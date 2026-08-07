@@ -1,0 +1,30 @@
+# 문서 인덱스
+
+소형 Open-Weight LLM 앙상블 기반 취약점 연구 Multi-Agent Orchestration 프로젝트의 실행 문서 모음.
+
+- 팀: 화햇대장 (WHITEHAT SCHOOL 4기)
+- 기간: 2026-08-03 ~ 2026-10-17
+- 원본 문서(같은 폴더): [prd.md](prd.md), [Multi-Agent Vulnerability Harness.md](Multi-Agent%20Vulnerability%20Harness.md), 킥오프 발표자료 PDF(28p, 이미지 스캔본 — 텍스트 레이어 없음)
+
+## 문서 지도
+
+| 문서 | 다루는 것 | 주 독자 |
+| --- | --- | --- |
+| [architecture.md](architecture.md) | 파이프라인 단계, 구성 요소 책임, 상태 전이 | 전원 |
+| [agent-contracts.md](agent-contracts.md) | 역할별 실행 계약, 입출력 스키마, 프롬프트 규약 | 하네스/에이전트 담당 |
+| [knowledge-base.md](knowledge-base.md) | KB 6계층, Evidence Store, Hybrid Retrieval, Context Capsule | 검색/데이터 담당 |
+| [model-serving.md](model-serving.md) | Model Registry, 하드웨어 프로필, 양자화·서빙 검증 절차 | 인프라 담당 |
+| [evaluation.md](evaluation.md) | B1/B1'/B3/B3' 조건, 데이터셋, 누출 방지, 지표 정의 | 평가 담당 |
+| [engineering-guide.md](engineering-guide.md) | 저장소 구조, 4개 인터페이스, 재현성, 관찰 가능성, 개발 규칙 | 개발 전원 |
+| [roadmap.md](roadmap.md) | 마일스톤별 산출물과 완료 기준(DoD), 8-way 트랙 | 전원 |
+| [disclosure-policy.md](disclosure-policy.md) | 취약점 제보 워크플로, 2인 검증, 연구 윤리·법적 경계 | 전원 |
+| [open-questions.md](open-questions.md) | 미해결 리스크와 결정 대기 항목 | PL/PM |
+| [decisions/](decisions/) | 되돌리기 비싼 결정의 기록(ADR) | 전원 |
+
+## 문서 규칙
+
+1. PRD는 "무엇을 왜"를, `docs/`는 "어떻게"를 담는다. 목표·일정 변경은 PRD를 먼저 고치고 여기에 반영한다.
+2. 되돌리기 비싼 결정(오케스트레이터, 상태 저장소, 모델 계열, 평가 프로토콜)은 [decisions/](decisions/)에 ADR로 남긴다.
+3. 아직 정해지지 않은 것은 지어내지 말고 `TBD` + 결정 기한과 함께 [open-questions.md](open-questions.md)에 적는다.
+4. 측정값은 출처(실측/문서/추정)를 표기한다. 추정치는 `(추정)`으로 명시한다.
+</content>

@@ -1,0 +1,129 @@
+# 엔지니어링 가이드
+
+## 1. 지금 만들지 않는 것
+
+처음부터 분산 시스템으로 만들지 않는다. 초기 구성은 다음으로 고정한다.
+
+- 단일 Python 서비스
+- SQLite 또는 DuckDB state
+- 로컬 artifact 디렉터리
+- Docker sandbox (도구 실행 격리)
+- bounded in-process queue
+
+Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benchmark에서 병목이 확인된 뒤**에 추가한다. 병목 근거 없이 도입된 인프라는 리뷰에서 되돌린다.
+
+## 2. 저장소 구조 (제안)
+
+```
+.
+├── docs/                  # 이 문서 모음
+├── prompts/               # 역할별 프롬프트, 버전 디렉터리
+│   ├── scout/v4/
+│   ├── auditor/v3/
+│   └── critic/v2/
+├── config/
+│   ├── models.yaml        # Model Registry (model-serving.md §5)
+│   ├── profiles.yaml      # 벤치마크 조건별 프로필
+│   └── budgets.yaml       # run 단위 예산
+├── src/
+│   ├── orchestrator/      # 파이프라인 노드 (순수 함수 + Pydantic)
+│   ├── interfaces/        # ModelClient / Retriever / ToolRunner / StateStore
+│   ├── adapters/          # 위 인터페이스의 구체 구현
+│   ├── schemas/           # Candidate / Evidence / Finding / Decision / RunRecord
+│   └── cli.py             # 표준 CLI 진입점
+├── tools/                 # 정적분석·build·sanitizer·fuzz 래퍼 (Docker)
+├── eval/
+│   ├── datasets/          # 평가셋 메타데이터 (원본은 별도 스토리지)
+│   ├── leakage/           # 누출 자동 검증 스크립트
+│   └── report/            # 비교표 생성
+├── artifacts/             # run별 산출물 (git 제외)
+└── tests/
+```
+
+## 3. 교체 가능한 4개 인터페이스
+
+도메인 로직은 이 4개에만 의존한다. 구현체 교체가 코드 변경 없이 설정만으로 가능해야 한다.
+
+```python
+class ModelClient(Protocol):
+    def complete(self, *, role: str, prompt: Prompt, schema: type[BaseModel]) -> Result: ...
+
+class Retriever(Protocol):
+    def search(self, query: Query, level: CapsuleLevel) -> ContextCapsule: ...
+    def expand(self, capsule: ContextCapsule, need: MissingEvidence) -> ContextCapsule: ...
+
+class ToolRunner(Protocol):
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence: ...
+
+class StateStore(Protocol):
+    def put(self, obj: Candidate | Evidence | Finding | Decision) -> str: ...
+    def get(self, kind: str, id: str) -> BaseModel | None: ...
+    def query(self, kind: str, **filters) -> list[BaseModel]: ...
+```
+
+금지 사항: 오케스트레이터 노드에서 vLLM/LiteLLM/SQLite를 직접 import 하는 것. 어댑터 레이어를 거친다.
+
+## 4. 오케스트레이터 종속성 최소화
+
+초기 runtime은 checkpoint·resume·human gate가 필요한 graph workflow에 적합한 **LangGraph v1**을 후보로 한다. 다만:
+
+- 각 node는 **순수 Python 함수 + Pydantic schema**로 작성한다.
+- 노드 함수는 LangGraph 타입을 시그니처에 노출하지 않는다.
+- 상태는 `StateStore`를 통해서만 읽고 쓴다.
+
+이 규칙을 지키면 Temporal·Prefect·자체 스케줄러로 이관할 때 노드 코드를 그대로 옮길 수 있다.
+
+## 5. 재현성 (필수 기록 항목)
+
+모든 run에서 다음을 `RunRecord`로 남긴다. 하나라도 빠지면 그 run의 결과는 비교표에 넣지 않는다.
+
+- repository commit과 source hash
+- model·tokenizer·quantization checksum
+- prompt·agent spec version
+- tool/container image digest
+- resolved budget와 threshold
+- random seed와 sampling 설정
+- KB 스냅샷 버전
+
+## 6. 관찰 가능성
+
+초기 필수는 **JSONL + OpenTelemetry trace**뿐이다. UI가 필요해지는 시점에 self-hosted Langfuse를 추가한다.
+
+trace에 반드시 남길 것:
+
+| 항목 | 이유 |
+| --- | --- |
+| 단계별 입력·출력 토큰 (cached 분리) | 비용 지표의 기반 |
+| 역할별 모델·프롬프트 버전 | 조건 비교의 기반 |
+| 후보 상태 전이와 사유 코드 | 단계별 제거율 산출 |
+| 도구 실행 명령·종료 코드·소요 시간 | 검증 재현 |
+| 모델 입력 context 전체 | 누출 검증 |
+
+## 7. 도구 실행 격리
+
+- 모든 build/sanitizer/fuzz/PoC 실행은 Docker sandbox 안에서만 한다.
+- 기본값: 네트워크 차단, 읽기 전용 마운트, CPU·메모리·시간 상한.
+- 대상 코드는 **공개 소스코드와 직접 구축한 로컬 환경**으로 한정한다. 외부 시스템에 대한 실행은 금지한다([disclosure-policy.md](disclosure-policy.md)).
+
+## 8. 개발 규칙
+
+1. **작은 파일 다수 > 큰 파일 소수.** 파일 200~400줄 목표, 800줄 상한.
+2. 함수 50줄 이하, 중첩 4단계 이하. 조기 반환을 쓴다.
+3. 에러는 삼키지 않는다. 도구 실패도 `Evidence`(실패 사유 포함)로 기록한다.
+4. 스키마 경계에서 검증한다. 모델 출력은 항상 Pydantic으로 파싱한 뒤 사용한다.
+5. 하드코딩 금지 — 임계값·예산·모델은 `config/`에서 온다.
+6. 새 기능 전에 기존 코드에 같은 일을 하는 것이 있는지 먼저 찾는다.
+7. 비결정적 로직(임계값 판정, dedupe 규칙)에는 반드시 테스트를 남긴다.
+
+## 9. 되돌리기 비싼 결정은 ADR로
+
+다음 범주는 `docs/decisions/`에 ADR을 남기고 진행한다.
+
+- 오케스트레이터 선택·교체
+- 상태 저장소 선택
+- 모델 계열 확정 및 양자화 기본값
+- 평가 프로토콜 변경(조건 정의, 데이터셋 구성)
+- 분산 인프라 도입
+
+ADR 형식: 배경 / 결정 / 대안과 기각 사유 / 결과와 되돌리는 비용 / 상태(제안·승인·폐기).
+</content>
