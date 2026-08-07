@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Import check
+        run: python -m compileall -q .
+
+      # - run: pip install pytest -r requirements.txt
+      # - run: pytest
