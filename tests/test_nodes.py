@@ -163,13 +163,17 @@ def test_static_tool_failure_is_recorded_not_raised(ctx: RunContext) -> None:
 
 
 def test_no_hit_static_run_is_recorded_but_is_not_a_signal(ctx: RunContext) -> None:
-    """"돌렸는데 없었다"와 "신호가 있다"는 다른 사건이다."""
+    """"돌렸는데 없었다"와 "신호가 있다"는 다른 사건이다.
+
+    빌드 성공은 발견 여부와 무관하게 신호다(재현 명세를 쓸 수 있는지가 여기서 갈린다).
+    걸러지는 것은 **아무것도 못 찾은 정적분석**뿐이다.
+    """
     clean = signals.run(ctx, workdir="util.c")
     hit = signals.run(ctx, workdir="parser.c")
 
     assert all(ev.ok for ev in clean)  # 신호 부재로 기록된다
-    assert signals.with_signal(clean) == ()
-    assert signals.with_signal(hit)
+    assert not [ev for ev in signals.with_signal(clean) if ev.kind is EvidenceKind.STATIC]
+    assert [ev for ev in signals.with_signal(hit) if ev.kind is EvidenceKind.STATIC]
 
 
 def test_capsule_budget_comes_from_config(ctx: RunContext) -> None:
