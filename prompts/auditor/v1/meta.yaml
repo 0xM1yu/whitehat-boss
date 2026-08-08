@@ -1,0 +1,4 @@
+role: auditor
+version: v1
+output_schema: Finding
+description: 확장 캡슐로 가설과 경로를 세우는 5단계 감사 프롬프트
