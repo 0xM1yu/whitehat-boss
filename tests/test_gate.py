@@ -1,0 +1,245 @@
+"""Evidence Gate 술어 테스트.
+
+게이트는 순수 함수이므로 테스트도 순수하다 — store도 trace도 쓰지 않는다.
+등급 판정은 이 시스템이 "측정하려는 값"이 아니라 **문서가 정한 규칙**이므로 여기서는
+조건별 등급을 그대로 단언한다(architecture.md §4 표).
+"""
+
+from datetime import UTC, datetime
+
+from src.orchestrator import gate
+from src.schemas import (
+    Decision,
+    Evidence,
+    EvidenceGrade,
+    EvidenceKind,
+    Finding,
+    FindingState,
+    Location,
+    MissingEvidence,
+    PathStep,
+    PathStepKind,
+    ProducedBy,
+    ReproSpec,
+    Role,
+    Verdict,
+)
+
+RUN_ID = "run_20260901_0001"
+OBSERVED_AT = datetime(2026, 9, 1, tzinfo=UTC)
+TARGET = Location(file="parser.c", symbol="parse_header", line_start=10, line_end=20)
+AUDITOR = ProducedBy(role=Role.AUDITOR, model="fake", prompt_version="v1")
+CRITIC = ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1")
+
+FULL_PATH = [
+    PathStep(step=PathStepKind.SOURCE, symbol="read_input"),
+    PathStep(step=PathStepKind.PROPAGATE, symbol="parse_header"),
+    PathStep(step=PathStepKind.SINK, symbol="memcpy"),
+]
+
+
+def _evidence(
+    evidence_id: str,
+    kind: EvidenceKind,
+    *,
+    ok: bool = True,
+    location: Location | None = None,
+) -> Evidence:
+    return Evidence(
+        evidence_id=evidence_id,
+        run_id=RUN_ID,
+        kind=kind,
+        source="semgrep",
+        artifact_id="art_0001",
+        location=location,
+        payload_ref="logs/semgrep.json",
+        digest="sha256:" + "0" * 64,
+        observed_at=OBSERVED_AT,
+        ok=ok,
+        error=None if ok else "도구 실패",
+    )
+
+
+def _finding(
+    *,
+    refs: list[str],
+    path: list[PathStep] | None = None,
+    repro: bool = False,
+) -> Finding:
+    return Finding(
+        finding_id="find_0001",
+        run_id=RUN_ID,
+        candidate_id="cand_0001",
+        title="검증 없는 memcpy",
+        cwe="CWE-787",
+        state=FindingState.HYPOTHESIZED,
+        confidence=0.6,
+        path=path or [],
+        evidence_refs=refs,
+        produced_by=AUDITOR,
+        repro_spec=ReproSpec(steps=["./build.sh"], expected_signal="ASAN") if repro else None,
+    )
+
+
+def _decision(verdict: Verdict, *, grounded: bool) -> Decision:
+    return Decision(
+        decision_id="dec_0001",
+        run_id=RUN_ID,
+        finding_id="find_0001",
+        verdict=verdict,
+        rationale="근거 서술",
+        evidence_refs=["ev_graph"] if grounded else [],
+        produced_by=CRITIC,
+    )
+
+
+def test_no_evidence_refs_is_e0() -> None:
+    result = gate.evaluate(_finding(refs=[]), [])
+
+    assert result.grade is EvidenceGrade.E0
+    assert not result.ambiguous
+
+
+def test_static_signal_alone_is_e1() -> None:
+    finding = _finding(refs=["ev_static"])
+    evidences = [_evidence("ev_static", EvidenceKind.STATIC)]
+
+    assert gate.evaluate(finding, evidences).grade is EvidenceGrade.E1
+
+
+def test_failed_evidence_does_not_count() -> None:
+    """`ok=False`는 실패 기록이지 근거가 아니다. 게이트는 `ok`만 본다."""
+    finding = _finding(refs=["ev_static"])
+    evidences = [_evidence("ev_static", EvidenceKind.STATIC, ok=False)]
+
+    assert gate.evaluate(finding, evidences).grade is EvidenceGrade.E0
+
+
+def test_location_overlap_alone_is_e1() -> None:
+    """정적 신호가 없어도 후보 위치와 겹치면 E1이다."""
+    finding = _finding(refs=["ev_build"])
+    evidences = [
+        _evidence(
+            "ev_build",
+            EvidenceKind.BUILD,
+            location=Location(file="parser.c", line_start=15),
+        )
+    ]
+
+    result = gate.evaluate(finding, evidences, candidate_location=TARGET)
+
+    assert result.predicates["location_ok"]
+    assert result.grade is EvidenceGrade.E1
+
+
+def test_path_and_graph_without_blocking_is_e2() -> None:
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(finding, evidences)
+
+    assert result.grade is EvidenceGrade.E2
+    assert not result.ambiguous
+
+
+def test_blocking_missing_evidence_holds_at_e1_and_flags_ambiguous() -> None:
+    """경로와 그래프는 있는데 blocking이 남았다 — E1↔E2 경계다.
+
+    모델을 부르지 않고 E1으로 확정하되, 그 사실을 남길 수 있어야 한다.
+    """
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+    missings = [
+        MissingEvidence(
+            missing_id="mev_0001",
+            run_id=RUN_ID,
+            finding_id="find_0001",
+            need="빌드 플래그",
+            how_to_obtain="빌드 로그 첨부",
+            blocking=True,
+        )
+    ]
+
+    result = gate.evaluate(finding, evidences, missings=missings)
+
+    assert result.grade is EvidenceGrade.E1
+    assert result.ambiguous
+
+
+def test_upheld_with_repro_spec_is_e3() -> None:
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH, repro=True)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
+
+    assert result.grade is EvidenceGrade.E3
+
+
+def test_upheld_without_repro_spec_stays_e2() -> None:
+    """E3의 조건 자체가 "재현 명세 존재"다 (architecture.md §4)."""
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
+
+    assert result.grade is EvidenceGrade.E2
+    assert not result.predicates["p3"]
+
+
+def test_ungrounded_rebut_normalizes_to_uphold() -> None:
+    """근거 없는 반박은 반박이 아니다 (agent-contracts.md §2.3)."""
+    decision = _decision(Verdict.REBUT, grounded=False)
+
+    assert gate.normalize(decision) is Verdict.UPHOLD
+    assert gate.was_normalized(decision)
+
+
+def test_grounded_rebut_is_not_normalized() -> None:
+    decision = _decision(Verdict.REBUT, grounded=True)
+
+    assert gate.normalize(decision) is Verdict.REBUT
+    assert not gate.was_normalized(decision)
+
+
+def test_need_evidence_is_not_a_failed_rebuttal() -> None:
+    decision = _decision(Verdict.NEED_EVIDENCE, grounded=False)
+
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
+    assert not gate.was_normalized(decision)
+
+
+def test_runtime_evidence_is_e4() -> None:
+    finding = _finding(refs=["ev_asan"])
+    evidences = [_evidence("ev_asan", EvidenceKind.SANITIZER)]
+
+    assert gate.evaluate(finding, evidences).grade is EvidenceGrade.E4
+
+
+def test_grade_comparison_is_ordered() -> None:
+    assert gate.at_least(EvidenceGrade.E3, EvidenceGrade.E2)
+    assert gate.at_least(EvidenceGrade.E2, EvidenceGrade.E2)
+    assert not gate.at_least(EvidenceGrade.E1, EvidenceGrade.E2)
+
+
+def test_evidences_for_follows_ref_order() -> None:
+    """참조 순서가 곧 판정 순서다 — 순서가 흔들리면 재현성 비교가 깨진다."""
+    finding = _finding(refs=["ev_b", "ev_a"])
+    pool = [
+        _evidence("ev_a", EvidenceKind.STATIC),
+        _evidence("ev_b", EvidenceKind.GRAPH),
+        _evidence("ev_other", EvidenceKind.BUILD),
+    ]
+
+    assert [e.evidence_id for e in gate.evidences_for(finding, pool)] == ["ev_b", "ev_a"]
