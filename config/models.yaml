@@ -1,0 +1,117 @@
+# Model Registry (model-serving.md §5)
+#
+# 역할과 모델을 코드에서 분리한다. 여기 없는 model key는 프로필에서 참조할 수 없다.
+#
+# `endpoint`의 스킴이 어댑터를 고른다:
+#   fake://  → FakeModelClient (결정론적, GPU 불필요)
+#   그 외    → OpenAICompatModelClient (vLLM OpenAI-compatible)
+# 이 규칙 덕분에 한 프로필 안에서 역할별로 실서빙과 Fake를 섞을 수 있다(profiles.yaml single_gpu_12g).
+#
+# `benchmark` 값이 전부 0인 모델은 아직 실측 전이라는 뜻이다. model-serving.md §5에 따라
+# production 프로필에 넣지 않으며 `cli doctor`가 경고한다. 값은 §3 체크리스트 실측 후 채운다.
+#
+# checksum은 model·tokenizer·quantization 묶음의 해시다(engineering-guide.md §5 재현성 필수 항목).
+# 아래 값은 전부 합성 예시이며 실측 전까지 0으로 둔다.
+
+models:
+  fake:
+    endpoint: "fake://deterministic"
+    context_limit: 32768
+    quantization: "none"
+    license: "N/A"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-4b:
+    # 12GB 단일 카드에서 scout만 실서빙할 때 쓰는 소형 모델. profiles.yaml single_gpu_12g 참조.
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 131072
+    quantization: "fp8"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: "fake"
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-8b:
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 131072
+    quantization: "fp4"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: "qwen3-4b"
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-coder-30b-a3b:
+    # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
+    endpoint: "http://127.0.0.1:8002/v1"
+    context_limit: 262144
+    quantization: "nvfp4"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  devstral-small-2-24b:
+    # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
+    # dense 24B라 NVFP4가 매력적이지만 반박 정확도 저하 위험이 있다(§4, open-questions R2).
+    endpoint: "http://127.0.0.1:8003/v1"
+    context_limit: 262144
+    quantization: "nvfp4"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-embedding-0.6b:
+    endpoint: "http://127.0.0.1:8004/v1"
+    context_limit: 32768
+    quantization: "fp16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-reranker-0.6b:
+    endpoint: "http://127.0.0.1:8005/v1"
+    context_limit: 32768
+    quantization: "fp16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
