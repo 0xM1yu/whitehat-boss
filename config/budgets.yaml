@@ -39,6 +39,11 @@ thresholds:
   # bounded in-process queue 크기 (engineering-guide.md §1).
   queue_maxsize: 256
 
+  # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
+  # 한도를 넘기면 후보를 queued로 두고 schema_parse_failed로 기록한다. 이 값을 올리면
+  # "스키마 파싱 실패율"(evaluation.md §5.1)이 낮아지므로 조건 간 비교에서 고정해야 한다.
+  schema_retries: 1
+
   # 캡슐 레벨별 토큰 상한 (knowledge-base.md §4). 키는 CapsuleLevel 열거형 값과 같다.
   capsule_budget_tokens:
     light: 4000

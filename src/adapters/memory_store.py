@@ -25,8 +25,15 @@ class InMemoryStateStore:
         return self._rows.get((kind, id))
 
     def query(self, kind: ObjectKind, **filters: object) -> list[StoredObject]:
-        return [
-            obj
-            for (row_kind, _), obj in self._rows.items()
+        """ID 오름차순. SqliteStateStore의 `ORDER BY obj_id`와 같은 순서여야 한다.
+
+        정렬 계약이 두 구현에서 갈리면 노드가 결과를 순회하는 순간 프로필에 따라 실행
+        순서가 달라지고, 그대로 "같은 seed·조건이면 같은 결과"(engineering-guide.md §5)가
+        깨진다. dict 삽입 순서는 계약이 아니다.
+        """
+        rows = [
+            (row_id, obj)
+            for (row_kind, row_id), obj in self._rows.items()
             if row_kind == kind and filters_match(obj, filters)
         ]
+        return [obj for _, obj in sorted(rows, key=lambda row: row[0])]
