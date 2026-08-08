@@ -8,7 +8,7 @@
 | --- | --- | --- | --- | --- |
 | R1 | AI TOP ATOM(sm_121)에서 vLLM 버전·커널 호환성 미검증 | 크리티컬 패스 정지. GB10 전용 실행 지원은 2026-06부터이고 NVFP4 KV cache·speculative decoding은 커뮤니티 fork 수준일 수 있음 | 2026-08-17 | TBD |
 | R2 | Critic(Devstral Small 2, dense 24B) NVFP4 양자화 시 반박 정확도 저하 가능성 | B3'의 핵심 효과를 측정 불가하게 만듦 | 2026-08-31 | TBD |
-| R3 | 평가 데이터 누출 자동 검증 스크립트 부재 | 코드 리뷰만으로는 보장 불가. 누락 시 모든 비교 결과 무효 | 2026-09-07 | TBD |
+| R3 | 평가 데이터 누출 자동 검증 스크립트 부재 | 코드 리뷰만으로는 보장 불가. 누락 시 모든 비교 결과 무효. **부분 착수**: `eval/leakage/`가 [evaluation.md](evaluation.md) §4 표의 7개 중 2개(hash 교집합, CVE·flag·문제명·patch diff 마스킹)를 구현하고 CI에서 돈다. 남은 5개(Patch Leakage 출처 검사, 중복 데이터 제거, Time Split, Prompt Logging, Reproducibility)는 미구현이므로 **해결 아님** | 2026-09-07 | TBD |
 | R4 | 단일 노드 대역폭 병목의 실제 한계 미파악 | 4조건 실행 시간이 일정을 초과할 수 있음. ConnectX-7 2대 확장 판단의 전제 | 2026-09-05 | TBD |
 | R5 | Zero-day 제보 워크플로의 강제 수단 미정 | 원칙(2인 검증, AI 원문 금지)은 있으나 체크리스트·승인 절차의 운영 방식 미확정 | 2026-09-21 | TBD |
 
@@ -21,10 +21,13 @@
 | D3 | Capsule 확장 횟수 상한 | 초기값 3, 실측 후 조정 | [knowledge-base.md](knowledge-base.md) §5 |
 | D4 | Critic 양자화 검증 표본 크기와 허용 하락폭 | 표본 N, 일치율 하락 허용 % | [model-serving.md](model-serving.md) §4 |
 | D5 | GPU-hour → 금액 환산식 | 전력 단가, 장비 감가 가정 | [evaluation.md](evaluation.md) §5.3 |
-| D6 | 상태 저장소 SQLite vs DuckDB | 쓰기 패턴과 분석 쿼리 비중에 따라 | [engineering-guide.md](engineering-guide.md) §1 |
-| D7 | 오케스트레이터 LangGraph v1 확정 여부 | 노드를 순수 함수로 유지한다는 전제 하에 확정 | [engineering-guide.md](engineering-guide.md) §4 |
+| D6 | 상태 저장소 SQLite vs DuckDB | 쓰기 패턴과 분석 쿼리 비중에 따라. **v1은 SQLite로 시작** — [ADR 0001](decisions/0001-state-store-sqlite.md)(상태: 제안). 되돌리는 비용이 낮아 지금 확정하지 않아도 된다 | [engineering-guide.md](engineering-guide.md) §1 |
+| D7 | 오케스트레이터 LangGraph v1 확정 여부 | 노드를 순수 함수로 유지한다는 전제 하에 확정. **v1은 순차 최소 러너, LangGraph 보류** — [ADR 0002](decisions/0002-minimal-runner-langgraph-deferred.md)(상태: 제안). 노드 시그니처에 프레임워크 타입을 넣지 않아 이 항목이 열린 채로 유지된다 | [engineering-guide.md](engineering-guide.md) §4 |
 | D8 | **Evidence Gate와 Critic의 순서** | 킥오프 자료 내부 불일치: 04-6 표는 `Critic(4차) → Evidence Gate(5차)`, 05-2 구조도와 하네스 제안서는 `Evidence Gate → (high-value only) → Critic`. 현재 문서는 후자 채택 | [architecture.md](architecture.md) §3 |
 | D9 | 1차 분석 대상의 범위 | 킥오프 04-1은 "펌웨어의 취약점을 분석"으로 명시. 소스 저장소 우선 vs 펌웨어 우선에 따라 Preprocessor·Index 구현 순서가 갈림 | [architecture.md](architecture.md) §3 |
+| D10 | 재평가 횟수를 어디에 보관하는가 | 지금은 `queue.py`가 **run 범위 in-memory 카운터**로 들고 있다. Candidate는 SQLite에 `queued`로 남지만 "몇 번 재평가됐는지"는 run이 끝나면 사라지므로, 다중 run·resume에서 `requeue_limit_reached` 전이가 성립하지 않는다(매 run이 0부터 센다). 선택지: (a) `Candidate.requeue_count` 필드 추가 (b) StateStore에 run 밖 카운터 테이블 (c) 단일 run 전제를 명문화하고 resume 비지원 확정 — **현재 코드는 (c) 가정**. (a)는 `src/schemas/` 변경이라 전원 공지 대상 | [architecture.md](architecture.md) §3 Queue 규칙 |
+| D11 | Evidence에 "발견 건수"가 없다 | 정적분석 도구는 아무것도 못 찾아도 정상 종료하므로 `Evidence(kind=static, ok=true)`가 남는다. 그대로 두면 "돌렸는데 없었다"가 신호로 세어져 Scout 점수가 오르고 Evidence Gate E1이 모든 Finding에서 참이 된다. 지금은 `nodes/signals.with_signal()`이 `exit_code`로 판별하는데, 이는 ToolRunner의 관례에 기댄 것이다 — **Semgrep은 발견이 있어도 0을 반환하는 모드가 있고 clang-tidy는 다른 관례를 쓴다.** 선택지: (a) `Evidence.findings: int` 추가(전원 공지 대상) (b) 신호 없음은 Evidence로 남기지 않고 trace에만 기록 (c) 도구별 어댑터가 `ok`의 의미를 계약으로 고정 | [agent-contracts.md](agent-contracts.md) §3, [architecture.md](architecture.md) §3 |
+| D12 | build를 몇 단계에서 실행하는가 | [architecture.md](architecture.md) §3은 build를 8단계(Tool Validation) 소관으로 두고 2단계는 sanitizer 로그를 "파싱"하는 단계로 정의한다. 그런데 Auditor는 빌드 가능 여부를 모르면 `repro_spec`을 쓰지 않고, 그러면 E3이 성립하지 않아 **8단계가 영원히 도달 불가**가 된다(도구 검증 제거율의 분모가 0). 현재 코드는 2단계에 build 프로브를 넣어 해결했다. 선택지: (a) §3을 코드에 맞춰 2단계에 build를 포함하도록 고친다 (b) `repro_spec` 생성 조건에서 BUILD 요구를 빼고 8단계가 빌드 실패를 직접 처리한다 | [architecture.md](architecture.md) §3 |
 
 ## 3. 팀·운영 미정
 

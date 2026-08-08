@@ -60,8 +60,12 @@ Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받�
 
 역할과 모델을 코드에서 분리한다. 프로필 교체만으로 B1/B1'/B3/B3' 조건을 구성할 수 있어야 한다.
 
+**registry와 프로필은 다른 파일이다.** 모델 목록은 장비가 바뀔 때, 프로필은 실험 조건이
+바뀔 때 손대므로 수명이 다르다. 한 파일에 두면 조건 하나를 추가할 때 registry 전체가
+diff에 올라온다.
+
 ```yaml
-# models.yaml (합성 예시)
+# config/models.yaml (합성 예시)
 models:
   qwen3-8b:
     endpoint: http://127.0.0.1:8001/v1
@@ -69,31 +73,43 @@ models:
     quantization: fp4
     license: Apache-2.0
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    prompt_template_version: v4
+    prompt_template_version: v1
     fallback: null
     benchmark:
       measured_at: "2026-08-17T00:00:00Z"
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+```
 
+```yaml
+# config/profiles.yaml (합성 예시)
 profiles:
   local_balanced:
-    scout: qwen3-8b
-    auditor: qwen3-coder-30b-a3b
-    critic: devstral-small-2
-    embedding: qwen3-embedding-0.6b
-    reranker: qwen3-reranker-0.6b
-
-  b1_single:            # 벤치마크 조건: 단일 모델
-    scout: qwen3-coder-30b-a3b
-    auditor: qwen3-coder-30b-a3b
-    critic: qwen3-coder-30b-a3b
-    embedding: qwen3-embedding-0.6b
-    reranker: qwen3-reranker-0.6b
+    description: "전 역할 실서빙"
+    production: false
+    roles:                        # 역할 → models.yaml의 키
+      scout: qwen3-8b
+      auditor: qwen3-coder-30b-a3b
+      critic: devstral-small-2-24b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:                     # ModelClient는 여기서 고르지 않는다 (아래 참조)
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default               # budgets.yaml의 키
 ```
 
 `benchmark` 항목이 비어 있는(`0`) 모델은 프로덕션 프로필에 넣지 않는다.
+
+**`adapters`에 ModelClient가 없는 것은 의도다.** 역할마다 다른 모델을 쓰고 그중 일부만
+실서빙일 수 있으므로(12GB 프로필은 scout만 실서빙), ModelClient 선택은 프로필이 아니라
+각 모델의 `endpoint` 스킴이 역할별로 한다. 프로필 단위로 하나를 고르는 구조였다면 그
+구성을 표현할 수 없다.
+
+`prompt_template_version`은 **결과에 그대로 박제된다**(`RunRecord.prompt_versions`).
+버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다(agent-contracts.md §4).
 
 ## 6. 게이트웨이 구성
 

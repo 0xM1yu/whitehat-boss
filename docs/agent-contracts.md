@@ -195,10 +195,15 @@ agent:
   "run_id": "run_20260901_0001",
   "condition": "B3prime@pipeline",
   "repo_commit": "0000000000000000000000000000000000000000",
-  "source_hash": "sha256:0000…",
-  "model_checksums": {"auditor": "sha256:0000…", "critic": "sha256:0000…"},
+  "source_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "model_checksums": {
+    "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
   "prompt_versions": {"scout": "v1", "auditor": "v1", "critic": "v1"},
-  "tool_images": {"semgrep": "sha256:0000…", "fuzz": "sha256:0000…"},
+  "tool_images": {
+    "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
   "budget": {"input_tokens": 4000000, "output_tokens": 400000, "gpu_seconds": 7200},
   "thresholds": {"scout_threshold": 0.5},
   "seed": 20260901,
