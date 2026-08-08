@@ -1,0 +1,250 @@
+"""라우팅 정책과 계층 경계 테스트.
+
+정책 판정은 **문서가 정한 규칙**이므로 조건별 route를 그대로 단언한다. 임계값 자체는
+config에서 오므로 테스트에 숫자를 박지 않고 `config.thresholds`에서 읽어 쓴다 —
+`budgets.yaml`을 조정해도 이 테스트는 여전히 옳아야 한다.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from src.config import Thresholds, load_config
+from src.orchestrator.policy import (
+    Action,
+    DecisionPoint,
+    FixedThresholdPolicy,
+    Route,
+    RoutingRequest,
+    UnknownDecisionPoint,
+)
+from src.orchestrator.stages import Stage
+from src.schemas import EvidenceGrade, FindingState, ReasonCode, Verdict
+
+ORCHESTRATOR_DIR = Path(__file__).resolve().parent.parent / "src" / "orchestrator"
+
+
+@pytest.fixture
+def thresholds() -> Thresholds:
+    return load_config("dev_fake").thresholds
+
+
+@pytest.fixture
+def policy(thresholds: Thresholds) -> FixedThresholdPolicy:
+    return FixedThresholdPolicy(thresholds)
+
+
+def _request(
+    point: DecisionPoint,
+    stage: Stage,
+    *,
+    subject_kind: str = "candidate",
+    **signals: object,
+) -> RoutingRequest:
+    return RoutingRequest(
+        point=point,
+        stage=stage,
+        subject_kind=subject_kind,
+        subject_id="cand_0001",
+        signals=signals,
+    )
+
+
+def test_policy_handles_every_decision_point(policy: FixedThresholdPolicy) -> None:
+    """결정 지점을 새로 만들고 처리기를 빼먹으면 실행 중에야 드러난다.
+
+    `RoutingPolicy` Protocol은 데이터 멤버(`name`)를 가져 `isinstance`로 검사할 수
+    없으므로, 구조 대신 **모든 지점이 처리된다**는 실질을 확인한다.
+    """
+    unhandled = [point for point in DecisionPoint if point not in _HANDLED_POINTS]
+
+    assert unhandled == []
+    assert isinstance(policy.name, str) and callable(policy.decide)
+
+
+# 각 지점을 판정하는 데 필요한 최소 신호. 위 테스트가 이 표를 근거로 전 지점을 돌린다.
+_HANDLED_POINTS: dict[DecisionPoint, dict[str, object]] = {
+    DecisionPoint.SCOUT_TRIAGE: {"score": 0.9},
+    DecisionPoint.CAPSULE_EXPANSION: {"expansion_count": 0},
+    DecisionPoint.GATE_GRADE: {"grade": EvidenceGrade.E2.value},
+    DecisionPoint.CRITIC_VERDICT: {
+        "verdict": Verdict.UPHOLD.value,
+        "grade": EvidenceGrade.E3.value,
+        "has_repro_spec": True,
+    },
+    DecisionPoint.REPRO_RESULT: {"ok": True, "tool_allowed": True},
+    DecisionPoint.REQUEUE: {"requeue_count": 0},
+}
+
+
+def test_every_decision_point_returns_an_action(policy: FixedThresholdPolicy) -> None:
+    for point, signals in _HANDLED_POINTS.items():
+        action = policy.decide(_request(point, Stage.GATE, **signals))
+        assert action.policy == policy.name, point
+
+
+def test_score_at_threshold_is_promoted(
+    policy: FixedThresholdPolicy, thresholds: Thresholds
+) -> None:
+    """경계값은 `>=`로 통과한다. 어느 쪽인지가 코드에 한 곳만 있어야 한다."""
+    action = policy.decide(
+        _request(DecisionPoint.SCOUT_TRIAGE, Stage.SCOUT, score=thresholds.scout_threshold)
+    )
+
+    assert action.route is Route.ADVANCE
+    assert action.to_state is FindingState.TRIAGED
+    assert action.reason_code is ReasonCode.SCOUT_PROMOTED
+
+
+def test_score_below_threshold_is_queued_not_dropped(
+    policy: FixedThresholdPolicy, thresholds: Thresholds
+) -> None:
+    """탈락 후보는 폐기하지 않고 queued로 둔다 (architecture.md §3 Queue 규칙)."""
+    action = policy.decide(
+        _request(DecisionPoint.SCOUT_TRIAGE, Stage.SCOUT, score=thresholds.scout_threshold - 0.01)
+    )
+
+    assert action.to_state is FindingState.QUEUED
+    assert action.reason_code is ReasonCode.BELOW_SCOUT_THRESHOLD
+
+
+def test_decision_records_its_basis(
+    policy: FixedThresholdPolicy, thresholds: Thresholds
+) -> None:
+    """정책 A/B 비교의 데이터 소스다 — 판정에 쓴 신호가 남아야 한다."""
+    action = policy.decide(_request(DecisionPoint.SCOUT_TRIAGE, Stage.SCOUT, score=0.9))
+
+    assert action.policy == "fixed_threshold"
+    assert action.basis["scout_threshold"] == thresholds.scout_threshold
+    assert action.basis["score"] == 0.9
+
+
+def test_capsule_expansion_stops_at_configured_limit(
+    policy: FixedThresholdPolicy, thresholds: Thresholds
+) -> None:
+    within = policy.decide(
+        _request(DecisionPoint.CAPSULE_EXPANSION, Stage.RETRIEVAL, expansion_count=0)
+    )
+    over = policy.decide(
+        _request(
+            DecisionPoint.CAPSULE_EXPANSION,
+            Stage.RETRIEVAL,
+            expansion_count=thresholds.capsule_expansion_max,
+        )
+    )
+
+    assert within.route is Route.EXPAND
+    assert within.to_state is None  # 확장은 상태를 바꾸지 않는다
+    assert over.reason_code is ReasonCode.CAPSULE_EXPANSION_EXHAUSTED
+
+
+def test_gate_grades_map_to_transitions(policy: FixedThresholdPolicy) -> None:
+    def route_for(grade: EvidenceGrade) -> Action:
+        return policy.decide(_request(DecisionPoint.GATE_GRADE, Stage.GATE, grade=grade.value))
+
+    assert route_for(EvidenceGrade.E0).reason_code is ReasonCode.INSUFFICIENT_EVIDENCE
+    assert route_for(EvidenceGrade.E1).route is Route.HOLD
+    assert route_for(EvidenceGrade.E1).reason_code is ReasonCode.EVIDENCE_WEAK
+    assert route_for(EvidenceGrade.E2).reason_code is ReasonCode.PROMOTED_TO_CRITIC
+
+
+def test_critic_uphold_needs_repro_spec_to_advance(policy: FixedThresholdPolicy) -> None:
+    """F-8과 F-9를 가르는 것은 재현 명세의 유무다."""
+
+    def decide(has_spec: bool) -> Action:
+        return policy.decide(
+            _request(
+                DecisionPoint.CRITIC_VERDICT,
+                Stage.CRITIC,
+                verdict=Verdict.UPHOLD.value,
+                grade=EvidenceGrade.E3.value,
+                has_repro_spec=has_spec,
+            )
+        )
+
+    assert decide(True).to_state is FindingState.VALIDATED
+    assert decide(False).to_state is FindingState.HYPOTHESIZED
+    assert decide(False).reason_code is ReasonCode.REPRO_SPEC_MISSING
+
+
+def test_grounded_rebut_and_need_evidence_go_to_queue(policy: FixedThresholdPolicy) -> None:
+    def decide(verdict: Verdict) -> Action:
+        return policy.decide(
+            _request(
+                DecisionPoint.CRITIC_VERDICT,
+                Stage.CRITIC,
+                verdict=verdict.value,
+                grade=EvidenceGrade.E2.value,
+                has_repro_spec=True,
+            )
+        )
+
+    assert decide(Verdict.REBUT).reason_code is ReasonCode.CRITIC_REBUTTED
+    assert decide(Verdict.NEED_EVIDENCE).reason_code is ReasonCode.CRITIC_NEED_EVIDENCE
+
+
+def test_tool_policy_violation_outranks_repro_result(policy: FixedThresholdPolicy) -> None:
+    action = policy.decide(
+        _request(DecisionPoint.REPRO_RESULT, Stage.VALIDATE, ok=True, tool_allowed=False)
+    )
+
+    assert action.reason_code is ReasonCode.TOOL_POLICY_VIOLATION
+
+
+def test_repro_result_maps_to_proven_or_queued(policy: FixedThresholdPolicy) -> None:
+    confirmed = policy.decide(
+        _request(DecisionPoint.REPRO_RESULT, Stage.VALIDATE, ok=True, tool_allowed=True)
+    )
+    failed = policy.decide(
+        _request(DecisionPoint.REPRO_RESULT, Stage.VALIDATE, ok=False, tool_allowed=True)
+    )
+
+    assert confirmed.to_state is FindingState.PROVEN
+    assert failed.to_state is FindingState.QUEUED
+
+
+def test_requeue_limit_keeps_object_queued(
+    policy: FixedThresholdPolicy, thresholds: Thresholds
+) -> None:
+    """상한을 넘겨도 폐기하지 않는다 (계획 D-i)."""
+    over = policy.decide(
+        _request(DecisionPoint.REQUEUE, Stage.SCOUT, requeue_count=thresholds.requeue_max)
+    )
+
+    assert over.route is Route.HOLD
+    assert over.to_state is FindingState.QUEUED
+    assert over.reason_code is ReasonCode.REQUEUE_LIMIT_REACHED
+
+
+def test_requeue_target_depends_on_subject_kind(policy: FixedThresholdPolicy) -> None:
+    """Candidate는 candidate로, Finding은 hypothesized로 돌아간다 (C-8 / F-14)."""
+    candidate = policy.decide(
+        _request(DecisionPoint.REQUEUE, Stage.SCOUT, subject_kind="candidate", requeue_count=0)
+    )
+    finding = policy.decide(
+        _request(DecisionPoint.REQUEUE, Stage.GATE, subject_kind="finding", requeue_count=0)
+    )
+
+    assert candidate.to_state is FindingState.CANDIDATE
+    assert finding.to_state is FindingState.HYPOTHESIZED
+
+
+def test_missing_signal_raises_instead_of_defaulting(policy: FixedThresholdPolicy) -> None:
+    """신호가 없으면 기본값으로 넘기지 않는다 — 조용한 오라우팅이 더 비싸다."""
+    with pytest.raises(UnknownDecisionPoint):
+        policy.decide(_request(DecisionPoint.SCOUT_TRIAGE, Stage.SCOUT))
+
+
+def test_orchestrator_source_has_no_adapter_import() -> None:
+    """오케스트레이터는 구체 어댑터를 직접 import 하지 않는다 (engineering-guide.md §3).
+
+    이것이 깨지면 "구현체 교체가 설정만으로 가능"이라는 주장이 성립하지 않는다.
+    조립은 `src/adapters/factory.py` 한 곳에서만 한다.
+    """
+    offenders = [
+        path.name
+        for path in sorted(ORCHESTRATOR_DIR.rglob("*.py"))
+        if "src.adapters" in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []

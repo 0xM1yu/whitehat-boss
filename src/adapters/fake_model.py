@@ -30,7 +30,13 @@ from src.schemas.finding import Finding, PathStep, ReproSpec
 _CHARS_PER_TOKEN = 4
 
 # Scout 점수 가중치. 합이 1.0을 넘지 않아야 score(0.0~1.0) 제약을 지킨다.
-_SCORE_BASE = 0.40
+#
+# **경계에 걸치지 않게 잡는다.** benign 표본(위험 호출만 있고 정적 신호도 실행 흔적도
+# 없는 경우)의 점수는 `_SCORE_BASE + _W_RISKY_CALL = 0.40`이고 config의
+# `scout_threshold`는 0.5다. 두 값이 같으면 `>=`냐 `>`냐로 결과가 뒤집히고 부동소수
+# 반올림까지 얹힌다. benign이 걸러지는 것이 이 픽스처의 핵심 시나리오이므로 0.1의
+# 여유를 둔다. 반대로 정적 신호가 붙으면 0.60이 되어 임계값을 확실히 넘는다.
+_SCORE_BASE = 0.30
 _W_STATIC_SIGNAL = 0.20
 _W_RUNTIME_EVIDENCE = 0.20
 _W_RISKY_CALL = 0.10
@@ -150,7 +156,8 @@ def _build_candidate(context: FakeContext, _produced_by: ProducedBy) -> Candidat
     """4단계 Scout 출력.
 
     점수는 세 신호의 가중합이다. 위험 호출만 있고 정적 신호도 실행 흔적도 없는 후보는
-    기본값 + 0.10에 머물러 임계값 아래로 떨어진다 — benign 표본이 실제로 걸러진다.
+    `_SCORE_BASE + _W_RISKY_CALL`(0.40)에 머물러 임계값(0.5) 아래로 떨어진다 —
+    benign 표본이 실제로 걸러진다. 경계에 걸치지 않게 잡은 이유는 위 상수 주석 참조.
     """
     risky = risky_calls_in(context.source)
     reasons: list[str] = []
