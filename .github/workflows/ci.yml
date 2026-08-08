@@ -26,5 +26,8 @@ jobs:
       - name: Import check
         run: python -m compileall -q .
 
-      # - run: pip install pytest -r requirements.txt
-      # - run: pytest
+      - name: Install runtime deps
+        run: pip install -r requirements.txt
+
+      - name: Test
+        run: pytest
