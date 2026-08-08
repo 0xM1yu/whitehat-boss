@@ -1,0 +1,16 @@
+# run 산출물 (engineering-guide.md §2: artifacts/ 는 git 제외)
+artifacts/
+
+# state DB (저장소 밖 보관이 기본값이나, 로컬 override 대비)
+*.db
+*.db-journal
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
