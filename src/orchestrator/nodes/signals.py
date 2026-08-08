@@ -16,9 +16,14 @@ from src.orchestrator.stages import Stage
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 
-# 2단계에서 도는 정적분석 도구. 이름은 ToolRunner의 화이트리스트 안에 있어야 하고,
-# 밖의 이름을 쓰면 tool_policy 위반으로 기록된다(조용히 성공하지 않는다).
-STATIC_TOOLS = ("semgrep", "clang-tidy")
+# 2단계에서 도는 도구. 이름은 ToolRunner의 화이트리스트 안에 있어야 하고, 밖의 이름을
+# 쓰면 tool_policy 위반으로 기록된다(조용히 성공하지 않는다).
+#
+# `build`가 정적분석과 함께 있는 이유: architecture.md §3의 2단계는 sanitizer 로그와
+# fuzz coverage도 다루는데 둘 다 빌드가 선행되어야 하고, **Auditor가 재현 명세를 쓸 수
+# 있는지가 이 신호로 갈린다**(빌드되는지 모르는 채로 재현 절차를 지어내면 8단계가
+# 실행할 수 없는 명세를 받는다). 빌드 실패도 그 자체로 신호이므로 여기서 기록한다.
+SIGNAL_TOOLS = ("semgrep", "clang-tidy", "build")
 
 
 def with_signal(evidences: tuple[Evidence, ...] | list[Evidence]) -> tuple[Evidence, ...]:
@@ -57,5 +62,5 @@ def run(ctx: RunContext, *, workdir: str = ".") -> list[Evidence]:
                 sandbox=DEFAULT_SANDBOX,
                 stage=Stage.SIGNALS,
             )
-            for tool in STATIC_TOOLS
+            for tool in SIGNAL_TOOLS
         ]
