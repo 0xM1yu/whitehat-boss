@@ -136,9 +136,14 @@ def risky_calls_in(source: str) -> list[str]:
 
 
 def _has_static_signal(context: FakeContext) -> bool:
-    return "static_signal" in context.capsule_sections or any(
-        ref.kind is EvidenceKind.STATIC and ref.ok for ref in context.evidence
-    )
+    """정적 신호가 **실제로** 있는가.
+
+    캡슐의 `static_signal` **섹션 존재**를 신호로 세지 않는다. Retriever는 그 섹션을
+    레벨에 따라 무조건 붙이므로(내용이 비어도 목록에는 있다), 섹션 이름을 신호로 세면
+    모든 후보가 같은 가산점을 받아 benign 표본이 임계값에 정확히 걸린다 — 걸러지는지
+    보려고 만든 표본이 비교 연산자 하나에 좌우된다. 신호의 근거는 Evidence뿐이다.
+    """
+    return any(ref.kind is EvidenceKind.STATIC and ref.ok for ref in context.evidence)
 
 
 def _has_runtime_evidence(context: FakeContext) -> bool:
