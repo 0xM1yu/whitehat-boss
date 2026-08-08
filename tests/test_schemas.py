@@ -44,7 +44,7 @@ from src.schemas import (
 
 ZERO_DIGEST = "sha256:" + "0" * 64
 ZERO_COMMIT = "0" * 40
-AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3-coder-30b-a3b", prompt_version="v3")
+AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3-coder-30b-a3b", prompt_version="v1")
 
 
 def _finding(**overrides: object) -> Finding:
@@ -74,7 +74,7 @@ def _run(**overrides: object) -> RunRecord:
         "repo_commit": ZERO_COMMIT,
         "source_hash": ZERO_DIGEST,
         "model_checksums": {"auditor": ZERO_DIGEST, "critic": ZERO_DIGEST},
-        "prompt_versions": {"scout": "v4", "auditor": "v3", "critic": "v2"},
+        "prompt_versions": {"scout": "v1", "auditor": "v1", "critic": "v1"},
         "tool_images": {"semgrep": ZERO_DIGEST, "fuzz": ZERO_DIGEST},
         "budget": Budget(input_tokens=4_000_000, output_tokens=400_000, gpu_seconds=7200),
         "thresholds": {"scout_threshold": 0.5},
@@ -132,7 +132,7 @@ def test_decision_example_parses() -> None:
         rationale="상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
         evidence_refs=["ev_graph_0012"],
         produced_by=ProducedBy(
-            role=Role.CRITIC, model="devstral-small-2-24b", prompt_version="v2"
+            role=Role.CRITIC, model="devstral-small-2-24b", prompt_version="v1"
         ),
     )
     assert decision.is_grounded
