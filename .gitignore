@@ -6,6 +6,9 @@ artifacts/
 *.db-journal
 *.sqlite3
 
+# 작업 계획 (세션 인계용, PR 산출물이 아니다)
+.claude/plans/
+
 # Python
 __pycache__/
 *.py[cod]
