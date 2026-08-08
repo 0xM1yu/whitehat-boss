@@ -57,7 +57,7 @@ def build_deps(
     return Deps(
         models=RoutingModelClient(clients),
         retriever=FakeRetriever(root=source_root, ids=ids, run_id=run_id, on_cache=on_cache),
-        tools=FakeToolRunner(ids=ids, run_id=run_id),
+        tools=FakeToolRunner(ids=ids, run_id=run_id, root=source_root),
         store=_state_store(config, run_id=run_id, artifacts_root=artifacts_root),
         ids=ids,
     )
@@ -78,6 +78,7 @@ def _model_client(model_key: str, config: HarnessConfig) -> ModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
+        retries=config.thresholds.schema_retries,
     )
 
 

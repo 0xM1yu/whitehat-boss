@@ -14,6 +14,7 @@ from pathlib import Path
 
 from src.ids import IdFactory, sha256_text
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
+from src.paths import PathEscape, safe_join
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 
@@ -44,9 +45,19 @@ class SandboxUnavailable(RuntimeError):
 class FakeToolRunner:
     """`ToolRunner` 구현. 같은 workdir·argv에는 항상 같은 Evidence를 낸다."""
 
-    def __init__(self, *, ids: IdFactory, run_id: str, observed_at: datetime | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ids: IdFactory,
+        run_id: str,
+        root: Path,
+        observed_at: datetime | None = None,
+    ) -> None:
         self.ids = ids
         self.run_id = run_id
+        # 샌드박스에 마운트되는 대상 루트. `ToolArgs.workdir`는 이 아래의 상대경로다
+        # (engineering-guide.md §7 읽기 전용 마운트). 밖을 가리키면 실행하지 않는다.
+        self.root = Path(root)
         # 시각을 주입받는다 — 재현 실행에서 같은 값이 나와야 trace를 대조할 수 있다.
         self.observed_at = observed_at or datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC)
 
@@ -66,37 +77,43 @@ class FakeToolRunner:
             return self.make_evidence(
                 tool, kind, args, ok=False, exit_code=1, error="network=True는 허용되지 않는다"
             )
+        try:
+            workdir = safe_join(self.root, args.workdir)
+        except PathEscape as exc:
+            return self.make_evidence(tool, kind, args, ok=False, exit_code=1, error=str(exc))
         if tool in _STATIC_TOOLS:
-            return self._run_static(tool, kind, args)
+            return self._run_static(tool, kind, args, workdir)
         if tool in _REPRO_TOOLS:
-            return self._run_repro(tool, kind, args)
-        return self._run_generic(tool, kind, args)
+            return self._run_repro(tool, kind, args, workdir)
+        return self._run_generic(tool, kind, args, workdir)
 
     # --- 도구별 동작 ---------------------------------------------------------
 
-    def _run_static(self, tool: str, kind: EvidenceKind, args: ToolArgs) -> Evidence:
+    def _run_static(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:
         hits = sum(
             1
-            for path in _sources(args.workdir)
+            for path in _sources(workdir)
             if _matches_any(path.read_text("utf-8", errors="replace"))
         )
         # 신호 없음은 실패가 아니다(architecture.md §3: "신호 부재로 기록").
         return self.make_evidence(tool, kind, args, ok=True, exit_code=1 if hits else 0, hits=hits)
 
-    def _run_repro(self, tool: str, kind: EvidenceKind, args: ToolArgs) -> Evidence:
+    def _run_repro(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:
         """재현 실행. Fake에는 실행할 바이너리가 없으므로 대상 존재로 대체한다.
 
         `expected_signal` 매칭은 8단계 노드의 책임이다(게이트는 `ok`만 본다).
         """
-        if not _sources(args.workdir):
+        if not _sources(workdir):
             return self.make_evidence(
                 tool, kind, args, ok=False, exit_code=2, error="재현 대상 소스가 없다"
             )
         return self.make_evidence(tool, kind, args, ok=True, exit_code=1)
 
-    def _run_generic(self, tool: str, kind: EvidenceKind, args: ToolArgs) -> Evidence:
+    def _run_generic(
+        self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path
+    ) -> Evidence:
         """build·index처럼 대상 존재만 확인하면 되는 도구."""
-        if not Path(args.workdir).exists():
+        if not workdir.exists():
             return self.make_evidence(
                 tool, kind, args, ok=False, exit_code=2, error=f"workdir가 없다: {args.workdir}"
             )
@@ -134,13 +151,13 @@ def _matches_any(text: str) -> bool:
     return any(pattern.search(text) for pattern in _STATIC_PATTERNS)
 
 
-def _sources(workdir: str) -> list[Path]:
-    root = Path(workdir)
-    if root.is_file():
-        return [root]
-    if not root.exists():
+def _sources(workdir: Path) -> list[Path]:
+    """정렬된 목록을 돌려준다 — rglob 순서는 파일시스템마다 달라 재현성을 깬다."""
+    if workdir.is_file():
+        return [workdir]
+    if not workdir.exists():
         return []
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix in _SOURCE_SUFFIXES)
+    return sorted(p for p in workdir.rglob("*") if p.is_file() and p.suffix in _SOURCE_SUFFIXES)
 
 
 _STATIC_TOOLS = frozenset({"semgrep", "clang-tidy"})
