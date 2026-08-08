@@ -15,6 +15,7 @@ from pathlib import Path
 
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retriever import Query
+from src.paths import safe_join
 from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
@@ -113,7 +114,7 @@ class FakeRetriever:
         level도 키에 넣는다 — 같은 심볼이라도 Scout용과 Auditor용 캡슐은 다른 물건이다.
         """
         target = query.target
-        digest = sha256_text(_read_file(self.root / target.file))
+        digest = sha256_text(_read_source(self.root, target.file))
         return sha256_text(f"{digest}|{target.symbol or ''}|{level.value}|{CAPSULE_POLICY_VERSION}")
 
 
@@ -123,7 +124,7 @@ def read_symbol_source(root: Path, target: Location) -> str:
     `ContextCapsule`이 본문을 담지 않으므로 프롬프트를 만드는 쪽도 이 함수를 쓴다.
     두 곳이 서로 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     """
-    text = _read_file(root / target.file)
+    text = _read_source(root, target.file)
     if target.line_start is None:
         return text
     lines = text.splitlines()
@@ -131,7 +132,13 @@ def read_symbol_source(root: Path, target: Location) -> str:
     return "\n".join(lines[max(target.line_start - 1, 0) : end])
 
 
-def _read_file(path: Path) -> str:
+def _read_source(root: Path, relative: str) -> str:
+    """대상 루트 아래 파일만 읽는다. 루트 탈출은 `PathEscape`로 실패한다(src/paths.py).
+
+    없는 파일은 빈 내용이다 — 인덱스가 가리키는 파일이 사라진 것은 신호 부재이고,
+    루트 밖을 가리키는 것은 그와 다른 사건이라 섞지 않는다.
+    """
+    path = safe_join(root, relative)
     if not path.is_file():
         return ""
     return path.read_text("utf-8", errors="replace")

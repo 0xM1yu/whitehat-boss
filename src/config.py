@@ -120,6 +120,9 @@ class Thresholds(HarnessModel):
     requeue_max: int = Field(ge=0)
     critic_top_n: int = Field(gt=0)
     queue_maxsize: int = Field(gt=0)
+    # agent-contracts.md §1의 token_budget.retries. 이 값이 "스키마 파싱 실패율"의
+    # 분모를 바꾸므로 조건 간 비교에서 고정되어야 한다 — 어댑터 기본값으로 두지 않는다.
+    schema_retries: int = Field(ge=0)
     capsule_budget_tokens: CapsuleBudgets
 
     def budget_for(self, level: CapsuleLevel) -> int:

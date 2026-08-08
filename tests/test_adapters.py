@@ -26,6 +26,7 @@ from src.ids import IdFactory, new_run_id, sha256_text
 from src.interfaces.model_client import Prompt
 from src.interfaces.retriever import Query
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
+from src.paths import PathEscape
 from src.schemas import (
     Candidate,
     CapsuleLevel,
@@ -76,8 +77,13 @@ def _query(budget_tokens: int = 4000) -> Query:
     return Query(run_id=RUN_ID, target=TARGET, budget_tokens=budget_tokens)
 
 
-def _args(workdir: Path, *argv: str) -> ToolArgs:
-    return ToolArgs(argv=list(argv) or ["run"], workdir=str(workdir))
+def _args(workdir: str = ".", *argv: str) -> ToolArgs:
+    """`workdir`는 샌드박스에 마운트된 루트 기준 상대경로다."""
+    return ToolArgs(argv=list(argv) or ["run"], workdir=workdir)
+
+
+def _runner(root: Path) -> FakeToolRunner:
+    return FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID, root=root)
 
 
 # --- IdFactory --------------------------------------------------------------
@@ -314,51 +320,60 @@ def test_read_symbol_source_slices_by_line(target_root: Path) -> None:
     assert len(sliced) < len(whole)
 
 
+@pytest.mark.parametrize("escape", ["../outside.c", "/etc/passwd"])
+def test_source_outside_root_is_refused(target_root: Path, escape: str) -> None:
+    """`Location.file`은 모델·인덱스에서 오는 값이라 루트 밖을 가리킬 수 있다.
+
+    pathlib은 오른쪽이 절대경로면 왼쪽을 통째로 버리므로 검증 없이는 조용히 새어 나간다.
+    """
+    (target_root.parent / "outside.c").write_text(VULNERABLE_C, encoding="utf-8")
+    with pytest.raises(PathEscape):
+        read_symbol_source(target_root, Location(file=escape))
+
+
 # --- FakeToolRunner ---------------------------------------------------------
 
 
 def test_static_tool_finds_signal_only_where_it_exists(target_root: Path) -> None:
-    runner = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID)
-    hit = runner.run("semgrep", _args(target_root / "parser.c"), SANDBOX)
-    miss = runner.run("semgrep", _args(target_root / "util.c"), SANDBOX)
+    runner = _runner(target_root)
+    hit = runner.run("semgrep", _args("parser.c"), SANDBOX)
+    miss = runner.run("semgrep", _args("util.c"), SANDBOX)
     assert hit.ok and miss.ok  # 신호 부재는 실패가 아니다
     assert hit.exit_code != miss.exit_code
     assert hit.kind is EvidenceKind.STATIC
 
 
-def test_tool_failure_becomes_evidence_not_exception(tmp_path: Path) -> None:
+def test_tool_failure_becomes_evidence_not_exception(target_root: Path) -> None:
     """engineering-guide.md §8.3: 도구 실패도 Evidence로 기록한다."""
-    evidence = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID).run(
-        "build", _args(tmp_path / "없음"), SANDBOX
-    )
+    evidence = _runner(target_root).run("build", _args("없는디렉터리"), SANDBOX)
     assert not evidence.ok
     assert evidence.error
 
 
 def test_tool_outside_policy_is_recorded_as_failure(target_root: Path) -> None:
-    evidence = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID).run(
-        "curl", _args(target_root), SANDBOX
-    )
+    evidence = _runner(target_root).run("curl", _args(), SANDBOX)
     assert not evidence.ok
     assert "tool_policy" in (evidence.error or "")
 
 
 def test_network_sandbox_is_refused(target_root: Path) -> None:
     """disclosure-policy.md §5: 외부 시스템 실행 금지."""
-    evidence = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID).run(
-        "semgrep", _args(target_root), SANDBOX.transition(network=True)
-    )
+    evidence = _runner(target_root).run("semgrep", _args(), SANDBOX.transition(network=True))
     assert not evidence.ok
     assert "network" in (evidence.error or "")
 
 
+@pytest.mark.parametrize("workdir", ["../secrets", "/etc"])
+def test_workdir_outside_mount_is_refused(target_root: Path, workdir: str) -> None:
+    """모델·인덱스에서 온 경로가 마운트 밖을 가리키면 실행하지 않는다(src/paths.py)."""
+    evidence = _runner(target_root).run("semgrep", _args(workdir), SANDBOX)
+    assert not evidence.ok
+    assert "루트" in (evidence.error or "")
+
+
 def test_tool_results_are_deterministic(target_root: Path) -> None:
-    first = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID).run(
-        "semgrep", _args(target_root), SANDBOX
-    )
-    second = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID).run(
-        "semgrep", _args(target_root), SANDBOX
-    )
+    first = _runner(target_root).run("semgrep", _args(), SANDBOX)
+    second = _runner(target_root).run("semgrep", _args(), SANDBOX)
     assert first == second
 
 
@@ -405,6 +420,18 @@ def test_query_filters_by_run_id(store) -> None:  # noqa: ANN001
     store.put(_candidate("cand_0001"))
     store.put(_candidate("cand_0002", run_id="run_20260901_0002"))
     assert len(store.query("candidate", run_id=RUN_ID)) == 1
+
+
+def test_query_returns_ids_in_ascending_order(store) -> None:  # noqa: ANN001
+    """두 구현의 정렬 계약이 같아야 한다.
+
+    노드가 결과를 순회하는 순간 순서가 곧 실행 순서다. memory와 sqlite가 다른 순서를
+    주면 프로필을 바꿨을 때만 재현이 깨지고, 원인을 찾는 데 실행 비용을 다시 쓴다.
+    """
+    for candidate_id in ("cand_0003", "cand_0001", "cand_0002"):
+        store.put(_candidate(candidate_id))
+    ids = [obj.candidate_id for obj in store.query("candidate")]
+    assert ids == sorted(ids)
 
 
 def test_query_filters_by_state(store) -> None:  # noqa: ANN001
@@ -472,6 +499,6 @@ def test_deps_share_one_id_factory(target_root: Path, tmp_path: Path) -> None:
     deps = build_deps(
         load_config("dev_fake"), run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path
     )
-    deps.tools.run("build", _args(target_root), SANDBOX)
+    deps.tools.run("build", _args(), SANDBOX)
     assert deps.ids.issued()["evidence"] == 1
     assert sha256_text("x").startswith("sha256:")
