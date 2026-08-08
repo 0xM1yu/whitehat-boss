@@ -102,7 +102,10 @@ class ReasonCode(StrEnum):
     """
 
     # 4단계 Scout
+    SCOUT_PROMOTED = "scout_promoted"
     BELOW_SCOUT_THRESHOLD = "below_scout_threshold"
+    # 5단계 Auditor
+    AUDITOR_HYPOTHESIZED = "auditor_hypothesized"
     # 6단계 Evidence Gate
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     EVIDENCE_WEAK = "evidence_weak"
@@ -111,6 +114,8 @@ class ReasonCode(StrEnum):
     CRITIC_UPHELD = "critic_upheld"
     CRITIC_REBUTTED = "critic_rebutted"
     CRITIC_NEED_EVIDENCE = "critic_need_evidence"
+    # 반박에는 실패했으나 재현 명세가 없어 validated로 올릴 수 없는 경우 (architecture.md §4 E3).
+    REPRO_SPEC_MISSING = "repro_spec_missing"
     # 8단계 Tool Validation
     REPRO_CONFIRMED = "repro_confirmed"
     REPRO_FAILED = "repro_failed"
@@ -121,6 +126,8 @@ class ReasonCode(StrEnum):
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"
     # Queue 규칙 (architecture.md §3)
     NEW_EVIDENCE_REQUEUE = "new_evidence_requeue"
+    # 재평가 횟수 상한(config의 requeue_max) 초과. 폐기하지 않고 queued를 유지한다.
+    REQUEUE_LIMIT_REACHED = "requeue_limit_reached"
     # 제보 (disclosure-policy.md) — 자동 전이 없음, 사람 승인으로만
     HUMAN_VERIFIED = "human_verified"
 
