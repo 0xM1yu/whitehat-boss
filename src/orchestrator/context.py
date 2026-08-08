@@ -44,6 +44,18 @@ def _default_monotonic_ms() -> int:
     return int(perf_counter() * 1000)
 
 
+def _unwired_read_source(_target: Location) -> str:
+    """`read_source`가 배선되지 않은 채 호출됐다. 빈 문자열로 넘기지 않는다.
+
+    조용히 ""를 돌려주면 프롬프트에 원문이 빠진 채로 모델이 호출되고, 그 결과가
+    "모델이 못 찾았다"로 집계된다 — 배선 실수가 모델 성능 지표로 둔갑한다.
+    """
+    raise NotImplementedError(
+        "RunContext.read_source가 배선되지 않았다. 파일 읽기 구현(read_symbol_source)은 "
+        "어댑터 쪽에 있고 조립부가 주입한다 — 오케스트레이터는 그것을 import 하지 않는다."
+    )
+
+
 @dataclass
 class RunContext:
     """한 run의 의존성과 기록 장치.
@@ -63,6 +75,10 @@ class RunContext:
     ledger: BudgetLedger
     policy: RoutingPolicy
     record: RunRecord | None = None
+    # 대상 심볼의 원문을 읽는다. `ContextCapsule`은 본문을 담지 않는 매니페스트이므로
+    # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
+    # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
+    read_source: Callable[[Location], str] = field(default=_unwired_read_source)
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
 
