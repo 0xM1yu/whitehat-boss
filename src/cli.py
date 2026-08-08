@@ -23,6 +23,7 @@ from typing import TextIO
 from src.adapters.factory import Deps, build_deps
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import CONFIG_DIR, ConfigError, HarnessConfig, load_config
+from src.console import force_utf8
 from src.ids import new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
@@ -370,26 +371,6 @@ def build_parser() -> argparse.ArgumentParser:
     gc_cmd.add_argument("--apply", action="store_true")
     gc_cmd.add_argument("--yes", action="store_true")
     return parser
-
-
-def force_utf8(stream: TextIO) -> None:
-    """출력 스트림을 UTF-8로 바꾼다.
-
-    Windows 콘솔의 기본 인코딩(cp949)에서는 `—` 같은 문자가 `UnicodeEncodeError`를 내고
-    **출력 도중에 죽는다.** 실제로 `doctor`가 점검 6줄을 찍은 뒤 예외로 종료했다 —
-    진단 도구가 진단 대상보다 먼저 깨지면 안 된다. 우리가 쓰는 파일(trace·리포트)이
-    전부 UTF-8이므로 콘솔도 같은 인코딩으로 맞춘다.
-
-    바꿀 수 없는 스트림(파이프로 감싼 테스트 캡처 등)은 그대로 둔다. 여기서 실패해도
-    명령 자체는 계속되어야 하므로 예외를 좁게 잡아 넘긴다.
-    """
-    reconfigure = getattr(stream, "reconfigure", None)
-    if reconfigure is None:
-        return
-    try:
-        reconfigure(encoding="utf-8")
-    except (ValueError, OSError, AttributeError):
-        return
 
 
 def main(argv: Sequence[str] | None = None) -> int:

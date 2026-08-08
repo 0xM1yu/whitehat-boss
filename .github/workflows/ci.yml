@@ -31,3 +31,8 @@ jobs:
 
       - name: Test
         run: pytest
+
+      # evaluation.md §4: 누출이 한 건이라도 있으면 그 run의 비교 결과는 무효다.
+      # 코드 리뷰로는 보장할 수 없으므로 CI에서 막는다. prompts/ 가 기본 검사 대상이다.
+      - name: Leakage check
+        run: python -m eval.leakage

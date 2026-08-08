@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from src import cli
+from src import cli, console
 from src.config import load_config
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import Stage
@@ -245,7 +245,7 @@ def test_console_output_survives_a_non_utf8_terminal() -> None:
     """
     stream = io.TextIOWrapper(io.BytesIO(), encoding="cp949")
 
-    cli.force_utf8(stream)
+    console.force_utf8(stream)
     stream.write("실측 전 초기값 임계값 — 조건 간 비교 전에 확정한다")  # 예외가 나면 실패
 
     assert stream.encoding == "utf-8"
