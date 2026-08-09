@@ -9,6 +9,12 @@ artifacts/
 # 작업 계획 (세션 인계용, PR 산출물이 아니다)
 .claude/plans/
 
+# Slurm 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
+.claude/slurm/
+
+# VS Code
+.vscode/
+
 # Python
 __pycache__/
 *.py[cod]
