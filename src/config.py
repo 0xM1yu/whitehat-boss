@@ -27,6 +27,9 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 # 프로필에 반드시 있어야 하는 역할. embedding·reranker는 Retriever 구현에 따라 없을 수 있다.
 REQUIRED_ROLES = ("scout", "auditor", "critic")
 
+# `retriever: hybrid`일 때만 추가로 요구되는 역할 (ProfileEntry의 검증기 참조).
+RETRIEVAL_ROLES = ("embedding", "reranker")
+
 # 이 스킴이면 FakeModelClient로 간다. 역할별로 갈리므로 프로필 안에서 혼용이 가능하다.
 FAKE_SCHEME = "fake://"
 
@@ -80,7 +83,10 @@ class AdapterSelection(HarnessModel):
     KeyError를 내는 대신 설정 로드에서 실패해야 한다.
     """
 
-    retriever: Literal["fake"]
+    # hybrid는 embedding·reranker를 실제로 호출한다. 그 두 역할이 프로필에 없으면
+    # 로드 시점에 실패한다(아래 검증기) — factory에서 KeyError로 터지면 어느 프로필이
+    # 잘못됐는지가 스택 아래에 묻힌다.
+    retriever: Literal["fake", "hybrid"]
     tool_runner: Literal["fake"]
     state_store: Literal["memory", "sqlite"]
 
@@ -101,6 +107,20 @@ class ProfileEntry(HarnessModel):
         missing = [role for role in REQUIRED_ROLES if role not in self.roles]
         if missing:
             raise ValueError(f"프로필에 필수 역할이 없다: {missing}")
+        return self
+
+    @model_validator(mode="after")
+    def _hybrid_needs_retrieval_roles(self) -> "ProfileEntry":
+        """`retriever: hybrid`는 embedding·reranker 역할을 요구한다.
+
+        REQUIRED_ROLES에 넣지 않은 것은 의도다 — `retriever: fake`인 프로필에는 그
+        두 역할이 없어도 된다. 요구 조건이 어댑터 선택에 달려 있으므로 여기서 본다.
+        """
+        if self.adapters.retriever != "hybrid":
+            return self
+        missing = [role for role in RETRIEVAL_ROLES if role not in self.roles]
+        if missing:
+            raise ValueError(f"retriever: hybrid 프로필에 검색 역할이 없다: {missing}")
         return self
 
 
