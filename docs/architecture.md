@@ -66,14 +66,24 @@ candidate ──scout pass──> triaged ──auditor──> hypothesized
                         ┌──insufficient───────────┤
                         ▼                         ▼ sufficient
                      queued  <──rebutted──  critic review
-                        │                         │ upheld
+                        │                         │ upheld + 재현 명세
                         │                         ▼
-                        └──new evidence──>   validated
-                                                  │ tool validation 재현 성공
-                                                  ▼
-                                               proven ──> reported
-                                                          (2인 검증 후, disclosure-policy.md)
+                        │                     validated
+                        │                         │ tool validation 재현 성공
+                        │                         ▼
+                        │                      proven ──> reported
+                        │                                 (2인 검증 후, disclosure-policy.md)
+                        │
+                        └──new evidence──> candidate | hypothesized   (재평가)
 ```
+
+**`queued`에서 돌아가는 곳은 `validated`가 아니다.** 새 Evidence가 들어오면 Candidate는
+`candidate`로, Finding은 `hypothesized`로 돌아가 게이트를 처음부터 다시 통과해야 한다 —
+재평가가 판정 단계를 건너뛰면 근거 등급이 검증되지 않은 채로 승격된다. 재평가 횟수 상한은
+config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를 유지한다.
+
+> 전이 표 전체(트리거·단계·사유 코드)는 `src/orchestrator/state_machine.py`의 모듈
+> docstring에 있다. 이 그림은 그 표의 요약이며, 둘이 어긋나면 표가 기준이다.
 
 근거 등급(Evidence Gate 판정 기준):
 

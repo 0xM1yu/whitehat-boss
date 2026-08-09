@@ -45,5 +45,11 @@
 
 | # | 제목 | 상태 | 일자 |
 | --- | --- | --- | --- |
-| — | (아직 없음) | — | — |
+| [0001](0001-state-store-sqlite.md) | 상태 저장소를 SQLite로 시작한다 | 제안 | 2026-08-08 |
+| [0002](0002-minimal-runner-langgraph-deferred.md) | 오케스트레이터를 순수 함수 최소 러너로 시작하고 LangGraph를 보류한다 | 제안 | 2026-08-08 |
+| [0003](0003-routing-policy-in-orchestrator.md) | RoutingPolicy를 `src/interfaces/`가 아니라 `src/orchestrator/`에 둔다 | 제안 | 2026-08-08 |
+
+셋 다 **제안** 상태다. Harness v1 스캐폴드를 구현하며 내린 결정이고 팀 검토 전까지 확정이
+아니다. 셋 모두 "되돌리는 비용"을 낮게 유지하는 쪽을 골랐다 — 지금 확실하지 않은 것을
+지금 확정하지 않기 위해서다.
 </content>

@@ -1,0 +1,4 @@
+role: scout
+version: v1
+output_schema: Candidate
+description: 경량 캡슐로 후보를 거르는 4단계 트리아지 프롬프트
