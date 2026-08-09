@@ -1,0 +1,60 @@
+# run 단위 예산과 정책 임계값 (engineering-guide.md §8.5)
+#
+# 하드코딩 금지 — 임계값·예산·모델은 전부 여기서 온다. 노드는 이 값을 직접 비교하지 않고
+# RoutingPolicy를 거친다(src/orchestrator/policy.py).
+#
+# evaluation.md §2.3 공정성 규칙: 모든 조건은 동일 예산에서 실행한다. 조건 간 차이는
+# 프로필과 단계 활성화만이므로 thresholds·sampling·seed는 프로필과 무관하게 공통이다.
+# 실제로 쓰인 값은 RunRecord.thresholds에 박제된다(evaluation.md §6).
+
+budgets:
+  default:
+    input_tokens: 4000000
+    output_tokens: 400000
+    gpu_seconds: 7200
+
+  dev_fake:
+    # Fake 어댑터는 GPU를 쓰지 않는다. 예산 소진 경로(stopped_after)를 테스트에서
+    # 태울 수 있도록 일부러 작게 잡는다.
+    input_tokens: 200000
+    output_tokens: 20000
+    gpu_seconds: 0
+
+thresholds:
+  # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — open-questions D2.
+  scout_threshold: 0.5
+
+  # Progressive Context Expansion 상한 (knowledge-base.md §5, 초기값 3) — open-questions D3.
+  # 초과하면 후보를 폐기하지 않고 queued로 둔다.
+  capsule_expansion_max: 3
+
+  # queued 후보의 재평가 횟수 상한. 새 Evidence가 들어올 때마다 무한히 재평가하면
+  # 토큰이 샌다. 초과 시에도 폐기하지 않고 queued를 유지하며 사유 코드만 남긴다.
+  requeue_max: 2
+
+  # 7단계 Critic에 올릴 상위 Finding 수. Critic은 가장 비싼 단계이므로 상한이 있어야 한다
+  # (architecture.md §3 "상위 Finding만").
+  critic_top_n: 8
+
+  # bounded in-process queue 크기 (engineering-guide.md §1).
+  queue_maxsize: 256
+
+  # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
+  # 한도를 넘기면 후보를 queued로 두고 schema_parse_failed로 기록한다. 이 값을 올리면
+  # "스키마 파싱 실패율"(evaluation.md §5.1)이 낮아지므로 조건 간 비교에서 고정해야 한다.
+  schema_retries: 1
+
+  # 캡슐 레벨별 토큰 상한 (knowledge-base.md §4). 키는 CapsuleLevel 열거형 값과 같다.
+  capsule_budget_tokens:
+    light: 4000
+    expanded: 24000
+    focused: 8000
+
+# 모델 게이트웨이 요청 파라미터. 조건 간 비교에서 고정해야 하므로 RunRecord에 남는다
+# (engineering-guide.md §5).
+sampling:
+  temperature: 0.2
+  top_p: 0.95
+
+# 기본 seed. CLI가 --seed로 덮어쓸 수 있고, 실제로 쓰인 값이 RunRecord.seed에 기록된다.
+seed: 20260901

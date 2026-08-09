@@ -20,11 +20,21 @@ jobs:
       - name: Install tools
         run: pip install ruff
 
+      # 모듈 형태로 부른다. pip가 설치한 실행 파일이 PATH에 안 잡히는 경우가 흔하고
+      # (GitHub Actions에서 실제로 겪었다), `python -m`은 그 문제가 구조적으로 없다.
       - name: Lint
-        run: ruff check .
+        run: python -m ruff check .
 
       - name: Import check
         run: python -m compileall -q .
 
-      # - run: pip install pytest -r requirements.txt
-      # - run: pytest
+      - name: Install runtime deps
+        run: pip install -r requirements.txt
+
+      - name: Test
+        run: python -m pytest
+
+      # evaluation.md §4: 누출이 한 건이라도 있으면 그 run의 비교 결과는 무효다.
+      # 코드 리뷰로는 보장할 수 없으므로 CI에서 막는다. prompts/ 가 기본 검사 대상이다.
+      - name: Leakage check
+        run: python -m eval.leakage
