@@ -14,13 +14,21 @@ from pathlib import Path
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
+from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
 from src.adapters.sqlite_store import SqliteStateStore
+from src.adapters.vllm_retrieval import (
+    FakeEmbeddingClient,
+    FakeRerankerClient,
+    VllmEmbeddingClient,
+    VllmRerankerClient,
+)
 from src.config import HarnessConfig, ModelEntry
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
+from src.interfaces.retrieval import EmbeddingClient, RerankerClient
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
@@ -48,6 +56,7 @@ def build_deps(
     source_root: Path,
     artifacts_root: Path,
     on_cache: CacheHook | None = None,
+    on_truncate: TruncateHook | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다."""
     ids = IdFactory(run_id)
@@ -56,11 +65,62 @@ def build_deps(
     }
     return Deps(
         models=RoutingModelClient(clients),
-        retriever=FakeRetriever(root=source_root, ids=ids, run_id=run_id, on_cache=on_cache),
+        retriever=_retriever(
+            config,
+            ids=ids,
+            run_id=run_id,
+            source_root=source_root,
+            on_cache=on_cache,
+            on_truncate=on_truncate,
+        ),
         tools=FakeToolRunner(ids=ids, run_id=run_id, root=source_root),
         store=_state_store(config, run_id=run_id, artifacts_root=artifacts_root),
         ids=ids,
     )
+
+
+def _retriever(
+    config: HarnessConfig,
+    *,
+    ids: IdFactory,
+    run_id: str,
+    source_root: Path,
+    on_cache: CacheHook | None,
+    on_truncate: TruncateHook | None,
+) -> Retriever:
+    """`adapters.retriever`가 구현을 고른다.
+
+    embedding·reranker의 실서빙 여부는 여기서 정하지 않는다 — 모델과 마찬가지로
+    `ModelEntry.endpoint` 스킴이 역할별로 판정한다. 그래서 embedding만 띄우고
+    reranker는 Fake로 두는 구성이 프로필만으로 표현된다.
+    """
+    if config.profile.adapters.retriever == "fake":
+        return FakeRetriever(root=source_root, ids=ids, run_id=run_id, on_cache=on_cache)
+    return HybridRetriever(
+        root=source_root,
+        ids=ids,
+        run_id=run_id,
+        embedder=_embedding_client(config),
+        reranker=_reranker_client(config),
+        on_cache=on_cache,
+        on_truncate=on_truncate,
+    )
+
+
+def _embedding_client(config: HarnessConfig) -> EmbeddingClient:
+    key = config.profile.roles["embedding"]
+    entry = config.models[key]
+    if entry.is_fake:
+        return FakeEmbeddingClient()
+    return VllmEmbeddingClient(endpoint=entry.endpoint, model_name=key)
+
+
+def _reranker_client(config: HarnessConfig) -> RerankerClient:
+    key = config.profile.roles["reranker"]
+    entry = config.models[key]
+    if entry.is_fake:
+        return FakeRerankerClient()
+    return VllmRerankerClient(endpoint=entry.endpoint, model_name=key)
 
 
 def _model_client(model_key: str, config: HarnessConfig) -> ModelClient:

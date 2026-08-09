@@ -43,6 +43,7 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 ## 3. 교체 가능한 4개 인터페이스
 
 도메인 로직은 이 4개에만 의존한다. 구현체 교체가 코드 변경 없이 설정만으로 가능해야 한다.
+오케스트레이터 노드가 보는 것은 `Deps`가 들고 있는 이 4개뿐이고, 그 수는 늘리지 않는다.
 
 ```python
 class ModelClient(Protocol):
@@ -75,6 +76,19 @@ class StateStore(Protocol):
 
 **`query()`는 ID 오름차순을 보장한다.** 노드가 결과를 순회하는 순간 그 순서가 곧 실행
 순서이고, 구현마다 갈라지면 프로필을 바꿨을 때만 재현이 깨진다.
+
+### 3.1 구현체가 쓰는 하위 Protocol
+
+`src/interfaces/`에는 위 4개 외에 **구현체끼리의 결합점**도 있다. 도메인 로직은 이들을
+보지 않으므로 위의 "4개"는 그대로다.
+
+| Protocol | 누가 쓰는가 | 왜 인터페이스인가 |
+| --- | --- | --- |
+| `EmbeddingClient` · `RerankerClient` (`retrieval.py`) | `HybridRetriever`가 의존, 서빙 트랙이 제공 | knowledge-base.md §3의 2단계 재선별을 어떤 서버로 하든 Retriever 코드가 안 바뀌어야 한다. Fake 대체가 되어야 GPU 없이 이 경로가 돈다 |
+
+**`Role`에 넣지 않은 이유**는 [ADR 0004](decisions/0004-retrieval-clients-separate-from-model-client.md)에 있다.
+요약하면 `Role`은 프롬프트 버전·출력 스키마가 붙는 실행 계약 역할이고, 임베딩·리랭킹은
+프롬프트도 스키마도 없다.
 
 금지 사항: 오케스트레이터 노드에서 vLLM/LiteLLM/SQLite를 직접 import 하는 것. 어댑터 레이어를 거친다.
 `src/orchestrator/**` 소스에 `src.adapters` 문자열이 없는지는 테스트가 강제한다.
