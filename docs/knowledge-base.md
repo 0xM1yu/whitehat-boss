@@ -60,6 +60,7 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 ```json
 {
   "capsule_id": "cap_0001",
+  "run_id": "run_20260901_0001",
   "target": {"file": "src/parser/http.c", "symbol": "parse_header"},
   "level": "expanded",
   "budget_tokens": 24000,
@@ -71,11 +72,22 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
     {"kind": "known_facts", "tokens": 200}
   ],
   "evidence_refs": ["ev_static_0007"],
-  "cache_key": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  "cache_key": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "expansion_count": 1
 }
 ```
 
 `level` 열거형: `light`(Scout용) | `expanded`(Auditor용) | `focused`(Critic용, 반박 축 관련 섹션만)
+
+`run_id`는 Evidence Store가 run 단위 수명이기 때문에 필요하다(§1). 같은 조건을 seed만 바꿔
+여러 번 돌리므로, run 소속이 없으면 반복 실행의 캡슐이 한 저장소에서 섞인다.
+
+`expansion_count`는 Progressive Context Expansion(§5) 횟수다. **상한은 이 구조체가 아니라
+config에서 온다** — `capsule_expansion_max`가 정책값이고 초과 판정은 오케스트레이터가 한다
+(초과 시 후보를 폐기하지 않고 `queued`로 둔다).
+
+> 이 예시는 `tests/test_doc_examples.py`가 `ContextCapsule`로 실제 파싱해 본다.
+> 스키마와 어긋나면 테스트가 깨진다.
 
 ## 5. Progressive Context Expansion
 

@@ -18,9 +18,9 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 .
 ├── docs/                  # 이 문서 모음
 ├── prompts/               # 역할별 프롬프트, 버전 디렉터리
-│   ├── scout/v4/
-│   ├── auditor/v3/
-│   └── critic/v2/
+│   ├── scout/v1/          # prefix.md / body.md / meta.yaml
+│   ├── auditor/v1/
+│   └── critic/v1/
 ├── config/
 │   ├── models.yaml        # Model Registry (model-serving.md §5)
 │   ├── profiles.yaml      # 벤치마크 조건별 프로필
@@ -46,7 +46,9 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 
 ```python
 class ModelClient(Protocol):
-    def complete(self, *, role: str, prompt: Prompt, schema: type[BaseModel]) -> Result: ...
+    def complete(
+        self, *, role: Role, prompt: Prompt, schema: type[SchemaT]
+    ) -> ModelResult[SchemaT]: ...
 
 class Retriever(Protocol):
     def search(self, query: Query, level: CapsuleLevel) -> ContextCapsule: ...
@@ -56,12 +58,26 @@ class ToolRunner(Protocol):
     def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence: ...
 
 class StateStore(Protocol):
-    def put(self, obj: Candidate | Evidence | Finding | Decision) -> str: ...
-    def get(self, kind: str, id: str) -> BaseModel | None: ...
-    def query(self, kind: str, **filters) -> list[BaseModel]: ...
+    def put(self, obj: StoredObject) -> str: ...
+    def get(self, kind: ObjectKind, id: str) -> StoredObject | None: ...
+    def query(self, kind: ObjectKind, **filters: object) -> list[StoredObject]: ...
 ```
 
+> 구현 대응: `src/interfaces/`. 위 시그니처는 Harness v1 스캐폴드의 실제 코드에 맞춰
+> 갱신했다. 바뀐 곳과 이유(**제안**이며 팀 검토 대상):
+>
+> | 곳 | 변경 | 이유 |
+> | --- | --- | --- |
+> | `ModelClient.role` | `str` → `Role` | 역할은 닫힌 집합이고 라우팅 키다. 문자열이면 오타가 런타임에야 드러난다 |
+> | `ModelClient` 반환 | `Result` → `ModelResult[SchemaT]` | 구조화 출력의 타입을 잃지 않고, `usage`(input/output/cached 분리)와 실제 응답 모델을 함께 돌려줘야 한다(evaluation.md §5.2) |
+> | `StateStore` 대상 | 4종 → `StoredObject` 8종 | `Artifact`·`MissingEvidence`·`ContextCapsule`·`RunRecord`도 저장 대상이다 |
+> | `StateStore.kind` | `str` → `ObjectKind` | 자유 문자열이면 오타가 예외가 아니라 **빈 결과**를 낸다 |
+
+**`query()`는 ID 오름차순을 보장한다.** 노드가 결과를 순회하는 순간 그 순서가 곧 실행
+순서이고, 구현마다 갈라지면 프로필을 바꿨을 때만 재현이 깨진다.
+
 금지 사항: 오케스트레이터 노드에서 vLLM/LiteLLM/SQLite를 직접 import 하는 것. 어댑터 레이어를 거친다.
+`src/orchestrator/**` 소스에 `src.adapters` 문자열이 없는지는 테스트가 강제한다.
 
 ## 4. 오케스트레이터 종속성 최소화
 

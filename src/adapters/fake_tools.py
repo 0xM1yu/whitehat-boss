@@ -1,0 +1,164 @@
+"""FakeToolRunner — Docker 없이 도구 신호를 만드는 결정론적 ToolRunner.
+
+실제 도구를 흉내 내되 **파일을 실제로 읽는다.** 고정된 Evidence를 돌려주면 0단계에서
+바뀐 대상이 2단계 신호에 반영되지 않아, 파이프라인이 입력과 무관하게 같은 결과를 낸다.
+
+engineering-guide.md §8.3과 architecture.md §3 2단계("실패해도 진행"):
+**실패해도 예외를 던지지 않고 `Evidence(ok=False, error=...)`를 반환한다.**
+샌드박스 자체를 띄우지 못하는 경우에만 예외다 — Fake에는 그 경로가 없다.
+"""
+
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+
+from src.ids import IdFactory, sha256_text
+from src.interfaces.tool_runner import SandboxSpec, ToolArgs
+from src.paths import PathEscape, safe_join
+from src.schemas.enums import EvidenceKind
+from src.schemas.evidence import Evidence
+
+# 도구 이름 → 이 도구가 만드는 Evidence 종류. 여기 없는 도구는 실행이 거부된다
+# (tool_policy 밖 호출을 조용히 성공시키지 않는다).
+TOOL_KINDS: dict[str, EvidenceKind] = {
+    "semgrep": EvidenceKind.STATIC,
+    "clang-tidy": EvidenceKind.STATIC,
+    "build": EvidenceKind.BUILD,
+    "asan": EvidenceKind.SANITIZER,
+    "poc": EvidenceKind.POC_RUN,
+    "index": EvidenceKind.GRAPH,
+}
+
+# semgrep/clang-tidy가 잡았다고 볼 패턴. 실제 룰셋이 아니라 신호 유무를 만드는 최소 규칙이다.
+_STATIC_PATTERNS = (
+    re.compile(r"\bmemcpy\s*\([^,]+,[^,]+,\s*[a-zA-Z_]"),  # 길이가 상수가 아님
+    re.compile(r"\b(gets|strcpy|sprintf)\s*\("),
+)
+
+_SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".py")
+
+
+class SandboxUnavailable(RuntimeError):
+    """Evidence조차 만들 수 없는 경우. Fake에서는 발생하지 않는다."""
+
+
+class FakeToolRunner:
+    """`ToolRunner` 구현. 같은 workdir·argv에는 항상 같은 Evidence를 낸다."""
+
+    def __init__(
+        self,
+        *,
+        ids: IdFactory,
+        run_id: str,
+        root: Path,
+        observed_at: datetime | None = None,
+    ) -> None:
+        self.ids = ids
+        self.run_id = run_id
+        # 샌드박스에 마운트되는 대상 루트. `ToolArgs.workdir`는 이 아래의 상대경로다
+        # (engineering-guide.md §7 읽기 전용 마운트). 밖을 가리키면 실행하지 않는다.
+        self.root = Path(root)
+        # 시각을 주입받는다 — 재현 실행에서 같은 값이 나와야 trace를 대조할 수 있다.
+        self.observed_at = observed_at or datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC)
+
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence:
+        kind = TOOL_KINDS.get(tool)
+        if kind is None:
+            return self.make_evidence(
+                tool,
+                EvidenceKind.BUILD,
+                args,
+                ok=False,
+                exit_code=127,
+                error=f"tool_policy 밖 도구: {tool!r}. 허용: {sorted(TOOL_KINDS)}",
+            )
+        if sandbox.network:
+            # disclosure-policy.md §5: 외부 시스템 실행 금지. 조용히 통과시키면 정책이 무의미하다.
+            return self.make_evidence(
+                tool, kind, args, ok=False, exit_code=1, error="network=True는 허용되지 않는다"
+            )
+        try:
+            workdir = safe_join(self.root, args.workdir)
+        except PathEscape as exc:
+            return self.make_evidence(tool, kind, args, ok=False, exit_code=1, error=str(exc))
+        if tool in _STATIC_TOOLS:
+            return self._run_static(tool, kind, args, workdir)
+        if tool in _REPRO_TOOLS:
+            return self._run_repro(tool, kind, args, workdir)
+        return self._run_generic(tool, kind, args, workdir)
+
+    # --- 도구별 동작 ---------------------------------------------------------
+
+    def _run_static(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:
+        hits = sum(
+            1
+            for path in _sources(workdir)
+            if _matches_any(path.read_text("utf-8", errors="replace"))
+        )
+        # 신호 없음은 실패가 아니다(architecture.md §3: "신호 부재로 기록").
+        return self.make_evidence(tool, kind, args, ok=True, exit_code=1 if hits else 0, hits=hits)
+
+    def _run_repro(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:
+        """재현 실행. Fake에는 실행할 바이너리가 없으므로 대상 존재로 대체한다.
+
+        `expected_signal` 매칭은 8단계 노드의 책임이다(게이트는 `ok`만 본다).
+        """
+        if not _sources(workdir):
+            return self.make_evidence(
+                tool, kind, args, ok=False, exit_code=2, error="재현 대상 소스가 없다"
+            )
+        return self.make_evidence(tool, kind, args, ok=True, exit_code=1)
+
+    def _run_generic(
+        self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path
+    ) -> Evidence:
+        """build·index처럼 대상 존재만 확인하면 되는 도구."""
+        if not workdir.exists():
+            return self.make_evidence(
+                tool, kind, args, ok=False, exit_code=2, error=f"workdir가 없다: {args.workdir}"
+            )
+        return self.make_evidence(tool, kind, args, ok=True, exit_code=0)
+
+    def make_evidence(
+        self,
+        tool: str,
+        kind: EvidenceKind,
+        args: ToolArgs,
+        *,
+        ok: bool,
+        exit_code: int,
+        error: str | None = None,
+        hits: int | None = None,
+    ) -> Evidence:
+        evidence_id = self.ids.next("evidence")
+        body = f"{tool} {' '.join(args.argv)} exit={exit_code} hits={hits}"
+        return Evidence(
+            evidence_id=evidence_id,
+            run_id=self.run_id,
+            kind=kind,
+            source=tool,
+            artifact_id=args.workdir,
+            payload_ref=f"artifacts/{self.run_id}/{tool}/{evidence_id}.log",
+            digest=sha256_text(body),
+            observed_at=self.observed_at,
+            ok=ok,
+            exit_code=exit_code,
+            error=error,
+        )
+
+
+def _matches_any(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _STATIC_PATTERNS)
+
+
+def _sources(workdir: Path) -> list[Path]:
+    """정렬된 목록을 돌려준다 — rglob 순서는 파일시스템마다 달라 재현성을 깬다."""
+    if workdir.is_file():
+        return [workdir]
+    if not workdir.exists():
+        return []
+    return sorted(p for p in workdir.rglob("*") if p.is_file() and p.suffix in _SOURCE_SUFFIXES)
+
+
+_STATIC_TOOLS = frozenset({"semgrep", "clang-tidy"})
+_REPRO_TOOLS = frozenset({"asan", "poc"})

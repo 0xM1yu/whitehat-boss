@@ -1,0 +1,84 @@
+# 실행 프로필 (model-serving.md §5, engineering-guide.md §2)
+#
+# 프로필 교체만으로 B1/B1'/B3/B3' 조건과 실행 환경을 구성할 수 있어야 한다.
+# `roles`의 값은 models.yaml의 model key다. scout·auditor·critic은 필수다.
+# `adapters`는 모델 외 3개 인터페이스의 구현 선택이다. ModelClient는 여기서 고르지 않는다 —
+# models.yaml의 endpoint 스킴이 역할별로 결정하므로 한 프로필에서 실서빙과 Fake가 섞일 수 있다.
+
+profiles:
+  dev_fake:
+    description: "GPU 없이 파이프라인 0~9단계를 완주시키는 개발 프로필. 전 역할 Fake."
+    # 팀원 대부분이 GPU 접근이 없다. 이 프로필로 전체 경로가 돌지 않으면 병렬 작업이 막힌다.
+    production: false
+    roles:
+      scout: fake
+      auditor: fake
+      critic: fake
+      embedding: fake
+      reranker: fake
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: memory
+    budget: dev_fake
+
+  single_gpu_12g:
+    # 12GB 카드 1장 기준 실서빙은 scout 하나만 올린다.
+    #
+    #   Qwen3-4B(FP8)        약 8.0GB
+    #   Qwen3-Embedding-0.6B 약 1.2GB
+    #   Qwen3-Reranker-0.6B  약 1.2GB
+    #   합계                 약 10.4GB  (12GB 중)
+    #
+    # 산술적으로는 1.6GB가 남지만 셋을 한 장에 올리면 안 된다. vLLM은 기동 시
+    # gpu_memory_utilization 비율만큼 메모리를 선점하고 가중치를 뺀 나머지 대부분을
+    # KV cache로 잡는다. 세 프로세스가 같은 카드를 나눠 쓰면 scout에 남는 여유가
+    # 1.6GB 미만이 되어 KV cache가 사실상 0이 되고, 동시 요청 1건도 처리하지 못한다.
+    # 따라서 embedding·reranker를 포함한 나머지 전 역할을 Fake로 둔다.
+    description: "12GB 단일 GPU. scout만 실서빙하고 나머지 전 역할은 Fake."
+    production: false
+    roles:
+      scout: qwen3-4b
+      auditor: fake
+      critic: fake
+      embedding: fake
+      reranker: fake
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default
+
+  local_balanced:
+    description: "AI TOP ATOM(GB10) 전 역할 실서빙. B3' 조건의 기본 구성."
+    # model-serving.md §3 체크리스트를 실측하고 models.yaml의 benchmark를 채우기 전까지
+    # production: true 로 올리지 않는다.
+    production: false
+    roles:
+      scout: qwen3-8b
+      auditor: qwen3-coder-30b-a3b
+      critic: devstral-small-2-24b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default
+
+  b1_single:
+    description: "벤치마크 조건 B1 — 전 역할을 같은 단일 모델로 실행."
+    # evaluation.md §2.3 공정성 규칙 1: 조건 간 차이는 프로필과 단계 활성화만.
+    # 예산·임계값·프롬프트 버전은 budgets.yaml에서 공통으로 온다.
+    production: false
+    roles:
+      scout: qwen3-coder-30b-a3b
+      auditor: qwen3-coder-30b-a3b
+      critic: qwen3-coder-30b-a3b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default
