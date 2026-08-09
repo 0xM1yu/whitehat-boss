@@ -22,6 +22,24 @@ profiles:
       state_store: memory
     budget: dev_fake
 
+  dev_hybrid:
+    description: "GPU 없이 hybrid Retriever 경로를 태우는 개발 프로필. 전 역할 Fake."
+    # dev_fake와 다른 점은 `retriever: hybrid` 하나다. embedding·reranker도 Fake이므로
+    # GPU가 없어도 광역 수집 → embedding → reranker 재선별 경로가 실제로 실행된다.
+    # 실서빙과의 차이는 두 클라이언트 구현뿐이고, 그 선택은 endpoint 스킴이 한다.
+    production: false
+    roles:
+      scout: fake
+      auditor: fake
+      critic: fake
+      embedding: fake
+      reranker: fake
+    adapters:
+      retriever: hybrid
+      tool_runner: fake
+      state_store: memory
+    budget: dev_fake
+
   single_gpu_12g:
     # 12GB 카드 1장 기준 실서빙은 scout 하나만 올린다.
     #
