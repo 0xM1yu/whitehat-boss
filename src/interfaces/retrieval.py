@@ -19,6 +19,7 @@ from typing import Protocol
 
 from pydantic import Field
 
+from src.interfaces.model_client import Usage
 from src.schemas.common import HarnessModel
 
 
@@ -34,6 +35,35 @@ class Ranked(HarnessModel):
     score: float
 
 
+class RetrievalResult(HarnessModel):
+    """검색 호출 하나의 비용.
+
+    **비용을 반환값에 싣는다.** `client.last_usage()` 같은 접근자를 두면 클라이언트가
+    상태를 갖게 되고, 배치·재시도·동시성이 들어오는 순간 "어느 호출의 usage인가"가
+    흐려진다. 호출과 비용이 같은 값에 묶여 있어야 어긋날 수 없다 — `ModelResult`가
+    이미 쓰는 방식이다.
+
+    `Usage`는 `model_client`의 것을 그대로 쓴다. 새로 만들면 합산 코드가 두 벌이 되고
+    `cached_tokens <= input_tokens` 검증기도 이중화된다.
+
+    검색 비용을 세지 않으면 evaluation.md §5.2의 토큰 분리에서 검색분이 통째로 빠지고
+    "finding당 GPU-hour"가 낙관적으로 나온다. Fake에서는 0이라 안 보이지만 실서빙에서는
+    실제 GPU 시간이다.
+    """
+
+    usage: Usage
+    # 실서빙 클라이언트만 채운다. Fake는 0 — 지어낸 숫자는 예산 계획을 망친다.
+    gpu_seconds: int = Field(default=0, ge=0)
+
+
+class EmbeddingResult(RetrievalResult):
+    vectors: list[list[float]] = Field(default_factory=list)
+
+
+class RerankResult(RetrievalResult):
+    ranked: list[Ranked] = Field(default_factory=list)
+
+
 class EmbeddingClient(Protocol):
     """텍스트 → 벡터. 광역 수집 결과를 1차로 좁히는 데 쓴다.
 
@@ -41,7 +71,7 @@ class EmbeddingClient(Protocol):
     model-serving.md §2가 embedding을 "크게 배칭"으로 규정한 이유가 그것이다.
     """
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
+    def embed(self, texts: Sequence[str]) -> EmbeddingResult: ...
 
 
 class RerankerClient(Protocol):
@@ -52,4 +82,4 @@ class RerankerClient(Protocol):
     적은 저장소에서 검색 자체가 실패한다.
     """
 
-    def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> list[Ranked]: ...
+    def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> RerankResult: ...
