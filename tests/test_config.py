@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from src.config import (
     CONFIG_DIR,
+    PROMPTED_ROLES,
     REQUIRED_ROLES,
     ConfigError,
     HarnessConfig,
@@ -67,8 +68,30 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         kb_snapshot="kb-2026-08-30",
         started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
     )
+    # checksums는 전 역할을 담는다 — 임베딩 모델이 바뀌면 검색 결과가 바뀌므로
+    # 재현성 기록에서 뺄 수 없다.
     assert set(record.model_checksums) == set(config.profile.roles)
+    # prompt_versions는 프롬프트가 실제로 있는 역할만 담는다. 없는 프롬프트의 "버전"은
+    # 거짓 정보이고, ADR 0004가 Role 확장을 기각한 이유가 그것이다.
+    assert set(record.prompt_versions) == set(PROMPTED_ROLES) & set(config.profile.roles)
+    for absent in ("embedding", "reranker", "judge"):
+        assert absent not in record.prompt_versions
     assert record.thresholds  # 평탄화 결과가 비면 임계값 대조가 불가능하다
+
+
+def test_prompted_roles_matches_prompt_directories() -> None:
+    """`PROMPTED_ROLES`와 `prompts/` 하위 디렉터리가 일치한다.
+
+    상수가 현실과 갈라지면 doctor가 없는 프롬프트를 확인하려 들거나 있는 프롬프트를
+    건너뛴다. `config`는 디스크 배치에 의존하면 안 되므로 상수로 두되, 그 상수가 맞는지는
+    여기서 기계로 확인한다.
+    """
+    on_disk = {
+        path.name
+        for path in (CONFIG_DIR.parent / "prompts").iterdir()
+        if path.is_dir() and not path.name.startswith((".", "_"))
+    }
+    assert set(PROMPTED_ROLES) == on_disk
 
 
 def test_dev_fake_needs_no_gpu() -> None:
