@@ -12,6 +12,7 @@
 
 import io
 import json
+import socket
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.enums import FindingState, ReasonCode
 from src.schemas.run import Budget
+from tests.conftest import ALL_PROFILES
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 STARTED_AT = datetime(2026, 9, 1, tzinfo=UTC)
@@ -290,6 +292,44 @@ def test_describe_wiring_matches_what_build_deps_makes(profile: str, tmp_path: P
         actual["reranker"] = type(deps.retriever.reranker).__name__
 
     assert describe_wiring(config) == actual
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_doctor_never_opens_a_socket(profile: str, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """`doctor`는 엔드포인트에 접속하지 않는다 (src/cli.py 모듈 docstring).
+
+    `describe_wiring()`이 모델·검색 클라이언트를 실제로 만든다. 지금은 그 생성자들이
+    필드 대입뿐이라 안전하지만, 그 사실을 보장하는 것이 docstring 한 줄뿐이었다.
+    누가 `__init__`에 헬스체크나 커넥션 풀을 넣으면 doctor가 조용히 네트워크를 치고
+    GPU 없는 팀원의 진단이 네트워크 오류로 실패한다 — 설정 오류와 구별되지 않는다.
+
+    `describe_wiring`만 감싸지 않고 `doctor` 전체를 검사한다. 나중에 다른 접속 코드가
+    들어와도 같은 그물에 걸려야 한다.
+    """
+
+    def _refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("doctor가 소켓을 열었다")
+
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse)
+
+    assert cli.doctor(profile, artifacts_root=tmp_path)
+
+
+def test_some_profile_actually_points_at_a_real_endpoint() -> None:
+    """위 테스트가 공허해지지 않게 한다.
+
+    모든 프로필이 `fake://`뿐이면 소켓 검사는 아무것도 검증하지 않는다. 실서빙
+    엔드포인트를 가리키는 프로필이 최소 하나 있어야 그 검사에 의미가 생긴다.
+    프로필 이름을 박지 않고 `ModelEntry.is_fake`로 판정한다.
+    """
+    served = [
+        profile
+        for profile in ALL_PROFILES
+        for config in [load_config(profile)]
+        if any(not config.model_for(role).is_fake for role in config.profile.roles)
+    ]
+    assert served, "실서빙 엔드포인트를 가리키는 프로필이 없어 소켓 검사가 공허하다"
 
 
 def _doctor_text(profile: str, artifacts_root: Path) -> str:

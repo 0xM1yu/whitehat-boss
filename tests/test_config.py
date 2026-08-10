@@ -26,9 +26,7 @@ from src.config import (
     load_config,
 )
 from src.schemas import CapsuleLevel, RunRecord
-
-# 저장소에 있는 모든 프로필. 새 프로필이 추가되면 자동으로 검사 대상이 된다.
-ALL_PROFILES = sorted(yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))["profiles"])
+from tests.conftest import ALL_PROFILES
 
 ZERO_DIGEST = "sha256:" + "0" * 64
 
