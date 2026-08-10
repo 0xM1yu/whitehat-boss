@@ -62,12 +62,18 @@ def _canonical(trace_path: Path) -> bytes:
 
 
 def _charged(trace_path: Path) -> int:
-    """장부에 실제로 차감된 input 토큰 합. `RunRecord.budget`은 할당량이라 소비가 아니다."""
-    return sum(
+    """run이 끝난 시점의 누적 input 토큰. `RunRecord.budget`은 할당량이라 소비가 아니다.
+
+    `budget` 이벤트는 **그 시점까지의 누적값**이지 이번 차감분이 아니다. 합산하면
+    스냅샷을 여러 번 더하게 되어 아무 뜻도 없는 수가 나온다 — 단조 증가라 대소 비교는
+    우연히 맞지만, 그 값을 "소비량"이라 부르면 지표가 거짓이 된다.
+    """
+    charges = [
         event["data"]["input_tokens"]
         for event in _of(_events(trace_path), "budget")
         if event["data"]["event"] == "charge"
-    )
+    ]
+    return charges[-1] if charges else 0
 
 
 def _of(events: list[dict], kind: str, *, stage: int | None = None) -> list[dict]:
