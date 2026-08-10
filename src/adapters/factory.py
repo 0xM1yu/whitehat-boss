@@ -16,7 +16,7 @@ from typing import Any
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
-from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook
+from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook, UsageHook
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
@@ -66,6 +66,7 @@ class _BuildArgs:
     artifacts_root: Path
     on_cache: CacheHook | None = None
     on_truncate: TruncateHook | None = None
+    on_usage: UsageHook | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,7 @@ _RETRIEVERS: dict[str, _Wiring] = {
             reranker=_reranker_client(a.config),
             on_cache=a.on_cache,
             on_truncate=a.on_truncate,
+            on_usage=a.on_usage,
         ),
     ),
 }
@@ -140,6 +142,7 @@ def build_deps(
     artifacts_root: Path,
     on_cache: CacheHook | None = None,
     on_truncate: TruncateHook | None = None,
+    on_usage: UsageHook | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다."""
     ids = IdFactory(run_id)
@@ -151,6 +154,7 @@ def build_deps(
         artifacts_root=artifacts_root,
         on_cache=on_cache,
         on_truncate=on_truncate,
+        on_usage=on_usage,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
     # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지

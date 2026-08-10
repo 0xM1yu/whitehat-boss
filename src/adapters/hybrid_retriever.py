@@ -21,7 +21,11 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from src.ids import IdFactory, sha256_text
-from src.interfaces.retrieval import EmbeddingClient, RerankerClient
+from src.interfaces.retrieval import (
+    EmbeddingClient,
+    RerankerClient,
+    RetrievalResult,
+)
 from src.interfaces.retriever import Query
 from src.paths import safe_join
 from src.schemas.capsule import CapsuleSection, ContextCapsule
@@ -64,6 +68,15 @@ EXPANSION_ORDER = ("related", "known_facts", "static_signal")
 CacheHook = Callable[[str, bool], None]
 TruncateHook = Callable[[int, int], None]
 
+# 검색 호출의 비용을 올리는 훅: (component, result, 입력 문서 수).
+# 오케스트레이터를 import 하지 않으려고 콜백으로 둔다(engineering-guide.md §3).
+UsageHook = Callable[[str, RetrievalResult, int], None]
+
+# `retrieval_call` 이벤트의 `component` 값. trace에서 두 부품의 비용을 나눠 세려면
+# 문자열이 한 곳에서 나와야 한다.
+RETRIEVAL_EMBEDDING = "embedding"
+RETRIEVAL_RERANKER = "reranker"
+
 
 class Chunk:
     """수집된 코드 조각 하나. 스키마가 아니라 어댑터 내부 자료구조다."""
@@ -90,6 +103,7 @@ class HybridRetriever:
         reranker: RerankerClient,
         on_cache: CacheHook | None = None,
         on_truncate: TruncateHook | None = None,
+        on_usage: UsageHook | None = None,
         top_k: int = DEFAULT_TOP_K,
         top_n: int = DEFAULT_TOP_N,
         max_chunks: int = MAX_CHUNKS,
@@ -101,6 +115,7 @@ class HybridRetriever:
         self.reranker = reranker
         self.on_cache = on_cache
         self.on_truncate = on_truncate
+        self.on_usage = on_usage
         self.top_k = top_k
         self.top_n = top_n
         self.max_chunks = max_chunks
@@ -208,7 +223,9 @@ class HybridRetriever:
             return []
 
         text = _query_text(query)
-        vectors = self.embedder.embed([text, *(chunk.text for chunk in candidates)])
+        embedded = self.embedder.embed([text, *(chunk.text for chunk in candidates)])
+        self._report(RETRIEVAL_EMBEDDING, embedded, len(candidates))
+        vectors = embedded.vectors
         if len(vectors) != len(candidates) + 1:
             # 길이가 어긋나면 유사도가 엉뚱한 조각에 붙는다. 조용히 자르지 않는다.
             raise ValueError(
@@ -222,13 +239,24 @@ class HybridRetriever:
         )
         narrowed = [candidates[i] for i, _ in scored[: self.top_k]]
 
-        ranked = self.reranker.rerank(
+        reranked = self.reranker.rerank(
             query=text,
             documents=[chunk.text for chunk in narrowed],
             top_n=self.top_n,
         )
-        ordered = sorted(ranked, key=lambda r: (-r.score, r.index))
+        self._report(RETRIEVAL_RERANKER, reranked, len(narrowed))
+        ordered = sorted(reranked.ranked, key=lambda r: (-r.score, r.index))
         return [narrowed[r.index] for r in ordered if 0 <= r.index < len(narrowed)]
+
+    def _report(self, component: str, result: RetrievalResult, candidates: int) -> None:
+        """검색 호출 비용을 훅으로 올린다.
+
+        훅이 없으면 조용히 넘어간다 — 어댑터 단위 테스트는 오케스트레이터 없이 돌고,
+        그때 비용을 받을 곳이 없는 것은 정상이다. 파이프라인에서 훅이 안 붙는 사고는
+        `LateUsageHook`이 바인딩 전 호출을 터뜨려서 잡는다.
+        """
+        if self.on_usage is not None:
+            self.on_usage(component, result, candidates)
 
     def _collect(self, query: Query) -> list[Chunk]:
         """키워드로 1차 필터. 힌트가 없으면 전체(상한까지)가 후보다."""
