@@ -12,27 +12,30 @@
 
 import io
 import json
+import socket
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from src import cli, console
-from src.config import load_config
+from src.adapters.factory import build_deps, describe_wiring
+from src.config import PROMPTED_ROLES, load_config
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.enums import FindingState, ReasonCode
 from src.schemas.run import Budget
+from tests.conftest import ALL_PROFILES
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 STARTED_AT = datetime(2026, 9, 1, tzinfo=UTC)
 CONDITION = "B3prime@pipeline"
 
 
-def _run(tmp_path: Path, name: str = "run", **overrides: object):  # noqa: ANN202
-    """dev_fake 프로필로 파이프라인을 한 번 돌리고 (결과, trace 경로)를 돌려준다."""
-    config = load_config("dev_fake")
+def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **overrides: object):  # noqa: ANN202
+    """파이프라인을 한 번 돌리고 (결과, trace 경로)를 돌려준다. 기본은 dev_fake."""
+    config = load_config(profile)
     if "budget" in overrides:
         config = config.transition(budget=overrides.pop("budget"))
     run_dir = tmp_path / name / "run_20260901_0001"
@@ -56,6 +59,21 @@ def _canonical(trace_path: Path) -> bytes:
             event.pop(field, None)
         lines.append(json.dumps(event, ensure_ascii=False, sort_keys=True))
     return "\n".join(lines).encode("utf-8")
+
+
+def _charged(trace_path: Path) -> int:
+    """run이 끝난 시점의 누적 input 토큰. `RunRecord.budget`은 할당량이라 소비가 아니다.
+
+    `budget` 이벤트는 **그 시점까지의 누적값**이지 이번 차감분이 아니다. 합산하면
+    스냅샷을 여러 번 더하게 되어 아무 뜻도 없는 수가 나온다 — 단조 증가라 대소 비교는
+    우연히 맞지만, 그 값을 "소비량"이라 부르면 지표가 거짓이 된다.
+    """
+    charges = [
+        event["data"]["input_tokens"]
+        for event in _of(_events(trace_path), "budget")
+        if event["data"]["event"] == "charge"
+    ]
+    return charges[-1] if charges else 0
 
 
 def _of(events: list[dict], kind: str, *, stage: int | None = None) -> list[dict]:
@@ -227,6 +245,39 @@ def test_stop_after_retrieval_makes_no_model_calls(tmp_path: Path) -> None:
     assert result.candidates == ()
 
 
+def test_retrieval_cost_is_charged_only_when_retrieval_runs(tmp_path: Path) -> None:
+    """검색 호출이 trace와 예산에 잡힌다.
+
+    `HybridRetriever`는 embedding·reranker를 실제로 호출하는데 그 비용을 보고할 경로가
+    없었다. Fake에서는 0이라 안 보이지만 실서빙에서는 실제 GPU 시간이고, 빠지면
+    evaluation.md §5.2의 토큰 분리와 "finding당 GPU-hour"가 전부 낙관적으로 나온다.
+
+    **개수·토큰 수를 상수로 기대하지 않는다.** 그 값들은 이 프로젝트가 재려는 대상이다.
+    두 프로필의 상대 비교로만 검증한다.
+    """
+    _, plain_trace = _run(tmp_path, "plain")
+    _, hybrid_trace = _run(tmp_path, "hybrid", profile="dev_hybrid")
+
+    assert _of(_events(plain_trace), "retrieval_call") == []
+    calls = _of(_events(hybrid_trace), "retrieval_call")
+    # embedding과 reranker가 각각 최소 한 번. 개수를 세지 않고 집합으로 본다.
+    assert {e["data"]["component"] for e in calls} == {"embedding", "reranker"}
+    assert all(e["data"]["input_tokens"] > 0 for e in calls)
+
+    # 검색이 도는 쪽이 실제로 더 많이 쓴다. 같으면 계량기가 안 붙은 것이다.
+    # `RunRecord.budget`은 할당량이라 프로필이 같으면 같다 — 장부(`budget` 이벤트)를 본다.
+    assert _charged(hybrid_trace) > _charged(plain_trace)
+
+
+def test_retrieval_calls_carry_the_stage_they_happened_in(tmp_path: Path) -> None:
+    """단계 없이 남기면 "3단계 검색 비용" 같은 질문에 답할 수 없다."""
+    _, trace_path = _run(tmp_path, profile="dev_hybrid")
+    events = _events(trace_path)
+
+    assert all(e["stage"] is not None for e in _of(events, "retrieval_call"))
+    assert all(e["stage"] is not None for e in _of(events, "cache"))
+
+
 # --- CLI --------------------------------------------------------------------
 
 
@@ -249,6 +300,88 @@ def test_console_output_survives_a_non_utf8_terminal() -> None:
     stream.write("실측 전 초기값 임계값 — 조건 간 비교 전에 확정한다")  # 예외가 나면 실패
 
     assert stream.encoding == "utf-8"
+
+
+def test_doctor_output_differs_between_profiles(tmp_path: Path) -> None:
+    """`dev_fake`와 `dev_hybrid`의 유일한 차이(retriever)가 진단에 드러나야 한다.
+
+    두 출력이 같으면 설정이 무시되고 있어도 알아챌 방법이 없다. `adapters.retriever`가
+    선언만 되고 읽히지 않던 시기에 doctor가 정확히 그 상태였다.
+    """
+    fake = _doctor_text("dev_fake", tmp_path)
+    hybrid = _doctor_text("dev_hybrid", tmp_path)
+
+    assert fake != hybrid
+    assert "HybridRetriever" in hybrid
+    assert "HybridRetriever" not in fake
+
+
+@pytest.mark.parametrize("profile", ["dev_fake", "dev_hybrid"])
+def test_describe_wiring_matches_what_build_deps_makes(profile: str, tmp_path: Path) -> None:
+    """doctor가 말하는 이름과 실제로 만들어진 객체가 같아야 한다.
+
+    `describe_wiring()`은 부작용 있는 객체를 만들지 않으므로 `build_deps()`와 갈라질 수
+    있다 — 선언과 실제의 괴리는 이 PR이 고치는 결함과 정확히 같은 종류다. 출력의
+    **모든 행**을 대조한다. 일부만 보면 나머지가 조용히 어긋난다.
+    """
+    config = load_config(profile)
+    deps = build_deps(
+        config, run_id="run_20260901_0001", source_root=TARGET, artifacts_root=tmp_path
+    )
+    actual = {
+        "retriever": type(deps.retriever).__name__,
+        "tool_runner": type(deps.tools).__name__,
+        "state_store": type(deps.store).__name__,
+    }
+    for role in PROMPTED_ROLES:
+        actual[role] = type(deps.models.client_for(role)).__name__
+    if config.profile.adapters.retriever == "hybrid":
+        actual["embedding"] = type(deps.retriever.embedder).__name__
+        actual["reranker"] = type(deps.retriever.reranker).__name__
+
+    assert describe_wiring(config) == actual
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_doctor_never_opens_a_socket(profile: str, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """`doctor`는 엔드포인트에 접속하지 않는다 (src/cli.py 모듈 docstring).
+
+    `describe_wiring()`이 모델·검색 클라이언트를 실제로 만든다. 지금은 그 생성자들이
+    필드 대입뿐이라 안전하지만, 그 사실을 보장하는 것이 docstring 한 줄뿐이었다.
+    누가 `__init__`에 헬스체크나 커넥션 풀을 넣으면 doctor가 조용히 네트워크를 치고
+    GPU 없는 팀원의 진단이 네트워크 오류로 실패한다 — 설정 오류와 구별되지 않는다.
+
+    `describe_wiring`만 감싸지 않고 `doctor` 전체를 검사한다. 나중에 다른 접속 코드가
+    들어와도 같은 그물에 걸려야 한다.
+    """
+
+    def _refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("doctor가 소켓을 열었다")
+
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse)
+
+    assert cli.doctor(profile, artifacts_root=tmp_path)
+
+
+def test_some_profile_actually_points_at_a_real_endpoint() -> None:
+    """위 테스트가 공허해지지 않게 한다.
+
+    모든 프로필이 `fake://`뿐이면 소켓 검사는 아무것도 검증하지 않는다. 실서빙
+    엔드포인트를 가리키는 프로필이 최소 하나 있어야 그 검사에 의미가 생긴다.
+    프로필 이름을 박지 않고 `ModelEntry.is_fake`로 판정한다.
+    """
+    served = [
+        profile
+        for profile in ALL_PROFILES
+        for config in [load_config(profile)]
+        if any(not config.model_for(role).is_fake for role in config.profile.roles)
+    ]
+    assert served, "실서빙 엔드포인트를 가리키는 프로필이 없어 소켓 검사가 공허하다"
+
+
+def _doctor_text(profile: str, artifacts_root: Path) -> str:
+    return "\n".join(check.render() for check in cli.doctor(profile, artifacts_root=artifacts_root))
 
 
 def test_doctor_fails_on_unknown_profile(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:

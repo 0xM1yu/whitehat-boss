@@ -30,6 +30,17 @@ REQUIRED_ROLES = ("scout", "auditor", "critic")
 # `retriever: hybrid`일 때만 추가로 요구되는 역할 (ProfileEntry의 검증기 참조).
 RETRIEVAL_ROLES = ("embedding", "reranker")
 
+# 프롬프트를 받고 구조화 출력을 내는 역할. `ModelClient`가 만들어지는 유일한 대상이다.
+#
+# `Role` 열거형과 다르다 — `Role.JUDGE`는 Evidence Gate가 결정론적이라 모델을 부르지
+# 않는다. `RETRIEVAL_ROLES`와도 다르다 — embedding·reranker는 프롬프트도 출력 스키마도
+# 없다(ADR 0004). 이 셋을 구분하지 않으면 `RunRecord.prompt_versions`에 존재하지 않는
+# 프롬프트의 버전이 적힌다.
+#
+# `tests/test_config.py::test_prompted_roles_matches_prompt_directories`가 이 상수와
+# `prompts/` 하위 디렉터리의 일치를 강제한다.
+PROMPTED_ROLES = ("scout", "auditor", "critic")
+
 # 이 스킴이면 FakeModelClient로 간다. 역할별로 갈리므로 프로필 안에서 혼용이 가능하다.
 FAKE_SCHEME = "fake://"
 
@@ -190,10 +201,20 @@ class HarnessConfig(HarnessModel):
         return {role: self.models[key].checksum for role, key in self.profile.roles.items()}
 
     def prompt_versions(self) -> dict[str, str]:
-        """`RunRecord.prompt_versions`에 넣을 역할 → prompt_template_version 맵."""
+        """`RunRecord.prompt_versions`에 넣을 역할 → prompt_template_version 맵.
+
+        **`PROMPTED_ROLES`만 담는다.** 전 역할을 담으면 `embedding`·`reranker`처럼
+        프롬프트가 존재하지 않는 역할의 "버전"이 실행 기록에 적힌다 — 거짓 정보이고,
+        ADR 0004가 `Role` 확장을 기각한 이유가 정확히 이것이다.
+
+        `model_checksums()`는 반대로 전 역할을 담는다. 그 둘은 실제 모델이고 **임베딩
+        모델이 바뀌면 검색 결과가 바뀌므로** 재현성 기록에서 뺄 수 없다. `RunRecord`가
+        두 dict를 독립 필드로 선언하고 있어 키 집합이 달라도 문제가 없다.
+        """
         return {
-            role: self.models[key].prompt_template_version
-            for role, key in self.profile.roles.items()
+            role: self.models[self.profile.roles[role]].prompt_template_version
+            for role in PROMPTED_ROLES
+            if role in self.profile.roles
         }
 
     def unmeasured_models(self) -> list[str]:

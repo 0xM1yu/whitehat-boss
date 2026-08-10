@@ -10,18 +10,23 @@ Protocol만 본다.
 """
 
 import json
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
 
 from src.ids import sha256_text
-from src.interfaces.retrieval import Ranked
+from src.interfaces.model_client import Usage
+from src.interfaces.retrieval import EmbeddingResult, Ranked, RerankResult
 
 _TIMEOUT_S = 300
 
 # Fake 임베딩 차원. 실제 모델(0.6B는 1024)과 맞출 이유가 없다 — 코사인 유사도의
 # 상대 순서만 결정론적이면 파이프라인 경로 검증에는 충분하다.
 _FAKE_DIM = 16
+
+# 4바이트 ≈ 1토큰. 게이트웨이가 usage를 안 주거나 Fake일 때 쓰는 근사다(어댑터 공통 상수).
+_CHARS_PER_TOKEN = 4
 
 
 class RetrievalGatewayError(RuntimeError):
@@ -42,16 +47,22 @@ class VllmEmbeddingClient:
         self.model_name = model_name
         self.api_key = api_key
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+    def embed(self, texts: Sequence[str]) -> EmbeddingResult:
         if not texts:
-            return []
+            return EmbeddingResult(usage=_no_tokens())
+        started = time.monotonic()
         data = _post(
             f"{self.endpoint}/embeddings",
             {"model": self.model_name, "input": list(texts)},
             self.api_key,
         )
+        elapsed = int(time.monotonic() - started)
         rows = sorted(data["data"], key=lambda row: int(row.get("index", 0)))
-        return [[float(x) for x in row["embedding"]] for row in rows]
+        return EmbeddingResult(
+            vectors=[[float(x) for x in row["embedding"]] for row in rows],
+            usage=_usage_from(data.get("usage"), texts),
+            gpu_seconds=elapsed,
+        )
 
 
 class VllmRerankerClient:
@@ -68,9 +79,10 @@ class VllmRerankerClient:
         self.model_name = model_name
         self.api_key = api_key
 
-    def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> list[Ranked]:
+    def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> RerankResult:
         if not documents or top_n <= 0:
-            return []
+            return RerankResult(usage=_no_tokens())
+        started = time.monotonic()
         data = _post(
             f"{self.endpoint}/rerank",
             {
@@ -81,10 +93,14 @@ class VllmRerankerClient:
             },
             self.api_key,
         )
-        return [
-            Ranked(index=int(row["index"]), score=float(row["relevance_score"]))
-            for row in data.get("results", [])
-        ]
+        return RerankResult(
+            ranked=[
+                Ranked(index=int(row["index"]), score=float(row["relevance_score"]))
+                for row in data.get("results", [])
+            ],
+            usage=_usage_from(data.get("usage"), [query, *documents]),
+            gpu_seconds=int(time.monotonic() - started),
+        )
 
 
 class FakeEmbeddingClient:
@@ -95,8 +111,11 @@ class FakeEmbeddingClient:
     아니라 **후보 정렬 순서**뿐이다. 순서가 실행마다 같기만 하면 재현성이 성립한다.
     """
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        return [_hash_vector(text) for text in texts]
+    def embed(self, texts: Sequence[str]) -> EmbeddingResult:
+        return EmbeddingResult(
+            vectors=[_hash_vector(text) for text in texts],
+            usage=_estimated_usage(texts),
+        )
 
 
 class FakeRerankerClient:
@@ -106,10 +125,42 @@ class FakeRerankerClient:
     Fake 리랭커의 역할은 "재선별 경로가 실제로 타는가"를 확인하는 것뿐이다.
     """
 
-    def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> list[Ranked]:
-        del query
+    def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> RerankResult:
         count = max(0, min(top_n, len(documents)))
-        return [Ranked(index=i, score=1.0 - i / max(len(documents), 1)) for i in range(count)]
+        return RerankResult(
+            ranked=[Ranked(index=i, score=1.0 - i / max(len(documents), 1)) for i in range(count)],
+            usage=_estimated_usage([query, *documents]),
+        )
+
+
+def _no_tokens() -> Usage:
+    return Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+
+
+def _estimated_usage(texts: Sequence[str]) -> Usage:
+    """입력 길이에서 토큰을 근사한다.
+
+    Fake라고 0으로 두지 않는다. 0이면 "검색이 공짜"와 "계량기가 안 붙었다"가 구별되지
+    않고, dev_fake에서 비용 경로가 도는지 확인할 수 없다. 출력은 벡터·점수라 생성
+    토큰이 없으므로 `output_tokens`는 0이다.
+    """
+    return Usage(
+        input_tokens=sum(len(text) for text in texts) // _CHARS_PER_TOKEN,
+        output_tokens=0,
+        cached_tokens=0,
+    )
+
+
+def _usage_from(usage: dict | None, texts: Sequence[str]) -> Usage:
+    """게이트웨이가 usage를 주면 그것을, 아니면 길이 근사를 쓴다.
+
+    vLLM의 pooling·rerank 응답은 usage를 안 실어 보내는 버전이 있다. 그때 0으로
+    기록하면 실서빙 비용이 장부에서 사라진다.
+    """
+    if not usage:
+        return _estimated_usage(texts)
+    prompt = int(usage.get("prompt_tokens", 0)) or int(usage.get("total_tokens", 0))
+    return Usage(input_tokens=prompt, output_tokens=0, cached_tokens=0)
 
 
 def _hash_vector(text: str) -> list[float]:
