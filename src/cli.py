@@ -20,9 +20,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TextIO
 
-from src.adapters.factory import Deps, build_deps
+from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
-from src.config import CONFIG_DIR, ConfigError, HarnessConfig, load_config
+from src.config import CONFIG_DIR, PROMPTED_ROLES, ConfigError, HarnessConfig, load_config
 from src.console import force_utf8
 from src.ids import new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
@@ -51,8 +51,6 @@ PROVISIONAL_THRESHOLDS = ("scout_threshold", "capsule_expansion_max", "requeue_m
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 추정용 근사다(어댑터와 같은 상수).
 _CHARS_PER_TOKEN = 4
 
-# 프롬프트가 있어야 하는 역할. `judge`는 v1에서 모델을 부르지 않는다(게이트가 결정론적).
-_MODEL_ROLES = ("scout", "auditor", "critic")
 
 
 class Severity(StrEnum):
@@ -88,11 +86,30 @@ def doctor(profile: str, *, artifacts_root: Path, config_dir: Path = CONFIG_DIR)
             f"{sorted(config.profile.roles)}",
         ),
     ]
+    checks.extend(_check_wiring(config))
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_prompts(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
     return checks
+
+
+def _check_wiring(config: HarnessConfig) -> list[Check]:
+    """설정이 실제로 무엇을 물리는지 보여준다.
+
+    프로필이 선언한 값이 아니라 **결정된 구현체**를 출력한다. 이게 없으면
+    `dev_fake`와 `dev_hybrid`의 진단이 한 글자도 다르지 않아, 설정이 무시되고 있어도
+    알아챌 방법이 없다 — `adapters.retriever`가 실제로 그 상태였다.
+    """
+    endpoints = {role: config.model_for(role).endpoint for role in config.profile.roles}
+    return [
+        Check(Severity.OK, f"{name:12} → {impl}{_endpoint_note(endpoints.get(name))}")
+        for name, impl in describe_wiring(config).items()
+    ]
+
+
+def _endpoint_note(endpoint: str | None) -> str:
+    return f"   ({endpoint})" if endpoint else ""
 
 
 def _check_benchmarks(config: HarnessConfig) -> list[Check]:
@@ -112,7 +129,7 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
     run 도중에 없는 것을 알면 그때까지 쓴 시간을 버린다(config.py의 판단과 같다).
     """
     checks: list[Check] = []
-    for role in _MODEL_ROLES:
+    for role in PROMPTED_ROLES:
         version = config.model_for(role).prompt_template_version
         try:
             load_prompt(Role(role), version)
@@ -219,7 +236,7 @@ def _prefix_tokens(config: HarnessConfig) -> int:
     sizes = [
         len(load_prompt(Role(role), config.model_for(role).prompt_template_version).prefix)
         // _CHARS_PER_TOKEN
-        for role in _MODEL_ROLES
+        for role in PROMPTED_ROLES
     ]
     return sum(sizes) // len(sizes)
 

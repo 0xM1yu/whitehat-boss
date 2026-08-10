@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 
 from src import cli, console
-from src.config import load_config
+from src.adapters.factory import build_deps, describe_wiring
+from src.config import PROMPTED_ROLES, load_config
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
@@ -249,6 +250,50 @@ def test_console_output_survives_a_non_utf8_terminal() -> None:
     stream.write("실측 전 초기값 임계값 — 조건 간 비교 전에 확정한다")  # 예외가 나면 실패
 
     assert stream.encoding == "utf-8"
+
+
+def test_doctor_output_differs_between_profiles(tmp_path: Path) -> None:
+    """`dev_fake`와 `dev_hybrid`의 유일한 차이(retriever)가 진단에 드러나야 한다.
+
+    두 출력이 같으면 설정이 무시되고 있어도 알아챌 방법이 없다. `adapters.retriever`가
+    선언만 되고 읽히지 않던 시기에 doctor가 정확히 그 상태였다.
+    """
+    fake = _doctor_text("dev_fake", tmp_path)
+    hybrid = _doctor_text("dev_hybrid", tmp_path)
+
+    assert fake != hybrid
+    assert "HybridRetriever" in hybrid
+    assert "HybridRetriever" not in fake
+
+
+@pytest.mark.parametrize("profile", ["dev_fake", "dev_hybrid"])
+def test_describe_wiring_matches_what_build_deps_makes(profile: str, tmp_path: Path) -> None:
+    """doctor가 말하는 이름과 실제로 만들어진 객체가 같아야 한다.
+
+    `describe_wiring()`은 부작용 있는 객체를 만들지 않으므로 `build_deps()`와 갈라질 수
+    있다 — 선언과 실제의 괴리는 이 PR이 고치는 결함과 정확히 같은 종류다. 출력의
+    **모든 행**을 대조한다. 일부만 보면 나머지가 조용히 어긋난다.
+    """
+    config = load_config(profile)
+    deps = build_deps(
+        config, run_id="run_20260901_0001", source_root=TARGET, artifacts_root=tmp_path
+    )
+    actual = {
+        "retriever": type(deps.retriever).__name__,
+        "tool_runner": type(deps.tools).__name__,
+        "state_store": type(deps.store).__name__,
+    }
+    for role in PROMPTED_ROLES:
+        actual[role] = type(deps.models.client_for(role)).__name__
+    if config.profile.adapters.retriever == "hybrid":
+        actual["embedding"] = type(deps.retriever.embedder).__name__
+        actual["reranker"] = type(deps.retriever.reranker).__name__
+
+    assert describe_wiring(config) == actual
+
+
+def _doctor_text(profile: str, artifacts_root: Path) -> str:
+    return "\n".join(check.render() for check in cli.doctor(profile, artifacts_root=artifacts_root))
 
 
 def test_doctor_fails_on_unknown_profile(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:

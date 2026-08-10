@@ -27,7 +27,7 @@ from src.adapters.vllm_retrieval import (
     VllmEmbeddingClient,
     VllmRerankerClient,
 )
-from src.config import HarnessConfig, ModelEntry
+from src.config import PROMPTED_ROLES, HarnessConfig, ModelEntry
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
 from src.interfaces.retrieval import EmbeddingClient, RerankerClient
@@ -152,8 +152,13 @@ def build_deps(
         on_cache=on_cache,
         on_truncate=on_truncate,
     )
+    # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
+    # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지
+    # 않아 드러나지 않을 뿐 잘못된 배선이다(ADR 0004: 그 둘은 `Role`이 아니다).
     clients: dict[str, ModelClient] = {
-        role: _model_client(key, config) for role, key in config.profile.roles.items()
+        role: _model_client(config.profile.roles[role], config)
+        for role in PROMPTED_ROLES
+        if role in config.profile.roles
     }
     return Deps(
         models=RoutingModelClient(clients),
@@ -162,6 +167,34 @@ def build_deps(
         store=_build("state_store", args),
         ids=ids,
     )
+
+
+def describe_wiring(config: HarnessConfig) -> dict[str, str]:
+    """설정이 고르는 구현체 이름. `doctor`가 출력한다.
+
+    프로필이 무엇을 선언했는지가 아니라 **무엇이 실제로 물리는지**를 보여주는 것이
+    목적이다. `dev_fake`와 `dev_hybrid`의 유일한 차이가 retriever인데 진단 출력이
+    똑같으면, 설정이 무시되고 있어도 알아챌 방법이 없다.
+
+    부작용은 만들지 않는다 — `doctor`는 엔드포인트에 접속하지 않는 것이 계약이다
+    (`src/cli.py` 모듈 docstring). 어댑터 3종은 `_Wiring.impl`에서 이름만 뽑는다
+    (`SqliteStateStore`는 생성 시점에 파일을 만든다). 모델·검색 클라이언트는 생성자가
+    필드 대입뿐이라 실제로 만들어 이름을 읽는다 — `build_deps()`와 같은 함수를 쓰므로
+    갈라질 수 없다.
+    """
+    wiring = {
+        field: WIRINGS[field][getattr(config.profile.adapters, field)].impl.__name__
+        for field in WIRINGS
+    }
+    for role in PROMPTED_ROLES:
+        if role in config.profile.roles:
+            wiring[role] = type(_model_client(config.profile.roles[role], config)).__name__
+    # 검색 클라이언트는 hybrid일 때만 만들어진다. fake retriever 프로필에서 이 줄을
+    # 출력하면 "쓰이지도 않는데 물려 있다"로 읽힌다.
+    if config.profile.adapters.retriever == "hybrid":
+        wiring["embedding"] = type(_embedding_client(config)).__name__
+        wiring["reranker"] = type(_reranker_client(config)).__name__
+    return wiring
 
 
 def _build(field: str, args: _BuildArgs) -> Any:

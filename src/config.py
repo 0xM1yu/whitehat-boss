@@ -30,6 +30,17 @@ REQUIRED_ROLES = ("scout", "auditor", "critic")
 # `retriever: hybrid`일 때만 추가로 요구되는 역할 (ProfileEntry의 검증기 참조).
 RETRIEVAL_ROLES = ("embedding", "reranker")
 
+# 프롬프트를 받고 구조화 출력을 내는 역할. `ModelClient`가 만들어지는 유일한 대상이다.
+#
+# `Role` 열거형과 다르다 — `Role.JUDGE`는 Evidence Gate가 결정론적이라 모델을 부르지
+# 않는다. `RETRIEVAL_ROLES`와도 다르다 — embedding·reranker는 프롬프트도 출력 스키마도
+# 없다(ADR 0004). 이 셋을 구분하지 않으면 `RunRecord.prompt_versions`에 존재하지 않는
+# 프롬프트의 버전이 적힌다.
+#
+# `tests/test_config.py::test_prompted_roles_matches_prompt_directories`가 이 상수와
+# `prompts/` 하위 디렉터리의 일치를 강제한다.
+PROMPTED_ROLES = ("scout", "auditor", "critic")
+
 # 이 스킴이면 FakeModelClient로 간다. 역할별로 갈리므로 프로필 안에서 혼용이 가능하다.
 FAKE_SCHEME = "fake://"
 
