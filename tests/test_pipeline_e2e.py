@@ -33,9 +33,9 @@ STARTED_AT = datetime(2026, 9, 1, tzinfo=UTC)
 CONDITION = "B3prime@pipeline"
 
 
-def _run(tmp_path: Path, name: str = "run", **overrides: object):  # noqa: ANN202
-    """dev_fake 프로필로 파이프라인을 한 번 돌리고 (결과, trace 경로)를 돌려준다."""
-    config = load_config("dev_fake")
+def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **overrides: object):  # noqa: ANN202
+    """파이프라인을 한 번 돌리고 (결과, trace 경로)를 돌려준다. 기본은 dev_fake."""
+    config = load_config(profile)
     if "budget" in overrides:
         config = config.transition(budget=overrides.pop("budget"))
     run_dir = tmp_path / name / "run_20260901_0001"
@@ -59,6 +59,15 @@ def _canonical(trace_path: Path) -> bytes:
             event.pop(field, None)
         lines.append(json.dumps(event, ensure_ascii=False, sort_keys=True))
     return "\n".join(lines).encode("utf-8")
+
+
+def _charged(trace_path: Path) -> int:
+    """장부에 실제로 차감된 input 토큰 합. `RunRecord.budget`은 할당량이라 소비가 아니다."""
+    return sum(
+        event["data"]["input_tokens"]
+        for event in _of(_events(trace_path), "budget")
+        if event["data"]["event"] == "charge"
+    )
 
 
 def _of(events: list[dict], kind: str, *, stage: int | None = None) -> list[dict]:
@@ -228,6 +237,39 @@ def test_stop_after_retrieval_makes_no_model_calls(tmp_path: Path) -> None:
     assert _of(_events(trace_path), "model_call") == []
     assert result.record.stopped_after == int(Stage.RETRIEVAL)
     assert result.candidates == ()
+
+
+def test_retrieval_cost_is_charged_only_when_retrieval_runs(tmp_path: Path) -> None:
+    """검색 호출이 trace와 예산에 잡힌다.
+
+    `HybridRetriever`는 embedding·reranker를 실제로 호출하는데 그 비용을 보고할 경로가
+    없었다. Fake에서는 0이라 안 보이지만 실서빙에서는 실제 GPU 시간이고, 빠지면
+    evaluation.md §5.2의 토큰 분리와 "finding당 GPU-hour"가 전부 낙관적으로 나온다.
+
+    **개수·토큰 수를 상수로 기대하지 않는다.** 그 값들은 이 프로젝트가 재려는 대상이다.
+    두 프로필의 상대 비교로만 검증한다.
+    """
+    _, plain_trace = _run(tmp_path, "plain")
+    _, hybrid_trace = _run(tmp_path, "hybrid", profile="dev_hybrid")
+
+    assert _of(_events(plain_trace), "retrieval_call") == []
+    calls = _of(_events(hybrid_trace), "retrieval_call")
+    # embedding과 reranker가 각각 최소 한 번. 개수를 세지 않고 집합으로 본다.
+    assert {e["data"]["component"] for e in calls} == {"embedding", "reranker"}
+    assert all(e["data"]["input_tokens"] > 0 for e in calls)
+
+    # 검색이 도는 쪽이 실제로 더 많이 쓴다. 같으면 계량기가 안 붙은 것이다.
+    # `RunRecord.budget`은 할당량이라 프로필이 같으면 같다 — 장부(`budget` 이벤트)를 본다.
+    assert _charged(hybrid_trace) > _charged(plain_trace)
+
+
+def test_retrieval_calls_carry_the_stage_they_happened_in(tmp_path: Path) -> None:
+    """단계 없이 남기면 "3단계 검색 비용" 같은 질문에 답할 수 없다."""
+    _, trace_path = _run(tmp_path, profile="dev_hybrid")
+    events = _events(trace_path)
+
+    assert all(e["stage"] is not None for e in _of(events, "retrieval_call"))
+    assert all(e["stage"] is not None for e in _of(events, "cache"))
 
 
 # --- CLI --------------------------------------------------------------------

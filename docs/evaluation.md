@@ -85,6 +85,7 @@
 | 지표 | 정의 |
 | --- | --- |
 | input / output / cached token | 반드시 분리 기록 |
+| 검색(embedding·reranker) 토큰·GPU-second | 모델 호출과 **분리 집계**한다. trace의 `retrieval_call` 이벤트가 소스이고 `model_call`과 분모가 다르다 — 검색 호출에는 출력 스키마가 없으므로 "스키마 파싱 실패율"에 섞이면 그 값이 희석된다 |
 | cache hit ratio | prefix cache + capsule cache |
 | GPU-second, peak memory | 역할별 |
 | wall-clock latency | 단계별, run 전체 |

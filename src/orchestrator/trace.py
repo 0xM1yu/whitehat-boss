@@ -14,6 +14,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | `count(repro_failed) / count(repro_*)` |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
+| 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 스키마 파싱 실패율 | `model_call.ok` | `count(ok=false) / count(*)` — 모델·역할별 |
@@ -21,6 +22,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
+
+검색 호출을 `model_call`에 `role=embedding`으로 끼워 넣지 않는 이유도 같다 — "스키마
+파싱 실패율"의 분모가 `model_call` 전체인데 스키마가 없는 호출이 섞이면 그 값이 조용히
+희석된다. embedding·reranker는 `Role`도 아니다(ADR 0004).
 
 Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 `create()`도 `transition`을
 남긴다. "근거 없는 반박 비율"의 분모는 critic 역할의 `model_call`이고 "스키마 파싱
@@ -62,6 +67,7 @@ class EventKind(StrEnum):
     STAGE_END = "stage_end"
     TRANSITION = "transition"
     MODEL_CALL = "model_call"
+    RETRIEVAL_CALL = "retrieval_call"
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
