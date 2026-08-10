@@ -11,6 +11,10 @@ artifacts/
 
 # Seraph 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
 .claude/seraph/
+seraph _tutorial/
+
+# 작업 계획 문서 (PR 산출물이 아니다)
+PR4-plan.md
 
 # VS Code
 .vscode/
