@@ -201,10 +201,20 @@ class HarnessConfig(HarnessModel):
         return {role: self.models[key].checksum for role, key in self.profile.roles.items()}
 
     def prompt_versions(self) -> dict[str, str]:
-        """`RunRecord.prompt_versions`에 넣을 역할 → prompt_template_version 맵."""
+        """`RunRecord.prompt_versions`에 넣을 역할 → prompt_template_version 맵.
+
+        **`PROMPTED_ROLES`만 담는다.** 전 역할을 담으면 `embedding`·`reranker`처럼
+        프롬프트가 존재하지 않는 역할의 "버전"이 실행 기록에 적힌다 — 거짓 정보이고,
+        ADR 0004가 `Role` 확장을 기각한 이유가 정확히 이것이다.
+
+        `model_checksums()`는 반대로 전 역할을 담는다. 그 둘은 실제 모델이고 **임베딩
+        모델이 바뀌면 검색 결과가 바뀌므로** 재현성 기록에서 뺄 수 없다. `RunRecord`가
+        두 dict를 독립 필드로 선언하고 있어 키 집합이 달라도 문제가 없다.
+        """
         return {
-            role: self.models[key].prompt_template_version
-            for role, key in self.profile.roles.items()
+            role: self.models[self.profile.roles[role]].prompt_template_version
+            for role in PROMPTED_ROLES
+            if role in self.profile.roles
         }
 
     def unmeasured_models(self) -> list[str]:
