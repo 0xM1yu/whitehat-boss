@@ -11,17 +11,18 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
-from src.adapters.factory import build_deps
+from src.adapters.factory import WIRINGS, build_deps
 from src.adapters.fake_model import FakeContext, FakeModelClient, FakeModelError, risky_calls_in
 from src.adapters.fake_retriever import FakeRetriever, read_symbol_source
 from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
-from src.config import load_config
+from src.config import AdapterSelection, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
 from src.interfaces.model_client import Prompt
 from src.interfaces.retriever import Query
@@ -492,6 +493,26 @@ def test_single_gpu_12g_mixes_real_and_fake(target_root: Path, tmp_path: Path) -
     assert not isinstance(deps.models.client_for("scout"), FakeModelClient)
     assert isinstance(deps.models.client_for("auditor"), FakeModelClient)
     assert isinstance(deps.store, SqliteStateStore)
+
+
+@pytest.mark.parametrize("field", sorted(WIRINGS))
+def test_every_adapter_choice_is_wired(field: str) -> None:
+    """`AdapterSelection`의 `Literal` 값 집합 == 팩토리 매핑의 키 집합.
+
+    `adapters.retriever`가 설정에 선언돼 있는데 factory가 읽지 않아 `FakeRetriever`가
+    하드코딩된 채로 머물렀던 적이 있다. 설정이 조용히 무시되면 프로필이 거짓말을 하고,
+    그 상태로 뽑은 벤치마크는 무효다.
+
+    누가 `Literal`에 값을 추가하고 배선을 잊으면 여기서 깨진다 — 주석으로 부탁하는
+    대신 CI가 막는다.
+    """
+    declared = set(get_args(AdapterSelection.model_fields[field].annotation))
+    assert declared == set(WIRINGS[field])
+
+
+def test_adapter_fields_and_wiring_tables_cover_each_other() -> None:
+    """필드 자체가 빠지는 것도 막는다. 매핑을 안 만들면 위 테스트가 아예 안 돈다."""
+    assert set(WIRINGS) == set(AdapterSelection.model_fields)
 
 
 def test_deps_share_one_id_factory(target_root: Path, tmp_path: Path) -> None:
