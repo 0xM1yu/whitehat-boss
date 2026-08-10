@@ -20,6 +20,7 @@ from time import perf_counter
 from src.config import HarnessConfig
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient, ModelResult, Prompt, SchemaT, Usage
+from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs, ToolRunner
@@ -75,6 +76,8 @@ class RunContext:
     ledger: BudgetLedger
     policy: RoutingPolicy
     record: RunRecord | None = None
+    # 마지막으로 진입한 단계. Retriever 콜백이 자기 단계를 모르므로 여기서 채운다.
+    current_stage: Stage = Stage.PREPROCESS
     # 대상 심볼의 원문을 읽는다. `ContextCapsule`은 본문을 담지 않는 매니페스트이므로
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
@@ -85,7 +88,17 @@ class RunContext:
     # --- 단계 ---
 
     def stage(self, stage: Stage) -> StageSpan:
-        """`with ctx.stage(Stage.SCOUT):` — `stage_start`/`stage_end`를 짝지어 남긴다."""
+        """`with ctx.stage(Stage.SCOUT):` — `stage_start`/`stage_end`를 짝지어 남긴다.
+
+        진입한 단계를 기억한다. Retriever의 콜백(`on_cache`·`on_usage`)은 자기가 몇
+        단계에서 불렸는지 모르는데, 캡슐 캐시는 3·5·7단계에서 모두 발생하고 검색 비용은
+        `ledger.charge(stage=)`가 단계를 요구한다. 단계 없이 남기면 "3단계 적중률" 같은
+        질문에 답할 수 없다.
+
+        ponytail: 러너가 순차 실행이라 "마지막에 진입한 단계"로 충분하다.
+        단계를 동시에 돌리게 되면 콜백에 단계를 명시적으로 실어 보내야 한다.
+        """
+        self.current_stage = stage
         return self.trace.stage_span(stage, monotonic_ms=self.monotonic_ms)
 
     # --- 모델 ---
@@ -230,7 +243,27 @@ class RunContext:
 
     def record_cache(self, key: str, hit: bool, *, cache: str = "capsule") -> None:
         """캡슐 캐시 적중 기록 (knowledge-base.md §6). Retriever의 `on_cache` 훅에 연결된다."""
-        self.trace.emit(EventKind.CACHE, cache=cache, key=key, hit=hit)
+        self.trace.emit(EventKind.CACHE, stage=self.current_stage, cache=cache, key=key, hit=hit)
+
+    def record_retrieval(self, component: str, result: RetrievalResult, candidates: int) -> None:
+        """검색 호출의 비용을 trace와 예산에 반영한다. Retriever의 `on_usage` 훅에 연결된다.
+
+        `model_call`이 아니라 `retrieval_call`로 남긴다 — trace.py 대응표의 "스키마 파싱
+        실패율" 분모가 `model_call` 전체이고, 스키마가 없는 검색 호출이 섞이면 그 값이
+        조용히 희석된다. embedding·reranker는 `Role`도 아니다(ADR 0004).
+        """
+        stage = self.current_stage
+        self.trace.emit(
+            EventKind.RETRIEVAL_CALL,
+            stage=stage,
+            component=component,
+            input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens,
+            cached_tokens=result.usage.cached_tokens,
+            gpu_seconds=result.gpu_seconds,
+            candidates=candidates,
+        )
+        self.ledger.charge(result.usage, stage=stage, gpu_seconds=result.gpu_seconds)
 
     # --- 정책과 전이 ---
 

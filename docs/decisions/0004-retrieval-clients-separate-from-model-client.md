@@ -49,3 +49,10 @@ embedding만 띄우고 reranker는 Fake로 두는 구성이 프로필만으로 �
   필요하지 않았다.
 - 캡슐 정책 버전을 `hybrid-v1`로 따로 둔다. 구성 규칙이 다른데 캐시 키가 같으면 두
   구현이 만든 캡슐이 섞여 조건 비교가 오염된다(knowledge-base.md §6).
+- **후속 (PR #4에서 처리)**: 이 결정의 근거("`Role`을 키로 쓰는 기록에 빈 항목이
+  생긴다")가 코드 쪽에는 남아 있었다. `config.prompt_versions()`가 프로필의 전 역할을
+  순회해 `RunRecord.prompt_versions`에 `embedding: v1`·`reranker: v1`이 적히고 있었고,
+  `build_deps()`는 그 두 역할에도 채팅 완성용 `ModelClient`를 만들고 있었다.
+  `config.PROMPTED_ROLES`를 단일 출처로 두어 둘 다 정리했다. `model_checksums()`는
+  그대로 전 역할을 담는다 — 임베딩 모델이 바뀌면 검색 결과가 바뀌므로 재현성 기록에서
+  뺄 수 없고, `RunRecord`가 두 dict를 독립 필드로 선언하고 있어 키 집합이 달라도 된다.

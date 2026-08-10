@@ -30,6 +30,7 @@ from typing import Protocol
 from src.config import HarnessConfig
 from src.ids import IdFactory, sha256_text
 from src.interfaces.model_client import ModelClient
+from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
@@ -140,6 +141,30 @@ class LateCacheHook:
         self._ctx.record_cache(key, hit)
 
 
+class UsageHookUnbound(RuntimeError):
+    """검색 비용 훅이 RunContext에 연결되기 전에 불렸다."""
+
+
+class LateUsageHook:
+    """`LateCacheHook`과 같은 조립 순서 문제를 같은 방식으로 메운다.
+
+    **바인딩 전 호출은 조용히 무시하지 않고 터뜨린다** — 비용 이벤트가 새면 검색이
+    장부에 안 잡히고, 그것은 "검색이 공짜"와 구분되지 않는다. Fake에서 0으로 보이던
+    것이 실서빙에서는 실제 GPU 시간이다.
+    """
+
+    def __init__(self) -> None:
+        self._ctx: RunContext | None = None
+
+    def bind(self, ctx: RunContext) -> None:
+        self._ctx = ctx
+
+    def __call__(self, component: str, result: RetrievalResult, candidates: int) -> None:
+        if self._ctx is None:
+            raise UsageHookUnbound("검색 비용 훅이 RunContext에 연결되기 전에 호출됐다")
+        self._ctx.record_retrieval(component, result, candidates)
+
+
 @dataclass
 class _Accumulator:
     """단계 사이에 들고 다니는 중간 산출물.
@@ -170,6 +195,7 @@ def run_pipeline(
     trace: TraceWriter,
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
+    usage_hook: LateUsageHook | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> RunResult:
     """단계 0~9를 순서대로 돌리고 `RunRecord`를 닫는다."""
@@ -190,6 +216,8 @@ def run_pipeline(
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
+    if usage_hook is not None:
+        usage_hook.bind(ctx)
 
     artifacts = preprocess.run(ctx, source_root=spec.target)
     record, warnings = _new_record(spec, config, ctx.run_id, started_at, artifacts)
