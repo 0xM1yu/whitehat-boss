@@ -58,10 +58,26 @@ F-15는 사람이 승인해야만 일어난다. 파이프라인이 자동으로 
 
 ## RunRecord
 
-| # | 트리거 | 결과 |
-| --- | --- | --- |
-| R-1 | 9단계 완주 | `finished_at` 채움 |
-| R-2 | `BudgetExhausted` | `finished_at` + `stopped_after=N` |
+| # | 트리거 | 결과 | reason_code |
+| --- | --- | --- | --- |
+| R-1 | 9단계 완주 | `finished_at` 채움 | — |
+| R-2 | 9단계 전 종료 | `finished_at` + `stopped_after=N` | 아래 셋 중 하나 |
+
+R-2의 사유는 `finish_run()`이 정하지 않고 **호출자가 넘긴다.** 세 경로가 있다.
+
+| 사유 | 트리거 |
+| --- | --- |
+| `budget_exhausted` | `BudgetExhausted`가 올라옴 (architecture.md §5) |
+| `user_stop_requested` | 사용자가 `--stop-after N`으로 자름 |
+| `dry_run` | `--dry-run`이 3단계에서 자름 (`DRY_RUN_LAST_STAGE`) |
+
+셋을 하나로 묶지 않는 이유는 evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기
+때문이다. 묶으면 예산을 0.03%만 쓴 run이 "예산 초과로 중단됨"으로 읽힌다. 뒤의 둘도
+따로 두는데, `--dry-run --stop-after 5`처럼 동시에 올 수 있어 사유가 하나면 어느 쪽이
+상한을 결정했는지가 사라지기 때문이다 — 판정은 `RunSpec.stop_at()`이 한다.
+
+`stopped_after`와 `reason`은 함께 채워지거나 함께 비어야 하며, `finish_run()`이 그것을
+강제한다. 이 둘이 갈라진 것이 R-2가 무조건 `budget_exhausted`를 적던 결함의 원인이다.
 """
 
 from dataclasses import dataclass
@@ -231,10 +247,23 @@ def finish_run(
     *,
     finished_at: datetime,
     stopped_after: int | None,
+    reason: ReasonCode | None,
     store: StateStore,
     trace: TraceWriter,
 ) -> RunRecord:
-    """R-1/R-2. 완주면 `stopped_after=None`, 예산 소진이면 중단 단계를 함께 채운다."""
+    """R-1/R-2. 완주면 둘 다 `None`, 중단이면 단계와 사유를 함께 받는다.
+
+    **사유를 여기서 만들지 않고 호출자에게서 받는다.** 예전에는 `stopped_after`가 차 있으면
+    무조건 `budget_exhausted`로 적었는데, 그러면 사용자가 `--stop-after`로 자른 run과
+    예산이 실제로 소진된 run이 기록에서 구별되지 않는다. 중단 사유는 evaluation.md가
+    조건 간 비교에 쓰는 지표이므로, 틀린 값이 조용히 들어가면 존재하지 않는 결론이 나온다.
+    """
+    if (stopped_after is None) != (reason is None):
+        # 이번 결함이 정확히 두 값이 갈라진 것이다. 한쪽만 채우는 호출부를 여기서 막는다.
+        raise ValueError(
+            "stopped_after와 reason은 함께 채워지거나 함께 비어야 한다: "
+            f"stopped_after={stopped_after}, reason={reason}"
+        )
     updated = record.transition(finished_at=finished_at, stopped_after=stopped_after)
     store.put(updated)
     trace.emit(
@@ -245,6 +274,6 @@ def finish_run(
         rule="R-1" if stopped_after is None else "R-2",
         from_state=None,
         to_state="finished",
-        reason=None if stopped_after is None else _R.BUDGET_EXHAUSTED.value,
+        reason=reason.value if reason else None,
     )
     return updated
