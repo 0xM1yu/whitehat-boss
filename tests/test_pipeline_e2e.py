@@ -13,6 +13,7 @@
 import io
 import json
 import socket
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,6 +22,8 @@ import pytest
 from src import cli, console
 from src.adapters.factory import build_deps, describe_wiring
 from src.config import PROMPTED_ROLES, load_config
+from src.ids import new_run_id
+from src.orchestrator import runner
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
@@ -43,7 +46,9 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT, **overrides)
     trace_path = run_dir / "trace.jsonl"
     with trace_path.open("w", encoding="utf-8") as stream:
-        result, _ = cli.execute(config, spec, run_dir=run_dir, trace_stream=stream)
+        result, _ = cli.execute(
+            config, spec, run_id=run_dir.name, run_dir=run_dir, trace_stream=stream
+        )
     return result, trace_path
 
 
@@ -78,6 +83,17 @@ def _charged(trace_path: Path) -> int:
 
 def _of(events: list[dict], kind: str, *, stage: int | None = None) -> list[dict]:
     return [e for e in events if e["kind"] == kind and (stage is None or e["stage"] == int(stage))]
+
+
+def _run_transition(trace_path: Path) -> dict:
+    """run 객체의 마지막 전이(R-1/R-2) 이벤트. 종료 사유가 여기 남는다.
+
+    `stage`는 이벤트의 최상위 필드이고 `rule`·`reason`은 `data` 안이므로 이벤트 전체를
+    돌려준다.
+    """
+    runs = [e for e in _of(_events(trace_path), "transition") if e["subject_kind"] == "run"]
+    assert runs, "run 전이가 없으면 종료 사유를 읽을 수 없다"
+    return runs[-1]
 
 
 # --- 1. 완주 ----------------------------------------------------------------
@@ -120,6 +136,108 @@ def test_incomplete_manifest_fields_are_reported_not_faked(tmp_path: Path) -> No
 
     assert result.record.tool_images == {}
     assert any("tool_images" in warning for warning in result.warnings)
+
+
+# --- 하네스 저장소 상태 기록 (P3) --------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def _fresh_repo(root: Path) -> Path:
+    """커밋 1개짜리 깨끗한 git 저장소."""
+    repo = root / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "test")
+    (repo / "a.txt").write_text("first", encoding="utf-8")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "first")
+    return repo
+
+
+def test_clean_repo_is_recorded_as_not_dirty(tmp_path: Path) -> None:
+    repo = _fresh_repo(tmp_path)
+
+    commit, dirty, warnings = runner._repo_state(repo)
+
+    assert len(commit) == 40
+    assert dirty is False
+    assert warnings == []
+
+
+def test_dirty_repo_is_recorded(tmp_path: Path) -> None:
+    """실측(2026-08-11): config/models.yaml·profiles.yaml을 고친 상태로 세 run이 돌았다.
+
+    모델도 엔드포인트도 바뀐 실행인데 manifest만 보면 커밋이 그대로라 재현 가능해 보였다.
+
+    dirty는 읽기 실패가 아니라 사실이므로 `_repo_state`는 경고하지 않는다 — "비교표에
+    넣을 수 없다"는 판단은 `incomplete_fields`가 하고, 아래 별도 테스트가 그것을 본다.
+    """
+    repo = _fresh_repo(tmp_path)
+    (repo / "a.txt").write_text("changed", encoding="utf-8")
+
+    _, dirty, warnings = runner._repo_state(repo)
+
+    assert dirty is True
+    assert warnings == []
+
+
+def test_untracked_file_also_counts_as_dirty(tmp_path: Path) -> None:
+    """`git status --porcelain`은 미추적 파일도 낸다. 그것도 재현을 깨뜨린다."""
+    repo = _fresh_repo(tmp_path)
+    (repo / "scratch.yaml").write_text("local: true", encoding="utf-8")
+
+    _, dirty, _ = runner._repo_state(repo)
+
+    assert dirty is True
+
+
+def test_non_repository_records_unknown_not_false(tmp_path: Path) -> None:
+    """git이 없거나 저장소가 아니면 "확인 못 함"이다.
+
+    불리언 두 값으로는 이 상태를 표현할 수 없다. `False`로 적으면 "깨끗하다"는
+    적극적인 거짓말이 되므로 `None`을 쓴다.
+    """
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+
+    commit, dirty, warnings = runner._repo_state(plain)
+
+    assert dirty is None
+    assert commit == runner._UNKNOWN_COMMIT
+    assert warnings
+
+
+def test_dirty_and_unknown_both_reach_incomplete_fields(tmp_path: Path) -> None:
+    """경고가 `incomplete_fields`를 통해 실제로 사용자에게 도달하는지 본다.
+
+    `_repo_state`가 값을 잘 만들어도 그 값이 경고 목록에 연결되지 않으면 run은
+    여전히 조용히 비교표에 들어간다.
+    """
+    result, _ = _run(tmp_path)
+    record = result.record
+
+    def repo_warnings(dirty: bool | None) -> list[str]:
+        # `incomplete_fields`는 tool_images·kb_snapshot 경고도 함께 낸다. 목록이 비었는지만
+        # 보면 repo_dirty 경고가 아예 없어도 통과한다 — 그래서 해당 경고만 골라낸다.
+        found = runner.incomplete_fields(record.transition(repo_dirty=dirty))
+        return [w for w in found if "repo_dirty" in w]
+
+    assert repo_warnings(False) == []
+    assert repo_warnings(True), "dirty한 run이 경고 없이 비교표에 들어간다"
+    assert repo_warnings(None), "확인 못 한 run이 경고 없이 비교표에 들어간다"
+
+
+def test_manifest_carries_the_repo_dirty_flag(tmp_path: Path) -> None:
+    """기록이 manifest까지 실제로 흘러가는지 본다 — 필드가 빠지면 재현 판단이 불가능하다."""
+    _, trace_path = _run(tmp_path)
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    assert "repo_dirty" in manifest
+    assert manifest["repo_dirty"] in (True, False, None)
 
 
 # --- 2. 재현성 --------------------------------------------------------------
@@ -237,12 +355,76 @@ def test_budget_exhaustion_still_reaches_the_report(tmp_path: Path) -> None:
     assert any("예산 소진" in warning for warning in result.warnings)
 
 
+def test_budget_exhaustion_is_still_recorded_as_budget_exhausted(tmp_path: Path) -> None:
+    """**예산 경로의 대조군.**
+
+    사용자 중단 사유를 새로 만들면서 예산 경로를 같이 망가뜨릴 수 있다. 중단 쪽만
+    보면 그 사실을 모른다 — 예산이 실제로 소진된 run은 여전히 `budget_exhausted`여야
+    한다.
+    """
+    tiny = Budget(input_tokens=1, output_tokens=1, gpu_seconds=0)
+    _, trace_path = _run(tmp_path, budget=tiny)
+
+    assert _run_transition(trace_path)["data"]["reason"] == ReasonCode.BUDGET_EXHAUSTED.value
+
+
 def test_stop_after_retrieval_makes_no_model_calls(tmp_path: Path) -> None:
     result, trace_path = _run(tmp_path, stop_after=int(Stage.RETRIEVAL))
 
     assert _of(_events(trace_path), "model_call") == []
     assert result.record.stopped_after == int(Stage.RETRIEVAL)
     assert result.candidates == ()
+
+
+def test_user_stop_is_not_recorded_as_budget_exhaustion(tmp_path: Path) -> None:
+    """`--stop-after`로 자른 run과 완주한 run의 사유가 달라야 한다.
+
+    실측(2026-08-11): 예산 4,000,000 중 1,067 토큰만 쓴 run이
+    `{"rule":"R-2","reason":"budget_exhausted"}`로 기록됐다. `BudgetExhausted`는 한
+    번도 던져지지 않았다. evaluation.md가 조건 간 비교에서 중단 사유를 지표로 쓰므로,
+    그대로 두면 "예산 초과로 중단됨"이라는 존재하지 않는 결론이 나온다.
+    """
+    stopped = _run_transition(_run(tmp_path, "stopped", stop_after=int(Stage.SCOUT))[1])
+    complete = _run_transition(_run(tmp_path, "complete")[1])
+
+    assert stopped["data"]["reason"] == ReasonCode.USER_STOP_REQUESTED.value
+    assert stopped["data"]["rule"] == "R-2"
+    # 대조군: 완주하면 사유가 없다. 두 쪽을 함께 봐야 "달라졌다"가 성립한다.
+    assert complete["data"]["reason"] is None
+    assert complete["data"]["rule"] == "R-1"
+
+
+def test_dry_run_is_recorded_as_dry_run_not_user_stop(tmp_path: Path) -> None:
+    """`--dry-run`은 사용자가 중단한 것이 아니라 실행 모드다.
+
+    두 상한이 동시에 걸릴 수 있으므로(`--dry-run --stop-after 5`) 사유를 하나로
+    묶으면 어느 쪽이 잘랐는지가 기록에서 사라진다. 이 PR의 주제가 "기록이 사실과
+    다르지 않게 한다"이므로 여기서 뭉개지 않는다.
+    """
+    _, trace_path = _run(tmp_path, dry_run=True)
+
+    assert _run_transition(trace_path)["data"]["reason"] == ReasonCode.DRY_RUN.value
+
+
+def test_the_lower_cap_is_the_one_recorded(tmp_path: Path) -> None:
+    """두 상한이 함께 오면 실제로 자른 쪽이 기록된다.
+
+    `RunSpec.stop_at()`이 단계 수와 사유를 함께 내므로 둘이 갈라질 수 없다 — 따로
+    계산하면 P1과 같은 종류의 결함이 된다.
+    """
+    # dry-run 상한(3)보다 낮게 자르면 사용자 지정이 이긴다.
+    user_wins = _run_transition(
+        _run(tmp_path, "user", dry_run=True, stop_after=int(Stage.SIGNALS))[1]
+    )
+    # dry-run 상한보다 높게 자르면 dry-run이 이긴다.
+    dry_wins = _run_transition(
+        _run(tmp_path, "dry", dry_run=True, stop_after=int(Stage.AUDITOR))[1]
+    )
+
+    assert user_wins["data"]["reason"] == ReasonCode.USER_STOP_REQUESTED.value
+    assert user_wins["stage"] == int(Stage.SIGNALS)
+    assert dry_wins["data"]["reason"] == ReasonCode.DRY_RUN.value
+    assert dry_wins["stage"] == int(Stage.RETRIEVAL)
 
 
 def test_retrieval_cost_is_charged_only_when_retrieval_runs(tmp_path: Path) -> None:
@@ -438,6 +620,112 @@ def test_cli_run_writes_trace_manifest_and_report(
     assert (run_dir / "run_manifest.json").is_file()
     assert (run_dir / "report.md").read_text(encoding="utf-8").startswith("#")
     assert "완주" in capsys.readouterr().out
+
+
+def test_two_runs_on_the_same_day_do_not_overwrite_each_other(tmp_path: Path) -> None:
+    """같은 날 두 번 돌리면 디렉터리도 run_id도 갈라져야 한다.
+
+    수정 전에는 둘 다 `run_YYYYMMDD_0001`이라 두 번째 실행이 첫 번째의
+    trace·manifest·report를 조용히 덮었다. `mkdir(exist_ok=True)` + `"w"` 모드가
+    겹친 결과다. roadmap.md 4차 DoD가 "동일 예산에서 3회 반복"이므로 이 상태로는
+    그 조건이 물리적으로 성립하지 않는다.
+
+    **디렉터리 수와 run_id를 모두 본다.** 하나만 보면 나머지가 조용히 어긋난다.
+    """
+    for seed in (1000, 2000):
+        cli.main(
+            [
+                "run",
+                "--profile",
+                "dev_fake",
+                "--target",
+                str(TARGET),
+                "--seed",
+                str(seed),
+                "--artifacts-root",
+                str(tmp_path),
+            ]
+        )
+
+    run_dirs = sorted(p for p in tmp_path.iterdir() if p.is_dir())
+    assert len(run_dirs) == 2, f"실행 2회인데 디렉터리가 {len(run_dirs)}개다"
+
+    manifests = [
+        json.loads((d / "run_manifest.json").read_text(encoding="utf-8")) for d in run_dirs
+    ]
+    assert len({m["run_id"] for m in manifests}) == 2
+    # 앞 run이 덮이지 않았다는 증거 — 두 seed가 모두 남아 있어야 한다.
+    assert {m["seed"] for m in manifests} == {1000, 2000}
+
+
+def test_run_dir_name_matches_the_run_id_inside_it(tmp_path: Path) -> None:
+    """디렉터리 이름과 `RunRecord.run_id`가 갈라지면 지금 결함보다 나쁘다.
+
+    수정 전에는 `new_run_id`가 cli.run()과 cli.execute()에서 각각 불렸다. 입력이
+    같아 우연히 일치했을 뿐이라, 순번이 들어오는 순간 갈라질 자리였다. 그래서
+    "run_id는 한 번만 만든다"를 여기서 고정한다.
+    """
+    for _ in range(2):
+        cli.main(
+            [
+                "run",
+                "--profile",
+                "dev_fake",
+                "--target",
+                str(TARGET),
+                "--artifacts-root",
+                str(tmp_path),
+            ]
+        )
+
+    for run_dir in (p for p in tmp_path.iterdir() if p.is_dir()):
+        manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["run_id"] == run_dir.name
+
+
+def test_a_directory_claimed_between_scan_and_mkdir_is_not_clobbered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """훑기와 만들기 사이의 틈을 실제로 벌려 본다.
+
+    `_next_sequence`가 고른 번호를 그 사이에 다른 프로세스가 가져간 상황이다. 순차
+    테스트로는 이 경합을 자연스럽게 만들 수 없으므로 훑기 결과를 고정해 재현한다.
+    `mkdir(exist_ok=True)`로 되돌리면 여기서 앞 run의 파일이 사라진다 — 그것이 원래
+    결함의 정확한 모양이다.
+    """
+    monkeypatch.setattr(cli, "_next_sequence", lambda *_: 1)
+    taken = tmp_path / new_run_id(datetime.now(UTC), 1)
+    taken.mkdir()
+    (taken / "trace.jsonl").write_text("먼저 온 run의 것", encoding="utf-8")
+
+    cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET), "--artifacts-root", str(tmp_path)]
+    )
+
+    assert (taken / "trace.jsonl").read_text(encoding="utf-8") == "먼저 온 run의 것"
+    assert (tmp_path / new_run_id(datetime.now(UTC), 2)).is_dir()
+
+
+def test_estimate_does_not_consume_a_run_sequence(tmp_path: Path) -> None:
+    """추정은 산출물을 남기지 않으므로 순번도 소비하면 안 된다.
+
+    소비하면 `estimate`를 몇 번 돌렸는지에 따라 다음 run의 번호가 달라져, 번호가
+    "그날 몇 번째 실행인가"를 더 이상 뜻하지 않는다.
+    """
+    for _ in range(3):
+        cli.main(
+            [
+                "estimate",
+                "--profile",
+                "dev_fake",
+                "--target",
+                str(TARGET),
+                "--artifacts-root",
+                str(tmp_path),
+            ]
+        )
+
+    assert [p for p in tmp_path.iterdir() if p.name.startswith(cli.RUN_DIR_PREFIX)] == []
 
 
 def test_cli_run_can_emit_sarif(tmp_path: Path) -> None:

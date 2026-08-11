@@ -78,6 +78,7 @@ def _run_record() -> RunRecord:
         run_id=RUN_ID,
         condition="B3prime@pipeline",
         repo_commit="0" * 40,
+        repo_dirty=False,
         source_hash="sha256:" + "0" * 64,
         model_checksums={},
         prompt_versions={},
@@ -234,6 +235,7 @@ def test_finish_run_marks_stopped_stage_on_budget_exhaustion() -> None:
         _run_record(),
         finished_at=finished_at,
         stopped_after=int(Stage.CRITIC),
+        reason=ReasonCode.BUDGET_EXHAUSTED,
         store=store,
         trace=trace,
     )
@@ -249,11 +251,63 @@ def test_finish_run_completed_is_comparable() -> None:
         _run_record(),
         finished_at=datetime(2026, 9, 1, 1, tzinfo=UTC),
         stopped_after=None,
+        reason=None,
         store=InMemoryStateStore(),
         trace=_writer(),
     )
 
     assert record.is_complete
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [ReasonCode.BUDGET_EXHAUSTED, ReasonCode.USER_STOP_REQUESTED, ReasonCode.DRY_RUN],
+)
+def test_finish_run_records_the_reason_it_was_given(reason: ReasonCode) -> None:
+    """중단 사유가 호출자에게서 와야 한다.
+
+    이 세 값이 전부 `budget_exhausted`로 기록되던 것이 이 테스트를 만든 계기다.
+    `--stop-after`로 자른 run이 "예산 초과로 중단됨"으로 읽히면 조건 간 비교
+    (evaluation.md §5)가 존재하지 않는 결론을 낸다.
+    """
+    trace = _writer()
+
+    state_machine.finish_run(
+        _run_record(),
+        finished_at=datetime(2026, 9, 1, 1, tzinfo=UTC),
+        stopped_after=int(Stage.CRITIC),
+        reason=reason,
+        store=InMemoryStateStore(),
+        trace=trace,
+    )
+
+    assert trace.events[-1].data["reason"] == reason.value
+
+
+@pytest.mark.parametrize(
+    ("stopped_after", "reason"),
+    [
+        (int(Stage.CRITIC), None),
+        (None, ReasonCode.USER_STOP_REQUESTED),
+    ],
+)
+def test_finish_run_rejects_a_half_filled_stop(
+    stopped_after: int | None, reason: ReasonCode | None
+) -> None:
+    """단계와 사유는 함께 채워지거나 함께 비어야 한다.
+
+    이번 결함이 정확히 두 값이 갈라진 것이므로 불변식으로 고정한다 — 한쪽만 넘기는
+    호출부가 생기면 여기서 터진다.
+    """
+    with pytest.raises(ValueError, match="stopped_after"):
+        state_machine.finish_run(
+            _run_record(),
+            finished_at=datetime(2026, 9, 1, 1, tzinfo=UTC),
+            stopped_after=stopped_after,
+            reason=reason,
+            store=InMemoryStateStore(),
+            trace=_writer(),
+        )
 
 
 def test_queue_is_fifo_and_bounded() -> None:
