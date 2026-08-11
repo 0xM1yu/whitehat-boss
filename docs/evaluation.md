@@ -111,7 +111,9 @@
 
 ## 6. 실행 기록
 
-모든 run은 `RunRecord`([agent-contracts.md](agent-contracts.md) §3)를 남긴다. 최소 항목: repo commit/source hash, model·tokenizer·quantization checksum, prompt·agent spec 버전, tool/container image digest, budget·threshold, random seed, KB 스냅샷 버전.
+모든 run은 `RunRecord`([agent-contracts.md](agent-contracts.md) §3)를 남긴다. 최소 항목: repo commit/source hash, **하네스 저장소의 dirty 여부**, model·tokenizer·quantization checksum, prompt·agent spec 버전, tool/container image digest, budget·threshold, random seed, KB 스냅샷 버전.
+
+repo commit만으로는 하네스 자신의 미커밋 변경을 잡지 못한다 — source hash는 *분석 대상*만 본다. 설정을 고친 채로 돈 run은 commit이 같아도 재현되지 않으므로 dirty 여부가 최소 항목이다.
 
 기록이 불완전한 run의 결과는 비교표에 넣지 않는다.
 
