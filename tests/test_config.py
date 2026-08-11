@@ -55,6 +55,7 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         run_id="run_20260901_0001",
         condition="B3prime@pipeline",
         repo_commit="0" * 40,
+        repo_dirty=False,
         source_hash=ZERO_DIGEST,
         model_checksums=config.model_checksums(),
         prompt_versions=config.prompt_versions(),
