@@ -95,8 +95,9 @@ class RunContext:
         `ledger.charge(stage=)`가 단계를 요구한다. 단계 없이 남기면 "3단계 적중률" 같은
         질문에 답할 수 없다.
 
-        ponytail: 러너가 순차 실행이라 "마지막에 진입한 단계"로 충분하다.
-        단계를 동시에 돌리게 되면 콜백에 단계를 명시적으로 실어 보내야 한다.
+        v1 전제: 러너가 순차 실행이라 "마지막에 진입한 단계"로 충분하다(계획 §5.1
+        "동시성 없음이 v1 전제다" — `trace.py`도 같은 전제 위에 있다). 단계를 동시에
+        돌리게 되면 콜백에 단계를 명시적으로 실어 보내야 한다.
         """
         self.current_stage = stage
         return self.trace.stage_span(stage, monotonic_ms=self.monotonic_ms)
