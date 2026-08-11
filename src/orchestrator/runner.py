@@ -379,8 +379,12 @@ def incomplete_fields(record: RunRecord) -> list[str]:
     if record.repo_dirty is not False:
         # True("dirty했다")와 None("확인 못 함") 둘 다 경고 대상이다. 어느 쪽이든 이 run을
         # repo_commit으로 재현할 수 있다고 말할 수 없다.
-        state = "미커밋 변경이 있었다" if record.repo_dirty else "확인하지 못했다"
-        warnings.append(f"repo_dirty: 하네스 저장소를 {state}. 모델 비교표에서 제외한다")
+        state = (
+            "하네스 저장소에 미커밋 변경이 있었다"
+            if record.repo_dirty
+            else "하네스 저장소 상태를 확인하지 못했다"
+        )
+        warnings.append(f"repo_dirty: {state}. 모델 비교표에서 제외한다")
     return warnings
 
 
@@ -416,9 +420,10 @@ def _repo_state(repo_root: Path = REPO_ROOT) -> tuple[str, bool | None, list[str
     status, status_warnings = _git_line(repo_root, "status", "--porcelain")
     if status is None:
         return commit, None, [f"저장소 상태를 확인하지 못했다: {status_warnings[0]}"]
-    if status:
-        return commit, True, ["하네스 저장소에 미커밋 변경이 있다 (repo_commit만으로 재현 불가)"]
-    return commit, False, []
+    # dirty는 읽기 실패가 아니라 사실이므로 여기서 경고하지 않는다. "이 run은 비교표에
+    # 넣을 수 없다"는 판단은 `incomplete_fields`가 한 곳에서 내린다 — 양쪽이 다 경고하면
+    # 같은 사실이 두 줄로 나와 진짜 문제가 묻힌다.
+    return commit, bool(status), []
 
 
 def _git_line(repo_root: Path, *args: str) -> tuple[str | None, list[str]]:
