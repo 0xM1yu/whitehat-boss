@@ -168,12 +168,13 @@ def test_clean_repo_is_recorded_as_not_dirty(tmp_path: Path) -> None:
     assert warnings == []
 
 
-def test_dirty_repo_is_recorded_and_warned_about(tmp_path: Path) -> None:
+def test_dirty_repo_is_recorded(tmp_path: Path) -> None:
     """실측(2026-08-11): config/models.yaml·profiles.yaml을 고친 상태로 세 run이 돌았다.
 
-    모델도 엔드포인트도 바뀐 실행인데 manifest만 보면 커밋이 그대로라 재현 가능해
-    보였다. evaluation.md §6이 "기록이 불완전한 run은 비교표에 넣지 않는다"이므로
-    경고 대상이다.
+    모델도 엔드포인트도 바뀐 실행인데 manifest만 보면 커밋이 그대로라 재현 가능해 보였다.
+
+    dirty는 읽기 실패가 아니라 사실이므로 `_repo_state`는 경고하지 않는다 — "비교표에
+    넣을 수 없다"는 판단은 `incomplete_fields`가 하고, 아래 별도 테스트가 그것을 본다.
     """
     repo = _fresh_repo(tmp_path)
     (repo / "a.txt").write_text("changed", encoding="utf-8")
@@ -181,7 +182,7 @@ def test_dirty_repo_is_recorded_and_warned_about(tmp_path: Path) -> None:
     _, dirty, warnings = runner._repo_state(repo)
 
     assert dirty is True
-    assert any("미커밋" in warning for warning in warnings)
+    assert warnings == []
 
 
 def test_untracked_file_also_counts_as_dirty(tmp_path: Path) -> None:
