@@ -72,6 +72,7 @@ def _run(**overrides: object) -> RunRecord:
         "run_id": "run_20260901_0001",
         "condition": "B3prime@pipeline",
         "repo_commit": ZERO_COMMIT,
+        "repo_dirty": False,
         "source_hash": ZERO_DIGEST,
         "model_checksums": {"auditor": ZERO_DIGEST, "critic": ZERO_DIGEST},
         "prompt_versions": {"scout": "v1", "auditor": "v1", "critic": "v1"},
