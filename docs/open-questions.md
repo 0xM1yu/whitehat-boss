@@ -11,6 +11,7 @@
 | R3 | 평가 데이터 누출 자동 검증 스크립트 부재 | 코드 리뷰만으로는 보장 불가. 누락 시 모든 비교 결과 무효. **부분 착수**: `eval/leakage/`가 [evaluation.md](evaluation.md) §4 표의 7개 중 2개(hash 교집합, CVE·flag·문제명·patch diff 마스킹)를 구현하고 CI에서 돈다. 남은 5개(Patch Leakage 출처 검사, 중복 데이터 제거, Time Split, Prompt Logging, Reproducibility)는 미구현이므로 **해결 아님** | 2026-09-07 | TBD |
 | R4 | 단일 노드 대역폭 병목의 실제 한계 미파악 | 4조건 실행 시간이 일정을 초과할 수 있음. ConnectX-7 2대 확장 판단의 전제 | 2026-09-05 | TBD |
 | R5 | Zero-day 제보 워크플로의 강제 수단 미정 | 원칙(2인 검증, AI 원문 금지)은 있으나 체크리스트·승인 절차의 운영 방식 미확정 | 2026-09-21 | TBD |
+| R6 | prefix cache 효과를 장부에 잡지 못한다 (`cached_tokens`가 항상 0) | [evaluation.md](evaluation.md) §5.2의 "cache — prefix" 지표가 산출 불가. B3'의 주장 중 하나가 prefix 재사용으로 입력 토큰을 줄인다는 것인데, 그 효과를 재지 못하면 조건 간 비교에서 이점이 0으로 보인다. **어댑터 결함이 아니다**: 하네스를 거치지 않고 raw HTTP로 직접 호출해도 응답의 `prompt_tokens_details`가 null로 온다(2026-08-11 세라프 실측). 서버가 값을 주지 않는 것이다. 세라프는 드라이버 535(CUDA 12.2 상한)라 vLLM 0.19.1까지만 쓸 수 있어 최신 vLLM의 동작을 확인할 방법이 없다. **ATOM(CUDA 13.0)에서 먼저 확인한다** — 낡은 서버 동작에 맞춰 `_usage_from`을 고치면 ATOM에서 오히려 틀린 코드가 된다 | 2026-09-07 | TBD |
 
 ## 2. 설계 결정 대기
 
