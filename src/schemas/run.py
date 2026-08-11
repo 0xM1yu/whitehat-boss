@@ -61,6 +61,14 @@ class RunRecord(UtcModel):
     condition: Annotated[str, Field(pattern=CONDITION_PATTERN)]
     # git commit SHA-1 (40 hex). sha256 digest와 형식이 다르므로 별도 제약이다.
     repo_commit: Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
+    # 하네스 저장소에 미커밋 변경이 있었는가. `repo_commit`은 HEAD만 읽고 `source_hash`는
+    # *분석 대상*만 잡으므로, 그 사이에 "하네스 자신이 dirty했다"는 사실이 빠져 있었다.
+    # 설정을 고친 채로 돈 run이 manifest만 보면 재현 가능해 보이던 것이 이 필드의 계기다.
+    #
+    # `bool`이 아니라 `bool | None`인 것은 의도다. git이 없거나 저장소가 아닐 수 있는데
+    # 그 경우를 `False`로 적으면 "깨끗하다"는 적극적인 거짓말이 된다. `None`이 "확인 못 함"이다.
+    # 기본값을 두지 않는 것도 의도다 — 이 모듈 docstring대로 재현성 항목은 전부 필수 필드다.
+    repo_dirty: bool | None
     # 분석 대상 소스 트리의 해시. repo_commit만으로는 미커밋 변경을 잡지 못한다.
     source_hash: Sha256Digest
     # 역할 → model·tokenizer·quantization checksum

@@ -56,7 +56,7 @@ from src.orchestrator.trace import TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate
 from src.schemas.common import Location
-from src.schemas.enums import ArtifactKind, CapsuleLevel, FindingState
+from src.schemas.enums import ArtifactKind, CapsuleLevel, FindingState, ReasonCode
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.run import RunRecord
@@ -67,6 +67,10 @@ DEFAULT_KB_SNAPSHOT = "kb-none"
 
 # git을 못 읽었을 때의 자리표시자. 40 hex라는 형식은 지키되 경고 대상이다.
 _UNKNOWN_COMMIT = "0" * 40
+
+# 하네스 저장소 루트. `cwd`를 쓰면 저장소 밖에서 CLI를 돌렸을 때 **다른 저장소**의
+# HEAD를 읽는다 — 기록이 조용히 남의 것이 된다.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # 분석 대상이 되는 artifact 종류. config·unknown은 캡슐을 만들지 않는다.
 _ANALYZABLE = (ArtifactKind.SOURCE, ArtifactKind.BINARY, ArtifactKind.FIRMWARE)
@@ -100,10 +104,20 @@ class RunSpec:
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
-    def last_stage(self) -> int:
-        """이번 실행이 도달할 마지막 단계."""
+    def stop_at(self) -> tuple[int, ReasonCode | None]:
+        """도달할 마지막 단계와, 완주가 아니라면 **무엇이 잘랐는지**.
+
+        단계 수와 사유를 한 함수에서 함께 낸다. 따로 계산하면 갈라지고, 갈라진 기록은
+        이 PR이 고치는 결함과 같은 종류가 된다.
+
+        상한이 둘 다 걸릴 수 있으므로(`--dry-run --stop-after 5`) **낮은 쪽이 이긴다.**
+        같으면 `dry_run`을 적는다 — dry-run은 단계 수뿐 아니라 "모델을 부르지 않았다"까지
+        뜻하는 더 강한 진술이라, 동점에서 그쪽을 적는 편이 기록이 더 정확하다.
+        """
         last = MAX_STAGE if self.stop_after is None else min(self.stop_after, MAX_STAGE)
-        return min(last, DRY_RUN_LAST_STAGE) if self.dry_run else last
+        if self.dry_run and DRY_RUN_LAST_STAGE <= last:
+            return DRY_RUN_LAST_STAGE, ReasonCode.DRY_RUN
+        return last, None if last >= MAX_STAGE else ReasonCode.USER_STOP_REQUESTED
 
 
 @dataclass(frozen=True)
@@ -224,13 +238,15 @@ def run_pipeline(
     ctx.record = record
     ctx.store.put(record)
 
-    last = spec.last_stage()
+    last, stop_reason = spec.stop_at()
     state = _Accumulator()
-    stopped_after = None if last >= MAX_STAGE else last
+    stopped_after = None if stop_reason is None else last
     try:
         _analyze(ctx, artifacts, state, last)
     except BudgetExhausted as exc:
-        stopped_after = exc.stage
+        # 예산 소진이 사용자 지정 상한보다 먼저 왔다. 사유를 덮어쓴다 — 실제로 실행을
+        # 끊은 것이 이쪽이다.
+        stopped_after, stop_reason = exc.stage, ReasonCode.BUDGET_EXHAUSTED
         warnings.append(f"{exc.stage}단계에서 예산 소진: {exc.item} {exc.spent}/{exc.limit}")
 
     findings = list(state.findings.values())
@@ -239,6 +255,7 @@ def run_pipeline(
         record,
         finished_at=max(now(), started_at),
         stopped_after=stopped_after,
+        reason=stop_reason,
         store=ctx.store,
         trace=trace,
     )
@@ -327,11 +344,12 @@ def _new_record(
     evaluation.md §6: 기록이 불완전한 run의 결과는 비교표에 넣지 않는다. 그러니 조용히
     비워 두는 대신, 무엇이 왜 비었는지를 호출자가 볼 수 있게 돌려준다.
     """
-    commit, warnings = _repo_commit()
+    commit, dirty, warnings = _repo_state()
     record = RunRecord(
         run_id=run_id,
         condition=spec.condition,
         repo_commit=commit,
+        repo_dirty=dirty,
         source_hash=source_hash(artifacts),
         model_checksums=config.model_checksums(),
         prompt_versions=config.prompt_versions(),
@@ -358,6 +376,11 @@ def incomplete_fields(record: RunRecord) -> list[str]:
         warnings.append(f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다")
     if record.repo_commit == _UNKNOWN_COMMIT:
         warnings.append("repo_commit이 자리표시자다")
+    if record.repo_dirty is not False:
+        # True("dirty했다")와 None("확인 못 함") 둘 다 경고 대상이다. 어느 쪽이든 이 run을
+        # repo_commit으로 재현할 수 있다고 말할 수 없다.
+        state = "미커밋 변경이 있었다" if record.repo_dirty else "확인하지 못했다"
+        warnings.append(f"repo_dirty: 하네스 저장소를 {state}. 모델 비교표에서 제외한다")
     return warnings
 
 
@@ -371,22 +394,47 @@ def source_hash(artifacts: list[Artifact]) -> str:
     return sha256_text("\n".join(lines))
 
 
-def _repo_commit() -> tuple[str, list[str]]:
-    """하네스 저장소의 HEAD. 못 읽으면 자리표시자와 경고를 돌려준다."""
+def _repo_state(repo_root: Path = REPO_ROOT) -> tuple[str, bool | None, list[str]]:
+    """하네스 저장소의 HEAD와 미커밋 변경 여부. 못 읽으면 자리표시자와 경고를 돌려준다.
+
+    `repo_commit`만으로는 **하네스 자신의** 미커밋 변경을 잡지 못한다. `source_hash`는
+    *분석 대상*만 보므로(위 `source_hash` 주석) 그 사이에 구멍이 있었다 — 설정을 고친
+    채로 돈 run이 manifest만 보면 그 커밋으로 재현 가능해 보였다.
+
+    `repo_root`를 인자로 받는 것은 두 가지 때문이다. 첫째, 예전에는 `cwd`를 상속해서
+    저장소 밖에서 CLI를 돌리면 **다른 저장소의** HEAD를 읽었다. 둘째, 그래야 clean/dirty
+    두 경우를 임시 저장소로 실제로 태워 볼 수 있다.
+
+    dirty 판정은 `git status --porcelain`이 한다. 미추적 파일도 출력에 들어가는데,
+    그것도 재현을 깨뜨리므로 dirty로 센다.
+    """
+    commit, warnings = _git_line(repo_root, "rev-parse", "HEAD")
+    if commit is None or len(commit) != 40:
+        detail = warnings or [f"repo_commit 형식이 아니다: {commit!r}"]
+        return _UNKNOWN_COMMIT, None, [f"repo_commit을 읽지 못했다: {detail[0]}"]
+
+    status, status_warnings = _git_line(repo_root, "status", "--porcelain")
+    if status is None:
+        return commit, None, [f"저장소 상태를 확인하지 못했다: {status_warnings[0]}"]
+    if status:
+        return commit, True, ["하네스 저장소에 미커밋 변경이 있다 (repo_commit만으로 재현 불가)"]
+    return commit, False, []
+
+
+def _git_line(repo_root: Path, *args: str) -> tuple[str | None, list[str]]:
+    """`git` 출력 한 덩어리. 실패하면 `None`과 사유를 돌려준다."""
     try:
         completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", *args],
+            cwd=repo_root,
             capture_output=True,
             text=True,
             timeout=10,
             check=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return _UNKNOWN_COMMIT, [f"repo_commit을 읽지 못했다: {type(exc).__name__}"]
-    commit = completed.stdout.strip()
-    if len(commit) != 40:
-        return _UNKNOWN_COMMIT, [f"repo_commit 형식이 아니다: {commit!r}"]
-    return commit, []
+        return None, [f"git {args[0]} 실패: {type(exc).__name__}"]
+    return completed.stdout.strip(), []
 
 
 def write_manifest(run_dir: Path, record: RunRecord) -> Path:

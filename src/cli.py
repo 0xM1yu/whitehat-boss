@@ -24,7 +24,7 @@ from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import CONFIG_DIR, PROMPTED_ROLES, ConfigError, HarnessConfig, load_config
 from src.console import force_utf8
-from src.ids import new_run_id
+from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
     DEFAULT_KB_SNAPSHOT,
@@ -169,15 +169,18 @@ def execute(
     config: HarnessConfig,
     spec: RunSpec,
     *,
+    run_id: str,
     run_dir: Path,
     trace_stream: TextIO | None = None,
 ) -> tuple[RunResult, Deps]:
     """factory가 만든 어댑터를 러너에 넘긴다. 이 접합부가 이 파일의 존재 이유다.
 
     `Deps`를 함께 돌려주는 것은 `estimate`가 StateStore에서 캡슐을 세야 하기 때문이다.
+
+    **`run_id`를 만들지 않고 받는다.** 예전에는 여기와 `run()`이 각각 `new_run_id`를
+    불렀다. 입력이 같아 우연히 일치했을 뿐이라, 순번이 들어오는 순간 디렉터리 이름과
+    `RunRecord.run_id`가 갈라질 자리였다 — 지금 고치는 결함보다 나쁜 상태다.
     """
-    started_at = spec.started_at or datetime.now(UTC)
-    run_id = new_run_id(started_at)
     hook = LateCacheHook()
     usage_hook = LateUsageHook()
     trace = TraceWriter(run_id, stream=trace_stream)
@@ -212,7 +215,12 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     spec = RunSpec(condition=DEFAULT_CONDITION, target=target, dry_run=True)
     with tempfile.TemporaryDirectory() as tmp:
         # 추정은 산출물을 남기지 않는다 — 실행 기록과 섞이면 gc가 무엇을 지울지 흐려진다.
-        result, deps = execute(config, spec, run_dir=Path(tmp) / "estimate")
+        # 그래서 순번도 **소비하지 않는다.** 임시 디렉터리에는 충돌할 상대가 없으므로
+        # `_claim_run_dir`를 거치지 않고 1번을 그대로 쓴다.
+        run_dir = Path(tmp) / "estimate"
+        result, deps = execute(
+            config, spec, run_id=new_run_id(datetime.now(UTC)), run_dir=run_dir
+        )
         capsules = deps.store.query("capsule")
 
     calls = _expected_calls(config, len(capsules))
@@ -258,6 +266,54 @@ def _gpu_estimate(config: HarnessConfig) -> str:
 # --- run --------------------------------------------------------------------
 
 
+def _claim_run_dir(artifacts_root: Path, started_at: datetime) -> tuple[str, Path]:
+    """그날의 다음 순번을 **선점하고** (run_id, 디렉터리)를 돌려준다.
+
+    예전에는 `new_run_id()`에 순번을 넘기지 않아 같은 날 모든 run이 `_0001`이었고,
+    `mkdir(exist_ok=True)`와 trace의 `"w"` 모드가 겹쳐 두 번째 실행이 앞 run의
+    trace·manifest·report를 조용히 덮었다. state.db도 이 디렉터리 안에 있으므로
+    (`adapters/factory.py`) 객체 행까지 같이 덮였다.
+
+    번호를 훑어 max+1을 고르는 것만으로는 부족하다 — 훑기와 만들기 사이에 다른 프로세스가
+    같은 번호를 가져갈 수 있다. 그래서 `exist_ok=False`로 **원자적으로 선점**하고
+    `FileExistsError`면 다음 번호로 재시도한다. 덮어쓰기를 구조적으로 불가능하게 만드는
+    것이 요점이지, 번호를 잘 고르는 것이 아니다.
+
+    ponytail: `gc`가 `_0001`을 지우면 같은 날 새 run이 그 번호를 재사용한다. 그러면
+    회의록·비교표·이슈에 적어 둔 `run_20260811_0001`이 **다른 데이터를 가리키게 된다** —
+    그 run_id로 남긴 결론을 나중에 검증할 수 없고, 틀렸다는 사실조차 드러나지 않는다.
+    지우는 것은 명시적 사용자 조작이고 산출물은 이미 사라진 뒤이므로 v1에서는 막지
+    않는다. 막아야 할 때가 오면 삭제한 번호를 artifacts_root에 기록해 건너뛴다.
+    """
+    for sequence in range(_next_sequence(artifacts_root, started_at), MAX_SEQUENCE + 1):
+        run_id = new_run_id(started_at, sequence)
+        run_dir = artifacts_root / run_id
+        try:
+            run_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue  # 훑은 뒤 누가 가져갔다. 다음 번호로.
+        return run_id, run_dir
+    raise SystemExit(f"하루 상한 {MAX_SEQUENCE}개를 넘겼다: {artifacts_root}")
+
+
+def _next_sequence(artifacts_root: Path, started_at: datetime) -> int:
+    """그날 이미 쓰인 순번의 max+1. 없으면 1.
+
+    1부터 하나씩 시도해도 결과는 같지만, run이 쌓이면 매번 그만큼 mkdir을 시도하게 된다.
+    """
+    prefix = new_run_id(started_at, 0)[:-SEQ_WIDTH]
+    if not artifacts_root.is_dir():
+        return 1
+    used = [
+        int(suffix)
+        for path in artifacts_root.iterdir()
+        if path.is_dir() and path.name.startswith(prefix)
+        for suffix in [path.name[len(prefix) :]]
+        if suffix.isdigit()
+    ]
+    return max(used, default=0) + 1
+
+
 def run(args: argparse.Namespace) -> int:
     config = load_config(args.profile)
     if args.seed is not None:
@@ -266,8 +322,7 @@ def run(args: argparse.Namespace) -> int:
         config = config.transition(seed=args.seed)
 
     started_at = datetime.now(UTC)
-    run_dir = args.artifacts_root / new_run_id(started_at)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     spec = RunSpec(
         condition=args.condition,
         target=args.target,
@@ -277,7 +332,7 @@ def run(args: argparse.Namespace) -> int:
         started_at=started_at,
     )
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
-        result, _ = execute(config, spec, run_dir=run_dir, trace_stream=stream)
+        result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
     report_path = write_report(run_dir, result, args.format)
 
     print(f"run_id: {result.record.run_id}")

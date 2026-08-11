@@ -15,7 +15,12 @@ from threading import Lock
 from src.schemas.common import ID_PREFIXES
 
 # 순번 자릿수. cand_0001 형태 (agent-contracts.md §3 예시).
-_SEQ_WIDTH = 4
+SEQ_WIDTH = 4
+
+# 자릿수가 표현할 수 있는 최대 순번. run_id는 하루 단위로 매겨지므로 이것이 "하루에 돌릴 수
+# 있는 run 수"의 상한이다. 넘으면 자릿수가 늘어 정렬이 깨지므로 조용히 넘기지 않는다
+# (`cli._claim_run_dir`).
+MAX_SEQUENCE = 10**SEQ_WIDTH - 1
 
 
 def sha256_digest(data: bytes) -> str:
@@ -33,7 +38,7 @@ def new_run_id(started_at: datetime, sequence: int = 1) -> str:
     시각에서 만들지만 `started_at`을 인자로 받는다 — 호출부가 시각을 주입해야
     재현 실행에서 같은 run_id를 만들 수 있다.
     """
-    return f"{ID_PREFIXES['run']}{started_at:%Y%m%d}_{sequence:0{_SEQ_WIDTH}d}"
+    return f"{ID_PREFIXES['run']}{started_at:%Y%m%d}_{sequence:0{SEQ_WIDTH}d}"
 
 
 class IdFactory:
@@ -57,7 +62,7 @@ class IdFactory:
         with self._lock:
             seq = self._counters.get(kind, 0) + 1
             self._counters[kind] = seq
-        return f"{prefix}{seq:0{_SEQ_WIDTH}d}"
+        return f"{prefix}{seq:0{SEQ_WIDTH}d}"
 
     def issued(self) -> dict[str, int]:
         """종류별 발급 수. trace의 단계별 산출물 개수와 대조하는 데 쓴다."""

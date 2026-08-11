@@ -319,7 +319,11 @@ def test_pipeline_actually_calls_embedding_and_reranker(
     )
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
         result, _ = cli.execute(
-            load_config("dev_hybrid"), spec, run_dir=run_dir, trace_stream=stream
+            load_config("dev_hybrid"),
+            spec,
+            run_id=run_dir.name,
+            run_dir=run_dir,
+            trace_stream=stream,
         )
 
     assert result.findings, "Auditor까지 도달하지 못했다 — 이 픽스처는 승격되어야 한다"
