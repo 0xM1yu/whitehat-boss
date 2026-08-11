@@ -22,6 +22,7 @@ import pytest
 from src import cli, console
 from src.adapters.factory import build_deps, describe_wiring
 from src.config import PROMPTED_ROLES, load_config
+from src.ids import new_run_id
 from src.orchestrator import runner
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import Stage
@@ -218,11 +219,15 @@ def test_dirty_and_unknown_both_reach_incomplete_fields(tmp_path: Path) -> None:
     result, _ = _run(tmp_path)
     record = result.record
 
-    clean = " ".join(runner.incomplete_fields(record.transition(repo_dirty=False)))
+    def repo_warnings(dirty: bool | None) -> list[str]:
+        # `incomplete_fields`는 tool_images·kb_snapshot 경고도 함께 낸다. 목록이 비었는지만
+        # 보면 repo_dirty 경고가 아예 없어도 통과한다 — 그래서 해당 경고만 골라낸다.
+        found = runner.incomplete_fields(record.transition(repo_dirty=dirty))
+        return [w for w in found if "repo_dirty" in w]
 
-    assert "repo_dirty" not in clean
-    assert runner.incomplete_fields(record.transition(repo_dirty=True))
-    assert runner.incomplete_fields(record.transition(repo_dirty=None))
+    assert repo_warnings(False) == []
+    assert repo_warnings(True), "dirty한 run이 경고 없이 비교표에 들어간다"
+    assert repo_warnings(None), "확인 못 한 run이 경고 없이 비교표에 들어간다"
 
 
 def test_manifest_carries_the_repo_dirty_flag(tmp_path: Path) -> None:
@@ -675,6 +680,29 @@ def test_run_dir_name_matches_the_run_id_inside_it(tmp_path: Path) -> None:
     for run_dir in (p for p in tmp_path.iterdir() if p.is_dir()):
         manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
         assert manifest["run_id"] == run_dir.name
+
+
+def test_a_directory_claimed_between_scan_and_mkdir_is_not_clobbered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """훑기와 만들기 사이의 틈을 실제로 벌려 본다.
+
+    `_next_sequence`가 고른 번호를 그 사이에 다른 프로세스가 가져간 상황이다. 순차
+    테스트로는 이 경합을 자연스럽게 만들 수 없으므로 훑기 결과를 고정해 재현한다.
+    `mkdir(exist_ok=True)`로 되돌리면 여기서 앞 run의 파일이 사라진다 — 그것이 원래
+    결함의 정확한 모양이다.
+    """
+    monkeypatch.setattr(cli, "_next_sequence", lambda *_: 1)
+    taken = tmp_path / new_run_id(datetime.now(UTC), 1)
+    taken.mkdir()
+    (taken / "trace.jsonl").write_text("먼저 온 run의 것", encoding="utf-8")
+
+    cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET), "--artifacts-root", str(tmp_path)]
+    )
+
+    assert (taken / "trace.jsonl").read_text(encoding="utf-8") == "먼저 온 run의 것"
+    assert (tmp_path / new_run_id(datetime.now(UTC), 2)).is_dir()
 
 
 def test_estimate_does_not_consume_a_run_sequence(tmp_path: Path) -> None:
