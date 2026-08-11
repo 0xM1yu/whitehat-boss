@@ -409,14 +409,21 @@ def _repo_state(repo_root: Path = REPO_ROOT) -> tuple[str, bool | None, list[str
     저장소 밖에서 CLI를 돌리면 **다른 저장소의** HEAD를 읽었다. 둘째, 그래야 clean/dirty
     두 경우를 임시 저장소로 실제로 태워 볼 수 있다.
 
-    dirty 판정은 `git status --porcelain`이 한다. 미추적 파일도 출력에 들어가는데,
-    그것도 재현을 깨뜨리므로 dirty로 센다.
+    dirty 판정은 `git status --porcelain`이 한다.
     """
     commit, warnings = _git_line(repo_root, "rev-parse", "HEAD")
     if commit is None or len(commit) != 40:
         detail = warnings or [f"repo_commit 형식이 아니다: {commit!r}"]
         return _UNKNOWN_COMMIT, None, [f"repo_commit을 읽지 못했다: {detail[0]}"]
 
+    # `--porcelain`의 기본 출력에는 미추적 파일이 들어간다. **그대로 둔다** —
+    # `--untracked-files=no`를 붙이고 싶어질 수 있으나 그러면 안 된다. 미추적 파일도
+    # 동작을 바꾼다: `prompts/` 아래 새 버전 디렉터리, `src/` 아래 새 모듈은 커밋되기
+    # 전에도 실행에 영향을 준다. `repo_dirty`가 답하는 질문은 "지금 코드가 HEAD와
+    # 같은가"이고, 미추적 파일이 있으면 같지 않다.
+    #
+    # 판정을 느슨하게 하지 않는 이유는 비대칭 때문이다. 잘못된 dirty는 경고 한 줄을
+    # 낭비하지만, 잘못된 clean은 재현 불가능한 run을 비교표에 넣어 결과를 무효로 만든다.
     status, status_warnings = _git_line(repo_root, "status", "--porcelain")
     if status is None:
         return commit, None, [f"저장소 상태를 확인하지 못했다: {status_warnings[0]}"]

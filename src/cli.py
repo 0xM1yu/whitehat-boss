@@ -279,11 +279,8 @@ def _claim_run_dir(artifacts_root: Path, started_at: datetime) -> tuple[str, Pat
     `FileExistsError`면 다음 번호로 재시도한다. 덮어쓰기를 구조적으로 불가능하게 만드는
     것이 요점이지, 번호를 잘 고르는 것이 아니다.
 
-    ponytail: `gc`가 `_0001`을 지우면 같은 날 새 run이 그 번호를 재사용한다. 그러면
-    회의록·비교표·이슈에 적어 둔 `run_20260811_0001`이 **다른 데이터를 가리키게 된다** —
-    그 run_id로 남긴 결론을 나중에 검증할 수 없고, 틀렸다는 사실조차 드러나지 않는다.
-    지우는 것은 명시적 사용자 조작이고 산출물은 이미 사라진 뒤이므로 v1에서는 막지
-    않는다. 막아야 할 때가 오면 삭제한 번호를 artifacts_root에 기록해 건너뛴다.
+    알려진 한계: `gc`가 지운 번호를 같은 날 새 run이 재사용한다. v1에서는 막지 않는다 —
+    위험과 해법 후보는 open-questions.md R7에 있다.
     """
     for sequence in range(_next_sequence(artifacts_root, started_at), MAX_SEQUENCE + 1):
         run_id = new_run_id(started_at, sequence)
