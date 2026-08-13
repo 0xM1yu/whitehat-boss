@@ -1,6 +1,10 @@
 # run 산출물 (engineering-guide.md §2: artifacts/ 는 git 제외)
 artifacts/
 
+# 이미지 이관용 tar (docker save 산출물). Slurm로 옮길 때 저장소 루트에 생기는데
+# 247MB라 한 번 들어가면 되돌리기 비싸다 (tools/README.md "Slurm 이관")
+harness-tools_*.tar
+
 # state DB (저장소 밖 보관이 기본값이나, 로컬 override 대비)
 *.db
 *.db-journal
