@@ -10,8 +10,10 @@ artifacts/
 .claude/plans/
 
 # Slurm 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
+# 검증 결과의 요약은 STATUS.md §7에 남긴다 — 원문 메모는 공유하지 않는다.
 .claude/slurm/
 slurm_tutorial/
+slurm-2026-08-11-issues.md
 
 # 작업 계획 문서 (PR 산출물이 아니다)
 PR4-plan.md
