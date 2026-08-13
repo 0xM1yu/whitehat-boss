@@ -40,6 +40,42 @@ profiles:
       state_store: memory
     budget: dev_fake
 
+  dev_docker:
+    description: "GPU 없이 실제 도구를 Docker 컨테이너에서 실행. 전 역할 Fake 모델."
+    # 모델은 Fake지만 도구는 진짜다. 2·8단계가 실제 semgrep·clang을 돌리므로
+    # `RunRecord.tool_images`가 채워지고, 그래야 이 run이 비교표에 들어갈 수 있다.
+    # 이미지 준비 절차는 tools/README.md.
+    production: false
+    roles:
+      scout: fake
+      auditor: fake
+      critic: fake
+      embedding: fake
+      reranker: fake
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: dev_fake
+
+  dev_singularity:
+    description: "Docker 데몬 접근이 없는 환경(Slurm 등). 도구는 Singularity로 실행."
+    # <node>에서 /usr/bin/docker는 permission denied이고 singularity 3.7.3만 돈다
+    # (2026-08-13 실측). dev_docker와 다른 점은 런타임 하나뿐이고, cpu_limit·memory_mb는
+    # 이 런타임이 강제하지 못한다(SLURM 소관, container_tools.UNENFORCED).
+    production: false
+    roles:
+      scout: fake
+      auditor: fake
+      critic: fake
+      embedding: fake
+      reranker: fake
+    adapters:
+      retriever: fake
+      tool_runner: singularity
+      state_store: sqlite
+    budget: dev_fake
+
   single_gpu_12g:
     # 12GB 카드 1장 기준 실서빙은 scout 하나만 올린다.
     #

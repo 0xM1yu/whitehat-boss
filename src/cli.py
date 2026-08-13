@@ -88,6 +88,7 @@ def doctor(profile: str, *, artifacts_root: Path, config_dir: Path = CONFIG_DIR)
         ),
     ]
     checks.extend(_check_wiring(config))
+    checks.append(_check_tool_runtime(config))
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_prompts(config))
     checks.append(_check_thresholds())
@@ -107,6 +108,30 @@ def _check_wiring(config: HarnessConfig) -> list[Check]:
         Check(Severity.OK, f"{name:12} → {impl}{_endpoint_note(endpoints.get(name))}")
         for name, impl in describe_wiring(config).items()
     ]
+
+
+def _check_tool_runtime(config: HarnessConfig) -> Check:
+    """도구 런타임이 이 기계에 있는지 본다.
+
+    `describe_wiring()`은 docker와 singularity를 모두 `ContainerToolRunner`로 출력한다 —
+    같은 클래스이기 때문이다. 그래서 **어느 런타임인지는 여기서만 드러난다.**
+
+    `shutil.which`는 PATH를 볼 뿐 접속하지 않으므로 "doctor는 엔드포인트에 접속하지
+    않는다"(모듈 docstring)와 충돌하지 않는다. 런타임이 없으면 첫 도구 실행이 아니라
+    `build_deps()`에서 `SandboxUnavailable`로 끊기는데, 그 사실을 5분 뒤가 아니라
+    지금 아는 편이 낫다.
+    """
+    runtime = config.profile.adapters.tool_runner
+    if runtime == "fake":
+        return Check(Severity.OK, "tool_runner가 Fake라 컨테이너 런타임이 필요 없다")
+    found = shutil.which(runtime)
+    if found is None:
+        return Check(
+            Severity.WARN,
+            f"{runtime} 실행 파일이 PATH에 없다 — 이 프로필로 run하면 SandboxUnavailable로 "
+            "즉시 끊긴다 (준비 절차는 tools/README.md)",
+        )
+    return Check(Severity.OK, f"도구 런타임 {runtime} 확인: {found}")
 
 
 def _endpoint_note(endpoint: str | None) -> str:
