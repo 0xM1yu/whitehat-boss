@@ -31,7 +31,7 @@
 | 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 | T1/T5 |
 | 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** | T2 |
 | 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (PoC 부재로 실행까지 못 감) | 🟡 부분 | T6 |
+| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 | T6 |
 | 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** | T2 |
 
 **6·9단계만 최종본이다.** 둘 다 모델·도구를 쓰지 않는 단계라서 지금 코드가 그대로 최종 구현이다.
@@ -133,7 +133,21 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
 - **clang-tidy만 `-std=c11`이었다.** 같은 `util.c`가 index에서는 통과하고 clang-tidy에서는
   `strnlen` 미선언 오류였다. 모든 clang 도구를 `-std=gnu17`로 통일했다(`_STD_ARG`).
 
-**Seraph 검증은 별도다.** moana-u3의 SIF 변환은 아직이다.
+**Seraph 검증 완료 (2026-08-14, moana-u3).** `dev_singularity` 프로필이 Docker와 같은
+결과를 냈다.
+
+- **SIF 변환에 재빌드가 필요 없었다.** Singularity 3.7.3이 buildx가 만든 tar(manifest
+  list + attestation manifest 포함)를 `docker-archive://`로 그대로 받아 8개 레이어를
+  풀었다(241MB SIF). `DOCKER_BUILDKIT=0` 재빌드도, 레지스트리도 필요 없다.
+- **런타임 추상화가 실측으로 확인됐다.** parser.c에서 발화한 룰·줄 번호가 같고
+  **semgrep fingerprint까지 동일하다** — fingerprint는 룰·파일·코드 문맥에서 나오므로,
+  같다는 것은 같은 룰셋이 같은 코드에 적용됐다는 뜻이다. 격리 옵션도 문법만 바뀌어
+  그대로 걸렸다(`--containall --net --network=none`, `--bind ...:/src:ro`).
+  결과도 같다: 후보 2건 / Finding 2건 / 완주.
+- **`cpu_limit`·`memory_mb`는 SLURM이 대신했다**(`srun --cpus-per-task=2 --mem=4G`).
+  `container_tools.UNENFORCED`에 적힌 대로 이 런타임이 강제하지 못하는 항목이다.
+- `doctor`의 state DB 경로 검사가 양방향으로 동작하는 것도 확인됐다 — `--artifacts-root`를
+  `/data/` 밑에 두면 OK, 저장소 안이면 WARN이다.
 
 ### 🔴 PoV(PoC) 생성
 
@@ -265,6 +279,25 @@ vLLM 0.19.1까지만 쓸 수 있어 최신 동작 확인이 불가능하다. **A
 
 현재 캡슐 대상은 **파일 단위**(`Location(file=...)`, symbol 없음)다.
 1단계 인덱서가 들어오면 심볼 단위로 좁혀지고 **후보 수와 제거율의 분모가 바뀐다.**
+
+### tool_images digest는 런타임 사이에서 비교할 수 없다
+
+같은 이미지인데 값이 다르다(2026-08-14 실측).
+
+```
+Docker      sha256:ccb6a6d9969b255f733496bf508ec141cdc547145b8708a6a2ae1e9d44467f12
+Singularity sha256:88a0fd4ba8f040e2abd03c8ef03c1ae3645436f702689cdff29057ea03779d20
+```
+
+Docker는 이미지 config의 sha256을, Singularity는 SIF 파일 자체의 sha256을 기록하기
+때문이다(`container_tools._image_digest()`). 둘 다 그 런타임 안에서는 이미지를 유일하게
+지시하지만, **서로 비교할 수 있는 값이 아니다.**
+
+→ **"tool_images가 같으면 같은 도구로 돌린 것"이라는 추론은 같은 런타임 안에서만
+성립한다.** 지금은 모든 run을 한 환경에서 돌리므로 문제가 없지만, ATOM(docker)과
+Seraph(singularity)를 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이 다르다고
+다른 이미지인 것도 아니다 — 위 두 값은 같은 이미지다. 해법(예: 양쪽에서 같은 값이
+나오는 이미지 식별자를 쓰기)은 정하지 않았다.
 
 ### Fake 어댑터의 수치는 성능이 아니다
 

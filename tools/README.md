@@ -60,6 +60,12 @@ moana-u3에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자�
 `/usr/local/bin/singularity` 3.7.3만 쓸 수 있다. **무거운 작업은 반드시 컴퓨트 노드에서
 한다 — 로그인 노드에서 빌드하지 않는다.**
 
+**2026-08-14 실측: 레지스트리 없이 `docker-archive://`로 끝났다.** Singularity 3.7.3이
+buildx가 만든 tar(manifest list + attestation manifest 포함)를 그대로 받아 8개 레이어를
+풀었다 — `DOCKER_BUILDKIT=0`으로 다시 빌드할 필요가 없었다. 소요는 `docker save` 247MB,
+`scp` 6초, SIF 변환 몇 분, 결과 SIF 241MB다. 아래 두 경로 중 **tar 경로를 먼저 시도해
+보라** — 레지스트리 계정이 없어도 되고 한 번에 끝난다.
+
 레지스트리를 쓸 수 있는 경우:
 
 ```bash
@@ -78,8 +84,12 @@ scp harness-tools_v1.tar <계정>@seraph:/data/daniel3290/
 ```
 
 ```bash
-srun -p debug_ce_ugrad -w moana-u3 singularity build /data/daniel3290/sif/harness-tools_v1.sif docker-archive:///data/daniel3290/harness-tools_v1.tar
+srun -p debug_ce_ugrad -w moana-u3 --mem=8G singularity build /data/daniel3290/sif/harness-tools_v1.sif docker-archive:///data/daniel3290/harness-tools_v1.tar
 ```
+
+`--mem=8G`는 변환이 레이어를 푸는 동안 쓰는 메모리다. 실행 자체에는 그만큼 필요 없다 —
+도구를 돌릴 때의 상한은 `srun --cpus-per-task=2 --mem=4G`로 줬다(아래 "런타임이 강제하지
+못하는 항목").
 
 SIF 경로 규칙은 `harness-tools:v1` → `{sif_dir}/harness-tools_v1.sif`이고, `sif_dir`은
 환경변수 `HARNESS_SIF_DIR`, 없으면 `{artifacts_root}/sif`다.
