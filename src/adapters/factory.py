@@ -9,10 +9,11 @@
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from src.adapters.container_tools import ContainerToolRunner
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
@@ -49,6 +50,13 @@ class Deps:
     tools: ToolRunner
     store: StateStore
     ids: IdFactory
+    # 컨테이너 이미지 → digest. `RunRecord.tool_images`가 되고, 비어 있으면 그 run은
+    # 비교표에서 제외된다(runner.incomplete_fields).
+    #
+    # `ToolRunner` Protocol에 `images()`를 넣는 것이 최종형이지만 `src/interfaces/` 변경은
+    # 전원 공지 대상이라(roadmap.md §3) 지금은 이 dataclass가 나른다. 두 구현이 이미
+    # `images()`를 갖고 있으므로 승격은 Protocol에 한 줄 추가하는 일이 된다.
+    tool_images: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -107,10 +115,34 @@ _RETRIEVERS: dict[str, _Wiring] = {
     ),
 }
 
+# docker와 singularity는 **같은 클래스**다. 로컬은 docker, Slurm는 Docker 데몬 접근이
+# 없어 singularity, ATOM은 나중에 docker — 계약과 판정은 하나이고 명령 조립만 갈린다.
+# 그래서 `describe_wiring()`의 구현 이름만으로는 둘이 구분되지 않는다. `doctor`가
+# 런타임 이름을 따로 출력하는 이유다(`cli._check_tool_runtime`).
 _TOOL_RUNNERS: dict[str, _Wiring] = {
     "fake": _Wiring(
         FakeToolRunner,
         lambda a: FakeToolRunner(ids=a.ids, run_id=a.run_id, root=a.source_root),
+    ),
+    "docker": _Wiring(
+        ContainerToolRunner,
+        lambda a: ContainerToolRunner(
+            runtime="docker",
+            ids=a.ids,
+            run_id=a.run_id,
+            root=a.source_root,
+            artifacts_root=a.artifacts_root,
+        ),
+    ),
+    "singularity": _Wiring(
+        ContainerToolRunner,
+        lambda a: ContainerToolRunner(
+            runtime="singularity",
+            ids=a.ids,
+            run_id=a.run_id,
+            root=a.source_root,
+            artifacts_root=a.artifacts_root,
+        ),
     ),
 }
 
@@ -164,12 +196,16 @@ def build_deps(
         for role in PROMPTED_ROLES
         if role in config.profile.roles
     }
+    tools = _build("tool_runner", args)
     return Deps(
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
-        tools=_build("tool_runner", args),
+        tools=tools,
         store=_build("state_store", args),
         ids=ids,
+        # 구현에게 묻는다. 여기서 이미지 이름을 조립하면 어댑터가 무엇을 실제로 물렸는지와
+        # 갈라질 수 있고, 갈라진 재현성 기록은 없는 것보다 나쁘다.
+        tool_images=tools.images(),
     )
 
 
