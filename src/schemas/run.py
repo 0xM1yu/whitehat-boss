@@ -77,6 +77,28 @@ class RunRecord(UtcModel):
     prompt_versions: dict[str, NonEmptyStr]
     # 도구 이름 → 컨테이너 이미지 digest
     tool_images: dict[str, Sha256Digest]
+    # 그 run이 **실제로 쓴** 도구 런타임 (`fake` | `docker` | `singularity`).
+    #
+    # 닫힌 집합은 `config.AdapterSelection.tool_runner`가 들고 있다. 여기서 `Literal`을
+    # 다시 적지 않는 것은 `src/schemas/`가 `src/config.py`를 import 할 수 없기 때문이고
+    # (config가 이 모듈을 import 한다), 같은 열거를 두 곳에 두면 갈라진다.
+    #
+    # 필수 필드인 이유는 두 가지다.
+    #
+    # 1. `--tool-runner` 오버라이드가 프로필에 적힌 값과 실제 값을 갈라놓을 수 있다
+    #    (ADR 0005). evaluation.md §2.3 규칙 2("조건 간 차이는 프로필과 단계 활성화만")에
+    #    예외를 여는 것이므로, 기록에 남지 않으면 나중에 비교표에서 이 run들을 구분할 수
+    #    없다.
+    # 2. **오버라이드가 없어도 필요하다.** `tool_images`의 digest는 런타임 사이에서
+    #    비교할 수 없다 — Docker는 이미지 config의 sha256을, Singularity는 SIF 파일의
+    #    sha256을 적는다(STATUS.md §10. 같은 이미지가 다른 값으로 잡힌 실측이 있다).
+    #    런타임이 함께 기록되면 최소한 digest를 런타임별로 묶어서 볼 수는 있다. §10의
+    #    해법은 아니지만 그 전제 조건이다.
+    #
+    # `incomplete_fields()`에는 넣지 않는다. 값이 config에서 항상 유도되어 빌 수가 없고,
+    # `fake`로 돈 run은 이미 `tool_images`가 비어 경고에 걸린다 — 같은 사실을 두 줄로
+    # 내면 진짜 문제가 묻힌다(runner.py의 같은 판단 참조).
+    tool_runner: NonEmptyStr
     budget: Budget
     # 해석된(resolved) 임계값. 예: {"scout_threshold": 0.5}. 값은 config에서 오고
     # 여기에는 그 run에서 실제로 쓰인 값을 박제한다.

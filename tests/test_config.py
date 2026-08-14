@@ -60,6 +60,7 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         model_checksums=config.model_checksums(),
         prompt_versions=config.prompt_versions(),
         tool_images={"semgrep": ZERO_DIGEST},
+        tool_runner=config.profile.adapters.tool_runner,
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,

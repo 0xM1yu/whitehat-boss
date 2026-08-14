@@ -30,6 +30,9 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 │   ├── interfaces/        # ModelClient / Retriever / ToolRunner / StateStore
 │   ├── adapters/          # 위 인터페이스의 구체 구현
 │   ├── schemas/           # Candidate / Evidence / Finding / Decision / RunRecord
+│   ├── bench.py           # §3 체크리스트 측정 (A~E). 접속하는 유일한 경로
+│   ├── bench_metrics.py   # vLLM /metrics 판독 — 이름·파싱·구간 delta
+│   ├── bench_report.py    # 체크리스트 판정 + models.yaml benchmark 반영
 │   └── cli.py             # 표준 CLI 진입점
 ├── tools/                 # 정적분석·build·sanitizer·fuzz 래퍼 (Docker)
 ├── eval/
@@ -110,7 +113,7 @@ class StateStore(Protocol):
 - repository commit과 source hash
 - model·tokenizer·quantization checksum
 - prompt·agent spec version
-- tool/container image digest
+- tool/container image digest**와 그것을 돌린 런타임** (digest는 런타임 사이에서 비교할 수 없다 — STATUS.md §10)
 - resolved budget와 threshold
 - random seed와 sampling 설정
 - KB 스냅샷 버전

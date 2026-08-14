@@ -1,4 +1,4 @@
-"""명령줄 진입점 — `doctor` / `estimate` / `run` / `gc`.
+"""명령줄 진입점 — `doctor` / `estimate` / `run` / `bench` / `gc`.
 
 **어댑터와 오케스트레이터를 잇는 유일한 파일이다.** `src/orchestrator/**`는
 `src/adapters/`를 import 하지 않으므로(engineering-guide.md §3), factory가 만든 `Deps`를
@@ -6,6 +6,9 @@
 
 `doctor`는 **엔드포인트에 접속하지 않는다.** 설정 파일과 저장소 상태만 본다 — GPU가 없는
 팀원도 돌릴 수 있어야 하고, 네트워크 실패와 설정 오류가 같은 오류로 보이면 안 된다.
+
+**`bench`만 접속한다.** 배포 전 검증 체크리스트(model-serving.md §3)는 실제 서버를 재야
+답이 나오므로 그 경계를 여기서 한 번 연다. 나머지 커맨드는 여전히 소켓을 열지 않는다.
 """
 
 import argparse
@@ -18,11 +21,25 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TextIO
+from typing import TextIO, get_args
 
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
-from src.config import CONFIG_DIR, PROMPTED_ROLES, ConfigError, HarnessConfig, load_config
+from src.bench import (
+    DEFAULT_CONCURRENCY,
+    DEFAULT_CONTEXTS,
+    DEFAULT_SAMPLES,
+    BenchApplyError,
+)
+from src.bench_report import apply_benchmarks, pending_updates, run_bench
+from src.config import (
+    CONFIG_DIR,
+    PROMPTED_ROLES,
+    AdapterSelection,
+    ConfigError,
+    HarnessConfig,
+    load_config,
+)
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
@@ -49,9 +66,12 @@ RUN_DIR_PREFIX = "run_"
 # 실측 전 초기값인 임계값 (open-questions D2·D3). 조건 간 비교 전에 확정해야 한다.
 PROVISIONAL_THRESHOLDS = ("scout_threshold", "capsule_expansion_max", "requeue_max")
 
+# `--tool-runner`가 받을 수 있는 값. 목록을 여기 적지 않고 설정 스키마에서 뽑는다 —
+# 배선이 늘었는데 CLI만 모르는 상태(그 반대도)가 생기지 않는다.
+TOOL_RUNNERS: tuple[str, ...] = get_args(AdapterSelection.model_fields["tool_runner"].annotation)
+
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 추정용 근사다(어댑터와 같은 상수).
 _CHARS_PER_TOKEN = 4
-
 
 
 class Severity(StrEnum):
@@ -72,10 +92,46 @@ class Check:
 # --- doctor -----------------------------------------------------------------
 
 
-def doctor(profile: str, *, artifacts_root: Path, config_dir: Path = CONFIG_DIR) -> list[Check]:
+def load_profile(
+    profile: str,
+    *,
+    seed: int | None = None,
+    tool_runner: str | None = None,
+    config_dir: Path = CONFIG_DIR,
+) -> HarnessConfig:
+    """프로필을 읽고 CLI 오버라이드를 적용한다. **오버라이드가 적용되는 유일한 곳이다.**
+
+    `doctor`·`estimate`·`run`·`bench`가 전부 이 함수를 지난다. 갈래마다 따로 적용하면
+    `doctor`가 프로필에 적힌 docker를 검사해 놓고 실제 run은 singularity로 죽는다 —
+    "있다고 했는데 없다"는 진단이 가장 비싼 종류의 거짓말이다.
+
+    `seed`와 `tool_runner`가 같은 경로를 쓰는 것은 두 값의 성격이 같기 때문이다: 둘 다
+    프로필 바깥에서 들어와 **실제로 쓰인 값**이 되고, 그래서 둘 다 `RunRecord`에 박힌다
+    (`seed`, `tool_runner`).
+    """
+    config = load_config(profile, config_dir=config_dir)
+    if seed is not None:
+        # config를 갈아 끼운다 — 어댑터도 같은 seed를 봐야 하고 `RunRecord.seed`는
+        # "실제로 쓰인 값"이어야 한다.
+        config = config.transition(seed=seed)
+    if tool_runner is not None:
+        # `AdapterSelection`은 frozen이라 새 인스턴스를 만들어 갈아 끼운다. `transition()`은
+        # 재검증을 타므로 Literal 밖의 값은 여기서 죽는다(argparse choices와 이중 방어).
+        adapters = config.profile.adapters.transition(tool_runner=tool_runner)
+        config = config.transition(profile=config.profile.transition(adapters=adapters))
+    return config
+
+
+def doctor(
+    profile: str,
+    *,
+    artifacts_root: Path,
+    tool_runner: str | None = None,
+    config_dir: Path = CONFIG_DIR,
+) -> list[Check]:
     """설정과 저장소 상태를 점검한다. 접속은 하지 않는다."""
     try:
-        config = load_config(profile, config_dir=config_dir)
+        config = load_profile(profile, tool_runner=tool_runner, config_dir=config_dir)
     except ConfigError as exc:
         return [Check(Severity.ERROR, f"설정 로드 실패: {exc}")]
 
@@ -88,6 +144,8 @@ def doctor(profile: str, *, artifacts_root: Path, config_dir: Path = CONFIG_DIR)
         ),
     ]
     checks.extend(_check_wiring(config))
+    if tool_runner is not None:
+        checks.append(_override_note(tool_runner))
     checks.append(_check_tool_runtime(config))
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_prompts(config))
@@ -108,6 +166,20 @@ def _check_wiring(config: HarnessConfig) -> list[Check]:
         Check(Severity.OK, f"{name:12} → {impl}{_endpoint_note(endpoints.get(name))}")
         for name, impl in describe_wiring(config).items()
     ]
+
+
+def _override_note(runtime: str) -> Check:
+    """오버라이드가 걸렸다는 사실 자체를 진단에 남긴다.
+
+    남기지 않으면 `doctor` 출력이 프로필 그대로 돈 것과 한 글자도 다르지 않다. 이건
+    evaluation.md §2.3 규칙 2("조건 간 차이는 프로필과 단계 활성화만")에 낸 예외이므로
+    (ADR 0005) 눈에 띄어야 한다. `run`은 같은 사실을 `RunRecord.tool_runner`에 박는다.
+    """
+    return Check(
+        Severity.WARN,
+        f"--tool-runner {runtime} 오버라이드가 걸렸다 — 프로필에 적힌 런타임 대신 이 값을 "
+        "검사한다. 공정성 규칙의 예외이며 run에서는 RunRecord.tool_runner에 남는다 (ADR 0005)",
+    )
 
 
 def _check_tool_runtime(config: HarnessConfig) -> Check:
@@ -243,9 +315,7 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # 그래서 순번도 **소비하지 않는다.** 임시 디렉터리에는 충돌할 상대가 없으므로
         # `_claim_run_dir`를 거치지 않고 1번을 그대로 쓴다.
         run_dir = Path(tmp) / "estimate"
-        result, deps = execute(
-            config, spec, run_id=new_run_id(datetime.now(UTC)), run_dir=run_dir
-        )
+        result, deps = execute(config, spec, run_id=new_run_id(datetime.now(UTC)), run_dir=run_dir)
         capsules = deps.store.query("capsule")
 
     calls = _expected_calls(config, len(capsules))
@@ -337,12 +407,7 @@ def _next_sequence(artifacts_root: Path, started_at: datetime) -> int:
 
 
 def run(args: argparse.Namespace) -> int:
-    config = load_config(args.profile)
-    if args.seed is not None:
-        # config를 갈아 끼운다 — 어댑터도 같은 seed를 봐야 하고 `RunRecord.seed`는
-        # "실제로 쓰인 값"이어야 한다.
-        config = config.transition(seed=args.seed)
-
+    config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
     started_at = datetime.now(UTC)
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     spec = RunSpec(
@@ -362,6 +427,12 @@ def run(args: argparse.Namespace) -> int:
     print(f"리포트: {report_path.name}")
     print(f"후보 {len(result.candidates)}건 / Finding {len(result.findings)}건")
     print(f"완주 여부: {'완주' if result.record.is_complete else '부분 결과'}")
+    if args.tool_runner is not None:
+        print(
+            f"[WARN ] 프로필과 다른 도구 런타임으로 돌았다: {args.tool_runner}. "
+            "evaluation.md §2.3 규칙 2의 예외이며 RunRecord.tool_runner에 남는다 (ADR 0005)",
+            file=sys.stderr,
+        )
     for warning in result.warnings:
         print(f"[WARN ] {warning}", file=sys.stderr)
     return 0
@@ -403,6 +474,41 @@ def _sarif_result(finding: Finding) -> dict:
             "evidenceRefs": list(finding.evidence_refs),
         },
     }
+
+
+# --- bench ------------------------------------------------------------------
+
+
+def bench(args: argparse.Namespace) -> int:
+    """§3 체크리스트를 실제 엔드포인트에 대고 잰다. **접속하는 유일한 커맨드다.**
+
+    종료 코드는 "bench 자신이 제대로 돌았는가"만 뜻한다. 측정 결과의 통과·실패는 JSON의
+    `checklist`에 있다 — 체크리스트 실패를 종료 코드로 옮기면 서버가 없는 개발 장비에서
+    CI가 빨개지고, 그러면 아무도 이 커맨드를 돌리지 않게 된다.
+    """
+    config = load_profile(args.profile, tool_runner=args.tool_runner)
+    report = run_bench(
+        config,
+        roles=args.roles,
+        samples=args.samples,
+        concurrency=args.concurrency,
+        contexts=args.contexts,
+    )
+    code = 0
+    if args.apply:
+        updates, skipped = pending_updates(report)
+        outcome: dict[str, object] = {"skipped": skipped}
+        try:
+            outcome |= apply_benchmarks(
+                CONFIG_DIR / "models.yaml", updates, str(report["measured_at"])
+            )
+        except BenchApplyError as exc:
+            # 부분적으로 망가진 registry가 갱신 실패보다 훨씬 비싸다. 아무것도 쓰지 않았다.
+            outcome |= {"error": str(exc), "updated": {}}
+            code = 1
+        report["apply"] = outcome
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return code
 
 
 # --- gc ---------------------------------------------------------------------
@@ -448,6 +554,9 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--profile", required=True)
     common.add_argument("--artifacts-root", type=Path, default=DEFAULT_ARTIFACTS_ROOT)
+    # 기본값 None = 프로필 존중. 같은 프로필을 Docker가 있는 장비와 Singularity만 되는
+    # 장비에서 함께 돌리기 위한 것이다 (ADR 0005).
+    common.add_argument("--tool-runner", choices=TOOL_RUNNERS, default=None)
 
     subs.add_parser("doctor", parents=[common])
 
@@ -463,6 +572,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
     run_cmd.add_argument("--kb-snapshot", default=DEFAULT_KB_SNAPSHOT)
 
+    bench_cmd = subs.add_parser("bench", parents=[common])
+    bench_cmd.add_argument("--roles", nargs="+", default=None)
+    bench_cmd.add_argument("--contexts", nargs="+", type=int, default=list(DEFAULT_CONTEXTS))
+    bench_cmd.add_argument("--concurrency", nargs="+", type=int, default=list(DEFAULT_CONCURRENCY))
+    bench_cmd.add_argument("--samples", type=int, default=DEFAULT_SAMPLES)
+    bench_cmd.add_argument("--apply", action="store_true")
+
     gc_cmd = subs.add_parser("gc")
     gc_cmd.add_argument("--keep", type=int, default=5)
     gc_cmd.add_argument("--artifacts-root", type=Path, default=DEFAULT_ARTIFACTS_ROOT)
@@ -476,16 +592,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     force_utf8(sys.stderr)
     args = build_parser().parse_args(argv)
     if args.command == "doctor":
-        checks = doctor(args.profile, artifacts_root=args.artifacts_root)
+        checks = doctor(
+            args.profile, artifacts_root=args.artifacts_root, tool_runner=args.tool_runner
+        )
         for check in checks:
             print(check.render())
         return 1 if any(c.severity is Severity.ERROR for c in checks) else 0
     if args.command == "estimate":
-        for line in estimate(load_config(args.profile), args.target):
+        config = load_profile(args.profile, tool_runner=args.tool_runner)
+        for line in estimate(config, args.target):
             print(line)
         return 0
     if args.command == "run":
         return run(args)
+    if args.command == "bench":
+        return bench(args)
     return gc(args)
 
 
