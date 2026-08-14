@@ -15,6 +15,10 @@ ARG SEMGREP_VERSION=1.86.0
 # 기본값은 브랜치지만 해석된 커밋을 이미지 안에 남긴다(/opt/semgrep-rules/COMMIT).
 # 같은 룰셋으로 다시 만들려면 그 값을 --build-arg로 넘긴다 (tools/README.md).
 ARG SEMGREP_RULES_COMMIT=develop
+# 1단계 인덱서가 쓰는 파서. 문법 모듈이 올라가면 같은 코드에서 다른 index가 나올 수 있다.
+ARG TREE_SITTER_VERSION=0.26.0
+ARG TREE_SITTER_C_VERSION=0.24.2
+ARG TREE_SITTER_CPP_VERSION=0.23.4
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -45,6 +49,16 @@ RUN git clone --filter=blob:none https://github.com/semgrep/semgrep-rules /tmp/s
 # 하네스 전용 룰. 공개 룰셋과 함께 로드된다.
 COPY rules/ /opt/semgrep-rules/harness/
 
+# 1단계 인덱서. 버전을 고정하는 이유는 문법 모듈이 올라가면 파싱 결과가 달라질 수 있고,
+# 그러면 같은 코드에서 다른 index가 나와 재현성이 깨지기 때문이다. 이미지 digest가
+# 이 버전을 함께 고정한다.
+RUN pip3 install --no-cache-dir \
+      "tree-sitter==${TREE_SITTER_VERSION}" \
+      "tree-sitter-c==${TREE_SITTER_C_VERSION}" \
+      "tree-sitter-cpp==${TREE_SITTER_CPP_VERSION}"
+
+COPY indexer.py /opt/indexer.py
+
 # 빌드 시점 연막 검사. ASAN 런타임이 빠진 이미지는 8단계에서야 드러나는데, 그때는
 # "재현 실패"와 구분되지 않는다 — 여기서 터지는 편이 훨씬 싸다.
 RUN printf 'int main(void){return 0;}\n' > /tmp/smoke.c \
@@ -54,6 +68,16 @@ RUN printf 'int main(void){return 0;}\n' > /tmp/smoke.c \
  && semgrep scan --config /opt/semgrep-rules/c --config /opt/semgrep-rules/harness \
       --metrics=off --disable-version-check --quiet /tmp/smoke.c \
  && rm -f /tmp/smoke /tmp/smoke.c
+
+# 인덱서 연막 검사. 파서 휠이 이 아키텍처에 없으면 여기서 터진다 — ATOM이 aarch64라
+# x86에서만 되는 휠을 물고 있으면 8단계가 아니라 지금 알아야 한다.
+# 심볼과 호출이 **실제로 잡히는지**까지 본다. import만 확인하면 문법 모듈이 바뀌어
+# 아무것도 못 뽑게 돼도 통과한다.
+RUN printf 'void a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx.c \
+ && python3 /opt/indexer.py --out /tmp/idx.json --root /tmp /tmp/idx.c \
+ && python3 -c "import json,sys; d=json.load(open('/tmp/idx.json')); \
+sys.exit(0 if len(d['symbols'])==2 and len(d['calls'])==1 else 1)" \
+ && rm -f /tmp/idx.c /tmp/idx.json
 
 # 대상은 읽기 전용으로 /src에, 쓰기는 /work에만 일어난다(container_tools 모듈 docstring).
 #
