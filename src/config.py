@@ -98,7 +98,9 @@ class AdapterSelection(HarnessModel):
     # 로드 시점에 실패한다(아래 검증기) — factory에서 KeyError로 터지면 어느 프로필이
     # 잘못됐는지가 스택 아래에 묻힌다.
     retriever: Literal["fake", "hybrid"]
-    tool_runner: Literal["fake"]
+    # docker·singularity는 같은 구현(`ContainerToolRunner`)의 런타임 선택이다. Slurm는
+    # Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-13 실측).
+    tool_runner: Literal["fake", "docker", "singularity"]
     state_store: Literal["memory", "sqlite"]
 
 
