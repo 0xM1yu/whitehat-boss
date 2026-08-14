@@ -33,6 +33,13 @@ Singularity 3.7.3은 `cpu_limit`·`memory_mb`를 강제하지 못한다(HPC에�
 실행은 성공했으므로 `ok=True`이고 `Evidence.error`로 흘리지 않는다 — 자원 상한이 안 걸린
 것은 실행 실패가 아니다. `UNENFORCED`에 적고 tools/README.md가 안내한다.
 
+**반대 방향도 있다: `read_only`는 Singularity에서 끌 수 없다.** SIF가 immutable이라 컨테이너
+루트가 항상 읽기 전용이다. 그래서 `read_only=False`를 주면 Docker에서만 루트 쓰기가 열려
+두 런타임의 결과가 갈린다 — 아래 semgrep 크래시가 정확히 루트 쓰기 금지에서 나온 것이므로
+가상의 위험이 아니다. `DEFAULT_SANDBOX`가 True 고정이라 지금은 드러나지 않고, 끄는 호출부가
+생기면 그때 거절해야 한다(`container_argv` 주석). `UNENFORCED`에 넣지 않은 것은 그쪽이
+"강제하지 **못하는** 항목"이고 이것은 "**끌 수 없는** 항목"이라 뜻이 반대이기 때문이다.
+
 ## asan·poc는 실행까지 성공해야 ok=True다
 
 Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다. 컴파일 성공을
@@ -270,6 +277,19 @@ def container_argv(
             *command.argv,
         ]
         return argv
+    # `read_only`를 보지 않는 것은 의도다. SIF는 immutable squashfs라 컨테이너 루트가
+    # **항상** 읽기 전용이고, 이 런타임에는 그것을 끄는 방법이 없다(`--writable`은 sandbox
+    # 디렉터리와 root 권한을 요구한다). `UNENFORCED`에 넣지 않은 것도 같은 이유다 —
+    # 거기는 "강제하지 못하는 항목"이고 이쪽은 반대로 "끌 수 없는 항목"이다.
+    #
+    # **그래서 `read_only=False`는 두 런타임에서 다르게 동작한다.** Docker는 컨테이너
+    # 루트에 쓰기가 열리고 Singularity는 그대로 막힌다. 이 차이는 결과까지 바꾼다 —
+    # 첫 dev_docker 실행에서 semgrep이 `$HOME/.semgrep`에 쓰려다 죽은 것이 정확히
+    # 루트 쓰기 금지 때문이었다(모듈 docstring). `read_only=False`로 돌리면 Docker에서는
+    # 그 크래시가 사라지고 Singularity에서는 남는다.
+    #
+    # 지금은 `DEFAULT_SANDBOX.read_only`가 True로 고정이라 드러나지 않는다. 끄는 호출부가
+    # 생기면 런타임 간 비교가 성립하지 않으므로 그때 명시적으로 거절해야 한다.
     argv = ["singularity", "exec", "--containall"]
     if not sandbox.network:
         argv += ["--net", "--network=none"]
@@ -554,7 +574,13 @@ class ContainerToolRunner:
         )
 
     def _kill(self, name: str) -> None:
-        """타임아웃 뒤에도 컨테이너는 살아 있다. 방치하면 run마다 하나씩 쌓인다."""
+        """타임아웃 뒤에도 컨테이너는 살아 있다. 방치하면 run마다 하나씩 쌓인다.
+
+        **docker만 정리가 필요하다.** `docker run`은 데몬에 요청을 보내는 클라이언트라
+        클라이언트를 죽여도 컨테이너는 데몬 밑에서 계속 돈다. `singularity exec`는 그
+        프로세스 자신이 컨테이너라 `subprocess` 타임아웃이 프로세스를 죽이면 함께 끝난다 —
+        지울 대상이 남지 않는다.
+        """
         if self.runtime != "docker":
             return
         subprocess.run(
