@@ -1,3 +1,13 @@
 pydantic>=2.7
 pyyaml>=6.0
 pytest>=8.0
+
+# 1단계 인덱서(tools/harness-tools/indexer.py)가 쓰는 파서. **하네스 런타임은 이것을
+# import 하지 않는다** — 인덱서는 컨테이너 안에서 돌고, 이미지가 자기 버전을 따로 고정한다
+# (Dockerfile의 TREE_SITTER_* ARG).
+#
+# 그런데도 여기 두는 것은 `tests/test_indexer.py`를 CI에서 **실제로 돌리기 위해서다.**
+# importorskip으로 두면 조용히 건너뛰고, 그러면 초록불인데 아무것도 검증하지 않는 상태가
+# 된다 — PR #7이 스텁 때문에 겪은 것과 같은 종류다.
+tree-sitter>=0.25
+tree-sitter-c>=0.24

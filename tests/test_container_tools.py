@@ -306,7 +306,9 @@ def test_every_clang_tool_uses_the_same_dialect() -> None:
     오류였다. 그 차이가 코드의 성질인지 우리 플래그의 산물인지 구분할 수 없었다.
     """
     dialects = set()
-    for tool in ("index", "build", "clang-tidy", "asan"):
+    # `index`는 목록에 없다 — tree-sitter 인덱서로 바뀌어 clang을 쓰지 않는다. 남겨 두면
+    # "index도 이 방언을 쓴다"로 읽히는데 사실이 아니고, 파서는 방언 플래그를 받지 않는다.
+    for tool in ("build", "clang-tidy", "asan"):
         for command in plan(
             tool, target="/src/parser.c", compile_sources=["/src/parser.c"], cwd="/src"
         ):
