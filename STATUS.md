@@ -1,6 +1,6 @@
 # 하네스 구현 현황
 
-> 기준일: 2026-08-13 · 대상: `src/` 전체
+> 기준일: 2026-08-14 · 대상: `src/` 전체
 > 갱신 규칙: 단계 상태나 블로커가 바뀌면 이 문서를 먼저 고치고 관련 문서에 반영한다.
 
 ---
@@ -186,20 +186,51 @@ semgrep 룰셋(공개 `semgrep-rules/c` + `tools/harness-tools/rules/`)이 돈�
 
 `OpenAICompatModelClient` / `vllm_retrieval.py` / `HybridRetriever`는 구현돼 있으나 ATOM 검증 전이다.
 
+**잴 도구는 들어왔다 (2026-08-14).** `python -m src.cli bench --profile <name>`이
+model-serving.md §3 체크리스트를 실제 엔드포인트에 대고 재고 JSON 하나로 낸다. 남은 것은
+ATOM에서 돌리는 일이다.
+
+- **접속하는 유일한 커맨드다.** `doctor`는 여전히 소켓을 열지 않는다(`cli.py` 모듈
+  docstring, `test_doctor_never_opens_a_socket`).
+- 측정은 `OpenAICompatModelClient`와 실제 프롬프트 렌더 경로를 **그대로** 쓴다. 운영과
+  다른 코드로 잰 수치는 운영 성능이 아니다.
+- **못 잰 값은 0으로 남기고 사유를 함께 낸다.** `--apply`는 0인 항목을 registry에 쓰지
+  않는다 — `Benchmark.is_measured`가 0 여부로 판정하므로 지어낸 값은 미측정 모델을
+  production 프로필에 올리는 길을 연다.
+- `--apply`는 `models.yaml`의 `benchmark:` 라인만 갈아 끼운다. 그 파일의 주석이 곧
+  문서이므로 통째로 다시 쓰지 않고, 대상 블록을 확실히 찾지 못하면 **아무것도 쓰지 않는다.**
+
+**아직 못 재는 것:** §3의 7번째(NVFP4 Critic 반박 정확도). 고정 반박 표본이 있어야 답이
+나오므로 평가셋 준비 전까지 범위 밖이고, bench 출력에는 `unmeasured(데이터셋 대기)`로 뜬다.
+
+### 🟢 실서빙 프로필이 실제 도구를 쓴다 (2026-08-14)
+
+`local_balanced`·`b1_single`의 `tool_runner`가 `fake` → `docker`가 됐다. 그전에는 두
+프로필로 완주시켜도 `RunRecord.tool_images`가 비어 §8 규칙상 비교표에서 제외됐다 —
+**중간 발표 DoD "B1 조건 1회 완주"를 프로필 정의만으로는 만족시킬 수 없었다.**
+
+`retriever`는 `fake`로 뒀다. hybrid로 올리면 embedding·reranker까지 실서빙이 되어 ATOM에
+모델 5개를 동시에 띄워야 하고, R1 검증의 실패 지점이 그만큼 늘어난다.
+
+`--tool-runner {fake,docker,singularity}`로 프로필의 런타임을 덮어쓸 수 있다. Slurm는
+Docker 데몬 접근이 없어 이것이 없으면 ATOM 투입 전 리허설이 불가능하다. evaluation.md
+§2.3 규칙 2의 예외이므로 **실제로 쓰인 값이 `RunRecord.tool_runner`에 남는다**(ADR 0005).
+
 ---
 
 ## 6. 블로킹 이슈
 
 | # | 항목 | 기한 | 상태 |
 |---|---|---|:-:|
-| **R1** | ATOM(GB10, sm_121) × vLLM 커널 호환성 미검증 | **2026-08-17** | 미착수 |
+| **R1** | ATOM(GB10, sm_121) × vLLM 커널 호환성 미검증 | **2026-08-17** | 계측 도구 완료 · 실측 대기 |
 | **R3** | 누출 검증 7개 중 5개 미구현 (Patch Leakage, 중복 제거, Time Split, Prompt Logging, Reproducibility) | 2026-09-07 | 부분 |
-| **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | 2026-09-07 | ATOM 대기 |
+| **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | 2026-09-07 | 대체 경로 확인(`prompt_tokens_cached_total`) · 장부 반영은 별건 · ATOM 대기 |
 | R4 | 단일 노드 대역폭 병목 미파악 | 2026-09-05 | 미착수 |
 
 ### R1 — 크리티컬 패스
 
-`model-serving.md` §3 체크리스트 7개 전부 미체크:
+`model-serving.md` §3 체크리스트 7개 전부 미체크. **재는 도구는 `cli bench`이고
+(2026-08-14), 각 항목이 bench 출력의 어느 필드로 답해지는지는 그 문서에 적혀 있다.**
 
 ```
 [ ] vLLM × CUDA 13.0 × sm_121 커널 호환성
@@ -211,7 +242,11 @@ semgrep 룰셋(공개 `semgrep-rules/c` + `tools/harness-tools/rules/`)이 돈�
 [ ] NVFP4 양자화 시 Critic 반박 정확도 저하
 ```
 
+마지막 항목만 bench 범위 밖이다 — 고정 반박 표본이 있어야 답이 나온다(평가셋 준비 중).
+
 **이것이 통과하기 전까지 `models.yaml`의 `benchmark` 값은 전부 0이고, 프로덕션 프로필로 올릴 수 없다.**
+`bench --apply`가 그 값을 채우지만 **0인 항목은 쓰지 않는다.** 채워지지 않았다는 것은
+재지 못했다는 뜻이고, 그 상태가 그대로 보여야 한다.
 
 ### R6 — 배경
 
@@ -221,6 +256,36 @@ semgrep 룰셋(공개 `semgrep-rules/c` + `tools/harness-tools/rules/`)이 돈�
 
 **어댑터 결함이 아니다.** 서버가 값을 주지 않는다. Slurm는 드라이버 535(CUDA 12.2 상한)라
 vLLM 0.19.1까지만 쓸 수 있어 최신 동작 확인이 불가능하다. **ATOM(CUDA 13.0)에서 먼저 확인한다.**
+
+**판정은 자동화됐다 (2026-08-14).** `bench`의 D 항목이 장부(`Usage.cached_tokens`)와
+`/metrics`를 함께 보고 판정한다: `both_hit`(정상) · `metrics_only`(위 상황의 재현 —
+어댑터가 아니라 서버가 원인이라는 사실이 출력에 드러난다) · `ledger_only`(이론상 없는
+조합) · `caching_disabled`(`enable_prefix_caching=False` — 서버를 다시 띄워야 한다) ·
+`neither`(켜져 있는데 적중 0 = 진짜 조사 대상) · `no_traffic` / `metrics_unavailable` /
+`metrics_reset`(캐시에 대해 아무 주장도 하지 않음). **카운터는 절대값이 아니라 구간
+delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 절대값에 그대로 섞이기 때문이다.
+
+**대체 경로가 확인됐다 (2026-08-14, Slurm <node> 실측).** `/metrics`의
+`vllm:prompt_tokens_cached_total` 구간 delta가 **응답의 `prompt_tokens_details.cached_tokens`가
+주었어야 할 값과 같은 단위(토큰)**다. 실측 원문에서 응답은 6회 전부 `null`인데 이 카운터는
+1120(질의 1458 중 76.8%)이었다. 즉 R6는 "값을 얻을 수 없다"가 아니라 **"응답 경로로는 못
+얻고 metrics 경로로는 얻는다"**로 성격이 바뀌었다.
+
+- **장부 반영은 별건이다.** 이 값은 **구간 합계라 개별 `model_call`에 배분할 수 없다.**
+  `BudgetLedger`·`_usage_from`은 손대지 않았고, bench 출력의 note에도 그렇게 적힌다.
+- **어느 카운터를 장부로 쓸지는 정하지 않았다.** `prefix_cache_hits_total`은 **local만**,
+  `prompt_tokens_cached_total`은 **local + external**을 센다(HELP 원문). 이번 실측에서
+  둘 다 1120으로 같았지만 그건 external이 0이었기 때문이다 — 값이 같다고 같은 것을 세는
+  것이 아니다. KV connector를 쓰기 시작하면 갈라지므로, bench는
+  `external_prefix_cache_hits_delta`를 함께 실어 **갈라진 시점이 사후에 판별되게** 한다.
+
+**실측이 잡아낸 결함 (같은 날 수정).** bench가 읽던 `vllm:gpu_cache_usage_perc`는
+**존재하지 않는 이름**이었다(`vllm:kv_cache_usage_perc`가 맞다). E(메모리)가 이 버전에서
+항상 빈손이었는데 **스텁이 bench가 기대하는 이름을 그대로 찍어 주어 테스트 26개가 전부
+초록이었다.** 그래서 (1) 이름을 `src/bench_metrics.py`의 `METRIC_NAMES` 상수로 모으고 (2) 스텁을
+실측 원문(`tests/fixtures/metrics/`)으로 교체했으며 (3) `METRIC_NAMES`가 fixture에 전부
+존재하는지 파일별로 대조하는 테스트를 두었다. ATOM 원문이 들어와 이름이 달라지면 그
+테스트가 깨지는 것이 의도다.
 
 ---
 
@@ -251,7 +316,7 @@ vLLM 0.19.1까지만 쓸 수 있어 최신 동작 확인이 불가능하다. **A
 
 | 항목 | 사유 | 해소 조건 |
 |---|---|---|
-| `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity` 프로필 + `harness-tools:v1` 이미지 |
+| `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v1` 이미지 |
 | `kb_snapshot` | KB 미구축 (`kb-none` 자리표시자) | KB 구축 + `--kb-snapshot` |
 | `model_checksums` | registry가 합성 예시값(전부 0) | 실서빙 모델 확정 |
 | GPU-second | 실측 전 | R1 통과 |

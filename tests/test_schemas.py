@@ -77,6 +77,7 @@ def _run(**overrides: object) -> RunRecord:
         "model_checksums": {"auditor": ZERO_DIGEST, "critic": ZERO_DIGEST},
         "prompt_versions": {"scout": "v1", "auditor": "v1", "critic": "v1"},
         "tool_images": {"semgrep": ZERO_DIGEST, "fuzz": ZERO_DIGEST},
+        "tool_runner": "docker",
         "budget": Budget(input_tokens=4_000_000, output_tokens=400_000, gpu_seconds=7200),
         "thresholds": {"scout_threshold": 0.5},
         "seed": 20260901,
