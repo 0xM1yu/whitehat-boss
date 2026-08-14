@@ -39,7 +39,11 @@ _SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".py")
 
 
 class SandboxUnavailable(RuntimeError):
-    """Evidence조차 만들 수 없는 경우. Fake에서는 발생하지 않는다."""
+    """Evidence조차 만들 수 없는 경우. Fake에서는 발생하지 않는다.
+
+    `container_tools.ContainerToolRunner`가 런타임 부재에 이 예외를 쓴다 — 두 어댑터가
+    같은 계약을 지키므로 예외 타입도 하나여야 호출부가 런타임별로 갈라지지 않는다.
+    """
 
 
 class FakeToolRunner:
@@ -87,12 +91,21 @@ class FakeToolRunner:
             return self._run_repro(tool, kind, args, workdir)
         return self._run_generic(tool, kind, args, workdir)
 
+    def images(self) -> dict[str, str]:
+        """컨테이너를 쓰지 않으므로 기록할 이미지가 없다.
+
+        `factory.build_deps()`가 런타임 종류를 따지지 않고 이 메서드를 부른다. 없는 값을
+        비워 두면 `runner.incomplete_fields()`가 "모델 비교표에서 제외한다"를 경고하는데,
+        Fake로 돈 run에서는 그것이 옳은 기록이다.
+        """
+        return {}
+
     # --- 도구별 동작 ---------------------------------------------------------
 
     def _run_static(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:
         hits = sum(
             1
-            for path in _sources(workdir)
+            for path in sources(workdir)
             if _matches_any(path.read_text("utf-8", errors="replace"))
         )
         # 신호 없음은 실패가 아니다(architecture.md §3: "신호 부재로 기록").
@@ -103,7 +116,7 @@ class FakeToolRunner:
 
         `expected_signal` 매칭은 8단계 노드의 책임이다(게이트는 `ok`만 본다).
         """
-        if not _sources(workdir):
+        if not sources(workdir):
             return self.make_evidence(
                 tool, kind, args, ok=False, exit_code=2, error="재현 대상 소스가 없다"
             )
@@ -151,7 +164,7 @@ def _matches_any(text: str) -> bool:
     return any(pattern.search(text) for pattern in _STATIC_PATTERNS)
 
 
-def _sources(workdir: Path) -> list[Path]:
+def sources(workdir: Path) -> list[Path]:
     """정렬된 목록을 돌려준다 — rglob 순서는 파일시스템마다 달라 재현성을 깬다."""
     if workdir.is_file():
         return [workdir]

@@ -90,6 +90,9 @@ class Dependencies(Protocol):
     tools: ToolRunner
     store: StateStore
     ids: IdFactory
+    # 컨테이너 이미지 → digest. 러너가 만들지 않고 받는다 — 무엇이 실제로 실행됐는지는
+    # 어댑터만 알고, 러너가 추측해 채우면 그 기록은 사실과 갈라진다.
+    tool_images: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -234,7 +237,9 @@ def run_pipeline(
         usage_hook.bind(ctx)
 
     artifacts = preprocess.run(ctx, source_root=spec.target)
-    record, warnings = _new_record(spec, config, ctx.run_id, started_at, artifacts)
+    record, warnings = _new_record(
+        spec, config, ctx.run_id, started_at, artifacts, deps.tool_images
+    )
     ctx.record = record
     ctx.store.put(record)
 
@@ -338,6 +343,7 @@ def _new_record(
     run_id: str,
     started_at: datetime,
     artifacts: list[Artifact],
+    tool_images: dict[str, str],
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -353,9 +359,10 @@ def _new_record(
         source_hash=source_hash(artifacts),
         model_checksums=config.model_checksums(),
         prompt_versions=config.prompt_versions(),
-        # 컨테이너 digest는 실제 Docker 실행이 붙어야 생긴다. 없는 값을 지어내면
-        # 재현성 기록 자체가 거짓이 되므로 비워 두고 경고한다.
-        tool_images={},
+        # 어댑터가 실제로 물린 이미지의 digest다. Fake로 돌면 비어 있고, 그때는
+        # `incomplete_fields()`가 경고하는 것이 옳은 동작이다 — 없는 값을 지어내면
+        # 재현성 기록 자체가 거짓이 된다.
+        tool_images=dict(tool_images),
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,
