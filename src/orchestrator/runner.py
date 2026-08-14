@@ -363,6 +363,10 @@ def _new_record(
         # `incomplete_fields()`가 경고하는 것이 옳은 동작이다 — 없는 값을 지어내면
         # 재현성 기록 자체가 거짓이 된다.
         tool_images=dict(tool_images),
+        # 프로필에 적힌 값이 아니라 `--tool-runner` 오버라이드까지 적용된 뒤의 값이다.
+        # cli가 config를 갈아 끼우고 나서 러너를 부르므로(seed와 같은 경로) 여기서
+        # config를 그대로 읽는 것이 곧 "실제로 쓴 런타임"이다.
+        tool_runner=config.profile.adapters.tool_runner,
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,

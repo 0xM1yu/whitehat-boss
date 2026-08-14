@@ -205,6 +205,7 @@ agent:
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
+  "tool_runner": "docker",
   "budget": {"input_tokens": 4000000, "output_tokens": 400000, "gpu_seconds": 7200},
   "thresholds": {"scout_threshold": 0.5},
   "seed": 20260901,
