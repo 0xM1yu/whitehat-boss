@@ -60,7 +60,7 @@ class Benchmark(HarnessModel):
     # **어느 장비에서 쟀는가.** `measured_at`(언제)과 대칭이다.
     #
     # 이 값이 없으면 registry의 수치가 어느 하드웨어 기준인지 기록에서 사라진다. 두 장비가
-    # 모두 지원 대상인 이상(docs/devices.md) `--apply`를 어디서 치느냐에 따라 같은 필드에
+    # 모두 지원 대상인 이상(docs/portability.md) `--apply`를 어디서 치느냐에 따라 같은 필드에
     # 다른 장비의 값이 들어가는데, 그 사실이 남지 않으면 다음 사람이 이 수치로 다른 장비를
     # 예측하게 된다.
     #

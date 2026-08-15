@@ -2,7 +2,7 @@
 
 - 상태: 제안
 - 일자: 2026-08-15
-- 관련: [devices.md](../devices.md), [evaluation.md](../evaluation.md) §2.3·§6, [model-serving.md](../model-serving.md) §3·§5, [decisions/0005](0005-tool-runner-override.md), [STATUS.md](../../STATUS.md) §10
+- 관련: [portability.md](../portability.md), [evaluation.md](../evaluation.md) §2.3·§6, [model-serving.md](../model-serving.md) §3·§5, [decisions/0005](0005-tool-runner-override.md), [STATUS.md](../../STATUS.md) §10
 
 ## 배경
 
@@ -95,4 +95,4 @@ tok/s가 같은 칸에 들어가는데, 그 사실이 남지 않으면 다음 �
   **포트 오프셋**이고, 그때 별도 ADR을 쓴다.
 - 비교표를 만들 때 `device`가 다른 run을 같은 셀에 넣지 않는지 확인하는 검사를 `eval/`에
   넣을지 정한다. `tool_runner`에 대해 0005가 남긴 후속과 같은 항목이다.
-- 라벨 값 집합을 닫을지(예: `devices.md`의 표에서 유도) 재검토한다. 장비가 셋이 되면.
+- 라벨 값 집합을 닫을지(예: `portability.md` §6의 표에서 유도) 재검토한다. 장비가 셋이 되면.

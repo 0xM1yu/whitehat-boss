@@ -404,7 +404,7 @@ def incomplete_fields(record: RunRecord) -> list[str]:
     if record.device is None:
         # `tool_runner`는 여기 없다 — config에서 유도되어 빌 수가 없기 때문이다. 이 값은
         # 사람이 `--device`를 안 주면 실제로 빈다. 두 장비가 모두 지원 대상인 이상
-        # (docs/devices.md) 장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
+        # (docs/portability.md) 장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
         warnings.append(
             "device가 비어 있다 (--device 미지정). 어느 장비에서 돌았는지 기록되지 않아 "
             "모델 비교표에서 제외한다"
