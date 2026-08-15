@@ -96,6 +96,145 @@ def test_call_graph_links_caller_to_callee(sample: Path) -> None:
     assert ("parse_header", "helper") in edges
 
 
+# --- 최상위에 없는 정의 ---------------------------------------------------------
+#
+# 이 절이 없어서 첫 구현이 `root_node.children`(최상위 한 겹)만 보고도 초록불이었다.
+# 픽스처의 함수가 전부 최상위 평면이었기 때문이다 — 실측하니 zlib(.c)에서 28.3%,
+# nlohmann/json(.cpp)에서 70.3%가 그렇게 사라지고 있었다.
+
+
+def test_functions_inside_ifdef_are_found(tmp_path: Path) -> None:
+    """`#ifdef`로 감싼 함수는 `preproc_ifdef` 아래 있다 — 최상위가 아니다.
+
+    zlib에서 사라진 138개 중 57개가 이 경우였다.
+    """
+    (tmp_path / "guard.c").write_text(
+        "#ifdef CONFIG_FEATURE\n"
+        "void guarded(void) { helper(); }\n"
+        "#endif\n"
+        "void plain(void) { guarded(); }\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "guard.c")
+
+    assert [s["name"] for s in index["symbols"]] == ["guarded", "plain"]
+    assert ("guarded", "helper") in {(c["caller"], c["callee"]) for c in index["calls"]}
+
+
+def test_both_branches_of_a_conditional_are_indexed(tmp_path: Path) -> None:
+    """구문만 보는 인덱서는 어느 가지가 컴파일되는지 모른다.
+
+    한쪽을 고르면 그 선택이 근거 없는 추측이다. 둘 다 낸다 — 같은 이름이 두 번
+    나오는 것이 사실이고, 읽는 쪽이 line으로 구별한다.
+    """
+    (tmp_path / "plat.c").write_text(
+        "#if defined(LINUX)\n"
+        "void plat_init(void) { linux_setup(); }\n"
+        "#else\n"
+        "void plat_init(void) { other_setup(); }\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "plat.c")
+
+    assert [s["name"] for s in index["symbols"]] == ["plat_init", "plat_init"]
+    assert {c["callee"] for c in index["calls"]} == {"linux_setup", "other_setup"}
+
+
+def test_parse_error_does_not_suppress_the_symbols_in_that_file(tmp_path: Path) -> None:
+    """전처리되지 않은 매크로가 끼면 tree-sitter가 그 파일을 `has_error`로 표시한다.
+
+    `int ZEXPORT deflate(...)`·`charf *buf` 같은 형태가 그렇고, zlib에서는 43개 중
+    39개(91%)가 이렇게 표시된다 — 평범한 C에서 예외가 아니라 기본값이다. 그러니
+    `parse_errors`에 올랐다는 이유로 그 파일의 심볼을 버리면 안 된다.
+
+    **이 테스트가 덮지 못하는 것**: 매크로가 정의를 `ERROR` 노드 **안으로** 밀어 넣는
+    경우(zlib에서 66건). 그건 앞 문맥이 100줄 넘게 쌓여야 재현되므로 최소 예제로
+    고정할 수 없다. 그쪽은 `_iter_definitions`가 트리 전체를 훑어 잡고, 근거는 실측이다
+    (zlib .c 손실 28.3% → 0.4%).
+    """
+    (tmp_path / "zexport.c").write_text(
+        "int ZEXPORT deflate(int level) {\n"
+        "    return compress2(level);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "zexport.c")
+
+    assert index["parse_errors"] == ["zexport.c"]
+    assert [s["name"] for s in index["symbols"]] == ["deflate"]
+    assert ("deflate", "compress2") in {(c["caller"], c["callee"]) for c in index["calls"]}
+
+
+def test_cpp_class_namespace_and_extern_c_are_indexed(tmp_path: Path) -> None:
+    """`_COMPILE_SUFFIXES`에 `.cc`/`.cpp`가 있으므로 C++ 파일은 실제로 넘어온다.
+
+    클래스 본문(`field_declaration_list`)·namespace(`declaration_list`)·
+    `extern "C"`(`linkage_specification`) 전부 최상위가 아니다. 첫 구현은 이 파일에서
+    심볼 0개·호출 0개를 내면서 exit 0이었다 — 그러면 `Evidence(ok=True)`가 남고
+    E2가 빈 그래프 위에서 열린다.
+    """
+    (tmp_path / "net.cpp").write_text(
+        "namespace net {\n"
+        "class Parser {\n"
+        "public:\n"
+        "    void inline_method(void) { memcpy(a, b, c); }\n"
+        "};\n"
+        "}\n"
+        'extern "C" {\n'
+        "void c_api(void) { strcpy(a, b); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "net.cpp")
+
+    assert {s["name"] for s in index["symbols"]} == {"inline_method", "c_api"}
+    assert {c["callee"] for c in index["calls"]} == {"memcpy", "strcpy"}
+
+
+def test_cpp_qualified_names_are_kept_whole(tmp_path: Path) -> None:
+    """`Parser::parse`를 `parse`로 줄이면 다른 클래스의 같은 이름과 구별되지 않는다.
+
+    `identifier`만 이름으로 받으면 이 정의들이 전부 `None`이 되어 심볼과 호출 간선이
+    함께 사라진다 — nlohmann/json에서 466건이 그 경로로 없어지고 있었다.
+    """
+    (tmp_path / "member.cpp").write_text(
+        "void Parser::parse(const char *s) { memcpy(buf, s, 64); }\n"
+        "Parser::Parser(void) { init(); }\n"
+        "Parser::~Parser(void) { release(); }\n"
+        "bool Parser::operator==(const Parser &o) { return cmp(o); }\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "member.cpp")
+
+    assert [s["name"] for s in index["symbols"]] == [
+        "Parser::parse",
+        "Parser::Parser",
+        "Parser::~Parser",
+        "Parser::operator==",
+    ]
+    assert ("Parser::parse", "memcpy") in {(c["caller"], c["callee"]) for c in index["calls"]}
+
+
+def test_a_definition_inside_a_body_is_not_a_separate_symbol(tmp_path: Path) -> None:
+    """찾은 정의 안으로는 들어가지 않는다.
+
+    중첩 정의까지 심볼로 올리면 그 본문의 호출이 바깥 함수 것으로도, 안쪽 함수 것으로도
+    세어져 같은 간선이 두 번 잡힌다.
+    """
+    (tmp_path / "nested.c").write_text(
+        "void outer(void) {\n"
+        "    void inner(void) { target(); }\n"
+        "    inner();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "nested.c")
+
+    assert [s["name"] for s in index["symbols"]] == ["outer"]
+    assert len([c for c in index["calls"] if c["callee"] == "target"]) == 1
+
+
 # --- 못 잡는 것을 드러내는가 ----------------------------------------------------
 
 
@@ -118,6 +257,24 @@ def test_indirect_calls_are_counted_not_invented(tmp_path: Path) -> None:
     # `fp(2)`는 identifier라 간선이 생기지만 그 대상은 매개변수다. 지금 구현의 한계이며
     # 없는 함수를 가리키는 간선이 나올 수 있다 — 읽는 쪽이 심볼 표와 대조해야 한다.
     assert all(c["caller"] == "run" for c in index["calls"])
+
+
+def test_unnamed_definitions_are_counted_not_silently_dropped(tmp_path: Path) -> None:
+    """정의는 찾았는데 이름을 못 뽑는 경우가 실제로 남아 있다.
+
+    `unresolved_calls`가 호출부의 누락을 세듯 이쪽은 심볼의 누락을 센다. 세지 않으면
+    "이 저장소에는 원래 함수가 그것뿐이다"와 구별되지 않는다.
+    """
+    (tmp_path / "ok.c").write_text("void a(void) { b(); }\n", encoding="utf-8")
+    assert _index(tmp_path, "ok.c")["unresolved_symbols"] == 0
+
+    # 정의 하나가 있는 파일. 심볼로 올라가든 이름을 못 뽑든, **둘 중 하나로는 세어져야**
+    # 한다. 조용히 0/0이 되는 경우가 없다는 것이 이 계약이다.
+    (tmp_path / "gnu.c").write_text(
+        "__attribute__((noinline)) void tagged(void) { work(); }\n", encoding="utf-8"
+    )
+    gnu = _index(tmp_path, "gnu.c")
+    assert len(gnu["symbols"]) + gnu["unresolved_symbols"] >= 1
 
 
 def test_broken_source_is_recorded_not_fatal(tmp_path: Path) -> None:
