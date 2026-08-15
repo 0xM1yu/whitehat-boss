@@ -174,9 +174,13 @@ def index_file(path: Path, relative: str) -> dict:
     symbols: list[dict] = []
     calls: list[dict] = []
     unresolved = 0
+    unnamed = 0
     for node in _iter_definitions(tree.root_node):
         name = _function_name(node)
         if name is None:
+            # 정의는 분명히 있는데 이름을 못 뽑았다. 버리되 **센다** — 그냥 넘기면
+            # "그 파일에 함수가 없다"와 구별되지 않는다(`unresolved_calls`와 같은 이유).
+            unnamed += 1
             continue
         symbols.append(
             {
@@ -194,6 +198,7 @@ def index_file(path: Path, relative: str) -> dict:
         "symbols": symbols,
         "calls": calls,
         "unresolved_calls": unresolved,
+        "unresolved_symbols": unnamed,
         # 깨진 코드도 tree-sitter는 ERROR 노드를 끼워 넣고 계속 파싱한다. 부분 결과가
         # 여전히 쓸모 있으므로 실패로 만들지 않고 사실만 남긴다.
         "has_parse_error": tree.root_node.has_error,
@@ -209,6 +214,7 @@ def build_index(paths: list[Path], root: Path) -> dict:
     symbols: list[dict] = []
     calls: list[dict] = []
     unresolved = 0
+    unnamed = 0
     parse_errors: list[str] = []
     indexed: list[str] = []
     skipped: list[str] = []
@@ -222,6 +228,7 @@ def build_index(paths: list[Path], root: Path) -> dict:
         symbols += result["symbols"]
         calls += result["calls"]
         unresolved += result["unresolved_calls"]
+        unnamed += result["unresolved_symbols"]
         if result["has_parse_error"]:
             parse_errors.append(relative)
         indexed.append(relative)
@@ -235,6 +242,10 @@ def build_index(paths: list[Path], root: Path) -> dict:
         "symbols": sorted(symbols, key=lambda s: (s["file"], s["line_start"], s["name"])),
         "calls": sorted(calls, key=lambda c: (c["file"], c["line"], c["caller"], c["callee"])),
         "unresolved_calls": unresolved,
+        # 정의는 찾았는데 이름을 못 뽑은 수. `unresolved_calls`가 호출부의 누락을
+        # 세듯 이쪽은 **심볼의 누락**을 센다. 둘 다 0이 아니면 그 저장소에서 이
+        # 그래프의 커버리지가 낮다는 뜻이고, E2를 얼마나 믿을지는 그것을 보고 판단한다.
+        "unresolved_symbols": unnamed,
         "parse_errors": sorted(parse_errors),
     }
 
@@ -270,7 +281,8 @@ def main(argv: list[str] | None = None) -> int:
     # 로그에 남는 한 줄. `Evidence.digest`가 로그의 sha256이므로 이 요약이 기록에 들어간다.
     print(
         f"# index: {len(index['symbols'])} symbols, {len(index['calls'])} calls, "
-        f"{index['unresolved_calls']} unresolved, {len(index['files'])} files"
+        f"{index['unresolved_calls']} unresolved calls, "
+        f"{index['unresolved_symbols']} unresolved symbols, {len(index['files'])} files"
     )
     return 0
 
