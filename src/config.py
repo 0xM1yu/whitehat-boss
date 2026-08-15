@@ -245,6 +245,23 @@ class HarnessConfig(HarnessModel):
             if not self.models[key].benchmark.is_measured
         )
 
+    def models_measured_elsewhere(self, device: str) -> dict[str, str]:
+        """benchmark를 **다른 장비에서** 잰 모델 키 → 그 장비.
+
+        `unmeasured_models()`와 같은 계층의 판정이다. 저쪽이 "아직 안 쟀다"를 답한다면
+        이쪽은 "쟀는데 여기가 아니다"를 답한다 — 둘 다 그 수치로 이 장비를 예측하면 안
+        된다는 뜻이지만 대응이 다르다(저쪽은 재야 하고, 이쪽은 알고 쓰면 된다).
+
+        `measured_on`이 `None`인 모델은 세지 않는다. "장비 미상"은 불일치가 아니라
+        모름이고, 그것을 불일치로 보고하면 registry를 채우기 전 상태에서 전 모델이
+        경고에 걸려 진짜 불일치가 묻힌다.
+        """
+        measured = (
+            (key, self.models[key].benchmark.measured_on)
+            for key in set(self.profile.roles.values())
+        )
+        return {key: on for key, on in sorted(measured) if on is not None and on != device}
+
 
 def _read_yaml(path: Path) -> dict[str, object]:
     if not path.exists():

@@ -127,6 +127,7 @@ def doctor(
     *,
     artifacts_root: Path,
     tool_runner: str | None = None,
+    device: str | None = None,
     config_dir: Path = CONFIG_DIR,
 ) -> list[Check]:
     """설정과 저장소 상태를 점검한다. 접속은 하지 않는다."""
@@ -147,6 +148,7 @@ def doctor(
     if tool_runner is not None:
         checks.append(_override_note(tool_runner))
     checks.append(_check_tool_runtime(config))
+    checks.extend(_check_device(config, device))
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_prompts(config))
     checks.append(_check_thresholds())
@@ -208,6 +210,33 @@ def _check_tool_runtime(config: HarnessConfig) -> Check:
 
 def _endpoint_note(endpoint: str | None) -> str:
     return f"   ({endpoint})" if endpoint else ""
+
+
+def _check_device(config: HarnessConfig, device: str | None) -> list[Check]:
+    """registry의 수치가 **지금 이 장비 기준인가**를 본다.
+
+    `--device`가 없으면 아무 말도 하지 않는다. 라벨이 없으면 비교할 대상이 없고, 없는
+    비교를 근거로 경고하면 헛경고가 된다 — 사람이 경고를 안 읽게 만드는 가장 빠른 길이다.
+    장비를 안 준 것이 실제로 문제가 되는 시점은 그 값을 registry에 **쓸 때**이므로, 그
+    경고는 `bench --apply`가 낸다.
+
+    `_check_wiring`이 "선언된 값이 아니라 결정된 구현체를 출력한다"는 것과 같은 정신으로,
+    지금 어느 장비 라벨로 도는지를 진단에 드러낸다.
+    """
+    if device is None:
+        return []
+    elsewhere = config.models_measured_elsewhere(device)
+    checks = [Check(Severity.OK, f"장비 라벨 {device!r} — run 기록과 --apply에 이 값이 남는다")]
+    if elsewhere:
+        pairs = ", ".join(f"{key}({on})" for key, on in elsewhere.items())
+        checks.append(
+            Check(
+                Severity.WARN,
+                f"registry의 benchmark가 다른 장비 기준이다: {pairs} — 현재 장비는 "
+                f"{device!r}다. 이 수치로 이 장비를 예측하지 않는다 (model-serving.md §5)",
+            )
+        )
+    return checks
 
 
 def _check_benchmarks(config: HarnessConfig) -> list[Check]:
@@ -416,6 +445,7 @@ def run(args: argparse.Namespace) -> int:
         stop_after=args.stop_after,
         dry_run=args.dry_run,
         kb_snapshot=args.kb_snapshot,
+        device=args.device,
         started_at=started_at,
     )
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
@@ -496,11 +526,26 @@ def bench(args: argparse.Namespace) -> int:
     )
     code = 0
     if args.apply:
+        if args.device is None:
+            # 여기가 장비를 안 준 것이 실제로 문제가 되는 시점이다. `doctor`는 라벨이
+            # 없으면 조용히 넘어가지만(`_check_device`), registry에 **쓰는** 순간에는
+            # 그 수치가 영구히 장비 미상으로 남는다. stderr로 낸다 — stdout의 JSON이
+            # 파싱 가능해야 한다.
+            print(
+                "[WARN ] --device 없이 --apply 했다. 이 수치가 어느 장비 것인지 "
+                "registry에 기록되지 않는다 (measured_on: null). "
+                "두 장비가 모두 지원 대상이므로 다음 사람이 이 값으로 다른 장비를 "
+                "예측하게 된다 (docs/devices.md)",
+                file=sys.stderr,
+            )
         updates, skipped = pending_updates(report)
         outcome: dict[str, object] = {"skipped": skipped}
         try:
             outcome |= apply_benchmarks(
-                CONFIG_DIR / "models.yaml", updates, str(report["measured_at"])
+                CONFIG_DIR / "models.yaml",
+                updates,
+                str(report["measured_at"]),
+                measured_on=args.device,
             )
         except BenchApplyError as exc:
             # 부분적으로 망가진 registry가 갱신 실패보다 훨씬 비싸다. 아무것도 쓰지 않았다.
@@ -558,12 +603,22 @@ def build_parser() -> argparse.ArgumentParser:
     # 장비에서 함께 돌리기 위한 것이다 (ADR 0005).
     common.add_argument("--tool-runner", choices=TOOL_RUNNERS, default=None)
 
-    subs.add_parser("doctor", parents=[common])
+    # `--device`는 estimate·gc에 달지 않는다. 받아 놓고 아무 데도 안 쓰는 플래그는
+    # "이 실행에 장비가 기록됐다"는 인상만 준다 — `--seed`가 run에만 있는 것과 같은 판단이다.
+    device = argparse.ArgumentParser(add_help=False)
+    device.add_argument(
+        "--device",
+        default=None,
+        help="장비 라벨(예: atom / slurm). run 기록과 --apply에 그대로 남는다. "
+        "호스트명으로 자동으로 채우지 않는다 — 안 주면 '확인 못 함'이다",
+    )
+
+    subs.add_parser("doctor", parents=[common, device])
 
     est = subs.add_parser("estimate", parents=[common])
     est.add_argument("--target", type=Path, required=True)
 
-    run_cmd = subs.add_parser("run", parents=[common])
+    run_cmd = subs.add_parser("run", parents=[common, device])
     run_cmd.add_argument("--target", type=Path, required=True)
     run_cmd.add_argument("--condition", default=DEFAULT_CONDITION)
     run_cmd.add_argument("--seed", type=int)
@@ -572,7 +627,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
     run_cmd.add_argument("--kb-snapshot", default=DEFAULT_KB_SNAPSHOT)
 
-    bench_cmd = subs.add_parser("bench", parents=[common])
+    bench_cmd = subs.add_parser("bench", parents=[common, device])
     bench_cmd.add_argument("--roles", nargs="+", default=None)
     bench_cmd.add_argument("--contexts", nargs="+", type=int, default=list(DEFAULT_CONTEXTS))
     bench_cmd.add_argument("--concurrency", nargs="+", type=int, default=list(DEFAULT_CONCURRENCY))
@@ -593,7 +648,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "doctor":
         checks = doctor(
-            args.profile, artifacts_root=args.artifacts_root, tool_runner=args.tool_runner
+            args.profile,
+            artifacts_root=args.artifacts_root,
+            tool_runner=args.tool_runner,
+            device=args.device,
         )
         for check in checks:
             print(check.render())
