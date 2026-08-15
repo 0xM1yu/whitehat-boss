@@ -104,6 +104,9 @@ class RunSpec:
     stop_after: int | None = None
     dry_run: bool = False
     kb_snapshot: str = DEFAULT_KB_SNAPSHOT
+    # 어느 장비에서 돌리는가. `--device`가 준 라벨 그대로이고, 안 주면 `None`이다.
+    # config에서 오지 않으므로 여기 있다 — `kb_snapshot`과 같은 성격이다.
+    device: str | None = None
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
@@ -367,6 +370,8 @@ def _new_record(
         # cli가 config를 갈아 끼우고 나서 러너를 부르므로(seed와 같은 경로) 여기서
         # config를 그대로 읽는 것이 곧 "실제로 쓴 런타임"이다.
         tool_runner=config.profile.adapters.tool_runner,
+        # config가 아니라 spec에서 온다 — 장비 라벨은 설정이 아니라 이 실행의 사실이다.
+        device=spec.device,
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,
@@ -396,6 +401,14 @@ def incomplete_fields(record: RunRecord) -> list[str]:
             else "하네스 저장소 상태를 확인하지 못했다"
         )
         warnings.append(f"repo_dirty: {state}. 모델 비교표에서 제외한다")
+    if record.device is None:
+        # `tool_runner`는 여기 없다 — config에서 유도되어 빌 수가 없기 때문이다. 이 값은
+        # 사람이 `--device`를 안 주면 실제로 빈다. 두 장비가 모두 지원 대상인 이상
+        # (docs/devices.md) 장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
+        warnings.append(
+            "device가 비어 있다 (--device 미지정). 어느 장비에서 돌았는지 기록되지 않아 "
+            "모델 비교표에서 제외한다"
+        )
     return warnings
 
 

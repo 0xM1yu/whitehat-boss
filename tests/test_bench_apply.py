@@ -234,6 +234,127 @@ def test_every_registry_block_has_the_line_apply_needs(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8").count('measured_on: "slurm"') == len(every_model)
 
 
+# --- --device ----------------------------------------------------------------
+
+
+def _manifest_path(artifacts_root: Path) -> Path:
+    """방금 만들어진 run 하나의 `run_manifest.json`. 이 파일이 곧 RunRecord다."""
+    runs = [path for path in artifacts_root.iterdir() if path.name.startswith("run_")]
+    assert len(runs) == 1, runs
+    return runs[0] / "run_manifest.json"
+
+
+def doctor_lines(*, device: str | None, config_dir: Path = CONFIG_DIR) -> list[str]:
+    checks = cli.doctor(
+        SERVED_PROFILE,
+        artifacts_root=CONFIG_DIR.parent / "artifacts",
+        device=device,
+        config_dir=config_dir,
+    )
+    return [check.render() for check in checks]
+
+
+
+def test_device_is_an_explicit_label_never_the_hostname() -> None:
+    """**자동 채움을 하지 않는다.**
+
+    호스트명으로 메우면 한 필드에 "사람이 붙인 장비 라벨"과 "하네스 프로세스가 돈
+    호스트명"이라는 서로 다른 두 사실이 들어가고, 기록만 보면 구분할 수 없다. 게다가 그
+    둘은 자주 어긋난다 — 로그인 노드에서 하네스를 돌리면 GPU 작업이 한 톨도 일어나지
+    않은 기계 이름이 적힌다. `None`은 `repo_dirty`의 `None`과 같은 뜻이다: 확인 못 함.
+    """
+    assert RunSpec(condition="B1@2x2", target=TARGET).device is None
+    assert RunSpec(condition="B1@2x2", target=TARGET, device="atom").device == "atom"
+
+
+def test_a_run_without_a_device_is_excluded_from_the_comparison_table(tmp_path: Path) -> None:
+    """장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
+
+    `tool_runner`가 `incomplete_fields()`에 없는 것은 config에서 유도되어 빌 수가 없기
+    때문인데, 이 값은 사람이 안 주면 실제로 빈다 — `repo_dirty`와 같은 취급이다.
+    """
+    code = cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET),
+         "--artifacts-root", str(tmp_path)]
+    )
+
+    assert code == 0
+    record = json.loads(_manifest_path(tmp_path).read_text("utf-8"))
+    assert record["device"] is None
+
+
+def test_the_device_label_lands_in_the_run_record(tmp_path: Path) -> None:
+    """대학 학생이 Slurm에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
+
+    `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않는다 — 이
+    필드가 없으면 두 run이 기록만으로는 완전히 같아 보인다.
+    """
+    code = cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET),
+         "--artifacts-root", str(tmp_path), "--device", "slurm"]
+    )
+
+    assert code == 0
+    record = json.loads(_manifest_path(tmp_path).read_text("utf-8"))
+    assert record["device"] == "slurm"
+
+
+def test_doctor_says_nothing_about_the_device_when_none_is_given() -> None:
+    """라벨이 없으면 비교할 대상이 없다. 없는 비교로 경고하면 헛경고가 된다."""
+    checks = doctor_lines(device=None)
+
+    assert not [line for line in checks if "장비" in line]
+
+
+def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -> None:
+    """registry가 ATOM 기준인데 Slurm에서 doctor를 치면 그 사실이 드러나야 한다."""
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+    path = _models_copy(tmp_path)
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+    )
+
+    same = doctor_lines(device="atom", config_dir=tmp_path)
+    other = doctor_lines(device="slurm", config_dir=tmp_path)
+
+    assert not [line for line in same if "다른 장비 기준" in line]
+    mismatch = [line for line in other if "다른 장비 기준" in line]
+    assert len(mismatch) == 1
+    assert "qwen3-4b(atom)" in mismatch[0]
+
+
+def test_an_unmeasured_registry_is_not_reported_as_a_mismatch() -> None:
+    """`measured_on`이 없는 것은 불일치가 아니라 **모름**이다.
+
+    모름을 불일치로 보고하면 registry를 채우기 전 상태에서 전 모델이 경고에 걸려 진짜
+    불일치가 묻힌다.
+    """
+    assert not [line for line in doctor_lines(device="atom") if "다른 장비 기준" in line]
+
+
+def test_apply_without_a_device_warns_at_the_moment_it_matters(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`doctor`는 조용하지만 registry에 **쓰는** 순간에는 영구히 장비 미상으로 남는다.
+
+    경고는 stderr로 간다 — stdout의 JSON이 파싱 가능해야 한다.
+    """
+    cli.main(
+        ["bench", "--profile", "dev_fake", "--artifacts-root", str(tmp_path), "--apply"]
+    )
+    captured = capsys.readouterr()
+
+    assert json.loads(captured.out)["roles"]  # stdout은 여전히 JSON이다
+    assert "--device 없이 --apply" in captured.err
+
+    cli.main(
+        ["bench", "--profile", "dev_fake", "--artifacts-root", str(tmp_path),
+         "--apply", "--device", "atom"]
+    )
+    assert "--device 없이 --apply" not in capsys.readouterr().err
+
+
 # --- CLI ---------------------------------------------------------------------
 
 
