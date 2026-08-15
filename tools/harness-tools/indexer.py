@@ -58,6 +58,31 @@ _GRAMMARS = {
 }
 
 
+# `declarator` 사슬의 끝에 오는 이름 노드. **문법이 정해주는 값이라 실측했다**
+# (tree-sitter-c 0.24.2 / tree-sitter-cpp 0.23.4):
+#
+#     void f(void){}                      identifier          'f'
+#     char *g(void){}                     identifier          'g'
+#     int ZEXPORT deflate(int a){}        identifier          'deflate'
+#     class P{ void m(void){} };          field_identifier    'm'
+#     void P::parse(char *s){}            qualified_identifier 'P::parse'
+#     P::P(void){}                        qualified_identifier 'P::P'
+#     class P{ ~P(void){} };              destructor_name     '~P'
+#     class P{ bool operator==(...){} };  operator_name       'operator=='
+#
+# `identifier` 하나만 보면 C++ 쪽이 전부 `None`이 되고, 호출부가 그것을 `continue`로
+# 넘겨 심볼과 그 함수의 호출 간선이 함께 사라진다.
+_NAME_NODES = frozenset(
+    {
+        "identifier",
+        "field_identifier",
+        "qualified_identifier",
+        "destructor_name",
+        "operator_name",
+    }
+)
+
+
 def _parser_for(suffix: str):
     """확장자에 맞는 파서. 문법 모듈은 이미지에 함께 설치돼 있다."""
     from importlib import import_module
@@ -72,10 +97,12 @@ def _function_name(definition) -> str | None:
     """`function_definition` → 함수 이름.
 
     `declarator` 필드를 타고 내려간다. 반환형이 포인터면 `pointer_declarator`가 한 겹
-    더 끼므로 `identifier`가 나올 때까지 반복한다.
+    더 끼므로 이름 노드가 나올 때까지 반복한다.
+
+    끝에 오는 노드 타입은 문법이 정해주고 C와 C++이 다르다. 실측한 것이 `_NAME_NODES`다.
     """
     node = definition.child_by_field_name("declarator")
-    while node is not None and node.type != "identifier":
+    while node is not None and node.type not in _NAME_NODES:
         node = node.child_by_field_name("declarator")
     return node.text.decode("utf-8", "replace") if node is not None else None
 
