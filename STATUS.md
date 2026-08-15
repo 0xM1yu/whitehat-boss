@@ -364,6 +364,20 @@ Seraph(singularity)를 섞어 쓰기 시작하면 조건 간 비교에서 걸린
 다른 이미지인 것도 아니다 — 위 두 값은 같은 이미지다. 해법(예: 양쪽에서 같은 값이
 나오는 이미지 식별자를 쓰기)은 정하지 않았다.
 
+### 두 장비의 결과를 같은 비교 셀에 넣지 않는다
+
+ATOM(GB10, sm_121)과 Seraph(A2000, sm_86)는 **둘 다 지원 대상이다** — 한쪽으로 이관하는
+것이 아니라 파이프라인 전체가 양쪽에서 각각 완주해야 한다(Seraph는 이식성 요구사항이다).
+
+그래서 같은 프로필·같은 조건으로 돈 두 run이 다른 하드웨어의 결과일 수 있다.
+`model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않으므로 **기록만 놓고
+보면 두 run이 완전히 같아 보인다.** `RunRecord.device`와 `Benchmark.measured_on`이 그 둘을
+가른다([decisions/0006](docs/decisions/0006-record-the-device-a-run-happened-on.md)).
+
+→ 장비별 제약, moana 노드가 고정되지 않는다는 것, 그리고 **아직 한쪽에서 완주하지 못하는
+항목의 대장**은 [docs/devices.md](docs/devices.md)에 모았다. 첫 항목은
+`local_balanced`·`b1_single`이 NVFP4 모델을 써서 Seraph(sm_86)에서 완주 불가라는 것이다.
+
 ### Fake 어댑터의 수치는 성능이 아니다
 
 `FakeModelClient`의 점수 가중치(`0.30 + 0.20 + 0.20 + 0.10`)는

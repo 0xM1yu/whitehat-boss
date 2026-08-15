@@ -14,6 +14,7 @@
 | [agent-contracts.md](agent-contracts.md) | 역할별 실행 계약, 입출력 스키마, 프롬프트 규약 | 하네스/에이전트 담당 |
 | [knowledge-base.md](knowledge-base.md) | KB 6계층, Evidence Store, Hybrid Retrieval, Context Capsule | 검색/데이터 담당 |
 | [model-serving.md](model-serving.md) | Model Registry, 하드웨어 프로필, 양자화·서빙 검증 절차 | 인프라 담당 |
+| [devices.md](devices.md) | 지원 대상 장비(ATOM·Seraph)와 각 장비의 제약, 이식성 결함 대장 | 인프라 담당 |
 | [evaluation.md](evaluation.md) | B1/B1'/B3/B3' 조건, 데이터셋, 누출 방지, 지표 정의 | 평가 담당 |
 | [engineering-guide.md](engineering-guide.md) | 저장소 구조, 4개 인터페이스, 재현성, 관찰 가능성, 개발 규칙 | 개발 전원 |
 | [roadmap.md](roadmap.md) | 마일스톤별 산출물과 완료 기준(DoD), 8-way 트랙 | 전원 |
