@@ -115,8 +115,15 @@ profiles:
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-0.6b
     adapters:
+      # retriever는 fake로 둔다. hybrid로 올리면 embedding·reranker까지 실서빙이 되어
+      # ATOM에 모델 5개를 동시에 띄워야 하고, R1(sm_121 커널 호환성) 검증의 실패 지점이
+      # 그만큼 늘어난다. 검색 경로는 dev_hybrid가 GPU 없이 이미 태우고 있다.
       retriever: fake
-      tool_runner: fake
+      # 도구가 실제로 돌아야 `RunRecord.tool_images`가 채워지고, **그래야 이 run이
+      # 비교표에 들어간다**(STATUS.md §8). fake로 두면 완주시켜도 비교 대상이 아니라
+      # 중간 발표 DoD "B1 조건 1회 완주"를 프로필 정의만으로는 만족시킬 수 없었다.
+      # Docker 데몬이 없는 장비(Slurm)에서는 `--tool-runner singularity`로 갈아끼운다(ADR 0005).
+      tool_runner: docker
       state_store: sqlite
     budget: default
 
@@ -132,7 +139,12 @@ profiles:
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-0.6b
     adapters:
+      # local_balanced와 같은 이유로 fake다. B1과 B3'의 차이가 "모델 구성"이어야 하므로
+      # 검색 경로도 두 조건에서 같아야 한다(evaluation.md §2.3 규칙 2).
       retriever: fake
-      tool_runner: fake
+      # local_balanced와 같은 이유로 docker다 — `RunRecord.tool_images`가 비면 이 run은
+      # 비교표에서 제외되고(STATUS.md §8), 그러면 B1 조건을 완주시켜도 B3'와 대조할 수
+      # 없다. 두 조건이 같은 tool_runner를 써야 도구 차이가 결과 차이로 섞이지 않는다.
+      tool_runner: docker
       state_store: sqlite
     budget: default
