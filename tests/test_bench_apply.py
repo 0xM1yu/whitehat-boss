@@ -12,11 +12,12 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from src import bench_report, cli
 from src.adapters.factory import WIRINGS
 from src.bench import BenchApplyError
-from src.config import CONFIG_DIR, load_config
+from src.config import CONFIG_DIR, Benchmark, load_config
 from src.orchestrator.runner import RunSpec
 
 RUN_ID = "run_20260101_0001"
@@ -159,6 +160,78 @@ def test_applied_registry_still_loads(tmp_path: Path) -> None:
     assert benchmark.is_measured
     assert benchmark.tok_s_single == 12.5
     assert benchmark.measured_at is not None
+
+
+# --- measured_on -------------------------------------------------------------
+
+
+def _loaded(tmp_path: Path, key: str = "qwen3-4b") -> Benchmark:
+    """갱신 결과를 실제 로더로 되읽는다. 문자열 검사만으로는 스키마 통과를 못 본다."""
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+    return load_config(SERVED_PROFILE, config_dir=tmp_path).models[key].benchmark
+
+
+def test_apply_keys_cover_every_benchmark_field() -> None:
+    """`APPLY_KEYS`가 `Benchmark`의 필드와 같은지 본다.
+
+    필드가 하나 늘었는데 `APPLY_KEYS`가 그대로면 그 값은 registry에 영영 안 쓰인다.
+    **이 검사가 생기기 전에는 그 상수를 아무도 읽지 않아** "필드와 같아야 한다"는 주석이
+    지켜지는지 알 방법이 없었다 — 이 저장소가 계속 고쳐 온 "선언과 실제의 괴리"다.
+    """
+    assert set(bench_report.APPLY_KEYS) == set(Benchmark.model_fields)
+
+
+def test_apply_records_which_device_measured_it(tmp_path: Path) -> None:
+    """수치와 함께 **어디서 쟀는지**가 registry에 남는다.
+
+    두 장비가 모두 지원 대상이므로(docs/devices.md) 같은 필드에 다른 하드웨어의 값이
+    들어갈 수 있다. 그 사실이 남지 않으면 다음 사람이 이 수치로 다른 장비를 예측한다.
+    """
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+    )
+
+    benchmark = _loaded(tmp_path)
+    assert benchmark.measured_on == "atom"
+    assert benchmark.measured_at is not None
+
+
+def test_an_unknown_device_is_written_as_null_not_guessed(tmp_path: Path) -> None:
+    """장비를 모른 채 쓴 수치라는 사실 자체가 기록이어야 한다.
+
+    빈 문자열이나 호스트명 추측으로 메우면 그 자리에 거짓이 들어간다 — `repo_dirty`가
+    `bool | None`인 것과 같은 이유다("확인 못 함"을 값과 섞지 않는다).
+    """
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT)
+
+    assert "measured_on: null" in path.read_text(encoding="utf-8")
+    assert _loaded(tmp_path).measured_on is None
+
+
+def test_every_registry_block_has_the_line_apply_needs(tmp_path: Path) -> None:
+    """`_value_line()`은 라인이 없으면 `BenchApplyError`로 죽는다.
+
+    스키마 기본값만으로는 부족하다 — `--apply`는 YAML을 라인 단위로 치환하므로 그 키가
+    파일에 **실제로 적혀 있어야** 한다. 한 모델이라도 빠지면 그 모델의 갱신이 통째로
+    실패하고, 그것을 ATOM 실측 현장에서 알게 되는 것이 최악이다.
+    """
+    path = _models_copy(tmp_path)
+    every_model = yaml.safe_load(path.read_text(encoding="utf-8"))["models"]
+
+    outcome = bench_report.apply_benchmarks(
+        path,
+        {key: {"tok_s_single": 1.0} for key in every_model},
+        MEASURED_AT,
+        measured_on="seraph",
+    )
+
+    assert set(outcome["updated"]) == set(every_model)
+    assert path.read_text(encoding="utf-8").count('measured_on: "seraph"') == len(every_model)
 
 
 # --- CLI ---------------------------------------------------------------------
