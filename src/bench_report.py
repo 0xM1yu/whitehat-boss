@@ -38,8 +38,10 @@ from src.config import PROMPTED_ROLES, HarnessConfig
 from src.orchestrator.prompt_loader import load_prompt
 from src.schemas.enums import Role
 
-# `--apply`가 건드리는 키. `config.Benchmark`의 필드와 같아야 한다.
-APPLY_KEYS = ("measured_at", "tok_s_single", "tok_s_batch32", "mem_gb_ctx8k")
+# `--apply`가 건드리는 키. `config.Benchmark`의 필드와 **같아야 한다** —
+# `tests/test_bench_apply.py::test_apply_keys_cover_every_benchmark_field`가 강제한다.
+# 그 검사가 생기기 전에는 이 상수를 아무도 읽지 않아 주석이 지켜지는지 알 수 없었다.
+APPLY_KEYS = ("measured_at", "measured_on", "tok_s_single", "tok_s_batch32", "mem_gb_ctx8k")
 
 PASS, FAIL, UNMEASURED = "pass", "fail", "unmeasured"
 
@@ -358,18 +360,29 @@ def _fields_for(role: str, value: Mapping[str, object]) -> tuple[dict[str, float
 
 
 def apply_benchmarks(
-    models_path: Path, updates: Mapping[str, Mapping[str, float]], measured_at: str
+    models_path: Path,
+    updates: Mapping[str, Mapping[str, float]],
+    measured_at: str,
+    *,
+    measured_on: str | None = None,
 ) -> dict[str, object]:
     """`benchmark:` 블록의 해당 라인만 갈아 끼운다. 주석·순서·들여쓰기는 보존한다.
 
     전부 찾은 뒤에 한 번에 쓴다. 모델 하나를 고치다 다음에서 실패하면 registry가 절반만
     갱신된 채 남는데, 그 상태는 갱신 실패보다 훨씬 비싸다.
+
+    `measured_on`은 **어느 장비에서 잰 값인가**다. `None`이면 `null`로 적는다 — 장비를
+    모르는 채로 쓴 수치라는 사실 자체가 기록이어야 하고, 빈 문자열이나 호스트명 추측으로
+    메우면 그 자리에 거짓이 들어간다(`config.Benchmark.measured_on` 주석).
     """
     lines = models_path.read_text(encoding="utf-8").splitlines(keepends=True)
     edits: dict[int, str] = {}
     for key, fields in sorted(updates.items()):
         block = _benchmark_block(lines, key)
-        rendered = {"measured_at": f'"{measured_at}"'}
+        rendered = {
+            "measured_at": f'"{measured_at}"',
+            "measured_on": f'"{measured_on}"' if measured_on else "null",
+        }
         rendered |= {name: repr(float(value)) for name, value in fields.items()}
         for name, text in rendered.items():
             index = _value_line(lines, block, name, key)
@@ -386,6 +399,7 @@ def apply_benchmarks(
         "path": str(models_path),
         "updated": {key: dict(fields) for key, fields in updates.items()},
         "measured_at": measured_at,
+        "measured_on": measured_on,
         "lines": len(edits),
     }
 
