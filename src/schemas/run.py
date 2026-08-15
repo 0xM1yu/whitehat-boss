@@ -101,7 +101,7 @@ class RunRecord(UtcModel):
     tool_runner: NonEmptyStr
     # 이 run이 **어느 장비에서** 돌았는가. `--device`가 준 라벨이고, 없으면 `None`이다.
     #
-    # 두 장비가 모두 지원 대상이므로(docs/devices.md) 같은 프로필·같은 조건으로 돈 두 run이
+    # 두 장비가 모두 지원 대상이므로(docs/portability.md) 같은 프로필·같은 조건으로 돈 두 run이
     # 다른 하드웨어의 결과일 수 있다. 그런데 기록에는 그것을 가릴 것이 하나도 없었다 —
     # `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 남지 않는다. 경희대
     # 학생이 Seraph에서 낸 결과와 팀의 ATOM 결과가 비교표에서 섞이는 것을 막는 필드다.

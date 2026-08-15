@@ -10,8 +10,10 @@
 테스트 26개가 초록이었다).
 """
 
+import ast
 import json
 import re
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -450,22 +452,76 @@ def test_main_writes_nothing_when_it_cannot_measure(
     assert not (tmp_path / "out").exists()
 
 
-def test_the_probe_imports_nothing_outside_the_standard_library() -> None:
-    """새 장비에서 `pip install` 없이 돌아야 한다.
+def _imports_of(path: Path) -> set[str]:
+    """그 파일이 import 하는 모듈 이름 전부. 점 있는 이름은 그대로 둔다.
 
-    `src.bench_metrics`가 stdlib만 쓰기 때문에 성립하는 성질이고, 그 모듈에 pydantic이
-    들어오는 순간 조용히 깨진다. requirements.txt를 지우고 돌려 볼 수는 없으므로
-    import 그래프로 본다.
+    `ast.walk`을 쓰는 것이 요점이다 — 함수 안의 들여쓴 import도 잡는다
+    (`probe_metrics.main()`의 `import time`이 실제로 그렇다). 줄 앞을 `startswith`로
+    훑으면 그 형태가 통째로 빠져나간다.
     """
-    import src.bench_metrics
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module)
+    return names
 
-    third_party = {"pydantic", "yaml", "requests", "httpx", "numpy"}
-    import src.console
 
-    for module in (probe_metrics, src.bench_metrics, src.console):
-        names = {
-            line.split()[1].split(".")[0]
-            for line in Path(module.__file__).read_text(encoding="utf-8").splitlines()
-            if line.startswith(("import ", "from ")) and len(line.split()) > 1
-        }
-        assert not (names & third_party), f"{module.__name__}: {names & third_party}"
+def _local_files(root: Path, dotted: str) -> list[Path]:
+    """`src.bench_metrics` → 저장소 안 실제 파일들. 저장소 모듈이 아니면 빈 목록.
+
+    **경로 위의 패키지 `__init__.py`를 전부 담는다.** `src.bench_metrics`를 import 하면
+    `src/__init__.py`도 실행되므로, 그 파일이 비어 있다는 것까지 검사 대상이어야 한다 —
+    프로브가 "클론만 하면 된다"고 주장하는 근거가 정확히 그 파일이다.
+    """
+    parts = dotted.split(".")
+    found: list[Path] = []
+    for depth in range(1, len(parts) + 1):
+        base = root.joinpath(*parts[:depth])
+        if (base / "__init__.py").is_file():
+            found.append(base / "__init__.py")
+        if depth == len(parts) and base.with_suffix(".py").is_file():
+            found.append(base.with_suffix(".py"))
+    return found
+
+
+def test_the_probe_imports_nothing_outside_the_standard_library() -> None:
+    """새 장비에서 **`pip install` 없이** 돌아야 한다. 이 성질의 유일한 자동 방어선이다.
+
+    앞선 판(제3자 패키지 5개 이름을 나열한 거부 목록)은 세 곳이 뚫려 있었다: 목록에 없는
+    패키지, 함수 안의 들여쓴 import, 그리고 **`src/__init__.py`**. 마지막이 특히 나빴다 —
+    프로브가 "저장소를 클론만 하면 된다"고 주장하는 근거가 바로 그 파일이 비어 있다는
+    것인데, 검사가 그 파일을 아예 읽지 않았다.
+
+    그래서 거부 목록을 버리고 **`sys.stdlib_module_names`로 허용 목록**을 쓴다. 그리고
+    모듈 이름을 나열하는 대신 `probe_metrics`에서 시작해 **저장소 안 모듈을 따라간다** —
+    프로브가 새 `src.*` 모듈을 쓰기 시작해도 그 모듈이 자동으로 검사에 들어온다.
+    """
+    root = Path(probe_metrics.__file__).resolve().parents[2]
+    pending = [Path(probe_metrics.__file__)]
+    seen: set[Path] = set()
+    offenders: dict[str, set[str]] = {}
+
+    while pending:
+        path = pending.pop().resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        outside = set()
+        for dotted in _imports_of(path):
+            local = _local_files(root, dotted)
+            if local:
+                pending.extend(local)
+                continue
+            if dotted.split(".")[0] not in sys.stdlib_module_names:
+                outside.add(dotted)
+        if outside:
+            offenders[str(path.relative_to(root))] = outside
+
+    assert not offenders, f"stdlib 밖의 import: {offenders}"
+    # 그물이 실제로 무엇을 훑었는지 고정한다. 그래프가 비면 위 단언이 공허하다.
+    followed = {str(path.relative_to(root)).replace("\\", "/") for path in seen}
+    assert "src/__init__.py" in followed
+    assert "src/bench_metrics.py" in followed
+    assert "src/console.py" in followed

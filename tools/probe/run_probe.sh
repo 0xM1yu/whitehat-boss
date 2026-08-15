@@ -50,6 +50,11 @@ import sys
 
 port = int(sys.argv[1])
 with socket.socket() as probe:
+    # 서버가 bind할 때와 같은 조건으로 본다. 이게 없으면 **직전 run이 남긴 TIME_WAIT
+    # 소켓**을 "사용 중"으로 오판한다 — 프로브 자신의 트래픽이 그런 소켓을 만들므로
+    # (urllib은 매 요청 Connection: close), 같은 포트로 다시 재려면 60초를 기다려야 한다.
+    # 실측 창이 짧은 장비에서 그 오판은 "남의 서버"라는 틀린 결론까지 낸다.
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         probe.bind(("127.0.0.1", port))
     except OSError as exc:

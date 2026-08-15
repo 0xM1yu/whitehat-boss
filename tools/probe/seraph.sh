@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
         --node) NODE="${2:?--node에 노드 이름을 줘라}"; shift 2 ;;
         --out) OUT="${2:?--out에 디렉터리를 줘라}"; shift 2 ;;
         --port) PORT="${2:?--port에 포트를 줘라}"; shift 2 ;;
-        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "[ERROR] 모르는 인자: $1" >&2; exit 2 ;;
     esac
 done

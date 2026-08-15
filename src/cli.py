@@ -535,7 +535,7 @@ def bench(args: argparse.Namespace) -> int:
                 "[WARN ] --device 없이 --apply 했다. 이 수치가 어느 장비 것인지 "
                 "registry에 기록되지 않는다 (measured_on: null). "
                 "두 장비가 모두 지원 대상이므로 다음 사람이 이 값으로 다른 장비를 "
-                "예측하게 된다 (docs/devices.md)",
+                "예측하게 된다 (docs/portability.md)",
                 file=sys.stderr,
             )
         updates, skipped = pending_updates(report)
@@ -609,8 +609,9 @@ def build_parser() -> argparse.ArgumentParser:
     device.add_argument(
         "--device",
         default=None,
-        help="장비 라벨(예: atom / seraph). run 기록과 --apply에 그대로 남는다. "
-        "호스트명으로 자동으로 채우지 않는다 — 안 주면 '확인 못 함'이다",
+        help="이 실행이 돌아간 장비의 라벨. run 기록과 --apply에 그대로 남는다. "
+        "값 집합은 열려 있다(ADR 0006) — 팀이 쓰는 라벨은 docs/portability.md에 있다. "
+        "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다",
     )
 
     subs.add_parser("doctor", parents=[common, device])
