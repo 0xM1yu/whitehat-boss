@@ -3,6 +3,11 @@
 저장소 유지보수용 일회성 스크립트를 둔다. 파이프라인이 실행 중에 의존하는 코드는
 `src/`에, 평가에 쓰는 코드는 `eval/`에 둔다 — 여기 있는 것은 CI와 사람만 부른다.
 
+| 디렉터리 | 내용 |
+| --- | --- |
+| `harness-tools/` | 2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·인덱서). 아래 참조 |
+| `probe/` | vLLM `/metrics` 원문을 두 장비에서 같은 절차로 받는다. 산출물이 그대로 `tests/fixtures/metrics/`의 fixture가 된다 ([probe/README.md](probe/README.md)) |
+
 ## harness-tools 이미지
 
 파이프라인 2단계(Signal Collection)와 8단계(Tool Validation)가 `ContainerToolRunner`를 통해
