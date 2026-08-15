@@ -9,5 +9,11 @@ pytest>=8.0
 # 그런데도 여기 두는 것은 `tests/test_indexer.py`를 CI에서 **실제로 돌리기 위해서다.**
 # importorskip으로 두면 조용히 건너뛰고, 그러면 초록불인데 아무것도 검증하지 않는 상태가
 # 된다 — PR #7이 스텁 때문에 겪은 것과 같은 종류다.
+#
+# **`_GRAMMARS`가 이름을 부르는 문법 모듈은 전부 여기 있어야 한다.** `.cc`/`.cpp`/`.hpp`가
+# `tree_sitter_cpp`를 부르는데 그것이 빠져 있었고, C++ 파일을 건드리는 테스트가 없어서
+# CI가 초록불이었다 — 이 파일이 막으려던 바로 그 상태다. 버전 하한은 Dockerfile의
+# TREE_SITTER_*_VERSION 핀과 같은 줄기로 맞춘다.
 tree-sitter>=0.25
 tree-sitter-c>=0.24
+tree-sitter-cpp>=0.23
