@@ -48,12 +48,24 @@ Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다.
 코드)다. 지금 픽스처에는 `main`이 없어 링크되지 않으므로 **E4는 여전히 도달 불가**다 —
 PoC를 만드는 주체(PoV 노드)가 생기기 전까지는 그것이 사실이고, 그 사실대로 기록한다.
 
-## index는 call graph가 아니다 (open-questions D13)
+## index는 이제 진짜 그래프를 만든다 (open-questions D13)
 
-`index`는 `clang -fsyntax-only`다. **구문 검사 통과일 뿐이고 `EvidenceKind.GRAPH`라는
-이름은 그보다 강한 것을 주장한다.** tree-sitter 인덱서가 다른 트랙에서 진행 중이라 그때까지
-쓰는 임시 다리다. include 경로 설정이 필요한 실제 저장소에서는 이 명령이 실패해 GRAPH
-Evidence가 생기지 않고, 그러면 모든 Finding이 E2를 넘지 못한다(STATUS.md에 함께 적었다).
+`index`는 `tools/harness-tools/indexer.py`(tree-sitter)다. 그전에는
+`clang -fsyntax-only`였는데 **구문 검사일 뿐이고 `EvidenceKind.GRAPH`라는 이름이 그보다
+강한 것을 주장했다.** 더 나쁜 것은 include 경로가 필요한 실제 저장소에서 그 명령이
+실패해 `Evidence(ok=False)`가 되고, `gate.py`가 `usable = [ev for ev in evidences if ev.ok]`로
+거르므로 **모든 Finding이 E2를 넘지 못했다는 점이다.** tree-sitter는 전처리도 링크도 하지
+않아 include 경로 없이 파싱되므로 그 벽이 사라진다.
+
+**여전히 근사다.** 구문만 보므로 함수 포인터 호출·매크로로 감싼 호출·같은 이름의 `static`
+함수를 구분하지 못한다. 놓친 것은 조용히 버리지 않고 센다 — 호출부의 누락은
+`unresolved_calls`, 심볼의 누락은 `unresolved_symbols`다. 그 값이 크면 그 저장소에서 이
+그래프의 커버리지가 낮다는 뜻이고, E2를 얼마나 믿을지는 그것을 보고 판단해야 한다.
+
+**아직 캡슐로 이어지지 않았다.** 산출물(`{SCRATCH}/index.json`)을 `HybridRetriever`가 읽어
+`callers`/`callees` 섹션을 채우는 것이 D13의 나머지 절반이고, 이 PR의 범위 밖이다.
+헤더(`.h`)는 `compile_sources`가 `_COMPILE_SUFFIXES`로 걸러 넘어오지 않으므로 헤더에 정의된
+`static inline` 함수는 아직 심볼에 없다.
 
 ## semgrep 룰셋은 이미지에 구워 넣는다
 
@@ -91,6 +103,13 @@ SCRATCH = "/work"
 
 # 이미지에 구워 넣은 룰셋 경로. 런타임에 레지스트리를 보지 않는다.
 SEMGREP_CONFIGS = ("/opt/semgrep-rules/c", "/opt/semgrep-rules/harness")
+
+# 이미지에 구워 넣은 인덱서(`tools/harness-tools/indexer.py`)와 그 산출물 이름.
+# 산출물은 scratch에 떨어지므로 호스트에서는
+# `{artifacts_root}/{run_id}/scratch/index/{INDEX_FILE}`이다 — 2단계(Retriever 연결)가
+# 읽을 경로이고, 그 연결은 아직 없다(open-questions D13).
+_INDEXER = "/opt/indexer.py"
+INDEX_FILE = "index.json"
 
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
 # 남기지 않는다(모듈 docstring).
@@ -213,7 +232,18 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         ]
     if tool == "index":
         _require_sources(tool, compile_sources)
-        return [Command(["clang", "-fsyntax-only", _STD_ARG, *compile_sources], cwd=cwd)]
+        # 결과는 scratch에 쓴다 — 대상 마운트는 읽기 전용이다. `--root`는 JSON에 담길
+        # 경로를 마운트 기준 상대경로로 만들기 위한 것이고, 절대경로를 남기면 실행마다
+        # 값이 달라져 재현성이 깨진다.
+        return [
+            Command(
+                [
+                    "python3", _INDEXER, "--out", f"{SCRATCH}/{INDEX_FILE}",
+                    "--root", MOUNT, *compile_sources,
+                ],
+                cwd=cwd,
+            )
+        ]
     if tool == "build":
         _require_sources(tool, compile_sources)
         # `-c`는 cwd에 .o를 쓴다. 대상 마운트는 읽기 전용이므로 scratch에서 돌린다.
