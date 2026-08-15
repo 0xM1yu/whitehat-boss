@@ -153,6 +153,18 @@ def read_counters(endpoint: str) -> CacheCounters:
     text, error = fetch(metrics_url(endpoint))
     if text is None:
         return CacheCounters(None, None, error)
+    return counters_from(text)
+
+
+def counters_from(text: str) -> CacheCounters:
+    """**이미 받아 둔** `/metrics` 문서에서 카운터를 뽑는다.
+
+    `read_counters()`가 엔드포인트를 받아 하는 일에서 스크레이프만 뺀 것이다. 원문을
+    따로 보관해야 하는 쪽(`tools/probe/`)이 같은 시점에 두 번 긁지 않도록 나눴다 —
+    두 번 긁으면 그 사이의 요청이 어느 쪽에 잡혔는지 알 수 없고, 저장한 원문이 리포트의
+    delta가 나온 문서와 달라진다. 아래 본문이 "한 스크레이프에서 전부 뽑는다"고 말하는
+    것과 같은 이유다.
+    """
     samples = parse_prometheus(text)
     queries = _sum_metric(samples, METRIC_PREFIX_QUERIES)
     hits = _sum_metric(samples, METRIC_PREFIX_HITS)
@@ -323,10 +335,20 @@ def cache_config_labels(endpoint: str) -> tuple[dict[str, str], str | None]:
     text, error = fetch(metrics_url(endpoint))
     if text is None:
         return {}, error
+    labels = config_labels_from(text)
+    return (labels, None) if labels else ({}, f"{METRIC_CACHE_CONFIG}가 /metrics에 없다")
+
+
+def config_labels_from(text: str) -> dict[str, str]:
+    """**이미 받아 둔** 문서에서 `cache_config_info` 라벨을. 없으면 빈 dict.
+
+    `counters_from()`과 같은 이유로 나눴다 — 원문을 손에 쥔 쪽이 라벨을 보려고 서버를
+    다시 긁을 이유가 없다. 사유가 필요한 호출자는 `cache_config_labels()`를 쓴다.
+    """
     for name, labels, _ in parse_prometheus(text):
         if name == METRIC_CACHE_CONFIG:
-            return dict(labels), None
-    return {}, f"{METRIC_CACHE_CONFIG}가 /metrics에 없다"
+            return dict(labels)
+    return {}
 
 
 def gpu_memory_utilization(endpoint: str) -> tuple[float | None, str | None]:
