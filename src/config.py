@@ -57,6 +57,20 @@ class Benchmark(HarnessModel):
     """
 
     measured_at: datetime | None = None
+    # **어느 장비에서 쟀는가.** `measured_at`(언제)과 대칭이다.
+    #
+    # 이 값이 없으면 registry의 수치가 어느 하드웨어 기준인지 기록에서 사라진다. 두 장비가
+    # 모두 지원 대상인 이상(docs/devices.md) `--apply`를 어디서 치느냐에 따라 같은 필드에
+    # 다른 장비의 값이 들어가는데, 그 사실이 남지 않으면 다음 사람이 이 수치로 다른 장비를
+    # 예측하게 된다.
+    #
+    # **막지 않고 기록한다.** `--tool-runner`도 막지 않고 `RunRecord.tool_runner`에 남기고
+    # (ADR 0005), `repo_dirty`도 dirty 실행을 막지 않고 기록만 한다. 여기서만 금지로 가면
+    # 이 저장소가 지켜 온 논법이 깨진다 — 대신 `doctor`가 현재 장비와 다르면 경고한다.
+    #
+    # 기본값이 `None`인 것은 `measured_at`과 같은 이유다. 기존 registry 항목에 이 키가
+    # 없으면 로드가 통째로 실패하고, `None`은 "장비 미상"이라는 정직한 값이다.
+    measured_on: NonEmptyStr | None = None
     tok_s_single: float = Field(default=0.0, ge=0.0)
     tok_s_batch32: float = Field(default=0.0, ge=0.0)
     mem_gb_ctx8k: float = Field(default=0.0, ge=0.0)

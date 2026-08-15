@@ -99,6 +99,7 @@ models:
     fallback: null
     benchmark:
       measured_at: "2026-08-17T00:00:00Z"
+      measured_on: "atom"        # 어느 장비에서 쟀는가. null이면 장비 미상
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -124,6 +125,14 @@ profiles:
 ```
 
 `benchmark` 항목이 비어 있는(`0`) 모델은 프로덕션 프로필에 넣지 않는다.
+
+**registry의 `benchmark`는 `measured_on` 장비 기준이다.** 두 장비가 모두 지원 대상이므로
+([devices.md](devices.md)) 같은 필드에 다른 하드웨어의 값이 들어갈 수 있고, 그 사실이
+남지 않으면 다음 사람이 이 수치로 다른 장비를 예측한다. **다른 장비의 수치를 덮어쓰기
+전에 그 사실을 인지해야 한다** — `bench --apply`는 막지 않고 기록만 하며(ADR 0005의
+"금지가 아니라 기록"과 같은 논법), 현재 장비와 `measured_on`이 다르면 `doctor`가
+경고한다. 장비를 지정하지 않고 `--apply`하면 `measured_on`이 `null`로 적힌다 — 추측한
+호스트명으로 메우지 않는다.
 
 **`mem_gb_ctx8k`가 뜻하는 것.** "8K 요청 한 건의 점유"가 아니라 **8K context 요청이 떠
 있는 동안 관측된 카드 점유**다. vLLM은 기동 시 `gpu_memory_utilization` 비율만큼 메모리를
