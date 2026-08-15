@@ -35,6 +35,7 @@
 
 1. 모든 조건은 **동일 계산 예산**(input/output token 상한, GPU-second 상한)에서 실행한다.
 2. 조건 간 차이는 프로필과 파이프라인 단계 활성화만. retrieval 설정·프롬프트 버전·데이터셋은 고정한다.
+   - **예외 하나**: `--tool-runner`가 프로필의 도구 런타임을 덮어쓸 수 있다([decisions/0005](decisions/0005-tool-runner-override.md)). Docker가 없는 장비에서 리허설하기 위한 것이며, 실제로 쓰인 값은 `RunRecord.tool_runner`에 남는다. **런타임이 다른 run은 같은 비교 셀에 넣지 않는다.**
 3. 같은 조건은 seed를 바꿔 최소 3회 반복하고 분산을 함께 보고한다.
 4. 프롬프트 버전이 바뀌면 이전 결과와 직접 비교하지 않고 재측정한다.
 

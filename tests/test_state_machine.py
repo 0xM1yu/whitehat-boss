@@ -83,6 +83,7 @@ def _run_record() -> RunRecord:
         model_checksums={},
         prompt_versions={},
         tool_images={},
+        tool_runner="fake",
         budget=Budget(input_tokens=10, output_tokens=10, gpu_seconds=0),
         thresholds={},
         seed=1,
