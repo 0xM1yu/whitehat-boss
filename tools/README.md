@@ -161,6 +161,47 @@ export HARNESS_SIF_DIR=/data/daniel3290/sif
 결과 문서는 그 값이 믿을 만한지만 가른다. 로그 가독성은 각 로그 머리의
 `# semgrep: N findings` 한 줄이 대신한다.
 
+### 인덱서 (1단계)
+
+`index`는 `indexer.py`(tree-sitter)다. 심볼 표와 호출 그래프를 `/work/index.json`에 쓴다 —
+대상 마운트가 읽기 전용이라 산출물은 scratch에만 떨어질 수 있다.
+
+**`clang -fsyntax-only`를 걷어낸 이유**는 구문 검사가 그래프가 아니라서만이 아니다. 그 명령은
+include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidence(ok=False)`가 되고, 게이트가
+`ok` 아닌 Evidence를 거르므로 **모든 Finding이 E2를 넘지 못했다.** tree-sitter는 전처리도
+링크도 하지 않아 include 경로 없이 파싱된다.
+
+| 뽑는 것 | 예 |
+| --- | --- |
+| `symbols` | `{"name": "parse_header", "file": "parser.c", "line_start": 19, "line_end": 26}` |
+| `calls` | `{"caller": "parse_header", "callee": "memcpy", "file": "parser.c", "line": 24}` |
+| `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
+| `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
+| `files` | 실제로 인덱싱한 파일 — 분모다. `symbols`가 적을 때 "함수가 없다"와 "파일이 안 왔다"를 가른다 |
+| `skipped` · `parse_errors` | 문법이 없어 건너뛴 파일 · 부분 파싱된 파일 |
+
+정의는 `#ifdef` 블록·C++ 클래스 본문·`namespace`·`extern "C"` 안에도 있으므로 파일의
+최상위만 보지 않고 **트리 전체**를 훑는다. 최상위만 보면 zlib(.c)에서 28.3%,
+nlohmann/json(.cpp)에서 70.3%가 사라진다. `#if`/`#else` 양쪽 가지는 **둘 다** 낸다 —
+구문만으로는 어느 쪽이 컴파일되는지 알 수 없고, 한쪽을 고르면 근거 없는 추측이 된다.
+
+**이 그래프는 근사다.** 구문만 보므로 함수 포인터 호출(`(*fp)(x)`)·매크로로 감싼 호출·같은
+이름의 파일 스코프 `static` 함수를 구분하지 못한다. 놓친 것을 조용히 버리거나 이름을
+지어내지 않고 **센다** — 호출부의 누락은 `unresolved_calls`, 심볼의 누락은
+`unresolved_symbols`다. 그 값이 크면 그 저장소에서 커버리지가 낮다는 뜻이고, E2를 얼마나
+믿을지는 그것을 보고 판단한다.
+
+`parse_errors`는 드문 예외가 아니다. `ZEXPORT`·`FAR` 같은 전처리 안 된 매크로가 끼면
+tree-sitter가 그 파일을 표시하는데, zlib에서는 43개 중 39개(91%)가 그렇다. **표시됐다고
+그 파일의 심볼을 버리지 않는다** — 부분 파싱 결과가 여전히 쓸모 있다.
+
+파서 버전은 `--build-arg TREE_SITTER_VERSION=` / `TREE_SITTER_C_VERSION=` /
+`TREE_SITTER_CPP_VERSION=`으로 고정한다. 문법 모듈이 올라가면 같은 코드에서 다른 index가
+나올 수 있으므로 이미지 digest가 이 버전을 함께 고정한다.
+
+헤더(`.h`)는 아직 인덱싱하지 않는다 — `compile_sources`가 `_COMPILE_SUFFIXES`로 거르기
+때문이고, 그래서 헤더에 정의된 `static inline` 함수가 심볼에 없다.
+
 ### 컴파일 방언
 
 clang을 쓰는 모든 도구(`index` / `build` / `clang-tidy` / `asan`)가 `-std=gnu17`을 공유한다
