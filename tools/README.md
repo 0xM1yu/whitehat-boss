@@ -177,6 +177,7 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | `calls` | `{"caller": "parse_header", "callee": "memcpy", "file": "parser.c", "line": 24}` |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
 | `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
+| `files` | 실제로 인덱싱한 파일 — 분모다. `symbols`가 적을 때 "함수가 없다"와 "파일이 안 왔다"를 가른다 |
 | `skipped` · `parse_errors` | 문법이 없어 건너뛴 파일 · 부분 파싱된 파일 |
 
 정의는 `#ifdef` 블록·C++ 클래스 본문·`namespace`·`extern "C"` 안에도 있으므로 파일의
