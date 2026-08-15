@@ -375,7 +375,7 @@ ATOM(GB10, sm_121)과 Slurm(A2000, sm_86)는 **둘 다 지원 대상이다** —
 가른다([decisions/0006](docs/decisions/0006-record-the-device-a-run-happened-on.md)).
 
 → 장비별 제약, slurm 노드가 고정되지 않는다는 것, 그리고 **아직 한쪽에서 완주하지 못하는
-항목의 대장**은 [docs/devices.md](docs/devices.md)에 모았다. 첫 항목은
+항목의 대장**은 [docs/portability.md](docs/portability.md)에 모았다. 첫 항목은
 `local_balanced`·`b1_single`이 NVFP4 모델을 써서 Slurm(sm_86)에서 완주 불가라는 것이다.
 
 ### Fake 어댑터의 수치는 성능이 아니다

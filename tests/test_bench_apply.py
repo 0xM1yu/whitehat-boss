@@ -185,7 +185,7 @@ def test_apply_keys_cover_every_benchmark_field() -> None:
 def test_apply_records_which_device_measured_it(tmp_path: Path) -> None:
     """수치와 함께 **어디서 쟀는지**가 registry에 남는다.
 
-    두 장비가 모두 지원 대상이므로(docs/devices.md) 같은 필드에 다른 하드웨어의 값이
+    두 장비가 모두 지원 대상이므로(docs/portability.md) 같은 필드에 다른 하드웨어의 값이
     들어갈 수 있다. 그 사실이 남지 않으면 다음 사람이 이 수치로 다른 장비를 예측한다.
     """
     path = _models_copy(tmp_path)
@@ -211,6 +211,27 @@ def test_an_unknown_device_is_written_as_null_not_guessed(tmp_path: Path) -> Non
 
     assert "measured_on: null" in path.read_text(encoding="utf-8")
     assert _loaded(tmp_path).measured_on is None
+
+
+@pytest.mark.parametrize(
+    "label",
+    ['atom "gb10"', r"lab\dev", r"C:\atom", "atom#1", "노드 u4", "a: b"],
+)
+def test_a_hostile_label_neither_breaks_nor_silently_changes(tmp_path: Path, label: str) -> None:
+    """`--device`는 사용자 입력이고 ADR 0006이 라벨 집합을 **일부러 열어 두었다.**
+
+    따옴표를 그대로 잇는 방식(`f'"{value}"'`)은 두 가지로 깨졌다. 따옴표가 든 라벨은
+    registry를 파싱 불가로 만들어 이후 모든 커맨드를 죽이고, `C:\\atom`은 로드는 되지만
+    YAML 이스케이프로 **조용히 다른 라벨**이 된다(`\\a` = BEL). 뒤가 더 나쁘다 — 이
+    필드의 존재 이유가 정확히 "어느 장비였는지 나중에 알 수 있다"이기 때문이다.
+    """
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 1.0}}, MEASURED_AT, measured_on=label
+    )
+
+    assert _loaded(tmp_path).measured_on == label
 
 
 def test_every_registry_block_has_the_line_apply_needs(tmp_path: Path) -> None:
