@@ -61,6 +61,7 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         prompt_versions=config.prompt_versions(),
         tool_images={"semgrep": ZERO_DIGEST},
         tool_runner=config.profile.adapters.tool_runner,
+        device="atom",
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,
