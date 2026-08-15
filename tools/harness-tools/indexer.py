@@ -106,6 +106,39 @@ def _walk_calls(node, caller: str, relative: str, calls: list[dict]) -> int:
     return unresolved
 
 
+def _iter_definitions(root):
+    """트리 전체에서 `function_definition`을 **원문 순서로** 낸다.
+
+    최상위(`root_node.children`)만 보면 실제 저장소의 함수 상당수가 통째로 빠진다.
+    zlib(.c 43파일)에서 488개 중 138개(28.3%)가 그랬고, 그 138개가 있던 자리는:
+
+    | 부모 노드 | 개수 | 무엇인가 |
+    | --- | --- | --- |
+    | `ERROR` | 66 | `int ZEXPORT deflate(...)` — 전처리되지 않은 매크로가 낀 시그니처 |
+    | `preproc_ifdef` | 57 | `#ifdef`로 감싼 함수 |
+    | `preproc_else`·`preproc_if`·`preproc_elif` | 15 | 조건부 컴파일의 나머지 가지 |
+
+    C++은 더 심하다. nlohmann/json(.cpp 423파일)에서 1247개 중 877개(70.3%)가 빠졌고
+    자리는 `field_declaration_list`(클래스 본문)·`declaration_list`(namespace)·
+    `linkage_specification`(`extern "C"`)·`template_declaration`이다.
+    `_COMPILE_SUFFIXES`에 `.cc`/`.cpp`가 있으므로 그 파일들은 실제로 여기 넘어온다.
+
+    **찾은 정의 안으로는 들어가지 않는다.** 본문 안의 호출은 `_walk_calls`가 그 정의의
+    것으로 세므로, 중첩 정의까지 별도 심볼로 올리면 같은 호출이 두 번 잡힌다.
+
+    재귀 대신 스택을 쓴다 — 파스 트리 깊이가 파이썬 재귀 한계에 걸리는 자리를 하나
+    줄인다(실측 최대 깊이는 zlib 31, json 128로 여유가 있지만 공짜로 없앨 수 있다).
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == "function_definition":
+            yield node
+            continue
+        # pop()이 끝에서 꺼내므로 역순으로 넣어야 원문 순서가 된다.
+        stack.extend(reversed(node.children))
+
+
 def index_file(path: Path, relative: str) -> dict:
     """파일 하나의 심볼·호출. 읽거나 파싱하지 못하면 `OSError`/`KeyError`가 올라간다."""
     source = path.read_bytes()
@@ -114,9 +147,7 @@ def index_file(path: Path, relative: str) -> dict:
     symbols: list[dict] = []
     calls: list[dict] = []
     unresolved = 0
-    for node in tree.root_node.children:
-        if node.type != "function_definition":
-            continue
+    for node in _iter_definitions(tree.root_node):
         name = _function_name(node)
         if name is None:
             continue
