@@ -495,6 +495,45 @@ def test_gpu_memory_utilization_comes_from_the_measured_config_labels(
     assert 0.0 < value <= 1.0
 
 
+def test_cache_config_labels_carry_the_names_that_are_not_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`kv_cache_memory_bytes`는 메트릭이 아니라 이 게이지의 **라벨**이다.
+
+    프로브가 이 이름을 문자열로 다시 적지 않게 하려고 라벨을 통째로 내보낸다. 값을
+    해석하지 않는 것도 계약이다 — 실측 원문에서 이 라벨은 문자열 `"None"`이고
+    (Seraph는 이 값을 채우지 않는다), float으로 바꾸려 들면 거기서 죽는다. ATOM에서
+    숫자로 채워지면 그때 `mem_gb_ctx8k`를 nvidia-smi 없이 얻을 수 있다.
+    """
+    monkeypatch.setattr(urllib.request, "urlopen", _Server(metrics=[metrics_fixture()]))
+    labels, error = bench_metrics.cache_config_labels("http://127.0.0.1:8001/v1")
+
+    assert error is None
+    assert labels["kv_cache_memory_bytes"] == "None"
+    assert labels["enable_prefix_caching"] == "True"
+    # `gpu_memory_utilization()`이 float으로 주는 값과 **같은 라벨**에서 온다. 두 경로가
+    # 갈라지면 프로브와 bench가 다른 것을 보고 있다는 뜻이다.
+    monkeypatch.setattr(urllib.request, "urlopen", _Server(metrics=[metrics_fixture()]))
+    value, _ = bench_metrics.gpu_memory_utilization("http://127.0.0.1:8001/v1")
+    assert float(labels["gpu_memory_utilization"]) == value
+
+
+def test_cache_config_labels_report_absence_instead_of_an_empty_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """라벨이 없는 것과 못 읽은 것을 가른다. 둘 다 `{}`로만 주면 사유가 사라진다."""
+    without = "\n".join(
+        line
+        for line in metrics_fixture().splitlines()
+        if not line.startswith(bench_metrics.METRIC_CACHE_CONFIG)
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", _Server(metrics=[without]))
+    labels, error = bench_metrics.cache_config_labels("http://127.0.0.1:8001/v1")
+
+    assert labels == {}
+    assert bench_metrics.METRIC_CACHE_CONFIG in str(error)
+
+
 # --- 구간이 성립하지 않는 경우 -----------------------------------------------
 
 

@@ -302,6 +302,33 @@ def _ledger_substitutes(before: CacheCounters, after: CacheCounters) -> dict[str
     return fields
 
 
+def cache_config_labels(endpoint: str) -> tuple[dict[str, str], str | None]:
+    """`vllm:cache_config_info`의 라벨 **전부**. (라벨, 실패 사유).
+
+    `gpu_memory_utilization()`이 라벨 하나를 골라 float으로 주는 것과 달리 통째로 준다.
+    프로브(`tools/probe/`)가 봐야 하는 값 중 `kv_cache_memory_bytes`·`num_gpu_blocks`처럼
+    **메트릭이 아니라 이 게이지의 라벨인** 것들이 있는데, 그 키를 프로브가 문자열로 다시
+    적으면 이름이 갈라질 자리가 그대로 생긴다 — vLLM이 내보내는 이름은 전부 이 모듈을
+    지난다는 것이 `METRIC_NAMES`의 존재 이유다.
+
+    **`kv_cache_memory_bytes`를 `METRIC_NAMES`에 넣는 것으로는 해결되지 않는다.** 그것은
+    독립 메트릭이 아니라 라벨이라 `/metrics`에 그 이름의 샘플이 없고, 넣으면
+    `tests/test_bench.py::test_bench_reads_only_names_that_exist_in_every_fixture`가 실측
+    원문에서 즉시 깨진다. 라벨은 라벨로 다룬다.
+
+    값을 해석하지 않고 문자열 그대로 준다. 실측에서 `kv_cache_memory_bytes="None"`,
+    `gpu_memory_utilization="0.6"`처럼 **라벨마다 타입이 다르고** vLLM이 파이썬 `None`을
+    문자열로 찍기 때문이다(2026-08-14 Seraph 원문). 해석은 쓰는 쪽이 한다.
+    """
+    text, error = fetch(metrics_url(endpoint))
+    if text is None:
+        return {}, error
+    for name, labels, _ in parse_prometheus(text):
+        if name == METRIC_CACHE_CONFIG:
+            return dict(labels), None
+    return {}, f"{METRIC_CACHE_CONFIG}가 /metrics에 없다"
+
+
 def gpu_memory_utilization(endpoint: str) -> tuple[float | None, str | None]:
     """`vllm:cache_config_info`의 라벨에서 읽는다.
 
