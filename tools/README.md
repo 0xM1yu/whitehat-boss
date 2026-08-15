@@ -176,12 +176,23 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | `symbols` | `{"name": "parse_header", "file": "parser.c", "line_start": 19, "line_end": 26}` |
 | `calls` | `{"caller": "parse_header", "callee": "memcpy", "file": "parser.c", "line": 24}` |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
+| `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
 | `skipped` · `parse_errors` | 문법이 없어 건너뛴 파일 · 부분 파싱된 파일 |
+
+정의는 `#ifdef` 블록·C++ 클래스 본문·`namespace`·`extern "C"` 안에도 있으므로 파일의
+최상위만 보지 않고 **트리 전체**를 훑는다. 최상위만 보면 zlib(.c)에서 28.3%,
+nlohmann/json(.cpp)에서 70.3%가 사라진다. `#if`/`#else` 양쪽 가지는 **둘 다** 낸다 —
+구문만으로는 어느 쪽이 컴파일되는지 알 수 없고, 한쪽을 고르면 근거 없는 추측이 된다.
 
 **이 그래프는 근사다.** 구문만 보므로 함수 포인터 호출(`(*fp)(x)`)·매크로로 감싼 호출·같은
 이름의 파일 스코프 `static` 함수를 구분하지 못한다. 놓친 것을 조용히 버리거나 이름을
-지어내지 않고 `unresolved_calls`로 센다 — 그 값이 크면 그 저장소에서 커버리지가 낮다는
-뜻이고, E2를 얼마나 믿을지는 그것을 보고 판단한다.
+지어내지 않고 **센다** — 호출부의 누락은 `unresolved_calls`, 심볼의 누락은
+`unresolved_symbols`다. 그 값이 크면 그 저장소에서 커버리지가 낮다는 뜻이고, E2를 얼마나
+믿을지는 그것을 보고 판단한다.
+
+`parse_errors`는 드문 예외가 아니다. `ZEXPORT`·`FAR` 같은 전처리 안 된 매크로가 끼면
+tree-sitter가 그 파일을 표시하는데, zlib에서는 43개 중 39개(91%)가 그렇다. **표시됐다고
+그 파일의 심볼을 버리지 않는다** — 부분 파싱 결과가 여전히 쓸모 있다.
 
 파서 버전은 `--build-arg TREE_SITTER_VERSION=` / `TREE_SITTER_C_VERSION=` /
 `TREE_SITTER_CPP_VERSION=`으로 고정한다. 문법 모듈이 올라가면 같은 코드에서 다른 index가
