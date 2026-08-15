@@ -1,0 +1,516 @@
+"""배포 전 검증 체크리스트(model-serving.md §3)를 실제 엔드포인트에 대고 잰다.
+
+**`bench`가 접속하는 유일한 커맨드다.** `doctor`는 설정과 저장소 상태만 보고 소켓을 열지
+않는다(`src/cli.py` 모듈 docstring). 그 경계는 GPU 없는 팀원의 진단이 네트워크 오류로
+실패하지 않게 하려는 것이고, 여기서 한 번 더 못박는다 — bench는 서버가 있는 장비에서만
+의미가 있으며, 없으면 "측정 못 함"을 사유와 함께 출력하고 끝낸다.
+
+측정에는 `OpenAICompatModelClient`를 **그대로** 쓴다. bench 전용 HTTP 경로로 잰 수치는
+운영 성능이 아니다. 특히 prefix를 system 메시지로 분리하는 `_request_payload`의 동작이
+prefix cache 측정의 전제다(agent-contracts.md §4.2). 프롬프트도 실제 렌더 경로
+(`load_prompt().render()` + `build_facts()`)를 쓴다.
+
+`/metrics`를 읽는 계층(이름·파싱·카운터 구간 delta)은 `src/bench_metrics.py`에 있고,
+체크리스트 판정과 registry 반영은 `src/bench_report.py`에 있다.
+
+**못 잰 값은 0으로 남기고 사유를 함께 낸다.** 추정치·보간값을 넣지 않는다 —
+`Benchmark.is_measured`가 0 여부로 판정하므로 지어낸 값은 미측정 모델을 production
+프로필에 올리는 길을 연다(model-serving.md §5).
+
+## 측정 순서가 결과를 바꾼다
+
+B(구조화 출력)를 가장 먼저 돌린다 — 가장 싸게 계약 전체의 성립 여부를 판정하기 때문이다.
+그런데 B는 같은 prefix로 여러 번 요청하므로 **그 시점에 prefix cache가 데워진다.** 그래서
+D(prefix 적중률)는 절대값을 쓰지 않고 `/metrics` 카운터의 **구간 delta**로 잰다. 절대값은
+서버가 언제 떴는지와 앞에서 무엇이 돌았는지에 오염된다.
+
+delta를 써도 "bench가 데운 캐시를 bench가 잰다"는 사실은 남으므로, 그 구간의
+`prewarmed_by`와 전체 `measurement_order`를 출력에 남긴다. 순서를 바꿨을 때 수치가 달라진
+이유를 나중에 설명할 수 있어야 한다.
+"""
+
+import json
+import time
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+
+from pydantic import BaseModel
+
+from src.adapters.openai_compat import (
+    ModelGatewayError,
+    OpenAICompatModelClient,
+    SchemaParseError,
+)
+from src.bench_metrics import (
+    METRIC_CACHE_CONFIG,
+    METRIC_KV_USAGE,
+    counter_delta,
+    fetch,
+    gpu_memory_utilization,
+    kv_cache_perc,
+    nvidia_smi_mb,
+    read_counters,
+)
+from src.interfaces.model_client import Prompt
+from src.orchestrator.prompt_loader import PromptTemplate, build_facts
+from src.schemas.candidate import Candidate
+from src.schemas.common import Location
+from src.schemas.decision import Decision
+from src.schemas.enums import CapsuleLevel, Role
+from src.schemas.finding import Finding
+
+# 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 길이 맞춤용 근사다(cli·어댑터와 같은 상수).
+CHARS_PER_TOKEN = 4
+
+DEFAULT_SAMPLES = 5
+DEFAULT_CONCURRENCY = (8, 16, 32)
+DEFAULT_CONTEXTS = (8192, 16384, 32768)
+
+# `Benchmark.tok_s_batch32`에 대응하는 동시 요청 수. 이 값이 `--concurrency`에 없으면
+# 그 필드는 미측정(0)으로 남는다 — 다른 동시성 수치를 대신 넣지 않는다.
+BATCH32 = 32
+# `Benchmark.mem_gb_ctx8k`에 대응하는 context. 나머지 context는 출력 전용이다
+# (registry에 대응 필드가 없다).
+CTX8K = 8192
+
+_TIMEOUT_S = 60
+_BENCH_RUN_ID = "run_20260101_0001"
+_TARGET = Location(file="bench.c")
+
+# 채움용 코드 조각. 길이는 config(`thresholds.capsule_budget_tokens`)에서 오고
+# 여기서는 "무엇으로 채우는가"만 정한다.
+_FILLER = "    memcpy(dst + off, src, len);  /* bench filler */\n"
+_BASE_SOURCE = "int parse_header(const char *src, size_t len) {\n    char dst[64];\n"
+
+# 역할 → (출력 스키마, 캡슐 레벨). 레벨은 파이프라인에서 그 역할이 실제로 받는 것이다:
+# scout은 LIGHT, auditor는 EXPANDED 캡슐을 받는다(runner._triage_one). critic은 캡슐 대신
+# Finding+Evidence를 받으므로 EXPANDED에 준하는 길이로 근사하고, 그 사실을 출력의
+# `capsule_level`에 남긴다.
+ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
+    Role.SCOUT: (Candidate, CapsuleLevel.LIGHT),
+    Role.AUDITOR: (Finding, CapsuleLevel.EXPANDED),
+    Role.CRITIC: (Decision, CapsuleLevel.EXPANDED),
+}
+
+MEASUREMENT_ORDER = ("startup", "structured_output", "prefix_cache", "throughput", "memory")
+
+
+class BenchApplyError(RuntimeError):
+    """models.yaml의 갱신 대상 블록을 확실히 찾지 못했다. 아무것도 쓰지 않는다."""
+
+
+# --- 프롬프트 ----------------------------------------------------------------
+
+
+def _filler(chars: int, variant: int) -> str:
+    """`variant`가 매 호출 달라진다 — **의도다.**
+
+    본문까지 완전히 같으면 서버가 body 접두사도 캐시해 prefill이 거의 사라지고, 그러면
+    C(처리량)가 운영보다 낙관적으로 나온다. 운영에서는 후보마다 body가 다르므로 공유되는
+    것은 prefix뿐이어야 한다.
+    """
+    head = f"/* bench sample {variant} */\n{_BASE_SOURCE}"
+    want = max(0, chars - len(head))
+    return head + _FILLER * (want // len(_FILLER) + 1)
+
+
+def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
+    """실제 렌더 경로. 자리표시자 누락은 `render()`가 잡는다."""
+    if role is Role.CRITIC:
+        facts = build_facts(
+            run_id=_BENCH_RUN_ID,
+            ids={"finding_id": "find_0001", "decision_id": "dec_0001"},
+        )
+        return template.render(
+            facts=facts,
+            claim="검증 없는 memcpy (CWE-787)",
+            path="parse_header -> memcpy",
+            evidence=filler,
+        )
+    facts = build_facts(
+        run_id=_BENCH_RUN_ID,
+        ids={"candidate_id": "cand_0001", "finding_id": "find_0001"},
+        artifact_id="art_0001",
+        target=_TARGET,
+        source=filler,
+    )
+    fields = {
+        "target": _TARGET.file,
+        "capsule_sections": "code, callers",
+        "source": filler,
+    }
+    if role is Role.AUDITOR:
+        fields["candidate"] = "cand_0001 검증 없는 memcpy (CWE-787) score=0.8"
+    return template.render(facts=facts, **fields)
+
+
+def sized_prompt(role: Role, template: PromptTemplate, tokens: int, variant: int) -> Prompt:
+    """렌더 결과가 목표 토큰 수에 준하도록 채움 길이를 맞춘다.
+
+    `source`가 FACTS 블록과 본문에 두 번 실리므로(실제 노드도 그렇다) 채움 길이와 렌더
+    길이가 선형이 아니다. 그래서 재보고 조정한다 — 길이를 상수로 박지 않는다. 목표값은
+    `thresholds.capsule_budget_tokens`(config)에서 온다.
+    """
+    want = max(1, tokens) * CHARS_PER_TOKEN
+    chars = want
+    prompt = _render(role, template, _filler(chars, variant))
+    for _ in range(3):
+        actual = len(prompt.prefix) + len(prompt.body)
+        if actual <= want * 1.1 or chars <= 0:
+            break
+        chars = max(0, int(chars * want / actual))
+        prompt = _render(role, template, _filler(chars, variant))
+    return prompt
+
+
+def approx_tokens(prompt: Prompt) -> int:
+    return (len(prompt.prefix) + len(prompt.body)) // CHARS_PER_TOKEN
+
+
+# --- 호출 -------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Call:
+    """호출 하나의 결과. 실패도 값으로 다룬다 — 실패 횟수가 곧 B의 지표다."""
+
+    ok: bool
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    input_tokens: int = 0
+    error: str = ""
+
+
+def call_once(
+    client: OpenAICompatModelClient, role: Role, prompt: Prompt, schema: type[BaseModel]
+) -> Call:
+    try:
+        result = client.complete(role=role, prompt=prompt, schema=schema)
+    except SchemaParseError as exc:
+        # 삼키지 않는다 — 스키마 파싱 실패는 이 프로젝트가 재려는 지표다.
+        return Call(False, error=f"SchemaParseError: {exc}")
+    except ModelGatewayError as exc:
+        return Call(False, error=f"ModelGatewayError: {exc}")
+    usage = result.usage
+    return Call(
+        True,
+        output_tokens=usage.output_tokens,
+        cached_tokens=usage.cached_tokens,
+        input_tokens=usage.input_tokens,
+    )
+
+
+# --- 측정 A~E ---------------------------------------------------------------
+
+
+def check_startup(endpoint: str, model_key: str) -> dict[str, object]:
+    """A. `GET /v1/models`의 id가 registry key와 일치하는가.
+
+    `factory._model_client()`가 `model_name=model_key`를 그대로 실어 보내므로, 여기가
+    어긋나면 실제 run의 `/chat/completions`도 같은 이유로 실패한다. 서버를
+    `--served-model-name <registry key>`로 띄웠는지를 보는 검사다.
+    """
+    body, error = fetch(f"{endpoint.rstrip('/')}/models")
+    if body is None:
+        return {"ok": False, "reason": error, "served_ids": []}
+    try:
+        served = [str(item.get("id", "")) for item in json.loads(body).get("data", [])]
+    except (json.JSONDecodeError, AttributeError, TypeError) as exc:
+        return {"ok": False, "reason": f"/v1/models 응답을 읽지 못했다: {exc}", "served_ids": []}
+    if model_key not in served:
+        return {
+            "ok": False,
+            "reason": (
+                f"registry key {model_key!r}가 서버의 모델 목록 {served}에 없다 — "
+                "vLLM을 --served-model-name으로 맞추지 않으면 실제 run도 같은 이유로 실패한다"
+            ),
+            "served_ids": served,
+        }
+    return {"ok": True, "reason": None, "served_ids": served}
+
+
+def measure_structured_output(
+    client: OpenAICompatModelClient,
+    role: Role,
+    template: PromptTemplate,
+    schema: type[BaseModel],
+    tokens: int,
+    samples: int,
+) -> dict[str, object]:
+    """B. 실제 출력 스키마로 `samples`회 요청해 유효 JSON 비율을 낸다.
+
+    가장 먼저·가장 싸게 판정한다. 이 항목이 무너지면 agent-contracts.md의 계약 전체가
+    재설계 대상이라 나머지 측정에 비용을 쓸 이유가 없다.
+    """
+    calls = [
+        call_once(client, role, sized_prompt(role, template, tokens, i), schema)
+        for i in range(samples)
+    ]
+    failures = [call.error for call in calls if not call.ok]
+    valid = samples - len(failures)
+    return {
+        "samples": samples,
+        "valid": valid,
+        "valid_ratio": round(valid / samples, 4) if samples else 0.0,
+        "failures": failures,
+    }
+
+
+def verdict_for(cached: int, delta: Mapping[str, object]) -> tuple[str, str]:
+    """D의 판정. 규칙을 한 곳에 모은다.
+
+    `both_hit` / `metrics_only` / `ledger_only` / `neither` / `caching_disabled`,
+    그리고 캐시에 대해 아무 주장도 하지 않는 `no_traffic` / `metrics_unavailable` /
+    `metrics_reset`.
+    """
+    status = delta.get("status")
+    if status == "metrics_unavailable":
+        return "metrics_unavailable", f"/metrics를 읽지 못해 대조 불가: {delta.get('reason')}"
+    if status == "metrics_reset":
+        return "metrics_reset", str(delta.get("reason"))
+    if status == "no_traffic":
+        # 캐시에 대해 아무 주장도 하지 않는 판정이다.
+        return "no_traffic", str(delta.get("reason"))
+    metrics_hit = float(delta.get("hits_delta") or 0.0) > 0
+    ledger_hit = cached > 0
+    if metrics_hit and ledger_hit:
+        return "both_hit", f"정상 — 장부를 신뢰할 수 있다. {_substitute_note(delta)}"
+    if metrics_hit and not ledger_hit:
+        return "metrics_only", (
+            "서버가 prompt_tokens_details를 주지 않는다 (R6 재현). /metrics는 적중을 "
+            f"보고하므로 어댑터 결함이 아니다 — 장부만 0이다. {_substitute_note(delta)}"
+        )
+    if ledger_hit and not metrics_hit:
+        return "ledger_only", (
+            "장부는 적중인데 /metrics 증분이 0이다. 카운터 이름이 바뀌었거나 다른 서버를 "
+            "긁고 있다 — 무엇인지 확인하기 전까지 이 수치를 쓰지 않는다"
+        )
+    # 여기부터가 "적중이 없다"이다. 두 원인을 가른다 — 앞은 서버를 다시 띄우면 되고,
+    # 뒤는 prefix가 공유되지 않거나 캐시가 매번 축출되는 진짜 조사 대상이다.
+    enabled = delta.get("prefix_caching_enabled")
+    if enabled is False:
+        return "caching_disabled", (
+            f"{METRIC_CACHE_CONFIG}의 enable_prefix_caching이 False다. 서버가 그렇게 떠 "
+            "있으므로 bench가 할 수 있는 일이 없다 — 서버를 다시 띄워야 한다"
+        )
+    if enabled is None:
+        return "neither", (
+            "적중이 0이다. "
+            f"{METRIC_CACHE_CONFIG}의 enable_prefix_caching 라벨을 읽지 못해 "
+            "'꺼져 있다'와 '켜져 있는데 안 맞는다'를 가르지 못했다"
+        )
+    return "neither", (
+        "enable_prefix_caching은 True인데 적중이 0이다 — prefix가 공유되지 않거나 캐시가 "
+        "매번 축출되고 있다"
+    )
+
+
+def _substitute_note(delta: Mapping[str, object]) -> str:
+    """장부 대체 수치를 한 줄로. `metrics_only`에서 이 숫자가 R6의 성격을 바꾼다.
+
+    "서버가 장부값을 안 준다"에서 "장부는 0이지만 구간 캐시 토큰은 N개로 얻을 수 있다"가
+    된다. **다만 구간 합계라 개별 `model_call`에 배분할 수 없다** — 그래서 하네스의
+    `BudgetLedger`는 이 값을 쓰지 않는다(장부 반영 여부는 별건).
+    """
+    cached = delta.get("prompt_tokens_cached_delta")
+    if cached is None:
+        return str(delta.get("prompt_tokens_cached_delta_reason") or "대체 수치 없음")
+    external = delta.get("external_prefix_cache_hits_delta")
+    split = f", 그중 external {external:+.0f}" if isinstance(external, (int, float)) else ""
+    return (
+        f"metrics 기준 구간 캐시 토큰 {cached:.0f}개(local+external{split}) — 대체 경로 있음. "
+        "구간 합계라 개별 model_call에 배분할 수 없어 BudgetLedger에는 반영하지 않는다"
+    )
+
+
+def measure_prefix_cache(
+    client: OpenAICompatModelClient,
+    role: Role,
+    template: PromptTemplate,
+    schema: type[BaseModel],
+    tokens: int,
+    samples: int,
+    endpoint: str,
+) -> dict[str, object]:
+    """D. 같은 prefix 반복 호출의 장부(`Usage.cached_tokens`)와 `/metrics`를 대조한다.
+
+    R6 판정 지점이다. 장부가 0이어도 거기서 끝내지 않는다 — `/metrics`가 적중을 보고하면
+    **어댑터 결함이 아니라 서버가 `prompt_tokens_details`를 주지 않는 것**이고, 그 사실이
+    출력에 드러나야 한다(2026-08-11 Seraph 실측이 이 경우였다: 적중 99.0%인데 장부는 0).
+
+    카운터는 **구간 delta**로 본다. 절대값은 서버 기동 시점과 앞 구간(B)에 오염된다.
+    """
+    before = read_counters(endpoint)
+    calls = [
+        call_once(client, role, sized_prompt(role, template, tokens, i), schema)
+        for i in range(samples)
+    ]
+    after = read_counters(endpoint)
+    calls_ok = sum(1 for call in calls if call.ok)
+    delta = counter_delta(before, after, calls_ok=calls_ok)
+    cached = sum(call.cached_tokens for call in calls)
+    prompt_tokens = sum(call.input_tokens for call in calls)
+    verdict, note = verdict_for(cached, delta)
+    return {
+        "verdict": verdict,
+        "note": note,
+        "ledger": {
+            "cached_tokens": cached,
+            "prompt_tokens": prompt_tokens,
+            "hit_ratio": round(cached / prompt_tokens, 4) if prompt_tokens else 0.0,
+        },
+        "metrics_delta": delta,
+        "calls_ok": calls_ok,
+        # 앞 구간(B)이 같은 prefix로 이미 요청했으므로 이 구간의 캐시는 데워져 있다.
+        # 적중률을 cold start 수치로 읽지 않게 남긴다.
+        "prewarmed_by": ["structured_output"],
+    }
+
+
+def measure_throughput(
+    client: OpenAICompatModelClient,
+    role: Role,
+    template: PromptTemplate,
+    schema: type[BaseModel],
+    tokens: int,
+    concurrency: Sequence[int],
+    endpoint: str,
+) -> dict[str, object]:
+    """C. 동시 요청 1과 `concurrency`별 합산 tok/s.
+
+    output 토큰은 응답 usage의 `completion_tokens`를, 시간은 벽시계를 쓴다. 구간마다
+    prefix cache 카운터 delta를 함께 찍는다 — tok/s가 캐시 덕인지 아닌지 사후에
+    판별되지 않으면 그 수치로 다음 장비를 예측할 수 없다.
+    """
+    levels = [1, *sorted(set(concurrency) - {1})]
+    by_level: dict[str, object] = {}
+    for level in levels:
+        by_level[str(level)] = _one_level(client, role, template, schema, tokens, level, endpoint)
+    single = by_level.get("1")
+    batch32 = by_level.get(str(BATCH32))
+    return {
+        "by_concurrency": by_level,
+        "tok_s_single": float(single["tok_s"]) if isinstance(single, dict) else 0.0,
+        "tok_s_batch32": float(batch32["tok_s"]) if isinstance(batch32, dict) else 0.0,
+        "tok_s_batch32_reason": (
+            None
+            if batch32
+            else f"--concurrency에 {BATCH32}가 없어 재지 않았다 "
+            "(다른 동시성 값으로 대신하지 않는다)"
+        ),
+    }
+
+
+def _one_level(
+    client: OpenAICompatModelClient,
+    role: Role,
+    template: PromptTemplate,
+    schema: type[BaseModel],
+    tokens: int,
+    level: int,
+    endpoint: str,
+) -> dict[str, object]:
+    before = read_counters(endpoint)
+    prompts = [sized_prompt(role, template, tokens, variant) for variant in range(level)]
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=level) as pool:
+        calls = list(pool.map(lambda p: call_once(client, role, p, schema), prompts))
+    elapsed = time.monotonic() - started
+    produced = sum(call.output_tokens for call in calls)
+    return {
+        "concurrency": level,
+        "wall_s": round(elapsed, 3),
+        "output_tokens": produced,
+        "tok_s": round(produced / elapsed, 2) if elapsed > 0 else 0.0,
+        "failures": [call.error for call in calls if not call.ok],
+        # 이 구간의 캐시 적중률. tok/s가 캐시 덕인지 사후에 판별하려면 옆에 있어야 한다.
+        "prefix_cache_delta": counter_delta(
+            before, read_counters(endpoint), calls_ok=sum(1 for call in calls if call.ok)
+        ),
+    }
+
+
+def measure_memory(
+    client: OpenAICompatModelClient,
+    role: Role,
+    template: PromptTemplate,
+    schema: type[BaseModel],
+    contexts: Sequence[int],
+    endpoint: str,
+    context_limit: int,
+) -> dict[str, object]:
+    """E. context별 KV cache 점유.
+
+    **`nvidia-smi`의 점유는 context에 따라 거의 변하지 않는다.** vLLM이 기동 시
+    `gpu_memory_utilization` 비율만큼 선점하고 가중치를 뺀 나머지를 KV cache로 잡기
+    때문이다. 그래서 8K와 32K의 값이 같아도 측정 실패가 아니다 — 그 사실을 사유로
+    남긴다. context에 따라 실제로 변하는 것은 `vllm:kv_cache_usage_perc`이고, §3
+    체크리스트 3번은 그것으로 답한다.
+
+    요청이 끝나면 KV cache가 반납되므로 **요청이 떠 있는 동안** 표본을 뜬다. 이건 추측이
+    아니라 실측이다 — 2026-08-14 Seraph 원문은 요청 6회가 전부 끝난 뒤 긁은 것이고
+    `vllm:kv_cache_usage_perc`가 **0.0**이다. 사후에 한 번만 긁으면 이 항목은 언제나 0이
+    나온다.
+    """
+    by_context: dict[str, object] = {}
+    for ctx in contexts:
+        if ctx > context_limit:
+            by_context[str(ctx)] = {
+                "skipped": f"registry의 context_limit({context_limit})을 넘는다",
+            }
+            continue
+        by_context[str(ctx)] = _one_context(client, role, template, schema, ctx, endpoint)
+    util, util_error = gpu_memory_utilization(endpoint)
+    ctx8k = by_context.get(str(CTX8K))
+    mb = float(ctx8k.get("nvidia_smi_mb_peak", 0.0)) if isinstance(ctx8k, dict) else 0.0
+    return {
+        "by_context": by_context,
+        "gpu_memory_utilization": util,
+        "gpu_memory_utilization_reason": util_error,
+        "mem_gb_ctx8k": round(mb / 1024, 3) if mb else 0.0,
+        "mem_gb_ctx8k_reason": (
+            "이 값은 context에 따라 변하지 않는다 — vLLM이 기동 시 gpu_memory_utilization "
+            "비율만큼 선점하기 때문이다. 8K와 32K가 같아도 측정 실패가 아니다. context에 "
+            "따라 변하는 것은 kv_cache_usage_perc이며 by_context에 있다"
+            if mb
+            else "nvidia-smi가 없어 GB를 얻지 못했다 (/metrics는 비율만 주고 GB를 주지 않는다)"
+        ),
+    }
+
+
+def _one_context(
+    client: OpenAICompatModelClient,
+    role: Role,
+    template: PromptTemplate,
+    schema: type[BaseModel],
+    ctx: int,
+    endpoint: str,
+) -> dict[str, object]:
+    prompt = sized_prompt(role, template, ctx, variant=ctx)
+    peak_perc: list[float] = []
+    peak_mb: list[float] = []
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(call_once, client, role, prompt, schema)
+        while not future.done():
+            perc = kv_cache_perc(endpoint)
+            if perc is not None:
+                peak_perc.append(perc)
+            used = nvidia_smi_mb()
+            if used is not None:
+                peak_mb.append(used)
+        call = future.result()
+    return {
+        "requested_tokens": ctx,
+        "prompt_tokens_approx": approx_tokens(prompt),
+        "call_ok": call.ok,
+        "error": call.error or None,
+        # 필드 이름은 메트릭 이름을 그대로 따른다. 어느 메트릭에서 온 값인지가 출력만
+        # 보고 드러나야 한다 — 옛 이름(gpu_cache_usage_perc)이 존재하지 않는 메트릭이었다.
+        "kv_cache_usage_perc_peak": max(peak_perc) if peak_perc else 0.0,
+        "kv_cache_usage_perc_reason": (
+            None if peak_perc else f"{METRIC_KV_USAGE}를 /metrics에서 읽지 못했다"
+        ),
+        "nvidia_smi_mb_peak": max(peak_mb) if peak_mb else 0.0,
+        "nvidia_smi_mb_reason": None if peak_mb else "nvidia-smi가 PATH에 없거나 실패했다",
+    }

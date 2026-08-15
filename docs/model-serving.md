@@ -36,17 +36,39 @@ Critic이 다른 계열이어야 하는 이유: 같은 모델의 self-consistenc
 
 AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레시피 공식 지원은 2026년 6월부터이고, NVFP4 KV cache·speculative decoding 같은 최적화는 커뮤니티 fork 수준에 머무는 경우가 있다. **이 장비에서 직접 검증하기 전까지 어떤 성능 수치도 계획에 반영하지 않는다.**
 
-검증 체크리스트:
+검증 체크리스트 (각 항목 뒤는 `python -m src.cli bench`가 그 항목을 답하는 출력 필드다):
 
-- [ ] vLLM 버전 × CUDA 13.0 × sm_121 커널 호환성 (기동 성공 여부)
-- [ ] 역할별 모델 로드 성공 및 실제 통합메모리 점유 측정
-- [ ] context 8K / 16K / 32K에서 KV cache 점유와 처리량
-- [ ] 단일 스트림 tok/s vs 배치(8/16/32 동시 요청) 합산 tok/s
-- [ ] automatic prefix caching 동작 확인 및 적중률
-- [ ] structured output(JSON schema 강제) 동작 확인
-- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4
+- [ ] vLLM 버전 × CUDA 13.0 × sm_121 커널 호환성 (기동 성공 여부) → `roles.*.startup.ok`
+- [ ] 역할별 모델 로드 성공 및 실제 통합메모리 점유 측정 → `roles.*.memory.mem_gb_ctx8k` (+ `nvidia_smi_mb_peak`)
+- [ ] context 8K / 16K / 32K에서 KV cache 점유와 처리량 → `roles.*.memory.by_context.*.kv_cache_usage_perc_peak` (`vllm:kv_cache_usage_perc`)
+- [ ] 단일 스트림 tok/s vs 배치(8/16/32 동시 요청) 합산 tok/s → `roles.*.throughput.tok_s_single` / `.by_concurrency.*`
+- [ ] automatic prefix caching 동작 확인 및 적중률 → `roles.*.prefix_cache.verdict` / `.metrics_delta` (장부가 비어도 `prompt_tokens_cached_delta`가 토큰 수를 준다 — 구간 합계라 BudgetLedger에는 넣지 않는다)
+- [ ] structured output(JSON schema 강제) 동작 확인 → `roles.*.structured_output.valid_ratio`
+- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다
 
-측정 결과는 `docs/decisions/`에 ADR로 남기고, 수치는 Model Registry의 `benchmark` 항목에 기록한다.
+`bench` 출력의 `checklist` 배열이 위 7개를 통과/실패/미측정으로 요약한다. **못 잰 값은 0으로
+남기고 사유를 함께 낸다** — 추정치를 넣으면 `Benchmark.is_measured`가 0 여부로 판정하므로
+미측정 모델이 production 프로필에 오르는 길이 열린다.
+
+**structured output이 ATOM에서 깨진다면 첫 번째 용의자 — reasoning 토큰.**
+
+2026-08-14 Seraph 실측 응답(`tests/fixtures/metrics/vllm_0191_chat_completion.json`)은
+`response_format` 없이 나간 호출이었고, 모델이 **`<think>` 블록을 먼저 내놓았다**
+(`finish_reason: "length"`로 잘렸다). Qwen3 계열은 기본적으로 reasoning 토큰을 낸다.
+
+guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(raw)`가 **첫 글자에서**
+깨진다. 2026-08-11 검증(V1)에서 5회 전부 유효 JSON이 나왔으므로 그 스택에서는 억제되고
+있지만, **ATOM은 vLLM 버전도 모델도 다르다.** bench의 B 항목이 ATOM에서 실패하면
+`chat_template_kwargs`의 `enable_thinking` 계열부터 확인한다. 재현되지 않은 문제이므로
+코드는 지금 고치지 않는다.
+
+**측정 순서가 결과를 바꾼다.** structured output을 먼저 돌리면 그 시점에 prefix cache가
+데워지므로, 적중률은 `/metrics` 카운터의 **구간 delta**로 잰다. 실제 순서는 출력의
+`measurement_order`에 남는다.
+
+측정 결과는 `docs/decisions/`에 ADR로 남기고, 수치는 Model Registry의 `benchmark` 항목에
+`bench --apply`로 기록한다. `--apply`는 해당 라인만 갈아 끼우며 `models.yaml`의 주석을
+보존한다 — 대상 블록을 확실히 찾지 못하면 아무것도 쓰지 않고 실패한다.
 
 ## 4. 양자화 품질 검증 (Critic 전용)
 
@@ -102,6 +124,19 @@ profiles:
 ```
 
 `benchmark` 항목이 비어 있는(`0`) 모델은 프로덕션 프로필에 넣지 않는다.
+
+**`mem_gb_ctx8k`가 뜻하는 것.** "8K 요청 한 건의 점유"가 아니라 **8K context 요청이 떠
+있는 동안 관측된 카드 점유**다. vLLM은 기동 시 `gpu_memory_utilization` 비율만큼 메모리를
+선점하고 가중치를 뺀 나머지를 KV cache로 잡으므로, 이 값은 8K를 처리하든 32K를 처리하든
+거의 같게 나온다 — **8K와 32K의 값이 같다고 측정 실패가 아니다.** context에 따라 실제로
+변하는 것은 `vllm:kv_cache_usage_perc`이고, 체크리스트 3번은 그 수치로 답한다. 이 값은 counter가
+아니라 **gauge**여서 요청이 끝나면 0.0으로 돌아가므로, bench는 요청이 떠 있는 동안 폴링해
+peak을 잡는다(2026-08-14 Seraph 실측 원문에서 사후 스크레이프 값이 0.0이었다).
+
+같은 이유로 이 값은 `gpu_memory_utilization`과 **함께 있어야만 의미가 있다.** 그 비율이
+다르면 같은 카드·같은 모델에서도 점유가 통째로 달라져 다른 사람이 재현할 수 없다. 그래서
+`bench --apply`는 그 비율을 확인하지 못하면(`vllm:cache_config_info` 라벨 부재 등) 이
+필드를 registry에 쓰지 않는다.
 
 **`adapters`에 ModelClient가 없는 것은 의도다.** 역할마다 다른 모델을 쓰고 그중 일부만
 실서빙일 수 있으므로(12GB 프로필은 scout만 실서빙), ModelClient 선택은 프로필이 아니라
