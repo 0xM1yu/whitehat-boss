@@ -12,11 +12,12 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from src import bench_report, cli
 from src.adapters.factory import WIRINGS
 from src.bench import BenchApplyError
-from src.config import CONFIG_DIR, load_config
+from src.config import CONFIG_DIR, Benchmark, load_config
 from src.orchestrator.runner import RunSpec
 
 RUN_ID = "run_20260101_0001"
@@ -159,6 +160,220 @@ def test_applied_registry_still_loads(tmp_path: Path) -> None:
     assert benchmark.is_measured
     assert benchmark.tok_s_single == 12.5
     assert benchmark.measured_at is not None
+
+
+# --- measured_on -------------------------------------------------------------
+
+
+def _loaded(tmp_path: Path, key: str = "qwen3-4b") -> Benchmark:
+    """갱신 결과를 실제 로더로 되읽는다. 문자열 검사만으로는 스키마 통과를 못 본다."""
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+    return load_config(SERVED_PROFILE, config_dir=tmp_path).models[key].benchmark
+
+
+def test_apply_keys_cover_every_benchmark_field() -> None:
+    """`APPLY_KEYS`가 `Benchmark`의 필드와 같은지 본다.
+
+    필드가 하나 늘었는데 `APPLY_KEYS`가 그대로면 그 값은 registry에 영영 안 쓰인다.
+    **이 검사가 생기기 전에는 그 상수를 아무도 읽지 않아** "필드와 같아야 한다"는 주석이
+    지켜지는지 알 방법이 없었다 — 이 저장소가 계속 고쳐 온 "선언과 실제의 괴리"다.
+    """
+    assert set(bench_report.APPLY_KEYS) == set(Benchmark.model_fields)
+
+
+def test_apply_records_which_device_measured_it(tmp_path: Path) -> None:
+    """수치와 함께 **어디서 쟀는지**가 registry에 남는다.
+
+    두 장비가 모두 지원 대상이므로(docs/portability.md) 같은 필드에 다른 하드웨어의 값이
+    들어갈 수 있다. 그 사실이 남지 않으면 다음 사람이 이 수치로 다른 장비를 예측한다.
+    """
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+    )
+
+    benchmark = _loaded(tmp_path)
+    assert benchmark.measured_on == "atom"
+    assert benchmark.measured_at is not None
+
+
+def test_an_unknown_device_is_written_as_null_not_guessed(tmp_path: Path) -> None:
+    """장비를 모른 채 쓴 수치라는 사실 자체가 기록이어야 한다.
+
+    빈 문자열이나 호스트명 추측으로 메우면 그 자리에 거짓이 들어간다 — `repo_dirty`가
+    `bool | None`인 것과 같은 이유다("확인 못 함"을 값과 섞지 않는다).
+    """
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT)
+
+    assert "measured_on: null" in path.read_text(encoding="utf-8")
+    assert _loaded(tmp_path).measured_on is None
+
+
+@pytest.mark.parametrize(
+    "label",
+    ['atom "gb10"', r"lab\dev", r"C:\atom", "atom#1", "노드 u4", "a: b"],
+)
+def test_a_hostile_label_neither_breaks_nor_silently_changes(tmp_path: Path, label: str) -> None:
+    """`--device`는 사용자 입력이고 ADR 0006이 라벨 집합을 **일부러 열어 두었다.**
+
+    따옴표를 그대로 잇는 방식(`f'"{value}"'`)은 두 가지로 깨졌다. 따옴표가 든 라벨은
+    registry를 파싱 불가로 만들어 이후 모든 커맨드를 죽이고, `C:\\atom`은 로드는 되지만
+    YAML 이스케이프로 **조용히 다른 라벨**이 된다(`\\a` = BEL). 뒤가 더 나쁘다 — 이
+    필드의 존재 이유가 정확히 "어느 장비였는지 나중에 알 수 있다"이기 때문이다.
+    """
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 1.0}}, MEASURED_AT, measured_on=label
+    )
+
+    assert _loaded(tmp_path).measured_on == label
+
+
+def test_every_registry_block_has_the_line_apply_needs(tmp_path: Path) -> None:
+    """`_value_line()`은 라인이 없으면 `BenchApplyError`로 죽는다.
+
+    스키마 기본값만으로는 부족하다 — `--apply`는 YAML을 라인 단위로 치환하므로 그 키가
+    파일에 **실제로 적혀 있어야** 한다. 한 모델이라도 빠지면 그 모델의 갱신이 통째로
+    실패하고, 그것을 ATOM 실측 현장에서 알게 되는 것이 최악이다.
+    """
+    path = _models_copy(tmp_path)
+    every_model = yaml.safe_load(path.read_text(encoding="utf-8"))["models"]
+
+    outcome = bench_report.apply_benchmarks(
+        path,
+        {key: {"tok_s_single": 1.0} for key in every_model},
+        MEASURED_AT,
+        measured_on="seraph",
+    )
+
+    assert set(outcome["updated"]) == set(every_model)
+    assert path.read_text(encoding="utf-8").count('measured_on: "seraph"') == len(every_model)
+
+
+# --- --device ----------------------------------------------------------------
+
+
+def _manifest_path(artifacts_root: Path) -> Path:
+    """방금 만들어진 run 하나의 `run_manifest.json`. 이 파일이 곧 RunRecord다."""
+    runs = [path for path in artifacts_root.iterdir() if path.name.startswith("run_")]
+    assert len(runs) == 1, runs
+    return runs[0] / "run_manifest.json"
+
+
+def doctor_lines(*, device: str | None, config_dir: Path = CONFIG_DIR) -> list[str]:
+    checks = cli.doctor(
+        SERVED_PROFILE,
+        artifacts_root=CONFIG_DIR.parent / "artifacts",
+        device=device,
+        config_dir=config_dir,
+    )
+    return [check.render() for check in checks]
+
+
+
+def test_device_is_an_explicit_label_never_the_hostname() -> None:
+    """**자동 채움을 하지 않는다.**
+
+    호스트명으로 메우면 한 필드에 "사람이 붙인 장비 라벨"과 "하네스 프로세스가 돈
+    호스트명"이라는 서로 다른 두 사실이 들어가고, 기록만 보면 구분할 수 없다. 게다가 그
+    둘은 자주 어긋난다 — 로그인 노드에서 하네스를 돌리면 GPU 작업이 한 톨도 일어나지
+    않은 기계 이름이 적힌다. `None`은 `repo_dirty`의 `None`과 같은 뜻이다: 확인 못 함.
+    """
+    assert RunSpec(condition="B1@2x2", target=TARGET).device is None
+    assert RunSpec(condition="B1@2x2", target=TARGET, device="atom").device == "atom"
+
+
+def test_a_run_without_a_device_is_excluded_from_the_comparison_table(tmp_path: Path) -> None:
+    """장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
+
+    `tool_runner`가 `incomplete_fields()`에 없는 것은 config에서 유도되어 빌 수가 없기
+    때문인데, 이 값은 사람이 안 주면 실제로 빈다 — `repo_dirty`와 같은 취급이다.
+    """
+    code = cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET),
+         "--artifacts-root", str(tmp_path)]
+    )
+
+    assert code == 0
+    record = json.loads(_manifest_path(tmp_path).read_text("utf-8"))
+    assert record["device"] is None
+
+
+def test_the_device_label_lands_in_the_run_record(tmp_path: Path) -> None:
+    """경희대 학생이 Seraph에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
+
+    `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않는다 — 이
+    필드가 없으면 두 run이 기록만으로는 완전히 같아 보인다.
+    """
+    code = cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET),
+         "--artifacts-root", str(tmp_path), "--device", "seraph"]
+    )
+
+    assert code == 0
+    record = json.loads(_manifest_path(tmp_path).read_text("utf-8"))
+    assert record["device"] == "seraph"
+
+
+def test_doctor_says_nothing_about_the_device_when_none_is_given() -> None:
+    """라벨이 없으면 비교할 대상이 없다. 없는 비교로 경고하면 헛경고가 된다."""
+    checks = doctor_lines(device=None)
+
+    assert not [line for line in checks if "장비" in line]
+
+
+def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -> None:
+    """registry가 ATOM 기준인데 Seraph에서 doctor를 치면 그 사실이 드러나야 한다."""
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+    path = _models_copy(tmp_path)
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+    )
+
+    same = doctor_lines(device="atom", config_dir=tmp_path)
+    other = doctor_lines(device="seraph", config_dir=tmp_path)
+
+    assert not [line for line in same if "다른 장비 기준" in line]
+    mismatch = [line for line in other if "다른 장비 기준" in line]
+    assert len(mismatch) == 1
+    assert "qwen3-4b(atom)" in mismatch[0]
+
+
+def test_an_unmeasured_registry_is_not_reported_as_a_mismatch() -> None:
+    """`measured_on`이 없는 것은 불일치가 아니라 **모름**이다.
+
+    모름을 불일치로 보고하면 registry를 채우기 전 상태에서 전 모델이 경고에 걸려 진짜
+    불일치가 묻힌다.
+    """
+    assert not [line for line in doctor_lines(device="atom") if "다른 장비 기준" in line]
+
+
+def test_apply_without_a_device_warns_at_the_moment_it_matters(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`doctor`는 조용하지만 registry에 **쓰는** 순간에는 영구히 장비 미상으로 남는다.
+
+    경고는 stderr로 간다 — stdout의 JSON이 파싱 가능해야 한다.
+    """
+    cli.main(
+        ["bench", "--profile", "dev_fake", "--artifacts-root", str(tmp_path), "--apply"]
+    )
+    captured = capsys.readouterr()
+
+    assert json.loads(captured.out)["roles"]  # stdout은 여전히 JSON이다
+    assert "--device 없이 --apply" in captured.err
+
+    cli.main(
+        ["bench", "--profile", "dev_fake", "--artifacts-root", str(tmp_path),
+         "--apply", "--device", "atom"]
+    )
+    assert "--device 없이 --apply" not in capsys.readouterr().err
 
 
 # --- CLI ---------------------------------------------------------------------

@@ -50,6 +50,7 @@
 | [0003](0003-routing-policy-in-orchestrator.md) | RoutingPolicy를 `src/interfaces/`가 아니라 `src/orchestrator/`에 둔다 | 제안 | 2026-08-08 |
 | [0004](0004-retrieval-clients-separate-from-model-client.md) | embedding·reranker를 ModelClient가 아닌 별도 인터페이스로 둔다 | 제안 | 2026-08-10 |
 | [0005](0005-tool-runner-override.md) | `--tool-runner`로 프로필의 도구 런타임을 덮어쓸 수 있게 한다 | 제안 | 2026-08-14 |
+| [0006](0006-record-the-device-a-run-happened-on.md) | run과 registry 수치에 어느 장비에서 나왔는지를 기록한다 | 제안 | 2026-08-15 |
 
 전부 **제안** 상태다. Harness v1 스캐폴드를 구현하며 내린 결정이고 팀 검토 전까지 확정이
 아니다. 모두 "되돌리는 비용"을 낮게 유지하는 쪽을 골랐다 — 지금 확실하지 않은 것을
@@ -58,4 +59,10 @@
 0005는 성격이 하나 다르다. [evaluation.md](../evaluation.md) §2.3의 공정성 규칙에 예외를
 여는 결정이므로, 되돌리기 쉬운 것과 별개로 **실행 기록(`RunRecord.tool_runner`)에 흔적이
 남는다.**
+
+0006은 0005와 같은 논법을 쓰지만 **예외를 열지 않는다.** `--device`는 설정을 한 글자도
+바꾸지 않고 기록만 남기므로 §2.3 규칙 2에 걸리지 않는다. 대신 규칙 5("장비가 다른 run은
+같은 비교 셀에 넣지 않는다")가 성립하려면 그 기록이 있어야 한다. 이 ADR이 **장비별 설정
+오버레이를 지금 만들지 않기로 한 근거**도 함께 담고 있다 — endpoint가 실제로 갈라지는지
+미확인이고, 갈라진다면 키가 장비가 아니라 사용자일 수 있다.
 </content>
