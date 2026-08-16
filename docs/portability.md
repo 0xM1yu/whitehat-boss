@@ -44,7 +44,7 @@
 | 갈리는 것 | 어디서 표현되는가 |
 | --- | --- |
 | endpoint | `config/models.yaml`의 `endpoint` |
-| 컨테이너 런타임 | 프로필의 `adapters.tool_runner`, 또는 `--tool-runner`(ADR 0005) |
+| 컨테이너 런타임 | 프로필의 `adapters.tool_runner`. `--tool-runner` 오버라이드도 있지만 **지금은 도달 가능한 사용처가 없다** — 사유는 [decisions/0005](decisions/0005-tool-runner-override.md)의 "이후 드러난 것" |
 | 실행 가능한 양자화 | **별도 model key와 별도 프로필.** 오버레이로 `quantization`을 덮지 않는다 — 그건 같은 모델이 아니다 |
 | 잡 실행·접속 | 하네스 밖. 래퍼 스크립트와 운용 문서 |
 
@@ -82,9 +82,16 @@ python -m src.cli doctor --profile local_balanced --device seraph
 
 | # | 항목 | 못 도는 환경 | 상태 |
 | --- | --- | --- | --- |
-| 1 | `local_balanced`·`b1_single`이 NVFP4 모델을 참조한다 (`qwen3-coder-30b-a3b`, `devstral-small-2-24b`) | Blackwell 이전 아키텍처 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** |
-| 2 | R1: 최신 vLLM × Blackwell 커널 호환성 미검증 | 검증 전 | [open-questions.md](open-questions.md) R1. `tools/probe/`가 1차 판정을 낸다 |
-| 3 | `tool_images` digest를 런타임 사이에서 비교할 수 없다 | Docker↔Singularity 혼용 | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 드러내기만 한다 |
+| 1 | `local_balanced`이 참조하는 모델 5개 중 **3개**가 Blackwell 이상을 요구한다: `qwen3-8b`(`fp4`), `qwen3-coder-30b-a3b`(`nvfp4`), `devstral-small-2-24b`(`nvfp4`). `b1_single`은 세 역할이 전부 `qwen3-coder-30b-a3b`(`nvfp4`)다 | Blackwell(sm_100+) 미만 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** |
+| 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | 미해결. **셋 중 진단 비용이 가장 크다**(아래) |
+| 3 | R1: 최신 vLLM × Blackwell 커널 호환성 미검증 | 검증 전 | [open-questions.md](open-questions.md) R1. `tools/probe/`가 1차 판정을 낸다 |
+| 4 | `tool_images` digest를 런타임 사이에서 비교할 수 없다 | Docker↔Singularity 혼용 | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 드러내기만 한다 |
+
+**#2가 #1보다 위험한 이유.** 프로필 이름과 주석이 **메모리 조건만** 말한다("12GB 카드 1장",
+"Qwen3-4B(FP8) 약 8.0GB"). 30B·24B를 쓰는 #1의 프로필은 12GB 카드에서 **크기로도** 걸리니
+사람이 원인을 금방 안다. 반면 `single_gpu_12g`는 이름이 정확히 "12GB 카드용"이라 그 카드를
+가진 사람이 **고를 프로필**이고, 메모리 계산도 맞고, **세대 때문에** 죽는다. 조건을 다
+만족했는데 죽으므로 원인을 찾는 비용이 훨씬 크다.
 
 **양쪽 완주가 끝내 불가능하다고 판명되면 단일 장비로 좁히는 것이 옳은 결론이다** —
 반쪽짜리 이중 지원이 최악이다. 지금 그 결정을 내리는 것이 아니라, 그 상황이 왔을 때
