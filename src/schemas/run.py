@@ -99,6 +99,22 @@ class RunRecord(UtcModel):
     # `fake`로 돈 run은 이미 `tool_images`가 비어 경고에 걸린다 — 같은 사실을 두 줄로
     # 내면 진짜 문제가 묻힌다(runner.py의 같은 판단 참조).
     tool_runner: NonEmptyStr
+    # 이 run이 **어느 장비에서** 돌았는가. `--device`가 준 라벨이고, 없으면 `None`이다.
+    #
+    # 두 장비가 모두 지원 대상이므로(docs/portability.md) 같은 프로필·같은 조건으로 돈 두 run이
+    # 다른 하드웨어의 결과일 수 있다. 그런데 기록에는 그것을 가릴 것이 하나도 없었다 —
+    # `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 남지 않는다. 대학
+    # 학생이 Slurm에서 낸 결과와 팀의 ATOM 결과가 비교표에서 섞이는 것을 막는 필드다.
+    #
+    # **호스트명으로 자동으로 채우지 않는다.** 그러면 한 필드에 "사람이 붙인 장비 라벨"과
+    # "하네스 프로세스가 돈 호스트명"이라는 **서로 다른 두 사실**이 들어가고, 기록만 보면
+    # 어느 쪽인지 구분할 수 없다. 게다가 그 둘은 자주 어긋난다 — 로그인 노드에서 하네스를
+    # 돌리면 GPU 작업이 한 톨도 일어나지 않은 기계 이름이 적힌다. `None`은 `repo_dirty`의
+    # `None`과 같은 뜻이다: **확인 못 함.** 값과 섞지 않는다.
+    #
+    # `tool_runner`와 달리 `incomplete_fields()`에 들어간다. 그쪽은 config에서 항상
+    # 유도되어 빌 수가 없지만, 이 값은 사람이 안 주면 실제로 빈다.
+    device: str | None
     budget: Budget
     # 해석된(resolved) 임계값. 예: {"scout_threshold": 0.5}. 값은 config에서 오고
     # 여기에는 그 run에서 실제로 쓰인 값을 박제한다.

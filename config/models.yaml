@@ -24,6 +24,7 @@ models:
     fallback: null
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -39,6 +40,7 @@ models:
     fallback: "fake"
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -53,6 +55,7 @@ models:
     fallback: "qwen3-4b"
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -68,6 +71,7 @@ models:
     fallback: null
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -84,6 +88,7 @@ models:
     fallback: null
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -98,6 +103,7 @@ models:
     fallback: null
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
@@ -112,6 +118,7 @@ models:
     fallback: null
     benchmark:
       measured_at: null
+      measured_on: null
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0

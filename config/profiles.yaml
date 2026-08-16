@@ -89,7 +89,13 @@ profiles:
     # KV cache로 잡는다. 세 프로세스가 같은 카드를 나눠 쓰면 scout에 남는 여유가
     # 1.6GB 미만이 되어 KV cache가 사실상 0이 되고, 동시 요청 1건도 처리하지 못한다.
     # 따라서 embedding·reranker를 포함한 나머지 전 역할을 Fake로 둔다.
-    description: "12GB 단일 GPU. scout만 실서빙하고 나머지 전 역할은 Fake."
+    #
+    # **메모리만으로는 부족하다 — 세대 조건이 따로 있다.** scout의 qwen3-4b는 `fp8`이고
+    # FP8 텐서코어는 Ada(sm_89) 이상이다. 12GB 카드라도 Ampere(A2000, sm_86)에서는 기동
+    # 자체가 안 된다. 이 프로필이 특히 위험한 이유는 이름이 정확히 "12GB 카드용"이라 그
+    # 카드를 가진 사람이 고를 프로필인데, 메모리 계산은 맞고 세대 때문에 죽기 때문이다 —
+    # 조건을 다 만족했는데 죽으므로 원인 찾기가 비싸다 (docs/portability.md §5 #2).
+    description: "12GB 이상 + Ada(sm_89) 이상 단일 GPU. scout만 실서빙하고 나머지는 Fake."
     production: false
     roles:
       scout: qwen3-4b
