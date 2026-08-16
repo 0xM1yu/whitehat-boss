@@ -70,7 +70,7 @@ class VllmRerankerClient:
 
     Qwen3-Reranker는 원본이 causal LM이라 그냥 띄우면 이 경로가 열리지 않는다.
     `--hf_overrides`로 `Qwen3ForSequenceClassification` + `classifier_from_token`을
-    주어야 score API에 물린다(.claude/slurm/README.md §7.2). 그 설정 없이 띄운
+    주어야 score API에 물린다(2026-08-11 실측). 그 설정 없이 띄운
     서버는 404를 돌려주고, 여기서는 `RetrievalGatewayError`로 드러난다.
     """
 

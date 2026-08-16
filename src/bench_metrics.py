@@ -153,6 +153,18 @@ def read_counters(endpoint: str) -> CacheCounters:
     text, error = fetch(metrics_url(endpoint))
     if text is None:
         return CacheCounters(None, None, error)
+    return counters_from(text)
+
+
+def counters_from(text: str) -> CacheCounters:
+    """**이미 받아 둔** `/metrics` 문서에서 카운터를 뽑는다.
+
+    `read_counters()`가 엔드포인트를 받아 하는 일에서 스크레이프만 뺀 것이다. 원문을
+    따로 보관해야 하는 쪽(`tools/probe/`)이 같은 시점에 두 번 긁지 않도록 나눴다 —
+    두 번 긁으면 그 사이의 요청이 어느 쪽에 잡혔는지 알 수 없고, 저장한 원문이 리포트의
+    delta가 나온 문서와 달라진다. 아래 본문이 "한 스크레이프에서 전부 뽑는다"고 말하는
+    것과 같은 이유다.
+    """
     samples = parse_prometheus(text)
     queries = _sum_metric(samples, METRIC_PREFIX_QUERIES)
     hits = _sum_metric(samples, METRIC_PREFIX_HITS)
@@ -300,6 +312,43 @@ def _ledger_substitutes(before: CacheCounters, after: CacheCounters) -> dict[str
             continue
         fields[key] = value
     return fields
+
+
+def cache_config_labels(endpoint: str) -> tuple[dict[str, str], str | None]:
+    """`vllm:cache_config_info`의 라벨 **전부**. (라벨, 실패 사유).
+
+    `gpu_memory_utilization()`이 라벨 하나를 골라 float으로 주는 것과 달리 통째로 준다.
+    프로브(`tools/probe/`)가 봐야 하는 값 중 `kv_cache_memory_bytes`·`num_gpu_blocks`처럼
+    **메트릭이 아니라 이 게이지의 라벨인** 것들이 있는데, 그 키를 프로브가 문자열로 다시
+    적으면 이름이 갈라질 자리가 그대로 생긴다 — vLLM이 내보내는 이름은 전부 이 모듈을
+    지난다는 것이 `METRIC_NAMES`의 존재 이유다.
+
+    **`kv_cache_memory_bytes`를 `METRIC_NAMES`에 넣는 것으로는 해결되지 않는다.** 그것은
+    독립 메트릭이 아니라 라벨이라 `/metrics`에 그 이름의 샘플이 없고, 넣으면
+    `tests/test_bench.py::test_bench_reads_only_names_that_exist_in_every_fixture`가 실측
+    원문에서 즉시 깨진다. 라벨은 라벨로 다룬다.
+
+    값을 해석하지 않고 문자열 그대로 준다. 실측에서 `kv_cache_memory_bytes="None"`,
+    `gpu_memory_utilization="0.6"`처럼 **라벨마다 타입이 다르고** vLLM이 파이썬 `None`을
+    문자열로 찍기 때문이다(2026-08-14 Slurm 원문). 해석은 쓰는 쪽이 한다.
+    """
+    text, error = fetch(metrics_url(endpoint))
+    if text is None:
+        return {}, error
+    labels = config_labels_from(text)
+    return (labels, None) if labels else ({}, f"{METRIC_CACHE_CONFIG}가 /metrics에 없다")
+
+
+def config_labels_from(text: str) -> dict[str, str]:
+    """**이미 받아 둔** 문서에서 `cache_config_info` 라벨을. 없으면 빈 dict.
+
+    `counters_from()`과 같은 이유로 나눴다 — 원문을 손에 쥔 쪽이 라벨을 보려고 서버를
+    다시 긁을 이유가 없다. 사유가 필요한 호출자는 `cache_config_labels()`를 쓴다.
+    """
+    for name, labels, _ in parse_prometheus(text):
+        if name == METRIC_CACHE_CONFIG:
+            return dict(labels)
+    return {}
 
 
 def gpu_memory_utilization(endpoint: str) -> tuple[float | None, str | None]:

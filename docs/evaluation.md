@@ -38,6 +38,7 @@
    - **예외 하나**: `--tool-runner`가 프로필의 도구 런타임을 덮어쓸 수 있다([decisions/0005](decisions/0005-tool-runner-override.md)). Docker가 없는 장비에서 리허설하기 위한 것이며, 실제로 쓰인 값은 `RunRecord.tool_runner`에 남는다. **런타임이 다른 run은 같은 비교 셀에 넣지 않는다.**
 3. 같은 조건은 seed를 바꿔 최소 3회 반복하고 분산을 함께 보고한다.
 4. 프롬프트 버전이 바뀌면 이전 결과와 직접 비교하지 않고 재측정한다.
+5. **장비가 다른 run은 같은 비교 셀에 넣지 않는다.** 두 장비 모두 지원 대상이므로([portability.md](portability.md)) 같은 프로필·같은 조건의 run이 다른 하드웨어의 결과일 수 있다. 실제로 쓰인 장비는 `RunRecord.device`에 남는다([decisions/0006](decisions/0006-record-the-device-a-run-happened-on.md)). `--device`는 규칙 2의 **예외가 아니다** — 설정을 한 글자도 바꾸지 않고 기록만 남기므로 `--tool-runner`와 성격이 다르다.
 
 ## 3. 평가 데이터셋
 
