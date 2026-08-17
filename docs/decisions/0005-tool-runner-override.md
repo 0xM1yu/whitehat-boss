@@ -1,6 +1,6 @@
 # 0005. `--tool-runner`로 프로필의 도구 런타임을 덮어쓸 수 있게 한다
 
-- 상태: 제안
+- 상태: 승인 (2026-08-17 — 아래 "후속"의 상태 갱신 조건이 충족됐다)
 - 일자: 2026-08-14
 - 관련: [evaluation.md](../evaluation.md) §2.3, [model-serving.md](../model-serving.md) §3, [engineering-guide.md](../engineering-guide.md) §5, [STATUS.md](../../STATUS.md) §8·§10, [open-questions.md](../open-questions.md) R1
 
@@ -184,13 +184,34 @@ singularity 둘"**이었고, 그 안에서는 오버라이드가 필요한 조�
   판정의 기준은 **semgrep fingerprint 일치**다 — 후보·Finding 개수 일치는 룰이나 줄 번호가
   달라도 우연히 같을 수 있어 근거가 못 된다.
 
-  현재 상태로는 **충족되지 않았다.**
+  **충족됐다 (2026-08-17). 상태를 `승인`으로 올린다.**
 
-  | 대조 | 확인된 수준 | 근거 |
-  | --- | --- | --- |
-  | docker ↔ singularity (Slurm) | **fingerprint 일치** | STATUS.md §5 |
-  | podman (ATOM) | **후보 2/Finding 2 개수 일치까지만** | tools/README.md, 2026-08-17 |
+  | 대조 | 아키텍처 | 확인된 수준 | 근거 |
+  | --- | --- | --- | --- |
+  | docker ↔ singularity | x86_64 ↔ **x86_64** | fingerprint 일치 | STATUS.md §5 (2026-08-14) |
+  | docker ↔ **podman** | x86_64 ↔ **aarch64** | fingerprint 일치 | STATUS.md §5 (2026-08-17) |
 
-  ATOM에는 런타임이 podman 하나뿐이라 **그 장비 안에서는 두 런타임을 대조할 수 없다** —
-  대조가 장비를 건너뛴다. 그래서 이 조건을 채우려면 ATOM run의 semgrep fingerprint를 다른
-  런타임의 것과 직접 맞춰 봐야 한다. 그전까지 상태는 `제안`이다.
+  ```
+  ev_0002  2f5f28f1…0bce6_0     ← ATOM/podman/aarch64 == 로컬/docker/x86_64
+  ev_0005  766c3342…3c1e99_0    ← 동일
+  ```
+
+  **아키텍처가 다른 대조가 처음 성립했다.** 2026-08-14의 docker ↔ singularity는 같은
+  x86_64끼리였다 — Slurm에 올린 SIF가 로컬(x86_64 Windows Docker)에서 만든 이미지 tar를
+  그대로 변환한 것이고(STATUS.md §5 "SIF 변환에 재빌드가 필요 없었다") Singularity는
+  에뮬레이션하지 않으므로, 그 실행의 호스트도 x86_64다. 즉 그때까지 확인된 것은
+  **"런타임이 달라도 같다"**뿐이었고 **"아키텍처가 달라도 같다"**는 미확인이었다.
+
+  ATOM의 이미지는 그 장비에서 arm64로 **따로 빌드**했으므로(tools/README.md) 이번 대조는
+  런타임과 아키텍처가 동시에 다르다. 그런데도 fingerprint가 같다 — fingerprint는 룰·파일·
+  코드 문맥에서 나오므로, **같은 룰셋이 같은 코드에 같은 방식으로 적용됐다**는 뜻이다.
+
+  **위 절이 예상한 경로가 아니었다.** "ATOM run의 fingerprint를 다른 런타임의 것과 맞춰
+  봐야 한다"까지는 맞았지만, 대조 상대로 Slurm를 다시 잡을 필요가 없었다 — 이미 있던
+  **로컬 Docker 산출물**(`artifacts/run_20260813_0002`·`0003`)이 그 상대였다.
+
+  **여전히 남는 것**: 이 일치는 semgrep 한 도구, 픽스처 두 파일에 대한 것이다. clang-tidy·
+  빌드 경로는 아키텍처가 갈리면 결과가 달라질 수 있고(컴파일러 대상이 다르다) 그건 아직
+  대조되지 않았다. `tool_images` digest가 세 런타임·두 아키텍처에서 서로 비교 불가라는
+  사실도 그대로다([STATUS.md](../../STATUS.md) §10) — 이 승인은 **판정이 같다**는 것이지
+  **기록이 같다**는 것이 아니다.
