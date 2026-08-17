@@ -76,6 +76,11 @@ class RunContext:
     ledger: BudgetLedger
     policy: RoutingPolicy
     record: RunRecord | None = None
+    # **역할별 GPU 미측정 횟수.** 원장이 아니라 여기서 센다 — 원장은 상한 관리자이고,
+    # 역할 차원을 넣으면 "역할별 상한"이 필요하다는 압력이 생긴다. evaluation.md §5.2가
+    # 요구하는 것은 역할별 **지표**이지 역할별 상한이 아니다. 역할을 아는 곳이 여기이고,
+    # 이 값은 `runner.unmeasured_gpu_warning()`의 입력이 된다.
+    gpu_unmeasured_roles: dict[str, int] = field(default_factory=dict)
     # 마지막으로 진입한 단계. Retriever 콜백이 자기 단계를 모르므로 여기서 채운다.
     current_stage: Stage = Stage.PREPROCESS
     # 대상 심볼의 원문을 읽는다. `ContextCapsule`은 본문을 담지 않는 매니페스트이므로
@@ -162,6 +167,11 @@ class RunContext:
         # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
         # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로
         # 남았고, 그래서 `gpu_seconds` 상한이 한 번도 걸린 적이 없다.
+        if result.gpu_ms is None:
+            # 세는 것은 "GPU를 안 썼다"가 아니라 **"안 쟀다"**다. Fake 모델이 여기 들어오고,
+            # 러너가 실서빙 역할과 교집합해서 비교표 제외 판정을 낸다.
+            name = role.value
+            self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
         self.ledger.charge(result.usage, stage=stage, gpu_ms=result.gpu_ms)
         return result
 
@@ -220,10 +230,12 @@ class RunContext:
         # 0으로 두지 않는다"고 적는다. 구분은 재현성이다 — 토큰은 입력의 결정론적
         # 함수(`len // 4`)라 Fake에서도 같은 입력이면 같은 값이지만, wall-clock은 아니다.
         #
-        # 인자 이름을 여기서 못 박지 않는다. 도구 시간을 GPU 예산에서 떼는 것은 다음
-        # 커밋이고, 그때 이 분기가 새 인자로 함께 옮겨간다.
+        # **`gpu_ms`가 아니라 `tool_ms`다.** 여기서 도는 네 도구(semgrep·clang-tidy·build·
+        # asan)는 GPU를 쓰지 않는다. 2026-08-17까지 이 시간이 `gpu_seconds`로 청구됐고,
+        # 그래서 그 필드의 0 아닌 값은 **전부 CPU 시간**이었다 — evaluation.md §5.3의
+        # "finding당 GPU-hour"가 그 값을 분자로 쓴다.
         is_fake_runtime = self.config.profile.adapters.tool_runner == "fake"
-        self.ledger.charge(_NO_TOKENS, stage=stage, gpu_ms=None if is_fake_runtime else elapsed)
+        self.ledger.charge(_NO_TOKENS, stage=stage, tool_ms=None if is_fake_runtime else elapsed)
         return evidence
 
     # --- 게이트 ---

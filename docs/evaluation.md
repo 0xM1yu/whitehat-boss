@@ -89,12 +89,24 @@
 | input / output / cached token | 반드시 분리 기록 |
 | 검색(embedding·reranker) 토큰·GPU-second | 모델 호출과 **분리 집계**한다. trace의 `retrieval_call` 이벤트가 소스이고 `model_call`과 분모가 다르다 — 검색 호출에는 출력 스키마가 없으므로 "스키마 파싱 실패율"에 섞이면 그 값이 희석된다 |
 | cache hit ratio | prefix cache + capsule cache |
-| GPU-second, peak memory | 역할별 |
+| GPU-second, peak memory | 역할별. **출처 라벨과 함께 읽는다** — 아래 참조 |
 | wall-clock latency | 단계별, run 전체 |
-| validated finding당 GPU-hour | 핵심 비용 지표 |
-| proven finding당 GPU-hour | 핵심 비용 지표 |
+| validated finding당 GPU-hour | 핵심 비용 지표. **분자에 컨테이너 도구 시간을 넣지 않는다** — semgrep·clang-tidy·build·asan은 GPU를 쓰지 않는다. 그 시간은 `Budget.tool_seconds`가 따로 센다 |
+| proven finding당 GPU-hour | 상동 |
 | 백만 input token당 유효 finding | 토큰 효율 |
 | false positive 1건당 사람 triage 시간 | 실측(타이머 기록) |
+
+**GPU-second는 출처 라벨과 함께 읽는다.** 지금 그 값은 요청 wall-clock에서 나오고
+(`ModelResult.gpu_ms_source == "request_wall_clock"`), 그 근사는 **v1의 순차 실행 전제
+위에서만** 성립한다 — vLLM은 continuous batching을 하므로 큐 대기가 섞이고 동시 요청이면
+같은 GPU 시간이 두 번 세어진다. 큐를 스레드로 돌리게 되면 이 지표를 먼저 다시 정의해야
+한다. 라벨은 trace의 `model_call`·`retrieval_call` 이벤트에 실리므로 **데이터만 보고도**
+어느 방식으로 잰 값인지 알 수 있다.
+
+**안 잰 것은 0이 아니라 `None`이다.** Fake 어댑터는 잴 GPU가 없으므로 `None`을 낸다.
+실서빙 역할의 호출이 `None`으로 남으면 그 run의 GPU 비용은 미상이고, `incomplete_fields()`가
+역할 이름과 함께 경고해 **비교표에서 제외**한다(2026-08-17까지 모델 호출이 GPU 시간을 아예
+청구하지 못했으므로 그 이전 run은 전부 이 상태다).
 
 ### 5.3 Frontier 대비 비교표
 

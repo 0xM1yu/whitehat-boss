@@ -1,0 +1,47 @@
+{
+  "run_id": "run_20260817_0004",
+  "condition": "B1@pipeline",
+  "repo_commit": "93098a62b1e948ddd58aaa613ec98c0fe8b451cc",
+  "repo_dirty": true,
+  "source_hash": "sha256:844d097e7a43544e626912332a4ba1c17d7660f1fe5291f0038716da4af9cf64",
+  "model_checksums": {
+    "scout": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "embedding": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "reranker": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "prompt_versions": {
+    "scout": "v1",
+    "auditor": "v1",
+    "critic": "v1"
+  },
+  "tool_images": {},
+  "tool_runner": "fake",
+  "device": "verify",
+  "budget": {
+    "input_tokens": 200000,
+    "output_tokens": 20000,
+    "gpu_seconds": 0
+  },
+  "thresholds": {
+    "scout_threshold": 0.5,
+    "capsule_expansion_max": 3.0,
+    "requeue_max": 2.0,
+    "critic_top_n": 8.0,
+    "queue_maxsize": 256.0,
+    "schema_retries": 1.0,
+    "capsule_budget_tokens.light": 4000.0,
+    "capsule_budget_tokens.expanded": 24000.0,
+    "capsule_budget_tokens.focused": 8000.0
+  },
+  "seed": 20260901,
+  "sampling": {
+    "temperature": 0.2,
+    "top_p": 0.95
+  },
+  "kb_snapshot": "kb-x",
+  "started_at": "2026-08-17T14:30:53Z",
+  "finished_at": "2026-08-17T14:30:53Z",
+  "stopped_after": null
+}
