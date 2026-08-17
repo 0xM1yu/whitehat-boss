@@ -26,6 +26,13 @@ ID_PREFIXES = {
 # "sha256:" + 64 hex. agent-contracts.md §3 Evidence.digest, model-serving.md §5 checksum.
 Sha256Digest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 
+# 전부 0인 digest. **형식은 유효하지만 값은 자리표시자다** — 위 패턴을 그대로 통과하므로
+# 스키마는 이것을 막지 못한다. `config/models.yaml`의 checksum이 실측 전까지 이 값이고,
+# 그 상태로 돈 run은 기록상 재현 가능해 보이지만 어느 모델이었는지 지시하지 못한다.
+# 판정하는 쪽(`runner.incomplete_fields`, `cli`)이 여기서 가져다 쓴다 — 같은 리터럴을
+# 여러 곳에 적으면 한 곳만 고쳐도 아무도 모른다.
+PLACEHOLDER_DIGEST = "sha256:" + "0" * 64
+
 # 비어 있지 않은 식별자. 접두사까지 강제하지는 않는다 — 접두사 규칙이 문서에 명문화된
 # 것은 예시뿐이므로 값 형태만 최소로 제약한다.
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]

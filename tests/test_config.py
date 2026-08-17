@@ -26,9 +26,10 @@ from src.config import (
     load_config,
 )
 from src.schemas import CapsuleLevel, RunRecord
+from src.schemas.common import PLACEHOLDER_DIGEST
 from tests.conftest import ALL_PROFILES
 
-ZERO_DIGEST = "sha256:" + "0" * 64
+ZERO_DIGEST = PLACEHOLDER_DIGEST
 
 
 # --- 참조 정합성 ------------------------------------------------------------
