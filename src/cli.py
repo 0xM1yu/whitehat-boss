@@ -187,7 +187,7 @@ def _override_note(runtime: str) -> Check:
 def _check_tool_runtime(config: HarnessConfig) -> Check:
     """도구 런타임이 이 기계에 있는지 본다.
 
-    `describe_wiring()`은 docker와 singularity를 모두 `ContainerToolRunner`로 출력한다 —
+    `describe_wiring()`은 docker·singularity·podman을 모두 `ContainerToolRunner`로 출력한다 —
     같은 클래스이기 때문이다. 그래서 **어느 런타임인지는 여기서만 드러난다.**
 
     `shutil.which`는 PATH를 볼 뿐 접속하지 않으므로 "doctor는 엔드포인트에 접속하지
