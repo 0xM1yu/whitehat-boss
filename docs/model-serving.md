@@ -184,8 +184,13 @@ python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \
 
 **HF Hub 메타데이터는 정본이 아니다.** `siblings[].lfs.sha256`은 **LFS 추적 파일만**
 덮는다 — `config.json`·`tokenizer_config.json` 같은 작은 파일은 일반 git blob이라
-`blob_id`(git SHA-1)만 오는데, 하필 그쪽이 양자화 설정과 tokenizer 설정이다. 즉 "묶음"의
+`blobId`(git SHA-1)만 오는데, 하필 그쪽이 양자화 설정과 tokenizer 설정이다. 즉 "묶음"의
 절반이 빠진다. HF 조회는 **받기 전 예비 확인**으로만 쓴다.
+
+2026-08-17 API 확인(`GET /api/models/Qwen/Qwen3-0.6B?blobs=true`): 파일 10개 중 `lfs`가
+붙은 것은 `model.safetensors`·`tokenizer.json` **둘뿐**이고, `config.json`·
+`generation_config.json`·`tokenizer_config.json`·`merges.txt`·`vocab.json`은 전부
+`blobId`+`size`만 온다.
 
 `source`는 그 스냅샷이 어디서 왔는지다(`hf://org/repo@rev` 또는 `file:///경로`). 후보가
 전부 커뮤니티·서드파티 산출물이라(2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의
