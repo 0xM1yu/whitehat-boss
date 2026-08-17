@@ -56,12 +56,16 @@ class VllmEmbeddingClient:
             {"model": self.model_name, "input": list(texts)},
             self.api_key,
         )
-        elapsed = int(time.monotonic() - started)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         rows = sorted(data["data"], key=lambda row: int(row.get("index", 0)))
         return EmbeddingResult(
             vectors=[[float(x) for x in row["embedding"]] for row in rows],
             usage=_usage_from(data.get("usage"), texts),
-            gpu_seconds=elapsed,
+            # `gpu_seconds`는 폐기 예정이지만 이 커밋에서는 계속 채운다 — 원장이 아직 그
+            # 필드를 읽으므로 여기서 먼저 지우면 커밋 하나가 빨개진 채로 남는다.
+            gpu_seconds=elapsed_ms // 1000,
+            gpu_ms=elapsed_ms,
+            gpu_ms_source="request_wall_clock",
         )
 
 
@@ -93,13 +97,16 @@ class VllmRerankerClient:
             },
             self.api_key,
         )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         return RerankResult(
             ranked=[
                 Ranked(index=int(row["index"]), score=float(row["relevance_score"]))
                 for row in data.get("results", [])
             ],
             usage=_usage_from(data.get("usage"), [query, *documents]),
-            gpu_seconds=int(time.monotonic() - started),
+            gpu_seconds=elapsed_ms // 1000,
+            gpu_ms=elapsed_ms,
+            gpu_ms_source="request_wall_clock",
         )
 
 
