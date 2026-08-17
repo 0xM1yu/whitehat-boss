@@ -31,7 +31,7 @@
 | 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 | T1/T5 |
 | 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** | T2 |
 | 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 | T6 |
+| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity·podman 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 | T6 |
 | 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** | T2 |
 
 **6·9단계만 최종본이다.** 둘 다 모델·도구를 쓰지 않는 단계라서 지금 코드가 그대로 최종 구현이다.
@@ -94,8 +94,9 @@ Evidence는 `payload_ref`로 경로만 들고 있으므로 **스키마 변경 �
 
 ### 🟡 8단계 실행 환경 — `ContainerToolRunner` (2026-08-14)
 
-**들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity 안에서 실제 도구를 돌린다.
-런타임은 생성자 인자이고 프로필이 고른다(`dev_docker` / `dev_singularity`). 이미지는
+**들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
+돌린다. 런타임은 생성자 인자이고 프로필이 고른다(`dev_docker` / `dev_singularity`) —
+podman은 프로필이 없어 `--tool-runner podman`으로 고른다(ADR 0005). 이미지는
 `harness-tools:v1` 하나이며 semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
 (준비 절차는 `tools/README.md`).
@@ -212,8 +213,9 @@ ATOM에서 돌리는 일이다.
 `retriever`는 `fake`로 뒀다. hybrid로 올리면 embedding·reranker까지 실서빙이 되어 ATOM에
 모델 5개를 동시에 띄워야 하고, R1 검증의 실패 지점이 그만큼 늘어난다.
 
-`--tool-runner {fake,docker,singularity}`로 프로필의 런타임을 덮어쓸 수 있다. Seraph는
-Docker 데몬 접근이 없어 이것이 없으면 ATOM 투입 전 리허설이 불가능하다. evaluation.md
+`--tool-runner {fake,docker,singularity,podman}`로 프로필의 런타임을 덮어쓸 수 있다. Seraph는
+Docker 데몬 접근이 없고 ATOM은 데몬 접근도 singularity도 없어, 이것이 없으면 두 장비 모두에서
+이 프로필의 도구 실행 경로가 막힌다. evaluation.md
 §2.3 규칙 2의 예외이므로 **실제로 쓰인 값이 `RunRecord.tool_runner`에 남는다**(ADR 0005).
 
 ---
@@ -345,24 +347,35 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 현재 캡슐 대상은 **파일 단위**(`Location(file=...)`, symbol 없음)다.
 1단계 인덱서가 들어오면 심볼 단위로 좁혀지고 **후보 수와 제거율의 분모가 바뀐다.**
 
-### tool_images digest는 런타임 사이에서 비교할 수 없다
+### tool_images digest는 런타임 사이에서도 아키텍처 사이에서도 비교할 수 없다
 
-같은 이미지인데 값이 다르다(2026-08-14 실측).
+같은 이미지인데 런타임마다 값이 다르다(2026-08-14·17 실측).
 
 ```
-Docker      sha256:ccb6a6d9969b255f733496bf508ec141cdc547145b8708a6a2ae1e9d44467f12
-Singularity sha256:88a0fd4ba8f040e2abd03c8ef03c1ae3645436f702689cdff29057ea03779d20
+Docker      sha256:ccb6a6d9969b255f733496bf508ec141cdc547145b8708a6a2ae1e9d44467f12  (이미지 config sha256)
+Singularity sha256:88a0fd4ba8f040e2abd03c8ef03c1ae3645436f702689cdff29057ea03779d20  (SIF 파일 sha256)
+podman      sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a256  (RepoDigest — ATOM에서 별도 빌드)
 ```
 
-Docker는 이미지 config의 sha256을, Singularity는 SIF 파일 자체의 sha256을 기록하기
-때문이다(`container_tools._image_digest()`). 둘 다 그 런타임 안에서는 이미지를 유일하게
-지시하지만, **서로 비교할 수 있는 값이 아니다.**
+Docker는 이미지 config의 sha256을, Singularity는 SIF 파일 자체의 sha256을, podman은
+RepoDigest를 기록한다(`container_tools._image_digest()`). 셋 다 그 런타임 안에서는 이미지를
+유일하게 지시하지만, **서로 비교할 수 있는 값이 아니다.**
 
-→ **"tool_images가 같으면 같은 도구로 돌린 것"이라는 추론은 같은 런타임 안에서만
-성립한다.** 지금은 모든 run을 한 환경에서 돌리므로 문제가 없지만, ATOM(docker)과
-Seraph(singularity)를 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이 다르다고
-다른 이미지인 것도 아니다 — 위 두 값은 같은 이미지다. 해법(예: 양쪽에서 같은 값이
-나오는 이미지 식별자를 쓰기)은 정하지 않았다.
+**비교를 막는 축이 둘이다.**
+
+| 축 | 왜 갈리는가 | 기록에 남는가 |
+|---|---|---|
+| 런타임 (docker ↔ singularity ↔ podman) | 런타임마다 다른 종류의 sha256을 적는다 | `RunRecord.tool_runner` |
+| 아키텍처 (x86_64 ↔ aarch64) | 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**다 | **없다** — `device` 라벨이 [portability.md](docs/portability.md) §6 표를 거쳐 간접적으로 가리킬 뿐이다 |
+
+위 podman 값은 **두 축이 겹친** 경우다 — 기록 포맷도 다르고, ATOM(aarch64)에서 따로 빌드한
+다른 아키텍처의 이미지이기도 하다.
+
+→ **"tool_images가 같으면 같은 도구로 돌린 것"이라는 추론은 같은 런타임·같은 아키텍처
+안에서만 성립한다.** 지금은 각 run을 한 환경에서 돌리므로 문제가 없지만, ATOM(podman)·
+Seraph(singularity)·로컬(docker)을 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이
+다르다고 다른 이미지인 것도 아니다 — 위 세 값 중 docker·singularity는 같은 이미지다. 해법(예:
+양쪽에서 같은 값이 나오는 이미지 식별자를 쓰기)은 정하지 않았다.
 
 ### 두 장비의 결과를 같은 비교 셀에 넣지 않는다
 
