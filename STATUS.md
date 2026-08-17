@@ -152,6 +152,38 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
 - `doctor`의 state DB 경로 검사가 양방향으로 동작하는 것도 확인됐다 — `--artifacts-root`를
   `/data/` 밑에 두면 OK, 저장소 안이면 WARN이다.
 
+**ATOM 검증 완료 (2026-08-17, aarch64 / podman).** `dev_docker --tool-runner podman`이
+Docker와 같은 결과를 냈다. **도구 실행 경로는 검증됐고, 모델 서빙은 환경 제약으로 대기다.**
+
+```
+run_id      run_20260817_0001      후보 2건 / Finding 2건 / 완주
+tool_runner podman                 device      atom
+repo_commit 4ada193…(dirty: False) condition   B3prime@pipeline
+tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a256'}
+```
+
+- **아키텍처가 달라도 판정이 같다 — 처음 확인됐다.** semgrep fingerprint가 로컬
+  (x86_64/docker) `run_20260813_0002`·`0003`과 **문자 단위로 같다**(`ev_0002`
+  `2f5f28f1…0bce6_0`, `ev_0005` `766c3342…3c1e99_0`). 2026-08-14의 docker ↔ singularity
+  대조는 같은 x86_64끼리였고(SIF가 로컬 x86 tar를 그대로 변환한 것이다, 위 항목), ATOM
+  이미지는 그 장비에서 arm64로 따로 빌드했다. 그래서 이번이 **런타임과 아키텍처가 동시에
+  다른 첫 대조**다. 이것으로 [ADR 0005](docs/decisions/0005-tool-runner-override.md)가
+  스스로 정한 상태 갱신 조건이 충족되어 그 ADR이 `승인`이 됐다.
+- **R1의 커널 호환성 항목은 통과했다.** vLLM 0.27.1이 aarch64에 설치되고
+  `torch.cuda.get_device_capability()`가 `(12, 1)`·`NVIDIA GB10`을 인식했다
+  (torch 2.13.0+cu130 / CUDA 13.0). **대체 서빙 스택 검토는 불필요하다.**
+- **그런데 모델 서빙은 불가능하다 — 하네스 결함이 아니라 환경 제약이다.** 테넌트에서
+  로컬 주소로의 TCP 접속이 차단돼 있어, 같은 프로세스에서 `bind('127.0.0.1', p)` →
+  `listen` → `connect`가 `ConnectionRefusedError: [Errno 111]`로 떨어진다(`ss -ltn`에는
+  LISTEN으로 보이고 `lo`도 UP이다). `<private-ip>`은 `[Errno 113] No route to host`.
+  인터넷 아웃바운드는 정상이다. vLLM은 `world_size=1`이어도 TCPStore에 자기 자신으로
+  붙으므로 기동이 안 되고, 하네스도 `http://127.0.0.1:8001`로 붙으므로 추론 요청 자체가
+  성립하지 않는다. **관리자에게 예외를 요청한 상태다.**
+- `nvidia-smi --query-gpu=memory.total,memory.used`가 이 장비에서 `[N/A], [N/A]`다.
+  통합메모리라 별도 VRAM이 없어 보고할 값이 없다 — nvidia-smi는 PATH에 있고 정상 종료한다.
+  `mem_gb_ctx8k`의 유일한 소스가 그 값이므로 §3 체크리스트 2번은 다른 소스가 정해질
+  때까지 답이 나오지 않는다.
+
 ### 🔴 PoV(PoC) 생성
 
 **현재:** Auditor가 `ReproSpec(steps=["./build.sh --sanitize=address", "./poc <file>"])`를 만들지만, **`poc` 실행파일을 만드는 주체가 없다.**
