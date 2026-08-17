@@ -47,10 +47,10 @@ models:
     prompt_template_version: "v1"
     fallback: "fake"
     benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
+      measured_at: "2026-08-17T15:16:27Z"
+      measured_on: "atom"
+      tok_s_single: 39.65
+      tok_s_batch32: 127.69
       mem_gb_ctx8k: 0
 
   qwen3-8b:
