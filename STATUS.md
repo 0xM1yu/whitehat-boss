@@ -347,22 +347,24 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 
 ### tool_images digest는 런타임 사이에서 비교할 수 없다
 
-같은 이미지인데 값이 다르다(2026-08-14 실측).
+같은 이미지인데 런타임마다 값이 다르다(2026-08-14·17 실측).
 
 ```
-Docker      sha256:ccb6a6d9969b255f733496bf508ec141cdc547145b8708a6a2ae1e9d44467f12
-Singularity sha256:88a0fd4ba8f040e2abd03c8ef03c1ae3645436f702689cdff29057ea03779d20
+Docker      sha256:ccb6a6d9969b255f733496bf508ec141cdc547145b8708a6a2ae1e9d44467f12  (이미지 config sha256)
+Singularity sha256:88a0fd4ba8f040e2abd03c8ef03c1ae3645436f702689cdff29057ea03779d20  (SIF 파일 sha256)
+podman      sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a256  (RepoDigest — ATOM에서 별도 빌드)
 ```
 
-Docker는 이미지 config의 sha256을, Singularity는 SIF 파일 자체의 sha256을 기록하기
-때문이다(`container_tools._image_digest()`). 둘 다 그 런타임 안에서는 이미지를 유일하게
-지시하지만, **서로 비교할 수 있는 값이 아니다.**
+Docker는 이미지 config의 sha256을, Singularity는 SIF 파일 자체의 sha256을, podman은
+RepoDigest를 기록한다(`container_tools._image_digest()`). 셋 다 그 런타임 안에서는 이미지를
+유일하게 지시하지만, **서로 비교할 수 있는 값이 아니다.** podman 값이 또 다른 이유는
+포맷만이 아니라 **ATOM(aarch64)에서 따로 빌드한 다른 아키텍처 이미지**이기 때문이기도 하다.
 
 → **"tool_images가 같으면 같은 도구로 돌린 것"이라는 추론은 같은 런타임 안에서만
-성립한다.** 지금은 모든 run을 한 환경에서 돌리므로 문제가 없지만, ATOM(docker)과
-Seraph(singularity)를 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이 다르다고
-다른 이미지인 것도 아니다 — 위 두 값은 같은 이미지다. 해법(예: 양쪽에서 같은 값이
-나오는 이미지 식별자를 쓰기)은 정하지 않았다.
+성립한다.** 지금은 각 run을 한 환경에서 돌리므로 문제가 없지만, ATOM(podman)·
+Seraph(singularity)·로컬(docker)을 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이
+다르다고 다른 이미지인 것도 아니다 — 위 세 값 중 docker·singularity는 같은 이미지다. 해법(예:
+양쪽에서 같은 값이 나오는 이미지 식별자를 쓰기)은 정하지 않았다.
 
 ### 두 장비의 결과를 같은 비교 셀에 넣지 않는다
 

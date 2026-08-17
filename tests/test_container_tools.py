@@ -148,6 +148,32 @@ def test_docker_argv_carries_the_sandbox_policy(tmp_path: Path) -> None:
     assert argv[argv.index(DEFAULT_IMAGE) + 1 :] == ["semgrep", "scan"]
 
 
+def test_podman_argv_matches_docker_except_the_binary(tmp_path: Path) -> None:
+    """podman은 docker CLI 호환이라 바이너리 이름만 갈리고 격리 플래그는 동일하다.
+
+    ATOM은 Docker 데몬 접근도 singularity도 없어 이 경로가 유일한 실서빙 런타임이다
+    (2026-08-17). 같은 프로필을 `--tool-runner podman`으로 돌린다(ADR 0005).
+    """
+    kwargs = dict(
+        sandbox=SANDBOX,
+        root=TARGET,
+        scratch=tmp_path,
+        command=Command(["semgrep", "scan"], cwd="/src"),
+        name="harness-x",
+        sif_dir=tmp_path,
+    )
+    podman = container_argv("podman", **kwargs)
+    docker = container_argv("docker", **kwargs)
+
+    assert podman[0] == "podman"
+    # 첫 토큰(바이너리)만 다르고 나머지는 한 글자도 다르지 않다 — 격리가 갈리면 두 장비의
+    # 결과를 같은 비교 셀에 넣을 수 없다.
+    assert podman[1:] == docker[1:]
+    assert "--network=none" in podman
+    assert "--read-only" in podman
+    assert podman[podman.index("--memory") + 1] == "2048m"
+
+
 def test_singularity_argv_carries_the_sandbox_policy(tmp_path: Path) -> None:
     argv = container_argv(
         "singularity",
@@ -186,7 +212,7 @@ def test_network_true_is_not_expressible_as_an_isolated_command() -> None:
     assert "--network=none" not in argv
 
 
-@pytest.mark.parametrize("runtime", ["docker", "singularity"])
+@pytest.mark.parametrize("runtime", ["docker", "podman", "singularity"])
 def test_tool_env_is_forwarded_not_dropped(runtime: str, tmp_path: Path) -> None:
     """`ToolArgs.env`를 조용히 버리지 않는다. 정렬해서 넘긴다 — 순서도 재현성이다."""
     argv = container_argv(
@@ -511,7 +537,7 @@ def test_default_image_matches_the_orchestrator_default() -> None:
 
 def test_unknown_runtime_is_rejected(tmp_path: Path, spy: _Spy) -> None:
     with pytest.raises(ValueError, match="모르는 런타임"):
-        _runner(tmp_path, runtime="podman")
+        _runner(tmp_path, runtime="lxc")
 
 
 def test_missing_runtime_fails_at_construction(
