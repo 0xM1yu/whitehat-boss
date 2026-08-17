@@ -89,6 +89,22 @@ class ModelEntry(HarnessModel):
     license: NonEmptyStr
     # model·tokenizer·quantization 묶음의 해시. RunRecord.model_checksums로 들어간다.
     checksum: Sha256Digest
+    # **그 checksum이 어디서 나왔는가.** 예: `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<rev>`
+    # 또는 `file:///data/models/qwen3-coder-30b-nvfp4`.
+    #
+    # checksum만으로는 사람이 역추적할 수 없다. 후보가 전부 커뮤니티·서드파티 산출물이라
+    # (2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의 모델이 리포지터리마다 다르고**,
+    # 값이 안 맞을 때 "어느 리포의 어느 리비전이었나"를 답할 실마리가 기록에 없었다.
+    #
+    # **형식을 패턴으로 강제하지 않는다.** checksum 정본이 로컬 스냅샷 해시라
+    # (model-serving.md §5) `file://`도 정당한 값이고, `hf://`로 좁히면 그 경로를 적을
+    # 수 없다. `--device` 라벨 집합을 열어 둔 것과 같은 판단이다(ADR 0006). 대신
+    # `NonEmptyStr`이라 "적었는데 빈 문자열"은 막는다.
+    #
+    # 기본값이 `None`인 것은 `Benchmark.measured_on`과 같은 이유다 — 기존 registry 항목에
+    # 이 키가 없으면 로드가 통째로 실패하고, `None`은 "출처 미상"이라는 정직한 값이다.
+    # `--apply`는 이 필드를 건드리지 않는다(`benchmark:` 블록 밖이고 `APPLY_KEYS`에 없다).
+    source: NonEmptyStr | None = None
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark

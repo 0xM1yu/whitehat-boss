@@ -268,7 +268,9 @@ def _check_checksums(config: HarnessConfig) -> list[Check]:
     """
     served = config.served_models()
     placeholder = sorted(
-        f"{role}({key})"
+        # `source`가 있으면 함께 찍는다 — 채우려면 **어느 리포의 어느 리비전인지**를
+        # 알아야 하고, 그것이 없다는 사실 자체도 알아야 할 정보다.
+        f"{role}({key}, source={config.models[key].source or '미상'})"
         for role, key in served.items()
         if config.models[key].checksum == PLACEHOLDER_DIGEST
     )
