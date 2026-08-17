@@ -13,6 +13,7 @@ model-serving.md §6: 도메인 로직은 `ModelClient` 인터페이스에만 �
 """
 
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -60,8 +61,14 @@ class OpenAICompatModelClient:
     def complete(self, *, role: Role, prompt: Prompt, schema: type[BaseModel]) -> ModelResult:
         last_error: Exception | None = None
         body = prompt.body
+        # **재시도분까지 더한다.** 스키마 파싱에 실패한 응답도 서버는 이미 만들어 냈고
+        # 그 GPU 시간은 실제로 쓰였다. 마지막 시도만 세면 재시도가 잦은 모델일수록 비용이
+        # 싸 보인다 — 조건 간 비교에서 정확히 거꾸로 가는 편향이다.
+        gpu_ms = 0
         for _ in range(self.retries + 1):
+            started = time.monotonic()
             raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
+            gpu_ms += int((time.monotonic() - started) * 1000)
             try:
                 value = schema.model_validate_json(raw)
             except ValidationError as exc:
@@ -70,7 +77,13 @@ class OpenAICompatModelClient:
                 # 이전 응답 원문을 다시 넣으면 같은 오류를 반복하게 만든다.
                 body = f"{prompt.body}\n\n[스키마 오류] {exc.errors(include_url=False)}"
                 continue
-            return ModelResult(value=value, usage=usage, model=self.model_name)
+            return ModelResult(
+                value=value,
+                usage=usage,
+                model=self.model_name,
+                gpu_ms=gpu_ms,
+                gpu_ms_source="request_wall_clock",
+            )
         raise SchemaParseError(
             f"{role} 역할의 {self.model_name}이 {self.retries + 1}회 안에 "
             f"{schema.__name__}을 만들지 못했다: {last_error}"
