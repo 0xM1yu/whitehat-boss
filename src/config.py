@@ -234,6 +234,21 @@ class HarnessConfig(HarnessModel):
             if role in self.profile.roles
         }
 
+    def served_models(self) -> dict[str, str]:
+        """**Fake가 아닌** 역할 → model key.
+
+        `model_checksums()`가 전 역할을 담는 것과 대비된다. 저쪽은 기록이라 빠짐이 없어야
+        하고, 이쪽은 판정 대상이라 **해시할 대상이 실재하는 역할만** 담아야 한다 —
+        `FakeModelClient`는 프로세스 안에서 도는 코드이므로 가중치도 토크나이저도 없고,
+        그 checksum이 0인 것은 미기록이 아니라 정확한 값이다.
+
+        역할 단위인 것은 `single_gpu_12g`처럼 한 프로필에서 Fake와 실서빙이 섞이기
+        때문이다(그 프로필은 scout만 실서빙이다).
+        """
+        return {
+            role: key for role, key in self.profile.roles.items() if not self.models[key].is_fake
+        }
+
     def unmeasured_models(self) -> list[str]:
         """benchmark가 비어 있는(실측 전) 모델 키.
 
