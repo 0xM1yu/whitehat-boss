@@ -95,8 +95,10 @@ Evidence는 `payload_ref`로 경로만 들고 있으므로 **스키마 변경 �
 ### 🟡 8단계 실행 환경 — `ContainerToolRunner` (2026-08-14)
 
 **들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
-돌린다. 런타임은 생성자 인자이고 프로필이 고른다(`dev_docker` / `dev_singularity`) —
-podman은 프로필이 없어 `--tool-runner podman`으로 고른다(ADR 0005). 이미지는
+돌린다. 런타임은 생성자 인자이고 프로필이 고른다 — 개발 프로필은 `dev_docker` /
+`dev_singularity`, 실서빙 프로필(`local_balanced`·`b1_single`)은 `podman`이다(2026-08-17,
+주 실서빙 장비가 ATOM이므로 — docs/portability.md §3). 프로필이 선언한 런타임이 없는
+장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
 `harness-tools:v1` 하나이며 semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
 (준비 절차는 `tools/README.md`).
