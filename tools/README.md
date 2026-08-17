@@ -59,6 +59,25 @@ docker image inspect harness-tools:v1 --format '{{index .RepoDigests 0}}|{{.Id}}
 docker run --rm harness-tools:v1 cat /opt/semgrep-rules/COMMIT
 ```
 
+### ATOM 빌드·실행 (podman)
+
+ATOM은 **Docker 데몬 접근도 singularity도 없고 podman만 있다**(2026-08-17 실측). aarch64라
+x86 이미지를 옮겨 쓸 수도 없으므로 **이 장비에서 직접 빌드한다.** podman은 Dockerfile을 그대로
+읽으므로 같은 파일로 빌드된다 — 그 자리에서 tree-sitter·semgrep의 arm64 휠 유무까지 검증된다.
+
+```bash
+podman build -t harness-tools:v1 tools/harness-tools/
+python -m src.cli run --profile <프로필> --tool-runner podman --target <경로>
+```
+
+`--tool-runner podman`은 프로필의 런타임을 덮는다(ADR 0005). podman은 docker CLI 호환이라
+`container_argv`가 바이너리 이름만 갈고 격리 플래그는 같다. **rootless인데도 `--cpus`·
+`--memory`를 강제하므로**(아래 표) SLURM 같은 외부 도구가 필요 없다. digest도 docker와 같은
+`image inspect` 포맷으로 읽힌다 — podman은 로컬 빌드에도 `RepoDigests`를 채운다.
+
+825MB(arm64) 이미지가 `dev_docker --tool-runner podman`으로 완주했고(후보 2 / Finding 2),
+이는 Slurm의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은 판정을 낸다.
+
 ### Slurm 이관 (Singularity)
 
 <node>에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자가 docker 그룹이 아니다)
@@ -111,6 +130,7 @@ export HARNESS_SIF_DIR=/data/<account>/sif
 | 런타임 | `SandboxSpec` 필드 | 상태 |
 | --- | --- | --- |
 | docker | 전부 | `--network=none` / `--read-only` / `--cpus` / `--memory` / `timeout` 모두 적용 |
+| podman | 전부 | docker와 같다 — rootless인데도 cgroup v2 위임으로 `--cpus`·`--memory`를 강제한다 (2026-08-17 ATOM 실측: `--memory=256m` → 컨테이너 안 `memory.max` 268435456) |
 | singularity 3.7.3 | `cpu_limit`, `memory_mb` | **강제되지 않는다.** HPC에서는 SLURM(`--cpus-per-task`, `--mem`)이 담당한다 |
 
 강제되지 않는 항목은 `Evidence.error`에 남기지 않는다 — 실행은 성공했고, 자원 상한이 안
@@ -122,6 +142,7 @@ export HARNESS_SIF_DIR=/data/<account>/sif
 | 런타임 | 필드 | 상태 |
 | --- | --- | --- |
 | docker | — | `read_only`를 끄면 컨테이너 루트에 쓰기가 열린다 |
+| podman | — | docker와 같다 — `read_only`를 끄면 루트 쓰기가 열린다 |
 | singularity 3.7.3 | `read_only` | **끌 수 없다.** SIF가 immutable squashfs라 루트가 항상 읽기 전용이다 |
 
 **그래서 `read_only=False`는 두 런타임에서 다르게 동작한다.** 가상의 위험이 아니다 — 첫
