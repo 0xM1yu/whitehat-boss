@@ -51,6 +51,12 @@ class BudgetLedger:
         # 결함이 다시 생긴다 — 이 결함이 정확히 그렇게 생겼다(세 지점이 각자 내림했고,
         # 모델 경로는 아예 인자가 없었다).
         self.gpu_ms = 0
+        # **컨테이너 도구 시간은 GPU와 다른 칸에 쌓는다.** 2026-08-17까지 이 값이
+        # `gpu_seconds`로 청구되고 있었는데, 그때 0이 아닌 값을 만든 네 도구(semgrep·
+        # clang-tidy·build·asan)는 **GPU를 쓰지 않는다.** evaluation.md §5.3의
+        # "finding당 GPU-hour"가 그 값을 분자로 쓰므로 섞인 채로 두면 핵심 비용 지표가
+        # CPU 시간으로 오염된다.
+        self.tool_ms = 0
         # `gpu_ms=None`으로 온 호출 수 — **"GPU를 안 썼다"가 아니라 "안 쟀다"의 개수다.**
         # Fake 어댑터가 여기 들어온다. 실서빙 역할에서 이 값이 0이 아니면 그 run의
         # GPU 비용은 미상이고, `runner.incomplete_fields()`가 그 사실로 판정한다.
@@ -60,6 +66,11 @@ class BudgetLedger:
     def gpu_seconds(self) -> int:
         """사람이 읽는 파생값. **판정과 누산은 언제나 `gpu_ms`가 한다.**"""
         return self.gpu_ms // 1000
+
+    @property
+    def tool_seconds(self) -> int:
+        """`gpu_seconds`와 같은 파생값. 누산과 판정은 `tool_ms`가 한다."""
+        return self.tool_ms // 1000
 
     @property
     def budget(self) -> Budget:
@@ -80,6 +91,7 @@ class BudgetLedger:
             ("input_tokens", self.input_tokens, self._budget.input_tokens, 1),
             ("output_tokens", self.output_tokens, self._budget.output_tokens, 1),
             ("gpu_seconds", self.gpu_ms, self._budget.gpu_seconds * 1000, 1000),
+            ("tool_seconds", self.tool_ms, self._budget.tool_seconds * 1000, 1000),
         )
         for item, spent, limit, per_unit in checks:
             if limit > 0 and spent >= limit:
@@ -106,7 +118,9 @@ class BudgetLedger:
         )
         raise BudgetExhausted(stage, item, spent, limit)
 
-    def charge(self, usage: Usage, *, stage: int, gpu_ms: int | None = 0) -> None:
+    def charge(
+        self, usage: Usage, *, stage: int, gpu_ms: int | None = 0, tool_ms: int | None = 0
+    ) -> None:
         """이미 일어난 소비를 기록한다. 넘겨도 되돌리지 않고 `budget` 이벤트만 남긴다.
 
         `cached_tokens`는 `input_tokens`의 부분집합이므로 따로 더하지 않는다
@@ -123,6 +137,13 @@ class BudgetLedger:
             self.unmeasured_gpu_calls += 1
         else:
             self.gpu_ms += gpu_ms
+        # `tool_ms`도 같은 규칙이다. Fake 런타임의 도구 시간이 `None`으로 오는데, 그것은
+        # GPU도 컨테이너도 아니라 **하네스가 자기를 잰 값**이라 장부에 넣을 대상이 아니다
+        # (`RunContext.call_tool`에 그 판단과 근거가 있다). 미측정 개수는 따로 세지 않는다 —
+        # 도구 시간은 재현성 기록이 아니라 상한이고, `tool_images`가 이미 "컨테이너 없이
+        # 돌았다"를 판정한다(`incomplete_fields`).
+        if tool_ms is not None:
+            self.tool_ms += tool_ms
         overrun = self._overrun()
         self._trace.emit(
             EventKind.BUDGET,
@@ -134,6 +155,7 @@ class BudgetLedger:
             # 사후 집계가 볼 수 있는 유일한 정확값이 ms다.
             gpu_seconds=self.gpu_seconds,
             gpu_ms=self.gpu_ms,
+            tool_ms=self.tool_ms,
             item=overrun[0] if overrun else None,
         )
 
@@ -146,4 +168,5 @@ class BudgetLedger:
             # 실제보다 최대 1초 많게** 나온다 — 리포트에서 읽는 값이라 낙관적으로 틀리는
             # 방향이다.
             "gpu_seconds": max(0, self._budget.gpu_seconds * 1000 - self.gpu_ms) // 1000,
+            "tool_seconds": max(0, self._budget.tool_seconds * 1000 - self.tool_ms) // 1000,
         }

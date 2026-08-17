@@ -257,6 +257,17 @@ def run_pipeline(
         stopped_after, stop_reason = exc.stage, ReasonCode.BUDGET_EXHAUSTED
         warnings.append(f"{exc.stage}단계에서 예산 소진: {exc.item} {exc.spent}/{exc.limit}")
 
+    # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
+    # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
+    # 한다 — `single_gpu_12g`처럼 scout만 실서빙인 프로필에서 Fake 네 역할이 걸리면
+    # `dev_*` 프로필이 매 run 같은 줄을 뱉고 진짜 문제가 묻힌다(checksum 검사와 같은 논법).
+    served = config.served_models()
+    gpu_warning = unmeasured_gpu_warning(
+        {role: count for role, count in ctx.gpu_unmeasured_roles.items() if role in served}
+    )
+    if gpu_warning:
+        warnings.append(gpu_warning)
+
     findings = list(state.findings.values())
     rendered = report.run(ctx, findings=findings)
     finished = state_machine.finish_run(
@@ -385,14 +396,43 @@ def _new_record(
     return record, warnings
 
 
+def unmeasured_gpu_warning(roles: Mapping[str, int] | None) -> str | None:
+    """실서빙 역할이 GPU 시간을 못 남겼다는 경고. 없으면 `None`.
+
+    **`incomplete_fields()`와 러너가 같은 정의를 쓰기 위해 따로 뽑았다.** 판정에 필요한
+    값이 run이 **끝난 뒤에야** 나오는데(`_new_record`는 파이프라인 시작 전에 불린다)
+    러너가 문구를 따로 만들면 두 곳이 갈라진다 — 이 저장소가 반복해서 고쳐 온 "선언과
+    실제의 괴리"가 정확히 그 형태다.
+
+    evaluation.md §5.2·§5.3이 GPU-second를 비용 지표의 분자로 쓴다. 실서빙 호출이 그 값을
+    못 남겼다면 이 run의 비용은 **미상**이고, 그대로 비교표에 넣으면 "쟀는데 0"과 "안
+    쟀다"가 같은 칸에 들어간다 — 2026-08-17까지 모델 호출이 GPU 시간을 아예 청구하지
+    못했던 것이 정확히 그 상태였다.
+    """
+    if not roles:
+        return None
+    detail = ", ".join(f"{role}({count}회)" for role, count in sorted(roles.items()))
+    return (
+        f"GPU 시간을 못 잰 실서빙 호출이 있다: {detail}. 이 run의 GPU 비용은 미상이라 "
+        "모델 비교표에서 제외한다"
+    )
+
+
 def incomplete_fields(
-    record: RunRecord, *, served_models: Mapping[str, str] | None = None
+    record: RunRecord,
+    *,
+    served_models: Mapping[str, str] | None = None,
+    gpu_unmeasured_roles: Mapping[str, int] | None = None,
 ) -> list[str]:
     """비교표에 넣을 수 없게 만드는 빈 항목 (engineering-guide.md §5).
 
     `served_models`는 **Fake가 아닌 역할**의 역할 → model key다. checksum 자리표시자
     판정에만 쓴다. `None`이면 그 검사를 건너뛴다 — 모르는 채로 "괜찮다"고 말하지 않고,
     판정할 근거가 없으면 판정하지 않는다.
+
+    `gpu_unmeasured_roles`는 **실서빙 역할 중 GPU 시간을 못 잰 것**의 역할 → 호출 수다.
+    러너가 원장에서 뽑아 `served_models`와 교집합해서 넘긴다 — Fake 역할이 섞이면 `dev_*`
+    프로필이 매 run 같은 줄을 뱉고 진짜 문제가 묻힌다(checksum 검사와 같은 논법).
     """
     warnings = []
     if not record.tool_images:
@@ -416,6 +456,9 @@ def incomplete_fields(
                 f"model_checksums가 자리표시자(전부 0)다: {', '.join(placeholder)}. "
                 "어느 모델로 돈 run인지 기록이 지시하지 못한다. 모델 비교표에서 제외한다"
             )
+    gpu_warning = unmeasured_gpu_warning(gpu_unmeasured_roles)
+    if gpu_warning:
+        warnings.append(gpu_warning)
     if record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
         warnings.append(f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다")
     if record.repo_commit == _UNKNOWN_COMMIT:

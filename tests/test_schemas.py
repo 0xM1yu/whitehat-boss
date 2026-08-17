@@ -10,6 +10,8 @@
 모든 값은 문서와 같은 합성 예시다.
 """
 
+import json
+import pathlib
 from datetime import UTC, datetime
 from typing import get_args
 
@@ -378,3 +380,38 @@ def test_tool_args_reject_empty_argv() -> None:
     assert ToolArgs(argv=["semgrep", "--config=auto"], workdir="/src").env == {}
     with pytest.raises(ValidationError):
         ToolArgs(argv=[], workdir="/src")
+
+
+# --- 기존 manifest 호환 (2026-08-17) -----------------------------------------
+
+# **추적되는 fixture 하나가 유일한 CI 강제 장치다.**
+#
+# 출처: `artifacts/run_20260817_0004/run_manifest.json`을 그대로 복사한 것이다.
+#   - 언제  : 2026-08-17 (로컬)
+#   - 무엇  : `dev_fake` 프로필 스모크 run. `--device verify`, `tool_runner: fake`,
+#             `tool_images` 비어 있음. **ATOM run이 아니다** — 그 run의 산출물은 그
+#             장비에 있고 이 저장소에 없다.
+#   - 왜    : `budget`에 `tool_seconds`가 **없다.** 그 필드가 생기기 전에 쓰인 기록이므로,
+#             옵셔널로 추가했다는 주장을 실제로 검증한다.
+#
+# `artifacts/`는 `.gitignore`에 있어 저장소 상태가 아니다. 그래서 아티팩트를 훑는
+# 테스트는 CI에서 manifest 0개로 **공허하게 통과한다** — 추적되는 fixture만이 강제력을
+# 가진다. 스키마에 필수 필드를 늘리려는 사람은 이 테스트에서 먼저 걸려야 한다.
+MANIFEST_FIXTURE = (
+    pathlib.Path(__file__).resolve().parent / "fixtures" / "manifests" / "run_20260817_0004.json"
+)
+
+
+def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
+    """`Budget.tool_seconds`를 옵셔널로 넣은 근거가 이것이다.
+
+    필수로 넣었다면 이 fixture가 `model_validate`에서 통째로 실패한다 —
+    `Benchmark.measured_on`·`ModelEntry.source`가 같은 이유로 기본값을 뒀다.
+    """
+    payload = json.loads(MANIFEST_FIXTURE.read_text(encoding="utf-8"))
+    assert "tool_seconds" not in payload["budget"], "fixture가 낡지 않았다 — 검사가 공허해진다"
+
+    record = RunRecord.model_validate(payload)
+
+    assert record.budget.tool_seconds == 0  # "상한이 없었다"는 사실이지 지어낸 값이 아니다
+    assert record.tool_runner and record.device is not None
