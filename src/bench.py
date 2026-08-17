@@ -474,9 +474,22 @@ def measure_memory(
             "비율만큼 선점하기 때문이다. 8K와 32K가 같아도 측정 실패가 아니다. context에 "
             "따라 변하는 것은 kv_cache_usage_perc이며 by_context에 있다"
             if mb
-            else "nvidia-smi가 없어 GB를 얻지 못했다 (/metrics는 비율만 주고 GB를 주지 않는다)"
+            # **아래 사유를 뭉개지 않는다.** 이 값의 유일한 소스가 nvidia-smi이므로
+            # (/metrics는 비율만 주고 GB를 주지 않는다) 그쪽이 왜 값을 못 줬는지가 곧
+            # 이 필드가 0인 이유다. "nvidia-smi가 없어서"로 고정해 두면 통합메모리
+            # 장비에서 거짓이 된다(2026-08-17 GB10 실측).
+            else f"{_ctx8k_reason(ctx8k)} (/metrics는 비율만 주고 GB를 주지 않는다)"
         ),
     }
+
+
+def _ctx8k_reason(ctx8k: object) -> str:
+    """8K 측정이 남긴 nvidia-smi 사유. 없으면 그 사실을 그대로 적는다."""
+    if isinstance(ctx8k, dict):
+        reason = ctx8k.get("nvidia_smi_mb_reason")
+        if reason:
+            return str(reason)
+    return "8K context 측정이 없어 nvidia-smi 사유를 알 수 없다"
 
 
 def _one_context(
@@ -490,13 +503,16 @@ def _one_context(
     prompt = sized_prompt(role, template, ctx, variant=ctx)
     peak_perc: list[float] = []
     peak_mb: list[float] = []
+    # 마지막 폴링이 준 사유. 값을 한 번이라도 얻으면 `None`으로 덮이므로 남는 것은
+    # **끝까지 못 얻었을 때의 실제 이유**다 — 세 경우를 뭉뚱그리지 않는다(`nvidia_smi_mb`).
+    mb_reason: str | None = "요청이 도는 동안 nvidia-smi를 한 번도 재지 못했다"
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(call_once, client, role, prompt, schema)
         while not future.done():
             perc = kv_cache_perc(endpoint)
             if perc is not None:
                 peak_perc.append(perc)
-            used = nvidia_smi_mb()
+            used, mb_reason = nvidia_smi_mb()
             if used is not None:
                 peak_mb.append(used)
         call = future.result()
@@ -512,5 +528,5 @@ def _one_context(
             None if peak_perc else f"{METRIC_KV_USAGE}를 /metrics에서 읽지 못했다"
         ),
         "nvidia_smi_mb_peak": max(peak_mb) if peak_mb else 0.0,
-        "nvidia_smi_mb_reason": None if peak_mb else "nvidia-smi가 PATH에 없거나 실패했다",
+        "nvidia_smi_mb_reason": None if peak_mb else mb_reason,
     }
