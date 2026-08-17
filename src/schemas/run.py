@@ -77,7 +77,7 @@ class RunRecord(UtcModel):
     prompt_versions: dict[str, NonEmptyStr]
     # 도구 이름 → 컨테이너 이미지 digest
     tool_images: dict[str, Sha256Digest]
-    # 그 run이 **실제로 쓴** 도구 런타임 (`fake` | `docker` | `singularity`).
+    # 그 run이 **실제로 쓴** 도구 런타임 (`fake` | `docker` | `singularity` | `podman`).
     #
     # 닫힌 집합은 `config.AdapterSelection.tool_runner`가 들고 있다. 여기서 `Literal`을
     # 다시 적지 않는 것은 `src/schemas/`가 `src/config.py`를 import 할 수 없기 때문이고

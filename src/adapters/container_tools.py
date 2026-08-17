@@ -1,4 +1,4 @@
-"""ContainerToolRunner — Docker·Singularity 안에서 실제 도구를 돌리는 ToolRunner.
+"""ContainerToolRunner — Docker·Singularity·podman 안에서 실제 도구를 돌리는 ToolRunner.
 
 계약은 `FakeToolRunner`와 같다(engineering-guide.md §8.3): **실패해도 예외를 던지지 않고
 `Evidence(ok=False, error=...)`를 돌려준다.** 예외는 샌드박스 자체를 띄울 수 없는 경우뿐이고
