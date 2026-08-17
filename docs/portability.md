@@ -44,9 +44,34 @@
 | 갈리는 것 | 어디서 표현되는가 |
 | --- | --- |
 | endpoint | `config/models.yaml`의 `endpoint` |
-| 컨테이너 런타임 | 프로필의 `adapters.tool_runner`. **`--tool-runner` 오버라이드에 실제 사용처가 생겼다**(2026-08-17) — ATOM에는 podman만 있는데 `local_balanced`·`b1_single`·`dev_docker`는 `docker`를 선언한다. 경위는 [decisions/0005](decisions/0005-tool-runner-override.md)의 "이후 드러난 것"과 "사용처가 생겼다" |
+| 컨테이너 런타임 | 프로필의 `adapters.tool_runner` (선언 기준은 아래). 프로필이 적지 못한 장비는 `--tool-runner`로 덮는다 — 실제 사용처는 `dev_docker`를 ATOM에서 돌릴 때다(2026-08-17). 경위는 [decisions/0005](decisions/0005-tool-runner-override.md) |
 | 실행 가능한 양자화 | **별도 model key와 별도 프로필.** 오버레이로 `quantization`을 덮지 않는다 — 그건 같은 모델이 아니다 |
 | 잡 실행·접속 | 하네스 밖. 래퍼 스크립트와 운용 문서 |
+
+### 프로필은 어느 런타임을 선언하는가
+
+**프로필은 그 프로필을 실제로 돌릴 주 장비의 런타임을 선언하고, 다른 장비가
+`--tool-runner`로 덮는다.**
+
+지원 런타임은 셋(docker·singularity·podman)인데 프로필은 하나만 적을 수 있으므로 어느
+쪽을 골라도 오버라이드가 남는다. 그러니 질문은 "예외를 없앨 수 있는가"가 아니라
+**"어느 장비를 예외로 둘 것인가"**이고, 답은 **주 경로가 예외가 아니어야 한다**이다 —
+오버라이드는 [evaluation.md](evaluation.md) §2.3 규칙 2의 예외이고
+`RunRecord.tool_runner`에 기록으로 남는다. 주 장비가 상시 예외 상태면 그 기록이
+"이 run은 특별했다"를 뜻하지 못하게 된다.
+
+`dev_singularity`가 이미 그 논법이다. Seraph에서 돌리려고 만든 프로필이므로 런타임을
+직접 선언하고, 그 장비에서는 오버라이드가 필요 없다.
+
+| 프로필 | 선언 | 주 장비 | 오버라이드가 필요한 곳 |
+| --- | --- | --- | --- |
+| `local_balanced` · `b1_single` | `podman` | **ATOM** — 이 두 프로필을 돌릴 수 있는 유일한 장비다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Seraph) 이 프로필은 거기서 기동하지 않는다 | 없음 |
+| `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서 dev 경로를 돌릴 때 (`--tool-runner podman`) |
+| `dev_singularity` | `singularity` | Seraph | 없음 |
+
+**런타임별로 프로필을 복제하지 않는다.** 조건 축(B1/B3')에 장비 축이 섞이고, 조건이 늘
+때마다 장비 수만큼 프로필이 곱해진다([decisions/0005](decisions/0005-tool-runner-override.md)가
+기각한 대안이다).
 
 지금은 endpoint가 갈리지 않는다. 서버와 클라이언트를 같은 노드에서 돌리므로 어느 장비에서든
 `127.0.0.1`이다. 그래서 `config/`는 한 벌이고 장비별 오버레이가 없다. 이 전제가 깨지면
@@ -84,8 +109,24 @@ python -m src.cli doctor --profile local_balanced --device seraph
 | --- | --- | --- | --- |
 | 1 | `local_balanced`이 참조하는 모델 5개 중 **3개**가 Blackwell 이상을 요구한다: `qwen3-8b`(`fp4`), `qwen3-coder-30b-a3b`(`nvfp4`), `devstral-small-2-24b`(`nvfp4`). `b1_single`은 세 역할이 전부 `qwen3-coder-30b-a3b`(`nvfp4`)다 | Blackwell(sm_100+) 미만 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** |
 | 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | 미해결. **셋 중 진단 비용이 가장 크다**(아래) |
-| 3 | R1: 최신 vLLM × Blackwell 커널 호환성 미검증 | 검증 전 | [open-questions.md](open-questions.md) R1. `tools/probe/`가 1차 판정을 낸다 |
-| 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다 |
+| 3 | ~~R1: 최신 vLLM × Blackwell 커널 호환성 미검증~~ → **커널 호환성은 2026-08-17 통과**(vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10` 인식). 남은 것은 **그 장비에서 모델을 띄우지 못한다**는 것이고, 원인은 하네스가 아니라 테넌트의 로컬 TCP 차단이다(§6) | ATOM (환경 제약 해소 전) | [open-questions.md](open-questions.md) R1. **하네스가 고칠 수 있는 항목이 아니므로 이 표에서 빠질 예정**이다 — 관리자 예외가 적용되면 지운다 |
+| 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다. **두 축 모두 실측으로 뒷받침된다**(아래) |
+
+**#4의 "두 축"은 이제 추측이 아니다.** 같은 이미지를 세 런타임에서 만든 digest 실측이 셋
+있고, 그중 하나는 아키텍처까지 다르다.
+
+```
+docker      sha256:ccb6a6d9969b255f733496bf508ec141cdc547145b8708a6a2ae1e9d44467f12  x86_64 · 이미지 config sha256
+singularity sha256:88a0fd4ba8f040e2abd03c8ef03c1ae3645436f702689cdff29057ea03779d20  x86_64 · SIF 파일 sha256
+podman      sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a256  aarch64 · RepoDigest
+```
+
+앞의 둘은 **같은 이미지**인데 값이 다르다(런타임 축). 세 번째는 그 위에 아키텍처 축이
+겹친 경우다 — ATOM에서 arm64로 따로 빌드했으므로 값이 같을 수가 없다.
+
+**그런데 판정은 같다.** 세 run의 semgrep fingerprint가 일치한다([decisions/0005](decisions/0005-tool-runner-override.md)의
+상태 갱신 조건). 즉 **"digest가 다르다"와 "다른 도구로 돌았다"는 다른 말**이고, 지금 기록은
+그 둘을 구분해 주지 못한다. 이것이 이 항목이 아직 결함인 이유다.
 
 **#2가 #1보다 위험한 이유.** 프로필 이름과 주석이 **메모리 조건만** 말한다("12GB 카드 1장",
 "Qwen3-4B(FP8) 약 8.0GB"). 30B·24B를 쓰는 #1의 프로필은 12GB 카드에서 **크기로도** 걸리니
@@ -104,8 +145,20 @@ python -m src.cli doctor --profile local_balanced --device seraph
 
 | 라벨 | 아키텍처 | 컨테이너 런타임 | 확인된 것 |
 | --- | --- | --- | --- |
-| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어 | **podman 4.9.3** (rootless. Docker 데몬 접근·singularity 둘 다 없음) | 2026-08-17 harness-tools:v1 arm64 빌드·podman 완주(후보 2/Finding 2). 할당 자원: 통합메모리 128 GB 중 **팀 전체 합계 34 GiB**(별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다), GPU **공유**, CPU 6코어 상당, 디스크 1 TiB NVMe Gen5 전용 파티션. **R1(모델 서빙)은 검증 대기** |
-| `seraph` | Ampere (sm_86), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
+| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어. 할당: 통합메모리 128 GB 중 **팀 전체 합계 34 GiB**(별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다), GPU **공유**, CPU 6코어 상당, 디스크 1 TiB NVMe Gen5 전용 파티션 | **podman 4.9.3** (rootless. Docker 데몬 접근·singularity 둘 다 없음) | 2026-08-17 harness-tools:v1 **arm64 현지 빌드** → `dev_docker --tool-runner podman` **완주**(후보 2/Finding 2, `run_20260817_0001`). **semgrep fingerprint가 로컬 x86_64/docker 산출물과 일치** — 아키텍처가 다른 첫 대조다([STATUS.md](../STATUS.md) §5, [decisions/0005](decisions/0005-tool-runner-override.md)). **R1 커널 호환성 통과**: vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10`을 인식. **모델 서빙은 못 한다 — 하네스가 아니라 환경 제약이다**(아래) |
+| `seraph` | Ampere (sm_86), **x86_64**(로컬 x86 이미지 tar를 그대로 변환해 돌린 것이 근거 — STATUS.md §5), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
+
+**`atom`의 로컬 TCP 차단 (2026-08-17).** 테넌트에서 로컬 주소로의 TCP 접속이 막혀 있다.
+같은 프로세스에서 `bind('127.0.0.1', p)` → `listen` → `connect`가 `ConnectionRefusedError:
+[Errno 111]`로 떨어지고(`ss -ltn`에는 LISTEN으로 보이며 `lo`도 UP이다), `192.168.0.10`은
+`[Errno 113] No route to host`다. 인터넷 아웃바운드는 정상이다. vLLM은 `world_size=1`이어도
+TCPStore에 자기 자신으로 붙으므로 기동이 안 되고, 하네스도 `http://127.0.0.1:8001`로
+붙으므로 추론 요청이 성립하지 않는다. 관리자에게 예외를 요청한 상태다.
+
+**이 사실을 §5(이식성 결함 목록)에 넣지 않는 것은 의도다.** §5는 "하네스의 어느 부분이
+아직 환경을 가리는가"를 적는 곳인데, 이건 하네스가 무엇을 하든 바뀌지 않는 **그 테넌트의
+설정**이다. §5에 넣으면 고칠 주체가 우리인 항목과 아닌 항목이 한 표에 섞이고, 그 표가
+"이 표가 비면 목표 달성"이라는 뜻을 잃는다. 관측 기록인 여기(§6)가 맞는 자리다.
 
 접속·잡 실행·노드 선택 같은 운용 절차는 [tools/probe/README.md](../tools/probe/README.md)에
 있다. 그 내용이 이 문서에 없는 것은 의도다 — 하네스가 알 필요가 없는 사실이기 때문이다.

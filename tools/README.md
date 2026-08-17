@@ -67,10 +67,17 @@ x86 이미지를 옮겨 쓸 수도 없으므로 **이 장비에서 직접 빌드
 
 ```bash
 podman build -t harness-tools:v1 tools/harness-tools/
-python -m src.cli run --profile <프로필> --tool-runner podman --target <경로>
+
+# 실서빙 프로필은 podman을 직접 선언한다 — 플래그가 필요 없다 (2026-08-17)
+python -m src.cli run --profile b1_single --target <경로> --device atom
+
+# 개발 프로필을 이 장비에서 돌릴 때만 덮는다
+python -m src.cli run --profile dev_docker --tool-runner podman --target <경로> --device atom
 ```
 
-`--tool-runner podman`은 프로필의 런타임을 덮는다(ADR 0005). podman은 docker CLI 호환이라
+`local_balanced`·`b1_single`이 `podman`인 것은 주 실서빙 장비가 ATOM이기 때문이다
+(docs/portability.md §3). `--tool-runner`는 프로필이 선언한 런타임이 그 장비에 없을 때
+쓴다(ADR 0005) — 지금 그 경우는 `dev_docker`다. podman은 docker CLI 호환이라
 `container_argv`가 바이너리 이름만 갈고 격리 플래그는 같다. **rootless인데도 `--cpus`·
 `--memory`를 강제하므로**(아래 표) SLURM 같은 외부 도구가 필요 없다. digest도 docker와 같은
 `image inspect` 포맷으로 읽힌다 — podman은 로컬 빌드에도 `RepoDigests`를 채운다.

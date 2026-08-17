@@ -1,6 +1,6 @@
 # 하네스 구현 현황
 
-> 기준일: 2026-08-14 · 대상: `src/` 전체
+> 기준일: 2026-08-17 · 대상: `src/` 전체
 > 갱신 규칙: 단계 상태나 블로커가 바뀌면 이 문서를 먼저 고치고 관련 문서에 반영한다.
 
 ---
@@ -24,7 +24,7 @@
 | # | 단계 | 로직 | 실제 동작 | 상태 | 담당 트랙 |
 |:-:|---|:-:|---|:-:|---|
 | 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 | T2 |
-| 1 | Index | ✅ | 디렉터리 존재만 확인 | 🔵 **진행 중** | T3 |
+| 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** | T3 |
 | 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 | T6 |
 | 3 | Retrieval | ✅ | 파일 텍스트 자르기 | 🟡 흉내 | T4 |
 | 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 | T1/T5 |
@@ -70,9 +70,16 @@
 
 ### 1단계 인덱서 — tree-sitter (T3)
 
-**현재:** `FakeToolRunner`가 디렉터리 존재만 확인하고 `Evidence(kind=GRAPH, ok=True)`를 반환한다.
+**현재 (2026-08-15 갱신):** 인덱서는 **들어왔다.** 컨테이너를 쓰는 프로필에서는 `index`
+노드가 `indexer.py --callgraph`를 돌려(`nodes/index.py`) 실제 심볼 표와 호출 그래프를 낸다.
+`dev_fake`에서만 `FakeToolRunner`가 디렉터리 존재만 확인하고 `Evidence(kind=GRAPH, ok=True)`를
+반환한다.
 
-**영향:** Gate E2 조건 `graph_ok`가 내용 없이 참이 되고, 캡슐의 `callers`/`callees` 섹션이 고정 64토큰으로 채워진다 → **E2 판정과 토큰 회계가 동시에 부정확하다** (D13)
+**그래서 남은 것은 "인덱서가 없다"가 아니라 "산출물이 캡슐까지 오지 않는다"다.**
+`scratch/index/index.json`을 `HybridRetriever`가 읽어 `callers`/`callees`/`types`를 채우는
+연결이 아직 없다(D13). 그동안 `FakeRetriever`는 그 세 섹션을 고정 64토큰으로 채우므로
+**E2 판정과 토큰 회계가 함께 부정확하다.** 심볼 0개도 `Evidence(ok=True)`라 빈 그래프에서도
+E2가 열리는 것도 그대로다 — 상세와 커버리지 실측은 open-questions D13.
 
 **필요 산출물:**
 ```json
@@ -95,8 +102,10 @@ Evidence는 `payload_ref`로 경로만 들고 있으므로 **스키마 변경 �
 ### 🟡 8단계 실행 환경 — `ContainerToolRunner` (2026-08-14)
 
 **들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
-돌린다. 런타임은 생성자 인자이고 프로필이 고른다(`dev_docker` / `dev_singularity`) —
-podman은 프로필이 없어 `--tool-runner podman`으로 고른다(ADR 0005). 이미지는
+돌린다. 런타임은 생성자 인자이고 프로필이 고른다 — 개발 프로필은 `dev_docker` /
+`dev_singularity`, 실서빙 프로필(`local_balanced`·`b1_single`)은 `podman`이다(2026-08-17,
+주 실서빙 장비가 ATOM이므로 — docs/portability.md §3). 프로필이 선언한 런타임이 없는
+장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
 `harness-tools:v1` 하나이며 semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
 (준비 절차는 `tools/README.md`).
@@ -149,6 +158,38 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
   `container_tools.UNENFORCED`에 적힌 대로 이 런타임이 강제하지 못하는 항목이다.
 - `doctor`의 state DB 경로 검사가 양방향으로 동작하는 것도 확인됐다 — `--artifacts-root`를
   `/data/` 밑에 두면 OK, 저장소 안이면 WARN이다.
+
+**ATOM 검증 완료 (2026-08-17, aarch64 / podman).** `dev_docker --tool-runner podman`이
+Docker와 같은 결과를 냈다. **도구 실행 경로는 검증됐고, 모델 서빙은 환경 제약으로 대기다.**
+
+```
+run_id      run_20260817_0001      후보 2건 / Finding 2건 / 완주
+tool_runner podman                 device      atom
+repo_commit 4ada193…(dirty: False) condition   B3prime@pipeline
+tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a256'}
+```
+
+- **아키텍처가 달라도 판정이 같다 — 처음 확인됐다.** semgrep fingerprint가 로컬
+  (x86_64/docker) `run_20260813_0002`·`0003`과 **문자 단위로 같다**(`ev_0002`
+  `2f5f28f1…0bce6_0`, `ev_0005` `766c3342…3c1e99_0`). 2026-08-14의 docker ↔ singularity
+  대조는 같은 x86_64끼리였고(SIF가 로컬 x86 tar를 그대로 변환한 것이다, 위 항목), ATOM
+  이미지는 그 장비에서 arm64로 따로 빌드했다. 그래서 이번이 **런타임과 아키텍처가 동시에
+  다른 첫 대조**다. 이것으로 [ADR 0005](docs/decisions/0005-tool-runner-override.md)가
+  스스로 정한 상태 갱신 조건이 충족되어 그 ADR이 `승인`이 됐다.
+- **R1의 커널 호환성 항목은 통과했다.** vLLM 0.27.1이 aarch64에 설치되고
+  `torch.cuda.get_device_capability()`가 `(12, 1)`·`NVIDIA GB10`을 인식했다
+  (torch 2.13.0+cu130 / CUDA 13.0). **대체 서빙 스택 검토는 불필요하다.**
+- **그런데 모델 서빙은 불가능하다 — 하네스 결함이 아니라 환경 제약이다.** 테넌트에서
+  로컬 주소로의 TCP 접속이 차단돼 있어, 같은 프로세스에서 `bind('127.0.0.1', p)` →
+  `listen` → `connect`가 `ConnectionRefusedError: [Errno 111]`로 떨어진다(`ss -ltn`에는
+  LISTEN으로 보이고 `lo`도 UP이다). `192.168.0.10`은 `[Errno 113] No route to host`.
+  인터넷 아웃바운드는 정상이다. vLLM은 `world_size=1`이어도 TCPStore에 자기 자신으로
+  붙으므로 기동이 안 되고, 하네스도 `http://127.0.0.1:8001`로 붙으므로 추론 요청 자체가
+  성립하지 않는다. **관리자에게 예외를 요청한 상태다.**
+- `nvidia-smi --query-gpu=memory.total,memory.used`가 이 장비에서 `[N/A], [N/A]`다.
+  통합메모리라 별도 VRAM이 없어 보고할 값이 없다 — nvidia-smi는 PATH에 있고 정상 종료한다.
+  `mem_gb_ctx8k`의 유일한 소스가 그 값이므로 §3 체크리스트 2번은 다른 소스가 정해질
+  때까지 답이 나오지 않는다.
 
 ### 🔴 PoV(PoC) 생성
 
@@ -213,9 +254,16 @@ ATOM에서 돌리는 일이다.
 `retriever`는 `fake`로 뒀다. hybrid로 올리면 embedding·reranker까지 실서빙이 되어 ATOM에
 모델 5개를 동시에 띄워야 하고, R1 검증의 실패 지점이 그만큼 늘어난다.
 
-`--tool-runner {fake,docker,singularity,podman}`로 프로필의 런타임을 덮어쓸 수 있다. Seraph는
-Docker 데몬 접근이 없고 ATOM은 데몬 접근도 singularity도 없어, 이것이 없으면 두 장비 모두에서
-이 프로필의 도구 실행 경로가 막힌다. evaluation.md
+**2026-08-17: 그 `docker`가 `podman`이 됐다.** 프로필은 주 실서빙 장비의 런타임을 선언하고
+다른 장비가 덮는다는 기준을 세웠고([portability.md](docs/portability.md) §3), 이 두 프로필의
+주 실서빙 장비는 ATOM(podman만 있다)이다. 그전에는 ATOM의 **모든** 실서빙 run이
+`--tool-runner podman`을 달아야 했고, 그 오버라이드가 evaluation.md §2.3 규칙 2의 예외라
+**주 경로가 상시 예외 상태**였다. `local_balanced`는 모델 5개 중 3개가, `b1_single`은 세
+역할이 전부 Blackwell 이상을 요구하므로 두 프로필 모두 그 미만 장비에서는 애초에 기동하지
+않는다([portability.md](docs/portability.md) §5 #1) — 그래서 반대 방향의 대가가 없다.
+
+`--tool-runner {fake,docker,singularity,podman}`는 그대로 남는다. 프로필이 선언한 런타임이
+없는 장비에서 쓰고, 지금 실제 사용처는 `dev_docker`를 ATOM에서 돌릴 때다. evaluation.md
 §2.3 규칙 2의 예외이므로 **실제로 쓰인 값이 `RunRecord.tool_runner`에 남는다**(ADR 0005).
 
 ---
@@ -224,7 +272,7 @@ Docker 데몬 접근이 없고 ATOM은 데몬 접근도 singularity도 없어, �
 
 | # | 항목 | 기한 | 상태 |
 |---|---|---|:-:|
-| **R1** | ATOM(GB10, sm_121) × vLLM 커널 호환성 미검증 | **2026-08-17** | 계측 도구 완료 · 실측 대기 |
+| **R1** | ~~ATOM × vLLM 커널 호환성 미검증~~ → **커널 호환성 통과(2026-08-17).** 남은 것은 그 장비에서 **서버를 못 띄운다**는 것이고 원인은 하네스 밖이다(로컬 TCP 차단) | **2026-08-17** | 커널 ✅ · 서빙은 환경 예외 승인 대기 |
 | **R3** | 누출 검증 7개 중 5개 미구현 (Patch Leakage, 중복 제거, Time Split, Prompt Logging, Reproducibility) | 2026-09-07 | 부분 |
 | **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | 2026-09-07 | 대체 경로 확인(`prompt_tokens_cached_total`) · 장부 반영은 별건 · ATOM 대기 |
 | R4 | 단일 노드 대역폭 병목 미파악 | 2026-09-05 | 미착수 |
@@ -234,8 +282,14 @@ Docker 데몬 접근이 없고 ATOM은 데몬 접근도 singularity도 없어, �
 `model-serving.md` §3 체크리스트 7개 전부 미체크. **재는 도구는 `cli bench`이고
 (2026-08-14), 각 항목이 bench 출력의 어느 필드로 답해지는지는 그 문서에 적혀 있다.**
 
+**"커널 호환성 통과"와 "체크리스트 1번 통과"는 다르다.** 2026-08-17에 확인된 것은 vLLM
+0.27.1이 aarch64에 설치되고 torch가 `(12, 1)`·`NVIDIA GB10`을 인식한다는 것이다. 반면
+아래 1번의 판정 필드는 `roles.*.startup.ok` — **서버가 실제로 떠서 `/v1/models`를 주는가**
+이고, 로컬 TCP 차단으로 서버를 못 띄웠으므로 그 항목은 여전히 미측정이다. 두 사실을 같은
+것으로 읽으면 "재지 않은 값이 통과했다"가 된다.
+
 ```
-[ ] vLLM × CUDA 13.0 × sm_121 커널 호환성
+[ ] vLLM × CUDA 13.0 × sm_121 커널 호환성   ← 커널·설치는 확인. 기동(startup.ok)은 미측정
 [ ] 역할별 모델 로드 및 실제 통합메모리 점유
 [ ] context 8K/16K/32K에서 KV cache 점유와 처리량
 [ ] 단일 스트림 tok/s vs 배치(8/16/32) 합산 tok/s
