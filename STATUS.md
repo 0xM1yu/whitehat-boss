@@ -219,9 +219,9 @@ ATOM에서 돌리는 일이다.
 다른 장비가 덮는다는 기준을 세웠고([portability.md](docs/portability.md) §3), 이 두 프로필의
 주 실서빙 장비는 ATOM(podman만 있다)이다. 그전에는 ATOM의 **모든** 실서빙 run이
 `--tool-runner podman`을 달아야 했고, 그 오버라이드가 evaluation.md §2.3 규칙 2의 예외라
-**주 경로가 상시 예외 상태**였다. 두 프로필의 모델이 전부 `nvfp4`/`fp4`라 Blackwell 미만
-장비에서는 애초에 기동하지 않으므로([portability.md](docs/portability.md) §5 #1) 반대 방향의
-대가는 없다.
+**주 경로가 상시 예외 상태**였다. `local_balanced`는 모델 5개 중 3개가, `b1_single`은 세
+역할이 전부 Blackwell 이상을 요구하므로 두 프로필 모두 그 미만 장비에서는 애초에 기동하지
+않는다([portability.md](docs/portability.md) §5 #1) — 그래서 반대 방향의 대가가 없다.
 
 `--tool-runner {fake,docker,singularity,podman}`는 그대로 남는다. 프로필이 선언한 런타임이
 없는 장비에서 쓰고, 지금 실제 사용처는 `dev_docker`를 ATOM에서 돌릴 때다. evaluation.md

@@ -65,7 +65,7 @@
 
 | 프로필 | 선언 | 주 장비 | 오버라이드가 필요한 곳 |
 | --- | --- | --- | --- |
-| `local_balanced` · `b1_single` | `podman` | **ATOM** (유일한 실서빙 장비) | 없음 — 다른 장비에서는 모델이 기동하지 않는다(§5 #1) |
+| `local_balanced` · `b1_single` | `podman` | **ATOM** — 이 두 프로필을 돌릴 수 있는 유일한 장비다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Seraph) 이 프로필은 거기서 기동하지 않는다 | 없음 |
 | `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서 dev 경로를 돌릴 때 (`--tool-runner podman`) |
 | `dev_singularity` | `singularity` | Seraph | 없음 |
 
