@@ -188,6 +188,11 @@ def test_canonical_lines_drop_only_volatile_fields() -> None:
 # run이 3/6/8초를 남겼는데 실제 차이는 1.6배였다(장부는 2.7배).
 MEASURED_TOOL_WALL_MS = (493, 1053, 342, 348, 906, 356, 367, 345, 1979, 342, 1961)
 
+# 같은 11건을 ATOM(aarch64/podman)에서 돌린 값. **이쪽이 더 강한 단언이다** — 전부 1초
+# 미만이라 예전 내림에서는 11/11이 0으로 청구됐다. 즉 그 run의 도구 시간은 장부에
+# 통째로 없었다. 아키텍처가 다르면 같은 도구도 다른 시간을 쓴다는 사실도 함께 남는다.
+ATOM_TOOL_WALL_MS = (299, 929, 321, 272, 932, 258, 248, 281, 335, 258, 358)
+
 
 def _ledger(gpu_seconds: int = 0) -> BudgetLedger:
     budget = Budget(input_tokens=10**9, output_tokens=10**9, gpu_seconds=gpu_seconds)
@@ -215,6 +220,27 @@ def test_the_ledger_keeps_every_millisecond_of_the_measured_run() -> None:
     # 공허하지 않다는 증거: 청구가 실제로 일어났고(0도 None도 아니다) 미측정으로 샌 것이
     # 하나도 없다. 이 둘이 없으면 청구 경로가 통째로 죽어도 위 단언이 통과할 수 있다.
     assert ledger.gpu_ms > 0
+    assert ledger.unmeasured_gpu_calls == 0
+
+
+def test_the_ledger_keeps_a_run_where_every_call_was_under_a_second() -> None:
+    """ATOM(aarch64/podman) 실측 11건. **11건 전부 1초 미만이다.**
+
+    예전 내림에서는 이 run의 도구 시간이 **통째로 0**이었다 — 8/11이 아니라 11/11이다.
+    x86 케이스보다 강한 단언이라 둘 다 남긴다: 하나가 통과해도 다른 하나가 걸리는
+    조합이 있어야 그물이 촘촘해진다.
+    """
+    ledger = _ledger()
+    zero_usage = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+
+    for wall_ms in ATOM_TOOL_WALL_MS:
+        ledger.charge(zero_usage, stage=2, gpu_ms=wall_ms)
+
+    assert ledger.gpu_ms == sum(ATOM_TOOL_WALL_MS) == 4491
+    assert ledger.gpu_seconds == 4  # 예전 장부는 0이었다
+    # 공허 방지: 11건 전부 1초 미만이라는 전제 자체를 고정한다. 이 전제가 깨지면 이
+    # 테스트가 "1초 미만도 청구된다"를 더는 증명하지 못한다.
+    assert all(ms < 1000 for ms in ATOM_TOOL_WALL_MS)
     assert ledger.unmeasured_gpu_calls == 0
 
 
@@ -276,3 +302,60 @@ def test_a_fake_runtime_tool_call_is_not_charged_as_time() -> None:
 
     assert ledger.gpu_ms == 0
     assert ledger.unmeasured_gpu_calls == 1
+
+
+def test_the_exhaustion_report_uses_the_unit_its_name_claims() -> None:
+    """밖으로 나가는 숫자는 `item` 이름이 뜻하는 단위여야 한다.
+
+    원장은 ms로 누산하고 ms로 판정하지만, 예외·trace·`remaining()`은 전부 초를 낸다.
+    변환을 빼먹으면 `gpu_seconds 4491/4 소진` 같은 메시지가 사람에게 간다 — 이름과
+    단위가 어긋난 숫자를 기록에 남기는 것이 이번 결함과 같은 계열이다.
+    """
+    ledger = _ledger(gpu_seconds=4)
+    zero_usage = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+    for wall_ms in ATOM_TOOL_WALL_MS:
+        ledger.charge(zero_usage, stage=2, gpu_ms=wall_ms)
+    assert ledger.gpu_ms == 4491  # 내부는 ms
+
+    with pytest.raises(BudgetExhausted) as exc:
+        ledger.ensure(Stage.AUDITOR)
+
+    assert exc.value.item == "gpu_seconds"
+    assert (exc.value.spent, exc.value.limit) == (4, 4)  # ms였다면 4491/4000
+    assert ledger.remaining()["gpu_seconds"] == 0
+    blocked = ledger._trace.events[-1].data
+    assert (blocked["spent"], blocked["limit"]) == (4, 4)
+
+
+def test_the_tool_budget_actually_stops_a_run() -> None:
+    """**지금까지 한 번도 걸린 적 없는 상한이 실제로 걸리는지 본다.**
+
+    도구 시간이 `gpu_seconds`로 청구되던 시절에는 내림 때문에 소비가 거의 오르지 않아
+    상한이 사실상 무한이었다. 지표 문제가 아니라 **안전장치가 죽어 있던 것**이다.
+    """
+    budget = Budget(input_tokens=10**9, output_tokens=10**9, gpu_seconds=0, tool_seconds=8)
+    ledger = BudgetLedger(budget, TraceWriter(RUN_ID, clock=lambda: NOW))
+    zero_usage = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+
+    for wall_ms in MEASURED_TOOL_WALL_MS:  # 합계 8,492 ms > 8초
+        ledger.charge(zero_usage, stage=2, tool_ms=wall_ms)
+
+    assert ledger.tool_ms == 8492
+    with pytest.raises(BudgetExhausted) as exc:
+        ledger.ensure(Stage.AUDITOR)
+    assert exc.value.item == "tool_seconds"
+    assert (exc.value.spent, exc.value.limit) == (8, 8)
+
+
+def test_tool_time_does_not_land_in_the_gpu_ledger() -> None:
+    """도구 넷(semgrep·clang-tidy·build·asan)은 GPU를 쓰지 않는다.
+
+    2026-08-17까지 그 시간이 `gpu_seconds`로 청구됐고, evaluation.md §5.3의 "finding당
+    GPU-hour"가 그 값을 분자로 쓴다 — 섞이면 핵심 비용 지표가 CPU 시간으로 오염된다.
+    """
+    ledger = _ledger()
+
+    ledger.charge(Usage(input_tokens=0, output_tokens=0, cached_tokens=0), stage=2, tool_ms=5000)
+
+    assert ledger.tool_ms == 5000
+    assert ledger.gpu_ms == 0  # GPU 칸은 도구가 건드리지 않는다

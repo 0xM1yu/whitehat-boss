@@ -36,6 +36,19 @@ class Budget(HarnessModel):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     gpu_seconds: int = Field(ge=0)
+    # 컨테이너 도구(semgrep·clang-tidy·build·asan)의 실행 시간 상한.
+    #
+    # **`gpu_seconds`와 나눈 이유**: 2026-08-17까지 도구 시간이 `gpu_seconds`로 청구되고
+    # 있었는데 그 네 도구는 GPU를 쓰지 않는다. evaluation.md §5.3의 "validated/proven
+    # finding당 GPU-hour"가 그 값을 분자로 쓰므로, 나누지 않으면 핵심 비용 지표가 CPU
+    # 시간으로 오염된 채 확정된다.
+    #
+    # **옵셔널인 것은 기존 manifest 때문이다.** 필수로 넣으면 이 필드가 없던 시절에 쓰인
+    # `run_manifest.json`이 `model_validate`에서 통째로 실패한다. `Benchmark.measured_on`·
+    # `ModelEntry.source`가 같은 이유로 기본값을 뒀다. 기본값 0은 `BudgetLedger._overrun`의
+    # 관용구("상한 0은 검사하지 않는다")와 맞고, 옛 run에 대해서는 **"도구 상한이 없었다"는
+    # 사실**이다 — 지어낸 값이 아니다.
+    tool_seconds: int = Field(default=0, ge=0)
 
 
 class Sampling(HarnessModel):
@@ -98,6 +111,12 @@ class RunRecord(UtcModel):
     # `incomplete_fields()`에는 넣지 않는다. 값이 config에서 항상 유도되어 빌 수가 없고,
     # `fake`로 돈 run은 이미 `tool_images`가 비어 경고에 걸린다 — 같은 사실을 두 줄로
     # 내면 진짜 문제가 묻힌다(runner.py의 같은 판단 참조).
+    #
+    # **이 필드를 옵셔널로 낮추지 마라.** 이 필드가 생기기 전(2026-08-14 이전)에 쓰인
+    # manifest는 여기서 로드에 실패하는데, **그것이 올바른 결과다.** 읽히게 만드는 유일한
+    # 방법은 없는 사실을 지어내 소급 편집하는 것이고, 이 필드가 존재하는 이유가 정확히
+    # "`tool_images` digest로 유도할 수 없다"는 것이다(ADR 0005). 옵셔널로 낮추면 그
+    # ADR이 무효가 된다 — 오버라이드가 걸린 run과 아닌 run을 사후에 구분할 수 없게 된다.
     tool_runner: NonEmptyStr
     # 이 run이 **어느 장비에서** 돌았는가. `--device`가 준 라벨이고, 없으면 `None`이다.
     #
@@ -114,6 +133,15 @@ class RunRecord(UtcModel):
     #
     # `tool_runner`와 달리 `incomplete_fields()`에 들어간다. 그쪽은 config에서 항상
     # 유도되어 빌 수가 없지만, 이 값은 사람이 안 주면 실제로 빈다.
+    #
+    # **`str | None`이지 옵셔널 필드가 아니다.** 기본값을 주지 않는 것이 요점이다 —
+    # `None`은 "확인 못 함"이라는 **명시적인 값**이어야 하고, 기본값이 있으면 안 준 것과
+    # 모르는 것이 합쳐진다(`repo_dirty`가 `bool | None`인 것과 같은 관용구).
+    #
+    # **이 필드를 없애거나 기본값을 주지 마라.** 이 필드가 생기기 전(2026-08-15 이전)에
+    # 쓰인 manifest는 로드에 실패하는데 **그것이 올바른 결과다.** 그 run들이 어느 장비에서
+    # 돌았는지는 아무도 모르고, 지어내면 evaluation.md §2.3 규칙 5("장비가 다른 run은 같은
+    # 비교 셀에 넣지 않는다")가 거짓 위에 서게 된다(ADR 0006).
     device: str | None
     budget: Budget
     # 해석된(resolved) 임계값. 예: {"scout_threshold": 0.5}. 값은 config에서 오고
