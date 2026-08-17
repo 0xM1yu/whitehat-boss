@@ -155,6 +155,44 @@ peak을 잡는다(2026-08-14 Seraph 실측 원문에서 사후 스크레이프 �
 `prompt_template_version`은 **결과에 그대로 박제된다**(`RunRecord.prompt_versions`).
 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다(agent-contracts.md §4).
 
+### checksum을 어떻게 산출하는가
+
+`checksum`은 **model·tokenizer·quantization 묶음**의 해시다. 실서빙 역할의 이 값이
+자리표시자(전부 0)면 그 run은 비교표에서 제외되고(`incomplete_fields`), `doctor`가 run
+전에 미리 경고한다.
+
+**정본은 로컬 스냅샷 전 파일의 sha256을 모은 manifest의 sha256이다.** 산출은
+`tools/model_checksum.py`가 한다 — 손으로 맞추면 정렬·개행·제외 규칙 중 하나만 어긋나도
+**조용히 다른 값**이 나온다.
+
+```bash
+python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \
+    --source hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<revision>
+```
+
+출력의 `checksum:`·`source:` 두 줄을 `models.yaml`에 **사람이 붙여넣는다.**
+`bench --apply`와 달리 자동으로 쓰지 않는다 — 값을 채우는 것은 다운로드가 끝난 뒤의
+판단이고, 그 판단까지 자동화할 이유가 없다.
+
+| 규칙 | 내용 | 왜 |
+| --- | --- | --- |
+| 대상 | 스냅샷의 **모든 파일**. 제외는 짧은 denylist(`*.md`·`LICENSE*`·`.gitattributes`·이미지·`.cache/`)뿐 | **비대칭.** allowlist가 새 가중치를 놓치면 모델이 바뀌었는데 checksum이 그대로다(조용한 거짓). denylist가 문서 파일을 놓치면 값이 헛되이 바뀔 뿐이다(시끄러운 참). `repo_dirty`가 미추적 파일까지 dirty로 세는 것과 같은 판단 |
+| 정렬 | 스냅샷 루트 기준 **POSIX 상대경로** 순 | 구분자를 `/`로 고정해야 Windows에서 만들어도 같은 값이 나온다 |
+| 형식 | `<파일 sha256>  <상대경로>`, UTF-8·**LF** | `sha256sum` 호환이라 스냅샷에서 바로 `sha256sum -c`로 검증된다 |
+| 심볼릭 링크 | **파일 링크는 따라가고, 디렉터리 링크는 따라가지 않는다**(무시한 사실은 사유로 출력) | HF 캐시의 스냅샷은 `blobs/`로 가는 파일 링크 모음이라 따라가지 않으면 해시할 내용이 없다. 디렉터리 링크는 순환하거나 스냅샷 밖 트리를 끌어들인다 |
+| manifest | `config/checksums/<model key>.txt`에 **커밋한다** | 값이 `config/models.yaml`에 있으므로 근거도 `config/` 안에 있어야 갈라지지 않는다. 값 하나만 남기면 달라졌을 때 **어느 파일이** 달라졌는지 알 수 없다 |
+
+**HF Hub 메타데이터는 정본이 아니다.** `siblings[].lfs.sha256`은 **LFS 추적 파일만**
+덮는다 — `config.json`·`tokenizer_config.json` 같은 작은 파일은 일반 git blob이라
+`blob_id`(git SHA-1)만 오는데, 하필 그쪽이 양자화 설정과 tokenizer 설정이다. 즉 "묶음"의
+절반이 빠진다. HF 조회는 **받기 전 예비 확인**으로만 쓴다.
+
+`source`는 그 스냅샷이 어디서 왔는지다(`hf://org/repo@rev` 또는 `file:///경로`). 후보가
+전부 커뮤니티·서드파티 산출물이라(2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의
+모델이 리포지터리마다 다르다** — checksum이 안 맞을 때 이 필드가 없으면 어느 리포의 어느
+리비전이었는지 답할 수 없다. 형식은 강제하지 않는다(ADR 0006이 `--device` 라벨 집합을
+열어 둔 것과 같은 판단).
+
 ## 6. 게이트웨이 구성
 
 ```
