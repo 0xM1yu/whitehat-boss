@@ -27,8 +27,9 @@ from src.orchestrator import runner
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
+from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import FindingState, ReasonCode
-from src.schemas.run import Budget
+from src.schemas.run import Budget, RunRecord
 from tests.conftest import ALL_PROFILES
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
@@ -229,6 +230,60 @@ def test_dirty_and_unknown_both_reach_incomplete_fields(tmp_path: Path) -> None:
     assert repo_warnings(False) == []
     assert repo_warnings(True), "dirty한 run이 경고 없이 비교표에 들어간다"
     assert repo_warnings(None), "확인 못 한 run이 경고 없이 비교표에 들어간다"
+
+
+def _checksum_warnings(record: RunRecord, profile: str) -> list[str]:
+    """checksum 자리표시자 경고만 골라낸다. 다른 경고가 섞이면 단언이 공허해진다."""
+    found = runner.incomplete_fields(record, served_models=load_config(profile).served_models())
+    return [w for w in found if "model_checksums" in w]
+
+
+def test_fake_roles_do_not_warn_about_placeholder_checksums(tmp_path: Path) -> None:
+    """Fake 모델의 checksum 0은 빠진 값이 아니라 **맞는 값**이다.
+
+    경고하면 `dev_*` 프로필의 모든 run이 매번 같은 줄을 뱉고, 그러면 진짜 문제가 묻힌다 —
+    `incomplete_fields`가 `tool_runner`를 목록에서 뺀 것과 같은 논법이다.
+    """
+    result, _ = _run(tmp_path)
+
+    assert _checksum_warnings(result.record, "dev_fake") == []
+
+
+def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
+    """실서빙 역할의 0은 경고하고 **어느 역할의 어느 model key인지**를 담는다.
+
+    이름이 없으면 역할이 다섯인 프로필에서 어디를 채워야 하는지 알 수 없다.
+    """
+    result, _ = _run(tmp_path)
+    served = load_config("b1_single").served_models()
+    # dev_fake로 돈 run의 기록을 갈아 끼운다. 이 검사가 보는 것은 "자리표시자 digest +
+    # 실서빙 역할"이라는 조합 하나뿐이다.
+    record = result.record.transition(model_checksums=dict.fromkeys(served, PLACEHOLDER_DIGEST))
+
+    warnings = _checksum_warnings(record, "b1_single")
+
+    assert warnings, "실서빙 역할이 전부 자리표시자인데 경고가 없다"
+    assert "auditor(qwen3-coder-30b-a3b)" in warnings[0]
+    assert "비교표에서 제외" in warnings[0]
+
+
+def test_a_mixed_profile_warns_only_about_its_served_role(tmp_path: Path) -> None:
+    """`single_gpu_12g`는 scout만 실서빙이고 나머지는 Fake다.
+
+    프로필 단위로 켜고 끄면 이 프로필에서 실서빙 역할을 통째로 놓치거나(끄면) Fake 네 개를
+    헛되이 경고한다(켜면). 판정이 역할별이어야 하는 이유가 정확히 이 프로필이다.
+    """
+    result, _ = _run(tmp_path)
+    served = load_config("single_gpu_12g").served_models()
+    assert served == {"scout": "qwen3-4b"}, "프로필이 바뀌면 이 검사의 전제가 무너진다"
+
+    record = result.record.transition(
+        model_checksums={"scout": PLACEHOLDER_DIGEST, "auditor": PLACEHOLDER_DIGEST}
+    )
+    warnings = _checksum_warnings(record, "single_gpu_12g")
+
+    assert warnings and "scout(qwen3-4b)" in warnings[0]
+    assert "auditor" not in warnings[0], "Fake 역할이 경고에 섞였다"
 
 
 def test_manifest_carries_the_repo_dirty_flag(tmp_path: Path) -> None:

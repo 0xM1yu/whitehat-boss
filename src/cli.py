@@ -53,6 +53,7 @@ from src.orchestrator.runner import (
 )
 from src.orchestrator.stages import MAX_STAGE
 from src.orchestrator.trace import TraceWriter
+from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
 from src.schemas.finding import Finding
 
@@ -150,6 +151,7 @@ def doctor(
     checks.append(_check_tool_runtime(config))
     checks.extend(_check_device(config, device))
     checks.extend(_check_benchmarks(config))
+    checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
@@ -248,6 +250,40 @@ def _check_benchmarks(config: HarnessConfig) -> list[Check]:
     if config.profile.production:
         return [Check(Severity.ERROR, f"benchmark 미측정 모델을 production에 올렸다: {unmeasured}")]
     return [Check(Severity.WARN, f"benchmark 미측정 모델: {unmeasured} (dev 프로필이라 허용)")]
+
+
+def _check_checksums(config: HarnessConfig) -> list[Check]:
+    """실서빙 역할의 `checksum`이 자리표시자(전부 0)인가.
+
+    `run`이 끝난 뒤 `incomplete_fields()`가 같은 판정을 하지만, **돌리기 전에 알 수 있는
+    사실이다.** 5분(실서빙이면 그보다 훨씬 길다)을 쓰고 나서 "이 run은 비교표에 못 넣는다"를
+    듣는 것보다 지금 듣는 편이 싸다 — `_check_prompts`가 같은 이유로 여기 있다.
+
+    **Fake 역할은 세지 않는다.** 그쪽의 0은 미기록이 아니라 정확한 값이다
+    (`HarnessConfig.served_models` 참조). `unmeasured_models()`가 fake를 세는 것과
+    다른데, 저쪽은 "아직 안 쟀다"를 묻고 이쪽은 "잴 대상이 있는데 비어 있다"를 묻는다.
+
+    ERROR가 아니라 WARN인 것도 의도다 — 막지 않고 기록한다는 이 저장소의 논법을 따른다
+    (`Benchmark.measured_on` 주석, ADR 0005·0006).
+    """
+    served = config.served_models()
+    placeholder = sorted(
+        f"{role}({key})"
+        for role, key in served.items()
+        if config.models[key].checksum == PLACEHOLDER_DIGEST
+    )
+    if not served:
+        return [Check(Severity.OK, "실서빙 역할이 없다 (전 역할 Fake) — checksum 검사 대상 없음")]
+    if not placeholder:
+        return [Check(Severity.OK, "실서빙 역할의 model checksum이 모두 채워져 있다")]
+    return [
+        Check(
+            Severity.WARN,
+            f"model checksum이 자리표시자(전부 0)다: {', '.join(placeholder)} — 이대로 run하면 "
+            "어느 모델로 돈 기록인지 지시하지 못해 모델 비교표에서 제외된다 "
+            "(산출 절차는 model-serving.md §5)",
+        )
+    ]
 
 
 def _check_prompts(config: HarnessConfig) -> list[Check]:
