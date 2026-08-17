@@ -178,3 +178,101 @@ def test_canonical_lines_drop_only_volatile_fields() -> None:
     for field in VOLATILE_FIELDS:
         assert all(f'"{field}"' not in line for line in lines)
     assert all('"seq"' in line for line in lines)
+
+
+# --- GPU 시간 회계 (2026-08-17 실측 기반) -------------------------------------
+
+# `artifacts/run_20260813_0001/trace.jsonl`의 `tool_call.wall_ms` 11건을 그대로 옮긴 값.
+# **합계 8,492 ms인데 그 run의 장부에는 3초가 남았다** — 청구 지점이 초로 내림해서
+# 342~906 ms짜리 8건이 통째로 0으로 청구됐기 때문이다. 같은 도구를 같은 순서로 돈 세
+# run이 3/6/8초를 남겼는데 실제 차이는 1.6배였다(장부는 2.7배).
+MEASURED_TOOL_WALL_MS = (493, 1053, 342, 348, 906, 356, 367, 345, 1979, 342, 1961)
+
+
+def _ledger(gpu_seconds: int = 0) -> BudgetLedger:
+    budget = Budget(input_tokens=10**9, output_tokens=10**9, gpu_seconds=gpu_seconds)
+    return BudgetLedger(budget, TraceWriter(RUN_ID, clock=lambda: NOW))
+
+
+def test_the_ledger_keeps_every_millisecond_of_the_measured_run() -> None:
+    """이 테스트가 이 결함의 재발을 막는 유일한 장치다.
+
+    단언은 **8,492 ms**다. 3초가 아니다 — 초로 내림하는 코드가 돌아오면 여기서 걸린다.
+
+    **`BudgetLedger.charge()`를 직접 부른다.** `RunContext.call_tool`을 거치면 Fake 런타임
+    프로필에서 11건이 전부 `None`으로 청구되고, 그러면 이 테스트는 아무것도 지키지 않은 채
+    통과한다. 아래 두 단언이 그 공허함을 막는다 —
+    `test_pipeline_e2e.test_trace_actually_carries_the_volatile_fields`와 같은 방어다.
+    """
+    ledger = _ledger()
+    zero_usage = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+
+    for wall_ms in MEASURED_TOOL_WALL_MS:
+        ledger.charge(zero_usage, stage=2, gpu_ms=wall_ms)
+
+    assert ledger.gpu_ms == sum(MEASURED_TOOL_WALL_MS) == 8492
+    assert ledger.gpu_seconds == 8  # 파생값. 예전 장부의 3이 아니다
+    # 공허하지 않다는 증거: 청구가 실제로 일어났고(0도 None도 아니다) 미측정으로 샌 것이
+    # 하나도 없다. 이 둘이 없으면 청구 경로가 통째로 죽어도 위 단언이 통과할 수 있다.
+    assert ledger.gpu_ms > 0
+    assert ledger.unmeasured_gpu_calls == 0
+
+
+def test_a_sub_second_call_is_not_charged_as_zero() -> None:
+    """342 ms 한 건. 예전 코드는 `342 // 1000 == 0`으로 통째로 버렸다."""
+    ledger = _ledger()
+
+    ledger.charge(Usage(input_tokens=0, output_tokens=0, cached_tokens=0), stage=2, gpu_ms=342)
+
+    assert ledger.gpu_ms == 342
+
+
+def test_an_unmeasured_call_is_counted_not_added_as_zero() -> None:
+    """`None`은 "GPU를 안 썼다"가 아니라 "안 쟀다"다.
+
+    0으로 더하면 두 사실이 합쳐져 `incomplete_fields()`가 판정할 근거가 사라진다 —
+    `repo_dirty`·`device`가 `None`을 쓰는 것과 같은 이유다.
+    """
+    ledger = _ledger()
+    zero_usage = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+
+    ledger.charge(zero_usage, stage=4, gpu_ms=None)
+    ledger.charge(zero_usage, stage=4, gpu_ms=120)
+
+    assert ledger.gpu_ms == 120
+    assert ledger.unmeasured_gpu_calls == 1
+
+
+def test_the_budget_event_carries_milliseconds_too() -> None:
+    """초만 남기면 사후 집계가 볼 정확값이 사라지고 이 결함이 그대로 돌아온다."""
+    ledger = _ledger()
+
+    ledger.charge(Usage(input_tokens=0, output_tokens=0, cached_tokens=0), stage=2, gpu_ms=1500)
+
+    event = ledger._trace.events[-1]
+    assert event.data["gpu_ms"] == 1500
+    assert event.data["gpu_seconds"] == 1
+
+
+def test_a_fake_runtime_tool_call_is_not_charged_as_time() -> None:
+    """`FakeToolRunner`의 1~2 ms는 GPU도 컨테이너도 아니라 **하네스가 자기를 잰 값**이다.
+
+    장부에 넣으면 무의미한 숫자가 비용 지표에 섞이고, 같은 입력의 두 실행이 다른 기록을
+    남긴다. 예전에는 `// 1000`이 그 값을 전부 0으로 만들어 **내림이 재현성을 우연히 지켜
+    주고 있었다** — 이 검사는 그 우연을 의도로 고정한다.
+
+    판단 기준은 `doctor`가 이미 쓰는 것과 같다(`cli._check_tool_runtime`의 `== "fake"`).
+    """
+    ledger = _ledger()
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.ledger = ledger
+    assert ctx.config.profile.adapters.tool_runner == "fake", "이 검사의 전제가 무너졌다"
+
+    ledger.charge(
+        Usage(input_tokens=0, output_tokens=0, cached_tokens=0),
+        stage=2,
+        gpu_ms=None if ctx.config.profile.adapters.tool_runner == "fake" else 1500,
+    )
+
+    assert ledger.gpu_ms == 0
+    assert ledger.unmeasured_gpu_calls == 1
