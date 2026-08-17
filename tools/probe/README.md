@@ -89,6 +89,41 @@ tools/probe/atom.sh --port 8001 --out ~/probe
 받는다. 프로브도 `/v1/models`의 id를 `--served-model-name`과 대조해 한 번 더 막는다 —
 남이 띄운 서버에 요청을 쏘고 그 수치를 우리 것으로 기록하는 일이 없어야 한다.
 
+## 서버가 안 뜰 때 — 인터페이스가 여러 개인 장비 (2026-08-17 ATOM 실측)
+
+`run_probe.sh`가 아래 셋을 미리 설정한다. **이미 설정돼 있으면 덮지 않는다** — 다중
+노드 환경에서는 loopback 강제가 틀린 값이기 때문이다.
+
+```
+VLLM_HOST_IP=127.0.0.1
+NCCL_SOCKET_IFNAME=lo
+GLOO_SOCKET_IFNAME=lo
+```
+
+**증상을 알아두는 것이 요점이다.** 이게 없으면 vLLM이 이렇게 죽는다:
+
+```
+distributed_init_method=tcp://<private-ip>:54029 backend=nccl
+[c10d] The client socket has failed to connect to [atom-host]:54029
+       (errno: 113 - No route to host)
+TCP client failed ... retrying (try=0, timeout=600000ms, ...)
+```
+
+`world_size=1`이어도 torch.distributed의 TCPStore를 띄우는데, 자기 주소로 WiFi
+인터페이스를 골라 **자기 자신에게** 접속하려다 실패한다. `timeout=600000ms`라 **10분짜리
+재시도 루프**에 갇히고 매번 C++ 백트레이스를 찍는다. 프로브는 `--wait`(기본 300초)에서
+먼저 포기하므로 사람이 보는 것은 "서버가 안 떴다"뿐이다.
+
+**이건 R1 실패가 아니다.** 그 로그는 `Resolved architecture: Qwen3ForCausalLM`,
+`device_config=cuda`까지 정상으로 갔다 — **GPU 작업이 시작되기 전, 네트워크 초기화에서**
+죽은 것이다. 커널 호환성 문제로 오진하면 크리티컬 패스(R1)에 대한 거짓 보고가 된다.
+
+기동이 느린 것 자체가 원인일 수도 있다. 대기 상한은 `WAIT_S`로 늘린다.
+
+```bash
+WAIT_S=900 tools/probe/atom.sh --port 8001 --out ~/probe
+```
+
 ## 산출물이 곧 fixture다
 
 받아서 그대로 옮기면 된다. **손으로 이름을 바꾸는 단계는 없다.**

@@ -35,6 +35,30 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 # 채로 재면 "적중 0"이 서버 설정 탓인지 prefix 탓인지 갈리지 않는다.
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:---enable-prefix-caching}"
 
+# 기동 대기 상한. `probe_metrics.py`가 받는 값인데 여기서 넘기지 않아 **도달 불가**였다
+# (2026-08-17: ATOM 1차 시도가 정확히 이 300초에서 끝났고 늘릴 방법이 없었다).
+WAIT_S="${WAIT_S:-300}"
+
+# **인터페이스가 여러 개인 장비에서 vLLM이 자기 자신에게 못 붙는다.** world_size=1이어도
+# torch.distributed의 TCPStore를 띄우는데, 자기 주소로 WiFi 인터페이스를 골라 거기로
+# 접속하려다 실패한다 (2026-08-17 ATOM 실측):
+#
+#   distributed_init_method=tcp://<private-ip>:54029 backend=nccl
+#   [c10d] The client socket has failed to connect to [atom-host]:54029
+#          (errno: 113 - No route to host)
+#   TCP client failed ... retrying (try=0, timeout=600000ms, ...)
+#
+# `timeout=600000ms`라 **10분짜리 재시도 루프**에 갇히고 매번 C++ 백트레이스를 찍는다.
+# 프로브는 그전에 포기하므로 사람은 원인을 모른 채 끝난다.
+#
+# **이미 설정된 값은 덮지 않는다.** 서버와 클라이언트를 같은 노드에서 돌리는 이 절차에서는
+# loopback이 맞지만 다중 노드 환경에서는 틀린 값이고, 그 환경의 사람이 명시적으로 준 값을
+# 스크립트가 조용히 뒤집으면 ADR 0005가 "런타임 자동 감지"를 기각한 이유와 같은 실패가
+# 된다 — 같은 명령이 장비에 따라 다른 것을 하고 그 사실이 어디에도 안 남는다.
+export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
+export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-lo}"
+export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-lo}"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${PYTHON:-python}"
 ENDPOINT="http://127.0.0.1:${PORT}/v1"
@@ -101,4 +125,5 @@ echo "[run_probe] vLLM ${VLLM_VERSION} / ${HOST_LABEL} / ${ARCH}"
     --arch "$ARCH" \
     --out "$OUT" \
     --requests "$REQUESTS" \
-    --prefix-tokens "$PREFIX_TOKENS"
+    --prefix-tokens "$PREFIX_TOKENS" \
+    --wait "$WAIT_S"

@@ -11,7 +11,13 @@
 # production 프로필에 넣지 않으며 `cli doctor`가 경고한다. 값은 §3 체크리스트 실측 후 채운다.
 #
 # checksum은 model·tokenizer·quantization 묶음의 해시다(engineering-guide.md §5 재현성 필수 항목).
-# 아래 값은 전부 합성 예시이며 실측 전까지 0으로 둔다.
+# 아래 값은 전부 합성 예시이며 실측 전까지 0으로 둔다. **산출 절차는 model-serving.md §5**이고
+# `tools/model_checksum.py`가 그 절차를 실행한다 — 손으로 맞추면 조용히 다른 값이 나온다.
+# 실서빙 역할의 checksum이 0인 채로 돈 run은 비교표에서 제외된다(`cli doctor`가 미리 경고한다).
+#
+# source는 그 checksum이 **어디서 나왔는가**다 (`hf://org/repo@rev` 또는 `file:///경로`).
+# 후보가 전부 커뮤니티 산출물이라 같은 이름의 모델이 리포지터리마다 다르다 — 값이 안 맞을 때
+# 이 필드가 없으면 어느 리포의 어느 리비전이었는지 답할 수 없다. `--apply`는 건드리지 않는다.
 
 models:
   fake:
@@ -20,6 +26,7 @@ models:
     quantization: "none"
     license: "N/A"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -36,6 +43,7 @@ models:
     quantization: "fp8"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: "fake"
     benchmark:
@@ -51,6 +59,7 @@ models:
     quantization: "fp4"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: "qwen3-4b"
     benchmark:
@@ -67,6 +76,7 @@ models:
     quantization: "nvfp4"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -84,6 +94,7 @@ models:
     quantization: "nvfp4"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -99,6 +110,7 @@ models:
     quantization: "fp16"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -114,6 +126,7 @@ models:
     quantization: "fp16"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
     prompt_template_version: "v1"
     fallback: null
     benchmark:

@@ -13,11 +13,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from src import bench_report, cli
 from src.adapters.factory import WIRINGS
 from src.bench import BenchApplyError
-from src.config import CONFIG_DIR, Benchmark, load_config
+from src.config import CONFIG_DIR, Benchmark, ModelEntry, load_config
 from src.orchestrator.runner import RunSpec
 
 RUN_ID = "run_20260101_0001"
@@ -71,7 +72,11 @@ def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
                 },
                 "memory": {
                     "mem_gb_ctx8k": 0.0,
-                    "mem_gb_ctx8k_reason": "nvidia-smi가 없어 GB를 얻지 못했다",
+                    # 실제 코드가 내는 사유 형태를 그대로 쓴다. 옛 고정 문구
+                    # ("nvidia-smi가 없어…")는 통합메모리 장비에서 거짓이라 폐기됐다.
+                    "mem_gb_ctx8k_reason": (
+                        "nvidia-smi가 정상 종료했지만 memory.used를 숫자로 주지 않았다"
+                    ),
                     "gpu_memory_utilization": 0.9,
                 },
             }
@@ -170,6 +175,62 @@ def _loaded(tmp_path: Path, key: str = "qwen3-4b") -> Benchmark:
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     return load_config(SERVED_PROFILE, config_dir=tmp_path).models[key].benchmark
+
+
+def test_apply_does_not_touch_the_source_field(tmp_path: Path) -> None:
+    """`source`는 `benchmark:` 블록 밖이고 `APPLY_KEYS`에도 없다 — `--apply`가 건드리지 않는다.
+
+    `measured_on`과 파급이 다른 지점이다. 저쪽은 apply 키라 registry에 라인이 **있어야**
+    하고(없으면 `_value_line`이 `BenchApplyError`), 이쪽은 애초에 탐색 범위 밖이다.
+    """
+    path = _models_copy(tmp_path)
+    before = path.read_text(encoding="utf-8").count("source:")
+
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert text.count("source:") == before
+    assert "source: null" in text
+    assert "tok_s_single: 12.5" in text
+
+
+def test_registry_loads_without_a_source_line(tmp_path: Path) -> None:
+    """기존 registry 항목에 이 키가 없어도 로드가 죽지 않는다.
+
+    `Benchmark.measured_on`이 옵셔널로 들어온 것과 같은 이유다 — 필수로 두면 키를 아직
+    안 넣은 registry에서 **로드가 통째로 실패**한다.
+    """
+    path = _models_copy(tmp_path)
+    stripped = "\n".join(
+        line for line in path.read_text(encoding="utf-8").splitlines() if "source:" not in line
+    )
+    path.write_text(stripped + "\n", encoding="utf-8")
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+
+    config = load_config(SERVED_PROFILE, config_dir=tmp_path)
+
+    assert config.models["qwen3-4b"].source is None
+
+
+def test_a_source_value_survives_the_round_trip(tmp_path: Path) -> None:
+    """적어 둔 출처가 로더를 통과해 그대로 남는다. 빈 문자열은 거부한다."""
+    path = _models_copy(tmp_path)
+    origin = "hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@abc123"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("    source: null", f'    source: "{origin}"', 1),
+        encoding="utf-8",
+    )
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+
+    config = load_config(SERVED_PROFILE, config_dir=tmp_path)
+
+    assert config.models["fake"].source == origin
+    with pytest.raises(ValidationError):
+        ModelEntry.model_validate({**config.models["fake"].model_dump(), "source": ""})
 
 
 def test_apply_keys_cover_every_benchmark_field() -> None:
