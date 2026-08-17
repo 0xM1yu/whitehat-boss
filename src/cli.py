@@ -242,14 +242,42 @@ def _check_device(config: HarnessConfig, device: str | None) -> list[Check]:
 
 
 def _check_benchmarks(config: HarnessConfig) -> list[Check]:
+    """**전부 측정 / 부분 측정 / 미측정** 셋을 가른다.
+
+    `Benchmark.is_measured`는 셋 중 하나만 0이 아니어도 참이므로(그 속성 주석), 그것만
+    보면 **절반만 채운 모델이 production 게이트를 그냥 통과한다.** ATOM에서
+    `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으니(2026-08-17) 그 상태는
+    가정이 아니라 곧 실제로 생긴다.
+
+    부분 측정을 production에서 ERROR로 두는 것은 model-serving.md §5의 취지 그대로다 —
+    그 게이트가 막으려는 것이 "실측 없이 올리기"이고 절반은 실측이 아니다. 어떤 항목을
+    이 장비에서 영영 못 재는 것이 해법을 요구한다면 그 해법은 **대체 소스를 정하는 것**
+    이지 게이트를 조용히 통과시키는 것이 아니다.
+    """
     unmeasured = config.unmeasured_models()
-    if not unmeasured:
+    partial = config.partially_measured_models()
+    if not unmeasured and not partial:
         return [Check(Severity.OK, "프로필의 모든 모델에 benchmark 실측치가 있다")]
-    # model-serving.md §5는 실측 전 모델을 production 프로필에 넣지 말라고 정한다(블로킹).
-    # dev 프로필에서는 정상 상태이므로 경고로만 남긴다.
-    if config.profile.production:
-        return [Check(Severity.ERROR, f"benchmark 미측정 모델을 production에 올렸다: {unmeasured}")]
-    return [Check(Severity.WARN, f"benchmark 미측정 모델: {unmeasured} (dev 프로필이라 허용)")]
+
+    checks: list[Check] = []
+    # dev 프로필에서 미측정은 정상 상태이므로 경고로만 남긴다.
+    blocking = Severity.ERROR if config.profile.production else Severity.WARN
+    suffix = "" if config.profile.production else " (dev 프로필이라 허용)"
+    if unmeasured:
+        state = "을 production에 올렸다" if config.profile.production else ": "
+        checks.append(Check(blocking, f"benchmark 미측정 모델{state}{unmeasured}{suffix}"))
+    if partial:
+        detail = ", ".join(
+            f"{key}({', '.join(missing)} 미측정)" for key, missing in partial.items()
+        )
+        checks.append(
+            Check(
+                blocking,
+                f"benchmark가 일부만 채워진 모델: {detail} — 이 상태로는 그 항목을 "
+                f"뺀 비교만 성립한다{suffix}",
+            )
+        )
+    return checks
 
 
 def _check_checksums(config: HarnessConfig) -> list[Check]:
