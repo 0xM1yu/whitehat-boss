@@ -42,8 +42,8 @@ models:
     context_limit: 131072
     quantization: "fp8"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72"
+    source: "hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98"
     prompt_template_version: "v1"
     fallback: "fake"
     benchmark:
