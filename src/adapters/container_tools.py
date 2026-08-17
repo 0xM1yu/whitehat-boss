@@ -319,7 +319,7 @@ def container_argv(
     # 디렉터리와 root 권한을 요구한다). `UNENFORCED`에 넣지 않은 것도 같은 이유다 —
     # 거기는 "강제하지 못하는 항목"이고 이쪽은 반대로 "끌 수 없는 항목"이다.
     #
-    # **그래서 `read_only=False`는 두 런타임에서 다르게 동작한다.** Docker는 컨테이너
+    # **그래서 `read_only=False`는 런타임에 따라 다르게 동작한다.** Docker·podman은 컨테이너
     # 루트에 쓰기가 열리고 Singularity는 그대로 막힌다. 이 차이는 결과까지 바꾼다 —
     # 첫 dev_docker 실행에서 semgrep이 `$HOME/.semgrep`에 쓰려다 죽은 것이 정확히
     # 루트 쓰기 금지 때문이었다(모듈 docstring). `read_only=False`로 돌리면 Docker에서는
