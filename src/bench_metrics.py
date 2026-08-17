@@ -383,10 +383,28 @@ def kv_cache_perc(endpoint: str) -> float | None:
     return _sum_metric(parse_prometheus(text), METRIC_KV_USAGE)
 
 
-def nvidia_smi_mb() -> float | None:
-    """PATH에 있으면 병기한다. 없으면 None — 추정하지 않는다."""
+def nvidia_smi_mb() -> tuple[float | None, str | None]:
+    """(MB, 실패 사유). 값을 못 얻으면 **왜 못 얻었는지**를 함께 돌려준다.
+
+    **세 경우가 서로 다르고, 그 차이가 다음 사람을 어디로 보낼지를 정한다.**
+
+    | 경우 | 사람이 할 일 |
+    | --- | --- |
+    | 실행 파일이 PATH에 없다 | 드라이버·PATH를 본다 |
+    | 실행이 실패했다 / 비정상 종료 | 그 오류를 본다 |
+    | **정상 종료했는데 `[N/A]`다** | **아무것도 고칠 게 없다.** 다른 소스를 찾아야 한다 |
+
+    셋을 한 사유로 뭉치면 마지막 경우에서 거짓말이 된다 — 2026-08-17 ATOM(GB10) 실측:
+
+        nvidia-smi --query-gpu=name,compute_cap,memory.total,memory.used --format=csv,noheader
+        → NVIDIA GB10, 12.1, [N/A], [N/A]
+
+    통합메모리라 별도 VRAM이 없어서다. nvidia-smi는 PATH에 있고 정상 종료한다. 그런데
+    사유가 "PATH에 없거나 실패했다"로 기록되면 다음 사람이 드라이버를 뒤진다. `None`과
+    `0.0`을, `metrics_only`와 `neither`를 가른 것과 같은 이유다.
+    """
     if shutil.which("nvidia-smi") is None:
-        return None
+        return None, "nvidia-smi가 PATH에 없다"
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
@@ -395,7 +413,17 @@ def nvidia_smi_mb() -> float | None:
             timeout=15,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"nvidia-smi 실행이 실패했다: {exc}"
+    if out.returncode != 0:
+        detail = (out.stderr or out.stdout).strip().splitlines()
+        head = detail[0] if detail else "출력 없음"
+        return None, f"nvidia-smi가 종료 코드 {out.returncode}로 끝났다: {head}"
     values = [float(tok) for tok in out.stdout.split() if tok.strip().isdigit()]
-    return max(values) if values else None
+    if values:
+        return max(values), None
+    return None, (
+        f"nvidia-smi가 정상 종료했지만 memory.used를 숫자로 주지 않았다({out.stdout.strip()!r}) — "
+        "통합메모리 장비는 별도 VRAM이 없어 이 값을 보고하지 않는다(2026-08-17 GB10 실측). "
+        "PATH·드라이버 문제가 아니다"
+    )
