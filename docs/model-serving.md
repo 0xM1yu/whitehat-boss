@@ -4,7 +4,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 메모리 | 128GB 통합 LPDDR5X (CPU·GPU 공유, 가용 112Gi) |
+| 메모리 | **팀 할당 34 GiB** (통합 LPDDR5X, CPU·GPU 공유). 장비 전체는 128GB지만 우리 몫은 34 GiB다 — **커널이 강제**한다(2026-08-17 실측: `memory.max`=34.0 GiB, `memory.high`=30 GiB 스로틀). 통합 메모리라 모델 가중치가 이 한도에 포함되고, 공용 계정이라 팀원과 합산된다. 이전 "가용 112Gi"는 장비 스펙에서 나온 **추정이었고 틀렸다**. 관측 기록은 [portability.md](portability.md) §6 |
 | 메모리 대역폭 | 273 GB/s |
 | 연산 | 1 PFLOP (sparse FP4), 48 SM / 6,144 CUDA 코어 |
 | CPU / 아키텍처 | 20코어 Arm (Cortex-X925 ×10 + A725 ×10) / Blackwell sm_121, CUDA 13.0 |
