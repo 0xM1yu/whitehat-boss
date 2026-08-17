@@ -716,3 +716,65 @@ def test_the_measured_content_is_not_schema_valid(served: tuple) -> None:
     assert content.lstrip().startswith("<think>")
     with pytest.raises(ValidationError):
         Candidate.model_validate_json(content)
+
+
+# --- nvidia-smi 사유 (2026-08-17 ATOM 실측) -----------------------------------
+
+
+class _Completed:
+    """`subprocess.run`의 반환을 흉내 낸다. 필요한 세 필드만 있다."""
+
+    def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0) -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def _smi(monkeypatch: pytest.MonkeyPatch, *, found: bool = True, **kwargs: object) -> None:
+    path = "/usr/bin/nvidia-smi" if found else None
+    monkeypatch.setattr(bench_metrics.shutil, "which", lambda _: path)
+    monkeypatch.setattr(bench_metrics.subprocess, "run", lambda *a, **k: _Completed(**kwargs))
+
+
+def test_unified_memory_reports_na_not_a_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GB10은 통합메모리라 memory.used를 보고하지 않는다 (2026-08-17 ATOM 실측).
+
+        nvidia-smi --query-gpu=name,compute_cap,memory.total,memory.used --format=csv,noheader
+        → NVIDIA GB10, 12.1, [N/A], [N/A]
+
+    nvidia-smi는 PATH에 있고 정상 종료한다. 사유가 "PATH에 없거나 실패했다"로 남으면
+    **거짓이고**, 다음 사람이 드라이버를 뒤진다. 고칠 것이 없다는 사실 자체가 정보다.
+    """
+    _smi(monkeypatch, stdout="[N/A]\n")
+
+    value, reason = bench_metrics.nvidia_smi_mb()
+
+    assert value is None
+    assert reason is not None
+    assert "통합메모리" in reason and "PATH" not in reason.split("—")[0]
+
+
+def test_a_missing_binary_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    _smi(monkeypatch, found=False)
+
+    value, reason = bench_metrics.nvidia_smi_mb()
+
+    assert value is None
+    assert reason == "nvidia-smi가 PATH에 없다"
+
+
+def test_a_nonzero_exit_carries_the_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """비정상 종료는 세 번째 경우와 다르다 — 그 오류를 봐야 한다."""
+    _smi(monkeypatch, returncode=9, stderr="Failed to initialize NVML\n")
+
+    value, reason = bench_metrics.nvidia_smi_mb()
+
+    assert value is None
+    assert reason is not None
+    assert "9" in reason and "NVML" in reason
+
+
+def test_a_number_is_returned_without_a_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    _smi(monkeypatch, stdout="1024\n2048\n")
+
+    assert bench_metrics.nvidia_smi_mb() == (2048.0, None)

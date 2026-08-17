@@ -6,6 +6,7 @@
 | 디렉터리 | 내용 |
 | --- | --- |
 | `harness-tools/` | 2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·인덱서). 아래 참조 |
+| `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `probe/` | vLLM `/metrics` 원문을 두 장비에서 같은 절차로 받는다. 산출물이 그대로 `tests/fixtures/metrics/`의 fixture가 된다 ([probe/README.md](probe/README.md)) |
 
 ## harness-tools 이미지
@@ -152,10 +153,11 @@ export HARNESS_SIF_DIR=/data/daniel3290/sif
 | podman | — | docker와 같다 — `read_only`를 끄면 루트 쓰기가 열린다 |
 | singularity 3.7.3 | `read_only` | **끌 수 없다.** SIF가 immutable squashfs라 루트가 항상 읽기 전용이다 |
 
-**그래서 `read_only=False`는 두 런타임에서 다르게 동작한다.** 가상의 위험이 아니다 — 첫
-`dev_docker` 실행에서 semgrep이 `$HOME/.semgrep`에 쓰려다 죽은 것이 루트 쓰기 금지 때문이었고,
-`read_only=False`로 돌리면 Docker에서는 그 크래시가 사라지고 Singularity에서는 남는다. 같은
-코드에 대한 정적 신호가 런타임에 따라 갈리므로 조건 간 비교가 성립하지 않는다.
+**그래서 `read_only=False`는 런타임에 따라 다르게 동작한다** — Docker·podman은 루트 쓰기가
+열리고 Singularity는 그대로 막힌다(위 표). 가상의 위험이 아니다 — 첫 `dev_docker` 실행에서
+semgrep이 `$HOME/.semgrep`에 쓰려다 죽은 것이 루트 쓰기 금지 때문이었고, `read_only=False`로
+돌리면 Docker에서는 그 크래시가 사라지고 Singularity에서는 남는다. 같은 코드에 대한 정적
+신호가 런타임에 따라 갈리므로 조건 간 비교가 성립하지 않는다.
 
 `DEFAULT_SANDBOX.read_only`가 True 고정이라 지금은 드러나지 않는다. 끄는 호출부가 생기면
 `ContainerToolRunner`가 `network=True`처럼 명시적으로 거절해야 한다.

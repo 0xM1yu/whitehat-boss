@@ -13,7 +13,7 @@ YAML의 오타 필드가 조용히 무시되지 않고 로드 시점에 실패�
 
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 import yaml
 from pydantic import Field, model_validator
@@ -75,9 +75,36 @@ class Benchmark(HarnessModel):
     tok_s_batch32: float = Field(default=0.0, ge=0.0)
     mem_gb_ctx8k: float = Field(default=0.0, ge=0.0)
 
+    # 실측 대상 세 항목. `--apply`가 쓰는 키(`bench_report.APPLY_KEYS`) 중 수치만이다.
+    # `ClassVar`가 아니면 pydantic이 필드로 읽어 registry 스키마가 바뀐다.
+    MEASUREMENTS: ClassVar[tuple[str, ...]] = ("tok_s_single", "tok_s_batch32", "mem_gb_ctx8k")
+
+    @property
+    def missing_measurements(self) -> tuple[str, ...]:
+        """아직 0인 항목. **세 상태를 가르는 단일 출처다.**
+
+        비어 있으면 전부 측정, 셋 다면 미측정, 그 사이면 부분 측정이다.
+        """
+        return tuple(name for name in self.MEASUREMENTS if not getattr(self, name))
+
     @property
     def is_measured(self) -> bool:
-        return any((self.tok_s_single, self.tok_s_batch32, self.mem_gb_ctx8k))
+        """**하나라도 쟀는가.** "전부 쟀는가"가 아니다 — `is_fully_measured`가 그쪽이다.
+
+        이 값이 `any`인 것은 의도다. `--apply`가 못 잰 값을 0으로 남기므로(bench.py
+        모듈 docstring) 부분적으로 채워진 상태가 정상 경로에 실재하고, 그때 이 모델을
+        "아무것도 모르는 모델"로 취급하면 이미 확보한 수치까지 버리게 된다.
+
+        **대신 이것만으로 production 게이트를 세우면 절반만 채우고도 열린다.** 그래서
+        `doctor`가 `missing_measurements`로 부분 측정을 따로 판정한다 — ATOM에서
+        `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으므로(2026-08-17) 그
+        상태는 가정이 아니라 곧 실제로 발생한다.
+        """
+        return len(self.missing_measurements) < len(self.MEASUREMENTS)
+
+    @property
+    def is_fully_measured(self) -> bool:
+        return not self.missing_measurements
 
 
 class ModelEntry(HarnessModel):
@@ -89,6 +116,22 @@ class ModelEntry(HarnessModel):
     license: NonEmptyStr
     # model·tokenizer·quantization 묶음의 해시. RunRecord.model_checksums로 들어간다.
     checksum: Sha256Digest
+    # **그 checksum이 어디서 나왔는가.** 예: `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<rev>`
+    # 또는 `file:///data/models/qwen3-coder-30b-nvfp4`.
+    #
+    # checksum만으로는 사람이 역추적할 수 없다. 후보가 전부 커뮤니티·서드파티 산출물이라
+    # (2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의 모델이 리포지터리마다 다르고**,
+    # 값이 안 맞을 때 "어느 리포의 어느 리비전이었나"를 답할 실마리가 기록에 없었다.
+    #
+    # **형식을 패턴으로 강제하지 않는다.** checksum 정본이 로컬 스냅샷 해시라
+    # (model-serving.md §5) `file://`도 정당한 값이고, `hf://`로 좁히면 그 경로를 적을
+    # 수 없다. `--device` 라벨 집합을 열어 둔 것과 같은 판단이다(ADR 0006). 대신
+    # `NonEmptyStr`이라 "적었는데 빈 문자열"은 막는다.
+    #
+    # 기본값이 `None`인 것은 `Benchmark.measured_on`과 같은 이유다 — 기존 registry 항목에
+    # 이 키가 없으면 로드가 통째로 실패하고, `None`은 "출처 미상"이라는 정직한 값이다.
+    # `--apply`는 이 필드를 건드리지 않는다(`benchmark:` 블록 밖이고 `APPLY_KEYS`에 없다).
+    source: NonEmptyStr | None = None
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark
@@ -234,6 +277,21 @@ class HarnessConfig(HarnessModel):
             if role in self.profile.roles
         }
 
+    def served_models(self) -> dict[str, str]:
+        """**Fake가 아닌** 역할 → model key.
+
+        `model_checksums()`가 전 역할을 담는 것과 대비된다. 저쪽은 기록이라 빠짐이 없어야
+        하고, 이쪽은 판정 대상이라 **해시할 대상이 실재하는 역할만** 담아야 한다 —
+        `FakeModelClient`는 프로세스 안에서 도는 코드이므로 가중치도 토크나이저도 없고,
+        그 checksum이 0인 것은 미기록이 아니라 정확한 값이다.
+
+        역할 단위인 것은 `single_gpu_12g`처럼 한 프로필에서 Fake와 실서빙이 섞이기
+        때문이다(그 프로필은 scout만 실서빙이다).
+        """
+        return {
+            role: key for role, key in self.profile.roles.items() if not self.models[key].is_fake
+        }
+
     def unmeasured_models(self) -> list[str]:
         """benchmark가 비어 있는(실측 전) 모델 키.
 
@@ -245,6 +303,20 @@ class HarnessConfig(HarnessModel):
             for key in set(self.profile.roles.values())
             if not self.models[key].benchmark.is_measured
         )
+
+    def partially_measured_models(self) -> dict[str, tuple[str, ...]]:
+        """**일부만** 잰 모델 키 → 아직 0인 항목.
+
+        `unmeasured_models()`가 "아직 아무것도 안 쟀다"를 답한다면 이쪽은 "쟀는데 덜
+        쟀다"를 답한다. 둘을 가르지 않으면 `is_measured`가 `any`이므로 절반만 채운
+        모델이 production 게이트를 그냥 통과한다.
+        """
+        return {
+            key: self.models[key].benchmark.missing_measurements
+            for key in sorted(set(self.profile.roles.values()))
+            if self.models[key].benchmark.is_measured
+            and not self.models[key].benchmark.is_fully_measured
+        }
 
     def models_measured_elsewhere(self, device: str) -> dict[str, str]:
         """benchmark를 **다른 장비에서** 잰 모델 키 → 그 장비.
