@@ -16,7 +16,7 @@ manifest를 함께 낸다.
 
 HF Hub 메타데이터(`siblings[].lfs.sha256`)를 정본으로 쓰지 않는 이유는 그것이 **LFS 추적
 파일만** 덮기 때문이다. `config.json`·`tokenizer_config.json` 같은 작은 파일은 일반 git
-blob이라 `blob_id`(git SHA-1)만 오는데, 하필 그쪽이 양자화 설정과 tokenizer 설정 —
+blob이라 `blobId`(git SHA-1)만 오는데, 하필 그쪽이 양자화 설정과 tokenizer 설정 —
 registry 주석이 말하는 "model·tokenizer·quantization 묶음"의 절반이다. 그래서 받은 뒤
 로컬에서 잰 값이 정본이고, HF 조회는 받기 전 예비 확인으로만 쓴다.
 
