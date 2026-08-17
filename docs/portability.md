@@ -104,8 +104,8 @@ python -m src.cli doctor --profile local_balanced --device slurm
 
 | 라벨 | 아키텍처 | 컨테이너 런타임 | 확인된 것 |
 | --- | --- | --- | --- |
-| `atom` | Blackwell (sm_121), CUDA 13.0 | Docker | R1 검증 대기 |
-| `slurm` | Ampere (sm_86), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
+| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** | **podman 4.9.3** (Docker 데몬·singularity 없음) | 2026-08-17 harness-tools:v1 arm64 빌드·podman 완주(후보 2/Finding 2). **R1(모델 서빙)은 검증 대기** |
+| `slurm` | Ampere (sm_86), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
 
 접속·잡 실행·노드 선택 같은 운용 절차는 [tools/probe/README.md](../tools/probe/README.md)에
 있다. 그 내용이 이 문서에 없는 것은 의도다 — 하네스가 알 필요가 없는 사실이기 때문이다.

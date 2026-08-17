@@ -115,6 +115,10 @@ INDEX_FILE = "index.json"
 # 남기지 않는다(모듈 docstring).
 UNENFORCED: dict[str, tuple[str, ...]] = {
     "docker": (),
+    # podman은 rootless인데도 cpu_limit·memory_mb를 강제한다 — 2026-08-17 ATOM 실측에서
+    # `--memory=256m`을 준 컨테이너 안 `memory.max`가 정확히 268435456(256MiB)이었다.
+    # cgroup v2 위임 덕이다. 그래서 singularity가 아니라 docker와 같은 편(빈 튜플)이다.
+    "podman": (),
     "singularity": ("cpu_limit", "memory_mb"),
 }
 
@@ -288,8 +292,11 @@ def container_argv(
     없지만, 채웠는데 무시되는 것보다 전달되는 편이 낫다. 정렬해서 넘긴다(재현성).
     """
     pairs = [f"{key}={value}" for key, value in sorted((env or {}).items())]
-    if runtime == "docker":
-        argv = ["docker", "run", "--rm", "--name", name]
+    if runtime in ("docker", "podman"):
+        # podman은 docker CLI를 그대로 흉내 내므로 플래그가 같다 — 바이너리 이름만 갈린다.
+        # ATOM은 SELinux가 비활성이라 볼륨 `:Z` 라벨이 필요 없다(2026-08-17 실측). 켜진
+        # 장비가 생기면 그때 `:Z`를 붙인다 — 지금 붙이면 없는 문제에 대비해 소스를 relabel한다.
+        argv = [runtime, "run", "--rm", "--name", name]
         if not sandbox.network:
             argv.append("--network=none")
         if sandbox.read_only:
@@ -606,26 +613,28 @@ class ContainerToolRunner:
     def _kill(self, name: str) -> None:
         """타임아웃 뒤에도 컨테이너는 살아 있다. 방치하면 run마다 하나씩 쌓인다.
 
-        **docker만 정리가 필요하다.** `docker run`은 데몬에 요청을 보내는 클라이언트라
-        클라이언트를 죽여도 컨테이너는 데몬 밑에서 계속 돈다. `singularity exec`는 그
-        프로세스 자신이 컨테이너라 `subprocess` 타임아웃이 프로세스를 죽이면 함께 끝난다 —
-        지울 대상이 남지 않는다.
+        **docker·podman은 정리가 필요하다.** `docker run`은 데몬에 요청을 보내는 클라이언트라
+        클라이언트를 죽여도 컨테이너는 데몬 밑에서 계속 돈다. podman은 데몬이 없지만 컨테이너를
+        conmon이 감시하므로 `podman run`을 죽여도 conmon 밑에 남을 수 있다 — 둘 다 이름으로
+        지운다. `singularity exec`는 그 프로세스 자신이 컨테이너라 타임아웃이 프로세스를 죽이면
+        함께 끝난다 — 지울 대상이 없다.
         """
-        if self.runtime != "docker":
+        if self.runtime not in ("docker", "podman"):
             return
         subprocess.run(
-            ["docker", "rm", "--force", name], capture_output=True, timeout=30, check=False
+            [self.runtime, "rm", "--force", name], capture_output=True, timeout=30, check=False
         )
 
     def _image_digest(self) -> str | None:
         if self.runtime == "singularity":
             sif = sif_path(self.sif_dir, self.image)
             return f"sha256:{_file_sha256(sif)}" if sif.exists() else None
-        # RepoDigests는 **push된 적 없는 로컬 빌드 이미지에서 비어 있다.** 그 경우 .Id를
-        # 쓴다 — 둘 다 그 이미지를 유일하게 지시하는 sha256이다.
+        # RepoDigests는 **docker에서는 push된 적 없는 로컬 빌드 이미지에 비어 있다.** 그
+        # 경우 .Id를 쓴다 — 둘 다 그 이미지를 유일하게 지시하는 sha256이다. podman은 로컬
+        # 빌드에도 RepoDigests를 채우지만(2026-08-17 실측) 같은 포맷이라 이 경로가 그대로 된다.
         out = _command_output(
             [
-                "docker", "image", "inspect", self.image,
+                self.runtime, "image", "inspect", self.image,
                 "--format", "{{index .RepoDigests 0}}|{{.Id}}",
             ]
         )
