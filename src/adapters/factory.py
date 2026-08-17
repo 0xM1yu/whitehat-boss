@@ -115,10 +115,10 @@ _RETRIEVERS: dict[str, _Wiring] = {
     ),
 }
 
-# docker와 singularity는 **같은 클래스**다. 로컬은 docker, Slurm는 Docker 데몬 접근이
-# 없어 singularity, ATOM은 나중에 docker — 계약과 판정은 하나이고 명령 조립만 갈린다.
-# 그래서 `describe_wiring()`의 구현 이름만으로는 둘이 구분되지 않는다. `doctor`가
-# 런타임 이름을 따로 출력하는 이유다(`cli._check_tool_runtime`).
+# docker·singularity·podman은 **같은 클래스**다. 로컬은 docker, Slurm는 Docker 데몬 접근이
+# 없어 singularity, ATOM은 데몬 접근도 singularity도 없어 podman — 계약과 판정은 하나이고
+# 명령 조립만 갈린다. 그래서 `describe_wiring()`의 구현 이름만으로는 셋이 구분되지 않는다.
+# `doctor`가 런타임 이름을 따로 출력하는 이유다(`cli._check_tool_runtime`).
 _TOOL_RUNNERS: dict[str, _Wiring] = {
     "fake": _Wiring(
         FakeToolRunner,
@@ -128,6 +128,16 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
         ContainerToolRunner,
         lambda a: ContainerToolRunner(
             runtime="docker",
+            ids=a.ids,
+            run_id=a.run_id,
+            root=a.source_root,
+            artifacts_root=a.artifacts_root,
+        ),
+    ),
+    "podman": _Wiring(
+        ContainerToolRunner,
+        lambda a: ContainerToolRunner(
+            runtime="podman",
             ids=a.ids,
             run_id=a.run_id,
             root=a.source_root,
