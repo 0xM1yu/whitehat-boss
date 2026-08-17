@@ -13,7 +13,7 @@ YAML의 오타 필드가 조용히 무시되지 않고 로드 시점에 실패�
 
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 import yaml
 from pydantic import Field, model_validator
@@ -75,9 +75,36 @@ class Benchmark(HarnessModel):
     tok_s_batch32: float = Field(default=0.0, ge=0.0)
     mem_gb_ctx8k: float = Field(default=0.0, ge=0.0)
 
+    # 실측 대상 세 항목. `--apply`가 쓰는 키(`bench_report.APPLY_KEYS`) 중 수치만이다.
+    # `ClassVar`가 아니면 pydantic이 필드로 읽어 registry 스키마가 바뀐다.
+    MEASUREMENTS: ClassVar[tuple[str, ...]] = ("tok_s_single", "tok_s_batch32", "mem_gb_ctx8k")
+
+    @property
+    def missing_measurements(self) -> tuple[str, ...]:
+        """아직 0인 항목. **세 상태를 가르는 단일 출처다.**
+
+        비어 있으면 전부 측정, 셋 다면 미측정, 그 사이면 부분 측정이다.
+        """
+        return tuple(name for name in self.MEASUREMENTS if not getattr(self, name))
+
     @property
     def is_measured(self) -> bool:
-        return any((self.tok_s_single, self.tok_s_batch32, self.mem_gb_ctx8k))
+        """**하나라도 쟀는가.** "전부 쟀는가"가 아니다 — `is_fully_measured`가 그쪽이다.
+
+        이 값이 `any`인 것은 의도다. `--apply`가 못 잰 값을 0으로 남기므로(bench.py
+        모듈 docstring) 부분적으로 채워진 상태가 정상 경로에 실재하고, 그때 이 모델을
+        "아무것도 모르는 모델"로 취급하면 이미 확보한 수치까지 버리게 된다.
+
+        **대신 이것만으로 production 게이트를 세우면 절반만 채우고도 열린다.** 그래서
+        `doctor`가 `missing_measurements`로 부분 측정을 따로 판정한다 — ATOM에서
+        `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으므로(2026-08-17) 그
+        상태는 가정이 아니라 곧 실제로 발생한다.
+        """
+        return len(self.missing_measurements) < len(self.MEASUREMENTS)
+
+    @property
+    def is_fully_measured(self) -> bool:
+        return not self.missing_measurements
 
 
 class ModelEntry(HarnessModel):
@@ -276,6 +303,20 @@ class HarnessConfig(HarnessModel):
             for key in set(self.profile.roles.values())
             if not self.models[key].benchmark.is_measured
         )
+
+    def partially_measured_models(self) -> dict[str, tuple[str, ...]]:
+        """**일부만** 잰 모델 키 → 아직 0인 항목.
+
+        `unmeasured_models()`가 "아직 아무것도 안 쟀다"를 답한다면 이쪽은 "쟀는데 덜
+        쟀다"를 답한다. 둘을 가르지 않으면 `is_measured`가 `any`이므로 절반만 채운
+        모델이 production 게이트를 그냥 통과한다.
+        """
+        return {
+            key: self.models[key].benchmark.missing_measurements
+            for key in sorted(set(self.profile.roles.values()))
+            if self.models[key].benchmark.is_measured
+            and not self.models[key].benchmark.is_fully_measured
+        }
 
     def models_measured_elsewhere(self, device: str) -> dict[str, str]:
         """benchmark를 **다른 장비에서** 잰 모델 키 → 그 장비.
