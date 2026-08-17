@@ -44,9 +44,34 @@
 | 갈리는 것 | 어디서 표현되는가 |
 | --- | --- |
 | endpoint | `config/models.yaml`의 `endpoint` |
-| 컨테이너 런타임 | 프로필의 `adapters.tool_runner`. **`--tool-runner` 오버라이드에 실제 사용처가 생겼다**(2026-08-17) — ATOM에는 podman만 있는데 `local_balanced`·`b1_single`·`dev_docker`는 `docker`를 선언한다. 경위는 [decisions/0005](decisions/0005-tool-runner-override.md)의 "이후 드러난 것"과 "사용처가 생겼다" |
+| 컨테이너 런타임 | 프로필의 `adapters.tool_runner` (선언 기준은 아래). 프로필이 적지 못한 장비는 `--tool-runner`로 덮는다 — 실제 사용처는 `dev_docker`를 ATOM에서 돌릴 때다(2026-08-17). 경위는 [decisions/0005](decisions/0005-tool-runner-override.md) |
 | 실행 가능한 양자화 | **별도 model key와 별도 프로필.** 오버레이로 `quantization`을 덮지 않는다 — 그건 같은 모델이 아니다 |
 | 잡 실행·접속 | 하네스 밖. 래퍼 스크립트와 운용 문서 |
+
+### 프로필은 어느 런타임을 선언하는가
+
+**프로필은 그 프로필을 실제로 돌릴 주 장비의 런타임을 선언하고, 다른 장비가
+`--tool-runner`로 덮는다.**
+
+지원 런타임은 셋(docker·singularity·podman)인데 프로필은 하나만 적을 수 있으므로 어느
+쪽을 골라도 오버라이드가 남는다. 그러니 질문은 "예외를 없앨 수 있는가"가 아니라
+**"어느 장비를 예외로 둘 것인가"**이고, 답은 **주 경로가 예외가 아니어야 한다**이다 —
+오버라이드는 [evaluation.md](evaluation.md) §2.3 규칙 2의 예외이고
+`RunRecord.tool_runner`에 기록으로 남는다. 주 장비가 상시 예외 상태면 그 기록이
+"이 run은 특별했다"를 뜻하지 못하게 된다.
+
+`dev_singularity`가 이미 그 논법이다. Slurm에서 돌리려고 만든 프로필이므로 런타임을
+직접 선언하고, 그 장비에서는 오버라이드가 필요 없다.
+
+| 프로필 | 선언 | 주 장비 | 오버라이드가 필요한 곳 |
+| --- | --- | --- | --- |
+| `local_balanced` · `b1_single` | `podman` | **ATOM** (유일한 실서빙 장비) | 없음 — 다른 장비에서는 모델이 기동하지 않는다(§5 #1) |
+| `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서 dev 경로를 돌릴 때 (`--tool-runner podman`) |
+| `dev_singularity` | `singularity` | Slurm | 없음 |
+
+**런타임별로 프로필을 복제하지 않는다.** 조건 축(B1/B3')에 장비 축이 섞이고, 조건이 늘
+때마다 장비 수만큼 프로필이 곱해진다([decisions/0005](decisions/0005-tool-runner-override.md)가
+기각한 대안이다).
 
 지금은 endpoint가 갈리지 않는다. 서버와 클라이언트를 같은 노드에서 돌리므로 어느 장비에서든
 `127.0.0.1`이다. 그래서 `config/`는 한 벌이고 장비별 오버레이가 없다. 이 전제가 깨지면
