@@ -72,7 +72,11 @@ def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
                 },
                 "memory": {
                     "mem_gb_ctx8k": 0.0,
-                    "mem_gb_ctx8k_reason": "nvidia-smi가 없어 GB를 얻지 못했다",
+                    # 실제 코드가 내는 사유 형태를 그대로 쓴다. 옛 고정 문구
+                    # ("nvidia-smi가 없어…")는 통합메모리 장비에서 거짓이라 폐기됐다.
+                    "mem_gb_ctx8k_reason": (
+                        "nvidia-smi가 정상 종료했지만 memory.used를 숫자로 주지 않았다"
+                    ),
                     "gpu_memory_utilization": 0.9,
                 },
             }
