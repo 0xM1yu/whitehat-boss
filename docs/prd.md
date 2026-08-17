@@ -145,7 +145,7 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 | Primary Auditor | Qwen3-Coder-30B-A3B-Instruct | 30.5B(3.3B active) MoE, 256K context, repository-scale 분석에 최적화, 선별 후보에만 호출 |
 | Independent Critic | Devstral Small 2 24B | Primary와 다른 모델 계열, codebase 탐색·tool-use 지원, 상위 후보만 검증하여 비용 최적화 |
 
-현재 가용 장비는 GIGABYTE AI TOP ATOM(NVIDIA GB10, 통합 메모리 128GB/가용 112Gi, 대역폭 273GB/s) 1대이며, 용량은 넉넉하지만 대역폭이 좁아 **대형 모델의 긴 응답을 기다리는 용도보다 여러 요청을 동시 처리하는 멀티 에이전트 구성에 유리**하다. Auditor·Critic은 NVFP4 양자화를 기본값으로 검토하고 8K/16K/32K context 기준으로 실측한다. 2대 연결(ConnectX-7) 확장은 단일 노드 benchmark에서 병목이 확인된 뒤 검토한다.
+현재 가용 장비는 GIGABYTE AI TOP ATOM(NVIDIA GB10, 통합 메모리 128GB/가용 112Gi *(추정 — 팀 실할당은 34 GiB로 실측됨, 2026-08-17. docs/model-serving.md §1)*, 대역폭 273GB/s) 1대이며, 용량은 넉넉하지만 대역폭이 좁아 **대형 모델의 긴 응답을 기다리는 용도보다 여러 요청을 동시 처리하는 멀티 에이전트 구성에 유리**하다. Auditor·Critic은 NVFP4 양자화를 기본값으로 검토하고 8K/16K/32K context 기준으로 실측한다. 2대 연결(ConnectX-7) 확장은 단일 노드 benchmark에서 병목이 확인된 뒤 검토한다.
 
 ### 4.6 Cost-Effective 및 토큰 효율 전략
 
