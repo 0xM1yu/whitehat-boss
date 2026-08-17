@@ -113,7 +113,7 @@ class StateStore(Protocol):
 - repository commit과 source hash
 - model·tokenizer·quantization checksum
 - prompt·agent spec version
-- tool/container image digest**와 그것을 돌린 런타임** (digest는 런타임 사이에서 비교할 수 없다 — STATUS.md §10)
+- tool/container image digest**와 그것을 돌린 런타임** (digest는 런타임 사이에서도 아키텍처 사이에서도 비교할 수 없다 — STATUS.md §10)
 - resolved budget와 threshold
 - random seed와 sampling 설정
 - KB 스냅샷 버전

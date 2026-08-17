@@ -128,7 +128,8 @@ profiles:
       # 도구가 실제로 돌아야 `RunRecord.tool_images`가 채워지고, **그래야 이 run이
       # 비교표에 들어간다**(STATUS.md §8). fake로 두면 완주시켜도 비교 대상이 아니라
       # 중간 발표 DoD "B1 조건 1회 완주"를 프로필 정의만으로는 만족시킬 수 없었다.
-      # Docker 데몬이 없는 장비(Seraph)에서는 `--tool-runner singularity`로 갈아끼운다(ADR 0005).
+      # Docker 데몬이 없는 장비에서는 `--tool-runner`로 갈아끼운다(ADR 0005): Seraph는
+      # `singularity`, ATOM은 `podman`이다 (2026-08-17 실측 — ATOM에는 그 둘이 다 없다).
       tool_runner: docker
       state_store: sqlite
     budget: default

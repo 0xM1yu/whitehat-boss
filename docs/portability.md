@@ -28,7 +28,7 @@
 
 | 확인 | 방법 | 현재 |
 | --- | --- | --- |
-| 실행 코드에 장비 고유명이 없다 | `src/**`를 AST로 파싱해 주석·docstring을 뺀 뒤 장비명·아키·스케줄러 이름을 찾는다 | 0건. 남는 것은 `docker`/`singularity`(config가 고르는 런타임 이름)와 `NVFP4`(registry의 양자화 값)뿐이고, 둘 다 장비가 아니라 설정을 가리킨다 |
+| 실행 코드에 장비 고유명이 없다 | `src/**`를 AST로 파싱해 주석·docstring을 뺀 뒤 장비명·아키·스케줄러 이름을 찾는다 | 0건. 남는 것은 `docker`/`singularity`/`podman`(config가 고르는 런타임 이름)과 `NVFP4`(registry의 양자화 값)뿐이고, 둘 다 장비가 아니라 설정을 가리킨다 |
 | 전 프로필이 GPU·네트워크 없이 진단을 통과한다 | 모든 프로필에 `doctor` 실행 | 7/7, ERROR 0건 |
 | GPU 없이 파이프라인이 완주한다 | `dev_fake`·`dev_hybrid`로 `run` | 완주 |
 | 테스트가 GPU·네트워크 없이 돈다 | CI(`ubuntu-latest`, GPU 없음) | 전 테스트 통과 |
@@ -44,7 +44,7 @@
 | 갈리는 것 | 어디서 표현되는가 |
 | --- | --- |
 | endpoint | `config/models.yaml`의 `endpoint` |
-| 컨테이너 런타임 | 프로필의 `adapters.tool_runner`. `--tool-runner` 오버라이드도 있지만 **지금은 도달 가능한 사용처가 없다** — 사유는 [decisions/0005](decisions/0005-tool-runner-override.md)의 "이후 드러난 것" |
+| 컨테이너 런타임 | 프로필의 `adapters.tool_runner`. **`--tool-runner` 오버라이드에 실제 사용처가 생겼다**(2026-08-17) — ATOM에는 podman만 있는데 `local_balanced`·`b1_single`·`dev_docker`는 `docker`를 선언한다. 경위는 [decisions/0005](decisions/0005-tool-runner-override.md)의 "이후 드러난 것"과 "사용처가 생겼다" |
 | 실행 가능한 양자화 | **별도 model key와 별도 프로필.** 오버레이로 `quantization`을 덮지 않는다 — 그건 같은 모델이 아니다 |
 | 잡 실행·접속 | 하네스 밖. 래퍼 스크립트와 운용 문서 |
 
@@ -85,7 +85,7 @@ python -m src.cli doctor --profile local_balanced --device seraph
 | 1 | `local_balanced`이 참조하는 모델 5개 중 **3개**가 Blackwell 이상을 요구한다: `qwen3-8b`(`fp4`), `qwen3-coder-30b-a3b`(`nvfp4`), `devstral-small-2-24b`(`nvfp4`). `b1_single`은 세 역할이 전부 `qwen3-coder-30b-a3b`(`nvfp4`)다 | Blackwell(sm_100+) 미만 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** |
 | 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | 미해결. **셋 중 진단 비용이 가장 크다**(아래) |
 | 3 | R1: 최신 vLLM × Blackwell 커널 호환성 미검증 | 검증 전 | [open-questions.md](open-questions.md) R1. `tools/probe/`가 1차 판정을 낸다 |
-| 4 | `tool_images` digest를 런타임 사이에서 비교할 수 없다 | Docker↔Singularity 혼용 | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 드러내기만 한다 |
+| 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다 |
 
 **#2가 #1보다 위험한 이유.** 프로필 이름과 주석이 **메모리 조건만** 말한다("12GB 카드 1장",
 "Qwen3-4B(FP8) 약 8.0GB"). 30B·24B를 쓰는 #1의 프로필은 12GB 카드에서 **크기로도** 걸리니
@@ -104,7 +104,7 @@ python -m src.cli doctor --profile local_balanced --device seraph
 
 | 라벨 | 아키텍처 | 컨테이너 런타임 | 확인된 것 |
 | --- | --- | --- | --- |
-| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** | **podman 4.9.3** (Docker 데몬·singularity 없음) | 2026-08-17 harness-tools:v1 arm64 빌드·podman 완주(후보 2/Finding 2). **R1(모델 서빙)은 검증 대기** |
+| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어 | **podman 4.9.3** (rootless. Docker 데몬 접근·singularity 둘 다 없음) | 2026-08-17 harness-tools:v1 arm64 빌드·podman 완주(후보 2/Finding 2). 할당 자원: 통합메모리 128 GB 중 **팀 전체 합계 34 GiB**(별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다), GPU **공유**, CPU 6코어 상당, 디스크 1 TiB NVMe Gen5 전용 파티션. **R1(모델 서빙)은 검증 대기** |
 | `seraph` | Ampere (sm_86), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
 
 접속·잡 실행·노드 선택 같은 운용 절차는 [tools/probe/README.md](../tools/probe/README.md)에

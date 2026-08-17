@@ -16,7 +16,7 @@
 | --- | --- |
 | `model_checksums` | 아니다. model·tokenizer·quantization 해시라 **설계상 장비 불변**이다 |
 | `prompt_versions` | 아니다 |
-| `tool_runner` | 부분적으로만. Seraph=singularity / ATOM=docker이지만 `--tool-runner`로 뒤집힌다 |
+| `tool_runner` | 부분적으로만. Seraph=singularity / ATOM=podman(2026-08-17 실측)이지만 `--tool-runner`로 뒤집힌다 |
 | `thresholds`·`budget`·`seed` | 아니다. 공정성 규칙상 오히려 같아야 한다 |
 | endpoint | **기록되지 않는다** |
 
