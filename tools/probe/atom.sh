@@ -8,6 +8,7 @@
 #
 #   tmux new -s probe                        # ← SSH(Tailscale 경유)가 끊겨도 살아남는다
 #   tools/probe/atom.sh --port 8001 --out ~/probe
+#   WAIT_S=900 tools/probe/atom.sh ...       # 기동이 300초를 넘을 때 (2026-08-17 1차 시도)
 #
 # **계정이 공용일 수 있다.** 그래서 두 가지를 실행 전에 본다:
 #

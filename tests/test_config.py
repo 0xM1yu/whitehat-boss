@@ -19,6 +19,7 @@ from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
     REQUIRED_ROLES,
+    Benchmark,
     ConfigError,
     HarnessConfig,
     ModelEntry,
@@ -26,9 +27,10 @@ from src.config import (
     load_config,
 )
 from src.schemas import CapsuleLevel, RunRecord
+from src.schemas.common import PLACEHOLDER_DIGEST
 from tests.conftest import ALL_PROFILES
 
-ZERO_DIGEST = "sha256:" + "0" * 64
+ZERO_DIGEST = PLACEHOLDER_DIGEST
 
 
 # --- 참조 정합성 ------------------------------------------------------------
@@ -222,3 +224,55 @@ def _copy_config(dest: Path, *, profile_patch: dict) -> None:
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
     raw["profiles"]["dev_fake"].update(profile_patch)
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+
+
+# --- benchmark 세 상태 (2026-08-17) ------------------------------------------
+
+
+def _bench(**values: float) -> Benchmark:
+    return Benchmark(**values)
+
+
+def test_benchmark_distinguishes_three_states() -> None:
+    """전부 측정 / 부분 측정 / 미측정이 구분되어야 한다.
+
+    `is_measured`가 `any`라 그것만으로는 **절반만 채운 모델이 production 게이트를 그냥
+    통과한다.** ATOM에서 `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으므로
+    (2026-08-17) 부분 측정은 가정이 아니라 곧 실제로 생기는 상태다.
+    """
+    none = _bench()
+    partial = _bench(tok_s_single=30.0, tok_s_batch32=90.0)
+    full = _bench(tok_s_single=30.0, tok_s_batch32=90.0, mem_gb_ctx8k=8.25)
+
+    assert (none.is_measured, none.is_fully_measured) == (False, False)
+    assert (partial.is_measured, partial.is_fully_measured) == (True, False)
+    assert (full.is_measured, full.is_fully_measured) == (True, True)
+    assert partial.missing_measurements == ("mem_gb_ctx8k",)
+    assert none.missing_measurements == tuple(Benchmark.MEASUREMENTS)
+    assert full.missing_measurements == ()
+
+
+def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path) -> None:
+    """부분 측정 모델은 **어느 항목이 비었는지**까지 나와야 한다.
+
+    이름만 나오면 "다시 다 재라"가 되고, 이미 확보한 수치를 버리게 된다.
+    """
+    for name in ("profiles.yaml", "budgets.yaml"):
+        (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+    models = (CONFIG_DIR / "models.yaml").read_text(encoding="utf-8")
+    # **`qwen3-4b` 블록만** 채운다. registry의 첫 블록은 `fake`이므로 앞에서부터
+    # 치환하면 엉뚱한 모델이 부분 측정이 되고, 이 검사가 보려던 것을 못 본다.
+    head, marker, tail = models.partition("  qwen3-4b:")
+    assert marker, "registry에 qwen3-4b 블록이 없다 — 이 검사의 전제가 무너졌다"
+    patched = head + marker + tail.replace(
+        "      tok_s_single: 0\n      tok_s_batch32: 0",
+        "      tok_s_single: 30.0\n      tok_s_batch32: 90.0",
+        1,
+    )
+    (tmp_path / "models.yaml").write_text(patched, encoding="utf-8")
+
+    config = load_config("single_gpu_12g", config_dir=tmp_path)
+
+    assert config.partially_measured_models() == {"qwen3-4b": ("mem_gb_ctx8k",)}
+    # 부분 측정은 "아직 안 쟀다"와 다르다 — 두 목록이 겹치면 안 된다.
+    assert "qwen3-4b" not in config.unmeasured_models()

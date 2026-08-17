@@ -21,7 +21,7 @@ TraceWriter·BudgetLedger의 전제를 함께 풀어야 한다(`queue.py` docstr
 """
 
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,7 +55,7 @@ from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate
-from src.schemas.common import Location
+from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.enums import ArtifactKind, CapsuleLevel, FindingState, ReasonCode
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
@@ -379,15 +379,43 @@ def _new_record(
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
-    warnings.extend(incomplete_fields(record))
+    # Fake 역할은 빼고 준다. 그쪽의 checksum 0은 빠진 값이 아니라 맞는 값이다
+    # (`incomplete_fields`의 그 검사 주석).
+    warnings.extend(incomplete_fields(record, served_models=config.served_models()))
     return record, warnings
 
 
-def incomplete_fields(record: RunRecord) -> list[str]:
-    """비교표에 넣을 수 없게 만드는 빈 항목 (engineering-guide.md §5)."""
+def incomplete_fields(
+    record: RunRecord, *, served_models: Mapping[str, str] | None = None
+) -> list[str]:
+    """비교표에 넣을 수 없게 만드는 빈 항목 (engineering-guide.md §5).
+
+    `served_models`는 **Fake가 아닌 역할**의 역할 → model key다. checksum 자리표시자
+    판정에만 쓴다. `None`이면 그 검사를 건너뛴다 — 모르는 채로 "괜찮다"고 말하지 않고,
+    판정할 근거가 없으면 판정하지 않는다.
+    """
     warnings = []
     if not record.tool_images:
         warnings.append("tool_images가 비어 있다 (컨테이너 없이 실행). 모델 비교표에서 제외한다")
+    if served_models:
+        # **Fake 역할은 호출자가 이미 빼고 준다.** Fake 모델의 checksum 0은 빠진 값이
+        # 아니라 **맞는 값**이다 — `FakeModelClient`는 프로세스 안에서 도는 코드라 해시할
+        # 가중치도 토크나이저도 존재하지 않는다. 없는 것을 "미기록"으로 경고하면 dev
+        # 프로필의 모든 run이 매번 이 줄을 뱉고, 그러면 진짜 문제가 묻힌다 — `tool_runner`를
+        # 이 목록에서 뺀 것과 같은 논법이다(`schemas/run.py`의 그 필드 주석).
+        #
+        # 판정이 **역할별**인 것도 의도다. `single_gpu_12g`처럼 한 프로필 안에서 Fake와
+        # 실서빙이 섞이므로, 프로필 단위로 켜고 끄면 그 프로필의 실서빙 역할을 놓친다.
+        placeholder = sorted(
+            f"{role}({key})"
+            for role, key in served_models.items()
+            if record.model_checksums.get(role) == PLACEHOLDER_DIGEST
+        )
+        if placeholder:
+            warnings.append(
+                f"model_checksums가 자리표시자(전부 0)다: {', '.join(placeholder)}. "
+                "어느 모델로 돈 run인지 기록이 지시하지 못한다. 모델 비교표에서 제외한다"
+            )
     if record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
         warnings.append(f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다")
     if record.repo_commit == _UNKNOWN_COMMIT:

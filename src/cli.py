@@ -53,6 +53,7 @@ from src.orchestrator.runner import (
 )
 from src.orchestrator.stages import MAX_STAGE
 from src.orchestrator.trace import TraceWriter
+from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
 from src.schemas.finding import Finding
 
@@ -150,6 +151,7 @@ def doctor(
     checks.append(_check_tool_runtime(config))
     checks.extend(_check_device(config, device))
     checks.extend(_check_benchmarks(config))
+    checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
@@ -240,14 +242,78 @@ def _check_device(config: HarnessConfig, device: str | None) -> list[Check]:
 
 
 def _check_benchmarks(config: HarnessConfig) -> list[Check]:
+    """**전부 측정 / 부분 측정 / 미측정** 셋을 가른다.
+
+    `Benchmark.is_measured`는 셋 중 하나만 0이 아니어도 참이므로(그 속성 주석), 그것만
+    보면 **절반만 채운 모델이 production 게이트를 그냥 통과한다.** ATOM에서
+    `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으니(2026-08-17) 그 상태는
+    가정이 아니라 곧 실제로 생긴다.
+
+    부분 측정을 production에서 ERROR로 두는 것은 model-serving.md §5의 취지 그대로다 —
+    그 게이트가 막으려는 것이 "실측 없이 올리기"이고 절반은 실측이 아니다. 어떤 항목을
+    이 장비에서 영영 못 재는 것이 해법을 요구한다면 그 해법은 **대체 소스를 정하는 것**
+    이지 게이트를 조용히 통과시키는 것이 아니다.
+    """
     unmeasured = config.unmeasured_models()
-    if not unmeasured:
+    partial = config.partially_measured_models()
+    if not unmeasured and not partial:
         return [Check(Severity.OK, "프로필의 모든 모델에 benchmark 실측치가 있다")]
-    # model-serving.md §5는 실측 전 모델을 production 프로필에 넣지 말라고 정한다(블로킹).
-    # dev 프로필에서는 정상 상태이므로 경고로만 남긴다.
-    if config.profile.production:
-        return [Check(Severity.ERROR, f"benchmark 미측정 모델을 production에 올렸다: {unmeasured}")]
-    return [Check(Severity.WARN, f"benchmark 미측정 모델: {unmeasured} (dev 프로필이라 허용)")]
+
+    checks: list[Check] = []
+    # dev 프로필에서 미측정은 정상 상태이므로 경고로만 남긴다.
+    blocking = Severity.ERROR if config.profile.production else Severity.WARN
+    suffix = "" if config.profile.production else " (dev 프로필이라 허용)"
+    if unmeasured:
+        state = "을 production에 올렸다" if config.profile.production else ": "
+        checks.append(Check(blocking, f"benchmark 미측정 모델{state}{unmeasured}{suffix}"))
+    if partial:
+        detail = ", ".join(
+            f"{key}({', '.join(missing)} 미측정)" for key, missing in partial.items()
+        )
+        checks.append(
+            Check(
+                blocking,
+                f"benchmark가 일부만 채워진 모델: {detail} — 이 상태로는 그 항목을 "
+                f"뺀 비교만 성립한다{suffix}",
+            )
+        )
+    return checks
+
+
+def _check_checksums(config: HarnessConfig) -> list[Check]:
+    """실서빙 역할의 `checksum`이 자리표시자(전부 0)인가.
+
+    `run`이 끝난 뒤 `incomplete_fields()`가 같은 판정을 하지만, **돌리기 전에 알 수 있는
+    사실이다.** 5분(실서빙이면 그보다 훨씬 길다)을 쓰고 나서 "이 run은 비교표에 못 넣는다"를
+    듣는 것보다 지금 듣는 편이 싸다 — `_check_prompts`가 같은 이유로 여기 있다.
+
+    **Fake 역할은 세지 않는다.** 그쪽의 0은 미기록이 아니라 정확한 값이다
+    (`HarnessConfig.served_models` 참조). `unmeasured_models()`가 fake를 세는 것과
+    다른데, 저쪽은 "아직 안 쟀다"를 묻고 이쪽은 "잴 대상이 있는데 비어 있다"를 묻는다.
+
+    ERROR가 아니라 WARN인 것도 의도다 — 막지 않고 기록한다는 이 저장소의 논법을 따른다
+    (`Benchmark.measured_on` 주석, ADR 0005·0006).
+    """
+    served = config.served_models()
+    placeholder = sorted(
+        # `source`가 있으면 함께 찍는다 — 채우려면 **어느 리포의 어느 리비전인지**를
+        # 알아야 하고, 그것이 없다는 사실 자체도 알아야 할 정보다.
+        f"{role}({key}, source={config.models[key].source or '미상'})"
+        for role, key in served.items()
+        if config.models[key].checksum == PLACEHOLDER_DIGEST
+    )
+    if not served:
+        return [Check(Severity.OK, "실서빙 역할이 없다 (전 역할 Fake) — checksum 검사 대상 없음")]
+    if not placeholder:
+        return [Check(Severity.OK, "실서빙 역할의 model checksum이 모두 채워져 있다")]
+    return [
+        Check(
+            Severity.WARN,
+            f"model checksum이 자리표시자(전부 0)다: {', '.join(placeholder)} — 이대로 run하면 "
+            "어느 모델로 돈 기록인지 지시하지 못해 모델 비교표에서 제외된다 "
+            "(산출 절차는 model-serving.md §5)",
+        )
+    ]
 
 
 def _check_prompts(config: HarnessConfig) -> list[Check]:

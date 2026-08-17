@@ -41,8 +41,9 @@ from src.schemas import (
     Sampling,
     Verdict,
 )
+from src.schemas.common import PLACEHOLDER_DIGEST
 
-ZERO_DIGEST = "sha256:" + "0" * 64
+ZERO_DIGEST = PLACEHOLDER_DIGEST
 ZERO_COMMIT = "0" * 40
 AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3-coder-30b-a3b", prompt_version="v1")
 

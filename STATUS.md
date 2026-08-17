@@ -374,8 +374,18 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 |---|---|---|
 | `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v1` 이미지 |
 | `kb_snapshot` | KB 미구축 (`kb-none` 자리표시자) | KB 구축 + `--kb-snapshot` |
-| `model_checksums` | registry가 합성 예시값(전부 0) | 실서빙 모델 확정 |
+| `model_checksums` | registry가 합성 예시값(전부 0) | 실서빙 모델 확정 + checksum 산출 (model-serving.md §5) |
 | GPU-second | 실측 전 | R1 통과 |
+
+**`model_checksums` 행은 2026-08-17까지 이 표에만 있고 코드에는 없었다.** `incomplete_fields()`가
+그 필드를 보지 않았으므로 checksum이 전부 0인 채로 돈 run도 경고 없이 통과했다 — 기록상
+재현 가능해 보이는데 어느 모델이었는지는 지시하지 못하는 상태였고, `repo_dirty`가 막으려던
+것과 같은 계열의 구멍이다. 이제 코드가 판정한다.
+
+**단, Fake 역할은 세지 않는다.** `FakeModelClient`는 프로세스 안에서 도는 코드라 해시할
+가중치도 토크나이저도 없고, 그 checksum 0은 미기록이 아니라 정확한 값이다. 판정은
+**역할별**이라 `single_gpu_12g`처럼 섞인 프로필에서도 실서빙 역할만 걸린다. `doctor`가
+같은 규칙으로 run 전에 미리 WARN한다.
 
 ---
 
