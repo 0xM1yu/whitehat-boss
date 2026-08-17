@@ -6,6 +6,7 @@
 | 디렉터리 | 내용 |
 | --- | --- |
 | `harness-tools/` | 2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·인덱서). 아래 참조 |
+| `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `probe/` | vLLM `/metrics` 원문을 두 장비에서 같은 절차로 받는다. 산출물이 그대로 `tests/fixtures/metrics/`의 fixture가 된다 ([probe/README.md](probe/README.md)) |
 
 ## harness-tools 이미지
