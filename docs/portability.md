@@ -86,6 +86,7 @@ python -m src.cli doctor --profile local_balanced --device seraph
 | 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | 미해결. **셋 중 진단 비용이 가장 크다**(아래) |
 | 3 | R1: 최신 vLLM × Blackwell 커널 호환성 미검증 | 검증 전 | [open-questions.md](open-questions.md) R1. `tools/probe/`가 1차 판정을 낸다 |
 | 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다 |
+| 5 | **`qwen3-4b`(`fp8`)가 sm_121에서 `VLLM_USE_DEEP_GEMM=0` 없이 기동하지 않는다.** DeepGEMM이 fp8 scale-factor 레이아웃을 변환하지 못해 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`, 2026-08-17 ATOM 실측) | ATOM(sm_121) — **플래그 없이** | **해소(기동 인자로).** 플래그를 주면 뜨고, 그 사실과 오진 방향이 `config/models.yaml`의 해당 모델 주석에 있다. **#2와 반대 방향이라 같은 행에 넣지 않았다** — #2는 "카드가 낡아서" 못 돌고 이쪽은 "카드는 충분히 새로운데 백엔드가 그 레이아웃을 못 다뤄서" 못 돈다. R1(커널 호환성)은 bf16으로 통과했고 양자화 커널은 그 범위 밖이었다 — 이것이 그 첫 사례다 |
 
 **#2가 #1보다 위험한 이유.** 프로필 이름과 주석이 **메모리 조건만** 말한다("12GB 카드 1장",
 "Qwen3-4B(FP8) 약 8.0GB"). 30B·24B를 쓰는 #1의 프로필은 12GB 카드에서 **크기로도** 걸리니

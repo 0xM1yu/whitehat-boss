@@ -38,6 +38,25 @@ models:
 
   qwen3-4b:
     # 12GB 단일 카드에서 scout만 실서빙할 때 쓰는 소형 모델. profiles.yaml single_gpu_12g 참조.
+    #
+    # **ATOM(sm_121)에서는 `VLLM_USE_DEEP_GEMM=0` 없이 기동하지 않는다** (2026-08-17 실측).
+    # DeepGEMM이 이 모델의 fp8 scale-factor 레이아웃을 sm_121에서 변환하지 못하고 가중치
+    # 로딩 **후처리**에서 죽는다:
+    #
+    #   RuntimeError: Assertion error (deepgemm-src/csrc/apis/layout.hpp:60):
+    #                 Unknown SF transformation
+    #   fp8.py:434 → deep_gemm.py:96 → fp8_utils.py:1137 → utils/deep_gemm.py:494
+    #
+    # **오진 방향을 못박는다: 플래그 없이 재측정하면 "수치가 안 나오는" 것이 아니라 "서버가
+    # 안 뜬다".** 크래시가 가중치를 다 읽은 뒤에 나오므로 모델 파일이나 checksum을 의심하기
+    # 쉬운데, 원인은 백엔드 커널이다. 아래 benchmark는 그 플래그를 준 상태의 측정이다.
+    #
+    #   VLLM_USE_DEEP_GEMM=0 vllm serve <스냅샷 경로> --served-model-name qwen3-4b …
+    #
+    # **R1(sm_121 커널 호환성) 통과와 별건이다.** 그 검증은 bf16 Qwen3-0.6B로 했고
+    # (.claude/plans/atom-memory-arm64-pr10.plan.md의 R1 범위 정의) 양자화 커널 경로는 그
+    # 범위 밖이었다. 이것이 그 "별건"의 첫 구체 사례이고, 다른 양자화(`nvfp4`)도 같은 종류의
+    # 백엔드 문제를 따로 만날 수 있다. 상세는 docs/portability.md §5 #5.
     endpoint: "http://127.0.0.1:8001/v1"
     context_limit: 131072
     quantization: "fp8"
