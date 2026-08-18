@@ -109,9 +109,13 @@ python -m src.cli doctor --profile local_balanced --device slurm
 | --- | --- | --- | --- |
 | 1 | `local_balanced`이 참조하는 모델 5개 중 **3개**가 Blackwell 이상을 요구한다: `qwen3-8b`(`fp4`), `qwen3-coder-30b-a3b`(`nvfp4`), `devstral-small-2-24b`(`nvfp4`). `b1_single`은 세 역할이 전부 `qwen3-coder-30b-a3b`(`nvfp4`)다 | Blackwell(sm_100+) 미만 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** |
 | 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | 미해결. **셋 중 진단 비용이 가장 크다**(아래) |
-| 3 | ~~R1: 최신 vLLM × Blackwell 커널 호환성 미검증~~ → **커널 호환성은 2026-08-17 통과**(vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10` 인식). 남은 것은 **그 장비에서 모델을 띄우지 못한다**는 것이고, 원인은 하네스가 아니라 테넌트의 로컬 TCP 차단이다(§6) | ATOM (환경 제약 해소 전) | [open-questions.md](open-questions.md) R1. **하네스가 고칠 수 있는 항목이 아니므로 이 표에서 빠질 예정**이다 — 관리자 예외가 적용되면 지운다 |
 | 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다. **두 축 모두 실측으로 뒷받침된다**(아래) |
 | 5 | **`qwen3-4b`(`fp8`)가 sm_121에서 `VLLM_USE_DEEP_GEMM=0` 없이 기동하지 않는다.** DeepGEMM이 fp8 scale-factor 레이아웃을 변환하지 못해 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`, 2026-08-17 ATOM 실측) | ATOM(sm_121) — **플래그 없이** | **해소(기동 인자로).** 플래그를 주면 뜨고, 그 사실과 오진 방향이 `config/models.yaml`의 해당 모델 주석에 있다. **#2와 반대 방향이라 같은 행에 넣지 않았다** — #2는 "카드가 낡아서" 못 돌고 이쪽은 "카드는 충분히 새로운데 백엔드가 그 레이아웃을 못 다뤄서" 못 돈다. R1(커널 호환성)은 bf16으로 통과했고 양자화 커널은 그 범위 밖이었다 — 이것이 그 첫 사례다 |
+
+**`#`는 고정 ID다.** 해소된 항목을 지울 때 뒤 번호를 당기지 않는다 — `config/models.yaml`의
+`qwen3-4b` 주석과 [model-serving.md](model-serving.md) §3이 `#5`를 이름으로 가리킨다.
+(#3은 R1이었다: ATOM의 로컬 TCP 차단으로 모델을 못 띄우던 항목. 2026-08-17 관리자 예외로
+해소됐고, 애초에 하네스가 고칠 수 있는 항목이 아니어서 §6의 관측 기록으로만 남긴다.)
 
 **#4의 "두 축"은 이제 추측이 아니다.** 같은 이미지를 세 런타임에서 만든 digest 실측이 셋
 있고, 그중 하나는 아키텍처까지 다르다.
@@ -146,15 +150,21 @@ podman      sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a
 
 | 라벨 | 아키텍처 | 컨테이너 런타임 | 확인된 것 |
 | --- | --- | --- | --- |
-| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어. 할당: 통합메모리 128 GB 중 **팀 전체 합계 34 GiB**(별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다), GPU **공유**, CPU 6코어 상당, 디스크 1 TiB NVMe Gen5 전용 파티션 | **podman 4.9.3** (rootless. Docker 데몬 접근·singularity 둘 다 없음) | 2026-08-17 harness-tools:v1 **arm64 현지 빌드** → `dev_docker --tool-runner podman` **완주**(후보 2/Finding 2, `run_20260817_0001`). **semgrep fingerprint가 로컬 x86_64/docker 산출물과 일치** — 아키텍처가 다른 첫 대조다([STATUS.md](../STATUS.md) §5, [decisions/0005](decisions/0005-tool-runner-override.md)). **R1 커널 호환성 통과**: vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10`을 인식. **모델 서빙은 못 한다 — 하네스가 아니라 환경 제약이다**(아래) |
+| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어. 할당: 통합메모리 128 GB 중 **팀 전체 합계 34 GiB**(별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다), GPU **공유**, CPU 6코어 상당, 디스크 1 TiB NVMe Gen5 전용 파티션 | **podman 4.9.3** (rootless. Docker 데몬 접근·singularity 둘 다 없음) | 2026-08-17 harness-tools:v1 **arm64 현지 빌드** → `dev_docker --tool-runner podman` **완주**(후보 2/Finding 2, `run_20260817_0001`). **semgrep fingerprint가 로컬 x86_64/docker 산출물과 일치** — 아키텍처가 다른 첫 대조다([STATUS.md](../STATUS.md) §5, [decisions/0005](decisions/0005-tool-runner-override.md)). **R1 커널 호환성 통과**: vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10`을 인식. **모델 서빙 확인**: 로컬 TCP 차단이 같은 날 풀린 뒤 `qwen3-4b`(fp8)가 `127.0.0.1:8001`에서 떴다 — `VLLM_USE_DEEP_GEMM=0` 필요(§5 #5), 실측은 `config/models.yaml` |
 | `slurm` | Ampere (sm_86), **x86_64**(로컬 x86 이미지 tar를 그대로 변환해 돌린 것이 근거 — STATUS.md §5), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
 
-**`atom`의 로컬 TCP 차단 (2026-08-17).** 테넌트에서 로컬 주소로의 TCP 접속이 막혀 있다.
-같은 프로세스에서 `bind('127.0.0.1', p)` → `listen` → `connect`가 `ConnectionRefusedError:
-[Errno 111]`로 떨어지고(`ss -ltn`에는 LISTEN으로 보이며 `lo`도 UP이다), `<private-ip>`은
-`[Errno 113] No route to host`다. 인터넷 아웃바운드는 정상이다. vLLM은 `world_size=1`이어도
-TCPStore에 자기 자신으로 붙으므로 기동이 안 되고, 하네스도 `http://127.0.0.1:8001`로
-붙으므로 추론 요청이 성립하지 않는다. 관리자에게 예외를 요청한 상태다.
+**`atom`의 로컬 TCP 차단 — 2026-08-17 발생, 같은 날 해소.** 테넌트에서 로컬 주소로의 TCP
+접속이 막혀 있었다. 같은 프로세스에서 `bind('127.0.0.1', p)` → `listen` → `connect`가
+`ConnectionRefusedError: [Errno 111]`로 떨어졌고(`ss -ltn`에는 LISTEN으로 보이며 `lo`도
+UP이었다), `<private-ip>`은 `[Errno 113] No route to host`였다. 인터넷 아웃바운드는 정상이었다.
+vLLM은 `world_size=1`이어도 TCPStore에 자기 자신으로 붙으므로 기동이 안 됐고, 하네스도
+`http://127.0.0.1:8001`로 붙으므로 추론 요청이 성립하지 않았다.
+
+**관리자 예외가 적용돼 풀렸다.** 근거는 자기보고가 아니라 실측이다 — `config/models.yaml`의
+`qwen3-4b`에 `measured_at: 2026-08-17T15:16:27Z` / `measured_on: atom` / 단일 39.65 tok/s가
+들어가 있고, 그 값은 서버가 `127.0.0.1:8001`에서 떠서 응답했어야 나온다. **지운 기록이 아니라
+남긴 기록인 이유**: 같은 종류의 테넌트에서 또 만날 수 있고, 증상(`ss`에는 LISTEN인데
+`connect`가 거부)이 하네스 버그로 오진되기 쉬운 모양이다.
 
 **이 사실을 §5(이식성 결함 목록)에 넣지 않는 것은 의도다.** §5는 "하네스의 어느 부분이
 아직 환경을 가리는가"를 적는 곳인데, 이건 하네스가 무엇을 하든 바뀌지 않는 **그 테넌트의
