@@ -72,7 +72,7 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 데워지므로, 적중률은 `/metrics` 카운터의 **구간 delta**로 잰다. 실제 순서는 출력의
 `measurement_order`에 남는다.
 
-측정 결과는 `docs/decisions/`에 ADR로 남기고, 수치는 Model Registry의 `benchmark` 항목에
+측정 결과는 `docs/decisions/`에 ADR로 남기고(첫 사례: [decisions/0007](decisions/0007-atom-qwen3-4b-first-measurement.md) — ATOM `qwen3-4b`), 수치는 Model Registry의 `benchmark` 항목에
 `bench --apply`로 기록한다. `--apply`는 해당 라인만 갈아 끼우며 `models.yaml`의 주석을
 보존한다 — 대상 블록을 확실히 찾지 못하면 아무것도 쓰지 않고 실패한다.
 

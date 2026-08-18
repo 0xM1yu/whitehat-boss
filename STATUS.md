@@ -294,7 +294,10 @@ ATOM에서 돌리는 일이다.
 **나머지 6개는 여전히 미측정이고, 4번만 부분이다.** registry에 있는 값은 `tok_s_single`과
 `tok_s_batch32` 둘뿐이라 8/16 동시 요청은 아직 답이 없다. `mem_gb_ctx8k`는 0인데 이것은
 "0 GB"가 아니라 **안 쟀다**는 뜻이다(§5의 `nvidia-smi [N/A]` — 소스가 정해져야 답이 나온다).
-그리고 **측정 원문(`bench` 출력)이 아직 ADR로 남지 않았다** — §3이 요구하는 절차이고 별건이다.
+측정은 [ADR 0007](docs/decisions/0007-atom-qwen3-4b-first-measurement.md)에 정본으로 남겼다.
+**단 그 안의 원문 자리는 비어 있다** — `cli bench`는 JSON을 stdout으로만 내고 아무도 파일로
+받지 않아서, `checklist` 배열처럼 registry에 자리가 없는 필드는 터미널과 함께 사라졌다.
+그래서 위 "미측정"과 "쟀는데 registry에 안 들어가는 값"을 지금은 구분할 수 없다.
 
 ```
 [x] vLLM × CUDA 13.0 × sm_121 커널 호환성   ← 2026-08-17 기동 확인. VLLM_USE_DEEP_GEMM=0 필요
