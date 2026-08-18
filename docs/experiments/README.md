@@ -22,6 +22,7 @@
 
 | 날짜 | 보고서 | 주제 | 장비 | 작성 |
 | --- | --- | --- | --- | --- |
+| 2026-08-18 | [서빙 · Docker · GPU 회계](2026-08-18-serving-atom.md) | vLLM 프로브, aarch64 이미지, fp8 기동, util 기준, 첫 실모델 완주, GPU-second 회계, ARM64 회귀 | `atom` | @danielcho02 |
 
 ## 파일 이름
 
