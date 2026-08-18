@@ -36,6 +36,12 @@ Critic이 다른 계열이어야 하는 이유: 같은 모델의 self-consistenc
 
 AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레시피 공식 지원은 2026년 6월부터이고, NVFP4 KV cache·speculative decoding 같은 최적화는 커뮤니티 fork 수준에 머무는 경우가 있다. **이 장비에서 직접 검증하기 전까지 어떤 성능 수치도 계획에 반영하지 않는다.**
 
+**양자화 커널은 이 체크리스트의 1번보다 앞에 있다.** 2026-08-17 ATOM 실측: `qwen3-4b`(fp8)가
+`VLLM_USE_DEEP_GEMM=0` 없이는 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`).
+**수치가 나빠지는 것이 아니라 서버가 안 뜬다** — 기동 인자를 모르면 1번부터 답할 수 없다.
+모델별 기동 조건은 `config/models.yaml`의 해당 항목 주석에 있고, 환경 축으로는
+[portability.md](portability.md) §5 #5다.
+
 검증 체크리스트 (각 항목 뒤는 `python -m src.cli bench`가 그 항목을 답하는 출력 필드다):
 
 - [ ] vLLM 버전 × 드라이버/CUDA × GPU 아키텍처 커널 호환성 (기동 성공 여부) → `roles.*.startup.ok`
