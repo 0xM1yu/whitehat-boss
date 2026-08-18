@@ -49,12 +49,17 @@
 | [0002](0002-minimal-runner-langgraph-deferred.md) | 오케스트레이터를 순수 함수 최소 러너로 시작하고 LangGraph를 보류한다 | 제안 | 2026-08-08 |
 | [0003](0003-routing-policy-in-orchestrator.md) | RoutingPolicy를 `src/interfaces/`가 아니라 `src/orchestrator/`에 둔다 | 제안 | 2026-08-08 |
 | [0004](0004-retrieval-clients-separate-from-model-client.md) | embedding·reranker를 ModelClient가 아닌 별도 인터페이스로 둔다 | 제안 | 2026-08-10 |
-| [0005](0005-tool-runner-override.md) | `--tool-runner`로 프로필의 도구 런타임을 덮어쓸 수 있게 한다 | 제안 | 2026-08-14 |
+| [0005](0005-tool-runner-override.md) | `--tool-runner`로 프로필의 도구 런타임을 덮어쓸 수 있게 한다 | **승인** | 2026-08-14 (승인 2026-08-17) |
 | [0006](0006-record-the-device-a-run-happened-on.md) | run과 registry 수치에 어느 장비에서 나왔는지를 기록한다 | 제안 | 2026-08-15 |
 
-전부 **제안** 상태다. Harness v1 스캐폴드를 구현하며 내린 결정이고 팀 검토 전까지 확정이
-아니다. 모두 "되돌리는 비용"을 낮게 유지하는 쪽을 골랐다 — 지금 확실하지 않은 것을
-지금 확정하지 않기 위해서다.
+**0005를 뺀 나머지는 제안 상태다.** Harness v1 스캐폴드를 구현하며 내린 결정이고 팀 검토
+전까지 확정이 아니다. 모두 "되돌리는 비용"을 낮게 유지하는 쪽을 골랐다 — 지금 확실하지
+않은 것을 지금 확정하지 않기 위해서다.
+
+0005는 **스스로 정한 갱신 조건이 충족되어** 2026-08-17에 승인으로 올라갔다. 그 조건은
+"지원 런타임 전부가 같은 표본에서 같은 판정을 낸다"였고, 판정 기준은 semgrep fingerprint
+일치였다. ATOM(aarch64/podman) run이 로컬(x86_64/docker) 산출물과 fingerprint까지 같아
+**아키텍처가 다른 대조가 처음 성립했다.**
 
 0005는 성격이 하나 다르다. [evaluation.md](../evaluation.md) §2.3의 공정성 규칙에 예외를
 여는 결정이므로, 되돌리기 쉬운 것과 별개로 **실행 기록(`RunRecord.tool_runner`)에 흔적이

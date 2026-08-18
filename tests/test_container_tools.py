@@ -152,7 +152,9 @@ def test_podman_argv_matches_docker_except_the_binary(tmp_path: Path) -> None:
     """podman은 docker CLI 호환이라 바이너리 이름만 갈리고 격리 플래그는 동일하다.
 
     ATOM은 Docker 데몬 접근도 singularity도 없어 이 경로가 유일한 실서빙 런타임이다
-    (2026-08-17). 같은 프로필을 `--tool-runner podman`으로 돌린다(ADR 0005).
+    (2026-08-17). 그래서 실서빙 프로필(`local_balanced`·`b1_single`)이 `podman`을 직접
+    선언한다(docs/portability.md §3). `dev_docker`처럼 다른 런타임을 선언한 프로필만
+    `--tool-runner podman`으로 덮는다(ADR 0005).
     """
     kwargs = dict(
         sandbox=SANDBOX,

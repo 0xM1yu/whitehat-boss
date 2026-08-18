@@ -1,6 +1,6 @@
 # 0005. `--tool-runner`로 프로필의 도구 런타임을 덮어쓸 수 있게 한다
 
-- 상태: 제안
+- 상태: 승인 (2026-08-17 — 아래 "후속"의 상태 갱신 조건이 충족됐다)
 - 일자: 2026-08-14
 - 관련: [evaluation.md](../evaluation.md) §2.3, [model-serving.md](../model-serving.md) §3, [engineering-guide.md](../engineering-guide.md) §5, [STATUS.md](../../STATUS.md) §8·§10, [open-questions.md](../open-questions.md) R1
 
@@ -135,6 +135,44 @@ singularity 둘"**이었고, 그 안에서는 오버라이드가 필요한 조�
 이 플래그의 사용처는 남는다** — 지원 장비가 셋인데 프로필은 런타임을 하나만 적을 수 있기
 때문이다. 그래서 이 결정은 플래그의 존폐와 무관하고, 여기서 함께 처리하지 않는다.
 
+## 정했다 — 프로필은 주 실서빙 장비를 선언한다 (2026-08-17, 같은 날 뒤)
+
+위 절이 미정으로 남긴 것을 정했다. **`local_balanced`·`b1_single`의 `tool_runner`를
+`docker` → `podman`으로 바꿨다.** 기준은 [portability.md](../portability.md) §3에 명문화했다:
+**프로필은 주 실서빙 장비의 런타임을 선언하고 다른 장비가 덮는다.**
+
+**위 절의 표는 이 변경 전 상태를 적은 것이다. 지우지 않는다** — 그 표가 없으면 왜
+바꿨는지가 사라진다. 바뀐 뒤는 이렇다:
+
+| 프로필 | `tool_runner` | podman만 있는 장비(ATOM)에서 | 바뀐 것 |
+| --- | --- | --- | --- |
+| `local_balanced` | **`podman`** | 오버라이드 불필요 | 위 표의 "오버라이드 필요"가 해소됐다 |
+| `b1_single` | **`podman`** | 오버라이드 불필요 | 동일 |
+| `dev_docker` | `docker` | **오버라이드 필요** (`--tool-runner podman`) | 그대로다 |
+| `dev_singularity` | `singularity` | 프로필대로는 못 돈다 | 그대로다 |
+
+**바뀐 것은 사용처의 유무가 아니라 정체다.** 위 절은 이 플래그의 사용처를 "**실서빙
+프로필**을 ATOM에서 돌리는 것"으로 지목했는데, 그 근거는 이 변경으로 사라졌다. 대신
+**`dev_docker`를 ATOM에서 돌리는 것**이 사용처로 남고, 그것이 2026-08-17 실측이 실제로
+지나간 경로다(`dev_docker --tool-runner podman`,
+[tools/README.md](../../tools/README.md)). GPU 없는 팀원 노트북은 대부분 Docker이므로
+`dev_docker`는 `docker`로 둔다.
+
+**왜 이쪽 방향인가.** 위 절이 적었듯 어느 쪽을 골라도 오버라이드는 남는다. 그러면 남는
+질문은 **어느 장비를 예외로 둘 것인가**뿐인데, 오버라이드는 [evaluation.md](../evaluation.md)
+§2.3 규칙 2의 예외이고 `RunRecord.tool_runner`에 기록된다 — **주 경로가 상시 예외 상태면
+그 기록이 "이 run은 특별했다"를 뜻하지 못한다.** 예외는 드물어야 기록으로 값이 있다.
+
+**반대 방향의 대가가 없다는 것이 결정적이었다.** "바꾸면 Docker가 있는 장비에서 필요해진다"는
+위 절의 서술은 실서빙 프로필에 대해서는 성립하지 않는다. `local_balanced`는 모델 5개 중
+3개가(`qwen3-8b`=`fp4`, `qwen3-coder-30b-a3b`·`devstral-small-2-24b`=`nvfp4`), `b1_single`은
+세 역할이 전부 `nvfp4`라 **Blackwell 미만 장비에서는 애초에 기동하지 못하기 때문이다**
+([portability.md](../portability.md) §5 #1). 즉 "Docker는 있는데 이 프로필을 돌려야 하는
+장비"가 지금 존재하지 않는다. 그런 장비(GPU + Docker)가 생기면 그때 `--tool-runner docker`를
+쓰면 되고, 그것이 이 플래그가 있는 이유다.
+
+**되돌리는 비용: 낮다.** `config/profiles.yaml`의 값 두 줄이다.
+
 ## 후속
 
 - 비교표를 만들 때 `tool_runner`가 다른 run을 같은 셀에 넣지 않는지 확인하는 검사를
@@ -146,13 +184,34 @@ singularity 둘"**이었고, 그 안에서는 오버라이드가 필요한 조�
   판정의 기준은 **semgrep fingerprint 일치**다 — 후보·Finding 개수 일치는 룰이나 줄 번호가
   달라도 우연히 같을 수 있어 근거가 못 된다.
 
-  현재 상태로는 **충족되지 않았다.**
+  **충족됐다 (2026-08-17). 상태를 `승인`으로 올린다.**
 
-  | 대조 | 확인된 수준 | 근거 |
-  | --- | --- | --- |
-  | docker ↔ singularity (Slurm) | **fingerprint 일치** | STATUS.md §5 |
-  | podman (ATOM) | **후보 2/Finding 2 개수 일치까지만** | tools/README.md, 2026-08-17 |
+  | 대조 | 아키텍처 | 확인된 수준 | 근거 |
+  | --- | --- | --- | --- |
+  | docker ↔ singularity | x86_64 ↔ **x86_64** | fingerprint 일치 | STATUS.md §5 (2026-08-14) |
+  | docker ↔ **podman** | x86_64 ↔ **aarch64** | fingerprint 일치 | STATUS.md §5 (2026-08-17) |
 
-  ATOM에는 런타임이 podman 하나뿐이라 **그 장비 안에서는 두 런타임을 대조할 수 없다** —
-  대조가 장비를 건너뛴다. 그래서 이 조건을 채우려면 ATOM run의 semgrep fingerprint를 다른
-  런타임의 것과 직접 맞춰 봐야 한다. 그전까지 상태는 `제안`이다.
+  ```
+  ev_0002  2f5f28f1…0bce6_0     ← ATOM/podman/aarch64 == 로컬/docker/x86_64
+  ev_0005  766c3342…3c1e99_0    ← 동일
+  ```
+
+  **아키텍처가 다른 대조가 처음 성립했다.** 2026-08-14의 docker ↔ singularity는 같은
+  x86_64끼리였다 — Slurm에 올린 SIF가 로컬(x86_64 Windows Docker)에서 만든 이미지 tar를
+  그대로 변환한 것이고(STATUS.md §5 "SIF 변환에 재빌드가 필요 없었다") Singularity는
+  에뮬레이션하지 않으므로, 그 실행의 호스트도 x86_64다. 즉 그때까지 확인된 것은
+  **"런타임이 달라도 같다"**뿐이었고 **"아키텍처가 달라도 같다"**는 미확인이었다.
+
+  ATOM의 이미지는 그 장비에서 arm64로 **따로 빌드**했으므로(tools/README.md) 이번 대조는
+  런타임과 아키텍처가 동시에 다르다. 그런데도 fingerprint가 같다 — fingerprint는 룰·파일·
+  코드 문맥에서 나오므로, **같은 룰셋이 같은 코드에 같은 방식으로 적용됐다**는 뜻이다.
+
+  **위 절이 예상한 경로가 아니었다.** "ATOM run의 fingerprint를 다른 런타임의 것과 맞춰
+  봐야 한다"까지는 맞았지만, 대조 상대로 Slurm를 다시 잡을 필요가 없었다 — 이미 있던
+  **로컬 Docker 산출물**(`artifacts/run_20260813_0002`·`0003`)이 그 상대였다.
+
+  **여전히 남는 것**: 이 일치는 semgrep 한 도구, 픽스처 두 파일에 대한 것이다. clang-tidy·
+  빌드 경로는 아키텍처가 갈리면 결과가 달라질 수 있고(컴파일러 대상이 다르다) 그건 아직
+  대조되지 않았다. `tool_images` digest가 세 런타임·두 아키텍처에서 서로 비교 불가라는
+  사실도 그대로다([STATUS.md](../../STATUS.md) §10) — 이 승인은 **판정이 같다**는 것이지
+  **기록이 같다**는 것이 아니다.

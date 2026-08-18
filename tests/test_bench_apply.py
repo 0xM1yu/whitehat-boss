@@ -524,10 +524,16 @@ def test_tool_runner_choices_come_from_the_config_schema() -> None:
 
 @pytest.mark.parametrize("profile", ["local_balanced", "b1_single"])
 def test_serving_profiles_run_real_tools(profile: str) -> None:
-    """`tool_images`가 채워져야 그 run이 비교표에 들어간다 (STATUS.md §8)."""
+    """`tool_images`가 채워져야 그 run이 비교표에 들어간다 (STATUS.md §8).
+
+    **런타임이 `podman`인 것도 이 테스트가 지킨다.** 프로필은 주 실서빙 장비의 런타임을
+    선언한다(docs/portability.md §3). 이 둘의 주 실서빙 장비는 ATOM이고 그 장비에는
+    podman만 있으므로, `docker`로 되돌아가면 ATOM의 모든 실서빙 run이 `--tool-runner`
+    오버라이드를 달게 되고 주 경로가 evaluation.md §2.3 규칙 2의 상시 예외가 된다.
+    """
     config = load_config(profile)
 
-    assert config.profile.adapters.tool_runner == "docker"
+    assert config.profile.adapters.tool_runner == "podman"
     # retriever까지 올리면 ATOM에 모델 5개를 띄워야 하고 R1의 실패 지점이 늘어난다.
     assert config.profile.adapters.retriever == "fake"
 
