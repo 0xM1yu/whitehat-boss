@@ -115,4 +115,3 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - LLM 기반 리포트 생성 에이전트 (템플릿 + 규칙으로 처리)
 - LLM 기반 dedupe 에이전트
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
-</content>

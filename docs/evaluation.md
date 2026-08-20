@@ -138,4 +138,3 @@ repo commit만으로는 하네스 자신의 미커밋 변경을 잡지 못한다
 - 최소: 4개 조건 모두 동일 예산에서 실행되고 지표가 기록된다
 - 기본: benign 표본에서 오탐이 유의미하게 감소한다(B3 → B3')
 - 최종: 제보 가능한 신규 취약점 확보 → [disclosure-policy.md](disclosure-policy.md)
-</content>
