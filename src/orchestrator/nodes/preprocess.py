@@ -20,6 +20,12 @@ _KIND_BY_SUFFIX: dict[str, ArtifactKind] = {
     ".h": ArtifactKind.SOURCE,
     ".cc": ArtifactKind.SOURCE,
     ".cpp": ArtifactKind.SOURCE,
+    # `.inc`는 `#include`로 펼쳐지는 본문 조각이라 확장자만 보면 부수적이지만,
+    # 실측 샘플에서는 `target.c`가 28바이트짜리 `#include` 한 줄이고 실제 코드
+    # 17KB가 전부 `.inc`에 있었다. UNKNOWN으로 두면 `runner._ANALYZABLE`이 걸러
+    # 그 17KB가 어느 단계에도 들어가지 않는데, **에러가 아니므로 "그 파일에
+    # 취약점이 없다"와 구별되지 않는다.**
+    ".inc": ArtifactKind.SOURCE,
     ".py": ArtifactKind.SOURCE,
     ".conf": ArtifactKind.CONFIG,
     ".cfg": ArtifactKind.CONFIG,
