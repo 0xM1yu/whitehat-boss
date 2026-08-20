@@ -20,6 +20,7 @@
 | [roadmap.md](roadmap.md) | 마일스톤별 산출물과 완료 기준(DoD), 8-way 트랙 | 전원 |
 | [disclosure-policy.md](disclosure-policy.md) | 취약점 제보 워크플로, 2인 검증, 연구 윤리·법적 경계 | 전원 |
 | [open-questions.md](open-questions.md) | 미해결 리스크와 결정 대기 항목 | PL/PM |
+| [experiments/](experiments/) | 실험 보고서 원문과 **대조로 확정된 사실** | 전원 |
 | [decisions/](decisions/) | 되돌리기 비싼 결정의 기록(ADR) | 전원 |
 
 ## 문서 규칙
@@ -28,4 +29,7 @@
 2. 되돌리기 비싼 결정(오케스트레이터, 상태 저장소, 모델 계열, 평가 프로토콜)은 [decisions/](decisions/)에 ADR로 남긴다.
 3. 아직 정해지지 않은 것은 지어내지 말고 `TBD` + 결정 기한과 함께 [open-questions.md](open-questions.md)에 적는다.
 4. 측정값은 출처(실측/문서/추정)를 표기한다. 추정치는 `(추정)`으로 명시한다.
+5. 실험 보고서는 **그 시점의 관측 기록이므로 주장을 소급 편집하지 않는다.** 서식 정리는
+   누구나 하되 주장 수정은 작성자만 한다. 이후 대조로 정정된 사실은
+   [experiments/README.md](experiments/README.md)의 확정 표가 담는다.
 </content>
