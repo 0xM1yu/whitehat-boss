@@ -24,4 +24,18 @@ registry의 `checksum`은 **이 파일 전체의 sha256**이다. 값 하나만 �
 파일이 달라졌는지 알 수 없으므로 manifest를 함께 커밋한다.
 
 절차와 포함·제외 규칙은 [model-serving.md](../../docs/model-serving.md) §5에 있다.
-값을 채우는 것은 모델을 받은 뒤이므로 지금은 비어 있다.
+
+**이 파일을 읽는 코드는 `src/`에 없다 — orphan이 아니라 그것이 설계다.** 쓰는 쪽은
+`tools/model_checksum.py` 하나뿐이고, 읽는 쪽은 **스냅샷을 가진 장비의 사람**이다
+(위 `sha256sum -c`). 하네스는 registry의 한 줄만 보고 `RunRecord.model_checksums`에
+넣는다(`src/config.py`) — 4.9 GB 스냅샷이 없는 CI에서는 어차피 검증할 대상이 없다.
+그래서 이 디렉터리는 **런타임 계약이 아니라 provenance 기록**이다.
+
+`qwen3-4b`가 그 관계의 첫 실례다.
+
+```
+$ sha256sum config/checksums/qwen3-4b.txt
+ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72
+$ grep 'checksum:' -A0 config/models.yaml   # qwen3-4b
+checksum: "sha256:ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72"
+```

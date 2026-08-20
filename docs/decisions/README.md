@@ -51,6 +51,7 @@
 | [0004](0004-retrieval-clients-separate-from-model-client.md) | embedding·reranker를 ModelClient가 아닌 별도 인터페이스로 둔다 | 제안 | 2026-08-10 |
 | [0005](0005-tool-runner-override.md) | `--tool-runner`로 프로필의 도구 런타임을 덮어쓸 수 있게 한다 | **승인** | 2026-08-14 (승인 2026-08-17) |
 | [0006](0006-record-the-device-a-run-happened-on.md) | run과 registry 수치에 어느 장비에서 나왔는지를 기록한다 | 제안 | 2026-08-15 |
+| [0007](0007-atom-qwen3-4b-first-measurement.md) | ATOM 첫 실측을 고정하고 `qwen3-4b`를 `VLLM_USE_DEEP_GEMM=0`으로 못박는다 | 제안 | 2026-08-17 |
 
 **0005를 뺀 나머지는 제안 상태다.** Harness v1 스캐폴드를 구현하며 내린 결정이고 팀 검토
 전까지 확정이 아니다. 모두 "되돌리는 비용"을 낮게 유지하는 쪽을 골랐다 — 지금 확실하지
@@ -70,4 +71,9 @@
 같은 비교 셀에 넣지 않는다")가 성립하려면 그 기록이 있어야 한다. 이 ADR이 **장비별 설정
 오버레이를 지금 만들지 않기로 한 근거**도 함께 담고 있다 — endpoint가 실제로 갈라지는지
 미확인이고, 갈라진다면 키가 장비가 아니라 사용자일 수 있다.
-</content>
+
+0007은 성격이 또 다르다 — **결정이 아니라 측정 기록이 본체다**(위 "언제 ADR을 쓰는가"의
+"하드웨어 검증 결과에 따른 방향 전환"). [model-serving.md](../model-serving.md) §3이
+"측정 결과는 `docs/decisions/`에 ADR로 남긴다"고 절차를 정해 둔 것에 대응한다. **원문
+(`bench` stdout JSON)이 보존되지 않은 채로 쓰였고**, 그것이 이 ADR이 `제안`에 머무는
+이유다 — 그 사실 자체를 문서 안에 남겼다.
