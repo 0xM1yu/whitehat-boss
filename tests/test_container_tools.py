@@ -20,12 +20,16 @@ from pydantic import ValidationError
 from src.adapters import container_tools
 from src.adapters.container_tools import (
     DEFAULT_IMAGE,
+    INDEX_FILE,
+    INDEX_TOOL,
     Command,
     ContainerToolRunner,
     Step,
     container_argv,
+    index_output_path,
     judge,
     plan,
+    scratch_dir,
     semgrep_results,
     sif_path,
     summary_line,
@@ -704,3 +708,28 @@ def _rules_in(artifacts_root: Path, evidence: Evidence) -> list[str]:
     log = artifacts_root / RUN_ID / evidence.source / f"{evidence.evidence_id}.log"
     stdout = log.read_text(encoding="utf-8").split("--- stdout ---")[1].split("--- stderr ---")[0]
     return [item["check_id"] for item in semgrep_results(stdout.strip()) or []]
+
+
+# --- 인덱서 산출물 경로 (D13) ---------------------------------------------------
+
+
+def test_index_output_path_points_where_the_runner_actually_writes(tmp_path: Path) -> None:
+    """읽는 쪽(`adapters/index_graph.py`)과 쓰는 쪽(`_execute`)이 같은 경로여야 한다.
+
+    갈리면 예외가 아니라 **파일을 못 찾는 상태**가 되고, 로더는 그것을 `missing`으로
+    읽는다 — 즉 "인덱서가 안 돌았다"로 기록되어 조용히 그래프 섹션이 사라진다.
+    """
+    expected = scratch_dir(tmp_path, RUN_ID, INDEX_TOOL) / INDEX_FILE
+
+    assert index_output_path(tmp_path, RUN_ID) == expected
+    assert index_output_path(tmp_path, RUN_ID).name == INDEX_FILE
+
+
+def test_scratch_dir_name_matches_the_node_tool_name() -> None:
+    """scratch 하위 디렉터리 이름이 곧 도구 이름이다(`_execute`가 `tool`로 만든다).
+
+    어댑터는 오케스트레이터를 import 하지 않으므로 값이 양쪽에 복제돼 있다 — 여기서 대조한다.
+    """
+    from src.orchestrator.nodes.index import INDEX_TOOL as NODE_INDEX_TOOL
+
+    assert INDEX_TOOL == NODE_INDEX_TOOL

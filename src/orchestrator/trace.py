@@ -17,6 +17,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
+| 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 1건 |
 | 스키마 파싱 실패율 | `model_call.ok` | `count(ok=false) / count(*)` — 모델·역할별 |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
@@ -72,6 +73,11 @@ class EventKind(StrEnum):
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
     CACHE = "cache"
+    # 1단계 인덱서 산출물의 로드 결과와 커버리지. **run당 1건**이다 — Retriever가 최초로
+    # 그래프를 조회할 때 한 번 실리고, 후보 수에 비례하면 같은 값이 중복돼 재현성 비교가
+    # 지저분해진다. `unresolved_*`가 크면 그 저장소에서 E2를 얼마나 믿을지가 달라지는데,
+    # 이 이벤트가 생기기 전에는 그 숫자를 아무도 집계할 수 없었다(D13).
+    GRAPH_INDEX = "graph_index"
     CRITIC_NORMALIZED = "critic_normalized"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
