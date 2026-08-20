@@ -4,11 +4,16 @@
 조각을 넣는다. 토큰 수도 items 수도 실측이므로 캡슐 예산 초과 경로와 cache hit ratio가
 진짜 값이 된다.
 
-**`callers`/`callees`/`types` 섹션을 만들지 않는다.** knowledge-base.md §4의 레벨별
-구성에는 있지만, 그 세 가지는 call graph에서 나와야 하고 1단계 Index는 지금
-`FakeToolRunner`를 거친다 — 실제 심볼 테이블이 없다. 없는 그래프에서 나온 척 섹션을
-채우면 Evidence Gate E2와 토큰 회계가 동시에 거짓말을 한다. 그래서 검색으로 실제
-확보한 것만 `related`로 내보내고, 그래프 파생 섹션은 실 인덱서가 생길 때까지 비운다.
+**`callers`/`callees`는 1단계 인덱서 산출물에서 온다**(`adapters/index_graph.py`, D13).
+`FakeRetriever`와 **같은 모듈**을 쓴다 — 두 구현이 같은 index.json에서 다른 섹션을 내면
+`dev_fake`와 `dev_docker`의 결과를 비교할 수 없다. index.json이 없으면(`dev_hybrid`는
+`tool_runner: fake`다) 그 섹션을 **만들지 않는다**: 조용히 빈 섹션을 내면 "그래프가
+비었다"와 "인덱서가 안 돌았다"가 구별되지 않는다.
+
+**`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에 타입
+데이터가 없다(`indexer.build_index()`는 symbols·calls뿐). 없는 그래프에서 나온 척 섹션을
+채우면 토큰 회계가 거짓말을 한다.
+
 `CapsuleSection.kind`가 `NonEmptyStr`로 열려 있는 것이 이 확장을 허용한다(스키마 주석).
 → open-questions.md D13
 
@@ -20,6 +25,12 @@ import math
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
+from src.adapters.index_graph import (
+    CHARS_PER_TOKEN,
+    GRAPH_SECTION_KINDS,
+    GraphIndex,
+    fit_names,
+)
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retrieval import (
     EmbeddingClient,
@@ -35,9 +46,12 @@ from src.schemas.finding import MissingEvidence
 
 # 캡슐 구성 규칙이 다르면 캐시 키도 달라야 한다(knowledge-base.md §6). Fake와 같은 값을
 # 쓰면 두 구현이 만든 캡슐이 같은 키를 공유해 조건 비교가 오염된다.
-CAPSULE_POLICY_VERSION = "hybrid-v1"
+#
+# **hybrid-v1 → hybrid-v2 (2026-08-20)**: `callers`/`callees`가 구성에 들어왔다.
+CAPSULE_POLICY_VERSION = "hybrid-v2"
 
-_CHARS_PER_TOKEN = 4
+# 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
+# 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
 _AUX_SECTION_TOKENS = 64
 
 # 광역 수집 범위. 저장소 전체를 임베딩하면 스카우트 한 건에 수천 건을 호출하게 된다.
@@ -57,13 +71,18 @@ SKIP_DIRS = frozenset({".git", "__pycache__", "artifacts", "node_modules", ".ven
 
 # 레벨별 섹션 구성. LIGHT는 검색하지 않는다 — Scout는 후보 전량에 대해 도는 단계라
 # 여기서 임베딩을 부르면 model-serving.md §2의 "Scout는 크게 배칭" 전제가 무너진다.
+#
+# **그래프 섹션의 자리는 `FakeRetriever.LEVEL_SECTIONS`와 같아야 한다**(EXPANDED에
+# callers·callees, FOCUSED에 callers). 갈리면 같은 index.json에서 두 구현이 다른 캡슐을
+# 내고 `dev_fake`↔`dev_docker` 비교가 성립하지 않는다. `related`는 이쪽에만 있는데,
+# 그건 검색으로 확보한 것이라 애초에 Fake에 대응물이 없다.
 LEVEL_SECTIONS: dict[CapsuleLevel, tuple[str, ...]] = {
     CapsuleLevel.LIGHT: ("target_function", "static_signal"),
-    CapsuleLevel.EXPANDED: ("target_function", "related", "static_signal"),
-    CapsuleLevel.FOCUSED: ("target_function", "related", "known_facts"),
+    CapsuleLevel.EXPANDED: ("target_function", "related", "callers", "callees", "static_signal"),
+    CapsuleLevel.FOCUSED: ("target_function", "related", "callers", "known_facts"),
 }
 
-EXPANSION_ORDER = ("related", "known_facts", "static_signal")
+EXPANSION_ORDER = ("related", "callers", "callees", "known_facts", "static_signal")
 
 CacheHook = Callable[[str, bool], None]
 TruncateHook = Callable[[int, int], None]
@@ -87,7 +106,7 @@ class Chunk:
         self.file = file
         self.line_start = line_start
         self.text = text
-        self.tokens = max(1, len(text) // _CHARS_PER_TOKEN)
+        self.tokens = max(1, len(text) // CHARS_PER_TOKEN)
 
 
 class HybridRetriever:
@@ -104,6 +123,7 @@ class HybridRetriever:
         on_cache: CacheHook | None = None,
         on_truncate: TruncateHook | None = None,
         on_usage: UsageHook | None = None,
+        graph: GraphIndex | None = None,
         top_k: int = DEFAULT_TOP_K,
         top_n: int = DEFAULT_TOP_N,
         max_chunks: int = MAX_CHUNKS,
@@ -113,6 +133,9 @@ class HybridRetriever:
         self.run_id = run_id
         self.embedder = embedder
         self.reranker = reranker
+        # 주입되지 않으면 경로 없는 인덱스다 — `status=missing`이라 그래프 섹션이
+        # 부재한다. 빈 그래프를 지어내지 않는다(`FakeRetriever`와 같은 처리).
+        self.graph = graph if graph is not None else GraphIndex(None)
         self.on_cache = on_cache
         self.on_truncate = on_truncate
         self.on_usage = on_usage
@@ -148,7 +171,9 @@ class HybridRetriever:
             target=query.target,
             level=level,
             budget_tokens=query.budget_tokens,
-            sections=_sections_for(kinds, source, selected, query.budget_tokens),
+            sections=_sections_for(
+                kinds, source, selected, query.budget_tokens, self.graph, query.target.file
+            ),
             cache_key=cache_key,
         )
         self._cache[cache_key] = capsule
@@ -186,10 +211,23 @@ class HybridRetriever:
                 continue
             if kind == "related" and not pool:
                 continue
-            tokens = min(_AUX_SECTION_TOKENS, remaining)
-            if tokens <= 0:
-                break
-            sections.append(CapsuleSection(kind=kind, tokens=tokens, items=1))
+            if kind in GRAPH_SECTION_KINDS:
+                names = self.graph.names_for(kind, capsule.target.file)
+                if names is None:
+                    # 그래프가 없다. 없는 섹션을 지어내지 않고 다음 후보로 넘어간다.
+                    continue
+                tokens, items = fit_names(names, remaining)
+                if names and items == 0:
+                    # 붙일 것은 있는데 예산이 없다 — "더 붙일 것이 없음"과 다른 사건이라
+                    # 0건 섹션으로 위장하지 않고 멈춘다.
+                    break
+            else:
+                # `items`를 1로 박지 않는다. `search()`가 보조 섹션에 `items=None`을
+                # 주므로 여기서 1을 넣으면 같은 섹션이 경로에 따라 다른 값을 갖는다.
+                tokens, items = min(_AUX_SECTION_TOKENS, remaining), None
+                if tokens <= 0:
+                    break
+            sections.append(CapsuleSection(kind=kind, tokens=tokens, items=items))
             return self._transition(capsule, sections, need)
         return capsule
 
@@ -331,29 +369,51 @@ def _read_source(root: Path, relative: str) -> str:
 
 
 def _sections_for(
-    kinds: Sequence[str], source: str, selected: list[Chunk], budget: int
+    kinds: Sequence[str],
+    source: str,
+    selected: list[Chunk],
+    budget: int,
+    graph: GraphIndex,
+    target_file: str,
 ) -> list[CapsuleSection]:
     """예산을 넘기지 않는 선에서 섹션을 채운다.
 
     `related`의 토큰은 실제로 선별된 조각의 길이 합이다 — 고정값을 쓰면 캡슐 예산
     초과 경로가 영원히 안 타고, 그러면 그 경로가 검증되지 않는다.
+
+    **그래프 분기는 `FakeRetriever._sections_for()`와 같아야 한다.** 두 구현이 같은
+    index.json에서 다른 섹션을 내면 `dev_fake`↔`dev_docker` 비교가 성립하지 않는다.
     """
     sections: list[CapsuleSection] = []
     used = 0
     for kind in kinds:
+        remaining = budget - used
+        items: int | None = None
         if kind == "target_function":
-            cost, items = max(1, len(source) // _CHARS_PER_TOKEN), None
+            cost = max(1, len(source) // CHARS_PER_TOKEN)
         elif kind == "related":
             if not selected:
                 continue
-            cost, items = _fit_related(selected, budget - used)
+            cost, items = _fit_related(selected, remaining)
             if items == 0:
                 continue
+        elif kind in GRAPH_SECTION_KINDS:
+            names = graph.names_for(kind, target_file)
+            if names is None:
+                # 인덱서가 안 돌았거나 형식이 어긋났다 — 섹션을 만들지 않는다.
+                # 0건 섹션으로 내면 "그래프가 비었다"와 구별되지 않는다.
+                continue
+            cost, items = fit_names(names, remaining)
+            if names and items == 0:
+                break
         else:
-            cost, items = _AUX_SECTION_TOKENS, None
-        tokens = min(cost, budget - used)
-        if tokens <= 0:
+            cost = _AUX_SECTION_TOKENS
+        # **`cost == 0`은 "예산이 없다"가 아니라 "그래프를 봤는데 간선이 0건이다"이다.**
+        # 두 사건을 한 조건으로 묶으면(예전의 `if tokens <= 0: break`) 빈 그래프가 예산
+        # 소진으로 기록되고, 그러면 캡슐만 보고는 인덱서가 안 돈 것과 구별되지 않는다.
+        if cost > 0 and remaining <= 0:
             break
+        tokens = min(cost, remaining)
         sections.append(CapsuleSection(kind=kind, tokens=tokens, items=items))
         used += tokens
     return sections
