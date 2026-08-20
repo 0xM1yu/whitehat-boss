@@ -14,10 +14,12 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | `count(repro_failed) / count(repro_*)` |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
+| GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
+| 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
-| 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 1건 |
+| 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
 | 스키마 파싱 실패율 | `model_call.ok` | `count(ok=false) / count(*)` — 모델·역할별 |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
@@ -73,10 +75,18 @@ class EventKind(StrEnum):
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
     CACHE = "cache"
-    # 1단계 인덱서 산출물의 로드 결과와 커버리지. **run당 1건**이다 — Retriever가 최초로
-    # 그래프를 조회할 때 한 번 실리고, 후보 수에 비례하면 같은 값이 중복돼 재현성 비교가
-    # 지저분해진다. `unresolved_*`가 크면 그 저장소에서 E2를 얼마나 믿을지가 달라지는데,
-    # 이 이벤트가 생기기 전에는 그 숫자를 아무도 집계할 수 없었다(D13).
+    # 1단계 인덱서 산출물의 로드 결과와 커버리지. `unresolved_*`가 크면 그 저장소에서 E2를
+    # 얼마나 믿을지가 달라지는데, 이 이벤트가 생기기 전에는 아무도 그 숫자를 집계할 수
+    # 없었다(D13).
+    #
+    # **run당 최대 1건이고, 0건일 수 있다.** 로더가 지연 로드라 Retriever가 그래프를
+    # 처음 조회할 때 실린다 — 그래프 섹션은 EXPANDED·FOCUSED에만 있으므로 **후보가 하나도
+    # 4단계를 통과하지 못한 run은 이 이벤트가 아예 없다**(실측: 후보 1건/Finding 0건 run에서
+    # 0건). 그래서 "이벤트가 없다"를 "커버리지가 완전하다"로 읽으면 안 되고, 분모로 쓸 때는
+    # `stage_end`(stage=5) 유무로 먼저 갈라야 한다.
+    #
+    # 조회마다 싣지 않는 것은 같은 값이 후보 수만큼 중복돼 재현성 비교가 지저분해지기
+    # 때문이다.
     GRAPH_INDEX = "graph_index"
     CRITIC_NORMALIZED = "critic_normalized"
     BUDGET = "budget"

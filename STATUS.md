@@ -26,7 +26,7 @@
 | 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 | T2 |
 | 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** | T3 |
 | 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 | T6 |
-| 3 | Retrieval | ✅ | 파일 텍스트 자르기 | 🟡 흉내 | T4 |
+| 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 | T4 |
 | 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 | T1/T5 |
 | 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 | T1/T5 |
 | 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** | T2 |
@@ -100,12 +100,18 @@ hybrid 쪽 경로를 태운다.
   "unresolved_calls": 0, "unresolved_symbols": 0
 }
 ```
-Evidence는 `payload_ref`로 경로만 들고 있으므로 **스키마 변경 없이 붙는다.**
+**스키마는 바뀌지 않았다 — 다만 `payload_ref`를 거치지도 않는다.** 인덱서 산출물의 호스트
+경로는 `container_tools.index_output_path()`가 조립하고 `index_graph`가 그것을 직접 읽는다.
+`Evidence.payload_ref`가 가리키는 것은 **도구 로그(`.log`)**이지 `index.json`이 아니다
+(`container_tools.py`·`fake_tools.py`). 구현 전에는 `payload_ref`로 나를 것으로 적어 뒀는데,
+결론(스키마 무변경)만 맞고 경로가 달라졌다.
 
-**연쇄 효과:**
-- 캡슐이 파일 단위 → 심볼 단위로 좁혀진다 (`Location`에 `symbol` / `line_start`)
-- Gate E1의 `location_ok`(`Location.overlaps`)가 작동하기 시작한다
-- **후보 수와 제거율의 분모가 바뀌므로 도입 전/후 지표는 직접 비교하지 않는다**
+**여기까지가 된 것이고, 아래는 아직 아니다 (후속):**
+- 캡슐은 여전히 **파일 단위**다. 심볼 단위(`Location`에 `symbol`/`line_start`)는 D13의 남은
+  항목이고 이번에 하지 않았다.
+- 따라서 Gate E1의 `location_ok`(`Location.overlaps`)는 **아직 작동하지 않는다.**
+- 그 작업이 들어오면 **후보 수와 제거율의 분모가 또 바뀌므로** 그 전/후 지표를 직접
+  비교하지 않는다(§10).
 
 ---
 
@@ -139,7 +145,8 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
   실제 심볼 표와 호출 그래프를 낸다. 남은 것은 **빈 그래프도 `Evidence(ok=True)`라 심볼
   0개 위에서 E2가 열린다**는 점이다(D13 ②). 그래프 자체도 근사이고 놓친 것은
   `unresolved_calls`·`unresolved_symbols`가 세며, 그 값은 이제 `graph_index` trace
-  이벤트로 run마다 1건 남는다 — 그전에는 아무도 집계할 수 없었다.
+  이벤트로 남는다 — 그전에는 아무도 집계할 수 없었다. **run당 최대 1건이고 0건일 수
+  있다**: 로더가 지연 로드라 후보가 하나도 4단계를 통과하지 못하면 이벤트가 아예 없다.
 - clang-tidy는 exit code만으로 "경고 발견"과 "컴파일 실패"를 구분하지 못한다. 출력의
   `clang-diagnostic-error` 표지로 가르는데 문자열 매칭이라 clang이 표기를 바꾸면 깨진다(D11).
 
@@ -441,6 +448,23 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 현재 캡슐 대상은 **파일 단위**(`Location(file=...)`, symbol 없음)다.
 심볼 단위로 좁혀지면 **후보 수와 제거율의 분모가 바뀐다.** 그때 Gate E1의 `location_ok`도
 비로소 작동을 시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다).
+
+### GPU 회계 수정(2026-08-17) 전/후 비용 지표를 직접 비교하지 않는다
+
+세 가지가 한꺼번에 바뀌었다:
+
+| 축 | 이전 | 이후 |
+|---|---|---|
+| 모델 호출의 GPU 시간 | **청구되지 않았다** (`ModelResult`에 필드가 없었다) | `gpu_ms`로 청구된다 |
+| 도구 시간 | `gpu_seconds`로 청구됐다 — **그 값의 0 아닌 부분은 전부 CPU 시간이었다** | `tool_ms`로 분리, 별도 예산(`Budget.tool_seconds`) |
+| 단위 | 초 단위 내림 (1초 미만은 버려졌다) | 밀리초 |
+
+→ **"finding 1건당 GPU-hour"의 분자가 다른 것을 세고 있었다.** 이전 값은 GPU를 가장 많이
+쓰는 경로(모델 호출)를 0으로 두고 GPU를 쓰지 않는 경로(semgrep·clang)를 세고 있었으므로,
+두 시점의 값은 크기 비교가 아니라 **정의 자체가 다르다.** 같은 표에 넣지 않는다.
+
+측정 여부는 이제 기록에 남는다 — `gpu_ms_source`가 실측인지 wall-clock 근사인지 가르고,
+실서빙 역할이 한 번도 못 잰 run은 `incomplete_fields()`가 비교표에서 제외한다(§8).
 
 ### 그래프 섹션 연결(2026-08-20) 전/후 캡슐 크기를 직접 비교하지 않는다
 
