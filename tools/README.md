@@ -234,8 +234,16 @@ tree-sitter가 그 파일을 표시하는데, zlib에서는 43개 중 39개(91%)
 `TREE_SITTER_CPP_VERSION=`으로 고정한다. 문법 모듈이 올라가면 같은 코드에서 다른 index가
 나올 수 있으므로 이미지 digest가 이 버전을 함께 고정한다.
 
-헤더(`.h`)는 아직 인덱싱하지 않는다 — `compile_sources`가 `_COMPILE_SUFFIXES`로 거르기
-때문이고, 그래서 헤더에 정의된 `static inline` 함수가 심볼에 없다.
+인덱서에 넘길 확장자는 clang에 넘길 확장자와 **따로 정한다**
+(`container_tools._INDEX_SUFFIXES` vs `_COMPILE_SUFFIXES`). tree-sitter는 전처리를 하지
+않으므로 `#include`로 끌려오는 파일을 **직접 주지 않으면 보지 못한다** — 실측 평가 샘플
+3건이 `target.c` 28바이트(`#include "session_core.inc"` 한 줄) + `.inc` 17KB 구조라,
+`.inc`를 넘기지 않으면 그 17KB가 통째로 `skipped`가 된다. 반대로 clang 계열은 `.inc`를
+받으면 안 된다 — 함수 본문 조각이라 단독 컴파일이 되지 않아 **일어나지 않은 빌드 실패가
+신호로 기록된다.** 그래서 두 목록을 합치지 않는다.
+
+헤더(`.h`)는 아직 인덱싱하지 않는다 — `_INDEX_SUFFIXES`에 없어서이고, 그래서 헤더에
+정의된 `static inline` 함수가 심볼에 없다.
 
 ### 컴파일 방언
 

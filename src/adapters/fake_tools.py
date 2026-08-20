@@ -35,7 +35,11 @@ _STATIC_PATTERNS = (
     re.compile(r"\b(gets|strcpy|sprintf)\s*\("),
 )
 
-_SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".py")
+# `sources()`가 훑을 확장자. **후보를 열거하는 목록이고 도구별로 좁히는 곳이 아니다** —
+# `container_tools._plan_for()`가 `_COMPILE_SUFFIXES`/`_INDEX_SUFFIXES`로 다시 거른다.
+# 그래서 `.inc`가 여기 있다고 clang에 넘어가지는 않는다. 반대로 여기서 빠지면 좁히는
+# 쪽이 고를 후보 자체가 없어져, 인덱서가 볼 수 없는 파일이 조용히 생긴다.
+_SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".inc", ".py")
 
 
 class SandboxUnavailable(RuntimeError):
