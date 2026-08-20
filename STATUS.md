@@ -506,4 +506,5 @@ ATOM(GB10, sm_121)과 Slurm(A2000, sm_86)는 **둘 다 지원 대상이다** —
 | [docs/model-serving.md](docs/model-serving.md) | 하드웨어, Registry, 배포 전 검증 체크리스트 |
 | [docs/evaluation.md](docs/evaluation.md) | 조건 정의, 누출 방지, 지표 |
 | [docs/open-questions.md](docs/open-questions.md) | 미해결 항목 원본 |
+| [docs/experiments/](docs/experiments/) | 실험 보고서 원문과 대조로 확정된 사실 |
 | [docs/roadmap.md](docs/roadmap.md) | 마일스톤과 DoD |
