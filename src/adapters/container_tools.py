@@ -64,8 +64,9 @@ PoC를 만드는 주체(PoV 노드)가 생기기 전까지는 그것이 사실�
 
 **아직 캡슐로 이어지지 않았다.** 산출물(`{SCRATCH}/index.json`)을 `HybridRetriever`가 읽어
 `callers`/`callees` 섹션을 채우는 것이 D13의 나머지 절반이고, 이 PR의 범위 밖이다.
-헤더(`.h`)는 `compile_sources`가 `_COMPILE_SUFFIXES`로 걸러 넘어오지 않으므로 헤더에 정의된
-`static inline` 함수는 아직 심볼에 없다.
+헤더(`.h`)는 `_INDEX_SUFFIXES`에 없어 인덱서에 넘어가지 않으므로 헤더에 정의된
+`static inline` 함수는 아직 심볼에 없다. `.inc`는 넘어간다 — 그쪽은 실제 코드가 통째로
+들어 있어 빠지면 대상의 대부분이 사라지기 때문이다(`_INDEX_SUFFIXES` 주석).
 
 ## semgrep 룰셋은 이미지에 구워 넣는다
 
@@ -123,7 +124,27 @@ UNENFORCED: dict[str, tuple[str, ...]] = {
 }
 
 # 컴파일 대상으로 넘길 확장자. 헤더·파이썬은 clang에 직접 주지 않는다.
+#
+# **아래 `_INDEX_SUFFIXES`와 일부러 갈라져 있다. 합치면 build가 깨진다.**
+# `.inc`는 `#include`로 펼쳐지는 함수 본문 조각이라 **단독 컴파일이 되지 않는다.**
+# clang 계열(build·clang-tidy·asan)은 `target.c`만 주면 전처리가 `.inc`를 끌어오므로
+# 직접 줄 이유가 없고, 직접 주면 컴파일이 실패해 `ok=False`가 된다 —
+# **일어나지 않은 실패가 신호로 기록된다.**
 _COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
+
+# 인덱서(`index`)에만 넘길 확장자. tree-sitter는 **전처리를 하지 않아서** 갈라진다 —
+# `clang -fsyntax-only`를 쓰던 시절에는 전처리가 `#include`를 펼쳐 `.inc`를 자동으로
+# 끌어왔지만 지금은 직접 주지 않으면 28바이트짜리 `#include` 한 줄만 보고 그 뒤의
+# 17KB를 못 본다. 그리고 **에러가 아니므로 "그 파일에 함수가 없다"와 구별되지 않는다.**
+#
+# **여기 있는 확장자는 전부 `tools/harness-tools/indexer.py`의 `_GRAMMARS`에도 있어야
+# 한다**(반대는 아니다 — `_GRAMMARS`는 아직 안 보내는 `.h`·`.hpp`도 안다). 그 스크립트는
+# 이미지 안에서 독립 실행되고 `src/`를 import 하지 않아 목록이 양쪽에 따로 존재한다 —
+# **어긋나면 예외가 아니라 `skipped`에 이름만 남고 조용히 빈 그래프가 나온다.**
+#
+# `.h`는 아직 없다. 헤더의 `static inline`이 심볼에서 빠지는 것은 별개의 알려진
+# 구멍이고(모듈 docstring), 이 목록과는 다른 판단이 필요하다.
+_INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc")
 
 # 컴파일 방언. **clang을 쓰는 모든 도구가 같은 값을 쓴다.**
 #
@@ -520,14 +541,20 @@ class ContainerToolRunner:
     # --- 실행 ---------------------------------------------------------------
 
     def _plan_for(self, tool: str, resolved: Path) -> list[Command]:
-        """`workdir`는 파일일 수도 디렉터리일 수도 있다(노드가 artifact 경로를 그대로 준다)."""
+        """`workdir`는 파일일 수도 디렉터리일 수도 있다(노드가 artifact 경로를 그대로 준다).
+
+        **넘길 확장자가 도구마다 다르다.** 인덱서만 `.inc`를 직접 받는다 — 이유는
+        `_COMPILE_SUFFIXES`·`_INDEX_SUFFIXES` 주석에 있다. 한 목록으로 합치면 clang
+        계열이 단독 컴파일되지 않는 조각을 받아 없는 실패를 만들어낸다.
+        """
+        suffixes = _INDEX_SUFFIXES if tool == "index" else _COMPILE_SUFFIXES
         return plan(
             tool,
             target=_in_container(self.root, resolved),
             compile_sources=[
                 _in_container(self.root, path)
                 for path in sources(resolved)
-                if path.suffix in _COMPILE_SUFFIXES
+                if path.suffix in suffixes
             ],
             cwd=_in_container(self.root, resolved if resolved.is_dir() else resolved.parent),
         )

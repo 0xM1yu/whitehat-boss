@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from src.adapters.container_tools import INDEX_FILE, plan
+from src.adapters.container_tools import _INDEX_SUFFIXES, INDEX_FILE, plan
 
 _INDEXER_PATH = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "indexer.py"
 
@@ -167,7 +167,7 @@ def test_parse_error_does_not_suppress_the_symbols_in_that_file(tmp_path: Path) 
 
 
 def test_cpp_class_namespace_and_extern_c_are_indexed(tmp_path: Path) -> None:
-    """`_COMPILE_SUFFIXES`에 `.cc`/`.cpp`가 있으므로 C++ 파일은 실제로 넘어온다.
+    """`_INDEX_SUFFIXES`에 `.cc`/`.cpp`가 있으므로 C++ 파일은 실제로 넘어온다.
 
     클래스 본문(`field_declaration_list`)·namespace(`declaration_list`)·
     `extern "C"`(`linkage_specification`) 전부 최상위가 아니다. 첫 구현은 이 파일에서
@@ -292,6 +292,49 @@ def test_unparsable_suffix_is_listed_as_skipped(tmp_path: Path) -> None:
 
     assert index["skipped"] == ["notes.txt"]
     assert index["files"] == []
+
+
+def test_include_fragment_is_indexed_not_skipped(tmp_path: Path) -> None:
+    """실측 샘플의 구조: `target.c`는 `#include` 한 줄이고 코드는 전부 `.inc`에 있다.
+
+    tree-sitter는 **전처리를 하지 않는다.** `clang -fsyntax-only`를 쓰던 시절에는
+    전처리가 `#include`를 펼쳐 `.inc`를 끌어왔지만 지금은 직접 주지 않으면 28바이트만
+    보고 17KB를 못 본다 — 그런데 예외가 아니라 `skipped`라 "함수가 없다"와 구별되지
+    않는다. 그래서 `skipped`가 비었는지와 `.inc` 쪽 심볼·호출을 함께 본다.
+    """
+    (tmp_path / "target.c").write_text('#include "session_core.inc"\n', encoding="utf-8")
+    (tmp_path / "session_core.inc").write_text(
+        "static int helper(const char *s) {\n"
+        "    return strlen(s);\n"
+        "}\n"
+        "\n"
+        "void session_read(const char *src, int len) {\n"
+        "    char buf[64];\n"
+        "    memcpy(buf, src, len);\n"
+        "    helper(buf);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    index = _index(tmp_path, "target.c", "session_core.inc")
+
+    assert index["skipped"] == []
+    assert index["files"] == ["session_core.inc", "target.c"]
+    assert [s["name"] for s in index["symbols"]] == ["helper", "session_read"]
+    assert {(c["caller"], c["callee"]) for c in index["calls"]} == {
+        ("helper", "strlen"),
+        ("session_read", "memcpy"),
+        ("session_read", "helper"),
+    }
+
+
+def test_every_suffix_the_harness_sends_has_a_grammar() -> None:
+    """목록이 양쪽에 따로 있다 — 이 스크립트는 `src/`를 import 하지 않는다.
+
+    어긋나면 예외가 아니라 `skipped`에 이름만 남아 조용히 빈 그래프가 나오고, 그
+    그래프로 E2가 열린다. 하네스가 보내기로 한 확장자는 전부 파싱될 수 있어야 한다.
+    """
+    assert set(_INDEX_SUFFIXES) <= set(indexer._GRAMMARS)
 
 
 def test_empty_source_is_not_an_error(tmp_path: Path) -> None:
