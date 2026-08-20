@@ -19,7 +19,7 @@ from typing import Protocol
 
 from pydantic import Field
 
-from src.interfaces.model_client import Usage
+from src.interfaces.model_client import GpuMsSource, Usage
 from src.schemas.common import HarnessModel
 
 
@@ -52,8 +52,13 @@ class RetrievalResult(HarnessModel):
     """
 
     usage: Usage
-    # 실서빙 클라이언트만 채운다. Fake는 0 — 지어낸 숫자는 예산 계획을 망친다.
-    gpu_seconds: int = Field(default=0, ge=0)
+    # 이 호출이 GPU를 점유한 시간(밀리초). **안 쟀으면 `None`이고 0이 아니다.**
+    # Fake 검색은 잴 GPU가 없으므로 `None`이다 — 0으로 적으면 "GPU를 안 썼다"와
+    # "안 쟀다"가 합쳐져 `incomplete_fields()`가 판정할 근거가 사라진다.
+    gpu_ms: int | None = None
+    # 위 값의 출처. 라벨 없이 wall-clock을 GPU 시간이라 부르지 않는다
+    # (`ModelResult.gpu_ms_source`의 같은 주석 — 순차 실행 전제에 의존한다).
+    gpu_ms_source: GpuMsSource | None = None
 
 
 class EmbeddingResult(RetrievalResult):
