@@ -74,11 +74,13 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> _Spy:
     return recorder
 
 
-def _runner(tmp_path: Path, runtime: str = "docker", **kwargs) -> ContainerToolRunner:  # noqa: ANN003
+def _runner(
+    tmp_path: Path, runtime: str = "docker", *, root: Path = TARGET, **kwargs  # noqa: ANN003
+) -> ContainerToolRunner:
     return ContainerToolRunner(
         ids=IdFactory(RUN_ID),
         run_id=RUN_ID,
-        root=TARGET,
+        root=root,
         artifacts_root=tmp_path,
         runtime=runtime,
         observed_at=OBSERVED_AT,
@@ -524,6 +526,65 @@ def test_file_workdir_runs_in_its_parent_directory(tmp_path: Path, spy: _Spy) ->
 
     assert argv[argv.index("-w") + 1] == "/src"
     assert "/src/parser.c" in argv
+
+
+# --- 확장자가 도구마다 갈라진다 -------------------------------------------------
+
+
+@pytest.fixture
+def include_target(tmp_path: Path) -> Path:
+    """실측 샘플의 구조. `target.c`는 `#include` 한 줄이고 코드는 전부 `.inc`에 있다.
+
+    `tests/fixtures/target`을 쓰지 않는 이유가 이 PR의 요지다 — 픽스처가 실전 구조를
+    대표하지 못해 생긴 결함이 이 저장소에 이미 두 건 있다(clang의 include 경로,
+    tree-sitter 최상위 한 겹 순회). 그래서 테스트가 그 구조를 직접 재현한다.
+    """
+    root = tmp_path / "sample"
+    root.mkdir()
+    (root / "target.c").write_text('#include "session_core.inc"\n', encoding="utf-8")
+    (root / "session_core.inc").write_text("void session_read(void) {}\n", encoding="utf-8")
+    return root
+
+
+def test_the_two_suffix_lists_stay_split() -> None:
+    """한 목록으로 합치고 싶어지는 자리다. 합치면 build가 깨진다.
+
+    `.inc`는 함수 본문 조각이라 단독 컴파일이 되지 않는다 — clang에 직접 주면 컴파일이
+    실패해 `ok=False`가 되고, **일어나지 않은 실패가 신호로 기록된다.**
+    """
+    assert ".inc" not in container_tools._COMPILE_SUFFIXES
+    assert ".inc" in container_tools._INDEX_SUFFIXES
+
+
+@pytest.mark.parametrize("tool", ["build", "clang-tidy"])
+def test_clang_tools_never_receive_an_include_fragment(
+    tool: str, tmp_path: Path, include_target: Path, spy: _Spy
+) -> None:
+    """`target.c`만 주면 **전처리가** `.inc`를 끌어온다 — 직접 줄 이유가 없다.
+
+    직접 주면 단독 컴파일이 되지 않아 실패하고, 그 실패가 도구 신호로 집계된다.
+    """
+    _runner(tmp_path, root=include_target).run(tool, ToolArgs(argv=[tool], workdir="."), SANDBOX)
+
+    argv = spy.calls[0]
+
+    assert "/src/target.c" in argv
+    assert "/src/session_core.inc" not in argv
+
+
+def test_indexer_does_receive_the_include_fragment(
+    tmp_path: Path, include_target: Path, spy: _Spy
+) -> None:
+    """tree-sitter는 전처리를 하지 않는다 — 직접 주지 않으면 28바이트짜리 `#include`
+    한 줄만 보고 그 뒤의 17KB를 못 본다. 그리고 그것은 에러가 아니다."""
+    _runner(tmp_path, root=include_target).run(
+        "index", ToolArgs(argv=["index"], workdir="."), SANDBOX
+    )
+
+    argv = spy.calls[0]
+
+    assert "/src/target.c" in argv
+    assert "/src/session_core.inc" in argv
 
 
 # --- 배선 ----------------------------------------------------------------------

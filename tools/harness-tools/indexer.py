@@ -55,15 +55,25 @@ from pathlib import Path
 # 형식이 바뀌면 올리고, 읽는 쪽이 모르는 버전은 거절한다.
 INDEX_VERSION = "index-v1"
 
-# 확장자 → tree-sitter 문법 모듈 이름. `fake_tools._SOURCE_SUFFIXES`의 C/C++ 부분과
-# 같아야 한다 — 그쪽이 `compile_sources`를 고르므로 여기 없는 확장자가 넘어오면
-# 파싱하지 못하고 조용히 빠진다.
+# 확장자 → tree-sitter 문법 모듈 이름. **`container_tools._INDEX_SUFFIXES`가 보내는
+# 확장자를 전부 담아야 한다**(그쪽이 이 스크립트에 넘길 파일을 고른다). 여기가 더 넓은
+# 것은 괜찮다 — `.h`·`.hpp`는 알지만 아직 넘어오지 않는다.
+#
+# **이 스크립트는 `src/`를 import 하지 않는다**(모듈 docstring). 그래서 목록이 양쪽에
+# 따로 존재하고, 어긋나면 예외가 아니라 `skipped`에 이름만 남는다 — 즉 **조용히 빈
+# 그래프가 나온다.** 그래서 `tests/test_indexer.py`와 이미지 빌드의 연막 검사
+# (`Dockerfile`)가 양쪽을 각각 대조한다.
 _GRAMMARS = {
     ".c": "tree_sitter_c",
     ".h": "tree_sitter_c",
     ".cc": "tree_sitter_cpp",
     ".cpp": "tree_sitter_cpp",
     ".hpp": "tree_sitter_cpp",
+    # `.inc`에는 언어 힌트가 없다. C로 고정한 것은 **추측이다** — 실측 샘플
+    # (`target.c` 28바이트 + `session_core.inc` 17KB)이 전부 C였다. C++ `.inc`가 오면
+    # 파싱이 어긋나는데 그때도 조용하지는 않다: `has_parse_error`가 서고 이름을 못 뽑은
+    # 정의는 `unresolved_symbols`가 센다. 그 값이 크면 이 매핑을 다시 봐야 한다는 뜻이다.
+    ".inc": "tree_sitter_c",
 }
 
 
@@ -157,7 +167,8 @@ def _iter_definitions(root):
     C++은 더 심하다. nlohmann/json(.cpp 423파일)에서 1247개 중 877개(70.3%)가 빠졌고
     자리는 `field_declaration_list`(클래스 본문)·`declaration_list`(namespace)·
     `linkage_specification`(`extern "C"`)·`template_declaration`이다.
-    `_COMPILE_SUFFIXES`에 `.cc`/`.cpp`가 있으므로 그 파일들은 실제로 여기 넘어온다.
+    `container_tools._INDEX_SUFFIXES`에 `.cc`/`.cpp`가 있으므로 그 파일들은 실제로
+    여기 넘어온다.
 
     **찾은 정의 안으로는 들어가지 않는다.** 본문 안의 호출은 `_walk_calls`가 그 정의의
     것으로 세므로, 중첩 정의까지 별도 심볼로 올리면 같은 호출이 두 번 잡힌다.
