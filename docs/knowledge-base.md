@@ -119,4 +119,3 @@ light capsule ──부족──> callers/callees 1-hop 추가
 2. 평가셋과 동일한 코드·challenge·firmware 버전은 KB에 넣지 않는다.
 3. 외부 write-up을 넣을 때는 출처 URL과 수집 시각을 L0에 함께 기록한다.
 4. KB 스냅샷은 버전 태그를 붙이고, 각 run의 `RunRecord`에 사용한 KB 버전을 남긴다.
-</content>
