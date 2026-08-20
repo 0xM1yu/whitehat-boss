@@ -29,7 +29,7 @@ from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.gate import GateResult
 from src.orchestrator.policy import Action, RoutingPolicy, RoutingRequest
 from src.orchestrator.stages import Stage
-from src.orchestrator.trace import EventKind, StageSpan, TraceWriter
+from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.common import Location
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role
@@ -293,6 +293,23 @@ class RunContext:
     def record_cache(self, key: str, hit: bool, *, cache: str = "capsule") -> None:
         """캡슐 캐시 적중 기록 (knowledge-base.md §6). Retriever의 `on_cache` 훅에 연결된다."""
         self.trace.emit(EventKind.CACHE, stage=self.current_stage, cache=cache, key=key, hit=hit)
+
+    def record_graph_index(self, fields: dict[str, TraceValue]) -> None:
+        """1단계 인덱서 산출물의 로드 결과. Retriever의 `on_index` 훅에 연결된다.
+
+        **`unresolved_*`를 캡슐이 아니라 여기로 보낸다.** 그 값들은 저장소 전체의
+        스칼라라 후보마다 달라지지 않고 토큰 비용도 없다 — 섹션으로 실으면 텍스트가
+        아닌 숫자가 토큰 회계에 들어간다. 반면 "그 저장소에서 E2를 얼마나 믿을지"는
+        지표 해석의 입력이고, **여기 남지 않은 사건은 측정할 수 없다**(trace.py).
+
+        `status`가 함께 실리는 것이 요점이다. 인덱서가 안 돈 것(`missing`)과 형식이
+        어긋난 것(`unsupported_version`)과 실제로 간선이 0건인 것은 대응이 전부 다르다.
+
+        **dataclass가 아니라 dict를 받는다.** 어댑터 타입을 여기서 import 하면 "노드는
+        구체 어댑터를 모른다"가 깨진다(engineering-guide.md §3). 필드 이름을 만드는 쪽은
+        `index_graph.IndexSummary.as_trace_fields()`이고 테스트가 그 집합을 고정한다.
+        """
+        self.trace.emit(EventKind.GRAPH_INDEX, stage=self.current_stage, **fields)
 
     def record_retrieval(self, component: str, result: RetrievalResult, candidates: int) -> None:
         """검색 호출의 비용을 trace와 예산에 반영한다. Retriever의 `on_usage` 훅에 연결된다.

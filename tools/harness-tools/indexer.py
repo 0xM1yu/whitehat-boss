@@ -51,8 +51,10 @@ import json
 import sys
 from pathlib import Path
 
-# 출력 형식 버전. 읽는 쪽(`HybridRetriever`)과 어긋나면 조용히 빈 캡슐이 나오므로
-# 형식이 바뀌면 올리고, 읽는 쪽이 모르는 버전은 거절한다.
+# 출력 형식 버전. 읽는 쪽은 `src/adapters/index_graph.py`의 `SUPPORTED_INDEX_VERSION`이고,
+# 어긋나면 그쪽이 `unsupported_version`으로 **거절한다** — 그래프 섹션이 통째로 사라지는데
+# 그 모양은 "인덱서가 안 돌았다"와 같아서 캡슐만 봐서는 구별되지 않는다. 형식이 바뀌면
+# 올리고, 두 값이 갈리지 않도록 `tests/test_indexer.py`가 대조한다.
 INDEX_VERSION = "index-v1"
 
 # 확장자 → tree-sitter 문법 모듈 이름. **`container_tools._INDEX_SUFFIXES`가 보내는

@@ -62,8 +62,9 @@ PoC를 만드는 주체(PoV 노드)가 생기기 전까지는 그것이 사실�
 `unresolved_calls`, 심볼의 누락은 `unresolved_symbols`다. 그 값이 크면 그 저장소에서 이
 그래프의 커버리지가 낮다는 뜻이고, E2를 얼마나 믿을지는 그것을 보고 판단해야 한다.
 
-**아직 캡슐로 이어지지 않았다.** 산출물(`{SCRATCH}/index.json`)을 `HybridRetriever`가 읽어
-`callers`/`callees` 섹션을 채우는 것이 D13의 나머지 절반이고, 이 PR의 범위 밖이다.
+**캡슐까지 이어졌다(2026-08-20).** 산출물(`{SCRATCH}/index.json`)의 호스트 경로는
+`index_output_path()`가 내고, `adapters/index_graph.py`가 그것을 읽어 두 Retriever의
+`callers`/`callees` 섹션을 채운다. `types`는 아직 아니다 — index-v1에 타입 데이터가 없다.
 헤더(`.h`)는 `_INDEX_SUFFIXES`에 없어 인덱서에 넘어가지 않으므로 헤더에 정의된
 `static inline` 함수는 아직 심볼에 없다. `.inc`는 넘어간다 — 그쪽은 실제 코드가 통째로
 들어 있어 빠지면 대상의 대부분이 사라지기 때문이다(`_INDEX_SUFFIXES` 주석).
@@ -107,10 +108,15 @@ SEMGREP_CONFIGS = ("/opt/semgrep-rules/c", "/opt/semgrep-rules/harness")
 
 # 이미지에 구워 넣은 인덱서(`tools/harness-tools/indexer.py`)와 그 산출물 이름.
 # 산출물은 scratch에 떨어지므로 호스트에서는
-# `{artifacts_root}/{run_id}/scratch/index/{INDEX_FILE}`이다 — 2단계(Retriever 연결)가
-# 읽을 경로이고, 그 연결은 아직 없다(open-questions D13).
+# `{artifacts_root}/{run_id}/scratch/index/{INDEX_FILE}`이고, 그 경로를 조립하는 곳은
+# `index_output_path()` 하나다 — `adapters/index_graph.py`가 읽는다(open-questions D13).
 _INDEXER = "/opt/indexer.py"
 INDEX_FILE = "index.json"
+
+# scratch 하위 디렉터리 이름은 도구 이름이다(`_execute`가 `tool`로 만든다).
+# `nodes/index.INDEX_TOOL`과 같은 값이어야 하지만 어댑터는 오케스트레이터를 import 하지
+# 않으므로(engineering-guide.md §3) 여기 복제하고 tests/test_container_tools.py가 대조한다.
+INDEX_TOOL = "index"
 
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
 # 남기지 않는다(모듈 docstring).
@@ -215,6 +221,21 @@ class Step:
 def sif_path(sif_dir: Path, image: str) -> Path:
     """`harness-tools:v1` → `{sif_dir}/harness-tools_v1.sif`."""
     return Path(sif_dir) / f"{image.replace('/', '_').replace(':', '_')}.sif"
+
+
+def scratch_dir(artifacts_root: Path, run_id: str, tool: str) -> Path:
+    """도구별 scratch 디렉터리. 컨테이너 안에서는 `SCRATCH`로 마운트된다.
+
+    **쓰는 쪽(`_execute`)과 읽는 쪽(`index_output_path`)이 같은 함수를 쓴다.** 경로를
+    두 곳에서 따로 조립하면 어긋나도 예외가 아니라 파일을 못 찾는 상태가 되고,
+    `index_graph`는 그것을 `missing`으로 읽는다 — **인덱서가 안 돈 것과 구별되지 않는다.**
+    """
+    return Path(artifacts_root) / run_id / "scratch" / tool
+
+
+def index_output_path(artifacts_root: Path, run_id: str) -> Path:
+    """인덱서 산출물의 호스트 경로. `adapters/index_graph.py`가 읽는다."""
+    return scratch_dir(artifacts_root, run_id, INDEX_TOOL) / INDEX_FILE
 
 
 def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> list[Command]:
@@ -568,7 +589,7 @@ class ContainerToolRunner:
         sandbox: SandboxSpec,
         commands: list[Command],
     ) -> Evidence:
-        scratch = self.artifacts_root / self.run_id / "scratch" / tool
+        scratch = scratch_dir(self.artifacts_root, self.run_id, tool)
         scratch.mkdir(parents=True, exist_ok=True)
         sections = [f"# node argv: {' '.join(args.argv)}", f"# runtime: {self.runtime}"]
         steps: list[Step] = []
