@@ -17,7 +17,7 @@ import pytest
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import load_config
-from src.orchestrator import prompt_loader
+from src.orchestrator import prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import (
@@ -152,6 +152,19 @@ def test_preprocess_classifies_and_stores_relative_paths(ctx: RunContext) -> Non
     assert all(a.kind is ArtifactKind.SOURCE for a in artifacts)
     assert all(not Path(a.path).is_absolute() for a in artifacts)
     assert ctx.store.get("artifact", artifacts[0].artifact_id) is not None
+
+
+def test_include_fragment_is_classified_as_analyzable_source() -> None:
+    """`.inc`가 UNKNOWN이면 `runner._ANALYZABLE`이 걸러 실제 코드가 통째로 빠진다.
+
+    실측 샘플은 `target.c`가 28바이트짜리 `#include` 한 줄이고 코드 17KB가 전부
+    `.inc`에 있다. 걸러져도 **에러가 나지 않으므로** "그 파일에 취약점이 없다"와
+    구별되지 않는다 — 그래서 분류만이 아니라 필터를 통과하는지까지 본다.
+    """
+    kind = preprocess.classify(Path("session_core.inc"))
+
+    assert kind is ArtifactKind.SOURCE
+    assert kind in runner._ANALYZABLE
 
 
 def test_static_tool_failure_is_recorded_not_raised(ctx: RunContext) -> None:

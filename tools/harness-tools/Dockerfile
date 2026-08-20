@@ -79,6 +79,18 @@ RUN printf 'void a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx.c \
 sys.exit(0 if len(d['symbols'])==2 and len(d['calls'])==1 else 1)" \
  && rm -f /tmp/idx.c /tmp/idx.json
 
+# `.inc` 연막 검사. 실측 샘플은 `target.c`가 `#include` 한 줄이고 코드가 전부 `.inc`에
+# 있다. 이미지 안 `_GRAMMARS`에서 `.inc`가 빠지면 예외가 아니라 `skipped`에 이름만 남아
+# **빈 그래프가 성공으로 기록된다.** 호스트 테스트와 겹치지 않는다 — 이미지에 들어간
+# indexer.py 사본과 이 아키텍처의 파서 휠은 호스트가 확인할 수 없다.
+RUN printf 'void a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx_core.inc \
+ && printf '#include "idx_core.inc"\n' > /tmp/idx_inc.c \
+ && python3 /opt/indexer.py --out /tmp/idx_inc.json --root /tmp \
+      /tmp/idx_inc.c /tmp/idx_core.inc \
+ && python3 -c "import json,sys; d=json.load(open('/tmp/idx_inc.json')); \
+sys.exit(0 if len(d['symbols'])==2 and len(d['calls'])==1 and d['skipped']==[] else 1)" \
+ && rm -f /tmp/idx_core.inc /tmp/idx_inc.c /tmp/idx_inc.json
+
 # 대상은 읽기 전용으로 /src에, 쓰기는 /work에만 일어난다(container_tools 모듈 docstring).
 #
 # 빌드 시점에는 바인드가 없으므로 디렉터리를 만들어 둔다 — 없으면 아래 ENV를 쓰는 도구가
