@@ -76,6 +76,11 @@ class RunContext:
     ledger: BudgetLedger
     policy: RoutingPolicy
     record: RunRecord | None = None
+    # **역할별 GPU 미측정 횟수.** 원장이 아니라 여기서 센다 — 원장은 상한 관리자이고,
+    # 역할 차원을 넣으면 "역할별 상한"이 필요하다는 압력이 생긴다. evaluation.md §5.2가
+    # 요구하는 것은 역할별 **지표**이지 역할별 상한이 아니다. 역할을 아는 곳이 여기이고,
+    # 이 값은 `runner.unmeasured_gpu_warning()`의 입력이 된다.
+    gpu_unmeasured_roles: dict[str, int] = field(default_factory=dict)
     # 마지막으로 진입한 단계. Retriever 콜백이 자기 단계를 모르므로 여기서 채운다.
     current_stage: Stage = Stage.PREPROCESS
     # 대상 심볼의 원문을 읽는다. `ContextCapsule`은 본문을 담지 않는 매니페스트이므로
@@ -153,8 +158,21 @@ class RunContext:
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
             cached_tokens=result.usage.cached_tokens,
+            # GPU 시간과 **그 출처**를 함께 남긴다. 라벨이 기록에 없으면 반년 뒤 이 수치가
+            # wall-clock 근사였다는 사실을 데이터만 보고 알 수 없다
+            # (`ModelResult.gpu_ms_source` 주석 — 순차 실행 전제에 의존한다).
+            gpu_ms=result.gpu_ms,
+            gpu_ms_source=result.gpu_ms_source,
         )
-        self.ledger.charge(result.usage, stage=stage)
+        # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
+        # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로
+        # 남았고, 그래서 `gpu_seconds` 상한이 한 번도 걸린 적이 없다.
+        if result.gpu_ms is None:
+            # 세는 것은 "GPU를 안 썼다"가 아니라 **"안 쟀다"**다. Fake 모델이 여기 들어오고,
+            # 러너가 실서빙 역할과 교집합해서 비교표 제외 판정을 낸다.
+            name = role.value
+            self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
+        self.ledger.charge(result.usage, stage=stage, gpu_ms=result.gpu_ms)
         return result
 
     # --- 도구 ---
@@ -187,7 +205,37 @@ class RunContext:
             error=evidence.error,
             finding_id=subject_id,
         )
-        self.ledger.charge(_NO_TOKENS, stage=stage, gpu_seconds=elapsed // 1000)
+        # **밀리초를 그대로 넘긴다.** 여기서 `// 1000`을 하던 것이 이 결함의 세 지점 중
+        # 하나였다 — 도구 11건 중 8건(342~906 ms)이 0으로 청구됐다(2026-08-17 실측).
+        # 단위 변환은 원장이 한다.
+        #
+        # **단, Fake 런타임의 시간은 청구하지 않는다.** `FakeToolRunner`의 1~2 ms는 GPU도
+        # 컨테이너도 아니고 **하네스가 자기 자신을 잰 값**이다. 그것을 장부에 넣으면 무의미한
+        # 숫자가 비용 지표에 섞이고, 같은 입력의 두 실행이 다른 기록을 남긴다. 예전에는
+        # `// 1000`이 그 값을 전부 0으로 만들어 **내림이 재현성을 우연히 지켜 주고
+        # 있었다** — 이 분기가 그 우연을 의도로 바꾼다.
+        #
+        # 판단 기준은 새로 만들지 않았다. `doctor`가 이미 같은 식으로 갈라
+        # "tool_runner가 Fake라 컨테이너 런타임이 필요 없다"를 판정한다(`cli._check_tool_runtime`).
+        # 어댑터를 import 하지 않고 config를 읽는 것도 이 파일의 기존 방식 그대로다
+        # (`self.config.model_key_for(...)`).
+        #
+        # **`--tool-runner` 오버라이드와 갈라질 수 없다.** 오버라이드는 `cli.load_profile()`이
+        # config를 만들 때 이미 반영하고(`adapters.transition(tool_runner=...)`), 러너는
+        # `RunRecord.tool_runner`에 **같은 식**을 박는다. 여기서 읽는 값과 기록에 남는 값이
+        # 같은 표현이라 어긋날 수 없다 — 오버라이드가 나중에 적용되는 구조였다면 이 분기가
+        # 조용히 틀린 값을 만들었을 것이므로, 그렇지 않은 이유를 여기 남긴다.
+        #
+        # **반대 선례 하나를 처리해 둔다.** `vllm_retrieval._estimated_usage`는 "Fake라고
+        # 0으로 두지 않는다"고 적는다. 구분은 재현성이다 — 토큰은 입력의 결정론적
+        # 함수(`len // 4`)라 Fake에서도 같은 입력이면 같은 값이지만, wall-clock은 아니다.
+        #
+        # **`gpu_ms`가 아니라 `tool_ms`다.** 여기서 도는 네 도구(semgrep·clang-tidy·build·
+        # asan)는 GPU를 쓰지 않는다. 2026-08-17까지 이 시간이 `gpu_seconds`로 청구됐고,
+        # 그래서 그 필드의 0 아닌 값은 **전부 CPU 시간**이었다 — evaluation.md §5.3의
+        # "finding당 GPU-hour"가 그 값을 분자로 쓴다.
+        is_fake_runtime = self.config.profile.adapters.tool_runner == "fake"
+        self.ledger.charge(_NO_TOKENS, stage=stage, tool_ms=None if is_fake_runtime else elapsed)
         return evidence
 
     # --- 게이트 ---
@@ -261,10 +309,11 @@ class RunContext:
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
             cached_tokens=result.usage.cached_tokens,
-            gpu_seconds=result.gpu_seconds,
+            gpu_ms=result.gpu_ms,
+            gpu_ms_source=result.gpu_ms_source,
             candidates=candidates,
         )
-        self.ledger.charge(result.usage, stage=stage, gpu_seconds=result.gpu_seconds)
+        self.ledger.charge(result.usage, stage=stage, gpu_ms=result.gpu_ms)
 
     # --- 정책과 전이 ---
 
