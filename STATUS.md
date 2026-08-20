@@ -179,13 +179,15 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 - **R1의 커널 호환성 항목은 통과했다.** vLLM 0.27.1이 aarch64에 설치되고
   `torch.cuda.get_device_capability()`가 `(12, 1)`·`NVIDIA GB10`을 인식했다
   (torch 2.13.0+cu130 / CUDA 13.0). **대체 서빙 스택 검토는 불필요하다.**
-- **그런데 모델 서빙은 불가능하다 — 하네스 결함이 아니라 환경 제약이다.** 테넌트에서
-  로컬 주소로의 TCP 접속이 차단돼 있어, 같은 프로세스에서 `bind('127.0.0.1', p)` →
-  `listen` → `connect`가 `ConnectionRefusedError: [Errno 111]`로 떨어진다(`ss -ltn`에는
-  LISTEN으로 보이고 `lo`도 UP이다). `<private-ip>`은 `[Errno 113] No route to host`.
-  인터넷 아웃바운드는 정상이다. vLLM은 `world_size=1`이어도 TCPStore에 자기 자신으로
-  붙으므로 기동이 안 되고, 하네스도 `http://127.0.0.1:8001`로 붙으므로 추론 요청 자체가
-  성립하지 않는다. **관리자에게 예외를 요청한 상태다.**
+- **로컬 TCP 차단은 같은 날 해소됐고, 모델이 실제로 떴다.** 차단이 걸려 있던 동안에는
+  같은 프로세스에서 `bind('127.0.0.1', p)` → `listen` → `connect`가
+  `ConnectionRefusedError: [Errno 111]`로 떨어졌고(`ss -ltn`에는 LISTEN으로 보이고 `lo`도
+  UP이었다), `<private-ip>`은 `[Errno 113] No route to host`였다. vLLM은 `world_size=1`
+  이어도 TCPStore에 자기 자신으로 붙으므로 그동안 기동 자체가 불가능했다. **관리자 예외가
+  적용된 뒤 `qwen3-4b`가 `127.0.0.1:8001`에서 서빙됐다** — 근거는 registry의 실측이다
+  (`config/models.yaml`: `measured_at: 2026-08-17T15:16:27Z`, `measured_on: atom`,
+  단일 39.65 tok/s · batch32 127.69 tok/s). **기동에는 `VLLM_USE_DEEP_GEMM=0`이 필요하다**
+  — 없으면 가중치를 다 읽은 뒤 죽는다(§6 R1, `models.yaml` 주석).
 - `nvidia-smi --query-gpu=memory.total,memory.used`가 이 장비에서 `[N/A], [N/A]`다.
   통합메모리라 별도 VRAM이 없어 보고할 값이 없다 — nvidia-smi는 PATH에 있고 정상 종료한다.
   `mem_gb_ctx8k`의 유일한 소스가 그 값이므로 §3 체크리스트 2번은 다른 소스가 정해질
@@ -272,27 +274,36 @@ ATOM에서 돌리는 일이다.
 
 | # | 항목 | 기한 | 상태 |
 |---|---|---|:-:|
-| **R1** | ~~ATOM × vLLM 커널 호환성 미검증~~ → **커널 호환성 통과(2026-08-17).** 남은 것은 그 장비에서 **서버를 못 띄운다**는 것이고 원인은 하네스 밖이다(로컬 TCP 차단) | **2026-08-17** | 커널 ✅ · 서빙은 환경 예외 승인 대기 |
+| **R1** | ~~ATOM × vLLM 커널 호환성 미검증~~ · ~~로컬 TCP 차단으로 서버를 못 띄움~~ → **둘 다 2026-08-17 해소.** `qwen3-4b`가 `127.0.0.1:8001`에서 서빙됐다(`VLLM_USE_DEEP_GEMM=0` 필요). 남은 것은 §3 체크리스트의 **아직 안 잰 항목**이고, 이제 하네스 안에서 답할 수 있다 | **2026-08-17** | 기동 ✅ · 체크리스트 1/7 통과 |
 | **R3** | 누출 검증 7개 중 5개 미구현 (Patch Leakage, 중복 제거, Time Split, Prompt Logging, Reproducibility) | 2026-09-07 | 부분 |
 | **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | 2026-09-07 | 대체 경로 확인(`prompt_tokens_cached_total`) · 장부 반영은 별건 · ATOM 대기 |
 | R4 | 단일 노드 대역폭 병목 미파악 | 2026-09-05 | 미착수 |
 
 ### R1 — 크리티컬 패스
 
-`model-serving.md` §3 체크리스트 7개 전부 미체크. **재는 도구는 `cli bench`이고
-(2026-08-14), 각 항목이 bench 출력의 어느 필드로 답해지는지는 그 문서에 적혀 있다.**
+`model-serving.md` §3 체크리스트 7개 중 **1번이 통과했다.** 재는 도구는 `cli bench`이고
+(2026-08-14), 각 항목이 bench 출력의 어느 필드로 답해지는지는 그 문서에 적혀 있다.
 
-**"커널 호환성 통과"와 "체크리스트 1번 통과"는 다르다.** 2026-08-17에 확인된 것은 vLLM
-0.27.1이 aarch64에 설치되고 torch가 `(12, 1)`·`NVIDIA GB10`을 인식한다는 것이다. 반면
-아래 1번의 판정 필드는 `roles.*.startup.ok` — **서버가 실제로 떠서 `/v1/models`를 주는가**
-이고, 로컬 TCP 차단으로 서버를 못 띄웠으므로 그 항목은 여전히 미측정이다. 두 사실을 같은
-것으로 읽으면 "재지 않은 값이 통과했다"가 된다.
+**"커널 호환성 통과"와 "체크리스트 1번 통과"는 원래 다른 사실이고, 이제 둘 다 답이 있다.**
+앞은 vLLM 0.27.1이 aarch64에 설치되고 torch가 `(12, 1)`·`NVIDIA GB10`을 인식한다는 것이다.
+뒤의 판정 필드는 `roles.*.startup.ok` — **서버가 실제로 떠서 `/v1/models`를 주는가**이고,
+로컬 TCP 차단이 풀린 뒤 `qwen3-4b`가 떠서 registry에 실측이 들어갔다(§5). **단 조건이
+붙는다 — `VLLM_USE_DEEP_GEMM=0`이 없으면 이 모델은 기동하지 않는다.** 통과는 "그 인자를
+준 상태에서"이고, 인자를 빼면 1번이 다시 실패한다.
+
+**나머지 6개는 여전히 미측정이고, 4번만 부분이다.** registry에 있는 값은 `tok_s_single`과
+`tok_s_batch32` 둘뿐이라 8/16 동시 요청은 아직 답이 없다. `mem_gb_ctx8k`는 0인데 이것은
+"0 GB"가 아니라 **안 쟀다**는 뜻이다(§5의 `nvidia-smi [N/A]` — 소스가 정해져야 답이 나온다).
+측정은 [ADR 0007](docs/decisions/0007-atom-qwen3-4b-first-measurement.md)에 정본으로 남겼다.
+**단 그 안의 원문 자리는 비어 있다** — `cli bench`는 JSON을 stdout으로만 내고 아무도 파일로
+받지 않아서, `checklist` 배열처럼 registry에 자리가 없는 필드는 터미널과 함께 사라졌다.
+그래서 위 "미측정"과 "쟀는데 registry에 안 들어가는 값"을 지금은 구분할 수 없다.
 
 ```
-[ ] vLLM × CUDA 13.0 × sm_121 커널 호환성   ← 커널·설치는 확인. 기동(startup.ok)은 미측정
-[ ] 역할별 모델 로드 및 실제 통합메모리 점유
+[x] vLLM × CUDA 13.0 × sm_121 커널 호환성   ← 2026-08-17 기동 확인. VLLM_USE_DEEP_GEMM=0 필요
+[ ] 역할별 모델 로드 및 실제 통합메모리 점유    ← mem_gb_ctx8k=0. nvidia-smi가 [N/A]라 소스 대기
 [ ] context 8K/16K/32K에서 KV cache 점유와 처리량
-[ ] 단일 스트림 tok/s vs 배치(8/16/32) 합산 tok/s
+[~] 단일 스트림 tok/s vs 배치(8/16/32) 합산 tok/s ← 단일 39.65 · batch32 127.69. 8·16 미측정
 [ ] automatic prefix caching 동작 및 적중률       ← R6 판정 지점
 [ ] structured output(JSON schema 강제) 동작
 [ ] NVFP4 양자화 시 Critic 반박 정확도 저하
