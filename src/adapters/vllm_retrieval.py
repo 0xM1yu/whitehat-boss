@@ -56,12 +56,13 @@ class VllmEmbeddingClient:
             {"model": self.model_name, "input": list(texts)},
             self.api_key,
         )
-        elapsed = int(time.monotonic() - started)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         rows = sorted(data["data"], key=lambda row: int(row.get("index", 0)))
         return EmbeddingResult(
             vectors=[[float(x) for x in row["embedding"]] for row in rows],
             usage=_usage_from(data.get("usage"), texts),
-            gpu_seconds=elapsed,
+            gpu_ms=elapsed_ms,
+            gpu_ms_source="request_wall_clock",
         )
 
 
@@ -93,13 +94,15 @@ class VllmRerankerClient:
             },
             self.api_key,
         )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         return RerankResult(
             ranked=[
                 Ranked(index=int(row["index"]), score=float(row["relevance_score"]))
                 for row in data.get("results", [])
             ],
             usage=_usage_from(data.get("usage"), [query, *documents]),
-            gpu_seconds=int(time.monotonic() - started),
+            gpu_ms=elapsed_ms,
+            gpu_ms_source="request_wall_clock",
         )
 
 
@@ -143,6 +146,11 @@ def _estimated_usage(texts: Sequence[str]) -> Usage:
     Fake라고 0으로 두지 않는다. 0이면 "검색이 공짜"와 "계량기가 안 붙었다"가 구별되지
     않고, dev_fake에서 비용 경로가 도는지 확인할 수 없다. 출력은 벡터·점수라 생성
     토큰이 없으므로 `output_tokens`는 0이다.
+
+    **GPU 시간은 반대로 간다(`gpu_ms=None`).** 모순이 아니라 재현성 때문이다 — 토큰은
+    입력의 **결정론적 함수**(`len // 4`)라 Fake에서도 같은 입력이면 같은 값이 나오지만,
+    wall-clock은 아니다. Fake 경로에서 잰 시간은 하네스가 자기를 잰 값이라 장부에 넣을
+    대상도 아니다(`RunContext.call_tool`의 같은 판단).
     """
     return Usage(
         input_tokens=sum(len(text) for text in texts) // _CHARS_PER_TOKEN,

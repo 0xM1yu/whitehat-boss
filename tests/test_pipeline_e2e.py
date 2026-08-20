@@ -850,3 +850,37 @@ def test_gc_apply_removes_only_old_run_dirs(tmp_path: Path) -> None:
     assert not runs[0].exists() and not runs[1].exists()
     assert runs[2].is_dir()  # 최신 1개는 남는다
     assert other.is_dir()  # run_ 접두사가 아닌 디렉터리는 건드리지 않는다
+
+
+# --- GPU 회계 판정 (2026-08-17) ----------------------------------------------
+
+
+def test_a_fake_run_does_not_warn_about_unmeasured_gpu_time(tmp_path: Path) -> None:
+    """`dev_fake`는 실서빙 역할이 하나도 없다 — 잴 GPU가 없는 것은 결함이 아니다.
+
+    경고하면 dev 프로필의 모든 run이 매번 같은 줄을 뱉고 진짜 문제가 묻힌다
+    (`model_checksums`에서 Fake 역할을 뺀 것과 같은 논법).
+    """
+    result, _ = _run(tmp_path)
+
+    assert not [w for w in result.warnings if "GPU 시간" in w]
+
+
+def test_an_unmeasured_served_role_is_named(tmp_path: Path) -> None:
+    """실서빙 역할이 GPU 시간을 못 남기면 그 run의 비용은 미상이다.
+
+    2026-08-17까지 모델 호출이 GPU 시간을 **아예 청구하지 못했으므로**, 그 상태로 돈 run은
+    전부 여기 걸려야 한다. 경고에 역할 이름이 없으면 어느 역할을 고쳐야 하는지 알 수 없다.
+    """
+    served = load_config("single_gpu_12g").served_models()
+    assert served == {"scout": "qwen3-4b"}, "이 검사의 전제가 무너졌다"
+
+    warning = runner.unmeasured_gpu_warning(
+        {role: 3 for role in ("scout", "auditor") if role in served}
+    )
+
+    assert warning is not None
+    assert "scout(3회)" in warning
+    assert "auditor" not in warning  # Fake 역할은 교집합에서 빠진다
+    assert "비교표에서 제외" in warning
+    assert runner.unmeasured_gpu_warning({}) is None

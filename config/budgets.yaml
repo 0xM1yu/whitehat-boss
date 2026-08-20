@@ -12,6 +12,19 @@ budgets:
     input_tokens: 4000000
     output_tokens: 400000
     gpu_seconds: 7200
+    # 컨테이너 도구(semgrep·clang-tidy·build·asan)의 run 전체 상한. GPU 예산과 나눈
+    # 이유는 그 도구들이 GPU를 쓰지 않기 때문이다(schemas/run.py `Budget.tool_seconds`).
+    #
+    # **이 값은 잠정치다. 실대상 측정이 아니다.** 지금 가진 수치는 2026-08-17에 잰
+    # 8,492 ms(x86_64/docker)와 4,491 ms(aarch64/podman)뿐인데 둘 다 대상이
+    # `tests/fixtures/target`(파일 두 개짜리 장난감 parser.c)이다. 실제 저장소는 파일이
+    # 서너 자릿수 많으므로 그 값에서 상한을 유도하면 **지어낸 근거**가 된다
+    # (model-serving.md §5·bench.py 모듈 docstring의 같은 규칙: 지어낸 값은 미측정을
+    # production으로 통과시킨다).
+    #
+    # **근거를 만드는 측정은 zlib 급 실대상 1회 run이다**(open-questions D15). 그전까지
+    # 이 값의 목적은 폭주 차단 하나이고, 정상 run이 걸리지 않도록 넉넉히 둔다.
+    tool_seconds: 1800
 
   dev_fake:
     # Fake 어댑터는 GPU를 쓰지 않는다. 예산 소진 경로(stopped_after)를 테스트에서
@@ -19,6 +32,10 @@ budgets:
     input_tokens: 200000
     output_tokens: 20000
     gpu_seconds: 0
+    # Fake 런타임의 도구 시간은 애초에 청구되지 않는다(`RunContext.call_tool`) — 잴
+    # 컨테이너가 없고, 그 시간은 하네스가 자기를 잰 값이다. 0은 "상한 없음"이라는 기존
+    # 관용구다(`BudgetLedger._overrun`).
+    tool_seconds: 0
 
 thresholds:
   # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — open-questions D2.

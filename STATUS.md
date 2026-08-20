@@ -386,7 +386,7 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 | `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v1` 이미지 |
 | `kb_snapshot` | KB 미구축 (`kb-none` 자리표시자) | KB 구축 + `--kb-snapshot` |
 | `model_checksums` | registry가 합성 예시값(전부 0) | 실서빙 모델 확정 + checksum 산출 (model-serving.md §5) |
-| GPU-second | 실측 전 | R1 통과 |
+| GPU-second | ~~실측 전~~ → **코드가 청구하지 않았다** (2026-08-17 발견). 모델 호출은 `ModelResult`에 GPU 시간 필드가 아예 없었고, 검색·도구는 초로 내림해 1초 미만을 버렸다 | 청구 경로 수정 + 실서빙 run. `incomplete_fields()`가 실서빙 역할의 미측정을 판정한다 |
 
 **`model_checksums` 행은 2026-08-17까지 이 표에만 있고 코드에는 없었다.** `incomplete_fields()`가
 그 필드를 보지 않았으므로 checksum이 전부 0인 채로 돈 run도 경고 없이 통과했다 — 기록상
@@ -397,6 +397,14 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 가중치도 토크나이저도 없고, 그 checksum 0은 미기록이 아니라 정확한 값이다. 판정은
 **역할별**이라 `single_gpu_12g`처럼 섞인 프로필에서도 실서빙 역할만 걸린다. `doctor`가
 같은 규칙으로 run 전에 미리 WARN한다.
+
+**바로 위 GPU-second 행이 같은 계열의 두 번째다.** `model_checksums` 행을 고친 그날
+(2026-08-17), 이 표는 GPU-second도 "`incomplete_fields()`가 판정한다" 아래 올려 두고 있었는데
+코드는 그 값을 **청구조차 하지 않고 있었다** — 모델 호출에는 GPU 시간 필드가 없었고, 검색과
+도구는 초로 내림해 1초 미만을 버렸다. 한 행을 고치면서 바로 다음 행을 같은 상태로 남긴
+것이다. **표에 적는 것과 코드가 판정하는 것은 다르다**는 사실이 이 문단의 값이고, 다음에
+이 표에 행을 추가할 때 먼저 물어야 할 질문이기도 하다: *그 판정을 실제로 하는 코드가
+있는가?*
 
 ---
 
