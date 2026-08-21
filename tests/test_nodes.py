@@ -374,6 +374,34 @@ def test_successful_repro_attaches_evidence_and_proves(ctx: RunContext) -> None:
     assert any(ev.kind is EvidenceKind.SANITIZER for ev in evidences)
 
 
+def test_validate_evaluates_the_gate_before_deciding(ctx: RunContext) -> None:
+    """8단계도 게이트를 부른다 (W3). 안 부르면 E4가 어디에도 안 남는다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    validate.run(ctx, finding=finding, workdir="parser.c")
+
+    graded = [
+        e
+        for e in ctx.trace.events
+        if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.VALIDATE)
+    ]
+    assert len(graded) == 1
+    assert graded[0].data["p4"] is True
+    assert graded[0].data["grade"] == "E4"
+
+
+def test_gate_refuses_stages_where_its_predicates_cannot_hold(ctx: RunContext) -> None:
+    """`GATE_STAGES` 밖에서 부르면 아직 성립할 수 없는 술어가 거짓으로 기록된다.
+
+    그 행이 제거율의 분모에 섞이므로 조용히 넘기지 않는다. 이 검사가 `GATE_STAGES`를
+    실제로 쓰이는 상수로 만든다 — 그전에는 src/ 참조가 0건이었다.
+    """
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    with pytest.raises(ValueError, match="게이트는"):
+        ctx.evaluate_gate(finding, (), stage=Stage.SCOUT)
+
+
 def test_report_dedupes_and_does_not_promote_to_reported(ctx: RunContext) -> None:
     proven = _finding("find_0001", state=FindingState.PROVEN)
     duplicate = _finding("find_0002", state=FindingState.PROVEN)
