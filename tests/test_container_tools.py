@@ -591,6 +591,28 @@ def test_indexer_does_receive_the_include_fragment(
     assert "/src/session_core.inc" in argv
 
 
+def test_the_adapter_compares_against_the_constant_not_a_literal() -> None:
+    """`INDEX_TOOL`을 만들어 두고 `tool == "index"` 리터럴로 비교하면 안 된다.
+
+    바로 위 `test_scratch_dir_name_matches_the_node_tool_name`이 두 상수를 대조하지만,
+    **양쪽 상수를 함께 바꾸면 그 검사는 통과한다.** 그때 리터럴만 뒤처져 인덱서가 조용히
+    `_COMPILE_SUFFIXES`를 받고 `.inc`가 빠진다 — D16이 기록한 실패(28바이트짜리
+    `#include` 한 줄만 분석하고 17KB를 보지 않았다)의 재현이다.
+
+    **행동으로는 구별할 수 없다.** 상수를 갈아 끼우면 `plan()`이 인덱서 명령을 아예 못
+    만들어 명령이 실행되지 않는다 — 리터럴이 남아 있어도 같은 모양이 된다. 그래서
+    소스를 읽는다. `tests/test_policy.py::test_orchestrator_source_has_no_adapter_import`가
+    같은 이유로 같은 방식을 쓴다.
+    """
+    source = Path(container_tools.__file__).read_text(encoding="utf-8")
+    # 주석은 뺀다 — 이 결함을 설명하는 주석이 그 문자열을 인용한다.
+    code = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
+
+    offenders = [line.strip() for line in code if 'tool == "index"' in line]
+
+    assert offenders == [], f"리터럴 비교가 남아 있다: {offenders}"
+
+
 # --- 배선 ----------------------------------------------------------------------
 
 
