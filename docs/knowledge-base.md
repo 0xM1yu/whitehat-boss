@@ -79,6 +79,16 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 
 `level` 열거형: `light`(Scout용) | `expanded`(Auditor용) | `focused`(Critic용, 반박 축 관련 섹션만)
 
+> **위 예시는 목표 구성이고 `types`는 아직 코드가 내지 않는다 (2026-08-20).**
+> `callers`·`callees`는 1단계 인덱서 산출물(`index-v1`)에서 실측으로 채워지지만, 그 형식에
+> **타입 정보가 없다** — `indexer.build_index()`가 내는 것은 `symbols`와 `calls`뿐이고
+> `struct`·`class`·`typedef`를 뽑는 코드가 없다. 없는 데이터로 섹션을 발행하면 토큰 회계가
+> 거짓말을 하므로 두 Retriever의 `LEVEL_SECTIONS`에서 `types`를 **뺐다.** 채우려면
+> 인덱서에 타입 수집을 넣고 `INDEX_VERSION`을 올려야 한다(open-questions D13).
+>
+> 인덱서가 돌지 않은 프로필(`dev_fake`·`dev_hybrid`)에서는 `callers`·`callees`도 **섹션
+> 자체가 없다.** 빈 섹션을 내면 "그래프가 비었다"와 "인덱서가 안 돌았다"가 구별되지 않는다.
+
 `run_id`는 Evidence Store가 run 단위 수명이기 때문에 필요하다(§1). 같은 조건을 seed만 바꿔
 여러 번 돌리므로, run 소속이 없으면 반복 실행의 캡슐이 한 저장소에서 섞인다.
 

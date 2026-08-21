@@ -185,6 +185,42 @@ class LateUsageHook:
         self._ctx.record_retrieval(component, result, candidates)
 
 
+class IndexSummaryLike(Protocol):
+    """인덱스 훅이 받는 것의 구조적 계약.
+
+    구체 타입(`adapters.index_graph.IndexSummary`)을 import 하면 오케스트레이터가 어댑터를
+    아는 상태가 된다(engineering-guide.md §3). `src/orchestrator/`와 `src/interfaces/`에
+    어댑터 import는 지금 0건이고 그 상태를 유지한다.
+    """
+
+    def as_trace_fields(self) -> dict[str, str | int]: ...
+
+
+class IndexHookUnbound(RuntimeError):
+    """인덱스 훅이 RunContext에 연결되기 전에 불렸다."""
+
+
+class LateIndexHook:
+    """`LateCacheHook`과 같은 조립 순서 문제를 같은 방식으로 메운다.
+
+    **바인딩 전 호출은 조용히 무시하지 않고 터뜨린다** — 이 이벤트가 새면
+    `unresolved_calls`·`unresolved_symbols`가 trace에 안 남고, 그러면 그 저장소에서
+    호출 그래프 커버리지가 얼마였는지 사후에 답할 수 없다. **커버리지를 모르는 것과
+    커버리지가 완전한 것은 다르다.**
+    """
+
+    def __init__(self) -> None:
+        self._ctx: RunContext | None = None
+
+    def bind(self, ctx: RunContext) -> None:
+        self._ctx = ctx
+
+    def __call__(self, summary: IndexSummaryLike) -> None:
+        if self._ctx is None:
+            raise IndexHookUnbound("인덱스 훅이 RunContext에 연결되기 전에 호출됐다")
+        self._ctx.record_graph_index(summary.as_trace_fields())
+
+
 @dataclass
 class _Accumulator:
     """단계 사이에 들고 다니는 중간 산출물.
@@ -216,6 +252,7 @@ def run_pipeline(
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
     usage_hook: LateUsageHook | None = None,
+    index_hook: LateIndexHook | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> RunResult:
     """단계 0~9를 순서대로 돌리고 `RunRecord`를 닫는다."""
@@ -238,6 +275,8 @@ def run_pipeline(
         cache_hook.bind(ctx)
     if usage_hook is not None:
         usage_hook.bind(ctx)
+    if index_hook is not None:
+        index_hook.bind(ctx)
 
     artifacts = preprocess.run(ctx, source_root=spec.target)
     record, warnings = _new_record(

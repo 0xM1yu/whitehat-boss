@@ -26,7 +26,7 @@
 | 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 | T2 |
 | 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** | T3 |
 | 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 | T6 |
-| 3 | Retrieval | ✅ | 파일 텍스트 자르기 | 🟡 흉내 | T4 |
+| 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 | T4 |
 | 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 | T1/T5 |
 | 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 | T1/T5 |
 | 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** | T2 |
@@ -75,25 +75,43 @@
 `dev_fake`에서만 `FakeToolRunner`가 디렉터리 존재만 확인하고 `Evidence(kind=GRAPH, ok=True)`를
 반환한다.
 
-**그래서 남은 것은 "인덱서가 없다"가 아니라 "산출물이 캡슐까지 오지 않는다"다.**
-`scratch/index/index.json`을 `HybridRetriever`가 읽어 `callers`/`callees`/`types`를 채우는
-연결이 아직 없다(D13). 그동안 `FakeRetriever`는 그 세 섹션을 고정 64토큰으로 채우므로
-**E2 판정과 토큰 회계가 함께 부정확하다.** 심볼 0개도 `Evidence(ok=True)`라 빈 그래프에서도
-E2가 열리는 것도 그대로다 — 상세와 커버리지 실측은 open-questions D13.
+**산출물이 캡슐까지 왔다 (2026-08-20).** `scratch/index/index.json`을
+`adapters/index_graph.py`가 읽어 **두 Retriever의** `callers`/`callees`를 채운다.
+`FakeRetriever`가 주 경로다 — index.json을 내는 프로필이 전부 `retriever: fake`이기
+때문이다(`dev_docker`·`dev_singularity`·`local_balanced`·`b1_single`). `dev_hybrid_docker`가
+hybrid 쪽 경로를 태운다.
 
-**필요 산출물:**
+**`types`는 채우지 않는다.** index-v1에 타입 데이터가 없어(`build_index()`는 symbols·calls
+뿐) 섹션 자체를 없앴다 — 고정 64토큰으로 두면 없는 근거를 지어내는 것이고, 이름만 남기면
+다음 사람이 "채워야 하는데 비었다"로 읽는다.
+
+**바로잡음: 고정 64토큰이 오염시킨 것은 토큰 회계이지 E2 판정이 아니었다.**
+`gate.py`의 `graph_ok`는 `any(ev.kind is GRAPH for ev in usable)`로 **Evidence만** 보고
+캡슐 섹션을 읽지 않는다. E2의 실제 약점은 따로 있고 그대로 남아 있다 — 심볼 0개도
+`Evidence(ok=True)`라 **빈 그래프 위에서 E2가 열린다**(open-questions D13 ②).
+
+**실제 산출물 형식** (`indexer.INDEX_VERSION == "index-v1"`, 읽는 쪽이 모르는 버전은 거절):
 ```json
 {
-  "functions": [{"name","file","line_start","line_end"}],
-  "calls":     [{"caller","callee","line"}]
+  "version": "index-v1",
+  "files": ["parser.c"], "skipped": [], "parse_errors": [],
+  "symbols": [{"name": "parse_header", "file": "parser.c", "line_start": 9, "line_end": 22}],
+  "calls":   [{"caller": "parse_header", "callee": "memcpy", "file": "parser.c", "line": 20}],
+  "unresolved_calls": 0, "unresolved_symbols": 0
 }
 ```
-Evidence는 `payload_ref`로 경로만 들고 있으므로 **스키마 변경 없이 붙는다.**
+**스키마는 바뀌지 않았다 — 다만 `payload_ref`를 거치지도 않는다.** 인덱서 산출물의 호스트
+경로는 `container_tools.index_output_path()`가 조립하고 `index_graph`가 그것을 직접 읽는다.
+`Evidence.payload_ref`가 가리키는 것은 **도구 로그(`.log`)**이지 `index.json`이 아니다
+(`container_tools.py`·`fake_tools.py`). 구현 전에는 `payload_ref`로 나를 것으로 적어 뒀는데,
+결론(스키마 무변경)만 맞고 경로가 달라졌다.
 
-**연쇄 효과:**
-- 캡슐이 파일 단위 → 심볼 단위로 좁혀진다 (`Location`에 `symbol` / `line_start`)
-- Gate E1의 `location_ok`(`Location.overlaps`)가 작동하기 시작한다
-- **후보 수와 제거율의 분모가 바뀌므로 도입 전/후 지표는 직접 비교하지 않는다**
+**여기까지가 된 것이고, 아래는 아직 아니다 (후속):**
+- 캡슐은 여전히 **파일 단위**다. 심볼 단위(`Location`에 `symbol`/`line_start`)는 D13의 남은
+  항목이고 이번에 하지 않았다.
+- 따라서 Gate E1의 `location_ok`(`Location.overlaps`)는 **아직 작동하지 않는다.**
+- 그 작업이 들어오면 **후보 수와 제거율의 분모가 또 바뀌므로** 그 전/후 지표를 직접
+  비교하지 않는다(§10).
 
 ---
 
@@ -123,12 +141,12 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
 중간 발표 DoD "`proven` 1건 이상 재현"은 PoV가 들어와야 성립한다.
 
 **남은 한계 2가지:**
-- `index`가 `clang -fsyntax-only`다. **call graph가 아니라 구문 검사 통과일 뿐인데
-  `EvidenceKind.GRAPH`는 그보다 강한 것을 주장한다**(D13). 이걸 두는 이유는 `index`가
-  실행 불가가 되면 E2의 `graph_ok`가 무너져 8단계가 영원히 도달 불가가 되기 때문이다.
-  **include 경로 설정이 필요한 실제 저장소에서는 이 명령이 실패해 GRAPH Evidence가 생기지
-  않고, 그러면 모든 Finding이 E2를 넘지 못한다.** 픽스처는 표준 헤더만 써서 통과한다.
-  tree-sitter 인덱서(T3)가 들어오면 이 다리를 걷어낸다.
+- ~~`index`가 `clang -fsyntax-only`다~~ — **걷어냈다(2026-08-14).** tree-sitter 인덱서가
+  실제 심볼 표와 호출 그래프를 낸다. 남은 것은 **빈 그래프도 `Evidence(ok=True)`라 심볼
+  0개 위에서 E2가 열린다**는 점이다(D13 ②). 그래프 자체도 근사이고 놓친 것은
+  `unresolved_calls`·`unresolved_symbols`가 세며, 그 값은 이제 `graph_index` trace
+  이벤트로 남는다 — 그전에는 아무도 집계할 수 없었다. **run당 최대 1건이고 0건일 수
+  있다**: 로더가 지연 로드라 후보가 하나도 4단계를 통과하지 못하면 이벤트가 아예 없다.
 - clang-tidy는 exit code만으로 "경고 발견"과 "컴파일 실패"를 구분하지 못한다. 출력의
   `clang-diagnostic-error` 표지로 가르는데 문자열 매칭이라 clang이 표기를 바꾸면 깨진다(D11).
 
@@ -414,7 +432,7 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 |---|---|---|
 | **D2** | `scout_threshold: 0.5`가 근거 없는 초기값 | 조건 간 비교 전 확정 필요. `cli.py`의 `PROVISIONAL_THRESHOLDS`가 `doctor`에서 경고. **2026-08-14 실측: benign 표본이 정확히 0.50으로 경계 통과.** 지금 바꾸지 않는다 — 픽스처가 떨어지도록 맞춘 값이 될 뿐이다 |
 | **D9** | 소스 저장소 우선 vs 펌웨어 우선 | 0·1단계 구현 순서가 갈린다 |
-| **D13** | 캡슐의 `callers`/`callees`를 무엇이 채우는가 | 1단계 인덱서 도입으로 해소 예정 |
+| **D13** | 캡슐의 `callers`/`callees`를 무엇이 채우는가 | **해소(2026-08-20)** — 인덱서 산출물이 `index_graph`를 거쳐 두 Retriever의 두 섹션을 채운다. 남은 것: `types`(index-v2 필요), 심볼 단위 캡슐, 빈 그래프의 E2, 조용한 절단 3종 |
 | D1 | B1/B1'/B3/B3' 라벨이 2×2와 파이프라인 두 축으로 사용됨 | `RunRecord.condition`에 `@2x2`/`@pipeline` 명시로 임시 봉합 |
 | D10 | 재평가 카운터가 run 범위 in-memory | 다중 run·resume 시 `requeue_limit_reached`가 성립 안 함 |
 | D11 | `Evidence`에 "발견 건수" 필드 부재 | **semgrep은 해소**: `--json` 결과 문서의 유무로 판정하므로 exit code 관례에 의존하지 않는다(2026-08-14 크래시가 "발견함"으로 집계된 사건 이후). **clang-tidy는 여전히 미해결** — 컴파일 실패와 경고 발견이 같은 exit code라 출력 문자열(`clang-diagnostic-error`)로 가른다 |
@@ -428,7 +446,53 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 ### 심볼 인덱스 도입 전/후 지표를 직접 비교하지 않는다
 
 현재 캡슐 대상은 **파일 단위**(`Location(file=...)`, symbol 없음)다.
-1단계 인덱서가 들어오면 심볼 단위로 좁혀지고 **후보 수와 제거율의 분모가 바뀐다.**
+심볼 단위로 좁혀지면 **후보 수와 제거율의 분모가 바뀐다.** 그때 Gate E1의 `location_ok`도
+비로소 작동을 시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다).
+
+### GPU 회계 수정(2026-08-17) 전/후 비용 지표를 직접 비교하지 않는다
+
+세 가지가 한꺼번에 바뀌었다:
+
+| 축 | 이전 | 이후 |
+|---|---|---|
+| 모델 호출의 GPU 시간 | **청구되지 않았다** (`ModelResult`에 필드가 없었다) | `gpu_ms`로 청구된다 |
+| 도구 시간 | `gpu_seconds`로 청구됐다 — **그 값의 0 아닌 부분은 전부 CPU 시간이었다** | `tool_ms`로 분리, 별도 예산(`Budget.tool_seconds`) |
+| 단위 | 초 단위 내림 (1초 미만은 버려졌다) | 밀리초 |
+
+→ **"finding 1건당 GPU-hour"의 분자가 다른 것을 세고 있었다.** 이전 값은 GPU를 가장 많이
+쓰는 경로(모델 호출)를 0으로 두고 GPU를 쓰지 않는 경로(semgrep·clang)를 세고 있었으므로,
+두 시점의 값은 크기 비교가 아니라 **정의 자체가 다르다.** 같은 표에 넣지 않는다.
+
+측정 여부는 이제 기록에 남는다 — `gpu_ms_source`가 실측인지 wall-clock 근사인지 가르고,
+실서빙 역할이 한 번도 못 잰 run은 `incomplete_fields()`가 비교표에서 제외한다(§8).
+
+### 그래프 섹션 연결(2026-08-20) 전/후 캡슐 크기를 직접 비교하지 않는다
+
+`callers`/`callees`가 **고정 64토큰에서 실측으로** 바뀌었고 `types`(역시 64)는 **사라졌다.**
+캡슐 크기는 예산 소진 경로와 제거율에 들어가므로 **이 변경 전후의 지표는 같은 축이 아니다.**
+
+바뀐 방향이 한쪽이 아니다:
+
+| 상황 | 이전 | 이후 |
+|---|---|---|
+| index.json 없음 (`dev_fake`·`dev_hybrid`) | 세 섹션 192토큰 | 섹션 **부재** (0토큰) |
+| index.json 있고 간선 많음 | 192토큰 | 실측 — 더 클 수도 작을 수도 |
+| index.json 있고 간선 0건 | 192토큰 | `tokens=0, items=0` 섹션 |
+
+`CAPSULE_POLICY_VERSION`을 올려(`v1`→`v2`, `hybrid-v1`→`hybrid-v2`) 캐시 키가 갈리므로
+**이전 실행의 캡슐 캐시와 섞이지는 않는다.** 섞이지 않는 것과 비교 가능한 것은 다르다.
+
+→ 인덱서 도입 때와 같은 종류의 단절이다. 두 시점의 "캡슐 1건당 토큰"과 그것에서 유도되는
+비용 지표(finding 1건당 GPU-hour)를 한 표에 넣지 않는다.
+
+### `items`가 전부인지 잘린 것인지는 캡슐만 봐서는 모른다
+
+`callers`/`callees`/`related` 모두 예산에 들어가는 만큼만 담고 `items`에 담은 수를 적는다.
+**`items=3`이 "간선이 3개"인지 "30개 중 3개만 들어갔다"인지 구별되지 않는다.**
+같은 종류가 셋이다 — `HybridRetriever.MAX_CHUNKS`(400) 절단이 `on_truncate` 콜백으로만
+드러나는 것, 그리고 `target_function`이 예산을 다 먹으면 그래프 섹션이 아예 발행되지 못해
+"인덱서가 안 돌았다"와 같은 모양이 되는 것(실측 임계: focused 32KB / expanded 96KB).
+셋 다 open-questions D13에 한 묶음으로 남겼다.
 
 ### tool_images digest는 런타임 사이에서도 아키텍처 사이에서도 비교할 수 없다
 
