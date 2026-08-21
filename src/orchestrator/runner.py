@@ -56,6 +56,7 @@ from src.orchestrator.trace import TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location
+from src.schemas.decision import Decision
 from src.schemas.enums import ArtifactKind, CapsuleLevel, FindingState, ReasonCode
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
@@ -185,6 +186,30 @@ class LateUsageHook:
         self._ctx.record_retrieval(component, result, candidates)
 
 
+class TruncateHookUnbound(RuntimeError):
+    """절단 훅이 RunContext에 연결되기 전에 불렸다."""
+
+
+class LateTruncateHook:
+    """`LateCacheHook`과 같은 조립 순서 문제를 같은 방식으로 메운다.
+
+    **바인딩 전 호출은 조용히 무시하지 않고 터뜨린다** — 이 이벤트가 새면 광역 수집이
+    상한에 걸려 잘린 run이 **"전부 봤다"와 구별되지 않는다.** 검색 범위를 모르는 것과
+    범위가 완전한 것은 다르다(`LateIndexHook`이 커버리지에 대해 편 논법과 같다).
+    """
+
+    def __init__(self) -> None:
+        self._ctx: RunContext | None = None
+
+    def bind(self, ctx: RunContext) -> None:
+        self._ctx = ctx
+
+    def __call__(self, collected: int, kept: int) -> None:
+        if self._ctx is None:
+            raise TruncateHookUnbound("절단 훅이 RunContext에 연결되기 전에 호출됐다")
+        self._ctx.record_retrieval_truncated(collected, kept)
+
+
 class IndexSummaryLike(Protocol):
     """인덱스 훅이 받는 것의 구조적 계약.
 
@@ -233,6 +258,9 @@ class _Accumulator:
     findings: dict[str, Finding] = field(default_factory=dict)
     evidences: dict[str, tuple[Evidence, ...]] = field(default_factory=dict)
     missings: dict[str, tuple[MissingEvidence, ...]] = field(default_factory=dict)
+    # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
+    # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
+    decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
     workdirs: dict[str, str] = field(default_factory=dict)
 
     def update(self, finding: Finding) -> None:
@@ -251,6 +279,7 @@ def run_pipeline(
     trace: TraceWriter,
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
+    truncate_hook: LateTruncateHook | None = None,
     usage_hook: LateUsageHook | None = None,
     index_hook: LateIndexHook | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -273,6 +302,8 @@ def run_pipeline(
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
+    if truncate_hook is not None:
+        truncate_hook.bind(ctx)
     if usage_hook is not None:
         usage_hook.bind(ctx)
     if index_hook is not None:
@@ -338,18 +369,25 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
     if last < Stage.CRITIC:
         return
     for finding in critic.select(ctx, state.in_state(FindingState.HYPOTHESIZED)):
-        after, _ = critic.run(
+        after, decision = critic.run(
             ctx,
             finding=finding,
             evidences=state.evidences.get(finding.finding_id, ()),
             missings=state.missings.get(finding.finding_id, ()),
         )
+        # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
+        state.decisions[finding.finding_id] = (decision,)
         state.update(after)
     if last < Stage.VALIDATE:
         return
     for finding in state.in_state(FindingState.VALIDATED):
         after, _ = validate.run(
-            ctx, finding=finding, workdir=state.workdirs.get(finding.finding_id, ".")
+            ctx,
+            finding=finding,
+            workdir=state.workdirs.get(finding.finding_id, "."),
+            evidences=state.evidences.get(finding.finding_id, ()),
+            missings=state.missings.get(finding.finding_id, ()),
+            decisions=state.decisions.get(finding.finding_id, ()),
         )
         state.update(after)
 

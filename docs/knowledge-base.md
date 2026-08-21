@@ -77,6 +77,19 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 }
 ```
 
+> **위 예시는 매니페스트 축만 보여 준다 (2026-08-21).** `callers`·`callees` 섹션에는
+> 프롬프트에 실릴 줄이 `body`로 함께 담기고, **`tokens`·`items`가 그 본문에서 계산한 값과
+> 일치해야 한다** — 어긋나면 스키마 검증기가 캡슐 생성을 거부한다:
+>
+>     {"kind": "callers", "tokens": 8, "items": 1,
+>      "body": ["parse_request src/http/server.c:214"]}
+>
+> 여기 `8`은 `len("parse_request src/http/server.c:214") // 4`다(`src/tokens.py`).
+> 위 예시처럼 `body`가 없는 섹션도 유효하다 — `target_function`의 원문은 캡슐이 담지 않고
+> 프롬프트를 만드는 쪽이 따로 읽으며, `static_signal`·`known_facts`는 데이터원이 아직
+> 붙지 않았다. **`body`가 비었다는 것은 "본문이 없다"가 아니라 "이 섹션은 본문을 여기
+> 담지 않는다"이다.**
+
 `level` 열거형: `light`(Scout용) | `expanded`(Auditor용) | `focused`(Critic용, 반박 축 관련 섹션만)
 
 > **위 예시는 목표 구성이고 `types`는 아직 코드가 내지 않는다 (2026-08-20).**

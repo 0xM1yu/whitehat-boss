@@ -115,6 +115,27 @@ def describe_target(target: Location) -> str:
 
 
 def describe_sections(capsule: ContextCapsule) -> str:
+    """캡슐 섹션의 **본문까지** 프롬프트에 렌더한다 (W1).
+
+    예전에는 `callers(312 tok)` 같은 **이름표만** 냈다. 그래서 D13이 실제 호출 그래프를
+    캡슐에 넣은 뒤에도 모델은 그것을 보지 못했고, "못 봐서 못 찾은 건지 봤는데 못 찾은
+    건지"가 구별되지 않았다 — 그 상태에서 잰 성능 수치는 하네스가 아니라 Fake 어댑터를
+    잰 값이다.
+
+    **같은 내용이 `build_facts()`의 사실 블록에도 간다.** 중복이 아니라 계약이다:
+    body.md가 "아래 JSON이 참조 가능한 사실 전부다"라고 못박으므로, 산문에만 있는 것은
+    모델이 무시해도 되는 값이 된다. `{{SOURCE}}`가 이미 같은 이유로 양쪽에 실린다
+    (`bench.sized_prompt` docstring이 그 2배 계상을 적어 뒀다).
+
+    **본문이 없는 섹션은 이름표로 남는다.** `target_function`(원문은 `{{SOURCE}}`가
+    싣는다)·`static_signal`·`known_facts`(데이터원이 아직 없다)가 그렇다 —
+    없는 본문을 지어내지 않는다.
+    """
     if not capsule.sections:
         return "(없음)"
-    return ", ".join(f"{section.kind}({section.tokens} tok)" for section in capsule.sections)
+    lines: list[str] = []
+    for section in capsule.sections:
+        counted = "" if section.items is None else f", {section.items}건"
+        lines.append(f"- {section.kind} ({section.tokens} tok{counted})")
+        lines.extend(f"    {entry}" for entry in section.body)
+    return "\n".join(lines)

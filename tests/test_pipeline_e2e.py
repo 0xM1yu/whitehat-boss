@@ -25,7 +25,7 @@ from src.config import PROMPTED_ROLES, load_config
 from src.ids import new_run_id
 from src.orchestrator import runner
 from src.orchestrator.runner import RunSpec
-from src.orchestrator.stages import Stage
+from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import FindingState, ReasonCode
@@ -315,6 +315,59 @@ def test_trace_actually_carries_the_volatile_fields(tmp_path: Path) -> None:
 
 
 # --- 3. 지표 산출 가능성 ----------------------------------------------------
+
+
+def test_evidence_gate_runs_at_all_three_stages(tmp_path: Path) -> None:
+    """`stages.GATE_STAGES`가 문서가 아니라 사실이어야 한다 (W3).
+
+    `gate.py`는 "`evaluate()`는 세 단계에서 각각 호출된다"고 단정하는데 8단계에는 호출이
+    **없었다.** `GATE_STAGES` 상수의 src/ 참조가 0건이었고, 코드가 문서를 배신하는
+    상태였다.
+    """
+    _, trace_path = _run(tmp_path)
+    events = _events(trace_path)
+
+    for stage in GATE_STAGES:
+        assert _of(events, "gate_eval", stage=stage), f"{int(stage)}단계에 게이트 판정이 없다"
+
+
+def test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools(tmp_path: Path) -> None:
+    """E4는 8단계에서만 성립한다. 그 단계가 게이트를 안 부르면 **영원히 집계되지 않는다.**
+
+    E4의 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데 그것을 만드는 단계가 8단계뿐이다
+    (`validate._call`). 그래서 이 등급이 trace에 나타난다는 것 자체가 W3이 닫혔다는 뜻이고,
+    그전에는 도구 검증 제거율의 분자가 **구조적으로** 0이었다.
+
+    **등급 값 자체를 고정하지 않는다** — 그것은 Fake 도구가 성공을 내주는 성질에 기대는
+    값이다. 고정하는 것은 "E4가 나타난다면 그 단계는 8이다"라는 관계다.
+    """
+    _, trace_path = _run(tmp_path)
+    graded = _of(_events(trace_path), "gate_eval")
+
+    e4 = [e for e in graded if e["data"]["grade"] == "E4"]
+    assert e4, "E4가 한 번도 안 나오면 8단계 게이트가 배선되지 않았다"
+    assert {e["stage"] for e in e4} == {int(Stage.VALIDATE)}
+    assert all(e["data"]["p4"] for e in e4)
+
+
+def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
+    """등급은 근거가 쌓이며 올라가는 값이다. 8단계가 6·7단계보다 낮으면 배선이 틀렸다.
+
+    8단계 게이트에 앞 단계 Evidence·Decision을 안 넘기면 정확히 이 증상이 난다 —
+    2단계 static 근거가 `usable`에서 빠져 `p1`이 거짓이 되고, Critic 판정이 없어 `p3`도
+    거짓이 된다. **낮아진 등급은 예외가 아니라 조용히 틀린 값으로 기록된다.**
+    """
+    _, trace_path = _run(tmp_path)
+    order = ["E0", "E1", "E2", "E3", "E4"]
+
+    seen = [
+        (e["stage"], order.index(e["data"]["grade"]))
+        for e in _of(_events(trace_path), "gate_eval")
+        if e["subject_id"] == "find_0001"
+    ]
+
+    assert len(seen) == len(GATE_STAGES)
+    assert [grade for _, grade in seen] == sorted(grade for _, grade in seen)
 
 
 def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
