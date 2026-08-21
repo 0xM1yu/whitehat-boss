@@ -238,7 +238,7 @@ agent:
 | P6 | `condition`에 정의 축을 포함(`B3prime@pipeline`) | [evaluation.md](evaluation.md) §2.2가 이미 지적한 라벨 충돌. D1이 확정될 때까지 두 축을 구분해 기록해 둔다 |
 | P7 | 상태 열거형은 하나, 객체별 허용 값은 `Literal`로 제약 | [architecture.md](architecture.md) §4의 상태 머신은 하나의 체인인데 이 절은 Candidate와 Finding에 각각 `state`를 둔다. 열거형을 쪼개면 전이 추적이 끊기므로, 열거형은 하나로 두고 Candidate는 `{candidate, triaged, queued}`, Finding은 `{hypothesized, queued, validated, proven, reported}`로 좁혔다 |
 | P8 | `under_review` 같은 중간 상태를 두지 **않음** | [disclosure-policy.md](disclosure-policy.md)의 2인 검증은 상태 전이가 아니라 사람 승인 게이트다. 자동 전이가 없는 상태를 상태 머신에 넣으면 단계별 제거율 지표가 오염된다 |
-| P9 | 프롬프트 버전은 `v1`부터 시작 | 위 예시의 `v2`/`v3`/`v4`는 [engineering-guide.md](engineering-guide.md) §2의 디렉터리 예시에서 온 값이다. 실제 프롬프트는 아직 없으므로 v1에서 시작한다 |
+| P9 | 프롬프트 버전은 `v1`부터 시작 | 실제 프롬프트는 아직 없으므로 v1에서 시작한다([engineering-guide.md](engineering-guide.md) §2의 디렉터리 예시도 전부 `v1`이다) |
 
 검토가 필요한 미해결 항목:
 
@@ -255,4 +255,3 @@ agent:
 5. 프롬프트 변경은 [evaluation.md](evaluation.md)의 고정 표본에서 회귀 측정 후 반영한다.
 
 > 2026-08-08 Harness v1 스캐폴드 구현 중 발견된 불일치와 제안 사항. 팀 검토 필요.
-</content>
