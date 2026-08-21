@@ -76,7 +76,7 @@ def run_bench(
     contexts: Sequence[int] = DEFAULT_CONTEXTS,
 ) -> dict[str, object]:
     """프로필의 실서빙 역할을 A~E로 재고 §3 체크리스트 요약까지 붙여 돌려준다."""
-    wanted = list(roles) if roles else list(PROMPTED_ROLES)
+    wanted = list(roles) if roles else [r for r in PROMPTED_ROLES if r in config.profile.roles]
     measured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     results: dict[str, object] = {}
     for role in wanted:
