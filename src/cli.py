@@ -324,6 +324,8 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
     """
     checks: list[Check] = []
     for role in PROMPTED_ROLES:
+        if role not in config.profile.roles:
+            continue  # 이 프로필이 안 쓰는 역할(예: single-pass 전용 single)은 건너뛴다
         version = config.model_for(role).prompt_template_version
         try:
             load_prompt(Role(role), version)
@@ -443,6 +445,7 @@ def _prefix_tokens(config: HarnessConfig) -> int:
         len(load_prompt(Role(role), config.model_for(role).prompt_template_version).prefix)
         // _CHARS_PER_TOKEN
         for role in PROMPTED_ROLES
+        if role in config.profile.roles
     ]
     return sum(sizes) // len(sizes)
 

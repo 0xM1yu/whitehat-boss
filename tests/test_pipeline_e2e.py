@@ -571,6 +571,9 @@ def test_describe_wiring_matches_what_build_deps_makes(profile: str, tmp_path: P
         "state_store": type(deps.store).__name__,
     }
     for role in PROMPTED_ROLES:
+        # single-pass 전용 역할은 이 프로필의 build_deps가 만들지 않는다
+        if role not in config.profile.roles:
+            continue
         actual[role] = type(deps.models.client_for(role)).__name__
     if config.profile.adapters.retriever == "hybrid":
         actual["embedding"] = type(deps.retriever.embedder).__name__
