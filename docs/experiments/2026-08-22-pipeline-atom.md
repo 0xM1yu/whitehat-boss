@@ -37,7 +37,7 @@
 | 1단계 인덱서 산출물 로드 | **성립** — `graph_index status=loaded`, 심볼 4 / 호출 5 / unresolved 0 |
 | 캡슐 그래프 섹션 본문 적재(W1) | **데이터 경로만 성립** — `expanded` 캡슐에 본문이 실렸다. **모델 판단에 미친 영향은 확인되지 않았다**(§3 해석 ⑤) |
 | 8단계 게이트 재판정(W3) | **성립** — stage 8에 `gate_eval`이 남았다 |
-| 장부 합산 | **일치** — `model_call` 4건의 합이 최종 `budget`과 같다 |
+| 장부 합산 | **일치** — `model_call` 4건의 합이 최종 `budget`과 같다. **2026-08-22 추가**: `tool_call` 9건의 합도 `tool_ms` 3,804와 정확히 같다(§3 해석 ①') |
 | prefix cache | **장부는 0, 서버는 19.9%** — [open-questions.md](../open-questions.md) R6이 `cli run` 경로에서도 성립 |
 | 탐지 품질 | **판정 불가** — auditor·critic이 Fake이고 표본이 2건이다 |
 
@@ -136,6 +136,23 @@ cap_0002 expanded parser.c  target_function(146, body[])
 세 캡슐 모두 target = {file, symbol: null, line_start: null, line_end: null}
 ```
 
+**`tool_call` (2026-08-22 검증에서 `trace.jsonl`을 열어 확보)**
+
+`argv`는 **요청 argv**다 — `context.call_model` 옆의 `call_tool`이 `argv=" ".join(args.argv)`로 요청을 싣고, 실제 컨테이너 명령은 `container_tools.commands_for()`가 도구 이름과 소스에서 따로 조립한다. 8단계 두 줄의 `argv`가 같아 보이는 것이 그 때문이다.
+
+```
+stage 1  index       238ms  ok=true   exit 0   index --callgraph .
+stage 2  semgrep     955ms  ok=true   exit 1   semgrep --quiet parser.c
+stage 2  clang-tidy  274ms  ok=true   exit 1   clang-tidy --quiet parser.c
+stage 2  build       252ms  ok=true   exit 0   build --quiet parser.c
+stage 2  semgrep     931ms  ok=true   exit 1   semgrep --quiet util.c
+stage 2  clang-tidy  256ms  ok=true   exit 1   clang-tidy --quiet util.c
+stage 2  build       255ms  ok=true   exit 0   build --quiet util.c
+stage 8  build       286ms  ok=true   exit 0   build ./build.sh --sanitize=address ./poc parser.c   find_0001
+stage 8  asan        357ms  ok=false  exit 1   asan  ./build.sh --sanitize=address ./poc parser.c   find_0001
+                            error: "asan: 빌드 단계에서 끊겨 프로그램이 실행되지 않았다"
+```
+
 **vLLM 서버 로그**
 
 ```
@@ -147,6 +164,10 @@ Prefix cache hit rate: 19.9%
 **① 장부가 네 호출을 전부 세었다.**
 `1459+979+1516+435 = 4389`, `164+171+149+71 = 555`, `4814+3502 = 8316`.
 세 축 모두 `model_call` 합과 최종 `budget`이 정확히 같다. 새는 호출이 없다.
+
+**①' 도구 시간도 같다 — 2026-08-22에 확인했다.**
+`238+955+274+252+931+256+255+286+357 = 3804`. `tool_call` 아홉 건의 `wall_ms` 합이 최종 `budget`의 `tool_ms`와 정확히 같다.
+**이 축은 기록 당시 합만 있었고 내역이 없었다.** 모델 호출 쪽은 처음부터 대조됐지만 도구 쪽은 대조된 적이 없었는데, 이제 됐다.
 
 **② `gpu_ms`가 실서빙 호출에만 있다.**
 Fake 두 호출은 `None`이다 — 세는 것은 "GPU를 안 썼다"가 아니라 **"안 쟀다"**이고, 그것이
@@ -190,6 +211,22 @@ Fake 두 호출은 `None`이다 — 세는 것은 "GPU를 안 썼다"가 아니�
 stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작한다. 다만 등급을 **소비**하는
 쪽은 여전히 그대로다([open-questions.md](../open-questions.md) D18).
 
+**⑧' 8단계 asan이 실패한 것은 결함이 아니다 — 그러나 넘어갈 일도 아니다.**
+같은 단계의 `build`는 `ok=true exit 0`인데 바로 다음 `asan`이 `ok=false`다. **두 도구가 같은 빌드를 도는 것이 아니다**: `commands_for()`가 `build`를 `clang -c -g -O1`(오브젝트까지, 링크 없음)로, `asan`을 `clang -fsanitize=address,undefined … -o {SCRATCH}/asan.bin` + 그 바이너리 실행 **두 명령**으로 조립한다. `-c`는 `main` 없이 통과하고 실행 파일 링크는 통과하지 못한다 — **픽스처 두 파일에 `main`이 없다.** 실패 문구도 거기서 나온다: `_RUNTIME_TOOLS` 분기가 `len(steps) < total`일 때 "빌드 단계에서 끊겨 프로그램이 실행되지 않았다"를 돌려주므로 **끊긴 것은 `asan` 자신의 링크 단계**다. `container_tools`의 모듈 docstring이 이미 같은 말을 적어 뒀다 — "지금 픽스처에는 `main`이 없어 링크되지 않으므로 **E4는 여전히 도달 불가**다".
+
+**모르는 것**: 그 clang이 어떤 링크 에러로 죽었는지는 이 데이터에 없다. trace의 `exit 1`은 판정기가 돌려준 값이고 `_EXEC_FAILED = (125, 126, 127)`에 안 걸렸으므로 "실행 실패가 아니라 빌드 중단"까지만 말할 수 있다. 에러 원문은 Evidence 로그에 있고 열지 않았다.
+
+**게이트에 미친 영향은 확실하다.** `gate.py`가 `usable = [ev for ev in evidences if ev.ok]`로 거르고 `"p4": any(ev.kind in _RUNTIME_KINDS for ev in usable)`이므로, `asan`이 `ok=False`라 `usable`에서 빠지고 **p4가 False**다. **stage 8이 E3에 머문 구체 근거가 이것이다.** [open-questions.md](../open-questions.md) **D18과는 층이 다르다** — 이쪽은 *등급이 왜 E3인가*(게이트)이고 D18은 *그 E3가 왜 소비되지 않는가*(정책)다.
+
+**여기서 멈추면 안 되는 이유 — p4는 구조적으로 닫혀 있다.** `_RUNTIME_KINDS`(`sanitizer`/`crash`/`poc_run`)를 내는 도구는 `TOOL_KINDS`에서 **`asan`과 `poc` 둘뿐**이고(`crash`는 생산자가 아예 없다), **둘 다 닫혀 있다**:
+
+| 경로 | 왜 닫혀 있나 |
+| --- | --- |
+| `asan` | `main` 없는 픽스처에서 링크 실패 → `ok=False` → `usable`에서 빠진다 |
+| `poc` | `commands_for()`가 `{SCRATCH}/poc` 실행을 내는데 **그 파일을 만드는 주체가 없다**(`container_tools` 주석, [STATUS.md](../../STATUS.md) §5 PoV) |
+
+→ **E4는 지금까지 어떤 run에서도 성립한 적이 없다.** 결함이 아니라 **측정 타당성의 문제**다. 등급 분포나 단계별 제거율을 논할 때 E4는 *분자가 0*인 것이 아니라 **분자가 될 수 없는 상태**다. 둘을 같은 칸에 넣으면 "재현까지 간 Finding이 없다"가 "재현 경로가 열려 있는데 아무도 못 갔다"로 읽힌다. [STATUS.md](../../STATUS.md) §10이 추적하는 분모 변화와 같은 계열의 사실이다.
+
 **⑨ prefix cache: 서버는 19.9%, 장부는 0.**
 `model_call` 네 건 모두 `cached 0`인데 같은 run의 vLLM 서버는 `Prefix cache hit rate: 19.9%`를
 찍었다. R6이 지금까지 `cli bench` 경로에서만 관측됐는데 **`cli run` 경로에서도 같다**는
@@ -222,18 +259,18 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 | run 산출물 보존 여부 | **보존됨** — **R7 미실현** | `ls` |
 | `tool_images` digest + 종류 | **`harness-tools:v1` = `sha256:b5d7048b…`** · docker | `run_manifest.json` |
 | 모델 비교표 제외 판정 | **1건** — `kb_snapshot`이 자리표시자(`kb-none`)다 | `runner.incomplete_fields()` |
+| `tool_call` 개별 항목 | **9건** — §3 근거 로그. 합이 `tool_ms` 3,804와 **일치** | `trace.jsonl` |
 
 **비교표 제외 사유가 하나뿐인 것이 관측이다.** `tool_images`가 차 있고 `repo_dirty`가 false이며 `device`가 `atom`이므로, 남은 것은 KB 미구축 하나다 — 즉 **KB가 생기면 이 run은 비교표에 들어갈 수 있는 상태**다.
 
 ### 5-2. 여전히 미측정
 
-**못 잰 값을 0으로 채우지 않는다.** 아래 둘은 **영구**다 — 시간이 지나 관측 기회가 사라졌다.
+**못 잰 값을 0으로 채우지 않는다.** **앞의 두 행은 영구다** — 시간이 지나 관측 기회가 사라졌다. 뒤의 두 행은 원자료를 확보하면 아직 쓸 수 있다.
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
 | **동시에 떠 있던 다른 서버** | **영구.** 검증 시점(18:15Z)에는 8001 하나뿐이었으나 이 run은 16:42Z이고 **서버 기동 시각을 찍지 않아** 같은 프로세스임을 증명할 수 없다 | 이 run에 대해서는 **없다.** 다음 실험에서 `ss -ltnp`를 그때 적는다 |
 | **기동 조건 ①`CPATH` ②`VLLM_ATTENTION_BACKEND` 지정 여부** | **영구.** 위와 같은 이유 — 18:15Z의 `/proc/<pid>/environ` 덤프를 16:42Z의 조건으로 옮길 수 없다 | 이 run에 대해서는 **없다.** [README.md](README.md) 미확정 #2의 입력은 검증 run 쪽에서 나왔다 |
-| `tool_call` 개별 항목 | trace를 열지 않았다 — `tool_ms 3804`이라는 합만 있다. **파일은 살아 있다**(18,625 B) | `grep tool_call /srv/tenants/ext01/artifacts/run_20260821_0004/trace.jsonl` |
 | **`dev_docker` run 2건 (같은 날)** | **미수록** — 원자료가 이 기록에 없다 | 해당 run 디렉터리의 `trace.jsonl`·`run_manifest.json`을 확보해 별도 §를 추가하거나 별도 보고서로 연다 |
 | **`cli bench` 1건 (같은 날)** | **미수록** — stdout JSON을 보존하지 않았다 | 재실행 시 stdout을 파일로 받는다. [README.md](README.md)가 이미 같은 전례("`bench` stdout을 놓쳐 측정 기록이 재구성본이 됐다")를 적고 있다 |
 
@@ -260,7 +297,7 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 
 | 우선순위 | 항목 | 현황 |
 | --- | --- | --- |
-| 높음 | §5의 `run_manifest.json` 파생 항목 5개 확보 | 산출물이 살아 있으면 즉시 |
+| ~~높음~~ | ~~§5의 `run_manifest.json` 파생 항목 5개 확보~~ | **2026-08-22 완료** — 산출물이 살아 있었다(§5-1). `tool_call` 내역도 함께 확보했다 |
 | 높음 | **D19 — 프롬프트 본문을 run 산출물에 남긴다** | **이 보고서와 같은 PR에서 구현한다.** 그러면 다음 run부터 §3 해석 ⑤가 답 가능해진다 |
 | 높음 | **D20 — scout이 그래프를 못 보는 것이 의도인가** | 이 보고서에서 신설. 결정 전에는 `LEVEL_SECTIONS`를 건드리지 않는다 |
 | 중간 | auditor·critic 실서빙 | 품질 판정의 전제. 지금은 Fake라 제거율이 성립하지 않는다 |
