@@ -216,6 +216,23 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 모두 붙여 fp8 4B와 bf16 0.6B를 각각 띄운다. 확정 조건은 **양쪽 다 기동하고,
 `--enforce-eager` 없이도 뜨는 것**이다.
 
+> **2026-08-22 — 좁혀진 것은 "②가 필수인가"이지 "셋을 합칠 수 있는가"가 아니다.**
+> [파이프라인 보고서](2026-08-22-pipeline-atom.md) 검증 run(`run_20260821_0007`)의 서버
+> 프로세스에서 `/proc/<pid>/environ`을 읽었더니 **`CPATH`와 `VLLM_USE_DEEP_GEMM=0`은
+> 있고 `VLLM_ATTENTION_BACKEND`는 없었다.** 그 상태로 fp8 4B가 `--enforce-eager` 없이
+> 떴고 파이프라인이 완주했다(argv: `--gpu-memory-utilization 0.2 --max-model-len 32768
+> --enable-prefix-caching`).
+>
+> → **fp8 4B에 대해 ②는 필수가 아니다.** bf16 0.6B에 대해서는 여전히 모른다.
+>
+> **이 관측이 #2를 확정하지는 않는다.** #2가 묻는 것은 셋을 **동시에** 준 조합이
+> 성립하는가인데, 셋을 동시에 준 서버는 아직 없다. 위 확정 방법은 그대로 유효하다.
+>
+> **덤프는 전량이 아니다.** 필터가 `^(VLLM_|CPATH=|CUDA_VISIBLE|LD_LIBRARY_PATH=)`라
+> 기동 명령에 있던 `NCCL_SOCKET_IFNAME=lo`·`GLOO_SOCKET_IFNAME=lo`는 **안 찍힌 것이지
+> 미지정이 아니다.** `VLLM_ATTENTION_BACKEND` 판정만 이 덤프로 성립한다 — 그 이름은
+> `VLLM_` 접두라 지정됐다면 필터를 통과했을 것이기 때문이다.
+
 ### #3 검색 실험의 서빙 모델 revision 3건
 
 `Qwen3-0.6B` · `Qwen3-Embedding-0.6B` · `Qwen3-Reranker-0.6B` 전부 **미기재**다.
