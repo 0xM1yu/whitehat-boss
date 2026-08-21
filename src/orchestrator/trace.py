@@ -17,6 +17,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
 | 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
+| 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
@@ -71,6 +72,16 @@ class EventKind(StrEnum):
     TRANSITION = "transition"
     MODEL_CALL = "model_call"
     RETRIEVAL_CALL = "retrieval_call"
+    # 광역 수집이 `HybridRetriever.MAX_CHUNKS`(400)에 걸려 잘렸다.
+    #
+    # **이 이벤트가 없으면 "안 잘렸다"이다.** 잘린 run에서만 남으므로 0건이 정상이고,
+    # 그래서 `retrieval_call`처럼 분모로 쓸 수 없다. 이벤트가 생기기 전에는 절단이
+    # `on_truncate` 콜백에만 있었고 오케스트레이터가 그 훅을 안 받아, **조용히 잘린 것이
+    # "전부 봤다"로 읽혔다**(D13, W7).
+    #
+    # `retrieval_call`과 합치지 않는다 — 그쪽은 호출 1건당 1행이고 이쪽은 수집 1회당
+    # 1행이라 분모가 다르다. `candidates`라는 이름도 겹치지 않게 `collected`를 쓴다.
+    RETRIEVAL_TRUNCATED = "retrieval_truncated"
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"

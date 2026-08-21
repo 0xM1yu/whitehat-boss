@@ -5,9 +5,10 @@ knowledge-base.md §3의 2단계 구조(광역 수집 → reranker 재선별)는
 텍스트의 길이로 섹션 토큰을 채운다 — **토큰 수가 실제 내용에서 나와야** 캡슐 예산 초과
 경로와 cache hit ratio가 진짜 값이 된다.
 
-`ContextCapsule`은 섹션 텍스트를 담지 않는 **매니페스트**다(스키마에 본문 필드가 없다).
-프롬프트에 실을 원문은 호출자가 `read_symbol_source()`로 따로 읽는다. 이 분담은
-`src/schemas/`를 넓히지 않으려는 선택이다(roadmap.md §3 전원 공지 대상).
+`ContextCapsule`은 **매니페스트이면서 그래프 섹션의 본문을 담는다.** `callers`/`callees`는
+`CapsuleSection.body`에 줄이 그대로 실리고, 스키마 검증기가 `tokens`와 그 줄들의 일치를
+강제한다. `target_function`의 원문은 여전히 담지 않는다 — 호출자가 `read_symbol_source()`로
+따로 읽는다. 파일 전체를 캡슐에 복사하면 매니페스트가 아니라 사본이 된다.
 
 **`callers`/`callees`는 1단계 인덱서 산출물에서 온다**(`adapters/index_graph.py`, D13).
 `HybridRetriever`와 **같은 모듈**을 쓴다 — 두 구현이 같은 index.json에서 다른 섹션을 내면
@@ -20,10 +21,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 from src.adapters.index_graph import (
-    CHARS_PER_TOKEN,
     GRAPH_SECTION_KINDS,
     GraphIndex,
-    fit_names,
+    graph_section,
 )
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retriever import Query
@@ -32,6 +32,7 @@ from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
+from src.tokens import estimate_tokens
 
 # knowledge-base.md §6: capsule cache 키에 들어가는 정책 버전. 캡슐 구성 규칙이 바뀌면 올린다.
 #
@@ -130,22 +131,25 @@ class FakeRetriever:
             if kind in present:
                 continue
             if kind in GRAPH_SECTION_KINDS:
-                names = self.graph.names_for(kind, capsule.target.file)
-                if names is None:
+                # 그래프 분기는 `HybridRetriever.expand()`와 **같은 함수**를 부른다.
+                section, stop = graph_section(
+                    kind, self.graph, capsule.target.file, remaining
+                )
+                if section is None:
+                    if stop:
+                        # 붙일 것은 있는데 예산이 없다. "더 붙일 것이 없음"과 다른
+                        # 사건이므로 0건 섹션으로 위장하지 않고 확장을 멈춘다.
+                        break
                     # 그래프가 없다. 없는 섹션을 지어내지 않고 다음 후보로 넘어간다.
                     continue
-                tokens, items = fit_names(names, remaining)
-                if names and items == 0:
-                    # 붙일 것은 있는데 예산이 없다. "더 붙일 것이 없음"과 다른 사건이므로
-                    # 0건 섹션으로 위장하지 않고 확장을 멈춘다.
-                    break
             else:
-                tokens, items = min(_AUX_SECTION_TOKENS, remaining), None
+                tokens = min(_AUX_SECTION_TOKENS, remaining)
                 if tokens <= 0:
                     break
-            added = [*capsule.sections, CapsuleSection(kind=kind, tokens=tokens, items=items)]
+                section = CapsuleSection(kind=kind, tokens=tokens)
+            added = [*capsule.sections, section]
             return capsule.transition(
-                sections=[section.model_dump() for section in added],
+                sections=[existing.model_dump() for existing in added],
                 expansion_count=capsule.expansion_count + 1,
                 evidence_refs=[*capsule.evidence_refs, need.missing_id],
             )
@@ -202,26 +206,31 @@ def _sections_for(
     used = 0
     for kind in LEVEL_SECTIONS[level]:
         remaining = budget - used
-        items: int | None = None
-        if kind == "target_function":
-            cost = max(1, len(source) // CHARS_PER_TOKEN)
-        elif kind in GRAPH_SECTION_KINDS:
-            names = graph.names_for(kind, target_file)
-            if names is None:
+        if kind in GRAPH_SECTION_KINDS:
+            # 그래프 분기는 `HybridRetriever._sections_for()`와 **같은 함수**를 부른다.
+            # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
+            section, stop = graph_section(kind, graph, target_file, remaining)
+            if section is None:
+                if stop:
+                    # 붙일 것은 있는데 예산이 없다.
+                    break
                 # 인덱서가 안 돌았거나 형식이 어긋났다 — 섹션을 만들지 않는다.
                 # 0건 섹션으로 내면 "그래프가 비었다"와 구별되지 않는다.
                 continue
-            cost, items = fit_names(names, remaining)
-            if names and items == 0:
-                break
-        else:
-            cost = _AUX_SECTION_TOKENS
+            sections.append(section)
+            used += section.tokens
+            continue
+        cost = estimate_tokens(source) if kind == "target_function" else _AUX_SECTION_TOKENS
         # **`cost == 0`은 "예산이 없다"가 아니라 "그래프를 봤는데 간선이 0건이다"이다.**
         # 두 사건을 한 조건으로 묶으면(예전의 `if tokens <= 0: break`) 빈 그래프가 예산
         # 소진으로 기록되고, 그러면 캡슐만 보고는 인덱서가 안 돈 것과 구별되지 않는다.
+        #
+        # 그래프 섹션이 위에서 먼저 빠지므로 **아래 `min()`은 본문 있는 섹션에 닿지
+        # 않는다.** 닿으면 줄은 그대로 두고 토큰만 깎는 것이 되어 `CapsuleSection`의
+        # 검증기에서 죽는다 — 그 사실이 두 함수 사이의 암묵이 아니라 구조로 있어야 한다.
         if cost > 0 and remaining <= 0:
             break
         tokens = min(cost, remaining)
-        sections.append(CapsuleSection(kind=kind, tokens=tokens, items=items))
+        sections.append(CapsuleSection(kind=kind, tokens=tokens))
         used += tokens
     return sections

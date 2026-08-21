@@ -28,7 +28,7 @@ from src.orchestrator import gate, state_machine
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.gate import GateResult
 from src.orchestrator.policy import Action, RoutingPolicy, RoutingRequest
-from src.orchestrator.stages import Stage
+from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.common import Location
 from src.schemas.decision import Decision
@@ -253,7 +253,17 @@ class RunContext:
         """순수 판정(gate.evaluate) + `gate_eval`·`gate_ambiguous` 기록.
 
         `ambiguous`는 기록만 하고 모델을 호출하지 않는다 — 등급은 E1로 확정된다.
+
+        **`stage`는 `GATE_STAGES` 안이어야 한다.** E3은 Critic 출력이, E4는 도구 검증
+        로그가 있어야 성립하므로 게이트는 그 세 단계에서만 뜻이 있다. 그 밖에서 부르면
+        아직 성립할 수 없는 술어를 거짓으로 기록하게 되고, 그 행이 제거율의 분모에
+        섞인다. 여기서 막지 않으면 `GATE_STAGES`는 **아무도 안 보는 상수**가 된다 —
+        실제로 그랬고, 그동안 8단계에는 호출이 아예 없었다(W3).
         """
+        if stage not in GATE_STAGES:
+            raise ValueError(
+                f"게이트는 {[int(s) for s in GATE_STAGES]}단계에서만 판정한다: {int(stage)}"
+            )
         result = gate.evaluate(
             finding, evidences, decisions, missings, candidate_location=candidate_location
         )
@@ -331,6 +341,23 @@ class RunContext:
             candidates=candidates,
         )
         self.ledger.charge(result.usage, stage=stage, gpu_ms=result.gpu_ms)
+
+    def record_retrieval_truncated(self, collected: int, kept: int) -> None:
+        """광역 수집 절단을 trace에 남긴다. Retriever의 `on_truncate` 훅에 연결된다.
+
+        **예산에는 청구하지 않는다.** 잘려 나간 조각은 임베딩에 넘어가지도 않았으므로
+        비용이 발생하지 않았고, 여기서 장부를 건드리면 `retrieval_call`이 이미 청구한
+        것과 겹쳐 센다. 이 이벤트가 남기는 것은 비용이 아니라 **범위**다.
+
+        "전부 봤다"와 "상한까지만 봤다"는 다른 사건인데, 이 훅이 배선되기 전에는 캡슐도
+        trace도 그 둘을 구별하지 못했다(D13, W7).
+        """
+        self.trace.emit(
+            EventKind.RETRIEVAL_TRUNCATED,
+            stage=self.current_stage,
+            collected=collected,
+            kept=kept,
+        )
 
     # --- 정책과 전이 ---
 

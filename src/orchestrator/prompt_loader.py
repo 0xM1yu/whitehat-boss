@@ -155,7 +155,20 @@ def build_facts(
         "ids": dict(ids),
         "artifact_id": artifact_id,
         "target": target.model_dump(mode="json") if target else None,
-        "capsule_sections": [section.kind for section in capsule.sections] if capsule else [],
+        # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
+        # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
+        # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
+        "capsule_sections": [
+            {
+                "kind": section.kind,
+                "tokens": section.tokens,
+                "items": section.items,
+                "lines": list(section.body),
+            }
+            for section in capsule.sections
+        ]
+        if capsule
+        else [],
         "source": source,
         "evidence": [
             {"evidence_id": ev.evidence_id, "kind": ev.kind.value, "ok": ev.ok} for ev in evidences

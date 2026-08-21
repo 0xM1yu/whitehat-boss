@@ -8,8 +8,19 @@
 (S1 계약, C4에서 확정). `blocking=True`인 이유: 모델이 이 ID를 참조했다는 것은 "코드에서
 확인 불가"라고 판단했다는 뜻이고, 그것이 곧 Evidence Gate E2가 막아야 할 상태다
 (계획 D-h: E2의 "guard 부재"를 blocking MissingEvidence 부재로 환원).
+
+## `callers` 사실은 캡슐에서 파생한다
+
+예전에는 `run(callers=...)` 인자였는데 러너가 **그것을 넘기지 않았다** — 항상 빈 튜플이라
+`FakeModelClient`의 `context.callers[0]` 분기가 죽은 코드였고, 실제 모델도 호출자 목록을
+받지 못했다(W4).
+
+인자를 되살리는 대신 없앴다. 캡슐이 이미 `callers` 섹션을 들고 이 함수에 들어오므로
+(D13, `index_graph`), 호출자에게 같은 정보를 다시 달라고 하면 **두 번째 데이터원**이
+생기고 그 둘이 갈릴 자리가 만들어진다. 여기서 파생시키면 갈릴 것이 없다.
 """
 
+from src.graph_entry import name_of
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.scout import describe_sections, describe_target
@@ -28,6 +39,11 @@ ROLE = Role.AUDITOR
 _NEED = "대상 경로를 코드만으로 확정할 수 없다: 정적분석 신호 또는 호출 그래프 근거"
 _HOW = "2단계 신호 수집을 대상 파일로 다시 실행하거나 index 도구로 호출자를 확인한다"
 
+# `callers` 사실을 뽑아 올 섹션. `index_graph.GRAPH_SECTION_KINDS`의 값과 같은 문자열인데
+# 그쪽은 어댑터라 import 할 수 없다(engineering-guide.md §3). 갈리면 사실 블록이 조용히
+# 비므로 `tests/test_nodes.py`가 두 값을 대조한다.
+CALLERS_SECTION = "callers"
+
 
 def run(
     ctx: RunContext,
@@ -35,7 +51,6 @@ def run(
     candidate: Candidate,
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...] = (),
-    callers: tuple[str, ...] = (),
 ) -> tuple[Finding, list[MissingEvidence]]:
     """가설 Finding과 그것이 요청한 MissingEvidence를 만들어 저장한다."""
     ids = {
@@ -50,7 +65,6 @@ def run(
             candidate=candidate,
             capsule=capsule,
             evidences=evidences,
-            callers=callers,
         )
         ctx.create(finding, reason=ReasonCode.AUDITOR_HYPOTHESIZED, stage=Stage.AUDITOR)
         missings = _materialize_missing(ctx, finding)
@@ -66,7 +80,6 @@ def _ask_model(
     candidate: Candidate,
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...],
-    callers: tuple[str, ...],
 ) -> Finding:
     template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
     source = ctx.read_source(capsule.target)
@@ -79,7 +92,7 @@ def _ask_model(
             capsule=capsule,
             source=source,
             evidences=evidences,
-            callers=callers,
+            callers=caller_names(capsule),
         ),
         candidate=_describe_candidate(candidate),
         target=describe_target(capsule.target),
@@ -102,6 +115,23 @@ def _ask_model(
         _queue_candidate(ctx, candidate, ReasonCode.SCHEMA_PARSE_FAILED)
         raise
     return result.value
+
+
+def caller_names(capsule: ContextCapsule) -> tuple[str, ...]:
+    """캡슐의 `callers` 섹션에서 **심볼 이름만** 뽑는다. 없으면 빈 튜플.
+
+    사실 블록의 `callers`는 `FakeContext.callers` 주석대로 "source→sink 경로 구성용"이라
+    맨 이름이 필요하고, 섹션 본문은 호출 **지점**(`main main.c:12`)이라 알갱이가 다르다.
+    같은 데이터원에서 나온 두 표현이므로 갈릴 수 없다 — 두 번째 데이터원을 만들지 않은
+    것이 요점이다.
+
+    같은 호출자가 여러 줄에서 나오면 한 번만 센다. `dict.fromkeys`는 순서를 지키므로
+    캡슐이 결정론적이면 이 값도 결정론적이다(engineering-guide.md §5).
+    """
+    for section in capsule.sections:
+        if section.kind == CALLERS_SECTION:
+            return tuple(dict.fromkeys(name_of(entry) for entry in section.body))
+    return ()
 
 
 def _queue_candidate(ctx: RunContext, candidate: Candidate, reason: ReasonCode) -> None:
