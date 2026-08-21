@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from src.adapters import index_graph
 from src.adapters.container_tools import _INDEX_SUFFIXES, INDEX_FILE, plan
 
 _INDEXER_PATH = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "indexer.py"
@@ -403,6 +404,16 @@ def test_index_no_longer_shells_out_to_clang() -> None:
 
 def test_version_is_stamped_so_readers_can_reject_unknown_formats() -> None:
     assert indexer.INDEX_VERSION == "index-v1"
+
+
+def test_the_reader_knows_the_version_this_script_writes() -> None:
+    """형식이 양쪽에 따로 있다 — 이 스크립트는 `src/`를 import 하지 않는다.
+
+    어긋나면 예외가 아니라 `unsupported_version`이 되고 **그래프 섹션이 통째로
+    사라진다.** 그 모양은 "인덱서가 안 돌았다"와 같아서 캡슐만 봐서는 구별되지 않는다.
+    `_INDEX_SUFFIXES` ↔ `_GRAMMARS`와 같은 종류의 이중화이고 같은 방식으로 막는다.
+    """
+    assert index_graph.SUPPORTED_INDEX_VERSION == indexer.INDEX_VERSION
 
 
 def test_script_runs_as_a_subprocess_and_exits_zero(sample: Path, tmp_path: Path) -> None:

@@ -46,6 +46,7 @@ from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
     DEFAULT_KB_SNAPSHOT,
     LateCacheHook,
+    LateIndexHook,
     LateUsageHook,
     RunResult,
     RunSpec,
@@ -375,6 +376,7 @@ def execute(
     """
     hook = LateCacheHook()
     usage_hook = LateUsageHook()
+    index_hook = LateIndexHook()
     trace = TraceWriter(run_id, stream=trace_stream)
     deps = build_deps(
         config,
@@ -383,6 +385,7 @@ def execute(
         artifacts_root=run_dir.parent,
         on_cache=hook,
         on_usage=usage_hook,
+        on_index=index_hook,
     )
     result = run_pipeline(
         spec,
@@ -395,6 +398,7 @@ def execute(
         run_dir=run_dir,
         cache_hook=hook,
         usage_hook=usage_hook,
+        index_hook=index_hook,
     )
     return result, deps
 

@@ -884,3 +884,59 @@ def test_an_unmeasured_served_role_is_named(tmp_path: Path) -> None:
     assert "auditor" not in warning  # Fake 역할은 교집합에서 빠진다
     assert "비교표에서 제외" in warning
     assert runner.unmeasured_gpu_warning({}) is None
+
+
+# --- 인덱서 산출물 연결 (D13) ---------------------------------------------------
+
+
+def test_some_profile_pairs_a_hybrid_retriever_with_a_real_indexer() -> None:
+    """이 조합이 없으면 `HybridRetriever`의 그래프 섹션 분기가 죽은 코드가 된다.
+
+    index.json을 내는 프로필은 전부 `retriever: fake`이고(dev_docker·dev_singularity·
+    local_balanced·b1_single), `dev_hybrid`는 `tool_runner: fake`라 산출물이 없다.
+    이 저장소는 "픽스처가 실전을 대표하지 못해 생긴 결함"을 이미 두 번 겪었다 —
+    clang의 include 경로와 tree-sitter 최상위 한 겹. 둘 다 테스트는 초록이었다.
+
+    프로필 **이름을 박지 않는다.** 조합으로 판정해야 이름이 바뀌어도 이 그물이 남는다
+    (`test_some_profile_actually_points_at_a_real_endpoint`와 같은 방식).
+    """
+    paired = [
+        profile
+        for profile in ALL_PROFILES
+        for adapters in [load_config(profile).profile.adapters]
+        if adapters.retriever == "hybrid" and adapters.tool_runner != "fake"
+    ]
+
+    assert paired, "hybrid Retriever가 실제 index.json을 읽는 프로필이 하나도 없다"
+
+
+def test_graph_index_is_traced_exactly_once_per_run(tmp_path: Path) -> None:
+    """`unresolved_*`가 trace에 남지 않으면 그 저장소의 그래프 커버리지를 사후에 못 센다.
+
+    **커버리지를 모르는 것과 커버리지가 완전한 것은 다르다.** `dev_fake`는 index.json이
+    없으므로 `status=missing`이 정답이고, 그 사실 자체가 기록되어야 한다.
+    """
+    run_dir = tmp_path / "run_20260901_0001"
+    run_dir.mkdir(parents=True)
+    spec = RunSpec(
+        condition="B3prime@pipeline",
+        target=TARGET,
+        started_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
+        cli.execute(
+            load_config("dev_fake"),
+            spec,
+            run_id=run_dir.name,
+            run_dir=run_dir,
+            trace_stream=stream,
+        )
+
+    events = [
+        json.loads(line)
+        for line in (run_dir / "trace.jsonl").read_text("utf-8").splitlines()
+        if json.loads(line)["kind"] == "graph_index"
+    ]
+
+    assert len(events) == 1, f"graph_index 이벤트가 {len(events)}건이다 — run당 1건이어야 한다"
+    assert events[0]["data"]["status"] == "missing"
