@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from src import cli
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import FakeRetriever
 from src.adapters.hybrid_retriever import HybridRetriever, read_symbol_source
@@ -21,11 +22,20 @@ from src.adapters.vllm_retrieval import (
 from src.config import ConfigError, load_config
 from src.ids import IdFactory
 from src.interfaces.retriever import Query
+from src.orchestrator.budget import BudgetLedger
+from src.orchestrator.context import RunContext
+from src.orchestrator.policy import FixedThresholdPolicy
+from src.orchestrator.runner import LateTruncateHook, RunSpec, TruncateHookUnbound
+from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
 
 RUN_ID = "run_test_0001"
+
+# `cli.execute()` 배선 검사에 쓰는 실제 대상 트리. 파이프라인은 dry-run으로 3단계까지만
+# 돈다 — 여기서 재는 것은 조립이지 분석 결과가 아니다.
+_TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 
 
 def _need(missing_id: str) -> MissingEvidence:
@@ -75,6 +85,31 @@ def corpus(tmp_path: Path) -> Path:
         )
     (tmp_path / "notes.txt").write_text("token token token\n", encoding="utf-8")
     return tmp_path
+
+
+def _bare_context(trace: TraceWriter) -> RunContext:
+    """훅이 붙을 최소 실행 문맥. 절단 이벤트가 trace까지 가는지만 본다."""
+    config = load_config("dev_fake")
+    deps = build_deps(
+        config,
+        run_id=RUN_ID,
+        source_root=_TARGET,
+        artifacts_root=_TARGET.parent,
+    )
+    return RunContext(
+        run_id=RUN_ID,
+        config=config,
+        models=deps.models,
+        retriever=deps.retriever,
+        tools=deps.tools,
+        store=deps.store,
+        ids=deps.ids,
+        trace=trace,
+        ledger=BudgetLedger(config.budget, trace),
+        policy=FixedThresholdPolicy(config.thresholds),
+        read_source=lambda target: "",
+        monotonic_ms=lambda: 0,
+    )
 
 
 def _retriever(root: Path, **kwargs) -> tuple[HybridRetriever, SpyEmbedder, SpyReranker]:
@@ -221,6 +256,60 @@ def test_truncation_is_reported_not_silent(corpus: Path) -> None:
     retriever.search(_query(), CapsuleLevel.EXPANDED)
 
     assert seen and seen[0][1] == 1
+
+
+def test_truncation_reaches_the_trace_not_just_the_callback(corpus: Path) -> None:
+    """훅이 trace 이벤트가 돼야 절단을 사후에 셀 수 있다 (W7).
+
+    `HybridRetriever`도 `build_deps()`도 이 훅을 받을 준비가 되어 있었는데
+    `cli.execute()`가 만들어 넘기지 않아, **절단이 아무 데도 안 남았다.**
+    """
+    trace = TraceWriter(RUN_ID)
+    hook = LateTruncateHook()
+    retriever, _, _ = _retriever(corpus, max_chunks=1, on_truncate=hook)
+    hook.bind(_bare_context(trace))
+
+    retriever.search(_query(), CapsuleLevel.EXPANDED)
+
+    truncated = [e for e in trace.events if e.kind is EventKind.RETRIEVAL_TRUNCATED]
+    assert len(truncated) == 1
+    assert truncated[0].data["kept"] == 1
+    assert truncated[0].data["collected"] > truncated[0].data["kept"]
+
+
+def test_truncate_hook_refuses_to_fire_before_it_is_bound() -> None:
+    """조용히 무시하면 절단 이벤트가 새고, 그러면 '안 잘렸다'와 구별되지 않는다.
+
+    나머지 세 훅(`LateCacheHook`·`LateUsageHook`·`LateIndexHook`)과 같은 계약이다.
+    """
+    with pytest.raises(TruncateHookUnbound):
+        LateTruncateHook()(400, 1)
+
+
+def test_cli_passes_the_truncate_hook_into_the_adapters(monkeypatch, tmp_path: Path) -> None:
+    """배선의 시작점이 `cli.execute()`다. 여기서 안 넘기면 나머지가 다 준비돼도 죽는다.
+
+    훅 자체가 아니라 **넘겼는가**를 본다 — `dev_fake`는 절단이 일어나지 않는 프로필이고,
+    이 결함은 절단 로직이 아니라 조립 순서에서 났다.
+    """
+    passed: dict[str, object] = {}
+    real = cli.build_deps
+
+    def spy(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        passed.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "build_deps", spy)
+    run_dir = tmp_path / "run_20260901_0001"
+    run_dir.mkdir(parents=True)
+    cli.execute(
+        load_config("dev_fake"),
+        RunSpec(condition="B3prime@pipeline", target=_TARGET, dry_run=True),
+        run_id=run_dir.name,
+        run_dir=run_dir,
+    )
+
+    assert isinstance(passed.get("on_truncate"), LateTruncateHook)
 
 
 # --- expand -------------------------------------------------------------------
