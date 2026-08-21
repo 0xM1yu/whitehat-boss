@@ -13,11 +13,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.adapters.container_tools import ContainerToolRunner
+from src.adapters.container_tools import ContainerToolRunner, index_output_path
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook, UsageHook
+from src.adapters.index_graph import GraphIndex, IndexHook
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
@@ -75,6 +76,24 @@ class _BuildArgs:
     on_cache: CacheHook | None = None
     on_truncate: TruncateHook | None = None
     on_usage: UsageHook | None = None
+    on_index: IndexHook | None = None
+
+    def graph_index(self) -> GraphIndex:
+        """1단계 인덱서 산출물을 읽을 로더.
+
+        **두 Retriever가 같은 것을 받는다.** 갈리면 같은 index.json에서 다른 캡슐이 나와
+        `dev_fake`↔`dev_docker` 비교가 오염된다(`index_graph` 모듈 docstring).
+
+        경로 조립을 여기서 하지 않고 `container_tools.index_output_path()`에 묻는다 —
+        쓰는 쪽과 읽는 쪽이 갈리면 예외가 아니라 파일을 못 찾는 상태가 되고, 그것은
+        "인덱서가 안 돌았다"로 기록된다.
+
+        `tool_runner: fake`인 프로필에서는 그 경로에 파일이 생기지 않는다. 그래도 같은
+        로더를 넘긴다 — 존재 판정은 로더가 하고 결과는 `status=missing`이다.
+        """
+        return GraphIndex(
+            index_output_path(self.artifacts_root, self.run_id), on_index=self.on_index
+        )
 
 
 @dataclass(frozen=True)
@@ -94,7 +113,14 @@ _RETRIEVERS: dict[str, _Wiring] = {
     "fake": _Wiring(
         FakeRetriever,
         lambda a: FakeRetriever(
-            root=a.source_root, ids=a.ids, run_id=a.run_id, on_cache=a.on_cache
+            root=a.source_root,
+            ids=a.ids,
+            run_id=a.run_id,
+            on_cache=a.on_cache,
+            # **index.json을 내는 프로필이 전부 이쪽이다**(dev_docker·dev_singularity·
+            # local_balanced·b1_single). 여기 그래프를 안 물리면 1단계 산출물을 아무도
+            # 읽지 않는다.
+            graph=a.graph_index(),
         ),
     ),
     # embedding·reranker의 실서빙 여부는 여기서 정하지 않는다 — 모델과 마찬가지로
@@ -111,6 +137,7 @@ _RETRIEVERS: dict[str, _Wiring] = {
             on_cache=a.on_cache,
             on_truncate=a.on_truncate,
             on_usage=a.on_usage,
+            graph=a.graph_index(),
         ),
     ),
 }
@@ -185,6 +212,7 @@ def build_deps(
     on_cache: CacheHook | None = None,
     on_truncate: TruncateHook | None = None,
     on_usage: UsageHook | None = None,
+    on_index: IndexHook | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다."""
     ids = IdFactory(run_id)
@@ -197,6 +225,7 @@ def build_deps(
         on_cache=on_cache,
         on_truncate=on_truncate,
         on_usage=on_usage,
+        on_index=on_index,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
     # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지
