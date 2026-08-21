@@ -128,7 +128,7 @@ def _context(source: str, **overrides: object) -> FakeContext:
         },
         "artifact_id": "art_0001",
         "target": TARGET,
-        "capsule_sections": ["target_function"],
+        "capsule_sections": [{"kind": "target_function", "tokens": 12}],
         "source": source,
         "evidence": [],
         "callers": ["recv_request"],
@@ -201,7 +201,7 @@ def test_auditor_omits_repro_spec_without_build_evidence() -> None:
 def test_auditor_requests_missing_evidence_without_static_signal() -> None:
     finding = FakeModelClient().complete(
         role=Role.AUDITOR,
-        prompt=_prompt(_context(VULNERABLE_C, capsule_sections=["target_function"])),
+        prompt=_prompt(_context(VULNERABLE_C, capsule_sections=[{"kind": "target_function"}])),
         schema=Finding,
     ).value
     assert finding.missing_evidence == ["mev_0001"]
