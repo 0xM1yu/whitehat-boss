@@ -47,6 +47,7 @@ from src.orchestrator.runner import (
     DEFAULT_KB_SNAPSHOT,
     LateCacheHook,
     LateIndexHook,
+    LateTruncateHook,
     LateUsageHook,
     RunResult,
     RunSpec,
@@ -375,6 +376,9 @@ def execute(
     `RunRecord.run_id`가 갈라질 자리였다 — 지금 고치는 결함보다 나쁜 상태다.
     """
     hook = LateCacheHook()
+    # **이 훅이 빠져 있던 것이 W7이다.** `build_deps()`도 `HybridRetriever`도 받을 준비가
+    # 되어 있었는데 여기서 만들어 넘기지 않아, `MAX_CHUNKS` 절단이 아무 데도 안 남았다.
+    truncate_hook = LateTruncateHook()
     usage_hook = LateUsageHook()
     index_hook = LateIndexHook()
     trace = TraceWriter(run_id, stream=trace_stream)
@@ -384,6 +388,7 @@ def execute(
         source_root=spec.target,
         artifacts_root=run_dir.parent,
         on_cache=hook,
+        on_truncate=truncate_hook,
         on_usage=usage_hook,
         on_index=index_hook,
     )
@@ -397,6 +402,7 @@ def execute(
         trace=trace,
         run_dir=run_dir,
         cache_hook=hook,
+        truncate_hook=truncate_hook,
         usage_hook=usage_hook,
         index_hook=index_hook,
     )
