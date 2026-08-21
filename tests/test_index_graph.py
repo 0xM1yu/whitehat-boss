@@ -30,11 +30,16 @@ from src.adapters.index_graph import (
 )
 from src.adapters.vllm_retrieval import FakeEmbeddingClient, FakeRerankerClient
 from src.config import load_config
+from src.graph_entry import name_of, render_entry
 from src.ids import IdFactory
 from src.interfaces.retriever import Query
+from src.orchestrator.nodes import auditor
+from src.orchestrator.nodes.scout import describe_sections, describe_target
+from src.orchestrator.prompt_loader import build_facts, load_prompt
 from src.schemas.common import Location
-from src.schemas.enums import CapsuleLevel
+from src.schemas.enums import CapsuleLevel, Role
 from src.schemas.finding import MissingEvidence
+from src.tokens import estimate_tokens
 
 RUN_ID = "run_test_0001"
 
@@ -259,8 +264,35 @@ def test_graph_section_records_how_many_entries_actually_fit_the_budget(tmp_path
     names = ["aaaaaaaa a.c:1", "bbbbbbbb b.c:2", "cccccccc c.c:3"]
     per_entry = len(names[0]) // 4
 
-    assert fit_names(names, per_entry * 2) == (per_entry * 2, 2)
-    assert fit_names(names, 10_000) == (per_entry * 3, 3)
+    assert fit_names(names, per_entry * 2) == (per_entry * 2, 2, names[:2])
+    assert fit_names(names, 10_000) == (per_entry * 3, 3, names)
+
+
+def test_fit_names_returns_the_lines_it_counted_not_just_the_count(tmp_path: Path):
+    """토큰을 센 줄을 그대로 돌려줘야 캡슐이 그 줄을 프롬프트에 실을 수 있다.
+
+    예전에는 `(토큰합, 개수)`만 내고 문자열을 버렸다. 그래서 캡슐은 "몇 토큰짜리
+    callers가 k건"까지만 알고 **그 k건이 무엇인지는 몰랐다** — 모델에게 보여줄 것이
+    없었다(W1).
+    """
+    names = ["aaaaaaaa a.c:1", "bbbbbbbb b.c:2", "cccccccc c.c:3"]
+    tokens, items, fitted = fit_names(names, len(names[0]) // 4 * 2)
+
+    assert fitted == names[:2]
+    assert items == len(fitted)
+    assert tokens == sum(estimate_tokens(line) for line in fitted)
+
+
+def test_render_and_parse_are_fixed_together(tmp_path: Path):
+    """`render_entry()`와 `name_of()`가 왕복해야 한다.
+
+    둘이 갈리면 형식을 바꾼 사람이 한쪽만 고치고 `callers` 사실 블록이 조용히 틀린
+    이름을 낸다 — 렌더러 옆에 파서를 둔 이유가 이 테스트다.
+    """
+    assert name_of(render_entry("memcpy", "util.c", 42)) == "memcpy"
+    assert name_of(render_entry("parse_header", "src/deep/path.c", 7)) == "parse_header"
+    # 형식이 어긋난 줄을 조용히 빈 문자열로 만들지 않는다.
+    assert name_of("bare_name") == "bare_name"
 
 
 def test_budget_exhausted_section_is_not_emitted_as_zero_items(source: Path, tmp_path: Path):
@@ -429,3 +461,124 @@ def test_index_summary_trace_fields_are_the_metric_column_names():
         "unresolved_symbols",
         "parse_errors",
     }
+
+
+# --- 프롬프트로 가는 경로 (W1·W4) -----------------------------------------------
+#
+# 여기까지가 이 모듈의 존재 이유다. 캡슐이 실측 그래프를 담아도 **모델이 그것을 못 보면**
+# "못 봐서 못 찾은 건지 봤는데 못 찾은 건지"가 구별되지 않고, 그 상태의 성능 수치는
+# 하네스가 아니라 Fake 어댑터를 잰 값이다.
+
+
+def _rendered_body(source_root: Path, artifacts_root: Path, role: Role = Role.SCOUT) -> str:
+    """실제 노드와 **같은 함수들**로 프롬프트 body를 만든다.
+
+    노드를 부르지 않고 여기서 조립하는 이유는 `RunContext` 없이도 렌더 결과를 볼 수 있어야
+    PR 본문에 붙일 덤프를 뽑기 쉽기 때문이다. 쓰는 함수(`build_facts`·`describe_sections`)는
+    `scout._ask_model`·`auditor._ask_model`이 부르는 것과 같다.
+    """
+    capsule = _fake(source_root, _graph(artifacts_root)).search(_query(), CapsuleLevel.EXPANDED)
+    template = load_prompt(role, "v1")
+    fields = {
+        "target": describe_target(capsule.target),
+        "capsule_sections": describe_sections(capsule),
+        "source": "void parse_header(void) { helper(); }",
+    }
+    if role is Role.AUDITOR:
+        fields["candidate"] = "cand_0001 · 추정 CWE: CWE-787 · 트리아지 신호: (없음)"
+    return template.render(
+        facts=build_facts(
+            run_id=RUN_ID,
+            ids={"candidate_id": "cand_0001"},
+            artifact_id="art_0001",
+            target=capsule.target,
+            capsule=capsule,
+            source=fields["source"],
+            callers=auditor.caller_names(capsule),
+        ),
+        **fields,
+    ).body
+
+
+def test_capsule_carries_the_lines_it_counted(source: Path, tmp_path: Path):
+    """섹션이 토큰만 세고 줄을 버리면 프롬프트에 실을 것이 없다 (W1)."""
+    capsule = _fake(source, _graph(tmp_path)).search(_query(), CapsuleLevel.EXPANDED)
+
+    callers, callees = _section(capsule, "callers"), _section(capsule, "callees")
+
+    assert callers.body == [_CALLER_ENTRY]
+    assert callees.body == [_CALLEE_ENTRY]
+    # 스키마 검증기가 강제하는 것을 여기서도 확인한다 — 회계와 내용은 같은 값이어야 한다.
+    assert callers.items == len(callers.body)
+    assert callers.tokens == sum(estimate_tokens(line) for line in callers.body)
+
+
+def test_rendered_prompt_actually_carries_the_graph_section_bodies(source: Path, tmp_path: Path):
+    """**W1이 됐다는 유일한 증거.** 렌더된 프롬프트 안에 호출 지점이 글자로 들어 있다.
+
+    두 자리 모두 본다: 산문(`{{CAPSULE_SECTIONS}}`)과 사실 블록(`{{FACTS}}`). body.md가
+    "아래 JSON이 참조 가능한 사실 전부다"라고 못박으므로 **산문에만 있으면 모델에게
+    무시하라고 지시한 자리에 넣은 것이 된다** — `{{SOURCE}}`가 양쪽에 실리는 것과 같은
+    이유다.
+    """
+    for role in (Role.SCOUT, Role.AUDITOR):
+        body = _rendered_body(source, tmp_path, role)
+        prose, facts = body.split("```json")
+
+        for entry in (_CALLER_ENTRY, _CALLEE_ENTRY):
+            assert entry in prose, f"{role.value}: 산문에 {entry!r}가 없다"
+            assert entry in facts, f"{role.value}: 사실 블록에 {entry!r}가 없다"
+
+
+def test_prompt_dump(source: Path, tmp_path: Path, capsys):
+    """`pytest -s tests/test_index_graph.py::test_prompt_dump`로 실물을 눈으로 본다.
+
+    단언 없이 출력만 하는 테스트가 아니다 — 덤프에 그래프 섹션이 없으면 실패한다.
+    PR 본문에 붙이는 출력이 **검사된 출력**이어야 나중에 조용히 비어도 알 수 있다.
+    """
+    body = _rendered_body(source, tmp_path, Role.SCOUT)
+    with capsys.disabled():
+        print("\n===== scout/v1 body (index.json 있음) =====")
+        print(body)
+        print("===== end =====")
+    assert _CALLER_ENTRY in body
+
+
+def test_callers_fact_is_derived_from_the_capsule_not_from_a_second_source(
+    source: Path, tmp_path: Path
+):
+    """`callers` 사실은 캡슐의 `callers` 섹션에서 나온다 (W4).
+
+    예전에는 러너가 `auditor.run(callers=...)`을 안 넘겨 **항상 빈 튜플**이었고,
+    `FakeModelClient`의 `context.callers[0]` 분기가 죽은 코드였다.
+    """
+    capsule = _fake(source, _graph(tmp_path)).search(_query(), CapsuleLevel.EXPANDED)
+
+    assert auditor.caller_names(capsule) == (name_of(_CALLER_ENTRY),)
+    # 그래프가 없으면 지어내지 않는다.
+    empty = _fake(source, _graph(tmp_path / "none", document=None)).search(
+        _query(), CapsuleLevel.EXPANDED
+    )
+    assert auditor.caller_names(empty) == ()
+
+
+def test_auditor_section_name_matches_the_adapter():
+    """노드는 어댑터를 import 할 수 없어 문자열이 양쪽에 따로 있다. 갈리면 사실이 빈다."""
+    assert auditor.CALLERS_SECTION in GRAPH_SECTION_KINDS
+
+
+def test_both_retrievers_emit_identical_graph_sections(source: Path, tmp_path: Path):
+    """두 구현의 그래프 분기가 갈리면 `dev_fake`↔`dev_docker` 비교가 성립하지 않는다.
+
+    예전에는 이 분기가 양쪽에 복사돼 있었고 두 docstring이 서로에게 "갈리면 안 된다"고
+    부탁하고 있었다. 지금은 `index_graph.graph_section()` 한 함수를 부르므로 갈릴 자리가
+    없는데, 그 사실을 여기서 고정한다 — 다음 사람이 다시 복사하면 여기서 깨진다.
+    """
+    for level in (CapsuleLevel.EXPANDED, CapsuleLevel.FOCUSED):
+        fake = _fake(source, _graph(tmp_path)).search(_query(), level)
+        hybrid = _hybrid(source, _graph(tmp_path)).search(_query(), level)
+
+        def graph_only(capsule):  # noqa: ANN001, ANN202
+            return [s.model_dump() for s in capsule.sections if s.kind in GRAPH_SECTION_KINDS]
+
+        assert graph_only(fake) == graph_only(hybrid), f"{level.value}에서 갈렸다"

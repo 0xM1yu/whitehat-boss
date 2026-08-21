@@ -24,7 +24,7 @@
 `target_function`이 레벨 예산을 통째로 먹으면 그래프 섹션이 발행되지 못해 1행과 같은
 모양이 된다. 지금 target이 `Location(file=...)`이라 `read_symbol_source()`가 파일 전체를
 돌려주기 때문이고, 실측 임계는 focused(8,000토큰) 32KB / expanded(24,000토큰) 96KB다
-(`CHARS_PER_TOKEN`=4 기준). 심볼 단위 캡슐이 들어오면 `target_function`이 심볼 하나로
+(`src/tokens.CHARS_PER_TOKEN`=4 기준). 심볼 단위 캡슐이 들어오면 `target_function`이 심볼로
 좁혀져 사라지는 한계다 — open-questions D13에 적었다.
 
 ## 실패해도 예외를 던지지 않는다
@@ -42,12 +42,19 @@ trace의 `graph_index` 이벤트가 된다.
 이름 함수를 부르는 호출이 이 파일의 `callers`로 잘못 붙을 수 있다. 이것은
 `unresolved_*`가 세지 않는 종류의 오차라 여기 적어 둔다.
 
-## 캡슐 섹션의 본문은 아직 프롬프트에 실리지 않는다
+## 여기서 만든 줄이 그대로 프롬프트에 실린다
 
-`nodes/scout.describe_sections()`가 `kind(N tok)`만 렌더한다. 그래서 이 모듈이 만드는
-것은 **토큰 회계와 매니페스트의 진실성**이지 모델이 보는 문맥이 아니다. 본문을 프롬프트에
-싣는 것은 별개 작업이고 D13에 적었다. 그때 토큰 수가 이미 맞아 있도록 `_render()`가
-실제로 실을 문자열을 만들고 그 길이로 토큰을 센다.
+`render_entry()`가 만든 문자열이 `CapsuleSection.body`에 담겨 `scout.describe_sections()`의
+산문과 `prompt_loader.build_facts()`의 사실 블록 양쪽으로 간다. 그래서 이 모듈은 토큰
+회계뿐 아니라 **모델이 실제로 보는 문맥**을 만든다.
+
+토큰 수는 처음부터 그 문자열의 길이에서 나왔으므로(`src/tokens.estimate_tokens`) 본문을
+싣는다고 숫자가 달라지지 않았다. `CapsuleSection`이 그 둘의 일치를 검증기로 강제한다 —
+줄을 버리면서 토큰만 남기는 경로는 이제 스키마에서 죽는다.
+
+줄의 형식 자체(`render_entry()`)와 그것을 되읽는 `name_of()`는 `src/graph_entry.py`에
+**나란히** 있다. 내용상 여기 있어야 하지만 되읽는 쪽이 `orchestrator/nodes/auditor.py`라
+층 규칙에 걸린다 — 사유는 그 모듈 docstring에 적었다.
 """
 
 import json
@@ -55,11 +62,9 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-# 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 추정용 근사다.
-#
-# **두 retriever가 각자 들고 있던 것을 여기로 모았다.** 값이 갈리면 같은 index.json에서
-# 두 구현이 다른 캡슐 크기를 내고, 그러면 `dev_fake`↔`dev_docker` 비교가 성립하지 않는다.
-CHARS_PER_TOKEN = 4
+from src.graph_entry import render_entry
+from src.schemas.capsule import CapsuleSection
+from src.tokens import estimate_tokens
 
 # `indexer.py`의 `INDEX_VERSION`과 같아야 한다.
 #
@@ -185,7 +190,7 @@ class GraphIndex:
             ]
         # 정렬·중복 제거로 결정론을 지킨다. 같은 입력에 같은 캡슐이 나오지 않으면
         # engineering-guide.md §5의 재현성이 깨진다.
-        return sorted({_render(name, row_file, line) for name, row_file, line in rows})
+        return sorted({render_entry(name, row_file, line) for name, row_file, line in rows})
 
     @property
     def summary(self) -> IndexSummary:
@@ -244,40 +249,66 @@ class GraphIndex:
         return summary
 
 
-def fit_names(names: list[str], remaining: int) -> tuple[int, int]:
-    """예산에 들어가는 만큼만 담는다. (토큰 합, 담은 개수).
+def graph_section(
+    kind: str, graph: "GraphIndex", target_file: str, remaining: int
+) -> tuple[CapsuleSection | None, bool]:
+    """그래프 섹션 하나를 만든다. `(섹션, 멈춰야 하는가)`.
+
+    **두 Retriever가 같은 함수를 부른다.** 예전에는 이 분기가 `fake_retriever`와
+    `hybrid_retriever`에 각각 복사돼 있었고, 양쪽 docstring이 "갈리면 안 된다"고 서로에게
+    부탁하고 있었다. 부탁 대신 한 함수로 만들면 갈릴 자리가 없다 —
+    `rules/harness-c.yaml` 첫 주석·`index_output_path()`와 같은 처리다.
+
+    | 반환 | 뜻 | 호출자가 할 일 |
+    | --- | --- | --- |
+    | `(None, False)` | 그래프 자체가 없다 (없음·버전 모름·깨짐) | 섹션을 **만들지 않고** 다음으로 |
+    | `(None, True)` | 실을 것은 있는데 예산이 없다 | 섹션 구성을 **멈춘다** |
+    | `(섹션, False)` | 실었다. 간선 0건이면 `tokens=0, items=0, body=[]` | 붙이고 계속 |
+
+    2행과 3행의 0건을 섞지 않는 것이 이 모듈의 원칙이다 — 0건 섹션으로 위장하면
+    "예산이 없었다"가 "그래프가 비었다"로 기록된다.
+
+    **여기서 만든 섹션에는 `min()`을 다시 걸면 안 된다.** `fit_names`가 이미
+    `remaining` 이하로 맞춰 돌려주므로 깎을 것이 없고, 굳이 깎으면 줄은 그대로 두고
+    토큰만 줄이는 것이 되어 `CapsuleSection`의 검증기에서 죽는다.
+    """
+    names = graph.names_for(kind, target_file)
+    if names is None:
+        return None, False
+    tokens, items, body = fit_names(names, remaining)
+    if names and items == 0:
+        return None, True
+    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=body), False
+
+
+def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
+    """예산에 들어가는 만큼만 담는다. (토큰 합, 담은 개수, **담은 줄**).
 
     `HybridRetriever._fit_related`와 같은 계약이다. 숫자만 `min()`으로 깎으면 items는
     전체인데 tokens는 잘린 값이 되어 **매니페스트가 자기 내용과 어긋난다.** 보조 섹션이
     고정 64토큰이던 동안에는 이 경로가 사실상 안 탔지만, callee가 수백 개인 큰 파일에서는
     실제로 걸린다.
 
+    **담은 줄을 버리지 않고 함께 돌려준다.** 예전에는 `(토큰합, 개수)`만 내고 문자열을
+    버렸고, 그래서 캡슐이 "몇 토큰짜리 callers가 3건 있다"까지만 알고 그 3건이 무엇인지는
+    몰랐다 — 모델에게 보여줄 수 있는 것이 없었다. 호출자가 이 줄을 `CapsuleSection.body`에
+    넣고, 스키마 검증기가 `tokens == sum(estimate_tokens(줄))`을 강제한다.
+
+    **반환하는 토큰 합은 `remaining` 이하임이 보장된다.** 호출자가 여기에 다시 `min()`을
+    걸면 안 된다 — 줄은 그대로 두고 토큰만 깎는 것이 되어 스키마 검증기에서 죽는다.
+
     **`items=k`가 `k < len(names)`인지는 캡슐만 봐서는 구별되지 않는다.** `_fit_related`도
-    지금 같은 상태이고, `HybridRetriever.MAX_CHUNKS` 절단이 `on_truncate`로만 드러나는
-    것과 같은 종류다 — 셋을 한 묶음으로 D13에 남겼다.
+    지금 같은 상태이고, 절단을 캡슐에 남기는 것은 별건으로 D13에 있다.
     """
     total = 0
-    count = 0
+    fitted: list[str] = []
     for name in names:
-        cost = _tokens(name)
+        cost = estimate_tokens(name)
         if total + cost > remaining:
             break
         total += cost
-        count += 1
-    return total, count
-
-
-def _render(name: str, file: str, line: int) -> str:
-    """섹션 한 줄. 토큰 수가 이 문자열의 길이에서 나오므로 렌더러가 하나여야 한다.
-
-    `callers`·`callees` 둘 다 **호출 지점**을 적는다. 두 섹션이 같은 `calls` 행에서
-    나오므로 형식이 갈릴 이유가 없고, `items`의 뜻도 양쪽 모두 "호출 지점 수"로 같다.
-    """
-    return f"{name} {file}:{line}"
-
-
-def _tokens(text: str) -> int:
-    return max(1, len(text) // CHARS_PER_TOKEN)
+        fitted.append(name)
+    return total, len(fitted), fitted
 
 
 def _defined_symbols(symbols: list[dict]) -> dict[str, set[str]]:

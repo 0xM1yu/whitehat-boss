@@ -63,6 +63,22 @@ class FakeEvidenceRef(HarnessModel):
     ok: bool = True
 
 
+class FakeCapsuleSection(HarnessModel):
+    """사실 블록의 `capsule_sections` 한 항목.
+
+    `CapsuleSection`을 그대로 쓰지 않는다 — 이쪽은 **프롬프트에서 파싱해 온 것**이고
+    저쪽은 캡슐의 불변식(토큰 합 = 본문 길이)을 강제한다. 모델이 받은 프롬프트가
+    스키마 검증을 다시 통과해야 할 이유가 없고, 통과시키면 프롬프트가 조금만 달라져도
+    Fake가 `FakeModelError`로 죽는다.
+    """
+
+    kind: str
+    tokens: int = 0
+    items: int | None = None
+    # `callers`/`callees`의 실제 줄(`이름 파일:줄`). 본문 없는 섹션은 빈 목록이다.
+    lines: list[str] = Field(default_factory=list)
+
+
 class FakeContext(HarnessModel):
     """노드가 프롬프트 본문에 실어 보내는 사실.
 
@@ -75,8 +91,9 @@ class FakeContext(HarnessModel):
     ids: dict[str, str] = Field(default_factory=dict)
     artifact_id: str = ""
     target: Location | None = None
-    # 캡슐에 담긴 섹션 종류. static_signal 유무가 Scout 점수를 가른다.
-    capsule_sections: list[str] = Field(default_factory=list)
+    # 캡슐에 담긴 섹션과 그 본문. 점수 산정에는 쓰지 않는다 — `_has_static_signal()`
+    # 주석이 그 이유를 적는다(섹션 존재는 레벨이 정하는 것이라 신호가 아니다).
+    capsule_sections: list[FakeCapsuleSection] = Field(default_factory=list)
     # 대상 함수 본문. 위험 호출 탐지의 근거다.
     source: str = ""
     evidence: list[FakeEvidenceRef] = Field(default_factory=list)
