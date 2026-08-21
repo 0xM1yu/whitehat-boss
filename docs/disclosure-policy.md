@@ -78,4 +78,3 @@ proven finding
 
 - 분석 대상 코드는 외부 API로 전송되지 않는다(온프레미스 서빙). 이는 이 프로젝트의 핵심 주장 중 하나이므로, 외부 전송이 발생하는 경로는 코드 리뷰에서 차단한다.
 - 수집한 write-up·CVE 자료는 라이선스와 출처를 L0 메타데이터에 기록한다([knowledge-base.md](knowledge-base.md) §7).
-</content>
