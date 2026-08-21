@@ -51,6 +51,7 @@ from src.orchestrator.nodes import (
 )
 from src.orchestrator.nodes.report import Report
 from src.orchestrator.policy import FixedThresholdPolicy
+from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import TraceWriter
 from src.schemas.artifact import Artifact
@@ -299,6 +300,10 @@ def run_pipeline(
         ledger=BudgetLedger(config.budget, trace),
         policy=FixedThresholdPolicy(config.thresholds),
         read_source=read_source,
+        # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
+        # 때만 프롬프트를 남긴다(D19). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
+        # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
+        prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)

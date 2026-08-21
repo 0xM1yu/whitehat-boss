@@ -173,6 +173,27 @@ def test_default_scan_includes_prompts() -> None:
     assert PROMPTS in leakage_main.DEFAULT_SCAN
 
 
+def test_run_globs_include_run_prompt_artifacts() -> None:
+    """`prompts/`는 템플릿이다. 대상 코드가 섞이는 곳은 run 산출물 쪽이다 (D19)."""
+    assert "artifacts/*/prompts/*.md" in leakage_main.RUN_GLOBS
+    assert leakage_main.TRACE_GLOB in leakage_main.RUN_GLOBS
+
+
+def test_check_scans_run_prompt_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """산출물 프롬프트가 대상에 안 들어가면 렌더된 입력은 한 번도 검사되지 않는다."""
+    prompts = tmp_path / "artifacts" / "run_20260901_0001" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "0001_scout.md").write_text(CLEAN + LEAKED_CVE, encoding="utf-8")
+    monkeypatch.setattr(leakage_main, "REPO_ROOT", tmp_path)
+
+    report = leakage_main.check(
+        scan=[], kb=None, evalset=None, problem_names=tmp_path / "none.txt"
+    )
+
+    assert report.scanned == 1
+    assert [leak.pattern for leak in report.leaks] == ["cve_id"]
+
+
 def test_repository_passes_the_default_check(capsys: pytest.CaptureFixture) -> None:
     assert leakage_main.main([]) == 0
     assert "[실패]" not in capsys.readouterr().out
