@@ -12,17 +12,17 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 실험 종료 시각 | **미기재** — 분 단위 원기록이 없다. `run_id`가 `run_20260821_0004`인 것은 모순이 아니다: `run_id`는 `started_at`의 **UTC 날짜**에서 나오고 2026-08-22 00:00 KST = 2026-08-21 15:00 UTC다. 즉 KST 이른 시각의 run이다. **몇 시인지는 이 기록으로 정해지지 않는다** |
+| 실험 종료 시각 | **2026-08-22 01:42:23 KST** (`finished_at` = 2026-08-21T16:42:23Z) — 2026-08-22 검증 run(`run_20260821_0007`)이 `run_manifest.json`을 열어 확정했다. 디렉터리 mtime `2026-08-22 01:42:23.886773379 +0900`이 같은 값을 가리킨다. `run_id`가 `run_20260821_0004`인 것이 모순이 아닌 이유도 여기서 확인된다: `run_id`는 `started_at`의 **UTC 날짜**에서 나오고 이 run의 `started_at`이 2026-08-21T16:42:11Z다 |
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98`<br>별칭 `qwen3-4b` — **별칭은 근거가 못 된다.** 스냅샷 경로가 revision과 일치하는 것을 기동 로그의 `model_tag`로 확인했다:<br>`/srv/tenants/ext01/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98` |
-| `repo_commit` | **미기재** — `run_manifest.json`을 열지 않았다. 코드 기준선은 `main@54c8070`으로 알고 있으나 dirty 여부는 확인하지 않았다 |
+| `repo_commit` | **`54c80705fb848f4852dc2163c19b1a2541bf61b5`** · `repo_dirty` **false** — 2026-08-22 검증 run(`run_20260821_0007`)이 확정했다. 기록 당시의 추정(`main@54c8070`)이 맞았고, **확인하지 못했던 dirty 여부도 깨끗한 것으로 확정됐다** |
 | `run_id` | `run_20260821_0004` |
-| run 산출물 경로·보존 | 경로 `/srv/tenants/ext01/artifacts/run_20260821_0004` · **보존 여부 미기재.** [open-questions.md](../open-questions.md) R7 때문에 이 칸이 비면 `run_id`만으로 이 실험을 지시할 수 없다 |
+| run 산출물 경로·보존 | 경로 `/srv/tenants/ext01/artifacts/run_20260821_0004` · **보존 확인**(2026-08-22 검증 run(`run_20260821_0007`) 시점). `asan` `build` `clang-tidy` `index` `report.md` `run_manifest.json` `scratch` `semgrep` `state.db`(28,672 B) `trace.jsonl`(18,625 B)이 그대로 있다 — [open-questions.md](../open-questions.md) **R7은 이 run에서 미실현**이다 |
 | `tool_runner` | 프로필 선언 **`fake`** / 실제 **`docker`** — `single_gpu_12g`가 `tool_runner: fake`라 도구를 돌리려면 오버라이드가 **구조적으로 필요했다.** [README.md](README.md) 미확정 #4의 두 번째 사례다([ADR 0005](../decisions/0005-tool-runner-override.md)가 상정한 용도가 아니다) |
 | `--device` | `atom` |
-| `tool_images` digest | **미기재** — `run_manifest.json` 미확인. 종류(docker = 이미지 config sha256)까지 함께 적어야 비교 가능하다([portability.md](../portability.md) §5 #4) |
+| `tool_images` digest | **`harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17`** · 종류 **docker(이미지 config sha256)**([portability.md](../portability.md) §5 #4). 2026-08-22 검증 run(`run_20260821_0007`)의 digest와 **같다** — 두 run이 같은 이미지로 돌았다 |
 | `--gpu-memory-utilization` | **0.2** · 그 시점 분모 **119.7 GiB**(물리 통합메모리) = **23.94 GiB**. 기동 로그가 직접 답했다 — `Free memory on device (109.48/119.7 GiB) on startup` / `Desired GPU memory utilization is (0.2, 23.94 GiB)` |
-| 동시에 떠 있던 다른 서버 | **미기재.** 제한 단위가 세션이 아니라 사용자(`user-1004`)라 이 칸이 비면 throttle 여부를 사후에 못 가른다([README.md](README.md) 확정 #4) |
-| 원문 산출물 보존 | **터미널 출력만.** `trace.jsonl`·`state.db`·`run_manifest.json`은 다시 열지 않았다 |
+| 동시에 떠 있던 다른 서버 | **영구 미기재.** 2026-08-22 검증 run(`run_20260821_0007`) 시점(2026-08-21T18:15Z)에는 8001 하나뿐이었으나 **이 run은 16:42Z이고 서버 기동 시각을 찍지 않았다** — 두 시점이 같은 프로세스라는 것을 증명할 수 없으므로 그 관측을 이 칸으로 옮기면 지어낸 근거가 된다. 제한 단위가 세션이 아니라 사용자(`user-1004`)라 이 칸이 비면 throttle 여부를 사후에 못 가른다([README.md](README.md) 확정 #4) |
+| 원문 산출물 보존 | **기록 당시에는 터미널 출력만.** 2026-08-22 검증 run(`run_20260821_0007`)이 `run_manifest.json`을 열었고 `trace.jsonl`·`state.db`도 디스크에 남아 있음을 확인했다 — **다만 그 둘의 내용은 아직 읽지 않았다**(§5) |
 
 ---
 
@@ -53,7 +53,7 @@
 | 프로필 | `single_gpu_12g` (`retriever: fake`, `tool_runner: fake` → docker로 오버라이드) |
 | 분석 대상 | `tests/fixtures/target` (`parser.c`, `util.c`) |
 | 양자화 | `quantization=fp8`, `dtype=torch.bfloat16`, 커널 `CutlassFp8BlockScaledMMKernel` |
-| 기동 조건 | `VLLM_USE_DEEP_GEMM=0` — [README.md](README.md) 확정 #3 ③. 나머지 두 조건(①`CPATH` ②`VLLM_ATTENTION_BACKEND`)의 지정 여부는 **미기재** |
+| 기동 조건 | `VLLM_USE_DEEP_GEMM=0` — [README.md](README.md) 확정 #3 ③. 나머지 두 조건(①`CPATH` ②`VLLM_ATTENTION_BACKEND`)의 지정 여부는 **영구 미기재** — 사유는 §5 |
 | KV cache | 18.14 GiB · **132,112 tokens** · `max-model-len 32768` → 최대 동시성 **4.03x** |
 | 메모리 실사용 | weights+non-torch 5.7 GiB / peak activation 0.1 GiB / CUDAGraph 0.7 GiB / 모델 로딩 4.27 GiB·23.96 s |
 | prefix caching | **on** |
@@ -209,18 +209,31 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 
 ## 5. 미측정 항목과 사유
 
-**못 잰 값을 0으로 채우지 않는다.**
+**절반이 채워졌다.** 2026-08-22 검증 run이 이 run의 산출물을 열었기 때문이다. 채워진 것과 못 채운 것을 갈라 적는다 — **둘을 한 표에 두면 "언젠가 재면 된다"와 "이제 잴 수 없다"가 같은 칸에 들어간다.**
+
+### 5-1. 2026-08-22 검증에서 채워진 것
+
+`run_20260821_0007` 검증 때 이 run의 `run_manifest.json`과 디렉터리를 열어 확정했다.
+
+| 항목 | 값 | 무엇으로 |
+| --- | --- | --- |
+| 실험 종료 시각 (분 단위) | **2026-08-22 01:42:23 KST** (`finished_at` 16:42:23Z) | `run_manifest.json` · 디렉터리 mtime |
+| `repo_commit` + dirty | **`54c80705fb848f4852dc2163c19b1a2541bf61b5`** · dirty **false** | `run_manifest.json` |
+| run 산출물 보존 여부 | **보존됨** — **R7 미실현** | `ls` |
+| `tool_images` digest + 종류 | **`harness-tools:v1` = `sha256:b5d7048b…`** · docker | `run_manifest.json` |
+| 모델 비교표 제외 판정 | **1건** — `kb_snapshot`이 자리표시자(`kb-none`)다 | `runner.incomplete_fields()` |
+
+**비교표 제외 사유가 하나뿐인 것이 관측이다.** `tool_images`가 차 있고 `repo_dirty`가 false이며 `device`가 `atom`이므로, 남은 것은 KB 미구축 하나다 — 즉 **KB가 생기면 이 run은 비교표에 들어갈 수 있는 상태**다.
+
+### 5-2. 여전히 미측정
+
+**못 잰 값을 0으로 채우지 않는다.** 아래 둘은 **영구**다 — 시간이 지나 관측 기회가 사라졌다.
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| 실험 종료 시각 (분 단위) | 원기록 없음 | run 디렉터리 mtime 또는 셸 히스토리 타임스탬프 |
-| `repo_commit` + dirty | `run_manifest.json` 미확인 | `cat /srv/tenants/ext01/artifacts/run_20260821_0004/run_manifest.json` |
-| run 산출물 보존 여부 | 확인 안 함 | 같은 경로 `ls`. **R7 때문에 이 칸이 가장 급하다** |
-| `tool_images` digest + 종류 | `run_manifest.json` 미확인 | 위와 같은 파일 |
-| 동시에 떠 있던 다른 서버 | 기록 없음 | 다음 실험에서 `ss -ltnp` 결과를 그때 적는다 |
-| 기동 조건 ①`CPATH` ②`VLLM_ATTENTION_BACKEND` 지정 여부 | 기동 명령 원문 미보존 | §9의 자리에 원문을 붙인다. 미확정 #2(세 조건 통합 가능성)의 입력이다 |
-| `tool_call` 개별 항목 | trace를 열지 않았다 — `tool_ms 3804`이라는 합만 있다 | `grep tool_call trace.jsonl` |
-| 모델 비교표 제외 판정 | `RunRecord.incomplete_fields()` 미확인 | `run_manifest.json` |
+| **동시에 떠 있던 다른 서버** | **영구.** 검증 시점(18:15Z)에는 8001 하나뿐이었으나 이 run은 16:42Z이고 **서버 기동 시각을 찍지 않아** 같은 프로세스임을 증명할 수 없다 | 이 run에 대해서는 **없다.** 다음 실험에서 `ss -ltnp`를 그때 적는다 |
+| **기동 조건 ①`CPATH` ②`VLLM_ATTENTION_BACKEND` 지정 여부** | **영구.** 위와 같은 이유 — 18:15Z의 `/proc/<pid>/environ` 덤프를 16:42Z의 조건으로 옮길 수 없다 | 이 run에 대해서는 **없다.** [README.md](README.md) 미확정 #2의 입력은 검증 run 쪽에서 나왔다 |
+| `tool_call` 개별 항목 | trace를 열지 않았다 — `tool_ms 3804`이라는 합만 있다. **파일은 살아 있다**(18,625 B) | `grep tool_call /srv/tenants/ext01/artifacts/run_20260821_0004/trace.jsonl` |
 | **`dev_docker` run 2건 (같은 날)** | **미수록** — 원자료가 이 기록에 없다 | 해당 run 디렉터리의 `trace.jsonl`·`run_manifest.json`을 확보해 별도 §를 추가하거나 별도 보고서로 연다 |
 | **`cli bench` 1건 (같은 날)** | **미수록** — stdout JSON을 보존하지 않았다 | 재실행 시 stdout을 파일로 받는다. [README.md](README.md)가 이미 같은 전례("`bench` stdout을 놓쳐 측정 기록이 재구성본이 됐다")를 적고 있다 |
 
@@ -276,7 +289,7 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 | `--gpu-memory-utilization` | `0.2` |
 | `--max-model-len` | `32768` |
 | prefix caching | on |
-| 환경변수 | `VLLM_USE_DEEP_GEMM=0` (그 외 미기재) |
+| 환경변수 | `VLLM_USE_DEEP_GEMM=0` — **그 외는 영구 미기재**(§5-2). 2026-08-22 검증 run의 `/proc/<pid>/environ` 덤프는 그 시점의 서버이고 이 run의 것이라는 근거가 없다 |
 
 하네스 실행 명령은 원문이 남아 있다.
 
