@@ -80,6 +80,23 @@ def run(
         finding = _attach(ctx, finding, produced)
         # `_attach()`가 방금 만든 근거를 `evidence_refs`에 넣었으므로, 앞 단계 것과 합쳐
         # 넘기면 `evidences_for()`가 이 Finding의 것만 골라낸다. E4는 여기서만 성립한다.
+        #
+        # ## 이 등급은 아무도 읽지 않는다. 지우지 마라
+        #
+        # 반환값을 버린다. **목적이 판정이 아니라 집계**이기 때문이다 — E4의 조건인
+        # `SANITIZER`/`CRASH`/`POC_RUN` Evidence는 바로 위 `_call()`이 만들고, `_attach()`
+        # 이후가 `p4`를 참으로 만들 수 있는 **유일한 시점**이다. 여기서 부르지 않으면 그
+        # 등급은 `gate_eval` trace에 영영 나타나지 않고 도구 검증 제거율의 분자가
+        # 구조적으로 0이 된다(W3이 고친 것이 그것이다).
+        #
+        # **아래 정책은 이 등급을 보지 않는다.** `policy._repro_result()`가 읽는 것은
+        # `ok`·`tool_allowed` 둘뿐이고 `basis`에도 `grade`가 없다. 그래서 게이트가 E3인
+        # Finding도 `ok=True`면 `proven`이 된다 — 상태 축과 등급 축이 어긋난 채로 남아
+        # 있다(2026-08-21 ATOM run 실측). 그 둘을 잇는 것은 승격 로직 변경이고 이전 run과
+        # 비교가 끊기므로 **별건이다**(open-questions D18).
+        #
+        # 설명 없는 미소비 계산은 다음 사람이 죽은 코드로 보고 지운다. `GATE_STAGES`가
+        # 참조 0건이던 자리와 같은 종류라 사유를 여기 남긴다.
         ctx.evaluate_gate(
             finding,
             gate.evidences_for(finding, (*evidences, *produced)),
