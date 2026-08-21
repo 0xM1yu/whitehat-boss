@@ -53,7 +53,7 @@ The structural representations are **compressed** to fit the context limit. The 
 
 3. **Use `note` in `path` to record what makes each step hold.** For a source step, note = the entry-point symbol or path of the external input. For a sink step, note = the **concrete input constraint** needed to cause the problem (e.g., length > 64, negative index). If a constraint cannot be confirmed in the provided text, request that value via `missing_evidence`.
 
-4. **State triggerability in the first sentence of `rca_draft`, and classify any unconfirmed case into one of three states.** This classification is authoritative — it fixes `verdict` and the `confidence` band mechanically (see the two tables below).
+4. **State triggerability in the first sentence of `rca_draft`.** Either it is triggerable (confirmed), or it is unconfirmed — and every unconfirmed case falls into exactly one of three states (`guarded`, `no_reach`, `reachability_unknown`). This classification is authoritative — it fixes `verdict` and the `confidence` band mechanically (see the two tables below).
    - **Triggerable** — external input reaching the sink is confirmed from the provided text. `confidence` 0.7–1.0.
    - **Guard present (`guarded`)** — a bounds check is **legible in the provided text** at the sink, the call site, or the type. Quote which check blocks it. `confidence` 0.1–0.3, no `missing`.
    - **Unreachable (`no_reach`)** — the entry point is test-only, root-only, or debug-only, or is not registered, so it cannot be reached externally, and this is **confirmed in the provided text**. `confidence` 0.1–0.3.
@@ -74,9 +74,9 @@ The structural representations are **compressed** to fit the context limit. The 
 
 8. **Fill `repro_spec` only when you know the build and execution method** (see the `<important>` above). If you do fill it, `steps` must contain only genuinely executable procedures, and `expected_signal` must contain a **concrete, matchable signal** (e.g., `ASAN heap-buffer-overflow WRITE`). If you do not know, use `null`.
 
-9. **Use the values in `ids` verbatim.** Carry over `finding_id` and `candidate_id` from the facts block, and the `missing` you request is the single `ids.missing_id` from the facts block. Do not invent an evidence ID that is not in the facts block's `evidence`.
+9. **Use the values in `ids` verbatim.** Carry over `finding_id` and `candidate_id` from the facts block, and the `missing` you request is the single `ids.missing_id` from the facts block. Do not invent an evidence ID that is not in the facts block's `evidence`. If the facts block's `evidence` is empty, leave `evidence_refs` as an empty list `[]` — do not copy an ID from the examples (Example 1's `ev_gr1` is illustrative and exists only in that synthetic facts block).
 
-10. **Consistency across the 3 calls.** This candidate is called independently multiple times (3 calls) and aggregated by majority vote. Point to the same defect with the same `location`, the same `cwe`, and the same sink symbol every time. If you describe one defect differently across calls, they are counted as different findings and none reaches a majority. Keep the technical terms in Rule "Output language" in English so the description is byte-stable across calls.
+10. **Consistency across the 3 calls.** This candidate is called independently multiple times (3 calls) and aggregated by majority vote. Point to the same defect with the same `cwe` and the same sink `step.symbol` every time. If you describe one defect differently across calls, they are counted as different findings and none reaches a majority. Keep the technical terms in Rule "Output language" in English so the description is byte-stable across calls.
 
 ## `cwe` validity
 
