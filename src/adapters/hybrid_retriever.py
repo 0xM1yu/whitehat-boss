@@ -10,6 +10,12 @@
 `tool_runner: fake`다) 그 섹션을 **만들지 않는다**: 조용히 빈 섹션을 내면 "그래프가
 비었다"와 "인덱서가 안 돌았다"가 구별되지 않는다.
 
+**그래프 섹션의 본문은 캡슐에 실린다.** `callers`/`callees`의 줄이 `CapsuleSection.body`에
+담겨 프롬프트로 간다(`index_graph.graph_section()`). `related`는 아직 담지 않는다 —
+`expand()`가 `related`의 토큰을 조각 단위로 더하면서 `min()`으로 깎는 경로가 있어
+(`sections[related].tokens + extra`), 줄과 토큰이 어긋날 수 있다. 그 절단을 먼저 풀어야
+한다(open-questions D13).
+
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에 타입
 데이터가 없다(`indexer.build_index()`는 symbols·calls뿐). 없는 그래프에서 나온 척 섹션을
 채우면 토큰 회계가 거짓말을 한다.
@@ -26,10 +32,9 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from src.adapters.index_graph import (
-    CHARS_PER_TOKEN,
     GRAPH_SECTION_KINDS,
     GraphIndex,
-    fit_names,
+    graph_section,
 )
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retrieval import (
@@ -43,6 +48,7 @@ from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
+from src.tokens import estimate_tokens
 
 # 캡슐 구성 규칙이 다르면 캐시 키도 달라야 한다(knowledge-base.md §6). Fake와 같은 값을
 # 쓰면 두 구현이 만든 캡슐이 같은 키를 공유해 조건 비교가 오염된다.
@@ -106,7 +112,7 @@ class Chunk:
         self.file = file
         self.line_start = line_start
         self.text = text
-        self.tokens = max(1, len(text) // CHARS_PER_TOKEN)
+        self.tokens = estimate_tokens(text)
 
 
 class HybridRetriever:
@@ -212,22 +218,23 @@ class HybridRetriever:
             if kind == "related" and not pool:
                 continue
             if kind in GRAPH_SECTION_KINDS:
-                names = self.graph.names_for(kind, capsule.target.file)
-                if names is None:
+                # 그래프 분기는 `FakeRetriever.expand()`와 **같은 함수**를 부른다.
+                section, stop = graph_section(
+                    kind, self.graph, capsule.target.file, remaining
+                )
+                if section is None:
+                    if stop:
+                        break
                     # 그래프가 없다. 없는 섹션을 지어내지 않고 다음 후보로 넘어간다.
                     continue
-                tokens, items = fit_names(names, remaining)
-                if names and items == 0:
-                    # 붙일 것은 있는데 예산이 없다 — "더 붙일 것이 없음"과 다른 사건이라
-                    # 0건 섹션으로 위장하지 않고 멈춘다.
-                    break
             else:
                 # `items`를 1로 박지 않는다. `search()`가 보조 섹션에 `items=None`을
                 # 주므로 여기서 1을 넣으면 같은 섹션이 경로에 따라 다른 값을 갖는다.
-                tokens, items = min(_AUX_SECTION_TOKENS, remaining), None
+                tokens = min(_AUX_SECTION_TOKENS, remaining)
                 if tokens <= 0:
                     break
-            sections.append(CapsuleSection(kind=kind, tokens=tokens, items=items))
+                section = CapsuleSection(kind=kind, tokens=tokens)
+            sections.append(section)
             return self._transition(capsule, sections, need)
         return capsule
 
@@ -389,28 +396,35 @@ def _sections_for(
     for kind in kinds:
         remaining = budget - used
         items: int | None = None
+        if kind in GRAPH_SECTION_KINDS:
+            # 그래프 분기는 `FakeRetriever._sections_for()`와 **같은 함수**를 부른다.
+            # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
+            section, stop = graph_section(kind, graph, target_file, remaining)
+            if section is None:
+                if stop:
+                    break
+                # 인덱서가 안 돌았거나 형식이 어긋났다 — 섹션을 만들지 않는다.
+                # 0건 섹션으로 내면 "그래프가 비었다"와 구별되지 않는다.
+                continue
+            sections.append(section)
+            used += section.tokens
+            continue
         if kind == "target_function":
-            cost = max(1, len(source) // CHARS_PER_TOKEN)
+            cost = estimate_tokens(source)
         elif kind == "related":
             if not selected:
                 continue
             cost, items = _fit_related(selected, remaining)
             if items == 0:
                 continue
-        elif kind in GRAPH_SECTION_KINDS:
-            names = graph.names_for(kind, target_file)
-            if names is None:
-                # 인덱서가 안 돌았거나 형식이 어긋났다 — 섹션을 만들지 않는다.
-                # 0건 섹션으로 내면 "그래프가 비었다"와 구별되지 않는다.
-                continue
-            cost, items = fit_names(names, remaining)
-            if names and items == 0:
-                break
         else:
             cost = _AUX_SECTION_TOKENS
         # **`cost == 0`은 "예산이 없다"가 아니라 "그래프를 봤는데 간선이 0건이다"이다.**
         # 두 사건을 한 조건으로 묶으면(예전의 `if tokens <= 0: break`) 빈 그래프가 예산
         # 소진으로 기록되고, 그러면 캡슐만 보고는 인덱서가 안 돈 것과 구별되지 않는다.
+        #
+        # 그래프 섹션이 위에서 먼저 빠지므로 **아래 `min()`은 본문 있는 섹션에 닿지
+        # 않는다.** 닿으면 줄은 두고 토큰만 깎는 것이 되어 검증기에서 죽는다.
         if cost > 0 and remaining <= 0:
             break
         tokens = min(cost, remaining)

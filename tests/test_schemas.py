@@ -44,6 +44,7 @@ from src.schemas import (
     Verdict,
 )
 from src.schemas.common import PLACEHOLDER_DIGEST
+from src.tokens import estimate_tokens
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
 ZERO_COMMIT = "0" * 40
@@ -302,6 +303,51 @@ def test_capsule_sections_must_fit_budget() -> None:
     assert _capsule().used_tokens == 2300
     with pytest.raises(ValidationError):
         _capsule(budget_tokens=1000)
+
+
+def test_section_tokens_cannot_drift_from_its_body() -> None:
+    """본문을 담은 섹션은 `tokens`가 그 본문에서 계산한 값이어야 한다 (W1).
+
+    **이 검증기가 이 저장소가 반복해서 잡아온 결함 부류를 구조적으로 없앤다** — 숫자와
+    내용이 각각 계산되어 조용히 갈라지는 것(`fit_names`가 개수만 깎던 것, 확장 경로의
+    `items=1`, `gpu_seconds`가 CPU 시간을 세던 것). 한 객체 안에서 서로를 강제하면
+    갈라질 자리가 없다.
+    """
+    body = ["main main.c:12", "memcpy parser.c:20"]
+    honest = sum(estimate_tokens(line) for line in body)
+
+    assert CapsuleSection(kind="callers", tokens=honest, items=2, body=body).body == body
+    # 줄은 그대로 두고 토큰만 깎는 경로(`min()`)가 여기서 죽는다.
+    with pytest.raises(ValidationError, match="본문에서 계산한 값"):
+        CapsuleSection(kind="callers", tokens=honest - 1, items=2, body=body)
+    with pytest.raises(ValidationError, match="본문 줄 수"):
+        CapsuleSection(kind="callers", tokens=honest, items=99, body=body)
+
+
+def test_section_without_body_is_a_legitimate_state_not_a_violation() -> None:
+    """`body=[]`는 "본문이 없다"가 아니라 "이 섹션은 본문을 여기 담지 않는다"이다.
+
+    셋이 전부 정당하다: `target_function`(원문은 프롬프트가 따로 읽는다),
+    보조 섹션(데이터원이 아직 없다), **간선 0건**(그래프를 봤는데 없었다).
+    검증기가 여기 걸리면 "없다"와 "0건"의 구별이 무너진다.
+    """
+    assert CapsuleSection(kind="target_function", tokens=900).body == []
+    assert CapsuleSection(kind="static_signal", tokens=64).body == []
+    assert CapsuleSection(kind="callers", tokens=0, items=0).items == 0
+
+
+def test_transition_keeps_the_body_and_its_validator() -> None:
+    """`transition()`은 전체 재검증을 거치므로 본문도 왕복해야 한다.
+
+    `model_copy`였다면 검증기를 우회해 본문 없는 섹션이 조용히 생겼을 것이다.
+    """
+    body = ["main main.c:12"]
+    section = CapsuleSection(kind="callers", tokens=estimate_tokens(body[0]), items=1, body=body)
+    capsule = _capsule(sections=[section])
+
+    moved = capsule.transition(expansion_count=1)
+
+    assert moved.sections[0].body == body
 
 
 def test_capsule_expansion_count_has_no_hardcoded_cap() -> None:
