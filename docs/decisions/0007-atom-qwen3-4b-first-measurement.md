@@ -39,7 +39,7 @@ fp8.py:434 → deep_gemm.py:96 → fp8_utils.py:1137 → utils/deep_gemm.py:494
 | --- | --- | --- |
 | 모델 | `Qwen3-4B-Instruct-2507-FP8` @ `8591804019c8b22094c3b5b4454e0edc05dffc98` | `models.yaml` `source` |
 | 스냅샷 무결성 | `sha256:ab78c8e5…ff72` (= `config/checksums/qwen3-4b.txt` 전체의 sha256) | `models.yaml` `checksum` |
-| 장비 | `atom` — GB10, sm_121, CUDA 13.0, aarch64, DGX OS(Ubuntu 24.04), 통합메모리 128 GB 중 **팀 합계 34 GiB**, GPU 공유 | [portability.md](../portability.md) §6 |
+| 장비 | `atom` — GB10, sm_121, CUDA 13.0, aarch64, DGX OS(Ubuntu 24.04), 통합메모리 128 GB 중 **팀 목표 34 GiB**(측정 시점 8/17엔 cgroup `memory.max`도 34였다; 이후 하드 한도 64로 상향 — [portability.md](../portability.md) §6), GPU 공유 | [portability.md](../portability.md) §6 |
 | 서빙 | vLLM 0.27.1, `127.0.0.1:8001`, **`VLLM_USE_DEEP_GEMM=0` 필수** | 위 |
 | 시각 | `2026-08-17T15:16:27Z` | `models.yaml` `measured_at` |
 
@@ -109,7 +109,7 @@ fp8.py:434 → deep_gemm.py:96 → fp8_utils.py:1137 → utils/deep_gemm.py:494
 - **원문이 없는 채로 정본이 된다.** 위 표의 판정은 registry 다섯 줄과 그날의 크래시
   로그에서 재구성한 것이고, `bench`의 `checklist` 배열이 실제로 무엇을 뱉었는지는
   확인할 수 없다. 그래서 상태가 `제안`이다 — 원문이 붙거나 재측정이 되면 올린다.
-- 수치가 **GPU 공유 상태**의 값이다. 팀 합계 34 GiB 할당에 GPU를 공유하므로 같은 명령이
+- 수치가 **GPU 공유 상태**의 값이다. 팀 목표 34 GiB 안에서 GPU를 공유하므로 같은 명령이
   다른 시각에 다른 값을 낼 수 있다. 재현 시 대조할 기준선으로는 쓰되, 절대값으로
   계획에 넣지 않는다(§3의 첫 문장).
 
