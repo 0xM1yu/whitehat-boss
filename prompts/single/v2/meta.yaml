@@ -1,0 +1,4 @@
+role: single
+version: v2
+output_schema: Finding
+description: B1·B3 통합 단일패스 — Scout·Auditor·Critic 없이 혼자 경로 수립·자기반박, 출력은 Auditor와 동일한 Finding. 3회 호출 후 다수결
