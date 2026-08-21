@@ -10,6 +10,7 @@
 
 import json
 import re
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -30,6 +31,7 @@ from src.bench_metrics import (
     METRIC_TOKENS_RECOMPUTED,
 )
 from src.config import load_config
+from src.interfaces.model_client import Prompt
 from src.orchestrator.prompt_loader import load_prompt
 from src.schemas.candidate import Candidate
 from src.schemas.common import Location
@@ -778,3 +780,89 @@ def test_a_number_is_returned_without_a_reason(monkeypatch: pytest.MonkeyPatch) 
     _smi(monkeypatch, stdout="1024\n2048\n")
 
     assert bench_metrics.nvidia_smi_mb() == (2048.0, None)
+
+
+# --- 메모리 폴링 --------------------------------------------------------------
+
+
+def test_memory_polling_sleeps_between_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    """폴링 사이에 간격이 있어야 한다. 없으면 관측이 재려는 대상을 흔든다.
+
+    그전에는 `while not future.done():` 안에 sleep이 없어 **폴링 속도가 `nvidia-smi`가
+    얼마나 느린가에 우연히 결정됐다.** 그 전제가 깨지는 자리가 ATOM이다 — 통합메모리라
+    `memory.total`이 `[N/A]`로 빨리 돌아온다. 관측 빈도가 장비 특성에 좌우되면 장비 간
+    비교에서 그것이 그대로 교란이 된다.
+    """
+    slept: list[float] = []
+    _stub_polling(monkeypatch, slept)
+
+    bench._one_context(
+        client=None, role=Role.SCOUT, template=None, schema=None, ctx=8192, endpoint="http://x"
+    )
+
+    assert slept, "폴링 사이에 sleep이 없다"
+    assert set(slept) == {bench._POLL_INTERVAL_S}
+
+
+def test_memory_reports_how_many_samples_the_peak_came_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`*_peak`만으로는 3 표본에서 나온 값과 300 표본에서 나온 값이 구별되지 않는다.
+
+    `*_reason`은 "한 번도 못 쟀다"만 가르므로 그 사이가 통째로 비어 있었다. 폴링 간격이
+    생기면서 표본이 줄어 구멍이 커지므로 개수를 함께 낸다 — 캡슐의 `items=k`가 잘린
+    값인지 캡슐만 봐서는 모르는 것(D13 잔여 (b))과 같은 모양이다.
+    """
+    counts: dict[str, int] = {}
+    _stub_polling(monkeypatch, [], counts=counts)
+
+    result = bench._one_context(
+        client=None, role=Role.SCOUT, template=None, schema=None, ctx=8192, endpoint="http://x"
+    )
+
+    assert result["kv_cache_usage_perc_samples"] == counts["kv"]
+    assert result["nvidia_smi_mb_samples"] == counts["smi"]
+    # 표본이 있으면 peak도 그 표본에서 나온 값이다.
+    assert result["nvidia_smi_mb_peak"] == 2048.0
+    assert result["nvidia_smi_mb_reason"] is None
+
+
+def _stub_polling(
+    monkeypatch: pytest.MonkeyPatch, slept: list[float], counts: dict[str, int] | None = None
+) -> None:
+    """GPU도 네트워크도 없이 폴링 루프를 몇 바퀴 돌린다.
+
+    호출 회수 자체는 스레드 스케줄링에 달려 있어 고정하지 않는다. 고정하는 것은
+    **관계**다: 보고된 표본 수가 실제로 값을 얻은 횟수와 같은가.
+    """
+    seen = counts if counts is not None else {}
+    seen.setdefault("kv", 0)
+    seen.setdefault("smi", 0)
+    done = threading.Event()
+
+    def fake_kv(endpoint: str) -> float:
+        seen["kv"] += 1
+        if seen["kv"] >= 3:
+            done.set()
+        return 0.5
+
+    def fake_smi() -> tuple[float, None]:
+        seen["smi"] += 1
+        return 2048.0, None
+
+    def fake_call(client, role, prompt, schema):  # noqa: ANN001, ANN202
+        done.wait(timeout=5)
+        return bench.Call(True)
+
+    monkeypatch.setattr(bench, "kv_cache_perc", fake_kv)
+    monkeypatch.setattr(bench, "nvidia_smi_mb", fake_smi)
+    monkeypatch.setattr(bench, "call_once", fake_call)
+    monkeypatch.setattr(
+        bench,
+        "sized_prompt",
+        lambda role, template, ctx, variant: Prompt(
+            prefix="p", body="b", prompt_version="v1"
+        ),
+    )
+    monkeypatch.setattr(bench, "approx_tokens", lambda prompt: 0)
+    monkeypatch.setattr(bench.time, "sleep", slept.append)
