@@ -39,7 +39,12 @@ RETRIEVAL_ROLES = ("embedding", "reranker")
 #
 # `tests/test_config.py::test_prompted_roles_matches_prompt_directories`가 이 상수와
 # `prompts/` 하위 디렉터리의 일치를 강제한다.
-PROMPTED_ROLES = ("scout", "auditor", "critic")
+PROMPTED_ROLES = (
+    "scout",
+    "auditor",
+    "critic",
+    "single",
+)
 
 # 이 스킴이면 FakeModelClient로 간다. 역할별로 갈리므로 프로필 안에서 혼용이 가능하다.
 FAKE_SCHEME = "fake://"
