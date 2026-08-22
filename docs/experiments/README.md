@@ -71,8 +71,9 @@
 ## 채울 수 없는 필드는 `미기재`로 남긴다
 
 지어내지 않는다. **빈칸이 그 자리에서 템플릿의 필수 필드가 왜 필요한지를 증명한다** —
-확정 #2가 "revision 미기재가 오독의 원인"이라고 적고 있고, 그 보고서의 revision 칸이
-실제로 비어 있다. 둘이 서로를 가리킨다.
+확정 #2가 "revision 미기재가 오독의 원인"이라고 적고 있고, 그 공백이 실제로 오독을 낳았다.
+그 revision 칸은 2026-08-22 미확정 #3으로 채워졌지만(스냅샷 해시), **빈칸이 필수 필드의
+필요성을 증명한 사례**로 남는다.
 
 ## ADR·registry와의 경계
 
@@ -117,8 +118,8 @@
 | run | 서빙 모델 (실제) | revision | 실서빙 대상 | Finding |
 | --- | --- | --- | :-: | :-: |
 | [서빙](2026-08-18-serving-atom.md) §8.2 | `Qwen3-4B-Instruct-2507-FP8` | `8591804019c8b2…` | scout | **1** |
-| [검색](2026-08-18-retrieval-atom.md) §3.3 | `Qwen3-0.6B` (bf16) — 별칭이 `qwen3-4b`였다 | **미기재** | scout | **0** |
-| [검색](2026-08-18-retrieval-atom.md) §4.4 | `Qwen3-Embedding-0.6B` + `Qwen3-Reranker-0.6B` | **미기재** | retriever (scout는 Fake) | **1** |
+| [검색](2026-08-18-retrieval-atom.md) §3.3 | `Qwen3-0.6B` (bf16) — 별칭이 `qwen3-4b`였다 | `c1899de289a0…` | scout | **0** |
+| [검색](2026-08-18-retrieval-atom.md) §4.4 | `Qwen3-Embedding-0.6B` + `Qwen3-Reranker-0.6B` | `97b0c614be4d…` · `e61197ed4502…` | retriever (scout는 Fake) | **1** |
 
 **오독의 원인은 보고서에 실제 모델과 revision이 없었다는 것이다.** `--served-model-name`은
 별명이라 근거가 못 된다 — 0.6B를 `qwen3-4b`라는 이름으로 서빙한 기록이 4B의 결과로 읽혔다.
@@ -215,13 +216,18 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 모두 붙여 fp8 4B와 bf16 0.6B를 각각 띄운다. 확정 조건은 **양쪽 다 기동하고,
 `--enforce-eager` 없이도 뜨는 것**이다.
 
-### #3 검색 실험의 서빙 모델 revision 3건
+### #3 검색 실험의 서빙 모델 revision 3건 — ✅ 해소 (2026-08-22)
 
-`Qwen3-0.6B` · `Qwen3-Embedding-0.6B` · `Qwen3-Reranker-0.6B` 전부 **미기재**다.
-확정 #2의 오독이 정확히 이 공백에서 나왔다.
+~~전부 미기재~~ → **작성자(손수민)가 ATOM 스냅샷 해시로 확정**했다. 확정 #2의 오독을 낳은
+공백이 정확히 이것이었고, 이제 검색 보고서 메타 표와 확정 #2 표에 기재됐다:
 
-**확정 방법**: 작성자에게 확인한다. 스냅샷 경로가 남아 있으면 그 커밋 해시로 확정되고,
-없으면 재서빙 시 기록한다.
+| 모델 | revision (HF 커밋) |
+| --- | --- |
+| `Qwen3-0.6B` | `c1899de289a04d12100db370d81485cdf75e47ca` |
+| `Qwen3-Embedding-0.6B` | `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` |
+| `Qwen3-Reranker-0.6B` | `e61197ed45024b0ed8a2d74b80b4d909f1255473` |
+
+`~/.cache/huggingface/hub/models--Qwen--*/refs/main`과 스냅샷 디렉터리 이름이 일치했다.
 
 ### #4 `single_gpu_12g`의 `tool_runner: fake`가 의도인가
 

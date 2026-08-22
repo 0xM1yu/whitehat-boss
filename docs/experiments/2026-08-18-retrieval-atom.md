@@ -21,9 +21,9 @@
 | 항목 | 값 |
 | --- | --- |
 | 실험 종료 시각 | **미기재** — 원 보고서는 "2026-08-18 저녁"까지만 적었다. 분 단위가 없어 다른 실험과의 선후를 원문만으로는 정할 수 없다 |
-| 실제 서빙 모델 (§3 scout) | `hf://Qwen/Qwen3-0.6B@미기재` (bf16). **별칭 `--served-model-name qwen3-4b`** — 별칭은 근거가 못 된다 |
-| 실제 서빙 모델 (§4.2 embedding) | `hf://Qwen/Qwen3-Embedding-0.6B@미기재` |
-| 실제 서빙 모델 (§4.3 reranker) | `hf://Qwen/Qwen3-Reranker-0.6B@미기재` |
+| 실제 서빙 모델 (§3 scout) | `hf://Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca` (bf16). **별칭 `--served-model-name qwen3-4b`** — 별칭은 근거가 못 된다 |
+| 실제 서빙 모델 (§4.2 embedding) | `hf://Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` |
+| 실제 서빙 모델 (§4.3 reranker) | `hf://Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473` |
 | `repo_commit` | **미기재** |
 | `run_id` | **미기재** |
 | run 산출물 경로·보존 | **미기재.** §9는 "저장소 변경 없음"이므로 저장소 안에는 남지 않았다 |
