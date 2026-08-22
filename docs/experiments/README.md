@@ -118,7 +118,7 @@
 
 | run | 서빙 모델 (실제) | revision | 실서빙 대상 | Finding |
 | --- | --- | --- | :-: | :-: |
-| [서빙](2026-08-18-serving-atom.md) §8.2 | `Qwen3-4B-Instruct-2507-FP8` | `8591804019c8b2…` | scout | **1** |
+| [서빙](2026-08-18-serving-atom.md) §8.2 | `Qwen3-4B-Instruct-2507-FP8` | `8591804019c8…` | scout | **1** |
 | [검색](2026-08-18-retrieval-atom.md) §3.3 | `Qwen3-0.6B` (bf16) — 별칭이 `qwen3-4b`였다 | `c1899de289a0…` | scout | **0** |
 | [검색](2026-08-18-retrieval-atom.md) §4.4 | `Qwen3-Embedding-0.6B` + `Qwen3-Reranker-0.6B` | `97b0c614be4d…` · `e61197ed4502…` | retriever (scout는 Fake) | **1** |
 
@@ -234,10 +234,11 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 > 미지정이 아니다.** `VLLM_ATTENTION_BACKEND` 판정만 이 덤프로 성립한다 — 그 이름은
 > `VLLM_` 접두라 지정됐다면 필터를 통과했을 것이기 때문이다.
 
-### #3 검색 실험의 서빙 모델 revision 3건 — ✅ 해소 (2026-08-22)
+### #3 검색 실험의 서빙 모델 revision 3건 — 해소 (2026-08-22)
 
-~~전부 미기재~~ → **작성자(@sumin0218)가 ATOM 스냅샷 해시로 확정**했다. 확정 #2의 오독을 낳은
-공백이 정확히 이것이었고, 이제 검색 보고서 메타 표와 확정 #2 표에 기재됐다:
+**해소(스냅샷 해시로).** 세 건 전부 미기재였다. 작성자(@sumin0218)가 ATOM 스냅샷 해시로
+확정했고, 확정 #2의 오독을 낳은 공백이 정확히 이것이었다. 이제 검색 보고서 메타 표와
+확정 #2 표에 기재됐다:
 
 | 모델 | revision (HF 커밋) |
 | --- | --- |
@@ -246,6 +247,23 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 | `Qwen3-Reranker-0.6B` | `e61197ed45024b0ed8a2d74b80b4d909f1255473` |
 
 `~/.cache/huggingface/hub/models--Qwen--*/refs/main`과 스냅샷 디렉터리 이름이 일치했다.
+
+**이 대조는 run에 묶여 있지 않다.** 검색 보고서는 원문 산출물도 §3 scout 기동 명령도
+남기지 않아서([검색](2026-08-18-retrieval-atom.md) 「메타」 표 · §10),
+[파이프라인](2026-08-22-pipeline-atom.md) 메타 표가 한 것처럼 기동 로그의 `model_tag`로
+짚을 수가 없다. 캐시가 실험 뒤에 다시 받아진 것이라면 08-18에 서빙된 revision이 같다는
+보장이 이 대조만으로는 안 나온다.
+
+**그 구멍은 상류가 메운다.** 세 repo 모두 HF Hub 최종 수정이 실험일보다 앞선다.
+
+| repo | 최종 수정 (HF Hub) |
+| --- | --- |
+| `Qwen/Qwen3-0.6B` | 2025-07-26 |
+| `Qwen/Qwen3-Embedding-0.6B` | 2026-04-20 |
+| `Qwen/Qwen3-Reranker-0.6B` | 2026-04-16 |
+
+셋 다 실험 전부터 `main`이 움직이지 않았다. **언제 받았든 `--revision` 없이 받으면 같은
+해시가 나온다는 뜻이고, 그래서 "지금 일치한다"가 "그때도 같았다"로 성립한다.**
 
 ### #4 `single_gpu_12g`의 `tool_runner: fake`가 의도인가
 
