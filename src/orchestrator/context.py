@@ -28,6 +28,7 @@ from src.orchestrator import gate, state_machine
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.gate import GateResult
 from src.orchestrator.policy import Action, RoutingPolicy, RoutingRequest
+from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.common import Location
@@ -87,6 +88,13 @@ class RunContext:
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     read_source: Callable[[Location], str] = field(default=_unwired_read_source)
+    # 렌더된 프롬프트를 run 산출물에 남기는 곳 (D19). `read_source`와 마찬가지로 조립부가
+    # 주입한다 — run_dir을 아는 것은 러너이고 노드도 이 객체도 그것을 몰라야 한다.
+    #
+    # **`None`이면 아무것도 쓰지 않고 `model_call`도 그대로다.** 산출물 디렉터리가 없는
+    # 호출 경로(단위 테스트, `--dry-run`)에서 빈 참조를 남기면 "안 썼다"와 "쓸 곳이
+    # 없었다"가 구별되지 않는다.
+    prompts: PromptLog | None = None
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
 
@@ -126,6 +134,10 @@ class RunContext:
         예산 소진이면 호출 전에 `BudgetExhausted`가 나므로 토큰을 쓰지 않는다.
         """
         self.ledger.ensure(stage)
+        # **예산 확인 뒤, 시계 시작 전.** 뒤인 이유는 `ensure`가 막은 호출에는 대응하는
+        # `model_call`이 없어서 파일만 남으면 개수가 어긋나기 때문이고, 앞인 이유는 이
+        # 파일 쓰기가 모델 지연(`wall_ms`)에 섞이면 안 되기 때문이다.
+        prompt_fields = self._record_prompt(role=role, stage=stage, prompt=prompt)
         started = self.monotonic_ms()
         try:
             result = self.models.complete(role=role, prompt=prompt, schema=schema)
@@ -139,6 +151,7 @@ class RunContext:
                 role=role.value,
                 model=self.config.model_key_for(role.value),
                 prompt_version=prompt.prompt_version,
+                **prompt_fields,
                 schema=schema.__name__,
                 ok=False,
                 error=type(exc).__name__,
@@ -153,6 +166,7 @@ class RunContext:
             role=role.value,
             model=result.model,
             prompt_version=prompt.prompt_version,
+            **prompt_fields,
             schema=schema.__name__,
             ok=True,
             input_tokens=result.usage.input_tokens,
@@ -174,6 +188,22 @@ class RunContext:
             self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
         self.ledger.charge(result.usage, stage=stage, gpu_ms=result.gpu_ms)
         return result
+
+    def _record_prompt(
+        self, *, role: Role, stage: Stage, prompt: Prompt
+    ) -> dict[str, TraceValue]:
+        """프롬프트를 산출물로 남기고 `model_call`에 실을 참조를 돌려준다 (D19).
+
+        **`prompts`가 없으면 빈 dict다.** `prompt_ref=None`을 늘 싣지 않는 것은 그러면
+        기록 장치가 없던 run과 프롬프트를 못 쓴 run이 trace에서 같은 모양이 되기
+        때문이다 — `graph_index`가 "없다"와 "0건"을 가르는 것과 같은 이유다.
+
+        본문은 trace에 싣지 않는다. 그 판단의 근거는 `prompt_log` 모듈 docstring에 있다.
+        """
+        if self.prompts is None:
+            return {}
+        ref, digest = self.prompts.write(role=role.value, stage=int(stage), prompt=prompt)
+        return {"prompt_ref": ref, "prompt_sha256": digest}
 
     # --- 도구 ---
 
