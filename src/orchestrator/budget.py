@@ -58,8 +58,28 @@ class BudgetLedger:
         # CPU 시간으로 오염된다.
         self.tool_ms = 0
         # `gpu_ms=None`으로 온 호출 수 — **"GPU를 안 썼다"가 아니라 "안 쟀다"의 개수다.**
-        # Fake 어댑터가 여기 들어온다. 실서빙 역할에서 이 값이 0이 아니면 그 run의
-        # GPU 비용은 미상이고, `runner.incomplete_fields()`가 그 사실로 판정한다.
+        # Fake 어댑터가 여기 들어온다.
+        #
+        # ## 지금 이 값을 읽는 곳은 없다. 지우지 마라
+        #
+        # **`incomplete_fields()`의 입력이 아니다.** 오래 그렇게 적혀 있었지만 거짓이었고,
+        # 실제 입력은 `RunContext.gpu_unmeasured_roles`다 — 그쪽은 **모델 호출만** 역할별로
+        # 세고 `runner`가 실서빙 역할과 교집합해서 넘긴다.
+        #
+        # 그래도 남기는 이유: 지워도 `charge()`의 `if gpu_ms is None` 분기는 그대로라
+        # **동작** 구별을 잃는 것은 아니지만, **그 횟수의 관측 가능성**을 잃는다. 원장이
+        # "몇 번을 못 쟀는지" 자체를 모르게 된다.
+        #
+        # **이대로 게이트에 연결하면 안 된다.** `RunContext.record_retrieval()`이 검색
+        # 호출도 `charge()`로 보내고 Fake embedding·reranker는 `gpu_ms=None`을 주므로,
+        # 이 값은 **모델 호출과 검색 호출을 섞어 센다.** 판정에 쓰면 Fake 검색이 "미측정
+        # GPU"로 잡혀 멀쩡한 `dev_*` run이 매번 비교표에서 빠진다 — checksum 자리표시자
+        # 판정에서 Fake 역할을 빼는 것과 같은 논법이다(`incomplete_fields()` 주석).
+        # 쓰려면 두 경로를 먼저 갈라야 한다.
+        #
+        # `budget` 이벤트에 실어 실제로 소비시키는 선택지도 있는데 그것은 **지표 열 추가**라
+        # 성격이 다르다. 설명 없는 미소비 값은 다음 사람이 죽은 코드로 지우므로 사유를
+        # 여기 남긴다 — `nodes/validate.py`가 8단계 게이트 등급에 하는 것과 같은 처리다.
         self.unmeasured_gpu_calls = 0
 
     @property
@@ -129,7 +149,8 @@ class BudgetLedger:
 
         **`gpu_ms=None`은 0으로 더하지 않는다.** `None`은 "안 쟀다"이고 0은 "GPU를 안
         썼다"라, 더해 버리면 두 사실이 합쳐져 나중에 구분할 수 없다. 미측정 사실은
-        `unmeasured_gpu_calls`가 따로 센다 — 그 값이 `incomplete_fields()`의 입력이다.
+        `unmeasured_gpu_calls`가 따로 센다 — **그 값을 읽는 곳은 아직 없고**, 판정을
+        하는 것은 `RunContext.gpu_unmeasured_roles`다(그 필드 주석).
         """
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens

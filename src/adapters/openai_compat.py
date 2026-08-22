@@ -62,13 +62,26 @@ class OpenAICompatModelClient:
         last_error: Exception | None = None
         body = prompt.body
         # **재시도분까지 더한다.** 스키마 파싱에 실패한 응답도 서버는 이미 만들어 냈고
-        # 그 GPU 시간은 실제로 쓰였다. 마지막 시도만 세면 재시도가 잦은 모델일수록 비용이
-        # 싸 보인다 — 조건 간 비교에서 정확히 거꾸로 가는 편향이다.
+        # 그 GPU 시간과 토큰은 실제로 쓰였다. 마지막 시도만 세면 재시도가 잦은 모델일수록
+        # 비용이 싸 보인다 — 조건 간 비교에서 정확히 거꾸로 가는 편향이다.
+        #
+        # **토큰도 같은 규칙이다.** 예전에는 `gpu_ms`만 누적하고 `usage`는 매 반복
+        # 재바인딩돼 마지막 성공분만 반환됐다. 3회 시도(2실패+1성공)면 GPU는 3회 합인데
+        # 토큰은 1회분이라, 위 주석이 GPU에서 없앤 편향이 토큰 쪽에 **거꾸로 되살아나
+        # 있었다** — 재시도가 잦은 모델의 "토큰당 GPU"가 실제보다 커 보인다.
+        #
+        # 셋(`input`/`output`/`cached`)을 함께 더한다. `cached_tokens`는 `input_tokens`의
+        # 부분집합이므로(`interfaces/model_client.py Usage`) prefix 캐시 비율
+        # `sum(cached) / sum(input)`의 분자와 분모가 같은 축에서 커져야 한다 — 하나만
+        # 누적하면 그 비율이 조용히 틀어진다. 각 항이 `cached <= input`을 만족하므로
+        # 합도 만족한다.
         gpu_ms = 0
+        spent = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
         for _ in range(self.retries + 1):
             started = time.monotonic()
             raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
             gpu_ms += int((time.monotonic() - started) * 1000)
+            spent = _add(spent, usage)
             try:
                 value = schema.model_validate_json(raw)
             except ValidationError as exc:
@@ -79,7 +92,7 @@ class OpenAICompatModelClient:
                 continue
             return ModelResult(
                 value=value,
-                usage=usage,
+                usage=spent,
                 model=self.model_name,
                 gpu_ms=gpu_ms,
                 gpu_ms_source="request_wall_clock",
@@ -145,4 +158,17 @@ def _usage_from(usage: dict) -> Usage:
         input_tokens=prompt_tokens,
         output_tokens=int(usage.get("completion_tokens", 0)),
         cached_tokens=min(cached, prompt_tokens),
+    )
+
+
+def _add(left: Usage, right: Usage) -> Usage:
+    """두 호출의 토큰을 더한다. 재시도 누적 전용이다.
+
+    `Usage`가 frozen이라 제자리 증가가 안 되고, 필드를 손으로 더하는 코드가 호출 지점에
+    흩어지면 셋 중 하나를 빠뜨리는 것이 이 결함의 재발이다 — 더하는 자리를 하나로 둔다.
+    """
+    return Usage(
+        input_tokens=left.input_tokens + right.input_tokens,
+        output_tokens=left.output_tokens + right.output_tokens,
+        cached_tokens=left.cached_tokens + right.cached_tokens,
     )

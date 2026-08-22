@@ -95,6 +95,20 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
 
 MEASUREMENT_ORDER = ("startup", "structured_output", "prefix_cache", "throughput", "memory")
 
+# 메모리 폴링 간격(초). **실측으로 정한 값이 아니라 절충용 잠정치다** — `Budget.tool_seconds`
+# (D15)와 같은 성격이고, 실측이 생기면 조정 대상이다.
+#
+# **없앤 문제가 "호출 횟수"는 아니다.** 그전에는 sleep이 아예 없었는데, 그렇다고 루프가
+# 무한정 도는 것은 아니었다: `nvidia-smi`의 fork+exec 자체가 루프를 묶고 있었다.
+# 진짜 문제는 **폴링 속도가 `nvidia-smi`가 얼마나 느린가에 우연히 결정된다**는 것이고,
+# 그 전제가 깨지는 자리가 정확히 ATOM이다 — 통합메모리라 `memory.total`이 `[N/A]`로
+# **빨리** 돌아온다(`bench_metrics.nvidia_smi_mb()`가 그 경우를 다룬다). 관측 빈도가
+# 장비 특성에 좌우되면 장비 간 비교에서 그것이 그대로 교란이 된다.
+#
+# 절충: 길면 peak를 놓치고, 짧으면 관측이 재려는 대상을 흔든다. 어느 쪽으로 틀렸는지는
+# `*_samples`가 함께 나가므로 사후에 알 수 있다.
+_POLL_INTERVAL_S = 0.1
+
 
 class BenchApplyError(RuntimeError):
     """models.yaml의 갱신 대상 블록을 확실히 찾지 못했다. 아무것도 쓰지 않는다."""
@@ -515,6 +529,7 @@ def _one_context(
             used, mb_reason = nvidia_smi_mb()
             if used is not None:
                 peak_mb.append(used)
+            time.sleep(_POLL_INTERVAL_S)
         call = future.result()
     return {
         "requested_tokens": ctx,
@@ -529,4 +544,14 @@ def _one_context(
         ),
         "nvidia_smi_mb_peak": max(peak_mb) if peak_mb else 0.0,
         "nvidia_smi_mb_reason": None if peak_mb else mb_reason,
+        # **peak이 몇 표본에서 나왔는지 함께 남긴다.** `*_peak: 0.0` + `reason`은 "한 번도
+        # 못 쟀다"만 구별하고, **3 표본에서 나온 peak과 300 표본에서 나온 peak을 구별하지
+        # 못한다.** 폴링 간격이 생기면서 표본이 줄어 그 구멍이 커지므로 함께 넣는다 —
+        # 캡슐의 `items=k`가 잘린 값인지 캡슐만 봐서는 모르는 것(D13 잔여 (b))과 같은
+        # 모양이다.
+        #
+        # 필드 이름이 곧 지표의 열 이름이다(`IndexSummary.as_trace_fields` docstring).
+        # `*_peak`과 짝이 되게 `*_samples`로 붙인다.
+        "kv_cache_usage_perc_samples": len(peak_perc),
+        "nvidia_smi_mb_samples": len(peak_mb),
     }

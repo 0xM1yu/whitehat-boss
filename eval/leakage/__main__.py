@@ -30,6 +30,15 @@ DEFAULT_SCAN = (REPO_ROOT / "prompts",)
 # trace JSONL은 run마다 생기므로 glob으로 모은다.
 TRACE_GLOB = "artifacts/*/trace.jsonl"
 
+# **run 산출물 프롬프트**(open-questions D19). 2026-08-22까지 이 스캐너가 본 프롬프트는
+# `prompts/` 아래 **템플릿**뿐이었다 — 즉 대상 코드에서 흘러들어온 문자열은 한 번도
+# 검사된 적이 없다. `{{SOURCE}}`·`{{CAPSULE_SECTIONS}}`가 렌더된 뒤의 텍스트가 여기 있고,
+# CVE 번호·문제명이 실제로 섞일 수 있는 곳은 템플릿이 아니라 이쪽이다.
+#
+# evaluation.md §4의 `Prompt Logging` 행이 요구하는 **"로그 존재 검사"는 아직 아니다** —
+# 여기 있는 것은 "있으면 검사한다"이고, 없으면 그냥 대상이 0건이다(R3).
+RUN_GLOBS = (TRACE_GLOB, "artifacts/*/prompts/*.md")
+
 # 문제명 목록. 없으면 문제명 검사만 비활성이다.
 DEFAULT_PROBLEM_NAMES = REPO_ROOT / "eval" / "datasets" / "problem_names.txt"
 
@@ -71,7 +80,8 @@ def check(
 ) -> Report:
     """마스킹 스캔과 digest 교집합 검사를 한 번에 돌린다."""
     names = load_problem_names(problem_names)
-    targets = [*scan, *sorted(REPO_ROOT.glob(TRACE_GLOB))]
+    found = [path for pattern in RUN_GLOBS for path in REPO_ROOT.glob(pattern)]
+    targets = [*scan, *sorted(found)]
     leaks = scan_paths(targets, problem_names=names)
     checked = kb is not None and evalset is not None and kb.exists() and evalset.exists()
     overlaps = intersecting(digests(kb), digests(evalset)) if checked else []

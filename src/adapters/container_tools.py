@@ -116,6 +116,10 @@ INDEX_FILE = "index.json"
 # scratch 하위 디렉터리 이름은 도구 이름이다(`_execute`가 `tool`로 만든다).
 # `nodes/index.INDEX_TOOL`과 같은 값이어야 하지만 어댑터는 오케스트레이터를 import 하지
 # 않으므로(engineering-guide.md §3) 여기 복제하고 tests/test_container_tools.py가 대조한다.
+#
+# **이 파일 안에서도 이 상수를 써야 한다.** 두 곳이 `tool == "index"` 리터럴을 쓰고 있었고,
+# 두 상수를 함께 바꾸면 대조 테스트는 통과하는데 리터럴만 뒤처져 인덱서가 조용히
+# `_COMPILE_SUFFIXES`를 받는다 — `.inc`가 빠져 D16의 실패가 재현된다.
 INDEX_TOOL = "index"
 
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
@@ -276,7 +280,7 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
                 cwd=cwd,
             )
         ]
-    if tool == "index":
+    if tool == INDEX_TOOL:
         _require_sources(tool, compile_sources)
         # 결과는 scratch에 쓴다 — 대상 마운트는 읽기 전용이다. `--root`는 JSON에 담길
         # 경로를 마운트 기준 상대경로로 만들기 위한 것이고, 절대경로를 남기면 실행마다
@@ -568,7 +572,10 @@ class ContainerToolRunner:
         `_COMPILE_SUFFIXES`·`_INDEX_SUFFIXES` 주석에 있다. 한 목록으로 합치면 clang
         계열이 단독 컴파일되지 않는 조각을 받아 없는 실패를 만들어낸다.
         """
-        suffixes = _INDEX_SUFFIXES if tool == "index" else _COMPILE_SUFFIXES
+        # 리터럴이 아니라 상수를 본다. 갈리면 인덱서가 조용히 `_COMPILE_SUFFIXES`를 받아
+        # `.inc`가 빠지고, D16이 기록한 실패(28바이트짜리 `#include` 한 줄만 분석하고
+        # 17KB를 보지 않았다)가 그대로 재현된다.
+        suffixes = _INDEX_SUFFIXES if tool == INDEX_TOOL else _COMPILE_SUFFIXES
         return plan(
             tool,
             target=_in_container(self.root, resolved),
