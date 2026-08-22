@@ -12,6 +12,7 @@ from src.adapters.memory_store import InMemoryStateStore
 from src.config import load_config
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelResult, Prompt, Usage
+from src.interfaces.retrieval import RetrievalResult
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
@@ -256,8 +257,12 @@ def test_a_sub_second_call_is_not_charged_as_zero() -> None:
 def test_an_unmeasured_call_is_counted_not_added_as_zero() -> None:
     """`None`은 "GPU를 안 썼다"가 아니라 "안 쟀다"다.
 
-    0으로 더하면 두 사실이 합쳐져 `incomplete_fields()`가 판정할 근거가 사라진다 —
-    `repo_dirty`·`device`가 `None`을 쓰는 것과 같은 이유다.
+    0으로 더하면 두 사실이 합쳐져 나중에 구분할 수 없다 — `repo_dirty`·`device`가 `None`을
+    쓰는 것과 같은 이유다.
+
+    **`incomplete_fields()`가 이 카운터를 읽지는 않는다.** 오래 그렇게 적혀 있었지만
+    거짓이었고 실제 입력은 `RunContext.gpu_unmeasured_roles`다. 여기서 고정하는 것은
+    원장이 두 사실을 섞지 않는다는 것뿐이다.
     """
     ledger = _ledger()
     zero_usage = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
@@ -267,6 +272,28 @@ def test_an_unmeasured_call_is_counted_not_added_as_zero() -> None:
 
     assert ledger.gpu_ms == 120
     assert ledger.unmeasured_gpu_calls == 1
+
+
+def test_the_unmeasured_counter_mixes_model_and_retrieval_calls() -> None:
+    """이 카운터를 그대로 판정에 쓰면 Fake 검색이 "미측정 GPU"로 잡힌다.
+
+    `record_retrieval()`도 `charge()`로 들어오고 Fake embedding·reranker는 `gpu_ms=None`을
+    준다. 그래서 이 값은 **모델 호출과 검색 호출을 섞어 센다** — 판정에 쓰면 멀쩡한
+    `dev_*` run이 매번 비교표에서 빠진다(checksum 판정에서 Fake 역할을 빼는 것과 같은
+    이유).
+
+    이 테스트는 고칠 것을 요구하는 것이 아니라 **함정을 박제한다.** 다음 사람이 카운터를
+    게이트에 연결하면 여기서 "모델만 세야 한다"는 전제를 다시 만나게 된다. 갈라야 할
+    것이 무엇인지는 `unmeasured_gpu_calls` 필드 주석에 있다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    zero = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+
+    ctx.record_retrieval("embedding", RetrievalResult(usage=zero, gpu_ms=None), candidates=3)
+
+    assert ctx.ledger.unmeasured_gpu_calls == 1
+    # 판정에 실제로 쓰이는 쪽은 검색 호출을 세지 않는다 — 모델 호출만 역할별로 담는다.
+    assert ctx.gpu_unmeasured_roles == {}
 
 
 def test_the_budget_event_carries_milliseconds_too() -> None:
