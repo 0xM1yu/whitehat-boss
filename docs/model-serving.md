@@ -217,6 +217,10 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 - vLLM: 온프레미스 inference server, OpenAI-compatible API 제공
 - LiteLLM: 역할별 routing·retry·fallback, spend/budget 관리
 - 도메인 로직은 `ModelClient` 인터페이스에만 의존한다([engineering-guide.md](engineering-guide.md)).
+- **서버 stdout은 `tee`로 파일에 받는다.** 규약과 사유는
+  [experiments/README.md](experiments/README.md)에 있다 — 같은 유실을 세 번 겪었고,
+  그 창에만 있는 값(`Prefix cache hit rate`)이 장부의 `cached_tokens`를 해석하는
+  유일한 대조값이다. 여기 두는 것은 포인터뿐이고 규약의 정본은 그쪽이다.
 
 ## 7. 확장 정책
 
