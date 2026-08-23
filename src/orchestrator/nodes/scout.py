@@ -137,5 +137,9 @@ def describe_sections(capsule: ContextCapsule) -> str:
     for section in capsule.sections:
         counted = "" if section.items is None else f", {section.items}건"
         lines.append(f"- {section.kind} ({section.tokens} tok{counted})")
-        lines.extend(f"    {entry}" for entry in section.body)
+        # 여러 줄짜리 본문(예: `related`의 코드 블록)은 **모든 줄**을 들여쓴다.
+        # `f"    {entry}"`는 첫 줄만 붙어 나머지가 왼쪽에 붙던 자리다(그래프 줄은 한 줄이라
+        # 안 드러났다).
+        for entry in section.body:
+            lines.extend(f"    {line}" for line in entry.splitlines())
     return "\n".join(lines)
