@@ -477,6 +477,12 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 사실은 `target_plan.fallback_artifacts`에 남는다 — 같은 지표를 볼 때 두 종류의 run이
 섞여 있을 수 있으므로 이 값으로 먼저 갈라야 한다.
 
+**2026-08-23 실측 — 분모가 얼마나 바뀌는지가 나왔다**([실험 보고서](docs/experiments/2026-08-23-pipeline-zlib-atom.md)).
+zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그중 **31건**은 심볼이 0건이라
+후보를 만들지 않았고(`.h`·바이너리 등), **286건**은 `candidate_max: 256`에 잘려
+`target_skipped`로 남았다. **즉 이 run의 제거율 분모는 79도 542도 아닌 256이다** — 세 수를
+섞으면 같은 run이 세 개의 다른 제거율을 낸다. 분모로 쓸 값은 `target_plan.planned`다.
+
 ### Gate E1의 `location_ok`는 여전히 작동하지 않는다 — 원인은 후보 위치가 아니었다
 
 **2026-08-23 정정.** 이 문서는 오래 "심볼 단위로 좁혀지면 `location_ok`가 비로소 작동을
@@ -491,6 +497,28 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 심볼 단위 후보는 그 조건의 **오른쪽**만 정밀하게 만든다. `location_ok`를 열려면 semgrep
 JSON과 clang-tidy 출력에서 줄 번호를 파싱해 `Evidence.location`을 채워야 하고, 그것은
 별개의 작업이다(open-questions D23).
+
+**2026-08-23 실측으로 확인됐다**([실험 보고서](docs/experiments/2026-08-23-pipeline-zlib-atom.md)): 심볼 단위로 돌린 두 run에서
+`location_ok`가 **픽스처 6건 · zlib 55건 전부 false**다. 후보 위치가 심볼로 정밀해졌는데도
+값이 안 바뀌었다.
+
+### `report.md`의 "중복 제거 N건"을 제거율로 읽지 않는다
+
+`run_20260823_0002`의 report.md 첫머리가 "중복 제거: 43건"이다. Finding 47건 중 43건이
+접혔다는 뜻인데, **이것은 오탐 제거율이 아니다.** 이유 셋:
+
+1. **뭉치는 키를 Fake가 만들었다.** `nodes/report.dedupe()`가 `(finding.cwe, _sink(finding))`로
+   묶고 `_sink`는 `finding.path[-1].symbol`이다. 그 `cwe`와 `path`를 만든 auditor가 Fake다 —
+   47건이 4개 sink로 접힌 것은 **Fake가 sink를 몇 종류만 만든다**는 뜻일 수 있고, 이 run은
+   그 구별을 하지 못한다.
+2. **dedupe는 상태를 바꾸지 않는다.** `report.run()`이 "상태는 바꾸지 않는다"고 못박고 있다.
+   evaluation.md가 요구하는 단계별 제거율은 `policy_decision` 전이에서 나오고, 이쪽은
+   9단계 렌더링이다. **두 축이다.**
+3. **trace에 없다.** `dedupe` 이벤트가 없어 이 수는 `Report.duplicates` 필드와 report.md
+   첫 줄에만 있다. 지표로 쓰려면 텍스트를 파싱해야 한다.
+
+**이벤트를 만들지 않은 것은 판단이다** — 이 값이 아직 어떤 지표의 입력도 아니고, 필요해질
+때 만드는 것이 맞다. 다만 그때까지 **이 수를 성능 주장에 쓰지 않는다.**
 
 ### GPU 회계 수정(2026-08-17) 전/후 비용 지표를 직접 비교하지 않는다
 
