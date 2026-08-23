@@ -15,9 +15,47 @@ TraceWriter·BudgetLedger의 전제를 함께 풀어야 한다(`queue.py` docstr
 
 ## 대상 지정 단위
 
-지금은 **파일 단위**로 캡슐을 만든다(`Location(file=...)`, symbol 없음). 실제 심볼
-인덱스가 1단계에 들어오면 심볼 단위로 좁힌다 — 그때 후보 수가 늘고 제거율의 분모가
-바뀌므로, 두 시점의 측정값을 직접 비교하지 않는다.
+**심볼 단위다(W2).** 1단계 인덱서 산출물에서 심볼마다 `Location(file, symbol,
+line_start, line_end)`을 만들고 그 하나가 후보 하나가 된다. 인덱스가 없는
+프로필(`dev_fake`)은 **파일 단위로 되돌아가고 그 사실이 `target_plan`에 남는다.**
+
+그전까지는 artifact당 `Location(file=...)` 하나였고, `read_symbol_source()`가
+`line_start is None`에서 파일 전체를 돌려주어 **큰 파일이 통째로 프롬프트에 실렸다** —
+zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 죽은 것이 이것이다.
+
+후보 수와 제거율의 **분모가 바뀌었다.** 심볼 인덱스 도입 전후의 지표를 직접 비교하지
+않는다(STATUS.md §10).
+
+## target 순서와 상한 — 정적 신호를 게이트가 아니라 순서로 쓴다
+
+후보 단위가 심볼이 되면 수가 폭증한다. 그렇다고 "정적 신호가 붙은 것만 후보로"
+거르지는 않는다 — 그러면 하네스가 semgrep이 이미 찾은 것만 찾게 되고, 이 프로젝트가
+재려는 주장("LLM 여럿이 정적분석기가 놓친 것을 찾는다")의 측정 경로가 막힌다. 게다가
+만들지 않은 후보는 `queued`도 `skipped`도 아니라 **기록에 아예 안 남는다.**
+
+그래서 신호는 **순서**로 쓴다: 신호가 붙은 artifact의 심볼이 큐 상위, 나머지는 뒤,
+`candidate_max`를 넘긴 나머지는 `target_skipped`로 **기록에 남긴다.**
+
+**신호 판정이 심볼이 아니라 artifact 단위인 것은 지금 그것밖에 못 하기 때문이다.**
+`Evidence.location`을 채우는 코드가 저장소에 없어(ToolRunner 두 구현 모두 기본값
+`None`) 어느 심볼에 붙은 신호인지 알 수 없다. `fake_model._has_static_signal()`도 같은
+입력을 보므로 이것이 "원래 하던 것"이기도 하다.
+
+## 후보 하나의 실패가 run 전체를 죽이지 않는다
+
+`ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 예전에는 둘 다 뚫고 나갔고
+`run_manifest.json`을 쓰는 블록이 그 뒤라 **산출물이 하나도 안 남았다** — zlib 때
+`state.db`를 직접 열어야 했던 이유다.
+
+단, 무조건 잡지 않는다. 후보 하나가 컨텍스트를 넘긴 것(그 후보만 버린다)과 서버가
+죽은 것(순회를 멈춘다)은 대응이 다르고, 둘을 가르는 정보가 `ModelGatewayError.status`에
+있다. 서버는 응답하는데 후보가 계속 죽는 경우를 위해 **연속 폐기 카운터**가 하나 더 있고,
+그쪽은 사유가 갈린다(`_TooManyDrops`).
+
+**멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
+자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
+`RunRecord`에 남는다(전이 표 R-2). 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
+GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
 import subprocess
@@ -29,7 +67,12 @@ from typing import Protocol
 
 from src.config import HarnessConfig
 from src.ids import IdFactory, sha256_text
-from src.interfaces.model_client import ModelClient
+from src.interfaces.model_client import (
+    ModelClient,
+    ModelGatewayError,
+    SchemaParseError,
+    error_detail,
+)
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -53,12 +96,18 @@ from src.orchestrator.nodes.report import Report
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import TraceWriter
+from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.decision import Decision
-from src.schemas.enums import ArtifactKind, CapsuleLevel, FindingState, ReasonCode
+from src.schemas.enums import (
+    ArtifactKind,
+    CapsuleLevel,
+    EvidenceKind,
+    FindingState,
+    ReasonCode,
+)
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.run import RunRecord
@@ -80,6 +129,37 @@ _ANALYZABLE = (ArtifactKind.SOURCE, ArtifactKind.BINARY, ArtifactKind.FIRMWARE)
 # `--dry-run`이 도달하는 마지막 단계. 여기까지는 모델을 부르지 않는다.
 DRY_RUN_LAST_STAGE = int(Stage.RETRIEVAL)
 
+# `target_skipped.reason`. 왜 4단계에 못 올라갔는가를 하나로 뭉치지 않는다 — 예산에
+# 잘린 것과 호출이 실패한 것은 대응이 다르다(`IndexSummary.status`와 같은 논법).
+_REASON_OVER_MAX = "over_candidate_max"
+_REASON_GATEWAY = "gateway_error"
+_REASON_SCHEMA = "schema_parse_failed"
+
+# 후보만 버리고 계속 가도 되는 HTTP 상태. **요청 하나가 거절된 것**이다 —
+# 400(컨텍스트 초과가 여기 온다) · 413(본문 초과) · 422(스키마 거절).
+#
+# 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
+# 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다.
+_DROPPABLE_STATUS = frozenset({400, 413, 422})
+
+# 연속 폐기 상한. 체계적 고장(페이로드 자체가 틀렸다·모델이 스키마를 전혀 못 맞춘다)이면
+# 남은 target을 전부 태우고도 쓸 수 있는 결과가 안 나온다.
+#
+# **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
+# 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
+_MAX_CONSECUTIVE_DROPS = 3
+
+
+class _TooManyDrops(RuntimeError):
+    """연속 폐기 상한. **서버가 죽은 것과 다른 사건이라 다른 타입이다.**
+
+    게이트웨이가 응답을 주는데도 후보가 계속 실패하는 상태다 — 프롬프트·예산·스키마 쪽을
+    봐야 하고, 서버를 살리는 것으로는 낫지 않는다. 같은 예외로 올리면 `RunRecord`의 중단
+    사유가 하나로 뭉쳐 그 구별이 사라진다.
+
+    러너 밖으로 새지 않는다. `run_pipeline`이 잡아 `stopped_after`와 사유로 바꾼다.
+    """
+
 
 class Dependencies(Protocol):
     """어댑터 묶음. `src/adapters/factory.py`의 `Deps`가 구조적으로 이것을 만족한다.
@@ -95,6 +175,10 @@ class Dependencies(Protocol):
     # 컨테이너 이미지 → digest. 러너가 만들지 않고 받는다 — 무엇이 실제로 실행됐는지는
     # 어댑터만 알고, 러너가 추측해 채우면 그 기록은 사실과 갈라진다.
     tool_images: dict[str, str]
+    # file → 그 파일에 정의된 심볼 위치. `None`이면 인덱스가 없다는 뜻이고 러너는 파일
+    # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
+    # 그래프 섹션에 대해 세운 것과 같은 구별이다.
+    symbols_for: Callable[[str], list[Location] | None]
 
 
 @dataclass(frozen=True)
@@ -247,6 +331,40 @@ class LateIndexHook:
         self._ctx.record_graph_index(summary.as_trace_fields())
 
 
+@dataclass(frozen=True)
+class _Target:
+    """4단계에 올릴 대상 하나. artifact가 아니라 **심볼**이 단위다(W2).
+
+    `evidences`를 들고 다니는 것은 2단계가 artifact당 한 번만 돌기 때문이다 — 같은
+    파일의 심볼 수백 개가 같은 신호를 공유한다. target마다 도구를 다시 돌리면 zlib에서
+    도구 호출이 세 자릿수에서 네 자릿수가 된다.
+    """
+
+    artifact: Artifact
+    location: Location
+    evidences: tuple[Evidence, ...]
+    # 이 artifact에 정적 신호가 붙었는가. **심볼이 아니라 artifact 단위다** —
+    # `Evidence.location`이 비어 있어 어느 심볼의 신호인지 알 수 없다(모듈 docstring).
+    signal: bool
+
+
+@dataclass
+class _TargetPlan:
+    """target 목록과 그것을 세는 값들. 그대로 `target_plan` 이벤트가 된다.
+
+    분모를 러너 지역 변수로 두지 않는 이유는 `_triage_all`이 폐기 건수를 더 얹기
+    때문이다 — 세는 곳이 둘로 갈리면 경고와 trace가 다른 수를 말한다.
+    """
+
+    analyzable_artifacts: int = 0
+    symbol_targets: int = 0
+    fallback_artifacts: int = 0
+    no_symbol_artifacts: int = 0
+    signal_artifacts: int = 0
+    collected: list[_Target] = field(default_factory=list)
+    targets: list[_Target] = field(default_factory=list)
+
+
 @dataclass
 class _Accumulator:
     """단계 사이에 들고 다니는 중간 산출물.
@@ -263,6 +381,11 @@ class _Accumulator:
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
     workdirs: dict[str, str] = field(default_factory=dict)
+    # 4단계에 못 올라간 target 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
+    # **여기 두는 이유가 이 클래스의 존재 이유와 같다** — 예산 소진으로 중간에 끊겨도
+    # 호출자가 그 수를 읽어 경고와 리포트에 올려야 한다.
+    deferred: int = 0
+    dropped: int = 0
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -300,6 +423,7 @@ def run_pipeline(
         ledger=BudgetLedger(config.budget, trace),
         policy=FixedThresholdPolicy(config.thresholds),
         read_source=read_source,
+        symbols_for=deps.symbols_for,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(D19). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
@@ -331,6 +455,19 @@ def run_pipeline(
         # 끊은 것이 이쪽이다.
         stopped_after, stop_reason = exc.stage, ReasonCode.BUDGET_EXHAUSTED
         warnings.append(f"{exc.stage}단계에서 예산 소진: {exc.item} {exc.spent}/{exc.limit}")
+    except ModelGatewayError as exc:
+        # 서버 쪽 사건이라 남은 target을 태워도 얻는 것이 없다. **그래도 여기까지 만든
+        # 것은 남긴다** — 예산 소진과 같은 자리에서 같은 방식으로 끝낸다(전이 표 R-2).
+        # 이 갈래가 없던 동안에는 예외가 `write_manifest` 앞을 뚫고 나가 산출물이 하나도
+        # 안 남았고, zlib 때 `state.db`를 직접 열어야 했던 이유가 그것이다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.MODEL_GATEWAY_UNAVAILABLE
+        warnings.append(f"게이트웨이가 응답하지 않아 중단했다: {error_detail(exc)}")
+    except _TooManyDrops as exc:
+        # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.CONSECUTIVE_TARGET_FAILURES
+        warnings.append(f"{exc}")
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -343,8 +480,25 @@ def run_pipeline(
     if gpu_warning:
         warnings.append(gpu_warning)
 
+    # **4단계에 못 올라간 target을 경고로 올린다 (W2).** trace의 `target_skipped`가
+    # 목록이지만 사용자가 run 결과로 읽는 것은 cli 출력과 report.md다. 여기 안 올리면
+    # deferred가 200건인 run과 0건인 run이 겉보기에 같아지고, 그러면 "조용히 절단하지
+    # 않는다"가 기록 절반에서만 성립한다.
+    #
+    # 예산 소진 경고와 **같은 자리·같은 경로**다. 새 통로를 내지 않는다.
+    if state.deferred:
+        warnings.append(
+            f"target {state.deferred}건을 candidate_max"
+            f"({config.thresholds.candidate_max})로 잘랐다. trace의 target_skipped가 목록이다"
+        )
+    if state.dropped:
+        warnings.append(
+            f"target {state.dropped}건을 후보 단위 호출 실패로 버렸다. "
+            f"사유는 trace의 target_skipped와 그 target의 model_call에 있다"
+        )
+
     findings = list(state.findings.values())
-    rendered = report.run(ctx, findings=findings)
+    rendered = report.run(ctx, findings=findings, deferred=state.deferred, dropped=state.dropped)
     finished = state_machine.finish_run(
         record,
         finished_at=max(now(), started_at),
@@ -369,8 +523,8 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
     if last < Stage.INDEX:
         return
     graph = index.run(ctx, workdir=".")
-    for artifact in [a for a in artifacts if a.kind in _ANALYZABLE]:
-        _triage_one(ctx, artifact, graph, state, last)
+    plan = _plan_targets(ctx, [a for a in artifacts if a.kind in _ANALYZABLE], graph, state, last)
+    _triage_all(ctx, plan, state, last)
     if last < Stage.CRITIC:
         return
     for finding in critic.select(ctx, state.in_state(FindingState.HYPOTHESIZED)):
@@ -397,25 +551,196 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
         state.update(after)
 
 
-def _triage_one(
-    ctx: RunContext, artifact: Artifact, graph: Evidence, state: _Accumulator, last: int
-) -> None:
-    """한 artifact를 2~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다."""
+def _plan_targets(
+    ctx: RunContext,
+    artifacts: list[Artifact],
+    graph: Evidence,
+    state: _Accumulator,
+    last: int,
+) -> _TargetPlan:
+    """2단계를 artifact마다 돌리고 4단계에 올릴 target 목록을 확정한다 (W2).
+
+    **모델을 한 번 부르기 전에 끝난다.** 그래서 `target_plan`이 실린 뒤에 죽어도 분모가
+    남고, 정적 신호로 **전역** 정렬을 할 수 있다 — artifact 하나를 끝까지 태우는
+    구조에서는 뒤쪽 artifact의 신호를 아직 모르므로 앞쪽의 신호 없는 심볼이 먼저 돈다.
+
+    도구 호출 횟수는 예전과 같다. 그때도 2단계가 artifact 전부에 대해 돌았다.
+    """
+    plan = _TargetPlan(analyzable_artifacts=len(artifacts))
     if last < Stage.SIGNALS:
-        return
-    target = Location(file=artifact.path)
-    found = signals.with_signal(signals.run(ctx, workdir=artifact.path))
-    evidences = (graph, *found)
+        return plan
+    for artifact in artifacts:
+        found = signals.with_signal(signals.run(ctx, workdir=artifact.path))
+        evidences = (graph, *found)
+        # **정적 신호만 순서에 쓴다.** `with_signal()`이 남기는 것에는 `build`(BUILD)도
+        # 있는데 그쪽은 성공 자체가 신호라 **모든 artifact에 붙는다** — 그것까지 세면
+        # 정렬 키가 상수가 되어 (a′)가 아무 일도 하지 않는다.
+        #
+        # 판정을 `fake_model._has_static_signal()`과 같은 축에 둔다. 점수에서 가산점을
+        # 주는 신호와 순서를 정하는 신호가 다르면 (a′)가 "원래 하던 것"에서 벗어난다.
+        signal = any(evidence.kind is EvidenceKind.STATIC for evidence in found)
+        if signal:
+            plan.signal_artifacts += 1
+        locations = ctx.symbols_for(artifact.path)
+        if locations is None:
+            # 인덱스가 없다(`dev_fake`·버전 모름·깨짐). 파일 단위로 되돌아간다 — 후보를
+            # 안 만들면 그 프로필의 run이 통째로 비고, 폴백은 W2 이전 동작이라 회귀가
+            # 아니다. **되돌아갔다는 사실이 기록에 남는 것**이 새로 얻는 것이다.
+            plan.fallback_artifacts += 1
+            locations = [Location(file=artifact.path)]
+        elif not locations:
+            # 인덱스는 있는데 이 파일에 심볼이 없다(`.h`·`.py`·바이너리는 인덱서에
+            # 넘어가지 않는다). 후보를 만들지 않는다 — 대상 선정이 새던 자리가 여기서
+            # 닫힌다(zlib run의 후보 32건 중 C 소스는 12건이었다).
+            plan.no_symbol_artifacts += 1
+            continue
+        else:
+            plan.symbol_targets += len(locations)
+        plan.collected += [
+            _Target(artifact=artifact, location=location, evidences=evidences, signal=signal)
+            for location in locations
+        ]
+    _order_and_cut(ctx, plan, state)
+    return plan
+
+
+def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> None:
+    """(a′) — 정적 신호를 게이트가 아니라 순서로 쓰고, 상한 초과분을 기록에 남긴다.
+
+    정렬 키의 첫 항이 `not signal`이라 `False < True`로 신호 붙은 쪽이 앞에 온다.
+    나머지 세 항은 index.json의 순서와 같다 — 후보 순서가 곧 ID 발급 순서라 흔들리면
+    두 run의 trace를 대조할 수 없다(engineering-guide.md §5).
+
+    **신호는 artifact 단위다.** 심볼 단위로 하려면 `Evidence.location`이 있어야 하는데
+    그것을 채우는 코드가 저장소에 없다(모듈 docstring).
+    """
+    plan.collected.sort(
+        key=lambda item: (
+            not item.signal,
+            item.location.file,
+            item.location.line_start or 0,
+            item.location.symbol or "",
+        )
+    )
+    limit = ctx.config.thresholds.candidate_max
+    plan.targets = plan.collected[:limit]
+    deferred = plan.collected[limit:]
+    ctx.trace.emit(
+        EventKind.TARGET_PLAN,
+        stage=Stage.SIGNALS,
+        analyzable_artifacts=plan.analyzable_artifacts,
+        symbol_targets=plan.symbol_targets,
+        fallback_artifacts=plan.fallback_artifacts,
+        no_symbol_artifacts=plan.no_symbol_artifacts,
+        signal_artifacts=plan.signal_artifacts,
+        planned=len(plan.targets),
+        deferred=len(deferred),
+        candidate_max=limit,
+    )
+    state.deferred = len(deferred)
+    for item in deferred:
+        _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
+
+
+def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
+    """target을 차례로 태운다. **후보 하나의 실패로 run을 잃지 않는다.**
+
+    `BudgetExhausted`는 여기서 잡지 않는다 — 실패가 아니라 정상 종료 경로이고
+    `run_pipeline`이 처리한다(모듈 docstring).
+
+    `ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 그 후보만 버리고 계속
+    간다. 다만 무조건 잡으면 안 된다:
+
+    | 사건 | 판정 | 대응 |
+    | --- | --- | --- |
+    | 후보 하나가 컨텍스트를 넘겼다 | `status`가 요청 단위 거절(4xx) | 그 후보만 버린다 |
+    | 서버가 죽었다 | `status`가 없거나 5xx | 즉시 멈춘다 |
+    | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
+
+    **연속 폐기를 하나의 카운터로 센다.** 게이트웨이와 스키마를 따로 세면 둘이 번갈아
+    실패할 때 어느 쪽도 상한에 닿지 않고 target 수백 개를 전부 태운다. 리셋 조건이
+    "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
+    고장 났다"는 판정을 무르게 하지 않는다.
+    """
+    consecutive = 0
+    for target in plan.targets:
+        try:
+            _triage_one(ctx, target, state, last)
+        except ModelGatewayError as exc:
+            if exc.status is None or exc.status not in _DROPPABLE_STATUS:
+                # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
+                #
+                # **그래도 run을 죽이지는 않는다.** `run_pipeline`이 이 예외를 받아
+                # 리포트와 매니페스트까지 간 뒤 중단 사유를 적는다 — 그러지 않으면
+                # 이 변경이 없애려던 "산출물이 하나도 안 남는다"가 그대로 남는다.
+                raise
+            consecutive = _drop(ctx, state, target, _REASON_GATEWAY, exc, consecutive)
+        except SchemaParseError as exc:
+            consecutive = _drop(ctx, state, target, _REASON_SCHEMA, exc, consecutive)
+        else:
+            # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
+            consecutive = 0
+
+
+def _drop(
+    ctx: RunContext,
+    state: _Accumulator,
+    target: _Target,
+    reason: str,
+    exc: Exception,
+    consecutive: int,
+) -> int:
+    """target 하나를 버리고 기록한다. 연속 상한에 닿으면 예외를 올린다."""
+    _emit_skipped(
+        ctx, target.location, stage=Stage.SCOUT, reason=reason, detail=error_detail(exc)
+    )
+    state.dropped += 1
+    if consecutive + 1 >= _MAX_CONSECUTIVE_DROPS:
+        raise _TooManyDrops(
+            f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다. 마지막 사유: {exc}"
+        ) from exc
+    return consecutive + 1
+
+
+def _emit_skipped(
+    ctx: RunContext, target: Location, *, stage: Stage, reason: str, detail: str = ""
+) -> None:
+    """4단계에 올리지 못한 target 하나를 기록한다.
+
+    `Candidate`를 만들어 `queued`로 두지 않는 이유는 `EventKind.TARGET_SKIPPED` 주석에
+    적었다 — 점수를 지어내야 하고 그 값이 Scout 점수 분포(D2의 입력)에 섞인다.
+
+    **`stage`가 곧 어디서 잘렸는가다.** 예산 절단은 2단계 뒤 계획 시점이고 후보 단위
+    실패는 4단계다 — 둘을 한 값으로 적으면 예산에 잘린 target이 "4단계에 들어갔다가
+    죽었다"로 읽힌다. `reason`과 중복이 아니라 서로를 검증한다.
+
+    **`error_detail`은 있을 때만 싣는다.** 예산 절단에는 상세가 없고, 그 자리에 빈
+    문자열을 넣으면 "상세가 비어 있었다"와 "상세라는 개념이 없다"가 같은 모양이 된다.
+    """
+    ctx.trace.emit(
+        EventKind.TARGET_SKIPPED,
+        stage=stage,
+        file=target.file,
+        symbol=target.symbol or "",
+        line_start=target.line_start or 0,
+        reason=reason,
+        **({"error_detail": detail} if detail else {}),
+    )
+
+
+def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int) -> None:
+    """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다."""
+    location, artifact, evidences = target.location, target.artifact, target.evidences
     if last < Stage.RETRIEVAL:
         return
-    capsule = retrieval.run(ctx, target=target, level=CapsuleLevel.LIGHT)
+    capsule = retrieval.run(ctx, target=location, level=CapsuleLevel.LIGHT)
     if last < Stage.SCOUT:
         return
     candidate = scout.run(ctx, artifact=artifact, capsule=capsule, evidences=evidences)
     state.candidates.append(candidate)
     if candidate.state is not FindingState.TRIAGED or last < Stage.AUDITOR:
         return
-    expanded = retrieval.run(ctx, target=target, level=CapsuleLevel.EXPANDED)
+    expanded = retrieval.run(ctx, target=location, level=CapsuleLevel.EXPANDED)
     finding, missings = auditor.run(ctx, candidate=candidate, capsule=expanded, evidences=evidences)
     state.update(finding)
     state.evidences[finding.finding_id] = evidences

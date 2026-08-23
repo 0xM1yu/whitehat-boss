@@ -8,11 +8,21 @@ HTTP를 띄우지 않고 `_post`만 갈아 끼운다. 여기서 재는 것은 �
 **여러 시도의 비용을 어떻게 합치는가**이고, 그것은 `complete()` 안에 있다.
 """
 
+import io
+import urllib.error
+import urllib.request
+
 import pytest
 from pydantic import BaseModel
 
-from src.adapters.openai_compat import OpenAICompatModelClient, SchemaParseError
-from src.interfaces.model_client import Prompt, Usage
+from src.adapters.openai_compat import OpenAICompatModelClient
+from src.interfaces.model_client import (
+    MAX_ERROR_DETAIL,
+    ModelGatewayError,
+    Prompt,
+    SchemaParseError,
+    Usage,
+)
 from src.schemas.enums import Role
 
 PROMPT = Prompt(prefix="공통 지시", body="후보 본문", prompt_version="v1")
@@ -118,3 +128,91 @@ def test_exhausted_retries_still_raise_instead_of_returning_a_default(
         _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
 
     assert attempts == [1, 2]
+
+# --- HTTP 오류 응답 본문 (4-1) -------------------------------------------------
+#
+# `HTTPError`는 `URLError`의 하위 클래스라 400도 예전 `except`로 들어왔는데 `exc.read()`를
+# 부르지 않았다. vLLM은 컨텍스트 초과를 **응답 본문에만** 담으므로, zlib run에서 우리가
+# 가장 알고 싶었던 "얼마나 넘쳤는가"가 그 자리에서 버려졌다.
+#
+# 여기서는 `urlopen`을 갈아 끼운다 — 위 테스트들이 `_post`를 갈아 끼우는 것과 달리,
+# 재는 것이 바로 그 `_post` 안의 예외 처리이기 때문이다.
+
+_OVERFLOW = (
+    b"{\"error\": {\"message\": \"This model's maximum context length is 32768 tokens. "
+    b'However, you requested 43200 tokens."}}'
+)
+
+
+def _raise_http(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def fake_urlopen(request, timeout=None):  # noqa: ANN001, ANN202, ARG001
+        raise error
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+
+def _http_error(code: int, body: bytes) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "http://127.0.0.1:9/v1/chat/completions", code, "Bad Request", {}, io.BytesIO(body)
+    )
+
+
+def test_the_http_error_body_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**이 문자열이 W2 이후 실대상 run의 첫 실측이 된다.**"""
+    _raise_http(monkeypatch, _http_error(400, _OVERFLOW))
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status == 400
+    assert "43200 tokens" in caught.value.detail
+
+
+def test_the_status_code_separates_a_bad_request_from_a_dead_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """러너가 "후보만 버린다"와 "즉시 멈춘다"를 가르는 입력이 이 필드다.
+
+    연결 실패에는 상태 코드가 없다 — `None`을 0이나 500으로 채우면 없는 사실을 지어내는
+    것이고, 러너가 그것을 보고 잘못된 쪽으로 간다.
+    """
+    _raise_http(monkeypatch, urllib.error.URLError("Connection refused"))
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "Connection refused" in caught.value.detail
+
+
+def test_a_long_error_body_is_cut_and_says_that_it_was_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """자른 것과 원래 짧은 것을 섞지 않는다 — 표시가 없으면 전부인지 알 수 없다."""
+    _raise_http(monkeypatch, _http_error(400, b"x" * 4000))
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert len(caught.value.detail) == MAX_ERROR_DETAIL + len("…(잘림)")
+    assert caught.value.detail.endswith("…(잘림)")
+
+
+def test_an_unreadable_error_body_does_not_lose_the_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """본문을 못 읽어도 우리가 잃는 것은 상세뿐이다. 거기서 예외를 올리면 상태까지 잃는다."""
+
+    class Closed(io.BytesIO):
+        def read(self, *_args: object) -> bytes:
+            raise OSError("stream closed")
+
+    _raise_http(monkeypatch, _http_error(413, b""))
+    monkeypatch.setattr(urllib.error.HTTPError, "read", Closed.read, raising=False)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status == 413
+    assert "읽지 못했다" in caught.value.detail
+
