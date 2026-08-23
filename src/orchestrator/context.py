@@ -19,7 +19,14 @@ from time import perf_counter
 
 from src.config import HarnessConfig
 from src.ids import IdFactory
-from src.interfaces.model_client import ModelClient, ModelResult, Prompt, SchemaT, Usage
+from src.interfaces.model_client import (
+    ModelClient,
+    ModelResult,
+    Prompt,
+    SchemaT,
+    Usage,
+    error_detail,
+)
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -88,6 +95,15 @@ class RunContext:
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     read_source: Callable[[Location], str] = field(default=_unwired_read_source)
+    # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만든다(W2).
+    #
+    # `read_source`와 달리 **미배선 기본값이 예외가 아니라 `None`("인덱스 없음")이다.**
+    # 그쪽은 조용히 ""를 돌려주면 배선 실수가 모델 성능 지표로 둔갑하지만, 이쪽의
+    # `None`은 실제로 일어나는 정상 상태이고(`dev_fake`) 러너가 파일 단위 폴백으로
+    # 처리하며 그 사실을 `target_plan.fallback_artifacts`에 남긴다.
+    symbols_for: Callable[[str], list[Location] | None] = field(
+        default=lambda _file: None
+    )
     # 렌더된 프롬프트를 run 산출물에 남기는 곳 (D19). `read_source`와 마찬가지로 조립부가
     # 주입한다 — run_dir을 아는 것은 러너이고 노드도 이 객체도 그것을 몰라야 한다.
     #
@@ -132,6 +148,11 @@ class RunContext:
         실패해도 `model_call`을 남기고 예외를 그대로 올린다 — "스키마 파싱 실패율"의
         분자가 여기서 나오므로 삼키면 지표가 0이 된다(evaluation.md §5.1).
         예산 소진이면 호출 전에 `BudgetExhausted`가 나므로 토큰을 쓰지 않는다.
+
+        **실패 이벤트에 클래스 이름만 싣던 것이 zlib에서 조사를 막았다.** vLLM이 컨텍스트
+        초과를 응답 본문에만 담는데(`ModelGatewayError.detail`) 기록에는 `error`
+        문자열 하나뿐이라, 무엇이 얼마나 넘쳤는지가 산출물 어디에도 없었다.
+        `_error_detail()`이 잘라낸 상세를 함께 싣는다.
         """
         self.ledger.ensure(stage)
         # **예산 확인 뒤, 시계 시작 전.** 뒤인 이유는 `ensure`가 막은 호출에는 대응하는
@@ -155,6 +176,7 @@ class RunContext:
                 schema=schema.__name__,
                 ok=False,
                 error=type(exc).__name__,
+                error_detail=error_detail(exc),
             )
             raise
         self.trace.emit(

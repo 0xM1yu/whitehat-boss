@@ -36,6 +36,7 @@ from src.interfaces.retrieval import EmbeddingClient, RerankerClient
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
+from src.schemas.common import Location
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,16 @@ class Deps:
     # 전원 공지 대상이라(roadmap.md §3) 지금은 이 dataclass가 나른다. 두 구현이 이미
     # `images()`를 갖고 있으므로 승격은 Protocol에 한 줄 추가하는 일이 된다.
     tool_images: dict[str, str] = field(default_factory=dict)
+    # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만드는 데 쓴다(W2).
+    #
+    # **`read_source`와 같은 모양이다** — 러너는 `src/adapters/`를 import 하지 않으므로
+    # `GraphIndex`를 타입으로 넘길 수 없고, `Location`(=`src/schemas/`)만 경계를 넘는
+    # 콜러블로 나른다. `Retriever` Protocol에 메서드를 다는 길도 있었지만 "무엇이
+    # 대상인가"는 검색이 아니라 인덱스의 질문이라 그쪽에 두지 않았다.
+    #
+    # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
+    # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
+    symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
 
 
 @dataclass(frozen=True)
@@ -78,8 +89,14 @@ class _BuildArgs:
     on_usage: UsageHook | None = None
     on_index: IndexHook | None = None
 
+    # **한 run에 하나만 만든다.** `graph_index()`가 호출마다 새 로더를 만들던 시절에는
+    # Retriever와 `symbols_for`가 각각 하나씩 갖게 되고, 그러면 지연 로드가 두 번 일어나
+    # `on_index` 훅이 두 번 불린다 — `graph_index` 이벤트는 run당 1건이 계약이다
+    # (`trace.py`). 그래서 `build_deps()`가 만들어 여기에 넣는다.
+    graph: GraphIndex | None = None
+
     def graph_index(self) -> GraphIndex:
-        """1단계 인덱서 산출물을 읽을 로더.
+        """1단계 인덱서 산출물을 읽을 로더. **한 run에 한 인스턴스다.**
 
         **두 Retriever가 같은 것을 받는다.** 갈리면 같은 index.json에서 다른 캡슐이 나와
         `dev_fake`↔`dev_docker` 비교가 오염된다(`index_graph` 모듈 docstring).
@@ -91,9 +108,9 @@ class _BuildArgs:
         `tool_runner: fake`인 프로필에서는 그 경로에 파일이 생기지 않는다. 그래도 같은
         로더를 넘긴다 — 존재 판정은 로더가 하고 결과는 `status=missing`이다.
         """
-        return GraphIndex(
-            index_output_path(self.artifacts_root, self.run_id), on_index=self.on_index
-        )
+        if self.graph is None:
+            raise ValueError("build_deps()가 GraphIndex를 넣지 않았다")
+        return self.graph
 
 
 @dataclass(frozen=True)
@@ -216,6 +233,9 @@ def build_deps(
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다."""
     ids = IdFactory(run_id)
+    # 경로 조립을 여기서 하지 않고 `container_tools.index_output_path()`에 묻는다 —
+    # 쓰는 쪽과 읽는 쪽이 갈리면 예외가 아니라 "인덱서가 안 돌았다"로 기록된다.
+    graph = GraphIndex(index_output_path(artifacts_root, run_id), on_index=on_index)
     args = _BuildArgs(
         config=config,
         ids=ids,
@@ -226,6 +246,7 @@ def build_deps(
         on_truncate=on_truncate,
         on_usage=on_usage,
         on_index=on_index,
+        graph=graph,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
     # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지
@@ -245,6 +266,9 @@ def build_deps(
         # 구현에게 묻는다. 여기서 이미지 이름을 조립하면 어댑터가 무엇을 실제로 물렸는지와
         # 갈라질 수 있고, 갈라진 재현성 기록은 없는 것보다 나쁘다.
         tool_images=tools.images(),
+        # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
+        # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
+        symbols_for=graph.symbols_for,
     )
 
 

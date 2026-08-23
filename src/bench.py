@@ -37,11 +37,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from src.adapters.openai_compat import (
-    ModelGatewayError,
-    OpenAICompatModelClient,
-    SchemaParseError,
-)
+from src.adapters.openai_compat import OpenAICompatModelClient
 from src.bench_metrics import (
     METRIC_CACHE_CONFIG,
     METRIC_KV_USAGE,
@@ -52,7 +48,7 @@ from src.bench_metrics import (
     nvidia_smi_mb,
     read_counters,
 )
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ModelGatewayError, Prompt, SchemaParseError
 from src.orchestrator.prompt_loader import PromptTemplate, build_facts
 from src.schemas.candidate import Candidate
 from src.schemas.common import Location
@@ -91,6 +87,13 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     Role.SCOUT: (Candidate, CapsuleLevel.LIGHT),
     Role.AUDITOR: (Finding, CapsuleLevel.EXPANDED),
     Role.CRITIC: (Decision, CapsuleLevel.EXPANDED),
+    # 단일패스는 셋을 한 호출로 한다. 스키마와 레벨을 **지어내지 않고 프롬프트가 선언한
+    # 값을 쓴다** — `prompts/single/v2/meta.yaml`의 `output_schema: Finding`이고, 혼자
+    # 경로까지 세우므로 문맥은 Auditor 이상이어야 한다.
+    #
+    # `Role.SINGLE`만 추가하고 여기를 비워 두면 `bench_report._role_report()`의
+    # `ROLE_SPEC[role_enum]`이 `KeyError`가 된다 — 고치려던 크래시가 자리만 옮긴다.
+    Role.SINGLE: (Finding, CapsuleLevel.EXPANDED),
 }
 
 MEASUREMENT_ORDER = ("startup", "structured_output", "prefix_cache", "throughput", "memory")

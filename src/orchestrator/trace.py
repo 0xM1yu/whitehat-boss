@@ -99,6 +99,27 @@ class EventKind(StrEnum):
     # 조회마다 싣지 않는 것은 같은 값이 후보 수만큼 중복돼 재현성 비교가 지저분해지기
     # 때문이다.
     GRAPH_INDEX = "graph_index"
+    # 4단계에 올릴 target 목록을 확정한 결과 (W2). **run당 1건이고, 모델을 한 번
+    # 부르기 전에 낸다** — 그 뒤 어디서 죽어도 분모는 남는다.
+    #
+    # 후보 단위가 파일에서 심볼로 바뀌면서 제거율의 분모가 `analyzable_artifacts`에서
+    # `symbol_targets`로 옮겨 갔다. 두 값을 함께 싣는 이유는 그 이동 자체를 데이터에서
+    # 볼 수 있어야 하기 때문이다(STATUS.md §10 지표 단절).
+    #
+    # `fallback_artifacts`(인덱스가 없어 파일 단위로 되돌아간 수)와
+    # `no_symbol_artifacts`(인덱스는 있는데 심볼 0건)를 가른다 — `.h`처럼 인덱서에
+    # 넘어가지 않는 파일과 인덱서가 아예 안 돈 run은 다른 사건이다.
+    TARGET_PLAN = "target_plan"
+    # 4단계에 올리지 못한 target 하나 (W2). `reason`이 사유다.
+    #
+    # **`target_plan`과 합치지 않는다** — 그쪽은 run당 1건인 분모이고 이쪽은 target당
+    # 1건이라 분모가 다르다(`retrieval_truncated`를 `retrieval_call`과 합치지 않은 것과
+    # 같은 이유). 합치면 절단 목록이 한 줄에 뭉쳐 세는 것과 읽는 것을 함께 잃는다.
+    #
+    # **`Candidate`를 만들어 `queued`로 두지 않는 이유**: `Candidate.score`가 필수 필드라
+    # 모델을 안 부르고 만들려면 0.0을 지어내야 하고, 그 값이 Scout 점수 분포(D2의 입력)에
+    # 섞인다. 지어낸 값을 기록에 넣지 않는다.
+    TARGET_SKIPPED = "target_skipped"
     CRITIC_NORMALIZED = "critic_normalized"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"

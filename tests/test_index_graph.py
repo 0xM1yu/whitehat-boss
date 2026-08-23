@@ -72,6 +72,14 @@ _INDEX_V1 = {
 _CALLER_ENTRY = "main main.c:12"
 _CALLEE_ENTRY = "memcpy parser.c:20"
 
+# 심볼 단위 target (W2). `parse_header`의 줄 범위가 곧 캡슐 본문이다.
+_PARSE_HEADER = Location(file="parser.c", symbol="parse_header", line_start=9, line_end=22)
+
+
+def _file_target(file: str) -> Location:
+    """인덱스가 없는 프로필이 쓰는 파일 단위 target. 파일 전체가 본문이다."""
+    return Location(file=file)
+
 
 def _write_index(artifacts_root: Path, document: object) -> Path:
     """컨테이너 러너가 쓰는 **바로 그 경로**에 놓는다.
@@ -139,7 +147,7 @@ def test_missing_index_is_reported_as_missing_not_as_empty_graph(tmp_path: Path)
     seen: list[IndexSummary] = []
     graph = _graph(tmp_path, document=None, on_index=seen.append)
 
-    assert graph.names_for("callers", "parser.c") is None
+    assert graph.names_for("callers", _file_target("parser.c")) is None
     assert [s.status for s in seen] == [STATUS_MISSING]
 
 
@@ -166,14 +174,14 @@ def test_unknown_index_version_is_refused_without_raising(tmp_path: Path):
     """
     graph = _graph(tmp_path, {**_INDEX_V1, "version": "index-v99"})
 
-    assert graph.names_for("callers", "parser.c") is None
+    assert graph.names_for("callers", _file_target("parser.c")) is None
     assert graph.summary.status == STATUS_UNSUPPORTED
 
 
 def test_malformed_index_json_is_refused_without_raising(tmp_path: Path):
     graph = _graph(tmp_path, "{ this is not json")
 
-    assert graph.names_for("callees", "parser.c") is None
+    assert graph.names_for("callees", _file_target("parser.c")) is None
     assert graph.summary.status == STATUS_MALFORMED
 
 
@@ -181,7 +189,7 @@ def test_index_with_the_right_version_but_missing_fields_is_refused(tmp_path: Pa
     """버전만 맞고 필드가 없으면 부분 결과를 쓰지 않는다 — 어디까지 믿을지 알 수 없다."""
     graph = _graph(tmp_path, {"version": "index-v1", "symbols": []})
 
-    assert graph.names_for("callers", "parser.c") is None
+    assert graph.names_for("callers", _file_target("parser.c")) is None
     assert graph.summary.status == STATUS_MALFORMED
 
 
@@ -190,19 +198,19 @@ def test_index_with_the_right_version_but_missing_fields_is_refused(tmp_path: Pa
 
 def test_callers_come_from_other_files_only(tmp_path: Path):
     """같은 파일 안의 호출자는 `target_function`이 이미 담고 있다. 두 번 세면 토큰이 부푼다."""
-    assert _graph(tmp_path).names_for("callers", "parser.c") == [_CALLER_ENTRY]
+    assert _graph(tmp_path).names_for("callers", _file_target("parser.c")) == [_CALLER_ENTRY]
 
 
 def test_callee_defined_in_the_target_file_is_not_listed_twice(tmp_path: Path):
     """`helper`는 parser.c에 정의돼 있어 본문에 이미 있다 — 간선의 반대쪽 끝이 캡슐 안이다."""
-    callees = _graph(tmp_path).names_for("callees", "parser.c")
+    callees = _graph(tmp_path).names_for("callees", _file_target("parser.c"))
 
     assert not any(name.startswith("helper ") for name in callees)
 
 
 def test_external_callee_not_in_the_symbol_table_is_kept(tmp_path: Path):
     """`memcpy`는 symbols에 없다 = 본문 안에 없는 것이 확실하다. 빼면 실재하는 간선을 숨긴다."""
-    assert _graph(tmp_path).names_for("callees", "parser.c") == [_CALLEE_ENTRY]
+    assert _graph(tmp_path).names_for("callees", _file_target("parser.c")) == [_CALLEE_ENTRY]
 
 
 def test_graph_entries_are_sorted_for_determinism(tmp_path: Path):
@@ -215,7 +223,7 @@ def test_graph_entries_are_sorted_for_determinism(tmp_path: Path):
         ],
     }
 
-    assert _graph(tmp_path, document).names_for("callers", "parser.c") == [
+    assert _graph(tmp_path, document).names_for("callers", _file_target("parser.c")) == [
         "alpha a.c:7",
         "zeta z.c:3",
     ]
@@ -427,7 +435,7 @@ def test_types_section_is_not_emitted_because_index_v1_has_no_type_data(
 def test_graph_section_kind_that_does_not_exist_is_a_programming_error(tmp_path: Path):
     """오타로 부른 섹션이 조용히 `None`을 내면 "그래프가 없다"로 읽힌다."""
     with pytest.raises(ValueError, match="그래프 섹션이 아니다"):
-        _graph(tmp_path).names_for("types", "parser.c")
+        _graph(tmp_path).names_for("types", _file_target("parser.c"))
 
 
 # --- 훅과 trace ----------------------------------------------------------------
@@ -438,9 +446,9 @@ def test_unresolved_counts_reach_the_hook_exactly_once_per_run(tmp_path: Path):
     seen: list[IndexSummary] = []
     graph = _graph(tmp_path, on_index=seen.append)
 
-    graph.names_for("callers", "parser.c")
-    graph.names_for("callees", "parser.c")
-    graph.names_for("callers", "main.c")
+    graph.names_for("callers", _file_target("parser.c"))
+    graph.names_for("callees", _file_target("parser.c"))
+    graph.names_for("callers", _file_target("main.c"))
 
     assert len(seen) == 1
     assert seen[0].status == STATUS_LOADED
@@ -582,3 +590,113 @@ def test_both_retrievers_emit_identical_graph_sections(source: Path, tmp_path: P
             return [s.model_dump() for s in capsule.sections if s.kind in GRAPH_SECTION_KINDS]
 
         assert graph_only(fake) == graph_only(hybrid), f"{level.value}에서 갈렸다"
+
+# --- 심볼 단위 target: 본문 판정이 줄 범위로 바뀐다 (W2) --------------------------
+
+
+def test_symbol_target_keeps_the_sibling_call_that_a_file_target_hides(tmp_path: Path):
+    """**이 대비가 W2의 핵심이다.**
+
+    `helper`는 parser.c에 정의돼 있어 파일 단위 target에서는 "본문에 이미 있다"로 빠진다.
+    심볼 단위 target에서 본문은 `parse_header`의 줄 범위(9~22)뿐이고 `helper`의 정의는
+    3~6줄이라 **본문 밖**이다 — 그때도 빼면 실재하는 간선을 숨긴다.
+    """
+    graph = _graph(tmp_path)
+
+    file_callees = graph.names_for("callees", _file_target("parser.c"))
+    symbol_callees = graph.names_for("callees", _PARSE_HEADER)
+
+    assert file_callees == [_CALLEE_ENTRY]
+    assert symbol_callees == ["helper parser.c:18", _CALLEE_ENTRY]
+
+
+def test_symbol_target_still_drops_self_recursion(tmp_path: Path):
+    """자기 자신으로 돌아오는 호출은 본문 안이다. 규칙이 느슨해진 것이 아니다."""
+    document = {
+        **_INDEX_V1,
+        "calls": [
+            *_INDEX_V1["calls"],
+            {"caller": "parse_header", "callee": "parse_header", "file": "parser.c", "line": 15},
+        ],
+    }
+
+    callers = _graph(tmp_path, document).names_for("callers", _PARSE_HEADER)
+
+    assert callers == [_CALLER_ENTRY]
+
+
+def test_symbol_target_selects_only_edges_into_that_symbol(tmp_path: Path):
+    """`helper`를 target으로 잡으면 `parse_header`로 들어오는 호출은 이 캡슐 것이 아니다."""
+    helper = Location(file="parser.c", symbol="helper", line_start=3, line_end=6)
+
+    assert _graph(tmp_path).names_for("callers", helper) == ["parse_header parser.c:18"]
+    # helper 본문(3~6줄)에서 나가는 호출은 인덱스에 없다. "봤는데 0건"이다.
+    assert _graph(tmp_path).names_for("callees", helper) == []
+
+
+# --- symbols_for: 후보 목록의 데이터원 (W2) --------------------------------------
+
+
+def test_symbols_for_returns_one_location_per_symbol_in_index_order(tmp_path: Path):
+    """후보 순서가 곧 ID 발급 순서다. index.json의 (file, line_start, name) 순서를 따른다."""
+    locations = _graph(tmp_path).symbols_for("parser.c")
+
+    assert [(loc.symbol, loc.line_start, loc.line_end) for loc in locations] == [
+        ("helper", 3, 6),
+        ("parse_header", 9, 22),
+    ]
+
+
+def test_symbols_for_separates_no_index_from_no_symbols(tmp_path: Path):
+    """`None`("인덱서가 안 돌았다")과 `[]`("봤는데 심볼 0건")를 섞지 않는다.
+
+    러너가 이 둘에 다르게 대응한다 — 앞은 파일 단위 폴백, 뒤는 후보를 만들지 않는다.
+    섞이면 `.h`처럼 인덱서에 안 넘어가는 파일과 인덱서가 죽은 run이 같은 모양이 된다.
+    """
+    assert _graph(tmp_path, document=None).symbols_for("parser.c") is None
+    assert _graph(tmp_path).symbols_for("header.h") == []
+
+
+def test_symbol_capsule_carries_only_that_symbols_source(source: Path, tmp_path: Path):
+    """심볼 단위 캡슐의 `target_function`이 파일 전체가 아니다 — W2가 고치려던 것이다."""
+    (source / "big.c").write_text(
+        "\n".join(f"void fn_{i}(void) {{ }}" for i in range(200)), encoding="utf-8"
+    )
+    target = Location(file="big.c", symbol="fn_1", line_start=2, line_end=2)
+    query = Query(run_id=RUN_ID, target=target, keywords=[], budget_tokens=4096)
+
+    capsule = _fake(source, _graph(tmp_path)).search(query, CapsuleLevel.LIGHT)
+    whole_file = _fake(source, _graph(tmp_path)).search(
+        Query(run_id=RUN_ID, target=_file_target("big.c"), keywords=[], budget_tokens=4096),
+        CapsuleLevel.LIGHT,
+    )
+
+    assert _section(capsule, "target_function").tokens < _section(
+        whole_file, "target_function"
+    ).tokens
+
+
+# --- D20: LIGHT 가 그래프를 싣는다 -----------------------------------------------
+
+
+def test_light_capsule_carries_the_call_graph(source: Path, tmp_path: Path):
+    """D20을 (a)로 확정했다. scout이 그래프를 얻을 경로가 구조적으로 0개이던 것을 연다."""
+    capsule = _fake(source, _graph(tmp_path)).search(_query(), CapsuleLevel.LIGHT)
+
+    assert [s.kind for s in capsule.sections if s.kind in GRAPH_SECTION_KINDS] == [
+        "callers",
+        "callees",
+    ]
+
+
+def test_both_retrievers_put_the_graph_at_the_same_level(source: Path, tmp_path: Path):
+    """두 구현이 갈리면 같은 index.json에서 다른 캡슐이 나와 조건 비교가 오염된다."""
+    fake = _fake(source, _graph(tmp_path)).search(_query(), CapsuleLevel.LIGHT)
+    hybrid = _hybrid(source, _graph(tmp_path)).search(_query(), CapsuleLevel.LIGHT)
+
+    graph_kinds = [
+        [s.kind for s in capsule.sections if s.kind in GRAPH_SECTION_KINDS]
+        for capsule in (fake, hybrid)
+    ]
+    assert graph_kinds[0] == graph_kinds[1] == ["callers", "callees"]
+

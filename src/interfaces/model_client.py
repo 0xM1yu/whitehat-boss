@@ -2,6 +2,19 @@
 
 오케스트레이터 노드는 vLLM·LiteLLM을 직접 import 하지 않는다. 어댑터가 이 Protocol을
 구현하고, 노드는 이 시그니처에만 의존한다.
+
+## 실패 두 종이 여기 있는 이유
+
+`ModelGatewayError`·`SchemaParseError`는 원래 `adapters/openai_compat.py`에 있었다.
+그런데 **러너가 그 둘을 구별해야 한다** — 후보 하나가 컨텍스트를 넘긴 것과 서버가 죽은
+것은 대응이 다르고(전자는 그 후보만 버리고 계속, 후자는 즉시 중단), 러너는
+`src/adapters/`를 import 하지 않는다(`runner.py` docstring, `tests/test_repo_hygiene.py`
+가 강제). 둘 다 이 Protocol이 정의하는 실패다 — 아래 `ModelClient` docstring이
+`SchemaParseError`의 계약을 이미 적고 있었고 예외만 다른 층에 있었다.
+
+**`adapters/openai_compat.py`에 재수출 별칭을 두지 않는다.** 같은 이름이 두 곳에서
+보이면 잡는 쪽이 어느 것을 import 해야 하는지가 갈리고, 갈리면 `except`가 조용히
+안 걸린다.
 """
 
 from typing import Generic, Literal, Protocol, TypeVar
@@ -23,6 +36,68 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 # 서버가 `/metrics`로 무엇을 주는지는 ATOM에서 확인한 뒤에 정한다. 없는 값을 지어내지
 # 않는다(model-serving.md §3, bench.py 모듈 docstring).
 GpuMsSource = Literal["request_wall_clock", "vllm_metrics"]
+
+
+# `ModelGatewayError.detail`과 `model_call` 실패 이벤트에 남길 최대 문자 수.
+#
+# **잠정치다.** 살리려는 것은 vLLM의 컨텍스트 초과 한 문장인데 **그 실측 길이를 우리는
+# 갖고 있지 않다** — zlib run에서 그 본문이 버려졌고 그것이 이 상수가 생긴 이유다.
+# 512는 그 형태의 한 문장에 여유를 둔 값이고, 넘치면 표시가 붙어 그 사실이 드러난다.
+# 첫 실대상 run이 이 값의 근거를 만든다(`budgets.tool_seconds`가 D15에 대해 쓰는 논법).
+MAX_ERROR_DETAIL = 512
+
+
+def truncate_detail(text: str) -> str:
+    """`MAX_ERROR_DETAIL`로 자르고, 잘렸으면 표시를 남긴다.
+
+    자른 것과 원래 짧은 것을 섞지 않는다 — 표시가 없으면 서버가 말해 준 것이 전부인지
+    우리가 버린 것이 있는지 사후에 알 수 없다.
+
+    줄바꿈을 공백으로 접는 것은 이 문자열이 trace JSONL 한 줄의 `data`에 실리기
+    때문이다. 원문 개행은 이스케이프되어 읽기만 나빠진다.
+    """
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= MAX_ERROR_DETAIL:
+        return collapsed
+    return collapsed[:MAX_ERROR_DETAIL] + "…(잘림)"
+
+
+def error_detail(exc: BaseException) -> str:
+    """실패 이벤트에 실을 짧은 사유. `detail`을 든 예외는 그것을, 아니면 문자열화한다.
+
+    `getattr`로 무는 것은 오케스트레이터가 **모든** 모델 실패에 이것을 쓰기 때문이다 —
+    어댑터가 무엇을 던지든(`ValidationError`·`OSError`) 한 자리에서 처리한다.
+    """
+    return truncate_detail(getattr(exc, "detail", "") or f"{exc}")
+
+
+class ModelGatewayError(RuntimeError):
+    """게이트웨이에 도달하지 못했거나 HTTP 오류. 재시도 대상이 아니다.
+
+    **`status`가 러너의 판정 입력이다.** 요청 하나가 거절된 것(400·413·422 — 컨텍스트
+    초과가 여기 온다)과 서버가 죽은 것(연결 실패·타임아웃이면 `None`, 서버 오류면 5xx)은
+    같은 예외에 뭉쳐 있었고, 그래서 러너가 가릴 수단이 없었다. 문자열을 파싱해 가르지
+    않도록 상태 코드를 필드로 든다.
+
+    `detail`은 응답 본문에서 잘라낸 서버 측 사유다. vLLM은 컨텍스트 초과를 그 본문에만
+    담는다(`maximum context length is N, however you requested M`) — 예전에는 `exc.read()`를
+    부르지 않아 **가장 알고 싶은 M이 버려졌다**.
+    """
+
+    def __init__(self, message: str, *, status: int | None = None, detail: str = "") -> None:
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
+
+
+class SchemaParseError(RuntimeError):
+    """`retries` 한도 안에 구조화 출력을 얻지 못했다.
+
+    후보 단위 실패다 — 한 호출이 한도를 소진한 것이고 다음 후보는 성공할 수 있다.
+    러너가 이것을 잡아 그 후보만 버린다. 실패 사실은 `context.call_model`의
+    `model_call ok=False`가 이미 남기므로(예외를 다시 올리기 전에 쓴다) 잡아도
+    "스키마 파싱 실패율"의 분자를 잃지 않는다.
+    """
 
 
 class Prompt(HarnessModel):
