@@ -31,11 +31,26 @@ class Report:
     run_id: str
     findings: tuple[Finding, ...]
     duplicates: int
+    # 4단계에 못 올라간 target 수 (W2). **"무엇을 찾았는가"만 적고 "무엇을 안 봤는가"를
+    # 빼면, 예산에 잘린 run의 리포트가 전량을 본 run의 리포트와 같은 얼굴을 한다** —
+    # `index_graph`가 "없다 vs 0건"에 대해, `retrieval_truncated`가 "이벤트 부재는
+    # 안 잘림"에 대해 거부한 것과 같은 모양이다.
+    #
+    # 목록이 아니라 수만 싣는다. 목록은 trace의 `target_skipped`에 있고, 리포트는
+    # 사람이 읽는 요약이라 수백 줄을 여기 옮기면 Finding이 묻힌다.
+    deferred: int = 0
+    dropped: int = 0
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
         if self.duplicates:
             lines += [f"중복 제거: {self.duplicates}건", ""]
+        if self.deferred or self.dropped:
+            lines += [
+                f"분석하지 못한 대상: 예산 초과 {self.deferred}건 · 호출 실패 "
+                f"{self.dropped}건 (사유는 trace의 `target_skipped`)",
+                "",
+            ]
         for state in _STATE_ORDER:
             group = [f for f in self.findings if f.state is state]
             if not group:
@@ -65,11 +80,23 @@ def dedupe(findings: list[Finding]) -> tuple[list[Finding], int]:
     return kept, len(findings) - len(kept)
 
 
-def run(ctx: RunContext, *, findings: list[Finding]) -> Report:
-    """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다."""
+def run(
+    ctx: RunContext, *, findings: list[Finding], deferred: int = 0, dropped: int = 0
+) -> Report:
+    """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
+
+    `deferred`·`dropped`는 러너가 센 값을 그대로 받는다 — 노드가 다시 세면 경고와
+    리포트가 다른 수를 말할 수 있다.
+    """
     with ctx.stage(Stage.REPORT):
         kept, duplicates = dedupe(findings)
-    return Report(run_id=ctx.run_id, findings=tuple(kept), duplicates=duplicates)
+    return Report(
+        run_id=ctx.run_id,
+        findings=tuple(kept),
+        duplicates=duplicates,
+        deferred=deferred,
+        dropped=dropped,
+    )
 
 
 def _sink(finding: Finding) -> str:

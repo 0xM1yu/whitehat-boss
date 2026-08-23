@@ -19,18 +19,21 @@ import urllib.request
 
 from pydantic import BaseModel, ValidationError
 
-from src.interfaces.model_client import ModelResult, Prompt, Usage
+from src.interfaces.model_client import (
+    ModelGatewayError,
+    ModelResult,
+    Prompt,
+    SchemaParseError,
+    Usage,
+    truncate_detail,
+)
 from src.schemas.enums import Role
 
 _TIMEOUT_S = 300
 
-
-class ModelGatewayError(RuntimeError):
-    """게이트웨이에 도달하지 못했거나 HTTP 오류. 재시도 대상이 아니다."""
-
-
-class SchemaParseError(RuntimeError):
-    """`retries` 한도 안에 구조화 출력을 얻지 못했다."""
+# HTTP 오류 응답 본문에서 읽어 둘 최대 바이트. 서버가 거대한 본문을 주는 경우를 막는다.
+# `_MAX_ERROR_DETAIL`이 그것을 다시 문자 단위로 자른다.
+_MAX_ERROR_BODY = 8192
 
 
 class OpenAICompatModelClient:
@@ -140,9 +143,35 @@ class OpenAICompatModelClient:
         try:
             with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
                 data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # **`URLError`보다 먼저 잡는다.** `HTTPError`가 그 하위 클래스라 순서를
+            # 바꾸면 400도 아래 절로 가고, 그러면 `exc.read()`를 부르는 자리가 없어
+            # 서버가 말해 준 사유가 통째로 사라진다 — zlib에서 실제로 그랬다.
+            detail = _error_detail(exc)
+            raise ModelGatewayError(
+                f"{self.endpoint} 호출 실패: HTTP {exc.code} {detail}",
+                status=exc.code,
+                detail=detail,
+            ) from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}") from exc
+            # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는
+            # 이것을 "서버가 죽었다"로 읽고 즉시 멈춘다.
+            raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}", detail=f"{exc}") from exc
         return data["choices"][0]["message"]["content"], _usage_from(data.get("usage", {}))
+
+
+def _error_detail(exc: urllib.error.HTTPError) -> str:
+    """오류 응답 본문을 읽어 자른다. 못 읽어도 원 예외를 잃지 않는다.
+
+    본문을 읽지 못하는 것(스트림이 이미 닫혔거나 소켓이 끊겼다)은 그 자체로는 사건이
+    아니다 — 우리가 잃는 것은 상세뿐이고 상태 코드는 이미 있다. 그래서 여기서 예외를
+    올리지 않고 사유를 문자열로 남긴다.
+    """
+    try:
+        body = exc.read(_MAX_ERROR_BODY).decode("utf-8", errors="replace").strip()
+    except (OSError, ValueError) as read_error:
+        return f"(응답 본문을 읽지 못했다: {type(read_error).__name__})"
+    return truncate_detail(body)
 
 
 def _usage_from(usage: dict) -> Usage:

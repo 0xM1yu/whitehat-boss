@@ -38,7 +38,10 @@ from src.tokens import estimate_tokens
 #
 # **v1 → v2 (2026-08-20)**: `types`를 없애고 `callers`/`callees`를 실제 호출 그래프에서
 # 채우도록 바꿨다. 올리지 않으면 구성이 다른 캡슐이 이전 실행과 같은 키를 공유한다.
-CAPSULE_POLICY_VERSION = "v2"
+#
+# **v2 → v3 (W2/D20)**: LIGHT에 `callers`/`callees`가 들어갔고(D20 (a)) target이 파일에서
+# 심볼로 좁혀졌다. 둘 다 같은 키에 다른 캡슐을 만드는 변경이다.
+CAPSULE_POLICY_VERSION = "v3"
 
 # 본문이 없는 보조 섹션의 고정 비용.
 #
@@ -54,8 +57,26 @@ _AUX_SECTION_TOKENS = 64
 # 내지 않는다(`indexer.build_index()`는 symbols·calls뿐). 이름만 남겨 두면 다음 사람이
 # "채워야 하는데 비었다"로 읽고, 고정값으로 채우면 없는 근거를 지어내는 것이라 뺀다.
 # 채우려면 인덱서에 타입 수집을 넣고 `INDEX_VERSION`을 올려야 한다(D13).
+# **LIGHT에 그래프 섹션이 들어간 이유 (D20을 (a)로 확정, 2026-08-23).**
+#
+# 그전까지 LIGHT는 `("target_function", "static_signal")`이었고 `EXPANDED`부터 그래프가
+# 붙었다. `run_20260821_0007`에서 그 결과가 실측으로 확정됐다 — `graph_index
+# status=loaded`(심볼 4·호출 5)인데 `memcpy parser.c:24`를 담은 프롬프트는 auditor 것
+# 하나뿐이었고 **scout 프롬프트 둘에는 없었다.** scout이 그래프를 얻을 경로가 구조적으로
+# 0개였다.
+#
+# 얇게 둔 근거는 주석에 적혀 있었고(`hybrid_retriever`: "LIGHT는 검색하지 않는다 — Scout는
+# 후보 전량에 대해 도는 단계라 여기서 임베딩을 부르면 …") 그것은 **임베딩 호출 비용**에
+# 관한 것이다. 그래프 섹션은 임베딩을 부르지 않는다 — 이미 로드된 index.json에서 읽는다
+# (`index_graph.names_for()`). 실측 비용은 `callees` 10토큰 / LIGHT 예산 4,000 = 0.25%다.
+#
+# **(b) `expand()` 배선은 지금 불가능하다.** Scout의 구조화 출력이 `Candidate` 하나라
+# "근거가 부족하다"를 담을 칸이 없고(`nodes/auditor.py`가 `MissingEvidence`를 노드가
+# 만드는 이유를 적고 있다), `expand()`는 한 번도 돈 적이 없어 판정 규칙을 보정할 데이터가
+# 없다. 그 항목은 D20 관측 ③으로 계속 열려 있다 — LIGHT를 두껍게 한 것이지 사다리를
+# 배선한 것이 아니다. knowledge-base.md §5가 사다리의 나머지 칸을 그대로 들고 있다.
 LEVEL_SECTIONS: dict[CapsuleLevel, tuple[str, ...]] = {
-    CapsuleLevel.LIGHT: ("target_function", "static_signal"),
+    CapsuleLevel.LIGHT: ("target_function", "callers", "callees", "static_signal"),
     CapsuleLevel.EXPANDED: ("target_function", "callers", "callees", "static_signal"),
     CapsuleLevel.FOCUSED: ("target_function", "callers", "known_facts"),
 }
@@ -104,9 +125,7 @@ class FakeRetriever:
             target=query.target,
             level=level,
             budget_tokens=query.budget_tokens,
-            sections=_sections_for(
-                level, source, query.budget_tokens, self.graph, query.target.file
-            ),
+            sections=_sections_for(level, source, query.budget_tokens, self.graph, query.target),
             cache_key=cache_key,
         )
         self._cache[cache_key] = capsule
@@ -132,9 +151,7 @@ class FakeRetriever:
                 continue
             if kind in GRAPH_SECTION_KINDS:
                 # 그래프 분기는 `HybridRetriever.expand()`와 **같은 함수**를 부른다.
-                section, stop = graph_section(
-                    kind, self.graph, capsule.target.file, remaining
-                )
+                section, stop = graph_section(kind, self.graph, capsule.target, remaining)
                 if section is None:
                     if stop:
                         # 붙일 것은 있는데 예산이 없다. "더 붙일 것이 없음"과 다른
@@ -156,13 +173,18 @@ class FakeRetriever:
         return capsule
 
     def cache_key_for(self, query: Query, level: CapsuleLevel) -> str:
-        """artifact digest + symbol + 캡슐 정책 버전 (knowledge-base.md §6).
+        """artifact digest + symbol + 줄 + 캡슐 정책 버전 (knowledge-base.md §6).
 
         level도 키에 넣는다 — 같은 심볼이라도 Scout용과 Auditor용 캡슐은 다른 물건이다.
+
+        **`line_start`도 넣는다(W2).** 인덱서가 파일 스코프를 구분하지 않아 같은 파일에
+        동명 `static` 함수가 둘 있을 수 있고(모듈 docstring의 알려진 오차), 이름만으로는
+        그 둘이 한 키를 공유해 **다른 심볼의 캡슐이 재사용된다.**
         """
         target = query.target
         digest = sha256_text(_read_source(self.root, target.file))
-        return sha256_text(f"{digest}|{target.symbol or ''}|{level.value}|{CAPSULE_POLICY_VERSION}")
+        symbol = f"{target.symbol or ''}@{target.line_start or ''}"
+        return sha256_text(f"{digest}|{symbol}|{level.value}|{CAPSULE_POLICY_VERSION}")
 
 
 def read_symbol_source(root: Path, target: Location) -> str:
@@ -192,7 +214,7 @@ def _read_source(root: Path, relative: str) -> str:
 
 
 def _sections_for(
-    level: CapsuleLevel, source: str, budget: int, graph: GraphIndex, target_file: str
+    level: CapsuleLevel, source: str, budget: int, graph: GraphIndex, target: Location
 ) -> list[CapsuleSection]:
     """예산을 넘기지 않는 선에서 레벨별 섹션을 채운다.
 
@@ -209,7 +231,7 @@ def _sections_for(
         if kind in GRAPH_SECTION_KINDS:
             # 그래프 분기는 `HybridRetriever._sections_for()`와 **같은 함수**를 부른다.
             # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
-            section, stop = graph_section(kind, graph, target_file, remaining)
+            section, stop = graph_section(kind, graph, target, remaining)
             if section is None:
                 if stop:
                     # 붙일 것은 있는데 예산이 없다.

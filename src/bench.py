@@ -37,11 +37,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from src.adapters.openai_compat import (
-    ModelGatewayError,
-    OpenAICompatModelClient,
-    SchemaParseError,
-)
+from src.adapters.openai_compat import OpenAICompatModelClient
 from src.bench_metrics import (
     METRIC_CACHE_CONFIG,
     METRIC_KV_USAGE,
@@ -52,7 +48,7 @@ from src.bench_metrics import (
     nvidia_smi_mb,
     read_counters,
 )
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ModelGatewayError, Prompt, SchemaParseError
 from src.orchestrator.prompt_loader import PromptTemplate, build_facts
 from src.schemas.candidate import Candidate
 from src.schemas.common import Location
