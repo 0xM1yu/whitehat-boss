@@ -20,15 +20,18 @@ from pathlib import Path
 import pytest
 
 from src import cli, console
+from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps, describe_wiring
+from src.adapters.fake_model import FakeModelClient
 from src.config import PROMPTED_ROLES, load_config
 from src.ids import new_run_id
+from src.interfaces.model_client import ModelGatewayError, SchemaParseError
 from src.orchestrator import runner
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.common import PLACEHOLDER_DIGEST
-from src.schemas.enums import FindingState, ReasonCode
+from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.run import Budget, RunRecord
 from tests.conftest import ALL_PROFILES
 
@@ -38,13 +41,24 @@ CONDITION = "B3prime@pipeline"
 
 
 def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **overrides: object):  # noqa: ANN202
-    """파이프라인을 한 번 돌리고 (결과, trace 경로)를 돌려준다. 기본은 dev_fake."""
+    """파이프라인을 한 번 돌리고 (결과, trace 경로)를 돌려준다. 기본은 dev_fake.
+
+    `before`는 run_dir이 생긴 뒤 실행 전에 불린다 — index.json을 그 자리에 놓는 데 쓴다
+    (W2). `candidate_max`는 (a′)의 절단 경로를 태우는 데 쓴다.
+    """
     config = load_config(profile)
     if "budget" in overrides:
         config = config.transition(budget=overrides.pop("budget"))
+    if "candidate_max" in overrides:
+        thresholds = config.thresholds.transition(candidate_max=overrides.pop("candidate_max"))
+        config = config.transition(thresholds=thresholds)
+    before = overrides.pop("before", None)
+    target = overrides.pop("target", TARGET)
     run_dir = tmp_path / name / "run_20260901_0001"
     run_dir.mkdir(parents=True)
-    spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT, **overrides)
+    if before is not None:
+        before(run_dir)
+    spec = RunSpec(condition=CONDITION, target=target, started_at=STARTED_AT, **overrides)
     trace_path = run_dir / "trace.jsonl"
     with trace_path.open("w", encoding="utf-8") as stream:
         result, _ = cli.execute(
@@ -996,3 +1010,396 @@ def test_graph_index_is_traced_exactly_once_per_run(tmp_path: Path) -> None:
 
     assert len(events) == 1, f"graph_index 이벤트가 {len(events)}건이다 — run당 1건이어야 한다"
     assert events[0]["data"]["status"] == "missing"
+
+# --- 9. 심볼 단위 target (W2) ------------------------------------------------
+#
+# `dev_fake`는 `tool_runner: fake`라 index.json을 내지 않는다. 그래서 두 경로를 각각
+# 태운다 — 인덱스가 없을 때(파일 단위 폴백)와 있을 때(심볼 단위). 한쪽만 태우면
+# 나머지 절반이 아무도 안 보는 코드가 된다(`test_index_graph.py`와 같은 논법).
+
+# 픽스처의 실제 함수 정의와 줄 범위. 어긋나면 아래 첫 테스트가 잡는다 — 손으로 적은
+# 인덱스가 픽스처와 갈라지면 이 절의 단언이 전부 거짓 위에 서게 된다.
+_FIXTURE_INDEX = {
+    "version": "index-v1",
+    "files": ["parser.c", "util.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "parse_header", "file": "parser.c", "line_start": 19, "line_end": 26},
+        {"name": "recv_request", "file": "parser.c", "line_start": 28, "line_end": 31},
+        {"name": "copy_name", "file": "util.c", "line_start": 14, "line_end": 24},
+        {"name": "name_length", "file": "util.c", "line_start": 26, "line_end": 29},
+    ],
+    "calls": [
+        {"caller": "recv_request", "callee": "parse_header", "file": "parser.c", "line": 30},
+        {"caller": "parse_header", "callee": "memcpy", "file": "parser.c", "line": 24},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+
+
+def _with_index(document: object = None):  # noqa: ANN202
+    """컨테이너 러너가 쓰는 **바로 그 경로**에 index.json을 놓는 `before` 훅.
+
+    `FakeToolRunner`의 `index`는 대상 존재만 확인하고 산출물을 내지 않으므로, 이렇게
+    두면 `dev_fake`로 심볼 단위 경로를 태울 수 있다. 경로를 손으로 조립하지 않고
+    `index_output_path()`에 묻는 이유는 배선이 어긋나도 초록불이 나오는 것을 막기
+    위해서다(`test_index_graph._write_index`와 같은 처리).
+    """
+
+    def place(run_dir: Path) -> None:
+        path = index_output_path(run_dir.parent, run_dir.name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = _FIXTURE_INDEX if document is None else document
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+    return place
+
+
+def _plan(trace_path: Path) -> dict:
+    events = _of(_events(trace_path), "target_plan")
+    assert len(events) == 1, f"target_plan은 run당 1건이다: {len(events)}건"
+    return events[0]["data"]
+
+
+def test_fixture_index_matches_the_real_fixture() -> None:
+    """위 인덱스가 픽스처와 갈라지면 이 절의 심볼 단위 테스트가 전부 거짓이 된다."""
+    for symbol in _FIXTURE_INDEX["symbols"]:
+        lines = (TARGET / symbol["file"]).read_text(encoding="utf-8").splitlines()
+        assert symbol["name"] in lines[symbol["line_start"] - 1]
+
+
+def test_targets_are_symbols_when_the_index_is_there(tmp_path: Path) -> None:
+    """후보 단위가 파일에서 심볼로 바뀐다. **분모가 바뀌는 지점이다**(STATUS.md §10)."""
+    result, trace_path = _run(tmp_path, before=_with_index())
+
+    plan = _plan(trace_path)
+    assert plan["symbol_targets"] == len(_FIXTURE_INDEX["symbols"])
+    assert plan["fallback_artifacts"] == 0
+    assert plan["planned"] == len(_FIXTURE_INDEX["symbols"])
+    # 후보가 artifact 수(2)가 아니라 심볼 수(4)만큼 생긴다.
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"])
+
+
+def test_candidate_locations_carry_the_symbol_and_its_lines(tmp_path: Path) -> None:
+    """`read_symbol_source()`가 파일 전체를 돌려주던 원인이 후보 위치에 있었다."""
+    result, _ = _run(tmp_path, name="sym", before=_with_index())
+
+    located = {
+        (c.location.file, c.location.symbol, c.location.line_start) for c in result.candidates
+    }
+    assert located == {
+        (s["file"], s["name"], s["line_start"]) for s in _FIXTURE_INDEX["symbols"]
+    }
+
+
+def test_missing_index_falls_back_to_files_and_says_so(tmp_path: Path) -> None:
+    """`dev_fake`는 index.json이 없다. 후보를 안 만들면 그 프로필의 run이 통째로 빈다.
+
+    폴백 자체는 W2 이전 동작이라 회귀가 아니다. **되돌아갔다는 사실이 기록에 남는 것**이
+    새로 얻는 것이다.
+    """
+    result, trace_path = _run(tmp_path)
+
+    plan = _plan(trace_path)
+    assert plan["fallback_artifacts"] == plan["analyzable_artifacts"] == 2
+    assert plan["symbol_targets"] == 0
+    assert len(result.candidates) == 2
+    assert all(c.location.symbol is None for c in result.candidates)
+
+
+def test_artifacts_without_symbols_make_no_candidates(tmp_path: Path) -> None:
+    """`.h`·`.py`·바이너리는 인덱서에 넘어가지 않아 심볼이 없다.
+
+    zlib run에서 artifact 300건 중 C 소스가 12건인데 후보가 32건 생겼다 — 대상 선정이
+    새고 있었고, 심볼이 후보를 정하면서 그 자리가 닫힌다.
+    """
+    only_parser = {
+        **_FIXTURE_INDEX,
+        "symbols": [s for s in _FIXTURE_INDEX["symbols"] if s["file"] == "parser.c"],
+    }
+
+    _, trace_path = _run(tmp_path, before=_with_index(only_parser))
+
+    plan = _plan(trace_path)
+    assert plan["no_symbol_artifacts"] == 1  # util.c
+    assert plan["symbol_targets"] == 2
+
+
+# --- 10. (a′) 정적 신호는 게이트가 아니라 순서다 ------------------------------
+
+
+def test_signal_bearing_artifacts_come_first_even_against_path_order(tmp_path: Path) -> None:
+    """신호가 붙은 artifact의 심볼이 먼저 돈다. **거르지는 않는다.**
+
+    거르면 하네스가 semgrep이 이미 찾은 것만 찾게 되고 이 프로젝트의 주장을 재는 경로가
+    막힌다. 그래서 신호 없는 심볼도 후보가 되고, 뒤로 갈 뿐이다.
+
+    경로 순서로는 `aaa.c`가 앞이지만 신호는 `parser.c`에만 붙는다(`fake_tools`의 정적
+    패턴이 길이가 상수가 아닌 `memcpy`를 잡는다). 정렬이 신호를 먼저 보지 않으면 이
+    단언이 뒤집힌다 — 알파벳 순서와 신호 순서가 어긋나게 잡은 것이 이 테스트의 요점이다.
+    """
+    target = tmp_path / "src"
+    target.mkdir()
+    (target / "parser.c").write_text((TARGET / "parser.c").read_text(encoding="utf-8"), "utf-8")
+    (target / "aaa.c").write_text("int quiet(void)\n{\n    return 0;\n}\n", encoding="utf-8")
+    index = {
+        **_FIXTURE_INDEX,
+        "files": ["aaa.c", "parser.c"],
+        "symbols": [
+            {"name": "quiet", "file": "aaa.c", "line_start": 1, "line_end": 4},
+            *[s for s in _FIXTURE_INDEX["symbols"] if s["file"] == "parser.c"],
+        ],
+    }
+
+    result, trace_path = _run(tmp_path, name="order", target=target, before=_with_index(index))
+
+    assert _plan(trace_path)["signal_artifacts"] == 1
+    files = [c.location.file for c in result.candidates]
+    assert files == ["parser.c", "parser.c", "aaa.c"]
+
+
+def test_candidate_max_defers_the_rest_and_records_them(tmp_path: Path) -> None:
+    """예산에 잘린 target이 흔적 없이 사라지면 (a′)를 한 의미가 없다."""
+    result, trace_path = _run(tmp_path, name="cut", before=_with_index(), candidate_max=1)
+
+    plan = _plan(trace_path)
+    skipped = _of(_events(trace_path), "target_skipped")
+
+    assert plan["planned"] == 1
+    assert plan["deferred"] == len(_FIXTURE_INDEX["symbols"]) - 1
+    assert len(skipped) == plan["deferred"]
+    assert {e["data"]["reason"] for e in skipped} == {"over_candidate_max"}
+    # 무엇이 잘렸는지가 남는다. 수만 남기면 목록을 사후에 복원할 수 없다.
+    assert all(e["data"]["symbol"] for e in skipped)
+    assert len(result.candidates) == 1
+
+
+def test_deferred_targets_reach_the_warning_and_the_report(tmp_path: Path) -> None:
+    """trace에만 남기면 사용자가 run 결과로 읽는 것에는 안 보인다.
+
+    deferred가 많은 run과 0건인 run이 겉보기에 같으면 "조용히 절단하지 않는다"가
+    기록의 절반에서만 성립한다.
+    """
+    result, _ = _run(tmp_path, name="warn", before=_with_index(), candidate_max=1)
+
+    assert any("candidate_max" in warning for warning in result.warnings)
+    assert "분석하지 못한 대상" in result.report.render()
+
+
+def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
+    """0건일 때도 줄이 나오면 그 문장이 신호가 아니라 장식이 된다."""
+    result, _ = _run(tmp_path, name="full", before=_with_index())
+
+    assert not any("candidate_max" in warning for warning in result.warnings)
+    assert "분석하지 못한 대상" not in result.report.render()
+
+# --- 11. 후보 하나의 실패가 run 전체를 죽이지 않는다 (4-2) --------------------
+#
+# zlib 때 `ModelGatewayError`가 뚫고 나갔고 `run_manifest.json`을 쓰는 블록이 그 뒤라
+# **산출물이 하나도 안 남았다** — `state.db`를 직접 열어야 했던 이유다. 후보가 수백 개인
+# 실대상 run에서는 하나가 터지면 그때까지의 GPU 시간이 전부 사라진다.
+#
+# `FakeModelClient`에 실패 주입 손잡이를 달지 않는다. 테스트만을 위한 분기를 프로덕션
+# 어댑터에 두지 않고, monkeypatch로 감싸면 `cli.execute()` 전체 경로가 그대로 돈다 —
+# 매니페스트가 남는지를 실제로 물으려면 그 경로여야 한다.
+
+
+def _failing_model(monkeypatch: pytest.MonkeyPatch, errors: list[Exception | None]) -> None:
+    """N번째 Scout 호출에서 준비된 예외를 던진다. 목록이 짧으면 그 뒤는 정상이다."""
+    original = FakeModelClient.complete
+    calls = {"n": 0}
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
+        if role is Role.SCOUT:
+            index = calls["n"]
+            calls["n"] += 1
+            if index < len(errors) and errors[index] is not None:
+                raise errors[index]
+        return original(self, role=role, prompt=prompt, schema=schema)
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+
+def _context_overflow() -> ModelGatewayError:
+    """vLLM이 컨텍스트 초과에 주는 400. 본문에 실린 문장이 우리가 가장 알고 싶은 값이다."""
+    detail = (
+        "This model's maximum context length is 32768 tokens. "
+        "However, you requested 43200 tokens."
+    )
+    return ModelGatewayError(f"HTTP 400 {detail}", status=400, detail=detail)
+
+
+def test_a_context_overflow_drops_only_that_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """후보 하나가 컨텍스트를 넘겼다 — 그 후보만 버리고 계속 간다."""
+    _failing_model(monkeypatch, [_context_overflow()])
+
+    result, trace_path = _run(tmp_path, name="drop", before=_with_index())
+
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["gateway_error"]
+    # 나머지 세 개는 정상으로 돌았다.
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"]) - 1
+
+
+def test_the_manifest_survives_a_dropped_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**이것이 4-2의 요점이다.** 산출물이 없으면 그때까지의 GPU 시간이 전부 사라진다."""
+    _failing_model(monkeypatch, [_context_overflow()])
+
+    _run(tmp_path, name="manifest", before=_with_index())
+
+    manifest = tmp_path / "manifest" / "run_20260901_0001" / "run_manifest.json"
+    assert manifest.is_file()
+    assert json.loads(manifest.read_text(encoding="utf-8"))["run_id"] == "run_20260901_0001"
+
+
+def test_the_server_side_error_stops_the_run_but_keeps_the_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """서버가 죽었으면 남은 target 수백 개를 전부 실패시키며 돌면 안 된다.
+
+    상태 코드가 없다 = 연결 실패·타임아웃이다. 400과 같은 예외 타입이지만 다른 사건이고,
+    그 둘을 가르는 정보가 4-1이 살린 응답 본문과 상태 코드에 있다.
+
+    **멈추는 것과 산출물을 잃는 것은 다르다.** 예산 소진과 같은 자리에서 같은 방식으로
+    끝난다(전이 표 R-2) — 그러지 않으면 이 변경이 없애려던 결함이 그대로 남는다.
+    """
+    dead = ModelGatewayError("http://127.0.0.1:8001 호출 실패: Connection refused")
+    _failing_model(monkeypatch, [dead])
+
+    result, trace_path = _run(tmp_path, name="dead", before=_with_index())
+
+    assert not result.record.is_complete
+    assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable"
+    assert (tmp_path / "dead" / "run_20260901_0001" / "run_manifest.json").is_file()
+    # 첫 target에서 멈췄다. 나머지는 태우지 않는다.
+    assert len(result.candidates) == 0
+
+
+def test_a_five_hundred_also_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """5xx는 요청이 아니라 서버 쪽 사건이다. 후보를 바꿔도 낫지 않는다."""
+    _failing_model(monkeypatch, [ModelGatewayError("HTTP 503", status=503, detail="overloaded")])
+
+    result, trace_path = _run(tmp_path, name="503", before=_with_index())
+
+    assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable"
+    assert (tmp_path / "503" / "run_20260901_0001" / "run_manifest.json").is_file()
+
+
+def test_a_schema_failure_drops_only_that_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`retries` 한도 소진도 후보 단위 실패다. 지표는 안 잃는다 — 분자는 `model_call`에 있다."""
+    _failing_model(monkeypatch, [SchemaParseError("scout이 2회 안에 Candidate를 못 만들었다")])
+
+    result, trace_path = _run(tmp_path, name="schema", before=_with_index())
+
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["schema_parse_failed"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"]) - 1
+    # 실패한 호출 자체는 `model_call ok=False`로 남는다. 잡았다고 분자가 사라지지 않는다.
+    failed = [e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]
+    assert len(failed) == 1
+
+
+def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**크기 거절은 체계적 고장이 아니다.**
+
+    400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로 세면 큰
+    함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
+    정렬이 신호 붙은 artifact를 앞으로 모으므로 드문 일도 아니다.
+    """
+    _failing_model(
+        monkeypatch, [_context_overflow(), _context_overflow(), _context_overflow()]
+    )
+
+    result, trace_path = _run(tmp_path, name="big", before=_with_index())
+
+    assert len(_of(_events(trace_path), "target_skipped")) == 3
+    # 네 번째는 정상으로 돌았다 — 멈추지 않았다는 뜻이다.
+    assert len(result.candidates) == 1
+    assert result.record.is_complete
+
+
+def test_size_rejections_do_not_reset_the_counter_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**세지 않는 것과 지우는 것은 다르다.**
+
+    크기 거절이 카운터를 내리면 체계적 실패와 번갈아 나오는 경우에 어느 쪽도 상한에
+    닿지 않고 target 수백 개를 전부 태운다. 올리지도 내리지도 않으므로 스키마 → 400 →
+    스키마 → 스키마가 1·1·2·3으로 닿는다.
+    """
+    _failing_model(
+        monkeypatch,
+        [
+            SchemaParseError("첫 번째"),
+            _context_overflow(),
+            SchemaParseError("세 번째"),
+            SchemaParseError("네 번째"),
+        ],
+    )
+
+    result, trace_path = _run(tmp_path, name="mixed", before=_with_index())
+
+    assert len(_of(_events(trace_path), "target_skipped")) == 4
+    assert len(result.candidates) == 0
+    # **사유가 게이트웨이 중단과 갈린다.** 서버는 응답하는데 후보가 계속 죽는 상태다.
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
+    assert (tmp_path / "mixed" / "run_20260901_0001" / "run_manifest.json").is_file()
+
+
+def test_a_completed_target_resets_the_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """완주가 리셋 조건이다. 흩어진 실패는 체계적 고장이 아니다."""
+    _failing_model(
+        monkeypatch,
+        [_context_overflow(), None, _context_overflow(), None],
+    )
+
+    result, trace_path = _run(tmp_path, name="reset", before=_with_index())
+
+    assert len(_of(_events(trace_path), "target_skipped")) == 2
+    assert len(result.candidates) == 2
+
+
+def test_dropped_targets_reach_the_warning_and_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """폐기도 절단과 같은 자리에 남는다 — 사용자가 읽는 것에 안 보이면 절반만 성립한다."""
+    _failing_model(monkeypatch, [_context_overflow()])
+
+    result, _ = _run(tmp_path, name="dropwarn", before=_with_index())
+
+    assert any("호출 실패로 버렸다" in warning for warning in result.warnings)
+    assert "분석하지 못한 대상" in result.report.render()
+
+
+def test_the_gateway_detail_survives_into_the_run_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**4-1이 4-2의 전제다.** zlib에서 우리가 가장 알고 싶었던 M이 버려졌다.
+
+    `model_call`의 `error`가 클래스 이름뿐이면 무엇이 얼마나 넘쳤는지가 산출물 어디에도
+    없다. 상세가 `error_detail`로 남고, 폐기 이벤트에도 같은 문자열이 붙는다.
+    """
+    _failing_model(monkeypatch, [_context_overflow()])
+
+    _, trace_path = _run(tmp_path, name="detail", before=_with_index())
+
+    failed = [e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]
+    assert "43200 tokens" in failed[0]["data"]["error_detail"]
+    assert failed[0]["data"]["error"] == "ModelGatewayError"
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert "43200 tokens" in skipped[0]["data"]["error_detail"]
+
