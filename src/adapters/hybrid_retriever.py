@@ -17,6 +17,14 @@
 embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않았다. 확장 경로의 부분
 절단(`min(pool[used].tokens, remaining)`)도 없앴다 — 조각은 통째로 들어가거나 안 들어간다.
 
+**`related`는 항목당 크기가 가장 큰 섹션이다.** 그래프 줄은 `memcpy parser.c:24` 한 줄이지만
+`related` 조각은 수십 줄짜리 코드 블록이다. 그리고 이 본문은 산문(`scout.describe_sections`)과
+사실 블록(`build_facts`) 양쪽에 실리므로(D17의 2배 계상 — `callers`/`callees`와 같은 계약),
+**선언 N토큰짜리 `related`가 실제 프롬프트에서는 대략 2N을 차지한다.** 토큰 추정 과소(D21)까지
+얹으면 더 커진다. 지금은 hybrid가 dev 전용(`dev_hybrid`·`dev_hybrid_docker`)이라 무해하지만,
+**실서빙 hybrid 프로필이 생기면 예산을 캡슐 선언값이 아니라 이 사실로 잡아야 한다.** 그래서
+캡슐 구성이 바뀐 이번 변경은 `CAPSULE_POLICY_VERSION`을 올린다(아래).
+
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에 타입
 데이터가 없다(`indexer.build_index()`는 symbols·calls뿐). 없는 그래프에서 나온 척 섹션을
 채우면 토큰 회계가 거짓말을 한다.
@@ -56,7 +64,10 @@ from src.tokens import estimate_tokens
 #
 # **hybrid-v1 → hybrid-v2 (2026-08-20)**: `callers`/`callees`가 구성에 들어왔다.
 # **hybrid-v2 → hybrid-v3 (W2/D20)**: LIGHT에 그래프가 들어갔고 target이 심볼로 좁혀졌다.
-CAPSULE_POLICY_VERSION = "hybrid-v3"
+# **hybrid-v3 → hybrid-v4 (2026-08-23)**: `related`에 `body`가 생기고 조각당 비용이
+#   `chunk.tokens`에서 `estimate_tokens(file:line\n+text)`로 커졌다 — 같은 키가 다른
+#   구성을 덮으면 안 되므로 올린다(#25가 v3, 이 변경이 v4 — 서로 다른 구성이다).
+CAPSULE_POLICY_VERSION = "hybrid-v4"
 
 # 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
 # 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
@@ -112,13 +123,14 @@ RETRIEVAL_RERANKER = "reranker"
 class Chunk:
     """수집된 코드 조각 하나. 스키마가 아니라 어댑터 내부 자료구조다."""
 
-    __slots__ = ("file", "line_start", "text", "tokens")
+    # `tokens`는 뒀다 지웠다 — `_fit_related`가 조각당 비용을 `estimate_tokens(_chunk_body())`
+    # (file:line + 코드)로 재고부터, 어디서도 `chunk.tokens`(코드만)를 읽지 않는다.
+    __slots__ = ("file", "line_start", "text")
 
     def __init__(self, file: str, line_start: int, text: str) -> None:
         self.file = file
         self.line_start = line_start
         self.text = text
-        self.tokens = estimate_tokens(text)
 
 
 class HybridRetriever:
@@ -209,18 +221,23 @@ class HybridRetriever:
         if related is not None and (used := sections[related].items or 0) < len(pool):
             body = _chunk_body(pool[used])
             cost = estimate_tokens(body)
-            # 부분 절단하지 않는다 — 조각 하나가 통째로 들어가거나 안 들어간다.
-            # 예전 `min(pool[used].tokens, remaining)`은 본문 없이 토큰만 더해 조각을
-            # 반쪽만 세었다. 본문이 실리는 지금은 그러면 검증기에서 죽는다.
-            if cost <= 0 or cost > remaining:
-                return capsule
-            sections[related] = CapsuleSection(
-                kind="related",
-                tokens=sections[related].tokens + cost,
-                items=used + 1,
-                body=[*sections[related].body, body],
-            )
-            return self._transition(capsule, sections, need)
+            # 조각은 통째로 들어가거나 안 들어간다 — 부분 절단(`min`)은 본문 없이 토큰만
+            # 더해 조각을 반쪽만 세던 것이라, 본문이 실리는 지금은 검증기에서 죽는다.
+            #
+            # **안 들어가면 `related`는 그대로 두고 아래로 흘려보낸다.** `return`하면
+            # `EXPANSION_ORDER`의 나머지(callers·callees·known_facts·static_signal)에
+            # 못 닿는다 — 조각 하나가 예산에 안 맞는다고 64토큰짜리 보조 섹션까지 포기할
+            # 이유가 없다(그래프 분기와 같은 결). 게다가 채움이 멈춘 이유가 "다음 조각이
+            # 안 들어가서"이고 그 뒤 다른 섹션이 예산을 더 먹으므로 remaining은 늘 그 조각보다
+            # 작다 — `return`을 두면 `related`에 남은 조각이 있는 한 expand가 영구 no-op이 된다.
+            if cost > 0 and cost <= remaining:
+                sections[related] = CapsuleSection(
+                    kind="related",
+                    tokens=sections[related].tokens + cost,
+                    items=used + 1,
+                    body=[*sections[related].body, body],
+                )
+                return self._transition(capsule, sections, need)
 
         present = {section.kind for section in sections}
         for kind in EXPANSION_ORDER:
