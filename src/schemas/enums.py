@@ -14,6 +14,24 @@ class Role(StrEnum):
     AUDITOR = "auditor"
     CRITIC = "critic"
     JUDGE = "judge"
+    # B1·B3 통합 단일패스. Scout·Auditor·Critic 없이 혼자 경로를 세우고 자기반박하며
+    # 출력은 Auditor와 같은 `Finding`이다(`prompts/single/v2/meta.yaml`).
+    #
+    # **`config.PROMPTED_ROLES`에 `"single"`이 먼저 들어와 있었고 여기가 비어 있었다.**
+    # 그래서 `Role("single")`이 `ValueError`였고, `cli._check_prompts`·`cli._prefix_tokens`·
+    # `bench_report._role_report`가 전부 그 위를 지나간다. 지금은 세 곳 다
+    # `if role in config.profile.roles` 가드에 걸려 안 터지지만, **그 가드가 막는 것은
+    # 정확히 single-pass 프로필을 붙이는 경우**다 — 등록의 목적이 그것이므로 프로필이
+    # 하나 생기는 순간 harness check·prefix 추정·bench가 함께 죽고 `prompts/single/v2`는
+    # 끝내 로드되지 않는다.
+    #
+    # **[ADR 0004](../../docs/decisions/0004-retrieval-clients-separate-from-model-client.md)가
+    # 기각한 것과 다른 종류다.** 그쪽은 `embedding`·`reranker`였고 사유는 "프롬프트도
+    # 스키마도 없는 검색 부품"이었다. `single`은 프롬프트 디렉터리와 `output_schema`를
+    # 가진 실행 계약 역할이라 그 사유가 적용되지 않는다.
+    #
+    # `tests/test_config.py`가 `PROMPTED_ROLES ⊆ Role`을 강제한다.
+    SINGLE = "single"
 
 
 class EvidenceKind(StrEnum):

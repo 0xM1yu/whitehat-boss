@@ -1309,30 +1309,52 @@ def test_a_schema_failure_drops_only_that_target(
     assert len(failed) == 1
 
 
-def test_the_consecutive_counter_is_shared_between_both_failures(
+def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**게이트웨이와 스키마를 한 카운터로 센다.**
+    """**크기 거절은 체계적 고장이 아니다.**
 
-    따로 세면 둘이 번갈아 실패할 때 어느 쪽도 상한에 닿지 않고 target 수백 개를 전부
-    태운다. 여기서는 400 → 스키마 → 400 세 건이 연속이라 세 번째에서 멈춘다.
+    400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로 세면 큰
+    함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
+    정렬이 신호 붙은 artifact를 앞으로 모으므로 드문 일도 아니다.
+    """
+    _failing_model(
+        monkeypatch, [_context_overflow(), _context_overflow(), _context_overflow()]
+    )
+
+    result, trace_path = _run(tmp_path, name="big", before=_with_index())
+
+    assert len(_of(_events(trace_path), "target_skipped")) == 3
+    # 네 번째는 정상으로 돌았다 — 멈추지 않았다는 뜻이다.
+    assert len(result.candidates) == 1
+    assert result.record.is_complete
+
+
+def test_size_rejections_do_not_reset_the_counter_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**세지 않는 것과 지우는 것은 다르다.**
+
+    크기 거절이 카운터를 내리면 체계적 실패와 번갈아 나오는 경우에 어느 쪽도 상한에
+    닿지 않고 target 수백 개를 전부 태운다. 올리지도 내리지도 않으므로 스키마 → 400 →
+    스키마 → 스키마가 1·1·2·3으로 닿는다.
     """
     _failing_model(
         monkeypatch,
         [
+            SchemaParseError("첫 번째"),
             _context_overflow(),
-            SchemaParseError("두 번째"),
-            _context_overflow(),
+            SchemaParseError("세 번째"),
+            SchemaParseError("네 번째"),
         ],
     )
 
     result, trace_path = _run(tmp_path, name="mixed", before=_with_index())
 
-    # 세 건을 버리고 멈췄다. 네 번째 target은 태우지 않는다.
-    assert len(_of(_events(trace_path), "target_skipped")) == 3
+    assert len(_of(_events(trace_path), "target_skipped")) == 4
     assert len(result.candidates) == 0
-    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
     # **사유가 게이트웨이 중단과 갈린다.** 서버는 응답하는데 후보가 계속 죽는 상태다.
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
     assert (tmp_path / "mixed" / "run_20260901_0001" / "run_manifest.json").is_file()
 
 
