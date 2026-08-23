@@ -10,11 +10,12 @@
 `tool_runner: fake`다) 그 섹션을 **만들지 않는다**: 조용히 빈 섹션을 내면 "그래프가
 비었다"와 "인덱서가 안 돌았다"가 구별되지 않는다.
 
-**그래프 섹션의 본문은 캡슐에 실린다.** `callers`/`callees`의 줄이 `CapsuleSection.body`에
-담겨 프롬프트로 간다(`index_graph.graph_section()`). `related`는 아직 담지 않는다 —
-`expand()`가 `related`의 토큰을 조각 단위로 더하면서 `min()`으로 깎는 경로가 있어
-(`sections[related].tokens + extra`), 줄과 토큰이 어긋날 수 있다. 그 절단을 먼저 풀어야
-한다(open-questions D13).
+**검색·그래프 섹션의 본문이 모두 캡슐에 실린다.** `callers`/`callees`의 줄이
+`CapsuleSection.body`에 담겨 프롬프트로 가고(`index_graph.graph_section()`), `related`도
+같다 — `_fit_related`가 조각의 `file:line`+코드를 줄로 돌려주고 검색·확장 두 경로가 그것을
+`body`에 넣는다(open-questions D13). 예전에는 `(토큰, 개수)`만 세고 코드를 버려,
+embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않았다. 확장 경로의 부분
+절단(`min(pool[used].tokens, remaining)`)도 없앴다 — 조각은 통째로 들어가거나 안 들어간다.
 
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에 타입
 데이터가 없다(`indexer.build_index()`는 symbols·calls뿐). 없는 그래프에서 나온 척 섹션을
@@ -206,13 +207,18 @@ class HybridRetriever:
         related = next((i for i, s in enumerate(sections) if s.kind == "related"), None)
 
         if related is not None and (used := sections[related].items or 0) < len(pool):
-            extra = min(pool[used].tokens, remaining)
-            if extra <= 0:
+            body = _chunk_body(pool[used])
+            cost = estimate_tokens(body)
+            # 부분 절단하지 않는다 — 조각 하나가 통째로 들어가거나 안 들어간다.
+            # 예전 `min(pool[used].tokens, remaining)`은 본문 없이 토큰만 더해 조각을
+            # 반쪽만 세었다. 본문이 실리는 지금은 그러면 검증기에서 죽는다.
+            if cost <= 0 or cost > remaining:
                 return capsule
             sections[related] = CapsuleSection(
                 kind="related",
-                tokens=sections[related].tokens + extra,
+                tokens=sections[related].tokens + cost,
                 items=used + 1,
+                body=[*sections[related].body, body],
             )
             return self._transition(capsule, sections, need)
 
@@ -439,9 +445,17 @@ def _sections_for(
         elif kind == "related":
             if not selected:
                 continue
-            cost, items = _fit_related(selected, remaining)
-            if items == 0:
+            cost, count, body = _fit_related(selected, remaining)
+            if count == 0:
                 continue
+            # 그래프 섹션과 같은 이유로 **여기서 섹션을 완성해 `continue`한다** —
+            # `_fit_related`가 이미 `cost <= remaining`을 보장하므로, 아래 공용
+            # `min()` 줄에 본문 있는 섹션이 닿으면 토큰만 깎여 검증기에서 죽는다.
+            sections.append(
+                CapsuleSection(kind=kind, tokens=cost, items=count, body=body)
+            )
+            used += cost
+            continue
         else:
             cost = _AUX_SECTION_TOKENS
         # **`cost == 0`은 "예산이 없다"가 아니라 "그래프를 봤는데 간선이 0건이다"이다.**
@@ -458,13 +472,29 @@ def _sections_for(
     return sections
 
 
-def _fit_related(selected: list[Chunk], remaining: int) -> tuple[int, int]:
-    """예산에 들어가는 만큼만 담는다. (토큰 합, 담은 개수)."""
+def _chunk_body(chunk: Chunk) -> str:
+    """`related` 섹션의 본문 한 줄. 코드 앞에 `file:line`을 붙여 위치를 함께 준다."""
+    return f"{chunk.file}:{chunk.line_start}\n{chunk.text}"
+
+
+def _fit_related(selected: list[Chunk], remaining: int) -> tuple[int, int, list[str]]:
+    """예산에 들어가는 만큼만 담는다. (토큰 합, 담은 개수, **담은 줄**).
+
+    `index_graph.fit_names`와 같은 계약이다 — 담은 줄을 버리지 않고 함께 돌려주고,
+    호출자가 `CapsuleSection.body`에 넣는다. 예전에는 `(토큰합, 개수)`만 내고 조각의
+    코드를 버려, embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않았다
+    (open-questions D13). 반환 토큰 합은 `remaining` 이하이므로 호출자가 다시 `min()`을
+    걸면 안 된다 — 줄은 두고 토큰만 깎는 것이 되어 스키마 검증기에서 죽는다.
+    """
     total = 0
     count = 0
+    fitted: list[str] = []
     for chunk in selected:
-        if total + chunk.tokens > remaining:
+        body = _chunk_body(chunk)
+        cost = estimate_tokens(body)
+        if total + cost > remaining:
             break
-        total += chunk.tokens
+        total += cost
         count += 1
-    return total, count
+        fitted.append(body)
+    return total, count, fitted
