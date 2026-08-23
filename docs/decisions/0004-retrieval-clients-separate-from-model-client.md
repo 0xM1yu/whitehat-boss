@@ -56,3 +56,15 @@ embedding만 띄우고 reranker는 Fake로 두는 구성이 프로필만으로 �
   `config.PROMPTED_ROLES`를 단일 출처로 두어 둘 다 정리했다. `model_checksums()`는
   그대로 전 역할을 담는다 — 임베딩 모델이 바뀌면 검색 결과가 바뀌므로 재현성 기록에서
   뺄 수 없고, `RunRecord`가 두 dict를 독립 필드로 선언하고 있어 키 집합이 달라도 된다.
+- **후속 (2026-08-23)**: "`Role` 열거형은 건드리지 않는다"는 이 문서의 문장이
+  `Role.SINGLE` 추가로 한 번 깨졌다. **이 결정의 근거는 깨지 않는다.** 기각한 것은
+  `EMBEDDING`/`RERANKER`였고 사유는 "프롬프트도 스키마도 없는 검색 부품"이었는데,
+  `single`은 `prompts/single/v2/`와 `output_schema: Finding`을 가진 실행 계약 역할이라
+  그 사유가 적용되지 않는다 — 오히려 위 표의 기준("프롬프트 버전·출력 스키마·재시도
+  정책이 붙는 개념")을 만족한다.
+  왜 지금 추가했는가: `config.PROMPTED_ROLES`에 `"single"`이 먼저 들어와 있었고
+  열거형은 비어 있어 `Role("single")`이 `ValueError`였다. `cli._check_prompts`·
+  `cli._prefix_tokens`·`bench_report._role_report` 셋이 그 위를 지나가는데,
+  `if role in config.profile.roles` 가드가 막고 있던 것이 **정확히 single-pass 프로필을
+  붙이는 경우**라 등록의 목적이 달성되는 순간 셋이 함께 죽는 상태였다.
+  `tests/test_config.py`가 `PROMPTED_ROLES ⊆ Role`과 `ROLE_SPEC` 커버리지를 강제한다.

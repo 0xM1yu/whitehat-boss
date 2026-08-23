@@ -15,6 +15,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from src.bench import ROLE_SPEC
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
@@ -28,6 +29,7 @@ from src.config import (
 )
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
+from src.schemas.enums import Role
 from tests.conftest import ALL_PROFILES
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
@@ -95,6 +97,32 @@ def test_prompted_roles_matches_prompt_directories() -> None:
         if path.is_dir() and not path.name.startswith((".", "_"))
     }
     assert set(PROMPTED_ROLES) == on_disk
+
+
+def test_every_prompted_role_is_a_real_role() -> None:
+    """`Role(role)`이 `PROMPTED_ROLES`의 모든 값에 대해 성립한다.
+
+    **이 검사가 없어서 `"single"`이 상수에만 들어오고 열거형에는 안 들어왔다.**
+    `Role("single")`이 `ValueError`였고 `cli._check_prompts`·`cli._prefix_tokens`·
+    `bench_report._role_report` 셋이 그 위를 지나간다. 세 곳 다
+    `if role in config.profile.roles` 가드가 있어 지금은 안 터지는데, **그 가드가 막는
+    것이 정확히 single-pass 프로필을 붙이는 경우**라 등록의 목적이 달성되는 순간 셋이
+    함께 죽는다. 위 디렉터리 대조가 상수↔디스크만 보고 상수↔열거형은 안 봤다.
+
+    한쪽 방향만 본다. `Role.JUDGE`는 프롬프트 디렉터리가 없고 `PROMPTED_ROLES`에도
+    없는데, 그것은 아직 프롬프트가 없는 역할이지 어긋남이 아니다.
+    """
+    assert {Role(role) for role in PROMPTED_ROLES} <= set(Role)
+
+
+def test_every_prompted_role_has_a_bench_spec() -> None:
+    """`Role`에만 넣고 `ROLE_SPEC`을 비워 두면 크래시가 자리만 옮긴다.
+
+    `bench_report._role_report()`가 `ROLE_SPEC[role_enum]`으로 바로 색인한다 —
+    `Role("single")`의 `ValueError`가 `KeyError`가 될 뿐이고, 터지는 프로필도 같다.
+    """
+    for role in PROMPTED_ROLES:
+        assert Role(role) in ROLE_SPEC, f"{role}에 bench 스펙이 없다"
 
 
 def test_dev_fake_needs_no_gpu() -> None:

@@ -22,10 +22,19 @@
 
 **네 번째 갈래가 하나 더 있고 그것은 구별되지 않는다**: index.json이 멀쩡한데
 `target_function`이 레벨 예산을 통째로 먹으면 그래프 섹션이 발행되지 못해 1행과 같은
-모양이 된다. 지금 target이 `Location(file=...)`이라 `read_symbol_source()`가 파일 전체를
-돌려주기 때문이고, 실측 임계는 focused(8,000토큰) 32KB / expanded(24,000토큰) 96KB다
-(`src/tokens.CHARS_PER_TOKEN`=4 기준). 심볼 단위 캡슐이 들어오면 `target_function`이 심볼로
-좁혀져 사라지는 한계다 — open-questions D13에 적었다.
+모양이 된다. 실측 임계는 focused(8,000토큰) 32KB / expanded(24,000토큰) 96KB다
+(`src/tokens.CHARS_PER_TOKEN`=4 기준).
+
+**W2가 그 갈래를 좁혔다. 없애지는 못했다.** 심볼 단위 target에서는 `target_function`이
+함수 하나라 저 임계에 닿는 일이 거의 없다. 그러나 인덱스가 없는 프로필(`dev_fake`)은
+여전히 파일 단위 target으로 되돌아가므로 그쪽에서는 옛 갈래가 그대로 산다 —
+`tests/test_index_graph.py`가 그 동작을 알려진 한계로 박제해 둔 이유다.
+
+## 심볼 목록도 여기서 낸다
+
+`symbols_for()`가 러너의 후보 목록을 만든다(W2). 후보 단위가 파일에서 심볼로 바뀌는
+배선의 데이터원이 캡슐의 그래프 섹션과 **같은 index.json**이라는 것이 요점이다 —
+따로 파싱하면 후보의 근사와 그래프의 근사가 갈리고, 그 차이는 어느 기록에도 안 남는다.
 
 ## 실패해도 예외를 던지지 않는다
 
@@ -64,6 +73,7 @@ from pathlib import Path
 
 from src.graph_entry import render_entry
 from src.schemas.capsule import CapsuleSection
+from src.schemas.common import Location
 from src.tokens import estimate_tokens
 
 # `indexer.py`의 `INDEX_VERSION`과 같아야 한다.
@@ -139,30 +149,75 @@ class GraphIndex:
         self.path = path
         self.on_index = on_index
         self._summary: IndexSummary | None = None
-        # file → 그 파일에 정의된 심볼 이름. 간선의 반대쪽 끝 판정에 쓴다.
-        self._defined: dict[str, set[str]] = {}
+        # file → 그 파일에 정의된 심볼 (이름, line_start, line_end). 간선의 반대쪽 끝
+        # 판정과 `symbols_for()`가 함께 쓴다.
+        #
+        # **줄 범위를 버리지 않는 것이 W2의 전부다.** index-v1이 심볼마다 이 둘을 이미
+        # 내는데(`indexer.index_file()`) 예전 로더는 이름만 남기고 버렸고, 그래서 후보
+        # 위치가 파일뿐이라 `read_symbol_source()`가 파일 전체를 프롬프트에 실었다.
+        self._defined: dict[str, list[tuple[str, int, int]]] = {}
         # 호출 간선 원본. (caller, callee, file, line)
+        #
+        # `file`은 **호출자가 정의된 파일**, `line`은 **호출 지점 줄**이다
+        # (`indexer._walk_calls`). 그래서 (file, line)이 곧 호출 지점이고, 그것이 본문
+        # 줄 범위 안인지로 "이미 캡슐에 있는가"를 판정할 수 있다.
         self._calls: list[tuple[str, str, str, int]] = []
 
     # --- 조회 -----------------------------------------------------------
 
-    def names_for(self, kind: str, file: str) -> list[str] | None:
+    def symbols_for(self, file: str) -> list[Location] | None:
+        """그 파일에 정의된 심볼의 위치. `None`은 **그래프 자체가 없다**는 뜻이다.
+
+        러너가 후보 목록을 만드는 데 쓴다(W2). 세 갈래를 호출자가 그대로 기록에 옮긴다:
+
+        | 반환 | 뜻 | 러너가 하는 일 |
+        | --- | --- | --- |
+        | `None` | 인덱스 없음·버전 모름·깨짐 | 파일 단위 target으로 되돌아간다 |
+        | `[]` | 인덱스는 있는데 이 파일에 심볼 0건 | 후보를 만들지 않는다 |
+        | `[...]` | 심볼 N건 | 심볼당 target 하나 |
+
+        `names_for()`가 "없다"와 "0건"을 가르는 것과 **같은 구별**이고 같은 이유다 —
+        `.h`처럼 인덱서에 넘어가지 않는 파일과 인덱서가 아예 안 돈 run을 한 값으로
+        뭉치면 후보가 사라진 이유를 사후에 알 수 없다.
+
+        정렬은 index.json의 순서(file, line_start, name)를 그대로 쓴다. 후보 순서가 곧
+        ID 발급 순서라 흔들리면 두 run의 trace를 대조할 수 없다(engineering-guide.md §5).
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        return [
+            Location(file=file, symbol=name, line_start=start, line_end=end)
+            for name, start, end in self._defined.get(file, [])
+        ]
+
+    def names_for(self, kind: str, target: Location) -> list[str] | None:
         """`kind` 섹션에 실을 항목. `None`은 **그래프 자체가 없다**는 뜻이다.
 
         빈 리스트(`[]`)와 섞지 않는다 — 그쪽은 "봤는데 간선이 0건"이다. 호출자는 이
         구별을 그대로 캡슐에 옮긴다(모듈 docstring 표).
 
-        ## 간선의 반대쪽 끝이 이미 캡슐 본문 안이면 싣지 않는다
+        ## 규칙은 둘이고, 둘 다 "본문"을 기준으로 한다
 
-        **전제: 지금 target은 `Location(file=X)`이고 `line_start`가 없어
-        `read_symbol_source()`가 파일 전체를 돌려준다** — 즉 `target_function` 섹션이 X
-        전체다. 그래서 X 안에서 X 안으로 가는 간선은 본문에 이미 있고, 또 적으면 토큰만
-        부푼다(`HybridRetriever._collect()`가 대상 파일을 후보에서 빼는 것과 같은 이유).
+        여기서 **본문**은 `read_symbol_source(root, target)`이 돌려주는 범위다. 그것이
+        `target_function` 섹션이자 프롬프트에 실리는 원문이므로, 두 판정이 그 정의를
+        공유해야 캡슐이 자기 내용과 어긋나지 않는다.
 
-        **심볼 단위 캡슐(D13 후속)이 이 전제를 깬다.** `target_function`이 심볼 한 개의
-        줄 범위로 좁혀지면 같은 파일 안의 호출자·피호출자가 더는 본문에 없고, 그때 이
-        필터는 **실재하는 간선을 숨긴다.** 그 작업에서 조건을 "파일이 같은가"가 아니라
-        "본문 줄 범위 안인가"로 바꿔야 한다.
+        1. **선택** — 무엇이 이 캡슐의 간선인가. `callers`는 본문으로 들어오는 호출,
+           `callees`는 본문에서 나가는 호출.
+        2. **제외** — 간선의 반대쪽 끝이 **본문 안**이면 뺀다. 이미 원문에 있으니 또
+           적으면 토큰만 부푼다.
+
+        ## 판정이 "파일이 같은가"에서 "본문 줄 범위 안인가"로 바뀌었다 (W2)
+
+        예전 필터는 **target이 파일 전체라는 전제** 위에 있었다 — `line_start`가 없어
+        `read_symbol_source()`가 파일을 통째로 돌려주던 시절이다. 심볼 단위 target에서는
+        같은 파일의 형제 함수가 더는 본문에 없으므로 그 필터를 그대로 두면 **실재하는
+        간선을 숨긴다.**
+
+        줄 범위 판정은 두 target 종류에 모두 맞는다: `line_start`가 없으면 `_in_body()`가
+        파일 전체를 본문으로 보므로 **폴백 프로필(`dev_fake`)의 캡슐은 한 글자도 바뀌지
+        않는다.** 그것이 이 판정을 고른 이유다 — 경로를 둘로 나누면 두 프로필이 다른
+        코드를 타고, 이 모듈이 없애려던 것이 정확히 그 갈라짐이다.
 
         `symbols`에 아예 없는 이름(`memcpy` 같은 외부 함수)은 남긴다 — 본문 안에 없는
         것이 확실하기 때문이다.
@@ -172,25 +227,52 @@ class GraphIndex:
         if self._load().status != STATUS_LOADED:
             return None
 
-        defined = self._defined.get(file, frozenset())
         if kind == "callers":
-            # 이 파일에 정의된 심볼로 들어오는 호출. `row_file`이 호출자가 정의된
-            # 파일이므로(인덱서가 호출자 본문을 훑으며 모은다) `!= file`이 곧 외부다.
             rows = [
                 (caller, row_file, line)
                 for caller, callee, row_file, line in self._calls
-                if callee in defined and row_file != file
+                # 선택: 본문 안에 정의된 심볼로 들어오는 호출.
+                if self._defined_in_body(callee, target)
+                # 제외: 호출 지점이 본문 안이면 원문에 이미 있다(자기 재귀·형제 호출).
+                and not self._in_body(row_file, line, target)
             ]
         else:
-            # 이 파일에서 나가는 호출. 대상이 이 파일에 정의돼 있으면 본문 안이라 뺀다.
             rows = [
                 (callee, row_file, line)
                 for _, callee, row_file, line in self._calls
-                if row_file == file and callee not in defined
+                # 선택: 본문 안에서 나가는 호출.
+                if self._in_body(row_file, line, target)
+                # 제외: 대상 정의가 본문 안이면 원문에 이미 있다.
+                and not self._defined_in_body(callee, target)
             ]
         # 정렬·중복 제거로 결정론을 지킨다. 같은 입력에 같은 캡슐이 나오지 않으면
         # engineering-guide.md §5의 재현성이 깨진다.
         return sorted({render_entry(name, row_file, line) for name, row_file, line in rows})
+
+    # --- 본문 판정 -------------------------------------------------------
+    #
+    # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**
+    # 심볼 target이면 그 심볼의 줄 범위, 파일 target이면 그 파일 전체다.
+
+    def _in_body(self, file: str, line: int, target: Location) -> bool:
+        """(file, line)이 본문 안인가."""
+        if file != target.file:
+            return False
+        if target.line_start is None:
+            return True
+        return target.line_start <= line <= (target.line_end or target.line_start)
+
+    def _defined_in_body(self, name: str, target: Location) -> bool:
+        """`name`의 정의가 본문 안인가.
+
+        파일 target에서는 "같은 파일에 정의됐는가"와 같아져 예전 동작이 그대로 남는다.
+        심볼 target에서는 자기 자신만 걸러지고, **형제 함수는 본문 밖이라 살아남는다** —
+        그것이 이 변경으로 새로 보이게 되는 간선이다.
+        """
+        return any(
+            defined == name and self._in_body(target.file, start, target)
+            for defined, start, _ in self._defined.get(target.file, [])
+        )
 
     @property
     def summary(self) -> IndexSummary:
@@ -250,7 +332,7 @@ class GraphIndex:
 
 
 def graph_section(
-    kind: str, graph: "GraphIndex", target_file: str, remaining: int
+    kind: str, graph: "GraphIndex", target: Location, remaining: int
 ) -> tuple[CapsuleSection | None, bool]:
     """그래프 섹션 하나를 만든다. `(섹션, 멈춰야 하는가)`.
 
@@ -272,7 +354,7 @@ def graph_section(
     `remaining` 이하로 맞춰 돌려주므로 깎을 것이 없고, 굳이 깎으면 줄은 그대로 두고
     토큰만 줄이는 것이 되어 `CapsuleSection`의 검증기에서 죽는다.
     """
-    names = graph.names_for(kind, target_file)
+    names = graph.names_for(kind, target)
     if names is None:
         return None, False
     tokens, items, body = fit_names(names, remaining)
@@ -311,10 +393,17 @@ def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
     return total, len(fitted), fitted
 
 
-def _defined_symbols(symbols: list[dict]) -> dict[str, set[str]]:
-    defined: dict[str, set[str]] = {}
+def _defined_symbols(symbols: list[dict]) -> dict[str, list[tuple[str, int, int]]]:
+    """file → (이름, line_start, line_end). **index.json의 순서를 보존한다.**
+
+    예전에는 `set`이라 순서도 줄 범위도 없었다. 순서는 `symbols_for()`가 내는 후보
+    순서가 되고 그것이 ID 발급 순서라 재현성의 일부다 — `build_index()`가 이미
+    (file, line_start, name)으로 정렬해 두므로 여기서 다시 정렬하지 않는다.
+    """
+    defined: dict[str, list[tuple[str, int, int]]] = {}
     for symbol in symbols:
-        defined.setdefault(symbol["file"], set()).add(symbol["name"])
+        entry = (symbol["name"], int(symbol["line_start"]), int(symbol["line_end"]))
+        defined.setdefault(symbol["file"], []).append(entry)
     return defined
 
 

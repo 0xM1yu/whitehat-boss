@@ -106,12 +106,14 @@ hybrid 쪽 경로를 태운다.
 (`container_tools.py`·`fake_tools.py`). 구현 전에는 `payload_ref`로 나를 것으로 적어 뒀는데,
 결론(스키마 무변경)만 맞고 경로가 달라졌다.
 
-**여기까지가 된 것이고, 아래는 아직 아니다 (후속):**
-- 캡슐은 여전히 **파일 단위**다. 심볼 단위(`Location`에 `symbol`/`line_start`)는 D13의 남은
-  항목이고 이번에 하지 않았다.
-- 따라서 Gate E1의 `location_ok`(`Location.overlaps`)는 **아직 작동하지 않는다.**
-- 그 작업이 들어오면 **후보 수와 제거율의 분모가 또 바뀌므로** 그 전/후 지표를 직접
-  비교하지 않는다(§10).
+**여기까지가 된 것이고, 아래는 그 뒤에 붙었다 (2026-08-23, W2):**
+- 캡슐이 **심볼 단위**가 됐다. `index.json`의 `symbols`가 `GraphIndex.symbols_for()`를 거쳐
+  후보 목록이 되고, 후보 하나가 심볼 하나다. 인덱스가 없는 프로필은 파일 단위로
+  되돌아가며 그 사실이 `target_plan.fallback_artifacts`에 남는다.
+- **후보 수와 제거율의 분모가 바뀌었다.** 전/후 지표를 직접 비교하지 않는다(§10).
+- Gate E1의 `location_ok`(`Location.overlaps`)는 **그래도 작동하지 않는다.** 원인이 후보
+  위치가 아니라 `Evidence.location`이 어디서도 채워지지 않는 것이었다 — 이 문단이 오래
+  틀리게 짚어 온 자리다(§10 정정, open-questions D23).
 
 ---
 
@@ -439,7 +441,7 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 |---|---|---|
 | **D2** | `scout_threshold: 0.5`가 근거 없는 초기값 | 조건 간 비교 전 확정 필요. `cli.py`의 `PROVISIONAL_THRESHOLDS`가 `doctor`에서 경고. **2026-08-14 실측: benign 표본이 정확히 0.50으로 경계 통과.** 지금 바꾸지 않는다 — 픽스처가 떨어지도록 맞춘 값이 될 뿐이다 |
 | **D9** | 소스 저장소 우선 vs 펌웨어 우선 | 0·1단계 구현 순서가 갈린다 |
-| **D13** | 캡슐의 `callers`/`callees`를 무엇이 채우는가 | **해소(2026-08-20)** — 인덱서 산출물이 `index_graph`를 거쳐 두 Retriever의 두 섹션을 채운다. **2026-08-21** 그 섹션의 본문이 프롬프트에 실리고(W1) 절단이 trace에 남는다(W7). 남은 것: `types`(index-v2 필요), 심볼 단위 캡슐, 빈 그래프의 E2, 절단 2종 |
+| **D13** | 캡슐의 `callers`/`callees`를 무엇이 채우는가 | **해소(2026-08-20)** — 인덱서 산출물이 `index_graph`를 거쳐 두 Retriever의 두 섹션을 채운다. **2026-08-21** 그 섹션의 본문이 프롬프트에 실리고(W1) 절단이 trace에 남는다(W7). **2026-08-23** 심볼 단위 캡슐이 들어왔다(W2) — `names_for()`의 본문 판정이 줄 범위가 됐고 `HybridRetriever._collect()`의 같은 전제도 함께 고쳤다. 남은 것: `types`(index-v2 필요), 빈 그래프의 E2, 절단 2종 |
 | **D17** | 프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 장식으로 만든다 | **신규(2026-08-21)** — 지금은 사실 블록에 같은 내용을 넣어 우회하고 대가는 토큰 2배 계상. 고치면 `prompt_template_version`이 올라가 이전 결과와 비교가 끊긴다 |
 | **D18** | 8단계 정책이 게이트 등급을 읽지 않는다 | **§5의 "지금은 세 단계 전부에서 판정한다"를 한정한다** — 판정은 하지만 승격은 여전히 `ok` 하나로 정해진다. 내용은 [open-questions D18](docs/open-questions.md)에만 둔다 |
 | D1 | B1/B1'/B3/B3' 라벨이 2×2와 파이프라인 두 축으로 사용됨 | `RunRecord.condition`에 `@2x2`/`@pipeline` 명시로 임시 봉합 |
@@ -454,9 +456,69 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 
 ### 심볼 인덱스 도입 전/후 지표를 직접 비교하지 않는다
 
-현재 캡슐 대상은 **파일 단위**(`Location(file=...)`, symbol 없음)다.
-심볼 단위로 좁혀지면 **후보 수와 제거율의 분모가 바뀐다.** 그때 Gate E1의 `location_ok`도
-비로소 작동을 시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다).
+**2026-08-23에 일어났다(W2).** 예고가 아니라 기록이다. 캡슐 대상이 파일 단위
+(`Location(file=...)`, symbol 없음)에서 **심볼 단위**로 바뀌었고, 끊긴 축이 다섯이다.
+
+| 축 | 이전 | 이후 |
+|---|---|---|
+| 후보의 단위 | artifact 하나당 1건 | 심볼 하나당 1건 |
+| 제거율의 분모 | 분석 대상 artifact 수 | 인덱싱된 함수 수 (`target_plan.symbol_targets`) |
+| 헤더·파이썬·바이너리 artifact | 후보 1건씩 생겼다 | **후보가 안 생긴다** (심볼이 없다) |
+| Scout가 보는 캡슐 | `target_function` + `static_signal` | `callers`·`callees`가 추가됐다 (D20) |
+| 캡슐 캐시 | `v2` / `hybrid-v2` | `v3` / `hybrid-v3` — **전량 무효** |
+
+앞의 셋은 분모를 바꾸고, 넷째는 Scout 점수 분포를 바꾸며, 다섯째는 cache hit ratio를
+이전 run과 비교할 수 없게 만든다.
+
+**임계값은 이 변경에서 건드리지 않았다.** `scout_threshold`(D2)의 입력이 넷째 축 때문에
+바뀌지만, 실모델 표본이 2점뿐이라 그 2점으로 임계를 옮기면 근거가 아니라 맞춤이 된다.
+
+**인덱스가 없는 프로필은 파일 단위로 되돌아간다.** `dev_fake`·`dev_hybrid`가 그렇고, 그
+사실은 `target_plan.fallback_artifacts`에 남는다 — 같은 지표를 볼 때 두 종류의 run이
+섞여 있을 수 있으므로 이 값으로 먼저 갈라야 한다.
+
+**2026-08-23 실측 — 분모가 얼마나 바뀌는지가 나왔다**([실험 보고서](docs/experiments/2026-08-23-pipeline-zlib-atom.md)).
+zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그중 **31건**은 심볼이 0건이라
+후보를 만들지 않았고(`.h`·바이너리 등), **286건**은 `candidate_max: 256`에 잘려
+`target_skipped`로 남았다. **즉 이 run의 제거율 분모는 79도 542도 아닌 256이다** — 세 수를
+섞으면 같은 run이 세 개의 다른 제거율을 낸다. 분모로 쓸 값은 `target_plan.planned`다.
+
+### Gate E1의 `location_ok`는 여전히 작동하지 않는다 — 원인은 후보 위치가 아니었다
+
+**2026-08-23 정정.** 이 문서는 오래 "심볼 단위로 좁혀지면 `location_ok`가 비로소 작동을
+시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다)"고 적어 왔다.
+**원인을 틀리게 짚었다.** 겹칠 일이 없는 것이 아니라 **왼쪽에 값이 없다.**
+
+`Evidence(...)`를 만드는 자리는 실질적으로 둘인데(`container_tools`·`fake_tools`) **어느
+쪽도 `location=`을 넘기지 않는다.** 기본값 `None`이고, `gate.py`가
+`ev.location is not None and ev.location.overlaps(candidate_location)`으로 왼쪽 항을 먼저
+보므로 판정이 구조적으로 거짓이다.
+
+심볼 단위 후보는 그 조건의 **오른쪽**만 정밀하게 만든다. `location_ok`를 열려면 semgrep
+JSON과 clang-tidy 출력에서 줄 번호를 파싱해 `Evidence.location`을 채워야 하고, 그것은
+별개의 작업이다(open-questions D23).
+
+**2026-08-23 실측으로 확인됐다**([실험 보고서](docs/experiments/2026-08-23-pipeline-zlib-atom.md)): 심볼 단위로 돌린 두 run에서
+`location_ok`가 **픽스처 6건 · zlib 55건 전부 false**다. 후보 위치가 심볼로 정밀해졌는데도
+값이 안 바뀌었다.
+
+### `report.md`의 "중복 제거 N건"을 제거율로 읽지 않는다
+
+`run_20260823_0002`의 report.md 첫머리가 "중복 제거: 43건"이다. Finding 47건 중 43건이
+접혔다는 뜻인데, **이것은 오탐 제거율이 아니다.** 이유 셋:
+
+1. **뭉치는 키를 Fake가 만들었다.** `nodes/report.dedupe()`가 `(finding.cwe, _sink(finding))`로
+   묶고 `_sink`는 `finding.path[-1].symbol`이다. 그 `cwe`와 `path`를 만든 auditor가 Fake다 —
+   47건이 4개 sink로 접힌 것은 **Fake가 sink를 몇 종류만 만든다**는 뜻일 수 있고, 이 run은
+   그 구별을 하지 못한다.
+2. **dedupe는 상태를 바꾸지 않는다.** `report.run()`이 "상태는 바꾸지 않는다"고 못박고 있다.
+   evaluation.md가 요구하는 단계별 제거율은 `policy_decision` 전이에서 나오고, 이쪽은
+   9단계 렌더링이다. **두 축이다.**
+3. **trace에 없다.** `dedupe` 이벤트가 없어 이 수는 `Report.duplicates` 필드와 report.md
+   첫 줄에만 있다. 지표로 쓰려면 텍스트를 파싱해야 한다.
+
+**이벤트를 만들지 않은 것은 판단이다** — 이 값이 아직 어떤 지표의 입력도 아니고, 필요해질
+때 만드는 것이 맞다. 다만 그때까지 **이 수를 성능 주장에 쓰지 않는다.**
 
 ### GPU 회계 수정(2026-08-17) 전/후 비용 지표를 직접 비교하지 않는다
 
