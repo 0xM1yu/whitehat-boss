@@ -54,7 +54,8 @@ from src.tokens import estimate_tokens
 # 쓰면 두 구현이 만든 캡슐이 같은 키를 공유해 조건 비교가 오염된다.
 #
 # **hybrid-v1 → hybrid-v2 (2026-08-20)**: `callers`/`callees`가 구성에 들어왔다.
-CAPSULE_POLICY_VERSION = "hybrid-v2"
+# **hybrid-v2 → hybrid-v3 (W2/D20)**: LIGHT에 그래프가 들어갔고 target이 심볼로 좁혀졌다.
+CAPSULE_POLICY_VERSION = "hybrid-v3"
 
 # 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
 # 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
@@ -78,12 +79,16 @@ SKIP_DIRS = frozenset({".git", "__pycache__", "artifacts", "node_modules", ".ven
 # 레벨별 섹션 구성. LIGHT는 검색하지 않는다 — Scout는 후보 전량에 대해 도는 단계라
 # 여기서 임베딩을 부르면 model-serving.md §2의 "Scout는 크게 배칭" 전제가 무너진다.
 #
-# **그래프 섹션의 자리는 `FakeRetriever.LEVEL_SECTIONS`와 같아야 한다**(EXPANDED에
+# **그래프 섹션의 자리는 `FakeRetriever.LEVEL_SECTIONS`와 같아야 한다**(LIGHT·EXPANDED에
 # callers·callees, FOCUSED에 callers). 갈리면 같은 index.json에서 두 구현이 다른 캡슐을
 # 내고 `dev_fake`↔`dev_docker` 비교가 성립하지 않는다. `related`는 이쪽에만 있는데,
 # 그건 검색으로 확보한 것이라 애초에 Fake에 대응물이 없다.
+#
+# **LIGHT의 그래프 두 칸은 위 "검색하지 않는다"의 예외가 아니다** — 그래프 섹션은
+# 임베딩도 reranker도 부르지 않고 이미 로드된 index.json에서 읽는다. 근거는
+# `fake_retriever.LEVEL_SECTIONS` 주석에 한 번만 적었다(D20을 (a)로 확정).
 LEVEL_SECTIONS: dict[CapsuleLevel, tuple[str, ...]] = {
-    CapsuleLevel.LIGHT: ("target_function", "static_signal"),
+    CapsuleLevel.LIGHT: ("target_function", "callers", "callees", "static_signal"),
     CapsuleLevel.EXPANDED: ("target_function", "related", "callers", "callees", "static_signal"),
     CapsuleLevel.FOCUSED: ("target_function", "related", "callers", "known_facts"),
 }
@@ -178,7 +183,7 @@ class HybridRetriever:
             level=level,
             budget_tokens=query.budget_tokens,
             sections=_sections_for(
-                kinds, source, selected, query.budget_tokens, self.graph, query.target.file
+                kinds, source, selected, query.budget_tokens, self.graph, query.target
             ),
             cache_key=cache_key,
         )
@@ -219,9 +224,7 @@ class HybridRetriever:
                 continue
             if kind in GRAPH_SECTION_KINDS:
                 # 그래프 분기는 `FakeRetriever.expand()`와 **같은 함수**를 부른다.
-                section, stop = graph_section(
-                    kind, self.graph, capsule.target.file, remaining
-                )
+                section, stop = graph_section(kind, self.graph, capsule.target, remaining)
                 if section is None:
                     if stop:
                         break
@@ -247,7 +250,10 @@ class HybridRetriever:
         """
         target = query.target
         digest = sha256_text(_read_source(self.root, target.file))
-        return sha256_text(f"{digest}|{target.symbol or ''}|{level.value}|{CAPSULE_POLICY_VERSION}")
+        # `line_start`를 함께 넣는 이유는 `FakeRetriever.cache_key_for()`에 적었다 —
+        # 동명 `static` 함수 둘이 한 키를 공유하는 것을 막는다(W2).
+        symbol = f"{target.symbol or ''}@{target.line_start or ''}"
+        return sha256_text(f"{digest}|{symbol}|{level.value}|{CAPSULE_POLICY_VERSION}")
 
     # --- 내부 ------------------------------------------------------------
 
@@ -306,14 +312,14 @@ class HybridRetriever:
     def _collect(self, query: Query) -> list[Chunk]:
         """키워드로 1차 필터. 힌트가 없으면 전체(상한까지)가 후보다."""
         corpus = self._load_corpus()
-        target_file = query.target.file
+        target = query.target
         keywords = [k.lower() for k in query.keywords]
         picked = [
             chunk
             for chunk in corpus
             # 대상 자신은 target_function 섹션이 이미 담고 있다. 두 번 세면 토큰이 부풀고
             # reranker 상위가 자기 자신으로 채워진다.
-            if chunk.file != target_file
+            if not _overlaps_body(chunk, target)
             and (not keywords or any(k in chunk.text.lower() for k in keywords))
         ]
         if len(picked) > self.max_chunks and self.on_truncate is not None:
@@ -331,6 +337,25 @@ def _query_text(query: Query) -> str:
     parts = [query.target.symbol or "", *query.keywords]
     joined = " ".join(part for part in parts if part).strip()
     return joined or query.target.file
+
+
+def _overlaps_body(chunk: Chunk, target: Location) -> bool:
+    """이 조각이 캡슐 본문과 겹치는가. 겹치면 검색 후보에서 뺀다.
+
+    **`index_graph.names_for()`가 고친 것과 같은 전제 위에 있던 자리다(W2).** 예전
+    조건은 `chunk.file != target.file`이었고, 그것은 target이 파일 전체라 파일 안의
+    모든 조각이 이미 본문이라는 전제였다. 심볼 단위 target에서는 같은 파일의 다른
+    함수가 본문 밖이므로, 그 조건을 그대로 두면 **가장 가까운 문맥을 검색에서 지운다.**
+
+    `line_start`가 없으면 파일 전체가 본문이라 예전 동작이 그대로 남는다.
+    """
+    if chunk.file != target.file:
+        return False
+    if target.line_start is None:
+        return True
+    chunk_end = chunk.line_start + CHUNK_LINES - 1
+    body_end = target.line_end or target.line_start
+    return chunk.line_start <= body_end and target.line_start <= chunk_end
 
 
 def _chunk_tree(root: Path) -> Iterable[Chunk]:
@@ -381,7 +406,7 @@ def _sections_for(
     selected: list[Chunk],
     budget: int,
     graph: GraphIndex,
-    target_file: str,
+    target: Location,
 ) -> list[CapsuleSection]:
     """예산을 넘기지 않는 선에서 섹션을 채운다.
 
@@ -399,7 +424,7 @@ def _sections_for(
         if kind in GRAPH_SECTION_KINDS:
             # 그래프 분기는 `FakeRetriever._sections_for()`와 **같은 함수**를 부른다.
             # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
-            section, stop = graph_section(kind, graph, target_file, remaining)
+            section, stop = graph_section(kind, graph, target, remaining)
             if section is None:
                 if stop:
                     break

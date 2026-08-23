@@ -133,6 +133,12 @@ class ReasonCode(StrEnum):
     # 계약 위반 (agent-contracts.md §1)
     BUDGET_EXHAUSTED = "budget_exhausted"
     SCHEMA_PARSE_FAILED = "schema_parse_failed"
+    # run 중단 (W2). 후보 하나가 실패한 것은 `target_skipped`로 남고 run은 계속 간다 —
+    # 아래 둘은 **더 갈 이유가 없어서 러너가 멈춘 경우**다. 하나로 묶지 않는 이유는
+    # 대응이 다르기 때문이다: 앞은 서버를 살려야 하고, 뒤는 서버가 살아 있는데 후보가
+    # 계속 죽는 것이라 프롬프트·예산·스키마를 봐야 한다.
+    MODEL_GATEWAY_UNAVAILABLE = "model_gateway_unavailable"
+    CONSECUTIVE_TARGET_FAILURES = "consecutive_target_failures"
     TOOL_POLICY_VIOLATION = "tool_policy_violation"
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"
     # Queue 규칙 (architecture.md §3)
