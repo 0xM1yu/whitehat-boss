@@ -52,6 +52,11 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 있다. 서버는 응답하는데 후보가 계속 죽는 경우를 위해 **연속 폐기 카운터**가 하나 더 있고,
 그쪽은 사유가 갈린다(`_TooManyDrops`).
 
+그 카운터가 세는 것은 **체계적 고장의 신호**뿐이다. 크기 거절(400·413)은 "이 후보가
+크다"이지 "이 run이 고장 났다"가 아니라서 세지 않는다 — 세면 큰 함수 셋이 연달아 오는
+것만으로 멈추고, 그것이 이 절이 견디겠다고 한 바로 그 경우다. 대신 **내리지도 않으므로**
+체계적 실패와 번갈아 나와도 상한에 닿는다.
+
 **멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
 `RunRecord`에 남는다(전이 표 R-2). 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
@@ -135,15 +140,35 @@ _REASON_OVER_MAX = "over_candidate_max"
 _REASON_GATEWAY = "gateway_error"
 _REASON_SCHEMA = "schema_parse_failed"
 
-# 후보만 버리고 계속 가도 되는 HTTP 상태. **요청 하나가 거절된 것**이다 —
-# 400(컨텍스트 초과가 여기 온다) · 413(본문 초과) · 422(스키마 거절).
+# **이 후보가 크다**는 뜻의 HTTP 상태. 400은 vLLM이 컨텍스트 초과에 주는 값이고
+# 413은 본문 초과다. 다음 후보는 작을 수 있으므로 **이 후보에 대한 사실**이지 run에
+# 대한 사실이 아니다 — 그래서 아래 `_MAX_CONSECUTIVE_DROPS`가 세지 않는다.
+_SIZE_STATUS = frozenset({400, 413})
+
+# 후보만 버리고 계속 가도 되는 HTTP 상태. **요청 하나가 거절된 것**이다.
+# 422(스키마 거절)는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다.
 #
 # 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
 # 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다.
-_DROPPABLE_STATUS = frozenset({400, 413, 422})
+_DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 
-# 연속 폐기 상한. 체계적 고장(페이로드 자체가 틀렸다·모델이 스키마를 전혀 못 맞춘다)이면
+# 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다·요청 모양이 틀렸다)이면
 # 남은 target을 전부 태우고도 쓸 수 있는 결과가 안 나온다.
+#
+# **크기 거절(`_SIZE_STATUS`)은 여기에 세지 않는다.** 세면 큰 심볼 셋이 연달아 오는
+# 것만으로 run이 멈추는데, 그것은 W2가 정확히 견디겠다고 한 경우다("후보 하나가
+# 컨텍스트를 넘겼다 → 그 후보만 버린다"). 정렬이 신호 붙은 artifact를 앞으로 모으므로
+# 큰 함수가 뭉쳐 오는 것은 드문 일도 아니다.
+#
+# **번갈아 실패하는 경우는 여전히 걸린다.** 크기 거절은 카운터를 올리지도 않지만
+# **내리지도 않는다** — 리셋 조건은 오직 완주다. 그래서 스키마 → 400 → 스키마 →
+# 400 → 스키마는 1·1·2·2·3으로 상한에 닿는다. 이 값이 잡으려는 것이 그 모양이다.
+#
+# **크기 거절만 계속 나오는 run은 멈추지 않는다.** 그래도 폭주하지 않는 것은
+# `candidate_max`가 이미 목록을 묶어 두기 때문이고, 끝난 뒤에는 모든 행에 서버가
+# 말해 준 사유가 붙은 완전한 기록이 남는다 — 중간에 끊긴 run보다 진단이 쉽다.
+# 400이 크기가 아닌 이유(페이로드 자체가 틀렸다)로 올 수도 있는데, 그 경우에도 결과는
+# "전량 스킵 + 매 행에 사유"라 한 번 보면 갈린다.
 #
 # **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
 # 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
@@ -674,7 +699,12 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
                 # 리포트와 매니페스트까지 간 뒤 중단 사유를 적는다 — 그러지 않으면
                 # 이 변경이 없애려던 "산출물이 하나도 안 남는다"가 그대로 남는다.
                 raise
-            consecutive = _drop(ctx, state, target, _REASON_GATEWAY, exc, consecutive)
+            # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
+            # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
+            systematic = exc.status not in _SIZE_STATUS
+            consecutive = _drop(
+                ctx, state, target, _REASON_GATEWAY, exc, consecutive, systematic=systematic
+            )
         except SchemaParseError as exc:
             consecutive = _drop(ctx, state, target, _REASON_SCHEMA, exc, consecutive)
         else:
@@ -689,12 +719,21 @@ def _drop(
     reason: str,
     exc: Exception,
     consecutive: int,
+    *,
+    systematic: bool = True,
 ) -> int:
-    """target 하나를 버리고 기록한다. 연속 상한에 닿으면 예외를 올린다."""
+    """target 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
+
+    `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
+    (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
+    않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+    """
     _emit_skipped(
         ctx, target.location, stage=Stage.SCOUT, reason=reason, detail=error_detail(exc)
     )
     state.dropped += 1
+    if not systematic:
+        return consecutive
     if consecutive + 1 >= _MAX_CONSECUTIVE_DROPS:
         raise _TooManyDrops(
             f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다. 마지막 사유: {exc}"
