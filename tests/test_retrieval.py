@@ -13,7 +13,11 @@ import pytest
 from src import cli
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import FakeRetriever
-from src.adapters.hybrid_retriever import HybridRetriever, read_symbol_source
+from src.adapters.hybrid_retriever import (
+    HybridRetriever,
+    _chunk_body,
+    read_symbol_source,
+)
 from src.adapters.vllm_retrieval import (
     FakeEmbeddingClient,
     FakeRerankerClient,
@@ -30,6 +34,7 @@ from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
+from src.tokens import estimate_tokens
 
 RUN_ID = "run_test_0001"
 
@@ -315,30 +320,39 @@ def test_cli_passes_the_truncate_hook_into_the_adapters(monkeypatch, tmp_path: P
 # --- expand -------------------------------------------------------------------
 
 
-def test_expand_pulls_one_more_from_the_pool(corpus: Path) -> None:
-    """예산이 초기 채움을 자른 경우에만 풀에 남은 조각이 있다.
+def test_expand_does_not_partial_add_an_overflowing_pool_chunk(corpus: Path) -> None:
+    """다음 풀 조각이 남은 예산에 통째로 안 들어가면 붙이지 않는다 (부분 절단 금지, D13).
 
-    풀이 이미 소진됐으면 `related`를 늘리는 대신 다음 보조 섹션으로 넘어가는 것이
-    정상이다 — 그래서 여기서는 예산을 좁혀 잘리는 상황을 만든다.
+    예전에는 `min(chunk.tokens, remaining)`으로 조각을 반쪽만 세어 `items`를 늘렸다 —
+    본문 없이 토큰만 더한 것이라 캡슐이 자기 내용과 어긋났다. 이제 `related`의 본문이
+    실리므로(각 조각의 `file:line`+코드), 조각은 **통째로 들어가거나 안 들어간다.**
+    남은 예산이 조각 하나보다 작으면 늘리지 않고 그대로 돌려준다.
     """
     measure, _, _ = _retriever(corpus)
     pool = measure._retrieve(_query())
     assert len(pool) >= 3, "이 픽스처는 최소 3개 조각을 선별해야 한다"
 
-    # 앞의 2건만 들어가고, static_signal(64) 뒤로 확장 여지가 30 남는 예산.
+    # 앞의 2건만 들어가고, 세 번째 조각을 통째로 담기엔 부족한 슬랙만 남는 예산.
+    # 조각 비용은 `_chunk_body`(file:line+코드)로 잰다 — 코드가 쓰는 단위와 같아야
+    # 파일 경로가 길어져도 `before.items == 2`가 조용히 뒤집히지 않는다.
     target_tokens = max(1, len(read_symbol_source(corpus, Location(file="target.py"))) // 4)
-    budget = target_tokens + pool[0].tokens + pool[1].tokens + 64 + 30
+    related_cost = sum(estimate_tokens(_chunk_body(chunk)) for chunk in pool[:2])
+    budget = target_tokens + related_cost + 64 + 30
 
     retriever, _, _ = _retriever(corpus)
     capsule = retriever.search(_query(budget=budget), CapsuleLevel.EXPANDED)
     before = next(s for s in capsule.sections if s.kind == "related")
     assert before.items == 2, "예산이 앞의 2건만 남기도록 잡히지 않았다"
+    assert before.body, "related 섹션에 선별한 코드 본문이 실려야 한다 (D13)"
 
     expanded = retriever.expand(capsule, _need("mev_0001"))
     after = next(s for s in expanded.sections if s.kind == "related")
 
-    assert after.items == (before.items or 0) + 1
-    assert after.tokens >= before.tokens
+    # related는 안 늘어난다(부분 절단 금지)…
+    assert after.items == 2, "통째로 안 들어가는 조각을 반쪽만 붙이면 안 된다"
+    assert after.tokens == before.tokens
+    # …하지만 조각 하나 못 넣었다고 확장을 포기하진 않는다 — 남은 예산으로 다른 섹션이
+    # 붙어 캡슐 전체는 자란다(🔴1: 이른 `return` 제거).
     assert expanded.expansion_count == capsule.expansion_count + 1
 
 
