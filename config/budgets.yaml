@@ -85,8 +85,18 @@ thresholds:
 
   # 캡슐 레벨별 토큰 상한 (knowledge-base.md §4). 키는 CapsuleLevel 열거형 값과 같다.
   capsule_budget_tokens:
+    # **D21 stopgap — 예산 축소 (2026-08-25 회의 결정).** `estimate_tokens = len//4`가 실서빙 실측
+    # (2.224 chars/token, run_20260821_0007)보다 ~1.8배 과소라, 선언 예산이 실제
+    # 프롬프트에서 `--max-model-len`을 넘어 잘린다. 최악 배율에서 32,768에 맞춰 `expanded`를
+    # 낮춘다: 32768 × 2.224/4 ≈ 18,200.
+    #
+    # ⚠ **임시(stopgap)다 — 회의 결정: (c) 이 예산 축소를 먼저 넣고, 그 후 `estimate_tokens`를
+    #   실 토크나이저로 교체한다(정본).** 토크나이저가 들어오면 계상이 실측으로 바뀌어 이
+    #   보수값은 원복할 수 있다. 32K 천장 가정이라 auditor가 ≤8K로 서빙되면 더 낮춰야 한다.
+    #   산문↔JSON 중복(D17)·한국어 프롬프트는 별개 축(크기)이고 토크나이저 뒤 실측으로 판단.
+    # light/focused는 실측상 이미 상한 아래다(4000→~7,190 · 8000→~14,400).
     light: 4000
-    expanded: 24000
+    expanded: 18000
     focused: 8000
 
 # 모델 게이트웨이 요청 파라미터. 조건 간 비교에서 고정해야 하므로 RunRecord에 남는다
