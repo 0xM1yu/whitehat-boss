@@ -4,7 +4,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 메모리 | **팀 배정 목표는 멘토 안내 34 GiB**(운용 목표·약속)이고, **시스템 하드 한도는 cgroup `memory.max` = 64 GiB**(`memory.high` = 58 GiB 스로틀). 34는 지켜야 할 선, 64는 넘으면 OOM인 선이다. 통합 LPDDR5X, CPU·GPU 공유 — 장비 전체는 128GB지만 우리 슬라이스(`user-1004`)에 걸린 하드 한도가 64다(2026-08-19·08-20 실측). 통합 메모리라 모델 가중치가 이 한도에 포함되고, 공용 계정이라 팀원과 **합산**된다. **하드 한도는 바뀔 수 있으니 실행 시점에 `memory.max`를 읽는다**(8/17엔 34였다가 상향). `free`·`nvidia-smi`·vLLM은 cgroup을 몰라 물리값(119.7 GiB)을 보고, `gpu_memory_utilization`의 분모도 그 물리값이다(다른 축). 이전 "가용 112Gi"는 장비 스펙에서 나온 **추정이었고 틀렸다**. 관측 기록은 [portability.md](portability.md) §6 |
+| 메모리 | **PL이 메모리 할당을 34 → 64 GiB로 상향했고, 2026-08-25 이를 공식 확인**했다 — 운용 상한 = 공식 할당 = cgroup `memory.max` = **64 GiB**(`memory.high` = 58 GiB 스로틀)로 정렬됐다(이전 목표 34는 해소). 64는 넘으면 OOM인 선이다. 통합 LPDDR5X, CPU·GPU 공유 — 장비 전체는 128GB지만 우리 슬라이스(`user-1004`)에 걸린 하드 한도가 64다(2026-08-19·08-20 실측). 통합 메모리라 모델 가중치가 이 한도에 포함되고, 공용 계정이라 팀원과 **합산**된다. **하드 한도는 바뀔 수 있으니 실행 시점에 `memory.max`를 읽는다**(8/17엔 34였다가 상향). `free`·`nvidia-smi`·vLLM은 cgroup을 몰라 물리값(119.7 GiB)을 보고, `gpu_memory_utilization`의 분모도 그 물리값이다(다른 축). 이전 "가용 112Gi"는 장비 스펙에서 나온 **추정이었고 틀렸다**. 관측 기록은 [portability.md](portability.md) §6 |
 | 메모리 대역폭 | 273 GB/s |
 | 연산 | 1 PFLOP (sparse FP4), 48 SM / 6,144 CUDA 코어 |
 | CPU / 아키텍처 | 20코어 Arm (Cortex-X925 ×10 + A725 ×10) / Blackwell sm_121, CUDA 13.0 |
