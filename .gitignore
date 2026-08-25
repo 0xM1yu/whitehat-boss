@@ -13,6 +13,10 @@ harness-tools_*.tar
 # 작업 계획 (세션 인계용, PR 산출물이 아니다)
 .claude/plans/
 
+# 코드리뷰 메모 (세션 산출물, PR 산출물이 아니다). `.claude/plans/`와 같은 성격이다 —
+# 리뷰 결론은 PR 코멘트와 open-questions.md에 남고 원문 메모는 공유 대상이 아니다.
+.claude/reviews/
+
 # Slurm 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
 # 검증 결과의 요약은 STATUS.md §7에 남긴다 — 원문 메모는 공유하지 않는다.
 .claude/slurm/

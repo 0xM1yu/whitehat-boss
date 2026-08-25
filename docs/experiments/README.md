@@ -26,6 +26,7 @@
 | 2026-08-18 | [검색 경로 실서빙](2026-08-18-retrieval-atom.md) | 하네스↔실모델 배선, embedding·reranker 실서빙, HybridRetriever 실경로 완주 | `atom` | @sumin0218 |
 | 2026-08-22 | [파이프라인 실서빙 완주](2026-08-22-pipeline-atom.md) | scout 실모델 완주, 캡슐 그래프 섹션·게이트 등급 관측, `cli run` 경로의 prefix cache 장부 | `atom` | @danielcho02 |
 | 2026-08-23 | [심볼 단위 후보로 zlib 완주](2026-08-23-pipeline-zlib-atom.md) | W2 심볼 target 실저장소 검증, (a′) 정렬, `candidate_max` 절단 기록, 7단계 선별 사슬(D26) | `atom` | @danielcho02 |
+| 2026-08-25 | [심볼 542건 전량 완주](2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | @danielcho02 |
 
 ## 파일 이름
 
@@ -84,15 +85,25 @@
 안 지켜졌다.** 필드는 보고서를 쓰는 시점에 읽히고 사고는 서버를 띄우는 시점에 난다 —
 **적어 두는 자리와 지켜야 하는 자리가 다르다.** 그래서 규약을 여기 둔다.
 
+**2026-08-25에 처음 보존됐다.** [542건 보고서](2026-08-25-pipeline-zlib542-atom.md)의
+`run_20260825_0001/serve_20260825_125430.log`가 그것이고, 같은 run에서 8/23이 잃었던
+`Prefix cache hit rate: 30.5%`가 실제로 남아 R6에 첫 대조값이 생겼다.
+
+**다만 방법이 `tee`가 아니었다.**
+
 ```bash
-<서버 기동 명령> 2>&1 | tee "$LOG"
+setsid nohup <서버 기동 명령> > "$LOG" 2>&1 &
 ```
 
+- **`tee`로는 부족하다.** 세 사고의 원인은 "출력을 파일로 안 받았다"가 아니라 **"포그라운드로
+  띄우고 창을 닫았다"**이고, `tee`는 앞의 절반만 막는다. 창을 닫으면 파이프라인 전체가
+  SIGHUP을 받아 **서버가 같이 죽는다** — 그러면 로그는 남아도 run이 끝나지 않는다.
+  `setsid nohup ... &`는 **보존과 생존을 함께** 준다. 셋 다 걸린 지점이 정확히 생존 쪽이었다.
 - `$LOG`는 run 산출물 옆이 낫다. 서버 로그와 run이 갈라지면 어느 run의 로그인지 사후에
-  못 맞춘다.
+  못 맞춘다. 8/25는 `artifacts/logs/`에 받아 run 종료 후 run 디렉터리로 복사했다.
 - **코드로 강제하지 않는다.** 서버 기동은 하네스 밖이고, 강제하려면 하네스가 서버를
   띄워야 하는데 그것은 별개의 설계다. 지금은 규약이고, 네 번째 사례가 나오면 그때
-  강제하는 쪽을 다시 본다.
+  강제하는 쪽을 다시 본다. **8/25가 그 네 번째가 아니다** — 규약을 지켰더니 남았다.
 - 보고서에는 그 경로를 적는다. **못 받았으면 `보존하지 않았다`고 적는다** — 그것도 값이다.
 
 ## 채울 수 없는 필드는 `미기재`로 남긴다
@@ -118,8 +129,8 @@
 
 ## 확정된 사실
 
-**2026-08-18 두 보고서를 대조해 확정한 다섯 건이다.** 각 행은 근거를 함께 적는다 —
-근거 없는 확정은 다음 대조에서 또 갈린다.
+**#1~#5는 2026-08-18 두 보고서를 대조해 확정했고, #6은 이후 run이 쌓여 확정됐다.** 각 행은
+근거를 함께 적는다 — 근거 없는 확정은 다음 대조에서 또 갈린다.
 
 > 저장소 문서를 가리킬 때는 **`main`에 있는 것만 링크한다.** 아직 열린 PR에 있는 것은 PR
 > 번호로 적는다 — ATOM 첫 실측의 ADR 정본은 [0007](../decisions/0007-atom-qwen3-4b-first-measurement.md)이며 PR #15로 `main`에 머지됐다.
@@ -162,6 +173,17 @@
 | ① | `CPATH=$HOME/pyhdr/...` | **항상** — Triton이 실행 시점에 `Python.h`를 참조한다 | [서빙](2026-08-18-serving-atom.md) §2.3a, [검색](2026-08-18-retrieval-atom.md) §2.2 |
 | ② | `VLLM_ATTENTION_BACKEND=TORCH_SDPA` | **flashinfer가 선택될 때** — 그 커널 JIT에 nvcc가 필요한데 권한 밖이다 | [검색](2026-08-18-retrieval-atom.md) §5 |
 | ③ | `VLLM_USE_DEEP_GEMM=0` | **fp8 양자화 모델일 때** — DeepGEMM이 scale-factor 레이아웃을 변환 못 한다 | [서빙](2026-08-18-serving-atom.md) §5.2~5.3 |
+
+> **2026-08-25 — ②가 왜 안 걸렸는지가 처음으로 로그에 직접 나왔다.**
+> [542건 보고서](2026-08-25-pipeline-zlib542-atom.md)의 기동 로그가
+> `Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN',
+> 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION']`이다 — **flashinfer가 후보에 있었는데
+> 선택되지 않았다.** ②의 발동 조건이 "flashinfer가 선택될 때"이므로 이 run에서는
+> `VLLM_ATTENTION_BACKEND`를 주지 않은 것이 맞고, 실제로 주지 않았다.
+>
+> **8/22 관측보다 한 겹 낫다.** 그때는 `/proc/<pid>/environ`에 그 변수가 **없다**는 것까지만
+> 봤고(미확정 #2), 왜 없어도 됐는지는 추론이었다. 이번엔 **선택된 백엔드 이름 자체**가 로그에
+> 있다. → **fp8 4B + vLLM 0.27.1 + sm_121 조합에서 ②는 필요 없다.** bf16 0.6B는 여전히 모른다.
 
 **`--enforce-eager`는 필수가 아니다.** [서빙 보고서](2026-08-18-serving-atom.md) §5.3의
 기동 로그가 `--enforce-eager` 없이 나왔고, torch.compile이 19.60초 수행되고 CUDA graph
@@ -223,6 +245,44 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 **문서를 고쳐도 이 오버라이드는 사라지지 않는다.** 그리고 ADR 0005는 오버라이드의 범위를
 "프로필이 선언한 런타임이 **그 장비에 없을 때**"로 못박았는데, `fake` → `podman`은
 **그 ADR이 상정하지 않은 용도**다. 미확정 #4가 이 항목이다.
+
+### #6 ATOM에는 podman과 docker가 **둘 다** 있다 — "podman만"이 틀렸다
+
+**podman 쪽은 새 사실이 아니다.** [portability.md](../portability.md) §6 장비 표가
+`atom`의 런타임을 **`podman 4.9.3` (rootless)**로 이미 적고 있고, 2026-08-25 ATOM에서
+다시 확인했다(@danielcho02). 그러므로 [profiles.yaml](../../config/profiles.yaml)의
+`local_balanced`·`b1_single`이 선언한 `tool_runner: podman`은 **그 장비에서 실제로 성립한다.**
+
+**틀린 것은 배타 서술 쪽이다.** 같은 두 자리가 podman을 **유일 런타임**으로 적는다.
+
+| 어디 | 지금 문장 | 무엇과 어긋나나 |
+| --- | --- | --- |
+| [portability.md](../portability.md) §6 `atom` 행 | `podman 4.9.3` **(rootless. Docker 데몬 접근·singularity 둘 다 없음)** | `--tool-runner docker`가 ATOM에서 **세 번 실제로 돌았다** |
+| [profiles.yaml](../../config/profiles.yaml) `local_balanced` 주석 | "ATOM에는 **podman만 있으므로**(2026-08-17 실측)" | 위와 같다 |
+
+**근거는 세 run의 도구 실행이다.** 셋 다 `--device atom --tool-runner docker`이고 도구가
+실제로 돌아 `tool_images`가 채워졌다.
+
+| run | 보고서 | `tool_call` |
+| --- | --- | --- |
+| `run_20260821_0004` | [2026-08-22](2026-08-22-pipeline-atom.md) | 9건 |
+| `run_20260823_0002` | [2026-08-23](2026-08-23-pipeline-zlib-atom.md) | 238건 |
+| `run_20260825_0001` | [2026-08-25](2026-08-25-pipeline-zlib542-atom.md) | 238건 |
+
+**두 런타임이 서로 다른 값을 낸다는 것도 기록에 있다.** portability.md §5 #4의 digest 표가
+같은 `harness-tools:v1`에 대해 podman/aarch64 **RepoDigest** `sha256:3a63ba2e…`를 적었는데,
+8/25 run의 docker/aarch64 값은 `sha256:b5d7048b…`(docker 29.x `RepoDigests`)로 **다른
+해시**다. 같은 런타임의 같은 이미지였다면 나올 수 없는 대비다.
+
+> **정정 대상 두 곳은 이 PR에서 건드리지 않았다.** portability.md §6은 장비 표이고
+> profiles.yaml은 `config/` 변경이라, 이 저장소가 반복해 세운 "config는 별도 PR" 선을
+> 넘는다. **여기 확정 표가 그 자리를 메운다** — 이 README가 "이후 대조로 정정된 것은 여기
+> 표가 담는다"고 적은 그 용도다. 두 문장을 실제로 고치는 것은 후속 PR이다.
+
+**뜻은 두 갈래다.** ① `local_balanced`·`b1_single`을 ATOM에서 돌릴 때 오버라이드가
+필요 없다(선언대로 podman이 있다). ② 그러나 **"docker가 없어서 podman을 골랐다"는 근거는
+성립하지 않는다** — 미확정 #4가 묻는 `single_gpu_12g`의 런타임 선언을 다시 볼 때, 선택지가
+"podman뿐"이 아니라 "둘 중 하나"다.
 
 ---
 
@@ -316,3 +376,14 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 > 도구를 안 돌리는 run이 아직 하나도 없다. 이 항목이 "확정 방법 둘 중 하나"로 열려 있는
 > 동안 `RunRecord.tool_runner`에는 계속 선언값과 다른 값이 박힌다(ADR 0005의 의도대로
 > 기록은 남지만, 남는 이유가 매번 같다).
+
+> **2026-08-25 — 네 번째 사례, 그리고 (b)의 선택지가 늘었다.**
+> [542건 보고서](2026-08-25-pipeline-zlib542-atom.md)의 `run_20260825_0001`도 같은 프로필에
+> `--tool-runner docker`를 붙였다. **네 번 연속이고, 이 프로필로 도구를 안 돌린 run은 여전히
+> 0건이다.** 사례가 더 쌓여도 판정이 바뀌지 않는다는 뜻이라, 이 항목은 이제 "관측이 부족해서"
+> 열려 있는 것이 아니라 **아무도 (a)/(b)를 고르지 않아서** 열려 있다.
+>
+> **확정 #6이 (b)에 값을 하나 더 준다.** 그전까지 "프로필 선언을 고친다"의 후보는 사실상
+> `podman` 하나였다 — profiles.yaml이 "ATOM에는 podman만 있으므로"라고 적었기 때문이다.
+> **ATOM에 docker도 있다는 것이 확인됐으므로**(확정 #6) `single_gpu_12g`의 선언을 고칠 때
+> `docker`·`podman` 둘 다 후보다. 네 run이 전부 실제로 쓴 값은 **`docker`**다.
