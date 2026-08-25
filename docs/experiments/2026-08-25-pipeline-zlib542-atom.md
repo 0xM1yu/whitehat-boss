@@ -17,7 +17,7 @@
 | `--device` | `atom` |
 | `tool_images` digest | `harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` · **종류: docker 29.x `RepoDigests`(= manifest list digest, `.Id`와 같은 값)** — portability.md §5 #4 |
 | `--gpu-memory-utilization` | `0.2` · **분모 119.7 GiB → 23.94 GiB**. 기동 로그 원문: `Free memory on device (110.37/119.7 GiB) on startup. Desired GPU memory utilization is (0.2, 23.94 GiB)` |
-| 동시에 떠 있던 다른 서버 | **없음.** 기동 전 `ss -ltnp | grep :800[0-9]` 0건 · `nvidia-smi` "No running processes found" · `ps | grep vllm` 0건 |
+| 동시에 떠 있던 다른 서버 | **없음.** 기동 전 `ss -ltnp \| grep :800[0-9]` 0건 · `nvidia-smi` "No running processes found" · `ps \| grep vllm` 0건 |
 | 원문 산출물 보존 위치 | 위 run 디렉터리 + `logs/raw_20260825_125430.tgz` |
 | 서빙 서버 stdout | **`run_20260825_0001/serve_20260825_125430.log` — 보존했다.** 8/18·8/22·8/23 세 번 연속 유실된 값이고, 이번에 처음 남았다 |
 
