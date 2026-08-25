@@ -63,7 +63,7 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
   "run_id": "run_20260901_0001",
   "target": {"file": "src/parser/http.c", "symbol": "parse_header"},
   "level": "expanded",
-  "budget_tokens": 24000,
+  "budget_tokens": 18000,
   "sections": [
     {"kind": "target_function", "tokens": 900},
     {"kind": "callers", "tokens": 1400, "items": 3},
