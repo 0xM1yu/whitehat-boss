@@ -18,6 +18,7 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import build_facts, load_prompt
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.decision import Decision
 from src.schemas.enums import Role
 from src.schemas.evidence import Evidence
@@ -25,15 +26,41 @@ from src.schemas.finding import Finding, MissingEvidence
 
 ROLE = Role.CRITIC
 
+# 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와
+# 같은 꼴로 읽히도록 맞춘다 — 절단 사유는 어느 상한이 걸렸는지를 이름으로 말해야 한다.
+_REASON_OVER_TOP_N = "over_critic_top_n"
+
 
 def select(ctx: RunContext, findings: list[Finding]) -> list[Finding]:
     """Critic에 올릴 상위 Finding. 개수 상한은 config에서 온다(`critic_top_n`).
 
     Critic은 가장 비싼 단계이므로 상한이 있어야 한다(architecture.md §3 "상위 Finding만").
     confidence 동점은 `finding_id`로 가른다 — 정렬이 흔들리면 재현 실행이 갈라진다.
+
+    **자르는 자리와 남기는 자리가 한 곳이다** (D26 (b), `_order_and_cut`과 같은 구조).
+    슬라이스만 하던 동안에는 잘린 건이 `Finding.state`에서도 trace에서도 안 읽혔다 —
+    F-9(`repro_spec_missing`)가 `hypothesized → hypothesized`라 7단계에 **간** 건과 **못
+    간** 건이 리포트의 같은 묶음에 나란히 찍히고, 44줄이 멀쩡히 있어서 전량을 본 것처럼
+    읽혔다(실측 `run_20260825_0001`: 승격 44 · 선별 8 · **절단 36**).
+
+    잘린 건만 남긴다. 올라간 건은 이미 `gate_eval`·`transition`(stage=7)에 있다 —
+    `target_skipped`가 잘린 target만 남기는 것과 같다.
     """
     ordered = sorted(findings, key=lambda f: (-f.confidence, f.finding_id))
-    return ordered[: ctx.config.thresholds.critic_top_n]
+    limit = ctx.config.thresholds.critic_top_n
+    for cut in ordered[limit:]:
+        ctx.trace.emit(
+            EventKind.CRITIC_SKIPPED,
+            stage=Stage.CRITIC,
+            subject_kind="finding",
+            subject_id=cut.finding_id,
+            reason=_REASON_OVER_TOP_N,
+            # 선별 키와 8단계 진입 조건을 나란히 싣는다 — D26 (a)가 묻는 것이 이 둘의
+            # 어긋남이고, 없으면 그 답을 보려고 `state.db`를 열어야 한다.
+            confidence=cut.confidence,
+            has_repro_spec=cut.repro_spec is not None,
+        )
+    return ordered[:limit]
 
 
 def run(
