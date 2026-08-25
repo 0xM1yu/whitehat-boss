@@ -13,6 +13,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | `count(repro_failed) / count(repro_*)` |
+| Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
 | GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
 | 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
@@ -120,6 +121,30 @@ class EventKind(StrEnum):
     # 모델을 안 부르고 만들려면 0.0을 지어내야 하고, 그 값이 Scout 점수 분포(D2의 입력)에
     # 섞인다. 지어낸 값을 기록에 넣지 않는다.
     TARGET_SKIPPED = "target_skipped"
+    # 7단계에 올리지 못한 Finding 하나 (D26 (b)). `critic.select()`가 `critic_top_n`으로
+    # 자른 뒤 남긴다. **잘린 건당 1행이고, 안 잘린 run은 0건이다.**
+    #
+    # **`transition`에 넣지 않는다.** 이유가 두 겹이고 뒤쪽이 더 무겁다. (가) `transition`의
+    # 모든 행은 `TransitionRule`(F-x)이 뒤에 있는데 절단은 어느 규칙에도 대응하지 않아 F
+    # 번호를 지어내야 한다. (나) 위 대응표의 "제거율 — Critic"이 `transition`(stage=7)을
+    # 분모로 쓰므로, 모델을 한 번도 안 부른 건이 거기 섞이면 **그 비율이 조용히 부푼다** —
+    # 기록만 늘리려던 변경이 지표를 바꾼다.
+    #
+    # **`target_skipped`와 합치지 않는다.** 그쪽의 `data`는 `file`·`symbol`·`line_start`인데
+    # 그건 Candidate가 안 만들어져 **ID가 없기 때문**이다. Finding에는 `finding_id`가 있으므로
+    # 여기서는 `subject_id`로 지목한다(`critic_normalized`·`gate_eval`과 같은 처리). 합치면
+    # `count(target_skipped)`의 뜻이 "4단계에 못 간 target 수"에서 조용히 달라진다.
+    #
+    # **`stage`는 7이다.** 절단이 실행되는 자리는 6단계 뒤이지만 6으로 적으면 "게이트에서
+    # 잘렸다"로 읽히는데 게이트는 이 건을 **승격시켰다**. 7로 적으면
+    # `count(critic_skipped, stage=7) + count(gate_eval, stage=7) = count(promoted_to_critic)`
+    # 으로 7단계가 분할로 닫힌다. "들어갔다가 죽었다"로 오독될 위험은 `kind`가 막는다 —
+    # 이 행은 정의상 **안 들어간** 건이다.
+    #
+    # `confidence`(선별 키)와 `has_repro_spec`(8단계 진입 조건)을 함께 싣는다. D26 (a)가
+    # 묻는 것이 정확히 그 둘의 어긋남이고, 이 두 필드가 없던 동안에는 그 답을 보려고
+    # `state.db`를 손으로 열어야 했다.
+    CRITIC_SKIPPED = "critic_skipped"
     CRITIC_NORMALIZED = "critic_normalized"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
