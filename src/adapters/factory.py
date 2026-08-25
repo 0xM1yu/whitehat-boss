@@ -23,6 +23,7 @@ from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
 from src.adapters.sqlite_store import SqliteStateStore
+from src.adapters.tokenizer import counter_for_source
 from src.adapters.vllm_retrieval import (
     FakeEmbeddingClient,
     FakeRerankerClient,
@@ -69,6 +70,15 @@ class Deps:
     # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
+    # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
+    # (글자수 근사 `len//4`)를 유지한다(D21 (b)).
+    #
+    # **`symbols_for`와 같은 모양이다** — 러너·RunContext는 `src/adapters/`를 import 하지
+    # 않으므로 `counter_for_source`를 타입이 아니라 **콜러블로** 경계를 넘겨야 한다. 러너가
+    # 역할 캡슐을 조립하기 직전에 `using_counter(counter_for_role(role))`로 켠다. 기본값이
+    # "토크나이저 없음"인 것도 `symbols_for`와 같은 의도다 — 이 필드 없이 조립돼도 옛
+    # 동작(글자수 근사)이 남는다.
+    counter_for_role: Callable[[str], Callable[[str], int] | None] = lambda _role: None
 
 
 @dataclass(frozen=True)
@@ -257,6 +267,14 @@ def build_deps(
         if role in config.profile.roles
     }
     tools = _build("tool_runner", args)
+
+    # 역할 → 실 카운터. `source`가 없거나(fake 등) 그 경로에 `tokenizer.json`이 없으면
+    # `None`이라 러너가 기본 카운터(글자수 근사)를 유지한다. `counter_for_source`가
+    # source별로 캐시하므로 러너가 후보마다 불러도 토크나이저는 run당 한 번만 로드된다.
+    def counter_for_role(role: str) -> Callable[[str], int] | None:
+        source = config.model_for(role).source
+        return counter_for_source(source) if source else None
+
     return Deps(
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
@@ -269,6 +287,7 @@ def build_deps(
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,
+        counter_for_role=counter_for_role,
     )
 
 
