@@ -40,6 +40,15 @@ class Report:
     # 사람이 읽는 요약이라 수백 줄을 여기 옮기면 Finding이 묻힌다.
     deferred: int = 0
     dropped: int = 0
+    # 7단계에 못 올라간 Finding 수 (D26 (b)). **위 둘과 같은 줄에 넣지 않는다** — 그쪽 단위는
+    # target이고 이쪽은 Finding이다. 사람이 읽는 산출물에서 분모를 섞는 것이 trace에서
+    # 섞는 것보다 나쁘다.
+    #
+    # 이 줄이 없으면 절단된 Finding이 **안 보이는 게 아니라 잘못 보인다.** F-9가
+    # `hypothesized → hypothesized`라 7단계에 간 건과 못 간 건이 아래 같은 묶음에 나란히
+    # 찍힌다 — 실측 `run_20260825_0001`에서 `hypothesized 44건` 중 **36건이 반박을 안
+    # 받았는데** 리포트에 그 사실이 없었다.
+    critic_deferred: int = 0
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
@@ -49,6 +58,12 @@ class Report:
             lines += [
                 f"분석하지 못한 대상: 예산 초과 {self.deferred}건 · 호출 실패 "
                 f"{self.dropped}건 (사유는 trace의 `target_skipped`)",
+                "",
+            ]
+        if self.critic_deferred:
+            lines += [
+                f"반박받지 못한 Finding: {self.critic_deferred}건 "
+                f"(`critic_top_n` 초과 · 목록은 trace의 `critic_skipped`)",
                 "",
             ]
         for state in _STATE_ORDER:
@@ -81,12 +96,17 @@ def dedupe(findings: list[Finding]) -> tuple[list[Finding], int]:
 
 
 def run(
-    ctx: RunContext, *, findings: list[Finding], deferred: int = 0, dropped: int = 0
+    ctx: RunContext,
+    *,
+    findings: list[Finding],
+    deferred: int = 0,
+    dropped: int = 0,
+    critic_deferred: int = 0,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
-    `deferred`·`dropped`는 러너가 센 값을 그대로 받는다 — 노드가 다시 세면 경고와
-    리포트가 다른 수를 말할 수 있다.
+    `deferred`·`dropped`·`critic_deferred`는 러너가 센 값을 그대로 받는다 — 노드가 다시
+    세면 경고와 리포트가 다른 수를 말할 수 있다.
     """
     with ctx.stage(Stage.REPORT):
         kept, duplicates = dedupe(findings)
@@ -96,6 +116,7 @@ def run(
         duplicates=duplicates,
         deferred=deferred,
         dropped=dropped,
+        critic_deferred=critic_deferred,
     )
 
 
