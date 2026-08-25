@@ -27,6 +27,7 @@
 | 2026-08-22 | [파이프라인 실서빙 완주](2026-08-22-pipeline-atom.md) | scout 실모델 완주, 캡슐 그래프 섹션·게이트 등급 관측, `cli run` 경로의 prefix cache 장부 | `atom` | 조민규 |
 | 2026-08-23 | [심볼 단위 후보로 zlib 완주](2026-08-23-pipeline-zlib-atom.md) | W2 심볼 target 실저장소 검증, (a′) 정렬, `candidate_max` 절단 기록, 7단계 선별 사슬(D26) | `atom` | 조민규 |
 | 2026-08-25 | [심볼 542건 전량 완주](2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | 조민규 |
+| 2026-08-25 | [NVFP4 실서빙 검증](2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | 조민규 |
 
 ## 파일 이름
 
@@ -278,6 +279,41 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 "podman뿐"이 아니라 "둘 중 하나"다.
 
 ---
+
+### #7 NVFP4는 sm_121에서 추가 환경변수 없이 뜬다 — 그러나 portability §5 #1은 닫히지 않는다
+
+**두 문장을 갈라야 한다. 붙이면 정본에 거짓이 들어간다.**
+
+| | 무엇 | 상태 |
+| --- | --- | --- |
+| **닫힌 것** | `config/models.yaml`의 `qwen3-4b` 주석이 열어 둔 문장 — "다른 양자화(`nvfp4`)도 같은 종류의 백엔드 문제를 따로 만날 수 있다" | **닫혔다.** NVFP4 2종이 `VLLM_USE_DEEP_GEMM=0` 같은 것 없이 떴다 |
+| **닫히지 않은 것** | [portability.md](../portability.md) §5 #1 — `local_balanced`이 참조하는 모델 5개 중 3개가 Blackwell 이상을 요구한다 | **미해결 그대로** |
+
+**왜 닫히지 않는가**: §5는 "하네스의 어느 부분이 **어느 환경에서 못 도는가**" 목록이고
+#1의 "못 도는 환경" 칸은 **`Blackwell(sm_100+) 미만`**이다. ATOM은 **sm_121 = Blackwell**
+이므로 거기서 떴다는 것은 **#1을 확인하지 반증하지 않는다.** 해법("같은 모델의 다른
+양자화를 별도 model key + 별도 프로필로 둔다")도 그대로다.
+
+| 근거 | |
+| --- | --- |
+| 기동 로그 | `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` · `arch=sm121` ([NVFP4 보고서](2026-08-25-serving-nvfp4-atom.md) §3·§4) |
+| 3개 중 몇 개를 쟀나 | **2개.** `qwen3-8b`·`qwen3-coder-30b-a3b` |
+| 남은 1개 | **`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지 |
+
+### #8 `kv_cache_dtype`은 모델마다 다르고 하네스 기록에 없다
+
+**조건 비교에서 갈리는 항목이다. 같은 장비·같은 프로필이어도 이 값이 다르다.**
+
+| 모델 | 양자화 | `kv_cache_dtype` | 근거 |
+| --- | --- | --- | --- |
+| `qwen3-4b` | `fp8` | **bf16** | [542건 보고서](2026-08-25-pipeline-zlib542-atom.md) |
+| `qwen3-8b` | `nvfp4` | **fp8_e4m3** | [NVFP4 보고서](2026-08-25-serving-nvfp4-atom.md) §3 |
+| `qwen3-coder-30b-a3b` | `nvfp4` | **fp8_e4m3** | 같은 보고서 §4 |
+
+**서버가 체크포인트를 보고 자동으로 정한다.** 하네스가 고르지도 기록하지도 않으므로
+`RunRecord`에 남지 않는다 — `top_k` 미기록([open-questions](../open-questions.md) D29)·
+컴파일 플래그(D32)와 같은 종류의 교란변수다. 두 보고서의 메모리·품질 수치를 나란히 놓을
+때 이 행을 먼저 본다.
 
 ## 미확정
 
