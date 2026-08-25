@@ -142,6 +142,15 @@ UNENFORCED: dict[str, tuple[str, ...]] = {
 # **일어나지 않은 실패가 신호로 기록된다.**
 _COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
 
+# `_COMPILE_SUFFIXES` 중 C++인 것. 나머지가 C다.
+#
+# **이 목록은 `_COMPILE_SUFFIXES`의 부분집합이어야 한다.** 여기 있는데 저기 없으면 그
+# 확장자는 애초에 컴파일 대상이 아니라 이 분류가 한 번도 쓰이지 않고, 저기 있는데 여기
+# 판정에서 빠지면 C++ 파일이 C 방언을 받아 clang이 거부한다 — 2026-08-25 실측
+# (`run_20260825_0001`)의 `invalid argument '-std=gnu17' not allowed with 'C++'` 5건이
+# 정확히 그것이다.
+_CXX_SUFFIXES = (".cc", ".cpp")
+
 # 인덱서(`index`)에만 넘길 확장자. tree-sitter는 **전처리를 하지 않아서** 갈라진다 —
 # `clang -fsyntax-only`를 쓰던 시절에는 전처리가 `#include`를 펼쳐 `.inc`를 자동으로
 # 끌어왔지만 지금은 직접 주지 않으면 28바이트짜리 `#include` 한 줄만 보고 그 뒤의
@@ -156,7 +165,14 @@ _COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
 # 구멍이고(모듈 docstring), 이 목록과는 다른 판단이 필요하다.
 _INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc")
 
-# 컴파일 방언. **clang을 쓰는 모든 도구가 같은 값을 쓴다.**
+# 컴파일 방언. **clang을 쓰는 모든 도구가 같은 값을 쓴다 — 단 그 규칙은 언어 안에서만
+# 성립한다.**
+#
+# 원래 이 상수는 문자열 하나(`-std=gnu17`)였고 세 도구가 그것을 공유했다. 그런데
+# `_COMPILE_SUFFIXES`에 `.cc`·`.cpp`가 있으므로 **C++ 파일에도 C 방언이 갔고 clang이
+# 거부했다**(2026-08-25 실측 5건, `_CXX_SUFFIXES` 주석). 지키려던 불변은 "도구마다 방언이
+# 다르면 안 된다"이지 "언어가 달라도 같은 방언"이 아니다 — 후자는 애초에 성립하지 않는다.
+# 그래서 축을 하나 늘린다: **언어별로 값이 하나이고, 그 값을 세 도구가 공유한다.**
 #
 # 2026-08-14 첫 dev_docker 실행에서 clang-tidy만 `-std=c11`이었고 index·build는 기본값
 # (gnu17)이었다. 그래서 util.c의 `strnlen`이 한쪽에서는 보이고 다른 쪽에서는 미선언
@@ -170,8 +186,8 @@ _INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc")
 # 판정 임계값은 아니지만 분석 결과를 바꾸므로 조건 간 비교에 영향을 준다. 지금 코드
 # 상수로 충분한 이유는 모든 조건이 같은 방언을 쓰기 때문이다. 실제 저장소는 프로젝트마다
 # 방언이 다르고 `compile_commands.json`이 있으면 그쪽을 따라야 한다 — 그 시점에
-# budgets/config로 옮긴다.
-_STD_ARG = "-std=gnu17"
+# budgets/config로 옮긴다. **`_include_args()`도 같은 범주다**(open-questions D32).
+_STD_ARGS = {"c": "-std=gnu17", "c++": "-std=gnu++17"}
 
 # semgrep이 예외로 죽었는지 보는 표지. `--json`이 stdout만 바꾸므로 크래시 흔적은
 # 여전히 stderr에 남는다(이번 진단을 가능하게 한 것도 그 stderr다).
@@ -271,14 +287,20 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         _require_sources(tool, compile_sources)
         # `--` 뒤는 컴파일 인자다. compile_commands.json이 없으면 이것 없이는 대상마다
         # 경고 대신 오류가 난다.
+        #
+        # **첫 그룹에 발견이 있으면 둘째 그룹은 분석되지 않는다 (open-questions D34).**
+        # `--warnings-as-errors=*` 때문에 발견이 곧 non-zero이고 `_execute`가 거기서
+        # 멈춘다. 그 사실은 어디에도 기록되지 않으므로 항목으로 열려 있다 — 주석이
+        # 아니라 번호가 그것을 들고 있다.
         return [
             Command(
                 [
                     "clang-tidy", "--quiet", "--warnings-as-errors=*",
-                    *compile_sources, "--", _STD_ARG,
+                    *sources_, "--", _STD_ARGS[language], *_include_args(cwd),
                 ],
                 cwd=cwd,
             )
+            for language, sources_ in _by_language(compile_sources)
         ]
     if tool == INDEX_TOOL:
         _require_sources(tool, compile_sources)
@@ -297,17 +319,36 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
     if tool == "build":
         _require_sources(tool, compile_sources)
         # `-c`는 cwd에 .o를 쓴다. 대상 마운트는 읽기 전용이므로 scratch에서 돌린다.
+        # 링크하지 않으므로 언어별로 갈라도 산출물이 서로를 덮지 않는다(asan과 다르다).
         return [
-            Command(["clang", "-c", "-g", "-O1", _STD_ARG, *compile_sources], cwd=SCRATCH)
+            Command(
+                [
+                    "clang", "-c", "-g", "-O1",
+                    _STD_ARGS[language], *_include_args(cwd), *sources_,
+                ],
+                cwd=SCRATCH,
+            )
+            for language, sources_ in _by_language(compile_sources)
         ]
     if tool == "asan":
         _require_sources(tool, compile_sources)
+        # **asan만 언어를 못 가른다 — 컴파일과 링크가 한 명령이기 때문이다.**
+        # build는 `-c`라 산출물이 파일별로 갈리지만 여기는 `-o binary` 하나로 모인다.
+        # 언어별로 나눠 두 번 쓰면 뒤 명령이 앞 바이너리를 **덮어써 절반이 빠진 프로그램**이
+        # 뜨고, 그것이 실행돼 크래시하면 E4가 성립한다 — 모듈 docstring이 막으려는
+        # ("한 번도 돌지 않은 프로그램이 재현 완료로 기록된다") 사고의 변형이다.
+        # 그래서 지어내지 않고 거절한다. 링크 규칙은 D34가 들고 있다.
+        groups = _by_language(compile_sources)
+        if len(groups) > 1:
+            raise ValueError(f"{tool}: C와 C++이 섞인 대상은 링크 규칙이 없다 (D34)")
+        language, sources_ = groups[0]
         binary = f"{SCRATCH}/asan.bin"
         return [
             Command(
                 [
                     "clang", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                    "-g", "-O1", _STD_ARG, "-o", binary, *compile_sources,
+                    "-g", "-O1", _STD_ARGS[language], *_include_args(cwd),
+                    "-o", binary, *sources_,
                 ],
                 cwd=SCRATCH,
             ),
@@ -766,6 +807,47 @@ class ContainerToolRunner:
 def _require_sources(tool: str, compile_sources: list[str]) -> None:
     if not compile_sources:
         raise ValueError(f"{tool}: 컴파일할 C 소스가 없다")
+
+
+def _include_args(cwd: str) -> list[str]:
+    """`-I` 인자. **대상 루트와 artifact 디렉터리 둘뿐이다.**
+
+    2026-08-25 실측(`run_20260825_0001`)에서 build 실패 27건 중 20건이
+    `fatal error: 'zlib.h' file not found`·`'zutil.h' file not found`였다. 파일을 고립시켜
+    컴파일하니 `#include "zlib.h"`가 아무 데서도 안 보인 것이다.
+
+    **"헤더가 있는 모든 디렉터리"로 넓히지 않는다.** 그러면 개수가 저장소 크기에 비례해
+    늘어나 상한이 없고, 대규모 저장소에서 인자가 폭발한다. 둘로 고정하면 개수가 상수이고
+    관측된 20건을 전부 덮는다 — `zlib.h`·`zutil.h`는 대상 루트에 있고, 로컬 헤더는
+    artifact 디렉터리에 있다.
+
+    **세 도구(build·clang-tidy·asan)가 같은 값을 받아야 한다.** `_STD_ARGS` 주석이 방언에
+    대해 적어 둔 이유가 그대로 걸린다 — 갈리면 같은 파일에 대한 두 진단이 어긋나고, 그
+    차이가 코드의 성질인지 우리 플래그의 산물인지 구분할 수 없다.
+
+    artifact가 대상 루트 자체면 둘이 같으므로 하나로 줄인다(중복 인자를 남기지 않는다 —
+    로그가 곧 `digest`라 무의미한 차이도 기록에 남는다).
+    """
+    directories = [cwd] if cwd == MOUNT else [cwd, MOUNT]
+    return [flag for directory in directories for flag in ("-I", directory)]
+
+
+def _by_language(compile_sources: list[str]) -> list[tuple[str, list[str]]]:
+    """소스를 언어별로 가른다. 순서는 C 먼저, C++ 다음으로 고정한다(재현성).
+
+    **한 clang 호출로 두 방언을 표현할 수 없다.** `-std=`는 위치 인자가 아니라 마지막
+    값이 이기므로, 섞인 목록에 하나를 주면 다른 언어가 반드시 거부된다. 그래서 호출
+    자체를 가른다 — `plan()`이 이미 `list[Command]`를 돌려주므로 새 구조가 아니다.
+
+    **섞이는 경우는 `workdir`가 디렉터리일 때만 생긴다.** artifact가 파일이면
+    `fake_tools.sources()`가 자기 자신 1건을 돌려주므로 언어가 하나다.
+
+    빈 그룹은 내보내지 않는다 — 소스 없는 clang 호출은 그 자체로 실패한다.
+    """
+    groups: dict[str, list[str]] = {"c": [], "c++": []}
+    for source in compile_sources:
+        groups["c++" if source.endswith(_CXX_SUFFIXES) else "c"].append(source)
+    return [(language, sources_) for language, sources_ in groups.items() if sources_]
 
 
 def _in_container(root: Path, path: Path) -> str:
