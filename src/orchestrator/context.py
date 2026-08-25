@@ -104,6 +104,15 @@ class RunContext:
     symbols_for: Callable[[str], list[Location] | None] = field(
         default=lambda _file: None
     )
+    # 역할 → 그 역할 모델의 실 토크나이저 카운터 (D21 (b)). `None`이면 기본 카운터
+    # (글자수 근사 `len//4`)를 유지한다. `symbols_for`와 같은 성격 — 어댑터가 만들고
+    # factory가 주입하며, 러너가 역할 캡슐 조립 직전에
+    # `using_counter(ctx.counter_for_role(role))`로 켠다. RunContext는 `src/adapters/`를
+    # import 하지 않으므로 콜러블로 받는다. **미배선 기본값이 "토크나이저 없음"**인 것은
+    # 의도다 — 이 필드 없이 만든 RunContext(단위 테스트)가 옛 동작을 그대로 남긴다.
+    counter_for_role: Callable[[str], Callable[[str], int] | None] = field(
+        default=lambda _role: None
+    )
     # 렌더된 프롬프트를 run 산출물에 남기는 곳 (D19). `read_source`와 마찬가지로 조립부가
     # 주입한다 — run_dir을 아는 것은 러너이고 노드도 이 객체도 그것을 몰라야 한다.
     #

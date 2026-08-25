@@ -10,7 +10,10 @@
 조립과 검증이 **같은 값**을 봐야 한다 — `CapsuleSection._tokens_match_body`가 이 함수를
 다시 불러 `tokens == sum(estimate_tokens(줄))`을 강제하기 때문이다. 그래서 "지금 켜진
 카운터"는 **모듈 전역 하나(`_counter`)**다: 역할마다 모델(=토크나이저)이 다르므로, 그 역할
-캡슐을 조립하기 **직전에** `set_counter()`로 바꾸고 조립이 끝나면 `reset_counter()`로 되돌린다.
+캡슐을 조립하기 **직전에** 그 역할 토크나이저로 바꾼다 — 러너가 `using_counter()`로
+`retrieval.run()` 한 번을 감싸고(그 안에서 `set_counter()`로 스왑), 끝나면 이전 카운터로
+되돌린다(`runner._triage_one`). 카운터를 어디서 만들어 주입하는지는
+`src/adapters/tokenizer.py`·`factory`에 있다 — 러너는 `src/adapters`를 모른다.
 카운터가 갈리면 같은 index.json에서 두 Retriever가 다른 캡슐을 내 `dev_fake`↔`dev_docker`
 비교가 깨진다 — 그래서 **지금 켜진 카운터가 하나여야 한다**는 것이 이 모듈의 존재 이유다.
 토크나이저 파일이 없으면(CI·dev) 기본 카운터가 유효하다.
@@ -21,7 +24,8 @@
 않다. 값이 같은 것은 우연이 아니지만, 묶는 것은 별건이다.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 # 기본 카운터: 4글자 ≈ 1토큰. 실 토크나이저 파일이 없으면(CI·dev) 이 값이 유효하다.
 CHARS_PER_TOKEN = 4
@@ -34,7 +38,7 @@ def _chars_estimate(text: str) -> int:
 
 
 # **지금 켜진 카운터.** 조립·검증이 같은 값을 보도록 모듈 전역 하나로 둔다(위 docstring).
-# 기본은 글자수 근사이고, 실 토크나이저는 `set_counter()`로 갈아끼운다.
+# 기본은 글자수 근사이고, 실 토크나이저는 `using_counter()`(→`set_counter`)로 갈아끼운다.
 _counter: Callable[[str], int] = _chars_estimate
 
 
@@ -66,3 +70,23 @@ def reset_counter() -> None:
     """기본 카운터(글자수 근사 `len//4`)로 되돌린다."""
     global _counter
     _counter = _chars_estimate
+
+
+@contextmanager
+def using_counter(counter: Callable[[str], int] | None) -> Iterator[None]:
+    """`counter`가 켜진 채로 블록을 돈다.
+
+    **캡슐 조립~검증을 한 호흡으로 감싸는 용도** — 역할 캡슐을 만드는 `retrieval.run()` 한 번을
+    이 안에 넣으면 조립과 `CapsuleSection` 검증이 같은 카운터를 본다. 끝나면 **이전 카운터로**
+    되돌린다(예외에도, `finally`). `counter`가 `None`이면 아무것도 바꾸지 않는다 — 토크나이저
+    파일이 없거나(CI·dev) source가 hf/file이 아니면 기본 카운터(글자수 근사)가 유지된다.
+    """
+    if counter is None:
+        yield
+        return
+    previous = _counter
+    set_counter(counter)  # 스왑·복원은 한 변경 경로(set_counter)로 모은다
+    try:
+        yield
+    finally:
+        set_counter(previous)  # 기본이 아니라 **이전** 카운터로 — 역할 중첩에서 바깥이 산다

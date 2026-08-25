@@ -482,6 +482,20 @@ def test_dev_fake_wires_every_role_to_a_fake(target_root: Path, tmp_path: Path) 
         assert isinstance(deps.models.client_for(role), FakeModelClient)
 
 
+def test_counter_for_role_is_none_for_fake_models(target_root: Path, tmp_path: Path) -> None:
+    """fake 모델엔 토크나이저 `source`가 없어 역할 카운터가 `None`이다 (D21 (b) 3b).
+
+    두 가지를 함께 본다: **배선이 연결됐다**(`Deps`에 `counter_for_role`이 있고 factory가
+    채운다)와 **dev_fake는 무영향이다**(`None` → 러너의 `using_counter`가 no-op → 기본
+    카운터 `len//4` 유지). 실 토크나이저로 세는 것은 `test_tokenizer_adapter.py`가 본다.
+    """
+    deps = build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path
+    )
+    assert deps.counter_for_role("scout") is None
+    assert deps.counter_for_role("auditor") is None
+
+
 def test_single_gpu_12g_mixes_real_and_fake(target_root: Path, tmp_path: Path) -> None:
     """한 프로필 안에서 scout만 실서빙된다 — RoutingModelClient가 있는 이유다."""
     deps = build_deps(
