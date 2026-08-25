@@ -1199,7 +1199,7 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     assert "분석하지 못한 대상" not in result.report.render()
     # 절단이 없는 run에는 `critic_skipped`도 없다 — 이벤트 부재가 곧 "안 잘렸다"이다.
     assert not any("critic_top_n" in warning for warning in result.warnings)
-    assert "반박받지 못한 Finding" not in result.report.render()
+    assert "잘린 Finding" not in result.report.render()
 
 
 def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path: Path) -> None:
@@ -1227,7 +1227,11 @@ def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path
     assert all(e["subject_id"] for e in skipped)
     # 사용자가 run 결과로 읽는 두 곳.
     assert any("critic_top_n" in warning for warning in result.warnings)
-    assert "반박받지 못한 Finding" in result.report.render()
+    # 앞머리에 잘린 사유가, 괄호에 **상한 값**이 찍혀야 한다. 이름만 적으면 러너의 run
+    # 경고(`critic_top_n(1)`)와 같은 사실을 다르게 말하게 된다.
+    rendered = result.report.render()
+    assert "`critic_top_n`으로 잘린 Finding" in rendered
+    assert "(상한 1 ·" in rendered
 
 # --- 11. 후보 하나의 실패가 run 전체를 죽이지 않는다 (4-2) --------------------
 #

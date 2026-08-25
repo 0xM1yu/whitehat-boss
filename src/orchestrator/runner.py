@@ -542,6 +542,7 @@ def run_pipeline(
         deferred=state.deferred,
         dropped=state.dropped,
         critic_deferred=state.critic_deferred,
+        critic_top_n=config.thresholds.critic_top_n,
     )
     finished = state_machine.finish_run(
         record,
