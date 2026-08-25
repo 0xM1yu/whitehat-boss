@@ -73,12 +73,23 @@ models:
       mem_gb_ctx8k: 0
 
   qwen3-8b:
+    # 2026-08-25 ATOM에서 **기동만** 했다(추론 없음). 상세는
+    # docs/experiments/2026-08-25-serving-nvfp4-atom.md §3.
+    #
+    # `quantization`이 `fp4`였는데 **틀린 값이다.** 체크포인트가 선언하는 것은 NVFP4이고
+    # (기동 로그: `Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4)`,
+    # `quantization=modelopt_fp4`) `fp4`는 이 registry의 다른 어느 모델도 쓰지 않는 값이다.
+    # docs/portability.md §5 #1이 이 모델을 `fp4`로 세고 있었던 것도 여기서 왔다.
+    #
+    # **`benchmark`가 전부 0인 것은 실측 전이라는 뜻이고, 이 모델은 그 상태가 맞다** —
+    # 떴다는 것만 확인했고 토큰/초를 재지 않았다. model-serving.md §5에 따라 production
+    # 프로필에 넣지 않으며 `cli doctor`가 경고한다. 그 경고가 지금 정확한 상태다.
     endpoint: "http://127.0.0.1:8001/v1"
     context_limit: 131072
-    quantization: "fp4"
+    quantization: "nvfp4"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:38fa6aacb2da61c5c3eba2e4f636a0f37acaeb1bcdb3cb3e93c3f15f5615f09f"
+    source: "hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e"
     prompt_template_version: "v1"
     fallback: "qwen3-4b"
     benchmark:
@@ -90,24 +101,48 @@ models:
 
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
+    #
+    # 2026-08-25 ATOM 실측. 상세는 docs/experiments/2026-08-25-serving-nvfp4-atom.md §4~§5.
+    #
+    # **`tok_s_batch32`가 `tok_s_single`보다 작다. 오타가 아니다.** 이 모델은 배치가 단일보다
+    # 느리고(54.83 → 38.93) `qwen3-4b`(39.65 → 127.69, 3.2배)와 정반대다. 동시성 8이
+    # 최적(73.40)이고 16·32에서 떨어진다. **다만 16·32 측정에는 HTTP 400과 timeout 실패가
+    # 섞여 있어 순수 처리량이 아니다** — 방향만 읽고 크기는 읽지 않는다(보고서 해석 ④).
+    #
+    # **`mem_gb_ctx8k`는 0으로 남긴다 — 지어내지 않는다.** `nvidia-smi`가 이 장비에서
+    # `[N/A]`를 낸다(GB10은 통합메모리라 별도 VRAM 카운터가 없다). `bench --apply`도 이
+    # 필드만 `skipped`로 두고 건드리지 않았다. **값을 채우면 `Benchmark.is_measured`가 0
+    # 여부로 판정하므로 안 잰 모델이 production 프로필에 오르는 길이 열린다**
+    # (model-serving.md §3의 같은 규칙). 재는 방법은 보고서 §7에 적혀 있다.
     endpoint: "http://127.0.0.1:8002/v1"
     context_limit: 262144
     quantization: "nvfp4"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:69c4c69eb5fe52d59f2c4fe015986d76495f2f2674aabf7c087e0f6307e00e44"
+    source: "hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
+      measured_at: "2026-08-25T05:59:47Z"
+      measured_on: "atom"
+      tok_s_single: 54.83
+      tok_s_batch32: 38.93
       mem_gb_ctx8k: 0
 
   devstral-small-2-24b:
     # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
     # dense 24B라 NVFP4가 매력적이지만 반박 정확도 저하 위험이 있다(§4, open-questions R2).
+    #
+    # **2026-08-25 NVFP4 실측에서 이 모델만 빠졌다.** portability.md §5 #1이 세는 3개 중
+    # 나머지 둘(`qwen3-8b`·`qwen3-coder-30b-a3b`)은 sm_121에서 떴지만 **이 모델은 받지도
+    # 띄우지도 않았다.** 그래서 `source`·`checksum`은 값이 없는 상태 그대로다 — 존재를
+    # 확인한 것과 받아서 띄운 것은 다르고, 후자만 `source`에 적을 자격이 있다.
+    #
+    # 확인한 것은 이름뿐이다(아래는 **주석이지 값이 아니다**):
+    #   정본   mistralai/Devstral-Small-2-24B-Instruct-2512
+    #   nvfp4  Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4
+    # revision을 확인하지 않았으므로 `hf://…@<rev>` 형태를 만들 수 없고, 만들면 그것이
+    # 곧 지어낸 값이다.
     endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 262144
     quantization: "nvfp4"
