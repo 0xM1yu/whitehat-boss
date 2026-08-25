@@ -1,8 +1,9 @@
 """실 토크나이저를 토큰 카운터로 만든다 (D21 (b)).
 
 `models.yaml`의 `source`(예: `hf://Qwen/Qwen3-4B-...@<rev>`)에서 그 모델의 `tokenizer.json`을
-찾아 `src.tokens.set_counter()`에 넘길 카운터(`Callable[[str], int]`)를 돌려준다. 러너가
-역할 캡슐 조립 직전에 `counter_for_source(...)`로 그것을 set 한다(후속 단계 3b).
+찾아 토큰 카운터(`Callable[[str], int]`)를 돌려준다. `factory`가 역할별로 이 카운터를 만들어
+`Deps.counter_for_role`로 주입하고, 러너가 역할 캡슐 조립 직전에
+`using_counter(ctx.counter_for_role(role))`로 켠다(3b, `runner._triage_one`).
 
 **`tokenizers`는 하드 의존이 아니다.** 실서빙 프로필에만 필요하고 그쪽엔 vLLM과 함께 깔려
 있다(ATOM). 프로젝트 기본 의존은 pydantic·pyyaml뿐이고 CI·dev는 `tokenizers` 없이 돈다 —
@@ -16,6 +17,7 @@ run에서 토크나이저가 깨졌는데 조용히 글자수 근사로 돌아�
 
 import os
 from collections.abc import Callable
+from functools import cache
 from pathlib import Path
 
 # HF 저장소·스냅샷 디렉터리에 들어 있는 fast tokenizer 파일 이름.
@@ -87,12 +89,17 @@ def tokenizer_dir_from_source(source: str, hub_cache: Path | None = None) -> Pat
     return None
 
 
+@cache
 def counter_for_source(source: str, hub_cache: Path | None = None) -> Callable[[str], int] | None:
     """`models.yaml`의 `source` 하나로 실 카운터까지 — 경로 해석 + 로더를 합친다.
 
-    러너가 역할 캡슐 조립 직전에 `set_counter(counter_for_source(...) or 기본)`으로 쓴다(3b).
-    경로를 못 만들거나(스킴 모름·리비전 없음) 그 경로에 `tokenizer.json`이 없거나 `tokenizers`가
+    러너가 역할 캡슐 조립 직전에 `using_counter(counter_for_source(...))`로 쓴다(3b). 경로를
+    못 만들거나(스킴 모름·리비전 없음) 그 경로에 `tokenizer.json`이 없거나 `tokenizers`가
     없으면 `None` — 어느 경우든 호출자는 기본 카운터를 유지한다.
+
+    **결과를 캐시한다**(`source`별). 러너가 후보마다 부르는데 토크나이저 로딩(수 MB 파싱)이
+    무거워, 같은 모델은 run 내내 한 번만 로드한다. 토크나이저 파일은 run 중 바뀌지 않으므로
+    (조립 시작 시점에 존재) 캐시가 안전하다.
     """
     directory = tokenizer_dir_from_source(source, hub_cache)
     if directory is None:

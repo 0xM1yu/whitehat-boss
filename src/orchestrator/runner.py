@@ -112,10 +112,12 @@ from src.schemas.enums import (
     EvidenceKind,
     FindingState,
     ReasonCode,
+    Role,
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.run import RunRecord
+from src.tokens import using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
 # `RunRecord.kb_snapshot`은 재현성 필수 항목이다(engineering-guide.md §5).
@@ -204,6 +206,11 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
+    # 역할 → 그 역할 모델의 실 토크나이저 카운터(D21 (b)). `None`이면 기본 카운터
+    # (글자수 근사)를 유지한다. `symbols_for`와 같은 경로다 — factory가 채우고 러너는
+    # `ctx`로 받아 역할 캡슐 조립 직전에 `using_counter(...)`로 켠다. 러너가
+    # `src/adapters/`를 import 하지 않으려고 콜러블로 받는다.
+    counter_for_role: Callable[[str], Callable[[str], int] | None]
 
 
 @dataclass(frozen=True)
@@ -449,6 +456,7 @@ def run_pipeline(
         policy=FixedThresholdPolicy(config.thresholds),
         read_source=read_source,
         symbols_for=deps.symbols_for,
+        counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(D19). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
@@ -772,14 +780,22 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
     location, artifact, evidences = target.location, target.artifact, target.evidences
     if last < Stage.RETRIEVAL:
         return
-    capsule = retrieval.run(ctx, target=location, level=CapsuleLevel.LIGHT)
+    # 역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(D21 (b) 3b). scout는 LIGHT
+    # 캡슐을 보므로 scout 카운터로 켠다. `counter_for_role`이 `None`을 주면(fake·토크나이저
+    # 없음) `using_counter`가 아무것도 바꾸지 않아 기본 카운터(글자수 근사)가 유지된다.
+    with using_counter(ctx.counter_for_role(Role.SCOUT.value)):
+        capsule = retrieval.run(ctx, target=location, level=CapsuleLevel.LIGHT)
     if last < Stage.SCOUT:
         return
     candidate = scout.run(ctx, artifact=artifact, capsule=capsule, evidences=evidences)
     state.candidates.append(candidate)
     if candidate.state is not FindingState.TRIAGED or last < Stage.AUDITOR:
         return
-    expanded = retrieval.run(ctx, target=location, level=CapsuleLevel.EXPANDED)
+    # auditor는 EXPANDED 캡슐을 보므로 auditor 카운터로 켠다. 역할마다 모델(=토크나이저)이
+    # 다를 수 있어 scout와 따로 감싼다 — 조립과 `CapsuleSection` 검증이 같은 카운터를 봐야
+    # 한다(`src/tokens.py` docstring).
+    with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
+        expanded = retrieval.run(ctx, target=location, level=CapsuleLevel.EXPANDED)
     finding, missings = auditor.run(ctx, candidate=candidate, capsule=expanded, evidences=evidences)
     state.update(finding)
     state.evidences[finding.finding_id] = evidences
