@@ -333,22 +333,128 @@ def test_clang_tidy_turns_warnings_into_a_nonzero_exit() -> None:
     assert "--warnings-as-errors=*" in argv
 
 
-def test_every_clang_tool_uses_the_same_dialect() -> None:
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("/src/parser.c", "-std=gnu17"),
+        ("/src/parser.cc", "-std=gnu++17"),
+        ("/src/parser.cpp", "-std=gnu++17"),
+    ],
+)
+def test_every_clang_tool_uses_the_same_dialect(source: str, expected: str) -> None:
     """같은 파일이 한 도구에서 통과하고 다른 도구에서 오류가 나면 안 된다.
 
     2026-08-14 실측: clang-tidy만 `-std=c11`이라 util.c의 `strnlen`이 거기서만 미선언
     오류였다. 그 차이가 코드의 성질인지 우리 플래그의 산물인지 구분할 수 없었다.
+
+    **2026-08-25 — 한정이 언어 안으로 좁아졌다.** 그전에는 세 도구가 입력과 무관하게
+    `-std=gnu17` 하나를 썼는데, `_COMPILE_SUFFIXES`에 `.cc`·`.cpp`가 있어 **C++ 파일도
+    그 값을 받고 clang이 거부했다**(`run_20260825_0001`에서 5건). 지키려던 불변은
+    "도구마다 방언이 다르면 안 된다"이지 "언어가 달라도 같은 방언"이 아니다 — 그래서
+    **언어를 고정하고 도구를 가로지르며** 같은지 본다.
     """
     dialects = set()
     # `index`는 목록에 없다 — tree-sitter 인덱서로 바뀌어 clang을 쓰지 않는다. 남겨 두면
     # "index도 이 방언을 쓴다"로 읽히는데 사실이 아니고, 파서는 방언 플래그를 받지 않는다.
     for tool in ("build", "clang-tidy", "asan"):
-        for command in plan(
-            tool, target="/src/parser.c", compile_sources=["/src/parser.c"], cwd="/src"
-        ):
+        for command in plan(tool, target=source, compile_sources=[source], cwd="/src"):
             dialects |= {value for value in command.argv if value.startswith("-std=")}
 
-    assert dialects == {"-std=gnu17"}
+    assert dialects == {expected}
+
+
+def test_cxx_suffixes_are_a_subset_of_the_compile_list() -> None:
+    """C++ 판정에만 있고 컴파일 대상에 없는 확장자는 한 번도 쓰이지 않는다.
+
+    반대 방향이 더 위험하다 — 컴파일 대상에 있는데 이 판정에서 빠지면 그 파일이 C 방언을
+    받아 clang이 거부한다. 그것이 2026-08-25의 5건이다.
+    """
+    assert set(container_tools._CXX_SUFFIXES) <= set(container_tools._COMPILE_SUFFIXES)
+
+
+def test_every_clang_tool_gets_the_same_include_paths() -> None:
+    """`-I`가 갈리면 같은 파일에 대한 두 진단이 어긋난다 — 방언과 같은 이유다.
+
+    2026-08-25 실측: build 실패 27건 중 20건이 `'zlib.h' file not found` 계열이었다.
+    파일을 고립시켜 컴파일해 `#include`가 아무 데서도 안 보였다.
+    """
+    per_tool = {}
+    for tool in ("build", "clang-tidy", "asan"):
+        # asan의 둘째 명령은 바이너리 실행이라 컴파일 인자가 없다 — 첫 명령만 본다.
+        argv = plan(
+            tool,
+            target="/src/contrib/blast/blast.c",
+            compile_sources=["/src/contrib/blast/blast.c"],
+            cwd="/src/contrib/blast",
+        )[0].argv
+        per_tool[tool] = [argv[i + 1] for i, value in enumerate(argv) if value == "-I"]
+
+    # 대상 루트와 artifact 디렉터리 둘. "헤더가 있는 모든 디렉터리"가 아니다.
+    assert per_tool["build"] == ["/src/contrib/blast", "/src"]
+    assert len({tuple(paths) for paths in per_tool.values()}) == 1, per_tool
+
+
+def test_include_paths_are_not_duplicated_at_the_target_root() -> None:
+    """artifact가 대상 루트 자체면 두 경로가 같다. 무의미한 중복 인자를 남기지 않는다 —
+    로그가 곧 `Evidence.digest`라 기록에 그대로 박힌다."""
+    argv = plan("build", target="/src", compile_sources=["/src/a.c"], cwd="/src")[0].argv
+
+    assert [value for value in argv if value == "-I"] == ["-I"]
+
+
+def test_clang_tidy_puts_compile_args_after_the_double_dash() -> None:
+    """`--` 앞은 clang-tidy 인자, 뒤가 컴파일 인자다. 앞에 두면 clang-tidy가 거부한다."""
+    argv = plan("clang-tidy", target="/src/a.c", compile_sources=["/src/a.c"], cwd="/src")[
+        0
+    ].argv
+    tail = argv[argv.index("--") :]
+
+    assert "-std=gnu17" in tail
+    assert "-I" in tail
+    assert "/src/a.c" not in tail, "소스는 `--` 앞에 온다"
+
+
+@pytest.mark.parametrize("tool", ["build", "clang-tidy"])
+def test_mixed_languages_split_into_one_command_each(tool: str) -> None:
+    """한 clang 호출로 두 방언을 표현할 수 없다 — `-std=`는 마지막 값이 이긴다.
+
+    갈라진 명령이 서로의 소스를 물고 가면 결국 같은 실패가 난다.
+    """
+    commands = plan(
+        tool, target="/src", compile_sources=["/src/a.c", "/src/b.cpp"], cwd="/src"
+    )
+
+    assert len(commands) == 2
+    c_argv, cxx_argv = commands[0].argv, commands[1].argv
+
+    assert "-std=gnu17" in c_argv and "-std=gnu++17" not in c_argv
+    assert "-std=gnu++17" in cxx_argv and "-std=gnu17" not in cxx_argv
+    assert "/src/a.c" in c_argv and "/src/b.cpp" not in c_argv
+    assert "/src/b.cpp" in cxx_argv and "/src/a.c" not in cxx_argv
+
+
+def test_asan_refuses_mixed_languages_instead_of_linking_half_a_program() -> None:
+    """**asan만 언어를 못 가른다** — 컴파일과 링크가 한 명령이라 `-o`가 서로를 덮는다.
+
+    나눠서 두 번 쓰면 절반이 빠진 프로그램이 뜨고, 그것이 크래시하면 E4가 성립한다.
+    지어내지 않고 거절한다(open-questions D34).
+    """
+    with pytest.raises(ValueError, match="링크 규칙이 없다"):
+        plan("asan", target="/src", compile_sources=["/src/a.c", "/src/b.cpp"], cwd="/src")
+
+
+def test_a_header_only_artifact_is_still_rejected_before_any_process() -> None:
+    """**"해당 없음"의 표현을 바꾸지 않았다** (open-questions D31).
+
+    `.h`는 `_COMPILE_SUFFIXES`에 없어 `compile_sources`가 비고, `plan()`이 프로세스를
+    띄우기 전에 거절한다. D16이 같은 상태(`.inc`의 clang-tidy)를 "거짓 신호가 아니다"로
+    이미 판정했다 — 컴파일러에 넘긴 것이 아니라 **넘길 것이 없는 상태**다.
+
+    이 테스트는 그 판정을 잠근다. 나중 리팩터가 조용히 헤더를 컴파일하기 시작하면
+    **일어나지 않은 실패가 신호로 기록된다.**
+    """
+    with pytest.raises(ValueError, match="컴파일할 C 소스가 없다"):
+        plan("build", target="/src/blast.h", compile_sources=[], cwd="/src")
 
 
 def test_every_whitelisted_tool_has_a_command() -> None:
