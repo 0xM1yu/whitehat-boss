@@ -80,20 +80,28 @@ _DEVICE_ROW = re.compile(r"^\|\s*`--device`\s*\|\s*`([^`]+)`\s*\|", re.MULTILINE
 
 
 def _tracked(*patterns: str) -> list[Path]:
-    """`git ls-files`가 내놓는 추적 파일. git이 없으면 검사를 건너뛴다."""
+    """`git ls-files`가 내놓는 추적 파일. git이 없으면 검사를 건너뛴다.
+
+    **`-z`가 필수다.** 기본 출력은 비ASCII 경로를 큰따옴표로 감싸고 바이트를 8진
+    이스케이프로 바꾼다(`.claude/노트.md` → `".claude/\\353\\205\\270...md"`). 그대로
+    `Path`에 넣으면 없는 파일을 가리켜 `OSError`가 나고, 검사기가 **문서의 결함처럼 보이는
+    실패**를 낸다 — 원인이 문서가 아니라 여기라서 읽는 사람이 엉뚱한 곳을 고친다.
+    `-z`는 이스케이프를 끄고 NUL로 가른다.
+    """
     try:
         result = subprocess.run(
-            ["git", "ls-files", *patterns],
+            ["git", "ls-files", "-z", *patterns],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
     except OSError:  # pragma: no cover - git 없는 환경
         pytest.skip("git을 실행할 수 없다")
     if result.returncode != 0:  # pragma: no cover - 저장소 밖
         pytest.skip("저장소가 아니다")
-    return [REPO_ROOT / line for line in result.stdout.splitlines() if line]
+    return [REPO_ROOT / name for name in result.stdout.split("\0") if name]
 
 
 def _read(path: Path) -> str:
