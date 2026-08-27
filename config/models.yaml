@@ -158,6 +158,43 @@ models:
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
 
+  # --- B1'/B3' 실험용 bf16 모델 (@0xM1yu 요청·@danielcho02 승인 2026-08-27) ---
+  # 아직 실측 전이라 checksum·benchmark는 0, source는 null이다(파일 상단 규칙: 실측은
+  # tools/model_checksum.py로 나중에 채운다). 그때까지 cli doctor가 경고하고 비교표에서 제외된다.
+  foundation-sec-8b:
+    # Cisco Foundation-Sec-1.1-8B-Instruct (Llama-3.1-8B 계열). B1'/B3' 실험 대상.
+    endpoint: "http://127.0.0.1:8006/v1"
+    context_limit: 131072
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  granite-3.3-8b:
+    # IBM Granite-3.3-8B-Instruct. B1'/B3' 실험 대상.
+    endpoint: "http://127.0.0.1:8007/v1"
+    context_limit: 131072
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
   qwen3-embedding-0.6b:
     endpoint: "http://127.0.0.1:8004/v1"
     context_limit: 32768
