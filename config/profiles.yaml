@@ -157,7 +157,17 @@ profiles:
       # 중간 발표 DoD "B1 조건 1회 완주"를 프로필 정의만으로는 만족시킬 수 없었다.
       #
       # **`podman`인 것은 주 실서빙 장비가 ATOM이기 때문이다** — 프로필은 주 실서빙
-      # 장비의 런타임을 선언하고 다른 장비가 오버라이드한다(portability.md §3). ATOM에는
+      # 장비의 런타임을 선언하고 다른 장비가 오버라이드한다(portability.md §3).
+      #
+      # ⚠ **아래 "podman만 있으므로"는 2026-08-21에 반증됐다.** ATOM에 Docker 29.2.1이
+      # podman과 함께 있고, 그 뒤 ATOM run은 전부 docker로 돌았다
+      # (docs/experiments/README.md §#6). **그래도 이 프로필의 값은 이 PR에서 바꾸지
+      # 않는다** — 이 값으로 이미 돈 run이 있고, `tool_images` digest는 런타임 사이에서
+      # 비교할 수 없어서(portability.md §7 위험 #4) 지금 갈면 그 기록과 갈린다. B3'-large
+      # 프로필이 확정될 때(팀 run_matrix가 아직 `TODO_local_large`다) 함께 옮기는 것이 맞다.
+      # 아래 원문은 당시 근거를 남겨 두려고 지우지 않았다.
+      #
+      # ATOM에는
       # podman만 있으므로(2026-08-17 실측) `docker`로 두면 그 장비의 **모든** 실서빙 run이
       # `--tool-runner podman`을 달아야 하고, 그것은 evaluation.md §2.3 규칙 2의 예외라
       # `RunRecord.tool_runner`에 기록된다 — 주 경로가 상시 예외 상태가 된다.
@@ -209,12 +219,19 @@ profiles:
   # **넷의 어댑터 선택이 같아야 한다.** 조건 간 차이는 `roles`뿐이어야 하고, 그것이
   # evaluation.md §2.3 규칙 1이다. 그래서 아래 넷은 adapters·budget·production이 동일하다.
   #
-  # `tool_runner: docker` — **ATOM에 docker가 있다(2026-08-21 실측: Docker 29.2.1, podman
-  # 4.9.3과 공존).** portability.md §6이 오래 "docker 데몬 접근 없음"으로 적고 있었는데 그건
-  # 2026-08-17 시점 관측이고 그 뒤 뒤집혔다 — 이 PR이 그 서술도 함께 고친다. 2026-08-25·26·27
-  # ATOM run이 전부 docker로 돌았고(`run_20260827_0004` 완주), **podman으로 도구를 돌린 run은
-  # 8/17 `run_20260817_0001` 하나뿐이다.** 팀 `lib/prime_runner.py`가 `--tool-runner`
-  # 오버라이드를 쓰지 않으므로 여기 적힌 값이 그대로 쓰인다.
+  # `tool_runner: docker` — **ATOM에 docker가 있다**(2026-08-21 실측: Docker 29.2.1이
+  # podman 4.9.3과 공존). portability.md §6이 오래 "Docker 데몬 접근 없음"으로 적고 있었는데
+  # 그건 2026-08-17 관측이고 4일 뒤 뒤집혔다 — 이 PR이 그 서술도 함께 고친다.
+  #
+  # **근거는 말이 아니라 run이다.** `--device atom --tool-runner docker`로 도구가 실제로
+  # 돌아 `tool_images`가 채워진 run이 docs/experiments/README.md §#6에 셋 적혀 있고
+  # (`run_20260821_0004` 9건 · `run_20260823_0002` 238건 · `run_20260825_0001` 238건),
+  # 8/26·8/27 재측정도 같은 플래그였다(`run_20260827_0004` 완주, `tool_call` 13건).
+  # **반대로 podman으로 도구를 돌린 run은 `run_20260817_0001` 하나뿐이다** — 즉 "검증된
+  # 경로는 podman"이 지금은 거꾸로다.
+  #
+  # 팀 `lib/prime_runner.py`가 `--tool-runner` 오버라이드를 쓰지 않으므로 여기 적힌 값이
+  # 그대로 쓰인다. podman으로 두면 그 스크립트가 덮어 줄 수단이 없다.
   #
   # ⚠ **B3'-large는 아직 이 넷과 런타임이 다르다.** `local_balanced`가 `podman`이고, 팀
   # run_matrix가 `b3prime_large_profile: TODO_local_large`로 프로필을 아직 안 정했다.
