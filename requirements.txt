@@ -25,9 +25,16 @@ tree-sitter-cpp>=0.23
 # 이 PR이 만든 값을 한 줄도 검증하지 않는 상태가 된다.
 #
 # **⚠ tree-sitter와 달리 전이 의존이 크다.** tree-sitter 3종은 전이 의존이 0개인데
-# `tokenizers`는 `huggingface-hub`를 하드 의존으로 끌고 오고(0.22·0.23 둘 다), 그것이 다시
-# click·filelock·fsspec·hf-xet·httpx·packaging·tqdm·typing-extensions를 끌고 온다 —
-# 실측 순증 12개. 가벼운 줄 알고 손대지 않도록 여기 적어 둔다.
+# `tokenizers`는 `huggingface-hub`를 하드 의존으로 끌고 온다(0.22·0.23 둘 다). CI 로그에서
+# 실제로 새로 받아진 것은 **12개**다 — huggingface-hub · click · filelock · fsspec ·
+# hf-xet · httpx · httpcore · h11 · anyio · certifi · idna · tqdm.
+#
+# `huggingface-hub`는 `packaging`·`typing-extensions`·`pyyaml`도 요구하지만 **그 셋은
+# 순증이 아니다** — pytest·pydantic·이 파일이 이미 요구한다. 세면 부풀려 적게 된다.
+#
+# 설치 시간은 CI 실측으로 `Install runtime deps` 스텝이 3.65s → 6.25s, **약 +2.6초**다
+# (각 1회 표본이라 정밀도를 주장하지 않는다. 대조군은 `tokenizers`가 없던 PR #32의 run).
+# 가벼운 줄 알고 손대지 않도록 여기 적어 둔다.
 #
 # **네트워크는 안 탄다.** 이 저장소가 쓰는 것은 `Tokenizer.from_file` 하나이고
 # (`src/adapters/tokenizer.py`), 다운로드 경로를 지나지 않는다. 테스트도 `tmp_path`에
