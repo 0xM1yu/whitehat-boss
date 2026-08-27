@@ -211,6 +211,9 @@ class Dependencies(Protocol):
     # `ctx`로 받아 역할 캡슐 조립 직전에 `using_counter(...)`로 켠다. 러너가
     # `src/adapters/`를 import 하지 않으려고 콜러블로 받는다.
     counter_for_role: Callable[[str], Callable[[str], int] | None]
+    # 위 카운터가 무엇으로 정해졌는지 (D21 (b)). `token_counter` 이벤트의 `data`가 된다.
+    # `IndexSummaryLike`와 같은 이유로 **스칼라 dict**다 — 러너가 어댑터 타입을 모른다.
+    counter_report: dict[str, str | None]
 
 
 @dataclass(frozen=True)
@@ -477,6 +480,13 @@ def run_pipeline(
     )
     ctx.record = record
     ctx.store.put(record)
+
+    # **어느 토큰 카운터로 셀 것인가를 여기서 남긴다 (D21 (b)).** `target_plan`과 같은
+    # 계약이다 — run당 1건이고 **모델을 한 번 부르기 전에** 낸다. 카운터는 `build_deps`
+    # 시점에 이미 정해져 있으므로 늦출 이유가 없고, 그 뒤 어디서 죽어도 이 run이 무엇으로
+    # 쟀는지는 남아야 한다. 이것이 없던 동안 폴백은 조용했고, "토크나이저로 쟀다"를
+    # 사람이 run 전에 손으로 확인해 보고서에 붙이는 것이 유일한 증거였다.
+    ctx.record_token_counter(dict(deps.counter_report))
 
     last, stop_reason = spec.stop_at()
     state = _Accumulator()

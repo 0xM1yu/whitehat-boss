@@ -23,7 +23,11 @@ from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
 from src.adapters.sqlite_store import SqliteStateStore
-from src.adapters.tokenizer import counter_for_source
+from src.adapters.tokenizer import (
+    REASON_NO_SOURCE,
+    counter_for_source,
+    counter_reason_for_source,
+)
 from src.adapters.vllm_retrieval import (
     FakeEmbeddingClient,
     FakeRerankerClient,
@@ -38,6 +42,7 @@ from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.schemas.common import Location
+from src.tokens import COUNTED_ROLES
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,16 @@ class Deps:
     # "토크나이저 없음"인 것도 `symbols_for`와 같은 의도다 — 이 필드 없이 조립돼도 옛
     # 동작(글자수 근사)이 남는다.
     counter_for_role: Callable[[str], Callable[[str], int] | None] = lambda _role: None
+    # 위 카운터가 **무엇으로 정해졌는지**를 run 산출물에 남기기 위한 스칼라 dict.
+    # 러너가 run 시작 시 그대로 `token_counter` 이벤트로 낸다.
+    #
+    # **타입이 아니라 dict인 것이 요점이다** — `IndexSummary.as_trace_fields()`와 같은
+    # 이유다. 오케스트레이터가 어댑터 타입을 import 하면 "노드는 구체 어댑터를 모른다"가
+    # 깨진다(engineering-guide.md §3, `tests/test_policy.py`가 검사한다).
+    #
+    # 기본값이 빈 dict인 것도 `symbols_for`·`counter_for_role`과 같은 의도다 — 이 필드 없이
+    # 조립된 `Deps`(단위 테스트)가 이벤트를 못 내도 파이프라인은 옛 동작 그대로 돈다.
+    counter_report: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -275,6 +290,35 @@ def build_deps(
         source = config.model_for(role).source
         return counter_for_source(source) if source else None
 
+    def counter_report() -> dict[str, str | None]:
+        """`token_counter` 이벤트의 `data`. **필드 이름이 곧 지표의 열 이름이다.**
+
+        `IndexSummary.as_trace_fields()`와 같은 자리·같은 계약이다 — 어댑터가 스칼라 dict를
+        만들고 오케스트레이터는 그것만 받는다. `tests/test_trace.py`가 키 집합을 고정한다.
+
+        **`counter_for_role`과 같은 판정에서 나온다**(`_resolve_counter`). 갈리면 러너가 켠
+        카운터와 기록이 어긋나고, 어긋난 기록은 없는 것보다 나쁘다.
+
+        **해석된 경로는 담지 않는다** — trace 재현성 기준이 경로 절댓값을 금지하고
+        (`orchestrator/trace.py`) HF 캐시 경로는 `Path.home()`을 지난다. `source`에 리비전이
+        박혀 있으므로 스냅샷은 그것으로 특정된다.
+        """
+        fields: dict[str, str | None] = {}
+        for role in COUNTED_ROLES:
+            source = config.model_for(role).source if role in config.profile.roles else None
+            counter = counter_for_role(role)
+            fields[f"{role}_counter"] = "real" if counter is not None else "approx"
+            fields[f"{role}_source"] = source
+            # `source`가 없으면 해석을 시도조차 안 했으므로 사유는 `no_source`다.
+            # 있는데 `None`이면 왜인지는 어댑터가 안다 — 여기서 다시 추론하지 않는다.
+            if counter is not None:
+                fields[f"{role}_reason"] = None
+            elif source:
+                fields[f"{role}_reason"] = counter_reason_for_source(source)
+            else:
+                fields[f"{role}_reason"] = REASON_NO_SOURCE
+        return fields
+
     return Deps(
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
@@ -288,6 +332,7 @@ def build_deps(
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,
         counter_for_role=counter_for_role,
+        counter_report=counter_report(),
     )
 
 

@@ -14,11 +14,14 @@ from pathlib import Path
 
 from tokenizers import Tokenizer, models, pre_tokenizers
 
+from src.adapters.factory import build_deps
 from src.adapters.tokenizer import (
     counter_for_source,
     counter_from_tokenizer,
+    counter_reason_for_source,
     tokenizer_dir_from_source,
 )
+from src.config import load_config
 
 
 def test_none_when_no_tokenizer_file(tmp_path: Path) -> None:
@@ -85,3 +88,91 @@ def test_counter_for_source_end_to_end(tmp_path: Path) -> None:
 def test_counter_for_source_none_when_file_absent(tmp_path: Path) -> None:
     """경로는 만들어져도 그 자리에 tokenizer.json이 없으면 None."""
     assert counter_for_source("hf://Org/Name@rev1", hub_cache=tmp_path) is None
+
+
+# --- 폴백 사유 (D21 (b), `token_counter` 이벤트의 `{role}_reason`) ---
+#
+# **네 사유를 가르는 것이 요점이다.** 결과는 넷 다 글자수 근사로 같지만 대응이 전부 다르다 —
+# `graph_index`가 `missing`과 `unsupported_version`을 가른 것과 같은 이유다.
+# `library_absent`는 여기서 검사하지 않는다: 그 상태의 이 파일은 collection error이므로
+# (모듈 docstring) 테스트가 도달할 수 없는 분기다.
+
+
+def test_reason_is_none_when_the_counter_is_real(tmp_path: Path) -> None:
+    """실 카운터를 얻었으면 사유는 없다 — `real`은 사유를 갖지 않는다."""
+    tokenizer = Tokenizer(models.WordLevel(vocab={"a": 0, "[UNK]": 1}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    snapshot = tmp_path / "models--Org--Name" / "snapshots" / "rev1"
+    snapshot.mkdir(parents=True)
+    tokenizer.save(str(snapshot / "tokenizer.json"))
+
+    assert counter_reason_for_source("hf://Org/Name@rev1", hub_cache=tmp_path) is None
+
+
+def test_reason_is_unresolved_source_when_the_revision_is_missing(tmp_path: Path) -> None:
+    """리비전이 없으면 경로를 못 만든다 — registry가 고칠 일이지 캐시를 받을 일이 아니다."""
+    assert (
+        counter_reason_for_source("hf://repo-without-rev", hub_cache=tmp_path)
+        == "unresolved_source"
+    )
+
+
+def test_reason_is_file_absent_when_the_snapshot_is_not_downloaded(tmp_path: Path) -> None:
+    """경로는 섰는데 파일이 없다 — 캐시를 받으면 풀린다. 위와 다른 사건이다."""
+    assert counter_reason_for_source("hf://Org/Name@rev1", hub_cache=tmp_path) == "file_absent"
+
+
+def test_build_deps_reports_real_when_the_tokenizer_file_is_there(tmp_path: Path) -> None:
+    """`build_deps`까지 이어져 `counter_report`가 `real`과 그 `source`를 낸다 (D21 (b)).
+
+    **`tests/test_adapters.py`가 아니라 여기 있는 이유**: 이 검사만 `tokenizers`를 실제로
+    필요로 한다. 저쪽에 두면 라이브러리가 없는 환경에서 **어댑터 테스트 전체**가 collection
+    error가 되고, 하드 의존의 파급이 이 파일 하나를 넘는다. 나머지 `counter_report` 검사
+    (`no_source`·`file_absent`·역할 가드)는 라이브러리가 필요 없어 저쪽에 남아 있다.
+
+    **`source`를 싣고 해석된 경로는 안 싣는다** — trace 재현성 기준이 경로 절댓값을
+    금지하고(`orchestrator/trace.py`), `source`에 리비전이 박혀 있어 스냅샷은 그것으로
+    특정된다.
+    """
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+    (target_root / "parser.c").write_text("void f(void) {}\n", encoding="utf-8")
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    tokenizer = Tokenizer(models.WordLevel(vocab={"a": 0, "[UNK]": 1}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer.save(str(model_dir / "tokenizer.json"))
+
+    source = f"file://{model_dir.as_posix()}"
+    base = load_config("single_gpu_12g")
+    key = base.model_key_for("scout")
+    entries = dict(base.models)
+    entries[key] = entries[key].model_copy(update={"source": source})
+    config = base.model_copy(update={"models": entries})
+
+    deps = build_deps(
+        config,
+        run_id="run_20260901_0001",
+        source_root=target_root,
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    assert deps.counter_for_role("scout") is not None
+    assert deps.counter_report["scout_counter"] == "real"
+    assert deps.counter_report["scout_source"] == source
+    assert deps.counter_report["scout_reason"] is None
+    # 같은 프로필의 auditor는 fake다 — 한 run 안에서 역할별로 갈린다는 것이 요점이다.
+    assert deps.counter_report["auditor_counter"] == "approx"
+    assert deps.counter_report["auditor_reason"] == "no_source"
+
+
+def test_counter_and_reason_come_from_one_judgement(tmp_path: Path) -> None:
+    """카운터와 기록이 갈리면 안 된다 — 갈린 기록은 없는 것보다 나쁘다.
+
+    `_resolve_counter` 하나를 둘이 나눠 쓴다는 계약을 값으로 못박는다.
+    """
+    for source in ("hf://Org/Name@rev1", "hf://no-rev", "sha256:0000"):
+        counter = counter_for_source(source, hub_cache=tmp_path)
+        reason = counter_reason_for_source(source, hub_cache=tmp_path)
+        assert (counter is None) == (reason is not None), source
