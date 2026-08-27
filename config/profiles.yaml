@@ -163,7 +163,7 @@ profiles:
       # podman과 함께 있고, 그 뒤 ATOM run은 전부 docker로 돌았다
       # (docs/experiments/README.md §#6). **그래도 이 프로필의 값은 이 PR에서 바꾸지
       # 않는다** — 이 값으로 이미 돈 run이 있고, `tool_images` digest는 런타임 사이에서
-      # 비교할 수 없어서(portability.md §7 위험 #4) 지금 갈면 그 기록과 갈린다. B3'-large
+      # 비교할 수 없어서(portability.md §5 #4) 지금 갈면 그 기록과 갈린다. B3'-large
       # 프로필이 확정될 때(팀 run_matrix가 아직 `TODO_local_large`다) 함께 옮기는 것이 맞다.
       # 아래 원문은 당시 근거를 남겨 두려고 지우지 않았다.
       #
