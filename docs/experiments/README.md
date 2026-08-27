@@ -28,6 +28,7 @@
 | 2026-08-23 | [심볼 단위 후보로 zlib 완주](2026-08-23-pipeline-zlib-atom.md) | W2 심볼 target 실저장소 검증, (a′) 정렬, `candidate_max` 절단 기록, 7단계 선별 사슬(D26) | `atom` | @danielcho02 |
 | 2026-08-25 | [심볼 542건 전량 완주](2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | @danielcho02 |
 | 2026-08-25 | [NVFP4 실서빙 검증](2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | @danielcho02 |
+| 2026-08-26 | [배선 수정 후 재측정](2026-08-26-pipeline-zlib542-remeasure-atom.md) | 8단계 `gate_eval` 첫 8건(D26 닫힘), 원인은 build `-I` 누락, `critic_skipped` 첫 관측, 실 토크나이저 무동작 판정 | `atom` | @danielcho02 |
 
 ## 파일 이름
 
