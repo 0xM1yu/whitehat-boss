@@ -161,8 +161,16 @@ class AdapterSelection(HarnessModel):
     # 잘못됐는지가 스택 아래에 묻힌다.
     retriever: Literal["fake", "hybrid"]
     # docker·singularity·podman은 같은 구현(`ContainerToolRunner`)의 런타임 선택이다.
-    # Seraph는 Docker 데몬 접근이 없어 singularity를, ATOM은 데몬 접근이 없고 singularity도
-    # 없어 podman을 쓴다(둘 다 실측). CLI `--tool-runner`가 이 Literal에서 choices를 뽑는다.
+    # Seraph는 Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-17 실측).
+    #
+    # **ATOM은 docker와 podman을 둘 다 가진다**(2026-08-21 실측: Docker 29.2.1 · podman
+    # 4.9.3). 이 주석은 2026-08-17 실측을 근거로 "ATOM은 데몬 접근이 없고 singularity도
+    # 없어 podman을 쓴다"고 적고 있었는데(`32e2fb5`), 4일 뒤 docker가 확인되어 반증됐다.
+    # 이후 실행 기록도 그쪽이다 — 8/25·26·27 ATOM run이 전부 docker로 돌았고 podman으로
+    # 도구를 돌린 run은 `run_20260817_0001` 하나다. 어느 쪽을 선언하는지는 프로필마다
+    # 다르고 그 표가 docs/portability.md §3에 있다.
+    #
+    # CLI `--tool-runner`가 이 Literal에서 choices를 뽑는다.
     tool_runner: Literal["fake", "docker", "singularity", "podman"]
     state_store: Literal["memory", "sqlite"]
 
