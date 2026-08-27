@@ -159,16 +159,43 @@ models:
       mem_gb_ctx8k: 0
 
   # --- B1'/B3' 실험용 bf16 모델 (윤경 요청·민규 승인 2026-08-27) ---
-  # 아직 실측 전이라 checksum·benchmark는 0, source는 null이다(파일 상단 규칙: 실측은
+  # `checksum`·`benchmark`는 실측 전이라 0이다(파일 상단 규칙: 실측은
   # tools/model_checksum.py로 나중에 채운다). 그때까지 cli doctor가 경고하고 비교표에서 제외된다.
+  #
+  # **`source`는 그 묶음이 아니다.** 파일 상단이 `--apply`가 안 건드리는 필드라고 적어 뒀다 —
+  # 실측이 채워 주지 않으므로 지금 안 적으면 나중에도 안 채워진다. 그리고 PR #31 이후로는
+  # 기록용이 아니라 실 토크나이저를 켜는 스위치다(`factory.counter_for_role`): 비어 있으면
+  # 러너가 글자수 근사(`len//4`)를 유지하고 `token_counter`에 `approx`/`no_source`로 남는다.
+  # B1'가 근사로 돌고 B3'-large가 실측으로 돌면 조건 간 토큰 회계가 갈린다(evaluation.md §2.3).
+  # 아래 리비전들은 HF API로 실재를 확인했다(2026-08-28).
+  #
+  # `quantization: bf16`인 것은 팀 2x2 스펙 고정값이 bf16이기 때문이다.
   foundation-sec-8b:
     # Cisco Foundation-Sec-1.1-8B-Instruct (Llama-3.1-8B 계열). B1'/B3' 실험 대상.
+    #
+    # **`license`가 이중이다 — Apache-2.0만 적으면 절반이 사라진다.** 모델 카드
+    # frontmatter는 `license: other`이고 NOTICE.md가 둘을 든다: 가중치 본체는
+    # "Llama 3.1 Community License, Copyright © Meta Platforms, Inc.", Cisco가 더한
+    # 변경분만 "Apache 2.0 License, Copyright Cisco Systems, Inc."다. 앞쪽이 재배포·표기
+    # 의무와 Acceptable Use Policy가 붙는 쪽이라 지우면 안 된다.
+    # `license`는 `NonEmptyStr`이라 스키마가 안 잡고 `doctor`도 이 필드를 보지 않는다 —
+    # `checksum`=0이 비교표에서 걸러 주는 안전장치 **밖**이고, 결과 공개 시 그대로 인용된다.
+    #
+    # **`context_limit`은 65536이다.** config.json의 `max_position_embeddings` 실측값이고
+    # 모델 카드도 "Extended 64k context window"라고 적는다. Llama-3.1 계열이라 131072로
+    # 추정하기 쉬운데, 이 모델은 `rope_scaling`(`original_max_position_embeddings` 8192,
+    # factor 8.0)로 64K까지만 확장됐다. 파이프라인은 이 값을 안 읽지만 `bench.py`가
+    # `if ctx > context_limit`으로 측정 대상을 거른다 — 128K로 두면 서버가 못 받는 길이를
+    # 재려 든다.
+    #
+    # `fallback: null` — 조건 비교 대상이라 다른 모델로 조용히 넘어가면 조건이 깨진다.
+    # 이 registry의 다수 관례이기도 하다(fallback을 가진 것은 qwen3-4b·qwen3-8b 둘뿐).
     endpoint: "http://127.0.0.1:8006/v1"
-    context_limit: 131072
+    context_limit: 65536
     quantization: "bf16"
-    license: "Apache-2.0"
+    license: "Llama-3.1-Community + Apache-2.0 (Cisco changes)"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    source: "hf://fdtn-ai/Foundation-Sec-1.1-8B-Instruct@243b27655e01c87cc04fdb88632be7cd9e55ac1f"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -180,12 +207,32 @@ models:
 
   granite-3.3-8b:
     # IBM Granite-3.3-8B-Instruct. B1'/B3' 실험 대상.
-    endpoint: "http://127.0.0.1:8007/v1"
+    #
+    # `license: Apache-2.0`과 `context_limit: 131072`은 확인했고 맞다 — 카드 frontmatter가
+    # `license: apache-2.0`이고 config.json의 `max_position_embeddings`가 131072다.
+    #
+    # **⚠ 8003을 `devstral-small-2-24b`와 공유한다.** 팀
+    # `experiments/2x2/config/models_endpoints.yaml`이 granite를 8003으로 선언하고,
+    # registry는 서버가 **실제로 뜨는 자리**를 적는 곳이라 그쪽을 따랐다(#36의 8007은 본문이
+    # 밝힌 대로 임의 배정이었다). 한 프로필이 둘을 같이 쓰지는 않지만(b3prime_balanced에
+    # devstral 없음 / local_balanced에 granite 없음) **한 포트에 두 서버를 동시에 못 띄운다** —
+    # 조건을 오갈 때 서버를 갈아야 한다. `doctor`는 endpoint를 출력만 하고 중복을 검사하지
+    # 않으므로(`_endpoint_note`) 사전에 걸러 주지 않는다.
+    #
+    # **그 상태에서 조용히 틀릴 수 있는 경로가 하나 있다.** vLLM은 요청의 `model`이 서빙 중인
+    # 이름과 다르면 404를 내고 그건 `ModelGatewayError`로 죽는다 — 여기까지는 소리가 난다.
+    # 그러나 `--served-model-name`은 **순수 별칭이라 실제 가중치와의 일치를 검증하지 않는다.**
+    # 이 저장소가 그걸 이미 썼다: 2026-08-18에 Qwen3-0.6B를 `--served-model-name qwen3-4b`로
+    # 8001에 서빙했고, 그 문서가 "**별칭은 근거가 못 된다**"고 적어 뒀다
+    # (docs/experiments/2026-08-18-retrieval-atom.md). 8003에 granite를 띄우면서 이름만
+    # devstral로 붙이면 하네스는 granite의 답을 devstral의 것으로 기록하고 알아챌 방법이 없다.
+    # **기동 스크립트가 registry 키를 그대로 `--served-model-name`에 넣는 것이 유일한 방어다.**
+    endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 131072
     quantization: "bf16"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    source: "hf://ibm-granite/granite-3.3-8b-instruct@51dd4bc2ade4059a6bd87649d68aa11e4fb2529b"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
