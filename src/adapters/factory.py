@@ -422,6 +422,7 @@ def _model_client(model_key: str, config: HarnessConfig) -> ModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
+        max_tokens=config.thresholds.output_max,
         retries=config.thresholds.schema_retries,
     )
 
