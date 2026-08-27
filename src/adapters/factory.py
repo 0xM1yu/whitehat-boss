@@ -23,6 +23,11 @@ from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
 from src.adapters.sqlite_store import SqliteStateStore
+from src.adapters.tokenizer import (
+    REASON_NO_SOURCE,
+    counter_for_source,
+    counter_reason_for_source,
+)
 from src.adapters.vllm_retrieval import (
     FakeEmbeddingClient,
     FakeRerankerClient,
@@ -37,6 +42,7 @@ from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.schemas.common import Location
+from src.tokens import COUNTED_ROLES
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,25 @@ class Deps:
     # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
+    # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
+    # (글자수 근사 `len//4`)를 유지한다(D21 (b)).
+    #
+    # **`symbols_for`와 같은 모양이다** — 러너·RunContext는 `src/adapters/`를 import 하지
+    # 않으므로 `counter_for_source`를 타입이 아니라 **콜러블로** 경계를 넘겨야 한다. 러너가
+    # 역할 캡슐을 조립하기 직전에 `using_counter(counter_for_role(role))`로 켠다. 기본값이
+    # "토크나이저 없음"인 것도 `symbols_for`와 같은 의도다 — 이 필드 없이 조립돼도 옛
+    # 동작(글자수 근사)이 남는다.
+    counter_for_role: Callable[[str], Callable[[str], int] | None] = lambda _role: None
+    # 위 카운터가 **무엇으로 정해졌는지**를 run 산출물에 남기기 위한 스칼라 dict.
+    # 러너가 run 시작 시 그대로 `token_counter` 이벤트로 낸다.
+    #
+    # **타입이 아니라 dict인 것이 요점이다** — `IndexSummary.as_trace_fields()`와 같은
+    # 이유다. 오케스트레이터가 어댑터 타입을 import 하면 "노드는 구체 어댑터를 모른다"가
+    # 깨진다(engineering-guide.md §3, `tests/test_policy.py`가 검사한다).
+    #
+    # 기본값이 빈 dict인 것도 `symbols_for`·`counter_for_role`과 같은 의도다 — 이 필드 없이
+    # 조립된 `Deps`(단위 테스트)가 이벤트를 못 내도 파이프라인은 옛 동작 그대로 돈다.
+    counter_report: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -257,6 +282,60 @@ def build_deps(
         if role in config.profile.roles
     }
     tools = _build("tool_runner", args)
+
+    # 역할 → 실 카운터. `source`가 없거나(fake 등) 그 경로에 `tokenizer.json`이 없으면
+    # `None`이라 러너가 기본 카운터(글자수 근사)를 유지한다. `counter_for_source`가
+    # source별로 캐시하므로 러너가 후보마다 불러도 토크나이저는 run당 한 번만 로드된다.
+    # **역할 가드가 위 `clients`와 같은 조건이다.** `model_key_for`가 없는 역할에
+    # `ConfigError`를 던지는데, `_triage_one`은 scout 카운터를 `Stage.RETRIEVAL` 검사 뒤·
+    # `Stage.SCOUT` 검사 **앞**에서 부른다 — 4단계 앞에서 멈추는 run이 scout 없는 프로필로
+    # 돌면 거기서 죽는다. 지금 프로필 전부가 scout·auditor를 정의하므로 실현되지 않지만,
+    # 두 줄 위와 모양이 다른 것 자체가 다음 사람이 밟을 자리다.
+    def counter_for_role(role: str) -> Callable[[str], int] | None:
+        if role not in config.profile.roles:
+            return None
+        source = config.model_for(role).source
+        return counter_for_source(source) if source else None
+
+    def counter_report() -> dict[str, str | None]:
+        """`token_counter` 이벤트의 `data`. **필드 이름이 곧 지표의 열 이름이다.**
+
+        `IndexSummary.as_trace_fields()`와 같은 자리·같은 계약이다 — 어댑터가 스칼라 dict를
+        만들고 오케스트레이터는 그것만 받는다. 키 집합을 고정하는 것은 둘이다:
+        `tests/test_pipeline_e2e.py`의 `test_token_counter_is_traced_exactly_once_…`(trace에
+        실제로 실린 `data`를 통째로 대조)와 `tests/test_adapters.py`(여기서 만든 dict를 직접
+        대조).
+
+        **`counter_for_role`과 같은 판정에서 나온다**(`_resolve_counter`). 갈리면 러너가 켠
+        카운터와 기록이 어긋나고, 어긋난 기록은 없는 것보다 나쁘다.
+
+        **`build_deps()`에서 즉시 불린다 — 카운터가 여기서 만들어진다.** 그래서 토크나이저
+        로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._triage_one`이 아니라 조립
+        시점에 일어난다. 의도다 — `token_counter`는 **모델을 부르기 전에** 나와야 하고
+        (`orchestrator/trace.py`), 깨진 토크나이저로 도는 run은 첫 호출 전에 죽는 편이 낫다.
+        `counter_for_source`가 캐시하므로 로드 횟수는 늘지 않고, `doctor`는
+        `describe_wiring()`만 쓰므로 이 경로를 지나지 않는다.
+
+        **해석된 경로는 담지 않는다** — trace 재현성 기준이 경로 절댓값을 금지하고
+        (`orchestrator/trace.py`) HF 캐시 경로는 `Path.home()`을 지난다. `source`에 리비전이
+        박혀 있으므로 스냅샷은 그것으로 특정된다.
+        """
+        fields: dict[str, str | None] = {}
+        for role in COUNTED_ROLES:
+            source = config.model_for(role).source if role in config.profile.roles else None
+            counter = counter_for_role(role)
+            fields[f"{role}_counter"] = "real" if counter is not None else "approx"
+            fields[f"{role}_source"] = source
+            # `source`가 없으면 해석을 시도조차 안 했으므로 사유는 `no_source`다.
+            # 있는데 `None`이면 왜인지는 어댑터가 안다 — 여기서 다시 추론하지 않는다.
+            if counter is not None:
+                fields[f"{role}_reason"] = None
+            elif source:
+                fields[f"{role}_reason"] = counter_reason_for_source(source)
+            else:
+                fields[f"{role}_reason"] = REASON_NO_SOURCE
+        return fields
+
     return Deps(
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
@@ -269,6 +348,8 @@ def build_deps(
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,
+        counter_for_role=counter_for_role,
+        counter_report=counter_report(),
     )
 
 
