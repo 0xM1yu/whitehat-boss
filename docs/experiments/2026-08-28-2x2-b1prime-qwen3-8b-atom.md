@@ -40,7 +40,7 @@
 | PR #36의 프로필 넷 | **성립. 4/4 ERROR 0건** (§3) |
 | PR #36의 `output_max` 배선 | **성립.** `RunRecord.thresholds`에 `output_max: 8192.0`이 실렸다. **폭주 차단 효과는 이 run으로 판정되지 않는다**(§5) |
 | B1′ 조건 완주 | **완주.** 후보 19건 / Finding 13건 / 10분 03초 |
-| 이 run의 비교표 등재 | **제외.** `model_checksums` 전부 0 · `repo_dirty: true` |
+| 이 run의 비교표 등재 | **제외.** `model_checksums` 전부 0 · `repo_dirty: true`. **이 판정은 바뀌지 않는다** — 뒤에 checksum이 채워져도 이 run의 기록은 0이다(§10) |
 | PWN-003 정답 대조 | **불합격** (§6) |
 
 ## 2. 실험 환경
@@ -66,6 +66,11 @@ config를 파싱해 어댑터를 조립할 뿐 엔드포인트를 두드리지 �
 | `b3prime_balanced` | **8006 / 8003 / 8001** | 0 |
 
 넷 다 WARN은 같은 둘이다 — `benchmark 미측정` · `model checksum 자리표시자`.
+
+> **checksum WARN은 이후 해소됐다.** 이 표는 `eb0e30c` 시점의 출력이다. PR #36이
+> `ee1d93b`로 세 모델의 checksum을 실측해 넣은 뒤 같은 명령이
+> `[OK   ] 실서빙 역할의 model checksum이 모두 채워져 있다`를 낸다. `benchmark 미측정`
+> WARN은 그대로다 — `measured_at`이 셋 다 아직 `null`이다.
 
 ### 근거 로그
 
@@ -225,7 +230,8 @@ config를 파싱해 어댑터를 조립할 뿐 엔드포인트를 두드리지 �
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| `model_checksums` | **PR #36이 세 모델을 0으로 등록했다** | ATOM에서 `tools/model_checksum.py` |
+| `model_checksums` | **이 run 시점에 PR #36이 세 모델을 0으로 등록한 상태였다.** 이 칸은 영구히 미측정이다 — 지나간 run의 기록은 뒤에 못 채운다 | **앞으로의 run은 채워진다** — `ee1d93b`가 세 값을 실측해 넣었다(§10) |
+| `benchmark` (`tok_s`·`mem_gb_ctx8k`) | 세 모델 다 `measured_at: null` | `bench` 실행 |
 | 단독 `0.15` · 동거 `0.25` | 시도하지 않았다 | 각 1회 기동 |
 | `b3prime_balanced` 실행 | 세 서버를 동시에 안 띄웠다 | 8006·8003·8001 동시 기동 |
 | 오탐률 | benign 표본을 안 돌렸다 | `blind/BENIGN-*` 투입 |
@@ -244,9 +250,10 @@ config를 파싱해 어댑터를 조립할 뿐 엔드포인트를 두드리지 �
 
 | 우선순위 | 항목 | 현황 |
 | --- | --- | --- |
-| 높음 | **PR #36: 새 모델 3종 checksum이 0** — 이 PR이 개통한 프로필로 돈 run이 전부 비교표 밖에 쌓인다. 실제로 이 run이 그렇게 됐다 | `tools/model_checksum.py` 미실행 |
-| 중간 | **PR #36 브랜치가 `origin/main`보다 뒤처져 있다** — PR #38(`.claude/*.md` 무시) 미반영. 점 두 개 diff의 `.gitignore \| 6 ----`가 그 증상이고 PR #36의 변경이 아니다(`git log origin/main..HEAD -- .gitignore` 빈 출력) | 미착수 |
-| 중간 | **`docs/evaluation.md` §2.3 규칙 2가 PR #36과 어긋난다** — "조건 비교에 쓰는 실서빙 프로필(`b1_single`·`local_balanced`) … ATOM의 런타임인 `podman`"이라 적는데, 새 비교 프로필 넷은 `docker`이고 podman 전제는 같은 PR이 반증했다 | PR #36 브랜치에서 수정 |
+| — | **PR #36: 새 모델 3종 checksum이 0** — 이 PR이 개통한 프로필로 돈 run이 비교표 밖에 쌓인다고 적었던 항목 | **닫힘(`ee1d93b`).** `qwen3-8b-bf16` `sha256:2dcba233…` · `foundation-sec-8b` `sha256:2f37c76b…` · `granite-3.3-8b` `sha256:d96a17ee…`가 실측으로 들어갔고 `config/checksums/`에 세 파일이 생겼다. ATOM `doctor --profile b3prime_balanced`가 `[OK] 실서빙 역할의 model checksum이 모두 채워져 있다`를 낸다. **이 run(`run_20260827_0005`)에는 소급되지 않는다** — 기록은 0인 채로 남고 비교표 제외도 그대로다 |
+| — | **PR #36 브랜치가 `origin/main`보다 뒤처져 있다** | **닫힘(`ee8919f`).** `git merge-base --is-ancestor origin/main <PR36 HEAD>` 통과 |
+| — | **`docs/evaluation.md` §2.3 규칙 2가 PR #36과 어긋난다** | **닫힘(`b1505a3`, PR #36).** 목록을 여섯으로 고치고 근거를 "선언한 런타임이 그 장비에 있다"로 바꿨다. 깨진 절 참조 `§7 위험 #4` → `§5 #4` 3곳도 함께 고쳤다 |
+| 높음 | **세 모델의 `benchmark`가 미측정이다**(`measured_at: null`) — checksum이 채워져도 `doctor`의 `benchmark 미측정` WARN은 남고, `production: true`로 올릴 수 없다 | `bench` 미실행 |
 | 중간 | `.gitignore`에 `*.log` — `origin/main`에도 없다 | 미착수 |
 | 중간 | **`run_matrix.yaml` §9의 `b3prime_large_profile: TODO_local_large`** — B3′-large 프로필 이름 미확정 | 미착수 |
 | 중간 | **`served_name` 축 대조** — `run_matrix.yaml`은 `qwen3-8b`의 `served_name`을 `qwen3-8b`로 적는데 PR #36 registry는 `qwen3-8b-bf16`으로 서빙한다. 같은 가중치를 가리키지만 이름이 다르다 | 미확인 |
