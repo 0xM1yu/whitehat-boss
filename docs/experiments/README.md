@@ -29,6 +29,7 @@
 | 2026-08-25 | [심볼 542건 전량 완주](2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | @danielcho02 |
 | 2026-08-25 | [NVFP4 실서빙 검증](2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | @danielcho02 |
 | 2026-08-26 | [배선 수정 후 재측정](2026-08-26-pipeline-zlib542-remeasure-atom.md) | 8단계 `gate_eval` 첫 8건(D26 닫힘), 원인은 build `-I` 누락, `critic_skipped` 첫 관측, 실 토크나이저 무동작 판정 | `atom` | @danielcho02 |
+| 2026-08-28 | [track_a PWN-003 첫 완주](2026-08-28-pipeline-track-a-pwn003-atom.md) | b1_single 첫 완주, track_a 데이터셋 첫 투입, 정답 대조 불합격, 공백 폭주와 xgrammar 해소, 30B `util 0.28` 실측 | `atom` | @danielcho02 |
 
 ## 파일 이름
 
@@ -337,6 +338,19 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 `/sys/fs/cgroup/user.slice/user-1004.slice/memory.current`를 읽는다.
 **24 GiB 근처면 계상, 4~5 GiB면 미계상이다.**
 ([검색 보고서](2026-08-18-retrieval-atom.md) §6의 "단계별 서빙 34 GiB 실측"이 이 측정이다.)
+
+> **2026-08-28 해소 — 미계상이다.** util **0.28**로 30B를 띄운 채 읽었다:
+> `memory.current` **13,790,609,408 = 12.84 GiB** · `memory.high` **`max`** ·
+> `memory.max` **68,719,476,736 = 64 GiB**. 같은 시각 vLLM 자기 회계는 **35.66 GiB**,
+> `nvidia-smi`는 **32.2 GiB**다. **vLLM 프로세스가 이 slice 안에 있다는 것도 함께 확인했다** —
+> `/proc/78448/cgroup` = `0::/user.slice/user-1004.slice/session-18873.scope`. util 0.28의
+> 계상 기대값은 33 GiB 이상인데 실측이 그 3분의 1이고, 가중치 17.99 GiB와 미리 잡은 KV
+> 12.75 GiB는 idle 여부와 무관하게 상주하므로 **계상됐다면 보였어야 한다.**
+> **따라 나오는 것**: `memory.max`(64 GiB)도 `memory.high`도 **GPU 쪽 할당을 못 막는다.**
+> 34 GiB 약속을 지키는 수단은 `--gpu-memory-utilization` 값 자체뿐이고, 확정 #4의
+> "cgroup과 다른 축"이라는 서술이 실측으로 확인됐다.
+> **남는 것**: 12.84 GiB의 구성(어느 프로세스 몫인지)과 추론 **중**의 값은 안 쟀다.
+> 근거는 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §2에 있다.
 
 ### #2 세 기동 조건을 한 조합으로 통합할 수 있는가
 
