@@ -184,9 +184,15 @@ _RETRIEVERS: dict[str, _Wiring] = {
     ),
 }
 
-# docker·singularity·podman은 **같은 클래스**다. 로컬은 docker, Slurm는 Docker 데몬 접근이
-# 없어 singularity, ATOM은 데몬 접근도 singularity도 없어 podman — 계약과 판정은 하나이고
-# 명령 조립만 갈린다. 그래서 `describe_wiring()`의 구현 이름만으로는 셋이 구분되지 않는다.
+# docker·singularity·podman은 **같은 클래스**다. 로컬과 ATOM은 docker, Slurm는 Docker 데몬
+# 접근이 없어 singularity — 계약과 판정은 하나이고 명령 조립만 갈린다.
+#
+# (이 주석은 "ATOM은 데몬 접근도 singularity도 없어 podman"이라고 적고 있었다. 그
+# 2026-08-17 실측이 2026-08-21에 반증됐다 — ATOM에 docker 29.2.1과 podman 4.9.3이 함께
+# 있다. 프로필 선언값도 2026-08-28에 docker로 되돌렸다: ADR 0005 마지막 절.
+# `src/config.py`의 같은 반증 서술과 짝이다.)
+#
+# 그래서 `describe_wiring()`의 구현 이름만으로는 셋이 구분되지 않는다.
 # `doctor`가 런타임 이름을 따로 출력하는 이유다(`cli._check_tool_runtime`).
 _TOOL_RUNNERS: dict[str, _Wiring] = {
     "fake": _Wiring(
