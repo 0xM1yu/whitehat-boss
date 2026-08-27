@@ -194,7 +194,7 @@ models:
     context_limit: 65536
     quantization: "bf16"
     license: "Llama-3.1-Community + Apache-2.0 (Cisco changes)"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    checksum: "sha256:2f37c76bf414fccdb0f7b8c5b25e32d855f30c5bf60d12fc7ba0dc6743748c81"
     source: "hf://fdtn-ai/Foundation-Sec-1.1-8B-Instruct@243b27655e01c87cc04fdb88632be7cd9e55ac1f"
     prompt_template_version: "v1"
     fallback: null
@@ -231,7 +231,7 @@ models:
     context_limit: 131072
     quantization: "bf16"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    checksum: "sha256:d96a17eedb0b038c03f1bcfdde903a35aeae1ddf57a7e7165033812ac2a99b51"
     source: "hf://ibm-granite/granite-3.3-8b-instruct@51dd4bc2ade4059a6bd87649d68aa11e4fb2529b"
     prompt_template_version: "v1"
     fallback: null
@@ -267,7 +267,7 @@ models:
     context_limit: 40960
     quantization: "bf16"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    checksum: "sha256:2dcba23341ad4d09e1cbf09ca4fabb0638b716f267eb643a046d744a0e53f097"
     source: "hf://Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218"
     prompt_template_version: "v1"
     fallback: null
