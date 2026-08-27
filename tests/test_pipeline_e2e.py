@@ -52,6 +52,9 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     if "candidate_max" in overrides:
         thresholds = config.thresholds.transition(candidate_max=overrides.pop("candidate_max"))
         config = config.transition(thresholds=thresholds)
+    if "critic_top_n" in overrides:
+        thresholds = config.thresholds.transition(critic_top_n=overrides.pop("critic_top_n"))
+        config = config.transition(thresholds=thresholds)
     before = overrides.pop("before", None)
     target = overrides.pop("target", TARGET)
     run_dir = tmp_path / name / "run_20260901_0001"
@@ -1194,6 +1197,41 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
 
     assert not any("candidate_max" in warning for warning in result.warnings)
     assert "분석하지 못한 대상" not in result.report.render()
+    # 절단이 없는 run에는 `critic_skipped`도 없다 — 이벤트 부재가 곧 "안 잘렸다"이다.
+    assert not any("critic_top_n" in warning for warning in result.warnings)
+    assert "잘린 Finding" not in result.report.render()
+
+
+def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path: Path) -> None:
+    """7단계 절단도 `candidate_max`와 같은 대우를 받는다 (D26 (b)).
+
+    여기서는 target 절단보다 한 겹 더 나쁘다. F-9(`repro_spec_missing`)가
+    `hypothesized → hypothesized`라 7단계에 **간** 건과 **못 간** 건이 리포트의 같은
+    묶음에 나란히 찍힌다 — 대상이 사라져서 안 보이는 것이 아니라 **전량을 본 것처럼**
+    읽힌다(실측 `run_20260825_0001`: 승격 44 · 선별 8 · 절단 36).
+    """
+    result, trace_path = _run(tmp_path, name="critic_cut", before=_with_index(), critic_top_n=1)
+
+    events = _events(trace_path)
+    skipped = _of(events, "critic_skipped")
+    promoted = [
+        e for e in _of(events, "transition") if e["data"].get("reason") == "promoted_to_critic"
+    ]
+
+    assert skipped, "절단이 있는데 이벤트가 없으면 D26 (b) 이전으로 돌아간 것이다"
+    assert len(skipped) == len(promoted) - 1  # critic_top_n=1
+    # stage 7이 분할로 닫힌다: 못 올라간 건 + 올라간 건 = 승격한 건.
+    assert len(skipped) + len(_of(events, "gate_eval", stage=7)) == len(promoted)
+    assert {e["data"]["reason"] for e in skipped} == {"over_critic_top_n"}
+    # 무엇이 잘렸는지가 남는다. 수만 남기면 목록을 사후에 복원할 수 없다.
+    assert all(e["subject_id"] for e in skipped)
+    # 사용자가 run 결과로 읽는 두 곳.
+    assert any("critic_top_n" in warning for warning in result.warnings)
+    # 앞머리에 잘린 사유가, 괄호에 **상한 값**이 찍혀야 한다. 이름만 적으면 러너의 run
+    # 경고(`critic_top_n(1)`)와 같은 사실을 다르게 말하게 된다.
+    rendered = result.report.render()
+    assert "`critic_top_n`으로 잘린 Finding" in rendered
+    assert "(상한 1 ·" in rendered
 
 # --- 11. 후보 하나의 실패가 run 전체를 죽이지 않는다 (4-2) --------------------
 #
