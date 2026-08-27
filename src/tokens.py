@@ -18,6 +18,15 @@
 비교가 깨진다 — 그래서 **지금 켜진 카운터가 하나여야 한다**는 것이 이 모듈의 존재 이유다.
 토크나이저 파일이 없으면(CI·dev) 기본 카운터가 유효하다.
 
+**⚠ `expand()`가 배선되는 날 `using_counter` 밖에서 재검증이 터진다.** `HarnessModel.
+transition()`은 `model_copy(update=...)`와 달리 **전체 모델을 재검증**하는데,
+`Retriever.expand()`가 `capsule.transition(sections=[...])`을 부르므로 **기존 섹션까지 전부
+다시 검증된다.** 실 토크나이저로 만든 섹션을 기본 카운터 아래에서 재검증하면
+`CapsuleSection._tokens_match_body`가 안 맞아 `ValueError`가 난다 — 조립과 검증이 같은
+카운터를 봐야 한다는 이 모듈의 불변식이 확장 경로에서 깨지는 자리다. **지금은 안 터진다**:
+러너의 `retrieval.expand()` 호출 지점이 0개다(D20 관측 ③). 배선하는 사람이 확장도
+`using_counter(...)` 안에서 돌려야 한다.
+
 **아직 모으지 않은 것이 셋 있다**: `fake_model._CHARS_PER_TOKEN`·
 `vllm_retrieval._CHARS_PER_TOKEN`·`bench.CHARS_PER_TOKEN`. 그 셋은 캡슐 토큰 회계가
 아니라 각각 프롬프트 usage·검색 usage·벤치 채움 길이를 재므로 이 불변식과 묶여 있지

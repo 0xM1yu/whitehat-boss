@@ -16,6 +16,7 @@ from tokenizers import Tokenizer, models, pre_tokenizers
 
 from src.adapters.factory import build_deps
 from src.adapters.tokenizer import (
+    clear_counter_cache,
     counter_for_source,
     counter_from_tokenizer,
     counter_reason_for_source,
@@ -165,6 +166,26 @@ def test_build_deps_reports_real_when_the_tokenizer_file_is_there(tmp_path: Path
     # 같은 프로필의 auditor는 fake다 — 한 run 안에서 역할별로 갈린다는 것이 요점이다.
     assert deps.counter_report["auditor_counter"] == "approx"
     assert deps.counter_report["auditor_reason"] == "no_source"
+
+
+def test_cache_can_be_cleared_when_the_file_appears(tmp_path: Path) -> None:
+    """캐시를 비우지 않으면 없다가 생긴 파일을 못 본다 — 그 손잡이가 있어야 한다.
+
+    지금 테스트가 안전한 것은 `tmp_path`가 매번 달라 키가 겹치지 않아서이고, 그것은 계약이
+    아니라 우연이다. 같은 `source`를 두 번 물어 그 우연에 기대지 않는지 확인한다.
+    """
+    source = "hf://Org/Name@rev1"
+    assert counter_for_source(source, hub_cache=tmp_path) is None  # 아직 없다
+
+    tokenizer = Tokenizer(models.WordLevel(vocab={"a": 0, "[UNK]": 1}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    snapshot = tmp_path / "models--Org--Name" / "snapshots" / "rev1"
+    snapshot.mkdir(parents=True)
+    tokenizer.save(str(snapshot / "tokenizer.json"))
+
+    assert counter_for_source(source, hub_cache=tmp_path) is None  # 캐시된 옛 판정
+    clear_counter_cache()
+    assert counter_for_source(source, hub_cache=tmp_path) is not None
 
 
 def test_counter_and_reason_come_from_one_judgement(tmp_path: Path) -> None:
