@@ -30,6 +30,7 @@
 | 2026-08-25 | [NVFP4 실서빙 검증](2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | @danielcho02 |
 | 2026-08-26 | [배선 수정 후 재측정](2026-08-26-pipeline-zlib542-remeasure-atom.md) | 8단계 `gate_eval` 첫 8건(D26 닫힘), 원인은 build `-I` 누락, `critic_skipped` 첫 관측, 실 토크나이저 무동작 판정 | `atom` | @danielcho02 |
 | 2026-08-28 | [track_a PWN-003 첫 완주](2026-08-28-pipeline-track-a-pwn003-atom.md) | b1_single 첫 완주, track_a 데이터셋 첫 투입, 정답 대조 불합격, 공백 폭주와 xgrammar 해소, 30B `util 0.28` 실측 | `atom` | @danielcho02 |
+| 2026-08-28 | [2×2 B1′ 첫 완주 (PR #36 검증)](2026-08-28-2x2-b1prime-qwen3-8b-atom.md) | PR #36 프로필 4/4 doctor 통과, 8B bf16이 KV cache 13.82 GiB로 10분 03초 완주, `output_max` 인과는 미성립(30B가 그 키 없이 완주), 정답 대조 불합격 | `atom` | @danielcho02 |
 
 ## 파일 이름
 
