@@ -8,7 +8,8 @@ architecture.md §3의 9단계는 "규칙 기반 중복 제거, 템플릿 리포
 일어난다(disclosure-policy.md). 이 노드는 상태를 바꾸지 않고 읽기만 한다.
 """
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 
 from src.orchestrator.context import RunContext
 from src.orchestrator.stages import Stage
@@ -22,6 +23,14 @@ _STATE_ORDER = (
     FindingState.HYPOTHESIZED,
     FindingState.QUEUED,
 )
+
+# 등급 대표 우선순위 (D35). 값이 작을수록 높은 등급이라 dedupe에서 대표로 남는다.
+# 문자열 비교("E10" > "E3" 같은 함정)를 피하려 명시 순서로 둔다.
+_GRADE_ORDER = {"E4": 0, "E3": 1, "E2": 2, "E1": 3, "E0": 4}
+# 등급을 못 받은 Finding의 기본값. `evidence_refs`가 없으면 게이트도 E0을 준다.
+_DEFAULT_GRADE = "E0"
+# 요약 줄에 등급을 높은 것부터 적는다 (D36).
+_GRADE_DISPLAY_ORDER = ("E4", "E3", "E2", "E1", "E0")
 
 
 @dataclass(frozen=True)
@@ -54,9 +63,25 @@ class Report:
     # config 없이 단독으로 읽히는 문서라 여기 없으면 "36이 상한 8의 결과인지 80의 결과인지"를
     # 이 파일만 보고는 알 수 없다.
     critic_top_n: int = 0
+    # finding_id → 등급 값("E3" 등) (D35·D36). **러너가 `gate.evaluate`로 계산해 넘긴다.**
+    # Finding에 등급 필드가 없어 등급은 게이트 판정이라 trace에만 있었고, 그래서 이 노드가
+    # 대표를 고를 때 등급을 못 봐 E3가 사라졌고(D35) 최종 산출물이 등급을 못 실었다(D36).
+    # 노드가 다시 매기지 않고 러너 값을 받는 것은 `deferred`·`critic_deferred`와 같은 이유다.
+    grades: dict[str, str] = field(default_factory=dict)
+
+    def _grade_of(self, finding: Finding) -> str:
+        return self.grades.get(finding.finding_id, _DEFAULT_GRADE)
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
+        # **등급 분포를 맨 위에 싣는다 (D36).** 이 run의 성과(예: 8단계 E3 8건)가 여기
+        # 없으면 리포트만 읽는 사람은 trace를 파야 그것을 본다 — F-9가 상태를 안 바꿔
+        # E3가 `queued`로 찍히기 때문이다.
+        if self.findings:
+            dist = Counter(self._grade_of(f) for f in self.findings)
+            parts = [f"{g} {dist[g]}건" for g in _GRADE_DISPLAY_ORDER if dist[g]]
+            if parts:
+                lines += [f"등급 분포: {' · '.join(parts)}", ""]
         if self.duplicates:
             lines += [f"중복 제거: {self.duplicates}건", ""]
         if self.deferred or self.dropped:
@@ -81,23 +106,35 @@ class Report:
             if not group:
                 continue
             lines += [f"## {state.value} ({len(group)}건)", ""]
-            lines += [_entry(finding) for finding in group]
+            lines += [_entry(finding, self._grade_of(finding)) for finding in group]
             lines.append("")
         if not self.findings:
             lines += ["보고할 Finding이 없다.", ""]
         return "\n".join(lines)
 
 
-def dedupe(findings: list[Finding]) -> tuple[list[Finding], int]:
-    """같은 CWE·같은 sink 경로는 한 건으로 본다.
+def dedupe(
+    findings: list[Finding], grades: dict[str, str] | None = None
+) -> tuple[list[Finding], int]:
+    """같은 CWE·같은 source→sink는 한 건으로 본다.
 
-    `finding_id` 순서로 처음 것을 남긴다 — 어느 것이 남는지가 실행마다 달라지면
-    리포트를 실행 간에 대조할 수 없다.
+    **대표는 등급이 높은 것을 남긴다 (D35).** 예전에는 `finding_id` 오름차순으로 처음
+    것을 남겨 등급을 안 봤고, 그래서 E3가 E0/E2 대표에 밀려 리포트에서 사라졌다(실측
+    6건). 등급 우선으로 바꿔도 동급은 `finding_id`로 가르므로 **재현성은 그대로다** —
+    어느 것이 남는지가 실행마다 흔들리지 않는다.
+
+    **키에 source 심볼도 넣는다 (D35).** sink만 보면 저장소 전역에서 `memcpy`를 쓰는
+    서로 다른 함수가 같은 CWE로 한 건이 됐다 — source→sink 쌍이라야 다른 함수가 안 뭉친다.
     """
+    grades = grades or {}
     kept: list[Finding] = []
-    seen: set[tuple[str, str]] = set()
-    for finding in sorted(findings, key=lambda f: f.finding_id):
-        key = (finding.cwe, _sink(finding))
+    seen: set[tuple[str, str, str]] = set()
+    ordered = sorted(
+        findings,
+        key=lambda f: (_GRADE_ORDER.get(grades.get(f.finding_id, _DEFAULT_GRADE), 4), f.finding_id),
+    )
+    for finding in ordered:
+        key = _dedupe_key(finding)
         if key in seen:
             continue
         seen.add(key)
@@ -113,15 +150,18 @@ def run(
     dropped: int = 0,
     critic_deferred: int = 0,
     critic_top_n: int = 0,
+    grades: dict[str, str] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
     `deferred`·`dropped`·`critic_deferred`는 러너가 센 값을 그대로 받는다 — 노드가 다시
     세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로 받는다:
-    노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다.
+    노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도 같다 —
+    등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시 매기지 않는다.
     """
+    grades = grades or {}
     with ctx.stage(Stage.REPORT):
-        kept, duplicates = dedupe(findings)
+        kept, duplicates = dedupe(findings, grades)
     return Report(
         run_id=ctx.run_id,
         findings=tuple(kept),
@@ -130,16 +170,25 @@ def run(
         dropped=dropped,
         critic_deferred=critic_deferred,
         critic_top_n=critic_top_n,
+        grades=dict(grades),
     )
 
 
-def _sink(finding: Finding) -> str:
-    """경로의 마지막 심볼. 경로가 없으면 제목으로 대신한다."""
-    return finding.path[-1].symbol if finding.path else finding.title
+def _dedupe_key(finding: Finding) -> tuple[str, str, str]:
+    """(CWE, source 심볼, sink 심볼). 경로가 없으면 제목으로 양쪽을 대신한다 (D35).
+
+    sink만이 아니라 source도 넣는 것이 요점이다 — 같은 sink·같은 CWE라도 그 경로가 시작된
+    함수가 다르면 다른 Finding이다.
+    """
+    if finding.path:
+        return (finding.cwe, finding.path[0].symbol, finding.path[-1].symbol)
+    return (finding.cwe, finding.title, finding.title)
 
 
-def _entry(finding: Finding) -> str:
+def _entry(finding: Finding, grade: str) -> str:
+    # **앞머리에 등급을 박는다 (D36).** state(`queued` 등)만 찍으면 E3에 도달한 Finding도
+    # `queued`로 보인다 — F-9가 상태를 안 바꾸기 때문이다. 등급이 이 run의 성과다.
     return (
-        f"- **{finding.title}** ({finding.cwe}, confidence {finding.confidence:.2f})\n"
+        f"- **[{grade}] {finding.title}** ({finding.cwe}, confidence {finding.confidence:.2f})\n"
         f"  - id: `{finding.finding_id}` · 근거 {len(finding.evidence_refs)}건"
     )

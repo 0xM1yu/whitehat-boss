@@ -82,7 +82,7 @@ from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
-from src.orchestrator import state_machine
+from src.orchestrator import gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import (
@@ -554,6 +554,24 @@ def run_pipeline(
         )
 
     findings = list(state.findings.values())
+    # **등급을 리포트에 넘긴다 (D35·D36).** Finding에 등급 필드가 없어 등급은 게이트
+    # 판정이라 trace에만 있었고, 그래서 리포트가 대표를 고를 때 등급을 못 보고(E3 삭제)
+    # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다 — 러너가
+    # 가진 evidences·decisions·missings가 최종 등급을 결정한다. `ctx.evaluate_gate`가 아니라
+    # 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
+    #
+    # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
+    # 들어가고, 게다가 Fake auditor에선 E4가 원리상 도달 불가다(D38). E4가 실제로 열리면
+    # (실서빙 auditor) 그 근거를 여기로 모으는 일이 따라온다.
+    grades = {
+        f.finding_id: gate.evaluate(
+            f,
+            state.evidences.get(f.finding_id, ()),
+            state.decisions.get(f.finding_id, ()),
+            state.missings.get(f.finding_id, ()),
+        ).grade.value
+        for f in findings
+    }
     rendered = report.run(
         ctx,
         findings=findings,
@@ -561,6 +579,7 @@ def run_pipeline(
         dropped=state.dropped,
         critic_deferred=state.critic_deferred,
         critic_top_n=config.thresholds.critic_top_n,
+        grades=grades,
     )
     finished = state_machine.finish_run(
         record,
