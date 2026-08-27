@@ -342,6 +342,45 @@ def test_critic_selection_is_capped_by_config(ctx: RunContext) -> None:
     assert [f.finding_id for f in selected] == sorted(f.finding_id for f in selected)
 
 
+def test_critic_truncation_leaves_one_event_per_cut_finding(ctx: RunContext) -> None:
+    """`critic_top_n` 절단이 trace에 남는다 (D26 (b)).
+
+    실측 `run_20260825_0001`은 승격 44 · 선별 8 · **절단 36**인데 그 36건이 `transition`
+    reason 목록에도 trace 어느 이벤트에도 없었다 — 슬라이스가 이벤트를 안 남겨서다.
+
+    state를 섞는 것은 `has_repro_spec`이 실제로 갈리는지 보기 위해서다. `_finding`이
+    `repro_spec`을 state에 묶어 두어 HYPOTHESIZED만으로는 그 필드가 **항상 False**이고,
+    그러면 필드가 죽어 있어도 초록불이 난다.
+    """
+    states = (FindingState.HYPOTHESIZED, FindingState.VALIDATED)
+    findings = [_finding(f"find_{i:04d}", confidence=0.5, state=states[i % 2]) for i in range(20)]
+    limit = ctx.config.thresholds.critic_top_n
+
+    selected = critic.select(ctx, findings)
+    skipped = [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_SKIPPED]
+
+    assert len(skipped) == len(findings) - limit
+    # 수만 세면 엉뚱한 건이 잘려도 초록불이다. 잘린 집합이 선별의 여집합이어야 한다.
+    assert {e.subject_id for e in skipped} == {f.finding_id for f in findings} - {
+        f.finding_id for f in selected
+    }
+    assert {e.stage for e in skipped} == {int(Stage.CRITIC)}
+    assert {e.data["reason"] for e in skipped} == {"over_critic_top_n"}
+    # 선별 키와 8단계 진입 조건이 함께 남아야 D26 (a)를 trace만으로 판정할 수 있다.
+    by_id = {f.finding_id: f for f in findings}
+    assert all(e.data["confidence"] == by_id[e.subject_id].confidence for e in skipped)
+    assert {e.data["has_repro_spec"] for e in skipped} == {True, False}
+
+
+def test_critic_selection_within_the_cap_records_nothing(ctx: RunContext) -> None:
+    """이벤트 부재가 곧 "안 잘렸다"이다 — `retrieval_truncated`와 같은 계약."""
+    findings = [_finding(f"find_{i:04d}") for i in range(ctx.config.thresholds.critic_top_n)]
+
+    critic.select(ctx, findings)
+
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_SKIPPED]
+
+
 # --- 8~9단계 ----------------------------------------------------------------
 
 

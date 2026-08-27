@@ -421,6 +421,10 @@ class _Accumulator:
     # 호출자가 그 수를 읽어 경고와 리포트에 올려야 한다.
     deferred: int = 0
     dropped: int = 0
+    # 7단계에 못 올라간 Finding 수 (D26 (b)). **위 둘과 단위가 다르다** — `deferred`·
+    # `dropped`는 target을 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
+    # 분모가 섞인다(`target_skipped`를 `critic_skipped`와 나눈 것과 같은 이유).
+    critic_deferred: int = 0
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -539,9 +543,25 @@ def run_pipeline(
             f"target {state.dropped}건을 후보 단위 호출 실패로 버렸다. "
             f"사유는 trace의 target_skipped와 그 target의 model_call에 있다"
         )
+    # **7단계 절단도 같은 자리에 올린다 (D26 (b)).** 위 두 경고의 논거가 그대로 적용되는데,
+    # 여기서는 한 겹 더 나쁘다 — target 절단은 대상이 사라져서 안 보이지만 Finding 절단은
+    # F-9가 상태를 안 바꿔서 **44줄이 멀쩡히 찍힌 채** 전량을 본 것처럼 읽힌다.
+    if state.critic_deferred:
+        warnings.append(
+            f"Finding {state.critic_deferred}건을 critic_top_n"
+            f"({config.thresholds.critic_top_n})로 잘라 7단계에 올리지 않았다. "
+            f"trace의 critic_skipped가 목록이다"
+        )
 
     findings = list(state.findings.values())
-    rendered = report.run(ctx, findings=findings, deferred=state.deferred, dropped=state.dropped)
+    rendered = report.run(
+        ctx,
+        findings=findings,
+        deferred=state.deferred,
+        dropped=state.dropped,
+        critic_deferred=state.critic_deferred,
+        critic_top_n=config.thresholds.critic_top_n,
+    )
     finished = state_machine.finish_run(
         record,
         finished_at=max(now(), started_at),
@@ -570,7 +590,12 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
     _triage_all(ctx, plan, state, last)
     if last < Stage.CRITIC:
         return
-    for finding in critic.select(ctx, state.in_state(FindingState.HYPOTHESIZED)):
+    # **절단 수를 노드가 아니라 여기서 센다.** 노드가 세고 러너가 또 세면 경고와 리포트가
+    # 다른 수를 말할 수 있다(report.py `run()`의 `deferred`·`dropped`와 같은 처리).
+    promoted = state.in_state(FindingState.HYPOTHESIZED)
+    selected = critic.select(ctx, promoted)
+    state.critic_deferred = len(promoted) - len(selected)
+    for finding in selected:
         after, decision = critic.run(
             ctx,
             finding=finding,
