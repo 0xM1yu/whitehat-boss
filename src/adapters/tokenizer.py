@@ -159,6 +159,21 @@ def counter_for_source(source: str, hub_cache: Path | None = None) -> Callable[[
     return _resolve_counter(source, hub_cache)[0]
 
 
+def clear_counter_cache() -> None:
+    """`_resolve_counter`의 캐시를 비운다. **테스트가 쓰라고 있는 손잡이다.**
+
+    캐시에 상한이 없고 프로세스 수명 내내 `Tokenizer`를 붙잡는다 — run당 1회 로드라는
+    목적에는 맞지만, 비우는 길이 없으면 "파일이 없다가 생겼다"를 검사할 방법이 없다.
+    지금 테스트가 안전한 것은 `tmp_path`가 매번 달라 키가 겹치지 않기 때문이고 **그것은
+    우연에 가깝다.**
+
+    덧붙임: `_resolve_counter(src)`와 `_resolve_counter(src, None)`은 `functools.cache`에서
+    **다른 키**다. 결과가 같으니 최악이 중복 로드 한 번이고 버그가 아니다 — 정규화 래퍼를
+    하나 더 두는 값이 얻는 것보다 크다고 보아 두지 않는다.
+    """
+    _resolve_counter.cache_clear()
+
+
 def counter_reason_for_source(source: str, hub_cache: Path | None = None) -> str | None:
     """실 카운터를 못 쓴 사유. 쓸 수 있으면 `None`.
 
