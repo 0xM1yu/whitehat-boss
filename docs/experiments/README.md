@@ -257,10 +257,15 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 
 **틀린 것은 배타 서술 쪽이다.** 같은 두 자리가 podman을 **유일 런타임**으로 적는다.
 
-| 어디 | 지금 문장 | 무엇과 어긋나나 |
-| --- | --- | --- |
-| [portability.md](../portability.md) §6 `atom` 행 | `podman 4.9.3` **(rootless. Docker 데몬 접근·singularity 둘 다 없음)** | `--tool-runner docker`가 ATOM에서 **세 번 실제로 돌았다** |
-| [profiles.yaml](../../config/profiles.yaml) `local_balanced` 주석 | "ATOM에는 **podman만 있으므로**(2026-08-17 실측)" | 위와 같다 |
+| 어디 | 그때 문장 | 무엇과 어긋났나 | 지금 |
+| --- | --- | --- | --- |
+| [portability.md](../portability.md) §6 `atom` 행 | `podman 4.9.3` **(rootless. Docker 데몬 접근·singularity 둘 다 없음)** | `--tool-runner docker`가 ATOM에서 **세 번 실제로 돌았다** | **정정됨** — `docker 29.2.1 + podman 4.9.3` 공존으로 고치고 2026-08-21 실측과 이 run들을 근거로 달았다 |
+| [profiles.yaml](../../config/profiles.yaml) `local_balanced` 주석 | "ATOM에는 **podman만 있으므로**(2026-08-17 실측)" | 위와 같다 | **반증 표시함, 값은 유지** — `tool_runner: podman`을 지금 갈면 그 값으로 이미 돈 run과 digest가 갈린다(§5 #4). B3'-large 프로필 확정 시 함께 옮긴다 |
+
+**2026-08-28에 앞의 둘을 정리했다.** 같은 반증을 들고 있던 `src/config.py`의
+`AdapterSelection.tool_runner` 주석도 함께 고쳤고, 새 2x2 프로필 넷은 `docker`로 선언했다.
+남은 것은 `local_balanced`·`b1_single`의 `podman` **선언값** 하나이고, 그것은 기록과 갈리는
+변경이라 B3'-large 프로필이 정해질 때 처리한다.
 
 **근거는 세 run의 도구 실행이다.** 셋 다 `--device atom --tool-runner docker`이고 도구가
 실제로 돌아 `tool_images`가 채워졌다.
