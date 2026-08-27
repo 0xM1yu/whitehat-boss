@@ -452,6 +452,49 @@ def test_report_dedupes_and_does_not_promote_to_reported(ctx: RunContext) -> Non
     assert proven.title in result.render()
 
 
+def test_dedupe_keeps_the_highest_grade_representative() -> None:
+    """중복에서 등급 높은 것을 남긴다 (D35). 예전엔 finding_id 오름차순이라 E3가 낮은
+    등급 대표에 밀려 리포트에서 사라졌다 — 실측 6건. id가 더 커도 등급이 이겨야 한다."""
+    low = _finding("find_0001")  # 같은 source→sink → 같은 dedupe 키
+    high = _finding("find_0009")
+
+    kept, dups = report.dedupe([low, high], {"find_0001": "E0", "find_0009": "E3"})
+
+    assert dups == 1
+    assert [f.finding_id for f in kept] == ["find_0009"]  # 등급이 id를 이긴다
+
+
+def test_dedupe_does_not_merge_different_source_functions() -> None:
+    """같은 CWE·같은 sink라도 source가 다르면 다른 건이다 (D35). 예전 키는 sink만 봐서
+    전역에서 memcpy를 쓰는 서로 다른 함수가 한 건으로 합쳐졌다."""
+    a = _finding("find_0001")  # recv_request → memcpy
+    b = a.model_copy(
+        update={
+            "finding_id": "find_0002",
+            "path": [
+                PathStep(step=PathStepKind.SOURCE, symbol="handle_packet"),
+                PathStep(step=PathStepKind.SINK, symbol="memcpy"),
+            ],
+        }
+    )
+
+    kept, dups = report.dedupe([a, b], {})
+
+    assert dups == 0
+    assert {f.finding_id for f in kept} == {"find_0001", "find_0002"}
+
+
+def test_render_shows_grade_and_distribution(ctx: RunContext) -> None:
+    """리포트가 등급을 싣는다 (D36). 예전엔 state만 찍어 E3에 도달한 Finding도 `queued`로
+    보였고, run의 성과(E3 건수)를 보려면 trace를 파야 했다."""
+    e3 = _finding("find_0001", state=FindingState.VALIDATED)
+
+    rendered = report.run(ctx, findings=[e3], grades={"find_0001": "E3"}).render()
+
+    assert "[E3]" in rendered  # 각 항목 앞머리에 등급
+    assert "등급 분포: E3 1건" in rendered  # 맨 위 요약
+
+
 # --- 프롬프트 계약 ----------------------------------------------------------
 
 
