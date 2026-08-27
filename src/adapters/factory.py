@@ -301,10 +301,20 @@ def build_deps(
         """`token_counter` 이벤트의 `data`. **필드 이름이 곧 지표의 열 이름이다.**
 
         `IndexSummary.as_trace_fields()`와 같은 자리·같은 계약이다 — 어댑터가 스칼라 dict를
-        만들고 오케스트레이터는 그것만 받는다. `tests/test_trace.py`가 키 집합을 고정한다.
+        만들고 오케스트레이터는 그것만 받는다. 키 집합을 고정하는 것은 둘이다:
+        `tests/test_pipeline_e2e.py`의 `test_token_counter_is_traced_exactly_once_…`(trace에
+        실제로 실린 `data`를 통째로 대조)와 `tests/test_adapters.py`(여기서 만든 dict를 직접
+        대조).
 
         **`counter_for_role`과 같은 판정에서 나온다**(`_resolve_counter`). 갈리면 러너가 켠
         카운터와 기록이 어긋나고, 어긋난 기록은 없는 것보다 나쁘다.
+
+        **`build_deps()`에서 즉시 불린다 — 카운터가 여기서 만들어진다.** 그래서 토크나이저
+        로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._triage_one`이 아니라 조립
+        시점에 일어난다. 의도다 — `token_counter`는 **모델을 부르기 전에** 나와야 하고
+        (`orchestrator/trace.py`), 깨진 토크나이저로 도는 run은 첫 호출 전에 죽는 편이 낫다.
+        `counter_for_source`가 캐시하므로 로드 횟수는 늘지 않고, `doctor`는
+        `describe_wiring()`만 쓰므로 이 경로를 지나지 않는다.
 
         **해석된 경로는 담지 않는다** — trace 재현성 기준이 경로 절댓값을 금지하고
         (`orchestrator/trace.py`) HF 캐시 경로는 `Path.home()`을 지난다. `source`에 리비전이
