@@ -13,11 +13,18 @@ agent:
     - index.callers
     - index.callees
   token_budget:
-    input_max: 24000
+    input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 2000
     retries: 1
   output_schema: Finding     # 아래 §3
 ```
+
+> **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
+> 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
+> 단계로 되돌려 capsule 축소"를 수행하는 코드가 없다. 더구나 **캡슐 예산은 프롬프트 크기의
+> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로 따로 실려 예산 밖에서 프롬프트를 키운다
+> (`config/budgets.yaml`의 주석, [open-questions.md](open-questions.md) D21·D17). 그래서 이
+> 숫자를 "프롬프트가 이 안에 들어온다"로 읽으면 안 된다.
 
 계약 위반 시 동작:
 
