@@ -242,6 +242,42 @@ models:
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
 
+  qwen3-8b-bf16:
+    # B1' 조건의 Qwen3-8B. **기존 `qwen3-8b`와 다른 키인 것이 이 항목의 요점이다.**
+    #
+    # 그쪽은 `quantization: nvfp4`이고 source가 `hf://nvidia/Qwen3-8B-NVFP4@ccd10a89…`로
+    # **NVIDIA가 다시 만 체크포인트**다. 이쪽은 Qwen 원본 bf16(`hf://Qwen/Qwen3-8B`)이라
+    # 같은 이름의 다른 파일이다. 덮어쓰면 B3'-large(`local_balanced`)가 쓰는 항목이 깨진다.
+    #
+    # **8001을 기존 `qwen3-8b`와 공유하는 것은 의도다** — 한 번에 하나만 서빙한다.
+    # granite/devstral의 8003 공유와 같은 성격이고, 같은 함정을 공유한다:
+    # `--served-model-name`은 별칭일 뿐 가중치를 검증하지 않으므로, 8001에 nvfp4를 띄우고
+    # 이름만 `qwen3-8b-bf16`으로 붙이면 하네스는 알아채지 못한다. 기동 스크립트가 registry
+    # 키와 실제 스냅샷을 함께 관리해야 한다(위 granite 주석과 같은 이유).
+    #
+    # **`context_limit`은 40960이다.** `Qwen/Qwen3-8B` config.json의
+    # `max_position_embeddings` 실측값이고 `rope_scaling`은 `null`이다. Qwen3가 131072로
+    # 알려진 것은 YaRN을 **켰을 때**이고 체크포인트가 선언하는 값이 아니다 — 서버를 YaRN 없이
+    # 띄우면 40960이 실제 상한이다. 팀 스펙이 입력을 32,768로 고정하므로 실행에는 영향이
+    # 없고, 이 값을 읽는 곳은 `bench.py`뿐이다. (기존 `qwen3-8b`의 131072은 다른 리포의
+    # 값이라 여기서 건드리지 않는다.)
+    #
+    # `fallback: null` — 조건 비교 대상이라 다른 모델로 넘어가면 조건이 깨진다.
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 40960
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
   qwen3-embedding-0.6b:
     endpoint: "http://127.0.0.1:8004/v1"
     context_limit: 32768
