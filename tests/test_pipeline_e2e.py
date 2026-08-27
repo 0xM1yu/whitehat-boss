@@ -1014,6 +1014,58 @@ def test_graph_index_is_traced_exactly_once_per_run(tmp_path: Path) -> None:
     assert len(events) == 1, f"graph_index 이벤트가 {len(events)}건이다 — run당 1건이어야 한다"
     assert events[0]["data"]["status"] == "missing"
 
+
+def test_token_counter_is_traced_exactly_once_and_before_any_model_call(tmp_path: Path) -> None:
+    """어느 카운터로 셌는지가 안 남으면 그 run이 "토크나이저 적용 후"인지 사후에 못 가른다.
+
+    폴백이 조용했던 동안에는 이것을 run **전에** 사람이 손으로 확인하는 수밖에 없었다
+    (2026-08-26 재측정 §근거 로그). 그 확인을 run이 스스로 하게 만드는 것이 이 이벤트다.
+
+    **`graph_index`와 달리 0건이 허용되지 않는다.** 그쪽은 지연 로드라 조회가 없으면 안
+    실리지만, 카운터는 `build_deps` 시점에 정해져 있다 — 그리고 **모델을 부르기 전에**
+    나와야 그 뒤 어디서 죽어도 분모가 남는다(`target_plan`과 같은 계약).
+    """
+    run_dir = tmp_path / "run_20260901_0002"
+    run_dir.mkdir(parents=True)
+    spec = RunSpec(
+        condition="B3prime@pipeline",
+        target=TARGET,
+        started_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
+        cli.execute(
+            load_config("dev_fake"),
+            spec,
+            run_id=run_dir.name,
+            run_dir=run_dir,
+            trace_stream=stream,
+        )
+
+    lines = (run_dir / "trace.jsonl").read_text("utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+    counters = [i for i, e in enumerate(events) if e["kind"] == "token_counter"]
+    models = [i for i, e in enumerate(events) if e["kind"] == "model_call"]
+
+    assert len(counters) == 1, f"token_counter가 {len(counters)}건이다 — run당 1건이어야 한다"
+    assert models, "이 픽스처는 모델을 부른다 — 안 불렀다면 순서 검사가 공회전한다"
+    assert counters[0] < models[0], "token_counter가 첫 model_call보다 뒤에 나왔다"
+
+    data = events[counters[0]]["data"]
+    # `dev_fake`는 전 역할이 fake라 `source`가 없다 — `approx`/`no_source`가 정답이고
+    # 그 사실 자체가 기록되어야 한다(`graph_index`의 `status=missing`과 같은 자리).
+    assert data == {
+        "scout_counter": "approx",
+        "scout_source": None,
+        "scout_reason": "no_source",
+        "auditor_counter": "approx",
+        "auditor_source": None,
+        "auditor_reason": "no_source",
+    }
+
+    # **해석된 경로가 새면 재현성 기준이 깨진다**(`orchestrator/trace.py`). 절대경로 조각이
+    # 값에 섞이지 않는지 여기서 못박는다 — 나중에 필드를 늘릴 때 밟을 자리다.
+    assert not [v for v in data.values() if isinstance(v, str) and ("/" in v or "\\" in v)]
+
 # --- 9. 심볼 단위 target (W2) ------------------------------------------------
 #
 # `dev_fake`는 `tool_runner: fake`라 index.json을 내지 않는다. 그래서 두 경로를 각각

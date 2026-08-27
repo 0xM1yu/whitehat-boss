@@ -17,3 +17,30 @@ pytest>=8.0
 tree-sitter>=0.25
 tree-sitter-c>=0.24
 tree-sitter-cpp>=0.23
+
+# 실 토크나이저(D21 (b)). 하네스 런타임이 **실서빙 프로필에서만** 부르므로
+# `pyproject.toml`의 런타임 의존(pydantic·pyyaml)에는 넣지 않는다 — 위 tree-sitter와 같은
+# 자리다. 여기 두는 이유도 같다: `tests/test_tokenizer_adapter.py`의 실카운팅 검증을 CI에서
+# **실제로 돌리기 위해서다.** importorskip으로 두면 조용히 건너뛰고, 그러면 초록불인데
+# 이 PR이 만든 값을 한 줄도 검증하지 않는 상태가 된다.
+#
+# **⚠ tree-sitter와 달리 전이 의존이 크다.** tree-sitter 3종은 전이 의존이 0개인데
+# `tokenizers`는 `huggingface-hub`를 하드 의존으로 끌고 온다(0.22·0.23 둘 다). CI 로그에서
+# 실제로 새로 받아진 것은 **12개**다 — huggingface-hub · click · filelock · fsspec ·
+# hf-xet · httpx · httpcore · h11 · anyio · certifi · idna · tqdm.
+#
+# `huggingface-hub`는 `packaging`·`typing-extensions`·`pyyaml`도 요구하지만 **그 셋은
+# 순증이 아니다** — pytest·pydantic·이 파일이 이미 요구한다. 세면 부풀려 적게 된다.
+#
+# 설치 시간은 CI 실측으로 `Install runtime deps` 스텝이 3.65s → 6.25s, **약 +2.6초**다
+# (각 1회 표본이라 정밀도를 주장하지 않는다. 대조군은 `tokenizers`가 없던 PR #32의 run).
+# 가벼운 줄 알고 손대지 않도록 여기 적어 둔다.
+#
+# **네트워크는 안 탄다.** 이 저장소가 쓰는 것은 `Tokenizer.from_file` 하나이고
+# (`src/adapters/tokenizer.py`), 다운로드 경로를 지나지 않는다. 테스트도 `tmp_path`에
+# 직접 만든 파일만 읽는다.
+#
+# 하한이 0.22인 것은 ATOM 실서빙 환경에 깔린 값이 0.22.2이기 때문이다
+# (docs/experiments/2026-08-26-pipeline-zlib542-remeasure-atom.md §근거 로그). 그보다 낮은
+# 것을 CI가 잡으면 실서빙과 다른 것을 검증하게 된다.
+tokenizers>=0.22

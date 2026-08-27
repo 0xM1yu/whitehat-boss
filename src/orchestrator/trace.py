@@ -22,6 +22,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
+| 토큰 계상 방식 | `token_counter` | 역할별 `real`/`approx`와 그 사유. run당 **정확히 1건** |
 | 스키마 파싱 실패율 | `model_call.ok` | `count(ok=false) / count(*)` — 모델·역할별 |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
@@ -145,6 +146,29 @@ class EventKind(StrEnum):
     # 묻는 것이 정확히 그 둘의 어긋남이고, 이 두 필드가 없던 동안에는 그 답을 보려고
     # `state.db`를 손으로 열어야 했다.
     CRITIC_SKIPPED = "critic_skipped"
+    # 이 run이 **어느 토큰 카운터로 셌는가** (D21 (b)). 역할별로 `real`(그 모델의 실
+    # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
+    #
+    # **run당 정확히 1건이고, 모델을 한 번 부르기 전에 낸다** — `target_plan`과 같은 계약이다.
+    # 카운터는 `build_deps` 시점에 이미 정해져 있으므로 지연 발행할 이유가 없고, 그 뒤
+    # 어디서 죽어도 "무엇으로 쟀는가"는 남아야 한다.
+    #
+    # **이 이벤트가 생기기 전에는 폴백이 조용했다.** `tokenizers`가 없거나 HF 캐시에
+    # `tokenizer.json`이 없으면 `counter_for_source`가 `None`을 돌려주고
+    # `using_counter(None)`이 no-op이라 글자수 근사로 돌았는데, trace에도 `RunRecord`에도
+    # 경고에도 아무것도 안 남았다. 그래서 2026-08-26 재측정은 run **전에** 사람이 세 모델을
+    # 손으로 확인하고 그 출력을 보고서에 붙여야 했다 — "폴백은 조용해서 사후에는 구별할 수
+    # 없다"가 그 보고서에 적힌 이유다. `graph_index`가 `status=loaded|missing`으로 "없다"와
+    # "0건"을 가른 것과 같은 자리이고, 카운터에만 그것이 없었다.
+    #
+    # **역할은 `scout`·`auditor` 둘뿐이다.** 러너가 카운터를 켜는 자리가 그 둘이고
+    # (`_triage_one`), 켜지지 않는 역할을 실으면 거짓 정보가 된다 —
+    # `config.prompt_versions()`가 `embedding`을 안 담는 것과 같은 이유다.
+    #
+    # **해석된 경로는 싣지 않는다.** 위 "재현성 기준"이 경로 절댓값을 금지하고 HF 캐시
+    # 경로는 `Path.home()`을 지난다. 대신 `{role}_source`(리비전이 박힌 `models.yaml` 값)를
+    # 실어 스냅샷까지 특정되게 한다.
+    TOKEN_COUNTER = "token_counter"
     CRITIC_NORMALIZED = "critic_normalized"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"

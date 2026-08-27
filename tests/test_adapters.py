@@ -22,7 +22,7 @@ from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
-from src.config import AdapterSelection, load_config
+from src.config import AdapterSelection, HarnessConfig, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
 from src.interfaces.model_client import Prompt
 from src.interfaces.retriever import Query
@@ -482,6 +482,57 @@ def test_dev_fake_wires_every_role_to_a_fake(target_root: Path, tmp_path: Path) 
         assert isinstance(deps.models.client_for(role), FakeModelClient)
 
 
+def test_counter_for_role_is_none_for_fake_models(target_root: Path, tmp_path: Path) -> None:
+    """fake 모델엔 토크나이저 `source`가 없어 역할 카운터가 `None`이다 (D21 (b) 3b).
+
+    두 가지를 함께 본다: **배선이 연결됐다**(`Deps`에 `counter_for_role`이 있고 factory가
+    채운다)와 **dev_fake는 무영향이다**(`None` → 러너의 `using_counter`가 no-op → 기본
+    카운터 `len//4` 유지). 실 토크나이저로 세는 것은 `test_tokenizer_adapter.py`가 본다.
+    """
+    deps = build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path
+    )
+    assert deps.counter_for_role("scout") is None
+    assert deps.counter_for_role("auditor") is None
+    # 그리고 **그 사실이 기록에 남는다** — 폴백이 조용하지 않다는 것이 D21 (b)의 절반이다.
+    assert deps.counter_report == {
+        "scout_counter": "approx",
+        "scout_source": None,
+        "scout_reason": "no_source",
+        "auditor_counter": "approx",
+        "auditor_source": None,
+        "auditor_reason": "no_source",
+    }
+
+
+def _with_source(config: HarnessConfig, role: str, source: str) -> HarnessConfig:
+    """`role`이 쓰는 모델의 `source`만 바꾼 설정. `config/models.yaml`은 안 건드린다."""
+    key = config.model_key_for(role)
+    entries = dict(config.models)
+    entries[key] = entries[key].model_copy(update={"source": source})
+    return config.model_copy(update={"models": entries})
+
+
+def test_counter_report_says_file_absent_when_the_snapshot_is_not_there(
+    target_root: Path, tmp_path: Path
+) -> None:
+    """`source`는 있는데 그 경로에 파일이 없으면 `file_absent`다.
+
+    `no_source`(설정이 그렇게 생겼다)와 다른 사건이다 — 이쪽은 캐시를 받아야 한다.
+    이 구별이 없으면 ATOM에서 스냅샷이 안 받아진 run과 `dev_fake` run이 기록에서 같아 보인다.
+    """
+    source = f"file://{(tmp_path / 'nowhere').as_posix()}"
+    config = _with_source(load_config("single_gpu_12g"), "scout", source)
+    deps = build_deps(
+        config, run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path / "artifacts"
+    )
+
+    assert deps.counter_for_role("scout") is None
+    assert deps.counter_report["scout_counter"] == "approx"
+    assert deps.counter_report["scout_source"] == source
+    assert deps.counter_report["scout_reason"] == "file_absent"
+
+
 def test_single_gpu_12g_mixes_real_and_fake(target_root: Path, tmp_path: Path) -> None:
     """한 프로필 안에서 scout만 실서빙된다 — RoutingModelClient가 있는 이유다."""
     deps = build_deps(
@@ -523,3 +574,25 @@ def test_deps_share_one_id_factory(target_root: Path, tmp_path: Path) -> None:
     deps.tools.run("build", _args(), SANDBOX)
     assert deps.ids.issued()["evidence"] == 1
     assert sha256_text("x").startswith("sha256:")
+
+
+def test_counter_for_role_returns_none_for_a_role_the_profile_lacks(
+    target_root: Path, tmp_path: Path
+) -> None:
+    """프로필에 없는 역할이면 `ConfigError`가 아니라 `None`이다.
+
+    `build_deps`가 클라이언트를 `if role in config.profile.roles`로 거르는데 이 클로저만
+    안 걸렀다. `_triage_one`은 scout 카운터를 `Stage.RETRIEVAL` 검사 뒤·`Stage.SCOUT` 검사
+    **앞**에서 부르므로, 4단계 앞에서 멈추는 run이 scout 없는 프로필로 돌면 거기서 죽는다.
+    """
+    base = load_config("dev_fake")
+    roles = {r: k for r, k in base.profile.roles.items() if r != "scout"}
+    config = base.model_copy(update={"profile": base.profile.model_copy(update={"roles": roles})})
+    deps = build_deps(
+        config, run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path / "artifacts"
+    )
+
+    assert deps.counter_for_role("scout") is None
+    assert deps.counter_report["scout_counter"] == "approx"
+    assert deps.counter_report["scout_source"] is None
+    assert deps.counter_report["scout_reason"] == "no_source"
