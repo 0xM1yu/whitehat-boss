@@ -72,7 +72,7 @@
 
 ⚠ **위 표에 `podman` 줄과 `docker` 줄이 함께 있는 것은 과도기라서다.** ATOM이 podman만
 가지던 시절에 선언한 둘(`local_balanced`·`b1_single`)과, docker가 생긴 뒤 선언한 넷이
-섞여 있다. `tool_images` digest는 런타임 사이에서 비교할 수 없으므로(§7 위험 #4)
+섞여 있다. `tool_images` digest는 런타임 사이에서 비교할 수 없으므로(§5 #4)
 **두 무리를 같은 비교표에 올릴 수 없다.** `local_balanced`는 B3'-large 후보인데 팀
 `run_matrix.yaml`이 아직 `b3prime_large_profile: TODO_local_large`로 비워 둔 상태라 지금은
 실제로 부딪히지 않는다 — **B3'-large를 열 때 그 프로필도 `docker`로 옮겨야 한다.**
