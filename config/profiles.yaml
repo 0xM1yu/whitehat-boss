@@ -156,27 +156,34 @@ profiles:
       # 비교표에 들어간다**(STATUS.md §8). fake로 두면 완주시켜도 비교 대상이 아니라
       # 중간 발표 DoD "B1 조건 1회 완주"를 프로필 정의만으로는 만족시킬 수 없었다.
       #
-      # **`podman`인 것은 주 실서빙 장비가 ATOM이기 때문이다** — 프로필은 주 실서빙
+      # **`docker`인 것은 주 실서빙 장비가 ATOM이기 때문이다** — 프로필은 주 실서빙
       # 장비의 런타임을 선언하고 다른 장비가 오버라이드한다(portability.md §3).
+      # 그 기준은 그대로이고, **바뀐 것은 "ATOM의 런타임"이 무엇이냐다.**
       #
-      # ⚠ **아래 "podman만 있으므로"는 2026-08-21에 반증됐다.** ATOM에 Docker 29.2.1이
-      # podman과 함께 있고, 그 뒤 ATOM run은 전부 docker로 돌았다
-      # (docs/experiments/README.md §#6). **그래도 이 프로필의 값은 이 PR에서 바꾸지
-      # 않는다** — 이 값으로 이미 돈 run이 있고, `tool_images` digest는 런타임 사이에서
-      # 비교할 수 없어서(portability.md §5 #4) 지금 갈면 그 기록과 갈린다. B3'-large
-      # 프로필이 확정될 때(팀 run_matrix가 아직 `TODO_local_large`다) 함께 옮기는 것이 맞다.
-      # 아래 원문은 당시 근거를 남겨 두려고 지우지 않았다.
+      # ⚠ **2026-08-28에 `podman` → `docker`로 되돌렸다.** 경위는
+      # decisions/0005-tool-runner-override.md의 마지막 절. 2026-08-17에 `docker` →
+      # `podman`으로 간 근거는 "ATOM에는 podman만 있다"였고 그 전제가 2026-08-21에
+      # 반증됐다(Docker 29.2.1 · podman 4.9.3 공존. 2026-08-28
+      # `ssh atom 'which podman; which docker'`로 재확인 — 둘 다 /usr/bin에 있다).
       #
-      # ATOM에는
-      # podman만 있으므로(2026-08-17 실측) `docker`로 두면 그 장비의 **모든** 실서빙 run이
-      # `--tool-runner podman`을 달아야 하고, 그것은 evaluation.md §2.3 규칙 2의 예외라
-      # `RunRecord.tool_runner`에 기록된다 — 주 경로가 상시 예외 상태가 된다.
+      # **되돌린 진짜 이유는 선언값이 실행 기록과 어긋나 있었다는 것이다.** `b1_single`로
+      # 돈 run 둘(`run_20260827_0001`·`0004`)이 **둘 다 `tool_runner: docker`**다 — 즉
+      # `--tool-runner docker` 오버라이드를 달고 돌았다. 그것은 evaluation.md §2.3 규칙 2가
+      # 조건 비교용 프로필에 금지한 예외이고, ADR 0005가 podman을 고른 근거("주 경로가
+      # 상시 예외 상태면 그 기록이 '이 run은 특별했다'를 뜻하지 못한다")가 **이제 정확히
+      # 반대를 가리킨다.**
+      #
+      # **"이미 podman으로 돈 run과 digest가 갈린다"던 유지 사유는 사실이 아니었다.**
+      # artifacts의 run 14건을 전수 조회한 결과 podman으로 도구를 돌린 run은
+      # `run_20260817_0001` 하나이고, 그것은 `model_checksums`가 전부 0인 dev 프로필이다
+      # (`dev_docker --tool-runner podman`). **이 프로필과 `b1_single`로 podman을 써서 돈
+      # run은 0건이라 갈릴 기록이 없다.**
       #
       # 반대 방향의 대가는 없다. 이 프로필의 모델 5개 중 3개가 Blackwell 이상을 요구하므로
       # (`fp4` ×1, `nvfp4` ×2) Seraph(sm_86)에서는 **애초에 기동하지 못한다**
-      # (portability.md §5 #1). 그래서 podman으로 바꿔도 그 장비에서
-      # `--tool-runner singularity`가 상시 필요해지는 상황이 생기지 않는다.
-      tool_runner: podman
+      # (portability.md §5 #1). 그래서 그 장비에서 `--tool-runner singularity`가 상시
+      # 필요해지는 상황이 생기지 않는다.
+      tool_runner: docker
       state_store: sqlite
     budget: default
 
@@ -195,12 +202,16 @@ profiles:
       # local_balanced와 같은 이유로 fake다. B1과 B3'의 차이가 "모델 구성"이어야 하므로
       # 검색 경로도 두 조건에서 같아야 한다(evaluation.md §2.3 규칙 2).
       retriever: fake
-      # local_balanced와 같은 이유로 podman이다 — `RunRecord.tool_images`가 비면 이 run은
-      # 비교표에서 제외되고(STATUS.md §8), 그러면 B1 조건을 완주시켜도 B3'와 대조할 수
-      # 없다. 두 조건이 같은 tool_runner를 써야 도구 차이가 결과 차이로 섞이지 않는다.
-      # 런타임이 `podman`인 근거도 local_balanced와 같다(주 실서빙 장비 = ATOM,
+      # local_balanced와 같은 이유로 컨테이너 런타임이다 — `RunRecord.tool_images`가 비면
+      # 이 run은 비교표에서 제외되고(STATUS.md §8), 그러면 B1 조건을 완주시켜도 B3'와
+      # 대조할 수 없다. 두 조건이 같은 tool_runner를 써야 도구 차이가 결과 차이로 섞이지
+      # 않는다. 런타임이 `docker`인 근거도 local_balanced와 같다(주 실서빙 장비 = ATOM,
       # portability.md §3). 세 역할이 전부 `nvfp4`라 Seraph에서 못 도는 것도 같다.
-      tool_runner: podman
+      #
+      # **이 프로필이 되돌림의 직접 근거다.** 선언은 `podman`이었는데 이 프로필로 돈 run
+      # 둘(`run_20260827_0001`·`0004`)이 `RunRecord.tool_runner: docker`다 — 주 경로가
+      # 상시 오버라이드 상태였다. 자세한 것은 local_balanced 주석과 ADR 0005 마지막 절.
+      tool_runner: docker
       state_store: sqlite
     budget: default
 
@@ -233,12 +244,12 @@ profiles:
   # 팀 `lib/prime_runner.py`가 `--tool-runner` 오버라이드를 쓰지 않으므로 여기 적힌 값이
   # 그대로 쓰인다. podman으로 두면 그 스크립트가 덮어 줄 수단이 없다.
   #
-  # ⚠ **B3'-large는 아직 이 넷과 런타임이 다르다.** `local_balanced`가 `podman`이고, 팀
-  # run_matrix가 `b3prime_large_profile: TODO_local_large`로 프로필을 아직 안 정했다.
-  # `tool_images` digest는 런타임 사이에서 비교할 수 없으므로(portability.md 위험 #4),
-  # **B3'-large를 실제로 열 때 그 프로필도 docker로 선언해야 네 조건이 대조 가능해진다.**
-  # 이 PR은 `local_balanced`를 건드리지 않는다 — 범위 밖이고, 지금 바꾸면 그 프로필로 이미
-  # 돈 run과 갈린다.
+  # ✅ **B3'-large와 런타임이 같아졌다(2026-08-28).** 전에는 `local_balanced`가 `podman`이라
+  # 이 넷과 갈렸고, `tool_images` digest는 런타임 사이에서 비교할 수 없으므로
+  # (portability.md §5 #4) 네 조건을 같은 비교표에 못 올렸다. `local_balanced`·`b1_single`을
+  # `docker`로 되돌리면서 그 벽이 사라졌다 — **조건 비교용 실서빙 프로필 여섯이 전부
+  # `docker`다.** 팀 run_matrix의 `b3prime_large_profile`은 아직 `TODO_local_large`라
+  # 프로필 이름만 정하면 된다.
   #
   # `retriever: fake` — hybrid로 두면 embedding·reranker까지 실서빙해야 하고 ATOM에 모델을
   # 다섯 개 띄워야 한다. B1'와 B3'의 차이가 "모델 구성"이어야 하므로 검색 경로도 네 조건에서
