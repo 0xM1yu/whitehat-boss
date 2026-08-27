@@ -22,7 +22,7 @@ from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
-from src.config import AdapterSelection, load_config
+from src.config import AdapterSelection, HarnessConfig, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
 from src.interfaces.model_client import Prompt
 from src.interfaces.retriever import Query
@@ -494,6 +494,43 @@ def test_counter_for_role_is_none_for_fake_models(target_root: Path, tmp_path: P
     )
     assert deps.counter_for_role("scout") is None
     assert deps.counter_for_role("auditor") is None
+    # 그리고 **그 사실이 기록에 남는다** — 폴백이 조용하지 않다는 것이 D21 (b)의 절반이다.
+    assert deps.counter_report == {
+        "scout_counter": "approx",
+        "scout_source": None,
+        "scout_reason": "no_source",
+        "auditor_counter": "approx",
+        "auditor_source": None,
+        "auditor_reason": "no_source",
+    }
+
+
+def _with_source(config: HarnessConfig, role: str, source: str) -> HarnessConfig:
+    """`role`이 쓰는 모델의 `source`만 바꾼 설정. `config/models.yaml`은 안 건드린다."""
+    key = config.model_key_for(role)
+    entries = dict(config.models)
+    entries[key] = entries[key].model_copy(update={"source": source})
+    return config.model_copy(update={"models": entries})
+
+
+def test_counter_report_says_file_absent_when_the_snapshot_is_not_there(
+    target_root: Path, tmp_path: Path
+) -> None:
+    """`source`는 있는데 그 경로에 파일이 없으면 `file_absent`다.
+
+    `no_source`(설정이 그렇게 생겼다)와 다른 사건이다 — 이쪽은 캐시를 받아야 한다.
+    이 구별이 없으면 ATOM에서 스냅샷이 안 받아진 run과 `dev_fake` run이 기록에서 같아 보인다.
+    """
+    source = f"file://{(tmp_path / 'nowhere').as_posix()}"
+    config = _with_source(load_config("single_gpu_12g"), "scout", source)
+    deps = build_deps(
+        config, run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path / "artifacts"
+    )
+
+    assert deps.counter_for_role("scout") is None
+    assert deps.counter_report["scout_counter"] == "approx"
+    assert deps.counter_report["scout_source"] == source
+    assert deps.counter_report["scout_reason"] == "file_absent"
 
 
 def test_single_gpu_12g_mixes_real_and_fake(target_root: Path, tmp_path: Path) -> None:

@@ -37,6 +37,18 @@ TOKENIZER_FILE = "tokenizer.json"
 _HF_SCHEME = "hf://"
 _FILE_SCHEME = "file://"
 
+# 기본 카운터로 되돌아간 **사유**. `token_counter` 이벤트의 `{role}_reason`이 되고,
+# 그 값이 곧 지표의 열 값이므로 함부로 바꾸지 않는다.
+#
+# **넷을 가르는 것이 요점이다** — `graph_index`가 `missing`과 `unsupported_version`을 가른
+# 것과 같은 이유로 대응이 전부 다르다. `no_source`는 설정이 그렇게 생긴 것(fake 등)이라
+# 정상이고, `library_absent`는 설치 문제이고, `file_absent`는 캐시가 안 받아진 것이고,
+# `unresolved_source`는 registry가 리비전 없는 `source`를 적은 것이다.
+REASON_NO_SOURCE = "no_source"
+REASON_UNRESOLVED_SOURCE = "unresolved_source"
+REASON_FILE_ABSENT = "file_absent"
+REASON_LIBRARY_ABSENT = "library_absent"
+
 
 def counter_from_tokenizer(location: str | Path) -> Callable[[str], int] | None:
     """`location`에서 실 토큰 카운터를 만든다.
@@ -47,24 +59,37 @@ def counter_from_tokenizer(location: str | Path) -> Callable[[str], int] | None:
 
     돌려주는 카운터는 **원시 토큰 수**만 센다 — 바닥 1은 `src.tokens.estimate_tokens`가
     강제하므로 여기서 다시 씌우지 않는다.
+
+    **사유까지 필요하면 `_load_counter`를 쓴다.** 이 함수는 그것의 얇은 껍데기다 —
+    판정이 두 곳에 살면 카운터와 기록이 갈리고, 갈린 기록은 없는 것보다 나쁘다.
+    """
+    return _load_counter(location)[0]
+
+
+def _load_counter(location: str | Path) -> tuple[Callable[[str], int] | None, str | None]:
+    """`(카운터, 폴백 사유)`. 성공하면 `(counter, None)`, 실패하면 `(None, 사유)`.
+
+    **`file_absent`와 `library_absent`를 가른다.** 둘 다 결과는 글자수 근사로 같지만 대응이
+    다르다 — 앞은 HF 캐시를 받아야 하고 뒤는 `pip install`이다. 이 구별이 없으면 ATOM에서
+    venv가 `tokenizers` 없이 떴을 때와 스냅샷이 안 받아졌을 때가 기록에서 같아 보인다.
     """
     path = Path(location)
     if path.is_dir():
         path = path / TOKENIZER_FILE
     if not path.is_file():
-        return None
+        return None, REASON_FILE_ABSENT
 
     try:
         from tokenizers import Tokenizer
     except ImportError:
-        return None
+        return None, REASON_LIBRARY_ABSENT
 
     tokenizer = Tokenizer.from_file(str(path))
 
     def count(text: str) -> int:
         return len(tokenizer.encode(text).ids)
 
-    return count
+    return count, None
 
 
 def _default_hub_cache() -> Path:
@@ -101,12 +126,14 @@ def tokenizer_dir_from_source(source: str, hub_cache: Path | None = None) -> Pat
 
 
 @cache
-def counter_for_source(source: str, hub_cache: Path | None = None) -> Callable[[str], int] | None:
-    """`models.yaml`의 `source` 하나로 실 카운터까지 — 경로 해석 + 로더를 합친다.
+def _resolve_counter(
+    source: str, hub_cache: Path | None = None
+) -> tuple[Callable[[str], int] | None, str | None]:
+    """`source` → `(카운터, 폴백 사유)`. **카운터와 기록이 같은 판정에서 나오는 자리다.**
 
-    러너가 역할 캡슐 조립 직전에 `using_counter(counter_for_source(...))`로 쓴다(3b). 경로를
-    못 만들거나(스킴 모름·리비전 없음) 그 경로에 `tokenizer.json`이 없거나 `tokenizers`가
-    없으면 `None` — 어느 경우든 호출자는 기본 카운터를 유지한다.
+    `counter_for_source`와 `counter_reason_for_source`가 둘 다 여기를 부른다. 판정을 두 벌
+    두면 러너가 켠 카운터와 trace에 적힌 종류가 갈릴 수 있고, **갈린 기록은 없는 것보다
+    나쁘다**(`factory`가 `tool_images`를 "구현에게 묻는" 것과 같은 논법).
 
     **결과를 캐시한다**(`source`별). 러너가 후보마다 부르는데 토크나이저 로딩(수 MB 파싱)이
     무거워, 같은 모델은 run 내내 한 번만 로드한다. 토크나이저 파일은 run 중 바뀌지 않으므로
@@ -114,5 +141,27 @@ def counter_for_source(source: str, hub_cache: Path | None = None) -> Callable[[
     """
     directory = tokenizer_dir_from_source(source, hub_cache)
     if directory is None:
-        return None
-    return counter_from_tokenizer(directory)
+        return None, REASON_UNRESOLVED_SOURCE
+    return _load_counter(directory)
+
+
+def counter_for_source(source: str, hub_cache: Path | None = None) -> Callable[[str], int] | None:
+    """`models.yaml`의 `source` 하나로 실 카운터까지 — 경로 해석 + 로더를 합친다.
+
+    러너가 역할 캡슐 조립 직전에 `using_counter(counter_for_source(...))`로 쓴다(3b). 경로를
+    못 만들거나(스킴 모름·리비전 없음) 그 경로에 `tokenizer.json`이 없거나 `tokenizers`가
+    없으면 `None` — 어느 경우든 호출자는 기본 카운터를 유지한다.
+
+    **왜 `None`인지는 `counter_reason_for_source`가 답한다.** 그 값이 run 산출물에 남는다
+    (`token_counter` 이벤트) — 이 폴백이 조용하던 동안에는 "토크나이저로 쟀다"는 기록을
+    run 전에 사람이 손으로 확인해야 했다(2026-08-26 재측정 §근거 로그).
+    """
+    return _resolve_counter(source, hub_cache)[0]
+
+
+def counter_reason_for_source(source: str, hub_cache: Path | None = None) -> str | None:
+    """실 카운터를 못 쓴 사유. 쓸 수 있으면 `None`.
+
+    `counter_for_source`와 **같은 판정**(`_resolve_counter`)에서 나온다.
+    """
+    return _resolve_counter(source, hub_cache)[1]

@@ -30,6 +30,18 @@ from contextlib import contextmanager
 # 기본 카운터: 4글자 ≈ 1토큰. 실 토크나이저 파일이 없으면(CI·dev) 이 값이 유효하다.
 CHARS_PER_TOKEN = 4
 
+# **역할 카운터가 실제로 켜지는 역할.** `runner._triage_one`이 `using_counter(...)`로 감싸는
+# 자리가 이 둘이다 — scout는 LIGHT 캡슐, auditor는 EXPANDED 캡슐을 조립할 때.
+#
+# `factory`가 이 목록으로 `Deps.counter_report`를 만들고 러너가 그것을 `token_counter`
+# 이벤트로 낸다. **켜지지 않는 역할을 기록에 실으면 거짓 정보다** —
+# `config.prompt_versions()`가 프롬프트 없는 역할을 안 담는 것과 같은 이유다.
+#
+# 문자열인 것은 이 모듈이 `src/schemas/`보다 **아래**에 있기 때문이다(`schemas/capsule.py`가
+# 이 모듈을 import 한다). `Role`을 여기서 import 하면 순환이 된다 — 대신
+# `tests/test_tokens.py`가 이 집합을 `Role`과 대조해 고정한다.
+COUNTED_ROLES = ("scout", "auditor")
+
 
 def _chars_estimate(text: str) -> int:
     """글자수 근사. 실 토크나이저 전까지의 기본 카운터. 원시 개수만 돌려준다
