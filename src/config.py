@@ -222,6 +222,12 @@ class Thresholds(HarnessModel):
     # agent-contracts.md §1의 token_budget.retries. 이 값이 "스키마 파싱 실패율"의
     # 분모를 바꾸므로 조건 간 비교에서 고정되어야 한다 — 어댑터 기본값으로 두지 않는다.
     schema_retries: int = Field(ge=0)
+    # 요청 하나의 출력 토큰 상한 (agent-contracts.md §1의 token_budget.output_max).
+    # `openai_compat`이 payload의 `"max_tokens"`로 싣는다. 없으면 서버가 `--max-model-len`
+    # 까지 생성하고, 2026-08-27 ATOM에서 30B가 실제로 그렇게 폭주해 클라이언트 타임아웃이
+    # 났다. `schema_retries`와 같은 이유로 여기 있다 — 조건 간 비교에서 고정되어야 하고
+    # `flatten()`이 `RunRecord.thresholds`로 실어야 한다. 어댑터 기본값으로 두지 않는다.
+    output_max: int = Field(gt=0)
     capsule_budget_tokens: CapsuleBudgets
 
     def budget_for(self, level: CapsuleLevel) -> int:

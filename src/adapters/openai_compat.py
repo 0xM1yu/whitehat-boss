@@ -47,6 +47,7 @@ class OpenAICompatModelClient:
         temperature: float,
         top_p: float,
         seed: int,
+        max_tokens: int,
         retries: int = 1,
         api_key: str = "EMPTY",
     ) -> None:
@@ -56,6 +57,12 @@ class OpenAICompatModelClient:
         self.top_p = top_p
         # seed를 요청에 실어야 같은 조건 재실행이 같은 결과를 낸다(engineering-guide.md §5).
         self.seed = seed
+        # **기본값을 두지 않는다.** 이 값이 payload에 없으면 서버가 `--max-model-len`까지
+        # 생성한다 — 2026-08-27 ATOM에서 30B가 그렇게 폭주해 `_TIMEOUT_S`에 걸렸다.
+        # 기본값을 두면 조립 지점이 조용히 config를 안 읽고 지나갈 수 있고, 그러면 실제로
+        # 쓰인 상한과 `RunRecord.thresholds`에 적힌 값이 갈린다. `temperature`·`top_p`·`seed`
+        # 가 필수 키워드인 것과 같은 이유다.
+        self.max_tokens = max_tokens
         self.retries = retries
         # 온프레미스 vLLM은 인증을 쓰지 않지만 OpenAI 클라이언트 규약상 헤더가 필요하다.
         # 실제 키가 필요한 게이트웨이라면 환경변수에서 주입한다 — 소스에 두지 않는다.
@@ -120,6 +127,9 @@ class OpenAICompatModelClient:
             "temperature": self.temperature,
             "top_p": self.top_p,
             "seed": self.seed,
+            # 출력 상한. 이것이 없으면 서버는 `--max-model-len`까지 생성할 수 있다 —
+            # 정상 응답을 자르는 손잡이가 아니라 폭주 차단이다(8/26 실측 후보당 167토큰).
+            "max_tokens": self.max_tokens,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
