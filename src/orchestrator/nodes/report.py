@@ -40,6 +40,20 @@ class Report:
     # 사람이 읽는 요약이라 수백 줄을 여기 옮기면 Finding이 묻힌다.
     deferred: int = 0
     dropped: int = 0
+    # 7단계에 못 올라간 Finding 수 (D26 (b)). **위 둘과 같은 줄에 넣지 않는다** — 그쪽 단위는
+    # target이고 이쪽은 Finding이다. 사람이 읽는 산출물에서 분모를 섞는 것이 trace에서
+    # 섞는 것보다 나쁘다.
+    #
+    # 이 줄이 없으면 절단된 Finding이 **안 보이는 게 아니라 잘못 보인다.** F-9가
+    # `hypothesized → hypothesized`라 7단계에 간 건과 못 간 건이 아래 같은 묶음에 나란히
+    # 찍힌다 — 실측 `run_20260825_0001`에서 `hypothesized 44건` 중 **36건이 7단계에 못
+    # 갔는데** 리포트에 그 사실이 없었다.
+    critic_deferred: int = 0
+    # 위 수를 만든 상한. **값을 함께 싣는다** — 러너의 run 경고가 `critic_top_n(8)`처럼
+    # 값을 찍으므로 이름만 적으면 두 산출물이 같은 사실을 다르게 말한다. 그리고 report.md는
+    # config 없이 단독으로 읽히는 문서라 여기 없으면 "36이 상한 8의 결과인지 80의 결과인지"를
+    # 이 파일만 보고는 알 수 없다.
+    critic_top_n: int = 0
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
@@ -49,6 +63,17 @@ class Report:
             lines += [
                 f"분석하지 못한 대상: 예산 초과 {self.deferred}건 · 호출 실패 "
                 f"{self.dropped}건 (사유는 trace의 `target_skipped`)",
+                "",
+            ]
+        if self.critic_deferred:
+            # **앞머리 명사구에 잘린 사유를 넣는다.** "반박받지 못한 Finding"으로 적으면
+            # `insufficient_evidence`로 6단계에서 떨어진 건(실측 11건)도 같은 이름에 들어가
+            # 이 수가 47이어야 맞는 문장이 된다. 사유가 다른 둘을 한 이름으로 묶으면 D26이
+            # 지적하는 구별이 리포트에서 다시 합쳐진다 — `target_skipped`가 `reason`을 필드로
+            # 두는 것과 같은 이유다.
+            lines += [
+                f"`critic_top_n`으로 잘린 Finding: {self.critic_deferred}건 "
+                f"(상한 {self.critic_top_n} · 목록은 trace의 `critic_skipped`)",
                 "",
             ]
         for state in _STATE_ORDER:
@@ -81,12 +106,19 @@ def dedupe(findings: list[Finding]) -> tuple[list[Finding], int]:
 
 
 def run(
-    ctx: RunContext, *, findings: list[Finding], deferred: int = 0, dropped: int = 0
+    ctx: RunContext,
+    *,
+    findings: list[Finding],
+    deferred: int = 0,
+    dropped: int = 0,
+    critic_deferred: int = 0,
+    critic_top_n: int = 0,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
-    `deferred`·`dropped`는 러너가 센 값을 그대로 받는다 — 노드가 다시 세면 경고와
-    리포트가 다른 수를 말할 수 있다.
+    `deferred`·`dropped`·`critic_deferred`는 러너가 센 값을 그대로 받는다 — 노드가 다시
+    세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로 받는다:
+    노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다.
     """
     with ctx.stage(Stage.REPORT):
         kept, duplicates = dedupe(findings)
@@ -96,6 +128,8 @@ def run(
         duplicates=duplicates,
         deferred=deferred,
         dropped=dropped,
+        critic_deferred=critic_deferred,
+        critic_top_n=critic_top_n,
     )
 
 
