@@ -574,3 +574,25 @@ def test_deps_share_one_id_factory(target_root: Path, tmp_path: Path) -> None:
     deps.tools.run("build", _args(), SANDBOX)
     assert deps.ids.issued()["evidence"] == 1
     assert sha256_text("x").startswith("sha256:")
+
+
+def test_counter_for_role_returns_none_for_a_role_the_profile_lacks(
+    target_root: Path, tmp_path: Path
+) -> None:
+    """프로필에 없는 역할이면 `ConfigError`가 아니라 `None`이다.
+
+    `build_deps`가 클라이언트를 `if role in config.profile.roles`로 거르는데 이 클로저만
+    안 걸렀다. `_triage_one`은 scout 카운터를 `Stage.RETRIEVAL` 검사 뒤·`Stage.SCOUT` 검사
+    **앞**에서 부르므로, 4단계 앞에서 멈추는 run이 scout 없는 프로필로 돌면 거기서 죽는다.
+    """
+    base = load_config("dev_fake")
+    roles = {r: k for r, k in base.profile.roles.items() if r != "scout"}
+    config = base.model_copy(update={"profile": base.profile.model_copy(update={"roles": roles})})
+    deps = build_deps(
+        config, run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path / "artifacts"
+    )
+
+    assert deps.counter_for_role("scout") is None
+    assert deps.counter_report["scout_counter"] == "approx"
+    assert deps.counter_report["scout_source"] is None
+    assert deps.counter_report["scout_reason"] == "no_source"
