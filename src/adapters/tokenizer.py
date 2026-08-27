@@ -5,10 +5,21 @@
 `Deps.counter_for_role`로 주입하고, 러너가 역할 캡슐 조립 직전에
 `using_counter(ctx.counter_for_role(role))`로 켠다(3b, `runner._triage_one`).
 
-**`tokenizers`는 하드 의존이 아니다.** 실서빙 프로필에만 필요하고 그쪽엔 vLLM과 함께 깔려
-있다(ATOM). 프로젝트 기본 의존은 pydantic·pyyaml뿐이고 CI·dev는 `tokenizers` 없이 돈다 —
-그래서 import를 **지연**하고, 없으면 `None`을 돌려 호출자가 기본 카운터(글자수 근사)를
-유지하게 한다.
+**`tokenizers`는 하네스의 런타임 의존이 아니다** — `pyproject.toml`의 `dependencies`는
+pydantic·pyyaml 둘뿐이고 실제로 이 라이브러리를 부르는 것은 실서빙 프로필뿐이다(그쪽엔
+vLLM과 함께 깔려 있다 — ATOM).
+
+**그러나 `requirements.txt`에는 있다.** 그 파일은 "이 저장소를 검사하려면 무엇이 필요한가"의
+목록이고, `tests/test_tokenizer_adapter.py`의 실카운팅 검증을 **CI에서 실제로 돌리기 위해**
+tree-sitter가 이미 같은 자리에 있다. 따라서 **"CI는 `tokenizers` 없이 돈다"는 더 이상 사실이
+아니다** — 없으면 그 테스트가 skip이 아니라 collection error를 낸다.
+
+**그런데도 import는 여전히 지연이고 없으면 `None`이다.** 노리는 것이 CI가 아니라 **런타임의
+부분 설치 환경**이기 때문이다: `requirements.txt`를 안 쓰고 최소 설치로 띄운 곳, 또는
+`pip install`이 부분 실패한 곳. 거기서 import 실패로 파이프라인을 죽이는 것보다 기본
+카운터(글자수 근사)로 도는 편이 낫다 — 다만 **그 폴백은 이제 조용하지 않다**:
+러너가 run 시작 시 `token_counter` 이벤트로 역할별 `real`/`approx`와 그 사유를 남긴다
+(`orchestrator/trace.py`의 `EventKind.TOKEN_COUNTER`).
 
 **구별: "파일 없음/라이브러리 없음"은 None(폴백), "파일이 있는데 깨짐"은 예외.** 실서빙
 run에서 토크나이저가 깨졌는데 조용히 글자수 근사로 돌아가면 D21이 고치려던 바로 그
