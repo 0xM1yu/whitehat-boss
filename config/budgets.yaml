@@ -89,12 +89,17 @@ thresholds:
   # **이 값이 없으면 상한도 없다.** 지금까지 payload에 `max_tokens`가 없었고, 그러면 서버는
   # `--max-model-len`까지 생성할 수 있다. 2026-08-27 ATOM에서 30B가 실제로 폭주해 클라이언트
   # 타임아웃(300초)이 났다 — `openai_compat._TIMEOUT_S`가 걸리는 자리다. 상한의 목적은
-  # 그 폭주 차단이지 정상 응답을 자르는 것이 아니다: 8/26 실측이 후보당 output 167토큰이라
-  # 8,192는 정상 경로에서 **한 번도 닿지 않는다**.
+  # 그 폭주 차단이지 정상 응답을 자르는 것이 아니다: 8/27 track_a run의 `model_call`
+  # `output_tokens` **최대**가 auditor 2,424(성공 호출 — `run_20260827_0002` seq=1707,
+  # `ok=true`)라 8,192는 그 **3.4배**다. 평균(≈189)이 아니라 **관측 최대로도** 정상 경로에서
+  # 안 닿는다. 2,000이었으면 그 성공 호출이 잘려 파싱 실패로 뒤집혔을 값이다.
   #
   # `sampling`이 아니라 여기 있는 것은 `Thresholds.flatten()`이 `RunRecord.thresholds`로
-  # 실어 주기 때문이다 — 조건 간 비교에서 고정돼야 하는 값이고, 실제로 쓰인 값이 남아야 한다
-  # (evaluation.md §6). `schema_retries`가 이미 같은 이유로 여기 있다.
+  # 실어 주기 때문이다 — 조건 간 비교에서 고정돼야 하는 값이고 실제로 쓰인 값이 남아야 하며
+  # (evaluation.md §6), `dict[str, float]`라 키를 늘려도 기존 manifest 로드가 안 죽는다.
+  # `schema_retries`가 이미 같은 이유로 여기 있다. **`Sampling`도 검토했다** — 그쪽 docstring이
+  # 자기를 "게이트웨이 요청 파라미터"로 정의해 `max_tokens`가 들어맞지만, 스키마 필드가 늘어
+  # 기본값 처리가 필요하고 기존 manifest 호환이 깨진다. 일관성·호환 쪽을 골라 현행 유지.
   output_max: 8192
 
   # 캡슐 레벨별 토큰 상한 (knowledge-base.md §4). 키는 CapsuleLevel 열거형 값과 같다.
