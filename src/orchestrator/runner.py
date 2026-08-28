@@ -554,21 +554,34 @@ def run_pipeline(
         )
 
     findings = list(state.findings.values())
+    # 후보 위치를 얻는다 (D35 a·candidate_location). Finding은 `candidate_id`만 들고
+    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이라
+    # `null`일 수 있어 dedupe 키에는 파일만 쓴다.
+    by_cand = {c.candidate_id: c.location for c in state.candidates}
+    files = {
+        f.finding_id: (by_cand[f.candidate_id].file if f.candidate_id in by_cand else None)
+        for f in findings
+    }
     # **등급을 리포트에 넘긴다 (D35·D36).** Finding에 등급 필드가 없어 등급은 게이트
     # 판정이라 trace에만 있었고, 그래서 리포트가 대표를 고를 때 등급을 못 보고(E3 삭제)
-    # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다 — 러너가
-    # 가진 evidences·decisions·missings가 최종 등급을 결정한다. `ctx.evaluate_gate`가 아니라
-    # 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
+    # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다.
+    #
+    # **`evidences_for`로 이 Finding이 참조하는 근거만 거른다** — 6·7·8단계 게이트가 전부
+    # 그렇게 하고(`gate_node`·`critic`·`validate`), 안 거르면 artifact 단위 근거 묶음의 다른
+    # Finding 근거로 등급이 올라가 제거율이 무의미해진다. Fake auditor에선 근거가 전량이라
+    # 무동작이지만 **실서빙 auditor가 붙으면 켜진다**(#36의 B1′/B3′). `ctx.evaluate_gate`가
+    # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
     #
     # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
-    # 들어가고, 게다가 Fake auditor에선 E4가 원리상 도달 불가다(D38). E4가 실제로 열리면
-    # (실서빙 auditor) 그 근거를 여기로 모으는 일이 따라온다.
+    # 들어가고, Fake auditor에선 E4가 원리상 도달 불가다(D38). E4가 실제로 열리면 그 근거를
+    # 여기로 모으는 일이 따라온다(`validate.run`이 `produced`를 반환하는데 지금 버린다).
     grades = {
         f.finding_id: gate.evaluate(
             f,
-            state.evidences.get(f.finding_id, ()),
+            gate.evidences_for(f, state.evidences.get(f.finding_id, ())),
             state.decisions.get(f.finding_id, ()),
             state.missings.get(f.finding_id, ()),
+            candidate_location=by_cand.get(f.candidate_id),
         ).grade.value
         for f in findings
     }
@@ -579,6 +592,7 @@ def run_pipeline(
         dropped=state.dropped,
         critic_deferred=state.critic_deferred,
         critic_top_n=config.thresholds.critic_top_n,
+        files=files,
         grades=grades,
     )
     finished = state_machine.finish_run(
