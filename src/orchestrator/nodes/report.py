@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from src.orchestrator.context import RunContext
 from src.orchestrator.stages import Stage
-from src.schemas.enums import FindingState
+from src.schemas.enums import FindingState, PathStepKind
 from src.schemas.finding import Finding
 
 # 리포트에 싣는 상태 순서. 위에 있을수록 먼저 나온다.
@@ -27,8 +27,12 @@ _STATE_ORDER = (
 # 등급 대표 우선순위 (D35). 값이 작을수록 높은 등급이라 dedupe에서 대표로 남는다.
 # 문자열 비교("E10" > "E3" 같은 함정)를 피하려 명시 순서로 둔다.
 _GRADE_ORDER = {"E4": 0, "E3": 1, "E2": 2, "E1": 3, "E0": 4}
-# 등급을 못 받은 Finding의 기본값. `evidence_refs`가 없으면 게이트도 E0을 준다.
-_DEFAULT_GRADE = "E0"
+# `grades`에 키가 없을 때. **"E0"으로 접지 않는다** — 게이트가 구조적으로 E0을 줄 수 없는
+# Finding(근거 + `repro_spec`)을 "등급 없음"인데 "E0"이라 주장하면, `index_graph`가
+# "없다 vs 0건"에 대해 거부한 그 구별이 리포트에서 깨진다. 실 run은 러너가 전량 채운다.
+_GRADE_UNKNOWN = "-"
+# dedupe 정렬에서 "등급 없음"은 가장 낮게 둬 등급 있는 대표에 밀리게 한다.
+_GRADE_RANK_UNKNOWN = 99
 # 요약 줄에 등급을 높은 것부터 적는다 (D36).
 _GRADE_DISPLAY_ORDER = ("E4", "E3", "E2", "E1", "E0")
 
@@ -69,8 +73,9 @@ class Report:
     # 노드가 다시 매기지 않고 러너 값을 받는 것은 `deferred`·`critic_deferred`와 같은 이유다.
     grades: dict[str, str] = field(default_factory=dict)
 
-    def _grade_of(self, finding: Finding) -> str:
-        return self.grades.get(finding.finding_id, _DEFAULT_GRADE)
+    def _grade_of(self, finding: Finding) -> str | None:
+        """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
+        return self.grades.get(finding.finding_id)
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
@@ -114,27 +119,35 @@ class Report:
 
 
 def dedupe(
-    findings: list[Finding], grades: dict[str, str] | None = None
+    findings: list[Finding],
+    grades: dict[str, str] | None = None,
+    files: dict[str, str | None] | None = None,
 ) -> tuple[list[Finding], int]:
-    """같은 CWE·같은 source→sink는 한 건으로 본다.
+    """같은 CWE·같은 파일·같은 대상 함수는 한 건으로 본다.
 
-    **대표는 등급이 높은 것을 남긴다 (D35).** 예전에는 `finding_id` 오름차순으로 처음
-    것을 남겨 등급을 안 봤고, 그래서 E3가 E0/E2 대표에 밀려 리포트에서 사라졌다(실측
-    6건). 등급 우선으로 바꿔도 동급은 `finding_id`로 가르므로 **재현성은 그대로다** —
-    어느 것이 남는지가 실행마다 흔들리지 않는다.
+    **대표는 등급이 높은 것을 남긴다 (D35 b).** 예전에는 `finding_id` 오름차순으로 처음
+    것을 남겨 등급을 안 봤고, 그래서 E3가 낮은 등급 대표에 밀려 리포트에서 사라졌다
+    (실측 62→4에서 E3 6건). 등급 우선으로 바꿔도 동급은 `finding_id`로 가르므로
+    **재현성은 그대로다** — 어느 것이 남는지가 실행마다 흔들리지 않는다.
 
-    **키에 source 심볼도 넣는다 (D35).** sink만 보면 저장소 전역에서 `memcpy`를 쓰는
-    서로 다른 함수가 같은 CWE로 한 건이 됐다 — source→sink 쌍이라야 다른 함수가 안 뭉친다.
+    **키는 (CWE, 파일, 대상 함수)다 (D35 a).** sink 심볼만 보면 저장소 전역에서 `memcpy`를
+    쓰는 서로 다른 함수가 한 건으로 합쳐졌다(D40의 `gz_load`·`gz_avail`·`gz_look`·`gz_write`
+    넷이 전부 `('CWE-787','input','memcpy')`). 대상 함수는 경로의 PROPAGATE 칸이고, 파일은
+    러너가 `Candidate.location`에서 얻어 넘긴다 — `Candidate.location.symbol`은 모델이 쓴
+    값이라 `null`일 수 있어 파일만 쓴다.
     """
     grades = grades or {}
+    files = files or {}
     kept: list[Finding] = []
     seen: set[tuple[str, str, str]] = set()
-    ordered = sorted(
-        findings,
-        key=lambda f: (_GRADE_ORDER.get(grades.get(f.finding_id, _DEFAULT_GRADE), 4), f.finding_id),
-    )
-    for finding in ordered:
-        key = _dedupe_key(finding)
+
+    def _rank(finding: Finding) -> tuple[int, str]:
+        # 등급 높은 것 먼저, 동급은 finding_id로 — 둘 다 결정론.
+        rank = _GRADE_ORDER.get(grades.get(finding.finding_id), _GRADE_RANK_UNKNOWN)
+        return (rank, finding.finding_id)
+
+    for finding in sorted(findings, key=_rank):
+        key = _dedupe_key(finding, files.get(finding.finding_id))
         if key in seen:
             continue
         seen.add(key)
@@ -151,6 +164,7 @@ def run(
     critic_deferred: int = 0,
     critic_top_n: int = 0,
     grades: dict[str, str] | None = None,
+    files: dict[str, str | None] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
@@ -158,10 +172,12 @@ def run(
     세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로 받는다:
     노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도 같다 —
     등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시 매기지 않는다.
+    `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어 넘긴다 — dedupe 키가
+    파일을 가르는 데 쓴다(D35 a).
     """
     grades = grades or {}
     with ctx.stage(Stage.REPORT):
-        kept, duplicates = dedupe(findings, grades)
+        kept, duplicates = dedupe(findings, grades, files)
     return Report(
         run_id=ctx.run_id,
         findings=tuple(kept),
@@ -174,21 +190,32 @@ def run(
     )
 
 
-def _dedupe_key(finding: Finding) -> tuple[str, str, str]:
-    """(CWE, source 심볼, sink 심볼). 경로가 없으면 제목으로 양쪽을 대신한다 (D35).
+def _dedupe_key(finding: Finding, file: str | None) -> tuple[str, str, str]:
+    """(CWE, 파일, 대상 함수). 셋이 같아야 한 건이다 (D35 a).
 
-    sink만이 아니라 source도 넣는 것이 요점이다 — 같은 sink·같은 CWE라도 그 경로가 시작된
-    함수가 다르면 다른 Finding이다.
+    대상 함수는 **경로의 PROPAGATE 칸**이다 — Finding을 서로 다르게 만드는 것이 그것이고,
+    SOURCE는 호출자가 없으면 `"input"` 상수로 접히며(`fake_model`) SINK는 여럿이 공유한다
+    (`memcpy`). PROPAGATE가 없으면 sink, 그것도 없으면 제목으로 대신한다.
     """
+    return (finding.cwe, file or "", _target_symbol(finding))
+
+
+def _target_symbol(finding: Finding) -> str:
+    """분석 대상 함수 — 경로의 PROPAGATE 심볼. 없으면 sink, 경로가 없으면 제목."""
+    for step in finding.path:
+        if step.step is PathStepKind.PROPAGATE:
+            return step.symbol
     if finding.path:
-        return (finding.cwe, finding.path[0].symbol, finding.path[-1].symbol)
-    return (finding.cwe, finding.title, finding.title)
+        return finding.path[-1].symbol
+    return finding.title
 
 
-def _entry(finding: Finding, grade: str) -> str:
+def _entry(finding: Finding, grade: str | None) -> str:
     # **앞머리에 등급을 박는다 (D36).** state(`queued` 등)만 찍으면 E3에 도달한 Finding도
     # `queued`로 보인다 — F-9가 상태를 안 바꾸기 때문이다. 등급이 이 run의 성과다.
+    # 등급이 없으면(`grades`에 키 없음) "E0"이 아니라 `-`로 찍는다(위 `_GRADE_UNKNOWN`).
     return (
-        f"- **[{grade}] {finding.title}** ({finding.cwe}, confidence {finding.confidence:.2f})\n"
+        f"- **[{grade or _GRADE_UNKNOWN}] {finding.title}** "
+        f"({finding.cwe}, confidence {finding.confidence:.2f})\n"
         f"  - id: `{finding.finding_id}` · 근거 {len(finding.evidence_refs)}건"
     )
