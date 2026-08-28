@@ -130,6 +130,82 @@ def test_exhausted_retries_still_raise_instead_of_returning_a_default(
 
     assert attempts == [1, 2]
 
+
+# --- 재시도 프롬프트 (D47) -----------------------------------------------------
+#
+# 재시도 본문은 `complete()` 안에서만 만들어지고 산출물에 안 남는다(D49). **여기가 그것을
+# 볼 수 있는 유일한 자리다.** 위 테스트들과 같이 `_post`를 갈아 끼우되 payload를 보관한다 —
+# 재는 것이 회계가 아니라 **서버에 실제로 간 문자열**이기 때문이다.
+
+_SENTINEL = "SENTINEL_DO_NOT_ECHO"
+
+# 공백 폭주 응답. 여는 중괄호 뒤로 공백과 탭만 이어지다 끝난다 — 2026-08-28 ATOM
+# `run_20260828_0002`의 실패가 전부 이 모양이었다(`EOF while parsing an object at line
+# 16139`). 길이를 15,000자 근처에 둔 것은 그 run에서 8,192 토큰 응답이 escape된 뒤의
+# 크기와 자릿수를 맞추기 위해서다.
+_RUNAWAY = '{\n  "note": "' + _SENTINEL + '",' + "\t \n" * 5000
+
+
+def _capture(monkeypatch: pytest.MonkeyPatch, raw: str) -> list[dict]:
+    """항상 `raw`를 돌려주는 서버. 보낸 payload를 순서대로 모아 돌려준다."""
+    payloads: list[dict] = []
+
+    def fake_post(self, payload: dict) -> tuple[str, Usage]:  # noqa: ANN001, ARG001
+        payloads.append(payload)
+        return raw, Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+    return payloads
+
+
+def _user_content(payload: dict) -> str:
+    return payload["messages"][1]["content"]
+
+
+def test_the_retry_does_not_echo_the_failed_response_into_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """재시도 본문에 실패한 응답 원문이 실리면 안 된다 (D47).
+
+    실리면 출력 상한이 그 자리에서 **입력** 초과로 되돌아온다. `run_20260828_0002`에서
+    8,192 토큰짜리 폭주가 재시도 프롬프트에 실려 입력이 24,576을 넘었고, 게이트웨이가
+    400으로 거절해 target 3건이 떨어졌다 — 그중 하나가 그 대상의 정답 함수였다.
+
+    **`include_input=False`를 되돌리면 아래 단언 둘이 다 깨진다**: 덧붙는 문자열이
+    200자대가 아니라 25,000자대가 되고 `_SENTINEL`이 그 안에 그대로 실린다.
+    """
+    payloads = _capture(monkeypatch, _RUNAWAY)
+
+    with pytest.raises(SchemaParseError):
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert len(payloads) == 2
+    first, second = (_user_content(p) for p in payloads)
+    # 응답 안의 표지가 프롬프트로 건너오지 않는다.
+    assert _SENTINEL not in second
+    # 덧붙은 것은 오류 메시지뿐이다. 원문이 실리면 escape되며 오히려 더 커진다.
+    assert len(second) - len(first) < 1_000
+
+
+def test_the_retry_still_carries_why_the_parse_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """원문을 뺐다고 사유까지 빼면 안 된다 — `include_context`는 켜 둔다.
+
+    "EOF while parsing an object"가 스키마 위반과 출력 절단을 가르는 유일한 단서다(D46).
+    없으면 재시도하는 모델이 무엇을 고쳐야 하는지 모르고, trace의 `error_detail`도 두
+    원인을 못 가른다.
+    """
+    payloads = _capture(monkeypatch, _RUNAWAY)
+
+    with pytest.raises(SchemaParseError):
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    second = _user_content(payloads[1])
+    assert "[스키마 오류]" in second
+    assert "EOF" in second
+
+
 # --- HTTP 오류 응답 본문 (4-1) -------------------------------------------------
 #
 # `HTTPError`는 `URLError`의 하위 클래스라 400도 예전 `except`로 들어왔는데 `exc.read()`를
