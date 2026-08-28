@@ -27,6 +27,18 @@ transition()`은 `model_copy(update=...)`와 달리 **전체 모델을 재검증
 러너의 `retrieval.expand()` 호출 지점이 0개다(D20 관측 ③). 배선하는 사람이 확장도
 `using_counter(...)` 안에서 돌려야 한다.
 
+**⚠ 2026-08-28 — 실제로 터졌는데 위가 지목한 경로가 아니었다 (D43).** 확장이 아니라
+**저장소 로드**다: `SqliteStateStore._load`가 `model_validate`로 캡슐을 되돌리므로
+`using_counter` 밖의 조회는 기본 카운터로 재검증한다. `cli.estimate`의
+`store.query("capsule")`가 그 자리였고 실 토크나이저 프로필에서 `ValidationError`로 죽었다.
+그 한 곳은 `using_counter`로 감쌌지만(D43 (a)) **위험한 자리는 확장 경로 하나가 아니라
+`using_counter` 밖의 모든 `model_validate`다** — 새 조회 지점을 만드는 사람은 그 안에서
+돌려야 한다. 정본은 캡슐이 자기 카운터를 싣고 로드가 그것을 복원하는 것이다(D43 (c)).
+
+**이 붕괴는 조용할 수 있다.** `CapsuleSection._tokens_match_body`가 **본문 있는 섹션에만**
+걸리므로, 그래프 섹션이 빈 캡슐에서는 카운터가 갈려도 아무 일도 안 일어난다. 재현하려면
+본문 있는 섹션과 **두 카운터가 실제로 갈리는** 줄이 함께 필요하다.
+
 **아직 모으지 않은 것이 셋 있다**: `fake_model._CHARS_PER_TOKEN`·
 `vllm_retrieval._CHARS_PER_TOKEN`·`bench.CHARS_PER_TOKEN`. 그 셋은 캡슐 토큰 회계가
 아니라 각각 프롬프트 usage·검색 usage·벤치 채움 길이를 재므로 이 불변식과 묶여 있지
