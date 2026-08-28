@@ -1296,6 +1296,26 @@ def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path
 # 매니페스트가 남는지를 실제로 물으려면 그 경로여야 한다.
 
 
+def _critic_json_truncated() -> SchemaParseError:
+    """`run_20260827_0002`의 critic 실패(`seq=1893`)를 그대로 옮긴 예외 (D44).
+
+    **합성 문자열을 쓰지 않는 이유가 이 실패의 정체에 있다.** 이것은 Decision의 어느 필드가
+    틀렸다는 것이 아니라 **JSON이 안 닫힌 채 끝났다**는 것이다 — 모델이 객체를 열고 공백을
+    끝없이 뱉다가 출력 상한에 잘려 `EOF while parsing an object`가 났다. 그 run의 실패
+    9건이 전부 이 모양이고(auditor 8 · critic 1), 잘린 입력값의 꼬리는 전부 공백·탭
+    연속이다. 실패율은 캡슐 레벨과 함께 움직인다 — scout(LIGHT) 64건 0%, auditor·critic
+    (EXPANDED) 14건 중 9건이다.
+
+    가드가 사유를 보존하는지 재는 것이 이 테스트의 절반이므로 사유 문자열이 실제와 같은
+    모양이어야 한다. 잔여 위험은 D46이 들고 있다.
+    """
+    return SchemaParseError(
+        "critic 역할의 qwen3-coder-30b-a3b이 2회 안에 Decision을 만들지 못했다: "
+        "1 validation error for Decision Invalid JSON: EOF while parsing an object "
+        "at line 2722 column 0 [type=json_invalid]"
+    )
+
+
 def _failing_model(
     monkeypatch: pytest.MonkeyPatch,
     errors: list[Exception | None],
@@ -1516,7 +1536,7 @@ def test_a_critic_schema_failure_drops_only_that_finding(
     """
     _failing_model(
         monkeypatch,
-        [SchemaParseError("critic이 2회 안에 Decision을 못 만들었다")],
+        [_critic_json_truncated()],
         role_under_test=Role.CRITIC,
     )
 
@@ -1525,6 +1545,9 @@ def test_a_critic_schema_failure_drops_only_that_finding(
     failed = _of(_events(trace_path), "critic_failed")
     assert [e["data"]["reason"] for e in failed] == ["schema_parse_failed"]
     assert failed[0]["subject_kind"] == "finding"
+    # **사유를 보존한다.** 이것이 없으면 "critic이 왜 못 돌았는가"를 보려고 다시
+    # `state.db`를 열어야 하고, 그것이 이 결함이 만들던 상태다.
+    assert "EOF while parsing an object" in failed[0]["data"]["error_detail"]
     # **산출물이 남는다** — 이 테스트의 존재 이유다. `report.md` 파일 자체는 `cli`가 쓰므로
     # (`cli.py`의 `run_dir / "report.md"`) 러너 층위에서는 9단계가 리포트를 만들어 냈는지를
     # 본다. 죽은 run에서 없어진 것이 정확히 이 둘이다.
@@ -1547,7 +1570,7 @@ def test_the_seventh_stage_still_splits_three_ways_when_a_critic_call_dies(
     """
     _failing_model(
         monkeypatch,
-        [SchemaParseError("critic이 2회 안에 Decision을 못 만들었다")],
+        [_critic_json_truncated()],
         role_under_test=Role.CRITIC,
     )
 
