@@ -457,10 +457,29 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     if tool == "semgrep":
         return judge_semgrep(last)
     if tool == "clang-tidy":
+        # **명령을 띄우지도 못한 것은 신호가 아니다.** `_RUNTIME_TOOLS`가 위에서 하는 판정과
+        # 같은 것이고, 그 상수의 주석이 이미 "크래시(=신호)와 구분해야 한다"고 적어 뒀다.
+        # 여기에 없던 동안 **컨테이너 기동 실패가 정적 신호로 집계됐다** — 2026-08-28
+        # `run_20260828_0001`에서 keyring 쿼터로 docker가 컨테이너를 못 띄워 도구 13건이
+        # 전부 exit 125였는데, semgrep·build는 `ok=False`로 떨어진 반면 clang-tidy만
+        # `ok=True`로 올라가 `signal_artifacts: 3`이 만들어졌다.
+        if code in _EXEC_FAILED:
+            return False, code, f"clang-tidy: 명령을 띄우지 못했다 (exit={code})"
         # 진단은 stdout으로 나온다("N warnings generated."만 stderr다).
         if _COMPILE_ERROR_MARKER in last.stdout:
             # exit code로는 "경고 발견"과 구분되지 않는다(모듈 docstring, D11).
             return False, code, "clang-tidy: 대상이 컴파일되지 않는다"
+        # **non-zero인데 진단이 한 줄도 없으면 돌지 않은 것이다.** `--warnings-as-errors=*`가
+        # non-zero를 만드는 경로는 경고 발견뿐이고, 그 경고는 stdout에 찍힌다(`--quiet`는
+        # "N warnings generated." 요약만 지운다). 위 `_EXEC_FAILED`가 지금 아는 코드를 막지만
+        # **런타임이 다른 코드로 실패하면 그쪽은 또 신호가 된다** — `judge_semgrep`이
+        # exit code 대신 결과 문서의 유무로 판정하기로 한 것과 같은 논법이고, 그 판정이
+        # 나온 계기(2026-08-14, 한 번도 돌지 않은 semgrep이 정적 신호를 만들었다)가
+        # clang-tidy에서 2026-08-28에 그대로 재현됐다.
+        if code != 0 and not last.stdout.strip():
+            return False, code, (
+                f"clang-tidy가 진단을 한 줄도 내지 않았다 (exit={code}). 로그의 stderr 참조"
+            )
         return True, code, None
     if code == 0:
         return True, 0, None
