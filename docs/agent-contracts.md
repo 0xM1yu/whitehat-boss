@@ -14,7 +14,7 @@ agent:
     - index.callees
   token_budget:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
-    output_max: 8192         # config의 thresholds.output_max와 같은 값. 요청에 max_tokens로 실린다
+    output_max: 4096         # config의 thresholds.output_max와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
   output_schema: Finding     # 아래 §3
 ```
@@ -29,6 +29,13 @@ agent:
 > 숫자였는데, `run_20260827_0002`의 auditor 호출 하나가 `ok: true`로 **2,424 토큰**을 냈다 —
 > 2,000이었으면 그 성공이 잘려 파싱 실패가 됐다. 근거와 남은 한계는 `config/budgets.yaml`의
 > `output_max` 주석에 있다.
+>
+> **2026-08-28에 8,192에서 4,096으로 내렸다.** 근거는 헤드룸이 아니라 **클라이언트 타임아웃
+> 여유**다 — `run_20260828_0002`가 63 tok/s를 실측했고, 8,192까지 폭주하면 재시도까지 2회에
+> 약 260초라 `_TIMEOUT_S = 300`에 11초밖에 안 남는다(실측 288,959 ms). 그 벽을 넘으면 읽을 수
+> 있는 파싱 실패가 불투명한 타임아웃으로 바뀌고, 그것이 이 항목이 원래 없애려던 실패
+> 모양이다. 4,096이면 여유가 170초다. **대가는 관측 최대 2,424 대비 여유가 3.4배에서 1.7배로
+> 주는 것**이고, 그보다 큰 정상 응답이 나오면 역할별 상한(D46 (c))이 다음 수다.
 >
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
