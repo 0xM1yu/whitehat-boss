@@ -58,6 +58,7 @@ from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
 from src.schemas.finding import Finding
+from src.tokens import using_counter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
@@ -423,7 +424,25 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # `_claim_run_dir`를 거치지 않고 1번을 그대로 쓴다.
         run_dir = Path(tmp) / "estimate"
         result, deps = execute(config, spec, run_id=new_run_id(datetime.now(UTC)), run_dir=run_dir)
-        capsules = deps.store.query("capsule")
+        # **조회를 조립과 같은 카운터 안에서 한다 (D43 (a)).**
+        #
+        # `SqliteStateStore._load`가 `model_validate`로 캡슐을 되돌리므로
+        # `CapsuleSection._tokens_match_body`가 **로드 시점에 다시 돈다.** 캡슐은 러너가
+        # `using_counter(counter_for_role(scout))` 안에서 조립했는데 이 조회가 그 밖이라,
+        # 실 토크나이저 프로필에서는 저장값(실 토크나이저)과 재계산값(글자수 근사)이 갈려
+        # `ValidationError`로 죽었다 — `estimate --profile b1_single`이 실제로 그렇게 죽었고
+        # 사유는 "callees 섹션의 tokens(30)가 본문에서 계산한 값(18)과 다르다"였다.
+        #
+        # scout 카운터인 것은 `runner._triage_one`이 LIGHT 캡슐을 그것으로 조립하기
+        # 때문이다. 조립과 검증이 같은 카운터를 봐야 한다는 `src/tokens.py`의 불변식을
+        # 여기서도 같은 방식으로 지킨다.
+        #
+        # **⚠ 이것은 임시방편이다.** `src/tokens.py`가 이미 경고한 대로 위험한 자리는
+        # 확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이
+        # 수정은 그중 지금 터진 한 곳을 막을 뿐이다. 정본은 캡슐이 자기 카운터를 싣고
+        # 로드가 그것을 복원하는 것이다(D43 (c)) — 그때 이 `with`는 필요 없어진다.
+        with using_counter(deps.counter_for_role(Role.SCOUT.value)):
+            capsules = deps.store.query("capsule")
 
     calls = _expected_calls(config, len(capsules))
     tokens = sum(c.used_tokens for c in capsules) + _prefix_tokens(config) * calls
