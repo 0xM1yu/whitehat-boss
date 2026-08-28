@@ -1,0 +1,106 @@
+From 9e8108b9aeecb560e6e85aecb2050fbeb8917413 Mon Sep 17 00:00:00 2001
+From: kirin <194181645+danielcho02@users.noreply.github.com>
+Date: Fri, 28 Aug 2026 07:07:45 +0000
+Subject: [PATCH] =?UTF-8?q?fix(registry):=20granite-3.3-8b=20=ED=8F=AC?=
+ =?UTF-8?q?=ED=8A=B8=EB=A5=BC=208003=EC=97=90=EC=84=9C=208007=EB=A1=9C=20?=
+ =?UTF-8?q?=EC=98=AE=EA=B8=B4=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+팀 `experiments/2x2/config/models_endpoints.yaml` 원문을 2026-08-28 ATOM에서
+대조한 결과 granite와 devstral-small-2-24b가 둘 다 8003이었다. 한 포트에 두
+서버를 동시에 못 띄우므로 b3prime_balanced가 막힌다 - 세 역할이 서로 다른
+서버를 동시에 요구하는 유일한 프로필이고, 2026-08-28 보고서가 "세 서버를
+동시에 안 띄웠다"고 적은 이유다.
+
+팀이 포트마다 다른 모델을 띄우는 것으로 합의해, 비어 있던 8007로 옮긴다.
+8003은 devstral 단독이 되고 b3prime_balanced는 8006/8007/8001로 갈린다.
+남은 공유 포트는 8001(qwen3-8b / qwen3-8b-bf16) 하나이고 그것은 의도된
+공유다 - 한 번에 하나만 서빙한다.
+
+- config/models.yaml: granite endpoint와 근거 주석
+- config/models.yaml: qwen3-8b-bf16 주석 - 8001이 남은 유일한 공유 포트다
+- config/profiles.yaml: b3prime_balanced의 동시 기동 포트 셋
+
+ATOM 쪽 models_endpoints.yaml과 기동 스크립트의 --port도 8007로 함께
+바뀌어야 한다. doctor는 endpoint를 출력만 하고 중복이나 불일치를 검사하지
+않으므로(_endpoint_note) 어긋나도 걸러 주지 않는다.
+---
+ config/models.yaml   | 24 +++++++++++++-----------
+ config/profiles.yaml | 10 ++++++----
+ 2 files changed, 19 insertions(+), 15 deletions(-)
+
+diff --git a/config/models.yaml b/config/models.yaml
+index 32c6f01..8bada71 100644
+--- a/config/models.yaml
++++ b/config/models.yaml
+@@ -211,23 +211,24 @@ models:
+     # `license: Apache-2.0`과 `context_limit: 131072`은 확인했고 맞다 — 카드 frontmatter가
+     # `license: apache-2.0`이고 config.json의 `max_position_embeddings`가 131072다.
+     #
+-    # **⚠ 8003을 `devstral-small-2-24b`와 공유한다.** 팀
+-    # `experiments/2x2/config/models_endpoints.yaml`이 granite를 8003으로 선언하고,
+-    # registry는 서버가 **실제로 뜨는 자리**를 적는 곳이라 그쪽을 따랐다(#36의 8007은 본문이
+-    # 밝힌 대로 임의 배정이었다). 한 프로필이 둘을 같이 쓰지는 않지만(b3prime_balanced에
+-    # devstral 없음 / local_balanced에 granite 없음) **한 포트에 두 서버를 동시에 못 띄운다** —
+-    # 조건을 오갈 때 서버를 갈아야 한다. `doctor`는 endpoint를 출력만 하고 중복을 검사하지
+-    # 않으므로(`_endpoint_note`) 사전에 걸러 주지 않는다.
++    # **포트는 8007이다.** 한때 8003이었다 — 팀
++    # `experiments/2x2/config/models_endpoints.yaml`이 granite를 8003으로 선언해서 그쪽을
++    # 따랐는데(`5a70393`), 2026-08-28 ATOM에서 그 파일 원문을 대조해 보니 granite와
++    # `devstral-small-2-24b`가 **둘 다 8003**이었다. 한 포트에 두 서버를 동시에 못 띄우므로
++    # `b3prime_balanced`(8006·8007·8001 동시 기동)가 막힌다. **팀이 포트마다 다른 모델을
++    # 띄우는 것으로 합의했고**, granite를 비어 있던 8007로 옮겨 8003은 devstral 단독이 됐다.
++    # `doctor`는 endpoint를 출력만 하고 중복을 검사하지 않으므로(`_endpoint_note`) 이런
++    # 중복을 사전에 걸러 주지 않는다 — 값이 갈려 있는 것 자체가 유일한 방어다.
+     #
+     # **그 상태에서 조용히 틀릴 수 있는 경로가 하나 있다.** vLLM은 요청의 `model`이 서빙 중인
+     # 이름과 다르면 404를 내고 그건 `ModelGatewayError`로 죽는다 — 여기까지는 소리가 난다.
+     # 그러나 `--served-model-name`은 **순수 별칭이라 실제 가중치와의 일치를 검증하지 않는다.**
+     # 이 저장소가 그걸 이미 썼다: 2026-08-18에 Qwen3-0.6B를 `--served-model-name qwen3-4b`로
+     # 8001에 서빙했고, 그 문서가 "**별칭은 근거가 못 된다**"고 적어 뒀다
+-    # (docs/experiments/2026-08-18-retrieval-atom.md). 8003에 granite를 띄우면서 이름만
+-    # devstral로 붙이면 하네스는 granite의 답을 devstral의 것으로 기록하고 알아챌 방법이 없다.
++    # (docs/experiments/2026-08-18-retrieval-atom.md). 8007에 다른 모델을 띄우면서 이름만
++    # `granite-3.3-8b`로 붙이면 하네스는 그 답을 granite의 것으로 기록하고 알아챌 수 없다.
+     # **기동 스크립트가 registry 키를 그대로 `--served-model-name`에 넣는 것이 유일한 방어다.**
+-    endpoint: "http://127.0.0.1:8003/v1"
++    endpoint: "http://127.0.0.1:8007/v1"
+     context_limit: 131072
+     quantization: "bf16"
+     license: "Apache-2.0"
+@@ -250,7 +251,8 @@ models:
+     # 같은 이름의 다른 파일이다. 덮어쓰면 B3'-large(`local_balanced`)가 쓰는 항목이 깨진다.
+     #
+     # **8001을 기존 `qwen3-8b`와 공유하는 것은 의도다** — 한 번에 하나만 서빙한다.
+-    # granite/devstral의 8003 공유와 같은 성격이고, 같은 함정을 공유한다:
++    # granite/devstral의 8003 공유는 2026-08-28에 granite를 8007로 옮겨 해소됐으므로
++    # 8001이 남은 유일한 공유 포트다. 의도된 공유라도 함정은 그대로다:
+     # `--served-model-name`은 별칭일 뿐 가중치를 검증하지 않으므로, 8001에 nvfp4를 띄우고
+     # 이름만 `qwen3-8b-bf16`으로 붙이면 하네스는 알아채지 못한다. 기동 스크립트가 registry
+     # 키와 실제 스냅샷을 함께 관리해야 한다(위 granite 주석과 같은 이유).
+diff --git a/config/profiles.yaml b/config/profiles.yaml
+index 4de6896..48db0a3 100644
+--- a/config/profiles.yaml
++++ b/config/profiles.yaml
+@@ -309,10 +309,12 @@ profiles:
+     # 세 모델이 서로 다른 계열이라야 교차 검증에 값이 있다(model-serving.md §2). critic이
+     # auditor와 다른 계열인 것이 특히 그렇다 — 같은 계열이면 반박이 재진술이 되기 쉽다.
+     #
+-    # ⚠ **셋을 동시에 띄워야 하는 유일한 프로필이다.** 8006·8003·8001 세 포트가 함께 살아
+-    # 있어야 한다. B1' 셋은 한 번에 하나만 띄우면 되므로 granite(8003)와 devstral(8003),
+-    # qwen3-8b-bf16(8001)과 qwen3-8b(8001)의 포트 공유가 문제되지 않는데, 이 프로필은
+-    # 8003·8001을 쓰므로 **그 두 포트에 다른 모델이 떠 있으면 안 된다.**
++    # ⚠ **셋을 동시에 띄워야 하는 유일한 프로필이다.** 8006(foundation-sec) · 8007(granite)
++    # · 8001(qwen3-8b-bf16) 세 포트가 함께 살아 있어야 한다. **granite가 8003에서 8007로
++    # 옮겨진 이유가 이 프로필이다** — 8003은 devstral과 겹쳐 있었고 한 포트에 두 서버를
++    # 동시에 못 띄운다. 남은 공유 포트는 8001뿐이고(qwen3-8b-bf16과 qwen3-8b) B1' 셋은
++    # 한 번에 하나만 띄우면 되므로 문제되지 않는데, 이 프로필은 8001을 쓰므로 **그 포트에
++    # 다른 모델이 떠 있으면 안 된다.**
+     production: false
+     roles:
+       scout: foundation-sec-8b
+-- 
+2.34.1
+
