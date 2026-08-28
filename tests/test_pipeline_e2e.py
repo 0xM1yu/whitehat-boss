@@ -1623,3 +1623,62 @@ def test_the_planned_list_and_the_planned_count_agree(tmp_path: Path) -> None:
     plan = _of(events, "target_plan")
     assert len(plan) == 1, "target_plan은 run당 1건이다 — 목록이 분모를 대체하지 않는다"
     assert len(_of(events, "target_planned")) == plan[0]["data"]["planned"]
+
+
+def _critic_context_overflow() -> ModelGatewayError:
+    """`run_20260828_0001`이 7단계에서 받은 400을 그대로 옮긴 예외 (D44 후속).
+
+    **합성이 아니다.** `output_max: 8192`가 실리면서 `입력 24,577 + 출력 8,192 = 32,769`이
+    `--max-model-len 32768`을 넘겨 vLLM이 요청을 거절했다. 상한이 없던 시절에는 서버가
+    남은 공간만큼 생성하고 끝났을 요청이다.
+    """
+    detail = (
+        "This model's maximum context length is 32768 tokens. However, you requested "
+        "8192 output tokens and your prompt contains at least 24577 input tokens, "
+        "for a total of at least 32769 tokens."
+    )
+    return ModelGatewayError(f"HTTP 400 {detail}", status=400, detail=detail)
+
+
+def test_a_request_level_rejection_in_critic_drops_only_that_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**400은 이 Finding에 대한 사실이지 run에 대한 사실이 아니다 (D44 후속).**
+
+    처음에는 critic 루프에서 `ModelGatewayError`를 일부러 안 잡았고, 그 판단대로
+    `run_20260828_0001`이 7단계 400에서 `stopped_after: 7`로 끊겼다 — 후보 단위였다면
+    `_triage_all`이 하나만 버리고 완주했을 사건이다. 판정을 복사하지 않고 `_is_droppable`로
+    빼서 두 자리가 같은 규칙을 쓰게 했다.
+    """
+    _failing_model(monkeypatch, [_critic_context_overflow()], role_under_test=Role.CRITIC)
+
+    result, trace_path = _run(tmp_path, name="critic-400", before=_with_index())
+
+    failed = _of(_events(trace_path), "critic_failed")
+    assert [e["data"]["reason"] for e in failed] == ["gateway_error"]
+    assert "32768" in failed[0]["data"]["error_detail"]
+    # **run이 끊기지 않는다** — 이 테스트의 존재 이유다.
+    assert result.record.is_complete
+    assert (trace_path.parent / "run_manifest.json").is_file()
+
+
+def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**5xx는 서버 쪽 사건이라 그대로 올려 보낸다.** 남은 Finding을 태워도 얻는 게 없다.
+
+    `_is_droppable`이 가르는 축이 이것이다 — 400은 요청 하나의 문제이고 503은 run의 문제다.
+    올려 보내도 `run_pipeline`이 받아 매니페스트까지 가므로 산출물은 남는다.
+    """
+    _failing_model(
+        monkeypatch,
+        [ModelGatewayError("HTTP 503", status=503, detail="overloaded")],
+        role_under_test=Role.CRITIC,
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-503", before=_with_index())
+
+    assert _of(_events(trace_path), "critic_failed") == []
+    assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable"
+    assert (trace_path.parent / "run_manifest.json").is_file()
+    assert not result.record.is_complete
