@@ -1586,3 +1586,40 @@ def test_the_seventh_stage_still_splits_three_ways_when_a_critic_call_dies(
         + len(_of(events, "gate_eval", stage=Stage.CRITIC))
     )
     assert accounted == reached_critic, f"7단계 분할이 안 닫힌다: {accounted} != {reached_critic}"
+
+
+def test_the_symbols_actually_analysed_are_named_in_the_trace(tmp_path: Path) -> None:
+    """**실행한 대상의 이름이 남는다 (D45).**
+
+    `run_20260827_0004`의 정답 대조에서 "근본 원인 `router_define`이 후보 19건에 있었는가"를
+    물었는데 run 산출물로 답할 수 없었다. `target_plan`은 `symbol_targets: 19`처럼 개수만
+    싣고, 이름이 남는 곳은 `target_skipped`뿐인데 그 run은 `deferred: 0`이라 0건이었다.
+    `Candidate.location`도 못 메운다 — 그것은 모델이 쓴 값이고 그 run에서는 `symbol`이 전부
+    `null`이었다. 인덱서는 이름을 알고 있는데 그 값이 실행 기록으로 안 건너왔다.
+    """
+    _, trace_path = _run(tmp_path, name="planned", before=_with_index())
+
+    events = _events(trace_path)
+    planned = _of(events, "target_planned")
+    # 인덱서가 아는 이름이 그대로 온다. 개수가 아니라 이름이 이 테스트의 대상이다.
+    assert {e["data"]["symbol"] for e in planned} == {s["name"] for s in _FIXTURE_INDEX["symbols"]}
+    # 파일·줄도 함께 온다 — 이름만으로는 같은 이름의 `static` 함수 둘을 못 가른다(W2).
+    assert {(e["data"]["file"], e["data"]["line_start"]) for e in planned} == {
+        (s["file"], s["line_start"]) for s in _FIXTURE_INDEX["symbols"]
+    }
+
+
+def test_the_planned_list_and_the_planned_count_agree(tmp_path: Path) -> None:
+    """`count(target_planned) = target_plan.planned`, 그리고 `target_plan`은 여전히 1건이다.
+
+    **분모를 새로 만들지 않는 것이 이 이벤트의 조건이다.** 같은 수를 두 곳에서 말하되 한쪽은
+    개수, 한쪽은 이름이다. 두 수가 갈리면 어느 쪽을 믿을지가 사라지고, `target_plan`이 run당
+    1건이라는 계약(이 파일의 다른 검사가 잠근다)도 함께 지켜져야 목록이 분모를 대체하지
+    않는다.
+    """
+    _, trace_path = _run(tmp_path, name="planned-count", before=_with_index())
+
+    events = _events(trace_path)
+    plan = _of(events, "target_plan")
+    assert len(plan) == 1, "target_plan은 run당 1건이다 — 목록이 분모를 대체하지 않는다"
+    assert len(_of(events, "target_planned")) == plan[0]["data"]["planned"]
