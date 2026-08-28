@@ -452,6 +452,94 @@ def test_report_dedupes_and_does_not_promote_to_reported(ctx: RunContext) -> Non
     assert proven.title in result.render()
 
 
+def _targeting(finding_id: str, target: str) -> Finding:
+    """`fake_model`이 내는 3칸 경로(SOURCE input · PROPAGATE 대상함수 · SINK memcpy)를
+    본떠, 대상 함수만 다른 Finding을 만든다 — D40이 든 gz_load/avail/… 모양."""
+    return _finding(finding_id).model_copy(
+        update={
+            "path": [
+                PathStep(step=PathStepKind.SOURCE, symbol="input"),
+                PathStep(step=PathStepKind.PROPAGATE, symbol=target),
+                PathStep(step=PathStepKind.SINK, symbol="memcpy"),
+            ]
+        }
+    )
+
+
+def test_dedupe_keeps_the_highest_grade_representative() -> None:
+    """중복에서 등급 높은 것을 남긴다 (D35 b). 예전엔 finding_id 오름차순이라 E3가 낮은
+    등급 대표에 밀려 리포트에서 사라졌다 — 실측 6건. id가 더 커도 등급이 이겨야 한다."""
+    low = _finding("find_0001")  # 같은 파일·대상 함수 → 같은 dedupe 키
+    high = _finding("find_0009")
+
+    kept, dups = report.dedupe([low, high], {"find_0001": "E0", "find_0009": "E3"})
+
+    assert dups == 1
+    assert [f.finding_id for f in kept] == ["find_0009"]  # 등급이 id를 이긴다
+
+
+def test_dedupe_same_grade_breaks_ties_by_finding_id() -> None:
+    """동급이면 `finding_id` 오름차순으로 대표를 정한다 — 재현성 (D35 리뷰 ⑥). 입력 순서가
+    흔들려도 같은 것이 남아야 리포트를 실행 간에 대조할 수 있다."""
+    kept, _ = report.dedupe(
+        [_finding("find_0009"), _finding("find_0001")],  # 같은 키·같은 등급, 입력 역순
+        {"find_0009": "E3", "find_0001": "E3"},
+    )
+
+    assert [f.finding_id for f in kept] == ["find_0001"]  # 더 작은 id
+
+
+def test_dedupe_does_not_merge_different_target_functions() -> None:
+    """같은 CWE·같은 sink라도 **대상 함수(PROPAGATE)**가 다르면 다른 건이다 (D35 a). 예전
+    키는 sink만 봐서 D40의 넷(gz_load·gz_avail·gz_look·gz_write → 전부 memcpy)이 한 건이 됐다.
+
+    source는 `fake_model`에서 호출자가 없으면 `"input"` 상수로 접히므로 source로는 못 가른다 —
+    가운데 PROPAGATE 칸이 대상 함수다.
+    """
+    targets = ["gz_load", "gz_avail", "gz_look", "gz_write"]
+    findings = [_targeting(f"find_002{i}", t) for i, t in enumerate(targets, start=4)]
+
+    kept, dups = report.dedupe(findings, {})
+
+    assert dups == 0  # 넷 다 남는다
+    assert len(kept) == 4
+
+
+def test_dedupe_does_not_merge_across_files() -> None:
+    """같은 CWE·대상 함수라도 파일이 다르면 다른 건이다 (D35 a). `PathStep`에 파일이 없어
+    러너가 `Candidate.location.file`을 `files` 맵으로 넘긴다."""
+    a, b = _finding("find_0001"), _finding("find_0002")  # 같은 (CWE, 대상 함수)
+
+    kept, dups = report.dedupe([a, b], {}, {"find_0001": "a.c", "find_0002": "b.c"})
+
+    assert dups == 0
+    assert {f.finding_id for f in kept} == {"find_0001", "find_0002"}
+
+
+def test_render_shows_grade_and_distribution(ctx: RunContext) -> None:
+    """리포트가 등급을 싣는다 (D36). 예전엔 state만 찍어 E3에 도달한 Finding도 `queued`로
+    보였고, run의 성과(E3 건수)를 보려면 trace를 파야 했다."""
+    e3 = _finding("find_0001", state=FindingState.VALIDATED)
+
+    rendered = report.run(ctx, findings=[e3], grades={"find_0001": "E3"}).render()
+
+    assert "[E3]" in rendered  # 각 항목 앞머리에 등급
+    assert "등급 분포: E3 1건" in rendered  # 맨 위 요약
+
+
+def test_render_marks_ungraded_finding_as_unknown_not_e0(ctx: RunContext) -> None:
+    """`grades`에 없는 Finding은 `[-]`로 찍고 분포에서 뺀다 — "등급 없음"을 "E0"이라
+    주장하지 않는다 (D35 리뷰 ⑤). 게이트가 구조적으로 E0을 줄 수 없는 근거 + repro_spec을
+    가진 Finding이 있다."""
+    backed = _finding("find_0001", state=FindingState.VALIDATED)
+
+    rendered = report.run(ctx, findings=[backed]).render()  # grades 안 넘김
+
+    assert "[-]" in rendered
+    assert "[E0]" not in rendered
+    assert "등급 분포" not in rendered  # 아는 등급이 0건이면 분포 줄 자체가 없다
+
+
 # --- 프롬프트 계약 ----------------------------------------------------------
 
 
