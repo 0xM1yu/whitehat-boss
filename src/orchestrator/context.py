@@ -38,7 +38,7 @@ from src.orchestrator.policy import Action, RoutingPolicy, RoutingRequest
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
-from src.schemas.common import Location
+from src.schemas.common import Location, ProducedBy
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.evidence import Evidence
@@ -218,6 +218,24 @@ class RunContext:
             name = role.value
             self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
         self.ledger.charge(result.usage, stage=stage, gpu_ms=result.gpu_ms)
+        # **`produced_by`를 하네스가 stamp한다.** 그것은 어느 역할·모델·프롬프트 버전이
+        # 만들었는지(evaluation.md §2.3 조건 비교의 기반)인데, 모델은 자기 model 이름도
+        # prompt_version도 모른다. 그런데 `produced_by`가 Finding·Decision의 필수 필드라
+        # 실서빙에서는 모델이 아무 값이나 채워 넣었다 — Fake는 하네스가 채우는데(fake_model)
+        # 그 비대칭이 결함이었다(윤경 지적). 여기서 덮어 실서빙도 Fake와 같아진다.
+        #
+        # `produced_by`가 있는 스키마(Finding·Decision)만 덮는다. `model`은 `result.model`을
+        # 쓴다 — fallback이 동작하면 요청 모델과 다를 수 있고 그것이 실제로 응답한 모델이다
+        # (`ModelResult.model` 주석). Fake는 `result.model`이 이미 `model_name`이라 무변경이다.
+        if "produced_by" in type(result.value).model_fields:
+            stamped = result.value.model_copy(
+                update={
+                    "produced_by": ProducedBy(
+                        role=role, model=result.model, prompt_version=prompt.prompt_version
+                    )
+                }
+            )
+            result = result.model_copy(update={"value": stamped})
         return result
 
     def _record_prompt(

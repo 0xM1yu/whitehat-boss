@@ -18,7 +18,8 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS, EventKind, TraceWriter
-from src.schemas import Candidate, FindingState, Location, Role
+from src.schemas import Candidate, FindingState, Location, ProducedBy, Role
+from src.schemas.finding import Finding
 from src.schemas.run import Budget
 
 RUN_ID = "run_20260901_0001"
@@ -120,6 +121,41 @@ def test_call_model_records_usage_and_charges_budget() -> None:
     assert call.data["cached_tokens"] == result.usage.cached_tokens
     assert ctx.ledger.input_tokens == result.usage.input_tokens
     assert models.calls == 1
+
+
+class _FindingStub:
+    """`produced_by`에 **틀린 값**을 넣은 Finding을 낸다 — 실서빙 모델이 자기 role·model을
+    모른 채 그 필수 필드를 채우는 상황(윤경 지적)을 세운다."""
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+        bogus = Finding(
+            finding_id="find_0001",
+            run_id=RUN_ID,
+            candidate_id="cand_0001",
+            title="t",
+            cwe="CWE-787",
+            state=FindingState.HYPOTHESIZED,
+            confidence=0.5,
+            produced_by=ProducedBy(role=Role.SCOUT, model="wrong", prompt_version="v0"),
+        )
+        return ModelResult(value=bogus, usage=_usage(), model="served-30b")
+
+
+def test_call_model_stamps_produced_by_over_the_model_value() -> None:
+    """실서빙 모델이 `produced_by`에 아무 값이나 넣어도 하네스가 진실로 덮는다 (윤경 요청).
+
+    Fake는 이미 맞게 채우므로, 모델이 **틀린** `produced_by`(role=SCOUT·model=wrong)를 낸
+    경우를 세워 override를 본다. `model`은 `ModelResult.model`(실제 응답 모델)을 써야 한다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _FindingStub()
+
+    result = ctx.call_model(role=Role.AUDITOR, prompt=PROMPT, schema=Finding, stage=Stage.AUDITOR)
+
+    pb = result.value.produced_by
+    assert pb.role is Role.AUDITOR  # 모델이 쓴 SCOUT이 아니라 호출 역할
+    assert pb.model == "served-30b"  # `ModelResult.model` — fallback까지 반영한 실제 응답 모델
+    assert pb.prompt_version == PROMPT.prompt_version
 
 
 def test_call_model_records_failure_and_reraises() -> None:
