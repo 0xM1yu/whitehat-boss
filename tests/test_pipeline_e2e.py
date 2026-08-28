@@ -1296,13 +1296,42 @@ def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path
 # 매니페스트가 남는지를 실제로 물으려면 그 경로여야 한다.
 
 
-def _failing_model(monkeypatch: pytest.MonkeyPatch, errors: list[Exception | None]) -> None:
-    """N번째 Scout 호출에서 준비된 예외를 던진다. 목록이 짧으면 그 뒤는 정상이다."""
+def _critic_json_truncated() -> SchemaParseError:
+    """`run_20260827_0002`의 critic 실패(`seq=1893`)를 그대로 옮긴 예외 (D44).
+
+    **합성 문자열을 쓰지 않는 이유가 이 실패의 정체에 있다.** 이것은 Decision의 어느 필드가
+    틀렸다는 것이 아니라 **JSON이 안 닫힌 채 끝났다**는 것이다 — 모델이 객체를 열고 공백을
+    끝없이 뱉다가 출력 상한에 잘려 `EOF while parsing an object`가 났다. 그 run의 실패
+    9건이 전부 이 모양이고(auditor 8 · critic 1), 잘린 입력값의 꼬리는 전부 공백·탭
+    연속이다. 실패율은 캡슐 레벨과 함께 움직인다 — scout(LIGHT) 64건 0%, auditor·critic
+    (EXPANDED) 14건 중 9건이다.
+
+    가드가 사유를 보존하는지 재는 것이 이 테스트의 절반이므로 사유 문자열이 실제와 같은
+    모양이어야 한다. 잔여 위험은 D46이 들고 있다.
+    """
+    return SchemaParseError(
+        "critic 역할의 qwen3-coder-30b-a3b이 2회 안에 Decision을 만들지 못했다: "
+        "1 validation error for Decision Invalid JSON: EOF while parsing an object "
+        "at line 2722 column 0 [type=json_invalid]"
+    )
+
+
+def _failing_model(
+    monkeypatch: pytest.MonkeyPatch,
+    errors: list[Exception | None],
+    *,
+    role_under_test: Role = Role.SCOUT,
+) -> None:
+    """N번째 `role_under_test` 호출에서 준비된 예외를 던진다. 목록이 짧으면 그 뒤는 정상이다.
+
+    역할을 인자로 받는 것은 D44 때문이다 — critic 단계의 실패는 후보 단위가 아니라 Finding
+    단위라 같은 주입기를 다른 역할에 걸어야 두 경로를 같은 방식으로 잴 수 있다.
+    """
     original = FakeModelClient.complete
     calls = {"n": 0}
 
     def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
-        if role is Role.SCOUT:
+        if role is role_under_test:
             index = calls["n"]
             calls["n"] += 1
             if index < len(errors) and errors[index] is not None:
@@ -1493,3 +1522,67 @@ def test_the_gateway_detail_survives_into_the_run_artifacts(
     skipped = _of(_events(trace_path), "target_skipped")
     assert "43200 tokens" in skipped[0]["data"]["error_detail"]
 
+
+
+def test_a_critic_schema_failure_drops_only_that_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**critic 호출 하나가 죽어도 run은 산출물까지 간다 (D44).**
+
+    이 가드가 없던 동안 `run_20260827_0002`는 16 m 26 s를 돌고 critic 첫 호출의
+    `SchemaParseError`로 죽었고, 그 run 디렉터리에는 `report.md`도 `run_manifest.json`도
+    남지 않았다 — 모델 호출 78건이 trace에만 있어 어느 커밋으로 돈 run인지 기록이
+    지시하지 못했다. 후보 단위(`_triage_all`)에는 있던 처리가 Finding 단위에는 없었다.
+    """
+    _failing_model(
+        monkeypatch,
+        [_critic_json_truncated()],
+        role_under_test=Role.CRITIC,
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-schema", before=_with_index())
+
+    failed = _of(_events(trace_path), "critic_failed")
+    assert [e["data"]["reason"] for e in failed] == ["schema_parse_failed"]
+    assert failed[0]["subject_kind"] == "finding"
+    # **사유를 보존한다.** 이것이 없으면 "critic이 왜 못 돌았는가"를 보려고 다시
+    # `state.db`를 열어야 하고, 그것이 이 결함이 만들던 상태다.
+    assert "EOF while parsing an object" in failed[0]["data"]["error_detail"]
+    # **산출물이 남는다** — 이 테스트의 존재 이유다. `report.md` 파일 자체는 `cli`가 쓰므로
+    # (`cli.py`의 `run_dir / "report.md"`) 러너 층위에서는 9단계가 리포트를 만들어 냈는지를
+    # 본다. 죽은 run에서 없어진 것이 정확히 이 둘이다.
+    assert (trace_path.parent / "run_manifest.json").is_file()
+    assert result.report.render().startswith("#")
+    # 실패한 호출 자체는 `model_call ok=False`로 남는다. 잡았다고 분자가 사라지지 않는다.
+    assert len([e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]) == 1
+    assert result.record.is_complete
+
+
+def test_the_seventh_stage_still_splits_three_ways_when_a_critic_call_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`critic_skipped + critic_failed + gate_eval(stage=7) = 7단계에 올라간 Finding 수`.
+
+    `EventKind.CRITIC_SKIPPED` 주석이 원래 두 항으로 적어 둔 분할이다. 실패 건을
+    `critic_skipped`에 합쳤다면 이 등식은 여전히 맞지만 그 이벤트의 뜻("정의상 안 들어간
+    건")이 깨지고, 아무 이벤트도 안 내면 좌변이 우변보다 작아져 **차이가 어디로 갔는지
+    기록이 지시하지 못한다.** 셋으로 나눈 근거가 이것이다.
+    """
+    _failing_model(
+        monkeypatch,
+        [_critic_json_truncated()],
+        role_under_test=Role.CRITIC,
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-split", before=_with_index())
+
+    events = _events(trace_path)
+    # **분모는 trace가 아니라 결과 객체에서 온다.** 좌변을 만든 이벤트로 우변을 세면
+    # 등식이 자기 자신을 증명한다.
+    reached_critic = len(result.findings)
+    accounted = (
+        len(_of(events, "critic_skipped"))
+        + len(_of(events, "critic_failed"))
+        + len(_of(events, "gate_eval", stage=Stage.CRITIC))
+    )
+    assert accounted == reached_critic, f"7단계 분할이 안 닫힌다: {accounted} != {reached_critic}"

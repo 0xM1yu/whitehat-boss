@@ -425,6 +425,10 @@ class _Accumulator:
     # `dropped`는 target을 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
     # 분모가 섞인다(`target_skipped`를 `critic_skipped`와 나눈 것과 같은 이유).
     critic_deferred: int = 0
+    # 7단계에 **들어갔다가** critic 호출이 실패해 버린 Finding 수 (D44). `critic_deferred`와
+    # 나누는 이유는 그 필드를 `deferred`·`dropped`와 나눈 이유와 같다 — 이쪽은 "안 올라갔다"
+    # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
+    critic_failed: int = 0
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -515,6 +519,16 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.CONSECUTIVE_TARGET_FAILURES
         warnings.append(f"{exc}")
+    except SchemaParseError as exc:
+        # **후위 방어선이다 (D44).** 후보 단위는 `_triage_all`이, Finding 단위는 `_analyze`의
+        # critic 루프가 이미 잡으므로 여기까지 오는 것은 **아직 가드가 없는 경로**뿐이다.
+        # 그런 경로가 생겼을 때 산출물이 통째로 사라지는 대신 매니페스트와 리포트까지 가고
+        # 중단 사유가 남는다 — `ModelGatewayError` 갈래가 같은 이유로 있고, 그 주석이
+        # "이 갈래가 없던 동안에는 예외가 `write_manifest` 앞을 뚫고 나가 산출물이 하나도
+        # 안 남았다"고 적어 둔 그 사고의 재발을 막는다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
+        warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -551,6 +565,14 @@ def run_pipeline(
             f"Finding {state.critic_deferred}건을 critic_top_n"
             f"({config.thresholds.critic_top_n})로 잘라 7단계에 올리지 않았다. "
             f"trace의 critic_skipped가 목록이다"
+        )
+    # **7단계에서 죽은 Finding도 같은 자리에 올린다 (D44).** 위 절단 경고와 같은 논거인데
+    # 여기서는 한 겹 더 나쁘다 — 절단은 사람이 상한을 정해서 일어나지만 이쪽은 예정에 없던
+    # 손실이고, 경고가 없으면 critic을 7건 돌린 run과 3건이 죽은 run이 겉보기에 같아진다.
+    if state.critic_failed:
+        warnings.append(
+            f"Finding {state.critic_failed}건이 7단계 critic 호출 실패로 판정을 못 받았다. "
+            f"사유는 trace의 critic_failed에 있다"
         )
 
     findings = list(state.findings.values())
@@ -629,12 +651,42 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
     selected = critic.select(ctx, promoted)
     state.critic_deferred = len(promoted) - len(selected)
     for finding in selected:
-        after, decision = critic.run(
-            ctx,
-            finding=finding,
-            evidences=state.evidences.get(finding.finding_id, ()),
-            missings=state.missings.get(finding.finding_id, ()),
-        )
+        try:
+            after, decision = critic.run(
+                ctx,
+                finding=finding,
+                evidences=state.evidences.get(finding.finding_id, ()),
+                missings=state.missings.get(finding.finding_id, ()),
+            )
+        except SchemaParseError as exc:
+            # **Finding 하나의 실패로 run을 잃지 않는다 (D44).** `_triage_all`이 후보에 대해
+            # 하는 것과 같은 판정이고, 여기에 그 처리가 없던 동안 `run_20260827_0002`는
+            # 16 m 26 s를 돌고 critic 첫 호출에서 죽어 **산출물이 하나도 안 남았다** —
+            # 모델 호출 78건이 trace에만 있고 `report.md`도 `run_manifest.json`도 없어
+            # 어느 커밋으로 돈 run인지 기록이 지시하지 못했다.
+            #
+            # **여기서 잡는 것은 `SchemaParseError` 하나다.** `ModelGatewayError`는 일부러
+            # 안 잡는다 — `_triage_all`은 그것을 `_DROPPABLE_STATUS`로 갈라 "요청 단위 거절"
+            # 만 버리고 나머지는 올려 보내는데, 그 판정을 여기 복사하면 같은 규칙이 두 곳에
+            # 따로 살게 된다. 게이트웨이 사건은 `run_pipeline`이 이미 잡아 매니페스트까지
+            # 가므로 산출물이 사라지는 일은 없다. 후보 단위처럼 크기 거절만 떨구고 싶어지면
+            # 그때는 `_drop`의 갈래를 Finding 쪽으로 끌어오는 것이 맞지 이 자리를 늘리는
+            # 것이 아니다.
+            #
+            # **연속 폐기 카운터(`_TooManyDrops`)를 여기 두지 않는다.** 그 장치는 target
+            # 수백 개를 태우는 것을 막으려는 것인데 selected는 `critic_top_n`으로 이미
+            # 묶여 있다(실측 7건). 상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이
+            # 상한에 닿았는지가 사유에서 사라진다.
+            state.critic_failed += 1
+            ctx.trace.emit(
+                EventKind.CRITIC_FAILED,
+                stage=Stage.CRITIC,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                reason=_REASON_SCHEMA,
+                error_detail=error_detail(exc),
+            )
+            continue
         # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
         state.decisions[finding.finding_id] = (decision,)
         state.update(after)

@@ -146,6 +146,22 @@ class EventKind(StrEnum):
     # 묻는 것이 정확히 그 둘의 어긋남이고, 이 두 필드가 없던 동안에는 그 답을 보려고
     # `state.db`를 손으로 열어야 했다.
     CRITIC_SKIPPED = "critic_skipped"
+    # 7단계에 **들어갔다가** critic 호출이 실패해 그 Finding만 버렸다 (D44).
+    #
+    # **`critic_skipped`와 합치지 않는다.** 바로 위 주석이 그 이벤트를 "정의상 **안 들어간**
+    # 건"으로 못박았다. 파싱 실패는 반대로 **들어가서 모델을 부르고 죽은** 건이라, 한 이름에
+    # 넣으면 `critic_skipped`의 뜻이 조용히 넓어지고 D26 (a)가 그 이벤트로 묻던 질문
+    # ("선별 키와 8단계 진입 조건이 어긋나는가")이 실패 건에 오염된다.
+    #
+    # **7단계 분할은 셋으로 늘어난다**:
+    #   `count(critic_skipped) + count(critic_failed) + count(gate_eval, stage=7)`
+    #   `= count(promoted_to_critic)`
+    # 이 이벤트가 없던 동안에는 좌변이 우변보다 **작았고**, 그 차이가 어디로 갔는지 기록이
+    # 지시하지 못했다 — 애초에 run이 통째로 죽어 trace 말고는 아무것도 안 남았기 때문이다.
+    #
+    # `subject_id`는 `finding_id`이고 `reason`·`error_detail`을 함께 싣는다. 사유를 안 실으면
+    # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
+    CRITIC_FAILED = "critic_failed"
     # 이 run이 **어느 토큰 카운터로 셌는가** (D21 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
     #
