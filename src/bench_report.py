@@ -147,6 +147,19 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
 
     다르면 bench가 잰 것이 운영 경로가 아니게 된다. 어긋남은
     `tests/test_bench.py::test_bench_client_matches_the_factory`가 막는다.
+
+    **`max_tokens`도 그 규칙에 포함된다.** "처리량 측정이니 출력 길이를 따로 두는 게
+    맞지 않나"를 검토했고, 답은 아니다. 이유 셋이다:
+
+    1. 이 모듈 docstring의 규칙이 그것이다 — bench 전용 파라미터로 잰 수치는 운영 성능이
+       아니다. `temperature`·`seed`를 이미 운영값으로 맞춰 두고 출력 상한만 달리 두면
+       같은 종류의 어긋남을 하나 남긴다.
+    2. **측정값이 왜곡되지 않는다.** `tok_s`는 `produced / elapsed`라 상한은 표본 길이를
+       바꿀 뿐 속도를 바꾸지 않는다. 그리고 8/26 실측이 후보당 output 167토큰이라 8,192는
+       정상 경로에서 닿지 않는다 — 실제로 걸릴 일이 없다.
+    3. 걸리는 경우가 곧 재야 할 이상이다. 2026-08-27 ATOM에서 30B가 폭주해 클라이언트
+       타임아웃이 난 상황을 bench가 상한 없이 만나면 체크리스트가 "측정 못 함"으로 끝난다.
+       운영과 같은 상한을 두면 그 자리에서 잘리고 수치가 남는다.
     """
     entry = config.models[model_key]
     return OpenAICompatModelClient(
@@ -155,6 +168,7 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
+        max_tokens=config.thresholds.output_max,
         retries=config.thresholds.schema_retries,
     )
 

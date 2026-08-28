@@ -145,7 +145,44 @@ class EventKind(StrEnum):
     # `confidence`(선별 키)와 `has_repro_spec`(8단계 진입 조건)을 함께 싣는다. D26 (a)가
     # 묻는 것이 정확히 그 둘의 어긋남이고, 이 두 필드가 없던 동안에는 그 답을 보려고
     # `state.db`를 손으로 열어야 했다.
+    # 4단계에 **올린** target 하나. `file`·`symbol`·`line_start`를 싣는다 (D45).
+    #
+    # **`target_plan`에 목록을 접어 넣지 않는다.** 그쪽은 run당 1건인 분모이고
+    # `tests/test_pipeline_e2e.py`가 그 계약을 단언한다. 여기에 배열을 실으면 후보가 많은
+    # run에서 이벤트 하나가 통째로 커지고, 분모로 쓰던 행이 목록 행으로 성격이 바뀐다.
+    #
+    # **`target_skipped`와 대칭이다.** 그 이벤트가 잘린 대상의 이름을 남기는 동안 실행된
+    # 대상은 개수만 남았고, 그래서 `run_20260827_0004`의 정답 대조에서 "근본 원인
+    # `router_define`이 후보 19건에 있었는가"에 run 산출물로 답할 수 없었다 — `deferred: 0`
+    # 이라 `target_skipped`가 0건이었고, `Candidate.location`은 **모델이 쓴 값**이라
+    # `symbol`이 전부 `null`이었다. **인덱서는 이름을 알고 있다**(`index_graph.py`의
+    # `Location(file, symbol, line_start, line_end)`) — 끊긴 자리가 여기다.
+    #
+    # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
+    # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
+    TARGET_PLANNED = "target_planned"
     CRITIC_SKIPPED = "critic_skipped"
+    # 7단계에 **들어갔다가** critic 호출이 실패해 그 Finding만 버렸다 (D44).
+    #
+    # **`critic_skipped`와 합치지 않는다.** 바로 위 주석이 그 이벤트를 "정의상 **안 들어간**
+    # 건"으로 못박았다. 파싱 실패는 반대로 **들어가서 모델을 부르고 죽은** 건이라, 한 이름에
+    # 넣으면 `critic_skipped`의 뜻이 조용히 넓어지고 D26 (a)가 그 이벤트로 묻던 질문
+    # ("선별 키와 8단계 진입 조건이 어긋나는가")이 실패 건에 오염된다.
+    #
+    # **7단계 분할은 셋으로 늘어난다**:
+    #   `count(critic_skipped) + count(critic_failed) + count(gate_eval, stage=7)`
+    #   `= count(promoted_to_critic)`
+    # 이 이벤트가 없던 동안에는 좌변이 우변보다 **작았고**, 그 차이가 어디로 갔는지 기록이
+    # 지시하지 못했다 — 애초에 run이 통째로 죽어 trace 말고는 아무것도 안 남았기 때문이다.
+    #
+    # **`reason`은 두 값을 갖는다**: `schema_parse_failed`(모델이 `Decision`을 못 맞췄다)와
+    # `gateway_error`(요청 단위 거절 — 400·413·422). 둘을 한 이벤트에 둔 것은 결과가 같기
+    # 때문이다(그 Finding만 빠지고 run은 계속 간다). 가르는 것은 `reason`이고, 서버 쪽
+    # 사건(상태 없음·5xx)은 애초에 여기 안 온다 — `_is_droppable`이 올려 보낸다.
+    #
+    # `subject_id`는 `finding_id`이고 `reason`·`error_detail`을 함께 싣는다. 사유를 안 실으면
+    # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
+    CRITIC_FAILED = "critic_failed"
     # 이 run이 **어느 토큰 카운터로 셌는가** (D21 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
     #
