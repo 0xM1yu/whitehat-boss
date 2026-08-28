@@ -177,6 +177,18 @@ _DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 _MAX_CONSECUTIVE_DROPS = 3
 
 
+def _is_droppable(exc: ModelGatewayError) -> bool:
+    """이 게이트웨이 오류가 **요청 하나에 대한 사실**인가 — 그 하나만 버리고 계속 갈 수 있는가.
+
+    후보 단위(`_triage_all`)와 Finding 단위(`_analyze`의 critic 루프)가 같은 판정을 쓴다.
+    **함수로 뺀 이유가 그것이다** — 두 곳이 각자 `status not in _DROPPABLE_STATUS`를 적으면
+    한쪽만 고쳐질 때 같은 오류가 자리에 따라 다르게 처리된다.
+
+    `status`가 없으면(연결 실패·타임아웃·비-JSON 응답) 서버 쪽 사건이라 버릴 수 없다.
+    """
+    return exc.status is not None and exc.status in _DROPPABLE_STATUS
+
+
 class _TooManyDrops(RuntimeError):
     """연속 폐기 상한. **서버가 죽은 것과 다른 사건이라 다른 타입이다.**
 
@@ -664,28 +676,22 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
             # 16 m 26 s를 돌고 critic 첫 호출에서 죽어 **산출물이 하나도 안 남았다** —
             # 모델 호출 78건이 trace에만 있고 `report.md`도 `run_manifest.json`도 없어
             # 어느 커밋으로 돈 run인지 기록이 지시하지 못했다.
+            _drop_finding(ctx, state, finding, _REASON_SCHEMA, exc)
+            continue
+        except ModelGatewayError as exc:
+            # **요청 단위 거절은 이 Finding에 대한 사실이다 (D44 후속).** 처음에는 여기서
+            # `ModelGatewayError`를 일부러 안 잡았다 — `_DROPPABLE_STATUS` 판정을 복사하면
+            # 같은 규칙이 두 곳에 따로 산다는 이유였고, "그때는 `_drop`의 갈래를 Finding
+            # 쪽으로 끌어오는 것이 맞다"고 적어 뒀다. **그때가 첫 실서빙 run에서 바로 왔다**:
+            # 2026-08-28 `run_20260828_0001`이 7단계에서 400(`입력 24,577 + 출력 8,192 >
+            # 컨텍스트 32,768`)을 받고 `stopped_after: 7`로 끊겼다. 후보였다면 하나만 버리고
+            # 완주했을 사건이다.
             #
-            # **여기서 잡는 것은 `SchemaParseError` 하나다.** `ModelGatewayError`는 일부러
-            # 안 잡는다 — `_triage_all`은 그것을 `_DROPPABLE_STATUS`로 갈라 "요청 단위 거절"
-            # 만 버리고 나머지는 올려 보내는데, 그 판정을 여기 복사하면 같은 규칙이 두 곳에
-            # 따로 살게 된다. 게이트웨이 사건은 `run_pipeline`이 이미 잡아 매니페스트까지
-            # 가므로 산출물이 사라지는 일은 없다. 후보 단위처럼 크기 거절만 떨구고 싶어지면
-            # 그때는 `_drop`의 갈래를 Finding 쪽으로 끌어오는 것이 맞지 이 자리를 늘리는
-            # 것이 아니다.
-            #
-            # **연속 폐기 카운터(`_TooManyDrops`)를 여기 두지 않는다.** 그 장치는 target
-            # 수백 개를 태우는 것을 막으려는 것인데 selected는 `critic_top_n`으로 이미
-            # 묶여 있다(실측 7건). 상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이
-            # 상한에 닿았는지가 사유에서 사라진다.
-            state.critic_failed += 1
-            ctx.trace.emit(
-                EventKind.CRITIC_FAILED,
-                stage=Stage.CRITIC,
-                subject_kind="finding",
-                subject_id=finding.finding_id,
-                reason=_REASON_SCHEMA,
-                error_detail=error_detail(exc),
-            )
+            # 그래서 판정을 복사하지 않고 `_is_droppable`로 **빼서 공유한다.** 서버 쪽
+            # 사건(상태 없음·5xx)은 그대로 올려 보내고 `run_pipeline`이 매니페스트까지 간다.
+            if not _is_droppable(exc):
+                raise
+            _drop_finding(ctx, state, finding, _REASON_GATEWAY, exc)
             continue
         # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
         state.decisions[finding.finding_id] = (decision,)
@@ -828,7 +834,7 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
         try:
             _triage_one(ctx, target, state, last)
         except ModelGatewayError as exc:
-            if exc.status is None or exc.status not in _DROPPABLE_STATUS:
+            if not _is_droppable(exc):
                 # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
                 #
                 # **그래도 run을 죽이지는 않는다.** `run_pipeline`이 이 예외를 받아
@@ -875,6 +881,29 @@ def _drop(
             f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다. 마지막 사유: {exc}"
         ) from exc
     return consecutive + 1
+
+
+def _drop_finding(
+    ctx: RunContext, state: _Accumulator, finding: Finding, reason: str, exc: Exception
+) -> None:
+    """Finding 하나를 7단계에서 버리고 기록한다 (D44). `_drop`의 Finding 판이다.
+
+    **`_drop`과 달리 연속 폐기 카운터가 없다.** 그 장치(`_TooManyDrops`)는 target 수백 개를
+    태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
+    상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이 상한에 닿았는지가 사유에서 사라진다.
+
+    **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 target을 세고 이쪽은
+    Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
+    """
+    state.critic_failed += 1
+    ctx.trace.emit(
+        EventKind.CRITIC_FAILED,
+        stage=Stage.CRITIC,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        reason=reason,
+        error_detail=error_detail(exc),
+    )
 
 
 def _emit_planned(ctx: RunContext, target: Location) -> None:
