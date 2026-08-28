@@ -42,12 +42,13 @@ class Tiny(BaseModel):
     ok: bool
 
 
-def _client(retries: int = 2) -> OpenAICompatModelClient:
+def _client(retries: int = 2, max_tokens: int = 8192) -> OpenAICompatModelClient:
     return OpenAICompatModelClient(
         endpoint="http://127.0.0.1:9/v1",
         model_name="test-model",
         temperature=0.0,
         top_p=1.0,
+        max_tokens=max_tokens,
         seed=7,
         retries=retries,
     )
@@ -216,3 +217,22 @@ def test_an_unreadable_error_body_does_not_lose_the_status(
     assert caught.value.status == 413
     assert "읽지 못했다" in caught.value.detail
 
+
+
+def test_the_output_cap_is_actually_sent_and_comes_from_the_caller() -> None:
+    """`max_tokens`가 payload에 실린다.
+
+    **이것이 없으면 상한도 없다.** 이 필드가 payload에 없으면 서버는 `--max-model-len`까지
+    생성하고, 2026-08-27 ATOM에서 30B가 그렇게 폭주해 클라이언트 타임아웃이 났다.
+
+    상수가 아니라 **생성자가 받은 값**이 실리는지를 본다 — 값을 하드코딩하면 config를
+    바꿔도 payload가 안 따라오고, 그러면 `RunRecord.thresholds`에 적힌 상한과 실제로 쓰인
+    상한이 갈린다.
+    """
+    payload = _client(max_tokens=1234)._request_payload("prefix", "body", Tiny)
+
+    assert payload["max_tokens"] == 1234
+    # 기존 요청 파라미터가 밀려나지 않았다 — 같은 dict에 나란히 있어야 한다.
+    assert payload["temperature"] == 0.0
+    assert payload["top_p"] == 1.0
+    assert payload["seed"] == 7

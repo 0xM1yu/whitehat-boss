@@ -1296,13 +1296,42 @@ def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path
 # 매니페스트가 남는지를 실제로 물으려면 그 경로여야 한다.
 
 
-def _failing_model(monkeypatch: pytest.MonkeyPatch, errors: list[Exception | None]) -> None:
-    """N번째 Scout 호출에서 준비된 예외를 던진다. 목록이 짧으면 그 뒤는 정상이다."""
+def _critic_json_truncated() -> SchemaParseError:
+    """`run_20260827_0002`의 critic 실패(`seq=1893`)를 그대로 옮긴 예외 (D44).
+
+    **합성 문자열을 쓰지 않는 이유가 이 실패의 정체에 있다.** 이것은 Decision의 어느 필드가
+    틀렸다는 것이 아니라 **JSON이 안 닫힌 채 끝났다**는 것이다 — 모델이 객체를 열고 공백을
+    끝없이 뱉다가 출력 상한에 잘려 `EOF while parsing an object`가 났다. 그 run의 실패
+    9건이 전부 이 모양이고(auditor 8 · critic 1), 잘린 입력값의 꼬리는 전부 공백·탭
+    연속이다. 실패율은 캡슐 레벨과 함께 움직인다 — scout(LIGHT) 64건 0%, auditor·critic
+    (EXPANDED) 14건 중 9건이다.
+
+    가드가 사유를 보존하는지 재는 것이 이 테스트의 절반이므로 사유 문자열이 실제와 같은
+    모양이어야 한다. 잔여 위험은 D46이 들고 있다.
+    """
+    return SchemaParseError(
+        "critic 역할의 qwen3-coder-30b-a3b이 2회 안에 Decision을 만들지 못했다: "
+        "1 validation error for Decision Invalid JSON: EOF while parsing an object "
+        "at line 2722 column 0 [type=json_invalid]"
+    )
+
+
+def _failing_model(
+    monkeypatch: pytest.MonkeyPatch,
+    errors: list[Exception | None],
+    *,
+    role_under_test: Role = Role.SCOUT,
+) -> None:
+    """N번째 `role_under_test` 호출에서 준비된 예외를 던진다. 목록이 짧으면 그 뒤는 정상이다.
+
+    역할을 인자로 받는 것은 D44 때문이다 — critic 단계의 실패는 후보 단위가 아니라 Finding
+    단위라 같은 주입기를 다른 역할에 걸어야 두 경로를 같은 방식으로 잴 수 있다.
+    """
     original = FakeModelClient.complete
     calls = {"n": 0}
 
     def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
-        if role is Role.SCOUT:
+        if role is role_under_test:
             index = calls["n"]
             calls["n"] += 1
             if index < len(errors) and errors[index] is not None:
@@ -1493,3 +1522,163 @@ def test_the_gateway_detail_survives_into_the_run_artifacts(
     skipped = _of(_events(trace_path), "target_skipped")
     assert "43200 tokens" in skipped[0]["data"]["error_detail"]
 
+
+
+def test_a_critic_schema_failure_drops_only_that_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**critic 호출 하나가 죽어도 run은 산출물까지 간다 (D44).**
+
+    이 가드가 없던 동안 `run_20260827_0002`는 16 m 26 s를 돌고 critic 첫 호출의
+    `SchemaParseError`로 죽었고, 그 run 디렉터리에는 `report.md`도 `run_manifest.json`도
+    남지 않았다 — 모델 호출 78건이 trace에만 있어 어느 커밋으로 돈 run인지 기록이
+    지시하지 못했다. 후보 단위(`_triage_all`)에는 있던 처리가 Finding 단위에는 없었다.
+    """
+    _failing_model(
+        monkeypatch,
+        [_critic_json_truncated()],
+        role_under_test=Role.CRITIC,
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-schema", before=_with_index())
+
+    failed = _of(_events(trace_path), "critic_failed")
+    assert [e["data"]["reason"] for e in failed] == ["schema_parse_failed"]
+    assert failed[0]["subject_kind"] == "finding"
+    # **사유를 보존한다.** 이것이 없으면 "critic이 왜 못 돌았는가"를 보려고 다시
+    # `state.db`를 열어야 하고, 그것이 이 결함이 만들던 상태다.
+    assert "EOF while parsing an object" in failed[0]["data"]["error_detail"]
+    # **산출물이 남는다** — 이 테스트의 존재 이유다. `report.md` 파일 자체는 `cli`가 쓰므로
+    # (`cli.py`의 `run_dir / "report.md"`) 러너 층위에서는 9단계가 리포트를 만들어 냈는지를
+    # 본다. 죽은 run에서 없어진 것이 정확히 이 둘이다.
+    assert (trace_path.parent / "run_manifest.json").is_file()
+    assert result.report.render().startswith("#")
+    # 실패한 호출 자체는 `model_call ok=False`로 남는다. 잡았다고 분자가 사라지지 않는다.
+    assert len([e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]) == 1
+    assert result.record.is_complete
+
+
+def test_the_seventh_stage_still_splits_three_ways_when_a_critic_call_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`critic_skipped + critic_failed + gate_eval(stage=7) = 7단계에 올라간 Finding 수`.
+
+    `EventKind.CRITIC_SKIPPED` 주석이 원래 두 항으로 적어 둔 분할이다. 실패 건을
+    `critic_skipped`에 합쳤다면 이 등식은 여전히 맞지만 그 이벤트의 뜻("정의상 안 들어간
+    건")이 깨지고, 아무 이벤트도 안 내면 좌변이 우변보다 작아져 **차이가 어디로 갔는지
+    기록이 지시하지 못한다.** 셋으로 나눈 근거가 이것이다.
+    """
+    _failing_model(
+        monkeypatch,
+        [_critic_json_truncated()],
+        role_under_test=Role.CRITIC,
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-split", before=_with_index())
+
+    events = _events(trace_path)
+    # **분모는 trace가 아니라 결과 객체에서 온다.** 좌변을 만든 이벤트로 우변을 세면
+    # 등식이 자기 자신을 증명한다.
+    reached_critic = len(result.findings)
+    accounted = (
+        len(_of(events, "critic_skipped"))
+        + len(_of(events, "critic_failed"))
+        + len(_of(events, "gate_eval", stage=Stage.CRITIC))
+    )
+    assert accounted == reached_critic, f"7단계 분할이 안 닫힌다: {accounted} != {reached_critic}"
+
+
+def test_the_symbols_actually_analysed_are_named_in_the_trace(tmp_path: Path) -> None:
+    """**실행한 대상의 이름이 남는다 (D45).**
+
+    `run_20260827_0004`의 정답 대조에서 "근본 원인 `router_define`이 후보 19건에 있었는가"를
+    물었는데 run 산출물로 답할 수 없었다. `target_plan`은 `symbol_targets: 19`처럼 개수만
+    싣고, 이름이 남는 곳은 `target_skipped`뿐인데 그 run은 `deferred: 0`이라 0건이었다.
+    `Candidate.location`도 못 메운다 — 그것은 모델이 쓴 값이고 그 run에서는 `symbol`이 전부
+    `null`이었다. 인덱서는 이름을 알고 있는데 그 값이 실행 기록으로 안 건너왔다.
+    """
+    _, trace_path = _run(tmp_path, name="planned", before=_with_index())
+
+    events = _events(trace_path)
+    planned = _of(events, "target_planned")
+    # 인덱서가 아는 이름이 그대로 온다. 개수가 아니라 이름이 이 테스트의 대상이다.
+    assert {e["data"]["symbol"] for e in planned} == {s["name"] for s in _FIXTURE_INDEX["symbols"]}
+    # 파일·줄도 함께 온다 — 이름만으로는 같은 이름의 `static` 함수 둘을 못 가른다(W2).
+    assert {(e["data"]["file"], e["data"]["line_start"]) for e in planned} == {
+        (s["file"], s["line_start"]) for s in _FIXTURE_INDEX["symbols"]
+    }
+
+
+def test_the_planned_list_and_the_planned_count_agree(tmp_path: Path) -> None:
+    """`count(target_planned) = target_plan.planned`, 그리고 `target_plan`은 여전히 1건이다.
+
+    **분모를 새로 만들지 않는 것이 이 이벤트의 조건이다.** 같은 수를 두 곳에서 말하되 한쪽은
+    개수, 한쪽은 이름이다. 두 수가 갈리면 어느 쪽을 믿을지가 사라지고, `target_plan`이 run당
+    1건이라는 계약(이 파일의 다른 검사가 잠근다)도 함께 지켜져야 목록이 분모를 대체하지
+    않는다.
+    """
+    _, trace_path = _run(tmp_path, name="planned-count", before=_with_index())
+
+    events = _events(trace_path)
+    plan = _of(events, "target_plan")
+    assert len(plan) == 1, "target_plan은 run당 1건이다 — 목록이 분모를 대체하지 않는다"
+    assert len(_of(events, "target_planned")) == plan[0]["data"]["planned"]
+
+
+def _critic_context_overflow() -> ModelGatewayError:
+    """`run_20260828_0001`이 7단계에서 받은 400을 그대로 옮긴 예외 (D44 후속).
+
+    **합성이 아니다.** `output_max: 8192`가 실리면서 `입력 24,577 + 출력 8,192 = 32,769`이
+    `--max-model-len 32768`을 넘겨 vLLM이 요청을 거절했다. 상한이 없던 시절에는 서버가
+    남은 공간만큼 생성하고 끝났을 요청이다.
+    """
+    detail = (
+        "This model's maximum context length is 32768 tokens. However, you requested "
+        "8192 output tokens and your prompt contains at least 24577 input tokens, "
+        "for a total of at least 32769 tokens."
+    )
+    return ModelGatewayError(f"HTTP 400 {detail}", status=400, detail=detail)
+
+
+def test_a_request_level_rejection_in_critic_drops_only_that_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**400은 이 Finding에 대한 사실이지 run에 대한 사실이 아니다 (D44 후속).**
+
+    처음에는 critic 루프에서 `ModelGatewayError`를 일부러 안 잡았고, 그 판단대로
+    `run_20260828_0001`이 7단계 400에서 `stopped_after: 7`로 끊겼다 — 후보 단위였다면
+    `_triage_all`이 하나만 버리고 완주했을 사건이다. 판정을 복사하지 않고 `_is_droppable`로
+    빼서 두 자리가 같은 규칙을 쓰게 했다.
+    """
+    _failing_model(monkeypatch, [_critic_context_overflow()], role_under_test=Role.CRITIC)
+
+    result, trace_path = _run(tmp_path, name="critic-400", before=_with_index())
+
+    failed = _of(_events(trace_path), "critic_failed")
+    assert [e["data"]["reason"] for e in failed] == ["gateway_error"]
+    assert "32768" in failed[0]["data"]["error_detail"]
+    # **run이 끊기지 않는다** — 이 테스트의 존재 이유다.
+    assert result.record.is_complete
+    assert (trace_path.parent / "run_manifest.json").is_file()
+
+
+def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**5xx는 서버 쪽 사건이라 그대로 올려 보낸다.** 남은 Finding을 태워도 얻는 게 없다.
+
+    `_is_droppable`이 가르는 축이 이것이다 — 400은 요청 하나의 문제이고 503은 run의 문제다.
+    올려 보내도 `run_pipeline`이 받아 매니페스트까지 가므로 산출물은 남는다.
+    """
+    _failing_model(
+        monkeypatch,
+        [ModelGatewayError("HTTP 503", status=503, detail="overloaded")],
+        role_under_test=Role.CRITIC,
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-503", before=_with_index())
+
+    assert _of(_events(trace_path), "critic_failed") == []
+    assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable"
+    assert (trace_path.parent / "run_manifest.json").is_file()
+    assert not result.record.is_complete

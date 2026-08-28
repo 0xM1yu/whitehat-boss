@@ -14,11 +14,22 @@ agent:
     - index.callees
   token_budget:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
-    output_max: 2000
+    output_max: 8192         # config의 thresholds.output_max와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
   output_schema: Finding     # 아래 §3
 ```
 
+> **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
+> `thresholds.output_max`가 값을 들고 `adapters/openai_compat._request_payload`가 요청에
+> `max_tokens`로 싣는다. 그전까지 이 줄은 선언만이었고 — `grep -rn output_max src/`가 0건이었다 —
+> 서버가 자기 기본값까지 생성했다. `run_20260827_0001`의 auditor 호출 하나가 그렇게 5분을 먹고
+> 클라이언트 타임아웃으로 run을 끊었다.
+>
+> **값이 2,000에서 8,192로 바뀐 것도 그때다.** 2,000은 강제된 적이 없어 검증된 적도 없는
+> 숫자였는데, `run_20260827_0002`의 auditor 호출 하나가 `ok: true`로 **2,424 토큰**을 냈다 —
+> 2,000이었으면 그 성공이 잘려 파싱 실패가 됐다. 근거와 남은 한계는 `config/budgets.yaml`의
+> `output_max` 주석에 있다.
+>
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
 > 단계로 되돌려 capsule 축소"를 수행하는 코드가 없다. 더구나 **캡슐 예산은 프롬프트 크기의

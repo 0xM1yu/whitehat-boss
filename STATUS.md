@@ -123,9 +123,10 @@ hybrid 쪽 경로를 태운다.
 
 **들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
 돌린다. 런타임은 생성자 인자이고 프로필이 고른다 — 개발 프로필은 `dev_docker` /
-`dev_singularity`, 실서빙 프로필(`local_balanced`·`b1_single`)은 `podman`이다(2026-08-17,
-주 실서빙 장비가 ATOM이므로 — docs/portability.md §3). 프로필이 선언한 런타임이 없는
-장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
+`dev_singularity`, 조건 비교용 실서빙 프로필 여섯(`local_balanced`·`b1_single` + 2x2 넷)은
+전부 `docker`다(2026-08-28, 주 실서빙 장비가 ATOM이므로 — docs/portability.md §3.
+2026-08-17~08-28 사이 앞의 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
+프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
 `harness-tools:v1` 하나이며 semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
 (준비 절차는 `tools/README.md`).
@@ -291,9 +292,19 @@ ATOM에서 돌리는 일이다.
 역할이 전부 Blackwell 이상을 요구하므로 두 프로필 모두 그 미만 장비에서는 애초에 기동하지
 않는다([portability.md](docs/portability.md) §5 #1) — 그래서 반대 방향의 대가가 없다.
 
+**2026-08-28: 그 `podman`이 다시 `docker`가 됐다.** 기준("프로필은 주 실서빙 장비의 런타임을
+선언한다")은 그대로이고 바뀐 것은 ATOM의 런타임이 무엇이냐다 — 위 문단의 "ATOM(podman만
+있다)"이 반증됐다(docker 29.2.1 · podman 4.9.3 공존, 2026-08-28 `which` 재확인). 되돌린
+직접 근거는 **선언과 기록이 어긋나 있었다**는 것이다: `b1_single`로 돈 run 둘
+(`run_20260827_0001`·`0004`)이 `RunRecord.tool_runner: docker`였다 — 위 문단이 피하려던
+"주 경로가 상시 예외 상태"가 실제로 벌어지고 있었다. 유지 근거였던 "podman으로 이미 돈
+run과 digest가 갈린다"도 사실이 아니었다 — run 14건 중 podman은 `run_20260817_0001`
+하나이고 그것은 dev 프로필이다. 상세는 ADR 0005 마지막 절.
+
 `--tool-runner {fake,docker,singularity,podman}`는 그대로 남는다. 프로필이 선언한 런타임이
-없는 장비에서 쓰고, 지금 실제 사용처는 `dev_docker`를 ATOM에서 돌릴 때다. evaluation.md
-§2.3 규칙 2의 예외이므로 **실제로 쓰인 값이 `RunRecord.tool_runner`에 남는다**(ADR 0005).
+없는 장비에서 쓰고, 지금 남는 사용처는 `dev_singularity`를 ATOM에서 돌릴 때다(ATOM에
+singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제로 쓰인 값이
+`RunRecord.tool_runner`에 남는다**(ADR 0005).
 
 ---
 
