@@ -809,6 +809,20 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
 
 
+@dataclass
+class _Reached:
+    """target 하나가 어느 단계까지 갔는지 (D48).
+
+    **가변인 것이 목적이다.** `_triage_one`이 예외로 빠져나가면 반환값이 없으므로,
+    "어디까지 갔는가"를 돌려줄 길이 이것뿐이다. 호출자가 만들어 넘기고 호출자가 읽는다.
+
+    기본값이 `RETRIEVAL`인 이유는 `_triage_one`의 첫 모델 호출이 3단계 캡슐 조립이기
+    때문이다 — 그전에 죽으면(예: 인덱스 조회) 3이 맞고, 0으로 두면 없는 단계를 적는다.
+    """
+
+    stage: Stage = Stage.RETRIEVAL
+
+
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
     """target을 차례로 태운다. **후보 하나의 실패로 run을 잃지 않는다.**
 
@@ -831,8 +845,13 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
     """
     consecutive = 0
     for target in plan.targets:
+        # 이번 target이 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (D48). 예외는
+        # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
+        # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
+        # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
+        reached = _Reached()
         try:
-            _triage_one(ctx, target, state, last)
+            _triage_one(ctx, target, state, last, reached)
         except ModelGatewayError as exc:
             if not _is_droppable(exc):
                 # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
@@ -845,10 +864,19 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
             # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
             systematic = exc.status not in _SIZE_STATUS
             consecutive = _drop(
-                ctx, state, target, _REASON_GATEWAY, exc, consecutive, systematic=systematic
+                ctx,
+                state,
+                target,
+                _REASON_GATEWAY,
+                exc,
+                consecutive,
+                stage=reached.stage,
+                systematic=systematic,
             )
         except SchemaParseError as exc:
-            consecutive = _drop(ctx, state, target, _REASON_SCHEMA, exc, consecutive)
+            consecutive = _drop(
+                ctx, state, target, _REASON_SCHEMA, exc, consecutive, stage=reached.stage
+            )
         else:
             # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
             consecutive = 0
@@ -862,6 +890,7 @@ def _drop(
     exc: Exception,
     consecutive: int,
     *,
+    stage: Stage,
     systematic: bool = True,
 ) -> int:
     """target 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
@@ -869,10 +898,14 @@ def _drop(
     `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
     (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
     않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+
+    **`stage`는 호출자가 준다 (D48).** 예전에는 여기서 `Stage.SCOUT`으로 박았는데,
+    `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 기록은 4가 됐다.
+    `run_20260828_0002`의 `target_skipped` 3건이 전부 그랬다 — 실패한 `model_call`은
+    셋 다 5단계 auditor인데 skip 기록은 4다. `_emit_skipped`가 자기 docstring에
+    "**`stage`가 곧 어디서 잘렸는가다**"라고 적어 뒀고, 박아 둔 값은 그 문장을 못 지킨다.
     """
-    _emit_skipped(
-        ctx, target.location, stage=Stage.SCOUT, reason=reason, detail=error_detail(exc)
-    )
+    _emit_skipped(ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc))
     state.dropped += 1
     if not systematic:
         return consecutive
@@ -952,8 +985,14 @@ def _emit_skipped(
     )
 
 
-def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int) -> None:
-    """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다."""
+def _triage_one(
+    ctx: RunContext, target: _Target, state: _Accumulator, last: int, reached: _Reached
+) -> None:
+    """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다.
+
+    **`reached.stage`를 노드에 들어가기 직전에 올린다 (D48).** 끝난 뒤에 올리면 그
+    노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
+    """
     location, artifact, evidences = target.location, target.artifact, target.evidences
     if last < Stage.RETRIEVAL:
         return
@@ -964,6 +1003,7 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
         capsule = retrieval.run(ctx, target=location, level=CapsuleLevel.LIGHT)
     if last < Stage.SCOUT:
         return
+    reached.stage = Stage.SCOUT
     candidate = scout.run(ctx, artifact=artifact, capsule=capsule, evidences=evidences)
     state.candidates.append(candidate)
     if candidate.state is not FindingState.TRIAGED or last < Stage.AUDITOR:
@@ -971,6 +1011,7 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
     # auditor는 EXPANDED 캡슐을 보므로 auditor 카운터로 켠다. 역할마다 모델(=토크나이저)이
     # 다를 수 있어 scout와 따로 감싼다 — 조립과 `CapsuleSection` 검증이 같은 카운터를 봐야
     # 한다(`src/tokens.py` docstring).
+    reached.stage = Stage.AUDITOR
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=location, level=CapsuleLevel.EXPANDED)
     finding, missings = auditor.run(ctx, candidate=candidate, capsule=expanded, evidences=evidences)
@@ -980,6 +1021,7 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
     state.workdirs[finding.finding_id] = artifact.path
     if last < Stage.GATE:
         return
+    reached.stage = Stage.GATE
     graded, _ = gate_node.run(
         ctx,
         finding=finding,
