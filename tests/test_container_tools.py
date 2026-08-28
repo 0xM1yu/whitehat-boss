@@ -861,3 +861,48 @@ def test_scratch_dir_name_matches_the_node_tool_name() -> None:
     from src.orchestrator.nodes.index import INDEX_TOOL as NODE_INDEX_TOOL
 
     assert INDEX_TOOL == NODE_INDEX_TOOL
+
+
+def test_clang_tidy_that_never_started_is_not_a_static_signal() -> None:
+    """컨테이너가 명령을 못 띄운 것은 **신호가 아니다.**
+
+    2026-08-28 `run_20260828_0001`에서 keyring 쿼터로 docker가 컨테이너를 하나도 못 띄웠다.
+    도구 호출 13건이 전부 exit 125였는데 semgrep·build는 `ok=False`로 떨어진 반면
+    clang-tidy만 `ok=True`로 올라가 `target_plan.signal_artifacts`가 **3으로 조작됐다.**
+    `signal`은 `_order_and_cut`의 정렬 첫 키이자 Evidence Gate의 입력이므로, 한 번도 돌지
+    않은 도구가 그 둘을 움직인 것이다.
+
+    `_EXEC_FAILED`는 원래 있던 상수이고 그 주석이 "크래시(=신호)와 구분해야 한다"고 이미
+    적어 뒀다 — `_RUNTIME_TOOLS`에만 걸려 있었을 뿐이다.
+    """
+    for code in (125, 126, 127):
+        ok, exit_code, error = judge("clang-tidy", [Step(code, "", "docker: daemon error")], 1)
+
+        assert ok is False, f"exit={code}가 신호로 올라갔다"
+        assert exit_code == code, "프로세스가 낸 값을 그대로 남긴다"
+        assert error is not None and "띄우지 못했다" in error
+
+
+def test_clang_tidy_nonzero_without_any_diagnostic_is_not_a_signal() -> None:
+    """`--warnings-as-errors=*`가 non-zero를 만드는 길은 경고 발견뿐이고 그것은 stdout에 찍힌다.
+
+    그래서 **non-zero인데 진단이 한 줄도 없으면 돌지 않은 것**이다. `_EXEC_FAILED`가 지금
+    아는 코드는 막지만 런타임이 다른 코드로 실패하면 그쪽은 또 신호가 되므로, exit code가
+    아니라 출력의 유무로 판정한다 — `judge_semgrep`이 결과 문서로 판정하기로 한 것과 같다.
+    """
+    ok, code, error = judge("clang-tidy", [Step(1, "   \n", "some runtime failure")], 1)
+
+    assert ok is False
+    assert code == 1
+    assert error is not None and "진단을 한 줄도 내지 않았다" in error
+
+
+def test_clang_tidy_still_reports_real_warnings_as_a_signal() -> None:
+    """고침이 **진짜 신호를 죽이지 않는다.** 진단이 있으면 non-zero는 그대로 신호다."""
+    assert judge("clang-tidy", [Step(1, "util.c:14:5: warning: x [bugprone-x]", "")], 1) == (
+        True,
+        1,
+        None,
+    )
+    # 깨끗한 실행은 예전과 같다.
+    assert judge("clang-tidy", [Step(0, "", "")], 1) == (True, 0, None)
