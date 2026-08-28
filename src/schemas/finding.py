@@ -83,6 +83,20 @@ class Finding(HarnessModel):
     confidence: float = Field(ge=0.0, le=1.0)
     path: list[PathStep] = Field(default_factory=list)
     rca_draft: str = ""
+    # 트리거 가능성의 명시적 상태 (@0xM1yu 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
+    # 모순(예: `not_vulnerable`인데 "취약"이라 서술)을 줄이려 이 상태를 **먼저** 확정하는데, 그
+    # 값이 산출물에 안 남아 "모델이 실제로 그 상태로 판정했는지"를 사후에 못 봤다. Auditor가
+    # 내는 값: `triggerable` · `guarded` · `no_reach` · `reachability_unknown` · `no_signal`.
+    #
+    # **optional·nullable이다.** 서버의 확정 프롬프트(2026-08-29 반영)에 위 다섯 값이 들어갔고,
+    # 이 필드가 없으면 emit해도 파싱에서 버려진다 — 그래서 먼저 받을 자리를 낸다. 아직 안 내는
+    # 프롬프트(기존 실험)에서는 `None`으로 남는다.
+    # **타입을 일부러 `str`로 둔다.** @0xM1yu 요청의 목적은 "값이 산출물에 안 남아 못 봤다"의 해소,
+    # 곧 **관측**이다. `str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다. 실제 emit 분포를
+    # 본 뒤에야 (1) `Literal`/enum으로 좁혀 강제하고 (2) @0xM1yu이 요청한 필드 순서(… →
+    # `trigger_status` → `confidence` → …)로 재배치한다 — 재배치는 구조화 출력 백엔드가 property
+    # 순서를 강제하는지(xgrammar) 확인한 뒤다.
+    trigger_status: str | None = None
     evidence_refs: list[Identifier] = Field(default_factory=list)
     missing_evidence: list[Identifier] = Field(default_factory=list)
     produced_by: ProducedBy
