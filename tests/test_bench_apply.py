@@ -526,14 +526,25 @@ def test_tool_runner_choices_come_from_the_config_schema() -> None:
 def test_serving_profiles_run_real_tools(profile: str) -> None:
     """`tool_images`가 채워져야 그 run이 비교표에 들어간다 (STATUS.md §8).
 
-    **런타임이 `podman`인 것도 이 테스트가 지킨다.** 프로필은 주 실서빙 장비의 런타임을
-    선언한다(docs/portability.md §3). 이 둘의 주 실서빙 장비는 ATOM이고 그 장비에는
-    podman만 있으므로, `docker`로 되돌아가면 ATOM의 모든 실서빙 run이 `--tool-runner`
-    오버라이드를 달게 되고 주 경로가 evaluation.md §2.3 규칙 2의 상시 예외가 된다.
+    **런타임이 `docker`인 것도 이 테스트가 지킨다.** 프로필은 주 실서빙 장비의 런타임을
+    선언하고(docs/portability.md §3) 그 장비는 ATOM이다.
+
+    **이 단언은 2026-08-28에 `podman`에서 뒤집혔다.** 그전 docstring은 "ATOM에는 podman만
+    있으므로 `docker`로 되돌아가면 ATOM의 모든 실서빙 run이 `--tool-runner` 오버라이드를
+    달게 된다"고 적었는데, 그 전제가 두 겹으로 틀렸다 — ① ATOM에 docker 29.2.1과
+    podman 4.9.3이 함께 있다(2026-08-21 확인, 08-28 `which`로 재확인) ② **오버라이드는
+    이미 달리고 있었다.** `b1_single`로 돈 run 둘(`run_20260827_0001`·`0004`)이
+    `RunRecord.tool_runner: docker`다. 즉 `podman` 선언이 막으려던 "주 경로가 상시 예외
+    상태"를 그 선언이 오히려 만들고 있었다. 경위는
+    docs/decisions/0005-tool-runner-override.md 마지막 절.
+
+    **여섯이 같은 값이어야 한다는 것이 이 단언의 지금 이유다.** 2x2 실험 프로필 넷도
+    `docker`이고, `tool_images` digest는 런타임 사이에서 비교할 수 없으므로
+    (docs/portability.md §5 #4) 값이 갈리면 B3'-large와 2x2 넷을 같은 비교표에 못 올린다.
     """
     config = load_config(profile)
 
-    assert config.profile.adapters.tool_runner == "podman"
+    assert config.profile.adapters.tool_runner == "docker"
     # retriever까지 올리면 ATOM에 모델 5개를 띄워야 하고 R1의 실패 지점이 늘어난다.
     assert config.profile.adapters.retriever == "fake"
 

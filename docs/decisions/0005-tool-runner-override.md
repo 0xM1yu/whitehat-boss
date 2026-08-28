@@ -173,6 +173,68 @@ singularity 둘"**이었고, 그 안에서는 오버라이드가 필요한 조�
 
 **되돌리는 비용: 낮다.** `config/profiles.yaml`의 값 두 줄이다.
 
+## 되돌렸다 — `podman` → `docker` (2026-08-28)
+
+**위 절의 결정을 되돌린다.** `local_balanced`·`b1_single`의 `tool_runner`가 다시 `docker`다.
+**위 절은 지우지 않는다** — 어떤 사실 위에서 그 판단이 나왔는지가 남아야 한다.
+
+**기준은 바뀌지 않았다.** "프로필은 주 실서빙 장비의 런타임을 선언하고 다른 장비가 덮는다"는
+그대로다. 바뀐 것은 **주 실서빙 장비의 런타임이 무엇이냐**다.
+
+**① 전제가 반증됐다.** 위 절이 podman을 고른 근거는 "ATOM은 podman만 있다"(2026-08-17 실측)였다.
+2026-08-21에 Docker 29.2.1이 확인됐고, 2026-08-28에 다시 확인했다:
+
+```
+$ ssh atom 'which podman; which docker; podman --version; docker --version'
+/usr/bin/podman
+/usr/bin/docker
+podman version 4.9.3
+Docker version 29.2.1, build a5c7197
+```
+
+**둘 다 있다.** 따라서 "장비에 없어서"는 어느 쪽 방향으로도 근거가 되지 못한다 — 되돌리는
+근거는 아래 ②·③이지 부재가 아니다.
+
+**② 위 절의 논리가 이제 반대를 가리킨다.** 그 절은 podman을 이렇게 정당화했다 — *"주 경로가
+상시 예외 상태면 그 기록이 '이 run은 특별했다'를 뜻하지 못한다. 예외는 드물어야 기록으로 값이
+있다."* 그런데 **선언이 `podman`인 채로 실제 run은 전부 `docker`였다.**
+
+| run | 프로필(추정 근거) | `RunRecord.tool_runner` |
+| --- | --- | --- |
+| `run_20260827_0001` | `b1_single` — scout·auditor·critic checksum이 셋 다 `sha256:69c4c69e…`(`qwen3-coder-30b-a3b`) | **`docker`** |
+| `run_20260827_0004` | 동일 | **`docker`** |
+
+즉 `--tool-runner docker` 오버라이드를 달고 돌았고, 그것이 바로 [evaluation.md](../evaluation.md)
+§2.3 규칙 2가 조건 비교용 프로필에 금지한 예외다. 주 경로가 상시 예외 상태였다 — 위 절이
+피하려던 바로 그 상태다.
+
+**③ 유지 사유의 전제가 사실이 아니었다.** `config/profiles.yaml`과
+[experiments/README.md](../experiments/README.md)가 "`podman`을 지금 갈면 그 값으로 이미 돈
+run과 digest가 갈린다"를 유지 근거로 적고 있었다. `artifacts/`의 run 14건을 전수 조회했다:
+
+```
+run_20260817_0001   podman   B3prime@pipeline   model_checksums 전부 0
+그 외 13건          docker   —                  —
+```
+
+**podman으로 도구를 돌린 run은 하나뿐이고, `model_checksums`가 전부 0인 dev 프로필이다**
+(`dev_docker --tool-runner podman`, [portability.md](../portability.md) §6). `local_balanced`·
+`b1_single`로 podman을 써서 돈 run은 **0건**이라 갈릴 기록이 없다.
+
+**얻는 것.** 조건 비교용 실서빙 프로필 여섯이 전부 `docker`가 된다. `tool_images` digest는
+런타임 사이에서 비교할 수 없으므로([portability.md](../portability.md) §5 #4) 그전에는
+`local_balanced`(podman)를 쓸 B3'-large와 2×2 넷(docker)을 같은 비교표에 올릴 수 없었다.
+그 벽이 사라진다. 팀 `run_matrix.yaml`이 `b3prime_large_profile`을 아직 `TODO_local_large`로
+비워 둔 상태라 **지금 바꾸는 비용이 0이다.**
+
+**잃는 것.** 이 플래그의 사용처가 다시 `dev_singularity`를 ATOM에서 돌리는 경우로 좁아진다
+(ATOM에 singularity는 없다). 위 절이 지목한 `dev_docker`-on-ATOM 사용처는 2026-08-21에
+docker가 확인되면서 이미 사라졌다. **그래도 플래그는 남긴다** — 지원 장비가 셋인데 프로필은
+런타임을 하나만 적을 수 있고, `RunRecord.tool_runner`는 오버라이드와 무관하게 필요하다(위
+"결정" 절).
+
+**되돌리는 비용: 낮다.** `config/profiles.yaml`의 값 두 줄이다 — 위 절과 같다.
+
 ## 후속
 
 - 비교표를 만들 때 `tool_runner`가 다른 run을 같은 셀에 넣지 않는지 확인하는 검사를

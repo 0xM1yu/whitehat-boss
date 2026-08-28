@@ -161,8 +161,16 @@ class AdapterSelection(HarnessModel):
     # 잘못됐는지가 스택 아래에 묻힌다.
     retriever: Literal["fake", "hybrid"]
     # docker·singularity·podman은 같은 구현(`ContainerToolRunner`)의 런타임 선택이다.
-    # Slurm는 Docker 데몬 접근이 없어 singularity를, ATOM은 데몬 접근이 없고 singularity도
-    # 없어 podman을 쓴다(둘 다 실측). CLI `--tool-runner`가 이 Literal에서 choices를 뽑는다.
+    # Slurm는 Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-17 실측).
+    #
+    # **ATOM은 docker와 podman을 둘 다 가진다**(2026-08-21 실측: Docker 29.2.1 · podman
+    # 4.9.3). 이 주석은 2026-08-17 실측을 근거로 "ATOM은 데몬 접근이 없고 singularity도
+    # 없어 podman을 쓴다"고 적고 있었는데(`32e2fb5`), 4일 뒤 docker가 확인되어 반증됐다.
+    # 이후 실행 기록도 그쪽이다 — 8/25·26·27 ATOM run이 전부 docker로 돌았고 podman으로
+    # 도구를 돌린 run은 `run_20260817_0001` 하나다. 어느 쪽을 선언하는지는 프로필마다
+    # 다르고 그 표가 docs/portability.md §3에 있다.
+    #
+    # CLI `--tool-runner`가 이 Literal에서 choices를 뽑는다.
     tool_runner: Literal["fake", "docker", "singularity", "podman"]
     state_store: Literal["memory", "sqlite"]
 
@@ -222,6 +230,12 @@ class Thresholds(HarnessModel):
     # agent-contracts.md §1의 token_budget.retries. 이 값이 "스키마 파싱 실패율"의
     # 분모를 바꾸므로 조건 간 비교에서 고정되어야 한다 — 어댑터 기본값으로 두지 않는다.
     schema_retries: int = Field(ge=0)
+    # 요청 하나의 출력 토큰 상한 (agent-contracts.md §1의 token_budget.output_max).
+    # `openai_compat`이 payload의 `"max_tokens"`로 싣는다. 없으면 서버가 `--max-model-len`
+    # 까지 생성하고, 2026-08-27 ATOM에서 30B가 실제로 그렇게 폭주해 클라이언트 타임아웃이
+    # 났다. `schema_retries`와 같은 이유로 여기 있다 — 조건 간 비교에서 고정되어야 하고
+    # `flatten()`이 `RunRecord.thresholds`로 실어야 한다. 어댑터 기본값으로 두지 않는다.
+    output_max: int = Field(gt=0)
     capsule_budget_tokens: CapsuleBudgets
 
     def budget_for(self, level: CapsuleLevel) -> int:

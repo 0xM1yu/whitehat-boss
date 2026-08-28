@@ -65,9 +65,18 @@
 
 | 프로필 | 선언 | 주 장비 | 오버라이드가 필요한 곳 |
 | --- | --- | --- | --- |
-| `local_balanced` · `b1_single` | `podman` | **ATOM** — 이 두 프로필을 돌릴 수 있는 유일한 장비다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Slurm) 이 프로필은 거기서 기동하지 않는다 | 없음 |
-| `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서 dev 경로를 돌릴 때 (`--tool-runner podman`) |
+| `local_balanced` · `b1_single` | `docker` | **ATOM** — 이 두 프로필을 돌릴 수 있는 유일한 장비다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Slurm) 이 프로필은 거기서 기동하지 않는다 | 없음 |
+| `b1_single_qwen3_8b` · `b1_single_foundation_sec` · `b1_single_granite` · `b3prime_balanced` | `docker` | **ATOM** — 팀 2x2 실험 프로필 넷. 팀 `experiments/2x2/lib/prime_runner.py`가 `--tool-runner`를 쓰지 않으므로 선언값이 그대로 쓰인다 | 없음 |
+| `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서는 **이제 필요 없다**(2026-08-21 이후 docker 존재). 그전에는 `--tool-runner podman`이었고, 그 사례가 [decisions/0005](decisions/0005-tool-runner-override.md)의 근거다 |
 | `dev_singularity` | `singularity` | Slurm | 없음 |
+
+✅ **조건 비교용 실서빙 프로필 여섯이 전부 `docker`다(2026-08-28).** 2026-08-17~08-28
+사이에는 `local_balanced`·`b1_single`만 `podman`이라 이 표에 두 값이 섞여 있었고,
+`tool_images` digest가 런타임 사이에서 비교되지 않으므로(§5 #4) **두 무리를 같은 비교표에
+올릴 수 없었다.** 그 벽이 사라졌다 — B3'-large(`local_balanced` 후보)와 2×2 넷이 이제 같은
+셀에 들어간다. 팀 `run_matrix.yaml`의 `b3prime_large_profile`은 아직
+`TODO_local_large`이므로 프로필 이름만 정하면 된다. 되돌린 경위와 근거는
+[decisions/0005](decisions/0005-tool-runner-override.md)의 마지막 절.
 
 **런타임별로 프로필을 복제하지 않는다.** 조건 축(B1/B3')에 장비 축이 섞이고, 조건이 늘
 때마다 장비 수만큼 프로필이 곱해진다([decisions/0005](decisions/0005-tool-runner-override.md)가
@@ -150,7 +159,7 @@ podman      sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a
 
 | 라벨 | 아키텍처 | 컨테이너 런타임 | 확인된 것 |
 | --- | --- | --- | --- |
-| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어. 할당: 통합메모리 128 GB 중 **PL 공식 할당 64 GiB**(PL이 34→64 상향, 2026-08-25 공식 확인 — cgroup `memory.max`=64와 일치, `memory.high`=58, 2026-08-19·08-20 실측. 별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다. 공용 계정이라 팀 합산), GPU **공유**, CPU는 `cpu.max=max`라 **강제 없음**(nproc 20 전부 사용 가능), 디스크 1 TiB NVMe Gen5 전용 파티션 | **podman 4.9.3** (rootless. Docker 데몬 접근·singularity 둘 다 없음) | 2026-08-17 harness-tools:v1 **arm64 현지 빌드** → `dev_docker --tool-runner podman` **완주**(후보 2/Finding 2, `run_20260817_0001`). **semgrep fingerprint가 로컬 x86_64/docker 산출물과 일치** — 아키텍처가 다른 첫 대조다([STATUS.md](../STATUS.md) §5, [decisions/0005](decisions/0005-tool-runner-override.md)). **R1 커널 호환성 통과**: vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10`을 인식. **모델 서빙 확인**: 로컬 TCP 차단이 같은 날 풀린 뒤 `qwen3-4b`(fp8)가 `127.0.0.1:8001`에서 떴다 — `VLLM_USE_DEEP_GEMM=0` 필요(§5 #5), 실측은 `config/models.yaml` |
+| `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어. 할당: 통합메모리 128 GB 중 **PL 공식 할당 64 GiB**(PL이 34→64 상향, 2026-08-25 공식 확인 — cgroup `memory.max`=64와 일치, `memory.high`=58, 2026-08-19·08-20 실측. 별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다. 공용 계정이라 팀 합산), GPU **공유**, CPU는 `cpu.max=max`라 **강제 없음**(nproc 20 전부 사용 가능), 디스크 1 TiB NVMe Gen5 전용 파티션 | **docker 29.2.1 + podman 4.9.3**(rootless) 공존. singularity 없음.<br><br>⚠ **2026-08-21에 바뀐 값이다.** 그전까지 이 칸은 "podman만, Docker 데몬 접근 없음"이었고 그것은 **2026-08-17 실측**이 근거였다(`32e2fb5`가 `src/config.py` 주석에, `075544e`가 이 표에 넣었다). 4일 뒤 `ssh atom 'podman --version; docker --version'`이 둘 다 내놓았고, 이후 실행 기록이 그쪽을 따른다 — **2026-08-25·26·27 ATOM run이 전부 docker로 돌았다**(`run_20260827_0004` 완주, `doctor … --tool-runner docker` → `/usr/bin/docker` 확인). **podman으로 도구를 돌린 run은 아래 8/17 한 건뿐이다.** | 2026-08-17 harness-tools:v1 **arm64 현지 빌드** → `dev_docker --tool-runner podman` **완주**(후보 2/Finding 2, `run_20260817_0001`) — 이 저장소의 유일한 podman 도구 실행 기록이다. **semgrep fingerprint가 로컬 x86_64/docker 산출물과 일치** — 아키텍처가 다른 첫 대조다([STATUS.md](../STATUS.md) §5, [decisions/0005](decisions/0005-tool-runner-override.md)). **R1 커널 호환성 통과**: vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10`을 인식. **모델 서빙 확인**: 로컬 TCP 차단이 같은 날 풀린 뒤 `qwen3-4b`(fp8)가 `127.0.0.1:8001`에서 떴다 — `VLLM_USE_DEEP_GEMM=0` 필요(§5 #5), 실측은 `config/models.yaml` |
 | `slurm` | Ampere (sm_86), **x86_64**(로컬 x86 이미지 tar를 그대로 변환해 돌린 것이 근거 — STATUS.md §5), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
 
 **`atom`의 로컬 TCP 차단 — 2026-08-17 발생, 같은 날 해소.** 테넌트에서 로컬 주소로의 TCP
