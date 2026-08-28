@@ -15,6 +15,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from src.adapters.factory import _model_client
 from src.bench import ROLE_SPEC
 from src.config import (
     CONFIG_DIR,
@@ -227,6 +228,26 @@ def test_thresholds_flatten_is_float_map() -> None:
     flat = load_config("dev_fake").thresholds.flatten()
     assert all(isinstance(value, float) for value in flat.values())
     assert any(key.startswith("capsule_budget_tokens.") for key in flat)
+
+
+def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> None:
+    """`output_max`가 **기록과 요청 양쪽**에 같은 값으로 간다.
+
+    한쪽만 가면 최악이다 — `RunRecord.thresholds`에 8192가 적혔는데 실제 요청은 상한 없이
+    돌면, 기록이 있다는 이유로 아무도 다시 확인하지 않는다. 그래서 두 경로를 한 테스트에서
+    함께 고정한다.
+
+    `_model_client`를 직접 부르는 것은 `build_deps()`가 tool_runner까지 조립해 docker·podman이
+    없는 환경에서 못 도는 반면, 여기서 재려는 것은 모델 클라이언트 하나이기 때문이다.
+    """
+    config = load_config("single_gpu_12g")  # scout만 실서빙이라 실클라이언트가 하나 나온다
+
+    assert config.thresholds.flatten()["output_max"] == float(config.thresholds.output_max)
+
+    client = _model_client(config.profile.roles["scout"], config)
+    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+
+    assert payload["max_tokens"] == config.thresholds.output_max
 
 
 @pytest.mark.parametrize("level", list(CapsuleLevel))
