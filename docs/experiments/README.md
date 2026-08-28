@@ -29,7 +29,10 @@
 | 2026-08-25 | [심볼 542건 전량 완주](2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | 조민규 |
 | 2026-08-25 | [NVFP4 실서빙 검증](2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | 조민규 |
 | 2026-08-26 | [배선 수정 후 재측정](2026-08-26-pipeline-zlib542-remeasure-atom.md) | 8단계 `gate_eval` 첫 8건(D26 닫힘), 원인은 build `-I` 누락, `critic_skipped` 첫 관측, 실 토크나이저 무동작 판정 | `atom` | 조민규 |
-| 2026-08-28 | [토크나이저 정확도 Prove](2026-08-28-tokenizer-prove-atom.md) | 실 토크나이저 vs 서버 `input_tokens` **오차 0**(+13 상수)·옛 `len//4` ≈1.6x 과소(D21 4단계 Prove), critic 실서빙 확인, `critic_top_n` 의제 | `atom` | 손수민 |
+| 2026-08-28 | [track_a PWN-003 첫 완주](2026-08-28-pipeline-track-a-pwn003-atom.md) | b1_single 첫 완주, track_a 데이터셋 첫 투입, 정답 대조 불합격, 공백 폭주와 xgrammar 해소, 30B `util 0.28` 실측 | `atom` | 조민규 |
+| 2026-08-28 | [2×2 B1′ 첫 완주 (PR #36 검증)](2026-08-28-2x2-b1prime-qwen3-8b-atom.md) | PR #36 프로필 4/4 doctor 통과, 8B bf16이 KV cache 13.82 GiB로 10분 03초 완주, `output_max` 인과는 미성립(30B가 그 키 없이 완주), 정답 대조 불합격 | `atom` | 조민규 |
+| 2026-08-28 | [run A 하네스 검증](2026-08-28-runA-harness-validation-atom.md) | D44·D45 성립 확인, `output_max 8192`의 피해 셋(폭주 미차단·gold 함수 400 탈락·실패 시간), gold 3함수 중 2건이 Finding, 재시도가 응답 원문을 되싣는 결함(D47) | `atom` | 조민규 |
+| 2026-08-28 | [토크나이저 정확도 Prove](2026-08-28-tokenizer-prove-atom.md) | 실 토크나이저 vs 서버 `input_tokens` **오차 0**(+13 상수)·옛 `len//4` ≈1.6x 과소(D21 4단계 Prove), `run_20260827_0004` 재분석, `critic_top_n` 의제 | `atom` | 손수민 |
 
 ## 파일 이름
 
@@ -258,10 +261,25 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 
 **틀린 것은 배타 서술 쪽이다.** 같은 두 자리가 podman을 **유일 런타임**으로 적는다.
 
-| 어디 | 지금 문장 | 무엇과 어긋나나 |
-| --- | --- | --- |
-| [portability.md](../portability.md) §6 `atom` 행 | `podman 4.9.3` **(rootless. Docker 데몬 접근·singularity 둘 다 없음)** | `--tool-runner docker`가 ATOM에서 **세 번 실제로 돌았다** |
-| [profiles.yaml](../../config/profiles.yaml) `local_balanced` 주석 | "ATOM에는 **podman만 있으므로**(2026-08-17 실측)" | 위와 같다 |
+| 어디 | 그때 문장 | 무엇과 어긋났나 | 지금 |
+| --- | --- | --- | --- |
+| [portability.md](../portability.md) §6 `atom` 행 | `podman 4.9.3` **(rootless. Docker 데몬 접근·singularity 둘 다 없음)** | `--tool-runner docker`가 ATOM에서 **세 번 실제로 돌았다** | **정정됨** — `docker 29.2.1 + podman 4.9.3` 공존으로 고치고 2026-08-21 실측과 이 run들을 근거로 달았다 |
+| [profiles.yaml](../../config/profiles.yaml) `local_balanced` 주석 | "ATOM에는 **podman만 있으므로**(2026-08-17 실측)" | 위와 같다 | **정정됨 — 값도 `docker`로 되돌렸다**(2026-08-28). 아래 참조 |
+
+**2026-08-28에 셋을 전부 정리했다.** `src/config.py`·`src/adapters/factory.py`의 같은 반증
+서술을 고쳤고, 새 2x2 프로필 넷을 `docker`로 선언했고, **`local_balanced`·`b1_single`의
+선언값도 `podman` → `docker`로 되돌렸다.**
+
+**"값은 유지" 쪽을 지탱하던 근거가 사실이 아니었다.** 그 근거는 "`podman`으로 이미 돈
+run이 있어 지금 갈면 digest가 갈린다"였는데, `artifacts/`의 run 14건을 전수 조회하니
+podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 `model_checksums`가 전부
+0인 dev 프로필이다(`dev_docker --tool-runner podman`). **두 프로필로 podman을 써서 돈 run은
+0건이라 갈릴 기록이 없었다.**
+
+**오히려 선언이 기록과 어긋나 있었다.** `b1_single`로 돈 run 둘
+(`run_20260827_0001`·`0004`)이 `RunRecord.tool_runner: docker`다 — `--tool-runner` 오버라이드를
+달고 돌았고, 그것이 [evaluation.md](../evaluation.md) §2.3 규칙 2가 금지한 예외다.
+경위와 판단은 [decisions/0005](../decisions/0005-tool-runner-override.md) 마지막 절.
 
 **근거는 세 run의 도구 실행이다.** 셋 다 `--device atom --tool-runner docker`이고 도구가
 실제로 돌아 `tool_images`가 채워졌다.
@@ -338,6 +356,19 @@ vLLM 기동 로그가 직접 답했다 — `Free memory on device (109.37/119.7 
 `/sys/fs/cgroup/user.slice/user-1004.slice/memory.current`를 읽는다.
 **24 GiB 근처면 계상, 4~5 GiB면 미계상이다.**
 ([검색 보고서](2026-08-18-retrieval-atom.md) §6의 "단계별 서빙 34 GiB 실측"이 이 측정이다.)
+
+> **2026-08-28 해소 — 미계상이다.** util **0.28**로 30B를 띄운 채 읽었다:
+> `memory.current` **13,790,609,408 = 12.84 GiB** · `memory.high` **`max`** ·
+> `memory.max` **68,719,476,736 = 64 GiB**. 같은 시각 vLLM 자기 회계는 **35.66 GiB**,
+> `nvidia-smi`는 **32.2 GiB**다. **vLLM 프로세스가 이 slice 안에 있다는 것도 함께 확인했다** —
+> `/proc/78448/cgroup` = `0::/user.slice/user-1004.slice/session-18873.scope`. util 0.28의
+> 계상 기대값은 33 GiB 이상인데 실측이 그 3분의 1이고, 가중치 17.99 GiB와 미리 잡은 KV
+> 12.75 GiB는 idle 여부와 무관하게 상주하므로 **계상됐다면 보였어야 한다.**
+> **따라 나오는 것**: `memory.max`(64 GiB)도 `memory.high`도 **GPU 쪽 할당을 못 막는다.**
+> 34 GiB 약속을 지키는 수단은 `--gpu-memory-utilization` 값 자체뿐이고, 확정 #4의
+> "cgroup과 다른 축"이라는 서술이 실측으로 확인됐다.
+> **남는 것**: 12.84 GiB의 구성(어느 프로세스 몫인지)과 추론 **중**의 값은 안 쟀다.
+> 근거는 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §2에 있다.
 
 ### #2 세 기동 조건을 한 조합으로 통합할 수 있는가
 

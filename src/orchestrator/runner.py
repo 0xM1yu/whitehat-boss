@@ -82,7 +82,7 @@ from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
-from src.orchestrator import state_machine
+from src.orchestrator import gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import (
@@ -175,6 +175,18 @@ _DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 # **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
 # 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
 _MAX_CONSECUTIVE_DROPS = 3
+
+
+def _is_droppable(exc: ModelGatewayError) -> bool:
+    """이 게이트웨이 오류가 **요청 하나에 대한 사실**인가 — 그 하나만 버리고 계속 갈 수 있는가.
+
+    후보 단위(`_triage_all`)와 Finding 단위(`_analyze`의 critic 루프)가 같은 판정을 쓴다.
+    **함수로 뺀 이유가 그것이다** — 두 곳이 각자 `status not in _DROPPABLE_STATUS`를 적으면
+    한쪽만 고쳐질 때 같은 오류가 자리에 따라 다르게 처리된다.
+
+    `status`가 없으면(연결 실패·타임아웃·비-JSON 응답) 서버 쪽 사건이라 버릴 수 없다.
+    """
+    return exc.status is not None and exc.status in _DROPPABLE_STATUS
 
 
 class _TooManyDrops(RuntimeError):
@@ -425,6 +437,10 @@ class _Accumulator:
     # `dropped`는 target을 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
     # 분모가 섞인다(`target_skipped`를 `critic_skipped`와 나눈 것과 같은 이유).
     critic_deferred: int = 0
+    # 7단계에 **들어갔다가** critic 호출이 실패해 버린 Finding 수 (D44). `critic_deferred`와
+    # 나누는 이유는 그 필드를 `deferred`·`dropped`와 나눈 이유와 같다 — 이쪽은 "안 올라갔다"
+    # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
+    critic_failed: int = 0
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -515,6 +531,16 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.CONSECUTIVE_TARGET_FAILURES
         warnings.append(f"{exc}")
+    except SchemaParseError as exc:
+        # **후위 방어선이다 (D44).** 후보 단위는 `_triage_all`이, Finding 단위는 `_analyze`의
+        # critic 루프가 이미 잡으므로 여기까지 오는 것은 **아직 가드가 없는 경로**뿐이다.
+        # 그런 경로가 생겼을 때 산출물이 통째로 사라지는 대신 매니페스트와 리포트까지 가고
+        # 중단 사유가 남는다 — `ModelGatewayError` 갈래가 같은 이유로 있고, 그 주석이
+        # "이 갈래가 없던 동안에는 예외가 `write_manifest` 앞을 뚫고 나가 산출물이 하나도
+        # 안 남았다"고 적어 둔 그 사고의 재발을 막는다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
+        warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -552,8 +578,47 @@ def run_pipeline(
             f"({config.thresholds.critic_top_n})로 잘라 7단계에 올리지 않았다. "
             f"trace의 critic_skipped가 목록이다"
         )
+    # **7단계에서 죽은 Finding도 같은 자리에 올린다 (D44).** 위 절단 경고와 같은 논거인데
+    # 여기서는 한 겹 더 나쁘다 — 절단은 사람이 상한을 정해서 일어나지만 이쪽은 예정에 없던
+    # 손실이고, 경고가 없으면 critic을 7건 돌린 run과 3건이 죽은 run이 겉보기에 같아진다.
+    if state.critic_failed:
+        warnings.append(
+            f"Finding {state.critic_failed}건이 7단계 critic 호출 실패로 판정을 못 받았다. "
+            f"사유는 trace의 critic_failed에 있다"
+        )
 
     findings = list(state.findings.values())
+    # 후보 위치를 얻는다 (D35 a·candidate_location). Finding은 `candidate_id`만 들고
+    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이라
+    # `null`일 수 있어 dedupe 키에는 파일만 쓴다.
+    by_cand = {c.candidate_id: c.location for c in state.candidates}
+    files = {
+        f.finding_id: (by_cand[f.candidate_id].file if f.candidate_id in by_cand else None)
+        for f in findings
+    }
+    # **등급을 리포트에 넘긴다 (D35·D36).** Finding에 등급 필드가 없어 등급은 게이트
+    # 판정이라 trace에만 있었고, 그래서 리포트가 대표를 고를 때 등급을 못 보고(E3 삭제)
+    # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다.
+    #
+    # **`evidences_for`로 이 Finding이 참조하는 근거만 거른다** — 6·7·8단계 게이트가 전부
+    # 그렇게 하고(`gate_node`·`critic`·`validate`), 안 거르면 artifact 단위 근거 묶음의 다른
+    # Finding 근거로 등급이 올라가 제거율이 무의미해진다. Fake auditor에선 근거가 전량이라
+    # 무동작이지만 **실서빙 auditor가 붙으면 켜진다**(#36의 B1′/B3′). `ctx.evaluate_gate`가
+    # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
+    #
+    # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
+    # 들어가고, Fake auditor에선 E4가 원리상 도달 불가다(D38). E4가 실제로 열리면 그 근거를
+    # 여기로 모으는 일이 따라온다(`validate.run`이 `produced`를 반환하는데 지금 버린다).
+    grades = {
+        f.finding_id: gate.evaluate(
+            f,
+            gate.evidences_for(f, state.evidences.get(f.finding_id, ())),
+            state.decisions.get(f.finding_id, ()),
+            state.missings.get(f.finding_id, ()),
+            candidate_location=by_cand.get(f.candidate_id),
+        ).grade.value
+        for f in findings
+    }
     rendered = report.run(
         ctx,
         findings=findings,
@@ -561,6 +626,8 @@ def run_pipeline(
         dropped=state.dropped,
         critic_deferred=state.critic_deferred,
         critic_top_n=config.thresholds.critic_top_n,
+        files=files,
+        grades=grades,
     )
     finished = state_machine.finish_run(
         record,
@@ -596,12 +663,36 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
     selected = critic.select(ctx, promoted)
     state.critic_deferred = len(promoted) - len(selected)
     for finding in selected:
-        after, decision = critic.run(
-            ctx,
-            finding=finding,
-            evidences=state.evidences.get(finding.finding_id, ()),
-            missings=state.missings.get(finding.finding_id, ()),
-        )
+        try:
+            after, decision = critic.run(
+                ctx,
+                finding=finding,
+                evidences=state.evidences.get(finding.finding_id, ()),
+                missings=state.missings.get(finding.finding_id, ()),
+            )
+        except SchemaParseError as exc:
+            # **Finding 하나의 실패로 run을 잃지 않는다 (D44).** `_triage_all`이 후보에 대해
+            # 하는 것과 같은 판정이고, 여기에 그 처리가 없던 동안 `run_20260827_0002`는
+            # 16 m 26 s를 돌고 critic 첫 호출에서 죽어 **산출물이 하나도 안 남았다** —
+            # 모델 호출 78건이 trace에만 있고 `report.md`도 `run_manifest.json`도 없어
+            # 어느 커밋으로 돈 run인지 기록이 지시하지 못했다.
+            _drop_finding(ctx, state, finding, _REASON_SCHEMA, exc)
+            continue
+        except ModelGatewayError as exc:
+            # **요청 단위 거절은 이 Finding에 대한 사실이다 (D44 후속).** 처음에는 여기서
+            # `ModelGatewayError`를 일부러 안 잡았다 — `_DROPPABLE_STATUS` 판정을 복사하면
+            # 같은 규칙이 두 곳에 따로 산다는 이유였고, "그때는 `_drop`의 갈래를 Finding
+            # 쪽으로 끌어오는 것이 맞다"고 적어 뒀다. **그때가 첫 실서빙 run에서 바로 왔다**:
+            # 2026-08-28 `run_20260828_0001`이 7단계에서 400(`입력 24,577 + 출력 8,192 >
+            # 컨텍스트 32,768`)을 받고 `stopped_after: 7`로 끊겼다. 후보였다면 하나만 버리고
+            # 완주했을 사건이다.
+            #
+            # 그래서 판정을 복사하지 않고 `_is_droppable`로 **빼서 공유한다.** 서버 쪽
+            # 사건(상태 없음·5xx)은 그대로 올려 보내고 `run_pipeline`이 매니페스트까지 간다.
+            if not _is_droppable(exc):
+                raise
+            _drop_finding(ctx, state, finding, _REASON_GATEWAY, exc)
+            continue
         # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
         state.decisions[finding.finding_id] = (decision,)
         state.update(after)
@@ -705,6 +796,14 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         deferred=len(deferred),
         candidate_max=limit,
     )
+    # **실행할 대상의 이름을 남긴다 (D45).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
+    # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**
+    # 그래서 정답 대조가 "무엇을 봤는가"를 물을 때 기록은 "몇 개를 봤는가"까지만 답했다.
+    #
+    # 모델을 부르기 전에 낸다. `target_plan`과 같은 계약이고, 그 뒤 어디서 죽어도 이 run이
+    # 무엇을 보려 했는지는 남는다.
+    for item in plan.targets:
+        _emit_planned(ctx, item.location)
     state.deferred = len(deferred)
     for item in deferred:
         _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
@@ -735,7 +834,7 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
         try:
             _triage_one(ctx, target, state, last)
         except ModelGatewayError as exc:
-            if exc.status is None or exc.status not in _DROPPABLE_STATUS:
+            if not _is_droppable(exc):
                 # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
                 #
                 # **그래도 run을 죽이지는 않는다.** `run_pipeline`이 이 예외를 받아
@@ -782,6 +881,49 @@ def _drop(
             f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다. 마지막 사유: {exc}"
         ) from exc
     return consecutive + 1
+
+
+def _drop_finding(
+    ctx: RunContext, state: _Accumulator, finding: Finding, reason: str, exc: Exception
+) -> None:
+    """Finding 하나를 7단계에서 버리고 기록한다 (D44). `_drop`의 Finding 판이다.
+
+    **`_drop`과 달리 연속 폐기 카운터가 없다.** 그 장치(`_TooManyDrops`)는 target 수백 개를
+    태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
+    상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이 상한에 닿았는지가 사유에서 사라진다.
+
+    **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 target을 세고 이쪽은
+    Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
+    """
+    state.critic_failed += 1
+    ctx.trace.emit(
+        EventKind.CRITIC_FAILED,
+        stage=Stage.CRITIC,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        reason=reason,
+        error_detail=error_detail(exc),
+    )
+
+
+def _emit_planned(ctx: RunContext, target: Location) -> None:
+    """4단계에 올린 target 하나를 기록한다 (D45).
+
+    **`_emit_skipped`와 같은 필드를 같은 이름으로 싣는다.** 둘을 나란히 놓고 세는 것이 이
+    이벤트의 용도라, 한쪽만 `symbol`을 `None`으로 두거나 이름을 달리 하면 대조가 안 된다.
+    빈 문자열·0으로 채우는 관용구도 그쪽에서 가져온다 — `Location`의 `symbol`·`line_start`가
+    옵셔널이고(파일 단위 폴백에서는 실제로 빈다) 그 사실 자체가 D20의 폴백 여부를 지시한다.
+
+    **`reason`이 없다.** 그쪽은 "왜 못 갔는가"를 싣지만 이쪽은 간 것이라 사유가 없다.
+    빈 사유를 넣으면 두 이벤트가 같은 모양이 되어 합쳐 세는 실수를 부른다.
+    """
+    ctx.trace.emit(
+        EventKind.TARGET_PLANNED,
+        stage=Stage.SIGNALS,
+        file=target.file,
+        symbol=target.symbol or "",
+        line_start=target.line_start or 0,
+    )
 
 
 def _emit_skipped(
