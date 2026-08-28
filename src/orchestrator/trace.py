@@ -175,6 +175,11 @@ class EventKind(StrEnum):
     # 이 이벤트가 없던 동안에는 좌변이 우변보다 **작았고**, 그 차이가 어디로 갔는지 기록이
     # 지시하지 못했다 — 애초에 run이 통째로 죽어 trace 말고는 아무것도 안 남았기 때문이다.
     #
+    # **`reason`은 두 값을 갖는다**: `schema_parse_failed`(모델이 `Decision`을 못 맞췄다)와
+    # `gateway_error`(요청 단위 거절 — 400·413·422). 둘을 한 이벤트에 둔 것은 결과가 같기
+    # 때문이다(그 Finding만 빠지고 run은 계속 간다). 가르는 것은 `reason`이고, 서버 쪽
+    # 사건(상태 없음·5xx)은 애초에 여기 안 온다 — `_is_droppable`이 올려 보낸다.
+    #
     # `subject_id`는 `finding_id`이고 `reason`·`error_detail`을 함께 싣는다. 사유를 안 실으면
     # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
     CRITIC_FAILED = "critic_failed"
