@@ -790,6 +790,14 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         deferred=len(deferred),
         candidate_max=limit,
     )
+    # **실행할 대상의 이름을 남긴다 (D45).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
+    # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**
+    # 그래서 정답 대조가 "무엇을 봤는가"를 물을 때 기록은 "몇 개를 봤는가"까지만 답했다.
+    #
+    # 모델을 부르기 전에 낸다. `target_plan`과 같은 계약이고, 그 뒤 어디서 죽어도 이 run이
+    # 무엇을 보려 했는지는 남는다.
+    for item in plan.targets:
+        _emit_planned(ctx, item.location)
     state.deferred = len(deferred)
     for item in deferred:
         _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
@@ -867,6 +875,26 @@ def _drop(
             f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다. 마지막 사유: {exc}"
         ) from exc
     return consecutive + 1
+
+
+def _emit_planned(ctx: RunContext, target: Location) -> None:
+    """4단계에 올린 target 하나를 기록한다 (D45).
+
+    **`_emit_skipped`와 같은 필드를 같은 이름으로 싣는다.** 둘을 나란히 놓고 세는 것이 이
+    이벤트의 용도라, 한쪽만 `symbol`을 `None`으로 두거나 이름을 달리 하면 대조가 안 된다.
+    빈 문자열·0으로 채우는 관용구도 그쪽에서 가져온다 — `Location`의 `symbol`·`line_start`가
+    옵셔널이고(파일 단위 폴백에서는 실제로 빈다) 그 사실 자체가 D20의 폴백 여부를 지시한다.
+
+    **`reason`이 없다.** 그쪽은 "왜 못 갔는가"를 싣지만 이쪽은 간 것이라 사유가 없다.
+    빈 사유를 넣으면 두 이벤트가 같은 모양이 되어 합쳐 세는 실수를 부른다.
+    """
+    ctx.trace.emit(
+        EventKind.TARGET_PLANNED,
+        stage=Stage.SIGNALS,
+        file=target.file,
+        symbol=target.symbol or "",
+        line_start=target.line_start or 0,
+    )
 
 
 def _emit_skipped(
