@@ -12,9 +12,12 @@
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
 from tokenizers import Tokenizer, models, pre_tokenizers
 
 from src.adapters.factory import build_deps
+from src.adapters.sqlite_store import SqliteStateStore
 from src.adapters.tokenizer import (
     clear_counter_cache,
     counter_for_source,
@@ -23,6 +26,10 @@ from src.adapters.tokenizer import (
     tokenizer_dir_from_source,
 )
 from src.config import load_config
+from src.schemas.capsule import CapsuleSection, ContextCapsule
+from src.schemas.common import Location
+from src.schemas.enums import CapsuleLevel
+from src.tokens import estimate_tokens, using_counter
 
 
 def test_none_when_no_tokenizer_file(tmp_path: Path) -> None:
@@ -197,3 +204,67 @@ def test_counter_and_reason_come_from_one_judgement(tmp_path: Path) -> None:
         counter = counter_for_source(source, hub_cache=tmp_path)
         reason = counter_reason_for_source(source, hub_cache=tmp_path)
         assert (counter is None) == (reason is not None), source
+
+
+def test_a_stored_capsule_only_reloads_under_the_counter_that_built_it(tmp_path: Path) -> None:
+    """저장소 경계의 `model_validate`는 조립과 **같은 카운터** 안에서 돌아야 한다 (D43).
+
+    `SqliteStateStore._load`가 캡슐을 `model_validate`로 되돌리므로
+    `CapsuleSection._tokens_match_body`가 **로드 시점에 다시** 돈다. 조립을 실 토크나이저로
+    했는데 조회가 `using_counter` 밖이면 기본 카운터(글자수 근사)로 재계산되어 갈린다 —
+    `cli.estimate`가 그 자리였고 `ValidationError`로 죽었다.
+
+    **`src/tokens.py`가 이 붕괴를 이미 예고했는데 지목한 경로가 달랐다.** 그 docstring은
+    `expand()`가 배선되는 날 터진다고 적었지만 실제로 터진 것은 저장소 로드다. 위험한 자리는
+    확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이 검사는 그
+    사실을 값으로 못박는다.
+
+    본문 줄은 두 카운터가 **실제로 갈리는** 것을 고른다(`copy_name util.c:14` = 기본 4 대
+    실 6). 우연히 같은 값을 내는 줄로는 결함이 있어도 이 검사가 통과한다.
+    """
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    tokenizer = Tokenizer(models.WordLevel(vocab={"a": 0, "[UNK]": 1}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer.save(str(model_dir / "tokenizer.json"))
+    real = counter_for_source(f"file://{model_dir.as_posix()}")
+    assert real is not None
+
+    body = ["copy_name util.c:14"]
+    assert sum(estimate_tokens(line) for line in body) != _under(real, body), (
+        "두 카운터가 같은 값을 내면 이 검사는 결함이 있어도 통과한다"
+    )
+
+    with using_counter(real):
+        section = CapsuleSection(
+            kind="callees",
+            tokens=sum(estimate_tokens(line) for line in body),
+            items=len(body),
+            body=body,
+        )
+        capsule = ContextCapsule(
+            capsule_id="cap_0001",
+            run_id="run_20260901_0001",
+            target=Location(file="util.c"),
+            level=CapsuleLevel.LIGHT,
+            budget_tokens=4000,
+            cache_key="sha256:" + "0" * 64,
+            sections=[section],
+        )
+    store = SqliteStateStore(tmp_path / "state.db")
+    try:
+        store.put(capsule)
+        # 밖에서 조회하면 재검증이 기본 카운터로 돌아 갈린다.
+        with pytest.raises(ValidationError):
+            store.query("capsule")
+        # 조립과 같은 카운터 안에서는 되돌아온다.
+        with using_counter(real):
+            assert len(store.query("capsule")) == 1
+    finally:
+        store.close()
+
+
+def _under(counter, lines: list[str]) -> int:
+    """`counter`를 켠 상태에서 센 합. 검사의 전제(두 카운터가 갈린다)를 확인하는 데 쓴다."""
+    with using_counter(counter):
+        return sum(estimate_tokens(line) for line in lines)
