@@ -149,7 +149,9 @@ def doctor(
         ),
     ]
     checks.extend(_check_wiring(config))
-    if tool_runner is not None:
+    if tool_runner is not None and _tool_runner_overrides(
+        profile, tool_runner, config_dir=config_dir
+    ):
         checks.append(_override_note(tool_runner))
     checks.append(_check_tool_runtime(config))
     checks.extend(_check_device(config, device))
@@ -173,6 +175,27 @@ def _check_wiring(config: HarnessConfig) -> list[Check]:
         Check(Severity.OK, f"{name:12} → {impl}{_endpoint_note(endpoints.get(name))}")
         for name, impl in describe_wiring(config).items()
     ]
+
+
+def _tool_runner_overrides(
+    profile: str, tool_runner: str | None, *, config_dir: Path = CONFIG_DIR
+) -> bool:
+    """`--tool-runner` 값이 프로필 **선언값과 실제로 다른가** (D50).
+
+    예외 신고의 조건은 "플래그를 넘겼는가"가 아니라 "값이 바뀌었는가"다 — evaluation.md
+    §2.3 규칙 2("조건 간 차이는 프로필과 단계 활성화만")에 낸 예외이므로(ADR 0005) 실제로
+    예외인 run에만 붙어야 한다. 선언값과 **같은** 값을 넘긴 run은 오버라이드가 아니다:
+    `run_20260828_0002`가 `b1_single`(선언 docker)에 `--tool-runner docker`로 돌고도
+    "프로필과 다른 런타임" 경고를 달아 보고서 메타를 쓰는 사람을 오도했다. `RunRecord`는
+    정확했고 틀린 것은 경고 문구뿐이라, 선언값 비교 한 줄이 문구를 사실로 만든다.
+
+    선언값은 **오버라이드 적용 전** 값이라 `load_profile`을 지난 config로는 못 본다(그쪽은
+    이미 갈아 끼운 뒤다). pristine `load_config`에서 읽는다.
+    """
+    if tool_runner is None:
+        return False
+    declared = load_config(profile, config_dir=config_dir).profile.adapters.tool_runner
+    return tool_runner != declared
 
 
 def _override_note(runtime: str) -> Check:
@@ -555,7 +578,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"리포트: {report_path.name}")
     print(f"후보 {len(result.candidates)}건 / Finding {len(result.findings)}건")
     print(f"완주 여부: {'완주' if result.record.is_complete else '부분 결과'}")
-    if args.tool_runner is not None:
+    if _tool_runner_overrides(args.profile, args.tool_runner):
         print(
             f"[WARN ] 프로필과 다른 도구 런타임으로 돌았다: {args.tool_runner}. "
             "evaluation.md §2.3 규칙 2의 예외이며 RunRecord.tool_runner에 남는다 (ADR 0005)",

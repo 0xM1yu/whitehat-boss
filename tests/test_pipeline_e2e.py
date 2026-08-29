@@ -750,6 +750,40 @@ def test_cli_run_writes_trace_manifest_and_report(
     assert "완주" in capsys.readouterr().out
 
 
+def test_run_warns_only_when_the_tool_runner_actually_differs(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`run`의 예외 신고는 **값이 바뀐** run에만 붙는다 (D50).
+
+    **이 경로가 사건이 난 자리다.** `run_20260828_0002`가 `b1_single`(선언 docker)에
+    `--tool-runner docker`로 돌고도 "프로필과 다른 도구 런타임" 경고를 달아 보고서 메타를
+    쓰는 사람을 오도했다. 술어(`_tool_runner_overrides`)와 `doctor` 경로는 각각 테스트가
+    있지만 **`run`이 그 술어를 실제로 쓰는지는 검사되지 않았다** — 그 한 줄이 사건의 자리라
+    회귀 가드를 여기 둔다. `is not None`으로 되돌리면 첫 단언이 깨진다.
+
+    두 프로필 다 도구는 `fake`로 돈다 — 선언값만 다르므로 CI에 docker가 없어도 성립한다.
+    """
+    same = cli.main(
+        [
+            "run", "--profile", "dev_fake", "--target", str(TARGET),
+            "--condition", CONDITION, "--seed", "20260901",
+            "--artifacts-root", str(tmp_path / "same"), "--tool-runner", "fake",
+        ]
+    )
+    assert same == 0
+    assert "프로필과 다른 도구 런타임" not in capsys.readouterr().err
+
+    diff = cli.main(
+        [
+            "run", "--profile", "dev_docker", "--target", str(TARGET),
+            "--condition", CONDITION, "--seed", "20260901",
+            "--artifacts-root", str(tmp_path / "diff"), "--tool-runner", "fake",
+        ]
+    )
+    assert diff == 0
+    assert "프로필과 다른 도구 런타임으로 돌았다: fake" in capsys.readouterr().err
+
+
 def test_two_runs_on_the_same_day_do_not_overwrite_each_other(tmp_path: Path) -> None:
     """같은 날 두 번 돌리면 디렉터리도 run_id도 갈라져야 한다.
 
