@@ -72,17 +72,26 @@ class Finding(HarnessModel):
     **전이 시 주의**: `model_copy(update=...)`는 아래 검증기를 우회한다. 상태 전이는
     `HarnessModel.transition()`으로 한다 — 그래야 `proven`으로 올릴 때 재현 명세와
     근거가 있는지 실제로 확인된다.
+
+    **필드 선언 순서가 계약이다 (D51).** 이 순서가 그대로 `model_json_schema()`의
+    property 순서가 되고, 그 스키마가 `response_format`으로 서버에 실린다
+    (`adapters/openai_compat._request_payload`). 순서는 `prompts/auditor/v2`
+    prefix 90-105행이 요구하는 것과 같다 — **범주값(`state`·`trigger_status`)을
+    숫자값(`confidence`)과 산문(`rca_draft`)보다 먼저** 내게 해서 뒤 필드가 앞의
+    판정을 거스르지 못하게 한다는 것이 근거다. 근거의 출처는 관측이다: 이전 실험에서
+    `confidence` 0.2인데 `rca_draft`는 "취약하다"고 쓰는 모순이 있었고, 상태를 먼저
+    확정하게 하니 줄었다.
+
+    **그 효과가 실제로 나는지는 아직 안 쟀다.** 구조화 출력 백엔드(xgrammar)가
+    property 순서대로 생성을 강제하는지에 달렸고, v2 프롬프트로 도는 첫 run이 그
+    답을 준다. 순서를 맞춰 두는 것 자체는 어느 쪽이든 해롭지 않다.
     """
 
     finding_id: Identifier
     run_id: Identifier
     candidate_id: Identifier
-    title: NonEmptyStr
-    cwe: Cwe
     state: FindingStateValue
-    confidence: float = Field(ge=0.0, le=1.0)
     path: list[PathStep] = Field(default_factory=list)
-    rca_draft: str = ""
     # 트리거 가능성의 명시적 상태 (윤경 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
     # 모순(예: `not_vulnerable`인데 "취약"이라 서술)을 줄이려 이 상태를 **먼저** 확정하는데, 그
     # 값이 산출물에 안 남아 "모델이 실제로 그 상태로 판정했는지"를 사후에 못 봤다. Auditor가
@@ -96,16 +105,20 @@ class Finding(HarnessModel):
     # **채움률은 `produced_by.prompt_version`별로 센다**: 하네스가 그 값을 stamp하므로
     # (`context.py` `call_model`) 어느 프롬프트로 돈 Finding인지가 건마다 남고, 두 `None`이
     # 사후에 갈린다. 전체를 한 분모로 세면 그 둘이 뭉개진다.
-    # **타입을 일부러 `str`로 둔다.** 윤경 요청의 목적은 "값이 산출물에 안 남아 못 봤다"의 해소,
-    # 곧 **관측**이다. `str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다. 실제 emit 분포를
-    # 본 뒤에야 (1) `Literal`/enum으로 좁혀 강제하고 (2) 윤경이 요청한 필드 순서(… →
-    # `trigger_status` → `confidence` → …)로 재배치한다 — 재배치는 구조화 출력 백엔드가 property
-    # 순서를 강제하는지(xgrammar) 확인한 뒤다.
+    # **타입을 일부러 `str`로 둔다.** 요청의 목적은 "값이 산출물에 안 남아 못 봤다"의 해소,
+    # 곧 **관측**이다. `str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다. 실제 emit
+    # 분포를 본 뒤에야 `Literal`/enum으로 좁혀 강제한다 — 그 보류가 D51이다.
     trigger_status: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    rca_draft: str = ""
+    cwe: Cwe
+    title: NonEmptyStr
     evidence_refs: list[Identifier] = Field(default_factory=list)
     missing_evidence: list[Identifier] = Field(default_factory=list)
-    produced_by: ProducedBy
     repro_spec: ReproSpec | None = None
+    # 마지막이다 — 모델이 채우는 값이 아니라 하네스가 stamp한다(`context.py` `call_model`).
+    # v2 프롬프트도 "harness metadata, do not fabricate"로 그렇게 적는다.
+    produced_by: ProducedBy
 
     @model_validator(mode="after")
     def _promoted_states_need_backing(self) -> "Finding":
