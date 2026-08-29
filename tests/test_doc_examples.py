@@ -115,6 +115,18 @@ def test_capsule_example_carries_the_fields_pr1_added() -> None:
     assert capsule.expansion_count >= 0
 
 
+def test_finding_example_carries_trigger_status() -> None:
+    """이 필드가 빠져 있던 것이 이 단언을 만든 계기다 (PR #53 리뷰).
+
+    **원문 JSON을 본다.** 파싱된 모델을 보면 안 된다 — `trigger_status`는 기본값이 `None`인
+    optional 필드라, 예시에서 빠져도 `finding.trigger_status is None`이 그대로 참이다.
+    `model_validate` 한 줄로 끝나는 위 파라미터 테스트가 이 누락을 못 잡는 이유도 같다.
+    """
+    raw = json.loads(_body("agent-contracts.md", "Finding", 0))
+
+    assert "trigger_status" in raw
+
+
 def test_run_record_example_uses_full_length_digests() -> None:
     """`sha256:0000…` 같은 축약은 사람에게만 읽히고 스키마는 통과하지 못한다."""
     record = RunRecord.model_validate(

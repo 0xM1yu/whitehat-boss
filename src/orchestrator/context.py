@@ -227,6 +227,17 @@ class RunContext:
         # `produced_by`가 있는 스키마(Finding·Decision)만 덮는다. `model`은 `result.model`을
         # 쓴다 — fallback이 동작하면 요청 모델과 다를 수 있고 그것이 실제로 응답한 모델이다
         # (`ModelResult.model` 주석). Fake는 `result.model`이 이미 `model_name`이라 무변경이다.
+        #
+        # **`model_copy(update=)`는 저장소가 두 곳에서 금지한 호출인데(`common.py`
+        # `HarnessModel` docstring · `finding.py` `Finding` docstring, 둘 다 Finding을 이름으로
+        # 지목한다) 이 자리에서만 안전하다.** 금지의 이유는 그것이 `model_validator`를
+        # 우회한다는 것인데, `produced_by`를 읽는 검증기가 없다 —
+        # `Finding._promoted_states_need_backing`이 보는 것은 `state`·`repro_spec`·
+        # `evidence_refs`·`path`뿐이고 `Decision`에는 `model_validator` 자체가 없다. 들어오는
+        # 값도 파싱 시점에 이미 검증됐다. **상태 전이는 여기서도 예외가 아니다** — `state`를
+        # 이 방식으로 바꾸면 검증기가 조용히 우회되므로 `transition()`을 써야 한다.
+        # `transition()`을 여기 쓰지 않는 것은 반환 타입이 `HarnessModel`이라
+        # `ModelResult[SchemaT]`의 `SchemaT`가 죽기 때문이고, 그 비용을 질 이유가 없다.
         if "produced_by" in type(result.value).model_fields:
             stamped = result.value.model_copy(
                 update={

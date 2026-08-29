@@ -158,6 +158,7 @@ agent:
     {"step": "sink", "symbol": "memcpy", "note": "고정 크기 스택 버퍼"}
   ],
   "rca_draft": "…",
+  "trigger_status": null,
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "produced_by": {"role": "auditor", "model": "qwen3-coder-30b-a3b", "prompt_version": "v1"},
@@ -166,6 +167,11 @@ agent:
 ```
 
 `state` 열거형: `hypothesized` | `queued` | `validated` | `proven` | `reported`
+
+`trigger_status` 열거값: `triggerable` | `guarded` | `no_reach` | `reachability_unknown` | `no_signal`.
+**스키마 타입은 `str | None`이고 열거형이 아니다** — 실제 emit 분포를 보기 전에 좁히면 못 본 값이
+finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py](../src/schemas/finding.py) 주석).
+프롬프트가 이 값을 안 시키는 run에서는 `null`로 남는다.
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
