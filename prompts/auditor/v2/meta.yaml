@@ -1,0 +1,4 @@
+role: auditor
+version: v2
+output_schema: Finding
+description: 원본 소스 기반 5단계 감사. `trigger_status`를 `confidence`·`rca_draft`·CWE **앞에서** 확정해 그 셋이 서로 모순되지 않게 한다

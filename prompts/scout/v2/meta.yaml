@@ -1,0 +1,4 @@
+role: scout
+version: v2
+output_schema: Candidate
+description: 원본 소스 기반 4단계 트리아지. 역할 분리판 — 경로 구성은 Auditor 몫이고 여기서는 신호 조사와 반대신호 확인만 한다
