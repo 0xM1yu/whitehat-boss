@@ -6,7 +6,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 실험 종료 시각 | **미기재** — 원자료에 없다. [TEMPLATE.md](TEMPLATE.md) 첫 필드가 이것 때문에 생겼는데 또 비었다 |
+| 실험 종료 시각 | **미기재** — 원자료에 없다. [TEMPLATE.md](../TEMPLATE.md) 첫 필드가 이것 때문에 생겼는데 또 비었다 |
 | 실제 서빙 모델 | 별칭 `qwen3-4b` (fp8). **revision 미기재** — 서버 기동 로그를 보존하지 않았다 |
 | `repo_commit` | `28754ec951e5e7a0a2ae15129808d74b4a53d635` · dirty **False** (base `main` = `672434a`) |
 | `run_id` | `run_20260823_0001`(픽스처) · `run_20260823_0002`(zlib) |
@@ -14,7 +14,7 @@
 | `tool_runner` | 프로필 선언 `fake` / 실제 `docker` (`--tool-runner docker` 오버라이드) |
 | `--device` | `atom` |
 | `tool_images` digest | **미기재** |
-| `--gpu-memory-utilization` | `0.2` — 분모는 물리 통합메모리 **119.7 GiB**([README.md](README.md) 확정 #4) |
+| `--gpu-memory-utilization` | `0.2` — 분모는 물리 통합메모리 **119.7 GiB**([README.md](../README.md) 확정 #4) |
 | 동시에 떠 있던 다른 서버 | **미기재** |
 | 원문 산출물 보존 위치 | run 산출물은 위 경로. **서빙 서버 stdout은 보존하지 않았다** — 포그라운드로 띄우고 창을 닫았다 |
 
@@ -350,8 +350,8 @@ Fake auditor의 성질일 수 있다 — 이 run의 auditor는 Fake다. 그러�
 
 | 벽 | 원인 | 해결 |
 | --- | --- | --- |
-| `single_gpu_12g`로 도구가 안 돈다 | 프로필 선언이 `tool_runner: fake` | `--tool-runner docker` 오버라이드. **세 번째 사례다** — [README.md](README.md) 미확정 #4 |
-| prefix cache 서버 측 값 유실 | vLLM을 포그라운드로 띄우고 창을 닫았다 | 다음 기동부터 `tee`로 파일에 받는다 — [README.md](README.md)에 규약을 넣었다 |
+| `single_gpu_12g`로 도구가 안 돈다 | 프로필 선언이 `tool_runner: fake` | `--tool-runner docker` 오버라이드. **세 번째 사례다** — [README.md](../README.md) 미확정 #4 |
+| prefix cache 서버 측 값 유실 | vLLM을 포그라운드로 띄우고 창을 닫았다 | 다음 기동부터 `tee`로 파일에 받는다 — [README.md](../README.md)에 규약을 넣었다 |
 
 ## 7. 미측정 항목과 사유
 
@@ -403,7 +403,7 @@ Fake auditor의 성질일 수 있다 — 이 run의 auditor는 Fake다. 그러�
 ## 11. 부록 — 재현 절차
 
 **원자료에 기동 명령 원문이 없다.** 아래는 원자료가 명시한 인자만 적은 것이고 **완전한
-재현 명령이 아니다** — 환경변수([portability.md](../portability.md) §5의 세 조건)와
+재현 명령이 아니다** — 환경변수([portability.md](../../portability.md) §5의 세 조건)와
 모델 경로가 빠져 있다.
 
 ```bash

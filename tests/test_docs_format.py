@@ -164,8 +164,33 @@ def _defined_decisions() -> list[str]:
     return _D_ROW.findall(_read(OPEN_QUESTIONS))
 
 
+# 보고서는 `harness/` 아래에 있다. `experiments/` 바로 밑에는 색인(README)과 양식(TEMPLATE)만
+# 남고, 실제 run 보고서는 `harness/`(하네스가 도는지 본 run)와 `2x2/`(팀 실험)로 갈린다.
+REPORT_DIRS = (EXPERIMENTS / "harness", EXPERIMENTS / "2x2")
+
+
 def _reports() -> list[Path]:
-    return sorted(p for p in EXPERIMENTS.glob("*.md") if p.name not in _NOT_A_REPORT)
+    return sorted(
+        p
+        for directory in REPORT_DIRS
+        if directory.is_dir()
+        for p in directory.glob("*.md")
+        if p.name not in _NOT_A_REPORT
+    )
+
+
+def test_the_report_glob_actually_finds_reports() -> None:
+    """`_reports()`가 빈 목록이면 아래 보고서 검사들이 **조용히 통과한다.**
+
+    파라미터화된 검사는 목록이 비면 아무것도 안 돌고 "통과"로 보인다. 실제로 이 함수가
+    `experiments/*.md`를 보던 때 보고서를 `harness/`로 옮겼더니 **0건이 되어 두 검사가
+    빈 채로 초록이었다.** 그 사고를 여기서 잡는다 — 디렉터리 배치가 또 바뀌면 이 단언이
+    먼저 깨진다.
+    """
+    assert _reports(), (
+        f"{[d.name for d in REPORT_DIRS]} 어디에도 보고서가 없다 — "
+        "배치를 바꿨다면 REPORT_DIRS를 같이 고친다"
+    )
 
 
 def _rel(path: Path) -> str:
@@ -296,14 +321,17 @@ def test_every_experiment_report_is_in_the_index() -> None:
 
     이 폴더가 생긴 계기가 "보고서가 메신저 첨부로만 존재해서 대조가 안 됐다"이다. 저장소에
     넣어 놓고 색인에 안 걸면 같은 자리로 돌아간다.
+
+    **파일명이 아니라 `experiments/` 기준 상대경로로 대조한다.** 보고서가 `harness/`·`2x2/`로
+    갈린 뒤로는 이름만 보면 색인이 **다른 폴더의 같은 이름**을 가리켜도 통과한다.
     """
     index = _read(EXPERIMENTS / "README.md")
     linked = {unquote(target.split("#", 1)[0]) for target in _LINK.findall(index)}
 
     missing = [
-        f"docs/experiments/README.md: `{report.name}` 가 색인 표에 없다"
-        for report in _reports()
-        if report.name not in linked
+        f"docs/experiments/README.md: `{rel}` 가 색인 표에 없다"
+        for rel in (r.relative_to(EXPERIMENTS).as_posix() for r in _reports())
+        if rel not in linked
     ]
 
     assert missing == [], "\n".join(missing)
