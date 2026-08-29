@@ -77,6 +77,12 @@ def declared_sampling_by_role(
 
     **새 run은 이 함수로 항상 dict를 남긴다(비어도).** `RunRecord.model_sampling`의
     `None`은 이 필드 이전에 쓰인 옛 manifest에서만 나온다.
+
+    **한계 — 부재의 뜻이 하나가 아니다 (D29 ③).** 여기서 빠진 역할은 `source` 없음 ·
+    스냅샷 리졸브 실패 · 파일 없음 · 파일 깨짐 · 선언 키 0개 · 검증 실패를 **모두** 뜻한다.
+    앞 넷은 **우리 쪽 기록 구멍**이고 다섯째만 **실험 사실**인데 그 둘이 안 갈린다. run
+    수준에서는 `None`(옛 manifest)과 `{}`(읽었으나 없음)가 갈리지만 **역할 수준에서는 안
+    갈린다** — 그래서 부재를 "그 모델은 선언이 없다"로 읽으면 안 된다.
     """
     served = config.served_models()
     out: dict[str, ModelSampling] = {}
