@@ -1,0 +1,31 @@
+# B1/B3 실험용 엔드포인트. 하네스 models.yaml 과 별개다.
+# served_name 은 vllm serve --served-model-name 과 같아야 한다.
+
+models:
+  # B1, B1', B3, B3' 공통 사용 모델
+  qwen3-8b:
+    endpoint: "http://127.0.0.1:8001/v1"
+    served_name: qwen3-8b
+    repo: "Qwen/Qwen3-8B"
+
+  foundation-sec-8b:
+    endpoint: "http://127.0.0.1:8006/v1"
+    served_name: foundation-sec-8b
+    repo: "fdtn-ai/Foundation-Sec-1.1-8B-Instruct"
+
+  granite-3.3-8b:
+    endpoint: "http://127.0.0.1:8007/v1"
+    served_name: granite-3.3-8b
+    repo: "ibm-granite/granite-3.3-8b-instruct"
+
+  # B3′-large의 Critic 모델
+  devstral-small-2-24b:
+    endpoint: "http://127.0.0.1:8003/v1"
+    served_name: devstral-small-2-24b
+    repo: "mistralai/Devstral-Small-2-24B-Instruct-2512"
+
+  # B3'-large의 Auditor 모델
+  qwen3-coder-30b-a3b:
+    endpoint: "http://127.0.0.1:8002/v1"
+    served_name: qwen3-coder-30b-a3b
+    repo: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
