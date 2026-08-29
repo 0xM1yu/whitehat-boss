@@ -973,8 +973,15 @@ def _emit_skipped(
 
     **후보 단위 실패가 4로 고정이 아니게 된 것은 D48부터다.** `_drop`이 `Stage.SCOUT`을
     박고 있었는데 `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 4로
-    남았다. 지금은 `_Reached`가 실제 단계를 들고 오므로 3~6이 나올 수 있다 — 3은 캡슐
-    조립(실서빙 retriever에서만), 4는 scout, 5는 auditor, 6은 게이트다.
+    남았다. 지금은 `_Reached`가 실제 단계를 들고 오므로 3~6이 나올 수 있다 — 3은 **LIGHT**
+    캡슐 조립(실서빙 retriever에서만), 4는 scout, 5는 **EXPANDED 캡슐 조립 또는** auditor,
+    6은 게이트다.
+
+    **5가 그 둘을 겹치는 것은 카운터 경계를 따라간 결과다.** `_triage_one`이 `reached.stage`를
+    EXPANDED 조립 **앞에서** 올리는데, 그 조립이 이미 auditor 카운터 안에서 도는 자리이기
+    때문이다(그 자리 `using_counter` 주석). 갈라야 할 때는 그 target에 auditor `model_call`이
+    있는지 본다 — 없으면 조립에서 죽은 것이다. 자동 채점이 5를 "auditor 모델 실패"로 세면
+    조립 실패가 그 분자에 섞인다.
 
     **`error_detail`은 있을 때만 싣는다.** 예산 절단에는 상세가 없고, 그 자리에 빈
     문자열을 넣으면 "상세가 비어 있었다"와 "상세라는 개념이 없다"가 같은 모양이 된다.
