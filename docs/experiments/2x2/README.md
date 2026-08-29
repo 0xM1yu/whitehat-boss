@@ -24,8 +24,44 @@
 
 대상 소스(`blind/**`)와 run 산출물도 넣지 않는다 — 크고, 저장소가 들고 있을 이유가 없다.
 
-## 아직 비어 있다
+## 지금 여기 있는 것
 
-2026-08-30 기준 이 디렉터리에는 이 문서만 있다. 매트릭스 기록은 ATOM에 있고 아직 회수하지
-않았다 — **그 상태 자체가 위험이다.** 지금은 이번 매트릭스의 해석이 그 장비의 파일에만
-달려 있다.
+| 파일 | 무엇 |
+| --- | --- |
+| [`config/run_matrix.yaml`](config/run_matrix.yaml) | 매트릭스 스펙 원문. 조건 다섯(B1·B1'·B3·B3'·B3'-large)의 모델·역할 구성, seed 정책, 샘플링 고정값, 판정 규칙 |
+| [`config/models_endpoints.yaml`](config/models_endpoints.yaml) | 조건이 쓰는 엔드포인트와 HF repo. **하네스 `config/models.yaml`과 별개다** |
+
+2026-08-30에 ATOM `~/experiments/2x2/config/`에서 그대로 받았다. **편집하지 않았다** —
+원본이 ATOM에서 계속 바뀌므로 이쪽은 그 시점의 사본이다.
+
+## 이 파일들이 말해 주는 것 — 하네스 기록만 봐선 모르는 것
+
+**샘플링 고정값 중 다섯이 `RunRecord`에 안 남는다.** `run_matrix.yaml` §3이 아홉을 고정하고
+"모든 조건·모든 역할 공통. 절대 조건별로 바꾸지 말 것"이라 못박았는데, 하네스가 요청에
+싣는 것은 `temperature`·`top_p`·`max_tokens` 셋뿐이다.
+
+| 스펙이 고정한 값 | 하네스가 보내나 | 기록에 남나 |
+| --- | :-: | :-: |
+| `temperature: 0.2` · `top_p: 0.95` | O | `RunRecord.sampling` |
+| `max_tokens: 8192` | O | `RunRecord.thresholds.output_max` |
+| `top_k: -1` · `min_p: 0.0` · `repetition_penalty: 1.0` · `frequency_penalty: 0.0` · `max_input_tokens: 32768` | **X** | **어디에도 안 남는다** |
+
+그래서 이 파일이 없으면 **이번 매트릭스가 무슨 조건으로 돌았는지 사후에 못 정한다.**
+[D56](../../open-questions.md)이 그 항목이다.
+
+**`max_tokens: 8192`가 스펙 고정값이다.** 하네스 쪽 `config/budgets.yaml`의
+`thresholds.output_max`를 바꾸면 하네스로 도는 셀만 스펙을 어긴다 — 매트릭스가 도는 동안은
+그 값을 건드리지 않는다.
+
+**v2 프롬프트의 원본이 ATOM의 `~/experiments/2x2/prompts/multi/`다.** 저장소
+[`prompts/{scout,auditor,critic}/v2/`](../../../prompts/)는 그 사본이고, **둘이 갈릴 수
+있다.** 어느 쪽이 정본인지는 아직 안 정했다.
+
+## 아직 없는 것
+
+- **셀 ↔ `run_id` 매핑.** ATOM에 매핑 파일이 없다(`grep -rl "run_2026"`가 run 산출물
+  안쪽만 찾는다). `results/<조건>/<모델>/` 디렉터리 구조와 각 run의 `condition`으로
+  역추적해야 한다
+- **서버 기동 명령 원문.** `models_endpoints.yaml`은 포트와 repo만 담는다. `--generation-config`
+  같은 플래그가 걸렸는지는 여기서 알 수 없고, 그것이 모델 선언값과 실효값을 가른다
+- **셀별 보고서.** 매트릭스가 끝난 뒤 [TEMPLATE.md](../TEMPLATE.md)를 따라 쓴다
