@@ -62,6 +62,32 @@ class Sampling(HarnessModel):
     top_p: float = Field(gt=0.0, le=1.0)
 
 
+class ModelSampling(HarnessModel):
+    """한 모델이 자기 `generation_config.json`에 **선언한** 샘플링 (D29).
+
+    `Sampling`이 하네스가 요청에 **보내는** 값이라면, 이쪽은 모델 파일이 선언하고
+    vLLM이 기동 시 적용하는 값이다 — 하네스는 `temperature`·`top_p`만 보내므로 `top_k`·
+    `repetition_penalty`는 **모델 파일에서 와서 요청에도 응답에도 안 실린다.** 그 값이
+    모델마다 다르고(예: Qwen3-8B는 `top_k 20`, Foundation-Sec·granite는 없음) 기록에
+    안 남으면 모델 비교에서 샘플링 차이가 모델 차이로 섞인다(evaluation.md §2.3).
+
+    **필드가 전부 optional인 것은 모델마다 선언하는 부분집합이 다르기 때문이다.** `None`은
+    "그 모델의 `generation_config.json`이 이 키를 선언하지 않았다" = 서버가 vLLM 기본값을
+    쓴다는 뜻이지 값이 0이라는 뜻이 아니다. 지어내지 않고 파일에 있는 것만 담는다.
+    """
+
+    temperature: float | None = Field(default=None, ge=0.0)
+    top_p: float | None = Field(default=None, gt=0.0, le=1.0)
+    # **`0`과 `-1`은 스키마 밖 값이 아니라 "비활성"이라는 정상 선언이다.** HF는 `top_k: 0`,
+    # vLLM은 `-1`을 그 뜻으로 쓴다. `Sampling`(우리가 **보내는** 값)이었다면 `ge=1`이 맞지만
+    # 이쪽은 **모델이 선언한 것을 그대로 받아 적는** 자리라, 정상 선언을 스키마 밖으로 밀어내면
+    # 그 모델의 기록이 통째로 사라진다(`read_declared_sampling`이 검증 실패 시 전부 버린다).
+    # 그러면 `temperature 0.7 · top_k 0`을 선언한 모델이 "선언 없음"으로 남아, D29가 막으려던
+    # 오독을 정확히 반대 방향에서 재생산한다.
+    top_k: int | None = Field(default=None, ge=-1)
+    repetition_penalty: float | None = Field(default=None, gt=0.0)
+
+
 class RunRecord(UtcModel):
     """한 번의 실행에 대한 재현성 기록.
 
@@ -148,7 +174,19 @@ class RunRecord(UtcModel):
     # 여기에는 그 run에서 실제로 쓰인 값을 박제한다.
     thresholds: dict[str, float]
     seed: int
+    # 하네스가 요청에 **보낸** 샘플링 (config `budgets.yaml`의 `sampling`).
     sampling: Sampling
+    # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (D29). `sampling`이
+    # 보낸 값이라면 이쪽은 서버가 모델 파일에서 적용하는 값이다 — `top_k`·`repetition_penalty`는
+    # 하네스가 안 보내고 요청·응답에도 안 실려 이 필드로만 기록에 남는다.
+    #
+    # **`| None`이고 기본값 `None`인 것은 device·repo_dirty와 같은 관용구다.** `None`은
+    # "이 manifest는 기록하지 않았다"(이 필드 이전에 쓰인 기록)이고, `{}`는 "기록했으나
+    # 선언 샘플링을 읽을 실서빙 모델이 없었다"(Fake 프로필·`source` 없는 모델)로 서로 다르다 —
+    # 새 run은 항상 dict(비어도)를 남기므로 `None`은 옛 manifest에서만 나온다. 그래서 이
+    # 필드를 늘려도 `test_a_manifest_written_before_tool_seconds_still_loads`가 지키는
+    # "옛 manifest는 로드된다"가 깨지지 않는다.
+    model_sampling: dict[str, ModelSampling] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime
