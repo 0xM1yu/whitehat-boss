@@ -13,9 +13,14 @@ run 산출물(`trace.jsonl`·`prompts/`)과 서빙 모델 `tokenizer.json`에서
 | --- | --- |
 | 대상 run | `run_20260827_0004` (30B `b1_single`, PWN-003). run 자체의 세션 메타·`repo_commit`은 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §메타 |
 | run 산출물·보존 | `/srv/tenants/user/artifacts/run_20260827_0004` — **ATOM 보존.** `trace.jsonl`·`prompts/`(33건)를 재분석 입력으로 받았다 |
-| `repo_commit` (재분석 시점) | 이 PR의 head. 재분석은 코드 변경 0이라 run의 `repo_commit`(track_a 보고서)과 별개다 |
-| `--device` | `atom` — 입력이 ATOM `run_20260827_0004` 산출물이다 |
+| `repo_commit` (재분석 시점) | **해당 없음** — 이 재분석은 하네스를 돌리지 않고 산출물만 읽었다(§5가 쓰는 것은 `tokenizers`와 표준 라이브러리뿐이다). run 자체의 `repo_commit`은 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §메타 |
+| `--device` | `atom` |
 | 서빙 스냅샷 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` — Prove가 이 `tokenizer.json`으로 셌다. **이 40 hex가 이 문서 전체의 근거다**(무엇으로 셌나). revision은 [NVFP4 검증 보고서](2026-08-25-serving-nvfp4-atom.md)와 같다 |
+
+`--device`가 `atom`인 근거는 입력이 ATOM `run_20260827_0004`의 산출물이라는 것이다 — 이 재분석
+자체는 `--device`를 인자로 받지 않는다. **그 설명을 값 칸에 적지 않는다**:
+`tests/test_docs_format.py`의 `_DEVICE_ROW`가 `` | `--device` | `atom` | `` 꼴만 읽어 파일명의
+장비와 대조하므로, 칸에 산문을 넣으면 그 대조가 조용히 건너뛰어진다.
 
 ## 1. 요약
 
@@ -23,7 +28,7 @@ run 산출물(`trace.jsonl`·`prompts/`)과 서빙 모델 `tokenizer.json`에서
 | --- | --- |
 | **토크나이저 Prove (D21 (b), 로드맵 4단계)** | 서버 `input_tokens` − 우리 카운트 = **정확히 +13** (33/33). 비율 0.990(상수 보정 시 1.000). 옛 `len//4`는 0.629(≈1.6x 과소) |
 | 부수 — critic 실서빙 확인 | critic 7콜이 `qwen3-coder-30b-a3b`로 real 서빙됨(`gpu_ms` 있음). 단 `b1_single`이라 scout·auditor와 **같은 30B**를 쓴다 |
-| 의제 — `critic_top_n` | D26(2026-08-26 해소)이 이제 **개수**를 다음 병목으로 지목 — "상한만 올린 대조 run 1회"가 답. 이 문서의 per-call 비용은 confound가 커 그 대조 run의 비용 예산 입력까지다 |
+| 의제 — `critic_top_n` | D26(2026-08-26 해소)이 이제 **개수**를 다음 병목으로 지목 — "상한만 올린 대조 run 1회"가 답(단 D26의 그 숫자는 Fake critic run이다 — §4). 이 문서의 per-call 비용은 confound가 커 그 대조 run의 비용 예산 입력까지다 |
 
 ## 2. 토크나이저 Prove (메인)
 
@@ -96,6 +101,11 @@ model = qwen3-coder-30b-a3b · ok = True · gpu_ms = 3085·2948·2681·… · gp
 upheld라 **E3 8건이 상한값 그 자체**이며, 잘린 51건 중 50건이 `repro_spec`을 갖고 있다. D26이 그
 질문을 닫을 입력으로 든 것은 **"상한만 바꾼 대조 run 1회"**다.
 
+**단, 그 숫자들은 auditor·critic이 Fake인 run의 것이다.** D26이 같은 자리에 경고 둘을 함께
+달아 뜑다 — "**E3 8건을 성능으로 읽으면 안 된다** — auditor·critic이 Fake다", 그리고 "그 51건이
+전부 upheld된다는 근거는 없으므로(confidence 0.6이 23건 / 0.3이 28건)". 이 문서가 바로 위에서
+자기 per-call을 confound 셋으로 낮춘 것과 **같은 기준이 이 인용 숫자에도 걸린다.**
+
 > ⚠ **정정:** 이 §의 초안은 "개수보다 선별 기준(confidence vs `repro_spec`)이 먼저"라고 적었는데,
 > 그것은 `-I` 수정 **전** D26의 배타성에 기댄 서술이라 지금은 서지 않는다. 그리고 "8→44로 늘려도
 > 8단계 0건"은 **실측이 아니라** 그 배타성에서 나온 구조적 추론이고, 근거 run(`run_20260825_0001`)은
@@ -127,13 +137,21 @@ tok = Tokenizer.from_file("<40hex 스냅샷>/tokenizer.json")
 for e in map(json.loads, open(".../run_20260827_0004/trace.jsonl", encoding="utf-8")):
     if e.get("kind") != "model_call":            continue
     d = e["data"]
-    if not d.get("ok") or "prompt_ref" not in d: continue   # 실패 1건 제외
-    text = "\n".join(ln for ln in open(f".../{d['prompt_ref']}", encoding="utf-8")
-                     if not COMMENT.match(ln))
+    if not d.get("ok") or "prompt_ref" not in d: continue   # 이 run은 33건 전부 ok=True다
+    # 줄에 개행이 이미 붙어 있다 — `"\n".join`을 쓰면 줄마다 빈 줄이 끼어 수가 달라진다.
+    text = "".join(ln for ln in open(f".../{d['prompt_ref']}", encoding="utf-8")
+                   if not COMMENT.match(ln))
     ours   = len(tok.encode(text).ids)           # 실 토크나이저
     server = d["input_tokens"]                    # 서버 실측
     assert server - ours == 13                    # 33/33 성립
 ```
+
+`prompt_log.render()`가 파일에 `<!-- harness-prompt … -->` · `<!-- prefix -->` · `<!-- body -->` 세 줄을
+넣으므로 위 정규식이 걷어내는 것은 그 셋이고, 남는 것은 `prefix` + `\n` + `body`다. **서버는 그 둘을
+이어 붙인 한 덩어리가 아니라 두 메시지로 받는다**(`src/adapters/openai_compat.py` — `system=prefix`,
+`user=body`). 따라서 위 대조는 "이어 붙인 텍스트 대 서버 실측"이고, +13에는 채팅 템플릿 래핑과
+이 이어 붙이기의 차이가 **함께** 들어 있다 — 둘로 갈라 세지 않았으므로 §6의 "+13 상수의
+구성"은 여전히 미측정이다.
 
 critic real 판정과 per-call 관찰은 같은 `model_call`의 `model`·`gpu_ms`·`gpu_ms_source`에서 읽었다.
 전체 스크립트를 `tools/`에 두는 것이 정본이나(TEMPLATE.md §9), 지금은 위 정규식·입력 경로·대조식이
