@@ -78,7 +78,13 @@ class ModelSampling(HarnessModel):
 
     temperature: float | None = Field(default=None, ge=0.0)
     top_p: float | None = Field(default=None, gt=0.0, le=1.0)
-    top_k: int | None = Field(default=None, ge=1)
+    # **`0`과 `-1`은 스키마 밖 값이 아니라 "비활성"이라는 정상 선언이다.** HF는 `top_k: 0`,
+    # vLLM은 `-1`을 그 뜻으로 쓴다. `Sampling`(우리가 **보내는** 값)이었다면 `ge=1`이 맞지만
+    # 이쪽은 **모델이 선언한 것을 그대로 받아 적는** 자리라, 정상 선언을 스키마 밖으로 밀어내면
+    # 그 모델의 기록이 통째로 사라진다(`read_declared_sampling`이 검증 실패 시 전부 버린다).
+    # 그러면 `temperature 0.7 · top_k 0`을 선언한 모델이 "선언 없음"으로 남아, D29가 막으려던
+    # 오독을 정확히 반대 방향에서 재생산한다.
+    top_k: int | None = Field(default=None, ge=-1)
     repetition_penalty: float | None = Field(default=None, gt=0.0)
 
 
