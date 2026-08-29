@@ -16,12 +16,12 @@
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98`<br>별칭 `qwen3-4b` — **별칭은 근거가 못 된다.** 스냅샷 경로가 revision과 일치하는 것을 기동 로그의 `model_tag`로 확인했다:<br>`/srv/tenants/ext01/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98` |
 | `repo_commit` | **`54c80705fb848f4852dc2163c19b1a2541bf61b5`** · `repo_dirty` **false** — 2026-08-22 검증 run(`run_20260821_0007`)이 확정했다. 기록 당시의 추정(`main@54c8070`)이 맞았고, **확인하지 못했던 dirty 여부도 깨끗한 것으로 확정됐다** |
 | `run_id` | `run_20260821_0004` |
-| run 산출물 경로·보존 | 경로 `/srv/tenants/ext01/artifacts/run_20260821_0004` · **보존 확인**(2026-08-22 검증 run(`run_20260821_0007`) 시점). `asan` `build` `clang-tidy` `index` `report.md` `run_manifest.json` `scratch` `semgrep` `state.db`(28,672 B) `trace.jsonl`(18,625 B)이 그대로 있다 — [open-questions.md](../open-questions.md) **R7은 이 run에서 미실현**이다 |
-| `tool_runner` | 프로필 선언 **`fake`** / 실제 **`docker`** — `single_gpu_12g`가 `tool_runner: fake`라 도구를 돌리려면 오버라이드가 **구조적으로 필요했다.** [README.md](README.md) 미확정 #4의 두 번째 사례다([ADR 0005](../decisions/0005-tool-runner-override.md)가 상정한 용도가 아니다) |
+| run 산출물 경로·보존 | 경로 `/srv/tenants/ext01/artifacts/run_20260821_0004` · **보존 확인**(2026-08-22 검증 run(`run_20260821_0007`) 시점). `asan` `build` `clang-tidy` `index` `report.md` `run_manifest.json` `scratch` `semgrep` `state.db`(28,672 B) `trace.jsonl`(18,625 B)이 그대로 있다 — [open-questions.md](../../open-questions.md) **R7은 이 run에서 미실현**이다 |
+| `tool_runner` | 프로필 선언 **`fake`** / 실제 **`docker`** — `single_gpu_12g`가 `tool_runner: fake`라 도구를 돌리려면 오버라이드가 **구조적으로 필요했다.** [README.md](../README.md) 미확정 #4의 두 번째 사례다([ADR 0005](../../decisions/0005-tool-runner-override.md)가 상정한 용도가 아니다) |
 | `--device` | `atom` |
-| `tool_images` digest | **`harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17`** · 종류 **docker(이미지 config sha256)**([portability.md](../portability.md) §5 #4). 2026-08-22 검증 run(`run_20260821_0007`)의 digest와 **같다** — 두 run이 같은 이미지로 돌았다 |
+| `tool_images` digest | **`harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17`** · 종류 **docker(이미지 config sha256)**([portability.md](../../portability.md) §5 #4). 2026-08-22 검증 run(`run_20260821_0007`)의 digest와 **같다** — 두 run이 같은 이미지로 돌았다 |
 | `--gpu-memory-utilization` | **0.2** · 그 시점 분모 **119.7 GiB**(물리 통합메모리) = **23.94 GiB**. 기동 로그가 직접 답했다 — `Free memory on device (109.48/119.7 GiB) on startup` / `Desired GPU memory utilization is (0.2, 23.94 GiB)` |
-| 동시에 떠 있던 다른 서버 | **영구 미기재.** 2026-08-22 검증 run(`run_20260821_0007`) 시점(2026-08-21T18:15Z)에는 8001 하나뿐이었으나 **이 run은 16:42Z이고 서버 기동 시각을 찍지 않았다** — 두 시점이 같은 프로세스라는 것을 증명할 수 없으므로 그 관측을 이 칸으로 옮기면 지어낸 근거가 된다. 제한 단위가 세션이 아니라 사용자(`user-1004`)라 이 칸이 비면 throttle 여부를 사후에 못 가른다([README.md](README.md) 확정 #4) |
+| 동시에 떠 있던 다른 서버 | **영구 미기재.** 2026-08-22 검증 run(`run_20260821_0007`) 시점(2026-08-21T18:15Z)에는 8001 하나뿐이었으나 **이 run은 16:42Z이고 서버 기동 시각을 찍지 않았다** — 두 시점이 같은 프로세스라는 것을 증명할 수 없으므로 그 관측을 이 칸으로 옮기면 지어낸 근거가 된다. 제한 단위가 세션이 아니라 사용자(`user-1004`)라 이 칸이 비면 throttle 여부를 사후에 못 가른다([README.md](../README.md) 확정 #4) |
 | 원문 산출물 보존 | **기록 당시에는 터미널 출력만.** 2026-08-22 검증 run(`run_20260821_0007`)이 `run_manifest.json`을 열었고 `trace.jsonl`·`state.db`도 디스크에 남아 있음을 확인했다 — **다만 그 둘의 내용은 아직 읽지 않았다**(§5) |
 
 ---
@@ -38,7 +38,7 @@
 | 캡슐 그래프 섹션 본문 적재(W1) | **데이터 경로만 성립** — `expanded` 캡슐에 본문이 실렸다. **모델 판단에 미친 영향은 확인되지 않았다**(§3 해석 ⑤) |
 | 8단계 게이트 재판정(W3) | **성립** — stage 8에 `gate_eval`이 남았다 |
 | 장부 합산 | **일치** — `model_call` 4건의 합이 최종 `budget`과 같다. **2026-08-22 추가**: `tool_call` 9건의 합도 `tool_ms` 3,804와 정확히 같다(§3 해석 ①') |
-| prefix cache | **장부는 0, 서버는 19.9%** — [open-questions.md](../open-questions.md) R6이 `cli run` 경로에서도 성립 |
+| prefix cache | **장부는 0, 서버는 19.9%** — [open-questions.md](../../open-questions.md) R6이 `cli run` 경로에서도 성립 |
 | 탐지 품질 | **판정 불가** — auditor·critic이 Fake이고 표본이 2건이다 |
 
 ---
@@ -53,7 +53,7 @@
 | 프로필 | `single_gpu_12g` (`retriever: fake`, `tool_runner: fake` → docker로 오버라이드) |
 | 분석 대상 | `tests/fixtures/target` (`parser.c`, `util.c`) |
 | 양자화 | `quantization=fp8`, `dtype=torch.bfloat16`, 커널 `CutlassFp8BlockScaledMMKernel` |
-| 기동 조건 | `VLLM_USE_DEEP_GEMM=0` — [README.md](README.md) 확정 #3 ③. 나머지 두 조건(①`CPATH` ②`VLLM_ATTENTION_BACKEND`)의 지정 여부는 **영구 미기재** — 사유는 §5 |
+| 기동 조건 | `VLLM_USE_DEEP_GEMM=0` — [README.md](../README.md) 확정 #3 ③. 나머지 두 조건(①`CPATH` ②`VLLM_ATTENTION_BACKEND`)의 지정 여부는 **영구 미기재** — 사유는 §5 |
 | KV cache | 18.14 GiB · **132,112 tokens** · `max-model-len 32768` → 최대 동시성 **4.03x** |
 | 메모리 실사용 | weights+non-torch 5.7 GiB / peak activation 0.1 GiB / CUDAGraph 0.7 GiB / 모델 로딩 4.27 GiB·23.96 s |
 | prefix caching | **on** |
@@ -177,55 +177,55 @@ Fake 두 호출은 `None`이다 — 세는 것은 "GPU를 안 썼다"가 아니�
 **③ scout이 실제로 후보를 걸렀다.**
 `cand_0002`가 0.00으로 `below_scout_threshold`에 걸렸다. 실모델 scout이 임계값 판정에
 들어간 **첫 기록**이다. 표본 2건이므로 **임계값에 대해서는 아무것도 따라 나오지 않는다**
-([open-questions.md](../open-questions.md) D2).
+([open-questions.md](../../open-questions.md) D2).
 
 **④ scout이 본 캡슐에는 호출 그래프가 없었다.**
 `cand_0001`·`cand_0002`가 받은 것은 `cap_0001`·`cap_0003`이고 둘 다 `light`다.
 `light`의 섹션 구성은 `("target_function", "static_signal")`이라 `callers`/`callees`가
 **구조적으로 들어가지 않는다.** 인덱서가 정상으로 돌아 심볼 4·호출 5를 냈는데도(위
 `graph_index`) 그 결과를 scout은 보지 못했다. 이것을 결정 대기 항목
-[**D20**](../open-questions.md)으로 열었다.
+[**D20**](../../open-questions.md)으로 열었다.
 
 **⑤ W1의 데이터 경로는 성립했고, 모델 판단에 미친 영향은 확인되지 않았다.**
 `cap_0002`(expanded)의 `callees`에 본문 두 줄이 실렸다 — `tokens=10`, `items=2`가 그
 줄들에서 계산된 값과 일치하므로 캡슐 스키마 검증기를 통과한 진짜 값이다.
 **그러나 그 캡슐을 받은 auditor는 Fake였고**, 실서빙된 유일한 역할인 scout은 ④ 때문에
 그래프를 못 봤다. **실모델이 그래프 줄을 보고 판단을 바꿨는지는 이 run이 답하지 않는다.**
-같은 이유로 [open-questions.md](../open-questions.md) D19(프롬프트 본문 미영속)가
+같은 이유로 [open-questions.md](../../open-questions.md) D19(프롬프트 본문 미영속)가
 그 확인을 막고 있었다 — 프롬프트가 산출물에 남지 않아 "모델이 실제로 무엇을 봤는가"를
 사후에 물을 수 없었다.
 
 **⑥ `callers`가 0건인 것은 그래프가 비어서가 아니다.**
 `callers(0, items 0)` 섹션이 **발행됐다**는 것이 요점이다 — index.json이 없으면 섹션
-자체가 부재해야 한다([knowledge-base.md](../knowledge-base.md) §4). 즉 "봤는데 들어오는
+자체가 부재해야 한다([knowledge-base.md](../../knowledge-base.md) §4). 즉 "봤는데 들어오는
 호출이 0건"이다. `parser.c` 안의 함수를 부르는 외부 파일이 픽스처에 없으므로 예상된 값이다.
 
 **⑦ `location_ok: False`가 세 게이트 전부에서 나온 것은 결함이 아니다.**
 세 캡슐의 `target`이 전부 `symbol: null, line_start: null`이다. 지금 캡슐 대상은 **파일
 단위**이므로 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다 — Gate E1의
-`location_ok`는 **심볼 단위 캡슐이 들어와야 작동을 시작한다**([STATUS.md](../../STATUS.md)
-§10, [open-questions.md](../open-questions.md) D13의 '심볼 단위 캡슐' 항목). 이 run은 그
+`location_ok`는 **심볼 단위 캡슐이 들어와야 작동을 시작한다**([STATUS.md](../../../STATUS.md)
+§10, [open-questions.md](../../open-questions.md) D13의 '심볼 단위 캡슐' 항목). 이 run은 그
 예고가 실행에서 그대로 관측된 첫 기록이다.
 
 **⑧ 8단계가 게이트를 불렀다.**
 stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작한다. 다만 등급을 **소비**하는
-쪽은 여전히 그대로다([open-questions.md](../open-questions.md) D18).
+쪽은 여전히 그대로다([open-questions.md](../../open-questions.md) D18).
 
 **⑧' 8단계 asan이 실패한 것은 결함이 아니다 — 그러나 넘어갈 일도 아니다.**
 같은 단계의 `build`는 `ok=true exit 0`인데 바로 다음 `asan`이 `ok=false`다. **두 도구가 같은 빌드를 도는 것이 아니다**: `commands_for()`가 `build`를 `clang -c -g -O1`(오브젝트까지, 링크 없음)로, `asan`을 `clang -fsanitize=address,undefined … -o {SCRATCH}/asan.bin` + 그 바이너리 실행 **두 명령**으로 조립한다. `-c`는 `main` 없이 통과하고 실행 파일 링크는 통과하지 못한다 — **픽스처 두 파일에 `main`이 없다.** 실패 문구도 거기서 나온다: `_RUNTIME_TOOLS` 분기가 `len(steps) < total`일 때 "빌드 단계에서 끊겨 프로그램이 실행되지 않았다"를 돌려주므로 **끊긴 것은 `asan` 자신의 링크 단계**다. `container_tools`의 모듈 docstring이 이미 같은 말을 적어 뒀다 — "지금 픽스처에는 `main`이 없어 링크되지 않으므로 **E4는 여전히 도달 불가**다".
 
 **모르는 것**: 그 clang이 어떤 링크 에러로 죽었는지는 이 데이터에 없다. trace의 `exit 1`은 판정기가 돌려준 값이고 `_EXEC_FAILED = (125, 126, 127)`에 안 걸렸으므로 "실행 실패가 아니라 빌드 중단"까지만 말할 수 있다. 에러 원문은 Evidence 로그에 있고 열지 않았다.
 
-**게이트에 미친 영향은 확실하다.** `gate.py`가 `usable = [ev for ev in evidences if ev.ok]`로 거르고 `"p4": any(ev.kind in _RUNTIME_KINDS for ev in usable)`이므로, `asan`이 `ok=False`라 `usable`에서 빠지고 **p4가 False**다. **stage 8이 E3에 머문 구체 근거가 이것이다.** [open-questions.md](../open-questions.md) **D18과는 층이 다르다** — 이쪽은 *등급이 왜 E3인가*(게이트)이고 D18은 *그 E3가 왜 소비되지 않는가*(정책)다.
+**게이트에 미친 영향은 확실하다.** `gate.py`가 `usable = [ev for ev in evidences if ev.ok]`로 거르고 `"p4": any(ev.kind in _RUNTIME_KINDS for ev in usable)`이므로, `asan`이 `ok=False`라 `usable`에서 빠지고 **p4가 False**다. **stage 8이 E3에 머문 구체 근거가 이것이다.** [open-questions.md](../../open-questions.md) **D18과는 층이 다르다** — 이쪽은 *등급이 왜 E3인가*(게이트)이고 D18은 *그 E3가 왜 소비되지 않는가*(정책)다.
 
 **여기서 멈추면 안 되는 이유 — p4는 구조적으로 닫혀 있다.** `_RUNTIME_KINDS`(`sanitizer`/`crash`/`poc_run`)를 내는 도구는 `TOOL_KINDS`에서 **`asan`과 `poc` 둘뿐**이고(`crash`는 생산자가 아예 없다), **둘 다 닫혀 있다**:
 
 | 경로 | 왜 닫혀 있나 |
 | --- | --- |
 | `asan` | `main` 없는 픽스처에서 링크 실패 → `ok=False` → `usable`에서 빠진다 |
-| `poc` | `commands_for()`가 `{SCRATCH}/poc` 실행을 내는데 **그 파일을 만드는 주체가 없다**(`container_tools` 주석, [STATUS.md](../../STATUS.md) §5 PoV) |
+| `poc` | `commands_for()`가 `{SCRATCH}/poc` 실행을 내는데 **그 파일을 만드는 주체가 없다**(`container_tools` 주석, [STATUS.md](../../../STATUS.md) §5 PoV) |
 
-→ **E4는 지금까지 어떤 run에서도 성립한 적이 없다.** 결함이 아니라 **측정 타당성의 문제**다. 등급 분포나 단계별 제거율을 논할 때 E4는 *분자가 0*인 것이 아니라 **분자가 될 수 없는 상태**다. 둘을 같은 칸에 넣으면 "재현까지 간 Finding이 없다"가 "재현 경로가 열려 있는데 아무도 못 갔다"로 읽힌다. [STATUS.md](../../STATUS.md) §10이 추적하는 분모 변화와 같은 계열의 사실이다.
+→ **E4는 지금까지 어떤 run에서도 성립한 적이 없다.** 결함이 아니라 **측정 타당성의 문제**다. 등급 분포나 단계별 제거율을 논할 때 E4는 *분자가 0*인 것이 아니라 **분자가 될 수 없는 상태**다. 둘을 같은 칸에 넣으면 "재현까지 간 Finding이 없다"가 "재현 경로가 열려 있는데 아무도 못 갔다"로 읽힌다. [STATUS.md](../../../STATUS.md) §10이 추적하는 분모 변화와 같은 계열의 사실이다.
 
 **⑨ prefix cache: 서버는 19.9%, 장부는 0.**
 `model_call` 네 건 모두 `cached 0`인데 같은 run의 vLLM 서버는 `Prefix cache hit rate: 19.9%`를
@@ -239,7 +239,7 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 
 | 벽 | 원인 | 해결 |
 | --- | --- | --- |
-| `single_gpu_12g`로 도구를 돌릴 수 없다 | 그 프로필의 `tool_runner`가 `fake`다 | `--tool-runner docker` 오버라이드. **문서를 고쳐도 사라지지 않는 벽이다** — [README.md](README.md) 미확정 #4가 이 항목이고, 이번이 두 번째 사례다 |
+| `single_gpu_12g`로 도구를 돌릴 수 없다 | 그 프로필의 `tool_runner`가 `fake`다 | `--tool-runner docker` 오버라이드. **문서를 고쳐도 사라지지 않는 벽이다** — [README.md](../README.md) 미확정 #4가 이 항목이고, 이번이 두 번째 사례다 |
 | fp8 모델이 뜨지 않는다 | DeepGEMM이 scale-factor 레이아웃을 변환하지 못한다 | `VLLM_USE_DEEP_GEMM=0` — 확정 #3 ③. 새로 막힌 것이 아니라 **기지의 조건을 적용한 것**이다 |
 
 ---
@@ -270,9 +270,9 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
 | **동시에 떠 있던 다른 서버** | **영구.** 검증 시점(18:15Z)에는 8001 하나뿐이었으나 이 run은 16:42Z이고 **서버 기동 시각을 찍지 않아** 같은 프로세스임을 증명할 수 없다 | 이 run에 대해서는 **없다.** 다음 실험에서 `ss -ltnp`를 그때 적는다 |
-| **기동 조건 ①`CPATH` ②`VLLM_ATTENTION_BACKEND` 지정 여부** | **영구.** 위와 같은 이유 — 18:15Z의 `/proc/<pid>/environ` 덤프를 16:42Z의 조건으로 옮길 수 없다 | 이 run에 대해서는 **없다.** [README.md](README.md) 미확정 #2의 입력은 검증 run 쪽에서 나왔다 |
+| **기동 조건 ①`CPATH` ②`VLLM_ATTENTION_BACKEND` 지정 여부** | **영구.** 위와 같은 이유 — 18:15Z의 `/proc/<pid>/environ` 덤프를 16:42Z의 조건으로 옮길 수 없다 | 이 run에 대해서는 **없다.** [README.md](../README.md) 미확정 #2의 입력은 검증 run 쪽에서 나왔다 |
 | **`dev_docker` run 2건 (같은 날)** | **미수록** — 원자료가 이 기록에 없다 | 해당 run 디렉터리의 `trace.jsonl`·`run_manifest.json`을 확보해 별도 §를 추가하거나 별도 보고서로 연다 |
-| **`cli bench` 1건 (같은 날)** | **미수록** — stdout JSON을 보존하지 않았다 | 재실행 시 stdout을 파일로 받는다. [README.md](README.md)가 이미 같은 전례("`bench` stdout을 놓쳐 측정 기록이 재구성본이 됐다")를 적고 있다 |
+| **`cli bench` 1건 (같은 날)** | **미수록** — stdout JSON을 보존하지 않았다 | 재실행 시 stdout을 파일로 받는다. [README.md](../README.md)가 이미 같은 전례("`bench` stdout을 놓쳐 측정 기록이 재구성본이 됐다")를 적고 있다 |
 
 ---
 

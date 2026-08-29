@@ -16,7 +16,7 @@
 | `repo_commit` | `run_0001` = `3f93e1cce0e1785054cb84517459322ae27f7d34` · `run_0004` = `1b43d55a3d6182f3b323ab2714bb512bc6aa675a` (둘 다 dirty **False**). **`run_0002`·`run_0003`은 미기재** — 매니페스트를 남기기 전에 죽었다 |
 | `run_id` | `run_20260827_0001` ~ `run_20260827_0004`. **날짜가 UTC다** — `cli.py`가 `new_run_id(datetime.now(UTC))`를 쓰므로 KST 08-28 00:45에 시작한 run이 `20260827`로 찍힌다. 이 파일 이름(종료일 KST)과 하루 어긋나는 것이 정상이며, run_id로 날짜를 읽으면 안 된다 |
 | run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/run_20260827_000{1,2,3,4}` — **넷 다 보존.** 단 `0002`·`0003`에는 `report.md`도 `run_manifest.json`도 **없다**(생성 전에 죽었다) |
-| `tool_runner` | 프로필 선언 **`podman`**(`config/profiles.yaml`의 `b1_single`) / 실제 **`docker`**. `--tool-runner docker` 오버라이드이며 [ADR 0005](../decisions/0005-tool-runner-override.md) 예외다. **이번 세션 run 넷 전부 해당** |
+| `tool_runner` | 프로필 선언 **`podman`**(`config/profiles.yaml`의 `b1_single`) / 실제 **`docker`**. `--tool-runner docker` 오버라이드이며 [ADR 0005](../../decisions/0005-tool-runner-override.md) 예외다. **이번 세션 run 넷 전부 해당** |
 | `--device` | `atom` |
 | `tool_images` digest | `harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` (docker `RepoDigests`) — 8/25·8/26과 **동일** |
 | `--gpu-memory-utilization` | **0.28** · 분모 물리 통합메모리 **119.7 GiB** → 33.52 GiB. 두 서버 같다 |
@@ -66,7 +66,7 @@
 | 정답 대조 | **불합격.** 근본 원인 `router_define`을 못 짚었고 CWE도 다르다(정답 CWE-843) |
 | 폭주 두 건 | 원인은 **하네스가 `max_tokens`를 안 보낸다**는 것. 해법은 **서버 옵션**이고 하네스 수정 0 |
 | 신규 결함 넷 | 요청당 출력 상한 없음(D42) · 캡슐 재검증이 카운터 밖(D43) · critic 파싱 실패가 run을 죽임(D44) · **실행한 대상의 심볼이 기록에 없다**(D45) |
-| 부수 확정 | **CUDA 통합메모리는 cgroup에 계상되지 않는다** — vLLM이 `user-1004.slice` 안에 있는데 `memory.current`가 12.84 GiB뿐이다([README.md](README.md) 미확정 #1의 답, §2) |
+| 부수 확정 | **CUDA 통합메모리는 cgroup에 계상되지 않는다** — vLLM이 `user-1004.slice` 안에 있는데 `memory.current`가 12.84 GiB뿐이다([README.md](../README.md) 미확정 #1의 답, §2) |
 
 **이 run이 답하지 않는 것**: 탐지 성능(표본 1) · 다른 샘플 · 공백 폭주가 모델의 성질인지
 이 스키마와의 상호작용인지 · 장부 예산 계상의 정확성(§5).
@@ -81,7 +81,7 @@
 | `kv_cache_dtype` | `fp8_e4m3` (두 서버 동일) |
 | attention backend | **FLASHINFER** — 후보 `['FLASHINFER', 'TRITON_ATTN']`. **8/25 NVFP4와 같고 두 번째 확인이다.** 8/26의 4B는 `FLASH_ATTN`이었다([재측정 보고서](2026-08-26-pipeline-zlib542-remeasure-atom.md)) |
 | NVFP4 커널 | `FlashInferCutlassNvFp4LinearKernel` · MoE `FLASHINFER_CUTLASS` |
-| `VLLM_ATTENTION_BACKEND` | **주지 않았다.** flashinfer가 선택됐는데도 두 서버 다 기동했다 — [README.md](README.md) 확정 #3 ②는 "flashinfer가 선택될 때 nvcc가 필요하다"인데 **NVFP4 경로에서는 발동하지 않는다.** 8/25도 FLASHINFER를 썼으나 **그 보고서는 기동 명령 전체 원문을 미기재로 남겨 그때 이 변수를 줬는지 알 수 없다** — 그래서 "안 주고도 뜬다"를 명령 원문과 함께 남기는 것은 이 기록이 처음이다 |
+| `VLLM_ATTENTION_BACKEND` | **주지 않았다.** flashinfer가 선택됐는데도 두 서버 다 기동했다 — [README.md](../README.md) 확정 #3 ②는 "flashinfer가 선택될 때 nvcc가 필요하다"인데 **NVFP4 경로에서는 발동하지 않는다.** 8/25도 FLASHINFER를 썼으나 **그 보고서는 기동 명령 전체 원문을 미기재로 남겨 그때 이 변수를 줬는지 알 수 없다** — 그래서 "안 주고도 뜬다"를 명령 원문과 함께 남기는 것은 이 기록이 처음이다 |
 | cgroup (`user-1004.slice`) | `memory.current` **13,790,609,408 B = 12.84 GiB** · `memory.high` **`max`**(제한 없음) · `memory.max` **68,719,476,736 = 64 GiB**. 2026-08-28 02:4x KST, 서버 B가 idle로 떠 있는 상태에서 읽었다 |
 
 ### 8/25 30B와의 대조 — `util`만 다르다
@@ -102,7 +102,7 @@
 22.79 → 22.91로 **거의 같다** — `util`을 0.3에서 0.28로 내려도 가중치·활성화·CUDA graph는
 안 줄고 **KV만 줄었다.**
 
-**KV를 포함한 35.7 GiB는 멘토 안내 34 GiB를 약 1.7 GiB 넘는다**([README.md](README.md) 확정
+**KV를 포함한 35.7 GiB는 멘토 안내 34 GiB를 약 1.7 GiB 넘는다**([README.md](../README.md) 확정
 \#4 — 34는 팀 약속선이고 시스템 하드 한도는 64 GiB다. 하드 한도까지는 약 28 GiB 남는다).
 **그 34 GiB가 cgroup에 잡히는 값인지는 README 미확정 #1이었고, 이번에 읽어서 답이 나왔다 —
 아래 소절이 그것이다.**
@@ -130,7 +130,7 @@ max                # memory.high  = 제한 없음
 `memory.current`에 합산된다. **그런데 그 값이 12.84 GiB뿐이다.** 같은 시각 vLLM 자기 회계는
 35.66 GiB, `nvidia-smi`는 32.2 GiB를 가리킨다.
 
-**따라서 [README.md](README.md) 미확정 #1의 답은 "미계상"이다.** 그 항목이 세운 판별식은
+**따라서 [README.md](../README.md) 미확정 #1의 답은 "미계상"이다.** 그 항목이 세운 판별식은
 "util 0.2로 띄운 상태에서 24 GiB 근처면 계상, 4~5 GiB면 미계상"이고, util 0.28이면 계상 쪽
 기대값이 **33 GiB 이상**인데 실측은 그 3분의 1이다. 모델 가중치 17.99 GiB와 미리 잡아 둔
 KV 12.75 GiB는 idle 여부와 무관하게 상주하므로, **계상됐다면 보였어야 한다.**
@@ -159,7 +159,7 @@ If this is not intended, please relaunch vLLM instance with `--generation-config
 하네스가 요청에 싣는 것은 `config/budgets.yaml`의 `sampling` **둘뿐**이다 —
 `temperature: 0.2` · `top_p: 0.95`. `run_manifest.json`의 `sampling`도 그 둘이다. 따라서
 요청이 덮는 것은 그 둘이고, **`top_k: 20`과 `repetition_penalty: 1.05`는 모델 파일이 정한
-값 그대로 적용됐으며 run 기록 어디에도 남지 않는다.** [open-questions.md](../open-questions.md)
+값 그대로 적용됐으며 run 기록 어디에도 남지 않는다.** [open-questions.md](../../open-questions.md)
 D29가 이 항목이고, 그 항목이 "깨지는 순간은 모델을 바꿀 때"라고 적어 둔 자리에 이번 실측이 닿는다.
 
 **`repetition_penalty`가 이 저장소 문서에 실리는 것은 이번이 처음이다.** 값 자체는 8/25 30B
@@ -533,7 +533,7 @@ Qwen3-8B ×3이고 **이 run은 30B ×3**이다. **이 기록을 조건 비교�
 | 중간 | `cli estimate`가 못 돈다 | D43 신설 |
 | 중간 | 실서빙 auditor의 `repro_spec` 부재 | 프롬프트·응답 열어보기(§5) |
 | 중간 | `dedupe()`가 E2도 지운다 | D35에 두 번째 사례 추가 |
-| 해소 | README 미확정 #1(통합메모리의 cgroup 계상) | **답이 나왔다 — 미계상**(§2). [README.md](README.md)의 그 항목에 해소 블록을 달았다 |
+| 해소 | README 미확정 #1(통합메모리의 cgroup 계상) | **답이 나왔다 — 미계상**(§2). [README.md](../README.md)의 그 항목에 해소 블록을 달았다 |
 | 낮음 | `estimate`에 `--device`가 없다 | `cli.py:698`이 `parents=[common]`이고 `run`만 `[common, device]`다. 값이 기록에 안 남는 명령이라 영향은 작다 |
 | 낮음 | `counter_for_source(None)`이 `AttributeError` | `tokenizer.py`는 "빈 값이면 `None`"이라 적었지만 `None` 입력에는 터진다. **프로덕션 경로는 `factory.py:298`의 `counter_for_source(source) if source else None`이 막는다** — 규약과 구현의 어긋남이고 파이프라인 결함은 아니다 |
 
@@ -545,7 +545,7 @@ Qwen3-8B ×3이고 **이 run은 30B ×3**이다. **이 기록을 조건 비교�
 - **임시 설정·프로필**: 저장소 `config/`는 안 건드렸다. 측정 전용 변경 둘은 워크트리
   `/srv/tenants/ext01/measure-20260827`의 커밋 `3f93e1c`(candidate_max 64)·
   `1b43d55`(max_tokens 2000)에 있고 **둘 다 머지 대상이 아니다.** 그 워크트리는 clean이다.
-- **저장소 변경**: 셋뿐이다 — 이 보고서 · [open-questions.md](../open-questions.md)(D42~D45 신설, D29·D35 갱신) · [README.md](README.md)(색인 1행, 미확정 #1 해소 블록).
+- **저장소 변경**: 셋뿐이다 — 이 보고서 · [open-questions.md](../../open-questions.md)(D42~D45 신설, D29·D35 갱신) · [README.md](../README.md)(색인 1행, 미확정 #1 해소 블록).
 
 ## 9. 부록 — 재현 절차
 

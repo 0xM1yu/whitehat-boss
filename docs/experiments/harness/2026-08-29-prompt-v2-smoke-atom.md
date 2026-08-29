@@ -2,7 +2,7 @@
 
 > **run 두 건과 프로브 한 건이 하나의 대조다.** 같은 서버 프로세스(pid 3663640)가 둘을
 > 연달아 받았고 `config/models.yaml`의 **한 줄**만 갈렸다. 그래서 파일을 나누지 않는다 —
-> 갈라 놓으면 이 폴더가 생긴 사고([README.md](README.md) 확정 #2, "보고서 둘이 갈렸다")를
+> 갈라 놓으면 이 폴더가 생긴 사고([README.md](../README.md) 확정 #2, "보고서 둘이 갈렸다")를
 > 그대로 재현한다.
 >
 > **이 보고서의 모든 수치는 2026-08-29 ATOM 세션에서 집계된 값이다.** 그 세션 명령 원문이
@@ -38,7 +38,7 @@
 ## 1. 요약
 
 **경로 성립과 기제 판정이다. 성능 주장도 인과 주장도 하지 않는다** — 조건당 표본이 1건이고
-프롬프트 버전이 갈렸다([evaluation.md](../evaluation.md) §2.3 규칙 4).
+프롬프트 버전이 갈렸다([evaluation.md](../../evaluation.md) §2.3 규칙 4).
 
 | 항목 | 결과 |
 | --- | --- |
@@ -58,7 +58,7 @@
 
 **연 것 셋 · 닫은 것 둘.** 신설 D53(실패한 호출이 예산 장부에 안 실린다) · D54(머지된 v2를
 고르는 모델이 없다) · D55(재시도가 실패율 지표를 갉는다). 닫는 것은 D47·D52다. 전부
-[open-questions.md](../open-questions.md)에 있다.
+[open-questions.md](../../open-questions.md)에 있다.
 
 ## 2. 실험 환경
 
@@ -178,12 +178,12 @@ v1으로 도는 run은 스키마가 자리를 내줘도 값을 못 받는다 —
 그 둘을 먼저 적는다.
 
 1. **모델을 부르는 노드가 셋뿐이다.** `grep -rn "call_model(" src/`가
-   [scout.py](../../src/orchestrator/nodes/scout.py) 85행 ·
-   [auditor.py](../../src/orchestrator/nodes/auditor.py) 103행 ·
-   [critic.py](../../src/orchestrator/nodes/critic.py) 114행 셋만 낸다. 8단계 `validate`와
+   [scout.py](../../../src/orchestrator/nodes/scout.py) 85행 ·
+   [auditor.py](../../../src/orchestrator/nodes/auditor.py) 103행 ·
+   [critic.py](../../../src/orchestrator/nodes/critic.py) 114행 셋만 낸다. 8단계 `validate`와
    9단계 `report`는 모델을 안 부른다
 2. **`cache` 이벤트가 캡슐 조회 1회당 1건이다.**
-   [fake_retriever.py](../../src/adapters/fake_retriever.py) 116행의 `on_cache` 훅이 조회마다
+   [fake_retriever.py](../../../src/adapters/fake_retriever.py) 116행의 `on_cache` 훅이 조회마다
    한 번 불린다. 2026-08-26 run이 같은 성질을 이미 보였다(D39: 604 = scout 542 + auditor 62)
 
 | 이벤트 | run B | v2 | 차 |
@@ -199,7 +199,7 @@ v1으로 도는 run은 스키마가 자리를 내줘도 값을 못 받는다 —
 | `budget` | 38 | 41 | **+3** |
 | `critic_failed` | (없음) | 3 | +3 |
 
-`_triage_one`이 대상마다 LIGHT 캡슐을 조립하고([runner.py](../../src/orchestrator/runner.py) 1015행),
+`_triage_one`이 대상마다 LIGHT 캡슐을 조립하고([runner.py](../../../src/orchestrator/runner.py) 1015행),
 `TRIAGED`인 후보에만 EXPANDED를 조립한다(1028행). **`cache 25 = 19 LIGHT + 6 EXPANDED`가
 양쪽 같으므로 두 run 다 scout 19회 · auditor 6회다.** 남는 것이 critic이다.
 
@@ -224,7 +224,7 @@ cache 25, model_call 25, transition 51, policy_decision 25, gate_eval 6`이고 `
 
 ### 해석 ② — run B의 Finding 6건은 전부 `E0`였다
 
-`_analyze`는 **`HYPOTHESIZED`인 Finding에만** critic을 돌린다([runner.py](../../src/orchestrator/runner.py) 662행).
+`_analyze`는 **`HYPOTHESIZED`인 Finding에만** critic을 돌린다([runner.py](../../../src/orchestrator/runner.py) 662행).
 
 ```python
 promoted = state.in_state(FindingState.HYPOTHESIZED)
@@ -246,7 +246,7 @@ if grade is EvidenceGrade.E1:
 
 `E0`은 `p1 = static_ok or location_ok`가 거짓이라는 뜻이고, 두 술어 다
 `gate.evidences_for(finding, evidences)` — **그 Finding이 `evidence_refs`로 참조한 근거**만
-본다([gate.py](../../src/orchestrator/gate.py) 155~158행이
+본다([gate.py](../../../src/orchestrator/gate.py) 155~158행이
 `[by_id[ref] for ref in finding.evidence_refs if ref in by_id]`로 거른다).
 
 **그리고 `location_ok`는 셈에서 빠진다.** D23이 열려 있고 `Evidence.location`을 채우는 코드가
@@ -284,7 +284,7 @@ critic_skipped 0  +  gate_eval(stage=7) 3  +  critic_failed 3  =  6  =  선별�
 - `critic_failed 3` — 7단계에 **들어갔다가** 파싱 실패로 판정을 못 받은 건
 
 세 항이 선별 수와 정확히 닫히므로 **분모가 어디서 줄었는지가 trace만으로 읽힌다.**
-[evaluation.md](../evaluation.md) §6이 요구하는 "Finding 수를 그대로 나란히 놓지 않는다"의
+[evaluation.md](../../evaluation.md) §6이 요구하는 "Finding 수를 그대로 나란히 놓지 않는다"의
 근거가 이 등식이다.
 
 ### 따라 나오지 않는 것
@@ -374,7 +374,7 @@ PR #51의 `budgets.yaml` 주석은 여유를 "3.4배 → 1.7배"로 적었고 �
 ### 해석 ⑥ — `fail 0`이 `재시도 0`이 아니다
 
 **run B는 `ok 25 / fail 0`인데 성공 호출의 `output_tokens` 최대가 8,402다.**
-`openai_compat.complete()`가 재시도분을 합산하고([openai_compat.py](../../src/adapters/openai_compat.py) 74~89·94·127행),
+`openai_compat.complete()`가 재시도분을 합산하고([openai_compat.py](../../../src/adapters/openai_compat.py) 74~89·94·127행),
 요청 하나의 상한이 `max_tokens = output_max = 8,192`다. ⇒ **1회 시도로 8,402가 나올 수 없다.
 그 호출은 최소 2회 시도했다.**
 
@@ -437,7 +437,7 @@ D51 (2)가 미룬 질문 하나 — **구조화 출력 백엔드가 스키마의
 ### 해석 ⑧ — 스키마에 자리를 내는 것으로는 필드가 안 나온다
 
 **안 나온 넷** — `trigger_status` · `rca_draft` · `evidence_refs` · `missing_evidence` —
-이 [finding.py](../../src/schemas/finding.py)에서 **전부 default를 가진 optional**이다.
+이 [finding.py](../../../src/schemas/finding.py)에서 **전부 default를 가진 optional**이다.
 
 ```python
 path: list[PathStep] = Field(default_factory=list)
@@ -470,12 +470,12 @@ D23 때문에 `location_ok`가 구조적으로 거짓이라 **`p1 = static_ok`�
 
 | 번호 | 무엇 | 어느 지표가 어떻게 틀리나 | 근거 |
 | --- | --- | --- | --- |
-| **D53** | 실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 | [evaluation.md](../evaluation.md) **§5.2** — `input/output token`, `GPU-second`, "validated finding당 GPU-hour"의 **분자가 빈다**. v2에서 **wall-clock 729초**와 출력 토큰 최대 6×8,192가 장부 밖이다(243초의 출처는 `model_call.wall_ms`다. 장부가 받았을 값은 `result.gpu_ms`이고 `gpu_ms_source == "request_wall_clock"`이라 가깝지만 `wall_ms`가 `_record_prompt` **뒤**부터 재므로 조금 크다). **폭주가 잦은 조건일수록 싸 보인다** | `budget` 이벤트 수 = **ok** `model_call` + `tool_call` (38 = 25+13 / 41 = **28**+13, 31이 아니다) |
+| **D53** | 실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 | [evaluation.md](../../evaluation.md) **§5.2** — `input/output token`, `GPU-second`, "validated finding당 GPU-hour"의 **분자가 빈다**. v2에서 **wall-clock 729초**와 출력 토큰 최대 6×8,192가 장부 밖이다(243초의 출처는 `model_call.wall_ms`다. 장부가 받았을 값은 `result.gpu_ms`이고 `gpu_ms_source == "request_wall_clock"`이라 가깝지만 `wall_ms`가 `_record_prompt` **뒤**부터 재므로 조금 크다). **폭주가 잦은 조건일수록 싸 보인다** | `budget` 이벤트 수 = **ok** `model_call` + `tool_call` (38 = 25+13 / 41 = **28**+13, 31이 아니다) |
 | **D54** | `config/models.yaml`의 어느 모델도 v2 프롬프트를 고르지 않아 머지된 v2가 도달 불가다 | 지표가 아니라 **도달성** 문제다. 기본 설정으로 도는 모든 run에서 `trigger_status`가 전량 `null`이고, 그것이 D52의 기제로 읽히지 않으면 "모델이 안 냈다"로 오독된다 | `config/models.yaml`의 `prompt_template_version`이 **전 항목 `"v1"`** |
-| **D55** | 재시도가 `model_call` 한 건으로 뭉개져 스키마 파싱 실패율이 과소 집계된다 | [evaluation.md](../evaluation.md) **§5.1** — "스키마 파싱 실패율"의 **분자가 준다**. `context.py`가 그 지표의 분모를 `model_call`로 잡아 뒀는데, 실패했다가 살아난 시도가 `ok=true` 한 건에 흡수된다 | run B가 `fail 0`인데 `output_tokens` 8,402 > `output_max` 8,192 (§5 해석 ⑥) |
+| **D55** | 재시도가 `model_call` 한 건으로 뭉개져 스키마 파싱 실패율이 과소 집계된다 | [evaluation.md](../../evaluation.md) **§5.1** — "스키마 파싱 실패율"의 **분자가 준다**. `context.py`가 그 지표의 분모를 `model_call`로 잡아 뒀는데, 실패했다가 살아난 시도가 `ok=true` 한 건에 흡수된다 | run B가 `fail 0`인데 `output_tokens` 8,402 > `output_max` 8,192 (§5 해석 ⑥) |
 
 > **D54는 "지금 `models.yaml`을 v2로 넘기라"는 지시가 아니다.** 2×2가 도는 중에 넘기면
-> [evaluation.md](../evaluation.md) §2.3 규칙 4로 **전량 재측정**이다. 이 항목은 **미결
+> [evaluation.md](../../evaluation.md) §2.3 규칙 4로 **전량 재측정**이다. 이 항목은 **미결
 > 판단이지 누락이 아니고**, 넘기는 시점은 2×2 전량 완료 후다(§8.2·§8.3 2번).
 
 **D53과 D55는 같은 편향의 두 면이다.** `openai_compat.complete()`의 주석이 어댑터 **안에서**
@@ -490,7 +490,7 @@ D23 때문에 `location_ok`가 구조적으로 거짓이라 **`p1 = static_ok`�
 #### D55의 사후 복원 규칙
 
 **시도 하나가 요청 하나다** — `complete()`의 재시도 루프가 매 시도마다 `_post()`를 부르고
-그것이 `/v1/chat/completions`로 가는 POST 하나다([openai_compat.py](../../src/adapters/openai_compat.py) 90~94·165~192행).
+그것이 `/v1/chat/completions`로 가는 POST 하나다([openai_compat.py](../../../src/adapters/openai_compat.py) 90~94·165~192행).
 그래서:
 
 ```
@@ -556,7 +556,7 @@ D23 때문에 `location_ok`가 구조적으로 거짓이라 **`p1 = static_ok`�
 ### 8.1 이 보고서가 코드를 안 고치는 이유
 
 **팀 2×2가 도는 중이다.** 셀이 진행되는 동안 하네스를 바꾸면 셀마다 다른 코드로 돈 run이
-한 매트릭스에 섞이고, 그것은 [evaluation.md](../evaluation.md) §2.3 규칙 2·4가 막는 것이다.
+한 매트릭스에 섞이고, 그것은 [evaluation.md](../../evaluation.md) §2.3 규칙 2·4가 막는 것이다.
 PR #51을 지금 머지하지 말라는 것(§8.3 3번)과 **같은 근거**다.
 
 그래서 이 변경은 문서만 바꾼다. 코드 변경은 아래 큐로 넘긴다.
@@ -584,7 +584,7 @@ PR #51을 지금 머지하지 말라는 것(§8.3 3번)과 **같은 근거**다.
 
 1. **[즉시·최우선] 지금 도는 2×2가 서빙 서버 stdout을 파일로 받고 있는가.**
    §7.1의 복원 규칙이 그 로그에 걸려 있다 — 없으면 **그 2×2의 스키마 파싱 실패율은 사후에도
-   못 만든다**(D55). [README.md](README.md)의 「서빙 서버 stdout을 파일로 받는다」가 이미
+   못 만든다**(D55). [README.md](../README.md)의 「서빙 서버 stdout을 파일로 받는다」가 이미
    `setsid nohup ... > "$LOG" 2>&1 &`를 규약으로 정해 뒀고, 같은 사고가 세 번 있었다.
    **아직 안 받고 있으면 다음 셀 기동 전에 고쳐야 하므로 다른 넷보다 먼저다.**
 
@@ -592,11 +592,11 @@ PR #51을 지금 머지하지 말라는 것(§8.3 3번)과 **같은 근거**다.
    **전 항목 `"v1"`**이다. PR #54가 넣은 v2 셋을 **고르는 모델이 하나도 없다**(D54).
    ⇒ 그 매트릭스의 `trigger_status`는 **전량 `null`**이고, 그것은 모델의 판단이 아니라
    프롬프트 부재다(§3에서 run B가 실측). **2×2에서 그 필드를 지표로 쓸 계획이면 지금 정해야
-   한다.** 다만 **매트릭스가 도는 중에 v2로 넘기면 안 된다** — [evaluation.md](../evaluation.md)
+   한다.** 다만 **매트릭스가 도는 중에 v2로 넘기면 안 된다** — [evaluation.md](../../evaluation.md)
    §2.3 규칙 4로 전량 재측정이다.
 
 3. **[즉시] PR #51을 2×2 도는 중에 머지하지 않는다.** `output_max`는 `RunRecord.thresholds`에
-   실리는 계산 예산이고, 셀마다 다른 상한이면 [evaluation.md](../evaluation.md) §2.3 규칙 1
+   실리는 계산 예산이고, 셀마다 다른 상한이면 [evaluation.md](../../evaluation.md) §2.3 규칙 1
    (동일 계산 예산)이 깨진다. 머지 시점은 **전량 완료 후 또는 다음 매트릭스 착수 전**.
 
 4. **[주의] v1으로 도는 셀에서 critic이 아예 안 돌 수 있다.** run B가 Finding 6건 전부
