@@ -116,7 +116,7 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
-from src.schemas.run import RunRecord
+from src.schemas.run import ModelSampling, RunRecord
 from src.tokens import using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
@@ -496,7 +496,7 @@ def run_pipeline(
 
     artifacts = preprocess.run(ctx, source_root=spec.target)
     record, warnings = _new_record(
-        spec, config, ctx.run_id, started_at, artifacts, deps.tool_images
+        spec, config, ctx.run_id, started_at, artifacts, deps.tool_images, deps.model_sampling
     )
     ctx.record = record
     ctx.store.put(record)
@@ -1051,6 +1051,7 @@ def _new_record(
     started_at: datetime,
     artifacts: list[Artifact],
     tool_images: dict[str, str],
+    model_sampling: dict[str, ModelSampling],
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -1079,7 +1080,13 @@ def _new_record(
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,
+        # 하네스가 **보낸** 샘플링.
         sampling=config.sampling,
+        # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (D29). 서버가
+        # 모델 파일에서 적용하는 `top_k` 등을 하네스는 안 보내므로 이 필드로만 기록에 남는다.
+        # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
+        # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.
+        model_sampling=model_sampling,
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
