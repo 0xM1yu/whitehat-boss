@@ -249,6 +249,9 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "thresholds": {"scout_threshold": 0.5},
   "seed": 20260901,
   "sampling": {"temperature": 0.2, "top_p": 0.95},
+  "model_sampling": {
+    "auditor": {"temperature": 0.7, "top_k": 20, "top_p": 0.8, "repetition_penalty": 1.05}
+  },
   "kb_snapshot": "kb-2026-08-30",
   "started_at": "2026-09-01T09:00:00Z",
   "finished_at": null,
