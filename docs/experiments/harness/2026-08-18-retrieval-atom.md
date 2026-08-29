@@ -1,12 +1,12 @@
 # ATOM 검색 경로(Retrieval) 실서빙 실험 결과
 
 > **기록 성격**: 2026-08-18 시점의 관측 기록이다. 서식(메타 표, §6~7)은
-> [TEMPLATE.md](TEMPLATE.md)에 맞춰 2026-08-19에 @danielcho02가 정리했다.
+> [TEMPLATE.md](../TEMPLATE.md)에 맞춰 2026-08-19에 @danielcho02가 정리했다.
 >
 > **정정 이력**: 작성자(@sumin0218)가 2026-08-19에 본문에서 두 주장을 직접 정정했다 —
 > §1(실모델 파이프라인 "첫 완주" → **검색 경로를 포함한** 첫 완주. 전체 첫 완주는 서빙 쪽)과
 > §2.1(메모리 "34 GiB 커널 강제" → 34는 멘토 안내 **팀 목표**이고, 시스템 하드 한도는 cgroup
-> **`memory.max`=64 GiB**다. 8/17엔 max도 34였다가 상향됐다). 근거는 [README.md](README.md) 확정 #1·#4.
+> **`memory.max`=64 GiB**다. 8/17엔 max도 34였다가 상향됐다). 근거는 [README.md](../README.md) 확정 #1·#4.
 
 **작성**: @sumin0218 (T4 Retrieval / 로컬 LLM 구축)
 **실험 기간**: 2026-08-18 저녁
@@ -15,7 +15,7 @@
 
 ## 메타
 
-**빈칸은 지어내지 않았다.** 특히 revision 3건의 공백이 [README.md](README.md) 확정 #2가
+**빈칸은 지어내지 않았다.** 특히 revision 3건의 공백이 [README.md](../README.md) 확정 #2가
 지목한 오독의 원인이었다.
 
 **그 세 칸은 2026-08-22에 채웠다 — 실험 시점에 적어둔 값이 아니라 ATOM 캐시의 스냅샷
@@ -31,7 +31,7 @@
 | `repo_commit` | **미기재** |
 | `run_id` | **미기재** |
 | run 산출물 경로·보존 | **미기재.** §9는 "저장소 변경 없음"이므로 저장소 안에는 남지 않았다 |
-| `tool_runner` | 프로필 `single_gpu_12g` 선언 **`fake`**([profiles.yaml](../../config/profiles.yaml)) / 실제 **`podman`**. 오버라이드 경위는 [README.md](README.md) 확정 #5 |
+| `tool_runner` | 프로필 `single_gpu_12g` 선언 **`fake`**([profiles.yaml](../../../config/profiles.yaml)) / 실제 **`podman`**. 오버라이드 경위는 [README.md](../README.md) 확정 #5 |
 | `--device` | `atom` |
 | `tool_images` digest | **미기재** |
 | `--gpu-memory-utilization` | embedding·reranker 각 **0.1** (§10 부록) · 분모 **119.7 GiB**(물리 통합메모리). **scout(8001)은 미기재** |
@@ -46,7 +46,7 @@
 
 | 항목                         | 결과                                                         |
 | ---------------------------- | ------------------------------------------------------------ |
-| 하네스 ↔ 실모델 배선 (scout) | **성공** — 검색 경로를 포함한 실모델 첫 완주(전체 첫 완주는 모델 서빙 쪽, [README.md](README.md) 확정 #1), structured output 정상 |
+| 하네스 ↔ 실모델 배선 (scout) | **성공** — 검색 경로를 포함한 실모델 첫 완주(전체 첫 완주는 모델 서빙 쪽, [README.md](../README.md) 확정 #1), structured output 정상 |
 | embedding 실서빙             | **성공** — `/v1/embeddings`, 1024차원 벡터                   |
 | reranker 실서빙              | **성공** — `/v1/rerank`, 순위 의미상 정확                    |
 | HybridRetriever 실경로 완주  | **성공** — embedding·reranker 둘 다 실호출, 파이프라인 완주  |
@@ -173,8 +173,8 @@ Finding이 Fake retriever(dev_fake)와 다르게 나온 것이 요점입니다 �
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| 단계별 서빙 34 GiB 실측 | **미착수** | 각 서버를 띄운 상태에서 `memory.current`를 읽는다 — 상한이 세 겹이라는 것이 [README.md](README.md) 확정 #4에 있고, 미확정 #1이 정확히 이 측정을 기다린다 |
-| 실험 종료 시각 (분 단위) | 필드가 없었다 | 다음 실험부터 [TEMPLATE.md](TEMPLATE.md) 메타 표가 강제한다 |
+| 단계별 서빙 34 GiB 실측 | **미착수** | 각 서버를 띄운 상태에서 `memory.current`를 읽는다 — 상한이 세 겹이라는 것이 [README.md](../README.md) 확정 #4에 있고, 미확정 #1이 정확히 이 측정을 기다린다 |
+| 실험 종료 시각 (분 단위) | 필드가 없었다 | 다음 실험부터 [TEMPLATE.md](../TEMPLATE.md) 메타 표가 강제한다 |
 | 서빙 모델 revision 3건 | 필드가 없었다 | **해소(스냅샷 해시로, 2026-08-22).** 위 「메타」 표에 기재했다 — 지운 기록이 아니라 남긴 기록으로 이 행을 둔다 |
 
 ---
