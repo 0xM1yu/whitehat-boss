@@ -46,8 +46,9 @@
 | `max_tokens: 8192` | O | `RunRecord.thresholds.output_max` |
 | `top_k: -1` · `min_p: 0.0` · `repetition_penalty: 1.0` · `frequency_penalty: 0.0` · `max_input_tokens: 32768` | **X** | **어디에도 안 남는다** |
 
-그래서 이 파일이 없으면 **이번 매트릭스가 무슨 조건으로 돌았는지 사후에 못 정한다.**
-[D56](../../open-questions.md)이 그 항목이다.
+**다섯 다 끄는 값이라 실효는 없다** — `-1`·`0.0`·`1.0`은 그 기능을 안 쓴다는 뜻이고,
+`temperature 0.2` · `top_p 0.95`면 분포가 이미 좁아 `top_k` 상한이 얹혀도 자를 것이 없다.
+그래도 **무엇으로 고정했는지가 이 파일에만 있다**는 사실은 남는다. 그래서 사본을 들였다.
 
 **`max_tokens: 8192`가 스펙 고정값이다.** 하네스 쪽 `config/budgets.yaml`의
 `thresholds.output_max`를 바꾸면 하네스로 도는 셀만 스펙을 어긴다 — 매트릭스가 도는 동안은
