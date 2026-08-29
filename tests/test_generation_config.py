@@ -90,9 +90,35 @@ def test_unresolvable_sources_are_none(tmp_path: Path) -> None:
     assert read_declared_sampling("hf://org/model", hub_cache=tmp_path) is None
 
 
-def test_a_value_outside_the_schema_is_none_not_a_lie(tmp_path: Path) -> None:
-    """파일이 `top_k: 0` 같은 스키마 밖 값을 담으면 미기록으로 둔다 — 고쳐 담지 않는다."""
+def test_top_k_zero_is_a_real_declaration_not_a_schema_violation(tmp_path: Path) -> None:
+    """`top_k: 0`은 스키마 밖 값이 아니라 **"비활성"이라는 정상 선언**이다.
+
+    HF는 `0`, vLLM은 `-1`을 그 뜻으로 쓴다. `ModelSampling`이 `ge=1`이던 동안에는 그 선언이
+    검증에서 튕겨 **그 모델의 기록이 통째로 사라졌다** — `temperature 0.7`까지 함께 버려져
+    "선언 없음"으로 남았고, 그것은 D29가 막으려던 오독을 반대 방향에서 재생산한다.
+    `Sampling`(우리가 **보내는** 값)이라면 `ge=1`이 맞지만 이쪽은 **받아 적는** 자리다.
+    """
     _write_generation_config(tmp_path, _SOURCE, {"top_k": 0, "temperature": 0.7})
+
+    sampling = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+    assert sampling is not None
+    assert sampling.top_k == 0
+    assert sampling.temperature == 0.7
+
+    _write_generation_config(tmp_path, _SOURCE, {"top_k": -1})
+    vllm_style = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+    assert vllm_style is not None
+    assert vllm_style.top_k == -1
+
+
+def test_a_value_outside_the_schema_is_none_not_a_lie(tmp_path: Path) -> None:
+    """진짜 스키마 밖 값(`top_p: 5.0` — 확률이 1을 넘는다)은 미기록으로 둔다.
+
+    **전체를 버리는 대가를 알고 둔다** — 같은 파일의 `temperature 0.7`도 함께 사라지고,
+    맵에서 그 역할이 빠져 "못 읽음"과 구별되지 않는다(리뷰 M2). 이 값은 관측된 적이 없어
+    지금은 그 대가를 치른다. 관측되면 키 단위로 버리는 쪽을 다시 본다.
+    """
+    _write_generation_config(tmp_path, _SOURCE, {"top_p": 5.0, "temperature": 0.7})
 
     assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
 
