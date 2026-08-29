@@ -322,6 +322,23 @@ include_input=False       → 191자
 그 run은 2 m 33 s 만에 끝났고 `target_planned`가 4건뿐이다(정상 run은 19건). 인덱서가
 죽어 파일 단위로 떨어진 결과다. **비교에도 판정에도 쓰지 않는다.**
 
+### 그런데 이 run을 **끊은** 것은 keyring이 아니다
+
+`stopped_after`가 `run_20260828_0002`와 똑같이 **7**이고, 사유도 같다.
+
+```
+stage 4  scout    ok true   wall 3756
+stage 5  auditor  ok true   wall 7014
+…
+stage 7  critic   ok false  wall 124869
+  {"error":{"message":"This model's maximum context length is 32768 tokens.
+   However, you requested 8192 output t…
+```
+
+**D47이 그날 두 run을 끊었다.** keyring은 도구를 죽여 이 run을 무효로 만들었지만, 파이프라인을
+멈춘 것은 재시도 프롬프트가 부풀어 받은 400이다 — 도구가 전부 실패한 조건에서도 같은 자리에서
+같은 모양으로 났다는 뜻이라, 이 결함이 대상이나 도구 상태에 의존하지 않는다는 것을 보인다.
+
 ### 그런데 그 무효 run이 결함 하나를 드러냈다
 
 `tool_call` 13건이 이렇다.
