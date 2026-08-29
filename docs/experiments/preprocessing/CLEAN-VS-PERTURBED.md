@@ -68,7 +68,7 @@
 | 5 | cfg | cfg | pdg | ast+cfg |
 | 6 | pdg | pdg | ast+cfg | pdg |
 | 7 | ast | ast | ast | ast |
-| - | LLMxCPG | - | - | - | - |
+| - | LLMxCPG | LLMxCPG | LLMxCPG | LLMxCPG |
 
 ---
 
