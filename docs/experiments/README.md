@@ -33,6 +33,7 @@
 | 2026-08-28 | [2×2 B1′ 첫 완주 (PR #36 검증)](2026-08-28-2x2-b1prime-qwen3-8b-atom.md) | PR #36 프로필 4/4 doctor 통과, 8B bf16이 KV cache 13.82 GiB로 10분 03초 완주, `output_max` 인과는 미성립(30B가 그 키 없이 완주), 정답 대조 불합격 | `atom` | @danielcho02 |
 | 2026-08-28 | [run A 하네스 검증](2026-08-28-runA-harness-validation-atom.md) | D44·D45 성립 확인, `output_max 8192`의 피해 셋(폭주 미차단·gold 함수 400 탈락·실패 시간), gold 3함수 중 2건이 Finding, 재시도가 응답 원문을 되싣는 결함(D47) | `atom` | @danielcho02 |
 | 2026-08-28 | [토크나이저 정확도 Prove](2026-08-28-tokenizer-prove-atom.md) | 실 토크나이저 vs 서버 `input_tokens` **오차 0**(+13 상수)·옛 `len//4` ≈1.6x 과소(D21 4단계 Prove), `run_20260827_0004` 재분석, `critic_top_n` 의제 | `atom` | @sumin0218 |
+| 2026-08-29 | [프롬프트 v2 스모크와 v1 대조](2026-08-29-prompt-v2-smoke-atom.md) | D52 닫힘(v1 `null` ×6 대 v2 `triggerable` ×6 + 프로브 음성 대조), 7단계 critic 첫 진입(v1은 Finding 6건 전부 `E0`), 폭주가 run 시간의 60.7%를 순손실로 먹는다, D47 닫힘(400 0건), 스키마 필드 순서 위반 0건, `fail 0`인 run에도 폭주가 있다(D55) | `atom` | @danielcho02 |
 
 ## 파일 이름
 
@@ -341,6 +342,27 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 `RunRecord`에 남지 않는다 — `top_k` 미기록([open-questions](../open-questions.md) D29)·
 컴파일 플래그(D32)와 같은 종류의 교란변수다. 두 보고서의 메모리·품질 수치를 나란히 놓을
 때 이 행을 먼저 본다.
+
+### #9 구조화 출력 스키마에 자리를 내는 것만으로는 그 필드가 안 나온다 — 프롬프트가 시켜야 나온다
+
+**2026-08-29 확정.** [v2 스모크 보고서](2026-08-29-prompt-v2-smoke-atom.md) §3·§6.
+같은 서버 프로세스(pid 3663640)에서 세 관측이 한 방향을 가리킨다.
+
+| 조건 | `trigger_status` | 근거 |
+| --- | :-: | --- |
+| v1 프롬프트 (run B) | `null` ×6 | 스키마에 필드가 있고 프롬프트가 안 묻는다 |
+| v2 프롬프트 (v2 스모크) | `triggerable` ×6 | `prompts/auditor/v2/prefix.md` 36~42행이 다섯 값을 정의한다 |
+| **프롬프트 없이 스키마만** (서버 직접 프로브) | **안 냈다** | `strict: true`인데도 선언된 optional 4개를 다 안 냈다 |
+
+**프로브가 이 확정의 핵심이다.** 낸 10개가 required 8 + optional 2이고 안 낸 넷은 전부
+default를 가진 optional이다 — `strict`가 required를 어긴 것이 아니라 **모델이 optional을
+프롬프트 없이는 안 낸다.**
+
+**왜 규약으로 올리는가**: 스키마에 필드를 넣고 채움률을 재면 0이 나오는데, 그 0을 "모델이
+못 낸다"로 읽는 오독이 [open-questions.md](../open-questions.md) D52를 열게 한 사건이었다.
+**필드를 신설할 때 프롬프트와 스키마를 같은 PR에 넣는다** — PR #53(스키마)과 #54(프롬프트)가
+갈려서 그 사이에 도는 run이 전부 `null`이었다. 지금은 `config/models.yaml`이 v2를 안 골라
+같은 상태가 이어지고 있다(D54).
 
 ## 미확정
 
