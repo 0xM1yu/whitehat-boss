@@ -320,15 +320,24 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     **값 자체는 잠그지 않는다** — 실측으로 정하는 값을 테스트가 상수로 박으면 안 된다는
     것이 `tests/test_config.py` 모듈 docstring의 판정이다. 잠그는 것은 **두 자리가 같다**는
     불변식뿐이라, 값을 바꿀 때 두 곳을 함께 바꾸면 통과한다.
+
+    **선언을 전부 잡는다.** 첫 매치만 보면 D46 **(c)**(역할별 `output_max`)가 그 문서에
+    예시로 들어오는 날 조용히 첫 줄만 검사하게 된다 — 지금 고치는 드리프트와 같은 모양이
+    한 겹 아래에서 다시 생긴다.
+
+    **`b1_single`을 쓰는 것은 아무 프로필이나 된다는 뜻이다.** `config/budgets.yaml`이
+    "thresholds·sampling·seed는 프로필과 무관하게 공통"이라고 못박아 뒀다. 그 전제가
+    깨지면 이 테스트는 한 프로필만 보게 되므로, 그때는 여기도 같이 고쳐야 한다.
     """
     from src.config import load_config
 
     contract = _read(REPO_ROOT / "docs" / "agent-contracts.md")
-    declared = re.search(r"^\s*output_max:\s*(\d+)", contract, re.MULTILINE)
-    assert declared is not None, "docs/agent-contracts.md에 output_max 선언이 없다"
+    pattern = re.compile(r"^\s*output_max:\s*(\d+)", re.MULTILINE)
+    declared = [int(m.group(1)) for m in pattern.finditer(contract)]
+    assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
     actual = load_config("b1_single").thresholds.output_max
-    assert int(declared.group(1)) == actual, (
-        f"docs/agent-contracts.md의 output_max({declared.group(1)})가 "
+    assert declared == [actual] * len(declared), (
+        f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
         f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
     )
