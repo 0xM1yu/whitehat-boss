@@ -111,14 +111,28 @@ def test_top_k_zero_is_a_real_declaration_not_a_schema_violation(tmp_path: Path)
     assert vllm_style.top_k == -1
 
 
-def test_a_value_outside_the_schema_is_none_not_a_lie(tmp_path: Path) -> None:
-    """진짜 스키마 밖 값(`top_p: 5.0` — 확률이 1을 넘는다)은 미기록으로 둔다.
+def test_a_value_outside_the_schema_drops_only_that_key(tmp_path: Path) -> None:
+    """진짜 스키마 밖 값(`top_p: 5.0` — 확률이 1을 넘는다)은 **그 키만** 버린다.
 
-    **전체를 버리는 대가를 알고 둔다** — 같은 파일의 `temperature 0.7`도 함께 사라지고,
-    맵에서 그 역할이 빠져 "못 읽음"과 구별되지 않는다(리뷰 M2). 이 값은 관측된 적이 없어
-    지금은 그 대가를 치른다. 관측되면 키 단위로 버리는 쪽을 다시 본다.
+    전체를 버리면 그 하나가 같은 파일의 `temperature 0.7`까지 데려가고, 역할이 맵에서
+    빠져 **"두 개를 선언한 모델"이 "선언 없음"과 구별되지 않는다** — D29가 막으려던 그
+    자리로 되돌아간다. 지어내 고치지 않는 것과 이웃을 데려가는 것은 다른 문제다.
     """
     _write_generation_config(tmp_path, _SOURCE, {"top_p": 5.0, "temperature": 0.7})
+
+    sampling = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+
+    assert sampling is not None
+    assert sampling.temperature == 0.7
+    assert sampling.top_p is None
+
+
+def test_a_file_whose_keys_are_all_outside_the_schema_is_none(tmp_path: Path) -> None:
+    """살아남는 키가 하나도 없으면 `None`이다 — 빈 `ModelSampling`을 남기지 않는다.
+
+    빈 객체는 "선언이 있었다"고 말하는데 실제로 담긴 값이 없어서, 미선언과 뜻이 겹친다.
+    """
+    _write_generation_config(tmp_path, _SOURCE, {"top_p": 5.0, "temperature": -1.0})
 
     assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
 
