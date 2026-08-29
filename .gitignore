@@ -44,3 +44,6 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .coverage
+
+# macOS Finder 메타데이터
+.DS_Store
