@@ -514,6 +514,36 @@ def test_doctor_checks_the_overridden_runtime_not_the_profile(tmp_path: Path) ->
     assert "컨테이너 런타임이 필요 없다" not in rendered
 
 
+def test_matching_tool_runner_is_not_flagged_as_override(tmp_path: Path) -> None:
+    """선언값과 **같은** 값을 넘긴 run은 오버라이드가 아니다 (D50).
+
+    `run_20260828_0002`가 `b1_single`(선언 docker)에 `--tool-runner docker`로 돌고도
+    "프로필과 다른 도구 런타임" 경고를 달아, 보고서 메타의 "선언값 / 실제값"을 쓰는 사람을
+    오도했다. 예외 신고의 조건은 플래그를 넘겼는가가 아니라 값이 바뀌었는가다.
+
+    **되돌리면 이 테스트가 깨진다** — 옛 코드는 `is not None`만 봐서 같은 값에도 경고했다.
+    """
+    assert cli.load_config("b1_single").profile.adapters.tool_runner == "docker"
+
+    rendered = "\n".join(
+        check.render()
+        for check in cli.doctor("b1_single", artifacts_root=tmp_path, tool_runner="docker")
+    )
+    assert "오버라이드가 걸렸다" not in rendered
+
+
+def test_tool_runner_override_predicate_compares_the_declared_value() -> None:
+    """헬퍼는 선언값 비교로 예외 여부를 가른다 (D50).
+
+    `dev_docker`는 docker를 선언한다. 같은 값은 예외가 아니고, 다른 값·플래그 없음은
+    각각 예외·비예외다. 위 두 doctor 테스트(다른 값→경고, 같은 값→무경고)가 이 술어에
+    의존한다.
+    """
+    assert cli._tool_runner_overrides("dev_docker", "singularity") is True
+    assert cli._tool_runner_overrides("dev_docker", "docker") is False
+    assert cli._tool_runner_overrides("dev_docker", None) is False
+
+
 def test_tool_runner_choices_come_from_the_config_schema() -> None:
     """CLI가 아는 값과 배선이 아는 값이 갈라지지 않는다."""
     assert set(cli.TOOL_RUNNERS) == set(WIRINGS["tool_runner"])
