@@ -41,6 +41,12 @@ def read_declared_sampling(
     - 파일이 깨졌거나 매핑이 아니다
     - 파일은 있으나 샘플링 키를 **하나도** 선언하지 않았다(bos/eos만 있는 모델 — 서버가
       vLLM 기본값을 쓴다는 뜻이고, 그 기본값은 여기서 알 수 없으므로 기록하지 않는다)
+    - 선언한 키가 **전부** 스키마 밖이다
+
+    **스키마 밖 키는 그 키만 버린다.** 전체를 버리면 `top_p: 5.0` 하나가 같은 파일의
+    `temperature: 0.7`까지 데려가고, 그 역할이 맵에서 빠져 **"두 개를 선언한 모델"이
+    "선언 없음"과 구별되지 않는다** — D29가 막으려던 그 자리로 되돌아간다. 필드가 전부
+    optional이고 교차 검증기가 없어서 낱개 검증이 성립한다.
     """
     if not source:
         return None
@@ -59,11 +65,17 @@ def read_declared_sampling(
     picked = {key: data[key] for key in _SAMPLING_KEYS if data.get(key) is not None}
     if not picked:
         return None
-    try:
-        return ModelSampling.model_validate(picked)
-    except ValidationError:
-        # 파일이 스키마 밖 값을 담았다(예: top_k 0). 지어내 고치지 않고 미기록으로 둔다.
+    kept: dict[str, object] = {}
+    for key, value in picked.items():
+        try:
+            ModelSampling.model_validate({key: value})
+        except ValidationError:
+            # 이 키만 버린다. 지어내 고치지 않되 **이웃까지 데려가지도 않는다.**
+            continue
+        kept[key] = value
+    if not kept:
         return None
+    return ModelSampling.model_validate(kept)
 
 
 def declared_sampling_by_role(
