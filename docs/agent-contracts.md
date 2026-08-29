@@ -148,25 +148,32 @@ agent:
   "finding_id": "find_0007",
   "run_id": "run_20260901_0001",
   "candidate_id": "cand_0001",
-  "title": "parse_header에서 길이 검증 없는 memcpy",
-  "cwe": "CWE-787",
   "state": "hypothesized",
-  "confidence": 0.6,
   "path": [
     {"step": "source", "symbol": "recv_request", "note": "네트워크 입력"},
     {"step": "propagate", "symbol": "parse_header", "note": "len이 검증 없이 전달"},
     {"step": "sink", "symbol": "memcpy", "note": "고정 크기 스택 버퍼"}
   ],
-  "rca_draft": "…",
   "trigger_status": null,
+  "confidence": 0.6,
+  "rca_draft": "…",
+  "cwe": "CWE-787",
+  "title": "parse_header에서 길이 검증 없는 memcpy",
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
-  "produced_by": {"role": "auditor", "model": "qwen3-coder-30b-a3b", "prompt_version": "v1"},
-  "repro_spec": null
+  "repro_spec": null,
+  "produced_by": {"role": "auditor", "model": "qwen3-coder-30b-a3b", "prompt_version": "v1"}
 }
 ```
 
 `state` 열거형: `hypothesized` | `queued` | `validated` | `proven` | `reported`
+
+**위 키 순서가 계약이다 (D51).** `Finding`의 선언 순서가 그대로 `model_json_schema()`의
+property 순서가 되고 그 스키마가 `response_format`으로 서버에 실린다. **범주값**(`state`·
+`trigger_status`)을 **숫자값**(`confidence`)과 **산문**(`rca_draft`)보다 먼저 두는 것이
+요점이고, `produced_by`는 모델이 채우는 값이 아니라 하네스가 stamp하므로 맨 뒤다.
+**그 순서가 생성까지 강제되는지는 아직 안 쟀다** — xgrammar에 달렸고 v2 프롬프트로 도는
+첫 run이 답한다.
 
 `trigger_status` 열거값: `triggerable` | `guarded` | `no_reach` | `reachability_unknown` | `no_signal`.
 **스키마 타입은 `str | None`이고 열거형이 아니다** — 실제 emit 분포를 보기 전에 좁히면 못 본 값이
