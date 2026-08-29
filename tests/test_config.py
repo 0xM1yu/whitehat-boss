@@ -15,6 +15,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from src import schemas
 from src.adapters.factory import _model_client
 from src.bench import ROLE_SPEC
 from src.config import (
@@ -28,6 +29,7 @@ from src.config import (
     ProfileEntry,
     load_config,
 )
+from src.orchestrator.prompt_loader import load_prompt
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -98,6 +100,42 @@ def test_prompted_roles_matches_prompt_directories() -> None:
         if path.is_dir() and not path.name.startswith((".", "_"))
     }
     assert set(PROMPTED_ROLES) == on_disk
+
+
+def _prompt_dirs() -> list[Path]:
+    """디스크에 있는 `prompts/<role>/<version>/` 전부."""
+    root = CONFIG_DIR.parent / "prompts"
+    return sorted(
+        version
+        for role in root.iterdir()
+        if role.is_dir() and not role.name.startswith((".", "_"))
+        for version in role.iterdir()
+        if version.is_dir()
+    )
+
+
+@pytest.mark.parametrize("directory", _prompt_dirs(), ids=lambda d: f"{d.parent.name}/{d.name}")
+def test_every_prompt_version_on_disk_loads(directory: Path) -> None:
+    """`prompts/`에 올려 둔 **모든 버전**이 로더를 통과하고 meta가 디렉터리와 맞는다.
+
+    **버전 단위 검사가 없었다.** `test_prompted_roles_matches_prompt_directories`는 역할
+    디렉터리만 보므로, 새 버전에 `{{FACTS}}` 블록이 빠지거나 `output_schema` 이름이
+    틀려도 그 버전을 실제로 쓰는 run이 나올 때까지 아무것도 안 깨진다 — 프롬프트는
+    모델 입력이라 그때는 이미 GPU 시간을 쓴 뒤다.
+
+    `prompt_template_version`은 모델별 설정이라 **아무도 안 켠 버전이 디스크에 있을 수
+    있다.** 그런 버전일수록 여기서 걸러야 한다.
+    """
+    role, version = Role(directory.parent.name), directory.name
+
+    template = load_prompt(role, version)
+
+    assert template.role is role
+    assert template.version == version
+    assert getattr(schemas, template.output_schema, None) is not None, (
+        f"{directory}/meta.yaml의 output_schema `{template.output_schema}`가 "
+        "`src.schemas`에 없다"
+    )
 
 
 def test_every_prompted_role_is_a_real_role() -> None:
