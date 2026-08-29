@@ -171,7 +171,14 @@ agent:
 `trigger_status` 열거값: `triggerable` | `guarded` | `no_reach` | `reachability_unknown` | `no_signal`.
 **스키마 타입은 `str | None`이고 열거형이 아니다** — 실제 emit 분포를 보기 전에 좁히면 못 본 값이
 finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py](../src/schemas/finding.py) 주석).
-프롬프트가 이 값을 안 시키는 run에서는 `null`로 남는다.
+
+> **출처 주의 — 위 다섯 중 넷만 이 저장소에서 확인된다 (D51·D52).**
+> [single/v2 prefix](../prompts/single/v2/prefix.md) 규칙 4가 `triggerable`·`guarded`·`no_reach`·
+> `reachability_unknown`을 정의하지만 그것은 **`rca_draft` 첫 문장의 분류**이지 이 필드가 아니고,
+> **`no_signal`은 저장소 어디에도 없다.** 그리고 `prompts/` 어느 파일도 `trigger_status`를 내라고
+> 시키지 않는데 하네스는 그 디렉터리에서만 프롬프트를 읽는다
+> ([prompt_loader.py](../src/orchestrator/prompt_loader.py)). **그래서 이 필드는 해당 프롬프트가
+> 저장소에 들어오기 전까지 어느 run에서든 `null`이다** — 채움률 0을 "모델이 안 냈다"로 읽으면 안 된다.
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
