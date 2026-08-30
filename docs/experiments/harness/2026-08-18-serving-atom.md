@@ -3,8 +3,8 @@
 > **기록 성격**: 2026-08-17~18 시점의 관측 기록이다.
 > **§2.1·§6의 메모리 서술은 2026-08-19 cgroup 실측으로 작성자가 직접 고쳤다** — 원 보고서는
 > 34 GiB를 시스템이 강제하는 상한으로 다뤘는데, 실제 상한은 세 겹이고 34는 그중 팀 약속이다.
-> 경위는 [README.md](README.md)의 확정 #4.
-> 그 외 본문은 고치지 않았다. 서식(메타 표, §11~15)은 [TEMPLATE.md](TEMPLATE.md)에 맞춰
+> 경위는 [README.md](../README.md)의 확정 #4.
+> 그 외 본문은 고치지 않았다. 서식(메타 표, §11~15)은 [TEMPLATE.md](../TEMPLATE.md)에 맞춰
 > 2026-08-19에 정리했고, 그 과정에서 주장은 바꾸지 않았다.
 
 **작성**: 조민규 (서빙 · 컨테이너 · GPU 회계)
@@ -21,8 +21,8 @@
 | 실제 서빙 모델 (§3 프로브) | `hf://Qwen/Qwen3-0.6B@미기재` |
 | `repo_commit` | `4ada193c1f8d3908cc35e094cda288c5423ed460` (dirty: False) — §4 도구 이미지 run 기준. **§8 실모델 run은 미기재** |
 | `run_id` | `run_20260817_0001` (§4). **§8 실모델 run은 미기재** |
-| run 산출물 경로·보존 | **보존하지 않았다.** 게다가 로컬 저장소의 `artifacts/run_20260817_0001/`은 **같은 번호의 다른 run**이다(`device: verify-box`, `tool_runner: fake`) — [open-questions.md](../open-questions.md) R7이 경고한 번호 재사용이 이미 일어났다. **run_id만으로 이 실험을 지시할 수 없다** |
-| `tool_runner` | 프로필 선언 `docker` / 실제 **`podman`** — `dev_docker`를 ATOM에서 돌린 오버라이드([ADR 0005](../decisions/0005-tool-runner-override.md)가 상정한 용도) |
+| run 산출물 경로·보존 | **보존하지 않았다.** 게다가 로컬 저장소의 `artifacts/run_20260817_0001/`은 **같은 번호의 다른 run**이다(`device: verify-box`, `tool_runner: fake`) — [open-questions.md](../../open-questions.md) R7이 경고한 번호 재사용이 이미 일어났다. **run_id만으로 이 실험을 지시할 수 없다** |
+| `tool_runner` | 프로필 선언 `docker` / 실제 **`podman`** — `dev_docker`를 ATOM에서 돌린 오버라이드([ADR 0005](../../decisions/0005-tool-runner-override.md)가 상정한 용도) |
 | `--device` | `atom` |
 | `tool_images` digest | `sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a256`<br>**종류: podman RepoDigest · aarch64** |
 | `--gpu-memory-utilization` | **0.2** · 분모 **119.7 GiB**(물리 통합메모리) = 23.94 GiB |
@@ -228,7 +228,7 @@ INFO: Application startup complete.
 
 **이 로그는 `--enforce-eager` 없이 나온 것입니다.** torch.compile이 19.60초 수행되고 CUDA
 graph 35개가 잡혔으므로, eager 강제는 이 장비의 기동 조건이 아닙니다
-([README.md](README.md) 확정 #3).
+([README.md](../README.md) 확정 #3).
 
 ### 5.4 해석 — 검증 범위와의 관계
 
@@ -438,7 +438,7 @@ x86에서 건너뛴 3건이 ATOM에서는 전부 실행되어 통과했습니다
 
 **못 잰 값을 0으로 채우지 않았습니다.** `Benchmark.is_measured`가 0 여부로 판정하므로,
 추정치를 넣으면 안 잰 모델이 production 프로필에 오르는 길이 열립니다
-([model-serving.md](../model-serving.md) §3).
+([model-serving.md](../../model-serving.md) §3).
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |

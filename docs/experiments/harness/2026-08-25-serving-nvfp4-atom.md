@@ -9,14 +9,14 @@
 | 실제 서빙 모델 ② | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` | 별칭 `qwen3-coder-30b-a3b` |
 | `repo_commit` | `393b38e2d647cf830de0db859c6350ceac031d49` | dirty: `config/models.yaml` (bench `--apply`) + `config/checksums/*.txt` 2건 신규 |
 | `run_id` | **해당 없음** — `cli bench`는 run 디렉터리를 만들지 않는다 | 같은 날 `run_20260825_0001`은 **다른 실험**이다([542건 보고서](2026-08-25-pipeline-zlib542-atom.md)) |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/logs/` — **보존** | **저장소 밖이다.** [open-questions](../open-questions.md) R3이 경고한 바로 그 배치다 |
+| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/logs/` — **보존** | **저장소 밖이다.** [open-questions](../../open-questions.md) R3이 경고한 바로 그 배치다 |
 | `tool_runner` | **해당 없음** — bench는 도구를 돌리지 않는다 | |
 | `--device` | `atom` | |
 | `tool_images` digest | **해당 없음** — 컨테이너를 쓰지 않는다 | |
-| `--gpu-memory-utilization` | 8B **0.2** / 30B **0.3**. 분모는 물리 통합메모리 **119.7 GiB** | 로그 원문: `Free memory on device (109.32/119.7 GiB)`. cgroup 상한(64 GiB)과 다르다([README](README.md) 확정 #4) |
+| `--gpu-memory-utilization` | 8B **0.2** / 30B **0.3**. 분모는 물리 통합메모리 **119.7 GiB** | 로그 원문: `Free memory on device (109.32/119.7 GiB)`. cgroup 상한(64 GiB)과 다르다([README](../README.md) 확정 #4) |
 | 동시에 떠 있던 다른 서버 | **없음** | 기동 전 `ss`·`nvidia-smi`·`ps` 0건 확인 |
 | 원문 산출물 보존 위치 | `logs/bench30b_20260825_142256.log` (11,142 B) · `logs/models30b_20260825_142256.json` | **보존** |
-| 서빙 서버 stdout | `logs/serve_8b_20260825_142256.log` (28,230 B) · `logs/serve_30b_20260825_142256.log` (77,599 B) | **보존.** [README](README.md)의 `setsid nohup` 규약을 지킨 두 번째 사례 |
+| 서빙 서버 stdout | `logs/serve_8b_20260825_142256.log` (28,230 B) · `logs/serve_30b_20260825_142256.log` (77,599 B) | **보존.** [README](../README.md)의 `setsid nohup` 규약을 지킨 두 번째 사례 |
 
 > **경로 접두사**: 위 `logs/`는 전부 `/srv/tenants/ext01/artifacts/logs/` 아래다.
 
@@ -51,7 +51,7 @@
 ### 목적
 
 **경로 성립 판정.** NVFP4 체크포인트가 sm_121에서 뜨는가. `qwen3-4b`(fp8)가
-`VLLM_USE_DEEP_GEMM=0`을 요구했으므로([portability.md](../portability.md) §5 #5),
+`VLLM_USE_DEEP_GEMM=0`을 요구했으므로([portability.md](../../portability.md) §5 #5),
 다른 양자화도 같은 종류의 백엔드 문제를 따로 만날 수 있다는 것이 열려 있었다.
 
 ### 조건
@@ -171,7 +171,7 @@ vLLM 자신이 바이트 고정을 권한다 — 해석 ⑥.
 
 ### 목적
 
-**성능 측정 + 체크리스트 판정.** [model-serving.md](../model-serving.md) §3 체크리스트를
+**성능 측정 + 체크리스트 판정.** [model-serving.md](../../model-serving.md) §3 체크리스트를
 30B에 대해 돌린다.
 
 ### 조건
@@ -230,7 +230,7 @@ prefix cache 판정:
 NVFP4 2종이 **추가 환경변수 없이** 떴으므로 `fp8`의 `VLLM_USE_DEEP_GEMM=0`에
 대응하는 NVFP4 쪽 벽은 **없다**.
 
-**닫히지 않은 것**: [portability.md](../portability.md) §5 #1이다. 그 항목의
+**닫히지 않은 것**: [portability.md](../../portability.md) §5 #1이다. 그 항목의
 "못 도는 환경" 칸은 **`Blackwell(sm_100+) 미만`**이고 ATOM은 sm_121 = Blackwell이다.
 **Blackwell에서 떴다는 것은 #1을 확인하지 반증하지 않는다.** #1의 상태는
 `미해결` 그대로이고, 해법("같은 모델의 다른 양자화를 별도 model key + 별도 프로필로
@@ -310,7 +310,7 @@ fit into requested memory, or `--kv-cache-memory=93064468480` (86.67 GiB) to ful
 gpu memory.
 ```
 
-[model-serving.md](../model-serving.md)가 이미 그 방향을 적어 뒀다. **이 실험은 3모델
+[model-serving.md](../../model-serving.md)가 이미 그 방향을 적어 뒀다. **이 실험은 3모델
 동시를 시도하지 않았다** — 위는 산술이지 실측이 아니다.
 
 ---
@@ -371,7 +371,7 @@ gpu memory.
 
 ## 11. 부록 — 재현 절차
 
-**서버 stdout 보존 규약**([README](README.md))을 지킨 형태:
+**서버 stdout 보존 규약**([README](../README.md))을 지킨 형태:
 
 ```bash
 setsid nohup vllm serve <스냅샷 경로> \
@@ -382,7 +382,7 @@ setsid nohup vllm serve <스냅샷 경로> \
 
 > ⚠ **위 명령은 재구성본이다.** 로그에서 읽히는 인자(`--served-model-name`,
 > `--gpu-memory-utilization`, 스냅샷 경로)만 확실하고 **전체 원문은 미기재**다.
-> [TEMPLATE.md](TEMPLATE.md)가 "편집하거나 줄이지 않는다"고 요구하는 필드이므로
+> [TEMPLATE.md](../TEMPLATE.md)가 "편집하거나 줄이지 않는다"고 요구하는 필드이므로
 > **지키지 못한 것을 그대로 적는다.**
 
 bench:

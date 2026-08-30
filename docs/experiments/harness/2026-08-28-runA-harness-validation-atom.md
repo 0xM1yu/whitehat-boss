@@ -1,6 +1,6 @@
 # run A — 하네스 검증: D44·D45 성립과 `output_max 8192`의 피해 — ATOM
 
-> **이 보고서는 하네스 검증 run이다. [evaluation.md](../evaluation.md) §2.3의 조건 비교표에
+> **이 보고서는 하네스 검증 run이다. [evaluation.md](../../evaluation.md) §2.3의 조건 비교표에
 > 넣지 않는다.**
 >
 > 판정하는 것은 D44·D45가 코드에서 실제로 작동하는가와 `output_max 8192`가 무엇을 했는가이지,
@@ -304,7 +304,7 @@ include_input=False       → 191자
 > 사람이 읽어 만들었다. **정답지는 이 저장소에 들어 있지 않고 하네스도 읽지 않는다** — 대상은
 > `blind/PWN-003/source`뿐이다. 이 절이 함수 이름과 CWE를 적는 것은 판정 근거를 남기기
 > 위해서이고, `vulnerable_statement`·트리거 시퀀스 같은 정답지 본문은 옮기지 않았다.
-> [evaluation.md](../evaluation.md) §4의 누출 검사는 KB 인덱스와 프롬프트를 보므로 이
+> [evaluation.md](../../evaluation.md) §4의 누출 검사는 KB 인덱스와 프롬프트를 보므로 이
 > 문서에 걸리지 않지만, **이 문서를 KB에 넣지 않는다**는 것이 그 전제다.
 
 ## 6. 실험 4 — `run_20260828_0001` 무효 판정
