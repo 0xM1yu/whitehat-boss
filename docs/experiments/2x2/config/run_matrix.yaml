@@ -1,0 +1,250 @@
+# =============================================================================
+# run_matrix.yaml — 2×2 (+ B3'-large) 실험 공통 설정
+#
+# 원칙: 조건끼리 비교하려면 "모델 구성"과 "역할 구성" 말고는 전부 같아야 한다.
+#       그 "전부 같아야 하는 값"을 이 파일 한 곳에 모아 둔다.
+#       조건별로 달라지는 값은 아래 matrix: 블록에만 적는다.
+#
+# 실험 조건 요약
+#   B1        : 같은 모델 1개 × 같은 질문 3번 → 다수결      (모델별 1세트, 총 3세트)
+#   B1'       : 같은 모델 1개 × 역할 3개(Scout→Auditor→Critic) (모델별 1세트, 총 3세트)
+#   B3        : 서로 다른 모델 3개 × 같은 질문 1번씩 → 다수결
+#   B3'       : 서로 다른 모델 3개 × 역할 3개
+#   B3'-large : B3'와 구조는 같고 모델만 대형으로 교체
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. 경로 / 실행 환경
+# -----------------------------------------------------------------------------
+harness_root:   /srv/tenants/user/whitehat-boss
+dataset_root:   /srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1
+artifacts_root: /srv/tenants/user/experiments/2x2/artifacts
+results_root:   /srv/tenants/user/experiments/2x2/results
+
+device: atom
+
+
+# -----------------------------------------------------------------------------
+# 2. seed
+#
+# evaluation.md §2.3 규칙 3 — 같은 조건은 seed를 바꿔 최소 3회.
+# 다만 조건마다 seed를 "쓰는 방식"이 다르므로 아래 matrix.seed_policy 를 함께 볼 것.
+#   - B1  : 3개 seed = 한 번의 B1 실행 안에서의 3개 세션 (다수결 재료)
+#   - 그 외: primary_seed 가 주 결과, 나머지 2개는 재현성 확인용 반복 실행
+# -----------------------------------------------------------------------------
+seeds:
+  - 20260901
+  - 20260902
+  - 20260903
+
+primary_seed: 20260901
+
+# B1 세션 3개의 seed 오프셋 (primary_seed + offset). 호출마다 다른 seed = 다른 세션.
+b1_run_seed_offsets:
+  - 0
+  - 1
+  - 2
+
+# -----------------------------------------------------------------------------
+# 3. 샘플링 파라미터 — 모든 조건·모든 역할 공통. 절대 조건별로 바꾸지 말 것.
+# -----------------------------------------------------------------------------
+sampling:
+  temperature: 0.2
+  top_p: 0.95
+  top_k: -1
+  min_p: 0.0
+  repetition_penalty: 1.0     # OFF
+  frequency_penalty: 0.0      # OFF
+  max_input_tokens: 32768     # 입력 상한
+  max_tokens: 8192            # 출력 상한 (parse_fail·비용 집계 기준)
+  schema_retries: 1
+
+# 출력 형식: 모든 역할이 JSON 으로 응답한다.
+output_format: json
+
+# 추론(thinking) 모드는 전 조건 OFF.
+# Qwen3 계열은 chat template 인자로 꺼야 실제로 꺼진다.
+reasoning:
+  enable_thinking: false
+  chat_template_kwargs:
+    enable_thinking: false
+
+
+# -----------------------------------------------------------------------------
+# 4. 프롬프트
+#   B1  / B3        → Auditor 프롬프트 하나만 사용 (단일 패스)
+#   B1' / B3' / large → Scout → Auditor → Critic 3단 프롬프트
+# -----------------------------------------------------------------------------
+prompts:
+  root: /srv/tenants/user/experiments/2x2/prompts
+
+  # 단일 패스(B1 / B3)
+  single:
+    dir: single
+    prefix: prefix.md
+    body: body.md
+    role: auditor          # single/ 안의 프롬프트는 Auditor 역할이다
+
+  # 다단계 패스(B1' / B3' / B3'-large)
+  multi:
+    dir: multi
+    stages:
+      - scout
+      - auditor
+      - critic
+    prefix_pattern: "{stage}_prefix.md"
+    body_pattern: "{stage}_body.md"
+
+
+# -----------------------------------------------------------------------------
+# 5. 판정 규칙
+# -----------------------------------------------------------------------------
+majority:
+  # Track A: vulnerable 만 긍정 표. need_evidence 는 미완성(비표).
+  positive_verdict: vulnerable
+  threshold: 2
+  applies_to: [B1, B3]       # 다수결은 투표 조건에만 적용
+
+# Scout 통과 임계값 — 이 값 미만이면 below_scout_threshold 로 종료.
+scout_threshold: 0.5
+scout_threshold_applies_to: [B1prime, B3prime, B3prime_large]
+
+
+# -----------------------------------------------------------------------------
+# 6. 모델 레지스트리
+#    양자화가 다르면 별도 id 로 등록한다 (같은 Qwen3-8B 라도 bf16 / nvfp4 는 다른 조건).
+#    served_name 은 vLLM --served-model-name 과 정확히 일치해야 한다.
+# -----------------------------------------------------------------------------
+models:
+  qwen3-8b:
+    served_name: qwen3-8b
+    quantization: bf16
+
+  foundation-sec-8b:
+    served_name: foundation-sec-8b
+    quantization: bf16
+    note: Foundation-Sec-1.1-8B-Instruct
+
+  granite-3.3-8b:
+    served_name: granite-3.3-8b
+    quantization: bf16
+    note: Granite-3.3-8B-Instruct
+
+  qwen3-8b-nvfp4:
+    served_name: qwen3-8b-nvfp4
+    quantization: nvfp4
+
+  qwen3-coder-30b-a3b-nvfp4:
+    served_name: qwen3-coder-30b-a3b
+    quantization: nvfp4
+    note: 30.5B (3.3B active) MoE
+
+  devstral-small-2-24b:
+    served_name: devstral-small-2-24b
+    quantization: bf16
+    note: >
+      nvfp4 체크포인트 문제로 bf16 으로 역양자화하여 서빙한다.
+      따라서 B3'-large 3개 모델 중 이 모델만 양자화 조건이 다르다.
+      결과 해석 시 반드시 함께 명시할 것.
+
+
+# -----------------------------------------------------------------------------
+# 7. 조건별 구성
+# -----------------------------------------------------------------------------
+matrix:
+
+  B1:
+    goal: 같은 모델에 같은 질문을 3번 하고 다수결로 합치면 1번보다 나아지는가
+    mode: repeated_voting
+    prompt: auditor
+    # 모델마다 각각 1세트씩, 총 3세트 실행
+    models: [qwen3-8b, foundation-sec-8b, granite-3.3-8b]
+    sessions: 3
+    seed_policy: primary_seed + b1_session_offsets   # 20260901 / 902 / 903
+    aggregate: majority
+
+  B1prime:
+    goal: 같은 모델에게 역할을 나눠 시키면 같은 질문 3번보다 나은가
+    mode: role_split
+    # 한 모델이 Scout·Auditor·Critic 3역할을 모두 수행. 모델별 1세트, 총 3세트.
+    models: [qwen3-8b, foundation-sec-8b, granite-3.3-8b]
+    roles:
+      scout:   same_as_model
+      auditor: same_as_model
+      critic:  same_as_model
+    seed_policy: primary_seed_all_stages             # 3단계 전부 20260901
+    aggregate: pipeline
+
+  B3:
+    goal: 서로 다른 회사 모델 3개의 다수결이 같은 모델 3개보다 나아지는가
+    mode: repeated_voting
+    prompt: auditor
+    models:
+      A: qwen3-8b
+      B: foundation-sec-8b
+      C: granite-3.3-8b
+    seed_policy: primary_seed_all_models             # 주 결과 20260901
+    replicate_seeds: [20260902, 20260903]            # 보조 결과
+    aggregate: majority
+
+  B3prime:
+    goal: 서로 다른 회사 모델 3개에 역할을 나누면 한 모델이 3역할 다 하는 것보다 나은가
+    mode: role_split
+    roles:
+      scout:   foundation-sec-8b
+      auditor: granite-3.3-8b
+      critic:  qwen3-8b
+    seed_policy: primary_seed_all_stages
+    aggregate: pipeline
+
+  B3prime_large:
+    goal: B3' 구조 그대로 대형 모델로 바꾸면 성능이 얼마나 올라가는가
+    mode: role_split
+    roles:
+      scout:   qwen3-8b-nvfp4
+      auditor: qwen3-coder-30b-a3b-nvfp4
+      critic:  devstral-small-2-24b
+    seed_policy: primary_seed_all_stages
+    aggregate: pipeline
+    caveat: >
+      Critic(Devstral-Small-2-24B)만 bf16, 나머지 둘은 nvfp4 이다.
+      B3' 와의 차이는 "모델 크기"뿐 아니라 "양자화"도 섞여 있으므로
+      단독 비교로 크기 효과를 주장하지 말 것.
+
+
+# -----------------------------------------------------------------------------
+# 8. 하네스 조건 id 매핑
+# -----------------------------------------------------------------------------
+conditions:
+  B1:            B1@2x2
+  B3:            B3@2x2
+  B1prime:       B1prime@2x2
+  B3prime:       B3prime@2x2
+  B3prime_large: B3prime_large@2x2
+
+
+# -----------------------------------------------------------------------------
+# 9. 프로필 매핑 (하네스 --model-a 등에서 참조)
+# -----------------------------------------------------------------------------
+# B1' / B1 에서 단일 모델을 지정할 때 쓰는 프로필.
+b1prime_profiles:
+  qwen3-8b:          b1_single_qwen3_8b
+  foundation-sec-8b: b1_single_foundation_sec
+  granite-3.3-8b:    b1_single_granite
+
+b3prime_profile:       b3prime_balanced   # harness 에 scout=foundation-sec-8b/auditor=granite-3.3-8b/critic=qwen3-8b 로 등록 필요
+b3prime_large_profile: TODO_local_large     # 실제 프로필 이름 확인 후 채울 것
+
+
+# -----------------------------------------------------------------------------
+# 10. 결과 공개 시 함께 밝혀야 하는 사항
+# -----------------------------------------------------------------------------
+confound_caveat: >
+  Track A residual confound: size/package logistic BA ≈ 0.783.
+  See CONFOUND_AUDIT.md — disclose with all published Track A results.
+
+quantization_caveat: >
+  B1 / B1' / B3 / B3' 는 전부 bf16 이다.
+  B3'-large 만 nvfp4(Scout, Auditor) + bf16(Critic) 혼합이므로,
+  B3' → B3'-large 비교에는 모델 크기와 양자화 효과가 함께 섞여 있다.
