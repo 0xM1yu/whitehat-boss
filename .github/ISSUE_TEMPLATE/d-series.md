@@ -1,7 +1,7 @@
 ---
 name: D-시리즈 (설계 결정·결함)
 about: docs/open-questions.md의 D 항목 하나를 추적한다. 결정되면 문서로 옮기고 이슈를 닫는다.
-title: "[D00] "
+title: "[D<번호>] "
 labels: ["D-series"]
 ---
 
@@ -27,7 +27,7 @@ docs/open-questions.md의 원문을 옮겨 담는다. 원본이 진실의 소스
 
 ## 관련
 - **파일**:
-- **문서**: `docs/open-questions.md` D00
+- **문서**: `docs/open-questions.md` D<번호>
 - **실측/보고서**:
 - **선행/후속 D**:
 
