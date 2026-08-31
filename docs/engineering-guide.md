@@ -8,7 +8,7 @@
 - SQLite 또는 DuckDB state
 - 로컬 artifact 디렉터리
 - Docker sandbox (도구 실행 격리)
-- bounded in-process queue
+- ~~bounded in-process queue~~ — D25로 제거(2026-08-31). 재투입 경로가 생기면 다시 연다
 
 Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benchmark에서 병목이 확인된 뒤**에 추가한다. 병목 근거 없이 도입된 인프라는 리뷰에서 되돌린다.
 

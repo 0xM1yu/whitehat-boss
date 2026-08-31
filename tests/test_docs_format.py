@@ -335,3 +335,37 @@ def test_every_experiment_report_is_in_the_index() -> None:
     ]
 
     assert missing == [], "\n".join(missing)
+
+
+def test_the_contract_example_output_max_matches_the_config() -> None:
+    """계약 문서의 `output_max`가 config의 값과 같다.
+
+    그 줄 자신이 `# config의 thresholds.output_max와 같은 값`이라고 적어 뒀는데 지키는
+    것이 없었다. **D42가 정확히 이 드리프트에서 나왔다** — 계약 문서가 `output_max: 2000`을
+    선언하고 `config/budgets.yaml`의 역산 주석이 그 2,000을 쓰는데 **하네스에는 그 키가
+    없어서** 실제 상한은 `--max-model-len`이었다. 선언과 실행이 갈린 것을 아무도 못 봤다.
+
+    **값 자체는 잠그지 않는다** — 실측으로 정하는 값을 테스트가 상수로 박으면 안 된다는
+    것이 `tests/test_config.py` 모듈 docstring의 판정이다. 잠그는 것은 **두 자리가 같다**는
+    불변식뿐이라, 값을 바꿀 때 두 곳을 함께 바꾸면 통과한다.
+
+    **선언을 전부 잡는다.** 첫 매치만 보면 D46 **(c)**(역할별 `output_max`)가 그 문서에
+    예시로 들어오는 날 조용히 첫 줄만 검사하게 된다 — 지금 고치는 드리프트와 같은 모양이
+    한 겹 아래에서 다시 생긴다.
+
+    **`b1_single`을 쓰는 것은 아무 프로필이나 된다는 뜻이다.** `config/budgets.yaml`이
+    "thresholds·sampling·seed는 프로필과 무관하게 공통"이라고 못박아 뒀다. 그 전제가
+    깨지면 이 테스트는 한 프로필만 보게 되므로, 그때는 여기도 같이 고쳐야 한다.
+    """
+    from src.config import load_config
+
+    contract = _read(REPO_ROOT / "docs" / "agent-contracts.md")
+    pattern = re.compile(r"^\s*output_max:\s*(\d+)", re.MULTILINE)
+    declared = [int(m.group(1)) for m in pattern.finditer(contract)]
+    assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
+
+    actual = load_config("b1_single").thresholds.output_max
+    assert declared == [actual] * len(declared), (
+        f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
+        f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
+    )

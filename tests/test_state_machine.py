@@ -11,7 +11,6 @@ from pydantic import ValidationError
 
 from src.adapters.memory_store import InMemoryStateStore
 from src.orchestrator import state_machine
-from src.orchestrator.queue import QueueFull, WorkQueue
 from src.orchestrator.stages import Stage
 from src.orchestrator.state_machine import TRANSITIONS, IllegalTransition
 from src.orchestrator.trace import EventKind, TraceWriter
@@ -310,23 +309,3 @@ def test_finish_run_rejects_a_half_filled_stop(
             store=InMemoryStateStore(),
             trace=_writer(),
         )
-
-
-def test_queue_is_fifo_and_bounded() -> None:
-    queue: WorkQueue[str] = WorkQueue(maxsize=2)
-    queue.push("a")
-    queue.push("b")
-
-    with pytest.raises(QueueFull):
-        queue.push("c")
-    assert queue.pop() == "a"
-
-
-def test_requeue_counter_is_per_object() -> None:
-    """상한 판정은 정책이 한다. 큐는 세기만 한다."""
-    queue: WorkQueue[str] = WorkQueue(maxsize=8)
-
-    assert queue.requeue_count("cand_0001") == 0
-    assert queue.mark_requeued("cand_0001") == 1
-    assert queue.mark_requeued("cand_0001") == 2
-    assert queue.requeue_count("cand_0002") == 0
