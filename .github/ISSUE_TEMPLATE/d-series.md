@@ -8,6 +8,13 @@ labels: ["D-series"]
 <!--
 docs/open-questions.md의 원문을 옮겨 담는다. 원본이 진실의 소스이고 이슈는 그 추적용이다.
 결정·수정이 끝나면 open-questions.md를 먼저 고치고, 이 이슈를 그 커밋/PR로 닫는다.
+
+⚠ 이 파일 안의 `D<번호>`를 실제 숫자로 바꾸지 않는다.
+tests/test_docs_format.py 의 test_decision_references_point_at_a_real_row 가 추적되는 *.md
+전부에서 `D<숫자>` 를 찾아 open-questions.md 의 D 표와 대조한다. 그래서
+`D00` 같은 자리표시자는 CI 를 깨고(이 PR 의 첫 커밋이 그랬다), 실제 번호를 박으면 그 행이
+지워지는 날 깨진다. 그 검사의 실패 메시지는 "번호가 맞는지 확인한다"인데 자리표시자에는
+틀린 안내라 원인을 찾는 데 시간이 든다.
 -->
 
 ## 요약
