@@ -19,7 +19,7 @@ from src.schemas.common import (
 )
 
 # evaluation.md §2.2: 2×2 설계(§2.1)와 파이프라인 조건(§2.2)이 같은 라벨을 다른 축으로
-# 쓴다. 어느 정의인지 라벨에 박아 두지 않으면 비교표가 섞인다. 라벨 통합은 D1(open-questions).
+# 쓴다. 어느 정의인지 라벨에 박아 두지 않으면 비교표가 섞인다. 라벨 통합은 #59(open-questions).
 # `'`는 파일명·URL·쉘에서 깨지므로 `prime`으로 표기한다.
 CONDITION_PATTERN = r"^(B1|B1prime|B3|B3prime)@(2x2|pipeline)$"
 
@@ -63,7 +63,7 @@ class Sampling(HarnessModel):
 
 
 class ModelSampling(HarnessModel):
-    """한 모델이 자기 `generation_config.json`에 **선언한** 샘플링 (D29).
+    """한 모델이 자기 `generation_config.json`에 **선언한** 샘플링 (#99).
 
     `Sampling`이 하네스가 요청에 **보내는** 값이라면, 이쪽은 모델 파일이 선언하고
     vLLM이 기동 시 적용하는 값이다 — 하네스는 `temperature`·`top_p`만 보내므로 `top_k`·
@@ -82,7 +82,7 @@ class ModelSampling(HarnessModel):
     # vLLM은 `-1`을 그 뜻으로 쓴다. `Sampling`(우리가 **보내는** 값)이었다면 `ge=1`이 맞지만
     # 이쪽은 **모델이 선언한 것을 그대로 받아 적는** 자리라, 정상 선언을 스키마 밖으로 밀어내면
     # 그 모델의 기록이 통째로 사라진다(`read_declared_sampling`이 검증 실패 시 전부 버린다).
-    # 그러면 `temperature 0.7 · top_k 0`을 선언한 모델이 "선언 없음"으로 남아, D29가 막으려던
+    # 그러면 `temperature 0.7 · top_k 0`을 선언한 모델이 "선언 없음"으로 남아, #99가 막으려던
     # 오독을 정확히 반대 방향에서 재생산한다.
     top_k: int | None = Field(default=None, ge=-1)
     repetition_penalty: float | None = Field(default=None, gt=0.0)
@@ -176,7 +176,7 @@ class RunRecord(UtcModel):
     seed: int
     # 하네스가 요청에 **보낸** 샘플링 (config `budgets.yaml`의 `sampling`).
     sampling: Sampling
-    # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (D29). `sampling`이
+    # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). `sampling`이
     # 보낸 값이라면 이쪽은 서버가 모델 파일에서 적용하는 값이다 — `top_k`·`repetition_penalty`는
     # 하네스가 안 보내고 요청·응답에도 안 실려 이 필드로만 기록에 남는다.
     #

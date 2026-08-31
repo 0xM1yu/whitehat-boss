@@ -1,6 +1,6 @@
 """StateStore 인터페이스 (engineering-guide.md §3).
 
-저장소 구현(SQLite vs DuckDB)은 open-questions.md D6에서 확정한다. 이 Protocol에
+저장소 구현(SQLite vs DuckDB)은 open-questions.md ADR 0001에서 확정한다. 이 Protocol에
 대고 개발하면 그 결정이 노드 코드에 닿지 않는다.
 """
 

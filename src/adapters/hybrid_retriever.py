@@ -4,7 +4,7 @@
 조각을 넣는다. 토큰 수도 items 수도 실측이므로 캡슐 예산 초과 경로와 cache hit ratio가
 진짜 값이 된다.
 
-**`callers`/`callees`는 1단계 인덱서 산출물에서 온다**(`adapters/index_graph.py`, D13).
+**`callers`/`callees`는 1단계 인덱서 산출물에서 온다**(`adapters/index_graph.py`, #63).
 `FakeRetriever`와 **같은 모듈**을 쓴다 — 두 구현이 같은 index.json에서 다른 섹션을 내면
 `dev_fake`와 `dev_docker`의 결과를 비교할 수 없다. index.json이 없으면(`dev_hybrid`는
 `tool_runner: fake`다) 그 섹션을 **만들지 않는다**: 조용히 빈 섹션을 내면 "그래프가
@@ -13,14 +13,14 @@
 **검색·그래프 섹션의 본문이 모두 캡슐에 실린다.** `callers`/`callees`의 줄이
 `CapsuleSection.body`에 담겨 프롬프트로 가고(`index_graph.graph_section()`), `related`도
 같다 — `_fit_related`가 조각의 `file:line`+코드를 줄로 돌려주고 검색·확장 두 경로가 그것을
-`body`에 넣는다(open-questions D13). 예전에는 `(토큰, 개수)`만 세고 코드를 버려,
+`body`에 넣는다(이슈 #63). 예전에는 `(토큰, 개수)`만 세고 코드를 버려,
 embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않았다. 확장 경로의 부분
 절단(`min(pool[used].tokens, remaining)`)도 없앴다 — 조각은 통째로 들어가거나 안 들어간다.
 
 **`related`는 항목당 크기가 가장 큰 섹션이다.** 그래프 줄은 `memcpy parser.c:24` 한 줄이지만
 `related` 조각은 수십 줄짜리 코드 블록이다. 그리고 이 본문은 산문(`scout.describe_sections`)과
-사실 블록(`build_facts`) 양쪽에 실리므로(D17의 2배 계상 — `callers`/`callees`와 같은 계약),
-**선언 N토큰짜리 `related`가 실제 프롬프트에서는 대략 2N을 차지한다.** 토큰 추정 과소(D21)까지
+사실 블록(`build_facts`) 양쪽에 실리므로(#67의 2배 계상 — `callers`/`callees`와 같은 계약),
+**선언 N토큰짜리 `related`가 실제 프롬프트에서는 대략 2N을 차지한다.** 토큰 추정 과소(#96)까지
 얹으면 더 커진다. 지금은 hybrid가 dev 전용(`dev_hybrid`·`dev_hybrid_docker`)이라 무해하지만,
 **실서빙 hybrid 프로필이 생기면 예산을 캡슐 선언값이 아니라 이 사실로 잡아야 한다.** 그래서
 캡슐 구성이 바뀐 이번 변경은 `CAPSULE_POLICY_VERSION`을 올린다(아래).
@@ -30,7 +30,7 @@ embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않
 채우면 토큰 회계가 거짓말을 한다.
 
 `CapsuleSection.kind`가 `NonEmptyStr`로 열려 있는 것이 이 확장을 허용한다(스키마 주석).
-→ open-questions.md D13
+→ 이슈 #63
 
 **결정론**: 파일 순회는 정렬하고, 동점은 입력 인덱스 오름차순으로 깬다. 같은 입력에
 같은 캡슐이 나오지 않으면 engineering-guide.md §5의 재현성이 깨진다.
@@ -63,7 +63,7 @@ from src.tokens import estimate_tokens
 # 쓰면 두 구현이 만든 캡슐이 같은 키를 공유해 조건 비교가 오염된다.
 #
 # **hybrid-v1 → hybrid-v2 (2026-08-20)**: `callers`/`callees`가 구성에 들어왔다.
-# **hybrid-v2 → hybrid-v3 (W2/D20)**: LIGHT에 그래프가 들어갔고 target이 심볼로 좁혀졌다.
+# **hybrid-v2 → hybrid-v3 (W2/#95)**: LIGHT에 그래프가 들어갔고 target이 심볼로 좁혀졌다.
 # **hybrid-v3 → hybrid-v4 (2026-08-23)**: `related`에 `body`가 생기고 조각당 비용이
 #   `chunk.tokens`에서 `estimate_tokens(file:line\n+text)`로 커졌다 — 같은 키가 다른
 #   구성을 덮으면 안 되므로 올린다(#25가 v3, 이 변경이 v4 — 서로 다른 구성이다).
@@ -98,7 +98,7 @@ SKIP_DIRS = frozenset({".git", "__pycache__", "artifacts", "node_modules", ".ven
 #
 # **LIGHT의 그래프 두 칸은 위 "검색하지 않는다"의 예외가 아니다** — 그래프 섹션은
 # 임베딩도 reranker도 부르지 않고 이미 로드된 index.json에서 읽는다. 근거는
-# `fake_retriever.LEVEL_SECTIONS` 주석에 한 번만 적었다(D20을 (a)로 확정).
+# `fake_retriever.LEVEL_SECTIONS` 주석에 한 번만 적었다(#95을 (a)로 확정).
 LEVEL_SECTIONS: dict[CapsuleLevel, tuple[str, ...]] = {
     CapsuleLevel.LIGHT: ("target_function", "callers", "callees", "static_signal"),
     CapsuleLevel.EXPANDED: ("target_function", "related", "callers", "callees", "static_signal"),
@@ -500,7 +500,7 @@ def _fit_related(selected: list[Chunk], remaining: int) -> tuple[int, int, list[
     `index_graph.fit_names`와 같은 계약이다 — 담은 줄을 버리지 않고 함께 돌려주고,
     호출자가 `CapsuleSection.body`에 넣는다. 예전에는 `(토큰합, 개수)`만 내고 조각의
     코드를 버려, embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않았다
-    (open-questions D13). 반환 토큰 합은 `remaining` 이하이므로 호출자가 다시 `min()`을
+    (이슈 #63). 반환 토큰 합은 `remaining` 이하이므로 호출자가 다시 `min()`을
     걸면 안 된다 — 줄은 두고 토큰만 깎는 것이 되어 스키마 검증기에서 죽는다.
     """
     total = 0

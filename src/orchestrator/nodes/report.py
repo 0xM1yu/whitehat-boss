@@ -24,7 +24,7 @@ _STATE_ORDER = (
     FindingState.QUEUED,
 )
 
-# 등급 대표 우선순위 (D35). 값이 작을수록 높은 등급이라 dedupe에서 대표로 남는다.
+# 등급 대표 우선순위 (#101). 값이 작을수록 높은 등급이라 dedupe에서 대표로 남는다.
 # 문자열 비교("E10" > "E3" 같은 함정)를 피하려 명시 순서로 둔다.
 _GRADE_ORDER = {"E4": 0, "E3": 1, "E2": 2, "E1": 3, "E0": 4}
 # `grades`에 키가 없을 때. **"E0"으로 접지 않는다** — 게이트가 구조적으로 E0을 줄 수 없는
@@ -33,7 +33,7 @@ _GRADE_ORDER = {"E4": 0, "E3": 1, "E2": 2, "E1": 3, "E0": 4}
 _GRADE_UNKNOWN = "-"
 # dedupe 정렬에서 "등급 없음"은 가장 낮게 둬 등급 있는 대표에 밀리게 한다.
 _GRADE_RANK_UNKNOWN = 99
-# 요약 줄에 등급을 높은 것부터 적는다 (D36).
+# 요약 줄에 등급을 높은 것부터 적는다 (PR #37).
 _GRADE_DISPLAY_ORDER = ("E4", "E3", "E2", "E1", "E0")
 
 
@@ -53,7 +53,7 @@ class Report:
     # 사람이 읽는 요약이라 수백 줄을 여기 옮기면 Finding이 묻힌다.
     deferred: int = 0
     dropped: int = 0
-    # 7단계에 못 올라간 Finding 수 (D26 (b)). **위 둘과 같은 줄에 넣지 않는다** — 그쪽 단위는
+    # 7단계에 못 올라간 Finding 수 (#98 (b)). **위 둘과 같은 줄에 넣지 않는다** — 그쪽 단위는
     # target이고 이쪽은 Finding이다. 사람이 읽는 산출물에서 분모를 섞는 것이 trace에서
     # 섞는 것보다 나쁘다.
     #
@@ -67,9 +67,9 @@ class Report:
     # config 없이 단독으로 읽히는 문서라 여기 없으면 "36이 상한 8의 결과인지 80의 결과인지"를
     # 이 파일만 보고는 알 수 없다.
     critic_top_n: int = 0
-    # finding_id → 등급 값("E3" 등) (D35·D36). **러너가 `gate.evaluate`로 계산해 넘긴다.**
+    # finding_id → 등급 값("E3" 등) (#101·PR #37). **러너가 `gate.evaluate`로 계산해 넘긴다.**
     # Finding에 등급 필드가 없어 등급은 게이트 판정이라 trace에만 있었고, 그래서 이 노드가
-    # 대표를 고를 때 등급을 못 봐 E3가 사라졌고(D35) 최종 산출물이 등급을 못 실었다(D36).
+    # 대표를 고를 때 등급을 못 봐 E3가 사라졌고(#101) 최종 산출물이 등급을 못 실었다(PR #37).
     # 노드가 다시 매기지 않고 러너 값을 받는 것은 `deferred`·`critic_deferred`와 같은 이유다.
     grades: dict[str, str] = field(default_factory=dict)
 
@@ -79,7 +79,7 @@ class Report:
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
-        # **등급 분포를 맨 위에 싣는다 (D36).** 이 run의 성과(예: 8단계 E3 8건)가 여기
+        # **등급 분포를 맨 위에 싣는다 (PR #37).** 이 run의 성과(예: 8단계 E3 8건)가 여기
         # 없으면 리포트만 읽는 사람은 trace를 파야 그것을 본다 — F-9가 상태를 안 바꿔
         # E3가 `queued`로 찍히기 때문이다.
         if self.findings:
@@ -98,7 +98,7 @@ class Report:
         if self.critic_deferred:
             # **앞머리 명사구에 잘린 사유를 넣는다.** "반박받지 못한 Finding"으로 적으면
             # `insufficient_evidence`로 6단계에서 떨어진 건(실측 11건)도 같은 이름에 들어가
-            # 이 수가 47이어야 맞는 문장이 된다. 사유가 다른 둘을 한 이름으로 묶으면 D26이
+            # 이 수가 47이어야 맞는 문장이 된다. 사유가 다른 둘을 한 이름으로 묶으면 #98이
             # 지적하는 구별이 리포트에서 다시 합쳐진다 — `target_skipped`가 `reason`을 필드로
             # 두는 것과 같은 이유다.
             lines += [
@@ -125,13 +125,13 @@ def dedupe(
 ) -> tuple[list[Finding], int]:
     """같은 CWE·같은 파일·같은 대상 함수는 한 건으로 본다.
 
-    **대표는 등급이 높은 것을 남긴다 (D35 b).** 예전에는 `finding_id` 오름차순으로 처음
+    **대표는 등급이 높은 것을 남긴다 (#101 b).** 예전에는 `finding_id` 오름차순으로 처음
     것을 남겨 등급을 안 봤고, 그래서 E3가 낮은 등급 대표에 밀려 리포트에서 사라졌다
     (실측 62→4에서 E3 6건). 등급 우선으로 바꿔도 동급은 `finding_id`로 가르므로
     **재현성은 그대로다** — 어느 것이 남는지가 실행마다 흔들리지 않는다.
 
-    **키는 (CWE, 파일, 대상 함수)다 (D35 a).** sink 심볼만 보면 저장소 전역에서 `memcpy`를
-    쓰는 서로 다른 함수가 한 건으로 합쳐졌다(D40의 `gz_load`·`gz_avail`·`gz_look`·`gz_write`
+    **키는 (CWE, 파일, 대상 함수)다 (#101 a).** sink 심볼만 보면 저장소 전역에서 `memcpy`를
+    쓰는 서로 다른 함수가 한 건으로 합쳐졌다(#77의 `gz_load`·`gz_avail`·`gz_look`·`gz_write`
     넷이 전부 `('CWE-787','input','memcpy')`). 대상 함수는 경로의 PROPAGATE 칸이고, 파일은
     러너가 `Candidate.location`에서 얻어 넘긴다 — `Candidate.location.symbol`은 모델이 쓴
     값이라 `null`일 수 있어 파일만 쓴다.
@@ -173,7 +173,7 @@ def run(
     노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도 같다 —
     등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시 매기지 않는다.
     `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어 넘긴다 — dedupe 키가
-    파일을 가르는 데 쓴다(D35 a).
+    파일을 가르는 데 쓴다(#101 a).
     """
     grades = grades or {}
     with ctx.stage(Stage.REPORT):
@@ -191,7 +191,7 @@ def run(
 
 
 def _dedupe_key(finding: Finding, file: str | None) -> tuple[str, str, str]:
-    """(CWE, 파일, 대상 함수). 셋이 같아야 한 건이다 (D35 a).
+    """(CWE, 파일, 대상 함수). 셋이 같아야 한 건이다 (#101 a).
 
     대상 함수는 **경로의 PROPAGATE 칸**이다 — Finding을 서로 다르게 만드는 것이 그것이고,
     SOURCE는 호출자가 없으면 `"input"` 상수로 접히며(`fake_model`) SINK는 여럿이 공유한다
@@ -211,7 +211,7 @@ def _target_symbol(finding: Finding) -> str:
 
 
 def _entry(finding: Finding, grade: str | None) -> str:
-    # **앞머리에 등급을 박는다 (D36).** state(`queued` 등)만 찍으면 E3에 도달한 Finding도
+    # **앞머리에 등급을 박는다 (PR #37).** state(`queued` 등)만 찍으면 E3에 도달한 Finding도
     # `queued`로 보인다 — F-9가 상태를 안 바꾸기 때문이다. 등급이 이 run의 성과다.
     # 등급이 없으면(`grades`에 키 없음) "E0"이 아니라 `-`로 찍는다(위 `_GRADE_UNKNOWN`).
     return (

@@ -226,12 +226,12 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
-    # 역할 → 그 역할 모델의 실 토크나이저 카운터(D21 (b)). `None`이면 기본 카운터
+    # 역할 → 그 역할 모델의 실 토크나이저 카운터(#96 (b)). `None`이면 기본 카운터
     # (글자수 근사)를 유지한다. `symbols_for`와 같은 경로다 — factory가 채우고 러너는
     # `ctx`로 받아 역할 캡슐 조립 직전에 `using_counter(...)`로 켠다. 러너가
     # `src/adapters/`를 import 하지 않으려고 콜러블로 받는다.
     counter_for_role: Callable[[str], Callable[[str], int] | None]
-    # 위 카운터가 무엇으로 정해졌는지 (D21 (b)). `token_counter` 이벤트의 `data`가 된다.
+    # 위 카운터가 무엇으로 정해졌는지 (#96 (b)). `token_counter` 이벤트의 `data`가 된다.
     # `IndexSummaryLike`와 같은 이유로 **스칼라 dict**다 — 러너가 어댑터 타입을 모른다.
     counter_report: dict[str, str | None]
 
@@ -441,11 +441,11 @@ class _Accumulator:
     # 호출자가 그 수를 읽어 경고와 리포트에 올려야 한다.
     deferred: int = 0
     dropped: int = 0
-    # 7단계에 못 올라간 Finding 수 (D26 (b)). **위 둘과 단위가 다르다** — `deferred`·
+    # 7단계에 못 올라간 Finding 수 (#98 (b)). **위 둘과 단위가 다르다** — `deferred`·
     # `dropped`는 target을 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
     # 분모가 섞인다(`target_skipped`를 `critic_skipped`와 나눈 것과 같은 이유).
     critic_deferred: int = 0
-    # 7단계에 **들어갔다가** critic 호출이 실패해 버린 Finding 수 (D44). `critic_deferred`와
+    # 7단계에 **들어갔다가** critic 호출이 실패해 버린 Finding 수 (해소). `critic_deferred`와
     # 나누는 이유는 그 필드를 `deferred`·`dropped`와 나눈 이유와 같다 — 이쪽은 "안 올라갔다"
     # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
     critic_failed: int = 0
@@ -489,7 +489,7 @@ def run_pipeline(
         symbols_for=deps.symbols_for,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
-        # 때만 프롬프트를 남긴다(D19). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
+        # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
         prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
     )
@@ -509,7 +509,7 @@ def run_pipeline(
     ctx.record = record
     ctx.store.put(record)
 
-    # **어느 토큰 카운터로 셀 것인가를 여기서 남긴다 (D21 (b)).** `target_plan`과 같은
+    # **어느 토큰 카운터로 셀 것인가를 여기서 남긴다 (#96 (b)).** `target_plan`과 같은
     # 계약이다 — run당 1건이고 **모델을 한 번 부르기 전에** 낸다. 카운터는 `build_deps`
     # 시점에 이미 정해져 있으므로 늦출 이유가 없고, 그 뒤 어디서 죽어도 이 run이 무엇으로
     # 쟀는지는 남아야 한다. 이것이 없던 동안 폴백은 조용했고, "토크나이저로 쟀다"를
@@ -540,7 +540,7 @@ def run_pipeline(
         stop_reason = ReasonCode.CONSECUTIVE_TARGET_FAILURES
         warnings.append(f"{exc}")
     except SchemaParseError as exc:
-        # **후위 방어선이다 (D44).** 후보 단위는 `_triage_all`이, Finding 단위는 `_analyze`의
+        # **후위 방어선이다 (해소).** 후보 단위는 `_triage_all`이, Finding 단위는 `_analyze`의
         # critic 루프가 이미 잡으므로 여기까지 오는 것은 **아직 가드가 없는 경로**뿐이다.
         # 그런 경로가 생겼을 때 산출물이 통째로 사라지는 대신 매니페스트와 리포트까지 가고
         # 중단 사유가 남는다 — `ModelGatewayError` 갈래가 같은 이유로 있고, 그 주석이
@@ -577,7 +577,7 @@ def run_pipeline(
             f"target {state.dropped}건을 후보 단위 호출 실패로 버렸다. "
             f"사유는 trace의 target_skipped와 그 target의 model_call에 있다"
         )
-    # **7단계 절단도 같은 자리에 올린다 (D26 (b)).** 위 두 경고의 논거가 그대로 적용되는데,
+    # **7단계 절단도 같은 자리에 올린다 (#98 (b)).** 위 두 경고의 논거가 그대로 적용되는데,
     # 여기서는 한 겹 더 나쁘다 — target 절단은 대상이 사라져서 안 보이지만 Finding 절단은
     # F-9가 상태를 안 바꿔서 **44줄이 멀쩡히 찍힌 채** 전량을 본 것처럼 읽힌다.
     if state.critic_deferred:
@@ -586,7 +586,7 @@ def run_pipeline(
             f"({config.thresholds.critic_top_n})로 잘라 7단계에 올리지 않았다. "
             f"trace의 critic_skipped가 목록이다"
         )
-    # **7단계에서 죽은 Finding도 같은 자리에 올린다 (D44).** 위 절단 경고와 같은 논거인데
+    # **7단계에서 죽은 Finding도 같은 자리에 올린다 (해소).** 위 절단 경고와 같은 논거인데
     # 여기서는 한 겹 더 나쁘다 — 절단은 사람이 상한을 정해서 일어나지만 이쪽은 예정에 없던
     # 손실이고, 경고가 없으면 critic을 7건 돌린 run과 3건이 죽은 run이 겉보기에 같아진다.
     if state.critic_failed:
@@ -596,7 +596,7 @@ def run_pipeline(
         )
 
     findings = list(state.findings.values())
-    # 후보 위치를 얻는다 (D35 a·candidate_location). Finding은 `candidate_id`만 들고
+    # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
     # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이라
     # `null`일 수 있어 dedupe 키에는 파일만 쓴다.
     by_cand = {c.candidate_id: c.location for c in state.candidates}
@@ -604,7 +604,7 @@ def run_pipeline(
         f.finding_id: (by_cand[f.candidate_id].file if f.candidate_id in by_cand else None)
         for f in findings
     }
-    # **등급을 리포트에 넘긴다 (D35·D36).** Finding에 등급 필드가 없어 등급은 게이트
+    # **등급을 리포트에 넘긴다 (#101·PR #37).** Finding에 등급 필드가 없어 등급은 게이트
     # 판정이라 trace에만 있었고, 그래서 리포트가 대표를 고를 때 등급을 못 보고(E3 삭제)
     # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다.
     #
@@ -615,7 +615,7 @@ def run_pipeline(
     # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
     #
     # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
-    # 들어가고, Fake auditor에선 E4가 원리상 도달 불가다(D38). E4가 실제로 열리면 그 근거를
+    # 들어가고, Fake auditor에선 E4가 원리상 도달 불가다(해소). E4가 실제로 열리면 그 근거를
     # 여기로 모으는 일이 따라온다(`validate.run`이 `produced`를 반환하는데 지금 버린다).
     grades = {
         f.finding_id: gate.evaluate(
@@ -679,7 +679,7 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
                 missings=state.missings.get(finding.finding_id, ()),
             )
         except SchemaParseError as exc:
-            # **Finding 하나의 실패로 run을 잃지 않는다 (D44).** `_triage_all`이 후보에 대해
+            # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
             # 하는 것과 같은 판정이고, 여기에 그 처리가 없던 동안 `run_20260827_0002`는
             # 16 m 26 s를 돌고 critic 첫 호출에서 죽어 **산출물이 하나도 안 남았다** —
             # 모델 호출 78건이 trace에만 있고 `report.md`도 `run_manifest.json`도 없어
@@ -687,7 +687,7 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
             _drop_finding(ctx, state, finding, _REASON_SCHEMA, exc)
             continue
         except ModelGatewayError as exc:
-            # **요청 단위 거절은 이 Finding에 대한 사실이다 (D44 후속).** 처음에는 여기서
+            # **요청 단위 거절은 이 Finding에 대한 사실이다 (해소 후속).** 처음에는 여기서
             # `ModelGatewayError`를 일부러 안 잡았다 — `_DROPPABLE_STATUS` 판정을 복사하면
             # 같은 규칙이 두 곳에 따로 산다는 이유였고, "그때는 `_drop`의 갈래를 Finding
             # 쪽으로 끌어오는 것이 맞다"고 적어 뒀다. **그때가 첫 실서빙 run에서 바로 왔다**:
@@ -804,7 +804,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         deferred=len(deferred),
         candidate_max=limit,
     )
-    # **실행할 대상의 이름을 남긴다 (D45).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
+    # **실행할 대상의 이름을 남긴다 (해소).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
     # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**
     # 그래서 정답 대조가 "무엇을 봤는가"를 물을 때 기록은 "몇 개를 봤는가"까지만 답했다.
     #
@@ -819,7 +819,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
 
 @dataclass
 class _Reached:
-    """target 하나가 어느 단계까지 갔는지 (D48).
+    """target 하나가 어느 단계까지 갔는지 (PR #50).
 
     **가변인 것이 목적이다.** `_triage_one`이 예외로 빠져나가면 반환값이 없으므로,
     "어디까지 갔는가"를 돌려줄 길이 이것뿐이다. 호출자가 만들어 넘기고 호출자가 읽는다.
@@ -853,7 +853,7 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
     """
     consecutive = 0
     for target in plan.targets:
-        # 이번 target이 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (D48). 예외는
+        # 이번 target이 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (PR #50). 예외는
         # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
         # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
         # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
@@ -907,7 +907,7 @@ def _drop(
     (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
     않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
 
-    **`stage`는 호출자가 준다 (D48).** 예전에는 여기서 `Stage.SCOUT`으로 박았는데,
+    **`stage`는 호출자가 준다 (PR #50).** 예전에는 여기서 `Stage.SCOUT`으로 박았는데,
     `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 기록은 4가 됐다.
     `run_20260828_0002`의 `target_skipped` 3건이 전부 그랬다 — 실패한 `model_call`은
     셋 다 5단계 auditor인데 skip 기록은 4다. `_emit_skipped`가 자기 docstring에
@@ -927,7 +927,7 @@ def _drop(
 def _drop_finding(
     ctx: RunContext, state: _Accumulator, finding: Finding, reason: str, exc: Exception
 ) -> None:
-    """Finding 하나를 7단계에서 버리고 기록한다 (D44). `_drop`의 Finding 판이다.
+    """Finding 하나를 7단계에서 버리고 기록한다 (해소). `_drop`의 Finding 판이다.
 
     **`_drop`과 달리 연속 폐기 카운터가 없다.** 그 장치(`_TooManyDrops`)는 target 수백 개를
     태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
@@ -948,12 +948,12 @@ def _drop_finding(
 
 
 def _emit_planned(ctx: RunContext, target: Location) -> None:
-    """4단계에 올린 target 하나를 기록한다 (D45).
+    """4단계에 올린 target 하나를 기록한다 (해소).
 
     **`_emit_skipped`와 같은 필드를 같은 이름으로 싣는다.** 둘을 나란히 놓고 세는 것이 이
     이벤트의 용도라, 한쪽만 `symbol`을 `None`으로 두거나 이름을 달리 하면 대조가 안 된다.
     빈 문자열·0으로 채우는 관용구도 그쪽에서 가져온다 — `Location`의 `symbol`·`line_start`가
-    옵셔널이고(파일 단위 폴백에서는 실제로 빈다) 그 사실 자체가 D20의 폴백 여부를 지시한다.
+    옵셔널이고(파일 단위 폴백에서는 실제로 빈다) 그 사실 자체가 #95의 폴백 여부를 지시한다.
 
     **`reason`이 없다.** 그쪽은 "왜 못 갔는가"를 싣지만 이쪽은 간 것이라 사유가 없다.
     빈 사유를 넣으면 두 이벤트가 같은 모양이 되어 합쳐 세는 실수를 부른다.
@@ -973,13 +973,13 @@ def _emit_skipped(
     """4단계에 올리지 못한 target 하나를 기록한다.
 
     `Candidate`를 만들어 `queued`로 두지 않는 이유는 `EventKind.TARGET_SKIPPED` 주석에
-    적었다 — 점수를 지어내야 하고 그 값이 Scout 점수 분포(D2의 입력)에 섞인다.
+    적었다 — 점수를 지어내야 하고 그 값이 Scout 점수 분포(#91의 입력)에 섞인다.
 
     **`stage`가 곧 어디서 잘렸는가다.** 예산 절단은 2단계 뒤 계획 시점이고 후보 단위
     실패는 그 target이 실제로 죽은 노드다 — 둘을 한 값으로 적으면 예산에 잘린 target이
     "4단계에 들어갔다가 죽었다"로 읽힌다. `reason`과 중복이 아니라 서로를 검증한다.
 
-    **후보 단위 실패가 4로 고정이 아니게 된 것은 D48부터다.** `_drop`이 `Stage.SCOUT`을
+    **후보 단위 실패가 4로 고정이 아니게 된 것은 PR #50부터다.** `_drop`이 `Stage.SCOUT`을
     박고 있었는데 `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 4로
     남았다. 지금은 `_Reached`가 실제 단계를 들고 오므로 3~6이 나올 수 있다 — 3은 **LIGHT**
     캡슐 조립(실서빙 retriever에서만), 4는 scout, 5는 **EXPANDED 캡슐 조립 또는** auditor,
@@ -1010,13 +1010,13 @@ def _triage_one(
 ) -> None:
     """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다.
 
-    **`reached.stage`를 노드에 들어가기 직전에 올린다 (D48).** 끝난 뒤에 올리면 그
+    **`reached.stage`를 노드에 들어가기 직전에 올린다 (PR #50).** 끝난 뒤에 올리면 그
     노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
     """
     location, artifact, evidences = target.location, target.artifact, target.evidences
     if last < Stage.RETRIEVAL:
         return
-    # 역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(D21 (b) 3b). scout는 LIGHT
+    # 역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). scout는 LIGHT
     # 캡슐을 보므로 scout 카운터로 켠다. `counter_for_role`이 `None`을 주면(fake·토크나이저
     # 없음) `using_counter`가 아무것도 바꾸지 않아 기본 카운터(글자수 근사)가 유지된다.
     with using_counter(ctx.counter_for_role(Role.SCOUT.value)):
@@ -1090,7 +1090,7 @@ def _new_record(
         seed=config.seed,
         # 하네스가 **보낸** 샘플링.
         sampling=config.sampling,
-        # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (D29). 서버가
+        # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). 서버가
         # 모델 파일에서 적용하는 `top_k` 등을 하네스는 안 보내므로 이 필드로만 기록에 남는다.
         # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
         # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.

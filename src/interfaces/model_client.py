@@ -43,7 +43,7 @@ GpuMsSource = Literal["request_wall_clock", "vllm_metrics"]
 # **잠정치다.** 살리려는 것은 vLLM의 컨텍스트 초과 한 문장인데 **그 실측 길이를 우리는
 # 갖고 있지 않다** — zlib run에서 그 본문이 버려졌고 그것이 이 상수가 생긴 이유다.
 # 512는 그 형태의 한 문장에 여유를 둔 값이고, 넘치면 표시가 붙어 그 사실이 드러난다.
-# 첫 실대상 run이 이 값의 근거를 만든다(`budgets.tool_seconds`가 D15에 대해 쓰는 논법).
+# 첫 실대상 run이 이 값의 근거를 만든다(`budgets.tool_seconds`가 #65에 대해 쓰는 논법).
 MAX_ERROR_DETAIL = 512
 
 
