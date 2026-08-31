@@ -223,7 +223,6 @@ class Thresholds(HarnessModel):
     capsule_expansion_max: int = Field(ge=0)
     requeue_max: int = Field(ge=0)
     critic_top_n: int = Field(gt=0)
-    queue_maxsize: int = Field(gt=0)
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)

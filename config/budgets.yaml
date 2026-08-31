@@ -53,13 +53,6 @@ thresholds:
   # (architecture.md §3 "상위 Finding만").
   critic_top_n: 8
 
-  # bounded in-process queue 크기 (engineering-guide.md §1).
-  #
-  # **후보 경로는 이 값을 소비하지 않는다.** `WorkQueue`를 import 하는 것은 지금
-  # `tests/test_state_machine.py`뿐이고 러너의 target 순회는 평범한 리스트다. 후보 수의
-  # 상한은 아래 `candidate_max`가 따로 든다 — 이 키의 뜻을 조용히 넓히지 않는다.
-  queue_maxsize: 256
-
   # 한 run이 4단계(Scout)에 올릴 target 수 상한 (W2).
   #
   # 후보 단위가 파일에서 심볼로 바뀌면서 필요해졌다. zlib은 분석 대상 artifact 32건이
@@ -73,9 +66,9 @@ thresholds:
   # 후보 32건짜리 run뿐이라 거기서 상한을 유도하면 **지어낸 근거**가 된다
   # (위 `tool_seconds`가 D15에 대해 쓰는 논법과 같다).
   #
-  # 256을 고른 유일한 이유는 `queue_maxsize`가 in-process 작업 항목 수에 대해 이미 쓰고
-  # 있는 수라 새 숫자를 지어내지 않기 위해서다 — **근거가 아니라 관례다.** 그전까지 이
-  # 값의 목적은 폭주 차단 하나다.
+  # 256을 고른 유일한 이유는 **(이슈 #71로 제거된) `queue_maxsize`가 쓰던 값**을 재사용해 새
+  # 숫자를 지어내지 않기 위해서였다 — **근거가 아니라 관례다.** 그전까지 이 값의 목적은
+  # 폭주 차단 하나다.
   candidate_max: 256
 
   # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
