@@ -456,7 +456,7 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 | **D17** | 프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 장식으로 만든다 | **신규(2026-08-21)** — 지금은 사실 블록에 같은 내용을 넣어 우회하고 대가는 토큰 2배 계상. 고치면 `prompt_template_version`이 올라가 이전 결과와 비교가 끊긴다 |
 | **D18** | 8단계 정책이 게이트 등급을 읽지 않는다 | **§5의 "지금은 세 단계 전부에서 판정한다"를 한정한다** — 판정은 하지만 승격은 여전히 `ok` 하나로 정해진다. 내용은 [open-questions D18](docs/open-questions.md)에만 둔다 |
 | D1 | B1/B1'/B3/B3' 라벨이 2×2와 파이프라인 두 축으로 사용됨 | `RunRecord.condition`에 `@2x2`/`@pipeline` 명시로 임시 봉합 |
-| D10 | 재평가 카운터가 run 범위 in-memory | 다중 run·resume 시 `requeue_limit_reached`가 성립 안 함 |
+| D10 | 재평가 횟수를 **아무 데도 보관하지 않는다** (2026-08-31 D25로 in-memory 카운터 제거) | `requeue_count` 생산자가 없어 `requeue_limit_reached`가 단일 run 안에서도 발동하지 않는다 |
 | D11 | `Evidence`에 "발견 건수" 필드 부재 | **semgrep은 해소**: `--json` 결과 문서의 유무로 판정하므로 exit code 관례에 의존하지 않는다(2026-08-14 크래시가 "발견함"으로 집계된 사건 이후). **clang-tidy는 여전히 미해결** — 컴파일 실패와 경고 발견이 같은 exit code라 출력 문자열(`clang-diagnostic-error`)로 가른다 |
 | D12 | build 실행 단계 소속 (2단계 vs 8단계) | 문서와 구현 불일치. 현재 코드는 2단계에 프로브 |
 | D3 | `capsule_expansion_max: 3` 초기값 | 실측 후 조정 |
