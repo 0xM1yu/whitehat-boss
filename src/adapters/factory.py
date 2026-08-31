@@ -67,7 +67,7 @@ class Deps:
     # 전원 공지 대상이라(roadmap.md §3) 지금은 이 dataclass가 나른다. 두 구현이 이미
     # `images()`를 갖고 있으므로 승격은 Protocol에 한 줄 추가하는 일이 된다.
     tool_images: dict[str, str] = field(default_factory=dict)
-    # 역할 → 그 모델이 generation_config.json에 선언한 샘플링 (D29). `RunRecord.model_sampling`이
+    # 역할 → 그 모델이 generation_config.json에 선언한 샘플링 (#99). `RunRecord.model_sampling`이
     # 된다. `tool_images`와 같은 성격 — 러너는 `src/adapters/`를 import 하지 않으므로(계층 규칙)
     # 어댑터가 모델 파일을 읽어 만든 값을 이 dataclass가 나른다.
     model_sampling: dict[str, ModelSampling] = field(default_factory=dict)
@@ -82,7 +82,7 @@ class Deps:
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
     # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
-    # (글자수 근사 `len//4`)를 유지한다(D21 (b)).
+    # (글자수 근사 `len//4`)를 유지한다(#96 (b)).
     #
     # **`symbols_for`와 같은 모양이다** — 러너·RunContext는 `src/adapters/`를 import 하지
     # 않으므로 `counter_for_source`를 타입이 아니라 **콜러블로** 경계를 넘겨야 한다. 러너가

@@ -1,7 +1,7 @@
 """RunContext — 노드가 보는 실행 문맥.
 
 노드 시그니처는 `def run(ctx: RunContext, ...) -> ...`이고 LangGraph 타입을 노출하지
-않는다(open-questions.md D7 미확정, ADR 0002). 오케스트레이터를 갈아 끼워도 노드가
+않는다(open-questions.md ADR 0002 미확정, ADR 0002). 오케스트레이터를 갈아 끼워도 노드가
 그대로 남으려면 노드가 아는 것이 이 객체 하나여야 한다.
 
 **부작용은 전부 여기를 지난다.** 모델 호출·도구 실행·게이트 판정·정책 결정·상태 전이가
@@ -104,7 +104,7 @@ class RunContext:
     symbols_for: Callable[[str], list[Location] | None] = field(
         default=lambda _file: None
     )
-    # 역할 → 그 역할 모델의 실 토크나이저 카운터 (D21 (b)). `None`이면 기본 카운터
+    # 역할 → 그 역할 모델의 실 토크나이저 카운터 (#96 (b)). `None`이면 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다. `symbols_for`와 같은 성격 — 어댑터가 만들고
     # factory가 주입하며, 러너가 역할 캡슐 조립 직전에
     # `using_counter(ctx.counter_for_role(role))`로 켠다. RunContext는 `src/adapters/`를
@@ -113,7 +113,7 @@ class RunContext:
     counter_for_role: Callable[[str], Callable[[str], int] | None] = field(
         default=lambda _role: None
     )
-    # 렌더된 프롬프트를 run 산출물에 남기는 곳 (D19). `read_source`와 마찬가지로 조립부가
+    # 렌더된 프롬프트를 run 산출물에 남기는 곳 (해소). `read_source`와 마찬가지로 조립부가
     # 주입한다 — run_dir을 아는 것은 러너이고 노드도 이 객체도 그것을 몰라야 한다.
     #
     # **`None`이면 아무것도 쓰지 않고 `model_call`도 그대로다.** 산출물 디렉터리가 없는
@@ -252,7 +252,7 @@ class RunContext:
     def _record_prompt(
         self, *, role: Role, stage: Stage, prompt: Prompt
     ) -> dict[str, TraceValue]:
-        """프롬프트를 산출물로 남기고 `model_call`에 실을 참조를 돌려준다 (D19).
+        """프롬프트를 산출물로 남기고 `model_call`에 실을 참조를 돌려준다 (해소).
 
         **`prompts`가 없으면 빈 dict다.** `prompt_ref=None`을 늘 싣지 않는 것은 그러면
         기록 장치가 없던 run과 프롬프트를 못 쓴 run이 trace에서 같은 모양이 되기
@@ -412,7 +412,7 @@ class RunContext:
         self.trace.emit(EventKind.GRAPH_INDEX, stage=self.current_stage, **fields)
 
     def record_token_counter(self, fields: dict[str, TraceValue]) -> None:
-        """이 run이 어느 토큰 카운터로 셌는가 (D21 (b)). **run당 정확히 1건이다.**
+        """이 run이 어느 토큰 카운터로 셌는가 (#96 (b)). **run당 정확히 1건이다.**
 
         `record_graph_index`와 같은 모양이다 — 어댑터 타입이 아니라 **스칼라 dict**만 경계를
         넘는다(engineering-guide.md §3). 필드를 만드는 쪽은 `factory.counter_report()`이고
@@ -458,7 +458,7 @@ class RunContext:
         것과 겹쳐 센다. 이 이벤트가 남기는 것은 비용이 아니라 **범위**다.
 
         "전부 봤다"와 "상한까지만 봤다"는 다른 사건인데, 이 훅이 배선되기 전에는 캡슐도
-        trace도 그 둘을 구별하지 못했다(D13, W7).
+        trace도 그 둘을 구별하지 못했다(#63, W7).
         """
         self.trace.emit(
             EventKind.RETRIEVAL_TRUNCATED,

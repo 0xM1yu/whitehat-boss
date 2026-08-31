@@ -50,7 +50,7 @@ profiles:
     # index.json이 만들어지지 않는다 — hybrid의 `callers`/`callees` 분기가 죽은 코드가 된다.
     #
     # 이 저장소는 "픽스처가 실전을 대표하지 못해 생긴 결함"을 이미 두 번 겪었다:
-    # clang의 include 경로(D13)와 tree-sitter 최상위 한 겹(zlib 28.3%/json 70.3%).
+    # clang의 include 경로(#63)와 tree-sitter 최상위 한 겹(zlib 28.3%/json 70.3%).
     # 둘 다 테스트는 초록이었다. 프로필이 없으면 같은 자리가 또 생긴다.
     #
     # 모델이 전부 Fake라 GPU가 필요 없고 `production: false`라 조건 비교에 들어가지 않는다.

@@ -4,7 +4,7 @@
 `Evidence(ok=False, error=...)`를 돌려준다.** 예외는 샌드박스 자체를 띄울 수 없는 경우뿐이고
 (`SandboxUnavailable`), 그 판정은 생성 시점에 한다 — run 도중에 알면 그때까지 쓴 시간을 버린다.
 
-## exit code 관례 (open-questions D11)
+## exit code 관례 (이슈 #61)
 
 `nodes/signals.with_signal()`이 STATIC Evidence를 `exit_code`로 거른다. 도구 기본값은 그
 관례와 맞지 않아 아래 플래그로 강제한다.
@@ -17,7 +17,7 @@
 **clang-tidy는 exit code만으로 "경고를 찾음"과 "대상이 컴파일되지 않음"을 구분하지 못한다.**
 둘 다 non-zero다. 그대로 두면 컴파일 실패가 정적 신호로 집계된다. 그래서 출력에
 `clang-diagnostic-error`가 있으면 도구 실패(`ok=False`)로 내린다 — 남은 구분 수단이 출력
-문자열뿐이라는 사실 자체가 D11 항목이다.
+문자열뿐이라는 사실 자체가 #61 항목이다.
 
 ## 로그 규약 (engineering-guide.md §6)
 
@@ -48,7 +48,7 @@ Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다.
 코드)다. 지금 픽스처에는 `main`이 없어 링크되지 않으므로 **E4는 여전히 도달 불가**다 —
 PoC를 만드는 주체(PoV 노드)가 생기기 전까지는 그것이 사실이고, 그 사실대로 기록한다.
 
-## index는 이제 진짜 그래프를 만든다 (open-questions D13)
+## index는 이제 진짜 그래프를 만든다 (이슈 #63)
 
 `index`는 `tools/harness-tools/indexer.py`(tree-sitter)다. 그전에는
 `clang -fsyntax-only`였는데 **구문 검사일 뿐이고 `EvidenceKind.GRAPH`라는 이름이 그보다
@@ -109,7 +109,7 @@ SEMGREP_CONFIGS = ("/opt/semgrep-rules/c", "/opt/semgrep-rules/harness")
 # 이미지에 구워 넣은 인덱서(`tools/harness-tools/indexer.py`)와 그 산출물 이름.
 # 산출물은 scratch에 떨어지므로 호스트에서는
 # `{artifacts_root}/{run_id}/scratch/index/{INDEX_FILE}`이고, 그 경로를 조립하는 곳은
-# `index_output_path()` 하나다 — `adapters/index_graph.py`가 읽는다(open-questions D13).
+# `index_output_path()` 하나다 — `adapters/index_graph.py`가 읽는다(이슈 #63).
 _INDEXER = "/opt/indexer.py"
 INDEX_FILE = "index.json"
 
@@ -119,7 +119,7 @@ INDEX_FILE = "index.json"
 #
 # **이 파일 안에서도 이 상수를 써야 한다.** 두 곳이 `tool == "index"` 리터럴을 쓰고 있었고,
 # 두 상수를 함께 바꾸면 대조 테스트는 통과하는데 리터럴만 뒤처져 인덱서가 조용히
-# `_COMPILE_SUFFIXES`를 받는다 — `.inc`가 빠져 D16의 실패가 재현된다.
+# `_COMPILE_SUFFIXES`를 받는다 — `.inc`가 빠져 #66의 실패가 재현된다.
 INDEX_TOOL = "index"
 
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
@@ -186,7 +186,7 @@ _INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc")
 # 판정 임계값은 아니지만 분석 결과를 바꾸므로 조건 간 비교에 영향을 준다. 지금 코드
 # 상수로 충분한 이유는 모든 조건이 같은 방언을 쓰기 때문이다. 실제 저장소는 프로젝트마다
 # 방언이 다르고 `compile_commands.json`이 있으면 그쪽을 따라야 한다 — 그 시점에
-# budgets/config로 옮긴다. **`_include_args()`도 같은 범주다**(open-questions D32).
+# budgets/config로 옮긴다. **`_include_args()`도 같은 범주다**(이슈 #74).
 _STD_ARGS = {"c": "-std=gnu17", "c++": "-std=gnu++17"}
 
 # semgrep이 예외로 죽었는지 보는 표지. `--json`이 stdout만 바꾸므로 크래시 흔적은
@@ -288,7 +288,7 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         # `--` 뒤는 컴파일 인자다. compile_commands.json이 없으면 이것 없이는 대상마다
         # 경고 대신 오류가 난다.
         #
-        # **첫 그룹에 발견이 있으면 둘째 그룹은 분석되지 않는다 (open-questions D34).**
+        # **첫 그룹에 발견이 있으면 둘째 그룹은 분석되지 않는다 (이슈 #75).**
         # `--warnings-as-errors=*` 때문에 발견이 곧 non-zero이고 `_execute`가 거기서
         # 멈춘다. 그 사실은 어디에도 기록되지 않으므로 항목으로 열려 있다 — 주석이
         # 아니라 번호가 그것을 들고 있다.
@@ -337,10 +337,10 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         # 언어별로 나눠 두 번 쓰면 뒤 명령이 앞 바이너리를 **덮어써 절반이 빠진 프로그램**이
         # 뜨고, 그것이 실행돼 크래시하면 E4가 성립한다 — 모듈 docstring이 막으려는
         # ("한 번도 돌지 않은 프로그램이 재현 완료로 기록된다") 사고의 변형이다.
-        # 그래서 지어내지 않고 거절한다. 링크 규칙은 D34가 들고 있다.
+        # 그래서 지어내지 않고 거절한다. 링크 규칙은 #75가 들고 있다.
         groups = _by_language(compile_sources)
         if len(groups) > 1:
-            raise ValueError(f"{tool}: C와 C++이 섞인 대상은 링크 규칙이 없다 (D34)")
+            raise ValueError(f"{tool}: C와 C++이 섞인 대상은 링크 규칙이 없다 (#75)")
         language, sources_ = groups[0]
         binary = f"{SCRATCH}/asan.bin"
         return [
@@ -467,7 +467,7 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
             return False, code, f"clang-tidy: 명령을 띄우지 못했다 (exit={code})"
         # 진단은 stdout으로 나온다("N warnings generated."만 stderr다).
         if _COMPILE_ERROR_MARKER in last.stdout:
-            # exit code로는 "경고 발견"과 구분되지 않는다(모듈 docstring, D11).
+            # exit code로는 "경고 발견"과 구분되지 않는다(모듈 docstring, #61).
             return False, code, "clang-tidy: 대상이 컴파일되지 않는다"
         # **non-zero인데 진단이 한 줄도 없으면 돌지 않은 것이다.** `--warnings-as-errors=*`가
         # non-zero를 만드는 경로는 경고 발견뿐이고, 그 경고는 stdout에 찍힌다(`--quiet`는
@@ -633,7 +633,7 @@ class ContainerToolRunner:
         계열이 단독 컴파일되지 않는 조각을 받아 없는 실패를 만들어낸다.
         """
         # 리터럴이 아니라 상수를 본다. 갈리면 인덱서가 조용히 `_COMPILE_SUFFIXES`를 받아
-        # `.inc`가 빠지고, D16이 기록한 실패(28바이트짜리 `#include` 한 줄만 분석하고
+        # `.inc`가 빠지고, #66이 기록한 실패(28바이트짜리 `#include` 한 줄만 분석하고
         # 17KB를 보지 않았다)가 그대로 재현된다.
         suffixes = _INDEX_SUFFIXES if tool == INDEX_TOOL else _COMPILE_SUFFIXES
         return plan(

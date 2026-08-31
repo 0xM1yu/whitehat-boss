@@ -1,4 +1,4 @@
-"""1단계 인덱서 산출물(`index.json`)을 읽어 캡슐의 그래프 섹션으로 바꾼다 (D13).
+"""1단계 인덱서 산출물(`index.json`)을 읽어 캡슐의 그래프 섹션으로 바꾼다 (#63).
 
 `tools/harness-tools/indexer.py`가 컨테이너 안에서 심볼 표와 호출 그래프를 내고,
 `ContainerToolRunner`가 그것을 scratch에 떨어뜨린다. 여기가 **읽는 쪽**이다.
@@ -87,7 +87,7 @@ SUPPORTED_INDEX_VERSION = "index-v1"
 # 이 모듈이 채우는 섹션. `types`는 없다 — index-v1에 타입 데이터가 없기 때문이다
 # (`indexer.build_index()`가 내는 것은 symbols·calls뿐이고 struct·class·typedef를 뽑는
 # 코드가 없다). 데이터원이 없는데 섹션을 발행하면 이 모듈이 없애려는 거짓말이 된다.
-# 채우려면 인덱서에 타입 수집을 넣고 `INDEX_VERSION`을 올려야 한다(D13).
+# 채우려면 인덱서에 타입 수집을 넣고 `INDEX_VERSION`을 올려야 한다(#63).
 GRAPH_SECTION_KINDS = ("callers", "callees")
 
 # `IndexSummary.status` 값. "못 읽었다"의 사유를 하나로 뭉치지 않는다 — 인덱서가 안 돈
@@ -380,7 +380,7 @@ def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
     걸면 안 된다 — 줄은 그대로 두고 토큰만 깎는 것이 되어 스키마 검증기에서 죽는다.
 
     **`items=k`가 `k < len(names)`인지는 캡슐만 봐서는 구별되지 않는다.** `_fit_related`도
-    지금 같은 상태이고, 절단을 캡슐에 남기는 것은 별건으로 D13에 있다.
+    지금 같은 상태이고, 절단을 캡슐에 남기는 것은 별건으로 #63에 있다.
     """
     total = 0
     fitted: list[str] = []

@@ -22,7 +22,7 @@ budgets:
     # (model-serving.md §5·bench.py 모듈 docstring의 같은 규칙: 지어낸 값은 미측정을
     # production으로 통과시킨다).
     #
-    # **근거를 만드는 측정은 zlib 급 실대상 1회 run이다**(open-questions D15). 그전까지
+    # **근거를 만드는 측정은 zlib 급 실대상 1회 run이다**(이슈 #65). 그전까지
     # 이 값의 목적은 폭주 차단 하나이고, 정상 run이 걸리지 않도록 넉넉히 둔다.
     tool_seconds: 1800
 
@@ -38,10 +38,10 @@ budgets:
     tool_seconds: 0
 
 thresholds:
-  # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — open-questions D2.
+  # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — 이슈 #91.
   scout_threshold: 0.5
 
-  # Progressive Context Expansion 상한 (knowledge-base.md §5, 초기값 3) — open-questions D3.
+  # Progressive Context Expansion 상한 (knowledge-base.md §5, 초기값 3) — 이슈 #92.
   # 초과하면 후보를 폐기하지 않고 queued로 둔다.
   capsule_expansion_max: 3
 
@@ -64,7 +64,7 @@ thresholds:
   # **이 값은 잠정치다. 실측이 아니다.** 후보 1건당 토큰·시간을 한 번도 재지 않았고,
   # 그 측정의 입력이 이 변경 뒤의 zlib 급 실대상 1회 run이다. 지금 가진 것은 파일 단위
   # 후보 32건짜리 run뿐이라 거기서 상한을 유도하면 **지어낸 근거**가 된다
-  # (위 `tool_seconds`가 D15에 대해 쓰는 논법과 같다).
+  # (위 `tool_seconds`가 #65에 대해 쓰는 논법과 같다).
   #
   # 256을 고른 유일한 이유는 **(이슈 #71로 제거된) `queue_maxsize`가 쓰던 값**을 재사용해 새
   # 숫자를 지어내지 않기 위해서였다 — **근거가 아니라 관례다.** 그전까지 이 값의 목적은
@@ -131,7 +131,7 @@ thresholds:
 
   # 캡슐 레벨별 토큰 상한 (knowledge-base.md §4). 키는 CapsuleLevel 열거형 값과 같다.
   capsule_budget_tokens:
-    # **D21 부분 완화 — 예산 축소 (2026-08-25 회의 결정).** `estimate_tokens = len//4`가
+    # **#96 부분 완화 — 예산 축소 (2026-08-25 회의 결정).** `estimate_tokens = len//4`가
     # 실서빙 실측(2.224 chars/token, `run_20260821_0007`)보다 ~1.8배 과소다.
     #
     # ⚠ **이 값은 `--max-model-len`을 보장하지 못한다. 부분 완화이지 천장이 아니다.**
@@ -144,7 +144,7 @@ thresholds:
     #   `contrib/minizip/unzip.c`(67,662 B)는 `estimate_tokens`로 16,915라 **24,000에도
     #   18,000에도 안 걸린다.** 그 경로는 이 손잡이로 닫히지 않는다.
     #
-    # 그래서 값을 천장에서 역산하지 않는다. 천장을 겨냥하려면 D17의 2배 계상과 출력분이
+    # 그래서 값을 천장에서 역산하지 않는다. 천장을 겨냥하려면 #67의 2배 계상과 출력분이
     # 들어가야 하는데 — (32768 − output_max) / 1.798 / 2 — 그렇게 잡아도 원문이 안 묶이므로
     # 여전히 보장이 아니다. 18,000은 `related`가 먹을 수 있는 자리를 계상 기준 6,000 줄이는
     # 값이고, 그것이 이 변경의 전부다.
@@ -160,7 +160,7 @@ thresholds:
     #
     # ⚠ **정본은 여전히 (b) 실 토크나이저 교체다** — 회의 결정은 (c) 축소를 먼저 넣고 그
     #   다음 (b)였다. 토크나이저가 들어오면 계상이 실측으로 바뀌어 이 보수값은 원복할 수
-    #   있다. 원문을 실제로 묶는 일은 프롬프트 조립부에 가야 하고 별개 PR이다(D21).
+    #   있다. 원문을 실제로 묶는 일은 프롬프트 조립부에 가야 하고 별개 PR이다(#96).
     #   32K 천장 가정이라 auditor가 ≤8K로 서빙되면 더 낮춰야 한다.
     # light/focused도 같은 한계를 공유한다(원문 제외 기준 4000→~7,190 · 8000→~14,400).
     light: 4000
