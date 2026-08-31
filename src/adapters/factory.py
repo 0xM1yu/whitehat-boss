@@ -17,6 +17,7 @@ from src.adapters.container_tools import ContainerToolRunner, index_output_path
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
+from src.adapters.generation_config import declared_sampling_by_role
 from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook, UsageHook
 from src.adapters.index_graph import GraphIndex, IndexHook
 from src.adapters.memory_store import InMemoryStateStore
@@ -42,6 +43,7 @@ from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.schemas.common import Location
+from src.schemas.run import ModelSampling
 from src.tokens import COUNTED_ROLES
 
 
@@ -65,6 +67,10 @@ class Deps:
     # 전원 공지 대상이라(roadmap.md §3) 지금은 이 dataclass가 나른다. 두 구현이 이미
     # `images()`를 갖고 있으므로 승격은 Protocol에 한 줄 추가하는 일이 된다.
     tool_images: dict[str, str] = field(default_factory=dict)
+    # 역할 → 그 모델이 generation_config.json에 선언한 샘플링 (D29). `RunRecord.model_sampling`이
+    # 된다. `tool_images`와 같은 성격 — 러너는 `src/adapters/`를 import 하지 않으므로(계층 규칙)
+    # 어댑터가 모델 파일을 읽어 만든 값을 이 dataclass가 나른다.
+    model_sampling: dict[str, ModelSampling] = field(default_factory=dict)
     # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만드는 데 쓴다(W2).
     #
     # **`read_source`와 같은 모양이다** — 러너는 `src/adapters/`를 import 하지 않으므로
@@ -351,6 +357,9 @@ def build_deps(
         # 구현에게 묻는다. 여기서 이미지 이름을 조립하면 어댑터가 무엇을 실제로 물렸는지와
         # 갈라질 수 있고, 갈라진 재현성 기록은 없는 것보다 나쁘다.
         tool_images=tools.images(),
+        # 실서빙 모델 파일에서 선언 샘플링을 읽는다. Fake·source 없는 모델은 빠지고, 전부
+        # 그러면 빈 dict다 — `RunRecord.model_sampling`의 `None`(옛 manifest)과 구분된다.
+        model_sampling=declared_sampling_by_role(config),
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,

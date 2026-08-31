@@ -488,7 +488,7 @@ delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 
 사실은 `target_plan.fallback_artifacts`에 남는다 — 같은 지표를 볼 때 두 종류의 run이
 섞여 있을 수 있으므로 이 값으로 먼저 갈라야 한다.
 
-**2026-08-23 실측 — 분모가 얼마나 바뀌는지가 나왔다**([실험 보고서](docs/experiments/2026-08-23-pipeline-zlib-atom.md)).
+**2026-08-23 실측 — 분모가 얼마나 바뀌는지가 나왔다**([실험 보고서](docs/experiments/harness/2026-08-23-pipeline-zlib-atom.md)).
 zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그중 **31건**은 심볼이 0건이라
 후보를 만들지 않았고(`.h`·바이너리 등), **286건**은 `candidate_max: 256`에 잘려
 `target_skipped`로 남았다. **즉 이 run의 제거율 분모는 79도 542도 아닌 256이다** — 세 수를
@@ -509,7 +509,7 @@ zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그�
 JSON과 clang-tidy 출력에서 줄 번호를 파싱해 `Evidence.location`을 채워야 하고, 그것은
 별개의 작업이다(open-questions D23).
 
-**2026-08-23 실측으로 확인됐다**([실험 보고서](docs/experiments/2026-08-23-pipeline-zlib-atom.md)): 심볼 단위로 돌린 두 run에서
+**2026-08-23 실측으로 확인됐다**([실험 보고서](docs/experiments/harness/2026-08-23-pipeline-zlib-atom.md)): 심볼 단위로 돌린 두 run에서
 `location_ok`가 **픽스처 6건 · zlib 55건 전부 false**다. 후보 위치가 심볼로 정밀해졌는데도
 값이 안 바뀌었다.
 
@@ -517,7 +517,7 @@ JSON과 clang-tidy 출력에서 줄 번호를 파싱해 `Evidence.location`을 �
 위 문단은 "`Evidence.location`을 채우면 `location_ok`가 열린다"로 읽히는데, **열려도 등급은
 그대로다.** `gate.py`의 술어가 `p1 = static_ok or location_ok`— **`or`**이기 때문이다.
 
-[542건 보고서](docs/experiments/2026-08-25-pipeline-zlib542-atom.md) §3 해석 ⑤의 실측:
+[542건 보고서](docs/experiments/harness/2026-08-25-pipeline-zlib542-atom.md) §3 해석 ⑤의 실측:
 
 | 집합 | `static_ok` | `location_ok`가 살아나면 |
 | --- | :-: | --- |
@@ -645,7 +645,7 @@ E4는 그것을 성립시킬 수 있는 유일한 단계에서 판정되지 못�
 |---|---|
 | 커밋된 manifest | `tests/fixtures/manifests/run_20260817_0004.json` **하나뿐**이고 `tool_runner: fake` + checksum 전부 자리표시자 |
 | 그 run이 이 경로를 탔는가 | **아니다.** `FakeModelClient`에는 재시도 루프 자체가 없다 |
-| 실모델 run | `docs/experiments/2026-08-18-serving-atom.md` §2가 산출물을 **"보존하지 않았다"**고 명시 — 재계산할 대상이 없다 |
+| 실모델 run | `docs/experiments/harness/2026-08-18-serving-atom.md` §2가 산출물을 **"보존하지 않았다"**고 명시 — 재계산할 대상이 없다 |
 
 → 그러므로 §10의 다른 항목들과 달리 **"이 시점 전후를 같은 표에 넣지 마라"가 아니다.**
 비교 가능하다. 다만 **앞으로 실서빙 run이 쌓이면 이 수정 이전 값은 존재하지 않는다**는
@@ -721,7 +721,7 @@ ATOM(GB10, sm_121)과 Seraph(A2000, sm_86)는 **둘 다 지원 대상이다** �
 않는다. 도구도 픽스처도 임계값도 이 때문에 고치지 않는다(D2).
 
 **2026-08-25 — 실대상 542건에서도 같다. 오히려 더 선명하다.**
-[542건 보고서](docs/experiments/2026-08-25-pipeline-zlib542-atom.md) §3 해석 ⑨에서
+[542건 보고서](docs/experiments/harness/2026-08-25-pipeline-zlib542-atom.md) §3 해석 ⑨에서
 `graph_ok` **55/55** · `path_ok` **55/55** · `upheld` **8/8** · `confidence` **0.6 고정** —
 **네 값이 전부 100%이거나 상수다.** Fake auditor가 항상 GRAPH Evidence를 붙이고
 SOURCE/PROPAGATE/SINK 3단계를 만들며 Fake Critic이 전부 uphold하기 때문이다.
@@ -765,7 +765,7 @@ SOURCE/PROPAGATE/SINK 3단계를 만들며 Fake Critic이 전부 uphold하기 �
 모델별로 점수 분포가 달라질 수 있어, 같은 임계값이 조건마다 다른 의미가 될 수 있다.
 
 **2026-08-25 — 분포를 처음 쟀고, 우려보다 나쁘다.**
-[542건 보고서](docs/experiments/2026-08-25-pipeline-zlib542-atom.md) §3 해석 ⑦: 실서빙
+[542건 보고서](docs/experiments/harness/2026-08-25-pipeline-zlib542-atom.md) §3 해석 ⑦: 실서빙
 Qwen3-4B가 zlib 심볼 **542건에 고유값 9개**만 쓰고 **71%(386건)가 정확히 `0.0`**이다.
 `0.45`와 `0.65` 사이가 **완전 공백**이라 **임계값을 그 안 어디에 두든 승격이 55건으로
 같다.** 즉 위 문단이 걱정한 것("모델별로 분포가 달라진다")보다 앞선 문제가 있다 —
@@ -778,6 +778,21 @@ Qwen3-4B가 zlib 심볼 **542건에 고유값 9개**만 쓰고 **71%(386건)가 
 루브릭 명시 또는 점수 결정론화 검토 필요. (D2와 함께 논의)
 
 ---
+
+### `trigger_status` 도입·필드 재배치(2026-08-29) 전/후 구조화 출력 지표를 직접 비교하지 않는다
+
+`Finding`에 필드를 하나 더하고 선언 순서를 바꾸면 `model_json_schema()`가 달라지고, 그
+스키마가 그대로 `response_format.json_schema.schema`로 서버에 실린다
+(`adapters/openai_compat._request_payload`). **구조화 출력 백엔드가 컴파일하는 문법이
+달라진다는 뜻이다.**
+
+그래서 [evaluation.md](docs/evaluation.md) §5.1의 **구조화 출력 실패율**을 이 변경 전후로
+직접 비교할 수 없다. 특히 D46(공백 폭주)이 **문법 의존**이라는 것이 실측으로 나와 있다 —
+같은 모델이 `run_20260827_0002`에서는 scout 64건을 전부 실패했는데 `run_20260827_0004`에서는
+critic 7/7을 성공했고, D46 본문이 그것을 "필연이 아니라 입력 의존"이라고 적었다.
+
+**막는 것은 비교뿐이고 측정 자체는 유효하다.** `RunRecord`가 `repo_commit`을 들고 있으므로
+어느 쪽 스키마로 돈 run인지는 사후에 갈린다.
 
 ## 11. 관련 문서
 

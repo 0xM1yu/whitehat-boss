@@ -18,7 +18,8 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import VOLATILE_FIELDS, EventKind, TraceWriter
-from src.schemas import Candidate, FindingState, Location, Role
+from src.schemas import Candidate, Decision, FindingState, Location, ProducedBy, Role, Verdict
+from src.schemas.finding import Finding
 from src.schemas.run import Budget
 
 RUN_ID = "run_20260901_0001"
@@ -120,6 +121,85 @@ def test_call_model_records_usage_and_charges_budget() -> None:
     assert call.data["cached_tokens"] == result.usage.cached_tokens
     assert ctx.ledger.input_tokens == result.usage.input_tokens
     assert models.calls == 1
+
+
+_BOGUS = ProducedBy(role=Role.SCOUT, model="wrong", prompt_version="v0")
+
+
+def _bogus_finding() -> Finding:
+    return Finding(
+        finding_id="find_0001",
+        run_id=RUN_ID,
+        candidate_id="cand_0001",
+        title="t",
+        cwe="CWE-787",
+        state=FindingState.HYPOTHESIZED,
+        confidence=0.5,
+        produced_by=_BOGUS,
+    )
+
+
+def _bogus_decision() -> Decision:
+    return Decision(
+        decision_id="dec_0001",
+        run_id=RUN_ID,
+        finding_id="find_0001",
+        verdict=Verdict.UPHOLD,
+        rationale="r",
+        produced_by=_BOGUS,
+    )
+
+
+class _BogusProducedByStub:
+    """`produced_by`에 **틀린 값**을 넣은 산출물을 낸다 — 실서빙 모델이 자기 role·model을
+    모른 채 그 필수 필드를 채우는 상황(윤경 지적)을 세운다."""
+
+    def __init__(self, value) -> None:  # noqa: ANN001
+        self._value = value
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+        return ModelResult(value=self._value, usage=_usage(), model="served-30b")
+
+
+@pytest.mark.parametrize(
+    "make_value", [_bogus_finding, _bogus_decision], ids=["finding", "decision"]
+)
+def test_call_model_stamps_produced_by_over_the_model_value(make_value) -> None:  # noqa: ANN001
+    """실서빙 모델이 `produced_by`에 아무 값이나 넣어도 하네스가 진실로 덮는다 (윤경 요청).
+
+    Fake는 이미 맞게 채우므로, 모델이 **틀린** `produced_by`(role=SCOUT·model=wrong)를 낸
+    경우를 세워 override를 본다. `model`은 `ModelResult.model`(실제 응답 모델)을 써야 한다.
+
+    **`produced_by`를 가진 스키마 둘을 다 돈다.** 코드 경로는 하나지만 그 사실이 여기 안
+    적혀 있으면 `Decision`이 덮이는지는 아무도 확인하지 않은 것이 된다.
+    """
+    value = make_value()
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _BogusProducedByStub(value)
+
+    result = ctx.call_model(
+        role=Role.AUDITOR, prompt=PROMPT, schema=type(value), stage=Stage.AUDITOR
+    )
+
+    pb = result.value.produced_by
+    assert pb.role is Role.AUDITOR  # 모델이 쓴 SCOUT이 아니라 호출 역할
+    assert pb.model == "served-30b"  # `ModelResult.model` — fallback까지 반영한 실제 응답 모델
+    assert pb.prompt_version == PROMPT.prompt_version
+
+
+def test_call_model_leaves_schemas_without_produced_by_alone() -> None:
+    """`produced_by`가 없는 스키마(`Candidate`)에는 그 필드를 붙이지 않는다.
+
+    **가드가 없어지면 조용히 틀린다.** pydantic 2.13.4에서 `produced_by` 없는 모델에
+    `model_copy(update=...)`를 하면 예외도 경고도 없고, `model_dump()`에도 안 나타난다 —
+    그런데 **객체에는 붙는다**. 그래서 덤프를 보는 단언은 회귀를 못 잡고 `hasattr`만 잡는다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+
+    result = ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    assert "produced_by" not in Candidate.model_fields  # 전제: 이 스키마에는 그 필드가 없다
+    assert not hasattr(result.value, "produced_by")
 
 
 def test_call_model_records_failure_and_reraises() -> None:

@@ -13,7 +13,16 @@
 | --- | --- |
 | `README.md` (이 문서) | 색인 · **확정된 사실** · **미확정 항목** |
 | [`TEMPLATE.md`](TEMPLATE.md) | 보고서 서식. 각 필드에 "없으면 무엇을 못 하는지"가 붙어 있다 |
-| `YYYY-MM-DD-<주제>-<장비>.md` | 보고서 원문 |
+| [`harness/`](harness/) | **하네스가 도는가**를 본 run. `YYYY-MM-DD-<주제>-<장비>.md` |
+| [`2x2/`](2x2/) | **그 하네스로 돌린 팀 실험.** 셀 설정과 셀별 보고서 |
+
+**둘을 가른 이유는 성격이 다르기 때문이다.** `harness/`는 배선이 붙었는지·단계가 도는지를
+보는 run이라 결함이 나오면 그게 소득이다. `2x2/`는 그 하네스를 도구로 쓴 측정이라 하네스가
+흔들리면 셀이 무효가 된다. 한 폴더에 섞여 있으면 "이 run이 무엇을 주장하는가"를 파일명으로
+못 가른다.
+
+**색인은 여기 하나다.** 어느 폴더에 있든 아래 표에 걸린다 —
+`test_every_experiment_report_is_in_the_index`가 `experiments/` 기준 상대경로로 대조한다.
 
 **확정된 사실은 이 README에만 있다.** 보고서는 그 시점의 관측이고, 이후 대조로 정정된
 것은 여기 표가 담는다. 사실이 두 곳에 살면 또 갈린다 — 이 폴더가 존재하는 이유가 그것이다.
@@ -22,16 +31,18 @@
 
 | 날짜 | 보고서 | 주제 | 장비 | 작성 |
 | --- | --- | --- | --- | --- |
-| 2026-08-18 | [서빙 · Docker · GPU 회계](2026-08-18-serving-atom.md) | vLLM 프로브, aarch64 이미지, fp8 기동, util 기준, 첫 실모델 완주, GPU-second 회계, ARM64 회귀 | `atom` | 조민규 |
-| 2026-08-18 | [검색 경로 실서빙](2026-08-18-retrieval-atom.md) | 하네스↔실모델 배선, embedding·reranker 실서빙, HybridRetriever 실경로 완주 | `atom` | 손수민 |
-| 2026-08-22 | [파이프라인 실서빙 완주](2026-08-22-pipeline-atom.md) | scout 실모델 완주, 캡슐 그래프 섹션·게이트 등급 관측, `cli run` 경로의 prefix cache 장부 | `atom` | 조민규 |
-| 2026-08-23 | [심볼 단위 후보로 zlib 완주](2026-08-23-pipeline-zlib-atom.md) | W2 심볼 target 실저장소 검증, (a′) 정렬, `candidate_max` 절단 기록, 7단계 선별 사슬(D26) | `atom` | 조민규 |
-| 2026-08-25 | [심볼 542건 전량 완주](2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | 조민규 |
-| 2026-08-25 | [NVFP4 실서빙 검증](2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | 조민규 |
-| 2026-08-26 | [배선 수정 후 재측정](2026-08-26-pipeline-zlib542-remeasure-atom.md) | 8단계 `gate_eval` 첫 8건(D26 닫힘), 원인은 build `-I` 누락, `critic_skipped` 첫 관측, 실 토크나이저 무동작 판정 | `atom` | 조민규 |
-| 2026-08-28 | [track_a PWN-003 첫 완주](2026-08-28-pipeline-track-a-pwn003-atom.md) | b1_single 첫 완주, track_a 데이터셋 첫 투입, 정답 대조 불합격, 공백 폭주와 xgrammar 해소, 30B `util 0.28` 실측 | `atom` | 조민규 |
-| 2026-08-28 | [2×2 B1′ 첫 완주 (PR #36 검증)](2026-08-28-2x2-b1prime-qwen3-8b-atom.md) | PR #36 프로필 4/4 doctor 통과, 8B bf16이 KV cache 13.82 GiB로 10분 03초 완주, `output_max` 인과는 미성립(30B가 그 키 없이 완주), 정답 대조 불합격 | `atom` | 조민규 |
-| 2026-08-28 | [run A 하네스 검증](2026-08-28-runA-harness-validation-atom.md) | D44·D45 성립 확인, `output_max 8192`의 피해 셋(폭주 미차단·gold 함수 400 탈락·실패 시간), gold 3함수 중 2건이 Finding, 재시도가 응답 원문을 되싣는 결함(D47) | `atom` | 조민규 |
+| 2026-08-18 | [서빙 · Docker · GPU 회계](harness/2026-08-18-serving-atom.md) | vLLM 프로브, aarch64 이미지, fp8 기동, util 기준, 첫 실모델 완주, GPU-second 회계, ARM64 회귀 | `atom` | 조민규 |
+| 2026-08-18 | [검색 경로 실서빙](harness/2026-08-18-retrieval-atom.md) | 하네스↔실모델 배선, embedding·reranker 실서빙, HybridRetriever 실경로 완주 | `atom` | 손수민 |
+| 2026-08-22 | [파이프라인 실서빙 완주](harness/2026-08-22-pipeline-atom.md) | scout 실모델 완주, 캡슐 그래프 섹션·게이트 등급 관측, `cli run` 경로의 prefix cache 장부 | `atom` | 조민규 |
+| 2026-08-23 | [심볼 단위 후보로 zlib 완주](harness/2026-08-23-pipeline-zlib-atom.md) | W2 심볼 target 실저장소 검증, (a′) 정렬, `candidate_max` 절단 기록, 7단계 선별 사슬(D26) | `atom` | 조민규 |
+| 2026-08-25 | [심볼 542건 전량 완주](harness/2026-08-25-pipeline-zlib542-atom.md) | `candidate_max` 전량 실행, 후보당 비용 실측, D26 원인 재규정, Scout 점수 분포 | `atom` | 조민규 |
+| 2026-08-25 | [NVFP4 실서빙 검증](harness/2026-08-25-serving-nvfp4-atom.md) | NVFP4 2종 sm_121 기동, MoE 구조화 출력, 30B bench, D21 4-1 첫 실현, R6 대체 경로 | `atom` | 조민규 |
+| 2026-08-26 | [배선 수정 후 재측정](harness/2026-08-26-pipeline-zlib542-remeasure-atom.md) | 8단계 `gate_eval` 첫 8건(D26 닫힘), 원인은 build `-I` 누락, `critic_skipped` 첫 관측, 실 토크나이저 무동작 판정 | `atom` | 조민규 |
+| 2026-08-28 | [track_a PWN-003 첫 완주](harness/2026-08-28-pipeline-track-a-pwn003-atom.md) | b1_single 첫 완주, track_a 데이터셋 첫 투입, 정답 대조 불합격, 공백 폭주와 xgrammar 해소, 30B `util 0.28` 실측 | `atom` | 조민규 |
+| 2026-08-28 | [2×2 B1′ 첫 완주 (PR #36 검증)](harness/2026-08-28-2x2-b1prime-qwen3-8b-atom.md) | PR #36 프로필 4/4 doctor 통과, 8B bf16이 KV cache 13.82 GiB로 10분 03초 완주, `output_max` 인과는 미성립(30B가 그 키 없이 완주), 정답 대조 불합격 | `atom` | 조민규 |
+| 2026-08-28 | [run A 하네스 검증](harness/2026-08-28-runA-harness-validation-atom.md) | D44·D45 성립 확인, `output_max 8192`의 피해 셋(폭주 미차단·gold 함수 400 탈락·실패 시간), gold 3함수 중 2건이 Finding, 재시도가 응답 원문을 되싣는 결함(D47) | `atom` | 조민규 |
+| 2026-08-28 | [토크나이저 정확도 Prove](harness/2026-08-28-tokenizer-prove-atom.md) | 실 토크나이저 vs 서버 `input_tokens` **오차 0**(+13 상수)·옛 `len//4` ≈1.6x 과소(D21 4단계 Prove), `run_20260827_0004` 재분석, `critic_top_n` 의제 | `atom` | 손수민 |
+| 2026-08-29 | [프롬프트 v2 스모크와 v1 대조](harness/2026-08-29-prompt-v2-smoke-atom.md) | D52 닫힘(v1 `null` ×6 대 v2 `triggerable` ×6 + 프로브 음성 대조), 7단계 critic 첫 진입(v1은 Finding 6건 전부 `E0`), 폭주가 run 시간의 60.7%를 순손실로 먹는다, D47 닫힘(400 0건), 스키마 필드 순서 위반 0건, `fail 0`인 run에도 폭주가 있다(D55) | `atom` | 조민규 |
 
 ## 파일 이름
 
@@ -82,15 +93,15 @@
 
 | 언제 | 무엇을 잃었나 |
 | --- | --- |
-| 2026-08-18 | `bench` stdout — 측정 기록이 재구성본이 됐다([서빙 보고서](2026-08-18-serving-atom.md) §7 미측정 표) |
-| 2026-08-22 | `cli bench` stdout JSON — 그 run이 보고서에서 통째로 빠졌다([파이프라인 보고서](2026-08-22-pipeline-atom.md)) |
-| 2026-08-23 | vLLM 서버 stdout — `Prefix cache hit rate`가 유실됐다. 장부 `cached_tokens 0`의 **대조값이 없어 R6이 이 run으로는 안 움직인다**([zlib 보고서](2026-08-23-pipeline-zlib-atom.md) §4 해석 ⑦) |
+| 2026-08-18 | `bench` stdout — 측정 기록이 재구성본이 됐다([서빙 보고서](harness/2026-08-18-serving-atom.md) §7 미측정 표) |
+| 2026-08-22 | `cli bench` stdout JSON — 그 run이 보고서에서 통째로 빠졌다([파이프라인 보고서](harness/2026-08-22-pipeline-atom.md)) |
+| 2026-08-23 | vLLM 서버 stdout — `Prefix cache hit rate`가 유실됐다. 장부 `cached_tokens 0`의 **대조값이 없어 R6이 이 run으로는 안 움직인다**([zlib 보고서](harness/2026-08-23-pipeline-zlib-atom.md) §4 해석 ⑦) |
 
 **[TEMPLATE.md](TEMPLATE.md)에 "원문 산출물 보존 위치" 필드가 이미 있었는데 세 번 다
 안 지켜졌다.** 필드는 보고서를 쓰는 시점에 읽히고 사고는 서버를 띄우는 시점에 난다 —
 **적어 두는 자리와 지켜야 하는 자리가 다르다.** 그래서 규약을 여기 둔다.
 
-**2026-08-25에 처음 보존됐다.** [542건 보고서](2026-08-25-pipeline-zlib542-atom.md)의
+**2026-08-25에 처음 보존됐다.** [542건 보고서](harness/2026-08-25-pipeline-zlib542-atom.md)의
 `run_20260825_0001/serve_20260825_125430.log`가 그것이고, 같은 run에서 8/23이 잃었던
 `Prefix cache hit rate: 30.5%`가 실제로 남아 R6에 첫 대조값이 생겼다.
 
@@ -143,13 +154,13 @@ setsid nohup <서버 기동 명령> > "$LOG" 2>&1 &
 ### #1 실모델 파이프라인 첫 완주는 서빙 쪽이다
 
 **민규가 약 18시간 먼저다** — 2026-08-18 00:30경 KST vs 같은 날 저녁.
-[검색 보고서](2026-08-18-retrieval-atom.md) §1의 "실모델 파이프라인 첫 완주"는
+[검색 보고서](harness/2026-08-18-retrieval-atom.md) §1의 "실모델 파이프라인 첫 완주"는
 **"검색 경로를 포함한 실모델 완주가 처음"**이 정확한 주장이다. 그 완주 자체는 사실이고,
 성립 범위만 좁아진다.
 
 | 근거 | |
 | --- | --- |
-| 서빙 쪽 시각 | `bench`의 `measured_at: 2026-08-17T15:16:27Z` = **2026-08-18 00:16:27 KST** ([서빙 보고서](2026-08-18-serving-atom.md) §7.2) |
+| 서빙 쪽 시각 | `bench`의 `measured_at: 2026-08-17T15:16:27Z` = **2026-08-18 00:16:27 KST** ([서빙 보고서](harness/2026-08-18-serving-atom.md) §7.2) |
 | 검색 쪽 시각 | "2026-08-18 저녁" — **분 단위 미기재** |
 | 00:30이라는 값 | 대조 시 확정. **원 보고서에 분 단위 종료 시각이 없다** — [TEMPLATE.md](TEMPLATE.md) 첫 필드가 생긴 계기다 |
 
@@ -160,9 +171,9 @@ setsid nohup <서버 기동 명령> > "$LOG" 2>&1 &
 
 | run | 서빙 모델 (실제) | revision | 실서빙 대상 | Finding |
 | --- | --- | --- | :-: | :-: |
-| [서빙](2026-08-18-serving-atom.md) §8.2 | `Qwen3-4B-Instruct-2507-FP8` | `8591804019c8…` | scout | **1** |
-| [검색](2026-08-18-retrieval-atom.md) §3.3 | `Qwen3-0.6B` (bf16) — 별칭이 `qwen3-4b`였다 | `c1899de289a0…` | scout | **0** |
-| [검색](2026-08-18-retrieval-atom.md) §4.4 | `Qwen3-Embedding-0.6B` + `Qwen3-Reranker-0.6B` | `97b0c614be4d…` · `e61197ed4502…` | retriever (scout는 Fake) | **1** |
+| [서빙](harness/2026-08-18-serving-atom.md) §8.2 | `Qwen3-4B-Instruct-2507-FP8` | `8591804019c8…` | scout | **1** |
+| [검색](harness/2026-08-18-retrieval-atom.md) §3.3 | `Qwen3-0.6B` (bf16) — 별칭이 `qwen3-4b`였다 | `c1899de289a0…` | scout | **0** |
+| [검색](harness/2026-08-18-retrieval-atom.md) §4.4 | `Qwen3-Embedding-0.6B` + `Qwen3-Reranker-0.6B` | `97b0c614be4d…` · `e61197ed4502…` | retriever (scout는 Fake) | **1** |
 
 **오독의 원인은 보고서에 실제 모델과 revision이 없었다는 것이다.** `--served-model-name`은
 별명이라 근거가 못 된다 — 0.6B를 `qwen3-4b`라는 이름으로 서빙한 기록이 4B의 결과로 읽혔다.
@@ -175,12 +186,12 @@ setsid nohup <서버 기동 명령> > "$LOG" 2>&1 &
 
 | # | 조건 | 언제 필요한가 | 근거 |
 | :-: | --- | --- | --- |
-| ① | `CPATH=$HOME/pyhdr/...` | **항상** — Triton이 실행 시점에 `Python.h`를 참조한다 | [서빙](2026-08-18-serving-atom.md) §2.3a, [검색](2026-08-18-retrieval-atom.md) §2.2 |
-| ② | `VLLM_ATTENTION_BACKEND=TORCH_SDPA` | **flashinfer가 선택될 때** — 그 커널 JIT에 nvcc가 필요한데 권한 밖이다 | [검색](2026-08-18-retrieval-atom.md) §5 |
-| ③ | `VLLM_USE_DEEP_GEMM=0` | **fp8 양자화 모델일 때** — DeepGEMM이 scale-factor 레이아웃을 변환 못 한다 | [서빙](2026-08-18-serving-atom.md) §5.2~5.3 |
+| ① | `CPATH=$HOME/pyhdr/...` | **항상** — Triton이 실행 시점에 `Python.h`를 참조한다 | [서빙](harness/2026-08-18-serving-atom.md) §2.3a, [검색](harness/2026-08-18-retrieval-atom.md) §2.2 |
+| ② | `VLLM_ATTENTION_BACKEND=TORCH_SDPA` | **flashinfer가 선택될 때** — 그 커널 JIT에 nvcc가 필요한데 권한 밖이다 | [검색](harness/2026-08-18-retrieval-atom.md) §5 |
+| ③ | `VLLM_USE_DEEP_GEMM=0` | **fp8 양자화 모델일 때** — DeepGEMM이 scale-factor 레이아웃을 변환 못 한다 | [서빙](harness/2026-08-18-serving-atom.md) §5.2~5.3 |
 
 > **2026-08-25 — ②가 왜 안 걸렸는지가 처음으로 로그에 직접 나왔다.**
-> [542건 보고서](2026-08-25-pipeline-zlib542-atom.md)의 기동 로그가
+> [542건 보고서](harness/2026-08-25-pipeline-zlib542-atom.md)의 기동 로그가
 > `Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN',
 > 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION']`이다 — **flashinfer가 후보에 있었는데
 > 선택되지 않았다.** ②의 발동 조건이 "flashinfer가 선택될 때"이므로 이 run에서는
@@ -190,7 +201,7 @@ setsid nohup <서버 기동 명령> > "$LOG" 2>&1 &
 > 봤고(미확정 #2), 왜 없어도 됐는지는 추론이었다. 이번엔 **선택된 백엔드 이름 자체**가 로그에
 > 있다. → **fp8 4B + vLLM 0.27.1 + sm_121 조합에서 ②는 필요 없다.** bf16 0.6B는 여전히 모른다.
 
-**`--enforce-eager`는 필수가 아니다.** [서빙 보고서](2026-08-18-serving-atom.md) §5.3의
+**`--enforce-eager`는 필수가 아니다.** [서빙 보고서](harness/2026-08-18-serving-atom.md) §5.3의
 기동 로그가 `--enforce-eager` 없이 나왔고, torch.compile이 19.60초 수행되고 CUDA graph
 35개가 잡혔다. 검색 쪽이 그것을 쓴 것은 틀린 것이 아니라 **①을 우회하는 다른 방법**을
 함께 적은 것이다(torch.compile을 안 하면 헤더도 필요 없다).
@@ -285,9 +296,9 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 
 | run | 보고서 | `tool_call` |
 | --- | --- | --- |
-| `run_20260821_0004` | [2026-08-22](2026-08-22-pipeline-atom.md) | 9건 |
-| `run_20260823_0002` | [2026-08-23](2026-08-23-pipeline-zlib-atom.md) | 238건 |
-| `run_20260825_0001` | [2026-08-25](2026-08-25-pipeline-zlib542-atom.md) | 238건 |
+| `run_20260821_0004` | [2026-08-22](harness/2026-08-22-pipeline-atom.md) | 9건 |
+| `run_20260823_0002` | [2026-08-23](harness/2026-08-23-pipeline-zlib-atom.md) | 238건 |
+| `run_20260825_0001` | [2026-08-25](harness/2026-08-25-pipeline-zlib542-atom.md) | 238건 |
 
 **두 런타임이 서로 다른 값을 낸다는 것도 기록에 있다.** portability.md §5 #4의 digest 표가
 같은 `harness-tools:v1`에 대해 podman/aarch64 **RepoDigest** `sha256:3a63ba2e…`를 적었는데,
@@ -322,7 +333,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 
 | 근거 | |
 | --- | --- |
-| 기동 로그 | `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` · `arch=sm121` ([NVFP4 보고서](2026-08-25-serving-nvfp4-atom.md) §3·§4) |
+| 기동 로그 | `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` · `arch=sm121` ([NVFP4 보고서](harness/2026-08-25-serving-nvfp4-atom.md) §3·§4) |
 | 3개 중 몇 개를 쟀나 | **2개.** `qwen3-8b`·`qwen3-coder-30b-a3b` |
 | 남은 1개 | **`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지 |
 
@@ -332,14 +343,35 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 
 | 모델 | 양자화 | `kv_cache_dtype` | 근거 |
 | --- | --- | --- | --- |
-| `qwen3-4b` | `fp8` | **bf16** | [542건 보고서](2026-08-25-pipeline-zlib542-atom.md) |
-| `qwen3-8b` | `nvfp4` | **fp8_e4m3** | [NVFP4 보고서](2026-08-25-serving-nvfp4-atom.md) §3 |
+| `qwen3-4b` | `fp8` | **bf16** | [542건 보고서](harness/2026-08-25-pipeline-zlib542-atom.md) |
+| `qwen3-8b` | `nvfp4` | **fp8_e4m3** | [NVFP4 보고서](harness/2026-08-25-serving-nvfp4-atom.md) §3 |
 | `qwen3-coder-30b-a3b` | `nvfp4` | **fp8_e4m3** | 같은 보고서 §4 |
 
 **서버가 체크포인트를 보고 자동으로 정한다.** 하네스가 고르지도 기록하지도 않으므로
 `RunRecord`에 남지 않는다 — `top_k` 미기록([open-questions](../open-questions.md) D29)·
 컴파일 플래그(D32)와 같은 종류의 교란변수다. 두 보고서의 메모리·품질 수치를 나란히 놓을
 때 이 행을 먼저 본다.
+
+### #9 구조화 출력 스키마에 자리를 내는 것만으로는 그 필드가 안 나온다 — 프롬프트가 시켜야 나온다
+
+**2026-08-29 확정.** [v2 스모크 보고서](harness/2026-08-29-prompt-v2-smoke-atom.md) §3·§6.
+같은 서버 프로세스(pid 3663640)에서 세 관측이 한 방향을 가리킨다.
+
+| 조건 | `trigger_status` | 근거 |
+| --- | :-: | --- |
+| v1 프롬프트 (run B) | `null` ×6 | 스키마에 필드가 있고 프롬프트가 안 묻는다 |
+| v2 프롬프트 (v2 스모크) | `triggerable` ×6 | `prompts/auditor/v2/prefix.md` 36~42행이 다섯 값을 정의한다 |
+| **프롬프트 없이 스키마만** (서버 직접 프로브) | **안 냈다** | `strict: true`인데도 선언된 optional 4개를 다 안 냈다 |
+
+**프로브가 이 확정의 핵심이다.** 낸 10개가 required 8 + optional 2이고 안 낸 넷은 전부
+default를 가진 optional이다 — `strict`가 required를 어긴 것이 아니라 **모델이 optional을
+프롬프트 없이는 안 낸다.**
+
+**왜 규약으로 올리는가**: 스키마에 필드를 넣고 채움률을 재면 0이 나오는데, 그 0을 "모델이
+못 낸다"로 읽는 오독이 [open-questions.md](../open-questions.md) D52를 열게 한 사건이었다.
+**필드를 신설할 때 프롬프트와 스키마를 같은 PR에 넣는다** — PR #53(스키마)과 #54(프롬프트)가
+갈려서 그 사이에 도는 run이 전부 `null`이었다. 지금은 `config/models.yaml`이 v2를 안 골라
+같은 상태가 이어지고 있다(D54).
 
 ## 미확정
 
@@ -354,7 +386,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 **확정 방법**: 다음 서빙 때 util 0.2로 띄운 상태에서
 `/sys/fs/cgroup/user.slice/user-1004.slice/memory.current`를 읽는다.
 **24 GiB 근처면 계상, 4~5 GiB면 미계상이다.**
-([검색 보고서](2026-08-18-retrieval-atom.md) §6의 "단계별 서빙 34 GiB 실측"이 이 측정이다.)
+([검색 보고서](harness/2026-08-18-retrieval-atom.md) §6의 "단계별 서빙 34 GiB 실측"이 이 측정이다.)
 
 > **2026-08-28 해소 — 미계상이다.** util **0.28**로 30B를 띄운 채 읽었다:
 > `memory.current` **13,790,609,408 = 12.84 GiB** · `memory.high` **`max`** ·
@@ -367,7 +399,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 > 34 GiB 약속을 지키는 수단은 `--gpu-memory-utilization` 값 자체뿐이고, 확정 #4의
 > "cgroup과 다른 축"이라는 서술이 실측으로 확인됐다.
 > **남는 것**: 12.84 GiB의 구성(어느 프로세스 몫인지)과 추론 **중**의 값은 안 쟀다.
-> 근거는 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §2에 있다.
+> 근거는 [track_a 보고서](harness/2026-08-28-pipeline-track-a-pwn003-atom.md) §2에 있다.
 
 ### #2 세 기동 조건을 한 조합으로 통합할 수 있는가
 
@@ -379,7 +411,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 `--enforce-eager` 없이도 뜨는 것**이다.
 
 > **2026-08-22 — 좁혀진 것은 "②가 필수인가"이지 "셋을 합칠 수 있는가"가 아니다.**
-> [파이프라인 보고서](2026-08-22-pipeline-atom.md) 검증 run(`run_20260821_0007`)의 서버
+> [파이프라인 보고서](harness/2026-08-22-pipeline-atom.md) 검증 run(`run_20260821_0007`)의 서버
 > 프로세스에서 `/proc/<pid>/environ`을 읽었더니 **`CPATH`와 `VLLM_USE_DEEP_GEMM=0`은
 > 있고 `VLLM_ATTENTION_BACKEND`는 없었다.** 그 상태로 fp8 4B가 `--enforce-eager` 없이
 > 떴고 파이프라인이 완주했다(argv: `--gpu-memory-utilization 0.2 --max-model-len 32768
@@ -410,8 +442,8 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 `~/.cache/huggingface/hub/models--Qwen--*/refs/main`과 스냅샷 디렉터리 이름이 일치했다.
 
 **이 대조는 run에 묶여 있지 않다.** 검색 보고서는 원문 산출물도 §3 scout 기동 명령도
-남기지 않아서([검색](2026-08-18-retrieval-atom.md) 「메타」 표 · §10),
-[파이프라인](2026-08-22-pipeline-atom.md) 메타 표가 한 것처럼 기동 로그의 `model_tag`로
+남기지 않아서([검색](harness/2026-08-18-retrieval-atom.md) 「메타」 표 · §10),
+[파이프라인](harness/2026-08-22-pipeline-atom.md) 메타 표가 한 것처럼 기동 로그의 `model_tag`로
 짚을 수가 없다. 캐시가 실험 뒤에 다시 받아진 것이라면 08-18에 서빙된 revision이 같다는
 보장이 이 대조만으로는 안 나온다.
 
@@ -434,19 +466,19 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 **확정 방법**: 둘 중 하나를 고른다 — (a) ADR 0005의 범위를 `fake` → 실런타임 승격까지
 넓힌다, (b) 프로필 선언을 고친다. **`config/` 변경이라 이 PR의 범위 밖이고 별도 PR이다.**
 
-> **2026-08-22 — 두 번째 사례.** [파이프라인 보고서](2026-08-22-pipeline-atom.md)의 run도
+> **2026-08-22 — 두 번째 사례.** [파이프라인 보고서](harness/2026-08-22-pipeline-atom.md)의 run도
 > 같은 프로필에 `--tool-runner docker`를 붙여야 했다. 사례가 하나였을 때는 검색 실험
 > 쪽의 우연으로 읽을 여지가 있었지만, **다른 사람이 다른 목적으로 같은 벽에 부딪혔다.**
 > 이 프로필로 도구를 돌리는 것이 예외가 아니라 통상 사용법이라는 뜻이다.
 
-> **2026-08-23 — 세 번째 사례.** [zlib 보고서](2026-08-23-pipeline-zlib-atom.md)의 run
+> **2026-08-23 — 세 번째 사례.** [zlib 보고서](harness/2026-08-23-pipeline-zlib-atom.md)의 run
 > 둘도 같다. **세 번 다 오버라이드 없이는 실험이 성립하지 않았다** — `single_gpu_12g`로
 > 도구를 안 돌리는 run이 아직 하나도 없다. 이 항목이 "확정 방법 둘 중 하나"로 열려 있는
 > 동안 `RunRecord.tool_runner`에는 계속 선언값과 다른 값이 박힌다(ADR 0005의 의도대로
 > 기록은 남지만, 남는 이유가 매번 같다).
 
 > **2026-08-25 — 네 번째 사례, 그리고 (b)의 선택지가 늘었다.**
-> [542건 보고서](2026-08-25-pipeline-zlib542-atom.md)의 `run_20260825_0001`도 같은 프로필에
+> [542건 보고서](harness/2026-08-25-pipeline-zlib542-atom.md)의 `run_20260825_0001`도 같은 프로필에
 > `--tool-runner docker`를 붙였다. **네 번 연속이고, 이 프로필로 도구를 안 돌린 run은 여전히
 > 0건이다.** 사례가 더 쌓여도 판정이 바뀌지 않는다는 뜻이라, 이 항목은 이제 "관측이 부족해서"
 > 열려 있는 것이 아니라 **아무도 (a)/(b)를 고르지 않아서** 열려 있다.

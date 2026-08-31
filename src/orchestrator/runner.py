@@ -116,7 +116,7 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
-from src.schemas.run import RunRecord
+from src.schemas.run import ModelSampling, RunRecord
 from src.tokens import using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
@@ -496,7 +496,7 @@ def run_pipeline(
 
     artifacts = preprocess.run(ctx, source_root=spec.target)
     record, warnings = _new_record(
-        spec, config, ctx.run_id, started_at, artifacts, deps.tool_images
+        spec, config, ctx.run_id, started_at, artifacts, deps.tool_images, deps.model_sampling
     )
     ctx.record = record
     ctx.store.put(record)
@@ -809,6 +809,20 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
 
 
+@dataclass
+class _Reached:
+    """target 하나가 어느 단계까지 갔는지 (D48).
+
+    **가변인 것이 목적이다.** `_triage_one`이 예외로 빠져나가면 반환값이 없으므로,
+    "어디까지 갔는가"를 돌려줄 길이 이것뿐이다. 호출자가 만들어 넘기고 호출자가 읽는다.
+
+    기본값이 `RETRIEVAL`인 이유는 `_triage_one`의 첫 모델 호출이 3단계 캡슐 조립이기
+    때문이다 — 그전에 죽으면(예: 인덱스 조회) 3이 맞고, 0으로 두면 없는 단계를 적는다.
+    """
+
+    stage: Stage = Stage.RETRIEVAL
+
+
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
     """target을 차례로 태운다. **후보 하나의 실패로 run을 잃지 않는다.**
 
@@ -831,8 +845,13 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
     """
     consecutive = 0
     for target in plan.targets:
+        # 이번 target이 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (D48). 예외는
+        # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
+        # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
+        # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
+        reached = _Reached()
         try:
-            _triage_one(ctx, target, state, last)
+            _triage_one(ctx, target, state, last, reached)
         except ModelGatewayError as exc:
             if not _is_droppable(exc):
                 # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
@@ -845,10 +864,19 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
             # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
             systematic = exc.status not in _SIZE_STATUS
             consecutive = _drop(
-                ctx, state, target, _REASON_GATEWAY, exc, consecutive, systematic=systematic
+                ctx,
+                state,
+                target,
+                _REASON_GATEWAY,
+                exc,
+                consecutive,
+                stage=reached.stage,
+                systematic=systematic,
             )
         except SchemaParseError as exc:
-            consecutive = _drop(ctx, state, target, _REASON_SCHEMA, exc, consecutive)
+            consecutive = _drop(
+                ctx, state, target, _REASON_SCHEMA, exc, consecutive, stage=reached.stage
+            )
         else:
             # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
             consecutive = 0
@@ -862,6 +890,7 @@ def _drop(
     exc: Exception,
     consecutive: int,
     *,
+    stage: Stage,
     systematic: bool = True,
 ) -> int:
     """target 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
@@ -869,10 +898,14 @@ def _drop(
     `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
     (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
     않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+
+    **`stage`는 호출자가 준다 (D48).** 예전에는 여기서 `Stage.SCOUT`으로 박았는데,
+    `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 기록은 4가 됐다.
+    `run_20260828_0002`의 `target_skipped` 3건이 전부 그랬다 — 실패한 `model_call`은
+    셋 다 5단계 auditor인데 skip 기록은 4다. `_emit_skipped`가 자기 docstring에
+    "**`stage`가 곧 어디서 잘렸는가다**"라고 적어 뒀고, 박아 둔 값은 그 문장을 못 지킨다.
     """
-    _emit_skipped(
-        ctx, target.location, stage=Stage.SCOUT, reason=reason, detail=error_detail(exc)
-    )
+    _emit_skipped(ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc))
     state.dropped += 1
     if not systematic:
         return consecutive
@@ -935,8 +968,20 @@ def _emit_skipped(
     적었다 — 점수를 지어내야 하고 그 값이 Scout 점수 분포(D2의 입력)에 섞인다.
 
     **`stage`가 곧 어디서 잘렸는가다.** 예산 절단은 2단계 뒤 계획 시점이고 후보 단위
-    실패는 4단계다 — 둘을 한 값으로 적으면 예산에 잘린 target이 "4단계에 들어갔다가
-    죽었다"로 읽힌다. `reason`과 중복이 아니라 서로를 검증한다.
+    실패는 그 target이 실제로 죽은 노드다 — 둘을 한 값으로 적으면 예산에 잘린 target이
+    "4단계에 들어갔다가 죽었다"로 읽힌다. `reason`과 중복이 아니라 서로를 검증한다.
+
+    **후보 단위 실패가 4로 고정이 아니게 된 것은 D48부터다.** `_drop`이 `Stage.SCOUT`을
+    박고 있었는데 `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 4로
+    남았다. 지금은 `_Reached`가 실제 단계를 들고 오므로 3~6이 나올 수 있다 — 3은 **LIGHT**
+    캡슐 조립(실서빙 retriever에서만), 4는 scout, 5는 **EXPANDED 캡슐 조립 또는** auditor,
+    6은 게이트다.
+
+    **5가 그 둘을 겹치는 것은 카운터 경계를 따라간 결과다.** `_triage_one`이 `reached.stage`를
+    EXPANDED 조립 **앞에서** 올리는데, 그 조립이 이미 auditor 카운터 안에서 도는 자리이기
+    때문이다(그 자리 `using_counter` 주석). 갈라야 할 때는 그 target에 auditor `model_call`이
+    있는지 본다 — 없으면 조립에서 죽은 것이다. 자동 채점이 5를 "auditor 모델 실패"로 세면
+    조립 실패가 그 분자에 섞인다.
 
     **`error_detail`은 있을 때만 싣는다.** 예산 절단에는 상세가 없고, 그 자리에 빈
     문자열을 넣으면 "상세가 비어 있었다"와 "상세라는 개념이 없다"가 같은 모양이 된다.
@@ -952,8 +997,14 @@ def _emit_skipped(
     )
 
 
-def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int) -> None:
-    """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다."""
+def _triage_one(
+    ctx: RunContext, target: _Target, state: _Accumulator, last: int, reached: _Reached
+) -> None:
+    """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다.
+
+    **`reached.stage`를 노드에 들어가기 직전에 올린다 (D48).** 끝난 뒤에 올리면 그
+    노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
+    """
     location, artifact, evidences = target.location, target.artifact, target.evidences
     if last < Stage.RETRIEVAL:
         return
@@ -964,6 +1015,7 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
         capsule = retrieval.run(ctx, target=location, level=CapsuleLevel.LIGHT)
     if last < Stage.SCOUT:
         return
+    reached.stage = Stage.SCOUT
     candidate = scout.run(ctx, artifact=artifact, capsule=capsule, evidences=evidences)
     state.candidates.append(candidate)
     if candidate.state is not FindingState.TRIAGED or last < Stage.AUDITOR:
@@ -971,6 +1023,7 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
     # auditor는 EXPANDED 캡슐을 보므로 auditor 카운터로 켠다. 역할마다 모델(=토크나이저)이
     # 다를 수 있어 scout와 따로 감싼다 — 조립과 `CapsuleSection` 검증이 같은 카운터를 봐야
     # 한다(`src/tokens.py` docstring).
+    reached.stage = Stage.AUDITOR
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=location, level=CapsuleLevel.EXPANDED)
     finding, missings = auditor.run(ctx, candidate=candidate, capsule=expanded, evidences=evidences)
@@ -980,6 +1033,7 @@ def _triage_one(ctx: RunContext, target: _Target, state: _Accumulator, last: int
     state.workdirs[finding.finding_id] = artifact.path
     if last < Stage.GATE:
         return
+    reached.stage = Stage.GATE
     graded, _ = gate_node.run(
         ctx,
         finding=finding,
@@ -997,6 +1051,7 @@ def _new_record(
     started_at: datetime,
     artifacts: list[Artifact],
     tool_images: dict[str, str],
+    model_sampling: dict[str, ModelSampling],
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -1025,7 +1080,13 @@ def _new_record(
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
         seed=config.seed,
+        # 하네스가 **보낸** 샘플링.
         sampling=config.sampling,
+        # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (D29). 서버가
+        # 모델 파일에서 적용하는 `top_k` 등을 하네스는 안 보내므로 이 필드로만 기록에 남는다.
+        # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
+        # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.
+        model_sampling=model_sampling,
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
