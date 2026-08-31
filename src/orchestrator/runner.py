@@ -1,7 +1,15 @@
 """순차 러너 — 단계 0~9를 잇는다 (ADR 0002, engineering-guide.md §1).
 
-**v1은 순차다.** 큐를 스레드로 돌리지 않는다. 그렇게 하려면 StateStore·FakeModelClient·
-TraceWriter·BudgetLedger의 전제를 함께 풀어야 한다(`queue.py` docstring).
+**v1은 순차다.** 큐를 스레드로 돌리지 않는다. 그렇게 하려면 S1이 남긴 전제 셋을 함께
+풀어야 한다(계획 §5.1):
+
+1. `StateStore` 두 구현에 락이 없고 `sqlite3.connect(check_same_thread=True)` 기본값이다
+2. `FakeModelClient._seen_prefixes`가 보호되지 않아 캐시 적중률이 실행마다 달라진다
+3. `TraceWriter.seq`·`BudgetLedger` 누산에 락이 없어 순번과 비용이 뒤섞인다
+
+셋을 함께 풀지 않으면 조용히 깨지는 대신 즉시 실패하도록 지금 상태를 유지한다.
+**이 목록은 D25로 삭제된 `queue.py` 모듈 docstring이 들고 있던 것을 옮겨 온 것이다** —
+그 파일이 사라지면서 근거가 저장소에서 없어질 뻔했다.
 
 `src/adapters/`를 import 하지 않는다. 어댑터 조립은 `src/cli.py`가 하고, 러너는 아래
 `Dependencies` Protocol과 `read_source` 콜러블만 받는다 — 그래야 "구현체 교체가 설정만으로
