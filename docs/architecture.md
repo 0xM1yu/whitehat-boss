@@ -6,7 +6,7 @@
 2. **역할은 서비스가 아니라 실행 계약**: 에이전트마다 프로세스를 띄우지 않는다. 하나의 프로세스 안에서 `role + model_profile + tool_policy + token_budget + output_schema` 조합으로 실행된다. → [agent-contracts.md](agent-contracts.md)
 3. **비싼 단계일수록 뒤에**: 후보는 단계마다 줄어들고, 모델은 뒤로 갈수록 커진다. 각 단계는 통과율(제거율)을 기록한다.
 4. **에이전트 간에는 대화가 아니라 구조체만 전달**: 다른 에이전트의 장문 추론을 프롬프트에 넣지 않는다.
-5. **처음부터 분산 시스템을 만들지 않는다**: 단일 Python 서비스 + SQLite/DuckDB + 로컬 artifact 디렉터리 + Docker sandbox + bounded in-process queue.
+5. **처음부터 분산 시스템을 만들지 않는다**: 단일 Python 서비스 + SQLite/DuckDB + 로컬 artifact 디렉터리 + Docker sandbox. (~~bounded in-process queue~~ — D25로 2026-08-31 제거, 재투입 경로가 생기면 다시 연다)
 
 ## 2. 파이프라인
 
@@ -56,6 +56,10 @@ graph LR
 > **단계 순서 주의**: 위 표는 `Evidence Gate(6) → Critic(7)` 순서다. 킥오프 04-6 표는 `Critic(4차) → Evidence Gate(5차)`로 반대이나, 같은 자료의 05-2 구조도와 하네스 제안서 §3은 위 순서를 따른다. 다수 근거를 채택했고 확정은 [open-questions.md](open-questions.md) D8.
 
 **Queue 규칙**: 4·6단계에서 탈락한 후보는 즉시 버리지 않고 `queued` 상태로 남긴다. 새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다.
+
+> **⚠ 절반만 구현이다 (2026-08-31, D25).** `queued`로 남기는 쪽은 동작한다(`policy.py`의 `Route.QUEUE`).
+> **새 Evidence로 재평가하는 쪽은 배선이 없다** — `DecisionPoint.REQUEUE`를 내는 코드가 저장소에 없고,
+> 재평가 횟수를 보관하던 `queue.py`도 D25로 사라졌다(D10). 이 문단은 설계이지 현황이 아니다.
 
 ## 4. Finding 상태 머신
 
