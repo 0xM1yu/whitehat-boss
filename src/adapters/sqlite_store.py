@@ -1,4 +1,4 @@
-"""SqliteStateStore — `StateStore`의 파일 기반 구현 (docs/decisions/0001, D6).
+"""SqliteStateStore — `StateStore`의 파일 기반 구현 (docs/decisions/0001, ADR 0001).
 
 stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아니라 **JSON 한 컬럼**이다.
 `src/schemas/`는 8개 트랙이 동시에 건드리는 유일한 결합점이라(roadmap.md §3) 필드가

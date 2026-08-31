@@ -117,7 +117,7 @@ def describe_target(target: Location) -> str:
 def describe_sections(capsule: ContextCapsule) -> str:
     """캡슐 섹션의 **본문까지** 프롬프트에 렌더한다 (W1).
 
-    예전에는 `callers(312 tok)` 같은 **이름표만** 냈다. 그래서 D13이 실제 호출 그래프를
+    예전에는 `callers(312 tok)` 같은 **이름표만** 냈다. 그래서 #63이 실제 호출 그래프를
     캡슐에 넣은 뒤에도 모델은 그것을 보지 못했고, "못 봐서 못 찾은 건지 봤는데 못 찾은
     건지"가 구별되지 않았다 — 그 상태에서 잰 성능 수치는 하네스가 아니라 Fake 어댑터를
     잰 값이다.

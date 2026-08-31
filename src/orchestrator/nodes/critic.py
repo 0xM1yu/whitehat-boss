@@ -37,7 +37,7 @@ def select(ctx: RunContext, findings: list[Finding]) -> list[Finding]:
     Critic은 가장 비싼 단계이므로 상한이 있어야 한다(architecture.md §3 "상위 Finding만").
     confidence 동점은 `finding_id`로 가른다 — 정렬이 흔들리면 재현 실행이 갈라진다.
 
-    **자르는 자리와 남기는 자리가 한 곳이다** (D26 (b), `_order_and_cut`과 같은 구조).
+    **자르는 자리와 남기는 자리가 한 곳이다** (#98 (b), `_order_and_cut`과 같은 구조).
     슬라이스만 하던 동안에는 잘린 건이 `Finding.state`에서도 trace에서도 안 읽혔다 —
     F-9(`repro_spec_missing`)가 `hypothesized → hypothesized`라 7단계에 **간** 건과 **못
     간** 건이 리포트의 같은 묶음에 나란히 찍히고, 44줄이 멀쩡히 있어서 전량을 본 것처럼
@@ -55,7 +55,7 @@ def select(ctx: RunContext, findings: list[Finding]) -> list[Finding]:
             subject_kind="finding",
             subject_id=cut.finding_id,
             reason=_REASON_OVER_TOP_N,
-            # 선별 키와 8단계 진입 조건을 나란히 싣는다 — D26 (a)가 묻는 것이 이 둘의
+            # 선별 키와 8단계 진입 조건을 나란히 싣는다 — #98 (a)가 묻는 것이 이 둘의
             # 어긋남이고, 없으면 그 답을 보려고 `state.db`를 열어야 한다.
             confidence=cut.confidence,
             has_repro_spec=cut.repro_spec is not None,

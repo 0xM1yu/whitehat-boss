@@ -21,11 +21,11 @@ class CapsuleSection(HarnessModel):
     Progressive Expansion(§5)이 어떤 섹션을 더 붙일지 아직 확정되지 않아 열어 둔다.
 
     **그 목록은 목표이고 `types`는 아직 아무 구현도 내지 않는다** — index-v1에 타입
-    데이터가 없어 두 Retriever의 `LEVEL_SECTIONS`에서 뺐다(open-questions D13).
+    데이터가 없어 두 Retriever의 `LEVEL_SECTIONS`에서 뺐다(이슈 #63).
     스키마는 계속 허용한다; 막는 것은 이 클래스의 일이 아니다.
 
     `items`는 **실제로 담은 개수**다. 예산에 안 들어간 항목은 세지 않으므로
-    `items=3`이 "전부 3건"인지 "여럿 중 3건"인지는 여기서 구별되지 않는다(D13).
+    `items=3`이 "전부 3건"인지 "여럿 중 3건"인지는 여기서 구별되지 않는다(#63).
 
     ## `body`가 비어 있는 것과 내용이 없는 것은 다르다
 

@@ -67,7 +67,7 @@ DEFAULT_CONDITION = "B3prime@pipeline"
 # run 디렉터리 접두사. `gc`는 이 접두사를 가진 디렉터리만 지운다.
 RUN_DIR_PREFIX = "run_"
 
-# 실측 전 초기값인 임계값 (open-questions D2·D3). 조건 간 비교 전에 확정해야 한다.
+# 실측 전 초기값인 임계값 (이슈 #91·#92). 조건 간 비교 전에 확정해야 한다.
 PROVISIONAL_THRESHOLDS = ("scout_threshold", "capsule_expansion_max", "requeue_max")
 
 # `--tool-runner`가 받을 수 있는 값. 목록을 여기 적지 않고 설정 스키마에서 뽑는다 —
@@ -180,7 +180,7 @@ def _check_wiring(config: HarnessConfig) -> list[Check]:
 def _tool_runner_overrides(
     profile: str, tool_runner: str | None, *, config_dir: Path = CONFIG_DIR
 ) -> bool:
-    """`--tool-runner` 값이 프로필 **선언값과 실제로 다른가** (D50).
+    """`--tool-runner` 값이 프로필 **선언값과 실제로 다른가** (PR #55).
 
     예외 신고의 조건은 "플래그를 넘겼는가"가 아니라 "값이 바뀌었는가"다 — evaluation.md
     §2.3 규칙 2("조건 간 차이는 프로필과 단계 활성화만")에 낸 예외이므로(ADR 0005) 실제로
@@ -365,7 +365,7 @@ def _check_thresholds() -> Check:
     return Check(
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
-        "— 조건 간 비교 전에 확정한다 (open-questions D2·D3)",
+        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92)",
     )
 
 
@@ -447,7 +447,7 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # `_claim_run_dir`를 거치지 않고 1번을 그대로 쓴다.
         run_dir = Path(tmp) / "estimate"
         result, deps = execute(config, spec, run_id=new_run_id(datetime.now(UTC)), run_dir=run_dir)
-        # **조회를 조립과 같은 카운터 안에서 한다 (D43 (a)).**
+        # **조회를 조립과 같은 카운터 안에서 한다 (#84 (a)).**
         #
         # `SqliteStateStore._load`가 `model_validate`로 캡슐을 되돌리므로
         # `CapsuleSection._tokens_match_body`가 **로드 시점에 다시 돈다.** 캡슐은 러너가
@@ -463,7 +463,7 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # **⚠ 이것은 임시방편이다.** `src/tokens.py`가 이미 경고한 대로 위험한 자리는
         # 확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이
         # 수정은 그중 지금 터진 한 곳을 막을 뿐이다. 정본은 캡슐이 자기 카운터를 싣고
-        # 로드가 그것을 복원하는 것이다(D43 (c)) — 그때 이 `with`는 필요 없어진다.
+        # 로드가 그것을 복원하는 것이다(#84 (c)) — 그때 이 `with`는 필요 없어진다.
         with using_counter(deps.counter_for_role(Role.SCOUT.value)):
             capsules = deps.store.query("capsule")
 
