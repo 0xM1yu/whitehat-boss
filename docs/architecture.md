@@ -86,6 +86,10 @@ candidate ──scout pass──> triaged ──auditor──> hypothesized
 재평가가 판정 단계를 건너뛰면 근거 등급이 검증되지 않은 채로 승격된다. 재평가 횟수 상한은
 config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를 유지한다.
 
+> **⚠ 위 그림의 `new evidence` 재진입은 §3의 ⚠ 대로 배선이 없다** (2026-08-31, D25).
+> `queued`로 남기는 쪽은 동작하지만 새 Evidence로 되돌리는 쪽은 `DecisionPoint.REQUEUE`를
+> 내는 코드가 없고, 재평가 횟수를 세던 카운터도 사라졌다(D10). 설계이지 현황이 아니다.
+
 > 전이 표 전체(트리거·단계·사유 코드)는 `src/orchestrator/state_machine.py`의 모듈
 > docstring에 있다. 이 그림은 그 표의 요약이며, 둘이 어긋나면 표가 기준이다.
 
