@@ -1,4 +1,4 @@
-"""모델이 `generation_config.json`에 선언한 샘플링을 읽는다 (D29).
+"""모델이 `generation_config.json`에 선언한 샘플링을 읽는다 (#99).
 
 vLLM은 기동 시 모델의 `generation_config.json`을 읽어 `top_k`·`repetition_penalty` 같은
 값을 기본 샘플링에 적용한다(기동 로그: "Default vLLM sampling parameters have been
@@ -45,7 +45,7 @@ def read_declared_sampling(
 
     **스키마 밖 키는 그 키만 버린다.** 전체를 버리면 `top_p: 5.0` 하나가 같은 파일의
     `temperature: 0.7`까지 데려가고, 그 역할이 맵에서 빠져 **"두 개를 선언한 모델"이
-    "선언 없음"과 구별되지 않는다** — D29가 막으려던 그 자리로 되돌아간다. 필드가 전부
+    "선언 없음"과 구별되지 않는다** — #99가 막으려던 그 자리로 되돌아간다. 필드가 전부
     optional이고 교차 검증기가 없어서 낱개 검증이 성립한다.
     """
     if not source:
@@ -90,7 +90,7 @@ def declared_sampling_by_role(
     **새 run은 이 함수로 항상 dict를 남긴다(비어도).** `RunRecord.model_sampling`의
     `None`은 이 필드 이전에 쓰인 옛 manifest에서만 나온다.
 
-    **한계 — 부재의 뜻이 하나가 아니다 (D29 ③).** 여기서 빠진 역할은 `source` 없음 ·
+    **한계 — 부재의 뜻이 하나가 아니다 (#99 ③).** 여기서 빠진 역할은 `source` 없음 ·
     스냅샷 리졸브 실패 · 파일 없음 · 파일 깨짐 · 선언 키 0개 · 검증 실패를 **모두** 뜻한다.
     앞 넷은 **우리 쪽 기록 구멍**이고 다섯째만 **실험 사실**인데 그 둘이 안 갈린다. run
     수준에서는 `None`(옛 manifest)과 `{}`(읽었으나 없음)가 갈리지만 **역할 수준에서는 안

@@ -73,7 +73,7 @@ class Finding(HarnessModel):
     `HarnessModel.transition()`으로 한다 — 그래야 `proven`으로 올릴 때 재현 명세와
     근거가 있는지 실제로 확인된다.
 
-    **필드 선언 순서가 계약이다 (D51).** 이 순서가 그대로 `model_json_schema()`의
+    **필드 선언 순서가 계약이다 (#102).** 이 순서가 그대로 `model_json_schema()`의
     property 순서가 되고, 그 스키마가 `response_format`으로 서버에 실린다
     (`adapters/openai_compat._request_payload`). 순서는 `prompts/auditor/v2`
     prefix 90-105행이 요구하는 것과 같다 — **범주값(`state`·`trigger_status`)을
@@ -107,7 +107,7 @@ class Finding(HarnessModel):
     # 사후에 갈린다. 전체를 한 분모로 세면 그 둘이 뭉개진다.
     # **타입을 일부러 `str`로 둔다.** 요청의 목적은 "값이 산출물에 안 남아 못 봤다"의 해소,
     # 곧 **관측**이다. `str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다. 실제 emit
-    # 분포를 본 뒤에야 `Literal`/enum으로 좁혀 강제한다 — 그 보류가 D51이다.
+    # 분포를 본 뒤에야 `Literal`/enum으로 좁혀 강제한다 — 그 보류가 #102이다.
     trigger_status: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     rca_draft: str = ""

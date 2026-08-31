@@ -99,7 +99,7 @@ class OpenAICompatModelClient:
                 # 재요청에는 스키마 오류 메시지만 덧붙인다(agent-contracts.md §1).
                 # 이전 응답 원문을 다시 넣으면 같은 오류를 반복하게 만든다.
                 #
-                # **`include_input=False`가 그 두 줄을 실행하는 자리다 (D47).** pydantic의
+                # **`include_input=False`가 그 두 줄을 실행하는 자리다 (PR #49).** pydantic의
                 # `errors()`는 그 인자가 기본 `True`라, `json_invalid` 오류의 `input`에
                 # 파싱에 실패한 **응답 원문 전체**가 실린다 — 위에서 안 넣겠다고 적은
                 # 바로 그것이다. `include_url`만 끄고 이쪽을 안 껐던 것이 원인이라 두
@@ -109,13 +109,13 @@ class OpenAICompatModelClient:
                 # 공백 폭주가 escape되어(15,000자 → 25,223자) 재시도 프롬프트에 통째로
                 # 실렸고, 입력이 `--max-model-len 32768 − output_max 8192 = 24,576`을 넘어
                 # 게이트웨이가 400으로 거절했다. target 3건이 그렇게 떨어졌고 **그중 하나가
-                # 그 대상의 정답 함수(`router_define`)다.** 상한을 실은 D42가 이 자리에서
+                # 그 대상의 정답 함수(`router_define`)다.** 상한을 실은 PR #36가 이 자리에서
                 # 입력 초과로 되돌아온 셈이라, 상한 값을 어떻게 잡든 이 줄이 남아 있으면
                 # 같은 일이 난다.
                 #
                 # **`include_context`는 끄지 않는다.** `ctx.error`가 "EOF while parsing an
                 # object at line N"을 들고 있고, 그것이 스키마 위반과 출력 절단을 가르는
-                # 유일한 단서다(D46). 재시도하는 모델도, 나중에 trace의 `error_detail`을
+                # 유일한 단서다(#79). 재시도하는 모델도, 나중에 trace의 `error_detail`을
                 # 읽는 사람도 그 문장으로 폭주를 알아본다.
                 body = (
                     f"{prompt.body}\n\n[스키마 오류] "

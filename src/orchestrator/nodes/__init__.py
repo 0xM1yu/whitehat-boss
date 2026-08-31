@@ -1,7 +1,7 @@
 """파이프라인 단계 0~9 노드 (architecture.md §3).
 
 노드 시그니처는 `def run(ctx: RunContext, ...) -> ...`이고 **LangGraph 타입을 노출하지
-않는다**(open-questions.md D7 미확정, ADR 0002). 오케스트레이터를 갈아 끼워도 노드가
+않는다**(open-questions.md ADR 0002 미확정, ADR 0002). 오케스트레이터를 갈아 끼워도 노드가
 그대로 남으려면 노드가 아는 것이 `RunContext` 하나여야 한다.
 
 각 노드가 지키는 계약:

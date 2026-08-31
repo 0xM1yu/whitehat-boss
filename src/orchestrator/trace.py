@@ -79,7 +79,7 @@ class EventKind(StrEnum):
     # **이 이벤트가 없으면 "안 잘렸다"이다.** 잘린 run에서만 남으므로 0건이 정상이고,
     # 그래서 `retrieval_call`처럼 분모로 쓸 수 없다. 이벤트가 생기기 전에는 절단이
     # `on_truncate` 콜백에만 있었고 오케스트레이터가 그 훅을 안 받아, **조용히 잘린 것이
-    # "전부 봤다"로 읽혔다**(D13, W7).
+    # "전부 봤다"로 읽혔다**(#63, W7).
     #
     # `retrieval_call`과 합치지 않는다 — 그쪽은 호출 1건당 1행이고 이쪽은 수집 1회당
     # 1행이라 분모가 다르다. `candidates`라는 이름도 겹치지 않게 `collected`를 쓴다.
@@ -90,7 +90,7 @@ class EventKind(StrEnum):
     CACHE = "cache"
     # 1단계 인덱서 산출물의 로드 결과와 커버리지. `unresolved_*`가 크면 그 저장소에서 E2를
     # 얼마나 믿을지가 달라지는데, 이 이벤트가 생기기 전에는 아무도 그 숫자를 집계할 수
-    # 없었다(D13).
+    # 없었다(#63).
     #
     # **run당 최대 1건이고, 0건일 수 있다.** 로더가 지연 로드라 Retriever가 그래프를
     # 처음 조회할 때 실린다 — 그래프 섹션은 EXPANDED·FOCUSED에만 있으므로 **후보가 하나도
@@ -119,10 +119,10 @@ class EventKind(StrEnum):
     # 같은 이유). 합치면 절단 목록이 한 줄에 뭉쳐 세는 것과 읽는 것을 함께 잃는다.
     #
     # **`Candidate`를 만들어 `queued`로 두지 않는 이유**: `Candidate.score`가 필수 필드라
-    # 모델을 안 부르고 만들려면 0.0을 지어내야 하고, 그 값이 Scout 점수 분포(D2의 입력)에
+    # 모델을 안 부르고 만들려면 0.0을 지어내야 하고, 그 값이 Scout 점수 분포(#91의 입력)에
     # 섞인다. 지어낸 값을 기록에 넣지 않는다.
     TARGET_SKIPPED = "target_skipped"
-    # 7단계에 올리지 못한 Finding 하나 (D26 (b)). `critic.select()`가 `critic_top_n`으로
+    # 7단계에 올리지 못한 Finding 하나 (#98 (b)). `critic.select()`가 `critic_top_n`으로
     # 자른 뒤 남긴다. **잘린 건당 1행이고, 안 잘린 run은 0건이다.**
     #
     # **`transition`에 넣지 않는다.** 이유가 두 겹이고 뒤쪽이 더 무겁다. (가) `transition`의
@@ -142,10 +142,10 @@ class EventKind(StrEnum):
     # 으로 7단계가 분할로 닫힌다. "들어갔다가 죽었다"로 오독될 위험은 `kind`가 막는다 —
     # 이 행은 정의상 **안 들어간** 건이다.
     #
-    # `confidence`(선별 키)와 `has_repro_spec`(8단계 진입 조건)을 함께 싣는다. D26 (a)가
+    # `confidence`(선별 키)와 `has_repro_spec`(8단계 진입 조건)을 함께 싣는다. #98 (a)가
     # 묻는 것이 정확히 그 둘의 어긋남이고, 이 두 필드가 없던 동안에는 그 답을 보려고
     # `state.db`를 손으로 열어야 했다.
-    # 4단계에 **올린** target 하나. `file`·`symbol`·`line_start`를 싣는다 (D45).
+    # 4단계에 **올린** target 하나. `file`·`symbol`·`line_start`를 싣는다 (해소).
     #
     # **`target_plan`에 목록을 접어 넣지 않는다.** 그쪽은 run당 1건인 분모이고
     # `tests/test_pipeline_e2e.py`가 그 계약을 단언한다. 여기에 배열을 실으면 후보가 많은
@@ -162,11 +162,11 @@ class EventKind(StrEnum):
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
     TARGET_PLANNED = "target_planned"
     CRITIC_SKIPPED = "critic_skipped"
-    # 7단계에 **들어갔다가** critic 호출이 실패해 그 Finding만 버렸다 (D44).
+    # 7단계에 **들어갔다가** critic 호출이 실패해 그 Finding만 버렸다 (해소).
     #
     # **`critic_skipped`와 합치지 않는다.** 바로 위 주석이 그 이벤트를 "정의상 **안 들어간**
     # 건"으로 못박았다. 파싱 실패는 반대로 **들어가서 모델을 부르고 죽은** 건이라, 한 이름에
-    # 넣으면 `critic_skipped`의 뜻이 조용히 넓어지고 D26 (a)가 그 이벤트로 묻던 질문
+    # 넣으면 `critic_skipped`의 뜻이 조용히 넓어지고 #98 (a)가 그 이벤트로 묻던 질문
     # ("선별 키와 8단계 진입 조건이 어긋나는가")이 실패 건에 오염된다.
     #
     # **7단계 분할은 셋으로 늘어난다**:
@@ -183,7 +183,7 @@ class EventKind(StrEnum):
     # `subject_id`는 `finding_id`이고 `reason`·`error_detail`을 함께 싣는다. 사유를 안 실으면
     # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
     CRITIC_FAILED = "critic_failed"
-    # 이 run이 **어느 토큰 카운터로 셌는가** (D21 (b)). 역할별로 `real`(그 모델의 실
+    # 이 run이 **어느 토큰 카운터로 셌는가** (#96 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
     #
     # **run당 정확히 1건이고, 모델을 한 번 부르기 전에 낸다** — `target_plan`과 같은 계약이다.

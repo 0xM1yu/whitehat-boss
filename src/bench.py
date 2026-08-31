@@ -99,7 +99,7 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
 MEASUREMENT_ORDER = ("startup", "structured_output", "prefix_cache", "throughput", "memory")
 
 # 메모리 폴링 간격(초). **실측으로 정한 값이 아니라 절충용 잠정치다** — `Budget.tool_seconds`
-# (D15)와 같은 성격이고, 실측이 생기면 조정 대상이다.
+# (#65)와 같은 성격이고, 실측이 생기면 조정 대상이다.
 #
 # **없앤 문제가 "호출 횟수"는 아니다.** 그전에는 sleep이 아예 없었는데, 그렇다고 루프가
 # 무한정 도는 것은 아니었다: `nvidia-smi`의 fork+exec 자체가 루프를 묶고 있었다.
@@ -550,7 +550,7 @@ def _one_context(
         # **peak이 몇 표본에서 나왔는지 함께 남긴다.** `*_peak: 0.0` + `reason`은 "한 번도
         # 못 쟀다"만 구별하고, **3 표본에서 나온 peak과 300 표본에서 나온 peak을 구별하지
         # 못한다.** 폴링 간격이 생기면서 표본이 줄어 그 구멍이 커지므로 함께 넣는다 —
-        # 캡슐의 `items=k`가 잘린 값인지 캡슐만 봐서는 모르는 것(D13 잔여 (b))과 같은
+        # 캡슐의 `items=k`가 잘린 값인지 캡슐만 봐서는 모르는 것(#63 잔여 (b))과 같은
         # 모양이다.
         #
         # 필드 이름이 곧 지표의 열 이름이다(`IndexSummary.as_trace_fields` docstring).
