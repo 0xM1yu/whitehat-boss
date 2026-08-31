@@ -36,9 +36,9 @@ def test_every_d_has_a_body_file() -> None:
     """인덱스의 모든 D가 `docs/open-questions/`의 파일을 가리킨다."""
     missing = []
     for _, did, line in _d_rows():
-        hits = list(BODIES.glob(f"{did}-*.md"))
+        hits = list(BODIES.glob(f"{did}.md"))
         if not hits:
-            missing.append(f"{did}: docs/open-questions/{did}-*.md 가 없다")
+            missing.append(f"{did}: docs/open-questions/{did}.md 가 없다")
         elif f"open-questions/{hits[0].name}" not in line:
             missing.append(f"{did}: 인덱스 행이 {hits[0].name} 을 링크하지 않는다")
     assert missing == [], "\n".join(missing)
@@ -48,7 +48,7 @@ def test_index_rows_stay_thin() -> None:
     """인덱스 행에 본문을 넣지 않는다 — 그것이 충돌의 원인이었다."""
     fat = [
         f"docs/open-questions.md:{lineno}: {did} 행이 {len(line)}자다 "
-        f"(상한 {_MAX_ROW}) — 본문은 docs/open-questions/{did}-*.md 로 옮긴다"
+        f"(상한 {_MAX_ROW}) — 본문은 docs/open-questions/{did}.md 로 옮긴다"
         for lineno, did, line in _d_rows()
         if len(line) > _MAX_ROW
     ]
