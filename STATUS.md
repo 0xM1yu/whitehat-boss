@@ -739,9 +739,22 @@ SOURCE/PROPAGATE/SINK 3단계를 만들며 Fake Critic이 전부 uphold하기 �
   생길 수 있다. 관측 최대는 auditor 2,424(`run_20260827_0002` seq=1707, `ok=true`)라 4,096은
   그 1.7배지만, 그 최대값은 **run 하나에서 나온 한 건**이다.
 
-**자르고 있다는 신호는 정해 뒀다** — `ok=true`인 `model_call`의 `output_tokens`가
-`output_max`와 같으면 상한이 자르고 있다는 뜻이다. 한 건이라도 나오면 역할별 상한
-(D46 **(c)**)이 다음 수다. 8,192에서는 그 신호가 안 나왔다.
+**자르고 있다는 신호를 이 필드로는 못 가른다.** `model_call`의 `output_tokens`는
+`openai_compat.complete()`가 **재시도분까지 합산한 값**이라(`src/adapters/openai_compat.py`
+89·94·127행) `ok=true` 호출 하나의 값을 `output_max`와 견줘도 절단이 안 갈린다. 1차가
+상한에 잘리고 2차가 살아난 호출은 `output_tokens > output_max`로 남지 `== output_max`가
+되지 않는다 — `output_max 8,192`에서 이미 **네 건**이 그랬다(run B `8,402`, v2
+`8,386·8,428·8,481` — [open-questions.md](docs/open-questions.md) D46·D55).
+
+**그러므로 "8,192에서 신호가 안 나왔다"는 절단이 없었다는 뜻이 아니다** — 등식이 성립하는
+경우가 거의 없을 뿐이다. 게다가 상한에 잘린 응답은 JSON이 안 닫혀 파싱에 실패하므로
+`ok=false`가 되는데, 실패 경로의 이벤트에는 `output_tokens` 필드 자체가 없다.
+
+지금 할 수 있는 것은 `ok=true`이면서 `output_tokens >= output_max`인 호출을 훑는 것뿐이고,
+그것이 말해 주는 것도 "이 호출이 재시도했다"까지다 — 합이 상한을 넘는다고 어느 시도가
+상한에 닿았다는 뜻은 아니기 때문이다. **시도별로 가르는 것은 D55**(`model_call`에 시도 수를
+싣거나 시도마다 이벤트를 낸다)이고, 역할별 상한(D46 **(c)**)을 그 전에 발동시킬 판별식은
+아직 없다.
 
 **실제로 쓰인 값은 `RunRecord.thresholds`에 박제되므로** 어느 상한으로 돈 run인지는 사후에
 갈린다. 막는 것은 비교뿐이다.
