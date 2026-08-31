@@ -1,7 +1,7 @@
 """순차 러너 — 단계 0~9를 잇는다 (ADR 0002, engineering-guide.md §1).
 
 **v1은 순차다.** 큐를 스레드로 돌리지 않는다. 그렇게 하려면 StateStore·FakeModelClient·
-TraceWriter·BudgetLedger의 전제를 함께 풀어야 한다(`queue.py` docstring).
+TraceWriter·BudgetLedger의 전제를 함께 풀어야 한다(ADR 0002).
 
 `src/adapters/`를 import 하지 않는다. 어댑터 조립은 `src/cli.py`가 하고, 러너는 아래
 `Dependencies` Protocol과 `read_source` 콜러블만 받는다 — 그래야 "구현체 교체가 설정만으로
