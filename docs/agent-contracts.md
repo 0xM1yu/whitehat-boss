@@ -14,7 +14,7 @@ agent:
     - index.callees
   token_budget:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
-    output_max: 8192         # config의 thresholds.output_max와 같은 값. 요청에 max_tokens로 실린다
+    output_max: 4096         # config의 thresholds.output_max와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
   output_schema: Finding     # 아래 §3
 ```
@@ -29,6 +29,14 @@ agent:
 > 숫자였는데, `run_20260827_0002`의 auditor 호출 하나가 `ok: true`로 **2,424 토큰**을 냈다 —
 > 2,000이었으면 그 성공이 잘려 파싱 실패가 됐다. 근거와 남은 한계는 `config/budgets.yaml`의
 > `output_max` 주석에 있다.
+>
+> **2026-08-28에 8,192에서 4,096으로 내렸다.** 근거는 헤드룸이 아니라 **폭주가 먹는 시간**이다 —
+> `run_20260828_0002`는 869초 중 **792.6초(91.2%)를 실패한 `model_call` 5건**에 썼고, 63 tok/s
+> 실측에서 상한까지 폭주하면 1회에 130초, `retries: 1`이라 실패 하나가 2회를 태운다. run 시간의
+> 지배 항이 폭주이고 그 항이 상한에 정비례한다. **대가는 관측 최대 2,424 대비 여유가 3.4배에서
+> 1.7배로 주는 것**이고, 그보다 큰 정상 응답이 나오면 역할별 상한(D46 (c))이 다음 수다.
+> 타임아웃(`_TIMEOUT_S = 300`)은 **시도 하나당**이라 `wall_ms`(재시도 포함)와 직접 비교하면
+> 안 된다 — 자세한 계산은 `config/budgets.yaml`의 `output_max` 주석에 있다.
 >
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
