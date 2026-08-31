@@ -25,17 +25,26 @@
 
 **문서에 먼저 적지 않는다.** 이슈가 결함의 원천이고 상태의 원천이다.
 
-### `docs/open-questions.md`는 폐기 중이다
-
-지금까지는 결함을 그 파일의 D 표에 적었다. 그 방식이 병목이었다 — 여럿이 같은 표를 고치면
-표 전체가 충돌하고(#86 ↔ #87이 그랬다), 대장과 트래커가 이중으로 갈린다.
-
-- **새 결함을 D 표에 추가하지 않는다.** 바로 이슈를 연다.
-- 기존 D는 **이슈로 옮기는 중**이고, 옮길 값어치가 없는 것은 폐기한다.
-- 이관이 끝나면 파일을 지운다.
-
 이슈에는 **관측된 사실**(파일·줄), **어떻게 알았나**(run ID 또는 코드 위치),
 **선택지**(하나만 적지 않는다)를 넣는다. 템플릿이 그 칸을 들고 있다.
+
+### D 항목은 한 항목당 한 파일이다
+
+설계 판단이 걸린 결함은 이슈와 별개로 본문을 남긴다 — `docs/open-questions/` 아래
+번호별 파일 하나, 그리고 [인덱스](docs/open-questions.md)에 한 줄.
+
+- **본문은 파일에만 쓴다.** 인덱스 행은 번호·항목·상태·링크뿐이다(200자 상한).
+- 예전에는 표 한 행이 본문 전체(최대 5,500자)를 들고 있었다. 그래서 서로 다른 D를
+  고치는 두 PR이 같은 표를 건드렸고, 열을 추가하는 PR은 55행 **전부**와 충돌했다.
+  `docs/decisions/`가 쓰는 구조로 바꿔 그 원인을 없앴다.
+- **인덱스는 지우지 않는다.** 여러 문서가 그것을 링크하고, D 참조를 CI가 검증하는
+  근거가 그 표이고, 한 화면 조망이 거기서 나온다.
+
+### 코드는 D가 아니라 이슈 번호를 쓴다
+
+`src/`·`config/`의 주석이 미해결 사항을 가리킬 때는 이슈 번호(`#91`)를 쓴다.
+D 번호는 문서 안의 좌표이고, 코드가 그것에 의존하면 문서 구조를 못 바꾼다.
+해소된 것을 가리켜야 하면 그것을 닫은 PR·ADR을 쓴다.
 
 ---
 
@@ -48,12 +57,12 @@
 | `src/orchestrator/**`는 `src.adapters`를 import하지 않는다 | `test_orchestrator_source_has_no_adapter_import` |
 | 문서의 내부 링크는 실파일을 가리켜야 한다 | `test_internal_links_point_at_a_real_file` |
 | 마크다운 표의 열 수가 일관돼야 한다 | `test_markdown_tables_have_a_consistent_column_count` |
-| 문서에 쓴 `D<숫자>`는 D 표에 실재해야 한다 | `test_decision_references_point_at_a_real_row` |
+| 문서에 쓴 `D<숫자>`는 인덱스에 실재해야 한다 | `test_decision_references_point_at_a_real_row` |
+| `src/`·`config/`에 `D<숫자>`를 쓰지 않는다 | `test_production_code_does_not_reference_open_questions_d_rows` |
+| 모든 D가 `docs/open-questions/` 아래 본문 파일을 가진다 | `test_every_d_has_a_body_file` |
+| 인덱스 행에 본문을 넣지 않는다 (200자 상한) | `test_index_rows_stay_thin` |
 
 추적되는 `*.md`는 전부 대상이다 — 이 파일도 포함이다.
-
-> 마지막 줄은 **D 표와 함께 사라진다.** 그때까지는 문서에 D 번호를 쓸 때 그 행이 아직
-> 있는지 확인해야 하고, 자리표시자로 숫자를 적으면 CI가 깨진다.
 
 ---
 
@@ -85,7 +94,8 @@
 | 모델 레지스트리 · ATOM 하드웨어 | `docs/model-serving.md` |
 | 장비별 제약 · 실패 사례 | `docs/portability.md` |
 | 되돌리기 비싼 결정 | `docs/decisions/` |
-| **미해결 결함** | **GitHub Issues** (`docs/open-questions.md`는 이관 중) |
+| **미해결 결함 — 작업 추적** | **GitHub Issues** |
+| 미해결 결함 — 본문·선택지 | [docs/open-questions.md](docs/open-questions.md) 와 그 아래 번호별 파일 |
 
 ---
 
