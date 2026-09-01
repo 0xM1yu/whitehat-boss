@@ -579,6 +579,71 @@ def test_no_traffic_is_unmeasured_not_a_failure() -> None:
     assert bench_report._judge_prefix(measured)["status"] == bench_report.UNMEASURED
 
 
+def test_a_context_whose_call_failed_does_not_vanish_from_the_pass() -> None:
+    """8K가 살아 있으면 32K의 HTTP 400이 `any` 아래에서 사라진다 (이슈 #111).
+
+    `_judge_context`가 세 context를 `any(peak > 0)` 한 비트로 접는다. 레코드는 정직한데
+    (`call_ok: False`·`error`가 같은 dict에 있다) **요약이 원문보다 세다** — 3개 중 2개만
+    답했는데 무조건부 `pass`에 `reason: None`이 붙는다(CLAUDE.md §2.2).
+
+    2026-09-01 ATOM 실측에서 32K가 `--max-model-len 32768`을 넘어 400을 받았고,
+    체크리스트는 `pass`였다. 같은 모양이 2026-08-25 보고서에도 있다.
+
+    **상태는 바꾸지 않는다.** `pass`를 `fail`로 뒤집는 것은 설계 판단이고 과거 run의
+    판정이 함께 뒤집힌다 — 여기서 고정하는 것은 **사실이 사라지지 않는 것**뿐이다.
+    같은 파일 `_judge_prefix`가 이미 그 모양이다(PASS + 못 답한 부분을 사유에).
+    """
+    measured = [
+        {
+            "model_key": "qwen3-4b",
+            "startup": {"ok": True},
+            "skipped": None,
+            "memory": {
+                "by_context": {
+                    "8192": {"call_ok": True, "kv_cache_usage_perc_peak": 0.02665},
+                    "32768": {
+                        "call_ok": False,
+                        "kv_cache_usage_perc_peak": 0.0,
+                        "error": "ModelGatewayError: ... HTTP 400",
+                    },
+                }
+            },
+        }
+    ]
+
+    verdict = bench_report._judge_context(measured)
+
+    assert verdict["status"] == bench_report.PASS  # 상태는 그대로다
+    assert "32768" in str(verdict["reason"]), "답하지 못한 context가 요약에서 사라졌다"
+
+
+def test_all_contexts_failing_is_not_blamed_on_metrics() -> None:
+    """전부 호출 실패면 원인은 `/metrics`가 아니다 — 고정 사유가 거짓이 된다.
+
+    지금 코드는 peak이 전부 0이면 무조건 "`/metrics`의 …를 읽지 못했다"를 낸다. 호출이
+    안 닿아 0인 경우에도 그 문장이 나가므로 **읽은 적 있는 메트릭을 못 읽었다고 말한다.**
+    이번 run에서는 8K가 살아 발현하지 않았다 — 코드 독해에서 나온 경로다.
+    """
+    measured = [
+        {
+            "model_key": "qwen3-4b",
+            "startup": {"ok": True},
+            "skipped": None,
+            "memory": {
+                "by_context": {
+                    "8192": {"call_ok": False, "kv_cache_usage_perc_peak": 0.0},
+                    "32768": {"call_ok": False, "kv_cache_usage_perc_peak": 0.0},
+                }
+            },
+        }
+    ]
+
+    verdict = bench_report._judge_context(measured)
+
+    assert verdict["status"] == bench_report.UNMEASURED
+    assert METRIC_KV_USAGE not in str(verdict["reason"]), "안 읽은 것이 아니라 안 닿은 것이다"
+
+
 def test_a_decreasing_substitute_invalidates_only_that_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
