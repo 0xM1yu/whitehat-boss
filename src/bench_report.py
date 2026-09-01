@@ -259,7 +259,7 @@ def _judge_context(measured: Sequence[Mapping[str, object]]) -> dict[str, object
     if empty:
         return empty
     entries = [
-        (r.get("model_key", "?"), ctx, entry)
+        (r["model_key"], ctx, entry)
         for r in measured
         for ctx, entry in r["memory"]["by_context"].items()
         if isinstance(entry, dict)
