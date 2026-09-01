@@ -374,8 +374,68 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     )
 
     err = capsys.readouterr().err
-    assert code != 0, "실서빙 프로필이 라벨 없이 그대로 시작한다"
-    assert "device" in err and "condition" in err, "무엇이 없어 막혔는지 말하지 않는다"
+    assert code == 2, "실서빙 프로필이 라벨 없이 그대로 시작한다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def _errors(stderr: str) -> list[str]:
+    """`[ERROR]` 줄만 골라낸다.
+
+    **`"device" in err`로 단언하면 안 된다.** 그 낱말은 `[WARN ] 시작 전 —` 줄에서도 나오고
+    그쪽은 **차단 여부와 무관하게 모든 결여에 대해 찍힌다**(`cli.run`). WARN 문자열을 보는
+    단언은 게이트가 절반 사라져도 통과한다 — 아래 두 테스트 docstring의 실측이 그것이다.
+    """
+    return [line for line in stderr.splitlines() if line.startswith("[ERROR]")]
+
+
+def test_a_serving_profile_refuses_when_only_the_device_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """**게이트의 절반씩을 따로 잠근다.** 둘을 한 번에 뺀 케이스만 보면 절반이 무검사다.
+
+    뮤테이션으로 실측했다 — `BLOCKING_WHEN_SERVING`에서 한 원소를 빼도 게이트 테스트가
+    전부 초록이었다(`9 passed`). 나머지 하나가 여전히 차단해 `code != 0`이 유지되기
+    때문이고, 그때 단언하던 `"device" in err`·`"condition" in err`는 차단과 무관한 WARN
+    줄에서 왔다. 통째로 비울 때만 1건이 깨졌다 — **CLAUDE.md §5의 "테스트가 통과했으니
+    맞겠지"가 그대로 재현된 자리다.**
+
+    이 테스트는 `_DEVICE_MISSING`이 목록에서 빠지는 순간 죽는다 — condition·kb_snapshot을
+    다 줬으므로 남는 결여가 device 하나다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "장비만 빠졌을 때 실서빙 run이 그대로 시작한다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """위와 짝. `_CONDITION_DEFAULTED`가 목록에서 빠지는 순간 죽는다.
+
+    조건 라벨만 빠진 run이 가장 조용한 사고다 — 죽지도 않고 **기본 라벨로 기록된다.**
+    2026-08-25·08-26 ATOM run 둘이 정확히 그 모양이었다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--device", "atom", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "조건만 빠졌을 때 실서빙 run이 그대로 시작한다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
