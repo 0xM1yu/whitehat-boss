@@ -152,6 +152,20 @@ _CONDITION_DEFAULTED = (
     "2×2 축으로 돌린 run이 pipeline 라벨로 남으면 어느 축이었는지를 산출물로 가를 수 없다"
 )
 
+# **실서빙 run에서 이 둘이 비면 시작 전에 막는다.** 경고 한 줄은 긴 run의 출력에 묻히고,
+# 그 run은 시작하기도 전에 못 쓰는 것이 확정돼 있다 — `device`는 `incomplete_fields()`가
+# "모델 비교표에서 제외한다"고 **판정하는** 값이고, `condition`은 잘못 굳으면 비교표가
+# **섞인다**(`schemas/run.py`의 `CONDITION_PATTERN` 주석). 둘 다 GPU를 태운 뒤에 듣는 것이
+# 가장 비싼 종류다.
+#
+# **`kb_snapshot`은 여기 없다.** `kb-none`은 아직 KB가 없다는 정직한 표기이고
+# `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다 — 경고로 충분하다.
+#
+# **막는 기준은 `profile.production`이 아니다.** 지금 프로필 12개가 전부
+# `production: false`라 그 필드로는 dev와 실서빙이 갈리지 않는다(2026-09-02 실측).
+# `HarnessConfig.served_models()`가 그것을 가른다 — dev 다섯은 0, 실서빙 일곱은 1~3이다.
+BLOCKING_WHEN_SERVING = (_DEVICE_MISSING, _CONDITION_DEFAULTED)
+
 # git을 못 읽었을 때의 자리표시자. 40 hex라는 형식은 지키되 경고 대상이다.
 _UNKNOWN_COMMIT = "0" * 40
 

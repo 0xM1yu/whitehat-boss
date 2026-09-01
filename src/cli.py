@@ -44,6 +44,7 @@ from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
+    BLOCKING_WHEN_SERVING,
     DEFAULT_CONDITION,
     DEFAULT_KB_SNAPSHOT,
     LateCacheHook,
@@ -575,10 +576,24 @@ def run(args: argparse.Namespace) -> int:
     # 갈라지면 안 되기 때문이고(`missing_run_labels` docstring), 그래서 device·kb_snapshot은
     # 한 실행에서 두 번 뜬다. 시점을 접두사로 갈라 둔다 — 앞의 것은 "이렇게 시작한다"이고
     # 뒤의 것은 "이 run은 제외된다"라, 같은 줄이 두 번 뜨는 것으로 읽히면 안 된다.
-    for warning in missing_run_labels(
+    gaps = missing_run_labels(
         device=args.device, kb_snapshot=args.kb_snapshot, condition=args.condition
-    ):
+    )
+    for warning in gaps:
         print(f"[WARN ] 시작 전 — {warning}", file=sys.stderr)
+    # **실서빙이면 경고로 끝내지 않는다.** 경고 한 줄은 몇 시간짜리 run의 출력에 묻히고,
+    # 그러면 이 검사가 고치려던 것("태우고 나서 듣는다")이 그대로 남는다. Fake로 도는
+    # 프로필은 막지 않는다 — dev 스모크는 장비 라벨 없이 도는 것이 정상이다.
+    serving = bool(config.served_models())
+    blocking = [gap for gap in gaps if gap in BLOCKING_WHEN_SERVING] if serving else []
+    if blocking:
+        print(
+            f"[ERROR] 실서빙 프로필({args.profile})이라 위 {len(blocking)}건을 주지 않으면 "
+            "시작하지 않는다 — 이 run은 끝까지 돌아도 비교표에 넣을 수 없다. "
+            "--device 와 --condition 을 명시한다",
+            file=sys.stderr,
+        )
+        return 2
     started_at = datetime.now(UTC)
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     spec = RunSpec(
