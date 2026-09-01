@@ -98,6 +98,33 @@ class RunRecord(UtcModel):
     run_id: Identifier
     # 예: "B3prime@pipeline". 어느 정의의 조건인지 라벨에 포함한다.
     condition: Annotated[str, Field(pattern=CONDITION_PATTERN)]
+    # 이 run이 **어느 프로필로** 돌았는가 (`--profile`이 고른 `config/profiles.yaml` 항목).
+    #
+    # evaluation.md §2.3 규칙 2가 "조건 간 차이는 **프로필과 단계 활성화만**"으로 비교를
+    # 정의하는데, 그 축의 절반이 산출물 셋(`run_manifest.json`·`trace.jsonl`·`report.md`)
+    # 어디에도 없었다 — 프로필 이름이 **조작자가 친 쉘 명령에만** 있었다.
+    #
+    # 바로 아래 `tool_runner`가 필수인 사유(ADR 0005)가 **"프로필에 적힌 값과 실제 값이
+    # 갈릴 수 있다"**인데, **갈림의 기준인 프로필 자체가 없으면 그 예외를 읽을 수 없다.**
+    # 예외만 남고 기준이 없던 상태다. `cli bench`는 이미 남기고 있었다(`bench_report.py`).
+    #
+    # **`model_checksums`로는 복원되지 않는다.** 그쪽은 역할→모델만 담아
+    # `adapters.retriever`(fake ↔ hybrid)를 못 가른다. 그 축은 캡슐의 그래프 섹션 유무를
+    # 갈라 **모델이 본 것 자체**를 바꾸는데(`config/profiles.yaml`의 `dev_hybrid_docker`
+    # 주석), 다른 어떤 필드로도 유도되지 않는다. `production` 플래그·예산 프로필도 같다.
+    #
+    # **`| None`이고 기본값 `None`인 것은 `model_sampling`과 같은 관용구다** —
+    # `tool_runner`·`device`의 "옛 manifest는 로드 실패가 올바른 결과다"를 여기 쓰지 않는다.
+    # 그쪽은 값을 사후에 지어낼 **유혹**이 있어 막은 것인데, 이 필드는 반대다: 옛 run의
+    # 프로필은 **아무도 모르고**(그것이 이 필드가 생긴 이유다), 필수로 만들면
+    # `tests/fixtures/manifests/run_20260817_0004.json` 같은 **실제 옛 기록에 이름을
+    # 지어 넣어야** 로드된다 — CLAUDE.md §0이 정확히 금지하는 것이다.
+    # 새 run은 config에서 항상 유도되어 반드시 채워지므로 **`None`은 옛 manifest에서만
+    # 나온다.** 그래서 `None`은 "확인 못 함"이 아니라 **"이 기록은 남기지 않았다"**다.
+    #
+    # `incomplete_fields()`에는 넣지 않는다 — `tool_runner`와 같은 사유로, 새 run에서는
+    # 빌 수가 없어 경고가 영원히 안 뜬다. 뜨지 않는 경고는 진짜 문제를 묻는다.
+    profile: NonEmptyStr | None = None
     # git commit SHA-1 (40 hex). sha256 digest와 형식이 다르므로 별도 제약이다.
     repo_commit: Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
     # 하네스 저장소에 미커밋 변경이 있었는가. `repo_commit`은 HEAD만 읽고 `source_hash`는
