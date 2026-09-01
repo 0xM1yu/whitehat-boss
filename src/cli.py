@@ -532,7 +532,7 @@ def _claim_run_dir(artifacts_root: Path, started_at: datetime) -> tuple[str, Pat
     것이 요점이지, 번호를 잘 고르는 것이 아니다.
 
     알려진 한계: `gc`가 지운 번호를 같은 날 새 run이 재사용한다. v1에서는 막지 않는다 —
-    위험과 해법 후보는 open-questions.md R7에 있다.
+    위험과 해법 후보는 `docs/open-questions/R/R7.md` 에 있다.
     """
     for sequence in range(_next_sequence(artifacts_root, started_at), MAX_SEQUENCE + 1):
         run_id = new_run_id(started_at, sequence)

@@ -310,12 +310,17 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 ## 6. 블로킹 이슈
 
-| # | 항목 | 기한 | 상태 |
-|---|---|---|:-:|
-| **R1** | ~~ATOM × vLLM 커널 호환성 미검증~~ · ~~로컬 TCP 차단으로 서버를 못 띄움~~ → **둘 다 2026-08-17 해소.** `qwen3-4b`가 `127.0.0.1:8001`에서 서빙됐다(`VLLM_USE_DEEP_GEMM=0` 필요). 남은 것은 §3 체크리스트의 **아직 안 잰 항목**이고, 이제 하네스 안에서 답할 수 있다 | **2026-08-17** | 기동 ✅ · 체크리스트 1/7 통과 |
-| **R3** | 누출 검증 7개 중 5개 미구현 (Patch Leakage, 중복 제거, Time Split, Prompt Logging, Reproducibility) | 2026-09-07 | 부분 |
-| **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | 2026-09-07 | 대체 경로 확인(`prompt_tokens_cached_total`) · 장부 반영은 별건 · ATOM 대기 |
-| R4 | 단일 노드 대역폭 병목 미파악 | 2026-09-05 | 미착수 |
+| # | 항목 | 본문 |
+| --- | --- | --- |
+| **R1** | ATOM(sm_121) × vLLM 커널 호환성 · 로컬 TCP 차단 — 커널·기동은 2026-08-17 해소, §3 체크리스트 잔여 | [R1.md](docs/open-questions/R/R1.md) |
+| **R3** | 누출 검증 7개 중 5개 미구현 | [R3.md](docs/open-questions/R/R3.md) |
+| **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | [R6.md](docs/open-questions/R/R6.md) |
+| R4 | 단일 노드 대역폭 병목 미파악 | [R4.md](docs/open-questions/R/R4.md) |
+
+> **상태와 기한은 여기서 관리하지 않는다.** 정본은 [docs/open-questions.md](docs/open-questions.md) §1 표와
+> 각 `Rn.md` 의 머리 표다. 예전에는 이 표가 자체 `상태` 열을 들고 있었고 **인덱스와 갈렸다** —
+> 여기는 R6을 "대체 경로 확인"이라 하는데 인덱스 행은 08-23 에서 멈춰 그 경로를 몰랐다.
+> 이 표는 §3·§5 를 읽는 사람이 R 을 놓치지 않도록 남긴 포인터일 뿐이다.
 
 ### R1 — 크리티컬 패스
 
@@ -353,46 +358,6 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 `bench --apply`가 그 값을 채우지만 **0인 항목은 쓰지 않는다.** 채워지지 않았다는 것은
 재지 못했다는 뜻이고, 그 상태가 그대로 보여야 한다.
 
-### R6 — 배경
-
-2026-08-11 Slurm 실측: vLLM `/metrics` 기준 prefix 재사용 **99.0%**(1067 중 1056),
-`wall_ms` 5495 → 2540 (2.2배 단축)이 확인됐으나 응답의 `prompt_tokens_details`가 `null`이라
-하네스 장부에는 `cached_tokens: 0`으로 잡힌다.
-
-**어댑터 결함이 아니다.** 서버가 값을 주지 않는다. Slurm는 드라이버 535(CUDA 12.2 상한)라
-vLLM 0.19.1까지만 쓸 수 있어 최신 동작 확인이 불가능하다. **ATOM(CUDA 13.0)에서 먼저 확인한다.**
-
-**판정은 자동화됐다 (2026-08-14).** `bench`의 D 항목이 장부(`Usage.cached_tokens`)와
-`/metrics`를 함께 보고 판정한다: `both_hit`(정상) · `metrics_only`(위 상황의 재현 —
-어댑터가 아니라 서버가 원인이라는 사실이 출력에 드러난다) · `ledger_only`(이론상 없는
-조합) · `caching_disabled`(`enable_prefix_caching=False` — 서버를 다시 띄워야 한다) ·
-`neither`(켜져 있는데 적중 0 = 진짜 조사 대상) · `no_traffic` / `metrics_unavailable` /
-`metrics_reset`(캐시에 대해 아무 주장도 하지 않음). **카운터는 절대값이 아니라 구간
-delta로 읽는다** — 앞 측정이 데운 캐시와 서버 기동 시점이 절대값에 그대로 섞이기 때문이다.
-
-**대체 경로가 확인됐다 (2026-08-14, Slurm <node> 실측).** `/metrics`의
-`vllm:prompt_tokens_cached_total` 구간 delta가 **응답의 `prompt_tokens_details.cached_tokens`가
-주었어야 할 값과 같은 단위(토큰)**다. 실측 원문에서 응답은 6회 전부 `null`인데 이 카운터는
-1120(질의 1458 중 76.8%)이었다. 즉 R6는 "값을 얻을 수 없다"가 아니라 **"응답 경로로는 못
-얻고 metrics 경로로는 얻는다"**로 성격이 바뀌었다.
-
-- **장부 반영은 별건이다.** 이 값은 **구간 합계라 개별 `model_call`에 배분할 수 없다.**
-  `BudgetLedger`·`_usage_from`은 손대지 않았고, bench 출력의 note에도 그렇게 적힌다.
-- **어느 카운터를 장부로 쓸지는 정하지 않았다.** `prefix_cache_hits_total`은 **local만**,
-  `prompt_tokens_cached_total`은 **local + external**을 센다(HELP 원문). 이번 실측에서
-  둘 다 1120으로 같았지만 그건 external이 0이었기 때문이다 — 값이 같다고 같은 것을 세는
-  것이 아니다. KV connector를 쓰기 시작하면 갈라지므로, bench는
-  `external_prefix_cache_hits_delta`를 함께 실어 **갈라진 시점이 사후에 판별되게** 한다.
-
-**실측이 잡아낸 결함 (같은 날 수정).** bench가 읽던 `vllm:gpu_cache_usage_perc`는
-**존재하지 않는 이름**이었다(`vllm:kv_cache_usage_perc`가 맞다). E(메모리)가 이 버전에서
-항상 빈손이었는데 **스텁이 bench가 기대하는 이름을 그대로 찍어 주어 테스트 26개가 전부
-초록이었다.** 그래서 (1) 이름을 `src/bench_metrics.py`의 `METRIC_NAMES` 상수로 모으고 (2) 스텁을
-실측 원문(`tests/fixtures/metrics/`)으로 교체했으며 (3) `METRIC_NAMES`가 fixture에 전부
-존재하는지 파일별로 대조하는 테스트를 두었다. ATOM 원문이 들어와 이름이 달라지면 그
-테스트가 깨지는 것이 의도다.
-
----
 
 ## 7. 검증 완료 (2026-08-11, Slurm)
 
