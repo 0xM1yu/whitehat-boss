@@ -14,8 +14,10 @@ from src.adapters.generation_config import (
 )
 from src.adapters.tokenizer import tokenizer_dir_from_source
 from src.config import load_config
+from src.schemas.run import ModelSampling, RunRecord
 
 _SOURCE = "hf://org/model@abc123"
+ZERO_DIGEST = "sha256:" + "0" * 64
 
 
 def _write_generation_config(hub: Path, source: str, payload: dict) -> None:
@@ -248,3 +250,57 @@ def test_by_role_is_empty_not_none_when_nothing_resolves(tmp_path: Path) -> None
     config = load_config("local_balanced")  # 파일을 하나도 안 깐다
 
     assert declared_sampling_by_role(config, hub_cache=tmp_path) == {}
+
+
+def test_the_read_but_empty_role_survives_the_manifest_round_trip(tmp_path: Path) -> None:
+    """가른 구별이 **저장 경계를 넘어서도 남는가** (이슈 #99 ③, PR #107 리뷰).
+
+    이 PR이 만든 구별은 `run_manifest.json`에 실려야 값이 있다. 직렬화에서 빈
+    `ModelSampling()`과 부재가 같은 모양(`null`·`{}`)으로 뭉개지면, 읽는 쪽은 다시
+    "선언이 없다"와 "못 읽었다"를 못 가른다 — 리더에서 가른 것이 저장에서 도로 합쳐진다.
+
+    실제로는 두 축이 서로 다른 자리에 실린다: 읽은 역할은 **키가 있고 값이 전부 `null`인
+    객체**로, 못 읽은 역할은 **키 자체가 없음**으로 남는다. 그 둘이 재검증을 통과해도
+    구별된 채 돌아오는 것을 여기서 못 박는다.
+    """
+    config = load_config("local_balanced")
+    served = config.served_models()
+    scout_source = config.models[served["scout"]].source
+    assert scout_source is not None
+    # scout만 bos/eos로 깐다 — 읽혔고 선언이 0개인 역할이다. auditor는 안 깐다.
+    _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1, "eos_token_id": 2})
+
+    by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
+    record = RunRecord(
+        run_id="run_20260901_0001",
+        condition="B3prime@pipeline",
+        repo_commit="0" * 40,
+        repo_dirty=False,
+        source_hash=ZERO_DIGEST,
+        model_checksums=config.model_checksums(),
+        prompt_versions=config.prompt_versions(),
+        tool_images={"semgrep": ZERO_DIGEST},
+        tool_runner=config.profile.adapters.tool_runner,
+        device="atom",
+        budget=config.budget,
+        thresholds=config.thresholds.flatten(),
+        seed=config.seed,
+        sampling=config.sampling,
+        model_sampling=by_role,
+        kb_snapshot="kb-2026-08-30",
+        started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
+    )
+
+    written = json.loads(record.model_dump_json())
+    assert written["model_sampling"]["scout"] == {
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "repetition_penalty": None,
+    }, "읽었으나 선언이 0개인 역할은 키가 남아야 한다"
+    assert "auditor" not in written["model_sampling"], "못 읽은 역할은 키가 없다"
+
+    reloaded = RunRecord.model_validate_json(record.model_dump_json())
+    assert reloaded.model_sampling is not None
+    assert reloaded.model_sampling["scout"] == ModelSampling()
+    assert "auditor" not in reloaded.model_sampling
