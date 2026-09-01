@@ -379,6 +379,41 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
+def test_a_malformed_condition_is_refused_before_the_run_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """형식에 안 맞는 라벨도 **시작 전에** 막는다 — 결여만 막으면 절반이다.
+
+    `RunRecord.condition`이 `CONDITION_PATTERN`으로 같은 값을 거부하지만 그 판정은
+    `_new_record`에서, 즉 **0단계를 지난 뒤**에 일어난다. 그때는 이미 run 디렉터리와
+    번호가 나갔고 빈 디렉터리가 남는다 — R7(`gc`가 지운 run_id를 같은 날 새 run이
+    재사용한다)이 서 있는 자리와 같다.
+
+    **선존재 결함이다**(`origin/main`에서도 `exit=1` · 디렉터리 1건 잔류). 이 PR이 만든 것이
+    아니지만, 이 PR이 세운 게이트가 그 구멍을 덮지 않으면 "거부는 `_claim_run_dir` 앞이라
+    run 번호도 안 쓴다"는 이 PR의 주장이 절반만 참이 된다.
+
+    **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없으므로 dev 프로필에서도
+    막는다. 이건 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
+
+    `B3prime_large@2x2`를 고른 것은 2×2 스펙이 B3′-large 셀에 지정한 실제 라벨이라서다 —
+    그 셀을 돌리려는 사람이 지금 이 경로를 정확히 밟는다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "dev_fake", "--target", str(TARGET),
+            "--condition", "B3prime_large@2x2", "--device", "atom",
+            "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code != 0, "형식에 안 맞는 라벨로 run이 시작했다"
+    assert "B3prime_large@2x2" in err, "어느 값이 문제인지 말하지 않는다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
 def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """dev 스모크는 장비 라벨 없이 도는 것이 정상이라 막으면 그쪽이 죽는다.
 
