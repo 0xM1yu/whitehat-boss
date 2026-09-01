@@ -1,0 +1,54 @@
+[정량 사전 점수 v2.0 — v1.6 8지표(KatFish baseline) + v2.0 카운트형]
+risk_band: medium  (score 4)
+route_hint: light  (권고 — 사용자·오케스트레이터가 무시 가능)
+route_reason: 카운트형 어휘·피동 티 1건 · risk_band medium — 이미 잘 쓴 글, 단일 콜·최소 파이프라인 권장
+genre: report
+char_count: 864
+warning: baseline_genre_null:report->essay
+
+[v1.6 지표]
+- comma_inclusion_rate: 0.24  (z=-0.16 vs report 인간 baseline)
+- comma_usage_rate: 0.24  (z=-1.25 vs report 인간 baseline)
+- ending_comma_rate: 0.33  (z=+3.72 vs report 인간 baseline)  ★ S1 트리거
+- comma_segment_length: 9.52  (z=+2.46 vs report 인간 baseline)  ★ S1 트리거
+- conclusion_pivot_count: 1  (lexicon 매치: '따라서')
+- safe_balance_count: 0
+- hanja_nominalizer_density: 0.005  (z=-1.83 vs report 인간 baseline)
+- lexical_diversity: 0.85  (z=+4.07 vs report 인간 baseline)  ★ S1 트리거
+
+[v2.0 카운트형 지표 — 원값 / baseline calibration 전 z-score 해석 보류]
+- double_passive_count (이중 피동, 본진 A-8): 0
+- by_passive_count (~에 의해 피동, 본진 A-9): 0
+- pronoun_density (인칭 대명사 밀도, 본진 A-16): 0.013
+- have_make_literal_count (have/make 직역, 본진 A-7): 0
+- double_particle_count (이중 조사 결합, 본진 A-19): 0
+- relative_clause_nesting (관형절 3중+ 중첩 문장 수, 본진 A-18): 0
+- deul_overuse_rate ('-들' 남용률, 본진 A-17 hold): 0.000
+- 카운트 > 0 지표는 해당 본진 ID 처방(quick-rules.md·taxonomy)과 교차 확인 후 윤문할 것.
+
+[근거 사용 가이드]
+- 위 점수는 *근거 보조*다. 단독 판정 금지(보고서 명시).
+- z>1.0 지표는 quick-rules.md S1·S2 패턴과 교차 확인 후 윤문할 것.
+- ending_comma_rate가 ★ S1 트리거인 경우 C-11(연결어미 뒤 쉼표) 우선 손질.
+- conclusion_pivot 매치 토큰은 D-1·H-1 처방 적용 대상.
+
+[원문 시작]
+## ③과 ①의 순서·의존 (PR #107 리뷰 요청)
+
+PR #107 리뷰에서 "③만 고쳐도 실효는 ①이 막는다"는 지적이 나왔습니다. 맞는 지적이라 순서를 여기 적어 둡니다.
+
+**의존 관계**
+
+- **③(부재의 뜻 가르기)은 ①에 의존하지 않습니다.** ③이 보장하는 것은 "이 역할의 선언 샘플링을 우리가 읽었는가"까지입니다. 그 선언이 서버에서 실제로 적용됐는지는 ③의 주장 범위 밖입니다.
+- **①(선언값 ≠ 실효값)이 남아 있는 한 ③만으로 모델 비교가 신뢰되지 않습니다.** 누가 `--generation-config vllm`으로 띄우면 모델 파일값이 안 적용되는데 하네스는 그 플래그를 못 봅니다. 그래서 ③이 정직하게 기록한 "선언"이 그 run의 실효값이라는 보장은 ①이 줍니다.
+
+**그런데 순서는 ③이 먼저인 편이 낫습니다.**
+
+①은 나중에 고쳐도 그 시점부터 맞는 값이 들어옵니다. 서빙 플래그는 기동 시점에 읽으면 되고, 과거 run에 대해서도 기동 로그가 남아 있으면 사후 복원 여지가 있습니다.
+
+③은 그렇지 않습니다. **HF 캐시가 저장소 밖이라 "그때 그 스냅샷이 있었는가"를 나중에 알 방법이 없습니다.** 지금 도는 run이 `granite`를 맵에서 빼고 있을 때, 그것이 "granite가 선언을 안 했다"인지 "캐시를 못 받았다"인지는 그 run이 끝나는 순간 영구히 확정 불가가 됩니다. 미루면 그 기간의 샘플링 축이 통째로 검증 불가로 남습니다.
+
+**따라서 권하는 순서**: ③ → ① → ②(등가화, 모델 로스터 확정 후).
+
+②는 기존 판단대로 모델 선정 대기입니다. ①과 ②는 둘 다 "값을 어떻게 맞출까"이고 ③만 "기록을 잃지 않기"라, ③이 시간에 쫓기는 유일한 항목입니다.
+[원문 끝]
