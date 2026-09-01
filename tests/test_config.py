@@ -117,8 +117,34 @@ def test_served_models_skips_roles_this_profile_never_wires(profile: str) -> Non
     if config.profile.adapters.retriever != "hybrid":
         for role in RETRIEVAL_ROLES:
             assert role not in served, f"{profile}: {role}은 이 배선에서 뜨지 않는다"
+    # 뜨는 역할은 **남아야 한다.** 위 단언만으로는 빈 dict를 돌려주는 구현도 통과한다.
+    for role, key in config.profile.roles.items():
+        if config.models[key].is_fake:
+            continue
+        if config.profile.adapters.retriever != "hybrid" and role in RETRIEVAL_ROLES:
+            continue
+        assert role in served, f"{profile}: {role}은 이 배선에서 뜨는데 빠졌다"
     # 기록 쪽은 영향받지 않는다 — 선언한 역할이 전부 남는다.
     assert set(config.model_checksums()) == set(config.profile.roles)
+
+
+def test_a_hybrid_profile_keeps_its_retrieval_roles() -> None:
+    """hybrid면 검색 역할을 **센다.**
+
+    이 방향을 실프로필로는 못 잰다 — 오늘 hybrid인 두 프로필(`dev_hybrid`·
+    `dev_hybrid_docker`)은 그 역할이 `fake`라 어느 쪽 규칙으로 걸러도 결과가 같다.
+    그래서 게이트를 통째로 지운 구현(`retriever`를 안 보고 항상 `RETRIEVAL_ROLES`를
+    빼는 것)이 스위트 전체를 통과한다. 합성 프로필 한 건이 그 자리를 막는다.
+    """
+    base = load_config("b1_single")
+    profile = base.profile.model_copy(
+        update={"adapters": base.profile.adapters.model_copy(update={"retriever": "hybrid"})}
+    )
+    served = base.model_copy(update={"profile": profile}).served_models()
+
+    assert set(RETRIEVAL_ROLES) <= set(served), (
+        "hybrid 배선에서는 embedding·reranker가 실제로 뜬다 — 판정 대상에 있어야 한다"
+    )
 
 
 def test_prompted_roles_matches_prompt_directories() -> None:
