@@ -381,6 +381,25 @@ def test_the_device_label_lands_in_the_run_record(tmp_path: Path) -> None:
     assert record["device"] == "slurm"
 
 
+def test_the_profile_name_lands_in_the_run_manifest(tmp_path: Path) -> None:
+    """`run_manifest.json`만 보고 어느 프로필로 돌았는지 알 수 있어야 한다 (이슈 #76).
+
+    이 필드가 없으면 프로필 이름이 **조작자가 친 쉘 명령에만** 있고 산출물 셋
+    (`run_manifest.json`·`trace.jsonl`·`report.md`) 어디에도 없다. evaluation.md §2.3
+    규칙 2가 프로필을 비교의 기준축으로 지정했는데 그 축이 기록되지 않는다.
+
+    `cli bench`는 이미 `"profile"`을 남긴다 — `cli run`만 안 남긴다.
+    """
+    code = cli.main(
+        ["run", "--profile", "dev_fake", "--target", str(TARGET),
+         "--artifacts-root", str(tmp_path)]
+    )
+
+    assert code == 0
+    record = json.loads(_manifest_path(tmp_path).read_text("utf-8"))
+    assert record["profile"] == "dev_fake"
+
+
 def test_doctor_says_nothing_about_the_device_when_none_is_given() -> None:
     """라벨이 없으면 비교할 대상이 없다. 없는 비교로 경고하면 헛경고가 된다."""
     checks = doctor_lines(device=None)
