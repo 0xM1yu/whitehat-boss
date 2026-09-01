@@ -84,10 +84,28 @@ class ModelGatewayError(RuntimeError):
     부르지 않아 **가장 알고 싶은 M이 버려졌다**.
     """
 
-    def __init__(self, message: str, *, status: int | None = None, detail: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        detail: str = "",
+        usage: "Usage | None" = None,
+        gpu_ms: int | None = None,
+        gpu_ms_source: "GpuMsSource | None" = None,
+        attempts: int = 1,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
+        # 실패해도 이미 쓴 토큰·GPU는 실재한다 — 상위(`context.call_model`)가 장부에
+        # 청구하도록 실어 올린다(#82). 게이트웨이가 요청 전에 거절하면(400 컨텍스트 초과)
+        # 이 시도는 토큰을 안 만들지만 앞선 재시도의 소비가 `usage`에 남는다. `attempts`는
+        # 여기까지의 시도 수다(#83).
+        self.usage = usage
+        self.gpu_ms = gpu_ms
+        self.gpu_ms_source = gpu_ms_source
+        self.attempts = attempts
 
 
 class SchemaParseError(RuntimeError):
@@ -97,7 +115,26 @@ class SchemaParseError(RuntimeError):
     러너가 이것을 잡아 그 후보만 버린다. 실패 사실은 `context.call_model`의
     `model_call ok=False`가 이미 남기므로(예외를 다시 올리기 전에 쓴다) 잡아도
     "스키마 파싱 실패율"의 분자를 잃지 않는다.
+
+    소진까지 서버가 만든 응답의 토큰·GPU는 이미 쓰였다. `usage`·`gpu_ms`에 실어 올려
+    상위가 장부에 청구하게 한다(#82) — 안 실으면 폭주가 잦은 조건일수록 싸 보인다.
+    `attempts`는 시도 수다(#83).
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: "Usage | None" = None,
+        gpu_ms: int | None = None,
+        gpu_ms_source: "GpuMsSource | None" = None,
+        attempts: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.usage = usage
+        self.gpu_ms = gpu_ms
+        self.gpu_ms_source = gpu_ms_source
+        self.attempts = attempts
 
 
 class Prompt(HarnessModel):
@@ -161,6 +198,11 @@ class ModelResult(HarnessModel, Generic[SchemaT]):
     # 그때 남아 있을 경고가 이 라벨이다 — 문서는 사람을 규율하고 기록은 데이터를
     # 규율한다(ADR 0005의 논법). 그래서 trace 이벤트에도 함께 싣는다.
     gpu_ms_source: GpuMsSource | None = None
+    # 이 결과를 얻기까지의 시도 수. 재시도가 `complete()` 안에서 끝나 성공 한 건으로
+    # 나오므로, 이 값이 없으면 **1차 실패 후 살아난 호출이 성공 한 건과 구별되지 않는다**
+    # (#83). trace의 `model_call`에 실려 evaluation.md §5.1 "구조화 출력 실패율"의 분자를
+    # 시도 단위로 만든다. 재시도가 없으면 1이다.
+    attempts: int = Field(default=1, ge=1)
 
 
 class ModelClient(Protocol):

@@ -172,6 +172,22 @@ class RunContext:
         try:
             result = self.models.complete(role=role, prompt=prompt, schema=schema)
         except Exception as exc:
+            # **실패해도 이미 쓴 토큰·GPU를 청구하고 이벤트에 싣는다(#82).** 실패 경로가
+            # 청구를 건너뛰면 evaluation.md §5.2의 분자가 비어 폭주가 잦은 조건일수록 싸
+            # 보인다. 예외가 소비를 들고 있을 때만 청구한다 — 게이트웨이가 요청 전에
+            # 거절하면 usage가 0이고, `BudgetExhausted`처럼 소비 없는 예외는 아예 안 든다.
+            # `attempts`는 시도 수(#83) — 소비를 안 든 예외에는 1이다.
+            usage = getattr(exc, "usage", None)
+            gpu_ms = getattr(exc, "gpu_ms", None)
+            spend: dict[str, object] = {"attempts": getattr(exc, "attempts", 1)}
+            if usage is not None:
+                spend.update(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cached_tokens=usage.cached_tokens,
+                    gpu_ms=gpu_ms,
+                    gpu_ms_source=getattr(exc, "gpu_ms_source", None),
+                )
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
@@ -186,7 +202,14 @@ class RunContext:
                 ok=False,
                 error=type(exc).__name__,
                 error_detail=error_detail(exc),
+                **spend,
             )
+            if usage is not None:
+                if gpu_ms is None:
+                    # 성공 경로와 같은 규칙 — 미측정(`None`)은 "안 썼다"가 아니라 "안 쟀다"다.
+                    name = role.value
+                    self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
+                self.ledger.charge(usage, stage=stage, gpu_ms=gpu_ms)
             raise
         self.trace.emit(
             EventKind.MODEL_CALL,
@@ -208,6 +231,7 @@ class RunContext:
             # (`ModelResult.gpu_ms_source` 주석 — 순차 실행 전제에 의존한다).
             gpu_ms=result.gpu_ms,
             gpu_ms_source=result.gpu_ms_source,
+            attempts=result.attempts,
         )
         # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
         # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로

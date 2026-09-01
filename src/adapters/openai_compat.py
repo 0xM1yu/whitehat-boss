@@ -87,9 +87,20 @@ class OpenAICompatModelClient:
         # 합도 만족한다.
         gpu_ms = 0
         spent = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
-        for _ in range(self.retries + 1):
+        attempt = 0
+        for attempt in range(1, self.retries + 2):
             started = time.monotonic()
-            raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
+            try:
+                raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
+            except ModelGatewayError as exc:
+                # 게이트웨이 거절(컨텍스트 초과 400 등)은 재시도 대상이 아니라 그대로
+                # 올린다. 이 요청은 토큰을 안 만들었지만, 앞선 재시도가 이미 쓴 것이 있으면
+                # 실어 상위(`context.call_model`)가 장부에 청구하게 한다(#82).
+                exc.usage = spent
+                exc.gpu_ms = gpu_ms
+                exc.gpu_ms_source = "request_wall_clock"
+                exc.attempts = attempt
+                raise
             gpu_ms += int((time.monotonic() - started) * 1000)
             spent = _add(spent, usage)
             try:
@@ -128,10 +139,15 @@ class OpenAICompatModelClient:
                 model=self.model_name,
                 gpu_ms=gpu_ms,
                 gpu_ms_source="request_wall_clock",
+                attempts=attempt,
             )
         raise SchemaParseError(
             f"{role} 역할의 {self.model_name}이 {self.retries + 1}회 안에 "
-            f"{schema.__name__}을 만들지 못했다: {last_error}"
+            f"{schema.__name__}을 만들지 못했다: {last_error}",
+            usage=spent,
+            gpu_ms=gpu_ms,
+            gpu_ms_source="request_wall_clock",
+            attempts=self.retries + 1,
         )
 
     def _request_payload(self, prefix: str, body: str, schema: type[BaseModel]) -> dict:
