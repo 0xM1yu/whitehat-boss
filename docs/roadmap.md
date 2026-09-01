@@ -57,7 +57,9 @@
 | T7 | 평가·데이터셋 | 데이터셋 구축, 누출 검증, 지표 파이프라인 | [evaluation.md](evaluation.md) |
 | T8 | 헌팅·제보·리포트 | 실제 대상 헌팅, 2인 검증, 리포트·논문 | [disclosure-policy.md](disclosure-policy.md) |
 
-**트랙 배정과 동기화 방식은 아직 미정이다(TBD).** → [open-questions.md](open-questions.md)
+**트랙(T1~T8) 단위 개발은 2026-09-01에 폐기됐다.** 하네스는 두 명이 맡고 세부 역할 분담은
+회의로 정한다. 위 표는 그 시점까지의 배선이고, 정합성 최신화는 별건이다
+([open-questions.md](open-questions.md) §3에 O1~O3이 닫힌 사유가 있다).
 
 ### 병렬 작업의 동기화 지점
 

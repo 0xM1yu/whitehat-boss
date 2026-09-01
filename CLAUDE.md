@@ -31,7 +31,7 @@
 | `src/orchestrator/**`는 `src.adapters`를 import하지 않는다 | `test_orchestrator_source_has_no_adapter_import` |
 | `src/`·`config/`에 `D<숫자>`를 쓰지 않는다 — 이슈 번호를 쓴다 | `test_production_code_does_not_reference_open_questions_d_rows` |
 | 문서에 쓴 `D<숫자>`는 인덱스에 실재해야 한다 | `test_decision_references_point_at_a_real_row` |
-| 모든 D가 `docs/open-questions/` 아래 본문 파일을 가진다 | `test_every_d_has_a_body_file` |
+| 모든 D·R이 `docs/open-questions/D/`·`R/` 아래 본문 파일을 가진다 | `test_every_d_has_a_body_file` |
 | 인덱스 행에 본문을 넣지 않는다 (200자 상한) | `test_index_rows_stay_thin` |
 | 문서의 내부 링크는 실파일을 가리켜야 한다 | `test_internal_links_point_at_a_real_file` |
 | 마크다운 표의 열 수가 일관돼야 한다 | `test_markdown_tables_have_a_consistent_column_count` |
@@ -83,8 +83,10 @@
 
 ### D 항목은 한 항목당 한 파일이다
 
-설계 판단이 걸린 결함은 이슈와 별개로 본문을 남긴다 — `docs/open-questions/` 아래
+설계 판단이 걸린 결함은 이슈와 별개로 본문을 남긴다 — `docs/open-questions/D/` 아래
 번호별 파일 하나, 그리고 [인덱스](docs/open-questions.md)에 한 줄.
+**블로킹 리스크(R)는 같은 형식이되 `docs/open-questions/R/` 아래이고, 이슈를 만들지 않는다** —
+개별 결함이 아니라 프로젝트 수준 리스크라 상태의 원천이 인덱스 §1 표와 `Rn.md` 다.
 
 - **본문은 파일에만 쓴다.** 인덱스 행은 번호·항목·상태·링크뿐이다.
 - **인덱스는 지우지 않는다.** 여러 문서가 그것을 링크하고, D 참조를 CI가 검증하는 근거가
@@ -165,7 +167,7 @@ python -m pytest -q
 | "테스트가 통과했으니 맞겠지" | 테스트는 **주석 문장이 옳은지 검증하지 않는다** |
 | "줄바꿈이 이상한데 고쳐야지" | 워킹트리는 **LF가 정상**이다. CRLF는 `git status`에 안 보인다 |
 
-각 항목의 근거는 해당 이슈와 `docs/open-questions/` 아래 본문 파일에 있다.
+각 항목의 근거는 해당 이슈와 `docs/open-questions/D/`·`R/` 아래 본문 파일에 있다.
 
 ---
 
