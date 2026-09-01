@@ -86,7 +86,7 @@ def test_a_model_that_declared_nothing_is_told_apart_from_one_we_could_not_read(
         "top_k": None,
         "repetition_penalty": None,
     }
-    assert unreadable is None, "스냅샷을 못 찾은 것만 `None`이어야 한다"
+    assert unreadable is None, "그 경로에 파일이 없으면 읽지 못한 쪽이다"
 
 
 def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
@@ -217,7 +217,7 @@ def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
 
 
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:
-    """맵은 프롬프트를 쓰는 실서빙 역할만, 선언이 있는 것만 담는다 (D29).
+    """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
     `local_balanced`는 scout·auditor가 `hf://` source를, critic(`devstral`)이 `source`
     없음이다. scout·auditor에만 파일을 깔면 맵에 둘만 들어오고 critic은 빠진다 —

@@ -38,9 +38,11 @@ def read_declared_sampling(
     **`None`과 빈 `ModelSampling()`은 서로 다른 사실이다 (#99 ③).**
 
     - `None` = **읽지 못했다.** 우리 쪽 기록 구멍이다:
-      - `source`가 없다(빈 값·`sha256:` 등 다른 스킴·리비전 없는 `hf://`)
-      - 스냅샷 디렉터리를 못 찾았다 (HF 캐시가 그 자리에 없다)
-      - 스냅샷에 `generation_config.json`이 없다
+      - `source`가 비어 있다
+      - `source`를 스냅샷 경로로 **풀지 못했다** — `hf://`·`file://`가 아닌 스킴(예 `sha256:`)
+        이거나 `@rev`가 없다. 이 리졸버는 **존재 확인을 하지 않는다**
+        (`tokenizer.tokenizer_dir_from_source` docstring)
+      - 그 경로에 `generation_config.json`이 없다 — **HF 캐시가 안 받아졌을 때가 여기다**
       - 파일이 깨졌거나 매핑이 아니다
     - 빈 `ModelSampling()` = **읽었고 담을 선언이 없었다.** 이것은 **관측**이다:
       - 샘플링 키를 하나도 선언하지 않았다(bos/eos만 있는 모델 — granite·Foundation-Sec)
