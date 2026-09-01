@@ -312,3 +312,55 @@ def test_the_output_cap_is_actually_sent_and_comes_from_the_caller() -> None:
     assert payload["temperature"] == 0.0
     assert payload["top_p"] == 1.0
     assert payload["seed"] == 7
+
+
+# --- 시도 수와 실패분 회계 (D55·D53) ------------------------------------------
+#
+# `complete()`가 재시도를 자기 안에서 끝내고 성공 한 건을 내므로, 1차 실패 후 살아난
+# 호출이 성공 한 건과 구별되지 않는다(D55). 그리고 통째로 실패하면 이미 쓴 토큰·GPU가
+# 예외와 함께 사라져 상위가 장부에 청구할 것이 없다(D53). 시도 수를 결과·예외에 싣는다.
+
+
+def test_the_result_carries_how_many_attempts_it_took(monkeypatch: pytest.MonkeyPatch) -> None:
+    """2회 실패 후 성공하면 `attempts == 3`이다 (D55).
+
+    이 값이 `model_call`에 실려야 evaluation.md §5.1의 "구조화 출력 실패율" 분자가
+    '회복 못 한 실패'만이 아니라 '일어난 실패'를 센다. 지금은 성공 한 건과 구별 불가라
+    run B의 실패율이 실제 1/26인데 기록으로는 0%다.
+    """
+    _stub(monkeypatch, succeed_on=3)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.attempts == 3
+
+
+def test_a_first_try_success_reports_one_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """재시도가 없으면 `attempts == 1`이다. 성공 경로를 부풀리면 안 된다."""
+    _stub(monkeypatch, succeed_on=1)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.attempts == 1
+
+
+def test_exhaustion_carries_the_spend_it_already_made(monkeypatch: pytest.MonkeyPatch) -> None:
+    """소진 예외가 이미 쓴 토큰·GPU·시도 수를 들고 나온다 (D53·D55).
+
+    실패한 응답도 서버가 만들어 냈고 그 토큰·GPU는 실제로 쓰였다. 예외가 빈손으로 나오면
+    상위(`context.call_model`)가 장부에 청구할 것이 없어, 폭주가 잦은 조건일수록 싸 보인다 —
+    §5.2 비용표의 분자가 조건 비교에서 정확히 거꾸로 간다.
+    """
+    _stub(monkeypatch, succeed_on=99)
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    exc = caught.value
+    assert exc.attempts == 2  # retries=1 → 2회 시도
+    # 2회분(100+200 / 10+20 / 40+20) 합. 마지막 것만이 아니다.
+    assert exc.usage.input_tokens == 100 + 200
+    assert exc.usage.output_tokens == 10 + 20
+    assert exc.usage.cached_tokens == 40 + 20
+    assert exc.gpu_ms is not None and exc.gpu_ms >= 0
+    assert exc.gpu_ms_source == "request_wall_clock"

@@ -11,7 +11,7 @@ import pytest
 from src.adapters.memory_store import InMemoryStateStore
 from src.config import load_config
 from src.ids import IdFactory
-from src.interfaces.model_client import ModelResult, Prompt, Usage
+from src.interfaces.model_client import ModelResult, Prompt, SchemaParseError, Usage
 from src.interfaces.retrieval import RetrievalResult
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
@@ -212,6 +212,91 @@ def test_call_model_records_failure_and_reraises() -> None:
     (call,) = [e for e in ctx.trace.events if e.kind is EventKind.MODEL_CALL]
     assert call.data["ok"] is False
     assert call.data["error"] == "RuntimeError"
+
+
+class _FailingWithSpendStub:
+    """이미 토큰·GPU를 쓴 뒤 `SchemaParseError`로 소진되는 클라이언트 (D53).
+
+    실서빙의 `openai_compat.complete()`가 재시도를 소진하면 그때까지의 usage·gpu_ms를
+    예외에 실어 올린다. 이 스텁은 그 계약을 세워 `call_model`이 실패분을 청구하는지 본다.
+    """
+
+    def __init__(self, *, usage: Usage, gpu_ms: int, attempts: int) -> None:
+        self._usage = usage
+        self._gpu_ms = gpu_ms
+        self._attempts = attempts
+        self.calls = 0
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+        self.calls += 1
+        raise SchemaParseError(
+            "3회 안에 스키마를 만들지 못했다",
+            usage=self._usage,
+            gpu_ms=self._gpu_ms,
+            gpu_ms_source="request_wall_clock",
+            attempts=self._attempts,
+        )
+
+
+class _AttemptsStub:
+    """재시도 끝에 성공한 호출. `attempts`를 실은 `ModelResult`를 낸다 (D55)."""
+
+    def __init__(self, *, usage: Usage, attempts: int) -> None:
+        self._usage = usage
+        self._attempts = attempts
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+        value = Candidate(
+            candidate_id="cand_0001",
+            run_id=RUN_ID,
+            artifact_id="art_0001",
+            location=Location(file="parser.c"),
+            score=0.7,
+            state=FindingState.CANDIDATE,
+        )
+        return ModelResult(value=value, usage=self._usage, model="fake", attempts=self._attempts)
+
+
+def test_a_failed_call_charges_what_it_already_spent() -> None:
+    """실패한 호출도 이미 쓴 토큰·GPU를 장부에 청구한다 (D53).
+
+    실패 경로가 청구를 건너뛰면 evaluation.md §5.2의 분자(input/output token·GPU-second)가
+    비고, 폭주가 잦은 조건일수록 싸 보인다 — 조건 비교에서 정확히 거꾸로 가는 편향이다.
+    v2 스모크에서 `critic_failed` 3건 × 243초(run의 60.7%)가 그렇게 장부 밖으로 샜다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _FailingWithSpendStub(
+        usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+        gpu_ms=243_000,
+        attempts=2,
+    )
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.CRITIC, prompt=PROMPT, schema=Candidate, stage=Stage.CRITIC)
+
+    assert ctx.ledger.input_tokens == 300  # 실패분이 장부에 실렸다
+    assert ctx.ledger.gpu_ms == 243_000
+    (call,) = [e for e in ctx.trace.events if e.kind is EventKind.MODEL_CALL]
+    assert call.data["ok"] is False
+    assert call.data["input_tokens"] == 300  # 실패 이벤트도 소비를 싣는다
+    assert call.data["output_tokens"] == 30
+    assert call.data["attempts"] == 2
+
+
+def test_the_attempt_count_lands_on_a_successful_model_call() -> None:
+    """재시도가 성공으로 끝나도 시도 수가 `model_call`에 남는다 (D55).
+
+    이 값이 없으면 1차 실패 후 살아난 호출이 성공 한 건과 구별되지 않아 §5.1 실패율이 0%로
+    읽힌다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _AttemptsStub(usage=_usage(), attempts=3)
+
+    ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    (call,) = [e for e in ctx.trace.events if e.kind is EventKind.MODEL_CALL]
+    assert call.data["ok"] is True
+    assert call.data["attempts"] == 3
 
 
 def test_call_model_blocks_before_spending_when_exhausted() -> None:
