@@ -72,7 +72,7 @@
 | D34 | **언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다** | 열림 | [본문](open-questions/D34.md) |
 | D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 부분 | [본문](open-questions/D35.md) |
 | D36 | ~~`report.md`에 E 등급이 없다 — run의 성과가 최종 산출물에 안 보인다~~ | 닫힘 | [본문](open-questions/D36.md) |
-| D37 | **`run_manifest.json`에 `profile`이 없다** | 열림 | [본문](open-questions/D37.md) |
+| D37 | ~~`run_manifest.json`에 `profile`이 없다~~ | 닫힘 | [본문](open-questions/D37.md) |
 | D38 | **E4는 Fake auditor 프로필에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D38.md) |
 | D39 | **심볼 단위 후보에서 캡슐 캐시는 원리상 무효다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D39.md) |
 | D40 | **8단계가 dedupe 이전이라 같은 파일에 도구를 반복 실행한다** | 열림 | [본문](open-questions/D40.md) |
