@@ -1137,9 +1137,10 @@ def incomplete_fields(
 ) -> list[str]:
     """비교표에 넣을 수 없게 만드는 빈 항목 (engineering-guide.md §5).
 
-    `served_models`는 **Fake가 아닌 역할**의 역할 → model key다. checksum 자리표시자
-    판정에만 쓴다. `None`이면 그 검사를 건너뛴다 — 모르는 채로 "괜찮다"고 말하지 않고,
-    판정할 근거가 없으면 판정하지 않는다.
+    `served_models`는 **이 배선에서 실제로 뜨는 역할**의 역할 → model key다
+    (`HarnessConfig.served_models` — Fake 역할과, `retriever: fake`인 프로필의
+    embedding·reranker를 뺀다). checksum 자리표시자 판정에만 쓴다. `None`이면 그 검사를
+    건너뛴다 — 모르는 채로 "괜찮다"고 말하지 않고, 판정할 근거가 없으면 판정하지 않는다.
 
     `gpu_unmeasured_roles`는 **실서빙 역할 중 GPU 시간을 못 잰 것**의 역할 → 호출 수다.
     러너가 원장에서 뽑아 `served_models`와 교집합해서 넘긴다 — Fake 역할이 섞이면 `dev_*`

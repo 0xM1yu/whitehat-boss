@@ -113,8 +113,13 @@ def declared_sampling_by_role(
 ) -> dict[str, ModelSampling]:
     """`RunRecord.model_sampling`에 넣을 역할 → 선언 샘플링 맵.
 
-    **프롬프트를 쓰는 실서빙 역할만** 담는다. `served_models()`는 embedding·reranker도
-    주지만 그것들은 생성 모델이 아니라 샘플링과 무관하다 — `PROMPTED_ROLES`로 좁힌다.
+    **프롬프트를 쓰는 실서빙 역할만** 담는다 — `PROMPTED_ROLES`로 좁힌다. embedding·reranker는
+    생성 모델이 아니라 샘플링과 무관해서인데, 이 좁힘은 지금 **중복 방어**다:
+    `served_models()`가 이슈 #108 (b) 이후 `retriever: fake`인 프로필에서 그 둘을 이미
+    빼고, 현재 12개 프로필 중 hybrid는 두 개이며 그 둘도 검색 역할이 `fake`라
+    **오늘 그 둘을 주는 프로필은 0개다.** 그래도 `PROMPTED_ROLES`를 지우지 않는 것은
+    이 함수의 근거가 배선이 아니라 **"샘플링이 있는 역할인가"**이기 때문이다 —
+    hybrid 프로필에 실서빙 embedding이 붙는 날 그 축이 다시 필요해진다.
 
     **맵에서 빠지는 것은 "읽지 못한" 역할뿐이다 (#99 ③).** Fake 역할, `source` 없는 모델,
     스냅샷·파일을 못 찾은 모델이 그것이다. **읽었으나 선언이 0개인 모델은 빈
