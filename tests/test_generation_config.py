@@ -91,6 +91,47 @@ def test_a_model_that_declared_nothing_is_told_apart_from_one_we_could_not_read(
     assert unreadable is None, "그 경로에 파일이 없으면 읽지 못한 쪽이다"
 
 
+def test_a_file_we_cannot_decode_is_unread_not_an_exception(tmp_path: Path) -> None:
+    """비-UTF-8 바이트는 `None`이다 — 예외가 run을 죽이면 안 된다 (리뷰 지적 L1).
+
+    docstring이 "파일이 깨졌거나 매핑이 아니다 → `None`"이라 적는데
+    `UnicodeDecodeError`는 `ValueError` 하위지 `OSError`도 `JSONDecodeError`도 아니라
+    except를 통과했다. 그 예외는 `declared_sampling_by_role` → `factory`(run 조립 경로)까지
+    전파해 **run 자체를 죽인다.**
+    """
+    snapshot = tokenizer_dir_from_source(_SOURCE, tmp_path)
+    assert snapshot is not None
+    snapshot.mkdir(parents=True, exist_ok=True)
+    # 유효하지 않은 UTF-8 바이트열. 이스케이프 없이 만들어 소스가 ASCII로 남게 한다.
+    (snapshot / "generation_config.json").write_bytes(
+        b'{"temperature": "' + bytes([0xFF, 0xFE]) + b'"}'
+    )
+
+    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+
+
+def test_a_broken_file_stays_on_the_unread_side(tmp_path: Path) -> None:
+    """깨진 JSON은 `None`이다 — 빈 관측이 아니다 (리뷰 지적 M3).
+
+    #99 ③ 이전에는 이 분기가 다른 모든 경로와 똑같이 `None`을 내서 오분류가 무해했다.
+    이제는 **이 분기가 "못 읽음"과 "빈 관측"을 가르는 자리**라 하중을 새로 받는다.
+    누가 여기를 `ModelSampling()`으로 바꿔도 잡는 테스트가 없었다.
+    """
+    snapshot = tokenizer_dir_from_source(_SOURCE, tmp_path)
+    assert snapshot is not None
+    snapshot.mkdir(parents=True, exist_ok=True)
+    (snapshot / "generation_config.json").write_text("{ not json", encoding="utf-8")
+
+    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+
+
+def test_a_non_mapping_file_stays_on_the_unread_side(tmp_path: Path) -> None:
+    """매핑이 아닌 JSON도 `None`이다 (리뷰 지적 M3). 위와 같은 사유로 하중을 받는다."""
+    _write_generation_config(tmp_path, _SOURCE, [1, 2])  # type: ignore[arg-type]
+
+    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+
+
 def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
     tmp_path: Path,
 ) -> None:
