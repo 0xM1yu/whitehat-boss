@@ -906,3 +906,55 @@ def test_clang_tidy_still_reports_real_warnings_as_a_signal() -> None:
     )
     # 깨끗한 실행은 예전과 같다.
     assert judge("clang-tidy", [Step(0, "", "")], 1) == (True, 0, None)
+
+
+# --- semgrep이 파일을 실제로 봤는가 (#66) / 언어 그룹 break 기록 (#75) --------------
+
+
+def _semgrep_json_scanned(results: int, scanned: list[str]) -> str:
+    """`--json` 출력에 `paths.scanned`까지 담는다 — 실제 semgrep은 항상 `paths`를 낸다."""
+    return json.dumps(
+        {
+            "results": [{"check_id": f"r{i}"} for i in range(results)],
+            "paths": {"scanned": scanned, "skipped": []},
+            "errors": [],
+        }
+    )
+
+
+def test_semgrep_that_scanned_no_file_is_a_failure_not_a_clean_scan() -> None:
+    """`.inc`처럼 확장자가 언어로 매핑되지 않으면 semgrep이 exit 0·results 0을 내지만
+    `paths.scanned`가 비어 있다 — 파일을 아예 안 본 것이다(#66). 이걸 '정적 신호 없음'으로
+    읽으면 '도구가 안 봄'과 '봤는데 깨끗함'이 구별되지 않는다.
+    """
+    ok, code, error = judge("semgrep", [Step(0, _semgrep_json_scanned(0, []), "")], 1)
+
+    assert ok is False
+    assert code == 0, "프로세스가 반환한 값을 그대로 남긴다"
+    assert error is not None and "스캔" in error
+
+
+def test_semgrep_clean_scan_of_a_real_file_is_still_ok() -> None:
+    """results 0인데 `paths.scanned`에 파일이 있으면 정상 클린 스캔이다 — 실패로 만들지 않는다.
+
+    '봤는데 깨끗함'(scanned 非empty)과 '안 봄'(scanned empty)을 가르는 것이 이 항목의 요점이다.
+    """
+    assert judge("semgrep", [Step(0, _semgrep_json_scanned(0, ["target.c"]), "")], 1) == (
+        True,
+        0,
+        None,
+    )
+
+
+def test_unexecuted_commands_are_recorded_when_an_early_command_breaks() -> None:
+    """언어 그룹이 갈린 clang-tidy에서 C 그룹 발견이 non-zero라 break되면 C++ 그룹이 안 돈다(#75).
+
+    break는 asan의 "빌드 실패면 실행 안 함"(E4 가드)이라 유지하되, 안 돈 명령을 기록에 남긴다 —
+    안 그러면 뒤 그룹의 발견이 앞 그룹 발견에 가려 어디에도 안 남는다.
+    """
+    from src.adapters.container_tools import unexecuted_commands_note
+
+    note = unexecuted_commands_note(1, 2)
+    assert note is not None and "1" in note
+    assert unexecuted_commands_note(2, 2) is None  # 다 돌았으면 기록 없음
+    assert unexecuted_commands_note(1, 1) is None
