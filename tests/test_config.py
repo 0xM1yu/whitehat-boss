@@ -22,6 +22,7 @@ from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
     REQUIRED_ROLES,
+    RETRIEVAL_ROLES,
     Benchmark,
     ConfigError,
     HarnessConfig,
@@ -89,6 +90,35 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
     for absent in ("embedding", "reranker", "judge"):
         assert absent not in record.prompt_versions
     assert record.thresholds  # 평탄화 결과가 비면 임계값 대조가 불가능하다
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_served_models_skips_roles_this_profile_never_wires(profile: str) -> None:
+    """판정 대상에는 **이 배선에서 실제로 뜨는 역할만** 담긴다 (이슈 #108, 선택지 b).
+
+    `served_models()`의 docstring이 스스로 그 계약을 선언한다 — *"저쪽은 기록이라 빠짐이
+    없어야 하고, 이쪽은 판정 대상이라 **해시할 대상이 실재하는 역할만** 담아야 한다"*.
+    그런데 구현이 `is_fake` 하나로만 걸러 `profile.adapters`를 안 봤다.
+
+    embedding·reranker 클라이언트는 hybrid 빌더 안에서만 만들어지므로
+    (`factory.py`의 두 지점이 전부 `adapters.retriever == "hybrid"` 게이트 안이다),
+    `retriever: fake`인 프로필에서는 **한 번도 뜨지 않는다.** 그런데 `b1_single`·
+    `local_balanced`가 그 두 역할에 실모델을 선언해서 — 그 선언 자체는 의도다,
+    hybrid로 올리는 날 쓸 모델을 적어 둔 것이다(`profiles.yaml`의 `local_balanced`
+    retriever 주석) — 안 뜨는 모델의 미실측 checksum이 "비교표에서 제외한다" 판정에
+    들어왔다.
+
+    **기록은 그대로 둔다.** `model_checksums()`는 계속 전 역할을 담는다 — 프로필이
+    선언한 사실이고 빠짐이 없어야 한다. 갈리는 것은 **판정 대상**뿐이다.
+    """
+    config = load_config(profile)
+    served = config.served_models()
+
+    if config.profile.adapters.retriever != "hybrid":
+        for role in RETRIEVAL_ROLES:
+            assert role not in served, f"{profile}: {role}은 이 배선에서 뜨지 않는다"
+    # 기록 쪽은 영향받지 않는다 — 선언한 역할이 전부 남는다.
+    assert set(config.model_checksums()) == set(config.profile.roles)
 
 
 def test_prompted_roles_matches_prompt_directories() -> None:
