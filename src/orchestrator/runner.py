@@ -71,6 +71,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import re
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -124,7 +125,7 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
-from src.schemas.run import ModelSampling, RunRecord
+from src.schemas.run import CONDITION_PATTERN, ModelSampling, RunRecord
 from src.tokens import using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
@@ -165,6 +166,34 @@ _CONDITION_DEFAULTED = (
 # `production: false`라 그 필드로는 dev와 실서빙이 갈리지 않는다(2026-09-02 실측).
 # `HarnessConfig.served_models()`가 그것을 가른다 — dev 다섯은 0, 실서빙 일곱은 1~3이다.
 BLOCKING_WHEN_SERVING = (_DEVICE_MISSING, _CONDITION_DEFAULTED)
+
+
+def malformed_condition(condition: str | None) -> str | None:
+    """조건 라벨이 형식에 안 맞으면 그 사유, 맞거나 미지정이면 `None`.
+
+    **`RunRecord.condition`이 같은 정규식으로 이미 거부한다.** 그런데 그 판정은
+    `_new_record`에서, 즉 **0단계를 지난 뒤**에 일어난다 — 그때는 run 디렉터리와 번호가
+    이미 나갔고, `ValidationError`가 트레이스백으로 올라와 cli가 종료 코드조차 못 돌려준다.
+    남는 빈 디렉터리는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는
+    자리와 같다.
+
+    **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없다. 그래서
+    `missing_run_labels()`의 실서빙 게이트와 달리 **어느 프로필에서든** 막는다. 정책
+    선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
+
+    **결여와 따로 두는 이유.** `missing_run_labels()`는 "사람이 줘야 하는 값이 비었나"를
+    묻고 이쪽은 "준 값이 형식에 맞나"를 묻는다. 한 함수에 넣으면 `None`(미지정)과
+    빈 문자열·오타가 같은 목록에 섞여 실서빙 게이트가 오타까지 조건부로 봐야 한다.
+
+    정규식은 `RunRecord`가 쓰는 것을 그대로 가져온다 — 두 곳이 다른 패턴을 들면 여기서
+    통과한 값이 뒤에서 죽고, 그게 이 함수가 없애려는 상태다.
+    """
+    if condition is None or re.match(CONDITION_PATTERN, condition):
+        return None
+    return (
+        f"condition {condition!r}이 라벨 형식에 맞지 않는다 — {CONDITION_PATTERN}. "
+        "이대로 두면 0단계를 지난 뒤 기록을 만들 때 죽고 빈 run 디렉터리가 남는다"
+    )
 
 # git을 못 읽었을 때의 자리표시자. 40 hex라는 형식은 지키되 경고 대상이다.
 _UNKNOWN_COMMIT = "0" * 40

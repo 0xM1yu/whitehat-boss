@@ -53,6 +53,7 @@ from src.orchestrator.runner import (
     LateUsageHook,
     RunResult,
     RunSpec,
+    malformed_condition,
     missing_run_labels,
     run_pipeline,
 )
@@ -584,6 +585,13 @@ def run(args: argparse.Namespace) -> int:
     # **실서빙이면 경고로 끝내지 않는다.** 경고 한 줄은 몇 시간짜리 run의 출력에 묻히고,
     # 그러면 이 검사가 고치려던 것("태우고 나서 듣는다")이 그대로 남는다. Fake로 도는
     # 프로필은 막지 않는다 — dev 스모크는 장비 라벨 없이 도는 것이 정상이다.
+    # **형식은 프로필과 무관하게 막는다.** 결여는 실서빙에서만 거부하지만(위 주석), 형식에
+    # 안 맞는 라벨은 어느 프로필에서든 0단계 뒤 `_new_record`에서 `ValidationError`로 죽어
+    # 빈 run 디렉터리를 남긴다 — 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
+    malformed = malformed_condition(args.condition)
+    if malformed is not None:
+        print(f"[ERROR] {malformed}", file=sys.stderr)
+        return 2
     serving = bool(config.served_models())
     blocking = [gap for gap in gaps if gap in BLOCKING_WHEN_SERVING] if serving else []
     if blocking:
