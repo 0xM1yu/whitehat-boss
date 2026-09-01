@@ -155,7 +155,8 @@ class RunContext:
         """모델 호출 + usage 기록 + 예산 차감 + trace. 노드는 이것만 쓴다.
 
         실패해도 `model_call`을 남기고 예외를 그대로 올린다 — "스키마 파싱 실패율"의
-        분자가 여기서 나오므로 삼키면 지표가 0이 된다(evaluation.md §5.1).
+        분자(시도 단위 `attempts`)가 여기서 나오므로 삼키면 지표가 0이 된다. 그 지표의
+        산출식 정본은 `trace.py`의 「이벤트 → 지표」 표다(evaluation.md §5.1은 그 서술).
         예산 소진이면 호출 전에 `BudgetExhausted`가 나므로 토큰을 쓰지 않는다.
 
         **실패 이벤트에 클래스 이름만 싣던 것이 zlib에서 조사를 막았다.** vLLM이 컨텍스트
@@ -173,21 +174,24 @@ class RunContext:
             result = self.models.complete(role=role, prompt=prompt, schema=schema)
         except Exception as exc:
             # **실패해도 이미 쓴 토큰·GPU를 청구하고 이벤트에 싣는다(#82).** 실패 경로가
-            # 청구를 건너뛰면 evaluation.md §5.2의 분자가 비어 폭주가 잦은 조건일수록 싸
-            # 보인다. 예외가 소비를 들고 있을 때만 청구한다 — 게이트웨이가 요청 전에
-            # 거절하면 usage가 0이고, `BudgetExhausted`처럼 소비 없는 예외는 아예 안 든다.
-            # `attempts`는 시도 수(#83) — 소비를 안 든 예외에는 1이다.
+            # 청구를 건너뛰면 evaluation.md §5.2의 분자가 비어 폭주가 잦은 조건일수록 싸 보인다.
+            # 청구는 예외가 소비를 들고 왔을 때만 한다(아래 `if usage is not None`).
+            #
+            # **이벤트 키는 성공 경로와 균질하게 둔다(#82 리뷰 F10).** 소비를 안 든 예외
+            # (`BudgetExhausted` 등)는 토큰·gpu·attempts를 `None`으로 싣는다 — 안 잰 것은 0이
+            # 아니라 `None`이고(model_client.py `gpu_ms` 주석), 키 집합이 실패 종류마다 달라지면
+            # 사후 집계가 실패 행에서 KeyError나 `.get(...,0)` 0-뭉갬을 낸다. `attempts`도 안
+            # 실려 오면 **지어낸 1이 아니라 `None`**이다(#83 리뷰 F3 — 미실측은 미실측으로 둔다).
             usage = getattr(exc, "usage", None)
             gpu_ms = getattr(exc, "gpu_ms", None)
-            spend: dict[str, object] = {"attempts": getattr(exc, "attempts", 1)}
-            if usage is not None:
-                spend.update(
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cached_tokens=usage.cached_tokens,
-                    gpu_ms=gpu_ms,
-                    gpu_ms_source=getattr(exc, "gpu_ms_source", None),
-                )
+            spend: dict[str, object] = {
+                "attempts": getattr(exc, "attempts", None),
+                "input_tokens": usage.input_tokens if usage is not None else None,
+                "output_tokens": usage.output_tokens if usage is not None else None,
+                "cached_tokens": usage.cached_tokens if usage is not None else None,
+                "gpu_ms": gpu_ms,
+                "gpu_ms_source": getattr(exc, "gpu_ms_source", None),
+            }
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
@@ -207,6 +211,10 @@ class RunContext:
             if usage is not None:
                 if gpu_ms is None:
                     # 성공 경로와 같은 규칙 — 미측정(`None`)은 "안 썼다"가 아니라 "안 쟀다"다.
+                    # **지금 이 배선에선 도달 불가다(#82 리뷰 F16):** 소비를 실어 올리는 예외
+                    # 둘(`openai_compat`의 두 raise)이 모두 `gpu_ms`에 정수를 넣는다. 성공 경로
+                    # (`result.gpu_ms is None`, Fake)와 규칙을 맞춘 방어 코드이고, 언젠가
+                    # `usage`만 실은 예외가 생기면 이 자리가 비교표 제외 판정의 입력이 된다.
                     name = role.value
                     self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
                 self.ledger.charge(usage, stage=stage, gpu_ms=gpu_ms)

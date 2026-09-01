@@ -266,7 +266,7 @@ def test_a_failed_call_charges_what_it_already_spent() -> None:
     """
     ctx, _ = _context(budget=_budget(), usage=_usage())
     ctx.models = _FailingWithSpendStub(
-        usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+        usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=100),
         gpu_ms=243_000,
         attempts=2,
     )
@@ -281,6 +281,34 @@ def test_a_failed_call_charges_what_it_already_spent() -> None:
     assert call.data["input_tokens"] == 300  # 실패 이벤트도 소비를 싣는다
     assert call.data["output_tokens"] == 30
     assert call.data["attempts"] == 2
+    # 이벤트가 장부와 어긋나면 잡는다 (#82 리뷰 F11) — gpu·source·cached도 균질하게 싣는다.
+    # cached(100)는 input(300)과 다른 값이라 캐시 비율 분모 오염(input엔 들어가고 cached엔
+    # 안 들어감)도 이 단언이 잡는다.
+    assert call.data["gpu_ms"] == 243_000
+    assert call.data["gpu_ms_source"] == "request_wall_clock"
+    assert call.data["cached_tokens"] == 100
+
+
+def test_a_failed_calls_charge_can_exhaust_the_budget() -> None:
+    """실패분 청구가 상한을 넘기면 다음 단계 진입이 막힌다 — 실패 한 건이 run 종료 시점을
+    바꿀 수 있다 (#82 (a)의 의도된 귀결, 리뷰 F12).
+
+    이 PR 전에는 실패한 호출이 장부를 안 건드려 이 전이가 없었다. `gpu_seconds=0`(검사 안 함)이
+    아니라 `input_tokens` 상한으로 세워 실패분 청구가 실제로 `ensure()`를 막는지 본다.
+    """
+    ctx, _ = _context(budget=_budget(input_tokens=100), usage=_usage())
+    ctx.models = _FailingWithSpendStub(
+        usage=Usage(input_tokens=100, output_tokens=8192, cached_tokens=0),
+        gpu_ms=100,
+        attempts=2,
+    )
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.CRITIC, prompt=PROMPT, schema=Candidate, stage=Stage.CRITIC)
+
+    # 실패분이 input_tokens 100을 청구해 상한(100)에 닿았다 — 다음 ensure가 막는다.
+    with pytest.raises(BudgetExhausted):
+        ctx.ledger.ensure(Stage.AUDITOR)
 
 
 def test_the_attempt_count_lands_on_a_successful_model_call() -> None:

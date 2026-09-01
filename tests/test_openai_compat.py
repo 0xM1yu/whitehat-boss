@@ -9,6 +9,7 @@ HTTP를 띄우지 않고 `_post`만 갈아 끼운다. 여기서 재는 것은 �
 """
 
 import io
+import time
 import urllib.error
 import urllib.request
 
@@ -63,6 +64,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, succeed_on: int) -> list[int]:
         n = attempts[-1]
         inp, out, cached = _PER_ATTEMPT[n - 1]
         raw = '{"ok": true}' if n == succeed_on else '{"nope": 1}'
+        time.sleep(0.02)  # 각 시도가 wall-clock을 태운다 — gpu_ms 단언에 판별력을 준다
         return raw, Usage(input_tokens=inp, output_tokens=out, cached_tokens=cached)
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
@@ -362,5 +364,39 @@ def test_exhaustion_carries_the_spend_it_already_made(monkeypatch: pytest.Monkey
     assert exc.usage.input_tokens == 100 + 200
     assert exc.usage.output_tokens == 10 + 20
     assert exc.usage.cached_tokens == 40 + 20
-    assert exc.gpu_ms is not None and exc.gpu_ms >= 0
+    # 2회 시도가 각자 20ms를 태웠으므로 0이 아니다 — `gpu_ms`를 리터럴 0으로 상수화하는
+    # 변이를 잡는다(#82 리뷰 F9). `>= 0`은 int면 무조건 통과라 판별력이 없었다.
+    assert exc.gpu_ms >= 30
     assert exc.gpu_ms_source == "request_wall_clock"
+
+
+def test_gateway_failure_carries_the_spend_and_its_own_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """게이트웨이 거절도 이미 쓴 토큰·시도 수를 싣고, **자기 시도의 wall-clock까지** 라벨과
+    함께 실어 올린다 (#82 리뷰 F1·F9).
+
+    F1 이전에는 `gpu_ms +=`가 except 블록 밖이라 게이트웨이 실패가 재보지도 않은 0에
+    `request_wall_clock` 라벨을 붙였다 — 0은 "안 썼다"는 적극적 진술이라 §0 위반이었다.
+    """
+    calls: list[int] = []
+
+    def fake_post(self, payload):  # noqa: ANN001, ANN202, ARG001
+        calls.append(1)
+        time.sleep(0.02)
+        if len(calls) == 1:  # 1차는 파싱 실패 → 재시도
+            return '{"nope": 1}', Usage(input_tokens=100, output_tokens=10, cached_tokens=40)
+        raise ModelGatewayError("400", status=400, detail="maximum context length")
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    exc = caught.value
+    assert exc.attempts == 2  # 1차 파싱 실패 + 2차 게이트웨이
+    assert exc.usage.input_tokens == 100  # 1차분이 실린다
+    assert exc.gpu_ms_source == "request_wall_clock"
+    # 두 시도가 각자 20ms를 태웠다 — 게이트웨이 시도의 시간도 포함된다(F1). 한 시도(≈20ms)만
+    # 세면 30 미만이라, 게이트웨이 시도가 안 잡히는 회귀를 이 임계가 잡는다.
+    assert exc.gpu_ms >= 30

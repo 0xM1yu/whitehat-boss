@@ -80,7 +80,7 @@
 | False Positive Rate | benign 샘플에서 취약점으로 판정한 비율 |
 | AI-Human 일치도 | AI 판정과 사람 판정의 일치율 |
 | 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율 |
-| 스키마 파싱 실패율 | 모델별 구조화 출력 실패 비율. **분자는 "일어난 실패"다** — 재시도가 `complete()` 안에서 끝나므로 `model_call.attempts`로 센다(회복 못 한 실패만 세면 재시도로 살아난 호출이 0으로 잡힌다) |
+| 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 
 ### 5.2 비용·효율
 

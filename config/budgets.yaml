@@ -73,7 +73,9 @@ thresholds:
 
   # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
   # 한도를 넘기면 후보를 queued로 두고 schema_parse_failed로 기록한다. 이 값을 올리면
-  # "스키마 파싱 실패율"(evaluation.md §5.1)이 낮아지므로 조건 간 비교에서 고정해야 한다.
+  # "스키마 파싱 실패율"(evaluation.md §5.1)의 분자·분모가 함께 커지므로(재시도가 늘면
+  # 시도 수 `attempts`가 는다) 조건 간 비교에서 고정해야 한다. **재시도를 늘리면 실패율이
+  # 낮아진다는 옛 직관은 새 정의에서 성립하지 않는다** — 분자가 '일어난 실패'라 오히려 는다(#83).
   schema_retries: 1
 
   # 모델 게이트웨이 요청 하나의 **출력 토큰 상한**. `openai_compat._request_payload`가

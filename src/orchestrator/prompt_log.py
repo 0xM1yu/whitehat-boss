@@ -34,8 +34,8 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
 - **응답은 남기지 않는다.** `Candidate`·`Finding`·`Decision`이 이미 StateStore에 통째로
   들어가고 usage·`gpu_ms`는 `model_call`에 있다. 사본을 만들면 정본을 물어야 한다.
 - **호출이 실패해도 남는다.** 호출자가 모델을 부르기 **전에** 쓴다 — 실패 분기가
-  "스키마 파싱 실패율"의 분자인데(`context.call_model`), 그 입력이 없으면 왜 실패했는지
-  조사할 수 없다.
+  "스키마 파싱 실패율"의 분자(시도 단위 `attempts`, 정본은 `trace.py`)에 드는데
+  (`context.call_model`), 그 입력이 없으면 왜 실패했는지 조사할 수 없다.
 
 ## 크기
 

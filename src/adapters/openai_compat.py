@@ -93,9 +93,14 @@ class OpenAICompatModelClient:
             try:
                 raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
             except ModelGatewayError as exc:
-                # 게이트웨이 거절(컨텍스트 초과 400 등)은 재시도 대상이 아니라 그대로
-                # 올린다. 이 요청은 토큰을 안 만들었지만, 앞선 재시도가 이미 쓴 것이 있으면
-                # 실어 상위(`context.call_model`)가 장부에 청구하게 한다(#82).
+                # 게이트웨이 거절(컨텍스트 초과 400 등)은 재시도 대상이 아니라 그대로 올린다.
+                # **이 시도가 태운 wall-clock을 먼저 누적한다.** 안 그러면 재보지도 않은 0에
+                # `request_wall_clock` 라벨을 붙여 장부에 청구하게 된다 — 0은 "안 썼다"는 적극적
+                # 진술이라(CLAUDE.md §0, `model_client.py`의 `gpu_ms` 주석) 그 라벨이 거짓이 되고,
+                # 가장 비싼 실패(타임아웃, `_TIMEOUT_S`)가 장부에 0으로 잡힌다(#82 리뷰 F1).
+                # 거절이라 응답 토큰은 없지만 요청 왕복 시간은 실재한다. 앞선 재시도가 쓴 것도
+                # `spent`·`gpu_ms`에 함께 실어 상위(`context.call_model`)가 청구한다.
+                gpu_ms += int((time.monotonic() - started) * 1000)
                 exc.usage = spent
                 exc.gpu_ms = gpu_ms
                 exc.gpu_ms_source = "request_wall_clock"
