@@ -44,6 +44,7 @@ from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
+    DEFAULT_CONDITION,
     DEFAULT_KB_SNAPSHOT,
     LateCacheHook,
     LateIndexHook,
@@ -51,6 +52,7 @@ from src.orchestrator.runner import (
     LateUsageHook,
     RunResult,
     RunSpec,
+    missing_run_labels,
     run_pipeline,
 )
 from src.orchestrator.stages import MAX_STAGE
@@ -62,7 +64,6 @@ from src.tokens import using_counter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
-DEFAULT_CONDITION = "B3prime@pipeline"
 
 # run 디렉터리 접두사. `gc`는 이 접두사를 가진 디렉터리만 지운다.
 RUN_DIR_PREFIX = "run_"
@@ -565,10 +566,23 @@ def _next_sequence(artifacts_root: Path, started_at: datetime) -> int:
 
 def run(args: argparse.Namespace) -> int:
     config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
+    # **`_claim_run_dir`보다 앞이다.** 뒤에 두면 아무것도 안 한 run이 디렉터리와 번호를
+    # 남기고, 그 번호는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는 자리와
+    # 같다. 그리고 이 판정은 비용을 쓰기 **전에** 들려야 값어치가 있다 —
+    # `_check_checksums`가 doctor에서 같은 논법을 적어 뒀다.
+    #
+    # **문장은 `incomplete_fields()`와 같고 접두사만 다르다.** 같아야 하는 이유는 두 곳이
+    # 갈라지면 안 되기 때문이고(`missing_run_labels` docstring), 그래서 device·kb_snapshot은
+    # 한 실행에서 두 번 뜬다. 시점을 접두사로 갈라 둔다 — 앞의 것은 "이렇게 시작한다"이고
+    # 뒤의 것은 "이 run은 제외된다"라, 같은 줄이 두 번 뜨는 것으로 읽히면 안 된다.
+    for warning in missing_run_labels(
+        device=args.device, kb_snapshot=args.kb_snapshot, condition=args.condition
+    ):
+        print(f"[WARN ] 시작 전 — {warning}", file=sys.stderr)
     started_at = datetime.now(UTC)
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     spec = RunSpec(
-        condition=args.condition,
+        condition=DEFAULT_CONDITION if args.condition is None else args.condition,
         target=args.target,
         stop_after=args.stop_after,
         dry_run=args.dry_run,
@@ -749,7 +763,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_cmd = subs.add_parser("run", parents=[common, device])
     run_cmd.add_argument("--target", type=Path, required=True)
-    run_cmd.add_argument("--condition", default=DEFAULT_CONDITION)
+    # **기본값을 argparse에 두지 않는다.** 값은 `run()`이 `DEFAULT_CONDITION`으로 채우되,
+    # `None`이 여기까지 살아 와야 "안 줬다"와 "기본값과 같은 라벨을 의도해서 줬다"가
+    # 구별된다 — `runner.missing_run_labels`가 그 구분 위에 서 있다.
+    run_cmd.add_argument(
+        "--condition",
+        default=None,
+        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 그 사실을 경고한다",
+    )
     run_cmd.add_argument("--seed", type=int)
     run_cmd.add_argument("--stop-after", type=int, choices=range(MAX_STAGE + 1))
     run_cmd.add_argument("--dry-run", action="store_true")

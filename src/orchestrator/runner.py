@@ -131,6 +131,27 @@ from src.tokens import using_counter
 # `RunRecord.kb_snapshot`은 재현성 필수 항목이다(engineering-guide.md §5).
 DEFAULT_KB_SNAPSHOT = "kb-none"
 
+# `--condition`을 안 줬을 때 기록에 남는 라벨. **cli가 아니라 여기 있다** —
+# `missing_run_labels()`가 이 값을 경고 문구에 실어야 하는데 러너가 cli를 import 할 수는
+# 없다. `DEFAULT_KB_SNAPSHOT`과 같은 성격(사람이 주는 값의 기본치)이라 나란히 둔다.
+DEFAULT_CONDITION = "B3prime@pipeline"
+
+# **run 전 검사와 run 후 판정이 같은 문장을 쓰게 하려고 뽑았다.** 두 곳이 문구를 따로
+# 만들면 갈라지고, 그러면 같은 결여가 run 전과 후에 다른 이름으로 불린다 —
+# `unmeasured_gpu_warning`을 따로 뽑은 것과 같은 이유이고 그 docstring에 근거가 있다.
+_DEVICE_MISSING = (
+    "device가 비어 있다 (--device 미지정). 어느 장비에서 돌았는지 기록되지 않아 "
+    "모델 비교표에서 제외한다"
+)
+_KB_PLACEHOLDER = f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다"
+
+# 이쪽은 run **전에만** 낼 수 있다. 레코드에는 해석된 값이 들어가 있어서 "기본값이 찍혔다"와
+# "그 라벨을 의도해서 줬다"가 구별되지 않기 때문이다 — `missing_run_labels` docstring 참조.
+_CONDITION_DEFAULTED = (
+    f"condition이 기본값({DEFAULT_CONDITION})으로 기록된다 (--condition 미지정). "
+    "2×2 축으로 돌린 run이 pipeline 라벨로 남으면 어느 축이었는지를 산출물로 가를 수 없다"
+)
+
 # git을 못 읽었을 때의 자리표시자. 40 hex라는 형식은 지키되 경고 대상이다.
 _UNKNOWN_COMMIT = "0" * 40
 
@@ -1129,6 +1150,40 @@ def unmeasured_gpu_warning(roles: Mapping[str, int] | None) -> str | None:
     )
 
 
+def missing_run_labels(
+    *, device: str | None, kb_snapshot: str, condition: str | None
+) -> list[str]:
+    """**사람이 줘야 하는 값**의 결여. run이 시작하기 전에 판정한다.
+
+    `incomplete_fields()`가 끝난 run의 레코드를 보고 device·kb_snapshot에 같은 말을 하지만
+    그때는 이미 비용을 썼다. `cli._check_checksums`가 doctor에서 그 논법을 적어 뒀는데
+    ("`run`이 끝난 뒤 `incomplete_fields()`가 같은 판정을 하지만, **돌리기 전에 알 수 있는
+    사실이다**") **`run` 진입에는 그 검사가 없었고 `run()`은 `doctor`를 부르지 않는다.**
+
+    **레코드가 아니라 사람이 준 값을 받는다.** `condition`을 해석된 값으로는 판정할 수 없어
+    서다 — 기본값 `B3prime@pipeline`은 파이프라인 조건의 **정당한 값**이라
+    `== DEFAULT_CONDITION`으로 재면 그 라벨을 의도해서 준 run까지 경고한다. 매 run 같은 줄이
+    뜨면 사람이 경고를 안 읽게 되고, 그것이 `_check_device`가 "없는 비교를 근거로 경고하면
+    헛경고가 된다"고 적은 바로 그 실패다. 여기서는 `None`이 "안 줬다"이고 그것만이 결여다.
+
+    `device`·`kb_snapshot`은 `incomplete_fields()`와 **같은 문장**을 쓴다(`_DEVICE_MISSING`·
+    `_KB_PLACEHOLDER`). 셋 다 run 시점의 사실이라 사후에 채우면 CLAUDE.md §0이 금지하는
+    지어낸 값이 된다.
+
+    **경고이지 거부가 아니다.** dev 프로필의 스모크 run은 장비 라벨 없이 도는 것이 정상이라
+    막으면 그쪽이 죽는다. 이 함수가 사는 이유는 값을 강제하는 것이 아니라 **비용을 쓰기 전에
+    말하는 것**이다.
+    """
+    warnings = []
+    if device is None:
+        warnings.append(_DEVICE_MISSING)
+    if kb_snapshot == DEFAULT_KB_SNAPSHOT:
+        warnings.append(_KB_PLACEHOLDER)
+    if condition is None:
+        warnings.append(_CONDITION_DEFAULTED)
+    return warnings
+
+
 def incomplete_fields(
     record: RunRecord,
     *,
@@ -1172,7 +1227,9 @@ def incomplete_fields(
     if gpu_warning:
         warnings.append(gpu_warning)
     if record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
-        warnings.append(f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다")
+        # 문구는 `missing_run_labels()`와 공유한다 — 같은 결여를 run 전과 후가 다른 이름으로
+        # 부르면 그 갈라짐이 곧 다음 결함이다.
+        warnings.append(_KB_PLACEHOLDER)
     if record.repo_commit == _UNKNOWN_COMMIT:
         warnings.append("repo_commit이 자리표시자다")
     if record.repo_dirty is not False:
@@ -1188,10 +1245,10 @@ def incomplete_fields(
         # `tool_runner`는 여기 없다 — config에서 유도되어 빌 수가 없기 때문이다. 이 값은
         # 사람이 `--device`를 안 주면 실제로 빈다. 두 장비가 모두 지원 대상인 이상
         # (docs/portability.md) 장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
-        warnings.append(
-            "device가 비어 있다 (--device 미지정). 어느 장비에서 돌았는지 기록되지 않아 "
-            "모델 비교표에서 제외한다"
-        )
+        #
+        # 문구는 `missing_run_labels()`와 공유한다(`_DEVICE_MISSING`). 그쪽이 run **전에**
+        # 같은 말을 하므로, 사람이 이 줄을 run이 끝난 뒤에 처음 보는 일은 없어야 한다.
+        warnings.append(_DEVICE_MISSING)
     return warnings
 
 
