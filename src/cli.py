@@ -776,7 +776,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="이 실행이 돌아간 장비의 라벨. run 기록과 --apply에 그대로 남는다. "
         "값 집합은 열려 있다(ADR 0006) — 팀이 쓰는 라벨은 docs/portability.md에 있다. "
-        "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다",
+        "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다. "
+        "run에서 실서빙 프로필이면 거부한다(exit 2)",
     )
 
     subs.add_parser("doctor", parents=[common, device])
@@ -792,7 +793,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--condition",
         default=None,
-        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 그 사실을 경고한다",
+        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 경고한다 — "
+        "실서빙 프로필에서는 거부한다(exit 2)",
     )
     run_cmd.add_argument("--seed", type=int)
     run_cmd.add_argument("--stop-after", type=int, choices=range(MAX_STAGE + 1))
