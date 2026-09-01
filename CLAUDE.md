@@ -176,6 +176,7 @@ python -m pytest -q
 | 알고 싶은 것 | 문서 |
 | --- | --- |
 | 전체 구조 · 단계별 책임 · 근거 등급 E0~E4 | `docs/architecture.md` |
+| **앞으로 무엇을 어느 순서로 짓는가** | [docs/build-plan.md](docs/build-plan.md) |
 | 역할별 실행 계약 · 프롬프트 규약 | `docs/agent-contracts.md` |
 | 인터페이스 · 재현성 필수 기록 · 개발 규칙 | `docs/engineering-guide.md` |
 | 지표 정의 · 조건 간 비교 규칙 | `docs/evaluation.md` |
