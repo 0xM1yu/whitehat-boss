@@ -59,14 +59,24 @@ def test_every_d_has_a_body_file() -> None:
     assert missing == [], "\n".join(missing)
 
 
-def test_no_body_file_sits_outside_its_series_directory() -> None:
-    """본문이 `docs/open-questions/` 바로 밑에 있으면 위 검사가 **그것을 못 본다.**
+def test_every_body_file_has_an_index_row() -> None:
+    """인덱스 행이 없는 본문은 **아무 검사도 안 받는다.**
 
-    위쪽은 인덱스 행에서 출발해 파일을 찾으므로, 행이 없는 파일은 어디에 있든 안 걸린다.
-    이동을 반쯤 하다 만 상태(옛 파일은 옮겼는데 새 항목은 옛 자리에 만든)를 여기서 잡는다.
+    위 검사는 인덱스 행에서 출발해 파일을 찾으므로 **반대 방향을 못 본다.** 행을 지우고
+    파일을 남기면(고아 본문) 그 파일은 조용히 남고, 계열 디렉터리 밖에 만든 파일도
+    마찬가지다 — 둘 다 인덱스가 안 가리키는 파일이라는 한 가지 사실의 두 모습이다.
+
+    처음에는 `BODIES.glob("*.md")` 로 계열 밖만 봤는데, `glob` 은 재귀하지 않아
+    **`D/`·`R/` 안의 고아는 못 봤다.** 인덱스가 가리키는 집합과 디스크의 집합을
+    맞대는 편이 두 경우를 한 번에 덮는다.
     """
-    stray = sorted(p.name for p in BODIES.glob("*.md"))
-    assert stray == [], f"계열 디렉터리 밖에 본문이 있다: {stray}"
+    indexed = {f"{did[0]}/{did}.md" for _, did, _ in _rows()}
+    on_disk = {p.relative_to(BODIES).as_posix() for p in BODIES.rglob("*.md")}
+    orphans = sorted(on_disk - indexed)
+    assert orphans == [], (
+        f"인덱스 행이 없는 본문 {len(orphans)}개: {orphans} — "
+        "행을 지웠으면 파일도 지우고, 계열 디렉터리 밖이면 옮긴다"
+    )
 
 
 def test_index_rows_stay_thin() -> None:
