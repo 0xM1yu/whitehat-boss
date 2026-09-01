@@ -507,6 +507,16 @@ def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
         return False, step.exit_code, (
             f"semgrep이 결과 문서를 내지 않았다 (exit={step.exit_code}). 로그의 stderr 참조"
         )
+    scanned = semgrep_scanned(step.stdout)
+    if scanned is not None and not scanned:
+        # 문서는 정상인데 **연 파일이 0개**다. `.inc`처럼 확장자가 언어로 매핑되지 않은
+        # 대상이 그렇다(#66) — exit 0·results 0이라 지금까지 "정적 신호 없음"으로 읽혔지만,
+        # 도구가 그 파일을 **아예 안 본 것**이다. `judge_semgrep`이 결과 문서 유무로
+        # "돌았는가"를 가르는 것과 같은 논법으로, `paths.scanned`가 "그 파일을 봤는가"를 가른다.
+        return False, step.exit_code, (
+            f"semgrep이 어떤 파일도 스캔하지 않았다 (exit={step.exit_code}) — 확장자가 "
+            f"언어로 매핑되지 않은 대상(.inc 등). '정적 신호 없음'과 '도구가 안 봄'을 가른다"
+        )
     if step.exit_code not in _SEMGREP_OK:
         return False, step.exit_code, f"semgrep 실행 실패 (exit={step.exit_code})"
     return True, step.exit_code, None
@@ -526,6 +536,43 @@ def semgrep_results(stdout: str) -> list | None:
         return None
     results = document.get("results")
     return results if isinstance(results, list) else None
+
+
+def semgrep_scanned(stdout: str) -> list | None:
+    """`--json` 출력의 `paths.scanned` — semgrep이 실제로 연 파일 목록.
+
+    `None`은 "이 출력 형태에 목록이 없다"(옛 픽스처·비정상 출력)이고, **`[]`는 문서는
+    정상인데 연 파일이 0개**다. 둘을 가르는 이유는 `judge_semgrep`이 전자엔 손대지 않고
+    (결과 문서 유무 판정이 이미 잡는다) 후자만 "도구가 안 봤다"로 내리기 때문이다(#66).
+    실제 semgrep은 항상 `paths`를 내므로 `[]`는 `.inc` 같은 미매핑 대상에서만 나온다.
+    """
+    try:
+        document = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    paths = document.get("paths")
+    if not isinstance(paths, dict):
+        return None
+    scanned = paths.get("scanned")
+    return scanned if isinstance(scanned, list) else None
+
+
+def unexecuted_commands_note(executed: int, total: int) -> str | None:
+    """break로 안 돈 명령을 기록에 남길 한 줄. 다 돌았으면 `None` (#75).
+
+    `_execute`는 앞 명령이 non-zero면 break한다 — 그 break는 `asan`의 "빌드 실패면 실행하지
+    않는다"(E4 조건)를 지키는 장치라 유지한다. 대신 언어 그룹이 갈린 clang-tidy에서 C 그룹의
+    발견(=non-zero)이 C++ 그룹을 가리고 그 사실이 어디에도 안 남던 것을 기록으로 남긴다.
+    판정(`judge`)·등급·스키마는 건드리지 않는다 — 로그 섹션 한 줄이다.
+    """
+    if executed >= total:
+        return None
+    return (
+        f"# 실행되지 않은 명령 {total - executed}개 — 앞 명령이 non-zero로 끝나 break됨. "
+        f"언어 그룹이 갈린 경우 뒤 그룹이 도구를 통과하지 않았다"
+    )
 
 
 def summary_line(tool: str, steps: list[Step]) -> str | None:
@@ -716,6 +763,9 @@ class ContainerToolRunner:
             steps.append(Step(proc.returncode, proc.stdout, proc.stderr))
             if proc.returncode != 0:
                 break
+        note = unexecuted_commands_note(len(steps), len(commands))
+        if note is not None:
+            sections.append(note)
         ok, exit_code, error = judge(tool, steps, len(commands))
         summary = summary_line(tool, steps)
         if summary is not None:
