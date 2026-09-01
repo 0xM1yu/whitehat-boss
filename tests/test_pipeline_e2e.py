@@ -266,6 +266,89 @@ def test_fake_roles_do_not_warn_about_placeholder_checksums(tmp_path: Path) -> N
     assert _checksum_warnings(result.record, "dev_fake") == []
 
 
+def test_missing_run_labels_names_every_gap_the_operator_must_fill() -> None:
+    """사람이 줘야 하는 세 값이 비면 **run이 시작하기 전에** 그 사실을 이름으로 말한다.
+
+    셋 다 run 시점의 사실이라 사후에 정직하게 채울 수 없다 — CLAUDE.md §0이 "안 잰 값은
+    0으로 두고 사유를 남긴다. 그럴듯한 값으로 채우지 않는다"고 못박은 자리다.
+    `incomplete_fields()`가 device·kb_snapshot에 같은 판정을 하지만 그것은 run이 **끝난
+    뒤**다(`_new_record`가 레코드를 만들 때 불린다).
+
+    **`condition`은 값 비교로 판정할 수 없다.** 기본값 `B3prime@pipeline`은 파이프라인
+    조건의 **정당한 값**이라, `== DEFAULT_CONDITION`으로 재면 그 라벨을 의도해서 준 run까지
+    경고한다. 그래서 이 함수는 해석된 값이 아니라 **사람이 준 값**을 받는다 — `None`이
+    "미지정"이다. 그 구분이 없으면 검사가 매 run 같은 줄을 뱉고 진짜 결여가 묻힌다.
+    """
+    gaps = runner.missing_run_labels(
+        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition=None
+    )
+    assert [w for w in gaps if "device" in w], "장비를 안 준 run이 조용히 시작한다"
+    assert [w for w in gaps if "kb_snapshot" in w]
+    assert [w for w in gaps if "condition" in w], "조건을 안 준 run이 기본 라벨로 조용히 남는다"
+
+    filled = runner.missing_run_labels(
+        device="atom", kb_snapshot="kb-20260901", condition="B1prime@2x2"
+    )
+    assert filled == []
+
+    explicit = runner.missing_run_labels(
+        device="atom", kb_snapshot="kb-20260901", condition=runner.DEFAULT_CONDITION
+    )
+    assert explicit == [], "기본값과 같은 라벨을 명시한 run까지 경고하면 검사가 무뎌진다"
+
+
+def test_the_pre_run_check_and_incomplete_fields_use_the_same_sentence(tmp_path: Path) -> None:
+    """같은 결여를 두 곳이 다른 문장으로 말하면 그 갈라짐이 곧 다음 결함이다.
+
+    러너가 `unmeasured_gpu_warning`을 따로 뽑은 이유가 이것이고 그 docstring이 근거를 적어
+    뒀다 — "러너가 문구를 따로 만들면 두 곳이 갈라진다 … 이 저장소가 반복해서 고쳐 온
+    '선언과 실제의 괴리'가 정확히 그 형태다." run 전 검사와 run 후 판정도 같은 자리다.
+    """
+    result, _ = _run(tmp_path)
+    record = result.record.transition(device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT)
+    after = runner.incomplete_fields(record)
+
+    before = runner.missing_run_labels(
+        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition="B1prime@2x2"
+    )
+    assert before, "run 전 검사가 아무 말도 하지 않는다"
+    for sentence in before:
+        assert sentence in after, f"run 전과 후가 다른 문장을 쓴다: {sentence!r}"
+
+
+def test_run_names_the_gaps_before_it_claims_a_run_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """GPU를 쓰기 전에 듣는다. `cli._check_checksums`가 이미 그 논법을 적어 뒀다 —
+    "5분(실서빙이면 그보다 훨씬 길다)을 쓰고 나서 '이 run은 비교표에 못 넣는다'를 듣는
+    것보다 지금 듣는 편이 싸다."
+
+    **`_claim_run_dir`보다 앞이어야 한다.** 그 뒤에 두면 아무것도 안 한 run이 디렉터리와
+    번호를 남기고, 그 번호는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는
+    자리와 같다. 그래서 이 테스트는 문구뿐 아니라 **순서**를 단언한다.
+    """
+
+    class _Stop(RuntimeError):
+        """`_claim_run_dir`에 도달했다는 표시. 여기서 멈춰야 순서를 볼 수 있다."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main(
+            [
+                "run", "--profile", "dev_fake", "--target", str(TARGET),
+                "--seed", "20260901", "--artifacts-root", str(tmp_path),
+            ]
+        )
+
+    err = capsys.readouterr().err
+    assert "device" in err, "장비 결여를 run_dir을 잡기 전에 말하지 않는다"
+    assert "condition" in err, "조건 결여를 run_dir을 잡기 전에 말하지 않는다"
+    assert not list(tmp_path.iterdir()), "판정 전에 이미 디렉터리를 만들었다"
+
+
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
     """실서빙 역할의 0은 경고하고 **어느 역할의 어느 model key인지**를 담는다.
 
