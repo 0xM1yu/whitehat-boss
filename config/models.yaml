@@ -131,7 +131,7 @@ models:
 
   devstral-small-2-24b:
     # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
-    # dense 24B라 NVFP4가 매력적이지만 반박 정확도 저하 위험이 있다(§4, open-questions R2).
+    # dense 24B라 NVFP4가 매력적이지만 반박 정확도 저하 위험이 있다(§4, docs/open-questions/R/R2.md).
     #
     # **2026-08-25 NVFP4 실측에서 이 모델만 빠졌다.** portability.md §5 #1이 세는 3개 중
     # 나머지 둘(`qwen3-8b`·`qwen3-coder-30b-a3b`)은 sm_121에서 떴지만 **이 모델은 받지도

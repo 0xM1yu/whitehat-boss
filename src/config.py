@@ -58,7 +58,7 @@ class Benchmark(HarnessModel):
     """model-serving.md §5의 실측 기록.
 
     전 항목이 0이면 아직 이 장비에서 재보지 않았다는 뜻이다. §3 체크리스트가
-    블로킹이므로(open-questions R1) 값이 0인 모델은 production 프로필에 넣지 않는다.
+    블로킹이므로(`docs/open-questions/R/R1.md`) 값이 0인 모델은 production 프로필에 넣지 않는다.
     """
 
     measured_at: datetime | None = None
