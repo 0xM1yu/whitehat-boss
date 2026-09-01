@@ -68,6 +68,9 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         prompt_versions=config.prompt_versions(),
         tool_images={"semgrep": ZERO_DIGEST},
         tool_runner=config.profile.adapters.tool_runner,
+        # 비교의 기준축이다 — evaluation.md §2.3 규칙 2가 "조건 간 차이는 프로필과 단계
+        # 활성화만"으로 정의하는데 그 절반이 기록에 없었다 (이슈 #76).
+        profile=config.profile_name,
         device="atom",
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
@@ -76,6 +79,7 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         kb_snapshot="kb-2026-08-30",
         started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
     )
+    assert record.profile == profile
     # checksums는 전 역할을 담는다 — 임베딩 모델이 바뀌면 검색 결과가 바뀌므로
     # 재현성 기록에서 뺄 수 없다.
     assert set(record.model_checksums) == set(config.profile.roles)
@@ -85,48 +89,6 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
     for absent in ("embedding", "reranker", "judge"):
         assert absent not in record.prompt_versions
     assert record.thresholds  # 평탄화 결과가 비면 임계값 대조가 불가능하다
-
-
-@pytest.mark.parametrize("profile", ALL_PROFILES)
-def test_the_profile_name_is_derivable_into_the_run_record(profile: str) -> None:
-    """어느 프로필로 돌았는지가 기록에 남는다 (이슈 #76).
-
-    evaluation.md §2.3 규칙 2가 "조건 간 차이는 **프로필과 단계 활성화만**"으로 비교를
-    정의하는데, 그 축의 절반인 프로필 이름이 `RunRecord`에 없었다.
-
-    `RunRecord.tool_runner`가 필수 필드인 사유(ADR 0005)가 **"프로필에 적힌 값과 실제
-    값이 갈릴 수 있다"**인데, 갈림의 **기준인 프로필 자체가 기록되지 않으면 그 예외를
-    읽을 수 없다** — 예외만 남고 기준이 없다. 같은 저장소의 `cli bench`는 이미 남긴다
-    (`bench_report.py`의 `"profile": config.profile_name`).
-
-    **`model_checksums`로 항상 복원되지는 않는다.** 그쪽은 역할→checksum만 담아
-    `adapters.retriever`(fake ↔ hybrid)를 못 가르는데, 그 축은 캡슐의 `related` 섹션
-    유무와 embedding·reranker 호출 여부를 갈라 **모델이 본 것**을 바꾼다.
-    그래프 섹션(`callers`·`callees`)은 두 구현이 `index_graph.graph_section()`을
-    공유하므로 이 축으로 갈리지 않는다 — 그렇게 적었던 초판은 틀렸다(2026-09-01 감사).
-    """
-    config = load_config(profile)
-    record = RunRecord(
-        run_id="run_20260901_0001",
-        condition="B3prime@pipeline",
-        profile=config.profile_name,
-        repo_commit="0" * 40,
-        repo_dirty=False,
-        source_hash=ZERO_DIGEST,
-        model_checksums=config.model_checksums(),
-        prompt_versions=config.prompt_versions(),
-        tool_images={"semgrep": ZERO_DIGEST},
-        tool_runner=config.profile.adapters.tool_runner,
-        device="atom",
-        budget=config.budget,
-        thresholds=config.thresholds.flatten(),
-        seed=config.seed,
-        sampling=config.sampling,
-        kb_snapshot="kb-2026-08-30",
-        started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
-    )
-
-    assert record.profile == profile
 
 
 def test_prompted_roles_matches_prompt_directories() -> None:

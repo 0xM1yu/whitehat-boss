@@ -461,3 +461,6 @@ def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
 
     assert record.budget.tool_seconds == 0  # "상한이 없었다"는 사실이지 지어낸 값이 아니다
     assert record.tool_runner and record.device is not None
+    # 이 필드 이전에 쓰인 기록이므로 `None`이다 — "확인 못 함"이 아니라 "남기지 않았다"다.
+    # 새 run은 `config.profile_name`에서 무조건 유도되므로 `None`이 나올 수 없다 (이슈 #76).
+    assert record.profile is None

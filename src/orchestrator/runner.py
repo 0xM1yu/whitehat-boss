@@ -1070,9 +1070,8 @@ def _new_record(
     record = RunRecord(
         run_id=run_id,
         condition=spec.condition,
-        # config에서 온다 — `--profile`이 고른 이름 그대로다. spec이 아니라 config인 것은
-        # `tool_runner`와 같은 사유다: `--tool-runner` 오버라이드는 config를 갈아 끼우고
-        # 러너를 부르므로, 여기서 config를 읽는 것이 곧 "실제로 쓴 프로필"이다.
+        # `--profile`이 고른 이름 그대로다. `RunSpec`이 아니라 config에서 오는 것은
+        # 그 docstring이 정한 대로다 — "여기 없는 것은 config에서 온다".
         profile=config.profile_name,
         repo_commit=commit,
         repo_dirty=dirty,
