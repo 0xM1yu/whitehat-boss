@@ -299,7 +299,7 @@ class HarnessConfig(HarnessModel):
         }
 
     def served_models(self) -> dict[str, str]:
-        """**Fake가 아닌** 역할 → model key.
+        """이 배선에서 **실제로 뜨는** 역할 → model key.
 
         `model_checksums()`가 전 역할을 담는 것과 대비된다. 저쪽은 기록이라 빠짐이 없어야
         하고, 이쪽은 판정 대상이라 **해시할 대상이 실재하는 역할만** 담아야 한다 —
@@ -308,9 +308,32 @@ class HarnessConfig(HarnessModel):
 
         역할 단위인 것은 `single_gpu_12g`처럼 한 프로필에서 Fake와 실서빙이 섞이기
         때문이다(그 프로필은 scout만 실서빙이다).
+
+        **거르는 축이 둘이다** (이슈 #108, 선택지 b).
+
+        1. `is_fake` — 위 사유.
+        2. `retriever: fake`일 때의 `RETRIEVAL_ROLES` — embedding·reranker 클라이언트는
+           hybrid 빌더 안에서만 만들어지므로(`adapters.factory`의 두 지점이 전부
+           `adapters.retriever == "hybrid"` 게이트 안이다) 그 프로필에서는 한 번도 뜨지
+           않는다. 조건은 바로 위 `ProfileEntry._hybrid_needs_retrieval_roles`가 쓰는 것과
+           같다 — 그쪽은 "hybrid면 요구한다"이고 이쪽은 "hybrid가 아니면 안 센다"로,
+           같은 사실의 양면이다.
+
+        **선언 자체는 지우지 않는다.** `b1_single`·`local_balanced`가 `retriever: fake`인
+        채로 그 두 역할에 실모델을 적어 둔 것은 실수가 아니라 의도다 — hybrid로 올리는 날
+        쓸 모델을 적어 둔 것이고, 지금 fake인 이유는 ATOM에 모델 5개를 동시에 띄우면
+        R1(sm_121 커널 호환성) 검증의 실패 지점이 늘기 때문이다(`config/profiles.yaml`의
+        `local_balanced` retriever 주석). 그 정보를 프로필에서 지우면 나중에 hybrid로
+        올릴 때 어느 모델을 쓸지 다시 정해야 한다. 그래서 **기록(`model_checksums`)은
+        그대로 두고 판정 대상만 좁힌다.**
         """
+        wired = set(self.profile.roles)
+        if self.profile.adapters.retriever != "hybrid":
+            wired -= set(RETRIEVAL_ROLES)
         return {
-            role: key for role, key in self.profile.roles.items() if not self.models[key].is_fake
+            role: key
+            for role, key in self.profile.roles.items()
+            if role in wired and not self.models[key].is_fake
         }
 
     def unmeasured_models(self) -> list[str]:
