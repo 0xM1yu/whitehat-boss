@@ -349,6 +349,80 @@ def test_run_names_the_gaps_before_it_claims_a_run_dir(
     assert not list(tmp_path.iterdir()), "판정 전에 이미 디렉터리를 만들었다"
 
 
+def test_a_serving_profile_refuses_to_start_without_the_labels(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """**실서빙 run에서는 경고로 부족하다** (수민 리뷰 #119).
+
+    경고 한 줄은 긴 run의 출력에 묻힌다. 그리고 그 run은 시작하기도 전에 이미 못 쓰는
+    것이 확정돼 있다 — `incomplete_fields()`가 `device`가 비면 "모델 비교표에서
+    제외한다"고 판정하고, `condition`이 기본값으로 굳으면 2×2 축으로 돌린 run이 pipeline
+    라벨을 달아 비교표가 섞인다(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
+
+    **판별 기준은 `production`이 아니라 `served_models()`다.** 프로필 12개가 전부
+    `production: false`라 그 필드로는 아무것도 갈리지 않는다(직접 확인). `served_models()`는
+    dev 다섯을 0으로, 실서빙 일곱을 1~3으로 정확히 가른다.
+
+    `kb_snapshot`은 막지 않는다 — `kb-none`은 아직 KB가 없다는 정직한 표기이고
+    `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code != 0, "실서빙 프로필이 라벨 없이 그대로 시작한다"
+    assert "device" in err and "condition" in err, "무엇이 없어 막혔는지 말하지 않는다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """dev 스모크는 장비 라벨 없이 도는 것이 정상이라 막으면 그쪽이 죽는다.
+
+    이 테스트가 없으면 위 게이트가 조용히 전 프로필로 넓어져도 아무도 모른다 —
+    `_check_checksums`가 Fake 역할을 세지 않는 것과 같은 논법이다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "dev_fake", "--target", str(TARGET),
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    assert code == 0, "Fake 프로필 스모크가 막혔다"
+    assert "시작 전 —" in capsys.readouterr().err, "경고까지 사라지면 안 된다"
+    assert list(tmp_path.iterdir()), "돌았어야 하는 run이 산출물을 안 남겼다"
+
+
+def test_a_serving_profile_with_the_labels_passes_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """라벨을 주면 게이트를 통과한다 — 막는 것이 목적이 아니라 **묻는** 것이 목적이다.
+
+    `_claim_run_dir`에 도달했다는 것으로 통과를 본다. 그 뒤는 실서빙 엔드포인트가 필요해
+    이 테스트의 범위가 아니다.
+    """
+
+    class _Stop(RuntimeError):
+        """게이트를 지나 run_dir 확보까지 왔다는 표시."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main(
+            [
+                "run", "--profile", "b1_single", "--target", str(TARGET),
+                "--condition", "B1prime@2x2", "--device", "atom",
+                "--seed", "20260901", "--artifacts-root", str(tmp_path),
+            ]
+        )
+
+
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
     """실서빙 역할의 0은 경고하고 **어느 역할의 어느 model key인지**를 담는다.
 
