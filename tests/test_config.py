@@ -87,6 +87,46 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
     assert record.thresholds  # 평탄화 결과가 비면 임계값 대조가 불가능하다
 
 
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_the_profile_name_is_derivable_into_the_run_record(profile: str) -> None:
+    """어느 프로필로 돌았는지가 기록에 남는다 (이슈 #76).
+
+    evaluation.md §2.3 규칙 2가 "조건 간 차이는 **프로필과 단계 활성화만**"으로 비교를
+    정의하는데, 그 축의 절반인 프로필 이름이 `RunRecord`에 없었다.
+
+    `RunRecord.tool_runner`가 필수 필드인 사유(ADR 0005)가 **"프로필에 적힌 값과 실제
+    값이 갈릴 수 있다"**인데, 갈림의 **기준인 프로필 자체가 기록되지 않으면 그 예외를
+    읽을 수 없다** — 예외만 남고 기준이 없다. 같은 저장소의 `cli bench`는 이미 남긴다
+    (`bench_report.py`의 `"profile": config.profile_name`).
+
+    **`model_checksums`로는 복원되지 않는다.** 그쪽은 역할→모델만 담아
+    `adapters.retriever`(fake ↔ hybrid)를 못 가르는데, 그 축은 캡슐의 그래프 섹션
+    유무를 갈라 **모델이 본 것 자체**를 바꾼다.
+    """
+    config = load_config(profile)
+    record = RunRecord(
+        run_id="run_20260901_0001",
+        condition="B3prime@pipeline",
+        profile=config.profile_name,
+        repo_commit="0" * 40,
+        repo_dirty=False,
+        source_hash=ZERO_DIGEST,
+        model_checksums=config.model_checksums(),
+        prompt_versions=config.prompt_versions(),
+        tool_images={"semgrep": ZERO_DIGEST},
+        tool_runner=config.profile.adapters.tool_runner,
+        device="atom",
+        budget=config.budget,
+        thresholds=config.thresholds.flatten(),
+        seed=config.seed,
+        sampling=config.sampling,
+        kb_snapshot="kb-2026-08-30",
+        started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
+    )
+
+    assert record.profile == profile
+
+
 def test_prompted_roles_matches_prompt_directories() -> None:
     """`PROMPTED_ROLES`와 `prompts/` 하위 디렉터리가 일치한다.
 
