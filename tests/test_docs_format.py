@@ -375,13 +375,17 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
 #
 # 셋 다 **다른 검사가 구조적으로 못 잡는 것**만 본다. 하나라도 기존 검사와 겹치면
 # 그 자리는 지우는 편이 낫다.
+#
+# 허용 목록은 **문서가 실제로 인용하는 것만** 담는다. 안 쓰는 번호를 넣어 두면 목록이
+# 조용히 넓어져 오탐 방지가 아니라 검사 무력화가 된다 — 항목을 더할 때 문서에서 그 번호를
+# 실제로 찾아보고 넣는다.
 
 BUILD_PLAN = REPO_ROOT / "docs" / "build-plan.md"
 
 # 구축안이 정당하게 인용하는 D 항목. 이 목록 **밖의** D 참조는 파인튜닝 라벨을 D 계열로
 # 잘못 쓴 것이다 — 원문이 파인튜닝 단계를 `D1`·`D2`·`D3`으로 불렀는데 이 저장소에서 그
 # 셋은 각각 벤치마크 라벨 통합·Scout 임계값·Capsule 확장 상한이다.
-_BUILD_PLAN_D_CITATIONS = frozenset({"D9", "D25", "D30", "D51", "D57"})
+_BUILD_PLAN_D_CITATIONS = frozenset({"D9", "D13", "D25", "D30", "D51"})
 
 # `docs/open-questions.md` §1의 R 행. `_D_ROW`와 같은 서식이고 계열만 다르다.
 _R_ROW = re.compile(r"^\|\s*(R\d+)\s*\|", re.MULTILINE)
