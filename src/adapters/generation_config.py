@@ -48,6 +48,17 @@ def read_declared_sampling(
       - 샘플링 키를 하나도 선언하지 않았다(bos/eos만 있는 모델 — granite·Foundation-Sec)
       - 선언한 키가 **전부** 스키마 밖이었다
 
+    ⚠ **그 두 경우는 서로 구별되지 않는다.** `{"bos_token_id": 1}`(모델이 선언 안 함)과
+    `{"top_p": 5.0}`(모델이 선언했는데 **우리 스키마가 거부**)이 같은 빈 객체가 되고,
+    매니페스트에서도 글자 그대로 같다. 뒤집기 전 테스트가 든 걱정 — *"빈 객체는 '선언이
+    있었다'고 말하는데 담긴 값이 없어 미선언과 뜻이 겹친다"* — 가 **여기서 반쪽 살아 있다.**
+
+    그럼에도 빈 객체를 택한 이유는 **비대칭이다.** `None`으로 되돌리면 그 둘이
+    "HF 캐시를 못 찾았다"와 겹치는데, 캐시는 저장소 밖이라 **사후 복원이 불가능하다.**
+    반면 "우리가 거부했다"는 `config/models.yaml`의 모델을 다시 받으면 확인된다.
+    **복원 가능한 겹침을 남기고 불가능한 겹침을 없앤 것**이지, 겹침이 사라진 것이 아니다.
+    (셋을 가르려면 세 번째 표시가 필요하고 그것은 별건이다 — 2026-09-01 리뷰 M1.)
+
     **왜 갈라야 하나.** 둘이 같은 모양이면 "그 모델은 선언이 없다"(실험 사실)와
     "우리가 캐시를 못 찾았다"(우리 구멍)가 구별되지 않는데, **HF 캐시는 저장소 밖이라
     그때 그 상태였는지 나중에 확인할 방법이 없다** — 그 run의 샘플링 축이 영구히
@@ -72,7 +83,10 @@ def read_declared_sampling(
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        # `UnicodeDecodeError`는 `ValueError` 하위지 나머지 둘의 하위가 아니라 예전에는
+        # 이 절을 통과했다 — 비-UTF-8 바이트가 든 파일에서 예외가 run 조립 경로까지
+        # 전파해 run 자체를 죽였다. docstring이 "파일이 깨졌거나" 라 적은 자리다.
         return None
     if not isinstance(data, dict):
         return None
