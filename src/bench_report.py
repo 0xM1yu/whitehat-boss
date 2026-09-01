@@ -240,17 +240,40 @@ def _judge_memory(measured: Sequence[Mapping[str, object]]) -> dict[str, object]
 
 
 def _judge_context(measured: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """context별 KV cache 점유 판정. **답하지 못한 context를 사유가 든다** (#111).
+
+    `any(peak > 0)`이라 하나만 살아 있으면 `pass`인데, 예전에는 그 자리에 `reason: None`이
+    붙어 **요약만 보면 전 context가 측정된 것과 구별되지 않았다.** 레코드는 정직하다 —
+    `call_ok`·`error`가 같은 dict에 있다. 세던 것은 요약이고, 원문이 "3개 중 2개만
+    답했다"인데 요약이 무조건부 `pass`를 내는 것이 CLAUDE.md §2.2다.
+
+    **상태 어휘는 바꾸지 않는다.** `pass`를 `fail`이나 새 상태로 뒤집는 것은 설계 판단이고
+    과거 run의 판정이 함께 뒤집힌다. 여기서 고치는 것은 **사실이 사라지지 않는 것**뿐이고,
+    같은 파일 `_judge_prefix`가 이미 그 모양이다(PASS + 못 답한 부분을 사유에).
+
+    관측: 2026-09-01 ATOM `qwen3-4b`에서 32K가 서버 상한을 넘어 400을 받았는데 이 항목이
+    `pass`였다. 같은 모양이 아래 보고서 195·197행에도 있다 —
+    `docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md`.
+    """
     empty = _empty(measured)
     if empty:
         return empty
-    peaks = [
-        entry.get("kv_cache_usage_perc_peak", 0.0)
+    entries = [
+        (r["model_key"], ctx, entry)
         for r in measured
-        for entry in r["memory"]["by_context"].values()
+        for ctx, entry in r["memory"]["by_context"].items()
         if isinstance(entry, dict)
     ]
-    if any(peak > 0 for peak in peaks):
-        return {"status": PASS, "reason": None}
+    # `call_ok`가 없는 항목은 **실패로 세지 않는다** — `{"skipped": …}`처럼 애초에 재지 않기로
+    # 선언한 자리이고(`bench.py`의 `ctx > context_limit` 분기) 그 사유는 레코드에 따로 있다.
+    # 여기서 세는 것은 **재려다 실패한** 것뿐이다.
+    dead = [f"{key} ctx {ctx}" for key, ctx, entry in entries if not entry.get("call_ok", True)]
+    if any(entry.get("kv_cache_usage_perc_peak", 0.0) > 0 for _, _, entry in entries):
+        return {"status": PASS, "reason": f"호출이 실패한 context: {dead}" if dead else None}
+    if dead:
+        # 전부 못 닿았으면 원인은 `/metrics`가 아니다. 아래 고정 사유를 그대로 내면
+        # **읽은 적 있는 메트릭을 못 읽었다고 말하게 된다.**
+        return {"status": UNMEASURED, "reason": f"호출이 실패한 context: {dead}"}
     return {"status": UNMEASURED, "reason": f"/metrics의 {METRIC_KV_USAGE}를 읽지 못했다"}
 
 
