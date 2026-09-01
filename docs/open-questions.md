@@ -91,7 +91,7 @@
 | D53 | **실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 — 폭주가 잦은 조건일수록 싸 보인다** | 열림 | [본문](open-questions/D53.md) |
 | D54 | **`config/models.yaml`의 어느 모델도 v2 프롬프트를 고르지 않아 머지된 v2가 도달 불가다** | 보류 | [본문](open-questions/D54.md) |
 | D55 | **재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다** | 열림 | [본문](open-questions/D55.md) |
-| D57 | **`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다** | 열림 | [본문](open-questions/D57.md) |
+| D57 | **`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다** | 부분 | [본문](open-questions/D57.md) |
 
 ## 3. 팀·운영 미정
 
