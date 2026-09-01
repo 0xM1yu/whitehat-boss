@@ -108,17 +108,27 @@ class RunRecord(UtcModel):
     # 갈릴 수 있다"**인데, **갈림의 기준인 프로필 자체가 없으면 그 예외를 읽을 수 없다.**
     # 예외만 남고 기준이 없던 상태다. `cli bench`는 이미 남기고 있었다(`bench_report.py`).
     #
-    # **`model_checksums`로는 복원되지 않는다.** 그쪽은 역할→모델만 담아
-    # `adapters.retriever`(fake ↔ hybrid)를 못 가른다. 그 축은 캡슐의 그래프 섹션 유무를
-    # 갈라 **모델이 본 것 자체**를 바꾸는데(`config/profiles.yaml`의 `dev_hybrid_docker`
-    # 주석), 다른 어떤 필드로도 유도되지 않는다. `production` 플래그·예산 프로필도 같다.
+    # **`model_checksums`로 항상 복원되지는 않는다.** 그쪽은 역할→checksum만 담아
+    # `adapters.retriever`(fake ↔ hybrid)를 못 가른다. 그 축은 캡슐의 `related` 섹션 유무와
+    # embedding·reranker 호출 여부를 갈라 **모델이 본 것**을 바꾼다 — `related`는
+    # `hybrid_retriever.LEVEL_SECTIONS`에만 있다. `production` 플래그·예산 프로필도 같다.
+    #
+    # **그래프 섹션(`callers`·`callees`)은 이 축으로 갈리지 않는다.** 두 구현이
+    # `index_graph.graph_section()`을 공유하고 `LEVEL_SECTIONS`의 그 자리도 같다 —
+    # 갈린다고 적었던 초판은 틀렸다(2026-09-01 감사).
     #
     # **`| None`이고 기본값 `None`인 것은 `model_sampling`과 같은 관용구다** —
     # `tool_runner`·`device`의 "옛 manifest는 로드 실패가 올바른 결과다"를 여기 쓰지 않는다.
     # 그쪽은 값을 사후에 지어낼 **유혹**이 있어 막은 것인데, 이 필드는 반대다: 옛 run의
-    # 프로필은 **아무도 모르고**(그것이 이 필드가 생긴 이유다), 필수로 만들면
-    # `tests/fixtures/manifests/run_20260817_0004.json` 같은 **실제 옛 기록에 이름을
-    # 지어 넣어야** 로드된다 — CLAUDE.md §0이 정확히 금지하는 것이다.
+    # 프로필은 **기록에 없고 일반적으로는 복원되지 않는다.** 실서빙 프로필은
+    # `model_checksums`로 추정할 수 있으나(ADR 0005가 `run_20260827_0001`을 그렇게 짚었다)
+    # `dev_fake`↔`dev_hybrid`처럼 역할 맵이 같은 쌍은 안 갈린다. 필수로 만들면
+    # `tests/fixtures/manifests/run_20260817_0004.json` 같은 **실제 옛 기록이 로드에
+    # 실패하고**, 피하려면 추정에 기대 소급 편집하게 된다 — **추정을 기록으로 승격시키는
+    # 것**이 CLAUDE.md §0이 막는 자리다.
+    #
+    # (그 fixture의 프로필 자체는 `tests/test_schemas.py`가 `dev_fake`로 적어 뒀다. 초판이
+    # "아무도 모른다"고 쓴 것은 과장이었다 — 2026-09-01 감사.)
     # 새 run은 config에서 항상 유도되어 반드시 채워지므로 **`None`은 옛 manifest에서만
     # 나온다.** 그래서 `None`은 "확인 못 함"이 아니라 **"이 기록은 남기지 않았다"**다.
     #

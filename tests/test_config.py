@@ -99,9 +99,11 @@ def test_the_profile_name_is_derivable_into_the_run_record(profile: str) -> None
     읽을 수 없다** — 예외만 남고 기준이 없다. 같은 저장소의 `cli bench`는 이미 남긴다
     (`bench_report.py`의 `"profile": config.profile_name`).
 
-    **`model_checksums`로는 복원되지 않는다.** 그쪽은 역할→모델만 담아
-    `adapters.retriever`(fake ↔ hybrid)를 못 가르는데, 그 축은 캡슐의 그래프 섹션
-    유무를 갈라 **모델이 본 것 자체**를 바꾼다.
+    **`model_checksums`로 항상 복원되지는 않는다.** 그쪽은 역할→checksum만 담아
+    `adapters.retriever`(fake ↔ hybrid)를 못 가르는데, 그 축은 캡슐의 `related` 섹션
+    유무와 embedding·reranker 호출 여부를 갈라 **모델이 본 것**을 바꾼다.
+    그래프 섹션(`callers`·`callees`)은 두 구현이 `index_graph.graph_section()`을
+    공유하므로 이 축으로 갈리지 않는다 — 그렇게 적었던 초판은 틀렸다(2026-09-01 감사).
     """
     config = load_config(profile)
     record = RunRecord(
