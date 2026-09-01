@@ -68,6 +68,9 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         prompt_versions=config.prompt_versions(),
         tool_images={"semgrep": ZERO_DIGEST},
         tool_runner=config.profile.adapters.tool_runner,
+        # 비교의 기준축이다 — evaluation.md §2.3 규칙 2가 "조건 간 차이는 프로필과 단계
+        # 활성화만"으로 정의하는데 그 절반이 기록에 없었다 (이슈 #76).
+        profile=config.profile_name,
         device="atom",
         budget=config.budget,
         thresholds=config.thresholds.flatten(),
@@ -76,6 +79,7 @@ def test_run_record_fields_are_derivable(profile: str) -> None:
         kb_snapshot="kb-2026-08-30",
         started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
     )
+    assert record.profile == profile
     # checksums는 전 역할을 담는다 — 임베딩 모델이 바뀌면 검색 결과가 바뀌므로
     # 재현성 기록에서 뺄 수 없다.
     assert set(record.model_checksums) == set(config.profile.roles)

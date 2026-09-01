@@ -127,6 +127,20 @@ def test_finding_example_carries_trigger_status() -> None:
     assert "trigger_status" in raw
 
 
+def test_run_record_example_carries_the_profile() -> None:
+    """`profile`이 `| None = None`이라 예시에서 빠져도 파싱은 통과한다 (이슈 #76).
+
+    바로 위 `trigger_status`와 **같은 기제다** — 기본값이 있는 optional 필드는
+    `model_validate` 한 줄짜리 파라미터 테스트가 누락을 못 잡는다. 그래서 원문 JSON을 본다.
+
+    이 필드는 evaluation.md §2.3 규칙 2가 정한 비교의 기준축이라, 예시에서 사라지면
+    계약 문서가 그 축을 빠뜨린 채 읽힌다.
+    """
+    raw = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))
+
+    assert "profile" in raw
+
+
 def test_run_record_example_uses_full_length_digests() -> None:
     """`sha256:0000…` 같은 축약은 사람에게만 읽히고 스키마는 통과하지 못한다."""
     record = RunRecord.model_validate(

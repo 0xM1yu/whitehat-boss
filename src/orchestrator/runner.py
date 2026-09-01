@@ -1070,6 +1070,9 @@ def _new_record(
     record = RunRecord(
         run_id=run_id,
         condition=spec.condition,
+        # `--profile`이 고른 이름 그대로다. `RunSpec`이 아니라 config에서 오는 것은
+        # 그 docstring이 정한 대로다 — "여기 없는 것은 config에서 온다".
+        profile=config.profile_name,
         repo_commit=commit,
         repo_dirty=dirty,
         source_hash=source_hash(artifacts),
