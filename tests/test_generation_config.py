@@ -14,8 +14,10 @@ from src.adapters.generation_config import (
 )
 from src.adapters.tokenizer import tokenizer_dir_from_source
 from src.config import load_config
+from src.schemas.run import ModelSampling, RunRecord
 
 _SOURCE = "hf://org/model@abc123"
+ZERO_DIGEST = "sha256:" + "0" * 64
 
 
 def _write_generation_config(hub: Path, source: str, payload: dict) -> None:
@@ -59,17 +61,124 @@ def test_a_key_the_model_did_not_declare_stays_none_not_zero(tmp_path: Path) -> 
     assert sampling.repetition_penalty is None
 
 
-def test_a_file_with_no_sampling_keys_is_none(tmp_path: Path) -> None:
-    """bos/eos만 든 모델(Foundation-Sec·granite)은 선언이 없다 → `None`으로 빠진다.
+def test_a_model_that_declared_nothing_is_told_apart_from_one_we_could_not_read(
+    tmp_path: Path,
+) -> None:
+    """"선언이 없다"와 "못 읽었다"가 갈려야 한다 (이슈 #99 ③).
 
-    서버가 vLLM 기본값을 쓰는데 그 기본값은 이 파일로 알 수 없으므로 지어내지 않는다.
-    이 `None`이 맵에서 그 역할을 빼는 근거다.
+    granite·Foundation-Sec가 샘플링을 선언하지 않는 것은 **관측된 실험 사실**이다.
+    반면 HF 캐시 스냅샷을 못 찾은 것은 **우리 쪽 기록 구멍**이다. 둘이 같은 모양으로
+    나오면 그 run의 샘플링 축은 사후에 검증할 수 없다 — **HF 캐시는 저장소 밖이라
+    그때 그 상태였는지 나중에 알 방법이 없다.** 곧 돌 모델 비교가 정확히 이 축을
+    비교하므로 지금 안 가르면 그 값은 영구히 사라진다.
+
+    빈 `ModelSampling()`은 "파일을 읽었고 스키마에 담을 선언이 없었다"는 **관측**이고,
+    `None`은 "읽지 못했다"는 **부재**다. 지어내는 값이 아니므로 CLAUDE.md §0에 맞는다.
+    """
+    # bos/eos만 든 모델 — 파일은 읽혔고 샘플링 선언이 0개다
+    _write_generation_config(tmp_path, _SOURCE, {"bos_token_id": 1, "eos_token_id": 2})
+
+    declared = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+    unreadable = read_declared_sampling("hf://org/absent@deadbee", hub_cache=tmp_path)
+
+    assert declared is not None, "파일을 읽었다 — 그 사실이 기록에서 사라지면 안 된다"
+    assert declared.model_dump() == {
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "repetition_penalty": None,
+    }
+    assert unreadable is None, "그 경로에 파일이 없으면 읽지 못한 쪽이다"
+
+
+def test_a_file_we_cannot_decode_is_unread_not_an_exception(tmp_path: Path) -> None:
+    """비-UTF-8 바이트는 `None`이다 — 예외가 run을 죽이면 안 된다 (리뷰 지적 L1).
+
+    docstring이 "파일이 깨졌거나 매핑이 아니다 → `None`"이라 적는데
+    `UnicodeDecodeError`는 `ValueError` 하위지 `OSError`도 `JSONDecodeError`도 아니라
+    except를 통과했다. 그 예외는 `declared_sampling_by_role` → `factory`(run 조립 경로)까지
+    전파해 **run 자체를 죽인다.**
+    """
+    snapshot = tokenizer_dir_from_source(_SOURCE, tmp_path)
+    assert snapshot is not None
+    snapshot.mkdir(parents=True, exist_ok=True)
+    # 유효하지 않은 UTF-8 바이트열. 이스케이프 없이 만들어 소스가 ASCII로 남게 한다.
+    (snapshot / "generation_config.json").write_bytes(
+        b'{"temperature": "' + bytes([0xFF, 0xFE]) + b'"}'
+    )
+
+    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+
+
+def test_a_broken_file_stays_on_the_unread_side(tmp_path: Path) -> None:
+    """깨진 JSON은 `None`이다 — 빈 관측이 아니다 (리뷰 지적 M3).
+
+    #99 ③ 이전에는 이 분기가 다른 모든 경로와 똑같이 `None`을 내서 오분류가 무해했다.
+    이제는 **이 분기가 "못 읽음"과 "빈 관측"을 가르는 자리**라 하중을 새로 받는다.
+    누가 여기를 `ModelSampling()`으로 바꿔도 잡는 테스트가 없었다.
+    """
+    snapshot = tokenizer_dir_from_source(_SOURCE, tmp_path)
+    assert snapshot is not None
+    snapshot.mkdir(parents=True, exist_ok=True)
+    (snapshot / "generation_config.json").write_text("{ not json", encoding="utf-8")
+
+    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+
+
+def test_a_non_mapping_file_stays_on_the_unread_side(tmp_path: Path) -> None:
+    """매핑이 아닌 JSON도 `None`이다 (리뷰 지적 M3). 위와 같은 사유로 하중을 받는다."""
+    _write_generation_config(tmp_path, _SOURCE, [1, 2])  # type: ignore[arg-type]
+
+    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+
+
+def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
+    tmp_path: Path,
+) -> None:
+    """맵에서 빠지는 것은 **못 읽은 역할만**이다 (이슈 #99 ③).
+
+    역할이 맵에 없으면 `source` 없음·리졸브 실패·파일 없음·파일 깨짐·선언 0개를
+    **모두** 뜻했다. 그중 마지막만 실험 사실이고 나머지는 우리 쪽 구멍인데, 부재
+    하나로 뭉개지면 "그 모델은 선언이 없다"로 읽는 것을 막을 방법이 없다.
+    """
+    config = load_config("local_balanced")
+    served = config.served_models()
+    scout_source = config.models[served["scout"]].source
+    assert scout_source is not None
+    assert config.models[served["critic"]].source is None  # 대조군: 읽을 것이 없다
+    # scout에만 파일을 깐다 — bos만 들어 샘플링 선언이 0개다
+    _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1})
+
+    by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
+
+    assert "scout" in by_role, "읽었으나 선언이 0개인 역할은 맵에 남아야 한다"
+    assert by_role["scout"].top_k is None
+    assert "critic" not in by_role, "source가 없어 읽지 못한 역할만 빠진다"
+    assert "auditor" not in by_role, "파일을 안 깐 역할도 못 읽은 쪽이다"
+
+
+def test_a_file_with_no_sampling_keys_is_an_empty_observation_not_none(
+    tmp_path: Path,
+) -> None:
+    """bos/eos만 든 모델(Foundation-Sec·granite)은 **빈 관측**이지 부재가 아니다 (#99 ③).
+
+    **이 테스트는 계약이 뒤집혀 이름과 단언이 함께 바뀌었다.** 예전에는 `None`이었고
+    그 `None`이 맵에서 역할을 빼는 근거였는데, 바로 그것이 #99 ③이 지목한 결함이다 —
+    "모델이 선언하지 않았다"(실험 사실)와 "우리가 HF 캐시를 못 찾았다"(기록 구멍)가
+    같은 모양이 된다. **HF 캐시는 저장소 밖이라 사후에 어느 쪽이었는지 알 수 없다.**
+
+    서버가 vLLM 기본값을 쓴다는 사실은 여전히 지어내지 않는다 — 모든 필드가 `None`이고
+    그 `None`은 `ModelSampling` docstring대로 "이 키를 선언하지 않았다"는 뜻이다.
     """
     _write_generation_config(
         tmp_path, _SOURCE, {"bos_token_id": 1, "eos_token_id": 2, "pad_token_id": 0}
     )
 
-    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+    sampling = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+
+    assert sampling is not None, "파일을 읽었다는 사실이 기록에서 사라지면 안 된다"
+    assert sampling.temperature is None
+    assert sampling.top_k is None
 
 
 def test_missing_file_is_none(tmp_path: Path) -> None:
@@ -127,18 +236,31 @@ def test_a_value_outside_the_schema_drops_only_that_key(tmp_path: Path) -> None:
     assert sampling.top_p is None
 
 
-def test_a_file_whose_keys_are_all_outside_the_schema_is_none(tmp_path: Path) -> None:
-    """살아남는 키가 하나도 없으면 `None`이다 — 빈 `ModelSampling`을 남기지 않는다.
+def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
+    tmp_path: Path,
+) -> None:
+    """살아남는 키가 없어도 **읽은 것은 읽은 것**이다 (#99 ③).
 
-    빈 객체는 "선언이 있었다"고 말하는데 실제로 담긴 값이 없어서, 미선언과 뜻이 겹친다.
+    **계약이 뒤집혔다.** 예전 근거는 "빈 객체는 '선언이 있었다'고 말하는데 담긴 값이
+    없어 미선언과 뜻이 겹친다"였다. 그 걱정은 지금 반대쪽에서 더 크다 — `None`으로
+    돌리면 **읽지 못한 것과 겹치고**, 그쪽이 사후 복원이 불가능한 손실이다.
+
+    빈 `ModelSampling()`이 말하는 것은 "선언이 있었다"가 아니라
+    **"파일을 읽었고 스키마에 담을 것이 없었다"**이다 — 함수 docstring이 두 뜻을
+    명시적으로 가른다. 이 경로는 `top_k`가 `0`·`-1`을 정상 선언으로 받게 넓힌 뒤로는
+    사실상 병리적 입력에서만 온다.
     """
     _write_generation_config(tmp_path, _SOURCE, {"top_p": 5.0, "temperature": -1.0})
 
-    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+    sampling = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+
+    assert sampling is not None, "읽은 사실은 남는다"
+    assert sampling.top_p is None, "스키마 밖 값을 지어내 담지 않는다"
+    assert sampling.temperature is None
 
 
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:
-    """맵은 프롬프트를 쓰는 실서빙 역할만, 선언이 있는 것만 담는다 (D29).
+    """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
     `local_balanced`는 scout·auditor가 `hf://` source를, critic(`devstral`)이 `source`
     없음이다. scout·auditor에만 파일을 깔면 맵에 둘만 들어오고 critic은 빠진다 —
@@ -169,3 +291,57 @@ def test_by_role_is_empty_not_none_when_nothing_resolves(tmp_path: Path) -> None
     config = load_config("local_balanced")  # 파일을 하나도 안 깐다
 
     assert declared_sampling_by_role(config, hub_cache=tmp_path) == {}
+
+
+def test_the_read_but_empty_role_survives_the_manifest_round_trip(tmp_path: Path) -> None:
+    """가른 구별이 **저장 경계를 넘어서도 남는가** (이슈 #99 ③, PR #107 리뷰).
+
+    이 PR이 만든 구별은 `run_manifest.json`에 실려야 값이 있다. 직렬화에서 빈
+    `ModelSampling()`과 부재가 같은 모양(`null`·`{}`)으로 뭉개지면, 읽는 쪽은 다시
+    "선언이 없다"와 "못 읽었다"를 못 가른다 — 리더에서 가른 것이 저장에서 도로 합쳐진다.
+
+    실제로는 두 축이 서로 다른 자리에 실린다: 읽은 역할은 **키가 있고 값이 전부 `null`인
+    객체**로, 못 읽은 역할은 **키 자체가 없음**으로 남는다. 그 둘이 재검증을 통과해도
+    구별된 채 돌아오는 것을 여기서 못 박는다.
+    """
+    config = load_config("local_balanced")
+    served = config.served_models()
+    scout_source = config.models[served["scout"]].source
+    assert scout_source is not None
+    # scout만 bos/eos로 깐다 — 읽혔고 선언이 0개인 역할이다. auditor는 안 깐다.
+    _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1, "eos_token_id": 2})
+
+    by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
+    record = RunRecord(
+        run_id="run_20260901_0001",
+        condition="B3prime@pipeline",
+        repo_commit="0" * 40,
+        repo_dirty=False,
+        source_hash=ZERO_DIGEST,
+        model_checksums=config.model_checksums(),
+        prompt_versions=config.prompt_versions(),
+        tool_images={"semgrep": ZERO_DIGEST},
+        tool_runner=config.profile.adapters.tool_runner,
+        device="atom",
+        budget=config.budget,
+        thresholds=config.thresholds.flatten(),
+        seed=config.seed,
+        sampling=config.sampling,
+        model_sampling=by_role,
+        kb_snapshot="kb-2026-08-30",
+        started_at="2026-09-01T09:00:00Z",  # type: ignore[arg-type]
+    )
+
+    written = json.loads(record.model_dump_json())
+    assert written["model_sampling"]["scout"] == {
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "repetition_penalty": None,
+    }, "읽었으나 선언이 0개인 역할은 키가 남아야 한다"
+    assert "auditor" not in written["model_sampling"], "못 읽은 역할은 키가 없다"
+
+    reloaded = RunRecord.model_validate_json(record.model_dump_json())
+    assert reloaded.model_sampling is not None
+    assert reloaded.model_sampling["scout"] == ModelSampling()
+    assert "auditor" not in reloaded.model_sampling
