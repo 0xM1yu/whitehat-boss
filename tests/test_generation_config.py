@@ -114,17 +114,28 @@ def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
     assert "auditor" not in by_role, "파일을 안 깐 역할도 못 읽은 쪽이다"
 
 
-def test_a_file_with_no_sampling_keys_is_none(tmp_path: Path) -> None:
-    """bos/eos만 든 모델(Foundation-Sec·granite)은 선언이 없다 → `None`으로 빠진다.
+def test_a_file_with_no_sampling_keys_is_an_empty_observation_not_none(
+    tmp_path: Path,
+) -> None:
+    """bos/eos만 든 모델(Foundation-Sec·granite)은 **빈 관측**이지 부재가 아니다 (#99 ③).
 
-    서버가 vLLM 기본값을 쓰는데 그 기본값은 이 파일로 알 수 없으므로 지어내지 않는다.
-    이 `None`이 맵에서 그 역할을 빼는 근거다.
+    **이 테스트는 계약이 뒤집혀 이름과 단언이 함께 바뀌었다.** 예전에는 `None`이었고
+    그 `None`이 맵에서 역할을 빼는 근거였는데, 바로 그것이 #99 ③이 지목한 결함이다 —
+    "모델이 선언하지 않았다"(실험 사실)와 "우리가 HF 캐시를 못 찾았다"(기록 구멍)가
+    같은 모양이 된다. **HF 캐시는 저장소 밖이라 사후에 어느 쪽이었는지 알 수 없다.**
+
+    서버가 vLLM 기본값을 쓴다는 사실은 여전히 지어내지 않는다 — 모든 필드가 `None`이고
+    그 `None`은 `ModelSampling` docstring대로 "이 키를 선언하지 않았다"는 뜻이다.
     """
     _write_generation_config(
         tmp_path, _SOURCE, {"bos_token_id": 1, "eos_token_id": 2, "pad_token_id": 0}
     )
 
-    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+    sampling = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+
+    assert sampling is not None, "파일을 읽었다는 사실이 기록에서 사라지면 안 된다"
+    assert sampling.temperature is None
+    assert sampling.top_k is None
 
 
 def test_missing_file_is_none(tmp_path: Path) -> None:
@@ -182,14 +193,27 @@ def test_a_value_outside_the_schema_drops_only_that_key(tmp_path: Path) -> None:
     assert sampling.top_p is None
 
 
-def test_a_file_whose_keys_are_all_outside_the_schema_is_none(tmp_path: Path) -> None:
-    """살아남는 키가 하나도 없으면 `None`이다 — 빈 `ModelSampling`을 남기지 않는다.
+def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
+    tmp_path: Path,
+) -> None:
+    """살아남는 키가 없어도 **읽은 것은 읽은 것**이다 (#99 ③).
 
-    빈 객체는 "선언이 있었다"고 말하는데 실제로 담긴 값이 없어서, 미선언과 뜻이 겹친다.
+    **계약이 뒤집혔다.** 예전 근거는 "빈 객체는 '선언이 있었다'고 말하는데 담긴 값이
+    없어 미선언과 뜻이 겹친다"였다. 그 걱정은 지금 반대쪽에서 더 크다 — `None`으로
+    돌리면 **읽지 못한 것과 겹치고**, 그쪽이 사후 복원이 불가능한 손실이다.
+
+    빈 `ModelSampling()`이 말하는 것은 "선언이 있었다"가 아니라
+    **"파일을 읽었고 스키마에 담을 것이 없었다"**이다 — 함수 docstring이 두 뜻을
+    명시적으로 가른다. 이 경로는 `top_k`가 `0`·`-1`을 정상 선언으로 받게 넓힌 뒤로는
+    사실상 병리적 입력에서만 온다.
     """
     _write_generation_config(tmp_path, _SOURCE, {"top_p": 5.0, "temperature": -1.0})
 
-    assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
+    sampling = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+
+    assert sampling is not None, "읽은 사실은 남는다"
+    assert sampling.top_p is None, "스키마 밖 값을 지어내 담지 않는다"
+    assert sampling.temperature is None
 
 
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:

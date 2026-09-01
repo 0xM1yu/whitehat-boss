@@ -33,20 +33,32 @@ _SAMPLING_KEYS = ("temperature", "top_p", "top_k", "repetition_penalty")
 def read_declared_sampling(
     source: str | None, hub_cache: Path | None = None
 ) -> ModelSampling | None:
-    """모델의 `generation_config.json`이 선언한 샘플링. 읽을 수 없거나 선언이 없으면 `None`.
+    """모델의 `generation_config.json`이 선언한 샘플링. **읽지 못했으면** `None`.
 
-    `None`을 돌려주는 경우 — 지어내지 않기 위해 전부 `None`이다:
-    - `source`가 없다(빈 값·`sha256:` 등 다른 스킴·리비전 없는 `hf://`)
-    - 스냅샷 디렉터리에 `generation_config.json`이 없다
-    - 파일이 깨졌거나 매핑이 아니다
-    - 파일은 있으나 샘플링 키를 **하나도** 선언하지 않았다(bos/eos만 있는 모델 — 서버가
-      vLLM 기본값을 쓴다는 뜻이고, 그 기본값은 여기서 알 수 없으므로 기록하지 않는다)
-    - 선언한 키가 **전부** 스키마 밖이다
+    **`None`과 빈 `ModelSampling()`은 서로 다른 사실이다 (#99 ③).**
+
+    - `None` = **읽지 못했다.** 우리 쪽 기록 구멍이다:
+      - `source`가 없다(빈 값·`sha256:` 등 다른 스킴·리비전 없는 `hf://`)
+      - 스냅샷 디렉터리를 못 찾았다 (HF 캐시가 그 자리에 없다)
+      - 스냅샷에 `generation_config.json`이 없다
+      - 파일이 깨졌거나 매핑이 아니다
+    - 빈 `ModelSampling()` = **읽었고 담을 선언이 없었다.** 이것은 **관측**이다:
+      - 샘플링 키를 하나도 선언하지 않았다(bos/eos만 있는 모델 — granite·Foundation-Sec)
+      - 선언한 키가 **전부** 스키마 밖이었다
+
+    **왜 갈라야 하나.** 둘이 같은 모양이면 "그 모델은 선언이 없다"(실험 사실)와
+    "우리가 캐시를 못 찾았다"(우리 구멍)가 구별되지 않는데, **HF 캐시는 저장소 밖이라
+    그때 그 상태였는지 나중에 확인할 방법이 없다** — 그 run의 샘플링 축이 영구히
+    검증 불가가 된다. 곧 도는 모델 비교가 정확히 이 축을 비교한다.
+
+    빈 값은 지어낸 값이 아니다. 모든 필드가 `None`이고, `ModelSampling`의 `None`은
+    이미 "이 키를 선언하지 않았다"는 뜻이다(그 클래스 docstring) — CLAUDE.md §0의
+    "안 잰 값은 사유와 함께 둔다"와 같은 관용구다.
 
     **스키마 밖 키는 그 키만 버린다.** 전체를 버리면 `top_p: 5.0` 하나가 같은 파일의
-    `temperature: 0.7`까지 데려가고, 그 역할이 맵에서 빠져 **"두 개를 선언한 모델"이
-    "선언 없음"과 구별되지 않는다** — #99가 막으려던 그 자리로 되돌아간다. 필드가 전부
-    optional이고 교차 검증기가 없어서 낱개 검증이 성립한다.
+    `temperature: 0.7`까지 데려가고, 그 역할이 **"두 개를 선언한 모델"이 "선언 없음"과
+    구별되지 않는** 자리로 돌아간다. 필드가 전부 optional이고 교차 검증기가 없어서
+    낱개 검증이 성립한다.
     """
     if not source:
         return None
@@ -62,9 +74,11 @@ def read_declared_sampling(
         return None
     if not isinstance(data, dict):
         return None
+    # 여기부터는 **파일을 읽었다**가 확정이다. 아래 두 `return`이 `None`이 아니라
+    # 빈 `ModelSampling()`인 것이 #99 ③의 요점이다 — 읽은 사실을 잃지 않는다.
     picked = {key: data[key] for key in _SAMPLING_KEYS if data.get(key) is not None}
     if not picked:
-        return None
+        return ModelSampling()
     kept: dict[str, object] = {}
     for key, value in picked.items():
         try:
@@ -74,7 +88,7 @@ def read_declared_sampling(
             continue
         kept[key] = value
     if not kept:
-        return None
+        return ModelSampling()
     return ModelSampling.model_validate(kept)
 
 
@@ -85,16 +99,18 @@ def declared_sampling_by_role(
 
     **프롬프트를 쓰는 실서빙 역할만** 담는다. `served_models()`는 embedding·reranker도
     주지만 그것들은 생성 모델이 아니라 샘플링과 무관하다 — `PROMPTED_ROLES`로 좁힌다.
-    Fake 역할, `source` 없는 모델, 선언이 없는 모델은 빠진다(그 부재 자체가 정보다).
+
+    **맵에서 빠지는 것은 "읽지 못한" 역할뿐이다 (#99 ③).** Fake 역할, `source` 없는 모델,
+    스냅샷·파일을 못 찾은 모델이 그것이다. **읽었으나 선언이 0개인 모델은 빈
+    `ModelSampling()`으로 맵에 남는다** — granite·Foundation-Sec가 그 모양이고, 그것은
+    우리 구멍이 아니라 **관측된 실험 사실**이라 기록에서 사라지면 안 된다.
+
+    그래서 **부재의 뜻이 하나로 좁혀졌다**: "이 역할의 선언 샘플링을 읽지 못했다."
+    HF 캐시는 저장소 밖이라 사후 확인이 불가능하므로, 이 구분이 없으면 그 run의 샘플링
+    축을 나중에 검증할 수 없다.
 
     **새 run은 이 함수로 항상 dict를 남긴다(비어도).** `RunRecord.model_sampling`의
     `None`은 이 필드 이전에 쓰인 옛 manifest에서만 나온다.
-
-    **한계 — 부재의 뜻이 하나가 아니다 (#99 ③).** 여기서 빠진 역할은 `source` 없음 ·
-    스냅샷 리졸브 실패 · 파일 없음 · 파일 깨짐 · 선언 키 0개 · 검증 실패를 **모두** 뜻한다.
-    앞 넷은 **우리 쪽 기록 구멍**이고 다섯째만 **실험 사실**인데 그 둘이 안 갈린다. run
-    수준에서는 `None`(옛 manifest)과 `{}`(읽었으나 없음)가 갈리지만 **역할 수준에서는 안
-    갈린다** — 그래서 부재를 "그 모델은 선언이 없다"로 읽으면 안 된다.
     """
     served = config.served_models()
     out: dict[str, ModelSampling] = {}
