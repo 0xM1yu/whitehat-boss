@@ -59,6 +59,61 @@ def test_a_key_the_model_did_not_declare_stays_none_not_zero(tmp_path: Path) -> 
     assert sampling.repetition_penalty is None
 
 
+def test_a_model_that_declared_nothing_is_told_apart_from_one_we_could_not_read(
+    tmp_path: Path,
+) -> None:
+    """"선언이 없다"와 "못 읽었다"가 갈려야 한다 (이슈 #99 ③).
+
+    granite·Foundation-Sec가 샘플링을 선언하지 않는 것은 **관측된 실험 사실**이다.
+    반면 HF 캐시 스냅샷을 못 찾은 것은 **우리 쪽 기록 구멍**이다. 둘이 같은 모양으로
+    나오면 그 run의 샘플링 축은 사후에 검증할 수 없다 — **HF 캐시는 저장소 밖이라
+    그때 그 상태였는지 나중에 알 방법이 없다.** 곧 돌 모델 비교가 정확히 이 축을
+    비교하므로 지금 안 가르면 그 값은 영구히 사라진다.
+
+    빈 `ModelSampling()`은 "파일을 읽었고 스키마에 담을 선언이 없었다"는 **관측**이고,
+    `None`은 "읽지 못했다"는 **부재**다. 지어내는 값이 아니므로 CLAUDE.md §0에 맞는다.
+    """
+    # bos/eos만 든 모델 — 파일은 읽혔고 샘플링 선언이 0개다
+    _write_generation_config(tmp_path, _SOURCE, {"bos_token_id": 1, "eos_token_id": 2})
+
+    declared = read_declared_sampling(_SOURCE, hub_cache=tmp_path)
+    unreadable = read_declared_sampling("hf://org/absent@deadbee", hub_cache=tmp_path)
+
+    assert declared is not None, "파일을 읽었다 — 그 사실이 기록에서 사라지면 안 된다"
+    assert declared.model_dump() == {
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "repetition_penalty": None,
+    }
+    assert unreadable is None, "스냅샷을 못 찾은 것만 `None`이어야 한다"
+
+
+def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
+    tmp_path: Path,
+) -> None:
+    """맵에서 빠지는 것은 **못 읽은 역할만**이다 (이슈 #99 ③).
+
+    역할이 맵에 없으면 `source` 없음·리졸브 실패·파일 없음·파일 깨짐·선언 0개를
+    **모두** 뜻했다. 그중 마지막만 실험 사실이고 나머지는 우리 쪽 구멍인데, 부재
+    하나로 뭉개지면 "그 모델은 선언이 없다"로 읽는 것을 막을 방법이 없다.
+    """
+    config = load_config("local_balanced")
+    served = config.served_models()
+    scout_source = config.models[served["scout"]].source
+    assert scout_source is not None
+    assert config.models[served["critic"]].source is None  # 대조군: 읽을 것이 없다
+    # scout에만 파일을 깐다 — bos만 들어 샘플링 선언이 0개다
+    _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1})
+
+    by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
+
+    assert "scout" in by_role, "읽었으나 선언이 0개인 역할은 맵에 남아야 한다"
+    assert by_role["scout"].top_k is None
+    assert "critic" not in by_role, "source가 없어 읽지 못한 역할만 빠진다"
+    assert "auditor" not in by_role, "파일을 안 깐 역할도 못 읽은 쪽이다"
+
+
 def test_a_file_with_no_sampling_keys_is_none(tmp_path: Path) -> None:
     """bos/eos만 든 모델(Foundation-Sec·granite)은 선언이 없다 → `None`으로 빠진다.
 
