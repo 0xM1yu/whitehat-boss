@@ -74,7 +74,7 @@ models:
 
   qwen3-8b:
     # 2026-08-25 ATOM에서 **기동만** 했다(추론 없음). 상세는
-    # docs/experiments/2026-08-25-serving-nvfp4-atom.md §3.
+    # docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §3.
     #
     # `quantization`이 `fp4`였는데 **틀린 값이다.** 체크포인트가 선언하는 것은 NVFP4이고
     # (기동 로그: `Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4)`,
@@ -238,7 +238,7 @@ models:
     # 그러나 `--served-model-name`은 **순수 별칭이라 실제 가중치와의 일치를 검증하지 않는다.**
     # 이 저장소가 그걸 이미 썼다: 2026-08-18에 Qwen3-0.6B를 `--served-model-name qwen3-4b`로
     # 8001에 서빙했고, 그 문서가 "**별칭은 근거가 못 된다**"고 적어 뒀다
-    # (docs/experiments/2026-08-18-retrieval-atom.md). 8007에 다른 모델을 띄우면서 이름만
+    # (docs/experiments/harness/2026-08-18-retrieval-atom.md). 8007에 다른 모델을 띄우면서 이름만
     # `granite-3.3-8b`로 붙이면 하네스는 그 답을 granite의 것으로 기록하고 알아챌 수 없다.
     # **기동 스크립트가 registry 키를 그대로 `--served-model-name`에 넣는 것이 유일한 방어다.**
     endpoint: "http://127.0.0.1:8007/v1"
