@@ -21,18 +21,18 @@
 
 ## 2. 파이프라인 단계별 상태
 
-| # | 단계 | 로직 | 실제 동작 | 상태 | 담당 트랙 |
-|:-:|---|:-:|---|:-:|---|
-| 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 | T2 |
-| 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** | T3 |
-| 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 | T6 |
-| 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 | T4 |
-| 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** | T2 |
-| 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity·podman 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 | T6 |
-| 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** | T2 |
+| # | 단계 | 로직 | 실제 동작 | 상태 |
+|:-:|---|:-:|---|:-:|
+| 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 |
+| 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** |
+| 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 |
+| 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 |
+| 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 |
+| 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 |
+| 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** |
+| 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 |
+| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity·podman 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 |
+| 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** |
 
 **6·9단계만 최종본이다.** 둘 다 모델·도구를 쓰지 않는 단계라서 지금 코드가 그대로 최종 구현이다.
 
