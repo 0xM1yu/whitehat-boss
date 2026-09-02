@@ -12,6 +12,7 @@
 
 import io
 import json
+import re
 import socket
 import subprocess
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import FindingState, ReasonCode, Role
-from src.schemas.run import Budget, RunRecord
+from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from tests.conftest import ALL_PROFILES
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
@@ -474,6 +475,71 @@ def test_a_malformed_condition_is_refused_before_the_run_dir(
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
+def test_a_dry_run_is_not_blocked_by_the_serving_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """모델을 한 번도 안 부르는 run은 막지 않는다 — 게이트의 근거가 "비용"이기 때문이다.
+
+    `--dry-run`은 `DRY_RUN_LAST_STAGE`(RETRIEVAL)에서 끊기고 Scout은 그 **다음** 단계다.
+    게다가 실서빙 프로필 일곱이 전부 `retriever: fake`라 0~3단계에서 실서빙 클라이언트가
+    한 번도 불리지 않는다 — GPU 비용이 0이다.
+
+    **막으면 §0을 게이트가 유도한다.** 통과시키려고 `--device atom --condition B3prime@…`을
+    지어내 붙이면, 아무것도 재지 않은 dry-run의 매니페스트에 실서빙 장비·조건 라벨이 박힌다.
+    "그럴듯한 값으로 채우지 않는다"를 검사가 어기게 만드는 셈이다.
+
+    경고는 그대로 낸다 — 알려 주는 것과 막는 것은 다르다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET), "--dry-run",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 0, "모델을 안 부르는 dry-run이 게이트에 막혔다"
+    assert "시작 전 —" in err, "막지 않더라도 결여는 말해야 한다"
+    assert not _errors(err), "dry-run에 [ERROR]가 붙었다"
+
+
+def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """빈 문자열은 "줬다"가 아니다 — `--device ""`가 게이트와 사후 판정을 **둘 다** 통과했다.
+
+    실측: `--device "" --condition B1@pipeline --kb-snapshot kb-x`로 돌면 exit 0으로 완주하고
+    `run_manifest.json`의 `device`가 빈 문자열로 남는다. `missing_run_labels`는
+    `device is None`만 보고 `incomplete_fields`도 `record.device is None`만 봐서, 라벨 없는
+    run이 **"정상 run"으로 기록된다** — 이 PR이 막으려던 것보다 더 조용한 실패다.
+
+    두 곳을 **함께** 좁힌다. 갈라지면 안 된다는 것이 이 PR 자신의 논거다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--device", "   ", "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "공백뿐인 장비 라벨이 실서빙 run을 통과시킨다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_the_default_condition_matches_the_pattern() -> None:
+    """`DEFAULT_CONDITION`(러너)과 `CONDITION_PATTERN`(스키마)이 갈리면 안 된다.
+
+    전자는 `--condition`을 안 준 run에 **실제로 기록되는 값**이고 후자는 `RunRecord`가
+    그 값을 검증하는 정규식이다. 두 상수가 다른 파일에 있어 한쪽만 바뀌면, 기본값으로 돈
+    모든 run이 0단계 뒤에 죽는다 — `malformed_condition()`이 `None`을 통과시키므로
+    시작 전 검사도 못 잡는다.
+    """
+    assert re.fullmatch(CONDITION_PATTERN, runner.DEFAULT_CONDITION), (
+        f"기본 조건 라벨 {runner.DEFAULT_CONDITION!r}이 RunRecord의 패턴을 통과하지 못한다"
+    )
+
+
 def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """dev 스모크는 장비 라벨 없이 도는 것이 정상이라 막으면 그쪽이 죽는다.
 
@@ -493,7 +559,7 @@ def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureF
 
 
 def test_a_serving_profile_with_the_labels_passes_the_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     """라벨을 주면 게이트를 통과한다 — 막는 것이 목적이 아니라 **묻는** 것이 목적이다.
 
@@ -516,6 +582,11 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
                 "--seed", "20260901", "--artifacts-root", str(tmp_path),
             ]
         )
+
+    err = capsys.readouterr().err
+    assert not _errors(err), "라벨을 다 줬는데 거부됐다"
+    # `kb_snapshot`은 막지 않는다 — 경고만 나는 것이 계약이다.
+    assert "kb_snapshot" in err, "막지 않는 결여의 경고까지 사라졌다"
 
 
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
