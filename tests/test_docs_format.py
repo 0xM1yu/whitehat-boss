@@ -387,8 +387,10 @@ BUILD_PLAN = REPO_ROOT / "docs" / "build-plan.md"
 # 셋은 각각 벤치마크 라벨 통합·Scout 임계값·Capsule 확장 상한이다.
 _BUILD_PLAN_D_CITATIONS = frozenset({"D9", "D13", "D25", "D30", "D51"})
 
-# `docs/open-questions.md` §1의 R 행. `_D_ROW`와 같은 서식이고 계열만 다르다.
-_R_ROW = re.compile(r"^\|\s*(R\d+)\s*\|", re.MULTILINE)
+# `docs/open-questions.md` §1의 R 행. **서식을 `test_open_questions_layout`의 `_ROW`와
+# 정확히 맞춘다** — 그쪽이 "인덱스 행 ↔ 본문 파일"을 잇는 기준이라, 여기가 더 느슨하면
+# 본문 파일이 없는 번호가 이쪽에서만 "정의됨"으로 새어 나간다.
+_R_ROW = re.compile(r"^\| (R\d+) \|", re.MULTILINE)
 
 # 다른 문서가 가리키는 `R<n>`. `_D_REF`와 같은 논법이다 — `\b`만 쓰면 16진 digest가 샌다.
 _R_REF = re.compile(r"(?<![A-Za-z0-9])R(\d+)(?![0-9A-Za-z])")
@@ -403,6 +405,10 @@ def test_the_build_plan_is_a_tracked_document() -> None:
 
     같은 논거의 선례가 이 파일에 이미 있다(`test_the_report_glob_actually_finds_reports`
     — "파라미터화된 검사는 목록이 비면 아무것도 안 돌고 통과로 보인다").
+
+    **이 검사는 CI가 아니라 푸시 전 로컬에서 발화한다.** CI는 커밋된 트리를 체크아웃하므로
+    추적되지 않은 파일이 애초에 없다. 잡으려는 상황이 "손에서 문서를 쓰고 add를 잊은 채
+    테스트를 돌렸다"라서 그 자리가 맞다.
     """
     assert BUILD_PLAN.is_file(), "docs/build-plan.md가 없다"
     assert BUILD_PLAN in _tracked("*.md"), (
@@ -440,8 +446,8 @@ def test_the_build_plan_risk_references_point_at_a_real_r_row() -> None:
 
     **R 참조는 이 저장소에서 어떤 검사도 받지 않는다.** `_D_ROW`·`_D_REF` 둘 다 `D`만 보고,
     `[DR]`로 넓혀진 것은 인덱스 행과 본문 파일을 잇는 `test_open_questions_layout` 쪽
-    정규식 하나뿐이다 — 즉 "다른 문서 → R 참조"가 통째로 무검사다. 구축안은 R4·R6과
-    새로 등재할 항목들을 인용하므로 번호 오타를 잡을 것이 없다.
+    정규식 하나뿐이다 — 즉 "다른 문서 → R 참조"가 통째로 무검사다. 구축안은 R1·R4·R6을
+    인용한다(§1 정정 10 · §9 두 행). §9의 「미등재」 넷은 아직 번호가 없다.
 
     **범위를 이 문서 하나로 좁혔다.** `_D_REF`를 `[DR]`로 넓히는 안은 지금 저장소 전체에서
     이미 초록이라 RED가 되지 않고, 그 확대는 `R1` 같은 토큰이 다른 뜻으로 쓰인 자리를
