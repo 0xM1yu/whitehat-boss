@@ -351,7 +351,7 @@ def test_run_names_the_gaps_before_it_claims_a_run_dir(
 
 
 def test_a_serving_profile_refuses_to_start_without_the_labels(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**실서빙 run에서는 경고로 부족하다** (수민 리뷰 #119).
 
@@ -367,6 +367,7 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     `kb_snapshot`은 막지 않는다 — `kb-none`은 아직 KB가 없다는 정직한 표기이고
     `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다.
     """
+    _refuse_sockets(monkeypatch)
     code = cli.main(
         [
             "run", "--profile", "b1_single", "--target", str(TARGET),
@@ -378,6 +379,22 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     assert code == 2, "실서빙 프로필이 라벨 없이 그대로 시작한다"
     assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def _refuse_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """이 테스트가 네트워크를 치면 즉시 죽는다.
+
+    실서빙 프로필(`b1_single`)을 겨눈 첫 `run` 테스트다. 게이트가 회귀해 run이 실제로
+    시작되면 127.0.0.1:8001로 나가고 `_TIMEOUT_S`(300초)까지 매달릴 수 있다 — CI에서
+    "느리다"로 보이지 "게이트가 사라졌다"로 안 보인다. 같은 그물을
+    `test_doctor_never_opens_a_socket`이 이미 쓴다.
+    """
+
+    def _refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("게이트가 막았어야 하는 run이 소켓을 열었다")
+
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse)
 
 
 def _errors(stderr: str) -> list[str]:
@@ -555,7 +572,13 @@ def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureF
 
     assert code == 0, "Fake 프로필 스모크가 막혔다"
     assert "시작 전 —" in capsys.readouterr().err, "경고까지 사라지면 안 된다"
-    assert list(tmp_path.iterdir()), "돌았어야 하는 run이 산출물을 안 남겼다"
+    (run_dir,) = [p for p in tmp_path.iterdir() if p.is_dir()]
+
+    # **기록되는 값을 리터럴로 박는다.** `--condition`을 안 준 run에 실제로 무엇이 남는지가
+    # 이 PR의 계약이다(argparse 기본값을 없애고 `run()`이 해석한다) — 상수를 참조하면
+    # 그 값이 바뀌어도 통과한다.
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["condition"] == "B3prime@pipeline"
 
 
 def test_a_serving_profile_with_the_labels_passes_the_gate(

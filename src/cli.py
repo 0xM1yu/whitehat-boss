@@ -567,7 +567,13 @@ def _next_sequence(artifacts_root: Path, started_at: datetime) -> int:
 
 
 def run(args: argparse.Namespace) -> int:
-    config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
+    try:
+        config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
+    except ConfigError as exc:
+        # `doctor`는 같은 입력에 한 줄로 답한다(`:141-144`). `run`만 트레이스백을 내면
+        # 같은 오타가 커맨드에 따라 다른 얼굴로 나온다.
+        print(f"[ERROR] 설정 로드 실패: {exc}", file=sys.stderr)
+        return 2
     # **`_claim_run_dir`보다 앞이다.** 뒤에 두면 아무것도 안 한 run이 디렉터리와 번호를
     # 남기고, 그 번호는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는 자리와
     # 같다. 그리고 이 판정은 비용을 쓰기 **전에** 들려야 값어치가 있다 —
