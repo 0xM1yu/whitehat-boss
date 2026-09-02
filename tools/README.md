@@ -70,7 +70,7 @@ x86 이미지를 옮겨 쓸 수도 없으므로 **이 장비에서 직접 빌드
 podman build -t harness-tools:v1 tools/harness-tools/
 
 # 실서빙 프로필은 podman을 직접 선언한다 — 플래그가 필요 없다 (2026-08-17)
-python -m src.cli run --profile b1_single --target <경로> --device atom
+python -m src.cli run --profile b1_single --target <경로> --device atom --condition B1@pipeline
 
 # 개발 프로필을 이 장비에서 돌릴 때만 덮는다
 python -m src.cli run --profile dev_docker --tool-runner podman --target <경로> --device atom
