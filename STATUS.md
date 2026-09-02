@@ -317,7 +317,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 | **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | [R6.md](docs/open-questions/R/R6.md) |
 | R4 | 단일 노드 대역폭 병목 미파악 | [R4.md](docs/open-questions/R/R4.md) |
 
-> **상태와 기한은 여기서 관리하지 않는다.** 정본은 [docs/open-questions.md](docs/open-questions.md) §1 표와
+> **상태는 여기서 관리하지 않는다.** 정본은 [docs/open-questions.md](docs/open-questions.md) §1 표와
 > 각 `Rn.md` 의 머리 표다. 예전에는 이 표가 자체 `상태` 열을 들고 있었고 **인덱스와 갈렸다** —
 > 여기는 R6을 "대체 경로 확인"이라 하는데 인덱스 행은 08-23 에서 멈춰 그 경로를 몰랐다.
 > 이 표는 §3·§5 를 읽는 사람이 R 을 놓치지 않도록 남긴 포인터일 뿐이다.
