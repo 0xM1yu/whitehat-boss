@@ -1,0 +1,9 @@
+# 빈(blank) 이슈를 막아 모든 이슈가 템플릿을 거치게 한다.
+# #126·#128처럼 라벨도 번호도 없이 열린 이슈가 이 우회로에서 나왔다 — 템플릿을 안 고르면
+# 아무 형식 없는 이슈가 열렸다. 이제 이슈는 아래 템플릿(D-시리즈)을 거쳐야 한다.
+blank_issues_enabled: false
+
+contact_links:
+  - name: D-시리즈 결함이 아닌 것 (논의·질문)
+    url: https://github.com/Yunse4l/whitehat-boss/blob/main/docs/open-questions.md
+    about: 설계 결정·결함이 아니면 open-questions.md 「이 목록 관리 방식」을 참고하거나 팀 채널로. 결함이면 위 D-시리즈 템플릿을 쓴다.

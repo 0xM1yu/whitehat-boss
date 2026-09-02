@@ -1,0 +1,30 @@
+name: PR 작성자 자동 배정
+
+# 모든 PR이 담당자(assignee)를 갖도록, 열릴 때 assignee가 비어 있으면 작성자를 배정한다.
+# GitHub 브랜치 보호에는 "assignee 필수" 옵션이 없어 이 Action으로 대신한다.
+#
+# **비차단이다** — 담당자를 채워 넣을 뿐 아무것도 막지 않는다. 이미 assignee가 있으면
+# (작성자가 다른 사람을 지정했으면) 건드리지 않는다.
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  assign-author:
+    # 이미 담당자가 있으면 존중한다 — 작성자가 의도적으로 다른 사람을 지정했을 수 있다.
+    if: github.event.pull_request.assignees[0] == null
+    runs-on: ubuntu-latest
+    steps:
+      - name: 작성자를 assignee로 배정
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          gh pr edit "$NUM" --repo "$REPO" --add-assignee "$AUTHOR"
+          echo "assignee = $AUTHOR (작성자 자동 배정)"
