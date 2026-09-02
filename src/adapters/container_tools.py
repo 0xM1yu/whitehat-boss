@@ -290,8 +290,8 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         #
         # **첫 그룹에 발견이 있으면 둘째 그룹은 분석되지 않는다 (이슈 #75).**
         # `--warnings-as-errors=*` 때문에 발견이 곧 non-zero이고 `_execute`가 거기서
-        # 멈춘다. 그 사실은 어디에도 기록되지 않으므로 항목으로 열려 있다 — 주석이
-        # 아니라 번호가 그것을 들고 있다.
+        # 멈춘다. **그 사실은 이제 기록된다** — `unexecuted_commands_note()`가 안 돈 명령
+        # 수를 로그 섹션에 남긴다. break 자체는 `asan`의 E4 가드라 유지한다.
         return [
             Command(
                 [
@@ -509,6 +509,20 @@ def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
         )
     if step.exit_code not in _SEMGREP_OK:
         return False, step.exit_code, f"semgrep 실행 실패 (exit={step.exit_code})"
+    scanned = semgrep_scanned(step.stdout)
+    if scanned is not None and not scanned:
+        # 문서는 정상인데 **연 파일이 0개**다. `.inc`처럼 확장자가 언어로 매핑되지 않은
+        # 대상이 그렇다(#66) — exit 0·results 0이라 지금까지 "정적 신호 없음"으로 읽혔지만,
+        # 도구가 그 파일을 **아예 안 본 것**이다. `judge_semgrep`이 결과 문서 유무로
+        # "돌았는가"를 가르는 것과 같은 논법으로, `paths.scanned`가 "그 파일을 봤는가"를 가른다.
+        #
+        # **`_SEMGREP_OK` 검사 뒤다.** semgrep이 자기 오류(2·7)로 죽으면 스캔 목록이 비는
+        # 것은 **결과이지 원인이 아니다** — 앞에 두면 관측하지 않은 원인(확장자 매핑)을
+        # 사유로 적게 된다(§0). 판정과 `exit_code`는 어느 순서든 같다.
+        return False, step.exit_code, (
+            f"semgrep이 어떤 파일도 스캔하지 않았다 (exit={step.exit_code}) — 확장자가 "
+            f"언어로 매핑되지 않은 대상(.inc 등). '정적 신호 없음'과 '도구가 안 봄'을 가른다"
+        )
     return True, step.exit_code, None
 
 
@@ -526,6 +540,44 @@ def semgrep_results(stdout: str) -> list | None:
         return None
     results = document.get("results")
     return results if isinstance(results, list) else None
+
+
+def semgrep_scanned(stdout: str) -> list | None:
+    """`--json` 출력의 `paths.scanned` — semgrep이 실제로 연 파일 목록.
+
+    `None`은 "이 출력 형태에 목록이 없다"(옛 픽스처·비정상 출력)이고, **`[]`는 문서는
+    정상인데 연 파일이 0개**다. 둘을 가르는 이유는 `judge_semgrep`이 전자엔 손대지 않고
+    (결과 문서 유무 판정이 이미 잡는다) 후자만 "도구가 안 봤다"로 내리기 때문이다(#66).
+    실제 semgrep은 항상 `paths`를 내므로 `[]`는 `.inc` 같은 미매핑 대상에서만 나온다.
+    """
+    try:
+        document = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    paths = document.get("paths")
+    if not isinstance(paths, dict):
+        return None
+    scanned = paths.get("scanned")
+    return scanned if isinstance(scanned, list) else None
+
+
+def unexecuted_commands_note(executed: int, total: int) -> str | None:
+    """break로 안 돈 명령을 기록에 남길 한 줄. 다 돌았으면 `None` (#75).
+
+    `_execute`는 앞 명령이 non-zero면 break한다 — 그 break는 `asan`의 "빌드 실패면 실행하지
+    않는다"(E4 조건)를 지키는 장치라 유지한다. 대신 **언어 그룹이 갈리는 도구**(clang-tidy와
+    `build` 둘 다 `_by_language`를 쓴다)에서 앞 그룹의 발견이 뒤 그룹을 가리고 그 사실이
+    어디에도 안 남던 것을 기록으로 남긴다. 판정(`judge`)·등급·스키마는 건드리지 않는다.
+
+    **문구는 원인을 단정하지 않는다.** 이 함수는 `tool`을 받지 않아 `asan`처럼 언어 그룹이
+    갈릴 수 없는 도구(혼합 대상은 `plan()`이 거절한다)에서도 불린다. 정확한 사유는 `judge()`가
+    `Evidence.error`에 따로 내므로 여기서는 **관측한 사실만** 적는다.
+    """
+    if executed >= total:
+        return None
+    return f"# 실행되지 않은 명령 {total - executed}개 — 앞 명령이 non-zero로 끝나 break됨"
 
 
 def summary_line(tool: str, steps: list[Step]) -> str | None:
@@ -716,6 +768,9 @@ class ContainerToolRunner:
             steps.append(Step(proc.returncode, proc.stdout, proc.stderr))
             if proc.returncode != 0:
                 break
+        note = unexecuted_commands_note(len(steps), len(commands))
+        if note is not None:
+            sections.append(note)
         ok, exit_code, error = judge(tool, steps, len(commands))
         summary = summary_line(tool, steps)
         if summary is not None:
