@@ -21,18 +21,18 @@
 
 ## 2. 파이프라인 단계별 상태
 
-| # | 단계 | 로직 | 실제 동작 | 상태 | 담당 트랙 |
-|:-:|---|:-:|---|:-:|---|
-| 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 | T2 |
-| 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** | T3 |
-| 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 | T6 |
-| 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 | T4 |
-| 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** | T2 |
-| 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 | T1/T5 |
-| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity·podman 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 | T6 |
-| 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** | T2 |
+| # | 단계 | 로직 | 실제 동작 | 상태 |
+|:-:|---|:-:|---|:-:|
+| 0 | Preprocess | ✅ | 확장자 분류 + SHA-256 | 🟡 부분 |
+| 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** |
+| 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 |
+| 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 |
+| 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 |
+| 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 |
+| 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** |
+| 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 |
+| 8 | Validate | ✅ | 컨테이너에서 빌드·실행 (docker·singularity·podman 검증 완료. PoC 부재로 실행까지 못 감) | 🟡 부분 |
+| 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** |
 
 **6·9단계만 최종본이다.** 둘 다 모델·도구를 쓰지 않는 단계라서 지금 코드가 그대로 최종 구현이다.
 
@@ -317,7 +317,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 | **R6** | prefix cache가 장부에 `cached_tokens: 0`으로 기록됨 | [R6.md](docs/open-questions/R/R6.md) |
 | R4 | 단일 노드 대역폭 병목 미파악 | [R4.md](docs/open-questions/R/R4.md) |
 
-> **상태와 기한은 여기서 관리하지 않는다.** 정본은 [docs/open-questions.md](docs/open-questions.md) §1 표와
+> **상태는 여기서 관리하지 않는다.** 정본은 [docs/open-questions.md](docs/open-questions.md) §1 표와
 > 각 `Rn.md` 의 머리 표다. 예전에는 이 표가 자체 `상태` 열을 들고 있었고 **인덱스와 갈렸다** —
 > 여기는 R6을 "대체 경로 확인"이라 하는데 인덱스 행은 08-23 에서 멈춰 그 경로를 몰랐다.
 > 이 표는 §3·§5 를 읽는 사람이 R 을 놓치지 않도록 남긴 포인터일 뿐이다.
@@ -788,5 +788,4 @@ critic 7/7을 성공했고, D46 본문이 그것을 "필연이 아니라 입력 
 | [docs/evaluation.md](docs/evaluation.md) | 조건 정의, 누출 방지, 지표 |
 | [docs/open-questions.md](docs/open-questions.md) | 미해결 항목 원본 |
 | [docs/experiments/](docs/experiments/) | 실험 보고서 원문과 대조로 확정된 사실 |
-| [docs/roadmap.md](docs/roadmap.md) | 마일스톤과 DoD |
 | [docs/build-plan.md](docs/build-plan.md) | 앞으로 무엇을 어느 순서로 짓는가 (설계이지 현황이 아니다) |

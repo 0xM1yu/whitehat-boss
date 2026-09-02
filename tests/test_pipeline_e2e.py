@@ -1135,8 +1135,8 @@ def test_two_runs_on_the_same_day_do_not_overwrite_each_other(tmp_path: Path) ->
 
     수정 전에는 둘 다 `run_YYYYMMDD_0001`이라 두 번째 실행이 첫 번째의
     trace·manifest·report를 조용히 덮었다. `mkdir(exist_ok=True)` + `"w"` 모드가
-    겹친 결과다. roadmap.md 4차 DoD가 "동일 예산에서 3회 반복"이므로 이 상태로는
-    그 조건이 물리적으로 성립하지 않는다.
+    겹친 결과다. evaluation.md §2.3은 같은 조건을 seed만 바꿔 최소 3회 반복하도록
+    요구하는데, 이 상태로는 그 반복이 물리적으로 성립하지 않는다.
 
     **디렉터리 수와 run_id를 모두 본다.** 하나만 보면 나머지가 조용히 어긋난다.
     """

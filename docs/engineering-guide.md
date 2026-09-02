@@ -87,7 +87,7 @@ class StateStore(Protocol):
 
 | Protocol | 누가 쓰는가 | 왜 인터페이스인가 |
 | --- | --- | --- |
-| `EmbeddingClient` · `RerankerClient` (`retrieval.py`) | `HybridRetriever`가 의존, 서빙 트랙이 제공 | knowledge-base.md §3의 2단계 재선별을 어떤 서버로 하든 Retriever 코드가 안 바뀌어야 한다. Fake 대체가 되어야 GPU 없이 이 경로가 돈다 |
+| `EmbeddingClient` · `RerankerClient` (`retrieval.py`) | `HybridRetriever`가 의존, 서빙 쪽이 제공 | knowledge-base.md §3의 2단계 재선별을 어떤 서버로 하든 Retriever 코드가 안 바뀌어야 한다. Fake 대체가 되어야 GPU 없이 이 경로가 돈다 |
 
 **`Role`에 넣지 않은 이유**는 [ADR 0004](decisions/0004-retrieval-clients-separate-from-model-client.md)에 있다.
 요약하면 `Role`은 프롬프트 버전·출력 스키마가 붙는 실행 계약 역할이고, 임베딩·리랭킹은
