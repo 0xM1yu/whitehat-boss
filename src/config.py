@@ -226,8 +226,9 @@ class Thresholds(HarnessModel):
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)
-    # agent-contracts.md §1의 token_budget.retries. 이 값이 "스키마 파싱 실패율"의
-    # 분모를 바꾸므로 조건 간 비교에서 고정되어야 한다 — 어댑터 기본값으로 두지 않는다.
+    # agent-contracts.md §1의 token_budget.retries. 이 값을 올리면 시도 수 `attempts`가 늘어
+    # "스키마 파싱 실패율"(evaluation.md §5.1)의 분자·분모가 함께 커지므로 조건 간 비교에서
+    # 고정되어야 한다 — 어댑터 기본값으로 두지 않는다(#83).
     schema_retries: int = Field(ge=0)
     # 요청 하나의 출력 토큰 상한 (agent-contracts.md §1의 token_budget.output_max).
     # `openai_compat`이 payload의 `"max_tokens"`로 싣는다. 없으면 서버가 `--max-model-len`

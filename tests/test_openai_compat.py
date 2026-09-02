@@ -9,6 +9,7 @@ HTTP를 띄우지 않고 `_post`만 갈아 끼운다. 여기서 재는 것은 �
 """
 
 import io
+import time
 import urllib.error
 import urllib.request
 
@@ -63,6 +64,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, succeed_on: int) -> list[int]:
         n = attempts[-1]
         inp, out, cached = _PER_ATTEMPT[n - 1]
         raw = '{"ok": true}' if n == succeed_on else '{"nope": 1}'
+        time.sleep(0.02)  # 각 시도가 wall-clock을 태운다 — gpu_ms 단언에 판별력을 준다
         return raw, Usage(input_tokens=inp, output_tokens=out, cached_tokens=cached)
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
@@ -312,3 +314,89 @@ def test_the_output_cap_is_actually_sent_and_comes_from_the_caller() -> None:
     assert payload["temperature"] == 0.0
     assert payload["top_p"] == 1.0
     assert payload["seed"] == 7
+
+
+# --- 시도 수와 실패분 회계 (D55·D53) ------------------------------------------
+#
+# `complete()`가 재시도를 자기 안에서 끝내고 성공 한 건을 내므로, 1차 실패 후 살아난
+# 호출이 성공 한 건과 구별되지 않는다(D55). 그리고 통째로 실패하면 이미 쓴 토큰·GPU가
+# 예외와 함께 사라져 상위가 장부에 청구할 것이 없다(D53). 시도 수를 결과·예외에 싣는다.
+
+
+def test_the_result_carries_how_many_attempts_it_took(monkeypatch: pytest.MonkeyPatch) -> None:
+    """2회 실패 후 성공하면 `attempts == 3`이다 (D55).
+
+    이 값이 `model_call`에 실려야 evaluation.md §5.1의 "구조화 출력 실패율" 분자가
+    '회복 못 한 실패'만이 아니라 '일어난 실패'를 센다. 지금은 성공 한 건과 구별 불가라
+    run B의 실패율이 실제 1/26인데 기록으로는 0%다.
+    """
+    _stub(monkeypatch, succeed_on=3)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.attempts == 3
+
+
+def test_a_first_try_success_reports_one_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """재시도가 없으면 `attempts == 1`이다. 성공 경로를 부풀리면 안 된다."""
+    _stub(monkeypatch, succeed_on=1)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.attempts == 1
+
+
+def test_exhaustion_carries_the_spend_it_already_made(monkeypatch: pytest.MonkeyPatch) -> None:
+    """소진 예외가 이미 쓴 토큰·GPU·시도 수를 들고 나온다 (D53·D55).
+
+    실패한 응답도 서버가 만들어 냈고 그 토큰·GPU는 실제로 쓰였다. 예외가 빈손으로 나오면
+    상위(`context.call_model`)가 장부에 청구할 것이 없어, 폭주가 잦은 조건일수록 싸 보인다 —
+    §5.2 비용표의 분자가 조건 비교에서 정확히 거꾸로 간다.
+    """
+    _stub(monkeypatch, succeed_on=99)
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    exc = caught.value
+    assert exc.attempts == 2  # retries=1 → 2회 시도
+    # 2회분(100+200 / 10+20 / 40+20) 합. 마지막 것만이 아니다.
+    assert exc.usage.input_tokens == 100 + 200
+    assert exc.usage.output_tokens == 10 + 20
+    assert exc.usage.cached_tokens == 40 + 20
+    # 2회 시도가 각자 20ms를 태웠으므로 0이 아니다 — `gpu_ms`를 리터럴 0으로 상수화하는
+    # 변이를 잡는다(#82 리뷰 F9). `>= 0`은 int면 무조건 통과라 판별력이 없었다.
+    assert exc.gpu_ms >= 30
+    assert exc.gpu_ms_source == "request_wall_clock"
+
+
+def test_gateway_failure_carries_the_spend_and_its_own_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """게이트웨이 거절도 이미 쓴 토큰·시도 수를 싣고, **자기 시도의 wall-clock까지** 라벨과
+    함께 실어 올린다 (#82 리뷰 F1·F9).
+
+    F1 이전에는 `gpu_ms +=`가 except 블록 밖이라 게이트웨이 실패가 재보지도 않은 0에
+    `request_wall_clock` 라벨을 붙였다 — 0은 "안 썼다"는 적극적 진술이라 §0 위반이었다.
+    """
+    calls: list[int] = []
+
+    def fake_post(self, payload):  # noqa: ANN001, ANN202, ARG001
+        calls.append(1)
+        time.sleep(0.02)
+        if len(calls) == 1:  # 1차는 파싱 실패 → 재시도
+            return '{"nope": 1}', Usage(input_tokens=100, output_tokens=10, cached_tokens=40)
+        raise ModelGatewayError("400", status=400, detail="maximum context length")
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    exc = caught.value
+    assert exc.attempts == 2  # 1차 파싱 실패 + 2차 게이트웨이
+    assert exc.usage.input_tokens == 100  # 1차분이 실린다
+    assert exc.gpu_ms_source == "request_wall_clock"
+    # 두 시도가 각자 20ms를 태웠다 — 게이트웨이 시도의 시간도 포함된다(F1). 한 시도(≈20ms)만
+    # 세면 30 미만이라, 게이트웨이 시도가 안 잡히는 회귀를 이 임계가 잡는다.
+    assert exc.gpu_ms >= 30

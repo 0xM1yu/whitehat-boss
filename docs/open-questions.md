@@ -92,9 +92,9 @@
 | D50 | ~~`--tool-runner` 경고가 값을 비교하지 않아 오버라이드가 아닌 run을 오버라이드로 신고한다~~ | 닫힘 | [본문](open-questions/D/D50.md) |
 | D51 | **`trigger_status`의 보류 두 건 — (2) 필드 순서는 닫혔고 (1) 열거 강제가 남았다** | 보류 | [본문](open-questions/D/D51.md) |
 | D52 | ~~`trigger_status`를 내라고 시키는 프롬프트가 저장소에 없어 그 필드는 구조적으로 항상 `null`이다~~ | 닫힘 | [본문](open-questions/D/D52.md) |
-| D53 | **실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 — 폭주가 잦은 조건일수록 싸 보인다** | 열림 | [본문](open-questions/D/D53.md) |
+| D53 | ~~실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 — 폭주가 잦은 조건일수록 싸 보인다~~ | 닫힘 | [본문](open-questions/D/D53.md) |
 | D54 | **`config/models.yaml`의 어느 모델도 v2 프롬프트를 고르지 않아 머지된 v2가 도달 불가다** | 보류 | [본문](open-questions/D/D54.md) |
-| D55 | **재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다** | 열림 | [본문](open-questions/D/D55.md) |
+| D55 | ~~재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다~~ | 닫힘 | [본문](open-questions/D/D55.md) |
 | D57 | **`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다** | 부분 | [본문](open-questions/D/D57.md) |
 
 ## 3. 팀·운영 미정
