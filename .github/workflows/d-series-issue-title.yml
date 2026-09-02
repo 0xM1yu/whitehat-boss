@@ -1,0 +1,52 @@
+name: D-series 이슈 제목 검사
+
+# `D-series` 라벨이 붙은 이슈의 제목이 `[Dn] 요약` 형식인지 확인한다.
+# open-questions.md 「이 목록 관리 방식」 2단계가 그 형식을 요구하는데, 최근 이슈 몇 건이
+# 등재(D 본문 파일) 없이 이슈부터 열려 그 규약을 벗어났다(#114·#121·#124).
+#
+# **코멘트만 남기고 아무것도 막지 않는다.** 등재 없이 이슈부터 여는 것을 허용할지는
+# ADR 0008(결함 소스 오브 트루스)이 결정 중이므로, 여기서 차단하면 그 결정을 앞선다.
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  check-title:
+    if: contains(github.event.issue.labels.*.name, 'D-series')
+    runs-on: ubuntu-latest
+    steps:
+      - name: "[Dn] 제목 규약 확인"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          if printf '%s' "$TITLE" | grep -qE '^\[D[0-9]+\]'; then
+            echo "OK: 제목이 [Dn] 형식이다."
+            exit 0
+          fi
+          # 같은 안내를 이미 남겼으면 중복하지 않는다(edited가 여러 번 발생해도 한 번만).
+          if gh issue view "$NUM" --repo "$REPO" --json comments \
+               --jq '.comments[].body' | grep -q 'D-series 제목 규약'; then
+            echo "이미 안내 코멘트가 있다 — 건너뛴다."
+            exit 0
+          fi
+          BODY=$(printf '%s\n' \
+            '🤖 **D-series 제목 규약** — 이 이슈에 `D-series` 라벨이 붙었는데 제목이 `[Dn] 요약` 형식이 아닙니다.' \
+            '' \
+            '`open-questions.md` 「이 목록 관리 방식」 순서:' \
+            '1. **등재** — `docs/open-questions/D/D<n>.md` 본문 + 인덱스 §2에 한 줄(다음 번호는 저장소 최신 기준).' \
+            '2. **이슈화** — 제목 `[Dn] 요약`, 라벨 `D-series`.' \
+            '' \
+            '등재 없이 이슈부터 여는 것이 맞는지는 **ADR 0008(결함 소스 오브 트루스)** 이 결정 중입니다.' \
+            '- 등재를 강제한다면: 위 순서대로 등재 후 이 제목을 `[Dn] …`로 바꿔 주세요.' \
+            '- "본문 없는 이슈"를 허용한다면: 이 안내는 무시해도 됩니다(ADR 확정 시 이 검사도 조정).' \
+            '' \
+            '_자동 안내이고 비차단입니다 — 이 코멘트만 남기고 아무것도 막지 않습니다._')
+          gh issue comment "$NUM" --repo "$REPO" --body "$BODY"
+          echo "안내 코멘트를 남겼다."
