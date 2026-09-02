@@ -57,7 +57,7 @@ from src.orchestrator.runner import (
     missing_run_labels,
     run_pipeline,
 )
-from src.orchestrator.stages import MAX_STAGE
+from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -592,18 +592,7 @@ def run(args: argparse.Namespace) -> int:
     if malformed is not None:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
-    serving = bool(config.served_models())
-    blocking = [gap for gap in gaps if gap in BLOCKING_WHEN_SERVING] if serving else []
-    if blocking:
-        print(
-            f"[ERROR] 실서빙 프로필({args.profile})이라 위 {len(blocking)}건을 주지 않으면 "
-            "시작하지 않는다 — 이 run은 끝까지 돌아도 비교표에 넣을 수 없다. "
-            "--device 와 --condition 을 명시한다",
-            file=sys.stderr,
-        )
-        return 2
     started_at = datetime.now(UTC)
-    run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     spec = RunSpec(
         condition=DEFAULT_CONDITION if args.condition is None else args.condition,
         target=args.target,
@@ -613,6 +602,24 @@ def run(args: argparse.Namespace) -> int:
         device=args.device,
         started_at=started_at,
     )
+    # **모델을 한 번도 안 부르는 run은 막지 않는다.** 게이트의 근거가 "비용을 쓰기 전에"라
+    # `--dry-run`·낮은 `--stop-after`처럼 Scout에 닿지 않는 run에는 근거가 없다. 막으면
+    # 통과시키려고 장비·조건 라벨을 **지어내게** 되고, 그것이 CLAUDE.md §0이 금지하는
+    # "그럴듯한 값으로 채우기"다 — 검사가 그 위반을 유도하면 안 된다.
+    reaches_model = spec.stop_at()[0] >= Stage.SCOUT
+    serving = bool(config.served_models()) and reaches_model
+    blocking = [gap for gap in gaps if gap in BLOCKING_WHEN_SERVING] if serving else []
+    if blocking:
+        flags = ", ".join(BLOCKING_WHEN_SERVING[gap] for gap in blocking)
+        # **실제로 빠진 것만 이름으로 부른다.** 고정 문장이면 이미 준 플래그를 다시 대라고
+        # 말하게 되고, 조작자가 그것을 의심하며 시간을 태운다.
+        print(
+            f"[ERROR] 실서빙 프로필({args.profile})이라 {flags} 없이는 시작하지 않는다 — "
+            "이 run은 완주해도 비교표에 넣을 수 없다",
+            file=sys.stderr,
+        )
+        return 2
+    run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
         result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
     report_path = write_report(run_dir, result, args.format)

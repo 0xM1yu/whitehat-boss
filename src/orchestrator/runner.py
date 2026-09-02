@@ -165,7 +165,15 @@ _CONDITION_DEFAULTED = (
 # **막는 기준은 `profile.production`이 아니다.** 지금 프로필 12개가 전부
 # `production: false`라 그 필드로는 dev와 실서빙이 갈리지 않는다(2026-09-02 실측).
 # `HarnessConfig.served_models()`가 그것을 가른다 — dev 다섯은 0, 실서빙 일곱은 1~3이다.
-BLOCKING_WHEN_SERVING = (_DEVICE_MISSING, _CONDITION_DEFAULTED)
+#
+# **문장 → 플래그 이름 매핑이다.** 거부 문구가 `--device 와 --condition 을 명시한다`처럼
+# 고정 문장이면 이미 준 플래그를 다시 대라고 말하게 된다 — 조작자가 그것을 의심하며 시간을
+# 태운다. 실제로 빠진 것만 이름으로 부르려면 문장에서 플래그를 되찾을 수 있어야 한다.
+#
+# **`served_models()`에는 `retriever` 축이 접혀 있다.** 오늘 실서빙 일곱이 전부
+# `retriever: fake`라 이 게이트가 세는 것은 scout·auditor·critic뿐이다. hybrid 실서빙
+# 프로필이 생기면 embedding·reranker도 세어져 게이트 범위가 넓어진다.
+BLOCKING_WHEN_SERVING = {_DEVICE_MISSING: "--device", _CONDITION_DEFAULTED: "--condition"}
 
 
 def malformed_condition(condition: str | None) -> str | None:
@@ -1213,15 +1221,22 @@ def missing_run_labels(
     `_KB_PLACEHOLDER`). 셋 다 run 시점의 사실이라 사후에 채우면 CLAUDE.md §0이 금지하는
     지어낸 값이 된다.
 
+    **빈 문자열도 결여다.** `--device ""`는 "줬다"가 아니라 라벨이 없는 것이고, 그것을
+    통과시키면 라벨 없는 run이 *정상 run*으로 기록된다. `incomplete_fields()`도 같은 식으로
+    좁혀 두 판정이 갈라지지 않게 한다.
+
+    **`kb_snapshot`은 값 비교로 충분하다** — `kb-none`은 구성상 "아직 KB가 없다"는 뜻이라
+    의도해서 주는 정당한 값이 될 수 없다(그 상수 주석).
+
     **이 함수 자체는 경고만 낸다.** 다만 결과를 받은 `cli.run()`이 `served_models()`가 비지
     않은 프로필에서는 `BLOCKING_WHEN_SERVING`에 든 둘을 **exit 2로 거부한다** — dev 프로필의
     스모크 run은 장비 라벨 없이 도는 것이 정상이라 그쪽만 경고로 남는다. 이 함수가 사는 이유는
     값을 강제하는 것이 아니라 **비용을 쓰기 전에 말하는 것**이고, 강제는 호출부의 판단이다.
     """
     warnings = []
-    if device is None:
+    if not (device or "").strip():
         warnings.append(_DEVICE_MISSING)
-    if kb_snapshot == DEFAULT_KB_SNAPSHOT:
+    if not (kb_snapshot or "").strip() or kb_snapshot == DEFAULT_KB_SNAPSHOT:
         warnings.append(_KB_PLACEHOLDER)
     if condition is None:
         warnings.append(_CONDITION_DEFAULTED)
@@ -1270,7 +1285,7 @@ def incomplete_fields(
     gpu_warning = unmeasured_gpu_warning(gpu_unmeasured_roles)
     if gpu_warning:
         warnings.append(gpu_warning)
-    if record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
+    if not (record.kb_snapshot or "").strip() or record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
         # 문구는 `missing_run_labels()`와 공유한다 — 같은 결여를 run 전과 후가 다른 이름으로
         # 부르면 그 갈라짐이 곧 다음 결함이다.
         warnings.append(_KB_PLACEHOLDER)
@@ -1285,7 +1300,7 @@ def incomplete_fields(
             else "하네스 저장소 상태를 확인하지 못했다"
         )
         warnings.append(f"repo_dirty: {state}. 모델 비교표에서 제외한다")
-    if record.device is None:
+    if not (record.device or "").strip():
         # `tool_runner`는 여기 없다 — config에서 유도되어 빌 수가 없기 때문이다. 이 값은
         # 사람이 `--device`를 안 주면 실제로 빈다. 두 장비가 모두 지원 대상인 이상
         # (docs/portability.md) 장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
