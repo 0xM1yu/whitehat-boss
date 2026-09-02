@@ -51,6 +51,8 @@ graph LR
 | 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 시 `proven` |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
+> **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
+>
 > **분석 대상 범위**: 킥오프 발표자료 04-1은 이 하네스의 대상을 "펌웨어의 취약점 분석"으로 명시한다. 소스가 없는 바이너리·펌웨어도 1급 입력이므로 0·1단계는 소스 경로와 바이너리 경로를 **둘 다** 갖춰야 한다. 어느 쪽을 먼저 구현할지는 [open-questions.md](open-questions.md) D9.
 >
 > **단계 순서 주의**: 위 표는 `Evidence Gate(6) → Critic(7)` 순서다. 킥오프 04-6 표는 `Critic(4차) → Evidence Gate(5차)`로 반대이나, 같은 자료의 05-2 구조도와 하네스 제안서 §3은 위 순서를 따른다. 다수 근거를 채택했고 확정은 [open-questions.md](open-questions.md) D8.
