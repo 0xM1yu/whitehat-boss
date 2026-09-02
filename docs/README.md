@@ -17,6 +17,7 @@
 | [portability.md](portability.md) | 하네스가 장비에 요구하는 것, 그 독립성의 확인 방법, 이식성 결함 대장 | 인프라 담당 |
 | [evaluation.md](evaluation.md) | B1/B1'/B3/B3' 조건, 데이터셋, 누출 방지, 지표 정의 | 평가 담당 |
 | [engineering-guide.md](engineering-guide.md) | 저장소 구조, 4개 인터페이스, 재현성, 관찰 가능성, 개발 규칙 | 개발 전원 |
+| [build-plan.md](build-plan.md) | **앞으로 무엇을 어느 순서로 짓는가** — 단계별 모델 자리, 성능 레버, 파인튜닝, 실행 순서 | 전원 |
 | [roadmap.md](roadmap.md) | 마일스톤별 산출물과 완료 기준(DoD), 8-way 트랙 | 전원 |
 | [disclosure-policy.md](disclosure-policy.md) | 취약점 제보 워크플로, 2인 검증, 연구 윤리·법적 경계 | 전원 |
 | [open-questions.md](open-questions.md) | 미해결 리스크와 결정 대기 항목 | PL/PM |
