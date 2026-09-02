@@ -6,8 +6,7 @@ engineering-guide.md §8.5("임계값은 config에서")가 코드 리뷰로만 �
 바꿔 보려면 노드를 전부 고쳐야 한다.
 
 **`src/interfaces/`가 아니라 여기 있다.** 외부 시스템 경계(ModelClient·StateStore…)와
-내부 정책 경계는 성격이 다르고, PR 1에서 전원 공지 대상으로 올린 인터페이스 표면을
-넓히지 않는다.
+내부 정책 경계는 성격이 다르고, PR 1에서 정의한 인터페이스 표면을 넓히지 않는다.
 
 모든 결정은 `policy_decision` 이벤트로 trace에 남는다(RunContext.decide). 어떤 정책이
 어떤 신호를 보고 어디로 보냈는지가 남아야 나중에 정책 A/B 비교의 데이터가 된다.

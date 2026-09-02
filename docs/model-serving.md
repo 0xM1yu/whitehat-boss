@@ -226,4 +226,4 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 
 1. **모델 추가는 역할별 benchmark에서 실제 이득이 확인될 때만** 허용한다. 에이전트를 무작정 늘리지 않고 repository shard와 candidate queue만 병렬화한다.
 2. 2대 연결(ConnectX-7)은 단일 노드 benchmark에서 병목이 확인된 뒤에 검토한다. 확장이 열리면 Primary Auditor를 더 큰 코드 모델로 교체하거나 Critic을 별도 노드로 분리하는 경로가 생긴다.
-3. 단일 노드 성능 한계는 중간 발표(2026-09-05) 전에 파악해야 일정에 반영할 수 있다.
+3. 단일 노드 성능 한계는 확장(2대 연결)을 검토하기 전에 파악한다 — 그 판단의 전제다.

@@ -49,7 +49,7 @@ class HarnessModel(BaseModel):
 
     - `frozen=True`: 노드는 순수 함수이므로(engineering-guide.md §4) 상태 객체를
       제자리 변경하지 않는다. 전이는 새 객체를 만들어 표현한다.
-    - `extra="forbid"`: 8개 트랙이 이 스키마에 붙으므로(roadmap.md §3) 오타 필드가
+    - `extra="forbid"`: 여러 모듈이 이 스키마에 붙으므로 오타 필드가
       조용히 통과하면 안 된다.
 
     **전이 시 주의**: pydantic v2의 `model_copy(update=...)`는 **검증을 수행하지
