@@ -1,8 +1,8 @@
 """SqliteStateStore — `StateStore`의 파일 기반 구현 (docs/decisions/0001, ADR 0001).
 
 stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아니라 **JSON 한 컬럼**이다.
-`src/schemas/`는 8개 트랙이 동시에 건드리는 유일한 결합점이라(roadmap.md §3) 필드가
-늘 때마다 DDL 마이그레이션을 요구하면 트랙이 서로를 막는다. 분석 쿼리가 실제로 느려지면
+`src/schemas/`는 여러 모듈이 동시에 건드리는 유일한 결합점이라 필드가
+늘 때마다 DDL 마이그레이션을 요구하면 서로를 막는다. 분석 쿼리가 실제로 느려지면
 그때 컬럼을 승격한다(DuckDB 재검토 조건도 같다).
 
 읽을 때 `model_validate`로 되돌리므로 스키마 검증이 저장소 경계에서도 돈다

@@ -2,8 +2,7 @@
 
 > **이 문서는 설계이지 현황이 아니다.** 지금 배선된 것은 [STATUS.md](../STATUS.md)가, 지금
 > 구조는 [architecture.md](architecture.md)가 말한다. 여기는 **앞으로 무엇을 어느 순서로
-> 짓는가**만 담는다. 날짜와 완료 기준은 [roadmap.md](roadmap.md)에 있고 이 문서는 날짜를
-> 정하지 않는다.
+> 짓는가**만 담는다. **날짜를 정하지 않는다** — 이 저장소는 일정을 들지 않는다.
 >
 > **상태: 제안** — 방향은 2026-08-31 팀 합의이지만, §1 정정 18건과 **모델 로스터·
 > 오케스트레이션 방안(큰 모델 하나 vs 소형 앙상블)이 미확정**이다
@@ -307,5 +306,4 @@ CPU로 내리는 방식은 장부상 아무것도 반환하지 않는다** — �
 | 지금 구조 · 단계별 책임 · 근거 등급 | [architecture.md](architecture.md) |
 | 조건 간 비교 규칙 | [evaluation.md](evaluation.md) |
 | ATOM 메모리 · 서빙 제약 | [model-serving.md](model-serving.md) |
-| 날짜와 완료 기준 | [roadmap.md](roadmap.md) |
 | 미해결 결함 · 리스크 | [open-questions.md](open-questions.md) |

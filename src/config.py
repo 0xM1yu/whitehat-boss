@@ -4,8 +4,8 @@ engineering-guide.md §8.5: "하드코딩 금지 — 임계값·예산·모델�
 이 모듈이 그 규칙의 단일 진입점이다. 노드도 어댑터도 YAML을 직접 읽지 않는다.
 
 설정 모델은 `src.schemas`의 `HarnessModel`을 상속한다. `extra="forbid"` 덕분에
-YAML의 오타 필드가 조용히 무시되지 않고 로드 시점에 실패한다 — 8개 트랙이 같은 설정
-파일을 건드리므로(roadmap.md §3) 조용한 무시가 가장 비싼 실패다.
+YAML의 오타 필드가 조용히 무시되지 않고 로드 시점에 실패한다 — 여러 곳이 같은 설정
+파일을 건드리므로 조용한 무시가 가장 비싼 실패다.
 
 `Budget`·`Sampling`은 `src.schemas.run`의 것을 그대로 쓴다. 같은 값이 `RunRecord`에
 박제되므로(evaluation.md §6) 별도 타입을 두면 두 정의가 갈라진다.

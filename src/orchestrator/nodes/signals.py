@@ -34,8 +34,8 @@ def with_signal(evidences: tuple[Evidence, ...] | list[Evidence]) -> tuple[Evide
     Gate E1(`any(e.kind == STATIC and e.ok)`)이 모든 Finding에서 참이 된다.
 
     발견 여부는 `exit_code`로 판별한다 — 정적분석 도구의 관례이자 이 저장소의 ToolRunner
-    계약이다. `Evidence`에 "발견 건수" 필드가 있으면 더 정확하지만 스키마 확장은 전원
-    공지 대상이므로(roadmap.md §3) 여기서 하지 않고 open-questions 항목으로 올린다.
+    계약이다. `Evidence`에 "발견 건수" 필드가 있으면 더 정확하지만 스키마 확장이라
+    여기서 하지 않고 open-questions 항목으로 올린다.
 
     STATIC이 아닌 종류(GRAPH·BUILD 등)는 성공 자체가 신호이므로 `exit_code`를 보지 않는다.
     걸러진 Evidence도 저장소에는 그대로 남는다 — "신호 부재로 기록"이 2단계의 통과 조건이다.
