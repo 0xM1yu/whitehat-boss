@@ -12,6 +12,7 @@
 
 import io
 import json
+import re
 import socket
 import subprocess
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import FindingState, ReasonCode, Role
-from src.schemas.run import Budget, RunRecord
+from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from tests.conftest import ALL_PROFILES
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
@@ -264,6 +265,351 @@ def test_fake_roles_do_not_warn_about_placeholder_checksums(tmp_path: Path) -> N
     result, _ = _run(tmp_path)
 
     assert _checksum_warnings(result.record, "dev_fake") == []
+
+
+def test_missing_run_labels_names_every_gap_the_operator_must_fill() -> None:
+    """사람이 줘야 하는 세 값이 비면 **run이 시작하기 전에** 그 사실을 이름으로 말한다.
+
+    셋 다 run 시점의 사실이라 사후에 정직하게 채울 수 없다 — CLAUDE.md §0이 "안 잰 값은
+    0으로 두고 사유를 남긴다. 그럴듯한 값으로 채우지 않는다"고 못박은 자리다.
+    `incomplete_fields()`가 device·kb_snapshot에 같은 판정을 하지만 그것은 run이 **끝난
+    뒤**다(`_new_record`가 레코드를 만들 때 불린다).
+
+    **`condition`은 값 비교로 판정할 수 없다.** 기본값 `B3prime@pipeline`은 파이프라인
+    조건의 **정당한 값**이라, `== DEFAULT_CONDITION`으로 재면 그 라벨을 의도해서 준 run까지
+    경고한다. 그래서 이 함수는 해석된 값이 아니라 **사람이 준 값**을 받는다 — `None`이
+    "미지정"이다. 그 구분이 없으면 검사가 매 run 같은 줄을 뱉고 진짜 결여가 묻힌다.
+    """
+    gaps = runner.missing_run_labels(
+        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition=None
+    )
+    assert [w for w in gaps if "device" in w], "장비를 안 준 run이 조용히 시작한다"
+    assert [w for w in gaps if "kb_snapshot" in w]
+    assert [w for w in gaps if "condition" in w], "조건을 안 준 run이 기본 라벨로 조용히 남는다"
+
+    filled = runner.missing_run_labels(
+        device="atom", kb_snapshot="kb-20260901", condition="B1prime@2x2"
+    )
+    assert filled == []
+
+    explicit = runner.missing_run_labels(
+        device="atom", kb_snapshot="kb-20260901", condition=runner.DEFAULT_CONDITION
+    )
+    assert explicit == [], "기본값과 같은 라벨을 명시한 run까지 경고하면 검사가 무뎌진다"
+
+
+def test_the_pre_run_check_and_incomplete_fields_use_the_same_sentence(tmp_path: Path) -> None:
+    """같은 결여를 두 곳이 다른 문장으로 말하면 그 갈라짐이 곧 다음 결함이다.
+
+    러너가 `unmeasured_gpu_warning`을 따로 뽑은 이유가 이것이고 그 docstring이 근거를 적어
+    뒀다 — "러너가 문구를 따로 만들면 두 곳이 갈라진다 … 이 저장소가 반복해서 고쳐 온
+    '선언과 실제의 괴리'가 정확히 그 형태다." run 전 검사와 run 후 판정도 같은 자리다.
+    """
+    result, _ = _run(tmp_path)
+    record = result.record.transition(device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT)
+    after = runner.incomplete_fields(record)
+
+    before = runner.missing_run_labels(
+        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition="B1prime@2x2"
+    )
+    assert before, "run 전 검사가 아무 말도 하지 않는다"
+    for sentence in before:
+        assert sentence in after, f"run 전과 후가 다른 문장을 쓴다: {sentence!r}"
+
+
+def test_run_names_the_gaps_before_it_claims_a_run_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """GPU를 쓰기 전에 듣는다. `cli._check_checksums`가 이미 그 논법을 적어 뒀다 —
+    "5분(실서빙이면 그보다 훨씬 길다)을 쓰고 나서 '이 run은 비교표에 못 넣는다'를 듣는
+    것보다 지금 듣는 편이 싸다."
+
+    **`_claim_run_dir`보다 앞이어야 한다.** 그 뒤에 두면 아무것도 안 한 run이 디렉터리와
+    번호를 남기고, 그 번호는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는
+    자리와 같다. 그래서 이 테스트는 문구뿐 아니라 **순서**를 단언한다.
+    """
+
+    class _Stop(RuntimeError):
+        """`_claim_run_dir`에 도달했다는 표시. 여기서 멈춰야 순서를 볼 수 있다."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main(
+            [
+                "run", "--profile", "dev_fake", "--target", str(TARGET),
+                "--seed", "20260901", "--artifacts-root", str(tmp_path),
+            ]
+        )
+
+    err = capsys.readouterr().err
+    assert "device" in err, "장비 결여를 run_dir을 잡기 전에 말하지 않는다"
+    assert "condition" in err, "조건 결여를 run_dir을 잡기 전에 말하지 않는다"
+    assert not list(tmp_path.iterdir()), "판정 전에 이미 디렉터리를 만들었다"
+
+
+def test_a_serving_profile_refuses_to_start_without_the_labels(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**실서빙 run에서는 경고로 부족하다** (수민 리뷰 #119).
+
+    경고 한 줄은 긴 run의 출력에 묻힌다. 그리고 그 run은 시작하기도 전에 이미 못 쓰는
+    것이 확정돼 있다 — `incomplete_fields()`가 `device`가 비면 "모델 비교표에서
+    제외한다"고 판정하고, `condition`이 기본값으로 굳으면 2×2 축으로 돌린 run이 pipeline
+    라벨을 달아 비교표가 섞인다(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
+
+    **판별 기준은 `production`이 아니라 `served_models()`다.** 프로필 12개가 전부
+    `production: false`라 그 필드로는 아무것도 갈리지 않는다(직접 확인). `served_models()`는
+    dev 다섯을 0으로, 실서빙 일곱을 1~3으로 정확히 가른다.
+
+    `kb_snapshot`은 막지 않는다 — `kb-none`은 아직 KB가 없다는 정직한 표기이고
+    `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다.
+    """
+    _refuse_sockets(monkeypatch)
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "실서빙 프로필이 라벨 없이 그대로 시작한다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def _refuse_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """이 테스트가 네트워크를 치면 즉시 죽는다.
+
+    실서빙 프로필(`b1_single`)을 겨눈 첫 `run` 테스트다. 게이트가 회귀해 run이 실제로
+    시작되면 127.0.0.1:8001로 나가고 `_TIMEOUT_S`(300초)까지 매달릴 수 있다 — CI에서
+    "느리다"로 보이지 "게이트가 사라졌다"로 안 보인다. 같은 그물을
+    `test_doctor_never_opens_a_socket`이 이미 쓴다.
+    """
+
+    def _refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("게이트가 막았어야 하는 run이 소켓을 열었다")
+
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse)
+
+
+def _errors(stderr: str) -> list[str]:
+    """`[ERROR]` 줄만 골라낸다.
+
+    **`"device" in err`로 단언하면 안 된다.** 그 낱말은 `[WARN ] 시작 전 —` 줄에서도 나오고
+    그쪽은 **차단 여부와 무관하게 모든 결여에 대해 찍힌다**(`cli.run`). WARN 문자열을 보는
+    단언은 게이트가 절반 사라져도 통과한다 — 아래 두 테스트 docstring의 실측이 그것이다.
+    """
+    return [line for line in stderr.splitlines() if line.startswith("[ERROR]")]
+
+
+def test_a_serving_profile_refuses_when_only_the_device_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """**게이트의 절반씩을 따로 잠근다.** 둘을 한 번에 뺀 케이스만 보면 절반이 무검사다.
+
+    뮤테이션으로 실측했다 — `BLOCKING_WHEN_SERVING`에서 한 원소를 빼도 게이트 테스트가
+    전부 초록이었다(`9 passed`). 나머지 하나가 여전히 차단해 `code != 0`이 유지되기
+    때문이고, 그때 단언하던 `"device" in err`·`"condition" in err`는 차단과 무관한 WARN
+    줄에서 왔다. 통째로 비울 때만 1건이 깨졌다 — **CLAUDE.md §5의 "테스트가 통과했으니
+    맞겠지"가 그대로 재현된 자리다.**
+
+    이 테스트는 `_DEVICE_MISSING`이 목록에서 빠지는 순간 죽는다 — condition·kb_snapshot을
+    다 줬으므로 남는 결여가 device 하나다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "장비만 빠졌을 때 실서빙 run이 그대로 시작한다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """위와 짝. `_CONDITION_DEFAULTED`가 목록에서 빠지는 순간 죽는다.
+
+    조건 라벨만 빠진 run이 가장 조용한 사고다 — 죽지도 않고 **기본 라벨로 기록된다.**
+    2026-08-25·08-26 ATOM run 둘이 정확히 그 모양이었다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--device", "atom", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "조건만 빠졌을 때 실서빙 run이 그대로 시작한다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_malformed_condition_is_refused_before_the_run_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """형식에 안 맞는 라벨도 **시작 전에** 막는다 — 결여만 막으면 절반이다.
+
+    `RunRecord.condition`이 `CONDITION_PATTERN`으로 같은 값을 거부하지만 그 판정은
+    `_new_record`에서, 즉 **0단계를 지난 뒤**에 일어난다. 그때는 이미 run 디렉터리와
+    번호가 나갔고 빈 디렉터리가 남는다 — R7(`gc`가 지운 run_id를 같은 날 새 run이
+    재사용한다)이 서 있는 자리와 같다.
+
+    **선존재 결함이다**(`origin/main`에서도 `exit=1` · 디렉터리 1건 잔류). 이 PR이 만든 것이
+    아니지만, 이 PR이 세운 게이트가 그 구멍을 덮지 않으면 "거부는 `_claim_run_dir` 앞이라
+    run 번호도 안 쓴다"는 이 PR의 주장이 절반만 참이 된다.
+
+    **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없으므로 dev 프로필에서도
+    막는다. 이건 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
+
+    `B3prime_large@2x2`를 고른 것은 2×2 스펙이 B3′-large 셀에 지정한 실제 라벨이라서다 —
+    그 셀을 돌리려는 사람이 지금 이 경로를 정확히 밟는다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "dev_fake", "--target", str(TARGET),
+            "--condition", "B3prime_large@2x2", "--device", "atom",
+            "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code != 0, "형식에 안 맞는 라벨로 run이 시작했다"
+    assert "B3prime_large@2x2" in err, "어느 값이 문제인지 말하지 않는다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_dry_run_is_not_blocked_by_the_serving_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """모델을 한 번도 안 부르는 run은 막지 않는다 — 게이트의 근거가 "비용"이기 때문이다.
+
+    `--dry-run`은 `DRY_RUN_LAST_STAGE`(RETRIEVAL)에서 끊기고 Scout은 그 **다음** 단계다.
+    게다가 실서빙 프로필 일곱이 전부 `retriever: fake`라 0~3단계에서 실서빙 클라이언트가
+    한 번도 불리지 않는다 — GPU 비용이 0이다.
+
+    **막으면 §0을 게이트가 유도한다.** 통과시키려고 `--device atom --condition B3prime@…`을
+    지어내 붙이면, 아무것도 재지 않은 dry-run의 매니페스트에 실서빙 장비·조건 라벨이 박힌다.
+    "그럴듯한 값으로 채우지 않는다"를 검사가 어기게 만드는 셈이다.
+
+    경고는 그대로 낸다 — 알려 주는 것과 막는 것은 다르다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET), "--dry-run",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 0, "모델을 안 부르는 dry-run이 게이트에 막혔다"
+    assert "시작 전 —" in err, "막지 않더라도 결여는 말해야 한다"
+    assert not _errors(err), "dry-run에 [ERROR]가 붙었다"
+
+
+def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """빈 문자열은 "줬다"가 아니다 — `--device ""`가 게이트와 사후 판정을 **둘 다** 통과했다.
+
+    실측: `--device "" --condition B1@pipeline --kb-snapshot kb-x`로 돌면 exit 0으로 완주하고
+    `run_manifest.json`의 `device`가 빈 문자열로 남는다. `missing_run_labels`는
+    `device is None`만 보고 `incomplete_fields`도 `record.device is None`만 봐서, 라벨 없는
+    run이 **"정상 run"으로 기록된다** — 이 PR이 막으려던 것보다 더 조용한 실패다.
+
+    두 곳을 **함께** 좁힌다. 갈라지면 안 된다는 것이 이 PR 자신의 논거다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "--device", "   ", "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "공백뿐인 장비 라벨이 실서빙 run을 통과시킨다"
+    assert _errors(err), "거부했는데 [ERROR] 줄이 없다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_the_default_condition_matches_the_pattern() -> None:
+    """`DEFAULT_CONDITION`(러너)과 `CONDITION_PATTERN`(스키마)이 갈리면 안 된다.
+
+    전자는 `--condition`을 안 준 run에 **실제로 기록되는 값**이고 후자는 `RunRecord`가
+    그 값을 검증하는 정규식이다. 두 상수가 다른 파일에 있어 한쪽만 바뀌면, 기본값으로 돈
+    모든 run이 0단계 뒤에 죽는다 — `malformed_condition()`이 `None`을 통과시키므로
+    시작 전 검사도 못 잡는다.
+    """
+    assert re.fullmatch(CONDITION_PATTERN, runner.DEFAULT_CONDITION), (
+        f"기본 조건 라벨 {runner.DEFAULT_CONDITION!r}이 RunRecord의 패턴을 통과하지 못한다"
+    )
+
+
+def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """dev 스모크는 장비 라벨 없이 도는 것이 정상이라 막으면 그쪽이 죽는다.
+
+    이 테스트가 없으면 위 게이트가 조용히 전 프로필로 넓어져도 아무도 모른다 —
+    `_check_checksums`가 Fake 역할을 세지 않는 것과 같은 논법이다.
+    """
+    code = cli.main(
+        [
+            "run", "--profile", "dev_fake", "--target", str(TARGET),
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    assert code == 0, "Fake 프로필 스모크가 막혔다"
+    assert "시작 전 —" in capsys.readouterr().err, "경고까지 사라지면 안 된다"
+    (run_dir,) = [p for p in tmp_path.iterdir() if p.is_dir()]
+
+    # **기록되는 값을 리터럴로 박는다.** `--condition`을 안 준 run에 실제로 무엇이 남는지가
+    # 이 PR의 계약이다(argparse 기본값을 없애고 `run()`이 해석한다) — 상수를 참조하면
+    # 그 값이 바뀌어도 통과한다.
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["condition"] == "B3prime@pipeline"
+
+
+def test_a_serving_profile_with_the_labels_passes_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """라벨을 주면 게이트를 통과한다 — 막는 것이 목적이 아니라 **묻는** 것이 목적이다.
+
+    `_claim_run_dir`에 도달했다는 것으로 통과를 본다. 그 뒤는 실서빙 엔드포인트가 필요해
+    이 테스트의 범위가 아니다.
+    """
+
+    class _Stop(RuntimeError):
+        """게이트를 지나 run_dir 확보까지 왔다는 표시."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main(
+            [
+                "run", "--profile", "b1_single", "--target", str(TARGET),
+                "--condition", "B1prime@2x2", "--device", "atom",
+                "--seed", "20260901", "--artifacts-root", str(tmp_path),
+            ]
+        )
+
+    err = capsys.readouterr().err
+    assert not _errors(err), "라벨을 다 줬는데 거부됐다"
+    # `kb_snapshot`은 막지 않는다 — 경고만 나는 것이 계약이다.
+    assert "kb_snapshot" in err, "막지 않는 결여의 경고까지 사라졌다"
 
 
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:

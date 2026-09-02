@@ -71,6 +71,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import re
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -124,12 +125,83 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
-from src.schemas.run import ModelSampling, RunRecord
+from src.schemas.run import CONDITION_PATTERN, ModelSampling, RunRecord
 from src.tokens import using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
 # `RunRecord.kb_snapshot`은 재현성 필수 항목이다(engineering-guide.md §5).
 DEFAULT_KB_SNAPSHOT = "kb-none"
+
+# `--condition`을 안 줬을 때 기록에 남는 라벨. **cli가 아니라 여기 있다** —
+# `missing_run_labels()`가 이 값을 경고 문구에 실어야 하는데 러너가 cli를 import 할 수는
+# 없다. `DEFAULT_KB_SNAPSHOT`과 같은 성격(사람이 주는 값의 기본치)이라 나란히 둔다.
+DEFAULT_CONDITION = "B3prime@pipeline"
+
+# **run 전 검사와 run 후 판정이 같은 문장을 쓰게 하려고 뽑았다.** 두 곳이 문구를 따로
+# 만들면 갈라지고, 그러면 같은 결여가 run 전과 후에 다른 이름으로 불린다 —
+# `unmeasured_gpu_warning`을 따로 뽑은 것과 같은 이유이고 그 docstring에 근거가 있다.
+_DEVICE_MISSING = (
+    "device가 비어 있다 (--device 미지정). 어느 장비에서 돌았는지 기록되지 않아 "
+    "모델 비교표에서 제외한다"
+)
+_KB_PLACEHOLDER = f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다"
+
+# 이쪽은 run **전에만** 낼 수 있다. 레코드에는 해석된 값이 들어가 있어서 "기본값이 찍혔다"와
+# "그 라벨을 의도해서 줬다"가 구별되지 않기 때문이다 — `missing_run_labels` docstring 참조.
+_CONDITION_DEFAULTED = (
+    f"condition이 기본값({DEFAULT_CONDITION})으로 기록된다 (--condition 미지정). "
+    "2×2 축으로 돌린 run이 pipeline 라벨로 남으면 어느 축이었는지를 산출물로 가를 수 없다"
+)
+
+# **실서빙 run에서 이 둘이 비면 시작 전에 막는다.** 경고 한 줄은 긴 run의 출력에 묻히고,
+# 그 run은 시작하기도 전에 못 쓰는 것이 확정돼 있다 — `device`는 `incomplete_fields()`가
+# "모델 비교표에서 제외한다"고 **판정하는** 값이고, `condition`은 잘못 굳으면 비교표가
+# **섞인다**(`schemas/run.py`의 `CONDITION_PATTERN` 주석). 둘 다 GPU를 태운 뒤에 듣는 것이
+# 가장 비싼 종류다.
+#
+# **`kb_snapshot`은 여기 없다.** `kb-none`은 아직 KB가 없다는 정직한 표기이고
+# `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다 — 경고로 충분하다.
+#
+# **막는 기준은 `profile.production`이 아니다.** 지금 프로필 12개가 전부
+# `production: false`라 그 필드로는 dev와 실서빙이 갈리지 않는다(2026-09-02 실측).
+# `HarnessConfig.served_models()`가 그것을 가른다 — dev 다섯은 0, 실서빙 일곱은 1~3이다.
+#
+# **문장 → 플래그 이름 매핑이다.** 거부 문구가 `--device 와 --condition 을 명시한다`처럼
+# 고정 문장이면 이미 준 플래그를 다시 대라고 말하게 된다 — 조작자가 그것을 의심하며 시간을
+# 태운다. 실제로 빠진 것만 이름으로 부르려면 문장에서 플래그를 되찾을 수 있어야 한다.
+#
+# **`served_models()`에는 `retriever` 축이 접혀 있다.** 오늘 실서빙 일곱이 전부
+# `retriever: fake`라 이 게이트가 세는 것은 scout·auditor·critic뿐이다. hybrid 실서빙
+# 프로필이 생기면 embedding·reranker도 세어져 게이트 범위가 넓어진다.
+BLOCKING_WHEN_SERVING = {_DEVICE_MISSING: "--device", _CONDITION_DEFAULTED: "--condition"}
+
+
+def malformed_condition(condition: str | None) -> str | None:
+    """조건 라벨이 형식에 안 맞으면 그 사유, 맞거나 미지정이면 `None`.
+
+    **`RunRecord.condition`이 같은 정규식으로 이미 거부한다.** 그런데 그 판정은
+    `_new_record`에서, 즉 **0단계를 지난 뒤**에 일어난다 — 그때는 run 디렉터리와 번호가
+    이미 나갔고, `ValidationError`가 트레이스백으로 올라와 cli가 종료 코드조차 못 돌려준다.
+    남는 빈 디렉터리는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는
+    자리와 같다.
+
+    **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없다. 그래서
+    `missing_run_labels()`의 실서빙 게이트와 달리 **어느 프로필에서든** 막는다. 정책
+    선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
+
+    **결여와 따로 두는 이유.** `missing_run_labels()`는 "사람이 줘야 하는 값이 비었나"를
+    묻고 이쪽은 "준 값이 형식에 맞나"를 묻는다. 한 함수에 넣으면 `None`(미지정)과
+    빈 문자열·오타가 같은 목록에 섞여 실서빙 게이트가 오타까지 조건부로 봐야 한다.
+
+    정규식은 `RunRecord`가 쓰는 것을 그대로 가져온다 — 두 곳이 다른 패턴을 들면 여기서
+    통과한 값이 뒤에서 죽고, 그게 이 함수가 없애려는 상태다.
+    """
+    if condition is None or re.match(CONDITION_PATTERN, condition):
+        return None
+    return (
+        f"condition {condition!r}이 라벨 형식에 맞지 않는다 — {CONDITION_PATTERN}. "
+        "이대로 두면 0단계를 지난 뒤 기록을 만들 때 죽고 빈 run 디렉터리가 남는다"
+    )
 
 # git을 못 읽었을 때의 자리표시자. 40 hex라는 형식은 지키되 경고 대상이다.
 _UNKNOWN_COMMIT = "0" * 40
@@ -1129,6 +1201,48 @@ def unmeasured_gpu_warning(roles: Mapping[str, int] | None) -> str | None:
     )
 
 
+def missing_run_labels(
+    *, device: str | None, kb_snapshot: str, condition: str | None
+) -> list[str]:
+    """**사람이 줘야 하는 값**의 결여. run이 시작하기 전에 판정한다.
+
+    `incomplete_fields()`가 끝난 run의 레코드를 보고 device·kb_snapshot에 같은 말을 하지만
+    그때는 이미 비용을 썼다. `cli._check_checksums`가 doctor에서 그 논법을 적어 뒀는데
+    ("`run`이 끝난 뒤 `incomplete_fields()`가 같은 판정을 하지만, **돌리기 전에 알 수 있는
+    사실이다**") **`run` 진입에는 그 검사가 없었고 `run()`은 `doctor`를 부르지 않는다.**
+
+    **레코드가 아니라 사람이 준 값을 받는다.** `condition`을 해석된 값으로는 판정할 수 없어
+    서다 — 기본값 `B3prime@pipeline`은 파이프라인 조건의 **정당한 값**이라
+    `== DEFAULT_CONDITION`으로 재면 그 라벨을 의도해서 준 run까지 경고한다. 매 run 같은 줄이
+    뜨면 사람이 경고를 안 읽게 되고, 그것이 `_check_device`가 "없는 비교를 근거로 경고하면
+    헛경고가 된다"고 적은 바로 그 실패다. 여기서는 `None`이 "안 줬다"이고 그것만이 결여다.
+
+    `device`·`kb_snapshot`은 `incomplete_fields()`와 **같은 문장**을 쓴다(`_DEVICE_MISSING`·
+    `_KB_PLACEHOLDER`). 셋 다 run 시점의 사실이라 사후에 채우면 CLAUDE.md §0이 금지하는
+    지어낸 값이 된다.
+
+    **빈 문자열도 결여다.** `--device ""`는 "줬다"가 아니라 라벨이 없는 것이고, 그것을
+    통과시키면 라벨 없는 run이 *정상 run*으로 기록된다. `incomplete_fields()`도 같은 식으로
+    좁혀 두 판정이 갈라지지 않게 한다.
+
+    **`kb_snapshot`은 값 비교로 충분하다** — `kb-none`은 구성상 "아직 KB가 없다"는 뜻이라
+    의도해서 주는 정당한 값이 될 수 없다(그 상수 주석).
+
+    **이 함수 자체는 경고만 낸다.** 다만 결과를 받은 `cli.run()`이 `served_models()`가 비지
+    않은 프로필에서는 `BLOCKING_WHEN_SERVING`에 든 둘을 **exit 2로 거부한다** — dev 프로필의
+    스모크 run은 장비 라벨 없이 도는 것이 정상이라 그쪽만 경고로 남는다. 이 함수가 사는 이유는
+    값을 강제하는 것이 아니라 **비용을 쓰기 전에 말하는 것**이고, 강제는 호출부의 판단이다.
+    """
+    warnings = []
+    if not (device or "").strip():
+        warnings.append(_DEVICE_MISSING)
+    if not (kb_snapshot or "").strip() or kb_snapshot == DEFAULT_KB_SNAPSHOT:
+        warnings.append(_KB_PLACEHOLDER)
+    if condition is None:
+        warnings.append(_CONDITION_DEFAULTED)
+    return warnings
+
+
 def incomplete_fields(
     record: RunRecord,
     *,
@@ -1171,8 +1285,10 @@ def incomplete_fields(
     gpu_warning = unmeasured_gpu_warning(gpu_unmeasured_roles)
     if gpu_warning:
         warnings.append(gpu_warning)
-    if record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
-        warnings.append(f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다")
+    if not (record.kb_snapshot or "").strip() or record.kb_snapshot == DEFAULT_KB_SNAPSHOT:
+        # 문구는 `missing_run_labels()`와 공유한다 — 같은 결여를 run 전과 후가 다른 이름으로
+        # 부르면 그 갈라짐이 곧 다음 결함이다.
+        warnings.append(_KB_PLACEHOLDER)
     if record.repo_commit == _UNKNOWN_COMMIT:
         warnings.append("repo_commit이 자리표시자다")
     if record.repo_dirty is not False:
@@ -1184,14 +1300,14 @@ def incomplete_fields(
             else "하네스 저장소 상태를 확인하지 못했다"
         )
         warnings.append(f"repo_dirty: {state}. 모델 비교표에서 제외한다")
-    if record.device is None:
+    if not (record.device or "").strip():
         # `tool_runner`는 여기 없다 — config에서 유도되어 빌 수가 없기 때문이다. 이 값은
         # 사람이 `--device`를 안 주면 실제로 빈다. 두 장비가 모두 지원 대상인 이상
         # (docs/portability.md) 장비를 모르는 run은 비교표의 어느 칸에도 놓을 수 없다.
-        warnings.append(
-            "device가 비어 있다 (--device 미지정). 어느 장비에서 돌았는지 기록되지 않아 "
-            "모델 비교표에서 제외한다"
-        )
+        #
+        # 문구는 `missing_run_labels()`와 공유한다(`_DEVICE_MISSING`). 그쪽이 run **전에**
+        # 같은 말을 하므로, 사람이 이 줄을 run이 끝난 뒤에 처음 보는 일은 없어야 한다.
+        warnings.append(_DEVICE_MISSING)
     return warnings
 
 

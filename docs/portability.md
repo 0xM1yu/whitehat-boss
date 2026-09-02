@@ -102,7 +102,7 @@
 [evaluation.md](evaluation.md) §2.3 규칙 5가 이 기록 위에 서 있다.
 
 ```bash
-python -m src.cli run    --profile local_balanced --target <경로> --device atom
+python -m src.cli run    --profile local_balanced --target <경로> --device atom --condition B3prime@pipeline
 python -m src.cli bench  --profile local_balanced --apply --device atom
 python -m src.cli doctor --profile local_balanced --device seraph
 ```
