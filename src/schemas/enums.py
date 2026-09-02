@@ -1,7 +1,7 @@
 """파이프라인 전역에서 쓰는 열거형.
 
 값은 docs/agent-contracts.md §3, docs/architecture.md §4, docs/knowledge-base.md §4의
-문자열을 그대로 옮긴 것이다. 값 변경은 docs/roadmap.md §3에 따라 전원 공지 대상이다.
+문자열을 그대로 옮긴 것이다.
 """
 
 from enum import StrEnum

@@ -276,7 +276,7 @@ def test_dangling_budget_reference_fails(tmp_path: Path) -> None:
 
 
 def test_typo_field_is_rejected() -> None:
-    """`extra="forbid"` 확인. 오타 필드가 조용히 무시되면 8개 트랙이 다른 설정을 본다."""
+    """`extra="forbid"` 확인. 오타 필드가 조용히 무시되면 여러 곳이 다른 설정을 본다."""
     with pytest.raises(ValidationError):
         ProfileEntry.model_validate(
             {

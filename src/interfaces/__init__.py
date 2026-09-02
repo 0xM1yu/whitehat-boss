@@ -3,8 +3,7 @@
 도메인 로직은 이 4개에만 의존한다. 오케스트레이터 노드에서 vLLM·LiteLLM·SQLite를
 직접 import 하는 것은 금지다 — 어댑터(`src/adapters/`, PR 2)를 거친다.
 
-roadmap.md §3: `src/interfaces/`는 `src/schemas/`와 함께 트랙 간 유일한 결합점이므로
-**변경 시 전원 공지 대상**이다.
+`src/interfaces/`는 `src/schemas/`와 함께 여러 모듈이 함께 의존하는 유일한 결합점이다.
 """
 
 from src.interfaces.model_client import ModelClient, ModelResult, Prompt, SchemaT, Usage

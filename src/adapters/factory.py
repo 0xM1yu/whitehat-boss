@@ -63,8 +63,8 @@ class Deps:
     # 컨테이너 이미지 → digest. `RunRecord.tool_images`가 되고, 비어 있으면 그 run은
     # 비교표에서 제외된다(runner.incomplete_fields).
     #
-    # `ToolRunner` Protocol에 `images()`를 넣는 것이 최종형이지만 `src/interfaces/` 변경은
-    # 전원 공지 대상이라(roadmap.md §3) 지금은 이 dataclass가 나른다. 두 구현이 이미
+    # `ToolRunner` Protocol에 `images()`를 넣는 것이 최종형이지만 `src/interfaces/`는
+    # 여러 모듈이 함께 보는 결합점이라 지금은 이 dataclass가 나른다. 두 구현이 이미
     # `images()`를 갖고 있으므로 승격은 Protocol에 한 줄 추가하는 일이 된다.
     tool_images: dict[str, str] = field(default_factory=dict)
     # 역할 → 그 모델이 generation_config.json에 선언한 샘플링 (#99). `RunRecord.model_sampling`이
