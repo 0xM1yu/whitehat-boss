@@ -55,7 +55,7 @@
 | D12 | build를 몇 단계에서 실행하는가 | 열림 | [본문](open-questions/D/D12.md) |
 | D14 | **재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다** | 열림 | [본문](open-questions/D/D14.md) |
 | D15 | **`Budget.tool_seconds`의 값에 실대상 근거가 없다** | 열림 | [본문](open-questions/D/D15.md) |
-| D16 | **확장자로 대상을 고르는 도구가 `.inc`를 조용히 건너뛴다** | 열림 | [본문](open-questions/D/D16.md) |
+| D16 | ~~확장자로 대상을 고르는 도구가 `.inc`를 조용히 건너뛴다~~ | 닫힘 | [본문](open-questions/D/D16.md) |
 | D17 | **프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다** | 열림 | [본문](open-questions/D/D17.md) |
 | D18 | **8단계 정책이 게이트 등급을 읽지 않는다** | 열림 | [본문](open-questions/D/D18.md) |
 | D19 | **프롬프트 본문이 실행 산출물에 남지 않아 W1을 실행에서 검증할 수 없다** | 부분 | [본문](open-questions/D/D19.md) |
@@ -73,7 +73,7 @@
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 결정 | [본문](open-questions/D/D31.md) |
 | D32 | **컴파일 플래그(`-std`·`-I`)가 코드 상수인데 `RunRecord`에 없다** | 열림 | [본문](open-questions/D/D32.md) |
 | D33 | ~~`run_20260825_0001`이 옛 build 배선의 마지막 완전 측정이다~~ | 닫힘 | [본문](open-questions/D/D33.md) |
-| D34 | **언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다** | 열림 | [본문](open-questions/D/D34.md) |
+| D34 | ~~언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다~~ | 닫힘 | [본문](open-questions/D/D34.md) |
 | D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 부분 | [본문](open-questions/D/D35.md) |
 | D36 | ~~`report.md`에 E 등급이 없다 — run의 성과가 최종 산출물에 안 보인다~~ | 닫힘 | [본문](open-questions/D/D36.md) |
 | D37 | ~~`run_manifest.json`에 `profile`이 없다~~ | 닫힘 | [본문](open-questions/D/D37.md) |

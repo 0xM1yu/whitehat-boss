@@ -369,3 +369,99 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
         f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
         f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
     )
+
+
+# --- 구축안(docs/build-plan.md) 전용 가드 -----------------------------------
+#
+# 셋 다 **다른 검사가 구조적으로 못 잡는 것**만 본다. 하나라도 기존 검사와 겹치면
+# 그 자리는 지우는 편이 낫다.
+#
+# 허용 목록은 **문서가 실제로 인용하는 것만** 담는다. 안 쓰는 번호를 넣어 두면 목록이
+# 조용히 넓어져 오탐 방지가 아니라 검사 무력화가 된다 — 항목을 더할 때 문서에서 그 번호를
+# 실제로 찾아보고 넣는다.
+
+BUILD_PLAN = REPO_ROOT / "docs" / "build-plan.md"
+
+# 구축안이 정당하게 인용하는 D 항목. 이 목록 **밖의** D 참조는 파인튜닝 라벨을 D 계열로
+# 잘못 쓴 것이다 — 원문이 파인튜닝 단계를 `D1`·`D2`·`D3`으로 불렀는데 이 저장소에서 그
+# 셋은 각각 벤치마크 라벨 통합·Scout 임계값·Capsule 확장 상한이다.
+_BUILD_PLAN_D_CITATIONS = frozenset({"D9", "D13", "D25", "D30", "D51"})
+
+# `docs/open-questions.md` §1의 R 행. **서식을 `test_open_questions_layout`의 `_ROW`와
+# 정확히 맞춘다** — 그쪽이 "인덱스 행 ↔ 본문 파일"을 잇는 기준이라, 여기가 더 느슨하면
+# 본문 파일이 없는 번호가 이쪽에서만 "정의됨"으로 새어 나간다.
+_R_ROW = re.compile(r"^\| (R\d+) \|", re.MULTILINE)
+
+# 다른 문서가 가리키는 `R<n>`. `_D_REF`와 같은 논법이다 — `\b`만 쓰면 16진 digest가 샌다.
+_R_REF = re.compile(r"(?<![A-Za-z0-9])R(\d+)(?![0-9A-Za-z])")
+
+
+def test_the_build_plan_is_a_tracked_document() -> None:
+    """구축안이 `git ls-files`에 있어야 나머지 문서 검사가 그것을 본다.
+
+    **`_tracked()`가 `git ls-files -z`로 수집하고 파라미터화는 수집 시점에 평가된다.**
+    그래서 `git add` 되지 않은 새 문서는 표 열 수·내부 링크·D 참조 세 검사에 **존재하지
+    않는다** — 문서를 써 놓고 pytest가 초록이어도 아무것도 검사되지 않았다는 뜻이다.
+
+    같은 논거의 선례가 이 파일에 이미 있다(`test_the_report_glob_actually_finds_reports`
+    — "파라미터화된 검사는 목록이 비면 아무것도 안 돌고 통과로 보인다").
+
+    **이 검사는 CI가 아니라 푸시 전 로컬에서 발화한다.** CI는 커밋된 트리를 체크아웃하므로
+    추적되지 않은 파일이 애초에 없다. 잡으려는 상황이 "손에서 문서를 쓰고 add를 잊은 채
+    테스트를 돌렸다"라서 그 자리가 맞다.
+    """
+    assert BUILD_PLAN.is_file(), "docs/build-plan.md가 없다"
+    assert BUILD_PLAN in _tracked("*.md"), (
+        "docs/build-plan.md가 추적 목록에 없다 — 표 열 수·내부 링크·D 참조 검사가 "
+        "이 문서를 통째로 건너뛴다. `git add docs/build-plan.md` 했는지 확인한다"
+    )
+
+
+def test_the_build_plan_does_not_borrow_the_d_series_namespace() -> None:
+    """파인튜닝 단계 라벨은 `FT1`·`FT2`·`FT3`다. D 계열을 빌려 쓰면 안 된다.
+
+    **기존 D 참조 검사가 이것을 못 잡는다.** `test_decision_references_point_at_a_real_row`
+    는 번호가 인덱스에 **실재하는지**만 보는데 `D1`·`D2`·`D3`은 전부 실재한다 — 다른 뜻으로.
+    그래서 CI가 초록인 채로, 파인튜닝 계획을 읽던 사람이 링크를 따라가 "벤치마크 라벨 통합"
+    문서를 연다. CLAUDE.md §2가 말하는 "테스트가 못 잡는 규칙"의 교과서적 사례라 여기에
+    **이 문서 한정** 가드를 둔다.
+
+    허용 목록은 처음부터 필수다 — 구축안은 D9(1차 분석 대상의 범위)와 D51(필드 순서)을
+    정당하게 인용한다. 인용이 늘면 이 집합에 더한다.
+    """
+    borrowed: list[str] = []
+    for lineno, line in enumerate(_read(BUILD_PLAN).splitlines(), 1):
+        for number in _D_REF.findall(line):
+            if f"D{number}" not in _BUILD_PLAN_D_CITATIONS:
+                borrowed.append(
+                    f"docs/build-plan.md:{lineno}: D{number} — 파인튜닝 라벨이면 "
+                    f"FT{number}로 쓴다. D{number}는 이 저장소의 다른 항목이고 "
+                    "번호가 실재하므로 D 참조 검사가 잡지 못한다"
+                )
+    assert borrowed == [], "\n".join(borrowed)
+
+
+def test_the_build_plan_risk_references_point_at_a_real_r_row() -> None:
+    """구축안이 가리키는 `R<n>`이 인덱스 §1에 실재해야 한다.
+
+    **R 참조는 이 저장소에서 어떤 검사도 받지 않는다.** `_D_ROW`·`_D_REF` 둘 다 `D`만 보고,
+    `[DR]`로 넓혀진 것은 인덱스 행과 본문 파일을 잇는 `test_open_questions_layout` 쪽
+    정규식 하나뿐이다 — 즉 "다른 문서 → R 참조"가 통째로 무검사다. 구축안은 R1·R4·R6을
+    인용한다(§1 정정 10 · §9 두 행). §9의 「미등재」 넷은 아직 번호가 없다.
+
+    **범위를 이 문서 하나로 좁혔다.** `_D_REF`를 `[DR]`로 넓히는 안은 지금 저장소 전체에서
+    이미 초록이라 RED가 되지 않고, 그 확대는 `R1` 같은 토큰이 다른 뜻으로 쓰인 자리를
+    전수 확인하는 별건이다.
+    """
+    defined = set(_R_ROW.findall(_read(OPEN_QUESTIONS)))
+    assert defined, "docs/open-questions.md §1에서 R 행을 하나도 찾지 못했다"
+
+    dangling: list[str] = []
+    for lineno, line in enumerate(_read(BUILD_PLAN).splitlines(), 1):
+        for number in _R_REF.findall(line):
+            if f"R{number}" not in defined:
+                dangling.append(
+                    f"docs/build-plan.md:{lineno}: R{number}이 "
+                    "docs/open-questions.md §1에 없다 — 번호가 맞는지 확인한다"
+                )
+    assert dangling == [], "\n".join(dangling)

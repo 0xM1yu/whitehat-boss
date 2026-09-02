@@ -44,6 +44,8 @@ from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
+    BLOCKING_WHEN_SERVING,
+    DEFAULT_CONDITION,
     DEFAULT_KB_SNAPSHOT,
     LateCacheHook,
     LateIndexHook,
@@ -51,9 +53,11 @@ from src.orchestrator.runner import (
     LateUsageHook,
     RunResult,
     RunSpec,
+    malformed_condition,
+    missing_run_labels,
     run_pipeline,
 )
-from src.orchestrator.stages import MAX_STAGE
+from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -62,7 +66,6 @@ from src.tokens import using_counter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
-DEFAULT_CONDITION = "B3prime@pipeline"
 
 # run 디렉터리 접두사. `gc`는 이 접두사를 가진 디렉터리만 지운다.
 RUN_DIR_PREFIX = "run_"
@@ -564,11 +567,40 @@ def _next_sequence(artifacts_root: Path, started_at: datetime) -> int:
 
 
 def run(args: argparse.Namespace) -> int:
-    config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
+    try:
+        config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
+    except ConfigError as exc:
+        # `doctor`는 같은 입력에 한 줄로 답한다(`:141-144`). `run`만 트레이스백을 내면
+        # 같은 오타가 커맨드에 따라 다른 얼굴로 나온다.
+        print(f"[ERROR] 설정 로드 실패: {exc}", file=sys.stderr)
+        return 2
+    # **`_claim_run_dir`보다 앞이다.** 뒤에 두면 아무것도 안 한 run이 디렉터리와 번호를
+    # 남기고, 그 번호는 R7(`gc`가 지운 run_id를 같은 날 새 run이 재사용한다)이 서 있는 자리와
+    # 같다. 그리고 이 판정은 비용을 쓰기 **전에** 들려야 값어치가 있다 —
+    # `_check_checksums`가 doctor에서 같은 논법을 적어 뒀다.
+    #
+    # **문장은 `incomplete_fields()`와 같고 접두사만 다르다.** 같아야 하는 이유는 두 곳이
+    # 갈라지면 안 되기 때문이고(`missing_run_labels` docstring), 그래서 device·kb_snapshot은
+    # 한 실행에서 두 번 뜬다. 시점을 접두사로 갈라 둔다 — 앞의 것은 "이렇게 시작한다"이고
+    # 뒤의 것은 "이 run은 제외된다"라, 같은 줄이 두 번 뜨는 것으로 읽히면 안 된다.
+    gaps = missing_run_labels(
+        device=args.device, kb_snapshot=args.kb_snapshot, condition=args.condition
+    )
+    for warning in gaps:
+        print(f"[WARN ] 시작 전 — {warning}", file=sys.stderr)
+    # **실서빙이면 경고로 끝내지 않는다.** 경고 한 줄은 몇 시간짜리 run의 출력에 묻히고,
+    # 그러면 이 검사가 고치려던 것("태우고 나서 듣는다")이 그대로 남는다. Fake로 도는
+    # 프로필은 막지 않는다 — dev 스모크는 장비 라벨 없이 도는 것이 정상이다.
+    # **형식은 프로필과 무관하게 막는다.** 결여는 실서빙에서만 거부하지만(위 주석), 형식에
+    # 안 맞는 라벨은 어느 프로필에서든 0단계 뒤 `_new_record`에서 `ValidationError`로 죽어
+    # 빈 run 디렉터리를 남긴다 — 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
+    malformed = malformed_condition(args.condition)
+    if malformed is not None:
+        print(f"[ERROR] {malformed}", file=sys.stderr)
+        return 2
     started_at = datetime.now(UTC)
-    run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     spec = RunSpec(
-        condition=args.condition,
+        condition=DEFAULT_CONDITION if args.condition is None else args.condition,
         target=args.target,
         stop_after=args.stop_after,
         dry_run=args.dry_run,
@@ -576,6 +608,24 @@ def run(args: argparse.Namespace) -> int:
         device=args.device,
         started_at=started_at,
     )
+    # **모델을 한 번도 안 부르는 run은 막지 않는다.** 게이트의 근거가 "비용을 쓰기 전에"라
+    # `--dry-run`·낮은 `--stop-after`처럼 Scout에 닿지 않는 run에는 근거가 없다. 막으면
+    # 통과시키려고 장비·조건 라벨을 **지어내게** 되고, 그것이 CLAUDE.md §0이 금지하는
+    # "그럴듯한 값으로 채우기"다 — 검사가 그 위반을 유도하면 안 된다.
+    reaches_model = spec.stop_at()[0] >= Stage.SCOUT
+    serving = bool(config.served_models()) and reaches_model
+    blocking = [gap for gap in gaps if gap in BLOCKING_WHEN_SERVING] if serving else []
+    if blocking:
+        flags = ", ".join(BLOCKING_WHEN_SERVING[gap] for gap in blocking)
+        # **실제로 빠진 것만 이름으로 부른다.** 고정 문장이면 이미 준 플래그를 다시 대라고
+        # 말하게 되고, 조작자가 그것을 의심하며 시간을 태운다.
+        print(
+            f"[ERROR] 실서빙 프로필({args.profile})이라 {flags} 없이는 시작하지 않는다 — "
+            "이 run은 완주해도 비교표에 넣을 수 없다",
+            file=sys.stderr,
+        )
+        return 2
+    run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
         result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
     report_path = write_report(run_dir, result, args.format)
@@ -739,7 +789,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="이 실행이 돌아간 장비의 라벨. run 기록과 --apply에 그대로 남는다. "
         "값 집합은 열려 있다(ADR 0006) — 팀이 쓰는 라벨은 docs/portability.md에 있다. "
-        "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다",
+        "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다. "
+        "run에서 실서빙 프로필이면 거부한다(exit 2)",
     )
 
     subs.add_parser("doctor", parents=[common, device])
@@ -749,7 +800,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_cmd = subs.add_parser("run", parents=[common, device])
     run_cmd.add_argument("--target", type=Path, required=True)
-    run_cmd.add_argument("--condition", default=DEFAULT_CONDITION)
+    # **기본값을 argparse에 두지 않는다.** 값은 `run()`이 `DEFAULT_CONDITION`으로 채우되,
+    # `None`이 여기까지 살아 와야 "안 줬다"와 "기본값과 같은 라벨을 의도해서 줬다"가
+    # 구별된다 — `runner.missing_run_labels`가 그 구분 위에 서 있다.
+    run_cmd.add_argument(
+        "--condition",
+        default=None,
+        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 경고한다 — "
+        "실서빙 프로필에서는 거부한다(exit 2)",
+    )
     run_cmd.add_argument("--seed", type=int)
     run_cmd.add_argument("--stop-after", type=int, choices=range(MAX_STAGE + 1))
     run_cmd.add_argument("--dry-run", action="store_true")
