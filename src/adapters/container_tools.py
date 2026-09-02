@@ -290,8 +290,8 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         #
         # **첫 그룹에 발견이 있으면 둘째 그룹은 분석되지 않는다 (이슈 #75).**
         # `--warnings-as-errors=*` 때문에 발견이 곧 non-zero이고 `_execute`가 거기서
-        # 멈춘다. 그 사실은 어디에도 기록되지 않으므로 항목으로 열려 있다 — 주석이
-        # 아니라 번호가 그것을 들고 있다.
+        # 멈춘다. **그 사실은 이제 기록된다** — `unexecuted_commands_note()`가 안 돈 명령
+        # 수를 로그 섹션에 남긴다. break 자체는 `asan`의 E4 가드라 유지한다.
         return [
             Command(
                 [
@@ -507,18 +507,22 @@ def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
         return False, step.exit_code, (
             f"semgrep이 결과 문서를 내지 않았다 (exit={step.exit_code}). 로그의 stderr 참조"
         )
+    if step.exit_code not in _SEMGREP_OK:
+        return False, step.exit_code, f"semgrep 실행 실패 (exit={step.exit_code})"
     scanned = semgrep_scanned(step.stdout)
     if scanned is not None and not scanned:
         # 문서는 정상인데 **연 파일이 0개**다. `.inc`처럼 확장자가 언어로 매핑되지 않은
         # 대상이 그렇다(#66) — exit 0·results 0이라 지금까지 "정적 신호 없음"으로 읽혔지만,
         # 도구가 그 파일을 **아예 안 본 것**이다. `judge_semgrep`이 결과 문서 유무로
         # "돌았는가"를 가르는 것과 같은 논법으로, `paths.scanned`가 "그 파일을 봤는가"를 가른다.
+        #
+        # **`_SEMGREP_OK` 검사 뒤다.** semgrep이 자기 오류(2·7)로 죽으면 스캔 목록이 비는
+        # 것은 **결과이지 원인이 아니다** — 앞에 두면 관측하지 않은 원인(확장자 매핑)을
+        # 사유로 적게 된다(§0). 판정과 `exit_code`는 어느 순서든 같다.
         return False, step.exit_code, (
             f"semgrep이 어떤 파일도 스캔하지 않았다 (exit={step.exit_code}) — 확장자가 "
             f"언어로 매핑되지 않은 대상(.inc 등). '정적 신호 없음'과 '도구가 안 봄'을 가른다"
         )
-    if step.exit_code not in _SEMGREP_OK:
-        return False, step.exit_code, f"semgrep 실행 실패 (exit={step.exit_code})"
     return True, step.exit_code, None
 
 
@@ -563,16 +567,17 @@ def unexecuted_commands_note(executed: int, total: int) -> str | None:
     """break로 안 돈 명령을 기록에 남길 한 줄. 다 돌았으면 `None` (#75).
 
     `_execute`는 앞 명령이 non-zero면 break한다 — 그 break는 `asan`의 "빌드 실패면 실행하지
-    않는다"(E4 조건)를 지키는 장치라 유지한다. 대신 언어 그룹이 갈린 clang-tidy에서 C 그룹의
-    발견(=non-zero)이 C++ 그룹을 가리고 그 사실이 어디에도 안 남던 것을 기록으로 남긴다.
-    판정(`judge`)·등급·스키마는 건드리지 않는다 — 로그 섹션 한 줄이다.
+    않는다"(E4 조건)를 지키는 장치라 유지한다. 대신 **언어 그룹이 갈리는 도구**(clang-tidy와
+    `build` 둘 다 `_by_language`를 쓴다)에서 앞 그룹의 발견이 뒤 그룹을 가리고 그 사실이
+    어디에도 안 남던 것을 기록으로 남긴다. 판정(`judge`)·등급·스키마는 건드리지 않는다.
+
+    **문구는 원인을 단정하지 않는다.** 이 함수는 `tool`을 받지 않아 `asan`처럼 언어 그룹이
+    갈릴 수 없는 도구(혼합 대상은 `plan()`이 거절한다)에서도 불린다. 정확한 사유는 `judge()`가
+    `Evidence.error`에 따로 내므로 여기서는 **관측한 사실만** 적는다.
     """
     if executed >= total:
         return None
-    return (
-        f"# 실행되지 않은 명령 {total - executed}개 — 앞 명령이 non-zero로 끝나 break됨. "
-        f"언어 그룹이 갈린 경우 뒤 그룹이 도구를 통과하지 않았다"
-    )
+    return f"# 실행되지 않은 명령 {total - executed}개 — 앞 명령이 non-zero로 끝나 break됨"
 
 
 def summary_line(tool: str, steps: list[Step]) -> str | None:
