@@ -102,12 +102,25 @@ models:
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
     #
-    # 2026-08-25 ATOM 실측. 상세는 docs/experiments/2026-08-25-serving-nvfp4-atom.md §4~§5.
+    # 2026-09-02 ATOM 재측정(아래 값). 상세는
+    # docs/experiments/harness/2026-09-02-bench-concurrency-atom.md.
+    # 첫 측정은 2026-08-25이고 docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §4~§5다.
     #
-    # **`tok_s_batch32`가 `tok_s_single`보다 작다. 오타가 아니다.** 이 모델은 배치가 단일보다
-    # 느리고(54.83 → 38.93) `qwen3-4b`(39.65 → 127.69, 3.2배)와 정반대다. 동시성 8이
-    # 최적(73.40)이고 16·32에서 떨어진다. **다만 16·32 측정에는 HTTP 400과 timeout 실패가
-    # 섞여 있어 순수 처리량이 아니다** — 방향만 읽고 크기는 읽지 않는다(보고서 해석 ④).
+    # **아래 두 수치는 성격이 다르다. 같은 신뢰도로 읽으면 안 된다.**
+    #
+    # `tok_s_single`은 재현된다 — 11분 간격 두 판이 52.96 / 53.06으로 0.19% 차다(계산값).
+    #
+    # **`tok_s_batch32`는 재현되지 않는다.** 같은 서버·같은 인자로 돌린 두 판이 동시성 16에서
+    # 58.33 / 128.51로 **2.20배** 갈렸고 8에서도 62.61 / 118.33이었다. 여기 적힌 68.64는
+    # **그 둘 중 뒤 판의 값**이지 대표값이 아니다. `benchmark`에 재현 폭을 적을 칸이 없어
+    # 여기 적는다 — 이 값을 조건 비교의 근거로 쓰기 전에 판을 더 돌린다.
+    #
+    # **옛 주석의 「배치가 단일보다 느리다(54.83 → 38.93)」는 반증됐다.** 그 38.93은
+    # `tok_s = produced / elapsed`인데 **실패한 호출의 벽시계가 분모에 들어간** 값이었다.
+    # 재측정은 두 판 네 수준(1·8·16·32) 전부 실패 0건이고 둘 다 batch32 > single이다.
+    # **그렇다고 「배칭 이득이 얼마다」를 대신 적을 수는 없다** — 단일 대비 최대 배율이
+    # 1판 1.18배(동시성 8), 2판 2.42배(동시성 16)로 갈린다(계산값).
+    # `qwen3-4b`의 3.2배와 비교하려면 그 폭부터 좁혀야 한다.
     #
     # **`mem_gb_ctx8k`는 0으로 남긴다 — 지어내지 않는다.** `nvidia-smi`가 이 장비에서
     # `[N/A]`를 낸다(GB10은 통합메모리라 별도 VRAM 카운터가 없다). `bench --apply`도 이
@@ -123,10 +136,10 @@ models:
     prompt_template_version: "v1"
     fallback: null
     benchmark:
-      measured_at: "2026-08-25T05:59:47Z"
+      measured_at: "2026-09-02T05:11:50Z"
       measured_on: "atom"
-      tok_s_single: 54.83
-      tok_s_batch32: 38.93
+      tok_s_single: 53.06
+      tok_s_batch32: 68.64
       mem_gb_ctx8k: 0
 
   devstral-small-2-24b:
