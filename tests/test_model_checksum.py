@@ -115,6 +115,61 @@ def test_a_missing_directory_is_refused(tmp_path: Path) -> None:
         model_checksum.compute(tmp_path / "없는-경로")
 
 
+def test_an_empty_snapshot_path_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """빈 경로는 **현재 디렉터리**가 된다 — 그러면 저장소를 해시한다 (#134).
+
+    `Path("").resolve()`가 cwd이고 `compute()`의 유일한 가드(`if not root.is_dir()`)를
+    디렉터리라서 통과한다. 2026-09-03 ATOM에서 셸이 `SNAP=` 대입에 실패해 빈 문자열이
+    넘어갔고, 도구는 **저장소 파일 165개를 해시해 형식이 완벽한 checksum을 냈다.**
+
+    **모양이 완벽한 틀린 값이라 사람이 못 알아챈다** — CLAUDE.md §0이 겨냥하는 그것이다.
+    """
+    exit_code = model_checksum.main([""])
+
+    assert exit_code == 2
+    assert "비어" in capsys.readouterr().err
+
+
+def test_an_empty_snapshot_path_writes_no_manifest(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """거부는 **쓰기 전에** 일어나야 한다 (#134).
+
+    실제 사고에서 나쁜 쪽은 checksum이 stdout에 찍힌 것이 아니라 추적되는
+    `config/checksums/<key>.txt`가 저장소 파일 목록으로 **덮어써진** 것이었다.
+    """
+    out = tmp_path / "manifest.txt"
+
+    exit_code = model_checksum.main(["", "--manifest-out", str(out)])
+    capsys.readouterr()
+
+    assert exit_code == 2
+    assert not out.exists(), "거부해 놓고 manifest를 썼다"
+
+
+def test_the_hashed_root_is_printed_even_with_a_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """어떤 용법에서도 **무엇을 해시했는지** 보여야 한다 (#134).
+
+    그전에는 루트를 찍는 유일한 줄이 `print(f'source: "{args.source or root.as_uri()}"')`
+    였고, `--source`를 주면 사라졌다. 그런데 `--source`를 주는 것이 이 도구의 docstring이
+    규정한 **정규 용법**이다 — 정상적으로 쓰면 잘못된 루트를 볼 창구가 닫혀 있었다.
+    """
+    root = _snapshot(tmp_path / "snap")
+
+    exit_code = model_checksum.main(
+        [str(root), "--source", "hf://org/repo@rev", "--manifest-out", str(tmp_path / "m.txt")]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert str(root.resolve()) in out, "해시한 루트가 출력에 없다"
+    assert 'source: "hf://org/repo@rev"' in out, "--source는 종전대로 나와야 한다"
+
+
 def test_manifest_is_written_with_lf_regardless_of_platform(tmp_path: Path) -> None:
     """개행이 번역되면 파일 내용과 aggregate의 입력이 어긋난다.
 
