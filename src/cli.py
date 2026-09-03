@@ -275,8 +275,9 @@ def _check_benchmarks(config: HarnessConfig) -> list[Check]:
 
     `Benchmark.is_measured`는 셋 중 하나만 0이 아니어도 참이므로(그 속성 주석), 그것만
     보면 **절반만 채운 모델이 production 게이트를 그냥 통과한다.** ATOM에서
-    `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으니(2026-08-17) 그 상태는
-    가정이 아니라 곧 실제로 생긴다.
+    `mem_gb_ctx8k`를 `nvidia-smi --query-gpu`로 얻을 수 없다는 것이 확정됐으니
+    (2026-08-17) 그 상태는 가정이 아니라 곧 실제로 생긴다 — 쿼리를 적는 이유는
+    `config.Benchmark.is_measured` 주석과 같다.
 
     부분 측정을 production에서 ERROR로 두는 것은 model-serving.md §5의 취지 그대로다 —
     그 게이트가 막으려는 것이 "실측 없이 올리기"이고 절반은 실측이 아니다. 어떤 항목을

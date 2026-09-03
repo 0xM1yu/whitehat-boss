@@ -392,14 +392,17 @@ def nvidia_smi_mb() -> tuple[float | None, str | None]:
     | --- | --- |
     | 실행 파일이 PATH에 없다 | 드라이버·PATH를 본다 |
     | 실행이 실패했다 / 비정상 종료 | 그 오류를 본다 |
-    | **정상 종료했는데 `[N/A]`다** | **아무것도 고칠 게 없다.** 다른 소스를 찾아야 한다 |
+    | **정상 종료했는데 `[N/A]`다** | **이 쿼리로는 고칠 게 없다.** 다른 쿼리나 다른 소스를 찾아야 한다 |
 
     셋을 한 사유로 뭉치면 마지막 경우에서 거짓말이 된다 — 2026-08-17 ATOM(GB10) 실측:
 
         nvidia-smi --query-gpu=name,compute_cap,memory.total,memory.used --format=csv,noheader
         → NVIDIA GB10, 12.1, [N/A], [N/A]
 
-    통합메모리라 별도 VRAM이 없어서다. nvidia-smi는 PATH에 있고 정상 종료한다. 그런데
+    통합메모리라 별도 VRAM이 없어서다. **`--query-gpu`에 대한 이야기다** — 같은 장비에서
+    `--query-compute-apps`는 프로세스별 값을 준다(2026-09-03 실측). 그쪽이 `mem_gb_ctx8k`를
+    바로 채우지는 못한다(PID별이고 context 고정이 아니다) — 09-03 교대 보고서 §3.4.
+    nvidia-smi는 PATH에 있고 정상 종료한다. 그런데
     사유가 "PATH에 없거나 실패했다"로 기록되면 다음 사람이 드라이버를 뒤진다. `None`과
     `0.0`을, `metrics_only`와 `neither`를 가른 것과 같은 이유다.
     """
