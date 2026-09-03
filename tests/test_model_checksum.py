@@ -115,9 +115,7 @@ def test_a_missing_directory_is_refused(tmp_path: Path) -> None:
         model_checksum.compute(tmp_path / "없는-경로")
 
 
-def test_an_empty_snapshot_path_is_refused(
-    tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_an_empty_snapshot_path_is_refused(capsys: pytest.CaptureFixture) -> None:
     """빈 경로는 **현재 디렉터리**가 된다 — 그러면 저장소를 해시한다 (#134).
 
     `Path("").resolve()`가 cwd이고 `compute()`의 유일한 가드(`if not root.is_dir()`)를
