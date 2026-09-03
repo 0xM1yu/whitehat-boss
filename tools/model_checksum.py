@@ -161,6 +161,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # **빈 경로를 거부한다** (이슈 #134). `Path("")`는 `.resolve()`에서 **현재
+    # 디렉터리**가 되고, 아래 `compute()`의 유일한 가드(`if not root.is_dir()`)를
+    # 디렉터리라서 통과한다. 그러면 이 스크립트가 **저장소를 해시한다.**
+    #
+    # 가정이 아니라 실제로 났다 — 2026-09-03 ATOM에서 셸이 `SNAP=` 대입에 실패해
+    # 빈 문자열이 넘어갔고, 도구는 저장소 파일 165개(기대 10개)를 해시해 형식이
+    # 완벽한 checksum을 낸 뒤 `config/checksums/<key>.txt`를 덮어썼다.
+    #
+    # **`argparse`의 `required`로는 못 막는다** — 위치 인자는 주어졌고 값이 빈
+    # 문자열일 뿐이다. **`.` 같은 명시적 현재 디렉터리는 여전히 통과한다** — 이
+    # 가드가 막는 것은 "인자를 준 줄 알았는데 안 준" 경우이고, 그것이 실제로 난
+    # 사고의 형태다. 더 넓게 막는 것(모델 파일 시그니처 요구)은 정상적인 별난
+    # 스냅샷을 거부할 수 있어 별도 판단으로 둔다.
+    if not args.snapshot.parts:
+        print(
+            "[ERROR] 스냅샷 경로가 비어 있다 — 빈 경로는 현재 디렉터리가 되어 "
+            "엉뚱한 것을 해시한다. 셸 변수가 비었는지 확인한다",
+            file=sys.stderr,
+        )
+        return 2
+
     root = args.snapshot.resolve()
     try:
         checksum, manifest, skipped = compute(root)
@@ -177,6 +198,12 @@ def main(argv: list[str] | None = None) -> int:
         # 입력과 어긋나 `sha256sum -c`도, 재산출도 맞지 않는다.
         out.write_text(manifest, encoding="utf-8", newline="")
 
+    # **무엇을 해시했는지 항상 찍는다** (이슈 #134). 아래 `source:` 줄이 루트를 보여
+    # 주긴 하는데 `args.source`가 있으면 **그쪽으로 대체된다** — 그리고 `--source`를
+    # 주는 것이 이 파일 머리의 「쓰는 법」이 규정한 정규 용법이다. 즉 정상적으로 쓰면
+    # 잘못된 루트를 볼 창구가 닫혀 있었다. 위 빈 경로 가드가 못 막는 경우(`.`을 직접
+    # 준다, 엉뚱한 디렉터리를 준다)를 이 한 줄이 눈에 보이게 한다.
+    print(f"[스냅샷] {root}")
     print(f'checksum: "{checksum}"')
     print(f'source: "{args.source or root.as_uri()}"')
     print(f"[파일] {len(manifest.splitlines())}개")
