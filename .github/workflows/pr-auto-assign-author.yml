@@ -12,6 +12,9 @@ on:
 
 permissions:
   pull-requests: write
+  # `gh pr edit --add-assignee`가 GitHub의 issues assignees 엔드포인트를 탈 수 있어 함께
+  # 준다 — 없으면 403이 나는데 비차단이라 조용히 실패한다(#129 리뷰 MEDIUM).
+  issues: write
 
 jobs:
   assign-author:
