@@ -129,7 +129,29 @@ def test_an_empty_snapshot_path_is_refused(
     exit_code = model_checksum.main([""])
 
     assert exit_code == 2
-    assert "비어" in capsys.readouterr().err
+    assert "현재 디렉터리" in capsys.readouterr().err
+
+
+def test_an_explicit_current_directory_is_refused_with_an_accurate_reason(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """`.`도 같은 가드에 걸린다 — 거부는 옳고 **사유가 거짓이었다**.
+
+    `Path(".").parts`가 `()`라 빈 문자열과 구별되지 않는다(`Path("") == Path(".")`,
+    `"./"`·`"./."`도 같다). 그래서 `if not args.snapshot.parts` 가드는 `.`도 막는데,
+    메시지는 *"스냅샷 경로가 비어 있다"*라고 말했다. 스냅샷 디렉터리 안에서
+    `model_checksum.py .`을 정당하게 돌린 사람에게 **그 문장은 거짓이고, 무엇을
+    고쳐야 하는지도 알려 주지 않는다.**
+
+    **거부 자체는 유지한다** — cwd를 통째로 해시하는 것이 #134가 막으려던 사고이고,
+    `.`은 그 사고를 막는 가드를 우회할 이유가 없다. 고치는 것은 사유뿐이다.
+    """
+    exit_code = model_checksum.main(["."])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "현재 디렉터리" in err
+    assert "비어 있다" not in err, "`.`을 준 조작자에게 «경로가 비어 있다»는 거짓이다"
 
 
 def test_an_empty_snapshot_path_writes_no_manifest(
