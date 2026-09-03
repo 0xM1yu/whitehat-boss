@@ -43,6 +43,7 @@
 | 2026-08-28 | [run A 하네스 검증](harness/2026-08-28-runA-harness-validation-atom.md) | D44·D45 성립 확인, `output_max 8192`의 피해 셋(폭주 미차단·gold 함수 400 탈락·실패 시간), gold 3함수 중 2건이 Finding, 재시도가 응답 원문을 되싣는 결함(D47) | `atom` | 조민규 |
 | 2026-08-28 | [토크나이저 정확도 Prove](harness/2026-08-28-tokenizer-prove-atom.md) | 실 토크나이저 vs 서버 `input_tokens` **오차 0**(+13 상수)·옛 `len//4` ≈1.6x 과소(D21 4단계 Prove), `run_20260827_0004` 재분석, `critic_top_n` 의제 | `atom` | 손수민 |
 | 2026-08-29 | [프롬프트 v2 스모크와 v1 대조](harness/2026-08-29-prompt-v2-smoke-atom.md) | D52 닫힘(v1 `null` ×6 대 v2 `triggerable` ×6 + 프로브 음성 대조), 7단계 critic 첫 진입(v1은 Finding 6건 전부 `E0`), 폭주가 run 시간의 60.7%를 순손실로 먹는다, D47 닫힘(400 0건), 스키마 필드 순서 위반 0건, `fail 0`인 run에도 폭주가 있다(D55) | `atom` | 조민규 |
+| 2026-09-03 | [모델 교대 — 잠재우기 실측](harness/2026-09-03-model-swap-sleep-atom.md) | build-plan §8-6 닫힘(교대 된다 — 잠재우기가 약 51 GiB 반환·왕복 2~6초 대 콜드 238초), `level 1`이 `level 2`와 구별 안 됨(§7 전제 반증), **`nvidia-smi --query-compute-apps`가 작동**(`[N/A]`는 `--query-gpu`뿐 — `mem_gb_ctx8k` 경로), 기준선의 51 GiB는 페이지 캐시 | `atom` | 조민규 |
 
 ## 파일 이름
 
