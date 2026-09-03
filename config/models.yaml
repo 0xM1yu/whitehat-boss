@@ -74,7 +74,7 @@ models:
 
   qwen3-8b:
     # 2026-08-25 ATOM에서 **기동만** 했다(추론 없음). 상세는
-    # docs/experiments/2026-08-25-serving-nvfp4-atom.md §3.
+    # docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §3.
     #
     # `quantization`이 `fp4`였는데 **틀린 값이다.** 체크포인트가 선언하는 것은 NVFP4이고
     # (기동 로그: `Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4)`,
@@ -102,12 +102,41 @@ models:
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
     #
-    # 2026-08-25 ATOM 실측. 상세는 docs/experiments/2026-08-25-serving-nvfp4-atom.md §4~§5.
+    # 2026-09-02 ATOM 재측정(아래 값). 상세는
+    # docs/experiments/harness/2026-09-02-bench-concurrency-atom.md.
+    # 첫 측정은 2026-08-25이고 docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §4~§5다.
     #
-    # **`tok_s_batch32`가 `tok_s_single`보다 작다. 오타가 아니다.** 이 모델은 배치가 단일보다
-    # 느리고(54.83 → 38.93) `qwen3-4b`(39.65 → 127.69, 3.2배)와 정반대다. 동시성 8이
-    # 최적(73.40)이고 16·32에서 떨어진다. **다만 16·32 측정에는 HTTP 400과 timeout 실패가
-    # 섞여 있어 순수 처리량이 아니다** — 방향만 읽고 크기는 읽지 않는다(보고서 해석 ④).
+    # **아래 두 수치는 성격이 다르다. 같은 신뢰도로 읽으면 안 된다.**
+    #
+    # `tok_s_single`은 캐시 ON 세 판에서 52.96 / 53.06 / 52.36으로 산포 1.34%다(계산값).
+    # **캐시를 끄면 21.96으로 2.4배 떨어진다** — 이 값도 캐시가 사고 있었다.
+    #
+    # **`tok_s_batch32`는 몇 번째 판이냐에 달려 있다 (이슈 #128).** 같은 서버·같은 인자로
+    # 돌린 세 판이 59.45 / 68.64 / 107.32로 **1.81배** 갈렸고, 원인은 산포가 아니라 prefix
+    # cache 적중률이다(0.5142 / 0.7776 / 0.8577). 동시성 8·16·32 각각에서 세 판을 적중률로
+    # 정렬하면 tok/s 정렬과 같고 **아홉 칸에 역전이 0건**이다. `bench`의 `variant`가
+    # **한 판 안에서만** 본문을 흔들어서(`bench.py:432`), seed가 같은 다음 판은 자기 자신을
+    # 캐시에서 읽는다. **그래서 이 필드는 0으로 둔다 — 미실측 표시다**(CLAUDE.md §0).
+    # `--apply`가 쓴 값은 68.64였고 그건 적중률 0.7776짜리 데워진 값이라, 아래가 적는
+    # 운영 범위(39.64~59.45) **밖**이다. `benchmark`에 캐시 온도를 적을 칸이 없으므로
+    # 값을 넣으면 다음 사람이 조건 없는 처리량으로 읽는다 — **주석은 사람만 읽고 필드는
+    # 코드가 읽는다.** #128이 판 사이에도 본문을 흔들게 고친 뒤 다시 잰다.
+    #
+    # **`tok_s_single`은 왜 0이 아닌가.** 그쪽은 세 판의 적중률이 전부 0.9996으로 같아서
+    # (동시성 1은 즉시 포화한다) 같은 조건이 재현되고 산포가 1.34%다. batch32는 적중률
+    # 자체가 판마다 달라 **재현되는 조건이 없다** — 그 차이가 한쪽만 0으로 두는 이유다.
+    #
+    # **캐시를 끄고 잰 하한선이 있다** — `--no-enable-prefix-caching`으로 다시 띄운 4판이
+    # 21.96 / 35.23 / 39.77 / 39.64(동시성 1/8/16/32)다. 그러니 **운영 값은 39.64(공유 0)와
+    # 59.45(1판, 본문 일부 공유) 사이**이고 68.64는 그 위다. 배치 크기 예산의 근거로 쓸
+    # 것은 그 4판 곡선이다 — **이득 1.81배이고 동시성 16에서 포화한다.**
+    #
+    # **옛 주석의 「배치가 단일보다 느리다(54.83 → 38.93)」는 반증됐다.** 그 38.93은
+    # `tok_s = produced / elapsed`인데 **실패한 호출의 벽시계가 분모에 들어간** 값이었다.
+    # 재측정은 두 판 네 수준(1·8·16·32) 전부 실패 0건이고 둘 다 batch32 > single이다.
+    # **그렇다고 「배칭 이득이 얼마다」를 대신 적을 수는 없다** — 단일 대비 최대 배율이
+    # 1판 1.18배(동시성 8), 2판 2.42배(동시성 16)로 갈린다(계산값).
+    # `qwen3-4b`의 3.2배와 비교하려면 그 폭부터 좁혀야 한다.
     #
     # **`mem_gb_ctx8k`는 0으로 남긴다 — 지어내지 않는다.** `nvidia-smi`가 이 장비에서
     # `[N/A]`를 낸다(GB10은 통합메모리라 별도 VRAM 카운터가 없다). `bench --apply`도 이
@@ -123,10 +152,10 @@ models:
     prompt_template_version: "v1"
     fallback: null
     benchmark:
-      measured_at: "2026-08-25T05:59:47Z"
+      measured_at: "2026-09-02T05:11:50Z"
       measured_on: "atom"
-      tok_s_single: 54.83
-      tok_s_batch32: 38.93
+      tok_s_single: 53.06
+      tok_s_batch32: 0
       mem_gb_ctx8k: 0
 
   devstral-small-2-24b:
@@ -225,7 +254,7 @@ models:
     # 그러나 `--served-model-name`은 **순수 별칭이라 실제 가중치와의 일치를 검증하지 않는다.**
     # 이 저장소가 그걸 이미 썼다: 2026-08-18에 Qwen3-0.6B를 `--served-model-name qwen3-4b`로
     # 8001에 서빙했고, 그 문서가 "**별칭은 근거가 못 된다**"고 적어 뒀다
-    # (docs/experiments/2026-08-18-retrieval-atom.md). 8007에 다른 모델을 띄우면서 이름만
+    # (docs/experiments/harness/2026-08-18-retrieval-atom.md). 8007에 다른 모델을 띄우면서 이름만
     # `granite-3.3-8b`로 붙이면 하네스는 그 답을 granite의 것으로 기록하고 알아챌 수 없다.
     # **기동 스크립트가 registry 키를 그대로 `--served-model-name`에 넣는 것이 유일한 방어다.**
     endpoint: "http://127.0.0.1:8007/v1"
@@ -281,12 +310,22 @@ models:
       mem_gb_ctx8k: 0
 
   qwen3-embedding-0.6b:
+    # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-embedding-0.6b.txt`이고
+    # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
+    #
+    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
+    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
+    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
+    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
+    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
+    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
+    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
     endpoint: "http://127.0.0.1:8004/v1"
     context_limit: 32768
     quantization: "fp16"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:2f0df70974121b6286d288c6b8639b576c4157fc7499fff717984cce3ab72323"
+    source: "hf://Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -297,12 +336,22 @@ models:
       mem_gb_ctx8k: 0
 
   qwen3-reranker-0.6b:
+    # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-reranker-0.6b.txt`이고
+    # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
+    #
+    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
+    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
+    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
+    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
+    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
+    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
+    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 32768
     quantization: "fp16"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:3e15b7c8147b36afb2937406a9015ad62286132e12ed4b21d0f7b2f64fe97f9a"
+    source: "hf://Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
