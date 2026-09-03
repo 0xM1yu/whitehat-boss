@@ -137,7 +137,18 @@ def _measure_role(
         "structured_output": measure_structured_output(*args, tokens, samples),
         "prefix_cache": measure_prefix_cache(*args, tokens, samples, entry.endpoint),
         "throughput": measure_throughput(*args, tokens, concurrency, entry.endpoint),
-        "memory": measure_memory(*args, contexts, entry.endpoint, entry.context_limit),
+        # `server_limit`·`output_max`는 **재보지 않고 건너뛸 context**를 가른다 (#126).
+        # `output_max`는 `_client`가 `max_tokens`로 싣는 바로 그 값이어야 한다 — 서버가
+        # 400을 내는 조건이 `prompt + max_tokens > max_model_len`이라 둘이 갈라지면
+        # 이 판정이 실제 요청과 다른 것을 계산하게 된다.
+        "memory": measure_memory(
+            *args,
+            contexts,
+            entry.endpoint,
+            entry.context_limit,
+            server_limit=startup["max_model_len"],
+            output_max=config.thresholds.output_max,
+        ),
         "skipped": None,
     }
 
