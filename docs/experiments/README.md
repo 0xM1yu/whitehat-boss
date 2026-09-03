@@ -44,6 +44,7 @@
 | 2026-08-28 | [토크나이저 정확도 Prove](harness/2026-08-28-tokenizer-prove-atom.md) | 실 토크나이저 vs 서버 `input_tokens` **오차 0**(+13 상수)·옛 `len//4` ≈1.6x 과소(D21 4단계 Prove), `run_20260827_0004` 재분석, `critic_top_n` 의제 | `atom` | @sumin0218 |
 | 2026-08-29 | [프롬프트 v2 스모크와 v1 대조](harness/2026-08-29-prompt-v2-smoke-atom.md) | D52 닫힘(v1 `null` ×6 대 v2 `triggerable` ×6 + 프로브 음성 대조), 7단계 critic 첫 진입(v1은 Finding 6건 전부 `E0`), 폭주가 run 시간의 60.7%를 순손실로 먹는다, D47 닫힘(400 0건), 스키마 필드 순서 위반 0건, `fail 0`인 run에도 폭주가 있다(D55) | `atom` | @danielcho02 |
 | 2026-09-02 | [동시성 16·32 재측정](harness/2026-09-02-bench-concurrency-atom.md) | 16·32의 HTTP 400·timeout 소거(네 판 실패 0), **배치 처리량이 캐시 온도의 함수(#128)**, **캐시 OFF 곡선 1.81배·16 포화**, vLLM이 `user-1004.slice` **밖**에 있음, FLASHINFER 선택돼도 무사(확정 #3 ② 반증), context 스윕이 서버 상한을 모름(#126) | `atom` | @danielcho02 |
+| 2026-09-03 | [모델 교대 — 잠재우기 실측](harness/2026-09-03-model-swap-sleep-atom.md) | build-plan §8-6 닫힘(교대 된다 — 잠재우기가 약 51 GiB 반환·왕복 2~6초 대 콜드 238초), `level 1`이 `level 2`와 구별 안 됨(§7 전제 반증), **`nvidia-smi --query-compute-apps`가 작동**(`[N/A]`는 `--query-gpu`뿐 — `mem_gb_ctx8k` 경로), 기준선의 51 GiB는 페이지 캐시 | `atom` | @danielcho02 |
 
 ## 파일 이름
 
