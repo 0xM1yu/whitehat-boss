@@ -456,6 +456,60 @@ def test_apply_without_a_device_warns_at_the_moment_it_matters(
     assert "--device 없이 --apply" not in capsys.readouterr().err
 
 
+def test_serving_apply_without_a_device_refuses_to_write(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실서빙 프로필에서 `--apply`는 `--device` 없이 registry를 쓰지 않는다 (#124).
+
+    `run`은 같은 결여에 `exit 2`인데 `bench --apply`만 경고하고 진행했다. 그 비대칭이
+    나쁜 이유는 **결여의 대가가 더 크기 때문**이다 — run의 산출물은 그 run 하나에
+    갇히지만 registry는 이후 모든 예산 추정과 `cli estimate`가 읽는 공용 파일이고,
+    `measured_on: null`은 거기 영구히 남는다(docs/portability.md).
+
+    이슈의 선택지 (b)다 — 읽기 전용 `bench`는 막지 않고 **파일을 쓰는 경로만** 요구한다.
+    """
+    written: list[object] = []
+    monkeypatch.setattr(cli, "apply_benchmarks", lambda *a, **k: written.append(a) or {})
+
+    code = cli.main(
+        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path), "--apply"]
+    )
+
+    assert code == 2
+    assert written == [], "거부해 놓고 registry에 썼다"
+    assert "--device" in capsys.readouterr().err
+
+
+def test_serving_apply_with_a_device_still_writes(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """라벨을 주면 종전대로 쓴다 — 막는 것은 결여이지 `--apply` 자체가 아니다 (#124)."""
+    monkeypatch.setattr(cli, "apply_benchmarks", lambda *a, **k: {"lines": 0})
+
+    code = cli.main(
+        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path),
+         "--apply", "--device", "atom"]
+    )
+    capsys.readouterr()
+
+    assert code != 2
+
+
+def test_serving_bench_without_apply_is_not_blocked(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """읽기 전용 `bench`는 라벨 없이도 돈다 (#124).
+
+    막는 근거가 "공용 파일이 오염된다"이므로 아무것도 안 쓰는 실행에는 그 근거가 없다.
+    """
+    code = cli.main(
+        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path)]
+    )
+    capsys.readouterr()
+
+    assert code != 2
+
+
 # --- CLI ---------------------------------------------------------------------
 
 
