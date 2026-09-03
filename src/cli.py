@@ -695,6 +695,27 @@ def bench(args: argparse.Namespace) -> int:
     CI가 빨개지고, 그러면 아무도 이 커맨드를 돌리지 않게 된다.
     """
     config = load_profile(args.profile, tool_runner=args.tool_runner)
+    # **registry에 쓸 것이면 장비 라벨을 먼저 요구한다** (#124). `run`은 같은 결여에
+    # `exit 2`인데 여기만 경고하고 진행해서 비대칭이 있었다. 결여의 대가가 더 큰 쪽이
+    # 여기다 — run의 산출물은 그 run 하나에 갇히고 `incomplete_fields()`가 비교표 제외를
+    # 판정하지만, registry는 이후 모든 예산 추정과 `cli estimate`가 읽는 **공용 파일**이고
+    # `measured_on: null`은 거기 영구히 남는다(docs/portability.md).
+    #
+    # **막는 것은 `--apply`뿐이다.** 읽기 전용 `bench`는 라벨 없이도 돈다 — 근거가
+    # "공용 파일이 오염된다"이므로 아무것도 안 쓰는 실행에는 그 근거가 없다.
+    # **Fake 프로필도 막지 않는다** — `run` 게이트와 같은 판단이고(그쪽 주석 참조),
+    # 애초에 쓸 측정값이 안 나온다.
+    #
+    # **재기 전에 판정한다.** #119가 run에 세운 원칙과 같은 자리다. 재고 나서 거부하면
+    # 측정 시간을 통째로 버리고, 그러면 조작자가 라벨을 **지어내서** 다시 돌리게 된다.
+    if args.apply and args.device is None and config.served_models():
+        print(
+            f"[ERROR] 실서빙 프로필({args.profile})이라 --device 없이는 --apply 하지 않는다 — "
+            "measured_on: null이 추적되는 config/models.yaml에 영구히 남고, "
+            "다음 사람이 그 값으로 다른 장비를 예측하게 된다 (docs/portability.md)",
+            file=sys.stderr,
+        )
+        return 2
     report = run_bench(
         config,
         roles=args.roles,
