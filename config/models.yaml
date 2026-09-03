@@ -310,12 +310,22 @@ models:
       mem_gb_ctx8k: 0
 
   qwen3-embedding-0.6b:
+    # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-embedding-0.6b.txt`이고
+    # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
+    #
+    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
+    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
+    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
+    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
+    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
+    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
+    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
     endpoint: "http://127.0.0.1:8004/v1"
     context_limit: 32768
     quantization: "fp16"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:2f0df70974121b6286d288c6b8639b576c4157fc7499fff717984cce3ab72323"
+    source: "hf://Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -326,12 +336,22 @@ models:
       mem_gb_ctx8k: 0
 
   qwen3-reranker-0.6b:
+    # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-reranker-0.6b.txt`이고
+    # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
+    #
+    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
+    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
+    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
+    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
+    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
+    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
+    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 32768
     quantization: "fp16"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:3e15b7c8147b36afb2937406a9015ad62286132e12ed4b21d0f7b2f64fe97f9a"
+    source: "hf://Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
