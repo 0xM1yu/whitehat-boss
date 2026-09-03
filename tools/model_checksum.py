@@ -39,6 +39,10 @@ dirty로 세는 것과 같은 판단이다 — 잘못된 clean이 훨씬 비싸�
     python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \\
         --source hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<revision>
 
+**첫 줄의 `[스냅샷]` 출력을 보고 넘어간다.** 셸 변수가 비면 빈 경로가 현재 디렉터리가
+되어 엉뚱한 것을 해시하는데, 그 결과도 형식이 완벽한 checksum이라 값만 봐서는 모른다
+(이슈 #134 — 빈 경로 자체는 이제 거부하지만 `.`이나 잘못 준 경로는 못 막는다).
+
 manifest는 `config/checksums/<model key>.txt`에 쓴다(`--manifest-out`으로 바꿀 수 있다).
 **checksum이 `config/models.yaml`에 있으므로 그 근거도 `config/` 안에 있어야 한다** —
 값과 근거가 다른 수명의 디렉터리에 흩어지면 갈라진다. 형식은 `sha256sum` 호환이라
