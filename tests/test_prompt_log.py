@@ -282,13 +282,21 @@ def _traced_model_calls(trace_path: Path) -> list[dict]:
     return [event["data"] for event in events if event["kind"] == EventKind.MODEL_CALL.value]
 
 
-def test_pipeline_writes_one_prompt_per_model_call(tmp_path: Path) -> None:
+def test_pipeline_writes_one_primary_prompt_per_model_call(tmp_path: Path) -> None:
+    """**1차 파일**이 호출당 하나다.
+
+    재시도가 있으면 `_retryK` 파일이 같은 순번으로 더 붙으므로(#80) 그것을 빼고 센다 —
+    dev_fake는 재시도가 없어 실제로는 파일 수와 호출 수가 같지만, 불변식은 "호출당 파일
+    하나"가 아니라 "호출당 **1차** 파일 하나"다(재시도 파일은 별개).
+    """
     run_dir, trace_path = _run(tmp_path)
 
     calls = _traced_model_calls(trace_path)
-    files = sorted((run_dir / DIR_NAME).glob("*.md"))
+    primary = sorted(
+        p for p in (run_dir / DIR_NAME).glob("*.md") if "_retry" not in p.name
+    )
     assert calls, "모델 호출이 없으면 이 테스트가 아무것도 보지 않는다"
-    assert len(files) == len(calls)
+    assert len(primary) == len(calls)
 
 
 def test_every_traced_ref_resolves_under_the_run_dir(tmp_path: Path) -> None:

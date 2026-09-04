@@ -92,7 +92,10 @@ def render(*, role: str, stage: int, prompt: Prompt) -> str:
 
 
 class PromptLog:
-    """`{run_dir}/prompts/`에 호출당 파일 하나.
+    """`{run_dir}/prompts/`에 호출당 1차 파일 하나. 재시도가 있으면 그 회차마다
+    `_retryK`가 붙은 파일이 **같은 순번으로** 하나씩 더 붙는다(`write_retry`, #80) —
+    실제로 서버에 간 요청을 재현하기 위해서다. 그래서 `*.md` 파일 수는 호출 수 이상이고,
+    호출당 하나인 것은 `_retry`가 없는 **1차** 파일이다.
 
     **순번은 이 객체가 센다.** trace의 `seq`를 쓰지 않는 것은 그 값이 프롬프트와 무관한
     이벤트(전이·게이트·예산)까지 세기 때문이고, `IdFactory`를 쓰지 않는 것은 그쪽에
