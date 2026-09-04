@@ -99,14 +99,14 @@ models:
     prompt_template_version: "v1"
     fallback: "qwen3-4b"
     benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
+      measured_at: "2026-09-04T05:08:19Z"
+      measured_on: "atom"
+      tok_s_single: 35.78
+      tok_s_batch32: 388.46
       mem_gb_ctx8k: 0
       # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
       # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: null
+      prefix_hit_ratio_batch32: 0.9981
 
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
@@ -164,14 +164,14 @@ models:
     prompt_template_version: "v1"
     fallback: null
     benchmark:
-      measured_at: "2026-09-02T05:11:50Z"
+      measured_at: "2026-09-04T05:08:19Z"
       measured_on: "atom"
-      tok_s_single: 53.06
-      tok_s_batch32: 0
+      tok_s_single: 53.4
+      tok_s_batch32: 66.42
       mem_gb_ctx8k: 0
       # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
       # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: null
+      prefix_hit_ratio_batch32: 0.5673
 
   devstral-small-2-24b:
     # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
