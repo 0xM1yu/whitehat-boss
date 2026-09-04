@@ -1,5 +1,15 @@
 # NVFP4 실서빙 검증 (8B 기동 · 30B 기동+추론+bench) — atom
 
+> **정정 (2026-09-03, PR #135).** 본문 네 곳이 *"`nvidia-smi`가 `[N/A]`를 낸다"*를 **쿼리 없이**
+> 단정했다. 그 문장이 참인 것은 **`--query-gpu`에 대해서**이고, 같은 장비에서
+> `--query-compute-apps`는 프로세스별 값을 준다(`150314, 54716 MiB` — [교대 보고서](2026-09-03-model-swap-sleep-atom.md) §3.4).
+> 네 곳에 쿼리를 붙여 좁혔다. **관측은 그대로다** — 그때 실제로 본 것이 `--query-gpu`의 `[N/A]`이고,
+> 바뀐 것은 그 관측이 무엇까지 말하는가다(CLAUDE.md §2.2).
+>
+> **`mem_gb_ctx8k`를 채울 수 있게 됐다는 뜻은 아니다.** 그 측정은 `--max-model-len 32768`이라
+> 이 필드의 정의(context 8K)와 다르고, 값이 기동 시 `gpu_memory_utilization` 선점으로 정해져
+> 설정값의 되읽기에 가깝다. 미측정 판정은 유지된다.
+
 ## 메타
 
 | 항목 | 값 | 비고 |
@@ -31,7 +41,7 @@
 | 30B 처리량 | 단일 54.83 tok/s · 동시성 32에서 38.93 tok/s | 성능 (표본 5) |
 | 30B 배치 이득 | **없다 — 배치가 단일보다 느리다.** 4B와 정반대 | 성능 (단, ④ 참조) |
 | prefix cache | 장부 0.0 · `/metrics` 0.9996 → `verdict: metrics_only` | 경로 성립 |
-| `mem_gb_ctx8k` | **미측정.** `nvidia-smi`가 `[N/A]`(통합메모리) | — |
+| `mem_gb_ctx8k` | **미측정.** `nvidia-smi --query-gpu`가 `[N/A]`(통합메모리) | 아래 정정 |
 | `devstral-small-2-24b` | **미검증.** 받지도 띄우지도 않았다 | — |
 
 ## 2. 실험 환경
@@ -193,7 +203,7 @@ vLLM 자신이 바이트 고정을 권한다 — 해석 ⑥.
 | memory ctx 8192 | kv_peak 0.0840% (57 표본) |
 | memory ctx 16384 | kv_peak 0.0605% (82 표본) |
 | memory ctx 32768 | `call_ok False` — **HTTP 400** |
-| `mem_gb_ctx8k` | **0.0 · unmeasured** (`nvidia-smi` `[N/A]`, 통합메모리) |
+| `mem_gb_ctx8k` | **0.0 · unmeasured** (`nvidia-smi --query-gpu` `[N/A]`, 통합메모리) |
 | checklist | pass **5** / unmeasured **2** (`mem_gb_ctx8k` · NVFP4 Critic 반박 정확도) |
 | `--apply` | `tok_s_single 54.83` · `tok_s_batch32 38.93` 기입. **`mem_gb_ctx8k`는 skipped** |
 
@@ -320,7 +330,7 @@ gpu memory.
 | 벽 | 원인 | 해결 |
 | --- | --- | --- |
 | ctx 32768에서 `call_ok False` | `prompt_tokens_approx` 근사가 천장을 224토큰 넘김 (D21) | **해결 못 함.** 토크나이저 없이는 근사가 남는다. 해석 ② |
-| `mem_gb_ctx8k` 측정 불가 | `nvidia-smi`가 `[N/A]` — GB10은 통합메모리라 별도 VRAM 카운터가 없다 | **해결 못 함.** `--apply`가 `skipped`로 두고 registry는 0 유지 |
+| `mem_gb_ctx8k` 측정 불가 | `nvidia-smi --query-gpu`가 `[N/A]` — GB10은 통합메모리라 이 쿼리에 별도 VRAM 카운터가 없다 | **해결 못 함.** `--apply`가 `skipped`로 두고 registry는 0 유지 |
 | `prompt_tokens_recomputed_delta` `null` | `vllm:prompt_tokens_recomputed_total`이 이 버전 `/metrics`에 없다 | **해결 못 함.** 대체 경로가 `prompt_tokens_cached` 하나뿐 |
 | 동시성 16·32의 실패 혼입 | HTTP 400 · timeout | **해결 못 함.** 수치 옆에 표시만 했다 |
 
@@ -331,7 +341,7 @@ gpu memory.
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| `mem_gb_ctx8k` (30B·8B 둘 다) | `nvidia-smi`가 통합메모리에서 `[N/A]`를 낸다 | cgroup `memory.current` 또는 `torch.cuda.memory_allocated()`를 분모로 쓰는 별도 계측 |
+| `mem_gb_ctx8k` (30B·8B 둘 다) | `nvidia-smi --query-gpu`가 통합메모리에서 `[N/A]`를 낸다 | cgroup `memory.current` 또는 `torch.cuda.memory_allocated()`를 분모로 쓰는 별도 계측 |
 | NVFP4 Critic 반박 정확도 (R2) | Critic 모델(`devstral-small-2-24b`)을 띄우지 않았다 | 24B nvfp4를 받아 띄우고 반박 표본을 돌린다 |
 | 8B 처리량·구조화 출력 | **기동만 했다.** 추론 요청을 보내지 않았다 | `cli bench --roles`에 8B를 넣는다 |
 | 30B 출력 **품질** | 표본 6건(1 + 5)은 형식 준수만 본다 | 평가 데이터셋 |

@@ -121,8 +121,10 @@ class Benchmark(HarnessModel):
 
         **대신 이것만으로 production 게이트를 세우면 절반만 채우고도 열린다.** 그래서
         `doctor`가 `missing_measurements`로 부분 측정을 따로 판정한다 — ATOM에서
-        `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으므로(2026-08-17) 그
-        상태는 가정이 아니라 곧 실제로 발생한다.
+        `mem_gb_ctx8k`를 `nvidia-smi --query-gpu`로 얻을 수 없다는 것이 확정됐으므로
+        (2026-08-17) 그 상태는 가정이 아니라 곧 실제로 발생한다. **다른 쿼리로도 이
+        필드가 채워지지 않는다는 뜻은 아니다** — 이 문장이 지탱하는 것은 "부분 측정이
+        실제로 생긴다"까지이고, 그것은 어느 쿼리에서든 참이다.
         """
         return len(self.missing_measurements) < len(self.MEASUREMENTS)
 
