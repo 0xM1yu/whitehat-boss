@@ -20,6 +20,7 @@ from pathlib import Path
 
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.bench import (
+    BATCH32,
     DEFAULT_CONCURRENCY,
     DEFAULT_CONTEXTS,
     DEFAULT_SAMPLES,
@@ -42,7 +43,14 @@ from src.schemas.enums import Role
 # `--apply`가 건드리는 키. `config.Benchmark`의 필드와 **같아야 한다** —
 # `tests/test_bench_apply.py::test_apply_keys_cover_every_benchmark_field`가 강제한다.
 # 그 검사가 생기기 전에는 이 상수를 아무도 읽지 않아 주석이 지켜지는지 알 수 없었다.
-APPLY_KEYS = ("measured_at", "measured_on", "tok_s_single", "tok_s_batch32", "mem_gb_ctx8k")
+APPLY_KEYS = (
+    "measured_at",
+    "measured_on",
+    "tok_s_single",
+    "tok_s_batch32",
+    "mem_gb_ctx8k",
+    "prefix_hit_ratio_batch32",
+)
 
 PASS, FAIL, UNMEASURED = "pass", "fail", "unmeasured"
 
@@ -137,7 +145,18 @@ def _measure_role(
         "structured_output": measure_structured_output(*args, tokens, samples),
         "prefix_cache": measure_prefix_cache(*args, tokens, samples, entry.endpoint),
         "throughput": measure_throughput(*args, tokens, concurrency, entry.endpoint),
-        "memory": measure_memory(*args, contexts, entry.endpoint, entry.context_limit),
+        # `server_limit`·`output_max`는 **재보지 않고 건너뛸 context**를 가른다 (#126).
+        # `output_max`는 `_client`가 `max_tokens`로 싣는 바로 그 값이어야 한다 — 서버가
+        # 400을 내는 조건이 `prompt + max_tokens > max_model_len`이라 둘이 갈라지면
+        # 이 판정이 실제 요청과 다른 것을 계산하게 된다.
+        "memory": measure_memory(
+            *args,
+            contexts,
+            entry.endpoint,
+            entry.context_limit,
+            server_limit=startup["max_model_len"],
+            output_max=config.thresholds.output_max,
+        ),
         "skipped": None,
     }
 
@@ -396,7 +415,44 @@ def _fields_for(role: str, value: Mapping[str, object]) -> tuple[dict[str, float
             f"{role}.mem_gb_ctx8k: gpu_memory_utilization을 얻지 못해 재현 불가라 쓰지 않는다 "
             f"({memory['gpu_memory_utilization_reason']})"
         )
+    # **`tok_s_batch32`가 어떤 캐시 상태에서 나온 값인지를 옆에 싣는다** (#128).
+    # 값을 고치지 않는다 — 읽는 사람이 판단할 재료만 는다.
+    ratio, ratio_reason = _batch32_hit_ratio(throughput)
+    if ratio is None:
+        skipped.append(f"{role}.prefix_hit_ratio_batch32: {ratio_reason}")
+    elif "tok_s_batch32" not in fields:
+        # 주석 달 대상이 없으면 적중률만 남겨 봐야 무엇의 적중률인지 말할 수 없다.
+        skipped.append(
+            f"{role}.prefix_hit_ratio_batch32: tok_s_batch32를 쓰지 않으므로 함께 두지 않는다"
+        )
+    else:
+        # **0을 버리지 않는다.** `MEASUREMENTS` 세 항목의 "0 = 미측정" 규칙은 여기에
+        # 성립하지 않는다 — 적중률 0은 캐시를 끄고 잰 판의 실측이고, 그게 이 필드가
+        # 가장 필요한 경우다. 못 읽은 것은 위 `ratio is None` 갈래로 간다.
+        fields["prefix_hit_ratio_batch32"] = ratio
     return fields, skipped
+
+
+def _batch32_hit_ratio(throughput: Mapping[str, object]) -> tuple[float | None, str]:
+    """동시성 `BATCH32` 구간의 prefix cache 적중률. 못 읽으면 `(None, 사유)`.
+
+    **지어내지 않는다.** `counter_delta`가 `hit_ratio: None`을 내는 경우가 둘 있고
+    (카운터 판독 실패, 그 구간에 엔진이 요청을 한 건도 못 봄) 둘 다 0으로 접으면
+    "캐시가 하나도 안 맞았다"는 적극적인 거짓이 된다.
+    """
+    levels = throughput.get("by_concurrency")
+    level = levels.get(str(BATCH32)) if isinstance(levels, Mapping) else None
+    if not isinstance(level, Mapping):
+        return None, f"동시성 {BATCH32} 구간이 없어 그 값의 캐시 상태를 모른다"
+    delta = level.get("prefix_cache_delta")
+    if not isinstance(delta, Mapping):
+        return None, "prefix_cache_delta가 없다"
+    ratio = delta.get("hit_ratio")
+    if ratio is None:
+        return None, (
+            f"적중률을 읽지 못했다 (status={delta.get('status')}): {delta.get('reason')}"
+        )
+    return float(ratio), ""
 
 
 def apply_benchmarks(

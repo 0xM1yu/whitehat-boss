@@ -35,6 +35,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   qwen3-4b:
     # 12GB 단일 카드에서 scout만 실서빙할 때 쓰는 소형 모델. profiles.yaml single_gpu_12g 참조.
@@ -71,6 +74,9 @@ models:
       tok_s_single: 39.65
       tok_s_batch32: 127.69
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   qwen3-8b:
     # 2026-08-25 ATOM에서 **기동만** 했다(추론 없음). 상세는
@@ -98,6 +104,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
@@ -157,6 +166,9 @@ models:
       tok_s_single: 53.06
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   devstral-small-2-24b:
     # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
@@ -186,6 +198,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   # --- B1'/B3' 실험용 bf16 모델 (윤경 요청·민규 승인 2026-08-27) ---
   # `checksum`·`benchmark`는 실측 전이라 0이다(파일 상단 규칙: 실측은
@@ -233,6 +248,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   granite-3.3-8b:
     # IBM Granite-3.3-8B-Instruct. B1'/B3' 실험 대상.
@@ -271,6 +289,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   qwen3-8b-bf16:
     # B1' 조건의 Qwen3-8B. **기존 `qwen3-8b`와 다른 키인 것이 이 항목의 요점이다.**
@@ -308,6 +329,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   qwen3-embedding-0.6b:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-embedding-0.6b.txt`이고
@@ -334,6 +358,9 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
 
   qwen3-reranker-0.6b:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-reranker-0.6b.txt`이고
@@ -360,3 +387,6 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null

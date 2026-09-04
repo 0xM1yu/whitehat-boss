@@ -79,6 +79,25 @@ class Benchmark(HarnessModel):
     tok_s_single: float = Field(default=0.0, ge=0.0)
     tok_s_batch32: float = Field(default=0.0, ge=0.0)
     mem_gb_ctx8k: float = Field(default=0.0, ge=0.0)
+    # **`tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가** (이슈 #128).
+    #
+    # 2026-09-02 ATOM에서 같은 서버·같은 인자로 돌린 세 판의 `tok_s_batch32`가
+    # 59.45 / 68.64 / 107.32로 **1.81배** 갈렸다. 원인은 산포가 아니라 prefix cache
+    # 적중률이고(0.5142 / 0.7776 / 0.8577), 동시성 8·16·32 각각에서 세 판을 적중률로
+    # 정렬하면 tok/s 정렬과 같아 **아홉 칸에 역전이 0건**이었다. 즉 옆 필드의 값은
+    # **몇 번째 판이냐의 함수**인데 registry에 그 사실을 적을 칸이 없었다.
+    #
+    # **이 필드는 값을 고치지 않는다.** 왜곡을 없애는 쪽(판마다 본문을 흔든다)은
+    # `bench`의 재현성과 맞바꾸는 설계 판단이라 #128이 정하지 않았다. 여기서 하는 것은
+    # 그 이슈가 「최소 정직 조치」라 부른 것뿐이다 — 읽는 사람이 판단할 재료를 남긴다.
+    #
+    # **`MEASUREMENTS`에 넣지 않는다.** 모델의 능력이 아니라 그 측정이 어떤 상태에서
+    # 나왔는가이고, 넣으면 이 값이 없는 모델이 전부 "부분 측정"으로 떨어진다.
+    #
+    # 기본값이 `None`인 것은 `measured_on`과 같은 이유다 — 기존 registry 항목에 이 키가
+    # 없으면 로드가 통째로 실패한다. **0.0과 `None`은 다르다**: 0.0은 "캐시를 끄고 쟀다"
+    # 라는 실측이고 `None`은 "카운터를 못 읽었다"다.
+    prefix_hit_ratio_batch32: float | None = Field(default=None, ge=0.0, le=1.0)
 
     # 실측 대상 세 항목. `--apply`가 쓰는 키(`bench_report.APPLY_KEYS`) 중 수치만이다.
     # `ClassVar`가 아니면 pydantic이 필드로 읽어 registry 스키마가 바뀐다.
