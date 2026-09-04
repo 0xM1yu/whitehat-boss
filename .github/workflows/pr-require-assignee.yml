@@ -1,0 +1,30 @@
+name: PR assignee 필수 (머지 차단)
+
+# assignee가 없는 PR은 이 체크가 **실패**해 머지를 막는다. GitHub 브랜치 보호에는
+# "assignee 필수" 옵션이 없어, 이 워크플로를 required status check로 걸어 차단형으로 만든다.
+# (required로 거는 것은 저장소 브랜치 보호 설정이고, 이 파일은 그 체크의 실체다.)
+#
+# **auto-assign(`pr-auto-assign-author.yml`)과 함께 쓴다.** 평상시엔 PR이 열릴 때 작성자가
+# 자동 배정돼 이 체크가 곧바로 통과하고, 이 체크는 auto-assign이 못 잡는 틈 — `reopened`,
+# 나중에 assignee를 뗀 경우 — 까지 막는 최종 게이트다. 그래서 `assigned`·`unassigned`에도
+# 돌아 상태를 갱신한다.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, assigned, unassigned, edited, synchronize]
+
+# 이벤트 페이로드만 읽는다 — 쓰기 권한이 필요 없다.
+permissions:
+  contents: read
+
+jobs:
+  require-assignee:
+    runs-on: ubuntu-latest
+    steps:
+      # assignee가 있으면 이 스텝은 건너뛴다 → 잡은 success(초록).
+      # 없으면 스텝이 돌아 exit 1 → 잡 실패(빨강) → required면 머지가 잠긴다.
+      - name: assignee가 없으면 실패시킨다
+        if: ${{ github.event.pull_request.assignees[0] == null }}
+        run: |
+          echo "::error title=assignee 필요::이 PR에 담당자(assignee)가 없습니다 — 담당자를 지정해야 머지됩니다."
+          exit 1
