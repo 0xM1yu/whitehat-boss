@@ -5,26 +5,41 @@ name: PR assignee 필수 (머지 차단)
 # (required로 거는 것은 저장소 브랜치 보호 설정이고, 이 파일은 그 체크의 실체다.)
 #
 # **auto-assign(`pr-auto-assign-author.yml`)과 함께 쓴다.** 평상시엔 PR이 열릴 때 작성자가
-# 자동 배정돼 이 체크가 곧바로 통과하고, 이 체크는 auto-assign이 못 잡는 틈 — `reopened`,
-# 나중에 assignee를 뗀 경우 — 까지 막는 최종 게이트다. 그래서 `assigned`·`unassigned`에도
-# 돌아 상태를 갱신한다.
+# 자동 배정돼 이 체크가 통과하고, 이 체크는 auto-assign이 못 잡는 틈 — `reopened`, 나중에
+# assignee를 뗀 경우 — 까지 막는 최종 게이트다.
+#
+# **왜 이벤트 페이로드가 아니라 라이브 상태를 조회하나.** `opened`에서 두 워크플로가 동시에
+# 뜨는데, auto-assign이 배정하기 전 스냅샷(`github.event.pull_request.assignees`)을 보면
+# 없다고 판정한다. 게다가 auto-assign은 `GITHUB_TOKEN`으로 배정하고, 그 토큰이 건 변경은
+# **다른 워크플로를 재실행시키지 않으므로**(무한루프 방지) `assigned` 재실행도 안 온다.
+# 그래서 스냅샷을 믿지 않고 `gh pr view`로 현재 상태를 직접 읽고, auto-assign(~6초)이 끝날
+# 시간을 짧은 재시도로 흡수한다.
 
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, assigned, unassigned, edited, synchronize]
 
-# 이벤트 페이로드만 읽는다 — 쓰기 권한이 필요 없다.
 permissions:
-  contents: read
+  pull-requests: read
 
 jobs:
   require-assignee:
     runs-on: ubuntu-latest
     steps:
-      # assignee가 있으면 이 스텝은 건너뛴다 → 잡은 success(초록).
-      # 없으면 스텝이 돌아 exit 1 → 잡 실패(빨강) → required면 머지가 잠긴다.
-      - name: assignee가 없으면 실패시킨다
-        if: ${{ github.event.pull_request.assignees[0] == null }}
+      - name: assignee가 있는지 라이브로 확인 (경합 흡수)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.pull_request.number }}
         run: |
+          for i in 1 2 3 4 5; do
+            n=$(gh pr view "$NUM" --repo "$REPO" --json assignees --jq '.assignees | length')
+            if [ "$n" -gt 0 ]; then
+              echo "assignee OK (수: $n)"
+              exit 0
+            fi
+            echo "assignee 없음 — auto-assign 대기 ($i/5)"
+            sleep 5
+          done
           echo "::error title=assignee 필요::이 PR에 담당자(assignee)가 없습니다 — 담당자를 지정해야 머지됩니다."
           exit 1
