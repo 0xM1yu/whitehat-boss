@@ -88,7 +88,7 @@
 | D46 | **구조화 출력이 공백 폭주로 안 닫힌 JSON을 낸다 — 상한을 키워도 안 닫힌다** | 열림 | [본문](open-questions/D/D46.md) |
 | D47 | ~~스키마 재시도가 실패한 응답 원문을 프롬프트에 되싣는다 — D42의 상한이 그 자리에서 입력 초과로 되돌아온다~~ | 닫힘 | [본문](open-questions/D/D47.md) |
 | D48 | ~~`target_skipped.stage`가 실제로 실패한 단계를 안 가리킨다~~ | 닫힘 | [본문](open-questions/D/D48.md) |
-| D49 | **재시도 프롬프트가 산출물에 안 남는다 — 실제로 서버에 간 요청을 재현할 수 없다** | 열림 | [본문](open-questions/D/D49.md) |
+| D49 | ~~재시도 프롬프트가 산출물에 안 남는다 — 실제로 서버에 간 요청을 재현할 수 없다~~ | 닫힘 | [본문](open-questions/D/D49.md) |
 | D50 | ~~`--tool-runner` 경고가 값을 비교하지 않아 오버라이드가 아닌 run을 오버라이드로 신고한다~~ | 닫힘 | [본문](open-questions/D/D50.md) |
 | D51 | **`trigger_status`의 보류 두 건 — (2) 필드 순서는 닫혔고 (1) 열거 강제가 남았다** | 보류 | [본문](open-questions/D/D51.md) |
 | D52 | ~~`trigger_status`를 내라고 시키는 프롬프트가 저장소에 없어 그 필드는 구조적으로 항상 `null`이다~~ | 닫힘 | [본문](open-questions/D/D52.md) |
