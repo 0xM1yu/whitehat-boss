@@ -138,10 +138,14 @@ class _Server:
         models: list[str] | None = None,
         completion: str | None = None,
         metrics: list[str] | None = None,
+        max_model_len: int | None = None,
     ) -> None:
         self.models = models
         self.completion = completion
         self.metrics = list(metrics or [])
+        # 실제 vLLM의 `/v1/models` 응답에 있는 필드다. `None`이면 그 키가 아예 없는
+        # 서버를 흉내낸다 — 그쪽이 종전 동작으로 떨어져야 한다(#126).
+        self.max_model_len = max_model_len
         self.calls: list[str] = []
 
     def __call__(self, target: object, timeout: float | None = None) -> _Response:
@@ -152,7 +156,11 @@ class _Server:
         if url.endswith("/models"):
             if self.models is None:
                 raise urllib.error.URLError("connection refused")
-            return _Response(json.dumps({"data": [{"id": name} for name in self.models]}))
+            entries: list[dict[str, object]] = [{"id": name} for name in self.models]
+            if self.max_model_len is not None:
+                for entry in entries:
+                    entry["max_model_len"] = self.max_model_len
+            return _Response(json.dumps({"data": entries}))
         if url.endswith("/chat/completions"):
             if self.completion is None:
                 raise urllib.error.URLError("connection refused")
@@ -306,6 +314,34 @@ def test_startup_compares_served_id_with_the_registry_key(monkeypatch: pytest.Mo
 
     assert result["ok"] is False
     assert "--served-model-name" in result["reason"]
+
+
+def test_startup_keeps_the_servers_max_model_len(monkeypatch: pytest.MonkeyPatch) -> None:
+    """서버가 실제로 받는 상한을 응답에서 읽어 둔다 (#126).
+
+    `context_limit`(registry)과 다른 축이다. 이 값을 안 들고 오면 스윕 꼭대기가
+    `prompt + max_tokens > max_model_len`으로 **항상 400**을 받는다.
+    """
+    monkeypatch.setattr(
+        urllib.request, "urlopen", _Server(models=["qwen3-4b"], max_model_len=32768)
+    )
+
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3-4b")
+
+    assert result["ok"] is True
+    assert result["max_model_len"] == 32768
+
+
+def test_startup_reports_no_max_model_len_when_the_server_omits_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """그 키가 없는 서버도 있다. 그때는 종전 동작으로 떨어져야 한다 (#126)."""
+    monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["qwen3-4b"]))
+
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3-4b")
+
+    assert result["ok"] is True
+    assert result["max_model_len"] is None
 
 
 # --- B: 구조화 출력 ----------------------------------------------------------
@@ -849,6 +885,80 @@ def test_a_number_is_returned_without_a_reason(monkeypatch: pytest.MonkeyPatch) 
     _smi(monkeypatch, stdout="1024\n2048\n")
 
     assert bench_metrics.nvidia_smi_mb() == (2048.0, None)
+
+
+# --- context 스윕 상한 (#126) -------------------------------------------------
+
+
+def _stub_sweep(monkeypatch: pytest.MonkeyPatch, measured: list[int]) -> None:
+    """`_one_context`를 실제로 부르지 않고 어느 context가 시도됐는지만 센다."""
+    monkeypatch.setattr(
+        bench,
+        "_one_context",
+        lambda client, role, template, schema, ctx, endpoint: measured.append(ctx) or {},
+    )
+    monkeypatch.setattr(bench, "gpu_memory_utilization", lambda endpoint: (0.0, "스텁"))
+
+
+def test_context_sweep_skips_what_the_server_cannot_accept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`prompt + output_max > max_model_len`인 context는 **재보지 않는다** (#126).
+
+    2026-09-02 ATOM에서 스윕 꼭대기(32,768)가 `output_max` 4,096과 합쳐져
+    `--max-model-len` 32,768을 넘어 **항상 400**을 받았다. 두 번째 발생이다.
+    재려다 실패한 것이 아니라 **애초에 못 재는 것**이므로 사유를 남기고 건너뛴다.
+    """
+    measured: list[int] = []
+    _stub_sweep(monkeypatch, measured)
+
+    result = bench.measure_memory(
+        None,
+        Role.SCOUT,
+        None,
+        None,
+        (8192, 32768),
+        "http://x",
+        262144,
+        server_limit=32768,
+        output_max=4096,
+    )
+
+    assert measured == [8192], "서버가 못 받는 context에 요청을 보냈다"
+    skipped = result["by_context"]["32768"]["skipped"]
+    assert "max_model_len" in skipped and "4096" in skipped
+
+
+def test_context_sweep_keeps_measuring_when_the_server_limit_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """상한을 안 주는 서버에서는 **종전대로** 재보고 실패를 기록한다 (#126).
+
+    이슈가 명시한 조건이다 — 값이 없다고 스윕을 좁히면 잴 수 있는 것을 안 재게 된다.
+    """
+    measured: list[int] = []
+    _stub_sweep(monkeypatch, measured)
+
+    bench.measure_memory(
+        None, Role.SCOUT, None, None, (8192, 32768), "http://x", 262144, server_limit=None
+    )
+
+    assert measured == [8192, 32768]
+
+
+def test_context_sweep_still_honours_the_registry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """registry `context_limit` 분기는 그대로다 — 서버 상한과 **다른 축**이다 (#126)."""
+    measured: list[int] = []
+    _stub_sweep(monkeypatch, measured)
+
+    result = bench.measure_memory(
+        None, Role.SCOUT, None, None, (8192, 32768), "http://x", 16384, server_limit=131072
+    )
+
+    assert measured == [8192]
+    assert "context_limit" in result["by_context"]["32768"]["skipped"]
 
 
 # --- 메모리 폴링 --------------------------------------------------------------

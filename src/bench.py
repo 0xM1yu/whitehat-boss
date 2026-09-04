@@ -230,11 +230,17 @@ def check_startup(endpoint: str, model_key: str) -> dict[str, object]:
     """
     body, error = fetch(f"{endpoint.rstrip('/')}/models")
     if body is None:
-        return {"ok": False, "reason": error, "served_ids": []}
+        return {"ok": False, "reason": error, "served_ids": [], "max_model_len": None}
     try:
-        served = [str(item.get("id", "")) for item in json.loads(body).get("data", [])]
+        entries = list(json.loads(body).get("data", []))
+        served = [str(item.get("id", "")) for item in entries]
     except (json.JSONDecodeError, AttributeError, TypeError) as exc:
-        return {"ok": False, "reason": f"/v1/models 응답을 읽지 못했다: {exc}", "served_ids": []}
+        return {
+            "ok": False,
+            "reason": f"/v1/models 응답을 읽지 못했다: {exc}",
+            "served_ids": [],
+            "max_model_len": None,
+        }
     if model_key not in served:
         return {
             "ok": False,
@@ -243,8 +249,40 @@ def check_startup(endpoint: str, model_key: str) -> dict[str, object]:
                 "vLLM을 --served-model-name으로 맞추지 않으면 실제 run도 같은 이유로 실패한다"
             ),
             "served_ids": served,
+            "max_model_len": None,
         }
-    return {"ok": True, "reason": None, "served_ids": served}
+    return {
+        "ok": True,
+        "reason": None,
+        "served_ids": served,
+        # **서버가 실제로 받는 상한.** registry의 `context_limit`과 **다른 축**이다 —
+        # 그쪽은 모델이 원리상 지원하는 길이이고 이쪽은 이 프로세스가 `--max-model-len`
+        # 으로 띄워진 값이다. 둘을 같은 것으로 읽으면 스윕 꼭대기가 항상 400을 받는다
+        # (#126, 2026-09-02 ATOM에서 두 번째 발생). **이미 부르는 응답에서 필드 하나를
+        # 더 읽을 뿐이라 왕복이 늘지 않는다.**
+        #
+        # **없으면 `None`이다.** 이 키를 안 주는 서버가 있고, 그때는 값을 지어내는 대신
+        # 종전대로 재보고 실패를 기록하는 쪽이 맞다.
+        "max_model_len": _served_max_model_len(entries, model_key),
+    }
+
+
+def _served_max_model_len(entries: Sequence[object], model_key: str) -> int | None:
+    """`/v1/models`의 해당 항목이 선언한 `max_model_len`. 없거나 이상하면 `None`.
+
+    **`model_key`의 항목만 본다.** 한 서버가 여러 모델을 서빙하면 항목마다 값이 다를 수
+    있고, 아무 항목이나 집으면 다른 모델의 상한으로 이 모델의 스윕을 자르게 된다.
+    """
+    for item in entries:
+        if not isinstance(item, dict) or str(item.get("id", "")) != model_key:
+            continue
+        value = item.get("max_model_len")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            # 문자열·`None`·0 이하를 상한으로 쓰면 스윕이 통째로 건너뛰어진다. 못 읽은
+            # 것과 "상한이 0"은 다르고, 전자면 종전 동작이 맞다.
+            return None
+        return value
+    return None
 
 
 def measure_structured_output(
@@ -456,6 +494,9 @@ def measure_memory(
     contexts: Sequence[int],
     endpoint: str,
     context_limit: int,
+    *,
+    server_limit: int | None = None,
+    output_max: int = 0,
 ) -> dict[str, object]:
     """E. context별 KV cache 점유.
 
@@ -475,6 +516,21 @@ def measure_memory(
         if ctx > context_limit:
             by_context[str(ctx)] = {
                 "skipped": f"registry의 context_limit({context_limit})을 넘는다",
+            }
+            continue
+        # **서버가 못 받는 것은 재보지 않는다** (#126). vLLM은
+        # `prompt_tokens + max_tokens > max_model_len`이면 400을 낸다 —
+        # 재려다 실패한 것이 아니라 **애초에 못 재는 것**이므로 `dead` 집계가 아니라
+        # `skipped`로 간다(`_judge_context`가 그 둘을 가른다).
+        #
+        # `server_limit`이 `None`이면 이 분기가 통째로 없는 것과 같다 — 상한을 안 주는
+        # 서버에서 스윕을 좁히면 **잴 수 있는 것을 안 재게 된다**.
+        if server_limit is not None and ctx + output_max > server_limit:
+            by_context[str(ctx)] = {
+                "skipped": (
+                    f"서버의 max_model_len({server_limit})을 넘는다 — "
+                    f"프롬프트 {ctx} + output_max {output_max} = {ctx + output_max}"
+                ),
             }
             continue
         by_context[str(ctx)] = _one_context(client, role, template, schema, ctx, endpoint)

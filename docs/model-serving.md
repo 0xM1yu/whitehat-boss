@@ -109,7 +109,14 @@ models:
       tok_s_single: 0
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null   # 위 batch32가 어떤 캐시 상태에서 나왔는가
 ```
+
+**`prefix_hit_ratio_batch32`는 실측 항목이 아니다** — `Benchmark.MEASUREMENTS` 셋(`tok_s_single`·
+`tok_s_batch32`·`mem_gb_ctx8k`)에 들어가지 않으므로 이 값이 없다고 「부분 측정」이 되지 않는다.
+`tok_s_batch32`가 **몇 번째 판이냐의 함수**라는 것이 2026-09-02 ATOM에서 실측으로 드러나
+([보고서](experiments/harness/2026-09-02-bench-concurrency-atom.md)), 그 값 옆에 조건을 적을
+칸으로 뒀다. **`null`은 미판독이고 `0.0`은 「캐시를 끄고 쟀다」라는 실측이다 — 둘은 다르다.**
 
 ```yaml
 # config/profiles.yaml (합성 예시)
