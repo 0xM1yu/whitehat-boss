@@ -27,10 +27,12 @@ Windows에서 파이썬이 텍스트 모드로 파일을 쓰면(`Path.write_text
 `newline="\n"`을 명시하는 것이 유일한 예방이다.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,5 +81,71 @@ def test_tracked_files_have_lf_in_the_working_tree() -> None:
 
     assert offenders == [], (
         "작업 트리에 CRLF가 섞인 추적 파일이 있다. 모듈 docstring의 복구 절차를 쓴다:\n"
+        + "\n".join(offenders)
+    )
+
+
+# `config/models.yaml`의 `  <모델이름>:` 행. 모델 블록의 경계를 이것으로 잡는다.
+_MODEL_HEADER = re.compile(r"^  ([A-Za-z0-9._-]+):\s*$")
+_ISO_DAY = re.compile(r"20\d\d-\d\d-\d\d")
+
+
+def _model_comment_blocks() -> dict[str, str]:
+    """모델 이름 → 그 블록 안의 **주석 줄만** 이어붙인 문자열.
+
+    값 줄을 섞으면 `measured_at: "2026-09-04T…"` 자신이 날짜로 잡혀 검사가 항상
+    통과한다. 그래서 `#`로 시작하는 줄만 모은다.
+    """
+    raw = (REPO_ROOT / "config" / "models.yaml").read_text(encoding="utf-8")
+    blocks: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in raw.splitlines():
+        header = _MODEL_HEADER.match(line)
+        if header:
+            current = header.group(1)
+            blocks[current] = []
+            continue
+        if current is not None and line.lstrip().startswith("#"):
+            blocks[current].append(line)
+    return {name: "\n".join(lines) for name, lines in blocks.items()}
+
+
+def test_a_measured_benchmark_names_its_measurement_date_in_the_comment() -> None:
+    """`benchmark`를 채우면서 그 근거 주석을 안 고치면 값과 주석이 정면 모순한다.
+
+    CLAUDE.md §2.3이 사고로 기록한 부류다 — *"`output_max`를 8,192에서 4,096으로
+    내리면서 「8,192는 정상 경로에서 닿지 않는다」고 **현재형으로 추론하는** docstring을
+    안 고쳤다. 값이 움직였는데 그 근거만 남았다."*
+
+    `models.yaml`에서 같은 일이 나면 더 나쁘다. 이 저장소의 산출물은 판정이고,
+    "이 모델은 안 쟀다"고 적힌 주석 밑에 실측값이 앉아 있으면 **읽는 사람이 어느
+    쪽을 믿어야 하는지 알 수 없다.** §0이 "수치를 쓸 때는 어디서 나왔는지를 같은
+    문장에 적는다"로 요구하는 것이 이것이다.
+
+    그래서 기계로 고정한다: `measured_at`이 있으면 **그 날짜가 그 모델의 주석 안에**
+    있어야 한다. 날짜를 적으려면 주석을 읽게 되고, 읽으면 모순이 눈에 띈다.
+
+    이 검사는 문장의 옳음을 검증하지 않는다 — 날짜의 존재만 본다. 그것으로 "값만
+    갈아끼우고 지나가는" 경로를 막는 것이 목적이다.
+    """
+    models = yaml.safe_load(
+        (REPO_ROOT / "config" / "models.yaml").read_text(encoding="utf-8")
+    )["models"]
+    comments = _model_comment_blocks()
+
+    offenders = []
+    for name, spec in models.items():
+        measured_at = (spec.get("benchmark") or {}).get("measured_at")
+        if not measured_at:
+            continue  # 미실측 — §0의 0/null 표시다. 검사 대상이 아니다.
+        day = str(measured_at)[:10]
+        body = comments.get(name, "")
+        if day not in body:
+            found = sorted(set(_ISO_DAY.findall(body))) or ["(주석에 날짜 없음)"]
+            offenders.append(f"  {name}: measured_at={day} 인데 주석의 날짜는 {found}")
+
+    assert offenders == [], (
+        "benchmark 값이 움직였는데 그 근거 주석이 따라오지 않았다 (CLAUDE.md §0 · §2.3).\n"
+        "해당 모델의 주석에 이번 측정이 언제/어디서 나왔는지를 적는다:\n"
         + "\n".join(offenders)
     )
