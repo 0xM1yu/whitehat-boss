@@ -162,17 +162,18 @@ _CONDITION_DEFAULTED = (
 # **`kb_snapshot`은 여기 없다.** `kb-none`은 아직 KB가 없다는 정직한 표기이고
 # `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다 — 경고로 충분하다.
 #
-# **막는 기준은 `profile.production`이 아니다.** 지금 프로필 12개가 전부
-# `production: false`라 그 필드로는 dev와 실서빙이 갈리지 않는다(2026-09-02 실측).
-# `HarnessConfig.served_models()`가 그것을 가른다 — dev 다섯은 0, 실서빙 일곱은 1~3이다.
+# **막는 기준은 `profile.production`이 아니다.** 지금 프로필 13개가 전부
+# `production: false`라 그 필드로는 dev와 실서빙이 갈리지 않는다(2026-09-04 확인).
+# `HarnessConfig.served_models()`가 그것을 가른다 — dev 다섯은 0, 실서빙 여덟은 1~5다.
 #
 # **문장 → 플래그 이름 매핑이다.** 거부 문구가 `--device 와 --condition 을 명시한다`처럼
 # 고정 문장이면 이미 준 플래그를 다시 대라고 말하게 된다 — 조작자가 그것을 의심하며 시간을
 # 태운다. 실제로 빠진 것만 이름으로 부르려면 문장에서 플래그를 되찾을 수 있어야 한다.
 #
-# **`served_models()`에는 `retriever` 축이 접혀 있다.** 오늘 실서빙 일곱이 전부
-# `retriever: fake`라 이 게이트가 세는 것은 scout·auditor·critic뿐이다. hybrid 실서빙
-# 프로필이 생기면 embedding·reranker도 세어져 게이트 범위가 넓어진다.
+# **`served_models()`에는 `retriever` 축이 접혀 있다.** 실서빙 여덟 중 일곱은
+# `retriever: fake`라 이 게이트가 세는 것이 scout·auditor·critic뿐이다. **나머지 하나
+# `local_balanced_hybrid`에서 그 조건이 깨졌다** — embedding·reranker까지 세어 다섯이고,
+# 그래서 이 게이트의 범위가 프로필마다 다르다(2026-09-04 확인).
 BLOCKING_WHEN_SERVING = {_DEVICE_MISSING: "--device", _CONDITION_DEFAULTED: "--condition"}
 
 

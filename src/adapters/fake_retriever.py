@@ -13,8 +13,11 @@ knowledge-base.md §3의 2단계 구조(광역 수집 → reranker 재선별)는
 **`callers`/`callees`는 1단계 인덱서 산출물에서 온다**(`adapters/index_graph.py`, #63).
 `HybridRetriever`와 **같은 모듈**을 쓴다 — 두 구현이 같은 index.json에서 다른 섹션을 내면
 `dev_fake`와 `dev_docker`의 결과를 비교할 수 없다(`rules/harness-c.yaml` 첫 주석과 같은
-논법). index.json을 내는 프로필이 전부 `retriever: fake`이므로(`dev_docker`·
-`dev_singularity`·`local_balanced`·`b1_single`) **그 연결이 실제로 도는 곳이 이 파일이다.**
+논법). index.json을 낼지는 `retriever`가 아니라 **`tool_runner`가 정한다** —
+`docker`·`singularity`가 내고 `fake`는 안 낸다(`container_tools.INDEX_FILE`). 프로필
+13개 중 10개가 그렇게 내고 그중 **8개가 `retriever: fake`**라 **그 연결이 주로 도는
+곳이 이 파일이다.** 나머지 둘(`dev_hybrid_docker`·`local_balanced_hybrid`)은 같은 index.json을
+`HybridRetriever`로 태운다(2026-09-04 확인).
 """
 
 from collections.abc import Callable
