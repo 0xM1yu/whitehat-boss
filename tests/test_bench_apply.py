@@ -54,6 +54,101 @@ def test_apply_preserves_the_comments_that_are_the_documentation(tmp_path: Path)
     assert "tok_s_single: 12.5" in path.read_text(encoding="utf-8")
 
 
+def _throughput(*, hit_ratio: object, tok_s_batch32: float = 90.0) -> dict[str, object]:
+    """`measure_throughput` 산출의 최소 형태. `by_concurrency`가 적중률을 들고 있다."""
+    return {
+        "tok_s_single": 30.0,
+        "tok_s_batch32": tok_s_batch32,
+        "tok_s_batch32_reason": None,
+        "by_concurrency": {
+            "1": {"tok_s": 30.0, "prefix_cache_delta": {"status": "ok", "hit_ratio": 0.9996}},
+            "32": {
+                "tok_s": tok_s_batch32,
+                "prefix_cache_delta": (
+                    {"status": "ok", "hit_ratio": hit_ratio}
+                    if hit_ratio is not None
+                    else {"status": "metrics_unavailable", "reason": "카운터를 읽지 못했다"}
+                ),
+            },
+        },
+    }
+
+
+def _role_report(throughput: dict[str, object]) -> dict[str, object]:
+    return {
+        "roles": {
+            "scout": {
+                "model_key": "qwen3-4b",
+                "skipped": None,
+                # `_is_measured`가 요구한다 — 없으면 이 역할이 통째로 건너뛰어져
+                # 기능 부재가 아니라 픽스처 결손으로 실패한다.
+                "startup": {"ok": True},
+                "throughput": throughput,
+                "memory": {"mem_gb_ctx8k": 0.0, "mem_gb_ctx8k_reason": "미측정"},
+            }
+        }
+    }
+
+
+def test_benchmark_carries_the_prefix_cache_hit_ratio(tmp_path: Path) -> None:
+    """`tok_s_batch32`가 몇 번째 판이냐의 함수라면 그 사실이 값 옆에 있어야 한다 (#128).
+
+    2026-09-02 ATOM에서 같은 서버·같은 인자로 돌린 세 판이 59.45 / 68.64 / 107.32로
+    **1.81배** 갈렸고, 원인은 산포가 아니라 prefix cache 적중률이었다
+    (0.5142 / 0.7776 / 0.8577 — 아홉 칸에 역전 0건).
+
+    **이 필드는 값을 고치지 않는다.** 이슈가 (a)(판 구분자를 섞는다)를 재현성과
+    맞바꾸는 설계 판단이라며 정하지 않았고, 여기서 하는 것은 그 이슈가
+    「최소 정직 조치」라 부른 (b)뿐이다 — **읽는 사람이 판단할 재료를 남긴다.**
+    """
+    entry = Benchmark(tok_s_batch32=68.64, prefix_hit_ratio_batch32=0.7776)
+
+    assert entry.prefix_hit_ratio_batch32 == 0.7776
+    # **실측 항목이 아니다.** 모델의 능력이 아니라 그 측정이 어떤 상태에서 나왔는가다.
+    # MEASUREMENTS에 넣으면 이 값이 없는 모델이 "부분 측정"으로 떨어진다.
+    assert "prefix_hit_ratio_batch32" not in Benchmark.MEASUREMENTS
+    assert entry.missing_measurements == ("tok_s_single", "mem_gb_ctx8k")
+
+
+def test_pending_updates_carries_the_batch32_hit_ratio() -> None:
+    """`--apply`가 쓸 값에 적중률이 함께 실린다 (#128)."""
+    updates, _ = bench_report.pending_updates(_role_report(_throughput(hit_ratio=0.7776)))
+
+    assert updates["qwen3-4b"]["prefix_hit_ratio_batch32"] == 0.7776
+
+
+def test_a_zero_hit_ratio_is_still_written(tmp_path: Path) -> None:
+    """적중률 0은 **미측정이 아니라 실측**이다 — 캐시를 끄고 잰 판이 정확히 그 값이다 (#128).
+
+    `--apply`가 0을 안 쓰는 규칙은 `MEASUREMENTS` 세 항목의 것이고(0 = 미측정 표시),
+    적중률에는 그 논법이 성립하지 않는다. 0을 버리면 **가장 정직한 판이 기록에서 사라진다.**
+    """
+    updates, _ = bench_report.pending_updates(_role_report(_throughput(hit_ratio=0.0)))
+
+    assert updates["qwen3-4b"]["prefix_hit_ratio_batch32"] == 0.0
+
+
+def test_an_unreadable_hit_ratio_is_not_invented() -> None:
+    """카운터를 못 읽었으면 그 자리는 비워 둔다 (#128). 0으로 접으면 적극적인 거짓말이다."""
+    updates, skipped = bench_report.pending_updates(_role_report(_throughput(hit_ratio=None)))
+
+    assert "prefix_hit_ratio_batch32" not in updates["qwen3-4b"]
+    assert any("prefix_hit_ratio_batch32" in reason for reason in skipped)
+
+
+def test_apply_writes_the_hit_ratio_into_the_registry(tmp_path: Path) -> None:
+    """registry 파일에 실제로 적힌다 (#128)."""
+    path = _models_copy(tmp_path)
+
+    bench_report.apply_benchmarks(
+        path, {"qwen3-4b": {"tok_s_batch32": 68.64, "prefix_hit_ratio_batch32": 0.7776}},
+        MEASURED_AT,
+    )
+
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert loaded["models"]["qwen3-4b"]["benchmark"]["prefix_hit_ratio_batch32"] == 0.7776
+
+
 def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
     """`Benchmark.is_measured`가 0 여부로 판정한다.
 
@@ -454,6 +549,60 @@ def test_apply_without_a_device_warns_at_the_moment_it_matters(
          "--apply", "--device", "atom"]
     )
     assert "--device 없이 --apply" not in capsys.readouterr().err
+
+
+def test_serving_apply_without_a_device_refuses_to_write(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실서빙 프로필에서 `--apply`는 `--device` 없이 registry를 쓰지 않는다 (#124).
+
+    `run`은 같은 결여에 `exit 2`인데 `bench --apply`만 경고하고 진행했다. 그 비대칭이
+    나쁜 이유는 **결여의 대가가 더 크기 때문**이다 — run의 산출물은 그 run 하나에
+    갇히지만 registry는 이후 모든 예산 추정과 `cli estimate`가 읽는 공용 파일이고,
+    `measured_on: null`은 거기 영구히 남는다(docs/portability.md).
+
+    이슈의 선택지 (b)다 — 읽기 전용 `bench`는 막지 않고 **파일을 쓰는 경로만** 요구한다.
+    """
+    written: list[object] = []
+    monkeypatch.setattr(cli, "apply_benchmarks", lambda *a, **k: written.append(a) or {})
+
+    code = cli.main(
+        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path), "--apply"]
+    )
+
+    assert code == 2
+    assert written == [], "거부해 놓고 registry에 썼다"
+    assert "--device" in capsys.readouterr().err
+
+
+def test_serving_apply_with_a_device_still_writes(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """라벨을 주면 종전대로 쓴다 — 막는 것은 결여이지 `--apply` 자체가 아니다 (#124)."""
+    monkeypatch.setattr(cli, "apply_benchmarks", lambda *a, **k: {"lines": 0})
+
+    code = cli.main(
+        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path),
+         "--apply", "--device", "atom"]
+    )
+    capsys.readouterr()
+
+    assert code != 2
+
+
+def test_serving_bench_without_apply_is_not_blocked(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """읽기 전용 `bench`는 라벨 없이도 돈다 (#124).
+
+    막는 근거가 "공용 파일이 오염된다"이므로 아무것도 안 쓰는 실행에는 그 근거가 없다.
+    """
+    code = cli.main(
+        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path)]
+    )
+    capsys.readouterr()
+
+    assert code != 2
 
 
 # --- CLI ---------------------------------------------------------------------
