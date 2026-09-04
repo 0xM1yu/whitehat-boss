@@ -205,23 +205,28 @@ models:
     #   util 0.30  가중치+non-torch 25.48 GiB · KV 9.67
     #   로딩 24.12 GiB / 173.2초, 전체 콜드 약 330초
     #
-    # **`source`·`checksum`은 띄웠는데도 안 채운다.** 띄운 것과 해시를 만든 것은 다르고,
-    # `source`는 그 checksum이 어디서 나왔는가를 적는 필드다(파일 상단). tools/model_checksum.py를
-    # 아직 안 돌렸다 — 서버가 떠 있는 동안 24 GiB를 읽으면 페이지 캐시가 차서 돌고 있는 다른
-    # 서버가 CUDA OOM으로 죽는다(같은 보고서 §4.3). 서버를 내린 뒤에 만든다. 지금 값을 적으면
-    # 그게 곧 지어낸 값이고, `checksum: 0`은 그 미실측 표시다.
+    # **`source`·`checksum`을 2026-09-04에 채웠다.** 이 항목이 최초 커밋부터 비워 두던 자리다.
+    # manifest는 `config/checksums/devstral-small-2-24b.txt`(파일 8개)이고 registry의 이 값은
+    # **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
     #
-    # revision은 확인됐다(**주석이지 값이 아니다.** 위 사유로 `source`에는 안 넣는다):
-    #   정본   mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128
-    #   nvfp4  Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4 — 이름만 확인. 받지도 띄우지도 않았다
+    # **서버를 내린 뒤에 만들었다.** 떠 있는 동안 24 GiB를 읽으면 페이지 캐시가 차서 돌고 있는
+    # 다른 서버가 CUDA OOM으로 죽는다(같은 보고서 §4.3) — 순서가 제약이었다.
+    #
+    # ⚠ **채워진 것은 「어느 파일로 돌았나」이지 「비교표에 들어간다」가 아니다.** 이 모델의
+    # `benchmark`는 여전히 전부 0이고(미실측), model-serving.md §5에 따라 production 프로필에
+    # 넣지 않는다. 그리고 2026-09-04 run(`run_20260904_0001`)은 이 값이 채워지기 **전**에
+    # 돌았으므로 그 run의 `RunRecord.model_checksums`에는 0이 남아 있다.
+    #
+    # **`nvfp4` 빌드는 여전히 안 받았다**(주석이지 값이 아니다):
+    #   Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4 — 이름만 확인. 받지도 띄우지도 않았다
     # NVFP4 양자화 시 반박 정확도 저하 위험(model-serving.md §4, docs/open-questions/R/R2.md)은
     # 그 별도 빌드에 대한 것이고, **여기 값은 그것이 아니다.**
     endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 262144
     quantization: "fp8"
     license: "Apache-2.0"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: null
+    checksum: "sha256:b352c3e63c12f9f14d0841790d09675801587ded6d3cbdbd47d233ade1f27b4d"
+    source: "hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128"
     prompt_template_version: "v1"
     fallback: null
     benchmark:

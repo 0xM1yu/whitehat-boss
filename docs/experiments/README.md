@@ -383,7 +383,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 | --- | --- |
 | 기동 로그 | `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` · `arch=sm121` ([NVFP4 보고서](harness/2026-08-25-serving-nvfp4-atom.md) §3·§4) |
 | 3개 중 몇 개를 쟀나 | **2개.** `qwen3-8b`·`qwen3-coder-30b-a3b` |
-| 남은 1개 | **`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지. **← 앞 문장은 2026-09-04에 반증됐다(이 절 머리의 갱신 블록).** `source`가 `null`인 것만 그대로다 |
+| 남은 1개 | ~~**`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지~~ → **2026-09-04에 전부 반증됐다**(이 절 머리의 갱신 블록). 그날 8003에 떴고, 서버를 내린 뒤 `tools/model_checksum.py`로 `source`·`checksum`을 채웠다. **다만 뜬 것은 `nvfp4`가 아니라 fp8 빌드다** — #1이 세는 3개 중 나머지 1개(nvfp4)는 여전히 미검증이다 |
 
 ### #8 `kv_cache_dtype`은 모델마다 다르고 하네스 기록에 없다
 
