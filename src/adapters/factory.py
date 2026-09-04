@@ -165,9 +165,9 @@ _RETRIEVERS: dict[str, _Wiring] = {
             ids=a.ids,
             run_id=a.run_id,
             on_cache=a.on_cache,
-            # **프로필 13개 중 10개가 index.json을 내고 그중 8개가 이쪽이다** — 내는
-            # 조건은 `tool_runner`가 docker·singularity인 것이고, `retriever: hybrid`인
-            # 둘(dev_hybrid_docker·local_balanced_hybrid)만 아래 hybrid 빌더로 간다.
+            # **index.json을 내는 프로필은 대부분 이쪽이다** — 내는 조건은
+            # `tool_runner`가 docker·singularity인 것이고, 그중 `retriever: hybrid`인
+            # dev_hybrid_docker·local_balanced_hybrid만 아래 hybrid 빌더로 간다.
             # 여기 그래프를 안 물리면 1단계 산출물을 아무도 읽지 않는다.
             graph=a.graph_index(),
         ),

@@ -14,10 +14,10 @@ knowledge-base.md §3의 2단계 구조(광역 수집 → reranker 재선별)는
 `HybridRetriever`와 **같은 모듈**을 쓴다 — 두 구현이 같은 index.json에서 다른 섹션을 내면
 `dev_fake`와 `dev_docker`의 결과를 비교할 수 없다(`rules/harness-c.yaml` 첫 주석과 같은
 논법). index.json을 낼지는 `retriever`가 아니라 **`tool_runner`가 정한다** —
-`docker`·`singularity`가 내고 `fake`는 안 낸다(`container_tools.INDEX_FILE`). 프로필
-13개 중 10개가 그렇게 내고 그중 **8개가 `retriever: fake`**라 **그 연결이 주로 도는
-곳이 이 파일이다.** 나머지 둘(`dev_hybrid_docker`·`local_balanced_hybrid`)은 같은 index.json을
-`HybridRetriever`로 태운다(2026-09-04 확인).
+`docker`·`singularity`가 내고 `fake`는 안 낸다(`container_tools.INDEX_FILE`). 그렇게
+내는 프로필은 **대부분** `retriever: fake`라 **그 연결이 주로 도는 곳이 이 파일이다.**
+예외는 `dev_hybrid_docker`·`local_balanced_hybrid`이고 그 둘은 같은 index.json을
+`HybridRetriever`로 태운다. **개수는 적지 않는다** — 프로필이 늘고 줄 때마다 틀린다.
 """
 
 from collections.abc import Callable

@@ -77,9 +77,10 @@
 
 **산출물이 캡슐까지 왔다 (2026-08-20).** `scratch/index/index.json`을
 `adapters/index_graph.py`가 읽어 **두 Retriever의** `callers`/`callees`를 채운다.
-`FakeRetriever`가 주 경로다 — 프로필 13개 중 10개가 index.json을 내고(내는 조건은
-`tool_runner`가 docker·singularity인 것이다) 그중 **8개가 `retriever: fake`**이기 때문이다. 나머지 둘
-`dev_hybrid_docker`·`local_balanced_hybrid`가 hybrid 쪽 경로를 태운다(2026-09-04 확인).
+`FakeRetriever`가 주 경로다 — index.json을 내는 조건은 `retriever`가 아니라
+`tool_runner`가 docker·singularity인 것이고, 그렇게 내는 프로필이 **대부분**
+`retriever: fake`이기 때문이다. `dev_hybrid_docker`·`local_balanced_hybrid`가 hybrid 쪽
+경로를 태운다(2026-09-04 확인).
 
 **`types`는 채우지 않는다.** index-v1에 타입 데이터가 없어(`build_index()`는 symbols·calls
 뿐) 섹션 자체를 없앴다 — 고정 64토큰으로 두면 없는 근거를 지어내는 것이고, 이름만 남기면
