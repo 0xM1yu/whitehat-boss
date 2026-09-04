@@ -147,6 +147,64 @@ def test_a_hybrid_profile_keeps_its_retrieval_roles() -> None:
     )
 
 
+# `local_balanced`와 같은 roles·budget에 `retriever: hybrid`만 다른 프로필. 아래 두
+# 테스트가 이 이름을 공유한다.
+HYBRID_SERVING_PROFILE = "local_balanced_hybrid"
+
+
+def test_a_real_profile_pairs_a_hybrid_retriever_with_served_retrieval_models() -> None:
+    """검색 역할을 **실제로 띄우는** 프로필이 저장소에 실재한다 (build-plan §8 row 2).
+
+    바로 위 테스트가 합성 프로필로 막고 있던 자리다. 그 docstring이 "이 방향을
+    실프로필로는 못 잰다"고 적었던 근거는 hybrid인 두 프로필이 **둘 다 전 역할 Fake**라
+    `is_fake` 축과 `retriever` 축이 같은 답을 낸다는 것이었다. 이 프로필은 두 축이
+    갈리는 첫 실물이다 — hybrid이면서 embedding·reranker가 실서빙이라, 어느 한
+    축만 보는 구현은 여기서 갈린다.
+
+    **프로필 이름을 박지 않고 조합으로 찾는다** — `test_some_profile_actually_points_
+    at_a_real_endpoint`와 같은 방식이다. 이름이 바뀌어도 그물이 남아야 한다.
+    """
+    paired = [
+        profile
+        for profile in ALL_PROFILES
+        for config in [load_config(profile)]
+        if config.profile.adapters.retriever == "hybrid"
+        and all(not config.model_for(role).is_fake for role in RETRIEVAL_ROLES)
+    ]
+
+    assert paired, (
+        "hybrid 배선에 실서빙 embedding·reranker를 짝지은 프로필이 없다 — "
+        "위 테스트의 합성 프로필 말고는 이 방향을 재는 것이 없다"
+    )
+    for profile in paired:
+        served = load_config(profile).served_models()
+        assert set(RETRIEVAL_ROLES) <= set(served), f"{profile}: 뜨는데 판정 대상에서 빠졌다"
+
+
+def test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retriever() -> None:
+    """대조군과의 차이가 `retriever` **하나**로 유지된다.
+
+    이 프로필의 쓸모가 그 하나에 걸려 있다. roles나 budget이 함께 움직이면 두 프로필의
+    run 차이가 무엇에서 왔는지 못 가른다 — evaluation.md §2.3 규칙 1이 조건 비교에
+    요구하는 것과 같은 성질이고, 여기서는 조건 비교표가 아니라 **검색 경로를 켠 효과**를
+    보려는 것이라 축이 하나여야 한다는 요구가 더 강하다.
+
+    한쪽만 고치는 것을 사람이 알아채기 어려워 기계로 고정한다.
+    """
+    base = load_config("local_balanced").profile
+    variant = load_config(HYBRID_SERVING_PROFILE).profile
+
+    assert variant.roles == base.roles
+    assert variant.budget == base.budget
+    assert variant.adapters.retriever == "hybrid"
+    assert base.adapters.retriever == "fake"
+    assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
+        exclude={"retriever"}
+    )
+    # 실측 전이다 — models.yaml의 benchmark가 아직 0이다 (model-serving.md §5).
+    assert variant.production is False
+
+
 def test_prompted_roles_matches_prompt_directories() -> None:
     """`PROMPTED_ROLES`와 `prompts/` 하위 디렉터리가 일치한다.
 
