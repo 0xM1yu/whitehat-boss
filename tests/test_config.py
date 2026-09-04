@@ -131,10 +131,18 @@ def test_served_models_skips_roles_this_profile_never_wires(profile: str) -> Non
 def test_a_hybrid_profile_keeps_its_retrieval_roles() -> None:
     """hybrid면 검색 역할을 **센다.**
 
-    이 방향을 실프로필로는 못 잰다 — 오늘 hybrid인 두 프로필(`dev_hybrid`·
-    `dev_hybrid_docker`)은 그 역할이 `fake`라 어느 쪽 규칙으로 걸러도 결과가 같다.
-    그래서 게이트를 통째로 지운 구현(`retriever`를 안 보고 항상 `RETRIEVAL_ROLES`를
-    빼는 것)이 스위트 전체를 통과한다. 합성 프로필 한 건이 그 자리를 막는다.
+    게이트를 통째로 지운 구현(`retriever`를 안 보고 항상 `RETRIEVAL_ROLES`를 빼는 것)이
+    스위트를 통과하는 것을 막는다.
+
+    **이 docstring이 오래 "이 방향을 실프로필로는 못 잰다"고 적어 왔고, 그것은
+    2026-09-04에 거짓이 됐다** — `local_balanced_hybrid`가 hybrid이면서 embedding·
+    reranker를 실서빙한다(아래 `test_a_real_profile_pairs_a_hybrid_retriever_with_
+    served_retrieval_models`). 그때까지 hybrid인 두 프로필은 그 역할이 `fake`라
+    `is_fake` 축과 `retriever` 축이 같은 답을 냈다.
+
+    **그래도 이 테스트는 남는다.** 실프로필 쪽은 `profiles.yaml`의 내용에 기대므로,
+    그 파일이 다시 바뀌면 함께 사라진다. 합성 프로필은 그 내용과 무관하게 `b1_single`
+    하나만 있으면 서므로 게이트 자체를 지키는 그물은 이쪽이다.
     """
     base = load_config("b1_single")
     profile = base.profile.model_copy(
