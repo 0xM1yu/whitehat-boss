@@ -116,9 +116,9 @@ def declared_sampling_by_role(
     **프롬프트를 쓰는 실서빙 역할만** 담는다 — `PROMPTED_ROLES`로 좁힌다. embedding·reranker는
     생성 모델이 아니라 샘플링과 무관해서다. **이 좁힘은 한때 중복 방어였고, 지금은
     아니다.** `served_models()`가 이슈 #108 (b) 이후 `retriever: fake`인 프로필에서 그
-    둘을 이미 빼므로 오래 그 둘을 주는 프로필이 0개였는데, 13개 프로필 중 hybrid 셋
-    가운데 `local_balanced_hybrid`가 embedding·reranker를 실서빙하면서
-    **그 수가 1이 됐다**(2026-09-04 확인). "붙는 날 다시 필요해진다"고 적어 두었던
+    둘을 이미 빼므로 오래 그 둘을 주는 프로필이 **하나도 없었는데**,
+    `local_balanced_hybrid`가 embedding·reranker를 실서빙하면서 그것이 깨졌다
+    (2026-09-04 확인). "붙는 날 다시 필요해진다"고 적어 두었던
     그날이 왔다 — 이제 `PROMPTED_ROLES`가 **실제로 거르는** 유일한 방어다. 지우지 마라.
 
     **맵에서 빠지는 것은 "읽지 못한" 역할뿐이다 (#99 ③).** Fake 역할, `source` 없는 모델,
