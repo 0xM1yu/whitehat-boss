@@ -736,9 +736,10 @@ def test_serving_profiles_run_real_tools(profile: str) -> None:
     상태"를 그 선언이 오히려 만들고 있었다. 경위는
     docs/decisions/0005-tool-runner-override.md 마지막 절.
 
-    **여섯이 같은 값이어야 한다는 것이 이 단언의 지금 이유다.** 2x2 실험 프로필 넷도
-    `docker`이고, `tool_images` digest는 런타임 사이에서 비교할 수 없으므로
-    (docs/portability.md §5 #4) 값이 갈리면 B3'-large와 2x2 넷을 같은 비교표에 못 올린다.
+    **둘이 같은 값이어야 한다는 것이 이 단언의 지금 이유다.** `tool_images` digest는
+    런타임 사이에서 비교할 수 없으므로(docs/portability.md §5 #4) 값이 갈리면 이 둘을
+    같은 비교표에 못 올린다. 예전에는 2x2 실험 프로필 넷도 같은 이유로 여기 묶여 있었고,
+    그 트랙은 2026-09-01에 폐기됐고 2026-09-04에 저장소에서 걷어냈다.
     """
     config = load_config(profile)
 
