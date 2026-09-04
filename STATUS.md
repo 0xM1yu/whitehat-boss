@@ -344,7 +344,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 ```
 [x] vLLM × CUDA 13.0 × sm_121 커널 호환성   ← 2026-08-17 기동 확인. VLLM_USE_DEEP_GEMM=0 필요
-[ ] 역할별 모델 로드 및 실제 통합메모리 점유    ← mem_gb_ctx8k=0. nvidia-smi가 [N/A]라 소스 대기
+[ ] 역할별 모델 로드 및 실제 통합메모리 점유    ← mem_gb_ctx8k=0. nvidia-smi --query-gpu가 [N/A]라 소스 대기
 [ ] context 8K/16K/32K에서 KV cache 점유와 처리량
 [~] 단일 스트림 tok/s vs 배치(8/16/32) 합산 tok/s ← 단일 39.65 · batch32 127.69. 8·16 미측정
 [ ] automatic prefix caching 동작 및 적중률       ← R6 판정 지점
