@@ -149,3 +149,49 @@ def test_a_measured_benchmark_names_its_measurement_date_in_the_comment() -> Non
         "해당 모델의 주석에 이번 측정이 언제/어디서 나왔는지를 적는다:\n"
         + "\n".join(offenders)
     )
+
+
+# 「프로필 N개」와 「N개 프로필」 두 어순이 다 쓰인다. 예시를 자릿수로 적으면
+# 이 줄 자신이 검사에 걸리므로 적지 않는다 — 아래 정규식이 곧 명세다.
+_PROFILE_COUNT = re.compile(r"프로필 (\d+)개|(\d+)개 프로필")
+
+
+def test_source_prose_does_not_carry_a_stale_profile_count() -> None:
+    """프로필을 추가하면 개수를 세던 주석이 **전부** 거짓이 된다.
+
+    사람이 `git grep`으로 훑는 것이 CLAUDE.md §2.3이 요구하는 절차인데, #138에서
+    그 훑기가 새지 않은 자리를 남겼다 — 프로필 하나를 더하고 넷을 고쳤는데
+    `runner.py`·`generation_config.py`·`test_pipeline_e2e.py`가 "12개"인 채로 남았다.
+    세 곳 다 **현재형**이라 다음 사람이 그대로 믿는다.
+
+    개수는 기계가 셀 수 있다. 그래서 센다.
+
+    **`src/`와 `tests/`만 본다.** `docs/open-questions/D/` 아래는 "2026-08-29 ATOM
+    실측, 줄번호는 origin/main a688e0f 기준" 같은 **날짜가 박힌 기록**이라 당시의
+    개수를 적은 것이 맞다 — 그것을 지금 값으로 고치면 기록이 거짓이 된다.
+    산 코드와 산 테스트의 서술만 현재를 말해야 한다.
+
+    한글 수사(「실서빙 일곱」 등)는 이 검사가 못 잡는다. 자릿수 표기만 본다.
+    """
+    profile_count = len(
+        yaml.safe_load(
+            (REPO_ROOT / "config" / "profiles.yaml").read_text(encoding="utf-8")
+        )["profiles"]
+    )
+
+    offenders = []
+    for directory in ("src", "tests"):
+        for path in sorted((REPO_ROOT / directory).rglob("*.py")):
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                for match in _PROFILE_COUNT.finditer(line):
+                    claimed = int(match.group(1) or match.group(2))
+                    if claimed != profile_count:
+                        rel = path.relative_to(REPO_ROOT).as_posix()
+                        offenders.append(f"  {rel}:{lineno} — {claimed}개라고 적혀 있다")
+
+    assert offenders == [], (
+        f"`config/profiles.yaml`의 프로필은 {profile_count}개인데 서술이 따라오지 "
+        "않았다 (CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
