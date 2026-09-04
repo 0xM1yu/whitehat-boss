@@ -175,21 +175,50 @@ models:
 
   devstral-small-2-24b:
     # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
-    # dense 24B라 NVFP4가 매력적이지만 반박 정확도 저하 위험이 있다(§4, docs/open-questions/R/R2.md).
     #
-    # **2026-08-25 NVFP4 실측에서 이 모델만 빠졌다.** portability.md §5 #1이 세는 3개 중
-    # 나머지 둘(`qwen3-8b`·`qwen3-coder-30b-a3b`)은 sm_121에서 떴지만 **이 모델은 받지도
-    # 띄우지도 않았다.** 그래서 `source`·`checksum`은 값이 없는 상태 그대로다 — 존재를
-    # 확인한 것과 받아서 띄운 것은 다르고, 후자만 `source`에 적을 자격이 있다.
+    # **2026-09-04 ATOM에서 처음 띄웠다.** 상세는
+    # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §7.
+    # 그 전까지 이 주석은 "받지도 띄우지도 않았다"고 적고 있었는데 **두 항 모두 거짓이 됐다** —
+    # HF 캐시에는 2026-08-25에 이미 받아져 있었고, 띄운 것이 2026-09-04다.
     #
-    # 확인한 것은 이름뿐이다(아래는 **주석이지 값이 아니다**):
-    #   정본   mistralai/Devstral-Small-2-24B-Instruct-2512
-    #   nvfp4  Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4
-    # revision을 확인하지 않았으므로 `hf://…@<rev>` 형태를 만들 수 없고, 만들면 그것이
-    # 곧 지어낸 값이다.
+    # **`quantization`이 `nvfp4`였는데 틀린 값이다. 실제는 `fp8`이다.** 근거 셋이 같은 방향이다:
+    #   config.json  `quantization_config.quant_method: 'fp8'`
+    #   vLLM 기동 로그 `quantization=fp8`
+    #   파일 크기     18,921 MiB + 5,678 MiB = 24.0 GiB — 24B × 1바이트다(bf16이면 약 48 GiB).
+    # portability.md §5 #1이 이 모델을 `nvfp4`로 세고 있던 것도 여기서 왔다.
+    #
+    # **멀티모달이다 — dense 텍스트 24B로만 읽으면 안 된다.** config.json의
+    # `architectures: ['Mistral3ForConditionalGeneration']` · `model_type: 'mistral3'`이고
+    # `modules_to_not_convert`에 `model.vision_tower`·`model.multi_modal_projector`가 있다.
+    # vLLM은 `Resolved architecture: PixtralForConditionalGeneration`으로 해석했다.
+    #
+    # **기동에 전용 로더 인자가 필요하다** — 스냅샷에 `consolidated-*.safetensors`·`params.json`·
+    # `tekken.json`만 있고 HF transformers 포맷 파일이 없다(mistral 네이티브):
+    #
+    #   --tokenizer-mode mistral --config-format mistral --load-format mistral
+    #
+    # 인자를 모르면 수치가 나빠지는 것이 아니라 **서버가 안 뜬다**(qwen3-4b의 fp8 항목과 같은
+    # 종류의 함정이다). 환경변수는 그날 전 기동 공통으로 `VLLM_USE_DEEP_GEMM=0`이 걸려 있었다.
+    #
+    # 메모리 실측(같은 보고서 §7. vLLM 기동 로그의 자기 회계다):
+    #   util 0.45  가중치+non-torch 26.8 GiB · KV 26.3 · nvidia-smi 53,330 MiB
+    #   util 0.30  가중치+non-torch 25.48 GiB · KV 9.67
+    #   로딩 24.12 GiB / 173.2초, 전체 콜드 약 330초
+    #
+    # **`source`·`checksum`은 띄웠는데도 안 채운다.** 띄운 것과 해시를 만든 것은 다르고,
+    # `source`는 그 checksum이 어디서 나왔는가를 적는 필드다(파일 상단). tools/model_checksum.py를
+    # 아직 안 돌렸다 — 서버가 떠 있는 동안 24 GiB를 읽으면 페이지 캐시가 차서 돌고 있는 다른
+    # 서버가 CUDA OOM으로 죽는다(같은 보고서 §4.3). 서버를 내린 뒤에 만든다. 지금 값을 적으면
+    # 그게 곧 지어낸 값이고, `checksum: 0`은 그 미실측 표시다.
+    #
+    # revision은 확인됐다(**주석이지 값이 아니다.** 위 사유로 `source`에는 안 넣는다):
+    #   정본   mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128
+    #   nvfp4  Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4 — 이름만 확인. 받지도 띄우지도 않았다
+    # NVFP4 양자화 시 반박 정확도 저하 위험(model-serving.md §4, docs/open-questions/R/R2.md)은
+    # 그 별도 빌드에 대한 것이고, **여기 값은 그것이 아니다.**
     endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 262144
-    quantization: "nvfp4"
+    quantization: "fp8"
     license: "Apache-2.0"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: null

@@ -45,6 +45,7 @@
 | 2026-08-29 | [프롬프트 v2 스모크와 v1 대조](harness/2026-08-29-prompt-v2-smoke-atom.md) | D52 닫힘(v1 `null` ×6 대 v2 `triggerable` ×6 + 프로브 음성 대조), 7단계 critic 첫 진입(v1은 Finding 6건 전부 `E0`), 폭주가 run 시간의 60.7%를 순손실로 먹는다, D47 닫힘(400 0건), 스키마 필드 순서 위반 0건, `fail 0`인 run에도 폭주가 있다(D55) | `atom` | 조민규 |
 | 2026-09-02 | [동시성 16·32 재측정](harness/2026-09-02-bench-concurrency-atom.md) | 16·32의 HTTP 400·timeout 소거(네 판 실패 0), **배치 처리량이 캐시 온도의 함수(#128)**, **캐시 OFF 곡선 1.81배·16 포화**, vLLM이 `user-1004.slice` **밖**에 있음, FLASHINFER 선택돼도 무사(확정 #3 ② 반증), context 스윕이 서버 상한을 모름(#126) | `atom` | 조민규 |
 | 2026-09-03 | [모델 교대 — 잠재우기 실측](harness/2026-09-03-model-swap-sleep-atom.md) | build-plan §8-6 닫힘(교대 된다 — 잠재우기가 약 51 GiB 반환·왕복 2~6초 대 콜드 238초), `level 1`이 `level 2`와 구별 안 됨(§7 전제 반증), **`nvidia-smi --query-compute-apps`가 작동**(`[N/A]`는 `--query-gpu`뿐 — `mem_gb_ctx8k` 경로), 기준선의 51 GiB는 페이지 캐시 | `atom` | 조민규 |
+| 2026-09-04 | [검색 둘을 포함한 다섯 상주 시도](harness/2026-09-04-five-model-residency-atom.md) | 검색 둘을 포함한 **네 서버 동시 상주**(가중치 합 27.66 GiB 대 KV 64.35 GiB — 제약은 상주 개수가 아니라 KV 예산), 32768 다섯은 **4/5**에서 CUDA OOM, **기동을 막은 것은 페이지 캐시**(`posix_fadvise`가 루트 없이 여분 81 → 108 GiB), **critic(devstral) 첫 기동 — registry의 `nvfp4`가 틀렸고 실제 `fp8`·VLM으로 해석됨**, scout 처리량 첫 실측(단일 35.78 · batch32 388.46), auditor `tok_s_batch32` 0 해제(66.42 · 적중률 0.5673 동반 · #133), 리랭커 순위는 실경로 모양으로 **미검증** | `atom` | 조민규 |
 
 ## 파일 이름
 
@@ -348,6 +349,24 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 
 ### #7 NVFP4는 sm_121에서 추가 환경변수 없이 뜬다 — 그러나 portability §5 #1은 닫히지 않는다
 
+> **2026-09-04 — 아래 「남은 1개」 행의 서술이 반증됐다. 그리고 그 모델은 NVFP4가 아니었다.**
+> [다섯 상주 보고서](harness/2026-09-04-five-model-residency-atom.md) §7이
+> `devstral-small-2-24b`를 revision `55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128`으로 8003에
+> 띄웠다. **"받지도 띄우지도 않았다"는 두 항 모두 거짓이다** — HF 캐시에는 2026-08-25에
+> 이미 받아져 있었고, 띄운 것은 2026-09-04가 처음이다.
+> **양자화가 `nvfp4`가 아니라 `fp8`이다.** 근거 셋: `config.json`의
+> `quantization_config.quant_method == 'fp8'` · vLLM 기동 로그 `quantization=fp8` ·
+> 파일 크기 18,921 MiB + 5,678 MiB = 24.0 GiB(24B × 1바이트. bf16이면 약 48 GiB여야 한다).
+> **멀티모달이기도 하다** — `architectures: ['Mistral3ForConditionalGeneration']`이고 vLLM이
+> `PixtralForConditionalGeneration`으로 해석했다.
+> **이 절의 제목("추가 환경변수 없이 뜬다")을 이 모델로 확장하지 않는다.** 그 기동은
+> 전 기동 공통 환경변수(`VLLM_USE_DEEP_GEMM=0` 등)를 건 상태였고, 그 위에 mistral 네이티브
+> 포맷용 로더 인자(`--tokenizer-mode mistral --config-format mistral --load-format mistral`)가
+> 따로 필요했다. **"NVFP4 3종 중 3종을 쟀다"로도 읽지 않는다** — 잰 것은 NVFP4가 아니다.
+> **`source`·`checksum`은 여전히 안 채웠다.** 서버가 떠 있는 동안 24 GiB를 읽으면 페이지
+> 캐시가 차서 다른 서버를 죽인다(같은 보고서 §4.3·§7). 값이 없으므로 registry는 `null`·`0`
+> 그대로다.
+
 **두 문장을 갈라야 한다. 붙이면 정본에 거짓이 들어간다.**
 
 | | 무엇 | 상태 |
@@ -364,7 +383,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 | --- | --- |
 | 기동 로그 | `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` · `arch=sm121` ([NVFP4 보고서](harness/2026-08-25-serving-nvfp4-atom.md) §3·§4) |
 | 3개 중 몇 개를 쟀나 | **2개.** `qwen3-8b`·`qwen3-coder-30b-a3b` |
-| 남은 1개 | **`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지 |
+| 남은 1개 | **`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지. **← 앞 문장은 2026-09-04에 반증됐다(이 절 머리의 갱신 블록).** `source`가 `null`인 것만 그대로다 |
 
 ### #8 `kv_cache_dtype`은 모델마다 다르고 하네스 기록에 없다
 
