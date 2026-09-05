@@ -26,6 +26,9 @@
 | [2026-09-04-models.md](2026-09-04-models.md) | Auditor·Critic에 쓸 30B급 MoE 후보 | 조합 넷을 추렸다. **다만 취약점 탐지 성능으로는 후보를 못 고른다** — 실측이 거의 없고 있는 것은 전부 낮다 |
 | [2026-09-04-quantization.md](2026-09-04-quantization.md) | 양자화가 Critic의 반박 능력을 얼마나 깎나 | **"4비트"가 한 물건이 아니다.** 가중치만 4비트와 가중치+활성 4비트(NVFP4)가 다르고, Critic이 하는 일이 후자에 특히 약하다 |
 | [2026-09-04-swap.md](2026-09-04-swap.md) | 모델 교대를 하네스에 어떻게 넣나 | 설계 셋. **지금 구조로는 교대가 512회다** — 후보 단위 실행을 단계 단위로 쪼개는 것이 선행이다 |
+| [2026-09-06-indexer-dual-slicing.md](2026-09-06-indexer-dual-slicing.md) | 인덱서에 LLMxCPG와 LLM4FPM을 어떻게 같이 넣나 | 한 Joern CPG 위에 신호주도·탐색주도 두 슬라이서. **첫 목적은 성능이 아니라 겹침 행렬** — 둘 다 전량으로 재고 예산을 나눈다 |
+| [2026-09-06-ensemble-orchestration.md](2026-09-06-ensemble-orchestration.md) | Scout 풀·Auditor 2·Critic 2를 어떻게 묶나 | Auditor는 합집합(투표 아님), Critic은 반증 임무·단일 라운드·합의는 우선순위만. **제작사 다양성의 이득은 취약점 과제에서 작다** — 공동오답 행렬로 실측 |
+| [2026-09-06-harness-architecture.md](2026-09-06-harness-architecture.md) | 이 장비에서 최고 성능 하네스 구조 | **검증을 심장에 둔다** — 프론티어와의 격차는 모델이 아니라 8단계 증명 루프다. 4인 평의회 의결 반영. 120B는 실측 전 확정 금지 |
 
 ## 우리 실측과 갈린 자리
 
