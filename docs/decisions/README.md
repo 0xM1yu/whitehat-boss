@@ -53,6 +53,7 @@
 | [0006](0006-record-the-device-a-run-happened-on.md) | run과 registry 수치에 어느 장비에서 나왔는지를 기록한다 | 제안 | 2026-08-15 |
 | [0007](0007-atom-qwen3-4b-first-measurement.md) | ATOM 첫 실측을 고정하고 `qwen3-4b`를 `VLLM_USE_DEEP_GEMM=0`으로 못박는다 | 제안 | 2026-08-17 |
 | [0008](0008-defect-source-of-truth.md) | 결함의 소스 오브 트루스 — 문서 본체, 이슈는 미러 | 제안 | 2026-09-01 |
+| [0009](0009-stage-unit-execution-and-model-swap.md) | 단계 단위 실행과 모델 교대 — `execution.mode`/`swap` | 제안 | 2026-09-06 |
 
 **0005를 뺀 나머지는 제안 상태다.** Harness v1 스캐폴드를 구현하며 내린 결정이고 팀 검토
 전까지 확정이 아니다. 모두 "되돌리는 비용"을 낮게 유지하는 쪽을 골랐다 — 지금 확실하지
