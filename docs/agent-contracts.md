@@ -240,7 +240,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 {
   "run_id": "run_20260901_0001",
   "condition": "B3prime@pipeline",
-  "profile": "b3prime_balanced",
+  "profile": "local_balanced",
   "repo_commit": "0000000000000000000000000000000000000000",
   "repo_dirty": false,
   "source_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",

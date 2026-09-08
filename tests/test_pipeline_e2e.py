@@ -360,9 +360,10 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     제외한다"고 판정하고, `condition`이 기본값으로 굳으면 2×2 축으로 돌린 run이 pipeline
     라벨을 달아 비교표가 섞인다(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
 
-    **판별 기준은 `production`이 아니라 `served_models()`다.** 프로필 12개가 전부
+    **판별 기준은 `production`이 아니라 `served_models()`다.** 저장소의 프로필이 전부
     `production: false`라 그 필드로는 아무것도 갈리지 않는다(직접 확인). `served_models()`는
-    dev 다섯을 0으로, 실서빙 일곱을 1~3으로 정확히 가른다.
+    dev 프로필을 0으로, 실서빙 프로필을 1개 이상으로 가른다. **개수는 적지 않는다** —
+    프로필이 늘고 줄 때마다 틀리는 서술이 된다.
 
     `kb_snapshot`은 막지 않는다 — `kb-none`은 아직 KB가 없다는 정직한 표기이고
     `incomplete_fields()`도 그것만은 "제외한다"고 말하지 않는다.
@@ -474,8 +475,9 @@ def test_a_malformed_condition_is_refused_before_the_run_dir(
     **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없으므로 dev 프로필에서도
     막는다. 이건 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
 
-    `B3prime_large@2x2`를 고른 것은 2×2 스펙이 B3′-large 셀에 지정한 실제 라벨이라서다 —
-    그 셀을 돌리려는 사람이 지금 이 경로를 정확히 밟는다.
+    `B3prime_large@2x2`를 고른 것은 `CONDITION_PATTERN`이 받는 넷(`B1`·`B1prime`·`B3`·
+    `B3prime`) **밖의** 이름이면서 축 접미사는 올바른 값이라서다 — "조건 이름이 틀렸다"와
+    "축 표기가 틀렸다"를 가르는 자리이고, 그 조합을 사람이 실제로 친다.
     """
     code = cli.main(
         [
@@ -498,8 +500,8 @@ def test_a_dry_run_is_not_blocked_by_the_serving_gate(
     """모델을 한 번도 안 부르는 run은 막지 않는다 — 게이트의 근거가 "비용"이기 때문이다.
 
     `--dry-run`은 `DRY_RUN_LAST_STAGE`(RETRIEVAL)에서 끊기고 Scout은 그 **다음** 단계다.
-    게다가 실서빙 프로필 일곱이 전부 `retriever: fake`라 0~3단계에서 실서빙 클라이언트가
-    한 번도 불리지 않는다 — GPU 비용이 0이다.
+    게다가 이 테스트가 쓰는 실서빙 프로필은 `retriever: fake`라 0~3단계에서 실서빙
+    클라이언트가 한 번도 불리지 않는다 — GPU 비용이 0이다.
 
     **막으면 §0을 게이트가 유도한다.** 통과시키려고 `--device atom --condition B3prime@…`을
     지어내 붙이면, 아무것도 재지 않은 dry-run의 매니페스트에 실서빙 장비·조건 라벨이 박힌다.
