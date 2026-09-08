@@ -41,13 +41,18 @@ profiles:
     budget: dev_fake
 
   dev_hybrid_docker:
-    description: "hybrid Retriever가 실제 index.json을 읽는 유일한 프로필. 전 역할 Fake 모델."
+    description: "hybrid Retriever가 실제 index.json을 읽는 유일한 GPU 불필요 프로필. 전 역할 Fake 모델."
     # `dev_hybrid`와 다른 점은 `tool_runner` 하나다.
     #
-    # **이 조합이 없으면 HybridRetriever의 그래프 섹션 경로가 어느 프로필에서도 돌지
-    # 않는다.** index.json을 내는 프로필은 전부 `retriever: fake`이고(dev_docker·
-    # dev_singularity·local_balanced·b1_single), `dev_hybrid`는 `tool_runner: fake`라
-    # index.json이 만들어지지 않는다 — hybrid의 `callers`/`callees` 분기가 죽은 코드가 된다.
+    # **이 조합이 없으면 HybridRetriever의 그래프 섹션 경로가 GPU 없이는 어느 프로필에서도
+    # 돌지 않는다.** 이 프로필을 만들 당시(2026-08-20, 이슈 #63) index.json을 내는 프로필은 전부
+    # `retriever: fake`였고(dev_docker·dev_singularity·local_balanced·b1_single),
+    # `dev_hybrid`는 `tool_runner: fake`라 index.json이 만들어지지 않았다 — hybrid의
+    # `callers`/`callees` 분기가 죽은 코드가 된다.
+    #
+    # **2026-09-04에 `local_balanced_hybrid`가 같은 짝을 이뤘지만 이 프로필을 대신하지
+    # 않는다.** 그쪽은 모델 다섯을 실서빙하므로 GPU 없이는 못 돈다. GPU도 Docker도 없는
+    # 팀원의 경로(portability.md §2)에서 이 분기를 태우는 것은 여전히 여기뿐이다.
     #
     # 이 저장소는 "픽스처가 실전을 대표하지 못해 생긴 결함"을 이미 두 번 겪었다:
     # clang의 include 경로(#63)와 tree-sitter 최상위 한 겹(zlib 28.3%/json 70.3%).
@@ -187,6 +192,73 @@ profiles:
       state_store: sqlite
     budget: default
 
+  local_balanced_hybrid:
+    description: "local_balanced에 검색 경로를 켠 것. embedding·reranker를 실제로 띄우는 첫 프로필."
+    # **build-plan §8 row 2("임베딩·리랭커를 켠다")가 요구하는 프로필이다.** 그 행이 건
+    # 선행 조건은 "checksum을 먼저 채운다" 하나이고 2026-09-03에 채워졌다 — 이슈 #131
+    # (config/models.yaml의 qwen3-embedding-0.6b·qwen3-reranker-0.6b).
+    #
+    # **local_balanced를 고치지 않고 새로 판 이유.** 그 프로필은 b1_single과 함께 조건
+    # 비교표(B1·B3')의 정본이고, evaluation.md §2.3 규칙 2가 "retrieval 설정은 고정한다"로
+    # 두 조건의 검색 경로를 같게 묶어 둔다. 실시간 retriever를 그 이름 아래에서 바꾸면
+    # 과거 run과 앞으로의 run이 같은 프로필 이름을 달고 다른 것이 된다.
+    #
+    # **이 프로필은 evaluation.md §2.3 규칙 2가 세는 「조건 비교에 쓰는 실서빙 프로필」에
+    # 들어가지 않는다.** 그쪽은 비교축이 모델 구성이고, 이것은 검색 경로를 켜는 쪽이라 그 표의
+    # 셀이 아니다. 그래서 그 문단의 목록에 이 이름을 더하지 않는다 — **개수를 여기 적지
+    # 않는 것도 의도다**: 그 목록은 프로필이 늘고 줄 때마다 움직인다.
+    #
+    # ── fake로 두었던 근거가 어디까지 움직였나 ──
+    #
+    # local_balanced의 retriever 주석이 든 근거는 둘이다: ① ATOM에 모델 5개를 동시에
+    # 띄워야 한다 ② R1(sm_121 커널 호환성) 검증의 실패 지점이 그만큼 늘어난다.
+    #
+    # **①의 메모리 전제만 실측이 건드렸다.** 2026-09-03 ATOM에서 잠재우기가 약 51 GiB를
+    # 반환했고 왕복이 2~6초였다(콜드 238초). 세 계측기가 일치했다 — 통합메모리가 모델을
+    # 붙들고 안 놓는 장비가 아니다
+    # (docs/experiments/harness/2026-09-03-model-swap-sleep-atom.md §1).
+    #
+    # **그 실측을 더 세게 읽지 않는다.** 같은 보고서가 스스로 셋을 못박는다.
+    #   · §5 — mem_gb_ctx8k를 안 쟀다. 이 실험의 context는 32,768이고 8K 고정이 아니다.
+    #   · §5 — 모델 **하나**를 재우고 깨웠다. 여러 모델을 번갈아 올리는 것은 안 했다.
+    #   · §7-5 — 교대를 하네스에 배선하는 길이 아직 없다. execution.mode·swap 키가
+    #     스키마에 없고 extra="forbid"라 그런 프로필은 로드 단계에서 거부된다.
+    # 그래서 **이것은 다섯을 동시에 띄우는 프로필이다.** 교대로 다섯을 피하는 배선은
+    # 아직 존재하지 않는다.
+    #
+    # **②는 실측이 건드리지 않았다.** R1은 커널이 도는가의 문제라 메모리와 다른 축이다
+    # (docs/open-questions/R/R1.md — model-serving.md §3 체크리스트 7개 중 1개 통과·1개
+    # 부분). 검증 지점이 다섯으로 느는 것은 그대로다. **그것이 이 프로필의 쓸모다** —
+    # 8004·8005가 실제로 뜨는지는 이 프로필로만 물을 수 있다.
+    #
+    # ⚠ **production: true로 올리지 않는다.** local_balanced와 같은 조건이다 —
+    # model-serving.md §3 체크리스트를 실측하고 models.yaml의 benchmark를 채우기 전까지다.
+    # 두 검색 모델의 benchmark는 checksum과 달리 아직 전부 0이다(미실측 표시).
+    #
+    # ⚠ **예산은 아직 이 배선에 맞춰 잡히지 않았다.** src/adapters/hybrid_retriever.py의
+    # 모듈 docstring이 "실서빙 hybrid 프로필이 생기면 예산을 캡슐 선언값이 아니라 이 사실로
+    # 잡아야 한다"고 적어 뒀다 — related 본문이 산문과 사실 블록 양쪽에 실려 선언 N토큰이
+    # 실제로는 약 2N을 차지한다(#67과 같은 계약). 그 조건이 이 프로필로 성립했다.
+    # `budget: default`를 그대로 쓰는 것은 **대조군과 축을 하나로 유지하려는 선택**이지
+    # 그 예산이 맞다는 판정이 아니다. 재는 것이 선행이다.
+    production: false
+    # local_balanced와 **같아야 한다.** 차이가 retriever 하나여야 두 프로필의 run 차이를
+    # 검색 경로로 돌릴 수 있다. tests/test_config.py의
+    # test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retriever가
+    # roles·budget·나머지 어댑터까지 기계로 고정한다.
+    roles:
+      scout: qwen3-8b
+      auditor: qwen3-coder-30b-a3b
+      critic: devstral-small-2-24b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:
+      # 이 한 줄이 local_balanced와 다른 전부다.
+      retriever: hybrid
+      tool_runner: docker
+      state_store: sqlite
+    budget: default
+
   b1_single:
     description: "벤치마크 조건 B1 — 전 역할을 같은 단일 모델로 실행."
     # evaluation.md §2.3 공정성 규칙 1: 조건 간 차이는 프로필과 단계 활성화만.
@@ -211,119 +283,6 @@ profiles:
       # **이 프로필이 되돌림의 직접 근거다.** 선언은 `podman`이었는데 이 프로필로 돈 run
       # 둘(`run_20260827_0001`·`0004`)이 `RunRecord.tool_runner: docker`다 — 주 경로가
       # 상시 오버라이드 상태였다. 자세한 것은 local_balanced 주석과 ADR 0005 마지막 절.
-      tool_runner: docker
-      state_store: sqlite
-    budget: default
-
-  # === 팀 2x2 실험 (B1' ×3 · B3') =========================================
-  #
-  # 이름은 팀 `experiments/2x2/config/run_matrix.yaml`의 값과 **글자까지 같아야 한다** —
-  # 팀 스크립트가 `python -m src.cli run --profile <이 이름>`으로 부른다. 바꾸면 실험이
-  # 프로필을 못 찾는다.
-  #
-  #   b1prime_profiles:
-  #     qwen3-8b:          b1_single_qwen3_8b
-  #     foundation-sec-8b: b1_single_foundation_sec
-  #     granite-3.3-8b:    b1_single_granite
-  #   b3prime_profile:     b3prime_balanced
-  #
-  # **넷의 어댑터 선택이 같아야 한다.** 조건 간 차이는 `roles`뿐이어야 하고, 그것이
-  # evaluation.md §2.3 규칙 1이다. 그래서 아래 넷은 adapters·budget·production이 동일하다.
-  #
-  # `tool_runner: docker` — **ATOM에 docker가 있다**(2026-08-21 실측: Docker 29.2.1이
-  # podman 4.9.3과 공존). portability.md §6이 오래 "Docker 데몬 접근 없음"으로 적고 있었는데
-  # 그건 2026-08-17 관측이고 4일 뒤 뒤집혔다 — 이 PR이 그 서술도 함께 고친다.
-  #
-  # **근거는 말이 아니라 run이다.** `--device atom --tool-runner docker`로 도구가 실제로
-  # 돌아 `tool_images`가 채워진 run이 docs/experiments/README.md §#6에 셋 적혀 있고
-  # (`run_20260821_0004` 9건 · `run_20260823_0002` 238건 · `run_20260825_0001` 238건),
-  # 8/26·8/27 재측정도 같은 플래그였다(`run_20260827_0004` 완주, `tool_call` 13건).
-  # **반대로 podman으로 도구를 돌린 run은 `run_20260817_0001` 하나뿐이다** — 즉 "검증된
-  # 경로는 podman"이 지금은 거꾸로다.
-  #
-  # 팀 `lib/prime_runner.py`가 `--tool-runner` 오버라이드를 쓰지 않으므로 여기 적힌 값이
-  # 그대로 쓰인다. podman으로 두면 그 스크립트가 덮어 줄 수단이 없다.
-  #
-  # ✅ **B3'-large와 런타임이 같아졌다(2026-08-28).** 전에는 `local_balanced`가 `podman`이라
-  # 이 넷과 갈렸고, `tool_images` digest는 런타임 사이에서 비교할 수 없으므로
-  # (portability.md §5 #4) 네 조건을 같은 비교표에 못 올렸다. `local_balanced`·`b1_single`을
-  # `docker`로 되돌리면서 그 벽이 사라졌다 — **조건 비교용 실서빙 프로필 여섯이 전부
-  # `docker`다.** 팀 run_matrix의 `b3prime_large_profile`은 아직 `TODO_local_large`라
-  # 프로필 이름만 정하면 된다.
-  #
-  # `retriever: fake` — hybrid로 두면 embedding·reranker까지 실서빙해야 하고 ATOM에 모델을
-  # 다섯 개 띄워야 한다. B1'와 B3'의 차이가 "모델 구성"이어야 하므로 검색 경로도 네 조건에서
-  # 같아야 한다(§2.3 규칙 2). 검색 경로 자체는 dev_hybrid_docker가 GPU 없이 태운다.
-  #
-  # `embedding`·`reranker`가 `fake`인 것은 `retriever: fake`라 호출되지 않기 때문이다.
-  # 실제로 안 띄우는 모델을 선언하면 `doctor`가 그 포트를 요구하는 것처럼 출력한다
-  # (single_gpu_12g가 같은 이유로 같은 선택을 한다).
-
-  b1_single_qwen3_8b:
-    description: "B1' — 세 역할 전부 Qwen3-8B(bf16). 팀 2x2 실험."
-    production: false
-    roles:
-      scout: qwen3-8b-bf16
-      auditor: qwen3-8b-bf16
-      critic: qwen3-8b-bf16
-      embedding: fake
-      reranker: fake
-    adapters:
-      retriever: fake
-      tool_runner: docker
-      state_store: sqlite
-    budget: default
-
-  b1_single_foundation_sec:
-    description: "B1' — 세 역할 전부 Foundation-Sec-8B(bf16). 팀 2x2 실험."
-    production: false
-    roles:
-      scout: foundation-sec-8b
-      auditor: foundation-sec-8b
-      critic: foundation-sec-8b
-      embedding: fake
-      reranker: fake
-    adapters:
-      retriever: fake
-      tool_runner: docker
-      state_store: sqlite
-    budget: default
-
-  b1_single_granite:
-    description: "B1' — 세 역할 전부 Granite-3.3-8B(bf16). 팀 2x2 실험."
-    production: false
-    roles:
-      scout: granite-3.3-8b
-      auditor: granite-3.3-8b
-      critic: granite-3.3-8b
-      embedding: fake
-      reranker: fake
-    adapters:
-      retriever: fake
-      tool_runner: docker
-      state_store: sqlite
-    budget: default
-
-  b3prime_balanced:
-    description: "B3' — 역할마다 다른 8B 모델. 팀 2x2 실험의 대조 조건."
-    # 세 모델이 서로 다른 계열이라야 교차 검증에 값이 있다(model-serving.md §2). critic이
-    # auditor와 다른 계열인 것이 특히 그렇다 — 같은 계열이면 반박이 재진술이 되기 쉽다.
-    #
-    # ⚠ **셋을 동시에 띄워야 하는 유일한 프로필이다.** 8006(foundation-sec) · 8007(granite)
-    # · 8001(qwen3-8b-bf16) 세 포트가 함께 살아 있어야 한다. **granite가 8003에서 8007로
-    # 옮겨진 이유가 이 프로필이다** — 8003은 devstral과 겹쳐 있었고 한 포트에 두 서버를
-    # 동시에 못 띄운다. 남은 공유 포트는 8001뿐이고(qwen3-8b-bf16과 qwen3-8b) B1' 셋은
-    # 한 번에 하나만 띄우면 되므로 문제되지 않는데, 이 프로필은 8001을 쓰므로 **그 포트에
-    # 다른 모델이 떠 있으면 안 된다.**
-    production: false
-    roles:
-      scout: foundation-sec-8b
-      auditor: granite-3.3-8b
-      critic: qwen3-8b-bf16
-      embedding: fake
-      reranker: fake
-    adapters:
-      retriever: fake
       tool_runner: docker
       state_store: sqlite
     budget: default

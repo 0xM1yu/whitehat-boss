@@ -77,9 +77,10 @@
 
 **산출물이 캡슐까지 왔다 (2026-08-20).** `scratch/index/index.json`을
 `adapters/index_graph.py`가 읽어 **두 Retriever의** `callers`/`callees`를 채운다.
-`FakeRetriever`가 주 경로다 — index.json을 내는 프로필이 전부 `retriever: fake`이기
-때문이다(`dev_docker`·`dev_singularity`·`local_balanced`·`b1_single`). `dev_hybrid_docker`가
-hybrid 쪽 경로를 태운다.
+`FakeRetriever`가 주 경로다 — index.json을 내는 조건은 `retriever`가 아니라
+`tool_runner`가 docker·singularity인 것이고, 그렇게 내는 프로필이 **대부분**
+`retriever: fake`이기 때문이다. `dev_hybrid_docker`·`local_balanced_hybrid`가 hybrid 쪽
+경로를 태운다(2026-09-04 확인).
 
 **`types`는 채우지 않는다.** index-v1에 타입 데이터가 없어(`build_index()`는 symbols·calls
 뿐) 섹션 자체를 없앴다 — 고정 64토큰으로 두면 없는 근거를 지어내는 것이고, 이름만 남기면
@@ -123,7 +124,7 @@ hybrid 쪽 경로를 태운다.
 
 **들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
 돌린다. 런타임은 생성자 인자이고 프로필이 고른다 — 개발 프로필은 `dev_docker` /
-`dev_singularity`, 조건 비교용 실서빙 프로필 여섯(`local_balanced`·`b1_single` + 2x2 넷)은
+`dev_singularity`, 조건 비교용 실서빙 프로필 둘(`local_balanced`·`b1_single`)은
 전부 `docker`다(2026-08-28, 주 실서빙 장비가 ATOM이므로 — docs/portability.md §3.
 2026-08-17~08-28 사이 앞의 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
 프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
@@ -354,7 +355,18 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 마지막 항목만 bench 범위 밖이다 — 고정 반박 표본이 있어야 답이 나온다(평가셋 준비 중).
 
-**이것이 통과하기 전까지 `models.yaml`의 `benchmark` 값은 전부 0이고, 프로덕션 프로필로 올릴 수 없다.**
+**이것이 통과하기 전까지 어느 모델도 프로덕션 프로필로 올릴 수 없다.** ⚠ 그 이유는 한 가지가
+아니다 — 「`benchmark` 값이 전부 0」도, 「전부 부분 측정」도 틀리다. `cli._check_benchmarks`는
+프로필의 역할 모델만 보고 **미측정과 부분 측정을 각각 한 줄씩** 낸다. `local_balanced`·
+`local_balanced_hybrid`에 실제로 돌리면(2026-09-08 실행) 두 줄이 다 나온다 — **미측정 셋**
+(`devstral-small-2-24b`·`qwen3-embedding-0.6b`·`qwen3-reranker-0.6b`, 세 항이 전부 0)과
+**부분 측정 둘**(`qwen3-8b`·`qwen3-coder-30b-a3b`, `mem_gb_ctx8k`만 0). 두 프로필이
+`production: false`라 지금은 WARN이고, production으로 올리는 순간 같은 두 줄이 ERROR다.
+`mem_gb_ctx8k`는 registry 전 항목이 0이라 **완전 측정은 아직 하나도 없다.** 처리량이 채워진
+것은 `qwen3-4b`(`39.65 · 127.69` — 위 체크리스트의 `[~]`, 정본은 ADR 0007)와 2026-09-04 ATOM
+실측인 `qwen3-8b`(`35.78 · 388.46`)·`qwen3-coder-30b-a3b`(`53.4 · 66.42`) 셋뿐이다. 뒤 둘의
+원천 보고서는 `config/models.yaml`의 각 블록이 경로로 드는데 **그 파일은 #142가 들여온다** —
+이 문단이 그 PR보다 먼저 도는 순간이 있어 링크로 걸지 않았다.
 `bench --apply`가 그 값을 채우지만 **0인 항목은 쓰지 않는다.** 채워지지 않았다는 것은
 재지 못했다는 뜻이고, 그 상태가 그대로 보여야 한다.
 

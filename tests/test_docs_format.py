@@ -165,8 +165,9 @@ def _defined_decisions() -> list[str]:
 
 
 # 보고서는 `harness/` 아래에 있다. `experiments/` 바로 밑에는 색인(README)과 양식(TEMPLATE)만
-# 남고, 실제 run 보고서는 `harness/`(하네스가 도는지 본 run)와 `2x2/`(팀 실험)로 갈린다.
-REPORT_DIRS = (EXPERIMENTS / "harness", EXPERIMENTS / "2x2")
+# 남는다. **튜플인 것은 의도다** — 2026-09-04까지는 `2x2/`(팀 실험)가 두 번째 원소였고,
+# 보고서 폴더가 다시 갈릴 때 여기에 더하면 아래 전부가 따라온다.
+REPORT_DIRS = (EXPERIMENTS / "harness",)
 
 
 def _reports() -> list[Path]:
@@ -322,8 +323,8 @@ def test_every_experiment_report_is_in_the_index() -> None:
     이 폴더가 생긴 계기가 "보고서가 메신저 첨부로만 존재해서 대조가 안 됐다"이다. 저장소에
     넣어 놓고 색인에 안 걸면 같은 자리로 돌아간다.
 
-    **파일명이 아니라 `experiments/` 기준 상대경로로 대조한다.** 보고서가 `harness/`·`2x2/`로
-    갈린 뒤로는 이름만 보면 색인이 **다른 폴더의 같은 이름**을 가리켜도 통과한다.
+    **파일명이 아니라 `experiments/` 기준 상대경로로 대조한다.** 보고서 폴더가 둘 이상으로
+    갈리면 이름만 보는 대조는 색인이 **다른 폴더의 같은 이름**을 가리켜도 통과시킨다.
     """
     index = _read(EXPERIMENTS / "README.md")
     linked = {unquote(target.split("#", 1)[0]) for target in _LINK.findall(index)}
@@ -465,3 +466,40 @@ def test_the_build_plan_risk_references_point_at_a_real_r_row() -> None:
                     "docs/open-questions.md §1에 없다 — 번호가 맞는지 확인한다"
                 )
     assert dangling == [], "\n".join(dangling)
+
+
+# 구축안이 프로필의 실서빙 역할 수를 셀 때 쓰는 표기: `프로필이름`(실서빙 N역할
+_SERVED_ROLE_CLAIM = re.compile(r"`([a-z0-9_]+)`\(실서빙 (\d+)역할")
+
+
+def test_the_build_plan_served_role_counts_match_served_models() -> None:
+    """구축안이 「실서빙 N역할」이라 적으면 그 N은 `served_models()`가 내는 수여야 한다.
+
+    #140 리뷰가 `local_balanced`의 「실서빙 3역할」을 **2로 고치라**고 요구했다. 근거는
+    셋째 critic(`devstral-small-2-24b`) 서버가 아직 안 떴다는 것이고, 그 사실 자체는
+    맞다 — 같은 표의 윗 행이 그렇게 적는다. 그러나 `served_models()`는 서버가 실제로
+    떴는지를 보지 않는다. `is_fake`(엔드포인트 스킴)와 `retriever` 축만 본다
+    (`src/config.py`, 이슈 #108 (b)). 그래서 코드가 내는 수는 **3이다.**
+
+    2로 고쳤다면 문서가 코드와 어긋난다 — CLAUDE.md §2.1이 금지하는 것이 정확히 그것이고,
+    「서버가 안 떴다」는 별개의 사실이라 **개수를 깎는 대신 선행 조건으로 적는 것**이 맞다.
+
+    이 검사는 그 혼동이 다시 들어오는 것을 막는다. 개수는 코드에서 가져온다.
+    """
+    from src.config import load_config
+
+    offenders = []
+    for lineno, line in enumerate(_read(BUILD_PLAN).splitlines(), 1):
+        for profile, claimed in _SERVED_ROLE_CLAIM.findall(line):
+            actual = len(load_config(profile).served_models())
+            if int(claimed) != actual:
+                offenders.append(
+                    f"docs/build-plan.md:{lineno}: {profile} — 문서는 {claimed}역할, "
+                    f"served_models()는 {actual}역할"
+                )
+
+    assert offenders == [], (
+        "구축안의 실서빙 역할 수가 `served_models()`와 다르다 (CLAUDE.md §2.1).\n"
+        "서버가 아직 안 떴다는 사실은 개수를 깎아서가 아니라 선행 조건으로 적는다.\n"
+        + "\n".join(offenders)
+    )

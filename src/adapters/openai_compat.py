@@ -87,8 +87,15 @@ class OpenAICompatModelClient:
         # 합도 만족한다.
         gpu_ms = 0
         spent = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+        # 2~N차가 실제로 보낸 body. **보내는 시점에 담는다** — 스키마 오류 핸들러에서
+        # 담으면 마지막 시도가 실패했을 때 한 번도 안 보낸 body가 끝에 붙는다(핸들러가
+        # 다음 회차용 body를 만들고 루프가 소진되는 경우). 상위가 재시도 파일로 남긴다(#80).
+        retry_bodies: list[str] = []
         attempt = 0
         for attempt in range(1, self.retries + 2):
+            if attempt > 1:
+                # 이 body는 직전 회차의 스키마 오류 핸들러가 만든 것이고, 지금 보내진다.
+                retry_bodies.append(body)
             started = time.monotonic()
             try:
                 raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
@@ -105,6 +112,7 @@ class OpenAICompatModelClient:
                 exc.gpu_ms = gpu_ms
                 exc.gpu_ms_source = "request_wall_clock"
                 exc.attempts = attempt
+                exc.retry_bodies = tuple(retry_bodies)
                 raise
             gpu_ms += int((time.monotonic() - started) * 1000)
             spent = _add(spent, usage)
@@ -145,6 +153,7 @@ class OpenAICompatModelClient:
                 gpu_ms=gpu_ms,
                 gpu_ms_source="request_wall_clock",
                 attempts=attempt,
+                retry_bodies=tuple(retry_bodies),
             )
         raise SchemaParseError(
             f"{role} 역할의 {self.model_name}이 {self.retries + 1}회 안에 "
@@ -153,6 +162,7 @@ class OpenAICompatModelClient:
             gpu_ms=gpu_ms,
             gpu_ms_source="request_wall_clock",
             attempts=self.retries + 1,
+            retry_bodies=tuple(retry_bodies),
         )
 
     def _request_payload(self, prefix: str, body: str, schema: type[BaseModel]) -> dict:
