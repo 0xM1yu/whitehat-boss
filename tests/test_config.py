@@ -209,7 +209,10 @@ def test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retr
     assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
         exclude={"retriever"}
     )
-    # 실측 전이다 — models.yaml의 benchmark가 아직 0이다 (model-serving.md §5).
+    # 두 검색 모델의 benchmark는 checksum과 달리 아직 전부 0이다 — config/profiles.yaml의
+    # 같은 프로필 주석과 같은 문장이다. scout·auditor는 2026-09-04에 처리량이 채워졌지만
+    # `mem_gb_ctx8k`가 0이라 부분 측정이고, `cli._check_benchmarks`가 부분 측정도
+    # production에서 막는다 (model-serving.md §5).
     assert variant.production is False
 
 
