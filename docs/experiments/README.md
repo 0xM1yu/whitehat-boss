@@ -363,9 +363,14 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 > 전 기동 공통 환경변수(`VLLM_USE_DEEP_GEMM=0` 등)를 건 상태였고, 그 위에 mistral 네이티브
 > 포맷용 로더 인자(`--tokenizer-mode mistral --config-format mistral --load-format mistral`)가
 > 따로 필요했다. **"NVFP4 3종 중 3종을 쟀다"로도 읽지 않는다** — 잰 것은 NVFP4가 아니다.
-> **`source`·`checksum`은 여전히 안 채웠다.** 서버가 떠 있는 동안 24 GiB를 읽으면 페이지
-> 캐시가 차서 다른 서버를 죽인다(같은 보고서 §4.3·§7). 값이 없으므로 registry는 `null`·`0`
-> 그대로다.
+> **`source`·`checksum`은 실험 시점에 비어 있었고, 서버를 내린 뒤에 채웠다.** 떠 있는 동안
+> 24 GiB를 읽으면 페이지 캐시가 차서 다른 서버를 죽이므로(같은 보고서 §4.3·§7) **순서가
+> 제약이었다** — 그 보고서 §7의 ⚠(*"checksum은 아직 안 만들었다"*)는 **실험 시점의
+> 기록**이고 그대로 맞다. **지금 registry에는 둘 다 들어 있다** — `config/models.yaml`의
+> `devstral-small-2-24b`이고 manifest는 `config/checksums/devstral-small-2-24b.txt`다.
+> **그래서 그날 산출물에는 자리표시자가 남아 있다** — 같은 보고서 §10의 `doctor` 화면이
+> `critic(devstral-small-2-24b, source=미상)`에 checksum 자리표시자 WARN을 낸 것은
+> 채워지기 **전**의 출력이다.
 
 **두 문장을 갈라야 한다. 붙이면 정본에 거짓이 들어간다.**
 
