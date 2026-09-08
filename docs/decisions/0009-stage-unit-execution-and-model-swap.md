@@ -6,7 +6,7 @@
 
 ## 배경
 
-리스트럭처가 상주 모델 수를 늘린다 — Scout 계열 셋([로스터 §1](../research/2026-09-08-roster.md): Memory·Boundary·Injection) + Auditor + Critic + embedding + reranker. 이 자리들이 **다 상주하면 KV 예산을 넘긴다.** ⚠ **Scout 계열이 셋이라는 것은 이 ADR이 정하지 않는다** — 로스터 조사는 스스로를 *"제안이지 결정이 아니다"*라고 적고 그 결정은 `ADR 0010`(하네스 구조와 모델 로스터)이 든다. 그쪽이 아직 머지 전이라 링크가 아니라 이름으로 적는다(링크로 걸면 `test_internal_links_point_at_a_real_file`이 깨진다). **계열 수가 바뀌면 아래 자리 수도 바뀐다.**
+리스트럭처가 상주 모델 수를 늘린다 — Scout 계열 셋([로스터 §1](../research/2026-09-08-roster.md): Memory·Boundary·Injection) + Auditor + Critic + embedding + reranker. 이 자리들이 **다 상주하면 KV 예산을 넘긴다.** ⚠ **Scout 계열이 셋이라는 것은 이 ADR이 정하지 않는다** — 로스터 조사는 스스로를 *"제안이지 결정이 아니다"*라고 적고 그 결정은 `ADR 0010`(하네스 구조와 모델 로스터)이 든다. **ADR은 서로를 번호로 참조한다**([experiments/README.md](../experiments/README.md)) — 번호는 그 문서가 저장소에 들어왔는지와 무관하게 같은 것을 가리킨다. `ADR 0010`을 들고 오는 PR은 #148이다. **계열 수가 바뀌면 아래 자리 수도 바뀐다.**
 
 - ATOM은 두 축이다: 물리 통합메모리 **119.7 GiB**와 우리 슬라이스 cgroup **80 GiB**(`model-serving.md §1`, `memory.high=max`라 상한 닿으면 예고 없이 OOM). ⚠ 단 2026-09-04 실측에선 vLLM이 `user-1004.slice` **밖**(`system.slice/ssh.service`)이라 **cgroup 80은 실제로 걸리지 않았다**(보고서 §5) — 관측된 구속 한계는 물리 119.7이고, 제약은 상주 개수가 아니라 **KV 예산 배분**이다(보고서 §1 요약·§3 해석①).
 - 2026-09-04 실측(보고서 §3): 네 서버(scout·auditor·embedding·reranker) 가중치+non-torch **27.66 GiB** + KV 합 64.35 = `nvidia-smi` PID 합 **96.07 / 119.7 GiB**. **이 배분의 조건이 「critic 제외 넷」이라 다섯째는 의도적으로 뺀 것이지 안 들어간 게 아니다**(§3). 다섯을 물린 것은 같은 보고서 **§8의 다른 배분**이고 **답은 4/5**다 — 8003 devstral·8002 auditor·8001 scout·8005 reranker가 UP이고 **8004 embedding(0.6B)이 CUDA OOM**이다. 죽은 것이 제일 큰 모델이 아니라 0.6B라는 사실이 보고서의 **"제약은 상주 개수가 아니라 KV 예산"** 결론을 뒷받침한다(`build-plan.md §8 row 2`가 이 4/5를 그대로 든다). 여기에 Scout 계열이 늘고 상주 모델이 커지면 그 예산을 넘긴다.
