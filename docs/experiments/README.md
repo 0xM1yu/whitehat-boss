@@ -45,6 +45,7 @@
 | 2026-08-29 | [프롬프트 v2 스모크와 v1 대조](harness/2026-08-29-prompt-v2-smoke-atom.md) | D52 닫힘(v1 `null` ×6 대 v2 `triggerable` ×6 + 프로브 음성 대조), 7단계 critic 첫 진입(v1은 Finding 6건 전부 `E0`), 폭주가 run 시간의 60.7%를 순손실로 먹는다, D47 닫힘(400 0건), 스키마 필드 순서 위반 0건, `fail 0`인 run에도 폭주가 있다(D55) | `atom` | @danielcho02 |
 | 2026-09-02 | [동시성 16·32 재측정](harness/2026-09-02-bench-concurrency-atom.md) | 16·32의 HTTP 400·timeout 소거(네 판 실패 0), **배치 처리량이 캐시 온도의 함수(#128)**, **캐시 OFF 곡선 1.81배·16 포화**, vLLM이 `user-1004.slice` **밖**에 있음, FLASHINFER 선택돼도 무사(확정 #3 ② 반증), context 스윕이 서버 상한을 모름(#126) | `atom` | @danielcho02 |
 | 2026-09-03 | [모델 교대 — 잠재우기 실측](harness/2026-09-03-model-swap-sleep-atom.md) | build-plan §8-6 닫힘(교대 된다 — 잠재우기가 약 51 GiB 반환·왕복 2~6초 대 콜드 238초), `level 1`이 `level 2`와 구별 안 됨(§7 전제 반증), **`nvidia-smi --query-compute-apps`가 작동**(`[N/A]`는 `--query-gpu`뿐 — `mem_gb_ctx8k` 경로), 기준선의 51 GiB는 페이지 캐시 | `atom` | @danielcho02 |
+| 2026-09-04 | [검색 둘을 포함한 다섯 상주 시도](harness/2026-09-04-five-model-residency-atom.md) | 검색 둘을 포함한 **네 서버 동시 상주**(가중치 합 27.66 GiB 대 KV 64.35 GiB — 제약은 상주 개수가 아니라 KV 예산), 32768 다섯은 **4/5**에서 CUDA OOM, **기동을 막은 것은 페이지 캐시**(`posix_fadvise`가 루트 없이 여분 81 → 108 GiB), **critic(devstral) 첫 기동 — registry의 `nvfp4`가 틀렸고 실제 `fp8`·VLM으로 해석됨**, scout 처리량 첫 실측(단일 35.78 · batch32 388.46), auditor `tok_s_batch32` 0 해제(66.42 · 적중률 0.5673 동반 · #133), 리랭커 순위는 실경로 모양으로 **미검증** | `atom` | @danielcho02 |
 
 ## 파일 이름
 
@@ -348,6 +349,41 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 
 ### #7 NVFP4는 sm_121에서 추가 환경변수 없이 뜬다 — 그러나 portability §5 #1은 닫히지 않는다
 
+> **2026-09-04 — 아래 「남은 1개」 행의 서술이 반증됐다. 그리고 그 모델은 NVFP4가 아니었다.**
+> [다섯 상주 보고서](harness/2026-09-04-five-model-residency-atom.md) §7이
+> `devstral-small-2-24b`를 revision `55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128`으로 8003에
+> 띄웠다. **「띄우지도」는 거짓이다** — 띄운 것은 2026-09-04가 처음이다.
+>
+> ⚠ **「받지도」는 그만큼 깨끗하지 않다. 같은 PR 안에서 이 표와 08-25 보고서의 갱신 블록이
+> 서로 다르게 읽는다.** §7이 본 것은 **2026-09-04에 조회한 HF 캐시의 스냅샷 날짜가
+> 2026-08-25였다**는 것이고, 그것이 그날 실험 **전**에 받아진 것인지는 저장소로 가르지 못한다.
+> 그리고 08-25 보고서의 그 행이 걸려 있던 대상은 당시 registry가 `nvfp4`로 라벨한 항목인데,
+> **그 nvfp4 빌드(`Firworks/…-nvfp4`)는 지금도 안 받았다** — `config/models.yaml`의
+> 그 모델 주석이 *"이름만 확인. 받지도 띄우지도 않았다"*로 이 PR 안에서 그렇게 적는다.
+> 실제로 캐시에 있었고 떴던 것은 **fp8 빌드**로 **다른 산출물**이다.
+>
+> **그래서 「두 항 모두 거짓」이라고 쓰지 않는다** — 캐시에 있었다는 관측이 지지하는 것은
+> 거기까지다(§0). 08-25 보고서에 붙인 갱신 블록도 같은 이유로 「받지도」를 반증으로 적지
+> 않았고, **이 표가 정본이므로 그 어긋남을 여기 남긴다.** 가르려면 그 캐시 항목이 언제
+> 만들어졌는지를 재야 한다 — 저장소 안에 그 증거가 없다.
+> **양자화가 `nvfp4`가 아니라 `fp8`이다.** 근거 셋: `config.json`의
+> `quantization_config.quant_method == 'fp8'` · vLLM 기동 로그 `quantization=fp8` ·
+> 파일 크기 18,921 MiB + 5,678 MiB = 24.0 GiB(24B × 1바이트. bf16이면 약 48 GiB여야 한다).
+> **멀티모달이기도 하다** — `architectures: ['Mistral3ForConditionalGeneration']`이고 vLLM이
+> `PixtralForConditionalGeneration`으로 해석했다.
+> **이 절의 제목("추가 환경변수 없이 뜬다")을 이 모델로 확장하지 않는다.** 그 기동은
+> 전 기동 공통 환경변수(`VLLM_USE_DEEP_GEMM=0` 등)를 건 상태였고, 그 위에 mistral 네이티브
+> 포맷용 로더 인자(`--tokenizer-mode mistral --config-format mistral --load-format mistral`)가
+> 따로 필요했다. **"NVFP4 3종 중 3종을 쟀다"로도 읽지 않는다** — 잰 것은 NVFP4가 아니다.
+> **`source`·`checksum`은 실험 시점에 비어 있었고, 서버를 내린 뒤에 채웠다.** 떠 있는 동안
+> 24 GiB를 읽으면 페이지 캐시가 차서 다른 서버를 죽이므로(같은 보고서 §4.3·§7) **순서가
+> 제약이었다** — 그 보고서 §7의 ⚠(*"checksum은 아직 안 만들었다"*)는 **실험 시점의
+> 기록**이고 그대로 맞다. **지금 registry에는 둘 다 들어 있다** — `config/models.yaml`의
+> `devstral-small-2-24b`이고 manifest는 `config/checksums/devstral-small-2-24b.txt`다.
+> **그래서 그날 산출물에는 자리표시자가 남아 있다** — 같은 보고서 §10의 `doctor` 화면이
+> `critic(devstral-small-2-24b, source=미상)`에 checksum 자리표시자 WARN을 낸 것은
+> 채워지기 **전**의 출력이다.
+
 **두 문장을 갈라야 한다. 붙이면 정본에 거짓이 들어간다.**
 
 | | 무엇 | 상태 |
@@ -364,7 +400,7 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 | --- | --- |
 | 기동 로그 | `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` · `arch=sm121` ([NVFP4 보고서](harness/2026-08-25-serving-nvfp4-atom.md) §3·§4) |
 | 3개 중 몇 개를 쟀나 | **2개.** `qwen3-8b`·`qwen3-coder-30b-a3b` |
-| 남은 1개 | **`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지 |
+| 남은 1개 | ~~**`devstral-small-2-24b` 미검증** — 받지도 띄우지도 않았다. registry `source`는 `null` 유지~~ → **2026-09-04에 전부 반증됐다**(이 절 머리의 갱신 블록). 그날 8003에 떴고, 서버를 내린 뒤 `tools/model_checksum.py`로 `source`·`checksum`을 채웠다. **다만 뜬 것은 `nvfp4`가 아니라 fp8 빌드다** — #1이 세는 3개 중 나머지 1개(nvfp4)는 여전히 미검증이다 |
 
 ### #8 `kv_cache_dtype`은 모델마다 다르고 하네스 기록에 없다
 

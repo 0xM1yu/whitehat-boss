@@ -10,6 +10,27 @@
 > 이 필드의 정의(context 8K)와 다르고, 값이 기동 시 `gpu_memory_utilization` 선점으로 정해져
 > 설정값의 되읽기에 가깝다. 미측정 판정은 유지된다.
 
+> **갱신 (2026-09-04, PR #142) — 본문은 그대로 두고 registry 쪽 사실만 덧붙인다.**
+> 해당 항목 둘: **§1 요약 표의 `devstral-small-2-24b` 행**과 **해석 ①의 마지막 문장**.
+> ①이 *"registry의 `source`는 `null`로 남는다"*를 **현재형으로** 적는데 registry는 더 이상
+> 그렇지 않다 — [다섯 상주 보고서](2026-09-04-five-model-residency-atom.md) §7이 그 모델을
+> **처음 띄웠고**(포트 8003 — 같은 보고서 §8 표), 지금 `config/models.yaml`의
+> `devstral-small-2-24b`에는 `source`
+> (`hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128`)와
+> `checksum`이 둘 다 들어 있다(manifest는 `config/checksums/devstral-small-2-24b.txt`).
+> **띄운 체크포인트의 양자화도 `nvfp4`가 아니라 `fp8`이다.** 정정 내용은
+> [README](../README.md) 확정 #7의 2026-09-04 갱신 블록이 담는다.
+>
+> **관측은 그대로다** — 이 실험이 2026-08-25에 그 모델을 띄우지 않은 것은 맞다.
+> **다만 「받지도」까지 반증됐다고는 적지 않는다**(CLAUDE.md §2.2). 같은 §7이 적은 것은
+> *"HF 캐시에 이미 받아져 있었다(2026-08-25)"*까지이고, 그 관측이 말하는 것은 **2026-09-04에
+> 본 캐시의 정본 스냅샷이 8/25 날짜였다**는 것이지 누가 언제(이 실험 전인지 후인지) 받았는지가
+> 아니다. 그리고 이 보고서에서 「받지도」가 걸려 있던 대상은
+> [portability.md](../../portability.md) §5 #1이 세는 **nvfp4 빌드**다 — §7 미측정 표가
+> *"24B nvfp4를 받아 띄우고"*로, §9 후속 과제가 *"nvfp4는 `Firworks/…-nvfp4`로 존재하는 것만
+> 확인"*으로 적는다. **그 빌드는 지금도 받지 않았다** — `config/models.yaml`의 같은 항목
+> 주석이 그렇게 적는다.
+
 ## 메타
 
 | 항목 | 값 | 비고 |
