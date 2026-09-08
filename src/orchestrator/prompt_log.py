@@ -92,7 +92,10 @@ def render(*, role: str, stage: int, prompt: Prompt) -> str:
 
 
 class PromptLog:
-    """`{run_dir}/prompts/`에 호출당 파일 하나.
+    """`{run_dir}/prompts/`에 호출당 1차 파일 하나. 재시도가 있으면 그 회차마다
+    `_retryK`가 붙은 파일이 **같은 순번으로** 하나씩 더 붙는다(`write_retry`, #80) —
+    실제로 서버에 간 요청을 재현하기 위해서다. 그래서 `*.md` 파일 수는 호출 수 이상이고,
+    호출당 하나인 것은 `_retry`가 없는 **1차** 파일이다.
 
     **순번은 이 객체가 센다.** trace의 `seq`를 쓰지 않는 것은 그 값이 프롬프트와 무관한
     이벤트(전이·게이트·예산)까지 세기 때문이고, `IdFactory`를 쓰지 않는 것은 그쪽에
@@ -118,6 +121,26 @@ class PromptLog:
         """
         self._seq += 1
         name = f"{self._seq:0{SEQ_WIDTH}d}_{role}.md"
+        text = render(role=role, stage=stage, prompt=prompt)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
+        return f"{DIR_NAME}/{name}", sha256_text(text)
+
+    def write_retry(
+        self, *, role: str, stage: int, prompt: Prompt, index: int
+    ) -> tuple[str, str]:
+        """재시도 회차(`index`=1..)의 프롬프트를 **직전 `write`와 같은 순번**으로 남긴다.
+
+        `000N_role.md`(1차)와 `000N_role_retry1.md`·`…retry2.md`가 한 순번으로 묶여, 어느
+        재시도가 어느 1차의 것인지 파일명만으로 붙는다. **카운터를 올리지 않는다** — 재시도가
+        순번을 먹으면 다음 호출의 1차 번호가 재시도 수만큼 건너뛰어, 순번이 호출 수와
+        어긋난다.
+
+        같은 `prompts/` 아래이므로 `eval/leakage`의 스캔이 이 파일도 본다 — **실제로 서버에
+        간 요청**이 누출 검증 대상이 되는 것이 (a)의 목적이다(#80). LF 고정은 `write`와 같은
+        이유다(장비별 해시 흔들림 방지).
+        """
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}_retry{index}.md"
         text = render(role=role, stage=stage, prompt=prompt)
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
