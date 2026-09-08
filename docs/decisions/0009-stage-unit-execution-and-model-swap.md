@@ -2,11 +2,11 @@
 
 - 상태: 제안 (하네스 팀 사인오프 대기)
 - 일자: 2026-09-06
-- 관련: [build-plan.md](../build-plan.md) §4·§7·§8, [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §7, [model-serving.md](../model-serving.md) §1·§3·§7, [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), [2026-09-03 교대 보고서](../experiments/harness/2026-09-03-model-swap-sleep-atom.md), [로스터 조사](../research/2026-09-08-roster.md) §1, `src/schemas/common.py`(`HarnessModel` `extra="forbid"`), `src/config.py`(`ProfileEntry`), `config/profiles.yaml`
+- 관련: [build-plan.md](../build-plan.md) §4·§7·§8, [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §7, [model-serving.md](../model-serving.md) §1·§3·§7, [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), [2026-09-03 교대 보고서](../experiments/harness/2026-09-03-model-swap-sleep-atom.md), [로스터 조사](../research/2026-09-08-roster.md) §1, `src/schemas/common.py`(`HarnessModel` `extra="forbid"`), `src/config.py`(`ProfileEntry`), `config/profiles.yaml`, `.claude/restructure-2026-09-04.md` C절(이 초안이 처음 근거로 든 저장소 밖 작업 메모 — `.gitignore`로 배제돼 열람 불가라 **근거로는 안 쓴다.** 같은 로스터가 위 [로스터 조사](../research/2026-09-08-roster.md) §1에 있고 그쪽이 원천이다. 이 줄은 출처 이력으로만 남긴다)
 
 ## 배경
 
-리스트럭처가 상주 모델 수를 늘린다 — Scout 계열 셋([로스터 §1](../research/2026-09-08-roster.md): Memory·Boundary·Injection) + Auditor + Critic + embedding + reranker. 이 자리들이 **다 상주하면 KV 예산을 넘긴다.**
+리스트럭처가 상주 모델 수를 늘린다 — Scout 계열 셋([로스터 §1](../research/2026-09-08-roster.md): Memory·Boundary·Injection) + Auditor + Critic + embedding + reranker. 이 자리들이 **다 상주하면 KV 예산을 넘긴다.** ⚠ **Scout 계열이 셋이라는 것은 이 ADR이 정하지 않는다** — 로스터 조사는 스스로를 *"제안이지 결정이 아니다"*라고 적고 그 결정은 `ADR 0010`(하네스 구조와 모델 로스터)이 든다. 그쪽이 아직 머지 전이라 링크가 아니라 이름으로 적는다(링크로 걸면 `test_internal_links_point_at_a_real_file`이 깨진다). **계열 수가 바뀌면 아래 자리 수도 바뀐다.**
 
 - ATOM은 두 축이다: 물리 통합메모리 **119.7 GiB**와 우리 슬라이스 cgroup **80 GiB**(`model-serving.md §1`, `memory.high=max`라 상한 닿으면 예고 없이 OOM). ⚠ 단 2026-09-04 실측에선 vLLM이 `user-1004.slice` **밖**(`system.slice/ssh.service`)이라 **cgroup 80은 실제로 걸리지 않았다**(보고서 §5) — 관측된 구속 한계는 물리 119.7이고, 제약은 상주 개수가 아니라 **KV 예산 배분**이다(보고서 §1 요약·§3 해석①).
 - 2026-09-04 실측(보고서 §3): 네 서버(scout·auditor·embedding·reranker) 가중치+non-torch **27.66 GiB** + KV 합 64.35 = `nvidia-smi` PID 합 **96.07 / 119.7 GiB**. **이 배분의 조건이 「critic 제외 넷」이라 다섯째는 의도적으로 뺀 것이지 안 들어간 게 아니다**(§3). 다섯을 물린 것은 같은 보고서 **§8의 다른 배분**이고 **답은 4/5**다 — 8003 devstral·8002 auditor·8001 scout·8005 reranker가 UP이고 **8004 embedding(0.6B)이 CUDA OOM**이다. 죽은 것이 제일 큰 모델이 아니라 0.6B라는 사실이 보고서의 **"제약은 상주 개수가 아니라 KV 예산"** 결론을 뒷받침한다(`build-plan.md §8 row 2`가 이 4/5를 그대로 든다). 여기에 Scout 계열이 늘고 상주 모델이 커지면 그 예산을 넘긴다.
@@ -39,7 +39,7 @@
 - **다 상주하면 KV 예산을 넘긴다**(2026-09-04 네 서버 96/119.7, 다섯째 배분에서 embedding CUDA OOM). Scout 계열([로스터 §1](../research/2026-09-08-roster.md))·상주 모델이 커질수록 심해진다. **상주를 줄이는 길이 교대만은 아니다** — 보고서 §8이 `--max-model-len` 낮추기·`--kv-cache-memory` 절대값도 든다. 교대는 그중 **상주 모델 수를 직접 줄이는** 길이다.
 - **교대 자체는 가능함이 실측됐다**([2026-09-03 보고서](../experiments/harness/2026-09-03-model-swap-sleep-atom.md): 잠재우기가 약 51 GiB 반환). ⚠ 다만 왕복 "2~6초"는 `/v1/models` 응답까지만 본 값이라 **설계 예산으로 못 쓴다**(`swap.md §1.3`, #144). 실 교대 예산은 실측이 정한다(`swap.md §9`).
 - ⚠ **잠든 서버도 공짜가 아니다** — L1/L2에서 서버당 약 **2.33 GiB** 잔류(`swap.md §3.3`), 7개면 ≈14 GiB(119.7의 12%). 곱셈 성립 여부는 미측정.
-- ⚠ **교대 비용의 dense↔MoE 대조는 미측정이다.** 로드/언로드는 **총 가중치 바이트**가 움직여 활성 파라미터와 무관하다 — 활성 파라미터가 작은 것은 **추론 대역폭** 이득이지(`model-serving.md §1`: 토큰마다 읽는 바이트가 병목) 교대 비용 이득이 아니다.
+- ⚠ **교대 비용의 dense↔MoE 대조는 미측정이다.** 로드/언로드는 **총 가중치 바이트**가 움직여 활성 파라미터와 무관하다 — 활성 파라미터가 작은 것은 **추론 대역폭** 이득이지(`model-serving.md §1`: 토큰마다 읽는 바이트가 병목) 교대 비용 이득이 아니다. 저장소 안의 근거 둘: [2026-08-18 서빙 보고서](../experiments/harness/2026-08-18-serving-atom.md)가 *"전문가 전체가 메모리에 상주하므로 메모리 절감 효과는 없습니다"*라고 적고, 실측 바이트도 활성 파라미터를 안 따라간다 — MoE auditor(30B-A3B, 활성 3B) **18.28 GiB**(보고서 §3) 대 dense critic(24B) **25.48~26.8 GiB**(§7)로 8배가 아니라 **1.4배**다 `[계산]`. ⚠ 두 값은 양자화도 갈리므로(nvfp4 대 fp8) 이 대조가 보이는 것은 **바이트가 활성 파라미터를 따라가지 않는다**는 것 하나뿐이다.
 
 ## 고려한 대안 (`swap.md §7`)
 
