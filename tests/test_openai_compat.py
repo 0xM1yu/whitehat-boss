@@ -189,6 +189,58 @@ def test_the_retry_does_not_echo_the_failed_response_into_the_prompt(
     assert len(second) - len(first) < 1_000
 
 
+# --- 재시도 본문을 실어 올린다 (D49 · #80) -------------------------------------
+#
+# 어댑터는 산출물 디렉터리를 모르므로 파일을 못 쓴다(계층). 대신 실제로 보낸 2~N차 body를
+# `retry_bodies`로 실어 올리고, 상위(`context.call_model`)가 재시도 파일로 남긴다. 여기서
+# 고정하는 것은 그 본문이 **서버에 실제로 간 것과 같다**는 것뿐이다 — `_capture`가 payload를
+# 들고 있다.
+
+
+def _capture_until(monkeypatch: pytest.MonkeyPatch, succeed_on: int) -> list[dict]:
+    """`succeed_on` 회차에 성공하는 서버. 보낸 payload를 순서대로 모아 돌려준다."""
+    payloads: list[dict] = []
+
+    def fake_post(self, payload: dict) -> tuple[str, Usage]:  # noqa: ANN001, ARG001
+        payloads.append(payload)
+        raw = '{"ok": true}' if len(payloads) == succeed_on else '{"nope": 1}'
+        return raw, Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+    return payloads
+
+
+def test_successful_retry_carries_the_sent_retry_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """재시도로 살아난 성공이 `ModelResult.retry_bodies`에 **실제로 간** 2차 body를 싣는다."""
+    payloads = _capture_until(monkeypatch, succeed_on=2)
+
+    result = _client(retries=2).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    sent = [_user_content(p) for p in payloads]
+    assert len(sent) == 2  # 성공까지 2회
+    assert result.retry_bodies == tuple(sent[1:])  # 1차 제외한 실제 요청 = 2차 하나
+
+
+def test_exhausted_retry_bodies_equal_the_sent_requests_without_a_phantom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """소진돼도 `retry_bodies`는 **실제로 간 요청**과 정확히 일치한다 (phantom 없음).
+
+    보내는 시점이 아니라 스키마 오류 핸들러에서 담으면, 마지막 회차가 만든(한 번도 안 보낸)
+    body가 끝에 붙어 payload보다 하나 많아진다. 그 회귀를 여기서 막는다.
+    """
+    payloads = _capture_until(monkeypatch, succeed_on=99)  # 끝까지 실패
+
+    with pytest.raises(SchemaParseError) as excinfo:
+        _client(retries=2).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    sent = [_user_content(p) for p in payloads]
+    assert len(sent) == 3  # 1 + 재시도 2
+    assert excinfo.value.retry_bodies == tuple(sent[1:])  # 2·3차, unsent phantom 없음
+
+
 def test_the_retry_still_carries_why_the_parse_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

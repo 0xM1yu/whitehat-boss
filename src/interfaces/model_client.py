@@ -94,6 +94,7 @@ class ModelGatewayError(RuntimeError):
         gpu_ms: int | None = None,
         gpu_ms_source: "GpuMsSource | None" = None,
         attempts: int = 1,
+        retry_bodies: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -106,6 +107,9 @@ class ModelGatewayError(RuntimeError):
         self.gpu_ms = gpu_ms
         self.gpu_ms_source = gpu_ms_source
         self.attempts = attempts
+        # 재시도 회차가 실제로 보낸 body — 400이 재시도에서 났으면 그 요청이 여기 있다.
+        # 상위가 재시도 파일로 남긴다(#80, `ModelResult.retry_bodies` 주석).
+        self.retry_bodies = retry_bodies
 
 
 class SchemaParseError(RuntimeError):
@@ -130,12 +134,15 @@ class SchemaParseError(RuntimeError):
         gpu_ms: int | None = None,
         gpu_ms_source: "GpuMsSource | None" = None,
         attempts: int = 1,
+        retry_bodies: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.usage = usage
         self.gpu_ms = gpu_ms
         self.gpu_ms_source = gpu_ms_source
         self.attempts = attempts
+        # 소진까지 재시도가 실제로 보낸 body들. 상위가 재시도 파일로 남긴다(#80).
+        self.retry_bodies = retry_bodies
 
 
 class Prompt(HarnessModel):
@@ -204,6 +211,12 @@ class ModelResult(HarnessModel, Generic[SchemaT]):
     # (#83). trace의 `model_call`에 실려 evaluation.md §5.1 "구조화 출력 실패율"의 분자를
     # 시도 단위로 만든다. 재시도가 없으면 1이다.
     attempts: int = Field(default=1, ge=1)
+    # 재시도 회차(2~N차)가 **실제로 서버에 보낸** body. 1차 body는 이미 프롬프트 로그에
+    # 있으므로 담지 않는다 — 이것은 그 뒤의 것들이다. 어댑터는 산출물 디렉터리를 모르므로
+    # (계층: `src/adapters/`는 오케스트레이터를 import 하지 않는다) 파일을 직접 못 쓰고,
+    # 상위(`context.call_model`)가 이 본문을 재시도 파일로 남겨 **실제로 간 요청을 재현**할
+    # 수 있게 한다(#80). 재시도가 없으면 빈 튜플이다.
+    retry_bodies: tuple[str, ...] = ()
 
 
 class ModelClient(Protocol):

@@ -192,6 +192,13 @@ class RunContext:
                 "gpu_ms": gpu_ms,
                 "gpu_ms_source": getattr(exc, "gpu_ms_source", None),
             }
+            # 실패해도 재시도가 실제로 보낸 요청은 남긴다 — 400을 받은 요청이 무엇이었는지가
+            # 이 항목의 요점이다(#80). 소비를 안 든 예외(`BudgetExhausted`)는 `retry_bodies`가
+            # 없어 `getattr`가 빈 튜플을 준다.
+            retry_fields = self._record_retries(
+                role=role, stage=stage, prompt=prompt,
+                retry_bodies=getattr(exc, "retry_bodies", ()),
+            )
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
@@ -202,6 +209,7 @@ class RunContext:
                 model=self.config.model_key_for(role.value),
                 prompt_version=prompt.prompt_version,
                 **prompt_fields,
+                **retry_fields,
                 schema=schema.__name__,
                 ok=False,
                 error=type(exc).__name__,
@@ -219,6 +227,11 @@ class RunContext:
                     self.gpu_unmeasured_roles[name] = self.gpu_unmeasured_roles.get(name, 0) + 1
                 self.ledger.charge(usage, stage=stage, gpu_ms=gpu_ms)
             raise
+        # 재시도로 살아난 성공도 실제로 간 요청을 남긴다(#80). 재시도가 없으면 빈 dict라
+        # 이벤트 키가 늘지 않는다.
+        retry_fields = self._record_retries(
+            role=role, stage=stage, prompt=prompt, retry_bodies=result.retry_bodies
+        )
         self.trace.emit(
             EventKind.MODEL_CALL,
             stage=stage,
@@ -229,6 +242,7 @@ class RunContext:
             model=result.model,
             prompt_version=prompt.prompt_version,
             **prompt_fields,
+            **retry_fields,
             schema=schema.__name__,
             ok=True,
             input_tokens=result.usage.input_tokens,
@@ -295,7 +309,34 @@ class RunContext:
         if self.prompts is None:
             return {}
         ref, digest = self.prompts.write(role=role.value, stage=int(stage), prompt=prompt)
+        # `prompt_sha256`은 **1차 시도**의 것이다. 재시도가 있으면 실제로 간 것과 다르므로,
+        # `_record_retries`가 `sent_sha256`(마지막으로 간 것)을 함께 싣는다(#80).
         return {"prompt_ref": ref, "prompt_sha256": digest}
+
+    def _record_retries(
+        self, *, role: Role, stage: Stage, prompt: Prompt, retry_bodies: tuple[str, ...]
+    ) -> dict[str, TraceValue]:
+        """재시도 회차(2~N차)의 프롬프트를 산출물로 남기고 `model_call`에 실을 필드를 돌려준다.
+
+        1차는 `_record_prompt`가 이미 남겼다. 이것은 그 뒤에 **실제로 서버에 간** body들을
+        각각 `000N_role_retryK.md`로 남긴다 — 그 파일이 곧 실제 요청이라 재현·누출검증이
+        된다(#80). 파일명은 1차 순번을 공유해 `prompt_ref`에서 유추된다.
+
+        `sent_sha256`은 **마지막으로 간 요청**의 해시다 — `prompt_sha256`(1차)이 실제 간
+        것과 다를 때 그 오도를 없앤다. 재시도가 없으면 빈 dict라 `prompt_sha256`이 곧 실제
+        간 것이고, 성공 경로 이벤트에 없던 키를 억지로 늘리지 않는다.
+        """
+        if not retry_bodies or self.prompts is None:
+            return {}
+        last_digest = ""
+        for index, body in enumerate(retry_bodies, start=1):
+            retry_prompt = Prompt(
+                prefix=prompt.prefix, body=body, prompt_version=prompt.prompt_version
+            )
+            _, last_digest = self.prompts.write_retry(
+                role=role.value, stage=int(stage), prompt=retry_prompt, index=index
+            )
+        return {"sent_sha256": last_digest}
 
     # --- 도구 ---
 
