@@ -1347,8 +1347,10 @@ def test_an_unmeasured_served_role_is_named(tmp_path: Path) -> None:
 def test_some_profile_pairs_a_hybrid_retriever_with_a_real_indexer() -> None:
     """이 조합이 없으면 `HybridRetriever`의 그래프 섹션 분기가 죽은 코드가 된다.
 
-    index.json을 내는 프로필은 전부 `retriever: fake`이고(dev_docker·dev_singularity·
-    local_balanced·b1_single), `dev_hybrid`는 `tool_runner: fake`라 산출물이 없다.
+    이 그물을 친 2026-08-20에는 index.json을 내는 프로필이 전부 `retriever: fake`였고
+    (dev_docker·dev_singularity·local_balanced·b1_single), `dev_hybrid`는
+    `tool_runner: fake`라 산출물이 없었다. 그래서 `dev_hybrid_docker`를 만들었다.
+    2026-09-04에 `local_balanced_hybrid`가 둘째로 이 조합에 들어왔다.
     이 저장소는 "픽스처가 실전을 대표하지 못해 생긴 결함"을 이미 두 번 겪었다 —
     clang의 include 경로와 tree-sitter 최상위 한 겹. 둘 다 테스트는 초록이었다.
 
