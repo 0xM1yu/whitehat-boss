@@ -107,6 +107,10 @@ models:
     # `--apply` 판이 `tok_s_single 35.78` · `tok_s_batch32 388.46` ·
     # `prefix_hit_ratio_batch32 0.9981`로 이 블록에 적힌 것과 같고, 동시성 1/8/16/32의
     # tok/s·적중률 원표와 실패 0건도 거기 있다.
+    #
+    # ⚠ **그 파일은 #142가 들여온다** — 이 주석이 그 PR보다 먼저 도는 순간이 있다. 경로로만
+    # 적고 마크다운 링크로 바꾸지 않는다: 링크 검사(`test_internal_links_point_at_a_real_file`)는
+    # `*.md`만 수집해 YAML을 안 보지만, #142 전에는 링크가 읽는 사람에게 끊어진 포인터다.
     endpoint: "http://127.0.0.1:8001/v1"
     context_limit: 131072
     quantization: "nvfp4"
@@ -134,6 +138,7 @@ models:
     # `prefix_hit_ratio_batch32 0.5673`으로 이 블록에 적힌 것과 같다. 명령은
     # `cli bench --profile local_balanced_hybrid --device atom --roles scout auditor
     # --concurrency 8 16 32 --apply`였고 8001·8002·8004·8005 넷이 동시에 뜬 상태였다.
+    # ⚠ **그 보고서는 #142가 들여온다** — 위 `qwen3-8b` 블록과 같은 사유로 링크로 걸지 않는다.
     # 2026-09-02 재측정(아래 #128 문단의 근거)은
     # docs/experiments/harness/2026-09-02-bench-concurrency-atom.md,
     # 첫 측정은 2026-08-25이고 docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §4~§5다.
