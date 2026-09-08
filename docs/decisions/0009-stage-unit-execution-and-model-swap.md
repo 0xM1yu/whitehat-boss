@@ -2,18 +2,18 @@
 
 - 상태: 제안 (하네스 팀 사인오프 대기)
 - 일자: 2026-09-06
-- 관련: [build-plan.md](../build-plan.md) §4·§7, [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md), [model-serving.md](../model-serving.md) §1, `src/schemas/common.py`(`HarnessModel` `extra="forbid"`), `src/config.py`(`ProfileEntry`), `config/profiles.yaml`, `.claude/restructure-2026-09-04.md` C절
+- 관련: [build-plan.md](../build-plan.md) §4·§7, [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md), [model-serving.md](../model-serving.md) §1, [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), `src/schemas/common.py`(`HarnessModel` `extra="forbid"`), `src/config.py`(`ProfileEntry`), `config/profiles.yaml`, `.claude/restructure-2026-09-04.md` C절(저장소 밖 작업 메모 — `.gitignore`로 배제되어 열람 불가)
 
 ## 배경
 
 리스트럭처가 상주 모델 수를 늘린다 — Scout 오케스트레이터(전문가 여럿) + Auditor·Critic MoE 2 + embedding + reranker. 이 자리들이 **동시에 상주하면 OOM**이다.
 
-- ATOM은 두 축이다: 물리 통합메모리 **119.7 GiB**와 우리 슬라이스 cgroup **80 GiB**(`model-serving.md §1`, `memory.high=max`라 상한 닿으면 예고 없이 OOM).
-- 2026-09-04 실측: 네 서버(scout·auditor·embedding·reranker) 가중치+non-torch **27.66 GiB**에 KV까지 더하면 `nvidia-smi` PID 합 **96.07 / 119.7 GiB**였다. **critic(다섯째)은 못 물었고**, 여기에 Scout 풀이 늘고 리랭커·상주 모델이 커지면 넘긴다.
+- ATOM은 두 축이다: 물리 통합메모리 **119.7 GiB**와 우리 슬라이스 cgroup **80 GiB**(`model-serving.md §1`, `memory.high=max`라 상한 닿으면 예고 없이 OOM). ⚠ 단 2026-09-04 실측에선 vLLM이 `user-1004.slice` **밖**(`system.slice/ssh.service`)이라 **cgroup 80은 실제로 걸리지 않았다** — 관측된 구속 한계는 물리 119.7이고, 보고서는 제약이 상주 개수가 아니라 **KV 예산 배분**이라 본다([다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md) §5). 그래서 교대 필요성 자체가 아래 「미결」이다.
+- 2026-09-04 실측([다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md) §3): 네 서버(scout·auditor·embedding·reranker) 가중치+non-torch **27.66 GiB**에 KV까지 더하면 `nvidia-smi` PID 합 **96.07 / 119.7 GiB**였다. **critic(다섯째)은 못 물었고**, 여기에 Scout 풀이 늘고 리랭커·상주 모델이 커지면 넘긴다.
 
-현재 실행은 **후보 단위**다(`build-plan.md §4`): 후보 하나가 검색→Scout→Auditor→Gate를 끝까지 통과한다. 그래서 **모든 모델이 동시에 떠 있어야 하고, 배치도 못 쓰고, 단계 사이 교대도 못 한다.** 단일 머신 전제(실험팀 2-서버안과 별개로 결국 한 대에서 돈다)에서 이 방식은 상주 수를 못 줄인다.
+현재 실행은 **후보 단위**다(`build-plan.md §4`): 후보 하나가 검색→Scout→검색→Auditor→Gate를 끝까지 통과한다. 그래서 **모든 모델이 동시에 떠 있어야 하고, 배치도 못 쓰고, 단계 사이 교대도 못 한다.** 단일 머신 전제(실험팀 2-서버안과 별개로 결국 한 대에서 돈다)에서 이 방식은 상주 수를 못 줄인다.
 
-`build-plan.md §4`가 이 전환을 이미 예고했다 — *"이 전환은 되돌리기 비싼 결정이라 별도 ADR로 뽑는다(작성 예정)."* 이 문서가 그 ADR이다.
+`build-plan.md §4`가 이 전환을 되돌리기 비싼 결정으로 보고 별도 ADR로 뽑기로 예고했다 — **이 문서가 그 ADR이다.**
 
 ## 결정
 
