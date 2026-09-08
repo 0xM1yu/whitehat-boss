@@ -98,9 +98,9 @@
 | D57 | **`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다** | 부분 | [본문](open-questions/D/D57.md) |
 | D58 | **샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)** | 열림 | [본문](open-questions/D/D58.md) |
 | D59 | **Critic과 Auditor가 다른 계열이어야 한다는 조건을 강제하는 장치가 코드에 없다** | 열림 | [본문](open-questions/D/D59.md) |
-| D60 | **bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다** | 열림 | [본문](open-questions/D/D60.md) |
-| D61 | **bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다** | 열림 | [본문](open-questions/D/D61.md) |
-| D62 | **bench가 판마다 같은 프롬프트를 보내 두 번째 판부터 자기 캐시를 맞는다** | 열림 | [본문](open-questions/D/D62.md) |
+| D60 | ~~bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다~~ | 닫힘 | [본문](open-questions/D/D60.md) |
+| D61 | ~~bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다~~ | 닫힘 | [본문](open-questions/D/D61.md) |
+| D62 | **bench가 판마다 같은 프롬프트를 보내 두 번째 판부터 자기 캐시를 맞는다 — (b) 채택, 왜곡 제거 (a)는 열림** | 부분 | [본문](open-questions/D/D62.md) |
 
 ## 3. 팀·운영 미정
 
