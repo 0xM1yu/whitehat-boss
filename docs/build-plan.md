@@ -31,8 +31,7 @@
 | 7 | ⚠ factory 한 곳만 고치면 Scout 풀이 붙는다 | `roles`가 문자열 맵이라 리스트가 파싱되지 않고, 그것을 문자열로 읽는 자리가 config·factory·cli·bench에 흩어져 있다. **멤버별 프롬프트를 주려면 `scout.py`도 바뀐다** — `complete()`는 렌더가 끝난 `Prompt` 하나만 받는다 | `src/config.py` `ProfileEntry` |
 | 8 | fake면 보조 섹션이 고정 토큰이라 주변 코드가 한 줄도 안 실린다 | 절반만 맞다. 고정값은 `static_signal`·`known_facts`뿐이고 `callers`·`callees`는 인덱서 실측이다. **다만 그 본문은 호출 지점 참조 한 줄이지 코드 조각이 아니다** — 코드를 싣는 `related`가 LIGHT에 없다는 결론은 유지된다 | `src/graph_entry.py` |
 | 9 | 캡슐 상한이 커서 컨텍스트를 내려도 공짜 | 그 값은 EXPANDED 한 레벨이고, config가 "이 값은 `--max-model-len`을 보장하지 못한다"고 적으며 반례까지 든다. 천장 역산값은 그보다 훨씬 작다 | `config/budgets.yaml` |
-| 10 | `local_balanced`의 `retriever: fake` 사유가 동시 상주 제약 | 인용이 잘렸다. 실제 사유는 **R1 검증의 실패 지점 증가**이고, 2×2 넷의 사유는 **조건 간 차이가 모델 구성뿐이어야 한다**는 공정성 규칙이다 | `config/profiles.yaml`, [evaluation.md](evaluation.md) §2.3 |
-| 11 | 2×2 프로필 둘이 fake | **넷**이다. 그리고 fake인 것은 embedding·reranker뿐이고 scout·auditor·critic은 실모델이다 | `config/profiles.yaml` |
+| 10 | `local_balanced`의 `retriever: fake` 사유가 동시 상주 제약 | 인용이 잘렸다. 실제 사유는 **R1 검증의 실패 지점 증가**다 | `config/profiles.yaml`, [evaluation.md](evaluation.md) §2.3 |
 | 12 | checksum 자리표시자인 모델은 Critic 하나 | 임베딩·리랭커도 checksum 자리표시자 · source 없음이다. **검색을 켜는 순간 둘이 `served_models()`에 들어와 그 run이 비교표에서 빠진다** | `config/models.yaml` |
 | 13 | 8단계 루프는 이미 설계돼 있어 배선만 돌리면 된다 | 상태 머신 규칙과 상한 값은 있으나 **재진입 신호를 내는 코드가 저장소에 없고** 재평가 횟수를 보관하던 모듈은 삭제됐다. 만들 것은 그 신호를 내는 자리다 | [architecture.md](architecture.md) §3 ⚠, [D25](open-questions/D/D25.md) |
 | 14 | 필드 순서가 계약이라 어긋나면 다른 분포를 강제한다 | 원천이 스스로 유보한다 — "그 효과가 실제로 나는지는 아직 안 쟀다". **"맞추면 이득"이 아니라 "틀리면 나중에 원인을 못 가린다"**로 낮춘다 | `src/schemas/finding.py`, [D51](open-questions/D/D51.md) |

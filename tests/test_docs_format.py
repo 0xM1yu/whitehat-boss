@@ -165,8 +165,9 @@ def _defined_decisions() -> list[str]:
 
 
 # 보고서는 `harness/` 아래에 있다. `experiments/` 바로 밑에는 색인(README)과 양식(TEMPLATE)만
-# 남고, 실제 run 보고서는 `harness/`(하네스가 도는지 본 run)와 `2x2/`(팀 실험)로 갈린다.
-REPORT_DIRS = (EXPERIMENTS / "harness", EXPERIMENTS / "2x2")
+# 남는다. **튜플인 것은 의도다** — 2026-09-04까지는 `2x2/`(팀 실험)가 두 번째 원소였고,
+# 보고서 폴더가 다시 갈릴 때 여기에 더하면 아래 전부가 따라온다.
+REPORT_DIRS = (EXPERIMENTS / "harness",)
 
 
 def _reports() -> list[Path]:
@@ -322,8 +323,8 @@ def test_every_experiment_report_is_in_the_index() -> None:
     이 폴더가 생긴 계기가 "보고서가 메신저 첨부로만 존재해서 대조가 안 됐다"이다. 저장소에
     넣어 놓고 색인에 안 걸면 같은 자리로 돌아간다.
 
-    **파일명이 아니라 `experiments/` 기준 상대경로로 대조한다.** 보고서가 `harness/`·`2x2/`로
-    갈린 뒤로는 이름만 보면 색인이 **다른 폴더의 같은 이름**을 가리켜도 통과한다.
+    **파일명이 아니라 `experiments/` 기준 상대경로로 대조한다.** 보고서 폴더가 둘 이상으로
+    갈리면 이름만 보는 대조는 색인이 **다른 폴더의 같은 이름**을 가리켜도 통과시킨다.
     """
     index = _read(EXPERIMENTS / "README.md")
     linked = {unquote(target.split("#", 1)[0]) for target in _LINK.findall(index)}
