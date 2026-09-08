@@ -123,7 +123,7 @@ hybrid 쪽 경로를 태운다.
 
 **들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
 돌린다. 런타임은 생성자 인자이고 프로필이 고른다 — 개발 프로필은 `dev_docker` /
-`dev_singularity`, 조건 비교용 실서빙 프로필 여섯(`local_balanced`·`b1_single` + 2x2 넷)은
+`dev_singularity`, 조건 비교용 실서빙 프로필 둘(`local_balanced`·`b1_single`)은
 전부 `docker`다(2026-08-28, 주 실서빙 장비가 ATOM이므로 — docs/portability.md §3.
 2026-08-17~08-28 사이 앞의 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
 프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는

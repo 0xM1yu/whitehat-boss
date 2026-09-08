@@ -66,17 +66,20 @@
 | 프로필 | 선언 | 주 장비 | 오버라이드가 필요한 곳 |
 | --- | --- | --- | --- |
 | `local_balanced` · `b1_single` | `docker` | **ATOM** — 이 두 프로필을 돌릴 수 있는 유일한 장비다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Seraph) 이 프로필은 거기서 기동하지 않는다 | 없음 |
-| `b1_single_qwen3_8b` · `b1_single_foundation_sec` · `b1_single_granite` · `b3prime_balanced` | `docker` | **ATOM** — 팀 2x2 실험 프로필 넷. 팀 `experiments/2x2/lib/prime_runner.py`가 `--tool-runner`를 쓰지 않으므로 선언값이 그대로 쓰인다 | 없음 |
 | `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서는 **이제 필요 없다**(2026-08-21 이후 docker 존재). 그전에는 `--tool-runner podman`이었고, 그 사례가 [decisions/0005](decisions/0005-tool-runner-override.md)의 근거다 |
 | `dev_singularity` | `singularity` | Seraph | 없음 |
 
-✅ **조건 비교용 실서빙 프로필 여섯이 전부 `docker`다(2026-08-28).** 2026-08-17~08-28
+✅ **조건 비교용 실서빙 프로필이 전부 `docker`다(2026-08-28).** 2026-08-17~08-28
 사이에는 `local_balanced`·`b1_single`만 `podman`이라 이 표에 두 값이 섞여 있었고,
 `tool_images` digest가 런타임 사이에서 비교되지 않으므로(§5 #4) **두 무리를 같은 비교표에
-올릴 수 없었다.** 그 벽이 사라졌다 — B3'-large(`local_balanced` 후보)와 2×2 넷이 이제 같은
-셀에 들어간다. 팀 `run_matrix.yaml`의 `b3prime_large_profile`은 아직
-`TODO_local_large`이므로 프로필 이름만 정하면 된다. 되돌린 경위와 근거는
+올릴 수 없었다.** 그 벽이 사라졌다. 되돌린 경위와 근거는
 [decisions/0005](decisions/0005-tool-runner-override.md)의 마지막 절.
+
+**⚠ 되돌릴 당시의 동기는 지금 문서에 없다.** 그때 `docker`로 맞춘 직접적인 이유는 팀 2×2
+실험 프로필 넷과 런타임을 일치시키는 것이었고(ADR 0005 마지막 절이 그 시점 기록으로
+남아 있다), **그 넷은 2026-09-01에 트랙째 폐기됐고 2026-09-04에 저장소에서 걷어냈다.** 결론(`docker`로 통일)은 그대로
+유효하지만 — ATOM에 docker가 있고 주 실서빙 장비가 ATOM이다 — 근거를 ADR에서 읽을 때
+그 넷이 저장소에 없다는 것을 알고 읽어야 한다.
 
 **런타임별로 프로필을 복제하지 않는다.** 조건 축(B1/B3')에 장비 축이 섞이고, 조건이 늘
 때마다 장비 수만큼 프로필이 곱해진다([decisions/0005](decisions/0005-tool-runner-override.md)가
