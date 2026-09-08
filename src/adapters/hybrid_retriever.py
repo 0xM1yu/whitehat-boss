@@ -21,9 +21,15 @@ embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않
 `related` 조각은 수십 줄짜리 코드 블록이다. 그리고 이 본문은 산문(`scout.describe_sections`)과
 사실 블록(`build_facts`) 양쪽에 실리므로(#67의 2배 계상 — `callers`/`callees`와 같은 계약),
 **선언 N토큰짜리 `related`가 실제 프롬프트에서는 대략 2N을 차지한다.** 토큰 추정 과소(#96)까지
-얹으면 더 커진다. 지금은 hybrid가 dev 전용(`dev_hybrid`·`dev_hybrid_docker`)이라 무해하지만,
-**실서빙 hybrid 프로필이 생기면 예산을 캡슐 선언값이 아니라 이 사실로 잡아야 한다.** 그래서
-캡슐 구성이 바뀐 이번 변경은 `CAPSULE_POLICY_VERSION`을 올린다(아래).
+얹으면 더 커진다. 그래서 캡슐 구성이 바뀐 그 변경은 `CAPSULE_POLICY_VERSION`을 올렸다(아래).
+
+**이 문단이 예고한 조건이 2026-09-04에 성립했다.** 오래 "지금은 hybrid가 dev 전용
+(`dev_hybrid`·`dev_hybrid_docker`)이라 무해하지만 실서빙 hybrid 프로필이 생기면 예산을
+캡슐 선언값이 아니라 이 사실로 잡아야 한다"고 적어 왔는데, `local_balanced_hybrid`가 그
+프로필이다(`config/profiles.yaml`). **그 프로필은 `budget: default`를 그대로 쓴다** —
+대조군 `local_balanced`와 축을 하나로 유지하려는 선택이지 그 예산이 이 2배 계상을 감안했다는
+판정이 아니다. 여기서 예산을 재잡으려면 실제로 실린 토큰을 먼저 재야 하고, 그 측정은 아직
+없다. 근본 해법은 위 문단이 이미 가리킨 #67이다.
 
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에 타입
 데이터가 없다(`indexer.build_index()`는 symbols·calls뿐). 없는 그래프에서 나온 척 섹션을
