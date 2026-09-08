@@ -283,13 +283,13 @@ models:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-embedding-0.6b.txt`이고
     # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
     #
-    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
-    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
-    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
-    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
-    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
-    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
-    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
+    # ⚠ **#108은 2026-09-09 닫혔다.** 등재된 결함(안 뜨는 역할을 서빙으로 세어 이 `checksum`이
+    # 비교표 제외 판정에 끌려듦)은 `served_models()`가 `retriever != hybrid`면 검색 역할을 빼는
+    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(`b1_single` 등)의
+    # `RunRecord.model_checksums`가 이 실해시를 담는 것은 — 그 run이 이 모델을 띄운 적이 없어도 —
+    # 결함이 아니라 **선언 기록 설계**다: `model_checksums`는 "프로필이 선언한 역할→모델"의 완전
+    # 기록이고(그 계약을 `tests/test_config.py`가 강제한다), "실제로 뜬 역할"은 `served_models()`가
+    # 따로 판정한다. #131이 채운 이 값은 그 선언 기록의 참값이다.
     endpoint: "http://127.0.0.1:8004/v1"
     context_limit: 32768
     quantization: "fp16"
@@ -312,13 +312,13 @@ models:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-reranker-0.6b.txt`이고
     # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
     #
-    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
-    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
-    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
-    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
-    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
-    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
-    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
+    # ⚠ **#108은 2026-09-09 닫혔다.** 등재된 결함(안 뜨는 역할을 서빙으로 세어 이 `checksum`이
+    # 비교표 제외 판정에 끌려듦)은 `served_models()`가 `retriever != hybrid`면 검색 역할을 빼는
+    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(`b1_single` 등)의
+    # `RunRecord.model_checksums`가 이 실해시를 담는 것은 — 그 run이 이 모델을 띄운 적이 없어도 —
+    # 결함이 아니라 **선언 기록 설계**다: `model_checksums`는 "프로필이 선언한 역할→모델"의 완전
+    # 기록이고(그 계약을 `tests/test_config.py`가 강제한다), "실제로 뜬 역할"은 `served_models()`가
+    # 따로 판정한다. #131이 채운 이 값은 그 선언 기록의 참값이다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 32768
     quantization: "fp16"
