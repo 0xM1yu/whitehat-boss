@@ -36,14 +36,20 @@
 
 ## 2. 설계 결정 대기
 
-> **⏸ 모델 선정 대기 보류 (2026-08-30, 5차 회의).** scout·auditor·critic 모델과 오케스트레이션 방안(큰 모델 하나 vs 소형 앙상블)이 확정되기 전까지 그에 종속된 항목은 수정을 보류한다 — 기조가 바뀌면 실측 축이 통째로 달라져 지금 고치는 것이 무의미하다. 해당: **D2·D3·D4·D24·D28**(임계값·양자화·점수·후보수), **D29**(샘플링 등가화 남은 부분), **D51**(열거 강제), **D54**(v2 모델 배선). 미해결 D는 GitHub Issue로 추적한다 — **현재 예외 넷은 D9·D19·D20·D21이고 이슈를 만드는 것이 남았다**(D9는 범위 결정 대기, 나머지 셋은 부분 해소라 잔여가 각 행에 있다).
+> **⏸ 모델 선정 대기 보류 (2026-08-30, 5차 회의).** scout·auditor·critic 모델과 오케스트레이션 방안(큰 모델 하나 vs 소형 앙상블)이 확정되기 전까지 그에 종속된 항목은 수정을 보류한다 — 기조가 바뀌면 실측 축이 통째로 달라져 지금 고치는 것이 무의미하다. 해당: **D2·D3·D4·D24·D28**(임계값·양자화·점수·후보수), **D29**(샘플링 등가화 남은 부분), **D51**(열거 강제), **D54**(v2 모델 배선).
+>
+> **⏵ 2026-09-08 — 여덟 중 여섯이 풀렸다.** 로스터가 제안됐고(ADR 0010 · [09-08 조사](research/2026-09-08-roster.md)) 보류 사유였던 「실측 축이 통째로 달라진다」가 여섯에서 소멸한다 — **D2·D4·D24·D28·D29·D54가 `열림`이다.** 다만 **D2·D4는 질문 자체가 바뀌고**(Scout가 셋으로 쪼개져 임계값이 스칼라가 아니게 되는 것 · Critic 후보가 네이티브 MXFP4라 고정밀 기준선이 없는 것), **D24는 Auditor A/B 둘 다 돌려야** 한다. 각 본문의 2026-09-08 절에 무엇이 바뀌었고 다음 입력이 무엇인지 적었다.
+>
+> **남은 보류는 둘이고 사유가 서로 다르다.** **D51**은 `trigger_status`를 내는 것이 Auditor라 **A/B 미결이 단독으로 막는 유일한 항목**이다. **D3**은 애초에 보류 사유가 틀렸다 — 모델이 아니라 **`expand()`의 호출부가 저장소에 없어서** `capsule_expansion_max`가 한 번도 안 걸린다(2026-09-08 코드 확인).
+>
+> 미해결 D는 GitHub Issue로 추적한다 — **⚠ 2026-09-08 — 이 문장의 「예외 넷」은 낡았다.** D9·D20·D21은 이슈가 있다(#94·#95·#96, 전부 열림 — 2026-09-08 조회). **남은 예외는 D19 하나**이고 그 이슈는 아직 없다.
 
 | # | 항목 | 상태 | 본문 |
 | --- | --- | --- | --- |
 | D1 | 벤치마크 라벨 통합 | 열림 | [본문](open-questions/D/D1.md) |
-| D2 | Scout 임계값·단계별 승격 비율 | 보류 | [본문](open-questions/D/D2.md) |
+| D2 | Scout 임계값·단계별 승격 비율 | 열림 | [본문](open-questions/D/D2.md) |
 | D3 | Capsule 확장 횟수 상한 | 보류 | [본문](open-questions/D/D3.md) |
-| D4 | Critic 양자화 검증 표본 크기와 허용 하락폭 | 보류 | [본문](open-questions/D/D4.md) |
+| D4 | Critic 양자화 검증 표본 크기와 허용 하락폭 | 열림 | [본문](open-questions/D/D4.md) |
 | D5 | GPU-hour → 금액 환산식 | 열림 | [본문](open-questions/D/D5.md) |
 | D6 | 상태 저장소 SQLite vs DuckDB | 결정 | [본문](open-questions/D/D6.md) |
 | D7 | 오케스트레이터 LangGraph v1 확정 여부 | 결정 | [본문](open-questions/D/D7.md) |
@@ -63,12 +69,12 @@
 | D21 | **토큰 계상이 실서빙 실측보다 1.8배 과소다** | 부분 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
 | D23 | **`Evidence.location`을 채우는 코드가 저장소에 없어 Gate E1의 `location_ok`가 구조적으로 거짓이다** | 열림 | [본문](open-questions/D/D23.md) |
-| D24 | **후보 1건당 토큰·시간을 한 번도 재지 않아 `candidate_max`에 근거가 없다** | 보류 | [본문](open-questions/D/D24.md) |
+| D24 | **후보 1건당 토큰·시간을 한 번도 재지 않아 `candidate_max`에 근거가 없다** | 열림 | [본문](open-questions/D/D24.md) |
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | **장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다** | 열림 | [본문](open-questions/D/D27.md) |
-| D28 | **Scout 점수에 해상도가 없다 — 원인 미확정** | 보류 | [본문](open-questions/D/D28.md) |
-| D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 보류 | [본문](open-questions/D/D29.md) |
+| D28 | **Scout 점수에 해상도가 없다 — 원인 미확정** | 열림 | [본문](open-questions/D/D28.md) |
+| D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 열림 | [본문](open-questions/D/D29.md) |
 | D30 | **`single`이라는 이름에 세 문서가 서로 다른 뜻을 붙인다** | 열림 | [본문](open-questions/D/D30.md) |
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 결정 | [본문](open-questions/D/D31.md) |
 | D32 | **컴파일 플래그(`-std`·`-I`)가 코드 상수인데 `RunRecord`에 없다** | 열림 | [본문](open-questions/D/D32.md) |
@@ -93,7 +99,7 @@
 | D51 | **`trigger_status`의 보류 두 건 — (2) 필드 순서는 닫혔고 (1) 열거 강제가 남았다** | 보류 | [본문](open-questions/D/D51.md) |
 | D52 | ~~`trigger_status`를 내라고 시키는 프롬프트가 저장소에 없어 그 필드는 구조적으로 항상 `null`이다~~ | 닫힘 | [본문](open-questions/D/D52.md) |
 | D53 | ~~실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 — 폭주가 잦은 조건일수록 싸 보인다~~ | 닫힘 | [본문](open-questions/D/D53.md) |
-| D54 | **`config/models.yaml`의 어느 모델도 v2 프롬프트를 고르지 않아 머지된 v2가 도달 불가다** | 보류 | [본문](open-questions/D/D54.md) |
+| D54 | **`config/models.yaml`의 어느 모델도 v2 프롬프트를 고르지 않아 머지된 v2가 도달 불가다** | 열림 | [본문](open-questions/D/D54.md) |
 | D55 | ~~재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다~~ | 닫힘 | [본문](open-questions/D/D55.md) |
 | D57 | **`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다** | 부분 | [본문](open-questions/D/D57.md) |
 | D58 | **샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)** | 열림 | [본문](open-questions/D/D58.md) |
