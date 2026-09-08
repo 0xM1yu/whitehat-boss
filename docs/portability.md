@@ -116,7 +116,7 @@ python -m src.cli doctor --profile local_balanced --device slurm
 
 | # | 항목 | 못 도는 환경 | 상태 |
 | --- | --- | --- | --- |
-| 1 | `local_balanced`이 참조하는 모델 5개 중 **3개**가 Blackwell 이상을 요구한다: `qwen3-8b`(`fp4`), `qwen3-coder-30b-a3b`(`nvfp4`), `devstral-small-2-24b`(`nvfp4`). `b1_single`은 세 역할이 전부 `qwen3-coder-30b-a3b`(`nvfp4`)다 | Blackwell(sm_100+) 미만 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** **2026-08-25 — 요구 자체는 그대로이고, Blackwell 쪽이 실측됐다.** [NVFP4 보고서](experiments/harness/2026-08-25-serving-nvfp4-atom.md)에서 `qwen3-8b`·`qwen3-coder-30b-a3b` **2종이 sm_121에서 추가 환경변수 없이 떴고** 30B는 구조화 출력까지 정상이다(5/5). **이 항목은 닫히지 않는다** — "못 도는 환경" 칸이 `Blackwell 미만`이고 ATOM은 sm_121 = Blackwell이므로 거기서 뜬 것은 이 항목을 **확인**하지 반증하지 않는다. 닫힌 것은 인접한 다른 불확실성이다: `config/models.yaml`의 `qwen3-4b` 주석이 열어 둔 "다른 양자화(`nvfp4`)도 같은 종류의 백엔드 문제를 따로 만날 수 있다"가 이 2종에 한해 닫혔다(#5의 `VLLM_USE_DEEP_GEMM=0`에 대응하는 NVFP4 쪽 벽은 **없다**). **셋 중 `devstral-small-2-24b`는 여전히 미검증이다** — 받지도 띄우지도 않았고 registry `source`는 `null`이다. |
+| 1 | `local_balanced`이 참조하는 모델 5개 중 **3개**가 Blackwell 이상을 요구한다: `qwen3-8b`(`fp4`), `qwen3-coder-30b-a3b`(`nvfp4`), `devstral-small-2-24b`(`nvfp4`). `b1_single`은 세 역할이 전부 `qwen3-coder-30b-a3b`(`nvfp4`)다 | Blackwell(sm_100+) 미만 | 미해결. 해법: 같은 모델의 다른 양자화를 별도 model key + 별도 프로필로 둔다. **registry 문제이지 코드 문제가 아니다** **2026-08-25 — 요구 자체는 그대로이고, Blackwell 쪽이 실측됐다.** [NVFP4 보고서](experiments/harness/2026-08-25-serving-nvfp4-atom.md)에서 `qwen3-8b`·`qwen3-coder-30b-a3b` **2종이 sm_121에서 추가 환경변수 없이 떴고** 30B는 구조화 출력까지 정상이다(5/5). **이 항목은 닫히지 않는다** — "못 도는 환경" 칸이 `Blackwell 미만`이고 ATOM은 sm_121 = Blackwell이므로 거기서 뜬 것은 이 항목을 **확인**하지 반증하지 않는다. 닫힌 것은 인접한 다른 불확실성이다: `config/models.yaml`의 `qwen3-4b` 주석이 열어 둔 "다른 양자화(`nvfp4`)도 같은 종류의 백엔드 문제를 따로 만날 수 있다"가 이 2종에 한해 닫혔다(#5의 `VLLM_USE_DEEP_GEMM=0`에 대응하는 NVFP4 쪽 벽은 **없다**). **셋 중 `devstral-small-2-24b`는 여전히 미검증이다** — 받지도 띄우지도 않았고 registry `source`는 `null`이다. **2026-09-04 — 앞 문장의 「띄우지도 않았다」도, 「registry `source`는 `null`이다」도, 이 행이 그 모델에 붙인 `nvfp4`도 반증됐다.** ⚠ **「받지도」는 반증으로 세지 않는다** — 캐시 스냅샷 날짜가 2026-08-25라는 것까지가 관측이고, 그 문장이 걸려 있던 nvfp4 빌드는 지금도 안 받았다([확정 #7](experiments/README.md)). [다섯 상주 보고서](experiments/harness/2026-09-04-five-model-residency-atom.md) §7이 revision `55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128`으로 sm_121에 처음 띄웠고(받아진 것은 2026-08-25), 그 체크포인트의 양자화는 **`fp8`이다** — `config.json`의 `quant_method: 'fp8'` · vLLM 기동 로그 `quantization=fp8` · 파일 크기 24.0 GiB(24B × 1바이트, bf16이면 약 48 GiB). **그러므로 이 행이 세는 「3개」는 다시 세야 한다** — 같은 표 #2가 fp8을 **Ada(sm_89) 이상**으로 세므로 이 모델은 #1이 아니라 #2와 같은 부류다. ⚠ **그렇다고 「Blackwell 미만에서 돈다」가 나오지는 않는다** — 관측은 sm_121 하나뿐이고 Ada에서 돌린 적이 없다. **셋을 둘로 고쳐 행을 옮기는 편집은 이 PR에서 하지 않았다** — 두 행의 「못 도는 환경」 칸이 다르므로(`Blackwell 미만` 대 `Ada 미만`) 항목의 판정 자체를 바꾸는 일이고, 그건 별도 건이다. **`source`·`checksum`은 실험 시점에 비어 있었고 서버를 내린 뒤에 채웠다** — 띄운 것과 해시를 만든 것은 다르고, 서버가 떠 있는 동안 24 GiB를 읽으면 페이지 캐시가 차서 다른 서버가 죽으므로(같은 보고서 §4.3) 순서가 제약이었다. **지금 registry에는 둘 다 들어 있다** — `config/models.yaml`의 `devstral-small-2-24b`이고 manifest는 `config/checksums/devstral-small-2-24b.txt`다. 그날 `doctor` 화면(같은 보고서 §10)이 낸 checksum 자리표시자 WARN은 채워지기 **전**의 출력이다. 기동에 mistral 네이티브 로더 인자(`--tokenizer-mode mistral --config-format mistral --load-format mistral`)가 필요한 것과 이 모델이 멀티모달이라는 것도 같은 절에 있다. |
 | 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | 미해결. **셋 중 진단 비용이 가장 크다**(아래) |
 | 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다. **두 축 모두 실측으로 뒷받침된다**(아래) |
 | 5 | **`qwen3-4b`(`fp8`)가 sm_121에서 `VLLM_USE_DEEP_GEMM=0` 없이 기동하지 않는다.** DeepGEMM이 fp8 scale-factor 레이아웃을 변환하지 못해 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`, 2026-08-17 ATOM 실측) | ATOM(sm_121) — **플래그 없이** | **해소(기동 인자로).** 플래그를 주면 뜨고, 그 사실과 오진 방향이 `config/models.yaml`의 해당 모델 주석에 있다. **#2와 반대 방향이라 같은 행에 넣지 않았다** — #2는 "카드가 낡아서" 못 돌고 이쪽은 "카드는 충분히 새로운데 백엔드가 그 레이아웃을 못 다뤄서" 못 돈다. R1(커널 호환성)은 bf16으로 통과했고 양자화 커널은 그 범위 밖이었다 — 이것이 그 첫 사례다 |
@@ -179,6 +179,34 @@ vLLM은 `world_size=1`이어도 TCPStore에 자기 자신으로 붙으므로 기
 아직 환경을 가리는가"를 적는 곳인데, 이건 하네스가 무엇을 하든 바뀌지 않는 **그 테넌트의
 설정**이다. §5에 넣으면 고칠 주체가 우리인 항목과 아닌 항목이 한 표에 섞이고, 그 표가
 "이 표가 비면 목표 달성"이라는 뜻을 잃는다. 관측 기록인 여기(§6)가 맞는 자리다.
+
+**`atom`의 페이지 캐시 — 루트 없이 떨어뜨린다 (2026-09-04 실측).** 통합메모리 장비라 모델
+파일을 읽어 생긴 리눅스 페이지 캐시가 CUDA 할당과 **같은 풀**을 놓고 다툰다. 안 떨어뜨리면
+총량이 남아 보여도 기동이 죽는다 — 여분 7 GiB · 버퍼/캐시 35 GiB인 상태에서 `init_device`의
+**첫 CUDA 호출**이 `torch.AcceleratorError: CUDA error: out of memory`로 떨어졌다
+([다섯 상주 보고서](experiments/harness/2026-09-04-five-model-residency-atom.md) §4.3).
+
+`drop_caches`는 권한이 없다 — `sudo -n`이 "암호가 필요합니다"를 내고
+`/proc/sys/vm/drop_caches`에 직접 쓰면 "허가 거부"다. **파일 단위
+`posix_fadvise(POSIX_FADV_DONTNEED)`는 소유자 권한으로 된다.** 그 캐시는 우리가 읽은 모델
+파일에서 온 것이라 전부 우리 소유이기 때문이다.
+
+```python
+import os, glob
+for f in glob.glob('/srv/tenants/user/.cache/huggingface/hub/**/*.safetensors', recursive=True):
+    fd = os.open(f, os.O_RDONLY)
+    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    os.close(fd)
+```
+
+모델 파일 44개에 걸어 `free -g` 기준 버퍼/캐시 **35 → 8 GiB**, 여분 **81 → 108 GiB**였다
+(같은 보고서 §6). **기동 사이마다 돌린다** — 모델을 읽을 때마다 캐시가 다시 찬다.
+
+**이 항목도 §5가 아니라 여기다.** 서버 기동은 하네스 밖이라(그 경계는
+[experiments/README.md](experiments/README.md)의 "서빙 서버 stdout을 파일로 받는다" 절이
+적는다) 하네스가 고칠 대상이 아니다. 다만 위 TCP 차단과 성격이 하나 다르다 — 그쪽은 **그
+테넌트의 설정**이고 이쪽은 **통합메모리 장비의 성질**이라, 같은 부류의 장비가 늘면 거기서도
+만난다. 그래도 §5에 안 넣는 이유는 같다: 하네스 코드가 없앨 수 있는 항목이 아니다.
 
 접속·잡 실행·노드 선택 같은 운용 절차는 [tools/probe/README.md](../tools/probe/README.md)에
 있다. 그 내용이 이 문서에 없는 것은 의도다 — 하네스가 알 필요가 없는 사실이기 때문이다.
