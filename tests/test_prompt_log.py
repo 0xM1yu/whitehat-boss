@@ -95,6 +95,21 @@ def test_newlines_are_lf_on_every_platform(tmp_path: Path) -> None:
     assert b"\r\n" not in (tmp_path / ref).read_bytes()
 
 
+def test_write_retry_shares_the_first_seq_without_bumping(tmp_path: Path) -> None:
+    """재시도는 1차와 같은 순번에 `_retryK`가 붙고, 카운터를 안 올려 다음 호출이 밀리지 않는다."""
+    log = PromptLog(tmp_path)
+
+    first, _ = log.write(role="scout", stage=4, prompt=PROMPT)
+    retry, rdigest = log.write_retry(role="scout", stage=4, prompt=PROMPT, index=1)
+    second, _ = log.write(role="auditor", stage=5, prompt=PROMPT)
+
+    assert first == f"{DIR_NAME}/0001_scout.md"
+    assert retry == f"{DIR_NAME}/0001_scout_retry1.md"  # 1차 순번 공유
+    assert second == f"{DIR_NAME}/0002_auditor.md"  # 재시도가 순번을 안 먹었다
+    assert rdigest == sha256_text((tmp_path / retry).read_text(encoding="utf-8"))
+    assert b"\r\n" not in (tmp_path / retry).read_bytes()
+
+
 # --- RunContext 배선 ----------------------------------------------------------
 
 
@@ -122,13 +137,38 @@ class StubModelClient:
         )
 
 
-def _context(*, prompts: PromptLog | None, fail: bool = False) -> RunContext:
+class RetryingStubModelClient:
+    """재시도로 살아난 성공을 흉내낸다 — 2차 body를 실어 올린다(어댑터 계약, #80)."""
+
+    RETRY_BODY = "후보별 본문\n\n[스키마 오류] 재시도가 실제로 보낸 것"
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201, ARG002
+        value = Candidate(
+            candidate_id="cand_0001",
+            run_id=RUN_ID,
+            artifact_id="art_0001",
+            location=Location(file="parser.c"),
+            score=0.7,
+            state=FindingState.CANDIDATE,
+        )
+        return ModelResult(
+            value=value,
+            usage=Usage(input_tokens=40, output_tokens=8, cached_tokens=0),
+            model="fake",
+            attempts=2,
+            retry_bodies=(self.RETRY_BODY,),
+        )
+
+
+def _context(
+    *, prompts: PromptLog | None, fail: bool = False, models: object | None = None
+) -> RunContext:
     config = load_config("dev_fake")
     trace = TraceWriter(RUN_ID, clock=lambda: NOW)
     return RunContext(
         run_id=RUN_ID,
         config=config,
-        models=StubModelClient(fail=fail),
+        models=models if models is not None else StubModelClient(fail=fail),
         retriever=None,
         tools=None,
         store=InMemoryStateStore(),
@@ -178,6 +218,38 @@ def test_failed_call_still_leaves_the_prompt(tmp_path: Path) -> None:
     assert (tmp_path / data["prompt_ref"]).is_file()
 
 
+def test_retry_call_persists_the_actual_sent_request(tmp_path: Path) -> None:
+    """재시도로 살아난 성공은 실제로 간 2차 요청을 파일로 남기고, `sent_sha256`으로 가리킨다.
+
+    `prompt_sha256`(1차)만 남으면 실제 서버에 간 것과 다른 것을 가리켜 오도가 된다(D49·#80).
+    """
+    ctx = _context(prompts=PromptLog(tmp_path), models=RetryingStubModelClient())
+
+    ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    data = _model_calls(ctx)[-1]
+    # 1차 파일과 재시도 파일이 한 순번으로 남는다.
+    assert data["prompt_ref"] == f"{DIR_NAME}/0001_scout.md"
+    retry_path = tmp_path / DIR_NAME / "0001_scout_retry1.md"
+    assert retry_path.is_file()
+    # 재시도 파일이 실제로 간 body를 담는다.
+    assert RetryingStubModelClient.RETRY_BODY in retry_path.read_text(encoding="utf-8")
+    # `sent_sha256`이 그 실제 요청을 가리키고, 1차 해시와 다르다 — 오도가 사라진다.
+    assert data["sent_sha256"] == sha256_text(retry_path.read_text(encoding="utf-8"))
+    assert data["sent_sha256"] != data["prompt_sha256"]
+
+
+def test_non_retry_call_adds_no_sent_hash(tmp_path: Path) -> None:
+    """재시도가 없으면 `prompt_sha256`이 곧 실제 간 것이라 `sent_sha256` 키를 늘리지 않는다."""
+    ctx = _context(prompts=PromptLog(tmp_path))
+
+    ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    data = _model_calls(ctx)[-1]
+    assert "sent_sha256" not in data
+    assert not (tmp_path / DIR_NAME / "0001_scout_retry1.md").exists()
+
+
 def test_budget_exhaustion_leaves_no_orphan_file(tmp_path: Path) -> None:
     """막힌 호출에는 대응하는 `model_call`이 없다. 파일만 남으면 개수가 어긋난다."""
     ctx = _context(prompts=PromptLog(tmp_path))
@@ -210,13 +282,21 @@ def _traced_model_calls(trace_path: Path) -> list[dict]:
     return [event["data"] for event in events if event["kind"] == EventKind.MODEL_CALL.value]
 
 
-def test_pipeline_writes_one_prompt_per_model_call(tmp_path: Path) -> None:
+def test_pipeline_writes_one_primary_prompt_per_model_call(tmp_path: Path) -> None:
+    """**1차 파일**이 호출당 하나다.
+
+    재시도가 있으면 `_retryK` 파일이 같은 순번으로 더 붙으므로(#80) 그것을 빼고 센다 —
+    dev_fake는 재시도가 없어 실제로는 파일 수와 호출 수가 같지만, 불변식은 "호출당 파일
+    하나"가 아니라 "호출당 **1차** 파일 하나"다(재시도 파일은 별개).
+    """
     run_dir, trace_path = _run(tmp_path)
 
     calls = _traced_model_calls(trace_path)
-    files = sorted((run_dir / DIR_NAME).glob("*.md"))
+    primary = sorted(
+        p for p in (run_dir / DIR_NAME).glob("*.md") if "_retry" not in p.name
+    )
     assert calls, "모델 호출이 없으면 이 테스트가 아무것도 보지 않는다"
-    assert len(files) == len(calls)
+    assert len(primary) == len(calls)
 
 
 def test_every_traced_ref_resolves_under_the_run_dir(tmp_path: Path) -> None:

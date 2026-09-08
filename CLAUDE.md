@@ -185,6 +185,7 @@ python -m pytest -q
 | **미해결 결함 — 작업 추적** | **GitHub Issues** |
 | 미해결 결함 — 본문·선택지 | [docs/open-questions.md](docs/open-questions.md) 와 그 아래 번호별 파일 |
 | 되돌리기 비싼 결정 | `docs/decisions/` |
+| **외부 문헌 조사 — 남이 주장한 것** (실측 아님) | [docs/research/](docs/research/README.md) |
 
 ---
 

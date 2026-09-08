@@ -31,8 +31,7 @@
 | 7 | ⚠ factory 한 곳만 고치면 Scout 풀이 붙는다 | `roles`가 문자열 맵이라 리스트가 파싱되지 않고, 그것을 문자열로 읽는 자리가 config·factory·cli·bench에 흩어져 있다. **멤버별 프롬프트를 주려면 `scout.py`도 바뀐다** — `complete()`는 렌더가 끝난 `Prompt` 하나만 받는다 | `src/config.py` `ProfileEntry` |
 | 8 | fake면 보조 섹션이 고정 토큰이라 주변 코드가 한 줄도 안 실린다 | 절반만 맞다. 고정값은 `static_signal`·`known_facts`뿐이고 `callers`·`callees`는 인덱서 실측이다. **다만 그 본문은 호출 지점 참조 한 줄이지 코드 조각이 아니다** — 코드를 싣는 `related`가 LIGHT에 없다는 결론은 유지된다 | `src/graph_entry.py` |
 | 9 | 캡슐 상한이 커서 컨텍스트를 내려도 공짜 | 그 값은 EXPANDED 한 레벨이고, config가 "이 값은 `--max-model-len`을 보장하지 못한다"고 적으며 반례까지 든다. 천장 역산값은 그보다 훨씬 작다 | `config/budgets.yaml` |
-| 10 | `local_balanced`의 `retriever: fake` 사유가 동시 상주 제약 | 인용이 잘렸다. 실제 사유는 **R1 검증의 실패 지점 증가**이고, 2×2 넷의 사유는 **조건 간 차이가 모델 구성뿐이어야 한다**는 공정성 규칙이다 | `config/profiles.yaml`, [evaluation.md](evaluation.md) §2.3 |
-| 11 | 2×2 프로필 둘이 fake | **넷**이다. 그리고 fake인 것은 embedding·reranker뿐이고 scout·auditor·critic은 실모델이다 | `config/profiles.yaml` |
+| 10 | `local_balanced`의 `retriever: fake` 사유가 동시 상주 제약 | 인용이 잘렸다. 실제 사유는 **R1 검증의 실패 지점 증가**다 | `config/profiles.yaml`, [evaluation.md](evaluation.md) §2.3 |
 | 12 | checksum 자리표시자인 모델은 Critic 하나 | 임베딩·리랭커도 checksum 자리표시자 · source 없음이다. **검색을 켜는 순간 둘이 `served_models()`에 들어와 그 run이 비교표에서 빠진다** | `config/models.yaml` |
 | 13 | 8단계 루프는 이미 설계돼 있어 배선만 돌리면 된다 | 상태 머신 규칙과 상한 값은 있으나 **재진입 신호를 내는 코드가 저장소에 없고** 재평가 횟수를 보관하던 모듈은 삭제됐다. 만들 것은 그 신호를 내는 자리다 | [architecture.md](architecture.md) §3 ⚠, [D25](open-questions/D/D25.md) |
 | 14 | 필드 순서가 계약이라 어긋나면 다른 분포를 강제한다 | 원천이 스스로 유보한다 — "그 효과가 실제로 나는지는 아직 안 쟀다". **"맞추면 이득"이 아니라 "틀리면 나중에 원인을 못 가린다"**로 낮춘다 | `src/schemas/finding.py`, [D51](open-questions/D/D51.md) |
@@ -249,12 +248,16 @@ L1~L4를 동시에 켜면 모델이 여러 개 필요해진다. **몇 개까지 
 
 ## 8. 실행 순서
 
-**12행이다.** 반 칸을 빼고 세면 넷이 조용히 빠진다.
+**15행이다.** 반 칸이 다섯이라(2.1·2.2·2.3·3.5·3.6) 정수 번호만 세면 그만큼
+조용히 빠진다.
 
 | # | 할 일 | 단계 | 어긋나면 |
 | --- | --- | --- | --- |
 | 1 | ~~동시성 16·32의 깨끗한 재측정~~ · ~~캐시가 빈 상태의 배치 처리량~~ → **닫힘** | — | **2026-09-02 네 판 전부 실패 0.** 캐시를 끈 4판이 배칭 곡선을 냈다 — **이득 1.81배, 동시성 16에서 포화**(21.96→35.23→39.77→39.64). 캐시 ON 세 판의 1.18~2.42배는 캐시 온도였다 ([확정 #10](experiments/README.md) · [#128](https://github.com/Yunse4l/whitehat-boss/issues/128)) |
-| 2 | 임베딩·리랭커를 켠다 | 3 | Auditor·Critic 캡슐만 바뀐다. **checksum을 먼저 채운다** |
+| 2 | ~~임베딩·리랭커를 켠다~~ → **부분** — 서빙까지다 | 3 | Auditor·Critic 캡슐만 바뀐다 — **그 문장은 완주해야 관측되고, 아직 관측이 없다.** 선행 조건이던 checksum은 채워졌다(임베딩·리랭커 2026-09-03 ATOM 실측 · [#131](https://github.com/Yunse4l/whitehat-boss/issues/131)). **2026-09-04 ATOM 실측 셋.** 원천은 `docs/experiments/harness/2026-09-04-five-model-residency-atom.md`이고 **그 파일은 [#142](https://github.com/Yunse4l/whitehat-boss/pull/142)가 들여온다** — 이 행이 그 PR보다 먼저 CI를 도는 순간이 있어 링크로 걸지 않았다(`test_internal_links_point_at_a_real_file`). ① `local_balanced_hybrid` 프로필이 생겼다 — `local_balanced`와 roles·budget이 같고 `retriever: hybrid`만 다르다([#138](https://github.com/Yunse4l/whitehat-boss/pull/138) — 이 행보다 먼저 머지된다) ② **네 서버가 동시에 떴다** — 8001 scout(`qwen3-8b` nvfp4) · 8002 auditor(`qwen3-coder-30b-a3b` nvfp4) · 8004 embedding(`qwen3-embedding-0.6b` fp16) · 8005 reranker(`qwen3-reranker-0.6b` fp16). 가중치+non-torch 18.28 / 6.38 / 1.62 / 1.38 = **합 27.66 GiB**, KV cache 합 **64.35 GiB**, `nvidia-smi --query-compute-apps` PID 합 **96.07 GiB / 119.7**. ⇒ **제약은 상주 개수가 아니라 KV 예산을 어떻게 쪼개느냐다** — `config/profiles.yaml`의 `local_balanced` retriever 주석이 든 근거 둘 중 「ATOM에 모델 5개를 동시에 띄워야 한다」가 여기서 좁아진다(R1 쪽 근거는 이 실측이 건드리지 않는다). **이 배분에서 다섯째는 안 물었다 — 조건이 「critic 제외 넷」이다**(보고서 §3). **다섯은 같은 보고서 §8이 다른 배분으로 물었고 답은 4/5다** — 8003 devstral(util 0.30) · 8002 auditor(0.26) · 8001 scout(0.14) · 8005 reranker(0.08)가 UP이고 8004 embedding이 CUDA OOM이다 ③ `doctor --profile local_balanced_hybrid`가 배선 절에 embedding·reranker를 찍고 checksum 경고는 critic 하나만 불렀다. `/v1/embeddings` 응답 dim 1024 · `/v1/rerank` 200 확인. ⚠ **그 경고는 지금 안 뜬다** — #142가 critic의 `checksum`을 채웠고 `_check_checksums`(`src/cli.py`)는 자리표시자가 0건이면 OK를 낸다. **doctor를 그 상태로 다시 돌린 것이 아니라 코드와 registry 값에서 나오는 추론이다.** **그래도 닫히지 않는다 — 남은 것은 완주 하나다.** 파이프라인을 한 번도 안 돌렸다(2.1·2.2). **critic 서버는 더 이상 사유가 아니다** — 2026-09-04에 8003에 처음 떴고(보고서 §7·§8), registry의 `source`·`checksum`도 그때 채워졌다(`config/models.yaml`의 `devstral-small-2-24b` · manifest는 `config/checksums/devstral-small-2-24b.txt` 파일 8개 — 둘 다 #142가 들여온다). 같은 실측이 그 모델의 `quantization`을 `nvfp4`에서 `fp8`로 고쳤다. ⚠ **채워진 것은 checksum이고 benchmark가 아니다** — 그 모델의 `benchmark`는 여전히 전부 0(미실측)이다. 그리고 **리랭커 순위가 우리 문서 길이에서 미검증이다** — 짧은 조각(2~4단어)에서 순위 역전이 3/3 결정론적으로 재현됐고 긴 서술문 4건에서는 맞았다. `related`에 싣는 조각은 수십 줄짜리 코드 블록이라 후자에 가깝지만 **그 길이로는 안 쟀다** — 「리랭커가 틀렸다」가 아니라 미검증 항목이다 |
+| 2.1 | **run A** — `local_balanced`(실서빙 3역할 · `retriever: fake`)로 zlib 급 실대상 1회 | 5·8 | **A를 hybrid로 돌리면 안 된다** — 모델 축과 검색 축이 같이 바뀌면 [#98](https://github.com/Yunse4l/whitehat-boss/issues/98)의 (c)(*「실서빙 auditor로 1회 돌려 상관이 Fake의 성질인지 먼저 가른다」*)를 못 읽는다. [evaluation.md](evaluation.md) §2.3 규칙 2가 「retrieval 설정…은 고정한다」고 한 것과 같은 이유다. **한 run이 둘을 먹인다** — #98의 (c)와 [#65](https://github.com/Yunse4l/whitehat-boss/issues/65)의 **8단계 Finding당 도구 시간 분모**(2026-08-26 재측정의 Finding당 928 ms는 8건에서 나온 값이라 얇고, 그 이슈가 그래서 상한을 확정하지 않았다). **critic 서버가 여전히 선행이다 — 다만 사유가 바뀌었다.** `served_models()`가 `local_balanced`에서 세는 셋은 scout·auditor·critic이고(그래서 「실서빙 3역할」이 맞다), 그중 critic(`devstral-small-2-24b`)은 **2026-09-04에 처음 떴다**(윗 행 ②). 남은 선행 조건은 「한 번도 안 떴다」가 아니라 **A를 돌리는 시점에 8003을 다시 띄우는 것**이다 — 그날 것은 서버를 내린 뒤 checksum을 만든 일회성 기동이다(`config/models.yaml`의 그 모델 주석). 역할별 모델을 바꾸는 플래그가 없으므로(`cli run`은 `--profile`·`--tool-runner`뿐) 띄우지 않으면 A가 7단계에서 멈춘다. **A가 쓰는 셋이 같이 뜨는 것은 봤다** — 2026-09-04 보고서 §8이 32768에서 8003 devstral(util 0.30) · 8002 auditor(0.26) · 8001 scout(0.14)를 순서대로 UP으로 올렸다. ⚠ **그 시점 호스트 여분이 8 GiB다** — 바로 다음에 올린 embedding이 CUDA OOM이라, A는 셋만 필요해도 여유가 얇다. **checksum 쪽 사유는 없어졌다** — `local_balanced`의 실서빙 셋은 checksum이 전부 채워졌다. #142를 합친 트리에서 `_check_checksums`를 돌려 `[OK ] 실서빙 역할의 model checksum이 모두 채워져 있다`를 받았다(자리표시자로 남은 것은 `fake` 하나뿐이고 그 0은 미기록이 아니라 정확한 값이다 — `served_models()`가 `is_fake`로 거른다). **개수는 적지 않는다 — registry 항목 수가 [#139](https://github.com/Yunse4l/whitehat-boss/pull/139)로 줄어든다.** `doctor`의 checksum 검사가 WARN이라 **안 막는다**는 기제는 그대로지만 이 프로필에는 지금 걸릴 항목이 없다 — 「checksum 0인 채로 완주하면 그 run은 비교표에서 빠진다」(CLAUDE.md §0)는 규칙이 남고 **전제가 없어졌다** |
+| 2.2 | **run B** — `local_balanced_hybrid`로 **같은 대상·같은 seed** 1회 | 3 | **row 2의 효과가 여기서 나온다** — A와 **검색 경로 하나만** 다르다. §1 정정 3(「바뀌는 것은 Auditor·Critic 캡슐뿐」)을 실행에서 처음 확인하는 자리이고, 지표는 §3대로 Scout 통과율이 아니라 최종 `proven` 건수와 EXPANDED·FOCUSED 캡슐 토큰 수다. **A가 먼저다** — B만 돌리면 바뀐 것이 검색인지 실서빙 auditor인지 안 갈린다 |
+| 2.3 | **run C** — `critic_top_n`(`config/budgets.yaml`에서 지금 8)만 올린 대조 run | 7 | [#98](https://github.com/Yunse4l/whitehat-boss/issues/98)이 본문 끝에서 *「상한만 바꾼 대조 run 1회가 그 질문을 닫는다」*고 적은 것. **게이트 결함은 2026-08-26에 닫혔다** — `-I`와 언어별 `-std`를 붙이자 `has_repro_spec`이 11/55 → 77/78이 되고 8단계 `gate_eval`이 8건 나왔다. **남은 병목이 `critic_top_n: 8`이다**: 6단계를 통과한 59건 중 8건만 7단계에 갔고 그 8건이 전부 upheld라 **E3 8건은 상한값 그 자체**이며, 잘린 51건 중 50건이 `repro_spec`을 갖고 있다. 그 51건이 전부 upheld된다는 근거는 없다(confidence 0.6이 23건 · 0.3이 28건). ⚠ **그 8건은 auditor·critic이 Fake인 run의 값이라 성능으로 읽지 않는다** — 그래서 2.1 뒤다. **row 2와 다른 축이다** — 검색이 아니라 7단계 상한이라 A·B와 같은 칸에 넣지 않는다 |
 | 3 | 인덱서 best-of-N 쿼리를 켠다 | 1 | 학습 0으로 최대 오차원을 때린다 · FT1 데이터가 쌓이기 시작 |
 | 3.5 | 참조 그래프로 경고 관련 파일 범위 잡기 | 2→3 | 독립적으로 돌고 기여가 가장 크다. **소스가 있는 타깃 한정** |
 | 3.6 | CVE diff · sanitizer 재현이 있는 타깃 수를 센다 | — | **FT1의 진짜 상한이 이 수다.** 정적 경고만으로는 학습 라벨이 안 된다 |
@@ -272,6 +275,10 @@ L1~L4를 동시에 켜면 모델이 여러 개 필요해진다. **몇 개까지 
 **⚠ 1·2·6번이 끝나기 전에는 7번(코드 작성)에 들어가지 않는다.** 하나라도 예상과 다르면
 배치가 바뀐다. 먼저 재고 나서 짓는다.
 
+**그 문장은 그대로 유효하고, 지금 걸리는 것은 2번 하나다.** 1·6은 닫혔고 2번은 서빙까지만
+됐다 — 완주가 없으므로 그 행이 건 「Auditor·Critic 캡슐만 바뀐다」가 아직 관측되지 않았다.
+**2번을 닫는 것이 2.1·2.2다.**
+
 ---
 
 ## 9. 미확인 항목
@@ -287,7 +294,7 @@ L1~L4를 동시에 켜면 모델이 여러 개 필요해진다. **몇 개까지 
 | CVE diff·sanitizer 재현이 있는 타깃이 몇 건인가 | **FT1의 실제 상한** | 미등재 |
 | **매크로·조건부 컴파일이 많은 코드에서 커버리지가 유지되는가** (펌웨어 한정이 아니다) | 1단계 손실이 커지면 신호 주도·탐색 주도가 **같은 방향으로** 나빠져 조합으로 상쇄되지 않는다 | 미등재 · 소스에서 실측 이력 있음 — 아래 |
 | prefix cache 효과를 장부에 못 잡는다 | 비용 주장을 장부로 증명할 수 없다 | [R6](open-questions/R/R6.md) — **응답 경로로는 못 얻고 metrics 경로로는 얻는다** |
-| 메모리·속도 수치 전반 | 대역폭 상한 계산이지 실측이 아니다. 방향은 안 뒤집히지만 값은 다르다 | §7에 라벨을 붙여 둠 |
+| 메모리·속도 수치 전반 | 대역폭 상한 계산이지 실측이 아니다. 방향은 안 뒤집히지만 값은 다르다 | §7에 라벨을 붙여 둠. **2026-09-04 ATOM에서 §7 네 행 중 「3 · 검색」 한 행에만 실측 짝이 생겼다** — 임베딩 1.62 + 리랭커 1.38 = **3.00 GiB**(가중치+non-torch, 네 서버 동시 상주). **두 수의 항목 구성이 같은지 대조하지 않았으므로 「~2.4가 틀렸다」로 읽지 않는다.** 속도 쪽은 scout·auditor 두 모델의 `tok_s_single`·`tok_s_batch32`가 채워졌고(PR [#138](https://github.com/Yunse4l/whitehat-boss/pull/138)) `mem_gb_ctx8k`는 **여전히 0**이다 — `nvidia-smi --query-gpu`가 통합메모리에서 `[N/A]`를 준다([portability.md](portability.md) §1) |
 
 **파싱 손실은 「펌웨어에서 그럴 수 있다」가 아니라 이미 잰 값이다 — 다만 크기가 작고
 계수기가 붙어 있다.** 매크로(`ZEXPORT`·`FAR`)가 낀 파일을 tree-sitter가 `parse_errors`로

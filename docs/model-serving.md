@@ -26,7 +26,7 @@
 | Reranker | Qwen3-Reranker-0.6B | 상동 | 상시 상주 | 예산 영향 미미 |
 | Scout / Triage | Qwen3-8B | Apache 2.0, 128K context. 구조화 분류·요약용 | 짧은 출력, thinking 최소, 높은 병렬성 | FP4 약 4GB (추정) |
 | Primary Auditor | Qwen3-Coder-30B-A3B-Instruct | 30.5B total / 3.3B active MoE, 256K native context. 좁은 대역폭에서 총 파라미터 대비 유리 | 선별 후보에만 호출 | NVFP4 약 15GB (추정) |
-| Independent Critic | Devstral Small 2 24B | Primary와 **다른 계열**, Apache 2.0, 256K context, tool-use 지원 | 상위 후보만 batch 검증 | dense 24B — 대역폭 영향 큼 |
+| Independent Critic | Devstral Small 2 24B | Primary와 **다른 계열**, Apache 2.0, 256K context, tool-use 지원. **멀티모달(vision)이다** — config.json이 `Mistral3ForConditionalGeneration`이고 vLLM이 `PixtralForConditionalGeneration`으로 해석한다(2026-09-04 ATOM 실측, [보고서](experiments/harness/2026-09-04-five-model-residency-atom.md) §7) | 상위 후보만 batch 검증 | dense 24B — 대역폭 영향 큼. **이 칸에 추정이 아닌 값이 하나 생겼다**: 우리가 실제로 띄운 체크포인트는 `nvfp4`가 아니라 **`fp8`**이고 가중치+non-torch가 **25.48 GiB**(util 0.30)~**26.8 GiB**(util 0.45)다 — 2026-09-04 ATOM, vLLM 기동 로그의 자기 회계. 나머지 칸은 여전히 추정이다 |
 
 Critic이 다른 계열이어야 하는 이유: 같은 모델의 self-consistency는 같은 실패를 반복한다. 교차 검증의 가치는 오류 상관관계가 낮을 때만 나온다.
 
@@ -81,6 +81,14 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받아 NVFP4가 매력적이다. 그러나 critic의 가치는 **반박 정확도**에 있고, 정밀도를 낮췄을 때 이 능력이 먼저 무너질 수 있다.
 
 검증 방법: 고정 반박 표본(정답이 알려진 finding — 진짜 취약점 N건 + 명백한 오탐 N건)에 대해 고정밀도 대비 NVFP4의 `verdict` 일치율과 `rebuttal_axis` 정확도를 비교한다. 일치율 하락이 기준치를 넘으면 Critic만 고정밀도로 운용한다.
+
+> **2026-09-04 — 이 비교의 「고정밀도」 쪽이 지금 손에 없다.** ATOM에서 실제로 띄운
+> `devstral-small-2-24b` 체크포인트의 양자화는 **`fp8`이고 NVFP4가 아니다**
+> ([보고서](experiments/harness/2026-09-04-five-model-residency-atom.md) §7 — `config.json`의
+> `quant_method: 'fp8'`, vLLM 기동 로그 `quantization=fp8`, 파일 크기 24.0 GiB).
+> registry가 `nvfp4`로 적고 있던 것을 그 실측으로 고쳤다. **그러므로 위 비교를 돌리려면
+> 기준선을 무엇으로 둘지부터 정해야 한다** — 지금 있는 것은 저정밀도 축의 한 점이지
+> 기준선이 아니다. NVFP4 빌드(`Firworks/…-nvfp4`)는 이름만 확인됐고 받지도 띄우지도 않았다.
 
 표본 크기와 허용 하락폭은 [open-questions.md](open-questions.md)에서 확정한다.
 

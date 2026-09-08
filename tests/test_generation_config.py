@@ -132,6 +132,25 @@ def test_a_non_mapping_file_stays_on_the_unread_side(tmp_path: Path) -> None:
     assert read_declared_sampling(_SOURCE, hub_cache=tmp_path) is None
 
 
+def _without_source(config, role: str):
+    """`role`의 모델에서 `source`만 없앤 config를 돌려준다.
+
+    **합성이어야 하는 이유가 2026-09-04에 생겼다.** 이 파일의 두 테스트는 오래
+    `local_balanced`의 critic(`devstral-small-2-24b`)을 「읽을 것이 없는 역할」의
+    대조군으로 썼다 — 그 모델이 `source: null`인 **유일한 실서빙 모델**이었기 때문이다.
+    그날 ATOM에서 처음 띄우고 `tools/model_checksum.py`를 돌리면서 `source`가 채워졌고,
+    **registry에 `source` 없는 실서빙 모델이 하나도 남지 않았다.**
+
+    실프로필로 이 방향을 다시 재려면 누군가 `source`를 비워야 하는데 그것은 §0을
+    거스른다(받아서 띄운 모델은 적는다). 그래서 대조군을 합성으로 만든다 —
+    `tests/test_config.py::test_a_hybrid_profile_keeps_its_retrieval_roles`가 같은
+    이유로 쓰는 방식이다. 이러면 registry 내용이 바뀌어도 이 검사가 안 흔들린다.
+    """
+    key = config.profile.roles[role]
+    entry = config.models[key].model_copy(update={"source": None})
+    return config.model_copy(update={"models": {**config.models, key: entry}})
+
+
 def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
     tmp_path: Path,
 ) -> None:
@@ -141,11 +160,11 @@ def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
     **모두** 뜻했다. 그중 마지막만 실험 사실이고 나머지는 우리 쪽 구멍인데, 부재
     하나로 뭉개지면 "그 모델은 선언이 없다"로 읽는 것을 막을 방법이 없다.
     """
-    config = load_config("local_balanced")
+    config = _without_source(load_config("local_balanced"), "critic")
     served = config.served_models()
     scout_source = config.models[served["scout"]].source
     assert scout_source is not None
-    assert config.models[served["critic"]].source is None  # 대조군: 읽을 것이 없다
+    assert config.models[served["critic"]].source is None  # 대조군: 읽을 것이 없다 (합성)
     # scout에만 파일을 깐다 — bos만 들어 샘플링 선언이 0개다
     _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1})
 
@@ -262,16 +281,19 @@ def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:
     """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
-    `local_balanced`는 scout·auditor가 `hf://` source를, critic(`devstral`)이 `source`
-    없음이다. scout·auditor에만 파일을 깔면 맵에 둘만 들어오고 critic은 빠진다 —
+    `local_balanced`는 scout·auditor가 `hf://` source를 갖고, critic은 `_without_source`가
+    합성으로 비운다. scout·auditor에만 파일을 깔면 맵에 둘만 들어오고 critic은 빠진다 —
     "이 역할은 선언 샘플링을 못 읽었다"가 부재로 드러난다.
+
+    **critic을 합성으로 비우는 이유는 `_without_source`의 docstring에 있다** — 2026-09-04에
+    registry에서 `source` 없는 실서빙 모델이 사라졌다.
     """
-    config = load_config("local_balanced")
+    config = _without_source(load_config("local_balanced"), "critic")
     served = config.served_models()
     scout_source = config.models[served["scout"]].source
     auditor_source = config.models[served["auditor"]].source
     assert scout_source and auditor_source
-    assert config.models[served["critic"]].source is None  # 전제
+    assert config.models[served["critic"]].source is None  # 전제 (합성)
 
     _write_generation_config(tmp_path, scout_source, {"top_k": 20, "temperature": 0.6})
     _write_generation_config(tmp_path, auditor_source, {"top_k": 20, "repetition_penalty": 1.05})
