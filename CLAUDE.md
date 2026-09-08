@@ -78,7 +78,7 @@
 
 **문서가 결함의 원천이고 상태의 원천이다** — `docs/open-questions/D/D<n>.md`의 상태 필드가
 정본이고 [인덱스](docs/open-questions.md) 표가 그것을 비춘다. **GitHub Issue는 추적 미러다.**
-([ADR 0008](docs/decisions/0008-defect-source-of-truth.md), 2026-09-08 수락)
+([ADR 0008](docs/decisions/0008-defect-source-of-truth.md), 2026-09-08 승인)
 
 규칙 셋이 따라온다.
 
