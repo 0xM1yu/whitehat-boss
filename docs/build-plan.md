@@ -32,7 +32,7 @@
 | 3 | ⚠ 검색을 켜는 것이 "가장 싼 개선"이고 Scout 통과율로 잰다 | **hybrid는 LIGHT에서 검색하지 않는다.** `related`는 EXPANDED·FOCUSED에만 있어 **Scout가 받는 캡슐은 fake와 같다.** 바뀌는 것은 Auditor·Critic 캡슐뿐이다 | `src/adapters/hybrid_retriever.py` 레벨별 섹션 구성 |
 | 4 | ⚠ 리스크 1번 "배칭 전제가 무너진다"(실측이 아닌 것) | 그 수치는 `measured_at`·`measured_on`이 붙은 **실측**이다. **2026-09-02 재측정으로 "32까지 밀 수 있는가"는 답이 나왔다 — 밀린다**(네 판 × 네 수준 실패 0건). 그리고 캐시를 끈 4판이 **배칭 이득 1.81배·동시성 16 포화**를 냈다. 캐시 ON 세 판의 1.18~2.42배는 prefix cache 적중률의 함수였다([#128](https://github.com/0xM1yu/whitehat-boss/issues/128)). **「8이 최적(73.40)」은 캐시 온도가 만든 값이다** | [experiments/README.md](experiments/README.md) 확정 #10 |
 | 5 | ⚠ 자기일관성 다수결은 `prompts/single/v2`에서 폐기한 방식 | **정반대다.** `single/v2`가 다수결을 **채택**했고, 어느 프로필도 `single`을 선언하지 않아 실행 자체가 불가다 | [D30](open-questions/D/D30.md) |
-| 6 | ⚠ `execution.mode`만 새 키 | `mode`·`swap` **둘 다 새 키**이고 `extra="forbid"` 때문에 스키마를 늘리기 전에는 **프로필이 로드 단계에서 거부된다** | `src/schemas/common.py` `HarnessModel` |
+| 6 | ⚠ `execution.mode`만 새 키 | `mode`·`swap` **둘 다 새 키**이고 `extra="forbid"` 때문에 스키마를 늘리기 전에는 **프로필이 로드 단계에서 거부된다**. **2026-09-09에 그 스키마가 들어왔다** — 두 키는 이제 `ProfileEntry.execution`이고, 선언하지 않은 프로필은 동작이 안 바뀐다(`ADR 0009` 결과 1). 러너·sleep/wake 배선은 여전히 별도 PR이다 | `src/schemas/common.py` `HarnessModel`, `src/config.py` `ExecutionPolicy` |
 | 7 | ⚠ factory 한 곳만 고치면 Scout 풀이 붙는다 | `roles`가 문자열 맵이라 리스트가 파싱되지 않고, 그것을 문자열로 읽는 자리가 config·factory·cli·bench에 흩어져 있다. **멤버별 프롬프트를 주려면 `scout.py`도 바뀐다** — `complete()`는 렌더가 끝난 `Prompt` 하나만 받는다 | `src/config.py` `ProfileEntry` |
 | 8 | fake면 보조 섹션이 고정 토큰이라 주변 코드가 한 줄도 안 실린다 | 절반만 맞다. 고정값은 `static_signal`·`known_facts`뿐이고 `callers`·`callees`는 인덱서 실측이다. **다만 그 본문은 호출 지점 참조 한 줄이지 코드 조각이 아니다** — 코드를 싣는 `related`가 LIGHT에 없다는 결론은 유지된다 | `src/graph_entry.py` |
 | 9 | 캡슐 상한이 커서 컨텍스트를 내려도 공짜 | 그 값은 EXPANDED 한 레벨이고, config가 "이 값은 `--max-model-len`을 보장하지 못한다"고 적으며 반례까지 든다. 천장 역산값은 그보다 훨씬 작다 | `config/budgets.yaml` |
@@ -247,7 +247,9 @@ L1~L4를 동시에 켜면 모델이 여러 개 필요해진다. **몇 개까지 
 `level 1`(CPU 오프로드)과 `level 2`(폐기)가 **세 계측기 전부에서 구별되지 않는다**
 (`free -g` 동일 · `nvidia-smi` 동일 2,382 MiB · `cuda free` 0.17 GiB 차). 왜 그런지는
 **기전을 못 갈랐다** — 보고서 §5에 미측정으로 남겼다. 그리고 이것은 **장비가 되는가**에
-대한 답이지 하네스가 할 수 있는가는 아니다(`execution.mode`·`swap`이 스키마에 없다 — §1 정정 6).
+대한 답이지 하네스가 할 수 있는가는 아니다 — `execution.mode`·`swap`은 2026-09-09에
+스키마에 들어왔지만(§1 정정 6) **선언을 받는 것까지**이고, 단계 단위 러너도 sleep/wake를
+부르는 코드도 아직 없다(`ADR 0009` 결과 2·3, 각각 별도 PR).
 
 ---
 

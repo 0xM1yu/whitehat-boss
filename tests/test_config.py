@@ -588,3 +588,170 @@ def test_b1_puts_one_model_in_every_role_and_still_loads() -> None:
 
     assert config.model_key_for("auditor") == config.model_key_for("critic")
     assert config.model_for("auditor").family == config.model_for("critic").family
+
+
+# --- 실행 정책 (ADR 0009) ------------------------------------------------------
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_no_profile_declares_execution_yet(profile: str) -> None:
+    """스키마만 열고 **값은 아직 안 박는다** (ADR 0009 결과 1).
+
+    기본이 `per_candidate`·`swap: None`이라 선언하지 않은 프로필은 동작이 안 바뀐다 —
+    그것이 이 ADR을 "되돌리기 싼 결정"으로 만드는 성질 전부다. 프로필 하나라도 값을
+    선언하는 순간 그 run은 지금까지의 run과 다른 것이 되고, 교대 예산이 실측되기 전에
+    (`swap.md` §9) 그런 값이 들어오면 근거 없는 수가 config에 굳는다.
+    """
+    profile_entry = load_config(profile).profile
+
+    assert profile_entry.execution is None
+
+
+def test_execution_defaults_preserve_todays_behaviour() -> None:
+    """`execution:`을 적되 비워 두면 지금 동작 그대로다.
+
+    기본값이 없으면 `execution`을 선언한 프로필이 곧바로 단계 단위가 되고, 러너는 아직
+    그 루프가 아니다(ADR 0009 「함께 옮겨야 하는 것」 — 별도 PR). 스키마가 러너보다
+    앞서 나가면 config는 통과하는데 실행 의미가 없는 선언이 남는다.
+    """
+    entry = ProfileEntry.model_validate(
+        {
+            "description": "x",
+            "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+            "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+            "budget": "dev_fake",
+            "execution": {},
+        }
+    )
+
+    assert entry.execution is not None
+    assert entry.execution.mode == "per_candidate"
+    assert entry.execution.swap is None
+
+
+def test_swap_without_per_stage_is_rejected() -> None:
+    """교대는 **단계 단위에서만** 선언할 수 있다 (ADR 0009 불변식 1).
+
+    후보 단위 + 교대는 `swap.md` §6.2가 센 **512회 교대**의 조합이다. 후보 하나가
+    3~6단계를 관통하므로 교대가 후보 수만큼 곱해지고, 왕복이 아직 미실측인 지금
+    (§1.3 — "2~6초"는 `/v1/models` 응답까지만 본 값이라 설계 예산으로 못 쓴다) 그
+    조합이 도는 순간 run 시간의 대부분을 어디에 썼는지 사후에 못 가른다.
+    **스키마가 막는다** — 그 자리에서 실패하지 않으면 GPU 시간을 쓰고 나서 안다.
+    """
+    with pytest.raises(ValidationError, match="per_stage"):
+        ProfileEntry.model_validate(
+            {
+                "description": "x",
+                "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+                "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+                "budget": "dev_fake",
+                "execution": {
+                    "mode": "per_candidate",
+                    "swap": {
+                        "resident": ["critic"],
+                        "swappable": ["scout", "auditor"],
+                        "level": 1,
+                        "settle_timeout_s": 30.0,
+                    },
+                },
+            }
+        )
+
+
+def test_swap_naming_a_role_the_profile_does_not_have_is_rejected() -> None:
+    """`swap`이 부르는 역할은 그 프로필의 `roles`에 실재해야 한다 (ADR 0009 불변식 2).
+
+    없는 역할을 재우고 깨우는 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다** —
+    오타 하나(`embeding`)면 그 모델만 교대에서 빠지고, 그 run은 메모리가 왜 안 줄었는지
+    설명할 수 없는 상태로 끝난다. `roles`가 참조 무결성을 로드 시점에 보는 것과 같은
+    자리다(`_check_model_refs`).
+    """
+    with pytest.raises(ValidationError, match="roles"):
+        ProfileEntry.model_validate(
+            {
+                "description": "x",
+                "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+                "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+                "budget": "dev_fake",
+                "execution": {
+                    "mode": "per_stage",
+                    "swap": {
+                        "resident": ["critic"],
+                        "swappable": ["scout", "embeding"],
+                        "level": 1,
+                        "settle_timeout_s": 30.0,
+                    },
+                },
+            }
+        )
+
+
+def test_a_complete_swap_declaration_on_per_stage_is_accepted() -> None:
+    """위 둘을 다 지킨 선언은 **통과해야 한다.**
+
+    거부만 검사하면 `execution`을 통째로 거부하는 구현도 스위트를 지난다. 그러면 ADR
+    0009가 연 축이 실제로는 안 열린 채 열렸다고 기록된다.
+    """
+    entry = ProfileEntry.model_validate(
+        {
+            "description": "x",
+            "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+            "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+            "budget": "dev_fake",
+            "execution": {
+                "mode": "per_stage",
+                "swap": {
+                    "resident": ["critic"],
+                    "swappable": ["scout", "auditor"],
+                    "level": 2,
+                    "settle_timeout_s": 30.0,
+                },
+            },
+        }
+    )
+
+    assert entry.execution is not None
+    assert entry.execution.mode == "per_stage"
+    assert entry.execution.swap is not None
+    assert entry.execution.swap.resident == ("critic",)
+    assert entry.execution.swap.swappable == ("scout", "auditor")
+    assert entry.execution.swap.level == 2
+
+
+def test_per_stage_without_swap_is_allowed() -> None:
+    """단계 단위인데 교대는 안 하는 배선이 정당하다 (ADR 0010 §1).
+
+    ADR 0010이 `per_stage`를 승인하면서 **교대는 스키마만 열고 기본은 끈다**고 적었다 —
+    단계 단위만으로 단계별 상주가 119.7 GiB에 들어가므로(계산값) 교대 없이 첫 run을
+    돌릴 수 있다. `swap`을 필수로 만들면 그 배선을 config로 표현할 수 없다.
+    """
+    entry = ProfileEntry.model_validate(
+        {
+            "description": "x",
+            "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+            "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+            "budget": "dev_fake",
+            "execution": {"mode": "per_stage"},
+        }
+    )
+
+    assert entry.execution is not None
+    assert entry.execution.swap is None
+
+
+def test_an_unknown_execution_key_is_rejected() -> None:
+    """`execution` 안에서도 오타는 조용히 무시되지 않는다.
+
+    새 중첩 모델이 `extra="forbid"` 밖에 서면 `mode`를 `modes`로 적은 프로필이 로드를
+    통과하고 기본값으로 돌아간다 — 선언한 사람은 단계 단위라고 믿고 run을 읽는다.
+    """
+    with pytest.raises(ValidationError):
+        ProfileEntry.model_validate(
+            {
+                "description": "x",
+                "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+                "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+                "budget": "dev_fake",
+                "execution": {"modes": "per_stage"},
+            }
+        )
