@@ -10,6 +10,7 @@
 여기서 단언하는 것은 "산출 가능하다"와, Scout 제거율에 한해 "0%도 100%도 아니다"뿐이다.
 """
 
+import inspect
 import io
 import json
 import re
@@ -46,6 +47,11 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
 
     `before`는 run_dir이 생긴 뒤 실행 전에 불린다 — index.json을 그 자리에 놓는 데 쓴다
     (W2). `candidate_max`는 (a′)의 절단 경로를 태우는 데 쓴다.
+
+    `configure`는 **위 셋으로 표현할 수 없는 config 변경**을 받는다 — `config`를 받아
+    바꾼 것을 돌려주는 함수다. `execution.mode` 같은 프로필 필드가 그렇다. 이 훅이
+    없으면 그런 검사가 이 헬퍼 본문을 복사하게 되고, 그러면 `cli.execute` 인자가
+    늘 때 **복사한 쪽만 조용히 뒤처진다**(손수민 리뷰 #161-3).
     """
     config = load_config(profile)
     if "budget" in overrides:
@@ -56,6 +62,9 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     if "critic_top_n" in overrides:
         thresholds = config.thresholds.transition(critic_top_n=overrides.pop("critic_top_n"))
         config = config.transition(thresholds=thresholds)
+    configure = overrides.pop("configure", None)
+    if configure is not None:
+        config = configure(config)
     before = overrides.pop("before", None)
     target = overrides.pop("target", TARGET)
     run_dir = tmp_path / name / "run_20260901_0001"
@@ -2123,6 +2132,9 @@ def _per_stage(config: object) -> object:
     `config/profiles.yaml`을 고치지 않는다 — 프로필에 `execution`을 적는 것은 ADR 0009
     결과 **4**이고 그 값은 교대 실측 뒤에 정해진다. 여기서 필요한 것은 러너가 그 값을
     보는지뿐이라 config 객체에서만 세운다.
+
+    `_run(..., configure=_per_stage)`로 넘긴다 — 두 ADR-0009 검사가 **같은 실행 경로**를
+    타야 한다(손수민 리뷰 #161-3).
     """
     from src.config import ExecutionPolicy
 
@@ -2174,17 +2186,84 @@ def test_per_stage_finishes_a_stage_for_every_target_before_the_next_starts(
     **단계 번호가 단조 증가여야 한다.** 되돌아가는 자리가 하나라도 있으면 그 지점에서
     앞 단계 모델을 다시 깨워야 한다.
     """
-    config = _per_stage(load_config("dev_fake"))
-    run_dir = tmp_path / "stage" / "run_20260901_0001"
-    run_dir.mkdir(parents=True)
-    _with_index()(run_dir)
-    spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT)
-    trace_path = run_dir / "trace.jsonl"
-    with trace_path.open("w", encoding="utf-8") as stream:
-        cli.execute(config, spec, run_id=run_dir.name, run_dir=run_dir, trace_stream=stream)
+    _, trace_path = _run(tmp_path, name="stage", before=_with_index(), configure=_per_stage)
 
     stages = _stage_order(trace_path)
     assert stages, "전이 이벤트가 하나도 없다"
     assert _is_non_decreasing(stages), (
         f"per_stage인데 단계가 되돌아간다: {stages}. 러너가 `execution.mode`를 안 보고 있다"
     )
+
+
+def test_every_triage_step_takes_the_same_arguments() -> None:
+    """`_TRIAGE_STEPS`의 콜러블 전부가 같은 시그니처여야 한다 (손수민 리뷰 #161-1).
+
+    **하나라도 다르면 디스패처가 특수분기를 갖고, 그 항목은 표에서 죽은 값이 된다.**
+    표는 권위 있어 보이는데 아무도 그 칸을 안 읽으므로, 단계를 재배열하거나 앞에
+    하나 끼울 때 표는 맞아 보이는데 엉뚱한 함수가 돈다.
+
+    **재현으로 크기를 쟀다.** 표의 `Stage.SCOUT`↔`Stage.AUDITOR` 콜러블을 맞바꾸면
+    **64 failed**로 시끄럽게 잡히는데, `Stage.RETRIEVAL` 항목을 `_step_gate`로 바꿔도
+    **104 passed**였다 — 첫 항목에 무엇을 넣어도 아무도 몰랐다. `_step_retrieval`만
+    `(ctx, item)`이라 `_run_step`이 `if stage is Stage.RETRIEVAL`로 우회했기 때문이다.
+
+    ⚠ **이 검사가 막는 것은 「죽은 표 항목」이지 시그니처 취향이 아니다.** 새 단계를
+    더할 때 `state`를 안 쓰더라도 받아라 — 안 받으면 디스패처가 다시 갈라진다.
+    """
+    expected = ["ctx", "item", "state"]
+    for stage, step in runner._TRIAGE_STEPS:
+        params = list(inspect.signature(step).parameters)
+        assert params == expected, (
+            f"{stage.name}의 `{step.__name__}`이 {params}를 받는다 — 표의 다른 항목과 "
+            f"다르면 디스패처가 이 단계를 특수분기로 부르게 되고 표의 이 칸은 죽는다"
+        )
+
+
+def test_the_triage_table_covers_stages_three_to_six_in_order() -> None:
+    """표가 3~6단계를 순서대로 정확히 덮어야 한다.
+
+    두 실행 모드가 이 표 하나를 읽으므로(`_triage_by_candidate`·`_triage_by_stage`),
+    표가 곧 「3~6단계가 무엇인가」의 정의다. 단계를 더하거나 빼면 여기가 먼저 바뀐다.
+    """
+    assert [stage for stage, _ in runner._TRIAGE_STEPS] == [
+        Stage.RETRIEVAL,
+        Stage.SCOUT,
+        Stage.AUDITOR,
+        Stage.GATE,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("step", "field", "stage_pair"),
+    [
+        (runner._step_scout, "capsule", "4단계가 3단계보다"),
+        (runner._step_auditor, "candidate", "5단계가 4단계보다"),
+        (runner._step_gate, "finding", "6단계가 5단계보다"),
+    ],
+)
+def test_a_step_run_out_of_order_raises_instead_of_flowing_none_onward(
+    step: object, field: str, stage_pair: str
+) -> None:
+    """앞 단계가 안 채운 값으로 뒷 단계를 부르면 **경계에서 멈춰야 한다**.
+
+    **왜 전용 예외인가 (손수민 리뷰 #161-4).** 원래는 `assert`였다. `assert`는
+    `python -O`에서 사라져 `None`이 노드 깊숙이 흘러 불명확한 `TypeError`가 된다.
+    그리고 `origin/main`의 `src/`에는 `assert`가 **0건**이다 — 이 저장소가 불변식을
+    알리는 방식은 전용 예외다(`ConfigError`·`PromptError`·`BenchApplyError`·
+    `_TooManyDrops`).
+
+    **타입이 `ModelGatewayError`·`SchemaParseError`와 달라야 하는 이유가 핵심이다.**
+    저 둘은 "이 후보가 실패했다"라 `_drop`이 그 후보만 버리고 계속 가는데, 이쪽은
+    "루프가 단계를 잘못된 순서로 돌았다"라 다음 후보도 똑같이 실패한다. 같은 타입이면
+    폐기 카운터가 배선 결함을 후보 실패로 세고, 상한을 채워 `_TooManyDrops`가 되면서
+    **원인이 「연속 target 실패」로 기록된다.**
+
+    ⚠ **이 검사가 없으면 가드를 지워도 스위트가 초록이다.** 실제로 확인했다 — 가드를
+    떼고 전체를 돌리면 1141건이 전부 통과했다. 그래서 여기 있다.
+    """
+    item = runner._InFlight(target=object(), reached=runner._Reached())  # type: ignore[arg-type]
+
+    with pytest.raises(runner._StageOutOfOrder, match=stage_pair):
+        step(object(), item, object())  # type: ignore[operator]
+
+    assert getattr(item, field) is None, "가드가 값을 채우지 않고 거절해야 한다"

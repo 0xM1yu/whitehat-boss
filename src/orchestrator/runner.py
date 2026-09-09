@@ -928,8 +928,32 @@ class _InFlight:
     missings: tuple[MissingEvidence, ...] = ()
 
 
-def _step_retrieval(ctx: RunContext, item: _InFlight) -> bool:
+class _StageOutOfOrder(RuntimeError):
+    """앞 단계가 채웠어야 할 값이 비어 있다 — **배선 결함이지 후보의 실패가 아니다.**
+
+    `ModelGatewayError`·`SchemaParseError`와 **다른 타입인 것이 요점이다.** 저 둘은
+    "이 후보가 실패했다"라서 `_drop`이 그 후보만 버리고 계속 가는데, 이쪽은
+    "루프가 단계를 잘못된 순서로 돌았다"라 다음 후보도 똑같이 실패한다. 같은 타입으로
+    올리면 폐기 카운터가 배선 결함을 후보 실패로 세고, 상한 셋을 채워 `_TooManyDrops`가
+    되면서 **원인이 「연속 target 실패」로 기록된다.** `_TooManyDrops`가 게이트웨이
+    중단과 다른 타입인 사유(그 docstring)와 같은 사유다.
+
+    **그래서 `_run_stage_for_all`·`_triage_by_candidate`가 이것을 안 잡는다** —
+    `run_pipeline`까지 올라가 리포트·매니페스트를 남기고 중단 사유로 적힌다.
+
+    ⚠ **`assert`를 안 쓴다.** `origin/main`의 `src/`에 `assert`가 0건이고, 이 저장소가
+    불변식을 알리는 방식은 전용 예외다(`ConfigError`·`PromptError`·`BenchApplyError`·
+    `_TooManyDrops`). 그리고 `assert`는 `python -O`에서 사라져 값이 노드 깊숙이 흘러
+    불명확한 `TypeError`가 된다(손수민 리뷰 #161-4).
+    """
+
+
+def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     """3단계 — LIGHT 캡슐. 항상 다음 단계로 넘긴다.
+
+    ⚠ **`state`를 안 쓰지만 받는다.** 표(`_TRIAGE_STEPS`)의 항목이 전부 같은 시그니처여야
+    디스패처가 특수분기 없이 표만 읽는다 — 하나라도 갈리면 그 칸이 죽은 값이 된다
+    (`tests/test_pipeline_e2e.py`의 `test_every_triage_step_takes_the_same_arguments`).
 
     역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). scout는 LIGHT
     캡슐을 보므로 scout 카운터로 켠다. `counter_for_role`이 `None`을 주면(fake·토크나이저
@@ -943,7 +967,8 @@ def _step_retrieval(ctx: RunContext, item: _InFlight) -> bool:
 def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     """4단계 — 분류. 승격되지 않은 후보는 여기서 멈춘다(`False`)."""
     item.reached.stage = Stage.SCOUT
-    assert item.capsule is not None  # noqa: S101 — 3단계가 반드시 앞선다(호출자가 순서를 준다)
+    if item.capsule is None:
+        raise _StageOutOfOrder("4단계가 3단계보다 먼저 돌았다 — capsule이 비어 있다")
     candidate = scout.run(
         ctx, artifact=item.target.artifact, capsule=item.capsule, evidences=item.target.evidences
     )
@@ -961,7 +986,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
-    assert candidate is not None  # noqa: S101 — 4단계가 승격한 것만 여기 온다
+    if candidate is None:
+        raise _StageOutOfOrder("5단계가 4단계보다 먼저 돌았다 — candidate가 비어 있다")
     evidences, artifact = item.target.evidences, item.target.artifact
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.EXPANDED)
@@ -980,7 +1006,8 @@ def _step_gate(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     """6단계 — Evidence Gate 등급."""
     item.reached.stage = Stage.GATE
     finding, candidate = item.finding, item.candidate
-    assert finding is not None and candidate is not None  # noqa: S101 — 5단계가 앞선다
+    if finding is None or candidate is None:
+        raise _StageOutOfOrder("6단계가 5단계보다 먼저 돌았다 — finding 또는 candidate가 비어 있다")
     graded, _ = gate_node.run(
         ctx,
         finding=finding,
@@ -992,23 +1019,26 @@ def _step_gate(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     return True
 
 
+# 한 단계의 실행자. **네 `_step_*`이 전부 이 모양이어야 한다** — 하나라도 갈리면
+# 디스패처가 특수분기를 갖게 되고, 그 단계의 표 항목은 아무도 안 읽는 죽은 값이 된다.
+# `state`를 안 쓰는 단계도 받는다(`_step_retrieval`).
+TriageStep = Callable[[RunContext, "_InFlight", "_Accumulator"], bool]
+
 # 3~6단계를 도는 순서와 각 단계의 실행자. **후보 단위와 단계 단위가 같은 표를 읽는다** —
 # 두 경로가 각자 순서를 적으면 한쪽만 고쳐질 때 같은 run이 모드에 따라 다른 단계를 탄다.
-_TRIAGE_STEPS: tuple[tuple[Stage, object], ...] = (
+#
+# **표를 통해서만 부른다.** 특수분기를 하나라도 두면 그 항목이 죽는다 — 표는 권위 있어
+# 보이는데 아무도 그 칸을 안 읽으므로, 단계를 재배열하거나 앞에 하나 끼울 때 표는
+# 맞아 보이는데 엉뚱한 함수가 돈다. 재현으로 크기를 쟀다(손수민 리뷰 #161-1): SCOUT↔
+# AUDITOR 콜러블을 맞바꾸면 64건이 실패하는데, 예전 코드에서 RETRIEVAL 항목을 엉뚱한
+# 함수로 바꿔도 **104건 전부 통과했다.** `tests/test_pipeline_e2e.py`의
+# `test_every_triage_step_takes_the_same_arguments`가 그 균일성을 고정한다.
+_TRIAGE_STEPS: tuple[tuple[Stage, TriageStep], ...] = (
     (Stage.RETRIEVAL, _step_retrieval),
     (Stage.SCOUT, _step_scout),
     (Stage.AUDITOR, _step_auditor),
     (Stage.GATE, _step_gate),
 )
-
-
-def _run_step(
-    ctx: RunContext, stage: Stage, step: object, item: _InFlight, state: _Accumulator
-) -> bool:
-    """단계 하나를 태운다. 3단계만 `state`를 안 받으므로 여기서 갈린다."""
-    if stage is Stage.RETRIEVAL:
-        return _step_retrieval(ctx, item)
-    return step(ctx, item, state)  # type: ignore[operator]
 
 
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
@@ -1063,7 +1093,7 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
 def _run_stage_for_all(
     ctx: RunContext,
     stage: Stage,
-    step: object,
+    step: TriageStep,
     items: list[_InFlight],
     state: _Accumulator,
 ) -> list[_InFlight]:
@@ -1078,7 +1108,7 @@ def _run_stage_for_all(
     survivors: list[_InFlight] = []
     for item in items:
         try:
-            keep = _run_step(ctx, stage, step, item, state)
+            keep = step(ctx, item, state)
         except ModelGatewayError as exc:
             if not _is_droppable(exc):
                 # 서버 쪽 사건이다. `run_pipeline`이 받아 리포트·매니페스트까지 간다.
@@ -1297,7 +1327,7 @@ def _triage_one(
     for stage, step in _TRIAGE_STEPS:
         if last < stage:
             return
-        if not _run_step(ctx, stage, step, item, state):
+        if not step(ctx, item, state):
             return
 
 
