@@ -14,6 +14,7 @@
 | `README.md` (이 문서) | 색인 · **확정된 사실** · **미확정 항목** |
 | [`TEMPLATE.md`](TEMPLATE.md) | 보고서 서식. 각 필드에 "없으면 무엇을 못 하는지"가 붙어 있다 |
 | [`harness/`](harness/) | **하네스가 도는가**를 본 run. `YYYY-MM-DD-<주제>-<장비>.md` |
+| [`preprocessing/`](preprocessing/) | **전처리 형식(source/ast/cfg/pdg/cpg)이 탐지 정확도를 얼마나 바꾸는가**를 본 Juliet 실험. 하네스를 거치지 않은 별도 측정이라 파일명 규칙도 `TEMPLATE.md`도 따르지 않는다. 아래 §전처리 실험 참조 |
 
 **한때 `2x2/`가 옆에 있었다.** 팀 2×2 매트릭스의 셀 설정과 셀별 보고서를 담을 자리였고,
 `harness/`와 가른 이유는 성격이 달라서였다 — 이쪽은 배선이 붙었는지를 보는 run이라 결함이
@@ -24,8 +25,17 @@
 [2026-08-28 2×2 B1′](harness/2026-08-28-2x2-b1prime-qwen3-8b-atom.md). **그 보고서 자신이
 매트릭스 run이 아니라고 적는다** — 머리말이 *"조건 비교의 입력이 아니다"*라고 못박는다.
 
-**색인은 여기 하나다.** 어느 폴더에 있든 아래 표에 걸린다 —
-`test_every_experiment_report_is_in_the_index`가 `experiments/` 기준 상대경로로 대조한다.
+**색인은 여기 하나다. 다만 대조가 강제되는 범위는 `harness/`뿐이다.**
+`test_every_experiment_report_is_in_the_index`가 `experiments/` 기준 상대경로로 대조하는 것은
+맞지만, 대조할 파일 목록을 [`tests/test_docs_format.py`](../../tests/test_docs_format.py)의
+`REPORT_DIRS`에서 뽑고 **그 튜플의 원소는 `harness/` 하나다.**
+
+> **⚠ 그래서 "어느 폴더에 있든 걸린다"는 이 문서가 오래 적어 온 대로 성립하지 않았다.**
+> `preprocessing/` 여섯 건이 2026-08-29에 들어왔는데(커밋 `4025695`·`b790270`) **색인에도
+> 위 구성 표에도 없었고**, 저장소의 어떤 `*.md`도 그 폴더를 가리키지 않았다 —
+> `git grep -n preprocessing -- '*.md'`가 그 폴더 밖에서 0건이다. 검사가 못 잡은 것은 버그가
+> 아니라 범위 밖이어서다. **보고서 폴더를 늘릴 때 `REPORT_DIRS`를 같이 고쳐야 대조가
+> 따라온다**(그 튜플 위 주석이 그렇게 적어 뒀다).
 
 **확정된 사실은 이 README에만 있다.** 보고서는 그 시점의 관측이고, 이후 대조로 정정된
 것은 여기 표가 담는다. 사실이 두 곳에 살면 또 갈린다 — 이 폴더가 존재하는 이유가 그것이다.
@@ -50,6 +60,27 @@
 | 2026-09-03 | [모델 교대 — 잠재우기 실측](harness/2026-09-03-model-swap-sleep-atom.md) | build-plan §8-6 닫힘(교대 된다 — 잠재우기가 약 51 GiB 반환·왕복 2~6초 대 콜드 238초), `level 1`이 `level 2`와 구별 안 됨(§7 전제 반증), **`nvidia-smi --query-compute-apps`가 작동**(`[N/A]`는 `--query-gpu`뿐 — `mem_gb_ctx8k` 경로), 기준선의 51 GiB는 페이지 캐시 | `atom` | 조민규 |
 | 2026-09-04 | [검색 둘을 포함한 다섯 상주 시도](harness/2026-09-04-five-model-residency-atom.md) | 검색 둘을 포함한 **네 서버 동시 상주**(가중치 합 27.66 GiB 대 KV 64.35 GiB — 제약은 상주 개수가 아니라 KV 예산), 32768 다섯은 **4/5**에서 CUDA OOM, **기동을 막은 것은 페이지 캐시**(`posix_fadvise`가 루트 없이 여분 81 → 108 GiB), **critic(devstral) 첫 기동 — registry의 `nvfp4`가 틀렸고 실제 `fp8`·VLM으로 해석됨**, scout 처리량 첫 실측(단일 35.78 · batch32 388.46), auditor `tok_s_batch32` 0 해제(66.42 · 적중률 0.5673 동반 · #133), 리랭커 순위는 실경로 모양으로 **미검증** | `atom` | 조민규 |
 | 2026-09-09 | [`gpt-oss-20b` 온보딩 첫 관문](harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) | sm_121에서 MXFP4 **기동 성공**(MoE backend는 **MARLIN**, 가중치 14.91~16.06 GiB / checkpoint 12.82의 1.16~1.25배), Harmony vocab이 모델 밖 별도 에셋이라 `TIKTOKEN_ENCODINGS_BASE` 없이는 전 요청 500, **structured output 실패** — `xgrammar`는 5/5 오답(스키마가 사고 채널을 덮어써 내부 독백이 `reason`으로 샌다)·`guidance`는 5/5 HTTP 500인데 `response_format` 없이는 **3/3 정답**. Critic 자리 판정은 ADR 0010 리뷰로 | `atom` | 조민규 |
+
+### 전처리 실험 (`preprocessing/`)
+
+**하네스 run이 아니다.** Juliet 샘플을 전처리 형식별(source · ast · cfg · pdg · cpg ·
+조합)로 바꿔 모델 셋에 직접 물은 측정이고, `cli run`을 거치지 않아 `run_id`도
+`RunRecord`도 없다. 그래서 위 색인의 열(날짜 · 장비 · 작성)을 채울 값이 파일 안에 없고,
+`REPORT_DIRS`도 이 폴더를 보지 않는다. **여기 걸어 두는 것은 최소한 어디서 찾는지가
+남게 하려는 것이고, 하네스 보고서와 같은 서식으로 올리는 것은 별건이다.**
+
+| 문서 | 무엇 |
+| --- | --- |
+| [preprocessing-methods.md](preprocessing/preprocessing-methods.md) | 실험 절차 — 모델 셋(Qwen3-8B · Foundation-Sec-1.1-8B-Instruct · Qwen3-4B, 전부 BF16), Juliet 데이터셋 구성, perturbation 방법, 평가 지표 정의 |
+| [preprocessing-clean-results.md](preprocessing/preprocessing-clean-results.md) | clean 버전 결과(source만 few-shot, 나머지 zero-shot). **문서 자신이 "최종 결과는 참고용"이라고 못박는다** — source 우위가 few-shot 유무와 섞여 있어서다 |
+| [preprocessing-perturbed-results.md](preprocessing/preprocessing-perturbed-results.md) | perturbed 버전 결과. 같은 조건(source만 few-shot) |
+| [preprocessing-perturbed-v2-results.md](preprocessing/preprocessing-perturbed-v2-results.md) | perturbed에서 정확도가 떨어지는 원인을 좁히려고 변수·함수명만 바꾼 판. **수치는 few-shot 문서에 함께 실려 있다** |
+| [preprocessing-few-shot-results.md](preprocessing/preprocessing-few-shot-results.md) | 상위 셋(source · ast+pdg · ast+cfg)을 같은 few-shot 조건으로 다시 잰 것. Qwen3-8B만 채워져 있고 나머지 둘은 TODO |
+| [CLEAN-VS-PERTURBED.md](preprocessing/CLEAN-VS-PERTURBED.md) | 위를 합친 순위표 — 종합 · 강건성(clean→perturbed 변화율) · 취약 판정과 함수 지목 동시 성공률 |
+
+**⚠ 이 여섯은 전부 미완이라고 스스로 적는다.** 각 문서의 `// TODO`가 zero-shot source 실험,
+형식별 few-shot 정확도, CPG 엣지 끊김 재측정을 남은 것으로 든다. 수치를 인용할 때는 그
+단서를 함께 읽는다.
 
 ## 파일 이름
 
@@ -344,10 +375,21 @@ podman으로 도구를 돌린 run은 `run_20260817_0001` 하나이고 그것은 
 > 넘는다. **여기 확정 표가 그 자리를 메운다** — 이 README가 "이후 대조로 정정된 것은 여기
 > 표가 담는다"고 적은 그 용도다. 두 문장을 실제로 고치는 것은 후속 PR이다.
 
+> **⚠ 정정 대상은 둘이 아니라 넷이었다 (2026-09-09에 확인).** 위 표가 센 두 자리 말고도
+> [tools/README.md](../../tools/README.md)의 「ATOM 빌드·실행」 절과
+> [tests/test_container_tools.py](../../tests/test_container_tools.py)의
+> `test_podman_argv_matches_docker_except_the_binary` docstring이 같은 배타 서술을 들고
+> 있었다. 위 두 자리는 2026-08-28에 고쳐졌는데 **이 둘은 목록에 없어서 그대로 남았다** —
+> `tools/README.md` 쪽에는 실행 가능한 명령까지 있었다(`--profile b1_single`을 "podman이
+> 선언돼 있으니 플래그가 필요 없다"로 설명하는 줄). **CLAUDE.md §2.3의 살아 있는 사례다** —
+> 정정 대상을 기억이 아니라 `git grep`으로 세었다면 목록이 처음부터 넷이었다.
+
 **뜻은 두 갈래다.** ① `local_balanced`·`b1_single`을 ATOM에서 돌릴 때 오버라이드가
-필요 없다(선언대로 podman이 있다). ② 그러나 **"docker가 없어서 podman을 골랐다"는 근거는
-성립하지 않는다** — 미확정 #4가 묻는 `single_gpu_12g`의 런타임 선언을 다시 볼 때, 선택지가
-"podman뿐"이 아니라 "둘 중 하나"다.
+필요 없다. **⚠ 이 문장은 원래 그 근거를 "(선언대로 podman이 있다)"로 달고 있었는데, 같은
+절이 바로 위에서 그 선언값을 `docker`로 되돌렸다고 적는다** — 결론(오버라이드 불필요)은
+그대로지만 근거는 "ATOM에 podman이 있다"가 아니라 **"ATOM에 docker가 있다"**다(2026-08-21).
+② 그러나 **"docker가 없어서 podman을 골랐다"는 근거는 성립하지 않는다** — 미확정 #4가 묻는
+`single_gpu_12g`의 런타임 선언을 다시 볼 때, 선택지가 "podman뿐"이 아니라 "둘 중 하나"다.
 
 ---
 
