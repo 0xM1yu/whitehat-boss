@@ -31,10 +31,14 @@ CandidateState = Literal[
 SCOUT_MEMBER_PATTERN = r"^scout_[a-z0-9]+(?:_[a-z0-9]+)*$"
 
 # 풀 멤버 역할 **키**(`Role.value`)를 담는 문자열. 열거형 자체가 아닌 이유는
-# `RunRecord.model_checksums`·`prompt_versions`·`config.model_key_for`·역할별 토큰 카운터가
-# 전부 역할 키 문자열로 동작하기 때문이다(ADR 0010 §3 "역할 키로 이미 동작한다") — 행렬의
-# 한 칸에서 그 run의 모델·checksum·프롬프트 버전으로 바로 이어진다. `Role`은 StrEnum이라
-# 직렬화 결과도 같으므로, 나중에 열거형으로 좁혀도 매니페스트는 안 바뀐다.
+# `RunRecord.model_checksums`·`prompt_versions`·`config.model_key_for`·`counter_for_role`이
+# 전부 역할 키 **문자열**을 받기 때문이다 — 행렬의 한 칸에서 그 run의 모델·checksum·프롬프트
+# 버전으로 바로 이어진다. 여기서 말하는 것은 **키로 조회된다**는 것이지 그 역할이 이미
+# 배선돼 있다는 뜻이 아니다: `counter_for_role`은 프로필이 선언한 역할이면 무엇이든 카운터를
+# 주지만, 그것을 **부르는 쪽**(`runner._triage_one`)이 `Role.SCOUT.value`로 박혀 있고
+# `counter_report`는 `src.tokens.COUNTED_ROLES` 둘만 싣는다(ADR 0010 §3의 ⚠ 문단).
+#
+# `Role`은 StrEnum이라 직렬화 결과도 같으므로, 나중에 열거형으로 좁혀도 매니페스트는 안 바뀐다.
 ScoutMemberRole = Annotated[str, Field(pattern=SCOUT_MEMBER_PATTERN, max_length=64)]
 
 

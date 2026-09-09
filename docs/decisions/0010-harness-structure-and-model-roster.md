@@ -109,7 +109,19 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 - 풀 멤버는 `Role`에 **`scout_memory`·`scout_boundary`·`scout_injection`** 셋을 더해 표현한다. 프로필은 `roles:`에 그 셋을 적고, 기존 `scout` 한 역할 프로필도 그대로 유효하다(둘 중 하나가 있어야 한다).
 - **팬아웃**: 4단계에서 대상 하나를 세 멤버가 각각 본다(캡슐은 한 번 만든다). **합집합(방식 ①)**: 임계값을 넘은 멤버의 후보를 **고르지도 합치지도 않고 각각** 5단계로 보낸다 — 함수 하나에 Finding이 여럿 생길 수 있고 9단계 dedupe가 같은 함수의 것을 합친다. 판정은 6단계 게이트가 근거로 한다(build-plan §5 "투표가 아니라 분업이다"). 함수당 하나로 합쳐 Auditor를 한 번만 부르는 방식 ②는 **Auditor가 받은 근거가 어느 멤버 것인지 섞여** 기각했다 — 공동오답 행렬이 흐려진다. Auditor 호출은 최대 3배지만 멤버가 CWE 계열로 갈려 있어 실제 겹침은 첫 run이 답한다. **태깅**: `Candidate.scout_member`를 신설해 하네스가 stamp한다 — 모델이 채우는 값이 아니다(`produced_by`와 같은 논법).
-- **왜 "roles를 리스트로" 대신 역할 셋인가.** 계획 D절은 `roles: dict[str, str]`를 리스트 수용으로 넓히자고 적었고 그 파급(config·factory·cli·bench·scout.py)을 스스로 셌다. 역할로 두면 그 다섯이 **0**이다 — `RunRecord.model_checksums`·`prompt_versions`·`ProducedBy.role`·`RoutingModelClient`·역할별 토큰 카운터가 전부 역할 키로 이미 동작하고, 멤버별 checksum·프롬프트 버전·발화 기록이 **공짜로** 남는다. 리스트였다면 그 다섯에 "리스트의 몇 번째"라는 새 좌표를 새로 파야 한다. 계획의 의도(N멤버 · 태깅)는 같다.
+- **왜 "roles를 리스트로" 대신 역할 셋인가.** 계획 D절은 `roles: dict[str, str]`를 리스트 수용으로 넓히자고 적었고 그 파급(config·factory·cli·bench·scout.py)을 스스로 셌다. 역할로 두면 **기록·라우팅 층이 공짜다** — `RunRecord.model_checksums`·`prompt_versions`·`ProducedBy.role`·`RoutingModelClient` **넷은 역할 키로 이미 동작하므로**(`config.model_checksums()`·`prompt_versions()`가 `profile.roles`를 그대로 돌고, `ProducedBy.role`이 `Role`이며, `RoutingModelClient.client_for`가 `role.value`로 색인한다) 멤버별 checksum·프롬프트 버전·발화 기록이 **손대지 않고** 남는다. 리스트였다면 그 넷 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다. 계획의 의도(N멤버 · 태깅)는 같다.
+
+  ⚠ **그러나 파급이 0인 것은 아니다.** 초안은 위 다섯 자리가 전부 0이라고 적었는데 셋이 틀렸다:
+  `config.PROMPTED_ROLES`와 `bench.ROLE_SPEC`은 **멤버당 한 줄씩 새로 넣어야 하고**(이 ADR을 코드로 옮긴
+  PR이 실제로 넣었다 — 안 넣으면 프롬프트 검사와 bench 경로가 각각 죽는다), 역할별 토큰 카운터는
+  **조회는 되지만 켜지지 않는다** — `counter_for_role(role)`은 프로필이 선언한 역할이면 카운터를
+  주는데, 부르는 쪽인 `runner._triage_one`이 `counter_for_role(Role.SCOUT.value)`로 박혀 있고
+  기록을 내는 `counter_report`는 `src.tokens.COUNTED_ROLES = ("scout", "auditor")`만 돌며
+  `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. `nodes/scout.py`도 `ROLE = Role.SCOUT` 하나다.
+  즉 풀 멤버가 4단계를 도는 날 그 캡슐은 기본 카운터(글자수 근사)로 회계된다.
+  정확한 주장은 "다섯이 0"이 아니라 **"기록 넷이 0이고, 나머지는 표에 줄을 더하는 일이지 새 좌표를
+  파는 일이 아니다"**이다 — 리스트 안이 요구하던 것은 후자였다. 카운터를 늘리는 것은 러너를 옮기는
+  PR의 몫이다(지금 늘리면 러너가 안 켜는 역할이 `token_counter` 이벤트에 실려 기록이 거짓이 된다).
 
 ### 4. 계열 규칙을 코드가 강제한다 (D59 (a))
 

@@ -25,8 +25,9 @@ class Role(StrEnum):
     # 것이 없고 멤버별 checksum·프롬프트 버전·발화 기록이 공짜로 남는다. 리스트였다면 그
     # 넷 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다.
     #
-    # ⚠ **ADR이 다섯째로 센 「역할별 토큰 카운터」는 아직 그렇지 않다 — 고칠 것이 0이
-    # 아니다.** `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
+    # ⚠ **역할별 토큰 카운터는 그 넷에 들지 않는다 — 고칠 것이 0이 아니다.** ADR 0010 §3의
+    # ⚠ 문단이 같은 것을 적는다(초안은 다섯이 0이라고 셌고, 그 셋이 틀렸다).
+    # `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
     # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 러너도 `_triage_one`에서
     # `counter_for_role(Role.SCOUT.value)`를 부르고 `nodes/scout.py`는 `ROLE = Role.SCOUT`
     # 하나다. 즉 풀 멤버가 4단계를 도는 배선이 오는 날 **역할 카운터는 따라오지 않고**,
