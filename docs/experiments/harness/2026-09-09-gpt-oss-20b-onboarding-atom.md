@@ -233,5 +233,5 @@ Yes – the code is a classic **use-after-free**.
 - [model-serving.md](../../model-serving.md) §3 — 배포 전 필수 검증 체크리스트(이 실험이 1번·6번을 답한다)
 - [research/2026-09-08-roster.md](../../research/2026-09-08-roster.md) §1·§4·§8 — 로스터, Critic 선정 근거, 온보딩 순서
 - [research/2026-09-08-critic-quantization.md](../../research/2026-09-08-critic-quantization.md) — gpt-oss 네이티브 MXFP4·Harmony
-- `ADR 0010` — 로스터를 정하는 문서(제안). 위 후속 1이 여기로 간다. **PR #148**
+- `ADR 0010` — 로스터를 정하는 문서. **2026-09-09에 승인됐다**(조민규 확정 + 손수민 리뷰). 위 후속 1이 여기로 갔다. **PR #148**
 - [experiments/README.md](../README.md) — 보고서 규약
