@@ -2110,9 +2110,10 @@ def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
 # ---------------------------------------------------------------------------
 # ADR 0009 결과 2 — 러너의 단계 단위 루프
 #
-# `execution.mode`는 PR B가 스키마로 열었고 러너는 아직 그 값을 안 본다. 아래 넷이
-# 그 간극을 고정한다. **J4(기본값 보존)만 지금 통과해야 한다** — 나머지 셋은 RED이고,
-# 그것이 이 PR의 착수 근거다.
+# `execution.mode`는 PR B가 스키마로 열었고 **이 PR이 러너를 그 값에 붙였다.**
+# 아래 둘은 짝이다 — 하나는 단계 단위가 실제로 도는지를, 다른 하나는 기본값이
+# 안 바뀌었는지를 본다. 두 번째가 없으면 첫 번째를 만족시키려고 기본 경로를 바꿔도
+# 초록이 나온다.
 # ---------------------------------------------------------------------------
 
 
@@ -2135,7 +2136,7 @@ def _stage_order(trace_path: Path, kind: str = "transition") -> list[int]:
 
 
 def _is_non_decreasing(values: list[int]) -> bool:
-    return all(a <= b for a, b in zip(values, values[1:]))
+    return all(a <= b for a, b in zip(values, values[1:], strict=False))
 
 
 def test_per_candidate_is_the_default_and_interleaves_stages(tmp_path: Path) -> None:

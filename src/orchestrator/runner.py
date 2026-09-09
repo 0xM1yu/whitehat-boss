@@ -113,6 +113,7 @@ from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate
+from src.schemas.capsule import ContextCapsule
 from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.decision import Decision
 from src.schemas.enums import (
@@ -261,7 +262,8 @@ _MAX_CONSECUTIVE_DROPS = 3
 def _is_droppable(exc: ModelGatewayError) -> bool:
     """이 게이트웨이 오류가 **요청 하나에 대한 사실**인가 — 그 하나만 버리고 계속 갈 수 있는가.
 
-    후보 단위(`_triage_all`)와 Finding 단위(`_analyze`의 critic 루프)가 같은 판정을 쓴다.
+    후보 단위(`_triage_by_candidate`)·단계 단위(`_run_stage_for_all`)·Finding 단위
+    (`_analyze`의 critic 루프) **셋**이 같은 판정을 쓴다.
     **함수로 뺀 이유가 그것이다** — 두 곳이 각자 `status not in _DROPPABLE_STATUS`를 적으면
     한쪽만 고쳐질 때 같은 오류가 자리에 따라 다르게 처리된다.
 
@@ -904,7 +906,208 @@ class _Reached:
     stage: Stage = Stage.RETRIEVAL
 
 
+@dataclass
+class _InFlight:
+    """target 하나가 **단계 사이에** 들고 가는 것.
+
+    후보 단위에서는 이 값들이 `_triage_one`의 지역 변수였다 — 한 함수 안에서 3~6단계가
+    연달아 돌기 때문이다. 단계 단위에서는 4단계와 5단계 사이에 다른 target 수백 개가
+    끼므로 **어딘가에 놓여 있어야 한다.**
+
+    `_Accumulator`가 아니라 여기 두는 이유: `_Accumulator`는 run 전체의 산출물(후보·
+    Finding·근거)을 모으는 자리이고, 이쪽은 **한 target이 다음 단계에 넘길 입력**이다.
+    섞으면 「부분 결과」가 무엇인지가 흐려진다 — 그 구별이 ADR 0009이 재정의하라고
+    적은 둘 중 하나다.
+    """
+
+    target: _Target
+    reached: _Reached
+    capsule: ContextCapsule | None = None
+    candidate: Candidate | None = None
+    finding: Finding | None = None
+    missings: tuple[MissingEvidence, ...] = ()
+
+
+def _step_retrieval(ctx: RunContext, item: _InFlight) -> bool:
+    """3단계 — LIGHT 캡슐. 항상 다음 단계로 넘긴다.
+
+    역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). scout는 LIGHT
+    캡슐을 보므로 scout 카운터로 켠다. `counter_for_role`이 `None`을 주면(fake·토크나이저
+    없음) `using_counter`가 아무것도 바꾸지 않아 기본 카운터(글자수 근사)가 유지된다.
+    """
+    with using_counter(ctx.counter_for_role(Role.SCOUT.value)):
+        item.capsule = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.LIGHT)
+    return True
+
+
+def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """4단계 — 분류. 승격되지 않은 후보는 여기서 멈춘다(`False`)."""
+    item.reached.stage = Stage.SCOUT
+    assert item.capsule is not None  # noqa: S101 — 3단계가 반드시 앞선다(호출자가 순서를 준다)
+    candidate = scout.run(
+        ctx, artifact=item.target.artifact, capsule=item.capsule, evidences=item.target.evidences
+    )
+    item.candidate = candidate
+    state.candidates.append(candidate)
+    return candidate.state is FindingState.TRIAGED
+
+
+def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """5단계 — EXPANDED 캡슐 + 심층 분석.
+
+    auditor는 EXPANDED 캡슐을 보므로 auditor 카운터로 켠다. 역할마다 모델(=토크나이저)이
+    다를 수 있어 scout와 따로 감싼다 — 조립과 `CapsuleSection` 검증이 같은 카운터를 봐야
+    한다(`src/tokens.py` docstring).
+    """
+    item.reached.stage = Stage.AUDITOR
+    candidate = item.candidate
+    assert candidate is not None  # noqa: S101 — 4단계가 승격한 것만 여기 온다
+    evidences, artifact = item.target.evidences, item.target.artifact
+    with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
+        expanded = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.EXPANDED)
+    finding, missings = auditor.run(
+        ctx, candidate=candidate, capsule=expanded, evidences=evidences
+    )
+    item.finding, item.missings = finding, tuple(missings)
+    state.update(finding)
+    state.evidences[finding.finding_id] = evidences
+    state.missings[finding.finding_id] = tuple(missings)
+    state.workdirs[finding.finding_id] = artifact.path
+    return True
+
+
+def _step_gate(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """6단계 — Evidence Gate 등급."""
+    item.reached.stage = Stage.GATE
+    finding, candidate = item.finding, item.candidate
+    assert finding is not None and candidate is not None  # noqa: S101 — 5단계가 앞선다
+    graded, _ = gate_node.run(
+        ctx,
+        finding=finding,
+        evidences=item.target.evidences,
+        missings=item.missings,
+        candidate_location=candidate.location,
+    )
+    state.update(graded)
+    return True
+
+
+# 3~6단계를 도는 순서와 각 단계의 실행자. **후보 단위와 단계 단위가 같은 표를 읽는다** —
+# 두 경로가 각자 순서를 적으면 한쪽만 고쳐질 때 같은 run이 모드에 따라 다른 단계를 탄다.
+_TRIAGE_STEPS: tuple[tuple[Stage, object], ...] = (
+    (Stage.RETRIEVAL, _step_retrieval),
+    (Stage.SCOUT, _step_scout),
+    (Stage.AUDITOR, _step_auditor),
+    (Stage.GATE, _step_gate),
+)
+
+
+def _run_step(
+    ctx: RunContext, stage: Stage, step: object, item: _InFlight, state: _Accumulator
+) -> bool:
+    """단계 하나를 태운다. 3단계만 `state`를 안 받으므로 여기서 갈린다."""
+    if stage is Stage.RETRIEVAL:
+        return _step_retrieval(ctx, item)
+    return step(ctx, item, state)  # type: ignore[operator]
+
+
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
+    """3~6단계를 돈다. **어느 루프인지는 프로필의 `execution.mode`가 정한다** (ADR 0009).
+
+    선언 안 한 프로필은 `per_candidate`다 — 지금까지의 경로 그대로이고, 그것이 ADR 0009이
+    이 결정을 「되돌리기 싼」 것으로 부른 근거다. `tests/test_pipeline_e2e.py`의
+    `test_per_candidate_is_the_default_and_interleaves_stages`가 그 보존을 고정한다.
+    """
+    execution = ctx.config.profile.execution
+    if execution is not None and execution.mode == "per_stage":
+        _triage_by_stage(ctx, plan, state, last)
+        return
+    _triage_by_candidate(ctx, plan, state, last)
+
+
+def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
+    """**모든 target이 K단계를 마친 뒤에 K+1이 시작한다** (ADR 0009 결과 2).
+
+    후보 단위와 **같은 `_TRIAGE_STEPS`를 읽고 바깥 루프만 뒤집는다.** 두 경로가 각자
+    단계 순서를 적으면 한쪽만 고쳐질 때 같은 run이 모드에 따라 다른 단계를 탄다.
+
+    ## 이 루프에서 뜻이 바뀌는 둘 (ADR 0009 「함께 옮겨야 하는 것」)
+
+    **1. 연속 폐기 카운터가 「이 단계에서 몇 건이 연속으로 죽었나」가 된다.**
+    후보 단위에서는 카운터가 run 전체에 하나였고 리셋 조건이 「후보 하나가 3~6단계를
+    완주」였다. 여기서는 **단계마다 0에서 시작하고**, 「이 target이 이 단계를 마쳤다」가
+    리셋이다. 바뀌는 이유는 뜻이 실제로 달라서다 — 단계 단위에서 4단계를 전부 통과한
+    run은 「scout는 멀쩡하다」를 증명한 것이고, 그 사실을 5단계 실패가 지우면 안 된다.
+    반대로 한 단계 안에서 연속 셋이 죽으면 **그 단계가 체계적으로 고장 난 것**이고
+    남은 단계를 태울 이유가 없다.
+
+    ⚠ **그래서 run 전체의 연속 폐기 상한은 모드에 따라 다르다.** `per_stage`에서는
+    단계 넷이 각각 최대 2건까지 견디므로 run 하나가 견디는 총 폐기 수가 늘어난다.
+    `_MAX_CONSECUTIVE_DROPS`는 그대로 두었다 — 그 값이 잠정치라고 자기 주석이 적고
+    (*"실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다"*), 여기서
+    모드별로 가르면 **재 보기도 전에 두 값을 갖게 된다.**
+
+    **2. 부분 결과가 「K단계까지 간 후보 전부」가 된다.** 예산이 5단계 도중에 소진되면
+    후보 단위에서는 완주한 후보 몇과 아무것도 아닌 나머지가 남지만, 단계 단위에서는
+    **4단계를 마친 후보 전부**가 남는다. `BudgetExhausted`를 여기서 잡지 않는 것은
+    후보 단위와 같다 — `run_pipeline`이 처리하고, 그때까지 `state`에 쌓인 것이 곧
+    부분 결과다. 이 루프는 그 「쌓인 것」을 단계 경계에서 가지런하게 만든다.
+    """
+    items = [_InFlight(target=target, reached=_Reached()) for target in plan.targets]
+    for stage, step in _TRIAGE_STEPS:
+        if last < stage:
+            return
+        items = _run_stage_for_all(ctx, stage, step, items, state)
+
+
+def _run_stage_for_all(
+    ctx: RunContext,
+    stage: Stage,
+    step: object,
+    items: list[_InFlight],
+    state: _Accumulator,
+) -> list[_InFlight]:
+    """한 단계를 살아 있는 target 전부에 태우고, 다음 단계로 갈 것만 돌려준다.
+
+    폐기 판정은 후보 단위(`_triage_by_candidate`)와 **같은 표**다 — `_is_droppable`이
+    그 판정을 함수로 들고 있는 이유가 정확히 이것이다(그 docstring). 여기서 다시
+    `status not in _DROPPABLE_STATUS`를 적으면 한쪽만 고쳐질 때 같은 오류가 모드에
+    따라 다르게 처리된다.
+    """
+    consecutive = 0
+    survivors: list[_InFlight] = []
+    for item in items:
+        try:
+            keep = _run_step(ctx, stage, step, item, state)
+        except ModelGatewayError as exc:
+            if not _is_droppable(exc):
+                # 서버 쪽 사건이다. `run_pipeline`이 받아 리포트·매니페스트까지 간다.
+                raise
+            consecutive = _drop(
+                ctx,
+                state,
+                item.target,
+                _REASON_GATEWAY,
+                exc,
+                consecutive,
+                stage=item.reached.stage,
+                systematic=exc.status not in _SIZE_STATUS,
+            )
+        except SchemaParseError as exc:
+            consecutive = _drop(
+                ctx, state, item.target, _REASON_SCHEMA, exc, consecutive, stage=item.reached.stage
+            )
+        else:
+            # 이 단계를 마쳤다. 앞의 실패는 이 단계의 체계적 고장이 아니었다.
+            consecutive = 0
+            if keep:
+                survivors.append(item)
+    return survivors
+
+
+def _triage_by_candidate(
+    ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int
+) -> None:
     """target을 차례로 태운다. **후보 하나의 실패로 run을 잃지 않는다.**
 
     `BudgetExhausted`는 여기서 잡지 않는다 — 실패가 아니라 정상 종료 경로이고
@@ -1083,46 +1286,19 @@ def _triage_one(
 ) -> None:
     """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다.
 
+    **후보 단위(`execution.mode: per_candidate`, 기본값)의 경로다.** 단계 단위는
+    `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만 뒤집어** 돈다.
+
     **`reached.stage`를 노드에 들어가기 직전에 올린다 (PR #50).** 끝난 뒤에 올리면 그
     노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
+    (그 올리는 일은 이제 각 `_step_*`이 자기 첫 줄에서 한다.)
     """
-    location, artifact, evidences = target.location, target.artifact, target.evidences
-    if last < Stage.RETRIEVAL:
-        return
-    # 역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). scout는 LIGHT
-    # 캡슐을 보므로 scout 카운터로 켠다. `counter_for_role`이 `None`을 주면(fake·토크나이저
-    # 없음) `using_counter`가 아무것도 바꾸지 않아 기본 카운터(글자수 근사)가 유지된다.
-    with using_counter(ctx.counter_for_role(Role.SCOUT.value)):
-        capsule = retrieval.run(ctx, target=location, level=CapsuleLevel.LIGHT)
-    if last < Stage.SCOUT:
-        return
-    reached.stage = Stage.SCOUT
-    candidate = scout.run(ctx, artifact=artifact, capsule=capsule, evidences=evidences)
-    state.candidates.append(candidate)
-    if candidate.state is not FindingState.TRIAGED or last < Stage.AUDITOR:
-        return
-    # auditor는 EXPANDED 캡슐을 보므로 auditor 카운터로 켠다. 역할마다 모델(=토크나이저)이
-    # 다를 수 있어 scout와 따로 감싼다 — 조립과 `CapsuleSection` 검증이 같은 카운터를 봐야
-    # 한다(`src/tokens.py` docstring).
-    reached.stage = Stage.AUDITOR
-    with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
-        expanded = retrieval.run(ctx, target=location, level=CapsuleLevel.EXPANDED)
-    finding, missings = auditor.run(ctx, candidate=candidate, capsule=expanded, evidences=evidences)
-    state.update(finding)
-    state.evidences[finding.finding_id] = evidences
-    state.missings[finding.finding_id] = tuple(missings)
-    state.workdirs[finding.finding_id] = artifact.path
-    if last < Stage.GATE:
-        return
-    reached.stage = Stage.GATE
-    graded, _ = gate_node.run(
-        ctx,
-        finding=finding,
-        evidences=evidences,
-        missings=tuple(missings),
-        candidate_location=candidate.location,
-    )
-    state.update(graded)
+    item = _InFlight(target=target, reached=reached)
+    for stage, step in _TRIAGE_STEPS:
+        if last < stage:
+            return
+        if not _run_step(ctx, stage, step, item, state):
+            return
 
 
 def _new_record(
