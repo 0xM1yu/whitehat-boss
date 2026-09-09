@@ -18,9 +18,14 @@
 
 이 특성이 아키텍처를 규정한다. Scout·Embedding은 크게 배칭하고, Auditor·Critic은 후보가 좁혀진 뒤에만 호출한다.
 
-## 2. 초기 모델 구성
+## 2. 역할별 서빙 성질 — 초기 모델 구성 (2026-08 기록)
 
-| 역할 | 모델 | 선정 이유 | 운영 방식 | 적재(추정) |
+**어느 모델이 어느 자리에 앉는지의 정본은 [CONTEXT.md](../CONTEXT.md) §1이다.** 아래 표는
+**2026-08 초기안의 기록**이고, 로스터는 그 뒤 2026-09-09에 확정됐다
+([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2). **이 표를 「지금 무엇이
+뜨는가」로 읽지 않는다** — 여기 남는 값은 그 시점의 선정 이유와, 그 뒤에 붙은 실측이다.
+
+| 역할 | 모델 (2026-08 초기안) | 선정 이유 | 운영 방식 | 적재(추정) |
 | --- | --- | --- | --- | --- |
 | Embedding | Qwen3-Embedding-0.6B | Apache 2.0, 32K context, code retrieval 지원 | 상시 상주 | 예산 영향 미미 |
 | Reranker | Qwen3-Reranker-0.6B | 상동 | 상시 상주 | 예산 영향 미미 |
@@ -28,7 +33,7 @@
 | Primary Auditor | Qwen3-Coder-30B-A3B-Instruct | 30.5B total / 3.3B active MoE, 256K native context. 좁은 대역폭에서 총 파라미터 대비 유리 | 선별 후보에만 호출 | NVFP4 약 15GB (추정) |
 | Independent Critic | Devstral Small 2 24B | Primary와 **다른 계열**, Apache 2.0, 256K context, tool-use 지원. **멀티모달(vision)이다** — config.json이 `Mistral3ForConditionalGeneration`이고 vLLM이 `PixtralForConditionalGeneration`으로 해석한다(2026-09-04 ATOM 실측, [보고서](experiments/harness/2026-09-04-five-model-residency-atom.md) §7) | 상위 후보만 batch 검증 | dense 24B — 대역폭 영향 큼. **이 칸에 추정이 아닌 값이 하나 생겼다**: 우리가 실제로 띄운 체크포인트는 `nvfp4`가 아니라 **`fp8`**이고 가중치+non-torch가 **25.48 GiB**(util 0.30)~**26.8 GiB**(util 0.45)다 — 2026-09-04 ATOM, vLLM 기동 로그의 자기 회계. 나머지 칸은 여전히 추정이다 |
 
-Critic이 다른 계열이어야 하는 이유: 같은 모델의 self-consistency는 같은 실패를 반복한다. 교차 검증의 가치는 오류 상관관계가 낮을 때만 나온다.
+Critic이 다른 계열이어야 하는 이유: 같은 모델의 self-consistency는 같은 실패를 반복한다. 교차 검증의 가치는 오류 상관관계가 낮을 때만 나온다. **이 요구는 어느 모델이 앉든 남는다** — [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4가 auditor와 critic의 `family`(가중치 출처 조직)를 `load_config`가 검사하도록 정했다. ⚠ **그것은 결정이고 아직 코드가 아니다** — 2026-09-09 조회 기준 `src/`·`config/`에 `family`가 0건이다. 그리고 [research/README.md](research/README.md)가 이 전제를 겨누는 남의 실측을 모아 뒀다 — 제작사를 다양화하면 오류 상관이 낮아진다는 보장이 그 데이터에는 없다.
 
 실제 메모리 점유는 양자화·KV cache·context 길이·동시 요청 수에 크게 좌우된다. **모델을 확정하기 전에 이 장비에서 8K/16K/32K context 기준으로 직접 측정한다.**
 
@@ -50,7 +55,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 - [ ] 단일 스트림 tok/s vs 배치(8/16/32 동시 요청) 합산 tok/s → `roles.*.throughput.tok_s_single` / `.by_concurrency.*`
 - [ ] automatic prefix caching 동작 확인 및 적중률 → `roles.*.prefix_cache.verdict` / `.metrics_delta` (장부가 비어도 `prompt_tokens_cached_delta`가 토큰 수를 준다 — 구간 합계라 BudgetLedger에는 넣지 않는다)
 - [ ] structured output(JSON schema 강제) 동작 확인 → `roles.*.structured_output.valid_ratio`
-- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다
+- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다. ⚠ **이 항목이 묻던 질문은 2026-09-09에 성립을 잃었다 — §4 머리와 [D4](open-questions/D/D4.md)를 먼저 읽는다.** 문구는 `src/bench_report.py`의 `CHECKLIST[6]`과 같은 것이고 **코드는 아직 안 고쳤으므로 `bench` 출력에도 이 문장이 그대로 뜬다**
 
 `bench` 출력의 `checklist` 배열이 위 7개를 통과/실패/미측정으로 요약한다. **못 잰 값은 0으로
 남기고 사유를 함께 낸다** — 추정치를 넣으면 `Benchmark.is_measured`가 0 여부로 판정하므로
@@ -76,7 +81,25 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 `bench --apply`로 기록한다. `--apply`는 해당 라인만 갈아 끼우며 `models.yaml`의 주석을
 보존한다 — 대상 블록을 확실히 찾지 못하면 아무것도 쓰지 않고 실패한다.
 
-## 4. 양자화 품질 검증 (Critic 전용)
+## 4. 양자화 품질 검증 (Critic 전용) — **전제가 사라진 절**
+
+> **⚠ 이 절은 Critic이 Devstral Small 2였을 때 쓰였고, 그 전제가 2026-09-09에 사라졌다.**
+> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [CONTEXT.md](../CONTEXT.md) §1**이고
+> 결정 기록은 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2다.
+>
+> **무엇이 무너졌나.** 아래 본문이 요구하는 것은 *"고정밀도 대비 NVFP4의 `verdict` 일치율"*인데,
+> 새 Critic 자리의 모델은 **네이티브 MXFP4**라 공개된 고정밀 체크포인트가 없다 — **비교할
+> 분모가 원리상 없다.** 근거는 [D4](open-questions/D/D4.md)의 2026-09-08 절과
+> [2026-09-08 Critic 양자화 조사](research/2026-09-08-critic-quantization.md) §B4다.
+>
+> **무엇이 대신 서는가.** D4가 질문을 **「고정밀 대비 하락폭」에서 「반박 정확도 표본 자체」로
+> 재정의**했다 — 진짜 취약점 N건 + 명백한 오탐 N건을 몇 건으로 하고 합격선을 어디에 둘
+> 것인가. **표본 크기와 합격선의 정본은 D4다.**
+>
+> **그래도 지우지 않는다.** §3 체크리스트 7번이 이 절을 이름으로 가리키고,
+> [R2](open-questions/R/R2.md)가 이 질문 위에 서 있다 — R2는 그 파일에서 아직 `열림`이고
+> ADR 0010 「후속」 2가 *"R2는 로스터 변경으로 닫힌다"*고 적는다. **아래는 「지금 하라」가
+> 아니라 「무엇을 물었던 절인가」로 읽는다.**
 
 Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받아 NVFP4가 매력적이다. 그러나 critic의 가치는 **반박 정확도**에 있고, 정밀도를 낮췄을 때 이 능력이 먼저 무너질 수 있다.
 
@@ -90,7 +113,9 @@ Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받�
 > 기준선을 무엇으로 둘지부터 정해야 한다** — 지금 있는 것은 저정밀도 축의 한 점이지
 > 기준선이 아니다. NVFP4 빌드(`Firworks/…-nvfp4`)는 이름만 확인됐고 받지도 띄우지도 않았다.
 
-표본 크기와 허용 하락폭은 [open-questions.md](open-questions.md)에서 확정한다.
+표본 크기와 허용 하락폭은 [open-questions.md](open-questions.md)에서 확정한다. **⚠ 재정의
+뒤의 정본은 [D4](open-questions/D/D4.md)이고, 거기서 정하는 것은 「허용 하락폭」이 아니라
+「표본 크기와 합격선」이다.**
 
 ## 5. Model Registry
 
@@ -126,18 +151,21 @@ models:
 ([보고서](experiments/harness/2026-09-02-bench-concurrency-atom.md)), 그 값 옆에 조건을 적을
 칸으로 뒀다. **`null`은 미판독이고 `0.0`은 「캐시를 끄고 쟀다」라는 실측이다 — 둘은 다르다.**
 
+**아래 예시의 모델 키는 구조를 보이려고 든 것이지 현재 로스터가 아니다** — 로스터의 정본은
+[CONTEXT.md](../CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
+
 ```yaml
-# config/profiles.yaml (합성 예시)
+# config/profiles.yaml (합성 예시 — 모델 키는 자리표시자다)
 profiles:
   local_balanced:
     description: "전 역할 실서빙"
     production: false
-    roles:                        # 역할 → models.yaml의 키
-      scout: qwen3-8b
-      auditor: qwen3-coder-30b-a3b
-      critic: devstral-small-2-24b
-      embedding: qwen3-embedding-0.6b
-      reranker: qwen3-reranker-0.6b
+    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 CONTEXT.md §1
+      scout: <모델 키>
+      auditor: <모델 키>
+      critic: <모델 키>
+      embedding: <모델 키>
+      reranker: <모델 키>
     adapters:                     # ModelClient는 여기서 고르지 않는다 (아래 참조)
       retriever: fake
       tool_runner: fake
@@ -223,11 +251,16 @@ python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \
 
 ```
 Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / budget)
-                                          → vLLM #1 (Scout)
-                                          → vLLM #2 (Auditor)
-                                          → vLLM #3 (Critic)
+                                          → vLLM (Scout — 풀이면 역할 셋)
+                                          → vLLM (Auditor)
+                                          → vLLM (Critic)
                                           → embedding / reranker
 ```
+
+**위 그림은 역할의 배선이지 상주 서버 수가 아니다.** 같은 모델이 앉은 두 역할은 **한 서버를
+공유하고**, 어느 자리가 그런지는 [CONTEXT.md](../CONTEXT.md) §1·§2가 든다. Scout를 역할 셋으로
+쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §3이고, **기존
+`scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
 
 - vLLM: 온프레미스 inference server, OpenAI-compatible API 제공
 - LiteLLM: 역할별 routing·retry·fallback, spend/budget 관리
