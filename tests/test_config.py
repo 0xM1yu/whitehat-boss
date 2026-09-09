@@ -687,7 +687,14 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     """
     _copy_config(
         tmp_path,
-        profile_patch={"roles": {"scout": "qwen3-8b", "auditor": "qwen3-8b", "critic": "qwen3-4b"}},
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-8b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
         model_patch={"qwen3-8b": {"reasoning_effort": "high"}},
     )
 

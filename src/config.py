@@ -201,6 +201,19 @@ class ModelEntry(HarnessModel):
     # registry 항목에 이 키가 없으면 로드가 통째로 실패한다. **다만 `None`은 통과가
     # 아니다**: `_check_family_split`이 "미상"을 "다르다"로 읽지 않는다(CLAUDE.md §0).
     family: NonEmptyStr | None = None
+    # **모델별 추가 요청 파라미터.** 지금 이 축에 있는 것은 이것 하나다 — 확정 로스터의
+    # Critic이 `gpt-oss-20b` + `reasoning_effort: high`이기 때문이다(`CONTEXT.md` §1).
+    #
+    # **서버를 띄우는 값과 가른다.** `TRITON_ATTN`·flashinfer off·`--enforce-eager`·
+    # `--structured-outputs-config.*`는 **하네스가 안 보낸다** — 그것은 `vllm serve`를 치는
+    # 사람의 값이고, 정본 자리는 `config/models.yaml`의 그 항목 「기동 조건」 주석이다
+    # (`model-serving.md` §5). 여기 오는 것은 **요청 본문에 실리는 것**뿐이다.
+    #
+    # 기본값이 `None`인 것은 `family`·`source`와 같은 이유다. 그리고 `None`이면
+    # **payload에 키를 안 넣는다** — 안 쓰는 서버가 거절할 수 있고, 성공 경로 payload의
+    # 키 집합이 모델마다 달라지면 사후 대조가 깨진다(`context.call_model`의 #82 리뷰 F10과
+    # 같은 규칙).
+    reasoning_effort: NonEmptyStr | None = None
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark

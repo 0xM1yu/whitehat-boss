@@ -196,6 +196,10 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
         top_p=config.sampling.top_p,
         seed=config.seed,
         max_tokens=config.thresholds.output_max,
+        # 모델별 값이라 registry에서 온다. 여기서 빠뜨리면 bench가 운영과 **다른 요청**을
+        # 보내면서 같은 것을 쟀다고 적는다 — 이 함수 docstring이 `max_tokens`에 대해 편
+        # 논거가 그대로 걸린다.
+        reasoning_effort=entry.reasoning_effort,
         retries=config.thresholds.schema_retries,
     )
 
