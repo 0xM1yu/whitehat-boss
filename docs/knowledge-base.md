@@ -34,13 +34,20 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 | --- | --- |
 | symbol, 파일 경로, offset, hash | Exact lookup |
 | 로그, 에러 메시지, 문자열 | FTS |
-| 자연어 설명, 유사 취약 패턴 | Embedding (Qwen3-Embedding-0.6B) |
+| 자연어 설명, 유사 취약 패턴 | Embedding — 모델은 [CONTEXT.md](../CONTEXT.md) §1이 정본 |
 | 호출 관계, 데이터 흐름 | Graph traversal |
 
 ### 2단계 구조
 
 1. **광역 수집**: symbol · call graph · keyword 기반으로 후보 문맥을 넓게 모은다.
-2. **재선별**: Qwen3-Reranker-0.6B로 상위 N개만 남긴다.
+2. **재선별**: 리랭커로 상위 N개만 남긴다.
+
+**어느 리랭커인지는 [CONTEXT.md](../CONTEXT.md) §1이 정본이다.** 이 자리의 모델은 2026-09-09
+로스터에서 바뀌었고, 근거는 **만든 쪽 표에서 0.6B가 코드 검색에서 1차 검색기보다 낮다**는
+것이다 — MTEB-Code 75.41(리랭킹 없음) → **73.42**, **−1.99** `[출처주장]`
+([2026-09-08 검색 조사](research/2026-09-08-retrieval.md)). ⚠ **우리가 실제로 보내는 입력
+모양에서는 아직 한 번도 재지 않았다** — 그 공백이 [D63](open-questions/D/D63.md)이고, 재측정
+대상은 CONTEXT.md §1이 리랭커 자리에 둔 모델이다.
 
 생성 모델의 긴 context는 "쓸 수 있으니 채우는" 대상이 아니다. **retrieval이 실패했을 때만** 확장한다.
 
@@ -91,6 +98,13 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 > 담지 않는다"이다.**
 
 `level` 열거형: `light`(Scout용) | `expanded`(Auditor용) | `focused`(Critic용, 반박 축 관련 섹션만)
+
+> **`light`의 「Scout」가 역할 하나를 뜻하지 않는다 (2026-09-09).** 로스터가 Scout를 **풀 세
+> 역할**(`scout_memory`·`scout_boundary`·`scout_injection`)로 쪼갰고, 그 셋이 대상 하나를
+> 각각 보되 **캡슐은 한 번 만든다** — 팬아웃은 캡슐이 아니라 호출 쪽이다
+> ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §3). **기존 `scout` 한
+> 역할 프로필도 그대로 유효하다.** 어느 모델이 그 역할들에 앉는지는
+> [CONTEXT.md](../CONTEXT.md) §1이 정본이다.
 
 > **위 예시는 목표 구성이고 `types`는 아직 코드가 내지 않는다 (2026-08-20).**
 > `callers`·`callees`는 1단계 인덱서 산출물(`index-v1`)에서 실측으로 채워지지만, 그 형식에
