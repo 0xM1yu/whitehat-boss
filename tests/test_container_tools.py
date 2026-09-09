@@ -157,10 +157,18 @@ def test_docker_argv_carries_the_sandbox_policy(tmp_path: Path) -> None:
 def test_podman_argv_matches_docker_except_the_binary(tmp_path: Path) -> None:
     """podman은 docker CLI 호환이라 바이너리 이름만 갈리고 격리 플래그는 동일하다.
 
-    ATOM은 Docker 데몬 접근도 singularity도 없어 이 경로가 유일한 실서빙 런타임이다
-    (2026-08-17). 그래서 실서빙 프로필(`local_balanced`·`b1_single`)이 `podman`을 직접
-    선언한다(docs/portability.md §3). `dev_docker`처럼 다른 런타임을 선언한 프로필만
-    `--tool-runner podman`으로 덮는다(ADR 0005).
+    **이 docstring이 들고 있던 근거는 뒤집혔다.** 그전에는 "ATOM은 Docker 데몬 접근도
+    singularity도 없어 이 경로가 유일한 실서빙 런타임이다(2026-08-17)"라고 적고, 그래서
+    실서빙 프로필(`local_balanced`·`b1_single`)이 `podman`을 직접 선언한다고 이었다.
+    그 전제가 2026-08-21에 반증됐고(ATOM에 docker 29.2.1과 podman 4.9.3이 함께 있다)
+    두 프로필의 선언값도 2026-08-28에 `docker`로 되돌아갔다 —
+    docs/decisions/0005-tool-runner-override.md 마지막 절.
+
+    **단언 자체는 그대로 필요하다.** podman은 여전히 지원 런타임이고
+    (`AdapterSelection.tool_runner`의 Literal에 있다), 이 저장소에는 podman으로 도구를
+    돌린 run이 하나 있다(`run_20260817_0001`, docs/portability.md §6). 격리 플래그가
+    갈리면 그 run과 docker run을 같은 비교 셀에 넣을 수 없다 — 이 테스트가 지키는 것은
+    그 등가성이지 어느 프로필이 무엇을 선언하는가가 아니다.
     """
     kwargs = dict(
         sandbox=SANDBOX,
