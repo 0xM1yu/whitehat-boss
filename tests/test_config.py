@@ -657,6 +657,60 @@ def test_unmeasured_models_are_reported_not_blocked() -> None:
     assert isinstance(config.unmeasured_models(), list)
 
 
+
+def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
+    tmp_path: Path,
+) -> None:
+    """registry가 `reasoning_effort`를 적으면 **그 값이 실제 요청에 실려야 한다.**
+
+    ## 왜 필요한가
+
+    확정 로스터의 Critic 자리는 `gpt-oss-20b` + **`reasoning_effort: high`**다
+    (`CONTEXT.md` §1). 그런데 그 값이 들어갈 자리가 코드에 없었다 — `ModelEntry`는
+    `extra="forbid"`(`HarnessModel`)라 registry에 적으면 `load_config`가 죽고,
+    `_request_payload`는 고정 dict라 실을 경로도 없었다. **registry 등재가 끝나도
+    그 행은 배선되지 않는 상태였다.**
+
+    ## 왜 「선언만」으로 끝내면 안 되나
+
+    `ModelEntry`에 필드만 열고 요청에 안 실으면 **registry가 거짓이 된다** — 문서와
+    기록에는 `high`가 적히는데 서버는 기본값으로 돈다. 이 저장소가 반복해서 밟은
+    자리이고(`config.prompt_versions`의 *"프롬프트가 존재하지 않는 역할의 「버전」이
+    실행 기록에 적힌다 — 거짓 정보"*), 선례
+    `test_the_output_cap_reaches_the_run_record_and_the_gateway_together`가 같은 이유로
+    두 경로를 한 검사에 묶는다.
+
+    ## 안 적은 모델은 키가 아예 없어야 한다
+
+    `reasoning_effort`를 안 주는 모델에 `None`을 실어 보내면 그 서버가 거절할 수 있고,
+    성공 경로 payload의 키 집합이 모델마다 달라진다. 그래서 **선언했을 때만** 넣는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={"roles": {"scout": "qwen3-8b", "auditor": "qwen3-8b", "critic": "qwen3-4b"}},
+        model_patch={"qwen3-8b": {"reasoning_effort": "high"}},
+    )
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.model_for("critic").reasoning_effort is None, (
+        "선언 안 한 모델은 `None`이어야 한다"
+    )
+    assert config.model_for("auditor").reasoning_effort == "high"
+
+    declared = _model_client(config.profile.roles["auditor"], config)
+    payload = declared._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert payload["reasoning_effort"] == "high", (
+        "registry가 선언했는데 요청에 안 실렸다 — 기록만 참이고 서버는 기본값으로 돈다"
+    )
+
+    silent = _model_client(config.profile.roles["critic"], config)
+    quiet = silent._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert "reasoning_effort" not in quiet, (
+        "선언 안 한 모델의 payload에 키가 생겼다 — 서버가 거절할 수 있고 키 집합이 흔들린다"
+    )
+
+
 # --- 헬퍼 ------------------------------------------------------------------
 
 
