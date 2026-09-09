@@ -181,6 +181,26 @@ class ModelEntry(HarnessModel):
     # 이 키가 없으면 로드가 통째로 실패하고, `None`은 "출처 미상"이라는 정직한 값이다.
     # `--apply`는 이 필드를 건드리지 않는다(`benchmark:` 블록 밖이고 `APPLY_KEYS`에 없다).
     source: NonEmptyStr | None = None
+    # **베이스 가중치의 제작사** — 양자화한 조직이 아니라 가중치가 나온 조직이다
+    # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `qwen3-8b`의
+    # 출처는 `hf://nvidia/Qwen3-8B-NVFP4`지만 NVIDIA가 한 것은 양자화이고 가중치는
+    # Qwen3-8B이므로 계열은 `qwen`이다. 같은 이유로 `NVFP4/…`에서 받은
+    # `qwen3-coder-30b-a3b`도 `qwen`이다.
+    #
+    # **왜 이 칸이 필요한가** (이슈 #121). evaluation.md §2.1이 B3/B3'의 조건으로
+    # "제작사가 다른 모델"을 못박고 model-serving.md와 `orchestrator/nodes/critic.py`가
+    # 같은 요구를 문장으로 적는데, **강제하는 코드가 저장소에 하나도 없었다.** 프로필 한
+    # 줄로 Critic이 Auditor와 같은 계열이 되어도 그 run은 완주하고, registry에 계열을 적을
+    # 칸이 없어 **사후에도 자동으로 못 가렸다.** 아래 `_check_family_split`이 그 판정을 한다.
+    #
+    # **`Literal`로 닫지 않는다.** 로스터는 계속 바뀌고(ADR 0010 머리) Auditor B안이
+    # NVIDIA라 값이 더 는다 — 닫아 두면 registry에 모델을 더할 때마다 이 코드가 따라와야
+    # 한다. `quantization`·`license`를 자유 문자열로 둔 것과 같은 판단이다.
+    #
+    # 기본값이 `None`인 것은 `source`·`Benchmark.measured_on`과 같은 이유다 — 기존
+    # registry 항목에 이 키가 없으면 로드가 통째로 실패한다. **다만 `None`은 통과가
+    # 아니다**: `_check_family_split`이 "미상"을 "다르다"로 읽지 않는다(CLAUDE.md §0).
+    family: NonEmptyStr | None = None
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark
@@ -219,6 +239,63 @@ class AdapterSelection(HarnessModel):
     state_store: Literal["memory", "sqlite"]
 
 
+class SwapPolicy(HarnessModel):
+    """단계 경계에서 어느 역할이 상주하고 어느 역할이 교대하는가 (ADR 0009).
+
+    **`none|sleep` 스칼라로는 이 구분을 못 적는다.** 교대 스키마 사례가 "정수 하나 +
+    LRU"와 "역할/그룹별 명시 선언" 두 갈래로 갈리는데, ADR 0009가 뒤쪽을 골랐다 —
+    어느 역할이 상주인지가 우리 파이프라인에서는 단계 순서로 정해지지 LRU로 정해지지
+    않기 때문이다.
+
+    **네 값에 기본을 주지 않는다.** 하위 호환을 위해 기본값이 필요한 것은 기존 YAML이
+    선언하지 않는 필드(`ProfileEntry.execution`·`ExecutionPolicy.mode`)이고, 이 모델은
+    `swap:`을 **적은 프로필에서만** 만들어지므로 그 사유가 걸리지 않는다. 반대로 기본을
+    주면 `swap: {}`이 "교대한다"고 선언하면서 아무 역할도 안 부르는 상태가 되고, 교대
+    왕복이 아직 미실측인 지금(`docs/research/2026-09-04-swap.md` §1.3·§9) `settle_timeout_s`
+    의 기본값은 아무도 재지 않은 수가 config에 굳는 것이다 — ADR 0009가 "값은 실측 후
+    채운다. 지금 값을 박지 않는다"고 적은 그 값이다(CLAUDE.md §0).
+    """
+
+    # 재우지 않는 역할.
+    resident: tuple[NonEmptyStr, ...]
+    # 단계 경계에서 재우고 깨우는 역할.
+    swappable: tuple[NonEmptyStr, ...]
+    # vLLM `/sleep?level=`. 둘의 차이는 설계상 존재하지만 2026-09-03 ATOM 측정에서는
+    # 구별되지 않았다(`docs/research/2026-09-04-swap.md` §1.2) — 그래서 고르게 둔다.
+    level: Literal[1, 2]
+    # 재우거나 깨운 뒤 `is_sleeping`이 뒤집힐 때까지 기다리는 상한.
+    settle_timeout_s: float = Field(gt=0)
+
+
+class ExecutionPolicy(HarnessModel):
+    """실행 단위와 교대 정책 (ADR 0009).
+
+    **기본값이 지금 동작이다.** `per_candidate`는 후보 하나가 3~6단계를 관통하는 현행
+    러너이고, 그래서 이 필드를 선언하지 않은 프로필은 run이 바뀌지 않는다. ADR 0009가
+    이 결정을 "되돌리기 싼" 것으로 부른 근거가 그것이고, 러너를 단계 단위로 재작성하는
+    쪽은 **별도 PR**이다 — 여기서 여는 것은 허용성뿐이라 `per_stage`를 적어도 지금은
+    러너가 그 루프가 아니다.
+    """
+
+    mode: Literal["per_candidate", "per_stage"] = "per_candidate"
+    swap: SwapPolicy | None = None
+
+    @model_validator(mode="after")
+    def _swap_requires_stage_unit(self) -> "ExecutionPolicy":
+        """후보 단위 + 교대 조합을 스키마가 막는다 (ADR 0009 불변식 1).
+
+        후보마다 교대하면 교대 횟수가 후보 수만큼 곱해진다 — 같은 파이프라인에서
+        512회로 세어진 조합이고(`docs/research/2026-09-04-swap.md` §6.2), 단계 단위로
+        재배열하면 3~5회다. 왕복 예산이 아직 미실측이라(§1.3) 그 조합이 도는 run은
+        지연의 대부분이 어디서 왔는지 사후에 못 가른다.
+        """
+        if self.swap is not None and self.mode != "per_stage":
+            raise ValueError(
+                f"execution.swap은 mode: per_stage에서만 선언할 수 있다 (지금 {self.mode!r})"
+            )
+        return self
+
+
 class ProfileEntry(HarnessModel):
     """실행 프로필 하나 (model-serving.md §5)."""
 
@@ -229,6 +306,9 @@ class ProfileEntry(HarnessModel):
     adapters: AdapterSelection
     # budgets.yaml의 budgets 키
     budget: NonEmptyStr
+    # 실행 단위와 교대 정책 (ADR 0009). **기본 `None`이 지금 동작이다** — 선언하지 않은
+    # 프로필은 후보 단위로 돌고 교대하지 않는다. 지금 저장소의 프로필은 전부 그쪽이다.
+    execution: ExecutionPolicy | None = None
 
     @model_validator(mode="after")
     def _has_required_roles(self) -> "ProfileEntry":
@@ -282,6 +362,23 @@ class ProfileEntry(HarnessModel):
         missing = [role for role in RETRIEVAL_ROLES if role not in self.roles]
         if missing:
             raise ValueError(f"retriever: hybrid 프로필에 검색 역할이 없다: {missing}")
+        return self
+
+    @model_validator(mode="after")
+    def _swap_names_roles_this_profile_has(self) -> "ProfileEntry":
+        """`swap.resident ∪ swap.swappable ⊆ roles` (ADR 0009 불변식 2).
+
+        없는 역할을 부르는 교대 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다.**
+        오타 하나면 그 모델만 교대에서 빠지고, 그 run은 메모리가 왜 안 줄었는지 설명할
+        수 없는 상태로 끝난다. `_check_model_refs`가 model key의 참조 무결성을 로드
+        시점에 보는 것과 같은 자리다 — 다만 이쪽은 프로필 안에서 닫히므로 여기서 본다.
+        """
+        if self.execution is None or self.execution.swap is None:
+            return self
+        named = {*self.execution.swap.resident, *self.execution.swap.swappable}
+        missing = sorted(named - set(self.roles))
+        if missing:
+            raise ValueError(f"execution.swap이 이 프로필의 roles에 없는 역할을 부른다: {missing}")
         return self
 
 
@@ -484,6 +581,46 @@ def _check_model_refs(name: str, profile: ProfileEntry, models: dict[str, ModelE
             raise ConfigError(f"모델 {key!r}의 fallback {fallback!r}이 registry에 없다")
 
 
+def _check_family_split(name: str, profile: ProfileEntry, models: dict[str, ModelEntry]) -> None:
+    """auditor와 critic이 **다른 계열**인지 본다 (ADR 0010 §4, 이슈 #121).
+
+    evaluation.md §2.1이 B3/B3'의 조건으로 "제작사가 다른 모델"을 못박고
+    model-serving.md와 `orchestrator/nodes/critic.py`가 같은 요구를 적는데, 세 곳 다
+    문장이고 **검사하는 코드가 없었다.** 사람이 프로필을 손으로 맞추는 것이 유일한
+    방어였고, 어긋나면 그 run은 `B3prime@…` 라벨을 달고 조용히 완주한다.
+
+    **같은 모델 키는 허용한다.** B1은 전 역할이 같은 단일 모델이라(build-plan §8의
+    "항상 최강 단일 멤버와 비교") 그 조건에서는 auditor == critic이 정의다. 단순
+    부등으로 막으면 비교표의 기준선이 로드 단계에서 죽는다.
+
+    **계열 미상은 통과가 아니다.** 판정할 근거가 없는 것이지 다른 것이 아니다 —
+    `family:`를 안 적는 것만으로 이 검사를 우회할 수 있으면 강제 장치가 있다고 믿는
+    채로 아무것도 안 잡는 상태가 되고, 그것이 원래보다 나쁘다(CLAUDE.md §0).
+
+    `doctor`가 아니라 `load_config`에 있는 것은 `run`이 `doctor`를 부르지 않기
+    때문이다 — WARN으로 두면 안 보고 지나갈 수 있다.
+    """
+    auditor_key = profile.roles.get("auditor")
+    critic_key = profile.roles.get("critic")
+    # 둘 중 하나가 없는 프로필은 `_has_required_roles`가 이미 잡는다. 여기서 다시
+    # 말하지 않는 것은 같은 결함에 두 메시지가 나오면 어느 쪽이 원인인지 흐려지기 때문이다.
+    if auditor_key is None or critic_key is None or auditor_key == critic_key:
+        return
+
+    unnamed = sorted(key for key in (auditor_key, critic_key) if models[key].family is None)
+    if unnamed:
+        raise ConfigError(
+            f"프로필 {name!r}: 모델 {unnamed}의 family가 없어 auditor·critic의 계열을 "
+            "판정할 수 없다. registry에 계열을 적는다"
+        )
+    if models[auditor_key].family == models[critic_key].family:
+        raise ConfigError(
+            f"프로필 {name!r}의 auditor({auditor_key})와 critic({critic_key})이 같은 계열 "
+            f"{models[auditor_key].family!r}이다 — evaluation.md §2.1이 조건으로 "
+            "제작사가 다른 모델을 요구한다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -503,6 +640,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         raise ConfigError(f"프로필 {profile!r}이 없다. 있는 것: {sorted(profiles)}")
     entry = ProfileEntry.model_validate(profiles[profile])
     _check_model_refs(profile, entry, models)
+    _check_family_split(profile, entry, models)
 
     budgets = _require(budgets_raw, "budgets", "budgets.yaml")
     if entry.budget not in budgets:

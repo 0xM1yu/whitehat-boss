@@ -134,6 +134,7 @@ models:
     quantization: fp4
     license: Apache-2.0
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    family: qwen                 # 베이스 가중치의 제작사. 양자화한 조직이 아니다
     prompt_template_version: v1
     fallback: null
     benchmark:
@@ -150,6 +151,12 @@ models:
 `tok_s_batch32`가 **몇 번째 판이냐의 함수**라는 것이 2026-09-02 ATOM에서 실측으로 드러나
 ([보고서](experiments/harness/2026-09-02-bench-concurrency-atom.md)), 그 값 옆에 조건을 적을
 칸으로 뒀다. **`null`은 미판독이고 `0.0`은 「캐시를 끄고 쟀다」라는 실측이다 — 둘은 다르다.**
+
+**`family`가 §2의 「Primary와 다른 계열」을 검사 가능하게 만든다** ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4).
+그 요구는 여기와 [evaluation.md](evaluation.md) §2.1과 critic 노드에 문장으로만 있었고 강제하는
+코드가 없었다 — 이제 `load_config`가 **auditor와 critic이 다른 모델 키면 계열이 달라야 한다**를
+보고, 같은 키(B1)는 정의상 허용한다. **값이 비어 있으면 통과가 아니라 실패다** — 판정할 근거가
+없는 것이지 다른 것이 아니다.
 
 **아래 예시의 모델 키는 구조를 보이려고 든 것이지 현재 로스터가 아니다** — 로스터의 정본은
 [CONTEXT.md](../CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
