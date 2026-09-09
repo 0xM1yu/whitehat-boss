@@ -38,6 +38,7 @@ from src.orchestrator.policy import Action, RoutingPolicy, RoutingRequest
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
+from src.schemas.candidate import scout_member_of
 from src.schemas.common import Location, ProducedBy
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role
@@ -293,6 +294,29 @@ class RunContext:
                 }
             )
             result = result.model_copy(update={"value": stamped})
+        # **`scout_member`도 하네스가 stamp한다 — 같은 논법이다** (ADR 0010 §3).
+        #
+        # 4단계 Scout 풀은 대상 하나를 멤버 셋이 각각 보고, 그 후보들이 합쳐지지 않은 채
+        # 5단계로 간다. "어느 멤버가 냈나"가 그래서 후보마다 남아야 하는데, 모델은
+        # `produced_by`와 똑같이 자기가 어느 자리에서 불렸는지 모른다. 스키마에 필드가
+        # 있으면 구조화 출력이 그것을 채우려 들므로 **비어 오기를 기대하지 않고 매번
+        # 덮는다** — 모델이 적은 멤버가 살아남으면 첫 run의 공동오답 행렬이 관측이 아니라
+        # 모델의 자기소개가 되고, 그 행렬이 모델을 Scout 자리 사이에서 옮기는 유일한
+        # 근거다(docs/research/2026-09-08-roster.md §7).
+        #
+        # 값은 `scout_member_of`가 만든다 — 풀 멤버 역할이면 그 역할 키, 풀이 없는 `scout`
+        # 한 역할이면 `None`이다. 그 `None`은 "안 쟀다"가 아니라 "이 run에 풀이 없었다"는
+        # 관측이고, 그래서 여기서도 조건부로 건너뛰지 않는다(`candidate.py` 필드 주석).
+        #
+        # `model_copy(update=)`가 이 자리에서 안전한 근거는 위 `produced_by` 블록과 같다 —
+        # `Candidate`에는 `model_validator`가 없고 `scout_member`를 읽는 검증기도 없다.
+        # 넣는 값도 스키마와 **같은 패턴**(`SCOUT_MEMBER_PATTERN`)에서 나오므로 검증 우회가
+        # 값을 느슨하게 하지 않는다.
+        if "scout_member" in type(result.value).model_fields:
+            tagged = result.value.model_copy(
+                update={"scout_member": scout_member_of(role.value)}
+            )
+            result = result.model_copy(update={"value": tagged})
         return result
 
     def _record_prompt(
