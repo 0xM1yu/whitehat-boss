@@ -16,7 +16,7 @@
 | --- | --- |
 | `model_checksums` | 아니다. model·tokenizer·quantization 해시라 **설계상 장비 불변**이다 |
 | `prompt_versions` | 아니다 |
-| `tool_runner` | 부분적으로만. Seraph=singularity / ATOM=podman(2026-08-17 실측)이지만 `--tool-runner`로 뒤집힌다 |
+| `tool_runner` | 부분적으로만. Seraph=singularity / ATOM=podman(2026-08-17 실측)이지만 `--tool-runner`로 뒤집힌다<br><br>⚠ **ATOM 쪽은 반증됐다(2026-08-21 확인, 08-28 재확인).** 그 장비에는 docker 29.2.1과 podman 4.9.3이 함께 있고([portability.md](../portability.md) §6), 실서빙 프로필의 선언값도 2026-08-28에 `docker`로 되돌아갔다([decisions/0005](0005-tool-runner-override.md) 마지막 절). **원 문장은 지우지 않는다** — 이 ADR이 "장비를 가릴 것이 하나도 없다"를 세운 근거가 이 표이므로, 그때 무엇을 보고 그렇게 적었는지가 남아야 한다. **그리고 판정("부분적으로만")은 오히려 더 약해졌다**: 2026-08-17 시점에는 `podman`이 ATOM을 유일하게 가리켰는데, 지금은 ATOM도 GPU 없는 팀원 노트북도 `docker`다(portability.md §3). 이 필드로 갈리는 것이 그만큼 줄었으므로 `RunRecord.device`를 따로 두자는 이 ADR의 논지는 그만큼 세진다 |
 | `thresholds`·`budget`·`seed` | 아니다. 공정성 규칙상 오히려 같아야 한다 |
 | endpoint | **기록되지 않는다** |
 
