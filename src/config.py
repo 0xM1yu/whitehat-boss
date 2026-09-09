@@ -158,6 +158,26 @@ class ModelEntry(HarnessModel):
     # 이 키가 없으면 로드가 통째로 실패하고, `None`은 "출처 미상"이라는 정직한 값이다.
     # `--apply`는 이 필드를 건드리지 않는다(`benchmark:` 블록 밖이고 `APPLY_KEYS`에 없다).
     source: NonEmptyStr | None = None
+    # **베이스 가중치의 제작사** — 양자화한 조직이 아니라 가중치가 나온 조직이다
+    # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `qwen3-8b`의
+    # 출처는 `hf://nvidia/Qwen3-8B-NVFP4`지만 NVIDIA가 한 것은 양자화이고 가중치는
+    # Qwen3-8B이므로 계열은 `qwen`이다. 같은 이유로 `NVFP4/…`에서 받은
+    # `qwen3-coder-30b-a3b`도 `qwen`이다.
+    #
+    # **왜 이 칸이 필요한가** (이슈 #121). evaluation.md §2.1이 B3/B3'의 조건으로
+    # "제작사가 다른 모델"을 못박고 model-serving.md와 `orchestrator/nodes/critic.py`가
+    # 같은 요구를 문장으로 적는데, **강제하는 코드가 저장소에 하나도 없었다.** 프로필 한
+    # 줄로 Critic이 Auditor와 같은 계열이 되어도 그 run은 완주하고, registry에 계열을 적을
+    # 칸이 없어 **사후에도 자동으로 못 가렸다.** 아래 `_check_family_split`이 그 판정을 한다.
+    #
+    # **`Literal`로 닫지 않는다.** 로스터는 계속 바뀌고(ADR 0010 머리) Auditor B안이
+    # NVIDIA라 값이 더 는다 — 닫아 두면 registry에 모델을 더할 때마다 이 코드가 따라와야
+    # 한다. `quantization`·`license`를 자유 문자열로 둔 것과 같은 판단이다.
+    #
+    # 기본값이 `None`인 것은 `source`·`Benchmark.measured_on`과 같은 이유다 — 기존
+    # registry 항목에 이 키가 없으면 로드가 통째로 실패한다. **다만 `None`은 통과가
+    # 아니다**: `_check_family_split`이 "미상"을 "다르다"로 읽지 않는다(CLAUDE.md §0).
+    family: NonEmptyStr | None = None
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark
@@ -428,6 +448,46 @@ def _check_model_refs(name: str, profile: ProfileEntry, models: dict[str, ModelE
             raise ConfigError(f"모델 {key!r}의 fallback {fallback!r}이 registry에 없다")
 
 
+def _check_family_split(name: str, profile: ProfileEntry, models: dict[str, ModelEntry]) -> None:
+    """auditor와 critic이 **다른 계열**인지 본다 (ADR 0010 §4, 이슈 #121).
+
+    evaluation.md §2.1이 B3/B3'의 조건으로 "제작사가 다른 모델"을 못박고
+    model-serving.md와 `orchestrator/nodes/critic.py`가 같은 요구를 적는데, 세 곳 다
+    문장이고 **검사하는 코드가 없었다.** 사람이 프로필을 손으로 맞추는 것이 유일한
+    방어였고, 어긋나면 그 run은 `B3prime@…` 라벨을 달고 조용히 완주한다.
+
+    **같은 모델 키는 허용한다.** B1은 전 역할이 같은 단일 모델이라(build-plan §8의
+    "항상 최강 단일 멤버와 비교") 그 조건에서는 auditor == critic이 정의다. 단순
+    부등으로 막으면 비교표의 기준선이 로드 단계에서 죽는다.
+
+    **계열 미상은 통과가 아니다.** 판정할 근거가 없는 것이지 다른 것이 아니다 —
+    `family:`를 안 적는 것만으로 이 검사를 우회할 수 있으면 강제 장치가 있다고 믿는
+    채로 아무것도 안 잡는 상태가 되고, 그것이 원래보다 나쁘다(CLAUDE.md §0).
+
+    `doctor`가 아니라 `load_config`에 있는 것은 `run`이 `doctor`를 부르지 않기
+    때문이다 — WARN으로 두면 안 보고 지나갈 수 있다.
+    """
+    auditor_key = profile.roles.get("auditor")
+    critic_key = profile.roles.get("critic")
+    # 둘 중 하나가 없는 프로필은 `_has_required_roles`가 이미 잡는다. 여기서 다시
+    # 말하지 않는 것은 같은 결함에 두 메시지가 나오면 어느 쪽이 원인인지 흐려지기 때문이다.
+    if auditor_key is None or critic_key is None or auditor_key == critic_key:
+        return
+
+    unnamed = sorted(key for key in (auditor_key, critic_key) if models[key].family is None)
+    if unnamed:
+        raise ConfigError(
+            f"프로필 {name!r}: 모델 {unnamed}의 family가 없어 auditor·critic의 계열을 "
+            "판정할 수 없다. registry에 계열을 적는다"
+        )
+    if models[auditor_key].family == models[critic_key].family:
+        raise ConfigError(
+            f"프로필 {name!r}의 auditor({auditor_key})와 critic({critic_key})이 같은 계열 "
+            f"{models[auditor_key].family!r}이다 — evaluation.md §2.1이 조건으로 "
+            "제작사가 다른 모델을 요구한다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -447,6 +507,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         raise ConfigError(f"프로필 {profile!r}이 없다. 있는 것: {sorted(profiles)}")
     entry = ProfileEntry.model_validate(profiles[profile])
     _check_model_refs(profile, entry, models)
+    _check_family_split(profile, entry, models)
 
     budgets = _require(budgets_raw, "budgets", "budgets.yaml")
     if entry.budget not in budgets:
