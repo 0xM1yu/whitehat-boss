@@ -1,7 +1,12 @@
 # 실행 프로필 (model-serving.md §5, engineering-guide.md §2)
 #
 # 프로필 교체만으로 B1/B1'/B3/B3' 조건과 실행 환경을 구성할 수 있어야 한다.
-# `roles`의 값은 models.yaml의 model key다. scout·auditor·critic은 필수다.
+# `roles`의 값은 models.yaml의 model key다. **필수는 auditor·critic 둘**이다(REQUIRED_ROLES).
+# 4단계 Scout 자리는 **단일 `scout` 하나 아니면 풀 셋 전부**다 — `scout_memory`·`scout_boundary`·
+# `scout_injection`을 다 적든지 하나도 안 적든지 둘 중 하나이고, 단일과 풀을 함께 선언하거나
+# 풀을 반만 적으면 로드가 실패한다(ADR 0010 §3, ProfileEntry._declares_one_scout_arrangement).
+# auditor와 critic이 **다른 모델 키면** models.yaml의 `family`가 달라야 한다 — 같은 키(B1)는
+# 정의상 허용하고, `family`가 비어 있으면 통과가 아니라 실패다(_check_family_split).
 # `adapters`는 모델 외 3개 인터페이스의 구현 선택이다. ModelClient는 여기서 고르지 않는다 —
 # models.yaml의 endpoint 스킴이 역할별로 결정하므로 한 프로필에서 실서빙과 Fake가 섞일 수 있다.
 
@@ -221,10 +226,15 @@ profiles:
     # **그 실측을 더 세게 읽지 않는다.** 같은 보고서가 스스로 셋을 못박는다.
     #   · §5 — mem_gb_ctx8k를 안 쟀다. 이 실험의 context는 32,768이고 8K 고정이 아니다.
     #   · §5 — 모델 **하나**를 재우고 깨웠다. 여러 모델을 번갈아 올리는 것은 안 했다.
-    #   · §7-5 — 교대를 하네스에 배선하는 길이 아직 없다. **키는 이제 있다** — ADR 0009가
-    #     연 execution.mode·swap이 ProfileEntry에 들어와, 적으면 로드는 통과한다.
-    #     없는 것은 그 뒤다: 러너가 아직 단계 단위가 아니고 sleep/wake를 부르는 코드도
-    #     없다(ADR 0009 결과 2·3, 각각 별도 PR). 그래서 아래 문장은 그대로다.
+    #   · §7-5 — 교대를 하네스에 배선하는 것은 별개다. 그 항이 근거로 든 것은
+    #     "execution.mode·swap 키가 스키마에 없고 extra=forbid라 프로필이 로드 단계에서
+    #     거부된다"이고, 이 실험은 "장비가 되는가"만 답했지 "하네스가 할 수 있는가"는
+    #     안 답했다고 적는다.
+    #
+    # ⚠ **§7-5가 든 그 근거는 2026-09-09에 바뀌었다 — 보고서 밖의 사실이라 여기 적는다.**
+    # ADR 0009가 연 execution.mode·swap이 ProfileEntry에 들어와, 이제 적으면 로드는
+    # 통과한다(ADR 0009 결과 1). **§7-5의 결론은 그대로다** — 없는 것은 그 뒤이고,
+    # 러너가 아직 단계 단위가 아니며 sleep/wake를 부르는 코드도 없다(결과 2·3, 각각 별도 PR).
     # 그래서 **이것은 다섯을 동시에 띄우는 프로필이다.** 교대로 다섯을 피하는 배선은
     # 아직 존재하지 않는다.
     #

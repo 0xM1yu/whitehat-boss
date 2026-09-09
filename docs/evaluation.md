@@ -18,7 +18,7 @@
 - **역할 분담 효과** = B1 → B1' 성능 향상
 - **모델 혼합 효과** = B1' → B3' 성능 향상
 
-> 킥오프 발표자료 02-3은 앙상블 축을 "여러 **회사** 모델"로 정의한다. 같은 모델의 self-consistency나 같은 계열의 다른 크기가 아니라 **제작사가 다른 모델**을 섞는 것이 B3/B3'의 조건이다. **Auditor와 Critic을 서로 다른 제작사로 두는 근거가 여기서 나온다.** 어느 모델이 그 두 자리에 앉는지는 [CONTEXT.md](../CONTEXT.md) §1이 정본이고, **이 조건 자체는 모델이 바뀌어도 남는다** — [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4가 두 자리의 `family`(가중치 출처 조직)를 `load_config`가 검사하도록 정했다(결정이고 아직 코드는 아니다).
+> 킥오프 발표자료 02-3은 앙상블 축을 "여러 **회사** 모델"로 정의한다. 같은 모델의 self-consistency나 같은 계열의 다른 크기가 아니라 **제작사가 다른 모델**을 섞는 것이 B3/B3'의 조건이다. **Auditor와 Critic을 서로 다른 제작사로 두는 근거가 여기서 나온다.** 어느 모델이 그 두 자리에 앉는지는 [CONTEXT.md](../CONTEXT.md) §1이 정본이고, **이 조건 자체는 모델이 바뀌어도 남는다** — [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4가 두 자리의 `family`(가중치 출처 조직)를 `load_config`가 검사하도록 정했고, **2026-09-09에 `src/config.py`의 `_check_family_split`으로 들어왔다** — auditor와 critic이 **다른 모델 키인데** 계열이 같으면 로드가 실패하고, 같은 키(B1이 그렇다)는 정의상 허용한다. `family`가 비어 있는 것은 통과가 아니라 실패다.
 
 ### 2.2 파이프라인 구성 조건 (PRD §5.2)
 
