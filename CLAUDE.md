@@ -208,4 +208,15 @@ python -m pytest -q
 - **착수 전 열린 이슈·PR을 본다.** 같은 결함을 남이 고치고 있을 수 있다.
 - 지우거나 덮어쓰기 전에 **먼저 열어 본다.**
 - 수치를 인용할 때는 **요약이 아니라 원천**(보고서·run ID·코드 줄)을 연다.
+- **모델·프로필을 현재형으로 읽기 전에 [CONTEXT.md](CONTEXT.md)를 먼저 연다.** 계획·설계 문서가
+  로스터를 현재형으로 서술하면 그것은 지시가 아니라 **낡은 서술**이고, 어긋나면 그 문서를 고친다.
+  개수도 문서에서 세지 않는다 — §1 표와 `config/`에서 센다.
+  강제하는 것은 `test_the_context_roster_matches_the_model_registry`·
+  `test_every_registry_model_is_named_in_context`다 — §1 표와 `config/models.yaml`을 묶는다.
+  **사고 —** 2026-09-09 하루에 네 번. [build-plan.md](docs/build-plan.md) §8이 측정 run을
+  `local_balanced`·`local_balanced_hybrid`에 걸어 둔 것을 살아 있는 지시로 읽어 **교체하기로 한
+  구성에 GPU 시간을 잡았다.** 그중 하나가 코드 검색에서 **−1.99**인 0.6B 리랭커를 켜는
+  run이었다([검색 조사](docs/research/2026-09-08-retrieval.md) §1). 같은 날 다른 세션은 로컬
+  체크아웃(16커밋 뒤짐)을 세어 「10 모델 / 12 프로필」이라 보고했는데 **실제는 7과 9**였다 —
+  이 절 첫 줄의 `origin/main` 규칙이 그것을 못 막았다.
 - §2의 셋을 특히 지킨다 — 그 셋은 테스트가 못 잡고, **전부 에이전트가 낸 사고다.**
