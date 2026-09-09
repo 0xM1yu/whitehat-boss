@@ -216,6 +216,63 @@ class AdapterSelection(HarnessModel):
     state_store: Literal["memory", "sqlite"]
 
 
+class SwapPolicy(HarnessModel):
+    """단계 경계에서 어느 역할이 상주하고 어느 역할이 교대하는가 (ADR 0009).
+
+    **`none|sleep` 스칼라로는 이 구분을 못 적는다.** 교대 스키마 사례가 "정수 하나 +
+    LRU"와 "역할/그룹별 명시 선언" 두 갈래로 갈리는데, ADR 0009가 뒤쪽을 골랐다 —
+    어느 역할이 상주인지가 우리 파이프라인에서는 단계 순서로 정해지지 LRU로 정해지지
+    않기 때문이다.
+
+    **네 값에 기본을 주지 않는다.** 하위 호환을 위해 기본값이 필요한 것은 기존 YAML이
+    선언하지 않는 필드(`ProfileEntry.execution`·`ExecutionPolicy.mode`)이고, 이 모델은
+    `swap:`을 **적은 프로필에서만** 만들어지므로 그 사유가 걸리지 않는다. 반대로 기본을
+    주면 `swap: {}`이 "교대한다"고 선언하면서 아무 역할도 안 부르는 상태가 되고, 교대
+    왕복이 아직 미실측인 지금(`docs/research/2026-09-04-swap.md` §1.3·§9) `settle_timeout_s`
+    의 기본값은 아무도 재지 않은 수가 config에 굳는 것이다 — ADR 0009가 "값은 실측 후
+    채운다. 지금 값을 박지 않는다"고 적은 그 값이다(CLAUDE.md §0).
+    """
+
+    # 재우지 않는 역할.
+    resident: tuple[NonEmptyStr, ...]
+    # 단계 경계에서 재우고 깨우는 역할.
+    swappable: tuple[NonEmptyStr, ...]
+    # vLLM `/sleep?level=`. 둘의 차이는 설계상 존재하지만 2026-09-03 ATOM 측정에서는
+    # 구별되지 않았다(`docs/research/2026-09-04-swap.md` §1.2) — 그래서 고르게 둔다.
+    level: Literal[1, 2]
+    # 재우거나 깨운 뒤 `is_sleeping`이 뒤집힐 때까지 기다리는 상한.
+    settle_timeout_s: float = Field(gt=0)
+
+
+class ExecutionPolicy(HarnessModel):
+    """실행 단위와 교대 정책 (ADR 0009).
+
+    **기본값이 지금 동작이다.** `per_candidate`는 후보 하나가 3~6단계를 관통하는 현행
+    러너이고, 그래서 이 필드를 선언하지 않은 프로필은 run이 바뀌지 않는다. ADR 0009가
+    이 결정을 "되돌리기 싼" 것으로 부른 근거가 그것이고, 러너를 단계 단위로 재작성하는
+    쪽은 **별도 PR**이다 — 여기서 여는 것은 허용성뿐이라 `per_stage`를 적어도 지금은
+    러너가 그 루프가 아니다.
+    """
+
+    mode: Literal["per_candidate", "per_stage"] = "per_candidate"
+    swap: SwapPolicy | None = None
+
+    @model_validator(mode="after")
+    def _swap_requires_stage_unit(self) -> "ExecutionPolicy":
+        """후보 단위 + 교대 조합을 스키마가 막는다 (ADR 0009 불변식 1).
+
+        후보마다 교대하면 교대 횟수가 후보 수만큼 곱해진다 — 같은 파이프라인에서
+        512회로 세어진 조합이고(`docs/research/2026-09-04-swap.md` §6.2), 단계 단위로
+        재배열하면 3~5회다. 왕복 예산이 아직 미실측이라(§1.3) 그 조합이 도는 run은
+        지연의 대부분이 어디서 왔는지 사후에 못 가른다.
+        """
+        if self.swap is not None and self.mode != "per_stage":
+            raise ValueError(
+                f"execution.swap은 mode: per_stage에서만 선언할 수 있다 (지금 {self.mode!r})"
+            )
+        return self
+
+
 class ProfileEntry(HarnessModel):
     """실행 프로필 하나 (model-serving.md §5)."""
 
@@ -226,6 +283,9 @@ class ProfileEntry(HarnessModel):
     adapters: AdapterSelection
     # budgets.yaml의 budgets 키
     budget: NonEmptyStr
+    # 실행 단위와 교대 정책 (ADR 0009). **기본 `None`이 지금 동작이다** — 선언하지 않은
+    # 프로필은 후보 단위로 돌고 교대하지 않는다. 지금 저장소의 프로필은 전부 그쪽이다.
+    execution: ExecutionPolicy | None = None
 
     @model_validator(mode="after")
     def _has_required_roles(self) -> "ProfileEntry":
@@ -246,6 +306,23 @@ class ProfileEntry(HarnessModel):
         missing = [role for role in RETRIEVAL_ROLES if role not in self.roles]
         if missing:
             raise ValueError(f"retriever: hybrid 프로필에 검색 역할이 없다: {missing}")
+        return self
+
+    @model_validator(mode="after")
+    def _swap_names_roles_this_profile_has(self) -> "ProfileEntry":
+        """`swap.resident ∪ swap.swappable ⊆ roles` (ADR 0009 불변식 2).
+
+        없는 역할을 부르는 교대 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다.**
+        오타 하나면 그 모델만 교대에서 빠지고, 그 run은 메모리가 왜 안 줄었는지 설명할
+        수 없는 상태로 끝난다. `_check_model_refs`가 model key의 참조 무결성을 로드
+        시점에 보는 것과 같은 자리다 — 다만 이쪽은 프로필 안에서 닫히므로 여기서 본다.
+        """
+        if self.execution is None or self.execution.swap is None:
+            return self
+        named = {*self.execution.swap.resident, *self.execution.swap.swappable}
+        missing = sorted(named - set(self.roles))
+        if missing:
+            raise ValueError(f"execution.swap이 이 프로필의 roles에 없는 역할을 부른다: {missing}")
         return self
 
 
