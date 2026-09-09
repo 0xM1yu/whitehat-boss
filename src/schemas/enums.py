@@ -17,16 +17,17 @@ class Role(StrEnum):
     # injection은 CWE-78·22·134이며, 계열을 여기 값으로 박지 않는 이유는 배정이 첫 run의
     # 공동오답 행렬로 바뀔 수 있기 때문이다.
     #
-    # **왜 `Role` 셋이고 `roles`를 리스트로 넓히는 것이 아닌가.** ADR 0010 §3이 파급을
-    # 직접 셌다 — `RunRecord.model_checksums`·`prompt_versions`·`ProducedBy.role`·
-    # `RoutingModelClient` **넷은 역할 키로 이미 동작한다**(`config.model_checksums()`와
-    # `prompt_versions()`가 `profile.roles`를 그대로 돌고, `ProducedBy.role`이 `Role`이며,
-    # `RoutingModelClient.client_for`가 `role.value`로 색인한다). 역할로 두면 그 넷은 고칠
-    # 것이 없고 멤버별 checksum·프롬프트 버전·발화 기록이 공짜로 남는다. 리스트였다면 그
-    # 넷 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다.
+    # **왜 `Role` 셋이고 `roles`를 리스트로 넓히는 것이 아닌가.** ADR 0010 §3이 파급을 표로
+    # 센다. 고칠 것이 **정말 0인 자리는 둘**이다 — `RunRecord.model_checksums`
+    # (`config.model_checksums()`가 `profile.roles.items()`를 그대로 돈다)와 `ProducedBy.role`
+    # (필드 타입이 `Role`이다). 나머지는 **상수 두 곳에 멤버당 한 줄**이다:
+    # `config.PROMPTED_ROLES`가 `prompt_versions()`와 `factory`의 `clients` 컴프리헨션을
+    # (그래서 `RoutingModelClient`를) 함께 가르고, `bench.ROLE_SPEC`이 bench 경로를 가른다.
+    # 리스트였다면 그 여섯 전부에 "리스트의 몇 번째"라는 **새 좌표**를 파야 했다 — 줄을
+    # 더하는 것과 좌표를 파는 것의 차이가 이 선택의 전부다.
     #
-    # ⚠ **역할별 토큰 카운터는 그 넷에 들지 않는다 — 고칠 것이 0이 아니다.** ADR 0010 §3의
-    # ⚠ 문단이 같은 것을 적는다(초안은 다섯이 0이라고 셌고, 그 셋이 틀렸다).
+    # ⚠ **역할별 토큰 카운터는 그 여섯에 안 든다 — 줄을 더해도 안 켜진다.** ADR 0010 §3의
+    # ⚠ 문단이 같은 것을 적는다.
     # `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
     # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 러너도 `_triage_one`에서
     # `counter_for_role(Role.SCOUT.value)`를 부르고 `nodes/scout.py`는 `ROLE = Role.SCOUT`
@@ -38,8 +39,11 @@ class Role(StrEnum):
     # `src/tokens.py`가 "켜지지 않는 역할을 기록에 실으면 거짓 정보다"로 적은 그것이다.
     # 늘리는 것은 러너를 옮기는 PR의 몫이고, 그 PR이 이 문단을 지운다.
     #
-    # **`SCOUT`은 남는다.** `b1_single`·`single_gpu_12g`·`dev_*`가 아직 그쪽이고, 프로필은
-    # 단일 `scout` 하나 아니면 이 셋을 선언한다(`config.ProfileEntry`가 그 배타를 본다).
+    # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
+    # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다
+    # (신규 모델이 registry에 없어서다. `CONTEXT.md` §5가 그 사실을 든다). 프로필은 단일
+    # `scout` 하나 아니면 풀 셋을 선언한다(`config.ProfileEntry`가 그 배타를 본다).
+    # ⚠ 여기서 프로필 이름을 세지 마라 — 개수도 이름도 `config/profiles.yaml`에서 센다.
     #
     # 아래 `SINGLE` 주석이 적은 함정이 여기도 그대로다 — `config.PROMPTED_ROLES`와
     # `bench.ROLE_SPEC`에 함께 넣지 않으면 프롬프트 검사·bench 경로가 각각 죽는다.

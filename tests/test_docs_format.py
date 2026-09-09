@@ -764,3 +764,57 @@ def test_every_registry_model_is_named_in_context() -> None:
         f"CONTEXT.md가 「registry에 남는다」고 적었는데 config/models.yaml에 없는 키: {orphan} — "
         "registry 키는 지우지 않는다(ADR 0010). 정말 지웠다면 그 행도 같이 지운다"
     )
+
+
+_REWIRE_MARKER = "`config/profiles.yaml` 재배선"
+_POOL_ROLES = ("scout_memory", "scout_boundary", "scout_injection")
+
+
+def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
+    """`config/profiles.yaml`이 §1 배정을 안 따를 때, CONTEXT.md §5가 그 사실을 들어야 한다.
+
+    **왜 이 검사가 있나.** CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때 손대는
+    넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **지금은 다르다.**
+    프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`다. 그 어긋남을 정본이
+    안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
+
+    **이 검사는 양방향으로 돈다.**
+
+    - 재배선이 아직이면 → §5에 그 줄이 있어야 한다. 없으면 실패한다.
+    - 재배선이 끝나면 → 그 줄이 **거짓이 되므로** 실패해서 지우게 만든다.
+
+    후자가 이 검사의 값이다. 「아직 안 된 것」을 적은 문장은 되는 순간 거짓이 되는데,
+    그것을 사람이 기억해서 지우기를 기대하지 않는다 — 이 저장소가 §2.3으로 반복해서
+    밟은 자리다.
+
+    ⚠ **이 검사는 「자리 ↔ 모델」 짝을 잠그지 않는다.** 잠그는 것은 「풀 역할이 프로필에
+    쓰였나」 하나다. 로스터가 옛 배정으로 되돌아가는 것 자체는 여전히 사람이 본다 —
+    §1 표의 세 열 중 기계가 답할 수 있는 것은 `registry 등재`뿐이기 때문이다
+    (`test_the_context_roster_matches_the_model_registry`의 docstring).
+    """
+    from src.config import CONFIG_DIR
+
+    raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))
+    profiles = raw.get("profiles") if isinstance(raw, dict) else None
+    assert isinstance(profiles, dict) and profiles, (
+        "config/profiles.yaml에서 profiles 매핑을 읽지 못했다"
+    )
+
+    rewired = sorted(
+        name
+        for name, entry in profiles.items()
+        if isinstance(entry, dict)
+        and any(role in (entry.get("roles") or {}) for role in _POOL_ROLES)
+    )
+    declared = _REWIRE_MARKER in _read(CONTEXT)
+
+    if rewired and declared:
+        raise AssertionError(
+            f"프로필 {rewired}이(가) Scout 풀로 재배선됐는데 CONTEXT.md §5가 아직 "
+            f"「{_REWIRE_MARKER} — 안 됐다」를 들고 있다. 그 줄은 이제 거짓이다. 지워라."
+        )
+    if not rewired and not declared:
+        raise AssertionError(
+            f"프로필 어느 것도 Scout 풀을 안 쓰는데 CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
+            "정본만 읽은 사람은 profiles.yaml이 §1과 같다고 읽는다 — §5에 그 어긋남을 적어라."
+        )

@@ -280,7 +280,9 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
     지금 저장소의 프로필은 전부 단일 `scout`이고 registry가 전부 `v1`이라 통과한다.
     이 검사가 서는 자리는 **풀 프로필이 `config/profiles.yaml`에 들어오는 순간**이다 —
-    풀 세 역할의 프롬프트 디렉터리는 `v2`만 있어서(D54) 그 프로필은 여기서 먼저 죽는다.
+    풀 세 역할의 프롬프트 디렉터리는 `v2`만 있어서(D54) 그 프로필은 여기서 걸린다.
+    ⚠ 실행 순서로는 러너의 `ROLE = Role.SCOUT` 고정이 그보다 앞에서 `ConfigError`를 내지만,
+    **이 검사는 러너를 안 태우므로** 그것과 무관하게 프롬프트 간극을 잡는다.
     """
     config = load_config(profile)
 
@@ -535,8 +537,13 @@ def test_a_scout_pool_profile_resolves_every_prompt_it_declares(tmp_path: Path) 
 
     풀 검사 다섯이 전부 `ProfileEntry.model_validate`에서 멈춰 있었다 — 스키마가 셋을
     받아들이는지만 보고, 그 프로필이 **고른 버전의 프롬프트가 열리는지**는 아무도 안
-    봤다. 4단계 배선이 실제로 하는 일은 `load_config` → `model_for(role)
+    봤다. 4단계가 **풀로 옮겨진 뒤에** 할 일이 `load_config` → `model_for(role)
     .prompt_template_version` → `load_prompt`이고, 그 사슬이 이어지는지는 여기서만 걸린다.
+
+    ⚠ **지금 러너는 이 사슬을 안 탄다.** `nodes/scout.py`가 `ROLE = Role.SCOUT` 하나라
+    풀 프로필에서는 `model_for("scout")`가 먼저 `ConfigError`를 낸다 — 인자 평가가
+    `load_prompt`보다 앞이다. 그러니 이 검사가 지키는 것은 **러너를 옮긴 뒤의 두 번째
+    관문**이고, 첫 관문(러너의 역할 고정)은 아직 아무도 안 지킨다.
 
     registry가 그 버전을 고르게 하려고 `model_patch`로 세 모델의
     `prompt_template_version`을 디스크에 있는 값으로 올린다. **저장소 registry는 아직
@@ -564,8 +571,12 @@ def test_the_prompt_version_a_scout_pool_would_select_is_not_on_disk_yet(tmp_pat
 
     registry 7항목이 전부 `prompt_template_version: "v1"`인데 풀 세 역할의 프롬프트
     디렉터리는 `v2`뿐이다. 그래서 풀 프로필은 **로드되고, `prompt_versions()`도 멀쩡한
-    맵을 내고**, 4단계 첫 호출에서 죽는다 — `run`이 `doctor`를 부르지 않으므로 그때는
-    이미 GPU 시간을 쓴 뒤다.
+    맵을 낸다** — `run`이 `doctor`를 부르지 않으므로 어긋남이 조립 시점에 안 보이고,
+    드러날 때는 이미 GPU 시간을 쓴 뒤다.
+
+    ⚠ **다만 지금 4단계에서 먼저 나는 것은 이 `PromptError`가 아니다.**
+    `nodes/scout.py`가 `ROLE = Role.SCOUT` 하나라 `model_for("scout")`가 앞서 `ConfigError`를
+    낸다. 즉 이 간극은 **러너를 옮긴 뒤에 드러나는 두 번째 간극**이다. 둘 다 열려 있다.
 
     **여기서 registry를 v2로 올리지 않는다.** 어느 조건이 어느 버전을 쓰는가는 D54의
     미결이고, 그 항목은 *"로스터 모델의 `prompt_template_version`을 v2로 올리는 PR"*을

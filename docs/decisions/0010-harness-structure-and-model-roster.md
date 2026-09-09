@@ -41,8 +41,10 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 **`ADR 0009`(단계 단위)는 번호로 참조한다.** [experiments/README.md](../experiments/README.md)가
 적어 둔 대로 **ADR은 서로를 번호로 참조하고 그 번호가 식별자다** — 번호는 그 문서가 저장소에
-들어왔는지와 무관하게 같은 것을 가리킨다. **0009를 들고 오는 PR은 #147이다**(2026-09-09 조회
-기준 `origin/main`에 없다). 들어온 뒤에는 `docs/decisions/`에서 번호로 찾는다.
+들어왔는지와 무관하게 같은 것을 가리킨다. **0009는 2026-09-09 02:09에 #147로 들어왔다**(`2dc3901`) —
+[docs/decisions/0009-stage-unit-execution-and-model-swap.md](0009-stage-unit-execution-and-model-swap.md).
+그 문장은 원래 "아직 `origin/main`에 없다"였고 **한 시간 뒤 거짓이 됐다.** 번호 참조 규칙
+자체는 그대로 두되(그것이 이 문단의 요지다) 사실은 갱신한다.
 
 ### ② 2026-09-08 조사 다섯이 흔든 세 자리 — **2026-09-09에 조사 쪽으로 확정했다**
 
@@ -109,23 +111,36 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 - 풀 멤버는 `Role`에 **`scout_memory`·`scout_boundary`·`scout_injection`** 셋을 더해 표현한다. 프로필은 `roles:`에 그 셋을 적고, 기존 `scout` 한 역할 프로필도 그대로 유효하다(둘 중 하나가 있어야 한다).
 - **팬아웃**: 4단계에서 대상 하나를 세 멤버가 각각 본다(캡슐은 한 번 만든다). **합집합(방식 ①)**: 임계값을 넘은 멤버의 후보를 **고르지도 합치지도 않고 각각** 5단계로 보낸다 — 함수 하나에 Finding이 여럿 생길 수 있고 9단계 dedupe가 같은 함수의 것을 합친다. 판정은 6단계 게이트가 근거로 한다(build-plan §5 "투표가 아니라 분업이다"). 함수당 하나로 합쳐 Auditor를 한 번만 부르는 방식 ②는 **Auditor가 받은 근거가 어느 멤버 것인지 섞여** 기각했다 — 공동오답 행렬이 흐려진다. Auditor 호출은 최대 3배지만 멤버가 CWE 계열로 갈려 있어 실제 겹침은 첫 run이 답한다. **태깅**: `Candidate.scout_member`를 신설해 하네스가 stamp한다 — 모델이 채우는 값이 아니다(`produced_by`와 같은 논법).
-- **왜 "roles를 리스트로" 대신 역할 셋인가.** 계획 D절은 `roles: dict[str, str]`를 리스트 수용으로 넓히자고 적었고 그 파급(config·factory·cli·bench·scout.py)을 스스로 셌다. 역할로 두면 **기록·라우팅 층이 공짜다** — `RunRecord.model_checksums`·`prompt_versions`·`ProducedBy.role`·`RoutingModelClient` **넷은 역할 키로 이미 동작하므로**(`config.model_checksums()`·`prompt_versions()`가 `profile.roles`를 그대로 돌고, `ProducedBy.role`이 `Role`이며, `RoutingModelClient.client_for`가 `role.value`로 색인한다) 멤버별 checksum·프롬프트 버전·발화 기록이 **손대지 않고** 남는다. 리스트였다면 그 넷 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다. 계획의 의도(N멤버 · 태깅)는 같다.
+- **왜 "roles를 리스트로" 대신 역할 셋인가.** 계획 D절은 `roles: dict[str, str]`를 리스트 수용으로 넓히자고 적었고 그 파급(config·factory·cli·bench·scout.py)을 스스로 셌다. 역할로 두면 기록·라우팅 층이 **역할 키를 새로 정의하지 않고** 따라온다. 다만 「공짜」의 범위는 아래대로다.
 
-  ⚠ **그러나 파급이 0인 것은 아니다.** 초안은 위 다섯 자리가 전부 0이라고 적었는데 셋이 틀렸다:
-  `config.PROMPTED_ROLES`와 `bench.ROLE_SPEC`은 **멤버당 한 줄씩 새로 넣어야 하고**(이 ADR을 코드로 옮긴
-  PR이 실제로 넣었다 — 안 넣으면 프롬프트 검사와 bench 경로가 각각 죽는다), 역할별 토큰 카운터는
-  **조회는 되지만 켜지지 않는다** — `counter_for_role(role)`은 프로필이 선언한 역할이면 카운터를
-  주는데, 부르는 쪽인 `runner._triage_one`이 `counter_for_role(Role.SCOUT.value)`로 박혀 있고
-  기록을 내는 `counter_report`는 `src.tokens.COUNTED_ROLES = ("scout", "auditor")`만 돌며
+  | 자리 | 풀 셋을 넣을 때 드는 것 | 근거 |
+  | --- | --- | --- |
+  | `RunRecord.model_checksums` | **0** | `config.model_checksums()`가 `profile.roles.items()`를 그대로 돈다 |
+  | `ProducedBy.role` | **0** | 필드 타입이 `Role`이라 열거형이 늘면 따라온다 |
+  | `RunRecord.prompt_versions` | `PROMPTED_ROLES`에 **멤버당 한 줄** | `prompt_versions()`가 `for role in PROMPTED_ROLES` |
+  | `RoutingModelClient` | 같은 상수의 **같은 줄** | `factory`의 `clients` 컴프리헨션이 같은 상수에 걸린다 |
+  | `bench.ROLE_SPEC` | 멤버당 한 줄 | 없으면 `ROLE_SPEC[role_enum]`이 `KeyError` |
+  | 역할별 토큰 카운터 | **안 따라온다** | 아래 ⚠ |
+
+  즉 **상수 두 곳에 줄을 더하는 일**이고, 리스트 안이 요구하던 것은 그것이 아니라 위 여섯 전부에
+  "리스트의 몇 번째"라는 **새 좌표**였다. 계획의 의도(N멤버 · 태깅)는 같다.
+
+  ⚠ **초안은 이 자리들이 전부 0이라고 적었다. 그 문장이 틀렸다.** 정정도 한 번 틀렸다 —
+  「기록 넷이 0」이라고 좁혔는데, 그 넷 중 `prompt_versions`·`RoutingModelClient` 둘이
+  `PROMPTED_ROLES`에 걸려 있다(위 표). 0인 것은 **둘**이다.
+
+  ⚠ **역할별 토큰 카운터는 조회는 되지만 켜지지 않는다.** `counter_for_role(role)`은 프로필이
+  선언한 역할이면 카운터를 주는데(가르는 것은 `COUNTED_ROLES`가 아니라 `profile.roles`다),
+  부르는 쪽인 `runner._triage_one`이 `counter_for_role(Role.SCOUT.value)`로 박혀 있고 기록을 내는
+  `counter_report`는 `src.tokens.COUNTED_ROLES = ("scout", "auditor")`만 돌며
   `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. `nodes/scout.py`도 `ROLE = Role.SCOUT` 하나다.
-  즉 풀 멤버가 4단계를 도는 날 그 캡슐은 기본 카운터(글자수 근사)로 회계된다.
-  정확한 주장은 "다섯이 0"이 아니라 **"기록 넷이 0이고, 나머지는 표에 줄을 더하는 일이지 새 좌표를
-  파는 일이 아니다"**이다 — 리스트 안이 요구하던 것은 후자였다. 카운터를 늘리는 것은 러너를 옮기는
-  PR의 몫이다(지금 늘리면 러너가 안 켜는 역할이 `token_counter` 이벤트에 실려 기록이 거짓이 된다).
+  즉 풀 멤버가 4단계를 도는 날 그 캡슐은 기본 카운터(글자수 근사)로 회계된다. 늘리는 것은 러너를
+  옮기는 PR의 몫이다 — 지금 늘리면 러너가 안 켜는 역할이 `token_counter` 이벤트에 실려 기록이
+  거짓이 된다.
 
 ### 4. 계열 규칙을 코드가 강제한다 (D59 (a))
 
-`ModelEntry`에 **`family`**(베이스 가중치 제작사 — 양자화한 조직이 아니라 가중치의 출처 조직)를 넣고, `load_config`가 **auditor와 critic이 다른 모델 키면 `family`가 달라야 한다**를 검사한다. 같은 키(B1)는 정의상 허용한다. 2026-09-04에 `foundation-sec-8b`(Cisco 배포·Llama 베이스)가 registry에서 빠져(#139) D59가 든 "계열 정의의 애매함" 실례가 없어졌고, 남은 값은 전부 자명하다 — `qwen`(Alibaba)·`mistral`·`microsoft`·`openai`·`fake`.
+`ModelEntry`에 **`family`**(베이스 가중치 제작사 — 양자화한 조직이 아니라 가중치의 출처 조직)를 넣고, `load_config`가 **auditor와 critic이 다른 모델 키면 `family`가 달라야 한다**를 검사한다. 같은 키(B1)는 정의상 허용한다. 2026-09-04에 `foundation-sec-8b`(Cisco 배포·Llama 베이스)가 registry에서 빠져(#139) D59가 든 "계열 정의의 애매함" 실례가 없어졌고, 남은 값은 전부 자명하다 — `qwen`(Alibaba)·`mistral`·`openai`·`fake`, 그리고 Auditor B안을 고르면 `nvidia`. ⚠ `microsoft`는 여기 없다 — `phi-4`가 그 유일한 항목이었는데 §7이 기각했다.
 
 ### 5. 1차 분석 대상은 **C/C++ 소스 저장소**다 (D9 닫힘)
 
@@ -164,7 +179,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 | 단계 | 상주 | 가중치+non-torch (GiB) | 라벨 |
 | --- | --- | --- | --- |
 | 1 · 쿼리 생성 | `qwen3-8b` | 6.38 | 실측 |
-| 3 · 검색 | `qwen3-embedding-0.6b` + `qwen3-reranker-4b` | 1.62 + ≈8 | 실측 + 계산값(4B × 2바이트) |
+| 3 · 검색 | `qwen3-embedding-0.6b` + `qwen3-reranker-4b` | 1.62 + 약 9 = **약 10.6** | 실측 + 계산(4B × 2바이트 + non-torch) |
 | 4 · Scout 풀 | `qwen3-coder-30b-a3b` + `devstral-small-2-24b` + `qwen3-8b` | 18.28 + 26.8 + 6.38 = **51.46** | **셋 다 실측** — [09-08 조사](../research/2026-09-08-roster.md) §1.1 |
 | 5 · Auditor | **A** `qwen3-coder-30b-a3b` / **B** `nemotron-3-super-120b-a12b` | A **18.28** / B **79.12** | A는 실측 · B는 계산(HF 실파일 합) — [09-08 조사](../research/2026-09-08-roster.md) §1.1 |
 | 7 · Critic | `gpt-oss-20b` | ≤16 | 출처주장(OpenAI "16GB 메모리 안에서 동작") — 바이트 미확인 |

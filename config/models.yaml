@@ -222,7 +222,10 @@ models:
       prefix_hit_ratio_batch32: 0.5673
 
   devstral-small-2-24b:
-    # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
+    # Mistral 계열 24B. **자리의 정본은 CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
+    # 이 모델은 `scout_boundary`(CWE-119·125·787·190)이고, 아래 서술이 전제하던 Critic 자리가
+    # 아니다. Primary와 다른 계열이어야 교차 검증의 가치가 나온다는 규칙 자체는 그대로이고
+    # (model-serving.md §2), 지금은 `load_config`의 `_check_family_split`이 그것을 강제한다.
     #
     # **2026-09-04 ATOM에서 처음 띄웠다.** 상세는
     # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §7.

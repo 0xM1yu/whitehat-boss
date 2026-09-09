@@ -98,5 +98,11 @@
 | `qwen3-reranker-4b` | 다운로드 전. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
+| **`config/profiles.yaml` 재배선** | **안 됐다.** 프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`, 리랭커는 `qwen3-reranker-0.6b`다 — **§1의 배정이 아니다.** 신규 셋이 registry에 없어서 프로필에 못 올린다(위 두 줄이 그 선행 조건이다) |
 
 **「로스터 확정」과 「그 모델이 선다」는 다른 문장이다.** 이 표가 그 차이를 남긴다.
+
+⚠ **그래서 `config/profiles.yaml`을 열면 §1과 다른 배정이 보인다. 그것은 드리프트가 아니라
+위 표의 마지막 줄이다.** §1이 정본이고 프로필은 아직 거기 못 따라왔다 — 반대로 읽지 마라.
+`tests/test_docs_format.py`의 `test_context_declares_that_profiles_are_not_rewired_yet`이
+그 어긋남과 이 선언을 묶는다: 재배선이 끝나면 그 검사가 실패해서 **이 줄을 지우게 만든다.**

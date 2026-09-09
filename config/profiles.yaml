@@ -1,5 +1,10 @@
 # 실행 프로필 (model-serving.md §5, engineering-guide.md §2)
 #
+# ⚠ **이 파일의 `roles:`는 아직 확정 로스터가 아니다.** 어느 모델이 어느 자리에 앉는지의
+# 정본은 저장소 루트 `CONTEXT.md` §1이고, 그 재배선은 신규 모델 셋이 registry에 등재된 뒤에
+# 온다 — `CONTEXT.md` §5의 마지막 줄이 그 사실을 든다. 여기 적힌 `critic: devstral-small-2-24b`
+# 같은 값을 "지금 쓰는 로스터"로 읽지 마라.
+#
 # 프로필 교체만으로 B1/B1'/B3/B3' 조건과 실행 환경을 구성할 수 있어야 한다.
 # `roles`의 값은 models.yaml의 model key다. **필수는 auditor·critic 둘**이다(REQUIRED_ROLES).
 # 4단계 Scout 자리는 **단일 `scout` 하나 아니면 풀 셋 전부**다 — `scout_memory`·`scout_boundary`·

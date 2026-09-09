@@ -27,7 +27,7 @@
 | # | 항목 | 상태 | 본문 |
 | --- | --- | --- | --- |
 | R1 | ATOM(sm_121) × vLLM 커널 호환성 · 로컬 TCP 차단 | 부분 | [본문](open-questions/R/R1.md) |
-| R2 | Critic(Devstral Small 2, dense 24B) NVFP4 양자화 시 반박 정확도 저하 가능성 | 열림 | [본문](open-questions/R/R2.md) |
+| R2 | ~~Critic(Devstral Small 2, dense 24B) NVFP4 양자화 시 반박 정확도 저하 가능성~~ → 로스터 변경으로 대상 소멸 | 닫힘 | [본문](open-questions/R/R2.md) |
 | R3 | 평가 데이터 누출 자동 검증 스크립트 부재 | 부분 | [본문](open-questions/R/R3.md) |
 | R4 | 단일 노드 대역폭 병목의 실제 한계 미파악 | 열림 | [본문](open-questions/R/R4.md) |
 | R5 | Zero-day 제보 워크플로의 강제 수단 미정 | 열림 | [본문](open-questions/R/R5.md) |
