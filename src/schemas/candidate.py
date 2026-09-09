@@ -1,6 +1,7 @@
 """Candidate 스키마 (agent-contracts.md §3, 파이프라인 4단계 Scout 출력)."""
 
-from typing import Literal
+import re
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -15,6 +16,37 @@ CandidateState = Literal[
     FindingState.TRIAGED,
     FindingState.QUEUED,
 ]
+
+
+# Scout 풀 멤버 역할 키의 형태 (ADR 0010 §3 —
+# docs/decisions/0010-harness-structure-and-model-roster.md).
+# 풀 멤버는 `Role`에 더해지는 `scout_memory`·`scout_boundary`·`scout_injection`이고, 풀이
+# 없는 프로필의 역할은 접두사 없는 `scout` 하나다 — **그 하나를 걸러 내는 것**이 이 패턴이
+# 하는 일이다.
+#
+# **멤버 이름 셋을 여기 옮겨 적지 않는다.** 원천은 `Role`이고 여기가 아는 것은 그 이름
+# 규칙뿐이다. 셋을 복제하면 열거형이 넷째 멤버를 얻는 날 이 파일만 뒤처지는데, 그때
+# 증상은 "새 멤버에 태그가 안 붙는다"가 아니라 **stamp가 `None`을 남기는 것**이라
+# 기록만 보고는 풀이 없던 run과 구별되지 않는다.
+SCOUT_MEMBER_PATTERN = r"^scout_[a-z0-9]+(?:_[a-z0-9]+)*$"
+
+# 풀 멤버 역할 **키**(`Role.value`)를 담는 문자열. 열거형 자체가 아닌 이유는
+# `RunRecord.model_checksums`·`prompt_versions`·`config.model_key_for`·역할별 토큰 카운터가
+# 전부 역할 키 문자열로 동작하기 때문이다(ADR 0010 §3 "역할 키로 이미 동작한다") — 행렬의
+# 한 칸에서 그 run의 모델·checksum·프롬프트 버전으로 바로 이어진다. `Role`은 StrEnum이라
+# 직렬화 결과도 같으므로, 나중에 열거형으로 좁혀도 매니페스트는 안 바뀐다.
+ScoutMemberRole = Annotated[str, Field(pattern=SCOUT_MEMBER_PATTERN, max_length=64)]
+
+
+def scout_member_of(role_value: str) -> str | None:
+    """호출 역할 키가 Scout 풀 멤버면 그 키를, 아니면 `None`을 돌려준다.
+
+    stamp 하는 쪽(`orchestrator/context.py`)이 이것만 부른다. 규칙과 그 규칙이 채우는
+    필드를 한 파일에 두는 것이 요점이다 — 둘이 갈라지면 패턴은 거부하는데 stamp는 만들어
+    내는 값이 생기고, stamp가 쓰는 `model_copy(update=)`는 검증을 우회하므로 그 값이
+    그대로 매니페스트에 남는다.
+    """
+    return role_value if re.fullmatch(SCOUT_MEMBER_PATTERN, role_value) else None
 
 
 class Candidate(HarnessModel):
@@ -36,3 +68,21 @@ class Candidate(HarnessModel):
     reason_codes: list[NonEmptyStr] = Field(default_factory=list)
     evidence_refs: list[Identifier] = Field(default_factory=list)
     state: CandidateState
+    # **어느 Scout 풀 멤버가 낸 후보인가 — 하네스가 stamp한다** (ADR 0010 §3).
+    #
+    # 모델이 채우는 값이 아니다(`produced_by`와 같은 논법). 모델은 자기가 풀의 어느 자리에서
+    # 불렸는지 모르고, 이 필드는 그 자리를 증언하는 **증거**다 — 모델이 쓴 값이 살아남으면
+    # 증언이 아니라 자기소개가 된다. 덮는 자리는 `RunContext.call_model` 하나다.
+    #
+    # **`None`은 미실측 표시가 아니다**(CLAUDE.md §0). 풀이 없는 프로필 — `roles:`에 `scout`
+    # 한 역할 — 로 돈 후보라는 관측이고, 풀 프로필의 후보에는 stamp가 반드시 값을 채우므로
+    # 두 뜻이 한 값에 겹치지 않는다.
+    #
+    # 이 태그가 첫 run의 **공동오답 행렬**(누가 무엇을 함께 놓쳤나)을 만들고, 그 행렬이
+    # 모델을 Scout 자리 사이에서 옮기는 유일한 근거다(ADR 0010 §2 "재배치의 유일한 근거" ·
+    # docs/research/2026-09-08-roster.md §7).
+    #
+    # **`Finding`에는 넘기지 않는다.** ADR 0010 §3이 신설을 정한 것은 `Candidate`뿐이고,
+    # 9단계 dedupe(`orchestrator/nodes/report.py`)가 어느 필드를 봐야 하는지는 그 문서가
+    # 정하지 않았다 — 지금 넘기면 그 미결을 코드가 임의로 답한 것이 된다.
+    scout_member: ScoutMemberRole | None = None
