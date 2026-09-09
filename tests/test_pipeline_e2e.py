@@ -2105,3 +2105,85 @@ def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
     assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable"
     assert (trace_path.parent / "run_manifest.json").is_file()
     assert not result.record.is_complete
+
+
+# ---------------------------------------------------------------------------
+# ADR 0009 결과 2 — 러너의 단계 단위 루프
+#
+# `execution.mode`는 PR B가 스키마로 열었고 러너는 아직 그 값을 안 본다. 아래 넷이
+# 그 간극을 고정한다. **J4(기본값 보존)만 지금 통과해야 한다** — 나머지 셋은 RED이고,
+# 그것이 이 PR의 착수 근거다.
+# ---------------------------------------------------------------------------
+
+
+def _per_stage(config: object) -> object:
+    """`execution.mode: per_stage`를 선언한 config를 만든다.
+
+    `config/profiles.yaml`을 고치지 않는다 — 프로필에 `execution`을 적는 것은 ADR 0009
+    결과 **4**이고 그 값은 교대 실측 뒤에 정해진다. 여기서 필요한 것은 러너가 그 값을
+    보는지뿐이라 config 객체에서만 세운다.
+    """
+    from src.config import ExecutionPolicy
+
+    profile = config.profile.transition(execution=ExecutionPolicy(mode="per_stage"))  # type: ignore[attr-defined]
+    return config.transition(profile=profile)  # type: ignore[attr-defined]
+
+
+def _stage_order(trace_path: Path, kind: str = "transition") -> list[int]:
+    """trace에 실린 `kind` 이벤트의 단계 번호를 seq 순으로 뽑는다."""
+    return [e["stage"] for e in _events(trace_path) if e["kind"] == kind and e["stage"] is not None]
+
+
+def _is_non_decreasing(values: list[int]) -> bool:
+    return all(a <= b for a, b in zip(values, values[1:]))
+
+
+def test_per_candidate_is_the_default_and_interleaves_stages(tmp_path: Path) -> None:
+    """**기본값은 지금 동작이다.** 이 검사는 PR C 전후로 똑같이 통과해야 한다.
+
+    후보 단위에서는 target 하나가 3→6을 관통하고 다음 target이 다시 3으로 돌아온다.
+    그래서 단계 번호 열이 **단조 증가가 아니다** — 되돌아오는 자리가 있다.
+
+    ⚠ **이 검사가 PR C의 안전망이다.** 단계 단위 루프를 넣으면서 기본 경로까지 바꾸면
+    선언 안 한 프로필의 run이 조용히 달라지고, ADR 0009이 이 결정을 「되돌리기 싼」
+    것으로 부른 근거가 사라진다.
+    """
+    config = load_config("dev_fake")
+    assert config.profile.execution is None or config.profile.execution.mode == "per_candidate"
+
+    _, trace_path = _run(tmp_path, name="default", before=_with_index())
+
+    stages = _stage_order(trace_path)
+    assert stages, "전이 이벤트가 하나도 없다 — 검사가 아무것도 안 본다"
+    assert not _is_non_decreasing(stages), (
+        f"후보 단위인데 단계가 단조 증가다: {stages}. target이 하나뿐이면 이 검사는 "
+        "아무것도 못 본다 — 픽스처를 확인해라"
+    )
+
+
+def test_per_stage_finishes_a_stage_for_every_target_before_the_next_starts(
+    tmp_path: Path,
+) -> None:
+    """**단계 단위의 정의 그 자체다.** 모든 target이 K단계를 마쳐야 K+1이 시작한다.
+
+    이것이 성립해야 「한 번에 한 역할의 모델만 상주」가 가능하다. ADR 0009이 교대
+    횟수를 512회[계산]에서 3~5회[계산]로 줄인다고 적은 근거가 이 순서다 — 순서가
+    안 서면 그 수는 나오지 않는다.
+
+    **단계 번호가 단조 증가여야 한다.** 되돌아가는 자리가 하나라도 있으면 그 지점에서
+    앞 단계 모델을 다시 깨워야 한다.
+    """
+    config = _per_stage(load_config("dev_fake"))
+    run_dir = tmp_path / "stage" / "run_20260901_0001"
+    run_dir.mkdir(parents=True)
+    _with_index()(run_dir)
+    spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT)
+    trace_path = run_dir / "trace.jsonl"
+    with trace_path.open("w", encoding="utf-8") as stream:
+        cli.execute(config, spec, run_id=run_dir.name, run_dir=run_dir, trace_stream=stream)
+
+    stages = _stage_order(trace_path)
+    assert stages, "전이 이벤트가 하나도 없다"
+    assert _is_non_decreasing(stages), (
+        f"per_stage인데 단계가 되돌아간다: {stages}. 러너가 `execution.mode`를 안 보고 있다"
+    )
