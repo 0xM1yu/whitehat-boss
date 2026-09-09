@@ -36,6 +36,7 @@
 | 문서의 내부 링크는 실파일을 가리켜야 한다 | `test_internal_links_point_at_a_real_file` |
 | 마크다운 표의 열 수가 일관돼야 한다 | `test_markdown_tables_have_a_consistent_column_count` |
 | 계약 문서의 `output_max` 선언이 config 값과 같다 | `test_the_contract_example_output_max_matches_the_config` |
+| `pull_request` 워크플로가 base 브랜치로 발화를 거르지 않는다 | `test_pull_request_workflows_do_not_limit_the_base_branch` |
 
 추적되는 `*.md`는 전부 대상이다 — 이 파일도 포함이다.
 
@@ -78,7 +79,7 @@
 
 **문서가 결함의 원천이고 상태의 원천이다** — `docs/open-questions/D/D<n>.md`의 상태 필드가
 정본이고 [인덱스](docs/open-questions.md) 표가 그것을 비춘다. **GitHub Issue는 추적 미러다.**
-([ADR 0008](docs/decisions/0008-defect-source-of-truth.md), 2026-09-08 수락)
+([ADR 0008](docs/decisions/0008-defect-source-of-truth.md), 2026-09-08 승인)
 
 규칙 셋이 따라온다.
 

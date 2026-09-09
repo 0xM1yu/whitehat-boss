@@ -1,8 +1,18 @@
 name: CI
 
+# **`pull_request`에 `branches` 필터를 두지 않는다.** base로 거르면 스택 PR(base가 main이
+# 아닌 PR — CLAUDE.md §4.3이 정면으로 다루는 그것)이 이 잡을 **아예 못 받는다.** 체크가
+# 실패하는 것이 아니라 존재하지 않으므로 PR 화면에서 통과와 구별되지 않는다.
+#
+# 실측(2026-09-09): 전체 PR 107건 중 base ≠ main이 5건(#29·#30·#42·#43·#161)이고 그중
+# 스택 상태에서 `check`를 받은 것은 **0건**, CI 없이 머지된 것이 **3건**이다.
+# `tests/test_repo_hygiene.py::test_pull_request_workflows_do_not_limit_the_base_branch`가
+# 이 규칙을 지킨다.
+#
+# `push`는 `main`만 둔다 — 브랜치 푸시마다 도는 것은 PR 이벤트와 중복이고, 지금도
+# push run 103건이 전부 main이라 동작이 안 바뀐다.
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 

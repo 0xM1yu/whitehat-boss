@@ -503,3 +503,38 @@ def test_the_build_plan_served_role_counts_match_served_models() -> None:
         "서버가 아직 안 떴다는 사실은 개수를 깎아서가 아니라 선행 조건으로 적는다.\n"
         + "\n".join(offenders)
     )
+
+
+# `docs/decisions/README.md`의 ADR 목록 표 행. 파일명 앞 네 자리가 번호다.
+_ADR_ROW = re.compile(r"^\|\s*\[(\d{4})\]\(", re.MULTILINE)
+
+DECISIONS = REPO_ROOT / "docs" / "decisions"
+
+
+def test_every_adr_has_a_row_in_the_decisions_readme() -> None:
+    """ADR 파일과 목록 표가 갈리면 **CI가 침묵한 채로** 결정이 사라진다.
+
+    이 검사가 없어서 생기는 구체적 사고: `docs/decisions/README.md`를 두 PR이 동시에
+    건드리면(각자 자기 ADR 행을 표에 더한다) 머지에서 충돌하는데, `--ours`/`--theirs`로
+    풀면 **한쪽 행이 통째로 사라진다.** 파일 자체는 남으므로
+    `test_internal_links_point_at_a_real_file`이 안 걸리고, 표를 세는 검사도 없어서
+    **초록인 채로 결정 하나가 목록에서 빠진다.**
+
+    표가 유일한 조망면이라 거기 없는 ADR은 사실상 없는 것이다 — 이 저장소가
+    `docs/open-questions.md` 인덱스를 지우지 않는 이유(ADR 0008)와 같은 논거다.
+
+    양방향으로 본다. 고아 행(파일 없는 번호)도 같은 종류의 거짓말이다.
+    """
+    if not DECISIONS.is_dir():
+        pytest.skip("docs/decisions/ 없음")
+
+    files = {p.name[:4] for p in DECISIONS.glob("[0-9][0-9][0-9][0-9]-*.md")}
+    rows = set(_ADR_ROW.findall(_read(DECISIONS / "README.md")))
+
+    missing = sorted(files - rows)
+    orphan = sorted(rows - files)
+    assert not missing, (
+        f"ADR 파일은 있는데 README 목록에 행이 없다: {missing} — "
+        "머지 충돌을 --ours/--theirs로 풀면 이렇게 된다"
+    )
+    assert not orphan, f"README 목록에 행은 있는데 그 번호의 ADR 파일이 없다: {orphan}"
