@@ -57,6 +57,8 @@ vllm serve openai/gpt-oss-20b --port 8006 --served-model-name gpt-oss-20b \
   --structured-outputs-config.backend {xgrammar|guidance}
 ```
 
+⚠ **`--structured-outputs-config.reasoning_parser`를 CLI로 주지 않았다.** 다만 로그는 vLLM이 그것을 **스스로 채웠다**고 적는다 — APIServer의 「non-default args」 줄은 `reasoning_parser=''`인데, EngineCore의 엔진 초기화 줄은 같은 기동에서 `reasoning_parser='openai_gptoss'`다(3회 전부). **따라서 「파서가 없어서 채널 경계를 몰랐다」는 이 로그로 성립하지 않는다.** 명시 지정이 결과를 바꾸는지는 **안 해봤다**(§5·§6).
+
 `config.json`이 선언하는 것:
 
 ```
@@ -171,7 +173,7 @@ Yes – the code is a classic **use-after-free**.
 
 **`guidance`는 500만 낸다.** 서버 로그에 트레이스백이 없고 응답의 `message`도 빈 문자열이라 사유를 못 봤다.
 
-⚠ **`reasoning_content`가 세 조건 전부에서 비어 있었다.** `reasoning_parser`가 `openai_gptoss`로 자동 설정됐는데도 그렇다. 사고 내용이 `content`로 나온다 — 왜인지는 **안 갈랐다.**
+⚠ **`reasoning_content`가 세 조건 전부에서 비어 있었다.** `response_format` 없는 자유 서술에서도 비었다 — **스키마 강제와 무관하게 채널이 API 응답에서 갈리지 않는다.** 그리고 EngineCore 로그는 `reasoning_parser='openai_gptoss'`로 **채워져 있었다**고 적는다(§2). 즉 관측은 「파서 미설정」이 아니라 **「파서가 설정돼 있는데도 `reasoning_content`가 빈 것」**이다. 왜인지는 **안 갈랐다.**
 
 ---
 
@@ -199,6 +201,7 @@ Yes – the code is a classic **use-after-free**.
 | `guidance` 500의 사유 | 로그에 트레이스백이 없고 응답 `message`가 비었다 | 서버 로그 레벨을 올려 재현 |
 | `outlines` 백엔드 | **안 해봤다** | 같은 스모크를 한 번 더 |
 | `enable_in_reasoning=True` | **안 해봤다** | 그 값으로 재기동해 §3.3 반복 |
+| `--structured-outputs-config.reasoning_parser` 명시 지정 | **안 해봤다** — EngineCore가 이미 `openai_gptoss`로 채워 뒀으므로(§2) 명시가 무엇을 바꾸는지는 미확인 | 그 플래그를 주고 재기동해 §3.3 반복 |
 | 장시간 서빙 안정성 | 스모크 3분 이내 | 연속 서빙 — [swap.md](../../research/2026-09-04-swap.md)가 `#49926`·`#52225`를 든다 |
 | `reasoning_content`가 빈 이유 | 안 갈랐다 | — |
 
@@ -210,6 +213,7 @@ Yes – the code is a classic **use-after-free**.
 - **「모델은 멀쩡하다」가 틀렸다면**: 자유 서술 3/3은 문제가 자명해서 나온 것일 수 있다. 어려운 표본에서 무너지면 이 문장은 좁혀야 한다. **표본이 하나이고 자명한 것을 골랐다.**
 - **「Marlin 팽창 1.16~1.25배」가 틀렸다면**: 다른 크기에서 비율이 달라진다. **20B 한 점이다** — `#50925`가 신고한 1.57배(67→105 GiB)는 더 큰 모델의 값이고 이 관측이 그것을 반증하지 않는다.
 - **메모리 범위가 틀렸다면**: 3회는 적다. 이상치가 있으면 범위가 바뀐다.
+- **⚠ 검토된 가설 하나 — 「`reasoning_parser`를 CLI로 안 줘서 채널 경계를 몰랐다」**(PR #160에서 손수민 제기). **이 로그로는 성립하지 않는다** — CLI에 안 준 것은 맞지만 EngineCore가 `openai_gptoss`로 채웠다(§2). 다만 **「해석된 값이 실제 문법 적용 시점에 쓰였는가」는 우리가 안 봤다.** 그것까지 부정하지는 않는다. 확인법: 그 플래그를 명시하고 §3.3을 반복해 verdict가 0/5에서 움직이는지 본다 — **움직이면 이 실험의 결론이 바뀐다.**
 
 ---
 
