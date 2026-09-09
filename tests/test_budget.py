@@ -5,7 +5,6 @@
 """
 
 from datetime import UTC, datetime
-from enum import StrEnum
 
 import pytest
 
@@ -203,18 +202,6 @@ def test_call_model_leaves_schemas_without_produced_by_alone() -> None:
     assert not hasattr(result.value, "produced_by")
 
 
-class _PoolRole(StrEnum):
-    """Scout 풀 멤버 역할의 **자리표시자**.
-
-    ADR 0010 §3의 셋(`scout_memory`·`scout_boundary`·`scout_injection`)은 같은 PR B의
-    다른 조각이 `Role`에 넣는다. stamp가 보는 것은 역할 **키 문자열**(`role.value`)이라
-    진짜 멤버가 들어와도 여기서 고정하는 계약은 그대로다 — 그때 이 열거형은 지우고
-    `Role.SCOUT_BOUNDARY`로 바꿔 쓰면 된다.
-    """
-
-    SCOUT_BOUNDARY = "scout_boundary"
-
-
 class _FixedValueStub:
     """모델이 낸 값을 그대로 돌려주는 ModelClient. 하네스가 무엇을 덮는지만 본다."""
 
@@ -249,12 +236,17 @@ def test_call_model_stamps_scout_member_over_the_model_value() -> None:
     놓쳤나"가 아니라 "모델이 자기를 뭐라고 불렀나"의 표가 된다. 그 표가
     「배분을 옮기는 유일한 근거」(docs/research/2026-09-08-roster.md §7)이므로,
     stamp가 틀리면 모델을 Scout 자리 사이에서 옮기는 판단이 통째로 틀린다.
+
+    **진짜 `Role.SCOUT_BOUNDARY`로 부른다.** 이 자리에는 같은 값을 든 자리표시자
+    열거형이 있었는데, ADR 0010 §3의 셋이 `Role`에 들어온 뒤로는 그 자리표시자가
+    **stamp 경로에서 실제 열거형을 한 번도 안 지나가게** 만들고 있었다 — 풀 멤버가
+    `Role`에서 빠지거나 값이 바뀌어도 이 검사는 통과한다.
     """
     ctx, _ = _context(budget=_budget(), usage=_usage())
     ctx.models = _FixedValueStub(_self_tagged_candidate())
 
     result = ctx.call_model(
-        role=_PoolRole.SCOUT_BOUNDARY, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT
+        role=Role.SCOUT_BOUNDARY, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT
     )
 
     assert result.value.scout_member == "scout_boundary"  # 모델이 쓴 injection이 아니다
