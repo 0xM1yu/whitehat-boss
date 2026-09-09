@@ -27,7 +27,7 @@
 | 1 | Index | ✅ | 실제 tree-sitter 인덱서 (`dev_docker`·`dev_singularity`·실서빙) / 디렉터리 존재만 확인 (`dev_fake`) | 🔵 **진행 중** |
 | 2 | Signals | ✅ | 실제 semgrep·clang-tidy·clang (`dev_docker`) / 정규식 2개 (`dev_fake`) | 🟡 부분 |
 | 3 | Retrieval | ✅ | 파일 텍스트 자르기 + 실제 호출 그래프의 `callers`/`callees` (인덱서가 돈 프로필) / embedding·reranker 재선별 (`dev_hybrid*`) | 🟡 부분 |
-| 4 | Scout | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 |
+| 4 | Scout — 풀이면 역할 셋 | ✅ | 가중합 휴리스틱 (Fake) | 🟡 Fake 모델 |
 | 5 | Auditor | ✅ | 템플릿 조합 (Fake) | 🟡 Fake 모델 |
 | 6 | **Gate** | ✅ | **결정론 판정** | 🟢 **완성** |
 | 7 | Critic | ✅ | graph 유무로 uphold/rebut (Fake) | 🟡 Fake 모델 |
@@ -35,6 +35,12 @@
 | 9 | **Report** | ✅ | 템플릿 렌더링 | 🟢 **완성** |
 
 **6·9단계만 최종본이다.** 둘 다 모델·도구를 쓰지 않는 단계라서 지금 코드가 그대로 최종 구현이다.
+
+**4단계 「Scout」는 역할 하나가 아닐 수 있다 (2026-09-09).** 로스터가 Scout를 **풀 세
+역할**(`scout_memory`·`scout_boundary`·`scout_injection`)로 쪼갰고, **기존 `scout` 한 역할
+프로필도 그대로 유효하다**([ADR 0010](docs/decisions/0010-harness-structure-and-model-roster.md) §3).
+⚠ **이 표가 말하는 것은 로직·어댑터의 상태이지 모델 이름이 아니다** — 어느 모델이 어느 자리에
+앉는지는 [CONTEXT.md](CONTEXT.md) §1이 정본이다.
 
 ---
 
@@ -124,9 +130,10 @@
 
 **들어왔다.** `src/adapters/container_tools.py`가 Docker·Singularity·podman 안에서 실제 도구를
 돌린다. 런타임은 생성자 인자이고 프로필이 고른다 — 개발 프로필은 `dev_docker` /
-`dev_singularity`, 조건 비교용 실서빙 프로필 둘(`local_balanced`·`b1_single`)은
-전부 `docker`다(2026-08-28, 주 실서빙 장비가 ATOM이므로 — docs/portability.md §3.
-2026-08-17~08-28 사이 앞의 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
+`dev_singularity`, 조건 비교용 실서빙 프로필(2026-08-28 기준 `local_balanced`·`b1_single`)은
+전부 `docker`다(주 실서빙 장비가 ATOM이므로 — docs/portability.md §3.
+2026-08-17~08-28 사이 그 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
+**목록의 정본은 `config/profiles.yaml`이다 — 여기 개수를 현재형으로 못박지 않는다.**
 프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
 `harness-tools:v1` 하나이며 semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
@@ -275,6 +282,9 @@ ATOM에서 돌리는 일이다.
 
 **아직 못 재는 것:** §3의 7번째(NVFP4 Critic 반박 정확도). 고정 반박 표본이 있어야 답이
 나오므로 평가셋 준비 전까지 범위 밖이고, bench 출력에는 `unmeasured(데이터셋 대기)`로 뜬다.
+⚠ **그 항목이 묻던 「고정밀 대비 하락폭」은 2026-09-09에 성립을 잃었다** — Critic 자리가
+바뀌었고 새 자리에는 비교할 고정밀 체크포인트가 없다
+([model-serving.md](docs/model-serving.md) §4 머리 · [D4](docs/open-questions/D/D4.md)).
 
 ### 🟢 실서빙 프로필이 실제 도구를 쓴다 (2026-08-14)
 
@@ -292,6 +302,8 @@ ATOM에서 돌리는 일이다.
 **주 경로가 상시 예외 상태**였다. `local_balanced`는 모델 5개 중 3개가, `b1_single`은 세
 역할이 전부 Blackwell 이상을 요구하므로 두 프로필 모두 그 미만 장비에서는 애초에 기동하지
 않는다([portability.md](docs/portability.md) §5 #1) — 그래서 반대 방향의 대가가 없다.
+⚠ **그 「5개 중 3개」는 2026-08-17 시점의 셈이다** — portability.md §5 #1은 이제 개수를
+현재형으로 적지 않는다(프로필이 부르는 모델이 로스터를 따라 움직인다).
 
 **2026-08-28: 그 `podman`이 다시 `docker`가 됐다.** 기준("프로필은 주 실서빙 장비의 런타임을
 선언한다")은 그대로이고 바뀐 것은 ATOM의 런타임이 무엇이냐다 — 위 문단의 "ATOM(podman만
@@ -354,19 +366,28 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 ```
 
 마지막 항목만 bench 범위 밖이다 — 고정 반박 표본이 있어야 답이 나온다(평가셋 준비 중).
+⚠ **그 항목의 전제는 2026-09-09에 사라졌다** — 위 체크박스 문구는
+`src/bench_report.py`의 `CHECKLIST`와 같은 것이고 **코드는 아직 안 고쳤다.** 무엇이
+무너졌고 무엇이 대신 서는지는 [model-serving.md](docs/model-serving.md) §4 머리와
+[D4](docs/open-questions/D/D4.md)가 적는다.
 
 **이것이 통과하기 전까지 어느 모델도 프로덕션 프로필로 올릴 수 없다.** ⚠ 그 이유는 한 가지가
 아니다 — 「`benchmark` 값이 전부 0」도, 「전부 부분 측정」도 틀리다. `cli._check_benchmarks`는
 프로필의 역할 모델만 보고 **미측정과 부분 측정을 각각 한 줄씩** 낸다. `local_balanced`·
-`local_balanced_hybrid`에 실제로 돌리면(2026-09-08 실행) 두 줄이 다 나온다 — **미측정 셋**
-(`devstral-small-2-24b`·`qwen3-embedding-0.6b`·`qwen3-reranker-0.6b`, 세 항이 전부 0)과
-**부분 측정 둘**(`qwen3-8b`·`qwen3-coder-30b-a3b`, `mem_gb_ctx8k`만 0). 두 프로필이
+`local_balanced_hybrid`에 실제로 돌리면 두 줄이 다 나온다 — **2026-09-08 실행 기준**으로
+**미측정 셋**(`devstral-small-2-24b`·`qwen3-embedding-0.6b`·`qwen3-reranker-0.6b`, 세 항이
+전부 0)과 **부분 측정 둘**(`qwen3-8b`·`qwen3-coder-30b-a3b`, `mem_gb_ctx8k`만 0)이다.
+⚠ **그 다섯은 그날 프로필이 부르던 모델이지 지금의 로스터가 아니다** — 정본은
+[CONTEXT.md](CONTEXT.md) §1이고, 재배선되면 이 두 줄의 내용이 바뀐다. 그 표가 **registry
+미등재**로 표시한 자리가 프로필에 오르면 benchmark 이전에 checksum부터 자리표시자다.
+
+두 프로필(`local_balanced`·`local_balanced_hybrid`)이
 `production: false`라 지금은 WARN이고, production으로 올리는 순간 같은 두 줄이 ERROR다.
 `mem_gb_ctx8k`는 registry 전 항목이 0이라 **완전 측정은 아직 하나도 없다.** 처리량이 채워진
 것은 `qwen3-4b`(`39.65 · 127.69` — 위 체크리스트의 `[~]`, 정본은 ADR 0007)와 2026-09-04 ATOM
 실측인 `qwen3-8b`(`35.78 · 388.46`)·`qwen3-coder-30b-a3b`(`53.4 · 66.42`) 셋뿐이다. 뒤 둘의
-원천 보고서는 `config/models.yaml`의 각 블록이 경로로 드는데 **그 파일은 #142가 들여온다** —
-이 문단이 그 PR보다 먼저 도는 순간이 있어 링크로 걸지 않았다.
+원천 보고서는 `config/models.yaml`의 각 블록이 경로로 드는데 **그 파일은 #142로 들어왔다** —
+등재 당시에는 이 문단이 그 PR보다 먼저 도는 순간이 있어 링크로 걸지 않았다.
 `bench --apply`가 그 값을 채우지만 **0인 항목은 쓰지 않는다.** 채워지지 않았다는 것은
 재지 못했다는 뜻이고, 그 상태가 그대로 보여야 한다.
 
