@@ -120,6 +120,51 @@ profiles:
       state_store: sqlite
     budget: default
 
+  reasonvul_deductive:
+    description: "ReasonVul deductive Scout 통제 실험. Qwen3-8B와 공통 설정을 유지하고 Scout 프롬프트만 v2-deductive로 변경."
+    production: false
+    roles:
+      scout: qwen3-8b-scout-deductive
+      auditor: qwen3-coder-30b-a3b
+      critic: devstral-small-2-24b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default
+
+  reasonvul_inductive:
+    description: "ReasonVul inductive Scout 통제 실험. Qwen3-8B와 공통 설정을 유지하고 Scout 프롬프트만 v2-inductive로 변경."
+    production: false
+    roles:
+      scout: qwen3-8b-scout-inductive
+      auditor: qwen3-coder-30b-a3b
+      critic: devstral-small-2-24b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default
+
+  reasonvul_abductive:
+    description: "ReasonVul abductive Scout 통제 실험. Qwen3-8B와 공통 설정을 유지하고 Scout 프롬프트만 v2-abductive로 변경."
+    production: false
+    roles:
+      scout: qwen3-8b-scout-abductive
+      auditor: qwen3-coder-30b-a3b
+      critic: devstral-small-2-24b
+      embedding: qwen3-embedding-0.6b
+      reranker: qwen3-reranker-0.6b
+    adapters:
+      retriever: fake
+      tool_runner: fake
+      state_store: sqlite
+    budget: default
+
   b1_single:
     description: "벤치마크 조건 B1 — 전 역할을 같은 단일 모델로 실행."
     # evaluation.md §2.3 공정성 규칙 1: 조건 간 차이는 프로필과 단계 활성화만.

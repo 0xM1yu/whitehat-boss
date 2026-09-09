@@ -78,6 +78,7 @@ class PromptTemplate:
     prefix: str
     body: str
     output_schema: str
+    source_line_numbers: bool = False
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -129,8 +130,19 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
     if not isinstance(output_schema, str) or not output_schema:
         raise PromptError(f"{directory}/meta.yaml에 output_schema가 없다")
 
+    source_line_numbers = meta.get("source_line_numbers", False)
+    if not isinstance(source_line_numbers, bool):
+        raise PromptError(
+            f"{directory}/meta.yaml의 source_line_numbers는 boolean이어야 한다"
+        )
+
     return PromptTemplate(
-        role=role, version=version, prefix=prefix, body=body, output_schema=output_schema
+        role=role,
+        version=version,
+        prefix=prefix,
+        body=body,
+        output_schema=output_schema,
+        source_line_numbers=source_line_numbers,
     )
 
 

@@ -66,7 +66,12 @@ def _ask_model(
 ) -> Candidate:
     """프롬프트를 만들어 모델에 묻는다. 실패는 사유 코드로 기록하고 그대로 올린다."""
     template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
-    source = ctx.read_source(capsule.target)
+    raw_source = ctx.read_source(capsule.target)
+    source = (
+        _with_source_line_numbers(raw_source, capsule.target)
+        if template.source_line_numbers
+        else raw_source
+    )
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -104,6 +109,18 @@ def _queue_previous(ctx: RunContext, previous: Candidate | None, reason: ReasonC
     if previous is None or previous.state is not FindingState.CANDIDATE:
         return
     ctx.apply(previous, to=FindingState.QUEUED, reason=reason, stage=Stage.SCOUT)
+
+
+def _with_source_line_numbers(source: str, target: Location) -> str:
+    """프롬프트 표시용 원본 줄 번호를 붙인다. 원본 파일은 수정하지 않는다."""
+    if not source:
+        return source
+
+    first_line = target.line_start or 1
+    return "\n".join(
+        f"{first_line + offset}: {line}"
+        for offset, line in enumerate(source.splitlines())
+    )
 
 
 def describe_target(target: Location) -> str:

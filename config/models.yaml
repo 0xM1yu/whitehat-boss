@@ -57,6 +57,48 @@ models:
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
 
+  qwen3-8b-scout-deductive:
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 131072
+    quantization: "fp4"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v2-deductive"
+    fallback: "qwen3-4b"
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-8b-scout-inductive:
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 131072
+    quantization: "fp4"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v2-inductive"
+    fallback: "qwen3-4b"
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
+  qwen3-8b-scout-abductive:
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 131072
+    quantization: "fp4"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    prompt_template_version: "v2-abductive"
+    fallback: "qwen3-4b"
+    benchmark:
+      measured_at: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
     endpoint: "http://127.0.0.1:8002/v1"

@@ -1,0 +1,5 @@
+role: scout
+version: v2-abductive
+output_schema: Candidate
+source_line_numbers: true
+description: "ReasonVul 기반 통제 실험용 abductive Scout; 단일 Candidate; 공통 계약 v2"
