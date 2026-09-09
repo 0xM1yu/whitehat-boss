@@ -1,0 +1,4 @@
+role: scout_boundary
+version: v2
+output_schema: Candidate
+description: 4단계 Scout 풀 · 경계·크기 산술 계열(CWE-119·125·787·190) 트리아지. 계약은 scout/v2와 같고 겨냥하는 CWE 계열만 다르다

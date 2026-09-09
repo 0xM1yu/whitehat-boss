@@ -25,10 +25,25 @@ from src.schemas.run import Budget, Sampling
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 # 프로필에 반드시 있어야 하는 역할. embedding·reranker는 Retriever 구현에 따라 없을 수 있다.
-REQUIRED_ROLES = ("scout", "auditor", "critic")
+#
+# **`scout`이 여기서 빠졌다.** 4단계는 여전히 필수지만 그 자리를 채우는 방식이 둘이 됐고
+# (ADR 0010 §3), "둘 중 하나"는 이 튜플로 표현되지 않는다. 대신 아래
+# `ProfileEntry._declares_one_scout_arrangement`가 본다 — `scout`을 여기 남겨 두면 풀
+# 프로필이 로드 자체를 못 한다.
+REQUIRED_ROLES = ("auditor", "critic")
 
 # `retriever: hybrid`일 때만 추가로 요구되는 역할 (ProfileEntry의 검증기 참조).
 RETRIEVAL_ROLES = ("embedding", "reranker")
+
+# 4단계 Scout 자리를 채우는 두 방식. 프로필은 **단일 `scout` 하나 아니면 풀 셋**을
+# 선언한다(ADR 0010 §3). 두 상수를 붙여 두는 것은 그 배타가 한 화면에서 읽혀야 하기
+# 때문이다.
+#
+# 어느 멤버가 어느 CWE 계열인지는 여기서 정하지 않는다 — 정본은 CONTEXT.md §1 표이고
+# 계약은 `prompts/<role>/v2/prefix.md`가 들고 있다. 이 상수가 아는 것은 "누가 풀
+# 멤버인가"뿐이라, 계열이 재배치돼도 여기는 안 움직인다.
+SCOUT_ROLE = "scout"
+SCOUT_POOL_ROLES = ("scout_memory", "scout_boundary", "scout_injection")
 
 # 프롬프트를 받고 구조화 출력을 내는 역할. `ModelClient`가 만들어지는 유일한 대상이다.
 #
@@ -39,8 +54,16 @@ RETRIEVAL_ROLES = ("embedding", "reranker")
 #
 # `tests/test_config.py::test_prompted_roles_matches_prompt_directories`가 이 상수와
 # `prompts/` 하위 디렉터리의 일치를 강제한다.
+#
+# **풀 셋이 여기 빠지면 그 역할은 `ModelClient`를 아예 못 받는다.**
+# `adapters.factory.build_deps()`가 이 상수를 돌며 클라이언트를 만들고 없는 역할은
+# 조용히 건너뛰므로(`if role in config.profile.roles`), 빠뜨려도 아무것도 안 터지고
+# 4단계가 빈손으로 돈다.
 PROMPTED_ROLES = (
     "scout",
+    "scout_memory",
+    "scout_boundary",
+    "scout_injection",
     "auditor",
     "critic",
     "single",
@@ -212,6 +235,39 @@ class ProfileEntry(HarnessModel):
         missing = [role for role in REQUIRED_ROLES if role not in self.roles]
         if missing:
             raise ValueError(f"프로필에 필수 역할이 없다: {missing}")
+        return self
+
+    @model_validator(mode="after")
+    def _declares_one_scout_arrangement(self) -> "ProfileEntry":
+        """4단계 Scout 자리는 **단일 `scout` 하나 아니면 풀 셋**이다 (ADR 0010 §3).
+
+        ADR이 적는 것은 *"프로필은 `roles:`에 그 셋을 적고, 기존 `scout` 한 역할
+        프로필도 그대로 유효하다(둘 중 하나가 있어야 한다)"*까지다. 아래 셋을 각각
+        막는 근거는 그 한 문장이 아니다.
+
+        - **둘 다 없다** — 4단계에 설 모델이 없다. `REQUIRED_ROLES`에서 `scout`을 뺀
+          대가가 이것이라 여기가 아니면 아무 데서도 안 걸리고, 4단계가 후보 0건을 내면
+          그것이 "취약점이 없었다"로 읽힌다.
+        - **풀이 불완전하다** — 한 CWE 계열을 통째로 안 보는 프로필이 된다. 그 사실이
+          후보 수 감소로만 나타나므로 run 결과만 봐서는 안 보인다.
+        - **둘 다 있다** — ADR이 명시적으로 금지하지는 않는다. 막는 근거는 배선이다:
+          어느 클라이언트가 4단계를 도는지 config만 보고 정할 수 없고, `model_checksums()`
+          가 전 역할을 담으므로 **한 번도 안 돈 역할의 checksum이 기록에 남는다** —
+          아래 `served_models()`가 embedding·reranker로 이미 다루는 것과 같은 종류다.
+        """
+        single = SCOUT_ROLE in self.roles
+        declared = [role for role in SCOUT_POOL_ROLES if role in self.roles]
+        if single and declared:
+            raise ValueError(
+                f"Scout 자리가 둘이다: 단일 {SCOUT_ROLE!r}과 풀 {declared}을 함께 "
+                "선언했다. 한쪽만 남긴다"
+            )
+        if not single and len(declared) != len(SCOUT_POOL_ROLES):
+            missing = [role for role in SCOUT_POOL_ROLES if role not in self.roles]
+            raise ValueError(
+                f"Scout 자리가 비었거나 풀이 불완전하다: 빠짐={missing}. "
+                f"단일 {SCOUT_ROLE!r} 하나 아니면 풀 {list(SCOUT_POOL_ROLES)} 전부다"
+            )
         return self
 
     @model_validator(mode="after")

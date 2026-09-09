@@ -85,6 +85,15 @@ _BASE_SOURCE = "int parse_header(const char *src, size_t len) {\n    char dst[64
 # `capsule_level`에 남긴다.
 ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     Role.SCOUT: (Candidate, CapsuleLevel.LIGHT),
+    # 풀 세 멤버는 4단계의 같은 자리라 계약이 scout과 같다 — 받는 캡슐도 LIGHT이고 내는
+    # 스키마도 Candidate다(ADR 0010 §3). **다른 것은 프롬프트가 겨냥하는 CWE 계열뿐이고,
+    # bench가 재는 것은 계열이 아니라 처리량·메모리라 여기서는 셋이 구분되지 않는다.**
+    # 그러니 세 줄이 같은 값인 것은 복붙이 아니라 측정 대상이 같다는 뜻이다.
+    #
+    # 아래 `Role.SINGLE` 주석의 `KeyError`가 여기도 그대로 걸린다.
+    Role.SCOUT_MEMORY: (Candidate, CapsuleLevel.LIGHT),
+    Role.SCOUT_BOUNDARY: (Candidate, CapsuleLevel.LIGHT),
+    Role.SCOUT_INJECTION: (Candidate, CapsuleLevel.LIGHT),
     Role.AUDITOR: (Finding, CapsuleLevel.EXPANDED),
     Role.CRITIC: (Decision, CapsuleLevel.EXPANDED),
     # 단일패스는 셋을 한 호출로 한다. 스키마와 레벨을 **지어내지 않고 프롬프트가 선언한

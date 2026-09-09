@@ -11,6 +11,26 @@ class Role(StrEnum):
     """실행 계약의 역할 (agent-contracts.md §1)."""
 
     SCOUT = "scout"
+    # 4단계 Scout 풀 (ADR 0010 §3). 한 대상을 셋이 각각 보고, 임계값을 넘은 후보를 고르지도
+    # 합치지도 않고 각각 5단계로 보낸다. 겨냥하는 CWE 계열이 멤버마다 다르고 그 배정의
+    # 정본은 CONTEXT.md §1 표다 — memory는 CWE-415·416, boundary는 CWE-119·125·787·190,
+    # injection은 CWE-78·22·134이며, 계열을 여기 값으로 박지 않는 이유는 배정이 첫 run의
+    # 공동오답 행렬로 바뀔 수 있기 때문이다.
+    #
+    # **왜 `Role` 셋이고 `roles`를 리스트로 넓히는 것이 아닌가.** ADR 0010 §3이 파급을
+    # 직접 셌다 — `RunRecord.model_checksums`·`prompt_versions`·`ProducedBy.role`·
+    # `RoutingModelClient`·역할별 토큰 카운터가 **전부 역할 키로 이미 동작한다.** 역할로
+    # 두면 그 다섯을 고칠 것이 없고 멤버별 checksum·프롬프트 버전·발화 기록이 공짜로
+    # 남는다. 리스트였다면 다섯 곳 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다.
+    #
+    # **`SCOUT`은 남는다.** `b1_single`·`single_gpu_12g`·`dev_*`가 아직 그쪽이고, 프로필은
+    # 단일 `scout` 하나 아니면 이 셋을 선언한다(`config.ProfileEntry`가 그 배타를 본다).
+    #
+    # 아래 `SINGLE` 주석이 적은 함정이 여기도 그대로다 — `config.PROMPTED_ROLES`와
+    # `bench.ROLE_SPEC`에 함께 넣지 않으면 프롬프트 검사·bench 경로가 각각 죽는다.
+    SCOUT_MEMORY = "scout_memory"
+    SCOUT_BOUNDARY = "scout_boundary"
+    SCOUT_INJECTION = "scout_injection"
     AUDITOR = "auditor"
     CRITIC = "critic"
     JUDGE = "judge"

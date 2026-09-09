@@ -23,6 +23,7 @@ from src.config import (
     PROMPTED_ROLES,
     REQUIRED_ROLES,
     RETRIEVAL_ROLES,
+    SCOUT_POOL_ROLES,
     Benchmark,
     ConfigError,
     HarnessConfig,
@@ -368,6 +369,105 @@ def test_profile_without_required_role_is_rejected() -> None:
                 "budget": "dev_fake",
             }
         )
+
+
+def _scout_arrangement(**roles: str) -> dict[str, object]:
+    """Scout 자리만 갈아 끼우는 프로필 원본. 나머지 역할·어댑터는 고정한다."""
+    return {
+        "description": "scout 자리 검증용",
+        "roles": {"auditor": "fake", "critic": "fake", **roles},
+        "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+        "budget": "dev_fake",
+    }
+
+
+def test_a_profile_declaring_the_scout_pool_loads() -> None:
+    """풀 셋만 선언한 프로필이 선다 (ADR 0010 §3).
+
+    *"프로필은 `roles:`에 그 셋을 적고, 기존 `scout` 한 역할 프로필도 그대로
+    유효하다(둘 중 하나가 있어야 한다)."* 이 방향이 막혀 있었다 — `REQUIRED_ROLES`가
+    `scout`을 무조건 요구해서, 풀 프로필은 **로드 자체가 안 됐다.**
+    """
+    entry = ProfileEntry.model_validate(
+        _scout_arrangement(scout_memory="fake", scout_boundary="fake", scout_injection="fake")
+    )
+
+    assert set(SCOUT_POOL_ROLES) <= set(entry.roles)
+    assert "scout" not in entry.roles
+
+
+def test_a_profile_declaring_the_single_scout_still_loads() -> None:
+    """기존 단일 `scout` 프로필은 그대로 유효하다 (ADR 0010 §3의 "둘 중 하나").
+
+    `config/profiles.yaml`의 프로필이 **현재 전부** 이쪽이라, 이 방향이 막히면 저장소의
+    프로필이 하나도 안 선다. 개수는 적지 않는다 — 프로필이 늘고 주는 값이라
+    `test_source_prose_does_not_carry_a_stale_profile_count`가 잡는 자리다.
+    """
+    entry = ProfileEntry.model_validate(_scout_arrangement(scout="fake"))
+
+    assert "scout" in entry.roles
+    assert not set(SCOUT_POOL_ROLES) & set(entry.roles)
+
+
+def test_a_profile_with_neither_a_single_scout_nor_the_pool_is_rejected() -> None:
+    """4단계를 설 사람이 없는 프로필은 로드 시점에 막는다.
+
+    `REQUIRED_ROLES`에서 `scout`을 뺀 것의 대가가 이것이다 — 아무 조치도 안 하면
+    Scout 없는 프로필이 조용히 로드되고, 4단계에서 후보가 0건인 run이 "취약점이
+    없었다"로 읽힌다.
+    """
+    with pytest.raises(ValidationError, match="Scout 자리"):
+        ProfileEntry.model_validate(_scout_arrangement())
+
+
+def test_a_profile_declaring_only_part_of_the_pool_is_rejected() -> None:
+    """풀은 셋 전부이거나 하나도 없거나다.
+
+    둘만 선언하면 그 프로필은 **한 CWE 계열을 통째로 안 본다**([CONTEXT.md](../CONTEXT.md)
+    §1의 계열 배정). 그 사실이 후보 수 감소로만 나타나므로 run 결과만 봐서는 안 보인다.
+    """
+    with pytest.raises(ValidationError, match="Scout 자리"):
+        ProfileEntry.model_validate(
+            _scout_arrangement(scout_memory="fake", scout_boundary="fake")
+        )
+
+
+def test_a_profile_declaring_both_the_single_scout_and_the_pool_is_rejected() -> None:
+    """단일 `scout`과 풀을 함께 선언하면 4단계 배선이 정해지지 않는다.
+
+    ADR 0010 §3은 *"둘 중 하나가 있어야 한다"*까지만 적고 겹침을 명시적으로 금지하지는
+    않는다. 여기서 막는 근거는 그 문장이 아니라 배선이다 — 둘 다 있으면 어느 클라이언트가
+    4단계를 도는지 config만 보고 정할 수 없고, `RunRecord.model_checksums`에 실제로 돌지
+    않은 역할의 해시가 남는다.
+    """
+    with pytest.raises(ValidationError, match="Scout 자리"):
+        ProfileEntry.model_validate(
+            _scout_arrangement(
+                scout="fake",
+                scout_memory="fake",
+                scout_boundary="fake",
+                scout_injection="fake",
+            )
+        )
+
+
+def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
+    """풀 세 멤버의 프롬프트 버전 집합이 서로 같다 (ADR 0010 §6).
+
+    *"풀 세 멤버가 다른 버전이면 같은 단계에 다른 계약이 섞이므로 풀은 한 버전이어야
+    한다."* 한 멤버에만 새 버전을 올리는 것이 그 혼합을 만드는 가장 싼 길이라 여기서
+    막는다.
+
+    **어느 버전인지는 단언하지 않는다.** 이 파일 머리의 규약대로 값이 아니라 불변식만
+    고정한다 — `v2`를 박으면 버전을 올릴 때 테스트를 맞추게 된다.
+    """
+    root = CONFIG_DIR.parent / "prompts"
+    versions = {
+        role: frozenset(d.name for d in (root / role).iterdir() if d.is_dir())
+        for role in SCOUT_POOL_ROLES
+    }
+
+    assert len(set(versions.values())) == 1, f"풀 멤버의 프롬프트 버전이 갈렸다: {versions}"
 
 
 def test_unknown_adapter_name_is_rejected() -> None:
