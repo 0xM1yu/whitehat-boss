@@ -19,9 +19,23 @@ class Role(StrEnum):
     #
     # **왜 `Role` 셋이고 `roles`를 리스트로 넓히는 것이 아닌가.** ADR 0010 §3이 파급을
     # 직접 셌다 — `RunRecord.model_checksums`·`prompt_versions`·`ProducedBy.role`·
-    # `RoutingModelClient`·역할별 토큰 카운터가 **전부 역할 키로 이미 동작한다.** 역할로
-    # 두면 그 다섯을 고칠 것이 없고 멤버별 checksum·프롬프트 버전·발화 기록이 공짜로
-    # 남는다. 리스트였다면 다섯 곳 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다.
+    # `RoutingModelClient` **넷은 역할 키로 이미 동작한다**(`config.model_checksums()`와
+    # `prompt_versions()`가 `profile.roles`를 그대로 돌고, `ProducedBy.role`이 `Role`이며,
+    # `RoutingModelClient.client_for`가 `role.value`로 색인한다). 역할로 두면 그 넷은 고칠
+    # 것이 없고 멤버별 checksum·프롬프트 버전·발화 기록이 공짜로 남는다. 리스트였다면 그
+    # 넷 전부에 "리스트의 몇 번째"라는 좌표를 새로 파야 한다.
+    #
+    # ⚠ **ADR이 다섯째로 센 「역할별 토큰 카운터」는 아직 그렇지 않다 — 고칠 것이 0이
+    # 아니다.** `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
+    # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 러너도 `_triage_one`에서
+    # `counter_for_role(Role.SCOUT.value)`를 부르고 `nodes/scout.py`는 `ROLE = Role.SCOUT`
+    # 하나다. 즉 풀 멤버가 4단계를 도는 배선이 오는 날 **역할 카운터는 따라오지 않고**,
+    # 그 run의 캡슐은 기본 카운터(글자수 근사)로 회계된다.
+    #
+    # **여기서 `COUNTED_ROLES`를 늘려 앞질러 가지 않는다.** 러너가 안 켜는 역할을 늘리면
+    # `Deps.counter_report`가 그 역할을 `token_counter` 이벤트에 실어 기록이 거짓이 된다 —
+    # `src/tokens.py`가 "켜지지 않는 역할을 기록에 실으면 거짓 정보다"로 적은 그것이다.
+    # 늘리는 것은 러너를 옮기는 PR의 몫이고, 그 PR이 이 문단을 지운다.
     #
     # **`SCOUT`은 남는다.** `b1_single`·`single_gpu_12g`·`dev_*`가 아직 그쪽이고, 프로필은
     # 단일 `scout` 하나 아니면 이 셋을 선언한다(`config.ProfileEntry`가 그 배타를 본다).

@@ -31,7 +31,7 @@ from src.config import (
     ProfileEntry,
     load_config,
 )
-from src.orchestrator.prompt_loader import load_prompt
+from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -268,6 +268,29 @@ def test_every_prompt_version_on_disk_loads(directory: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> None:
+    """프로필이 **고른** 프롬프트 버전이 디스크에 실재한다.
+
+    바로 위 `test_every_prompt_version_on_disk_loads`는 반대 방향이다 — 디스크에 올라온
+    것이 로더를 통과하는지만 본다. **고르는 쪽은 registry의 `prompt_template_version`**
+    이고, 그 값이 없는 디렉터리를 가리켜도 `load_config`는 통과한다: 프롬프트는 해당
+    역할의 첫 모델 호출에서 처음 열리므로 **GPU 시간을 쓴 뒤에 죽는다.** `cli doctor`의
+    `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다.
+
+    지금 저장소의 프로필은 전부 단일 `scout`이고 registry가 전부 `v1`이라 통과한다.
+    이 검사가 서는 자리는 **풀 프로필이 `config/profiles.yaml`에 들어오는 순간**이다 —
+    풀 세 역할의 프롬프트 디렉터리는 `v2`만 있어서(D54) 그 프로필은 여기서 먼저 죽는다.
+    """
+    config = load_config(profile)
+
+    for role in PROMPTED_ROLES:
+        if role not in config.profile.roles:
+            continue
+        version = config.model_for(role).prompt_template_version
+        assert load_prompt(Role(role), version).version == version
+
+
 def test_every_prompted_role_is_a_real_role() -> None:
     """`Role(role)`이 `PROMPTED_ROLES`의 모든 값에 대해 성립한다.
 
@@ -436,9 +459,15 @@ def test_a_profile_declaring_both_the_single_scout_and_the_pool_is_rejected() ->
     """단일 `scout`과 풀을 함께 선언하면 4단계 배선이 정해지지 않는다.
 
     ADR 0010 §3은 *"둘 중 하나가 있어야 한다"*까지만 적고 겹침을 명시적으로 금지하지는
-    않는다. 여기서 막는 근거는 그 문장이 아니라 배선이다 — 둘 다 있으면 어느 클라이언트가
-    4단계를 도는지 config만 보고 정할 수 없고, `RunRecord.model_checksums`에 실제로 돌지
-    않은 역할의 해시가 남는다.
+    않는다. 여기서 막는 근거는 그 문장이 아니라 배선이다 — 둘 다 있으면 **4단계를 어느
+    클라이언트가 도는지 config만 보고 정할 수 없고**, 그 선택이 코드 어딘가의 우선순위로
+    내려가면 프로필은 두 배선을 같은 모양으로 적으면서 다른 run을 낸다.
+
+    ⚠ **"안 돈 역할의 해시가 `model_checksums`에 남는다"는 근거가 아니다.** 이 저장소는
+    그 상태를 이미 정당한 것으로 다룬다 — `retriever: fake` 프로필의 embedding·reranker가
+    정확히 그것이고, `served_models()`가 *"선언 자체는 지우지 않는다 … 그래서
+    기록(`model_checksums`)은 그대로 두고 판정 대상만 좁힌다"*로 그 판단을 적어 놓았다(위
+    `test_served_models_skips_roles_this_profile_never_wires`가 그 계약을 고정한다).
     """
     with pytest.raises(ValidationError, match="Scout 자리"):
         ProfileEntry.model_validate(
@@ -468,6 +497,93 @@ def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
     }
 
     assert len(set(versions.values())) == 1, f"풀 멤버의 프롬프트 버전이 갈렸다: {versions}"
+
+
+# ADR 0010 §2가 4단계 풀 세 자리에 앉힌 registry 키. auditor·critic은 계열이 갈리는
+# 쌍이라(`qwen` × `mistral`) `_check_family_split`을 지난다.
+#
+# **`fake`로 대신하지 않는다.** 아래 두 검사가 보는 것은 「풀 역할이 고른 버전의
+# 디렉터리가 있는가」이고, 그 값을 실제로 움직일 PR은 로스터 모델의
+# `prompt_template_version`을 올리는 쪽이다(D54의 다음 입력). `fake`를 쓰면 그 PR이
+# 이 검사를 안 건드리고 지나간다.
+_POOL_PROFILE_ROLES = {
+    "scout_memory": "qwen3-coder-30b-a3b",
+    "scout_boundary": "devstral-small-2-24b",
+    "scout_injection": "qwen3-8b",
+    "auditor": "qwen3-coder-30b-a3b",
+    "critic": "devstral-small-2-24b",
+}
+
+
+def _scout_pool_prompt_version() -> str:
+    """풀 세 멤버가 **공통으로** 가진 프롬프트 버전 하나.
+
+    값을 박지 않는 것은 이 파일 머리의 규약이다 — `v2`를 적으면 버전을 올릴 때 값이
+    아니라 테스트를 맞추게 된다. 공통 버전이 하나뿐인지는 바로 위
+    `test_the_scout_pool_shares_one_prompt_version_on_disk`가 따로 본다.
+    """
+    root = CONFIG_DIR.parent / "prompts"
+    shared = set.intersection(
+        *({d.name for d in (root / role).iterdir() if d.is_dir()} for role in SCOUT_POOL_ROLES)
+    )
+    assert shared, "풀 세 멤버가 공통으로 가진 프롬프트 버전이 없다"
+    return max(shared)
+
+
+def test_a_scout_pool_profile_resolves_every_prompt_it_declares(tmp_path: Path) -> None:
+    """풀 프로필을 **`load_config`로 세워** 프롬프트까지 실제로 연다.
+
+    풀 검사 다섯이 전부 `ProfileEntry.model_validate`에서 멈춰 있었다 — 스키마가 셋을
+    받아들이는지만 보고, 그 프로필이 **고른 버전의 프롬프트가 열리는지**는 아무도 안
+    봤다. 4단계 배선이 실제로 하는 일은 `load_config` → `model_for(role)
+    .prompt_template_version` → `load_prompt`이고, 그 사슬이 이어지는지는 여기서만 걸린다.
+
+    registry가 그 버전을 고르게 하려고 `model_patch`로 세 모델의
+    `prompt_template_version`을 디스크에 있는 값으로 올린다. **저장소 registry는 아직
+    그 값이 아니다** — 그 사실 자체는 아래 검사가 따로 고정한다.
+    """
+    version = _scout_pool_prompt_version()
+    _copy_config(
+        tmp_path,
+        profile_patch={"roles": dict(_POOL_PROFILE_ROLES)},
+        model_patch={
+            key: {"prompt_template_version": version} for key in set(_POOL_PROFILE_ROLES.values())
+        },
+    )
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    for role in SCOUT_POOL_ROLES:
+        template = load_prompt(Role(role), config.model_for(role).prompt_template_version)
+        assert template.role is Role(role)
+        assert config.prompt_versions()[role] == version
+
+
+def test_the_prompt_version_a_scout_pool_would_select_is_not_on_disk_yet(tmp_path: Path) -> None:
+    """**지금은 열리지 않는다.** 그 간극을 스위트가 들고 있게 한다 (D54 · 이슈 #103).
+
+    registry 7항목이 전부 `prompt_template_version: "v1"`인데 풀 세 역할의 프롬프트
+    디렉터리는 `v2`뿐이다. 그래서 풀 프로필은 **로드되고, `prompt_versions()`도 멀쩡한
+    맵을 내고**, 4단계 첫 호출에서 죽는다 — `run`이 `doctor`를 부르지 않으므로 그때는
+    이미 GPU 시간을 쓴 뒤다.
+
+    **여기서 registry를 v2로 올리지 않는다.** 어느 조건이 어느 버전을 쓰는가는 D54의
+    미결이고, 그 항목은 *"로스터 모델의 `prompt_template_version`을 v2로 올리는 PR"*을
+    다음 입력으로 적으면서 **그 PR로도 닫히지 않는다**고 못박는다. 이 PR이 하는 것은
+    간극을 보이게 만드는 것까지다.
+
+    ⚠ **그 PR이 이 검사를 뒤집는다.** 뒤집히면 지울 것은 이 검사이고, 위
+    `test_a_scout_pool_profile_resolves_every_prompt_it_declares`가 그 자리를 대신한다.
+    """
+    _copy_config(tmp_path, profile_patch={"roles": dict(_POOL_PROFILE_ROLES)})
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    # 로드도 기록도 멀쩡해 보인다 — 그것이 이 함정의 전부다.
+    assert set(SCOUT_POOL_ROLES) <= set(config.prompt_versions())
+    for role in SCOUT_POOL_ROLES:
+        with pytest.raises(PromptError, match="프롬프트 파일이 없다"):
+            load_prompt(Role(role), config.model_for(role).prompt_template_version)
 
 
 def test_unknown_adapter_name_is_rejected() -> None:
@@ -677,6 +793,36 @@ def test_a_family_unknown_model_does_not_pass_the_cross_check(tmp_path: Path) ->
         load_config("dev_fake", config_dir=tmp_path)
 
 
+@pytest.mark.parametrize("written", ["Qwen", "QWEN", " qwen", "qwen "])
+def test_the_family_check_reads_case_and_padding_as_the_same_family(
+    tmp_path: Path, written: str
+) -> None:
+    """`family`는 자유 문자열이라 대소문자·앞뒤 공백이 실제로 갈릴 수 있다.
+
+    `ModelEntry.family`를 `Literal`로 닫지 않은 것은 의도다 — 로스터가 계속 바뀌므로
+    registry에 모델을 더할 때마다 코드가 따라오면 안 된다. **그 대가가 표기 흔들림**이고,
+    원문 그대로 비교하면 `'Qwen'`과 `'qwen'`이 서로 다른 계열로 통과한다. D59가 막으려던
+    "잘못된 짝이 조용히 지나간다"가 바로 그 길로 새어 나간다 — 검사가 있다고 믿는 채로
+    아무것도 안 잡는 상태라 원래보다 나쁘다(CLAUDE.md §0).
+
+    **타입은 계속 열어 둔다.** 좁히는 것은 비교뿐이다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "fake",
+                "auditor": "qwen3-coder-30b-a3b",  # family: qwen
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        model_patch={"devstral-small-2-24b": {"family": written}},
+    )
+
+    with pytest.raises(ConfigError, match="계열"):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
 def test_b1_puts_one_model_in_every_role_and_still_loads() -> None:
     """B1은 **정의상** auditor와 critic이 같은 모델이다 — 막으면 안 된다.
 
@@ -732,10 +878,12 @@ def test_execution_defaults_preserve_todays_behaviour() -> None:
 def test_swap_without_per_stage_is_rejected() -> None:
     """교대는 **단계 단위에서만** 선언할 수 있다 (ADR 0009 불변식 1).
 
-    후보 단위 + 교대는 `swap.md` §6.2가 센 **512회 교대**의 조합이다. 후보 하나가
-    3~6단계를 관통하므로 교대가 후보 수만큼 곱해지고, 왕복이 아직 미실측인 지금
-    (§1.3 — "2~6초"는 `/v1/models` 응답까지만 본 값이라 설계 예산으로 못 쓴다) 그
-    조합이 도는 순간 run 시간의 대부분을 어디에 썼는지 사후에 못 가른다.
+    후보 단위 + 교대는 `swap.md` §6.2의 **512회 교대[계산]** 조합이다 — `candidate_max:
+    256`에 후보당 왕복 2회를 곱한 값이고, 그 표의 열 이름이 "비용 [계산]"이다. 아무도
+    교대를 512번 세어 보지 않았다(CLAUDE.md §0). 후보 하나가 3~6단계를 관통하므로 교대가
+    후보 수만큼 곱해지고, 왕복이 아직 미실측인 지금(§1.3 — "2~6초"는 `/v1/models`
+    응답까지만 본 값이라 설계 예산으로 못 쓴다) 그 조합이 도는 순간 run 시간의 대부분을
+    어디에 썼는지 사후에 못 가른다.
     **스키마가 막는다** — 그 자리에서 실패하지 않으면 GPU 시간을 쓰고 나서 안다.
     """
     with pytest.raises(ValidationError, match="per_stage"):
@@ -837,6 +985,80 @@ def test_per_stage_without_swap_is_allowed() -> None:
 
     assert entry.execution is not None
     assert entry.execution.swap is None
+
+
+def _per_stage_swap(**swap: object) -> dict[str, object]:
+    """`swap` 블록만 갈아 끼우는 프로필 원본. 나머지는 통과하는 값으로 고정한다."""
+    return {
+        "description": "x",
+        "roles": {"scout": "fake", "auditor": "fake", "critic": "fake"},
+        "adapters": {"retriever": "fake", "tool_runner": "fake", "state_store": "memory"},
+        "budget": "dev_fake",
+        "execution": {
+            "mode": "per_stage",
+            "swap": {"level": 1, "settle_timeout_s": 30.0, **swap},
+        },
+    }
+
+
+def test_a_swap_that_wakes_nobody_is_rejected() -> None:
+    """`swappable`이 빈 교대 선언은 막는다 — **ADR 0009의 두 불변식이 아니다.**
+
+    `SwapPolicy`의 docstring이 네 값에 기본을 안 주는 이유로 *"`swap: {}`이 「교대한다」고
+    선언하면서 아무 역할도 안 부르는 상태"*를 든다. 그런데 `resident: []` +
+    `swappable: []`가 그대로 통과해 **정확히 그 상태**를 만들었다 — 사유를 적고 강제하지
+    않으면 다음 사람은 그 사유가 강제되는 것으로 읽는다.
+
+    교대하지 않는 배선의 정본 표현은 `swap`을 **생략하는** 것이고 그쪽은 지금도 정당하다
+    (`test_per_stage_without_swap_is_allowed`). 같은 뜻을 적는 두 번째 길이 있는데 그쪽만
+    「정책이 선 것처럼」 보이는 것이 이 검사가 막는 것이다.
+    """
+    with pytest.raises(ValidationError, match="swappable"):
+        ProfileEntry.model_validate(_per_stage_swap(resident=[], swappable=[]))
+    with pytest.raises(ValidationError, match="swappable"):
+        ProfileEntry.model_validate(
+            _per_stage_swap(resident=["scout", "auditor", "critic"], swappable=[])
+        )
+
+
+def test_a_role_in_both_swap_lists_is_rejected() -> None:
+    """한 역할이 상주이면서 교대일 수는 없다 — 이것도 ADR의 둘이 아니다.
+
+    "재우지 않는다"와 "단계 경계에서 재운다"를 같은 역할에 함께 선언한 것이라, 어느 쪽이
+    이기는지 **config만 보고 정할 수 없다.** 배선하는 사람이 아무 쪽이나 고르면 그 run은
+    메모리가 왜 그만큼인지 설명할 수 없는 상태로 끝난다.
+    """
+    with pytest.raises(ValidationError, match="상주"):
+        ProfileEntry.model_validate(
+            _per_stage_swap(resident=["critic", "scout"], swappable=["scout", "auditor"])
+        )
+
+
+def test_a_repeated_role_in_one_swap_list_is_rejected() -> None:
+    """한 목록 안의 중복도 막는다.
+
+    두 목록은 역할 **집합**이고, 같은 이름이 두 번 적힌 것의 유일한 효과는 그 사실을
+    눈에서 가리는 것이다(병합 산물이거나 오타다). `resident`가 비는 것은 막지 않는다 —
+    전부 교대시키는 정책은 말이 되므로 여기서 판단할 것이 아니다.
+    """
+    with pytest.raises(ValidationError, match="두 번"):
+        ProfileEntry.model_validate(
+            _per_stage_swap(resident=["critic"], swappable=["scout", "scout"])
+        )
+
+
+def test_an_empty_resident_list_is_still_accepted() -> None:
+    """상주가 없는 정책(전부 교대)은 정당하다 — 위 셋이 여기까지 번지면 안 된다.
+
+    거부만 검사하면 `swap`을 통째로 좁히는 구현도 스위트를 지난다
+    (`test_a_complete_swap_declaration_on_per_stage_is_accepted`와 같은 이유).
+    """
+    entry = ProfileEntry.model_validate(_per_stage_swap(resident=[], swappable=["scout"]))
+
+    assert entry.execution is not None
+    assert entry.execution.swap is not None
+    assert entry.execution.swap.resident == ()
+    assert entry.execution.swap.swappable == ("scout",)
 
 
 def test_an_unknown_execution_key_is_rejected() -> None:
