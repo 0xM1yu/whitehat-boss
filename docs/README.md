@@ -9,6 +9,7 @@
 
 | 문서 | 다루는 것 | 주 독자 |
 | --- | --- | --- |
+| **[CONTEXT.md](../CONTEXT.md)** | **모델 로스터·인덱서의 정본.** 모델을 현재형으로 읽기 전에 여기부터 (CLAUDE.md §7) | 전원 |
 | [architecture.md](architecture.md) | 파이프라인 단계, 구성 요소 책임, 상태 전이 | 전원 |
 | [agent-contracts.md](agent-contracts.md) | 역할별 실행 계약, 입출력 스키마, 프롬프트 규약 | 하네스/에이전트 담당 |
 | [knowledge-base.md](knowledge-base.md) | KB 6계층, Evidence Store, Hybrid Retrieval, Context Capsule | 검색/데이터 담당 |

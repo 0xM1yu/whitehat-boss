@@ -188,6 +188,7 @@ python -m pytest -q
 
 | 알고 싶은 것 | 문서 |
 | --- | --- |
+| **어느 모델이 어느 자리인가 · 인덱서** | **[CONTEXT.md](CONTEXT.md) — 정본. §7의 규칙이 이것이다** |
 | 전체 구조 · 단계별 책임 · 근거 등급 E0~E4 | `docs/architecture.md` |
 | **앞으로 무엇을 어느 순서로 짓는가** | [docs/build-plan.md](docs/build-plan.md) |
 | 역할별 실행 계약 · 프롬프트 규약 | `docs/agent-contracts.md` |

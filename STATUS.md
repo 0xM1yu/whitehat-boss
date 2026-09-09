@@ -367,7 +367,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 마지막 항목만 bench 범위 밖이다 — 고정 반박 표본이 있어야 답이 나온다(평가셋 준비 중).
 ⚠ **그 항목의 전제는 2026-09-09에 사라졌다** — 위 체크박스 문구는
-`src/bench_report.py`의 `CHECKLIST`와 같은 것이고 **코드는 아직 안 고쳤다.** 무엇이
+`src/bench_report.py`의 `CHECKLIST`와 같은 것이고 **2026-09-09에 그 줄을 고쳤다**(#93 재정의 반영). 무엇이
 무너졌고 무엇이 대신 서는지는 [model-serving.md](docs/model-serving.md) §4 머리와
 [D4](docs/open-questions/D/D4.md)가 적는다.
 
