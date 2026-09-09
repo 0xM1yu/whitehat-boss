@@ -433,10 +433,25 @@ def test_unmeasured_models_are_reported_not_blocked() -> None:
 # --- 헬퍼 ------------------------------------------------------------------
 
 
-def _copy_config(dest: Path, *, profile_patch: dict) -> None:
-    """저장소 config를 tmp_path로 복사하고 dev_fake 프로필만 덮어쓴다."""
-    for name in ("models.yaml", "budgets.yaml"):
-        (dest / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
+def _copy_config(dest: Path, *, profile_patch: dict, model_patch: dict | None = None) -> None:
+    """저장소 config를 tmp_path로 복사하고 dev_fake 프로필만 덮어쓴다.
+
+    `model_patch`(model key → 덮어쓸 필드)를 주면 registry 항목도 함께 바꾼다. 그때만
+    models.yaml이 yaml 왕복을 거치므로 **주석이 사라진다** — 주석이 살아 있어야 하는
+    검사는 원문 치환을 쓴다(`test_partially_measured_models_are_named_with_what_is_missing`).
+    """
+    budgets = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
+    (dest / "budgets.yaml").write_text(budgets, encoding="utf-8")
+    models_text = (CONFIG_DIR / "models.yaml").read_text("utf-8")
+    if model_patch is None:
+        (dest / "models.yaml").write_text(models_text, encoding="utf-8")
+    else:
+        raw_models = yaml.safe_load(models_text)
+        for key, patch in model_patch.items():
+            raw_models["models"][key].update(patch)
+        (dest / "models.yaml").write_text(
+            yaml.safe_dump(raw_models, allow_unicode=True), encoding="utf-8"
+        )
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
     raw["profiles"]["dev_fake"].update(profile_patch)
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
@@ -492,3 +507,84 @@ def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path
     assert config.partially_measured_models() == {"qwen3-4b": ("mem_gb_ctx8k",)}
     # 부분 측정은 "아직 안 쟀다"와 다르다 — 두 목록이 겹치면 안 된다.
     assert "qwen3-4b" not in config.unmeasured_models()
+
+
+# --- 계열 규칙 (ADR 0010 §4 · 이슈 #121) ---------------------------------------
+
+
+def test_every_registry_entry_declares_its_family() -> None:
+    """registry 전 항목이 `family`를 선언한다.
+
+    이 필드가 비면 아래 교차검사가 **판정을 못 한다**. 그런데 못 하는 것과 통과하는 것이
+    같아 보이므로, 항목 하나가 비어 있으면 그 모델을 Critic에 꽂는 프로필이 검사를
+    지나가 버린다 — 이 항목(#121)이 지적한 "틀려도 아무것도 안 잡는다"가 그대로 돌아온다.
+
+    새 모델을 registry에 올리는 사람이 이 줄을 빠뜨리면 여기서 먼저 걸린다.
+    """
+    models = load_config("dev_fake").models
+
+    unnamed = sorted(key for key, entry in models.items() if entry.family is None)
+    assert unnamed == [], f"계열 미상 registry 항목: {unnamed}"
+
+
+def test_a_critic_from_the_same_family_as_the_auditor_is_rejected(tmp_path: Path) -> None:
+    """Auditor와 Critic이 같은 계열이면 **로드에서** 막힌다 (ADR 0010 §4).
+
+    evaluation.md §2.1이 B3/B3'의 조건으로 "제작사가 다른 모델"을 못박는데, 그것을
+    검사하는 코드가 저장소에 없었다(#121). 어긋나면 조용히 어긋난다 — 프로필 한 줄로
+    Critic이 Auditor와 같은 계열이 되어도 그 run은 `B3prime@...` 라벨을 달고 완주하고,
+    registry에 계열을 적을 칸이 없어 **사후에도 자동으로 못 가린다.**
+
+    여기서 쓰는 쌍(`qwen3-coder-30b-a3b` × `qwen3-8b`)은 registry에 실재하는 모델
+    둘이고 키가 다르다 — 즉 지금 프로필에 그대로 적을 수 있는 조합이다. 그것이 이
+    검사가 막아야 하는 실물이다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "fake",
+                "auditor": "qwen3-coder-30b-a3b",
+                "critic": "qwen3-8b",
+            }
+        },
+    )
+
+    with pytest.raises(ConfigError, match="계열"):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+def test_a_family_unknown_model_does_not_pass_the_cross_check(tmp_path: Path) -> None:
+    """계열이 **미상**인 모델은 통과가 아니다 (CLAUDE.md §0).
+
+    미상을 "다르다"로 읽으면 이 검사는 `family:`를 안 적는 것만으로 우회된다 — 강제
+    장치가 있다고 믿는 채로 아무것도 안 잡는 상태가 되고, 그것이 #121이 지적한 원래
+    상태보다 나쁘다. 값이 없다는 것은 판정할 근거가 없다는 뜻이므로 여기서 실패한다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "fake",
+                "auditor": "qwen3-coder-30b-a3b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        model_patch={"devstral-small-2-24b": {"family": None}},
+    )
+
+    with pytest.raises(ConfigError, match="계열"):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+def test_b1_puts_one_model_in_every_role_and_still_loads() -> None:
+    """B1은 **정의상** auditor와 critic이 같은 모델이다 — 막으면 안 된다.
+
+    build-plan §8이 요구하는 "항상 최강 단일 멤버와 비교"의 그 조건이고, 계열 검사가
+    단순 부등이면 이 프로필이 로드에서 죽어 **비교표의 기준선이 통째로 사라진다**
+    (ADR 0010 §4 "같은 키(B1)는 정의상 허용한다").
+    """
+    config = load_config("b1_single")
+
+    assert config.model_key_for("auditor") == config.model_key_for("critic")
+    assert config.model_for("auditor").family == config.model_for("critic").family
