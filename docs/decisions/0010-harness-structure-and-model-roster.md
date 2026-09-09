@@ -1,6 +1,6 @@
-# 0010. 하네스 구조와 모델 로스터 확정 — Scout 풀 3역할 · Auditor Qwen3.6-35B-A3B · Critic gpt-oss-20b · 단계 단위 실행
+# 0010. 하네스 구조와 모델 로스터 확정 — Scout 풀 3역할 · Auditor A/B · Critic gpt-oss-20b · 단계 단위 실행 · Joern 슬라이서
 
-- 상태: **제안** — 2026-09-06 @danielcho02 초안. **@sumin0218의 최종 리뷰 뒤 팀이 확정한 구조로 간다** — 그 리뷰가 이 PR의 머지이고, 머지 전까지 아래 「결정」은 전부 제안이다. Scout·인덱서·Auditor·Critic 어느 자리도 아직 닫힌 것이 아니다
+- 상태: **승인** — 2026-09-06 @danielcho02 초안, **2026-09-09 @danielcho02 확정.** 아래 「결정」은 이제 정본이고 **저장소가 이 로스터를 바라본다**(→ [CONTEXT.md](../../CONTEXT.md)). ⚠ **모델은 계속 바뀐다** — 팀이 실험하며 정하는 중이고, 바꾸는 비용을 낮게 유지하는 것이 이 문서의 설계 목표다(「되돌리는 비용」). **바뀔 때 고치는 자리는 CONTEXT.md와 registry이지 문서 전부가 아니다.** @sumin0218 리뷰는 폐기되지 않았다 — 아래 「리뷰에서 정할 것」에 남은 셋이 그 몫이고, 로스터를 막지 않는다
 - 일자: 2026-09-06
 - 관련: [docs/research/2026-09-04-models.md](../research/2026-09-04-models.md) §2·§3.4·§3.5·§5, [docs/research/2026-09-04-quantization.md](../research/2026-09-04-quantization.md), [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §6·§7, `ADR 0009`, [build-plan.md](../build-plan.md) §2·§4·§7·§8, [model-serving.md](../model-serving.md) §1·§2, [evaluation.md](../evaluation.md) §2.1, [D9](../open-questions/D/D9.md)·[D59](../open-questions/D/D59.md)·[D63](../open-questions/D/D63.md)·[D64](../open-questions/D/D64.md), [R2](../open-questions/R/R2.md)·[R8](../open-questions/R/R8.md), [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), 중간발표 v3 슬라이드 10·18·23, 하네스 리스트럭처 계획(2026-09-04, @sumin0218·@danielcho02 — 로컬 노트 `.claude/restructure-2026-09-04.md`, 저장소 밖)
 
@@ -44,10 +44,10 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 들어왔는지와 무관하게 같은 것을 가리킨다. **0009를 들고 오는 PR은 #147이다**(2026-09-09 조회
 기준 `origin/main`에 없다). 들어온 뒤에는 `docs/decisions/`에서 번호로 찾는다.
 
-### ② 2026-09-08 조사 다섯이 이 로스터의 세 자리를 흔든다
+### ② 2026-09-08 조사 다섯이 흔든 세 자리 — **2026-09-09에 조사 쪽으로 확정했다**
 
 [research/2026-09-08-roster.md](../research/2026-09-08-roster.md)와 그 근거 넷이다.
-**아래 §2 표와 갈리는 자리만 적는다.**
+**아래 §2 표와 갈렸던 자리만 적는다. 셋 다 「09-08 조사」 열이 §2에 반영됐다** — 아래 표는 그 판단의 근거 기록이다.
 
 | 자리 | 이 초안 (§2) | 09-08 조사 | 조사가 든 근거 |
 | --- | --- | --- | --- |
@@ -74,8 +74,9 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 ### ⑤ 리뷰에서 이 셋을 함께 본다
 
-아래 「리뷰에서 정할 것」 넷에 더해, **위 ②의 세 자리**를 이 초안대로 갈지 조사 쪽으로 갈지가
-리뷰의 몫이다. **조사는 로스터를 정하지 않았다** — 두 안을 나란히 놓고 A/B로 재라고 했을 뿐이다.
+**위 ②의 세 자리는 2026-09-09에 @danielcho02가 조사 쪽으로 확정했다** — 근거는 ②의 표 그대로다. 조사 자신은 *"이것은 제안이지 결정이 아니다"*라 적었고 A/B만 남겼는데, **그 A/B(Auditor)는 그대로 열어 둔다.**
+
+아래 「리뷰에서 정할 것」 중 **#2(인덱서)도 같은 날 확정됐다**(§2 슬라이서 행). 남은 셋(#1·#3·#4)이 @sumin0218 리뷰의 몫이고 **로스터를 막지 않는다.**
 
 ## 결정
 
@@ -89,17 +90,18 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 | 자리 | 모델 (registry 키) | 제작사 | 양자화 | 지금 상태 |
 | --- | --- | --- | --- | --- |
-| 1단계 · 쿼리 생성기(모델 자리 ①) | `qwen3-8b` — `scout_memory`와 **같은 서버** | Alibaba | nvfp4 | 실측 있음. Joern 기반 슬라이서(LLM4FPM → LLMxCPG-Q 순)는 **별도 워크스트림**이고 그때까지 tree-sitter 인덱서를 유지한다 |
+| 1단계 · 쿼리 생성기(모델 자리 ①) | `qwen3-8b` — `scout_injection`과 **같은 서버**(같은 모델이다) | Alibaba | nvfp4 | 실측 있음 |
+| 0·1단계 · 슬라이서 | **Joern 기반 — `LLM4FPM`(신호 주도) → `LLMxCPG-Q`(쿼리 생성) 순** | — | — | **2026-09-09 확정. 이번 리스트럭처 범위 안이다.** 발표안 아티팩트의 Code Slicing 박스가 이것이고, 실험 중이며 되면 적용한다. **그때까지 tree-sitter 인덱서를 병행 유지한다** — 전환은 슬라이서가 서는 시점이지 이 문서가 아니다 |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | Alibaba | fp16 | checksum 有 · 처리량 미실측 |
 | 3단계 · 리랭커 | **`qwen3-reranker-4b`** (신규) | Alibaba | fp16 | 미실측. **D63의 재측정 대상이 이 모델이다** — 0.6B는 registry에 남긴다 |
-| 4단계 · `scout_memory` (CWE-415·416) | `qwen3-8b` | Alibaba | nvfp4 | 실측 있음 |
+| 4단계 · `scout_memory` (CWE-415·416) | **`qwen3-coder-30b-a3b`** | Alibaba | nvfp4 | 실측 있음. **가장 어려운 계열에 가장 강한 모델**(09-08 조사) — Auditor A안과 같은 모델이라 **같은 서버로 상주한다** |
 | 4단계 · `scout_boundary` (CWE-119·125·787·190) | `devstral-small-2-24b` | Mistral | fp8 | 기동 확인(9/4) · 처리량 미실측 |
-| 4단계 · `scout_injection` (CWE-78·22·134) | **`phi-4`** (신규) | Microsoft | fp8(후보 `RedHatAI/phi-4-FP8-dynamic`) | 미실측 · **컨텍스트 16,384** |
-| 5단계 · Auditor | **`qwen3.6-35b-a3b`** (신규) | Alibaba | nvfp4(후보 `nvidia/Qwen3.6-35B-A3B-NVFP4`) | 미실측 |
-| 7단계 · Critic | **`gpt-oss-20b`** (신규) | OpenAI | mxfp4(네이티브) | 미실측 |
+| 4단계 · `scout_injection` (CWE-78·22·134) | **`qwen3-8b`** | Alibaba | nvfp4 | 실측 있음. 가장 쉬운 계열 + batch32 **388.46 tok/s** [실측] — 후보 전량이 지나는 단계에 맞는다. `phi-4`는 §7로 기각 |
+| 5단계 · Auditor | **A안 `qwen3-coder-30b-a3b` / B안 `nemotron-3-super-120b-a12b`** | Alibaba / NVIDIA | nvfp4 | **A/B로 남긴다** — 문헌이 정면으로 갈려 실측으로 가른다(D24). A는 실측 있음 · B는 미실측. `qwen3.6-35b-a3b`는 §7로 기각 |
+| 7단계 · Critic | **`gpt-oss-20b`** + `reasoning_effort: high` (신규) | OpenAI | mxfp4(네이티브) | **기동 실측 있음** — [2026-09-09 온보딩 보고서](../experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md): 기동 통과 · 가중치 14.91~16.06 GiB · **structured output 실패**(아래 「다시 열리는 조건」) |
 | B1 기준(최강 단일 멤버) | `qwen3-coder-30b-a3b` | Alibaba | nvfp4 | 실측 있음. **지우지 않는다** — build-plan §8이 요구하는 "항상 최강 단일 멤버와 비교"의 그 멤버다 |
 
-**Scout 세 멤버의 모델 배정은 임시다.** 근거가 될 실측이 없다 — C 결함에서 가장 많은 계열(Boundary)에 가장 큰 모델을, 실측이 있는 `qwen3-8b`를 UAF/DF에, 나머지를 Injection에 뒀을 뿐이다. **첫 run의 공동오답 행렬**(누가 무엇을 함께 놓쳤나 — `Candidate.scout_member`로 만든다)이 재배치의 유일한 근거이고, 그 전에는 옮기지 않는다.
+**Scout 세 멤버의 배정은 09-08 조사가 근거를 댔다(②).** 초안 시점엔 임시였다 — 근거가 될 실측이 없다 — C 결함에서 가장 많은 계열(Boundary)에 가장 큰 모델을, 실측이 있는 `qwen3-8b`를 UAF/DF에, 나머지를 Injection에 뒀을 뿐이다. **첫 run의 공동오답 행렬**(누가 무엇을 함께 놓쳤나 — `Candidate.scout_member`로 만든다)이 재배치의 유일한 근거이고, 그 전에는 옮기지 않는다.
 
 **"Mistral-Small-24B" 자리를 `devstral-small-2-24b`로 채운 이유.** 발표안이 적은 이름은 Mistral-Small-24B인데, Devstral Small 2는 그 24B 베이스(`base_model: mistralai/Mistral-Small-3.1-24B-Base-2503` — HF 메타데이터, 2026-09-06 조회)의 코드 파생이고 **이미 ATOM에서 기동·checksum이 끝나 있다.** 바닐라 `Mistral-Small-3.2-24B-Instruct-2506`을 고집하면 얻는 것은 이름이고 대가는 온보딩 하나다. 바꾸고 싶으면 registry 키 하나·프로필 한 줄이다.
 
@@ -131,6 +133,8 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 | 조합 A `Nemotron-3.5-Lightning` + `gpt-oss-20b` (연구 권장 1순위) | GB10 검증 명시·NVFP4 상태 SWE-bench 공개(52.8)는 장점이나 코드 성능 보고가 후보 중 낮고 취약점 탐지·critic 실측 0건. 팀이 "보고 성능 최대"(조합 B)를 골랐다. **Nemotron은 Auditor 2차 후보로 남긴다** |
 | 조합 C `Gemma-4-26B-A4B` + `Nemotron` | Gemma4가 vLLM structured output 결함(#39130) 당사자 · Critic 근거 0건 |
 | 조합 D 현행 `qwen3-coder-30b-a3b` + `Nemotron` (변수 최소) | Coder가 2025-07 모델. **B1 기준으로 남겨 비교 대상이 된다** — 버린 것이 아니다 |
+| Scout·Injection `phi-4` (이 문서 초안) | **컨텍스트 16,384**라 LIGHT 캡슐 예산 4,000 + 대상 원문이 그 안에 들지 미확인이고, 추론 유형 배정에 논문 근거가 없다(09-08 조사). 대신 `qwen3-8b`가 **388.46 tok/s [실측]**로 그 자리에 맞는다. **2026-09-09 기각 — 온보딩 하나가 줄었다** |
+| Auditor `qwen3.6-35b-a3b` (이 문서 초안) | 미실측이고 서빙 근거가 B안보다 약하다(09-08 조사). Auditor는 A/B로 재기로 했고 그 둘이 `qwen3-coder-30b-a3b`(실측 있음)와 Nemotron-120B다. **2026-09-09 기각 — 2차 후보로 남긴다** |
 | Auditor·Critic 둘 다 Qwen | 조건 2 정면 위반 — models.md §5.5 |
 | Scout: 소형 베이스 하나 + 전문가 프롬프트 셋(→ LoRA 셋) | 온보딩 최소·상주 최소라 초안의 권장이었으나, 팀이 발표안의 모양(다른 제작사 셋)과 멤버 간 오류 상관 가능성을 택했다. **FT2(계열별 LoRA)는 이제 베이스 셋에 각각이다** — 비용이 는다 |
 | 후보 단위 실행 유지 | Scout 배칭 못 씀 · 상주 전부 동시 · 교대 512회(swap.md §6.2 계산값) |
@@ -159,12 +163,12 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 ## 리뷰에서 정할 것 — 미결 (@sumin0218)
 
-이 문서가 답하지 않은 구조 질문 넷이다. 발표 자료와 저장소 코드가 서로 다르게 말하는 자리라 **팀이 정해야 하고**, 각 줄에 이 초안이 기울어 있는 쪽을 적었다.
+이 문서가 답하지 않은 구조 질문 넷이었고 **#2(인덱서)는 2026-09-09에 확정됐다 — 남은 셋이다**. 발표 자료와 저장소 코드가 서로 다르게 말하는 자리라 **팀이 정해야 하고**, 각 줄에 이 초안이 기울어 있는 쪽을 적었다.
 
 | # | 질문 | 발표 자료 | 지금 코드 | 초안의 기울기 |
 | --- | --- | --- | --- | --- |
 | 1 | **Scout 캡슐에 검색 결과(`related`)가 들어가는가** | 슬라이드 17 — Embedder→Reranker→Retriever가 만든 캡슐을 **Scout에게** 전달 | LIGHT(Scout)는 검색 안 함, EXPANDED(Auditor)에만 `related`(`hybrid_retriever.LEVEL_SECTIONS`) — "후보 전량 단계에서 임베딩을 부르면 배칭 전제가 무너진다" | 코드 쪽 유지. 검색을 Scout에 넣으면 3단계 비용이 후보 수만큼 붙고 [D63](../open-questions/D/D63.md)의 리랭커 미검증이 4단계 입력에 바로 걸린다 |
-| 2 | **인덱서에서 확정된 것** — Joern 도입 여부, LLM4FPM(신호 주도)·LLMxCPG-Q(쿼리 생성) 중 순서, 그때까지 tree-sitter 유지 여부, 쿼리 생성기 모델을 Scout 모델과 공유하는지 | 슬라이드 13·14 — 둘 다 | tree-sitter 인덱서만 있다 | 둘 다 · LLM4FPM 먼저(결정론·독립) · tree-sitter 유지 · 쿼리 생성기는 `qwen3-8b` 공유 |
+| ~~2~~ | ~~**인덱서에서 확정된 것**~~ → **2026-09-09 확정, §2 슬라이서 행으로 옮겼다** | 슬라이드 13·14 — 둘 다 | tree-sitter 인덱서만 있다 | **결정: Joern 도입 · `LLM4FPM` → `LLMxCPG-Q` 순 · 슬라이서가 설 때까지 tree-sitter 병행 · 쿼리 생성기는 `qwen3-8b`로 `scout_injection`과 같은 서버.** 발표안 아티팩트의 Code Slicing 박스를 이번 범위에 넣는다 |
 | 3 | **후보 수 50 → 30 → 10**(슬라이드 10)이 임계값 목표인가 예시인가 | 숫자가 박혀 있다 | `candidate_max 256`(근거 없는 관례) · `critic_top_n 8` | 예시로 읽는다. 목표라면 `critic_top_n`을 10으로 — 8도 근거가 없다 |
 | 4 | **Validation의 Exploit은 누가 만드는가** | 슬라이드 21 — "Exploit을 통해 실제 취약 여부를 검증" | PoC를 만드는 주체가 없어 E4(`proven`)가 실서빙에서 도달 불가(STATUS.md §5) | 데이터셋 정답 PoC 재생(STATUS §5 선택지 A)을 먼저. LLM PoV 에이전트(B)는 별도 결정 |
 
