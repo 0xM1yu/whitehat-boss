@@ -1171,6 +1171,9 @@ def _new_record(
         # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
         # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.
         model_sampling=model_sampling,
+        # registry가 선언해 하네스가 **요청에 실은** 모델별 파라미터. `model_sampling`과
+        # 달리 어댑터를 안 거친다 — config에서 바로 유도되므로 `deps`를 탈 이유가 없다.
+        model_reasoning_effort=config.reasoning_efforts(),
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )

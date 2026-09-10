@@ -213,7 +213,17 @@ class ModelEntry(HarnessModel):
     # **payload에 키를 안 넣는다** — 안 쓰는 서버가 거절할 수 있고, 성공 경로 payload의
     # 키 집합이 모델마다 달라지면 사후 대조가 깨진다(`context.call_model`의 #82 리뷰 F10과
     # 같은 규칙).
-    reasoning_effort: NonEmptyStr | None = None
+    #
+    # **`Literal`로 닫는다** — 위 `family`가 안 닫는 것과 반대다. 저쪽은 로스터가 계속
+    # 바뀌는 **열린 집합**이고 이쪽은 서버가 아는 값이 셋뿐인 **닫힌 집합**이라,
+    # `AdapterSelection`의 판단이 그대로 걸린다 — *"아직 없는 구현체 이름을 YAML에 적으면
+    # factory가 KeyError를 내는 대신 설정 로드에서 실패해야 한다."* 자유 문자열이면
+    # `High`·`hgih`가 로드를 통과해 **서빙 때만**, 혹은 조용히 무시된 채로 드러난다.
+    #
+    # ⚠ `Finding.trigger_status`가 일부러 `str`인 것과 헷갈리지 않는다. 그쪽은 **모델이
+    # 내는 값**이라 분포를 보기 전에 좁히면 기록이 버려지고, 이쪽은 **우리가 적는 설정**이라
+    # 오타가 곧 결함이다. 값이 늘면 여기 한 줄을 늘리고 그 전까지는 크게 실패한다.
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark
@@ -549,6 +559,25 @@ class HarnessConfig(HarnessModel):
             role: self.models[self.profile.roles[role]].prompt_template_version
             for role in PROMPTED_ROLES
             if role in self.profile.roles
+        }
+
+    def reasoning_efforts(self) -> dict[str, str]:
+        """`RunRecord.model_reasoning_effort`에 넣을 역할 → `reasoning_effort` 맵.
+
+        **선언한 역할만 담는다.** 안 선언한 모델은 요청 payload에도 키가 안 생기므로
+        (`ModelEntry.reasoning_effort` 주석), 기록에도 키가 없는 것이 실제와 같다 —
+        `None`을 적으면 "기본값으로 돌았다"와 "그 서버가 이 파라미터를 아예 모른다"가
+        같은 모양이 된다.
+
+        **`PROMPTED_ROLES`만 보는 것은 `prompt_versions()`와 같은 사유다** —
+        embedding·reranker는 `_model_client`를 타지 않아(그쪽은 `VllmEmbeddingClient`·
+        `VllmRerankerClient`다) 이 값을 보낼 경로 자체가 없다. 담으면 거짓 정보다.
+        """
+        return {
+            role: entry.reasoning_effort
+            for role in PROMPTED_ROLES
+            if role in self.profile.roles
+            and (entry := self.models[self.profile.roles[role]]).reasoning_effort is not None
         }
 
     def served_models(self) -> dict[str, str]:

@@ -79,8 +79,8 @@
 **(가) 모델에 붙는 실행 인자 — 2026-09-09에 배선했다.** §1의 Critic 행이
 `reasoning_effort: high`를 드는데, 그 값이 들어갈 자리가 **스키마에 없었다**
 (`ModelEntry`가 `extra="forbid"`이고 요청 조립이 고정 dict였다). 지금은 `ModelEntry`에
-`reasoning_effort` 필드가 있고 registry가 선언하면 요청에 실린다 — **선언 안 한 모델은
-payload에 키가 안 생긴다.** 그러니 다음 모델에 다른 실행 인자가 붙으면 **그때 또 다섯째
+`reasoning_effort` 필드가 있고 registry가 선언하면 요청에 실리며 `RunRecord`에도 남는다
+(`model_reasoning_effort`) — **선언 안 한 모델은 payload에도 기록에도 키가 안 생긴다.** 그러니 다음 모델에 다른 실행 인자가 붙으면 **그때 또 다섯째
 자리를 연다.** 이 절의 넷은 여전히 「자리에 모델을 바꿔 끼우는 비용」이지 「새 손잡이를
 여는 비용」이 아니다.
 
@@ -120,7 +120,7 @@ payload에 키가 안 생긴다.** 그러니 다음 모델에 다른 실행 인�
 | `qwen3-reranker-4b` | 다운로드 전. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
-| **`reasoning_effort: high` 배선** | **됐다 (2026-09-09).** `ModelEntry.reasoning_effort` → 요청 payload. 남은 것은 registry 등재뿐이다 |
+| **`reasoning_effort: high` 배선** | **배선만 됐다 (2026-09-09).** `ModelEntry.reasoning_effort` → 요청 payload → `RunRecord.model_reasoning_effort`. ⚠ **그래도 이 자리는 안 선다** — registry 등재가 남았고 그 **앞에 이 표 첫 줄(structured output)**이 있다. 배선이 여는 것은 「선언하면 값이 실제로 간다」까지이지 「Critic이 뜬다」가 아니다 |
 | **`config/profiles.yaml` 재배선** | **안 됐다.** 프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`, 리랭커는 `qwen3-reranker-0.6b`다 — **§1의 배정이 아니다.** 신규 셋이 registry에 없어서 프로필에 못 올린다(위 두 줄이 그 선행 조건이다) |
 
 **「로스터 확정」과 「그 모델이 선다」는 다른 문장이다.** 이 표가 그 차이를 남긴다.
