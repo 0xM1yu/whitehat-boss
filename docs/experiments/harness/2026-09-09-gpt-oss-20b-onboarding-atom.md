@@ -1,6 +1,43 @@
 # `gpt-oss-20b` 온보딩 첫 관문 — ATOM
 
 > **한 줄:** 뜬다. 답도 맞힌다. **그런데 JSON 스키마를 강제하는 순간 못 쓰게 된다.**
+> ⚠ 아래 정정 — **그 「못 쓰게 된다」의 원인이 serve 설정인지 스키마 어휘인지 아직 안 갈렸다.**
+
+> **정정 (2026-09-09, [#160](https://github.com/0xM1yu/whitehat-boss/pull/160) 코멘트 후속).** §5가 미측정으로 남긴
+> *"`--structured-outputs-config.reasoning_parser` 명시 지정"*을 손수민이 ATOM에서 돌렸고
+> **verdict 3/3 정답**을 얻었다([#160 코멘트](https://github.com/0xM1yu/whitehat-boss/pull/160#issuecomment-5591142118)).
+> **관측은 그대로다** — 2026-09-09 03:14에 이 설정으로 본 것이 0/5이고, 바뀐 것은 그 관측이
+> 무엇까지 말하는가다(CLAUDE.md §2.2).
+>
+> **⚠ 그런데 그 run은 §5가 처방한 실험이 아니다.** §5의 「무엇을 하면 재는가」 칸은(`TEMPLATE.md` §5)
+> *"그 플래그를 주고 재기동해 **§3.3 반복**"*인데, 새 run은 §3.3을 반복하지 않고 **넷을 함께 바꿨다**:
+>
+> | 축 | 이 실험(§3.3) | 새 run |
+> | --- | --- | --- |
+> | 스키마 verdict 어휘 | `upheld` / `rejected` | **`vulnerable` / `safe`** |
+> | 케이스 | 같은 UAF 프롬프트 **5시행** | **서로 다른 3케이스** 각 1회 |
+> | 기동 인자 | — | **`--enforce-eager`·`VLLM_USE_FLASHINFER_SAMPLER=0` 추가** (재현 블록은 `VLLM_ATTENTION_BACKEND=TRITON_ATTN`도 적는데 §1이 *"선택지가 그것 하나"*라 이 실험과 같은 값이다) |
+> | `max_tokens` | 미기록 | **3000** (700은 잘렸다고 적는다) |
+>
+> **그래서 관측은 「그 serve 설정에서 3/3」이고, 「플래그가 결정적이다」는 추론이다.**
+>
+> **어휘 하나만으로도 설명이 된다.** §3.3의 `xgrammar` 조건은 **0/5**이고(「넷」은 오답 수가
+> 아니라 **JSON이 유효해 `reason`을 읽을 수 있었던 시행 수**다), 그 넷이 전부
+> *"The answer is incomplete."* 류로
+> **답안을 채점하는** 모양이었다 — `upheld`/`rejected`라는 판정 어휘를 주면서 판정할 대상(답안)은
+> 안 줬기 때문일 수 있다. 같은 §3.3 안에서 `response_format` **없이는 3/3**이었다는 것이 그 방향을
+> 받친다: 모델은 답을 알고 있었고 스키마가 과업을 다르게 읽혔다.
+>
+> **⚠ 그리고 두 run 어느 쪽도 실제 Critic 스키마가 아니다.** 배포될 `Decision.verdict`는
+> `uphold` | `rebut` | `need_evidence`이고 사유 필드는 `reason`이 아니라 `rationale`이다
+> (`src/schemas/enums.py`의 `Verdict`, [agent-contracts.md](../../agent-contracts.md) §3).
+> 그러니 **둘 다 Critic 자리 판정의 근거로는 부족하다.**
+>
+> **아직 열려 있는 것:** ① 같은 케이스·같은 스키마·같은 `max_tokens`로 **플래그만** 바꾼 A/B,
+> ② 실제 `Decision` 스키마로 반복, ③ §6이 남긴 「EngineCore가 해석한 값이 실제 문법 적용에
+> 쓰이는가」. **①은 §5가, ③은 §6이 이미 미측정으로 적어 뒀다. ②는 이 정정이 새로 낸 것이다** —
+> 원 보고서는 §3.3이 쓴 어휘가 배포될 `Decision` 스키마와 다르다는 것을 한 번도 안 적었고
+> §5 미측정 표에도 그 행이 없다. **그리고 셋 중 ②가 제일 싸다**(§7 후속 2).
 
 ## 메타
 
@@ -36,7 +73,7 @@
 | structured output — `guidance` | **5/5 HTTP 500** |
 | structured output 없이 | **3/3 정답** |
 
-**판정: 기동 통과 · structured output 실패.** [model-serving.md](../../model-serving.md) §3 체크리스트의 1번은 통과, 6번은 실패다.
+**판정: 기동 통과 · structured output 실패.** [model-serving.md](../../model-serving.md) §3 체크리스트의 1번은 통과, 6번은 실패다. ⚠ **6번의 「실패」는 이 스키마·이 serve 설정 범위다** — 머리의 정정 블록을 함께 읽는다. 그리고 6번을 **닫는** 것은 `cli bench`의 `structured_output.valid_ratio`이지 이 `curl` 관문이 아니다.
 
 ---
 
@@ -201,7 +238,7 @@ Yes – the code is a classic **use-after-free**.
 | `guidance` 500의 사유 | 로그에 트레이스백이 없고 응답 `message`가 비었다 | 서버 로그 레벨을 올려 재현 |
 | `outlines` 백엔드 | **안 해봤다** | 같은 스모크를 한 번 더 |
 | `enable_in_reasoning=True` | **안 해봤다** | 그 값으로 재기동해 §3.3 반복 |
-| `--structured-outputs-config.reasoning_parser` 명시 지정 | **안 해봤다** — EngineCore가 이미 `openai_gptoss`로 채워 뒀으므로(§2) 명시가 무엇을 바꾸는지는 미확인 | 그 플래그를 주고 재기동해 §3.3 반복 |
+| `--structured-outputs-config.reasoning_parser` 명시 지정 | **부분 측정됨(2026-09-09, 머리의 정정 블록).** 그 플래그를 준 run이 3/3을 냈으나 **§3.3 반복이 아니다** — 스키마 어휘·케이스·기동 인자·`max_tokens`가 함께 바뀌었다. 플래그 단독 효과는 여전히 미확인 | **같은 케이스·같은 스키마·같은 `max_tokens`로 플래그만** 바꾼 A/B |
 | 장시간 서빙 안정성 | 스모크 3분 이내 | 연속 서빙 — [swap.md](../../research/2026-09-04-swap.md)가 `#49926`·`#52225`를 든다 |
 | `reasoning_content`가 빈 이유 | 안 갈랐다 | — |
 
@@ -209,11 +246,11 @@ Yes – the code is a classic **use-after-free**.
 
 ## 6. 반증 조건
 
-- **「structured output이 이 모델을 망가뜨린다」가 틀렸다면**: `outlines` 또는 `enable_in_reasoning=True`에서 정답률이 오른다. **둘 다 안 해봤으므로 이 결론은 두 백엔드 범위다.**
+- **「structured output이 이 모델을 망가뜨린다」가 틀렸다면**: `outlines` 또는 `enable_in_reasoning=True`에서 정답률이 오른다. **둘 다 안 해봤으므로 이 결론은 두 백엔드 범위다.** ⚠ **2026-09-09 — 셋째 경로가 생겼다**: 스키마 어휘가 원인일 수 있다(머리의 정정 블록). 그러면 백엔드를 안 바꿔도 이 결론이 틀린다.
 - **「모델은 멀쩡하다」가 틀렸다면**: 자유 서술 3/3은 문제가 자명해서 나온 것일 수 있다. 어려운 표본에서 무너지면 이 문장은 좁혀야 한다. **표본이 하나이고 자명한 것을 골랐다.**
 - **「Marlin 팽창 1.16~1.25배」가 틀렸다면**: 다른 크기에서 비율이 달라진다. **20B 한 점이다** — `#50925`가 신고한 1.57배(67→105 GiB)는 더 큰 모델의 값이고 이 관측이 그것을 반증하지 않는다.
 - **메모리 범위가 틀렸다면**: 3회는 적다. 이상치가 있으면 범위가 바뀐다.
-- **⚠ 검토된 가설 하나 — 「`reasoning_parser`를 CLI로 안 줘서 채널 경계를 몰랐다」**(PR #160에서 손수민 제기). **이 로그로는 성립하지 않는다** — CLI에 안 준 것은 맞지만 EngineCore가 `openai_gptoss`로 채웠다(§2). 다만 **「해석된 값이 실제 문법 적용 시점에 쓰였는가」는 우리가 안 봤다.** 그것까지 부정하지는 않는다. 확인법: 그 플래그를 명시하고 §3.3을 반복해 verdict가 0/5에서 움직이는지 본다 — **움직이면 이 실험의 결론이 바뀐다.**
+- **⚠ 검토된 가설 하나 — 「`reasoning_parser`를 CLI로 안 줘서 채널 경계를 몰랐다」**(PR #160에서 손수민 제기). **이 로그로는 성립하지 않는다** — CLI에 안 준 것은 맞지만 EngineCore가 `openai_gptoss`로 채웠다(§2). 다만 **「해석된 값이 실제 문법 적용 시점에 쓰였는가」는 우리가 안 봤다.** 그것까지 부정하지는 않는다. 확인법: 그 플래그를 명시하고 §3.3을 반복해 verdict가 0/5에서 움직이는지 본다 — **움직이면 이 실험의 결론이 바뀐다.** ⚠ **2026-09-09 — 그 확인법이 교란된 채로 실행됐다.** 플래그를 준 run이 3/3을 냈으나 §3.3 반복이 아니라 축 넷이 함께 바뀌었다. **머리의 정정 블록**을 읽는다 — 이 문단만 보고 「가설이 반증됐다」로 읽으면 안 된다.
 
 ---
 
@@ -223,6 +260,11 @@ Yes – the code is a classic **use-after-free**.
    - **(가) 하네스를 2단으로** — Critic을 자유 서술로 받고 추출 단계를 붙인다. [로스터 조사](../../research/2026-09-08-roster.md) §8이 *"깨지면 「자유 서술 → 별도 추출」 2단이 다음 수다"*로 예비 수를 적어 뒀다. 대가: 코드 변경 + 실패 지점 하나 추가.
    - **(나) Critic 모델 교체** — 하네스 0줄. 대가: 로스터가 `gpt-oss-20b`를 고른 근거를 버린다.
 2. **`outlines`·`enable_in_reasoning=True` 두 조건**을 마저 돌린다 — (가)/(나)를 정하기 전에.
+   ⚠ **그 앞에 더 싼 것이 생겼다**(머리의 정정 블록) — 스키마 어휘를 실제 `Decision`
+   (`uphold` | `rebut` | `need_evidence`, 사유 필드는 `reason`이 아니라 `rationale`)로 바꿔
+   §3.3을 그대로 반복하는 것이다. §3.3의 오답이 전부 「답안 채점」 모양이었으므로
+   **어휘가 원인이면 serve 설정을 안 건드리고도 뒤집힌다.** 그 A/B가 (가)/(나) 판정의
+   입력이고, 지금 두 갈래는 **어느 쪽도 근거가 안 선 상태다.**
 3. **registry 등재**(ADR 0010 후속 3, PR A) — 등재해야 `cli bench`로 §5의 미측정 넷을 잰다. 등재 시 `config/models.yaml` 주석에 **`TIKTOKEN_ENCODINGS_BASE`를 기동 조건으로** 적는다.
 4. **로스터 §1의 「약 13 GiB(계산)」을 실측 범위로 갱신** — 14.91~16.06이다.
 
@@ -230,7 +272,7 @@ Yes – the code is a classic **use-after-free**.
 
 ## 관련
 
-- [model-serving.md](../../model-serving.md) §3 — 배포 전 필수 검증 체크리스트(이 실험이 1번·6번을 답한다)
+- [model-serving.md](../../model-serving.md) §3 — 배포 전 필수 검증 체크리스트(이 실험이 1번을 답하고, 6번은 **이 스키마·이 serve 설정 범위로** 답한다 — 머리의 정정 블록)
 - [research/2026-09-08-roster.md](../../research/2026-09-08-roster.md) §1·§4·§8 — 로스터, Critic 선정 근거, 온보딩 순서
 - [research/2026-09-08-critic-quantization.md](../../research/2026-09-08-critic-quantization.md) — gpt-oss 네이티브 MXFP4·Harmony
 - `ADR 0010` — 로스터를 정하는 문서(제안). 위 후속 1이 여기로 간다. **PR #148**
