@@ -9,6 +9,8 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 여기서 고정하는 것은 **참조 정합성과 불변식**뿐이다.
 """
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,7 @@ from src.config import (
     load_config,
 )
 from src.orchestrator.prompt_loader import PromptError, load_prompt
+from src.orchestrator.runner import RunSpec, _new_record
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -263,8 +266,7 @@ def test_every_prompt_version_on_disk_loads(directory: Path) -> None:
     assert template.role is role
     assert template.version == version
     assert getattr(schemas, template.output_schema, None) is not None, (
-        f"{directory}/meta.yaml의 output_schema `{template.output_schema}`가 "
-        "`src.schemas`에 없다"
+        f"{directory}/meta.yaml의 output_schema `{template.output_schema}`가 `src.schemas`에 없다"
     )
 
 
@@ -452,9 +454,7 @@ def test_a_profile_declaring_only_part_of_the_pool_is_rejected() -> None:
     §1의 계열 배정). 그 사실이 후보 수 감소로만 나타나므로 run 결과만 봐서는 안 보인다.
     """
     with pytest.raises(ValidationError, match="Scout 자리"):
-        ProfileEntry.model_validate(
-            _scout_arrangement(scout_memory="fake", scout_boundary="fake")
-        )
+        ProfileEntry.model_validate(_scout_arrangement(scout_memory="fake", scout_boundary="fake"))
 
 
 def test_a_profile_declaring_both_the_single_scout_and_the_pool_is_rejected() -> None:
@@ -657,7 +657,6 @@ def test_unmeasured_models_are_reported_not_blocked() -> None:
     assert isinstance(config.unmeasured_models(), list)
 
 
-
 def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     tmp_path: Path,
 ) -> None:
@@ -715,6 +714,77 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     quiet = silent._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert "reasoning_effort" not in quiet, (
         "선언 안 한 모델의 payload에 키가 생겼다 — 서버가 거절할 수 있고 키 집합이 흔들린다"
+    )
+
+
+def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
+    tmp_path: Path,
+) -> None:
+    """`reasoning_effort`가 **기록과 요청 양쪽**에 같은 값으로 간다 (손수민 리뷰 #165 HIGH).
+
+    ## 왜 요청 경로만으로는 부족한가
+
+    `engineering-guide.md` §5가 `RunRecord`에 남길 것으로 *"random seed와 sampling 설정"*을
+    들고 **"하나라도 빠지면 그 run의 결과는 비교표에 넣지 않는다"**로 닫는다.
+    `reasoning_effort`는 하네스가 요청 본문에 실어 **출력을 바꾸는** 값이고, 확정 로스터의
+    Critic 행이 *"크기 +3.71점 대 effort +11~13점"*을 근거로 그것을 고른다 —
+    **이 run의 실험 변수 자체다.** 기록에 안 남으면 `high`로 돈 run과 기본값으로 돈 run이
+    manifest에서 구별되지 않는다.
+
+    선례 `test_the_output_cap_reaches_the_run_record_and_the_gateway_together`가 같은
+    이유로 두 경로를 한 검사에 묶는다. ⚠ **다만 기제는 다르다** — `output_max`는
+    `thresholds.flatten()`(`dict[str, float]`)을 타는데 `reasoning_effort`는 문자열이라
+    그 자리에 못 들어간다. `model_sampling`(역할 → 값, `| None`)과 같은 관용구를 쓴다.
+
+    ## `_new_record`를 부르는 이유
+
+    접근자(`config.reasoning_efforts()`)만 단언하면 **그것을 `RunRecord`에 안 넣어도
+    초록이다.** 이 저장소가 반복해 밟은 자리라(`prompt_versions`의 *"거짓 정보"* 주석),
+    실제 생산 경로를 부른다.
+    """
+    _copy_config(
+        tmp_path,
+        # auditor만 선언한다 — scout·critic이 빈 것까지 함께 고정해야 "전 역할에
+        # 같은 값이 실렸다"는 반대 방향 결함이 안 지나간다.
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        model_patch={"qwen3-8b": {"reasoning_effort": "high"}},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.reasoning_efforts() == {"auditor": "high"}, (
+        "선언한 역할만, 선언한 값 그대로 나와야 한다"
+    )
+
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config,
+        "run_20260901_0001",
+        datetime(2026, 9, 1, tzinfo=UTC),
+        [],
+        {},
+        {},
+    )
+    assert record.model_reasoning_effort == {"auditor": "high"}, (
+        "요청에는 실리는데 기록에 안 남는다 — §5가 그 run을 비교표에서 뺀다"
+    )
+
+    written = json.loads(record.model_dump_json())
+    assert written["model_reasoning_effort"] == {"auditor": "high"}, (
+        "직렬화에서 사라지면 manifest를 읽는 쪽은 못 본다"
+    )
+
+    payload = _model_client(config.profile.roles["auditor"], config)._request_payload(  # noqa: SLF001
+        "prefix", "body", RunRecord
+    )
+    assert payload["reasoning_effort"] == record.model_reasoning_effort["auditor"], (
+        "기록과 요청이 갈렸다 — 기록이 있다는 이유로 아무도 다시 확인하지 않는다"
     )
 
 
@@ -783,10 +853,14 @@ def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path
     # 치환하면 엉뚱한 모델이 부분 측정이 되고, 이 검사가 보려던 것을 못 본다.
     head, marker, tail = models.partition("  qwen3-4b:")
     assert marker, "registry에 qwen3-4b 블록이 없다 — 이 검사의 전제가 무너졌다"
-    patched = head + marker + tail.replace(
-        "      tok_s_single: 0\n      tok_s_batch32: 0",
-        "      tok_s_single: 30.0\n      tok_s_batch32: 90.0",
-        1,
+    patched = (
+        head
+        + marker
+        + tail.replace(
+            "      tok_s_single: 0\n      tok_s_batch32: 0",
+            "      tok_s_single: 30.0\n      tok_s_batch32: 90.0",
+            1,
+        )
     )
     (tmp_path / "models.yaml").write_text(patched, encoding="utf-8")
 
