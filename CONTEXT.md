@@ -120,8 +120,8 @@
 | `qwen3-reranker-4b` | 다운로드 전. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
-| **`reasoning_effort: high` 배선** | **배선만 됐다 (2026-09-09).** `ModelEntry.reasoning_effort` → 요청 payload → `RunRecord.model_reasoning_effort`. ⚠ **그래도 이 자리는 안 선다** — registry 등재가 남았고 그 **앞에 이 표 첫 줄(structured output)**이 있다. 배선이 여는 것은 「선언하면 값이 실제로 간다」까지이지 「Critic이 뜬다」가 아니다 |
-| **`config/profiles.yaml` 재배선** | **안 됐다.** 프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`, 리랭커는 `qwen3-reranker-0.6b`다 — **§1의 배정이 아니다.** 신규 셋이 registry에 없어서 프로필에 못 올린다(위 두 줄이 그 선행 조건이다) |
+| **`reasoning_effort: high` 배선** | **배선(2026-09-09) + registry 등재(2026-09-11) 둘 다 됐다.** `ModelEntry.reasoning_effort` → 요청 payload → `RunRecord.model_reasoning_effort`이고, `gpt-oss-20b`가 §1 표대로 등재돼 `reasoning_effort: "high"`를 선언한다. ⚠ **그래도 이 자리는 안 선다** — **앞에 이 표 첫 줄(structured output)**이 남았고, 프로필의 `critic`도 아직 `devstral-small-2-24b`다(아래 마지막 줄). 배선과 등재가 여는 것은 「선언하면 값이 실제로 간다」까지이지 「Critic이 뜬다」가 아니다 |
+| **`config/profiles.yaml` 재배선** | **안 됐다.** 프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`, 리랭커는 `qwen3-reranker-0.6b`다 — **§1의 배정이 아니다.** ⚠ **2026-09-11부터 이유가 자리마다 다르다** — Critic(`gpt-oss-20b`)은 **등재됐으므로** 프로필에 올릴 수는 있고 남은 선행은 이 표 첫 줄(structured output)이다. 리랭커(`qwen3-reranker-4b`)와 Auditor B(`nemotron-3-super-120b-a12b`)는 **아직 registry에 없어서** 올릴 수 없다. 「셋 다 등재가 없어서」로 읽지 않는다 |
 
 **「로스터 확정」과 「그 모델이 선다」는 다른 문장이다.** 이 표가 그 차이를 남긴다.
 

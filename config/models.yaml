@@ -340,6 +340,15 @@ models:
     # verdict 어휘·케이스·기동 인자·`max_tokens` 넷이 함께 움직였다). 살아 있는 대안 가설이
     # **어휘 mismatch**이고, `tools/probe/gpt_oss_structured.py`가 그 통제 실험이다.
     # **이 등재가 R8을 닫지 않는다** — R8의 관문은 `cli bench`의 `structured_output.valid_ratio`다.
+    #
+    # ⚠ **아직 안 해 본 손잡이가 하나 더 있다 — `disable_any_whitespace`.**
+    # 2026-09-11에 **다른 모델**(`qwen3-coder-30b-a3b`)에서 구조화 출력 실패를 쟀더니 원인이
+    # 공백 폭주였고(이슈 #79), `--structured-outputs-config.disable_any_whitespace true`로 사라졌다
+    # (5/5 · 진단 10/10. `backend xgrammar`만으로는 재발하므로 귀속은 그 옵션 단독).
+    # 09-09 §3.3의 이 모델 실패가 **같은 모양인지는 안 봤다** — 그 실험은 응답 원문을 보존하지
+    # 않아 꼬리를 확인할 수 없고(보고서 메타), 모델도 양자화도 다르다. **그러니 "이 옵션이
+    # 이 모델도 고친다"로 읽지 않는다.** 다만 위 기동 조건이 이미 `backend xgrammar`라
+    # 옵션 한 줄을 더하는 값이 싸고, `tools/probe/gpt_oss_structured.py`의 팔로 그대로 잰다.
     endpoint: "http://127.0.0.1:8006/v1"
     context_limit: 131072
     quantization: "mxfp4"
