@@ -1,7 +1,8 @@
 """저장소 자체의 위생 검사.
 
 여기 있는 것은 코드의 동작이 아니라 **작업 트리의 상태**에 대한 단언이다. 사람 눈으로
-세 번 놓친 부류를 테스트로 옮기는 자리이고, 지금은 개행 하나가 들어 있다.
+세 번 놓친 부류를 테스트로 옮기는 자리다. **개수는 여기서 세지 않는다** — 그 문장이
+낡는 것이 이 파일이 막으려는 바로 그 종류의 어긋남이다.
 
 ## 왜 개행이 테스트 대상인가
 
@@ -200,4 +201,65 @@ def test_source_prose_does_not_carry_a_stale_profile_count() -> None:
     assert offenders == [], (
         f"`config/profiles.yaml`의 프로필은 {profile_count}개인데 서술이 따라오지 "
         "않았다 (CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
+
+
+def test_pull_request_workflows_do_not_limit_the_base_branch() -> None:
+    """`pull_request` 워크플로가 base 브랜치로 발화를 제한하면 **스택 PR이 검증을 못 받는다.**
+
+    ## 무슨 일이 났나
+
+    `ci.yml`이 `on.pull_request.branches: [main]`이었다. base가 main이 아닌 PR —
+    이 저장소가 `CLAUDE.md` §4.3에서 정면으로 다루는 **스택 PR** — 은 `check` 잡
+    (ruff·compileall·pytest·leakage)이 **한 번도 안 돌았다.**
+
+    크기를 실측했다: 전체 PR 107건 중 base ≠ main이 5건(#29·#30·#42·#43·#161)이고,
+    **스택 상태에서 `check`를 받은 PR은 0건**이다. 그중 셋(#29·#30·#42)은 **CI 없이
+    머지됐다.** `push` 쪽도 같이 막혀 있어서(`push.branches: [main]`) 브랜치를 밀어도
+    안 돈다 — CI 워크플로의 push run 103건이 전부 `main`이었다.
+
+    같은 저장소의 다른 워크플로 둘(`pr-require-assignee`·`pr-auto-assign-author`)은
+    `branches` 필터가 없어 스택 PR에서도 정상 발화한다. 그래서 #161에는 그 둘만
+    SUCCESS로 찍히고 `check`가 아예 없었다 — **초록불이 아니라 무(無)였다.**
+
+    ## 왜 사람이 못 잡나
+
+    체크가 **실패하는 것이 아니라 존재하지 않는다.** PR 화면에 빨간 줄이 없으므로
+    통과한 것과 구별되지 않는다. `CLAUDE.md` §5의 *"테스트가 통과했으니 맞겠지"*와
+    같은 부류이고, 그보다 나쁘다 — 돌지도 않았다.
+
+    ## 함정: YAML 1.1이 `on`을 불리언으로 읽는다
+
+    `yaml.safe_load`가 `on:` 키를 문자열 `"on"`이 아니라 **`True`**로 준다. `doc["on"]`만
+    보면 트리거를 못 찾아 **모든 워크플로가 조용히 통과한다** — 검사가 아무것도 안 막게
+    된다. 그래서 둘 다 본다.
+    """
+    root = Path(__file__).resolve().parents[1]
+    listed = subprocess.run(  # noqa: S603
+        ["git", "ls-files", ".github/workflows"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    assert listed, "git ls-files가 워크플로를 하나도 안 냈다 — 검사가 아무것도 안 본다"
+
+    offenders: list[str] = []
+    saw_pull_request = False
+    for rel in listed:
+        doc = yaml.safe_load((root / rel).read_text(encoding="utf-8"))
+        # `on:`은 YAML 1.1에서 `True`다. 둘 다 받는다 — 위 docstring의 함정.
+        triggers = doc.get(True, doc.get("on")) if isinstance(doc, dict) else None
+        if not isinstance(triggers, dict) or "pull_request" not in triggers:
+            continue
+        saw_pull_request = True
+        spec = triggers["pull_request"]
+        if not isinstance(spec, dict):
+            continue
+        limits = sorted(k for k in ("branches", "branches-ignore") if k in spec)
+        if limits:
+            offenders.append(f"{rel}: pull_request가 {limits}로 base를 거른다 → {spec[limits[0]]}")
+
+    assert saw_pull_request, "`pull_request` 트리거를 가진 워크플로가 없다 — 검사가 헛돈다"
+    assert offenders == [], (
+        "base 브랜치를 거르는 pull_request 워크플로가 있다. 스택 PR(base ≠ main)이 그 잡을 "
+        "**아예 못 받고**, 체크가 없는 것은 실패와 달리 화면에서 통과와 구별되지 않는다:\n"
+        + "\n".join(offenders)
     )

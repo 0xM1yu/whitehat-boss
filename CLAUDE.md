@@ -36,6 +36,7 @@
 | 문서의 내부 링크는 실파일을 가리켜야 한다 | `test_internal_links_point_at_a_real_file` |
 | 마크다운 표의 열 수가 일관돼야 한다 | `test_markdown_tables_have_a_consistent_column_count` |
 | 계약 문서의 `output_max` 선언이 config 값과 같다 | `test_the_contract_example_output_max_matches_the_config` |
+| `pull_request` 워크플로가 base 브랜치로 발화를 거르지 않는다 | `test_pull_request_workflows_do_not_limit_the_base_branch` |
 
 추적되는 `*.md`는 전부 대상이다 — 이 파일도 포함이다.
 
@@ -188,6 +189,7 @@ python -m pytest -q
 
 | 알고 싶은 것 | 문서 |
 | --- | --- |
+| **어느 모델이 어느 자리인가 · 인덱서** | **[CONTEXT.md](CONTEXT.md) — 정본. §7의 규칙이 이것이다** |
 | 전체 구조 · 단계별 책임 · 근거 등급 E0~E4 | `docs/architecture.md` |
 | **앞으로 무엇을 어느 순서로 짓는가** | [docs/build-plan.md](docs/build-plan.md) |
 | 역할별 실행 계약 · 프롬프트 규약 | `docs/agent-contracts.md` |
