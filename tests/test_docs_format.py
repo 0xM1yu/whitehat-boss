@@ -884,7 +884,13 @@ _ABSENT_CLAIM = re.compile(r"registry에 없|레지스트리에 없|미등재")
 _CLAUSE_END = re.compile(r"다[.)]|\.\s|—")
 _CLAIM_LOOKBACK = 200
 # 개수로 registry 상태를 주장하는 문구. 등재가 하나 늘 때마다 조용히 거짓이 된다.
+#
+# ⚠ **`미등재`는 이 저장소에서 두 뜻이다.** registry 미등재와 **D·R 인덱스 미등재**
+# (`build-plan.md`의 「미결 질문」 표가 그쪽이다). 그래서 registry 문맥인 줄에서만 본다 —
+# 안 좁히면 R 계열 등재를 말하는 표가 "registry 상태를 개수로 적었다"는 **틀린 사유로**
+# 걸린다. 지금 그 표가 안 걸리는 것은 어순 덕분일 뿐이라 설계로 막는다.
 _COUNT_CLAIM = re.compile(r"(둘|셋|넷|전부|모두)\s*다?\s*미등재")
+_REGISTRY_CONTEXT = re.compile(r"models\.yaml|registry", re.IGNORECASE)
 
 
 def test_no_document_says_a_registered_model_is_missing_from_the_registry() -> None:
@@ -941,6 +947,7 @@ def test_no_document_states_the_registry_state_as_a_count() -> None:
         f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: 「{match.group(0)}」"
         for path in _tracked("*.md")
         for lineno, line in enumerate(_read(path).splitlines(), start=1)
+        if _REGISTRY_CONTEXT.search(line)
         for match in [_COUNT_CLAIM.search(line)]
         if match
     ]
