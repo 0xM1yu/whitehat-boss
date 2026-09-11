@@ -429,18 +429,30 @@ def test_deferred_stays_a_target_count_and_is_not_labelled_as_attempts(
 
     assert result.report.deferred > 0, "넘긴 대상이 0이면 이 검사가 아무것도 안 본다"
 
-    # 팬아웃이 이 수에 곱해지지 않았는지 본다 — 계획된 대상 수를 넘을 수 없다.
+    # 팬아웃이 이 수에 곱해지지 않았는지 본다. `_with_index()`라 인덱스 없는 artifact가
+    # 0이므로 `계획 + 넘김 = 심볼 대상`이 성립한다 — 곱셈이 끼면 좌변이 커져 깨진다.
     planned = _plan(trace_path)
+    assert planned["fallback_artifacts"] == 0, (
+        "인덱스 없는 artifact가 있으면 아래 등식이 다른 이유로도 깨진다 — 픽스처 전제가 바뀌었다"
+    )
     assert result.report.deferred + planned["planned"] == planned["symbol_targets"], (
         f"넘긴 대상({result.report.deferred}) + 계획({planned['planned']})이 "
-        f"심볼 대상 수({planned['symbol_targets']})와 안 맞는다 — 팬아웃이 섞였다"
+        f"심볼 대상 수({planned['symbol_targets']})와 안 맞는다 — 팬아웃이 이 수에 곱해졌다"
     )
 
-    assert f"넘긴 대상(예산 초과): {result.report.deferred}건" in rendered, (
-        f"`deferred`({result.report.deferred})가 대상 라벨로 안 실린다 — 렌더 문구: {rendered!r}"
+    # ⚠ **수가 아니라 라벨을 본다.** `dropped == deferred`인 픽스처에서 수로 단언하면
+    # 렌더가 옳아도 부정 단언이 실패한다 — 그때 실패 메시지가 원인을 오도한다.
+    line = next((ln for ln in rendered.splitlines() if "넘긴 대상" in ln), "")
+    assert line, f"넘김·폐기 줄이 리포트에 없다 — 렌더: {rendered!r}"
+    deferred_label, _, attempts_label = line.partition("·")
+    assert f"넘긴 대상(예산 초과): {result.report.deferred}건" in deferred_label, (
+        f"`deferred`({result.report.deferred})가 대상 라벨로 안 실린다 — 줄: {line!r}"
     )
-    assert f"시도(대상 × Scout 자리, 호출 실패): {result.report.deferred}건" not in rendered, (
-        "`deferred`를 시도 라벨로 싣는다 — 풀에서 자리 수만큼 과소로 읽힌다"
+    assert "시도" not in deferred_label, (
+        f"`deferred`를 시도 라벨로 싣는다 — 풀에서 자리 수만큼 과소로 읽힌다: {deferred_label!r}"
+    )
+    assert "시도(대상 × Scout 자리" in attempts_label, (
+        f"`dropped` 쪽이 시도 라벨을 안 든다 — 줄: {line!r}"
     )
 
 
