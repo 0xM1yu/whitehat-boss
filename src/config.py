@@ -369,6 +369,11 @@ class ExecutionPolicy(HarnessModel):
         (`docs/research/2026-09-04-swap.md` §6.2 — 그 표의 열 이름이 "비용 [계산]"이다),
         3~5는 같은 표가 단계 단위 재배열에 적은 값으로 ADR 0010 §1이 "교대 횟수
         3~5회(계산값)"로 옮겨 적는다. **아무도 교대를 512번 세어 보지 않았다.**
+
+        ⚠ **512는 단일 `scout` 기준이다.** Scout 풀은 대상 하나를 멤버 셋이 각각 보므로
+        (ADR 0010 §3) 같은 `candidate_max`에서 후보가 셋 배가 되고 이 수는 **1,536**이
+        된다[계산]. 어느 쪽도 실측이 아니라는 위 문장은 그대로다 — 여기서 고치는 것은
+        **그 계산이 어느 구성의 것인가**이지 값의 성격이 아니다.
         """
         if self.swap is not None and self.mode != "per_stage":
             raise ValueError(

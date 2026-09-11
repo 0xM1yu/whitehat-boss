@@ -24,8 +24,14 @@
 ## 대상 지정 단위
 
 **심볼 단위다(W2).** 1단계 인덱서 산출물에서 심볼마다 `Location(file, symbol,
-line_start, line_end)`을 만들고 그 하나가 후보 하나가 된다. 인덱스가 없는
-프로필(`dev_fake`)은 **파일 단위로 되돌아가고 그 사실이 `target_plan`에 남는다.**
+line_start, line_end)`을 만든다. 인덱스가 없는 프로필(`dev_fake`)은 **파일 단위로
+되돌아가고 그 사실이 `target_plan`에 남는다.**
+
+⚠ **그 `Location` 하나가 후보 **몇 개**가 되는지는 Scout 자리 수가 정한다.** 단일
+`scout`면 하나이고, **풀이면 멤버마다 하나씩 셋이다** — 4단계에서 대상 하나를 세 멤버가
+각각 보고 그 후보들이 합쳐지지 않은 채 5단계로 간다(ADR 0010 §3 방식 ① 합집합).
+어느 멤버에서 왔는지는 `Candidate.scout_member`가 든다. **「대상 하나 = 후보 하나」로
+읽으면 풀 run의 후보 수와 제거율 분모를 셋 배로 잘못 읽는다.**
 
 그전까지는 artifact당 `Location(file=...)` 하나였고, `read_symbol_source()`가
 `line_start is None`에서 파일 전체를 돌려주어 **큰 파일이 통째로 프롬프트에 실렸다** —
@@ -511,7 +517,9 @@ class _Accumulator:
     # 만든다"). Scout 풀은 대상 하나를 멤버 셋이 각각 보므로 팬아웃 뒤 세 `_InFlight`가
     # 같은 target을 공유하는데, 캡슐을 멤버마다 다시 만들면 검색 호출이 3배가 되고 세 멤버가
     # 조금씩 다른 캡슐을 볼 수 있다(토크나이저별 예산 컷). 키는 target Location이다.
-    capsules: dict[str, ContextCapsule] = field(default_factory=dict)
+    capsules: dict[tuple[str, str | None, int | None, int | None], ContextCapsule] = field(
+        default_factory=dict
+    )
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -972,9 +980,15 @@ def _scout_roles(ctx: RunContext) -> tuple[Role, ...]:
     return (Role.SCOUT,)
 
 
-def _target_key(location: Location) -> str:
-    """캡슐 캐시 키. 같은 대상을 보는 풀 멤버 item들이 같은 키를 낸다."""
-    return f"{location.file}::{location.symbol}::{location.line_start}::{location.line_end}"
+def _target_key(location: Location) -> tuple[str, str | None, int | None, int | None]:
+    """캡슐 캐시 키. 같은 대상을 보는 풀 멤버 item들이 같은 키를 낸다.
+
+    **튜플인 것은 의도다.** 예전에는 네 필드를 `::`로 이어 문자열로 접었는데, 구분자가
+    값 안에 나타나면 서로 다른 대상이 같은 키가 된다. 캐시가 섞이면 **멤버가 다른
+    대상의 캡슐을 보고** 그 사실이 기록 어디에도 안 남는다. 지금 필드 값으로 그 충돌이
+    일어나는지는 안 셌다 — 튜플이면 **세어 볼 필요 자체가 없다**(PR #178 리뷰 L2).
+    """
+    return (location.file, location.symbol, location.line_start, location.line_end)
 
 
 def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
