@@ -40,8 +40,8 @@ from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.candidate import scout_member_of
 from src.schemas.common import Location, ProducedBy
-from src.schemas.decision import Decision
-from src.schemas.enums import FindingState, ReasonCode, Role
+from src.schemas.decision import Decision, DecisionDraft
+from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.run import RunRecord
@@ -485,6 +485,22 @@ class RunContext:
             subject_id=decision.decision_id,
             finding_id=decision.finding_id,
             original_verdict=decision.verdict.value,
+        )
+
+    def record_critic_verdict_mapped(self, draft: "DecisionDraft", *, stage: Stage) -> None:
+        """Critic이 표준 어휘를 안 써서 `Verdict.from_text`가 매핑한 것을 남긴다.
+
+        자유 verdict(enum grammar 회피)를 쓰면 매핑이 판정에 개입하므로, 원문과 매핑값을
+        남겨 잘못된 매핑을 사후에 감사할 수 있게 한다(§0 — 판정을 만드는 변환은 기록한다).
+        """
+        self.trace.emit(
+            EventKind.CRITIC_VERDICT_MAPPED,
+            stage=stage,
+            subject_kind="decision",
+            subject_id=draft.decision_id,
+            finding_id=draft.finding_id,
+            raw_verdict=draft.verdict,
+            mapped_verdict=Verdict.from_text(draft.verdict).value,
         )
 
     def record_cache(self, key: str, hit: bool, *, cache: str = "capsule") -> None:

@@ -282,6 +282,48 @@ def test_promoted_state_requires_path() -> None:
     assert _finding(state=FindingState.VALIDATED, repro_spec=spec).state is FindingState.VALIDATED
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 표준 어휘는 항등이다 (enum 어휘를 쓰는 모델 — devstral 등).
+        ("uphold", Verdict.UPHOLD),
+        ("rebut", Verdict.REBUT),
+        ("need_evidence", Verdict.NEED_EVIDENCE),
+        ("  Uphold  ", Verdict.UPHOLD),
+        # 긍정 — 자유 문자열(gpt-oss enum-제거 프로브가 실제로 낸 것 포함).
+        ("Yes", Verdict.UPHOLD),
+        ("yes", Verdict.UPHOLD),
+        ("use-after-free", Verdict.UPHOLD),
+        ("This is a confirmed use after free.", Verdict.UPHOLD),
+        ("vulnerable", Verdict.UPHOLD),
+        ("exploitable heap overflow", Verdict.UPHOLD),
+        ("true positive", Verdict.UPHOLD),
+        # 부정 — 긍정어를 담아도 부정이 이긴다 (판정 순서).
+        ("no", Verdict.REBUT),
+        ("not vulnerable", Verdict.REBUT),
+        ("this is a false positive", Verdict.REBUT),
+        ("the code is safe", Verdict.REBUT),
+        ("benign, no issue", Verdict.REBUT),
+        ("cannot be exploited", Verdict.REBUT),
+        # 불확실 — 부정어("no")를 담아도 불확실이 먼저다.
+        ("need more evidence", Verdict.NEED_EVIDENCE),
+        ("not enough evidence to decide", Verdict.NEED_EVIDENCE),
+        ("unclear", Verdict.NEED_EVIDENCE),
+        ("insufficient information", Verdict.NEED_EVIDENCE),
+        ("inconclusive", Verdict.NEED_EVIDENCE),
+        # 못 읽으면 UPHOLD — 읽히지 않는 verdict는 발견을 기각하지 않는다 (agent-contracts §2.3).
+        ("asdf qwer", Verdict.UPHOLD),
+    ],
+)
+def test_verdict_from_text_maps_free_verdicts(text: str, expected: Verdict) -> None:
+    """자유 verdict를 표준값으로 읽는다 (enum grammar 회피 — gpt-oss 실측 2026-09-12).
+
+    부정·불확실을 긍정보다 먼저 봐서 *"not vulnerable"*(부정)이 `vulnerab`(긍정어)에
+    끌려가지 않는다. 못 읽으면 `UPHOLD`(§2.3 — 근거 없는 반박은 uphold).
+    """
+    assert Verdict.from_text(text) is expected
+
+
 def test_candidate_state_rejects_finding_only_values() -> None:
     """상태 열거형은 하나지만 객체별로 허용 값이 다르다(enums.FindingState docstring)."""
     with pytest.raises(ValidationError):

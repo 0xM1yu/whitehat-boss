@@ -77,8 +77,9 @@ agent:
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
 - 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID만 전달).
 - 출력: `Decision`
+- **요청은 `verdict`를 자유 문자열로 받는다(`DecisionDraft`), 그리고 `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): 같은 케이스에서 `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. 매핑이 항등이 아니면(모델이 표준 어휘를 안 씀) `critic_verdict_mapped` trace로 원문·매핑값을 남긴다.
 - 반박 체크리스트: guard 존재 여부 / reachability(호출 가능 경로) / aliasing / lifetime / 컴파일 타임 조건·플래그 / 입력 도달성 제약
-- 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. 근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다.
+- 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. 근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다. **읽히지 않는 자유 verdict도 같은 규칙으로 `uphold`다**(`Verdict.from_text` fallback).
 
 ### 2.4 Evidence Judge (Evidence Gate)
 

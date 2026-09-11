@@ -4,6 +4,7 @@
 문자열을 그대로 옮긴 것이다.
 """
 
+import re
 from enum import StrEnum
 
 
@@ -122,6 +123,82 @@ class Verdict(StrEnum):
     UPHOLD = "uphold"
     REBUT = "rebut"
     NEED_EVIDENCE = "need_evidence"
+
+    @classmethod
+    def from_text(cls, text: str) -> "Verdict":
+        """자유 텍스트 verdict를 표준 Verdict로 읽는다.
+
+        **왜 자유 텍스트인가.** verdict를 스키마에 `enum`으로 강제하면 grammar 마스크가
+        모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): 같은
+        케이스·프롬프트·서버에서 `enum` 강제는 verdict 2/5, `enum` 제거(자유 문자열)는
+        **5/5**였고, rationale은 두 경우 다 맞았다. 그래서 Critic 요청은 verdict를 자유
+        문자열로 받고 여기서 표준값에 매핑한다. `DecisionDraft`(요청·파싱)와 짝이다.
+
+        **판정 순서가 뜻을 정한다.** 부정·불확실을 긍정보다 먼저 본다 — *"not vulnerable"*은
+        `vulnerab`을 담지만 REBUT다. 정확한 표준값(`uphold`/`rebut`/`need_evidence`)은
+        exact로 먼저 잡아 enum 어휘를 쓰는 모델(devstral 등)에서 매핑이 항등이 되게 한다.
+
+        **못 읽으면 `UPHOLD`다.** agent-contracts.md §2.3 — *"근거 없는 반박은 uphold로
+        처리한다"*. 읽히지 않는 verdict는 유효한 반박이 아니므로 발견을 기각하지 않는다.
+        매핑이 항등이 아니었는지는 호출자가 원문(`DecisionDraft.verdict`)과 대조해 남긴다.
+        """
+        t = text.strip().lower()
+        for verdict in cls:
+            if t == verdict.value:
+                return verdict
+        if any(
+            marker in t
+            for marker in (
+                "need_evidence",
+                "need evidence",
+                "need more",
+                "not enough",
+                "insufficient",
+                "unclear",
+                "inconclusive",
+                "undetermined",
+                "cannot determine",
+                "can't determine",
+                "cannot tell",
+            )
+        ):
+            return cls.NEED_EVIDENCE
+        if any(
+            marker in t
+            for marker in (
+                "rebut",
+                "false positive",
+                "false-positive",
+                "not vulnerab",
+                "no vulnerab",
+                "not exploitable",
+                "not a real",
+                "not an issue",
+                "no issue",
+                "not use-after-free",
+                "no use-after-free",
+                "cannot be exploited",
+                "safe",
+                "benign",
+                "reject",
+            )
+        ) or re.search(r"\bno\b", t):
+            return cls.REBUT
+        if any(
+            marker in t
+            for marker in (
+                "uphold",
+                "vulnerab",
+                "use-after-free",
+                "use after free",
+                "exploitable",
+                "confirmed",
+                "genuine",
+                "true positive",
+            )
+        ) or re.search(r"\byes\b", t):
+            return cls.UPHOLD
+        return cls.UPHOLD
 
 
 class CapsuleLevel(StrEnum):
