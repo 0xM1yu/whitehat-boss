@@ -131,9 +131,12 @@ class Finding(HarnessModel):
         전제(Evidence 중심 판정)를 정면으로 뒤집으므로 만들어질 수 없어야 한다.
         `hypothesized`/`queued` 초안 단계에는 요구하지 않는다.
 
-        **게이트가 이 전제를 grading에서 강제한다** — `gate.py`의 `p3`가 `path_ok`를 포함해
+        **게이트는 이 전제 중 경로 조건만 강제한다** — `gate.py`의 `p3`가 `path_ok`를 포함해
         경로 없는 Finding은 E3를 못 받는다(이슈 #154). 그 조건이 없던 때, 경로 없이 E3를 받은
         Finding이 `validated`로 전이하려다 아래 `path` 검사에서 `ValidationError`로 run을 죽였다.
+        전제 전체(E3가 E2를 함의한다)는 아직 안 선다 — `p3`에 `graph_ok`·`unblocked`가 없어
+        E3는 E2를 함의하지 않고, 7단계 진입이 등급이 아니라 상태라 경로 없는 E1도 올라온다
+        (이슈 #154의 남은 항목).
         """
         if self.state not in _EVIDENCE_BACKED_STATES:
             return self
