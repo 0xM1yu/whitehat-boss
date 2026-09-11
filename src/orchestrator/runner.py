@@ -532,7 +532,8 @@ class _Accumulator:
     deferred: int = 0
     dropped: int = 0
     # 7단계에 못 올라간 Finding 수 (#98 (b)). **위 둘과 단위가 다르다** — `deferred`·
-    # `dropped`는 시도를 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
+    # `dropped`는 **대상 또는 시도**(바로 위)이고 이쪽은 Finding을 센다.
+    # 한 수로 묶으면 경고와 리포트에서
     # 분모가 섞인다(`target_skipped`를 `critic_skipped`와 나눈 것과 같은 이유).
     critic_deferred: int = 0
     # 7단계에 **들어갔다가** critic 호출이 실패해 버린 Finding 수 (해소). `critic_deferred`와
