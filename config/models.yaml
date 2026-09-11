@@ -18,6 +18,13 @@
 # source는 그 checksum이 **어디서 나왔는가**다 (`hf://org/repo@rev` 또는 `file:///경로`).
 # 후보가 전부 커뮤니티 산출물이라 같은 이름의 모델이 리포지터리마다 다르다 — 값이 안 맞을 때
 # 이 필드가 없으면 어느 리포의 어느 리비전이었는지 답할 수 없다. `--apply`는 건드리지 않는다.
+#
+# family는 **베이스 가중치의 제작사**다 — 양자화한 조직이 아니라 가중치가 나온 조직이다
+# (ADR 0010 §4). 그래서 `source`의 org와 다를 수 있다: `qwen3-8b`는 `hf://nvidia/…`에서
+# 받았지만 NVIDIA가 한 것은 NVFP4 양자화이므로 `qwen`이고, `qwen3-coder-30b-a3b`의 `NVFP4/…`도
+# 같다. auditor와 critic이 **다른 모델 키면 계열이 달라야 한다**를 `load_config`가 검사한다
+# (같은 키인 B1은 정의상 허용). 그 요구는 evaluation.md §2.1·model-serving.md·critic 노드에
+# 문장으로만 있었고 강제하는 코드가 없었다 — 이슈 #121.
 
 models:
   fake:
@@ -27,6 +34,7 @@ models:
     license: "N/A"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: null
+    family: "fake"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -66,6 +74,7 @@ models:
     license: "Apache-2.0"
     checksum: "sha256:ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72"
     source: "hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98"
+    family: "qwen"
     prompt_template_version: "v1"
     fallback: "fake"
     benchmark:
@@ -117,6 +126,7 @@ models:
     license: "Apache-2.0"
     checksum: "sha256:38fa6aacb2da61c5c3eba2e4f636a0f37acaeb1bcdb3cb3e93c3f15f5615f09f"
     source: "hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e"
+    family: "qwen"
     prompt_template_version: "v1"
     fallback: "qwen3-4b"
     benchmark:
@@ -198,6 +208,7 @@ models:
     license: "Apache-2.0"
     checksum: "sha256:69c4c69eb5fe52d59f2c4fe015986d76495f2f2674aabf7c087e0f6307e00e44"
     source: "hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048"
+    family: "qwen"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -211,7 +222,10 @@ models:
       prefix_hit_ratio_batch32: 0.5673
 
   devstral-small-2-24b:
-    # Critic. Primary와 다른 계열이어야 교차 검증의 가치가 나온다(model-serving.md §2).
+    # Mistral 계열 24B. **자리의 정본은 CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
+    # 이 모델은 `scout_boundary`(CWE-119·125·787·190)이고, 아래 서술이 전제하던 Critic 자리가
+    # 아니다. Primary와 다른 계열이어야 교차 검증의 가치가 나온다는 규칙 자체는 그대로이고
+    # (model-serving.md §2), 지금은 `load_config`의 `_check_family_split`이 그것을 강제한다.
     #
     # **2026-09-04 ATOM에서 처음 띄웠다.** 상세는
     # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §7.
@@ -267,6 +281,7 @@ models:
     license: "Apache-2.0"
     checksum: "sha256:b352c3e63c12f9f14d0841790d09675801587ded6d3cbdbd47d233ade1f27b4d"
     source: "hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128"
+    family: "mistral"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -283,19 +298,20 @@ models:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-embedding-0.6b.txt`이고
     # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
     #
-    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
-    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
-    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
-    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
-    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
-    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
-    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
+    # ⚠ **#108은 2026-09-09 닫혔다.** 등재된 결함(안 뜨는 역할을 서빙으로 세어 이 `checksum`이
+    # 비교표 제외 판정에 끌려듦)은 `served_models()`가 `retriever != hybrid`면 검색 역할을 빼는
+    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(`b1_single` 등)의
+    # `RunRecord.model_checksums`가 이 실해시를 담는 것은 — 그 run이 이 모델을 띄운 적이 없어도 —
+    # 결함이 아니라 **선언 기록 설계**다: `model_checksums`는 "프로필이 선언한 역할→모델"의 완전
+    # 기록이고(그 계약을 `tests/test_config.py`가 강제한다), "실제로 뜬 역할"은 `served_models()`가
+    # 따로 판정한다. #131이 채운 이 값은 그 선언 기록의 참값이다.
     endpoint: "http://127.0.0.1:8004/v1"
     context_limit: 32768
     quantization: "fp16"
     license: "Apache-2.0"
     checksum: "sha256:2f0df70974121b6286d288c6b8639b576c4157fc7499fff717984cce3ab72323"
     source: "hf://Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+    family: "qwen"
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -312,19 +328,20 @@ models:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-reranker-0.6b.txt`이고
     # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
     #
-    # ⚠ **이 값이 채워졌다고 이슈 #108이 닫힌 것이 아니다.**
-    # #108은 `served_models()`가 한 번도 인스턴스화되지 않는 역할까지 서빙으로 세는 결함이고,
-    # 그 증상이 여기 있던 `checksum: 0`이 비교표 제외 판정에 끌려 들어가는 것이었다. 채우면
-    # **`doctor`의 WARN은 사라지지만 세는 방식은 그대로다** — 증상만 없어진다. `retriever: fake`
-    # 프로필(`b1_single` 등)의 `RunRecord.model_checksums`는 이제 0 대신 실해시를 담는데,
-    # 그 run은 이 모델을 **띄운 적이 없다.** #108 본문의 "지금 0인 편이 정직하다"가 그 뜻이었다.
-    # 판정은 그 이슈에서 하고, 여기서는 값이 움직였다는 것만 남긴다.
+    # ⚠ **#108은 2026-09-09 닫혔다.** 등재된 결함(안 뜨는 역할을 서빙으로 세어 이 `checksum`이
+    # 비교표 제외 판정에 끌려듦)은 `served_models()`가 `retriever != hybrid`면 검색 역할을 빼는
+    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(`b1_single` 등)의
+    # `RunRecord.model_checksums`가 이 실해시를 담는 것은 — 그 run이 이 모델을 띄운 적이 없어도 —
+    # 결함이 아니라 **선언 기록 설계**다: `model_checksums`는 "프로필이 선언한 역할→모델"의 완전
+    # 기록이고(그 계약을 `tests/test_config.py`가 강제한다), "실제로 뜬 역할"은 `served_models()`가
+    # 따로 판정한다. #131이 채운 이 값은 그 선언 기록의 참값이다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 32768
     quantization: "fp16"
     license: "Apache-2.0"
     checksum: "sha256:3e15b7c8147b36afb2937406a9015ad62286132e12ed4b21d0f7b2f64fe97f9a"
     source: "hf://Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473"
+    family: "qwen"
     prompt_template_version: "v1"
     fallback: null
     benchmark:

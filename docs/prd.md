@@ -135,7 +135,12 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 3. **중복 관리와 Cache**: 동일 artifact 분석 결과 재사용, Context Capsule 및 Finding Cache 활용, artifact 변경 시에만 재검증
 4. **Context Budget**: context 크기·검색 범위 제한, 필요한 Evidence만 선별 제공, token 비용과 추론 시간 절감
 
-### 4.5 초기 모델 구성
+### 4.5 초기 모델 구성 (2026-08 기록)
+
+**정본은 [CONTEXT.md](../CONTEXT.md) §1이다.** 아래는 2026-08 초기안이고 로스터는 2026-09-09에
+확정됐다. 표의 다섯 중 셋은 **자리가 바뀌었다** — `Qwen3-8B`는 Scout·Injection,
+`Qwen3-Coder-30B-A3B`는 Scout·Memory, `Devstral Small 2`는 Scout·Boundary다.
+
 
 | 역할 | 초기 추천 모델 | 비고 |
 | --- | --- | --- |
@@ -203,7 +208,7 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 ## 6. 리스크 및 오픈 이슈
 
 - **하드웨어 검증 이력 부재**: AI TOP ATOM(Blackwell sm_121)에서 vLLM의 GB10 전용 실행 지원은 2026년 6월부터 시작되었고 NVFP4 KV cache·speculative decoding 등은 커뮤니티 fork 수준에 머무는 경우가 있어, 배포 전 이 장비에서 vLLM 버전·커널 호환성을 직접 검증해야 한다. (담당자 추후 협의)
-- **Critic 모델의 양자화 품질 저하 가능성**: Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받는다. NVFP4 적용 시 critic 특유의 반박 정확도가 떨어지는지 별도 검증이 필요하다. (담당자 추후 협의)
+- **Critic 모델의 양자화 품질 저하 가능성** *(2026-09-09 — 전제가 사라졌다. 이 항목의 상태 원천은 [R2](open-questions/R/R2.md)이고, 새 Critic의 미검증 항목은 [R8](open-questions/R/R8.md)이 든다. 아래는 그 시점의 기록이다.)*: Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받는다. NVFP4 적용 시 critic 특유의 반박 정확도가 떨어지는지 별도 검증이 필요하다. (담당자 추후 협의)
 - **단일 노드 확장 한계**: 2대 연결(ConnectX-7) 확장은 benchmark로 병목이 확인되기 전까지 보류한다. 단일 노드 성능 한계 파악이 그 판단의 전제다. (담당자 추후 협의)
 - **평가 데이터 누출 검증 부담**: KB와 평가셋 분리, CVE ID Masking, Patch Leakage 방지를 코드 리뷰만으로 보장하기 어려우므로 자동 검증 스크립트가 필요하다. (담당자 추후 협의)
 - **Zero-day 제보 프로세스**: 최소 2인 검증 및 AI 생성물 그대로 제출 금지 원칙을 실제 워크플로에 어떻게 강제할지(체크리스트, 승인 절차)는 아직 정의되지 않았다.
