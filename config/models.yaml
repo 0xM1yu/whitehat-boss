@@ -431,3 +431,36 @@ models:
       # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
       # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
       prefix_hit_ratio_batch32: null
+
+  qwen3-reranker-4b:
+    # 2026-09-11 ATOM 스냅샷을 직접 받아 채웠다(다운로드 → checksum). manifest는
+    # `config/checksums/qwen3-reranker-4b.txt`이고 registry의 `checksum`은 **그 파일 전체의
+    # sha256**이다(`tools/model_checksum.py`, 파일 15개 · README·.gitattributes 제외).
+    # 붙여넣은 뒤 로컬 sha256이 registry 값과 일치함을 확인했다(CRLF 오염 없음).
+    #
+    # ⚠ **`context_limit`은 config.json의 `max_position_embeddings`=40960이다** — 0.6b(32768)와
+    # 달라 이름·형제값에서 추정하지 않았다(CLAUDE.md §0). **`quantization`은 양자화가 아니라
+    # native dtype**이다: config.json의 `torch_dtype`=bfloat16이고 `quantization_config`가 없다
+    # (0.6b가 `fp16`을 적은 것과 같은 관행 — 받은 그대로의 정밀도).
+    #
+    # ⚠ config.json의 `architectures`는 `['Qwen3ForCausalLM']`이라, 리랭커로 서빙하려면
+    # `--hf-overrides {"architectures":["Qwen3ForSequenceClassification"], …}`가 필요하다
+    # (0.6b가 쓴 것과 같은 reranker 서빙 인자). 그 기동·점수 정확성 검증은 등재와 별개이고
+    # 아직 안 됐다 — 그래서 `benchmark`는 전부 `0`(미실측 표시, CLAUDE.md §0)이고 production
+    # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 CONTEXT.md와 open-questions가 든다.
+    endpoint: "http://127.0.0.1:8005/v1"
+    context_limit: 40960
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:c86e70830af4d7d1d0fded0bd2c48b5c296b3de32ca668ae37f2100760fcd082"
+    source: "hf://Qwen/Qwen3-Reranker-4B@22e683669bc0f0bd69640a1354a6d0aebcfeede5"
+    family: "qwen"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
