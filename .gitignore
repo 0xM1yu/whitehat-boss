@@ -33,6 +33,12 @@ slurm-2026-08-11-issues.md
 
 # 작업 계획 문서 (PR 산출물이 아니다)
 PR4-plan.md
+
+# 스킬 작업용 스크래치. 날짜별 폴더로 쌓인다
+# (`_workspace/2026-09-01-001/00_metrics.json` · `01_input.txt` · `final.md` 등).
+# `.claude/plans/`와 같은 성격 — 세션 산출물이지 PR 산출물이 아니다.
+# **한 번 딸려 들어간 적이 있다** — `53e977b` "잘못 커밋된 _workspace/ 30개 파일을
+# 되돌린다" (2026-09-01). 그때 무시 규칙이 아예 없었다(PR #116이 넣었다).
 _workspace/
 
 # VS Code
