@@ -47,6 +47,28 @@ models:
       # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
       prefix_hit_ratio_batch32: null
 
+  # `fake`의 v2 판. Scout 풀 프롬프트(`scout_memory`·`scout_boundary`·`scout_injection`)는
+  # v2 전용이라(ADR 0010 §3 — 풀은 한 버전, 새 로스터는 v2), GPU 없이 풀 팬아웃을 도는
+  # `dev_fake_pool` 프로필이 이 키를 쓴다. 어댑터 선택은 endpoint 스킴(`fake://`)이 하므로
+  # `fake`와 같은 FakeModelClient로 뜬다 — 바뀌는 것은 `load_prompt`가 고르는 버전뿐이다.
+  fake_v2:
+    endpoint: "fake://deterministic"
+    context_limit: 32768
+    quantization: "none"
+    license: "N/A"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: null
+    family: "fake"
+    prompt_template_version: "v2"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
   qwen3-4b:
     # 12GB 단일 카드에서 scout만 실서빙할 때 쓰는 소형 모델. profiles.yaml single_gpu_12g 참조.
     #

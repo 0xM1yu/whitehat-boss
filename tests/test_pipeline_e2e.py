@@ -147,6 +147,93 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
     assert any(f.state is FindingState.PROVEN for f in result.findings)
 
 
+def _poolify(mode: str | None):  # noqa: ANN202
+    """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
+
+    풀 프로필을 `config/profiles.yaml`에 커밋하면 두 결정 게이트를 건드린다 —
+    `test_context_declares_that_profiles_are_not_rewired_yet`(재배선 상태)와
+    `test_no_profile_declares_execution_yet`(swap 실측 전 per_stage 금지). 둘 다 이 PR의
+    **팬아웃 메커니즘과 별개**이므로, 풀 config는 여기서만 조립한다. 풀 세 자리는 v2 전용
+    풀 프롬프트를 부르는 `fake_v2`, 나머지는 `fake`다.
+    """
+    from src.config import ExecutionPolicy
+
+    pool = {
+        "scout_memory": "fake_v2",
+        "scout_boundary": "fake_v2",
+        "scout_injection": "fake_v2",
+        "auditor": "fake",
+        "critic": "fake",
+        "embedding": "fake",
+        "reranker": "fake",
+    }
+
+    def configure(config):  # noqa: ANN001, ANN202
+        updates: dict[str, object] = {"roles": pool}
+        if mode is not None:
+            updates["execution"] = ExecutionPolicy(mode=mode)
+        return config.transition(profile=config.profile.transition(**updates))
+
+    return configure
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_scout_pool_fans_one_target_into_three_members(tmp_path: Path, mode: str | None) -> None:
+    """풀은 대상 하나를 멤버 셋이 각각 봐서 후보 셋을 낸다 (ADR 0010 §3 방식 ①).
+
+    합집합이지 투표가 아니다 — 세 후보가 합쳐지지 않고 각자 남는다. 각 후보의
+    `scout_member`는 하네스가 stamp해(모델이 아니라 `RunContext.call_model`) 어느 자리에서
+    왔는지 증언한다. 이 태그가 공동오답 행렬의 원천이다. 두 실행 모드 모두에서 돈다
+    (Option C — 팬아웃을 계획에서 편다).
+    """
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+
+    by_target: dict[str, list[str | None]] = {}
+    for candidate in result.candidates:
+        key = f"{candidate.location.file}:{candidate.location.symbol}"
+        by_target.setdefault(key, []).append(candidate.scout_member)
+
+    assert by_target, "풀인데 후보가 하나도 안 나왔다"
+    for key, members in by_target.items():
+        assert sorted(m or "" for m in members) == [
+            "scout_boundary",
+            "scout_injection",
+            "scout_memory",
+        ], f"{key}: 멤버 셋이 각각 후보를 내야 한다 (방식 ①) — got {members}"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_scout_pool_builds_the_light_capsule_once_per_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """멤버 셋이 같은 대상을 봐도 3단계 LIGHT 캡슐은 대상당 한 번만 만든다 (ADR 0010 §3).
+
+    `state.capsules` 캐시가 첫 멤버의 캡슐을 나머지에 물려 준다 — 그러지 않으면 검색이
+    멤버 수만큼(대상당 3배) 붙고 세 멤버가 조금씩 다른 캡슐을 볼 수 있다. `retrieval.run`을
+    감시해 LIGHT 레벨 호출이 후보 수가 아니라 **대상 수**와 같음을 고정한다.
+    """
+    from src.orchestrator.nodes import retrieval as retrieval_node
+    from src.schemas.enums import CapsuleLevel
+
+    original = retrieval_node.run
+    light_calls: list[tuple[object, ...]] = []
+
+    def spy(ctx: object, *, target: object, level: object) -> object:  # noqa: ANN401
+        if level is CapsuleLevel.LIGHT:
+            light_calls.append((target.file, target.symbol, target.line_start, target.line_end))
+        return original(ctx, target=target, level=level)
+
+    monkeypatch.setattr(retrieval_node, "run", spy)
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+
+    targets = {(c.location.file, c.location.symbol) for c in result.candidates}
+    assert len(light_calls) == len(targets), (
+        f"LIGHT 캡슐은 대상당 한 번(대상 {len(targets)})인데 {len(light_calls)}회 만들었다 — "
+        "풀 멤버마다 다시 만들면 이 수가 후보 수(대상당 3)로 뛴다"
+    )
+    assert len(set(light_calls)) == len(light_calls), "같은 대상을 두 번 build했다 — 캐시 miss"
+
+
 def test_manifest_is_written_with_reproducibility_fields(tmp_path: Path) -> None:
     result, trace_path = _run(tmp_path)
 

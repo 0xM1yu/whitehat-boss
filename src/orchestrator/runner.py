@@ -79,7 +79,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from src.config import HarnessConfig
+from src.config import SCOUT_POOL_ROLES, HarnessConfig
 from src.ids import IdFactory, sha256_text
 from src.interfaces.model_client import (
     ModelClient,
@@ -507,6 +507,11 @@ class _Accumulator:
     findings: dict[str, Finding] = field(default_factory=dict)
     evidences: dict[str, tuple[Evidence, ...]] = field(default_factory=dict)
     missings: dict[str, tuple[MissingEvidence, ...]] = field(default_factory=dict)
+    # 3단계 LIGHT 캡슐을 target별로 한 번만 만들어 공유한다 (ADR 0010 §3 "캡슐은 한 번
+    # 만든다"). Scout 풀은 대상 하나를 멤버 셋이 각각 보므로 팬아웃 뒤 세 `_InFlight`가
+    # 같은 target을 공유하는데, 캡슐을 멤버마다 다시 만들면 검색 호출이 3배가 되고 세 멤버가
+    # 조금씩 다른 캡슐을 볼 수 있다(토크나이저별 예산 컷). 키는 target Location이다.
+    capsules: dict[str, ContextCapsule] = field(default_factory=dict)
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -922,6 +927,11 @@ class _InFlight:
 
     target: _Target
     reached: _Reached
+    # 이 item이 맡은 4단계 Scout 자리 (Option C — 팬아웃을 계획에서 한다). 단일 프로필은
+    # `Role.SCOUT` 하나, 풀 프로필은 target 하나가 `scout_memory`·`scout_boundary`·
+    # `scout_injection` 세 item으로 펼쳐지고 각자 이 role을 들고 온다. `_step_scout`이
+    # `scout.run(role=...)`에 넘기고, `scout_member` stamp는 그 role에서 나온다.
+    role: Role = Role.SCOUT
     capsule: ContextCapsule | None = None
     candidate: Candidate | None = None
     finding: Finding | None = None
@@ -948,19 +958,46 @@ class _StageOutOfOrder(RuntimeError):
     """
 
 
+def _scout_roles(ctx: RunContext) -> tuple[Role, ...]:
+    """이 프로필의 4단계 Scout 자리. 풀이면 멤버 셋, 아니면 단일 `scout` 하나.
+
+    `config.SCOUT_POOL_ROLES`가 정본이다 — 프로필이 그 셋을 선언했으면 풀이고, 아니면
+    단일 `scout`이다. 둘 중 하나임은 `ProfileEntry._declares_one_scout_arrangement`가 이미
+    강제하므로 여기서는 「풀이 온전히 선언됐나」만 본다. 순서는 `SCOUT_POOL_ROLES` 그대로라
+    팬아웃 순서·ID 발급 순서가 두 run 사이에서 안 흔들린다.
+    """
+    roles = ctx.config.profile.roles
+    if all(member in roles for member in SCOUT_POOL_ROLES):
+        return tuple(Role(member) for member in SCOUT_POOL_ROLES)
+    return (Role.SCOUT,)
+
+
+def _target_key(location: Location) -> str:
+    """캡슐 캐시 키. 같은 대상을 보는 풀 멤버 item들이 같은 키를 낸다."""
+    return f"{location.file}::{location.symbol}::{location.line_start}::{location.line_end}"
+
+
 def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     """3단계 — LIGHT 캡슐. 항상 다음 단계로 넘긴다.
 
-    ⚠ **`state`를 안 쓰지만 받는다.** 표(`_TRIAGE_STEPS`)의 항목이 전부 같은 시그니처여야
-    디스패처가 특수분기 없이 표만 읽는다 — 하나라도 갈리면 그 칸이 죽은 값이 된다
-    (`tests/test_pipeline_e2e.py`의 `test_every_triage_step_takes_the_same_arguments`).
+    **캡슐은 target당 한 번 만든다** (ADR 0010 §3). 풀 프로필에서는 같은 target을 보는
+    멤버 셋이 각각 이 단계를 지나므로, 첫 멤버가 만든 캡슐을 `state.capsules`에 넣어
+    나머지가 재사용한다 — 검색 호출이 멤버 수만큼 붙는 것을 막고 세 멤버가 같은 캡슐을
+    본다. 단일 프로필은 target당 item이 하나라 캐시가 항상 miss이고 동작이 그대로다.
 
-    역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). scout는 LIGHT
-    캡슐을 보므로 scout 카운터로 켠다. `counter_for_role`이 `None`을 주면(fake·토크나이저
-    없음) `using_counter`가 아무것도 바꾸지 않아 기본 카운터(글자수 근사)가 유지된다.
+    역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). 첫 멤버의
+    카운터로 켠다 — 캡슐이 공유되므로 예산 컷도 그 하나로 정해진다. `counter_for_role`이
+    `None`을 주면(fake·토크나이저 없음) `using_counter`가 아무것도 바꾸지 않아 기본
+    카운터(글자수 근사)가 유지된다.
     """
-    with using_counter(ctx.counter_for_role(Role.SCOUT.value)):
+    key = _target_key(item.target.location)
+    cached = state.capsules.get(key)
+    if cached is not None:
+        item.capsule = cached
+        return True
+    with using_counter(ctx.counter_for_role(item.role.value)):
         item.capsule = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.LIGHT)
+    state.capsules[key] = item.capsule
     return True
 
 
@@ -970,7 +1007,11 @@ def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     if item.capsule is None:
         raise _StageOutOfOrder("4단계가 3단계보다 먼저 돌았다 — capsule이 비어 있다")
     candidate = scout.run(
-        ctx, artifact=item.target.artifact, capsule=item.capsule, evidences=item.target.evidences
+        ctx,
+        artifact=item.target.artifact,
+        capsule=item.capsule,
+        evidences=item.target.evidences,
+        role=item.role,
     )
     item.candidate = candidate
     state.candidates.append(candidate)
@@ -1083,7 +1124,16 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
     후보 단위와 같다 — `run_pipeline`이 처리하고, 그때까지 `state`에 쌓인 것이 곧
     부분 결과다. 이 루프는 그 「쌓인 것」을 단계 경계에서 가지런하게 만든다.
     """
-    items = [_InFlight(target=target, reached=_Reached()) for target in plan.targets]
+    # Option C — 팬아웃을 계획에서 한다. target 하나가 Scout 자리마다 item 하나로 펼쳐진다
+    # (풀이면 셋, 단일이면 하나). 스텝 계약은 1:1 그대로라 `_run_stage_for_all`·다운스트림은
+    # 안 바뀐다. `candidate_max`는 target을 자르지 후보를 자르지 않으므로 컷은 위 `_plan_targets`
+    # 그대로이고, 여기서 target당 멤버 수만큼 후보가 나온다.
+    roles = _scout_roles(ctx)
+    items = [
+        _InFlight(target=target, reached=_Reached(), role=role)
+        for target in plan.targets
+        for role in roles
+    ]
     for stage, step in _TRIAGE_STEPS:
         if last < stage:
             return
@@ -1158,42 +1208,47 @@ def _triage_by_candidate(
     고장 났다"는 판정을 무르게 하지 않는다.
     """
     consecutive = 0
+    # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 각 (target, role)이
+    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 리셋된다.
+    # 풀에서는 같은 target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+    roles = _scout_roles(ctx)
     for target in plan.targets:
-        # 이번 target이 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (PR #50). 예외는
-        # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
-        # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
-        # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
-        reached = _Reached()
-        try:
-            _triage_one(ctx, target, state, last, reached)
-        except ModelGatewayError as exc:
-            if not _is_droppable(exc):
-                # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
-                #
-                # **그래도 run을 죽이지는 않는다.** `run_pipeline`이 이 예외를 받아
-                # 리포트와 매니페스트까지 간 뒤 중단 사유를 적는다 — 그러지 않으면
-                # 이 변경이 없애려던 "산출물이 하나도 안 남는다"가 그대로 남는다.
-                raise
-            # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
-            # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
-            systematic = exc.status not in _SIZE_STATUS
-            consecutive = _drop(
-                ctx,
-                state,
-                target,
-                _REASON_GATEWAY,
-                exc,
-                consecutive,
-                stage=reached.stage,
-                systematic=systematic,
-            )
-        except SchemaParseError as exc:
-            consecutive = _drop(
-                ctx, state, target, _REASON_SCHEMA, exc, consecutive, stage=reached.stage
-            )
-        else:
-            # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
-            consecutive = 0
+        for role in roles:
+            # 이번 시도가 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (PR #50). 예외는
+            # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
+            # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
+            # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
+            reached = _Reached()
+            try:
+                _triage_one(ctx, target, state, last, reached, role=role)
+            except ModelGatewayError as exc:
+                if not _is_droppable(exc):
+                    # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
+                    #
+                    # **그래도 run을 죽이지는 않는다.** `run_pipeline`이 이 예외를 받아
+                    # 리포트와 매니페스트까지 간 뒤 중단 사유를 적는다 — 그러지 않으면
+                    # 이 변경이 없애려던 "산출물이 하나도 안 남는다"가 그대로 남는다.
+                    raise
+                # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
+                # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
+                systematic = exc.status not in _SIZE_STATUS
+                consecutive = _drop(
+                    ctx,
+                    state,
+                    target,
+                    _REASON_GATEWAY,
+                    exc,
+                    consecutive,
+                    stage=reached.stage,
+                    systematic=systematic,
+                )
+            except SchemaParseError as exc:
+                consecutive = _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, consecutive, stage=reached.stage
+                )
+            else:
+                # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
+                consecutive = 0
 
 
 def _drop(
@@ -1312,18 +1367,26 @@ def _emit_skipped(
 
 
 def _triage_one(
-    ctx: RunContext, target: _Target, state: _Accumulator, last: int, reached: _Reached
+    ctx: RunContext,
+    target: _Target,
+    state: _Accumulator,
+    last: int,
+    reached: _Reached,
+    *,
+    role: Role = Role.SCOUT,
 ) -> None:
-    """target 하나를 3~6단계에 태운다. 승격되지 않은 후보는 거기서 멈춘다.
+    """target 하나를 한 Scout 자리(`role`)로 3~6단계에 태운다. 승격되지 않은 후보는 멈춘다.
 
     **후보 단위(`execution.mode: per_candidate`, 기본값)의 경로다.** 단계 단위는
-    `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만 뒤집어** 돈다.
+    `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만 뒤집어** 돈다. 풀 프로필에서
+    `_triage_by_candidate`가 target × 멤버로 이 함수를 여러 번 부르고(Option C), 첫 멤버가
+    만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
 
     **`reached.stage`를 노드에 들어가기 직전에 올린다 (PR #50).** 끝난 뒤에 올리면 그
     노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
     (그 올리는 일은 이제 각 `_step_*`이 자기 첫 줄에서 한다.)
     """
-    item = _InFlight(target=target, reached=reached)
+    item = _InFlight(target=target, reached=reached, role=role)
     for stage, step in _TRIAGE_STEPS:
         if last < stage:
             return
