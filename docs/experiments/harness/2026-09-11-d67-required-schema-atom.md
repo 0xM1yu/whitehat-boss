@@ -17,14 +17,14 @@
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` (`--served-model-name qwen3-coder-30b-a3b`는 별칭) |
 | `repo_commit` | 조건 A의 1회차만 `2ed9a98`, 나머지 전부 `2ef2c7d`. **팔 판정 코드는 두 커밋 사이에서 안 바뀌었다** — `2ef2c7d`가 더한 것은 `_diagnose` 하나이고 `_run_arm`·`_schema_for`는 동일하다 |
 | `run_id` | **없다.** `cli run`을 안 돌렸다. 이 실험은 하네스의 어댑터만 쓰고 오케스트레이터를 안 지난다 |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/whitehat-boss/d67_probe.json`(조건 B) · `d67_probe_ws_off.json`(C) · `d67_probe_xgrammar_only.json`(D) — **보존됨**. ⚠ **조건 A의 JSON은 없다** — 조건 B가 같은 `--out d67_probe.json`으로 덮었다. A는 콘솔 출력만 남았고 아래 §3.1 표가 그것이다 |
+| run 산출물 경로·보존 여부 | **넷 중 둘만 남았다.** `/srv/tenants/ext01/whitehat-boss/d67_probe.json`(조건 B) · `d67_probe_ws_off.json`(C) — 보존됨. ⚠ **조건 A의 JSON은 없다** — 조건 B가 같은 `--out d67_probe.json`으로 덮었다. ⚠ **조건 D의 JSON도 없다** — 조작자가 `min_items` 진단 중에 중단해서(§3.4) 스크립트가 파일을 쓰기 전에 죽었다. **A와 D는 콘솔 출력만 남았고 아래 §3.1·§3.4가 그것이다** — 이 보고서가 그 둘의 유일한 기록이다 |
 | 입력 프롬프트 | `/srv/tenants/ext01/artifacts_20260904/run_20260904_0001/prompts/0002_auditor.md` — **`run_20260904_0001`이 실제로 보낸 원문**(`prompt_version: v1` · `stage: 5`) |
 | `tool_runner` | 해당 없음 (도구를 안 돌렸다) |
 | `--device` | `atom` |
 | `tool_images` digest | 해당 없음 |
 | `--gpu-memory-utilization` | `0.30` — **분모는 물리 통합메모리 119.7 GiB**(기동 시점 free 110.53 GiB, 요청 35.91 GiB) |
 | 동시에 떠 있던 다른 서버 | **없다.** 조건마다 하나씩 띄우고 다음 조건 전에 `pkill`했다 |
-| 원문 산출물 보존 위치 | 위 JSON 셋 + 아래 서버 로그 |
+| 원문 산출물 보존 위치 | 위 JSON **둘**(B·C) + 아래 서버 로그 넷. **A·D는 이 보고서가 유일한 기록이다** |
 | 서빙 서버 stdout | `~/vllm_logs/serve_auditor_8002_ws_default.log`(A·B) · `_ws_off.log`(C) · `_xgrammar_only.log`(D) · `_FAILED_ninja_path.log`(§4 벽 1). **ATOM 홈에만 있고 저장소에 없다** |
 | vLLM · 환경 | `0.27.1` · arch `sm121` · venv `/srv/tenants/ext01/venv-probe` (Python 3.12.3) |
 
@@ -203,12 +203,13 @@ StructuredOutputsConfig(backend='xgrammar', disable_any_whitespace=False, ...)
 | `--structured-outputs-config.disable_any_whitespace true`가 기동을 거부했다 | `disable_any_whitespace is only supported for xgrammar and guidance backends` — `backend`가 `auto`였다 | `--structured-outputs-config.backend xgrammar`를 함께 준다. **그래서 조건 D(귀속용)가 필요해졌다** |
 | `auto`가 무엇으로 풀렸는지 못 봤다 | vLLM 0.27.1이 해석된 structured output 백엔드를 로그에 안 남긴다(`grep` 0건) | **못 풀었다.** 조건 D를 따로 돌려 `xgrammar` 명시의 효과를 분리했다 |
 | 조작자가 프로브를 서버 기동 30초 뒤에 돌려 전량 `Connection refused` | 가중치 로딩에 2.5분이 걸린다 | `until curl -s -f …/v1/models; do sleep 10; done` |
+| **조건 D의 산출물 JSON을 통째로 잃었다** | 프로브가 **마지막에 한 번** 파일을 쓴다. 진단 중 `Ctrl+C`가 그 앞에서 죽여 팔 판정까지 함께 사라졌다 | **미해결.** 콘솔 출력을 이 보고서에 옮겨 적는 것으로 메웠다 — 다음 회차 전에 고칠 자리다(§7 5번) |
 
 ## 5. 미측정 항목과 사유
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| 조건 D의 `min_items` 진단 | 조작자가 중단했다 | 조건 D를 다시 띄워 같은 명령 |
+| 조건 D의 `min_items` 진단 | 조작자가 중단했다. **그 중단이 조건 D의 JSON도 함께 날렸다**(§4) — 팔 판정 3/5는 콘솔에만 있다 | 조건 D를 다시 띄워 같은 명령. 프로브를 고친 뒤가 낫다 |
 | 처리량·지연 | **이 실험의 범위 밖이다.** 경로 성립만 봤다 | `cli bench --roles auditor` |
 | 다른 프롬프트에서의 재현 | 프롬프트를 **하나**만 썼다(`0002_auditor.md`). 여럿을 섞으면 팔 간 차이와 프롬프트 간 차이가 안 갈린다 | `--prompt-index`를 바꿔 반복. auditor 1차 프롬프트가 **152건** 보존돼 있다 |
 | 다른 모델에서의 재현 | D67 갈래 ③(모델의 성질)을 가르는 실험이고 이 실험의 범위가 아니다 | 같은 프로브를 다른 auditor 모델에 |
@@ -235,7 +236,8 @@ StructuredOutputsConfig(backend='xgrammar', disable_any_whitespace=False, ...)
 | 2 | **D46 등재문 갱신** — 선택지 (a) 첫 실측. 그리고 **D42 인용 정정**(§7.1) | 이 보고서와 함께 |
 | 3 | `gpt-oss-20b`의 R8에 같은 옵션이 걸리는가 | 그 레시피는 이미 `backend xgrammar`다. 옵션 한 줄이면 된다 |
 | 4 | 프롬프트 여럿·모델 여럿으로 범위 넓히기 | §5 |
-| 5 | 서버 비결정성 | §5 마지막 줄. 별건 |
+| 5 | **프로브가 중단에 산출물을 잃는다** | `--out`을 마지막에 한 번 쓴다. 팔이 끝날 때마다 쓰거나 `finally`에서 쓰면 이번 손실이 안 난다 |
+| 6 | 서버 비결정성 | §5 마지막 줄. 별건 |
 
 ### 7.1 D46이 D42를 잘못 인용한다
 
@@ -254,8 +256,9 @@ D42는 *"하네스가 `output_max`를 안 보낸다"*이고, 그 계약 결함�
 
 ## 8. 정리 상태
 
-- **서빙 서버**: ⚠ **조건 D의 서버가 8002에 떠 있다.** 다음 작업 전에 `pkill -f "vllm serve"`로
-  내리고 GPU 반환을 확인한다
+- **서빙 서버**: **내렸다.** `pkill -f "vllm serve"` 후 8002에 프로세스 없음.
+  ⚠ **GPU 반환은 수치로 확인하지 못했다** — `nvidia-smi --query-gpu=memory.used`가 이 장비에서
+  `[N/A]`를 준다(통합메모리. `mem_gb_ctx8k`가 registry 전반에서 0인 것과 같은 원인이다)
 - **임시 설정·프로필**: 없음. `config/`를 안 건드렸다
 - **저장소 변경**: `tools/probe/d67_required_schema.py`(PR #175) · 이 보고서
 
