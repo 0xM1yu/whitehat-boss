@@ -524,13 +524,15 @@ class _Accumulator:
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
     workdirs: dict[str, str] = field(default_factory=dict)
-    # 4단계에 못 올라간 target 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
+    # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
+    # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
+    # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
     # **여기 두는 이유가 이 클래스의 존재 이유와 같다** — 예산 소진으로 중간에 끊겨도
     # 호출자가 그 수를 읽어 경고와 리포트에 올려야 한다.
     deferred: int = 0
     dropped: int = 0
     # 7단계에 못 올라간 Finding 수 (#98 (b)). **위 둘과 단위가 다르다** — `deferred`·
-    # `dropped`는 target을 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
+    # `dropped`는 시도를 세고 이쪽은 Finding을 센다. 한 수로 묶으면 경고와 리포트에서
     # 분모가 섞인다(`target_skipped`를 `critic_skipped`와 나눈 것과 같은 이유).
     critic_deferred: int = 0
     # 7단계에 **들어갔다가** critic 호출이 실패해 버린 Finding 수 (해소). `critic_deferred`와
@@ -1363,7 +1365,7 @@ def _drop_finding(
     태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
     상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이 상한에 닿았는지가 사유에서 사라진다.
 
-    **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 target을 세고 이쪽은
+    **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 시도를 세고 이쪽은
     Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
     """
     state.critic_failed += 1
