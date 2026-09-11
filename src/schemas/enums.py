@@ -30,7 +30,6 @@ class Role(StrEnum):
     # ADR 0010 §3의 ⚠ 문단이 같은 것을 적는다.
     # `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
     # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다.
-
     #
     # ⚠ **2026-09-11에 절반이 바뀌었다** (PR #178 — 풀 팬아웃).
     #
