@@ -627,12 +627,24 @@ def test_bench_on_a_fake_profile_says_why_it_measured_nothing(
 def test_dataset_pending_item_is_marked_out_of_scope(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """NVFP4 Critic 반박 정확도는 평가셋이 있어야 답한다 — 범위 밖임을 표시만 한다."""
+    """Critic 반박 정확도는 평가셋이 있어야 답한다 — 범위 밖임을 표시만 한다.
+
+    **2026-09-09에 이 항목의 문구가 바뀌었고 이 검사가 옛 문구를 고정하고 있었다.**
+    원래는 「NVFP4 양자화 시 Critic 반박 정확도 저하 여부」였는데, 그 물음은 Critic이
+    고정밀 원본을 가진 모델일 때만 선다. 확정 로스터의 Critic은 네이티브 MXFP4라
+    비교 대상이 없어 #93이 「반박 정확도 표본 자체」로 재정의했다.
+
+    ⚠ **그래서 `NVFP4`를 단언하지 않는다.** 이 검사가 고정하는 것은 양자화 방식이 아니라
+    **「마지막 항목은 데이터셋이 없어 미실측으로 표시된다」**이고, 그것은 재정의 전후로
+    같다. 모델이 또 바뀌어도 이 검사는 서 있어야 한다."""
     cli.main(["bench", "--profile", "dev_fake", "--artifacts-root", str(tmp_path)])
     report = json.loads(capsys.readouterr().out)
 
     last = report["checklist"][-1]
-    assert "NVFP4" in last["item"]
+    assert "반박 정확도" in last["item"]
+    assert "NVFP4" not in last["item"], (
+        "네이티브 MXFP4 Critic에는 고정밀 대비 기준선이 없다 — 문구가 되돌아갔다"
+    )
     assert last["status"] == "unmeasured"
     assert "데이터셋 대기" in last["reason"]
 

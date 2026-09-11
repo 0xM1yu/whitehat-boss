@@ -18,9 +18,16 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 .
 ├── docs/                  # 이 문서 모음
 ├── prompts/               # 역할별 프롬프트, 버전 디렉터리
-│   ├── scout/v1/          # prefix.md / body.md / meta.yaml
+│   ├── scout/v1/          # 버전 디렉터리마다 prefix.md / body.md / meta.yaml
+│   ├── scout/v2/
 │   ├── auditor/v1/
-│   └── critic/v1/
+│   ├── auditor/v2/
+│   ├── critic/v1/
+│   ├── critic/v2/
+│   ├── single/v2/         # B1·B3 통합 단일패스. v1 없이 v2로 들어왔다(`2f8109b`)
+│   ├── scout_memory/v2/   # Scout 풀 3역할(ADR 0010 §3). 셋 다 v1 없이 v2로 들어왔다(`6a3c31e`)
+│   ├── scout_boundary/v2/
+│   └── scout_injection/v2/
 ├── config/
 │   ├── models.yaml        # Model Registry (model-serving.md §5)
 │   ├── profiles.yaml      # 벤치마크 조건별 프로필
@@ -42,6 +49,10 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 ├── artifacts/             # run별 산출물 (git 제외)
 └── tests/
 ```
+
+`prompts/` 아래에서 **어느 버전을 읽을지는 노드가 아니라 config가 정한다**
+(`ModelEntry.prompt_template_version` → `prompt_loader.load_prompt(role, version)`). 그래야
+그 값이 `RunRecord.prompt_versions`와 같은 곳에서 나온다.
 
 ## 3. 교체 가능한 4개 인터페이스
 
