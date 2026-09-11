@@ -36,6 +36,12 @@ graph LR
     M --> L
 ```
 
+> **위 그림에서 Evidence Gate가 한 칸으로 보이지만 판정은 세 번 돈다.** 게이트는 단계가 아니라
+> **순수 함수(술어)**이고 6·7·8단계에서 각각 호출된다(`stages.GATE_STAGES`). 그림의 칸은 그중
+> **전이가 갈라지는 유일한 자리**인 6단계다 — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의
+> 전이 신호에 실리고, 8단계 재판정은 등급을 **집계만** 한다. 등급이 언제 성립하고 승격이 어디서
+> 정해지는지는 §4의 두 표에 나눠 적었다.
+
 ## 3. 단계별 책임과 통과 조건
 
 | # | 단계 | 입력 | 처리 | 출력 | 다음 단계 통과 조건 |
@@ -97,13 +103,38 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 
 근거 등급(Evidence Gate 판정 기준):
 
-| 등급 | 조건 | 승격 결과 |
+**아래 표는 판정 순서가 아니라 근거 강도의 정의다.** 게이트는 파이프라인의 한 칸이 아니라
+6·7·8단계에서 각각 도는 순수 함수이고(`stages.GATE_STAGES`, `RunContext.evaluate_gate()`가
+그 상수로 호출 단계를 강제한다), E3·E4는 *나중에 매기는 등급*이 아니라 **그 재료가 나오기
+전에는 성립할 수 없는 등급**이다. 재료가 없으면 `gate.py`의 단조 하강 판정식이 자동으로 아래
+등급을 준다 — **6단계에서 E3 술어가 거짓인 것은 결함이 아니라 정의다.**
+
+| 등급 | 성립 조건 | 이 등급이 처음 성립 가능한 단계 |
 | --- | --- | --- |
-| E0 | 모델 주장만 존재 | `queued` (폐기 아님) |
-| E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | `hypothesized` 유지 |
-| E2 | source→sink 경로가 call graph로 확인되고 guard 부재가 코드로 확인 | Critic으로 승격 |
-| E3 | Critic이 반박 실패 + 재현 명세 존재 | `validated` |
-| E4 | sanitizer/crash/PoC 재현 로그 존재 | `proven` |
+| E0 | 모델 주장만 존재 | 6 |
+| E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
+| E2 | source→sink 경로가 call graph로 확인되고 guard 부재가 코드로 확인 | 6 |
+| E3 | Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
+| E4 | sanitizer/crash/PoC 재현 로그 존재 | 8 — 도구 실행 로그가 있어야 성립한다 |
+
+**승격은 게이트가 하지 않는다 — 두 축을 한 표에 넣지 않는 이유다.** `gate.py`는 등급만 내고
+전이는 노드와 정책이 한다(모듈 docstring: *"등급을 전이로 매핑하는 것은 노드 몫이고, trace
+기록도 호출자가 한다"*). 한 칸에 뭉치면 "게이트가 Critic 결과를 받아 승격시킨다"로 읽혀
+**6 → 7 순서가 거꾸로로 보인다.**
+
+| 등급 | 그 등급에서 가는 곳 | 전이를 정하는 자리 |
+| --- | --- | --- |
+| E0 | `queued` (폐기 아님) | 6단계 · `DecisionPoint.GATE_GRADE` |
+| E1 | `hypothesized` 유지 | 6단계 · `DecisionPoint.GATE_GRADE` |
+| E2 | Critic으로 (`high-value only`) | 6단계 · `DecisionPoint.GATE_GRADE` |
+| E3 | `validated` | 7단계 · `DecisionPoint.CRITIC_VERDICT` (신호에 `grade`가 실린다) |
+| E4 | `proven` | 8단계 — **⚠ 등급을 읽지 않는다. 아래 참조** |
+
+> **⚠ 위 표의 E4 행은 설계이고 현황이 아니다.** 8단계의 게이트 호출은 `nodes/validate.py`가
+> **반환값을 버린다** — 목적이 판정이 아니라 집계다. 승격 정책(`policy._repro_result()`)이 읽는
+> 것은 도구의 `ok`·`tool_allowed`뿐이라, 게이트가 E3인 Finding도 `ok=True`면 `proven`이 된다.
+> **8단계에서 등급은 집계 전용이고 상태 축과 등급 축이 어긋난 채로 남아 있다.**
+> → [open-questions.md](open-questions.md) D18
 
 구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)
 
