@@ -16,7 +16,9 @@ def test_counted_roles_match_the_roles_the_runner_actually_wraps() -> None:
 
     `src/tokens.py`는 `src/schemas/`보다 아래에 있어 `Role`을 import 하면 순환이 된다
     (`schemas/capsule.py`가 이 모듈을 부른다). 그래서 문자열로 두고 **여기서 대조한다** —
-    러너가 `using_counter(...)`로 감싸는 자리가 `_triage_one`의 scout·auditor 둘이다.
+    러너가 `using_counter(...)`로 감싸는 자리가 그 둘이다 — LIGHT 캡슐은
+    `_step_retrieval`, EXPANDED는 auditor 단계. ⚠ **Scout 풀에서는 앞쪽이 멤버 키라
+    이 등식이 「켜지는 역할」과 어긋난다**(PR #178, `src/tokens.py`의 ⚠ 문단).
     """
     assert set(tokens.COUNTED_ROLES) == {Role.SCOUT.value, Role.AUDITOR.value}
 
