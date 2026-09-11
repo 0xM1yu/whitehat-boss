@@ -60,31 +60,53 @@ docker image inspect harness-tools:v1 --format '{{index .RepoDigests 0}}|{{.Id}}
 docker run --rm harness-tools:v1 cat /opt/semgrep-rules/COMMIT
 ```
 
-### ATOM 빌드·실행 (podman)
+### ATOM 빌드·실행
 
-ATOM은 **Docker 데몬 접근도 singularity도 없고 podman만 있다**(2026-08-17 실측). aarch64라
-x86 이미지를 옮겨 쓸 수도 없으므로 **이 장비에서 직접 빌드한다.** podman은 Dockerfile을 그대로
-읽으므로 같은 파일로 빌드된다 — 그 자리에서 tree-sitter·semgrep의 arm64 휠 유무까지 검증된다.
+ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularity는 없다**
+(2026-08-21 확인, 2026-08-28 `ssh atom 'which podman; which docker'` 재확인 —
+[portability.md](../docs/portability.md) §6). aarch64라 x86 이미지를 옮겨 쓸 수 없으므로
+**이 장비에서 직접 빌드한다.** 두 런타임 다 Dockerfile을 그대로 읽으므로 같은 파일로
+빌드되고, 그 자리에서 tree-sitter·semgrep의 arm64 휠 유무까지 검증된다.
+
+> **⚠ 이 절은 2026-09-09까지 "ATOM은 Docker 데몬 접근도 singularity도 없고 podman만
+> 있다(2026-08-17 실측)"로 적고 있었다.** 그 실측은 그날의 관측으로 유효하지만 **4일 뒤
+> docker 29.2.1이 확인되면서 전제가 반증됐다** —
+> [ADR 0005](../docs/decisions/0005-tool-runner-override.md) 마지막 절 ①. 같은 반증이
+> `config/profiles.yaml`·`src/config.py`·`src/adapters/factory.py`·[portability.md](../docs/portability.md) §6에는
+> 2026-08-28에 반영됐는데(`eb0e30c`·`a69d69f`) **이 파일은 빠졌다**: [experiments/README.md](../docs/experiments/README.md)
+> 확정 #6이 정정 대상을 앞의 둘로만 적었고 여기를 세지 않았다. CLAUDE.md §2.3(바꾼 값을
+> 가리키던 곳을 전수로 찾는다)이 잡으려던 자리다.
 
 ```bash
-podman build -t harness-tools:v1 tools/harness-tools/
+# 둘 중 어느 쪽으로 빌드해도 된다. 다만 이미지 저장소가 갈려 있어 digest가 서로 다르다
+# (같은 harness-tools:v1에 podman RepoDigest sha256:3a63ba2e… / docker sha256:b5d7048b… —
+#  experiments/README.md 확정 #6). 실행할 런타임 쪽에 빌드해 둔다.
+docker build -t harness-tools:v1 tools/harness-tools/
 
-# 실서빙 프로필은 podman을 직접 선언한다 — 플래그가 필요 없다 (2026-08-17)
+# 실서빙 프로필은 `docker`를 선언하고 ATOM에 docker가 있다 — 플래그가 필요 없다 (2026-08-28)
 python -m src.cli run --profile b1_single --target <경로> --device atom --condition B1@pipeline
 
-# 개발 프로필을 이 장비에서 돌릴 때만 덮는다
-python -m src.cli run --profile dev_docker --tool-runner podman --target <경로> --device atom
+# `dev_docker`도 이 장비에서는 덮을 것이 없다(2026-08-21 이후). 덮어야 하는 것은 ATOM에
+# 없는 런타임을 선언한 프로필뿐이고, 지금 그것은 `dev_singularity` 하나다
+python -m src.cli run --profile dev_singularity --tool-runner docker --target <경로> --device atom
 ```
 
-`local_balanced`·`b1_single`이 `podman`인 것은 주 실서빙 장비가 ATOM이기 때문이다
-(docs/portability.md §3). `--tool-runner`는 프로필이 선언한 런타임이 그 장비에 없을 때
-쓴다(ADR 0005) — 지금 그 경우는 `dev_docker`다. podman은 docker CLI 호환이라
-`container_argv`가 바이너리 이름만 갈고 격리 플래그는 같다. **rootless인데도 `--cpus`·
-`--memory`를 강제하므로**(아래 표) SLURM 같은 외부 도구가 필요 없다. digest도 docker와 같은
-`image inspect` 포맷으로 읽힌다 — podman은 로컬 빌드에도 `RepoDigests`를 채운다.
+`local_balanced`·`b1_single`이 `docker`인 것은 주 실서빙 장비가 ATOM이기 때문이다
+(docs/portability.md §3 — 프로필은 주 실서빙 장비의 런타임을 선언하고 다른 장비가 덮는다).
+**기준은 그대로이고 바뀐 것은 ATOM의 런타임이 무엇이냐다** — 2026-08-17~08-28 사이에는 같은
+기준 아래 `podman`이었고, 되돌린 경위는
+[ADR 0005](../docs/decisions/0005-tool-runner-override.md) 마지막 절이다. `--tool-runner`는
+프로필이 선언한 런타임이 그 장비에 없을 때 쓴다(ADR 0005).
 
-825MB(arm64) 이미지가 `dev_docker --tool-runner podman`으로 완주했고(후보 2 / Finding 2),
-이는 Seraph의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은 판정을 낸다.
+podman은 docker CLI 호환이라 `container_argv`가 바이너리 이름만 갈고 격리 플래그는 같다.
+**rootless인데도 `--cpus`·`--memory`를 강제하므로**(아래 표) SLURM 같은 외부 도구가 필요
+없다. digest도 docker와 같은 `image inspect` 포맷으로 읽힌다 — podman은 로컬 빌드에도
+`RepoDigests`를 채운다. **다만 적는 값의 종류가 달라 런타임 사이에서는 비교되지 않는다**
+(docs/portability.md §5 #4).
+
+825MB(arm64) 이미지가 `dev_docker --tool-runner podman`으로 완주했고(후보 2 / Finding 2,
+`run_20260817_0001`), 이는 Seraph의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은
+판정을 낸다. **그 run이 이 저장소의 유일한 podman 도구 실행 기록이다**(docs/portability.md §6).
 
 ### Seraph 이관 (Singularity)
 

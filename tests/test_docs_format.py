@@ -45,6 +45,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -108,14 +109,23 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _cells(line: str) -> int:
-    """마크다운 표 한 행의 셀 개수.
+def _split_cells(line: str) -> list[str]:
+    """마크다운 표 한 행의 셀.
 
     앞뒤 파이프는 셀이 아니라 표의 테두리이므로 한 개씩 뗀다. 남은 파이프가 셀 경계다.
     """
     body = _LEADING_PIPE.sub("", line.strip())
     body = _TRAILING_PIPE.sub("", body)
-    return len(_PIPE.split(body))
+    return [cell.strip() for cell in _PIPE.split(body)]
+
+
+def _cells(line: str) -> int:
+    """마크다운 표 한 행의 셀 **개수**.
+
+    쪼개는 규칙은 `_split_cells` 하나뿐이다 — 세는 쪽과 읽는 쪽이 규칙을 따로 들면
+    "무엇이 한 칸인가"의 답이 두 개가 된다.
+    """
+    return len(_split_cells(line))
 
 
 def _column_offenders(text: str) -> list[tuple[int, int, int, str]]:
@@ -538,3 +548,273 @@ def test_every_adr_has_a_row_in_the_decisions_readme() -> None:
         "머지 충돌을 --ours/--theirs로 풀면 이렇게 된다"
     )
     assert not orphan, f"README 목록에 행은 있는데 그 번호의 ADR 파일이 없다: {orphan}"
+
+
+# --- 정본 선언(CONTEXT.md) ↔ 모델 registry ------------------------------------
+#
+# CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지
+# 않아서 아래 둘이 그 선언을 기계가 읽는 불변식으로 바꾼다 — 두 파일이 조용히 갈라지는 것,
+# 그러니까 CONTEXT.md가 존재하는 이유 그 자체를 막는다.
+#
+# **판정은 표 구조로만 한다. 낱말로 하지 않는다.** `미등재`·`신규`는 이 저장소에서 다른
+# 뜻으로도 쓰인다(`docs/build-plan.md` §9의 R 행, 실험 보고서의 "신규 결함"). 낱말을 키로
+# 삼으면 상관없는 문서가 그 낱말을 옮길 때마다 여기가 깨지고, 오탐을 내는 검사는 꺼진다.
+
+CONTEXT = REPO_ROOT / "CONTEXT.md"
+
+# 표를 여는 절 제목. **번호가 아니라 제목으로 찾는다** — 앞에 절이 하나 끼는 날 번호로
+# 찾으면 조용히 다른 표를 읽는다.
+_ROSTER_HEADING = re.compile(r"^##\s+\d+\.\s+모델 로스터")
+_KEPT_HEADING = re.compile(r"^###\s+로스터에 없지만 registry에 남는 것")
+
+_ROSTER_TABLE = "CONTEXT.md 로스터 표(§1)"
+_KEPT_TABLE = "CONTEXT.md 「로스터에 없지만 registry에 남는 것」 표"
+
+# 열은 **이름으로** 찾는다. 순서로 찾으면 열이 하나 끼는 날 옆 칸을 읽는다.
+_KEY_COLUMN = "registry 키"
+_MARK_COLUMN = "registry 등재"
+_KEPT_KEY_COLUMN = "키"
+
+# `registry 등재` 칸의 판정 기호(U+2705 · U+274C).
+_YES = "✅"
+_NO = "❌"
+
+# 셀 첫머리의 백틱 토큰이 registry 키다. **첫 것만 읽는다** — Critic 행은
+# `` `gpt-oss-20b` (`reasoning_effort: high`) ``처럼 백틱 토큰을 하나 더 들고 있고
+# 그것은 키가 아니라 샘플링 인자다.
+_LEADING_KEY = re.compile(r"^`([^`]+)`")
+
+
+def _first_table(
+    text: str, heading: re.Pattern[str], where: str
+) -> tuple[list[str], list[tuple[int, list[str]]]]:
+    """`heading`이 여는 절의 **첫 표**를 `(헤더 셀, [(줄 번호, 본문 셀)])`로 읽는다.
+
+    절은 다음 `#` 제목에서 끝나고 표는 첫 것 하나만 본다 — 절 뒤에 다른 표가 생겨도
+    읽는 대상이 안 바뀐다. 코드 펜스 안은 건너뛴다(`_column_offenders`와 같은 이유).
+
+    **못 찾으면 빈 것을 돌려주지 않고 여기서 실패한다.** 조용히 비면 절 제목을 다듬는 날
+    아래 두 검사가 **아무것도 안 보고 초록**이 된다 —
+    `test_the_report_glob_actually_finds_reports`가 세운 것과 같은 논거다.
+    """
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
+    assert start is not None, (
+        f"{where}: 절 제목을 찾지 못했다 — 제목을 바꿨다면 이 검사도 같이 고친다"
+    )
+
+    header: list[str] | None = None
+    rows: list[tuple[int, list[str]]] = []
+    in_fence = False
+
+    for index in range(start + 1, len(lines)):
+        line = lines[index].strip()
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("#"):
+            break
+        if not line.startswith("|"):
+            if header is not None:
+                break  # 표가 끝났다
+            continue
+        if _SEPARATOR.match(line):
+            continue
+        if header is None:
+            header = _split_cells(line)
+        else:
+            rows.append((index + 1, _split_cells(line)))
+
+    assert header is not None and rows, f"{where}: 절 안에서 표를 찾지 못했다"
+    return header, rows
+
+
+def _column(header: list[str], name: str, where: str) -> int:
+    assert name in header, (
+        f"{where}: `{name}` 열이 없다(헤더: {header}) — 열 이름을 바꿨다면 이 검사도 같이 고친다"
+    )
+    return header.index(name)
+
+
+def _keys_in(rows: list[tuple[int, list[str]]], column: int) -> set[str]:
+    """표 한 열에서 백틱 키만 걷는다.
+
+    백틱으로 시작하지 않는 칸은 여기서 빠지고 **그 사실 자체는 감춰지지 않는다** —
+    registry에 있는 키가 안 걷히면 아래 `missing`에 나타나고, 서식 자체는
+    `test_the_context_roster_matches_the_model_registry`가 따로 잡는다.
+    """
+    keys: set[str] = set()
+    for _, row in rows:
+        if column >= len(row):
+            continue
+        match = _LEADING_KEY.match(row[column])
+        if match is not None:
+            keys.add(match.group(1))
+    return keys
+
+
+def _registry_keys() -> set[str]:
+    """`config/models.yaml`이 등재한 model key. 로더가 읽는 것과 같은 방식으로 읽는다.
+
+    **정규식으로 긁지 않는다.** 이 파일은 주석이 본문보다 길고 그 주석이 다른 항목의 키
+    이름을 여러 번 인용한다(`qwen3-8b` 블록이 `qwen3-4b`를 부르는 식) — 줄 단위로 긁으면
+    **주석에 이름이 나온 것만으로 「등재됐다」가 된다.**
+    """
+    from src.config import CONFIG_DIR
+
+    raw = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))
+    models = raw.get("models") if isinstance(raw, dict) else None
+    assert isinstance(models, dict) and models, "config/models.yaml에서 models 매핑을 읽지 못했다"
+    return set(models)
+
+
+def test_the_context_roster_matches_the_model_registry() -> None:
+    """CONTEXT.md §1의 `registry 등재` 칸은 `config/models.yaml`의 사실과 같아야 한다.
+
+    이 칸이 로스터 표에서 유일하게 **검증 가능한** 열이다. 나머지 두 열(자리·키)은 팀의
+    결정이라 기계가 옳고 그름을 말할 수 없지만, "그 키가 registry에 있나"는 파일을 열면
+    답이 나온다. 그래서 여기만 잠근다.
+
+    **어긋나면 무슨 일이 나나.** 이 표는 「로스터 확정」과 「그 모델이 선다」를 가르려고
+    존재한다(CONTEXT.md §5). 등재를 마친 키가 여기서 계속 미등재로 보이면 읽는 사람이
+    쓸 수 있는 모델을 못 쓰고, 반대로 안 받은 모델이 등재로 보이면 **없는 서버를 전제로
+    측정 계획을 짠다** — 2026-09-09에 GPU 시간을 잃은 것이 정확히 그 종류의 착오다.
+
+    **`config/models.yaml`을 파싱해서 본다.** 그 파일은 주석이 본문보다 길고 주석이 다른
+    항목의 키를 여러 번 부르므로 낱말 검색으로는 등재 여부를 못 가린다(`_registry_keys`).
+    """
+    header, rows = _first_table(_read(CONTEXT), _ROSTER_HEADING, _ROSTER_TABLE)
+    key_at = _column(header, _KEY_COLUMN, _ROSTER_TABLE)
+    mark_at = _column(header, _MARK_COLUMN, _ROSTER_TABLE)
+    registry = _registry_keys()
+
+    offenders: list[str] = []
+    for lineno, row in rows:
+        if max(key_at, mark_at) >= len(row):
+            offenders.append(f"CONTEXT.md:{lineno}: 셀이 {len(row)}개뿐이라 읽을 수 없다")
+            continue
+
+        match = _LEADING_KEY.match(row[key_at])
+        if match is None:
+            offenders.append(
+                f"CONTEXT.md:{lineno}: `{_KEY_COLUMN}` 칸이 백틱 키로 시작하지 않는다 "
+                f"— {row[key_at][:60]!r}"
+            )
+            continue
+
+        key, mark = match.group(1), row[mark_at]
+        has_yes, has_no = _YES in mark, _NO in mark
+        if has_yes == has_no:
+            offenders.append(
+                f"CONTEXT.md:{lineno}: `{key}` — `{_MARK_COLUMN}` 칸을 판독할 수 없다"
+                f"({mark[:40]!r}). {_YES}나 {_NO} 중 하나만 쓴다"
+            )
+        elif has_yes and key not in registry:
+            offenders.append(
+                f"CONTEXT.md:{lineno}: `{key}`를 {_YES}(등재)로 적었는데 "
+                f"config/models.yaml에 그 키가 없다. 있는 것: {sorted(registry)}"
+            )
+        elif has_no and key in registry:
+            offenders.append(
+                f"CONTEXT.md:{lineno}: `{key}`를 {_NO}(미등재)로 적었는데 "
+                f"config/models.yaml에 이미 있다 — 등재했으면 이 칸을 {_YES}로 바꾼다"
+            )
+
+    assert offenders == [], (
+        "CONTEXT.md §1 로스터 표가 config/models.yaml과 갈렸다.\n"
+        "로스터를 바꿀 때 손대는 곳은 CONTEXT.md §3이 넷으로 못박아 뒀다 — "
+        "이 표·models.yaml·profiles.yaml·ADR 0010.\n" + "\n".join(offenders)
+    )
+
+
+def test_every_registry_model_is_named_in_context() -> None:
+    """registry의 모든 키는 CONTEXT.md의 두 표 중 **한 곳에는** 이름이 있어야 한다.
+
+    §1이 자리를 준 키와 「로스터에 없지만 registry에 남는 것」이 사유를 준 키, 그 둘의
+    합집합이 `config/models.yaml`을 덮는다. 덮지 못하는 키는 **아무 문서도 설명하지 않는
+    모델**이고, 그것을 프로필에 배선한 사람과 나중에 읽는 사람이 서로 다른 것을 안다.
+
+    이 저장소는 registry 키를 지우지 않는다(ADR 0010 「되돌리는 비용」). 그래서 로스터에서
+    내려온 키가 registry에 남는 것이 정상이고, **정상인 것과 잊힌 것을 가르는 유일한 자리가
+    그 두 번째 표다.** 표가 비면 둘을 못 가른다.
+
+    **양방향으로 본다.** 두 번째 표가 "registry에 남는다"고 적은 키가 실제로는 지워졌다면
+    그 표가 거짓말이고, 특히 `qwen3-reranker-0.6b`는 그 표에서 **지우지 않는다**고 명시된
+    대조 기준이다 — 조용히 사라지면 4B와의 대조가 근거를 잃는다.
+    """
+    text = _read(CONTEXT)
+    roster_header, roster_rows = _first_table(text, _ROSTER_HEADING, _ROSTER_TABLE)
+    kept_header, kept_rows = _first_table(text, _KEPT_HEADING, _KEPT_TABLE)
+
+    named = _keys_in(roster_rows, _column(roster_header, _KEY_COLUMN, _ROSTER_TABLE))
+    kept = _keys_in(kept_rows, _column(kept_header, _KEPT_KEY_COLUMN, _KEPT_TABLE))
+    registry = _registry_keys()
+
+    missing = sorted(registry - named - kept)
+    orphan = sorted(kept - registry)
+
+    assert not missing, (
+        f"config/models.yaml에 있는데 CONTEXT.md가 이름을 대지 않는 키: {missing} — "
+        "자리를 줬으면 §1 표에, 안 줬으면 「로스터에 없지만 registry에 남는 것」에 "
+        "사유와 함께 넣는다"
+    )
+    assert not orphan, (
+        f"CONTEXT.md가 「registry에 남는다」고 적었는데 config/models.yaml에 없는 키: {orphan} — "
+        "registry 키는 지우지 않는다(ADR 0010). 정말 지웠다면 그 행도 같이 지운다"
+    )
+
+
+_REWIRE_MARKER = "`config/profiles.yaml` 재배선"
+_POOL_ROLES = ("scout_memory", "scout_boundary", "scout_injection")
+
+
+def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
+    """`config/profiles.yaml`이 §1 배정을 안 따를 때, CONTEXT.md §5가 그 사실을 들어야 한다.
+
+    **왜 이 검사가 있나.** CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때 손대는
+    넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **지금은 다르다.**
+    프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`다. 그 어긋남을 정본이
+    안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
+
+    **이 검사는 양방향으로 돈다.**
+
+    - 재배선이 아직이면 → §5에 그 줄이 있어야 한다. 없으면 실패한다.
+    - 재배선이 끝나면 → 그 줄이 **거짓이 되므로** 실패해서 지우게 만든다.
+
+    후자가 이 검사의 값이다. 「아직 안 된 것」을 적은 문장은 되는 순간 거짓이 되는데,
+    그것을 사람이 기억해서 지우기를 기대하지 않는다 — 이 저장소가 §2.3으로 반복해서
+    밟은 자리다.
+
+    ⚠ **이 검사는 「자리 ↔ 모델」 짝을 잠그지 않는다.** 잠그는 것은 「풀 역할이 프로필에
+    쓰였나」 하나다. 로스터가 옛 배정으로 되돌아가는 것 자체는 여전히 사람이 본다 —
+    §1 표의 세 열 중 기계가 답할 수 있는 것은 `registry 등재`뿐이기 때문이다
+    (`test_the_context_roster_matches_the_model_registry`의 docstring).
+    """
+    from src.config import CONFIG_DIR
+
+    raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))
+    profiles = raw.get("profiles") if isinstance(raw, dict) else None
+    assert isinstance(profiles, dict) and profiles, (
+        "config/profiles.yaml에서 profiles 매핑을 읽지 못했다"
+    )
+
+    rewired = sorted(
+        name
+        for name, entry in profiles.items()
+        if isinstance(entry, dict)
+        and any(role in (entry.get("roles") or {}) for role in _POOL_ROLES)
+    )
+    declared = _REWIRE_MARKER in _read(CONTEXT)
+
+    if rewired and declared:
+        raise AssertionError(
+            f"프로필 {rewired}이(가) Scout 풀로 재배선됐는데 CONTEXT.md §5가 아직 "
+            f"「{_REWIRE_MARKER} — 안 됐다」를 들고 있다. 그 줄은 이제 거짓이다. 지워라."
+        )
+    if not rewired and not declared:
+        raise AssertionError(
+            f"프로필 어느 것도 Scout 풀을 안 쓰는데 CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
+            "정본만 읽은 사람은 profiles.yaml이 §1과 같다고 읽는다 — §5에 그 어긋남을 적어라."
+        )

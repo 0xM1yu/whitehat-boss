@@ -48,6 +48,7 @@ class OpenAICompatModelClient:
         top_p: float,
         seed: int,
         max_tokens: int,
+        reasoning_effort: str | None = None,
         retries: int = 1,
         api_key: str = "EMPTY",
     ) -> None:
@@ -55,6 +56,10 @@ class OpenAICompatModelClient:
         self.model_name = model_name
         self.temperature = temperature
         self.top_p = top_p
+        # 선언한 모델만 요청에 싣는다(`config.ModelEntry.reasoning_effort`). 기본값이
+        # `None`인 것은 여기서는 "안 보낸다"이고, 그래야 이 파라미터를 모르는 서버가
+        # 거절하지 않는다.
+        self.reasoning_effort = reasoning_effort
         # seed를 요청에 실어야 같은 조건 재실행이 같은 결과를 낸다(engineering-guide.md §5).
         self.seed = seed
         # **기본값을 두지 않는다.** 이 값이 payload에 없으면 서버가 `--max-model-len`까지
@@ -171,7 +176,7 @@ class OpenAICompatModelClient:
         prefix와 가변부를 한 문자열로 뭉개면 캐시 적중률을 측정할 수도, 지킬 수도 없다
         (agent-contracts.md §4.2).
         """
-        return {
+        payload = {
             "model": self.model_name,
             "messages": [
                 {"role": "system", "content": prefix},
@@ -192,6 +197,11 @@ class OpenAICompatModelClient:
                 },
             },
         }
+        # **선언했을 때만 넣는다.** `None`을 실어 보내면 이 파라미터를 모르는 서버가
+        # 거절할 수 있고, 성공 경로 payload의 키 집합이 모델마다 달라진다.
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
+        return payload
 
     def _post(self, payload: dict) -> tuple[str, Usage]:
         request = urllib.request.Request(  # noqa: S310 - 스킴은 config가 정한 http(s)다

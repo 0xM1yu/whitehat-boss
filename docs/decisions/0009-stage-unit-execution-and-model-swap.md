@@ -1,6 +1,6 @@
 # 0009. 단계 단위 실행과 모델 교대 — `execution.mode` / `execution.swap`
 
-- 상태: 제안 (하네스 팀 사인오프 대기)
+- 상태: **승인** — 2026-09-06 초안, **2026-09-09 조민규 사인오프.** 사인오프는 별도 문서가 아니라 [ADR 0010](0010-harness-structure-and-model-roster.md)이 들고 있다 — 같은 날 **승인**된 그 문서의 §1이 *"`ADR 0009`의 `execution.mode: per_stage`를 **승인**한다"*고 적고, 같은 절이 교대를 *"교대(`execution.swap`)는 스키마만 열고 기본은 끈다"*로 좁힌다. ⚠ **승인된 것과 머지된 것을 같이 읽지 않는다** — 아래 「결과」 넷 중 들어온 것은 **1(스키마)뿐이다**: `ProfileEntry.execution`·`ExecutionPolicy`·`SwapPolicy`와 불변식 둘이 ADR 0010 후속 3의 **PR B**로 왔다(`fd12191`). **2(러너 단계 단위)·3(sleep/wake 배선)·4(프로필의 `execution` 선언)는 저장소에 없고**, 아래 「미결」 셋도 그대로다
 - 일자: 2026-09-06
 - 관련: [build-plan.md](../build-plan.md) §4·§7·§8, [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §7, [model-serving.md](../model-serving.md) §1·§3·§7, [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), [2026-09-03 교대 보고서](../experiments/harness/2026-09-03-model-swap-sleep-atom.md), [로스터 조사](../research/2026-09-08-roster.md) §1, `src/schemas/common.py`(`HarnessModel` `extra="forbid"`), `src/config.py`(`ProfileEntry`), `config/profiles.yaml`, `.claude/restructure-2026-09-04.md` C절(이 초안이 처음 근거로 든 저장소 밖 작업 메모 — `.gitignore`로 배제돼 열람 불가라 **근거로는 안 쓴다** — 열람이 안 되므로 내용이 무엇인지 여기서 확인할 수 없다. 이 ADR이 쓰는 로스터의 원천은 위 [로스터 조사](../research/2026-09-08-roster.md) §1이다. 이 줄은 출처 이력으로만 남긴다)
 
@@ -24,6 +24,8 @@
 - **불변식(스키마가 강제)**: `swap`이 있으면 `mode == per_stage`여야 하고(후보 단위 + 교대는 §6.2의 512회 조합이라 스키마가 막는다 — `swap.md §7 (a)`), `swap.resident ∪ swap.swappable ⊆ roles`.
 
 > **⚠ 지금 스키마는 `extra="forbid"`라 이 키를 프로필에 넣으면 로드 단계에서 거부된다**(`common.py` `HarnessModel:62`). 그래서 **스키마에 필드를 추가하는 것**이 이 결정의 코드 몫이고, **값(어느 프로필이 per_stage냐·swap 정책)은 실측 후** 채운다 — 지금 값을 박지 않는다(CLAUDE.md §0). 새 필드는 전부 기본값을 준다 — 없으면 기존 프로필이 전부 로드 실패한다(`swap.md §5.2`).
+>
+> ⚠ **위 문단은 2026-09-06 초안 시점의 서술이다.** 그 코드 몫은 2026-09-09에 들어왔다 — `ProfileEntry.execution`이 생겨 두 키를 적어도 로드가 거부되지 않고, 기본값(`mode: per_candidate` · `swap: None`)이 선언 안 한 프로필의 동작을 그대로 둔다. **값은 여전히 안 박았다** — 프로필 아홉 중 `execution`을 선언한 것은 없다(결과 4).
 
 **단계 단위 실행이란**(`build-plan.md §4`): 모든 후보가 한 단계씩 함께 통과한다. 교대 비용이 그 단계의 후보 수로 나뉘고, 상주 모델이 그 단계의 것만 남는다. 대신 후보 하나의 종단 지연은 늘어난다 — **배치 분석기라 문제되지 않는다.**
 
