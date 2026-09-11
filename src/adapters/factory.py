@@ -300,9 +300,12 @@ def build_deps(
     # `None`이라 러너가 기본 카운터(글자수 근사)를 유지한다. `counter_for_source`가
     # source별로 캐시하므로 러너가 후보마다 불러도 토크나이저는 run당 한 번만 로드된다.
     # **역할 가드가 위 `clients`와 같은 조건이다.** `model_key_for`가 없는 역할에
-    # `ConfigError`를 던지는데, `_triage_one`은 scout 카운터를 `Stage.RETRIEVAL` 검사 뒤·
+    # `ConfigError`를 던지는데, `_step_retrieval`은 그 카운터를 `Stage.RETRIEVAL` 검사 뒤·
     # `Stage.SCOUT` 검사 **앞**에서 부른다 — 4단계 앞에서 멈추는 run이 scout 없는 프로필로
-    # 돌면 거기서 죽는다. 지금 프로필 전부가 scout·auditor를 정의하므로 실현되지 않지만,
+    # 돌면 거기서 죽는다.
+    # ⚠ **풀에서는 그 역할이 `scout`이 아니라 멤버 키다**(PR #178) — 가드가 보는 집합이
+    # `profile.roles`라 멤버도 그대로 지난다. 지금 프로필 전부가 scout·auditor를
+    # 정의하므로 실현되지 않지만,
     # 두 줄 위와 모양이 다른 것 자체가 다음 사람이 밟을 자리다.
     def counter_for_role(role: str) -> Callable[[str], int] | None:
         if role not in config.profile.roles:
@@ -323,7 +326,7 @@ def build_deps(
         카운터와 기록이 어긋나고, 어긋난 기록은 없는 것보다 나쁘다.
 
         **`build_deps()`에서 즉시 불린다 — 카운터가 여기서 만들어진다.** 그래서 토크나이저
-        로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._triage_one`이 아니라 조립
+        로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._step_retrieval`이 아니라 조립
         시점에 일어난다. 의도다 — `token_counter`는 **모델을 부르기 전에** 나와야 하고
         (`orchestrator/trace.py`), 깨진 토크나이저로 도는 run은 첫 호출 전에 죽는 편이 낫다.
         `counter_for_source`가 캐시하므로 로드 횟수는 늘지 않고, `doctor`는

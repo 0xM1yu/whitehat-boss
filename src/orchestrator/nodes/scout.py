@@ -30,8 +30,16 @@ def run(
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...] = (),
     previous: Candidate | None = None,
+    role: Role = ROLE,
 ) -> Candidate:
-    """후보 하나를 만들고 트리아지 결과까지 적용해 돌려준다."""
+    """후보 하나를 만들고 트리아지 결과까지 적용해 돌려준다.
+
+    `role`은 Scout 자리를 고른다 — 풀 없는 단일 `scout`(기본)이거나 풀 멤버
+    (`scout_memory`·`scout_boundary`·`scout_injection`). **어느 쪽이든 단계는 4단계
+    (`Stage.SCOUT`)이고 임계값·전이 경로는 같다** — 바뀌는 것은 어느 프롬프트·모델을
+    부르는가뿐이다. `Candidate.scout_member` stamp는 노드가 아니라 `RunContext.call_model`이
+    이 `role`에서 만든다(ADR 0010 §3, `candidate.py` 필드 주석).
+    """
     candidate_id = ctx.ids.next("candidate")
     with ctx.stage(Stage.SCOUT):
         candidate = _ask_model(
@@ -41,6 +49,7 @@ def run(
             capsule=capsule,
             evidences=evidences,
             previous=previous,
+            role=role,
         )
         ctx.create(candidate, reason=None, stage=Stage.SCOUT)
         action = ctx.decide(
@@ -63,9 +72,10 @@ def _ask_model(
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...],
     previous: Candidate | None,
+    role: Role,
 ) -> Candidate:
     """프롬프트를 만들어 모델에 묻는다. 실패는 사유 코드로 기록하고 그대로 올린다."""
-    template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
+    template = load_prompt(role, ctx.config.model_for(role.value).prompt_template_version)
     source = ctx.read_source(capsule.target)
     prompt = template.render(
         facts=build_facts(
@@ -83,7 +93,7 @@ def _ask_model(
     )
     try:
         result = ctx.call_model(
-            role=ROLE,
+            role=role,
             prompt=prompt,
             schema=Candidate,
             stage=Stage.SCOUT,

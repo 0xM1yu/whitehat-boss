@@ -12,7 +12,7 @@
 카운터"는 **모듈 전역 하나(`_counter`)**다: 역할마다 모델(=토크나이저)이 다르므로, 그 역할
 캡슐을 조립하기 **직전에** 그 역할 토크나이저로 바꾼다 — 러너가 `using_counter()`로
 `retrieval.run()` 한 번을 감싸고(그 안에서 `set_counter()`로 스왑), 끝나면 이전 카운터로
-되돌린다(`runner._triage_one`). 카운터를 어디서 만들어 주입하는지는
+되돌린다(`runner._step_retrieval`). 카운터를 어디서 만들어 주입하는지는
 `src/adapters/tokenizer.py`·`factory`에 있다 — 러너는 `src/adapters`를 모른다.
 카운터가 갈리면 같은 index.json에서 두 Retriever가 다른 캡슐을 내 `dev_fake`↔`dev_docker`
 비교가 깨진다 — 그래서 **지금 켜진 카운터가 하나여야 한다**는 것이 이 모듈의 존재 이유다.
@@ -51,8 +51,14 @@ from contextlib import contextmanager
 # 기본 카운터: 4글자 ≈ 1토큰. 실 토크나이저 파일이 없으면(CI·dev) 이 값이 유효하다.
 CHARS_PER_TOKEN = 4
 
-# **역할 카운터가 실제로 켜지는 역할.** `runner._triage_one`이 `using_counter(...)`로 감싸는
-# 자리가 이 둘이다 — scout는 LIGHT 캡슐, auditor는 EXPANDED 캡슐을 조립할 때.
+# **역할 카운터가 실제로 켜지는 역할.** 러너가 `using_counter(...)`로 감싸는 자리가
+# 이 둘이다 — scout는 LIGHT 캡슐(`_step_retrieval`), auditor는 EXPANDED 캡슐을 조립할 때.
+#
+# ⚠ **Scout 풀에서는 「scout」이 아니라 멤버 키다**(PR #178). `_step_retrieval`이
+# `ctx.counter_for_role(item.role.value)`를 부르므로 풀 run은 **그 target의 첫 멤버**
+# 카운터를 켜고 **`scout`은 하나도 안 켠다** — 캡슐이 공유돼 나머지 멤버는 카운터를
+# 요청조차 안 한다. 그래서 아래 목록이 풀에서는 「켜지는 역할」과 어긋난다.
+# 커밋된 프로필이 전부 단일 `scout`이라 오늘은 안 갈린다.
 #
 # `factory`가 이 목록으로 `Deps.counter_report`를 만들고 러너가 그것을 `token_counter`
 # 이벤트로 낸다. **켜지지 않는 역할을 기록에 실으면 거짓 정보다** —

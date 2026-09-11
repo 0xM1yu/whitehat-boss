@@ -35,8 +35,11 @@ SCOUT_MEMBER_PATTERN = r"^scout_[a-z0-9]+(?:_[a-z0-9]+)*$"
 # 전부 역할 키 **문자열**을 받기 때문이다 — 행렬의 한 칸에서 그 run의 모델·checksum·프롬프트
 # 버전으로 바로 이어진다. 여기서 말하는 것은 **키로 조회된다**는 것이지 그 역할이 이미
 # 배선돼 있다는 뜻이 아니다: `counter_for_role`은 프로필이 선언한 역할이면 무엇이든 카운터를
-# 주지만, 그것을 **부르는 쪽**(`runner._triage_one`)이 `Role.SCOUT.value`로 박혀 있고
-# `counter_report`는 `src.tokens.COUNTED_ROLES` 둘만 싣는다(ADR 0010 §3의 ⚠ 문단).
+# 준다. ⚠ **2026-09-11부터 부르는 쪽도 멤버 역할을 넘긴다**(PR #178 — `_step_retrieval`이
+# `ctx.counter_for_role(item.role.value)`). **다만 켜지는 것은 그 target의 첫 멤버
+# 하나다** — 캡슐이 공유돼 나머지 멤버는 그 자리에 도달하지 않는다. 남은 것은
+# 기록 쪽이다 — `counter_report`는
+# 여전히 `src.tokens.COUNTED_ROLES` 둘만 싣는다(그 상수의 ⚠ 문단).
 #
 # `Role`은 StrEnum이라 직렬화 결과도 같으므로, 나중에 열거형으로 좁혀도 매니페스트는 안 바뀐다.
 ScoutMemberRole = Annotated[str, Field(pattern=SCOUT_MEMBER_PATTERN, max_length=64)]
