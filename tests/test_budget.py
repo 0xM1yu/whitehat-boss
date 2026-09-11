@@ -202,6 +202,90 @@ def test_call_model_leaves_schemas_without_produced_by_alone() -> None:
     assert not hasattr(result.value, "produced_by")
 
 
+class _FixedValueStub:
+    """모델이 낸 값을 그대로 돌려주는 ModelClient. 하네스가 무엇을 덮는지만 본다."""
+
+    def __init__(self, value) -> None:  # noqa: ANN001
+        self._value = value
+
+    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+        return ModelResult(value=self._value, usage=_usage(), model="served-8b")
+
+
+def _self_tagged_candidate() -> Candidate:
+    """모델이 `scout_member`를 **스스로 채운** 후보.
+
+    `produced_by`에서 실제로 일어난 일이다 — 스키마에 필드가 있으면 구조화 출력이
+    그것을 채우려 들고, 모델은 자기가 풀의 어느 자리에서 불렸는지 모른다.
+    """
+    return Candidate(
+        candidate_id="cand_0001",
+        run_id=RUN_ID,
+        artifact_id="art_0001",
+        location=Location(file="parser.c"),
+        score=0.7,
+        state=FindingState.CANDIDATE,
+        scout_member="scout_injection",
+    )
+
+
+def test_call_model_stamps_scout_member_over_the_model_value() -> None:
+    """풀 멤버로 부른 호출의 후보는 **그 멤버**를 단다 — 모델이 쓴 값이 아니라.
+
+    이 필드는 증거다. 모델이 채운 값이 살아남으면 공동오답 행렬은 "누가 무엇을 함께
+    놓쳤나"가 아니라 "모델이 자기를 뭐라고 불렀나"의 표가 된다. 그 표가
+    「배분을 옮기는 유일한 근거」(docs/research/2026-09-08-roster.md §7)이므로,
+    stamp가 틀리면 모델을 Scout 자리 사이에서 옮기는 판단이 통째로 틀린다.
+
+    **진짜 `Role.SCOUT_BOUNDARY`로 부른다.** 이 자리에는 같은 값을 든 자리표시자
+    열거형이 있었는데, ADR 0010 §3의 셋이 `Role`에 들어온 뒤로는 그 자리표시자가
+    **stamp 경로에서 실제 열거형을 한 번도 안 지나가게** 만들고 있었다 — 풀 멤버가
+    `Role`에서 빠지거나 값이 바뀌어도 이 검사는 통과한다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _FixedValueStub(_self_tagged_candidate())
+
+    result = ctx.call_model(
+        role=Role.SCOUT_BOUNDARY, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT
+    )
+
+    assert result.value.scout_member == "scout_boundary"  # 모델이 쓴 injection이 아니다
+
+
+def test_call_model_clears_scout_member_under_the_single_scout_role() -> None:
+    """풀이 없는 `scout` 호출은 멤버를 **비운다** — 모델이 하나를 적어 냈어도.
+
+    단일 scout 프로필의 후보가 멤버 태그를 달고 나가면, 풀 run과 단일 run의 후보가
+    같은 행렬에 섞여 한 멤버의 오답 수가 부풀려진다. 그 run에는 그 자리가 아예
+    없었다는 사실이 기록에서 사라진다.
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _FixedValueStub(_self_tagged_candidate())
+
+    result = ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    assert result.value.scout_member is None
+
+
+def test_call_model_leaves_schemas_without_scout_member_alone() -> None:
+    """`scout_member`가 없는 스키마(`Finding`)에는 그 필드를 붙이지 않는다.
+
+    `produced_by` 가드와 같은 이유다 — `model_copy(update=...)`는 없는 필드도 조용히
+    객체에 붙이고 `model_dump()`에는 안 내보낸다. Finding이 이 태그를 달기 시작하면
+    9단계 dedupe가 어느 필드를 봐야 하는지가 새 미결이 된다(ADR 0010 §3은 `Candidate`만
+    정했다).
+    """
+    ctx, _ = _context(budget=_budget(), usage=_usage())
+    ctx.models = _FixedValueStub(_bogus_finding())
+
+    result = ctx.call_model(
+        role=Role.AUDITOR, prompt=PROMPT, schema=Finding, stage=Stage.AUDITOR
+    )
+
+    assert "scout_member" not in Finding.model_fields  # 전제: 이 스키마에는 그 필드가 없다
+    assert not hasattr(result.value, "scout_member")
+
+
 def test_call_model_records_failure_and_reraises() -> None:
     """스키마 파싱 실패율의 분자가 여기서 나온다. 삼키면 지표가 0이 된다."""
     ctx, _ = _context(budget=_budget(), usage=_usage(), fail=True)
