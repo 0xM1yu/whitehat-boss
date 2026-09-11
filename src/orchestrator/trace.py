@@ -140,6 +140,10 @@ class EventKind(StrEnum):
     # 여기서는 `subject_id`로 지목한다(`critic_normalized`·`gate_eval`과 같은 처리). 합치면
     # `count(target_skipped)`의 뜻이 "4단계에 못 간 target 수"에서 조용히 달라진다.
     #
+    # ⚠ **그 뜻은 Scout 풀에서 이미 달라졌다**(PR #178). 이 이벤트는 이제 `(target, 자리)`
+    # 시도마다 나므로 **`count`는 시도 수이지 target 수가 아니다.** 단일 프로필에서는
+    # 둘이 같다. 미해결로 등재돼 있다(인덱스 참조).
+    #
     # **`stage`는 7이다.** 절단이 실행되는 자리는 6단계 뒤이지만 6으로 적으면 "게이트에서
     # 잘렸다"로 읽히는데 게이트는 이 건을 **승격시켰다**. 7로 적으면
     # `count(critic_skipped, stage=7) + count(gate_eval, stage=7) = count(promoted_to_critic)`
@@ -207,7 +211,8 @@ class EventKind(StrEnum):
     # `config.prompt_versions()`가 `embedding`을 안 담는 것과 같은 이유다.
     #
     # ⚠ **Scout 풀에서는 그 둘이 「켜지는 역할」이 아니다**(PR #178). 풀 run은
-    # `scout_memory` 등 멤버 카운터를 켜고 `scout`은 안 켜는데, 이 이벤트는 여전히
+    # **그 target의 첫 멤버** 카운터만 켜고(캡슐 공유 — 나머지는 요청조차 안 한다)
+    # `scout`은 안 켜는데, 이 이벤트는 여전히
     # `scout`을 `no_source`로 싣는다 — **없는 역할에 대한 기록**이고, 위 문장이 자기
     # 자신에게 걸린다. 커밋된 프로필이 전부 단일 `scout`이라 오늘은 안 난다.
     # **미해결로 등재돼 있다**(PR #178이 연 D 항목 — 인덱스 참조). 풀 프로필을 커밋하는

@@ -326,7 +326,7 @@ def build_deps(
         카운터와 기록이 어긋나고, 어긋난 기록은 없는 것보다 나쁘다.
 
         **`build_deps()`에서 즉시 불린다 — 카운터가 여기서 만들어진다.** 그래서 토크나이저
-        로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._triage_one`이 아니라 조립
+        로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._step_retrieval`이 아니라 조립
         시점에 일어난다. 의도다 — `token_counter`는 **모델을 부르기 전에** 나와야 하고
         (`orchestrator/trace.py`), 깨진 토크나이저로 도는 run은 첫 호출 전에 죽는 편이 낫다.
         `counter_for_source`가 캐시하므로 로드 횟수는 늘지 않고, `doctor`는

@@ -33,10 +33,11 @@ class Role(StrEnum):
     #
     # ⚠ **2026-09-11에 절반이 바뀌었다** (PR #178 — 풀 팬아웃).
     #
-    # - **러너 쪽은 따라온다.** `_step_retrieval`이 `ctx.counter_for_role(item.role.value)`로
-    #   **멤버 역할의** 카운터를 켠다. `nodes/scout.py`의 `ROLE = Role.SCOUT`도 이제 `run()`의
-    #   **기본값**이지 유일한 역할이 아니다. 예전 문장("러너가 `Role.SCOUT.value`로 박혀 있어
-    #   역할 카운터가 안 따라온다")은 **거짓이 됐다.**
+    # - **러너 쪽은 절반 따라온다.** `_step_retrieval`이 `ctx.counter_for_role(item.role.value)`를
+    #   부르므로 예전 문장("러너가 `Role.SCOUT.value`로 박혀 있어 역할 카운터가 안 따라온다")은
+    #   **거짓이 됐다.** ⚠ **다만 켜지는 것은 그 target의 첫 멤버 하나다** — 캡슐이 공유돼
+    #   나머지 멤버는 `using_counter`에 도달하기 전에 반환한다(`_step_retrieval`).
+    #   `nodes/scout.py`의 `ROLE = Role.SCOUT`도 이제 `run()`의 **기본값**이지 유일한 역할이 아니다.
     # - **기록 쪽은 그대로다.** `Deps.counter_report`는 여전히 `COUNTED_ROLES` 둘만 돌므로,
     #   풀 멤버 카운터가 **켜져도 `token_counter` 이벤트에는 안 실린다.**
     #

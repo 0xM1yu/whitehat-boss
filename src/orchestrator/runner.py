@@ -662,8 +662,9 @@ def run_pipeline(
         )
     if state.dropped:
         warnings.append(
-            f"target {state.dropped}건을 후보 단위 호출 실패로 버렸다. "
-            f"사유는 trace의 target_skipped와 그 target의 model_call에 있다"
+            f"시도(대상 × Scout 자리) {state.dropped}건을 호출 실패로 버렸다. "
+            f"사유는 trace의 target_skipped와 그 target의 model_call에 있다. "
+            f"⚠ 풀에서는 이 수가 「못 본 대상 수」가 아니다"
         )
     # **7단계 절단도 같은 자리에 올린다 (#98 (b)).** 위 두 경고의 논거가 그대로 적용되는데,
     # 여기서는 한 겹 더 나쁘다 — target 절단은 대상이 사라져서 안 보이지만 Finding 절단은
@@ -996,8 +997,19 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
 
     **캡슐은 target당 한 번 만든다** (ADR 0010 §3). 풀 프로필에서는 같은 target을 보는
     멤버 셋이 각각 이 단계를 지나므로, 첫 멤버가 만든 캡슐을 `state.capsules`에 넣어
-    나머지가 재사용한다 — 검색 호출이 멤버 수만큼 붙는 것을 막고 세 멤버가 같은 캡슐을
-    본다. 단일 프로필은 target당 item이 하나라 캐시가 항상 miss이고 동작이 그대로다.
+    나머지가 재사용한다 — **세 멤버가 같은 캡슐을 본다.** 단일 프로필은 target당 item이
+    하나라 캐시가 항상 miss이고 동작이 그대로다.
+
+    ⚠ **「검색 작업량이 3배가 되는 것을 막는다」가 아니다.** Retriever가 이미 자기 `_cache`를
+    들고 있어(`fake_retriever.search`·`hybrid_retriever.search`의 첫 줄) 이 캐시를 꺼도
+    **실제 검색 수는 같다** — 실측: 이 캐시 켬/끔에서 `search()` 호출 5↔9인데 캐시 미스는
+    **양쪽 3으로 동일**하다 `[실측 2026-09-11]`.
+
+    ⚠ **바뀌는 것은 회계다.** 이 캐시가 `retrieval.run()` **앞에서** 단락하므로 Retriever의
+    `on_cache` 훅을 지나지 않아 **`cache` 이벤트가 준다**(9→5, 적중률 0.667→0.40).
+    `evaluation.md` §5.2가 capsule cache hit ratio를 지표로 들고 `LateCacheHook`이
+    *"캐시 이벤트가 새면 hit ratio가 0으로 보이고 「캐시가 안 맞았다」와 구분되지 않는다"*고
+    적는다 — **이 단락은 그 누출을 설계로 만든다.** 미해결로 등재돼 있다(인덱스 참조).
 
     역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). 첫 멤버의
     카운터로 켠다 — 캡슐이 공유되므로 예산 컷도 그 하나로 정해진다. `counter_for_role`이
@@ -1177,8 +1189,8 @@ def _run_stage_for_all(
 
     그래서 그 run은 `stopped_after`가 `None`인 채 끝나고 `is_complete`가 **참이 된다** —
     Scout 커버리지의 1/3이 통째로 빈 run이 정상 완주로 보이고 비교표에 들어간다.
-    `report.py`·`run.py`·`trace.py` 어디에도 `scout_member`별 집계가 없어 **기록에서도
-    안 보인다.**
+    `scout_member`별 집계가 어디에도 없어(`report.py`·`run.py`·`trace.py` grep 0건)
+    **어느 멤버가 빠졌는지도 기록에서 못 되짚는다.**
 
     ⚠ **위 "연속 셋이 죽으면 그 단계가 체계적으로 고장 난 것"은 단일 `scout`에서만
     참이다.** 풀에서는 한 역할의 실패가 연속으로 쌓이지 않고, 반대로 연속 셋이 **서로
@@ -1307,7 +1319,12 @@ def _drop(
     stage: Stage,
     systematic: bool = True,
 ) -> int:
-    """target 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
+    """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
+
+    ⚠ **시도는 `(target, Scout 자리)`다 — target이 아니다.** 팬아웃 뒤 `items`가 그 곱으로
+    펼쳐지고 이 함수가 시도마다 불린다. 단일 `scout`에서는 자리가 하나라 둘이 같고,
+    **풀에서만 갈린다.** 그래서 `state.dropped`와 `count(target_skipped)`로 **「못 본 대상
+    수」를 셀 수 없다** — 형제 멤버가 같은 대상을 보기 때문이다. 미해결로 등재돼 있다.
 
     `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
     (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도

@@ -120,7 +120,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
   | `RunRecord.prompt_versions` | `PROMPTED_ROLES`에 **멤버당 한 줄** | `prompt_versions()`가 `for role in PROMPTED_ROLES` |
   | `RoutingModelClient` | 같은 상수의 **같은 줄** | `factory`의 `clients` 컴프리헨션이 같은 상수에 걸린다 |
   | `bench.ROLE_SPEC` | 멤버당 한 줄 | 없으면 `ROLE_SPEC[role_enum]`이 `KeyError` |
-  | 역할별 토큰 카운터 | **러너는 따라온다 · 기록은 안 따라온다** (2026-09-11 정정) | 아래 ⚠ |
+  | 역할별 토큰 카운터 | **러너는 첫 멤버만 켠다 · 기록은 안 따라온다** (2026-09-11 정정) | 아래 ⚠ |
 
   즉 **상수 두 곳에 줄을 더하는 일**이고, 리스트 안이 요구하던 것은 그것이 아니라 위 여섯 전부에
   "리스트의 몇 번째"라는 **새 좌표**였다. 계획의 의도(N멤버 · 태깅)는 같다.
@@ -130,8 +130,9 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
   `PROMPTED_ROLES`에 걸려 있다(위 표). 0인 것은 **둘**이다.
 
   ⚠ **2026-09-11 정정 (PR #178) — 아래 문단의 절반이 거짓이 됐다.** 러너는 이제
-  `_step_retrieval`에서 `ctx.counter_for_role(item.role.value)`로 **멤버 역할의** 카운터를
-  켠다. **여전히 참인 것은 기록 쪽뿐이다** — `counter_report`가 `COUNTED_ROLES` 둘만 돌아
+  `_step_retrieval`에서 `ctx.counter_for_role(item.role.value)`를 부른다. ⚠ **켜지는 것은
+  그 target의 첫 멤버 하나다** — 캡슐이 공유돼 나머지 멤버는 그 자리에 도달하지 않는다
+  (`{scout_memory, auditor}` `[실측 2026-09-11]`). **여전히 참인 것은 기록 쪽뿐이다** — `counter_report`가 `COUNTED_ROLES` 둘만 돌아
   풀 멤버 카운터가 켜져도 `token_counter` 이벤트에는 안 실린다. 아래는 그 시점의 기록이다.
 
   ⚠ **역할별 토큰 카운터는 조회는 되지만 켜지지 않는다.** `counter_for_role(role)`은 프로필이

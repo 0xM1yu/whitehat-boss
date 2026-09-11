@@ -49,7 +49,8 @@ models:
 
   # `fake`의 v2 판. Scout 풀 프롬프트(`scout_memory`·`scout_boundary`·`scout_injection`)는
   # v2 전용이라(ADR 0010 §3 — 풀은 한 버전, 새 로스터는 v2), GPU 없이 풀 팬아웃을 도는
-  # `dev_fake_pool` 프로필이 이 키를 쓴다. 어댑터 선택은 endpoint 스킴(`fake://`)이 하므로
+  # **커밋된 프로필은 아직 이 키를 안 쓴다** — `tests/test_pipeline_e2e.py`가 풀 config를
+  # in-test로 조립해서 쓴다(풀 프로필 커밋은 별도 PR). 어댑터 선택은 endpoint 스킴(`fake://`)이 하므로
   # `fake`와 같은 FakeModelClient로 뜬다 — 바뀌는 것은 `load_prompt`가 고르는 버전뿐이다.
   fake_v2:
     endpoint: "fake://deterministic"

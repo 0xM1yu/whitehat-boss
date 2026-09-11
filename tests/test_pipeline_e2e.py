@@ -10,6 +10,7 @@
 여기서 단언하는 것은 "산출 가능하다"와, Scout 제거율에 한해 "0%도 100%도 아니다"뿐이다.
 """
 
+import dataclasses
 import inspect
 import io
 import json
@@ -363,6 +364,45 @@ def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
             f"맹점이 실재하는데 `{func.__name__}` docstring이 그것을 안 든다 "
             f"(앵커 {_POOL_BLIND_SPOT_MARKER!r}). 최소 수용안 2번은 등재와 서술 둘 다다"
         )
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_the_report_does_not_call_dropped_attempts_unanalyzed_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """풀에서 멤버 하나가 죽어도 **대상은 분석된다.** 리포트가 그것을 부정하면 안 된다.
+
+    `state.dropped`는 `_drop` 호출 수이고 `_drop`은 **시도(`target × Scout 자리`)마다**
+    불린다. 단일 `scout`에서는 자리가 하나라 시도 수 = target 수여서 「대상 N건」이 참이었다.
+    **풀에서는 거짓이 된다** — 형제 멤버가 같은 대상을 보므로 시도가 죽어도 대상은 살아 있다.
+
+    **실측으로 갈렸다**: `scout_boundary`만 전량 422일 때 대상 둘이 **둘 다 후보를 냈는데**
+    리포트가 *"분석하지 못한 대상 … 2건"*을 실었다. `report.py`가 자기 주석에
+    *"사람이 읽는 산출물에서 분모를 섞는 것이 trace에서 섞는 것보다 나쁘다"*라고 적어 둔
+    바로 그 자리다.
+
+    이 검사는 **수가 아니라 이름**을 고정한다 — 수를 시도 단위로 두는 것은 이 PR의 선택이고
+    (「못 본 대상 수」를 따로 내는 것은 미해결로 등재했다), 그 선택이 사람에게 **거짓으로
+    읽히지 않는 것**이 여기서 지킬 최소다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 99)
+    _break_one_role(monkeypatch, "scout_boundary")
+
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+    rendered = result.report.render()
+
+    analyzed = {(c.location.file, c.location.symbol) for c in result.candidates}
+    assert len(analyzed) >= 2, "대상이 하나도 분석 안 됐다 — 이 run은 이 검사의 사례가 아니다"
+    assert result.report.dropped > 0, "폐기가 0건이면 이 검사가 아무것도 안 본다"
+
+    assert "분석하지 못한 대상" not in rendered, (
+        f"대상 {len(analyzed)}건이 전부 분석됐는데 리포트가 "
+        f"「분석하지 못한 대상 {result.report.dropped}건」이라고 적는다 — "
+        "시도 수를 대상 수로 부른다"
+    )
+    assert "시도" in rendered, (
+        "폐기 수가 무엇의 수인지 리포트가 말하지 않는다 — 사람이 target 수로 읽는다"
+    )
 
 
 def test_manifest_is_written_with_reproducibility_fields(tmp_path: Path) -> None:
@@ -1490,6 +1530,56 @@ def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> Non
     )
 
 
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_the_estimate_counter_role_is_the_one_the_runner_actually_uses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """위 검사를 **실동작에 묶는다.** 구현식을 다시 적는 것으로는 부족하다.
+
+    위 검사가 단언하는 `== SCOUT_POOL_ROLES[0]`은 `_capsule_counter_role`의 구현 그대로다.
+    정작 지켜야 할 불변식은 *"조립한 역할 = 재검증하는 역할"*인데, **조립하는 쪽을 안 본다.**
+    `_scout_roles`가 순서를 뒤집도록 회귀하면 러너는 `scout_injection`으로 조립하고
+    `estimate`는 `scout_memory`로 재검증해 #84가 되살아나는데 위 검사는 **초록이다.**
+
+    여기서는 풀 run을 실제로 돌려 `counter_for_role`이 **요청된 인자**를 집계하고, 그중
+    Scout 자리의 것이 `_capsule_counter_role`과 같은지 본다.
+
+    ⚠ **집계 결과가 「멤버 셋」이 아니라 하나인 것이 정상이다** — 캡슐이 target당 하나라
+    나머지 멤버는 `using_counter`에 도달하기 전에 캐시로 반환한다(`_step_retrieval`).
+    """
+    from src.adapters import factory as factory_mod
+    from src.cli import _capsule_counter_role
+
+    asked: list[str] = []
+    original = factory_mod.build_deps
+
+    def spy_build_deps(*args: object, **kwargs: object) -> object:
+        deps = original(*args, **kwargs)
+        inner = deps.counter_for_role
+
+        def wrapped(role: str) -> object:
+            asked.append(role)
+            return inner(role)
+
+        return dataclasses.replace(deps, counter_for_role=wrapped)
+
+    monkeypatch.setattr("src.cli.build_deps", spy_build_deps)
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+
+    scout_asked = {r for r in asked if r.startswith("scout")}
+    assert scout_asked, (
+        f"Scout 자리 카운터가 한 번도 요청되지 않았다 — 요청된 것: {sorted(set(asked))}"
+    )
+
+    assert result.candidates, "후보가 없다 — 이 run은 이 검사의 사례가 아니다"
+    assert scout_asked == {SCOUT_POOL_ROLES[0]}, (
+        f"러너가 캡슐을 조립하며 요청한 Scout 카운터가 {sorted(scout_asked)}다 — "
+        f"`cli._capsule_counter_role`은 {SCOUT_POOL_ROLES[0]!r}를 재검증에 쓴다. "
+        "둘이 갈리면 조립과 검증이 다른 카운터를 보고 #84가 되살아난다"
+    )
+    assert _capsule_counter_role.__module__ == "src.cli"  # 위 비교의 대상이 그 함수임을 못박는다
+
+
 def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
     """`estimate`의 호출 상한이 **Scout 자리 수**를 센다 (ADR 0010 §3 팬아웃).
 
@@ -1940,7 +2030,7 @@ def test_deferred_targets_reach_the_warning_and_the_report(tmp_path: Path) -> No
     result, _ = _run(tmp_path, name="warn", before=_with_index(), candidate_max=1)
 
     assert any("candidate_max" in warning for warning in result.warnings)
-    assert "분석하지 못한 대상" in result.report.render()
+    assert "완주하지 못한 시도" in result.report.render()
 
 
 def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
@@ -1948,7 +2038,7 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     result, _ = _run(tmp_path, name="full", before=_with_index())
 
     assert not any("candidate_max" in warning for warning in result.warnings)
-    assert "분석하지 못한 대상" not in result.report.render()
+    assert "완주하지 못한 시도" not in result.report.render()
     # 절단이 없는 run에는 `critic_skipped`도 없다 — 이벤트 부재가 곧 "안 잘렸다"이다.
     assert not any("critic_top_n" in warning for warning in result.warnings)
     assert "잘린 Finding" not in result.report.render()
@@ -2240,7 +2330,7 @@ def test_dropped_targets_reach_the_warning_and_the_report(
     result, _ = _run(tmp_path, name="dropwarn", before=_with_index())
 
     assert any("호출 실패로 버렸다" in warning for warning in result.warnings)
-    assert "분석하지 못한 대상" in result.report.render()
+    assert "완주하지 못한 시도" in result.report.render()
 
 
 def test_the_gateway_detail_survives_into_the_run_artifacts(
