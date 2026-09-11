@@ -44,7 +44,16 @@ class Report:
     run_id: str
     findings: tuple[Finding, ...]
     duplicates: int
-    # 4단계에 못 올라간 target 수 (W2). **"무엇을 찾았는가"만 적고 "무엇을 안 봤는가"를
+    # 4단계에 못 올라간 수 (W2). ⚠ **아래 둘의 단위가 다르다 — 같은 이름으로 부르지 않는다.**
+    #
+    # - `deferred`는 **대상** 수다. `candidate_max` 컷이 `_plan_targets`에서, 즉 **팬아웃
+    #   전에** 정해지므로 풀에서도 대상 단위 그대로다.
+    # - `dropped`는 **시도**(`대상 × Scout 자리`) 수다. `_drop`이 그 시도마다 불린다
+    #   (ADR 0010 §3). 단일 `scout`에서는 자리가 하나라 둘이 같고 **풀에서만 갈린다.**
+    #
+    # ⚠ **`dropped`로 「안 본 대상」을 셀 수 없다** — 멤버 하나가 죽어도 형제가 그 대상을
+    # 보므로 시도가 폐기돼도 대상은 분석된다. 미해결로 등재돼 있다(인덱스 참조).
+    # **"무엇을 찾았는가"만 적고 "무엇을 안 봤는가"를
     # 빼면, 예산에 잘린 run의 리포트가 전량을 본 run의 리포트와 같은 얼굴을 한다** —
     # `index_graph`가 "없다 vs 0건"에 대해, `retrieval_truncated`가 "이벤트 부재는
     # 안 잘림"에 대해 거부한 것과 같은 모양이다.
@@ -54,7 +63,8 @@ class Report:
     deferred: int = 0
     dropped: int = 0
     # 7단계에 못 올라간 Finding 수 (#98 (b)). **위 둘과 같은 줄에 넣지 않는다** — 그쪽 단위는
-    # target이고 이쪽은 Finding이다. 사람이 읽는 산출물에서 분모를 섞는 것이 trace에서
+    # 대상 또는 시도(바로 위)이고 이쪽은 Finding이다.
+    # 사람이 읽는 산출물에서 분모를 섞는 것이 trace에서
     # 섞는 것보다 나쁘다.
     #
     # 이 줄이 없으면 절단된 Finding이 **안 보이는 게 아니라 잘못 보인다.** F-9가
@@ -91,8 +101,15 @@ class Report:
             lines += [f"중복 제거: {self.duplicates}건", ""]
         if self.deferred or self.dropped:
             lines += [
-                f"분석하지 못한 대상: 예산 초과 {self.deferred}건 · 호출 실패 "
-                f"{self.dropped}건 (사유는 trace의 `target_skipped`)",
+                # ⚠ **둘을 한 이름으로 묶지 않는다 — 단위가 다르다**(위 필드 주석).
+                # `deferred`는 대상, `dropped`는 시도다. 묶으면 둘 중 하나는 반드시
+                # 거짓이 된다: 「대상」으로 부르면 **분석된 대상을 못 봤다고 말하고**
+                # (실측: 대상 2건이 전부 분석됐는데 `dropped`가 2였다), 「시도」로 부르면
+                # `deferred`를 자리 수만큼 **과소**로 말한다(실측: 풀에서 미수행 시도 3인데
+                # `deferred`는 1). 단일 프로필에서는 둘이 같아 이 구분이 안 보인다.
+                f"넘긴 대상(예산 초과): {self.deferred}건 · "
+                f"완주하지 못한 시도(대상 × Scout 자리, 호출 실패): {self.dropped}건 "
+                f"(사유는 trace의 `target_skipped`)",
                 "",
             ]
         if self.critic_deferred:

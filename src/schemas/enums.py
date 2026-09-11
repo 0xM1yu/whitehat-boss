@@ -26,18 +26,34 @@ class Role(StrEnum):
     # 리스트였다면 그 여섯 전부에 "리스트의 몇 번째"라는 **새 좌표**를 파야 했다 — 줄을
     # 더하는 것과 좌표를 파는 것의 차이가 이 선택의 전부다.
     #
-    # ⚠ **역할별 토큰 카운터는 그 여섯에 안 든다 — 줄을 더해도 안 켜진다.** ADR 0010 §3의
-    # ⚠ 문단이 같은 것을 적는다.
+    # ⚠ **역할별 토큰 카운터는 그 여섯에 안 든다 — 줄을 더해도 기록엔 안 실린다.**
+    # ADR 0010 §3의 ⚠ 문단이 같은 것을 적는다.
     # `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
-    # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 러너도 `_triage_one`에서
-    # `counter_for_role(Role.SCOUT.value)`를 부르고 `nodes/scout.py`는 `ROLE = Role.SCOUT`
-    # 하나다. 즉 풀 멤버가 4단계를 도는 배선이 오는 날 **역할 카운터는 따라오지 않고**,
-    # 그 run의 캡슐은 기본 카운터(글자수 근사)로 회계된다.
+    # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다.
     #
-    # **여기서 `COUNTED_ROLES`를 늘려 앞질러 가지 않는다.** 러너가 안 켜는 역할을 늘리면
-    # `Deps.counter_report`가 그 역할을 `token_counter` 이벤트에 실어 기록이 거짓이 된다 —
-    # `src/tokens.py`가 "켜지지 않는 역할을 기록에 실으면 거짓 정보다"로 적은 그것이다.
-    # 늘리는 것은 러너를 옮기는 PR의 몫이고, 그 PR이 이 문단을 지운다.
+    # ⚠ **2026-09-11에 절반이 바뀌었다** (PR #178 — 풀 팬아웃).
+    #
+    # - **러너 쪽은 절반 따라온다.** `_step_retrieval`이 `ctx.counter_for_role(item.role.value)`를
+    #   부르므로 예전 문장("러너가 `Role.SCOUT.value`로 박혀 있어 역할 카운터가 안 따라온다")은
+    #   **거짓이 됐다.** ⚠ **다만 켜지는 것은 그 target의 첫 멤버 하나다** — 캡슐이 공유돼
+    #   나머지 멤버는 `using_counter`에 도달하기 전에 반환한다(`_step_retrieval`).
+    #   `nodes/scout.py`의 `ROLE = Role.SCOUT`도 이제 `run()`의 **기본값**이지 유일한 역할이 아니다.
+    # - **기록 쪽은 그대로다.** `Deps.counter_report`는 여전히 `COUNTED_ROLES` 둘만 돌므로,
+    #   풀 멤버 카운터가 **켜져도 `token_counter` 이벤트에는 안 실린다.**
+    #
+    # **`COUNTED_ROLES`를 여기서 늘리지 않는다. 사유가 하나 더 붙었을 뿐 예전 것도 그대로
+    # 선다.**
+    #
+    # - **예전 사유가 여전히 참이다** — 러너가 멤버 카운터를 켜는 것은 **풀 프로필에서만**인데
+    #   `config/profiles.yaml`의 프로필은 **전부 단일 `scout`**이다. 그 프로필들에서 멤버를
+    #   `COUNTED_ROLES`에 넣으면 `counter_report`가 `no_source`를 실어 **정확히 예전 사유가
+    #   말한 거짓 기록**을 낸다.
+    # - **범위가 더해졌다** — 늘리면 `token_counter` 이벤트의 내용이 바뀌고
+    #   `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 기록 계약을 바꾸는 별도 PR의 몫이다.
+    #
+    # ⚠ **반대 방향도 있다. 풀 run의 `token_counter`는 「안 싣는」 것이 아니라 「없는 것을
+    # 싣는다」** — 풀은 `scout`을 하나도 안 켜는데 이벤트에는 `scout_counter: approx`가
+    # 실린다. 그 정정도 풀 프로필을 커밋하는 PR의 몫이다(`orchestrator/trace.py`의 ⚠ 문단).
     #
     # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
     # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다

@@ -83,7 +83,10 @@ class CapsuleSection(HarnessModel):
 
 
 class ContextCapsule(HarnessModel):
-    """후보 하나에 대응하는 최소 분석 문맥.
+    """대상 하나에 대응하는 최소 분석 문맥.
+
+    ⚠ **후보 하나당이 아니다** — Scout 풀에서는 대상 하나의 캡슐을 멤버 셋이 **공유한다**
+    (ADR 0010 §3). 후보 수로 곱하지 않는다.
 
     **전이 시 주의**: 확장은 `HarnessModel.transition()`으로 한다. `model_copy`는
     아래 예산 검증기를 우회하므로 상한을 넘긴 캡슐이 조용히 만들어진다.

@@ -140,6 +140,16 @@ class EventKind(StrEnum):
     # 여기서는 `subject_id`로 지목한다(`critic_normalized`·`gate_eval`과 같은 처리). 합치면
     # `count(target_skipped)`의 뜻이 "4단계에 못 간 target 수"에서 조용히 달라진다.
     #
+    # ⚠ **그 뜻은 Scout 풀에서 이미 달라졌다 — 그리고 한 단위도 아니다**(PR #178).
+    # 이 이벤트는 사유에 따라 **다른 단위**로 난다:
+    #
+    # - `over_candidate_max` — `_plan_targets`가 **팬아웃 전에** 낸다. **대상 단위.**
+    # - `gateway_error`·`schema_error` — `_drop`이 `(target, 자리)` **시도마다** 낸다.
+    #
+    # 그래서 `count(target_skipped)`는 **두 단위의 혼합**이고 target 수도 시도 수도 아니다.
+    # 단일 프로필에서는 자리가 하나라 둘이 같아 이 구분이 안 보인다. 세려면 `reason`으로
+    # 먼저 가른다. 미해결로 등재돼 있다(인덱스 참조).
+    #
     # **`stage`는 7이다.** 절단이 실행되는 자리는 6단계 뒤이지만 6으로 적으면 "게이트에서
     # 잘렸다"로 읽히는데 게이트는 이 건을 **승격시켰다**. 7로 적으면
     # `count(critic_skipped, stage=7) + count(gate_eval, stage=7) = count(promoted_to_critic)`
@@ -202,9 +212,17 @@ class EventKind(StrEnum):
     # 없다"가 그 보고서에 적힌 이유다. `graph_index`가 `status=loaded|missing`으로 "없다"와
     # "0건"을 가른 것과 같은 자리이고, 카운터에만 그것이 없었다.
     #
-    # **역할은 `scout`·`auditor` 둘뿐이다.** 러너가 카운터를 켜는 자리가 그 둘이고
-    # (`_triage_one`), 켜지지 않는 역할을 실으면 거짓 정보가 된다 —
+    # **역할은 `scout`·`auditor` 둘뿐이다.** 러너가 카운터를 켜는 자리가 그 둘이고,
+    # 켜지지 않는 역할을 실으면 거짓 정보가 된다 —
     # `config.prompt_versions()`가 `embedding`을 안 담는 것과 같은 이유다.
+    #
+    # ⚠ **Scout 풀에서는 그 둘이 「켜지는 역할」이 아니다**(PR #178). 풀 run은
+    # **그 target의 첫 멤버** 카운터만 켜고(캡슐 공유 — 나머지는 요청조차 안 한다)
+    # `scout`은 안 켜는데, 이 이벤트는 여전히
+    # `scout`을 `no_source`로 싣는다 — **없는 역할에 대한 기록**이고, 위 문장이 자기
+    # 자신에게 걸린다. 커밋된 프로필이 전부 단일 `scout`이라 오늘은 안 난다.
+    # **미해결로 등재돼 있다**(PR #178이 연 D 항목 — 인덱스 참조). 풀 프로필을 커밋하는
+    # PR이 여기를 함께 고친다.
     #
     # **해석된 경로는 싣지 않는다.** 위 "재현성 기준"이 경로 절댓값을 금지하고 HF 캐시
     # 경로는 `Path.home()`을 지난다. 대신 `{role}_source`(리비전이 박힌 `models.yaml` 값)를

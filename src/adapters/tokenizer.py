@@ -3,7 +3,7 @@
 `models.yaml`의 `source`(예: `hf://Qwen/Qwen3-4B-...@<rev>`)에서 그 모델의 `tokenizer.json`을
 찾아 토큰 카운터(`Callable[[str], int]`)를 돌려준다. `factory`가 역할별로 이 카운터를 만들어
 `Deps.counter_for_role`로 주입하고, 러너가 역할 캡슐 조립 직전에
-`using_counter(ctx.counter_for_role(role))`로 켠다(3b, `runner._triage_one`).
+`using_counter(ctx.counter_for_role(role))`로 켠다(3b, `runner._step_retrieval`).
 
 **`tokenizers`는 하네스의 런타임 의존이 아니다** — `pyproject.toml`의 `dependencies`는
 pydantic·pyyaml 둘뿐이고 실제로 이 라이브러리를 부르는 것은 실서빙 프로필뿐이다(그쪽엔

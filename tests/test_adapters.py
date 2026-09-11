@@ -582,8 +582,9 @@ def test_counter_for_role_returns_none_for_a_role_the_profile_lacks(
     """프로필에 없는 역할이면 `ConfigError`가 아니라 `None`이다.
 
     `build_deps`가 클라이언트를 `if role in config.profile.roles`로 거르는데 이 클로저만
-    안 걸렀다. `_triage_one`은 scout 카운터를 `Stage.RETRIEVAL` 검사 뒤·`Stage.SCOUT` 검사
+    안 걸렀다. `_step_retrieval`은 그 카운터를 `Stage.RETRIEVAL` 검사 뒤·`Stage.SCOUT` 검사
     **앞**에서 부르므로, 4단계 앞에서 멈추는 run이 scout 없는 프로필로 돌면 거기서 죽는다.
+    ⚠ 풀에서는 그 역할이 `scout`이 아니라 멤버 키다(PR #178).
     """
     base = load_config("dev_fake")
     roles = {r: k for r, k in base.profile.roles.items() if r != "scout"}

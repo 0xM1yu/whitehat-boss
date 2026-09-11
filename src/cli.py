@@ -35,6 +35,7 @@ from src.bench_report import apply_benchmarks, pending_updates, run_bench
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
+    SCOUT_POOL_ROLES,
     AdapterSelection,
     ConfigError,
     HarnessConfig,
@@ -467,19 +468,27 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # `ValidationError`로 죽었다 — `estimate --profile b1_single`이 실제로 그렇게 죽었고
         # 사유는 "callees 섹션의 tokens(30)가 본문에서 계산한 값(18)과 다르다"였다.
         #
-        # scout 카운터인 것은 `runner._triage_one`이 LIGHT 캡슐을 그것으로 조립하기
+        # 이 역할인 것은 `runner._step_retrieval`이 LIGHT 캡슐을 그 카운터로 조립하기
         # 때문이다. 조립과 검증이 같은 카운터를 봐야 한다는 `src/tokens.py`의 불변식을
         # 여기서도 같은 방식으로 지킨다.
+        #
+        # ⚠ **`"scout"`으로 박으면 풀에서 무너진다** — 풀 프로필에는 그 키가 없어
+        # (`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다)
+        # `counter_for_role`이 `None`을 주고 `using_counter(None)`은 아무것도 안 바꾼다.
+        # 즉 위 막음이 통째로 사라진다. `_capsule_counter_role`이 그것을 가른다.
         #
         # **⚠ 이것은 임시방편이다.** `src/tokens.py`가 이미 경고한 대로 위험한 자리는
         # 확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이
         # 수정은 그중 지금 터진 한 곳을 막을 뿐이다. 정본은 캡슐이 자기 카운터를 싣고
         # 로드가 그것을 복원하는 것이다(#84 (c)) — 그때 이 `with`는 필요 없어진다.
-        with using_counter(deps.counter_for_role(Role.SCOUT.value)):
+        with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
             capsules = deps.store.query("capsule")
 
     calls = _expected_calls(config, len(capsules))
-    tokens = sum(c.used_tokens for c in capsules) + _prefix_tokens(config) * calls
+    places = _scout_places(config)
+    # 캡슐은 target당 하나지만 **자리마다 프롬프트에 실린다** — `_expected_calls`와
+    # 같은 근거다. 캡슐당 한 번만 더하면 풀에서 캡슐 항이 1/3로 나온다.
+    tokens = sum(c.used_tokens for c in capsules) * places + _prefix_tokens(config) * calls
     budget = config.budget.input_tokens
     share = f"{tokens / budget:.1%}" if budget else "예산 0"
     return [
@@ -490,12 +499,41 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     ]
 
 
+def _capsule_counter_role(config: HarnessConfig) -> str:
+    """LIGHT 캡슐을 **조립한** 역할 키. 재검증도 같은 카운터를 봐야 한다.
+
+    풀이면 첫 멤버다 — `runner._scout_roles`가 `SCOUT_POOL_ROLES` 순서를 유지하고
+    `_step_retrieval`이 **첫 멤버가 만든 캡슐을 나머지에 물려 준다**(ADR 0010 §3). 단일이면
+    `scout`이다. **프로필에 실재하는 키여야 한다** — 없는 키를 주면 `counter_for_role`이
+    `None`을 돌려주고 조립·검증이 다른 카운터를 본다(#84).
+    """
+    roles = config.profile.roles
+    return SCOUT_POOL_ROLES[0] if all(m in roles for m in SCOUT_POOL_ROLES) else Role.SCOUT.value
+
+
+def _scout_places(config: HarnessConfig) -> int:
+    """이 프로필의 4단계 Scout 자리 수. 풀이면 셋, 단일이면 하나.
+
+    판정 근거는 `runner._scout_roles`와 **같은 상수**(`SCOUT_POOL_ROLES`)다 — 두 곳이
+    각자 "풀인가"를 정하면 한쪽만 고쳐질 때 추정과 실행이 갈린다.
+    """
+    roles = config.profile.roles
+    return len(SCOUT_POOL_ROLES) if all(m in roles for m in SCOUT_POOL_ROLES) else 1
+
+
 def _expected_calls(config: HarnessConfig, capsules: int) -> int:
-    """캡슐 하나당 scout 1회, 승격되면 auditor 1회, 상위만 critic 1회.
+    """후보 하나당 scout 1회, 승격되면 auditor 1회, 상위만 critic 1회.
 
     승격률을 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이 무의미해진다.
+
+    **⚠ 캡슐 수와 후보 수는 같지 않다.** 캡슐은 **target당 하나**인데(ADR 0010 §3 —
+    풀 멤버 셋이 같은 캡슐을 공유한다) 4단계는 **자리마다 한 번** 돈다. 그래서 후보가
+    `캡슐 × 자리 수`이고 4·5단계 호출이 그것을 따른다. 예전에는 「캡슐 하나당 scout 1회」로
+    세어 풀 프로필에서 **실제의 1/3**을 냈다 — 그 값으로 예산을 잡으면 run이 도중에
+    `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
     """
-    return capsules * 2 + min(capsules, config.thresholds.critic_top_n)
+    candidates = capsules * _scout_places(config)
+    return candidates * 2 + min(candidates, config.thresholds.critic_top_n)
 
 
 def _prefix_tokens(config: HarnessConfig) -> int:
