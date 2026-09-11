@@ -398,6 +398,25 @@ def test_bench_client_matches_the_factory(tmp_path: Path) -> None:
     assert type(from_bench) is type(from_factory)
     assert vars(from_bench) == vars(from_factory)
 
+    # ⚠ **위 대조만으로는 부족하다.** `vars()`가 같은 것은 두 쪽이 같은 값을 넣어서일
+    # 수도 있고 **둘 다 기본값이라서**일 수도 있다. registry에 아직 `reasoning_effort`를
+    # 선언한 모델이 없어서, 그 인자를 bench 쪽에만 안 넘겨도 이 검사가 통과했다 —
+    # 어긋남이 **모델을 등재하는 날** 처음 드러난다.
+    #
+    # 그래서 registry가 선언한 상태를 만들어 한 번 더 본다.
+    declared = config.transition(
+        models={
+            **config.models,
+            config.model_key_for("scout"): config.models[
+                config.model_key_for("scout")
+            ].transition(reasoning_effort="high"),
+        }
+    )
+    key = declared.model_key_for("scout")
+    assert bench_report._client(declared, key).reasoning_effort == "high", (
+        "registry가 선언했는데 bench 클라이언트가 안 받았다 — bench가 잰 것이 운영 경로가 아니다"
+    )
+
 
 # --- 실측 원문 대조 ----------------------------------------------------------
 #
