@@ -980,3 +980,48 @@ def test_the_roster_registration_cell_only_says_whether_it_is_registered() -> No
         f"§1의 `{_MARK_COLUMN}` 칸은 등재 여부만 말한다. 서빙·검증 상태는 §5에 적는다.\n"
         + "\n".join(offenders)
     )
+
+
+# R8은 **관문이 하나가 아니다** — 닫히는 조건이 셋이고 서로를 대신하지 못한다.
+# 그래서 단수 소유격 「R8의 관문」 자체가 결함이다. `R8.md`의 「온보딩 관문」·
+# 「셋 각각에 다른 관문」·표 머리 `| 관문 |`은 다른 구문이라 안 걸린다.
+_R8_SOLE_GATE_MARKER = "R8의 관문"
+
+# 이 파일만 뺀다 — **금지어를 금지하려면 그것을 적어야 한다.** 다른 테스트
+# 파일은 검사 대상이다(docstring도 주장을 싣는다).
+_MARKER_DECLARING_FILE = Path(__file__).resolve()
+
+
+def test_no_tracked_file_calls_r8_a_single_gate() -> None:
+    """어떤 추적 파일도 R8의 관문을 **하나**라고 적지 않는다.
+
+    **왜 기계가 보나.** 이 문장은 PR #180이 지우려고 연 바로 그 결함인데,
+    같은 문장이 **살아 있는 소스 셋**에 흩어져 있었다 — `config/models.yaml`,
+    `tools/README.md`, `tools/probe/gpt_oss_structured.py`. 산문의 참·거짓을
+    보는 검사가 저장소에 없어서(주석을 **보존**하는 검사는 있다 —
+    `test_bench_apply.py`) 하나를 고치고 나머지를 놓쳐도 CI가 초록이다.
+    **실제로 그렇게 됐다** — #180이 앞 둘을 고치고 프로브 파일을 놓쳤고,
+    이 검사가 그것을 잡았다.
+
+    **그리고 이 자리는 머지에서 되살아난다.** PR #181이 같은 주석 블록을
+    건드리는데 그쪽 판본은 이 문장을 **그대로 들고 있다.** 충돌을
+    `--theirs`로 풀면 #180이 존재하는 이유가 조용히 되돌아오고, 이 검사가
+    없으면 그때도 CI가 초록이다. CLAUDE.md §2.3의 전수 grep이 서는 자리다.
+
+    **고치는 방향은 「닫히는 조건 *n*」이다.** 관문이 하나라고 적으면
+    `valid_ratio` 0.8도 조건을 만족하는 것처럼 읽힌다 — 조건 1의 통과선은
+    **1.0**이고(`src/bench_report.py`의 `_judge_structured`), 조건 3(반박
+    정확도)은 `cli bench`에 **아예 없다**.
+    """
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()}:{number}"
+        for path in _tracked("*.md", "*.py", "*.yaml", "*.yml")
+        if path.resolve() != _MARKER_DECLARING_FILE
+        for number, line in enumerate(_read(path).splitlines(), start=1)
+        if _R8_SOLE_GATE_MARKER in line
+    ]
+    assert offenders == [], (
+        "R8의 관문을 **하나**라고 적은 자리가 남아 있다 — R8은 닫히는 조건이 "
+        "**셋**이고 서로를 대신하지 못한다. 「닫히는 조건 *n*」으로 고쳐라.\n"
+        + "\n".join(offenders)
+    )
