@@ -1,4 +1,8 @@
-"""3단계 Retrieval — 후보 하나에 대응하는 Context Capsule을 만든다.
+"""3단계 Retrieval — 대상 하나에 대응하는 Context Capsule을 만든다.
+
+⚠ **「후보 하나당」이 아니다.** Scout 풀에서는 대상 하나를 멤버 셋이 각각 보므로 후보가
+셋인데 **캡슐은 하나이고 셋이 공유한다**(ADR 0010 §3, `runner._step_retrieval`의
+`state.capsules` 캐시). 후보 수로 캡슐 토큰을 곱하면 풀 run에서 셋 배로 계상된다.
 
 architecture.md §3의 통과 조건은 "capsule 토큰 상한 이내"이고 그 상한은 config에서
 온다(`thresholds.capsule_budget_tokens`). 노드가 숫자를 박지 않는다.

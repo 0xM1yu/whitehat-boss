@@ -10,6 +10,7 @@
 여기서 단언하는 것은 "산출 가능하다"와, Scout 제거율에 한해 "0%도 100%도 아니다"뿐이다.
 """
 
+import dataclasses
 import inspect
 import io
 import json
@@ -25,7 +26,7 @@ from src import cli, console
 from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps, describe_wiring
 from src.adapters.fake_model import FakeModelClient
-from src.config import PROMPTED_ROLES, load_config
+from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
 from src.orchestrator import runner
@@ -145,6 +146,314 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
     assert states["parser.c"] is FindingState.TRIAGED
     assert states["util.c"] is FindingState.QUEUED  # 폐기가 아니라 보류
     assert any(f.state is FindingState.PROVEN for f in result.findings)
+
+
+def _poolify(mode: str | None):  # noqa: ANN202
+    """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
+
+    풀 프로필을 `config/profiles.yaml`에 커밋하면 두 결정 게이트를 건드린다 —
+    `test_context_declares_that_profiles_are_not_rewired_yet`(재배선 상태)와
+    `test_no_profile_declares_execution_yet`(swap 실측 전 per_stage 금지). 둘 다 이 PR의
+    **팬아웃 메커니즘과 별개**이므로, 풀 config는 여기서만 조립한다. 풀 세 자리는 v2 전용
+    풀 프롬프트를 부르는 `fake_v2`, 나머지는 `fake`다.
+    """
+    from src.config import ExecutionPolicy
+
+    pool = {
+        "scout_memory": "fake_v2",
+        "scout_boundary": "fake_v2",
+        "scout_injection": "fake_v2",
+        "auditor": "fake",
+        "critic": "fake",
+        "embedding": "fake",
+        "reranker": "fake",
+    }
+
+    def configure(config):  # noqa: ANN001, ANN202
+        updates: dict[str, object] = {"roles": pool}
+        if mode is not None:
+            updates["execution"] = ExecutionPolicy(mode=mode)
+        return config.transition(profile=config.profile.transition(**updates))
+
+    return configure
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_scout_pool_fans_one_target_into_three_members(tmp_path: Path, mode: str | None) -> None:
+    """풀은 대상 하나를 멤버 셋이 각각 봐서 후보 셋을 낸다 (ADR 0010 §3 방식 ①).
+
+    합집합이지 투표가 아니다 — 세 후보가 합쳐지지 않고 각자 남는다. 각 후보의
+    `scout_member`는 하네스가 stamp해(모델이 아니라 `RunContext.call_model`) 어느 자리에서
+    왔는지 증언한다. 이 태그가 공동오답 행렬의 원천이다. 두 실행 모드 모두에서 돈다
+    (Option C — 팬아웃을 계획에서 편다).
+    """
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+
+    by_target: dict[str, list[str | None]] = {}
+    for candidate in result.candidates:
+        key = f"{candidate.location.file}:{candidate.location.symbol}"
+        by_target.setdefault(key, []).append(candidate.scout_member)
+
+    assert by_target, "풀인데 후보가 하나도 안 나왔다"
+    for key, members in by_target.items():
+        assert sorted(m or "" for m in members) == [
+            "scout_boundary",
+            "scout_injection",
+            "scout_memory",
+        ], f"{key}: 멤버 셋이 각각 후보를 내야 한다 (방식 ①) — got {members}"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_scout_pool_builds_the_light_capsule_once_per_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """멤버 셋이 같은 대상을 봐도 3단계 LIGHT 캡슐은 대상당 한 번만 만든다 (ADR 0010 §3).
+
+    `state.capsules` 캐시가 첫 멤버의 캡슐을 나머지에 물려 준다 — 그러지 않으면 검색이
+    멤버 수만큼(대상당 3배) 붙고 세 멤버가 조금씩 다른 캡슐을 볼 수 있다. `retrieval.run`을
+    감시해 LIGHT 레벨 호출이 후보 수가 아니라 **대상 수**와 같음을 고정한다.
+    """
+    from src.orchestrator.nodes import retrieval as retrieval_node
+    from src.schemas.enums import CapsuleLevel
+
+    original = retrieval_node.run
+    light_calls: list[tuple[object, ...]] = []
+
+    def spy(ctx: object, *, target: object, level: object) -> object:  # noqa: ANN401
+        if level is CapsuleLevel.LIGHT:
+            light_calls.append((target.file, target.symbol, target.line_start, target.line_end))
+        return original(ctx, target=target, level=level)
+
+    monkeypatch.setattr(retrieval_node, "run", spy)
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+
+    targets = {(c.location.file, c.location.symbol) for c in result.candidates}
+    assert len(light_calls) == len(targets), (
+        f"LIGHT 캡슐은 대상당 한 번(대상 {len(targets)})인데 {len(light_calls)}회 만들었다 — "
+        "풀 멤버마다 다시 만들면 이 수가 후보 수(대상당 3)로 뛴다"
+    )
+    assert len(set(light_calls)) == len(light_calls), "같은 대상을 두 번 build했다 — 캐시 miss"
+
+
+# `_run_stage_for_all` docstring이 들어야 하는 한계 서술의 앵커. **문장이 아니라 앵커다** —
+# 서술 전체를 여기 복사하면 문구를 다듬을 때마다 검사가 깨진다.
+_POOL_BLIND_SPOT_MARKER = "풀 멤버 하나가 전량 실패해도"
+
+# `_drop`이 게이트웨이 실패에 붙이는 사유. 러너 상수를 그대로 읽는다 — 문자열을
+# 여기 복사하면 러너가 사유를 바꿀 때 이 검사가 조용히 0건을 세게 된다.
+_REASON_GATEWAY_ERROR = runner._REASON_GATEWAY
+
+
+def _with_mode(mode: str):  # noqa: ANN202
+    """`execution.mode`만 바꾸는 `configure` 훅. 역할은 안 건드린다(단일 scout 그대로)."""
+    from src.config import ExecutionPolicy
+
+    def configure(config):  # noqa: ANN001, ANN202
+        profile = config.profile.transition(execution=ExecutionPolicy(mode=mode))
+        return config.transition(profile=profile)
+
+    return configure
+
+
+def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
+    """`broken` 역할의 모델 호출만 **체계적으로** 실패시킨다 (HTTP 422).
+
+    **422인 것이 핵심이다.** 400·413은 `_SIZE_STATUS`라 러너가 **일부러** 연속 폐기
+    카운터에 안 센다 — 그 주석이 *"이 후보에 대한 사실이지 run에 대한 사실이 아니다"*라고
+    적는다. 그걸로 재면 차단기가 안 걸리는 것이 **맹점 때문인지 설계 때문인지 못 가른다.**
+    422는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다(`_DROPPABLE_STATUS` 주석).
+    """
+    original = FakeModelClient.complete
+
+    def complete(self, *, role: Role, prompt: object, schema: object) -> object:  # noqa: ANN001
+        if role.value == broken:
+            raise ModelGatewayError(f"{broken} 체계적 고장(테스트)", status=422)
+        return original(self, role=role, prompt=prompt, schema=schema)
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_systematically_broken_single_scout_trips_the_circuit_breaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**대조군.** 단일 `scout`가 매번 422로 죽으면 차단기가 걸리고 run이 미완주가 된다.
+
+    아래 풀 검사의 짝이다. 이것이 없으면 풀에서 차단기가 안 걸리는 것이 **팬아웃 때문인지
+    주입 방식이 틀려서인지** 못 가른다 — 같은 고장·같은 상한·같은 fixture로 한쪽만 걸리는
+    것을 보여야 팬아웃이 원인이라고 말할 수 있다.
+
+    **두 모드 모두 돈다.** 풀 검사가 두 모드를 재는데 대조군이 한쪽만 재면, 다른 모드에서
+    갈림이 실재한다는 것이 **증거 없이 주장**된다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    _break_one_role(monkeypatch, Role.SCOUT.value)
+
+    configure = None if mode is None else _with_mode(mode)
+    result, _ = _run(tmp_path, configure=configure)
+
+    assert result.record.stopped_after is not None, (
+        "단일 scout가 전량 422인데 차단기가 안 걸렸다 — 주입이 안 먹었다는 뜻이다"
+    )
+    assert not result.record.is_complete
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """풀 멤버 하나가 전량 실패해도 차단기가 안 걸리고 run이 **정상 완주로 기록된다.**
+
+    **이 PR은 그것을 안 고친다.** 등재된 결함이고(D68 · 이 PR 리뷰의 HIGH) 최소 수용안 2번이
+    *"안 고친다면 결함으로 등재하고 docstring에 그 한계를 적는다 — 풀 프로필 커밋 전에"*다.
+    여기서 하는 일은 **그 선택을 기계로 묶는 것**이다.
+
+    기제: **카운터가 역할을 안 가른다.** 한 단계의 작업 단위가 target × 역할로 펼쳐졌는데
+    `consecutive`는 그 열 전체에 하나뿐이고 성공 하나가 그것을 0으로 되돌린다. 그래서
+    형제 멤버의 성공이 매번 카운터를 지우고 `_MAX_CONSECUTIVE_DROPS`에 영원히 안 닿는다.
+
+    **이 검사는 양방향으로 돈다.**
+
+    - 맹점이 남아 있으면 → `_run_stage_for_all` docstring이 그 한계를 들어야 한다.
+      없으면 실패한다.
+    - **카운터를 역할별로 고치면 → 첫 단언이 실패한다.** 그때 고칠 자리가 여기이고,
+      같이 지울 것이 그 docstring 줄이다. 「아직 안 된 것」을 적은 문장은 되는 순간
+      거짓이 되는데 그것을 사람이 기억해 지우기를 기대하지 않는다
+      (`test_context_declares_that_profiles_are_not_rewired_yet`과 같은 논법).
+
+    ⚠ **오늘 이 맹점은 물리지 않는다** — `config/profiles.yaml`의 어느 프로필도 풀을
+    선언하지 않는다. 그래서 풀 config를 `_poolify`로 여기서만 조립한다. **물리는 시점은
+    풀 프로필을 커밋하는 PR이고, 그 PR이 이 검사를 먼저 만난다.**
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    _break_one_role(monkeypatch, "scout_boundary")
+
+    result, trace_path = _run(tmp_path, configure=_poolify(mode))
+
+    assert result.record.stopped_after is None, (
+        "풀 멤버 하나가 전량 422인데 차단기가 걸렸다 — 맹점이 고쳐졌다는 뜻이다. "
+        "그러면 `_run_stage_for_all` docstring의 한계 서술이 거짓이 되므로 함께 지운다"
+    )
+    assert result.record.is_complete, (
+        "맹점이 고쳐졌다 — 위 단언의 메시지를 따른다"
+    )
+
+    members = {c.scout_member for c in result.candidates}
+    assert "scout_boundary" not in members, "고장난 멤버가 후보를 냈다 — 주입이 안 먹었다"
+    assert {"scout_memory", "scout_injection"} <= members, (
+        "형제 멤버가 후보를 못 냈다 — 이 run은 맹점의 사례가 아니다"
+    )
+
+    # ⚠ **이 단언이 이 검사의 무게를 진다.** 위 넷은 폐기가 **한 건도 없어도** 전부
+    # 만족한다 — 고장난 멤버가 아예 디스패치되지 않는 회귀에서도 초록이다. 그리고
+    # 폐기가 상한 미만이면 「고쳐도 안 걸린다」가 되어 **양방향 보증이 조용히 죽는다**
+    # (fixture의 대상 수가 줄면 실제로 그렇게 된다).
+    dropped = [
+        e
+        for e in _of(_events(trace_path), "target_skipped")
+        if e["data"].get("reason") == _REASON_GATEWAY_ERROR
+    ]
+    assert len(dropped) >= runner._MAX_CONSECUTIVE_DROPS, (
+        f"게이트웨이 폐기가 {len(dropped)}건뿐이라 상한({runner._MAX_CONSECUTIVE_DROPS})에 "
+        "못 미친다 — 역할별로 세도 안 걸리므로 이 검사는 맹점을 증명하지 못한다. "
+        "fixture의 4단계 대상 수를 늘린다"
+    )
+
+    for func in (runner._run_stage_for_all, runner._triage_by_candidate):
+        assert _POOL_BLIND_SPOT_MARKER in inspect.getsource(func), (
+            f"맹점이 실재하는데 `{func.__name__}` docstring이 그것을 안 든다 "
+            f"(앵커 {_POOL_BLIND_SPOT_MARKER!r}). 최소 수용안 2번은 등재와 서술 둘 다다"
+        )
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_the_report_does_not_call_dropped_attempts_unanalyzed_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """풀에서 멤버 하나가 죽어도 **대상은 분석된다.** 리포트가 그것을 부정하면 안 된다.
+
+    `state.dropped`는 `_drop` 호출 수이고 `_drop`은 **시도(`target × Scout 자리`)마다**
+    불린다. 단일 `scout`에서는 자리가 하나라 시도 수 = target 수여서 「대상 N건」이 참이었다.
+    **풀에서는 거짓이 된다** — 형제 멤버가 같은 대상을 보므로 시도가 죽어도 대상은 살아 있다.
+
+    **실측으로 갈렸다**: `scout_boundary`만 전량 422일 때 대상 둘이 **둘 다 후보를 냈는데**
+    리포트가 *"분석하지 못한 대상 … 2건"*을 실었다. `report.py`가 자기 주석에
+    *"사람이 읽는 산출물에서 분모를 섞는 것이 trace에서 섞는 것보다 나쁘다"*라고 적어 둔
+    바로 그 자리다.
+
+    이 검사는 **수가 아니라 이름**을 고정한다 — 수를 시도 단위로 두는 것은 이 PR의 선택이고
+    (「못 본 대상 수」를 따로 내는 것은 미해결로 등재했다), 그 선택이 사람에게 **거짓으로
+    읽히지 않는 것**이 여기서 지킬 최소다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 99)
+    _break_one_role(monkeypatch, "scout_boundary")
+
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+    rendered = result.report.render()
+
+    analyzed = {(c.location.file, c.location.symbol) for c in result.candidates}
+    assert len(analyzed) >= 2, "대상이 하나도 분석 안 됐다 — 이 run은 이 검사의 사례가 아니다"
+    assert result.report.dropped > 0, "폐기가 0건이면 이 검사가 아무것도 안 본다"
+
+    assert "분석하지 못한 대상" not in rendered, (
+        f"대상 {len(analyzed)}건이 전부 분석됐는데 리포트가 "
+        f"「분석하지 못한 대상 {result.report.dropped}건」이라고 적는다 — "
+        "시도 수를 대상 수로 부른다"
+    )
+    assert "시도" in rendered, (
+        "폐기 수가 무엇의 수인지 리포트가 말하지 않는다 — 사람이 target 수로 읽는다"
+    )
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_deferred_stays_a_target_count_and_is_not_labelled_as_attempts(
+    tmp_path: Path, mode: str | None
+) -> None:
+    """`deferred`는 **대상** 수다 — `dropped`(시도)와 한 이름으로 묶으면 거짓이 된다.
+
+    `candidate_max` 컷은 `_plan_targets`에서, 즉 **팬아웃 전에** 정해진다(`state.deferred =
+    len(deferred)`). 그래서 풀에서도 대상 단위 그대로다. **`dropped`만 시도 단위다.**
+
+    두 수를 한 라벨로 묶으면 어느 쪽이든 하나는 거짓이다:
+    「대상」으로 부르면 `dropped`가 **분석된 대상을 못 봤다고 말하고**, 「시도」로 부르면
+    `deferred`를 자리 수만큼 **과소**로 말한다. 이 검사는 후자를 막는다 — 앞의 것은
+    `test_the_report_does_not_call_dropped_attempts_unanalyzed_targets`가 막는다.
+
+    **이 조합을 보는 검사가 없었다.** 기존 deferred 검사는 단일 프로필이라 자리가 하나여서
+    두 단위가 같아 보이고, 풀 검사는 `deferred`가 0인 시나리오였다. 그 사이로 샜다.
+    """
+    result, trace_path = _run(
+        tmp_path, configure=_poolify(mode), candidate_max=1, before=_with_index()
+    )
+    rendered = result.report.render()
+
+    assert result.report.deferred > 0, "넘긴 대상이 0이면 이 검사가 아무것도 안 본다"
+
+    # 팬아웃이 이 수에 곱해지지 않았는지 본다. `_with_index()`라 인덱스 없는 artifact가
+    # 0이므로 `계획 + 넘김 = 심볼 대상`이 성립한다 — 곱셈이 끼면 좌변이 커져 깨진다.
+    planned = _plan(trace_path)
+    assert planned["fallback_artifacts"] == 0, (
+        "인덱스 없는 artifact가 있으면 아래 등식이 다른 이유로도 깨진다 — 픽스처 전제가 바뀌었다"
+    )
+    assert result.report.deferred + planned["planned"] == planned["symbol_targets"], (
+        f"넘긴 대상({result.report.deferred}) + 계획({planned['planned']})이 "
+        f"심볼 대상 수({planned['symbol_targets']})와 안 맞는다 — 팬아웃이 이 수에 곱해졌다"
+    )
+
+    # ⚠ **수가 아니라 라벨을 본다.** `dropped == deferred`인 픽스처에서 수로 단언하면
+    # 렌더가 옳아도 부정 단언이 실패한다 — 그때 실패 메시지가 원인을 오도한다.
+    line = next((ln for ln in rendered.splitlines() if "넘긴 대상" in ln), "")
+    assert line, f"넘김·폐기 줄이 리포트에 없다 — 렌더: {rendered!r}"
+    deferred_label, _, attempts_label = line.partition("·")
+    assert f"넘긴 대상(예산 초과): {result.report.deferred}건" in deferred_label, (
+        f"`deferred`({result.report.deferred})가 대상 라벨로 안 실린다 — 줄: {line!r}"
+    )
+    assert "시도" not in deferred_label, (
+        f"`deferred`를 시도 라벨로 싣는다 — 풀에서 자리 수만큼 과소로 읽힌다: {deferred_label!r}"
+    )
+    assert "시도(대상 × Scout 자리" in attempts_label, (
+        f"`dropped` 쪽이 시도 라벨을 안 든다 — 줄: {line!r}"
+    )
 
 
 def test_manifest_is_written_with_reproducibility_fields(tmp_path: Path) -> None:
@@ -1225,6 +1534,145 @@ def test_a_directory_claimed_between_scan_and_mkdir_is_not_clobbered(
     assert (tmp_path / new_run_id(datetime.now(UTC), 2)).is_dir()
 
 
+def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> None:
+    """`estimate`가 캡슐을 다시 검증할 때 쓰는 카운터 역할이 **그 프로필에 실재해야 한다.**
+
+    `deps.store.query("capsule")`는 `using_counter` **밖**이면 글자수 근사로
+    `CapsuleSection._tokens_match_body`를 다시 돈다. 실 토크나이저로 조립된 캡슐이면
+    저장값과 재계산값이 갈려 `ValidationError`로 죽는다 — `estimate --profile b1_single`이
+    실제로 그렇게 죽었고, 그것을 막은 것이 `counter_for_role(...)`로 감싼 그 `with`다(#84).
+
+    **풀에서는 그 막음이 서지 않았다.** 역할 키를 `"scout"`으로 박아 뒀는데 풀 프로필에는
+    그 키가 없다(`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다). 그래서
+    `counter_for_role`이 `None`을 돌려주고 `using_counter(None)`은 아무것도 안 바꾼다.
+
+    ⚠ **오늘 안 터지는 이유는 둘 다 우연이다** — 커밋된 풀 프로필이 없고, Fake는 `source`가
+    없어 어차피 `None`이다. **실 토크나이저 풀 프로필을 커밋하는 순간 되살아난다.**
+    """
+    from src.cli import _capsule_counter_role
+
+    base = load_config("dev_fake")
+    pool = base.transition(
+        profile=base.profile.transition(
+            roles={
+                "scout_memory": "fake_v2",
+                "scout_boundary": "fake_v2",
+                "scout_injection": "fake_v2",
+                "auditor": "fake",
+                "critic": "fake",
+                "embedding": "fake",
+                "reranker": "fake",
+            }
+        )
+    )
+
+    for name, config in (("단일", base), ("풀", pool)):
+        role = _capsule_counter_role(config)
+        assert role in config.profile.roles, (
+            f"{name} 프로필에 없는 역할 {role!r}로 캡슐을 재검증한다 — "
+            f"`counter_for_role`이 None을 주고 #84의 막음이 사라진다. "
+            f"선언된 역할: {sorted(config.profile.roles)}"
+        )
+
+    assert _capsule_counter_role(pool) == SCOUT_POOL_ROLES[0], (
+        "풀에서 캡슐을 **조립하는** 것은 첫 멤버다 — `runner._scout_roles`가 "
+        "`SCOUT_POOL_ROLES` 순서를 유지하고 `_step_retrieval`이 첫 멤버의 캡슐을 캐시한다. "
+        "재검증도 같은 역할이어야 조립·검증이 같은 카운터를 본다"
+    )
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_the_estimate_counter_role_is_the_one_the_runner_actually_uses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """위 검사를 **실동작에 묶는다.** 구현식을 다시 적는 것으로는 부족하다.
+
+    위 검사가 단언하는 `== SCOUT_POOL_ROLES[0]`은 `_capsule_counter_role`의 구현 그대로다.
+    정작 지켜야 할 불변식은 *"조립한 역할 = 재검증하는 역할"*인데, **조립하는 쪽을 안 본다.**
+    `_scout_roles`가 순서를 뒤집도록 회귀하면 러너는 `scout_injection`으로 조립하고
+    `estimate`는 `scout_memory`로 재검증해 #84가 되살아나는데 위 검사는 **초록이다.**
+
+    여기서는 풀 run을 실제로 돌려 `counter_for_role`이 **요청된 인자**를 집계하고, 그중
+    Scout 자리의 것이 `_capsule_counter_role`과 같은지 본다.
+
+    ⚠ **집계 결과가 「멤버 셋」이 아니라 하나인 것이 정상이다** — 캡슐이 target당 하나라
+    나머지 멤버는 `using_counter`에 도달하기 전에 캐시로 반환한다(`_step_retrieval`).
+    """
+    from src.adapters import factory as factory_mod
+    from src.cli import _capsule_counter_role
+
+    asked: list[str] = []
+    original = factory_mod.build_deps
+
+    def spy_build_deps(*args: object, **kwargs: object) -> object:
+        deps = original(*args, **kwargs)
+        inner = deps.counter_for_role
+
+        def wrapped(role: str) -> object:
+            asked.append(role)
+            return inner(role)
+
+        return dataclasses.replace(deps, counter_for_role=wrapped)
+
+    monkeypatch.setattr("src.cli.build_deps", spy_build_deps)
+    result, _ = _run(tmp_path, configure=_poolify(mode))
+
+    scout_asked = {r for r in asked if r.startswith("scout")}
+    assert scout_asked, (
+        f"Scout 자리 카운터가 한 번도 요청되지 않았다 — 요청된 것: {sorted(set(asked))}"
+    )
+
+    assert result.candidates, "후보가 없다 — 이 run은 이 검사의 사례가 아니다"
+    assert scout_asked == {SCOUT_POOL_ROLES[0]}, (
+        f"러너가 캡슐을 조립하며 요청한 Scout 카운터가 {sorted(scout_asked)}다 — "
+        f"`cli._capsule_counter_role`은 {SCOUT_POOL_ROLES[0]!r}를 재검증에 쓴다. "
+        "둘이 갈리면 조립과 검증이 다른 카운터를 보고 #84가 되살아난다"
+    )
+    assert _capsule_counter_role.__module__ == "src.cli"  # 위 비교의 대상이 그 함수임을 못박는다
+
+
+def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
+    """`estimate`의 호출 상한이 **Scout 자리 수**를 센다 (ADR 0010 §3 팬아웃).
+
+    캡슐은 target당 하나인데 4단계는 **멤버마다 한 번** 돈다. 「캡슐 하나당 scout 1회」로
+    세면 풀 프로필의 scout 호출이 **실제의 1/3**로 나오고, 그 값으로 예산을 잡으면 run이
+    도중에 `BudgetExhausted`로 부분 결과만 남긴다 — `estimate`가 막으라고 있는 사건이
+    정확히 그것이다.
+
+    auditor·critic은 **후보** 수를 따르므로 팬아웃과 함께 는다. critic만 `critic_top_n`이
+    다시 막는다.
+    """
+    from src.cli import _expected_calls
+
+    base = load_config("dev_fake")
+    pool = base.transition(
+        profile=base.profile.transition(
+            roles={
+                "scout_memory": "fake_v2",
+                "scout_boundary": "fake_v2",
+                "scout_injection": "fake_v2",
+                "auditor": "fake",
+                "critic": "fake",
+                "embedding": "fake",
+                "reranker": "fake",
+            }
+        )
+    )
+    capsules = 4
+    top_n = base.thresholds.critic_top_n
+
+    assert _expected_calls(base, capsules) == capsules * 2 + min(capsules, top_n), (
+        "단일 scout 프로필의 값이 바뀌었다 — 회귀다"
+    )
+
+    members = len(SCOUT_POOL_ROLES)
+    candidates = capsules * members
+    assert _expected_calls(pool, capsules) == candidates * 2 + min(candidates, top_n), (
+        f"풀인데 호출 상한이 멤버 수({members})를 안 센다 — "
+        "캡슐 하나가 후보 셋이 되고 4·5단계가 그만큼 돈다"
+    )
+
+
 def test_estimate_does_not_consume_a_run_sequence(tmp_path: Path) -> None:
     """추정은 산출물을 남기지 않으므로 순번도 소비하면 안 된다.
 
@@ -1633,7 +2081,9 @@ def test_deferred_targets_reach_the_warning_and_the_report(tmp_path: Path) -> No
     result, _ = _run(tmp_path, name="warn", before=_with_index(), candidate_max=1)
 
     assert any("candidate_max" in warning for warning in result.warnings)
-    assert "분석하지 못한 대상" in result.report.render()
+    # ⚠ **`deferred`의 앵커는 「넘긴 대상」이다** — `dropped`와 한 f-string에 있으므로
+    # 「완주하지 못한 시도」로 단언하면 **`deferred`가 0이어도 통과한다.**
+    assert "넘긴 대상" in result.report.render()
 
 
 def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
@@ -1641,7 +2091,8 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     result, _ = _run(tmp_path, name="full", before=_with_index())
 
     assert not any("candidate_max" in warning for warning in result.warnings)
-    assert "분석하지 못한 대상" not in result.report.render()
+    assert "넘긴 대상" not in result.report.render()
+    assert "완주하지 못한 시도" not in result.report.render()
     # 절단이 없는 run에는 `critic_skipped`도 없다 — 이벤트 부재가 곧 "안 잘렸다"이다.
     assert not any("critic_top_n" in warning for warning in result.warnings)
     assert "잘린 Finding" not in result.report.render()
@@ -1933,7 +2384,7 @@ def test_dropped_targets_reach_the_warning_and_the_report(
     result, _ = _run(tmp_path, name="dropwarn", before=_with_index())
 
     assert any("호출 실패로 버렸다" in warning for warning in result.warnings)
-    assert "분석하지 못한 대상" in result.report.render()
+    assert "완주하지 못한 시도" in result.report.render()
 
 
 def test_the_gateway_detail_survives_into_the_run_artifacts(

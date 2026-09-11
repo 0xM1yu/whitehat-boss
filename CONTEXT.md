@@ -35,6 +35,7 @@
 | 키 | 왜 남나 |
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
+| `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. 커밋 프로필엔 아직 안 쓰이고 `test_pipeline_e2e`가 in-test로 조립한다 |
 | `qwen3-4b` | `single_gpu_12g` 전용(12GB 장비) |
 | `qwen3-reranker-0.6b` | **지우지 않는다** — 4B와의 대조 기준. 서빙 역할에서만 내린다 |
 
