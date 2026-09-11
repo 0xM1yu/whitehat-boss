@@ -454,7 +454,9 @@ def test_a_profile_declaring_only_part_of_the_pool_is_rejected() -> None:
     §1의 계열 배정). 그 사실이 후보 수 감소로만 나타나므로 run 결과만 봐서는 안 보인다.
     """
     with pytest.raises(ValidationError, match="Scout 자리"):
-        ProfileEntry.model_validate(_scout_arrangement(scout_memory="fake", scout_boundary="fake"))
+        ProfileEntry.model_validate(
+            _scout_arrangement(scout_memory="fake", scout_boundary="fake")
+        )
 
 
 def test_a_profile_declaring_both_the_single_scout_and_the_pool_is_rejected() -> None:

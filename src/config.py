@@ -347,8 +347,9 @@ class ExecutionPolicy(HarnessModel):
     **기본값이 지금 동작이다.** `per_candidate`는 후보 하나가 3~6단계를 관통하는 현행
     러너이고, 그래서 이 필드를 선언하지 않은 프로필은 run이 바뀌지 않는다. ADR 0009가
     이 결정을 "되돌리기 싼" 것으로 부른 근거가 그것이고, 러너를 단계 단위로 재작성하는
-    쪽은 **별도 PR**이다 — 여기서 여는 것은 허용성뿐이라 `per_stage`를 적어도 지금은
-    러너가 그 루프가 아니다.
+    쪽은 **별도 PR**이었고 그 PR이 들어왔다(ADR 0009 결과 2) — `per_stage`를 적으면
+    `runner._triage_by_stage`가 돈다. 여기서 정하는 것은 **어느 루프인가**뿐이고,
+    교대(`swap`) 배선은 아직 아니다(결과 3, `swap.md §9` 실측이 선행).
     """
 
     mode: Literal["per_candidate", "per_stage"] = "per_candidate"
