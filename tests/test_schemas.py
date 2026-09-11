@@ -268,6 +268,20 @@ def test_promoted_state_requires_evidence() -> None:
     assert _finding(state=FindingState.VALIDATED, repro_spec=spec).state is FindingState.VALIDATED
 
 
+def test_promoted_state_requires_path() -> None:
+    """validated 이상은 source→sink 경로도 요구한다.
+
+    게이트(`p3`의 `path_ok`)가 경로 없는 Finding을 E3에서 막지만 스키마도 같은 것을
+    막는다 — 그 전이가 스키마에서 터진 것이 이슈 #154의 크래시였다. 게이트 회귀가
+    이 갈래를 뚫어도 run이 죽지 않도록(그 대신 검증 단계에서 걸리도록) 층을 따로 고정한다.
+    """
+    spec = ReproSpec(steps=["./build.sh", "./poc"], expected_signal="ASAN heap-buffer-overflow")
+    with pytest.raises(ValidationError, match="source→sink 경로"):
+        _finding(state=FindingState.VALIDATED, repro_spec=spec, path=[])
+    # 경로가 붙으면 통과한다.
+    assert _finding(state=FindingState.VALIDATED, repro_spec=spec).state is FindingState.VALIDATED
+
+
 def test_candidate_state_rejects_finding_only_values() -> None:
     """상태 열거형은 하나지만 객체별로 허용 값이 다르다(enums.FindingState docstring)."""
     with pytest.raises(ValidationError):

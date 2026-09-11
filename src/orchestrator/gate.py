@@ -22,10 +22,16 @@
 | E0 | `not finding.evidence_refs` |
 | E1 | `any(e.kind == STATIC)` **or** `any(e.location.overlaps(cand.location))` |
 | E2 | `{SOURCE, SINK} ⊆ path.steps` **and** `any(e.kind == GRAPH)` **and** `not any(m.blocking)` |
-| E3 | `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` |
+| E3 | `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` **and** `path_ok` |
 | E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN})` |
 
 - 등급 = `E4 if p4 else E3 if p3 else E2 if p2 else E1 if p1 else E0` (단조 하강)
+- **E3의 경로 조건 (이슈 #154).** `path_ok`는 E2와 같은 `{SOURCE, SINK} ⊆ path.steps`다. E3은
+  `validated`로 승격되고, `validated`는 스키마가 source→sink 경로를 요구한다(`finding.py`
+  `_promoted_states_need_backing`). §4 상태 흐름상 경로는 E2에서 확인되고 E3는 그 뒤다 — 경로
+  없이 E3를 주면 경로 없는 `validated` 전이가 시도돼 실서빙 run이 7단계에서 `ValidationError`로
+  죽었다(이슈 #154, `run_20260904_0001`). 그래서 `p3`가 `path_ok`를 포함한다. 단조 하강이라 경로
+  없는 upheld+repro는 이제 E2(경로 없어 실패)를 지나 E1로 떨어진다.
 - `normalize()`: `verdict == REBUT and not is_grounded` → `UPHOLD`.
   이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
   (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").
@@ -135,7 +141,7 @@ def evaluate(
     predicates = {
         "p1": static_ok or location_ok,
         "p2": path_ok and graph_ok and unblocked,
-        "p3": upheld and finding.repro_spec is not None,
+        "p3": upheld and finding.repro_spec is not None and path_ok,
         "p4": any(ev.kind in _RUNTIME_KINDS for ev in usable),
         "static_ok": static_ok,
         "location_ok": location_ok,
