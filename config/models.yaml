@@ -347,7 +347,11 @@ models:
     # 백엔드가 `xgrammar` 하나뿐이라 「구현 탓인가」는 대조가 없다.** 남은 미측정은
     # `enable_in_reasoning`·enum 제약 제거·케이스 축이고, **2단 추출은 아직 안 쟀다** —
     # 그 전에는 「이 모델은 구조화 출력이 안 된다」로 단정하지 않는다.
-    # **이 등재가 R8을 닫지 않는다** — R8의 관문은 `cli bench`의 `structured_output.valid_ratio`다.
+    # **이 등재가 R8을 닫지 않는다** — R8의 닫히는 조건은 **셋**이고 등재는 그중 어느 것도 아니다.
+    # 1은 `cli bench`의 `structured_output.valid_ratio`가 **1.0**인 것이고(값이 나온 것이 아니라
+    # 1.0이다 — `src/bench_report.py`의 `_judge_structured`가 쓰는 통과선), 3은 **반박 정확도**인데
+    # 그쪽은 bench 밖이다(고정 반박 표본이 선행). **「등재하면 bench가 잰다」로 읽지 않는다** —
+    # `cli bench`는 `--profile`이 필수이고 프로필의 `critic`은 아직 이 모델이 아니다.
     #
     # ⚠ **아직 안 해 본 손잡이가 하나 더 있다 — `disable_any_whitespace`.**
     # 2026-09-11에 **다른 모델**(`qwen3-coder-30b-a3b`)에서 구조화 출력 실패를 쟀더니 원인이

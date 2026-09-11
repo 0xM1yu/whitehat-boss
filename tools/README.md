@@ -21,7 +21,10 @@
 | `gpt_oss_structured.py` | `gpt-oss-20b`의 structured output 정답률이 **serve 설정**으로 갈리는가. 프로브를 고정하고 `vllm serve` 인자만 바꿔 팔을 만든다 | [2026-09-09 보고서](../docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) §5 · R8 |
 
 ⚠ **뒤의 둘은 `cli bench`·`cli run`을 대체하지 않는다.** 하네스가 실제로 보내는 요청이
-아니기 때문이다 — R8의 관문(`structured_output.valid_ratio`)은 `cli bench`에만 있다.
+아니기 때문이다 — R8의 닫히는 조건 **1**(`structured_output.valid_ratio` = **1.0**)은 `cli bench`에만
+있다. ⚠ **조건 3(Critic 반박 정확도)은 `cli bench`에도 없다** — 고정 반박 표본이 선행이고
+표본 크기·합격선은 [D4](../docs/open-questions/D/D4.md)가 정한다. 프로브가 내는 정답률은
+그 표본이 아니다(팔을 가르는 A/B용이다).
 
 ## harness-tools 이미지
 
