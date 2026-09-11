@@ -870,3 +870,113 @@ def test_the_two_rulebooks_say_the_same_thing() -> None:
             f"{base}와 {other}가 첫 줄 말고도 다르다 — 두 에이전트가 다른 규약을 읽는다.\n"
             f"{base}에서 고치고 첫 줄만 바꿔 복사한다.\n{diff[:4000]}"
         )
+
+
+# registry 부재를 주장하는 문구. `미등재`는 §1 표가 정당하게 쓰므로 함께 본다.
+_ABSENT_CLAIM = re.compile(r"registry에 없|레지스트리에 없|미등재")
+# 그 주장 **바로 앞 절**에서만 키를 줍는다. 줄 전체를 보면 같은 줄의 다른 절이 걸린다 —
+# CONTEXT.md §5의 재배선 행은 한 줄 안에서 "Critic은 등재됐다"와 "리랭커는 없다"를
+# 함께 말하므로, 줄 단위로 보면 등재된 Critic까지 위반으로 잡힌다.
+#
+# **문장 경계에서 자른다.** 글자 수로만 자르면 앞 문장의 키가 딸려 온다 — 이 검사를 처음
+# 돌렸을 때 `build-plan.md`가 그랬다: checksum 자리표시자를 말하는 `fake`가 100자 뒤의
+# 다른 문장("새 로스터에는 registry 미등재 자리가 있다")에 붙어 오탐이 됐다.
+_CLAUSE_END = re.compile(r"다[.)]|\.\s|—")
+_CLAIM_LOOKBACK = 200
+# 개수로 registry 상태를 주장하는 문구. 등재가 하나 늘 때마다 조용히 거짓이 된다.
+#
+# ⚠ **`미등재`는 이 저장소에서 두 뜻이다.** registry 미등재와 **D·R 인덱스 미등재**
+# (`build-plan.md`의 「미결 질문」 표가 그쪽이다). 그래서 registry 문맥인 줄에서만 본다 —
+# 안 좁히면 R 계열 등재를 말하는 표가 "registry 상태를 개수로 적었다"는 **틀린 사유로**
+# 걸린다. 지금 그 표가 안 걸리는 것은 어순 덕분일 뿐이라 설계로 막는다.
+_COUNT_CLAIM = re.compile(r"(둘|셋|넷|전부|모두)\s*다?\s*미등재")
+_REGISTRY_CONTEXT = re.compile(r"models\.yaml|registry", re.IGNORECASE)
+
+
+def test_no_document_says_a_registered_model_is_missing_from_the_registry() -> None:
+    """등재된 키를 「registry에 없다」고 적은 문장이 없어야 한다.
+
+    **왜 필요한가.** `test_the_context_roster_matches_the_model_registry`는 §1 표의
+    `registry 등재` **칸**만 본다. 같은 파일 §5의 **산문**은 안 본다 — 그래서 등재 PR이
+    §1을 ✅로 바꾸면서 §5에 남은 「아직 registry에 없어서」를 못 잡고, **정본 파일이 자기
+    §1과 §5에서 다른 말을 하게 된다.**
+
+    `CONTEXT.md`가 존재하는 이유가 **낡은 로스터 서술을 살아 있는 지시로 읽는 사고**인데
+    (그 파일 머리말 — 2026-09-09 하루에 네 번), 그 파일이 스스로 그 사고의 원천이 되면
+    장치가 뒤집힌다. 그래서 사람이 아니라 코드가 막는다.
+
+    **주장 바로 앞만 본다.** 줄 단위로 보면 한 문장이 여러 자리를 말할 때
+    (「Critic은 등재됐고 리랭커는 없다」) 등재된 쪽까지 위반으로 잡힌다.
+    """
+    registry = _registry_keys()
+    offenders: list[str] = []
+
+    for path in _tracked("*.md"):
+        for lineno, line in enumerate(_read(path).splitlines(), start=1):
+            for claim in _ABSENT_CLAIM.finditer(line):
+                window = line[max(0, claim.start() - _CLAIM_LOOKBACK) : claim.start()]
+                # 마지막 문장 경계 뒤만 남긴다 — 그 절이 이 주장의 주어를 들고 있다.
+                breaks = list(_CLAUSE_END.finditer(window))
+                if breaks:
+                    window = window[breaks[-1].end() :]
+                for key in re.findall(r"`([^`]+)`", window):
+                    if key in registry:
+                        offenders.append(
+                            f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: "
+                            f"`{key}`를 「{claim.group(0)}」로 적었는데 "
+                            f"config/models.yaml에 **있다**"
+                        )
+
+    assert offenders == [], (
+        "등재된 모델을 미등재로 서술한 곳이 있다 — 등재 PR이 §1만 고치고 산문을 안 고친 "
+        "자리다(CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
+
+
+def test_no_document_states_the_registry_state_as_a_count() -> None:
+    """「셋 다 미등재」처럼 **개수**로 registry 상태를 적지 않는다.
+
+    개수는 등재가 하나 늘 때마다 조용히 거짓이 되는데, 키 이름이 없어서 위 검사도 못
+    잡는다. `CONTEXT.md` §3이 그 규칙을 이미 적는다 — *"그 밖의 문서는 모델을 현재형으로
+    이름 대지 않는다. 이름을 대야 하면 이 파일을 링크한다."*
+
+    **실제로 낡았다**: `R8.md`가 *"`config/models.yaml`(셋 다 미등재)"*로 적은 채
+    2026-09-11에 둘이 등재됐다. 세는 대신 §1 표를 가리키면 그 표는 CI가 잠근다.
+    """
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: 「{match.group(0)}」"
+        for path in _tracked("*.md")
+        for lineno, line in enumerate(_read(path).splitlines(), start=1)
+        if _REGISTRY_CONTEXT.search(line)
+        for match in [_COUNT_CLAIM.search(line)]
+        if match
+    ]
+    assert offenders == [], (
+        "registry 상태를 개수로 적은 곳이 있다. 개수는 등재마다 거짓이 되고 키 이름이 "
+        "없어 다른 검사도 못 잡는다 — CONTEXT.md §1 표를 링크한다.\n" + "\n".join(offenders)
+    )
+
+
+def test_the_roster_registration_cell_only_says_whether_it_is_registered() -> None:
+    """§1 `registry 등재` 칸은 **등재 여부만** 말한다 — 다른 항목 번호(R·D)를 안 든다.
+
+    그 열 이름이 「registry 등재」 하나이고, 서빙·검증 상태의 자리는 **§5**다. 한 칸이 두
+    축을 들면 다음 모델에서 「어디까지 이 칸에 적나」가 매번 다시 열리고, 그 칸을 잠그는
+    `test_the_context_roster_matches_the_model_registry`는 registry 사실만 검증하므로
+    **곁들인 서술은 아무도 안 본다.** §4의 등급 표를 두 축으로 가른 것과 같은 판단이다.
+    """
+    header, rows = _first_table(_read(CONTEXT), _ROSTER_HEADING, _ROSTER_TABLE)
+    mark_at = _column(header, _MARK_COLUMN, _ROSTER_TABLE)
+    item_ref = re.compile(r"\b[RD]\d+\b")
+
+    offenders = [
+        f"CONTEXT.md:{lineno}: `{_MARK_COLUMN}` 칸이 {found}를 든다 — {row[mark_at][:60]!r}"
+        for lineno, row in rows
+        if mark_at < len(row)
+        for found in [item_ref.findall(row[mark_at])]
+        if found
+    ]
+    assert offenders == [], (
+        f"§1의 `{_MARK_COLUMN}` 칸은 등재 여부만 말한다. 서빙·검증 상태는 §5에 적는다.\n"
+        + "\n".join(offenders)
+    )
