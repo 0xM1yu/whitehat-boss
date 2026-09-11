@@ -486,8 +486,10 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 | 축 | 단일 `scout` | 풀 셋 |
 |---|---|---|
 | 후보의 단위 | 심볼 하나당 1건 | **심볼 하나당 3건** (합집합 — 투표가 아니다) |
-| 제거율의 분모 | 인덱싱된 함수 수 | 그 수 **× 자리 수**. `target_plan.planned`를 분모로 쓰면 최대 300%가 나온다 |
-| `dropped`·`count(target_skipped)` | 못 본 target 수 | **시도 수** — 멤버 하나가 죽어도 형제가 그 대상을 본다([D70](docs/open-questions/D/D70.md)) |
+| 제거율의 분모 | `target_plan.planned` (§10 아래 「세 수를 섞지 않는다」) | **같은 `planned`인데 분자가 자리 수만큼 는다.** 그 분모로 풀 run의 후보를 세면 비율이 1을 넘을 수 있다 `[계산]` — 분자·분모의 단위를 맞추려면 분모도 `planned × 자리 수`여야 한다 |
+| `dropped` | 못 본 target 수 | **시도 수** — 멤버 하나가 죽어도 형제가 그 대상을 본다([D70](docs/open-questions/D/D70.md)) |
+| `count(target_skipped)` | 못 본 target 수 | **두 단위의 혼합** — `over_candidate_max`는 대상(팬아웃 전), `gateway_error`는 시도. `reason`으로 먼저 가른다 |
+| `deferred` | 못 본 target 수 | **대상 그대로** — `candidate_max` 컷이 팬아웃 전이다. `dropped`와 **같은 단위가 아니다** |
 | capsule cache 적중률 | Retriever 훅이 전량 기록 | `state.capsules`가 앞에서 단락해 **이벤트가 준다**(실측 9→5 · 0.667→0.40, 같은 항목) |
 
 **역할별 토큰 카운터도 갈린다** — 풀은 `scout`을 안 켜고 그 target의 **첫 멤버**만 켜는데

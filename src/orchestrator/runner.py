@@ -1015,6 +1015,13 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     카운터로 켠다 — 캡슐이 공유되므로 예산 컷도 그 하나로 정해진다. `counter_for_role`이
     `None`을 주면(fake·토크나이저 없음) `using_counter`가 아무것도 바꾸지 않아 기본
     카운터(글자수 근사)가 유지된다.
+
+    ⚠ **그래서 `capsule_budget_tokens`가 멤버 2·3에는 사실상 강제되지 않는다.** 캐시 적중은
+    `model_validate`를 다시 타지 않으므로, 첫 멤버 기준으로 상한 이내인 캡슐이 다른 계열
+    토크나이저 기준으로 상한을 넘어도 **어디서도 안 걸리고 기록에도 안 남는다.** 로스터는
+    풀 세 자리를 서로 다른 세 모델로 정해 두었다(`CONTEXT.md` §1 — 그중 하나는 계열도
+    다르다). 미해결로 등재돼 있다(인덱스 참조). ⚠ **Fake 프로필에서는 전 역할이 같은 기본
+    카운터라 이 갈림이 재현되지 않는다** — 테스트로 못 잡는 자리다.
     """
     key = _target_key(item.target.location)
     cached = state.capsules.get(key)

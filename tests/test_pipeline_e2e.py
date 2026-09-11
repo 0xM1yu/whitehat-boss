@@ -405,6 +405,45 @@ def test_the_report_does_not_call_dropped_attempts_unanalyzed_targets(
     )
 
 
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_deferred_stays_a_target_count_and_is_not_labelled_as_attempts(
+    tmp_path: Path, mode: str | None
+) -> None:
+    """`deferred`는 **대상** 수다 — `dropped`(시도)와 한 이름으로 묶으면 거짓이 된다.
+
+    `candidate_max` 컷은 `_plan_targets`에서, 즉 **팬아웃 전에** 정해진다(`state.deferred =
+    len(deferred)`). 그래서 풀에서도 대상 단위 그대로다. **`dropped`만 시도 단위다.**
+
+    두 수를 한 라벨로 묶으면 어느 쪽이든 하나는 거짓이다:
+    「대상」으로 부르면 `dropped`가 **분석된 대상을 못 봤다고 말하고**, 「시도」로 부르면
+    `deferred`를 자리 수만큼 **과소**로 말한다. 이 검사는 후자를 막는다 — 앞의 것은
+    `test_the_report_does_not_call_dropped_attempts_unanalyzed_targets`가 막는다.
+
+    **이 조합을 보는 검사가 없었다.** 기존 deferred 검사는 단일 프로필이라 자리가 하나여서
+    두 단위가 같아 보이고, 풀 검사는 `deferred`가 0인 시나리오였다. 그 사이로 샜다.
+    """
+    result, trace_path = _run(
+        tmp_path, configure=_poolify(mode), candidate_max=1, before=_with_index()
+    )
+    rendered = result.report.render()
+
+    assert result.report.deferred > 0, "넘긴 대상이 0이면 이 검사가 아무것도 안 본다"
+
+    # 팬아웃이 이 수에 곱해지지 않았는지 본다 — 계획된 대상 수를 넘을 수 없다.
+    planned = _plan(trace_path)
+    assert result.report.deferred + planned["planned"] == planned["symbol_targets"], (
+        f"넘긴 대상({result.report.deferred}) + 계획({planned['planned']})이 "
+        f"심볼 대상 수({planned['symbol_targets']})와 안 맞는다 — 팬아웃이 섞였다"
+    )
+
+    assert f"넘긴 대상(예산 초과): {result.report.deferred}건" in rendered, (
+        f"`deferred`({result.report.deferred})가 대상 라벨로 안 실린다 — 렌더 문구: {rendered!r}"
+    )
+    assert f"시도(대상 × Scout 자리, 호출 실패): {result.report.deferred}건" not in rendered, (
+        "`deferred`를 시도 라벨로 싣는다 — 풀에서 자리 수만큼 과소로 읽힌다"
+    )
+
+
 def test_manifest_is_written_with_reproducibility_fields(tmp_path: Path) -> None:
     result, trace_path = _run(tmp_path)
 
@@ -2030,7 +2069,9 @@ def test_deferred_targets_reach_the_warning_and_the_report(tmp_path: Path) -> No
     result, _ = _run(tmp_path, name="warn", before=_with_index(), candidate_max=1)
 
     assert any("candidate_max" in warning for warning in result.warnings)
-    assert "완주하지 못한 시도" in result.report.render()
+    # ⚠ **`deferred`의 앵커는 「넘긴 대상」이다** — `dropped`와 한 f-string에 있으므로
+    # 「완주하지 못한 시도」로 단언하면 **`deferred`가 0이어도 통과한다.**
+    assert "넘긴 대상" in result.report.render()
 
 
 def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
@@ -2038,6 +2079,7 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     result, _ = _run(tmp_path, name="full", before=_with_index())
 
     assert not any("candidate_max" in warning for warning in result.warnings)
+    assert "넘긴 대상" not in result.report.render()
     assert "완주하지 못한 시도" not in result.report.render()
     # 절단이 없는 run에는 `critic_skipped`도 없다 — 이벤트 부재가 곧 "안 잘렸다"이다.
     assert not any("critic_top_n" in warning for warning in result.warnings)
