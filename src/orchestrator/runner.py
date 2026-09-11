@@ -1153,6 +1153,30 @@ def _run_stage_for_all(
     그 판정을 함수로 들고 있는 이유가 정확히 이것이다(그 docstring). 여기서 다시
     `status not in _DROPPABLE_STATUS`를 적으면 한쪽만 고쳐질 때 같은 오류가 모드에
     따라 다르게 처리된다.
+
+    ## ⚠ 한계 — Scout 풀에서 이 카운터는 체계적 고장을 못 잡는다 (미해결, PR #178 리뷰)
+
+    **풀 멤버 하나가 전량 실패해도 이 카운터는 상한에 안 닿는다.** `consecutive = 0`
+    리셋이 **역할 루프 안**에 있어서다 — `items`가 target × 역할로 펼쳐져 있으므로 고장난
+    멤버가 매번 죽어도 **형제 멤버의 성공이 그때마다 카운터를 0으로 되돌린다.**
+
+    그래서 그 run은 `stopped_after`가 `None`인 채 끝나고 `is_complete`가 **참이 된다** —
+    Scout 커버리지의 1/3이 통째로 빈 run이 정상 완주로 보이고 비교표에 들어간다.
+    `report.py`·`run.py`·`trace.py` 어디에도 `scout_member`별 집계가 없어 **기록에서도
+    안 보인다.**
+
+    ⚠ **위 "연속 셋이 죽으면 그 단계가 체계적으로 고장 난 것"은 단일 `scout`에서만
+    참이다.** 풀에서는 한 역할의 실패가 연속으로 쌓이지 않고, 반대로 연속 셋이 **서로
+    다른 역할**일 수 있다.
+
+    **오늘은 물리지 않는다** — `config/profiles.yaml`의 어느 프로필도 풀을 선언하지
+    않는다. **물리는 시점은 풀 프로필을 커밋하는 PR이다.** 그 PR이 이 한계를 먼저
+    처리한다 — 고치는 방향은 연속 실패를 **역할별로** 세거나, `scout_member`별 산출 수를
+    기록에 남겨 0건인 멤버가 보이게 하는 것이다.
+
+    `tests/test_pipeline_e2e.py`의
+    `test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet`가 이 한계를 실측으로
+    고정하고 **이 서술과 묶는다** — 고치면 그 검사가 실패해서 이 절을 지우게 만든다.
     """
     consecutive = 0
     survivors: list[_InFlight] = []
@@ -1192,6 +1216,10 @@ def _triage_by_candidate(
 
     `BudgetExhausted`는 여기서 잡지 않는다 — 실패가 아니라 정상 종료 경로이고
     `run_pipeline`이 처리한다(모듈 docstring).
+
+    ⚠ **Scout 풀에서는 연속 폐기 카운터가 체계적 고장을 못 잡는다** — 이 루프도 같은
+    모양이다(`consecutive = 0` 리셋이 역할 루프 안에 있다). 전문은 `_run_stage_for_all`의
+    「한계」 절에 있다.
 
     `ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 그 후보만 버리고 계속
     간다. 다만 무조건 잡으면 안 된다:
