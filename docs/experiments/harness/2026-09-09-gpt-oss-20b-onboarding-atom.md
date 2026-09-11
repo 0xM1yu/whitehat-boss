@@ -247,7 +247,7 @@ Yes – the code is a classic **use-after-free**.
 | prefix cache 적중률 | 위와 같다 | 위와 같다 |
 | **Critic 반박 정확도** | bench 범위 밖 — 고정 반박 표본이 필요하다([model-serving.md](../../model-serving.md) §3 7번, D4) | 표본 데이터셋 확정 후 |
 | `guidance` 500의 사유 | 로그에 트레이스백이 없고 응답 `message`가 비었다 | 서버 로그 레벨을 올려 재현 |
-| `outlines` 백엔드 | **안 해봤다** | 같은 스모크를 한 번 더 |
+| `outlines` 백엔드 | ✅ **2026-09-11에 측정됐다 — 5/5 HTTP 500.** `guidance`와 같은 자리다([9팔 보고서](2026-09-11-gpt-oss-structured-vocab-flag-atom.md) §7). 서버는 정상 기동했고 자유서술은 3/3으로 돈다 — 500은 `response_format`을 실은 요청에서만 난다. ⚠ 사유는 안 갈랐다(로그 레벨) | 측정 완료 |
 | `enable_in_reasoning=True` | **안 해봤다** | 그 값으로 재기동해 §3.3 반복 |
 | `--structured-outputs-config.reasoning_parser` 명시 지정 | ✅ **2026-09-11에 측정됐다 — 플래그는 아무것도 안 바꾼다.** 같은 케이스·같은 스키마·같은 `max_tokens`로 플래그만 바꾼 A/B에서 **verdict 시퀀스가 바이트 단위로 동일**했다([보고서](2026-09-11-gpt-oss-structured-vocab-flag-atom.md) §3). §2의 관측(EngineCore가 이미 채웠다)이 맞았다 | 측정 완료 |
 | *(추가)* 스키마 어휘 | ✅ **2026-09-11에 측정됐다 — 어휘가 아니다.** 실제 `Decision` 어휘 1/5, 서술 어휘 `vulnerable`/`safe` **0/5**(더 나쁘다). 아래 §7 후속 2가 제일 싸다고 적은 그 실험이다 | 측정 완료 |
