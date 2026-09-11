@@ -43,6 +43,7 @@ from src.schemas import (
     Sampling,
     Verdict,
 )
+from src.schemas.candidate import scout_member_of
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.tokens import estimate_tokens
 
@@ -278,6 +279,71 @@ def test_candidate_state_rejects_finding_only_values() -> None:
             score=0.5,
             state=FindingState.PROVEN,  # type: ignore[arg-type]
         )
+
+
+# --- Scout 풀 멤버 태깅 (ADR 0010 §3) --------------------------------------
+
+
+def _candidate(**overrides: object) -> Candidate:
+    """4단계 Scout 출력 하나. `scout_member`만 바꿔 가며 쓴다."""
+    base: dict[str, object] = {
+        "candidate_id": "cand_0003",
+        "run_id": "run_20260901_0001",
+        "artifact_id": "art_a1b2c3",
+        "location": Location(file="src/parser/http.c", symbol="parse_header"),
+        "score": 0.61,
+        "state": FindingState.CANDIDATE,
+    }
+    base.update(overrides)
+    return Candidate(**base)  # type: ignore[arg-type]
+
+
+def test_scout_member_is_absent_when_the_profile_has_no_pool() -> None:
+    """풀이 없는 프로필(`roles:`에 `scout` 하나)의 후보는 멤버를 **주장하지 않는다**.
+
+    여기서의 `None`은 CLAUDE.md §0의 미실측 표시가 아니다 — "이 run에 풀이 없었다"는
+    관측이다. 풀 프로필로 돈 후보에는 하네스가 반드시 값을 stamp하므로 `None`이 남지
+    않고, 그래서 두 뜻이 한 값에 겹치지 않는다. 겹치게 두면 단일 scout run의 후보가
+    공동오답 행렬(ADR 0010 §3)의 어느 칸에 들어갈지 판단할 근거가 사라진다.
+    """
+    assert _candidate().scout_member is None
+
+
+def test_scout_member_refuses_the_single_scout_role() -> None:
+    """`"scout"`은 풀 멤버 이름이 아니다.
+
+    담기면 행렬에 **없는 자리**가 생긴다 — 세 멤버의 겹침을 세는 표에 네 번째 열이
+    끼고, 단일 scout 프로필로 돈 후보가 풀 멤버의 오답으로 집계된다. 그 표가
+    「배분을 옮기는 유일한 근거」(docs/research/2026-09-08-roster.md §7)라 그 한 열이
+    모델을 다른 자리로 옮기는 판단까지 끌고 간다.
+    """
+    with pytest.raises(ValidationError):
+        _candidate(scout_member="scout")
+
+
+def test_scout_member_accepts_the_pool_member_role_key() -> None:
+    """풀 멤버 역할 키(`Role.value`)를 그대로 담는다.
+
+    역할 키인 것이 요점이다 — `RunRecord.model_checksums`·`prompt_versions`가 같은
+    키를 쓰므로, 행렬의 한 칸에서 "어느 모델이 어느 checksum으로 무엇을 놓쳤나"까지
+    조인 없이 따라간다(ADR 0010 §3 "역할 키로 이미 동작한다").
+    """
+    assert _candidate(scout_member="scout_boundary").scout_member == "scout_boundary"
+
+
+def test_scout_member_of_tags_pool_roles_and_nothing_else() -> None:
+    """stamp가 쓰는 판별 규칙 자체를 고정한다.
+
+    풀 멤버는 `scout_` 접두 역할이고 단일 `scout`은 아니다(ADR 0010 §3). 규칙이
+    느슨해져 `auditor`까지 통과하면, 5단계가 만든 것이 4단계 멤버의 발화로 기록되어
+    공동오답 행렬이 **Scout이 낸 적 없는 오답**을 세게 된다.
+    """
+    assert scout_member_of("scout_memory") == "scout_memory"
+    assert scout_member_of("scout_boundary") == "scout_boundary"
+    assert scout_member_of("scout_injection") == "scout_injection"
+    assert scout_member_of("scout") is None
+    assert scout_member_of("auditor") is None
+    assert scout_member_of("single") is None
 
 
 # --- ContextCapsule 불변식 (architecture.md §3 3단계) ----------------------
