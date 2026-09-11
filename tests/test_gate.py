@@ -198,6 +198,25 @@ def test_upheld_without_repro_spec_stays_e2() -> None:
     assert not result.predicates["p3"]
 
 
+def test_upheld_with_repro_but_no_path_is_not_e3() -> None:
+    """경로 없는 upheld+repro는 E3가 아니다 (D65).
+
+    E3은 `validated`로 승격되는데 `validated`는 스키마가 source→sink 경로를 요구한다
+    (`finding.py`). 경로 없이 E3를 주면 그 전이가 `ValidationError`로 실서빙 run을 7단계에서
+    죽인다 — `run_20260904_0001`이 그렇게 끝났다. `p3`가 `path_ok`를 포함하므로, 경로가 빈
+    이 Finding은 E2(경로 없어 실패)를 지나 E1로 떨어진다.
+    """
+    finding = _finding(refs=["ev_static"], path=[], repro=True)
+    evidences = [_evidence("ev_static", EvidenceKind.STATIC)]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
+
+    assert result.grade is EvidenceGrade.E1
+    assert not result.predicates["p3"]
+    assert not result.predicates["path_ok"]
+    assert result.predicates["upheld"] and result.predicates["has_repro_spec"]
+
+
 def test_ungrounded_rebut_normalizes_to_uphold() -> None:
     """근거 없는 반박은 반박이 아니다 (agent-contracts.md §2.3)."""
     decision = _decision(Verdict.REBUT, grounded=False)

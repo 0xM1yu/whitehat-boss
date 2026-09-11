@@ -122,12 +122,21 @@ class Finding(HarnessModel):
 
     @model_validator(mode="after")
     def _promoted_states_need_backing(self) -> "Finding":
-        """validated 이상은 재현 명세와 근거를 동반해야 한다.
+        """validated 이상은 재현 명세·근거·경로를 동반해야 한다.
 
-        architecture.md §4: E3(`validated`)의 조건 자체가 "재현 명세 존재"이고, E4
-        (`proven`)는 재현 로그를 요구한다. 근거 0건짜리 `validated`는 이 시스템의
+        architecture.md §4: E3(`validated`)의 조건은 "Critic 반박 실패 + 재현 명세 존재"이고,
+        **경로(source→sink)는 그 앞 E2의 조건**이다 — §4 상태 흐름이 E2를 지난 뒤에야 E3로
+        오므로 `validated`에 이른 Finding은 그 경로를 들고 있어야 한다(그래서 아래가 `path`도
+        요구한다). E4(`proven`)는 재현 로그를 요구한다. 근거 0건짜리 `validated`는 이 시스템의
         전제(Evidence 중심 판정)를 정면으로 뒤집으므로 만들어질 수 없어야 한다.
         `hypothesized`/`queued` 초안 단계에는 요구하지 않는다.
+
+        **게이트는 이 전제 중 경로 조건만 강제한다** — `gate.py`의 `p3`가 `path_ok`를 포함해
+        경로 없는 Finding은 E3를 못 받는다(이슈 #154). 그 조건이 없던 때, 경로 없이 E3를 받은
+        Finding이 `validated`로 전이하려다 아래 `path` 검사에서 `ValidationError`로 run을 죽였다.
+        전제 전체(E3가 E2를 함의한다)는 아직 안 선다 — `p3`에 `graph_ok`·`unblocked`가 없어
+        E3는 E2를 함의하지 않고, 7단계 진입이 등급이 아니라 상태라 경로 없는 E1도 올라온다
+        (이슈 #154의 남은 항목).
         """
         if self.state not in _EVIDENCE_BACKED_STATES:
             return self
