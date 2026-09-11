@@ -27,12 +27,13 @@
 | # | 항목 | 상태 | 본문 |
 | --- | --- | --- | --- |
 | R1 | ATOM(sm_121) × vLLM 커널 호환성 · 로컬 TCP 차단 | 부분 | [본문](open-questions/R/R1.md) |
-| R2 | Critic(Devstral Small 2, dense 24B) NVFP4 양자화 시 반박 정확도 저하 가능성 | 열림 | [본문](open-questions/R/R2.md) |
+| R2 | ~~Critic(Devstral Small 2, dense 24B) NVFP4 양자화 시 반박 정확도 저하 가능성~~ → 로스터 변경으로 대상 소멸 | 닫힘 | [본문](open-questions/R/R2.md) |
 | R3 | 평가 데이터 누출 자동 검증 스크립트 부재 | 부분 | [본문](open-questions/R/R3.md) |
 | R4 | 단일 노드 대역폭 병목의 실제 한계 미파악 | 열림 | [본문](open-questions/R/R4.md) |
 | R5 | Zero-day 제보 워크플로의 강제 수단 미정 | 열림 | [본문](open-questions/R/R5.md) |
 | R6 | prefix cache 효과를 장부에 잡지 못한다 (`cached_tokens`가 항상 0) | 열림 | [본문](open-questions/R/R6.md) |
 | R7 | `gc`가 지운 run_id를 같은 날 새 run이 재사용한다 | 보류 | [본문](open-questions/R/R7.md) |
+| R8 | **새 로스터 신규 모델 둘(Auditor B안이면 셋)의 sm_121 기동·구조화 출력·Critic 반박 정확도가 미검증이다** (2026-09-09 `gpt-oss-20b` 첫 관문 실측 — 기동 통과·구조화 출력 실패) | 열림 | [본문](open-questions/R/R8.md) |
 
 ## 2. 설계 결정 대기
 
@@ -41,6 +42,10 @@
 > **⏵ 2026-09-08 — 여덟 중 여섯이 풀렸다.** 로스터가 제안됐고(ADR 0010 · [09-08 조사](research/2026-09-08-roster.md)) 보류 사유였던 「실측 축이 통째로 달라진다」가 여섯에서 소멸한다 — **D2·D4·D24·D28·D29·D54가 `열림`이다.** 다만 **D2·D4는 질문 자체가 바뀌고**(Scout가 셋으로 쪼개져 임계값이 스칼라가 아니게 되는 것 · Critic 후보가 네이티브 MXFP4라 고정밀 기준선이 없는 것), **D24는 Auditor A/B 둘 다 돌려야** 한다. 각 본문의 2026-09-08 절에 무엇이 바뀌었고 다음 입력이 무엇인지 적었다.
 >
 > **남은 보류는 둘이고 사유가 서로 다르다.** **D51**은 `trigger_status`를 내는 것이 Auditor라 **A/B 미결이 단독으로 막는 유일한 항목**이다. **D3**은 애초에 보류 사유가 틀렸다 — 모델이 아니라 **`expand()`의 호출부가 저장소에 없어서** `capsule_expansion_max`가 한 번도 안 걸린다(2026-09-08 코드 확인).
+>
+> **⏵ 2026-09-09 — 로스터가 확정됐다. 그런데 남은 보류 둘은 그대로다.** ADR 0010이 **승인**됐고 [CONTEXT.md](../CONTEXT.md) §1이 로스터의 정본이 됐다 — 바로 위 문단이 근거로 든 「로스터가 **제안**됐고」가 이제 「**확정**됐고」다. **그 승격이 D2·D4·D24·D28·D29·D54의 `열림`을 다시 바꾸지는 않는다** — 그 여섯은 2026-09-08에 이미 풀렸고 각자의 다음 입력도 그때 적혔다. 바뀐 것은 **D24** 하나다: A안·B안이 registry 키로 확정돼(`qwen3-coder-30b-a3b` / `nemotron-3-super-120b-a12b`) 「run 두 번」의 두 대상이 정해졌고, 초안이 Auditor 자리에 적던 제3의 후보(`qwen3.6-35b-a3b`)는 ADR §7로 기각됐다. **대상의 이름이 정해진 것이지 값이 재어진 것은 아니다.**
+>
+> **⚠ 로스터 확정이 D51을 풀지 않는다.** D51을 막는 것은 로스터가 아니라 **Auditor A/B**인데, ADR 0010 §2가 그 자리를 *"A/B로 남긴다 — 문헌이 정면으로 갈려 실측으로 가른다"*로 **확정하면서 열어 뒀고**, CONTEXT.md §1도 *"Auditor는 A/B다"*로 같은 것을 적는다. 어느 모델의 emit 분포를 보고 `Literal`을 좁힐지가 그대로 미정이라 **보류 유지**다 — 후보가 셋에서 둘로 줄었을 뿐 하나가 아니다. **D3도 그대로다** — 애초에 로스터와 무관한 항목이고(`expand()`의 호출부가 없다) 확정이 그 배선을 만들지 않는다. **보류 표시는 남되 그 사유는 2026-09-08부터 이미 「모델 대기」가 아니다.**
 >
 > 미해결 D는 GitHub Issue로 추적한다 — **⚠ 2026-09-08 — 이 문장의 「예외 넷」은 낡았다.** D9·D20·D21은 이슈가 있다(#94·#95·#96, 전부 열림 — 2026-09-08 조회). **남은 예외는 D19 하나**이고 그 이슈는 아직 없다.
 
@@ -103,14 +108,15 @@
 | D55 | ~~재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다~~ | 닫힘 | [본문](open-questions/D/D55.md) |
 | D57 | ~~`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다~~ | 닫힘 | [본문](open-questions/D/D57.md) |
 | D58 | **샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)** | 열림 | [본문](open-questions/D/D58.md) |
-| D59 | **Critic과 Auditor가 다른 계열이어야 한다는 조건을 강제하는 장치가 코드에 없다** | 열림 | [본문](open-questions/D/D59.md) |
+| D59 | ~~Critic과 Auditor가 다른 계열이어야 한다는 조건을 강제하는 장치가 코드에 없다~~ | 닫힘 | [본문](open-questions/D/D59.md) |
 | D60 | ~~bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다~~ | 닫힘 | [본문](open-questions/D/D60.md) |
 | D61 | ~~bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다~~ | 닫힘 | [본문](open-questions/D/D61.md) |
 | D62 | **bench가 판마다 같은 프롬프트를 보내 두 번째 판부터 자기 캐시를 맞는다 — (b) 채택, 왜곡 제거 (a)는 열림** | 부분 | [본문](open-questions/D/D62.md) |
 | D63 | **리랭커 순위를 우리가 실제로 보내는 입력 모양에서 한 번도 재지 않았다** | 열림 | [본문](open-questions/D/D63.md) |
-| D64 | **Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목** | 열림 | [본문](open-questions/D/D64.md) |
+| D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
 | D65 | **게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다 — 실서빙 run이 7단계에서 죽는다** | 열림 | [본문](open-questions/D/D65.md) |
 | D66 | **실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다** | 열림 | [본문](open-questions/D/D66.md) |
+| D67 | **Auditor가 `path`·`evidence_refs`를 안 채운다 — v1이 둘 다 요구하는데 150건 중 `path` 150·`evidence_refs` 148이 빈다. 원인 미확정** | 열림 | [본문](open-questions/D/D67.md) |
 
 ## 3. 팀·운영 미정
 

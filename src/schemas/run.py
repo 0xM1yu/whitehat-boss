@@ -227,6 +227,27 @@ class RunRecord(UtcModel):
     # 필드를 늘려도 `test_a_manifest_written_before_tool_seconds_still_loads`가 지키는
     # "옛 manifest는 로드된다"가 깨지지 않는다.
     model_sampling: dict[str, ModelSampling] | None = None
+    # 역할 → registry가 선언해 하네스가 **요청 본문에 실은** `reasoning_effort`.
+    #
+    # **`sampling`·`model_sampling` 어느 쪽도 이 값을 담을 수 없다.** `sampling`은 프로필
+    # 공통(`budgets.yaml`)인데 이 값은 **모델별**(registry)이고, `model_sampling`은 모델이
+    # `generation_config.json`에 **선언한** 값이라 「우리가 보낸 것」이 아니다. `thresholds`도
+    # 아니다 — 그쪽은 `dict[str, float]`이라 문자열이 안 들어간다.
+    #
+    # **왜 남기나.** `engineering-guide.md` §5가 `RunRecord`에 "random seed와 sampling 설정"을
+    # 요구하고 "하나라도 빠지면 그 run의 결과는 비교표에 넣지 않는다"로 닫는다. 이 값은
+    # 출력을 바꾸고 모델마다 다르므로, 안 남기면 `high`로 돈 run과 기본값으로 돈 run이
+    # manifest에서 같은 모양이 된다 — `ModelSampling` docstring이 `top_k`에 대해 적은
+    # "샘플링 차이가 모델 차이로 섞인다"와 같은 자리다.
+    #
+    # **`| None`이고 기본값 `None`인 것은 `model_sampling`과 같은 관용구다.** `None`은
+    # "이 manifest는 기록하지 않았다"(이 필드 이전의 기록)이고, `{}`는 "기록했으나 선언한
+    # 역할이 없었다"로 서로 다르다 — 새 run은 항상 dict(비어도)를 남긴다.
+    #
+    # **`PROMPTED_ROLES`만 담는다** — `prompt_versions()`와 같은 사유다. embedding·reranker는
+    # `VllmEmbeddingClient`·`VllmRerankerClient`를 타고 이 파라미터를 안 보내므로, 그 역할의
+    # "effort"를 적으면 거짓 정보다(`config.prompt_versions` docstring의 그 판단).
+    model_reasoning_effort: dict[str, NonEmptyStr] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime

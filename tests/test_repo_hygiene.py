@@ -263,3 +263,84 @@ def test_pull_request_workflows_do_not_limit_the_base_branch() -> None:
         "**아예 못 받고**, 체크가 없는 것은 실패와 달리 화면에서 통과와 구별되지 않는다:\n"
         + "\n".join(offenders)
     )
+
+
+def _gitignore_blocks() -> list[tuple[str, list[str]]]:
+    """`.gitignore`를 `(주석 본문, 패턴 목록)` 덩어리로 자른다.
+
+    빈 줄이 덩어리를 가르고, 패턴 줄 뒤에 주석이 다시 나오면 거기서도 갈린다.
+    """
+    raw = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    blocks: list[tuple[str, list[str]]] = []
+    comments: list[str] = []
+    patterns: list[str] = []
+
+    def flush() -> None:
+        nonlocal comments, patterns
+        if patterns:
+            blocks.append(("\n".join(comments), patterns))
+        comments, patterns = [], []
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            flush()
+        elif stripped.startswith("#"):
+            if patterns:
+                flush()
+            comments.append(stripped)
+        else:
+            patterns.append(stripped)
+    flush()
+    return blocks
+
+
+def test_the_workspace_ignore_rule_names_itself_in_its_own_comment() -> None:
+    """`_workspace/`가 **남의 사유 주석 밑에** 앉으면 왜 무시하는지가 사라진다.
+
+    ## 무슨 일이 났나
+
+    PR #116이 `_workspace/` 한 줄을 넣으면서 `PR4-plan.md`의 블록에 얹었다. 그 블록의
+    주석은 *"작업 계획 문서 (PR 산출물이 아니다)"*인데 `_workspace/`는 작업 계획 문서가
+    아니라 **스킬 스크래치 산출물**이 날짜별 폴더로 쌓이는 자리다. 그래서 이 파일에는
+    `_workspace/`가 왜 있는지가 **한 글자도 없다.**
+
+    #116 본문이 이것을 스스로 「남겨 둔 것」에 적었다 — *"행에 주석이 없다. 이 파일의
+    다른 항목은 전부 사유 주석을 달고 있다."* 리뷰 코멘트가 **0건**이라 그대로 머지됐다.
+
+    ## 왜 테스트인가
+
+    무시 **동작**은 맞다 — `git check-ignore -v _workspace/`가 이 줄을 짚는다. 그래서
+    아무 검사도 안 깨지고, 사람 눈에도 diff 한 줄은 정상으로 보인다. 비용은 다음에
+    이 줄을 지울지 판단하는 사람이 **왜 있는지 모른 채** 정하는 것이고, 그때는 이미
+    `53e977b`(*"잘못 커밋된 `_workspace/` 30개 파일을 되돌린다"*)가 반복된 뒤다.
+
+    CLAUDE.md §2.3이 사고로 기록한 「값이 움직였는데 그 근거만 남았다」의 **거울상**이다 —
+    여기서는 값만 있고 근거가 없다.
+
+    ## 이 검사가 보는 것
+
+    `_workspace/`가 든 블록의 **주석이 그것을 이름으로 부르는지**만 본다. 문장이 옳은지는
+    검증하지 않는다 — 위 `test_a_measured_benchmark_names_its_measurement_date_in_the_comment`와
+    같은 처리다. 이름을 적으려면 주석을 쓰게 되고, 쓰면 사유가 남는다.
+
+    **한 항목만 본다.** `.gitignore` 전체에 「패턴마다 주석」을 강제하지는 않는다 —
+    `*.db`·`*.db-journal`처럼 한 사유로 묶이는 덩어리가 정상이고 `# Python` 같은 분류
+    머리글도 정상이라, 일반 규칙으로 올리면 **거짓 양성이 난다.**
+    """
+    rule = "_workspace/"
+    owning = [
+        (comment, patterns)
+        for comment, patterns in _gitignore_blocks()
+        if rule in patterns
+    ]
+
+    assert owning, f"`.gitignore`에서 `{rule}` 규칙을 못 찾았다 — 지웠으면 이 검사도 지운다."
+
+    comment, patterns = owning[0]
+    assert "_workspace" in comment, (
+        f"`{rule}`가 자기 사유를 안 들고 있다 (CLAUDE.md §2.3 · #116 잔여).\n"
+        f"  이 규칙이 든 블록의 주석: {comment or '(주석 없음)'}\n"
+        f"  그 블록이 든 패턴: {patterns}\n"
+        "무엇이 거기 쌓이는지와 왜 추적하지 않는지를 이 규칙 자신의 주석에 적는다."
+    )

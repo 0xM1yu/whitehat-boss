@@ -69,7 +69,13 @@ CHECKLIST: tuple[tuple[str, str], ...] = (
     ),
     ("automatic prefix caching 동작 확인 및 적중률", "roles.*.prefix_cache.verdict"),
     ("structured output(JSON schema 강제) 동작 확인", "roles.*.structured_output.valid_ratio"),
-    ("NVFP4 양자화 시 Critic 반박 정확도 저하 여부", "미구현 — 평가셋 준비 중"),
+    # 2026-09-09에 전제가 사라졌다. 이 줄은 원래 "NVFP4 양자화 시 Critic 반박 정확도
+    # 저하 여부"였는데, 그 물음은 Critic이 고정밀 체크포인트를 가진 모델일 때만 선다.
+    # 확정 로스터의 Critic `gpt-oss-20b`는 **네이티브 MXFP4**라 비교할 원본이 없다
+    # (자리의 정본은 CONTEXT.md §1). #93이 그래서 「고정밀 대비 하락폭」이 아니라
+    # **「반박 정확도 표본 자체」**로 재정의했다. STATUS.md가 이 코드를 "아직 안 고쳤다"고
+    # 가리키고 있었고, 이 줄이 그 가리킴을 닫는다.
+    ("Critic 반박 정확도 표본 (#93 재정의 — 고정밀 대비가 아니다)", "미구현 — 평가셋 준비 중"),
 )
 
 FAKE_SKIP = "fake:// 엔드포인트라 측정 대상이 아니다 — 붙을 서버가 없다"
@@ -190,6 +196,10 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
         top_p=config.sampling.top_p,
         seed=config.seed,
         max_tokens=config.thresholds.output_max,
+        # 모델별 값이라 registry에서 온다. 여기서 빠뜨리면 bench가 운영과 **다른 요청**을
+        # 보내면서 같은 것을 쟀다고 적는다 — 이 함수 docstring이 `max_tokens`에 대해 편
+        # 논거가 그대로 걸린다.
+        reasoning_effort=entry.reasoning_effort,
         retries=config.thresholds.schema_retries,
     )
 
