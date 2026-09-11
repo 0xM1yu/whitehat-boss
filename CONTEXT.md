@@ -25,7 +25,7 @@
 | 4단계 · `scout_injection` (CWE-78·22·134) | `qwen3-8b` | ✅ |
 | 5단계 · Auditor **A안** | `qwen3-coder-30b-a3b` | ✅ |
 | 5단계 · Auditor **B안** | `nemotron-3-super-120b-a12b` | ❌ **미등재** |
-| 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ❌ **미등재** |
+| 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
 | B1 기준(최강 단일 멤버) | `qwen3-coder-30b-a3b` | ✅ |
 
 **Auditor는 A/B다.** 문헌이 정면으로 갈려 실측으로 가른다 — [D24](docs/open-questions/D/D24.md)가 *"A안·B안 둘 다 돌린 run 두 번. 한 번으로는 못 정한다"*고 적는다.

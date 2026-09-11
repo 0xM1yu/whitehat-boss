@@ -294,6 +294,75 @@ models:
       # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
       prefix_hit_ratio_batch32: null
 
+  gpt-oss-20b:
+    # **7단계 Critic.** 자리의 정본은 `CONTEXT.md` §1이다 — 2026-09-09 확정 로스터에서 이
+    # 모델이 Critic이고 `reasoning_effort: high`다. Auditor(`qwen3-coder-30b-a3b`)와 계열이
+    # 달라야 교차 검증의 가치가 나오고(model-serving.md §2), `load_config`의
+    # `_check_family_split`이 그것을 강제한다 — `qwen` 대 `gpt-oss`로 갈린다.
+    #
+    # **2026-09-11 등재.** 온보딩 실측은
+    # docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md이고, 아래 값 중
+    # `source`만 그 보고서 메타에서 왔다. 나머지는 2026-09-11에 ATOM 스냅샷을 직접 읽었다.
+    # manifest는 `config/checksums/gpt-oss-20b.txt`이고 registry의 `checksum`은 **그 파일
+    # 전체의 sha256**이다(`tools/model_checksum.py`, 파일 15개 · 문서 3개 제외).
+    #
+    # **`quantization`이 vLLM 로그와 다르다 — 갈려서 모델이 선언한 쪽을 적는다.**
+    # config.json의 `quantization_config.quant_method`는 `mxfp4`이고, 09-09 보고서 §1이 적은
+    # `quantization=gpt_oss_mxfp4`는 **vLLM이 고른 커널 경로의 이름**이다(같은 줄이
+    # `Using 'MARLIN' Mxfp4 MoE backend`으로 이어진다). 위 `devstral-small-2-24b`는 config.json과
+    # 기동 로그가 **일치했으므로**(둘 다 `fp8`) 그 값을 적었다 — 여기는 일치하지 않아 같은
+    # 규칙을 못 쓴다. 모델이 선언한 값을 적고 해석된 이름은 이 주석에 남긴다.
+    #
+    # **`context_limit`은 모델 상한이지 그날 띄운 값이 아니다.** config.json의
+    # `max_position_embeddings`가 131,072다. 09-09 스모크의 `--max-model-len 32768`은 그
+    # 기동의 선택이고, 다른 항목(`qwen3-8b: 131072`)이 모델 상한을 적으므로 축을 맞춘다.
+    #
+    # ⚠ **license는 Apache-2.0이지만 스냅샷에 `USAGE_POLICY`가 함께 있다.** 이 필드는 가중치
+    # 라이선스 한 축만 담으므로 그 문서의 제약은 여기 안 실린다 — 배포·공개 판단이 필요하면
+    # 스냅샷의 `USAGE_POLICY`를 직접 읽는다.
+    #
+    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # 아래는 `vllm serve`를 치는 사람의 값이다. **요청 본문에 실리는 것은 `reasoning_effort`
+    # 하나**이고 그것만 이 엔트리에 있다(`src/config.py`의 `ModelEntry.reasoning_effort` 주석).
+    #
+    #   VLLM_USE_DEEP_GEMM=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN     #   VLLM_USE_FLASHINFER_SAMPLER=0 TIKTOKEN_ENCODINGS_BASE=<harmony vocab dir>     #   vllm serve openai/gpt-oss-20b --port 8006 --served-model-name gpt-oss-20b     #     --max-model-len 32768 --gpu-memory-utilization 0.30 --enforce-eager     #     --structured-outputs-config.backend xgrammar
+    #
+    # - **flashinfer가 JIT(ninja/nvcc)를 부르는데 ATOM에 없다** → 엔진 초기화가 죽는다.
+    #   `TRITON_ATTN` + 샘플러 off + `--enforce-eager`로 피한다 (09-09 §1).
+    # - **Harmony vocab이 없으면 모든 요청이 500이다** (09-09 §1).
+    # - **`max_tokens` 헤드룸**: 700은 어려운 케이스가 잘려 빈 JSON이 나오고 3000은 괜찮다
+    #   (09-09 머리의 정정 블록). Critic 예산을 잡을 때 반영한다.
+    #
+    # ⚠ **structured output이 미해결이다 — R8.** 09-09 §3.3에서 `xgrammar` + `response_format`
+    # 조건이 **5/5 오답**이었고(`response_format` 없이는 3/3), `guidance`는 5/5 HTTP 500이었다.
+    # **원인은 안 갈렸다** — 「플래그 하나로 풀린다」는 #164에서 당사자가 철회했다(한 run에서
+    # verdict 어휘·케이스·기동 인자·`max_tokens` 넷이 함께 움직였다). 살아 있는 대안 가설이
+    # **어휘 mismatch**이고, `tools/probe/gpt_oss_structured.py`가 그 통제 실험이다.
+    # **이 등재가 R8을 닫지 않는다** — R8의 관문은 `cli bench`의 `structured_output.valid_ratio`다.
+    endpoint: "http://127.0.0.1:8006/v1"
+    context_limit: 131072
+    quantization: "mxfp4"
+    license: "Apache-2.0"
+    checksum: "sha256:b57ed507ba1b9331067add44a7ec7ed6c9c91b8daa0b1a0bf187d0c5be260612"
+    source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
+    family: "gpt-oss"
+    reasoning_effort: "high"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에
+      # 없어 프로필에 못 올린다 → `cli bench`를 못 돌린다."* 등재로 그 사유가 사라졌으므로
+      # `bench --roles critic --device atom --apply`가 채운다. **그때까지 0은 미실측 표시다.**
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
+      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
+      prefix_hit_ratio_batch32: null
+
   qwen3-embedding-0.6b:
     # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-embedding-0.6b.txt`이고
     # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
