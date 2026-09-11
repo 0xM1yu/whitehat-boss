@@ -41,9 +41,15 @@
 플래그 축과 **독립으로** 갈린다. 보고서 §7 후속 2가 *"셋 중 ②가 제일 싸다"*고 적은 것이
 이쪽이다.
 
-⚠ **`decision` 팔이 R8을 닫지는 않는다.** R8의 관문은 `cli bench`의
-`structured_output.valid_ratio`이고 그것은 **하네스가 보내는 요청**이다. 이 스크립트는
-`curl`과 같은 자리에 있다 — registry 등재 뒤 `cli bench --roles critic`이 따로 온다.
+⚠ **`decision` 팔이 R8을 닫지는 않는다.** R8의 닫히는 조건 **1**은 `cli bench`의
+`structured_output.valid_ratio`가 **1.0**인 것이고(`src/bench_report.py`의
+`_judge_structured`가 쓰는 통과선 — 값이 나온 것은 통과가 아니다), 그것은 **하네스가
+보내는 요청**이다. 이 스크립트는 `curl`과 같은 자리에 있다 — registry 등재 뒤
+`cli bench --roles critic`이 따로 온다.
+
+⚠ **조건 3(Critic 반박 정확도)은 `cli bench`에도 없다.** 고정 반박 표본(진짜 N +
+오탐 N)이 선행이고 표본 크기·합격선은 D4가 정한다. **이 프로브가 내는 정답률은 그
+표본이 아니다** — 팔을 가르는 A/B용이라 합격 판정으로 읽지 않는다.
 
 ## 쓰는 법
 
