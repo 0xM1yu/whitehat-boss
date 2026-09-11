@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | 1단계 · 쿼리 생성기 | `qwen3-8b` | ✅ |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | ✅ |
-| 3단계 · 리랭커 | `qwen3-reranker-4b` | ❌ **미등재** |
+| 3단계 · 리랭커 | `qwen3-reranker-4b` | ✅ 등재(2026-09-11) · 서빙·점수검증 R8 |
 | 4단계 · `scout_memory` (CWE-415·416) | `qwen3-coder-30b-a3b` | ✅ |
 | 4단계 · `scout_boundary` (CWE-119·125·787·190) | `devstral-small-2-24b` | ✅ |
 | 4단계 · `scout_injection` (CWE-78·22·134) | `qwen3-8b` | ✅ |
@@ -117,7 +117,7 @@
 | 항목 | 상태 |
 | --- | --- |
 | `gpt-oss-20b` structured output | **실패.** [2026-09-09 온보딩 보고서](docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) — `xgrammar` 5/5 오답 · `guidance` 5/5 HTTP 500 · 스키마 없이는 3/3 정답. 미측정 셋(`reasoning_parser` 명시 · `enable_in_reasoning=True` · `outlines`)이 남았고 **하나에서 뒤집히면 결론이 바뀐다** |
-| `qwen3-reranker-4b` | 다운로드 전. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
+| `qwen3-reranker-4b` | 2026-09-11 등재(다운로드·checksum). 서빙·점수 정확성은 [R8](docs/open-questions/R/R8.md) 미검증이라 아직 프로필엔 안 올린다. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
 | **`reasoning_effort: high` 배선** | **배선(2026-09-09) + registry 등재(2026-09-11) 둘 다 됐다.** `ModelEntry.reasoning_effort` → 요청 payload → `RunRecord.model_reasoning_effort`이고, `gpt-oss-20b`가 §1 표대로 등재돼 `reasoning_effort: "high"`를 선언한다. ⚠ **그래도 이 자리는 안 선다** — **앞에 이 표 첫 줄(structured output)**이 남았고, 프로필의 `critic`도 아직 `devstral-small-2-24b`다(아래 마지막 줄). 배선과 등재가 여는 것은 「선언하면 값이 실제로 간다」까지이지 「Critic이 뜬다」가 아니다 |
