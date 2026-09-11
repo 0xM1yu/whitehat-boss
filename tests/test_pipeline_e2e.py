@@ -25,7 +25,7 @@ from src import cli, console
 from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps, describe_wiring
 from src.adapters.fake_model import FakeModelClient
-from src.config import PROMPTED_ROLES, load_config
+from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
 from src.orchestrator import runner
@@ -238,6 +238,21 @@ def test_scout_pool_builds_the_light_capsule_once_per_target(
 # 서술 전체를 여기 복사하면 문구를 다듬을 때마다 검사가 깨진다.
 _POOL_BLIND_SPOT_MARKER = "풀 멤버 하나가 전량 실패해도"
 
+# `_drop`이 게이트웨이 실패에 붙이는 사유. 러너 상수를 그대로 읽는다 — 문자열을
+# 여기 복사하면 러너가 사유를 바꿀 때 이 검사가 조용히 0건을 세게 된다.
+_REASON_GATEWAY_ERROR = runner._REASON_GATEWAY
+
+
+def _with_mode(mode: str):  # noqa: ANN202
+    """`execution.mode`만 바꾸는 `configure` 훅. 역할은 안 건드린다(단일 scout 그대로)."""
+    from src.config import ExecutionPolicy
+
+    def configure(config):  # noqa: ANN001, ANN202
+        profile = config.profile.transition(execution=ExecutionPolicy(mode=mode))
+        return config.transition(profile=profile)
+
+    return configure
+
 
 def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
     """`broken` 역할의 모델 호출만 **체계적으로** 실패시킨다 (HTTP 422).
@@ -257,19 +272,24 @@ def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
 
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
 def test_a_systematically_broken_single_scout_trips_the_circuit_breaker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
     """**대조군.** 단일 `scout`가 매번 422로 죽으면 차단기가 걸리고 run이 미완주가 된다.
 
     아래 풀 검사의 짝이다. 이것이 없으면 풀에서 차단기가 안 걸리는 것이 **팬아웃 때문인지
     주입 방식이 틀려서인지** 못 가른다 — 같은 고장·같은 상한·같은 fixture로 한쪽만 걸리는
     것을 보여야 팬아웃이 원인이라고 말할 수 있다.
+
+    **두 모드 모두 돈다.** 풀 검사가 두 모드를 재는데 대조군이 한쪽만 재면, 다른 모드에서
+    갈림이 실재한다는 것이 **증거 없이 주장**된다.
     """
     monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
     _break_one_role(monkeypatch, Role.SCOUT.value)
 
-    result, _ = _run(tmp_path)
+    configure = None if mode is None else _with_mode(mode)
+    result, _ = _run(tmp_path, configure=configure)
 
     assert result.record.stopped_after is not None, (
         "단일 scout가 전량 422인데 차단기가 안 걸렸다 — 주입이 안 먹었다는 뜻이다"
@@ -306,7 +326,7 @@ def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
     monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
     _break_one_role(monkeypatch, "scout_boundary")
 
-    result, _ = _run(tmp_path, configure=_poolify(mode))
+    result, trace_path = _run(tmp_path, configure=_poolify(mode))
 
     assert result.record.stopped_after is None, (
         "풀 멤버 하나가 전량 422인데 차단기가 걸렸다 — 맹점이 고쳐졌다는 뜻이다. "
@@ -322,11 +342,26 @@ def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
         "형제 멤버가 후보를 못 냈다 — 이 run은 맹점의 사례가 아니다"
     )
 
-    source = inspect.getsource(runner._run_stage_for_all)
-    assert _POOL_BLIND_SPOT_MARKER in source, (
-        f"맹점이 실재하는데 `_run_stage_for_all` docstring이 그것을 안 든다 "
-        f"(앵커 {_POOL_BLIND_SPOT_MARKER!r}). 최소 수용안 2번은 등재와 서술 둘 다다"
+    # ⚠ **이 단언이 이 검사의 무게를 진다.** 위 넷은 폐기가 **한 건도 없어도** 전부
+    # 만족한다 — 고장난 멤버가 아예 디스패치되지 않는 회귀에서도 초록이다. 그리고
+    # 폐기가 상한 미만이면 「고쳐도 안 걸린다」가 되어 **양방향 보증이 조용히 죽는다**
+    # (fixture의 대상 수가 줄면 실제로 그렇게 된다).
+    dropped = [
+        e
+        for e in _of(_events(trace_path), "target_skipped")
+        if e["data"].get("reason") == _REASON_GATEWAY_ERROR
+    ]
+    assert len(dropped) >= runner._MAX_CONSECUTIVE_DROPS, (
+        f"게이트웨이 폐기가 {len(dropped)}건뿐이라 상한({runner._MAX_CONSECUTIVE_DROPS})에 "
+        "못 미친다 — 역할별로 세도 안 걸리므로 이 검사는 맹점을 증명하지 못한다. "
+        "fixture의 4단계 대상 수를 늘린다"
     )
+
+    for func in (runner._run_stage_for_all, runner._triage_by_candidate):
+        assert _POOL_BLIND_SPOT_MARKER in inspect.getsource(func), (
+            f"맹점이 실재하는데 `{func.__name__}` docstring이 그것을 안 든다 "
+            f"(앵커 {_POOL_BLIND_SPOT_MARKER!r}). 최소 수용안 2번은 등재와 서술 둘 다다"
+        )
 
 
 def test_manifest_is_written_with_reproducibility_fields(tmp_path: Path) -> None:
@@ -1405,6 +1440,48 @@ def test_a_directory_claimed_between_scan_and_mkdir_is_not_clobbered(
 
     assert (taken / "trace.jsonl").read_text(encoding="utf-8") == "먼저 온 run의 것"
     assert (tmp_path / new_run_id(datetime.now(UTC), 2)).is_dir()
+
+
+def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
+    """`estimate`의 호출 상한이 **Scout 자리 수**를 센다 (ADR 0010 §3 팬아웃).
+
+    캡슐은 target당 하나인데 4단계는 **멤버마다 한 번** 돈다. 「캡슐 하나당 scout 1회」로
+    세면 풀 프로필의 scout 호출이 **실제의 1/3**로 나오고, 그 값으로 예산을 잡으면 run이
+    도중에 `BudgetExhausted`로 부분 결과만 남긴다 — `estimate`가 막으라고 있는 사건이
+    정확히 그것이다.
+
+    auditor·critic은 **후보** 수를 따르므로 팬아웃과 함께 는다. critic만 `critic_top_n`이
+    다시 막는다.
+    """
+    from src.cli import _expected_calls
+
+    base = load_config("dev_fake")
+    pool = base.transition(
+        profile=base.profile.transition(
+            roles={
+                "scout_memory": "fake_v2",
+                "scout_boundary": "fake_v2",
+                "scout_injection": "fake_v2",
+                "auditor": "fake",
+                "critic": "fake",
+                "embedding": "fake",
+                "reranker": "fake",
+            }
+        )
+    )
+    capsules = 4
+    top_n = base.thresholds.critic_top_n
+
+    assert _expected_calls(base, capsules) == capsules * 2 + min(capsules, top_n), (
+        "단일 scout 프로필의 값이 바뀌었다 — 회귀다"
+    )
+
+    members = len(SCOUT_POOL_ROLES)
+    candidates = capsules * members
+    assert _expected_calls(pool, capsules) == candidates * 2 + min(candidates, top_n), (
+        f"풀인데 호출 상한이 멤버 수({members})를 안 센다 — "
+        "캡슐 하나가 후보 셋이 되고 4·5단계가 그만큼 돈다"
+    )
 
 
 def test_estimate_does_not_consume_a_run_sequence(tmp_path: Path) -> None:

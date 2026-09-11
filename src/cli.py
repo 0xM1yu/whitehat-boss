@@ -35,6 +35,7 @@ from src.bench_report import apply_benchmarks, pending_updates, run_bench
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
+    SCOUT_POOL_ROLES,
     AdapterSelection,
     ConfigError,
     HarnessConfig,
@@ -490,12 +491,29 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     ]
 
 
+def _scout_places(config: HarnessConfig) -> int:
+    """이 프로필의 4단계 Scout 자리 수. 풀이면 셋, 단일이면 하나.
+
+    판정 근거는 `runner._scout_roles`와 **같은 상수**(`SCOUT_POOL_ROLES`)다 — 두 곳이
+    각자 "풀인가"를 정하면 한쪽만 고쳐질 때 추정과 실행이 갈린다.
+    """
+    roles = config.profile.roles
+    return len(SCOUT_POOL_ROLES) if all(m in roles for m in SCOUT_POOL_ROLES) else 1
+
+
 def _expected_calls(config: HarnessConfig, capsules: int) -> int:
-    """캡슐 하나당 scout 1회, 승격되면 auditor 1회, 상위만 critic 1회.
+    """후보 하나당 scout 1회, 승격되면 auditor 1회, 상위만 critic 1회.
 
     승격률을 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이 무의미해진다.
+
+    **⚠ 캡슐 수와 후보 수는 같지 않다.** 캡슐은 **target당 하나**인데(ADR 0010 §3 —
+    풀 멤버 셋이 같은 캡슐을 공유한다) 4단계는 **자리마다 한 번** 돈다. 그래서 후보가
+    `캡슐 × 자리 수`이고 4·5단계 호출이 그것을 따른다. 예전에는 「캡슐 하나당 scout 1회」로
+    세어 풀 프로필에서 **실제의 1/3**을 냈다 — 그 값으로 예산을 잡으면 run이 도중에
+    `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
     """
-    return capsules * 2 + min(capsules, config.thresholds.critic_top_n)
+    candidates = capsules * _scout_places(config)
+    return candidates * 2 + min(candidates, config.thresholds.critic_top_n)
 
 
 def _prefix_tokens(config: HarnessConfig) -> int:

@@ -129,6 +129,11 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
   「기록 넷이 0」이라고 좁혔는데, 그 넷 중 `prompt_versions`·`RoutingModelClient` 둘이
   `PROMPTED_ROLES`에 걸려 있다(위 표). 0인 것은 **둘**이다.
 
+  ⚠ **2026-09-11 정정 (PR #178) — 아래 문단의 절반이 거짓이 됐다.** 러너는 이제
+  `_step_retrieval`에서 `ctx.counter_for_role(item.role.value)`로 **멤버 역할의** 카운터를
+  켠다. **여전히 참인 것은 기록 쪽뿐이다** — `counter_report`가 `COUNTED_ROLES` 둘만 돌아
+  풀 멤버 카운터가 켜져도 `token_counter` 이벤트에는 안 실린다. 아래는 그 시점의 기록이다.
+
   ⚠ **역할별 토큰 카운터는 조회는 되지만 켜지지 않는다.** `counter_for_role(role)`은 프로필이
   선언한 역할이면 카운터를 주는데(가르는 것은 `COUNTED_ROLES`가 아니라 `profile.roles`다),
   부르는 쪽인 `runner._triage_one`이 `counter_for_role(Role.SCOUT.value)`로 박혀 있고 기록을 내는

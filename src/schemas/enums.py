@@ -29,15 +29,21 @@ class Role(StrEnum):
     # ⚠ **역할별 토큰 카운터는 그 여섯에 안 든다 — 줄을 더해도 안 켜진다.** ADR 0010 §3의
     # ⚠ 문단이 같은 것을 적는다.
     # `src.tokens.COUNTED_ROLES`가 `("scout", "auditor")`로 박혀 있고
-    # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 러너도 `_triage_one`에서
-    # `counter_for_role(Role.SCOUT.value)`를 부르고 `nodes/scout.py`는 `ROLE = Role.SCOUT`
-    # 하나다. 즉 풀 멤버가 4단계를 도는 배선이 오는 날 **역할 카운터는 따라오지 않고**,
-    # 그 run의 캡슐은 기본 카운터(글자수 근사)로 회계된다.
+    # `tests/test_tokens.py`가 그 둘을 등식으로 고정한다.
     #
-    # **여기서 `COUNTED_ROLES`를 늘려 앞질러 가지 않는다.** 러너가 안 켜는 역할을 늘리면
-    # `Deps.counter_report`가 그 역할을 `token_counter` 이벤트에 실어 기록이 거짓이 된다 —
-    # `src/tokens.py`가 "켜지지 않는 역할을 기록에 실으면 거짓 정보다"로 적은 그것이다.
-    # 늘리는 것은 러너를 옮기는 PR의 몫이고, 그 PR이 이 문단을 지운다.
+    # ⚠ **2026-09-11에 절반이 바뀌었다** (PR #178 — 풀 팬아웃).
+    #
+    # - **러너 쪽은 따라온다.** `_step_retrieval`이 `ctx.counter_for_role(item.role.value)`로
+    #   **멤버 역할의** 카운터를 켠다. `nodes/scout.py`의 `ROLE = Role.SCOUT`도 이제 `run()`의
+    #   **기본값**이지 유일한 역할이 아니다. 예전 문장("러너가 `Role.SCOUT.value`로 박혀 있어
+    #   역할 카운터가 안 따라온다")은 **거짓이 됐다.**
+    # - **기록 쪽은 그대로다.** `Deps.counter_report`는 여전히 `COUNTED_ROLES` 둘만 돌므로,
+    #   풀 멤버 카운터가 **켜져도 `token_counter` 이벤트에는 안 실린다.**
+    #
+    # **그래서 `COUNTED_ROLES`를 여기서 늘리지 않는 이유가 바뀌었다.** 예전 사유("러너가 안
+    # 켜는 역할을 실으면 기록이 거짓이 된다")는 이제 안 선다 — 러너가 켠다. 지금 사유는
+    # **범위**다: 늘리면 `token_counter` 이벤트의 내용이 바뀌고 `tests/test_tokens.py`가
+    # 그 둘을 등식으로 고정하므로, 그것은 기록 계약을 바꾸는 별도 PR의 몫이다.
     #
     # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
     # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다
