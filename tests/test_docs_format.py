@@ -39,6 +39,7 @@ D12에서 끝나고 **빈 줄**이 있었는데 한쪽 PR은 그 앞에, 다른 
 추적되지 않는 것(`.claude/plans/` 등)은 CI에 존재하지 않으므로 대상이 아니다.
 """
 
+import difflib
 import re
 import subprocess
 from pathlib import Path
@@ -817,4 +818,55 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
         raise AssertionError(
             f"프로필 어느 것도 Scout 풀을 안 쓰는데 CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
             "정본만 읽은 사람은 profiles.yaml이 §1과 같다고 읽는다 — §5에 그 어긋남을 적어라."
+        )
+
+
+# 같은 규약을 두 파일이 든다. CLAUDE는 Claude가, AGENTS는 다른 에이전트(Codex 등)가 읽는다.
+_RULEBOOKS = ("CLAUDE.md", "AGENTS.md")
+
+
+def test_the_two_rulebooks_say_the_same_thing() -> None:
+    """`AGENTS.md`는 `CLAUDE.md`와 **첫 줄만** 달라야 한다.
+
+    **왜 사본을 두는가.** 에이전트마다 읽는 파일 이름이 다르다. 규약을 한쪽에만 두면
+    다른 에이전트는 그것을 아예 안 읽는다.
+
+    **왜 검사가 필요한가.** 사본은 조용히 갈린다 — 사람은 자기가 읽는 쪽만 고친다.
+    그리고 **갈린 사본이 실제로 있었다**: 2026-09-11에 `AGENTS.md`가 추적 대상이 되기 전
+    상태를 열어 보니 §3이 *"이슈가 결함의 원천이고 상태의 원천이다"*였는데, 같은 시점
+    `CLAUDE.md`는 **ADR 0008 이후라 정반대**였다(*"문서가 원천이고 GitHub Issue는 추적
+    미러다"*). `CONTEXT.md`를 가리키는 줄과 2026-09-09 4연속 사고 기록도 통째로 없었다.
+
+    **그 상태로 두면 이 저장소가 기록한 사고를 그대로 재생한다** — 다른 에이전트가
+    **낡은 문서를 살아 있는 지시로 읽는다**(CLAUDE.md §7의 사고). 그래서 문서로
+    부탁하지 않고 코드가 막는다. `CONTEXT.md` 검사들과 같은 판단이다.
+
+    고치는 법: 규약을 `CLAUDE.md`에서 고치고 첫 줄만 바꿔 복사한다.
+    """
+    bodies = {}
+    for name in _RULEBOOKS:
+        path = REPO_ROOT / name
+        assert path.is_file(), f"{name}이 없다 — 둘 다 추적 대상이다"
+        first, _, rest = _read(path).partition("\n")
+        assert first == f"# {name} — 하네스 팀 규약", (
+            f"{name}의 첫 줄이 `# {name} — 하네스 팀 규약`이 아니다: {first!r}. "
+            "이 검사는 첫 줄만 다른 것을 허용하므로 그 줄의 형식이 고정이어야 한다"
+        )
+        bodies[name] = rest
+
+    base, other = _RULEBOOKS
+    if bodies[base] != bodies[other]:
+        diff = "\n".join(
+            difflib.unified_diff(
+                bodies[base].splitlines(),
+                bodies[other].splitlines(),
+                fromfile=base,
+                tofile=other,
+                lineterm="",
+                n=1,
+            )
+        )
+        raise AssertionError(
+            f"{base}와 {other}가 첫 줄 말고도 다르다 — 두 에이전트가 다른 규약을 읽는다.\n"
+            f"{base}에서 고치고 첫 줄만 바꿔 복사한다.\n{diff[:4000]}"
         )
