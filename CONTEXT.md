@@ -116,7 +116,7 @@
 
 | 항목 | 상태 |
 | --- | --- |
-| `gpt-oss-20b` structured output | **실패.** [2026-09-09 온보딩 보고서](docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) — `xgrammar` 5/5 오답 · `guidance` 5/5 HTTP 500 · 스키마 없이는 3/3 정답. 미측정 셋(`reasoning_parser` 명시 · `enable_in_reasoning=True` · `outlines`)이 남았고 **하나에서 뒤집히면 결론이 바뀐다** |
+| `gpt-oss-20b` structured output | **실패.** [2026-09-09 온보딩 보고서](docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) — `xgrammar` 5/5 오답 · `guidance` 5/5 HTTP 500 · 스키마 없이는 3/3 정답. **2026-09-11에 둘이 답을 냈고 둘 다 부정이다**([어휘 × 플래그 보고서](docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md)) — `reasoning_parser` 명시는 verdict 시퀀스를 **바이트 단위로 안 바꾸고**, 어휘를 실제 `Decision`으로 바꿔도 1/5이며 서술 어휘(`vulnerable`/`safe`)는 **0/5**다. **미측정은 둘 남았다**(`enable_in_reasoning=True` · `outlines`)**이고 하나에서 뒤집히면 결론이 바뀐다** |
 | `qwen3-reranker-4b` | 2026-09-11 등재(다운로드·checksum). 서빙·점수 정확성은 [R8](docs/open-questions/R/R8.md) 미검증이라 아직 프로필엔 안 올린다. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |

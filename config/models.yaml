@@ -338,7 +338,10 @@ models:
     # 조건이 **5/5 오답**이었고(`response_format` 없이는 3/3), `guidance`는 5/5 HTTP 500이었다.
     # **원인은 안 갈렸다** — 「플래그 하나로 풀린다」는 #164에서 당사자가 철회했다(한 run에서
     # verdict 어휘·케이스·기동 인자·`max_tokens` 넷이 함께 움직였다). 살아 있는 대안 가설이
-    # **어휘 mismatch**이고, `tools/probe/gpt_oss_structured.py`가 그 통제 실험이다.
+    # **어휘 mismatch**였는데 **2026-09-11에 기각됐다** — `tools/probe/gpt_oss_structured.py`로
+    # 어휘 셋 × 플래그 유무를 돌렸고 전부 1/5 이하다(서술 어휘는 0/5). `reasoning_parser`
+    # 명시도 verdict 시퀀스를 바꾸지 않았다. **남은 미측정은 `outlines`·`enable_in_reasoning`
+    # 둘이고, 그 둘이 답하기 전에는 「이 모델은 구조화 출력이 안 된다」로 단정하지 않는다.**
     # **이 등재가 R8을 닫지 않는다** — R8의 관문은 `cli bench`의 `structured_output.valid_ratio`다.
     #
     # ⚠ **아직 안 해 본 손잡이가 하나 더 있다 — `disable_any_whitespace`.**
