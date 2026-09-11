@@ -180,6 +180,49 @@ class ArmResult:
         }
 
 
+def _diagnose(client: Any, *, arm: str, prompt: Prompt, trials: int) -> list[dict[str, Any]]:
+    """실패의 **성격**을 가른다 — 상한에 잘렸나, 문법이 깨졌나. 처방이 다르다.
+
+    ⚠ **왜 어댑터의 예외를 안 읽나.** `SchemaParseError`가 들고 오는 `usage`는 재시도의
+    **합계**다. 합계에서 "잘렸다"를 추론하는 것이 CLAUDE.md §2.2가 기록한 사고 그대로다 —
+    *"a₁ + a₂ = 8,402이고 두 항이 다 8,192 이하라는 데서 나오는 것은 a₁ ≥ 210뿐"*.
+    응답 **하나**를 봐야 답이 나온다.
+
+    그래서 어댑터가 만드는 payload를 그대로 쓰되(`_request_payload`) **재시도 없이** 한 번
+    보내고 원문을 남긴다. 보내는 것이 같으므로 위 팔에서 깨진 것과 같은 요청이다.
+    """
+    schema = _schema_for(arm)
+    shim = type(
+        "Finding", (Finding,), {"model_json_schema": classmethod(lambda cls, *a, **k: schema)}
+    )
+    payload = client._request_payload(prompt.prefix, prompt.body, shim)  # noqa: SLF001
+    out: list[dict[str, Any]] = []
+    for _ in range(trials):
+        try:
+            raw, usage = client._post(payload)  # noqa: SLF001
+        except Exception as exc:  # noqa: BLE001
+            out.append({"error": f"{type(exc).__name__}: {exc}"[:300]})
+            continue
+        record: dict[str, Any] = {
+            "max_tokens_sent": payload.get("max_tokens"),
+            "output_tokens": usage.output_tokens,
+            # **상한에 닿았나.** 이 한 응답의 값이라 합계 함정이 없다.
+            "hit_cap": usage.output_tokens >= int(payload.get("max_tokens") or 0),
+            "chars": len(raw),
+            # 꼬리가 진단이다 — 잘린 JSON은 중간에서 끊기고, 공백 폭주(D46 · #79)는
+            # 꼬리가 공백뿐이다.
+            "trailing_whitespace": len(raw) - len(raw.rstrip()),
+            "tail": raw[-200:],
+        }
+        try:
+            json.loads(raw)
+            record["json_valid"] = True
+        except json.JSONDecodeError as exc:
+            record |= {"json_valid": False, "json_error": str(exc)}
+        out.append(record)
+    return out
+
+
 def _run_arm(client: Any, *, arm: str, prompt: Prompt, trials: int, known: set[str]) -> ArmResult:
     result = ArmResult(arm=arm)
     schema = _schema_for(arm)
@@ -223,6 +266,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--arms", nargs="+", default=list(ARMS), choices=ARMS)
     parser.add_argument("--out", type=Path, default=Path("d67_probe.json"))
+    parser.add_argument(
+        "--diagnose",
+        nargs="*",
+        default=None,
+        choices=ARMS,
+        help="이 팔들의 응답 원문을 재시도 없이 한 번씩 더 받아 실패 성격을 가른다. "
+        "인자 없이 주면 --arms 전부",
+    )
     args = parser.parse_args(argv)
 
     prompts_dir = args.run_dir / "prompts"
@@ -272,6 +323,26 @@ def main(argv: list[str] | None = None) -> int:
         for err in r.errors[:3]:
             print(f"    ! {err[:120]}")
 
+    diagnostics: dict[str, list[dict[str, Any]]] = {}
+    if args.diagnose is not None:
+        targets = args.diagnose or args.arms
+        print("\n[진단] 재시도 없이 한 번씩 더 보낸다 — 잘렸나 문법이 깨졌나")
+        for arm in targets:
+            rows = _diagnose(client, arm=arm, prompt=prompt, trials=args.trials)
+            diagnostics[arm] = rows
+            for i, row in enumerate(rows):
+                if "error" in row:
+                    print(f"  {arm}[{i}] ! {row['error'][:110]}")
+                    continue
+                print(
+                    f"  {arm}[{i}] json={row['json_valid']} "
+                    f"out_tok={row['output_tokens']}/{row['max_tokens_sent']} "
+                    f"cap={row['hit_cap']} ws_tail={row['trailing_whitespace']}"
+                )
+                if not row["json_valid"]:
+                    print(f"      err : {row.get('json_error', '')[:100]}")
+                    print(f"      tail: {row['tail'][-90:]!r}")
+
     payload = {
         "probe": "d67_required_schema",
         "issue": 172,
@@ -284,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         "endpoint": config.models[model_key].endpoint,
         "trials_per_arm": args.trials,
         "arms": [r.as_dict() for r in results],
+        "diagnostics": diagnostics,
     }
     args.out.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
