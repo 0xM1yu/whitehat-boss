@@ -439,6 +439,9 @@ def _model_client(model_key: str, config: HarnessConfig) -> ModelClient:
         top_p=config.sampling.top_p,
         seed=config.seed,
         max_tokens=config.thresholds.output_max,
+        # **모델별 값이다** — 위 넷과 달리 `config.sampling`·`thresholds`(프로필 공통)가
+        # 아니라 registry 항목에서 온다. 선언 안 한 모델은 `None`이라 요청에 안 실린다.
+        reasoning_effort=entry.reasoning_effort,
         retries=config.thresholds.schema_retries,
     )
 
