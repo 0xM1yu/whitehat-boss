@@ -51,8 +51,13 @@ from contextlib import contextmanager
 # 기본 카운터: 4글자 ≈ 1토큰. 실 토크나이저 파일이 없으면(CI·dev) 이 값이 유효하다.
 CHARS_PER_TOKEN = 4
 
-# **역할 카운터가 실제로 켜지는 역할.** `runner._triage_one`이 `using_counter(...)`로 감싸는
-# 자리가 이 둘이다 — scout는 LIGHT 캡슐, auditor는 EXPANDED 캡슐을 조립할 때.
+# **역할 카운터가 실제로 켜지는 역할.** 러너가 `using_counter(...)`로 감싸는 자리가
+# 이 둘이다 — scout는 LIGHT 캡슐(`_step_retrieval`), auditor는 EXPANDED 캡슐을 조립할 때.
+#
+# ⚠ **Scout 풀에서는 「scout」이 아니라 멤버 키다**(PR #178). `_step_retrieval`이
+# `ctx.counter_for_role(item.role.value)`를 부르므로 풀 run은 `scout_memory` 등의
+# 카운터를 켜고 **`scout`은 하나도 안 켠다.** 그래서 아래 목록이 풀에서는 「켜지는
+# 역할」과 어긋난다 — 커밋된 프로필이 전부 단일 `scout`이라 오늘은 안 갈린다.
 #
 # `factory`가 이 목록으로 `Deps.counter_report`를 만들고 러너가 그것을 `token_counter`
 # 이벤트로 낸다. **켜지지 않는 역할을 기록에 실으면 거짓 정보다** —

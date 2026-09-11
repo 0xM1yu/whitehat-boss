@@ -120,7 +120,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
   | `RunRecord.prompt_versions` | `PROMPTED_ROLES`에 **멤버당 한 줄** | `prompt_versions()`가 `for role in PROMPTED_ROLES` |
   | `RoutingModelClient` | 같은 상수의 **같은 줄** | `factory`의 `clients` 컴프리헨션이 같은 상수에 걸린다 |
   | `bench.ROLE_SPEC` | 멤버당 한 줄 | 없으면 `ROLE_SPEC[role_enum]`이 `KeyError` |
-  | 역할별 토큰 카운터 | **안 따라온다** | 아래 ⚠ |
+  | 역할별 토큰 카운터 | **러너는 따라온다 · 기록은 안 따라온다** (2026-09-11 정정) | 아래 ⚠ |
 
   즉 **상수 두 곳에 줄을 더하는 일**이고, 리스트 안이 요구하던 것은 그것이 아니라 위 여섯 전부에
   "리스트의 몇 번째"라는 **새 좌표**였다. 계획의 의도(N멤버 · 태깅)는 같다.

@@ -40,10 +40,19 @@ class Role(StrEnum):
     # - **기록 쪽은 그대로다.** `Deps.counter_report`는 여전히 `COUNTED_ROLES` 둘만 돌므로,
     #   풀 멤버 카운터가 **켜져도 `token_counter` 이벤트에는 안 실린다.**
     #
-    # **그래서 `COUNTED_ROLES`를 여기서 늘리지 않는 이유가 바뀌었다.** 예전 사유("러너가 안
-    # 켜는 역할을 실으면 기록이 거짓이 된다")는 이제 안 선다 — 러너가 켠다. 지금 사유는
-    # **범위**다: 늘리면 `token_counter` 이벤트의 내용이 바뀌고 `tests/test_tokens.py`가
-    # 그 둘을 등식으로 고정하므로, 그것은 기록 계약을 바꾸는 별도 PR의 몫이다.
+    # **`COUNTED_ROLES`를 여기서 늘리지 않는다. 사유가 하나 더 붙었을 뿐 예전 것도 그대로
+    # 선다.**
+    #
+    # - **예전 사유가 여전히 참이다** — 러너가 멤버 카운터를 켜는 것은 **풀 프로필에서만**인데
+    #   `config/profiles.yaml`의 프로필은 **전부 단일 `scout`**이다. 그 프로필들에서 멤버를
+    #   `COUNTED_ROLES`에 넣으면 `counter_report`가 `no_source`를 실어 **정확히 예전 사유가
+    #   말한 거짓 기록**을 낸다.
+    # - **범위가 더해졌다** — 늘리면 `token_counter` 이벤트의 내용이 바뀌고
+    #   `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 기록 계약을 바꾸는 별도 PR의 몫이다.
+    #
+    # ⚠ **반대 방향도 있다. 풀 run의 `token_counter`는 「안 싣는」 것이 아니라 「없는 것을
+    # 싣는다」** — 풀은 `scout`을 하나도 안 켜는데 이벤트에는 `scout_counter: approx`가
+    # 실린다. 그 정정도 풀 프로필을 커밋하는 PR의 몫이다(`orchestrator/trace.py`의 ⚠ 문단).
     #
     # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
     # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다

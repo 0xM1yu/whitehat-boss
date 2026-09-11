@@ -80,9 +80,9 @@ _FILLER = "    memcpy(dst + off, src, len);  /* bench filler */\n"
 _BASE_SOURCE = "int parse_header(const char *src, size_t len) {\n    char dst[64];\n"
 
 # 역할 → (출력 스키마, 캡슐 레벨). 레벨은 파이프라인에서 그 역할이 실제로 받는 것이다:
-# scout은 LIGHT, auditor는 EXPANDED 캡슐을 받는다(runner._triage_one). critic은 캡슐 대신
-# Finding+Evidence를 받으므로 EXPANDED에 준하는 길이로 근사하고, 그 사실을 출력의
-# `capsule_level`에 남긴다.
+# scout은 LIGHT, auditor는 EXPANDED 캡슐을 받는다(runner._step_retrieval·auditor 단계).
+# critic은 캡슐 대신 Finding+Evidence를 받으므로 EXPANDED에 준하는 길이로 근사하고,
+# 그 사실을 출력의 `capsule_level`에 남긴다.
 ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     Role.SCOUT: (Candidate, CapsuleLevel.LIGHT),
     # 풀 세 멤버는 4단계의 같은 자리라 계약이 scout과 같다 — 받는 캡슐도 LIGHT이고 내는

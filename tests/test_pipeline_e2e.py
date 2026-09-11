@@ -307,8 +307,9 @@ def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
     *"안 고친다면 결함으로 등재하고 docstring에 그 한계를 적는다 — 풀 프로필 커밋 전에"*다.
     여기서 하는 일은 **그 선택을 기계로 묶는 것**이다.
 
-    기제: `consecutive = 0` 리셋이 **역할 루프 안**에 있어 형제 멤버의 성공이 매번 카운터를
-    0으로 되돌린다. 그래서 `_MAX_CONSECUTIVE_DROPS`에 영원히 안 닿는다.
+    기제: **카운터가 역할을 안 가른다.** 한 단계의 작업 단위가 target × 역할로 펼쳐졌는데
+    `consecutive`는 그 열 전체에 하나뿐이고 성공 하나가 그것을 0으로 되돌린다. 그래서
+    형제 멤버의 성공이 매번 카운터를 지우고 `_MAX_CONSECUTIVE_DROPS`에 영원히 안 닿는다.
 
     **이 검사는 양방향으로 돈다.**
 
@@ -1440,6 +1441,53 @@ def test_a_directory_claimed_between_scan_and_mkdir_is_not_clobbered(
 
     assert (taken / "trace.jsonl").read_text(encoding="utf-8") == "먼저 온 run의 것"
     assert (tmp_path / new_run_id(datetime.now(UTC), 2)).is_dir()
+
+
+def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> None:
+    """`estimate`가 캡슐을 다시 검증할 때 쓰는 카운터 역할이 **그 프로필에 실재해야 한다.**
+
+    `deps.store.query("capsule")`는 `using_counter` **밖**이면 글자수 근사로
+    `CapsuleSection._tokens_match_body`를 다시 돈다. 실 토크나이저로 조립된 캡슐이면
+    저장값과 재계산값이 갈려 `ValidationError`로 죽는다 — `estimate --profile b1_single`이
+    실제로 그렇게 죽었고, 그것을 막은 것이 `counter_for_role(...)`로 감싼 그 `with`다(#84).
+
+    **풀에서는 그 막음이 서지 않았다.** 역할 키를 `"scout"`으로 박아 뒀는데 풀 프로필에는
+    그 키가 없다(`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다). 그래서
+    `counter_for_role`이 `None`을 돌려주고 `using_counter(None)`은 아무것도 안 바꾼다.
+
+    ⚠ **오늘 안 터지는 이유는 둘 다 우연이다** — 커밋된 풀 프로필이 없고, Fake는 `source`가
+    없어 어차피 `None`이다. **실 토크나이저 풀 프로필을 커밋하는 순간 되살아난다.**
+    """
+    from src.cli import _capsule_counter_role
+
+    base = load_config("dev_fake")
+    pool = base.transition(
+        profile=base.profile.transition(
+            roles={
+                "scout_memory": "fake_v2",
+                "scout_boundary": "fake_v2",
+                "scout_injection": "fake_v2",
+                "auditor": "fake",
+                "critic": "fake",
+                "embedding": "fake",
+                "reranker": "fake",
+            }
+        )
+    )
+
+    for name, config in (("단일", base), ("풀", pool)):
+        role = _capsule_counter_role(config)
+        assert role in config.profile.roles, (
+            f"{name} 프로필에 없는 역할 {role!r}로 캡슐을 재검증한다 — "
+            f"`counter_for_role`이 None을 주고 #84의 막음이 사라진다. "
+            f"선언된 역할: {sorted(config.profile.roles)}"
+        )
+
+    assert _capsule_counter_role(pool) == SCOUT_POOL_ROLES[0], (
+        "풀에서 캡슐을 **조립하는** 것은 첫 멤버다 — `runner._scout_roles`가 "
+        "`SCOUT_POOL_ROLES` 순서를 유지하고 `_step_retrieval`이 첫 멤버의 캡슐을 캐시한다. "
+        "재검증도 같은 역할이어야 조립·검증이 같은 카운터를 본다"
+    )
 
 
 def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
