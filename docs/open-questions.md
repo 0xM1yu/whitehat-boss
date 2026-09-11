@@ -116,6 +116,7 @@
 | D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
 | D65 | **게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다 — 실서빙 run이 7단계에서 죽는다** | 열림 | [본문](open-questions/D/D65.md) |
 | D66 | **실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다** | 열림 | [본문](open-questions/D/D66.md) |
+| D67 | **Auditor가 `path`·`evidence_refs`를 안 채운다 — v1이 둘 다 요구하는데 150건 중 `path` 150·`evidence_refs` 148이 빈다. 원인 미확정** | 열림 | [본문](open-questions/D/D67.md) |
 
 ## 3. 팀·운영 미정
 
