@@ -35,6 +35,51 @@ _TIMEOUT_S = 300
 # `_MAX_ERROR_DETAIL`이 그것을 다시 문자 단위로 자른다.
 _MAX_ERROR_BODY = 8192
 
+# 재시도 프롬프트에 덧붙이는 **스키마 오류 문자열**의 상한(문자).
+#
+# **막는 것은 원문이 아니라 오류 개수다.** 원문이 실리는 축은 PR #49가
+# `include_input=False`로 닫았고(아래 `complete()`의 주석), 이 상한은 그것과 직교하는
+# 두 번째 축을 닫는다 — `exc.errors()`는 리스트라 스키마 위반 원소마다 한 항목이 붙고
+# 그 길이에 상한이 없었다. 2026-09-12 실측(pydantic 2.13.4): 원소 500개가 전부 타입
+# 위반인 응답은 **원문 14,415자에 오류 문자열 116,367자**로 원문의 8배다. PR #49가
+# 닫은 그 경로가 400을 맞은 크기(25,223자)의 4.6배이므로, 원문을 뺐어도 같은 자리로
+# 되돌아올 수 있다.
+#
+# **왜 2,000인가.** 관측된 경로를 안 건드리는 값이다 — 같은 실측에서 절단 응답
+# (`json_invalid`, 이 저장소가 실제로 만난 #79의 모양)의 오류 문자열이 **178자**, 단일
+# 필드 위반이 **134자**다. 10배 넘는 여유를 두고도 폭주에는 걸린다. 규모 감각으로는
+# 약 900토큰인데(`config/budgets.yaml`의 chars/token 2.224), **그 배율은 구성 의존값이라
+# 근거로 세지 않는다**(#96) — 근거는 위의 178·134다.
+#
+# `MAX_ERROR_DETAIL`(512)과 값을 공유하지 않는다. 저쪽은 trace JSONL 한 줄에 실리는
+# **사람이 읽을 사유**이고 이쪽은 **모델에게 보내는 재시도 입력**이라, 잘라야 하는
+# 이유도 적정선도 다르다.
+RETRY_ERROR_MAX_CHARS = 2000
+
+
+def _bounded_error_text(errors: object) -> str:
+    """재시도에 실을 오류 문자열. 상한을 넘으면 **머리와 꼬리를 남기고** 가운데를 접는다.
+
+    `truncate_detail`을 안 쓴다. 저쪽은 머리만 남기는데, 오류 리스트의 머리만 보면
+    재시도하는 모델도 나중에 `retry_bodies`를 읽는 사람도 "여기까지가 전부"로 읽는다.
+    **자른 것과 원래 짧은 것을 섞지 않는다**는 규약은 같고, 남기는 자리가 다르다.
+
+    머리를 꼬리보다 크게 잡는 것은 `json_invalid`가 **첫 항목 하나**이기 때문이다 —
+    "EOF while parsing an object at line N"이 스키마 위반과 출력 절단을 가르는 유일한
+    단서이고(#79), 그 한 줄을 잃으면 이 상한이 `include_context`를 끈 것과 같아진다.
+    """
+    text = f"{errors}"
+    if len(text) <= RETRY_ERROR_MAX_CHARS:
+        return text
+    # 표시도 상한 안에 넣는다 — 그래야 이 상수가 "덧붙는 것의 크기"를 실제로 묶는다.
+    # 버린 글자 수는 **정확한 값**을 적어야 하는데 그 자릿수가 표시 길이를 바꾸므로,
+    # 자리는 `len(text)`(버린 양의 상한)로 잡아 두고 수는 실제로 버린 값을 넣는다.
+    # 자릿수가 상한보다 작으면 결과가 상한보다 짧아질 뿐 넘지 않는다.
+    kept = RETRY_ERROR_MAX_CHARS - len(f"…(중략 {len(text)}자)…")
+    head = kept * 2 // 3
+    tail = kept - head
+    return f"{text[:head]}…(중략 {len(text) - kept}자)…{text[-tail:]}"
+
 
 class OpenAICompatModelClient:
     """`ModelClient` 구현. 역할 하나에 모델 하나가 대응한다."""
@@ -146,9 +191,16 @@ class OpenAICompatModelClient:
                 # object at line N"을 들고 있고, 그것이 스키마 위반과 출력 절단을 가르는
                 # 유일한 단서다(#79). 재시도하는 모델도, 나중에 trace의 `error_detail`을
                 # 읽는 사람도 그 문장으로 폭주를 알아본다.
+                #
+                # **2026-09-12 — `include_input=False`가 닫은 축은 하나뿐이었다.** 그 인자는
+                # **원문**이 실리는 축을 닫고, `errors()`가 리스트라는 데서 오는 **오류 개수**
+                # 축은 열려 있었다. 실측(pydantic 2.13.4): 원소 500개가 전부 타입 위반인
+                # 응답은 원문 14,415자에 오류 문자열 116,367자다 — 위 문단이 400을 맞았다고
+                # 적은 25,223자의 4.6배이고, **원문을 뺐어도 같은 자리로 되돌아온다.**
+                # `_bounded_error_text`가 그 축을 묶는다. 신호(`ctx.error`)는 머리에 남는다.
                 body = (
                     f"{prompt.body}\n\n[스키마 오류] "
-                    f"{exc.errors(include_url=False, include_input=False)}"
+                    f"{_bounded_error_text(exc.errors(include_url=False, include_input=False))}"
                 )
                 continue
             return ModelResult(
