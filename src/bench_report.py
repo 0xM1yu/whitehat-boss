@@ -143,7 +143,7 @@ def _measure_role(
         skipped = f"기동 확인 실패로 건너뛴다: {startup['reason']}"
         return {**head, **dict.fromkeys(MEASUREMENT_ORDER[1:], None), "skipped": skipped}
 
-    client = _client(config, model_key)
+    client = _client(config, model_key, role=role)
     args = (client, role_enum, template, schema)
     return {
         **head,
@@ -161,13 +161,13 @@ def _measure_role(
             entry.endpoint,
             entry.context_limit,
             server_limit=startup["max_model_len"],
-            output_max=config.thresholds.output_max,
+            output_max=config.thresholds.output_max_for(role),
         ),
         "skipped": None,
     }
 
 
-def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
+def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompatModelClient:
     """`factory._model_client()`와 **같은 인자**로 만든다.
 
     다르면 bench가 잰 것이 운영 경로가 아니게 된다. 어긋남은
@@ -176,12 +176,17 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
     **`max_tokens`도 그 규칙에 포함된다.** "처리량 측정이니 출력 길이를 따로 두는 게
     맞지 않나"를 검토했고, 답은 아니다. 이유 셋이다:
 
+    ⚠ **아래 셋이 말하는 "상한"은 `thresholds.output_max`가 아니다.** 이 함수가 싣는 것은
+    `output_max_for(role)`이고(#79의 (c)), 어느 역할이 값을 선언하면 그 역할의 상한은
+    전역값과 갈린다. 2의 "닿지 않는다"도 **그 역할의 값으로** 다시 따져야 한다 — 전역값이
+    안전하다는 것이 역할값이 안전하다는 뜻이 아니다.
+
     1. 이 모듈 docstring의 규칙이 그것이다 — bench 전용 파라미터로 잰 수치는 운영 성능이
        아니다. `temperature`·`seed`를 이미 운영값으로 맞춰 두고 출력 상한만 달리 두면
        같은 종류의 어긋남을 하나 남긴다.
     2. **측정값이 왜곡되지 않는다.** `tok_s`는 `produced / elapsed`라 상한은 표본 길이를
        바꿀 뿐 속도를 바꾸지 않는다. 그리고 8/26 실측이 후보당 output 167토큰이라
-       `thresholds.output_max`(2026-08-28부터 4,096)는 정상 경로에서 닿지 않는다 — 실제로
+       **선언이 없는 역할의 상한**(2026-08-28부터 4,096)은 정상 경로에서 닿지 않는다 — 실제로
        걸릴 일이 없다. **Critic 자리에서 같은 방향의 값이 하나 더 있다**:
        `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md`가
        `DecisionDraft`에서 `finish_reason=length` 0/18 · 최장 2,863토큰을 잰다. ⚠ 다른
@@ -199,7 +204,9 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
-        max_tokens=config.thresholds.output_max,
+        # 역할별 값이다(#79의 (c)). `factory._model_client`와 **같은 해석기**를 부른다 —
+        # 한쪽만 전역값을 읽으면 이 함수 docstring이 편 논거가 그 자리에서 깨진다.
+        max_tokens=config.thresholds.output_max_for(role),
         # 모델별 값이라 registry에서 온다. 여기서 빠뜨리면 bench가 운영과 **다른 요청**을
         # 보내면서 같은 것을 쟀다고 적는다 — 이 함수 docstring이 `max_tokens`에 대해 편
         # 논거가 그대로 걸린다.

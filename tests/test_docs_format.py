@@ -365,6 +365,16 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     예시로 들어오는 날 조용히 첫 줄만 검사하게 된다 — 지금 고치는 드리프트와 같은 모양이
     한 겹 아래에서 다시 생긴다.
 
+    **2026-09-12 — D46 (c)의 자리가 열렸다. 이 검사는 아직 안 바꾼다.**
+    `thresholds.output_max_by_role`이 생겼지만 **어느 역할도 선언하지 않았으므로** 모든
+    역할의 실효 상한이 `thresholds.output_max`와 같고, 이 검사가 비교하는 것이 곧 그
+    값이다. 지금 바꾸면 **아무것도 안 지키는 검사**가 된다.
+
+    ⚠ **값을 처음 넣는 PR이 여기를 함께 고친다.** 그때 비교 대상은 전역값이 아니라
+    `thresholds.output_max_for(<그 예시 블록의 role>)`이다 — 문서의 `agent:` 예시는
+    `role:`을 같은 블록에 들고 있으므로 역할과 숫자를 **짝으로** 뽑아야 한다. 지금처럼
+    전역값 하나와 대조하면, critic에 8,192를 주고 문서에 4,096을 적어도 통과한다.
+
     **`b1_single`을 쓰는 것은 아무 프로필이나 된다는 뜻이다.** `config/budgets.yaml`이
     "thresholds·sampling·seed는 프로필과 무관하게 공통"이라고 못박아 뒀다. 그 전제가
     깨지면 이 테스트는 한 프로필만 보게 되므로, 그때는 여기도 같이 고쳐야 한다.
@@ -376,11 +386,49 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     declared = [int(m.group(1)) for m in pattern.finditer(contract)]
     assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
-    actual = load_config("b1_single").thresholds.output_max
+    thresholds = load_config("b1_single").thresholds
+    # **값이 없어도 막을 수 있다.** 아래 비교는 전역값 하나와 대조하므로, 역할별 상한이
+    # 선언되는 날 critic에 8,192를 주고 문서에 4,096을 적어도 조용히 통과한다 — D42가
+    # 나온 드리프트가 한 겹 아래에서 재현된다. 그날 이 줄이 먼저 빨개져서 아래를 역할
+    # 짝으로 고치게 만든다. 위 ⚠ 문단이 그 고치는 방법이고, 이 줄이 그 강제다.
+    assert not thresholds.output_max_by_role, (
+        f"역할별 상한이 선언됐다({sorted(thresholds.output_max_by_role)}) — 아래 비교를 "
+        f"`thresholds.output_max_for(<그 예시 블록의 role>)`와의 짝 비교로 고쳐야 한다. "
+        f"⚠ 그렇게 고치면 다음으로 `test_the_contract_guard_goes_red_the_day_a_role_cap_"
+        f"is_declared`가 DID NOT RAISE로 죽는다 — 그 테스트는 **이 줄이 있다는 것**을 "
+        f"확인하는 테스트라 이 줄과 함께 지우는 것이 맞다. 가드가 고장 난 게 아니다."
+    )
+    actual = thresholds.output_max
     assert declared == [actual] * len(declared), (
         f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
         f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
     )
+
+
+def test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """역할값이 선언되는 순간 **위 검사가 실패해야 한다**.
+
+    위 docstring이 *"값을 처음 넣는 PR이 여기를 함께 고친다"*고 적어 뒀지만 docstring은
+    강제가 아니다. 실제로 `output_max_by_role: {critic: 8192}`를 넣고 문서를 4,096에 둬도
+    위 검사는 **통과한다** — D42가 나온 드리프트("계약 문서가 선언하고 하네스가 다른 값을
+    쓴다")가 한 겹 아래에서 그대로 재현된다.
+
+    **값 없이도 막을 수 있다.** 선언이 생기면 역할 짝으로 비교하도록 고치게 만드는 것이
+    이 테스트다. 그때 위 검사의 비교 대상은 전역값이 아니라 그 예시 블록의
+    `thresholds.output_max_for(<role>)`이고, 여기는 그 PR이 함께 지운다.
+    """
+    from src import config as config_module
+
+    loaded = config_module.load_config("b1_single")
+    declared = loaded.transition(
+        thresholds=loaded.thresholds.transition(output_max_by_role={"critic": 8192})
+    )
+    monkeypatch.setattr(config_module, "load_config", lambda *args, **kwargs: declared)
+
+    with pytest.raises(AssertionError, match="역할별"):
+        test_the_contract_example_output_max_matches_the_config()
 
 
 # --- 구축안(docs/build-plan.md) 전용 가드 -----------------------------------
