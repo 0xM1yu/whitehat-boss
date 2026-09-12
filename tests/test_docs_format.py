@@ -386,11 +386,38 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     declared = [int(m.group(1)) for m in pattern.finditer(contract)]
     assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
-    actual = load_config("b1_single").thresholds.output_max
+    thresholds = load_config("b1_single").thresholds
+    actual = thresholds.output_max
     assert declared == [actual] * len(declared), (
         f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
         f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
     )
+
+
+def test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """역할값이 선언되는 순간 **위 검사가 실패해야 한다**.
+
+    위 docstring이 *"값을 처음 넣는 PR이 여기를 함께 고친다"*고 적어 뒀지만 docstring은
+    강제가 아니다. 실제로 `output_max_by_role: {critic: 8192}`를 넣고 문서를 4,096에 둬도
+    위 검사는 **통과한다** — D42가 나온 드리프트("계약 문서가 선언하고 하네스가 다른 값을
+    쓴다")가 한 겹 아래에서 그대로 재현된다.
+
+    **값 없이도 막을 수 있다.** 선언이 생기면 역할 짝으로 비교하도록 고치게 만드는 것이
+    이 테스트다. 그때 위 검사의 비교 대상은 전역값이 아니라 그 예시 블록의
+    `thresholds.output_max_for(<role>)`이고, 여기는 그 PR이 함께 지운다.
+    """
+    from src import config as config_module
+
+    loaded = config_module.load_config("b1_single")
+    declared = loaded.transition(
+        thresholds=loaded.thresholds.transition(output_max_by_role={"critic": 8192})
+    )
+    monkeypatch.setattr(config_module, "load_config", lambda *args, **kwargs: declared)
+
+    with pytest.raises(AssertionError, match="역할별"):
+        test_the_contract_example_output_max_matches_the_config()
 
 
 # --- 구축안(docs/build-plan.md) 전용 가드 -----------------------------------

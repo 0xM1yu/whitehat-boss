@@ -975,6 +975,29 @@ def test_context_sweep_keeps_measuring_when_the_server_limit_is_unknown(
     assert measured == [8192, 32768]
 
 
+def test_the_context_sweep_makes_the_caller_state_the_output_cap() -> None:
+    """`output_max`에 기본값을 두지 않는다 — 빠뜨리면 #126 가드가 **조용히 약해진다**.
+
+    기본값 `0`이면 `ctx + output_max > server_limit`이 `ctx > server_limit`으로 퇴화한다.
+    2026-09-02 ATOM에서 스윕 꼭대기가 400을 받은 조건이 정확히 `ctx + 4,096 > 32,768`
+    이었으므로, 퇴화한 가드는 그 run을 **다시 통과시킨다** — 재려다 실패한 것이 아닌 것을
+    `dead`로 세면서.
+
+    `_model_client`가 `role`에 기본값을 안 두는 사유와 같은 자리다(PR #185).
+    """
+    with pytest.raises(TypeError, match="output_max"):
+        bench.measure_memory(
+            None,
+            Role.SCOUT,
+            None,
+            None,
+            (8192, 32768),
+            "http://x",
+            262144,
+            server_limit=32768,
+        )
+
+
 def test_context_sweep_still_honours_the_registry_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
