@@ -302,6 +302,20 @@ def test_promoted_state_requires_path() -> None:
         ("safe", Verdict.REBUT),
         ("not vulnerable", Verdict.REBUT),
         ("unclear", Verdict.NEED_EVIDENCE),
+        # 장식·라벨이 붙은 실제 LLM 출력 모양. 표준값이 **단어 하나로** 서 있으면 읽는다.
+        ("**uphold**", Verdict.UPHOLD),
+        ('"uphold"', Verdict.UPHOLD),
+        ("verdict: uphold", Verdict.UPHOLD),
+        ("`need_evidence`", Verdict.NEED_EVIDENCE),
+        # ⚠ 단어 경계 없는 접두어 매칭이 **거부를 지지로** 읽던 넷 (#182 리뷰 H1 실측).
+        # `startswith("uphold")`만 보면 아래 셋이 전부 UPHOLD였고, 마지막 것은 토큰 순서로만
+        # REBUT이 됐다 — 같은 문장이 어순으로 판정이 갈리면 그것은 판정이 아니다.
+        ("upholding is not warranted, this is a false positive", None),
+        ("uphold would be wrong here; the guard holds, so I rebut", None),
+        ("uphold or rebut", None),
+        ("rebut or uphold", None),
+        # 부정문 안의 표준값은 읽지 않는다 — 표준값이 **앞에 서야** 그 문장의 판정이다.
+        ("I would not uphold this claim", None),
         # 미해석 — 문장형 자유 서술은 추측하지 않고 None (호출자가 need_evidence로 보낸다).
         # 이 넷은 예전 부분문자열 매퍼가 **REBUT으로 오분류**해 진짜 취약을 기각하던 것들이다.
         ("not safe", None),

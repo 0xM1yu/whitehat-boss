@@ -33,6 +33,9 @@ from src.config import (
     ProfileEntry,
     load_config,
 )
+from src.orchestrator.nodes import auditor as auditor_node
+from src.orchestrator.nodes import critic as critic_node
+from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
 from src.schemas import CapsuleLevel, RunRecord
@@ -41,6 +44,18 @@ from src.schemas.enums import Role
 from tests.conftest import ALL_PROFILES
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
+
+# 역할 → 그 역할로 모델을 부르는 노드가 `ctx.call_model(schema=...)`에 넣는 스키마.
+# 풀 세 멤버는 별도 노드가 아니라 `nodes/scout.py`의 `run(role=...)`이 돈다(ADR 0010 §3).
+# `single`·`judge`는 아직 노드가 없어 여기 없다 — bench 쪽 검사만 선다.
+NODE_OUTPUT_SCHEMAS = {
+    Role.SCOUT: scout_node.OUTPUT_SCHEMA,
+    Role.SCOUT_MEMORY: scout_node.OUTPUT_SCHEMA,
+    Role.SCOUT_BOUNDARY: scout_node.OUTPUT_SCHEMA,
+    Role.SCOUT_INJECTION: scout_node.OUTPUT_SCHEMA,
+    Role.AUDITOR: auditor_node.OUTPUT_SCHEMA,
+    Role.CRITIC: critic_node.OUTPUT_SCHEMA,
+}
 
 
 # --- 참조 정합성 ------------------------------------------------------------
@@ -267,6 +282,43 @@ def test_every_prompt_version_on_disk_loads(directory: Path) -> None:
     assert template.version == version
     assert getattr(schemas, template.output_schema, None) is not None, (
         f"{directory}/meta.yaml의 output_schema `{template.output_schema}`가 `src.schemas`에 없다"
+    )
+
+
+@pytest.mark.parametrize("directory", _prompt_dirs(), ids=lambda d: f"{d.parent.name}/{d.name}")
+def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory: Path) -> None:
+    """`meta.yaml`의 `output_schema`가 **그 역할로 모델을 부르는 코드가 실제로 보내는**
+    스키마와 같다.
+
+    바로 위 `test_every_prompt_version_on_disk_loads`는 그 이름이 `src.schemas`에 **있는지**만
+    본다 — 있기만 하면 노드가 무엇을 보내든 통과한다. 프롬프트는 모델이 읽는 명령이고
+    스키마는 grammar가 강제하는 문법이라, 둘이 어긋나면 **모델이 시킨 대로 쓸 수 없는
+    필드를 시키는** 상태가 된다. `HarnessModel`이 `extra="forbid"`라 그 필드는
+    `additionalProperties: false`로 마스크되고, 마스크가 추론을 덮는 것이 이 PR이 고치는
+    바로 그 실패다(gpt-oss-20b 실측 2026-09-12).
+
+    **사고 —** `nodes/critic.py`가 `schema=DecisionDraft`로 바뀐 뒤에도 `prompts/critic/v1`
+    규칙 4가 *"`ids.decision_id`를 그대로 쓴다"*였고 출력표에 `decision_id`·`run_id`·
+    `finding_id`가 남아 있었다. `DecisionDraft`에는 그 셋이 없다. v1은 `config/profiles.yaml`의
+    **전 프로필**이 고르는 살아 있는 프롬프트다.
+
+    요청하는 곳이 **둘**이라 둘 다 본다 — 파이프라인 노드와 `bench.ROLE_SPEC`(bench는
+    같은 프롬프트 파일을 렌더해 구조화 출력을 잰다). 노드가 없는 역할(`single`)은
+    bench 쪽만 선다.
+    """
+    role, version = Role(directory.parent.name), directory.name
+
+    template = load_prompt(role, version)
+
+    node_schema = NODE_OUTPUT_SCHEMAS.get(role)
+    if node_schema is not None:
+        assert template.output_schema == node_schema.__name__, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"노드는 `{node_schema.__name__}`을 요청한다"
+        )
+    assert template.output_schema == ROLE_SPEC[role][0].__name__, (
+        f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+        f"bench.ROLE_SPEC은 `{ROLE_SPEC[role][0].__name__}`을 요청한다"
     )
 
 
