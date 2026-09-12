@@ -744,6 +744,46 @@ def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: P
         load_config("dev_fake", config_dir=tmp_path)
 
 
+@pytest.mark.parametrize("cap", [0, -1])
+def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None:
+    """`0`은 "상한 없음"이 아니라 **오설정**이다.
+
+    `output_max`가 `Field(gt=0)`인 것과 같은 자리인데 역할별 값에는 그 제약이 안 걸린다 —
+    dict의 값이라 `Field`가 못 본다. `_role_caps_name_real_roles`가 손으로 막고 있고,
+    그 줄에 테스트가 없었다. `0`이 통과하면 그 역할은 요청에 `max_tokens: 0`을 싣는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        thresholds_patch={"output_max_by_role": {"critic": cap}},
+    )
+
+    with pytest.raises(ValidationError, match="양수"):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+def test_asking_the_cap_for_a_role_that_is_not_a_role_fails_loudly() -> None:
+    """모르는 문자열에 **조용히 전역값을 주지 않는다**.
+
+    `_model_client`가 `role`을 필수 키워드로 둔 사유(*"기본값이 있으면 역할을 빠뜨린
+    조립 지점이 조용히 전역값을 실어 보낸다"*)가 그대로 한 겹 안쪽에 걸린다 — 대소문자가
+    다르거나(`Role.CRITIC.value`가 아니라 `"CRITIC"`) 오타인 키는 `dict.get`의 기본값으로
+    떨어져 **선언한 상한이 무시된 채** 돌고, 그 run은 "역할별 상한을 줬다"고 기록된다.
+    `output_max_by_role`의 오타를 로드 때 막는 것과 같은 자리다.
+    """
+    thresholds = load_config("b1_single").thresholds
+
+    for unknown in ("CRITIC", "critick", "nonsense", ""):
+        with pytest.raises(ConfigError, match="프롬프트 역할"):
+            thresholds.output_max_for(unknown)
+
+
 @pytest.mark.parametrize("level", list(CapsuleLevel))
 def test_every_capsule_level_has_a_budget(level: CapsuleLevel) -> None:
     """CapsuleLevel에 값을 추가하면 여기서 먼저 깨진다 — config가 따라오지 않은 것이다."""
