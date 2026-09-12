@@ -33,6 +33,12 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다(#83).
 
+⚠ **「제거율 — Critic」의 분자는 두 가지를 담는다.** `need_evidence`에는 Critic이 실제로
+보류한 것과 **우리 매퍼가 verdict를 못 읽어** 보류로 보낸 것이 함께 들어간다
+(`DecisionDraft.to_decision`). 후자는 모델의 판정이 아니라 `Verdict.from_text`의 실패이므로
+제거율로 읽으면 안 된다 — **가르는 값은 `critic_verdict_unmapped` 건수**이고, 그 이벤트를
+빼고 세면 Critic이 낸 보류만 남는다. 이벤트 부재 = 전부 읽혔다.
+
 검색 호출을 `model_call`에 `role=embedding`으로 끼워 넣지 않는 이유도 같다 — "스키마
 파싱 실패율"의 분모가 `model_call`들의 시도 합(`Σ attempts`)인데 스키마가 없는 호출이
 섞이면 그 값이 조용히 희석된다. embedding·reranker는 `Role`도 아니다(ADR 0004).
@@ -229,6 +235,9 @@ class EventKind(StrEnum):
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
     CRITIC_NORMALIZED = "critic_normalized"
+    # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
+    # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
+    CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
 

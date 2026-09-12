@@ -116,12 +116,122 @@ class ArtifactKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+# `Verdict.from_text`가 단어 **양끝에서만** 떼는 장식·구두점. 모델이 `**uphold**`·`"uphold"`·
+# `— uphold`·`1. uphold`·`“uphold”`로 내는 것이 실측이라 그만큼만 걷는다. 안쪽을 건드리면
+# `need_evidence`와 `not vulnerable`이 쪼개진다.
+#
+# **비ASCII 구두점과 번호 매김이 여기 있는 이유** (#182 재리뷰 L-4): 판정을 목록 항목으로
+# 내면(`• uphold`) 그 토큰이 통째로 장식이라 빈 문자열이 되고, 빈 단어는 아래에서 버려진다.
+_VERDICT_DECOR = "*\"'`:,.;!?()[]{}<>-_=/|~#%+“”‘’—–•·…0123456789"
+
+
+def _verdict_words(text: str) -> list[str]:
+    """verdict 문자열을 **장식을 뗀 소문자 단어 목록**으로 만든다.
+
+    표준값 층과 동의어 층이 **같은 입력**을 보게 하는 것이 이 함수의 존재 이유다
+    (#182 재리뷰 H-A). 예전에는 장식 제거가 표준값 셋에만 걸려 있어서 `Yes`는 UPHOLD인데
+    `**Yes**`·`Yes.`가 `None`이었다 — **마침표 하나로 판정이 갈렸다.**
+    """
+    return [word for word in (token.strip(_VERDICT_DECOR) for token in text.split()) if word]
+
+
+# `Verdict.from_text`가 읽는 **전체 문자열 단독 동의어**. 문장 속 부분 문자열이 아니라
+# verdict 필드 전체가 정확히 이것일 때만 매핑한다(위 docstring). 애매한 것(예: `"not safe"`)은
+# 넣지 않는다 — 미해석(`None`)으로 두고 `need_evidence`로 보내는 편이 오분류보다 안전하다.
+#
+# ⚠ **CWE 이름을 넣지 않는다** (#182 재리뷰 M-3). `use-after-free`가 여기 있었는데 그것은
+# 판정이 아니라 약점 종류이고, Scout이 겨냥하는 CWE 계열(415/416 · 119/125/787/190 ·
+# 78/22/134) 중 **한 계열만 매핑되면 Critic 제거율이 대상 CWE에 따라 달라진다**
+# (evaluation.md §2.3 — 조건 간 비교의 분자가 대상에 따라 다른 규칙으로 만들어진다).
+# 빼면 그 응답은 `need_evidence`(보류)이고 그것이 안전한 방향이다.
+_VERDICT_AFFIRM = frozenset({"yes", "vulnerable", "unsafe", "upheld", "exploitable"})
+_VERDICT_DENY = frozenset(
+    {"no", "safe", "rebutted", "false positive", "benign", "not vulnerable", "rejected"}
+)
+_VERDICT_DEFER = frozenset(
+    {"need evidence", "unclear", "insufficient", "inconclusive", "unknown", "cannot determine"}
+)
+
+
 class Verdict(StrEnum):
     """Decision.verdict 열거형 (agent-contracts.md §3)."""
 
     UPHOLD = "uphold"
     REBUT = "rebut"
     NEED_EVIDENCE = "need_evidence"
+
+    @classmethod
+    def from_text(cls, text: str) -> "Verdict | None":
+        """자유 verdict를 표준 Verdict로 읽는다. **못 읽으면 `None`**(추측하지 않는다).
+
+        **왜 자유 텍스트인가.** verdict를 스키마에 `enum`으로 강제하면 grammar 마스크가
+        모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제
+        verdict 2/5, `enum` 제거(자유 문자열) **5/5**, rationale은 둘 다 정답.
+        ⚠ **원천: PR #182 본문 (원문 미커밋).** 그 run의 JSONL·스크립트가 저장소에 없다 —
+        같은 날 커밋된 `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md`
+        는 **다른 실험**이고(`enum` 강제 팔을 안 돌렸다) §5가 그 사실의 자리다. 그래서 요청은
+        verdict를 자유 문자열로 받고(`DecisionDraft`) 여기서 표준값에 매핑한다.
+
+        **부분 문자열로 의미를 추측하지 않는다.** *"unsafe"*가 `safe`를 담는다고 REBUT으로,
+        *"uphold: no guard…"*가 `no`를 담는다고 REBUT으로 보내면 **근거 있는 진짜 취약을
+        기각한다.** 그래서 여기서 읽는 것은 **① 장식을 뗀 단어 하나가 표준값일 때**와
+        **② 장식을 뗀 전체가 짧고 명백한 단독 동의어일 때**뿐이다. 문장형 자유 서술은 `None`이다.
+
+        **①과 ②가 같은 정규화를 본다**(`_verdict_words`). 장식 제거가 ①에만 걸려 있던 판
+        (#182 재리뷰 H-A)은 `Yes`를 UPHOLD로 읽고 `**Yes**`·`Yes.`·`"Yes"`를 `None`으로
+        읽었다 — **마침표 하나로 판정이 갈렸고**, 그 `None`은 `need_evidence`를 거쳐
+        게이트 `p3`(`upheld` 요구)에 걸려 **진짜 취약이 `validated`에 못 갔다.** H1이
+        오탐 통과 쪽으로 치우쳤다면 이쪽은 반대 방향으로 치우친 같은 결함이다.
+
+        **①의 단어 경계가 요점이다.** 접두어만 보던 판(`t.startswith(verdict.value)`,
+        #182 리뷰 H1)은 *"upholding is not warranted, this is a false positive"*와
+        *"uphold or rebut"*을 둘 다 UPHOLD로 읽었다 — **거부가 지지가 됐고**,
+        *"rebut or uphold"*와는 어순으로만 갈렸다. `uphold`만 무제한 접두어 매칭이고
+        부정 동의어는 전체 일치를 요구했으므로 **틀리는 방향이 오탐 통과 쪽으로 치우쳐
+        있었다.** 지금은 셋을 함께 본다.
+
+        - **단어 양끝의 장식만 뗀다** — `**uphold**`·`"uphold"`·`` `need_evidence` ``·
+          `• uphold`·`1. uphold`가 실제 출력 모양이다. 안쪽은 건드리지 않아
+          `need_evidence`·`not vulnerable`이 쪼개지지 않는다.
+        - **표준값이 둘 이상 나오면 읽지 않는다**(`"uphold or rebut"`). 어느 쪽이 판정인지는
+          이 함수가 정할 일이 아니다. 머리 단어가 표준값이어도 마찬가지다
+          (`"rebut: this is not an uphold case"` → `None`) — 머리를 택하는 규칙은
+          `"uphold or rebut"`을 UPHOLD로 만들어 위 어순 의존을 되살린다.
+        - **판정은 맨 앞 단어다**(`"uphold: no guard…"` → UPHOLD). 그 앞에 선 것이 표준값이
+          아니면 이름표로 보고 **첫 구분자(`:`·`=`)까지 한 번** 걷는다 —
+          `"verdict: uphold"`·`"final verdict = uphold"`·`"verdict:uphold"`가 같은 판정이다.
+          그래서 부정문 속 표준값(*"I would not uphold this"*)은 `None`으로 남는다 —
+          앞에 서지 않은 표준값은 그 문장의 판정이 아니다.
+        - **CWE 이름은 판정이 아니다**(`"use-after-free"` → `None`, 재리뷰 M-3).
+
+        **`None`은 지지가 아니다.** 호출자(`DecisionDraft.to_decision`)가 미해석을
+        `need_evidence`(보류)로 보내고 원문을 trace에 남긴다 — `uphold`로 소비하지 않는다
+        (그렇지 않으면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
+        """
+        lowered = text.strip().lower()
+        values = {verdict.value for verdict in cls}
+        # 라벨을 **한 번** 걷는다 — 첫 구분자 앞에 표준값이 없으면 그 앞은 이름표다.
+        # `uphold: no guard…`는 앞이 이미 판정이라 걷지 않고, `final verdict = uphold`는
+        # 걷는다. 구분자를 `:` 하나로 모아 공백 없는 `verdict:uphold`도 같이 갈린다.
+        label, _, tail = lowered.replace("=", ":").partition(":")
+        words = _verdict_words(lowered)
+        if tail and not values & set(_verdict_words(label)):
+            words = _verdict_words(tail)
+        if len(values & set(words)) > 1:
+            return None
+        head = words[0] if words else ""
+        if head in values:
+            return cls(head)
+        # **동의어도 같은 정규화를 본다.** raw 문자열을 보던 동안 `**Yes**`·`Yes.`가 `None`
+        # 이었고, 그 `None`은 `need_evidence`를 거쳐 **E3를 막았다**(#182 재리뷰 H-A).
+        normalized = " ".join(words)
+        if normalized in _VERDICT_AFFIRM:
+            return cls.UPHOLD
+        if normalized in _VERDICT_DENY:
+            return cls.REBUT
+        if normalized in _VERDICT_DEFER:
+            return cls.NEED_EVIDENCE
+        return None
 
 
 class CapsuleLevel(StrEnum):
