@@ -287,14 +287,10 @@ def _build_decision_draft(context: FakeContext, produced_by: ProducedBy) -> Deci
     """
     decision = _build_decision(context, produced_by)
     return DecisionDraft(
-        decision_id=decision.decision_id,
-        run_id=decision.run_id,
-        finding_id=decision.finding_id,
         verdict=decision.verdict.value,
         rebuttal_axis=decision.rebuttal_axis,
         rationale=decision.rationale,
         evidence_refs=decision.evidence_refs,
-        produced_by=decision.produced_by,
     )
 
 

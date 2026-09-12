@@ -4,7 +4,6 @@
 문자열을 그대로 옮긴 것이다.
 """
 
-import re
 from enum import StrEnum
 
 
@@ -117,6 +116,20 @@ class ArtifactKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+# `Verdict.from_text`가 읽는 **전체 문자열 단독 동의어**. 문장 속 부분 문자열이 아니라
+# verdict 필드 전체가 정확히 이것일 때만 매핑한다(위 docstring). 애매한 것(예: `"not safe"`)은
+# 넣지 않는다 — 미해석(`None`)으로 두고 `need_evidence`로 보내는 편이 오분류보다 안전하다.
+_VERDICT_AFFIRM = frozenset(
+    {"yes", "vulnerable", "unsafe", "upheld", "exploitable", "use-after-free", "use after free"}
+)
+_VERDICT_DENY = frozenset(
+    {"no", "safe", "rebutted", "false positive", "benign", "not vulnerable", "rejected"}
+)
+_VERDICT_DEFER = frozenset(
+    {"need evidence", "unclear", "insufficient", "inconclusive", "unknown", "cannot determine"}
+)
+
+
 class Verdict(StrEnum):
     """Decision.verdict 열거형 (agent-contracts.md §3)."""
 
@@ -125,80 +138,35 @@ class Verdict(StrEnum):
     NEED_EVIDENCE = "need_evidence"
 
     @classmethod
-    def from_text(cls, text: str) -> "Verdict":
-        """자유 텍스트 verdict를 표준 Verdict로 읽는다.
+    def from_text(cls, text: str) -> "Verdict | None":
+        """자유 verdict를 표준 Verdict로 읽는다. **못 읽으면 `None`**(추측하지 않는다).
 
         **왜 자유 텍스트인가.** verdict를 스키마에 `enum`으로 강제하면 grammar 마스크가
-        모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): 같은
-        케이스·프롬프트·서버에서 `enum` 강제는 verdict 2/5, `enum` 제거(자유 문자열)는
-        **5/5**였고, rationale은 두 경우 다 맞았다. 그래서 Critic 요청은 verdict를 자유
-        문자열로 받고 여기서 표준값에 매핑한다. `DecisionDraft`(요청·파싱)와 짝이다.
+        모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제
+        verdict 2/5, `enum` 제거(자유 문자열) **5/5**, rationale은 둘 다 정답. 그래서 요청은
+        verdict를 자유 문자열로 받고(`DecisionDraft`) 여기서 표준값에 매핑한다.
 
-        **판정 순서가 뜻을 정한다.** 부정·불확실을 긍정보다 먼저 본다 — *"not vulnerable"*은
-        `vulnerab`을 담지만 REBUT다. 정확한 표준값(`uphold`/`rebut`/`need_evidence`)은
-        exact로 먼저 잡아 enum 어휘를 쓰는 모델(devstral 등)에서 매핑이 항등이 되게 한다.
+        **부분 문자열로 의미를 추측하지 않는다.** *"unsafe"*가 `safe`를 담는다고 REBUT으로,
+        *"uphold: no guard…"*가 `no`를 담는다고 REBUT으로 보내면 **근거 있는 진짜 취약을
+        기각한다.** 그래서 여기서 읽는 것은 **① 표준값과 정확히 같거나 그 접두어**(`"rebut - …"`
+        → REBUT, `"uphold: …"` → UPHOLD), **② 전체 문자열이 짧고 명백한 단독 동의어**뿐이다.
+        문장형 자유 서술은 `None`으로 둔다.
 
-        **못 읽으면 `UPHOLD`다.** agent-contracts.md §2.3 — *"근거 없는 반박은 uphold로
-        처리한다"*. 읽히지 않는 verdict는 유효한 반박이 아니므로 발견을 기각하지 않는다.
-        매핑이 항등이 아니었는지는 호출자가 원문(`DecisionDraft.verdict`)과 대조해 남긴다.
+        **`None`은 지지가 아니다.** 호출자(`DecisionDraft.to_decision`)가 미해석을
+        `need_evidence`(보류)로 보내고 원문을 trace에 남긴다 — `uphold`로 소비하지 않는다
+        (그렇지 않으면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
         """
         t = text.strip().lower()
         for verdict in cls:
-            if t == verdict.value:
+            if t == verdict.value or t.startswith(verdict.value):
                 return verdict
-        if any(
-            marker in t
-            for marker in (
-                "need_evidence",
-                "need evidence",
-                "need more",
-                "not enough",
-                "insufficient",
-                "unclear",
-                "inconclusive",
-                "undetermined",
-                "cannot determine",
-                "can't determine",
-                "cannot tell",
-            )
-        ):
-            return cls.NEED_EVIDENCE
-        if any(
-            marker in t
-            for marker in (
-                "rebut",
-                "false positive",
-                "false-positive",
-                "not vulnerab",
-                "no vulnerab",
-                "not exploitable",
-                "not a real",
-                "not an issue",
-                "no issue",
-                "not use-after-free",
-                "no use-after-free",
-                "cannot be exploited",
-                "safe",
-                "benign",
-                "reject",
-            )
-        ) or re.search(r"\bno\b", t):
-            return cls.REBUT
-        if any(
-            marker in t
-            for marker in (
-                "uphold",
-                "vulnerab",
-                "use-after-free",
-                "use after free",
-                "exploitable",
-                "confirmed",
-                "genuine",
-                "true positive",
-            )
-        ) or re.search(r"\byes\b", t):
+        if t in _VERDICT_AFFIRM:
             return cls.UPHOLD
-        return cls.UPHOLD
+        if t in _VERDICT_DENY:
+            return cls.REBUT
+        if t in _VERDICT_DEFER:
+            return cls.NEED_EVIDENCE
+        return None
 
 
 class CapsuleLevel(StrEnum):

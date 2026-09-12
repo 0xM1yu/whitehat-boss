@@ -46,41 +46,50 @@ class Decision(HarnessModel):
 
 
 class DecisionDraft(HarnessModel):
-    """Critic 구조화 출력 **파싱용** — `verdict`를 자유 문자열로 받는다.
+    """Critic 구조화 출력 **파싱용** — 모델이 정하는 필드만 담는다.
 
     `Decision.verdict`를 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는
-    추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측 2026-09-12: enum 강제 verdict 2/5,
-    enum 제거 5/5, rationale은 둘 다 정답). 그래서 Critic 요청은 이 스키마로 보내
-    `verdict`를 자유 문자열로 받고, `to_decision()`이 `Verdict.from_text`로 표준값에
-    매핑해 `Decision`을 만든다. `Decision`(다운스트림 계약)은 그대로 둔다.
+    추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측 2026-09-12: enum 강제 2/5, enum 제거
+    5/5). 그래서 Critic 요청은 이 스키마로 보내 `verdict`를 자유 문자열로 받고,
+    `to_decision()`이 `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.
 
-    나머지 필드는 `Decision`과 같아 매핑이 verdict 하나만 건드린다.
+    **ID·`produced_by`는 여기 없다 — 하네스가 주입한다.** 모델에 provenance를 맡기면
+    오염된다(실측: `produced_by.model`이 `"ChatGPT"` 등으로 나온다). `decision_id`·`run_id`·
+    `finding_id`·`produced_by`는 `RunContext`와 실제 호출 모델에서 결정적으로 넣는다.
     """
 
-    decision_id: Identifier
-    run_id: Identifier
-    finding_id: Identifier
     verdict: NonEmptyStr = Field(
         description="Your verdict. Prefer exactly one of: uphold, rebut, need_evidence."
     )
     rebuttal_axis: list[NonEmptyStr] = Field(default_factory=list)
     rationale: NonEmptyStr
     evidence_refs: list[Identifier] = Field(default_factory=list)
-    produced_by: ProducedBy
 
-    def to_decision(self) -> Decision:
-        """자유 `verdict`를 표준값으로 매핑해 `Decision`을 만든다. verdict 외엔 그대로 옮긴다."""
+    def to_decision(
+        self,
+        *,
+        decision_id: Identifier,
+        run_id: Identifier,
+        finding_id: Identifier,
+        produced_by: ProducedBy,
+    ) -> Decision:
+        """자유 `verdict`를 표준값으로 매핑하고, 하네스가 주는 ID·provenance로 `Decision`을 만든다.
+
+        `verdict`를 못 읽으면(`from_text`가 `None`) **`need_evidence`(보류)** 다 —
+        미해석 verdict를 `uphold`(지지)로 소비하지 않는다. 그 사건은 호출자가 trace로 남긴다.
+        """
+        verdict = Verdict.from_text(self.verdict)
         return Decision(
-            decision_id=self.decision_id,
-            run_id=self.run_id,
-            finding_id=self.finding_id,
-            verdict=Verdict.from_text(self.verdict),
+            decision_id=decision_id,
+            run_id=run_id,
+            finding_id=finding_id,
+            verdict=verdict if verdict is not None else Verdict.NEED_EVIDENCE,
             rebuttal_axis=self.rebuttal_axis,
             rationale=self.rationale,
             evidence_refs=self.evidence_refs,
-            produced_by=self.produced_by,
+            produced_by=produced_by,
         )
 
-    def verdict_was_mapped(self) -> bool:
-        """모델이 표준 어휘를 안 써서 매핑이 항등이 아니었나. 호출자가 trace로 남긴다."""
-        return self.verdict.strip().lower() != Verdict.from_text(self.verdict).value
+    def verdict_interpreted(self) -> bool:
+        """자유 `verdict`가 표준값으로 읽혔나. `False`면 `to_decision`이 보류로 보낸다."""
+        return Verdict.from_text(self.verdict) is not None

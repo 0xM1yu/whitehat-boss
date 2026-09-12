@@ -229,9 +229,9 @@ class EventKind(StrEnum):
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
     CRITIC_NORMALIZED = "critic_normalized"
-    # Critic이 표준 verdict 어휘를 안 써서 `Verdict.from_text`가 매핑한 사건. 자유 verdict
-    # (enum grammar 회피, `DecisionDraft`)를 표준값으로 읽을 때 원문·매핑값을 남긴다.
-    CRITIC_VERDICT_MAPPED = "critic_verdict_mapped"
+    # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
+    # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
+    CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
 

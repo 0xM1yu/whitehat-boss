@@ -19,6 +19,7 @@ from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import build_facts, load_prompt
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
+from src.schemas.common import ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import Role
 from src.schemas.evidence import Evidence
@@ -113,8 +114,9 @@ def _ask_model(
     )
     # **verdict를 자유 문자열로 받는다** — `Decision`의 `verdict: Verdict`를 스키마에 `enum`으로
     # 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측
-    # 2026-09-12: enum 강제 2/5 vs enum 제거 5/5). `DecisionDraft`로 받아 `to_decision()`이
-    # `Verdict.from_text`로 표준값에 매핑한다. 매핑이 개입하면 원문·매핑값을 trace로 남긴다.
+    # 2026-09-12: enum 강제 2/5 vs enum 제거 5/5). `DecisionDraft`(모델이 정하는 필드만)로 받아
+    # `to_decision()`이 `Verdict.from_text`로 표준값에 매핑한다. verdict를 못 읽으면
+    # `need_evidence`(보류)이고 원문을 trace에 남긴다 — 미해석을 uphold로 소비하지 않는다.
     result = ctx.call_model(
         role=ROLE,
         prompt=prompt,
@@ -124,9 +126,22 @@ def _ask_model(
         subject_id=finding.finding_id,
     )
     draft = result.value
-    if draft.verdict_was_mapped():
-        ctx.record_critic_verdict_mapped(draft, stage=Stage.CRITIC)
-    return draft.to_decision()
+    if not draft.verdict_interpreted():
+        ctx.record_critic_verdict_unmapped(
+            decision_id=decision_id,
+            finding_id=finding.finding_id,
+            raw_verdict=draft.verdict,
+            stage=Stage.CRITIC,
+        )
+    # **provenance는 하네스가 넣는다** — 모델 출력의 `produced_by`는 오염돼 있다(실측:
+    # `"ChatGPT"` 등). 실제 호출 모델(`result.model`)·역할·프롬프트 버전으로 결정적으로 만든다.
+    produced_by = ProducedBy(role=ROLE, model=result.model, prompt_version=prompt.prompt_version)
+    return draft.to_decision(
+        decision_id=decision_id,
+        run_id=ctx.run_id,
+        finding_id=finding.finding_id,
+        produced_by=produced_by,
+    )
 
 
 def _describe_path(finding: Finding) -> str:

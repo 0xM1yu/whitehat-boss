@@ -40,7 +40,7 @@ from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.candidate import scout_member_of
 from src.schemas.common import Location, ProducedBy
-from src.schemas.decision import Decision, DecisionDraft
+from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
@@ -487,20 +487,23 @@ class RunContext:
             original_verdict=decision.verdict.value,
         )
 
-    def record_critic_verdict_mapped(self, draft: "DecisionDraft", *, stage: Stage) -> None:
-        """Critic이 표준 어휘를 안 써서 `Verdict.from_text`가 매핑한 것을 남긴다.
+    def record_critic_verdict_unmapped(
+        self, *, decision_id: str, finding_id: str, raw_verdict: str, stage: Stage
+    ) -> None:
+        """Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 것을 남긴다.
 
-        자유 verdict(enum grammar 회피)를 쓰면 매핑이 판정에 개입하므로, 원문과 매핑값을
-        남겨 잘못된 매핑을 사후에 감사할 수 있게 한다(§0 — 판정을 만드는 변환은 기록한다).
+        자유 verdict(enum grammar 회피)가 표준 어휘도 명백한 동의어도 아니면 매핑이
+        `None`이고 `to_decision`이 `need_evidence`로 보낸다. 원문을 남겨 그 판정을 사후에
+        감사할 수 있게 한다(§0 — 판정을 만드는 변환은 기록한다).
         """
         self.trace.emit(
-            EventKind.CRITIC_VERDICT_MAPPED,
+            EventKind.CRITIC_VERDICT_UNMAPPED,
             stage=stage,
             subject_kind="decision",
-            subject_id=draft.decision_id,
-            finding_id=draft.finding_id,
-            raw_verdict=draft.verdict,
-            mapped_verdict=Verdict.from_text(draft.verdict).value,
+            subject_id=decision_id,
+            finding_id=finding_id,
+            raw_verdict=raw_verdict,
+            mapped_verdict=Verdict.NEED_EVIDENCE.value,
         )
 
     def record_cache(self, key: str, hit: bool, *, cache: str = "capsule") -> None:

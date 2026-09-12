@@ -285,43 +285,62 @@ def test_promoted_state_requires_path() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        # 표준 어휘는 항등이다 (enum 어휘를 쓰는 모델 — devstral 등).
+        # 표준 어휘는 항등 (enum 어휘를 쓰는 모델 — devstral 등).
         ("uphold", Verdict.UPHOLD),
         ("rebut", Verdict.REBUT),
         ("need_evidence", Verdict.NEED_EVIDENCE),
         ("  Uphold  ", Verdict.UPHOLD),
-        # 긍정 — 자유 문자열(gpt-oss enum-제거 프로브가 실제로 낸 것 포함).
+        # 표준값 접두어 — 뒤에 사유가 붙어도 앞이 표준값이면 읽는다.
+        ("uphold: no guard prevents the use-after-free", Verdict.UPHOLD),
+        ("rebut - the path is guarded", Verdict.REBUT),
+        ("rebutted", Verdict.REBUT),
+        # 짧은 명백한 단독 동의어 (전체 문자열).
         ("Yes", Verdict.UPHOLD),
-        ("yes", Verdict.UPHOLD),
-        ("use-after-free", Verdict.UPHOLD),
-        ("This is a confirmed use after free.", Verdict.UPHOLD),
         ("vulnerable", Verdict.UPHOLD),
-        ("exploitable heap overflow", Verdict.UPHOLD),
-        ("true positive", Verdict.UPHOLD),
-        # 부정 — 긍정어를 담아도 부정이 이긴다 (판정 순서).
+        ("unsafe", Verdict.UPHOLD),  # ⚠ 부분문자열 `safe`에 끌려 REBUT이 되면 안 된다
         ("no", Verdict.REBUT),
+        ("safe", Verdict.REBUT),
         ("not vulnerable", Verdict.REBUT),
-        ("this is a false positive", Verdict.REBUT),
-        ("the code is safe", Verdict.REBUT),
-        ("benign, no issue", Verdict.REBUT),
-        ("cannot be exploited", Verdict.REBUT),
-        # 불확실 — 부정어("no")를 담아도 불확실이 먼저다.
-        ("need more evidence", Verdict.NEED_EVIDENCE),
-        ("not enough evidence to decide", Verdict.NEED_EVIDENCE),
         ("unclear", Verdict.NEED_EVIDENCE),
-        ("insufficient information", Verdict.NEED_EVIDENCE),
-        ("inconclusive", Verdict.NEED_EVIDENCE),
-        # 못 읽으면 UPHOLD — 읽히지 않는 verdict는 발견을 기각하지 않는다 (agent-contracts §2.3).
-        ("asdf qwer", Verdict.UPHOLD),
+        # 미해석 — 문장형 자유 서술은 추측하지 않고 None (호출자가 need_evidence로 보낸다).
+        # 이 넷은 예전 부분문자열 매퍼가 **REBUT으로 오분류**해 진짜 취약을 기각하던 것들이다.
+        ("not safe", None),
+        ("not a false positive", None),
+        ("this is a genuine use-after-free vulnerability", None),
+        ("requires additional evidence to confirm", None),
+        ("asdf qwer", None),
     ],
 )
-def test_verdict_from_text_maps_free_verdicts(text: str, expected: Verdict) -> None:
-    """자유 verdict를 표준값으로 읽는다 (enum grammar 회피 — gpt-oss 실측 2026-09-12).
+def test_verdict_from_text_reads_only_explicit_verdicts(
+    text: str, expected: "Verdict | None"
+) -> None:
+    """표준값·그 접두어·짧은 단독 동의어만 읽고, 자유 서술은 `None`으로 둔다.
 
-    부정·불확실을 긍정보다 먼저 봐서 *"not vulnerable"*(부정)이 `vulnerab`(긍정어)에
-    끌려가지 않는다. 못 읽으면 `UPHOLD`(§2.3 — 근거 없는 반박은 uphold).
+    부분 문자열로 의미를 추측하지 않는다 — *"unsafe"*(전체)는 UPHOLD지만 *"not safe"*·
+    *"not a false positive"*는 오분류 위험이라 `None`이고, 호출자가 `need_evidence`로 보낸다.
+    미해석을 `uphold`(지지)로 소비하지 않는 것이 요점이다(진짜 취약 기각·거짓 validated 방지).
     """
     assert Verdict.from_text(text) is expected
+
+
+def test_decision_draft_maps_unreadable_verdict_to_need_evidence() -> None:
+    """읽히지 않는 verdict는 `need_evidence`(보류)이지 `uphold`(지지)가 아니다.
+
+    자유 서술 verdict가 `uphold`로 소비되면 경로·근거 있는 Finding이 validated로 새어
+    나간다(#182 리뷰 P1). `to_decision`이 그것을 막는다.
+    """
+    from src.schemas.common import ProducedBy
+    from src.schemas.decision import DecisionDraft
+
+    draft = DecisionDraft(verdict="I cannot rule out a use-after-free here", rationale="…")
+    produced_by = ProducedBy(role=Role.CRITIC, model="gpt-oss-20b", prompt_version="v1")
+    decision = draft.to_decision(
+        decision_id="dec_0001", run_id="run_20260901_0001", finding_id="find_0001",
+        produced_by=produced_by,
+    )
+    assert decision.verdict is Verdict.NEED_EVIDENCE
+    assert decision.produced_by.model == "gpt-oss-20b"  # 하네스 주입, 모델 출력 아님
+    assert not draft.verdict_interpreted()
 
 
 def test_candidate_state_rejects_finding_only_values() -> None:
