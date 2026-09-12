@@ -117,7 +117,9 @@ def _ask_model(
     )
     # **verdict를 자유 문자열로 받는다** — `Decision`의 `verdict: Verdict`를 스키마에 `enum`으로
     # 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측
-    # 2026-09-12: enum 강제 2/5 vs enum 제거 5/5). `DecisionDraft`(모델이 정하는 필드만)로 받아
+    # 2026-09-12: enum 강제 2/5 vs enum 제거 5/5 — **원천: PR #182 본문, 원문 미커밋**.
+    # `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md` §5).
+    # `DecisionDraft`(모델이 정하는 필드만)로 받아
     # `to_decision()`이 `Verdict.from_text`로 표준값에 매핑한다. verdict를 못 읽으면
     # `need_evidence`(보류)이고 원문을 trace에 남긴다 — 미해석을 uphold로 소비하지 않는다.
     result = ctx.call_model(

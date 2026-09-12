@@ -125,7 +125,6 @@ class ArtifactKind(StrEnum):
 _VERDICT_DECOR = "*\"'`:,.;!?()[]{}<>-_=/|~#%+“”‘’—–•·…0123456789"
 
 
-
 def _verdict_words(text: str) -> list[str]:
     """verdict 문자열을 **장식을 뗀 소문자 단어 목록**으로 만든다.
 
@@ -167,7 +166,10 @@ class Verdict(StrEnum):
 
         **왜 자유 텍스트인가.** verdict를 스키마에 `enum`으로 강제하면 grammar 마스크가
         모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제
-        verdict 2/5, `enum` 제거(자유 문자열) **5/5**, rationale은 둘 다 정답. 그래서 요청은
+        verdict 2/5, `enum` 제거(자유 문자열) **5/5**, rationale은 둘 다 정답.
+        ⚠ **원천: PR #182 본문 (원문 미커밋).** 그 run의 JSONL·스크립트가 저장소에 없다 —
+        같은 날 커밋된 `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md`
+        는 **다른 실험**이고(`enum` 강제 팔을 안 돌렸다) §5가 그 사실의 자리다. 그래서 요청은
         verdict를 자유 문자열로 받고(`DecisionDraft`) 여기서 표준값에 매핑한다.
 
         **부분 문자열로 의미를 추측하지 않는다.** *"unsafe"*가 `safe`를 담는다고 REBUT으로,

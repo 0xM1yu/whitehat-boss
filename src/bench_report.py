@@ -182,7 +182,11 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
     2. **측정값이 왜곡되지 않는다.** `tok_s`는 `produced / elapsed`라 상한은 표본 길이를
        바꿀 뿐 속도를 바꾸지 않는다. 그리고 8/26 실측이 후보당 output 167토큰이라
        `thresholds.output_max`(2026-08-28부터 4,096)는 정상 경로에서 닿지 않는다 — 실제로
-       걸릴 일이 없다. **숫자를 여기 박지 않는 이유**: 상한이 8,192에서 4,096으로 움직였을 때
+       걸릴 일이 없다. **Critic 자리에서 같은 방향의 값이 하나 더 있다**:
+       `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md`가
+       `DecisionDraft`에서 `finish_reason=length` 0/18 · 최장 2,863토큰을 잰다. ⚠ 다른
+       모델·다른 스키마라 위 근거를 **교체하지 않고 더한다**.
+       **숫자를 여기 박지 않는 이유**: 상한이 8,192에서 4,096으로 움직였을 때
        이 문단이 낡은 채로 남았다.
     3. 걸리는 경우가 곧 재야 할 이상이다. 2026-08-27 ATOM에서 30B가 폭주해 클라이언트
        타임아웃이 난 상황을 bench가 상한 없이 만나면 체크리스트가 "측정 못 함"으로 끝난다.

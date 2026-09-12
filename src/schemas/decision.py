@@ -50,7 +50,10 @@ class DecisionDraft(HarnessModel):
 
     `Decision.verdict`를 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는
     추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측 2026-09-12: enum 강제 2/5, enum 제거
-    5/5). 그래서 Critic 요청은 이 스키마로 보내 `verdict`를 자유 문자열로 받고,
+    5/5 — **원천: PR #182 본문, 원문 미커밋**. 같은 날 커밋된
+    `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md`는 **다른
+    실험**이고 §5가 그 사실의 자리다).
+    그래서 Critic 요청은 이 스키마로 보내 `verdict`를 자유 문자열로 받고,
     `to_decision()`이 `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.
 
     **ID·`produced_by`는 여기 없다 — 하네스가 주입한다.** 모델에 provenance를 맡기면

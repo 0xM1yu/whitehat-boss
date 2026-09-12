@@ -295,7 +295,8 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
     스키마는 grammar가 강제하는 문법이라, 둘이 어긋나면 **모델이 시킨 대로 쓸 수 없는
     필드를 시키는** 상태가 된다. `HarnessModel`이 `extra="forbid"`라 그 필드는
     `additionalProperties: false`로 마스크되고, 마스크가 추론을 덮는 것이 이 PR이 고치는
-    바로 그 실패다(gpt-oss-20b 실측 2026-09-12).
+    바로 그 실패다(gpt-oss-20b 실측 2026-09-12 — **원천: PR #182 본문, 원문 미커밋**.
+    `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md` §5).
 
     **사고 —** `nodes/critic.py`가 `schema=DecisionDraft`로 바뀐 뒤에도 `prompts/critic/v1`
     규칙 4가 *"`ids.decision_id`를 그대로 쓴다"*였고 출력표에 `decision_id`·`run_id`·
