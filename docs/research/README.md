@@ -31,6 +31,7 @@
 | [2026-09-08-scout-reasoning.md](2026-09-08-scout-reasoning.md) | 발표안의 연역·귀납·귀추 배정에 근거가 있나 | **없다 — 인용이 아니라 보간이다.** 세 모델을 함께 잰 논문이 없고, 있는 데이터는 반대로 간다. 그리고 **추론 유형 구분 자체가 벤치마크 포맷의 산물**이라는 반증이 있다 |
 | [2026-09-08-retrieval.md](2026-09-08-retrieval.md) | 리랭커를 키우면 되나 | **4B까지만.** 벤더 자기 표에서 **0.6B는 코드에서 순손실**이고 4B→8B는 +0.02다. 다만 **지배적 손실은 크기가 아니라 질의 모양**(식별자 대 자연어 4.2배)이다 |
 | [2026-09-08-critic-quantization.md](2026-09-08-critic-quantization.md) | Critic을 키우면 무엇이 좋아지나 | **크기 +3.71점, reasoning effort +11~13점** — **3배 큰 손잡이가 20B에 이미 붙어 있다.** 그리고 후보 목록 안에서 **TNR 17.31짜리 고장난 judge**가 실측됐다 |
+| [2026-09-12-critic-model-selection.md](2026-09-12-critic-model-selection.md) | gpt-oss 밖에서 다음 Critic을 무엇으로 재나 | **단독 고성능은 Nemotron 3 Super, 현 Qwen과 상주할 다음 smoke는 Nemotron 3.5 Lightning, 기준선은 Devstral Small 2.** 공통 C/C++ claim-verification 점수가 없으므로 profile 변경 전 직접 3×3→CVE-pair 평가가 필요하다 |
 | [2026-09-08-roster.md](2026-09-08-roster.md) | **그래서 조합은** | 위 다섯의 종합. 단계별 로스터 하나와 **Auditor 자리만 A/B** — 문헌이 그 자리에서 정면으로 갈린다 |
 
 > **2026-09-08의 다섯은 09-04 셋의 후속이다.** 팀이 *"30B MoE보다 큰 모델을 올려도
