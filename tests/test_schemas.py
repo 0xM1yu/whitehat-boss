@@ -282,6 +282,126 @@ def test_promoted_state_requires_path() -> None:
     assert _finding(state=FindingState.VALIDATED, repro_spec=spec).state is FindingState.VALIDATED
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 표준 어휘는 항등 (enum 어휘를 쓰는 모델 — devstral 등).
+        ("uphold", Verdict.UPHOLD),
+        ("rebut", Verdict.REBUT),
+        ("need_evidence", Verdict.NEED_EVIDENCE),
+        ("  Uphold  ", Verdict.UPHOLD),
+        # 맨 앞 단어가 표준값이면 뒤에 사유가 붙어도 읽는다.
+        ("uphold: no guard prevents the use-after-free", Verdict.UPHOLD),
+        ("rebut - the path is guarded", Verdict.REBUT),
+        ("rebutted", Verdict.REBUT),
+        # 짧은 명백한 단독 동의어 (전체 문자열).
+        ("Yes", Verdict.UPHOLD),
+        ("vulnerable", Verdict.UPHOLD),
+        ("unsafe", Verdict.UPHOLD),  # ⚠ 부분문자열 `safe`에 끌려 REBUT이 되면 안 된다
+        ("no", Verdict.REBUT),
+        ("safe", Verdict.REBUT),
+        ("not vulnerable", Verdict.REBUT),
+        ("unclear", Verdict.NEED_EVIDENCE),
+        # 장식·라벨이 붙은 실제 LLM 출력 모양. 표준값이 **단어 하나로** 서 있으면 읽는다.
+        ("**uphold**", Verdict.UPHOLD),
+        ('"uphold"', Verdict.UPHOLD),
+        ("verdict: uphold", Verdict.UPHOLD),
+        ("`need_evidence`", Verdict.NEED_EVIDENCE),
+        # ⚠ 단어 경계 없는 접두어 매칭이 **거부를 지지로** 읽던 넷 (#182 리뷰 H1 실측).
+        # `startswith("uphold")`만 보면 아래 셋이 전부 UPHOLD였고, 마지막 것은 토큰 순서로만
+        # REBUT이 됐다 — 같은 문장이 어순으로 판정이 갈리면 그것은 판정이 아니다.
+        ("upholding is not warranted, this is a false positive", None),
+        ("uphold would be wrong here; the guard holds, so I rebut", None),
+        ("uphold or rebut", None),
+        ("rebut or uphold", None),
+        # 부정문 안의 표준값은 읽지 않는다 — 표준값이 **앞에 서야** 그 문장의 판정이다.
+        ("I would not uphold this claim", None),
+        # 미해석 — 문장형 자유 서술은 추측하지 않고 None (호출자가 need_evidence로 보낸다).
+        # 이 넷은 예전 부분문자열 매퍼가 **REBUT으로 오분류**해 진짜 취약을 기각하던 것들이다.
+        ("not safe", None),
+        ("not a false positive", None),
+        ("this is a genuine use-after-free vulnerability", None),
+        ("requires additional evidence to confirm", None),
+        ("asdf qwer", None),
+        # ⚠ **동의어 층이 표준값 층과 같은 정규화를 거친다** (#182 재리뷰 H-A 실측).
+        # 장식 제거는 표준값 셋에만 걸려 있었고 동의어는 **raw 문자열**을 봤다 — 그래서
+        # `Yes`는 UPHOLD인데 `**Yes**`·`Yes.`·`"Yes"`가 전부 `None`이었다. 방향이 위 H1과
+        # 반대다: `None` → `need_evidence` → 게이트 `p3`가 `upheld`를 요구 → **E3가 막혀
+        # 진짜 취약이 `validated`에 못 간다.** 마침표 하나로 갈리면 그것은 판정이 아니다.
+        ("**Yes**", Verdict.UPHOLD),
+        ("Yes.", Verdict.UPHOLD),
+        ('"Yes"', Verdict.UPHOLD),
+        ("Yes!", Verdict.UPHOLD),
+        ("yes,", Verdict.UPHOLD),
+        ("unsafe.", Verdict.UPHOLD),
+        ("not vulnerable.", Verdict.REBUT),
+        ('"not vulnerable"', Verdict.REBUT),
+        ("(safe)", Verdict.REBUT),
+        ("`need evidence`", Verdict.NEED_EVIDENCE),
+        # 목록 기호·강조·번호 매김도 장식이다 (#182 재리뷰 L-4). 모델이 판정을 항목으로 낸다.
+        ("— uphold", Verdict.UPHOLD),
+        ("• uphold", Verdict.UPHOLD),
+        ("1. uphold", Verdict.UPHOLD),
+        ("“uphold”", Verdict.UPHOLD),
+        ("_uphold_", Verdict.UPHOLD),
+        # 라벨은 **두 겹**이고 구분자는 `:`만이 아니다 (#182 재리뷰 M-2). 한 겹·공백 뒤
+        # 콜론만 걷던 판에서는 `**verdict**: uphold`만 우연히 통과해 **마크다운 표기로
+        # 판정이 갈렸다.** 라벨 자리에 표준값이 없을 때만 걷는다 — `uphold: no guard…`는
+        # 그대로다(아래 M-1 항 참조).
+        ("final verdict: uphold", Verdict.UPHOLD),
+        ("verdict = uphold", Verdict.UPHOLD),
+        ("verdict:uphold", Verdict.UPHOLD),
+        ("**verdict**: uphold", Verdict.UPHOLD),
+        ("verdict: not vulnerable", Verdict.REBUT),
+        # ⚠ **CWE 이름은 verdict가 아니다** (#182 재리뷰 M-3). `use-after-free`를 UPHOLD로
+        # 읽으면 Scout이 겨냥하는 CWE 계열(415/416 · 119/125/787/190 · 78/22/134) 중
+        # **한 계열만 매핑돼 Critic 제거율이 대상 CWE에 따라 달라진다**(evaluation.md §2.3).
+        # 근거도 n=5 중 1건뿐이었다. 빼면 이 응답은 `need_evidence`(보류)다 — 안전한 방향.
+        ("use-after-free", None),
+        ("use after free", None),
+        ("`use-after-free`", None),
+        # 표준값 둘은 **머리 단어가 표준값이어도** 읽지 않는다 (#182 재리뷰 M-1 — 유지).
+        # 사람에겐 `rebut: …not an uphold case`가 안 모호하지만, 머리 단어를 택하는 규칙은
+        # `uphold or rebut`을 UPHOLD로 만들어 **H1이 없앤 어순 의존을 되살린다.** 틀릴 때
+        # `None`(→보류)은 안전한 방향이고 UPHOLD(→지지)는 아니다.
+        ("rebut: this is not an uphold case", None),
+    ],
+)
+def test_verdict_from_text_reads_only_explicit_verdicts(
+    text: str, expected: "Verdict | None"
+) -> None:
+    """**맨 앞 단어가 표준값일 때**와 짧은 단독 동의어만 읽고, 자유 서술은 `None`으로 둔다.
+
+    단어 경계가 요점이다 — `startswith(verdict.value)`만 보면 `upholding …false positive`가
+    UPHOLD가 되고 `uphold or rebut`·`rebut or uphold`가 어순으로만 갈린다(#182 리뷰 H1).
+
+    부분 문자열로 의미를 추측하지 않는다 — *"unsafe"*(전체)는 UPHOLD지만 *"not safe"*·
+    *"not a false positive"*는 오분류 위험이라 `None`이고, 호출자가 `need_evidence`로 보낸다.
+    미해석을 `uphold`(지지)로 소비하지 않는 것이 요점이다(진짜 취약 기각·거짓 validated 방지).
+    """
+    assert Verdict.from_text(text) is expected
+
+
+def test_decision_draft_maps_unreadable_verdict_to_need_evidence() -> None:
+    """읽히지 않는 verdict는 `need_evidence`(보류)이지 `uphold`(지지)가 아니다.
+
+    자유 서술 verdict가 `uphold`로 소비되면 경로·근거 있는 Finding이 validated로 새어
+    나간다(#182 리뷰 P1). `to_decision`이 그것을 막는다.
+    """
+    from src.schemas.common import ProducedBy
+    from src.schemas.decision import DecisionDraft
+
+    draft = DecisionDraft(verdict="I cannot rule out a use-after-free here", rationale="…")
+    produced_by = ProducedBy(role=Role.CRITIC, model="gpt-oss-20b", prompt_version="v1")
+    decision = draft.to_decision(
+        decision_id="dec_0001", run_id="run_20260901_0001", finding_id="find_0001",
+        produced_by=produced_by,
+    )
+    assert decision.verdict is Verdict.NEED_EVIDENCE
+    assert decision.produced_by.model == "gpt-oss-20b"  # 하네스 주입, 모델 출력 아님
+    assert not draft.verdict_interpreted()
+
+
 def test_candidate_state_rejects_finding_only_values() -> None:
     """상태 열거형은 하나지만 객체별로 허용 값이 다르다(enums.FindingState docstring)."""
     with pytest.raises(ValidationError):
