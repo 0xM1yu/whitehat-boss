@@ -181,8 +181,8 @@ CWE-415 0.852 · CWE-416 0.848 · CWE-190 0.792 · CWE-125 0.455.
 # 4. thinking 모드가 우리 출력 예산과 정면 충돌한다
 
 **CLAUDE.md §2.1대로 문서가 아니라 config를 열어 대조했다** — `config/budgets.yaml`의
-`output_max: 4096`이고 `src/adapters/factory.py`가 `max_tokens=config.thresholds.output_max`로
-실제로 싣는다.
+`output_max: 4096`이고 `src/adapters/factory.py`가 그 값을 `max_tokens`로 실제로 싣는다.
+⚠ **2026-09-12 갱신**: #185가 역할별 상한을 열어 그 줄이 `max_tokens=config.thresholds.output_max_for(role)`가 됐다. **선언한 역할이 없는 동안은 값이 같다** — 아래 논증은 그대로 서지만, critic에 값을 넣는 PR이 이 절을 다시 봐야 한다.
 
 QwQ-32B의 **측정된** 응답 길이(Round 1) `[제3자]`
 ([Think Twice](https://arxiv.org/html/2503.19855v1) Table 2) 대비 `[계산]`:

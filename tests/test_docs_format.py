@@ -386,11 +386,49 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     declared = [int(m.group(1)) for m in pattern.finditer(contract)]
     assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
-    actual = load_config("b1_single").thresholds.output_max
+    thresholds = load_config("b1_single").thresholds
+    # **값이 없어도 막을 수 있다.** 아래 비교는 전역값 하나와 대조하므로, 역할별 상한이
+    # 선언되는 날 critic에 8,192를 주고 문서에 4,096을 적어도 조용히 통과한다 — D42가
+    # 나온 드리프트가 한 겹 아래에서 재현된다. 그날 이 줄이 먼저 빨개져서 아래를 역할
+    # 짝으로 고치게 만든다. 위 ⚠ 문단이 그 고치는 방법이고, 이 줄이 그 강제다.
+    assert not thresholds.output_max_by_role, (
+        f"역할별 상한이 선언됐다({sorted(thresholds.output_max_by_role)}) — 아래 비교를 "
+        f"`thresholds.output_max_for(<그 예시 블록의 role>)`와의 짝 비교로 고쳐야 한다. "
+        f"⚠ 그렇게 고치면 다음으로 `test_the_contract_guard_goes_red_the_day_a_role_cap_"
+        f"is_declared`가 DID NOT RAISE로 죽는다 — 그 테스트는 **이 줄이 있다는 것**을 "
+        f"확인하는 테스트라 이 줄과 함께 지우는 것이 맞다. 가드가 고장 난 게 아니다."
+    )
+    actual = thresholds.output_max
     assert declared == [actual] * len(declared), (
         f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
         f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
     )
+
+
+def test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """역할값이 선언되는 순간 **위 검사가 실패해야 한다**.
+
+    위 docstring이 *"값을 처음 넣는 PR이 여기를 함께 고친다"*고 적어 뒀지만 docstring은
+    강제가 아니다. 실제로 `output_max_by_role: {critic: 8192}`를 넣고 문서를 4,096에 둬도
+    위 검사는 **통과한다** — D42가 나온 드리프트("계약 문서가 선언하고 하네스가 다른 값을
+    쓴다")가 한 겹 아래에서 그대로 재현된다.
+
+    **값 없이도 막을 수 있다.** 선언이 생기면 역할 짝으로 비교하도록 고치게 만드는 것이
+    이 테스트다. 그때 위 검사의 비교 대상은 전역값이 아니라 그 예시 블록의
+    `thresholds.output_max_for(<role>)`이고, 여기는 그 PR이 함께 지운다.
+    """
+    from src import config as config_module
+
+    loaded = config_module.load_config("b1_single")
+    declared = loaded.transition(
+        thresholds=loaded.thresholds.transition(output_max_by_role={"critic": 8192})
+    )
+    monkeypatch.setattr(config_module, "load_config", lambda *args, **kwargs: declared)
+
+    with pytest.raises(AssertionError, match="역할별"):
+        test_the_contract_example_output_max_matches_the_config()
 
 
 # --- 구축안(docs/build-plan.md) 전용 가드 -----------------------------------
@@ -1034,4 +1072,25 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
         "R8의 관문을 **하나**라고 적은 자리가 남아 있다 — R8은 닫히는 조건이 "
         "**셋**이고 서로를 대신하지 못한다. 「닫히는 조건 *n*」으로 고쳐라.\n"
         + "\n".join(offenders)
+    )
+def test_the_source_missing_note_goes_red_the_day_that_report_lands() -> None:
+    """`2,863`의 원천이 «아직 없다»고 적은 두 자리를, 그 보고서가 들어오는 날 빨갛게 만든다.
+
+    **왜 산문으로 두면 안 되나.** `config/budgets.yaml`과 `docs/agent-contracts.md`가
+    *"2,863의 원천은 아직 이 저장소에 없다"*를 적고, 각자 옆에 «머지되면 링크로 바꾼다»는
+    자기수리 메모를 들고 있다. **그 메모는 강제가 아니다** — 보고서를 넣고 돌려 보면
+    아무것도 안 깨진다. 그러면 두 문장이 조용히 거짓이 된 채로 남는다(CLAUDE.md §2.3).
+
+    같은 PR이 `test_the_contract_example_output_max_matches_the_config`에는 정확히 이런
+    트립와이어를 걸어 놓고 자기 문장에는 안 걸었다. 이 검사가 그 비대칭을 없앤다.
+
+    **이 검사가 빨개지면 고칠 곳은 셋이다** — 두 ⚠ 문단을 그 파일 링크로 바꾸고,
+    이 검사를 지운다. 가드가 고장 난 것이 아니라 **역할을 다한 것이다.**
+    """
+    report = REPO_ROOT / "docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md"
+    assert not report.exists(), (
+        f"{report.relative_to(REPO_ROOT).as_posix()} 가 저장소에 들어왔다 — "
+        "`config/budgets.yaml`과 `docs/agent-contracts.md`의 "
+        "«2,863의 원천은 아직 이 저장소에 없다» 두 문단을 그 파일 링크로 바꾸고, "
+        "이 검사를 함께 지워라. 이 검사는 그 순간 빨개지려고 있다."
     )
