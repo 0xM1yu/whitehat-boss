@@ -303,6 +303,37 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 ## 4. 프롬프트 관리 규약
 
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
+
+> ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
+>
+> **본문이 바뀌었는데 `version`이 안 바뀌었다.** 그래서 `prompt_version: "v1"`이 **서로 다른
+> 두 텍스트**를 가리킨다. 위 규칙 1도 [evaluation.md](evaluation.md) §2.3 규칙 4("프롬프트
+> 버전이 바뀌면 재측정한다")도 **버전 문자열이 바뀌는 것을 발화 조건으로 삼으므로 자동으로는
+> 안 걸린다.** 이 문단이 그 자리를 대신한다.
+>
+> **왜 범프하지 않았나.** `prompt_template_version`이 `ModelEntry`별이라 커밋된 9개 프로필 중
+> **7개에서 critic 엔트리가 scout·auditor와 공유된다** — `fake`(dev 5개 + `single_gpu_12g`)와
+> `qwen3-coder-30b-a3b`(`b1_single`). critic만 v3로 올리면 그 둘이 없는 `prompts/scout/v3`·
+> `prompts/auditor/v3`를 찾는다. 역할별 `prompt_version`([D67](open-questions/D/D67.md) ·
+> 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다. 되돌리지 않은 이유는
+> `prompts/critic/v1/meta.yaml` 머리 주석에 있다.
+>
+> **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
+> 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·
+> [2026-08-26](experiments/harness/2026-08-26-pipeline-zlib542-remeasure-atom.md)
+> `run_20260826_0001`, 각각 critic `model_call` 8건) **둘 다 프로필이 `single_gpu_12g`라
+> critic이 Fake다.** Fake는 프롬프트를 읽지 않으므로 **그 8건의 판정값은 이 텍스트의
+> 함수가 아니다** — 바뀐 것은 라벨의 모호성이지 그 run의 수치가 아니다.
+>
+> ⚠ **말할 수 있는 것은 거기까지다.** 두 run의 `prompt_versions.critic`·`prompt_sha256`은
+> 그대로 남아 있고, 그 라벨을 "그 날의 v1 본문"으로 되짚는 것은 이제 커밋 해시를 거쳐야 한다.
+>
+> **실서빙 critic이 `critic/v1`로 돈 커밋된 run은 확인되지 않았다.**
+> [2026-08-29 v2 스모크](experiments/harness/2026-08-29-prompt-v2-smoke-atom.md)의 v1 팔은
+> **critic 호출 0건**(Finding 6건이 전부 6단계에서 멈췄다)이고 v2 팔이 critic `v2` ×3이며,
+> [2026-09-04 실서빙 run](experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md)은
+> **7단계에서 죽었고 그 보고서 자신이 "비교표에 못 들어간다"고 적는다.** 확인 방법은
+> `git grep -n "prompt_version" -- docs/` + 각 보고서의 조건·프로필 절이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
