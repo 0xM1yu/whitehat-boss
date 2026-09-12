@@ -393,7 +393,7 @@ def test_bench_client_matches_the_factory(tmp_path: Path) -> None:
     deps = build_deps(config, run_id=RUN_ID, source_root=TARGET, artifacts_root=tmp_path)
 
     from_factory = deps.models.client_for("scout")
-    from_bench = bench_report._client(config, config.model_key_for("scout"))
+    from_bench = bench_report._client(config, config.model_key_for("scout"), role="scout")
 
     assert type(from_bench) is type(from_factory)
     assert vars(from_bench) == vars(from_factory)
@@ -413,8 +413,18 @@ def test_bench_client_matches_the_factory(tmp_path: Path) -> None:
         }
     )
     key = declared.model_key_for("scout")
-    assert bench_report._client(declared, key).reasoning_effort == "high", (
+    assert bench_report._client(declared, key, role="scout").reasoning_effort == "high", (
         "registry가 선언했는데 bench 클라이언트가 안 받았다 — bench가 잰 것이 운영 경로가 아니다"
+    )
+
+    # 역할별 `output_max`(D46 (c))도 **정확히 같은 자리**다. 저장소 config에 아직 선언이
+    # 없으므로 위 `vars()` 대조는 둘 다 전역값이라서 통과한다 — 어긋남이 값을 처음
+    # 넣는 날 드러난다. `reasoning_effort`가 그렇게 지나갔던 자리라 함께 막는다.
+    capped = config.transition(
+        thresholds=config.thresholds.transition(output_max_by_role={"scout": 8192})
+    )
+    assert bench_report._client(capped, key, role="scout").max_tokens == 8192, (
+        "config가 역할별 상한을 선언했는데 bench 클라이언트가 전역값을 실었다"
     )
 
 

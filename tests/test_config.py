@@ -640,10 +640,102 @@ def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> Non
 
     assert config.thresholds.flatten()["output_max"] == float(config.thresholds.output_max)
 
-    client = _model_client(config.profile.roles["scout"], config)
+    client = _model_client(config.profile.roles["scout"], config, role="scout")
     payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
 
     assert payload["max_tokens"] == config.thresholds.output_max
+
+
+# --- 역할별 출력 상한 (D46 (c)) ------------------------------------------------
+#
+# **자리만 연다. 값은 이 PR이 안 정한다.** 어느 역할에 얼마를 주는지는 실측으로 정할
+# 값이고(이 파일 모듈 docstring), 여기서 고정하는 것은 **선언하면 그 역할만 바뀌고
+# 선언 안 하면 한 톨도 안 바뀐다**는 불변식뿐이다.
+
+
+def test_a_role_without_a_declared_cap_is_untouched_by_the_new_slot() -> None:
+    """선언이 없으면 전역값 그대로다 — 그리고 **기록도 안 늘어난다**.
+
+    `ModelEntry.reasoning_effort`가 낸 전례다: 선언 안 한 역할은 요청에도 기록에도
+    키가 안 생긴다. `RunRecord.thresholds`에 `output_max_by_role.*`가 빈 채로 생기면
+    **기존 manifest와 새 manifest가 다른 모양**이 되는데, 그 차이가 뜻하는 것이 없다.
+    """
+    thresholds = load_config("b1_single").thresholds
+
+    assert all(
+        thresholds.output_max_for(role) == thresholds.output_max for role in PROMPTED_ROLES
+    ), "선언이 없는데 역할마다 다른 값이 나온다"
+    assert not [key for key in thresholds.flatten() if key.startswith("output_max_by_role")], (
+        "선언이 없는데 기록에 키가 생겼다 — 기존 manifest와 모양이 갈린다"
+    )
+
+
+def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Path) -> None:
+    """선언하면 **그 역할만** 바뀌고, 요청과 기록 양쪽에 같은 값으로 간다.
+
+    선례 `test_the_output_cap_reaches_the_run_record_and_the_gateway_together`가 전역값에
+    대해 거는 것과 같은 이유다 — 한쪽만 가면 최악이고, 기록이 있다는 이유로 아무도 다시
+    확인하지 않는다.
+
+    ⚠ **기제는 `reasoning_effort`와 다르다.** 저쪽은 문자열이라 `dict[str, float]`인
+    `thresholds`에 못 들어가 `RunRecord`에 **필드를 새로 냈다**. 이쪽은 int라 그 자리에
+    그대로 들어가므로 `flatten()`이 실어 주면 끝이다 — 새 필드를 내지 않는다.
+    """
+    _copy_config(
+        tmp_path,
+        # critic만 선언한다 — scout이 안 바뀌는 것까지 함께 고정해야 "전 역할에 같은
+        # 값이 실렸다"는 반대 방향 결함이 안 지나간다.
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        thresholds_patch={"output_max_by_role": {"critic": 8192}},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.thresholds.output_max_for("critic") == 8192
+    assert config.thresholds.output_max_for("scout") == config.thresholds.output_max
+
+    def sent(role: str) -> int:
+        client = _model_client(config.profile.roles[role], config, role=role)
+        return client._request_payload("prefix", "body", RunRecord)["max_tokens"]  # noqa: SLF001
+
+    assert sent("critic") == 8192, "선언했는데 요청에 안 실렸다"
+    assert sent("scout") == config.thresholds.output_max, "선언 안 한 역할이 함께 움직였다"
+
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config,
+        "run_20260912_0001",
+        datetime(2026, 9, 12, tzinfo=UTC),
+        [],
+        {},
+        {},
+    )
+    assert record.thresholds["output_max_by_role.critic"] == 8192.0, (
+        "요청에는 실리는데 기록에 안 남는다 — engineering-guide.md §5가 그 run을 비교표에서 뺀다"
+    )
+
+
+def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: Path) -> None:
+    """오타는 **서빙 때가 아니라 로드 때** 터져야 한다.
+
+    `ModelEntry.reasoning_effort`가 `Literal`로 닫힌 사유가 그대로 걸린다 — 자유 키면
+    `critick: 8192`가 로드를 통과하고 **조용히 무시된 채** 전역값으로 돈다. 그 run은
+    "역할별 상한을 줬다"고 기록되지만 실제로는 안 준 것이다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={"roles": {"scout": "qwen3-4b"}},
+        thresholds_patch={"output_max_by_role": {"critick": 8192}},
+    )
+
+    with pytest.raises(ValidationError, match="critick"):
+        load_config("dev_fake", config_dir=tmp_path)
 
 
 @pytest.mark.parametrize("level", list(CapsuleLevel))
@@ -706,13 +798,13 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     )
     assert config.model_for("auditor").reasoning_effort == "high"
 
-    declared = _model_client(config.profile.roles["auditor"], config)
+    declared = _model_client(config.profile.roles["auditor"], config, role="auditor")
     payload = declared._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert payload["reasoning_effort"] == "high", (
         "registry가 선언했는데 요청에 안 실렸다 — 기록만 참이고 서버는 기본값으로 돈다"
     )
 
-    silent = _model_client(config.profile.roles["critic"], config)
+    silent = _model_client(config.profile.roles["critic"], config, role="critic")
     quiet = silent._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert "reasoning_effort" not in quiet, (
         "선언 안 한 모델의 payload에 키가 생겼다 — 서버가 거절할 수 있고 키 집합이 흔들린다"
@@ -782,9 +874,8 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         "직렬화에서 사라지면 manifest를 읽는 쪽은 못 본다"
     )
 
-    payload = _model_client(config.profile.roles["auditor"], config)._request_payload(  # noqa: SLF001
-        "prefix", "body", RunRecord
-    )
+    auditor = _model_client(config.profile.roles["auditor"], config, role="auditor")
+    payload = auditor._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert payload["reasoning_effort"] == record.model_reasoning_effort["auditor"], (
         "기록과 요청이 갈렸다 — 기록이 있다는 이유로 아무도 다시 확인하지 않는다"
     )
@@ -793,15 +884,32 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
 # --- 헬퍼 ------------------------------------------------------------------
 
 
-def _copy_config(dest: Path, *, profile_patch: dict, model_patch: dict | None = None) -> None:
+def _copy_config(
+    dest: Path,
+    *,
+    profile_patch: dict,
+    model_patch: dict | None = None,
+    thresholds_patch: dict | None = None,
+) -> None:
     """저장소 config를 tmp_path로 복사하고 dev_fake 프로필만 덮어쓴다.
 
     `model_patch`(model key → 덮어쓸 필드)를 주면 registry 항목도 함께 바꾼다. 그때만
     models.yaml이 yaml 왕복을 거치므로 **주석이 사라진다** — 주석이 살아 있어야 하는
     검사는 원문 치환을 쓴다(`test_partially_measured_models_are_named_with_what_is_missing`).
+
+    `thresholds_patch`도 같은 규칙이다 — 주면 budgets.yaml이 왕복을 거친다. `output_max`
+    처럼 **저장소에는 아직 선언이 없는 값**을 세울 때 쓴다. 저장소 값을 바꿔 재는 검사는
+    "값이 실측으로 정해진다"는 이 파일 모듈 docstring의 전제를 깨므로 하지 않는다.
     """
-    budgets = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
-    (dest / "budgets.yaml").write_text(budgets, encoding="utf-8")
+    budgets_text = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
+    if thresholds_patch is None:
+        (dest / "budgets.yaml").write_text(budgets_text, encoding="utf-8")
+    else:
+        raw_budgets = yaml.safe_load(budgets_text)
+        raw_budgets["thresholds"].update(thresholds_patch)
+        (dest / "budgets.yaml").write_text(
+            yaml.safe_dump(raw_budgets, allow_unicode=True), encoding="utf-8"
+        )
     models_text = (CONFIG_DIR / "models.yaml").read_text("utf-8")
     if model_patch is None:
         (dest / "models.yaml").write_text(models_text, encoding="utf-8")

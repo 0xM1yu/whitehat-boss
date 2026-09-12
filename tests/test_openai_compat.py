@@ -9,6 +9,7 @@ HTTP를 띄우지 않고 `_post`만 갈아 끼운다. 여기서 재는 것은 �
 """
 
 import io
+import json
 import time
 import urllib.error
 import urllib.request
@@ -16,7 +17,7 @@ import urllib.request
 import pytest
 from pydantic import BaseModel
 
-from src.adapters.openai_compat import OpenAICompatModelClient
+from src.adapters.openai_compat import RETRY_ERROR_MAX_CHARS, OpenAICompatModelClient
 from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
     ModelGatewayError,
@@ -41,6 +42,16 @@ class Tiny(BaseModel):
     """최소 구조화 출력. `ok` 없는 응답은 `ValidationError`가 된다."""
 
     ok: bool
+
+
+class Many(BaseModel):
+    """원소마다 오류가 나는 스키마.
+
+    `Tiny`는 오류를 **하나**만 낸다. 재시도 본문이 커지는 두 번째 경로 — 응답 원문이
+    아니라 **오류 개수** — 는 그 스키마로는 만들 수가 없다.
+    """
+
+    items: list[Tiny]
 
 
 def _client(retries: int = 2, max_tokens: int = 8192) -> OpenAICompatModelClient:
@@ -187,6 +198,62 @@ def test_the_retry_does_not_echo_the_failed_response_into_the_prompt(
     assert _SENTINEL not in second
     # 덧붙은 것은 오류 메시지뿐이다. 원문이 실리면 escape되며 오히려 더 커진다.
     assert len(second) - len(first) < 1_000
+
+
+# 원소 500개가 전부 타입 위반인 응답. **원문은 14KB인데 오류 문자열이 116KB다** —
+# `include_input=False`가 막는 축(원문)과 직교하는 축이라 그 인자로는 안 줄어든다.
+_ERROR_STORM = json.dumps({"items": [{"ok": "nope"} for _ in range(500)]})
+
+# 오류 문자열 앞에 고정으로 붙는 꼬리표. 상한이 묶는 것은 오류 문자열이고 이 꼬리표는
+# 그 밖이라, 본문 증가분을 잴 때 함께 세야 한다.
+_ERROR_TAG = "\n\n[스키마 오류] "
+
+
+def test_the_retry_body_stays_bounded_when_the_error_count_explodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """재시도 본문이 커지는 축은 **둘**이고, PR #49는 그중 하나만 닫았다.
+
+    위 `test_the_retry_does_not_echo_the_failed_response_into_the_prompt`가 막는 것은
+    **응답 원문**이 실리는 축이다(`include_input=False`). 남은 축은 **오류 개수**다 —
+    `exc.errors()`는 리스트라 원소마다 한 항목이 붙고, 그 길이에 상한이 없었다.
+
+    2026-09-12 실측(pydantic 2.13.4): 원소 500개가 전부 타입 위반인 응답은 **원문
+    14,415자에 오류 문자열 116,367자**다. 원문의 8배이고, D47이 400을 맞은 그 크기다 —
+    `run_20260828_0002`에서 재시도 프롬프트를 게이트웨이 상한 밖으로 밀어낸 것이
+    25,223자였다. **상한 값을 어떻게 잡든 이 축이 열려 있으면 같은 일이 난다.**
+
+    실측된 절단 응답(`_RUNAWAY`)의 오류 문자열은 178자라 이 상한에 닿지 않는다 —
+    관측된 경로는 그대로 지나가고 상한은 폭주에만 걸린다.
+    """
+    payloads = _capture(monkeypatch, _ERROR_STORM)
+
+    with pytest.raises(SchemaParseError):
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Many)
+
+    first, second = (_user_content(p) for p in payloads)
+    assert len(second) - len(first) <= RETRY_ERROR_MAX_CHARS + len(_ERROR_TAG)
+
+
+def test_the_bounded_body_keeps_both_ends_and_says_what_it_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """자른 것과 원래 짧은 것을 섞지 않는다 — `truncate_detail`과 같은 규약이다.
+
+    **꼬리를 남기는 이유**: 오류 리스트의 머리만 보면 재시도하는 모델도, 나중에
+    `retry_bodies`를 읽는 사람도 "여기까지가 전부"로 읽는다. 표시가 있어야 버려진 것이
+    있다는 사실이 남는다.
+    """
+    payloads = _capture(monkeypatch, _ERROR_STORM)
+
+    with pytest.raises(SchemaParseError):
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Many)
+
+    second = _user_content(payloads[1])
+    assert "…(중략" in second
+    # 머리: 첫 오류의 위치가 살아 있다. 꼬리: 마지막 오류의 위치가 살아 있다.
+    assert "'items', 0, 'ok'" in second
+    assert "'items', 499, 'ok'" in second
 
 
 # --- 재시도 본문을 실어 올린다 (D49 · #80) -------------------------------------
