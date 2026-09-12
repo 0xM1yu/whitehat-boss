@@ -547,7 +547,17 @@ class Thresholds(HarnessModel):
         읽는 자리가 남으면 그 경로만 전역값으로 돌고, 실제로 쓰인 상한과
         `RunRecord.thresholds`에 적힌 값이 갈린다 — `output_max`가 선언만이고 강제가
         없던 시절(PR #36 이전)이 정확히 그 모양이었다.
+
+        **모르는 이름에 전역값을 주지 않는다.** `dict.get`의 기본값은 "선언 안 한 역할"과
+        "역할이 아닌 문자열"을 구분하지 않아, `"CRITIC"`·`"critick"`이 **선언한 상한을 무시한
+        채** 전역값으로 돌고 그 run은 "역할별 상한을 줬다"고 기록된다 — `output_max_by_role`의
+        오타를 로드 때 막는 것과 같은 결함을 읽는 쪽에 열어 두는 셈이다. 위 `_model_client`가
+        `role`에 기본값을 안 두는 사유(PR #185)가 여기 한 겹 안쪽에 그대로 걸린다.
         """
+        if role not in PROMPTED_ROLES:
+            raise KeyError(
+                f"{role!r}은 프롬프트 역할이 아니다. 있는 것: {sorted(PROMPTED_ROLES)}"
+            )
         return self.output_max_by_role.get(role, self.output_max)
 
     def flatten(self) -> dict[str, float]:

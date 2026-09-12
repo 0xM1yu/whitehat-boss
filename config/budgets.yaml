@@ -123,7 +123,16 @@ thresholds:
   # `DecisionDraft`로 18시행 돌린 실측의 `completion_tokens`가 **min 549 · median 1,051 ·
   # max 2,863**이다. **2,863은 성공한 출력이다** — `finish_reason=length` 0/18 · JSON 유효
   # 18/18이다. 그러므로 여유는 이 문단이 적은 **1.7배가 아니라 1.43배**(4,096 − 2,863 =
-  # 1,233)다. (그 원문은 Critic `DecisionDraft` 예산 보고서에 있고 별도 PR로 들어온다.)
+  # 1,233)다.
+  #
+  # ⚠ **2,863의 원천은 아직 이 저장소에 없다.** 그것을 실은
+  # `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md`가 PR #182와
+  # 함께 들어오고, 그전까지 이 수는 **`git grep`으로 이 주석과 `agent-contracts.md`
+  # 두 자리밖에 못 여는 상태다**. 뒤집히는 쪽인 2,424는 그렇지 않다 —
+  # `run_20260827_0002`의 auditor 호출 하나이고
+  # `docs/experiments/harness/2026-08-29-prompt-v2-smoke-atom.md` §"출력 상한"이 그 run ID를
+  # 들고 있다. **비대칭을 적어 두는 이유**: 이슈 #157이 정확히 이 결함 클래스다(실재하지
+  # 않는 출처를 근거로 인용한 자리). 보고서가 머지되면 이 문단을 그 파일 링크로 바꾼다.
   #
   # ⚠ **"상한에 닿았다"는 아직 아니다.** 위 18시행은 절단 0건이고, 프롬프트가 578토큰
   # (`expanded` 캡슐이 아니다) · 스키마도 `DecisionDraft`다. 이 주석이 말할 수 있는 것은

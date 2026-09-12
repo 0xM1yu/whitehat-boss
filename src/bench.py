@@ -505,7 +505,7 @@ def measure_memory(
     context_limit: int,
     *,
     server_limit: int | None = None,
-    output_max: int = 0,
+    output_max: int,
 ) -> dict[str, object]:
     """E. context별 KV cache 점유.
 
@@ -533,7 +533,11 @@ def measure_memory(
         # `skipped`로 간다(`_judge_context`가 그 둘을 가른다).
         #
         # `server_limit`이 `None`이면 이 분기가 통째로 없는 것과 같다 — 상한을 안 주는
-        # 서버에서 스윕을 좁히면 **잴 수 있는 것을 안 재게 된다**.
+        # 서버에서 스윕을 좁히면 **잴 수 있는 것을 안 재게 된다**. 그쪽은 "모른다"가 실제
+        # 상태라 기본값이 있고, `output_max`는 **부르는 쪽이 언제나 아는 값**이라 없다:
+        # 기본값 `0`이면 이 부등식이 `ctx > server_limit`으로 퇴화해, 2026-09-02 ATOM에서
+        # 400을 받은 조건(`ctx + 4,096 > 32,768`)이 다시 통과한다. `_model_client`가
+        # `role`에 기본값을 안 두는 사유와 같은 자리다(PR #185).
         if server_limit is not None and ctx + output_max > server_limit:
             by_context[str(ctx)] = {
                 "skipped": (

@@ -387,6 +387,14 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
     thresholds = load_config("b1_single").thresholds
+    # **값이 없어도 막을 수 있다.** 아래 비교는 전역값 하나와 대조하므로, 역할별 상한이
+    # 선언되는 날 critic에 8,192를 주고 문서에 4,096을 적어도 조용히 통과한다 — D42가
+    # 나온 드리프트가 한 겹 아래에서 재현된다. 그날 이 줄이 먼저 빨개져서 아래를 역할
+    # 짝으로 고치게 만든다. 위 ⚠ 문단이 그 고치는 방법이고, 이 줄이 그 강제다.
+    assert not thresholds.output_max_by_role, (
+        f"역할별 상한이 선언됐다({sorted(thresholds.output_max_by_role)}) — 아래 비교를 "
+        f"`thresholds.output_max_for(<그 예시 블록의 role>)`와의 짝 비교로 고쳐야 한다"
+    )
     actual = thresholds.output_max
     assert declared == [actual] * len(declared), (
         f"docs/agent-contracts.md의 output_max 선언 {declared}이 "

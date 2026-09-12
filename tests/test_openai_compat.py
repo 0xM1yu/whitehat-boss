@@ -213,10 +213,13 @@ _ERROR_STORM = json.dumps({"items": [{"ok": "nope"} for _ in range(500)]})
 # (`openai_compat.py`의 상수 주석·`complete()` 주석·이 파일)에 서로 베껴 적혀 있었는데
 # **셋 다 재현 불가능한 값**이었다 — `git grep`으로 열 수 있는 스크립트도 run ID도 없었다.
 # 여기 두면 `python -m pytest tests/test_openai_compat.py -k error_storm`이 곧 재현이다.
-_STORM_RAW_CHARS = 14_415
-_STORM_ERROR_CHARS = 116_367
+_STORM_RAW_CHARS = 8_011
+# 코드가 실제로 쓰는 플래그 조합 `(include_url=False, include_input=False)`의 값이다.
+# 나머지 셋은 70,390 / 90,890 / 99,390 — **어느 조합으로도 이전에 적혀 있던 116,367이
+# 안 나온다.** 그 수는 출처가 없었다.
+_STORM_ERROR_CHARS = 61_890
 _RUNAWAY_ERROR_CHARS = 178
-_SINGLE_VIOLATION_ERROR_CHARS = 134
+_SINGLE_VIOLATION_ERROR_CHARS = 122
 
 
 def _error_text(schema: type[BaseModel], raw: str) -> str:
@@ -282,10 +285,10 @@ def test_the_retry_body_stays_bounded_when_the_error_count_explodes(
     **응답 원문**이 실리는 축이다(`include_input=False`). 남은 축은 **오류 개수**다 —
     `exc.errors()`는 리스트라 원소마다 한 항목이 붙고, 그 길이에 상한이 없었다.
 
-    2026-09-12 실측(pydantic 2.13.4): 원소 500개가 전부 타입 위반인 응답은 **원문
-    14,415자에 오류 문자열 116,367자**다. 원문의 8배이고, D47이 400을 맞은 그 크기다 —
-    `run_20260828_0002`에서 재시도 프롬프트를 게이트웨이 상한 밖으로 밀어낸 것이
-    25,223자였다. **상한 값을 어떻게 잡든 이 축이 열려 있으면 같은 일이 난다.**
+    크기는 `test_the_error_storm_is_the_size_the_bound_is_justified_by`가 잰다 — 요약하면
+    원문 8,011자에 오류 문자열 61,890자로 **원문의 7.7배**이고, D47이 400을 맞은 크기
+    (`run_20260828_0002`가 게이트웨이 상한 밖으로 밀어낸 25,223자)의 **2.5배**다.
+    **상한 값을 어떻게 잡든 이 축이 열려 있으면 같은 일이 난다.**
 
     실측된 절단 응답(`_RUNAWAY`)의 오류 문자열은 178자라 이 상한에 닿지 않는다 —
     관측된 경로는 그대로 지나가고 상한은 폭주에만 걸린다.

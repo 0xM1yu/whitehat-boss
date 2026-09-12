@@ -969,7 +969,15 @@ def test_context_sweep_keeps_measuring_when_the_server_limit_is_unknown(
     _stub_sweep(monkeypatch, measured)
 
     bench.measure_memory(
-        None, Role.SCOUT, None, None, (8192, 32768), "http://x", 262144, server_limit=None
+        None,
+        Role.SCOUT,
+        None,
+        None,
+        (8192, 32768),
+        "http://x",
+        262144,
+        server_limit=None,
+        output_max=4096,
     )
 
     assert measured == [8192, 32768]
@@ -1006,7 +1014,15 @@ def test_context_sweep_still_honours_the_registry_limit(
     _stub_sweep(monkeypatch, measured)
 
     result = bench.measure_memory(
-        None, Role.SCOUT, None, None, (8192, 32768), "http://x", 16384, server_limit=131072
+        None,
+        Role.SCOUT,
+        None,
+        None,
+        (8192, 32768),
+        "http://x",
+        16384,
+        server_limit=131072,
+        output_max=4096,
     )
 
     assert measured == [8192]

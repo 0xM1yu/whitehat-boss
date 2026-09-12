@@ -176,6 +176,11 @@ def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompat
     **`max_tokens`도 그 규칙에 포함된다.** "처리량 측정이니 출력 길이를 따로 두는 게
     맞지 않나"를 검토했고, 답은 아니다. 이유 셋이다:
 
+    ⚠ **아래 셋이 말하는 "상한"은 `thresholds.output_max`가 아니다.** 이 함수가 싣는 것은
+    `output_max_for(role)`이고(#79의 (c)), 어느 역할이 값을 선언하면 그 역할의 상한은
+    전역값과 갈린다. 2의 "닿지 않는다"도 **그 역할의 값으로** 다시 따져야 한다 — 전역값이
+    안전하다는 것이 역할값이 안전하다는 뜻이 아니다.
+
     1. 이 모듈 docstring의 규칙이 그것이다 — bench 전용 파라미터로 잰 수치는 운영 성능이
        아니다. `temperature`·`seed`를 이미 운영값으로 맞춰 두고 출력 상한만 달리 두면
        같은 종류의 어긋남을 하나 남긴다.

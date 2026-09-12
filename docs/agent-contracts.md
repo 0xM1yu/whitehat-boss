@@ -37,7 +37,10 @@ agent:
 > 1.7배로 주는 것**이고, 그보다 큰 정상 응답이 나오면 역할별 상한(D46 (c))이 다음 수다.
 > **2026-09-12에 「관측 최대 2,424」가 깨져 그 자리가 열렸다** — gpt-oss-20b Critic의
 > `DecisionDraft` 18시행에서 성공 출력 최댓값이 **2,863**이라 여유가 1.7배에서 1.43배로
-> 준다(절단은 0/18이므로 **닿았다는 뜻은 아니다**). 자리는
+> 준다(절단은 0/18이므로 **닿았다는 뜻은 아니다**).
+> ⚠ **2,863의 원천은 아직 이 저장소에 없다** — `2026-09-12-critic-decisiondraft-budget-atom.md`가
+> PR #182와 함께 들어온다. 뒤집히는 쪽인 2,424는 `run_20260827_0002`로 추적된다
+> ([v2 스모크](experiments/harness/2026-08-29-prompt-v2-smoke-atom.md)). 자리는
 > `thresholds.output_max_by_role`이고 선언이 없는 역할은 위 값을 그대로 쓴다
 > (`Thresholds.output_max_for`). **값은 아직 어느 역할도 선언하지 않았다** — 실측과
 > 한계는 `config/budgets.yaml`의 `output_max` 주석에 있다.
