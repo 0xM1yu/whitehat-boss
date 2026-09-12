@@ -116,6 +116,11 @@ class ArtifactKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+# `Verdict.from_text`가 단어 **양끝에서만** 떼는 장식·구두점. 모델이 `**uphold**`·`"uphold"`·
+# `verdict: uphold`로 내는 것이 실측이라 그만큼만 걷는다. 안쪽을 건드리면 `need_evidence`와
+# `use-after-free`가 쪼개진다.
+_VERDICT_DECOR = "*\"'`:,.;!?()[]{}<>-"
+
 # `Verdict.from_text`가 읽는 **전체 문자열 단독 동의어**. 문장 속 부분 문자열이 아니라
 # verdict 필드 전체가 정확히 이것일 때만 매핑한다(위 docstring). 애매한 것(예: `"not safe"`)은
 # 넣지 않는다 — 미해석(`None`)으로 두고 `need_evidence`로 보내는 편이 오분류보다 안전하다.
@@ -148,18 +153,42 @@ class Verdict(StrEnum):
 
         **부분 문자열로 의미를 추측하지 않는다.** *"unsafe"*가 `safe`를 담는다고 REBUT으로,
         *"uphold: no guard…"*가 `no`를 담는다고 REBUT으로 보내면 **근거 있는 진짜 취약을
-        기각한다.** 그래서 여기서 읽는 것은 **① 표준값과 정확히 같거나 그 접두어**(`"rebut - …"`
-        → REBUT, `"uphold: …"` → UPHOLD), **② 전체 문자열이 짧고 명백한 단독 동의어**뿐이다.
-        문장형 자유 서술은 `None`으로 둔다.
+        기각한다.** 그래서 여기서 읽는 것은 **① 공백으로 가른 단어 하나가 표준값일 때**와
+        **② 전체 문자열이 짧고 명백한 단독 동의어일 때**뿐이다. 문장형 자유 서술은 `None`이다.
+
+        **①의 단어 경계가 요점이다.** 접두어만 보던 판(`t.startswith(verdict.value)`,
+        #182 리뷰 H1)은 *"upholding is not warranted, this is a false positive"*와
+        *"uphold or rebut"*을 둘 다 UPHOLD로 읽었다 — **거부가 지지가 됐고**,
+        *"rebut or uphold"*와는 어순으로만 갈렸다. `uphold`만 무제한 접두어 매칭이고
+        부정 동의어는 전체 일치를 요구했으므로 **틀리는 방향이 오탐 통과 쪽으로 치우쳐
+        있었다.** 지금은 셋을 함께 본다.
+
+        - **단어 양끝의 장식만 뗀다** — `**uphold**`·`"uphold"`·`` `need_evidence` ``가
+          실제 출력 모양이다. 안쪽은 건드리지 않아 `need_evidence`·`use-after-free`가
+          쪼개지지 않는다.
+        - **표준값이 둘 이상 나오면 읽지 않는다**(`"uphold or rebut"`). 어느 쪽이 판정인지는
+          이 함수가 정할 일이 아니다.
+        - **판정은 맨 앞 단어다**(`"uphold: no guard…"` → UPHOLD). `"verdict: uphold"` 꼴의
+          라벨은 한 겹만 걷는다. 그래서 부정문 속 표준값(*"I would not uphold this"*)은
+          `None`으로 남는다 — 앞에 서지 않은 표준값은 그 문장의 판정이 아니다.
 
         **`None`은 지지가 아니다.** 호출자(`DecisionDraft.to_decision`)가 미해석을
         `need_evidence`(보류)로 보내고 원문을 trace에 남긴다 — `uphold`로 소비하지 않는다
         (그렇지 않으면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
         """
         t = text.strip().lower()
-        for verdict in cls:
-            if t == verdict.value or t.startswith(verdict.value):
-                return verdict
+        tokens = t.split()
+        words = [token.strip(_VERDICT_DECOR) for token in tokens]
+        values = {verdict.value for verdict in cls}
+        if len(values & set(words)) > 1:
+            return None
+        head = words[0] if words else ""
+        # 라벨 한 겹(`verdict: uphold`)만 걷는다. 라벨 자리가 이미 표준값이면
+        # (`uphold: no guard…`) 그것이 판정이므로 걷지 않는다.
+        if len(words) > 1 and head not in values and tokens[0].endswith(":"):
+            head = words[1]
+        if head in values:
+            return cls(head)
         if t in _VERDICT_AFFIRM:
             return cls.UPHOLD
         if t in _VERDICT_DENY:

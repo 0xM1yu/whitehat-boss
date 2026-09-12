@@ -290,7 +290,7 @@ def test_promoted_state_requires_path() -> None:
         ("rebut", Verdict.REBUT),
         ("need_evidence", Verdict.NEED_EVIDENCE),
         ("  Uphold  ", Verdict.UPHOLD),
-        # 표준값 접두어 — 뒤에 사유가 붙어도 앞이 표준값이면 읽는다.
+        # 맨 앞 단어가 표준값이면 뒤에 사유가 붙어도 읽는다.
         ("uphold: no guard prevents the use-after-free", Verdict.UPHOLD),
         ("rebut - the path is guarded", Verdict.REBUT),
         ("rebutted", Verdict.REBUT),
@@ -328,7 +328,10 @@ def test_promoted_state_requires_path() -> None:
 def test_verdict_from_text_reads_only_explicit_verdicts(
     text: str, expected: "Verdict | None"
 ) -> None:
-    """표준값·그 접두어·짧은 단독 동의어만 읽고, 자유 서술은 `None`으로 둔다.
+    """**맨 앞 단어가 표준값일 때**와 짧은 단독 동의어만 읽고, 자유 서술은 `None`으로 둔다.
+
+    단어 경계가 요점이다 — `startswith(verdict.value)`만 보면 `upholding …false positive`가
+    UPHOLD가 되고 `uphold or rebut`·`rebut or uphold`가 어순으로만 갈린다(#182 리뷰 H1).
 
     부분 문자열로 의미를 추측하지 않는다 — *"unsafe"*(전체)는 UPHOLD지만 *"not safe"*·
     *"not a false positive"*는 오분류 위험이라 `None`이고, 호출자가 `need_evidence`로 보낸다.

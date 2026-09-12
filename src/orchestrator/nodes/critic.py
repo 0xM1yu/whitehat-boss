@@ -26,6 +26,9 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 
 ROLE = Role.CRITIC
+# 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조).
+# **`Decision`이 아니라 `DecisionDraft`다** — ID·`produced_by`는 하네스가 넣는다.
+OUTPUT_SCHEMA = DecisionDraft
 
 # 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와
 # 같은 꼴로 읽히도록 맞춘다 — 절단 사유는 어느 상한이 걸렸는지를 이름으로 말해야 한다.
@@ -120,7 +123,7 @@ def _ask_model(
     result = ctx.call_model(
         role=ROLE,
         prompt=prompt,
-        schema=DecisionDraft,
+        schema=OUTPUT_SCHEMA,
         stage=Stage.CRITIC,
         subject_kind="finding",
         subject_id=finding.finding_id,

@@ -1,4 +1,4 @@
 role: critic
 version: v1
-output_schema: Decision
+output_schema: DecisionDraft
 description: 주장·경로·근거 ID만 받아 반박하는 7단계 비판 프롬프트
