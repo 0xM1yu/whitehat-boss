@@ -21,6 +21,10 @@ from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.evidence import Evidence
 
 ROLE = Role.SCOUT
+# 이 역할로 모델을 부를 때 요청하는 구조화 출력 스키마. `prompts/<role>/*/meta.yaml`의
+# `output_schema`와 같아야 하고, `tests/test_config.py`가 그 둘을 묶는다 — 프롬프트가
+# 스키마에 없는 필드를 시키면 grammar 마스크가 그것을 막아 명령과 문법이 싸운다.
+OUTPUT_SCHEMA = Candidate
 
 
 def run(
@@ -95,7 +99,7 @@ def _ask_model(
         result = ctx.call_model(
             role=role,
             prompt=prompt,
-            schema=Candidate,
+            schema=OUTPUT_SCHEMA,
             stage=Stage.SCOUT,
             subject_kind="candidate",
             subject_id=candidate_id,

@@ -64,18 +64,17 @@ A `rebut` with no evidence is invalid and may be normalized by the harness to `u
 
 False rejection of a true Finding is the most damaging Critic error. When a defense cannot be grounded, prefer `need_evidence` rather than fabricating a rebuttal.
 
-## Output schema: Decision
+## Output schema: DecisionDraft
 
 Emit exactly one JSON object with:
-- `decision_id`
-- `run_id`
-- `finding_id`
 - `rationale`
 - `verdict`: `uphold` / `rebut` / `need_evidence`
 - `rebuttal_axis`
 - `evidence_refs`
 
-Use IDs supplied in `FACTS`; do not invent them.
+Use evidence IDs exactly as supplied in `FACTS`; do not invent them.
+Do not emit `decision_id`, `run_id`, `finding_id`, or `produced_by` — the harness fills
+those in. Anything outside the fields listed above is rejected.
 
 ## Output hygiene
 
