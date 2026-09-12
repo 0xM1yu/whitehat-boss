@@ -143,7 +143,7 @@ def _measure_role(
         skipped = f"기동 확인 실패로 건너뛴다: {startup['reason']}"
         return {**head, **dict.fromkeys(MEASUREMENT_ORDER[1:], None), "skipped": skipped}
 
-    client = _client(config, model_key)
+    client = _client(config, model_key, role=role)
     args = (client, role_enum, template, schema)
     return {
         **head,
@@ -161,13 +161,13 @@ def _measure_role(
             entry.endpoint,
             entry.context_limit,
             server_limit=startup["max_model_len"],
-            output_max=config.thresholds.output_max,
+            output_max=config.thresholds.output_max_for(role),
         ),
         "skipped": None,
     }
 
 
-def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
+def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompatModelClient:
     """`factory._model_client()`와 **같은 인자**로 만든다.
 
     다르면 bench가 잰 것이 운영 경로가 아니게 된다. 어긋남은
@@ -195,7 +195,9 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
-        max_tokens=config.thresholds.output_max,
+        # 역할별 값이다(#79의 (c)). `factory._model_client`와 **같은 해석기**를 부른다 —
+        # 한쪽만 전역값을 읽으면 이 함수 docstring이 편 논거가 그 자리에서 깨진다.
+        max_tokens=config.thresholds.output_max_for(role),
         # 모델별 값이라 registry에서 온다. 여기서 빠뜨리면 bench가 운영과 **다른 요청**을
         # 보내면서 같은 것을 쟀다고 적는다 — 이 함수 docstring이 `max_tokens`에 대해 편
         # 논거가 그대로 걸린다.
