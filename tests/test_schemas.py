@@ -323,6 +323,48 @@ def test_promoted_state_requires_path() -> None:
         ("this is a genuine use-after-free vulnerability", None),
         ("requires additional evidence to confirm", None),
         ("asdf qwer", None),
+        # ⚠ **동의어 층이 표준값 층과 같은 정규화를 거친다** (#182 재리뷰 H-A 실측).
+        # 장식 제거는 표준값 셋에만 걸려 있었고 동의어는 **raw 문자열**을 봤다 — 그래서
+        # `Yes`는 UPHOLD인데 `**Yes**`·`Yes.`·`"Yes"`가 전부 `None`이었다. 방향이 위 H1과
+        # 반대다: `None` → `need_evidence` → 게이트 `p3`가 `upheld`를 요구 → **E3가 막혀
+        # 진짜 취약이 `validated`에 못 간다.** 마침표 하나로 갈리면 그것은 판정이 아니다.
+        ("**Yes**", Verdict.UPHOLD),
+        ("Yes.", Verdict.UPHOLD),
+        ('"Yes"', Verdict.UPHOLD),
+        ("Yes!", Verdict.UPHOLD),
+        ("yes,", Verdict.UPHOLD),
+        ("unsafe.", Verdict.UPHOLD),
+        ("not vulnerable.", Verdict.REBUT),
+        ('"not vulnerable"', Verdict.REBUT),
+        ("(safe)", Verdict.REBUT),
+        ("`need evidence`", Verdict.NEED_EVIDENCE),
+        # 목록 기호·강조·번호 매김도 장식이다 (#182 재리뷰 L-4). 모델이 판정을 항목으로 낸다.
+        ("— uphold", Verdict.UPHOLD),
+        ("• uphold", Verdict.UPHOLD),
+        ("1. uphold", Verdict.UPHOLD),
+        ("“uphold”", Verdict.UPHOLD),
+        ("_uphold_", Verdict.UPHOLD),
+        # 라벨은 **두 겹**이고 구분자는 `:`만이 아니다 (#182 재리뷰 M-2). 한 겹·공백 뒤
+        # 콜론만 걷던 판에서는 `**verdict**: uphold`만 우연히 통과해 **마크다운 표기로
+        # 판정이 갈렸다.** 라벨 자리에 표준값이 없을 때만 걷는다 — `uphold: no guard…`는
+        # 그대로다(아래 M-1 항 참조).
+        ("final verdict: uphold", Verdict.UPHOLD),
+        ("verdict = uphold", Verdict.UPHOLD),
+        ("verdict:uphold", Verdict.UPHOLD),
+        ("**verdict**: uphold", Verdict.UPHOLD),
+        ("verdict: not vulnerable", Verdict.REBUT),
+        # ⚠ **CWE 이름은 verdict가 아니다** (#182 재리뷰 M-3). `use-after-free`를 UPHOLD로
+        # 읽으면 Scout이 겨냥하는 CWE 계열(415/416 · 119/125/787/190 · 78/22/134) 중
+        # **한 계열만 매핑돼 Critic 제거율이 대상 CWE에 따라 달라진다**(evaluation.md §2.3).
+        # 근거도 n=5 중 1건뿐이었다. 빼면 이 응답은 `need_evidence`(보류)다 — 안전한 방향.
+        ("use-after-free", None),
+        ("use after free", None),
+        ("`use-after-free`", None),
+        # 표준값 둘은 **머리 단어가 표준값이어도** 읽지 않는다 (#182 재리뷰 M-1 — 유지).
+        # 사람에겐 `rebut: …not an uphold case`가 안 모호하지만, 머리 단어를 택하는 규칙은
+        # `uphold or rebut`을 UPHOLD로 만들어 **H1이 없앤 어순 의존을 되살린다.** 틀릴 때
+        # `None`(→보류)은 안전한 방향이고 UPHOLD(→지지)는 아니다.
+        ("rebut: this is not an uphold case", None),
     ],
 )
 def test_verdict_from_text_reads_only_explicit_verdicts(
