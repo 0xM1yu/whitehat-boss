@@ -730,7 +730,13 @@ def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: P
     """
     _copy_config(
         tmp_path,
-        profile_patch={"roles": {"scout": "qwen3-4b"}},
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
         thresholds_patch={"output_max_by_role": {"critick": 8192}},
     )
 

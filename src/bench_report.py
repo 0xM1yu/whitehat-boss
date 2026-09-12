@@ -143,7 +143,7 @@ def _measure_role(
         skipped = f"기동 확인 실패로 건너뛴다: {startup['reason']}"
         return {**head, **dict.fromkeys(MEASUREMENT_ORDER[1:], None), "skipped": skipped}
 
-    client = _client(config, model_key)
+    client = _client(config, model_key, role=role)
     args = (client, role_enum, template, schema)
     return {
         **head,
@@ -161,13 +161,13 @@ def _measure_role(
             entry.endpoint,
             entry.context_limit,
             server_limit=startup["max_model_len"],
-            output_max=config.thresholds.output_max,
+            output_max=config.thresholds.output_max_for(role),
         ),
         "skipped": None,
     }
 
 
-def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
+def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompatModelClient:
     """`factory._model_client()`와 **같은 인자**로 만든다.
 
     다르면 bench가 잰 것이 운영 경로가 아니게 된다. 어긋남은
@@ -180,10 +180,19 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
        아니다. `temperature`·`seed`를 이미 운영값으로 맞춰 두고 출력 상한만 달리 두면
        같은 종류의 어긋남을 하나 남긴다.
     2. **측정값이 왜곡되지 않는다.** `tok_s`는 `produced / elapsed`라 상한은 표본 길이를
-       바꿀 뿐 속도를 바꾸지 않는다. 그리고 8/26 실측이 후보당 output 167토큰이라
-       `thresholds.output_max`(2026-08-28부터 4,096)는 정상 경로에서 닿지 않는다 — 실제로
-       걸릴 일이 없다. **숫자를 여기 박지 않는 이유**: 상한이 8,192에서 4,096으로 움직였을 때
-       이 문단이 낡은 채로 남았다.
+       바꿀 뿐 속도를 바꾸지 않는다. **숫자를 여기 박지 않는 이유**: 상한이 8,192에서
+       4,096으로 움직였을 때 이 문단이 낡은 채로 남았다.
+
+       ⚠ **"상한에 안 닿는다"는 더 이상 못 쓴다 (2026-09-12).** 이 문단은 8/26 실측
+       (후보당 output 167토큰)을 근거로 *"정상 경로에서 닿지 않는다 — 실제로 걸릴 일이
+       없다"*로 닫고 있었다. `cli bench --profile local_balanced --roles critic`
+       (ATOM, gpt-oss-20b, `reasoning_effort: high`, `capsule_level: expanded`)이 그것을
+       뒤집었다 — `structured_output`이 3표본 중 2건만 통과했고(`valid_ratio 0.6667`)
+       실패 1건이 **`content`가 빈** `SchemaParseError`다. 같은 날 별도 프로브(578토큰
+       프롬프트, n=18)의 `completion_tokens`가 549~2,863으로 상한의 70%까지 올라온다.
+       **167토큰은 다른 모델·다른 캡슐 레벨의 수치였다.** 아래 3번이 말하는 "걸리는
+       경우가 곧 재야 할 이상"이 실제로 온 것이고, 그 자리에 역할별 상한(#79의 (c))이
+       `output_max_for`로 열려 있다 — **값은 아직 아무 역할도 선언하지 않았다.**
     3. 걸리는 경우가 곧 재야 할 이상이다. 2026-08-27 ATOM에서 30B가 폭주해 클라이언트
        타임아웃이 난 상황을 bench가 상한 없이 만나면 체크리스트가 "측정 못 함"으로 끝난다.
        운영과 같은 상한을 두면 그 자리에서 잘리고 수치가 남는다.
@@ -195,7 +204,9 @@ def _client(config: HarnessConfig, model_key: str) -> OpenAICompatModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
-        max_tokens=config.thresholds.output_max,
+        # 역할별 값이다(#79의 (c)). `factory._model_client`와 **같은 해석기**를 부른다 —
+        # 한쪽만 전역값을 읽으면 이 함수 docstring이 편 논거가 그 자리에서 깨진다.
+        max_tokens=config.thresholds.output_max_for(role),
         # 모델별 값이라 registry에서 온다. 여기서 빠뜨리면 bench가 운영과 **다른 요청**을
         # 보내면서 같은 것을 쟀다고 적는다 — 이 함수 docstring이 `max_tokens`에 대해 편
         # 논거가 그대로 걸린다.

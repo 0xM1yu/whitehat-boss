@@ -185,7 +185,7 @@ def served() -> tuple:
     entry = config.models[key]
     template = load_prompt(Role.SCOUT, entry.prompt_template_version)
     tokens = config.thresholds.budget_for(bench.ROLE_SPEC[Role.SCOUT][1])
-    return bench_report._client(config, key), template, tokens
+    return bench_report._client(config, key, role="scout"), template, tokens
 
 
 # --- D: R6 판정 --------------------------------------------------------------
