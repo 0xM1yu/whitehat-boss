@@ -40,7 +40,10 @@ agent:
 > 준다(절단은 0/18이므로 **닿았다는 뜻은 아니다**).
 > ⚠ **2,863의 원천은 아직 이 저장소에 없다** — `2026-09-12-critic-decisiondraft-budget-atom.md`가
 > PR #182와 함께 들어온다. 뒤집히는 쪽인 2,424는 `run_20260827_0002`로 추적된다
-> ([v2 스모크](experiments/harness/2026-08-29-prompt-v2-smoke-atom.md)). 자리는
+> ([v2 스모크](experiments/harness/2026-08-29-prompt-v2-smoke-atom.md)).
+> **그 보고서가 머지되면 이 ⚠ 문단을 그 파일 링크로 바꾼다** — 그 순간 "아직 없다"가
+> 거짓이 되는데 CI가 그것을 못 잡는다(형식만 본다). 같은 메모가
+> `config/budgets.yaml`의 `output_max` 주석에도 있고 **둘 다 고쳐야 한 건이 끝난다.** 자리는
 > `thresholds.output_max_by_role`이고 선언이 없는 역할은 위 값을 그대로 쓴다
 > (`Thresholds.output_max_for`). **값은 아직 어느 역할도 선언하지 않았다** — 실측과
 > 한계는 `config/budgets.yaml`의 `output_max` 주석에 있다.

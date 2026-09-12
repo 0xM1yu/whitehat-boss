@@ -780,7 +780,7 @@ def test_asking_the_cap_for_a_role_that_is_not_a_role_fails_loudly() -> None:
     thresholds = load_config("b1_single").thresholds
 
     for unknown in ("CRITIC", "critick", "nonsense", ""):
-        with pytest.raises(KeyError, match="프롬프트 역할"):
+        with pytest.raises(ConfigError, match="프롬프트 역할"):
             thresholds.output_max_for(unknown)
 
 

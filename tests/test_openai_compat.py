@@ -26,7 +26,10 @@ from src.interfaces.model_client import (
     SchemaParseError,
     Usage,
 )
+from src.schemas.candidate import Candidate
+from src.schemas.decision import Decision
 from src.schemas.enums import Role
+from src.schemas.finding import Finding
 
 PROMPT = Prompt(prefix="공통 지시", body="후보 본문", prompt_version="v1")
 
@@ -238,6 +241,10 @@ def test_the_error_storm_is_the_size_the_bound_is_justified_by() -> None:
     한다), 관측된 경로는 안 걸린다(그래서 상한이 지금 도는 것을 안 건드린다). 정확한 수를
     함께 박아 두는 것은 pydantic 판올림이나 픽스처 수정으로 그 부등식의 여유가 조용히
     바뀌는 것을 드러내기 위해서다.
+
+    **주석이 인용하는 파생 비율까지 여기서 고정한다.** 입력 넷만 잠그면 `openai_compat.py`의
+    "31배"·"7.7배"·"11배"가 오타로 틀려도 아무것도 안 깨진다 — 그 비율이 상한을 읽는 사람이
+    실제로 쓰는 수이고, 세 자리가 틀린 수를 베껴 적은 것이 이 테스트가 생긴 이유다.
     """
     storm_errors = _error_text(Many, _ERROR_STORM)
     runaway_errors = _error_text(Tiny, _RUNAWAY)
@@ -254,18 +261,43 @@ def test_the_error_storm_is_the_size_the_bound_is_justified_by() -> None:
     assert len(runaway_errors) <= RETRY_ERROR_MAX_CHARS
     assert len(single_errors) <= RETRY_ERROR_MAX_CHARS
 
+    # 주석이 인용하는 파생 비율. 반올림 자리까지 같아야 한다.
+    assert round(_STORM_ERROR_CHARS / RETRY_ERROR_MAX_CHARS) == 31, "상수 주석의 '31배'"
+    assert round(_STORM_ERROR_CHARS / _STORM_RAW_CHARS, 1) == 7.7, "'원문의 7.7배'"
+    assert round(_STORM_ERROR_CHARS / 25_223, 1) == 2.5, "run A 재현값 25,223 대비 '2.5배'"
+    assert round(RETRY_ERROR_MAX_CHARS / _RUNAWAY_ERROR_CHARS, 1) == 11.2, "'11배 넘는 여유'"
 
-def test_a_truncated_response_is_a_single_error_so_it_never_reaches_the_fold() -> None:
+
+# 깨진 JSON 5종. `_RUNAWAY`가 이 저장소가 실제로 만난 모양이고(#79), 나머지 넷은 절단이
+# 날 수 있는 다른 자리다 — 여는 괄호만, 문자열 중간, 배열 중간, 빈 응답.
+_BROKEN_JSON = {
+    "runaway": _RUNAWAY,
+    "open_brace": "{",
+    "mid_string": '{"claim": "부분 쓰기 memcp',
+    "mid_array": '{"evidence": [{"id": "ev_0001"},',
+    "empty": "",
+}
+
+
+@pytest.mark.parametrize("schema", [Tiny, Candidate, Finding, Decision], ids=lambda s: s.__name__)
+@pytest.mark.parametrize("broken", list(_BROKEN_JSON), ids=list(_BROKEN_JSON))
+def test_a_truncated_response_is_a_single_error_so_it_never_reaches_the_fold(
+    schema: type[BaseModel], broken: str
+) -> None:
     """최상위 JSON이 깨지면 `json_invalid`가 **유일한** 오류다.
 
     `_bounded_error_text`가 머리를 꼬리보다 크게 잡는 사유로 *"`json_invalid`가 첫
     항목이라"*를 적고 있었는데, 그 경로는 **접기까지 가지도 않는다** — 오류가 하나뿐이라
     상한 아래에서 조기 반환한다. 결론(머리 > 꼬리)은 그대로 두되 사유를 여기서 고정한다.
+
+    **장난감 스키마 하나로는 그 전제를 세울 수 없다.** 그 docstring이 논증하는 대상은
+    운영 스키마(`Candidate`·`Finding`·`Decision`)이고, 필수 필드가 많을수록 "오류가 여럿
+    난다"가 그럴듯해진다 — `Tiny` 하나만 보는 것은 이 PR이 §5로 고발한 모양 그대로다.
+    셋을 깨진 JSON 5종과 곱해 **필드 수와 무관하게 `n=1`**임을 잠근다.
     """
-    try:
-        Tiny.model_validate_json(_RUNAWAY)
-    except ValidationError as exc:
-        errors = exc.errors(include_url=False, include_input=False)
+    with pytest.raises(ValidationError) as excinfo:
+        schema.model_validate_json(_BROKEN_JSON[broken])
+    errors = excinfo.value.errors(include_url=False, include_input=False)
 
     assert len(errors) == 1, "절단 응답인데 오류가 여럿이다 — 머리 편중의 사유가 바뀐다"
     assert errors[0]["type"] == "json_invalid"
@@ -286,8 +318,9 @@ def test_the_retry_body_stays_bounded_when_the_error_count_explodes(
     `exc.errors()`는 리스트라 원소마다 한 항목이 붙고, 그 길이에 상한이 없었다.
 
     크기는 `test_the_error_storm_is_the_size_the_bound_is_justified_by`가 잰다 — 요약하면
-    원문 8,011자에 오류 문자열 61,890자로 **원문의 7.7배**이고, D47이 400을 맞은 크기
-    (`run_20260828_0002`가 게이트웨이 상한 밖으로 밀어낸 25,223자)의 **2.5배**다.
+    원문 8,011자에 오류 문자열 61,890자로 **원문의 7.7배**다. D47이 닫은 경로를 재현하면
+    붙는 문자열이 25,223자이고 그 **2.5배**이기도 한데, ⚠ **25,223은 사후 재현 스크립트의
+    값이다** — `run_20260828_0002`에서 관측된 것은 `input_tokens ≥ 24,577`(토큰)이다.
     **상한 값을 어떻게 잡든 이 축이 열려 있으면 같은 일이 난다.**
 
     실측된 절단 응답(`_RUNAWAY`)의 오류 문자열은 178자라 이 상한에 닿지 않는다 —

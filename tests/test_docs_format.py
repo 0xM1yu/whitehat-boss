@@ -393,7 +393,10 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     # 짝으로 고치게 만든다. 위 ⚠ 문단이 그 고치는 방법이고, 이 줄이 그 강제다.
     assert not thresholds.output_max_by_role, (
         f"역할별 상한이 선언됐다({sorted(thresholds.output_max_by_role)}) — 아래 비교를 "
-        f"`thresholds.output_max_for(<그 예시 블록의 role>)`와의 짝 비교로 고쳐야 한다"
+        f"`thresholds.output_max_for(<그 예시 블록의 role>)`와의 짝 비교로 고쳐야 한다. "
+        f"⚠ 그렇게 고치면 다음으로 `test_the_contract_guard_goes_red_the_day_a_role_cap_"
+        f"is_declared`가 DID NOT RAISE로 죽는다 — 그 테스트는 **이 줄이 있다는 것**을 "
+        f"확인하는 테스트라 이 줄과 함께 지우는 것이 맞다. 가드가 고장 난 게 아니다."
     )
     actual = thresholds.output_max
     assert declared == [actual] * len(declared), (

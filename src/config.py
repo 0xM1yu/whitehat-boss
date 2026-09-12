@@ -554,8 +554,11 @@ class Thresholds(HarnessModel):
         오타를 로드 때 막는 것과 같은 결함을 읽는 쪽에 열어 두는 셈이다. 위 `_model_client`가
         `role`에 기본값을 안 두는 사유(PR #185)가 여기 한 겹 안쪽에 그대로 걸린다.
         """
+        # `ConfigError`다 — `model_key_for`가 같은 부류(설정에 없는 역할)를 `KeyError`에서
+        # 번역해 내보내는 것과 같은 자리라, 여기만 raw `KeyError`면 부르는 쪽이 두 가지를
+        # 잡아야 한다.
         if role not in PROMPTED_ROLES:
-            raise KeyError(
+            raise ConfigError(
                 f"{role!r}은 프롬프트 역할이 아니다. 있는 것: {sorted(PROMPTED_ROLES)}"
             )
         return self.output_max_by_role.get(role, self.output_max)
