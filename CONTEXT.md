@@ -125,7 +125,7 @@
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
 | **`reasoning_effort: high` 배선** | **배선(2026-09-09) + registry 등재(2026-09-11) 둘 다 됐다.** `ModelEntry.reasoning_effort` → 요청 payload → `RunRecord.model_reasoning_effort`이고, `gpt-oss-20b`가 §1 표대로 등재돼 `reasoning_effort: "high"`를 선언한다. ⚠ **그래도 이 자리는 안 선다** — **앞에 이 표 첫 줄(structured output)**이 남았고, 프로필의 `critic`도 아직 `devstral-small-2-24b`다(아래 마지막 줄). 배선과 등재가 여는 것은 「선언하면 값이 실제로 간다」까지이지 「Critic이 뜬다」가 아니다 |
-| **실서빙 프로필 ↔ §1** | **실서빙 프로필(`local_balanced` 등)은 아직 §1과 다르다** — 단일 `scout`·`critic: devstral-small-2-24b`·리랭커 `qwen3-reranker-0.6b`. ⚠ **2026-09-11부터 이유가 자리마다 다르다** — Critic(`gpt-oss-20b`)·리랭커(`qwen3-reranker-4b`)는 **등재됐으니** 올릴 수는 있고 남은 선행이 각각 이 표 첫 줄(structured output)·리랭커 행(서빙·점수 검증)이다. Auditor B(`nemotron-3-super-120b-a12b`)만 **미등재**라 못 올린다. **단 2026-09-13에 실험용 `local_balanced_pool` 하나가 Scout 풀을 v2 별칭으로 배선했다** — #178 팬아웃 플러밍을 실모델로 처음 채운 것이고 **모델 선정은 미확정**(프롬프트 도달성 #103·2×2 종속). 실서빙 프로필은 안 건드렸다 |
+| **실서빙 프로필 ↔ §1** | **실서빙 프로필(`local_balanced` 등)은 아직 §1과 다르다** — 단일 `scout`·`critic: devstral-small-2-24b`·리랭커 `qwen3-reranker-0.6b`. ⚠ **2026-09-11부터 이유가 자리마다 다르다** — Critic(`gpt-oss-20b`)·리랭커(`qwen3-reranker-4b`)는 **등재됐으니** 올릴 수는 있고 남은 선행이 각각 이 표 첫 줄(structured output)·리랭커 행(서빙·점수 검증)이다. Auditor B(`nemotron-3-super-120b-a12b`)만 **미등재**라 못 올린다. **단 2026-09-13에 실험용 `local_balanced_pool` 하나가 §1 목표를 provisional 배선했다 — Scout 풀(v2 별칭) + Critic `gpt-oss-20b`.** #178 팬아웃 플러밍을 실모델로 처음 채우고 Critic도 §1의 gpt-oss로 올렸다. **선정·검증은 미확정**(풀 도달성 #103·2×2 · Critic 반박 정확도·DecisionDraft→gpt-oss 통합 #182). `production: false`이고 실서빙 `local_balanced`(critic devstral)는 안 건드렸다 |
 
 **「로스터 확정」과 「그 모델이 선다」는 다른 문장이다.** 이 표가 그 차이를 남긴다.
 

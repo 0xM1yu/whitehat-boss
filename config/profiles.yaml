@@ -304,25 +304,30 @@ profiles:
       state_store: sqlite
     budget: default
 
-  # --- 임시 Scout 풀 배선 — 플러밍 완성용 (#103·#178) --------------------------
+  # --- 임시 §1-목표 배선 — Scout 풀 + Critic gpt-oss, 플러밍 완성용 (#103·#178) ----
   local_balanced_pool:
-    # **모델 선정 미확정. 배선 플러밍만 완성한다.** #178이 Scout 풀 팬아웃(대상 1개 →
+    # **모델 선정 미확정/검증 전. 배선 플러밍만 완성한다.** #178이 Scout 풀 팬아웃(대상 1개 →
     # 멤버 셋)을 러너에 넣었는데, 커밋된 프로필 어느 것도 풀 셋을 선언하지 않아 `fake_v2`로
-    # 테스트 안에서만 돌았다. 이 프로필이 **실모델(임시 v2 별칭)로 풀 자리를 처음 채운다** —
-    # scout_{memory,boundary,injection}이 각자 CWE 계열을 본다(ADR 0010 §3). 멤버 모델은
-    # 로스터 §1의 base를 v2 프롬프트로 가리키는 별칭이고(models.yaml 「임시 v2 별칭」 참조),
-    # **어느 모델이 어느 자리인지는 확정이 아니다** — 도달성(#103)이 풀리고 2×2가 끝난 뒤
-    # 정식으로 정한다. auditor·critic·검색은 local_balanced 그대로다.
+    # 테스트 안에서만 돌았다. 이 프로필이 **실모델로 §1 목표 구성을 provisional 배선한다:**
     #
-    # `production: false` — 처리량 미측정(별칭 benchmark 0)이고 근본 검증 전이다.
-    description: "임시 Scout 풀 배선(v2 별칭) — 플러밍 완성용, 모델 선정 미확정 (#103)"
+    # - **Scout 풀** — scout_{memory,boundary,injection}이 각자 CWE 계열을 본다(ADR 0010 §3).
+    #   멤버는 §1 base를 v2 프롬프트로 가리키는 임시 별칭이고(models.yaml 「임시 v2 별칭」),
+    #   **어느 모델이 어느 자리인지는 확정이 아니다** — 도달성(#103)·2×2 뒤 정식으로 정한다.
+    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high) — #182(DecisionDraft verdict)가
+    #   머지돼 배선은 되나 **반박 정확도 미측정 + DecisionDraft→gpt-oss 통합 확인이 남았다**
+    #   (#182가 "배선 후 follow-up"이라 적은 것). 그래서 실서빙 `local_balanced`(critic devstral)는
+    #   안 건드리고 여기서만 provisional로 올린다.
+    #
+    # auditor·검색은 local_balanced 그대로다.
+    # `production: false` — 처리량 미측정(별칭·gpt-oss benchmark 0)이고 근본 검증 전이다.
+    description: "임시 §1-목표 배선(Scout 풀 v2 별칭 + Critic gpt-oss) — 플러밍 완성용, 검증 전 (#103·#182)"
     production: false
     roles:
       scout_memory: qwen3-coder-30b-a3b-v2
       scout_boundary: devstral-small-2-24b-v2
       scout_injection: qwen3-8b-v2
       auditor: qwen3-coder-30b-a3b
-      critic: devstral-small-2-24b
+      critic: gpt-oss-20b
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-0.6b
     adapters:
