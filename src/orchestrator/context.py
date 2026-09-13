@@ -506,9 +506,19 @@ class RunContext:
             mapped_verdict=Verdict.NEED_EVIDENCE.value,
         )
 
-    def record_cache(self, key: str, hit: bool, *, cache: str = "capsule") -> None:
-        """캡슐 캐시 적중 기록 (knowledge-base.md §6). Retriever의 `on_cache` 훅에 연결된다."""
-        self.trace.emit(EventKind.CACHE, stage=self.current_stage, cache=cache, key=key, hit=hit)
+    def record_cache(
+        self, key: str, hit: bool, *, cache: str = "capsule", counted_by: str | None = None
+    ) -> None:
+        """캡슐 캐시 적중 기록 (knowledge-base.md §6). Retriever의 `on_cache` 훅에 연결된다.
+
+        `counted_by`는 **그 공유 캡슐을 어느 역할 카운터로 계산했나**다(#192 조건②) — Scout 풀에서
+        2·3번 멤버가 첫 멤버의 캡슐을 물려받을 때, 그 캡슐의 토큰이 무엇으로 세어졌는지를 남긴다.
+        풀이 아닌 경로(Retriever `on_cache`·단일 프로필)에서는 `None`이라 이벤트에 안 실린다.
+        """
+        data: dict[str, object] = {"cache": cache, "key": key, "hit": hit}
+        if counted_by is not None:
+            data["counted_by"] = counted_by
+        self.trace.emit(EventKind.CACHE, stage=self.current_stage, **data)
 
     def record_graph_index(self, fields: dict[str, TraceValue]) -> None:
         """1단계 인덱서 산출물의 로드 결과. Retriever의 `on_index` 훅에 연결된다.

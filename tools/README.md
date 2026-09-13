@@ -7,18 +7,20 @@
 | --- | --- |
 | `harness-tools/` | 2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·인덱서). 아래 참조 |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
-| `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 셋이 있다 — 아래 표 ([probe/README.md](probe/README.md)) |
+| `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
 
-### `probe/` 안의 셋
+### `probe/` 안의 것들
 
-같은 디렉터리지만 **답하는 질문이 다르다.** 앞의 하나는 서버가 값을 내주는가를 묻고,
-뒤의 둘은 모델이 무엇을 내놓는가를 묻는다.
+같은 디렉터리지만 **답하는 질문이 다르다.** 첫 행(metrics)은 서버가 값을 내주는가를 묻고,
+나머지는 모델이 무엇을 내놓는가를 묻는다.
 
 | 스크립트 | 답하는 질문 | 관련 |
 | --- | --- | --- |
 | `atom.sh`·`seraph.sh`·`run_probe.sh`·`probe_metrics.py` | vLLM `/metrics`가 우리가 읽는 이름으로 값을 내주는가. 산출물이 그대로 `tests/fixtures/metrics/`의 fixture가 된다 | R6 |
 | `d67_required_schema.py` | 구조화 출력 스키마를 `required`로 올리면 Auditor가 `path`·`evidence_refs`를 **채우는가**. 보존된 run의 프롬프트를 원문 그대로 재생하고 **스키마만** 바꾼다 | [D67](../docs/open-questions/D/D67.md) · #172 |
 | `gpt_oss_structured.py` | `gpt-oss-20b`의 structured output 정답률이 **serve 설정**으로 갈리는가. 프로브를 고정하고 `vllm serve` 인자만 바꿔 팔을 만든다 | [2026-09-09 보고서](../docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) §5 · R8 |
+| `critic_output_budget.py` | 보존된 run의 Finding에서 Critic 프롬프트를 재구성해 **출력 토큰이 무엇을 먹는가**(추론 대 본문)를 가른다 | #79 · #172 |
+| `d63_reranker_input_shape.py` | `qwen3-reranker-4b`가 **우리 입력 모양**(식별자 질의 × 코드 조각)에서 취약을 무관 위로 올리는가. `/rerank`에 Qwen3 양식을 씌워/안 씌워 판정 | [D63](../docs/open-questions/D/D63.md) · #152 |
 
 ⚠ **뒤의 둘은 `cli bench`·`cli run`을 대체하지 않는다.** 하네스가 실제로 보내는 요청이
 아니기 때문이다 — R8의 닫히는 조건 **1**(`structured_output.valid_ratio` = **1.0**)은 `cli bench`에만

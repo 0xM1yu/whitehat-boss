@@ -235,6 +235,31 @@ def test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retr
     assert variant.production is False
 
 
+POOL_HYBRID_PROFILE = "local_balanced_pool_hybrid"
+
+
+def test_the_pool_hybrid_profile_differs_from_local_balanced_pool_only_in_the_retriever() -> None:
+    """풀 검색 프로필도 대조군(`local_balanced_pool`)과의 차이가 `retriever` **하나**다.
+
+    `local_balanced_hybrid`↔`local_balanced`와 같은 성질이다 — 이 프로필의 쓸모가 검색
+    경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께 움직이면 풀 run의 차이가
+    무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기 쉬워 기계로 고정한다.
+    """
+    base = load_config("local_balanced_pool").profile
+    variant = load_config(POOL_HYBRID_PROFILE).profile
+
+    assert variant.roles == base.roles
+    assert variant.budget == base.budget
+    assert variant.adapters.retriever == "hybrid"
+    assert base.adapters.retriever == "fake"
+    assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
+        exclude={"retriever"}
+    )
+    # 검색 두 모델(0.6b)의 benchmark는 아직 0이고 별칭·gpt-oss도 0이라, production으로
+    # 올리지 않는다 — `cli._check_benchmarks`가 부분/미측정을 막는다(model-serving.md §5).
+    assert variant.production is False
+
+
 def test_prompted_roles_matches_prompt_directories() -> None:
     """`PROMPTED_ROLES`와 `prompts/` 하위 디렉터리가 일치한다.
 
@@ -333,11 +358,12 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     역할의 첫 모델 호출에서 처음 열리므로 **GPU 시간을 쓴 뒤에 죽는다.** `cli doctor`의
     `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다.
 
-    지금 저장소의 프로필은 전부 단일 `scout`이고 registry가 전부 `v1`이라 통과한다.
-    이 검사가 서는 자리는 **풀 프로필이 `config/profiles.yaml`에 들어오는 순간**이다 —
-    풀 세 역할의 프롬프트 디렉터리는 `v2`만 있어서(D54) 그 프로필은 여기서 걸린다.
-    ⚠ 실행 순서로는 러너의 `ROLE = Role.SCOUT` 고정이 그보다 앞에서 `ConfigError`를 내지만,
-    **이 검사는 러너를 안 태우므로** 그것과 무관하게 프롬프트 간극을 잡는다.
+    실서빙 프로필은 단일 `scout`이고 registry가 `v1`이라 통과한다. **풀 프로필
+    `local_balanced_pool`도 통과하는데, 그것은 이 검사가 잡을 뻔한 간극을 v2 별칭이
+    메우기 때문이다** — 풀 세 역할의 프롬프트 디렉터리는 `v2`만 있고(D54), base 셋은 v1이라
+    풀을 base로 배선했으면 여기서 걸렸을 것을, PR #190이 `prompt_template_version: v2` 별칭
+    셋을 등재해 그 프로필이 v2를 가리키게 했다. 그래서 이 검사는 **별칭이 실제로 v2를 가리키는지**를
+    지키는 자리로 선다 — 별칭 하나가 base로 되돌아가면 여기서 걸린다.
     """
     config = load_config(profile)
 

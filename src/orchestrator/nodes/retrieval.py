@@ -12,6 +12,7 @@ Progressive Context Expansion(knowledge-base.md §5)의 **횟수 상한 판정�
 그대로 적용한다 — 상한을 넘기면 후보를 폐기하지 않고 `queued`로 둔다(전이 표 C-5).
 """
 
+from src.config import SCOUT_POOL_ROLES
 from src.interfaces.retriever import Query
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, Route, RoutingRequest
@@ -21,6 +22,13 @@ from src.schemas.capsule import ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
+
+# 풀 공유 캡슐 예산 마진 (#194). 캡슐은 첫 멤버(qwen) 토크나이저로 예산이 정해지는데 다른
+# 계열(mistral=scout_boundary)은 같은 텍스트를 최대 ~11% 더 센다(2026-09-13 ATOM 실측:
+# 캡슐 합 +4%, 조각 최대 +10.6%). 첫 멤버 기준을 이 factor로 줄여 담으면 그 최대 갈림(1/0.90 ≈
+# 1.111)까지 세 자리 전부 상한 안에 든다 — strict per-member drop 없이 예산이 강제된다.
+# 단일 프로필은 자리가 하나라 적용하지 않는다.
+_POOL_CAPSULE_MARGIN = 0.90
 
 
 def run(
@@ -36,11 +44,16 @@ def run(
     구조였다면 구현마다 적중률 정의가 갈라졌을 것이다.
     """
     with ctx.stage(Stage.RETRIEVAL):
+        budget = ctx.config.thresholds.budget_for(level)
+        # #194 — 풀은 공유 캡슐을 세 계열이 나눠 보므로 첫 멤버 기준 예산을 마진만큼 줄여
+        # 담는다(위 `_POOL_CAPSULE_MARGIN`). 그래야 mistral 자리도 상한 안에 든다.
+        if all(member in ctx.config.profile.roles for member in SCOUT_POOL_ROLES):
+            budget = int(budget * _POOL_CAPSULE_MARGIN)
         query = Query(
             run_id=ctx.run_id,
             target=target,
             keywords=list(keywords),
-            budget_tokens=ctx.config.thresholds.budget_for(level),
+            budget_tokens=budget,
         )
         capsule = ctx.retriever.search(query, level)
         ctx.store.put(capsule)

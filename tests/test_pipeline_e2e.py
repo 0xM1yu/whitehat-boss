@@ -151,11 +151,10 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
 def _poolify(mode: str | None):  # noqa: ANN202
     """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
 
-    풀 프로필을 `config/profiles.yaml`에 커밋하면 두 결정 게이트를 건드린다 —
-    `test_context_declares_that_profiles_are_not_rewired_yet`(재배선 상태)와
-    `test_no_profile_declares_execution_yet`(swap 실측 전 per_stage 금지). 둘 다 이 PR의
-    **팬아웃 메커니즘과 별개**이므로, 풀 config는 여기서만 조립한다. 풀 세 자리는 v2 전용
-    풀 프롬프트를 부르는 `fake_v2`, 나머지는 `fake`다.
+    커밋된 풀 프로필 `local_balanced_pool`(PR #190)은 **실 모델**이라 GPU 없이는 못 돈다.
+    이 e2e 검사들은 팬아웃 **제어흐름**만 보므로 Fake로 충분하고, 그래서 실 프로필을 태우는
+    대신 여기서 `dev_fake` 기반 풀을 조립한다 — 풀 세 자리는 v2 전용 풀 프롬프트를 부르는
+    `fake_v2`, 나머지는 `fake`다. (실 프로필의 로드·게이트 정합은 `test_config.py`가 본다.)
     """
     from src.config import ExecutionPolicy
 
@@ -235,10 +234,6 @@ def test_scout_pool_builds_the_light_capsule_once_per_target(
     assert len(set(light_calls)) == len(light_calls), "같은 대상을 두 번 build했다 — 캐시 miss"
 
 
-# `_run_stage_for_all` docstring이 들어야 하는 한계 서술의 앵커. **문장이 아니라 앵커다** —
-# 서술 전체를 여기 복사하면 문구를 다듬을 때마다 검사가 깨진다.
-_POOL_BLIND_SPOT_MARKER = "풀 멤버 하나가 전량 실패해도"
-
 # `_drop`이 게이트웨이 실패에 붙이는 사유. 러너 상수를 그대로 읽는다 — 문자열을
 # 여기 복사하면 러너가 사유를 바꿀 때 이 검사가 조용히 0건을 세게 된다.
 _REASON_GATEWAY_ERROR = runner._REASON_GATEWAY
@@ -299,55 +294,37 @@ def test_a_systematically_broken_single_scout_trips_the_circuit_breaker(
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
-def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
+def test_a_broken_pool_member_trips_the_circuit_breaker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
-    """풀 멤버 하나가 전량 실패해도 차단기가 안 걸리고 run이 **정상 완주로 기록된다.**
+    """풀 멤버 하나가 전량 실패하면 차단기가 걸려 run이 **비교표에서 빠진다** (D68 수정).
 
-    **이 PR은 그것을 안 고친다.** 등재된 결함이고(D68 · 이 PR 리뷰의 HIGH) 최소 수용안 2번이
-    *"안 고친다면 결함으로 등재하고 docstring에 그 한계를 적는다 — 풀 프로필 커밋 전에"*다.
-    여기서 하는 일은 **그 선택을 기계로 묶는 것**이다.
+    기제: **연속 폐기 카운터가 역할별이다.** 한 단계의 작업 단위가 target × 역할로 펼쳐지고
+    `consecutive`가 역할을 키로 세므로, 고장난 멤버(`scout_boundary`)의 실패가 형제의 성공에
+    지워지지 않고 쌓여 `_MAX_CONSECUTIVE_DROPS`에 닿는다. 그래서 `stopped_after`가 채워지고
+    `is_complete`가 **False**가 된다 — Scout 커버리지 1/3이 빈 run이 정상 완주로 기록되던
+    맹점(옛 `_does_not_trip_..._yet`)이 닫혔다.
 
-    기제: **카운터가 역할을 안 가른다.** 한 단계의 작업 단위가 target × 역할로 펼쳐졌는데
-    `consecutive`는 그 열 전체에 하나뿐이고 성공 하나가 그것을 0으로 되돌린다. 그래서
-    형제 멤버의 성공이 매번 카운터를 지우고 `_MAX_CONSECUTIVE_DROPS`에 영원히 안 닿는다.
-
-    **이 검사는 양방향으로 돈다.**
-
-    - 맹점이 남아 있으면 → `_run_stage_for_all` docstring이 그 한계를 들어야 한다.
-      없으면 실패한다.
-    - **카운터를 역할별로 고치면 → 첫 단언이 실패한다.** 그때 고칠 자리가 여기이고,
-      같이 지울 것이 그 docstring 줄이다. 「아직 안 된 것」을 적은 문장은 되는 순간
-      거짓이 되는데 그것을 사람이 기억해 지우기를 기대하지 않는다
-      (`test_context_declares_that_profiles_are_not_rewired_yet`과 같은 논법).
-
-    ⚠ **오늘 이 맹점은 물리지 않는다** — `config/profiles.yaml`의 어느 프로필도 풀을
-    선언하지 않는다. 그래서 풀 config를 `_poolify`로 여기서만 조립한다. **물리는 시점은
-    풀 프로필을 커밋하는 PR이고, 그 PR이 이 검사를 먼저 만난다.**
+    ⚠ **단일 `scout`과 대조**: `test_a_systematically_broken_single_scout_trips_the_circuit_breaker`
+    가 같은 결과를 단일 역할에서 낸다. 풀에서도 같아진 것이 이 수정의 요점이다.
     """
     monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
     _break_one_role(monkeypatch, "scout_boundary")
 
     result, trace_path = _run(tmp_path, configure=_poolify(mode))
 
-    assert result.record.stopped_after is None, (
-        "풀 멤버 하나가 전량 422인데 차단기가 걸렸다 — 맹점이 고쳐졌다는 뜻이다. "
-        "그러면 `_run_stage_for_all` docstring의 한계 서술이 거짓이 되므로 함께 지운다"
+    assert result.record.stopped_after is not None, (
+        "풀 멤버 하나가 전량 422인데 차단기가 안 걸렸다 — 역할별 카운터(D68)가 회귀했다. "
+        "형제 멤버의 성공이 고장난 멤버의 연속 카운터를 지우고 있다"
     )
-    assert result.record.is_complete, (
-        "맹점이 고쳐졌다 — 위 단언의 메시지를 따른다"
+    assert not result.record.is_complete, (
+        "차단기가 걸렸는데 is_complete가 참이다 — `stopped_after`가 곧 불완전이다(§6)"
     )
-
-    members = {c.scout_member for c in result.candidates}
-    assert "scout_boundary" not in members, "고장난 멤버가 후보를 냈다 — 주입이 안 먹었다"
-    assert {"scout_memory", "scout_injection"} <= members, (
-        "형제 멤버가 후보를 못 냈다 — 이 run은 맹점의 사례가 아니다"
+    assert "scout_boundary" not in {c.scout_member for c in result.candidates}, (
+        "고장난 멤버가 후보를 냈다 — 주입이 안 먹었다"
     )
 
-    # ⚠ **이 단언이 이 검사의 무게를 진다.** 위 넷은 폐기가 **한 건도 없어도** 전부
-    # 만족한다 — 고장난 멤버가 아예 디스패치되지 않는 회귀에서도 초록이다. 그리고
-    # 폐기가 상한 미만이면 「고쳐도 안 걸린다」가 되어 **양방향 보증이 조용히 죽는다**
-    # (fixture의 대상 수가 줄면 실제로 그렇게 된다).
+    # 폐기가 상한에 실제로 닿았는지 — 상한 미만이면 다른 이유로 멈춘 것이라 이 검사가 무의미하다.
     dropped = [
         e
         for e in _of(_events(trace_path), "target_skipped")
@@ -355,15 +332,42 @@ def test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet(
     ]
     assert len(dropped) >= runner._MAX_CONSECUTIVE_DROPS, (
         f"게이트웨이 폐기가 {len(dropped)}건뿐이라 상한({runner._MAX_CONSECUTIVE_DROPS})에 "
-        "못 미친다 — 역할별로 세도 안 걸리므로 이 검사는 맹점을 증명하지 못한다. "
-        "fixture의 4단계 대상 수를 늘린다"
+        "못 미친다 — fixture의 4단계 대상 수를 늘린다"
+    )
+    # #193 ① — 폐기 이벤트가 어느 자리에서 죽었는지(scout_member)를 싣는다.
+    assert all(e["data"].get("scout_member") == "scout_boundary" for e in dropped), (
+        "target_skipped에 scout_member가 없거나 다르다 — 고장난 것은 scout_boundary다(#193 ①)"
     )
 
-    for func in (runner._run_stage_for_all, runner._triage_by_candidate):
-        assert _POOL_BLIND_SPOT_MARKER in inspect.getsource(func), (
-            f"맹점이 실재하는데 `{func.__name__}` docstring이 그것을 안 든다 "
-            f"(앵커 {_POOL_BLIND_SPOT_MARKER!r}). 최소 수용안 2번은 등재와 서술 둘 다다"
-        )
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_pool_capsule_cache_hits_are_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """풀에서 accumulator 캐시 적중이 `cache` 이벤트로 실린다 (#193 ②).
+
+    풀은 target당 캡슐을 첫 멤버가 만들고 2·3번 멤버는 `state.capsules`가 물려 준다. 그
+    단락이 `retrieval.run()` **앞**이라 Retriever의 `on_cache`를 안 지나므로, 러너가 직접
+    `record_cache(hit=True)`를 낸다 — 안 그러면 `cache` 이벤트가 target당 1건으로 줄어
+    hit ratio가 낮게 보인다(실측 0.667 → 0.40). 이 검사는 그 적중이 이벤트에 실리는지 본다.
+    """
+    _, trace_path = _run(tmp_path, configure=_poolify(mode))
+    cache = _of(_events(trace_path), "cache")
+    assert cache, "cache 이벤트가 0 — on_cache 미배선"
+    hits = [e for e in cache if e["data"]["hit"]]
+    assert hits, "풀인데 캐시 적중 이벤트가 0 — accumulator 단락이 이벤트를 안 낸다(#193 ②)"
+    targets = {e["data"]["key"] for e in cache}
+    assert len(cache) > len(targets), (
+        "cache 이벤트 수가 target 수와 같다 — accumulator 적중이 안 실렸다(#193 ② 회귀)"
+    )
+    # #192 조건② — 공유 캡슐이 어느 역할 카운터로 계산됐나가 적중 이벤트에 남는다.
+    accumulator_hits = [e for e in hits if "counted_by" in e["data"]]
+    assert accumulator_hits, (
+        "적중 이벤트에 counted_by가 없다 — 공유 캡슐 회계 근거가 안 남는다(#192 ②)"
+    )
+    assert all(e["data"]["counted_by"] == "scout_memory" for e in accumulator_hits), (
+        "공유 캡슐을 만든 것은 첫 멤버(scout_memory)인데 counted_by가 다르다"
+    )
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
@@ -1542,12 +1546,16 @@ def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> Non
     저장값과 재계산값이 갈려 `ValidationError`로 죽는다 — `estimate --profile b1_single`이
     실제로 그렇게 죽었고, 그것을 막은 것이 `counter_for_role(...)`로 감싼 그 `with`다(#84).
 
-    **풀에서는 그 막음이 서지 않았다.** 역할 키를 `"scout"`으로 박아 뒀는데 풀 프로필에는
-    그 키가 없다(`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다). 그래서
-    `counter_for_role`이 `None`을 돌려주고 `using_counter(None)`은 아무것도 안 바꾼다.
+    **풀에서 처음엔 그 막음이 안 섰다.** 역할 키를 `"scout"`으로 박아 뒀는데 풀 프로필에는
+    그 키가 없어(`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다)
+    `counter_for_role`이 `None`을 돌려줬다. **`_capsule_counter_role`이 그것을 고쳤다** —
+    풀이면 조립한 첫 멤버(`SCOUT_POOL_ROLES[0]` = `scout_memory`)를 돌려주므로 재검증이 같은
+    카운터를 본다. 아래 두 단언이 그 불변식을 고정한다.
 
-    ⚠ **오늘 안 터지는 이유는 둘 다 우연이다** — 커밋된 풀 프로필이 없고, Fake는 `source`가
-    없어 어차피 `None`이다. **실 토크나이저 풀 프로필을 커밋하는 순간 되살아난다.**
+    ⚠ **`local_balanced_pool`(PR #190, provisional)이 커밋된 실 별칭 풀 프로필이다** — 이 검사가
+    가리키던 그 "커밋하는 순간"이 왔고, 그 순간에도 막음이 선다는 것을 여기서 지킨다. Fake는
+    `source`가 없어 `counter_for_role`이 `None`이라 이 검사는 **역할 키의 실재**만 본다(값이 아니라
+    자리) — 실 토크나이저에서의 조립·재검증 일치는 아래 `..._the_runner_actually_uses`가 잡는다.
     """
     from src.cli import _capsule_counter_role
 
