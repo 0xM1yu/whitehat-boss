@@ -218,6 +218,45 @@ def test_sections_never_exceed_the_capsule_budget(corpus: Path) -> None:
     assert capsule.used_tokens <= capsule.budget_tokens
 
 
+def test_pool_profile_shrinks_the_capsule_budget_by_the_margin() -> None:
+    """풀 프로필에서 3단계 예산이 마진(#194)만큼 줄어 Query에 실린다. 단일은 안 줄어든다.
+
+    공유 캡슐을 첫 멤버(qwen) 토크나이저로 재는데 다른 계열(mistral=scout_boundary)이
+    같은 텍스트를 최대 ~11% 더 세므로, 첫 멤버 기준 예산을 factor로 줄여 담아야 세 자리가
+    전부 상한 안에 든다(2026-09-13 ATOM 실측). 단일 프로필은 자리가 하나라 마진이 없다 —
+    실측 없이 상한을 줄이면 §0의 "안 잰 값으로 채우지 않는다"에 걸린다.
+    """
+    from src.config import SCOUT_POOL_ROLES
+    from src.orchestrator.nodes import retrieval as retrieval_node
+    from src.orchestrator.nodes.retrieval import _POOL_CAPSULE_MARGIN
+
+    trace = TraceWriter(RUN_ID)
+    ctx = _bare_context(trace)
+    target = Location(file="x.c", symbol="f", line_start=1, line_end=2)
+
+    captured: list[int] = []
+    inner = ctx.retriever.search
+
+    def spy(query: Query, level: CapsuleLevel) -> object:
+        captured.append(query.budget_tokens)
+        return inner(query, level)
+
+    ctx.retriever.search = spy  # type: ignore[method-assign]
+    base = ctx.config.thresholds.budget_for(CapsuleLevel.LIGHT)
+
+    # 단일 `scout` 프로필(dev_fake) — 마진 없이 상한 그대로 나간다.
+    retrieval_node.run(ctx, target=target, level=CapsuleLevel.LIGHT)
+    assert captured[-1] == base, "단일 프로필에 마진이 붙었다"
+
+    # 풀 세 자리를 선언하면 예산이 마진만큼 줄어든다.
+    pool_roles = {role: "fake" for role in SCOUT_POOL_ROLES}
+    pool_roles.update({"auditor": "fake", "critic": "fake"})
+    ctx.config = ctx.config.transition(profile=ctx.config.profile.transition(roles=pool_roles))
+    retrieval_node.run(ctx, target=target, level=CapsuleLevel.LIGHT)
+    assert captured[-1] == int(base * _POOL_CAPSULE_MARGIN), "풀 예산에 마진이 안 붙었다"
+    assert captured[-1] < base
+
+
 def test_two_instances_produce_the_same_sections(corpus: Path) -> None:
     """같은 입력에 같은 캡슐이 나오지 않으면 재현성이 깨진다(engineering-guide.md §5)."""
     first, _, _ = _retriever(corpus)
