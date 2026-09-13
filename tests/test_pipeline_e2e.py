@@ -357,6 +357,14 @@ def test_pool_capsule_cache_hits_are_counted(
     assert len(cache) > len(targets), (
         "cache 이벤트 수가 target 수와 같다 — accumulator 적중이 안 실렸다(#193 ② 회귀)"
     )
+    # #192 조건② — 공유 캡슐이 어느 역할 카운터로 계산됐나가 적중 이벤트에 남는다.
+    accumulator_hits = [e for e in hits if "counted_by" in e["data"]]
+    assert accumulator_hits, (
+        "적중 이벤트에 counted_by가 없다 — 공유 캡슐 회계 근거가 안 남는다(#192 ②)"
+    )
+    assert all(e["data"]["counted_by"] == "scout_memory" for e in accumulator_hits), (
+        "공유 캡슐을 만든 것은 첫 멤버(scout_memory)인데 counted_by가 다르다"
+    )
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])

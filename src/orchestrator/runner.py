@@ -520,6 +520,12 @@ class _Accumulator:
     capsules: dict[tuple[str, str | None, int | None, int | None], ContextCapsule] = field(
         default_factory=dict
     )
+    # 그 캡슐을 **어느 역할 카운터로 계산했나**(공유 캡슐 토큰 회계 근거, #192 조건②). 첫 멤버가
+    # 자기 토크나이저로 `tokens`를 정하고 2·3번 멤버는 그것을 공유하므로, 그 사실을 캐시-적중
+    # 이벤트에 실어 「멤버 2·3의 프롬프트를 무엇으로 셌나」가 기록에서 안 지워지게 한다.
+    capsule_counter: dict[tuple[str, str | None, int | None, int | None], str] = field(
+        default_factory=dict
+    )
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -1040,11 +1046,14 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
         # 이 accumulator 캐시가 `retrieval.run()` 앞에서 단락하므로 Retriever의 `on_cache`를
         # 안 지난다 — 그 단락을 세지 않으면 `cache` 이벤트 수가 캡슐 조립 시도 수보다 적어
         # hit ratio가 낮게 보인다(풀 팬아웃 #178 후속·#193). 러너의 캐시이므로 러너가 낸다.
-        ctx.record_cache(_cache_key_str(key), hit=True)
+        # `counted_by`로 이 공유 캡슐이 **어느 역할 카운터로 계산됐나**를 실어, 멤버 2·3의
+        # 토큰 회계 근거가 기록에서 안 지워지게 한다(#192 조건②).
+        ctx.record_cache(_cache_key_str(key), hit=True, counted_by=state.capsule_counter.get(key))
         return True
     with using_counter(ctx.counter_for_role(item.role.value)):
         item.capsule = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.LIGHT)
     state.capsules[key] = item.capsule
+    state.capsule_counter[key] = item.role.value
     return True
 
 

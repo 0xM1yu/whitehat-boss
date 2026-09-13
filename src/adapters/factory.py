@@ -267,9 +267,10 @@ def _counted_roles(config: HarnessConfig) -> tuple[str, ...]:
     프로필에 없는 `scout`째로 돌던 것이 **없는 역할에 `no_source`를 싣던** 원인이었다
     (풀 팬아웃 #178 후속, 이슈 #192).
 
-    ⚠ **이것은 절반이다** — 「프로필에 없는 `scout`을 안 싣는다」까지다. 멤버 2·3의 프롬프트를
-    무엇으로 셌나(공유 캡슐이 지운다)는 여전히 기록에 없고, 그쪽은 공유 캡슐 토크나이저
-    항목(#194)과 함께 닫힌다.
+    멤버 2·3이 첫 멤버의 캡슐을 물려받을 때 **어느 역할로 계산됐나**는 캐시-적중 이벤트의
+    `counted_by`가 따로 남긴다(`runner._step_retrieval`·`context.record_cache`) — 그래서 이
+    이벤트가 `scout` 자리를 하나만 실어도 회계 근거가 지워지지 않는다. ⚠ 예산이 멤버별
+    토크나이저로 **강제**되는 것은 별개이고 공유 캡슐 재검증(#194)에 남는다.
     """
     roles = config.profile.roles
     if all(member in roles for member in SCOUT_POOL_ROLES):
