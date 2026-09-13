@@ -21,6 +21,21 @@ from src.interfaces.retrieval import EmbeddingResult, Ranked, RerankResult
 
 _TIMEOUT_S = 300
 
+# Qwen3-Reranker instruction 양식. **vLLM `/rerank`는 이 계열에 템플릿을 안 붙인다**
+# (`get_score_template`은 `jina_vl`만 구현 · `is_original_qwen3_reranker`는 점수 계산법만
+# 설정 — 2026-09-13 vLLM 0.27.1 소스 확인). 모델이 훈련 때 기대하는 양식이 통째로 빠지면
+# 실경로 질의(식별자 하나)의 순위가 무너진다. 그래서 여기서 붙인다.
+#
+# 공식 전체 양식은 system prefix + `<Instruct>/<Query>/<Document>` + `<think>` suffix로
+# **생성 채점**이지만(모델 README), `/rerank`(pooling)로는 prefix·suffix를 못 싣는다.
+# `<Instruct>/<Query>/<Document>` **부분 양식**만 실을 수 있는데, 2026-09-13 후속 실측에서
+# 그 부분 양식이 정식 생성 채점과 **거의 같았다**(맨질의 FAIL · 부분양식 PASS ≈ 생성 PASS).
+# ⚠ 표본이 작고(8건·질의 2) 실조각·32건 검증은 배선 후에 남았다(이슈 #152).
+_RERANK_INSTRUCTION = (
+    "Given a code symbol and security keywords, retrieve the source-code snippets "
+    "most relevant to analyzing it for a vulnerability."
+)
+
 # Fake 임베딩 차원. 실제 모델(0.6B는 1024)과 맞출 이유가 없다 — 코사인 유사도의
 # 상대 순서만 결정론적이면 파이프라인 경로 검증에는 충분하다.
 _FAKE_DIM = 16
@@ -75,21 +90,34 @@ class VllmRerankerClient:
     서버는 404를 돌려주고, 여기서는 `RetrievalGatewayError`로 드러난다.
     """
 
-    def __init__(self, *, endpoint: str, model_name: str, api_key: str = "EMPTY") -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        model_name: str,
+        api_key: str = "EMPTY",
+        instruction: str = _RERANK_INSTRUCTION,
+    ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.model_name = model_name
         self.api_key = api_key
+        self.instruction = instruction
 
     def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> RerankResult:
         if not documents or top_n <= 0:
             return RerankResult(usage=_no_tokens())
+        # Qwen3-Reranker 부분 양식을 붙여 보낸다(위 `_RERANK_INSTRUCTION` 주석). 서버가
+        # 안 붙이므로 여기서 안 붙이면 모델은 맨 텍스트를 받는다. usage 추정도 실제 보낸
+        # (양식 포함) 문자열로 센다 — 안 그러면 검색 토큰이 과소 계상된다.
+        wrapped_query = f"<Instruct>: {self.instruction}\n<Query>: {query}"
+        wrapped_docs = [f"<Document>: {doc}" for doc in documents]
         started = time.monotonic()
         data = _post(
             f"{self.endpoint}/rerank",
             {
                 "model": self.model_name,
-                "query": query,
-                "documents": list(documents),
+                "query": wrapped_query,
+                "documents": wrapped_docs,
                 "top_n": min(top_n, len(documents)),
             },
             self.api_key,
@@ -100,7 +128,7 @@ class VllmRerankerClient:
                 Ranked(index=int(row["index"]), score=float(row["relevance_score"]))
                 for row in data.get("results", [])
             ],
-            usage=_usage_from(data.get("usage"), [query, *documents]),
+            usage=_usage_from(data.get("usage"), [wrapped_query, *wrapped_docs]),
             gpu_ms=elapsed_ms,
             gpu_ms_source="request_wall_clock",
         )
