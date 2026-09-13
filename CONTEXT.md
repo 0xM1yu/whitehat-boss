@@ -98,8 +98,12 @@
 **둘 다 「로스터를 바꾸는 비용」이 아니라 「로스터를 처음 세우는 비용」이다** — 자리에
 모델을 바꿔 끼우는 일은 여전히 넷이다. 다만 이 파일만 읽고 "넷이면 끝난다"고 읽지 마라.
 
-⚠ **`config/profiles.yaml`의 `local_balanced`와 `local_balanced_hybrid`는 같은 diff에서 고친다.**
-`tests/test_config.py`의 `test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retriever`가
+⚠ **roles를 잠근 대조 쌍은 같은 diff에서 고친다.** `local_balanced`↔`local_balanced_hybrid`,
+그리고 `local_balanced_pool`↔`local_balanced_pool_hybrid` 둘이다 — 각 쌍은 `retriever`
+하나만 달라야 검색 경로 효과가 갈리고, 그래서 아래 두 검사가 roles 동일을 강제한다(그
+강제가 없는 `dev_fake`/`dev_hybrid`는 이 규칙 밖이다). `tests/test_config.py`의
+`test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retriever`와
+`test_the_pool_hybrid_profile_differs_from_local_balanced_pool_only_in_the_retriever`가
 `variant.roles == base.roles`를 단언한다 — 한쪽만 고치면 CI가 잡는다.
 
 ---
