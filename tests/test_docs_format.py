@@ -447,6 +447,20 @@ BUILD_PLAN = REPO_ROOT / "docs" / "build-plan.md"
 # 셋은 각각 벤치마크 라벨 통합·Scout 임계값·Capsule 확장 상한이다.
 _BUILD_PLAN_D_CITATIONS = frozenset({"D9", "D13", "D25", "D30", "D51"})
 
+# 파인튜닝 단계 라벨. 앞뒤 경계를 보는 이유는 `_D_REF`와 같다.
+_FT_REF = re.compile(r"(?<![A-Za-z0-9])FT(\d+)(?![0-9A-Za-z])")
+
+# 취소선. **죽은 것을 지우지 않고 취소선으로 남기는** 것이 이 저장소의 관례다
+# (ADR 0010 §2의 죽은 행·`docs/open-questions.md`의 해소된 D 제목). 번호를 재사용하지
+# 않는 것과 같은 이유 — 회의록·PR이 그 라벨로 참조한다.
+_STRUCK = re.compile(r"~~(.+?)~~")
+
+# 아래 FT 검사에서 빼는 절. **날짜가 박힌 정정 기록**이라 고치면 그날의 사실이 지워진다 —
+# 그 표는 "원문이 파인튜닝을 D 계열로 불렀고 FT1·FT2·FT3으로 바꿨다"는 **이름 이력**이지
+# "FT1이 지금 산다"는 주장이 아니다. `_BUILD_PLAN_D_CITATIONS`와 같은 논법의 좁은 예외이고,
+# 넓힐 때는 그 절이 정말 기록인지 문서에서 확인하고 넣는다.
+_BUILD_PLAN_FT_EXEMPT_SECTION = "## 1. 합의 원문에서 고친 것"
+
 # `docs/open-questions.md` §1의 R 행. **서식을 `test_open_questions_layout`의 `_ROW`와
 # 정확히 맞춘다** — 그쪽이 "인덱스 행 ↔ 본문 파일"을 잇는 기준이라, 여기가 더 느슨하면
 # 본문 파일이 없는 번호가 이쪽에서만 "정의됨"으로 새어 나간다.
@@ -499,6 +513,76 @@ def test_the_build_plan_does_not_borrow_the_d_series_namespace() -> None:
                     "번호가 실재하므로 D 참조 검사가 잡지 못한다"
                 )
     assert borrowed == [], "\n".join(borrowed)
+
+
+def test_the_build_plan_does_not_keep_a_fine_tuning_stage_whose_model_slot_it_removed() -> None:
+    """§2 표에서 모델 자리를 지운 파인튜닝 단계가 문서 다른 곳에 살아 있으면 안 된다.
+
+    **왜 이 검사가 있나.** §2 표의 한 행이 **모델 자리와 그 자리의 파인튜닝을 같은 줄에**
+    든다. 자리가 사라지면 그 파인튜닝도 대상을 잃는데, **그 셀 하나만 고치고 §6 표와 §8
+    로드맵을 안 고쳐도 아무것도 실패하지 않는다.**
+
+    2026-09-13에 실제로 그랬다. 슬라이싱이 무모델로 확정되며 자리 ①이 사라졌고 §2 표의
+    `FT1`을 취소선으로 죽였는데, §6이 `| FT1 | 인덱서 (단계 1) | …`를 그대로 들고 §8
+    로드맵이 *"인덱서 best-of-N **쿼리**를 켠다 · FT1 데이터가 쌓이기 시작"*을 들고 있었다 —
+    **걷어낸 설계(모델이 쓰는 쿼리)가 계획에 현재형으로 살아 있었다.** 적대적 리뷰가 같은
+    표의 다른 자리(⑤)는 잡고 이것은 놓쳤다. CLAUDE.md §2.3이 사람에게 맡긴 자리이고,
+    사람이 한 번 놓쳤으므로 기계에 넘긴다.
+
+    **통과 조건은 「지우기」가 아니라 「취소선」이다** — 번호를 재사용하지 않는 것과 같은
+    이유다(`docs/open-questions.md` 관리 방식). 지우면 회의록·PR이 그 라벨로 참조할 때
+    무엇이었는지 사라진다.
+    """
+    lines = _read(BUILD_PLAN).splitlines()
+
+    section_of: list[str] = []
+    current = ""
+    for line in lines:
+        if line.startswith("## "):
+            current = line.strip()
+        section_of.append(current)
+
+    summary_rows = [
+        (i, line)
+        for i, line in enumerate(lines)
+        if section_of[i].startswith("## 2.") and line.startswith("|")
+    ]
+    assert summary_rows, (
+        "docs/build-plan.md §2에서 모델 자리 표를 찾지 못했다 — 표 서식이나 절 제목이 "
+        "바뀌었다면 이 검사도 함께 고친다"
+    )
+
+    dead: set[str] = set()
+    live: set[str] = set()
+    for _, row in summary_rows:
+        struck = " ".join(_STRUCK.findall(row))
+        unstruck = _STRUCK.sub(" ", row)
+        dead.update(f"FT{n}" for n in _FT_REF.findall(struck))
+        live.update(f"FT{n}" for n in _FT_REF.findall(unstruck))
+    # 같은 라벨이 한 행에서 죽고 다른 행에서 살아 있으면 살아 있는 쪽이 이긴다.
+    dead -= live
+
+    assert live or dead, (
+        "docs/build-plan.md §2 표가 파인튜닝 라벨을 하나도 들지 않는다 — 표가 바뀐 것이다"
+    )
+
+    summary_lines = {i for i, _ in summary_rows}
+    offenders: list[str] = []
+    for lineno, line in enumerate(lines):
+        if lineno in summary_lines or section_of[lineno] == _BUILD_PLAN_FT_EXEMPT_SECTION:
+            continue
+        for number in _FT_REF.findall(_STRUCK.sub(" ", line)):
+            if f"FT{number}" in dead:
+                offenders.append(
+                    f"docs/build-plan.md:{lineno + 1}: FT{number} — §2 표가 그 모델 자리를 "
+                    "지웠는데 여기서는 현재형으로 살아 있다. 지우지 말고 취소선으로 남긴다"
+                )
+
+    assert offenders == [], (
+        "구축안이 **자리가 사라진** 파인튜닝 단계를 계획에 그대로 들고 있다 "
+        "(CLAUDE.md §2.3 — 지운 것을 살아 있는 소스가 가리키지 않는다).\n"
+        + "\n".join(offenders)
+    )
 
 
 def test_the_build_plan_risk_references_point_at_a_real_r_row() -> None:
