@@ -585,6 +585,10 @@ def test_counter_for_role_returns_none_for_a_role_the_profile_lacks(
     안 걸렀다. `_step_retrieval`은 그 카운터를 `Stage.RETRIEVAL` 검사 뒤·`Stage.SCOUT` 검사
     **앞**에서 부르므로, 4단계 앞에서 멈추는 run이 scout 없는 프로필로 돌면 거기서 죽는다.
     ⚠ 풀에서는 그 역할이 `scout`이 아니라 멤버 키다(PR #178).
+
+    **그리고 `counter_report`는 프로필에 없는 역할을 싣지 않는다** — `_counted_roles`가
+    프로필에 실재하는 자리만 돈다(풀 팬아웃 #178 후속). 없는 `scout`을 `no_source`로 싣던
+    것이 「없는 것을 싣는다」는 거짓 기록이었다.
     """
     base = load_config("dev_fake")
     roles = {r: k for r, k in base.profile.roles.items() if r != "scout"}
@@ -594,6 +598,43 @@ def test_counter_for_role_returns_none_for_a_role_the_profile_lacks(
     )
 
     assert deps.counter_for_role("scout") is None
-    assert deps.counter_report["scout_counter"] == "approx"
-    assert deps.counter_report["scout_source"] is None
-    assert deps.counter_report["scout_reason"] == "no_source"
+    assert "scout_counter" not in deps.counter_report, "프로필에 없는 scout이 기록에 실렸다"
+    assert "scout_source" not in deps.counter_report
+    assert deps.counter_report["auditor_counter"] == "approx"
+
+
+def test_counter_report_of_a_pool_profile_names_the_first_member_not_scout(
+    target_root: Path, tmp_path: Path
+) -> None:
+    """풀 프로필의 `token_counter`는 죽은 `scout`이 아니라 **켜지는 첫 멤버**를 싣는다.
+
+    풀은 캡슐을 첫 멤버(`scout_memory`)가 만들어 그 카운터로 예산을 정하고 2·3번 멤버는
+    캐시된 캡슐을 받는다. 그래서 실리는 scout 자리는 `scout_memory` 하나다 — `scout`은
+    프로필에 없으므로 이벤트에서 빠진다(풀 팬아웃 #178 후속, 옛 「없는 것을 싣는다」).
+
+    ⚠ 멤버 2·3의 토큰 회계 근거는 여전히 기록에 없다(공유 캡슐이 지운다) — 그쪽은
+    공유 캡슐 토크나이저 항목과 함께 닫힌다.
+    """
+    base = load_config("dev_fake")
+    pool_roles = {
+        "scout_memory": "fake_v2",
+        "scout_boundary": "fake_v2",
+        "scout_injection": "fake_v2",
+        "auditor": "fake",
+        "critic": "fake",
+        "embedding": "fake",
+        "reranker": "fake",
+    }
+    config = base.model_copy(
+        update={"profile": base.profile.model_copy(update={"roles": pool_roles})}
+    )
+    deps = build_deps(
+        config, run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path / "artifacts"
+    )
+
+    assert "scout_counter" not in deps.counter_report, "죽은 scout이 실렸다"
+    assert deps.counter_report["scout_memory_counter"] == "approx"
+    assert "scout_boundary_counter" not in deps.counter_report, (
+        "2·3번 멤버는 캡슐을 공유해 카운터를 안 켜므로 기록에도 안 실린다"
+    )
+    assert deps.counter_report["auditor_counter"] == "approx"
