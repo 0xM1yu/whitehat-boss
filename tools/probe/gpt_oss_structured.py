@@ -163,13 +163,25 @@ def _trial(
     choice = (body.get("choices") or [{}])[0]
     message = choice.get("message") or {}
     content = message.get("content") or ""
-    # §3.3의 열린 질문 ③ — `reasoning_content`가 왜 비는가. 세 조건 전부에서 비었다.
-    reasoning = message.get("reasoning_content")
+    # **vLLM 0.27.1이 쓰는 키는 `reasoning`이다. `reasoning_content`는 없다.**
+    # 2026-09-12 ATOM 실측 — 응답 `message`의 키 집합이 `annotations`·`audio`·`content`·
+    # `function_call`·`reasoning`·`refusal`·`role`이다(자유 서술·스키마 강제 양쪽 동일).
+    #
+    # ⚠ **그래서 이 필드로 낸 과거 관측은 무효다.** 09-09 보고서 §3.3이 열어 둔
+    # *"`reasoning_content`가 왜 비는가 — 안 갈랐다"*와 §해석의
+    # *"스키마 강제와 무관하게 채널이 API 응답에서 갈리지 않는다"*가 그것이다 — 채널은
+    # 갈려 나오고, 안 갈린 것은 우리가 없는 키를 읽었기 때문이다
+    # (2026-09-12 보고서 §4 — `docs/experiments/harness/`의
+    # `2026-09-12-critic-gptoss-token-accounting-atom.md`).
+    #
+    # **필드 이름도 같이 고친다.** `reasoning_content_len`으로 남기면 산출물만 보고는 어느
+    # 키를 읽은 것인지 모르고, 과거 JSONL과 새 JSONL이 같은 이름 아래 다른 것을 담는다.
+    reasoning = message.get("reasoning")
     record |= {
         "finish_reason": choice.get("finish_reason"),
         "completion_tokens": (body.get("usage") or {}).get("completion_tokens"),
-        "reasoning_content_empty": not reasoning,
-        "reasoning_content_len": len(reasoning or ""),
+        "reasoning_empty": not reasoning,
+        "reasoning_len": len(reasoning or ""),
         "content": content,
     }
     if not structured:
@@ -233,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     ok = [t for t in structured if t["status"] == 200]
     valid = [t for t in ok if t.get("json_valid")]
     correct = [t for t in valid if t.get("correct")]
-    empty_reasoning = [t for t in ok if t.get("reasoning_content_empty")]
+    empty_reasoning = [t for t in ok if t.get("reasoning_empty")]
 
     print(f"  HTTP 200        {len(ok)}/{len(structured)}")
     print(f"  JSON 유효       {len(valid)}/{len(ok) or 0}")
