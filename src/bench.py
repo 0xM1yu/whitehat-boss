@@ -52,7 +52,7 @@ from src.interfaces.model_client import ModelGatewayError, Prompt, SchemaParseEr
 from src.orchestrator.prompt_loader import PromptTemplate, build_facts
 from src.schemas.candidate import Candidate
 from src.schemas.common import Location
-from src.schemas.decision import Decision
+from src.schemas.decision import DecisionDraft
 from src.schemas.enums import CapsuleLevel, Role
 from src.schemas.finding import Finding
 
@@ -95,7 +95,11 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     Role.SCOUT_BOUNDARY: (Candidate, CapsuleLevel.LIGHT),
     Role.SCOUT_INJECTION: (Candidate, CapsuleLevel.LIGHT),
     Role.AUDITOR: (Finding, CapsuleLevel.EXPANDED),
-    Role.CRITIC: (Decision, CapsuleLevel.EXPANDED),
+    # **`Decision`이 아니라 `DecisionDraft`다.** bench는 같은 프롬프트 파일을 렌더해
+    # 구조화 출력을 재므로, 실서빙 노드(`nodes/critic.py`의 `OUTPUT_SCHEMA`)가 보내는
+    # 것과 달라지면 재는 grammar가 운영의 grammar가 아니게 된다 — ID·`produced_by`가
+    # 빠진 만큼 필수 필드 수가 다르다.
+    Role.CRITIC: (DecisionDraft, CapsuleLevel.EXPANDED),
     # 단일패스는 셋을 한 호출로 한다. 스키마와 레벨을 **지어내지 않고 프롬프트가 선언한
     # 값을 쓴다** — `prompts/single/v2/meta.yaml`의 `output_schema: Finding`이고, 혼자
     # 경로까지 세우므로 문맥은 Auditor 이상이어야 한다.

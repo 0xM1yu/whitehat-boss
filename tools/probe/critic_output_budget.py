@@ -102,7 +102,7 @@ from src.interfaces.model_client import Prompt  # noqa: E402
 from src.orchestrator import gate  # noqa: E402
 from src.orchestrator.nodes.critic import _describe_evidence, _describe_path  # noqa: E402
 from src.orchestrator.prompt_loader import PromptTemplate, build_facts, load_prompt  # noqa: E402
-from src.schemas.decision import Decision  # noqa: E402
+from src.schemas.decision import Decision, DecisionDraft  # noqa: E402
 from src.schemas.enums import Role  # noqa: E402
 from src.schemas.evidence import Evidence  # noqa: E402
 from src.schemas.finding import Finding  # noqa: E402
@@ -118,20 +118,14 @@ _CEILING_MARGIN_TOKENS = 2048
 def _schema_for(name: str) -> type:
     """`--schema`가 고르는 구조화 출력 스키마.
 
-    `DecisionDraft`는 **이 저장소에 없다** — PR #182(`fix/critic-free-verdict`)에만 있다.
-    조용한 대체 경로를 두지 않는다: 없으면 PR 번호를 이름으로 지목하며 죽는다. 산출물만
-    보고는 어느 스키마로 쟀는지 모르는 상태를 만들지 않는다(d67 프로브의 같은 판단).
+    **`draft`가 실서빙이다** — `nodes/critic.OUTPUT_SCHEMA`가 `DecisionDraft`이고
+    `test_the_probe_draft_schema_is_the_one_the_live_critic_node_sends`가 그 동일성을
+    건다. `decision`은 필드가 넷 더 많은 **상한 팔**이다(`DecisionDraft` ⊂ `Decision`).
+
+    2026-09-12 보고서 §3.3·§3.4는 `decision`으로 쟀다 — 그때 `DecisionDraft`가 PR #182
+    브랜치에만 있었기 때문이고, #182가 머지된 지금은 `draft`가 실서빙과 맞는 팔이다.
     """
-    if name == "decision":
-        return Decision
-    try:
-        from src.schemas.decision import DecisionDraft
-    except ImportError as exc:
-        raise SystemExit(
-            "DecisionDraft가 이 체크아웃에 없다. PR #182(fix/critic-free-verdict)의 "
-            "브랜치에서 돌리거나 --schema decision으로 잰다"
-        ) from exc
-    return DecisionDraft
+    return Decision if name == "decision" else DecisionDraft
 
 
 @dataclass(frozen=True)

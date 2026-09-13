@@ -611,3 +611,32 @@ def test_the_reconstructed_critic_prompt_carries_no_capsule_and_no_source() -> N
     # `evidence_refs`가 비면 근거 블록도 빈다 — 그래서 이 측정은 프롬프트 크기의 **하한**이다.
     assert facts["evidence"] == []
     assert built.evidence_count == 0
+
+
+def test_the_probe_draft_schema_is_the_one_the_live_critic_node_sends() -> None:
+    """`--schema draft`가 실서빙 `OUTPUT_SCHEMA`와 **같은 객체**여야 한다.
+
+    2026-09-12 프로브는 `DecisionDraft`가 PR #182 브랜치에만 있던 시점에 돌아
+    `--schema decision`으로 쟀고, #182가 머지되며 그 서술이 실서빙과 어긋났다
+    (보고서 §3.3의 ⚠). 그 어긋남을 잡는 것이 사람이었다 — 여기에 걸어 둔다.
+
+    같은 값인지(`==`)가 아니라 **같은 객체인지**(`is`)를 본다. 스키마를 갈아끼우고
+    프로브만 안 따라오면 여기서 죽는다.
+    """
+    from src.orchestrator.nodes.critic import OUTPUT_SCHEMA  # noqa: PLC0415
+    from tools.probe.critic_output_budget import _schema_for  # noqa: PLC0415
+
+    assert _schema_for("draft") is OUTPUT_SCHEMA
+
+
+def test_the_probe_decision_arm_is_an_upper_bound_on_the_draft_arm() -> None:
+    """`Decision` 필드 집합이 `DecisionDraft`를 **포함**해야 한다.
+
+    보고서 §3.3·§3.4와 `config/budgets.yaml`의 `output_max` 주석이 "여기 수는
+    실서빙에 대한 상한"이라 적는 근거가 이 포함 관계 하나다. 관계가 뒤집히면
+    그 문장들이 거짓이 되므로 여기서 막는다 — **실측이 아니라 구조적 논증이고,
+    그 논증의 전제만 고정한다.**
+    """
+    from src.schemas.decision import Decision, DecisionDraft  # noqa: PLC0415
+
+    assert set(DecisionDraft.model_fields) < set(Decision.model_fields)

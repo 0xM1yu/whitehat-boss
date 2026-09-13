@@ -8,7 +8,8 @@
 > 실제 Critic 프롬프트에서 **본문은 어느 조건에서도 76~126토큰**이고 나머지가 전부 추론이다
 > (`reasoning_effort: high`에서 추론 중앙 1,252 · 최대 16,381).
 > ③ **그러므로 `output_max_by_role.critic` 값은 안 정한다.** 하네스 실제 설정
-> (`max_tokens 4096` · `high` · `Decision` · 실 프롬프트) **16콜에서 실패 0건**이고 비폭주 최대
+> (`max_tokens 4096` · `high` · `Decision`(실서빙 `DecisionDraft`의 상한 — §3.3의 ⚠) · 실
+> 프롬프트) **16콜에서 실패 0건**이고 비폭주 최대
 > `completion_tokens`가 1,508이다. 전역 4,096이 이미 충분하다.
 >
 > ⚠ **이 보고서가 새로 답하지 않는 것.** D67의 원인 갈래와 D46의 해법은
@@ -131,6 +132,16 @@ input_value='{\n "finding_id": "find...\t\t\t\t\n \t\t\t\t\n '
 재구성. `max_tokens=16384` 고정 · `Decision` 스키마 · `temperature 0.2` · `top_p 0.95` ·
 `seed 20260901`. **본문/추론 토큰은 서버의 `/tokenize`로 각각 셌다**(추정이 아니다).
 
+> **⚠ 스키마는 `_ask_model`과 같지 않다 — `Decision`이고, 하네스는 `DecisionDraft`를 보낸다.**
+> 이 프로브를 돌린 시점에 `DecisionDraft`는 PR #182 브랜치에만 있었다. 그 PR이 머지되며
+> ([`nodes/critic.py`](../../../src/orchestrator/nodes/critic.py) `OUTPUT_SCHEMA = DecisionDraft`)
+> §3.3·§3.4가 잰 스키마가 실서빙과 어긋났다. **필드 집합은 `DecisionDraft` ⊂ `Decision`이다**
+> — `Decision`이 `decision_id`·`finding_id`·`produced_by`·`run_id` 넷을 더 요구한다(8 대 4).
+> 모델이 그 넷을 더 뱉어야 하므로 **여기 수는 `DecisionDraft`에 대한 상한이다**(구조적
+> 논증이지 실측이 아니다 — 두 스키마를 같은 조건에서 나란히 재지는 않았다). 결론
+> 「4,096이 충분하다」는 상한이 4,096 아래라서 성립하고, 스키마가 줄면 더 성립한다.
+> 프로브의 `--schema draft` 팔이 이제 실서빙과 맞는 팔이다.
+
 **결과.**
 
 | `reasoning_effort` | 추론 tok min/중앙/max | 본문 tok min/중앙/max | `completion_tokens` 중앙/max | 초 중앙 | `finish=length` |
@@ -170,7 +181,7 @@ input_value='{\n "finding_id": "find...\t\t\t\t\n \t\t\t\t\n '
 **목적.** §3.3의 결론을 하네스가 실제로 보내는 요청으로 확인한다.
 
 **조건.** `max_tokens=4096`(= 지금의 `thresholds.output_max`) · `reasoning_effort: high`(=
-registry 선언값) · `Decision` 스키마 · 자리표시자는 `_describe_path`/`_describe_evidence`가
+registry 선언값) · `Decision` 스키마(§3.3의 ⚠ — 실서빙 `DecisionDraft`에 대한 상한) · 자리표시자는 `_describe_path`/`_describe_evidence`가
 실제로 내는 문자열(`(경로 없음)`·`(근거 없음)`) · 상위 8건 × 2시행.
 
 **결과.** 16콜 · **JSON 실패 0 · `finish=length` 0** · `completion_tokens` 615~1,508

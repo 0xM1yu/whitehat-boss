@@ -333,6 +333,39 @@ def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
     assert after.state is not FindingState.QUEUED  # 반박으로 탈락하지 않았다
 
 
+def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:
+    """못 읽은 verdict는 `need_evidence`(보류)로 가고 **원문이 trace에 남는다**.
+
+    **Fake는 이 분기를 못 탄다** — 표준 어휘만 내므로 항등 경로만 돈다(#182 재리뷰 M-5).
+    그래서 실서빙에서만 나는 자유 서술 verdict를 여기서 모델 응답에 끼워 넣는다.
+
+    이 이벤트가 없으면 trace.py 지표표의 「제거율 — Critic」 분자(`rebutted ∪
+    need_evidence`)가 **진짜 보류와 못 읽은 verdict를 한 값으로 합친다** — 전자는 Critic의
+    판정이고 후자는 우리 매퍼의 실패라 같은 수에 들어가면 안 된다.
+    """
+    raw = "I cannot rule out a use-after-free here"
+    inner = ctx.models.complete
+
+    def unreadable(*, role, prompt, schema):  # noqa: ANN001, ANN202
+        result = inner(role=role, prompt=prompt, schema=schema)
+        if role is not Role.CRITIC:
+            return result
+        return result.model_copy(update={"value": result.value.model_copy(update={"verdict": raw})})
+
+    ctx.models.complete = unreadable  # type: ignore[method-assign]
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    _, decision = critic.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    assert decision.verdict is Verdict.NEED_EVIDENCE  # 지지(uphold)로 소비하지 않는다
+    unmapped = [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_VERDICT_UNMAPPED]
+    assert len(unmapped) == 1
+    assert unmapped[0].data["raw_verdict"] == raw
+    assert unmapped[0].data["mapped_verdict"] == Verdict.NEED_EVIDENCE.value
+    assert unmapped[0].subject_id == decision.decision_id
+
+
 def test_critic_selection_is_capped_by_config(ctx: RunContext) -> None:
     findings = [_finding(f"find_{i:04d}", confidence=0.5) for i in range(20)]
 

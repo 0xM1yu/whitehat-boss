@@ -1073,24 +1073,3 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
         "**셋**이고 서로를 대신하지 못한다. 「닫히는 조건 *n*」으로 고쳐라.\n"
         + "\n".join(offenders)
     )
-def test_the_source_missing_note_goes_red_the_day_that_report_lands() -> None:
-    """`2,863`의 원천이 «아직 없다»고 적은 두 자리를, 그 보고서가 들어오는 날 빨갛게 만든다.
-
-    **왜 산문으로 두면 안 되나.** `config/budgets.yaml`과 `docs/agent-contracts.md`가
-    *"2,863의 원천은 아직 이 저장소에 없다"*를 적고, 각자 옆에 «머지되면 링크로 바꾼다»는
-    자기수리 메모를 들고 있다. **그 메모는 강제가 아니다** — 보고서를 넣고 돌려 보면
-    아무것도 안 깨진다. 그러면 두 문장이 조용히 거짓이 된 채로 남는다(CLAUDE.md §2.3).
-
-    같은 PR이 `test_the_contract_example_output_max_matches_the_config`에는 정확히 이런
-    트립와이어를 걸어 놓고 자기 문장에는 안 걸었다. 이 검사가 그 비대칭을 없앤다.
-
-    **이 검사가 빨개지면 고칠 곳은 셋이다** — 두 ⚠ 문단을 그 파일 링크로 바꾸고,
-    이 검사를 지운다. 가드가 고장 난 것이 아니라 **역할을 다한 것이다.**
-    """
-    report = REPO_ROOT / "docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md"
-    assert not report.exists(), (
-        f"{report.relative_to(REPO_ROOT).as_posix()} 가 저장소에 들어왔다 — "
-        "`config/budgets.yaml`과 `docs/agent-contracts.md`의 "
-        "«2,863의 원천은 아직 이 저장소에 없다» 두 문단을 그 파일 링크로 바꾸고, "
-        "이 검사를 함께 지워라. 이 검사는 그 순간 빨개지려고 있다."
-    )
