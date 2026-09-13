@@ -235,6 +235,31 @@ def test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retr
     assert variant.production is False
 
 
+POOL_HYBRID_PROFILE = "local_balanced_pool_hybrid"
+
+
+def test_the_pool_hybrid_profile_differs_from_local_balanced_pool_only_in_the_retriever() -> None:
+    """풀 검색 프로필도 대조군(`local_balanced_pool`)과의 차이가 `retriever` **하나**다.
+
+    `local_balanced_hybrid`↔`local_balanced`와 같은 성질이다 — 이 프로필의 쓸모가 검색
+    경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께 움직이면 풀 run의 차이가
+    무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기 쉬워 기계로 고정한다.
+    """
+    base = load_config("local_balanced_pool").profile
+    variant = load_config(POOL_HYBRID_PROFILE).profile
+
+    assert variant.roles == base.roles
+    assert variant.budget == base.budget
+    assert variant.adapters.retriever == "hybrid"
+    assert base.adapters.retriever == "fake"
+    assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
+        exclude={"retriever"}
+    )
+    # 검색 두 모델(0.6b)의 benchmark는 아직 0이고 별칭·gpt-oss도 0이라, production으로
+    # 올리지 않는다 — `cli._check_benchmarks`가 부분/미측정을 막는다(model-serving.md §5).
+    assert variant.production is False
+
+
 def test_prompted_roles_matches_prompt_directories() -> None:
     """`PROMPTED_ROLES`와 `prompts/` 하위 디렉터리가 일치한다.
 
