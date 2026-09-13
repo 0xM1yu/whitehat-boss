@@ -526,6 +526,11 @@ class _Accumulator:
     capsule_counter: dict[tuple[str, str | None, int | None, int | None], str] = field(
         default_factory=dict
     )
+    # 팬아웃된(deferred 아닌) 대상 키 집합 (#193 ①). 「모든 자리가 실패한 대상 수」 =
+    # 이 집합에서 후보를 낸 대상을 뺀 것. 단일 `scout`에서도 성립한다(자리가 하나).
+    dispatched_targets: set[tuple[str, str | None, int | None, int | None]] = field(
+        default_factory=set
+    )
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -725,11 +730,16 @@ def run_pipeline(
         ).grade.value
         for f in findings
     }
+    # 「모든 자리가 실패해 분석되지 않은 대상 수」(#193 ①). 팬아웃된 대상 중 후보를 하나도
+    # 못 낸 것 — 형제 멤버가 같은 대상을 보므로 `dropped`(시도)로는 못 세던 값이다.
+    analyzed_targets = {_target_key(c.location) for c in state.candidates}
+    unanalyzed_targets = len(state.dispatched_targets - analyzed_targets)
     rendered = report.run(
         ctx,
         findings=findings,
         deferred=state.deferred,
         dropped=state.dropped,
+        unanalyzed_targets=unanalyzed_targets,
         critic_deferred=state.critic_deferred,
         critic_top_n=config.thresholds.critic_top_n,
         files=files,
@@ -910,6 +920,9 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     # 무엇을 보려 했는지는 남는다.
     for item in plan.targets:
         _emit_planned(ctx, item.location)
+    # 팬아웃되는(deferred 아닌) 대상 키. 리포트가 「모든 자리가 실패해 분석되지 않은 대상 수」를
+    # 이것에서 뺀다(#193 ①) — 후보를 하나도 못 낸 대상이 곧 그 수다.
+    state.dispatched_targets = {_target_key(item.location) for item in plan.targets}
     state.deferred = len(deferred)
     for item in deferred:
         _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
@@ -1244,12 +1257,13 @@ def _run_stage_for_all(
                 exc,
                 consecutive.get(role, 0),
                 stage=item.reached.stage,
+                role=role,
                 systematic=exc.status not in _SIZE_STATUS,
             )
         except SchemaParseError as exc:
             consecutive[role] = _drop(
                 ctx, state, item.target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
-                stage=item.reached.stage,
+                stage=item.reached.stage, role=role,
             )
         else:
             # 이 역할이 이 단계를 마쳤다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
@@ -1323,12 +1337,13 @@ def _triage_by_candidate(
                     exc,
                     consecutive.get(role, 0),
                     stage=reached.stage,
+                    role=role,
                     systematic=systematic,
                 )
             except SchemaParseError as exc:
                 consecutive[role] = _drop(
                     ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
-                    stage=reached.stage,
+                    stage=reached.stage, role=role,
                 )
             else:
                 # 완주했다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
@@ -1344,14 +1359,16 @@ def _drop(
     consecutive: int,
     *,
     stage: Stage,
+    role: Role,
     systematic: bool = True,
 ) -> int:
     """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
 
     ⚠ **시도는 `(target, Scout 자리)`다 — target이 아니다.** 팬아웃 뒤 `items`가 그 곱으로
     펼쳐지고 이 함수가 시도마다 불린다. 단일 `scout`에서는 자리가 하나라 둘이 같고,
-    **풀에서만 갈린다.** 그래서 `state.dropped`와 `count(target_skipped)`로 **「못 본 대상
-    수」를 셀 수 없다** — 형제 멤버가 같은 대상을 보기 때문이다. 미해결로 등재돼 있다.
+    **풀에서만 갈린다.** `role`을 `target_skipped.scout_member`로 실어(#193 ①) 어느 자리가
+    죽었는지 남긴다 — 그래야 「모든 자리가 실패한 대상」을 trace에서 셀 수 있고, 리포트의
+    `unanalyzed_targets`(팬아웃된 대상 − 후보 낸 대상)가 그 수를 요약으로 낸다.
 
     `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
     (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
@@ -1363,7 +1380,10 @@ def _drop(
     셋 다 5단계 auditor인데 skip 기록은 4다. `_emit_skipped`가 자기 docstring에
     "**`stage`가 곧 어디서 잘렸는가다**"라고 적어 뒀고, 박아 둔 값은 그 문장을 못 지킨다.
     """
-    _emit_skipped(ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc))
+    _emit_skipped(
+        ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc),
+        member=role.value,
+    )
     state.dropped += 1
     if not systematic:
         return consecutive
@@ -1418,7 +1438,13 @@ def _emit_planned(ctx: RunContext, target: Location) -> None:
 
 
 def _emit_skipped(
-    ctx: RunContext, target: Location, *, stage: Stage, reason: str, detail: str = ""
+    ctx: RunContext,
+    target: Location,
+    *,
+    stage: Stage,
+    reason: str,
+    detail: str = "",
+    member: str | None = None,
 ) -> None:
     """4단계에 올리지 못한 target 하나를 기록한다.
 
@@ -1451,6 +1477,10 @@ def _emit_skipped(
         symbol=target.symbol or "",
         line_start=target.line_start or 0,
         reason=reason,
+        # 어느 Scout 자리가 이 target에서 죽었나(#193 ①). 팬아웃 뒤 시도 단위가 `(target, 자리)`라,
+        # 이것이 없으면 「모든 자리가 실패한 대상」과 「한 자리만 실패한 대상」을 못 가른다.
+        # 단일 프로필은 `scout` 하나라 항상 같다. `None`이면 예산 절단(팬아웃 전)이라 자리가 없다.
+        **({"scout_member": member} if member is not None else {}),
         **({"error_detail": detail} if detail else {}),
     )
 

@@ -335,6 +335,10 @@ def test_a_broken_pool_member_trips_the_circuit_breaker(
         f"게이트웨이 폐기가 {len(dropped)}건뿐이라 상한({runner._MAX_CONSECUTIVE_DROPS})에 "
         "못 미친다 — fixture의 4단계 대상 수를 늘린다"
     )
+    # #193 ① — 폐기 이벤트가 어느 자리에서 죽었는지(scout_member)를 싣는다.
+    assert all(e["data"].get("scout_member") == "scout_boundary" for e in dropped), (
+        "target_skipped에 scout_member가 없거나 다르다 — 고장난 것은 scout_boundary다(#193 ①)"
+    )
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])

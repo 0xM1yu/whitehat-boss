@@ -119,7 +119,7 @@
 | D67 | **Auditor가 `path`·`evidence_refs`를 안 채운다 — v1이 둘 다 요구하는데 150건 중 `path` 150·`evidence_refs` 148이 빈다. 원인 미확정** | 열림 | [본문](open-questions/D/D67.md) |
 | D68 | ~~Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다~~ (연속 폐기를 역할별로 셈) | 닫힘 | [본문](open-questions/D/D68.md) |
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
-| D70 | **팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다** (②적중률 닫힘·①대상수 남음) | 부분 | [본문](open-questions/D/D70.md) |
+| D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
 | D71 | **공유 캡슐의 토큰 예산이 첫 멤버의 토크나이저로만 강제된다 — 로스터는 풀 세 자리를 서로 다른 세 모델로 정해 두었다** | 열림 | [본문](open-questions/D/D71.md) |
 | D72 | **역할별 출력 상한에 위쪽 한계가 없다 — `2**31`이 로드를 통과하고, 그 run은 전량 400인데 bench가 「못 잼」으로 적는다** | 열림 | [본문](open-questions/D/D72.md) |
 

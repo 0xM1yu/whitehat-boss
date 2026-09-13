@@ -52,7 +52,7 @@ class Report:
     #   (ADR 0010 §3). 단일 `scout`에서는 자리가 하나라 둘이 같고 **풀에서만 갈린다.**
     #
     # ⚠ **`dropped`로 「안 본 대상」을 셀 수 없다** — 멤버 하나가 죽어도 형제가 그 대상을
-    # 보므로 시도가 폐기돼도 대상은 분석된다. 미해결로 등재돼 있다(인덱스 참조).
+    # 보므로 시도가 폐기돼도 대상은 분석된다. 그 값은 아래 `unanalyzed_targets`가 낸다(#193 ①).
     # **"무엇을 찾았는가"만 적고 "무엇을 안 봤는가"를
     # 빼면, 예산에 잘린 run의 리포트가 전량을 본 run의 리포트와 같은 얼굴을 한다** —
     # `index_graph`가 "없다 vs 0건"에 대해, `retrieval_truncated`가 "이벤트 부재는
@@ -62,6 +62,10 @@ class Report:
     # 사람이 읽는 요약이라 수백 줄을 여기 옮기면 Finding이 묻힌다.
     deferred: int = 0
     dropped: int = 0
+    # **모든 자리가 실패해 후보를 하나도 못 낸 대상 수** (#193 ①). `dropped`(시도)·`deferred`
+    # (예산 컷)와 **또 다른 단위**다 — 팬아웃된 대상 중 어느 멤버도 후보를 못 낸 것이고,
+    # 러너가 `dispatched_targets − 후보 낸 대상`으로 센다. 단일 `scout`에서도 성립한다.
+    unanalyzed_targets: int = 0
     # 7단계에 못 올라간 Finding 수 (#98 (b)). **위 둘과 같은 줄에 넣지 않는다** — 그쪽 단위는
     # 대상 또는 시도(바로 위)이고 이쪽은 Finding이다.
     # 사람이 읽는 산출물에서 분모를 섞는 것이 trace에서
@@ -110,6 +114,13 @@ class Report:
                 f"넘긴 대상(예산 초과): {self.deferred}건 · "
                 f"완주하지 못한 시도(대상 × Scout 자리, 호출 실패): {self.dropped}건 "
                 f"(사유는 trace의 `target_skipped`)",
+                "",
+            ]
+        if self.unanalyzed_targets:
+            # `dropped`(시도)와 다른 단위 — 모든 자리가 실패해 후보를 하나도 못 낸 대상 수.
+            lines += [
+                f"분석되지 않은 대상(모든 Scout 자리 실패): {self.unanalyzed_targets}건 "
+                f"(어느 멤버로 무엇이 실패했는지는 trace의 `target_skipped.scout_member`)",
                 "",
             ]
         if self.critic_deferred:
@@ -178,6 +189,7 @@ def run(
     findings: list[Finding],
     deferred: int = 0,
     dropped: int = 0,
+    unanalyzed_targets: int = 0,
     critic_deferred: int = 0,
     critic_top_n: int = 0,
     grades: dict[str, str] | None = None,
@@ -199,6 +211,7 @@ def run(
         run_id=ctx.run_id,
         findings=tuple(kept),
         duplicates=duplicates,
+        unanalyzed_targets=unanalyzed_targets,
         deferred=deferred,
         dropped=dropped,
         critic_deferred=critic_deferred,
