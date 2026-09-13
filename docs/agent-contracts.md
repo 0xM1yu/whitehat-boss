@@ -47,6 +47,14 @@ agent:
 > `thresholds.output_max_by_role`이고 선언이 없는 역할은 위 값을 그대로 쓴다
 > (`Thresholds.output_max_for`). **값은 아직 어느 역할도 선언하지 않았다** — 실측과
 > 한계는 `config/budgets.yaml`의 `output_max` 주석에 있다.
+>
+> **2026-09-12 — 값을 안 정하기로 했고 그것이 실측의 결론이다.** 실제 Critic 프롬프트로
+> 재니 `prompt_tokens`가 **646~654**이고(캡슐도 원문도 안 실린다) `gpt-oss-20b`의 출력은
+> 추론과 본문으로 갈려 **본문이 76~126토큰**이다 — 위 2,863 같은 수는 그 둘의 합이지
+> 답변 길이가 아니다. 하네스 실제 설정 16콜에서 `finish=length`가 0건이라
+> **전역 4,096이 이미 충분하다.** 근거는
+> [2026-09-12 보고서](experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md)
+> §3.3·§3.4이고, 같은 정정이 `config/budgets.yaml`의 `output_max` 주석에도 들어갔다.
 > 타임아웃(`_TIMEOUT_S = 300`)은 **시도 하나당**이라 `wall_ms`(재시도 포함)와 직접 비교하면
 > 안 된다 — 자세한 계산은 `config/budgets.yaml`의 `output_max` 주석에 있다.
 >

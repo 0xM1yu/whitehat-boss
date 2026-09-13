@@ -296,7 +296,11 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config(args.profile)
     model_key = config.profile.roles["auditor"]
-    client = _model_client(model_key, config)
+    # **`role`은 키워드 필수다** (PR #185) — 출력 상한이 역할별로 갈릴 수 있으므로
+    # 기본값을 두면 역할을 빠뜨린 조립 지점이 조용히 전역값을 실어 보낸다. 이 프로브는
+    # auditor 프롬프트를 재생하므로 그 역할의 상한으로 보내야 재생이 성립한다.
+    # 이 줄이 없던 동안 이 스크립트는 `TypeError`로 죽었다.
+    client = _model_client(model_key, config, role=Role.AUDITOR.value)
 
     print(f"[프롬프트] {path}  (version={prompt.prompt_version} stage={meta['stage']})")
     print(f"[모델]     {model_key} @ {config.models[model_key].endpoint}")
