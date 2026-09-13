@@ -520,6 +520,17 @@ class _Accumulator:
     capsules: dict[tuple[str, str | None, int | None, int | None], ContextCapsule] = field(
         default_factory=dict
     )
+    # 그 캡슐을 **어느 역할 카운터로 계산했나**(공유 캡슐 토큰 회계 근거, #192 조건②). 첫 멤버가
+    # 자기 토크나이저로 `tokens`를 정하고 2·3번 멤버는 그것을 공유하므로, 그 사실을 캐시-적중
+    # 이벤트에 실어 「멤버 2·3의 프롬프트를 무엇으로 셌나」가 기록에서 안 지워지게 한다.
+    capsule_counter: dict[tuple[str, str | None, int | None, int | None], str] = field(
+        default_factory=dict
+    )
+    # 팬아웃된(deferred 아닌) 대상 키 집합 (#193 ①). 「모든 자리가 실패한 대상 수」 =
+    # 이 집합에서 후보를 낸 대상을 뺀 것. 단일 `scout`에서도 성립한다(자리가 하나).
+    dispatched_targets: set[tuple[str, str | None, int | None, int | None]] = field(
+        default_factory=set
+    )
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -719,11 +730,16 @@ def run_pipeline(
         ).grade.value
         for f in findings
     }
+    # 「모든 자리가 실패해 분석되지 않은 대상 수」(#193 ①). 팬아웃된 대상 중 후보를 하나도
+    # 못 낸 것 — 형제 멤버가 같은 대상을 보므로 `dropped`(시도)로는 못 세던 값이다.
+    analyzed_targets = {_target_key(c.location) for c in state.candidates}
+    unanalyzed_targets = len(state.dispatched_targets - analyzed_targets)
     rendered = report.run(
         ctx,
         findings=findings,
         deferred=state.deferred,
         dropped=state.dropped,
+        unanalyzed_targets=unanalyzed_targets,
         critic_deferred=state.critic_deferred,
         critic_top_n=config.thresholds.critic_top_n,
         files=files,
@@ -904,6 +920,9 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     # 무엇을 보려 했는지는 남는다.
     for item in plan.targets:
         _emit_planned(ctx, item.location)
+    # 팬아웃되는(deferred 아닌) 대상 키. 리포트가 「모든 자리가 실패해 분석되지 않은 대상 수」를
+    # 이것에서 뺀다(#193 ①) — 후보를 하나도 못 낸 대상이 곧 그 수다.
+    state.dispatched_targets = {_target_key(item.location) for item in plan.targets}
     state.deferred = len(deferred)
     for item in deferred:
         _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
@@ -995,6 +1014,12 @@ def _target_key(location: Location) -> tuple[str, str | None, int | None, int | 
     return (location.file, location.symbol, location.line_start, location.line_end)
 
 
+def _cache_key_str(key: tuple[str, str | None, int | None, int | None]) -> str:
+    """`_target_key` 튜플을 `cache` 이벤트의 문자열 라벨로. **캐시 조회 키가 아니라 이벤트
+    라벨이다** — 충돌은 무해하다(hit ratio는 이벤트 수를 센다). 그래서 튜플을 그냥 잇는다."""
+    return "::".join("" if part is None else str(part) for part in key)
+
+
 def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     """3단계 — LIGHT 캡슐. 항상 다음 단계로 넘긴다.
 
@@ -1008,32 +1033,40 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     **실제 검색 수는 같다** — 실측: 이 캐시 켬/끔에서 `search()` 호출 5↔9인데 캐시 미스는
     **양쪽 3으로 동일**하다 `[실측 2026-09-11]`.
 
-    ⚠ **바뀌는 것은 회계다.** 이 캐시가 `retrieval.run()` **앞에서** 단락하므로 Retriever의
-    `on_cache` 훅을 지나지 않아 **`cache` 이벤트가 준다**(9→5, 적중률 0.667→0.40).
-    `evaluation.md` §5.2가 capsule cache hit ratio를 지표로 들고 `LateCacheHook`이
-    *"캐시 이벤트가 새면 hit ratio가 0으로 보이고 「캐시가 안 맞았다」와 구분되지 않는다"*고
-    적는다 — **이 단락은 그 누출을 설계로 만든다.** 미해결로 등재돼 있다(인덱스 참조).
+    **회계는 이제 샌 곳을 메운다(#193 ②).** 이 캐시가 `retrieval.run()` **앞에서** 단락하므로
+    Retriever의 `on_cache` 훅을 지나지 않는데, 적중 분기가 **`ctx.record_cache(..., hit=True)`를
+    직접 낸다** — 그래서 `cache` 이벤트 수가 캡슐 조립 시도 수와 같아지고 hit ratio가 실측
+    0.667로 돌아온다(옛 단락에서는 9→5, 0.40으로 낮게 보였다). 러너의 캐시이므로 러너가
+    이벤트를 낸다. `evaluation.md` §5.2가 capsule cache hit ratio를 지표로 들고 `LateCacheHook`이
+    *"캐시 이벤트가 새면 hit ratio가 0으로 보인다"*고 적는 그 누출을 닫는다.
 
     역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). 첫 멤버의
     카운터로 켠다 — 캡슐이 공유되므로 예산 컷도 그 하나로 정해진다. `counter_for_role`이
     `None`을 주면(fake·토크나이저 없음) `using_counter`가 아무것도 바꾸지 않아 기본
     카운터(글자수 근사)가 유지된다.
 
-    ⚠ **그래서 `capsule_budget_tokens`가 멤버 2·3에는 사실상 강제되지 않는다.** 캐시 적중은
-    `model_validate`를 다시 타지 않으므로, 첫 멤버 기준으로 상한 이내인 캡슐이 다른 계열
-    토크나이저 기준으로 상한을 넘어도 **어디서도 안 걸리고 기록에도 안 남는다.** 로스터는
-    풀 세 자리를 서로 다른 세 모델로 정해 두었다(`CONTEXT.md` §1 — 그중 하나는 계열도
-    다르다). 미해결로 등재돼 있다(인덱스 참조). ⚠ **Fake 프로필에서는 전 역할이 같은 기본
-    카운터라 이 갈림이 재현되지 않는다** — 테스트로 못 잡는 자리다.
+    **`capsule_budget_tokens`는 풀에서 마진으로 강제된다(#194).** 캐시 적중은 `model_validate`를
+    다시 타지 않아 첫 멤버(qwen) 기준으로만 검증되는데, 다른 계열(mistral=`scout_boundary`)은 같은
+    텍스트를 최대 ~11% 더 센다(2026-09-13 ATOM 실측: 캡슐 합 +4%). 그래서 `nodes.retrieval`이 풀
+    프로필에서 예산을 `_POOL_CAPSULE_MARGIN`(0.90)만큼 줄여 담는다 — 그 최대 갈림까지 세 자리
+    전부 상한 안에 든다. 캡슐을 멤버마다 재계산하지 않고(공유 보장 유지) 담을 때 여유만 둔다.
+    ⚠ **Fake 프로필에서는 전 역할이 같은 기본 카운터라 이 갈림이 없다** — 마진은 무해하다.
     """
     key = _target_key(item.target.location)
     cached = state.capsules.get(key)
     if cached is not None:
         item.capsule = cached
+        # 이 accumulator 캐시가 `retrieval.run()` 앞에서 단락하므로 Retriever의 `on_cache`를
+        # 안 지난다 — 그 단락을 세지 않으면 `cache` 이벤트 수가 캡슐 조립 시도 수보다 적어
+        # hit ratio가 낮게 보인다(풀 팬아웃 #178 후속·#193). 러너의 캐시이므로 러너가 낸다.
+        # `counted_by`로 이 공유 캡슐이 **어느 역할 카운터로 계산됐나**를 실어, 멤버 2·3의
+        # 토큰 회계 근거가 기록에서 안 지워지게 한다(#192 조건②).
+        ctx.record_cache(_cache_key_str(key), hit=True, counted_by=state.capsule_counter.get(key))
         return True
     with using_counter(ctx.counter_for_role(item.role.value)):
         item.capsule = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.LIGHT)
     state.capsules[key] = item.capsule
+    state.capsule_counter[key] = item.role.value
     return True
 
 
@@ -1190,57 +1223,64 @@ def _run_stage_for_all(
     `status not in _DROPPABLE_STATUS`를 적으면 한쪽만 고쳐질 때 같은 오류가 모드에
     따라 다르게 처리된다.
 
-    ## ⚠ 한계 — Scout 풀에서 이 카운터는 체계적 고장을 못 잡는다 (미해결, PR #178 리뷰)
+    ## 연속 폐기 카운터는 **역할별**이다 (풀 팬아웃 #178의 후속 수정, 2026-09-13)
 
-    **풀 멤버 하나가 전량 실패해도 이 카운터는 상한에 안 닿는다.** `items`가 target ×
-    역할로 펼쳐져 있는데 `consecutive`는 그 열 전체에 **하나뿐이고, 성공 하나가 그것을
-    0으로 되돌린다** — 즉 카운터가 역할을 안 가른다. 그래서 고장난 멤버가 매번 죽어도
-    **형제 멤버의 성공이 그때마다 카운터를 지운다.**
+    `items`가 target × 역할로 펼쳐지므로 `consecutive`는 **역할을 키로 센다.** 풀 멤버
+    하나가 전량 실패하면 그 역할의 카운터가 형제의 성공에 지워지지 않고 쌓여
+    `_MAX_CONSECUTIVE_DROPS`에 닿는다 — 그래서 Scout 커버리지 1/3이 빈 run이 `stopped_after`를
+    채우고 `is_complete=False`가 된다(비교표에서 빠진다, [evaluation.md](../../evaluation.md) §6).
+    단일 `scout`은 키가 하나라 이전과 동작이 같다.
 
-    그래서 그 run은 `stopped_after`가 `None`인 채 끝나고 `is_complete`가 **참이 된다** —
-    Scout 커버리지의 1/3이 통째로 빈 run이 정상 완주로 보이고 비교표에 들어간다.
-    `scout_member`별 집계가 어디에도 없어(`report.py`·`run.py`·`trace.py` grep 0건)
-    **어느 멤버가 빠졌는지도 기록에서 못 되짚는다.**
+    > **왜 역할별인가.** 예전에는 열 전체에 카운터가 하나여서, 고장난 멤버가 매번 죽어도
+    > 형제 멤버의 성공이 그때마다 0으로 지웠다 — 상한에 영원히 안 닿았다. "연속 셋이
+    > 죽으면 그 단계가 체계적으로 고장"이 풀에서 거짓이 되던 자리다.
 
-    ⚠ **위 "연속 셋이 죽으면 그 단계가 체계적으로 고장 난 것"은 단일 `scout`에서만
-    참이다.** 풀에서는 한 역할의 실패가 연속으로 쌓이지 않고, 반대로 연속 셋이 **서로
-    다른 역할**일 수 있다.
+    ⚠ **역할별로 바꾸면서 두 가지가 반대로 바뀌었다 — 둘 다 산 결함이 아니라 「의미가
+    달라졌다」이고, 잠정으로 서술만 한다(미해결로 등재됨 — 인덱스 참조).**
+    - **교차역할 전역 장애는 N배 늦게 걸린다.** 모든 역할이 매 target에서 실패하면 각
+      역할이 따로 상한까지 올라가야 하므로, 풀 3역할에서는 3번째가 아니라 **7번째 시도**에
+      발화한다(단일은 그대로 3번째). `_MAX_CONSECUTIVE_DROPS`가 「3이면 3번째에 멈춘다」로
+      읽히지 않게 여기 적는다 — 실효 상한이 자리 수에 걸린다.
+    - **키가 4단계 자리(`item.role`)다.** `_InFlight.role`은 팬아웃에서 한 번 정해지고
+      재대입이 없는데 이 루프는 3~6단계를 같은 items로 돈다. 그래서 5단계 auditor 장애의
+      연속 카운터가 scout 세 버킷으로 갈린다 — 여전히 발화하되 키가 실패하는 역할을 안
+      가리킨다. 단일 `scout`은 키가 하나라 이 오분류가 무해하다.
 
-    **오늘은 물리지 않는다** — `config/profiles.yaml`의 어느 프로필도 풀을 선언하지
-    않는다. **물리는 시점은 풀 프로필을 커밋하는 PR이다.** 그 PR이 이 한계를 먼저
-    처리한다 — 고치는 방향은 연속 실패를 **역할별로** 세거나, `scout_member`별 산출 수를
-    기록에 남겨 0건인 멤버가 보이게 하는 것이다.
+    상한 재설계는 `_MAX_CONSECUTIVE_DROPS`의 첫 실대상 실측이 선행이라 미룬다(인덱스 선택지).
 
-    `tests/test_pipeline_e2e.py`의
-    `test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet`가 이 한계를 실측으로
-    고정하고 **이 서술과 묶는다** — 고치면 그 검사가 실패해서 이 절을 지우게 만든다.
+    `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`가
+    이 동작을 고정한다.
     """
-    consecutive = 0
+    # 연속 폐기를 역할별로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
+    consecutive: dict[Role, int] = {}
     survivors: list[_InFlight] = []
     for item in items:
+        role = item.role
         try:
             keep = step(ctx, item, state)
         except ModelGatewayError as exc:
             if not _is_droppable(exc):
                 # 서버 쪽 사건이다. `run_pipeline`이 받아 리포트·매니페스트까지 간다.
                 raise
-            consecutive = _drop(
+            consecutive[role] = _drop(
                 ctx,
                 state,
                 item.target,
                 _REASON_GATEWAY,
                 exc,
-                consecutive,
+                consecutive.get(role, 0),
                 stage=item.reached.stage,
+                role=role,
                 systematic=exc.status not in _SIZE_STATUS,
             )
         except SchemaParseError as exc:
-            consecutive = _drop(
-                ctx, state, item.target, _REASON_SCHEMA, exc, consecutive, stage=item.reached.stage
+            consecutive[role] = _drop(
+                ctx, state, item.target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                stage=item.reached.stage, role=role,
             )
         else:
-            # 이 단계를 마쳤다. 앞의 실패는 이 단계의 체계적 고장이 아니었다.
-            consecutive = 0
+            # 이 역할이 이 단계를 마쳤다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
+            consecutive[role] = 0
             if keep:
                 survivors.append(item)
     return survivors
@@ -1254,11 +1294,10 @@ def _triage_by_candidate(
     `BudgetExhausted`는 여기서 잡지 않는다 — 실패가 아니라 정상 종료 경로이고
     `run_pipeline`이 처리한다(모듈 docstring).
 
-    ⚠ **Scout 풀에서는 연속 폐기 카운터가 체계적 고장을 못 잡는다.**
-    **풀 멤버 하나가 전량 실패해도 상한에 안 닿는다.** 이 루프도 같은 모양이다:
-    `consecutive = 0` 리셋이 target 루프 **안의 역할 루프**에 있어 형제 멤버의 성공이
-    매번 카운터를 지운다. 전문(결과·범위·고치는 방향)은 `_run_stage_for_all`의
-    「한계」 절에 있다.
+    **연속 폐기 카운터는 역할별이다.** 팬아웃 뒤 시도 단위가 `(target, role)`이라
+    `consecutive`가 역할을 키로 세므로, 풀 멤버 하나가 전량 실패하면 그 역할이 자기
+    카운터로 상한에 닿는다 — 형제 멤버의 성공은 그 역할 키를 안 건드린다. 전문은
+    `_run_stage_for_all`의 「역할별」 절에 있다.
 
     `ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 그 후보만 버리고 계속
     간다. 다만 무조건 잡으면 안 된다:
@@ -1274,9 +1313,13 @@ def _triage_by_candidate(
     "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
     고장 났다"는 판정을 무르게 하지 않는다.
     """
-    consecutive = 0
+    # 연속 폐기를 **역할별로** 센다(풀 팬아웃 #178 후속). 시도 단위가 `(target, role)`이고, 풀에서
+    # 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던 단일 카운터로는 상한에 안 닿았다
+    # (Scout 커버리지 1/3이 빈 run이 정상 완주로 기록됐다). 역할별로 세면 그 멤버가 자기 카운터로
+    # `_MAX_CONSECUTIVE_DROPS`에 닿는다. 단일 `scout`은 키가 하나라 동작이 그대로다.
+    consecutive: dict[Role, int] = {}
     # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 각 (target, role)이
-    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 리셋된다.
+    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 그 역할만 리셋된다.
     # 풀에서는 같은 target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
     roles = _scout_roles(ctx)
     for target in plan.targets:
@@ -1299,23 +1342,25 @@ def _triage_by_candidate(
                 # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
                 # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
                 systematic = exc.status not in _SIZE_STATUS
-                consecutive = _drop(
+                consecutive[role] = _drop(
                     ctx,
                     state,
                     target,
                     _REASON_GATEWAY,
                     exc,
-                    consecutive,
+                    consecutive.get(role, 0),
                     stage=reached.stage,
+                    role=role,
                     systematic=systematic,
                 )
             except SchemaParseError as exc:
-                consecutive = _drop(
-                    ctx, state, target, _REASON_SCHEMA, exc, consecutive, stage=reached.stage
+                consecutive[role] = _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                    stage=reached.stage, role=role,
                 )
             else:
-                # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
-                consecutive = 0
+                # 완주했다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
+                consecutive[role] = 0
 
 
 def _drop(
@@ -1327,14 +1372,16 @@ def _drop(
     consecutive: int,
     *,
     stage: Stage,
+    role: Role,
     systematic: bool = True,
 ) -> int:
     """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
 
     ⚠ **시도는 `(target, Scout 자리)`다 — target이 아니다.** 팬아웃 뒤 `items`가 그 곱으로
     펼쳐지고 이 함수가 시도마다 불린다. 단일 `scout`에서는 자리가 하나라 둘이 같고,
-    **풀에서만 갈린다.** 그래서 `state.dropped`와 `count(target_skipped)`로 **「못 본 대상
-    수」를 셀 수 없다** — 형제 멤버가 같은 대상을 보기 때문이다. 미해결로 등재돼 있다.
+    **풀에서만 갈린다.** `role`을 `target_skipped.scout_member`로 실어(#193 ①) 어느 자리가
+    죽었는지 남긴다 — 그래야 「모든 자리가 실패한 대상」을 trace에서 셀 수 있고, 리포트의
+    `unanalyzed_targets`(팬아웃된 대상 − 후보 낸 대상)가 그 수를 요약으로 낸다.
 
     `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
     (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
@@ -1346,7 +1393,10 @@ def _drop(
     셋 다 5단계 auditor인데 skip 기록은 4다. `_emit_skipped`가 자기 docstring에
     "**`stage`가 곧 어디서 잘렸는가다**"라고 적어 뒀고, 박아 둔 값은 그 문장을 못 지킨다.
     """
-    _emit_skipped(ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc))
+    _emit_skipped(
+        ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc),
+        member=role.value,
+    )
     state.dropped += 1
     if not systematic:
         return consecutive
@@ -1401,7 +1451,13 @@ def _emit_planned(ctx: RunContext, target: Location) -> None:
 
 
 def _emit_skipped(
-    ctx: RunContext, target: Location, *, stage: Stage, reason: str, detail: str = ""
+    ctx: RunContext,
+    target: Location,
+    *,
+    stage: Stage,
+    reason: str,
+    detail: str = "",
+    member: str | None = None,
 ) -> None:
     """4단계에 올리지 못한 target 하나를 기록한다.
 
@@ -1434,6 +1490,10 @@ def _emit_skipped(
         symbol=target.symbol or "",
         line_start=target.line_start or 0,
         reason=reason,
+        # 어느 Scout 자리가 이 target에서 죽었나(#193 ①). 팬아웃 뒤 시도 단위가 `(target, 자리)`라,
+        # 이것이 없으면 「모든 자리가 실패한 대상」과 「한 자리만 실패한 대상」을 못 가른다.
+        # 단일 프로필은 `scout` 하나라 항상 같다. `None`이면 예산 절단(팬아웃 전)이라 자리가 없다.
+        **({"scout_member": member} if member is not None else {}),
         **({"error_detail": detail} if detail else {}),
     )
 

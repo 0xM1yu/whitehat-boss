@@ -86,6 +86,62 @@ def test_tracked_files_have_lf_in_the_working_tree() -> None:
     )
 
 
+def test_no_tracked_text_file_starts_with_a_utf8_bom() -> None:
+    """UTF-8 BOM(`EF BB BF`)이 소스 첫머리에 붙으면 **아무 도구도 안 잡는다.**
+
+    ## 무슨 일이 났나
+
+    #195 리뷰(적대적, HIGH-1)가 `factory.py`·`runner.py`·`enums.py`·`trace.py` 넷에
+    BOM이 새로 든 것을 짚었다 — Windows에서 PowerShell·일부 편집기가 파일을 쓰며
+    앞에 BOM을 붙인다. `git diff`에는 **docstring 첫 줄이 통째로 바뀐 것처럼** 보이는데
+    (앞 3바이트만 달라 `-` 줄과 `+` 줄이 같은 텍스트다) 내용은 한 글자도 안 바뀌었다.
+
+    ## 왜 사람도 CI도 못 잡나
+
+    `ruff`는 BOM 파일을 `All checks passed`로 통과시키고, 파이썬 인터프리터도 BOM을
+    조용히 먹으므로 **1300개 테스트가 전부 통과한다.** `git status`도 clean이다 —
+    CLAUDE.md §5의 *"줄바꿈이 이상한데 → CRLF는 `git status`에 안 보인다"*와 같은
+    부류이고, 이번엔 BOM이다. 위 개행 검사와 짝을 이룬다.
+
+    ## 이 검사가 보는 것
+
+    추적되는 텍스트 파일의 **첫 3바이트**만 본다. 바이너리(`git ls-files --eol`의
+    `w/none`)는 제외한다 — 개행 개념이 없듯 BOM 개념도 다르다. 복구는 앞 3바이트를
+    떼는 것뿐이고 내용은 안 바뀐다(커밋 diff가 그 한 줄만 된다).
+    """
+    binary = {
+        info.rsplit(" ", 1)[-1]
+        for index_eol, worktree_eol, info in _eol_rows()
+        if worktree_eol == "w/none"
+    }
+    try:
+        listed = subprocess.run(  # noqa: S603
+            ["git", "ls-files"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+        )
+    except OSError:  # pragma: no cover - git 없는 환경
+        pytest.skip("git을 실행할 수 없다")
+    if listed.returncode != 0:  # pragma: no cover - 저장소 밖
+        pytest.skip("저장소가 아니다")
+
+    offenders = []
+    for rel in listed.stdout.split():
+        if rel in binary:
+            continue
+        path = REPO_ROOT / rel
+        try:
+            head = path.read_bytes()[:3]
+        except OSError:  # pragma: no cover - 심링크 등
+            continue
+        if head == b"\xef\xbb\xbf":
+            offenders.append(f"  {rel}")
+
+    assert offenders == [], (
+        "추적 텍스트 파일 첫머리에 UTF-8 BOM이 있다 — ruff·pytest 어느 것도 안 잡는다 "
+        "(CLAUDE.md §5). 앞 3바이트(EF BB BF)만 떼면 된다:\n" + "\n".join(offenders)
+    )
+
+
 # `config/models.yaml`의 `  <모델이름>:` 행. 모델 블록의 경계를 이것으로 잡는다.
 _MODEL_HEADER = re.compile(r"^  ([A-Za-z0-9._-]+):\s*$")
 _ISO_DAY = re.compile(r"20\d\d-\d\d-\d\d")
