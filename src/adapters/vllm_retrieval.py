@@ -21,6 +21,38 @@ from src.interfaces.retrieval import EmbeddingResult, Ranked, RerankResult
 
 _TIMEOUT_S = 300
 
+# Qwen3-Reranker instruction 양식. **vLLM `/rerank`는 이 계열에 템플릿을 안 붙인다**
+# (`get_score_template`은 `jina_vl`만 구현 · `is_original_qwen3_reranker`는 점수 계산법만
+# 설정 — 2026-09-13 vLLM 0.27.1 소스 확인). 모델이 훈련 때 기대하는 양식이 통째로 빠지면
+# 실경로 질의(식별자 하나)의 순위가 무너진다. 그래서 여기서 붙인다.
+#
+# ⚠ **전제: 서빙 리랭커가 Qwen3-Reranker 계열이다.** `factory._reranker_client`는 `is_fake`만
+# 보고 이 클라이언트를 고르므로 **모든 비-Fake 리랭커**가 이 양식을 받는다. 서버가 자기
+# 템플릿을 붙이는 모델(예: `jina_vl`은 `get_score_template` 구현)로 바꾸면 **양식이 두 번
+# 붙는다** — 그런 모델을 등재하면 여기 모델 키 가드가 필요하다. 지금 로스터의 리랭커
+# (0.6b·4b)는 둘 다 Qwen3라 무해하다.
+# ⚠ **전제는 vLLM 버전에도 걸린다.** 「Qwen3엔 안 붙인다」는 0.27.1 소스에서 확인한 것이다
+# (저장소는 vLLM 버전을 고정하지 않는다 — `pyproject.toml` 런타임 의존성에 없다). 서버를
+# 올려 그쪽이 Qwen3에 템플릿을 붙이기 시작하면 **모델을 안 바꿔도 양식이 두 번 붙고 순위가
+# 조용히 망가진다** — 예외도 테스트 실패도 안 난다(payload 검사는 client가 붙였는지만 본다).
+# 버전을 올릴 때 이 전제를 재확인한다(확정 수단은 위 두 소스 파일).
+# ⚠ **`instruction`은 아직 config로 못 바꾼다** — `_reranker_client`가 안 넘겨 기본값만 산다
+# (생성자 파라미터라 테스트·직접 호출로만 오버라이드). config 배선은 후속.
+#
+# 공식 전체 양식은 system prefix + `<Instruct>/<Query>/<Document>` + `<think>` suffix로
+# **생성 채점**이지만(모델 README), `/rerank`(pooling)로는 prefix·suffix를 못 싣는다.
+# `<Instruct>/<Query>/<Document>` **부분 양식**만 실을 수 있는데, 2026-09-13 후속 실측에서
+# 그 부분 양식이 정식 생성 채점과 **거의 같았다**(맨질의 FAIL · 부분양식 PASS ≈ 생성 PASS).
+# ⚠ 표본이 작고(8건·질의 2) 실조각·32건 검증은 배선 후에 남았다(이슈 #152).
+#
+# ⚠ **이 문자열은 그 실측이 쓴 것과 글자까지 같다** — 보고서 §2가 같은 문자열을 싣는다
+# (2026-09-13-d63-reranker-template-atom.md). 배포하는 instruction과 잰 instruction이 달라지면
+# "부분 양식이 정식과 ≈"의 근거가 이 상수에 안 붙는다. 바꾸려면 다시 재고 그 보고서를 함께 고친다.
+_RERANK_INSTRUCTION = (
+    "Given a code-security query, retrieve C code snippets that contain "
+    "the vulnerability the query describes."
+)
+
 # Fake 임베딩 차원. 실제 모델(0.6B는 1024)과 맞출 이유가 없다 — 코사인 유사도의
 # 상대 순서만 결정론적이면 파이프라인 경로 검증에는 충분하다.
 _FAKE_DIM = 16
@@ -75,21 +107,34 @@ class VllmRerankerClient:
     서버는 404를 돌려주고, 여기서는 `RetrievalGatewayError`로 드러난다.
     """
 
-    def __init__(self, *, endpoint: str, model_name: str, api_key: str = "EMPTY") -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        model_name: str,
+        api_key: str = "EMPTY",
+        instruction: str = _RERANK_INSTRUCTION,
+    ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.model_name = model_name
         self.api_key = api_key
+        self.instruction = instruction
 
     def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> RerankResult:
         if not documents or top_n <= 0:
             return RerankResult(usage=_no_tokens())
+        # Qwen3-Reranker 부분 양식을 붙여 보낸다(위 `_RERANK_INSTRUCTION` 주석). 서버가
+        # 안 붙이므로 여기서 안 붙이면 모델은 맨 텍스트를 받는다. usage 추정도 실제 보낸
+        # (양식 포함) 문자열로 센다 — 안 그러면 검색 토큰이 과소 계상된다.
+        wrapped_query = f"<Instruct>: {self.instruction}\n<Query>: {query}"
+        wrapped_docs = [f"<Document>: {doc}" for doc in documents]
         started = time.monotonic()
         data = _post(
             f"{self.endpoint}/rerank",
             {
                 "model": self.model_name,
-                "query": query,
-                "documents": list(documents),
+                "query": wrapped_query,
+                "documents": wrapped_docs,
                 "top_n": min(top_n, len(documents)),
             },
             self.api_key,
@@ -100,7 +145,7 @@ class VllmRerankerClient:
                 Ranked(index=int(row["index"]), score=float(row["relevance_score"]))
                 for row in data.get("results", [])
             ],
-            usage=_usage_from(data.get("usage"), [query, *documents]),
+            usage=_usage_from(data.get("usage"), [wrapped_query, *wrapped_docs]),
             gpu_ms=elapsed_ms,
             gpu_ms_source="request_wall_clock",
         )
