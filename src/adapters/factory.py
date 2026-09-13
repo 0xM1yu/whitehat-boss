@@ -1,4 +1,4 @@
-"""어댑터 조립 (engineering-guide.md §3).
+﻿"""어댑터 조립 (engineering-guide.md §3).
 
 **구체 어댑터를 import 하는 유일한 파일이다.** 오케스트레이터 노드가 vLLM·SQLite는
 물론 이 패키지의 클래스도 직접 import 하지 않아야 "구현체 교체가 설정만으로 가능"이
@@ -35,7 +35,7 @@ from src.adapters.vllm_retrieval import (
     VllmEmbeddingClient,
     VllmRerankerClient,
 )
-from src.config import PROMPTED_ROLES, HarnessConfig, ModelEntry
+from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, HarnessConfig, ModelEntry
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
 from src.interfaces.retrieval import EmbeddingClient, RerankerClient
@@ -258,6 +258,27 @@ WIRINGS: dict[str, dict[str, _Wiring]] = {
 }
 
 
+def _counted_roles(config: HarnessConfig) -> tuple[str, ...]:
+    """`token_counter`가 실을 역할 = 러너가 실제로 카운터를 켜는 자리.
+
+    풀은 캡슐을 **첫 멤버**가 만들어 그 카운터로 예산을 정하고(공유), 2·3번 멤버는 캐시된
+    캡슐을 받아 카운터를 안 켠다. 그래서 켜지는 scout 자리는 `SCOUT_POOL_ROLES[0]` 하나다.
+    단일 프로필은 `scout`. auditor는 자기 캡슐을 켠다. `COUNTED_ROLES`(단일 기준 상수)를
+    프로필에 없는 `scout`째로 돌던 것이 **없는 역할에 `no_source`를 싣던** 원인이었다
+    (풀 팬아웃 #178 후속, 이슈 #192).
+
+    ⚠ **이것은 절반이다** — 「프로필에 없는 `scout`을 안 싣는다」까지다. 멤버 2·3의 프롬프트를
+    무엇으로 셌나(공유 캡슐이 지운다)는 여전히 기록에 없고, 그쪽은 공유 캡슐 토크나이저
+    항목(#194)과 함께 닫힌다.
+    """
+    roles = config.profile.roles
+    if all(member in roles for member in SCOUT_POOL_ROLES):
+        scout_places: tuple[str, ...] = (SCOUT_POOL_ROLES[0],)
+    else:
+        scout_places = tuple(r for r in COUNTED_ROLES if r != "auditor")
+    return tuple(role for role in (*scout_places, "auditor") if role in roles)
+
+
 def build_deps(
     config: HarnessConfig,
     *,
@@ -337,7 +358,7 @@ def build_deps(
         박혀 있으므로 스냅샷은 그것으로 특정된다.
         """
         fields: dict[str, str | None] = {}
-        for role in COUNTED_ROLES:
+        for role in _counted_roles(config):
             source = config.model_for(role).source if role in config.profile.roles else None
             counter = counter_for_role(role)
             fields[f"{role}_counter"] = "real" if counter is not None else "approx"

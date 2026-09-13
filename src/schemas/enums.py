@@ -1,4 +1,4 @@
-"""파이프라인 전역에서 쓰는 열거형.
+﻿"""파이프라인 전역에서 쓰는 열거형.
 
 값은 docs/agent-contracts.md §3, docs/architecture.md §4, docs/knowledge-base.md §4의
 문자열을 그대로 옮긴 것이다.
@@ -51,9 +51,11 @@ class Role(StrEnum):
     # - **범위가 더해졌다** — 늘리면 `token_counter` 이벤트의 내용이 바뀌고
     #   `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 기록 계약을 바꾸는 별도 PR의 몫이다.
     #
-    # ⚠ **반대 방향도 있다. 풀 run의 `token_counter`는 「안 싣는」 것이 아니라 「없는 것을
-    # 싣는다」** — 풀은 `scout`을 하나도 안 켜는데 이벤트에는 `scout_counter: approx`가
-    # 실린다. 그 정정도 풀 프로필을 커밋하는 PR의 몫이다(`orchestrator/trace.py`의 ⚠ 문단).
+    # ⚠ **풀 run의 `token_counter`가 「없는 것을 싣던」 절반은 #192로 고쳤다.** 풀이 `scout`을
+    #   하나도 안 켜는데 이벤트엔 `scout_counter: approx`가 실리던 것을, `factory._counted_roles`가
+    #   프로필에 실재하는 자리만 돌게 해 없앴다 — 풀이면 켜지는 첫 멤버(`scout_memory`)를 싣고
+    #   없는 `scout`은 안 싣는다. **멤버 2·3의 토큰 회계는 공유 캡슐 토크나이저 항목(#194)과
+    #   함께 남는다**(`orchestrator/trace.py`의 ⚠ 문단).
     #
     # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
     # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다
