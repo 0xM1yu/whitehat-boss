@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from src.interfaces.model_client import ModelResult, Prompt, Usage
 from src.schemas.candidate import Candidate
 from src.schemas.common import HarnessModel, Location, ProducedBy
-from src.schemas.decision import Decision
+from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import EvidenceKind, FindingState, PathStepKind, Role, Verdict
 from src.schemas.finding import Finding, PathStep, ReproSpec
 
@@ -278,8 +278,25 @@ def _build_decision(context: FakeContext, produced_by: ProducedBy) -> Decision:
     )
 
 
+def _build_decision_draft(context: FakeContext, produced_by: ProducedBy) -> DecisionDraft:
+    """7단계 Critic 출력 — 자유 verdict 판(실서빙 Critic이 이 스키마로 받는다).
+
+    `_build_decision`과 같은 판정을 내되 `verdict`를 문자열로 낸다. Fake는 표준 어휘를
+    그대로 써 `Verdict.from_text` 매핑이 항등이다 — 매핑 로직 자체는 단위 테스트가 덮고,
+    여기서는 배선(자유 verdict → `to_decision`)이 e2e에서 도는지만 고정한다.
+    """
+    decision = _build_decision(context, produced_by)
+    return DecisionDraft(
+        verdict=decision.verdict.value,
+        rebuttal_axis=decision.rebuttal_axis,
+        rationale=decision.rationale,
+        evidence_refs=decision.evidence_refs,
+    )
+
+
 _BUILDERS = {
     Candidate: _build_candidate,
     Finding: _build_finding,
     Decision: _build_decision,
+    DecisionDraft: _build_decision_draft,
 }

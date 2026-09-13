@@ -9,7 +9,9 @@
 2. 반박은 **근거 ID 또는 코드 위치를 동반해야 한다.** 근거 없는 반박은 채택되지 않고
    `uphold`로 처리되며 그 사실이 지표에 기록된다.
 3. 근거가 더 필요하면 `need_evidence`를 쓴다. 이것은 반박이 아니다.
-4. `ids.decision_id`를 그대로 쓴다.
+4. **ID·작성자 정보는 출력하지 않는다.** `decision_id`·`run_id`·`finding_id`·`produced_by`는
+   하네스가 넣는다. 사실 블록의 ID는 무엇에 대한 판정인지 알기 위한 것이고, 출력에는
+   아래 표의 네 필드만 낸다.
 
 ## 반박 체크리스트
 
@@ -20,12 +22,10 @@
 - 컴파일 타임 조건·플래그: 그 코드가 실제 빌드에 포함되는가
 - 입력 도달성 제약: 필요한 입력 값이 상위에서 제한되는가
 
-## 출력 스키마: Decision
+## 출력 스키마: DecisionDraft
 
 | 필드 | 값 |
 | --- | --- |
-| `decision_id` | 사실 블록의 `ids.decision_id` |
-| `run_id` / `finding_id` | 사실 블록의 값 |
 | `verdict` | `uphold` / `rebut` / `need_evidence` |
 | `rebuttal_axis` | 위 체크리스트 항목 이름 목록 |
 | `rationale` | 판정 근거 한두 문장 |

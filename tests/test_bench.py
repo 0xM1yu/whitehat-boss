@@ -185,7 +185,7 @@ def served() -> tuple:
     entry = config.models[key]
     template = load_prompt(Role.SCOUT, entry.prompt_template_version)
     tokens = config.thresholds.budget_for(bench.ROLE_SPEC[Role.SCOUT][1])
-    return bench_report._client(config, key), template, tokens
+    return bench_report._client(config, key, role="scout"), template, tokens
 
 
 # --- D: R6 판정 --------------------------------------------------------------
@@ -393,7 +393,7 @@ def test_bench_client_matches_the_factory(tmp_path: Path) -> None:
     deps = build_deps(config, run_id=RUN_ID, source_root=TARGET, artifacts_root=tmp_path)
 
     from_factory = deps.models.client_for("scout")
-    from_bench = bench_report._client(config, config.model_key_for("scout"))
+    from_bench = bench_report._client(config, config.model_key_for("scout"), role="scout")
 
     assert type(from_bench) is type(from_factory)
     assert vars(from_bench) == vars(from_factory)
@@ -413,8 +413,18 @@ def test_bench_client_matches_the_factory(tmp_path: Path) -> None:
         }
     )
     key = declared.model_key_for("scout")
-    assert bench_report._client(declared, key).reasoning_effort == "high", (
+    assert bench_report._client(declared, key, role="scout").reasoning_effort == "high", (
         "registry가 선언했는데 bench 클라이언트가 안 받았다 — bench가 잰 것이 운영 경로가 아니다"
+    )
+
+    # 역할별 `output_max`(D46 (c))도 **정확히 같은 자리**다. 저장소 config에 아직 선언이
+    # 없으므로 위 `vars()` 대조는 둘 다 전역값이라서 통과한다 — 어긋남이 값을 처음
+    # 넣는 날 드러난다. `reasoning_effort`가 그렇게 지나갔던 자리라 함께 막는다.
+    capped = config.transition(
+        thresholds=config.thresholds.transition(output_max_by_role={"scout": 8192})
+    )
+    assert bench_report._client(capped, key, role="scout").max_tokens == 8192, (
+        "config가 역할별 상한을 선언했는데 bench 클라이언트가 전역값을 실었다"
     )
 
 
@@ -959,10 +969,41 @@ def test_context_sweep_keeps_measuring_when_the_server_limit_is_unknown(
     _stub_sweep(monkeypatch, measured)
 
     bench.measure_memory(
-        None, Role.SCOUT, None, None, (8192, 32768), "http://x", 262144, server_limit=None
+        None,
+        Role.SCOUT,
+        None,
+        None,
+        (8192, 32768),
+        "http://x",
+        262144,
+        server_limit=None,
+        output_max=4096,
     )
 
     assert measured == [8192, 32768]
+
+
+def test_the_context_sweep_makes_the_caller_state_the_output_cap() -> None:
+    """`output_max`에 기본값을 두지 않는다 — 빠뜨리면 #126 가드가 **조용히 약해진다**.
+
+    기본값 `0`이면 `ctx + output_max > server_limit`이 `ctx > server_limit`으로 퇴화한다.
+    2026-09-02 ATOM에서 스윕 꼭대기가 400을 받은 조건이 정확히 `ctx + 4,096 > 32,768`
+    이었으므로, 퇴화한 가드는 그 run을 **다시 통과시킨다** — 재려다 실패한 것이 아닌 것을
+    `dead`로 세면서.
+
+    `_model_client`가 `role`에 기본값을 안 두는 사유와 같은 자리다(PR #185).
+    """
+    with pytest.raises(TypeError, match="output_max"):
+        bench.measure_memory(
+            None,
+            Role.SCOUT,
+            None,
+            None,
+            (8192, 32768),
+            "http://x",
+            262144,
+            server_limit=32768,
+        )
 
 
 def test_context_sweep_still_honours_the_registry_limit(
@@ -973,7 +1014,15 @@ def test_context_sweep_still_honours_the_registry_limit(
     _stub_sweep(monkeypatch, measured)
 
     result = bench.measure_memory(
-        None, Role.SCOUT, None, None, (8192, 32768), "http://x", 16384, server_limit=131072
+        None,
+        Role.SCOUT,
+        None,
+        None,
+        (8192, 32768),
+        "http://x",
+        16384,
+        server_limit=131072,
+        output_max=4096,
     )
 
     assert measured == [8192]

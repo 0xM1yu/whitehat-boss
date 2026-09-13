@@ -21,7 +21,7 @@ from src.schemas.common import (
     UtcModel,
     to_utc_iso,
 )
-from src.schemas.decision import Decision
+from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import (
     ArtifactKind,
     CapsuleLevel,
@@ -56,6 +56,7 @@ __all__ = [
     "ContextCapsule",
     "Cwe",
     "Decision",
+    "DecisionDraft",
     "Evidence",
     "EvidenceGrade",
     "EvidenceKind",

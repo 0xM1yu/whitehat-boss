@@ -290,7 +290,7 @@ def build_deps(
     # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지
     # 않아 드러나지 않을 뿐 잘못된 배선이다(ADR 0004: 그 둘은 `Role`이 아니다).
     clients: dict[str, ModelClient] = {
-        role: _model_client(config.profile.roles[role], config)
+        role: _model_client(config.profile.roles[role], config, role=role)
         for role in PROMPTED_ROLES
         if role in config.profile.roles
     }
@@ -391,7 +391,8 @@ def describe_wiring(config: HarnessConfig) -> dict[str, str]:
     }
     for role in PROMPTED_ROLES:
         if role in config.profile.roles:
-            wiring[role] = type(_model_client(config.profile.roles[role], config)).__name__
+            client = _model_client(config.profile.roles[role], config, role=role)
+            wiring[role] = type(client).__name__
     # 검색 클라이언트는 hybrid일 때만 만들어진다. fake retriever 프로필에서 이 줄을
     # 출력하면 "쓰이지도 않는데 물려 있다"로 읽힌다.
     if config.profile.adapters.retriever == "hybrid":
@@ -426,11 +427,15 @@ def _reranker_client(config: HarnessConfig) -> RerankerClient:
     return VllmRerankerClient(endpoint=entry.endpoint, model_name=key)
 
 
-def _model_client(model_key: str, config: HarnessConfig) -> ModelClient:
+def _model_client(model_key: str, config: HarnessConfig, *, role: str) -> ModelClient:
     """endpoint 스킴이 구현을 고른다. 역할마다 따로 판정하므로 혼용이 가능하다.
 
     `model_key`가 곧 `ProducedBy.model`에 남는 이름이다 — registry 키와 결과 기록이
     갈라지면 조건 비교에서 어느 모델이었는지 되짚을 수 없다.
+
+    **`role`에 기본값을 두지 않는다.** 출력 상한이 역할별로 갈릴 수 있으므로
+    (`Thresholds.output_max_for`), 기본값이 있으면 역할을 빠뜨린 조립 지점이 조용히
+    전역값을 실어 보낸다 — `max_tokens`가 필수 키워드인 것과 정확히 같은 사유다.
     """
     entry: ModelEntry = config.models[model_key]
     if entry.is_fake:
@@ -441,7 +446,9 @@ def _model_client(model_key: str, config: HarnessConfig) -> ModelClient:
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,
         seed=config.seed,
-        max_tokens=config.thresholds.output_max,
+        # **역할별 값이다** — 선언이 없으면 `thresholds.output_max`를 그대로 돌려준다
+        # (#79의 (c)). 해석은 전부 `output_max_for`에서 하고 여기서 분기하지 않는다.
+        max_tokens=config.thresholds.output_max_for(role),
         # **모델별 값이다** — 위 넷과 달리 `config.sampling`·`thresholds`(프로필 공통)가
         # 아니라 registry 항목에서 온다. 선언 안 한 모델은 `None`이라 요청에 안 실린다.
         reasoning_effort=entry.reasoning_effort,

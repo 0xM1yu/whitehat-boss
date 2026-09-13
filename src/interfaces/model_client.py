@@ -24,7 +24,9 @@ from pydantic import BaseModel, Field, model_validator
 from src.schemas.common import HarnessModel, NonEmptyStr
 from src.schemas.enums import Role
 
-# 역할별 출력 스키마(Candidate/Finding/Decision …). 계약의 `output_schema`에 해당한다.
+# 역할별 출력 스키마(Candidate/Finding/DecisionDraft …). 계약의 `output_schema`에 해당한다.
+# Critic이 보내는 것은 `Decision`이 아니라 `DecisionDraft`다 — ID·`produced_by`는 모델이
+# 아니라 하네스가 넣는다(`nodes/critic.py`의 `OUTPUT_SCHEMA`).
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 # GPU 시간을 **무엇으로 쟀는가.** 검색 결과(`interfaces/retrieval.py`)도 같은 값을 쓴다.
