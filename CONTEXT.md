@@ -36,9 +36,9 @@
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
 | `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. `test_pipeline_e2e`가 in-test로 조립한다 |
-| `qwen3-coder-30b-a3b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum이고 `prompt_template_version`만 v2 — 풀 프롬프트(v2뿐) 도달용(#103 (b), `fake_v2`와 같은 결). `local_balanced_pool`의 `scout_memory`. **모델 선정 미확정** — §1 자리는 base(v1)가 정본 |
-| `devstral-small-2-24b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum, `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_boundary`. 근거는 위 별칭과 같다(#103 (b)) |
-| `qwen3-8b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum, `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_injection`. 근거는 위 별칭과 같다(#103 (b)) |
+| `qwen3-coder-30b-a3b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback이고 `prompt_template_version`만 v2 — 풀 프롬프트(v2뿐) 도달용(#103 — registry 별칭, D54 (b)가 아니라 별개 선택지). `local_balanced_pool`의 `scout_memory`. **모델 선정 미확정** — §1 자리는 base(v1)가 정본 |
+| `devstral-small-2-24b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback, `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_boundary`. 근거는 위 별칭과 같다(#103) |
+| `qwen3-8b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback(`qwen3-4b`), `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_injection`. 근거는 위 별칭과 같다(#103) |
 | `qwen3-4b` | `single_gpu_12g` 전용(12GB 장비) |
 | `qwen3-reranker-0.6b` | **지우지 않는다** — 4B와의 대조 기준. 서빙 역할에서만 내린다 |
 

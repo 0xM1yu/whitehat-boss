@@ -319,7 +319,13 @@ profiles:
     #   안 건드리고 여기서만 provisional로 올린다.
     #
     # auditor·검색은 local_balanced 그대로다.
-    # `production: false` — 처리량 미측정(별칭·gpt-oss benchmark 0)이고 근본 검증 전이다.
+    # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 5역할
+    #   (scout 셋+auditor+critic)을 돌려주므로 러너는 이것을 **실서빙 프로필로 취급**하고
+    #   `--device`·`--condition`을 요구한다(`runner.py`의 그 주석 — dev/실서빙을 가르는 것은
+    #   `production`이 아니라 `served_models()`다, 2026-09-02 실측). `production: false`가 실제로
+    #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 그래서 이
+    #   프로필로 돈 run은 비교표 진입을 `production` 플래그가 막아 주지 않는다 — 처리량 미측정
+    #   (별칭·gpt-oss benchmark 0)이고 근본 검증 전이라 **손으로 안 돌린다.**
     description: "임시 §1-목표 배선(Scout 풀 v2 별칭 + Critic gpt-oss) — 플러밍 완성용, 검증 전 (#103·#182)"
     production: false
     roles:
