@@ -453,7 +453,15 @@ _FT_REF = re.compile(r"(?<![A-Za-z0-9])FT(\d+)(?![0-9A-Za-z])")
 # 취소선. **죽은 것을 지우지 않고 취소선으로 남기는** 것이 이 저장소의 관례다
 # (ADR 0010 §2의 죽은 행·`docs/open-questions.md`의 해소된 D 제목). 번호를 재사용하지
 # 않는 것과 같은 이유 — 회의록·PR이 그 라벨로 참조한다.
-_STRUCK = re.compile(r"~~(.+?)~~")
+#
+# **`DOTALL`이다** — 목록 항목의 취소선은 줄을 넘어간다(`- ~~첫 줄…\n  둘째 줄~~`).
+# 줄 단위로 보면 어느 쪽도 짝이 안 맞아 **멀쩡히 죽인 것을 살아 있다고 잡는다.**
+_STRUCK = re.compile(r"~~(.+?)~~", re.DOTALL)
+
+# 날짜가 박힌 줄. 이 저장소의 정정은 전부 `2026-09-13 —` 꼴을 달고 온다(ADR·D 본문·
+# CONTEXT.md). **죽은 라벨을 이름으로 부르며 "사라졌다"고 적는 정정문은 통과해야 한다** —
+# 그것을 못 쓰게 하면 왜 죽었는지가 문서에서 사라진다. 날짜 없는 현재형 주장은 그대로 걸린다.
+_DATED_LINE = re.compile(r"20\d{2}-\d{2}-\d{2}")
 
 # 아래 FT 검사에서 빼는 절. **날짜가 박힌 정정 기록**이라 고치면 그날의 사실이 지워진다 —
 # 그 표는 "원문이 파인튜닝을 D 계열로 불렀고 FT1·FT2·FT3으로 바꿨다"는 **이름 이력**이지
@@ -533,7 +541,11 @@ def test_the_build_plan_does_not_keep_a_fine_tuning_stage_whose_model_slot_it_re
     이유다(`docs/open-questions.md` 관리 방식). 지우면 회의록·PR이 그 라벨로 참조할 때
     무엇이었는지 사라진다.
     """
-    lines = _read(BUILD_PLAN).splitlines()
+    text = _read(BUILD_PLAN)
+    lines = text.splitlines()
+    # 취소선을 **문서 전체에서** 공백으로 덮는다. 줄 수와 열 위치를 보존해야 아래에서
+    # 줄 번호를 그대로 쓸 수 있다 — 그래서 개행만 남기고 나머지를 공백으로 바꾼다.
+    masked = _STRUCK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text).splitlines()
 
     section_of: list[str] = []
     current = ""
@@ -542,40 +554,42 @@ def test_the_build_plan_does_not_keep_a_fine_tuning_stage_whose_model_slot_it_re
             current = line.strip()
         section_of.append(current)
 
-    summary_rows = [
-        (i, line)
+    summary_lines = {
+        i
         for i, line in enumerate(lines)
         if section_of[i].startswith("## 2.") and line.startswith("|")
-    ]
-    assert summary_rows, (
+    }
+    assert summary_lines, (
         "docs/build-plan.md §2에서 모델 자리 표를 찾지 못했다 — 표 서식이나 절 제목이 "
         "바뀌었다면 이 검사도 함께 고친다"
     )
 
-    dead: set[str] = set()
+    declared: set[str] = set()
     live: set[str] = set()
-    for _, row in summary_rows:
-        struck = " ".join(_STRUCK.findall(row))
-        unstruck = _STRUCK.sub(" ", row)
-        dead.update(f"FT{n}" for n in _FT_REF.findall(struck))
-        live.update(f"FT{n}" for n in _FT_REF.findall(unstruck))
-    # 같은 라벨이 한 행에서 죽고 다른 행에서 살아 있으면 살아 있는 쪽이 이긴다.
-    dead -= live
+    for i in summary_lines:
+        declared.update(f"FT{n}" for n in _FT_REF.findall(lines[i]))
+        live.update(f"FT{n}" for n in _FT_REF.findall(masked[i]))
+    # 취소선 안에만 있던 라벨이 죽은 것. 한 행에서 죽고 다른 행에서 살아 있으면 산 쪽이 이긴다.
+    dead = declared - live
 
-    assert live or dead, (
+    assert declared, (
         "docs/build-plan.md §2 표가 파인튜닝 라벨을 하나도 들지 않는다 — 표가 바뀐 것이다"
     )
 
-    summary_lines = {i for i, _ in summary_rows}
     offenders: list[str] = []
-    for lineno, line in enumerate(lines):
-        if lineno in summary_lines or section_of[lineno] == _BUILD_PLAN_FT_EXEMPT_SECTION:
+    for lineno, line in enumerate(masked):
+        if (
+            lineno in summary_lines
+            or section_of[lineno] == _BUILD_PLAN_FT_EXEMPT_SECTION
+            or _DATED_LINE.search(line)
+        ):
             continue
-        for number in _FT_REF.findall(_STRUCK.sub(" ", line)):
+        for number in _FT_REF.findall(line):
             if f"FT{number}" in dead:
                 offenders.append(
                     f"docs/build-plan.md:{lineno + 1}: FT{number} — §2 표가 그 모델 자리를 "
-                    "지웠는데 여기서는 현재형으로 살아 있다. 지우지 말고 취소선으로 남긴다"
+                    "지웠는데 여기서는 현재형으로 살아 있다. 죽었다고 적으려면 취소선을 "
+                    "씌우거나 그 줄에 정정 날짜를 단다"
                 )
 
     assert offenders == [], (
