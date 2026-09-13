@@ -35,7 +35,10 @@
 | 키 | 왜 남나 |
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
-| `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. 커밋 프로필엔 아직 안 쓰이고 `test_pipeline_e2e`가 in-test로 조립한다 |
+| `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. `test_pipeline_e2e`가 in-test로 조립한다 |
+| `qwen3-coder-30b-a3b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback이고 `prompt_template_version`만 v2 — 풀 프롬프트(v2뿐) 도달용(#103 — registry 별칭, D54 (b)가 아니라 별개 선택지). `local_balanced_pool`의 `scout_memory`. **모델 선정 미확정** — §1 자리는 base(v1)가 정본 |
+| `devstral-small-2-24b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback, `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_boundary`. 근거는 위 별칭과 같다(#103) |
+| `qwen3-8b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback(`qwen3-4b`), `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_injection`. 근거는 위 별칭과 같다(#103) |
 | `qwen3-4b` | `single_gpu_12g` 전용(12GB 장비) |
 | `qwen3-reranker-0.6b` | **지우지 않는다** — 4B와의 대조 기준. 서빙 역할에서만 내린다 |
 
@@ -122,11 +125,14 @@
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
 | **`reasoning_effort: high` 배선** | **배선(2026-09-09) + registry 등재(2026-09-11) 둘 다 됐다.** `ModelEntry.reasoning_effort` → 요청 payload → `RunRecord.model_reasoning_effort`이고, `gpt-oss-20b`가 §1 표대로 등재돼 `reasoning_effort: "high"`를 선언한다. ⚠ **그래도 이 자리는 안 선다** — **앞에 이 표 첫 줄(structured output)**이 남았고, 프로필의 `critic`도 아직 `devstral-small-2-24b`다(아래 마지막 줄). 배선과 등재가 여는 것은 「선언하면 값이 실제로 간다」까지이지 「Critic이 뜬다」가 아니다 |
-| **`config/profiles.yaml` 재배선** | **안 됐다.** 프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`, 리랭커는 `qwen3-reranker-0.6b`다 — **§1의 배정이 아니다.** ⚠ **2026-09-11부터 이유가 자리마다 다르다** — Critic(`gpt-oss-20b`)과 리랭커(`qwen3-reranker-4b`)는 **등재됐으므로** 프로필에 올릴 수는 있고, 남은 선행이 각각 이 표 첫 줄(structured output)과 리랭커 행(서빙·점수 검증)이다. Auditor B(`nemotron-3-super-120b-a12b`)만 **아직 registry에 없어서** 올릴 수 없다. 「셋 다 등재가 없어서」로 읽지 않는다 |
+| **실서빙 프로필 ↔ §1** | **실서빙 프로필(`local_balanced` 등)은 아직 §1과 다르다** — 단일 `scout`·`critic: devstral-small-2-24b`·리랭커 `qwen3-reranker-0.6b`. ⚠ **2026-09-11부터 이유가 자리마다 다르다** — Critic(`gpt-oss-20b`)·리랭커(`qwen3-reranker-4b`)는 **등재됐으니** 올릴 수는 있고 남은 선행이 각각 이 표 첫 줄(structured output)·리랭커 행(서빙·점수 검증)이다. Auditor B(`nemotron-3-super-120b-a12b`)만 **미등재**라 못 올린다. **단 2026-09-13에 실험용 `local_balanced_pool` 하나가 §1 목표를 provisional 배선했다 — Scout 풀(v2 별칭) + Critic `gpt-oss-20b`.** #178 팬아웃 플러밍을 실모델로 처음 채우고 Critic도 §1의 gpt-oss로 올렸다. **선정·검증은 미확정**(풀 도달성 #103·2×2 · Critic 반박 정확도·DecisionDraft→gpt-oss 통합 #182). `production: false`이고 실서빙 `local_balanced`(critic devstral)는 안 건드렸다 |
 
 **「로스터 확정」과 「그 모델이 선다」는 다른 문장이다.** 이 표가 그 차이를 남긴다.
 
 ⚠ **그래서 `config/profiles.yaml`을 열면 §1과 다른 배정이 보인다. 그것은 드리프트가 아니라
-위 표의 마지막 줄이다.** §1이 정본이고 프로필은 아직 거기 못 따라왔다 — 반대로 읽지 마라.
+위 표의 마지막 줄이다.** §1이 정본이고 실서빙 프로필은 아직 거기 못 따라왔다 — 반대로 읽지 마라.
 `tests/test_docs_format.py`의 `test_context_declares_that_profiles_are_not_rewired_yet`이
-그 어긋남과 이 선언을 묶는다: 재배선이 끝나면 그 검사가 실패해서 **이 줄을 지우게 만든다.**
+그 어긋남과 이 선언을 묶는다: **어느 프로필이든 Scout 풀 역할을 쓰면 「아직 안 됐다」 마커를
+지우게 만든다** — 2026-09-13에 `local_balanced_pool`이 풀을 배선하며 그 마커를 지웠다. 이제 그
+줄이 도로 들어오면(실서빙 프로필이 §1을 못 따라온 채 「재배선 안 됨」을 다시 주장하면) 검사가
+막는다. **실서빙 프로필은 여전히 §1과 다르다** — 위 표 마지막 줄이 그 상태다.

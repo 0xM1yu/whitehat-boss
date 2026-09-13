@@ -49,9 +49,10 @@ class Role(StrEnum):
     #   공유 캡슐을 어느 역할 카운터로 계산했나가 기록에 실린다. ⚠ **예산이 멤버별 토크나이저로
     #   강제되는 것은 별개**이고 공유 캡슐 재검증(#194)에 남는다.
     #
-    # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
-    # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다
-    # (신규 모델이 registry에 없어서다. `CONTEXT.md` §5가 그 사실을 든다). 프로필은 단일
+    # **`SCOUT`은 남는다. 실서빙 프로필이 전부 그쪽이다** — `local_balanced`·
+    # `local_balanced_hybrid`는 단일 `scout`이다. 풀을 선언하는 것은 provisional
+    # `local_balanced_pool`(`production: false`) 하나이고, 그것은 v2 별칭 셋으로 풀 프롬프트에
+    # 도달한다(#103 — `CONTEXT.md` §5·`config/models.yaml`의 별칭 블록). 프로필은 단일
     # `scout` 하나 아니면 풀 셋을 선언한다(`config.ProfileEntry`가 그 배타를 본다).
     # ⚠ 여기서 프로필 이름을 세지 마라 — 개수도 이름도 `config/profiles.yaml`에서 센다.
     #
