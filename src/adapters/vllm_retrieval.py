@@ -26,14 +26,26 @@ _TIMEOUT_S = 300
 # 설정 — 2026-09-13 vLLM 0.27.1 소스 확인). 모델이 훈련 때 기대하는 양식이 통째로 빠지면
 # 실경로 질의(식별자 하나)의 순위가 무너진다. 그래서 여기서 붙인다.
 #
+# ⚠ **전제: 서빙 리랭커가 Qwen3-Reranker 계열이다.** `factory._reranker_client`는 `is_fake`만
+# 보고 이 클라이언트를 고르므로 **모든 비-Fake 리랭커**가 이 양식을 받는다. 서버가 자기
+# 템플릿을 붙이는 모델(예: `jina_vl`은 `get_score_template` 구현)로 바꾸면 **양식이 두 번
+# 붙는다** — 그런 모델을 등재하면 여기 모델 키 가드가 필요하다. 지금 로스터의 리랭커
+# (0.6b·4b)는 둘 다 Qwen3라 무해하다.
+# ⚠ **`instruction`은 아직 config로 못 바꾼다** — `_reranker_client`가 안 넘겨 기본값만 산다
+# (생성자 파라미터라 테스트·직접 호출로만 오버라이드). config 배선은 후속.
+#
 # 공식 전체 양식은 system prefix + `<Instruct>/<Query>/<Document>` + `<think>` suffix로
 # **생성 채점**이지만(모델 README), `/rerank`(pooling)로는 prefix·suffix를 못 싣는다.
 # `<Instruct>/<Query>/<Document>` **부분 양식**만 실을 수 있는데, 2026-09-13 후속 실측에서
 # 그 부분 양식이 정식 생성 채점과 **거의 같았다**(맨질의 FAIL · 부분양식 PASS ≈ 생성 PASS).
 # ⚠ 표본이 작고(8건·질의 2) 실조각·32건 검증은 배선 후에 남았다(이슈 #152).
+#
+# ⚠ **이 문자열은 그 실측이 쓴 것과 글자까지 같다** — 보고서 §2가 같은 문자열을 싣는다
+# (2026-09-13-d63-reranker-template-atom.md). 배포하는 instruction과 잰 instruction이 달라지면
+# "부분 양식이 정식과 ≈"의 근거가 이 상수에 안 붙는다. 바꾸려면 다시 재고 그 보고서를 함께 고친다.
 _RERANK_INSTRUCTION = (
-    "Given a code symbol and security keywords, retrieve the source-code snippets "
-    "most relevant to analyzing it for a vulnerability."
+    "Given a code-security query, retrieve C code snippets that contain "
+    "the vulnerability the query describes."
 )
 
 # Fake 임베딩 차원. 실제 모델(0.6B는 1024)과 맞출 이유가 없다 — 코사인 유사도의
