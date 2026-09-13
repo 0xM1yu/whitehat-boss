@@ -151,11 +151,10 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
 def _poolify(mode: str | None):  # noqa: ANN202
     """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
 
-    풀 프로필을 `config/profiles.yaml`에 커밋하면 두 결정 게이트를 건드린다 —
-    `test_context_declares_that_profiles_are_not_rewired_yet`(재배선 상태)와
-    `test_no_profile_declares_execution_yet`(swap 실측 전 per_stage 금지). 둘 다 이 PR의
-    **팬아웃 메커니즘과 별개**이므로, 풀 config는 여기서만 조립한다. 풀 세 자리는 v2 전용
-    풀 프롬프트를 부르는 `fake_v2`, 나머지는 `fake`다.
+    커밋된 풀 프로필 `local_balanced_pool`(PR #190)은 **실 모델**이라 GPU 없이는 못 돈다.
+    이 e2e 검사들은 팬아웃 **제어흐름**만 보므로 Fake로 충분하고, 그래서 실 프로필을 태우는
+    대신 여기서 `dev_fake` 기반 풀을 조립한다 — 풀 세 자리는 v2 전용 풀 프롬프트를 부르는
+    `fake_v2`, 나머지는 `fake`다. (실 프로필의 로드·게이트 정합은 `test_config.py`가 본다.)
     """
     from src.config import ExecutionPolicy
 
@@ -1547,12 +1546,16 @@ def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> Non
     저장값과 재계산값이 갈려 `ValidationError`로 죽는다 — `estimate --profile b1_single`이
     실제로 그렇게 죽었고, 그것을 막은 것이 `counter_for_role(...)`로 감싼 그 `with`다(#84).
 
-    **풀에서는 그 막음이 서지 않았다.** 역할 키를 `"scout"`으로 박아 뒀는데 풀 프로필에는
-    그 키가 없다(`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다). 그래서
-    `counter_for_role`이 `None`을 돌려주고 `using_counter(None)`은 아무것도 안 바꾼다.
+    **풀에서 처음엔 그 막음이 안 섰다.** 역할 키를 `"scout"`으로 박아 뒀는데 풀 프로필에는
+    그 키가 없어(`_declares_one_scout_arrangement`가 단일과 풀의 공존을 금지한다)
+    `counter_for_role`이 `None`을 돌려줬다. **`_capsule_counter_role`이 그것을 고쳤다** —
+    풀이면 조립한 첫 멤버(`SCOUT_POOL_ROLES[0]` = `scout_memory`)를 돌려주므로 재검증이 같은
+    카운터를 본다. 아래 두 단언이 그 불변식을 고정한다.
 
-    ⚠ **오늘 안 터지는 이유는 둘 다 우연이다** — 커밋된 풀 프로필이 없고, Fake는 `source`가
-    없어 어차피 `None`이다. **실 토크나이저 풀 프로필을 커밋하는 순간 되살아난다.**
+    ⚠ **`local_balanced_pool`(PR #190, provisional)이 커밋된 실 별칭 풀 프로필이다** — 이 검사가
+    가리키던 그 "커밋하는 순간"이 왔고, 그 순간에도 막음이 선다는 것을 여기서 지킨다. Fake는
+    `source`가 없어 `counter_for_role`이 `None`이라 이 검사는 **역할 키의 실재**만 본다(값이 아니라
+    자리) — 실 토크나이저에서의 조립·재검증 일치는 아래 `..._the_runner_actually_uses`가 잡는다.
     """
     from src.cli import _capsule_counter_role
 

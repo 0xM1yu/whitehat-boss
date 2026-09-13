@@ -58,7 +58,9 @@ CHARS_PER_TOKEN = 4
 # `ctx.counter_for_role(item.role.value)`를 부르므로 풀 run은 **그 target의 첫 멤버**
 # 카운터를 켜고 **`scout`은 하나도 안 켠다** — 캡슐이 공유돼 나머지 멤버는 카운터를
 # 요청조차 안 한다. 그래서 아래 목록이 풀에서는 「켜지는 역할」과 어긋난다.
-# 커밋된 프로필이 전부 단일 `scout`이라 오늘은 안 갈린다.
+# `local_balanced_pool`(provisional, `production: false`)이 풀을 선언하므로 그 프로필에서
+# 갈린다 — 그 어긋남은 `factory._counted_roles`가 프로필 실재 자리를 골라 흡수한다(#192).
+# 실서빙 프로필(`local_balanced`·`local_balanced_hybrid`)은 여전히 단일 `scout`이다.
 #
 # `factory`가 이 목록으로 `Deps.counter_report`를 만들고 러너가 그것을 `token_counter`
 # 이벤트로 낸다. **켜지지 않는 역할을 기록에 실으면 거짓 정보다** —

@@ -70,6 +70,73 @@ models:
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
 
+  # --- 임시 v2 별칭 셋 — Scout 풀 배선 플러밍용 (#103) --------------------------
+  # **모델 선정은 미확정이다.** 풀 프롬프트(scout_{memory,boundary,injection}/v2)는 v2뿐인데
+  # 프롬프트 버전은 모델에 붙고(`load_prompt(role, model.version)`) base 셋은 전부 v1이라, 풀을
+  # 배선하려면 v2를 가리키는 항목이 필요하다. **이것은 「프로필로만 가르는」 안(#103)이 아니다** —
+  # 그 안은 `models.yaml`을 안 건드리지만, 아래는 registry에 항목 셋을 **더한다**. 책임이 흐려지는
+  # 자리를 프로필이 아니라 registry로 옮긴 별개 선택지다(#103 본문에 그렇게 등재). 아래 셋은 **base와
+  # 같은 무게·서버·checksum·fallback**이고 `prompt_template_version`만 v2다 — 진짜 별칭이다.
+  # 로스터 §1의 자리는 base(v1)가 정본이고 이 별칭은 v2 프롬프트 도달용이다.
+  # **`benchmark`는 0(별칭 자체 미실측 · §0).** base 처리량을 여기 옮기는 코드 경로는 없고
+  # (`_gpu_estimate`가 별칭을 그대로 미실측으로 본다), devstral base는 그 값이 애초에 0이다.
+  # 풀 프로필 `local_balanced_pool`이 이 셋을 scout 자리에 배선한다.
+  # ⚠ **base가 바뀌면 여기도 손으로 맞춰야 한다** — 「base ↔ 별칭」 짝을 잠그는 검사가 없다
+  #   (`test_the_context_roster_matches_the_model_registry`는 registry 등재 여부만 본다).
+  qwen3-coder-30b-a3b-v2:
+    endpoint: "http://127.0.0.1:8002/v1"
+    context_limit: 262144
+    quantization: "nvfp4"
+    license: "Apache-2.0"
+    checksum: "sha256:69c4c69eb5fe52d59f2c4fe015986d76495f2f2674aabf7c087e0f6307e00e44"
+    source: "hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048"
+    family: "qwen"
+    prompt_template_version: "v2"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
+  devstral-small-2-24b-v2:
+    endpoint: "http://127.0.0.1:8003/v1"
+    context_limit: 262144
+    quantization: "fp8"
+    license: "Apache-2.0"
+    checksum: "sha256:b352c3e63c12f9f14d0841790d09675801587ded6d3cbdbd47d233ade1f27b4d"
+    source: "hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128"
+    family: "mistral"
+    prompt_template_version: "v2"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
+  qwen3-8b-v2:
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 131072
+    quantization: "nvfp4"
+    license: "Apache-2.0"
+    checksum: "sha256:38fa6aacb2da61c5c3eba2e4f636a0f37acaeb1bcdb3cb3e93c3f15f5615f09f"
+    source: "hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e"
+    family: "qwen"
+    prompt_template_version: "v2"
+    fallback: "qwen3-4b"
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
   qwen3-4b:
     # 12GB 단일 카드에서 scout만 실서빙할 때 쓰는 소형 모델. profiles.yaml single_gpu_12g 참조.
     #

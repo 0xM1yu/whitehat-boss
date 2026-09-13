@@ -333,11 +333,12 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     역할의 첫 모델 호출에서 처음 열리므로 **GPU 시간을 쓴 뒤에 죽는다.** `cli doctor`의
     `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다.
 
-    지금 저장소의 프로필은 전부 단일 `scout`이고 registry가 전부 `v1`이라 통과한다.
-    이 검사가 서는 자리는 **풀 프로필이 `config/profiles.yaml`에 들어오는 순간**이다 —
-    풀 세 역할의 프롬프트 디렉터리는 `v2`만 있어서(D54) 그 프로필은 여기서 걸린다.
-    ⚠ 실행 순서로는 러너의 `ROLE = Role.SCOUT` 고정이 그보다 앞에서 `ConfigError`를 내지만,
-    **이 검사는 러너를 안 태우므로** 그것과 무관하게 프롬프트 간극을 잡는다.
+    실서빙 프로필은 단일 `scout`이고 registry가 `v1`이라 통과한다. **풀 프로필
+    `local_balanced_pool`도 통과하는데, 그것은 이 검사가 잡을 뻔한 간극을 v2 별칭이
+    메우기 때문이다** — 풀 세 역할의 프롬프트 디렉터리는 `v2`만 있고(D54), base 셋은 v1이라
+    풀을 base로 배선했으면 여기서 걸렸을 것을, PR #190이 `prompt_template_version: v2` 별칭
+    셋을 등재해 그 프로필이 v2를 가리키게 했다. 그래서 이 검사는 **별칭이 실제로 v2를 가리키는지**를
+    지키는 자리로 선다 — 별칭 하나가 base로 되돌아가면 여기서 걸린다.
     """
     config = load_config(profile)
 
