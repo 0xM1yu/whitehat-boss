@@ -525,3 +525,118 @@ def test_the_probe_imports_nothing_outside_the_standard_library() -> None:
     assert "src/__init__.py" in followed
     assert "src/bench_metrics.py" in followed
     assert "src/console.py" in followed
+
+
+# --- critic_output_budget --------------------------------------------------
+#
+# 이 프로브의 결론은 두 판단에 얹혀 있고 **둘 다 테스트가 없으면 조용히 틀린다**:
+# ① Critic 프롬프트에 캡슐·원문이 안 실린다(그래서 21,021은 이 경로의 수가 아니다)
+# ② 공백 폭주 응답이 상한 표본에서 빠진다(#79를 config에 적지 않는다).
+# 나머지(인자 파싱·출력 포맷)는 안 고정한다 — 틀려도 결론이 안 바뀐다.
+
+
+def _budget_row(*, hit_cap: bool, chars: int, trailing: int) -> dict[str, Any]:
+    return {
+        "hit_cap": hit_cap,
+        "chars": chars,
+        "trailing_whitespace": trailing,
+        "output_tokens": 9999,
+        "input_tokens": 1000,
+        "est_tokens": 500,
+        "json_valid": True,
+    }
+
+
+def test_a_whitespace_runaway_is_kept_out_of_the_cap_sample() -> None:
+    """상한까지 공백으로 찬 응답의 `output_tokens`는 상한의 근거가 아니다 (#79).
+
+    그 값으로 상한을 정하면 **버그를 config에 적는 것**이고, 그 뒤 모든 폭주가 그 값에
+    비례해 비싸진다 — 폭주 차단이 상한의 유일한 목적인데 정반대로 간다.
+    """
+    from tools.probe.critic_output_budget import _summarize
+
+    summary = _summarize([_budget_row(hit_cap=True, chars=40000, trailing=39000)])
+
+    assert summary["whitespace_runaway"] == 1
+    assert summary["cap_sample"]["n"] == 0, "공백 폭주가 상한 표본에 들어갔다"
+    assert summary["ok"] == 1, "폭주도 성공 호출이다 — 분모에서 빼지 않는다"
+
+
+def test_an_answer_that_filled_the_cap_with_content_stays_in_the_sample() -> None:
+    """역도 성립해야 한다. 필터가 상한 도달을 전부 버리면 **잴 것을 안 재게 된다.**"""
+    from tools.probe.critic_output_budget import _summarize
+
+    summary = _summarize([_budget_row(hit_cap=True, chars=40000, trailing=3)])
+
+    assert summary["whitespace_runaway"] == 0
+    assert summary["cap_sample"]["max"] == 9999
+
+
+def test_an_empty_cap_sample_reports_null_not_zero() -> None:
+    """표본이 비면 `0`이 아니라 `null`이다.
+
+    이 저장소에서 `0`은 **미실측 표시**다(CLAUDE.md §0). 빈 분포를 0으로 적으면
+    "재봤더니 0이었다"로 읽힌다.
+    """
+    from tools.probe.critic_output_budget import _distribution
+
+    assert _distribution([]) == {"n": 0, "min": None, "median": None, "max": None, "mean": None}
+
+
+def test_the_reconstructed_critic_prompt_carries_no_capsule_and_no_source() -> None:
+    """Critic 프롬프트에 캡슐도 대상 원문도 안 실린다 — 이 프로브의 전제다.
+
+    `nodes/critic._ask_model`이 `build_facts`에 `capsule=`·`source=`를 안 넘기기 때문이고,
+    그래서 이 경로의 프롬프트는 합성 프로브의 21,021 토큰과 **다른 축**이다. 배선이 바뀌어
+    캡슐이 실리는 날 이 검사가 빨개져서 프로브 docstring의 그 문단을 함께 고치게 만든다.
+    """
+    from src.orchestrator.prompt_loader import load_prompt
+    from src.schemas.enums import EvidenceKind
+    from src.schemas.enums import Role as _Role
+    from tests.test_gate import _evidence, _finding  # noqa: PLC0415
+    from tools.probe.critic_output_budget import _reconstruct
+
+    finding = _finding(refs=[])
+    built = _reconstruct(
+        finding,
+        [_evidence("ev_static", EvidenceKind.STATIC)],
+        template=load_prompt(_Role.CRITIC, "v1"),
+        run_id="run_20260813_0001",
+    )
+
+    facts = json.loads(re.findall(r"```json\s*\n(.*?)\n```", built.prompt.body, re.DOTALL)[-1])
+    assert facts["capsule_sections"] == [], "Critic 사실 블록에 캡슐이 실렸다"
+    assert facts["source"] == "", "Critic 사실 블록에 대상 원문이 실렸다"
+    assert facts["target"] is None
+    # `evidence_refs`가 비면 근거 블록도 빈다 — 그래서 이 측정은 프롬프트 크기의 **하한**이다.
+    assert facts["evidence"] == []
+    assert built.evidence_count == 0
+
+
+def test_the_probe_draft_schema_is_the_one_the_live_critic_node_sends() -> None:
+    """`--schema draft`가 실서빙 `OUTPUT_SCHEMA`와 **같은 객체**여야 한다.
+
+    2026-09-12 프로브는 `DecisionDraft`가 PR #182 브랜치에만 있던 시점에 돌아
+    `--schema decision`으로 쟀고, #182가 머지되며 그 서술이 실서빙과 어긋났다
+    (보고서 §3.3의 ⚠). 그 어긋남을 잡는 것이 사람이었다 — 여기에 걸어 둔다.
+
+    같은 값인지(`==`)가 아니라 **같은 객체인지**(`is`)를 본다. 스키마를 갈아끼우고
+    프로브만 안 따라오면 여기서 죽는다.
+    """
+    from src.orchestrator.nodes.critic import OUTPUT_SCHEMA  # noqa: PLC0415
+    from tools.probe.critic_output_budget import _schema_for  # noqa: PLC0415
+
+    assert _schema_for("draft") is OUTPUT_SCHEMA
+
+
+def test_the_probe_decision_arm_is_an_upper_bound_on_the_draft_arm() -> None:
+    """`Decision` 필드 집합이 `DecisionDraft`를 **포함**해야 한다.
+
+    보고서 §3.3·§3.4와 `config/budgets.yaml`의 `output_max` 주석이 "여기 수는
+    실서빙에 대한 상한"이라 적는 근거가 이 포함 관계 하나다. 관계가 뒤집히면
+    그 문장들이 거짓이 되므로 여기서 막는다 — **실측이 아니라 구조적 논증이고,
+    그 논증의 전제만 고정한다.**
+    """
+    from src.schemas.decision import Decision, DecisionDraft  # noqa: PLC0415
+
+    assert set(DecisionDraft.model_fields) < set(Decision.model_fields)

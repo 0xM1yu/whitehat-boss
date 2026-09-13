@@ -221,7 +221,9 @@ Yes – the code is a classic **use-after-free**.
 
 **`guidance`는 500만 낸다.** 서버 로그에 트레이스백이 없고 응답의 `message`도 빈 문자열이라 사유를 못 봤다.
 
-⚠ **`reasoning_content`가 세 조건 전부에서 비어 있었다.** `response_format` 없는 자유 서술에서도 비었다 — **스키마 강제와 무관하게 채널이 API 응답에서 갈리지 않는다.** 그리고 EngineCore 로그는 `reasoning_parser='openai_gptoss'`로 **채워져 있었다**고 적는다(§2). 즉 관측은 「파서 미설정」이 아니라 **「파서가 설정돼 있는데도 `reasoning_content`가 빈 것」**이다. 왜인지는 **안 갈랐다.**
+⚠ **`reasoning_content`가 세 조건 전부에서 비어 있었다.** `response_format` 없는 자유 서술에서도 비었다 — ~~**스키마 강제와 무관하게 채널이 API 응답에서 갈리지 않는다.**~~
+>
+> **정정 (2026-09-12, ATOM 실측).** **필드 이름이 틀렸다.** vLLM 0.27.1의 응답 `message` 키 집합은 `annotations`·`audio`·`content`·`function_call`·**`reasoning`**·`refusal`·`role`이고 `reasoning_content`는 **없다** — 자유 서술과 스키마 강제 양쪽에서 같다. 올바른 키로 읽으면 채널은 **갈려 나온다**(실 Critic 프롬프트에서 추론 `high` 484~16,381토큰 · `medium` 69~227 · `low` 12~23). 그러므로 취소선 친 문장은 거짓이고, 아래 「왜인지는 안 갈랐다」도 갈렸다 — **우리가 없는 키를 읽었다**. 같은 결함이 `tools/probe/gpt_oss_structured.py`에 있었고 그 필드로 낸 관측(「reasoning 빔」)은 전부 무효다. 근거: [2026-09-12 보고서](2026-09-12-critic-gptoss-token-accounting-atom.md) §4. ⚠ **이 정정이 §3.3의 verdict 결과를 뒤집지는 않는다** — 그쪽은 별개 축이다. 그리고 EngineCore 로그는 `reasoning_parser='openai_gptoss'`로 **채워져 있었다**고 적는다(§2). 즉 관측은 「파서 미설정」이 아니라 **「파서가 설정돼 있는데도 `reasoning_content`가 빈 것」**이다. 왜인지는 **안 갈랐다.**
 
 ---
 
@@ -252,7 +254,7 @@ Yes – the code is a classic **use-after-free**.
 | `--structured-outputs-config.reasoning_parser` 명시 지정 | ✅ **2026-09-11에 측정됐다 — 플래그는 아무것도 안 바꾼다.** 같은 케이스·같은 스키마·같은 `max_tokens`로 플래그만 바꾼 A/B에서 **verdict 시퀀스가 바이트 단위로 동일**했다([보고서](2026-09-11-gpt-oss-structured-vocab-flag-atom.md) §3). §2의 관측(EngineCore가 이미 채웠다)이 맞았다 | 측정 완료 |
 | *(추가)* 스키마 어휘 | ✅ **2026-09-11에 측정됐다 — 어휘가 아니다.** 실제 `Decision` 어휘 1/5, 서술 어휘 `vulnerable`/`safe` **0/5**(더 나쁘다). 아래 §7 후속 2가 제일 싸다고 적은 그 실험이다 | 측정 완료 |
 | 장시간 서빙 안정성 | 스모크 3분 이내 | 연속 서빙 — [swap.md](../../research/2026-09-04-swap.md)가 `#49926`·`#52225`를 든다 |
-| `reasoning_content`가 빈 이유 | 안 갈랐다 | — |
+| ~~`reasoning_content`가 빈 이유~~ | **갈렸다 (2026-09-12)** — 필드 이름이 `reasoning`이고 `reasoning_content`는 없다. 채널은 정상적으로 갈려 나온다 | 해소. [2026-09-12 보고서](2026-09-12-critic-gptoss-token-accounting-atom.md) §4 |
 
 ---
 
