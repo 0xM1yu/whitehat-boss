@@ -355,7 +355,8 @@ profiles:
     # ⚠ **여기도 모델 선정은 미확정이다** — 풀 3자리·Critic은 `local_balanced_pool`과 같은
     #   provisional 별칭·gpt-oss이고, reranker는 `qwen3-reranker-0.6b`다(§1은 4b지만 교체는 #152
     #   질의모양·틀 레버 정리 후 — 이 PR은 어댑터 배선이지 모델 선정이 아니다). `#189`가 넣은
-    #   Qwen3 instruction 양식이 이 경로에서 처음 실제 payload에 실린다(0.6b도 Qwen3라 적용).
+    #   Qwen3 instruction 양식도 이 경로에서 실린다 — `local_balanced_hybrid`와 **같은
+    #   `VllmRerankerClient`**라 새 코드 경로가 아니라 풀 프로필에 그 경로가 붙는 것이다(0.6b도 Qwen3).
     # ⚠ **예산은 이 배선에 맞춰 안 잡혔다** — `hybrid_retriever.py` 모듈 docstring이 적은
     #   「related 본문이 산문·사실 블록 양쪽에 실려 선언 N토큰이 실제 ~2N」(#67 계약)이 이
     #   프로필에도 성립한다. `budget: default`는 축을 하나로 유지하려는 선택이지 그 예산이
