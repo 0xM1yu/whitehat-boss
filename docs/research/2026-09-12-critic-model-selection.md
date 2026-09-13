@@ -56,6 +56,11 @@ scaffold, tool policy, 실행 횟수가 결과에 영향을 준다는 전제를 
 ### 2.1 현재 pipeline에서 상주하는 Critic
 
 현재 Qwen3-Coder-30B-A3B Auditor가 약 35.6 GiB를 점유하는 관측을 전제로 하면, Critic은
+(**출처**: [2026-08-28 track-a pwn003 보고서](../experiments/harness/2026-08-28-pipeline-track-a-pwn003-atom.md)
+§"메모리"가 서버 A·B에서 **KV 포함 35.68 / 35.66 GiB**를 적는다 — 같은
+`Qwen3-Coder-30B-A3B-Instruct-FP4`다. ⚠ **그 보고서가 스스로 단서를 단다**: 같은 시점
+`nvidia-smi`는 **32.2 GiB**를 보고하고 *"무엇이 두 값을 가르는지는 안 쟀다"*. 35.6은
+vLLM 자기 회계 쪽이고, 아래 예산 논의는 **둘 중 큰 값을 쓰는 보수적 가정**이다.)
 가중치만으로 남은 예산을 거의 다 쓰면 안 된다. KV cache·non-torch 메모리·OS와 request
 동시성을 남겨야 한다. 이 모드에서의 목적은 **최대 파라미터**가 아니라 “같은 run에서
 정상적으로 판정하는 독립 Critic”이다.
@@ -74,7 +79,8 @@ long-context reasoning·agentic workflow 용도를 명시하고, LiveCodeBench v
 `[출처주장]`.
 
 NVIDIA는 DGX Spark 전용 배포 절차도 제공한다. [Spark 배포 가이드](https://build.nvidia.com/spark/nemotron/overview)
-`[출처주장]`. checkpoint 파일은 약 79.12 GiB `[계산]`라 Qwen 약 35.6 GiB와 동시에
+`[출처주장]`. checkpoint 파일은 약 79.12 GiB `[계산]`라 Qwen 약 35.6 GiB(§2.1의 출처·
+단서와 같은 수)와 동시에
 안전하게 띄울 수 없다. 따라서 이 모델은 “현재 Critic 교체”가 아니라 **Auditor B 또는
 단독 Critic evaluation**으로만 쓴다.
 
@@ -147,9 +153,20 @@ output-content schema를 준다. 모델이 요청 ID·run ID·finding ID·produc
 승인하지 않는다. 임계값은 D4가 표본 크기와 허용 오차를 정한 뒤에 선언한다. 이 조사에서
 숫자를 만들어 합격 처리하지 않는다.
 
+**관문 0 — 온보딩 착수 전에 런타임 호환부터 확인한다.** §2.2·§2.3의 보류 후보
+(Ling-3.0-flash · Mistral Small 4 · GLM-4.7 · DeepSeek V4 등)는 전부 `[출처주장]`이고,
+**현 pinned runtime(vLLM 0.27.1)에서의 JSON·reasoning parser 호환성을 §7이 「확인하지
+못한 것」으로 둔다.** 그 확인 없이 위 5.1~5.2 평가에 GPU 시간을 쓰지 않는다 — 계약
+실패는 정확도 표에 들어오지도 못한다. 확인 항목은 §7의 넷째 줄과 같은 것이다.
+
 ## 6. 실행 순서
 
-1. #182의 strict verdict parser 다음으로 **모델 생성 metadata 제거**를 끝낸다.
+1. ~~#182의 strict verdict parser 다음으로 **모델 생성 metadata 제거**를 끝낸다.~~
+   **완료 — #182가 둘을 같이 했다**(main `0148719`). 이 문서를 쓸 때는 parser의 「다음」
+   단계로 봤는데, 머지된 #182가 `nodes/critic.py`의 `OUTPUT_SCHEMA`를 `DecisionDraft`로
+   바꾸며 *"provenance는 하네스가 넣는다"*까지 같은 PR에서 끝냈다 —
+   `decision_id`·`run_id`·`finding_id`·`produced_by` 넷을 모델이 안 만든다. §5.1이 요구한
+   *"metadata는 node가 결정적으로 주입한다"*는 **이미 성립한 상태에서** 아래 2~6이 시작한다.
 2. Devstral Small 2를 실제 `critic/v1`의 양성·오탐·근거 부족 3×3 smoke로 측정한다.
 3. gpt-oss를 중지 또는 sleep 처리한 뒤 Lightning을 같은 input과 계약으로 측정한다.
    첫 run은 MTP/DSpark speculative decoding 없이 한다.
