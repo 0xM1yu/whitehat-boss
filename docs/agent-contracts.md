@@ -35,6 +35,18 @@ agent:
 > 실측에서 상한까지 폭주하면 1회에 130초, `retries: 1`이라 실패 하나가 2회를 태운다. run 시간의
 > 지배 항이 폭주이고 그 항이 상한에 정비례한다. **대가는 관측 최대 2,424 대비 여유가 3.4배에서
 > 1.7배로 주는 것**이고, 그보다 큰 정상 응답이 나오면 역할별 상한(D46 (c))이 다음 수다.
+> **2026-09-12에 「관측 최대 2,424」가 깨져 그 자리가 열렸다** — gpt-oss-20b Critic의
+> `DecisionDraft` 18시행에서 성공 출력 최댓값이 **2,863**이라 여유가 1.7배에서 1.43배로
+> 준다(절단은 0/18이므로 **닿았다는 뜻은 아니다**).
+> **2,863의 원천이 이 저장소에 들어왔다** — 그 수를 실은
+> [DecisionDraft 출력 예산](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)이
+> PR #182와 함께 머지됐다. 뒤집힌 2,424는 `run_20260827_0002`로 추적된다
+> ([v2 스모크](experiments/harness/2026-08-29-prompt-v2-smoke-atom.md)). 같은 인용이
+> `config/budgets.yaml`의 `output_max` 주석에도 있다 — 두 자리가 이제 실재하는 보고서를
+> 가리킨다. 자리는
+> `thresholds.output_max_by_role`이고 선언이 없는 역할은 위 값을 그대로 쓴다
+> (`Thresholds.output_max_for`). **값은 아직 어느 역할도 선언하지 않았다** — 실측과
+> 한계는 `config/budgets.yaml`의 `output_max` 주석에 있다.
 > 타임아웃(`_TIMEOUT_S = 300`)은 **시도 하나당**이라 `wall_ms`(재시도 포함)와 직접 비교하면
 > 안 된다 — 자세한 계산은 `config/budgets.yaml`의 `output_max` 주석에 있다.
 >
@@ -77,6 +89,10 @@ agent:
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
 - 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID만 전달).
 - 출력: `Decision`
+- **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
+- **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
+- **표준값 층과 동의어 층은 같은 정규화를 본다** — 단어 양끝의 장식(`**`·따옴표·백틱·목록 기호·번호 매김·비ASCII 구두점)을 뗀 뒤 양쪽을 대조한다. 장식 제거가 표준값 층에만 걸려 있던 판(#182 재리뷰 H-A)은 `Yes`를 UPHOLD로 읽고 `**Yes**`·`Yes.`를 `None`으로 읽어 **마침표 하나로 판정이 갈렸고**, 그 `None`이 `need_evidence`를 거쳐 게이트 `p3`(`upheld` 요구)에 걸려 **진짜 취약을 `validated`에서 막았다.** ⚠ **동의어에 CWE 이름을 넣지 않는다** — `use-after-free` 한 계열만 매핑되면 Critic 제거율이 대상 CWE에 따라 다른 규칙으로 만들어진다([evaluation.md](evaluation.md) §2.3).
+- **ID·`produced_by`는 모델 스키마(`DecisionDraft`)에서 빼고 하네스가 주입한다** — 모델에 provenance를 맡기면 `produced_by.model`이 실제 모델이 아닌 `"ChatGPT"` 등으로 오염된다(실측).
 - 반박 체크리스트: guard 존재 여부 / reachability(호출 가능 경로) / aliasing / lifetime / 컴파일 타임 조건·플래그 / 입력 도달성 제약
 - 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. 근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다.
 
@@ -299,6 +315,37 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 ## 4. 프롬프트 관리 규약
 
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
+
+> ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
+>
+> **본문이 바뀌었는데 `version`이 안 바뀌었다.** 그래서 `prompt_version: "v1"`이 **서로 다른
+> 두 텍스트**를 가리킨다. 위 규칙 1도 [evaluation.md](evaluation.md) §2.3 규칙 4("프롬프트
+> 버전이 바뀌면 재측정한다")도 **버전 문자열이 바뀌는 것을 발화 조건으로 삼으므로 자동으로는
+> 안 걸린다.** 이 문단이 그 자리를 대신한다.
+>
+> **왜 범프하지 않았나.** `prompt_template_version`이 `ModelEntry`별이라 커밋된 9개 프로필 중
+> **7개에서 critic 엔트리가 scout·auditor와 공유된다** — `fake`(dev 5개 + `single_gpu_12g`)와
+> `qwen3-coder-30b-a3b`(`b1_single`). critic만 v3로 올리면 그 둘이 없는 `prompts/scout/v3`·
+> `prompts/auditor/v3`를 찾는다. 역할별 `prompt_version`([D67](open-questions/D/D67.md) ·
+> 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다. 되돌리지 않은 이유는
+> `prompts/critic/v1/meta.yaml` 머리 주석에 있다.
+>
+> **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
+> 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·
+> [2026-08-26](experiments/harness/2026-08-26-pipeline-zlib542-remeasure-atom.md)
+> `run_20260826_0001`, 각각 critic `model_call` 8건) **둘 다 프로필이 `single_gpu_12g`라
+> critic이 Fake다.** Fake는 프롬프트를 읽지 않으므로 **그 8건의 판정값은 이 텍스트의
+> 함수가 아니다** — 바뀐 것은 라벨의 모호성이지 그 run의 수치가 아니다.
+>
+> ⚠ **말할 수 있는 것은 거기까지다.** 두 run의 `prompt_versions.critic`·`prompt_sha256`은
+> 그대로 남아 있고, 그 라벨을 "그 날의 v1 본문"으로 되짚는 것은 이제 커밋 해시를 거쳐야 한다.
+>
+> **실서빙 critic이 `critic/v1`로 돈 커밋된 run은 확인되지 않았다.**
+> [2026-08-29 v2 스모크](experiments/harness/2026-08-29-prompt-v2-smoke-atom.md)의 v1 팔은
+> **critic 호출 0건**(Finding 6건이 전부 6단계에서 멈췄다)이고 v2 팔이 critic `v2` ×3이며,
+> [2026-09-04 실서빙 run](experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md)은
+> **7단계에서 죽었고 그 보고서 자신이 "비교표에 못 들어간다"고 적는다.** 확인 방법은
+> `git grep -n "prompt_version" -- docs/` + 각 보고서의 조건·프로필 절이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

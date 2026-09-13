@@ -33,6 +33,9 @@ from src.config import (
     ProfileEntry,
     load_config,
 )
+from src.orchestrator.nodes import auditor as auditor_node
+from src.orchestrator.nodes import critic as critic_node
+from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
 from src.schemas import CapsuleLevel, RunRecord
@@ -41,6 +44,18 @@ from src.schemas.enums import Role
 from tests.conftest import ALL_PROFILES
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
+
+# 역할 → 그 역할로 모델을 부르는 노드가 `ctx.call_model(schema=...)`에 넣는 스키마.
+# 풀 세 멤버는 별도 노드가 아니라 `nodes/scout.py`의 `run(role=...)`이 돈다(ADR 0010 §3).
+# `single`·`judge`는 아직 노드가 없어 여기 없다 — bench 쪽 검사만 선다.
+NODE_OUTPUT_SCHEMAS = {
+    Role.SCOUT: scout_node.OUTPUT_SCHEMA,
+    Role.SCOUT_MEMORY: scout_node.OUTPUT_SCHEMA,
+    Role.SCOUT_BOUNDARY: scout_node.OUTPUT_SCHEMA,
+    Role.SCOUT_INJECTION: scout_node.OUTPUT_SCHEMA,
+    Role.AUDITOR: auditor_node.OUTPUT_SCHEMA,
+    Role.CRITIC: critic_node.OUTPUT_SCHEMA,
+}
 
 
 # --- 참조 정합성 ------------------------------------------------------------
@@ -267,6 +282,44 @@ def test_every_prompt_version_on_disk_loads(directory: Path) -> None:
     assert template.version == version
     assert getattr(schemas, template.output_schema, None) is not None, (
         f"{directory}/meta.yaml의 output_schema `{template.output_schema}`가 `src.schemas`에 없다"
+    )
+
+
+@pytest.mark.parametrize("directory", _prompt_dirs(), ids=lambda d: f"{d.parent.name}/{d.name}")
+def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory: Path) -> None:
+    """`meta.yaml`의 `output_schema`가 **그 역할로 모델을 부르는 코드가 실제로 보내는**
+    스키마와 같다.
+
+    바로 위 `test_every_prompt_version_on_disk_loads`는 그 이름이 `src.schemas`에 **있는지**만
+    본다 — 있기만 하면 노드가 무엇을 보내든 통과한다. 프롬프트는 모델이 읽는 명령이고
+    스키마는 grammar가 강제하는 문법이라, 둘이 어긋나면 **모델이 시킨 대로 쓸 수 없는
+    필드를 시키는** 상태가 된다. `HarnessModel`이 `extra="forbid"`라 그 필드는
+    `additionalProperties: false`로 마스크되고, 마스크가 추론을 덮는 것이 이 PR이 고치는
+    바로 그 실패다(gpt-oss-20b 실측 2026-09-12 — **원천: PR #182 본문, 원문 미커밋**.
+    `docs/experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md` §5).
+
+    **사고 —** `nodes/critic.py`가 `schema=DecisionDraft`로 바뀐 뒤에도 `prompts/critic/v1`
+    규칙 4가 *"`ids.decision_id`를 그대로 쓴다"*였고 출력표에 `decision_id`·`run_id`·
+    `finding_id`가 남아 있었다. `DecisionDraft`에는 그 셋이 없다. v1은 `config/profiles.yaml`의
+    **전 프로필**이 고르는 살아 있는 프롬프트다.
+
+    요청하는 곳이 **둘**이라 둘 다 본다 — 파이프라인 노드와 `bench.ROLE_SPEC`(bench는
+    같은 프롬프트 파일을 렌더해 구조화 출력을 잰다). 노드가 없는 역할(`single`)은
+    bench 쪽만 선다.
+    """
+    role, version = Role(directory.parent.name), directory.name
+
+    template = load_prompt(role, version)
+
+    node_schema = NODE_OUTPUT_SCHEMAS.get(role)
+    if node_schema is not None:
+        assert template.output_schema == node_schema.__name__, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"노드는 `{node_schema.__name__}`을 요청한다"
+        )
+    assert template.output_schema == ROLE_SPEC[role][0].__name__, (
+        f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+        f"bench.ROLE_SPEC은 `{ROLE_SPEC[role][0].__name__}`을 요청한다"
     )
 
 
@@ -640,10 +693,148 @@ def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> Non
 
     assert config.thresholds.flatten()["output_max"] == float(config.thresholds.output_max)
 
-    client = _model_client(config.profile.roles["scout"], config)
+    client = _model_client(config.profile.roles["scout"], config, role="scout")
     payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
 
     assert payload["max_tokens"] == config.thresholds.output_max
+
+
+# --- 역할별 출력 상한 (D46 (c)) ------------------------------------------------
+#
+# **자리만 연다. 값은 이 PR이 안 정한다.** 어느 역할에 얼마를 주는지는 실측으로 정할
+# 값이고(이 파일 모듈 docstring), 여기서 고정하는 것은 **선언하면 그 역할만 바뀌고
+# 선언 안 하면 한 톨도 안 바뀐다**는 불변식뿐이다.
+
+
+def test_a_role_without_a_declared_cap_is_untouched_by_the_new_slot() -> None:
+    """선언이 없으면 전역값 그대로다 — 그리고 **기록도 안 늘어난다**.
+
+    `ModelEntry.reasoning_effort`가 낸 전례다: 선언 안 한 역할은 요청에도 기록에도
+    키가 안 생긴다. `RunRecord.thresholds`에 `output_max_by_role.*`가 빈 채로 생기면
+    **기존 manifest와 새 manifest가 다른 모양**이 되는데, 그 차이가 뜻하는 것이 없다.
+    """
+    thresholds = load_config("b1_single").thresholds
+
+    assert all(
+        thresholds.output_max_for(role) == thresholds.output_max for role in PROMPTED_ROLES
+    ), "선언이 없는데 역할마다 다른 값이 나온다"
+    assert not [key for key in thresholds.flatten() if key.startswith("output_max_by_role")], (
+        "선언이 없는데 기록에 키가 생겼다 — 기존 manifest와 모양이 갈린다"
+    )
+
+
+def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Path) -> None:
+    """선언하면 **그 역할만** 바뀌고, 요청과 기록 양쪽에 같은 값으로 간다.
+
+    선례 `test_the_output_cap_reaches_the_run_record_and_the_gateway_together`가 전역값에
+    대해 거는 것과 같은 이유다 — 한쪽만 가면 최악이고, 기록이 있다는 이유로 아무도 다시
+    확인하지 않는다.
+
+    ⚠ **기제는 `reasoning_effort`와 다르다.** 저쪽은 문자열이라 `dict[str, float]`인
+    `thresholds`에 못 들어가 `RunRecord`에 **필드를 새로 냈다**. 이쪽은 int라 그 자리에
+    그대로 들어가므로 `flatten()`이 실어 주면 끝이다 — 새 필드를 내지 않는다.
+    """
+    _copy_config(
+        tmp_path,
+        # critic만 선언한다 — scout이 안 바뀌는 것까지 함께 고정해야 "전 역할에 같은
+        # 값이 실렸다"는 반대 방향 결함이 안 지나간다.
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        thresholds_patch={"output_max_by_role": {"critic": 8192}},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.thresholds.output_max_for("critic") == 8192
+    assert config.thresholds.output_max_for("scout") == config.thresholds.output_max
+
+    def sent(role: str) -> int:
+        client = _model_client(config.profile.roles[role], config, role=role)
+        return client._request_payload("prefix", "body", RunRecord)["max_tokens"]  # noqa: SLF001
+
+    assert sent("critic") == 8192, "선언했는데 요청에 안 실렸다"
+    assert sent("scout") == config.thresholds.output_max, "선언 안 한 역할이 함께 움직였다"
+
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config,
+        "run_20260912_0001",
+        datetime(2026, 9, 12, tzinfo=UTC),
+        [],
+        {},
+        {},
+    )
+    assert record.thresholds["output_max_by_role.critic"] == 8192.0, (
+        "요청에는 실리는데 기록에 안 남는다 — engineering-guide.md §5가 그 run을 비교표에서 뺀다"
+    )
+
+
+def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: Path) -> None:
+    """오타는 **서빙 때가 아니라 로드 때** 터져야 한다.
+
+    `ModelEntry.reasoning_effort`가 `Literal`로 닫힌 사유가 그대로 걸린다 — 자유 키면
+    `critick: 8192`가 로드를 통과하고 **조용히 무시된 채** 전역값으로 돈다. 그 run은
+    "역할별 상한을 줬다"고 기록되지만 실제로는 안 준 것이다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        thresholds_patch={"output_max_by_role": {"critick": 8192}},
+    )
+
+    with pytest.raises(ValidationError, match="critick"):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None:
+    """`0`은 "상한 없음"이 아니라 **오설정**이다.
+
+    `output_max`가 `Field(gt=0)`인 것과 같은 자리인데 역할별 값에는 그 제약이 안 걸린다 —
+    dict의 값이라 `Field`가 못 본다. `_role_caps_name_real_roles`가 손으로 막고 있고,
+    그 줄에 테스트가 없었다. `0`이 통과하면 그 역할은 요청에 `max_tokens: 0`을 싣는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "qwen3-4b",
+                "auditor": "qwen3-8b",
+                "critic": "devstral-small-2-24b",
+            }
+        },
+        thresholds_patch={"output_max_by_role": {"critic": cap}},
+    )
+
+    with pytest.raises(ValidationError, match="양수"):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+def test_asking_the_cap_for_a_role_that_is_not_a_role_fails_loudly() -> None:
+    """모르는 문자열에 **조용히 전역값을 주지 않는다**.
+
+    `_model_client`가 `role`을 필수 키워드로 둔 사유(*"기본값이 있으면 역할을 빠뜨린
+    조립 지점이 조용히 전역값을 실어 보낸다"*)가 그대로 한 겹 안쪽에 걸린다 — 대소문자가
+    다르거나(`Role.CRITIC.value`가 아니라 `"CRITIC"`) 오타인 키는 `dict.get`의 기본값으로
+    떨어져 **선언한 상한이 무시된 채** 돌고, 그 run은 "역할별 상한을 줬다"고 기록된다.
+    `output_max_by_role`의 오타를 로드 때 막는 것과 같은 자리다.
+    """
+    thresholds = load_config("b1_single").thresholds
+
+    for unknown in ("CRITIC", "critick", "nonsense", ""):
+        with pytest.raises(ConfigError, match="프롬프트 역할"):
+            thresholds.output_max_for(unknown)
 
 
 @pytest.mark.parametrize("level", list(CapsuleLevel))
@@ -706,13 +897,13 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     )
     assert config.model_for("auditor").reasoning_effort == "high"
 
-    declared = _model_client(config.profile.roles["auditor"], config)
+    declared = _model_client(config.profile.roles["auditor"], config, role="auditor")
     payload = declared._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert payload["reasoning_effort"] == "high", (
         "registry가 선언했는데 요청에 안 실렸다 — 기록만 참이고 서버는 기본값으로 돈다"
     )
 
-    silent = _model_client(config.profile.roles["critic"], config)
+    silent = _model_client(config.profile.roles["critic"], config, role="critic")
     quiet = silent._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert "reasoning_effort" not in quiet, (
         "선언 안 한 모델의 payload에 키가 생겼다 — 서버가 거절할 수 있고 키 집합이 흔들린다"
@@ -782,9 +973,8 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         "직렬화에서 사라지면 manifest를 읽는 쪽은 못 본다"
     )
 
-    payload = _model_client(config.profile.roles["auditor"], config)._request_payload(  # noqa: SLF001
-        "prefix", "body", RunRecord
-    )
+    auditor = _model_client(config.profile.roles["auditor"], config, role="auditor")
+    payload = auditor._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert payload["reasoning_effort"] == record.model_reasoning_effort["auditor"], (
         "기록과 요청이 갈렸다 — 기록이 있다는 이유로 아무도 다시 확인하지 않는다"
     )
@@ -793,15 +983,32 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
 # --- 헬퍼 ------------------------------------------------------------------
 
 
-def _copy_config(dest: Path, *, profile_patch: dict, model_patch: dict | None = None) -> None:
+def _copy_config(
+    dest: Path,
+    *,
+    profile_patch: dict,
+    model_patch: dict | None = None,
+    thresholds_patch: dict | None = None,
+) -> None:
     """저장소 config를 tmp_path로 복사하고 dev_fake 프로필만 덮어쓴다.
 
     `model_patch`(model key → 덮어쓸 필드)를 주면 registry 항목도 함께 바꾼다. 그때만
     models.yaml이 yaml 왕복을 거치므로 **주석이 사라진다** — 주석이 살아 있어야 하는
     검사는 원문 치환을 쓴다(`test_partially_measured_models_are_named_with_what_is_missing`).
+
+    `thresholds_patch`도 같은 규칙이다 — 주면 budgets.yaml이 왕복을 거친다. `output_max`
+    처럼 **저장소에는 아직 선언이 없는 값**을 세울 때 쓴다. 저장소 값을 바꿔 재는 검사는
+    "값이 실측으로 정해진다"는 이 파일 모듈 docstring의 전제를 깨므로 하지 않는다.
     """
-    budgets = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
-    (dest / "budgets.yaml").write_text(budgets, encoding="utf-8")
+    budgets_text = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
+    if thresholds_patch is None:
+        (dest / "budgets.yaml").write_text(budgets_text, encoding="utf-8")
+    else:
+        raw_budgets = yaml.safe_load(budgets_text)
+        raw_budgets["thresholds"].update(thresholds_patch)
+        (dest / "budgets.yaml").write_text(
+            yaml.safe_dump(raw_budgets, allow_unicode=True), encoding="utf-8"
+        )
     models_text = (CONFIG_DIR / "models.yaml").read_text("utf-8")
     if model_patch is None:
         (dest / "models.yaml").write_text(models_text, encoding="utf-8")

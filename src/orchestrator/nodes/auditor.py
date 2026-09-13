@@ -33,6 +33,8 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 
 ROLE = Role.AUDITOR
+# 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조).
+OUTPUT_SCHEMA = Finding
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
@@ -103,7 +105,7 @@ def _ask_model(
         result = ctx.call_model(
             role=ROLE,
             prompt=prompt,
-            schema=Finding,
+            schema=OUTPUT_SCHEMA,
             stage=Stage.AUDITOR,
             subject_kind="finding",
             subject_id=ids["finding_id"],

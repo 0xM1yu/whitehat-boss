@@ -504,22 +504,89 @@ class Thresholds(HarnessModel):
     # 났다. `schema_retries`와 같은 이유로 여기 있다 — 조건 간 비교에서 고정되어야 하고
     # `flatten()`이 `RunRecord.thresholds`로 실어야 한다. 어댑터 기본값으로 두지 않는다.
     output_max: int = Field(gt=0)
+    # 위 전역값을 **역할 단위로 덮는 자리** (이슈 #79의 선택지 **(c)**). 선언한 역할만 바뀌고
+    # 나머지는 `output_max`를 그대로 쓴다.
+    #
+    # **`ModelEntry.reasoning_effort`가 낸 전례 그대로다** — optional이고, 선언 안 하면
+    # 기존 동작이 한 톨도 안 바뀐다. 기본값이 `{}`인 것이 그 뜻이다.
+    #
+    # **왜 registry가 아니라 여기인가.** `reasoning_effort`는 모델 성질이라 registry가
+    # 맞지만 이 값을 정하는 것은 **캡슐 레벨**이다 — #79의 (c)가 지목한 것이 "EXPANDED
+    # 역할에 더 준다"이고, 레벨은 역할의 성질이다(`bench.ROLE_SPEC`). 같은 모델이 두
+    # 역할에 앉으면 필요한 상한이 갈린다.
+    #
+    # **키를 `PROMPTED_ROLES`로 닫는 것은 `reasoning_effort`가 `Literal`로 닫힌 사유와
+    # 같다.** 자유 키면 `critick: 8192`가 로드를 통과하고 **조용히 무시된 채** 전역값으로
+    # 돈다 — 그 run은 "역할별 상한을 줬다"고 기록되지만 실제로는 안 준 것이다. 오타가 곧
+    # 결함인 **우리가 적는 설정**이므로 크게 실패한다. 프롬프트를 안 받는 역할
+    # (embedding·reranker)이 빠지는 것도 같은 자리다 — 그쪽은 `_model_client`를 타지
+    # 않아 이 값을 실을 경로 자체가 없다(`prompt_versions()`의 "거짓 정보" 판단).
+    output_max_by_role: dict[str, int] = Field(default_factory=dict)
     capsule_budget_tokens: CapsuleBudgets
+
+    @model_validator(mode="after")
+    def _role_caps_name_real_roles(self) -> "Thresholds":
+        unknown = sorted(set(self.output_max_by_role) - set(PROMPTED_ROLES))
+        if unknown:
+            raise ValueError(
+                f"output_max_by_role이 프롬프트 역할이 아닌 것을 부른다: {unknown}. "
+                f"있는 것: {sorted(PROMPTED_ROLES)}"
+            )
+        bad = sorted(role for role, cap in self.output_max_by_role.items() if cap <= 0)
+        if bad:
+            raise ValueError(f"output_max_by_role의 값은 양수여야 한다: {bad}")
+        return self
 
     def budget_for(self, level: CapsuleLevel) -> int:
         return int(getattr(self.capsule_budget_tokens, level.value))
+
+    def output_max_for(self, role: str) -> int:
+        """이 역할이 요청에 실을 출력 상한. 선언이 없으면 전역값이다.
+
+        **이 함수가 유일한 해석 지점이어야 한다.** `config.thresholds.output_max`를 직접
+        읽는 자리가 남으면 그 경로만 전역값으로 돌고, 실제로 쓰인 상한과
+        `RunRecord.thresholds`에 적힌 값이 갈린다 — `output_max`가 선언만이고 강제가
+        없던 시절(PR #36 이전)이 정확히 그 모양이었다.
+
+        **모르는 이름에 전역값을 주지 않는다.** `dict.get`의 기본값은 "선언 안 한 역할"과
+        "역할이 아닌 문자열"을 구분하지 않아, `"CRITIC"`·`"critick"`이 **선언한 상한을 무시한
+        채** 전역값으로 돌고 그 run은 "역할별 상한을 줬다"고 기록된다 — `output_max_by_role`의
+        오타를 로드 때 막는 것과 같은 결함을 읽는 쪽에 열어 두는 셈이다. 위 `_model_client`가
+        `role`에 기본값을 안 두는 사유(PR #185)가 여기 한 겹 안쪽에 그대로 걸린다.
+        """
+        # `ConfigError`다 — `model_key_for`가 같은 부류(설정에 없는 역할)를 `KeyError`에서
+        # 번역해 내보내는 것과 같은 자리라, 여기만 raw `KeyError`면 부르는 쪽이 두 가지를
+        # 잡아야 한다.
+        if role not in PROMPTED_ROLES:
+            raise ConfigError(
+                f"{role!r}은 프롬프트 역할이 아니다. 있는 것: {sorted(PROMPTED_ROLES)}"
+            )
+        return self.output_max_by_role.get(role, self.output_max)
 
     def flatten(self) -> dict[str, float]:
         """`RunRecord.thresholds`(dict[str, float])에 그대로 넣을 수 있는 평탄한 표현.
 
         중첩 값은 점 표기로 편다(`capsule_budget_tokens.light`). RunRecord가 평탄한
         float 맵을 요구하는 것은 조건 간 비교에서 임계값을 열 단위로 대조하기 위해서다.
+
+        **역할별 `output_max`도 같은 표기로 여기 실린다** — `output_max_by_role.critic`.
+        `reasoning_effort`가 `RunRecord`에 **필드를 새로 낸 것과 갈리는 자리**이고, 이유는
+        타입 하나다: 저쪽은 문자열이라 `dict[str, float]`에 못 들어가고 이쪽은 int라
+        들어간다(`RunRecord.model_reasoning_effort` 주석이 그 배제를 적어 뒀다). 그러므로
+        기록 경로를 새로 열 필요가 없다.
+
+        **선언이 없으면 키를 안 만든다.** 빈 채로 키가 생기면 이 필드 이전의 manifest와
+        모양이 갈리는데 그 차이가 뜻하는 것이 없다 — `reasoning_efforts()`가 "선언한
+        역할만 담는다"고 적은 것과 같은 판단이다.
         """
         dumped = self.model_dump()
         nested = dumped.pop("capsule_budget_tokens")
+        by_role = dumped.pop("output_max_by_role")
         flat = {key: float(value) for key, value in dumped.items()}
         for level, tokens in nested.items():
             flat[f"capsule_budget_tokens.{level}"] = float(tokens)
+        for role, cap in by_role.items():
+            flat[f"output_max_by_role.{role}"] = float(cap)
         return flat
 
 
