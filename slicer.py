@@ -64,6 +64,7 @@ COUNTERS = (
     "candidates_not_processed",
     "engine_flows_truncated",
     "directories_skipped",
+    "flow_sinks_without_method",
 )
 LIMITATIONS = [
     "single-function stack overflow not covered",
@@ -73,7 +74,7 @@ LIMITATIONS = [
     "a CPG file node does not prove successful or complete parsing",
     "flow sources are enclosing-method parameters; parameterless readers may yield zero flows",
     "Joern engine-internal limits are not measured by flows_truncated",
-    "flow cap stops further sinks, but does not bound engine work within one sink",
+    "flow cap stops further method batches, but does not bound engine work within one batch",
     "structure recovery is lexical and does not guarantee compilable preprocessed C/C++",
 ]
 
@@ -134,7 +135,10 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
             )
             and all(
                 type(data.get(key)) is int and data[key] >= 0
-                for key in ("methods_internal", "calls", "calls_unresolved", "unknown_nodes")
+                for key in (
+                    "methods_internal", "calls", "calls_unresolved", "unknown_nodes",
+                    "flow_sinks_without_method",
+                )
             )
             and isinstance(engine, dict)
             and all(
@@ -405,10 +409,18 @@ class Slicer:
         self.measure("files_missing_from_cpg", len(missing))
         if missing:
             self.errors.append("Source files missing from CPG: " + ", ".join(missing))
-        for key in ("methods_internal", "calls", "calls_unresolved", "unknown_nodes"):
+        for key in (
+            "methods_internal", "calls", "calls_unresolved", "unknown_nodes",
+            "flow_sinks_without_method",
+        ):
             if type(data.get(key)) is not int or data[key] < 0:
                 raise ValueError(f"Invalid inventory counter: {key}")
             self.measure(key, data[key])
+        if data["flow_sinks_without_method"]:
+            self.errors.append(
+                f"Skipped {data['flow_sinks_without_method']} flow sinks "
+                "without an enclosing method"
+            )
         engine = data.get("engine_config")
         if not isinstance(engine, dict) or any(
             type(engine.get(key)) is not int
@@ -417,7 +429,7 @@ class Slicer:
             raise ValueError("Invalid engine configuration payload")
         self.result["joern_engine_config"] = engine
         self.result["measurement_notes"].pop("joern_engine_config")
-        if "ossdataflow" not in data.get("overlays", []):
+        if not {"ossdataflow", "dataflowOss"}.intersection(data.get("overlays", [])):
             self.query("overlay", queries.envelope("overlay", "run.ossdataflow; ujson.Bool(true)"))
 
     def collect_candidates(self) -> None:
@@ -592,6 +604,7 @@ def read_version(command: Path | None, timeout: float | None) -> tuple[str | Non
         try:
             process = subprocess.run(
                 [str(command), "--version"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

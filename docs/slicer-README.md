@@ -94,8 +94,11 @@ flow_count는 N보다 클 수 있다.
 
 추가 카운터는 `files_read_failed`, `files_in_cpg`, `files_missing_from_cpg`, `files_cpg_failed`,
 `methods_internal`, `calls`, `calls_unresolved`, `unknown_nodes`, `locations_unmapped`,
-`candidates_unmapped`, `candidates_not_processed`, `engine_flows_truncated`, `directories_skipped`다.
+`candidates_unmapped`, `candidates_not_processed`, `engine_flows_truncated`, `directories_skipped`,
+`flow_sinks_without_method`다.
 `directories_skipped`는 순회하지 않은 디렉터리 심볼릭 링크 수이며 partial과 사유를 남긴다.
+`flow_sinks_without_method`는 소속 함수가 없는 호출 인자 노드 수다. 해당 노드는 flow 질의에서
+제외하고 partial과 사유를 남긴다. CPG 불완전성을 정상적인 0경로로 해석하지 않는다.
 `files_in_cpg`·`files_missing_from_cpg`는 성공적으로 읽은 소스 파일을 기준으로 센다.
 `files_cpg_failed`는 Report의 Got a CPG 열이며 파싱 실패와 구분한다.
 `calls`는 operator를 제외하고, `calls_unresolved`는 callee가 빈 호출을 센다.
@@ -113,7 +116,8 @@ Case A는 파싱·호출 엣지 누락 때문에 오히려 후보가 늘 수 있
 Joern 엔진 자체가 내부 상한으로 버린 경로 수는 공개 API로 얻지 못하므로
 `engine_flows_truncated=null`과 사유를 남긴다. `truncated=false`는 CLI flow 상한에 관한
 관측이며 엔진의 완전한 탐색을 보증하지 않는다. `reachableByFlows`는 한 호출 안에서 결과를
-먼저 구하므로 sink별로 나누어도 단일 sink의 메모리·계산량을 flow 상한으로 제한할 수 없다.
+먼저 구하므로 같은 함수의 sink를 묶어 엔진 생성 비용을 줄인다. 상한은 이후 함수 묶음의
+질의를 멈추지만, 한 묶음 안의 메모리·계산량은 제한하지 못한다.
 이 동작은 [Joern의 traversal 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala)에 근거한다.
 
 구조 회복은 원본 문장·괄호와 CPG 제어 조상을 이용한 보충이다. 전처리·매크로 확장 결과나
@@ -132,5 +136,6 @@ python -m pytest -q tests/test_slicer.py
 테스트는 HTTP 경계에서 Joern을 mock한다. 포함률 경계, 합집합 무손실, ID 유지, 출력 결정론,
 줄 복원, 실패 기록을 검사한다. 실서버를 띄우지 않으며 실제 Joern 설치본의 Scala 질의 실행과
 실대상 커버리지·성능은 이 테스트의 검증 범위에 포함되지 않는다.
+
 HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
 [frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.

@@ -102,6 +102,7 @@ def payloads(*, case_a=None, case_b=None, flow_count=0, truncated=False):
                 "calls": 1,
                 "calls_unresolved": 0,
                 "unknown_nodes": 0,
+                "flow_sinks_without_method": 0,
                 "overlays": ["ossdataflow"],
                 "engine_config": {
                     "maxCallDepth": 4,
@@ -496,6 +497,7 @@ def test_version_comes_only_from_the_explicit_command(monkeypatch, repo, tmp_pat
 
     def version(command, **kwargs):
         commands.append(command)
+        assert kwargs["stdin"] == slicer.subprocess.DEVNULL
         return slicer.subprocess.CompletedProcess(command, 0, "fixture-version\n", "")
 
     monkeypatch.setattr(slicer.subprocess, "run", version)
@@ -505,6 +507,28 @@ def test_version_comes_only_from_the_explicit_command(monkeypatch, repo, tmp_pat
     assert result["joern_version"] == "fixture-version"
     assert commands[0][-1] == "--version"
     assert "joern_version" not in result["measurement_notes"]
+
+
+def test_existing_joern_dataflow_overlay_is_not_reapplied(monkeypatch, repo, tmp_path):
+    data = payloads()
+    inventory, _ = slicer.decode_response(data["inventory"], "inventory")
+    inventory["overlays"] = ["base", "controlflow", "dataflowOss"]
+    data["inventory"] = response("inventory", inventory)
+    code, _, transport = run_cli(monkeypatch, repo, tmp_path, data)
+    assert code == 0
+    assert "overlay" not in transport.stages
+
+
+def test_orphan_flow_sinks_are_reported_as_partial(monkeypatch, repo, tmp_path):
+    data = payloads(case_a=[candidate()])
+    inventory, _ = slicer.decode_response(data["inventory"], "inventory")
+    inventory["flow_sinks_without_method"] = 6
+    data["inventory"] = response("inventory", inventory)
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert code == 2 and result["status"] == "partial"
+    assert result["slices"]
+    assert result["counters"]["flow_sinks_without_method"] == 6
+    assert "without an enclosing method" in result["error"]
 
 
 def test_engine_overrides_reach_every_flow_query(monkeypatch, repo, tmp_path):

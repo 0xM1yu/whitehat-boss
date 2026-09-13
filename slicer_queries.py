@@ -45,6 +45,15 @@ def scope(m: nodes.Method): ujson.Value = ujson.Obj(
 """
 
 ANCESTORS = """
+      def sourceNode(n: nodes.AstNode): Boolean = n match {
+        // C frontend emits METHOD_REF/TYPE_DECL on each function's first line.
+        // Their parents are the synthetic <global>, not that source function.
+        case _: nodes.MethodRef | _: nodes.TypeDecl | _: nodes.NamespaceBlock |
+             _: nodes.Namespace | _: nodes.File => false
+        case m: nodes.Method => !m.name.startsWith("<")
+        case b: nodes.Block => b.code != "<empty>"
+        case _ => true
+      }
       def ancestors(n: nodes.AstNode): List[nodes.AstNode] = {
         // A method is already the scope boundary. Climbing from it reaches a
         // TYPE_DECL/NAMESPACE_BLOCK whose AST contains unrelated sibling methods.
@@ -52,7 +61,7 @@ ANCESTORS = """
         val seen = scala.collection.mutable.Set.empty[Long]
         val result = scala.collection.mutable.ListBuffer.empty[nodes.AstNode]
         var parent = n.astParentOption
-        while (parent.nonEmpty && seen.add(parent.get.id)) {
+        while (parent.nonEmpty && sourceNode(parent.get) && seen.add(parent.get.id)) {
           val p = parent.get
           result += p
           parent = if (p.isInstanceOf[nodes.Method]) None else p.astParentOption
@@ -85,11 +94,13 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
         "calls_unresolved" -> cpg.call.filterNot(_.name.startsWith("<operator>"))
           .filter(_.callee.isEmpty).size,
         "unknown_nodes" -> cpg.unknown.size,
+        "flow_sinks_without_method" -> cpg.call.argument.dedup
+          .count(n => Option(n.method).isEmpty),
         "engine_config" -> ujson.Obj(
           "maxCallDepth" -> flowContext.config.maxCallDepth,
           "maxArgsToAllow" -> flowContext.config.maxArgsToAllow,
           "maxOutputArgsExpansion" -> flowContext.config.maxOutputArgsExpansion),
-        "overlays" -> ujson.Arr.from(cpg.metaData.overlays.l.flatten.distinct.sorted))
+        "overlays" -> ujson.Arr.from(cpg.metaData.overlays.l.distinct.sorted))
     """,
     )
 
@@ -156,7 +167,7 @@ def flows_query(
     # One extra flow proves truncation; exactly N completed flows are not truncated.
     limit = "" if max_flows is None else f".take({max_flows + 1})"
     retained = "observed" if max_flows is None else f"observed.take({max_flows})"
-    truncated = "false" if max_flows is None else f"observed.size > {max_flows}"
+    truncated = "false" if max_flows is None else f"(observed.size > {max_flows})"
     return envelope(
         "flows",
         LOCATION
@@ -168,12 +179,15 @@ def flows_query(
         .flatMap(_.parameter.l.sortBy(p => (p.index, p.code, p.typeFullName)))
       def nodeKey(n: nodes.AstNode): String = ujson.write(ujson.Arr(
         n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1), n.code))
-      val sinks = cpg.call.argument.l.distinct.sortBy(n => (
+      val sinks = cpg.call.argument.filter(n => Option(n.method).nonEmpty).l.distinct.sortBy(n => (
         nodeKey(n), n.argumentIndex, n.method.fullName))
-      // Joern materializes each reachableByFlows call. Splitting sinks bounds further
-      // queries after the cap, but cannot bound the engine's cost for a single sink.
-      val observed = (if (srcs.isEmpty) Iterator.empty else sinks.iterator).flatMap(sink =>
-        Iterator.single(sink).reachableByFlows(srcs)(flowContext).toList.sortBy(p =>
+      // Each invocation builds an engine. Batch by enclosing method instead of
+      // rebuilding it for every argument; the cap stops subsequent method batches.
+      val batches = sinks.groupBy(_.method).toList.sortBy {{ case (m, _) =>
+        (m.filename, m.lineNumber.getOrElse(-1), m.fullName)
+      }}.map(_._2)
+      val observed = (if (srcs.isEmpty) Iterator.empty else batches.iterator).flatMap(batch =>
+        batch.iterator.reachableByFlows(srcs)(flowContext).toList.sortBy(p =>
           ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))){limit}.toList
       val kept = {retained}
       ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
@@ -192,7 +206,7 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
       val points = ujson.read({encoded}).arr.map(p => (p(0).str, p(1).num.toInt)).toSet
       def filename(n: nodes.AstNode): String = n.location.filename.replace('\\\\', '/')
         .stripPrefix({literal(repo.rstrip("/") + "/")}).stripPrefix("./")
-      val all = cpg.all.collect {{ case n: nodes.AstNode => n }}.l
+      val all = cpg.all.collect {{ case n: nodes.AstNode if sourceNode(n) => n }}.l
       val selected = scala.collection.mutable.Set.empty[nodes.AstNode]
       selected ++= all.filter(n => points.contains((filename(n),
         n.lineNumber.getOrElse(-1))))
