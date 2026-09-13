@@ -38,22 +38,16 @@ class Role(StrEnum):
     #   **거짓이 됐다.** ⚠ **다만 켜지는 것은 그 target의 첫 멤버 하나다** — 캡슐이 공유돼
     #   나머지 멤버는 `using_counter`에 도달하기 전에 반환한다(`_step_retrieval`).
     #   `nodes/scout.py`의 `ROLE = Role.SCOUT`도 이제 `run()`의 **기본값**이지 유일한 역할이 아니다.
-    # - **기록 쪽은 그대로다.** `Deps.counter_report`는 여전히 `COUNTED_ROLES` 둘만 돌므로,
-    #   풀 멤버 카운터가 **켜져도 `token_counter` 이벤트에는 안 실린다.**
-    #
-    # **`COUNTED_ROLES`를 여기서 늘리지 않는다. 사유가 하나 더 붙었을 뿐 예전 것도 그대로
-    # 선다.**
-    #
-    # - **예전 사유가 여전히 참이다** — 러너가 멤버 카운터를 켜는 것은 **풀 프로필에서만**인데
-    #   `config/profiles.yaml`의 프로필은 **전부 단일 `scout`**이다. 그 프로필들에서 멤버를
-    #   `COUNTED_ROLES`에 넣으면 `counter_report`가 `no_source`를 실어 **정확히 예전 사유가
-    #   말한 거짓 기록**을 낸다.
-    # - **범위가 더해졌다** — 늘리면 `token_counter` 이벤트의 내용이 바뀌고
-    #   `tests/test_tokens.py`가 그 둘을 등식으로 고정한다. 기록 계약을 바꾸는 별도 PR의 몫이다.
-    #
-    # ⚠ **반대 방향도 있다. 풀 run의 `token_counter`는 「안 싣는」 것이 아니라 「없는 것을
-    # 싣는다」** — 풀은 `scout`을 하나도 안 켜는데 이벤트에는 `scout_counter: approx`가
-    # 실린다. 그 정정도 풀 프로필을 커밋하는 PR의 몫이다(`orchestrator/trace.py`의 ⚠ 문단).
+    # - **기록 쪽도 #192로 따라왔다.** `Deps.counter_report`가 `COUNTED_ROLES`(단일 기준 상수)를
+    #   그대로 돌던 것을, `factory._counted_roles`가 **프로필에 실재하는 자리**를 돌게 바꿨다.
+    #   그래서 풀이면 켜지는 첫 멤버(`scout_memory`)를 싣고, 프로필에 없는 `scout`을
+    #   `no_source`로 싣던 「없는 것을 싣는다」 거짓 기록이 사라졌다. 단일 프로필은 `scout`을
+    #   그대로 싣는다(무회귀). `COUNTED_ROLES` 상수는 「단일 기준」으로 남고
+    #   `tests/test_tokens.py`가 그것을 고정한다 — **상수를 늘리지 않고 프로필에서 집합을
+    #   끌어온 것**이 요점이다.
+    # - **멤버 2·3의 토큰 회계 근거**는 캐시-적중 이벤트의 `counted_by`가 남긴다(#192 ②) —
+    #   공유 캡슐을 어느 역할 카운터로 계산했나가 기록에 실린다. ⚠ **예산이 멤버별 토크나이저로
+    #   강제되는 것은 별개**이고 공유 캡슐 재검증(#194)에 남는다.
     #
     # **`SCOUT`은 남는다. 지금은 `config/profiles.yaml`의 프로필이 전부 그쪽이다** —
     # `local_balanced`·`local_balanced_hybrid`를 포함해 하나도 풀로 재배선되지 않았다

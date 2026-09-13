@@ -35,7 +35,7 @@ from src.adapters.vllm_retrieval import (
     VllmEmbeddingClient,
     VllmRerankerClient,
 )
-from src.config import PROMPTED_ROLES, HarnessConfig, ModelEntry
+from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, HarnessConfig, ModelEntry
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
 from src.interfaces.retrieval import EmbeddingClient, RerankerClient
@@ -258,6 +258,28 @@ WIRINGS: dict[str, dict[str, _Wiring]] = {
 }
 
 
+def _counted_roles(config: HarnessConfig) -> tuple[str, ...]:
+    """`token_counter`가 실을 역할 = 러너가 실제로 카운터를 켜는 자리.
+
+    풀은 캡슐을 **첫 멤버**가 만들어 그 카운터로 예산을 정하고(공유), 2·3번 멤버는 캐시된
+    캡슐을 받아 카운터를 안 켠다. 그래서 켜지는 scout 자리는 `SCOUT_POOL_ROLES[0]` 하나다.
+    단일 프로필은 `scout`. auditor는 자기 캡슐을 켠다. `COUNTED_ROLES`(단일 기준 상수)를
+    프로필에 없는 `scout`째로 돌던 것이 **없는 역할에 `no_source`를 싣던** 원인이었다
+    (풀 팬아웃 #178 후속, 이슈 #192).
+
+    멤버 2·3이 첫 멤버의 캡슐을 물려받을 때 **어느 역할로 계산됐나**는 캐시-적중 이벤트의
+    `counted_by`가 따로 남긴다(`runner._step_retrieval`·`context.record_cache`) — 그래서 이
+    이벤트가 `scout` 자리를 하나만 실어도 회계 근거가 지워지지 않는다. ⚠ 예산이 멤버별
+    토크나이저로 **강제**되는 것은 별개이고 공유 캡슐 재검증(#194)에 남는다.
+    """
+    roles = config.profile.roles
+    if all(member in roles for member in SCOUT_POOL_ROLES):
+        scout_places: tuple[str, ...] = (SCOUT_POOL_ROLES[0],)
+    else:
+        scout_places = tuple(r for r in COUNTED_ROLES if r != "auditor")
+    return tuple(role for role in (*scout_places, "auditor") if role in roles)
+
+
 def build_deps(
     config: HarnessConfig,
     *,
@@ -337,7 +359,7 @@ def build_deps(
         박혀 있으므로 스냅샷은 그것으로 특정된다.
         """
         fields: dict[str, str | None] = {}
-        for role in COUNTED_ROLES:
+        for role in _counted_roles(config):
             source = config.model_for(role).source if role in config.profile.roles else None
             counter = counter_for_role(role)
             fields[f"{role}_counter"] = "real" if counter is not None else "approx"
