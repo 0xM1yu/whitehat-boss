@@ -117,7 +117,7 @@
 
 | 항목 | 상태 |
 | --- | --- |
-| `gpt-oss-20b` structured output | **실패.** [2026-09-09 온보딩 보고서](docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) — `xgrammar` 5/5 오답 · `guidance` 5/5 HTTP 500 · 스키마 없이는 3/3 정답. 미측정 셋(`reasoning_parser` 명시 · `enable_in_reasoning=True` · `outlines`)이 남았고 **하나에서 뒤집히면 결론이 바뀐다** |
+| `gpt-oss-20b` structured output | **실패.** [2026-09-09 온보딩 보고서](docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) — `xgrammar` 5/5 오답 · `guidance` 5/5 HTTP 500 · 스키마 없이는 3/3 정답. **2026-09-11에 아홉 팔로 축 다섯을 갈랐고 전부 기각이다**([9팔 보고서](docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md)) — `reasoning_parser`·어휘 넷·**enum 순서**·**속성 순서**·**백엔드 `outlines`**(5/5 HTTP 500). **같은 JSON 안에서 `reason`이 "clear use-after-free"라 쓰고 `verdict`가 `safe`다.** 자유서술은 27/27 정답 — **틀리는 건 enum 토큰 하나다.** ⚠ **미측정은 `enable_in_reasoning`·enum 제약 제거·케이스 축이고, (가) 2단 추출은 아직 안 쟀다** — ADR 0010 「다시 열리는 조건」이 (나) 교체를 그 뒤로 뒀다 |
 | `qwen3-reranker-4b` | 2026-09-11 등재(다운로드·checksum). 서빙·점수 정확성은 [R8](docs/open-questions/R/R8.md) 미검증이라 아직 프로필엔 안 올린다. [D63](docs/open-questions/D/D63.md)의 재측정 대상이 이 모델이다 |
 | Auditor A/B | 실측 전. [D24](docs/open-questions/D/D24.md)·[D51](docs/open-questions/D/D51.md)이 여기 종속 |
 | Joern 슬라이서 | 실험 중 |
