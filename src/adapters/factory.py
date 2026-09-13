@@ -1,4 +1,4 @@
-﻿"""어댑터 조립 (engineering-guide.md §3).
+"""어댑터 조립 (engineering-guide.md §3).
 
 **구체 어댑터를 import 하는 유일한 파일이다.** 오케스트레이터 노드가 vLLM·SQLite는
 물론 이 패키지의 클래스도 직접 import 하지 않아야 "구현체 교체가 설정만으로 가능"이
