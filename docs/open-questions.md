@@ -117,7 +117,7 @@
 | D65 | **게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다 — 실서빙 run이 7단계에서 죽는다** | 부분 | [본문](open-questions/D/D65.md) |
 | D66 | **실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다** | 열림 | [본문](open-questions/D/D66.md) |
 | D67 | **Auditor가 `path`·`evidence_refs`를 안 채운다 — v1이 둘 다 요구하는데 150건 중 `path` 150·`evidence_refs` 148이 빈다. 원인 미확정** | 열림 | [본문](open-questions/D/D67.md) |
-| D68 | **Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다** | 열림 | [본문](open-questions/D/D68.md) |
+| D68 | ~~Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다~~ (연속 폐기를 역할별로 셈) | 닫힘 | [본문](open-questions/D/D68.md) |
 | D69 | **Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다** | 열림 | [본문](open-questions/D/D69.md) |
 | D70 | **팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다** | 열림 | [본문](open-questions/D/D70.md) |
 | D71 | **공유 캡슐의 토큰 예산이 첫 멤버의 토크나이저로만 강제된다 — 로스터는 풀 세 자리를 서로 다른 세 모델로 정해 두었다** | 열림 | [본문](open-questions/D/D71.md) |

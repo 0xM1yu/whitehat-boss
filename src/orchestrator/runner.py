@@ -1,4 +1,4 @@
-"""순차 러너 — 단계 0~9를 잇는다 (ADR 0002, engineering-guide.md §1).
+﻿"""순차 러너 — 단계 0~9를 잇는다 (ADR 0002, engineering-guide.md §1).
 
 **v1은 순차다.** 큐를 스레드로 돌리지 않는다. 그렇게 하려면 S1이 남긴 전제 셋을 함께
 풀어야 한다(계획 §5.1):
@@ -1190,57 +1190,50 @@ def _run_stage_for_all(
     `status not in _DROPPABLE_STATUS`를 적으면 한쪽만 고쳐질 때 같은 오류가 모드에
     따라 다르게 처리된다.
 
-    ## ⚠ 한계 — Scout 풀에서 이 카운터는 체계적 고장을 못 잡는다 (미해결, PR #178 리뷰)
+    ## 연속 폐기 카운터는 **역할별**이다 (풀 팬아웃 #178의 후속 수정, 2026-09-13)
 
-    **풀 멤버 하나가 전량 실패해도 이 카운터는 상한에 안 닿는다.** `items`가 target ×
-    역할로 펼쳐져 있는데 `consecutive`는 그 열 전체에 **하나뿐이고, 성공 하나가 그것을
-    0으로 되돌린다** — 즉 카운터가 역할을 안 가른다. 그래서 고장난 멤버가 매번 죽어도
-    **형제 멤버의 성공이 그때마다 카운터를 지운다.**
+    `items`가 target × 역할로 펼쳐지므로 `consecutive`는 **역할을 키로 센다.** 풀 멤버
+    하나가 전량 실패하면 그 역할의 카운터가 형제의 성공에 지워지지 않고 쌓여
+    `_MAX_CONSECUTIVE_DROPS`에 닿는다 — 그래서 Scout 커버리지 1/3이 빈 run이 `stopped_after`를
+    채우고 `is_complete=False`가 된다(비교표에서 빠진다, [evaluation.md](../../evaluation.md) §6).
+    단일 `scout`은 키가 하나라 이전과 동작이 같다.
 
-    그래서 그 run은 `stopped_after`가 `None`인 채 끝나고 `is_complete`가 **참이 된다** —
-    Scout 커버리지의 1/3이 통째로 빈 run이 정상 완주로 보이고 비교표에 들어간다.
-    `scout_member`별 집계가 어디에도 없어(`report.py`·`run.py`·`trace.py` grep 0건)
-    **어느 멤버가 빠졌는지도 기록에서 못 되짚는다.**
+    > **왜 역할별인가.** 예전에는 열 전체에 카운터가 하나여서, 고장난 멤버가 매번 죽어도
+    > 형제 멤버의 성공이 그때마다 0으로 지웠다 — 상한에 영원히 안 닿았다. "연속 셋이
+    > 죽으면 그 단계가 체계적으로 고장"이 풀에서 거짓이 되던 자리다.
 
-    ⚠ **위 "연속 셋이 죽으면 그 단계가 체계적으로 고장 난 것"은 단일 `scout`에서만
-    참이다.** 풀에서는 한 역할의 실패가 연속으로 쌓이지 않고, 반대로 연속 셋이 **서로
-    다른 역할**일 수 있다.
-
-    **오늘은 물리지 않는다** — `config/profiles.yaml`의 어느 프로필도 풀을 선언하지
-    않는다. **물리는 시점은 풀 프로필을 커밋하는 PR이다.** 그 PR이 이 한계를 먼저
-    처리한다 — 고치는 방향은 연속 실패를 **역할별로** 세거나, `scout_member`별 산출 수를
-    기록에 남겨 0건인 멤버가 보이게 하는 것이다.
-
-    `tests/test_pipeline_e2e.py`의
-    `test_a_broken_pool_member_does_not_trip_the_circuit_breaker_yet`가 이 한계를 실측으로
-    고정하고 **이 서술과 묶는다** — 고치면 그 검사가 실패해서 이 절을 지우게 만든다.
+    `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`가
+    이 동작을 고정한다.
     """
-    consecutive = 0
+    # 연속 폐기를 역할별로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
+    consecutive: dict[Role, int] = {}
     survivors: list[_InFlight] = []
     for item in items:
+        role = item.role
         try:
             keep = step(ctx, item, state)
         except ModelGatewayError as exc:
             if not _is_droppable(exc):
                 # 서버 쪽 사건이다. `run_pipeline`이 받아 리포트·매니페스트까지 간다.
                 raise
-            consecutive = _drop(
+            consecutive[role] = _drop(
                 ctx,
                 state,
                 item.target,
                 _REASON_GATEWAY,
                 exc,
-                consecutive,
+                consecutive.get(role, 0),
                 stage=item.reached.stage,
                 systematic=exc.status not in _SIZE_STATUS,
             )
         except SchemaParseError as exc:
-            consecutive = _drop(
-                ctx, state, item.target, _REASON_SCHEMA, exc, consecutive, stage=item.reached.stage
+            consecutive[role] = _drop(
+                ctx, state, item.target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                stage=item.reached.stage,
             )
         else:
-            # 이 단계를 마쳤다. 앞의 실패는 이 단계의 체계적 고장이 아니었다.
-            consecutive = 0
+            # 이 역할이 이 단계를 마쳤다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
+            consecutive[role] = 0
             if keep:
                 survivors.append(item)
     return survivors
@@ -1254,11 +1247,10 @@ def _triage_by_candidate(
     `BudgetExhausted`는 여기서 잡지 않는다 — 실패가 아니라 정상 종료 경로이고
     `run_pipeline`이 처리한다(모듈 docstring).
 
-    ⚠ **Scout 풀에서는 연속 폐기 카운터가 체계적 고장을 못 잡는다.**
-    **풀 멤버 하나가 전량 실패해도 상한에 안 닿는다.** 이 루프도 같은 모양이다:
-    `consecutive = 0` 리셋이 target 루프 **안의 역할 루프**에 있어 형제 멤버의 성공이
-    매번 카운터를 지운다. 전문(결과·범위·고치는 방향)은 `_run_stage_for_all`의
-    「한계」 절에 있다.
+    **연속 폐기 카운터는 역할별이다.** 팬아웃 뒤 시도 단위가 `(target, role)`이라
+    `consecutive`가 역할을 키로 세므로, 풀 멤버 하나가 전량 실패하면 그 역할이 자기
+    카운터로 상한에 닿는다 — 형제 멤버의 성공은 그 역할 키를 안 건드린다. 전문은
+    `_run_stage_for_all`의 「역할별」 절에 있다.
 
     `ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 그 후보만 버리고 계속
     간다. 다만 무조건 잡으면 안 된다:
@@ -1274,9 +1266,13 @@ def _triage_by_candidate(
     "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
     고장 났다"는 판정을 무르게 하지 않는다.
     """
-    consecutive = 0
+    # 연속 폐기를 **역할별로** 센다(풀 팬아웃 #178 후속). 시도 단위가 `(target, role)`이고, 풀에서
+    # 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던 단일 카운터로는 상한에 안 닿았다
+    # (Scout 커버리지 1/3이 빈 run이 정상 완주로 기록됐다). 역할별로 세면 그 멤버가 자기 카운터로
+    # `_MAX_CONSECUTIVE_DROPS`에 닿는다. 단일 `scout`은 키가 하나라 동작이 그대로다.
+    consecutive: dict[Role, int] = {}
     # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 각 (target, role)이
-    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 리셋된다.
+    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 그 역할만 리셋된다.
     # 풀에서는 같은 target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
     roles = _scout_roles(ctx)
     for target in plan.targets:
@@ -1299,23 +1295,24 @@ def _triage_by_candidate(
                 # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
                 # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
                 systematic = exc.status not in _SIZE_STATUS
-                consecutive = _drop(
+                consecutive[role] = _drop(
                     ctx,
                     state,
                     target,
                     _REASON_GATEWAY,
                     exc,
-                    consecutive,
+                    consecutive.get(role, 0),
                     stage=reached.stage,
                     systematic=systematic,
                 )
             except SchemaParseError as exc:
-                consecutive = _drop(
-                    ctx, state, target, _REASON_SCHEMA, exc, consecutive, stage=reached.stage
+                consecutive[role] = _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                    stage=reached.stage,
                 )
             else:
-                # 완주했다. 앞의 실패는 체계적 고장이 아니었다.
-                consecutive = 0
+                # 완주했다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
+                consecutive[role] = 0
 
 
 def _drop(
