@@ -995,6 +995,12 @@ def _target_key(location: Location) -> tuple[str, str | None, int | None, int | 
     return (location.file, location.symbol, location.line_start, location.line_end)
 
 
+def _cache_key_str(key: tuple[str, str | None, int | None, int | None]) -> str:
+    """`_target_key` 튜플을 `cache` 이벤트의 문자열 라벨로. **캐시 조회 키가 아니라 이벤트
+    라벨이다** — 충돌은 무해하다(hit ratio는 이벤트 수를 센다). 그래서 튜플을 그냥 잇는다."""
+    return "::".join("" if part is None else str(part) for part in key)
+
+
 def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
     """3단계 — LIGHT 캡슐. 항상 다음 단계로 넘긴다.
 
@@ -1008,11 +1014,12 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     **실제 검색 수는 같다** — 실측: 이 캐시 켬/끔에서 `search()` 호출 5↔9인데 캐시 미스는
     **양쪽 3으로 동일**하다 `[실측 2026-09-11]`.
 
-    ⚠ **바뀌는 것은 회계다.** 이 캐시가 `retrieval.run()` **앞에서** 단락하므로 Retriever의
-    `on_cache` 훅을 지나지 않아 **`cache` 이벤트가 준다**(9→5, 적중률 0.667→0.40).
-    `evaluation.md` §5.2가 capsule cache hit ratio를 지표로 들고 `LateCacheHook`이
-    *"캐시 이벤트가 새면 hit ratio가 0으로 보이고 「캐시가 안 맞았다」와 구분되지 않는다"*고
-    적는다 — **이 단락은 그 누출을 설계로 만든다.** 미해결로 등재돼 있다(인덱스 참조).
+    **회계는 이제 샌 곳을 메운다(#193 ②).** 이 캐시가 `retrieval.run()` **앞에서** 단락하므로
+    Retriever의 `on_cache` 훅을 지나지 않는데, 적중 분기가 **`ctx.record_cache(..., hit=True)`를
+    직접 낸다** — 그래서 `cache` 이벤트 수가 캡슐 조립 시도 수와 같아지고 hit ratio가 실측
+    0.667로 돌아온다(옛 단락에서는 9→5, 0.40으로 낮게 보였다). 러너의 캐시이므로 러너가
+    이벤트를 낸다. `evaluation.md` §5.2가 capsule cache hit ratio를 지표로 들고 `LateCacheHook`이
+    *"캐시 이벤트가 새면 hit ratio가 0으로 보인다"*고 적는 그 누출을 닫는다.
 
     역할 캡슐 조립~검증을 그 역할 모델의 토크나이저로 감싼다(#96 (b) 3b). 첫 멤버의
     카운터로 켠다 — 캡슐이 공유되므로 예산 컷도 그 하나로 정해진다. `counter_for_role`이
@@ -1030,6 +1037,10 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     cached = state.capsules.get(key)
     if cached is not None:
         item.capsule = cached
+        # 이 accumulator 캐시가 `retrieval.run()` 앞에서 단락하므로 Retriever의 `on_cache`를
+        # 안 지난다 — 그 단락을 세지 않으면 `cache` 이벤트 수가 캡슐 조립 시도 수보다 적어
+        # hit ratio가 낮게 보인다(풀 팬아웃 #178 후속·#193). 러너의 캐시이므로 러너가 낸다.
+        ctx.record_cache(_cache_key_str(key), hit=True)
         return True
     with using_counter(ctx.counter_for_role(item.role.value)):
         item.capsule = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.LIGHT)

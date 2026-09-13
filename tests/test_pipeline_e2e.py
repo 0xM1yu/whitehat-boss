@@ -338,6 +338,28 @@ def test_a_broken_pool_member_trips_the_circuit_breaker(
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_pool_capsule_cache_hits_are_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """풀에서 accumulator 캐시 적중이 `cache` 이벤트로 실린다 (#193 ②).
+
+    풀은 target당 캡슐을 첫 멤버가 만들고 2·3번 멤버는 `state.capsules`가 물려 준다. 그
+    단락이 `retrieval.run()` **앞**이라 Retriever의 `on_cache`를 안 지나므로, 러너가 직접
+    `record_cache(hit=True)`를 낸다 — 안 그러면 `cache` 이벤트가 target당 1건으로 줄어
+    hit ratio가 낮게 보인다(실측 0.667 → 0.40). 이 검사는 그 적중이 이벤트에 실리는지 본다.
+    """
+    _, trace_path = _run(tmp_path, configure=_poolify(mode))
+    cache = _of(_events(trace_path), "cache")
+    assert cache, "cache 이벤트가 0 — on_cache 미배선"
+    hits = [e for e in cache if e["data"]["hit"]]
+    assert hits, "풀인데 캐시 적중 이벤트가 0 — accumulator 단락이 이벤트를 안 낸다(#193 ②)"
+    targets = {e["data"]["key"] for e in cache}
+    assert len(cache) > len(targets), (
+        "cache 이벤트 수가 target 수와 같다 — accumulator 적중이 안 실렸다(#193 ② 회귀)"
+    )
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
 def test_the_report_does_not_call_dropped_attempts_unanalyzed_targets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
