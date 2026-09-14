@@ -70,6 +70,7 @@
 | 2026-09-13 | [D63 후속 — 리랭커 instruction 양식](harness/2026-09-13-d63-reranker-template-atom.md) | **서버는 Qwen3에 템플릿을 안 붙인다**(vLLM 0.27.1 소스 — `get_score_template`은 `jina_vl`만, `is_original_qwen3_reranker`는 점수법만). 정식 채점은 `/rerank`가 아니라 **생성+`P(yes)`**인데, `/rerank`로 넣는 **부분 양식(`<Instruct>/<Query>/<Document>`)이 정식 생성 채점과 ≈**(실경로: 맨질의 FAIL·부분양식 PASS≈생성 PASS) → **client 재작성 불필요, `/rerank`에 양식만 씌운다**(이 PR 배선). 배제셋 ②·미확인② 해소. ⚠ 8건·압축 코드라 지시적 · 실조각·32건·기준선은 배선 후 · `run_id` 없음(비교표 밖) | `atom` | 손수민 |
 
 | 2026-09-14 | [Joern 슬라이서 실서버 검증](harness/2026-09-14-joern-slicer-live-atom.md) | Joern 4.0.605 실서버에서 C/C++ 회귀와 zlib 362후보를 전량 처리해 `partial`·slice 203건·flow 절단 293건·누락 파일 3건을 실측하고, 최신 회귀의 반복 동일성과 cap 동작을 확인 | `atom` | 조민규 |
+| 2026-09-14 | [Joern 슬라이서 공개 스모크 표본 3종](harness/2026-09-14-joern-slicer-smoke-samples-atom.md) | 같은 runner 표본에서 최종 slice 55/29/146과 알려진 GT 범위 줄 17/50/199를 사후 대조. 01·02는 전 후보 처리, 03은 415개 뒤 JVM heap OOM으로 21개 미처리라 PM 71/28/167과의 차이를 판정 보류 | `atom` | 조민규 |
 
 ### 전처리 실험 (`preprocessing/`)
 
