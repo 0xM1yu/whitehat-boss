@@ -16,6 +16,22 @@ def literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+# A class file holds a string constant in a CONSTANT_Utf8 entry whose length field is
+# 16 bits, so 65,535 bytes is a hard ceiling scalac reports as "String constant is too
+# long for the JVM". Escaping can double a chunk, hence the quarter-size split.
+JVM_STRING_LIMIT = 65535
+
+
+def joined_literal(value: str, size: int = JVM_STRING_LIMIT // 4) -> str:
+    """Rebuild one long string from several literals at run time.
+
+    `"a" + "b"` will not do: the compiler folds adjacent literals back into the single
+    oversized constant this exists to avoid. `mkString` is a call, so it cannot fold.
+    """
+    parts = [value[index : index + size] for index in range(0, len(value), size)] or [""]
+    return "List(" + ", ".join(literal(part) for part in parts) + ").mkString"
+
+
 def envelope(stage: str, body: str) -> str:
     return (
         "{ import io.shiftleft.semanticcpg.language._; "
@@ -230,7 +246,7 @@ def flows_query(
 
 
 def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
-    encoded = literal(json.dumps(points, ensure_ascii=True))
+    encoded = joined_literal(json.dumps(points, ensure_ascii=True))
     return envelope(
         "context",
         LOCATION

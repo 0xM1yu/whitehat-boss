@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -11,12 +12,16 @@ import pytest
 from test_slicer import candidate, make_slice, payloads, response, run_cli
 
 import slicer
+import slicer_queries as queries
 from slicer_candidates import collect
 from slicer_checkpoint import Checkpoint
 from slicer_export import export_sources
 from slicer_source import cluster, recover_lines
 
 READ_VERSION = slicer.read_version
+
+# One Scala string literal, escapes included.
+SCALA_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 
 
 @pytest.fixture(name="repo")
@@ -316,3 +321,28 @@ def test_resume_rejects_a_changed_toolchain(monkeypatch, repo, tmp_path, field):
     assert "Checkpoint mismatch: run_contract" in result["error"]
     assert not result["slices"]
     assert transport.stages == []
+
+
+def test_context_query_survives_the_jvm_string_constant_limit():
+    """A JVM class file caps one string constant at 65,535 UTF-8 bytes.
+
+    ATOM sample_03 aborted on exactly this: `String constant is too long for the JVM`
+    from scalac, after 208 of 436 candidates. The points list is interpolated into the
+    Scala source, so a large enough slice makes the query uncompilable.
+    """
+    points = [(f"examples/some/rather/long/path/source_{n % 7}.c", n) for n in range(1, 4001)]
+    query = queries.context_query(points, "/work/repo")
+    literals = SCALA_STRING.findall(query)
+    assert literals, "no string literals found; the extraction regex is wrong"
+    longest = max(len(s.encode("utf-8")) for s in literals)
+    assert longest <= 65535, f"a single Scala string constant is {longest} bytes"
+
+
+def test_context_query_reassembles_the_same_points_at_runtime():
+    """Chunking must not change the value: the joined literals must re-read as the input."""
+    points = [(f"src/f{n % 3}.c", n) for n in range(1, 500)]
+    query = queries.context_query(points, "/work/repo")
+    chunks = re.search(r"ujson\.read\((.*?)\)\.arr", query, re.DOTALL)
+    assert chunks, "points are no longer passed through ujson.read(...)"
+    rebuilt = "".join(json.loads(s) for s in SCALA_STRING.findall(chunks.group(1)))
+    assert json.loads(rebuilt) == [list(p) for p in points]
