@@ -89,9 +89,9 @@ checks는 새 출력 경로 `live-suite-20260914-final-run`의 통과 실행만 
 
 | 원문 | status | Case A / B | slices 전 / 후 | flows_truncated | queries_aborted | locations_unmapped | candidates_not_processed | total_seconds | CLI exit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `full-1.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 0 | 16.72511678468436 | 0 |
-| `full-2.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 0 | 30.820230378769338 | 0 |
-| `cap-1.json` | partial | 9 / 5 | 14 / 9 | 12 | 0 | 0 | 0 | 47.91968510765582 | 2 |
+| `full-1.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 0 | 16.73 | 0 |
+| `full-2.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 0 | 30.82 | 0 |
+| `cap-1.json` | partial | 9 / 5 | 14 / 9 | 12 | 0 | 0 | 0 | 47.92 | 2 |
 
 최신 `checks.json`의 `status`는 `passed`다. `full-1`·`full-2`의 slices 배열은 code를 포함해
 완전히 동일했고, 두 실행 모두 `files_seen=4`, `files_in_cpg=4`, `files_missing_from_cpg=0`,
@@ -125,7 +125,7 @@ zlib 입력은 기존 ATOM 저장소의 `e3dc0a85b7032e98380dec011bc8f2c2ee0d8fc
 | context query 수 / elapsed 합 | `878` / `5589.071395635605 s` (progress 계산값) |
 | flow 평균 / 최대 / 30초 초과 | `17.242707691798554 s` / `45.04639387130737 s` / `69건` (progress 계산값) |
 | context 평균 / 최대 | `6.365684960860598 s` / `23.13365364074707 s` (progress 계산값) |
-| `cpg_seconds` / `total_seconds` | `8.012684018351138` / `11868.295194353908` |
+| `cpg_seconds` / `total_seconds` | `8.01` / `11868.30` |
 | `engine_flows_truncated` | `null` (Joern 공개 응답에서 미측정) |
 | `files_parsed`, `files_parse_failed`, `files_cpg_failed` | `null` (frontend Report가 HTTP 응답에 없음) |
 
