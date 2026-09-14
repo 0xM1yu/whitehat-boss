@@ -7,10 +7,12 @@ an empty successful query must carry a valid payload, never an empty REPL respon
 
 import argparse
 import base64
+import hashlib
 import json
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -24,12 +26,11 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import slicer_queries as queries
+from slicer_checkpoint import Checkpoint
+from slicer_export import export_sources
+from slicer_pipeline import SlicingStages
 from slicer_source import (
     SOURCE_SUFFIXES,
-    assemble,
-    cluster,
-    normalize_points,
-    recover_points,
     relative_file,
 )
 
@@ -65,6 +66,9 @@ COUNTERS = (
     "engine_flows_truncated",
     "directories_skipped",
     "flow_sinks_without_method",
+    "backward_truncated",
+    "candidates_reused",
+    "candidate_stages_reused",
 )
 LIMITATIONS = [
     "single-function stack overflow not covered",
@@ -72,7 +76,7 @@ LIMITATIONS = [
     "cross-function double free not covered",
     "fuzzy parsing and missing call edges can inflate source-first candidates",
     "a CPG file node does not prove successful or complete parsing",
-    "flow sources are enclosing-method parameters; parameterless readers may yield zero flows",
+    "Case A sources are enclosing-method parameters; parameterless readers may yield zero flows",
     "Joern engine-internal limits are not measured by flows_truncated",
     "flow cap stops further method batches, but does not bound engine work within one batch",
     "structure recovery is lexical and does not guarantee compilable preprocessed C/C++",
@@ -111,12 +115,36 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
     valid = False
     if stage in ("case_a", "case_b"):
         valid = isinstance(data, list) and all(valid_candidate(row) for row in data)
+        if valid and stage == "case_b":
+            valid = all(
+                isinstance(row.get("selector"), dict)
+                and type(row["selector"].get("line")) is int
+                and type(row["selector"].get("column")) is int
+                and isinstance(row["selector"].get("code"), str)
+                and isinstance(row["selector"].get("ast_path"), list)
+                and all(type(n) is int and n >= 0 for n in row["selector"]["ast_path"])
+                for row in data
+            )
     elif stage == "context":
         valid = isinstance(data, list) and all(valid_location(row) for row in data)
     elif stage == "import":
         valid = isinstance(data, dict) and data.get("imported") is True
     elif stage == "overlay":
         valid = data is True
+    elif stage == "backward" and isinstance(data, dict):
+        valid = (
+            data.get("flow_count") is None
+            and type(data.get("truncated")) is bool
+            and all(
+                type(data.get(k)) is int and data[k] >= 0
+                for k in ("node_count", "state_count", "dependency_count")
+            )
+            and isinstance(data.get("lines"), list)
+            and all(valid_location(p) for p in data["lines"])
+            and isinstance(data.get("boundaries"), list)
+            and isinstance(data.get("truncation_reasons"), list)
+            and all(isinstance(r, str) for r in data["truncation_reasons"])
+        )
     elif stage == "flows" and isinstance(data, dict):
         valid = (
             type(data.get("flow_count")) is int
@@ -136,7 +164,10 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
             and all(
                 type(data.get(key)) is int and data[key] >= 0
                 for key in (
-                    "methods_internal", "calls", "calls_unresolved", "unknown_nodes",
+                    "methods_internal",
+                    "calls",
+                    "calls_unresolved",
+                    "unknown_nodes",
                     "flow_sinks_without_method",
                 )
             )
@@ -227,13 +258,14 @@ class JoernClient:
 
 def initial_result(repo: Path, threshold: float) -> dict:
     return {
-        "slice_version": "slice-v1",
+        "slice_version": "slice-v2",
         "repo": repo.name,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "joern_version": None,
         "threshold": threshold,
         "status": "failed",
         "slices": [],
+        "candidate_manifest": {},
         "counters": dict.fromkeys(COUNTERS),
         "measurement_notes": {key: "Stage not reached" for key in COUNTERS},
         "known_limitations": LIMITATIONS.copy(),
@@ -241,7 +273,7 @@ def initial_result(repo: Path, threshold: float) -> dict:
     }
 
 
-class Slicer:
+class Slicer(SlicingStages):
     def __init__(
         self,
         repo: Path,
@@ -266,6 +298,16 @@ class Slicer:
         self.completed: list[dict] = []
         self.candidates: list[dict] = []
         self.processed = 0
+        self.checkpoint = None
+        self.export_only = False
+        self.settings = {}
+        self.code_hashes = {}
+        self.source_hashes = {}
+        self.active_candidate = None
+        self.candidate_started = None
+        self.progress = None
+        self.progress_lock = threading.Lock()
+        self.heartbeat_seconds = 30.0
         for key in (
             "queries_aborted",
             "flows_truncated",
@@ -273,6 +315,8 @@ class Slicer:
             "candidates_unmapped",
             "files_read_failed",
             "directories_skipped",
+            "candidates_reused",
+            "candidate_stages_reused",
         ):
             self.measure(key, 0)
 
@@ -283,15 +327,55 @@ class Slicer:
     def increment(self, key: str, value: int = 1) -> None:
         self.measure(key, self.result["counters"][key] + value)
 
+    def event(self, event: str, **fields) -> None:
+        if self.progress:
+            with self.progress_lock:
+                self.progress.write(
+                    json.dumps(
+                        {
+                            "event": event,
+                            "time": time.time(),
+                            "candidate_key": self.active_candidate,
+                            **fields,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                self.progress.flush()
+
     def query(self, stage: str, query: str) -> tuple[object, str]:
+        started = time.perf_counter()
+        ended = threading.Event()
+        original_timeout = self.client.timeout
+
+        def heartbeat():
+            while not ended.wait(self.heartbeat_seconds):
+                self.event("heartbeat", stage=stage, elapsed_seconds=time.perf_counter() - started)
+
+        worker = threading.Thread(target=heartbeat, daemon=True)
+        self.event("query_start", stage=stage)
+        worker.start()
         try:
+            budget = self.settings.get("candidate_timeout_seconds")
+            if budget is not None and self.candidate_started is not None:
+                left = budget - (time.perf_counter() - self.candidate_started)
+                if left <= 0:
+                    raise QueryError("Candidate deadline exceeded")
+                self.client.timeout = min(left, original_timeout) if original_timeout else left
             data, logs = self.client.query(stage, query)
             validate_payload(stage, data, logs)
             return data, logs
         except QueryError as exc:
             self.increment("queries_aborted")
             self.result["diagnostics"].append(
-                {"stage": stage, "error": str(exc), "logs": exc.logs, "stop": True}
+                {
+                    "stage": stage,
+                    "error": str(exc),
+                    "logs": exc.logs,
+                    "stop": True,
+                    "candidate_key": self.active_candidate,
+                }
             )
             if exc.poisoned:
                 self.errors.append(
@@ -299,7 +383,13 @@ class Slicer:
                 )
             if "StackOverflowError" in str(exc):
                 self.result["status"] = "partial"
+            self.event("query_error", stage=stage, error=str(exc))
             raise
+        finally:
+            ended.set()
+            worker.join()
+            self.client.timeout = original_timeout
+            self.event("query_end", stage=stage, elapsed_seconds=time.perf_counter() - started)
 
     def load_sources(self) -> None:
         self.repo = self.repo.resolve()
@@ -331,7 +421,9 @@ class Slicer:
             try:
                 path.resolve().relative_to(self.repo)
                 # Decode strictly: replacement characters would silently change evidence.
-                text = path.read_text(encoding="utf-8")
+                raw = path.read_bytes()
+                self.source_hashes[name] = hashlib.sha256(raw).hexdigest()
+                text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
                 # splitlines also splits form feeds inside C source and shifts lineNumber.
                 self.sources[name] = text.removesuffix("\n").split("\n") if text else []
             except (OSError, UnicodeError, ValueError) as exc:
@@ -410,7 +502,10 @@ class Slicer:
         if missing:
             self.errors.append("Source files missing from CPG: " + ", ".join(missing))
         for key in (
-            "methods_internal", "calls", "calls_unresolved", "unknown_nodes",
+            "methods_internal",
+            "calls",
+            "calls_unresolved",
+            "unknown_nodes",
             "flow_sinks_without_method",
         ):
             if type(data.get(key)) is not int or data[key] < 0:
@@ -428,128 +523,13 @@ class Slicer:
         ):
             raise ValueError("Invalid engine configuration payload")
         self.result["joern_engine_config"] = engine
+        self.result["server"] = data.get("server")
         self.result["measurement_notes"].pop("joern_engine_config")
         if not {"ossdataflow", "dataflowOss"}.intersection(data.get("overlays", [])):
             self.query("overlay", queries.envelope("overlay", "run.ossdataflow; ujson.Bool(true)"))
-
-    def collect_candidates(self) -> None:
-        combined = {}
-        for case, make_query in (
-            ("A", queries.candidates_a_query),
-            ("B", lambda: queries.candidates_b_query(self.engine_limits)),
-        ):
-            data, _ = self.query("case_" + case.lower(), make_query())
-            if not isinstance(data, list):
-                raise ValueError(f"Case {case} result is not an array")
-            keys = set()
-            for row in data:
-                file = relative_file(row["file"], self.repo)
-                line, symbol = row["line"], row["symbol"]
-                if type(line) is not int or not isinstance(symbol, str) or not symbol:
-                    raise ValueError("Invalid candidate entry")
-                key = (case, file or row["file"], line, symbol)
-                keys.add(key)
-                candidate = combined.setdefault(
-                    key,
-                    {
-                        "case": case,
-                        "scopes": [],
-                        "anchors": [],
-                        "entry": {"symbol": symbol, "file": key[1], "line": line},
-                    },
-                )
-                if row["scope"] not in candidate["scopes"]:
-                    candidate["scopes"].append(row["scope"])
-                candidate["anchors"].extend(row["anchors"])
-            self.measure("candidates_case_" + case.lower(), len(keys))
-        self.candidates = [combined[key] for key in sorted(combined)]
-        for index, candidate in enumerate(self.candidates, 1):
-            candidate["id"] = f"slice_{index:04d}"
-            candidate["scopes"].sort(key=lambda s: (s["file"], s["line"], s["full_name"]))
-
-    def points(self, raw: list[dict]) -> set[tuple[str, int]]:
-        points, invalid = normalize_points(raw, self.sources, self.repo)
-        self.increment("locations_unmapped", invalid)
-        if invalid:
-            self.errors.append(f"Could not restore {invalid} reported source locations")
-        return points
-
-    def slice_candidate(self, candidate: dict) -> dict | None:
-        entry = candidate["entry"]
-        if not self.points([entry]):
-            self.increment("candidates_unmapped")
-            return None
-        points = self.points(candidate["anchors"]) | {(entry["file"], entry["line"])}
-        payload, _ = self.query(
-            "flows", queries.flows_query(candidate["scopes"], self.max_flows, self.engine_limits)
-        )
-        if (
-            not isinstance(payload, dict)
-            or type(payload.get("flow_count")) is not int
-            or payload["flow_count"] < 0
-            or type(payload.get("truncated")) is not bool
-            or not isinstance(payload.get("lines"), list)
-        ):
-            raise ValueError("Invalid flow result")
-        if payload["truncated"]:
-            self.increment("flows_truncated")
-            self.errors.append(f"Flow cap reached: {candidate['id']}")
-        points |= self.points(payload["lines"])
-        # Structural expansion introduces identifiers in conditions/returns; repeat
-        # supplementation to a fixed point so those declarations are not omitted.
-        while True:
-            old = points.copy()
-            data, _ = self.query(
-                "context", queries.context_query(sorted(points), self.repo.as_posix())
-            )
-            if not isinstance(data, list):
-                raise ValueError("Context result is not an array")
-            points |= self.points(data)
-            points = recover_points(points, self.sources)
-            if old == points:
-                break
-        return {
-            "id": candidate["id"],
-            "case": candidate["case"],
-            "entry": entry,
-            "lines": [{"file": f, "line": n} for f, n in sorted(points)],
-            "code": assemble(points, self.sources),
-            "absorbed": [],
-            "flow_count": payload["flow_count"],
-            "truncated": payload["truncated"],
-        }
-
-    def run(self) -> dict:
-        started = time.perf_counter()
-        try:
-            self.load_sources()
-            self.build_cpg()
-            self.inventory()
-            self.collect_candidates()
-            for candidate in self.candidates:
-                item = self.slice_candidate(candidate)
-                self.processed += 1
-                if item is not None:
-                    self.completed.append(item)
-        except Exception as exc:
-            self.errors.append(f"{type(exc).__name__}: {exc}")
-        except KeyboardInterrupt:
-            self.errors.append("Interrupted by user; server execution may continue")
-        finally:
-            self.finish(started)
-        return self.result
-
-    def finish(self, started: float) -> None:
-        if self.cpg_ready:
-            self.result["status"] = "partial" if self.errors else "ok"
-            self.measure("slices_before_clustering", len(self.completed))
-            self.result["slices"] = cluster(self.completed, self.result["threshold"], self.sources)
-            self.measure("slices_after_clustering", len(self.result["slices"]))
-            if self.result["counters"]["candidates_case_b"] is not None:
-                self.measure("candidates_not_processed", len(self.candidates) - self.processed)
-        if self.errors:
-            self.result["error"] = "; ".join(dict.fromkeys(self.errors))
-        self.measure("total_seconds", time.perf_counter() - started)
+        overlays = sorted(set(data["overlays"]) | {"dataflowOss"})
+        if self.checkpoint:
+            self.checkpoint.bind("overlays", overlays)
 
 
 def positive_int(value: str) -> int:
@@ -579,6 +559,15 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--repo", required=True, type=Path)
     result.add_argument("--out", required=True, type=Path)
     result.add_argument("--joern-endpoint", default="http://localhost:16240")
+    result.add_argument("--checkpoint", type=Path)
+    result.add_argument("--resume", action="store_true")
+    result.add_argument("--export-only", action="store_true")
+    result.add_argument("--export-dir", type=Path)
+    result.add_argument("--progress", type=Path)
+    result.add_argument("--heartbeat-seconds", type=positive_seconds, default=30)
+    result.add_argument("--candidate-timeout-seconds", type=positive_seconds)
+    result.add_argument("--backward-depth", type=positive_int)
+    result.add_argument("--backward-nodes", type=positive_int)
     result.add_argument("--threshold", type=threshold_value, default=0.95)
     result.add_argument("--max-flows-per-candidate", type=positive_int, default=None)
     result.add_argument("--query-timeout-seconds", type=positive_seconds, default=None)
@@ -611,8 +600,18 @@ def read_version(command: Path | None, timeout: float | None) -> tuple[str | Non
                 check=True,
                 timeout=timeout,
             )
-            version = (process.stdout + process.stderr).strip() or None
-            note = "joern --version returned empty output"
+            output = (process.stdout + process.stderr).strip()
+            # Some Joern launchers reject --version but print a version banner before
+            # exiting on stdin EOF. Keep timestamped terminal warnings out of the identity.
+            matches = re.findall(
+                r"(?im)^\s*(?:Version:\s*|joern\s+)?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)\s*$",
+                ANSI.sub("", output),
+            )
+            versions = set(matches)
+            version = versions.pop() if len(versions) == 1 else None
+            note = output or "joern --version returned empty output"
+            if version is None:
+                note = "No unambiguous Joern version in command output: " + note
         except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
             note = f"joern --version unavailable: {exc}"
     return version, note
@@ -640,37 +639,102 @@ def write_result(path: Path, result: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    started = time.perf_counter()
+    cli = parser()
+    args = cli.parse_args(argv)
+    if (args.resume or args.export_only) and not args.checkpoint:
+        cli.error("--resume/--export-only requires --checkpoint")
+    outputs = [p.resolve() for p in (args.out, args.checkpoint, args.progress) if p]
+    if len(outputs) != len(set(outputs)):
+        cli.error("Output, checkpoint and progress paths must be distinct")
     client = JoernClient(args.joern_endpoint, args.query_timeout_seconds)
     limits = {
-        key: value
-        for key, value in (
+        k: v
+        for k, v in (
             ("maxCallDepth", args.max_call_depth),
             ("maxArgsToAllow", args.max_args_to_allow),
             ("maxOutputArgsExpansion", args.max_output_args_expansion),
         )
-        if value is not None
+        if v is not None
     }
     job = Slicer(args.repo, args.threshold, args.max_flows_per_candidate, client, limits)
-    version, note = read_version(args.joern_version_command, args.query_timeout_seconds)
-    result = job.run()
-    result["joern_version"] = version
-    if version is None:
-        result["measurement_notes"]["joern_version"] = note
-    result["settings"] = {
+    job.settings = {
+        "threshold": args.threshold,
         "max_flows_per_candidate": args.max_flows_per_candidate,
         "query_timeout_seconds": args.query_timeout_seconds,
         "engine_overrides": limits,
+        "backward_depth": args.backward_depth,
+        "backward_nodes": args.backward_nodes,
+        "candidate_timeout_seconds": args.candidate_timeout_seconds,
     }
-    job.measure("total_seconds", time.perf_counter() - started)
+    job.result["settings"] = job.settings
+    job.code_hashes = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(Path(__file__).parent.glob("slicer*.py"))
+    }
+    job.export_only = args.export_only
+    job.heartbeat_seconds = args.heartbeat_seconds
+    attempt = None
     try:
+        if args.progress:
+            args.progress.parent.mkdir(parents=True, exist_ok=True)
+            job.progress = args.progress.open("a", encoding="utf-8", newline="\n")
+        if args.checkpoint:
+            job.checkpoint = Checkpoint(args.checkpoint, resume=args.resume or args.export_only)
+        if args.export_only:
+            contract = job.checkpoint.get("run_contract")
+            version = contract["joern_version"] if contract else None
+            note = "Export-only: recorded Joern version"
+            if contract:
+                job.settings = contract["settings"]
+                job.result["settings"] = job.settings
+        else:
+            version, note = read_version(args.joern_version_command, args.query_timeout_seconds)
+        if job.checkpoint and not args.export_only and version is None:
+            raise ValueError("Checkpoints require a measured --joern-version-command")
+        job.result["joern_version"] = version
+        if args.joern_version_command and not args.export_only:
+            job.result["diagnostics"].append({"stage": "version_command", "output": note})
+        if version is None:
+            job.result["measurement_notes"]["joern_version"] = note
+        if job.checkpoint:
+            attempt = job.checkpoint.begin(
+                {
+                    "settings": job.settings,
+                    "client_pid": os.getpid(),
+                    "endpoint": args.joern_endpoint,
+                }
+            )
+        result = job.run()
+        if job.checkpoint:
+            job.checkpoint.end(
+                attempt,
+                {
+                    "status": result["status"],
+                    "error": result.get("error"),
+                    "counters": result["counters"],
+                    "diagnostics": result["diagnostics"],
+                    "server": result.get("server"),
+                },
+            )
+            result["attempts"] = job.checkpoint.attempts()
         write_result(args.out, result)
-    except (OSError, ValueError) as exc:
-        # If the destination itself is unwritable, stderr is the only remaining channel.
-        print(f"Cannot write {args.out}: {exc}", file=sys.stderr)
+        if args.export_dir:
+            export_sources(args.export_dir, result, job.sources)
+        return {"ok": 0, "partial": 2, "failed": 1}[result["status"]]
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"Cannot write or prepare slicer result: {exc}", file=sys.stderr)
+        if not job.cpg_ready:
+            job.result["error"] = str(exc)
+            try:
+                write_result(args.out, job.result)
+            except (OSError, ValueError):
+                pass  # Destination errors have already been printed above.
         return 1
-    return {"ok": 0, "partial": 2, "failed": 1}[result["status"]]
+    finally:
+        if job.checkpoint:
+            job.checkpoint.close()
+        if job.progress:
+            job.progress.close()
 
 
 if __name__ == "__main__":

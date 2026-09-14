@@ -124,6 +124,7 @@
 | D72 | **역할별 출력 상한에 위쪽 한계가 없다 — `2**31`이 로드를 통과하고, 그 run은 전량 400인데 bench가 「못 잼」으로 적는다** | 열림 | [본문](open-questions/D/D72.md) |
 | D73 | 역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다 | 열림 | [본문](open-questions/D/D73.md) |
 | D74 | **Joern 슬라이스를 캡슐 본문으로 쓰면 Progressive Context Expansion이 확장할 것을 잃는다** | 열림 | [본문](open-questions/D/D74.md) |
+| D75 | 슬라이서 sink-first 의미·제어문 보존·단계별 재개 | 열림 | [본문](open-questions/D/D75.md) |
 
 ## 3. 팀·운영 미정
 

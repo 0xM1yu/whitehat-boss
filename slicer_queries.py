@@ -44,6 +44,24 @@ def scope(m: nodes.Method): ujson.Value = ujson.Obj(
   "line" -> m.lineNumber.getOrElse(-1))
 """
 
+CALL_IDENTITY = """
+def astPath(n: nodes.AstNode): List[Int] = {
+  var current = Option(n)
+  val path = scala.collection.mutable.ListBuffer.empty[Int]
+  while (current.nonEmpty && !current.get.isInstanceOf[nodes.Method]) {
+    path.prepend(current.get.order)
+    current = current.get.astParentOption
+  }
+  path.toList
+}
+def callSelector(c: nodes.Call): ujson.Value = ujson.Obj(
+  "line" -> c.lineNumber.getOrElse(-1), "column" -> c.columnNumber.getOrElse(-1),
+  "code" -> c.code, "ast_path" -> ujson.Arr.from(astPath(c)))
+def argumentInfo(a: nodes.Expression): ujson.Value = ujson.Obj(
+  "index" -> a.argumentIndex, "code" -> a.code,
+  "line" -> a.lineNumber.getOrElse(-1), "column" -> a.columnNumber.getOrElse(-1))
+"""
+
 ANCESTORS = """
       def sourceNode(n: nodes.AstNode): Boolean = n match {
         // C frontend emits METHOD_REF/TYPE_DECL on each function's first line.
@@ -88,6 +106,10 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
         engine_context(limits)
         + """
       ujson.Obj(
+        "server" -> ujson.Obj("java_version" -> System.getProperty("java.version"),
+          "process" -> java.lang.management.ManagementFactory.getRuntimeMXBean.getName,
+          "started_ms" -> java.lang.management.ManagementFactory.getRuntimeMXBean.getStartTime,
+          "heap_max_bytes" -> Runtime.getRuntime.maxMemory()),
         "files" -> ujson.Arr.from(cpg.file.name.l.distinct.sorted),
         "methods_internal" -> cpg.method.internal.size,
         "calls" -> cpg.call.filterNot(_.name.startsWith("<operator>")).size,
@@ -124,6 +146,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
     return envelope(
         "case_b",
         LOCATION
+        + CALL_IDENTITY
         + engine_context(limits)
         + """
       val arrays = cpg.call.filterNot(_.name.startsWith("<operator>"))
@@ -145,6 +168,16 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
         ujson.Obj("symbol" -> c.name, "file" -> c.location.filename,
           "line" -> c.lineNumber.getOrElse(-1), "scope" -> scope(c.method),
+          "selector" -> callSelector(c),
+          "reasons" -> ujson.Arr.from(List(
+            Option.when(arrays.contains(c))("local_array_argument"),
+            Option.when(repeatedCalls.contains(c))("repeated_release")).flatten),
+          "trigger_arguments" -> ujson.Arr.from(c.argument.l.filter(a =>
+            a.start.isIdentifier.refsTo.collect { case l: nodes.Local => l }
+              .exists(_.typeFullName.contains("[")) ||
+            (repeatedCalls.contains(c) && positions.getOrElse(c.name, Nil)
+              .contains(a.argumentIndex))).map(argumentInfo)),
+          "sink_arguments" -> ujson.Arr.from(c.argument.l.map(argumentInfo)),
           "anchors" -> ujson.Arr.from(anchors.map(loc)))
       }))
     """,
@@ -206,7 +239,11 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
       val points = ujson.read({encoded}).arr.map(p => (p(0).str, p(1).num.toInt)).toSet
       def filename(n: nodes.AstNode): String = n.location.filename.replace('\\\\', '/')
         .stripPrefix({literal(repo.rstrip("/") + "/")}).stripPrefix("./")
-      val all = cpg.all.collect {{ case n: nodes.AstNode if sourceNode(n) => n }}.l
+      val relevantMethods = cpg.method.internal.filter(m => points.exists {{ case (f, line) =>
+        filename(m) == f && m.lineNumber.exists(_ <= line) &&
+          m.lineNumberEnd.forall(_ >= line)
+      }}).l
+      val all = relevantMethods.flatMap(_.ast.l).filter(sourceNode).distinct
       val selected = scala.collection.mutable.Set.empty[nodes.AstNode]
       selected ++= all.filter(n => points.contains((filename(n),
         n.lineNumber.getOrElse(-1))))
@@ -218,6 +255,19 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
         val controls = parents.collect {{ case c: nodes.ControlStructure => c }}
         selected ++= parents
         selected ++= controls.flatMap(_.condition.ast.l)
+        // Labels/jumps are siblings in the AST, not ancestors of data-flow nodes.
+        // Retain their guards on the next fixed-point pass as well.
+        selected ++= controls.flatMap(_.ast.l).filter(n =>
+          n.isInstanceOf[nodes.JumpTarget] || (n match {{
+            case c: nodes.ControlStructure =>
+              Set("BREAK", "CONTINUE", "GOTO").contains(c.controlStructureType)
+            case _ => false
+          }}))
+        selected ++= methods.flatMap(_.ast.l).filter(n =>
+          n.isInstanceOf[nodes.JumpTarget] || (n match {{
+            case c: nodes.ControlStructure => c.controlStructureType == "GOTO"
+            case _ => false
+          }}))
         selected ++= methods.flatMap(_.ast.isReturn.l)
         val ids = selected.toList.flatMap {{
           case i: nodes.Identifier => List(i)
