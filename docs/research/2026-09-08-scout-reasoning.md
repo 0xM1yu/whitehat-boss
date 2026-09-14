@@ -337,4 +337,4 @@ Tool Calling과 JSON Schema를 **동시에 켜면** 오픈웨이트 모델들이
 
 **Scout 풀을 CWE 계열 세 Agent(`scout_memory`·`scout_boundary`·`scout_injection`)로 두는 [ADR 0010](../decisions/0010-harness-structure-and-model-roster.md) §3의 구조가 실측으로 확증됐다.** 추론 유형 분담은 문헌 근거도(§1) 성능도(위) 없어 채택하지 않는다.
 
-⚠ **확증된 것은 「구조」다.** 이 실험이 쓴 CWE→Agent 세부 목록은 로스터·프롬프트의 목록과 다르다(`injection`이 CWE-22 대신 CWE-89, `boundary`에 170·191·369 추가, `memory`에 401·476 추가). 어느 목록을 정본으로 할지는 [D74](../open-questions/D/D74.md)로 남긴다 — 오늘은 로스터 목록을 유지한다. 그리고 어느 **모델**이 어느 자리에 앉는지는 이 실험이 정하지 않는다 — 그것은 ADR 0010 §3이 적은 대로 첫 run의 공동오답 행렬이 정한다.
+⚠ **확증된 것은 「구조」다.** 이 실험이 쓴 CWE→Agent 세부 목록은 로스터·프롬프트의 목록과 다르다(`injection`이 CWE-22 대신 CWE-89, `boundary`에 170·191·369 추가, `memory`에 401·476 추가). 어느 목록을 정본으로 할지는 [D75](../open-questions/D/D75.md)로 남긴다 — 오늘은 로스터 목록을 유지한다. 그리고 어느 **모델**이 어느 자리에 앉는지는 이 실험이 정하지 않는다 — 그것은 ADR 0010 §3이 적은 대로 첫 run의 공동오답 행렬이 정한다.
