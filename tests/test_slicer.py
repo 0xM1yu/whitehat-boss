@@ -6,9 +6,14 @@
 `(observed.size > max_flows)` 의 경계·`observed.take(max_flows)` 의 절단 의미·`groupMap`·
 `argumentIndex` 필터가 **실제 CPG 에서 의도한 것을 고르는지는 어떤 검사도 실행하지 않는다.**
 
-그 공백은 가정이 아니라 관측이다 — *"mock 에서 통과한 구현이 실서버 첫 질의에서
-실패했다"*(#203). 질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다.
-그러므로 `52 passed` 를 「질의가 맞다」로 읽지 않는다 — CLAUDE.md §5 의
+그 공백은 가정이 아니라 **이 브랜치 자신의 이력이 보인 것**이다. `a0e5514` 에서 이 파일이
+전부 통과한 뒤 실서버 run 이 질의 결함 둘을 냈고 `c4acdd2` 가 고쳤다 —
+`truncated` 의 비교식이 **Scala 연산자 우선순위 때문에 튜플 비교로 파싱**됐고
+(`f"observed.size > {max_flows}"` → `f"(observed.size > {max_flows})"`), null method 인
+호출 인자에서 정렬 키 접근이 NPE 로 죽었다. **둘 다 substring 검사는 통과한다.**
+
+질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다. 그러므로 이 파일이 초록인 것을
+「질의가 맞다」로 읽지 않는다 — CLAUDE.md §5 의
 *"테스트가 통과했으니 맞겠지 → 테스트는 주석 문장이 옳은지 검증하지 않는다"* 가 이 자리다.
 """
 
@@ -291,6 +296,36 @@ def test_real_throwables_still_fail_even_next_to_a_report(message):
     """
     with pytest.raises(slicer.QueryError):
         slicer.decode_response(response("import", {"ok": True}, logs=message + "\n"), "import")
+
+
+def test_an_unterminated_osc_opener_does_not_swallow_a_real_crash():
+    """ANSI 제거가 **줄을 넘어 삼키면** 진짜 크래시가 흔적 없이 사라진다.
+
+    OSC(`\x1b]0;제목\x07`)는 BEL이나 ST로 닫힌다. 그런데 Joern 로그는 잘려서 오거나 섞여서
+    오므로 **닫히지 않은 오프너**가 있을 수 있고, 스트림 뒤쪽 어딘가에 무관한 단독 BEL이
+    하나만 있으면 정규식이 그 둘을 짝지어 **사이의 여러 줄을 통째로** 지운다. 그 사이에
+    스택트레이스가 있으면 `ERROR` 가 볼 것이 안 남는다.
+
+    **오탐보다 이쪽이 나쁘다.** 파일 이름 오탐은 시끄럽게 틀려서 사람이 본다. 이건
+    조용히 성공으로 보고한다 — §0의 *"측정이 틀리면 결론이 틀리고 그건 안 돌아온다"* 다.
+
+    같은 커밋의 `report_row`·`QUOTED_PATH` 가 `splitlines()` 로 **줄 단위**로만 도는 것과
+    같은 규율을 OSC에도 건다 — 페이로드에서 줄바꿈을 뺀다.
+    """
+    # payload 마커는 **정상으로 둔다** — 마커가 없으면 "payload 없음"으로 raise돼
+    # 검사가 틀린 이유로 통과한다. 여기서 유일하게 raise를 만들 수 있는 것은 오류 탐지다.
+    logs = (
+        "\x1b]0;joern"  # 닫는 BEL/ST가 없는 오프너
+        "\njava.lang.StackOverflowError\n"
+        "\x07"  # 뒤쪽의 무관한 단독 BEL — 정규식이 이 둘을 짝지으면 사이가 사라진다
+    )
+    with pytest.raises(slicer.QueryError):
+        slicer.decode_response(response("import", {"ok": True}, logs=logs), "import")
+
+
+def test_a_terminated_osc_on_one_line_is_still_stripped():
+    """줄 안에서 제대로 닫힌 OSC는 그대로 벗긴다 — 위 수정이 L1을 되돌리면 안 된다."""
+    assert slicer.ANSI.sub("", "\x1b]0;title\x07back") == "back"
 
 
 def test_payload_delimiters_and_error_words_are_data():
