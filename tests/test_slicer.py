@@ -298,6 +298,31 @@ def test_real_throwables_still_fail_even_next_to_a_report(message):
         slicer.decode_response(response("import", {"ok": True}, logs=message + "\n"), "import")
 
 
+@pytest.mark.parametrize(
+    "separator",
+    ["\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+def test_no_line_separator_lets_an_osc_opener_swallow_a_real_crash(separator):
+    """줄 구분자 **전부**에 대해 성립해야 한다 — `\n` 하나만 막는 것으로는 모자란다.
+
+    이 검사가 `\n` 만 봤을 때 **같은 버그가 `\r` 로 그대로 재현됐다.** 앞 수정이
+    「`splitlines()` 와 같은 줄 규율을 건다」고 적어 놓고 실제로는 그 집합의 부분집합
+    하나만 옮겼기 때문이다(§2.2 — 요약이 원문보다 셌다).
+
+    `str.splitlines()` 가 줄로 세는 것은 `\n` 만이 아니다. 여기 목록이 그것이고,
+    `scannable()`·`parse_report()` 가 「줄」이라고 부르는 것이 정확히 그 함수의 정의다.
+    """
+    logs = (
+        "\x1b]0;joern"
+        + separator
+        + "java.lang.StackOverflowError"
+        + separator
+        + "\x07"
+    )
+    with pytest.raises(slicer.QueryError):
+        slicer.decode_response(response("import", {"ok": True}, logs=logs), "import")
+
+
 def test_an_unterminated_osc_opener_does_not_swallow_a_real_crash():
     """ANSI 제거가 **줄을 넘어 삼키면** 진짜 크래시가 흔적 없이 사라진다.
 
