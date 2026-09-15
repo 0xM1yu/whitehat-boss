@@ -1,7 +1,7 @@
 # 오프라인 Joern 슬라이서 — slice-v2
 
 Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다. 모델과 하네스를 import하지
-않으며 저장소별로 미리 결과를 만든다. Scout·캡슐 배선은 별도다. 변경 근거는 [D75](open-questions/D/D75.md)다.
+않으며 저장소별로 미리 결과를 만든다. Scout·캡슐 배선은 별도다. 변경 근거는 [D77](open-questions/D/D77.md)다.
 
 ## 배포 파일과 실행
 
