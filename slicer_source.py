@@ -140,6 +140,25 @@ def recover_lines(source: list[str], selected: set[int]) -> set[int]:
             last = end + (terminator.end() if terminator else 0)
             groups.append(span(headers[begin], last))
     braces = [(line_at(a), line_at(b), span(headers[a], a)) for a, b, kind in pairs if kind == "{"]
+    skeletons = []
+    for begin, end, kind in pairs:
+        if kind != "{" or begin in initializers:
+            continue
+        header = masked[headers[begin] : begin].strip()
+        body = masked[begin : end + 1]
+        control = re.search(r"\b(?:switch|for|while|do)\b", header)
+        function = not re.search(r"\b(?:if|else|switch|for|while|catch)\b", header) and bool(
+            re.search(r"\)\s*(?:const\s*)?$", header)
+        )
+        if control or (function and re.search(r"\bgoto\b", body)):
+            structural = set()
+            for match in re.finditer(
+                r"\b(?:break|continue)\s*;|\bgoto\s+\w+\s*;|"
+                r"\bcase\s+[^;{}]+?:|\bdefault\s*:|(?m:^[ \t]*\w+\s*:(?!:))",
+                body,
+            ):
+                structural |= span(begin + match.start(), begin + match.end() - 1)
+            skeletons.append((line_at(begin), line_at(end), structural))
     result = set(selected)
     changed = True
     while changed:
@@ -150,6 +169,9 @@ def recover_lines(source: list[str], selected: set[int]) -> set[int]:
         for begin, end, header in braces:
             if any(begin <= line <= end for line in result) or result & header:
                 result |= header | {begin, end}
+        for begin, end, structural in skeletons:
+            if any(begin <= line <= end for line in result):
+                result |= structural
         changed = len(result) != before
     return result
 
@@ -190,11 +212,25 @@ def cluster(slices: list[dict], threshold: float, sources: dict) -> list[dict]:
             for bid in order:
                 if bid == aid or bid not in remaining or not points[bid]:
                     continue
+                if remaining[aid]["case"] != remaining[bid]["case"]:
+                    continue
                 if len(points[bid] & points[aid]) / len(points[bid]) < threshold:
                     continue
                 a, b = remaining[aid], remaining.pop(bid)
                 points[aid] |= points[bid]
                 a["absorbed"] = sorted(a["absorbed"] + [bid] + b["absorbed"])
+                if "members" in a:
+                    a["members"] = sorted(set(a["members"]) | set(b["members"]))
+                    # Detailed analysis belongs to a member, not to the representative.
+                    a.setdefault("member_analysis", {a["candidate_key"]: a["analysis"]})
+                    a["member_analysis"].update(
+                        b.get("member_analysis", {b["candidate_key"]: b["analysis"]})
+                    )
+                    for reason, locations in b["line_provenance"].items():
+                        a["line_provenance"][reason] = sorted(
+                            {tuple(p) for p in a["line_provenance"][reason]}
+                            | {tuple(p) for p in locations}
+                        )
                 counts = (a["flow_count"], b["flow_count"])
                 a["flow_count"] = None if None in counts else sum(counts)
                 a["truncated"] |= b["truncated"]

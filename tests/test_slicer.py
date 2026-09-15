@@ -105,6 +105,7 @@ def candidate(symbol="entry", line=1):
         "line": line,
         "scope": {"file": "main.c", "line": 1, "symbol": "entry", "full_name": "entry"},
         "anchors": [{"file": "main.c", "line": line}],
+        "selector": {"line": line, "column": 5, "code": symbol + "(buf)", "ast_path": [1, 2]},
     }
 
 
@@ -136,6 +137,19 @@ def payloads(*, case_a=None, case_b=None, flow_count=0, truncated=False):
                 "flow_count": flow_count,
                 "truncated": truncated,
                 "lines": [{"file": "main.c", "line": 5}] if flow_count else [],
+            },
+        ),
+        "backward": response(
+            "backward",
+            {
+                "flow_count": None,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "node_count": 2,
+                "state_count": 2,
+                "dependency_count": 1,
+                "boundaries": [],
+                "truncation_reasons": [],
             },
         ),
         "context": response("context", [{"file": "main.c", "line": n} for n in (1, 3, 4, 7)]),
@@ -397,7 +411,7 @@ def test_payload_delimiters_and_error_words_are_data():
 
 
 def test_stack_overflow_stops_and_keeps_completed_slices(monkeypatch, repo, tmp_path):
-    data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=2)
+    data = payloads(case_a=[candidate("a"), candidate("z")], flow_count=2)
     calls = []
 
     def flows(query):
@@ -419,7 +433,7 @@ def test_stack_overflow_stops_and_keeps_completed_slices(monkeypatch, repo, tmp_
 
 @pytest.mark.parametrize("truncated", [False, True])
 def test_flow_cap_records_observed_truncation(monkeypatch, repo, tmp_path, truncated):
-    data = payloads(case_b=[candidate("sprintf", 5)], flow_count=3, truncated=truncated)
+    data = payloads(case_a=[candidate("sprintf", 5)], flow_count=3, truncated=truncated)
     _, result, transport = run_cli(
         monkeypatch,
         repo,
@@ -457,7 +471,8 @@ def test_deterministic_slices_under_reordered_candidates(monkeypatch, repo, tmp_
         == json.dumps(second["slices"], ensure_ascii=False).encode()
     )
     assert first["slices"][0]["id"] == "slice_0001"
-    assert first["slices"][0]["absorbed"] == ["slice_0002", "slice_0003"]
+    assert first["slices"][0]["absorbed"] == ["slice_0002"]
+    assert first["slices"][1]["case"] == "B"
 
 
 def test_original_line_numbers_and_multifile_assembly(repo):
@@ -672,13 +687,13 @@ def test_version_comes_only_from_the_explicit_command(monkeypatch, repo, tmp_pat
     def version(command, **kwargs):
         commands.append(command)
         assert kwargs["stdin"] == slicer.subprocess.DEVNULL
-        return slicer.subprocess.CompletedProcess(command, 0, "fixture-version\n", "")
+        return slicer.subprocess.CompletedProcess(command, 0, "Version: 4.0.605\n", "")
 
     monkeypatch.setattr(slicer.subprocess, "run", version)
     _, result, _ = run_cli(
         monkeypatch, repo, tmp_path, payloads(), "--joern-version-command", "/opt/joern/joern"
     )
-    assert result["joern_version"] == "fixture-version"
+    assert result["joern_version"] == "4.0.605"
     assert commands[0][-1] == "--version"
     assert "joern_version" not in result["measurement_notes"]
 
