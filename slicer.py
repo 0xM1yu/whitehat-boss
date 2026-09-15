@@ -39,6 +39,41 @@ ERROR = re.compile(
     r"(?im:^\s*(?:--.*(?:Error|error)|error\s*:|error\b.*(?:not found|value)|"
     r"\d+ errors? found|.*\bCompilation (?:failed|error)|.*\[ERROR\]))"
 )
+# Joern frontend 파싱 리포트의 한 행 —
+# `| 1 | src/net/HttpException.cpp | 42 | yes | yes | 12ms |`. 리포트를 **세는 쪽**과
+# 오류 스캔에서 **빼는 쪽**이 같은 인식기를 써야 한다. 갈리면 한쪽이 리포트로 세는 줄을
+# 다른 쪽이 오류 로그로 읽는다.
+def report_row(line: str) -> list[str] | None:
+    parts = [part.strip() for part in line.split("|")]
+    if len(parts) == 8 and parts[1].isdigit() and parts[4] in ("yes", "no"):
+        return parts if parts[5] in ("yes", "no") else None
+    return None
+
+
+# 개별 파일 실패가 경로를 인용한다. 그 파일 하나의 실패이지 배치의 실패가 아니다 —
+# `parse_report` 가 세어 `errors` 에 남긴다.
+QUOTED_PATH = re.compile(r"(Failed to parse|Failed to generate a CPG for:)\s*'[^']*'")
+
+
+def scannable(text: str) -> str:
+    r"""오류 스캔에서 **파일 이름이 사는 자리**를 뺀다.
+
+    `ERROR` 의 `\b[\w.]+Exception\b` 는 `[\w.]+` 가 `.` 을 단어문자와 동급으로 먹어
+    `HttpException.cpp` 의 `HttpException` 에서 경계 조건을 만족한다. 그래서 CPG가 멀쩡히
+    만들어져도 **소스 파일 이름 하나로 import 가 전역 실패했다** — C/C++ 저장소에서
+    클래스명=파일명은 흔한 컨벤션이라 HTTP·파서 라이브러리는 거의 반드시 하나쯤 있다.
+
+    **빼는 것은 이름이 사는 두 자리뿐이다** — 리포트 표의 행과 실패 메시지의 인용 경로.
+    나머지 줄은 그대로 훑는다. 정규식을 좁히는 쪽(예: throwable 뒤에 `:` 를 요구)이 더
+    작은 수정이지만, 그쪽은 **진짜 오류를 놓치는 방향**으로 틀린다 — §0이 경계하는 쪽이다.
+    """
+    return "\n".join(
+        QUOTED_PATH.sub(r"\1 '<path>'", line)
+        for line in text.splitlines()
+        if report_row(line) is None
+    )
+
+
 COUNTERS = (
     "files_seen",
     "files_parsed",
@@ -161,13 +196,14 @@ def decode_response(response: dict, stage: str) -> tuple[object, str]:
     # Inspect diagnostics outside the payload, so a source identifier named Error
     # cannot be mistaken for a failed interpreter request.
     diagnostics = logs if match is None else logs[: match.start()] + logs[match.end() :]
-    failure = ERROR.search(diagnostics)
+    scanned = scannable(diagnostics)
+    failure = ERROR.search(scanned)
     success = response.get("success")
     if not (success is True or success == "true") or failure:
         raise QueryError(
             diagnostics.strip() or "Joern returned success=false",
             logs,
-            poisoned="StackOverflowError" in diagnostics or "OutOfMemoryError" in diagnostics,
+            poisoned="StackOverflowError" in scanned or "OutOfMemoryError" in scanned,
         )
     if match is None:
         raise QueryError(
@@ -341,10 +377,10 @@ class Slicer:
     def parse_report(self, logs: str) -> None:
         rows = {}
         for line in ANSI.sub("", logs).splitlines():
-            parts = [part.strip() for part in line.split("|")]
-            if len(parts) == 8 and parts[1].isdigit() and parts[4] in ("yes", "no"):
+            parts = report_row(line)
+            if parts is not None:
                 name = relative_file(parts[2], self.repo)
-                if parts[5] in ("yes", "no") and name is not None:
+                if name is not None:
                     rows[name] = (parts[4] == "yes", parts[5] == "yes")
         observed_failures = sorted(set(re.findall(r"Failed to parse '([^']+)'", logs)))
         cpg_failures = sorted(set(re.findall(r"Failed to generate a CPG for: '([^']+)'", logs)))
