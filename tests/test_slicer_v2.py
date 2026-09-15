@@ -255,6 +255,68 @@ def test_export_manifest_hashes_and_numbered_lines(monkeypatch, repo, tmp_path):
     assert (output / manifest["slices"][0]["raw"]).read_text() == result["slices"][0]["code"] + "\n"
 
 
+@pytest.mark.parametrize(
+    "option, name",
+    [
+        ("--checkpoint", "slices.json"),
+        ("--checkpoint", "MANIFEST.json"),
+        ("--checkpoint", "raw/A0001_entry_main_5_k.c"),
+        ("--out", "MANIFEST.json"),
+        ("--out", "candidate-manifest.json"),
+        ("--progress", "SHA256SUMS"),
+        ("--progress", "numbered/A0001_entry_main_5_k.txt"),
+    ],
+)
+def test_run_state_under_the_export_directory_is_refused(tmp_path, option, name):
+    """`export_sources()` os.replace()s every path under `--export-dir`.
+
+    An open SQLite checkpoint there is replaced by JSON on POSIX and the resume state is
+    gone -- the run cannot be continued and nothing reports the loss. Pairwise distinctness
+    of out/checkpoint/progress does not catch it: the three paths differ from each other.
+    """
+    export = tmp_path / "export"
+    argv = ["--repo", str(tmp_path), "--export-dir", str(export)]
+    if option != "--out":
+        argv += ["--out", str(tmp_path / "result.json")]
+    argv += [option, str(export / name)]
+    with pytest.raises(SystemExit) as error:
+        slicer.main(argv)
+    assert error.value.code == 2
+
+
+def test_the_reserved_namespace_is_the_whole_export_directory(monkeypatch, repo, tmp_path):
+    """Whatever `export_sources()` writes must be inside what the guard reserves.
+
+    A hand-kept list of reserved basenames drifts the moment the exporter gains a file.
+    This pins the guard to the exporter's actual output instead.
+    """
+    _, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_a=[candidate()], flow_count=1)
+    )
+    job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("unused", None))
+    job.load_sources()
+    export = tmp_path / "export"
+    export_sources(export, result, job.sources)
+    written = [p for p in export.rglob("*") if p.is_file()]
+    assert written, "the exporter wrote nothing; this test proves nothing"
+    for path in written:
+        assert export.resolve() in path.resolve().parents
+
+
+def test_run_state_beside_the_export_directory_is_still_allowed(tmp_path):
+    """The guard reserves the export subtree, not every neighbouring path."""
+    export = tmp_path / "export"
+    argv = [
+        "--repo", str(tmp_path),
+        "--out", str(tmp_path / "result.json"),
+        "--export-dir", str(export),
+        "--checkpoint", str(tmp_path / "state.db"),
+        "--progress", str(tmp_path / "progress.jsonl"),
+    ]
+    args = slicer.parser().parse_args(argv)
+    assert args.checkpoint.parent == tmp_path
+
+
 def test_selector_type_error_stops_before_interpolation(monkeypatch, repo, tmp_path):
     row = candidate("sprintf", 5)
     row["selector"]["ast_path"] = ['0); throw new RuntimeException("x")']
