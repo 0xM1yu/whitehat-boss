@@ -100,6 +100,7 @@ from src.interfaces.tool_runner import ToolRunner
 from src.orchestrator import gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
+from src.orchestrator.heartbeat import Heartbeat
 from src.orchestrator.nodes import (
     auditor,
     critic,
@@ -621,6 +622,17 @@ def run_pipeline(
     last, stop_reason = spec.stop_at()
     state = _Accumulator()
     stopped_after = None if stop_reason is None else last
+    # heartbeat: 러너가 살아 있는지를 밖에서 읽게 한다(이슈 #208 ②). `PromptLog`와 같은
+    # 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일 때만 켠다. 모델 호출이 멈춰도 이
+    # 스레드는 틱해 "죽음↔느림"을 가른다.
+    heartbeat = None
+    if run_dir is not None and not spec.dry_run:
+        heartbeat = Heartbeat(
+            run_dir / "heartbeat.json",
+            seq_of=lambda: len(trace.events),
+            stage_of=lambda: int(ctx.current_stage),
+            clock=now,
+        ).start()
     try:
         _analyze(ctx, artifacts, state, last)
     except BudgetExhausted as exc:
@@ -651,6 +663,10 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
+    finally:
+        # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다.
+        if heartbeat is not None:
+            heartbeat.stop()
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
