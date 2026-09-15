@@ -44,6 +44,25 @@ ANSI = re.compile(
     r"|\x1b][^\x07\x1b\n]*(?:\x07|\x1b\\)"
     r"|\x1b[@-Z\\-_]"  # 두 글자 이스케이프
 )
+def strip_ansi(text: str) -> str:
+    """ANSI 이스케이프를 **줄 단위로** 벗긴다.
+
+    한 시퀀스가 줄을 넘지 못하게 하는 것이 핵심이다. 닫는 BEL/ST 가 없는 OSC 오프너와
+    스트림 뒤쪽의 무관한 BEL 이 짝지으면 사이의 여러 줄이 통째로 사라지고, 거기 있던 진짜
+    스택트레이스가 `ERROR` 스캔에서 안 보인다 — **조용한 미탐**이라 오탐보다 나쁘다.
+
+    ⚠ **정규식의 부정 문자 클래스로 막으려다 두 번 틀렸다.** 처음엔 아예 안 막았고, 다음엔
+    `\\n` 하나만 뺐는데 `\\r`·`\\v`·`\\f`·`\\x1c`~`\\x1e`·`\\x85`·
+    `\\u2028`·`\\u2029` 로 그대로 재현됐다. **제어문자를 열거하는 방식 자체가 틀렸다** —
+    빠뜨린 것이 있는지 사람이 계속 확인해야 한다.
+
+    그래서 열거하지 않는다. `splitlines(keepends=True)` 로 쪼개면 **「줄」의 정의가
+    `scannable()`·`parse_report()` 가 쓰는 그 함수와 같아지고**, 구분자를 그대로 달고
+    있으므로 이어 붙이면 원문이 복원된다(이스케이프만 빠진 채로).
+    """
+    return "".join(ANSI.sub("", line) for line in text.splitlines(keepends=True))
+
+
 ERROR = re.compile(
     r"StackOverflowError|OutOfMemoryError|\b[\w.]+Exception\b|\b(?:\w+\.)+\w+Error\b|"
     r"(?im:^\s*(?:--.*(?:Error|error)|error\s*:|error\b.*(?:not found|value)|"
@@ -227,7 +246,7 @@ def decode_response(response: dict, stage: str) -> tuple[object, str]:
     stdout, stderr = response.get("stdout", ""), response.get("stderr", "")
     if not isinstance(stdout, str) or not isinstance(stderr, str):
         raise QueryError("stdout/stderr must be strings")
-    logs = ANSI.sub("", stdout + "\n" + stderr)
+    logs = strip_ansi(stdout + "\n" + stderr)
     match = re.search(rf"__SLICER_{stage}__([A-Za-z0-9+/=]+)__END_SLICER__", logs)
     # Inspect diagnostics outside the payload, so a source identifier named Error
     # cannot be mistaken for a failed interpreter request.
@@ -415,7 +434,7 @@ class Slicer:
 
     def parse_report(self, logs: str) -> None:
         rows = {}
-        for line in ANSI.sub("", logs).splitlines():
+        for line in strip_ansi(logs).splitlines():
             parts = report_row(line)
             if parts is not None:
                 name = relative_file(parts[2], self.repo)
