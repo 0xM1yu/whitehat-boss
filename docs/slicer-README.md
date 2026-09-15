@@ -208,3 +208,17 @@ Joern 재파싱 후 결과 동등성은 별도 실측으로 확인한다.
 근거: [Joern data flow 단계](https://docs.joern.io/cpgql/data-flow-steps/),
 [4.0.605 경로 API 구현](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala),
 [4.0.605 backward slicer](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/slicing/DataFlowSlicing.scala).
+
+전용 Joern 서버에 대한 선택 실행 검증은 다음과 같다. C/C++ 입력은 분석만 하며 실행하지 않는다.
+출력 디렉터리는 매번 새 경로여야 한다. 코드·입력 해시, 실제 CLI 결과와 종료 코드, Case B 원문,
+새 CPG 반복 시 slices 동일성 및 flow 상한 검사를 보존한다.
+
+```bash
+python tools/probe/joern_slicer_live.py --endpoint http://127.0.0.1:16240 --out-dir /work/live-check-01
+```
+
+ATOM Joern 4.0.605에서 실행한 결과와 범위는
+[실서버 검증 보고서](experiments/harness/2026-09-14-joern-slicer-live-atom.md)에 기록한다.
+
+HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
+[frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.
