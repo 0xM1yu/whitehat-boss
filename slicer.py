@@ -33,7 +33,14 @@ from slicer_source import (
     relative_file,
 )
 
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# ANSI 이스케이프. **SGR(색)만 벗기면 모자란다** — `\[2J`(화면 지움)·`\[K`(줄 지움)·
+# OSC(`\]0;제목\`)가 남으면 오류 스캔이 그것을 보고, payload 마커 한가운데 끼면
+# 마커가 잘려 「응답이 비었다」로 읽힌다. CSI 는 종단 바이트가 `@`~`~` 전체다.
+ANSI = re.compile(
+    r"\x1b\[[0-9;?]*[\x40-\x7E]"  # CSI — SGR(`m`)은 이 집합의 한 종단 바이트다
+    r"|\x1b][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC — BEL 또는 ST 로 닫는다
+    r"|\x1b[@-Z\\-_]"  # 두 글자 이스케이프
+)
 ERROR = re.compile(
     r"StackOverflowError|OutOfMemoryError|\b[\w.]+Exception\b|\b(?:\w+\.)+\w+Error\b|"
     r"(?im:^\s*(?:--.*(?:Error|error)|error\s*:|error\b.*(?:not found|value)|"
@@ -72,6 +79,25 @@ def scannable(text: str) -> str:
         for line in text.splitlines()
         if report_row(line) is None
     )
+
+
+def _read_no_follow(path: Path) -> str:
+    """심링크를 **open 시점에** 거부하고 읽는다.
+
+    호출부가 바로 앞에서 `resolve().relative_to(repo)` 로 저장소 밖 타깃을 막지만, 그 검사와
+    `read_text()` 는 **서로 다른 두 번의 조회**다. 그 사이에 링크가 바뀌면 검사한 것과 읽는
+    것이 달라진다(TOCTOU). 이 도구는 **감사 대상이 쓴 저장소**를 읽으므로 그 창을 연 채로
+    둘 이유가 없다.
+
+    `O_NOFOLLOW` 가 없는 플랫폼에서는 그냥 읽는다 — 앞선 `resolve()` 검사가 정적 심링크는
+    이미 막고 있어, 없는 곳에서 기능을 끄는 것이 아니라 창만 남는다.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags)
+    # `newline=None` (universal newlines) is not a detail — it is what `read_text` did, and
+    # dropping it left CRLF in `sources`, which shifts every assembled line by a stray CR.
+    with os.fdopen(descriptor, "r", encoding="utf-8", newline=None) as handle:
+        return handle.read()
 
 
 COUNTERS = (
@@ -366,8 +392,11 @@ class Slicer:
             name = path.relative_to(self.repo).as_posix()
             try:
                 path.resolve().relative_to(self.repo)
+                # Reject the symlink at open() time, not before it: resolve() and a later
+                # open() are two lookups, and this tool reads repositories written by
+                # whoever we are auditing. O_NOFOLLOW closes that window.
                 # Decode strictly: replacement characters would silently change evidence.
-                text = path.read_text(encoding="utf-8")
+                text = _read_no_follow(path)
                 # splitlines also splits form feeds inside C source and shifts lineNumber.
                 self.sources[name] = text.removesuffix("\n").split("\n") if text else []
             except (OSError, UnicodeError, ValueError) as exc:
