@@ -137,5 +137,16 @@ python -m pytest -q tests/test_slicer.py
 줄 복원, 실패 기록을 검사한다. 실서버를 띄우지 않으며 실제 Joern 설치본의 Scala 질의 실행과
 실대상 커버리지·성능은 이 테스트의 검증 범위에 포함되지 않는다.
 
+전용 Joern 서버에 대한 선택 실행 검증은 다음과 같다. C/C++ 입력은 분석만 하며 실행하지 않는다.
+출력 디렉터리는 매번 새 경로여야 한다. 코드·입력 해시, 실제 CLI 결과와 종료 코드, Case B 원문,
+새 CPG 반복 시 slices 동일성 및 flow 상한 검사를 보존한다.
+
+```bash
+python tools/probe/joern_slicer_live.py --endpoint http://127.0.0.1:16240 --out-dir /work/live-check-01
+```
+
+ATOM Joern 4.0.605에서 실행한 결과와 범위는
+[실서버 검증 보고서](experiments/harness/2026-09-14-joern-slicer-live-atom.md)에 기록한다.
+
 HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
 [frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.
