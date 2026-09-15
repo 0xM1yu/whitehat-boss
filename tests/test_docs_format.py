@@ -523,6 +523,62 @@ def test_the_build_plan_does_not_borrow_the_d_series_namespace() -> None:
     assert borrowed == [], "\n".join(borrowed)
 
 
+# 모델 자리가 없는 단계. CONTEXT.md §2가 슬라이싱을 **무모델 결정론**으로 확정해
+# 0·1단계에서 모델 자리가 사라졌다(2026-09-13). 자리가 되살아나면 **이 집합을 고치는 것이**
+# 그 결정을 기록하는 자리다 — 검사를 지우는 것이 아니라.
+_STAGES_WITHOUT_A_MODEL = ("1",)
+
+# 메모리 표의 상주 행. 첫 셀이 `1 · 쿼리 생성` 처럼 「번호 · 이름」이고 둘째 셀이 상주 모델이다.
+_MEMORY_ROW = re.compile(r"^\|\s*(\d+)\s*·[^|]*\|([^|]*)\|")
+
+# 메모리 표를 여는 줄. 두 문서가 서로 다른 머리말을 쓴다.
+_MEMORY_HEADER = re.compile(r"^\|\s*단계\s*\|\s*상주")
+
+
+def test_no_memory_table_lists_a_resident_model_for_a_stage_that_has_no_model_slot() -> None:
+    """모델 자리를 지운 단계가 **메모리 표에 상주 모델을 들고** 있으면 안 된다.
+
+    **왜 이 검사가 있나 — 실제로 놓쳤다.** PR #196이 1단계 모델 자리(쿼리 생성기)를
+    걷어내며 ADR 0010 §2 로스터 표(95행)와 「리뷰에서 정할 것」 표(218행)를 **둘 다**
+    고쳤는데, 그 사이에 낀 §결과의 메모리 표(187행)만 빠졌다:
+
+        | 1 · 쿼리 생성 | `qwen3-8b` | 6.38 | 실측 |
+
+    취소선도 날짜도 없는 **현재형**이라, 같은 파일이 *"1단계에 모델 자리 없음"*과
+    *"1단계에 `qwen3-8b`가 6.38 GiB로 상주한다"*를 동시에 주장했다.
+
+    **놓친 이유가 정확히 특정된다.** 두 차례의 자기 적대적 리뷰가 `쿼리 생성기`로 grep했는데
+    이 행은 `쿼리 생성`(기 없음)이라 그 패턴을 피해갔다. CLAUDE.md §2.3이 사람에게 맡긴
+    「전수」가 **문자열 패턴에 의존해서** 실패한 자리다 — 사람이 고른 패턴이 아니라 **표의
+    구조**로 세면 피해갈 수 없다.
+
+    형제 검사(`..._fine_tuning_stage_whose_model_slot_it_removed`)와 같은 사고의 다른 얼굴이다.
+    그쪽은 §2 자리를 지우고 §6·§8을 안 고친 것, 이쪽은 §2를 고치고 §결과를 안 고친 것이다.
+    """
+    stale = []
+    for path in (BUILD_PLAN, DECISIONS / "0010-harness-structure-and-model-roster.md"):
+        text = _read(path)
+        # 취소선은 「죽었다」는 표시다 — 줄·열을 보존하며 공백으로 덮어 살아 있는 것만 남긴다.
+        masked = _STRUCK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+        inside = False
+        for lineno, line in enumerate(masked.splitlines(), 1):
+            if _MEMORY_HEADER.match(line):
+                inside = True
+                continue
+            if inside and not line.startswith("|"):
+                inside = False
+            if not inside:
+                continue
+            m = _MEMORY_ROW.match(line)
+            if m and m.group(1) in _STAGES_WITHOUT_A_MODEL and m.group(2).strip():
+                stale.append(
+                    f"{_rel(path)}:{lineno}: {m.group(1)}단계에 모델 자리가 없는데 "
+                    f"메모리 표가 상주 모델 `{m.group(2).strip()}` 를 현재형으로 든다 — "
+                    "취소선(~~...~~)으로 죽이고 사유를 적는다"
+                )
+    assert stale == [], "\n".join(stale)
+
+
 def test_the_build_plan_does_not_keep_a_fine_tuning_stage_whose_model_slot_it_removed() -> None:
     """§2 표에서 모델 자리를 지운 파인튜닝 단계가 문서 다른 곳에 살아 있으면 안 된다.
 
