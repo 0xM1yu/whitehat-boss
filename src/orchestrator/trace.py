@@ -315,6 +315,11 @@ class TraceWriter:
         self._events.append(event)
         if self._stream is not None:
             self._stream.write(event.model_dump_json() + "\n")
+            # 이벤트마다 flush한다 — 없으면 스트림이 블록 버퍼링(≈8KB)이라 run 도중
+            # 파일에 덩어리로 지연되고(`tail -f` 비실시간), 하드크래시 시 버퍼의
+            # 직전 이벤트가 통째로 증발한다. trace는 단계·호출 경계에서만 나므로
+            # 핫루프가 아니라 flush 비용이 문제되지 않는다 (이슈 #208).
+            self._stream.flush()
         return event
 
     def stage_span(self, stage: Stage, *, monotonic_ms: Callable[[], int]) -> "StageSpan":
