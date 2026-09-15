@@ -1,4 +1,16 @@
-"""Offline slicer contract tests. Joern and its HTTP transport are always mocked."""
+"""Offline slicer contract tests. Joern and its HTTP transport are always mocked.
+
+**이 파일이 통과한다고 CPGQL 이 맞는 것은 아니다.** mock 이 HTTP 경계에 있으므로
+`candidates_case_a/b`·`flow_count`·`truncated`·slice 의 라인 소속은 전부 **mock 이 박은 값을
+되읽는다.** 질의 문자열에 대해 여기서 확인되는 것은 substring 과 위치뿐이고,
+`(observed.size > max_flows)` 의 경계·`observed.take(max_flows)` 의 절단 의미·`groupMap`·
+`argumentIndex` 필터가 **실제 CPG 에서 의도한 것을 고르는지는 어떤 검사도 실행하지 않는다.**
+
+그 공백은 가정이 아니라 관측이다 — *"mock 에서 통과한 구현이 실서버 첫 질의에서
+실패했다"*(#203). 질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다.
+그러므로 `52 passed` 를 「질의가 맞다」로 읽지 않는다 — CLAUDE.md §5 의
+*"테스트가 통과했으니 맞겠지 → 테스트는 주석 문장이 옳은지 검증하지 않는다"* 가 이 자리다.
+"""
 
 import base64
 import copy
@@ -227,6 +239,60 @@ def test_success_true_does_not_hide_errors(message):
         slicer.decode_response(response("case_a", [], logs=message + "\n"), "case_a")
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["HttpException.cpp", "src/net/ParseError.cpp", "include/ValidationError.h"],
+)
+def test_a_source_file_named_after_a_throwable_does_not_fail_the_import(name):
+    r"""**성공한** 파싱 리포트에 예외 이름을 품은 **파일 이름**이 있어도 실패가 아니다.
+
+    `ERROR` 정규식의 `\b[\w.]+Exception\b` 는 `[\w.]+` 가 `.` 을 단어문자와 동급으로 먹어
+    `HttpException.cpp` 의 `HttpException` 에서 경계 조건을 그대로 만족한다. 그런데
+    `decode_response` 는 payload 마커 구간만 빼고 **나머지 stdout 전체**를 훑고, 그 나머지에
+    `build_cpg` 가 `parse_report` 에 넘기는 **프론트엔드 파싱 리포트 표**가 들어 있다.
+
+    그래서 CPG가 멀쩡히 만들어져도 파일 이름 하나로 import가 **전역 실패**했다. C/C++
+    저장소에서 클래스명=파일명 컨벤션은 흔하다 — HTTP·파서·네트워킹 라이브러리는 거의
+    반드시 하나쯤 있다. §0이 말하는 「결론이 틀리고 그건 안 돌아온다」 부류다.
+    """
+    logs = report([(name, "yes", "yes")])
+    assert slicer.decode_response(response("import", {"ok": True}, logs=logs), "import")[0] == {
+        "ok": True
+    }
+
+
+def test_a_per_file_parse_failure_names_a_throwable_without_failing_the_batch():
+    """개별 파일 실패 메시지의 **인용된 경로**도 같은 오탐 경로다.
+
+    `Failed to parse '<path>'` 는 그 파일 하나가 안 된 것이고 `parse_report` 가
+    `parse_failures_observed` 로 세어 `errors` 에 남긴다 — **배치를 죽이는 신호가 아니다.**
+    그런데 경로에 `HttpException.cpp` 가 들어가면 `ERROR` 가 물어 전체가 죽는다.
+    """
+    logs = "Failed to parse 'src/net/HttpException.cpp'" + "\n"
+    assert slicer.decode_response(response("import", {"ok": True}, logs=logs), "import")[0] == {
+        "ok": True
+    }
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "java.lang.StackOverflowError",
+        "com.example.BarException: boom",
+        "Exception in thread \"main\" java.lang.RuntimeException: x",
+        "| 1 | ok.c | 10 | yes | yes | 1ms |" + "\n" + "java.lang.OutOfMemoryError: heap",
+    ],
+)
+def test_real_throwables_still_fail_even_next_to_a_report(message):
+    """위 둘을 고치면서 **진짜 오류를 놓치면** 훨씬 나쁘다 — 그쪽이 §0이 경계하는 방향이다.
+
+    마지막 경우가 그 자리를 지킨다: 리포트 행을 빼더라도 **같은 로그의 다른 줄**에 있는
+    진짜 throwable 은 그대로 잡혀야 한다.
+    """
+    with pytest.raises(slicer.QueryError):
+        slicer.decode_response(response("import", {"ok": True}, logs=message + "\n"), "import")
+
+
 def test_payload_delimiters_and_error_words_are_data():
     payload = [{"symbol": 'ErrorException|,:"\\\n한글', "line": 1}]
     assert slicer.decode_response(response("case_a", payload), "case_a")[0] == payload
@@ -388,6 +454,12 @@ def test_stack_overflow_during_import_is_recorded_as_partial(monkeypatch, repo, 
     assert code == 2 and result["status"] == "partial"
     assert result["slices"] == [] and result["counters"]["queries_aborted"] == 1
     assert transport.stages == ["import"]
+    # `partial` + `[]` 는 두 가지를 담는다 — CPG는 섰는데 슬라이스가 0건인 경우와, CPG 자체가
+    # 없는 이 경우다. `status` 문자열만으로는 안 갈린다. **가르는 것이 이 필드**이고,
+    # `docs/slicer-README.md` 의 계약 표가 그렇게 적으므로 여기서 고정한다 — 안 그러면
+    # 문서가 검증 안 된 문장을 든다(§2.1).
+    assert result["joern_engine_config"] is None
+    assert result["counters"]["candidates_case_a"] is None
 
 
 def test_missing_parser_report_is_unknown_not_success(monkeypatch, repo, tmp_path):
@@ -437,6 +509,10 @@ def test_missing_candidate_location_consumes_id_without_reuse(monkeypatch, repo,
     assert result["status"] == "partial"
     assert result["counters"]["candidates_case_a"] == 2
     assert result["counters"]["candidates_unmapped"] == 1
+    # 같은 후보가 두 카운터를 올린다 — 이중 계상이 아니라 **단위가 다른 두 지표**다
+    # (위치 건수 vs 후보 건수). 합산·비교하는 코드가 없다는 것이 그 근거이고,
+    # 관계를 여기서 고정해 둬야 한쪽만 움직이는 변경이 조용히 지나가지 않는다.
+    assert result["counters"]["locations_unmapped"] == 1
     assert [item["id"] for item in result["slices"]] == ["slice_0002"]
 
 

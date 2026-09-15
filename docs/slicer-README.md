@@ -63,7 +63,7 @@ Joern 엔진 설정은 `--max-call-depth`, `--max-args-to-allow`,
 | `threshold`, `settings` | 포함률 임계값, flow·질의 상한과 엔진 override |
 | `status` | `ok`: 질의 완료. `partial`: CPG 생성 이후 실패·누락·상한 초과 또는 StackOverflowError 관측. `failed`: 그 밖의 CPG 준비 실패 |
 | `error` | `partial`·`failed`에서만 존재하는 최상위 사유 문자열 |
-| `slices` | `failed`이면 `[]`. `ok`와 `[]`의 조합은 실제 후보/슬라이스 0건이다 |
+| `slices` | `failed`이면 `[]`. `ok`와 `[]`의 조합은 실제 후보/슬라이스 0건이다. ⚠ **`partial`과 `[]`의 조합은 두 가지를 담는다** — (가) CPG는 만들어졌고 슬라이스가 0건, (나) CPG 준비 중 StackOverflowError 로 **CPG 자체가 없다**. `status` 문자열만으로는 안 갈린다. **가르는 것은 `joern_engine_config`다** — (나)는 `null`이다(후보 카운터도 `null`). 비교표에 넣을지 정하는 쪽은 `status != "failed"` 가 아니라 그것을 본다 |
 | `measurement_notes` | 미측정 값별 사유. 측정하지 않은 값을 0으로 대체하지 않는다 |
 | `diagnostics` | 파싱 보고서 관측, 실패한 질의 단계·출력·중단 정책 |
 | `known_limitations` | 아래 한계를 포함한 기계 판독용 문자열 배열 |

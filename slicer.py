@@ -33,12 +33,73 @@ from slicer_source import (
     relative_file,
 )
 
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# ANSI 이스케이프. **SGR(색)만 벗기면 모자란다** — `\[2J`(화면 지움)·`\[K`(줄 지움)·
+# OSC(`\]0;제목\`)가 남으면 오류 스캔이 그것을 보고, payload 마커 한가운데 끼면
+# 마커가 잘려 「응답이 비었다」로 읽힌다. CSI 는 종단 바이트가 `@`~`~` 전체다.
+ANSI = re.compile(
+    r"\x1b\[[0-9;?]*[\x40-\x7E]"  # CSI — SGR(`m`)은 이 집합의 한 종단 바이트다
+    r"|\x1b][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC — BEL 또는 ST 로 닫는다
+    r"|\x1b[@-Z\\-_]"  # 두 글자 이스케이프
+)
 ERROR = re.compile(
     r"StackOverflowError|OutOfMemoryError|\b[\w.]+Exception\b|\b(?:\w+\.)+\w+Error\b|"
     r"(?im:^\s*(?:--.*(?:Error|error)|error\s*:|error\b.*(?:not found|value)|"
     r"\d+ errors? found|.*\bCompilation (?:failed|error)|.*\[ERROR\]))"
 )
+# Joern frontend 파싱 리포트의 한 행 —
+# `| 1 | src/net/HttpException.cpp | 42 | yes | yes | 12ms |`. 리포트를 **세는 쪽**과
+# 오류 스캔에서 **빼는 쪽**이 같은 인식기를 써야 한다. 갈리면 한쪽이 리포트로 세는 줄을
+# 다른 쪽이 오류 로그로 읽는다.
+def report_row(line: str) -> list[str] | None:
+    parts = [part.strip() for part in line.split("|")]
+    if len(parts) == 8 and parts[1].isdigit() and parts[4] in ("yes", "no"):
+        return parts if parts[5] in ("yes", "no") else None
+    return None
+
+
+# 개별 파일 실패가 경로를 인용한다. 그 파일 하나의 실패이지 배치의 실패가 아니다 —
+# `parse_report` 가 세어 `errors` 에 남긴다.
+QUOTED_PATH = re.compile(r"(Failed to parse|Failed to generate a CPG for:)\s*'[^']*'")
+
+
+def scannable(text: str) -> str:
+    r"""오류 스캔에서 **파일 이름이 사는 자리**를 뺀다.
+
+    `ERROR` 의 `\b[\w.]+Exception\b` 는 `[\w.]+` 가 `.` 을 단어문자와 동급으로 먹어
+    `HttpException.cpp` 의 `HttpException` 에서 경계 조건을 만족한다. 그래서 CPG가 멀쩡히
+    만들어져도 **소스 파일 이름 하나로 import 가 전역 실패했다** — C/C++ 저장소에서
+    클래스명=파일명은 흔한 컨벤션이라 HTTP·파서 라이브러리는 거의 반드시 하나쯤 있다.
+
+    **빼는 것은 이름이 사는 두 자리뿐이다** — 리포트 표의 행과 실패 메시지의 인용 경로.
+    나머지 줄은 그대로 훑는다. 정규식을 좁히는 쪽(예: throwable 뒤에 `:` 를 요구)이 더
+    작은 수정이지만, 그쪽은 **진짜 오류를 놓치는 방향**으로 틀린다 — §0이 경계하는 쪽이다.
+    """
+    return "\n".join(
+        QUOTED_PATH.sub(r"\1 '<path>'", line)
+        for line in text.splitlines()
+        if report_row(line) is None
+    )
+
+
+def _read_no_follow(path: Path) -> str:
+    """심링크를 **open 시점에** 거부하고 읽는다.
+
+    호출부가 바로 앞에서 `resolve().relative_to(repo)` 로 저장소 밖 타깃을 막지만, 그 검사와
+    `read_text()` 는 **서로 다른 두 번의 조회**다. 그 사이에 링크가 바뀌면 검사한 것과 읽는
+    것이 달라진다(TOCTOU). 이 도구는 **감사 대상이 쓴 저장소**를 읽으므로 그 창을 연 채로
+    둘 이유가 없다.
+
+    `O_NOFOLLOW` 가 없는 플랫폼에서는 그냥 읽는다 — 앞선 `resolve()` 검사가 정적 심링크는
+    이미 막고 있어, 없는 곳에서 기능을 끄는 것이 아니라 창만 남는다.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags)
+    # `newline=None` (universal newlines) is not a detail — it is what `read_text` did, and
+    # dropping it left CRLF in `sources`, which shifts every assembled line by a stray CR.
+    with os.fdopen(descriptor, "r", encoding="utf-8", newline=None) as handle:
+        return handle.read()
+
+
 COUNTERS = (
     "files_seen",
     "files_parsed",
@@ -161,13 +222,14 @@ def decode_response(response: dict, stage: str) -> tuple[object, str]:
     # Inspect diagnostics outside the payload, so a source identifier named Error
     # cannot be mistaken for a failed interpreter request.
     diagnostics = logs if match is None else logs[: match.start()] + logs[match.end() :]
-    failure = ERROR.search(diagnostics)
+    scanned = scannable(diagnostics)
+    failure = ERROR.search(scanned)
     success = response.get("success")
     if not (success is True or success == "true") or failure:
         raise QueryError(
             diagnostics.strip() or "Joern returned success=false",
             logs,
-            poisoned="StackOverflowError" in diagnostics or "OutOfMemoryError" in diagnostics,
+            poisoned="StackOverflowError" in scanned or "OutOfMemoryError" in scanned,
         )
     if match is None:
         raise QueryError(
@@ -330,8 +392,11 @@ class Slicer:
             name = path.relative_to(self.repo).as_posix()
             try:
                 path.resolve().relative_to(self.repo)
+                # Reject the symlink at open() time, not before it: resolve() and a later
+                # open() are two lookups, and this tool reads repositories written by
+                # whoever we are auditing. O_NOFOLLOW closes that window.
                 # Decode strictly: replacement characters would silently change evidence.
-                text = path.read_text(encoding="utf-8")
+                text = _read_no_follow(path)
                 # splitlines also splits form feeds inside C source and shifts lineNumber.
                 self.sources[name] = text.removesuffix("\n").split("\n") if text else []
             except (OSError, UnicodeError, ValueError) as exc:
@@ -341,10 +406,10 @@ class Slicer:
     def parse_report(self, logs: str) -> None:
         rows = {}
         for line in ANSI.sub("", logs).splitlines():
-            parts = [part.strip() for part in line.split("|")]
-            if len(parts) == 8 and parts[1].isdigit() and parts[4] in ("yes", "no"):
+            parts = report_row(line)
+            if parts is not None:
                 name = relative_file(parts[2], self.repo)
-                if parts[5] in ("yes", "no") and name is not None:
+                if name is not None:
                     rows[name] = (parts[4] == "yes", parts[5] == "yes")
         observed_failures = sorted(set(re.findall(r"Failed to parse '([^']+)'", logs)))
         cpg_failures = sorted(set(re.findall(r"Failed to generate a CPG for: '([^']+)'", logs)))
