@@ -265,6 +265,10 @@ def test_export_manifest_hashes_and_numbered_lines(monkeypatch, repo, tmp_path):
         ("--out", "candidate-manifest.json"),
         ("--progress", "SHA256SUMS"),
         ("--progress", "numbered/A0001_entry_main_5_k.txt"),
+        # `export / ""` is the export directory itself -- the `path == reserved`
+        # half of the guard, which every case above leaves untouched.
+        ("--checkpoint", ""),
+        ("--progress", ""),
     ],
 )
 def test_run_state_under_the_export_directory_is_refused(tmp_path, option, name):
@@ -285,36 +289,83 @@ def test_run_state_under_the_export_directory_is_refused(tmp_path, option, name)
 
 
 def test_the_reserved_namespace_is_the_whole_export_directory(monkeypatch, repo, tmp_path):
-    """Whatever `export_sources()` writes must be inside what the guard reserves.
+    """Whatever `export_sources()` writes must land inside what the guard reserves.
 
-    A hand-kept list of reserved basenames drifts the moment the exporter gains a file.
-    This pins the guard to the exporter's actual output instead.
+    **Search from wider than the thing under test.** The first version of this globbed
+    `export/` itself, so `export in path.parents` held for everything it could find --
+    a tautology that passed even with an exporter writing to `export/../`. Globbing the
+    parent is what makes the assertion able to fail.
     """
     _, result, _ = run_cli(
         monkeypatch, repo, tmp_path, payloads(case_a=[candidate()], flow_count=1)
     )
     job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("unused", None))
     job.load_sources()
-    export = tmp_path / "export"
+    root = tmp_path / "namespace"
+    export = root / "export"
+    before = {p.resolve() for p in root.rglob("*")}
     export_sources(export, result, job.sources)
-    written = [p for p in export.rglob("*") if p.is_file()]
+    written = [p for p in root.rglob("*") if p.is_file() and p.resolve() not in before]
     assert written, "the exporter wrote nothing; this test proves nothing"
-    for path in written:
-        assert export.resolve() in path.resolve().parents
+    escaped = [str(p) for p in written if export.resolve() not in p.resolve().parents]
+    assert escaped == [], f"export_sources wrote outside --export-dir: {escaped}"
 
 
-def test_run_state_beside_the_export_directory_is_still_allowed(tmp_path):
-    """The guard reserves the export subtree, not every neighbouring path."""
+def test_a_valid_export_dir_run_reaches_the_export(monkeypatch, repo, tmp_path):
+    """The guard must let a correct layout through -- and the export must actually happen.
+
+    Rejecting everything also satisfies "no checkpoint was clobbered", so the reject-path
+    test cannot notice an over-broad guard. Only running `main()` to completion can.
+    """
     export = tmp_path / "export"
+    code, _, _ = run_cli(
+        monkeypatch,
+        repo,
+        tmp_path,
+        payloads(case_a=[candidate()], flow_count=1),
+        "--checkpoint",
+        str(tmp_path / "state.db"),
+        "--progress",
+        str(tmp_path / "progress.jsonl"),
+        "--export-dir",
+        str(export),
+    )
+    assert code == 0
+    assert (export / "MANIFEST.json").is_file(), "the guard rejected a legitimate layout"
+
+
+def test_an_export_dir_that_is_a_file_is_refused_before_the_run(tmp_path):
+    """Fail on the typo before paying for Joern, not after the analysis succeeded.
+
+    `atomic_bytes()` mkdirs the parent, so a regular file at `--export-dir` only blows up
+    at the very end. `main()` then returns 1 for a run whose `--out` holds a correct
+    `"ok"` result -- the exit-code contract says 1 means failed.
+    """
+    occupied = tmp_path / "export"
+    occupied.write_text("not a directory\n", encoding="utf-8")
     argv = [
         "--repo", str(tmp_path),
         "--out", str(tmp_path / "result.json"),
-        "--export-dir", str(export),
-        "--checkpoint", str(tmp_path / "state.db"),
-        "--progress", str(tmp_path / "progress.jsonl"),
+        "--export-dir", str(occupied),
     ]
-    args = slicer.parser().parse_args(argv)
-    assert args.checkpoint.parent == tmp_path
+    with pytest.raises(SystemExit) as error:
+        slicer.main(argv)
+    assert error.value.code == 2
+
+
+def test_an_undecodable_source_blocks_the_checkpoint(monkeypatch, repo, tmp_path):
+    """A file counted as read but never decoded must not let a run_contract bind.
+
+    The hash was taken before the decode, so `source_hashes` balanced against
+    `files_seen` while `sources` was short an entry -- the exact state
+    `Cannot checkpoint incomplete source reads` exists to refuse.
+    """
+    (repo / "bad.cpp").write_bytes(b"\xff\xfe\xfd")
+    _, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(), "--checkpoint", str(tmp_path / "state.db")
+    )
+    assert result["counters"]["files_read_failed"] == 1
+    assert "incomplete source reads" in (result.get("error") or ""), result.get("error")
 
 
 def test_selector_type_error_stops_before_interpolation(monkeypatch, repo, tmp_path):
@@ -335,6 +386,24 @@ def test_clustering_never_merges_case_a_into_case_b():
     assert [item["case"] for item in result] == ["A", "B"]
     assert all(not item["absorbed"] for item in result)
     assert result[0]["flow_count"] == 1 and result[1]["flow_count"] is None
+
+
+def test_two_version_like_fields_refuse_to_name_a_version(monkeypatch):
+    """Picking either one would stamp a guess into `run_contract` and poison every resume.
+
+    A launcher that prints its own JVM build next to Joern's gives two `x.y.z` lines. The
+    set is ambiguous, so the identity is `None` and the reason is kept, not a coin flip.
+    """
+    banner = "Version: 4.0.605\nopenjdk 21.0.12\njoern 4.0.999\n"
+
+    def version(command, **kwargs):
+        return slicer.subprocess.CompletedProcess(command, 0, banner, "")
+
+    monkeypatch.setattr(slicer.subprocess, "run", version)
+    found, note = READ_VERSION(Path("joern"), None)
+    assert found is None, f"two distinct versions must not resolve to {found!r}"
+    assert note.startswith("No unambiguous Joern version")
+    assert "4.0.605" in note and "4.0.999" in note, "the raw output must survive in the note"
 
 
 def test_version_takes_the_semantic_field_and_keeps_the_raw_output(monkeypatch, repo, tmp_path):

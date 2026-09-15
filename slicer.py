@@ -528,13 +528,16 @@ class Slicer(SlicingStages):
                 # Reject the symlink at open() time, not before it: resolve() and a later
                 # open() are two lookups, and this tool reads repositories written by
                 # whoever we are auditing. O_NOFOLLOW closes that window.
-                # Decode strictly: replacement characters would silently change evidence.
                 raw = _read_no_follow(path)
-                # Hash the bytes as they sit on disk: folding newlines first would let a
-                # CRLF copy and an LF copy share a signature, and resume would accept the
-                # wrong file. The folding `read_text()` did happens on the next line.
-                self.source_hashes[name] = hashlib.sha256(raw).hexdigest()
+                # Decode strictly -- no `errors=`, so invalid bytes raise instead of
+                # turning into replacement characters that silently change evidence.
                 text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+                # Hash the bytes as they sit on disk, and only once the decode has
+                # succeeded. Folding newlines first would let a CRLF copy and an LF
+                # copy share a signature; hashing first would leave a hash with no
+                # `sources` entry, and `prepare_checkpoint`'s count check -- the one
+                # that refuses an incomplete read -- would balance on a short read.
+                self.source_hashes[name] = hashlib.sha256(raw).hexdigest()
                 # splitlines also splits form feeds inside C source and shifts lineNumber.
                 self.sources[name] = text.removesuffix("\n").split("\n") if text else []
             except (OSError, UnicodeError, ValueError) as exc:
@@ -765,6 +768,11 @@ def main(argv: list[str] | None = None) -> int:
         reserved = args.export_dir.resolve()
         if any(path == reserved or reserved in path.parents for path in outputs):
             cli.error("Output, checkpoint and progress paths must stay out of --export-dir")
+        if args.export_dir.exists() and not args.export_dir.is_dir():
+            # export_sources() only mkdirs on its first write, so a regular file here
+            # surfaces after the run: --out already holds a correct result and main()
+            # still returns 1. Fail on the typo before paying for Joern.
+            cli.error("--export-dir exists and is not a directory")
     client = JoernClient(args.joern_endpoint, args.query_timeout_seconds)
     limits = {
         k: v

@@ -23,7 +23,7 @@
 | 실제 서빙 모델 | **없음.** 이 실험에 모델이 없다 |
 | `repo_commit` | `98e8b9c` (`fix(slicer): 문맥 질의가 JVM 문자열 상수 상한을 넘지 않게 쪼갠다`), clean |
 | 배포 코드 SHA-256 | `slicer.py` `0373767aece9c27935084bed4437ef73dfbe2d8541b81fcc273d7fce7f0589f4` · `slicer_queries.py` `e977dcfd2918e2c88c437cf7ed3414b11e79f4cc23600526c697a1072b53a966` · `slicer_backward.py` `f657961c916cf32ad088c51f8ff3c5cc3213d664588eb41f95d260818ea1165a` · `slicer_pipeline.py` `c49478f9f5e268daf6a72a36e6b4923c5a0549d7e05c763bd5e60e0754b27dce` · `slicer_checkpoint.py` `afa578cab980e928d57ed10c2c9d86c79df4657d4eaf867d2fe7126cb8eada04` · `slicer_source.py` `1be67a06e7bdfff64b3aaaf547e6b855757cf1d97221a7083fa67752bdcd051a` · `slicer_candidates.py` `4901ede40cb9d2ef96e9e90eea2a84a6370fd942bac621e89ad5a9442755a1c8` · `slicer_export.py` `8335ccd5e0c828b36ddbd9d0c767dcfa1901e2c6fc168e9e828fc70ee53ce330` |
-| 코드 전송 검증 | 로컬 워킹트리와 ATOM 사본을 **파일 12개 전부 SHA-256 대조**해 일치를 확인한 뒤 실행했다 |
+| 코드 전송 검증 | 로컬 워킹트리와 ATOM 사본을 SHA-256으로 대조해 일치를 확인한 뒤 실행했다. **셀 수 있는 것은 위 행의 배포 코드 8개**(`slicer*.py` — `code_hashes`가 세는 그 집합이다)이고, 해시를 실은 것도 그 8개다. ⚠ 이전 판은 「12개」라고 적었는데 **그 수의 근거가 이 문서에 없어 지웠다**(§0) — 도구·fixture까지 대조했더라도 이 문서가 그것을 적지 않았다 |
 | `run_id` | **없다.** 하네스 run이 아니라 독립 슬라이서 실행이라 `RunRecord`가 없다 — 비교표 밖이다 |
 | run 산출물 경로·보존 여부 | ATOM `/srv/tenants/ext01/slicer-live-20260913-a0e5514/v2-20260915-rerun2/` — **보존**. run별로 `result.json`·`progress.jsonl`·`trace/responses.jsonl`·`server.log`·`client.log`·`exit-code.txt`·`resources.jsonl`·`export/` |
 | `tool_runner` | 해당 없음 (하네스 프로필을 쓰지 않는다) |
@@ -73,7 +73,7 @@
 
 ### 조건
 
-[공개 fixture](../../../tests/fixtures/slicer_v2/main.c) 2파일 44줄. run 셋을 순서대로 돌렸다.
+[공개 fixture](../../../tests/fixtures/slicer_v2/main.c) 2파일 48줄(`main.c` 44 · `helper.c` 4). run 셋을 순서대로 돌렸다.
 
 1. `fixture-full` — 연속 실행.
 2. `fixture-interrupt` — [중단 주입 래퍼](../../../tools/interrupt_after_flow_saved.py)로 **첫
