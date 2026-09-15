@@ -205,6 +205,45 @@ def test_the_report_glob_actually_finds_reports() -> None:
     )
 
 
+# 소수 10자리 이상 — 파이썬이 float를 그대로 문자열로 낼 때만 나오는 자릿수다(배정밀도의
+# 유효숫자가 그쯤에서 끝난다). **임계가 10인 것은 의도다.** 6~9자리는 도구가 그렇게 찍은
+# 값을 그대로 옮긴 것이라 §0상 정당하다 — `2026-08-25-serving-nvfp4-atom.md`의 `45.698446`
+# 이 그렇다. 그 둘을 한 규칙으로 묶으면 **실측 전사를 노이즈로 몰아** 보고서를 깎게 된다.
+_RAW_FLOAT = re.compile(r"\d+\.\d{10,}")
+
+
+def test_the_raw_float_regex_actually_matches_a_raw_float() -> None:
+    """정규식이 안 물면 아래 검사가 **빈 채로 초록이 된다** — 이 파일이 이미 겪은 실패다."""
+    assert _RAW_FLOAT.search("| `362` / `6241.860184431076 s` |")
+    assert not _RAW_FLOAT.search("Joern 4.0.605")  # 버전은 3자리다
+    assert not _RAW_FLOAT.search("`120.0036`초")  # 제한 도달 값은 4자리라 통과한다
+    assert not _RAW_FLOAT.search("45.698446")  # 도구가 찍은 6자리 전사는 결함이 아니다
+
+
+def test_reports_do_not_carry_raw_float_repr() -> None:
+    """보고서에 **측정하지 않은 정밀도**가 실리지 않는다.
+
+    초 단위 경과를 17자리로 실으면 읽는 사람에게 펨토초를 쟀다고 말하는 셈이다. §0이
+    *"수치를 쓸 때는 어디서 나왔는지를 같은 문장에 적는다"* 라 한 자리에서, 출처가 아니라
+    **자릿수**가 거짓말을 한다.
+
+    **왜 사람이 아니라 기계가 세는가.** `8cf5cfb`가 이 정리를 하면서 커밋 메시지에
+    *"그 패턴이 나오는 자리 전부에서 없앤다"* 라고 적었는데 **같은 표의 바로 윗 네 행(값
+    여섯 개)이 그대로 남아 있었다.** 눈으로 훑어 「전부」를 주장한 것이 틀린 자리다(§2.2).
+
+    자릿수만 본다 — 반올림이 맞는지, 값이 옳은지는 이 검사의 범위가 아니다.
+    """
+    noisy = [
+        f"{_rel(path)}:{lineno}: {hit} — 소수 10자리 이상은 float repr이지 측정 정밀도가 아니다"
+        for path in _reports()
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        for hit in _RAW_FLOAT.findall(line)
+    ]
+    assert noisy == [], (
+        f"측정하지 않은 정밀도 {len(noisy)}건:\n" + "\n".join(noisy)
+    )
+
+
 def _rel(path: Path) -> str:
     return path.relative_to(REPO_ROOT).as_posix()
 
