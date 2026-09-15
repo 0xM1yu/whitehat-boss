@@ -34,6 +34,8 @@ PATH 앞에 지정했다. 기존 체크아웃이나 기존 서버를 교체하�
 Joern 4.0.605의 실행기는 `--version`을 경고하면서 시작 배너를 내므로 버전 원문에는 경고도
 그대로 남아 있다. 버전 명령에 stdin을 닫아, 대화형 REPL이 입력을 기다리는 경우를 막았다.
 
+> **경과 시간 표기.** 이 보고서의 초 단위 값은 전부 **소수 2자리로 반올림**해 싣는다(계산값이다 — 원값은 §4가 적는 산출 JSON·`progress.jsonl`에 있다). 예외는 `120.0036`초·`120.001`초 둘로, **120초 제한을 넘은 것 자체가 그 값의 내용**이라 2자리로 깎으면 정확히 `120.00`이 되어 사실이 사라진다. ⚠ **시간은 성능 비교가 아니다** — 아래 §5(스모크는 §5 「해석 범위」)가 그 유보를 든다.
+
 ## 1. 실제 실행에서 드러난 결함
 
 상태와 로그는 [이슈 #202](https://github.com/0xM1yu/whitehat-boss/issues/202)에 추적한다.
@@ -48,7 +50,7 @@ Joern 4.0.605의 실행기는 `--version`을 경고하면서 시작 배너를 �
 
 마지막 행의 제한 도달 후 전용 서버 프로세스 그룹을 종료하고 새 서버를 띄웠다. HTTP 타임아웃은
 서버 계산을 취소하지 못하기 때문이다. 묶음 변경 후 첫 flow 질의는
-`zlib-batched-trace/progress.jsonl`에서 3.6685초였다. **두 값은 첫 질의의 관측이며 전체 처리량
+`zlib-batched-trace/progress.jsonl`에서 3.67초였다. **두 값은 첫 질의의 관측이며 전체 처리량
 개선율이 아니다.**
 
 Joern 4.0.605의 [reachableByFlows 구현](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala)은
@@ -64,9 +66,9 @@ Joern 4.0.605의 [reachableByFlows 구현](https://github.com/joernio/joern/blob
 
 | 원문 | status | Case A / B | 흡수 전 / 후 | 절단 후보 | 중단 질의 | 누락 위치 | total_seconds |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `full-1.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 34.7256 |
-| `full-2.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 53.5025 |
-| `cap-1.json` | partial | 9 / 5 | 14 / 9 | 12 | 0 | 0 | 71.5058 |
+| `full-1.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 34.73 |
+| `full-2.json` | ok | 9 / 5 | 14 / 9 | 0 | 0 | 0 | 53.50 |
+| `cap-1.json` | partial | 9 / 5 | 14 / 9 | 12 | 0 | 0 | 71.51 |
 
 `checks.json`이 네 검사 묶음의 통과를 기록한다. `case-b.json`에서 해제 후보 두 개는 모두
 `double_release`에 속한다. wrapper가 실제로 해제하는 두 번째 인자와 같은 선언의 반복 해제만
@@ -121,10 +123,10 @@ zlib 입력은 기존 ATOM 저장소의 `e3dc0a85b7032e98380dec011bc8f2c2ee0d8fc
 | `flows_truncated` | `293` |
 | `queries_aborted` | `0` |
 | `locations_unmapped` / `candidates_unmapped` | `3` / `0` |
-| flow query 수 / elapsed 합 | `362` / `6241.860184431076 s` (progress 계산값) |
-| context query 수 / elapsed 합 | `878` / `5589.071395635605 s` (progress 계산값) |
-| flow 평균 / 최대 / 30초 초과 | `17.242707691798554 s` / `45.04639387130737 s` / `69건` (progress 계산값) |
-| context 평균 / 최대 | `6.365684960860598 s` / `23.13365364074707 s` (progress 계산값) |
+| flow query 수 / elapsed 합 | `362` / `6241.86 s` (progress 계산값) |
+| context query 수 / elapsed 합 | `878` / `5589.07 s` (progress 계산값) |
+| flow 평균 / 최대 / 30초 초과 | `17.24 s` / `45.05 s` / `69건` (progress 계산값) |
+| context 평균 / 최대 | `6.37 s` / `23.13 s` (progress 계산값) |
 | `cpg_seconds` / `total_seconds` | `8.01` / `11868.30` |
 | `engine_flows_truncated` | `null` (Joern 공개 응답에서 미측정) |
 | `files_parsed`, `files_parse_failed`, `files_cpg_failed` | `null` (frontend Report가 HTTP 응답에 없음) |
