@@ -45,20 +45,30 @@ ANSI = re.compile(
     r"|\x1b[@-Z\\-_]"  # 두 글자 이스케이프
 )
 def strip_ansi(text: str) -> str:
-    """ANSI 이스케이프를 **줄 단위로** 벗긴다.
+    """ANSI 이스케이프를 **줄 단위로** 벗긴다 — 한 시퀀스가 줄을 넘지 못하게.
 
-    한 시퀀스가 줄을 넘지 못하게 하는 것이 핵심이다. 닫는 BEL/ST 가 없는 OSC 오프너와
-    스트림 뒤쪽의 무관한 BEL 이 짝지으면 사이의 여러 줄이 통째로 사라지고, 거기 있던 진짜
-    스택트레이스가 `ERROR` 스캔에서 안 보인다 — **조용한 미탐**이라 오탐보다 나쁘다.
+    닫는 BEL/ST 가 없는 OSC 오프너와 스트림 뒤쪽의 무관한 BEL 이 짝지으면 사이의 여러 줄이
+    통째로 사라지고, 거기 있던 진짜 스택트레이스가 `ERROR` 스캔에서 안 보인다.
+    `splitlines()` 로 먼저 쪼개면 그 일이 구조적으로 안 난다 — 「줄」의 정의가
+    `scannable()`·`parse_report()` 가 쓰는 그 함수와 같아진다. `keepends=True` 라 이어
+    붙이면 원문이 복원된다(이스케이프만 빠진 채로).
 
-    ⚠ **정규식의 부정 문자 클래스로 막으려다 두 번 틀렸다.** 처음엔 아예 안 막았고, 다음엔
-    `\\n` 하나만 뺐는데 `\\r`·`\\v`·`\\f`·`\\x1c`~`\\x1e`·`\\x85`·
-    `\\u2028`·`\\u2029` 로 그대로 재현됐다. **제어문자를 열거하는 방식 자체가 틀렸다** —
-    빠뜨린 것이 있는지 사람이 계속 확인해야 한다.
+    ⚠ **대가가 있고, 그것을 지불하기로 한 것이다.** 줄을 넘는 삼킴을 막으면 **미종결 OSC의
+    꼬리가 텍스트로 남는다** — 페이로드에 줄 경계문자(`\\r`·`\\v` 등)가 끼면 오프너가
+    속한 줄 안에 종단자가 없어 OSC 매치가 실패하고, `\\x1b]` 두 바이트만 2글자 이스케이프
+    분기에 먹힌 채 나머지가 살아남는다. 결과는 둘 중 하나다.
 
-    그래서 열거하지 않는다. `splitlines(keepends=True)` 로 쪼개면 **「줄」의 정의가
-    `scannable()`·`parse_report()` 가 쓰는 그 함수와 같아지고**, 구분자를 그대로 달고
-    있으므로 이어 붙이면 원문이 복원된다(이스케이프만 빠진 채로).
+    - 그 꼬리에 `Exception` 이 들었으면 **오탐** — 성공한 응답이 실패로 raise 된다.
+    - 꼬리가 리포트 행 앞에 붙으면 `parse_report` 가 그 행을 못 세고 `files_parsed` 등이
+      **`null` + 사유**가 된다(가짜 `0` 이 아니고 `errors` 에도 남는다).
+
+    **둘 다 시끄러운 실패다.** 반대편(줄을 넘게 두는 것)은 진짜 크래시가 흔적 없이 사라지는
+    **조용한 미탐**이고, §0 이 *"측정이 틀리면 결론이 틀리고 그건 안 돌아온다"* 로 막는 쪽이
+    그것이다. 그래서 이쪽을 고른다.
+
+    ⚠ **OSC 정규식의 제외 집합을 `splitlines()` 집합에 맞추는 것은 여기서 no-op 이다** —
+    쪼갠 뒤엔 경계문자가 줄 종단으로만 오므로 어느 쪽이든 매치가 실패한다(실측 확인).
+    그러니 「제외 집합을 넓혀서 고쳤다」고 적지 않는다.
     """
     return "".join(ANSI.sub("", line) for line in text.splitlines(keepends=True))
 
@@ -166,6 +176,8 @@ LIMITATIONS = [
     "Joern engine-internal limits are not measured by flows_truncated",
     "flow cap stops further method batches, but does not bound engine work within one batch",
     "structure recovery is lexical and does not guarantee compilable preprocessed C/C++",
+    "an unterminated OSC escape leaves its payload as text: it can raise a false "
+    "query error, or drop a frontend report row to null with a reason",
 ]
 
 
