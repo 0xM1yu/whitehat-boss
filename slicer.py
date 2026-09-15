@@ -757,6 +757,14 @@ def main(argv: list[str] | None = None) -> int:
     outputs = [p.resolve() for p in (args.out, args.checkpoint, args.progress) if p]
     if len(outputs) != len(set(outputs)):
         cli.error("Output, checkpoint and progress paths must be distinct")
+    if args.export_dir:
+        # export_sources() os.replace()s everything under this directory. Run state left
+        # there is replaced by an export artifact -- an open checkpoint becomes JSON and
+        # the resume state is gone, silently. Reserving the subtree rather than a list of
+        # basenames keeps the guard true when the exporter gains a file.
+        reserved = args.export_dir.resolve()
+        if any(path == reserved or reserved in path.parents for path in outputs):
+            cli.error("Output, checkpoint and progress paths must stay out of --export-dir")
     client = JoernClient(args.joern_endpoint, args.query_timeout_seconds)
     limits = {
         k: v

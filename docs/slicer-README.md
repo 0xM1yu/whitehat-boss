@@ -162,6 +162,12 @@ SHA256SUMS를 쓴다. 이름은 Case·표시 ID·대표 symbol·원본 basename�
 raw의 코드에는 줄 번호를 삽입하지 않는다. numbered는 `file:line | 원문` 형식이다. 교차파일
 slice의 전체 출처는 파일 내부 헤더와 manifest를 읽는다.
 
+`--out`·`--checkpoint`·`--progress`는 **`--export-dir` 바깥이어야 한다.** export는 그
+디렉터리 아래를 전부 `os.replace()` 로 덮으므로, 열린 체크포인트를 거기에 두면 POSIX에서
+SQLite 파일이 JSON으로 교체되고 **재개 상태가 조용히 사라진다.** 셋 중 하나라도 그 아래면
+체크포인트를 열기 **전에** 거절한다. 셋이 서로 다른 것만으로는 부족하다 — 서로 다르면서
+전부 export 디렉터리 안일 수 있다.
+
 각 파일은 원자적으로 교체하고 manifest와 checksum 목록을 마지막에 쓴다. 디렉터리 전체의
 원자적 교체는 아니므로 전달 전에 checksum을 검증한다. 재export 시 남은 옛 파일을 glob으로
 읽지 말고 manifest의 파일 목록을 사용한다.
