@@ -38,7 +38,10 @@ from slicer_source import (
 # 마커가 잘려 「응답이 비었다」로 읽힌다. CSI 는 종단 바이트가 `@`~`~` 전체다.
 ANSI = re.compile(
     r"\x1b\[[0-9;?]*[\x40-\x7E]"  # CSI — SGR(`m`)은 이 집합의 한 종단 바이트다
-    r"|\x1b][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC — BEL 또는 ST 로 닫는다
+    # OSC — BEL 또는 ST 로 닫는다. **페이로드에서 줄바꿈을 뺀 것이 핵심이다**: 닫히지 않은
+    # 오프너와 뒤쪽의 무관한 단독 BEL 이 짝지으면 사이의 여러 줄이 통째로 사라져 진짜
+    # 스택트레이스가 지워진다. 오탐은 시끄럽지만 이 미탐은 조용하다.
+    r"|\x1b][^\x07\x1b\n]*(?:\x07|\x1b\\)"
     r"|\x1b[@-Z\\-_]"  # 두 글자 이스케이프
 )
 ERROR = re.compile(
@@ -94,9 +97,16 @@ def _read_no_follow(path: Path) -> str:
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     descriptor = os.open(path, flags)
+    try:
+        handle = os.fdopen(descriptor, "r", encoding="utf-8", newline=None)
+    except BaseException:
+        # fdopen 이 소유권을 가져가기 전에 실패하면 raw fd 가 남는다. 저장소의 파일마다
+        # 한 번씩 도는 루프라 계통적 실패에서 누적된다.
+        os.close(descriptor)
+        raise
     # `newline=None` (universal newlines) is not a detail — it is what `read_text` did, and
     # dropping it left CRLF in `sources`, which shifts every assembled line by a stray CR.
-    with os.fdopen(descriptor, "r", encoding="utf-8", newline=None) as handle:
+    with handle:
         return handle.read()
 
 
