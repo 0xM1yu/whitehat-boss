@@ -323,6 +323,44 @@ def test_no_line_separator_lets_an_osc_opener_swallow_a_real_crash(separator):
         slicer.decode_response(response("import", {"ok": True}, logs=logs), "import")
 
 
+def test_an_unterminated_osc_leaves_its_tail_as_text_rather_than_swallowing_lines():
+    """미종결 OSC의 꼬리가 **텍스트로 남는 것은 결함이 아니라 고른 대가**다.
+
+    줄을 넘는 삼킴을 막으면 이 꼬리를 피할 수 없다. 페이로드에 줄 경계문자가 끼면 오프너가
+    속한 줄 안에 종단자가 없어 OSC 매치가 실패하고 `\\x1b]` 두 바이트만 먹힌다.
+
+    **이 검사는 그 대가를 박제한다.** 여기가 깨지면 누군가 OSC를 다시 줄 너머로 매치하게
+    만든 것이고, 그 순간 진짜 크래시가 조용히 사라지는 쪽으로 되돌아간다 — 아래 형제
+    검사가 막는 바로 그것이다. 시끄러운 실패를 조용한 실패와 바꾸지 않는다(§0).
+    """
+    tail = slicer.strip_ansi("\x1b]0;build\rBuildException monitor\x07rest")
+    assert "BuildException monitor" in tail  # 삼켜지지 않았다
+    assert "rest" in tail
+
+
+def test_a_dropped_report_row_degrades_to_null_with_a_reason_not_to_zero(repo):
+    """그 꼬리가 리포트 행을 가리면 **`null` + 사유**로 내려간다 — 가짜 `0` 이 아니다.
+
+    §0 이 *"안 잰 값은 0으로 두고 사유를 남긴다"* 로 요구하는 자리다. 대가를 지불하되
+    **장부는 정직하게** 남는지를 여기서 고정한다.
+    """
+    state = slicer.Slicer.__new__(slicer.Slicer)
+    state.repo, state.errors = repo, []
+    state.result = {
+        "counters": dict.fromkeys(slicer.COUNTERS),
+        "measurement_notes": {},
+        "diagnostics": [],
+    }
+    state.measure = lambda key, value: state.result["counters"].__setitem__(key, value)
+    state.parse_report(
+        "\x1b]0;progress\r50% | done\x07"
+        "| 1 | main.c | 4 | yes | yes | 1ms |\n| Total | | 4 | 1/1 | 1/1 | |\n"
+    )
+    assert state.result["counters"]["files_parsed"] is None
+    assert state.result["measurement_notes"]["files_parsed"]
+    assert state.errors == ["Incomplete or inconsistent frontend report"]
+
+
 def test_an_unterminated_osc_opener_does_not_swallow_a_real_crash():
     """ANSI 제거가 **줄을 넘어 삼키면** 진짜 크래시가 흔적 없이 사라진다.
 
