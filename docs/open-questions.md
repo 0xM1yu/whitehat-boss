@@ -125,7 +125,7 @@
 | D73 | 역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다 | 열림 | [본문](open-questions/D/D73.md) |
 | D74 | **Joern 슬라이스를 캡슐 본문으로 쓰면 Progressive Context Expansion이 확장할 것을 잃는다** | 열림 | [본문](open-questions/D/D74.md) |
 | D75 | 실험1이 확증한 Scout CWE→Agent 세부 목록이 로스터·프롬프트의 목록과 다르다 — 어느 것을 정본으로 할지 미결 | 열림 | [본문](open-questions/D/D75.md) |
-| D76 | 하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다 | 열림 | [본문](open-questions/D/D76.md) |
+| D76 | 하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다 | 부분 | [본문](open-questions/D/D76.md) |
 | D77 | ~~슬라이서 sink-first 의미·제어문 보존·단계별 재개~~ | 닫힘 | [본문](open-questions/D/D77.md) |
 
 ## 3. 팀·운영 미정
