@@ -6,6 +6,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+from src.orchestrator.runner import _REASON_GATEWAY, _REASON_OVER_MAX, _REASON_SCHEMA
 from tools import monitor
 
 NOW = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
@@ -79,23 +80,54 @@ def test_not_stuck_when_dead() -> None:
 # --- error_storm ------------------------------------------------------------
 
 
-def test_error_storm_when_last_k_share_a_reason() -> None:
-    events = [_ev("critic_failed", age_s=10, seq=i, reason="schema_error") for i in range(K)]
+def test_failure_reasons_match_runner_constants() -> None:
+    """폴러가 쓰는 실패 사유가 runner의 상수와 일치하고, over_candidate_max는 실패가 아니다(L5)."""
+    assert monitor._FAILURE_REASONS == frozenset({_REASON_GATEWAY, _REASON_SCHEMA})
+    assert _REASON_OVER_MAX not in monitor._FAILURE_REASONS
+
+
+def test_storm_when_k_failures_pile_up() -> None:
+    events = [_ev("critic_failed", age_s=10, seq=i, reason=_REASON_SCHEMA) for i in range(K)]
     assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is True
 
 
 def test_no_storm_below_k() -> None:
-    events = [_ev("critic_failed", age_s=10, seq=i, reason="schema_error") for i in range(K - 1)]
+    events = [_ev("critic_failed", age_s=10, seq=i, reason=_REASON_SCHEMA) for i in range(K - 1)]
     assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is False
 
 
-def test_no_storm_when_reasons_differ() -> None:
+def test_storm_when_reasons_alternate_but_failures_are_consecutive() -> None:
+    """H2 회귀: 차단기는 schema↔400 번갈아도 터진다. 폴러도 서야 한다(예전엔 사유 상이로 놓쳤다)."""
     events = [
-        _ev("target_skipped", age_s=10, seq=1, reason="gateway_error"),
-        _ev("target_skipped", age_s=9, seq=2, reason="schema_error"),
-        _ev("target_skipped", age_s=8, seq=3, reason="schema_error"),
+        _ev("target_skipped", age_s=12, seq=1, reason=_REASON_SCHEMA),
+        _ev("target_skipped", age_s=11, seq=2, reason=_REASON_GATEWAY),
+        _ev("target_skipped", age_s=10, seq=3, reason=_REASON_SCHEMA),
+    ]
+    assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is True
+
+
+def test_progress_event_resets_the_streak() -> None:
+    """진행 이벤트(target_planned)가 실패 사이에 끼면 그 앞은 다른 국면 — storm 아니다."""
+    events = [
+        _ev("critic_failed", age_s=30, seq=1, reason=_REASON_SCHEMA),
+        _ev("target_planned", age_s=20, seq=2),  # 리셋
+        _ev("critic_failed", age_s=12, seq=3, reason=_REASON_SCHEMA),
+        _ev("critic_failed", age_s=10, seq=4, reason=_REASON_SCHEMA),
     ]
     assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is False
+
+
+def test_over_candidate_max_is_not_a_failure() -> None:
+    events = [_ev("target_skipped", age_s=10, seq=i, reason=_REASON_OVER_MAX) for i in range(K + 2)]
+    assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is False
+
+
+def test_breaker_trip_transition_is_a_storm_even_below_k() -> None:
+    """차단기가 실제로 터진 사후 신호는 K 미만이어도 확정 storm이다."""
+    events = [
+        _ev("transition", age_s=1, seq=9, reason="consecutive_target_failures", subject="run")
+    ]
+    assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is True
 
 
 # --- completion / budget ----------------------------------------------------
@@ -118,6 +150,24 @@ def test_incomplete_when_stopped_after_is_set() -> None:
 def test_budget_exhausted_from_run_transition_reason() -> None:
     events = [_ev("transition", age_s=1, seq=9, reason="budget_exhausted", subject="run")]
     assert _derive(heartbeat=_hb(2), events=events)["budget_exhausted"] is True
+
+
+def test_budget_exhausted_from_live_budget_event() -> None:
+    """run 도중 budget.py가 내는 BUDGET(event=exhausted)도 잡는다 — 사후 전이만이 아니다(L7)."""
+    e = {
+        "seq": 5,
+        "ts": _iso(NOW - timedelta(seconds=2)),
+        "kind": "budget",
+        "data": {"event": "exhausted"},
+    }
+    assert _derive(heartbeat=_hb(2), events=[e])["budget_exhausted"] is True
+
+
+def test_stuck_is_unknown_before_the_first_trace_event() -> None:
+    """이벤트 0건이면 event_age는 heartbeat로 폴백하지 않고 None이라 stuck이 안 선다(L3)."""
+    status = _derive(heartbeat=_hb(2), events=[])
+    assert status["event_age_s"] is None
+    assert status["stuck"] is False
 
 
 # --- stuck ceiling from constants ------------------------------------------
