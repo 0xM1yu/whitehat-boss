@@ -316,9 +316,12 @@ class TraceWriter:
         if self._stream is not None:
             self._stream.write(event.model_dump_json() + "\n")
             # 이벤트마다 flush한다 — 없으면 스트림이 블록 버퍼링(≈8KB)이라 run 도중
-            # 파일에 덩어리로 지연되고(`tail -f` 비실시간), 하드크래시 시 버퍼의
-            # 직전 이벤트가 통째로 증발한다. trace는 단계·호출 경계에서만 나므로
-            # 핫루프가 아니라 flush 비용이 문제되지 않는다 (이슈 #208).
+            # 파일에 덩어리로 지연되고(`tail -f` 비실시간), 스트림을 닫지 못한 채
+            # 프로세스가 죽으면(SIGKILL·OOM-kill·미처리 예외) 버퍼의 직전 이벤트가
+            # 증발한다. flush가 닫는 것은 거기까지다 — OS 페이지 캐시로 넘긴 것이라
+            # 전원 차단·하드리셋(더티 페이지 유실)까지 보장하려면 fsync가 필요한데,
+            # trace가 핫루프는 아니어도 fsync는 다른 급이라 그 대가를 여기서 안 치른다
+            # (이슈 #208).
             self._stream.flush()
         return event
 
