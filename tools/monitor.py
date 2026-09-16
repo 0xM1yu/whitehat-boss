@@ -80,18 +80,31 @@ def _is_failure(event: dict) -> bool:
     return False
 
 
+def _member_of(event: dict) -> str:
+    """실패를 어느 카운터로 셀지. target_skipped는 `scout_member`(어느 자리가 죽었나),
+    critic_failed는 자리 개념이 없어 단일 버킷으로 둔다."""
+    if event.get("kind") == "critic_failed":
+        return "__critic__"
+    return (event.get("data") or {}).get("scout_member") or "__unknown__"
+
+
 def _error_storm(events: list[dict], k: int) -> bool:
-    """차단기가 잡으려는 모양 — **진행 이벤트 없이 연속된 실패 K개** — 을 밖에서 읽는다.
+    """차단기가 잡으려는 모양 — **진행 없이 한 자리에서 연속된 실패 K개** — 을 밖에서 읽는다.
 
     두 갈래다. **사후·정확:** 차단기가 실제로 터진 run은 종료 전이 사유가
     `consecutive_target_failures`라 그것으로 확정한다. **라이브·근사:** 진행 이벤트
     (`target_planned`·`gate_eval`·`transition` — 차단기가 완주에서 카운터를 리셋하는 것의
-    근사)가 끼지 않은 채 실패가 K개 쌓이면 storm으로 본다.
+    근사)가 끼기 전까지, **`scout_member`(자리)별로** 실패를 세어 한 자리가 K개에 닿으면
+    storm으로 본다. 차단기가 `item.role`을 키로 세는 것과 같은 축이다 — 그래서 대상 하나가
+    풀 멤버 셋에서 각 1회씩 죽는 것(자리별 1)은 storm이 아니다(차단기도 안 터진다).
 
-    ⚠ 차단기와 **값(K)만 같고 기준은 근사다.** 차단기는 역할별·systematic 실패만 세는데
-    `target_skipped`가 그 축(systematic/status·role)을 안 실어 trace만으로 복제할 수 없다.
-    그래서 이 근사는 차단기 트립을 **놓치지 않되**(사유 무관 + 사후 신호), 비systematic 실패가
-    쌓인 run에서 더 일찍 설 수 있다 — 미탐보다 오탐 쪽이라 관찰용으로 안전하다.
+    ⚠ **차단기와 값(K)·역할 축은 맞추되, systematic 축 하나가 근사로 남는다.** `role`은
+    `target_skipped.scout_member`에 실려 있어 위처럼 자리별로 세지만, `_drop`이 `systematic`
+    (크기 거절 400/413을 카운터에서 빼는 그 구분)은 trace에 안 싣는다 — 400/413도 real
+    gateway 실패와 똑같이 `gateway_error`로만 남는다. 그래서 **크기 거절이 한 자리에서 K회
+    연속되면 오탐이 난다**(차단기는 그것을 일부러 안 센다, `_MAX_CONSECUTIVE_DROPS` 주석).
+    이 오탐을 없애려면 `_emit_skipped`가 `status`(또는 `systematic`)를 한 필드 실어야 하고,
+    그건 이 폴러 밖(러너)이다. 여기서는 그 한계를 명시만 한다.
     """
     if k <= 0:
         return False
@@ -100,11 +113,12 @@ def _error_storm(events: list[dict], k: int) -> bool:
         for e in events
     ):
         return True
-    run = 0
+    runs: dict[str, int] = {}
     for e in reversed(events):
         if _is_failure(e):
-            run += 1
-            if run >= k:
+            member = _member_of(e)
+            runs[member] = runs.get(member, 0) + 1
+            if runs[member] >= k:
                 return True
         elif e.get("kind") in _PROGRESS_KINDS:
             break  # 진행 이벤트 = 리셋. 그 앞은 다른 국면이다.
@@ -165,6 +179,9 @@ def derive_status(
         "error_storm": _error_storm(events, error_storm_k),
         "budget_exhausted": budget,
         "incomplete": incomplete,
+        # 산출물이 나왔는가 = 폴링을 끝내도 되는가. `incomplete`(비교표용 is_complete 정의)와
+        # 다른 질문이다 — 중단된 run도 매니페스트를 남기므로 여기서 끝나야 한다(#212 리뷰 N1).
+        "has_manifest": manifest is not None,
         "current_stage": heartbeat.get("current_stage") if heartbeat else None,
         "last_event_seq": events[-1]["seq"]
         if events
@@ -244,6 +261,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    # run_dir을 못 읽으면 여기서 보고하고 끝낸다(#212 리뷰 N6). 이게 없으면 경로 오타·권한
+    # 문제가 load_json에서 "파일 없음"과 뭉쳐 폴러가 조용히 영원히 돈다. (레이스로 인한 일시
+    # OSError는 load_json이 삼켜 넘긴다 — 여기서 거르는 것은 디렉터리 자체가 안 읽히는 경우다.)
+    if not args.run_dir.is_dir():
+        print(f"[ERROR] run_dir을 읽을 수 없다: {args.run_dir}", file=sys.stderr)
+        return 2
+
     # 상수는 여기서 늦게 import한다 — 순수 함수 테스트를 무겁게 하지 않기 위해.
     from src.adapters.openai_compat import _TIMEOUT_S
     from src.config import load_config
@@ -264,13 +288,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{format_report(args.run_dir, status)}  [T {basis}]", flush=True)
         if args.status_file:
             _write_status_atomic(args.run_dir / "status.json", status)
-        if args.once or not status["incomplete"]:
+        # 산출물(매니페스트)이 나오면 끝난 것 — 중단된 run도 매니페스트를 남기므로 여기서
+        # 끝나야 한다(#212 리뷰 N1). `incomplete`(is_complete 정의)로 끝내면 예산 소진·차단기
+        # 트립 등 stopped_after가 찬 run이 영영 안 끝나고 아래 DEAD로 오판됐다.
+        if args.once or status["has_manifest"]:
             return 0
-        # 크래시 탈출(L2): heartbeat가 있었는데(run이 시작됐는데) c×N을 넘어 stale =
-        # 죽었다. manifest는 영영 안 생기므로 incomplete만으로는 못 끝낸다 — 경보하고 나간다.
+        # 크래시 탈출(L2): 매니페스트가 없는데(위에서 안 끝났으니) heartbeat가 있었다가
+        # c×N을 넘어 stale = run이 조용히 죽었다. 여기 오는 것은 매니페스트가 실제로 없는
+        # 경우뿐이므로 문구가 관측과 일치한다. em 대시는 cp949에서 깨져 하이픈을 쓴다(N7).
         if not status["alive"] and status["heartbeat_age_s"] is not None:
             print(
-                f"[{args.run_dir.name}] DEAD — heartbeat {status['heartbeat_age_s']}s stale, "
+                f"[{args.run_dir.name}] DEAD - heartbeat {status['heartbeat_age_s']}s stale, "
                 "매니페스트 없음. run이 조용히 죽었다.",
                 file=sys.stderr,
             )

@@ -29,11 +29,19 @@ def _hb(age_s: float, *, seq: int = 5, stage: int = 4, interval: float = 5.0) ->
 
 
 def _ev(
-    kind: str, *, age_s: float, seq: int, reason: str | None = None, subject: str | None = None
+    kind: str,
+    *,
+    age_s: float,
+    seq: int,
+    reason: str | None = None,
+    subject: str | None = None,
+    member: str | None = None,
 ) -> dict:
     e = {"seq": seq, "ts": _iso(NOW - timedelta(seconds=age_s)), "kind": kind, "data": {}}
     if reason is not None:
         e["data"]["reason"] = reason
+    if member is not None:
+        e["data"]["scout_member"] = member
     if subject is not None:
         e["subject_kind"] = subject
     return e
@@ -130,6 +138,26 @@ def test_breaker_trip_transition_is_a_storm_even_below_k() -> None:
     assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is True
 
 
+def test_no_storm_when_one_target_fails_across_pool_members() -> None:
+    """N2: 대상 하나가 풀 멤버 셋에서 각 1회씩 죽는 것은 storm 아니다 — 자리별로 세면
+    각 카운터가 1이라 차단기도 안 터진다(K=3=풀크기라 예전엔 전체 3으로 오탐)."""
+    events = [
+        _ev("target_skipped", age_s=12, seq=1, reason=_REASON_SCHEMA, member="scout_memory"),
+        _ev("target_skipped", age_s=11, seq=2, reason=_REASON_SCHEMA, member="scout_boundary"),
+        _ev("target_skipped", age_s=10, seq=3, reason=_REASON_SCHEMA, member="scout_injection"),
+    ]
+    assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is False
+
+
+def test_storm_when_one_member_fails_k_times() -> None:
+    """한 자리가 K회 연속 죽으면 storm — 자리별 카운터가 K에 닿는다."""
+    events = [
+        _ev("target_skipped", age_s=15 - i, seq=i, reason=_REASON_SCHEMA, member="scout_memory")
+        for i in range(K)
+    ]
+    assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is True
+
+
 # --- completion / budget ----------------------------------------------------
 
 
@@ -145,6 +173,19 @@ def test_complete_when_manifest_finished_and_not_stopped() -> None:
 def test_incomplete_when_stopped_after_is_set() -> None:
     manifest = {"finished_at": _iso(NOW), "stopped_after": 6, "thresholds": {}}
     assert _derive(manifest=manifest)["incomplete"] is True
+
+
+def test_stopped_run_is_incomplete_but_has_manifest() -> None:
+    """N1: 중단된 run은 incomplete=True지만 매니페스트는 남는다 — 폴러는 has_manifest로
+    끝나야 정상 종료한 중단 run을 DEAD로 오판하지 않는다."""
+    manifest = {"finished_at": _iso(NOW), "stopped_after": 5, "thresholds": {}}
+    status = _derive(manifest=manifest)
+    assert status["incomplete"] is True
+    assert status["has_manifest"] is True
+
+
+def test_no_manifest_means_not_finished() -> None:
+    assert _derive(heartbeat=_hb(2))["has_manifest"] is False
 
 
 def test_budget_exhausted_from_run_transition_reason() -> None:
