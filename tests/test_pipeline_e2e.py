@@ -138,6 +138,21 @@ def test_pipeline_runs_all_stages_end_to_end(tmp_path: Path) -> None:
     assert result.record.is_complete
 
 
+def test_run_leaves_a_heartbeat_file_with_final_state(tmp_path: Path) -> None:
+    """러너 배선 고정 (이슈 #208 ②): run_dir가 있으면 heartbeat.json이 남고,
+    종료 시점의 pid·이벤트 수·단계를 담는다. 단위 테스트는 `Heartbeat`를 직접
+    만들지만 이 테스트는 `run_pipeline`이 실제로 그것을 켜고 끄는지를 본다."""
+    _result, trace_path = _run(tmp_path)
+
+    heartbeat = trace_path.parent / "heartbeat.json"
+    assert heartbeat.exists()
+    payload = json.loads(heartbeat.read_text(encoding="utf-8"))
+    assert payload["pid"] > 0
+    assert isinstance(payload["last_event_seq"], int) and payload["last_event_seq"] > 0
+    assert isinstance(payload["current_stage"], int)
+    assert payload["interval_s"] > 0
+
+
 def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> None:
     """파이프라인이 실제로 무언가를 통과시키고 무언가를 거른다."""
     result, _ = _run(tmp_path)
