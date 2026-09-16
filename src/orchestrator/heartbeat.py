@@ -58,6 +58,10 @@ class Heartbeat:
             "current_stage": self._stage_of(),
             "interval_s": self._interval_s,
         }
+        # 형제 라이터(`PromptLog`·`write_manifest`)와 같은 관용구 — 쓰기 직전에 디렉터리를
+        # 보장한다. 현 CLI 경로에선 run_dir이 이미 있지만, 이 방어가 없으면 첫 쓰기가
+        # 디렉터리 부재에 걸릴 여지가 남는다.
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         # 원자적 교체 — 갱신 중 크래시가 나도 관찰자가 반쯤 쓰인 파일을 읽지 않는다.
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -75,7 +79,16 @@ class Heartbeat:
                 continue
 
     def start(self) -> "Heartbeat":
-        self._write()  # 첫 틱은 즉시 — 첫 주기를 기다리지 않는다.
+        # 첫 틱은 즉시 — 첫 주기를 기다리지 않는다. **`_loop`와 같은 이유로 견딘다:**
+        # 첫 쓰기가 일시적 OSError(Windows 잠금·ATOM 공유 스토리지)에 걸려도 스레드는
+        # 그대로 띄운다. 여기서 예외를 올리면 heartbeat 하나가 run 전체 산출물을
+        # 없앤다 — `run_pipeline`의 heartbeat 켜기가 `try`(매니페스트·리포트) 밖이라
+        # 첫 쓰기 예외가 그 앞을 뚫고 나가기 때문(#210 리뷰 H1). 첫 틱을 놓쳐도 다음
+        # 틱이 파일을 만든다.
+        try:
+            self._write()
+        except OSError:
+            pass
         self._thread = threading.Thread(target=self._loop, name="heartbeat", daemon=True)
         self._thread.start()
         return self
