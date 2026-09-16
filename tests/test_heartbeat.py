@@ -16,6 +16,15 @@ NOW = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
 
 
 def _read(path: Path) -> dict:
+    # Windows에선 스레드의 `os.replace`와 이 읽기가 겹치면 일시적으로 PermissionError가
+    # 난다(원자 교체의 반대편). 실서비스 폴러(`tools/monitor.py`)도 같은 것을 견뎌야 하고,
+    # 여기서는 잠깐 재시도로 그 레이스를 넘긴다 — 테스트가 보는 것은 틱 동작이지 이 레이스가
+    # 아니다.
+    for _ in range(50):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except OSError:
+            time.sleep(0.005)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -62,6 +71,31 @@ def test_write_is_atomic_no_tmp_left_behind(tmp_path: Path) -> None:
     hb.stop()
     assert path.exists()
     assert list(tmp_path.glob("*.tmp")) == []  # 원자 교체라 잔여 tmp가 없다
+
+
+def test_start_survives_a_transient_first_write_error(tmp_path: Path) -> None:
+    """첫 쓰기가 일시적 OSError에 걸려도 `start()`는 raise하지 않고, 다음 틱이 파일을 만든다.
+    이게 안 되면 heartbeat 하나가 run 전체 산출물을 없앤다 (#210 리뷰 H1)."""
+    path = tmp_path / "heartbeat.json"
+    hb = Heartbeat(path, seq_of=lambda: 1, stage_of=lambda: 2, interval_s=0.01)
+    original = hb._write
+    calls = {"n": 0}
+
+    def flaky() -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(13, "일시 잠금(테스트)")
+        original()
+
+    hb._write = flaky  # type: ignore[method-assign]
+    hb.start()  # 첫 _write가 터져도 여기서 raise되면 안 된다
+    try:
+        deadline = time.time() + 3.0
+        while time.time() < deadline and not path.exists():
+            time.sleep(0.01)
+        assert path.exists()  # 후속 틱이 회복해 파일을 만든다
+    finally:
+        hb.stop()
 
 
 def test_stop_is_idempotent(tmp_path: Path) -> None:
