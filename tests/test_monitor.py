@@ -1,10 +1,13 @@
 """`tools/monitor.py` — run 밖에서 상태·플래그를 읽는 폴러의 도출 규칙을 고정한다 (이슈 #208).
 
-순수 함수만 본다(파일·시계·상수는 인자로 받는다). 핵심은 임계값이 추측이 아니라 코드
-상수에서 오고, "죽음↔느림"과 "에러 반복"이 파일 스냅샷만으로 갈린다는 것이다.
+대부분 순수 함수를 본다(파일·시계·상수는 인자로 받는다). 핵심은 임계값이 추측이 아니라
+코드 상수에서 오고, "죽음↔느림"과 "에러 반복"이 파일 스냅샷만으로 갈린다는 것이다.
+맨 끝 두 건은 `main()`의 종료 갈래(N1·N6)를 `--once` 없이 실경로로 고정한다.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from src.orchestrator.runner import _REASON_GATEWAY, _REASON_OVER_MAX, _REASON_SCHEMA
 from tools import monitor
@@ -235,3 +238,33 @@ def test_read_trace_skips_a_half_written_last_line(tmp_path) -> None:
     path.write_text('{"seq":1,"ts":"x","kind":"stage_start"}\n{"seq":2,"ts":"y"', encoding="utf-8")
     events = monitor.read_trace(path)
     assert [e["seq"] for e in events] == [1]  # 잘린 둘째 줄은 버린다
+
+
+# --- main() 종료 갈래 (--once 없이 실경로로) --------------------------------
+
+
+def test_main_returns_0_on_a_stopped_run_even_with_stale_heartbeat(tmp_path: Path) -> None:
+    """N1 회귀: 중단된 run(매니페스트 있음·stopped_after)에 heartbeat가 stale해도 폴러는
+    매니페스트가 났으니 0으로 끝난다 — 종료 조건이 `not incomplete`면 이 run은 영영 안
+    끝나고 DEAD(exit 3)로 오판됐다(그 조건으로 되돌리면 이 테스트가 깨진다)."""
+    rd = tmp_path / "run_stopped"
+    rd.mkdir()
+    now = datetime.now(UTC)
+    stale = (now - timedelta(seconds=999)).isoformat()  # heartbeat 확실히 stale
+    (rd / "heartbeat.json").write_text(
+        json.dumps({"ts": stale, "pid": 1, "last_event_seq": 5, "current_stage": 5,
+                    "interval_s": 5.0}),
+        encoding="utf-8",
+    )
+    (rd / "run_manifest.json").write_text(
+        json.dumps({"finished_at": now.isoformat(), "stopped_after": 5, "thresholds": {}}),
+        encoding="utf-8",
+    )
+    (rd / "trace.jsonl").write_text("", encoding="utf-8")
+
+    assert monitor.main([str(rd)]) == 0  # DEAD(3)가 아니다
+
+
+def test_main_exits_2_when_run_dir_is_missing(tmp_path: Path) -> None:
+    """N6: 못 읽는 run_dir은 시작 시 보고하고 끝낸다 — 조용히 영원히 돌지 않는다."""
+    assert monitor.main([str(tmp_path / "does_not_exist")]) == 2
