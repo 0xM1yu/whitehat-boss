@@ -184,4 +184,6 @@ python3 slicer.py --repo /work/zlib --out /work/zlib-slices.json --joern-endpoin
 - 엔진 내부에서 버린 경로 수는 공개 응답으로 관측하지 못해 `engine_flows_truncated=null`이다.
 - 취약점 라벨 정답 대조, 탐지율·오탐률, 전체 코드 커버리지, 하네스 Scout·캡슐 연결은 측정하지 않았다.
   Joern 실서버에서 후보·slice 생성과 partial accounting을 확인했지만, 그것이 Scout 판정 정확도를
-  뜻하지는 않는다. [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다.
+  뜻하지는 않는다. [D74](../../open-questions/D/D74.md)는 이 실험 시점에 열려 있었다 —
+  2026-09-18에 **(a) 후보 열거에만**으로 닫혔고, 캡슐 경로의 선행조건은
+  [D78](../../open-questions/D/D78.md)로 넘어갔다.
