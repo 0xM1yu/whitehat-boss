@@ -1266,3 +1266,82 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
         "**셋**이고 서로를 대신하지 못한다. 「닫히는 조건 *n*」으로 고쳐라.\n"
         + "\n".join(offenders)
     )
+
+
+# 산문이 D 항목의 상태를 **현재형으로 단언**하는 자리 — `[D74](…)는 열림` · `**D74**는 닫힘`.
+#
+# **조사가 D 참조에 직접 붙은 것만 잡는다.** 사이에 허용하는 것은 링크와 마크업뿐이고
+# 산문은 안 된다. 느슨하게 두면 *"**D29**(샘플링 등가화 남은 부분)"* 이 걸린다 —
+# 「남은」의 `은` + `부분`이 조사+상태어로 파싱되는데 거기서 `부분`은 명사다.
+# 그 오탐은 가정이 아니라 이 저장소에서 실제로 나왔다.
+_D_STATUS_CLAIM = re.compile(
+    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}(?:는|은|이)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+)
+
+# D 본문 파일 머리의 상태 셀. `| 열림 |` · `| **닫힘** (2026-09-18, 선택지 (a)) |` 둘 다 받는다.
+_D_STATUS_CELL = re.compile(r"^\|\s*\*{0,2}(열림|닫힘|보류|부분|결정|결함 아님)")
+
+
+def _d_body_status(did: str) -> str | None:
+    """`D<n>.md` 머리 표가 선언한 상태. 없으면 `None`."""
+    path = REPO_ROOT / "docs" / "open-questions" / "D" / f"{did}.md"
+    if not path.is_file():
+        return None
+    for line in _read(path).splitlines():
+        found = _D_STATUS_CELL.match(line)
+        if found:
+            return found.group(1)
+    return None
+
+
+def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
+    """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다."""
+    sample = "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다."
+    found = _D_STATUS_CLAIM.search(sample)
+    assert found is not None, "상태 단언 정규식이 실제 문장을 못 잡는다"
+    assert found.group(1) == "D74"
+    assert found.group(2) == "열림"
+
+
+def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
+    """산문이 단언한 D 상태가 그 항목 본문 파일의 상태와 같아야 한다.
+
+    **왜 필요한가.** 상태의 원천은 `D<n>.md`이고(ADR 0008 — 결함의 상태 원천),
+    `test_every_body_file_has_an_index_row`가 **인덱스 행**을 그것에 묶는다. 그런데 산문은
+    아무도 안 본다 — D를 닫는 PR이 본문과 인덱스만 고치고, 그 항목을 **현재형으로 서술하던
+    다른 문서**를 놓친다. CLAUDE.md §2.3이 든 사고(*"값이 움직였는데 그 근거만 남았다"*)와
+    같은 모양이고, 그때도 CI는 초록이다.
+
+    **실제로 이 검사가 잡은 것 —** D74를 (a)로 닫는 PR이 실험 보고서의
+    *"[D74](…)는 열림 상태를 유지한다"* 를 안 고쳤다. 그 PR 본문은 실험 보고서를
+    *"날짜 박힌 스냅샷이라 안 건드린다"* 로 분류했는데, 그 한 문장만은 스냅샷이 아니라
+    **D74의 현재 상태 단언**이었다.
+
+    **보고서를 통째로 면제하지 않는 이유가 그것이다.** 면제하면 이 부류를 영영 못 잡는다.
+    측정 서술은 과거형이라 이 정규식에 안 걸리고, 걸리는 것은 상태를 현재형으로 말한
+    문장뿐이다.
+
+    자기 자신은 뺀다 — `D74.md`가 자기 상태를 적는 것은 정본이지 주장이 아니다.
+    """
+    offenders: list[str] = []
+
+    for path in _tracked("*.md"):
+        own = path.stem if path.parent.name == "D" else None
+        for number, line in enumerate(_read(path).splitlines(), start=1):
+            for claim in _D_STATUS_CLAIM.finditer(line):
+                did, claimed = claim.group(1), claim.group(2)
+                if did == own:
+                    continue
+                actual = _d_body_status(did)
+                if actual is None or actual == claimed:
+                    continue
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT).as_posix()}:{number}: "
+                    f"{did}을 「{claimed}」로 적었는데 "
+                    f"docs/open-questions/D/{did}.md는 「{actual}」이다"
+                )
+
+    assert offenders == [], (
+        "D의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
+        "본문·인덱스만 고치고 이 문장을 놓친 자리다(CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
