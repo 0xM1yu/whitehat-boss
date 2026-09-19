@@ -13,8 +13,27 @@ from src.orchestrator.stages import Stage
 from src.schemas.artifact import Artifact
 from src.schemas.enums import ArtifactKind
 
-# 확장자 → 종류. `file(1)` 대신 쓰는 최소 분류다. 펌웨어 추출(binwalk)이 들어오면
-# 별도 추출기가 앞에 붙고 추출된 파일은 `parent_id`로 원본 이미지와 연결된다.
+# 확장자 → 종류. `file(1)` 대신 쓰는 최소 분류다.
+#
+# **1차 분석 대상은 C/C++ 소스 저장소이고 바이너리·펌웨어는 2차다** (ADR 0010 §5,
+# 2026-09-09 승인 — 확정된 슬라이서가 소스 기반 CPG라 펌웨어를 1급 입력으로 두면
+# 1단계가 성립하지 않는다). 아래 바이너리·펌웨어 확장자는 **분류를 위해 남는다** —
+# 지우면 그 파일이 `unknown`이 되고, 2차에 다시 만들어야 한다.
+#
+# ⚠ **분류는 대상 선정과 다르고, 대상 선정은 후보 생성과 또 다르다.**
+# `runner._ANALYZABLE`이 binary·firmware를 포함해 그 artifact가 `_plan_targets`까지는
+# 간다. 그런데 **인덱스가 있는 프로필에서는 거기서 후보가 안 나온다** — 인덱서가
+# 바이너리를 안 받으므로 `locations`가 비고 `no_symbol_artifacts`로 세고 `continue`한다
+# (`runner.py`의 그 분기). 후보가 되는 것은 인덱스가 없는 폴백 경로뿐이다.
+#
+# ⚠ **「후보 0건」을 「아무 일도 안 한다」로 읽지 않는다.** `continue`는 `symbols_for()`
+# 뒤이고 그 앞에서 둘이 이미 일어난다 — `analyzable_artifacts` 분모에 들어가고,
+# 2단계 도구 중 **`semgrep`이 실제로 돈다**. `clang-tidy`·`build`는 `_require_sources`가
+# `compile_sources`가 빈 것을 보고 **프로세스를 띄우기 전에 거절한다**.
+# `.h`가 같은 두 줄을 지나는 것과 같은 자리다 — 이 파일의 소관이 아니다.
+#
+# 2차로 펌웨어 추출(binwalk)이 들어오면 별도 추출기가 앞에 붙고 추출된 파일은
+# `parent_id`로 원본 이미지와 연결된다. 그 필드는 그때를 위해 스키마에 남아 있다.
 _KIND_BY_SUFFIX: dict[str, ArtifactKind] = {
     ".c": ArtifactKind.SOURCE,
     ".h": ArtifactKind.SOURCE,
