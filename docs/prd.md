@@ -94,7 +94,7 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 
 | 구성 요소 | 도구 기반 처리 | LLM 활용 |
 | --- | --- | --- |
-| Preprocessor | 펌웨어 추출, 파일 타입 분류, 바이너리·소스·설정 파일 식별 | X |
+| Preprocessor | 펌웨어 추출, 파일 타입 분류, 바이너리·소스·설정 파일 식별 *(2026-09-19 — **펌웨어 추출은 2차다.** [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5가 1차 분석 대상을 **C/C++ 소스 저장소**로 확정했다: 확정된 슬라이서가 소스 기반 CPG라 펌웨어를 1급 입력으로 두면 1단계가 성립하지 않는다. 왼쪽은 그 시점의 요구 기록이다)* | X |
 | Code/Binary Index | tree-sitter, symbol table, strings, xref, function boundary, call graph 추출 | 필요한 context 선별 |
 | Evidence Store | 정적 분석 결과, crash log, sanitizer log, fuzzing 결과 저장 | 판단 근거 제공 |
 | Retriever | symbol, call graph, embedding, reranker 기반 context capsule 생성 | 검색된 context 기반 분석 |
