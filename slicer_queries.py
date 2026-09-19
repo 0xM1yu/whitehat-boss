@@ -151,7 +151,13 @@ def candidates_a_query() -> str:
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
         .filter(m => cpg.call.nameExact(m.name).isEmpty).filter(_.parameter.size > 0).l
       val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty).l
-      ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
+      // Handlers registered through a function pointer are entry points even when a
+      // resolved internal call to them also exists, so the "uncalled" filter above
+      // drops them (e.g. a library dispatch table's `server_handle_hello`). Add the
+      // address-taken internal functions directly instead of relying on that proxy.
+      val callbacks = cpg.methodRef.referencedMethod.internal
+        .filterNot(_.name.startsWith("<")).filter(_.parameter.size > 0).dedup.l
+      ujson.Arr.from((api ++ readers ++ callbacks).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
         "scope" -> scope(m), "anchors" -> ujson.Arr(loc(m)))))
     """,
