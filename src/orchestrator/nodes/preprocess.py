@@ -27,10 +27,10 @@ from src.schemas.enums import ArtifactKind
 # (`runner.py`의 그 분기). 후보가 되는 것은 인덱스가 없는 폴백 경로뿐이다.
 #
 # ⚠ **「후보 0건」을 「아무 일도 안 한다」로 읽지 않는다.** `continue`는 `symbols_for()`
-# 뒤이고 그 앞에서 두 가지가 이미 일어난다 — 2단계 도구 셋(`SIGNAL_TOOLS`)이 그
-# artifact에도 돌고, `analyzable_artifacts` 분모에도 들어간다. `.h`가 그 분모에 들어가는
-# 것과 **같은 코드 줄**이고 그쪽은 이미 판정이 끝났다(`runner._plan_targets`의 그 루프).
-# 이 파일의 소관이 아니다 — 여기는 확장자를 종류로 옮기는 자리다.
+# 뒤이고 그 앞에서 둘이 이미 일어난다 — `analyzable_artifacts` 분모에 들어가고,
+# 2단계 도구 중 **`semgrep`이 실제로 돈다**. `clang-tidy`·`build`는 `_require_sources`가
+# `compile_sources`가 빈 것을 보고 **프로세스를 띄우기 전에 거절한다**.
+# `.h`가 같은 두 줄을 지나는 것과 같은 자리다 — 이 파일의 소관이 아니다.
 #
 # 2차로 펌웨어 추출(binwalk)이 들어오면 별도 추출기가 앞에 붙고 추출된 파일은
 # `parent_id`로 원본 이미지와 연결된다. 그 필드는 그때를 위해 스키마에 남아 있다.
