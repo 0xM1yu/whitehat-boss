@@ -25,7 +25,12 @@ from src.schemas.enums import ArtifactKind
 # 간다. 그런데 **인덱스가 있는 프로필에서는 거기서 후보가 안 나온다** — 인덱서가
 # 바이너리를 안 받으므로 `locations`가 비고 `no_symbol_artifacts`로 세고 `continue`한다
 # (`runner.py`의 그 분기). 후보가 되는 것은 인덱스가 없는 폴백 경로뿐이다.
-# 그래서 이 PR은 러너를 안 바꾼다 — 바꿀 것이 이미 없다.
+#
+# ⚠ **「후보 0건」을 「아무 일도 안 한다」로 읽지 않는다.** `continue`는 `symbols_for()`
+# 뒤이고 그 앞에서 두 가지가 이미 일어난다 — 2단계 도구 셋(`SIGNAL_TOOLS`)이 그
+# artifact에도 돌고, `analyzable_artifacts` 분모에도 들어간다. `.h`가 그 분모에 들어가는
+# 것과 **같은 코드 줄**이고 그쪽은 이미 판정이 끝났다(`runner._plan_targets`의 그 루프).
+# 이 파일의 소관이 아니다 — 여기는 확장자를 종류로 옮기는 자리다.
 #
 # 2차로 펌웨어 추출(binwalk)이 들어오면 별도 추출기가 앞에 붙고 추출된 파일은
 # `parent_id`로 원본 이미지와 연결된다. 그 필드는 그때를 위해 스키마에 남아 있다.
