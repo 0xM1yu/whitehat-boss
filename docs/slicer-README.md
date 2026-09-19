@@ -217,8 +217,13 @@ Joern 재파싱 후 결과 동등성은 별도 실측으로 확인한다.
 python tools/probe/joern_slicer_live.py --endpoint http://127.0.0.1:16240 --out-dir /work/live-check-01
 ```
 
-ATOM Joern 4.0.605에서 실행한 결과와 범위는
-[실서버 검증 보고서](experiments/harness/2026-09-14-joern-slicer-live-atom.md)에 기록한다.
+ATOM Joern 4.0.605에서 실행한 결과와 범위는 **보고서 셋에 나뉘어 있다.** v1 코드(`c4acdd2`)로
+돌린 [실서버 검증](experiments/harness/2026-09-14-joern-slicer-live-atom.md)과
+[공개 스모크 표본 3종](experiments/harness/2026-09-14-joern-slicer-smoke-samples-atom.md) 둘이
+2026-09-14이고, 이 문서가 서술하는 slice-v2의
+[실서버 검증](experiments/harness/2026-09-15-joern-slicer-v2-atom.md)이 2026-09-15이다.
+⚠ **수치를 인용하기 전에 그 보고서가 실은 배포 코드 해시를 본다** — 셋이 서로 다르고, v1
+실서버 보고서 안에서도 zlib 전량과 소규모 회귀가 다른 `slicer.py`로 돌았다(그 보고서 §2 「소스」).
 
 HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
 [frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.
