@@ -305,7 +305,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 | # | 제안 | 근거 |
 | --- | --- | --- |
 | P1 | 모든 구조체에 `run_id` 추가 | 위 예시에서 `run_id`를 가진 것은 Candidate뿐이었다. Evidence Store가 run 단위 수명이고([knowledge-base.md](knowledge-base.md) §1) 같은 조건을 seed만 바꿔 3회 반복하므로([evaluation.md](evaluation.md) §2.3), run 소속이 없으면 반복 실행 결과가 한 저장소에서 섞인다 |
-| P2 | `Artifact` 스키마 신설 | [architecture.md](architecture.md) §3의 0단계 출력이 `Artifact[]`인데 이 절에 스키마가 없었다. 펌웨어가 1급 입력이므로(D9) 추출 원본을 가리키는 `parent_id`가 필요하다 |
+| P2 | `Artifact` 스키마 신설 | [architecture.md](architecture.md) §3의 0단계 출력이 `Artifact[]`인데 이 절에 스키마가 없었다. ~~펌웨어가 1급 입력이므로(D9)~~ → **1차는 C/C++ 소스이고 바이너리·펌웨어는 2차다**([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5 · D9 닫힘). 추출 원본을 가리키는 `parent_id`는 그 2차 경로용으로 **남긴다** — 지금 세팅하는 코드는 없다([STATUS.md](../STATUS.md) §5) |
 | P3 | `Evidence`에 `ok`·`exit_code`·`error` 추가 | [engineering-guide.md](engineering-guide.md) §8.3의 "도구 실패도 Evidence로 기록"과 §6 trace 필수 항목("도구 실행 명령·종료 코드")을 담을 자리가 없었다 |
 | P4 | `Finding`에 `repro_spec` 추가 | [architecture.md](architecture.md) §4의 E3 조건이 "재현 명세 존재"이고 §3 8단계 입력이 "`Finding` + 재현 명세"인데 그 구조체가 없었다. 없으면 E3→E4 판정이 사람 판단이 된다 |
 | P5 | `RunRecord`에 `source_hash`·`thresholds`·`sampling`·`kb_snapshot`·`finished_at`·`stopped_after` 추가 | 앞 다섯은 [engineering-guide.md](engineering-guide.md) §5 재현성 필수 항목인데 예시에 없었다. 뒤 둘은 [evaluation.md](evaluation.md) §6의 "기록이 불완전한 run은 비교표에 넣지 않는다"를 판정할 근거다 |
