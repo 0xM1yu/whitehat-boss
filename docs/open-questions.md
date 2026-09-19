@@ -59,7 +59,7 @@
 | D6 | 상태 저장소 SQLite vs DuckDB | 결정 | [본문](open-questions/D/D6.md) |
 | D7 | 오케스트레이터 LangGraph v1 확정 여부 | 결정 | [본문](open-questions/D/D7.md) |
 | D8 | **Evidence Gate와 Critic의 순서** | 닫힘 | [본문](open-questions/D/D8.md) |
-| D9 | 1차 분석 대상의 범위 | 열림 | [본문](open-questions/D/D9.md) |
+| D9 | ~~1차 분석 대상의 범위~~ (1차는 C/C++ 소스 · 바이너리·펌웨어는 2차 — ADR 0010 §5) | 닫힘 | [본문](open-questions/D/D9.md) |
 | D10 | 재평가 횟수를 어디에 보관하는가 | 열림 | [본문](open-questions/D/D10.md) |
 | D11 | Evidence에 "발견 건수"가 없다 | 열림 | [본문](open-questions/D/D11.md) |
 | D13 | **캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가** | 열림 | [본문](open-questions/D/D13.md) |

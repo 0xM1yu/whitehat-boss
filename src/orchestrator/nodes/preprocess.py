@@ -13,8 +13,19 @@ from src.orchestrator.stages import Stage
 from src.schemas.artifact import Artifact
 from src.schemas.enums import ArtifactKind
 
-# 확장자 → 종류. `file(1)` 대신 쓰는 최소 분류다. 펌웨어 추출(binwalk)이 들어오면
-# 별도 추출기가 앞에 붙고 추출된 파일은 `parent_id`로 원본 이미지와 연결된다.
+# 확장자 → 종류. `file(1)` 대신 쓰는 최소 분류다.
+#
+# **1차 분석 대상은 C/C++ 소스 저장소이고 바이너리·펌웨어는 2차다** (ADR 0010 §5,
+# 2026-09-09 승인 — 확정된 슬라이서가 소스 기반 CPG라 펌웨어를 1급 입력으로 두면
+# 1단계가 성립하지 않는다). 아래 바이너리·펌웨어 확장자는 **분류를 위해 남는다** —
+# 지우면 그 파일이 `unknown`이 되고, 2차에 다시 만들어야 한다.
+#
+# ⚠ **분류는 대상 선정과 다르다.** `runner._ANALYZABLE`이 binary·firmware를 포함하므로
+# 그 artifact도 `_plan_targets`에 들어간다. 「2차다」는 구현 순서이지 러너의 현재 동작이
+# 아니다 — 동작을 바꾸는 것은 별건이다.
+#
+# 2차로 펌웨어 추출(binwalk)이 들어오면 별도 추출기가 앞에 붙고 추출된 파일은
+# `parent_id`로 원본 이미지와 연결된다. 그 필드는 그때를 위해 스키마에 남아 있다.
 _KIND_BY_SUFFIX: dict[str, ArtifactKind] = {
     ".c": ArtifactKind.SOURCE,
     ".h": ArtifactKind.SOURCE,
