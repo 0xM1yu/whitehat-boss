@@ -563,6 +563,16 @@ models:
     # (0.6b가 쓴 것과 같은 reranker 서빙 인자). 그 기동·점수 정확성 검증은 등재와 별개이고
     # 아직 안 됐다 — 그래서 `benchmark`는 전부 `0`(미실측 표시, CLAUDE.md §0)이고 production
     # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 CONTEXT.md와 open-questions가 든다.
+    #
+    # ⚠ **2026-09-20 — 위 「아직 안 됐다」는 둘 중 앞을 잘못 든다.** **기동은 2026-09-13에 됐다** —
+    # ATOM 8005에 떴다 — #152의 **입력 모양 보고서**가 바로 그 `--hf-overrides`와
+    # `POST …:8005/v1/rerank → 200`을 메타 표에 적는다. (자매 템플릿 보고서는 8005 기동만 적고
+    # 상태 코드·오버라이드 문자열은 안 든다 — 200의 출처는 앞쪽 하나다.)
+    # **안 된 것은 점수 정확성이다.** `benchmark`가 전부 `0`인 것도, production에 못 들어가는 것도
+    # 그대로다 — 그 run들은 어댑터 밖 직접 호출이라 `run_id`가 없고 비교표 밖이다.
+    # ⚠ **그리고 2026-09-20에 두 풀 프로필이 이 키를 세웠다** — `config/profiles.yaml`의
+    # `local_balanced_pool`·`local_balanced_pool_hybrid`. 점수 검증 전에 올린 것이고 그 판단은
+    # open-questions가 든다. 둘 다 `production: false`라 위 마지막 문장은 그대로 유효하다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 40960
     quantization: "bf16"
