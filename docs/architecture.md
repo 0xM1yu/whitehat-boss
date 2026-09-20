@@ -38,9 +38,10 @@ graph LR
 
 > **위 그림에서 Evidence Gate가 한 칸으로 보이지만 판정은 세 번 돈다.** 게이트는 단계가 아니라
 > **순수 함수(술어)**이고 6·7·8단계에서 각각 호출된다(`stages.GATE_STAGES`). 그림의 칸은 그중
-> **전이가 갈라지는 유일한 자리**인 6단계다 — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의
-> 전이 신호에 실리고, 8단계 재판정은 등급을 **집계만** 한다. 등급이 언제 성립하고 승격이 어디서
-> 정해지는지는 §4의 두 표에 나눠 적었다.
+> **게이트 등급만으로 전이가 갈라지는 자리**인 6단계다(`policy._gate_grade`의 `basis`가 `grade`
+> 하나다) — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의 전이 신호에 실리고, 8단계 재판정도
+> 2026-09-20부터 같은 모양으로 그 단계의 전이 신호에 실린다(F-10 / F-10b). 등급이 언제 성립하고
+> 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
 
 ## 3. 단계별 책임과 통과 조건
 
@@ -54,7 +55,7 @@ graph LR
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
-| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 시 `proven` |
+| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
@@ -81,7 +82,7 @@ candidate ──scout pass──> triaged ──auditor──> hypothesized
                         │                         │ upheld + 재현 명세
                         │                         ▼
                         │                     validated
-                        │                         │ tool validation 재현 성공
+                        │                         │ tool validation 재현 성공 + Gate E4
                         │                         ▼
                         │                      proven ──> reported
                         │                                 (2인 검증 후, disclosure-policy.md)
@@ -128,13 +129,14 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | E1 | `hypothesized` 유지 | 6단계 · `DecisionPoint.GATE_GRADE` |
 | E2 | Critic으로 (`high-value only`) | 6단계 · `DecisionPoint.GATE_GRADE` |
 | E3 | `validated` | 7단계 · `DecisionPoint.CRITIC_VERDICT` (신호에 `grade`가 실린다) |
-| E4 | `proven` | 8단계 — **⚠ 등급을 읽지 않는다. 아래 참조** |
+| E4 | `proven` | 8단계 · `DecisionPoint.REPRO_RESULT` (신호에 `grade`가 실린다) |
 
-> **⚠ 위 표의 E4 행은 설계이고 현황이 아니다.** 8단계의 게이트 호출은 `nodes/validate.py`가
-> **반환값을 버린다** — 목적이 판정이 아니라 집계다. 승격 정책(`policy._repro_result()`)이 읽는
-> 것은 도구의 `ok`·`tool_allowed`뿐이라, 게이트가 E3인 Finding도 `ok=True`면 `proven`이 된다.
-> **8단계에서 등급은 집계 전용이고 상태 축과 등급 축이 어긋난 채로 남아 있다.**
-> → [open-questions.md](open-questions.md) D18
+> **위 표의 E4 행은 2026-09-20부터 현황이다**(커밋 `3e5c19f`). `nodes/validate.py`가 8단계 게이트
+> 호출의 반환값을 더 이상 버리지 않고 `RoutingRequest.signals`의 `grade`로 싣고, 승격 정책
+> (`policy._repro_result()`)이 **재현이 성공한(`ok=True`) 건에 한해** 그 등급을 읽는다 — E4면
+> `proven`(F-10), E4 미만이면 무전이로 `validated`에 홀드한다(F-10b, 사유 `evidence_below_proven`).
+> 그전에는 `ok`·`tool_allowed` 둘만 읽어 게이트가 E3인 Finding도 `ok=True`면 `proven`이 됐다.
+> → [open-questions.md](open-questions.md) D18(닫힘)
 
 구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)
 
