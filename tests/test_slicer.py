@@ -768,7 +768,12 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
 # **공통 한계.** 아래 assert 들이 주장하는 것은 **그 결함이 다시 들어오면 죽는다** 뿐이다 —
 # 질의가 의미상 옳다는 주장이 아니다. 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는
 # 여기서 실행되지 않으므로, 각 문자열이 실제 CPG 에서 무엇을 고르는지는 확인되지 않는다.
-# 전부 **문자 pin** 이라 뜻이 같은 재작성에도 걸린다 — 갈아야 할 때는 갈고 이 줄을 같이 고친다.
+#
+# ⚠ **「전부 문자 pin 이라 뜻이 같은 재작성에도 걸린다」로 뭉치지 않는다.** 그것은 **양성**
+# 단언에만 맞다 — 음성 단언(`".l.flatten" not in …`)은 없어야 할 문자열을 막는 것이라
+# 재작성으로 트립되지 않고, 대가가 반대 방향이다(T1 주석). 2라운드가 지역 주석에서 지운
+# 그 문장을 3차 커밋이 **머리말로 올려 되살렸다** — 각 테스트가 자기 한계를 들고, 여기서는
+# 뭉치지 않는다.
 
 
 def test_inventory_query_keeps_the_overlays_list_flat():
@@ -788,17 +793,20 @@ def test_inventory_query_keeps_the_overlays_list_flat():
 def test_context_query_excludes_synthetic_nodes_at_all_three_sites():
     """결함 2 — 합성 METHOD_REF/TYPE_DECL 이 다시 `<global>` 로 올라간다.
 
-    **적용 지점이 셋이라 셋 다 문다** — 한쪽만 남아도 새어 나간다.
+    **적용 지점이 셋이고 본문까지 넷이다** — 한쪽만 남아도 새어 나간다.
     좌표 대신 심볼로 가리킨다(이 PR 은 `slicer_queries.py` 를 안 건드리므로 줄번호는 낡는다):
-    `def sourceNode` 선언 · 조상 등반 루프(`val result` 안의 `while`) ·
+    `def sourceNode` 선언과 그 **본문의 `case` 절** · `def ancestors` 의 등반 `while` ·
     `context_query` 의 `val all` 선택.
     """
     context = queries.context_query([("main.c", 1)], "/work/repo")
     assert "def sourceNode(n: nodes.AstNode): Boolean" in context  # 선언
+    # ⚠ **본문도 문다.** 선언과 호출 셋을 그대로 두고 `case` 절만 지우면 가드가 항상 거짓을
+    # 안 내고 **결함이 통째로 돌아오는데** 위·아래 assert 는 전부 초록이었다(3라운드 실측).
+    assert "case _: nodes.MethodRef | _: nodes.TypeDecl" in context
     assert ".filter(sourceNode)" in context  # val all 선택
-    # 조상 등반. 이 가드가 빠지면 `ancestors` 의 `cpg.assignment` 경로가 `relevantMethods` 로
-    # 제한되지 않은 전역 traversal 이라 등반이 TypeDecl/NamespaceBlock/File 로 샌다
-    # (#202: *"형제 함수와 파일 첫 주석을 끌어왔다"*).
+    # 등반 가드. 빠지면 `context_query` 의 고정점 루프가 `cpg.assignment` 로 끌어온 노드
+    # (`relevantMethods` 로 제한되지 않은 전역 traversal)가 다음 패스의 등반 기점이 되어
+    # TypeDecl/NamespaceBlock/File 로 샌다(#202: *"형제 함수와 파일 첫 주석을 끌어왔다"*).
     assert "sourceNode(parent.get)" in context
 
 
@@ -815,14 +823,24 @@ def test_flows_query_parenthesizes_the_truncated_comparison():
 def test_queries_guard_against_sinks_whose_method_is_null():
     """결함 4 — 호출 인자 6개의 소속 method 가 null 이라 sink 정렬에서 NPE 가 났다(#202).
 
-    **고친 자리가 셋이고 그중 둘이 질의에 있다.** 셋째(`slicer.py` 의 보고 경로)는
-    `test_orphan_flow_sinks_are_reported_as_partial` 이 든다 — **그쪽은 mock 응답에 값을
-    박고 보고 경로만 읽으므로 질의를 한 줄도 열지 않는다.** 그래서 질의 쪽 둘은 여기서 문다.
+    **#225 표 4행이 든 자리는 셋이고 그중 둘이 질의에 있다.** 셋째(`slicer.py:628-632` 의
+    `errors.append`)는 `test_orphan_flow_sinks_are_reported_as_partial` 이 든다 —
+    **그쪽은 mock 응답에 값을 박고 보고 경로만 읽으므로 질의를 한 줄도 열지 않는다.**
+    그래서 질의 쪽 둘은 여기서 문다.
 
-    ⚠ 이 PR 의 1차 판은 *"`test_orphan_…` 이 넷째를 든다"* 고 적고 둘 다 안 물었는데,
+    ⚠ **「`slicer.py` 의 보고 경로」로 넓혀 읽지 마라.** `c4acdd2` 가 그 파일에서 고친 자리는
+    **넷**이고 그중 `COUNTERS` 등록과 `validate_payload` 의 정수 검증 키는 **되돌려도
+    전량 초록이다**(3라운드 실측). 둘 다 #225 표 밖이라 이 PR 의 범위는 아니지만,
+    덮였다고 적으면 그것이 다음 결함이다([CLAUDE.md](../CLAUDE.md) §2.2).
+
+    ⚠ 이 PR 의 1차 판은 *"`test_orphan_…` 이 넷째를 든다"* 고 적고 질의 쪽 둘을 안 물었는데,
     되돌려도 전량 초록이었다(1·2라운드 리뷰가 실측으로 재현).
     """
-    assert '"flow_sinks_without_method" -> cpg.call.argument.dedup' in queries.inventory_query()
+    inventory = queries.inventory_query()
+    assert '"flow_sinks_without_method" -> cpg.call.argument.dedup' in inventory
+    # ⚠ **술어까지 문다.** 위 한 줄만으로는 `.count(n => false)` 로 갈아도 초록이었다 —
+    # 카운터의 **존재**가 아니라 그것이 무엇을 세는지가 이 결함의 실질이다(3라운드 실측).
+    assert "Option(n.method).isEmpty" in inventory
     flows = queries.flows_query([candidate()["scope"]], 3)
     assert "filter(n => Option(n.method).nonEmpty)" in flows
 
@@ -831,6 +849,10 @@ def test_flows_query_batches_by_enclosing_method():
     """결함 5 — sink 하나마다 엔진을 새로 짓지 않는다. 배치 단위는 enclosing method 다."""
     flows = queries.flows_query([candidate()["scope"]], 3)
     assert "sinks.groupBy(_.method)" in flows
+    # ⚠ **소비부까지 문다.** 묶기만 하고 `Iterator.single(sink).reachableByFlows(...)` 로
+    # 되돌리면 **결함이 그대로 돌아오는데** 위 줄은 초록이었다 — 배치를 만드는 것과
+    # 배치로 **부르는** 것이 다른 자리다(3라운드 실측).
+    assert "batch.iterator.reachableByFlows" in flows
 
 
 def test_unwritable_output_reports_error_without_traceback(monkeypatch, repo, tmp_path, capsys):
