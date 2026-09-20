@@ -105,8 +105,12 @@ def test_transition_table_has_no_duplicate_keys() -> None:
 def _docstring_rows() -> list[tuple[str, ...]]:
     """모듈 docstring의 전이 표에서 Candidate·Finding 행만 뽑는다.
 
-    정규식을 안 쓴다 — 셀 개수로 자르면 구분선도 RunRecord 표(4열)도 자연히 빠지고,
-    **검출기가 조용히 죽는 자리**가 하나 줄어든다(CLAUDE.md §2.5).
+    거르는 것은 **둘**이다 — 셀이 6개인가(RunRecord 표는 4열이라 여기서 빠진다), 그리고
+    첫 칸이 `C-`/`F-`로 시작하는가. ⚠ **구분선(`| --- | ... |`)은 정확히 6셀이라 앞엣것에
+    안 걸린다** — 그것을 거르는 것은 뒤엣것이다. 처음 쓸 때 이 주석이 *"셀 개수로 자르면
+    구분선도 자연히 빠진다"*고 적었는데 자기 코드를 틀리게 서술한 것이었다(§2.1 역방향).
+
+    정규식은 안 쓴다 — **검출기가 조용히 죽는 자리**가 하나 줄어든다(CLAUDE.md §2.5).
     """
     rows: list[tuple[str, ...]] = []
     for line in (state_machine.__doc__ or "").splitlines():
@@ -147,18 +151,36 @@ def test_the_docstring_table_is_the_executable_table() -> None:
 
     assert {row[0] for row in rows} == {rule.rule for rule in TRANSITIONS}
 
-    table = {(r.kind, r.from_state, r.to_state, r.reason) for r in TRANSITIONS}
-    drifted: list[str] = []
+    # F-13의 「임의 → 변경 없음」이 펴지는 상태 집합을 **표에서** 얻는다. 코드의
+    # `_FINDING_STATES`를 import하면 그 상수가 줄어들 때 검사도 같이 줄어 변이가 살아난다.
+    finding_states = {
+        state
+        for rule, _t, _s, src, dst, _r in rows
+        if rule.startswith("F-") and src != "임의"
+        for cell in (src, dst)
+        for state in _cell_states(cell)
+        if state is not None
+    }
+
+    expected: set[tuple[str, FindingState | None, FindingState | None, ReasonCode | None]] = set()
     for rule, _trigger, _stage, src, dst, reason_cell in rows:
-        if src == "임의" or dst == "변경 없음":  # F-13은 상태별 자기 전이로 펴서 담는다
-            continue
         kind = "candidate" if rule.startswith("C-") else "finding"
         reason = None if reason_cell == "—" else ReasonCode(reason_cell.strip(" `"))
-        for from_state in _cell_states(src):
-            key = (kind, from_state, _cell_states(dst)[0], reason)
-            if key not in table:
-                drifted.append(f"{rule} {key}")
-    assert drifted == [], "docstring 표에만 있는 행 — TRANSITIONS와 갈라졌다: " + ", ".join(drifted)
+        if src == "임의" and dst == "변경 없음":  # F-13은 상태별 자기 전이로 펴서 담긴다
+            expected |= {(kind, state, state, reason) for state in finding_states}
+            continue
+        to_state = _cell_states(dst)[0]
+        expected |= {(kind, from_state, to_state, reason) for from_state in _cell_states(src)}
+
+    table = {(r.kind, r.from_state, r.to_state, r.reason) for r in TRANSITIONS}
+    # **집합 동치다 — 단방향이 아니다.** 첫 판은 `docstring → TRANSITIONS`만 돌았고,
+    # 이름 집합이 같으면 **코드에만 행을 더해도 초록**이었다. 검사 이름이 「IS the
+    # executable table」인데 무는 것은 그보다 약했다(CLAUDE.md §2.5 마지막 단락).
+    assert expected == table, (
+        "docstring 표와 TRANSITIONS가 갈라졌다.\n"
+        f"  표에만 있다: {sorted(str(key) for key in expected - table)}\n"
+        f"  코드에만 있다: {sorted(str(key) for key in table - expected)}"
+    )
 
 
 def test_the_self_transition_list_in_the_docstring_is_complete() -> None:
