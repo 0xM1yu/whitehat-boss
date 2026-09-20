@@ -33,7 +33,7 @@
 
 **잃는 것 — 그리고 되돌리는 비용.**
 
-- **과거 기록을 새 패턴으로 못 읽는다.** `condition: "B1prime@2x2"`를 든 `RunRecord`는 이제 `ValidationError`를 낸다. ⚠ **지금 저장소에 kind `run`을 되읽는 소비자가 없어 잠복이다** — `store.query(...)` 호출부는 저장소 전체에 **셋뿐이고 어느 것도 `"run"`이 아니다** — `src/cli.py:485`가 `"capsule"`, `tools/probe/critic_output_budget.py:248·249`가 `"finding"`·`"evidence"`다. ⚠ **`src/` 안에는 `"capsule"` 하나뿐이다** — 나머지 둘은 `tools/probe/`라 프로덕션 경로가 아니다. **소비자가 생기면 그때 옛 `state.db`가 깨진다.** 그 값을 가진 매니페스트가 실험 보고서에 남아 있다(`docs/experiments/harness/2026-08-28-2x2-b1prime-qwen3-8b-atom.md`).
+- **과거 기록을 새 패턴으로 못 읽는다.** `condition: "B1prime@2x2"`를 든 `RunRecord`는 이제 `ValidationError`를 낸다. ⚠ **지금 저장소에 kind `run`을 되읽는 소비자가 없어 잠복이다** — `store.query(...)` 호출부는 **`src/`·`tools/`에 셋**이다 — `src/cli.py:485`가 `"capsule"`, `tools/probe/critic_output_budget.py:248·249`가 `"finding"`·`"evidence"`다. **테스트에 일곱이 더 있어 합쳐 열이다**(`tests/test_adapters.py` 다섯 · `tests/test_tokenizer_adapter.py` 둘) — ⚠ 이 문단은 한때 「저장소 전체에 셋뿐」이라 적었고 **테스트를 안 셌다**(6라운드 적대 리뷰). **어느 것도 `"run"`이 아니다** — `git grep 'query("run")'`이 저장소 전체 0건이다. ⚠ **`src/` 안에는 `"capsule"` 하나뿐이다** — 나머지 둘은 `tools/probe/`라 프로덕션 경로가 아니다. **소비자가 생기면 그때 옛 `state.db`가 깨진다.** 그 값을 가진 매니페스트가 실험 보고서에 남아 있다(`docs/experiments/harness/2026-08-28-2x2-b1prime-qwen3-8b-atom.md`).
 - **되돌리기는 싸다** — 정규식 한 줄과 문서 몇 줄이다. 축을 되살리려면 `CONDITION_PATTERN`에 `(2x2|pipeline)`을 되돌리고 이 ADR을 대체하는 ADR을 쓴다.
 
 **살린 것 하나.** `evaluation.md` §2.1의 **절 번호와 앙상블 각주는 지우지 않았다.** `src/config.py`의 `_check_family_split`이 `ConfigError` 문구로 그 절 번호를 부르고, B3/B3′의 「제작사가 다른 모델」 조건이 그 각주에만 있다. 절을 통째로 지웠으면 런타임 오류 메시지가 없는 자리를 가리켰을 것이다([CLAUDE.md](../../CLAUDE.md) §2.3).
