@@ -504,7 +504,7 @@ _FT_REF = re.compile(r"(?<![A-Za-z0-9])FT(\d+)(?![0-9A-Za-z])")
 _STRUCK = re.compile(r"~~(.+?)~~", re.DOTALL)
 
 # 날짜가 박힌 줄. 이 저장소의 정정은 전부 `2026-09-13 —` 꼴을 달고 온다(ADR·D 본문·
-# CONTEXT.md). **죽은 라벨을 이름으로 부르며 "사라졌다"고 적는 정정문은 통과해야 한다** —
+# PROJECT-CONTEXT.md). **죽은 라벨을 이름으로 부르며 "사라졌다"고 적는 정정문은 통과해야 한다** —
 # 그것을 못 쓰게 하면 왜 죽었는지가 문서에서 사라진다. 날짜 없는 현재형 주장은 그대로 걸린다.
 _DATED_LINE = re.compile(r"20\d{2}-\d{2}-\d{2}")
 
@@ -568,7 +568,7 @@ def test_the_build_plan_does_not_borrow_the_d_series_namespace() -> None:
     assert borrowed == [], "\n".join(borrowed)
 
 
-# 모델 자리가 없는 단계. CONTEXT.md §2가 슬라이싱을 **무모델 결정론**으로 확정해
+# 모델 자리가 없는 단계. PROJECT-CONTEXT.md §2가 슬라이싱을 **무모델 결정론**으로 확정해
 # 0·1단계에서 모델 자리가 사라졌다(2026-09-13). 자리가 되살아나면 **이 집합을 고치는 것이**
 # 그 결정을 기록하는 자리다 — 검사를 지우는 것이 아니라.
 _STAGES_WITHOUT_A_MODEL = ("1",)
@@ -798,25 +798,25 @@ def test_every_adr_has_a_row_in_the_decisions_readme() -> None:
     assert not orphan, f"README 목록에 행은 있는데 그 번호의 ADR 파일이 없다: {orphan}"
 
 
-# --- 정본 선언(CONTEXT.md) ↔ 모델 registry ------------------------------------
+# --- 정본 선언(PROJECT-CONTEXT.md) ↔ 모델 registry ------------------------------------
 #
-# CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지
+# PROJECT-CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지
 # 않아서 아래 둘이 그 선언을 기계가 읽는 불변식으로 바꾼다 — 두 파일이 조용히 갈라지는 것,
-# 그러니까 CONTEXT.md가 존재하는 이유 그 자체를 막는다.
+# 그러니까 PROJECT-CONTEXT.md가 존재하는 이유 그 자체를 막는다.
 #
 # **판정은 표 구조로만 한다. 낱말로 하지 않는다.** `미등재`·`신규`는 이 저장소에서 다른
 # 뜻으로도 쓰인다(`docs/build-plan.md` §9의 R 행, 실험 보고서의 "신규 결함"). 낱말을 키로
 # 삼으면 상관없는 문서가 그 낱말을 옮길 때마다 여기가 깨지고, 오탐을 내는 검사는 꺼진다.
 
-CONTEXT = REPO_ROOT / "CONTEXT.md"
+CONTEXT = REPO_ROOT / "PROJECT-CONTEXT.md"
 
 # 표를 여는 절 제목. **번호가 아니라 제목으로 찾는다** — 앞에 절이 하나 끼는 날 번호로
 # 찾으면 조용히 다른 표를 읽는다.
 _ROSTER_HEADING = re.compile(r"^##\s+\d+\.\s+모델 로스터")
 _KEPT_HEADING = re.compile(r"^###\s+로스터에 없지만 registry에 남는 것")
 
-_ROSTER_TABLE = "CONTEXT.md 로스터 표(§1)"
-_KEPT_TABLE = "CONTEXT.md 「로스터에 없지만 registry에 남는 것」 표"
+_ROSTER_TABLE = "PROJECT-CONTEXT.md 로스터 표(§1)"
+_KEPT_TABLE = "PROJECT-CONTEXT.md 「로스터에 없지만 registry에 남는 것」 표"
 
 # 열은 **이름으로** 찾는다. 순서로 찾으면 열이 하나 끼는 날 옆 칸을 읽는다.
 _KEY_COLUMN = "registry 키"
@@ -919,14 +919,14 @@ def _registry_keys() -> set[str]:
 
 
 def test_the_context_roster_matches_the_model_registry() -> None:
-    """CONTEXT.md §1의 `registry 등재` 칸은 `config/models.yaml`의 사실과 같아야 한다.
+    """PROJECT-CONTEXT.md §1의 `registry 등재` 칸은 `config/models.yaml`의 사실과 같아야 한다.
 
     이 칸이 로스터 표에서 유일하게 **검증 가능한** 열이다. 나머지 두 열(자리·키)은 팀의
     결정이라 기계가 옳고 그름을 말할 수 없지만, "그 키가 registry에 있나"는 파일을 열면
     답이 나온다. 그래서 여기만 잠근다.
 
     **어긋나면 무슨 일이 나나.** 이 표는 「로스터 확정」과 「그 모델이 선다」를 가르려고
-    존재한다(CONTEXT.md §5). 등재를 마친 키가 여기서 계속 미등재로 보이면 읽는 사람이
+    존재한다(PROJECT-CONTEXT.md §5). 등재를 마친 키가 여기서 계속 미등재로 보이면 읽는 사람이
     쓸 수 있는 모델을 못 쓰고, 반대로 안 받은 모델이 등재로 보이면 **없는 서버를 전제로
     측정 계획을 짠다** — 2026-09-09에 GPU 시간을 잃은 것이 정확히 그 종류의 착오다.
 
@@ -941,13 +941,13 @@ def test_the_context_roster_matches_the_model_registry() -> None:
     offenders: list[str] = []
     for lineno, row in rows:
         if max(key_at, mark_at) >= len(row):
-            offenders.append(f"CONTEXT.md:{lineno}: 셀이 {len(row)}개뿐이라 읽을 수 없다")
+            offenders.append(f"PROJECT-CONTEXT.md:{lineno}: 셀이 {len(row)}개뿐이라 읽을 수 없다")
             continue
 
         match = _LEADING_KEY.match(row[key_at])
         if match is None:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{_KEY_COLUMN}` 칸이 백틱 키로 시작하지 않는다 "
+                f"PROJECT-CONTEXT.md:{lineno}: `{_KEY_COLUMN}` 칸이 백틱 키로 시작하지 않는다 "
                 f"— {row[key_at][:60]!r}"
             )
             continue
@@ -956,29 +956,29 @@ def test_the_context_roster_matches_the_model_registry() -> None:
         has_yes, has_no = _YES in mark, _NO in mark
         if has_yes == has_no:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{key}` — `{_MARK_COLUMN}` 칸을 판독할 수 없다"
+                f"PROJECT-CONTEXT.md:{lineno}: `{key}` — `{_MARK_COLUMN}` 칸을 판독할 수 없다"
                 f"({mark[:40]!r}). {_YES}나 {_NO} 중 하나만 쓴다"
             )
         elif has_yes and key not in registry:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{key}`를 {_YES}(등재)로 적었는데 "
+                f"PROJECT-CONTEXT.md:{lineno}: `{key}`를 {_YES}(등재)로 적었는데 "
                 f"config/models.yaml에 그 키가 없다. 있는 것: {sorted(registry)}"
             )
         elif has_no and key in registry:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{key}`를 {_NO}(미등재)로 적었는데 "
+                f"PROJECT-CONTEXT.md:{lineno}: `{key}`를 {_NO}(미등재)로 적었는데 "
                 f"config/models.yaml에 이미 있다 — 등재했으면 이 칸을 {_YES}로 바꾼다"
             )
 
     assert offenders == [], (
-        "CONTEXT.md §1 로스터 표가 config/models.yaml과 갈렸다.\n"
-        "로스터를 바꿀 때 손대는 곳은 CONTEXT.md §3이 넷으로 못박아 뒀다 — "
+        "PROJECT-CONTEXT.md §1 로스터 표가 config/models.yaml과 갈렸다.\n"
+        "로스터를 바꿀 때 손대는 곳은 PROJECT-CONTEXT.md §3이 넷으로 못박아 뒀다 — "
         "이 표·models.yaml·profiles.yaml·ADR 0010.\n" + "\n".join(offenders)
     )
 
 
 def test_every_registry_model_is_named_in_context() -> None:
-    """registry의 모든 키는 CONTEXT.md의 두 표 중 **한 곳에는** 이름이 있어야 한다.
+    """registry의 모든 키는 PROJECT-CONTEXT.md의 두 표 중 **한 곳에는** 이름이 있어야 한다.
 
     §1이 자리를 준 키와 「로스터에 없지만 registry에 남는 것」이 사유를 준 키, 그 둘의
     합집합이 `config/models.yaml`을 덮는다. 덮지 못하는 키는 **아무 문서도 설명하지 않는
@@ -1004,12 +1004,13 @@ def test_every_registry_model_is_named_in_context() -> None:
     orphan = sorted(kept - registry)
 
     assert not missing, (
-        f"config/models.yaml에 있는데 CONTEXT.md가 이름을 대지 않는 키: {missing} — "
+        f"config/models.yaml에 있는데 PROJECT-CONTEXT.md가 이름을 대지 않는 키: {missing} — "
         "자리를 줬으면 §1 표에, 안 줬으면 「로스터에 없지만 registry에 남는 것」에 "
         "사유와 함께 넣는다"
     )
     assert not orphan, (
-        f"CONTEXT.md가 「registry에 남는다」고 적었는데 config/models.yaml에 없는 키: {orphan} — "
+        f"PROJECT-CONTEXT.md가 「registry에 남는다」고 적었는데 "
+        f"config/models.yaml에 없는 키: {orphan} — "
         "registry 키는 지우지 않는다(ADR 0010). 정말 지웠다면 그 행도 같이 지운다"
     )
 
@@ -1019,9 +1020,10 @@ _POOL_ROLES = ("scout_memory", "scout_boundary", "scout_injection")
 
 
 def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
-    """`config/profiles.yaml`이 §1 배정을 안 따를 때, CONTEXT.md §5가 그 사실을 들어야 한다.
+    """`config/profiles.yaml`이 §1 배정을 안 따를 때, PROJECT-CONTEXT.md §5가 그 사실을 들어야 한다.
 
-    **왜 이 검사가 있나.** CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때 손대는
+    **왜 이 검사가 있나.** PROJECT-CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때
+    손대는
     넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **지금은 다르다.**
     프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`다. 그 어긋남을 정본이
     안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
@@ -1058,12 +1060,13 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
     if rewired and declared:
         raise AssertionError(
-            f"프로필 {rewired}이(가) Scout 풀로 재배선됐는데 CONTEXT.md §5가 아직 "
+            f"프로필 {rewired}이(가) Scout 풀로 재배선됐는데 PROJECT-CONTEXT.md §5가 아직 "
             f"「{_REWIRE_MARKER} — 안 됐다」를 들고 있다. 그 줄은 이제 거짓이다. 지워라."
         )
     if not rewired and not declared:
         raise AssertionError(
-            f"프로필 어느 것도 Scout 풀을 안 쓰는데 CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
+            f"프로필 어느 것도 Scout 풀을 안 쓰는데 "
+            f"PROJECT-CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
             "정본만 읽은 사람은 profiles.yaml이 §1과 같다고 읽는다 — §5에 그 어긋남을 적어라."
         )
 
@@ -1082,11 +1085,11 @@ def test_the_two_rulebooks_say_the_same_thing() -> None:
     그리고 **갈린 사본이 실제로 있었다**: 2026-09-11에 `AGENTS.md`가 추적 대상이 되기 전
     상태를 열어 보니 §3이 *"이슈가 결함의 원천이고 상태의 원천이다"*였는데, 같은 시점
     `CLAUDE.md`는 **ADR 0008 이후라 정반대**였다(*"문서가 원천이고 GitHub Issue는 추적
-    미러다"*). `CONTEXT.md`를 가리키는 줄과 2026-09-09 4연속 사고 기록도 통째로 없었다.
+    미러다"*). `PROJECT-CONTEXT.md`를 가리키는 줄과 2026-09-09 4연속 사고 기록도 통째로 없었다.
 
     **그 상태로 두면 이 저장소가 기록한 사고를 그대로 재생한다** — 다른 에이전트가
     **낡은 문서를 살아 있는 지시로 읽는다**(CLAUDE.md §7의 사고). 그래서 문서로
-    부탁하지 않고 코드가 막는다. `CONTEXT.md` 검사들과 같은 판단이다.
+    부탁하지 않고 코드가 막는다. `PROJECT-CONTEXT.md` 검사들과 같은 판단이다.
 
     고치는 법: 규약을 `CLAUDE.md`에서 고치고 첫 줄만 바꿔 복사한다.
     """
@@ -1122,7 +1125,7 @@ def test_the_two_rulebooks_say_the_same_thing() -> None:
 # registry 부재를 주장하는 문구. `미등재`는 §1 표가 정당하게 쓰므로 함께 본다.
 _ABSENT_CLAIM = re.compile(r"registry에 없|레지스트리에 없|미등재")
 # 그 주장 **바로 앞 절**에서만 키를 줍는다. 줄 전체를 보면 같은 줄의 다른 절이 걸린다 —
-# CONTEXT.md §5의 재배선 행은 한 줄 안에서 "Critic은 등재됐다"와 "리랭커는 없다"를
+# PROJECT-CONTEXT.md §5의 재배선 행은 한 줄 안에서 "Critic은 등재됐다"와 "리랭커는 없다"를
 # 함께 말하므로, 줄 단위로 보면 등재된 Critic까지 위반으로 잡힌다.
 #
 # **문장 경계에서 자른다.** 글자 수로만 자르면 앞 문장의 키가 딸려 온다 — 이 검사를 처음
@@ -1148,7 +1151,7 @@ def test_no_document_says_a_registered_model_is_missing_from_the_registry() -> N
     §1을 ✅로 바꾸면서 §5에 남은 「아직 registry에 없어서」를 못 잡고, **정본 파일이 자기
     §1과 §5에서 다른 말을 하게 된다.**
 
-    `CONTEXT.md`가 존재하는 이유가 **낡은 로스터 서술을 살아 있는 지시로 읽는 사고**인데
+    `PROJECT-CONTEXT.md`가 존재하는 이유가 **낡은 로스터 서술을 살아 있는 지시로 읽는 사고**인데
     (그 파일 머리말 — 2026-09-09 하루에 네 번), 그 파일이 스스로 그 사고의 원천이 되면
     장치가 뒤집힌다. 그래서 사람이 아니라 코드가 막는다.
 
@@ -1184,7 +1187,7 @@ def test_no_document_states_the_registry_state_as_a_count() -> None:
     """「셋 다 미등재」처럼 **개수**로 registry 상태를 적지 않는다.
 
     개수는 등재가 하나 늘 때마다 조용히 거짓이 되는데, 키 이름이 없어서 위 검사도 못
-    잡는다. `CONTEXT.md` §3이 그 규칙을 이미 적는다 — *"그 밖의 문서는 모델을 현재형으로
+    잡는다. `PROJECT-CONTEXT.md` §3이 그 규칙을 이미 적는다 — *"그 밖의 문서는 모델을 현재형으로
     이름 대지 않는다. 이름을 대야 하면 이 파일을 링크한다."*
 
     **실제로 낡았다**: `R8.md`가 *"`config/models.yaml`(셋 다 미등재)"*로 적은 채
@@ -1200,7 +1203,7 @@ def test_no_document_states_the_registry_state_as_a_count() -> None:
     ]
     assert offenders == [], (
         "registry 상태를 개수로 적은 곳이 있다. 개수는 등재마다 거짓이 되고 키 이름이 "
-        "없어 다른 검사도 못 잡는다 — CONTEXT.md §1 표를 링크한다.\n" + "\n".join(offenders)
+        "없어 다른 검사도 못 잡는다 — PROJECT-CONTEXT.md §1 표를 링크한다.\n" + "\n".join(offenders)
     )
 
 
@@ -1217,7 +1220,7 @@ def test_the_roster_registration_cell_only_says_whether_it_is_registered() -> No
     item_ref = re.compile(r"\b[RD]\d+\b")
 
     offenders = [
-        f"CONTEXT.md:{lineno}: `{_MARK_COLUMN}` 칸이 {found}를 든다 — {row[mark_at][:60]!r}"
+        f"PROJECT-CONTEXT.md:{lineno}: `{_MARK_COLUMN}` 칸이 {found}를 든다 — {row[mark_at][:60]!r}"
         for lineno, row in rows
         if mark_at < len(row)
         for found in [item_ref.findall(row[mark_at])]
@@ -1287,7 +1290,7 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # 막으려는 명제는 *"산문이 D·R의 상태를 **단언**한다"*이고, 그 문형은 둘이다.
 #
 # **(가) 맨형** — `[D77](…) 닫힘` · `**D54** 부분` · `D9(닫힘)`. **조사가 없다.**
-#   2026-09-20까지 이 문형이 통째로 사각이었고 **18건이 미탐이었다** — 그중 `CONTEXT.md`와
+#   2026-09-20까지 이 문형이 통째로 사각이었고 **18건이 미탐이었다** — 그중 `PROJECT-CONTEXT.md`와
 #   `docs/build-plan.md`의 정본 줄이 있다.
 # **(나) 인접형** — `D74는 열림` · `#98(D26, 열림)`. 조사/쉼표 바로 뒤에 상태어가 온다.
 # **(다) 말이 끼는 형** — `R2는 **그 파일에서 아직** \`열림\`이고`. 여기서 **백틱을 요구하고**
@@ -1410,7 +1413,7 @@ def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
     assert _WITHDRAWN.sub("", "~~D57(부분)~~ 뒤") == " 뒤", "취소선 제거가 깨졌다"
 
     hits = {
-        # 맨형 — `CONTEXT.md:146`이 로스터 표 뒤에 적는 형태
+        # 맨형 — `PROJECT-CONTEXT.md:146`이 로스터 표 뒤에 적는 형태
         "- [D77](docs/open-questions/D/D77.md) 닫힘": ("D77", "닫힘"),
         # 맨형(굵게) — `D64.md:62`
         "(관련: **D54** 부분 — 로스터 모델 중 어느 것도)": ("D54", "부분"),
@@ -1577,7 +1580,7 @@ def test_the_index_status_column_matches_its_body_file() -> None:
     )
 
 
-# 폐기됐다는 표시. **`제거`는 뺐다** — `CONTEXT.md` §5가 「enum 제약 **제거**」로 상시 쓰는
+# 폐기됐다는 표시. **`제거`는 뺐다** — `PROJECT-CONTEXT.md` §5가 「enum 제약 **제거**」로 상시 쓰는
 # 낱말이라, 폐기와 무관한 이웃 줄 하나가 검사를 통과시켰다(2라운드 리뷰가 주입으로 재현).
 _DEPRECATION_MARKER = re.compile(r"폐기|소멸|없앴")
 # 취소선은 **같은 줄에서만** 센다. 표에서는 그것이 폐기 표시이지만, 창 안 아무 줄에나 있는
@@ -1606,7 +1609,7 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     (`src/schemas/run.py`의 `CONDITION_PATTERN` 주석이 그렇다). 줄 하나만 보면 그 형태가
     전부 걸리고, 그러면 다음 사람이 이 검사를 지운다.
 
-    **범위는 「읽으면 그대로 따르는 것」뿐이다** — `CONTEXT.md`·`src/`·`config/`.
+    **범위는 「읽으면 그대로 따르는 것」뿐이다** — `PROJECT-CONTEXT.md`·`src/`·`config/`.
 
     ⚠ **`docs/` 를 안 넣은 것은 의도다.** 2026-09-20에 `docs/open-questions/D/` 까지 넓혀
     돌려 보니 **열둘**이 나왔고(커밋 `32ee331` 트리에서 잰 값) 그중 **열하나가 장부의 이력
@@ -1637,7 +1640,7 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     window = 3
     offenders: list[str] = []
 
-    for path in _tracked("CONTEXT.md", "src", "config"):
+    for path in _tracked("PROJECT-CONTEXT.md", "src", "config"):
         lines = _read(path).splitlines()
         for index, line in enumerate(lines):
             if not _TWO_BY_TWO.search(line):
