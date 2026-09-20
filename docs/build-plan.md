@@ -116,8 +116,8 @@ L1~L4를 동시에 켜면 모델이 여러 개 필요해진다. **몇 개까지 
 
 이 전환은 되돌리기 비싼 결정이라 별도 ADR로 뽑았다 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md). **아직 `execution` 계열 키를
 config에 넣지 않는다.** ⚠ **사유가 2026-09-09에 바뀌었다** — 그날 스키마가 두 키를 받게 되어
-적어도 로드는 통과한다(§1 정정 6). 남은 사유는 둘이다: **러너가 아직 단계 단위가 아니고
-sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서 정책이 선 것처럼 보이고,
+적어도 로드는 통과한다(§1 정정 6). 남은 사유는 둘이다: ~~**러너가 아직 단계 단위가 아니고**~~
+**sleep/wake를 부르는 코드가 없어** 선언이 아무 일도 안 하면서 정책이 선 것처럼 보이고,
 `swap`이 요구하는 값(왕복 예산·`settle_timeout_s`)이 **아직 실측이 아니다**(CLAUDE.md §0).
 선언은 [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 결과 4의 몫이고
 그 앞에 결과 2·3이 있다.
@@ -286,8 +286,15 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 (`free -g` 동일 · `nvidia-smi` 동일 2,382 MiB · `cuda free` 0.17 GiB 차). 왜 그런지는
 **기전을 못 갈랐다** — 보고서 §5에 미측정으로 남겼다. 그리고 이것은 **장비가 되는가**에
 대한 답이지 하네스가 할 수 있는가는 아니다 — `execution.mode`·`swap`은 2026-09-09에
-스키마에 들어왔지만(§1 정정 6) **선언을 받는 것까지**이고, 단계 단위 러너도 sleep/wake를
-부르는 코드도 아직 없다(`ADR 0009` 결과 2·3, 각각 별도 PR).
+스키마에 들어왔지만(§1 정정 6) **선언을 받는 것까지**이고, ~~단계 단위 러너도~~ sleep/wake를
+부르는 코드가 아직 없다(`ADR 0009` 결과 2·3, 각각 별도 PR).
+
+> **2026-09-20 정정 — 결과 2는 들어왔다.** 단계 단위 러너가 `cd65500`(#161,
+> `2026-09-11 10:26`)로 배선됐다 — `src/orchestrator/runner.py`의 `execution.mode ==
+> "per_stage"` 분기와 `_triage_by_stage`이고 `tests/test_pipeline_e2e.py`가 두 모드를
+> parametrize로 덮는다. ⚠ **그래도 오늘 도달할 수는 없다** —
+> `grep -c "execution:" config/profiles.yaml`이 **0**이라 어느 프로필도 그 모드를 선언하지
+> 않는다(결과 4). sleep/wake 호출부도 `src/` 전체에 **0건**이다(결과 3).
 
 ---
 
@@ -367,6 +374,23 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 가리키지 않는다. **재배선 전에 돌린 run은 폐기 예정 구성을 잰 값이고, 이 표를 「다음에 할
 일」로 읽고 그대로 착수하는 것이 CONTEXT.md 머리말이 적은 2026-09-09의 사고 그 자체다.**
 재배선에서 손대는 자리는 CONTEXT.md §3의 넷이고 **이 문서는 그 넷에 없다.**
+
+> ### ⚠ 2026-09-20 — §8 표의 세 행이 **이미 들어와 있다.** 표만 미착수로 읽힌다
+>
+> 표를 고치지 않고 여기 적는다 — 행 번호는 회의록·PR이 참조하므로 옮기지 않는다.
+>
+> | 행 | 표가 주는 인상 | 코드 |
+> | --- | --- | --- |
+> | **4** Scout 전문가 셋 | 미착수 | `prompts/scout_{memory,boundary,injection}/v2` **9파일 실재** · `src/schemas/candidate.py`의 `scout_member` 필드 · `src/orchestrator/context.py`가 호출마다 stamp |
+> | **5** 단계 단위 | 본체·미착수 | `cd65500`(#161, `2026-09-11 10:26`) — `runner.py`의 `execution.mode == "per_stage"` 분기·`_triage_by_stage`. `tests/test_pipeline_e2e.py`가 두 모드를 parametrize |
+> | **9** 도구 루프 | 「단계 단위가 선행」 대기 | **그 선행은 풀렸다.** 남은 것은 `DecisionPoint.REQUEUE` **생산자 0건**뿐이다 — 소비부(`policy._requeue`·전이 C-8·C-9·F-14)는 다 있다 |
+>
+> ⚠ **행 5를 「된다」로 읽지 않는다.** `grep -c "execution:" config/profiles.yaml`이 **0**이라
+> 어느 프로필도 그 모드를 선언하지 않는다 — 코드는 있고 테스트가 덮지만 **실프로필에서
+> 도달 불가**다. 그것이 [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md)
+> 결과 4의 몫이고, 결과 3(sleep/wake)도 `src/` 호출부 **0건**이다.
+>
+> ⚠ **행 4도 「관측된다」가 아니다.** 기록 배선은 있지만 그것을 실제로 채운 완주 run이 없다.
 
 ---
 
