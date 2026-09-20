@@ -795,6 +795,9 @@ def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Pa
         [],
         {},
         {},
+        # compile_flags — 이 검사의 축이 아니다. 어댑터를 안 세웠으므로 `None`이고,
+        # 그것은 `RunRecord.compile_flags`가 정한 "이 기록은 남기지 않았다"와 같은 뜻이다.
+        None,
     )
     assert record.thresholds["output_max_by_role.critic"] == 8192.0, (
         "요청에는 실리는데 기록에 안 남는다 — engineering-guide.md §5가 그 run을 비교표에서 뺀다"
@@ -990,6 +993,9 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         [],
         {},
         {},
+        # compile_flags — 이 검사의 축이 아니다. 어댑터를 안 세웠으므로 `None`이고,
+        # 그것은 `RunRecord.compile_flags`가 정한 "이 기록은 남기지 않았다"와 같은 뜻이다.
+        None,
     )
     assert record.model_reasoning_effort == {"auditor": "high"}, (
         "요청에는 실리는데 기록에 안 남는다 — §5가 그 run을 비교표에서 뺀다"
