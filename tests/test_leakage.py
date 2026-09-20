@@ -174,24 +174,137 @@ def test_default_scan_includes_prompts() -> None:
 
 
 def test_run_globs_include_run_prompt_artifacts() -> None:
-    """`prompts/`는 템플릿이다. 대상 코드가 섞이는 곳은 run 산출물 쪽이다 (D19)."""
-    assert "artifacts/*/prompts/*.md" in leakage_main.RUN_GLOBS
+    """`prompts/`는 템플릿이다. 대상 코드가 섞이는 곳은 run 산출물 쪽이다 (D19).
+
+    ⚠ **이 핀이 무는 것은 철자다.** 참인 명제는 *"이 글자로 되돌리면 죽는다"*이고
+    *"run 산출물이 실제로 검사된다"*는 아래 `test_the_default_call_scans_...`와
+    `test_check_scans_a_run_outside_the_repository`가 문다(CLAUDE.md §2.5 끝절).
+    """
+    assert "*/prompts/*.md" in leakage_main.RUN_GLOBS
     assert leakage_main.TRACE_GLOB in leakage_main.RUN_GLOBS
 
 
-def test_check_scans_run_prompt_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """산출물 프롬프트가 대상에 안 들어가면 렌더된 입력은 한 번도 검사되지 않는다."""
-    prompts = tmp_path / "artifacts" / "run_20260901_0001" / "prompts"
+# --- 스캔 면 (R3) ------------------------------------------------------------
+#
+# R3가 적는 결함: *"`RUN_GLOBS`가 `REPO_ROOT.glob("artifacts/*/…")`이라 저장소 밖
+# `--artifacts-root`로 돈 run은 기본 호출에서 한 건도 안 잡힌다."* ATOM run이 전부
+# 그 모양이므로(`--artifacts-root /srv/tenants/ext01/artifacts`) 기본 호출은 **그 장비에
+# 남은 잔여물**을 검사하고 방금 돈 run은 안 본다.
+
+
+def test_default_artifacts_root_is_the_repository_one() -> None:
+    """기본 호출이 저장소 안 run을 계속 본다 — R3 고침이 그것을 빼앗으면 안 된다."""
+    assert leakage_main.DEFAULT_ARTIFACTS_ROOT == REPO_ROOT / "artifacts"
+
+
+def test_the_default_call_scans_repository_run_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """산출물 프롬프트가 대상에 안 들어가면 렌더된 입력은 한 번도 검사되지 않는다 (D19)."""
+    prompts = tmp_path / "run_20260901_0001" / "prompts"
     prompts.mkdir(parents=True)
     (prompts / "0001_scout.md").write_text(CLEAN + LEAKED_CVE, encoding="utf-8")
-    monkeypatch.setattr(leakage_main, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(leakage_main, "DEFAULT_ARTIFACTS_ROOT", tmp_path)
+
+    code = leakage_main.main(["--problem-names", str(tmp_path / "none.txt")])
+
+    assert code == 1
+    assert "cve_id" in capsys.readouterr().out
+
+
+def test_check_scans_a_run_outside_the_repository(tmp_path: Path) -> None:
+    """ATOM run은 `--artifacts-root ~/artifacts_*`라 **저장소 밖**에 있다 (R3)."""
+    prompts = tmp_path / "run_20260901_0001" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "0001_scout.md").write_text(CLEAN + LEAKED_CVE, encoding="utf-8")
 
     report = leakage_main.check(
-        scan=[], kb=None, evalset=None, problem_names=tmp_path / "none.txt"
+        scan=[],
+        artifacts_root=tmp_path,
+        kb=None,
+        evalset=None,
+        problem_names=tmp_path / "none.txt",
     )
 
-    assert report.scanned == 1
+    assert report.run_artifacts == 1
     assert [leak.pattern for leak in report.leaks] == ["cve_id"]
+
+
+def test_check_ignores_runs_under_a_different_root(tmp_path: Path) -> None:
+    """음성 핀 — 준 뿌리 **밖**은 안 들어온다.
+
+    R3가 문제 삼는 것은 "0건"이 아니라 **무엇을 검사한 것인지 명령만 보고 알 수 없다**는
+    것이다. 뿌리를 줬는데 다른 곳의 run이 섞여 들어오면 그 성질이 똑같이 깨진다.
+    """
+    elsewhere = tmp_path / "artifacts_다른곳" / "run_20260901_0001" / "prompts"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "0001_scout.md").write_text(CLEAN + LEAKED_CVE, encoding="utf-8")
+    given = tmp_path / "artifacts_준것"
+    given.mkdir()
+
+    report = leakage_main.check(
+        scan=[],
+        artifacts_root=given,
+        kb=None,
+        evalset=None,
+        problem_names=tmp_path / "none.txt",
+    )
+
+    assert report.run_artifacts == 0
+    assert report.leaks == []
+
+
+def test_the_report_states_which_surface_it_scanned(tmp_path: Path) -> None:
+    """출력만 보고 무엇을 훑었는지 알 수 있어야 한다 — 그것이 R3가 남긴 문장이다."""
+    scanned = tmp_path / "훑을곳"
+    scanned.mkdir()
+    (scanned / "clean.md").write_text(CLEAN, encoding="utf-8")
+    root = tmp_path / "artifacts_atom"
+    root.mkdir()
+
+    rendered = leakage_main.check(
+        scan=[scanned],
+        artifacts_root=root,
+        kb=None,
+        evalset=None,
+        problem_names=tmp_path / "none.txt",
+    ).render()
+
+    assert str(scanned) in rendered
+    assert str(root) in rendered
+
+
+def test_artifacts_root_flag_reaches_the_scan(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`parse_args`가 아니라 `main()`을 돌린다 — 배선이 끊기면 여기서만 드러난다."""
+    prompts = tmp_path / "run_20260901_0001" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "0001_scout.md").write_text(CLEAN + LEAKED_CVE, encoding="utf-8")
+    clean = tmp_path / "clean.md"
+    clean.write_text(CLEAN, encoding="utf-8")
+
+    code = leakage_main.main(
+        ["--scan", str(clean), "--artifacts-root", str(tmp_path), "--problem-names", str(clean)]
+    )
+
+    assert code == 1
+    assert "CVE-2021-3156" in capsys.readouterr().out
+
+
+def test_a_missing_artifacts_root_is_an_error_not_a_green_light(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """뿌리를 **명시했는데** 없으면 0건이 아니라 오류다.
+
+    오타 하나가 "검사했고 깨끗함"을 만들어 내면 이 스캐너를 고친 의미가 없다 — 모듈
+    docstring이 digest 교집합에 대해 이미 같은 말을 한다(`[생략]`과 `[통과]`를 가른다).
+    **기본 뿌리가 없는 것은 오류가 아니다** — 갓 클론한 체크아웃의 정상 상태다.
+    """
+    code = leakage_main.main(["--artifacts-root", str(tmp_path / "없는뿌리")])
+
+    assert code == 2
+    assert "[ERROR]" in capsys.readouterr().err
 
 
 def test_repository_passes_the_default_check(capsys: pytest.CaptureFixture) -> None:
