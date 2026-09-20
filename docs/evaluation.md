@@ -111,6 +111,16 @@
 | 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율 |
 | 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 
+> ⚠ **`proven`은 「크래시가 재현됐다」가 아니다.** 그 상태를 여는 등급(E4)이 요구하는 것은
+> 런타임 Evidence의 `ok=True`인데, 그 `ok`가 뜻하는 것은 **도구가 실행됐다**는 것까지다 —
+> `container_tools.judge()`는 런타임 도구의 exit 0(=크래시 없음)도 `ok=True`로 올리고, Fake는
+> 실행 자체를 하지 않는다. 산출물을 `expected_signal`과 대조하는 코드는 없다.
+>
+> 그래서 Precision의 **분모**(`proven` + `validated`)에서 `proven`이 세는 것은 「재현된
+> 건수」가 아니라 **「도구가 돈 건수」**다. 그 차이를 가르는 것은 같은 행의 **사람 검토**이고
+> 그쪽이 분자다. **§5.2의 `proven finding당 GPU-hour`도 `proven`이 분모다.**
+> → [architecture.md](architecture.md) §4 · [open-questions.md](open-questions.md) D80(열림)
+
 ### 5.2 비용·효율
 
 | 지표 | 정의 |

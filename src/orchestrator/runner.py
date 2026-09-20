@@ -748,8 +748,15 @@ def run_pipeline(
     # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
     #
     # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
-    # 들어가고, Fake auditor에선 E4가 원리상 도달 불가다(해소). E4가 실제로 열리면 그 근거를
-    # 여기로 모으는 일이 따라온다(`validate.run`이 `produced`를 반환하는데 지금 버린다).
+    # 들어간다. 이유는 그 하나이고, 그것을 만드는 자리가 아래 `after, _ = validate.run(...)`이다
+    # (`produced`를 반환하는데 `_`로 버린다). E4가 이 경로로도 열리면 그 근거를 여기로 모으는
+    # 일이 따라온다.
+    #
+    # ⚠ **「Fake에선 E4가 원리상 도달 불가」를 두 번째 이유로 달았던 것은 거짓이라 뺐다.**
+    # `FakeToolRunner._run_repro()`는 실행 대신 대상 소스의 존재를 보므로 Fake 경로에서 E4는
+    # 실제로 나고, `test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools`가 그것을
+    # 단언한다(2026-08-21). 못 넘는 것은 **컨테이너 러너에 가짜 `repro_spec`이 갈 때**이고
+    # 그것은 빌드가 끊겨서다 — 「Fake auditor」와 「Fake 도구 러너」는 다른 축이다.
     grades = {
         f.finding_id: gate.evaluate(
             f,
