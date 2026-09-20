@@ -759,6 +759,32 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
     assert "replace('\\\\', '/')" in context
 
 
+def test_query_strings_pin_the_defects_the_live_run_found():
+    # 아래 assert 들이 주장하는 것은 **그 결함이 다시 들어오면 죽는다** 뿐이다 — 질의가
+    # 의미상 옳다는 주장이 아니다. 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는
+    # 여기서 실행되지 않으므로, 각 문자열이 실제 CPG 에서 무엇을 고르는지는 확인되지 않는다.
+    # 다섯 번째(null method sink)는 test_orphan_flow_sinks_are_reported_as_partial 이 든다.
+    inventory = queries.inventory_query()
+    # `cpg.metaData.overlays.l` 은 이미 평평하다. `.flatten` 이 String 을 Char 로 쪼개
+    # `ujson.Arr.from` 이 컴파일되지 않았다. 아래 줄은 위 줄에 가리지 않는다 — 같은 실수가
+    # 옆 필드(`cpg.file.name.l`)에 앉으면 위 줄은 통과하고 아래 줄만 죽는다.
+    assert "cpg.metaData.overlays.l.distinct.sorted" in inventory
+    assert ".l.flatten" not in inventory
+
+    context = queries.context_query([("main.c", 1)], "/work/repo")
+    # 선언과 적용 지점을 따로 본다 — 한쪽만 남아도 합성 METHOD_REF/TYPE_DECL 이 다시
+    # `<global>` 로 올라간다. 적용 형태를 문자로 박으므로 같은 뜻의 재작성에도 걸린다.
+    assert "def sourceNode(n: nodes.AstNode): Boolean" in context
+    assert ".filter(sourceNode)" in context
+
+    flows = queries.flows_query([candidate()["scope"]], 3)
+    # 괄호가 빠지면 Scala 가 `"truncated" -> observed.size > 3` 을 튜플 비교로 파싱한다.
+    # 괄호 없는 판도 substring 검사는 통과하므로 여기서 재는 것은 괄호뿐이다.
+    assert "(observed.size > 3)" in flows
+    # sink 하나마다 엔진을 새로 짓지 않는다 — 배치 단위는 enclosing method 다.
+    assert "sinks.groupBy(_.method)" in flows
+
+
 def test_unwritable_output_reports_error_without_traceback(monkeypatch, repo, tmp_path, capsys):
     monkeypatch.setattr(slicer, "urlopen", MockTransport(payloads()))
     code = slicer.main(["--repo", str(repo), "--out", str(tmp_path)])
