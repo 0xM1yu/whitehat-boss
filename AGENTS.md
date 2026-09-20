@@ -72,7 +72,7 @@
 ### 2.4 문서를 현재형으로 읽기 전에 **정본인지, 언제 쓰였는지** 본다
 
 **정본이 먼저다.** 무엇의 정본이 어디인지는 §6 표가 든다 — 모델·프로필·인덱서는
-[CONTEXT.md](CONTEXT.md), 파이프라인 단계·근거 등급은 `docs/architecture.md`, 짓는 순서는
+[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md), 파이프라인 단계·근거 등급은 `docs/architecture.md`, 짓는 순서는
 [build-plan.md](docs/build-plan.md), 결함 상태는 `docs/open-questions/D/D<n>.md`.
 **그 밖의 문서가 같은 것을 현재형으로 말하면 그것은 지시가 아니라 서술이고, 서술은 낡는다.**
 
@@ -86,7 +86,7 @@
 
 > **사고 — 2026-09-20에 셋을 연달아 밟았다. 셋 다 정본·장부 쪽이다.**
 >
-> ① [CONTEXT.md](CONTEXT.md) §5가 `gpt-oss-20b`의 「enum 제약 제거」를 **미측정**으로 적는데,
+> ① [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) §5가 `gpt-oss-20b`의 「enum 제약 제거」를 **미측정**으로 적는데,
 > `0148719`(#182)가 그것을 `2026-09-13 01:59`에 재서 **enum 강제 2/5 ↔ 제거 5/5**를 냈다.
 > 그 줄은 **12시간 뒤인 13:55에 쓰였는데** 그 실측을 안 실었다.
 > ② `R8.md`가 *"`config/profiles.yaml`의 `critic`이 아직 `gpt-oss-20b`가 아니고"*라 적는데,
@@ -283,7 +283,7 @@ python -m pytest -q
 
 | 알고 싶은 것 | 문서 |
 | --- | --- |
-| **어느 모델이 어느 자리인가 · 인덱서** | **[CONTEXT.md](CONTEXT.md) — 정본. §7의 규칙이 이것이다** |
+| **어느 모델이 어느 자리인가 · 인덱서** | **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) — 정본. §7의 규칙이 이것이다** |
 | 전체 구조 · 단계별 책임 · 근거 등급 E0~E4 | `docs/architecture.md` |
 | **앞으로 무엇을 어느 순서로 짓는가** | [docs/build-plan.md](docs/build-plan.md) |
 | 역할별 실행 계약 · 프롬프트 규약 | `docs/agent-contracts.md` |
@@ -304,7 +304,7 @@ python -m pytest -q
 - **착수 전 열린 이슈·PR을 본다.** 같은 결함을 남이 고치고 있을 수 있다.
 - 지우거나 덮어쓰기 전에 **먼저 열어 본다.**
 - 수치를 인용할 때는 **요약이 아니라 원천**(보고서·run ID·코드 줄)을 연다.
-- **모델·프로필을 현재형으로 읽기 전에 [CONTEXT.md](CONTEXT.md)를 먼저 연다.** 계획·설계 문서가
+- **모델·프로필을 현재형으로 읽기 전에 [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)를 먼저 연다.** 계획·설계 문서가
   로스터를 현재형으로 서술하면 그것은 지시가 아니라 **낡은 서술**이고, 어긋나면 그 문서를 고친다.
   개수도 문서에서 세지 않는다 — §1 표와 `config/`에서 센다.
   강제하는 것은 `test_the_context_roster_matches_the_model_registry`·
