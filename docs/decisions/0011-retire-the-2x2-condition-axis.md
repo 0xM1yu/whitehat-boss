@@ -11,7 +11,8 @@
 그 결과가 실제로 두 번 났다.
 
 1. **2026-09-15** — 누군가 이슈 #59를 *"2x2 실험 폐기로 인해 닫음"* 한 줄로 수동 close했다. `Closes`를 건 PR이 없었다([CLAUDE.md](../../CLAUDE.md) §3 규칙 1 위반).
-2. **2026-09-17** — 장부 전수 대조(PR #217)가 그것을 찾아 **되열었다.** 사유: *"폐기된 것은 2×2 실험 트랙이고 D1이 가리키는 §2.1의 라벨 축은 살아 있다."*
+2. **2026-09-18** — 장부 전수 대조(PR #217)가 그것을 찾아 **되열었다.** 사유: *"폐기된 것은 2×2 **실험 트랙**이고, D1이 가리키는 것은 … **§2.1의 라벨 축**입니다. 그 절은 지금도 살아 있고 …"*
+   ⚠ **날짜는 KST다.** 되열기 코멘트의 `createdAt`이 `2026-09-17T20:54:06Z`라 UTC로는 09-17이지만 이 저장소의 기준시(`git log --format=%cI`가 전부 `+09:00`)로는 **09-18 05:54**이고, [D1](../open-questions/D/D1.md)과 [인덱스](../open-questions.md)도 09-18로 적는다. **이 ADR의 초판이 UTC를 그대로 써 하루를 틀렸다** — 날짜 순서를 바로잡으려고 쓴 문서에서 난 오류라 여기 남긴다([CLAUDE.md](../../CLAUDE.md) §2.4).
 
 **되열린 쪽이 그때는 옳았다.** 2026-09-01에 폐기된 것은 **실험 트랙**이고(그 기록은 `config/budgets.yaml`의 `output_max` 주석에 남아 있다), D1이 묻던 것은 **라벨 축**이었다 — `B1`/`B1'`/`B3`/`B3'`이 §2.1(2×2)과 §2.2(파이프라인)에서 서로 다른 뜻으로 쓰이는 충돌이다. 트랙이 없어져도 라벨 충돌은 문서에 남아 있었다.
 
@@ -32,7 +33,7 @@
 
 **잃는 것 — 그리고 되돌리는 비용.**
 
-- **과거 기록을 새 패턴으로 못 읽는다.** `condition: "B1prime@2x2"`를 든 `RunRecord`는 이제 `ValidationError`를 낸다. ⚠ **지금 저장소에 kind `run`을 되읽는 소비자가 없어 잠복이다** — `store.get`/`query` 호출부 전수에서 읽는 것은 capsule·finding·evidence뿐이다. **소비자가 생기면 그때 옛 `state.db`가 깨진다.** 그 값을 가진 매니페스트가 실험 보고서에 남아 있다(`docs/experiments/harness/2026-08-28-2x2-b1prime-qwen3-8b-atom.md`).
+- **과거 기록을 새 패턴으로 못 읽는다.** `condition: "B1prime@2x2"`를 든 `RunRecord`는 이제 `ValidationError`를 낸다. ⚠ **지금 저장소에 kind `run`을 되읽는 소비자가 없어 잠복이다** — `store.query(...)` 호출부는 저장소 전체에 **셋뿐이고 어느 것도 `"run"`이 아니다** — `src/cli.py:485`가 `"capsule"`, `tools/probe/critic_output_budget.py:248·249`가 `"finding"`·`"evidence"`다. ⚠ **`src/` 안에는 `"capsule"` 하나뿐이다** — 나머지 둘은 `tools/probe/`라 프로덕션 경로가 아니다. **소비자가 생기면 그때 옛 `state.db`가 깨진다.** 그 값을 가진 매니페스트가 실험 보고서에 남아 있다(`docs/experiments/harness/2026-08-28-2x2-b1prime-qwen3-8b-atom.md`).
 - **되돌리기는 싸다** — 정규식 한 줄과 문서 몇 줄이다. 축을 되살리려면 `CONDITION_PATTERN`에 `(2x2|pipeline)`을 되돌리고 이 ADR을 대체하는 ADR을 쓴다.
 
 **살린 것 하나.** `evaluation.md` §2.1의 **절 번호와 앙상블 각주는 지우지 않았다.** `src/config.py`의 `_check_family_split`이 `ConfigError` 문구로 그 절 번호를 부르고, B3/B3′의 「제작사가 다른 모델」 조건이 그 각주에만 있다. 절을 통째로 지웠으면 런타임 오류 메시지가 없는 자리를 가리켰을 것이다([CLAUDE.md](../../CLAUDE.md) §2.3).
