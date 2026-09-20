@@ -582,8 +582,15 @@ def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
     assert len(set(versions.values())) == 1, f"풀 멤버의 프롬프트 버전이 갈렸다: {versions}"
 
 
-# ADR 0010 §2가 4단계 풀 세 자리에 앉힌 registry 키. auditor·critic은 계열이 갈리는
-# 쌍이라(`qwen` × `mistral`) `_check_family_split`을 지난다.
+# **`config/profiles.yaml`의 `local_balanced_pool`이 실제로 든 키**다. auditor·critic은 계열이
+# 갈리는 쌍이라(`qwen` × `mistral`) `_check_family_split`을 지난다.
+#
+# ⚠ **2026-09-21 — 이 값은 더 이상 §1 로스터가 아니다.** 2026-09-13에는 둘이 같았고 이 주석도
+# *"ADR 0010 §2가 4단계 풀 세 자리에 앉힌 키"*라 적었는데, 로스터가 교체돼 §1의 Scout 세
+# 자리는 `seccoderx-8b`·`seccoderx-8b-v15s`·`deepseek-r1-distill-qwen-32b`가 됐다.
+# **값을 새 키로 바꿀 수 없다** — 그 키들의 `prompt_template_version`이 `v14s`/`v15s`인데
+# `prompts/` 아래에 그 폴더가 없어(있는 것은 `v1`·`v2`뿐) 아래 두 검사가 곧바로 죽는다.
+# 프롬프트 이식(이슈 #233)이 오면 **이 상수와 프로필을 같은 PR에서 함께 옮긴다.**
 #
 # **`fake`로 대신하지 않는다.** 아래 두 검사가 보는 것은 「풀 역할이 고른 버전의
 # 디렉터리가 있는가」이고, 그 값을 실제로 움직일 PR은 로스터 모델의

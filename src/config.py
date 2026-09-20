@@ -193,9 +193,15 @@ class ModelEntry(HarnessModel):
     # 줄로 Critic이 Auditor와 같은 계열이 되어도 그 run은 완주하고, registry에 계열을 적을
     # 칸이 없어 **사후에도 자동으로 못 가렸다.** 아래 `_check_family_split`이 그 판정을 한다.
     #
-    # **`Literal`로 닫지 않는다.** 로스터는 계속 바뀌고(ADR 0010 머리) Auditor B안이
-    # NVIDIA라 값이 더 는다 — 닫아 두면 registry에 모델을 더할 때마다 이 코드가 따라와야
-    # 한다. `quantization`·`license`를 자유 문자열로 둔 것과 같은 판단이다.
+    # **`Literal`로 닫지 않는다.** 로스터는 계속 바뀌고(ADR 0010 머리) 닫아 두면 registry에
+    # 모델을 더할 때마다 이 코드가 따라와야 한다. `quantization`·`license`를 자유 문자열로
+    # 둔 것과 같은 판단이다.
+    #
+    # ⚠ **2026-09-21 — 이 판단의 근거를 갈아 끼웠다.** 앞서 여기 적힌 근거는 *"Auditor B안이
+    # NVIDIA라 값이 더 는다"*였는데 그 A/B가 소멸해 **값이 움직였는데 근거만 남는** 모양이
+    # 됐다(CLAUDE.md §2.3). 지금의 살아 있는 근거는 registry 자신이 든다 —
+    # `deepseek-r1-distill-qwen-32b` 항목이 *"베이스 가중치는 Qwen2.5지만 DeepSeek 재학습이라
+    # 계열 확정 필요"*라 적는다. **계열을 못 정한 키가 실재하는 동안은 닫을 수 없다.**
     #
     # 기본값이 `None`인 것은 `source`·`Benchmark.measured_on`과 같은 이유다 — 기존
     # registry 항목에 이 키가 없으면 로드가 통째로 실패한다. **다만 `None`은 통과가

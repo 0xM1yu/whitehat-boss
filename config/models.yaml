@@ -77,7 +77,8 @@ models:
   # 그 안은 `models.yaml`을 안 건드리지만, 아래는 registry에 항목 셋을 **더한다**. 책임이 흐려지는
   # 자리를 프로필이 아니라 registry로 옮긴 별개 선택지다(#103 본문에 그렇게 등재). 아래 셋은 **base와
   # 같은 무게·서버·checksum·fallback**이고 `prompt_template_version`만 v2다 — 진짜 별칭이다.
-  # 로스터 §1의 자리는 base(v1)가 정본이고 이 별칭은 v2 프롬프트 도달용이다.
+  # ⚠ **2026-09-21 교체 전에는 「§1 자리는 base(v1)가 정본」이었다.** 지금 §1의 Scout 세
+  # 자리는 이 계열이 아니므로 이 별칭들이 사는 곳은 `local_balanced_pool` 프로필 배선뿐이다.
   # **`benchmark`는 0(별칭 자체 미실측 · §0).** base 처리량을 여기 옮기는 코드 경로는 없고
   # (`_gpu_estimate`가 별칭을 그대로 미실측으로 본다), devstral base는 그 값이 애초에 0이다.
   # 풀 프로필 `local_balanced_pool`이 이 셋을 scout 자리에 배선한다.

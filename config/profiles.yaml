@@ -1,9 +1,14 @@
 # 실행 프로필 (model-serving.md §5, engineering-guide.md §2)
 #
 # ⚠ **이 파일의 `roles:`는 아직 확정 로스터가 아니다.** 어느 모델이 어느 자리에 앉는지의
-# 정본은 저장소 루트 `CONTEXT.md` §1이고, 그 재배선은 신규 모델 셋이 registry에 등재된 뒤에
-# 온다 — `CONTEXT.md` §5의 마지막 줄이 그 사실을 든다. 여기 적힌 `critic: devstral-small-2-24b`
-# 같은 값을 "지금 쓰는 로스터"로 읽지 마라.
+# 정본은 저장소 루트 `CONTEXT.md` §1이다. 여기 적힌 `critic: devstral-small-2-24b` 같은 값을
+# "지금 쓰는 로스터"로 읽지 마라.
+#
+# ⚠ **2026-09-21 — 재배선을 막는 사유가 바뀌었다.** 앞서 이 자리는 *"신규 모델 셋이 registry에
+# 등재된 뒤에 온다"*고 적었는데, 신규 키는 **셋이 아니라 넷**이고 **이미 등재됐다**. 지금 막는
+# 것은 둘이다 — 그 넷의 `checksum`이 placeholder(0 = 미실측 표시)이고, 그것들이 요구하는
+# 프롬프트 버전이 `prompts/` 아래에 없다(있는 것은 `v1`·`v2`뿐 · 이식이 이슈 #233).
+# `CONTEXT.md` §5가 자리마다 남은 선행을 든다.
 #
 # 프로필 교체만으로 B1/B1'/B3/B3' 조건과 실행 환경을 구성할 수 있어야 한다.
 # `roles`의 값은 models.yaml의 model key다. **필수는 auditor·critic 둘**이다(REQUIRED_ROLES).
@@ -304,15 +309,19 @@ profiles:
       state_store: sqlite
     budget: default
 
-  # --- 임시 §1-목표 배선 — Scout 풀 + Critic gpt-oss, 플러밍 완성용 (#103·#178) ----
+  # --- 임시 풀 배선 — Scout 풀 + Critic gpt-oss, 플러밍 완성용 (#103·#178) ----
   local_balanced_pool:
     # **모델 선정 미확정/검증 전. 배선 플러밍만 완성한다.** #178이 Scout 풀 팬아웃(대상 1개 →
     # 멤버 셋)을 러너에 넣었는데, 커밋된 프로필 어느 것도 풀 셋을 선언하지 않아 `fake_v2`로
-    # 테스트 안에서만 돌았다. 이 프로필이 **실모델로 §1 목표 구성을 provisional 배선한다:**
+    # 테스트 안에서만 돌았다. 이 프로필이 **실모델로 풀 구성을 provisional 배선한다:**
+    #
+    # ⚠ **2026-09-21 — 이 배선은 §1 목표가 아니다.** 세울 때(2026-09-13)는 그날의 §1을 겨눴는데
+    # 로스터가 교체돼 §1의 Scout 세 자리가 다른 계열이 됐다. 아래 멤버는 **옛 Scout 셋의 v2
+    # 별칭**이고, 새 자리로 옮기는 것은 프롬프트 이식(이슈 #233) 뒤다.
     #
     # - **Scout 풀** — scout_{memory,boundary,injection}이 각자 CWE 계열을 본다(ADR 0010 §3).
-    #   멤버는 §1 base를 v2 프롬프트로 가리키는 임시 별칭이고(models.yaml 「임시 v2 별칭」),
-    #   **어느 모델이 어느 자리인지는 확정이 아니다** — 도달성(#103)·2×2 뒤 정식으로 정한다.
+    #   멤버는 옛 §1 base를 v2 프롬프트로 가리키는 임시 별칭이고(models.yaml 「임시 v2 별칭」),
+    #   **어느 모델이 어느 자리인지는 확정이 아니다** — 도달성(#103) 뒤 정식으로 정한다.
     # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high) — #182(DecisionDraft verdict)가
     #   머지돼 배선은 되나 **반박 정확도 미측정 + DecisionDraft→gpt-oss 통합 확인이 남았다**
     #   (#182가 "배선 후 follow-up"이라 적은 것). 그래서 실서빙 `local_balanced`(critic devstral)는
@@ -326,7 +335,7 @@ profiles:
     #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 그래서 이
     #   프로필로 돈 run은 비교표 진입을 `production` 플래그가 막아 주지 않는다 — 처리량 미측정
     #   (별칭·gpt-oss benchmark 0)이고 근본 검증 전이라 **손으로 안 돌린다.**
-    description: "임시 §1-목표 배선(Scout 풀 v2 별칭 + Critic gpt-oss) — 플러밍 완성용, 검증 전 (#103·#182)"
+    description: "임시 풀 배선(옛 Scout 셋의 v2 별칭 + Critic gpt-oss) — 플러밍 완성용, 검증 전 (#103·#182)"
     production: false
     roles:
       scout_memory: qwen3-coder-30b-a3b-v2
