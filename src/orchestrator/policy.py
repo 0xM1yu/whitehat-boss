@@ -184,7 +184,9 @@ class FixedThresholdPolicy:
         if not ok:
             return self._act(Route.QUEUE, FindingState.QUEUED, ReasonCode.REPRO_FAILED, basis)
         # 재현이 실패하면 등급은 무의미하므로 ok=True일 때만 읽는다 — basis에는 실제로
-        # 판정에 쓴 신호만 남아야 한다(모듈 docstring 11-13행).
+        # 판정에 쓴 신호만 남아야 한다(`Signal` 정의 위 주석). ⚠ 줄 번호로 인용하지
+        # 않는다 — 처음 쓸 때 "모듈 docstring 11-13행"이라 적었는데 그 세 줄은 trace
+        # 기록 얘기였다(§2.1).
         grade = EvidenceGrade(_signal(request, "grade"))
         basis["grade"] = grade.value
         if grade is EvidenceGrade.E4:
