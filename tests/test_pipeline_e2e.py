@@ -29,7 +29,7 @@ from src.adapters.fake_model import FakeModelClient
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
-from src.orchestrator import runner
+from src.orchestrator import runner, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
@@ -1179,6 +1179,13 @@ def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
         ReasonCode.REPRO_CONFIRMED.value,
         ReasonCode.EVIDENCE_BELOW_PROVEN.value,
     }
+    # 이 집합은 **두 벌**이다 — 여기와 `trace.py`의 이벤트→지표 표(그쪽이 정본). 손으로
+    # 유지하다 접두사 산식(`count(repro_*)`)이 새 사유를 빠뜨렸다(#68). 같이 움직이게 묶는다.
+    # 표지가 움직이면 아래 집합이 비어 단언이 곧바로 터진다 — 조용히 통과할 길이 없다.
+    denominator = (trace.__doc__ or "").split("「제거율 — Tool」 산식:", 1)[-1].split("분모", 1)[-1]
+    assert {
+        name.strip() for name in denominator.split("count(", 1)[-1].split(")", 1)[0].split("∪")
+    } == repro, "trace.py의 8단계 제거율 분모와 이 테스트가 세는 사유 집합이 갈라졌다"
     validated = [
         e for e in _of(events, "transition", stage=Stage.VALIDATE) if e["data"]["reason"] in repro
     ]
