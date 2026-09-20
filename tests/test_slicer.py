@@ -805,6 +805,9 @@ def test_inventory_query_keeps_the_overlays_list_flat():
     # 위 양성의 `)` 가 그것을 닫는다.
     # ⚠ **대가는 반대 방향이다**: 장래에 **옳은** flatten 이 필요해지면 죽는다 —
     # 그때는 필드 한정으로 좁힌다. (양성과 달리 이쪽은 없어야 할 문자열이라 재작성에 안 걸린다.)
+    # ⚠ **양성 쪽의 대가는 브리틀함이다** — `.sorted.distinct` 로 순서를 바꾸거나 사이에
+    # 공백을 넣기만 해도 깨진다. 뜻은 같지만 **의도한 것**이다: 이 사슬이 움직이면 사람이
+    # 한 번 본다. scalafmt 를 돌리는 사람이 이유를 못 찾지 않게 여기 적어 둔다.
     assert "flatten" not in inventory
 
 
