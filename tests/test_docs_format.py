@@ -1400,7 +1400,7 @@ def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
     """
     # ⚠ **정규식 이름을 직접 부르는 단언이 하나는 있어야 한다.** 아래 루프는 `found` 를
     # 거쳐 가므로 「이 정규식에 핀이 있는가」를 기계로 세는 검사가 못 본다
-    # (`test_every_sweep_detector_carries_a_contamination_pin`).
+    # (`test_every_detector_carries_a_contamination_pin`).
     assert _D_STATUS_CLAIM.search("- [D77](docs/open-questions/D/D77.md) 닫힘"), "맨형을 못 잡는다"
     assert _WITHDRAWN.sub("", "~~D57(부분)~~ 뒤") == " 뒤", "취소선 제거가 깨졌다"
 
@@ -1658,17 +1658,42 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
 # 통째로 죽여도 CI가 초록이었다. 고치고 나서 이 파일 전체를 세어 보니
 # **전수 검사를 굴리는 정규식 25개 중 양·음 핀을 다 든 것이 3개**였다.
 # 내가 낸 두 결함은 예외가 아니라 **이 파일의 기본값**이었다.
+# ⚠ **그 3은 이 검사를 세우기 직전의 수다** — 세운 커밋이 둘을 더 달아 5가 됐고,
+# 6라운드의 재기준선 뒤로는 35개 중 8이다. 재는 시점을 안 적으면 다음 사람이
+# 「재현이 안 된다」로 읽는다([CLAUDE.md](../CLAUDE.md) §2.4) — 실제로 그랬다.
 #
 # 규칙은 **래칫**이다 — 새 검출기는 핀을 들어야 하고, 아래 부채 목록은 **줄기만 한다.**
 # 한 번에 스무 개를 채우려다 아무것도 안 하는 것보다, 다음 사람이 하나를 더할 때
 # 막는 편이 실제로 줄어든다(「인덱스 표는 지우지 않는다」와 같은 논법).
+#
+# ## 6라운드 — **「어느 것이 전수인가」를 맞히려던 것이 틀렸다**
+#
+# 처음에는 검출기 중 **전수를 굴리는 것**만 골라 핀을 요구했고, 고르는 방법이
+# *"함수 안에 `offenders` 라는 이름의 변수가 있는가"* 였다. 그 축이 샜다 — 6라운드가
+# 세 갈래를 **실제로 통과시켰다**(합성 검출기를 넣고 이 검사를 돌려 확인):
+#
+# 1. `assert not any(_RX.search(x) for x in ...)` — `offenders` 변수가 없어 함수째 안 보인다.
+# 2. `_TABLE = {"k": _RX}` 뒤 `_TABLE["k"].search(...)` — 함수 안에 `_RX` 라는 이름이 안 뜬다.
+#    도우미 함수로 한 겹 빼도 같다.
+# 3. `assert None is _RX.search(x)` — `_assert_direction` 이 좌변을 안 봐서 `pos` 로 읽혔고,
+#    **음성 단언 둘이 양·음 쌍으로 통과**했다.
+#
+# 셋을 각각 막는 것은 **또 문자열 축**이다([CLAUDE.md](../CLAUDE.md) §2.5). 그래서 고르기를
+# 통째로 버렸다 — **모듈 수준 `re.compile` 은 전부 핀을 든다.** 추론이 없으면 샐 곳도 없다.
+#
+# **재기준선.** 그 결과 검사 대상이 25에서 **35**(이 파일의 전 검출기)로 늘었고 면제 목록도
+# 20에서 **27**이 됐다. ⚠ **부채가 늘어난 것이 아니라 안 보이던 부채가 드러난 것이다** —
+# 새로 들어온 일곱(`_PIPE`·`_LEADING_PIPE`·`_TRAILING_PIPE`·`_D_ROW`·`_D_STATUS_CELL`·
+# `_ADR_ROW`·`_KEPT_HEADING`)은 **한 번도 검사받은 적이 없다.** 이 재기준선 뒤로는 그대로
+# 래칫이다.
 
 # ⚠ **이 목록은 늘릴 수 없다.** 줄이는 PR만 이 줄을 건드린다.
 _UNPINNED_LEGACY = frozenset({
-    "_SEPARATOR", "_FENCE", "_D_REF", "_LINK", "_REPORT_NAME", "_DEVICE_ROW",
-    "_FT_REF", "_STRUCK", "_DATED_LINE", "_R_ROW", "_R_REF",
-    "_MEMORY_ROW", "_MEMORY_HEADER", "_SERVED_ROLE_CLAIM", "_ROSTER_HEADING",
-    "_LEADING_KEY", "_ABSENT_CLAIM", "_CLAUSE_END", "_COUNT_CLAIM", "_REGISTRY_CONTEXT",
+    "_ABSENT_CLAIM", "_ADR_ROW", "_CLAUSE_END", "_COUNT_CLAIM", "_DATED_LINE", "_DEVICE_ROW",
+    "_D_REF", "_D_ROW", "_D_STATUS_CELL", "_FENCE", "_FT_REF", "_KEPT_HEADING", "_LEADING_KEY",
+    "_LEADING_PIPE", "_LINK", "_MEMORY_HEADER", "_MEMORY_ROW", "_PIPE", "_REGISTRY_CONTEXT",
+    "_REPORT_NAME", "_ROSTER_HEADING", "_R_REF", "_R_ROW", "_SEPARATOR", "_SERVED_ROLE_CLAIM",
+    "_STRUCK", "_TRAILING_PIPE",
 })
 
 
@@ -1680,8 +1705,12 @@ def _assert_direction(node: ast.Assert) -> str | None:
     if isinstance(test, ast.Compare):
         if any(isinstance(op, ast.NotIn) for op in test.ops):
             return "neg"
+        # ⚠ `comparators` 는 **우변뿐**이다. `None is X` 는 `None` 이 `left` 에 있어
+        # 여기서 빠지고 아래 `pos` 로 떨어졌다 — 음성 단언 둘이 **양·음 쌍으로 통과**했다
+        # (6라운드 실측: `_PROBE_FAKE` 가 핀 없이 래칫을 통과했다).
         if any(isinstance(op, ast.Is) for op in test.ops) and any(
-            isinstance(c, ast.Constant) and c.value is None for c in test.comparators
+            isinstance(c, ast.Constant) and c.value is None
+            for c in (test.left, *test.comparators)
         ):
             return "neg"
         if any(isinstance(op, ast.Eq) for op in test.ops) and any(
@@ -1691,7 +1720,31 @@ def _assert_direction(node: ast.Assert) -> str | None:
     return "pos"
 
 
-def test_every_sweep_detector_carries_a_contamination_pin() -> None:
+def test_the_assert_direction_reads_both_sides_of_an_is_comparison() -> None:
+    """`None is X` 도 음성이다 — 우변만 보면 그것을 **양성**으로 읽는다.
+
+    **사고 —** 6라운드까지 좌변을 안 봤다. 그래서 음성 단언 **둘**(`None is X` 와
+    `X is None`)을 든 검출기가 **양·음 쌍**으로 래칫을 통과했다. 핀이 붙은 것처럼 보이는데
+    그 검출기가 한 번이라도 무언가를 잡는다는 증거는 어디에도 없다 — 아래 검사가 막으려는
+    상태 그 자체다. **`_assert_direction` 을 직접 겨눈 검사가 없어서** 전수를 거쳐야만
+    드러났고, 그 전수는 이 오분류를 초록으로 통과시킨다.
+    """
+
+    def direction(source: str) -> str | None:
+        parsed = ast.parse(source).body[0]
+        assert isinstance(parsed, ast.Assert)
+        return _assert_direction(parsed)
+
+    assert direction("assert _X.search(s) is None") == "neg"
+    assert direction("assert None is _X.search(s)") == "neg", "좌변의 None 을 못 본다"
+    assert direction("assert _X.search(s) is not None") == "pos"
+    assert direction("assert None is not _X.search(s)") == "pos", "부정을 뒤집어 읽는다"
+    assert direction("assert not _X.search(s)") == "neg"
+    assert direction("assert _X.search(s)") == "pos"
+    assert direction("assert offenders == []") is None, "전수 단언은 핀이 아니다"
+
+
+def test_every_detector_carries_a_contamination_pin() -> None:
     """전수 검사를 굴리는 정규식은 **양성·음성 핀을 둘 다** 들어야 한다.
 
     **왜 둘 다인가.** 양성만 있으면 정규식이 넓어져 정상 문장을 막는 것을 못 잡고,
@@ -1720,13 +1773,6 @@ def test_every_sweep_detector_carries_a_contamination_pin() -> None:
     def named(node: ast.AST) -> set[str]:
         return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} & detectors
 
-    sweeping: set[str] = set()
-    for func in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
-        body_names = {n.id for n in ast.walk(func) if isinstance(n, ast.Name)}
-        asserts = [a for a in ast.walk(func) if isinstance(a, ast.Assert)]
-        if "offenders" in body_names or any(_assert_direction(a) is None for a in asserts):
-            sweeping |= body_names & detectors
-
     pins: dict[str, set[str]] = {}
     for node in (n for n in ast.walk(tree) if isinstance(n, ast.Assert)):
         direction = _assert_direction(node)
@@ -1735,14 +1781,14 @@ def test_every_sweep_detector_carries_a_contamination_pin() -> None:
         for name in named(node.test):
             pins.setdefault(name, set()).add(direction)
 
-    unpinned = {d for d in sweeping if pins.get(d, set()) != {"pos", "neg"}}
+    unpinned = {d for d in detectors if pins.get(d, set()) != {"pos", "neg"}}
 
     assert unpinned <= _UNPINNED_LEGACY, (
         "전수 검사를 굴리는 새 정규식에 오염 핀이 없다 — 그 검출기가 고장 나도 CI는 "
         "영영 초록이다. 이름을 직접 부르는 양성·음성 단언을 하나씩 단다:\n"
         + "\n".join(f"  {d}" for d in sorted(unpinned - _UNPINNED_LEGACY))
     )
-    assert _UNPINNED_LEGACY <= sweeping | _UNPINNED_LEGACY  # 목록이 실재를 가리킨다
+    assert _UNPINNED_LEGACY <= detectors, "면제 목록이 없는 이름을 든다"
     stale = _UNPINNED_LEGACY - unpinned
     assert not stale, (
         "면제 목록에 **이미 핀이 붙은** 정규식이 남아 있다 — 부채를 갚았으면 목록에서 "
