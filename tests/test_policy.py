@@ -72,7 +72,7 @@ _HANDLED_POINTS: dict[DecisionPoint, dict[str, object]] = {
         "grade": EvidenceGrade.E3.value,
         "has_repro_spec": True,
     },
-    DecisionPoint.REPRO_RESULT: {"ok": True, "tool_allowed": True},
+    DecisionPoint.REPRO_RESULT: {"ok": True, "tool_allowed": True, "grade": EvidenceGrade.E4.value},
     DecisionPoint.REQUEUE: {"requeue_count": 0},
 }
 
@@ -193,7 +193,13 @@ def test_tool_policy_violation_outranks_repro_result(policy: FixedThresholdPolic
 
 def test_repro_result_maps_to_proven_or_queued(policy: FixedThresholdPolicy) -> None:
     confirmed = policy.decide(
-        _request(DecisionPoint.REPRO_RESULT, Stage.VALIDATE, ok=True, tool_allowed=True)
+        _request(
+            DecisionPoint.REPRO_RESULT,
+            Stage.VALIDATE,
+            ok=True,
+            tool_allowed=True,
+            grade=EvidenceGrade.E4.value,
+        )
     )
     failed = policy.decide(
         _request(DecisionPoint.REPRO_RESULT, Stage.VALIDATE, ok=False, tool_allowed=True)
@@ -201,6 +207,25 @@ def test_repro_result_maps_to_proven_or_queued(policy: FixedThresholdPolicy) -> 
 
     assert confirmed.to_state is FindingState.PROVEN
     assert failed.to_state is FindingState.QUEUED
+
+
+def test_repro_result_grade_gates_promotion_to_proven(policy: FixedThresholdPolicy) -> None:
+    """F-10과 F-10b를 가르는 것은 게이트 등급이다 — E4 미만이면 재현에 성공해도 proven이 아니다."""
+
+    def decide(grade: EvidenceGrade) -> Action:
+        return policy.decide(
+            _request(
+                DecisionPoint.REPRO_RESULT,
+                Stage.VALIDATE,
+                ok=True,
+                tool_allowed=True,
+                grade=grade.value,
+            )
+        )
+
+    assert decide(EvidenceGrade.E4).to_state is FindingState.PROVEN
+    assert decide(EvidenceGrade.E3).to_state is FindingState.VALIDATED
+    assert decide(EvidenceGrade.E3).reason_code is ReasonCode.EVIDENCE_BELOW_PROVEN
 
 
 def test_requeue_limit_keeps_object_queued(

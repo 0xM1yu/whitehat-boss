@@ -9,7 +9,7 @@
 `IllegalTransition`으로 터진다. 이 프로젝트에서 나중에 바꾸기 가장 비싼 결정이므로
 설계 문서가 아니라 코드와 같은 파일에 둔다.
 
-`from == to`인 행(C-9·F-3·F-4·F-5·F-9·F-13)도 **반드시 trace에 남긴다** — 없으면
+`from == to`인 행(C-9·F-3·F-4·F-5·F-9·F-10b·F-13)도 **반드시 trace에 남긴다** — 없으면
 6·7단계 통과율의 분모가 사라진다.
 
 ## Candidate
@@ -40,6 +40,7 @@
 | F-8 | Gate E3 (반박 실패 + 명세) | 7 | `hypothesized` | `validated` | `critic_upheld` |
 | F-9 | 반박 실패, `repro_spec` 부재 | 7 | `hypothesized` | `hypothesized` | `repro_spec_missing` |
 | F-10 | Gate E4 (재현 로그 `ok=True`) | 8 | `validated` | `proven` | `repro_confirmed` |
+| F-10b | 재현 성공, E4 미만 (무전이) | 8 | `validated` | `validated` | `evidence_below_proven` |
 | F-11 | 재현 실패 | 8 | `validated` | `queued` | `repro_failed` |
 | F-12 | tool_policy 위반 | 8 | `validated` | `queued` | `tool_policy_violation` |
 | F-13 | 예산 소진 | 6·7·8 | 임의 | 변경 없음 | `budget_exhausted` |
@@ -139,6 +140,7 @@ TRANSITIONS: tuple[TransitionRule, ...] = (
     TransitionRule("F-8", "finding", _S.HYPOTHESIZED, _S.VALIDATED, _R.CRITIC_UPHELD),
     TransitionRule("F-9", "finding", _S.HYPOTHESIZED, _S.HYPOTHESIZED, _R.REPRO_SPEC_MISSING),
     TransitionRule("F-10", "finding", _S.VALIDATED, _S.PROVEN, _R.REPRO_CONFIRMED),
+    TransitionRule("F-10b", "finding", _S.VALIDATED, _S.VALIDATED, _R.EVIDENCE_BELOW_PROVEN),
     TransitionRule("F-11", "finding", _S.VALIDATED, _S.QUEUED, _R.REPRO_FAILED),
     TransitionRule("F-12", "finding", _S.VALIDATED, _S.QUEUED, _R.TOOL_POLICY_VIOLATION),
     # F-13 "임의 → 변경 없음"을 상태별 자기 전이로 편다.
