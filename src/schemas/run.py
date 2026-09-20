@@ -19,7 +19,7 @@ from src.schemas.common import (
 )
 
 # evaluation.md §2.2: 2×2 설계(§2.1)와 파이프라인 조건(§2.2)이 같은 라벨을 다른 축으로
-# 썼다. 라벨 통합 논의는 #59(open-questions).
+# 썼다. 그 충돌은 축을 하나로 줄이며 소멸했다 — ADR 0011(2026-09-20).
 # 2026-09-20: PM 결정으로 2×2 실험이 완전히 폐기되고 Scout 오케스트레이터로 전환되어
 # `2x2` 축을 CONDITION_PATTERN에서 제거한다.
 # `'`는 파일명·URL·쉘에서 깨지므로 `prime`으로 표기한다.
@@ -99,7 +99,7 @@ class RunRecord(UtcModel):
     """
 
     run_id: Identifier
-    # 예: "B3prime@pipeline". 어느 정의의 조건인지 라벨에 포함한다.
+    # 예: "B3prime@pipeline". 축은 지금 `pipeline` 하나이고, 늘 때를 대비해 라벨에 남긴다.
     condition: Annotated[str, Field(pattern=CONDITION_PATTERN)]
     # 이 run이 **어느 프로필로** 돌았는가 (`--profile`이 고른 `config/profiles.yaml` 항목).
     #
