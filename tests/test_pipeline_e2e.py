@@ -703,12 +703,33 @@ def test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects() -> None
     **「축」이라는 낱말 앞의 토큰만 본다.** 문구 전체를 패턴과 대조하면 일반 산문이 전부
     걸리고, 그러면 다음 사람이 이 검사를 지운다.
     """
-    axis_like = re.compile(r"[0-9A-Za-z×]+(?=\s*축)")
+    # 두 모양을 본다. **`N×N` 리터럴**이 실제로 터진 것이고(2×2·2x2·2X2·2 × 2·전각),
+    # **`@축`**은 패턴의 어휘와 직접 대조한다. 「축」 앞 토큰만 보던 첫 판은 구멍이 셋이었다 —
+    # `2×2 실험 축`처럼 한글이 끼면 끊기고, `2X2`를 놓치고, `retriever 축` 같은 무관한
+    # 정상 문구를 막았다(2라운드 리뷰가 주입으로 전부 재현).
+    matrix_axis = re.compile(r"[2２]\s*[×xX✕✖╳]\s*[2２]")
+    suffixed_axis = re.compile(r"@(\w+)")
+
+    def rejected(text: str) -> list[str]:
+        found = [m.group(0) for m in matrix_axis.finditer(text)]
+        found += [
+            m.group(1)
+            for m in suffixed_axis.finditer(text)
+            if m.group(1) not in CONDITION_PATTERN
+        ]
+        return found
+
+    # **오염 핀.** 아래가 없으면 두 문구가 깨끗해지는 순간 이 단언이 빈 리스트끼리 비교하는
+    # 공회전이 되고, 검출기가 고장 나도 영영 초록이다.
+    accident = "2×2 축으로 돌린 run이 pipeline 라벨로 남으면"
+    assert rejected(accident), "검출기가 사고 문구를 못 잡는다"
+    assert not rejected(f"조건은 {runner.DEFAULT_CONDITION} 하나다"), "검출기가 정상 조건을 잡는다"
+
     offenders = [
-        f"{axis!r}: {message}"
-        for message in runner.BLOCKING_WHEN_SERVING
-        for axis in axis_like.findall(message)
-        if axis.replace("×", "x") not in CONDITION_PATTERN
+        f"{axis!r}: {text}"
+        for gap, flag in runner.BLOCKING_WHEN_SERVING.items()
+        for text in (gap, flag)  # 키(문구)와 값(플래그명) 둘 다 본다
+        for axis in rejected(text)
     ]
     assert offenders == [], (
         "차단 문구가 CONDITION_PATTERN이 받지 않는 축을 사유로 든다 — 운영자가 "

@@ -1278,8 +1278,15 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # `docs/open-questions.md`가 *"D54**가** `열림`이다"* 와 *"D54**의** `열림`을"* 로 적은 두 줄을
 # 이 검사가 못 봤고, D54를 `부분`으로 내린 PR이 초록으로 통과했다. 전수를 **문자열**로 돌리면
 # 반쪽만 걸린다(CLAUDE.md §2.3).
+#
+# ⚠ **`의`만 백틱을 요구한다.** `는|은|이|가`는 「D54가 `열림`이다」처럼 상태를 **단언**하는
+# 자리에만 붙지만, `의`는 「D54**의** 보류 해제를 기록한다」 같은 **명사구**에도 붙는다 —
+# 그대로 두면 보류를 풀었다는 문장이 「보류다」로 읽혀 CI가 정상 문장을 막고, 그때 다음
+# 사람이 이 검사를 지운다. 백틱을 요구하면 인용된 상태값만 남는다.
 _D_STATUS_CLAIM = re.compile(
-    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}(?:는|은|이|가|의)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}"
+    r"(?:(?:는|은|이|가)\s*\*{0,2}`?|의\s*\*{0,2}`)"
+    r"(열림|닫힘|보류|부분)`?\*{0,2}"
 )
 
 # D 본문 파일 머리의 상태 셀. `| 열림 |` · `| **닫힘** (2026-09-18, 선택지 (a)) |` 둘 다 받는다.
@@ -1351,11 +1358,16 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     )
 
 
-# 폐기됐다는 표시. 취소선(`~~`)도 센다 — 표에서는 그것이 표시다.
-_DEPRECATION_MARKER = re.compile(r"폐기|소멸|제거|없앴|~~")
-# U+00D7 곱셈기호와 ASCII x를 **둘 다** 받는다. 2026-09-20에 `git grep "@2x2"`(ASCII)로만
-# 훑은 PR이 `2×2`를 든 네 줄을 통째로 놓쳤다 — 그중 둘은 살아 있는 소스였다.
-_TWO_BY_TWO = re.compile(r"2[×x]2")
+# 폐기됐다는 표시. **`제거`는 뺐다** — `CONTEXT.md` §5가 「enum 제약 **제거**」로 상시 쓰는
+# 낱말이라, 폐기와 무관한 이웃 줄 하나가 검사를 통과시켰다(2라운드 리뷰가 주입으로 재현).
+_DEPRECATION_MARKER = re.compile(r"폐기|소멸|없앴")
+# 취소선은 **같은 줄에서만** 센다. 표에서는 그것이 폐기 표시이지만, 창 안 아무 줄에나 있는
+# `~~`를 받으면 같은 우회가 열린다.
+_STRIKETHROUGH = "~~"
+# 곱셈기호(U+00D7)·ASCII `x`·대문자 `X`·전각 숫자·사이 공백을 전부 받는다.
+# 2026-09-20에 `git grep "@2x2"`(ASCII)로만 훑은 PR이 `2×2`를 든 네 줄을 통째로 놓쳤고,
+# 그 검사를 처음 쓸 때 이번에는 `2X2`·`2 × 2`를 놓쳤다 — 같은 실수의 두 번째 판이다.
+_TWO_BY_TWO = re.compile(r"[2２]\s*[×xX✕✖╳]\s*[2２]")
 
 
 def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
@@ -1373,8 +1385,14 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     (`src/schemas/run.py`의 `CONDITION_PATTERN` 주석이 그렇다). 줄 하나만 보면 그 형태가
     전부 걸리고, 그러면 다음 사람이 이 검사를 지운다.
 
-    **범위는 정본과 실행되는 것뿐이다** — `CONTEXT.md`·`src/`·`config/`. 실험 보고서는
-    날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
+    **범위는 「읽으면 그대로 따르는 것」뿐이다** — `CONTEXT.md`·`src/`·`config/`.
+
+    ⚠ **`docs/` 를 안 넣은 것은 의도다.** 2026-09-20에 `docs/open-questions/D/` 까지 넓혀
+    돌려 보니 **13건**이 나왔는데 그중 열둘이 장부의 **이력 서술**이었다 — D1의 원질문 문장,
+    D30·D79가 D1과 대조하는 문단, D44·D52가 당시 기록을 인용한 자리. 그것을 고치는 것은
+    관측을 지우는 일이다([CLAUDE.md](../CLAUDE.md) §0). 진짜 위반이던 `D54.md` 한 줄
+    (*"넘기는 시점은 2×2 전량 완료 후다"*)은 같은 PR에서 손으로 고쳤다. **실험 보고서도
+    같은 이유로 밖이다** — 날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
     """
     window = 3
     offenders: list[str] = []
@@ -1384,8 +1402,9 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
         for index, line in enumerate(lines):
             if not _TWO_BY_TWO.search(line):
                 continue
-            nearby = "\n".join(lines[index : index + 1 + window])
-            if _DEPRECATION_MARKER.search(nearby):
+            # 창은 **양쪽**을 본다. 주석은 앞줄에 사실을, 뒷줄에 처분을 적기도 하고 그 반대도 한다.
+            nearby = "\n".join(lines[max(0, index - window) : index + 1 + window])
+            if _STRIKETHROUGH in line or _DEPRECATION_MARKER.search(nearby):
                 continue
             offenders.append(
                 f"{path.relative_to(REPO_ROOT).as_posix()}:{index + 1}: {line.strip()}"
