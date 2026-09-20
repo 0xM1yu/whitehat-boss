@@ -1,6 +1,6 @@
 # 0010. 하네스 구조와 모델 로스터 확정 — Scout 풀 3역할 · Auditor A/B · Critic gpt-oss-20b · 단계 단위 실행 · Joern 슬라이서
 
-- 상태: **승인** — 2026-09-06 조민규 초안, **2026-09-09 조민규 확정**, 같은 날 **손수민 리뷰 승인**(PR #148, 커밋 `c347b9e`). 리뷰가 남긴 셋은 아래 「리뷰에서 정할 것」이 disposition을 든다. 아래 「결정」은 이제 정본이고 **저장소가 이 로스터를 바라본다**(→ [CONTEXT.md](../../CONTEXT.md)). ⚠ **모델은 계속 바뀐다** — 팀이 실험하며 정하는 중이고, 바꾸는 비용을 낮게 유지하는 것이 이 문서의 설계 목표다(「되돌리는 비용」). **바뀔 때 고치는 자리는 CONTEXT.md와 registry이지 문서 전부가 아니다.** 손수민 리뷰는 폐기되지 않았다 — 아래 「리뷰에서 정할 것」에 남은 셋이 그 몫이고, 로스터를 막지 않는다
+- 상태: **승인** — 2026-09-06 조민규 초안, **2026-09-09 조민규 확정**, 같은 날 **손수민 리뷰 승인**(PR #148, 커밋 `c347b9e`). 리뷰가 남긴 셋은 아래 「리뷰에서 정할 것」이 disposition을 든다. 아래 「결정」은 이제 정본이고 **저장소가 이 로스터를 바라본다**(→ [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)). ⚠ **모델은 계속 바뀐다** — 팀이 실험하며 정하는 중이고, 바꾸는 비용을 낮게 유지하는 것이 이 문서의 설계 목표다(「되돌리는 비용」). **바뀔 때 고치는 자리는 PROJECT-CONTEXT.md와 registry이지 문서 전부가 아니다.** 손수민 리뷰는 폐기되지 않았다 — 아래 「리뷰에서 정할 것」에 남은 셋이 그 몫이고, 로스터를 막지 않는다
 - 일자: 2026-09-06
 - 관련: [docs/research/2026-09-04-models.md](../research/2026-09-04-models.md) §2·§3.4·§3.5·§5, [docs/research/2026-09-04-quantization.md](../research/2026-09-04-quantization.md), [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §6·§7, `ADR 0009`, [build-plan.md](../build-plan.md) §2·§4·§7·§8, [model-serving.md](../model-serving.md) §1·§2, [evaluation.md](../evaluation.md) §2.1, [D9](../open-questions/D/D9.md)·[D59](../open-questions/D/D59.md)·[D63](../open-questions/D/D63.md)·[D64](../open-questions/D/D64.md), [R2](../open-questions/R/R2.md)·[R8](../open-questions/R/R8.md), [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), 중간발표 v3 슬라이드 10·18·23, 하네스 리스트럭처 계획(2026-09-04, 수민·민규 — 로컬 노트 `.claude/restructure-2026-09-04.md`, 저장소 밖)
 
@@ -107,7 +107,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 | 자리 | 모델 (registry 키) | 제작사 | 양자화 | 지금 상태 |
 | --- | --- | --- | --- | --- |
 | ~~1단계 · 쿼리 생성기(모델 자리 ①)~~ | ~~`qwen3-8b`~~ | — | — | **2026-09-13 이 자리가 소멸했다.** 슬라이싱 방식이 무모델로 확정되면서 1단계에 모델 자리가 없어졌다(아래 행). `qwen3-8b`는 `scout_injection`으로 남으므로 registry 키는 안 지운다 |
-| 0·1단계 · 슬라이서 | **Joern 기반 — 무모델 결정론.** Case A(source-first) · Case B(sink-first) 합집합 → 포함률 임계 클러스터링 | — | — | **2026-09-09 구조 확정 · 2026-09-13 방식 확정.** ⚠ **방식이 바뀌었다** — 앞 판본은 *"`LLM4FPM`(신호 주도) → `LLMxCPG-Q`(쿼리 생성) 순"*이었고, 실험 결과 **둘 다 안 쓴다**(LLM4FPM의 SAST 시작점도, LLMxCPG-Q의 모델 쿼리 생성도 없다). **tree-sitter 인덱서는 전환 대상이 아니라 짝으로 계속 남는다** — 슬라이스는 그래프가 아니라 그래프의 **투영**이라 E2의 `GRAPH` Evidence와 후보 열거를 대신하지 못한다. 정본은 [CONTEXT.md](../../CONTEXT.md) §2다 |
+| 0·1단계 · 슬라이서 | **Joern 기반 — 무모델 결정론.** Case A(source-first) · Case B(sink-first) 합집합 → 포함률 임계 클러스터링 | — | — | **2026-09-09 구조 확정 · 2026-09-13 방식 확정.** ⚠ **방식이 바뀌었다** — 앞 판본은 *"`LLM4FPM`(신호 주도) → `LLMxCPG-Q`(쿼리 생성) 순"*이었고, 실험 결과 **둘 다 안 쓴다**(LLM4FPM의 SAST 시작점도, LLMxCPG-Q의 모델 쿼리 생성도 없다). **tree-sitter 인덱서는 전환 대상이 아니라 짝으로 계속 남는다** — 슬라이스는 그래프가 아니라 그래프의 **투영**이라 E2의 `GRAPH` Evidence와 후보 열거를 대신하지 못한다. 정본은 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §2다 |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | Alibaba | fp16 | checksum 有 · 처리량 미실측 |
 | 3단계 · 리랭커 | **`qwen3-reranker-4b`** (신규) | Alibaba | fp16 | 미실측. **D63의 재측정 대상이 이 모델이다** — 0.6B는 registry에 남긴다. ⚠ **2026-09-20 — 이 행의 두 칸이 낡았다.** ① dtype은 **`bf16`**이다 — 등재 시 registry가 `bf16`으로 들어왔고(`config/models.yaml`, 그 항목 주석이 *"양자화가 아니라 native dtype"*이라 적는다) 2026-09-13 보고서 둘도 bf16이다. ② **`미실측`이 아니다** — 2026-09-13에 ATOM 8005 기동과 **D63 (a) 첫 실측**이 났다(`run_id` 없어 비교표 밖). 형제 행들이 그러듯 *"기동 실측 있음 · 점수 정확성 미실측"*으로 읽는다. **점수 정확성이 미실측인 것은 그대로다** |
 | 4단계 · `scout_memory` (CWE-415·416) | **`qwen3-coder-30b-a3b`** | Alibaba | nvfp4 | 실측 있음. **가장 어려운 계열에 가장 강한 모델**(09-08 조사) — Auditor A안과 같은 모델이라 **같은 서버로 상주한다** |
@@ -200,7 +200,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 | 단계 | 상주 | 가중치+non-torch (GiB) | 라벨 |
 | --- | --- | --- | --- |
-| ~~1 · 쿼리 생성~~ | ~~`qwen3-8b`~~ | ~~6.38~~ | **2026-09-13 소멸** — 1단계가 무모델이 되어 상주가 없다(§2 · [CONTEXT.md](../../CONTEXT.md) §2). 실측 6.38은 그 자리가 있던 때의 값이다 |
+| ~~1 · 쿼리 생성~~ | ~~`qwen3-8b`~~ | ~~6.38~~ | **2026-09-13 소멸** — 1단계가 무모델이 되어 상주가 없다(§2 · [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §2). 실측 6.38은 그 자리가 있던 때의 값이다 |
 | 3 · 검색 | `qwen3-embedding-0.6b` + `qwen3-reranker-4b` | 1.62 + 약 9 = **약 10.6** | 실측 + 계산(4B × 2바이트 + non-torch) |
 | 4 · Scout 풀 | `qwen3-coder-30b-a3b` + `devstral-small-2-24b` + `qwen3-8b` | 18.28 + 26.8 + 6.38 = **51.46** | **셋 다 실측** — [09-08 조사](../research/2026-09-08-roster.md) §1.1 |
 | 5 · Auditor | **A** `qwen3-coder-30b-a3b` / **B** `nemotron-3-super-120b-a12b` | A **18.28** / B **79.12** | A는 실측 · B는 계산(HF 실파일 합) — [09-08 조사](../research/2026-09-08-roster.md) §1.1 |

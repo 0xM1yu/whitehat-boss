@@ -13,7 +13,7 @@ class Role(StrEnum):
     SCOUT = "scout"
     # 4단계 Scout 풀 (ADR 0010 §3). 한 대상을 셋이 각각 보고, 임계값을 넘은 후보를 고르지도
     # 합치지도 않고 각각 5단계로 보낸다. 겨냥하는 CWE 계열이 멤버마다 다르고 그 배정의
-    # 정본은 CONTEXT.md §1 표다 — memory는 CWE-415·416, boundary는 CWE-119·125·787·190,
+    # 정본은 PROJECT-CONTEXT.md §1 표다 — memory는 CWE-415·416, boundary는 CWE-119·125·787·190,
     # injection은 CWE-78·22·134이며, 계열을 여기 값으로 박지 않는 이유는 배정이 첫 run의
     # 공동오답 행렬로 바뀔 수 있기 때문이다.
     #
@@ -52,7 +52,7 @@ class Role(StrEnum):
     # **`SCOUT`은 남는다. 실서빙 프로필이 전부 그쪽이다** — `local_balanced`·
     # `local_balanced_hybrid`는 단일 `scout`이다. 풀을 선언하는 것은 provisional
     # `local_balanced_pool`(`production: false`) 하나이고, 그것은 v2 별칭 셋으로 풀 프롬프트에
-    # 도달한다(#103 — `CONTEXT.md` §5·`config/models.yaml`의 별칭 블록). 프로필은 단일
+    # 도달한다(#103 — `PROJECT-CONTEXT.md` §5·`config/models.yaml`의 별칭 블록). 프로필은 단일
     # `scout` 하나 아니면 풀 셋을 선언한다(`config.ProfileEntry`가 그 배타를 본다).
     # ⚠ 여기서 프로필 이름을 세지 마라 — 개수도 이름도 `config/profiles.yaml`에서 센다.
     #

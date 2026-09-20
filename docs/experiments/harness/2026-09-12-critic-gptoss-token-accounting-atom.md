@@ -197,7 +197,7 @@ registry 선언값) · `Decision` 스키마(§3.3의 ⚠ — 실서빙 `Decision
 
 ⚠ **판정 정확도는 이 실험이 안 쟀다.** 센 것은 JSON이 유효한가와 몇 토큰을 쓰는가뿐이다.
 ⚠ **`reasoning_effort`를 내리는 것은 선택지가 아니다** — `gpt-oss-20b`를 Critic에 앉힌 근거가
-그 효력에 얹혀 있다([CONTEXT.md](../../../CONTEXT.md) §1).
+그 효력에 얹혀 있다([PROJECT-CONTEXT.md](../../../PROJECT-CONTEXT.md) §1).
 
 ### 3.5 D67 `required` 팔 재현 — 그리고 **D46 해법이 선행 조건이라는 것**
 

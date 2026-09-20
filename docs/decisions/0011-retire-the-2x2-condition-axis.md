@@ -49,5 +49,5 @@
 이 결정이 코드에 실제로 서는지를 셋이 잡는다.
 
 - `tests/test_schemas.py` — `B1@2x2`가 `ValidationError`를 내는지 단언한다(패턴을 되돌리면 빨개진다).
-- `tests/test_docs_format.py::test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead` — `CONTEXT.md`·`src/`·`config/`에서 2×2를 **살아 있는 선행**으로 드는 줄을 막는다. 폐기 사실을 적은 줄은 통과한다.
+- `tests/test_docs_format.py::test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead` — `PROJECT-CONTEXT.md`·`src/`·`config/`에서 2×2를 **살아 있는 선행**으로 드는 줄을 막는다. 폐기 사실을 적은 줄은 통과한다.
 - `tests/test_pipeline_e2e.py::test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects` — 운영자에게 나가는 차단 문구가 패턴이 안 받는 축을 사유로 들지 못하게 한다.
