@@ -360,6 +360,9 @@ models:
     # `benchmark`는 여전히 전부 0이고(미실측), model-serving.md §5에 따라 production 프로필에
     # 넣지 않는다. 그리고 2026-09-04 run(`run_20260904_0001`)은 이 값이 채워지기 **전**에
     # 돌았으므로 그 run의 `RunRecord.model_checksums`에는 0이 남아 있다.
+    # 그 run의 보고서는 docs/experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md다
+    # — PR #166으로 2026-09-10에 들어왔다. **그전에는 저장소에 없어 이 인용을 따라갈 데가
+    # 없었고**, 그 상태가 결함으로 등재돼 있었다(CLAUDE.md §0 — 출처를 같은 문장에 적는다).
     #
     # **`nvfp4` 빌드는 여전히 안 받았다**(주석이지 값이 아니다):
     #   Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4 — 이름만 확인. 받지도 띄우지도 않았다
