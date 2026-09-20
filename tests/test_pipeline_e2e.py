@@ -1172,7 +1172,13 @@ def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
     rejected = {ReasonCode.CRITIC_REBUTTED.value, ReasonCode.CRITIC_NEED_EVIDENCE.value}
     critic_rate = sum(1 for e in critic if e["data"]["reason"] in rejected) / len(critic)
 
-    repro = {ReasonCode.REPRO_FAILED.value, ReasonCode.REPRO_CONFIRMED.value}
+    # 8단계 재현 시도의 결과 사유 **전부**. trace.py의 이벤트→지표 표와 같은 집합이고,
+    # 접두사 `repro_*`로 세면 evidence_below_proven(F-10b)이 분모에서 빠진다(#68).
+    repro = {
+        ReasonCode.REPRO_FAILED.value,
+        ReasonCode.REPRO_CONFIRMED.value,
+        ReasonCode.EVIDENCE_BELOW_PROVEN.value,
+    }
     validated = [
         e for e in _of(events, "transition", stage=Stage.VALIDATE) if e["data"]["reason"] in repro
     ]
