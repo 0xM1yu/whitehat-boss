@@ -262,16 +262,23 @@ def test_the_report_states_which_surface_it_scanned(tmp_path: Path) -> None:
     root = tmp_path / "artifacts_atom"
     root.mkdir()
 
-    rendered = leakage_main.check(
+    report = leakage_main.check(
         scan=[scanned],
         artifacts_root=root,
         kb=None,
         evalset=None,
         problem_names=tmp_path / "none.txt",
-    ).render()
+    )
+    rendered = report.render()
 
     assert str(scanned) in rendered
     assert str(root) in rendered
+    # **「run 산출물 N건」이 `--scan` 경로를 같이 세면 안 된다.** 이 배치가 그것을 가르는
+    # 유일한 자리다 — `--scan`은 있고 뿌리는 비었다. 변이 `len(found)` → `len(targets)`가
+    # 나머지 검사 스물여섯을 **전부 통과했다**(실측). 수가 무엇을 센 것인지 모르면 이
+    # 고침이 없애려던 성질이 그대로 남는다(§0).
+    assert report.run_artifacts == 0
+    assert report.scanned == 1
 
 
 def test_artifacts_root_flag_reaches_the_scan(
