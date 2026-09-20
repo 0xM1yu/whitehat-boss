@@ -1274,20 +1274,34 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # 산문은 안 된다. 느슨하게 두면 *"**D29**(샘플링 등가화 남은 부분)"* 이 걸린다 —
 # 「남은」의 `은` + `부분`이 조사+상태어로 파싱되는데 거기서 `부분`은 명사다.
 # 그 오탐은 가정이 아니라 이 저장소에서 실제로 나왔다.
-# 조사는 다섯을 받는다. **`가`·`의`는 2026-09-20에 더했다** — 그 둘이 빠져 있어서
-# `docs/open-questions.md`가 *"D54**가** `열림`이다"* 와 *"D54**의** `열림`을"* 로 적은 두 줄을
-# 이 검사가 못 봤고, D54를 `부분`으로 내린 PR이 초록으로 통과했다. 전수를 **문자열**로 돌리면
-# 반쪽만 걸린다(CLAUDE.md §2.3).
+# ## 분기 둘 — **명제로 나눈다**
 #
-# ⚠ **`의`만 백틱을 요구한다.** `는|은|이|가`는 「D54가 `열림`이다」처럼 상태를 **단언**하는
-# 자리에만 붙지만, `의`는 「D54**의** 보류 해제를 기록한다」 같은 **명사구**에도 붙는다 —
-# 그대로 두면 보류를 풀었다는 문장이 「보류다」로 읽혀 CI가 정상 문장을 막고, 그때 다음
-# 사람이 이 검사를 지운다. 백틱을 요구하면 인용된 상태값만 남는다.
+# 이 정규식은 네 번 넓혔고 **세 번은 문자열 축으로만 넓혀서 매번 반쪽이었다**
+# (조사 `가`·`의` 추가 → 괄호 `,` 추가 → `D`에서 `[DR]`로). 네 번째에 축을 바꿨다 —
+# 막으려는 명제는 *"산문이 D·R의 상태를 **단언**한다"*이고, 그 문형은 둘이다.
+#
+# **(가) 인접형** — `D74는 열림` · `#98(D26, 열림)`. 조사/쉼표 바로 뒤에 상태어가 온다.
+# **(나) 말이 끼는 형** — `R2는 **그 파일에서 아직** \`열림\`이고`. 여기서 **백틱을 요구한다**:
+#   그러지 않으면 「D54의 보류 해제를 기록한다」 같은 명사구가 전부 걸린다.
+#
+# > **사고 — (나)를 안 보던 동안 9일 묵은 모순이 살아 있었다.** `docs/model-serving.md`가
+# > *"R2는 그 파일에서 아직 `열림`이고"*라 적는데 `R2.md`는 `닫힘`이다. **R2를 닫은 바로 그
+# > 커밋(`184aade`)이 같은 파일에 그 문장을 썼다.** 그리고 2026-09-20에 `[DR]`로 넓히면서
+# > **핀에 실형태 대신 「R2는 `닫힘`이다」라는 지어낸 형태를 넣어** 그 구멍을 덮었다 —
+# > 실형태를 핀으로 썼으면 그 자리에서 빨개졌다([CLAUDE.md](../CLAUDE.md) §0).
+#
+# ⚠ **왼쪽 경계가 필요하다** — 없으면 `DeepSeek-R1, 열림 상태다`가 R1 단언으로 읽힌다.
+# 그 모델 이름은 `docs/decisions/0010-...md`에 살아 있다.
 _D_STATUS_CLAIM = re.compile(
-    r"([DR]\d+)(?:\]\([^)]*\))?[*`\s]{0,4}"
-    r"(?:(?:는|은|이|가)\s*\*{0,2}`?|의\s*\*{0,2}`|,\s*)"
-    r"(열림|닫힘|보류|부분)`?\*{0,2}"
+    r"(?<![A-Za-z0-9-])([DR]\d+)(?:\]\([^)]*\))?[*`\s]{0,4}"
+    r"(?:(?:는|은|이|가|,)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+    r"|(?:는|은|이|가|의|,)\s*[^.\n|]{0,24}?\*{0,2}`(열림|닫힘|보류|부분)`)"
 )
+
+
+def _claimed_status(claim: "re.Match[str]") -> str:
+    """두 분기 중 실제로 잡힌 쪽의 상태값."""
+    return next(group for group in claim.groups()[1:] if group)
 
 # D 본문 파일 머리의 상태 셀. `| 열림 |` · `| **닫힘** (2026-09-18, 선택지 (a)) |` 둘 다 받는다.
 _D_STATUS_CELL = re.compile(r"^\|\s*\*{0,2}(열림|닫힘|보류|부분|결정|결함 아님)")
@@ -1314,24 +1328,32 @@ def _d_body_status(did: str) -> str | None:
 def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
     """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다.
 
-    **분기마다 핀을 단다.** 조사 넷(`는|은|이|가`)·백틱 `의`·괄호 `,` 셋이 서로 다른 실제
-    미탐에서 하나씩 자랐고, **핀 없는 분기는 깨져도 영영 초록이다.** 음성 핀은 `의`가
-    명사구까지 먹지 않는지를 붙든다.
+    **핀은 전부 저장소에 실재했던 형태다.** 지어낸 샘플을 쓰면 잡히는 형태만 고르게 되고,
+    그것이 정확히 2026-09-20에 `[DR]` 확장의 구멍을 덮은 방식이다 — 실형태
+    (*"R2는 그 파일에서 아직 `열림`이고"*)는 그 확장으로도 안 잡혔는데 핀은 초록이었다.
+    각 샘플 옆에 **어느 파일에서 왔는지** 적는다([CLAUDE.md](../CLAUDE.md) §0).
     """
     hits = {
+        # 인접형 — `D74.md`를 (a)로 닫는 PR이 실험 보고서에 남긴 문장
         "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다.": ("D74", "열림"),
-        "그 승격이 D54의 `열림`을 다시 바꾸지는 않는다": ("D54", "열림"),
+        # 인접형(괄호) — `D65.md:56`가 실제로 적었던 형태
         "**#98(D26, 열림)과의 관계**": ("D26", "열림"),
-        "R2는 `닫힘`이다": ("R2", "닫힘"),
+        # 말이 끼는 형 — `docs/model-serving.md:100`이 아흐레 들고 있던 **실형태**
+        "R2는 그 파일에서 아직 `열림`이고": ("R2", "열림"),
+        # `의` + 백틱 — `docs/open-questions.md:46`가 적었던 형태
+        "그 승격이 D54의 `열림`을 다시 바꾸지는 않는다": ("D54", "열림"),
     }
     for sample, (number, status) in hits.items():
         found = _D_STATUS_CLAIM.search(sample)
         assert found is not None, f"상태 단언 정규식이 못 잡는다: {sample}"
-        assert (found.group(1), found.group(2)) == (number, status), sample
+        assert (found.group(1), _claimed_status(found)) == (number, status), sample
 
     misses = [
         "D54의 보류 해제를 기록한다",  # `의` + 맨 상태어 = 명사구이지 단언이 아니다
         "D29(샘플링 등가화 남은 부분)",  # 괄호 안이 항목 이름의 일부
+        "Critic 후보는 DeepSeek-R1, 열림 상태다",  # 모델 이름 — 왼쪽 경계가 막는다
+        "| D9 | 인덱서 | 닫힘 | [본문](x.md) |",  # 인덱스 표 행은 산문이 아니다
+        "D63은 열려 있다. 그 뒤 `닫힘`이 됐다",  # 문장을 넘어가면 단언이 아니다
     ]
     for sample in misses:
         assert _D_STATUS_CLAIM.search(sample) is None, f"정규식이 정상 문장을 잡는다: {sample}"
@@ -1363,7 +1385,7 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
         own = path.stem if path.parent.name in ("D", "R") else None
         for number, line in enumerate(_read(path).splitlines(), start=1):
             for claim in _D_STATUS_CLAIM.finditer(line):
-                did, claimed = claim.group(1), claim.group(2)
+                did, claimed = claim.group(1), _claimed_status(claim)
                 if did == own:
                     continue
                 actual = _d_body_status(did)
@@ -1372,11 +1394,11 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
                 offenders.append(
                     f"{path.relative_to(REPO_ROOT).as_posix()}:{number}: "
                     f"{did}을 「{claimed}」로 적었는데 "
-                    f"docs/open-questions/D/{did}.md는 「{actual}」이다"
+                    f"docs/open-questions/{did[0]}/{did}.md는 「{actual}」이다"
                 )
 
     assert offenders == [], (
-        "D의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
+        "D·R의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
         "본문·인덱스만 고치고 이 문장을 놓친 자리다(CLAUDE.md §2.3).\n" + "\n".join(offenders)
     )
 
@@ -1423,6 +1445,19 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     그 줄에 **폐기 표시를 달았다**(문장은 남기고 ⚠ 를 붙였다 — 관측을 안 지운다). **실험
     보고서도 같은 이유로 밖이다** — 날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
     """
+    # **오염 핀.** 현재 범위의 매치 다섯이 전부 폐기 표시로 면제되므로 아래 단언은
+    # `[] == []`다 — **검출기를 통째로 죽여도 초록이다.** 형제 검사
+    # (`test_the_blocking_messages_...`)에는 핀을 다섯 달면서 이쪽에는 0개를 달았고,
+    # 4라운드 리뷰가 정규식을 무력화해 그것을 재현했다.
+    assert _TWO_BY_TWO.search("2×2 뒤 정식으로 정한다"), "곱셈기호를 놓친다"
+    assert _TWO_BY_TWO.search("2x2 뒤"), "ASCII x를 놓친다"
+    assert _TWO_BY_TWO.search("2X2 뒤"), "대문자 X를 놓친다"
+    assert _TWO_BY_TWO.search("2 × 2 뒤"), "사이 공백을 놓친다"
+    assert _TWO_BY_TWO.search("２×２ 뒤"), "전각 숫자를 놓친다"
+    assert not _TWO_BY_TWO.search("8192 × 2회"), "곱셈 표기를 축으로 읽는다"
+    assert _DEPRECATION_MARKER.search("2×2 전량 폐기로 소멸했다"), "폐기 표시를 못 읽는다"
+    assert not _DEPRECATION_MARKER.search("enum 제약 제거는 별개다"), "「제거」를 표시로 읽는다"
+
     window = 3
     offenders: list[str] = []
 
