@@ -137,7 +137,7 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 
 ### 4.5 초기 모델 구성 (2026-08 기록)
 
-**정본은 [CONTEXT.md](../CONTEXT.md) §1이다.** 아래는 2026-08 초기안이고 로스터는 2026-09-09에
+**정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다.** 아래는 2026-08 초기안이고 로스터는 2026-09-09에
 확정됐다. 표의 다섯 중 셋은 **자리가 바뀌었다** — `Qwen3-8B`는 Scout·Injection,
 `Qwen3-Coder-30B-A3B`는 Scout·Memory, `Devstral Small 2`는 Scout·Boundary다.
 

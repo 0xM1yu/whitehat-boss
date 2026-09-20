@@ -48,7 +48,7 @@
 역할**(`scout_memory`·`scout_boundary`·`scout_injection`)로 쪼갰고, **기존 `scout` 한 역할
 프로필도 그대로 유효하다**([ADR 0010](docs/decisions/0010-harness-structure-and-model-roster.md) §3).
 ⚠ **이 표가 말하는 것은 로직·어댑터의 상태이지 모델 이름이 아니다** — 어느 모델이 어느 자리에
-앉는지는 [CONTEXT.md](CONTEXT.md) §1이 정본이다.
+앉는지는 [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) §1이 정본이다.
 
 ---
 
@@ -386,7 +386,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 **미측정 셋**(`devstral-small-2-24b`·`qwen3-embedding-0.6b`·`qwen3-reranker-0.6b`, 세 항이
 전부 0)과 **부분 측정 둘**(`qwen3-8b`·`qwen3-coder-30b-a3b`, `mem_gb_ctx8k`만 0)이다.
 ⚠ **그 다섯은 그날 프로필이 부르던 모델이지 지금의 로스터가 아니다** — 정본은
-[CONTEXT.md](CONTEXT.md) §1이고, 재배선되면 이 두 줄의 내용이 바뀐다. 그 표가 **registry
+[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) §1이고, 재배선되면 이 두 줄의 내용이 바뀐다. 그 표가 **registry
 미등재**로 표시한 자리가 프로필에 오르면 benchmark 이전에 checksum부터 자리표시자다.
 
 두 프로필(`local_balanced`·`local_balanced_hybrid`)이
