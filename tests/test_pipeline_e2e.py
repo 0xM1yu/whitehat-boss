@@ -687,6 +687,35 @@ def test_run_names_the_gaps_before_it_claims_a_run_dir(
     assert not list(tmp_path.iterdir()), "판정 전에 이미 디렉터리를 만들었다"
 
 
+def test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects() -> None:
+    """실서빙 run을 막는 문구가 **존재할 수 없는 조건 축**을 사유로 들지 않는다.
+
+    **왜 필요한가.** `BLOCKING_WHEN_SERVING`의 키는 주석이 아니라 **운영자에게 나가는
+    출력**이다 — `cli.py`가 그것을 찍고 exit 2로 거부한다. 그런데 그 문구가 드는 사유는
+    `CONDITION_PATTERN`이 무엇을 받느냐에 달려 있고, **패턴은 움직인다.** 축이 하나
+    없어지면 그 축을 근거로 대던 문구는 *일어날 수 없는 일*을 이유로 run을 막는다.
+
+    > **사고 —** 2026-09-20에 2×2 축을 `CONDITION_PATTERN`에서 뺐는데
+    > `_CONDITION_DEFAULTED`는 *"2×2 축으로 돌린 run이 pipeline 라벨로 남으면"*을 그대로
+    > 들고 있었다. 같은 PR이 이 파일의 **docstring은 고쳤고** 프로덕션 문자열은 놓쳤다 —
+    > 산문과 출력이 정면으로 어긋난 채 CI가 초록이었다(CLAUDE.md §2.3).
+
+    **「축」이라는 낱말 앞의 토큰만 본다.** 문구 전체를 패턴과 대조하면 일반 산문이 전부
+    걸리고, 그러면 다음 사람이 이 검사를 지운다.
+    """
+    axis_like = re.compile(r"[0-9A-Za-z×]+(?=\s*축)")
+    offenders = [
+        f"{axis!r}: {message}"
+        for message in runner.BLOCKING_WHEN_SERVING
+        for axis in axis_like.findall(message)
+        if axis.replace("×", "x") not in CONDITION_PATTERN
+    ]
+    assert offenders == [], (
+        "차단 문구가 CONDITION_PATTERN이 받지 않는 축을 사유로 든다 — 운영자가 "
+        "존재할 수 없는 시나리오를 이유로 거부당한다.\n" + "\n".join(offenders)
+    )
+
+
 def test_a_serving_profile_refuses_to_start_without_the_labels(
     tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

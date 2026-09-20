@@ -383,7 +383,7 @@ config에 넣지 않는다.** ⚠ **사유가 2026-09-09에 바뀌었다** — �
 > | --- | --- | --- |
 > | **4** Scout 전문가 셋 | 미착수 | `prompts/scout_{memory,boundary,injection}/v2` **9파일 실재** · `src/schemas/candidate.py`의 `scout_member` 필드 · `src/orchestrator/context.py`가 호출마다 stamp |
 > | **5** 단계 단위 | 본체·미착수 | `cd65500`(#161, `2026-09-11 10:26`) — `runner.py`의 `execution.mode == "per_stage"` 분기·`_triage_by_stage`. `tests/test_pipeline_e2e.py`가 두 모드를 parametrize |
-> | **9** 도구 루프 | 「단계 단위가 선행」 대기 | **그 선행은 풀렸다.** 남은 것은 `DecisionPoint.REQUEUE` **생산자 0건**뿐이다 — 소비부(`policy._requeue`·전이 C-8·C-9·F-14)는 다 있다 |
+> | **9** 도구 루프 | 「단계 단위가 선행」 대기 | **그 선행은 코드에 들어왔으나 실프로필에서 도달 불가다**(아래 ⚠ — `execution:`을 선언한 프로필이 0). 그 위에 `DecisionPoint.REQUEUE` **생산자 0건**이 얹힌다 — 소비부(`policy._requeue`·전이 C-8·C-9·F-14)는 다 있다 |
 >
 > ⚠ **행 5를 「된다」로 읽지 않는다.** `grep -c "execution:" config/profiles.yaml`이 **0**이라
 > 어느 프로필도 그 모드를 선언하지 않는다 — 코드는 있고 테스트가 덮지만 **실프로필에서

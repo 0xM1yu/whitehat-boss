@@ -1274,8 +1274,12 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # 산문은 안 된다. 느슨하게 두면 *"**D29**(샘플링 등가화 남은 부분)"* 이 걸린다 —
 # 「남은」의 `은` + `부분`이 조사+상태어로 파싱되는데 거기서 `부분`은 명사다.
 # 그 오탐은 가정이 아니라 이 저장소에서 실제로 나왔다.
+# 조사는 다섯을 받는다. **`가`·`의`는 2026-09-20에 더했다** — 그 둘이 빠져 있어서
+# `docs/open-questions.md`가 *"D54**가** `열림`이다"* 와 *"D54**의** `열림`을"* 로 적은 두 줄을
+# 이 검사가 못 봤고, D54를 `부분`으로 내린 PR이 초록으로 통과했다. 전수를 **문자열**로 돌리면
+# 반쪽만 걸린다(CLAUDE.md §2.3).
 _D_STATUS_CLAIM = re.compile(
-    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}(?:는|은|이)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}(?:는|은|이|가|의)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
 )
 
 # D 본문 파일 머리의 상태 셀. `| 열림 |` · `| **닫힘** (2026-09-18, 선택지 (a)) |` 둘 다 받는다.
@@ -1344,4 +1348,50 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     assert offenders == [], (
         "D의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
         "본문·인덱스만 고치고 이 문장을 놓친 자리다(CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
+
+
+# 폐기됐다는 표시. 취소선(`~~`)도 센다 — 표에서는 그것이 표시다.
+_DEPRECATION_MARKER = re.compile(r"폐기|소멸|제거|없앴|~~")
+# U+00D7 곱셈기호와 ASCII x를 **둘 다** 받는다. 2026-09-20에 `git grep "@2x2"`(ASCII)로만
+# 훑은 PR이 `2×2`를 든 네 줄을 통째로 놓쳤다 — 그중 둘은 살아 있는 소스였다.
+_TWO_BY_TWO = re.compile(r"2[×x]2")
+
+
+def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
+    """정본과 살아 있는 소스가 2×2를 들면 **그것이 폐기됐다는 표시를 같이** 들어야 한다.
+
+    2×2 실험 축은 2026-09-20 PM 결정으로 폐기됐고 `CONDITION_PATTERN`이 `@pipeline`만
+    받는다. 그런데 그 축을 **앞으로 올 사건**처럼 적은 줄이 남으면, 읽는 사람은 오지 않을
+    선행을 기다린다 — `config/profiles.yaml`이 모델 자리 확정을 *"2×2 뒤 정식으로 정한다"*로
+    걸어 둔 것이 그 모양이었다.
+
+    **기록은 지우지 않는다.** 폐기 사실을 적은 줄은 통과한다 — 관측과 이력은 남기고
+    「살아 있는 지시」만 막는 것이 이 검사의 경계다(CLAUDE.md §0의 「관측은 안 지운다」).
+
+    **왜 창(window)으로 보나.** 주석은 여러 줄에 걸쳐 앞줄이 사실을, 뒷줄이 처분을 적는다
+    (`src/schemas/run.py`의 `CONDITION_PATTERN` 주석이 그렇다). 줄 하나만 보면 그 형태가
+    전부 걸리고, 그러면 다음 사람이 이 검사를 지운다.
+
+    **범위는 정본과 실행되는 것뿐이다** — `CONTEXT.md`·`src/`·`config/`. 실험 보고서는
+    날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
+    """
+    window = 3
+    offenders: list[str] = []
+
+    for path in _tracked("CONTEXT.md", "src", "config"):
+        lines = _read(path).splitlines()
+        for index, line in enumerate(lines):
+            if not _TWO_BY_TWO.search(line):
+                continue
+            nearby = "\n".join(lines[index : index + 1 + window])
+            if _DEPRECATION_MARKER.search(nearby):
+                continue
+            offenders.append(
+                f"{path.relative_to(REPO_ROOT).as_posix()}:{index + 1}: {line.strip()}"
+            )
+
+    assert offenders == [], (
+        "폐기된 2×2 축을 살아 있는 것처럼 드는 줄이 있다 — 읽는 쪽이 오지 않을 선행을 "
+        "기다린다.\n" + "\n".join(offenders)
     )

@@ -158,13 +158,13 @@ _KB_PLACEHOLDER = f"kb_snapshot이 자리표시자({DEFAULT_KB_SNAPSHOT})다"
 # "그 라벨을 의도해서 줬다"가 구별되지 않기 때문이다 — `missing_run_labels` docstring 참조.
 _CONDITION_DEFAULTED = (
     f"condition이 기본값({DEFAULT_CONDITION})으로 기록된다 (--condition 미지정). "
-    "2×2 축으로 돌린 run이 pipeline 라벨로 남으면 어느 축이었는지를 산출물로 가를 수 없다"
+    "어느 조건으로 돌린 run인지 산출물이 지시하지 못한다"
 )
 
 # **실서빙 run에서 이 둘이 비면 시작 전에 막는다.** 경고 한 줄은 긴 run의 출력에 묻히고,
 # 그 run은 시작하기도 전에 못 쓰는 것이 확정돼 있다 — `device`는 `incomplete_fields()`가
-# "모델 비교표에서 제외한다"고 **판정하는** 값이고, `condition`은 잘못 굳으면 비교표가
-# **섞인다**(`schemas/run.py`의 `CONDITION_PATTERN` 주석). 둘 다 GPU를 태운 뒤에 듣는 것이
+# "모델 비교표에서 제외한다"고 **판정하는** 값이고, `condition`은 기본값으로 굳으면 **어느
+# 조건으로 돈 run인지 산출물이 지시하지 못한다**. 둘 다 GPU를 태운 뒤에 듣는 것이
 # 가장 비싼 종류다.
 #
 # **`kb_snapshot`은 여기 없다.** `kb-none`은 아직 KB가 없다는 정직한 표기이고
