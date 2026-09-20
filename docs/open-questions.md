@@ -82,7 +82,7 @@
 | D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 열림 | [본문](open-questions/D/D29.md) |
 | D30 | **`single`이라는 이름에 세 문서가 서로 다른 뜻을 붙인다** | 열림 | [본문](open-questions/D/D30.md) |
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 닫힘 | [본문](open-questions/D/D31.md) |
-| D32 | **컴파일 플래그(`-std`·`-I`)가 코드 상수인데 `RunRecord`에 없다** | 열림 | [본문](open-questions/D/D32.md) |
+| D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) — **값이 코드 상수인 것은 그대로** | 부분 | [본문](open-questions/D/D32.md) |
 | D33 | ~~`run_20260825_0001`이 옛 build 배선의 마지막 완전 측정이다~~ | 닫힘 | [본문](open-questions/D/D33.md) |
 | D34 | ~~언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다~~ | 닫힘 | [본문](open-questions/D/D34.md) |
 | D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 부분 | [본문](open-questions/D/D35.md) |
