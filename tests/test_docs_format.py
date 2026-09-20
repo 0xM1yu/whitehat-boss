@@ -39,6 +39,7 @@ D12에서 끝나고 **빈 줄**이 있었는데 한쪽 PR은 그 앞에, 다른 
 추적되지 않는 것(`.claude/plans/` 등)은 CI에 존재하지 않으므로 대상이 아니다.
 """
 
+import ast
 import difflib
 import re
 import subprocess
@@ -1352,6 +1353,12 @@ def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
     저장소에 실제로 나타날 수 있는가」로** 고른다: 다중 D 열거·모델 이름·인덱스 표 행은
     전부 이 저장소의 표준 문형이다. 근거를 옆에 적는다.
     """
+    # ⚠ **정규식 이름을 직접 부르는 단언이 하나는 있어야 한다.** 아래 루프는 `found` 를
+    # 거쳐 가므로 「이 정규식에 핀이 있는가」를 기계로 세는 검사가 못 본다
+    # (`test_every_sweep_detector_carries_a_contamination_pin`).
+    assert _D_STATUS_CLAIM.search("- [D77](docs/open-questions/D/D77.md) 닫힘"), "맨형을 못 잡는다"
+    assert _WITHDRAWN.sub("", "~~D57(부분)~~ 뒤") == " 뒤", "취소선 제거가 깨졌다"
+
     hits = {
         # 맨형 — `CONTEXT.md:146`이 로스터 표 뒤에 적는 형태
         "- [D77](docs/open-questions/D/D77.md) 닫힘": ("D77", "닫힘"),
@@ -1520,4 +1527,104 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     assert offenders == [], (
         "폐기된 2×2 축을 살아 있는 것처럼 드는 줄이 있다 — 읽는 쪽이 오지 않을 선행을 "
         "기다린다.\n" + "\n".join(offenders)
+    )
+
+
+# ## 검출기에는 핀이 따라온다 — 이 파일 자신을 검사한다
+#
+# **이 검사가 있는 이유는 실측이다.** 2026-09-20에 PR #227이 적대적 리뷰를 다섯 라운드
+# 받았고, 그중 **두 라운드의 HIGH가 「검출기에 핀이 없어 공회전」**이었다 — 정규식을
+# 통째로 죽여도 CI가 초록이었다. 고치고 나서 이 파일 전체를 세어 보니
+# **전수 검사를 굴리는 정규식 25개 중 양·음 핀을 다 든 것이 3개**였다.
+# 내가 낸 두 결함은 예외가 아니라 **이 파일의 기본값**이었다.
+#
+# 규칙은 **래칫**이다 — 새 검출기는 핀을 들어야 하고, 아래 부채 목록은 **줄기만 한다.**
+# 한 번에 스무 개를 채우려다 아무것도 안 하는 것보다, 다음 사람이 하나를 더할 때
+# 막는 편이 실제로 줄어든다(「인덱스 표는 지우지 않는다」와 같은 논법).
+
+# ⚠ **이 목록은 늘릴 수 없다.** 줄이는 PR만 이 줄을 건드린다.
+_UNPINNED_LEGACY = frozenset({
+    "_SEPARATOR", "_FENCE", "_D_REF", "_LINK", "_REPORT_NAME", "_DEVICE_ROW",
+    "_FT_REF", "_STRUCK", "_DATED_LINE", "_R_ROW", "_R_REF",
+    "_MEMORY_ROW", "_MEMORY_HEADER", "_SERVED_ROLE_CLAIM", "_ROSTER_HEADING",
+    "_LEADING_KEY", "_ABSENT_CLAIM", "_CLAUSE_END", "_COUNT_CLAIM", "_REGISTRY_CONTEXT",
+})
+
+
+def _assert_direction(node: ast.Assert) -> str | None:
+    """단언의 방향. `None`이면 전수 단언(`offenders == []`)이라 핀이 아니다."""
+    test = node.test
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return "neg"
+    if isinstance(test, ast.Compare):
+        if any(isinstance(op, ast.NotIn) for op in test.ops):
+            return "neg"
+        if any(isinstance(op, ast.Is) for op in test.ops) and any(
+            isinstance(c, ast.Constant) and c.value is None for c in test.comparators
+        ):
+            return "neg"
+        if any(isinstance(op, ast.Eq) for op in test.ops) and any(
+            isinstance(c, ast.List) and not c.elts for c in test.comparators
+        ):
+            return None
+    return "pos"
+
+
+def test_every_sweep_detector_carries_a_contamination_pin() -> None:
+    """전수 검사를 굴리는 정규식은 **양성·음성 핀을 둘 다** 들어야 한다.
+
+    **왜 둘 다인가.** 양성만 있으면 정규식이 넓어져 정상 문장을 막는 것을 못 잡고,
+    음성만 있으면 좁아져 **검출기가 아무것도 안 잡는 상태**를 못 잡는다. 실제로 난 사고는
+    후자다 — 범위 안의 매치가 전부 면제되면 단언이 `[] == []`가 되어 **정규식을 지워도
+    초록**이다.
+
+    ⚠ **단언이 정규식 이름을 직접 불러야 센다.** `found = _X.search(s)` 뒤에
+    `assert found is not None` 은 이 검사에 안 보인다 — 그 간접이 정확히 `_D_STATUS_CLAIM`의
+    양성 핀을 0으로 만들었다. 직접 호명이 규율이기도 하다.
+
+    **면제는 늘리지 않는다.** `_UNPINNED_LEGACY`는 이 검사를 세운 날의 부채이고
+    줄이는 방향으로만 움직인다.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+
+    detectors = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+        if isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "compile"
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    def named(node: ast.AST) -> set[str]:
+        return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} & detectors
+
+    sweeping: set[str] = set()
+    for func in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+        body_names = {n.id for n in ast.walk(func) if isinstance(n, ast.Name)}
+        asserts = [a for a in ast.walk(func) if isinstance(a, ast.Assert)]
+        if "offenders" in body_names or any(_assert_direction(a) is None for a in asserts):
+            sweeping |= body_names & detectors
+
+    pins: dict[str, set[str]] = {}
+    for node in (n for n in ast.walk(tree) if isinstance(n, ast.Assert)):
+        direction = _assert_direction(node)
+        if direction is None:
+            continue
+        for name in named(node.test):
+            pins.setdefault(name, set()).add(direction)
+
+    unpinned = {d for d in sweeping if pins.get(d, set()) != {"pos", "neg"}}
+
+    assert unpinned <= _UNPINNED_LEGACY, (
+        "전수 검사를 굴리는 새 정규식에 오염 핀이 없다 — 그 검출기가 고장 나도 CI는 "
+        "영영 초록이다. 이름을 직접 부르는 양성·음성 단언을 하나씩 단다:\n"
+        + "\n".join(f"  {d}" for d in sorted(unpinned - _UNPINNED_LEGACY))
+    )
+    assert _UNPINNED_LEGACY <= sweeping | _UNPINNED_LEGACY  # 목록이 실재를 가리킨다
+    stale = _UNPINNED_LEGACY - unpinned
+    assert not stale, (
+        "면제 목록에 **이미 핀이 붙은** 정규식이 남아 있다 — 부채를 갚았으면 목록에서 "
+        "지운다. 안 지우면 다음 사람이 그만큼 다시 늘릴 수 있다:\n"
+        + "\n".join(f"  {d}" for d in sorted(stale))
     )
