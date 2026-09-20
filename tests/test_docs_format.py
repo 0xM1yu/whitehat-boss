@@ -1280,9 +1280,14 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # (조사 `가`·`의` 추가 → 괄호 `,` 추가 → `D`에서 `[DR]`로). 네 번째에 축을 바꿨다 —
 # 막으려는 명제는 *"산문이 D·R의 상태를 **단언**한다"*이고, 그 문형은 둘이다.
 #
-# **(가) 인접형** — `D74는 열림` · `#98(D26, 열림)`. 조사/쉼표 바로 뒤에 상태어가 온다.
-# **(나) 말이 끼는 형** — `R2는 **그 파일에서 아직** \`열림\`이고`. 여기서 **백틱을 요구한다**:
-#   그러지 않으면 「D54의 보류 해제를 기록한다」 같은 명사구가 전부 걸린다.
+# **(가) 맨형** — `[D77](…) 닫힘` · `**D54** 부분` · `D9(닫힘)`. **조사가 없다.**
+#   2026-09-20까지 이 문형이 통째로 사각이었고 **18건이 미탐이었다** — 그중 `CONTEXT.md`와
+#   `docs/build-plan.md`의 정본 줄이 있다.
+# **(나) 인접형** — `D74는 열림` · `#98(D26, 열림)`. 조사/쉼표 바로 뒤에 상태어가 온다.
+# **(다) 말이 끼는 형** — `R2는 **그 파일에서 아직** \`열림\`이고`. 여기서 **백틱을 요구하고**
+#   창이 **다른 D·R 토큰과 강한 구두점을 못 넘는다**: 그러지 않으면 「D54의 보류 해제를
+#   기록한다」 같은 명사구가 걸리고, 이 저장소의 표준 문형인 다중 D 열거
+#   (`D29는 … · D51이 \`보류\`다`)에서 **엉뚱한 D를 신고한다.**
 #
 # > **사고 — (나)를 안 보던 동안 9일 묵은 모순이 살아 있었다.** `docs/model-serving.md`가
 # > *"R2는 그 파일에서 아직 `열림`이고"*라 적는데 `R2.md`는 `닫힘`이다. **R2를 닫은 바로 그
@@ -1293,10 +1298,19 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # ⚠ **왼쪽 경계가 필요하다** — 없으면 `DeepSeek-R1, 열림 상태다`가 R1 단언으로 읽힌다.
 # 그 모델 이름은 `docs/decisions/0010-...md`에 살아 있다.
 _D_STATUS_CLAIM = re.compile(
-    r"(?<![A-Za-z0-9-])([DR]\d+)(?:\]\([^)]*\))?[*`\s]{0,4}"
-    r"(?:(?:는|은|이|가|,)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
-    r"|(?:는|은|이|가|의|,)\s*[^.\n|]{0,24}?\*{0,2}`(열림|닫힘|보류|부분)`)"
+    r"(?<![A-Za-z0-9-])([DR]\d+)(?:\]\([^)]*\))?"
+    # (가) 맨형 — 조사가 없다. `[D77](…) 닫힘` · `**D54** 부분` · `D9(닫힘)`
+    r"(?:[*`\s(]{1,4}\*{0,2}`?(열림|닫힘|보류|부분)`?"
+    # (나) 인접형 — 조사/쉼표 바로 뒤
+    r"|[*`\s]{0,4}(?:는|은|이|가|,)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+    # (다) 말이 끼는 형 — 백틱 필수. 창이 **다른 D·R 토큰과 강한 구두점을 못 넘는다**
+    r"|[*`\s]{0,4}(?:는|은|이|가|의|,)\s*"
+    r"(?:(?![DR]\d)[^.\n|·—()「」?!;:]){0,24}?\*{0,2}`(열림|닫힘|보류|부분)`)"
 )
+
+# 취소선 구간은 **철회 표시**다 — 검사 전에 걷어낸다. `~~D57(부분)~~ → 닫혔다` 처럼
+# 스스로 정정하는 문장이 저장소의 표준 형태이고, 안 걷으면 그것이 전부 위반으로 잡힌다.
+_WITHDRAWN = re.compile(r"~~.*?~~")
 
 
 def _claimed_status(claim: "re.Match[str]") -> str:
@@ -1310,10 +1324,11 @@ _D_STATUS_CELL = re.compile(r"^\|\s*\*{0,2}(열림|닫힘|보류|부분|결정|�
 def _d_body_status(did: str) -> str | None:
     """`D<n>.md`·`R<n>.md` 머리 표가 선언한 상태. 없으면 `None`.
 
-    **`R`도 본다.** 2026-09-20까지 이 검사가 `D`만 봤고, 그 사이
-    `docs/model-serving.md`가 *"R2는 그 파일에서 아직 `열림`이고"*를 **R2를 닫은 바로 그
-    커밋에서** 써서 9일을 살아 있었다. R은 이슈를 만들지 않아 미러가 없으므로
-    산문이 유일한 오염원이다.
+    **`R`도 본다.** R은 이슈를 만들지 않아 미러가 없으므로 산문이 유일한 오염원이다.
+
+    ⚠ **「D만 봐서 R 모순이 살아남았다」로 읽지 마라.** 한때 그렇게 적었는데 거짓 인과다 —
+    `docs/model-serving.md`의 *"R2는 그 파일에서 아직 `열림`이고"*는 `[DR]` 확장 뒤에도
+    **안 잡혔다.** 그것을 놓친 것은 **(다) 문형 미지원**이지 `R` 미지원이 아니다.
     """
     path = REPO_ROOT / "docs" / "open-questions" / did[0] / f"{did}.md"
     if not path.is_file():
@@ -1328,12 +1343,20 @@ def _d_body_status(did: str) -> str | None:
 def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
     """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다.
 
-    **핀은 전부 저장소에 실재했던 형태다.** 지어낸 샘플을 쓰면 잡히는 형태만 고르게 되고,
-    그것이 정확히 2026-09-20에 `[DR]` 확장의 구멍을 덮은 방식이다 — 실형태
-    (*"R2는 그 파일에서 아직 `열림`이고"*)는 그 확장으로도 안 잡혔는데 핀은 초록이었다.
-    각 샘플 옆에 **어느 파일에서 왔는지** 적는다([CLAUDE.md](../CLAUDE.md) §0).
+    **양성 핀은 전부 저장소에 실재했던 형태다** — 옆에 출처를 적는다. 지어낸 샘플을 쓰면
+    잡히는 형태만 고르게 되고, 그것이 정확히 2026-09-20에 `[DR]` 확장의 구멍을 덮은
+    방식이다([CLAUDE.md](../CLAUDE.md) §0).
+
+    ⚠ **음성 핀은 다르다 — 넷은 구성문이다.** 「잡히면 안 되는 형태」는 정의상 저장소에
+    없거나(막아야 하니까) 다른 뜻으로만 있다. 그래서 **실재 여부가 아니라 「그 문형이
+    저장소에 실제로 나타날 수 있는가」로** 고른다: 다중 D 열거·모델 이름·인덱스 표 행은
+    전부 이 저장소의 표준 문형이다. 근거를 옆에 적는다.
     """
     hits = {
+        # 맨형 — `CONTEXT.md:146`이 로스터 표 뒤에 적는 형태
+        "- [D77](docs/open-questions/D/D77.md) 닫힘": ("D77", "닫힘"),
+        # 맨형(굵게) — `D64.md:62`
+        "(관련: **D54** 부분 — 로스터 모델 중 어느 것도)": ("D54", "부분"),
         # 인접형 — `D74.md`를 (a)로 닫는 PR이 실험 보고서에 남긴 문장
         "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다.": ("D74", "열림"),
         # 인접형(괄호) — `D65.md:56`가 실제로 적었던 형태
@@ -1349,14 +1372,32 @@ def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
         assert (found.group(1), _claimed_status(found)) == (number, status), sample
 
     misses = [
-        "D54의 보류 해제를 기록한다",  # `의` + 맨 상태어 = 명사구이지 단언이 아니다
-        "D29(샘플링 등가화 남은 부분)",  # 괄호 안이 항목 이름의 일부
-        "Critic 후보는 DeepSeek-R1, 열림 상태다",  # 모델 이름 — 왼쪽 경계가 막는다
-        "| D9 | 인덱서 | 닫힘 | [본문](x.md) |",  # 인덱스 표 행은 산문이 아니다
-        "D63은 열려 있다. 그 뒤 `닫힘`이 됐다",  # 문장을 넘어가면 단언이 아니다
+        # 실재: `open-questions.md`가 「남은 **부분**」으로 쓴다 — 거기서 `부분`은 명사다
+        "D29(샘플링 등가화 남은 부분)",
+        # 구성문. `의`+명사구는 흔한 형태이고 그대로 두면 「보류를 풀었다」가 「보류다」로 읽힌다
+        "D54의 보류 해제를 기록한다",
+        # 구성문. `DeepSeek-R1`은 `decisions/0010-...md`에 살아 있는 모델 이름이다
+        "Critic 후보는 DeepSeek-R1, 열림 상태다",
+        # 구성문. 인덱스 표 행은 산문이 아니라 정본 자체다 — 잡으면 자기 자신을 신고한다
+        "| D9 | 인덱서 | 닫힘 | [본문](x.md) |",
+        # 구성문. 문장을 넘어가면 단언이 아니다
+        "D63은 열려 있다. 그 뒤 `닫힘`이 됐다",
     ]
     for sample in misses:
         assert _D_STATUS_CLAIM.search(sample) is None, f"정규식이 정상 문장을 잡는다: {sample}"
+
+    # **오귀속 핀.** 다중 D 열거는 이 저장소의 표준 문형이고(`open-questions.md:40`),
+    # (다)의 창이 다른 D 토큰을 넘으면 **엉뚱한 D를 신고한다.** 잡히되 **옳은 쪽**이어야 한다.
+    for sample, owner in (
+        ("**D29**는 남은 것이 있고 · **D51**이 `보류`다", "D51"),
+        ("D2는 무관하다 — 옆의 D51이 `보류`다", "D51"),
+        ("D40은 아직이고(D35가 `부분`)", "D35"),
+    ):
+        found = _D_STATUS_CLAIM.search(sample)
+        assert found is not None and found.group(1) == owner, f"오귀속: {sample}"
+
+    # 취소선은 철회 표시다 — 걷어내면 안 남는다.
+    assert _D_STATUS_CLAIM.search(_WITHDRAWN.sub("", "~~D57(부분)~~ → 닫혔다")) is None
 
 
 def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
@@ -1384,7 +1425,7 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     for path in _tracked("*.md"):
         own = path.stem if path.parent.name in ("D", "R") else None
         for number, line in enumerate(_read(path).splitlines(), start=1):
-            for claim in _D_STATUS_CLAIM.finditer(line):
+            for claim in _D_STATUS_CLAIM.finditer(_WITHDRAWN.sub("", line)):
                 did, claimed = claim.group(1), _claimed_status(claim)
                 if did == own:
                     continue
@@ -1454,7 +1495,9 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     assert _TWO_BY_TWO.search("2X2 뒤"), "대문자 X를 놓친다"
     assert _TWO_BY_TWO.search("2 × 2 뒤"), "사이 공백을 놓친다"
     assert _TWO_BY_TWO.search("２×２ 뒤"), "전각 숫자를 놓친다"
-    assert not _TWO_BY_TWO.search("8192 × 2회"), "곱셈 표기를 축으로 읽는다"
+    assert not _TWO_BY_TWO.search("8192 × 2회"), "앞 숫자 경계가 없다"
+    assert not _TWO_BY_TWO.search("해상도 2x25"), "뒤 숫자 경계가 없다"
+    assert _STRIKETHROUGH in "~~2x2 스펙 고정값~~", "취소선 표시가 바뀌었다"
     assert _DEPRECATION_MARKER.search("2×2 전량 폐기로 소멸했다"), "폐기 표시를 못 읽는다"
     assert not _DEPRECATION_MARKER.search("enum 제약 제거는 별개다"), "「제거」를 표시로 읽는다"
 
