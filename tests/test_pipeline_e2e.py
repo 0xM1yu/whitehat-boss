@@ -625,7 +625,7 @@ def test_missing_run_labels_names_every_gap_the_operator_must_fill() -> None:
     assert [w for w in gaps if "condition" in w], "조건을 안 준 run이 기본 라벨로 조용히 남는다"
 
     filled = runner.missing_run_labels(
-        device="atom", kb_snapshot="kb-20260901", condition="B1prime@2x2"
+        device="atom", kb_snapshot="kb-20260901", condition="B1prime@pipeline"
     )
     assert filled == []
 
@@ -647,7 +647,7 @@ def test_the_pre_run_check_and_incomplete_fields_use_the_same_sentence(tmp_path:
     after = runner.incomplete_fields(record)
 
     before = runner.missing_run_labels(
-        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition="B1prime@2x2"
+        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition="B1prime@pipeline"
     )
     assert before, "run 전 검사가 아무 말도 하지 않는다"
     for sentence in before:
@@ -694,8 +694,13 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
 
     경고 한 줄은 긴 run의 출력에 묻힌다. 그리고 그 run은 시작하기도 전에 이미 못 쓰는
     것이 확정돼 있다 — `incomplete_fields()`가 `device`가 비면 "모델 비교표에서
-    제외한다"고 판정하고, `condition`이 기본값으로 굳으면 2×2 축으로 돌린 run이 pipeline
-    라벨을 달아 비교표가 섞인다(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
+    제외한다"고 판정하고, `condition`이 없으면 **어느 조건으로 돈 run인지 산출물로 알 수
+    없다**(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
+
+    ⚠ **2026-09-20 — 이 문장의 근거가 바뀌었다.** 예전에는 *"`condition`이 기본값으로 굳으면
+    2×2 축으로 돌린 run이 pipeline 라벨을 달아 비교표가 섞인다"*였는데, 2×2가 폐기되고
+    `CONDITION_PATTERN`이 `@pipeline`만 받게 되어 **그 혼동은 일어날 수 없다.** 막는 이유는
+    이제 「축이 섞인다」가 아니라 「조건이 기록되지 않는다」다. 검사 자체는 그대로 유효하다.
 
     **판별 기준은 `production`이 아니라 `served_models()`다.** 저장소의 프로필이 전부
     `production: false`라 그 필드로는 아무것도 갈리지 않는다(직접 확인). `served_models()`는
@@ -812,14 +817,14 @@ def test_a_malformed_condition_is_refused_before_the_run_dir(
     **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없으므로 dev 프로필에서도
     막는다. 이건 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
 
-    `B3prime_large@2x2`를 고른 것은 `CONDITION_PATTERN`이 받는 넷(`B1`·`B1prime`·`B3`·
-    `B3prime`) **밖의** 이름이면서 축 접미사는 올바른 값이라서다 — "조건 이름이 틀렸다"와
-    "축 표기가 틀렸다"를 가르는 자리이고, 그 조합을 사람이 실제로 친다.
+    `B3prime_large@pipeline`을 고른 것은 `CONDITION_PATTERN`이 받는 넷(`B1`·`B1prime`·`B3`·
+    `B3prime`) **밖의** 이름이면서 축 접미사(`@pipeline`)는 올바른 값이라서다 — "조건 이름이
+    틀렸다"와 "축 표기가 틀렸다"를 가르는 자리이고, 그 조합을 사람이 실제로 친다.
     """
     code = cli.main(
         [
             "run", "--profile", "dev_fake", "--target", str(TARGET),
-            "--condition", "B3prime_large@2x2", "--device", "atom",
+            "--condition", "B3prime_large@pipeline", "--device", "atom",
             "--kb-snapshot", "kb-20260901",
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
@@ -827,7 +832,7 @@ def test_a_malformed_condition_is_refused_before_the_run_dir(
 
     err = capsys.readouterr().err
     assert code != 0, "형식에 안 맞는 라벨로 run이 시작했다"
-    assert "B3prime_large@2x2" in err, "어느 값이 문제인지 말하지 않는다"
+    assert "B3prime_large@pipeline" in err, "어느 값이 문제인지 말하지 않는다"
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
@@ -940,7 +945,7 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
         cli.main(
             [
                 "run", "--profile", "b1_single", "--target", str(TARGET),
-                "--condition", "B1prime@2x2", "--device", "atom",
+                "--condition", "B1prime@pipeline", "--device", "atom",
                 "--seed", "20260901", "--artifacts-root", str(tmp_path),
             ]
         )

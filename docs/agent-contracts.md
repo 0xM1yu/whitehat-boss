@@ -292,7 +292,9 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 }
 ```
 
-`condition`은 `^(B1|B1prime|B3|B3prime)@(2x2|pipeline)$` 형식이다. [evaluation.md](evaluation.md) §2가 지적하듯 2×2 설계와 파이프라인 조건이 같은 라벨을 다른 축으로 쓰므로, 어느 정의인지 라벨에 포함하지 않으면 비교표가 섞인다. `'`는 파일명·URL·쉘에서 깨지므로 `prime`으로 적는다. 라벨 통합 여부는 [open-questions.md](open-questions.md) D1.
+`condition`은 `^(B1|B1prime|B3|B3prime)@pipeline$` 형식이다. `'`는 파일명·URL·쉘에서 깨지므로 `prime`으로 적는다.
+
+> **2026-09-20 — `@2x2`를 뺐다.** 예전에는 `@(2x2|pipeline)`이었다 — [evaluation.md](evaluation.md) §2.1의 2×2 설계와 §2.2의 파이프라인 조건이 같은 라벨을 다른 축으로 써서, 어느 정의인지 라벨에 넣지 않으면 비교표가 섞였기 때문이다. **2×2가 폐기되고 Scout 오케스트레이터로 확정되면서 축이 하나만 남았고**, 그 충돌을 등재했던 [D1](open-questions/D/D1.md)도 닫혔다. ⚠ **`@pipeline` 접미사 자체는 남긴다** — 기존 값의 형식을 지키고 축이 다시 늘 때 자리가 된다.
 
 `finished_at`이 비어 있거나 `stopped_after`가 채워진 run(예산 소진 등으로 중단)은 부분 결과이므로 비교표에 넣지 않는다([evaluation.md](evaluation.md) §6). `stopped_after`는 [architecture.md](architecture.md) §3의 단계 번호(0~9)다.
 

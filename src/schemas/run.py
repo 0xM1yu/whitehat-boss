@@ -19,9 +19,12 @@ from src.schemas.common import (
 )
 
 # evaluation.md §2.2: 2×2 설계(§2.1)와 파이프라인 조건(§2.2)이 같은 라벨을 다른 축으로
-# 쓴다. 어느 정의인지 라벨에 박아 두지 않으면 비교표가 섞인다. 라벨 통합은 #59(open-questions).
+# 썼다. 라벨 통합 논의는 #59(open-questions).
+# 2026-09-20: PM 결정으로 2×2 실험이 완전히 폐기되고 Scout 오케스트레이터로 전환되어
+# `2x2` 축을 CONDITION_PATTERN에서 제거한다.
 # `'`는 파일명·URL·쉘에서 깨지므로 `prime`으로 표기한다.
-CONDITION_PATTERN = r"^(B1|B1prime|B3|B3prime)@(2x2|pipeline)$"
+# `@` 접미사는 남긴다 — 지금은 `pipeline`뿐이지만 축이 다시 늘 때 자리를 미리 지운다.
+CONDITION_PATTERN = r"^(B1|B1prime|B3|B3prime)@pipeline$"
 
 # architecture.md §3의 파이프라인 단계 번호는 0~9로 고정이다.
 _MAX_STAGE = 9
