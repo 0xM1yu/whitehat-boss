@@ -40,7 +40,8 @@ graph LR
 > **순수 함수(술어)**이고 6·7·8단계에서 각각 호출된다(`stages.GATE_STAGES`). 그림의 칸은 그중
 > **게이트 등급만으로 전이가 갈라지는 자리**인 6단계다(`policy._gate_grade`의 `basis`가 `grade`
 > 하나다) — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의 전이 신호에 실리고, 8단계 재판정도
-> 2026-09-20부터 같은 모양으로 그 단계의 전이 신호에 실린다(F-10 / F-10b). 등급이 언제 성립하고
+> 2026-09-20부터 같은 모양으로 그 단계의 전이 신호에 실린다(F-10 / F-10b — 후자는 아직 안 탄다).
+> 등급이 언제 성립하고
 > 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
 
 ## 3. 단계별 책임과 통과 조건
@@ -55,7 +56,7 @@ graph LR
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
-| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지) |
+| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 그 갈래는 아직 안 탄다, §4) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
@@ -136,6 +137,12 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > (`policy._repro_result()`)이 **재현이 성공한(`ok=True`) 건에 한해** 그 등급을 읽는다 — E4면
 > `proven`(F-10), E4 미만이면 무전이로 `validated`에 홀드한다(F-10b, 사유 `evidence_below_proven`).
 > 그전에는 `ok`·`tool_allowed` 둘만 읽어 게이트가 E3인 Finding도 `ok=True`면 `proven`이 됐다.
+>
+> ⚠ **그 F-10b 분기는 오늘 노드 경로에서 발화하지 않는다 — 방어 가드다.** `nodes/validate.run()`이
+> 내는 `ok=True`는 "produced Evidence가 전부 `ok`"라는 뜻이고, 그러면 그 SANITIZER/POC_RUN
+> Evidence가 `gate.evaluate()`의 `usable`에 들어 `p4`가 참이 되므로 **등급은 반드시 E4**다.
+> 즉 이 줄이 서술하는 것은 **구조**(등급을 읽는다)이지 오늘의 관측이 아니다. 실측과 그
+> 불변식이 깨지는 조건은 [D18 본문](open-questions/D/D18.md) 마지막 절에 있다.
 > → [open-questions.md](open-questions.md) D18(닫힘)
 
 구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)
