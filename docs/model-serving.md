@@ -20,7 +20,7 @@
 
 ## 2. 역할별 서빙 성질 — 초기 모델 구성 (2026-08 기록)
 
-**어느 모델이 어느 자리에 앉는지의 정본은 [CONTEXT.md](../CONTEXT.md) §1이다.** 아래 표는
+**어느 모델이 어느 자리에 앉는지의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다.** 아래 표는
 **2026-08 초기안의 기록**이고, 로스터는 그 뒤 2026-09-09에 확정됐다
 ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2). **이 표를 「지금 무엇이
 뜨는가」로 읽지 않는다** — 여기 남는 값은 그 시점의 선정 이유와, 그 뒤에 붙은 실측이다.
@@ -84,7 +84,7 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 ## 4. 양자화 품질 검증 (Critic 전용) — **전제가 사라진 절**
 
 > **⚠ 이 절은 Critic이 Devstral Small 2였을 때 쓰였고, 그 전제가 2026-09-09에 사라졌다.**
-> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [CONTEXT.md](../CONTEXT.md) §1**이고
+> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1**이고
 > 결정 기록은 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2다.
 >
 > **무엇이 무너졌나.** 아래 본문이 요구하는 것은 *"고정밀도 대비 NVFP4의 `verdict` 일치율"*인데,
@@ -159,7 +159,7 @@ models:
 없는 것이지 다른 것이 아니다.
 
 **아래 예시의 모델 키는 구조를 보이려고 든 것이지 현재 로스터가 아니다** — 로스터의 정본은
-[CONTEXT.md](../CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
+[PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
 
 ```yaml
 # config/profiles.yaml (합성 예시 — 모델 키는 자리표시자다)
@@ -167,7 +167,7 @@ profiles:
   local_balanced:
     description: "전 역할 실서빙"
     production: false
-    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 CONTEXT.md §1
+    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 PROJECT-CONTEXT.md §1
       scout: <모델 키>
       auditor: <모델 키>
       critic: <모델 키>
@@ -265,7 +265,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 ```
 
 **위 그림은 역할의 배선이지 상주 서버 수가 아니다.** 같은 모델이 앉은 두 역할은 **한 서버를
-공유하고**, 어느 자리가 그런지는 [CONTEXT.md](../CONTEXT.md) §1·§2가 든다. Scout를 역할 셋으로
+공유하고**, 어느 자리가 그런지는 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1·§2가 든다. Scout를 역할 셋으로
 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §3이고, **기존
 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
 

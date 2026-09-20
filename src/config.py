@@ -39,7 +39,7 @@ RETRIEVAL_ROLES = ("embedding", "reranker")
 # 선언한다(ADR 0010 §3). 두 상수를 붙여 두는 것은 그 배타가 한 화면에서 읽혀야 하기
 # 때문이다.
 #
-# 어느 멤버가 어느 CWE 계열인지는 여기서 정하지 않는다 — 정본은 CONTEXT.md §1 표이고
+# 어느 멤버가 어느 CWE 계열인지는 여기서 정하지 않는다 — 정본은 PROJECT-CONTEXT.md §1 표이고
 # 계약은 `prompts/<role>/v2/prefix.md`가 들고 있다. 이 상수가 아는 것은 "누가 풀
 # 멤버인가"뿐이라, 계열이 재배치돼도 여기는 안 움직인다.
 SCOUT_ROLE = "scout"
@@ -202,7 +202,7 @@ class ModelEntry(HarnessModel):
     # 아니다**: `_check_family_split`이 "미상"을 "다르다"로 읽지 않는다(CLAUDE.md §0).
     family: NonEmptyStr | None = None
     # **모델별 추가 요청 파라미터.** 지금 이 축에 있는 것은 이것 하나다 — 확정 로스터의
-    # Critic이 `gpt-oss-20b` + `reasoning_effort: high`이기 때문이다(`CONTEXT.md` §1).
+    # Critic이 `gpt-oss-20b` + `reasoning_effort: high`이기 때문이다(`PROJECT-CONTEXT.md` §1).
     #
     # **서버를 띄우는 값과 가른다.** `TRITON_ATTN`·flashinfer off·`--enforce-eager`·
     # `--structured-outputs-config.*`는 **하네스가 안 보낸다** — 그것은 `vllm serve`를 치는

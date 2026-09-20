@@ -312,7 +312,7 @@ models:
       prefix_hit_ratio_batch32: 0.5673
 
   devstral-small-2-24b:
-    # Mistral 계열 24B. **자리의 정본은 CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
+    # Mistral 계열 24B. **자리의 정본은 PROJECT-CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
     # 이 모델은 `scout_boundary`(CWE-119·125·787·190)이고, 아래 서술이 전제하던 Critic 자리가
     # 아니다. Primary와 다른 계열이어야 교차 검증의 가치가 나온다는 규칙 자체는 그대로이고
     # (model-serving.md §2), 지금은 `load_config`의 `_check_family_split`이 그것을 강제한다.
@@ -388,7 +388,7 @@ models:
       prefix_hit_ratio_batch32: null
 
   gpt-oss-20b:
-    # **7단계 Critic.** 자리의 정본은 `CONTEXT.md` §1이다 — 2026-09-09 확정 로스터에서 이
+    # **7단계 Critic.** 자리의 정본은 `PROJECT-CONTEXT.md` §1이다 — 2026-09-09 확정 로스터에서 이
     # 모델이 Critic이고 `reasoning_effort: high`다. Auditor(`qwen3-coder-30b-a3b`)와 계열이
     # 달라야 교차 검증의 가치가 나오고(model-serving.md §2), `load_config`의
     # `_check_family_split`이 그것을 강제한다 — `qwen` 대 `gpt-oss`로 갈린다.
@@ -562,7 +562,7 @@ models:
     # `--hf-overrides {"architectures":["Qwen3ForSequenceClassification"], …}`가 필요하다
     # (0.6b가 쓴 것과 같은 reranker 서빙 인자). 그 기동·점수 정확성 검증은 등재와 별개이고
     # 아직 안 됐다 — 그래서 `benchmark`는 전부 `0`(미실측 표시, CLAUDE.md §0)이고 production
-    # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 CONTEXT.md와 open-questions가 든다.
+    # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 PROJECT-CONTEXT.md와 open-questions가 든다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 40960
     quantization: "bf16"
