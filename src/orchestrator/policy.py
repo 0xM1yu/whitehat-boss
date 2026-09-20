@@ -173,7 +173,7 @@ class FixedThresholdPolicy:
         return self._act(Route.HOLD, FindingState.HYPOTHESIZED, ReasonCode.CRITIC_UPHELD, basis)
 
     def _repro_result(self, request: RoutingRequest) -> Action:
-        """F-10 / F-11 / F-12."""
+        """F-10 / F-10b / F-11 / F-12."""
         ok = bool(_signal(request, "ok"))
         allowed = bool(_signal(request, "tool_allowed"))
         basis: dict[str, Signal] = {"ok": ok, "tool_allowed": allowed}
@@ -181,9 +181,19 @@ class FixedThresholdPolicy:
             return self._act(
                 Route.QUEUE, FindingState.QUEUED, ReasonCode.TOOL_POLICY_VIOLATION, basis
             )
-        if ok:
-            return self._act(Route.ADVANCE, FindingState.PROVEN, ReasonCode.REPRO_CONFIRMED, basis)
-        return self._act(Route.QUEUE, FindingState.QUEUED, ReasonCode.REPRO_FAILED, basis)
+        if not ok:
+            return self._act(Route.QUEUE, FindingState.QUEUED, ReasonCode.REPRO_FAILED, basis)
+        # 재현이 실패하면 등급은 무의미하므로 ok=True일 때만 읽는다 — basis에는 실제로
+        # 판정에 쓴 신호만 남아야 한다(모듈 docstring 11-13행).
+        grade = EvidenceGrade(_signal(request, "grade"))
+        basis["grade"] = grade.value
+        if grade is EvidenceGrade.E4:
+            return self._act(
+                Route.ADVANCE, FindingState.PROVEN, ReasonCode.REPRO_CONFIRMED, basis
+            )
+        return self._act(
+            Route.HOLD, FindingState.VALIDATED, ReasonCode.EVIDENCE_BELOW_PROVEN, basis
+        )
 
     def _requeue(self, request: RoutingRequest) -> Action:
         """C-8 / C-9 / F-14. 상한을 넘겨도 폐기하지 않고 queued를 유지한다(계획 D-i)."""
