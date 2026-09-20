@@ -700,30 +700,41 @@ def test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects() -> None
     > 들고 있었다. 같은 PR이 이 파일의 **docstring은 고쳤고** 프로덕션 문자열은 놓쳤다 —
     > 산문과 출력이 정면으로 어긋난 채 CI가 초록이었다(CLAUDE.md §2.3).
 
-    **「축」이라는 낱말 앞의 토큰만 본다.** 문구 전체를 패턴과 대조하면 일반 산문이 전부
-    걸리고, 그러면 다음 사람이 이 검사를 지운다.
+    **두 모양만 본다** — `N×N` 리터럴과 `@축`이다. 문구 전체를 패턴과 대조하면 일반 산문이
+    전부 걸리고, 그러면 다음 사람이 이 검사를 지운다.
+
+    > **사고 하나 더 — 2026-09-20에 위 사고의 거울상을 밟았다.** 첫 판은 「축」이라는 낱말
+    > **앞의 토큰**만 봤는데 구멍이 셋이었다(`2×2 실험 축`처럼 한글이 끼면 끊기고, `2X2`를
+    > 놓치고, `retriever 축` 같은 정상 문구를 막았다). 검출기를 위 두 축으로 갈아치우면서
+    > **이 docstring의 그 문장을 안 고쳤다** — 이번엔 코드를 고치고 산문을 놓쳤다.
     """
     # 두 모양을 본다. **`N×N` 리터럴**이 실제로 터진 것이고(2×2·2x2·2X2·2 × 2·전각),
     # **`@축`**은 패턴의 어휘와 직접 대조한다. 「축」 앞 토큰만 보던 첫 판은 구멍이 셋이었다 —
     # `2×2 실험 축`처럼 한글이 끼면 끊기고, `2X2`를 놓치고, `retriever 축` 같은 무관한
     # 정상 문구를 막았다(2라운드 리뷰가 주입으로 전부 재현).
-    matrix_axis = re.compile(r"[2２]\s*[×xX✕✖╳]\s*[2２]")
-    suffixed_axis = re.compile(r"@(\w+)")
+    # 숫자 경계를 둔다 — 없으면 `8192 × 2회`·`512x256` 같은 곱셈·치수 표기가 축으로 읽힌다.
+    matrix_axis = re.compile(r"(?<![0-9０-９])[2２]\s*[×xX✕✖╳]\s*[2２](?![0-9０-９])")
+    # **어휘를 패턴에서 뽑고 조건 라벨에 앵커한다.** 예전에는 `축 not in CONDITION_PATTERN`,
+    # 즉 정규식 **소스 문자열에 대한 부분문자열 검사**였다 — `@B`·`@line`은 소스에 우연히
+    # 들어 있어 통과하고 `ops@example.com`은 `example`을 축으로 신고했다(3라운드 리뷰 실측).
+    labels, allowed = re.findall(r"\(([^)]+)\)", CONDITION_PATTERN)[0], set()
+    allowed.update(re.findall(r"@(\w+)", CONDITION_PATTERN))
+    suffixed_axis = re.compile(rf"(?:{labels})@(\w+)")
 
     def rejected(text: str) -> list[str]:
         found = [m.group(0) for m in matrix_axis.finditer(text)]
-        found += [
-            m.group(1)
-            for m in suffixed_axis.finditer(text)
-            if m.group(1) not in CONDITION_PATTERN
-        ]
+        found += [m.group(1) for m in suffixed_axis.finditer(text) if m.group(1) not in allowed]
         return found
 
     # **오염 핀.** 아래가 없으면 두 문구가 깨끗해지는 순간 이 단언이 빈 리스트끼리 비교하는
     # 공회전이 되고, 검출기가 고장 나도 영영 초록이다.
-    accident = "2×2 축으로 돌린 run이 pipeline 라벨로 남으면"
-    assert rejected(accident), "검출기가 사고 문구를 못 잡는다"
+    # ⚠ **검출기가 둘이므로 핀도 둘이다.** 첫 판은 `N×N` 핀 하나뿐이라 `@축` 쪽을 무력화해도
+    # 통과했다 — 절반만 붙드는 핀은 안 붙드는 것과 같다(3라운드 리뷰가 변이로 재현).
+    assert rejected("2×2 축으로 돌린 run이 pipeline 라벨로 남으면"), "N×N 검출기가 죽었다"
+    assert rejected("condition이 B1@ensemble로 남는다"), "@축 검출기가 죽었다"
     assert not rejected(f"조건은 {runner.DEFAULT_CONDITION} 하나다"), "검출기가 정상 조건을 잡는다"
+    assert not rejected("문의는 ops@example.com 으로"), "검출기가 이메일을 축으로 읽는다"
+    assert not rejected("출력 상한 8192 × 2회"), "검출기가 곱셈 표기를 축으로 읽는다"
 
     offenders = [
         f"{axis!r}: {text}"

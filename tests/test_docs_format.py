@@ -1284,8 +1284,8 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # 그대로 두면 보류를 풀었다는 문장이 「보류다」로 읽혀 CI가 정상 문장을 막고, 그때 다음
 # 사람이 이 검사를 지운다. 백틱을 요구하면 인용된 상태값만 남는다.
 _D_STATUS_CLAIM = re.compile(
-    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}"
-    r"(?:(?:는|은|이|가)\s*\*{0,2}`?|의\s*\*{0,2}`)"
+    r"([DR]\d+)(?:\]\([^)]*\))?[*`\s]{0,4}"
+    r"(?:(?:는|은|이|가)\s*\*{0,2}`?|의\s*\*{0,2}`|,\s*)"
     r"(열림|닫힘|보류|부분)`?\*{0,2}"
 )
 
@@ -1294,8 +1294,14 @@ _D_STATUS_CELL = re.compile(r"^\|\s*\*{0,2}(열림|닫힘|보류|부분|결정|�
 
 
 def _d_body_status(did: str) -> str | None:
-    """`D<n>.md` 머리 표가 선언한 상태. 없으면 `None`."""
-    path = REPO_ROOT / "docs" / "open-questions" / "D" / f"{did}.md"
+    """`D<n>.md`·`R<n>.md` 머리 표가 선언한 상태. 없으면 `None`.
+
+    **`R`도 본다.** 2026-09-20까지 이 검사가 `D`만 봤고, 그 사이
+    `docs/model-serving.md`가 *"R2는 그 파일에서 아직 `열림`이고"*를 **R2를 닫은 바로 그
+    커밋에서** 써서 9일을 살아 있었다. R은 이슈를 만들지 않아 미러가 없으므로
+    산문이 유일한 오염원이다.
+    """
+    path = REPO_ROOT / "docs" / "open-questions" / did[0] / f"{did}.md"
     if not path.is_file():
         return None
     for line in _read(path).splitlines():
@@ -1306,12 +1312,29 @@ def _d_body_status(did: str) -> str | None:
 
 
 def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
-    """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다."""
-    sample = "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다."
-    found = _D_STATUS_CLAIM.search(sample)
-    assert found is not None, "상태 단언 정규식이 실제 문장을 못 잡는다"
-    assert found.group(1) == "D74"
-    assert found.group(2) == "열림"
+    """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다.
+
+    **분기마다 핀을 단다.** 조사 넷(`는|은|이|가`)·백틱 `의`·괄호 `,` 셋이 서로 다른 실제
+    미탐에서 하나씩 자랐고, **핀 없는 분기는 깨져도 영영 초록이다.** 음성 핀은 `의`가
+    명사구까지 먹지 않는지를 붙든다.
+    """
+    hits = {
+        "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다.": ("D74", "열림"),
+        "그 승격이 D54의 `열림`을 다시 바꾸지는 않는다": ("D54", "열림"),
+        "**#98(D26, 열림)과의 관계**": ("D26", "열림"),
+        "R2는 `닫힘`이다": ("R2", "닫힘"),
+    }
+    for sample, (number, status) in hits.items():
+        found = _D_STATUS_CLAIM.search(sample)
+        assert found is not None, f"상태 단언 정규식이 못 잡는다: {sample}"
+        assert (found.group(1), found.group(2)) == (number, status), sample
+
+    misses = [
+        "D54의 보류 해제를 기록한다",  # `의` + 맨 상태어 = 명사구이지 단언이 아니다
+        "D29(샘플링 등가화 남은 부분)",  # 괄호 안이 항목 이름의 일부
+    ]
+    for sample in misses:
+        assert _D_STATUS_CLAIM.search(sample) is None, f"정규식이 정상 문장을 잡는다: {sample}"
 
 
 def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
@@ -1337,7 +1360,7 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     offenders: list[str] = []
 
     for path in _tracked("*.md"):
-        own = path.stem if path.parent.name == "D" else None
+        own = path.stem if path.parent.name in ("D", "R") else None
         for number, line in enumerate(_read(path).splitlines(), start=1):
             for claim in _D_STATUS_CLAIM.finditer(line):
                 did, claimed = claim.group(1), claim.group(2)
@@ -1367,7 +1390,9 @@ _STRIKETHROUGH = "~~"
 # 곱셈기호(U+00D7)·ASCII `x`·대문자 `X`·전각 숫자·사이 공백을 전부 받는다.
 # 2026-09-20에 `git grep "@2x2"`(ASCII)로만 훑은 PR이 `2×2`를 든 네 줄을 통째로 놓쳤고,
 # 그 검사를 처음 쓸 때 이번에는 `2X2`·`2 × 2`를 놓쳤다 — 같은 실수의 두 번째 판이다.
-_TWO_BY_TWO = re.compile(r"[2２]\s*[×xX✕✖╳]\s*[2２]")
+# ⚠ **숫자 경계가 필수다.** 없으면 `8192 × 2회`(실험 보고서의 토큰 상한 표기)와 `512x256`이
+# 축으로 읽힌다 — 지금 범위에는 오탐이 0이지만 같은 정규식을 차단 문구 쪽도 쓴다.
+_TWO_BY_TWO = re.compile(r"(?<![0-9０-９])[2２]\s*[×xX✕✖╳]\s*[2２](?![0-9０-９])")
 
 
 def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
@@ -1388,11 +1413,15 @@ def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
     **범위는 「읽으면 그대로 따르는 것」뿐이다** — `CONTEXT.md`·`src/`·`config/`.
 
     ⚠ **`docs/` 를 안 넣은 것은 의도다.** 2026-09-20에 `docs/open-questions/D/` 까지 넓혀
-    돌려 보니 **13건**이 나왔는데 그중 열둘이 장부의 **이력 서술**이었다 — D1의 원질문 문장,
-    D30·D79가 D1과 대조하는 문단, D44·D52가 당시 기록을 인용한 자리. 그것을 고치는 것은
-    관측을 지우는 일이다([CLAUDE.md](../CLAUDE.md) §0). 진짜 위반이던 `D54.md` 한 줄
-    (*"넘기는 시점은 2×2 전량 완료 후다"*)은 같은 PR에서 손으로 고쳤다. **실험 보고서도
-    같은 이유로 밖이다** — 날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
+    돌려 보니 **열둘**이 나왔고(커밋 `32ee331` 트리에서 잰 값) 그중 **열하나가 장부의 이력
+    서술**이었다 — `D1:29`(원질문 문장) · `D30:11`·`D79:69`(D1과의 대조) · `D44:11`·`D52:11`
+    (당시 기록 인용) · `D57:29` · **`D64`의 다섯 줄**(`:46`·`:60`·`:62`·`:74`·`:78` — 그 파일
+    머리의 ⚠ 가 *"등재 시점의 상태다"*로 덮는다). 그것을 고치는 것은 관측을 지우는 일이다
+    ([CLAUDE.md](../CLAUDE.md) §0).
+
+    **진짜 위반은 하나였다** — `D54.md:66`의 *"넘기는 시점은 2×2 전량 완료 후다"*. 같은 PR에서
+    그 줄에 **폐기 표시를 달았다**(문장은 남기고 ⚠ 를 붙였다 — 관측을 안 지운다). **실험
+    보고서도 같은 이유로 밖이다** — 날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
     """
     window = 3
     offenders: list[str] = []
