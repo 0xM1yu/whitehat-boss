@@ -43,10 +43,22 @@ Singularity 3.7.3은 `cpu_limit`·`memory_mb`를 강제하지 못한다(HPC에�
 ## asan·poc는 실행까지 성공해야 ok=True다
 
 Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다. 컴파일 성공을
-실행으로 세면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.** 그래서 빌드·링크
-실패는 `ok=False`이고, 바이너리가 실제로 떠서 크래시한 경우만 `ok=True`(exit_code에 크래시
-코드)다. 지금 픽스처에는 `main`이 없어 링크되지 않으므로 **E4는 여전히 도달 불가**다 —
-PoC를 만드는 주체(PoV 노드)가 생기기 전까지는 그것이 사실이고, 그 사실대로 기록한다.
+실행으로 세면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.** 그래서 `ok=False`로
+내리는 갈래가 셋이다 — 명령이 하나도 안 돈 경우(`not steps`), 빌드에서 끊긴 경우
+(`len(steps) < total`), **띄우지도 못한 경우**(`_EXEC_FAILED` = 125·126·127).
+
+**그 뒤로는 종료 코드를 보지 않는다.** 프로그램이 뜨기만 하면 크래시(non-zero)든 깨끗한
+종료(exit 0)든 `ok=True`이고, 그것이 `judge()` docstring의 *"돌았는데 아무것도 못 찾음:
+`ok=True, exit_code=0`"*이다. **즉 `ok=True`가 보증하는 것은 「실행됐다」까지이지
+「크래시했다」가 아니다.** 게이트는 `ok`와 `kind`만 보므로(`gate.evaluate()`의 `usable`과
+`p4`) 그 차이가 E4에 그대로 실린다 — 산출물을 `expected_signal`과 대조하는 코드는
+**없다**(이슈 #232). exit 0을 `ok=False`로 내릴지는 승격 동작이 바뀌는 판단이라 이 파일이
+혼자 정하지 않는다.
+
+지금 픽스처에는 `main`이 없어 링크되지 않으므로 **컨테이너 경로에서 E4는 여전히 도달
+불가**다 — PoC를 만드는 주체(PoV 노드)가 생기기 전까지는 그것이 사실이고, 그 사실대로
+기록한다. ⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신 대상
+소스의 존재를 보고 `ok=True`를 낸다.
 
 ## index는 이제 진짜 그래프를 만든다 (이슈 #63)
 
@@ -441,8 +453,13 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     모든 Finding에서 참이 된다.
 
     **`exit_code`는 프로세스가 반환한 값을 그대로 남긴다.** 합성하면 기록에 작은 거짓이
-    들어가고, 합성할 필요도 없다 — `with_signal()`이 `ok`를 먼저 보므로 크래시는
-    `ok=False`에서 이미 걸린다.
+    들어가고, 합성할 필요도 없다 — 거르는 쪽이 `ok`를 먼저 보므로 **도구 자신이 죽은 것**은
+    `ok=False`에서 걸린다.
+
+    ⚠ **「크래시」를 한 문단 안에서 두 뜻으로 쓰지 않는다.** 아래 `_RUNTIME_TOOLS` 갈래가
+    말하는 크래시는 **대상 프로그램**의 것이고 그쪽은 `ok=True`(신호)다. 그리고 그 갈래는
+    `with_signal()`이 보지 않는다 — 유일한 프로덕션 호출부(`runner.py`)가 `signals.run()`의
+    산출물만 받고 `SIGNAL_TOOLS`는 `semgrep`·`clang-tidy`·`build` 셋이다.
     """
     if not steps:
         return False, 127, f"{tool}: 실행된 명령이 없다"

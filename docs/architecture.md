@@ -117,7 +117,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
 | E2 | source→sink 경로가 call graph로 확인되고 guard 부재가 코드로 확인 | 6 |
 | E3 | Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
-| E4 | sanitizer/crash/PoC 재현 로그 존재 | 8 — 도구 실행 로그가 있어야 성립한다 |
+| E4 | sanitizer/crash/PoC 재현 로그 존재 — **「실행됐다」까지만 보증한다**(D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
 
 **승격은 게이트가 하지 않는다 — 두 축을 한 표에 넣지 않는 이유다.** `gate.py`는 등급만 내고
 전이는 노드와 정책이 한다(모듈 docstring: *"등급을 전이로 매핑하는 것은 노드 몫이고, trace
@@ -144,6 +144,20 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 즉 이 줄이 서술하는 것은 **구조**(등급을 읽는다)이지 오늘의 관측이 아니다. 실측과 그
 > 불변식이 깨지는 조건은 [D18 본문](open-questions/D/D18.md) 마지막 절에 있다.
 > → [open-questions.md](open-questions.md) D18(닫힘)
+
+> ⚠ **위에서 「재현이 성공한(`ok=True`)」이라 부른 것은 「크래시했다」가 아니라 「도구가
+> 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`poc`)를 `ok=False`로
+> 내리는 갈래는 셋이다 — 명령이 하나도 안 돈 경우, 빌드에서 끊긴 경우(`len(steps) < total`),
+> 띄우지도 못한 경우(`_EXEC_FAILED` = 125·126·127). **exit 0은 그 셋에 없다** — 깨끗이 끝난
+> 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 없으므로 대상 존재로 대체한다"*고 스스로 적는다. 그리고 `gate.evaluate()`의 `p4`는
+> `usable`(=`ev.ok`)과 `kind`만 보므로 `exit_code`가 판정에 들어가지 않는다.
+>
+> **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드가 없다** — 살아 있는 사용처는
+> `validate.tool_for()`가 신호 문자열에서 **도구 이름**을 고르는 것 하나다. 이 문서의 「재현
+> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐다」까지만 보증한다.**
+> 무엇을 고칠지는 아직 안 정했다.
+> → [open-questions.md](open-questions.md) D80(열림)
 
 구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)
 
