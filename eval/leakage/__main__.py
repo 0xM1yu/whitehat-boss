@@ -102,7 +102,12 @@ def check(
     evalset: Path | None,
     problem_names: Path,
 ) -> Report:
-    """마스킹 스캔과 digest 교집합 검사를 한 번에 돌린다."""
+    """마스킹 스캔과 digest 교집합 검사를 한 번에 돌린다.
+
+    ⚠ **`artifacts_root`를 검증하지 않는다.** 없는 뿌리는 예외가 아니라 0건이 된다
+    (`Path.glob()`이 그렇다). "명시한 뿌리가 디렉터리여야 한다"는 규약은 `main()`에 있고
+    여기에는 없다 — 다른 호출자를 붙이려면 그 검사를 같이 가져가야 한다.
+    """
     names = load_problem_names(problem_names)
     found = sorted(path for pattern in RUN_GLOBS for path in artifacts_root.glob(pattern))
     targets = [*scan, *found]
@@ -130,9 +135,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         help="추가로 훑을 경로. 기본은 prompts/ 와 {artifacts_root}/*/trace.jsonl",
     )
+    # ⚠ **`type=Path`를 쓰지 않는다.** argparse가 `""`를 `Path(".")`로 **조용히** 바꾸고
+    # (실측 3.14), 그러면 아래 `is_dir()`이 참이라 통과해 **현재 디렉터리**를 run 뿌리로
+    # 훑는다 — `--artifacts-root "$ATOM_ARTIFACTS"`에서 변수가 비면 나는 모양이고, 그것이
+    # 정확히 이 모듈이 막겠다고 적은 "오타 하나가 통과를 만든다"다. 문자열로 받아야
+    # 조작자가 준 것이 빈 값이었는지 `.`이었는지 구별된다.
     parser.add_argument(
         "--artifacts-root",
-        type=Path,
         help="run 산출물 뿌리. `src.cli run --artifacts-root`와 같은 값 (기본: ./artifacts)",
     )
     parser.add_argument("--kb", type=Path, help="KB 인덱스 디렉터리 또는 digest 매니페스트(.json)")
@@ -140,21 +149,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--problem-names", type=Path, default=DEFAULT_PROBLEM_NAMES)
     args = parser.parse_args(argv)
 
-    # **명시한 뿌리가 없으면 오류다.** 오타 하나가 "run 산출물 0건 · 통과"를 만들면 이
-    # 스캐너를 고친 뜻이 사라진다 — "검사했고 깨끗함"과 "검사할 것이 없었음"을 안 뭉개는
-    # 것이 이 모듈의 규약이다(모듈 docstring, digest 교집합의 `[생략]`).
+    # **명시한 뿌리가 디렉터리가 아니면 오류다.** 오타 하나가 "run 산출물 0건 · 통과"를
+    # 만들면 이 스캐너를 고친 뜻이 사라진다 — "검사했고 깨끗함"과 "검사할 것이 없었음"을
+    # 안 뭉개는 것이 이 모듈의 규약이다(모듈 docstring, digest 교집합의 `[생략]`).
     # **기본 뿌리가 없는 것은 오류가 아니다** — run을 한 번도 안 돌린 체크아웃이 그렇고,
     # CI가 정확히 그 상태로 이 명령을 돈다.
-    if args.artifacts_root is not None and not args.artifacts_root.is_dir():
-        print(
-            f"[ERROR] --artifacts-root 가 디렉터리가 아니다: {args.artifacts_root}",
-            file=sys.stderr,
-        )
-        return 2
+    #
+    # ⚠ **여기서 막는 것은 「디렉터리가 아닌 값」까지다.** 존재하는 **엉뚱한** 디렉터리
+    # (옆 뿌리를 가리킨 오타)는 못 가른다 — 그것을 답하는 것은 `render()`가 찍는 경로와
+    # run 산출물 건수이지 이 분기가 아니다. 성질을 못 무는 자리는 적어 둔다(§2.5 끝절).
+    artifacts_root = DEFAULT_ARTIFACTS_ROOT
+    if args.artifacts_root is not None:
+        artifacts_root = Path(args.artifacts_root)
+        if not args.artifacts_root or not artifacts_root.is_dir():
+            print(
+                f"[ERROR] --artifacts-root 가 디렉터리가 아니다: {args.artifacts_root!r}",
+                file=sys.stderr,
+            )
+            return 2
 
     report = check(
         scan=args.scan or list(DEFAULT_SCAN),
-        artifacts_root=args.artifacts_root or DEFAULT_ARTIFACTS_ROOT,
+        artifacts_root=artifacts_root,
         kb=args.kb,
         evalset=args.evalset,
         problem_names=args.problem_names,
