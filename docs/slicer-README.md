@@ -222,8 +222,10 @@ ATOM Joern 4.0.605에서 실행한 결과와 범위는 **보고서 셋에 나뉘
 [공개 스모크 표본 3종](experiments/harness/2026-09-14-joern-slicer-smoke-samples-atom.md) 둘이
 2026-09-14이고, 이 문서가 서술하는 slice-v2의
 [실서버 검증](experiments/harness/2026-09-15-joern-slicer-v2-atom.md)이 2026-09-15이다.
-⚠ **수치를 인용하기 전에 그 보고서가 실은 배포 코드 해시를 본다** — 셋이 서로 다르고, v1
-실서버 보고서 안에서도 zlib 전량과 소규모 회귀가 다른 `slicer.py`로 돌았다(그 보고서 §2 「소스」).
+⚠ **수치를 인용하기 전에 그 보고서의 메타 표에서 배포 코드 해시를 본다 — 보고서와 코드
+판이 1:1이 아니다.** v1 둘은 같은 커밋이고, 스모크 표본은 실서버 보고서의 소규모 회귀와
+`slicer.py`까지 같다(`80b26532…`). 정작 그 실서버 보고서 **안에서** zlib 전량이 다른
+판(`ac94e235…`)으로 돌았고, slice-v2는 또 다르다(`0373767a…`).
 
 HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
 [frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.
