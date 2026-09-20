@@ -671,3 +671,54 @@ def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
     # 이 필드 이전에 쓰인 기록이므로 `None`이다 — "확인 못 함"이 아니라 "남기지 않았다"다.
     # 새 run은 `config.profile_name`에서 무조건 유도되므로 `None`이 나올 수 없다 (이슈 #76).
     assert record.profile is None
+
+
+# ## required 두 필드 — 이 계약은 모델이 무엇을 채우는가를 가른다
+#
+# 2026-09-11 ATOM 실측(이슈 #172)이 근거다. 스키마가 빈 리스트를 기본값으로 허용하는 동안
+# 모델은 `path`·`evidence_refs`를 채우지 않았고, `required`로 올리자 채웠다.
+# **그 계약을 지키는 검사가 이 파일에 없었다** — 기본값을 되돌려도 CI가 초록이었다.
+
+
+def test_the_finding_schema_requires_the_two_fields_the_model_kept_omitting() -> None:
+    """`path`·`evidence_refs`가 `required`에 있고 `missing_evidence`는 없다.
+
+    **`missing_evidence`를 함께 단언하는 이유**는 셋이 형태가 같아서다 — 전부
+    `list[Identifier]`라 "리스트 셋을 다 required로" 같은 일괄 수정이 자연스러워 보인다.
+    그쪽은 모델이 「무엇이 없는가」를 알릴 때만 채우는 선택 필드라 강제하면 빈 배열을
+    받게 된다. 세 번째를 음성으로 고정해 그 일괄 수정을 막는다.
+
+    ⚠ **`minItems`는 단언하지 않는다 — 없어야 하는 것이다.** 같은 실측에서 `required`와
+    채움이 같았고, 빈 리스트는 근거 없는 `hypothesized` 초안의 정당한 출력이다.
+    """
+    required = set(Finding.model_json_schema()["required"])
+
+    assert "path" in required
+    assert "evidence_refs" in required
+    assert "missing_evidence" not in required, (
+        "선택 필드다 — required로 올리면 모델이 빈 배열을 채워 보낸다"
+    )
+
+    props = Finding.model_json_schema()["properties"]
+    for name in ("path", "evidence_refs"):
+        assert "minItems" not in props[name], f"{name}에 minItems가 붙었다 — 제약만 는다"
+
+
+def test_the_d67_probe_control_arm_differs_from_its_treatment_arm() -> None:
+    """프로브의 `stock` 팔이 `required` 팔과 **같으면 안 된다.**
+
+    **이 검사가 있는 이유는 실측이 아니라 사고다.** `stock`은 한때
+    `Finding.model_json_schema()`를 그대로 돌려줬다. 두 필드를 required로 올리는 순간
+    **대조군이 실험군과 바이트 동일**해지는데 프로브는 아무 신호도 내지 않았다 —
+    다시 돌리면 `stock`이 100% 채우고, 읽는 쪽은 09-11 관측이 재현되지 않는다고 읽는다.
+    **대조군이 조용히 사라지는 것은 실패한 실험보다 나쁘다.**
+    """
+    from tools.probe.d67_required_schema import _schema_for
+
+    stock = _schema_for("stock")
+    required = _schema_for("required")
+
+    assert stock != required, "대조군이 실험군과 같다 — 프로브가 아무것도 안 가른다"
+    for name in ("path", "evidence_refs"):
+        assert name not in stock["required"], f"stock 팔에 {name}이 남아 있다"
+        assert name in required["required"], f"required 팔에 {name}이 없다"

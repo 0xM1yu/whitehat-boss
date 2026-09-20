@@ -91,7 +91,30 @@ class Finding(HarnessModel):
     run_id: Identifier
     candidate_id: Identifier
     state: FindingStateValue
-    path: list[PathStep] = Field(default_factory=list)
+    # **기본값을 주지 않는다 — 스키마의 `required`가 모델의 생략을 가른다.** 2026-09-11 ATOM
+    # 실측(이슈 #172). 아래 수는 그 보고서 **§3.1 표에서 재계산한 것**이고, 사실 블록에 없는
+    # 근거 ID는 **전 조건 0**이었다 — 강제해도 환각하지 않는다.
+    #
+    #   `stock`     유효 20/20 · 채움 **0/20**   ← 네 조건 전부에서 비웠다
+    #   `required`  유효 10/20 · 채움 **10/10**  ← 성공한 호출은 전부 채웠다
+    #
+    # ⚠ **그 보고서 §1 요약은 「13/13」·「5/20」이라 적는데 §3.1 표에서 재구성되지 않는다**
+    #   (표로는 10/10, 그리고 아래 5/15다). 어느 쪽이 맞는지는 원천 JSON이 ATOM에 있어 여기서
+    #   못 가른다 — **재구성되는 쪽만 적는다**(CLAUDE.md §0·§2.1). 불일치는 이슈 #172가 든다.
+    #
+    # ⚠ **대가가 있고 그것은 서버 쪽이다** — `required`는 공백 폭주를 부른다. 유효 JSON이
+    #   `disable_any_whitespace=False`에서 **5/15**(조건 A·B·D), `true`에서 **5/5**다.
+    #   그 플래그는 하네스가 보내는 값이 아니라 `vllm serve`의 인자이고, 정본 자리는
+    #   `config/models.yaml`의 해당 모델 「기동 조건」 주석이다.
+    #   **그 조건 없이 이 required를 켜면 채움을 얻고 유효율을 잃는다.**
+    #
+    # ⚠ **이 수들을 비율로 읽지 마라.** 보고서 자신이 그것을 금지한다 — 같은 인자의 조건 A와 B가
+    #   2/5와 0/5를 냈고 **n=5**다. 읽을 것은 *"조건 C만 전 팔 5/5"*다. 그리고 **한 프롬프트·
+    #   한 모델·한 역할**의 결과이며 그 run은 `run_id`가 없어 비교표 밖이다.
+    # ⚠ `min_items`는 **넣지 않는다.** 채움률로 고른 것이 아니다 — 그 팔의 채움률은 정의상
+    #   100%라 비교 대상이 못 된다(프로브 docstring). 빈 리스트가 **근거 없는 `hypothesized`
+    #   초안의 정당한 출력**이라서다.
+    path: list[PathStep]
     # 트리거 가능성의 명시적 상태 (@0xM1yu 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
     # 모순(예: `not_vulnerable`인데 "취약"이라 서술)을 줄이려 이 상태를 **먼저** 확정하는데, 그
     # 값이 산출물에 안 남아 "모델이 실제로 그 상태로 판정했는지"를 사후에 못 봤다. Auditor가
@@ -113,7 +136,10 @@ class Finding(HarnessModel):
     rca_draft: str = ""
     cwe: Cwe
     title: NonEmptyStr
-    evidence_refs: list[Identifier] = Field(default_factory=list)
+    # `path`와 같은 이유로 기본값이 없다 (위 주석).
+    evidence_refs: list[Identifier]
+    # ⚠ **`missing_evidence`는 대상이 아니다.** 형태만 같다 — 이쪽은 모델이 「무엇이 없는가」를
+    # 알릴 때만 채우는 선택 필드라 required로 올리면 빈 배열을 강제로 받게 된다.
     missing_evidence: list[Identifier] = Field(default_factory=list)
     repro_spec: ReproSpec | None = None
     # 마지막이다 — 모델이 채우는 값이 아니라 하네스가 stamp한다(`context.py` `call_model`).
