@@ -577,6 +577,26 @@ def test_asan_exec_failure_is_not_a_crash() -> None:
     assert "띄우지 못했다" in error
 
 
+def test_asan_that_exits_clean_is_ok_true_because_ok_only_means_it_ran() -> None:
+    """**`ok=True`는 「크래시했다」가 아니라 「떴다」를 뜻한다** (이슈 #232).
+
+    `_EXEC_FAILED`에 `0`이 없으므로 크래시 없이 끝난 실행도 `ok=True`다. 모듈 docstring이
+    한때 반대(*"크래시한 경우만 `ok=True`"*)를 적었는데 **무는 검사가 없었다** — 빌드 끊김·
+    크래시·126/127 셋은 있었고 exit 0 갈래만 비어 있었다. 이 줄이 그것이다.
+
+    ⚠ **이 검사가 무는 것은 `judge()`의 반환 튜플 하나다.** 그 `ok=True`가 E4가 되는 것은
+    `gate.evaluate()`의 `p4`인데 **그쪽은 여기서 안 돈다** — `tests/test_gate.py`의
+    `test_runtime_evidence_is_e4` 소관이고, 둘을 잇는 end-to-end는 어느 검사도 안 든다.
+
+    ⚠ **철자를 물지 성질을 물지 않는다.** 이 `return`을 뒤집으면 죽지만, 같은 판단(D80의
+    선택지 (b))을 `ContainerToolRunner.run()`이나 `nodes/validate.py`에 넣으면 초록이다.
+    `poc`는 특히 무방비다 — `judge("poc", ...)`를 무는 검사가 0건이다.
+    """
+    steps = [Step(0, "", ""), Step(0, "", "")]
+
+    assert judge("asan", steps, 2) == (True, 0, None)
+
+
 # --- 로그와 digest --------------------------------------------------------------
 
 

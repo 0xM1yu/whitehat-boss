@@ -36,8 +36,9 @@
   이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
   (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").
 - `need_evidence`는 반박 실패가 **아니다** — 정규화 대상도 아니다.
-- `expected_signal` 문자열 매칭은 8단계 노드가 하고 `Evidence.ok`에 반영한다.
-  게이트는 `ok`만 본다.
+- 게이트는 `ok`만 본다. ⚠ **`expected_signal`을 산출물과 대조하는 코드는 없다** — 8단계
+  노드가 그 문자열로 하는 일은 `tool_for()`가 **도구 이름**을 고르는 것뿐이고, `Evidence.ok`는
+  어댑터의 `judge()`가 낸다. 그래서 `p4`가 참이어도 「기대한 신호가 관측됐다」는 아니다(#232).
 - **ambiguous(E1↔E2)**: `p1 and not p2 and (a and (not b or not c))`.
   경로는 이어졌는데 그래프 근거나 blocking 해소 중 하나가 빈 경우다.
   이때 `gate_ambiguous`를 기록하고 **E1으로 확정한다. 모델을 호출하지 않는다.**
