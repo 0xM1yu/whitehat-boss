@@ -34,7 +34,7 @@ from src.adapters.container_tools import (
     sif_path,
     summary_line,
 )
-from src.adapters.fake_tools import TOOL_KINDS, SandboxUnavailable
+from src.adapters.fake_tools import TOOL_KINDS, FakeToolRunner, SandboxUnavailable
 from src.ids import IdFactory
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
@@ -780,6 +780,86 @@ def test_images_prefer_repo_digest_then_image_id(
     )
 
     assert _runner(tmp_path).images() == {DEFAULT_IMAGE: image_id}
+
+
+# --- 컴파일 조건 기록 (D32 / #74) ---------------------------------------------
+#
+# D32가 적는 것: *"`RunRecord`에 없으므로 두 run을 나란히 놓았을 때 컴파일 조건이 같았는지
+# 다른지가 표에 나타나지 않는다. 확인하려면 run마다 Evidence 로그를 열어야 한다."*
+# 즉 사후 감사로는 잡히고 **비교표로는 안 잡힌다**가 정확한 상태다.
+
+
+def _compile_commands(workdir: str) -> list[Command]:
+    """그 workdir에서 clang을 실제로 부르는 명령만 고른다.
+
+    `asan`은 명령을 둘 내는데 둘째는 만들어진 바이너리를 **실행**하는 것이라 컴파일
+    인자가 없다. `-std=`가 있는 것만 남기면 세 도구의 컴파일 호출이 정확히 걸린다.
+    """
+    mixed = [f"{workdir}/a.c", f"{workdir}/b.cpp"]
+    c_only = [f"{workdir}/a.c"]
+    commands = [
+        *plan("clang-tidy", target=workdir, compile_sources=mixed, cwd=workdir),
+        *plan("build", target=workdir, compile_sources=mixed, cwd=workdir),
+        *plan("asan", target=workdir, compile_sources=c_only, cwd=workdir),
+    ]
+    return [c for c in commands if any(arg.startswith("-std=") for arg in c.argv)]
+
+
+def _include_dirs(command: Command) -> set[str]:
+    return {command.argv[i + 1] for i, arg in enumerate(command.argv) if arg == "-I"}
+
+
+def test_recorded_compile_flags_match_the_argv_that_plan_emits(tmp_path: Path) -> None:
+    """기록이 argv와 갈리면 재현성 기록이 거짓이 된다 (D32 / #74).
+
+    `factory`가 `images()`에 대해 적은 논법 그대로다 — *"구현에게 묻는다. 여기서
+    조립하면 어댑터가 무엇을 실제로 물렸는지와 갈라질 수 있고, 갈라진 재현성 기록은
+    없는 것보다 나쁘다."* 그래서 기대값을 `_STD_ARGS`에서 **베끼지 않고** `plan()`이
+    실제로 낸 argv에서 뽑는다. 상수만 고치면 여기서 죽는다.
+    """
+    declared = _runner(tmp_path).compile_flags()
+    commands = _compile_commands(f"{container_tools.MOUNT}/pkg")
+
+    emitted = {arg for command in commands for arg in command.argv if arg.startswith("-std=")}
+
+    assert commands, "컴파일 명령이 하나도 안 잡혔다 — 이 검사가 공허해진다"
+    assert emitted == set(declared.std.values())
+
+
+def test_recorded_include_dirs_are_the_ones_that_do_not_move_with_the_target(
+    tmp_path: Path,
+) -> None:
+    """`fixed_include_dirs`는 **대상이 바뀌어도 그대로인** `-I`만 담는다.
+
+    `_include_args()`는 대상 디렉터리와 마운트 루트 둘을 낸다. 앞엣것은 대상마다 달라
+    두 run을 나란히 놓는 데 못 쓰고, 뒤엣것은 고정이다. 그래서 기대값을 **서로 다른
+    workdir 둘의 교집합**으로 뽑는다 — 이름이 약속하는 성질이 곧 이 교집합이다.
+
+    ⚠ **이 검사가 무는 것은 "고정분이 맞나"까지다.** *"실제로 어떤 `-I`가 갔나"*는
+    Evidence 로그의 `$ {argv}` 줄이 답하고 이 필드가 아니다(D32의 층위 ①).
+    """
+    declared = _runner(tmp_path).compile_flags()
+    here = [_include_dirs(c) for c in _compile_commands(f"{container_tools.MOUNT}/pkg")]
+    there = [_include_dirs(c) for c in _compile_commands(f"{container_tools.MOUNT}/다른대상")]
+
+    assert set(declared.fixed_include_dirs) == set.intersection(*here, *there)
+    # 대상별 workdir이 새어 들어오면 두 run의 기록이 내용 없이 달라진다.
+    assert f"{container_tools.MOUNT}/pkg" not in declared.fixed_include_dirs
+
+
+def test_the_fake_runner_records_an_empty_compile_condition(tmp_path: Path) -> None:
+    """Fake는 컴파일을 하지 않으므로 **빈 조건**이다 — `None`과 다르다.
+
+    `images()`가 빈 dict를 내는 것과 같은 자리다. 빈 값은 *"기록했으나 컴파일한 도구가
+    없었다"*이고 `None`은 *"이 manifest는 이 사실을 남기지 않았다"*(옛 기록)다 —
+    `RunRecord.model_sampling`의 `{}` 대 `None` 관용구를 그대로 쓴다.
+    """
+    fake = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID, root=tmp_path)
+
+    flags = fake.compile_flags()
+
+    assert flags.std == {}
+    assert flags.fixed_include_dirs == []
 
 
 # --- 실제 컨테이너 -------------------------------------------------------------
