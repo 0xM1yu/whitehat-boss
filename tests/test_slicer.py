@@ -759,48 +759,78 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
     assert "replace('\\\\', '/')" in context
 
 
-def test_query_strings_pin_the_defects_the_live_run_found():
-    # 아래 assert 들이 주장하는 것은 **그 결함이 다시 들어오면 죽는다** 뿐이다 — 질의가
-    # 의미상 옳다는 주장이 아니다. 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는
-    # 여기서 실행되지 않으므로, 각 문자열이 실제 CPG 에서 무엇을 고르는지는 확인되지 않는다.
-    # ⚠ **넷째(null method sink)를 test_orphan_flow_sinks_are_reported_as_partial 이 든다고
-    # 적었던 것은 틀렸다.** 그 테스트는 mock 응답에 `flow_sinks_without_method` 를 박고
-    # slicer 의 **보고 경로만** 읽는다 — 질의를 한 줄도 열지 않는다. 그래서 넷째가 고친 세
-    # 자리 중 `slicer_queries.py` 쪽 둘은 되돌려도 전량 초록이었다. 아래 마지막 assert 가
-    # 그중 NPE 가 났던 자리를 문다.
+# ## 실서버 run(#202)이 낸 질의 결함 다섯 — **결함 하나에 테스트 하나**
+#
+# 한 함수에 묶으면 pytest 가 첫 실패에서 멈춰, 질의를 갈아엎는 리팩터가 둘 이상을 되돌려도
+# **한 번에 하나만 보인다**(2라운드 리뷰 실측: 결함 1·5 를 같이 되돌렸더니 `1 failed` 에
+# 첫 줄만 나왔다). 쪼개면 전량이 한 run 에서 드러난다.
+#
+# **공통 한계.** 아래 assert 들이 주장하는 것은 **그 결함이 다시 들어오면 죽는다** 뿐이다 —
+# 질의가 의미상 옳다는 주장이 아니다. 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는
+# 여기서 실행되지 않으므로, 각 문자열이 실제 CPG 에서 무엇을 고르는지는 확인되지 않는다.
+# 전부 **문자 pin** 이라 뜻이 같은 재작성에도 걸린다 — 갈아야 할 때는 갈고 이 줄을 같이 고친다.
+
+
+def test_inventory_query_keeps_the_overlays_list_flat():
+    """결함 1 — `cpg.metaData.overlays.l` 은 이미 평평하다.
+
+    `.flatten` 이 String 을 Char 로 쪼개 `ujson.Arr.from` 이 컴파일되지 않았다.
+    """
     inventory = queries.inventory_query()
-    # `cpg.metaData.overlays.l` 은 이미 평평하다. `.flatten` 이 String 을 Char 로 쪼개
-    # `ujson.Arr.from` 이 컴파일되지 않았다. 아래 줄은 위 줄에 가리지 않는다 — 같은 실수가
-    # 옆 필드(`cpg.file.name.l`)에 앉으면 위 줄은 통과하고 아래 줄만 죽는다.
-    # ⚠ 아래 둘도 문자 pin 이라 `.l.sorted.distinct` 처럼 뜻이 같은 재작성에 걸린다.
     assert "cpg.metaData.overlays.l.distinct.sorted" in inventory
+    # 음성 단언은 질의 **전체**에서 `.l.flatten` 을 금지한다 — 그래서 같은 실수가 옆
+    # 필드(`cpg.file.name.l`)에 앉아도 잡힌다. ⚠ **대가는 반대 방향이다**: 장래에 **옳은**
+    # flatten 이 다른 필드에 들어와도 죽는다. 그때는 이 줄을 필드 한정으로 좁힌다.
+    # (위 양성 단언과 달리 이쪽은 「뜻이 같은 재작성」에 안 걸린다 — 없어야 할 문자열이다.)
     assert ".l.flatten" not in inventory
 
+
+def test_context_query_excludes_synthetic_nodes_at_all_three_sites():
+    """결함 2 — 합성 METHOD_REF/TYPE_DECL 이 다시 `<global>` 로 올라간다.
+
+    **적용 지점이 셋이라 셋 다 문다** — 한쪽만 남아도 새어 나간다.
+    좌표 대신 심볼로 가리킨다(이 PR 은 `slicer_queries.py` 를 안 건드리므로 줄번호는 낡는다):
+    `def sourceNode` 선언 · 조상 등반 루프(`val result` 안의 `while`) ·
+    `context_query` 의 `val all` 선택.
+    """
     context = queries.context_query([("main.c", 1)], "/work/repo")
-    # 선언과 적용 지점을 따로 본다 — 한쪽만 남아도 합성 METHOD_REF/TYPE_DECL 이 다시
-    # `<global>` 로 올라간다. 적용 형태를 문자로 박으므로 같은 뜻의 재작성에도 걸린다.
-    assert "def sourceNode(n: nodes.AstNode): Boolean" in context
-    assert ".filter(sourceNode)" in context
-    # ⚠ **적용 지점은 셋이다.** 선언(`:82`)·조상 등반(`:98`)·선택(`:262`). 위 두 assert 는
-    # 선언과 선택만 물었고, 조상 등반을 되돌리면 전량 초록이었다 — `ancestors` 의
-    # `cpg.assignment` 경로는 `relevantMethods` 로 제한되지 않은 전역 traversal 이라 이
-    # 가드가 빠지면 등반이 TypeDecl/NamespaceBlock/File 로 샌다(#202: *"형제 함수와 파일
-    # 첫 주석을 끌어왔다"*). 아래도 문자 pin 이라 같은 뜻의 재작성에 걸린다.
+    assert "def sourceNode(n: nodes.AstNode): Boolean" in context  # 선언
+    assert ".filter(sourceNode)" in context  # val all 선택
+    # 조상 등반. 이 가드가 빠지면 `ancestors` 의 `cpg.assignment` 경로가 `relevantMethods` 로
+    # 제한되지 않은 전역 traversal 이라 등반이 TypeDecl/NamespaceBlock/File 로 샌다
+    # (#202: *"형제 함수와 파일 첫 주석을 끌어왔다"*).
     assert "sourceNode(parent.get)" in context
 
+
+def test_flows_query_parenthesizes_the_truncated_comparison():
+    """결함 3 — 괄호가 빠지면 Scala 가 `"truncated" -> observed.size > 3` 을 튜플 비교로 파싱한다.
+
+    ⚠ **여기서 재는 것은 괄호가 아니라 식 전체의 철자다.** `(3 < observed.size)` 처럼 괄호가
+    있고 뜻도 옳은 재작성에도 걸린다 — 괄호만 잰다고 적으면 다음 사람이 이 assert 를 과소평가한다.
+    """
     flows = queries.flows_query([candidate()["scope"]], 3)
-    # 괄호가 빠지면 Scala 가 `"truncated" -> observed.size > 3` 을 튜플 비교로 파싱한다.
-    # ⚠ **여기서 재는 것은 괄호가 아니라 식 전체의 철자다.** `(3 < observed.size)` 처럼
-    # 괄호가 있고 뜻도 옳은 재작성에도 걸린다 — 괄호만 잰다고 적으면 다음 사람이 이 assert 를
-    # 과소평가한다.
     assert "(observed.size > 3)" in flows
-    # sink 하나마다 엔진을 새로 짓지 않는다 — 배치 단위는 enclosing method 다.
-    # 여기서 재는 것은 배치 형태의 **철자**다 — `groupBy(n => n.method)` 처럼 뜻이 같은
-    # 재작성에도 걸린다.
-    assert "sinks.groupBy(_.method)" in flows
-    # 넷째 결함(null method sink) — 호출 인자 6개의 소속 method 가 null 이라 sink 정렬에서
-    # NullPointerException 이 났다(#202). 이 가드가 그것을 막는다. 위 주석대로 문자 pin 이다.
+
+
+def test_queries_guard_against_sinks_whose_method_is_null():
+    """결함 4 — 호출 인자 6개의 소속 method 가 null 이라 sink 정렬에서 NPE 가 났다(#202).
+
+    **고친 자리가 셋이고 그중 둘이 질의에 있다.** 셋째(`slicer.py` 의 보고 경로)는
+    `test_orphan_flow_sinks_are_reported_as_partial` 이 든다 — **그쪽은 mock 응답에 값을
+    박고 보고 경로만 읽으므로 질의를 한 줄도 열지 않는다.** 그래서 질의 쪽 둘은 여기서 문다.
+
+    ⚠ 이 PR 의 1차 판은 *"`test_orphan_…` 이 넷째를 든다"* 고 적고 둘 다 안 물었는데,
+    되돌려도 전량 초록이었다(1·2라운드 리뷰가 실측으로 재현).
+    """
+    assert '"flow_sinks_without_method" -> cpg.call.argument.dedup' in queries.inventory_query()
+    flows = queries.flows_query([candidate()["scope"]], 3)
     assert "filter(n => Option(n.method).nonEmpty)" in flows
+
+
+def test_flows_query_batches_by_enclosing_method():
+    """결함 5 — sink 하나마다 엔진을 새로 짓지 않는다. 배치 단위는 enclosing method 다."""
+    flows = queries.flows_query([candidate()["scope"]], 3)
+    assert "sinks.groupBy(_.method)" in flows
 
 
 def test_unwritable_output_reports_error_without_traceback(monkeypatch, repo, tmp_path, capsys):
