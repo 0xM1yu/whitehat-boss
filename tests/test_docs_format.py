@@ -1315,10 +1315,55 @@ _WITHDRAWN = re.compile(r"~~.*?~~")
 
 
 def _claimed_status(claim: "re.Match[str]") -> str:
-    """두 분기 중 실제로 잡힌 쪽의 상태값."""
+    """세 문형 중 실제로 잡힌 쪽의 상태값."""
     return next(group for group in claim.groups()[1:] if group)
 
 # D 본문 파일 머리의 상태 셀. `| 열림 |` · `| **닫힘** (2026-09-18, 선택지 (a)) |` 둘 다 받는다.
+# ## 문형 (라) — 상태어가 **서술어**일 때. 따로 두는 이유가 있다
+#
+# 6라운드가 실형태 하나를 더 찾았다: `[R1](…) `:11`의 상태는 **부분**이고`
+# (`docs/open-questions/D/D64.md:56`). (다)가 못 넘은 것은 새 문자가 아니라 **창 안에 낀
+# 코드 스팬**이다 — `:11`의 `:` 이 (다)의 구두점 차단에 걸린다.
+#
+# ⚠ **여기서 (다)의 백틱 요구를 푸는 것이 첫 수정이었고 그것이 틀렸다.** 풀면
+# 「D54의 보류 해제를 기록한다」가 잡힌다 — 아래 음성 핀이 정확히 그 문장이고, 거기서
+# 「보류」는 단언이 아니라 **명사구의 수식어**다. 문자 축을 넓히면 미탐 하나를 오탐 한
+# 부류와 바꾼다([CLAUDE.md](../CLAUDE.md) §2.5).
+#
+# 그래서 축을 **문법 자리**로 잡는다: 상태어 뒤에 **계사**(`이다`·`이고`·`이며`·`이었`·`였`)가
+# 붙으면 서술어이고 그때만 단언이다. 「보류 해제를」은 뒤에 명사가 오므로 안 걸린다.
+#
+# **덧셈으로 건다.** `_D_STATUS_CLAIM`은 **원문 줄에 그대로** 돌고 (라)만 정규화된 줄에
+# 돈다 — 그러지 않으면 정규화가 (다)의 백틱을 떼어 **기존 적중 둘을 잃는다**(실측).
+#
+# **실측 —** 추적되는 `*.md` 전수에서 (라)가 잡는 것은 넷이고 그중 기존 검출기 너머는
+# **하나**(위 실형태)다. **잃은 것 0 · 새 위반 0 · 음성 핀 6/6 유지.**
+_CLAIM_PART = re.compile(r"열림|닫힘|보류|부분|(?<![A-Za-z0-9-])[DR]\d+")
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+
+
+def _prose_only(line: str) -> str:
+    """백틱 스팬을 걷은 줄 — 스팬은 산문이 아니라 코드다.
+
+    단 그 안에 단언의 두 요소(항목 `D<n>`·`R<n>` 또는 상태어)가 있으면 **잡음이 아니라
+    단언의 일부**이므로 백틱만 뗀다. 통째로 지우면 `` `D53`(닫힘) ``
+    (`docs/open-questions/D/D66.md:19`)에서 **토큰째 사라져 적중을 잃는다**(실측).
+    """
+    return _CODE_SPAN.sub(
+        lambda span: span.group(0)[1:-1] if _CLAIM_PART.search(span.group(0)) else " ",
+        line,
+    )
+
+
+_D_STATUS_PREDICATE = re.compile(
+    r"(?<![A-Za-z0-9-])([DR]\d+)(?:\]\([^)]*\))?"
+    r"[*`\s]{0,4}(?:는|은|이|가|의|,)\s*"
+    r"(?:(?![DR]\d)[^.\n|·—()「」?!;:]){0,24}?"
+    r"\*{0,2}(열림|닫힘|보류|부분)\*{0,2}(?:이다|이고|이며|이었|였)"
+)
+
+
+
 _D_STATUS_CELL = re.compile(r"^\|\s*\*{0,2}(열림|닫힘|보류|부분|결정|결함 아님)")
 
 
@@ -1403,6 +1448,25 @@ def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
         found = _D_STATUS_CLAIM.search(sample)
         assert found is not None and found.group(1) == owner, f"오귀속: {sample}"
 
+    # **(라) 서술어형의 핀.** 양성은 `docs/open-questions/D/D64.md:56`의 실형태다 —
+    # 6라운드 손 훑기가 찾았고 그때 검출기는 못 잡았다. 음성 둘은 구성문이되 근거가 있다:
+    # 「보류 해제를」은 이 저장소가 실제로 쓰는 명사구이고(아래 `misses`의 같은 문장),
+    # 계사 없는 「열림 상태다」는 `decisions/0010-…md`의 모델 이름 문형과 같은 자리다.
+    assert _D_STATUS_PREDICATE.search(
+        _prose_only("**⑤ R1과의 관계.** [R1](../R/R1.md) `:11`의 상태는 **부분**이고,")
+    ), "(라) 서술어형을 못 잡는다"
+    assert _D_STATUS_PREDICATE.search("D54의 보류 해제를 기록한다") is None, (
+        "(라)가 명사구 수식어를 단언으로 읽는다"
+    )
+
+    # **정규화의 핀.** 스팬을 통째로 지우면 토큰째 사라진다(`D66.md:19`가 그 형태다).
+    assert _prose_only("`D53`(닫힘)이 닫은") == "D53(닫힘)이 닫은", "단언 요소를 든 스팬을 지웠다"
+    assert _prose_only("`:11`의 상태는") == " 의 상태는", "잡음 스팬을 안 걷는다"
+    assert _CODE_SPAN.search("`:11`"), "코드 스팬 정규식이 죽었다"
+    assert _CODE_SPAN.search(":11") is None, "백틱 없는 토막을 스팬으로 읽는다"
+    assert _CLAIM_PART.search("D53"), "단언 요소 정규식이 항목을 못 읽는다"
+    assert _CLAIM_PART.search("trigger_status") is None, "단언 요소 정규식이 아무거나 읽는다"
+
     # 취소선은 철회 표시다 — 걷어내면 안 남는다.
     assert _D_STATUS_CLAIM.search(_WITHDRAWN.sub("", "~~D57(부분)~~ → 닫혔다")) is None
 
@@ -1411,7 +1475,9 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     """산문이 단언한 D 상태가 그 항목 본문 파일의 상태와 같아야 한다.
 
     **왜 필요한가.** 상태의 원천은 `D<n>.md`이고(ADR 0008 — 결함의 상태 원천),
-    `test_every_body_file_has_an_index_row`가 **인덱스 행**을 그것에 묶는다. 그런데 산문은
+    `test_the_index_status_column_matches_its_body_file`이 **인덱스 행의 상태 열**을
+    그것에 묶는다(⚠ 그 검사는 6라운드에 생겼다 — 그전에는 아무것도 안 묶었다.
+    `test_every_body_file_has_an_index_row`는 행의 **존재**만 본다). 그런데 산문은
     아무도 안 본다 — D를 닫는 PR이 본문과 인덱스만 고치고, 그 항목을 **현재형으로 서술하던
     다른 문서**를 놓친다. CLAUDE.md §2.3이 든 사고(*"값이 움직였는데 그 근거만 남았다"*)와
     같은 모양이고, 그때도 CI는 초록이다.
@@ -1432,8 +1498,18 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     for path in _tracked("*.md"):
         own = path.stem if path.parent.name in ("D", "R") else None
         for number, line in enumerate(_read(path).splitlines(), start=1):
-            for claim in _D_STATUS_CLAIM.finditer(_WITHDRAWN.sub("", line)):
-                did, claimed = claim.group(1), _claimed_status(claim)
+            stripped = _WITHDRAWN.sub("", line)
+            claims = [
+                (claim.group(1), _claimed_status(claim))
+                for claim in _D_STATUS_CLAIM.finditer(stripped)
+            ]
+            # (라)는 **정규화된 줄**에 따로 돈다. 원문에 걸면 되고 정규화를 위에 걸면
+            # (다)의 백틱이 사라져 기존 적중을 잃는다 — 그래서 합집합이지 대체가 아니다.
+            claims += [
+                (claim.group(1), claim.group(2))
+                for claim in _D_STATUS_PREDICATE.finditer(_prose_only(stripped))
+            ]
+            for did, claimed in dict.fromkeys(claims):
                 if did == own:
                     continue
                 actual = _d_body_status(did)
@@ -1448,6 +1524,51 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     assert offenders == [], (
         "D·R의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
         "본문·인덱스만 고치고 이 문장을 놓친 자리다(CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
+
+
+def test_the_index_status_column_matches_its_body_file() -> None:
+    """인덱스 표의 상태 열이 본문 파일의 상태와 같아야 한다.
+
+    **이 자리가 비어 있었다.** 상태의 원천은 `D<n>.md`인데(ADR 0008 — 결함의 상태 원천)
+    그것을 인덱스에 묶는 검사가 없었다 — `test_every_body_file_has_an_index_row`는 인덱스가
+    가리키는 **집합**과 디스크의 집합을 맞대므로 행의 **존재**만 묶고,
+    `tests/test_open_questions_layout.py`의 `_ROW`는 번호만 캡처한다. 그리고
+    `_D_STATUS_CLAIM`은 산문을 겨냥해 `|`를 문자 클래스에 안 넣으므로 **표 행에 구조적으로
+    안 닿는다** — 셋 사이로 표 전체가 빠져나갔다.
+
+    **실측 —** 인덱스의 한 행만 본문과 어긋나게 바꾸고 전수를 돌렸더니 그대로 통과했다.
+    그 표에는 그렇게 열려 있던 행이 여든 남짓 있었다.
+
+    본문이 없는 행은 `test_every_d_has_a_body_file`이 잡으므로 여기서는 건너뛴다 —
+    한 결함을 두 검사가 이중으로 말하면 어느 쪽을 고쳐야 하는지가 흐려진다.
+
+    ⚠ **이 검사는 산문 검사를 대체하지 않는다.** 표는 정형이라 셀 위치로 읽히고, 산문은
+    문형으로 읽힌다. 둘은 같은 명제(*"D·R의 상태를 본문과 다르게 말한다"*)의 서로 다른
+    문형이고, 한쪽만 들면 [CLAUDE.md](../CLAUDE.md) §2.5가 든 반쪽 전수가 된다.
+    """
+    index = REPO_ROOT / "docs" / "open-questions.md"
+    offenders: list[str] = []
+
+    for number, line in enumerate(_read(index).splitlines(), start=1):
+        cells = _split_cells(line)
+        if len(cells) < 3:
+            continue
+        did = cells[0]
+        if not (len(did) > 1 and did[0] in "DR" and did[1:].isdigit()):
+            continue
+        claimed = cells[2].strip("* `")
+        actual = _d_body_status(did)
+        if actual is None or actual == claimed:
+            continue
+        offenders.append(
+            f"docs/open-questions.md:{number}: {did} 행이 「{claimed}」인데 "
+            f"docs/open-questions/{did[0]}/{did}.md는 「{actual}」이다"
+        )
+
+    assert offenders == [], (
+        "인덱스 표의 상태가 본문 파일과 어긋난다 — 상태의 원천은 본문이고 표는 그것을 "
+        "비춘다(ADR 0008 · CLAUDE.md §3).\n" + "\n".join(offenders)
     )
 
 
