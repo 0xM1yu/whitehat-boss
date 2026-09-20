@@ -1,6 +1,19 @@
 # run 산출물 (engineering-guide.md §2: artifacts/ 는 git 제외)
 artifacts/
 
+# 평가셋 실데이터. `eval/datasets/README.md`가 *"실제 데이터는 커밋하지 않는다"*고
+# 적는데 **그 규칙이 산문에만 있었다** — 강제하는 것이 없으면 다음에 `git add`하는
+# 사람이 모른다. 이 저장소는 그 자리에서 두 번 밟았다(`53e977b`가 되돌린 `_workspace/`
+# 30개, PR #31에 딸려 간 `.claude/` md 4건). 고정 표본·digest 매니페스트가 여기 쌓이고
+# 한 번 들어가면 되돌리기 비싸다.
+# ⚠ `problem_names.txt`는 특히 그렇다 — **누출 검사가 찾는 문자열 그 자체**라
+# (`eval/leakage/__main__.py`의 `DEFAULT_PROBLEM_NAMES`) 커밋하면 저장소가 정답지를
+# 갖는다. 없으면 그 검사만 꺼지고 나머지는 그대로 돈다.
+# README·.gitkeep은 이 자리가 무엇을 담는지를 들고 있으므로 계속 추적한다.
+eval/datasets/*
+!eval/datasets/.gitkeep
+!eval/datasets/README.md
+
 # 이미지 이관용 tar (docker save 산출물). Seraph로 옮길 때 저장소 루트에 생기는데
 # 247MB라 한 번 들어가면 되돌리기 비싸다 (tools/README.md "Seraph 이관")
 harness-tools_*.tar
