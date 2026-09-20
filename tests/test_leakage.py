@@ -299,16 +299,36 @@ def test_artifacts_root_flag_reaches_the_scan(
     assert "CVE-2021-3156" in capsys.readouterr().out
 
 
-def test_a_missing_artifacts_root_is_an_error_not_a_green_light(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+@pytest.mark.parametrize("form", ["없는 경로", "빈 문자열", "디렉터리가 아닌 파일"])
+def test_a_root_that_is_not_a_directory_is_an_error_not_a_green_light(
+    form: str, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """뿌리를 **명시했는데** 없으면 0건이 아니라 오류다.
+    """뿌리를 **명시했는데** 디렉터리가 아니면 0건이 아니라 오류다.
 
     오타 하나가 "검사했고 깨끗함"을 만들어 내면 이 스캐너를 고친 의미가 없다 — 모듈
     docstring이 digest 교집합에 대해 이미 같은 말을 한다(`[생략]`과 `[통과]`를 가른다).
-    **기본 뿌리가 없는 것은 오류가 아니다** — 갓 클론한 체크아웃의 정상 상태다.
+
+    **문형을 세서 넣었다.** 처음 판은 「없는 경로」 하나만 물었는데, 그 축이 **문자열**이
+    아니라 *"준 값이 의도한 run 뿌리인가"*라 빈 문자열이 통과했다 — argparse의 `type=Path`가
+    `""`를 `Path(".")`로 조용히 바꿔 `is_dir()`이 참이 되고 **현재 디렉터리**를 훑는다.
+    `--artifacts-root "$ATOM_ARTIFACTS"`에서 변수가 비면 나는 모양이다. 실측한 문형:
+    `''`→`.`(참) · `'   '`→그대로(거짓) · `'.'`·`'./'`→`.`(참, **정당한 값이다**) ·
+    파일 경로(거짓).
+
+    ⚠ **못 무는 것을 적는다.** 존재하는 **엉뚱한** 디렉터리(옆 뿌리를 가리킨 오타)는 이
+    검사가 못 가른다. 그것에 답하는 것은 `render()`가 찍는 경로와 건수다.
+    **기본 뿌리가 없는 것도 오류가 아니다** — 갓 클론한 체크아웃의 정상 상태이고 CI가
+    정확히 그 상태로 돈다(`test_repository_passes_the_default_check`가 그것을 문다).
     """
-    code = leakage_main.main(["--artifacts-root", str(tmp_path / "없는뿌리")])
+    a_file = tmp_path / "뿌리아님.txt"
+    a_file.write_text(CLEAN, encoding="utf-8")
+    value = {
+        "없는 경로": str(tmp_path / "없는뿌리"),
+        "빈 문자열": "",
+        "디렉터리가 아닌 파일": str(a_file),
+    }[form]
+
+    code = leakage_main.main(["--artifacts-root", value])
 
     assert code == 2
     assert "[ERROR]" in capsys.readouterr().err
