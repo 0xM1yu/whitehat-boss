@@ -765,9 +765,17 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
 # **한 번에 하나만 보인다**(2라운드 리뷰 실측: 결함 1·5 를 같이 되돌렸더니 `1 failed` 에
 # 첫 줄만 나왔다). 쪼개면 전량이 한 run 에서 드러난다.
 #
-# **공통 한계.** 아래 assert 들이 주장하는 것은 **그 결함이 다시 들어오면 죽는다** 뿐이다 —
-# 질의가 의미상 옳다는 주장이 아니다. 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는
-# 여기서 실행되지 않으므로, 각 문자열이 실제 CPG 에서 무엇을 고르는지는 확인되지 않는다.
+# **공통 한계 — 이 문장을 세게 쓰지 않는다.**
+#
+# 아래가 주장하는 것은 **「이 철자로 되돌리면 죽는다」**이지 **「그 결함이 다시 들어오면
+# 죽는다」가 아니다.** 4라운드 리뷰가 그 차이를 실측으로 보였다 — 핀 문자열을 전부 남긴 채
+# 결함을 되살리는 한 줄짜리 변이가 결함 1·2·4·5에 각각 있었다(`.sorted.flatten` 추가 ·
+# `case` 목록 절단 · 필터를 `sortBy` 뒤로 · 배치를 단원소로). 그 넷은 이번에 막았지만
+# **다섯째가 없다는 보장은 문자 핀으로 만들 수 없다.**
+#
+# 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는 여기서 실행되지 않는다 —
+# **질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다.** 이 파일은 그 경계를
+# 뒤집지 않는다.
 #
 # ⚠ **「전부 문자 pin 이라 뜻이 같은 재작성에도 걸린다」로 뭉치지 않는다.** 그것은 **양성**
 # 단언에만 맞다 — 음성 단언(`".l.flatten" not in …`)은 없어야 할 문자열을 막는 것이라
@@ -783,26 +791,37 @@ def test_inventory_query_keeps_the_overlays_list_flat():
     """
     inventory = queries.inventory_query()
     assert "cpg.metaData.overlays.l.distinct.sorted" in inventory
-    # 음성 단언은 질의 **전체**에서 `.l.flatten` 을 금지한다 — 그래서 같은 실수가 옆
-    # 필드(`cpg.file.name.l`)에 앉아도 잡힌다. ⚠ **대가는 반대 방향이다**: 장래에 **옳은**
-    # flatten 이 다른 필드에 들어와도 죽는다. 그때는 이 줄을 필드 한정으로 좁힌다.
-    # (위 양성 단언과 달리 이쪽은 「뜻이 같은 재작성」에 안 걸린다 — 없어야 할 문자열이다.)
-    assert ".l.flatten" not in inventory
+    # 음성 단언은 이 질의 **전체**에서 `flatten` 을 금지한다. ⚠ **`.l.flatten` 한 철자만
+    # 막던 판은 구멍이었다** — `.distinct.sorted` **뒤에** 붙이거나 옆 필드에 앉히면
+    # `List[String]` 에 `augmentString` 이 걸려 똑같이 Char 로 쪼개는데 둘 다 초록이었다
+    # (4라운드 실측). 지금 이 질의에 `flatten` 은 0회라 전면 금지가 성립한다.
+    # ⚠ **대가는 반대 방향이다**: 장래에 **옳은** flatten 이 필요해지면 죽는다 —
+    # 그때는 필드 한정으로 좁힌다. (양성과 달리 이쪽은 없어야 할 문자열이라 재작성에 안 걸린다.)
+    assert "flatten" not in inventory
 
 
-def test_context_query_excludes_synthetic_nodes_at_all_three_sites():
+def test_context_query_excludes_synthetic_nodes_at_every_site():
     """결함 2 — 합성 METHOD_REF/TYPE_DECL 이 다시 `<global>` 로 올라간다.
 
-    **적용 지점이 셋이고 본문까지 넷이다** — 한쪽만 남아도 새어 나간다.
+    **자리가 넷이다** — 선언·본문·등반·선택. 한쪽만 남아도 새어 나간다.
     좌표 대신 심볼로 가리킨다(이 PR 은 `slicer_queries.py` 를 안 건드리므로 줄번호는 낡는다):
     `def sourceNode` 선언과 그 **본문의 `case` 절** · `def ancestors` 의 등반 `while` ·
     `context_query` 의 `val all` 선택.
+
+    ⚠ **한계** — 아래는 전부 문자 pin 이다. 뜻이 같은 재작성(`case x: nodes.MethodRef =>` 등)에
+    걸리고, 반대로 `sourceNode` 가 **무엇을 반환하는지**까지는 `=> false` 철자로만 붙든다.
     """
     context = queries.context_query([("main.c", 1)], "/work/repo")
     assert "def sourceNode(n: nodes.AstNode): Boolean" in context  # 선언
     # ⚠ **본문도 문다.** 선언과 호출 셋을 그대로 두고 `case` 절만 지우면 가드가 항상 거짓을
     # 안 내고 **결함이 통째로 돌아오는데** 위·아래 assert 는 전부 초록이었다(3라운드 실측).
     assert "case _: nodes.MethodRef | _: nodes.TypeDecl" in context
+    # ⚠ **그리고 접두만 물면 모자란다.** 바로 위 소스 주석이 `MethodRef`/`TYPE_DECL` **둘만**
+    # 정당화하므로 주석에 맞춰 목록을 줄이는 사람이 지우는 것이 **나머지 셋**이고, #202 가 보고한
+    # *"형제 함수와 파일 첫 주석을 끌어왔다"* 는 정확히 그 셋이 통과할 때 나온다. 결과(`=> false`)도
+    # 같이 문다 — `=> true` 로 뒤집어도 접두는 남는다(4라운드 실측, 둘 다 초록이었다).
+    assert "_: nodes.NamespaceBlock |" in context
+    assert "_: nodes.Namespace | _: nodes.File => false" in context
     assert ".filter(sourceNode)" in context  # val all 선택
     # 등반 가드. 빠지면 `context_query` 의 고정점 루프가 `cpg.assignment` 로 끌어온 노드
     # (`relevantMethods` 로 제한되지 않은 전역 traversal)가 다음 패스의 등반 기점이 되어
@@ -828,10 +847,12 @@ def test_queries_guard_against_sinks_whose_method_is_null():
     **그쪽은 mock 응답에 값을 박고 보고 경로만 읽으므로 질의를 한 줄도 열지 않는다.**
     그래서 질의 쪽 둘은 여기서 문다.
 
-    ⚠ **「`slicer.py` 의 보고 경로」로 넓혀 읽지 마라.** `c4acdd2` 가 그 파일에서 고친 자리는
-    **넷**이고 그중 `COUNTERS` 등록과 `validate_payload` 의 정수 검증 키는 **되돌려도
-    전량 초록이다**(3라운드 실측). 둘 다 #225 표 밖이라 이 PR 의 범위는 아니지만,
-    덮였다고 적으면 그것이 다음 결함이다([CLAUDE.md](../CLAUDE.md) §2.2).
+    ⚠ **「`slicer.py` 의 보고 경로」로 넓혀 읽지 마라.** `c4acdd2` 가 그 파일에서
+    **`flow_sinks_without_method` 때문에** 고친 자리는 넷이고(`COUNTERS` 등록 ·
+    `validate_payload` 키 · 적재 루프 키 · `errors.append`) 그중 앞의 둘은 **되돌려도 전량
+    초록이다**(3라운드 실측). 둘 다 #225 표 밖이라 이 PR 의 범위는 아니지만, 덮였다고 적으면
+    그것이 다음 결함이다([CLAUDE.md](../CLAUDE.md) §2.2).
+    ⚠ **그 커밋이 `slicer.py` 에서 고친 자리 **전체**는 일곱이다** — 위 넷은 이 결함 한정이다.
 
     ⚠ 이 PR 의 1차 판은 *"`test_orphan_…` 이 넷째를 든다"* 고 적고 질의 쪽 둘을 안 물었는데,
     되돌려도 전량 초록이었다(1·2라운드 리뷰가 실측으로 재현).
@@ -842,17 +863,30 @@ def test_queries_guard_against_sinks_whose_method_is_null():
     # 카운터의 **존재**가 아니라 그것이 무엇을 세는지가 이 결함의 실질이다(3라운드 실측).
     assert "Option(n.method).isEmpty" in inventory
     flows = queries.flows_query([candidate()["scope"]], 3)
-    assert "filter(n => Option(n.method).nonEmpty)" in flows
+    # ⚠ **위치까지 문다.** #202 의 NPE 는 **정렬**에서 났으므로(`sortBy(… n.method.fullName)`)
+    # 필터를 `sortBy` **뒤로** 옮기면 결함이 그대로 돌아오는데, 존재만 무는 판은 초록이었다
+    # (4라운드 실측). 아래는 `cpg.call.argument` 직후 → `.l.distinct.sortBy` 직전을 통째로 박는다.
+    assert "cpg.call.argument.filter(n => Option(n.method).nonEmpty).l.distinct.sortBy" in flows
 
 
 def test_flows_query_batches_by_enclosing_method():
-    """결함 5 — sink 하나마다 엔진을 새로 짓지 않는다. 배치 단위는 enclosing method 다."""
+    """결함 5 — sink 하나마다 엔진을 새로 짓지 않는다. 배치 단위는 enclosing method 다.
+
+    **세 자리를 따로 문다** — 묶기 · 배치로 부르기 · **묶인 것의 크기**. 셋이 각각 다른
+    한 줄짜리 변이로 결함을 되살릴 수 있었다(3·4라운드 실측).
+
+    ⚠ **한계** — 전부 문자 pin 이다. `groupBy(n => n.method)` 처럼 뜻이 같은 재작성에 걸린다.
+    """
     flows = queries.flows_query([candidate()["scope"]], 3)
     assert "sinks.groupBy(_.method)" in flows
     # ⚠ **소비부까지 문다.** 묶기만 하고 `Iterator.single(sink).reachableByFlows(...)` 로
     # 되돌리면 **결함이 그대로 돌아오는데** 위 줄은 초록이었다 — 배치를 만드는 것과
     # 배치로 **부르는** 것이 다른 자리다(3라운드 실측).
     assert "batch.iterator.reachableByFlows" in flows
+    # ⚠ **크기까지 문다.** 위 둘을 남긴 채 `.map(_._2)` 를 `.flatMap(_._2.map(List(_)))` 로
+    # 바꾸면 배치가 전부 단원소가 되어 **sink 마다 엔진을 다시 짓는다** — 위 둘은 초록이었다
+    # (4라운드 실측).
+    assert "}.map(_._2)" in flows
 
 
 def test_unwritable_output_reports_error_without_traceback(monkeypatch, repo, tmp_path, capsys):
