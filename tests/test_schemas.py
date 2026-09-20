@@ -72,6 +72,31 @@ def _finding(**overrides: object) -> Finding:
     return Finding(**(base | overrides))
 
 
+def test_trigger_status_takes_any_string_until_the_emit_distribution_is_observed() -> None:
+    """`Literal`로 좁히는 것은 **분포를 본 뒤**다 (D51).
+
+    `src/schemas/finding.py`가 그 타입을 일부러 `str`로 두는 이유를 주석으로 적는다 —
+    *"`str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다. 실제 emit 분포를 본 뒤에야
+    `Literal`/enum으로 좁혀 강제한다."* 좁히는 한 줄이 **못 본 값을 든 Finding을 통째로
+    떨구는데 그것이 조용하다** — 떨궈진 건은 떨궈졌다는 흔적을 안 남긴다.
+
+    ⚠ **이 검사가 없던 동안 그 보류를 지키는 것은 주석 한 줄뿐이었다.** 2026-09-21에
+    실제로 `trigger_status: Literal["triggerable"] | None`으로 좁혀 보니 전수
+    **1506건이 전부 통과했다**(변이 실측). 라벨도 기존 검사도 아무것도 안 물었다.
+
+    ⚠ **이 검사가 무는 것은 「임의 문자열이 살아남는가」까지다.** *"분포를 실제로 봤는가"*는
+    못 문다 — 그것을 세는 코드가 저장소에 **없기** 때문이다(`git grep trigger_status -- src`가
+    선언 하나와 주석 둘, 집계 0건). 그래서 D51의 다음 입력은 run **하나가 아니라 둘**이다.
+    """
+    unseen = "아직 아무도 못 본 값"
+
+    finding = _finding(trigger_status=unseen)
+
+    assert finding.trigger_status == unseen, (
+        "좁히려면 emit 분포 관측이 먼저다 — 그 관측 없이 좁히면 못 본 값이 조용히 떨어진다 (D51)"
+    )
+
+
 def _run(**overrides: object) -> RunRecord:
     base: dict[str, object] = {
         "run_id": "run_20260901_0001",
