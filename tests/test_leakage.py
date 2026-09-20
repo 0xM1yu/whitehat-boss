@@ -317,8 +317,8 @@ def test_a_root_that_is_not_a_directory_is_an_error_not_a_green_light(
 
     ⚠ **못 무는 것을 적는다.** 존재하는 **엉뚱한** 디렉터리(옆 뿌리를 가리킨 오타)는 이
     검사가 못 가른다. 그것에 답하는 것은 `render()`가 찍는 경로와 건수다.
-    **기본 뿌리가 없는 것도 오류가 아니다** — 갓 클론한 체크아웃의 정상 상태이고 CI가
-    정확히 그 상태로 돈다(`test_repository_passes_the_default_check`가 그것을 문다).
+    **기본 뿌리가 없는 것은 오류가 아니다** — 그 반대쪽은 아래
+    `test_an_absent_default_root_is_not_an_error`가 문다.
     """
     a_file = tmp_path / "뿌리아님.txt"
     a_file.write_text(CLEAN, encoding="utf-8")
@@ -332,6 +332,30 @@ def test_a_root_that_is_not_a_directory_is_an_error_not_a_green_light(
 
     assert code == 2
     assert "[ERROR]" in capsys.readouterr().err
+
+
+def test_an_absent_default_root_is_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """기본 뿌리가 **없는** 것은 오류가 아니다 — CI가 정확히 그 상태로 돈다.
+
+    `artifacts/`는 gitignore라 갓 클론한 체크아웃에 없다. 위 검사가 명시한 뿌리를 exit 2로
+    막으므로, 안 막는 쪽을 여기서 고정한다.
+
+    **이 검사가 없던 동안 인용이 틀려 있었다(§2.1).** 위 docstring이 이 명제를
+    `test_repository_passes_the_default_check`가 문다고 적었는데, 그것은 실제 저장소에 대고
+    `main([])`을 돌리고 **이 체크아웃에는 `artifacts/`가 있다**(실측 run 산출물 7건). 즉 그
+    검사가 문 것은 뿌리가 **있을 때**다. 게다가 `main([])`은 `args.artifacts_root`가 `None`
+    이라 뿌리 검사 분기에 **아예 안 들어간다** — 부재를 만들어 주지 않으면 물 수가 없다.
+    """
+    monkeypatch.setattr(leakage_main, "DEFAULT_ARTIFACTS_ROOT", tmp_path / "존재안함")
+
+    code = leakage_main.main(["--problem-names", str(tmp_path / "none.txt")])
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[ERROR]" not in captured.err
+    assert "run 산출물 0건" in captured.out
 
 
 def test_repository_passes_the_default_check(capsys: pytest.CaptureFixture) -> None:
