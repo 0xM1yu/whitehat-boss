@@ -311,7 +311,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 | P3 | `Evidence`에 `ok`·`exit_code`·`error` 추가 | [engineering-guide.md](engineering-guide.md) §8.3의 "도구 실패도 Evidence로 기록"과 §6 trace 필수 항목("도구 실행 명령·종료 코드")을 담을 자리가 없었다 |
 | P4 | `Finding`에 `repro_spec` 추가 | [architecture.md](architecture.md) §4의 E3 조건이 "재현 명세 존재"이고 §3 8단계 입력이 "`Finding` + 재현 명세"인데 그 구조체가 없었다. 없으면 E3→E4 판정이 사람 판단이 된다 |
 | P5 | `RunRecord`에 `source_hash`·`thresholds`·`sampling`·`kb_snapshot`·`finished_at`·`stopped_after` 추가 | 앞 다섯은 [engineering-guide.md](engineering-guide.md) §5 재현성 필수 항목인데 예시에 없었다. 뒤 둘은 [evaluation.md](evaluation.md) §6의 "기록이 불완전한 run은 비교표에 넣지 않는다"를 판정할 근거다 |
-| P6 | `condition`에 정의 축을 포함(`B3prime@pipeline`) | [evaluation.md](evaluation.md) §2.2가 이미 지적한 라벨 충돌. D1이 확정될 때까지 두 축을 구분해 기록해 둔다 |
+| P6 | `condition`에 정의 축을 포함(`B3prime@pipeline`) | [evaluation.md](evaluation.md) §2.2가 이미 지적한 라벨 충돌. ⚠ 2026-09-20에 2×2 축이 폐기돼([ADR 0011](decisions/0011-retire-the-2x2-condition-axis.md)) 구분할 두 축이 없어졌다 — `@pipeline` 하나다 |
 | P7 | 상태 열거형은 하나, 객체별 허용 값은 `Literal`로 제약 | [architecture.md](architecture.md) §4의 상태 머신은 하나의 체인인데 이 절은 Candidate와 Finding에 각각 `state`를 둔다. 열거형을 쪼개면 전이 추적이 끊기므로, 열거형은 하나로 두고 Candidate는 `{candidate, triaged, queued}`, Finding은 `{hypothesized, queued, validated, proven, reported}`로 좁혔다 |
 | P8 | `under_review` 같은 중간 상태를 두지 **않음** | [disclosure-policy.md](disclosure-policy.md)의 2인 검증은 상태 전이가 아니라 사람 승인 게이트다. 자동 전이가 없는 상태를 상태 머신에 넣으면 단계별 제거율 지표가 오염된다 |
 | P9 | 프롬프트 버전은 `v1`부터 시작 | 실제 프롬프트는 아직 없으므로 v1에서 시작한다([engineering-guide.md](engineering-guide.md) §2의 디렉터리 예시도 전부 `v1`이다) |
