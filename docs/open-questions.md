@@ -51,7 +51,7 @@
 
 | # | 항목 | 상태 | 본문 |
 | --- | --- | --- | --- |
-| D1 | 벤치마크 라벨 통합 | 열림 | [본문](open-questions/D/D1.md) |
+| D1 | ~~벤치마크 라벨 통합~~ | 닫힘 | [본문](open-questions/D/D1.md) |
 | D2 | Scout 임계값·단계별 승격 비율 | 열림 | [본문](open-questions/D/D2.md) |
 | D3 | Capsule 확장 횟수 상한 | 보류 | [본문](open-questions/D/D3.md) |
 | D4 | Critic 양자화 검증 표본 크기와 허용 하락폭 | 열림 | [본문](open-questions/D/D4.md) |
