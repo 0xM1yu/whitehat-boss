@@ -94,6 +94,7 @@ from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape, safe_join
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
+from src.schemas.run import CompileFlags
 
 # `nodes/sandbox.DEFAULT_SANDBOX.image`와 같아야 한다. 어댑터는 오케스트레이터를 import 하지
 # 않으므로(engineering-guide.md §3) 값을 복제하고 tests/test_container_tools.py가 대조한다.
@@ -674,6 +675,20 @@ class ContainerToolRunner:
         """
         digest = self._image_digest()
         return {self.image: digest} if digest else {}
+
+    def compile_flags(self) -> CompileFlags:
+        """`RunRecord.compile_flags`에 들어갈 컴파일 조건 (#74).
+
+        **`images()`와 같은 자리다** — factory가 구현에게 묻고, 여기서 낸 값이 그대로
+        재현성 기록이 된다. 그래서 `plan()`이 쓰는 **바로 그 상수**를 돌려준다. 값을
+        여기서 다시 적으면 `plan()`이 움직였을 때 기록만 옛 값으로 남고, 그 갈라짐은
+        어디에도 안 뜬다.
+
+        `-I`는 **고정분만** 담는다. `_include_args()`가 내는 둘 중 대상 디렉터리는
+        명령마다 달라 두 run을 나란히 놓는 데 못 쓰고, `MOUNT`는 두 갈래 어느 쪽에서도
+        항상 간다. 실제로 간 argv는 `_execute`가 로그에 남기는 `$ {argv}` 줄이 답한다.
+        """
+        return CompileFlags(std=dict(_STD_ARGS), fixed_include_dirs=[MOUNT])
 
     # --- 실행 ---------------------------------------------------------------
 

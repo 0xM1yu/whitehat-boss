@@ -17,6 +17,7 @@ from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape, safe_join
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
+from src.schemas.run import CompileFlags
 
 # 도구 이름 → 이 도구가 만드는 Evidence 종류. 여기 없는 도구는 실행이 거부된다
 # (tool_policy 밖 호출을 조용히 성공시키지 않는다).
@@ -103,6 +104,16 @@ class FakeToolRunner:
         Fake로 돈 run에서는 그것이 옳은 기록이다.
         """
         return {}
+
+    def compile_flags(self) -> CompileFlags:
+        """컴파일을 하지 않으므로 기록할 컴파일 조건이 **없다** (#74).
+
+        `images()`와 같은 자리이고 같은 이유로 **빈 값**이다 — 지어낸 `-std`가 들어가면
+        Fake run과 컨테이너 run이 비교표에서 같은 컴파일 조건으로 보인다. 빈 값은
+        *"기록했으나 컴파일한 도구가 없었다"*이고, `RunRecord.compile_flags`의 `None`
+        (*"이 manifest는 남기지 않았다"*, 옛 기록)과 구별된다.
+        """
+        return CompileFlags(std={}, fixed_include_dirs=[])
 
     # --- 도구별 동작 ---------------------------------------------------------
 
