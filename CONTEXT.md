@@ -40,6 +40,10 @@
 | `qwen3-8b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback(`qwen3-4b`), `prompt_template_version`만 v2. `local_balanced_pool`의 `scout_injection`. 근거는 위 별칭과 같다(#103) |
 | `qwen3-4b` | `single_gpu_12g` 전용(12GB 장비) |
 | `qwen3-reranker-0.6b` | **지우지 않는다** — 4B와의 대조 기준. 서빙 역할에서만 내린다 |
+| `seccoderx-8b` | **확정 로스터 Scout memory(v14s)** — 프롬프트 이식(#233)·서빙 스냅샷 전이라 §1 배선 대기. registry 골격만(checksum placeholder) |
+| `seccoderx-8b-v15s` | 위와 같은 weights, 프롬프트만 v15s(Scout boundary). 확정 로스터, 배선 대기 |
+| `deepseek-r1-distill-qwen-32b` | **확정 로스터 Scout injection(v14s)** — 배선 대기(#233). registry 골격만 |
+| `qwen3.6-35b-a3b` | **확정 로스터 Auditor** — 로딩만·미검증. 배선 대기, registry 골격만 |
 
 > **registry 키는 지우지 않는다.** ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
 > 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유이고, 그래서 되돌리기가 싸다.
