@@ -232,6 +232,35 @@ models:
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
     #
+    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # 아래는 `vllm serve`를 치는 사람의 값이다. `ModelEntry`는 이 값들을 담지 않는다
+    # (`extra="forbid"` — `src/config.py`가 그 배제를 정본으로 적는다).
+    #
+    #   PATH=<venv>/bin:/usr/local/cuda/bin:$PATH VLLM_USE_DEEP_GEMM=0 \
+    #   vllm serve <스냅샷 경로> --port 8002 --served-model-name qwen3-coder-30b-a3b \
+    #     --max-model-len 32768 --gpu-memory-utilization 0.30 \
+    #     --structured-outputs-config.backend xgrammar \
+    #     --structured-outputs-config.disable_any_whitespace true
+    #
+    # - **`disable_any_whitespace true`가 필수다** — 2026-09-11 ATOM 실측(이슈 #172).
+    #   `Finding`의 `path`·`evidence_refs`를 스키마 `required`로 올리면 모델이 그 둘을 채우지만
+    #   (`stock`에서 20/20 비던 것 → `required` 팔은 성공한 10/10에서 채움) **공백 폭주**가
+    #   따라온다: 유효 JSON이 이 옵션 `false`에서 **5/15**(조건 A·B·D), `true`에서 **5/5**다.
+    #   꼬리 공백이 12,849~13,199자였고 전부 `output_tokens == max_tokens`였다.
+    #   ⚠ **`backend xgrammar`만으로는 재발한다** — 귀속은 `disable_any_whitespace` 단독이다.
+    #   ⚠ **비율로 읽지 마라 — n=5다.** 같은 인자의 조건 A·B가 2/5와 0/5를 냈다. 읽을 것은
+    #     *"조건 C만 전 팔 5/5"*이고, 한 프롬프트·한 모델·한 역할의 결과다.
+    #   ⚠ 위 수는 그 보고서 **§3.1 표에서 재계산**한 것이다 — §1 요약의 「13/13」·「5/20」은
+    #     그 표에서 재구성되지 않는다(원천 JSON이 ATOM에 있어 여기서 못 가른다).
+    # - **`PATH`가 인자의 일부다** — 빼면 기동이 막힌다(그 보고서 §4의 첫 벽).
+    #   ⚠ 원문은 venv의 `vllm`을 **절대 경로로** 부른다(`<venv>/bin/vllm serve`). 위 축약은
+    #     `PATH` 접두에 기대므로, 확실히 하려면 원문처럼 절대 경로를 쓴다.
+    # - **인자를 줬다고 실렸다고 읽지 않는다.** 기동 로그에서 확인한다:
+    #   `grep -o "StructuredOutputsConfig([^)]*)" <로그> | head -1`
+    # - 전체 원문(스냅샷 경로·`setsid nohup`·로그 리다이렉트·readiness 루프 포함)은
+    #   `docs/experiments/harness/2026-09-11-d67-required-schema-atom.md` §9다. 위는 그 축약이다.
+    #
     # **아래 값은 2026-09-04 ATOM 실측이고, 그 원천은
     # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §9다** — 그 절의
     # `--apply` 판이 `tok_s_single 53.4` · `tok_s_batch32 66.42` ·
