@@ -1,0 +1,22 @@
+role: scout_memory
+version: v3
+output_schema: ScoutResponse
+profile: memory
+model: SecCoderX-8B
+description: 'v14s: review 를 낼 때도 방어를 찾아본 흔적(counterevidence)을 남기게 했다.'
+cwe_scope:
+- CWE-401
+- CWE-404
+- CWE-415
+- CWE-416
+- CWE-457
+- CWE-476
+- CWE-562
+- CWE-590
+- CWE-761
+- CWE-762
+- CWE-772
+- CWE-775
+- CWE-824
+- CWE-825
+based_on: v11s/memory

@@ -42,10 +42,12 @@ from src.schemas.finding import (
     ReproSpec,
 )
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord, Sampling
+from src.schemas.scout_response import AnalysisSummary, ScoutResponse
 
 __all__ = [
     "CONDITION_PATTERN",
     "ID_PREFIXES",
+    "AnalysisSummary",
     "Artifact",
     "ArtifactKind",
     "Budget",
@@ -76,6 +78,7 @@ __all__ = [
     "Role",
     "RunRecord",
     "Sampling",
+    "ScoutResponse",
     "Sha256Digest",
     "UtcModel",
     "Verdict",
