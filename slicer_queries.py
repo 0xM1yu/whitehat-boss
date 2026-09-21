@@ -143,13 +143,29 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
     )
 
 
+# Case A entry-point recovery (issue #219). The original filter kept only methods that are
+# never called (`.isEmpty`) — an "uncalled API" heuristic. But a message handler dispatched
+# once (e.g. TLS `client_handle_hello`) IS called, so `.isEmpty` dropped exactly the source
+# entry points a memory-safety pass wants. Keeping methods called at most K times recovers
+# them. Measured on the eval-release samples (ATOM 2026-09-22): sample_24 (Picotls) 501 → 748
+# case_a symbols (+247, incl. `client_handle_hello`·`handle_input_tls12`·…); sample_02 21 → 43.
+CASE_A_CALL_LIMIT = 1
+# The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
+# a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
+# and the whole slice aborted (0 slices). Cap the relaxed `api` list — `readers` stay whole,
+# the input-API set is already small. A repo past the cap gets bounded coverage, not a failed
+# slice. Measured: the cap turns sample_01's abort into 2,198 candidates (2,000 api + readers).
+CASE_A_CANDIDATE_CAP = 2000
+
+
 def candidates_a_query() -> str:
     return envelope(
         "case_a",
         LOCATION
         + f"""
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
-        .filter(m => cpg.call.nameExact(m.name).isEmpty).filter(_.parameter.size > 0).l
+        .filter(m => cpg.call.nameExact(m.name).size <= {CASE_A_CALL_LIMIT})
+        .filter(_.parameter.size > 0).take({CASE_A_CANDIDATE_CAP}).l
       val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
