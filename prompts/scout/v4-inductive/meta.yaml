@@ -1,0 +1,8 @@
+role: scout
+version: v4
+output_schema: ScoutResponse
+candidate_schema: Candidate
+source_line_numbers: true
+common_rule_cards: common/rule_cards.md
+common_contrast_cases: common/contrast_cases.md
+description: "ReasonVul-inspired experimental inductive Scout with structured analysis summary"
