@@ -1066,6 +1066,95 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
         )
 
 
+_MODEL_SERVING = REPO_ROOT / "docs" / "model-serving.md"
+_UNAVOIDABLE = "회피 불가"
+
+
+def _within_profile_port_clashes() -> dict[str, dict[str, list[str]]]:
+    """프로필마다 「같은 포트로 서로 다른 registry 키를 보내는가」를 센다.
+
+    **프로필 *사이*의 충돌과 다르다.** 8001·8003은 어느 프로필로 도느냐에 따라 그 포트에
+    한 이름만 가므로 *"그날 돌릴 프로필이 무엇인지 보고 맞춘다"*가 듣는다. 한 프로필
+    **안에서** 두 이름이 같은 포트로 가면 **고를 프로필이 없다** — 그 회피가 성립하지 않는다.
+
+    **이름은 registry 키다** — `src/adapters/openai_compat.py`가 `"model": self.model_name`으로
+    보내고 그 값이 `factory._model_client()`에서 model key 그대로 온다.
+    """
+    from src.config import CONFIG_DIR
+
+    models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
+    raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))
+    profiles = raw["profiles"]
+
+    def port_of(key: str) -> str | None:
+        endpoint = str((models.get(key) or {}).get("endpoint", ""))
+        found = re.search(r"//127\.0\.0\.1:(\d+)/", endpoint)
+        return found.group(1) if found is not None else None
+
+    clashes: dict[str, dict[str, list[str]]] = {}
+    for name, entry in profiles.items():
+        if not isinstance(entry, dict):
+            continue
+        by_port: dict[str, set[str]] = {}
+        for key in (entry.get("roles") or {}).values():
+            port = port_of(str(key))
+            if port is not None:
+                by_port.setdefault(port, set()).add(str(key))
+        shared = {port: sorted(keys) for port, keys in by_port.items() if len(keys) > 1}
+        if shared:
+            clashes[name] = shared
+    return clashes
+
+
+def test_model_serving_calls_the_within_profile_port_clash_unavoidable() -> None:
+    """한 프로필이 같은 포트로 두 이름을 보내면 `model-serving.md`가 **회피 불가**라 적어야 한다.
+
+    **왜 이 검사가 있나.** 그 문서는 포트 공유를 적으면서 처방으로 *"그날 돌릴 프로필이
+    무엇인지 보고 맞춘다"*를 든다. 그 처방은 **프로필 사이**의 충돌(8001·8003)에만 듣는다 —
+    한 프로필 안에서 두 이름이 오면 고를 프로필이 없다. 문서가 전제 둘(*"8002는 한 프로필
+    안에서 두 이름이 온다"* · *"멀티네임은 미검증이다"*)을 다 적고도 **그 둘을 잇지 않아서**,
+    읽는 사람이 풀 프로필도 「프로필 골라 피하면 된다」로 읽는다.
+
+    **이 검사는 양방향으로 돈다.**
+
+    - 프로필 안 충돌이 있으면 → 그 포트와 「회피 불가」가 문서에 있어야 한다.
+    - 충돌이 없어지면 → 그 문장이 **거짓이 되므로** 실패해서 지우게 만든다.
+
+    후자가 곧 온다. 확정 로스터에서 Auditor가 바뀌면 `auditor`와 `scout_memory`가 다른
+    모델이 되어 8002 충돌이 사라진다 — 그때 「회피 불가」가 남아 있으면 없는 블로커를
+    주장하는 문장이 된다. 사람이 기억해서 지우기를 기대하지 않는다(CLAUDE.md 2.3).
+
+    이 검사는 멀티네임이 **되는지**를 묻지 않는다. 그것은 실측이 없어 문서가 0장으로
+    미검증이라 못박은 것이고, 여기서 잠그는 것은 **문서가 자기 전제에서 나오는 결론을
+    적었는가** 하나다.
+    """
+    clashes = _within_profile_port_clashes()
+    text = _read(_MODEL_SERVING)
+    declared = _UNAVOIDABLE in text
+
+    if clashes and not declared:
+        detail = "; ".join(
+            f"{name}: " + ", ".join(f"{port}<-{keys}" for port, keys in sorted(ports.items()))
+            for name, ports in sorted(clashes.items())
+        )
+        raise AssertionError(
+            f"프로필 안에서 포트를 공유하는 자리가 있는데 docs/model-serving.md가 "
+            f"「{_UNAVOIDABLE}」를 안 적는다 — {detail}. "
+            "그 자리는 프로필을 골라 피할 수 없으므로 「주의」가 아니라 블로커다."
+        )
+    if not clashes and declared:
+        raise AssertionError(
+            f"프로필 안에서 포트를 공유하는 자리가 하나도 없는데 "
+            f"docs/model-serving.md가 아직 「{_UNAVOIDABLE}」를 들고 있다. 그 줄은 이제 거짓이다."
+        )
+    for ports in clashes.values():
+        for port in ports:
+            assert port in text, (
+                f"포트 {port}이 프로필 안에서 두 이름을 받는데 docs/model-serving.md가 "
+                f"그 번호를 대지 않는다 — 읽는 사람이 어느 자리인지 못 찾는다"
+            )
+
+
 # 같은 규약을 두 파일이 든다. CLAUDE는 Claude가, AGENTS는 다른 에이전트(Codex 등)가 읽는다.
 _RULEBOOKS = ("CLAUDE.md", "AGENTS.md")
 
