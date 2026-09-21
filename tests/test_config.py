@@ -255,8 +255,11 @@ def test_the_pool_hybrid_profile_differs_from_local_balanced_pool_only_in_the_re
     assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
         exclude={"retriever"}
     )
-    # 검색 두 모델(0.6b)의 benchmark는 아직 0이고 별칭·gpt-oss도 0이라, production으로
-    # 올리지 않는다 — `cli._check_benchmarks`가 부분/미측정을 막는다(model-serving.md §5).
+    # 검색 두 모델(`qwen3-embedding-0.6b`·`qwen3-reranker-4b`)의 benchmark는 아직 0이고
+    # 별칭·gpt-oss도 0이라, production으로 올리지 않는다 — `cli._check_benchmarks`가
+    # 부분/미측정을 막는다(model-serving.md §5).
+    # ⚠ **리랭커를 「0.6b」로 뭉뚱그리지 않는다** — 2026-09-20에 이 쌍만 4b로 갈렸고(#152)
+    # `local_balanced` 쌍은 그대로 0.6b다. 이 주석은 단언이 아니라 CI가 안 잡는다.
     assert variant.production is False
 
 
