@@ -19,9 +19,12 @@ from src.schemas.common import (
 )
 
 # evaluation.md §2.2: 2×2 설계(§2.1)와 파이프라인 조건(§2.2)이 같은 라벨을 다른 축으로
-# 쓴다. 어느 정의인지 라벨에 박아 두지 않으면 비교표가 섞인다. 라벨 통합은 #59(open-questions).
+# 썼다. 그 충돌은 축을 하나로 줄이며 소멸했다 — ADR 0011(2026-09-20).
+# 2026-09-20: PM 결정으로 2×2 실험이 완전히 폐기되고 Scout 오케스트레이터로 전환되어
+# `2x2` 축을 CONDITION_PATTERN에서 제거한다.
 # `'`는 파일명·URL·쉘에서 깨지므로 `prime`으로 표기한다.
-CONDITION_PATTERN = r"^(B1|B1prime|B3|B3prime)@(2x2|pipeline)$"
+# `@` 접미사는 남긴다 — 지금은 `pipeline`뿐이지만 축이 다시 늘 때 자리를 미리 지운다.
+CONDITION_PATTERN = r"^(B1|B1prime|B3|B3prime)@pipeline$"
 
 # architecture.md §3의 파이프라인 단계 번호는 0~9로 고정이다.
 _MAX_STAGE = 9
@@ -88,6 +91,37 @@ class ModelSampling(HarnessModel):
     repetition_penalty: float | None = Field(default=None, gt=0.0)
 
 
+class CompileFlags(HarnessModel):
+    """그 run의 clang 계열 도구(build·clang-tidy·asan)가 쓴 컴파일 조건 (#74).
+
+    **왜 남기나.** `container_tools._STD_ARGS` 주석이 자기 자신에 대해 이미 적어 뒀다 —
+    *"판정 임계값은 아니지만 **분석 결과를 바꾸므로 조건 간 비교에 영향을 준다**"*.
+    `-I`도 같은 성질이고, 없을 때 20건이 `'zlib.h' file not found`로 죽었으므로
+    **있고 없고가 신호의 유무를 가른다**(#74의 2026-08-25 실측).
+
+    **층위 둘을 갈라야 한다.** ① Evidence 단위(사후 감사)는 이미 보인다 — `_execute`가
+    `$ {argv}`를 로그 각 절 첫 줄에 쓰고 그 내용이 `Evidence.digest`에 들어간다.
+    ② run 단위(조건 간 비교표)가 안 보였다 — 두 run을 나란히 놓았을 때 컴파일 조건이
+    같았는지를 **run마다 Evidence 로그를 열어야** 알 수 있었다. 이 모델은 ②만 연다.
+
+    ⚠ **`compile_commands.json`으로 가는 길을 여기서 정하지 않는다.** `_STD_ARGS` 주석이
+    *"결국 config로 가야 할 값"*이라 적었고 그 판단은 #74에 열려 있다 — 이 모델은
+    **지금 코드 상수인 것을 기록에 남길 뿐**이고 값의 출처를 옮기지 않는다.
+    """
+
+    # 언어 → 그 언어의 clang 호출에 간 `-std` 값. 세 도구가 같은 값을 쓴다.
+    # **빈 dict는 "컴파일한 도구가 없었다"**(Fake)이고 필드 자체의 `None`과 다르다.
+    std: dict[str, NonEmptyStr]
+    # `-I`로 간 디렉터리 중 **대상이 바뀌어도 그대로인 것**.
+    #
+    # ⚠ **"실제로 어떤 `-I`가 갔나"가 아니다.** `_include_args()`는 대상 디렉터리와 마운트
+    # 루트 둘을 내는데 앞엣것은 대상마다 달라 두 run을 나란히 놓는 데 쓸 수 없다 — 내용이
+    # 같아도 값이 달라진다. 그래서 고정분만 담고, 실제 argv는 층위 ①(Evidence 로그)이
+    # 답한다. **이름이 그 한계를 들고 있어야 한다** — `include_dirs`였다면 읽는 쪽이
+    # "이게 전부"로 읽는다(CLAUDE.md §2.2가 막는 그 오독).
+    fixed_include_dirs: list[NonEmptyStr]
+
+
 class RunRecord(UtcModel):
     """한 번의 실행에 대한 재현성 기록.
 
@@ -96,7 +130,7 @@ class RunRecord(UtcModel):
     """
 
     run_id: Identifier
-    # 예: "B3prime@pipeline". 어느 정의의 조건인지 라벨에 포함한다.
+    # 예: "B3prime@pipeline". 축은 지금 `pipeline` 하나이고, 늘 때를 대비해 라벨에 남긴다.
     condition: Annotated[str, Field(pattern=CONDITION_PATTERN)]
     # 이 run이 **어느 프로필로** 돌았는가 (`--profile`이 고른 `config/profiles.yaml` 항목).
     #
@@ -248,6 +282,24 @@ class RunRecord(UtcModel):
     # `VllmEmbeddingClient`·`VllmRerankerClient`를 타고 이 파라미터를 안 보내므로, 그 역할의
     # "effort"를 적으면 거짓 정보다(`config.prompt_versions` docstring의 그 판단).
     model_reasoning_effort: dict[str, NonEmptyStr] | None = None
+    # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). 사유와 한계는 `CompileFlags`에
+    # 있다 — 요점은 **사후 감사로는 잡히고 비교표로는 안 잡히던** 축을 여는 것이다.
+    #
+    # **어댑터에게 묻는다.** `tool_images`·`model_sampling`과 같은 경로다 — 러너는
+    # `src/adapters/`를 import 하지 않으므로(계층 규칙) `Deps`가 나른다. 러너가 상수를
+    # 다시 적으면 어댑터가 무엇을 실제로 넘겼는지와 갈라지고, **갈라진 재현성 기록은 없는
+    # 것보다 나쁘다**(`factory`가 `images()`에 대해 적은 그 문장).
+    #
+    # **`| None`이고 기본값 `None`인 것은 `model_sampling`과 같은 관용구다.** `None`은
+    # "이 manifest는 기록하지 않았다"(이 필드 이전의 기록)이고, 빈 `CompileFlags`는
+    # "기록했으나 컴파일한 도구가 없었다"(Fake 프로필)로 서로 다르다 — 새 run은 어댑터에게
+    # 물어 항상 값을 남기므로 `None`은 **옛 manifest에서만** 나온다. 그래서 이 필드를
+    # 늘려도 `test_a_manifest_written_before_tool_seconds_still_loads`가 지키는 "옛
+    # manifest는 로드된다"가 깨지지 않는다.
+    #
+    # `incomplete_fields()`에는 넣지 않는다 — `tool_runner`와 같은 사유다. Fake로 돈 run은
+    # 이미 `tool_images`가 비어 경고에 걸리고, 같은 사실을 두 줄로 내면 진짜 문제가 묻힌다.
+    compile_flags: CompileFlags | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime

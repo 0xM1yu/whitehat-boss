@@ -20,7 +20,7 @@
 
 ## 2. 역할별 서빙 성질 — 초기 모델 구성 (2026-08 기록)
 
-**어느 모델이 어느 자리에 앉는지의 정본은 [CONTEXT.md](../CONTEXT.md) §1이다.** 아래 표는
+**어느 모델이 어느 자리에 앉는지의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다.** 아래 표는
 **2026-08 초기안의 기록**이고, 로스터는 그 뒤 2026-09-09에 확정됐다
 ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2). **이 표를 「지금 무엇이
 뜨는가」로 읽지 않는다** — 여기 남는 값은 그 시점의 선정 이유와, 그 뒤에 붙은 실측이다.
@@ -84,7 +84,7 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 ## 4. 양자화 품질 검증 (Critic 전용) — **전제가 사라진 절**
 
 > **⚠ 이 절은 Critic이 Devstral Small 2였을 때 쓰였고, 그 전제가 2026-09-09에 사라졌다.**
-> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [CONTEXT.md](../CONTEXT.md) §1**이고
+> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1**이고
 > 결정 기록은 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2다.
 >
 > **무엇이 무너졌나.** 아래 본문이 요구하는 것은 *"고정밀도 대비 NVFP4의 `verdict` 일치율"*인데,
@@ -97,7 +97,7 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 > 것인가. **표본 크기와 합격선의 정본은 D4다.**
 >
 > **그래도 지우지 않는다.** §3 체크리스트 7번이 이 절을 이름으로 가리키고,
-> [R2](open-questions/R/R2.md)가 이 질문 위에 서 있다 — R2는 그 파일에서 아직 `열림`이고
+> [R2](open-questions/R/R2.md)가 이 질문 위에 서 있다 — R2는 **2026-09-09에 `닫힘`이 됐고**(⚠ 이 줄은 R2를 닫은 바로 그 커밋 `184aade`에서 *"아직 `열림`"*이라 적혔고 아흐레를 그대로 살았다 — 2026-09-20에 고쳤다)
 > ADR 0010 「후속」 2가 *"R2는 로스터 변경으로 닫힌다"*고 적는다. **아래는 「지금 하라」가
 > 아니라 「무엇을 물었던 절인가」로 읽는다.**
 
@@ -159,7 +159,7 @@ models:
 없는 것이지 다른 것이 아니다.
 
 **아래 예시의 모델 키는 구조를 보이려고 든 것이지 현재 로스터가 아니다** — 로스터의 정본은
-[CONTEXT.md](../CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
+[PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
 
 ```yaml
 # config/profiles.yaml (합성 예시 — 모델 키는 자리표시자다)
@@ -167,7 +167,7 @@ profiles:
   local_balanced:
     description: "전 역할 실서빙"
     production: false
-    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 CONTEXT.md §1
+    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 PROJECT-CONTEXT.md §1
       scout: <모델 키>
       auditor: <모델 키>
       critic: <모델 키>
@@ -265,7 +265,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 ```
 
 **위 그림은 역할의 배선이지 상주 서버 수가 아니다.** 같은 모델이 앉은 두 역할은 **한 서버를
-공유하고**, 어느 자리가 그런지는 [CONTEXT.md](../CONTEXT.md) §1·§2가 든다. Scout를 역할 셋으로
+공유하고**, 어느 자리가 그런지는 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1·§2가 든다. Scout를 역할 셋으로
 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §3이고, **기존
 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
 

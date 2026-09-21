@@ -295,6 +295,12 @@ python -m src.cli run \
   --seed 20260828
 ```
 
+> ⚠ **2026-09-20 — 위 명령은 지금 그대로는 안 돈다.** `--condition B1prime@2x2`가 무효값이
+> 됐다. 2×2가 폐기되고 Scout 오케스트레이터로 확정되면서 `CONDITION_PATTERN`이 `@pipeline`만
+> 받는다([evaluation.md](../../evaluation.md) §2.1 · [D1](../../open-questions/D/D1.md) 닫힘).
+> 프로필 `b1_single_qwen3_8b`도 그 트랙 철거 때 함께 걷혔다.
+> **이 보고서의 수치와 판정은 그대로 유효하다** — 그때의 관측 기록이고 값을 고치지 않는다.
+
 **서버 기동 인자 원문**(`non-default args`, 로그 8행):
 
 ```

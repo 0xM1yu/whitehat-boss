@@ -7,11 +7,11 @@
 > **상태: 제안** — 방향은 2026-08-31 팀 합의이고, 원문에서 고친 18건이 §1이다.
 > **모델 로스터와 오케스트레이션 방안(큰 모델 하나 vs 소형 앙상블)은 2026-09-09에
 > 확정됐다** — 결정 기록은 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)이고
-> **로스터의 정본은 [CONTEXT.md](../CONTEXT.md) §1**이다.
+> **로스터의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1**이다.
 > 이 문서의 §7 메모리 피크는 그 축의 한쪽(소형 앙상블)을 전제로 한 **계산값**이고,
 > 확정된 구성으로 다시 센 같은 표는 ADR 0010 「결과」에 있다.
 >
-> ⚠ **이 문서는 모델을 현재형으로 이름 대지 않는다**(CONTEXT.md §3). 아래에 남는 모델
+> ⚠ **이 문서는 모델을 현재형으로 이름 대지 않는다**(PROJECT-CONTEXT.md §3). 아래에 남는 모델
 > 이름은 **지난 실측·지난 판단의 기록**이다.
 >
 > 원본은 2026-08-31 팀이 합의한 「하네스 단계별 구축안」이다. **그 원문을 그대로 옮기지
@@ -55,7 +55,7 @@
 10단계 중 모델이 들어가는 자리는 **여섯 개**이고 지금 세 개를 쓰고 있다.
 
 > ⚠ **2026-09-13 — 일곱에서 여섯이 됐다.** 슬라이싱 방식이 **무모델**로 확정되어 1단계
-> 자리 ①(쿼리 생성기)이 사라졌다([CONTEXT.md](../CONTEXT.md) §2가 정본). **②~⑦ 번호는
+> 자리 ①(쿼리 생성기)이 사라졌다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2가 정본). **②~⑦ 번호는
 > 그대로 둔다** — 회의록·PR이 그 번호로 참조하므로 재사용하지 않는 것과 같은 논법이다.
 
 | 단계 | 역할 | 모델 자리 | 파인튜닝 |
@@ -116,8 +116,8 @@ L1~L4를 동시에 켜면 모델이 여러 개 필요해진다. **몇 개까지 
 
 이 전환은 되돌리기 비싼 결정이라 별도 ADR로 뽑았다 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md). **아직 `execution` 계열 키를
 config에 넣지 않는다.** ⚠ **사유가 2026-09-09에 바뀌었다** — 그날 스키마가 두 키를 받게 되어
-적어도 로드는 통과한다(§1 정정 6). 남은 사유는 둘이다: **러너가 아직 단계 단위가 아니고
-sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서 정책이 선 것처럼 보이고,
+적어도 로드는 통과한다(§1 정정 6). 남은 사유는 둘이다: ~~**러너가 아직 단계 단위가 아니고**~~
+**sleep/wake를 부르는 코드가 없어** 선언이 아무 일도 안 하면서 정책이 선 것처럼 보이고,
 `swap`이 요구하는 값(왕복 예산·`settle_timeout_s`)이 **아직 실측이 아니다**(CLAUDE.md §0).
 선언은 [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 결과 4의 몫이고
 그 앞에 결과 2·3이 있다.
@@ -138,7 +138,7 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 > ⚠ **이 절이 2026-09-13에 바뀌었다.** 그전에는 「신호 주도(SAST 경고 기준) ↔ 탐색 주도(모델
 > 쿼리)」 **두 경로**를 서술했고 자리 ①에 쿼리 생성기가 있었다. 확정된 방식은 **그 둘 다
 > 아니다** — 무모델 결정론, Case A(source-first)·Case B(sink-first) **합집합** 뒤 클러스터링이다
-> ([CONTEXT.md](../CONTEXT.md) §2가 정본). 아래는 그 방식에 맞춰 다시 적은 것이고, 살아남은
+> ([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2가 정본). 아래는 그 방식에 맞춰 다시 적은 것이고, 살아남은
 > 문장은 근거가 방식이 아니라 **CPG 자체**에 있던 것들이다.
 
 - **소스가 있어야 성립한다**(CPG는 소스 기반). 1차 대상이 C/C++ 소스 저장소인 근거가
@@ -153,7 +153,7 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
   반대다.** 그래서 슬라이서는 tree-sitter 인덱서의 `unresolved_calls`·`unresolved_symbols`에
   해당하는 **자기 계수기**(파싱 실패 파일·상한에서 끊긴 flow·중단된 질의)를 내야 한다.
 - **tree-sitter 인덱서는 계속 돈다.** 슬라이스는 그래프가 아니라 그래프의 투영이라 E2의
-  `GRAPH` Evidence와 후보 열거를 대신하지 못한다(CONTEXT.md §2). 그 인덱서가
+  `GRAPH` Evidence와 후보 열거를 대신하지 못한다(PROJECT-CONTEXT.md §2). 그 인덱서가
   `.c`·`.cc`·`.cpp`·`.inc` 넷만 받고(`container_tools._INDEX_SUFFIXES`) 헤더(`.h`·`.hpp`)는
   문법이 있는데도 안 넘긴다 — **Joern은 저장소를 통째로 받으므로 이 범위 차이가 둘 사이에
   남는다.**
@@ -227,7 +227,7 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 
 > ⚠ **2026-09-13 — FT1이 자리와 함께 사라졌다.** FT1의 대상은 1단계의 **쿼리 생성기**(자리 ①)
 > 였고 그 채점기 *"파싱 통과 + 결함 라인 포함"*의 「파싱 통과」는 **모델이 쓴 CPGQL이
-> 파싱되는가**였다. 슬라이싱 방식이 **무모델**로 확정되면서([CONTEXT.md](../CONTEXT.md) §2)
+> 파싱되는가**였다. 슬라이싱 방식이 **무모델**로 확정되면서([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2)
 > 1단계에 모델이 없어졌고, **학습시킬 대상이 없다.**
 >
 > **번호를 지우지 않고 취소선으로 남긴다** — 회의록·PR이 그 라벨로 참조하고, 지우면 FT2가
@@ -286,8 +286,15 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 (`free -g` 동일 · `nvidia-smi` 동일 2,382 MiB · `cuda free` 0.17 GiB 차). 왜 그런지는
 **기전을 못 갈랐다** — 보고서 §5에 미측정으로 남겼다. 그리고 이것은 **장비가 되는가**에
 대한 답이지 하네스가 할 수 있는가는 아니다 — `execution.mode`·`swap`은 2026-09-09에
-스키마에 들어왔지만(§1 정정 6) **선언을 받는 것까지**이고, 단계 단위 러너도 sleep/wake를
-부르는 코드도 아직 없다(`ADR 0009` 결과 2·3, 각각 별도 PR).
+스키마에 들어왔지만(§1 정정 6) **선언을 받는 것까지**이고, ~~단계 단위 러너도~~ sleep/wake를
+부르는 코드가 아직 없다(`ADR 0009` 결과 2·3, 각각 별도 PR).
+
+> **2026-09-20 정정 — 결과 2는 들어왔다.** 단계 단위 러너가 `cd65500`(#161,
+> `2026-09-11 10:26`)로 배선됐다 — `src/orchestrator/runner.py`의 `execution.mode ==
+> "per_stage"` 분기와 `_triage_by_stage`이고 `tests/test_pipeline_e2e.py`가 두 모드를
+> parametrize로 덮는다. ⚠ **그래도 오늘 도달할 수는 없다** —
+> `grep -c "execution:" config/profiles.yaml`이 **0**이라 어느 프로필도 그 모드를 선언하지
+> 않는다(결과 4). sleep/wake 호출부도 `src/` 전체에 **0건**이다(결과 3).
 
 ---
 
@@ -299,9 +306,9 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 | # | 할 일 | 단계 | 어긋나면 |
 | --- | --- | --- | --- |
 | 1 | ~~동시성 16·32의 깨끗한 재측정~~ · ~~캐시가 빈 상태의 배치 처리량~~ → **닫힘** | — | **2026-09-02 네 판 전부 실패 0.** 캐시를 끈 4판이 배칭 곡선을 냈다 — **이득 1.81배, 동시성 16에서 포화**(21.96→35.23→39.77→39.64). 캐시 ON 세 판의 1.18~2.42배는 캐시 온도였다 ([확정 #10](experiments/README.md) · [#128](https://github.com/0xM1yu/whitehat-boss/issues/128)) |
-| 2 | ~~임베딩·리랭커를 켠다~~ → **부분** — 서빙까지다 | 3 | Auditor·Critic 캡슐만 바뀐다 — **그 문장은 완주해야 관측되고, 아직 관측이 없다.** 선행 조건이던 checksum은 채워졌다(임베딩·리랭커 2026-09-03 ATOM 실측 · [#131](https://github.com/0xM1yu/whitehat-boss/issues/131)). **2026-09-04 ATOM 실측 셋.** 원천은 [2026-09-04 다섯 상주 보고서](experiments/harness/2026-09-04-five-model-residency-atom.md)다 — **#142가 머지되며 저장소에 들어왔으므로 이제 링크로 건다**(등재 당시에는 이 행이 그 PR보다 먼저 CI를 도는 순간이 있어 경로만 적었다). ① `local_balanced_hybrid` 프로필이 생겼다 — `local_balanced`와 roles·budget이 같고 `retriever: hybrid`만 다르다([#138](https://github.com/0xM1yu/whitehat-boss/pull/138) — 머지됐다) ② **네 서버가 동시에 떴다** — 8001 scout(`qwen3-8b` nvfp4) · 8002 auditor(`qwen3-coder-30b-a3b` nvfp4) · 8004 embedding(`qwen3-embedding-0.6b` fp16) · 8005 reranker(`qwen3-reranker-0.6b` fp16). 가중치+non-torch 18.28 / 6.38 / 1.62 / 1.38 = **합 27.66 GiB**, KV cache 합 **64.35 GiB**, `nvidia-smi --query-compute-apps` PID 합 **96.07 GiB / 119.7**. ⇒ **제약은 상주 개수가 아니라 KV 예산을 어떻게 쪼개느냐다** — `config/profiles.yaml`의 `local_balanced` retriever 주석이 든 근거 둘 중 「ATOM에 모델 5개를 동시에 띄워야 한다」가 여기서 좁아진다(R1 쪽 근거는 이 실측이 건드리지 않는다). **이 배분에서 다섯째는 안 물었다 — 조건이 「critic 제외 넷」이다**(보고서 §3). **다섯은 같은 보고서 §8이 다른 배분으로 물었고 답은 4/5다** — 8003 devstral(util 0.30) · 8002 auditor(0.26) · 8001 scout(0.14) · 8005 reranker(0.08)가 UP이고 8004 embedding이 CUDA OOM이다 ③ `doctor --profile local_balanced_hybrid`가 배선 절에 embedding·reranker를 찍고 checksum 경고는 critic 하나만 불렀다. `/v1/embeddings` 응답 dim 1024 · `/v1/rerank` 200 확인. ⚠ **그 경고는 지금 안 뜬다** — #142가 critic의 `checksum`을 채웠고 `_check_checksums`(`src/cli.py`)는 자리표시자가 0건이면 OK를 낸다. **doctor를 그 상태로 다시 돌린 것이 아니라 코드와 registry 값에서 나오는 추론이다.** **그래도 닫히지 않는다 — 남은 것은 완주 하나다.** 파이프라인을 한 번도 안 돌렸다(2.1·2.2). **critic 서버는 더 이상 사유가 아니다** — 2026-09-04에 8003에 처음 떴고(보고서 §7·§8), registry의 `source`·`checksum`도 그때 채워졌다(`config/models.yaml`의 `devstral-small-2-24b` · manifest는 `config/checksums/devstral-small-2-24b.txt` 파일 8개 — 둘 다 #142로 들어왔다). 같은 실측이 그 모델의 `quantization`을 `nvfp4`에서 `fp8`로 고쳤다. ⚠ **채워진 것은 checksum이고 benchmark가 아니다** — 그 모델의 `benchmark`는 여전히 전부 0(미실측)이다. 그리고 **리랭커 순위가 우리 문서 길이에서 미검증이다** — 짧은 조각(2~4단어)에서 순위 역전이 3/3 결정론적으로 재현됐고 긴 서술문 4건에서는 맞았다. `related`에 싣는 조각은 수십 줄짜리 코드 블록이라 후자에 가깝지만 **그 길이로는 안 쟀다** — 「리랭커가 틀렸다」가 아니라 미검증 항목이다. ⚠ **위 ②·③이 든 모델 이름은 2026-09-04 실측의 기록이지 지금의 로스터가 아니다** — 각 자리에 어느 모델이 앉는지의 정본은 [CONTEXT.md](../CONTEXT.md) §1이고, 그 리랭커 미검증 항목의 재측정 대상도 그 표가 리랭커 자리에 둔 모델이다(등재는 [open-questions.md](open-questions.md) 인덱스에 있다) |
-| 2.1 | **run A** — `local_balanced`(실서빙 3역할 · `retriever: fake`)로 zlib 급 실대상 1회. ⚠ **선행: 그 프로필이 [CONTEXT.md](../CONTEXT.md) §1의 로스터를 가리키고 있을 것** | 5·8 | **A를 hybrid로 돌리면 안 된다** — 모델 축과 검색 축이 같이 바뀌면 [#98](https://github.com/0xM1yu/whitehat-boss/issues/98)의 (c)(*「실서빙 auditor로 1회 돌려 상관이 Fake의 성질인지 먼저 가른다」*)를 못 읽는다. [evaluation.md](evaluation.md) §2.3 규칙 2가 「retrieval 설정…은 고정한다」고 한 것과 같은 이유다. **한 run이 둘을 먹인다** — #98의 (c)와 [#65](https://github.com/0xM1yu/whitehat-boss/issues/65)의 **8단계 Finding당 도구 시간 분모**(2026-08-26 재측정의 Finding당 928 ms는 8건에서 나온 값이라 얇고, 그 이슈가 그래서 상한을 확정하지 않았다). **⚠ 이 행의 선행 조건이 2026-09-09에 하나 늘었다 — 프로필이 어느 로스터를 가리키는가다.** `served_models()`가 `local_balanced`에서 세는 셋은 scout·auditor·critic이고(그래서 「실서빙 3역할」이 맞다), **그 셋에 어느 모델이 앉는지의 정본은 이제 [CONTEXT.md](../CONTEXT.md) §1이다.** `config/profiles.yaml`은 아직 그 로스터로 재배선되지 않았으므로 **오늘 이 프로필로 A를 돌리면 폐기 예정 구성을 재는 것이다** — 재배선은 CONTEXT.md §3이 적은 넷 중 config 두 자리이고 이 행의 선행이다. **critic 서버를 다시 띄우는 것도 여전히 선행이다.** 2026-09-04에 8003에 처음 뜬 것(윗 행 ②)은 서버를 내린 뒤 checksum을 만든 일회성 기동이고(`config/models.yaml`의 그 모델 주석), **그 포트에 무엇을 띄우는지는 재배선이 정한다.** 역할별 모델을 바꾸는 플래그가 없으므로(`cli run`은 `--profile`·`--tool-runner`뿐) 띄우지 않으면 A가 7단계에서 멈춘다. **그날의 셋이 같이 뜨는 것은 봤다** — 2026-09-04 보고서 §8이 32768에서 8003 devstral(util 0.30) · 8002 auditor(0.26) · 8001 scout(0.14)를 순서대로 UP으로 올렸다. ⚠ **그 셋은 그날의 구성이지 새 로스터의 셋이 아니다** — 새 구성으로 같은 관측을 한 적은 없다. ⚠ **그 시점 호스트 여분이 8 GiB다** — 바로 다음에 올린 embedding이 CUDA OOM이라, A는 셋만 필요해도 여유가 얇다. **checksum 쪽 사유는 「없어졌다」에서 「재배선에 달렸다」로 바뀐다.** 그 문장은 **옛 셋**에 대한 것이었다 — #142를 합친 트리에서 `_check_checksums`를 돌려 `[OK ] 실서빙 역할의 model checksum이 모두 채워져 있다`를 받았다(자리표시자로 남은 것은 `fake` 하나뿐이고 그 0은 미기록이 아니라 정확한 값이다 — `served_models()`가 `is_fake`로 거른다). **새 로스터에는 registry 미등재 자리가 있다** — [CONTEXT.md](../CONTEXT.md) §1이 그 표에서 ❌로 표시한다. 미등재 자리가 프로필에 오르면 checksum이 다시 자리표시자가 되고 「checksum 0인 채로 완주하면 그 run은 비교표에서 빠진다」(CLAUDE.md §0)가 **그때 다시 걸린다.** `doctor`의 checksum 검사가 WARN이라 **안 막는다**는 기제는 그대로다. **개수는 적지 않는다** — registry 항목 수는 로스터를 따라 움직인다([#139](https://github.com/0xM1yu/whitehat-boss/pull/139)로 줄었고 미등재가 등재되면 다시 는다) |
-| 2.2 | **run B** — `local_balanced_hybrid`로 **같은 대상·같은 seed** 1회 | 3 | **row 2의 효과가 여기서 나온다** — A와 **검색 경로 하나만** 다르다. §1 정정 3(「바뀌는 것은 Auditor·Critic 캡슐뿐」)을 실행에서 처음 확인하는 자리이고, 지표는 §3대로 Scout 통과율이 아니라 최종 `proven` 건수와 EXPANDED·FOCUSED 캡슐 토큰 수다. **A가 먼저다** — B만 돌리면 바뀐 것이 검색인지 실서빙 auditor인지 안 갈린다. ⚠ **오늘 이 프로필을 그대로 돌리면 3단계 리랭커 자리에 새 로스터가 서빙에서 내린 모델이 선다.** 그 자리의 정본은 [CONTEXT.md](../CONTEXT.md) §1이고, 내린 근거는 **만든 쪽 표에서 0.6B 리랭커가 코드에서 1차 검색기보다 낮다**는 것이다 — MTEB-Code 75.41(리랭킹 없음) → **73.42**, **−1.99** `[출처주장]`([2026-09-08 검색 조사](research/2026-09-08-retrieval.md)). **A와 B의 차이가 「검색 경로 하나」로 남으려면 두 프로필이 같은 로스터를 가리켜야 한다** — CONTEXT.md §3이 두 프로필을 같은 diff에서 고치라고 적은 이유이고 `tests/test_config.py`가 그것을 기계로 단언한다 |
+| 2 | ~~임베딩·리랭커를 켠다~~ → **부분** — 서빙까지다 | 3 | Auditor·Critic 캡슐만 바뀐다 — **그 문장은 완주해야 관측되고, 아직 관측이 없다.** 선행 조건이던 checksum은 채워졌다(임베딩·리랭커 2026-09-03 ATOM 실측 · [#131](https://github.com/0xM1yu/whitehat-boss/issues/131)). **2026-09-04 ATOM 실측 셋.** 원천은 [2026-09-04 다섯 상주 보고서](experiments/harness/2026-09-04-five-model-residency-atom.md)다 — **#142가 머지되며 저장소에 들어왔으므로 이제 링크로 건다**(등재 당시에는 이 행이 그 PR보다 먼저 CI를 도는 순간이 있어 경로만 적었다). ① `local_balanced_hybrid` 프로필이 생겼다 — `local_balanced`와 roles·budget이 같고 `retriever: hybrid`만 다르다([#138](https://github.com/0xM1yu/whitehat-boss/pull/138) — 머지됐다) ② **네 서버가 동시에 떴다** — 8001 scout(`qwen3-8b` nvfp4) · 8002 auditor(`qwen3-coder-30b-a3b` nvfp4) · 8004 embedding(`qwen3-embedding-0.6b` fp16) · 8005 reranker(`qwen3-reranker-0.6b` fp16). 가중치+non-torch 18.28 / 6.38 / 1.62 / 1.38 = **합 27.66 GiB**, KV cache 합 **64.35 GiB**, `nvidia-smi --query-compute-apps` PID 합 **96.07 GiB / 119.7**. ⇒ **제약은 상주 개수가 아니라 KV 예산을 어떻게 쪼개느냐다** — `config/profiles.yaml`의 `local_balanced` retriever 주석이 든 근거 둘 중 「ATOM에 모델 5개를 동시에 띄워야 한다」가 여기서 좁아진다(R1 쪽 근거는 이 실측이 건드리지 않는다). **이 배분에서 다섯째는 안 물었다 — 조건이 「critic 제외 넷」이다**(보고서 §3). **다섯은 같은 보고서 §8이 다른 배분으로 물었고 답은 4/5다** — 8003 devstral(util 0.30) · 8002 auditor(0.26) · 8001 scout(0.14) · 8005 reranker(0.08)가 UP이고 8004 embedding이 CUDA OOM이다 ③ `doctor --profile local_balanced_hybrid`가 배선 절에 embedding·reranker를 찍고 checksum 경고는 critic 하나만 불렀다. `/v1/embeddings` 응답 dim 1024 · `/v1/rerank` 200 확인. ⚠ **그 경고는 지금 안 뜬다** — #142가 critic의 `checksum`을 채웠고 `_check_checksums`(`src/cli.py`)는 자리표시자가 0건이면 OK를 낸다. **doctor를 그 상태로 다시 돌린 것이 아니라 코드와 registry 값에서 나오는 추론이다.** **그래도 닫히지 않는다 — 남은 것은 완주 하나다.** 파이프라인을 한 번도 안 돌렸다(2.1·2.2). **critic 서버는 더 이상 사유가 아니다** — 2026-09-04에 8003에 처음 떴고(보고서 §7·§8), registry의 `source`·`checksum`도 그때 채워졌다(`config/models.yaml`의 `devstral-small-2-24b` · manifest는 `config/checksums/devstral-small-2-24b.txt` 파일 8개 — 둘 다 #142로 들어왔다). 같은 실측이 그 모델의 `quantization`을 `nvfp4`에서 `fp8`로 고쳤다. ⚠ **채워진 것은 checksum이고 benchmark가 아니다** — 그 모델의 `benchmark`는 여전히 전부 0(미실측)이다. 그리고 **리랭커 순위가 우리 문서 길이에서 미검증이다** — 짧은 조각(2~4단어)에서 순위 역전이 3/3 결정론적으로 재현됐고 긴 서술문 4건에서는 맞았다. `related`에 싣는 조각은 수십 줄짜리 코드 블록이라 후자에 가깝지만 **그 길이로는 안 쟀다** — 「리랭커가 틀렸다」가 아니라 미검증 항목이다. ⚠ **위 ②·③이 든 모델 이름은 2026-09-04 실측의 기록이지 지금의 로스터가 아니다** — 각 자리에 어느 모델이 앉는지의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이고, 그 리랭커 미검증 항목의 재측정 대상도 그 표가 리랭커 자리에 둔 모델이다(등재는 [open-questions.md](open-questions.md) 인덱스에 있다) |
+| 2.1 | **run A** — `local_balanced`(실서빙 3역할 · `retriever: fake`)로 zlib 급 실대상 1회. ⚠ **선행: 그 프로필이 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1의 로스터를 가리키고 있을 것** | 5·8 | **A를 hybrid로 돌리면 안 된다** — 모델 축과 검색 축이 같이 바뀌면 [#98](https://github.com/0xM1yu/whitehat-boss/issues/98)의 (c)(*「실서빙 auditor로 1회 돌려 상관이 Fake의 성질인지 먼저 가른다」*)를 못 읽는다. [evaluation.md](evaluation.md) §2.3 규칙 2가 「retrieval 설정…은 고정한다」고 한 것과 같은 이유다. **한 run이 둘을 먹인다** — #98의 (c)와 [#65](https://github.com/0xM1yu/whitehat-boss/issues/65)의 **8단계 Finding당 도구 시간 분모**(2026-08-26 재측정의 Finding당 928 ms는 8건에서 나온 값이라 얇고, 그 이슈가 그래서 상한을 확정하지 않았다). **⚠ 이 행의 선행 조건이 2026-09-09에 하나 늘었다 — 프로필이 어느 로스터를 가리키는가다.** `served_models()`가 `local_balanced`에서 세는 셋은 scout·auditor·critic이고(그래서 「실서빙 3역할」이 맞다), **그 셋에 어느 모델이 앉는지의 정본은 이제 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다.** `config/profiles.yaml`은 아직 그 로스터로 재배선되지 않았으므로 **오늘 이 프로필로 A를 돌리면 폐기 예정 구성을 재는 것이다** — 재배선은 PROJECT-CONTEXT.md §3이 적은 넷 중 config 두 자리이고 이 행의 선행이다. **critic 서버를 다시 띄우는 것도 여전히 선행이다.** 2026-09-04에 8003에 처음 뜬 것(윗 행 ②)은 서버를 내린 뒤 checksum을 만든 일회성 기동이고(`config/models.yaml`의 그 모델 주석), **그 포트에 무엇을 띄우는지는 재배선이 정한다.** 역할별 모델을 바꾸는 플래그가 없으므로(`cli run`은 `--profile`·`--tool-runner`뿐) 띄우지 않으면 A가 7단계에서 멈춘다. **그날의 셋이 같이 뜨는 것은 봤다** — 2026-09-04 보고서 §8이 32768에서 8003 devstral(util 0.30) · 8002 auditor(0.26) · 8001 scout(0.14)를 순서대로 UP으로 올렸다. ⚠ **그 셋은 그날의 구성이지 새 로스터의 셋이 아니다** — 새 구성으로 같은 관측을 한 적은 없다. ⚠ **그 시점 호스트 여분이 8 GiB다** — 바로 다음에 올린 embedding이 CUDA OOM이라, A는 셋만 필요해도 여유가 얇다. **checksum 쪽 사유는 「없어졌다」에서 「재배선에 달렸다」로 바뀐다.** 그 문장은 **옛 셋**에 대한 것이었다 — #142를 합친 트리에서 `_check_checksums`를 돌려 `[OK ] 실서빙 역할의 model checksum이 모두 채워져 있다`를 받았다(자리표시자로 남은 것은 `fake` 하나뿐이고 그 0은 미기록이 아니라 정확한 값이다 — `served_models()`가 `is_fake`로 거른다). **새 로스터에는 registry 미등재 자리가 있다** — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이 그 표에서 ❌로 표시한다. 미등재 자리가 프로필에 오르면 checksum이 다시 자리표시자가 되고 「checksum 0인 채로 완주하면 그 run은 비교표에서 빠진다」(CLAUDE.md §0)가 **그때 다시 걸린다.** `doctor`의 checksum 검사가 WARN이라 **안 막는다**는 기제는 그대로다. **개수는 적지 않는다** — registry 항목 수는 로스터를 따라 움직인다([#139](https://github.com/0xM1yu/whitehat-boss/pull/139)로 줄었고 미등재가 등재되면 다시 는다) |
+| 2.2 | **run B** — `local_balanced_hybrid`로 **같은 대상·같은 seed** 1회 | 3 | **row 2의 효과가 여기서 나온다** — A와 **검색 경로 하나만** 다르다. §1 정정 3(「바뀌는 것은 Auditor·Critic 캡슐뿐」)을 실행에서 처음 확인하는 자리이고, 지표는 §3대로 Scout 통과율이 아니라 최종 `proven` 건수와 EXPANDED·FOCUSED 캡슐 토큰 수다. **A가 먼저다** — B만 돌리면 바뀐 것이 검색인지 실서빙 auditor인지 안 갈린다. ⚠ **오늘 이 프로필을 그대로 돌리면 3단계 리랭커 자리에 새 로스터가 서빙에서 내린 모델이 선다.** 그 자리의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이고, 내린 근거는 **만든 쪽 표에서 0.6B 리랭커가 코드에서 1차 검색기보다 낮다**는 것이다 — MTEB-Code 75.41(리랭킹 없음) → **73.42**, **−1.99** `[출처주장]`([2026-09-08 검색 조사](research/2026-09-08-retrieval.md)). **A와 B의 차이가 「검색 경로 하나」로 남으려면 두 프로필이 같은 로스터를 가리켜야 한다** — PROJECT-CONTEXT.md §3이 두 프로필을 같은 diff에서 고치라고 적은 이유이고 `tests/test_config.py`가 그것을 기계로 단언한다 |
 | 2.3 | **run C** — `critic_top_n`(`config/budgets.yaml`에서 지금 8)만 올린 대조 run | 7 | [#98](https://github.com/0xM1yu/whitehat-boss/issues/98)이 본문 끝에서 *「상한만 바꾼 대조 run 1회가 그 질문을 닫는다」*고 적은 것. **게이트 결함은 2026-08-26에 닫혔다** — `-I`와 언어별 `-std`를 붙이자 `has_repro_spec`이 11/55 → 77/78이 되고 8단계 `gate_eval`이 8건 나왔다. **남은 병목이 `critic_top_n: 8`이다**: 6단계를 통과한 59건 중 8건만 7단계에 갔고 그 8건이 전부 upheld라 **E3 8건은 상한값 그 자체**이며, 잘린 51건 중 50건이 `repro_spec`을 갖고 있다. 그 51건이 전부 upheld된다는 근거는 없다(confidence 0.6이 23건 · 0.3이 28건). ⚠ **그 8건은 auditor·critic이 Fake인 run의 값이라 성능으로 읽지 않는다** — 그래서 2.1 뒤다. **row 2와 다른 축이다** — 검색이 아니라 7단계 상한이라 A·B와 같은 칸에 넣지 않는다 |
 | ~~3~~ | ~~인덱서 best-of-N 쿼리를 켠다~~ | ~~1~~ | **2026-09-13 소멸.** 이 단계는 **모델이 쓰는 쿼리**를 전제한다 — 슬라이싱이 무모델로 확정돼 켤 것이 없고, 쌓일 `FT1` 데이터도 없다(§6 정정). 1단계 고도화는 이제 슬라이서 자신의 커버리지이지 쿼리 품질이 아니다 |
 | 3.5 | 참조 그래프로 경고 관련 파일 범위 잡기 | 2→3 | 독립적으로 돌고 기여가 가장 크다. **소스가 있는 타깃 한정** |
@@ -363,10 +370,27 @@ sleep/wake를 부르는 코드도 없어** 선언이 아무 일도 안 하면서
 > 판례를 남기지 않기 위해 그 경계를 여기 명시한다.
 
 ⚠ **그런데 2.1·2.2보다 앞에 로스터 재배선이 들어왔다 (2026-09-09).** 두 행이 쓰는 프로필은
-`config/profiles.yaml`이 정의하고, 그 파일은 아직 [CONTEXT.md](../CONTEXT.md) §1의 로스터를
+`config/profiles.yaml`이 정의하고, 그 파일은 아직 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1의 로스터를
 가리키지 않는다. **재배선 전에 돌린 run은 폐기 예정 구성을 잰 값이고, 이 표를 「다음에 할
-일」로 읽고 그대로 착수하는 것이 CONTEXT.md 머리말이 적은 2026-09-09의 사고 그 자체다.**
-재배선에서 손대는 자리는 CONTEXT.md §3의 넷이고 **이 문서는 그 넷에 없다.**
+일」로 읽고 그대로 착수하는 것이 PROJECT-CONTEXT.md 머리말이 적은 2026-09-09의 사고 그 자체다.**
+재배선에서 손대는 자리는 PROJECT-CONTEXT.md §3의 넷이고 **이 문서는 그 넷에 없다.**
+
+> ### ⚠ 2026-09-20 — §8 표의 세 행이 **이미 들어와 있다.** 표만 미착수로 읽힌다
+>
+> 표를 고치지 않고 여기 적는다 — 행 번호는 회의록·PR이 참조하므로 옮기지 않는다.
+>
+> | 행 | 표가 주는 인상 | 코드 |
+> | --- | --- | --- |
+> | **4** Scout 전문가 셋 | 미착수 | `prompts/scout_{memory,boundary,injection}/v2` **9파일 실재** · `src/schemas/candidate.py`의 `scout_member` 필드 · `src/orchestrator/context.py`가 호출마다 stamp |
+> | **5** 단계 단위 | 본체·미착수 | `cd65500`(#161, `2026-09-11 10:26`) — `runner.py`의 `execution.mode == "per_stage"` 분기·`_triage_by_stage`. `tests/test_pipeline_e2e.py`가 두 모드를 parametrize |
+> | **9** 도구 루프 | 「단계 단위가 선행」 대기 | **그 선행은 코드에 들어왔으나 실프로필에서 도달 불가다**(아래 ⚠ — `execution:`을 선언한 프로필이 0). 그 위에 `DecisionPoint.REQUEUE` **생산자 0건**이 얹힌다 — 소비부(`policy._requeue`·전이 C-8·C-9·F-14)는 다 있다 |
+>
+> ⚠ **행 5를 「된다」로 읽지 않는다.** `grep -c "execution:" config/profiles.yaml`이 **0**이라
+> 어느 프로필도 그 모드를 선언하지 않는다 — 코드는 있고 테스트가 덮지만 **실프로필에서
+> 도달 불가**다. 그것이 [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md)
+> 결과 4의 몫이고, 결과 3(sleep/wake)도 `src/` 호출부 **0건**이다.
+>
+> ⚠ **행 4도 「관측된다」가 아니다.** 기록 배선은 있지만 그것을 실제로 채운 완주 run이 없다.
 
 ---
 
