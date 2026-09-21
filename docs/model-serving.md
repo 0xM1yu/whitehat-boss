@@ -286,7 +286,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > `auditor`를 base로 가리킨다. **8001·8003은 프로필 사이에서 갈린다** — 풀로 돌리면 별칭
 > 이름만, 실서빙 `local_balanced`로 돌리면 base 이름만 온다.
 >
-> ⚠ **8002에는 그 회피가 없다 — 「주의」가 아니라 블로커다.** 위 표의 8001·8003은 프로필
+> ⚠ **8002는 회피 불가다 — 「주의」가 아니라 블로커다.** 위 표의 8001·8003은 프로필
 > **사이**의 갈림이라 고를 프로필이 있다. **8002는 풀 프로필 *안*에서 두 이름이 온다** —
 > `auditor`가 base를, `scout_memory`가 별칭을 가리킨다. 그러니 `local_balanced_pool`·
 > `local_balanced_pool_hybrid`는 **어느 프로필을 골라도** 한 서버가 두 이름에 동시에 답해야
@@ -296,7 +296,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > **이 문단은 기계가 지킨다.** `tests/test_docs_format.py`의
 > `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해
-> 프로필 안 포트 공유를 세고, 있으면 여기 「회피 불가」와 그 포트 번호를 요구한다.
+> 프로필 안 포트 공유를 세고, 있으면 그 선언과 포트 번호를 여기서 요구한다.
 > **양방향이다** — 확정 로스터에서 Auditor가 `qwen3-coder-30b-a3b`가 아니게 되면
 > `auditor`와 `scout_memory`가 다른 모델이 되어 이 충돌 자체가 사라지고, 그때는 같은
 > 검사가 **이 문단을 지우게 만든다.** 없어진 블로커를 주장하는 문장이 남는 것이
