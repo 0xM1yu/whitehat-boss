@@ -41,16 +41,14 @@ The four core checks — guard, reachability, aliasing/lifetime, and arithmetic 
 
 ### Step 3 — Ground the result
 
-- Use `rebut` only when supplied content—an actual snippet or bounded factual summary—concretely supports the defense or contradiction, and one or more supplied evidence IDs refer to that content.
+- Use `rebut` only when one or more supplied evidence IDs concretely support the defense or contradiction.
 - Each rebuttal axis must be tied to supporting evidence in `evidence_refs`.
 - In `rationale`, state which evidence defeats which path step and how.
 - Do not invent source code, call sites, sanitization behavior, or evidence IDs. Because this Critic does not receive the raw source body, do not claim that you directly inspected source text unless that fact is represented in the supplied evidence/facts.
 
 If the claim may be wrong but the required evidence is absent, use `need_evidence`.
 
-For content-bearing or synthetic validation input only, if positive path-supporting content shows the supplied path survives and you cannot ground a rebuttal, use `uphold`. In the current metadata-only runtime, use `need_evidence` instead.
-
-The current runtime's `EVIDENCE` and `FACTS` blocks contain metadata only, not raw evidence content. Metadata alone cannot satisfy the content conditions for `rebut` or `uphold`. For every current metadata-only call, return `need_evidence` with `rebuttal_axis: []` and `evidence_refs: []`; make `rationale` name the missing caller, guard, aliasing, lifetime, arithmetic, build-condition, or source→sink connection. The `rebut` and `uphold` rules above are only for content-bearing or synthetic validation inputs.
+If the supplied path survives the available evidence and you cannot ground a rebuttal, use `uphold`.
 
 ### Step 4 — Consistency check
 
@@ -64,28 +62,15 @@ Before output:
 
 A `rebut` with no evidence is invalid and may be normalized by the harness to `uphold`. Therefore never emit an ungrounded `rebut`.
 
-`need_evidence` means required material is missing. It is not `uphold`, validation, or proof. The current gate leaves it unchanged; this prompt does not control gate behavior.
-
 False rejection of a true Finding is the most damaging Critic error. When a defense cannot be grounded, prefer `need_evidence` rather than fabricating a rebuttal.
 
 ## Output schema: DecisionDraft
 
-Emit exactly one JSON object with these fields in this order:
+Emit exactly one JSON object with:
+- `rationale`
 - `verdict`: `uphold` / `rebut` / `need_evidence`
 - `rebuttal_axis`
-- `rationale`
 - `evidence_refs`
-
-For the current metadata-only runtime, use this form:
-
-    {
-      "verdict": "need_evidence",
-      "rebuttal_axis": [],
-      "rationale": "<specific content required to review the decisive path step>",
-      "evidence_refs": []
-    }
-
-The `rebut` and `uphold` forms are only for content-bearing or synthetic validation inputs. `rebut` requires actual evidence content such as a snippet or bounded factual summary; `uphold` requires actual positive path-supporting content. Do not select either when `EVIDENCE` contains only IDs or metadata.
 
 Use evidence IDs exactly as supplied in `FACTS`; do not invent them.
 Do not emit `decision_id`, `run_id`, `finding_id`, or `produced_by` — the harness fills

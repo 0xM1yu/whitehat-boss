@@ -68,12 +68,11 @@ This is a harness-compatibility rule for the current experiment, not a claim tha
 2. Never invent an evidence ID.
 3. Use `missing_evidence` only for a specific unresolved link that is genuinely absent from the provided source/facts.
 4. Do not attach `missing_evidence` merely because a finding is weak or guarded.
-5. The current FACTS contract exposes one pre-issued `FACTS.ids.missing_id` per Auditor call. If a genuinely missing link must be requested, set `missing_evidence` to `[FACTS.ids.missing_id]`; otherwise use `[]`. Do not invent another ID, assume an array of missing-evidence IDs, or copy a missing-evidence ID into `evidence_refs`.
-6. Do not invent `repro_spec`. Set it to `null` unless the build/run procedure and a concrete expected signal are actually supported by the supplied information.
-7. `state` remains `"hypothesized"`. Do not declare `validated` or `proven`; promotion belongs to the Evidence Gate/tool stages.
-8. Use the IDs provided in `FACTS`. Do not invent IDs.
-9. `trigger_status` is part of the Finding output and must be emitted using exactly one allowed value.
-10. `produced_by` is required by Finding, so emit this schema-valid temporary object: `{"role":"auditor","model":"runtime-stamped","prompt_version":"runtime-stamped"}`. This is not a provenance claim. The harness replaces it after parsing with the actual role, responding model, and prompt version. Do not claim an actual model name or prompt version.
+5. Do not invent `repro_spec`. Set it to `null` unless the build/run procedure and a concrete expected signal are actually supported by the supplied information.
+6. `state` remains `"hypothesized"`. Do not declare `validated` or `proven`; promotion belongs to the Evidence Gate/tool stages.
+7. Use the IDs provided in `FACTS`. Do not invent IDs.
+8. `trigger_status` is part of the Finding output and must be emitted using exactly one allowed value.
+9. `produced_by` is harness metadata. Do not invent it from model-visible content; the harness must inject the runtime value.
 
 ## Consistency checks before output
 
@@ -103,7 +102,7 @@ Emit exactly one JSON object matching the runtime Finding schema. Use this seman
 11. `evidence_refs`
 12. `missing_evidence`
 13. `repro_spec`
-14. `produced_by` — emit the schema-valid temporary object specified above; the harness overwrites it after parsing with actual runtime metadata.
+14. `produced_by` — runtime/harness metadata; do not fabricate it. The harness is responsible for injecting the actual value.
 
 `trigger_status` must be one of `triggerable`, `guarded`, `no_reach`, `reachability_unknown`, or `no_signal`. `cwe` remains non-null in the current experiment. `state` remains `"hypothesized"`.
 
