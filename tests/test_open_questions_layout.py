@@ -88,3 +88,54 @@ def test_index_rows_stay_thin() -> None:
         if len(line) > _MAX_ROW
     ]
     assert fat == [], f"인덱스 행 {len(fat)}개가 본문을 들고 있다:\n" + "\n".join(fat[:15])
+
+
+_D67 = BODIES / "D" / "D67.md"
+
+# 이 항목의 결론을 떠받치는 수. `stock` 0/20 -> `required` 13/13의 뒤집힘이고,
+# 그 하나로 전역 스키마를 바꾼다.
+_FILL_FLIP = "13/13"
+
+# 그 수가 재지 **않은** 것. 철자가 아니라 명제를 문다 — 「정확도」라는 낱말만 어딘가
+# 떨어져 있으면 통과하는 핀은 이 저장소가 이미 밟았다(#226 4·5라운드).
+_ACCURACY_CAVEAT = "채운 path가 맞는지"
+
+
+def test_d67_does_not_let_a_fill_rate_stand_for_correctness() -> None:
+    """채움률 뒤집힘을 적은 D67이 **「채운 path가 맞는지는 안 쟀다」**를 같이 들어야 한다.
+
+    **왜 이 검사가 있나.** `required`가 강제하는 것은 **키가 있으라**는 것이지 **비지
+    말라**는 것이 아니다 — 같은 항목이 `minItems`를 일부러 안 붙였고(`tests/test_schemas.py`
+    의 `test_the_finding_schema_requires_the_two_fields_the_model_kept_omitting`), 빈
+    리스트는 근거 없는 초안의 정당한 출력이라 적는다. 그러니 0/20 -> 13/13은 **모델이
+    그렇게 행동하더라**는 관측이지 스키마가 준 보장이 아니다.
+
+    **그리고 채움이 옳음이 아니다.** 경로를 확신 못 하는 후보에서 옛 스키마는 `path=[]`로
+    정직하게 비웠는데 `required`는 **그럴듯한 가짜 경로**를 채워 넣게 만들 유인을 준다.
+    그러면 Auditor 산출이 「비어서 약함」에서 「채워졌는데 틀림」으로 바뀌고, 뒤쪽이
+    downstream(Critic·Evidence Gate의 E3 Path 검사)에 더 해롭다. **이 항목은 채움만 쟀고
+    정확도는 한 번도 안 쟀다.**
+
+    그래서 이 검사는 둘을 묶는다 — **그 수를 적을 거면 그 수가 재지 않은 것도 적어라.**
+    한쪽만 남으면 다음 사람이 13/13을 「개선」으로 읽는다. 요약이 원문보다 세지는 자리이고
+    CLAUDE.md 2.2가 막는 형태다.
+
+    **양방향이다.** 채움률 뒤집힘을 이 항목에서 빼면(다른 항목으로 옮기거나 재측정으로
+    대체하면) 이 단서도 함께 거짓이 되므로 검사가 실패해 같이 지우게 만든다.
+    """
+    text = _D67.read_text(encoding="utf-8")
+    states_flip = _FILL_FLIP in text
+    states_caveat = _ACCURACY_CAVEAT in text
+
+    if states_flip and not states_caveat:
+        raise AssertionError(
+            f"D67이 채움률 뒤집힘({_FILL_FLIP})을 적으면서 "
+            f"「{_ACCURACY_CAVEAT}」는 안 적는다. "
+            "required는 키가 있으라는 것이지 비지 말라는 것이 아니고, 채움은 옳음이 아니다 — "
+            "그 수를 적을 거면 그 수가 재지 않은 것도 같은 문서가 들어야 한다."
+        )
+    if not states_flip and states_caveat:
+        raise AssertionError(
+            f"D67에 채움률 뒤집힘({_FILL_FLIP})이 없는데 "
+            f"「{_ACCURACY_CAVEAT}」 단서만 남았다. 무엇에 대한 단서인지 알 수 없다."
+        )
