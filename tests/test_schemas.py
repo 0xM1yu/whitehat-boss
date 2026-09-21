@@ -561,14 +561,21 @@ def test_capsule_expansion_count_has_no_hardcoded_cap() -> None:
 # --- RunRecord 불변식 (evaluation.md §2·§6) --------------------------------
 
 
-@pytest.mark.parametrize("condition", ["B1@2x2", "B1prime@2x2", "B3@pipeline", "B3prime@pipeline"])
+@pytest.mark.parametrize(
+    "condition", ["B1@pipeline", "B1prime@pipeline", "B3@pipeline", "B3prime@pipeline"]
+)
 def test_valid_conditions(condition: str) -> None:
     assert _run(condition=condition).condition == condition
 
 
-@pytest.mark.parametrize("condition", ["B1", "B2@2x2", "B1'@2x2", "B3prime@other", "b1@2x2"])
+@pytest.mark.parametrize(
+    "condition", ["B1", "B2@pipeline", "B1'@pipeline", "B3prime@other", "b1@pipeline", "B1@2x2"]
+)
 def test_invalid_conditions_are_rejected(condition: str) -> None:
-    """어느 정의(2×2 vs 파이프라인)의 조건인지 라벨에 없으면 비교표가 섞인다."""
+    """이름이 넷 밖이거나 축이 `pipeline`이 아니면 비교표가 섞인다.
+
+    `B1@2x2`는 2×2 폐기(2026-09-20) 이후 무효가 된 축의 회귀 핀이다.
+    """
     with pytest.raises(ValidationError):
         _run(condition=condition)
 
@@ -664,3 +671,7 @@ def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
     # 이 필드 이전에 쓰인 기록이므로 `None`이다 — "확인 못 함"이 아니라 "남기지 않았다"다.
     # 새 run은 `config.profile_name`에서 무조건 유도되므로 `None`이 나올 수 없다 (이슈 #76).
     assert record.profile is None
+    # 같은 사유로 `compile_flags`도 `None`이다 (D32 / #74). 새 run은 어댑터에게 물어
+    # 항상 값을 남기므로(비어도) `None`은 **옛 manifest에서만** 나온다.
+    assert "compile_flags" not in payload, "fixture가 낡지 않았다 — 검사가 공허해진다"
+    assert record.compile_flags is None

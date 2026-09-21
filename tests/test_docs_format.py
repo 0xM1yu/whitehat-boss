@@ -39,6 +39,7 @@ D12에서 끝나고 **빈 줄**이 있었는데 한쪽 PR은 그 앞에, 다른 
 추적되지 않는 것(`.claude/plans/` 등)은 CI에 존재하지 않으므로 대상이 아니다.
 """
 
+import ast
 import difflib
 import re
 import subprocess
@@ -498,7 +499,7 @@ _FT_REF = re.compile(r"(?<![A-Za-z0-9])FT(\d+)(?![0-9A-Za-z])")
 _STRUCK = re.compile(r"~~(.+?)~~", re.DOTALL)
 
 # 날짜가 박힌 줄. 이 저장소의 정정은 전부 `2026-09-13 —` 꼴을 달고 온다(ADR·D 본문·
-# CONTEXT.md). **죽은 라벨을 이름으로 부르며 "사라졌다"고 적는 정정문은 통과해야 한다** —
+# PROJECT-CONTEXT.md). **죽은 라벨을 이름으로 부르며 "사라졌다"고 적는 정정문은 통과해야 한다** —
 # 그것을 못 쓰게 하면 왜 죽었는지가 문서에서 사라진다. 날짜 없는 현재형 주장은 그대로 걸린다.
 _DATED_LINE = re.compile(r"20\d{2}-\d{2}-\d{2}")
 
@@ -562,7 +563,7 @@ def test_the_build_plan_does_not_borrow_the_d_series_namespace() -> None:
     assert borrowed == [], "\n".join(borrowed)
 
 
-# 모델 자리가 없는 단계. CONTEXT.md §2가 슬라이싱을 **무모델 결정론**으로 확정해
+# 모델 자리가 없는 단계. PROJECT-CONTEXT.md §2가 슬라이싱을 **무모델 결정론**으로 확정해
 # 0·1단계에서 모델 자리가 사라졌다(2026-09-13). 자리가 되살아나면 **이 집합을 고치는 것이**
 # 그 결정을 기록하는 자리다 — 검사를 지우는 것이 아니라.
 _STAGES_WITHOUT_A_MODEL = ("1",)
@@ -792,25 +793,25 @@ def test_every_adr_has_a_row_in_the_decisions_readme() -> None:
     assert not orphan, f"README 목록에 행은 있는데 그 번호의 ADR 파일이 없다: {orphan}"
 
 
-# --- 정본 선언(CONTEXT.md) ↔ 모델 registry ------------------------------------
+# --- 정본 선언(PROJECT-CONTEXT.md) ↔ 모델 registry ------------------------------------
 #
-# CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지
+# PROJECT-CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지
 # 않아서 아래 둘이 그 선언을 기계가 읽는 불변식으로 바꾼다 — 두 파일이 조용히 갈라지는 것,
-# 그러니까 CONTEXT.md가 존재하는 이유 그 자체를 막는다.
+# 그러니까 PROJECT-CONTEXT.md가 존재하는 이유 그 자체를 막는다.
 #
 # **판정은 표 구조로만 한다. 낱말로 하지 않는다.** `미등재`·`신규`는 이 저장소에서 다른
 # 뜻으로도 쓰인다(`docs/build-plan.md` §9의 R 행, 실험 보고서의 "신규 결함"). 낱말을 키로
 # 삼으면 상관없는 문서가 그 낱말을 옮길 때마다 여기가 깨지고, 오탐을 내는 검사는 꺼진다.
 
-CONTEXT = REPO_ROOT / "CONTEXT.md"
+CONTEXT = REPO_ROOT / "PROJECT-CONTEXT.md"
 
 # 표를 여는 절 제목. **번호가 아니라 제목으로 찾는다** — 앞에 절이 하나 끼는 날 번호로
 # 찾으면 조용히 다른 표를 읽는다.
 _ROSTER_HEADING = re.compile(r"^##\s+\d+\.\s+모델 로스터")
 _KEPT_HEADING = re.compile(r"^###\s+로스터에 없지만 registry에 남는 것")
 
-_ROSTER_TABLE = "CONTEXT.md 로스터 표(§1)"
-_KEPT_TABLE = "CONTEXT.md 「로스터에 없지만 registry에 남는 것」 표"
+_ROSTER_TABLE = "PROJECT-CONTEXT.md 로스터 표(§1)"
+_KEPT_TABLE = "PROJECT-CONTEXT.md 「로스터에 없지만 registry에 남는 것」 표"
 
 # 열은 **이름으로** 찾는다. 순서로 찾으면 열이 하나 끼는 날 옆 칸을 읽는다.
 _KEY_COLUMN = "registry 키"
@@ -913,14 +914,14 @@ def _registry_keys() -> set[str]:
 
 
 def test_the_context_roster_matches_the_model_registry() -> None:
-    """CONTEXT.md §1의 `registry 등재` 칸은 `config/models.yaml`의 사실과 같아야 한다.
+    """PROJECT-CONTEXT.md §1의 `registry 등재` 칸은 `config/models.yaml`의 사실과 같아야 한다.
 
     이 칸이 로스터 표에서 유일하게 **검증 가능한** 열이다. 나머지 두 열(자리·키)은 팀의
     결정이라 기계가 옳고 그름을 말할 수 없지만, "그 키가 registry에 있나"는 파일을 열면
     답이 나온다. 그래서 여기만 잠근다.
 
     **어긋나면 무슨 일이 나나.** 이 표는 「로스터 확정」과 「그 모델이 선다」를 가르려고
-    존재한다(CONTEXT.md §5). 등재를 마친 키가 여기서 계속 미등재로 보이면 읽는 사람이
+    존재한다(PROJECT-CONTEXT.md §5). 등재를 마친 키가 여기서 계속 미등재로 보이면 읽는 사람이
     쓸 수 있는 모델을 못 쓰고, 반대로 안 받은 모델이 등재로 보이면 **없는 서버를 전제로
     측정 계획을 짠다** — 2026-09-09에 GPU 시간을 잃은 것이 정확히 그 종류의 착오다.
 
@@ -935,13 +936,13 @@ def test_the_context_roster_matches_the_model_registry() -> None:
     offenders: list[str] = []
     for lineno, row in rows:
         if max(key_at, mark_at) >= len(row):
-            offenders.append(f"CONTEXT.md:{lineno}: 셀이 {len(row)}개뿐이라 읽을 수 없다")
+            offenders.append(f"PROJECT-CONTEXT.md:{lineno}: 셀이 {len(row)}개뿐이라 읽을 수 없다")
             continue
 
         match = _LEADING_KEY.match(row[key_at])
         if match is None:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{_KEY_COLUMN}` 칸이 백틱 키로 시작하지 않는다 "
+                f"PROJECT-CONTEXT.md:{lineno}: `{_KEY_COLUMN}` 칸이 백틱 키로 시작하지 않는다 "
                 f"— {row[key_at][:60]!r}"
             )
             continue
@@ -950,29 +951,29 @@ def test_the_context_roster_matches_the_model_registry() -> None:
         has_yes, has_no = _YES in mark, _NO in mark
         if has_yes == has_no:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{key}` — `{_MARK_COLUMN}` 칸을 판독할 수 없다"
+                f"PROJECT-CONTEXT.md:{lineno}: `{key}` — `{_MARK_COLUMN}` 칸을 판독할 수 없다"
                 f"({mark[:40]!r}). {_YES}나 {_NO} 중 하나만 쓴다"
             )
         elif has_yes and key not in registry:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{key}`를 {_YES}(등재)로 적었는데 "
+                f"PROJECT-CONTEXT.md:{lineno}: `{key}`를 {_YES}(등재)로 적었는데 "
                 f"config/models.yaml에 그 키가 없다. 있는 것: {sorted(registry)}"
             )
         elif has_no and key in registry:
             offenders.append(
-                f"CONTEXT.md:{lineno}: `{key}`를 {_NO}(미등재)로 적었는데 "
+                f"PROJECT-CONTEXT.md:{lineno}: `{key}`를 {_NO}(미등재)로 적었는데 "
                 f"config/models.yaml에 이미 있다 — 등재했으면 이 칸을 {_YES}로 바꾼다"
             )
 
     assert offenders == [], (
-        "CONTEXT.md §1 로스터 표가 config/models.yaml과 갈렸다.\n"
-        "로스터를 바꿀 때 손대는 곳은 CONTEXT.md §3이 넷으로 못박아 뒀다 — "
+        "PROJECT-CONTEXT.md §1 로스터 표가 config/models.yaml과 갈렸다.\n"
+        "로스터를 바꿀 때 손대는 곳은 PROJECT-CONTEXT.md §3이 넷으로 못박아 뒀다 — "
         "이 표·models.yaml·profiles.yaml·ADR 0010.\n" + "\n".join(offenders)
     )
 
 
 def test_every_registry_model_is_named_in_context() -> None:
-    """registry의 모든 키는 CONTEXT.md의 두 표 중 **한 곳에는** 이름이 있어야 한다.
+    """registry의 모든 키는 PROJECT-CONTEXT.md의 두 표 중 **한 곳에는** 이름이 있어야 한다.
 
     §1이 자리를 준 키와 「로스터에 없지만 registry에 남는 것」이 사유를 준 키, 그 둘의
     합집합이 `config/models.yaml`을 덮는다. 덮지 못하는 키는 **아무 문서도 설명하지 않는
@@ -998,12 +999,13 @@ def test_every_registry_model_is_named_in_context() -> None:
     orphan = sorted(kept - registry)
 
     assert not missing, (
-        f"config/models.yaml에 있는데 CONTEXT.md가 이름을 대지 않는 키: {missing} — "
+        f"config/models.yaml에 있는데 PROJECT-CONTEXT.md가 이름을 대지 않는 키: {missing} — "
         "자리를 줬으면 §1 표에, 안 줬으면 「로스터에 없지만 registry에 남는 것」에 "
         "사유와 함께 넣는다"
     )
     assert not orphan, (
-        f"CONTEXT.md가 「registry에 남는다」고 적었는데 config/models.yaml에 없는 키: {orphan} — "
+        f"PROJECT-CONTEXT.md가 「registry에 남는다」고 적었는데 "
+        f"config/models.yaml에 없는 키: {orphan} — "
         "registry 키는 지우지 않는다(ADR 0010). 정말 지웠다면 그 행도 같이 지운다"
     )
 
@@ -1013,9 +1015,10 @@ _POOL_ROLES = ("scout_memory", "scout_boundary", "scout_injection")
 
 
 def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
-    """`config/profiles.yaml`이 §1 배정을 안 따를 때, CONTEXT.md §5가 그 사실을 들어야 한다.
+    """`config/profiles.yaml`이 §1 배정을 안 따를 때, PROJECT-CONTEXT.md §5가 그 사실을 들어야 한다.
 
-    **왜 이 검사가 있나.** CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때 손대는
+    **왜 이 검사가 있나.** PROJECT-CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때
+    손대는
     넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **지금은 다르다.**
     프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`다. 그 어긋남을 정본이
     안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
@@ -1052,12 +1055,13 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
     if rewired and declared:
         raise AssertionError(
-            f"프로필 {rewired}이(가) Scout 풀로 재배선됐는데 CONTEXT.md §5가 아직 "
+            f"프로필 {rewired}이(가) Scout 풀로 재배선됐는데 PROJECT-CONTEXT.md §5가 아직 "
             f"「{_REWIRE_MARKER} — 안 됐다」를 들고 있다. 그 줄은 이제 거짓이다. 지워라."
         )
     if not rewired and not declared:
         raise AssertionError(
-            f"프로필 어느 것도 Scout 풀을 안 쓰는데 CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
+            f"프로필 어느 것도 Scout 풀을 안 쓰는데 "
+            f"PROJECT-CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
             "정본만 읽은 사람은 profiles.yaml이 §1과 같다고 읽는다 — §5에 그 어긋남을 적어라."
         )
 
@@ -1076,11 +1080,11 @@ def test_the_two_rulebooks_say_the_same_thing() -> None:
     그리고 **갈린 사본이 실제로 있었다**: 2026-09-11에 `AGENTS.md`가 추적 대상이 되기 전
     상태를 열어 보니 §3이 *"이슈가 결함의 원천이고 상태의 원천이다"*였는데, 같은 시점
     `CLAUDE.md`는 **ADR 0008 이후라 정반대**였다(*"문서가 원천이고 GitHub Issue는 추적
-    미러다"*). `CONTEXT.md`를 가리키는 줄과 2026-09-09 4연속 사고 기록도 통째로 없었다.
+    미러다"*). `PROJECT-CONTEXT.md`를 가리키는 줄과 2026-09-09 4연속 사고 기록도 통째로 없었다.
 
     **그 상태로 두면 이 저장소가 기록한 사고를 그대로 재생한다** — 다른 에이전트가
     **낡은 문서를 살아 있는 지시로 읽는다**(CLAUDE.md §7의 사고). 그래서 문서로
-    부탁하지 않고 코드가 막는다. `CONTEXT.md` 검사들과 같은 판단이다.
+    부탁하지 않고 코드가 막는다. `PROJECT-CONTEXT.md` 검사들과 같은 판단이다.
 
     고치는 법: 규약을 `CLAUDE.md`에서 고치고 첫 줄만 바꿔 복사한다.
     """
@@ -1116,7 +1120,7 @@ def test_the_two_rulebooks_say_the_same_thing() -> None:
 # registry 부재를 주장하는 문구. `미등재`는 §1 표가 정당하게 쓰므로 함께 본다.
 _ABSENT_CLAIM = re.compile(r"registry에 없|레지스트리에 없|미등재")
 # 그 주장 **바로 앞 절**에서만 키를 줍는다. 줄 전체를 보면 같은 줄의 다른 절이 걸린다 —
-# CONTEXT.md §5의 재배선 행은 한 줄 안에서 "Critic은 등재됐다"와 "리랭커는 없다"를
+# PROJECT-CONTEXT.md §5의 재배선 행은 한 줄 안에서 "Critic은 등재됐다"와 "리랭커는 없다"를
 # 함께 말하므로, 줄 단위로 보면 등재된 Critic까지 위반으로 잡힌다.
 #
 # **문장 경계에서 자른다.** 글자 수로만 자르면 앞 문장의 키가 딸려 온다 — 이 검사를 처음
@@ -1142,7 +1146,7 @@ def test_no_document_says_a_registered_model_is_missing_from_the_registry() -> N
     §1을 ✅로 바꾸면서 §5에 남은 「아직 registry에 없어서」를 못 잡고, **정본 파일이 자기
     §1과 §5에서 다른 말을 하게 된다.**
 
-    `CONTEXT.md`가 존재하는 이유가 **낡은 로스터 서술을 살아 있는 지시로 읽는 사고**인데
+    `PROJECT-CONTEXT.md`가 존재하는 이유가 **낡은 로스터 서술을 살아 있는 지시로 읽는 사고**인데
     (그 파일 머리말 — 2026-09-09 하루에 네 번), 그 파일이 스스로 그 사고의 원천이 되면
     장치가 뒤집힌다. 그래서 사람이 아니라 코드가 막는다.
 
@@ -1178,7 +1182,7 @@ def test_no_document_states_the_registry_state_as_a_count() -> None:
     """「셋 다 미등재」처럼 **개수**로 registry 상태를 적지 않는다.
 
     개수는 등재가 하나 늘 때마다 조용히 거짓이 되는데, 키 이름이 없어서 위 검사도 못
-    잡는다. `CONTEXT.md` §3이 그 규칙을 이미 적는다 — *"그 밖의 문서는 모델을 현재형으로
+    잡는다. `PROJECT-CONTEXT.md` §3이 그 규칙을 이미 적는다 — *"그 밖의 문서는 모델을 현재형으로
     이름 대지 않는다. 이름을 대야 하면 이 파일을 링크한다."*
 
     **실제로 낡았다**: `R8.md`가 *"`config/models.yaml`(셋 다 미등재)"*로 적은 채
@@ -1194,7 +1198,7 @@ def test_no_document_states_the_registry_state_as_a_count() -> None:
     ]
     assert offenders == [], (
         "registry 상태를 개수로 적은 곳이 있다. 개수는 등재마다 거짓이 되고 키 이름이 "
-        "없어 다른 검사도 못 잡는다 — CONTEXT.md §1 표를 링크한다.\n" + "\n".join(offenders)
+        "없어 다른 검사도 못 잡는다 — PROJECT-CONTEXT.md §1 표를 링크한다.\n" + "\n".join(offenders)
     )
 
 
@@ -1211,7 +1215,7 @@ def test_the_roster_registration_cell_only_says_whether_it_is_registered() -> No
     item_ref = re.compile(r"\b[RD]\d+\b")
 
     offenders = [
-        f"CONTEXT.md:{lineno}: `{_MARK_COLUMN}` 칸이 {found}를 든다 — {row[mark_at][:60]!r}"
+        f"PROJECT-CONTEXT.md:{lineno}: `{_MARK_COLUMN}` 칸이 {found}를 든다 — {row[mark_at][:60]!r}"
         for lineno, row in rows
         if mark_at < len(row)
         for found in [item_ref.findall(row[mark_at])]
@@ -1274,17 +1278,108 @@ def test_no_tracked_file_calls_r8_a_single_gate() -> None:
 # 산문은 안 된다. 느슨하게 두면 *"**D29**(샘플링 등가화 남은 부분)"* 이 걸린다 —
 # 「남은」의 `은` + `부분`이 조사+상태어로 파싱되는데 거기서 `부분`은 명사다.
 # 그 오탐은 가정이 아니라 이 저장소에서 실제로 나왔다.
+# ## 분기 둘 — **명제로 나눈다**
+#
+# 이 정규식은 네 번 넓혔고 **세 번은 문자열 축으로만 넓혀서 매번 반쪽이었다**
+# (조사 `가`·`의` 추가 → 괄호 `,` 추가 → `D`에서 `[DR]`로). 네 번째에 축을 바꿨다 —
+# 막으려는 명제는 *"산문이 D·R의 상태를 **단언**한다"*이고, 그 문형은 둘이다.
+#
+# **(가) 맨형** — `[D77](…) 닫힘` · `**D54** 부분` · `D9(닫힘)`. **조사가 없다.**
+#   2026-09-20까지 이 문형이 통째로 사각이었고 **18건이 미탐이었다** — 그중 `PROJECT-CONTEXT.md`와
+#   `docs/build-plan.md`의 정본 줄이 있다.
+# **(나) 인접형** — `D74는 열림` · `#98(D26, 열림)`. 조사/쉼표 바로 뒤에 상태어가 온다.
+# **(다) 말이 끼는 형** — `R2는 **그 파일에서 아직** \`열림\`이고`. 여기서 **백틱을 요구하고**
+#   창이 **다른 D·R 토큰과 강한 구두점을 못 넘는다**: 그러지 않으면 「D54의 보류 해제를
+#   기록한다」 같은 명사구가 걸리고, 이 저장소의 표준 문형인 다중 D 열거
+#   (`D29는 … · D51이 \`보류\`다`)에서 **엉뚱한 D를 신고한다.**
+#
+# > **사고 — (나)를 안 보던 동안 9일 묵은 모순이 살아 있었다.** `docs/model-serving.md`가
+# > *"R2는 그 파일에서 아직 `열림`이고"*라 적는데 `R2.md`는 `닫힘`이다. **R2를 닫은 바로 그
+# > 커밋(`184aade`)이 같은 파일에 그 문장을 썼다.** 그리고 2026-09-20에 `[DR]`로 넓히면서
+# > **핀에 실형태 대신 「R2는 `닫힘`이다」라는 지어낸 형태를 넣어** 그 구멍을 덮었다 —
+# > 실형태를 핀으로 썼으면 그 자리에서 빨개졌다([CLAUDE.md](../CLAUDE.md) §0).
+#
+# ⚠ **왼쪽 경계가 필요하다** — 없으면 `DeepSeek-R1, 열림 상태다`가 R1 단언으로 읽힌다.
+# 그 모델 이름은 `docs/decisions/0010-...md`에 살아 있다.
 _D_STATUS_CLAIM = re.compile(
-    r"(D\d+)(?:\]\([^)]*\))?[*`\s]{0,4}(?:는|은|이)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+    r"(?<![A-Za-z0-9-])([DR]\d+)(?:\]\([^)]*\))?"
+    # (가) 맨형 — 조사가 없다. `[D77](…) 닫힘` · `**D54** 부분` · `D9(닫힘)`
+    r"(?:[*`\s(]{1,4}\*{0,2}`?(열림|닫힘|보류|부분)`?"
+    # (나) 인접형 — 조사/쉼표 바로 뒤
+    r"|[*`\s]{0,4}(?:는|은|이|가|,)\s*\*{0,2}`?(열림|닫힘|보류|부분)`?\*{0,2}"
+    # (다) 말이 끼는 형 — 백틱 필수. 창이 **다른 D·R 토큰과 강한 구두점을 못 넘는다**
+    r"|[*`\s]{0,4}(?:는|은|이|가|의|,)\s*"
+    r"(?:(?![DR]\d)[^.\n|·—()「」?!;:]){0,24}?\*{0,2}`(열림|닫힘|보류|부분)`)"
 )
 
+# 취소선 구간은 **철회 표시**다 — 검사 전에 걷어낸다. `~~D57(부분)~~ → 닫혔다` 처럼
+# 스스로 정정하는 문장이 저장소의 표준 형태이고, 안 걷으면 그것이 전부 위반으로 잡힌다.
+_WITHDRAWN = re.compile(r"~~.*?~~")
+
+
+def _claimed_status(claim: "re.Match[str]") -> str:
+    """세 문형 중 실제로 잡힌 쪽의 상태값."""
+    return next(group for group in claim.groups()[1:] if group)
+
 # D 본문 파일 머리의 상태 셀. `| 열림 |` · `| **닫힘** (2026-09-18, 선택지 (a)) |` 둘 다 받는다.
+# ## 문형 (라) — 상태어가 **서술어**일 때. 따로 두는 이유가 있다
+#
+# 6라운드가 실형태 하나를 더 찾았다: `[R1](…) `:11`의 상태는 **부분**이고`
+# (`docs/open-questions/D/D64.md:56`). (다)가 못 넘은 것은 새 문자가 아니라 **창 안에 낀
+# 코드 스팬**이다 — `:11`의 `:` 이 (다)의 구두점 차단에 걸린다.
+#
+# ⚠ **여기서 (다)의 백틱 요구를 푸는 것이 첫 수정이었고 그것이 틀렸다.** 풀면
+# 「D54의 보류 해제를 기록한다」가 잡힌다 — 아래 음성 핀이 정확히 그 문장이고, 거기서
+# 「보류」는 단언이 아니라 **명사구의 수식어**다. 문자 축을 넓히면 미탐 하나를 오탐 한
+# 부류와 바꾼다([CLAUDE.md](../CLAUDE.md) §2.5).
+#
+# 그래서 축을 **문법 자리**로 잡는다: 상태어 뒤에 **계사**(`이다`·`이고`·`이며`·`이었`·`였`)가
+# 붙으면 서술어이고 그때만 단언이다. 「보류 해제를」은 뒤에 명사가 오므로 안 걸린다.
+#
+# **덧셈으로 건다.** `_D_STATUS_CLAIM`은 **원문 줄에 그대로** 돌고 (라)만 정규화된 줄에
+# 돈다 — 그러지 않으면 정규화가 (다)의 백틱을 떼어 **기존 적중 둘을 잃는다**(실측).
+#
+# **실측 —** 추적되는 `*.md` 전수에서 (라)가 잡는 것은 넷이고 그중 기존 검출기 너머는
+# **하나**(위 실형태)다. **잃은 것 0 · 새 위반 0 · 음성 핀 6/6 유지.**
+_CLAIM_PART = re.compile(r"열림|닫힘|보류|부분|(?<![A-Za-z0-9-])[DR]\d+")
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+
+
+def _prose_only(line: str) -> str:
+    """백틱 스팬을 걷은 줄 — 스팬은 산문이 아니라 코드다.
+
+    단 그 안에 단언의 두 요소(항목 `D<n>`·`R<n>` 또는 상태어)가 있으면 **잡음이 아니라
+    단언의 일부**이므로 백틱만 뗀다. 통째로 지우면 `` `D53`(닫힘) ``
+    (`docs/open-questions/D/D66.md:19`)에서 **토큰째 사라져 적중을 잃는다**(실측).
+    """
+    return _CODE_SPAN.sub(
+        lambda span: span.group(0)[1:-1] if _CLAIM_PART.search(span.group(0)) else " ",
+        line,
+    )
+
+
+_D_STATUS_PREDICATE = re.compile(
+    r"(?<![A-Za-z0-9-])([DR]\d+)(?:\]\([^)]*\))?"
+    r"[*`\s]{0,4}(?:는|은|이|가|의|,)\s*"
+    r"(?:(?![DR]\d)[^.\n|·—()「」?!;:]){0,24}?"
+    r"\*{0,2}(열림|닫힘|보류|부분)\*{0,2}(?:이다|이고|이며|이었|였)"
+)
+
+
+
 _D_STATUS_CELL = re.compile(r"^\|\s*\*{0,2}(열림|닫힘|보류|부분|결정|결함 아님)")
 
 
 def _d_body_status(did: str) -> str | None:
-    """`D<n>.md` 머리 표가 선언한 상태. 없으면 `None`."""
-    path = REPO_ROOT / "docs" / "open-questions" / "D" / f"{did}.md"
+    """`D<n>.md`·`R<n>.md` 머리 표가 선언한 상태. 없으면 `None`.
+
+    **`R`도 본다.** R은 이슈를 만들지 않아 미러가 없으므로 산문이 유일한 오염원이다.
+
+    ⚠ **「D만 봐서 R 모순이 살아남았다」로 읽지 마라.** 한때 그렇게 적었는데 거짓 인과다 —
+    `docs/model-serving.md`의 *"R2는 그 파일에서 아직 `열림`이고"*는 `[DR]` 확장 뒤에도
+    **안 잡혔다.** 그것을 놓친 것은 **(다) 문형 미지원**이지 `R` 미지원이 아니다.
+    """
+    path = REPO_ROOT / "docs" / "open-questions" / did[0] / f"{did}.md"
     if not path.is_file():
         return None
     for line in _read(path).splitlines():
@@ -1295,19 +1390,97 @@ def _d_body_status(did: str) -> str | None:
 
 
 def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
-    """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다."""
-    sample = "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다."
-    found = _D_STATUS_CLAIM.search(sample)
-    assert found is not None, "상태 단언 정규식이 실제 문장을 못 잡는다"
-    assert found.group(1) == "D74"
-    assert found.group(2) == "열림"
+    """정규식이 아무것도 안 잡으면 아래 검사가 조용히 통과한다 — 그것부터 막는다.
+
+    **양성 핀은 전부 저장소에 실재했던 형태다** — 옆에 출처를 적는다. 지어낸 샘플을 쓰면
+    잡히는 형태만 고르게 되고, 그것이 정확히 2026-09-20에 `[DR]` 확장의 구멍을 덮은
+    방식이다([CLAUDE.md](../CLAUDE.md) §0).
+
+    ⚠ **음성 핀은 다르다 — 넷은 구성문이다.** 「잡히면 안 되는 형태」는 정의상 저장소에
+    없거나(막아야 하니까) 다른 뜻으로만 있다. 그래서 **실재 여부가 아니라 「그 문형이
+    저장소에 실제로 나타날 수 있는가」로** 고른다: 다중 D 열거·모델 이름·인덱스 표 행은
+    전부 이 저장소의 표준 문형이다. 근거를 옆에 적는다.
+    """
+    # ⚠ **정규식 이름을 직접 부르는 단언이 하나는 있어야 한다.** 아래 루프는 `found` 를
+    # 거쳐 가므로 「이 정규식에 핀이 있는가」를 기계로 세는 검사가 못 본다
+    # (`test_every_detector_carries_a_contamination_pin`).
+    assert _D_STATUS_CLAIM.search("- [D77](docs/open-questions/D/D77.md) 닫힘"), "맨형을 못 잡는다"
+    assert _WITHDRAWN.sub("", "~~D57(부분)~~ 뒤") == " 뒤", "취소선 제거가 깨졌다"
+
+    hits = {
+        # 맨형 — `PROJECT-CONTEXT.md:146`이 로스터 표 뒤에 적는 형태
+        "- [D77](docs/open-questions/D/D77.md) 닫힘": ("D77", "닫힘"),
+        # 맨형(굵게) — `D64.md:62`
+        "(관련: **D54** 부분 — 로스터 모델 중 어느 것도)": ("D54", "부분"),
+        # 인접형 — `D74.md`를 (a)로 닫는 PR이 실험 보고서에 남긴 문장
+        "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다.": ("D74", "열림"),
+        # 인접형(괄호) — `D65.md:56`가 실제로 적었던 형태
+        "**#98(D26, 열림)과의 관계**": ("D26", "열림"),
+        # 말이 끼는 형 — `docs/model-serving.md:100`이 아흐레 들고 있던 **실형태**
+        "R2는 그 파일에서 아직 `열림`이고": ("R2", "열림"),
+        # `의` + 백틱 — `docs/open-questions.md:46`가 적었던 형태
+        "그 승격이 D54의 `열림`을 다시 바꾸지는 않는다": ("D54", "열림"),
+    }
+    for sample, (number, status) in hits.items():
+        found = _D_STATUS_CLAIM.search(sample)
+        assert found is not None, f"상태 단언 정규식이 못 잡는다: {sample}"
+        assert (found.group(1), _claimed_status(found)) == (number, status), sample
+
+    misses = [
+        # 실재: `open-questions.md`가 「남은 **부분**」으로 쓴다 — 거기서 `부분`은 명사다
+        "D29(샘플링 등가화 남은 부분)",
+        # 구성문. `의`+명사구는 흔한 형태이고 그대로 두면 「보류를 풀었다」가 「보류다」로 읽힌다
+        "D54의 보류 해제를 기록한다",
+        # 구성문. `DeepSeek-R1`은 `decisions/0010-...md`에 살아 있는 모델 이름이다
+        "Critic 후보는 DeepSeek-R1, 열림 상태다",
+        # 구성문. 인덱스 표 행은 산문이 아니라 정본 자체다 — 잡으면 자기 자신을 신고한다
+        "| D9 | 인덱서 | 닫힘 | [본문](x.md) |",
+        # 구성문. 문장을 넘어가면 단언이 아니다
+        "D63은 열려 있다. 그 뒤 `닫힘`이 됐다",
+    ]
+    for sample in misses:
+        assert _D_STATUS_CLAIM.search(sample) is None, f"정규식이 정상 문장을 잡는다: {sample}"
+
+    # **오귀속 핀.** 다중 D 열거는 이 저장소의 표준 문형이고(`open-questions.md:40`),
+    # (다)의 창이 다른 D 토큰을 넘으면 **엉뚱한 D를 신고한다.** 잡히되 **옳은 쪽**이어야 한다.
+    for sample, owner in (
+        ("**D29**는 남은 것이 있고 · **D51**이 `보류`다", "D51"),
+        ("D2는 무관하다 — 옆의 D51이 `보류`다", "D51"),
+        ("D40은 아직이고(D35가 `부분`)", "D35"),
+    ):
+        found = _D_STATUS_CLAIM.search(sample)
+        assert found is not None and found.group(1) == owner, f"오귀속: {sample}"
+
+    # **(라) 서술어형의 핀.** 양성은 `docs/open-questions/D/D64.md:56`의 실형태다 —
+    # 6라운드 손 훑기가 찾았고 그때 검출기는 못 잡았다. 음성 둘은 구성문이되 근거가 있다:
+    # 「보류 해제를」은 이 저장소가 실제로 쓰는 명사구이고(아래 `misses`의 같은 문장),
+    # 계사 없는 「열림 상태다」는 `decisions/0010-…md`의 모델 이름 문형과 같은 자리다.
+    assert _D_STATUS_PREDICATE.search(
+        _prose_only("**⑤ R1과의 관계.** [R1](../R/R1.md) `:11`의 상태는 **부분**이고,")
+    ), "(라) 서술어형을 못 잡는다"
+    assert _D_STATUS_PREDICATE.search("D54의 보류 해제를 기록한다") is None, (
+        "(라)가 명사구 수식어를 단언으로 읽는다"
+    )
+
+    # **정규화의 핀.** 스팬을 통째로 지우면 토큰째 사라진다(`D66.md:19`가 그 형태다).
+    assert _prose_only("`D53`(닫힘)이 닫은") == "D53(닫힘)이 닫은", "단언 요소를 든 스팬을 지웠다"
+    assert _prose_only("`:11`의 상태는") == " 의 상태는", "잡음 스팬을 안 걷는다"
+    assert _CODE_SPAN.search("`:11`"), "코드 스팬 정규식이 죽었다"
+    assert _CODE_SPAN.search(":11") is None, "백틱 없는 토막을 스팬으로 읽는다"
+    assert _CLAIM_PART.search("D53"), "단언 요소 정규식이 항목을 못 읽는다"
+    assert _CLAIM_PART.search("trigger_status") is None, "단언 요소 정규식이 아무거나 읽는다"
+
+    # 취소선은 철회 표시다 — 걷어내면 안 남는다.
+    assert _D_STATUS_CLAIM.search(_WITHDRAWN.sub("", "~~D57(부분)~~ → 닫혔다")) is None
 
 
 def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     """산문이 단언한 D 상태가 그 항목 본문 파일의 상태와 같아야 한다.
 
     **왜 필요한가.** 상태의 원천은 `D<n>.md`이고(ADR 0008 — 결함의 상태 원천),
-    `test_every_body_file_has_an_index_row`가 **인덱스 행**을 그것에 묶는다. 그런데 산문은
+    `test_the_index_status_column_matches_its_body_file`이 **인덱스 행의 상태 열**을
+    그것에 묶는다(⚠ 그 검사는 6라운드에 생겼다 — 그전에는 아무것도 안 묶었다.
+    `test_every_body_file_has_an_index_row`는 행의 **존재**만 본다). 그런데 산문은
     아무도 안 본다 — D를 닫는 PR이 본문과 인덱스만 고치고, 그 항목을 **현재형으로 서술하던
     다른 문서**를 놓친다. CLAUDE.md §2.3이 든 사고(*"값이 움직였는데 그 근거만 남았다"*)와
     같은 모양이고, 그때도 CI는 초록이다.
@@ -1326,10 +1499,20 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
     offenders: list[str] = []
 
     for path in _tracked("*.md"):
-        own = path.stem if path.parent.name == "D" else None
+        own = path.stem if path.parent.name in ("D", "R") else None
         for number, line in enumerate(_read(path).splitlines(), start=1):
-            for claim in _D_STATUS_CLAIM.finditer(line):
-                did, claimed = claim.group(1), claim.group(2)
+            stripped = _WITHDRAWN.sub("", line)
+            claims = [
+                (claim.group(1), _claimed_status(claim))
+                for claim in _D_STATUS_CLAIM.finditer(stripped)
+            ]
+            # (라)는 **정규화된 줄**에 따로 돈다. 원문에 걸면 되고 정규화를 위에 걸면
+            # (다)의 백틱이 사라져 기존 적중을 잃는다 — 그래서 합집합이지 대체가 아니다.
+            claims += [
+                (claim.group(1), claim.group(2))
+                for claim in _D_STATUS_PREDICATE.finditer(_prose_only(stripped))
+            ]
+            for did, claimed in dict.fromkeys(claims):
                 if did == own:
                     continue
                 actual = _d_body_status(did)
@@ -1338,10 +1521,280 @@ def test_no_document_states_a_d_status_that_its_body_file_contradicts() -> None:
                 offenders.append(
                     f"{path.relative_to(REPO_ROOT).as_posix()}:{number}: "
                     f"{did}을 「{claimed}」로 적었는데 "
-                    f"docs/open-questions/D/{did}.md는 「{actual}」이다"
+                    f"docs/open-questions/{did[0]}/{did}.md는 「{actual}」이다"
                 )
 
     assert offenders == [], (
-        "D의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
+        "D·R의 상태를 본문 파일과 다르게 단언한 산문이 있다 — 그 항목을 닫은 PR이 "
         "본문·인덱스만 고치고 이 문장을 놓친 자리다(CLAUDE.md §2.3).\n" + "\n".join(offenders)
+    )
+
+
+def test_the_index_status_column_matches_its_body_file() -> None:
+    """인덱스 표의 상태 열이 본문 파일의 상태와 같아야 한다.
+
+    **이 자리가 비어 있었다.** 상태의 원천은 `D<n>.md`인데(ADR 0008 — 결함의 상태 원천)
+    그것을 인덱스에 묶는 검사가 없었다 — `test_every_body_file_has_an_index_row`는 인덱스가
+    가리키는 **집합**과 디스크의 집합을 맞대므로 행의 **존재**만 묶고,
+    `tests/test_open_questions_layout.py`의 `_ROW`는 번호만 캡처한다. 그리고
+    `_D_STATUS_CLAIM`은 산문을 겨냥해 `|`를 문자 클래스에 안 넣으므로 **표 행에 구조적으로
+    안 닿는다** — 셋 사이로 표 전체가 빠져나갔다.
+
+    **실측 —** 인덱스의 한 행만 본문과 어긋나게 바꾸고 전수를 돌렸더니 그대로 통과했다.
+    그 표에는 그렇게 열려 있던 행이 여든 남짓 있었다.
+
+    본문이 없는 행은 `test_every_d_has_a_body_file`이 잡으므로 여기서는 건너뛴다 —
+    한 결함을 두 검사가 이중으로 말하면 어느 쪽을 고쳐야 하는지가 흐려진다.
+
+    ⚠ **이 검사는 산문 검사를 대체하지 않는다.** 표는 정형이라 셀 위치로 읽히고, 산문은
+    문형으로 읽힌다. 둘은 같은 명제(*"D·R의 상태를 본문과 다르게 말한다"*)의 서로 다른
+    문형이고, 한쪽만 들면 [CLAUDE.md](../CLAUDE.md) §2.5가 든 반쪽 전수가 된다.
+    """
+    index = REPO_ROOT / "docs" / "open-questions.md"
+    offenders: list[str] = []
+
+    for number, line in enumerate(_read(index).splitlines(), start=1):
+        cells = _split_cells(line)
+        if len(cells) < 3:
+            continue
+        did = cells[0]
+        if not (len(did) > 1 and did[0] in "DR" and did[1:].isdigit()):
+            continue
+        claimed = cells[2].strip("* `")
+        actual = _d_body_status(did)
+        if actual is None or actual == claimed:
+            continue
+        offenders.append(
+            f"docs/open-questions.md:{number}: {did} 행이 「{claimed}」인데 "
+            f"docs/open-questions/{did[0]}/{did}.md는 「{actual}」이다"
+        )
+
+    assert offenders == [], (
+        "인덱스 표의 상태가 본문 파일과 어긋난다 — 상태의 원천은 본문이고 표는 그것을 "
+        "비춘다(ADR 0008 · CLAUDE.md §3).\n" + "\n".join(offenders)
+    )
+
+
+# 폐기됐다는 표시. **`제거`는 뺐다** — `PROJECT-CONTEXT.md` §5가 「enum 제약 **제거**」로 상시 쓰는
+# 낱말이라, 폐기와 무관한 이웃 줄 하나가 검사를 통과시켰다(2라운드 리뷰가 주입으로 재현).
+_DEPRECATION_MARKER = re.compile(r"폐기|소멸|없앴")
+# 취소선은 **같은 줄에서만** 센다. 표에서는 그것이 폐기 표시이지만, 창 안 아무 줄에나 있는
+# `~~`를 받으면 같은 우회가 열린다.
+_STRIKETHROUGH = "~~"
+# 곱셈기호(U+00D7)·ASCII `x`·대문자 `X`·전각 숫자·사이 공백을 전부 받는다.
+# 2026-09-20에 `git grep "@2x2"`(ASCII)로만 훑은 PR이 `2×2`를 든 네 줄을 통째로 놓쳤고,
+# 그 검사를 처음 쓸 때 이번에는 `2X2`·`2 × 2`를 놓쳤다 — 같은 실수의 두 번째 판이다.
+# ⚠ **숫자 경계가 필수다.** 없으면 `8192 × 2회`(실험 보고서의 토큰 상한 표기)와 `512x256`이
+# 축으로 읽힌다 — 지금 범위에는 오탐이 0이지만 같은 정규식을 차단 문구 쪽도 쓴다.
+_TWO_BY_TWO = re.compile(r"(?<![0-9０-９])[2２]\s*[×xX✕✖╳]\s*[2２](?![0-9０-９])")
+
+
+def test_the_dead_2x2_axis_is_never_named_without_saying_it_is_dead() -> None:
+    """정본과 살아 있는 소스가 2×2를 들면 **그것이 폐기됐다는 표시를 같이** 들어야 한다.
+
+    2×2 실험 축은 2026-09-20 PM 결정으로 폐기됐고 `CONDITION_PATTERN`이 `@pipeline`만
+    받는다. 그런데 그 축을 **앞으로 올 사건**처럼 적은 줄이 남으면, 읽는 사람은 오지 않을
+    선행을 기다린다 — `config/profiles.yaml`이 모델 자리 확정을 *"2×2 뒤 정식으로 정한다"*로
+    걸어 둔 것이 그 모양이었다.
+
+    **기록은 지우지 않는다.** 폐기 사실을 적은 줄은 통과한다 — 관측과 이력은 남기고
+    「살아 있는 지시」만 막는 것이 이 검사의 경계다(CLAUDE.md §0의 「관측은 안 지운다」).
+
+    **왜 창(window)으로 보나.** 주석은 여러 줄에 걸쳐 앞줄이 사실을, 뒷줄이 처분을 적는다
+    (`src/schemas/run.py`의 `CONDITION_PATTERN` 주석이 그렇다). 줄 하나만 보면 그 형태가
+    전부 걸리고, 그러면 다음 사람이 이 검사를 지운다.
+
+    **범위는 「읽으면 그대로 따르는 것」뿐이다** — `PROJECT-CONTEXT.md`·`src/`·`config/`.
+
+    ⚠ **`docs/` 를 안 넣은 것은 의도다.** 2026-09-20에 `docs/open-questions/D/` 까지 넓혀
+    돌려 보니 **열둘**이 나왔고(커밋 `32ee331` 트리에서 잰 값) 그중 **열하나가 장부의 이력
+    서술**이었다 — `D1:29`(원질문 문장) · `D30:11`·`D79:69`(D1과의 대조) · `D44:11`·`D52:11`
+    (당시 기록 인용) · `D57:29` · **`D64`의 다섯 줄**(`:46`·`:60`·`:62`·`:74`·`:78` — 그 파일
+    머리의 ⚠ 가 *"등재 시점의 상태다"*로 덮는다). 그것을 고치는 것은 관측을 지우는 일이다
+    ([CLAUDE.md](../CLAUDE.md) §0).
+
+    **진짜 위반은 하나였다** — `D54.md:66`의 *"넘기는 시점은 2×2 전량 완료 후다"*. 같은 PR에서
+    그 줄에 **폐기 표시를 달았다**(문장은 남기고 ⚠ 를 붙였다 — 관측을 안 지운다). **실험
+    보고서도 같은 이유로 밖이다** — 날짜 박힌 스냅샷이라 2×2를 현재형으로 적어도 그때의 사실이다.
+    """
+    # **오염 핀.** 현재 범위의 매치 다섯이 전부 폐기 표시로 면제되므로 아래 단언은
+    # `[] == []`다 — **검출기를 통째로 죽여도 초록이다.** 형제 검사
+    # (`test_the_blocking_messages_...`)에는 핀을 다섯 달면서 이쪽에는 0개를 달았고,
+    # 4라운드 리뷰가 정규식을 무력화해 그것을 재현했다.
+    assert _TWO_BY_TWO.search("2×2 뒤 정식으로 정한다"), "곱셈기호를 놓친다"
+    assert _TWO_BY_TWO.search("2x2 뒤"), "ASCII x를 놓친다"
+    assert _TWO_BY_TWO.search("2X2 뒤"), "대문자 X를 놓친다"
+    assert _TWO_BY_TWO.search("2 × 2 뒤"), "사이 공백을 놓친다"
+    assert _TWO_BY_TWO.search("２×２ 뒤"), "전각 숫자를 놓친다"
+    assert not _TWO_BY_TWO.search("8192 × 2회"), "앞 숫자 경계가 없다"
+    assert not _TWO_BY_TWO.search("해상도 2x25"), "뒤 숫자 경계가 없다"
+    assert _STRIKETHROUGH in "~~2x2 스펙 고정값~~", "취소선 표시가 바뀌었다"
+    assert _DEPRECATION_MARKER.search("2×2 전량 폐기로 소멸했다"), "폐기 표시를 못 읽는다"
+    assert not _DEPRECATION_MARKER.search("enum 제약 제거는 별개다"), "「제거」를 표시로 읽는다"
+
+    window = 3
+    offenders: list[str] = []
+
+    for path in _tracked("PROJECT-CONTEXT.md", "src", "config"):
+        lines = _read(path).splitlines()
+        for index, line in enumerate(lines):
+            if not _TWO_BY_TWO.search(line):
+                continue
+            # 창은 **양쪽**을 본다. 주석은 앞줄에 사실을, 뒷줄에 처분을 적기도 하고 그 반대도 한다.
+            nearby = "\n".join(lines[max(0, index - window) : index + 1 + window])
+            if _STRIKETHROUGH in line or _DEPRECATION_MARKER.search(nearby):
+                continue
+            offenders.append(
+                f"{path.relative_to(REPO_ROOT).as_posix()}:{index + 1}: {line.strip()}"
+            )
+
+    assert offenders == [], (
+        "폐기된 2×2 축을 살아 있는 것처럼 드는 줄이 있다 — 읽는 쪽이 오지 않을 선행을 "
+        "기다린다.\n" + "\n".join(offenders)
+    )
+
+
+# ## 검출기에는 핀이 따라온다 — 이 파일 자신을 검사한다
+#
+# **이 검사가 있는 이유는 실측이다.** 2026-09-20에 PR #227이 적대적 리뷰를 다섯 라운드
+# 받았고, 그중 **두 라운드의 HIGH가 「검출기에 핀이 없어 공회전」**이었다 — 정규식을
+# 통째로 죽여도 CI가 초록이었다. 고치고 나서 이 파일 전체를 세어 보니
+# **전수 검사를 굴리는 정규식 25개 중 양·음 핀을 다 든 것이 3개**였다.
+# 내가 낸 두 결함은 예외가 아니라 **이 파일의 기본값**이었다.
+# ⚠ **그 3은 이 검사를 세우기 직전의 수다** — 세운 커밋이 둘을 더 달아 5가 됐고,
+# 6라운드의 재기준선 뒤로는 35개 중 8이다. 재는 시점을 안 적으면 다음 사람이
+# 「재현이 안 된다」로 읽는다([CLAUDE.md](../CLAUDE.md) §2.4) — 실제로 그랬다.
+#
+# 규칙은 **래칫**이다 — 새 검출기는 핀을 들어야 하고, 아래 부채 목록은 **줄기만 한다.**
+# 한 번에 스무 개를 채우려다 아무것도 안 하는 것보다, 다음 사람이 하나를 더할 때
+# 막는 편이 실제로 줄어든다(「인덱스 표는 지우지 않는다」와 같은 논법).
+#
+# ## 6라운드 — **「어느 것이 전수인가」를 맞히려던 것이 틀렸다**
+#
+# 처음에는 검출기 중 **전수를 굴리는 것**만 골라 핀을 요구했고, 고르는 방법이
+# *"함수 안에 `offenders` 라는 이름의 변수가 있는가"* 였다. 그 축이 샜다 — 6라운드가
+# 세 갈래를 **실제로 통과시켰다**(합성 검출기를 넣고 이 검사를 돌려 확인):
+#
+# 1. `assert not any(_RX.search(x) for x in ...)` — `offenders` 변수가 없어 함수째 안 보인다.
+# 2. `_TABLE = {"k": _RX}` 뒤 `_TABLE["k"].search(...)` — 함수 안에 `_RX` 라는 이름이 안 뜬다.
+#    도우미 함수로 한 겹 빼도 같다.
+# 3. `assert None is _RX.search(x)` — `_assert_direction` 이 좌변을 안 봐서 `pos` 로 읽혔고,
+#    **음성 단언 둘이 양·음 쌍으로 통과**했다.
+#
+# 셋을 각각 막는 것은 **또 문자열 축**이다([CLAUDE.md](../CLAUDE.md) §2.5). 그래서 고르기를
+# 통째로 버렸다 — **모듈 수준 `re.compile` 은 전부 핀을 든다.** 추론이 없으면 샐 곳도 없다.
+#
+# **재기준선.** 그 결과 검사 대상이 25에서 **35**(이 파일의 전 검출기)로 늘었고 면제 목록도
+# 20에서 **27**이 됐다. ⚠ **부채가 늘어난 것이 아니라 안 보이던 부채가 드러난 것이다** —
+# 새로 들어온 일곱(`_PIPE`·`_LEADING_PIPE`·`_TRAILING_PIPE`·`_D_ROW`·`_D_STATUS_CELL`·
+# `_ADR_ROW`·`_KEPT_HEADING`)은 **한 번도 검사받은 적이 없다.** 이 재기준선 뒤로는 그대로
+# 래칫이다.
+
+# ⚠ **이 목록은 늘릴 수 없다.** 줄이는 PR만 이 줄을 건드린다.
+_UNPINNED_LEGACY = frozenset({
+    "_ABSENT_CLAIM", "_ADR_ROW", "_CLAUSE_END", "_COUNT_CLAIM", "_DATED_LINE", "_DEVICE_ROW",
+    "_D_REF", "_D_ROW", "_D_STATUS_CELL", "_FENCE", "_FT_REF", "_KEPT_HEADING", "_LEADING_KEY",
+    "_LEADING_PIPE", "_LINK", "_MEMORY_HEADER", "_MEMORY_ROW", "_PIPE", "_REGISTRY_CONTEXT",
+    "_REPORT_NAME", "_ROSTER_HEADING", "_R_REF", "_R_ROW", "_SEPARATOR", "_SERVED_ROLE_CLAIM",
+    "_STRUCK", "_TRAILING_PIPE",
+})
+
+
+def _assert_direction(node: ast.Assert) -> str | None:
+    """단언의 방향. `None`이면 전수 단언(`offenders == []`)이라 핀이 아니다."""
+    test = node.test
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return "neg"
+    if isinstance(test, ast.Compare):
+        if any(isinstance(op, ast.NotIn) for op in test.ops):
+            return "neg"
+        # ⚠ `comparators` 는 **우변뿐**이다. `None is X` 는 `None` 이 `left` 에 있어
+        # 여기서 빠지고 아래 `pos` 로 떨어졌다 — 음성 단언 둘이 **양·음 쌍으로 통과**했다
+        # (6라운드 실측: `_PROBE_FAKE` 가 핀 없이 래칫을 통과했다).
+        if any(isinstance(op, ast.Is) for op in test.ops) and any(
+            isinstance(c, ast.Constant) and c.value is None
+            for c in (test.left, *test.comparators)
+        ):
+            return "neg"
+        if any(isinstance(op, ast.Eq) for op in test.ops) and any(
+            isinstance(c, ast.List) and not c.elts for c in test.comparators
+        ):
+            return None
+    return "pos"
+
+
+def test_the_assert_direction_reads_both_sides_of_an_is_comparison() -> None:
+    """`None is X` 도 음성이다 — 우변만 보면 그것을 **양성**으로 읽는다.
+
+    **사고 —** 6라운드까지 좌변을 안 봤다. 그래서 음성 단언 **둘**(`None is X` 와
+    `X is None`)을 든 검출기가 **양·음 쌍**으로 래칫을 통과했다. 핀이 붙은 것처럼 보이는데
+    그 검출기가 한 번이라도 무언가를 잡는다는 증거는 어디에도 없다 — 아래 검사가 막으려는
+    상태 그 자체다. **`_assert_direction` 을 직접 겨눈 검사가 없어서** 전수를 거쳐야만
+    드러났고, 그 전수는 이 오분류를 초록으로 통과시킨다.
+    """
+
+    def direction(source: str) -> str | None:
+        parsed = ast.parse(source).body[0]
+        assert isinstance(parsed, ast.Assert)
+        return _assert_direction(parsed)
+
+    assert direction("assert _X.search(s) is None") == "neg"
+    assert direction("assert None is _X.search(s)") == "neg", "좌변의 None 을 못 본다"
+    assert direction("assert _X.search(s) is not None") == "pos"
+    assert direction("assert None is not _X.search(s)") == "pos", "부정을 뒤집어 읽는다"
+    assert direction("assert not _X.search(s)") == "neg"
+    assert direction("assert _X.search(s)") == "pos"
+    assert direction("assert offenders == []") is None, "전수 단언은 핀이 아니다"
+
+
+def test_every_detector_carries_a_contamination_pin() -> None:
+    """전수 검사를 굴리는 정규식은 **양성·음성 핀을 둘 다** 들어야 한다.
+
+    **왜 둘 다인가.** 양성만 있으면 정규식이 넓어져 정상 문장을 막는 것을 못 잡고,
+    음성만 있으면 좁아져 **검출기가 아무것도 안 잡는 상태**를 못 잡는다. 실제로 난 사고는
+    후자다 — 범위 안의 매치가 전부 면제되면 단언이 `[] == []`가 되어 **정규식을 지워도
+    초록**이다.
+
+    ⚠ **단언이 정규식 이름을 직접 불러야 센다.** `found = _X.search(s)` 뒤에
+    `assert found is not None` 은 이 검사에 안 보인다 — 그 간접이 정확히 `_D_STATUS_CLAIM`의
+    양성 핀을 0으로 만들었다. 직접 호명이 규율이기도 하다.
+
+    **면제는 늘리지 않는다.** `_UNPINNED_LEGACY`는 이 검사를 세운 날의 부채이고
+    줄이는 방향으로만 움직인다.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+
+    detectors = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+        if isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "compile"
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    def named(node: ast.AST) -> set[str]:
+        return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} & detectors
+
+    pins: dict[str, set[str]] = {}
+    for node in (n for n in ast.walk(tree) if isinstance(n, ast.Assert)):
+        direction = _assert_direction(node)
+        if direction is None:
+            continue
+        for name in named(node.test):
+            pins.setdefault(name, set()).add(direction)
+
+    unpinned = {d for d in detectors if pins.get(d, set()) != {"pos", "neg"}}
+
+    assert unpinned <= _UNPINNED_LEGACY, (
+        "전수 검사를 굴리는 새 정규식에 오염 핀이 없다 — 그 검출기가 고장 나도 CI는 "
+        "영영 초록이다. 이름을 직접 부르는 양성·음성 단언을 하나씩 단다:\n"
+        + "\n".join(f"  {d}" for d in sorted(unpinned - _UNPINNED_LEGACY))
+    )
+    assert _UNPINNED_LEGACY <= detectors, "면제 목록이 없는 이름을 든다"
+    stale = _UNPINNED_LEGACY - unpinned
+    assert not stale, (
+        "면제 목록에 **이미 핀이 붙은** 정규식이 남아 있다 — 부채를 갚았으면 목록에서 "
+        "지운다. 안 지우면 다음 사람이 그만큼 다시 늘릴 수 있다:\n"
+        + "\n".join(f"  {d}" for d in sorted(stale))
     )

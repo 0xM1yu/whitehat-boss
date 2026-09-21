@@ -529,7 +529,8 @@ def test_a_profile_with_neither_a_single_scout_nor_the_pool_is_rejected() -> Non
 def test_a_profile_declaring_only_part_of_the_pool_is_rejected() -> None:
     """풀은 셋 전부이거나 하나도 없거나다.
 
-    둘만 선언하면 그 프로필은 **한 CWE 계열을 통째로 안 본다**([CONTEXT.md](../CONTEXT.md)
+    둘만 선언하면 그 프로필은 **한 CWE 계열을 통째로 안 본다**
+    ([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md)
     §1의 계열 배정). 그 사실이 후보 수 감소로만 나타나므로 run 결과만 봐서는 안 보인다.
     """
     with pytest.raises(ValidationError, match="Scout 자리"):
@@ -794,6 +795,9 @@ def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Pa
         [],
         {},
         {},
+        # compile_flags — 이 검사의 축이 아니다. 어댑터를 안 세웠으므로 `None`이고,
+        # 그것은 `RunRecord.compile_flags`가 정한 "이 기록은 남기지 않았다"와 같은 뜻이다.
+        None,
     )
     assert record.thresholds["output_max_by_role.critic"] == 8192.0, (
         "요청에는 실리는데 기록에 안 남는다 — engineering-guide.md §5가 그 run을 비교표에서 뺀다"
@@ -884,7 +888,7 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     ## 왜 필요한가
 
     확정 로스터의 Critic 자리는 `gpt-oss-20b` + **`reasoning_effort: high`**다
-    (`CONTEXT.md` §1). 그런데 그 값이 들어갈 자리가 코드에 없었다 — `ModelEntry`는
+    (`PROJECT-CONTEXT.md` §1). 그런데 그 값이 들어갈 자리가 코드에 없었다 — `ModelEntry`는
     `extra="forbid"`(`HarnessModel`)라 registry에 적으면 `load_config`가 죽고,
     `_request_payload`는 고정 dict라 실을 경로도 없었다. **registry 등재가 끝나도
     그 행은 배선되지 않는 상태였다.**
@@ -989,6 +993,9 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         [],
         {},
         {},
+        # compile_flags — 이 검사의 축이 아니다. 어댑터를 안 세웠으므로 `None`이고,
+        # 그것은 `RunRecord.compile_flags`가 정한 "이 기록은 남기지 않았다"와 같은 뜻이다.
+        None,
     )
     assert record.model_reasoning_effort == {"auditor": "high"}, (
         "요청에는 실리는데 기록에 안 남는다 — §5가 그 run을 비교표에서 뺀다"

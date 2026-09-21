@@ -29,7 +29,7 @@ from src.adapters.fake_model import FakeModelClient
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
-from src.orchestrator import runner
+from src.orchestrator import runner, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
@@ -494,6 +494,22 @@ def test_incomplete_manifest_fields_are_reported_not_faked(tmp_path: Path) -> No
     assert any("tool_images" in warning for warning in result.warnings)
 
 
+def test_the_record_carries_the_compile_condition(tmp_path: Path) -> None:
+    """컴파일 조건이 비교표에 나타나야 한다 (D32 / #74).
+
+    D32: *"`RunRecord`에 없으므로 두 run을 나란히 놓았을 때 컴파일 조건이 같았는지 다른지가
+    표에 나타나지 않는다."* 배선이 끊기면 **여기서만** 드러난다 — 어댑터는 제 값을 내고
+    스키마는 필드를 갖고 있는데 그 사이가 안 이어진 상태가 전부 초록으로 통과한다.
+
+    Fake로 돈 run이라 조건은 **비어 있다**. 빈 값은 *"기록했으나 컴파일한 도구가 없었다"*
+    이고 `None`은 *"이 manifest는 남기지 않았다"*(옛 기록)다 — `model_sampling`의 관용구다.
+    """
+    result, _ = _run(tmp_path)
+
+    assert result.record.compile_flags is not None
+    assert result.record.compile_flags.std == {}
+
+
 # --- 하네스 저장소 상태 기록 (P3) --------------------------------------------
 
 
@@ -625,7 +641,7 @@ def test_missing_run_labels_names_every_gap_the_operator_must_fill() -> None:
     assert [w for w in gaps if "condition" in w], "조건을 안 준 run이 기본 라벨로 조용히 남는다"
 
     filled = runner.missing_run_labels(
-        device="atom", kb_snapshot="kb-20260901", condition="B1prime@2x2"
+        device="atom", kb_snapshot="kb-20260901", condition="B1prime@pipeline"
     )
     assert filled == []
 
@@ -647,7 +663,7 @@ def test_the_pre_run_check_and_incomplete_fields_use_the_same_sentence(tmp_path:
     after = runner.incomplete_fields(record)
 
     before = runner.missing_run_labels(
-        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition="B1prime@2x2"
+        device=None, kb_snapshot=runner.DEFAULT_KB_SNAPSHOT, condition="B1prime@pipeline"
     )
     assert before, "run 전 검사가 아무 말도 하지 않는다"
     for sentence in before:
@@ -687,6 +703,81 @@ def test_run_names_the_gaps_before_it_claims_a_run_dir(
     assert not list(tmp_path.iterdir()), "판정 전에 이미 디렉터리를 만들었다"
 
 
+def test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects() -> None:
+    """실서빙 run을 막는 문구가 **존재할 수 없는 조건 축**을 사유로 들지 않는다.
+
+    **왜 필요한가.** `BLOCKING_WHEN_SERVING`의 키는 주석이 아니라 **운영자에게 나가는
+    출력**이다 — `cli.py`가 그것을 찍고 exit 2로 거부한다. 그런데 그 문구가 드는 사유는
+    `CONDITION_PATTERN`이 무엇을 받느냐에 달려 있고, **패턴은 움직인다.** 축이 하나
+    없어지면 그 축을 근거로 대던 문구는 *일어날 수 없는 일*을 이유로 run을 막는다.
+
+    > **사고 —** 2026-09-20에 2×2 축을 `CONDITION_PATTERN`에서 뺐는데
+    > `_CONDITION_DEFAULTED`는 *"2×2 축으로 돌린 run이 pipeline 라벨로 남으면"*을 그대로
+    > 들고 있었다. 같은 PR이 이 파일의 **docstring은 고쳤고** 프로덕션 문자열은 놓쳤다 —
+    > 산문과 출력이 정면으로 어긋난 채 CI가 초록이었다(CLAUDE.md §2.3).
+
+    **두 모양만 본다** — `N×N` 리터럴과 `@축`이다. 문구 전체를 패턴과 대조하면 일반 산문이
+    전부 걸리고, 그러면 다음 사람이 이 검사를 지운다.
+
+    > **사고 하나 더 — 2026-09-20에 위 사고의 거울상을 밟았다.** 첫 판은 「축」이라는 낱말
+    > **앞의 토큰**만 봤다. 구멍이 셋이다 — ① 「축」이라는 낱말이 없거나 그 앞에 한글이
+    > 끼면(`2×2 실험 축`) 통째로 놓치고, ② `BLOCKING_WHEN_SERVING`의 **값은 안 봤고**,
+    > ③ `retriever 축` 같은 무관한 정상 문구를 막았다. 검출기를 위 두 축으로 갈아치우면서
+    > **이 docstring의 그 문장을 안 고쳤다** — 이번엔 코드를 고치고 산문을 놓쳤다.
+    >
+    > ⚠ **그 구멍 목록도 한 번 틀렸다.** 4라운드 전까지 ②를 *"`2X2`를 놓친다"*로 적었는데,
+    > 첫 판의 `[0-9A-Za-z×]+`는 `X`가 `[A-Za-z]`에 들어 있어 **`2X2 축`을 잡는다.**
+    > 코드를 안 열고 앞 라운드의 인라인 주석을 옮긴 것이다([CLAUDE.md](../CLAUDE.md) §2.1).
+    """
+    # 두 모양을 본다. **`N×N` 리터럴**이 실제로 터진 것이고(2×2·2x2·2X2·2 × 2·전각),
+    # **`@축`**은 패턴의 어휘와 직접 대조한다. 「축」 앞 토큰만 보던 첫 판은 구멍이 셋이었다 —
+    # `2×2 실험 축`처럼 한글이 끼면 끊기고, `2X2`를 놓치고, `retriever 축` 같은 무관한
+    # 정상 문구를 막았다(2라운드 리뷰가 주입으로 전부 재현).
+    # 숫자 경계를 둔다 — 없으면 `8192 × 2회`·`512x256` 같은 곱셈·치수 표기가 축으로 읽힌다.
+    matrix_axis = re.compile(r"(?<![0-9０-９])[2２]\s*[×xX✕✖╳]\s*[2２](?![0-9０-９])")
+    # **어휘를 패턴에서 뽑고 조건 라벨에 앵커한다.** 예전에는 `축 not in CONDITION_PATTERN`,
+    # 즉 정규식 **소스 문자열에 대한 부분문자열 검사**였다 — `@B`·`@line`은 소스에 우연히
+    # 들어 있어 통과하고 `ops@example.com`은 `example`을 축으로 신고했다(3라운드 리뷰 실측).
+    labels = re.findall(r"\(([^)]+)\)", CONDITION_PATTERN)[0]
+    allowed = set(re.findall(r"@(\w+)", CONDITION_PATTERN))
+    # 두 형태를 받는다 — **조건 라벨이 붙은 `B1@축`**과 **맨 `@축`**. 라벨형만 보면
+    # 장래에 다른 축이 폐기될 때의 맨 언급(`@ensemble`)을 통째로 잃는다 —
+    # *"오탐보다 미탐이 나쁘다"*. 맨 형태는 앞이 낱말이 아닐 때만 받아 `ops@example.com`을 뺀다.
+    suffixed_axis = re.compile(rf"(?:{labels})@(\w+)|(?<![\w.])@(\w+)")
+
+    def rejected(text: str) -> list[str]:
+        found = [m.group(0) for m in matrix_axis.finditer(text)]
+        found += [
+            axis
+            for m in suffixed_axis.finditer(text)
+            for axis in [m.group(1) or m.group(2)]
+            if axis not in allowed
+        ]
+        return found
+
+    # **오염 핀.** 아래가 없으면 두 문구가 깨끗해지는 순간 이 단언이 빈 리스트끼리 비교하는
+    # 공회전이 되고, 검출기가 고장 나도 영영 초록이다.
+    # ⚠ **검출기가 둘이므로 핀도 둘이다.** 첫 판은 `N×N` 핀 하나뿐이라 `@축` 쪽을 무력화해도
+    # 통과했다 — 절반만 붙드는 핀은 안 붙드는 것과 같다(3라운드 리뷰가 변이로 재현).
+    assert rejected("2×2 축으로 돌린 run이 pipeline 라벨로 남으면"), "N×N 검출기가 죽었다"
+    assert rejected("condition이 B1@ensemble로 남는다"), "라벨형 @축 검출기가 죽었다"
+    assert rejected("조건 축이 @ensemble였다"), "맨 @축 검출기가 죽었다"
+    assert not rejected(f"조건은 {runner.DEFAULT_CONDITION} 하나다"), "검출기가 정상 조건을 잡는다"
+    assert not rejected("문의는 ops@example.com 으로"), "검출기가 이메일을 축으로 읽는다"
+    assert not rejected("출력 상한 8192 × 2회"), "검출기가 곱셈 표기를 축으로 읽는다"
+
+    offenders = [
+        f"{axis!r}: {text}"
+        for gap, flag in runner.BLOCKING_WHEN_SERVING.items()
+        for text in (gap, flag)  # 키(문구)와 값(플래그명) 둘 다 본다
+        for axis in rejected(text)
+    ]
+    assert offenders == [], (
+        "차단 문구가 CONDITION_PATTERN이 받지 않는 축을 사유로 든다 — 운영자가 "
+        "존재할 수 없는 시나리오를 이유로 거부당한다.\n" + "\n".join(offenders)
+    )
+
+
 def test_a_serving_profile_refuses_to_start_without_the_labels(
     tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -694,8 +785,13 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
 
     경고 한 줄은 긴 run의 출력에 묻힌다. 그리고 그 run은 시작하기도 전에 이미 못 쓰는
     것이 확정돼 있다 — `incomplete_fields()`가 `device`가 비면 "모델 비교표에서
-    제외한다"고 판정하고, `condition`이 기본값으로 굳으면 2×2 축으로 돌린 run이 pipeline
-    라벨을 달아 비교표가 섞인다(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
+    제외한다"고 판정하고, `condition`이 없으면 **어느 조건으로 돈 run인지 산출물로 알 수
+    없다**(`schemas/run.py`). 그러니 GPU를 태우기 전에 **막는다.**
+
+    ⚠ **2026-09-20 — 이 문장의 근거가 바뀌었다.** 예전에는 *"`condition`이 기본값으로 굳으면
+    2×2 축으로 돌린 run이 pipeline 라벨을 달아 비교표가 섞인다"*였는데, 2×2가 폐기되고
+    `CONDITION_PATTERN`이 `@pipeline`만 받게 되어 **그 혼동은 일어날 수 없다.** 막는 이유는
+    이제 「축이 섞인다」가 아니라 「조건이 기록되지 않는다」다. 검사 자체는 그대로 유효하다.
 
     **판별 기준은 `production`이 아니라 `served_models()`다.** 저장소의 프로필이 전부
     `production: false`라 그 필드로는 아무것도 갈리지 않는다(직접 확인). `served_models()`는
@@ -812,14 +908,14 @@ def test_a_malformed_condition_is_refused_before_the_run_dir(
     **형식은 문자열만 보면 안다** — 프로필도 엔드포인트도 필요 없으므로 dev 프로필에서도
     막는다. 이건 정책 선택이 아니라 반드시 죽을 값에 대한 빠른 실패다.
 
-    `B3prime_large@2x2`를 고른 것은 `CONDITION_PATTERN`이 받는 넷(`B1`·`B1prime`·`B3`·
-    `B3prime`) **밖의** 이름이면서 축 접미사는 올바른 값이라서다 — "조건 이름이 틀렸다"와
-    "축 표기가 틀렸다"를 가르는 자리이고, 그 조합을 사람이 실제로 친다.
+    `B3prime_large@pipeline`을 고른 것은 `CONDITION_PATTERN`이 받는 넷(`B1`·`B1prime`·`B3`·
+    `B3prime`) **밖의** 이름이면서 축 접미사(`@pipeline`)는 올바른 값이라서다 — "조건 이름이
+    틀렸다"와 "축 표기가 틀렸다"를 가르는 자리이고, 그 조합을 사람이 실제로 친다.
     """
     code = cli.main(
         [
             "run", "--profile", "dev_fake", "--target", str(TARGET),
-            "--condition", "B3prime_large@2x2", "--device", "atom",
+            "--condition", "B3prime_large@pipeline", "--device", "atom",
             "--kb-snapshot", "kb-20260901",
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
@@ -827,7 +923,7 @@ def test_a_malformed_condition_is_refused_before_the_run_dir(
 
     err = capsys.readouterr().err
     assert code != 0, "형식에 안 맞는 라벨로 run이 시작했다"
-    assert "B3prime_large@2x2" in err, "어느 값이 문제인지 말하지 않는다"
+    assert "B3prime_large@pipeline" in err, "어느 값이 문제인지 말하지 않는다"
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
@@ -940,7 +1036,7 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
         cli.main(
             [
                 "run", "--profile", "b1_single", "--target", str(TARGET),
-                "--condition", "B1prime@2x2", "--device", "atom",
+                "--condition", "B1prime@pipeline", "--device", "atom",
                 "--seed", "20260901", "--artifacts-root", str(tmp_path),
             ]
         )
@@ -1092,7 +1188,20 @@ def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
     rejected = {ReasonCode.CRITIC_REBUTTED.value, ReasonCode.CRITIC_NEED_EVIDENCE.value}
     critic_rate = sum(1 for e in critic if e["data"]["reason"] in rejected) / len(critic)
 
-    repro = {ReasonCode.REPRO_FAILED.value, ReasonCode.REPRO_CONFIRMED.value}
+    # 8단계 재현 시도의 결과 사유 **전부**. trace.py의 이벤트→지표 표와 같은 집합이고,
+    # 접두사 `repro_*`로 세면 evidence_below_proven(F-10b)이 분모에서 빠진다(#68).
+    repro = {
+        ReasonCode.REPRO_FAILED.value,
+        ReasonCode.REPRO_CONFIRMED.value,
+        ReasonCode.EVIDENCE_BELOW_PROVEN.value,
+    }
+    # 이 집합은 **두 벌**이다 — 여기와 `trace.py`의 이벤트→지표 표(그쪽이 정본). 손으로
+    # 유지하다 접두사 산식(`count(repro_*)`)이 새 사유를 빠뜨렸다(#68). 같이 움직이게 묶는다.
+    # 표지가 움직이면 아래 집합이 비어 단언이 곧바로 터진다 — 조용히 통과할 길이 없다.
+    denominator = (trace.__doc__ or "").split("「제거율 — Tool」 산식:", 1)[-1].split("분모", 1)[-1]
+    assert {
+        name.strip() for name in denominator.split("count(", 1)[-1].split(")", 1)[0].split("∪")
+    } == repro, "trace.py의 8단계 제거율 분모와 이 테스트가 세는 사유 집합이 갈라졌다"
     validated = [
         e for e in _of(events, "transition", stage=Stage.VALIDATE) if e["data"]["reason"] in repro
     ]

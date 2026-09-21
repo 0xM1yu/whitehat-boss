@@ -440,8 +440,8 @@ def test_device_is_an_explicit_label_never_the_hostname() -> None:
     둘은 자주 어긋난다 — 로그인 노드에서 하네스를 돌리면 GPU 작업이 한 톨도 일어나지
     않은 기계 이름이 적힌다. `None`은 `repo_dirty`의 `None`과 같은 뜻이다: 확인 못 함.
     """
-    assert RunSpec(condition="B1@2x2", target=TARGET).device is None
-    assert RunSpec(condition="B1@2x2", target=TARGET, device="atom").device == "atom"
+    assert RunSpec(condition="B1@pipeline", target=TARGET).device is None
+    assert RunSpec(condition="B1@pipeline", target=TARGET, device="atom").device == "atom"
 
 
 def test_a_run_without_a_device_is_excluded_from_the_comparison_table(tmp_path: Path) -> None:

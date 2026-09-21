@@ -38,9 +38,11 @@ graph LR
 
 > **위 그림에서 Evidence Gate가 한 칸으로 보이지만 판정은 세 번 돈다.** 게이트는 단계가 아니라
 > **순수 함수(술어)**이고 6·7·8단계에서 각각 호출된다(`stages.GATE_STAGES`). 그림의 칸은 그중
-> **전이가 갈라지는 유일한 자리**인 6단계다 — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의
-> 전이 신호에 실리고, 8단계 재판정은 등급을 **집계만** 한다. 등급이 언제 성립하고 승격이 어디서
-> 정해지는지는 §4의 두 표에 나눠 적었다.
+> **게이트 등급만으로 전이가 갈라지는 자리**인 6단계다(`policy._gate_grade`의 `basis`가 `grade`
+> 하나다) — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의 전이 신호에 실리고, 8단계 재판정도
+> 2026-09-20부터 같은 모양으로 그 단계의 전이 신호에 실린다(F-10 / F-10b — 후자는 아직 안 탄다).
+> 등급이 언제 성립하고
+> 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
 
 ## 3. 단계별 책임과 통과 조건
 
@@ -54,12 +56,12 @@ graph LR
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
-| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 시 `proven` |
+| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 그 갈래는 아직 안 탄다, §4) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
 >
-> **분석 대상 범위 — 1차는 C/C++ 소스 저장소다** ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5, 2026-09-09 승인). 킥오프 발표자료 04-1이 대상을 "펌웨어의 취약점 분석"으로 명시했고 이 문단도 그에 따라 ~~"바이너리·펌웨어도 1급 입력이므로 0·1단계는 두 경로를 **둘 다** 갖춰야 한다"~~고 적었다. 중간발표 슬라이드 8의 "C/C++ 오픈소스 Zero-Day"가 팀의 현재 목표이고, **확정된 슬라이서가 소스 기반**(Joern CPG — [CONTEXT.md](../CONTEXT.md) §2)이라 펌웨어를 1급 입력으로 두면 1단계가 성립하지 않는다. **바이너리·펌웨어는 2차다** — 위 표 0·1단계의 바이너리 경로는 책임 정의로 남되 구현 순서에서 뒤다. 등재는 [open-questions.md](open-questions.md) D9(닫힘).
+> **분석 대상 범위 — 1차는 C/C++ 소스 저장소다** ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5, 2026-09-09 승인). 킥오프 발표자료 04-1이 대상을 "펌웨어의 취약점 분석"으로 명시했고 이 문단도 그에 따라 ~~"바이너리·펌웨어도 1급 입력이므로 0·1단계는 두 경로를 **둘 다** 갖춰야 한다"~~고 적었다. 중간발표 슬라이드 8의 "C/C++ 오픈소스 Zero-Day"가 팀의 현재 목표이고, **확정된 슬라이서가 소스 기반**(Joern CPG — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2)이라 펌웨어를 1급 입력으로 두면 1단계가 성립하지 않는다. **바이너리·펌웨어는 2차다** — 위 표 0·1단계의 바이너리 경로는 책임 정의로 남되 구현 순서에서 뒤다. 등재는 [open-questions.md](open-questions.md) D9(닫힘).
 >
 > **단계 순서 주의**: 위 표는 `Evidence Gate(6) → Critic(7)` 순서다. 킥오프 04-6 표는 `Critic(4차) → Evidence Gate(5차)`로 반대이나, 같은 자료의 05-2 구조도와 하네스 제안서 §3은 위 순서를 따른다. 다수 근거를 채택했고 확정은 [open-questions.md](open-questions.md) D8.
 
@@ -81,7 +83,7 @@ candidate ──scout pass──> triaged ──auditor──> hypothesized
                         │                         │ upheld + 재현 명세
                         │                         ▼
                         │                     validated
-                        │                         │ tool validation 재현 성공
+                        │                         │ tool validation 재현 성공 + Gate E4
                         │                         ▼
                         │                      proven ──> reported
                         │                                 (2인 검증 후, disclosure-policy.md)
@@ -115,7 +117,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
 | E2 | source→sink 경로가 call graph로 확인되고 guard 부재가 코드로 확인 | 6 |
 | E3 | Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
-| E4 | sanitizer/crash/PoC 재현 로그 존재 | 8 — 도구 실행 로그가 있어야 성립한다 |
+| E4 | sanitizer/crash/PoC 재현 로그 존재 — **「실행됐다」까지만 보증한다**(D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
 
 **승격은 게이트가 하지 않는다 — 두 축을 한 표에 넣지 않는 이유다.** `gate.py`는 등급만 내고
 전이는 노드와 정책이 한다(모듈 docstring: *"등급을 전이로 매핑하는 것은 노드 몫이고, trace
@@ -128,13 +130,34 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | E1 | `hypothesized` 유지 | 6단계 · `DecisionPoint.GATE_GRADE` |
 | E2 | Critic으로 (`high-value only`) | 6단계 · `DecisionPoint.GATE_GRADE` |
 | E3 | `validated` | 7단계 · `DecisionPoint.CRITIC_VERDICT` (신호에 `grade`가 실린다) |
-| E4 | `proven` | 8단계 — **⚠ 등급을 읽지 않는다. 아래 참조** |
+| E4 | `proven` | 8단계 · `DecisionPoint.REPRO_RESULT` (신호에 `grade`가 실린다) |
 
-> **⚠ 위 표의 E4 행은 설계이고 현황이 아니다.** 8단계의 게이트 호출은 `nodes/validate.py`가
-> **반환값을 버린다** — 목적이 판정이 아니라 집계다. 승격 정책(`policy._repro_result()`)이 읽는
-> 것은 도구의 `ok`·`tool_allowed`뿐이라, 게이트가 E3인 Finding도 `ok=True`면 `proven`이 된다.
-> **8단계에서 등급은 집계 전용이고 상태 축과 등급 축이 어긋난 채로 남아 있다.**
-> → [open-questions.md](open-questions.md) D18
+> **위 표의 E4 행은 2026-09-20부터 현황이다**(커밋 `3e5c19f`). `nodes/validate.py`가 8단계 게이트
+> 호출의 반환값을 더 이상 버리지 않고 `RoutingRequest.signals`의 `grade`로 싣고, 승격 정책
+> (`policy._repro_result()`)이 **재현이 성공한(`ok=True`) 건에 한해** 그 등급을 읽는다 — E4면
+> `proven`(F-10), E4 미만이면 무전이로 `validated`에 홀드한다(F-10b, 사유 `evidence_below_proven`).
+> 그전에는 `ok`·`tool_allowed` 둘만 읽어 게이트가 E3인 Finding도 `ok=True`면 `proven`이 됐다.
+>
+> ⚠ **그 F-10b 분기는 오늘 노드 경로에서 발화하지 않는다 — 방어 가드다.** `nodes/validate.run()`이
+> 내는 `ok=True`는 "produced Evidence가 전부 `ok`"라는 뜻이고, 그러면 그 SANITIZER/POC_RUN
+> Evidence가 `gate.evaluate()`의 `usable`에 들어 `p4`가 참이 되므로 **등급은 반드시 E4**다.
+> 즉 이 줄이 서술하는 것은 **구조**(등급을 읽는다)이지 오늘의 관측이 아니다. 실측과 그
+> 불변식이 깨지는 조건은 [D18 본문](open-questions/D/D18.md) 마지막 절에 있다.
+> → [open-questions.md](open-questions.md) D18(닫힘)
+
+> ⚠ **위에서 「재현이 성공한(`ok=True`)」이라 부른 것은 「크래시했다」가 아니라 「도구가
+> 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`poc`)를 `ok=False`로
+> 내리는 갈래는 셋이다 — 명령이 하나도 안 돈 경우, 빌드에서 끊긴 경우(`len(steps) < total`),
+> 띄우지도 못한 경우(`_EXEC_FAILED` = 125·126·127). **exit 0은 그 셋에 없다** — 깨끗이 끝난
+> 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 없으므로 대상 존재로 대체한다"*고 스스로 적는다. 그리고 `gate.evaluate()`의 `p4`는
+> `usable`(=`ev.ok`)과 `kind`만 보므로 `exit_code`가 판정에 들어가지 않는다.
+>
+> **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드가 없다** — 살아 있는 사용처는
+> `validate.tool_for()`가 신호 문자열에서 **도구 이름**을 고르는 것 하나다. 이 문서의 「재현
+> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐다」까지만 보증한다.**
+> 무엇을 고칠지는 아직 안 정했다.
+> → [open-questions.md](open-questions.md) D80(열림)
 
 구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)
 
