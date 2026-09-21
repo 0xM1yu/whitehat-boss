@@ -810,6 +810,39 @@ def test_every_adr_has_a_row_in_the_decisions_readme() -> None:
 
 CONTEXT = REPO_ROOT / "PROJECT-CONTEXT.md"
 
+
+# 2026-09-21에 폐기한 옛 정본 파일. 리네임은 #227로 들어왔고 그 뒤 main에 없다.
+_RETIRED_CANON = REPO_ROOT / "CONTEXT.md"
+
+
+def test_the_canon_is_one_file_and_the_retired_name_stays_dead() -> None:
+    """정본 파일은 `PROJECT-CONTEXT.md` **하나**다. 옛 이름이 되돌아오면 여기서 막는다.
+
+    **왜 이 검사가 있나.** 리네임이 머지된 뒤에도 **미머지 브랜치 스물한 개**가 아직 옛
+    이름으로 그 파일을 들고 있다(2026-09-21에
+    `git diff --name-only origin/main...<branch>`로 셌다). 그중 하나만 들어와도 저장소에
+    정본을 주장하는 파일이 **둘**이 되고, 그 순간 CLAUDE.md §7의 「정본을 먼저 열어라」가
+    어느 쪽을 가리키는지 알 수 없어진다. 이 파일이 생긴 이유 — 2026-09-09에 「현재 구성」을
+    주장하는 소스가 셋이라 **어느 쪽이 정본인지 기계가 읽을 수단이 없었다** — 가 그대로
+    재발한다. 그날 하루에 같은 사고가 네 번 났다.
+
+    **끊어진 링크는 여기서 안 본다** — `test_internal_links_point_at_a_real_file`이 이미
+    그것을 든다. 이 검사가 무는 것은 **파일의 존재** 하나다. 둘을 한 검사에 넣으면 실패
+    메시지가 어느 쪽이 깨졌는지 못 가른다.
+
+    양쪽을 다 단언한다 — 옛 이름이 없는 것만 보면 **정본이 통째로 사라진 트리도 통과**한다.
+
+    `src/orchestrator/context.py`는 다른 이름이라 무관하다.
+    """
+    assert CONTEXT.exists(), (
+        f"{CONTEXT.name}이 없다 — 정본 파일이 사라졌다. 옛 이름으로 되돌린 것이라면 되돌려라."
+    )
+    assert not _RETIRED_CANON.exists(), (
+        f"{_RETIRED_CANON.name}이 돌아왔다. 2026-09-21에 폐기했고 정본은 {CONTEXT.name} "
+        f"하나다 — 미머지 브랜치의 옛 판본이 들어온 것이라면 그 내용을 {CONTEXT.name}으로 "
+        "옮기고 이 파일은 지운다."
+    )
+
 # 표를 여는 절 제목. **번호가 아니라 제목으로 찾는다** — 앞에 절이 하나 끼는 날 번호로
 # 찾으면 조용히 다른 표를 읽는다.
 _ROSTER_HEADING = re.compile(r"^##\s+\d+\.\s+모델 로스터")
