@@ -285,6 +285,10 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "model_sampling": {
     "auditor": {"temperature": 0.7, "top_k": 20, "top_p": 0.8, "repetition_penalty": 1.05}
   },
+  "compile_flags": {
+    "std": {"c": "-std=gnu17", "c++": "-std=gnu++17"},
+    "fixed_include_dirs": ["/src"]
+  },
   "kb_snapshot": "kb-2026-08-30",
   "started_at": "2026-09-01T09:00:00Z",
   "finished_at": null,

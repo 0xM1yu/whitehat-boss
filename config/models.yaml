@@ -573,6 +573,16 @@ models:
     # ⚠ **그리고 2026-09-20에 두 풀 프로필이 이 키를 세웠다** — `config/profiles.yaml`의
     # `local_balanced_pool`·`local_balanced_pool_hybrid`. 점수 검증 전에 올린 것이고 그 판단은
     # open-questions가 든다. 둘 다 `production: false`라 위 마지막 문장은 그대로 유효하다.
+    #
+    # ⚠ **2026-09-21 — 메모리를 쟀다.** ATOM에서 가중치+non-torch **8.12~8.15 GiB**
+    # (util 0.15 · 0.12 각 1회). 같은 날 **KV 하한도 물렸다** — util 0.10 · max-model-len 40960에서
+    # 기동이 깨진다(가용 KV 3.81, 필요량 5.62). 원천은 `docs/experiments/` 아래 그 날짜의
+    # 로스터 메모리·KV 편이다.
+    # **위 두 문단은 이 실측으로 안 바뀐다** — 점수 정확성은 여전히 미검증이고 `benchmark`도
+    # 전부 `0` 그대로다. **잰 셋(기동·순위·메모리) 중 어느 것도 처리량이 아니다.**
+    # ⚠ **`mem_gb_ctx8k`도 채우지 않는다** — 위 8.12는 가중치+non-torch이고 그 칸이 뜻하는
+    # 「8k 컨텍스트에서의 메모리」와 같은 양이라는 보증이 없다(registry 전 항목이 이 칸을 `0`으로
+    # 둔다). **값은 `bench --apply`가 채운다 — 손으로 맞추면 조용히 다른 값이 나온다.**
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 40960
     quantization: "bf16"
