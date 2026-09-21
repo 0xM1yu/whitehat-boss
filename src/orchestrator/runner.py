@@ -133,7 +133,7 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
-from src.schemas.run import CONDITION_PATTERN, ModelSampling, RunRecord
+from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
 from src.tokens import using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
@@ -304,6 +304,13 @@ class Dependencies(Protocol):
     # 컨테이너 이미지 → digest. 러너가 만들지 않고 받는다 — 무엇이 실제로 실행됐는지는
     # 어댑터만 알고, 러너가 추측해 채우면 그 기록은 사실과 갈라진다.
     tool_images: dict[str, str]
+    # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). `tool_images`와 같은 이유로
+    # 러너가 만들지 않고 받는다 — 무엇이 실제로 argv에 갔는지는 어댑터만 알고, 러너가
+    # 상수를 다시 적으면 그 기록은 사실과 갈라진다.
+    #
+    # `None`의 뜻은 `RunRecord.compile_flags`가 정한 것과 같다 — **"이 기록은 남기지
+    # 않았다"**이지 "컴파일 조건이 없었다"가 아니다. 뒤엣것은 빈 `CompileFlags`다.
+    compile_flags: CompileFlags | None
     # file → 그 파일에 정의된 심볼 위치. `None`이면 인덱스가 없다는 뜻이고 러너는 파일
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
@@ -607,7 +614,14 @@ def run_pipeline(
 
     artifacts = preprocess.run(ctx, source_root=spec.target)
     record, warnings = _new_record(
-        spec, config, ctx.run_id, started_at, artifacts, deps.tool_images, deps.model_sampling
+        spec,
+        config,
+        ctx.run_id,
+        started_at,
+        artifacts,
+        deps.tool_images,
+        deps.model_sampling,
+        deps.compile_flags,
     )
     ctx.record = record
     ctx.store.put(record)
@@ -734,8 +748,15 @@ def run_pipeline(
     # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
     #
     # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
-    # 들어가고, Fake auditor에선 E4가 원리상 도달 불가다(해소). E4가 실제로 열리면 그 근거를
-    # 여기로 모으는 일이 따라온다(`validate.run`이 `produced`를 반환하는데 지금 버린다).
+    # 들어간다. 이유는 그 하나이고, 그것을 만드는 자리가 아래 `after, _ = validate.run(...)`이다
+    # (`produced`를 반환하는데 `_`로 버린다). E4가 이 경로로도 열리면 그 근거를 여기로 모으는
+    # 일이 따라온다.
+    #
+    # ⚠ **「Fake에선 E4가 원리상 도달 불가」를 두 번째 이유로 달았던 것은 거짓이라 뺐다.**
+    # `FakeToolRunner._run_repro()`는 실행 대신 대상 소스의 존재를 보므로 Fake 경로에서 E4는
+    # 실제로 나고, `test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools`가 그것을
+    # 단언한다(2026-08-21). 못 넘는 것은 **컨테이너 러너에 가짜 `repro_spec`이 갈 때**이고
+    # 그것은 빌드가 끊겨서다 — 「Fake auditor」와 「Fake 도구 러너」는 다른 축이다.
     grades = {
         f.finding_id: gate.evaluate(
             f,
@@ -1550,6 +1571,7 @@ def _new_record(
     artifacts: list[Artifact],
     tool_images: dict[str, str],
     model_sampling: dict[str, ModelSampling],
+    compile_flags: CompileFlags | None,
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -1591,6 +1613,10 @@ def _new_record(
         # registry가 선언해 하네스가 **요청에 실은** 모델별 파라미터. `model_sampling`과
         # 달리 어댑터를 안 거친다 — config에서 바로 유도되므로 `deps`를 탈 이유가 없다.
         model_reasoning_effort=config.reasoning_efforts(),
+        # 어댑터가 낸 컴파일 조건 (#74). `tool_images`와 같은 경로로 받는다 — 러너는
+        # `src/adapters/`를 import 하지 않으므로 `_STD_ARGS`를 여기서 읽을 수 없고, 읽을 수
+        # 있더라도 읽으면 안 된다: 값을 두 곳에 두면 갈라진다.
+        compile_flags=compile_flags,
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
