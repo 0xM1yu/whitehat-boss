@@ -462,7 +462,9 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
-    prompt_template_version: "v1"
+    # v3: 이 PR이 critic/v3를 신설(metadata-only 런타임에 맞춘 need_evidence 기본)했고 Critic이
+    # 이 모델이라, 그 프롬프트를 실제 로드하려면 여기가 v3여야 한다.
+    prompt_template_version: "v3"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에
