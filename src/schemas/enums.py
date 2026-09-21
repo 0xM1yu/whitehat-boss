@@ -297,6 +297,8 @@ class ReasonCode(StrEnum):
     # 8단계 Tool Validation
     REPRO_CONFIRMED = "repro_confirmed"
     REPRO_FAILED = "repro_failed"
+    # 재현엔 성공했으나 게이트 등급이 E4 미만이라 proven으로 올리지 않는다 (F-10b).
+    EVIDENCE_BELOW_PROVEN = "evidence_below_proven"
     # run 종료 (state_machine.py R-2). 아래 둘과 BUDGET_EXHAUSTED가 "왜 9단계까지 못
     # 갔는가"를 구분한다. 하나로 묶으면 예산이 실제로 소진된 run과 사용자가 자른 run이
     # 기록에서 같아 보이고, evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰므로

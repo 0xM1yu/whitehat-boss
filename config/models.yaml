@@ -601,9 +601,20 @@ models:
     #
     # ⚠ config.json의 `architectures`는 `['Qwen3ForCausalLM']`이라, 리랭커로 서빙하려면
     # `--hf-overrides {"architectures":["Qwen3ForSequenceClassification"], …}`가 필요하다
-    # (0.6b가 쓴 것과 같은 reranker 서빙 인자). 그 기동·점수 정확성 검증은 등재와 별개이고
-    # 아직 안 됐다 — 그래서 `benchmark`는 전부 `0`(미실측 표시, CLAUDE.md §0)이고 production
-    # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 PROJECT-CONTEXT.md와 open-questions가 든다.
+    # (0.6b가 쓴 것과 같은 reranker 서빙 인자).
+    #
+    # ⚠ **2026-09-21 정정 — 위 줄들은 2026-09-11자고, 「아직 안 됐다」로 끝나던 문장이 낡았다.**
+    # 그 뒤로 셋이 됐다: ① **기동** — 2026-09-13 ATOM, util 0.20 · max-model-len 40960 · 3회
+    # 결정론(보고서는 `docs/experiments/` 아래 그 날짜의 입력모양 편) ② **순위** — 같은 날 두 편이
+    # 쟀다 ③ **메모리** — 2026-09-21 ATOM, 가중치+non-torch **8.12~8.15 GiB**(util 0.15·0.12).
+    # 같은 날 KV 하한도 물렸다 — util 0.10 · 40960에서 기동 실패(KV 3.81, 필요량 5.62).
+    #
+    # **그래도 아래 `benchmark`가 전부 `0`인 것은 그대로다.** 저 셋 중 어느 것도 **처리량이
+    # 아니다** — `tok_s_single`·`tok_s_batch32`는 안 쟀다. `mem_gb_ctx8k`도 **채우지 않는다**:
+    # 위 8.12는 가중치+non-torch이고 그 칸이 뜻하는 「8k 컨텍스트에서의 메모리」와 같은 양이라는
+    # 보증이 없다(registry 전 항목이 이 칸을 0으로 두고 있다). **값은 `bench --apply`가 채운다 —
+    # 손으로 맞추면 조용히 다른 값이 나온다.** 그래서 production 프로필에는 아직 못 들어간다.
+    # 남은 미검증·재측정 항목은 PROJECT-CONTEXT.md와 open-questions가 든다.
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 40960
     quantization: "bf16"

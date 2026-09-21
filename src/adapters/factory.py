@@ -43,7 +43,7 @@ from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.schemas.common import Location
-from src.schemas.run import ModelSampling
+from src.schemas.run import CompileFlags, ModelSampling
 from src.tokens import COUNTED_ROLES
 
 
@@ -71,6 +71,10 @@ class Deps:
     # 된다. `tool_images`와 같은 성격 — 러너는 `src/adapters/`를 import 하지 않으므로(계층 규칙)
     # 어댑터가 모델 파일을 읽어 만든 값을 이 dataclass가 나른다.
     model_sampling: dict[str, ModelSampling] = field(default_factory=dict)
+    # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). `RunRecord.compile_flags`가
+    # 된다. `tool_images`와 같은 성격이고 같은 이유로 **구현에게 묻는다** — 여기서 상수를
+    # 조립하면 Fake와 컨테이너가 같은 조건으로 기록된다.
+    compile_flags: CompileFlags | None = None
     # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만드는 데 쓴다(W2).
     #
     # **`read_source`와 같은 모양이다** — 러너는 `src/adapters/`를 import 하지 않으므로
@@ -383,6 +387,9 @@ def build_deps(
         # 구현에게 묻는다. 여기서 이미지 이름을 조립하면 어댑터가 무엇을 실제로 물렸는지와
         # 갈라질 수 있고, 갈라진 재현성 기록은 없는 것보다 나쁘다.
         tool_images=tools.images(),
+        # 같은 이유로 구현에게 묻는다 (#74). Fake는 빈 조건을 내고, 그 빈 값은
+        # `RunRecord.compile_flags`의 `None`(옛 manifest)과 구분된다.
+        compile_flags=tools.compile_flags(),
         # 실서빙 모델 파일에서 선언 샘플링을 읽는다. Fake·source 없는 모델은 빠지고, 전부
         # 그러면 빈 dict다 — `RunRecord.model_sampling`의 `None`(옛 manifest)과 구분된다.
         model_sampling=declared_sampling_by_role(config),
