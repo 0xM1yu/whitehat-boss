@@ -1083,7 +1083,8 @@ def _within_profile_port_clashes() -> dict[str, dict[str, list[str]]]:
     from src.config import CONFIG_DIR
 
     models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
-    profiles = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))["profiles"]
+    raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))
+    profiles = raw["profiles"]
 
     def port_of(key: str) -> str | None:
         endpoint = str((models.get(key) or {}).get("endpoint", ""))
