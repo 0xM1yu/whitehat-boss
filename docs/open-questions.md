@@ -130,7 +130,7 @@
 | D78 | **슬라이스를 캡슐 경로에 올리기 전에 풀어야 할 것 셋** — `Location` 표현력·캐시 키·E1 STATIC | 열림 | [본문](open-questions/D/D78.md) |
 | D79 | 조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다 | 열림 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** | 열림 | [본문](open-questions/D/D80.md) |
-| D81 | **장비가 ATOM에서 vast.ai로 바뀌었다 — 비교 셀·KV 예산·R1/R8의 전제가 함께 움직인다** | 열림 | [본문](open-questions/D/D81.md) |
+| D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** | 열림 | [본문](open-questions/D/D81.md) |
 
 ## 3. 팀·운영 미정
 
