@@ -1,0 +1,168 @@
+# 로스터 네 자리의 가중치와 KV 토큰 단가 — ATOM ([D81](../../open-questions/D/D81.md))
+
+> **결론 셋.**
+> ① **A안 로스터의 가중치 실측이 찼다.** 마지막 빈칸이던 `qwen3-reranker-4b`를 쟀다 —
+> **8.12~8.15 GiB**. 남은 미실측은 registry 미등재인 `nemotron` 하나다.
+> ② **KV 토큰 단가가 자리마다 3.3배 갈리고, 방향이 직관과 반대다.** `qwen3-reranker-4b`(4B)가
+> **144 KiB/token**인데 `qwen3-coder-30b-a3b`(30B)는 **48 KiB/token**이다 — **작은 모델이 토큰당
+> 세 배 비싸다.** 가르는 것은 파라미터 수가 아니라 **KV헤드 수 × 층수 × `kv_cache_dtype`**이다.
+> ③ **4단계(A안 피크) 최소는 약 61 GiB다.** 2026-09-04 §8이 같은 세 서버에서 관측한 **99 GiB는
+> 요구량이 아니라 우리가 준 `util`**이었다. 그 보고서의 결론(*"제약은 상주 개수가 아니라 KV
+> 예산 배분"*)을 이 실측이 수치로 확인한다.
+>
+> ⚠ **`kv_cache_dtype: auto`가 모델마다 다르게 풀린다 — 가중치 양자화에서 추정할 수 없다.**
+> NVFP4(`modelopt_fp4`) 둘은 **`fp8_e4m3`**(1바이트)로 풀렸고, **fp8 가중치인 devstral은
+> `bf16`**(2바이트)로 풀렸다. 이 한 칸이 KV 비용을 **두 배** 가른다.
+>
+> ⚠ **이 run이 안 잰 것.** 처리량(`benchmark`) · 판정 정확도 · **여러 서버 동시 상주**(한 번에
+> 하나씩만 띄웠다) · `gpt-oss-20b`·`qwen3-embedding-0.6b`(오늘 대상 아님) · `run_id` 없음(비교표 밖).
+
+## 메타
+
+| 항목 | 값 |
+| --- | --- |
+| 날짜 · 장비 | 2026-09-21 · `atom` (`aitopatom-d06a` · NVIDIA GB10 · sm_121 · 통합메모리 119.7 GiB) |
+| vLLM | `0.27.1` (`/srv/tenants/ext01/venv-probe`) |
+| 공통 인자 | `--enforce-eager` · `--revision`(registry `source`의 것) · 포트 8005 |
+| 공통 env | `VLLM_USE_DEEP_GEMM=0` · `VLLM_USE_FLASHINFER_SAMPLER=0` · `HF_HUB_OFFLINE=1` |
+| 스크립트 | 안전장치 넷을 건 래퍼(§5). 저장소 밖 — 서버 기동은 하네스 밖이다([portability.md](../../portability.md) §6 절 끝) |
+| 원문 로그 | ATOM `/srv/tenants/ext01/vllm_*_20260921_*.log` 일곱 |
+
+## 1. 측정
+
+한 번에 **한 서버만** 띄웠다. 동시 상주는 이 run의 대상이 아니다.
+
+| # | 모델 | `util` | `max-model-len` | 가중치+non-torch | act | KV | KV 토큰 | 동시성 | `kv_cache_dtype` | 결과 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `qwen3-reranker-4b` | 0.15 | 8,192 | **8.12** | 0.15 | 9.68 | 70,496 | 8.61x | bf16 | UP |
+| 2 | `qwen3-reranker-4b` | 0.10 | 40,960 | — | — | 3.81 | — | — | bf16 | **FAIL** |
+| 3 | `qwen3-reranker-4b` | 0.12 | 40,960 | **8.15** | 0.15 | 6.06 | 44,144 | 1.08x | bf16 | UP |
+| 4 | `devstral-small-2-24b` | 0.30 | 32,768 | **25.83** | 0.80 | 9.28 | 60,832 | 1.86x | bf16 | UP |
+| 5 | `qwen3-coder-30b-a3b` | 0.30 | 32,768 | — | — | 17.46 | 381,504 | 11.64x | `fp8_e4m3` | **FAIL**(§4) |
+| 6 | `qwen3-coder-30b-a3b` | 0.30 | 32,768 | **17.76** | 0.52 | 17.64 | 385,280 | 11.76x | `fp8_e4m3` | UP |
+| 7 | `qwen3-8b` | 0.15 | 32,768 | **7.06** | 0.19 | 10.71 | 156,032 | 4.76x | `fp8_e4m3` | UP |
+
+`CUDAGraph`는 일곱 판 전부 **0.0 GiB**다 — `--enforce-eager` 때문이다.
+
+**#2의 실패 메시지가 하한을 직접 적는다** — *"40,960을 한 건이라도 서빙하려면 5.62 GiB KV가
+필요한데 가용은 3.81 GiB. 이 메모리로 가능한 최대 컨텍스트는 **27,728**"*. 2026-09-04
+[다섯 상주 보고서](2026-09-04-five-model-residency-atom.md) §4.1이 만난 것과 같은 형태다.
+
+**셋은 앞 실측을 재현한다.**
+
+| 모델 | 오늘 | 2026-09-04 | 차 |
+| --- | --- | --- | --- |
+| `devstral-small-2-24b` (`util` 0.30) | **25.83** | **25.48** (§7) | +0.35 |
+| `qwen3-coder-30b-a3b` | **17.76** | **18.28** (§3) | −0.52 |
+| `qwen3-8b` | **7.06** | **6.38** (§3) | +0.68 |
+
+⚠ **한 점으로 못 박지 않는다.** `+non-torch` 항이 `util`·기동마다 움직인다 — 같은 성질을
+[2026-09-09 보고서](2026-09-09-gpt-oss-20b-onboarding-atom.md) §3.2가 *"같은 인자에서 1.15 GiB(7.7%) 흔들린다"*로 적었다.
+**예산을 짤 때는 상한을 쓴다.**
+
+## 2. KV 토큰 단가 — 구조식이 다섯 판에서 맞았다
+
+`Available KV ÷ GPU KV cache size`로 역산한 값을 `config.json`의 구조식과 대조했다.
+
+    KV bytes/token = 2(K,V) × num_key_value_heads × head_dim × dtype바이트 × num_hidden_layers
+
+| 모델 | KV헤드 | `head_dim` | 층 | dtype바이트 | **구조식** | **실측 역산** |
+| --- | --- | --- | --- | --- | --- | --- |
+| `qwen3-reranker-4b` | 8 | 128 | 36 | 2 | 144 KiB | **147,438 B ≈ 144 KiB** |
+| `devstral-small-2-24b` | 8 | 128 | 40 | 2 | 160 KiB | **163,800 B ≈ 160 KiB** |
+| `qwen3-coder-30b-a3b` | 4 | 128 | 48 | **1** | 48 KiB | **49,161 B ≈ 48 KiB** |
+| `qwen3-8b` | 8 | 128 | 36 | **1** | 72 KiB | **73,702 B ≈ 72 KiB** |
+
+**네 자리 전부 맞았다.** 리랭커는 `util`이 다른 두 판(#1·#3)이 **서로도** 같은 값을 냈다.
+
+⚠ **`dtype바이트`는 추정하면 틀린다 — 이 실험이 처음에 틀렸다.** `qwen3-coder-30b-a3b`를
+2바이트로 잡아 **96 KiB**를 예측했는데 실측이 **48 KiB**였다. 원인은 `kv_cache_dtype`이다:
+
+| 가중치 양자화 | 해석된 `kv_cache_dtype` | 바이트 |
+| --- | --- | --- |
+| `modelopt_fp4` (NVFP4) — 30b·8b | **`fp8_e4m3`** | 1 |
+| `fp8` — devstral | **bf16** | 2 |
+| bf16 원본 — reranker | bf16 | 2 |
+
+**fp8 가중치인 devstral이 bf16 KV를 쓰고, fp4 가중치인 둘이 fp8 KV를 쓴다.** 방향이 이름과
+어긋나므로 **로그의 `kv_cache_dtype=` 줄을 보기 전에는 예산을 못 짠다.**
+
+⚠ **이 표를 `gpt-oss-20b`에 옮기지 마라.** 그 모델은 `sliding_window: 128`에 `layer_types`가
+있어 층마다 KV 거동이 다르다 — **구조식이 그대로 적용되지 않는다.** 오늘 안 쟀다.
+
+## 3. 4단계(A안 피크)가 계산으로 닫힌다
+
+[PROJECT-CONTEXT.md](../../../PROJECT-CONTEXT.md) §1이 4단계에 세 자리를 둔다. 오늘 셋을 다 쟀다.
+
+| 자리 | 모델 | 가중치+non-torch | act | KV/token |
+| --- | --- | --- | --- | --- |
+| `scout_memory` | `qwen3-coder-30b-a3b` | 17.76 | 0.52 | 48 KiB |
+| `scout_boundary` | `devstral-small-2-24b` | 25.83 | 0.80 | 160 KiB |
+| `scout_injection` | `qwen3-8b` | 7.06 | 0.19 | 72 KiB |
+| **합** | | **50.65** | **1.51** | **280 KiB** |
+
+`[계산]` 32,768 토큰을 **자리마다 한 건씩** 담는 KV = 32,768 × 280 KiB = **8.75 GiB**.
+**4단계 최소 ≈ 50.65 + 1.51 + 8.75 = 60.9 GiB / 119.7.**
+
+**2026-09-04 §8은 같은 세 서버에서 `free` 사용 99 GiB를 관측했다.** 차 38 GiB는 부족분이 아니라
+**그때 준 `util`(0.30+0.26+0.14 = 0.70 = 83.8 GiB)이 남긴 KV**다. 같은 보고서 §1 요약이
+*"제약은 상주 개수가 아니다"*라 한 것의 수치판이다.
+
+⚠ **「61 GiB면 된다」가 아니라 「61 GiB가 하한이다」**이다. 자리마다 **동시 요청 1건**을 가정했고,
+오늘 #3이 보여 주듯 동시성 1.08x는 **두 번째 요청이 큐에서 기다린다**는 뜻이다.
+⚠ 그리고 **셋을 같이 띄워 보지 않았다** — 2026-09-04 §3이 `nvidia-smi` PID 합과 `free`
+사용 사이에 **약 15 GiB**를 설명 없이 남긴 것이 이 합산에도 걸린다.
+
+## 4. `ninja` — NVFP4는 **CLI 플래그**여야 한다
+
+#5가 KV 할당까지 가 놓고 죽었다.
+
+    FileNotFoundError: [Errno 2] No such file or directory: 'ninja'
+    RuntimeError: Engine core initialization failed.
+
+**`VLLM_ATTENTION_BACKEND=TRITON_ATTN`을 env로 준 상태였다.** 같은 명령에
+`--attention-config.backend TRITON_ATTN`을 **인자로** 더하자 #6이 떴다.
+[2026-09-12 보고서](2026-09-12-critic-gptoss-token-accounting-atom.md)가 같은 것을 적는다 — *"8001·8002만 `--attention-config.backend TRITON_ATTN`을 들었다"*.
+
+⚠ **`bf16`·`fp8` 모델은 그 플래그 없이 떴다**(#1·#3·#4). **NVFP4에서만 무는 조건이다.**
+
+## 5. 안전장치 — 일곱 판, 고아 0건
+
+기동 지시가 *"절대 터지면 안 돼, drain도 포함"*이라 겹쳐 걸었다.
+
+| | 장치 | 검증됐나 |
+| --- | --- | --- |
+| 1 | 사전 게이트 — 가용 < 60 GiB면 기동 거부 · 중복 `vllm serve`·포트 점유도 막는다 | 일곱 판 통과 |
+| 2 | `systemd-run --user --scope -p MemoryMax -p MemorySwapMax=0` | ⚠ **미검증** — 여유가 커서 한 번도 안 걸렸다 |
+| 3 | `timeout --kill-after=30 300` | ✅ **`rc=124`로 발화 확인**(#3·#4·#6) |
+| 4 | 워치독 — 5초마다 가용 확인, 35 GiB 미만이면 SIGTERM → SIGKILL | ⚠ 미발화(최저 가용 70) |
+
+**일곱 판 전부 가용이 114~115 GiB로 복귀했고 고아 프로세스가 없었다.**
+
+⚠ **고아를 특히 겨눴다.** 이 박스에 2026-09-19 기록이 남아 있다 — EngineCore가 죽은 뒤
+rank0이 **약 41시간** `Broken pipe`를 뱉어 `vllm_qwen36_lowmem.log`가 **362 MB**가 됐다.
+장치 3이 그것을 막는다. ⚠ **그 정지의 원인은 이 보고서가 규명하지 않았다** — 커널 로그 권한이
+없어 `journalctl -b -1 -k`가 0건이다. **EngineCore가 트레이스백 없이 사라진 것은 외부 SIGKILL의
+서명이지 증거가 아니다.**
+
+**페이지 캐시는 [portability.md](../../portability.md) §6 절차를 기동 사이마다 돌렸다** — safetensors 84개에
+`posix_fadvise(DONTNEED)`로 버퍼/캐시 **38 → 7 GiB**, 여분 **39 → 70 GiB**. 2026-09-04 §6의
+35 → 8 / 81 → 108과 같은 거동이다.
+
+## 6. 안 잰 것
+
+| 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
+| --- | --- | --- |
+| 동시 상주 | 한 번에 하나씩만 띄웠다 — 오늘 목적이 자리별 단가다 | 4단계 셋을 §3의 하한 `util`로 같이 띄운다 |
+| 처리량(`benchmark`) | 기동·메모리만 봤다. registry의 여섯 항은 **그대로 `0`**이다 | `bench --apply` |
+| 판정 정확도·순위 | 이 run은 요청을 하나도 안 보냈다 | 리랭커 쪽은 [D63](../../open-questions/D/D63.md) 소관 |
+| `gpt-oss-20b` KV 단가 | `sliding_window: 128` + `layer_types`라 구조식이 그대로 안 맞는다 | 띄워서 `Available KV ÷ KV 토큰`으로 역산 |
+| `qwen3-embedding-0.6b` | 오늘 대상이 아니었다 | 위와 같다 |
+| `nemotron-3-super-120b-a12b` | **registry 미등재** — 받지도 않았다 | 등재가 선행이다 |
+| 하드 캡(장치 2)의 실효 | 한 번도 안 걸렸다 | 일부러 `MemoryMax`를 예산 아래로 줘 본다 |
+
+**`mem_gb_ctx8k`는 채우지 않았다.** 오늘 잰 8.12는 가중치+non-torch이고, 그 칸이 뜻하는
+「8k 컨텍스트에서의 메모리」와 같은 양이라는 보증이 없다 — registry 전 항목이 이 칸을 `0`으로
+둔다. **값은 `bench --apply`가 채운다.**
+
+`run_id`가 없으므로 **비교표에 들어가지 않는다.**
