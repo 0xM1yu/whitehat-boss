@@ -12,7 +12,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 제거율 — Scout | `transition`(stage=4) | `1 − count(scout_promoted) / count(생성)` |
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
-| 제거율 — Tool | `transition`(stage=8) | `count(repro_failed) / count(repro_*)` |
+| 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
 | Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
 | GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
@@ -38,6 +38,14 @@ count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패
 (`DecisionDraft.to_decision`). 후자는 모델의 판정이 아니라 `Verdict.from_text`의 실패이므로
 제거율로 읽으면 안 된다 — **가르는 값은 `critic_verdict_unmapped` 건수**이고, 그 이벤트를
 빼고 세면 Critic이 낸 보류만 남는다. 이벤트 부재 = 전부 읽혔다.
+
+「제거율 — Tool」 산식: 분자 `count(repro_failed)`, 분모
+`count(repro_failed ∪ repro_confirmed ∪ evidence_below_proven)`.
+
+⚠ **그 분모를 접두사로 세지 않는다.** 예전 산식은 `count(repro_*)`였는데 그 접두사는
+8단계 사유 `evidence_below_proven`(F-10b)을 **안 잡고** 7단계 사유
+`repro_spec_missing`(F-9)은 **잡는다** — 양쪽으로 틀리는 것을 stage 필터 하나가 겨우
+막고 있었다. 8단계 사유가 늘면 이 산식을 같이 고친다(#68).
 
 검색 호출을 `model_call`에 `role=embedding`으로 끼워 넣지 않는 이유도 같다 — "스키마
 파싱 실패율"의 분모가 `model_call`들의 시도 합(`Σ attempts`)인데 스키마가 없는 호출이
