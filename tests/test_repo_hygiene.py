@@ -321,6 +321,68 @@ def test_pull_request_workflows_do_not_limit_the_base_branch() -> None:
     )
 
 
+# 평가셋 자리에 추적해도 되는 것. 이 디렉터리가 무엇을 담는지를 드는 문서뿐이다.
+_DATASET_TRACKED = frozenset({"eval/datasets/.gitkeep", "eval/datasets/README.md"})
+
+
+def test_no_evaluation_data_is_tracked() -> None:
+    """`eval/datasets/`에는 **실데이터가 안 들어간다.**
+
+    ## 왜 테스트인가
+
+    `eval/datasets/README.md`가 이미 *"실제 데이터는 커밋하지 않는다"*고 적는다. 그런데
+    그 문장은 **산문에만 있었고 아무것도 강제하지 않았다** — 다음에 `git add`하는 사람은
+    README를 안 읽는다. 이 저장소는 정확히 그 자리에서 두 번 밟았다(`53e977b`가 되돌린
+    `_workspace/` 30개 파일, PR #31에 딸려 간 `.claude/` md 4건). 둘 다 무시 규칙이
+    **없어서** 났고, 둘 다 되돌리는 커밋이 따로 필요했다.
+
+    ⚠ **`problem_names.txt`는 특히 그렇다** — 그 파일은 누출 검사가 **찾는 문자열 그
+    자체**다(`eval/leakage/__main__.py`의 `DEFAULT_PROBLEM_NAMES`). 커밋하면 정답지를
+    저장소가 갖게 되고, 그 뒤의 누출 검사 결과는 의미가 없다.
+
+    ## 이 검사가 보는 것 — 둘이다
+
+    ① **지금 추적되는 것**이 허용 목록뿐인가. `.gitignore`는 이미 추적 중인 파일을 못
+    막으므로 `git add -f`로 들어온 것은 규칙이 아니라 이 단언이 잡는다.
+    ② **새 데이터 파일이 실제로 무시되는가.** 규칙이 지워지거나 부정 패턴이 잘못 넓어지면
+    ①은 한동안 초록인 채로 있다 — 그래서 양성·음성을 둘 다 묻는다. `--no-index`라
+    **없는 경로도 물을 수 있어** 이 테스트는 파일을 만들지 않는다.
+    """
+    root = Path(__file__).resolve().parents[1]
+    listed = set(
+        subprocess.run(  # noqa: S603
+            ["git", "ls-files", "eval/datasets"],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.split()
+    )
+    assert listed == _DATASET_TRACKED, (
+        f"`eval/datasets/` 추적 목록이 허용 목록과 다르다.\n"
+        f"  추적됨: {sorted(listed)}\n"
+        f"  허용:   {sorted(_DATASET_TRACKED)}\n"
+        "실데이터가 들어왔으면 `git rm --cached`로 뺀다. 문서를 새로 추가한 것이라면 "
+        "`_DATASET_TRACKED`를 같이 넓힌다 — 넓히는 것이 판단이라는 뜻이다."
+    )
+
+    def ignored(rel: str) -> bool:
+        return (
+            subprocess.run(  # noqa: S603
+                ["git", "check-ignore", "--no-index", "-q", rel],
+                cwd=root, capture_output=True, text=True, check=False,
+            ).returncode
+            == 0
+        )
+
+    # 양성 핀 — 실데이터가 들어올 실제 이름이다(README가 그 파일명을 든다).
+    assert ignored("eval/datasets/problem_names.txt"), (
+        "`eval/datasets/` 무시 규칙이 죽었다 — 위 단언은 한동안 초록인 채로 있는다."
+    )
+    # 음성 핀 — 부정 패턴이 살아 있어야 README가 계속 추적된다. 이것이 무시되면
+    # 규칙이 자기 사유를 설명하는 문서까지 같이 가린다.
+    assert not ignored("eval/datasets/README.md"), (
+        "`!eval/datasets/README.md` 부정 패턴이 안 듣는다 — 규칙의 사유가 사라진다."
+    )
+
+
 def _gitignore_blocks() -> list[tuple[str, list[str]]]:
     """`.gitignore`를 `(주석 본문, 패턴 목록)` 덩어리로 자른다.
 

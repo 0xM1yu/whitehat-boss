@@ -671,6 +671,10 @@ def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
     # 이 필드 이전에 쓰인 기록이므로 `None`이다 — "확인 못 함"이 아니라 "남기지 않았다"다.
     # 새 run은 `config.profile_name`에서 무조건 유도되므로 `None`이 나올 수 없다 (이슈 #76).
     assert record.profile is None
+    # 같은 사유로 `compile_flags`도 `None`이다 (D32 / #74). 새 run은 어댑터에게 물어
+    # 항상 값을 남기므로(비어도) `None`은 **옛 manifest에서만** 나온다.
+    assert "compile_flags" not in payload, "fixture가 낡지 않았다 — 검사가 공허해진다"
+    assert record.compile_flags is None
 
 
 # ## required 두 필드 — 이 계약은 모델이 무엇을 채우는가를 가른다
