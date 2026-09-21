@@ -1,6 +1,6 @@
 """8단계 Tool Validation — 재현 명세를 샌드박스에서 실행한다.
 
-전이 표 F-10(재현 성공) / F-11(실패) / F-12(tool_policy 위반).
+전이 표 F-10(재현 성공, E4) / F-10b(재현 성공, E4 미만) / F-11(실패) / F-12(tool_policy 위반).
 
 **`expected_signal` 매칭은 도구 선택 시점에 한다.** 게이트는 `Evidence.ok`만 보므로
 (계획 §2), "asan을 돌렸는데 기대 신호는 PoC 크래시였다" 같은 어긋남이 `ok=True`로 남으면
@@ -81,23 +81,17 @@ def run(
         # `_attach()`가 방금 만든 근거를 `evidence_refs`에 넣었으므로, 앞 단계 것과 합쳐
         # 넘기면 `evidences_for()`가 이 Finding의 것만 골라낸다. E4는 여기서만 성립한다.
         #
-        # ## 이 등급은 아무도 읽지 않는다. 지우지 마라
+        # 반환값을 쓴다(1-A 전에는 버렸다). E4의 조건인 `SANITIZER`/`CRASH`/`POC_RUN`
+        # Evidence는 바로 위 `_call()`이 만들고, `_attach()` 이후가 `p4`를 참으로 만들 수
+        # 있는 **유일한 시점**이다. 여기서 부르지 않으면 그 등급은 `gate_eval` trace에
+        # 영영 나타나지 않고 도구 검증 제거율의 분자가 구조적으로 0이 된다(W3이 고친
+        # 것이 그것이다).
         #
-        # 반환값을 버린다. **목적이 판정이 아니라 집계**이기 때문이다 — E4의 조건인
-        # `SANITIZER`/`CRASH`/`POC_RUN` Evidence는 바로 위 `_call()`이 만들고, `_attach()`
-        # 이후가 `p4`를 참으로 만들 수 있는 **유일한 시점**이다. 여기서 부르지 않으면 그
-        # 등급은 `gate_eval` trace에 영영 나타나지 않고 도구 검증 제거율의 분자가
-        # 구조적으로 0이 된다(W3이 고친 것이 그것이다).
-        #
-        # **아래 정책은 이 등급을 보지 않는다.** `policy._repro_result()`가 읽는 것은
-        # `ok`·`tool_allowed` 둘뿐이고 `basis`에도 `grade`가 없다. 그래서 게이트가 E3인
-        # Finding도 `ok=True`면 `proven`이 된다 — 상태 축과 등급 축이 어긋난 채로 남아
-        # 있다(2026-08-21 ATOM run 실측). 그 둘을 잇는 것은 승격 로직 변경이고 이전 run과
-        # 비교가 끊기므로 **별건이다**(이슈 #68).
-        #
-        # 설명 없는 미소비 계산은 다음 사람이 죽은 코드로 보고 지운다. `GATE_STAGES`가
-        # 참조 0건이던 자리와 같은 종류라 사유를 여기 남긴다.
-        ctx.evaluate_gate(
+        # **아래 정책도 이제 이 등급을 본다**(F-10b, 이슈 #68). `policy._repro_result()`가
+        # `ok=True`일 때만 `grade`를 읽어 E4 미만이면 `proven`으로 올리지 않는다 — 상태
+        # 축과 등급 축이 어긋난 채로 남아 있던 문제(2026-08-21 ATOM run 실측)가 여기서
+        # 닫힌다.
+        result = ctx.evaluate_gate(
             finding,
             gate.evidences_for(finding, (*evidences, *produced)),
             decisions,
@@ -113,6 +107,7 @@ def run(
                 signals={
                     "ok": bool(produced) and all(ev.ok for ev in produced),
                     "tool_allowed": tool is not None,
+                    "grade": result.grade.value,
                 },
             )
         )
