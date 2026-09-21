@@ -49,7 +49,11 @@ def _candidate(state: FindingState = FindingState.CANDIDATE) -> Candidate:
 
 
 def _finding(state: FindingState = FindingState.HYPOTHESIZED, *, backed: bool = False) -> Finding:
-    extra = {}
+    # `path`·`evidence_refs`는 기본값이 없다(`schemas/finding.py` — 스키마의 `required`가
+    # 모델의 생략을 가른다). 그래서 **빈 값이 이 팩토리의 기본**이고 `backed=True`가 그것을
+    # 덮는다. ⚠ 이 둘을 `Finding(...)`에 직접 넘기면서 `**extra`에도 두면 중복 키워드라
+    # `TypeError`다 — 한 자리에서만 준다.
+    extra: dict = {"path": [], "evidence_refs": []}
     if backed:
         extra = {
             "evidence_refs": ["ev_0001"],
