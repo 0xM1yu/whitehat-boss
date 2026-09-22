@@ -13,8 +13,13 @@ STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 
 # A poisoned failure (deadline/HTTP/OOM) may leave the Joern server running the runaway
 # query, so the candidates right after it tend to time out too. Isolate each candidate,
-# but stop the run after this many *consecutive* poisoned failures — past that the server
-# will not recover without a restart, and a `--resume` picks up past the "failed" ones.
+# but stop the run after this many *consecutive* poisoned failures.
+# NOTE on --resume: a failed candidate is NOT persisted as failed (the failure is before
+# save_stage, so no checkpoint row -> restore_stage returns "pending"). So --resume RE-RUNS
+# it, it does not skip it. Restarting the dedicated server first lets resume progress when
+# the poison was *server state*. When the poison is *candidate-intrinsic* (a query that
+# always exceeds the 600s deadline), resume re-burns the timeout on it every time, and a
+# streak of >= POISON_STOP_STREAK such candidates never advances past them (documented limit).
 POISON_STOP_STREAK = 3
 
 
@@ -221,7 +226,9 @@ class SlicingStages:
                             if consecutive_poison >= POISON_STOP_STREAK:
                                 self.errors.append(
                                     f"Stopped after {consecutive_poison} consecutive poisoned "
-                                    "candidates; restart the dedicated server and --resume"
+                                    "candidates; restart the dedicated server and --resume. If "
+                                    "these are deadline-intrinsic (not server state), resume "
+                                    "re-runs them and will re-stop here"
                                 )
                                 break
                         else:

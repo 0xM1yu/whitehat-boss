@@ -440,9 +440,13 @@ def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_pa
 
 
 def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_path):
-    # Past a short streak the server will not recover, so the run stops rather than burning
-    # the per-query timeout on every remaining candidate. A --resume restarts the server and
-    # skips the ones already marked failed.
+    # Past a short streak the run stops rather than burning the per-query timeout on every
+    # remaining candidate. A failed candidate is NOT persisted as failed: the failure is
+    # before save_stage, so it has no checkpoint row and restore_stage returns "pending" ->
+    # --resume RE-RUNS it from scratch, it does not skip it (see test above). Restarting the
+    # dedicated server first lets resume progress IF the poison was server state; if the
+    # poison is candidate-intrinsic (a query that always exceeds the 600s deadline), resume
+    # re-burns the timeout on it and a streak of these never advances (documented limit).
     cands = [candidate("c" + str(i), i + 1) for i in range(6)]
     data = payloads(case_a=cands, flow_count=2)
 
