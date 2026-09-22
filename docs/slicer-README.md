@@ -38,9 +38,14 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 
 ### Case A — 기존 파라미터 기반 경로
 
-이름이 일치하는 호출이 없고 매개변수가 있는 내부 함수와 지정된 입력 API를 부르는 내부
-함수를 후보로 삼는다. 소속 함수 파라미터에서 CPG의 호출 인자로 이어지는 `reachableByFlows`
-경로를 구한다. 함수별 sink batch를 유지한다. 매개변수 없는 reader는 0경로일 수 있다.
+이름이 일치하는 호출이 **`CASE_A_CALL_LIMIT`회(기본 1) 이하**이고 매개변수가 있는 내부
+함수와 지정된 입력 API를 부르는 내부 함수를 후보로 삼는다. 호출이 아예 없는 함수만 보면
+**한 번 호출되는 핸들러 진입점**(예: TLS `client_handle_hello`)을 놓치므로 K회 이하로 완화한다
+(#219). 완화된 집합은 대형 저장소에서 폭증해 결과가 Joern stdout을 넘겨 슬라이스가 통째로
+실패할 수 있어, 그 집합을 `CASE_A_CANDIDATE_CAP`(기본 2000)로 유계한다 — 입력 API 호출자는
+집합이 작아 유계 대상이 아니다. 소속 함수 파라미터에서 CPG의 호출 인자로 이어지는
+`reachableByFlows` 경로를 구한다. 함수별 sink batch를 유지한다. 매개변수 없는 reader는
+0경로일 수 있다.
 
 ### Case B — 선택한 호출 인자에서 역추적
 
@@ -52,10 +57,11 @@ wrapper는 free로 흐르는 **매개변수 위치**를 보존한다. write·연
 유계한다. 인덱스 **읽기**와 정수만의 산술은 제외한다 — 유계를 위한 recall 한계다.
 
 후보마다 호출의 소속 함수·줄·열·code·AST order 경로로 호출 한 개를 선택한다. 모호하면
-첫 호출을 임의로 쓰지 않고 실패를 기록한다. ⚠ **이 실패는 그 후보 하나로 끝나지 않는다** —
-질의가 `require`로 죽어 `QueryError`가 되고, 후보 루프를 감싼 바깥 `except`까지 올라가
-**남은 후보 전부가 처리되지 않는다**(`candidates_not_processed`에 남는다). 매핑 실패
-(`candidates_unmapped`)가 후보 하나만 건너뛰고 계속하는 것과 다르다. `trigger_arguments`는 후보 선정 근거이고,
+첫 호출을 임의로 쓰지 않고 실패를 기록한다. **이 실패는 그 후보 하나로 끝난다** —
+질의가 `require`로 죽어 `QueryError`가 되지만, 후보 루프가 그것을 잡아 `candidates_failed`에
+세고 다음 후보로 계속한다(#219). 매핑 실패(`candidates_unmapped`)가 후보 하나만 건너뛰고
+계속하는 것과 같은 결이다. ⚠ 단 `poisoned`(서버 상태 불확실) 실패가 **연속 `POISON_STOP_STREAK`회**면
+run을 멈춘다 — 서버가 그 뒤로 회복 못 하기 때문이고, 재기동 후 `--resume`이 저장 지점에서 잇는다. `trigger_arguments`는 후보 선정 근거이고,
 `sink_arguments`는 선택한 호출의 모든 인자다. `strcpy(dst, src)`에서 배열 dst만 보고 src를
 놓치지 않도록 구분한다. 반복 해제의 관련 호출은 anchor로도 남긴다.
 
@@ -152,9 +158,12 @@ python slicer.py --repo /work/repo --out /work/results/exported.json \
   --checkpoint /work/results/state.db --export-only --export-dir /work/results/export
 ```
 
-Joern HTTP timeout은 서버의 Scala 계산을 취소하지 않는다. OOM·StackOverflow·HTTP 실패는
-첫 오류에서 중단하며, 다음 후보마다 timeout을 반복하지 않는다. 전용 서버 재기동 후 resume한다.
-자동 재기동·실패 후보 자동 건너뛰기는 하지 않는다. `--candidate-timeout-seconds`는 한 시도의
+Joern HTTP timeout은 서버의 Scala 계산을 취소하지 않는다. 후보 하나의 실패
+(OOM·StackOverflow·timeout·HTTP)는 `candidates_failed`에 세고 다음 후보로 계속한다(#219) —
+한 후보가 run 전체를 버리지 않는다. ⚠ 단 `poisoned` 실패가 **연속 `POISON_STOP_STREAK`(3)회**면
+멈춘다: 서버가 계산 중인 runaway 질의 뒤로 후보마다 timeout을 반복하므로, 그때는 전용 서버
+재기동 후 resume이 답이다(자동 재기동은 안 한다 — 저장 지점에서 이어간다).
+`--candidate-timeout-seconds`는 한 시도의
 후보 처리 안에서 각 질의의 남은 시간도 제한한다. Python의 원문 조립·디스크 쓰기를 강제
 취소하는 프로세스 상한은 아니다. heartbeat는 대기 중임을 뜻하며 진도 증가로 해석하지 않는다.
 

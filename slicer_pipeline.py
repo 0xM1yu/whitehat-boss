@@ -11,6 +11,17 @@ from slicer_source import assemble, cluster, normalize_points, recover_points
 
 STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 
+# A poisoned failure (deadline/HTTP/OOM) may leave the Joern server running the runaway
+# query, so the candidates right after it tend to time out too. Isolate each candidate,
+# but stop the run after this many *consecutive* poisoned failures.
+# NOTE on --resume: a failed candidate is NOT persisted as failed (the failure is before
+# save_stage, so no checkpoint row -> restore_stage returns "pending"). So --resume RE-RUNS
+# it, it does not skip it. Restarting the dedicated server first lets resume progress when
+# the poison was *server state*. When the poison is *candidate-intrinsic* (a query that
+# always exceeds the 600s deadline), resume re-burns the timeout on it every time, and a
+# streak of >= POISON_STOP_STREAK such candidates never advances past them (documented limit).
+POISON_STOP_STREAK = 3
+
 
 class SlicingStages:
     def collect_candidates(self) -> None:
@@ -22,6 +33,14 @@ class SlicingStages:
             rows[case], _ = self.query("case_" + case.lower(), query)
             self.measure(
                 "candidates_case_" + case.lower(), len(collect({case: rows[case]}, self.repo))
+            )
+        # HIGH-1 (#241 review): the .take cap in candidates_a_query is silent. When the count
+        # reaches the cap, api and/or readers may be truncated, so record a per-run note (measure
+        # popped any prior note). Below the cap it cannot have been truncated, so no note.
+        if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
+            self.result["measurement_notes"]["candidates_case_a"] = (
+                f"reached the cap ({queries.CASE_A_CANDIDATE_CAP}); api and/or readers may be "
+                "truncated to an unspecified first-N in CPG traversal order (slicer_queries)"
             )
         self.candidates = collect(rows, self.repo)
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
@@ -190,8 +209,40 @@ class SlicingStages:
                         "baseline",
                         {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
                     )
+                from slicer import QueryError  # deferred: slicer imports this module
+
+                consecutive_poison = 0
                 for candidate in self.candidates:
-                    item = self.slice_candidate(candidate)
+                    try:
+                        item = self.slice_candidate(candidate)
+                    except QueryError as exc:
+                        # Isolate a per-candidate failure. A single flows/backward timeout
+                        # or abort used to propagate to the outer handler and discard every
+                        # remaining candidate (#219) — one pathological candidate should not
+                        # cost the whole run. Record it and move on. The candidate's own
+                        # checkpoint state is left as last saved, so a `--resume` retries it
+                        # from there (e.g. a context failure resumes the saved flow).
+                        self.increment("candidates_failed")
+                        self.event(
+                            "candidate_failed",
+                            candidate_key=candidate["candidate_key"],
+                            error=str(exc),
+                        )
+                        self.processed += 1
+                        if exc.poisoned:
+                            consecutive_poison += 1
+                            if consecutive_poison >= POISON_STOP_STREAK:
+                                self.errors.append(
+                                    f"Stopped after {consecutive_poison} consecutive poisoned "
+                                    "candidates; restart the dedicated server and --resume. If "
+                                    "these are deadline-intrinsic (not server state), resume "
+                                    "re-runs them and will re-stop here"
+                                )
+                                break
+                        else:
+                            consecutive_poison = 0
+                        continue
+                    consecutive_poison = 0
                     self.processed += 1
                     if item is not None:
                         self.completed.append(item)

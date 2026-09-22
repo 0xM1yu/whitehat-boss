@@ -1,0 +1,16 @@
+role: embedder
+side: query
+version: v3
+profile: sink
+model: qwen3-embedding-0.6b
+placeholders:
+  - SYMBOL
+  - FILE
+  - LINE
+  - WHY_SELECTED
+render: "Instruct: {{prefix.md}}\nQuery: {{body.md}}"
+based_on: v1
+description: >
+  E2 body-lead only. prefix 불변. packed {{FILE}}:{{LINE}}를 문장 맨 앞으로 옮기고
+  본문의 at {{FILE}}:{{LINE}}는 제거(반복 아님). 심볼명보다 위치 토큰이 query 벡터를
+  이끌게 해서 정의 청크가 호출 지점을 이기는 현상을 줄이려 함.

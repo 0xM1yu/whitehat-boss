@@ -165,6 +165,7 @@ COUNTERS = (
     "locations_unmapped",
     "candidates_unmapped",
     "candidates_not_processed",
+    "candidates_failed",
     "engine_flows_truncated",
     "directories_skipped",
     "flow_sinks_without_method",
@@ -180,6 +181,9 @@ LIMITATIONS = [
     "a CPG file node does not prove successful or complete parsing",
     "Case A sources are enclosing-method parameters; parameterless readers may yield zero flows",
     "Joern engine-internal limits are not measured by flows_truncated",
+    "Case A candidates are capped (api and readers each) in slicer_queries; at the cap the "
+    "kept subset is an unspecified first-N in CPG traversal order, so a capped run is not "
+    "distinguishable from a repo with exactly that many candidates without the measurement note",
     "flow cap stops further method batches, but does not bound engine work within one batch",
     "structure recovery is lexical and does not guarantee compilable preprocessed C/C++",
     "an unterminated OSC escape leaves its payload as text: it can raise a false "
@@ -418,6 +422,7 @@ class Slicer(SlicingStages):
             "flows_truncated",
             "locations_unmapped",
             "candidates_unmapped",
+            "candidates_failed",
             "files_read_failed",
             "directories_skipped",
             "candidates_reused",

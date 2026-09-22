@@ -1,0 +1,15 @@
+role: embedder
+side: query
+version: v2
+profile: sink
+model: qwen3-embedding-0.6b
+placeholders:
+  - SYMBOL
+  - FILE
+  - LINE
+  - WHY_SELECTED
+render: "Instruct: {{prefix.md}}\nQuery: {{body.md}}"
+based_on: v1
+description: >
+  E2 only. source v2와 동일 규칙, 표현만 call site. body.md 불변.
+

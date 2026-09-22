@@ -29,6 +29,7 @@ from urllib.error import URLError
 import pytest
 
 import slicer
+import slicer_pipeline
 import slicer_queries as queries
 from slicer_source import assemble, cluster, mask_non_code, normalize_points, recover_lines
 
@@ -411,8 +412,12 @@ def test_payload_delimiters_and_error_words_are_data():
     assert slicer.decode_response(response("case_a", payload), "case_a")[0] == payload
 
 
-def test_stack_overflow_stops_and_keeps_completed_slices(monkeypatch, repo, tmp_path):
-    data = payloads(case_a=[candidate("a"), candidate("z")], flow_count=2)
+def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_path):
+    # A single poisoned candidate (here a StackOverflow mid-run) used to propagate to the
+    # outer handler and discard every remaining candidate (#219). Now it is recorded as
+    # failed and the candidates *after* it are still sliced — the middle one poisons, the
+    # first and third both come back.
+    data = payloads(case_a=[candidate("a", 1), candidate("m", 2), candidate("z", 3)], flow_count=2)
     calls = []
 
     def flows(query):
@@ -424,12 +429,35 @@ def test_stack_overflow_stops_and_keeps_completed_slices(monkeypatch, repo, tmp_
         )
 
     data["flows"] = flows
-    code, result, transport = run_cli(monkeypatch, repo, tmp_path, data)
-    assert code == 2 and result["status"] == "partial"
-    assert len(result["slices"]) == 1
-    assert result["counters"]["candidates_not_processed"] == 1
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["status"] == "partial"
+    assert result["counters"]["candidates_failed"] == 1
+    # All three candidates were reached — the run did not cascade to a stop, so nothing is
+    # left unprocessed (a stop after the middle candidate would leave the third behind).
+    assert result["counters"]["candidates_not_processed"] == 0
+    assert result["slices"]  # at least the surviving candidates produced a slice
     assert result["counters"]["queries_aborted"] == 1
-    assert transport.stages[-1] == "flows"
+
+
+def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_path):
+    # Past a short streak the run stops rather than burning the per-query timeout on every
+    # remaining candidate. A failed candidate is NOT persisted as failed: the failure is
+    # before save_stage, so it has no checkpoint row and restore_stage returns "pending" ->
+    # --resume RE-RUNS it from scratch, it does not skip it (see test above). Restarting the
+    # dedicated server first lets resume progress IF the poison was server state; if the
+    # poison is candidate-intrinsic (a query that always exceeds the 600s deadline), resume
+    # re-burns the timeout on it and a streak of these never advances (documented limit).
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    data = payloads(case_a=cands, flow_count=2)
+
+    def flows(query):
+        return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+
+    data["flows"] = flows
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    streak = slicer_pipeline.POISON_STOP_STREAK
+    assert result["counters"]["candidates_failed"] == streak
+    assert result["counters"]["candidates_not_processed"] == len(cands) - streak
 
 
 @pytest.mark.parametrize("truncated", [False, True])
@@ -849,6 +877,24 @@ def test_inventory_query_keeps_the_overlays_list_flat():
     # 공백을 넣기만 해도 깨진다. 뜻은 같지만 **의도한 것**이다: 이 사슬이 움직이면 사람이
     # 한 번 본다. scalafmt 를 돌리는 사람이 이유를 못 찾지 않게 여기 적어 둔다.
     assert "flatten" not in inventory
+
+
+def test_case_a_query_bounds_are_pinned():
+    # #241 review MEDIUM-2: candidates_a_query had no regression pin, and the mock slicer tests
+    # never execute this Scala (tests/test_slicer.py header: candidates_case_a is a mock value).
+    # Pin the three properties a harmless-looking rewrite silently breaks.
+    q = queries.candidates_a_query()
+    lim, cap = queries.CASE_A_CALL_LIMIT, queries.CASE_A_CANDIDATE_CAP
+    # MEDIUM-1: the K=1 filter short-circuits at LIMIT+1 calls instead of enumerating the whole
+    # call set of a common name. Semantically == `.size <= LIMIT`; this pins the early-exit form.
+    assert f".take({lim} + 1).size <= {lim}" in q
+    # Property 1: the candidate cap .take sits AFTER both filters. Moving it before the param
+    # filter would take the first-N raw methods and then filter, shrinking the set toward 0.
+    # The param filter immediately preceding the take pins that ordering.
+    assert f".filter(_.parameter.size > 0).take({cap})" in q
+    # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
+    # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
+    assert q.count(f".take({cap})") == 2
 
 
 def test_context_query_excludes_synthetic_nodes_at_every_site():
