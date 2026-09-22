@@ -1,9 +1,10 @@
 # 실행 프로필 (model-serving.md §5, engineering-guide.md §2)
 #
-# ⚠ **이 파일의 `roles:`는 아직 확정 로스터가 아니다.** 어느 모델이 어느 자리에 앉는지의
-# 정본은 저장소 루트 `PROJECT-CONTEXT.md` §1이고, 그 재배선은 신규 모델 셋이 registry에 등재된 뒤에
-# 온다 — `PROJECT-CONTEXT.md` §5의 마지막 줄이 그 사실을 든다. 여기 적힌 `critic: devstral-small-2-24b`
-# 같은 값을 "지금 쓰는 로스터"로 읽지 마라.
+# ⚠ **이 파일의 `roles:`는 프로필마다 §1과의 관계가 다르다.** 어느 모델이 어느 자리에 앉는지의
+# 정본은 저장소 루트 `PROJECT-CONTEXT.md` §1이다. **두 풀 프로필(`local_balanced_pool`·`_hybrid`)은
+# 2026-09-21 교체로 §1 확정 로스터와 일치**하고, **실서빙 `local_balanced`·`b1_single` 등은 아직
+# 옛 로스터**다 — 여기 적힌 `critic: devstral-small-2-24b` 같은 값을 "지금 쓰는 로스터"로 읽지 마라.
+# `PROJECT-CONTEXT.md` §5의 마지막 줄이 자리별 상태를 든다.
 #
 # 프로필 교체만으로 B1/B1'/B3/B3' 조건과 실행 환경을 구성할 수 있어야 한다.
 # `roles`의 값은 models.yaml의 model key다. **필수는 auditor·critic 둘**이다(REQUIRED_ROLES).
@@ -304,15 +305,16 @@ profiles:
       state_store: sqlite
     budget: default
 
-  # --- 임시 §1-목표 배선 — Scout 풀 + Critic gpt-oss + 리랭커 4b, 플러밍 완성용 (#103·#178·#152) ----
+  # --- 확정 로스터 배선(§1 정본 2026-09-21) — Scout seccoderx·deepseek + Auditor qwen3.6 + Critic gpt-oss + 리랭커 4b (#233·#178·#152) ----
   local_balanced_pool:
-    # **모델 선정 미확정/검증 전. 배선 플러밍만 완성한다.** #178이 Scout 풀 팬아웃(대상 1개 →
-    # 멤버 셋)을 러너에 넣었는데, 커밋된 프로필 어느 것도 풀 셋을 선언하지 않아 `fake_v2`로
-    # 테스트 안에서만 돌았다. 이 프로필이 **실모델로 §1 목표 구성을 provisional 배선한다:**
+    # **§1 정본의 확정 로스터를 프로필에 배선한다. checksum·처리량 검증 전.**
+    # #178이 Scout 풀 팬아웃(대상 1개 → 멤버 셋)을 러너에 넣었는데, 커밋된 프로필 어느 것도 풀
+    # 셋을 선언하지 않아 `fake_v2`로 테스트 안에서만 돌았다. 이 프로필이 **실모델로 채운다:**
     #
     # - **Scout 풀** — scout_{memory,boundary,injection}이 각자 CWE 계열을 본다(ADR 0010 §3).
-    #   멤버는 §1 base를 v2 프롬프트로 가리키는 임시 별칭이고(models.yaml 「임시 v2 별칭」),
-    #   **어느 모델이 어느 자리인지는 확정이 아니다** — 도달성(#103) 뒤 정식으로 정한다.
+    #   §1 정본대로 — memory·boundary = `seccoderx-8b`(한 키가 두 역할, 프롬프트 v3 폴더가 내용
+    #   가름: scout_memory/v3=옛 v14s · scout_boundary/v3=옛 v15s), injection =
+    #   `deepseek-r1-distill-qwen-32b`(v3).
     # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high) — #182(DecisionDraft verdict)가
     #   머지돼 배선은 되나 **반박 정확도 미측정 + DecisionDraft→gpt-oss 통합 확인이 남았다**
     #   (#182가 "배선 후 follow-up"이라 적은 것). 그래서 실서빙 `local_balanced`(critic devstral)는
@@ -323,8 +325,12 @@ profiles:
     #   `local_balanced_pool_hybrid`의 주석이 든다. **`retriever: fake`인 이 프로필은 그것을
     #   부르지 않지만** 쌍의 roles가 같아야 해서 같은 diff에서 함께 바뀐다.
     #
-    # auditor는 local_balanced 그대로다. ⚠ **검색은 더 이상 아니다** — 리랭커가 위 줄로 갈렸다
-    # (`local_balanced`는 `qwen3-reranker-0.6b`). embedding만 같다.
+    # - **Auditor = §1의 `qwen3.6-35b-a3b`.** Auditor 프롬프트가 아직 미확정이라 registry가
+    #   디스크의 v1을 고른다(auditor/v3는 #237 신설 중 — 확정되면 그때 올린다). critic gpt-oss와
+    #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`).
+    # ⚠ **local_balanced와 더는 같지 않다** — 전 역할이 §1 확정 로스터로 갈렸다
+    #   (`local_balanced`는 단일 scout · auditor `qwen3-coder-30b-a3b` · critic `devstral-small-2-24b`
+    #   · 리랭커 `qwen3-reranker-0.6b`). embedding만 같다.
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 5역할
     #   (scout 셋+auditor+critic)을 돌려주므로 러너는 이것을 **실서빙 프로필로 취급**하고
     #   `--device`·`--condition`을 요구한다(`runner.py`의 그 주석 — dev/실서빙을 가르는 것은
@@ -332,13 +338,13 @@ profiles:
     #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 그래서 이
     #   프로필로 돈 run은 비교표 진입을 `production` 플래그가 막아 주지 않는다 — 처리량 미측정
     #   (별칭·gpt-oss benchmark 0)이고 근본 검증 전이라 **손으로 안 돌린다.**
-    description: "임시 §1-목표 배선(Scout 풀 v2 별칭 + Critic gpt-oss + 리랭커 4b) — 플러밍 완성용, 검증 전 (#103·#182·#152)"
+    description: "확정 로스터 배선(§1 정본: Scout 풀 seccoderx·deepseek + Auditor qwen3.6 + Critic gpt-oss + 리랭커 4b) — checksum·처리량 검증 전 (#233·#182·#152)"
     production: false
     roles:
-      scout_memory: qwen3-coder-30b-a3b-v2
-      scout_boundary: devstral-small-2-24b-v2
-      scout_injection: qwen3-8b-v2
-      auditor: qwen3-coder-30b-a3b
+      scout_memory: seccoderx-8b
+      scout_boundary: seccoderx-8b
+      scout_injection: deepseek-r1-distill-qwen-32b
+      auditor: qwen3.6-35b-a3b
       critic: gpt-oss-20b
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-4b
@@ -358,8 +364,9 @@ profiles:
     # 자리다 — 축이 하나여야 어느 쪽 효과인지 갈린다. `local_balanced_hybrid`가 같은 이유로
     # `local_balanced`와 나뉜 것과 같다.
     #
-    # ⚠ **여기도 모델 선정은 미확정이다** — 풀 3자리·Critic은 `local_balanced_pool`과 같은
-    #   provisional 별칭·gpt-oss다. **reranker는 2026-09-20에 §1 정본대로 `qwen3-reranker-4b`로
+    # ⚠ **전 역할이 `local_balanced_pool`과 같은 §1 확정 키다** — Scout seccoderx·deepseek(v3),
+    #   Auditor `qwen3.6-35b-a3b`(프롬프트 미확정이라 디스크의 v1), Critic gpt-oss.
+    #   checksum·검증 전. **reranker는 2026-09-20에 §1 정본대로 `qwen3-reranker-4b`로
     #   올렸다** — 두 풀 프로필을 같은 diff에서 고친다(`tests/test_config.py`가 쌍의 roles 동일을
     #   기계로 고정하므로 한쪽만 고치면 red다).
     # ⚠ **올린 것이 검증된 것은 아니다.** #152의 배제셋 중 **둘이 열려 있고**(참조 구현 대조 ·
@@ -394,10 +401,10 @@ profiles:
     # `local_balanced_pool`과 **같아야 한다.** 차이가 retriever 하나여야 검색 경로 효과가
     # 갈린다. tests/test_config.py가 roles·budget·나머지 어댑터까지 기계로 고정한다.
     roles:
-      scout_memory: qwen3-coder-30b-a3b-v2
-      scout_boundary: devstral-small-2-24b-v2
-      scout_injection: qwen3-8b-v2
-      auditor: qwen3-coder-30b-a3b
+      scout_memory: seccoderx-8b
+      scout_boundary: seccoderx-8b
+      scout_injection: deepseek-r1-distill-qwen-32b
+      auditor: qwen3.6-35b-a3b
       critic: gpt-oss-20b
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-4b
