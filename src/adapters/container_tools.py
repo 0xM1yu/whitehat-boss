@@ -104,6 +104,7 @@ from src.adapters.fake_tools import TOOL_KINDS, SandboxUnavailable, sources
 from src.ids import IdFactory
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape, safe_join
+from src.schemas.common import Location
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 from src.schemas.run import CompileFlags
@@ -608,6 +609,41 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     return f"# semgrep: {len(results)} findings"
 
 
+def first_hit_location(tool: str, steps: list[Step]) -> Location | None:
+    """정적 신호의 **첫 발견 위치**를 `Evidence.location`에 실을 수 있게 뽑는다 (#70 초석).
+
+    지금은 semgrep `--json`의 `results[0]`만 읽는다 — `path`·`start.line`·`end.line`을
+    그대로 옮긴다. semgrep의 `path`는 명령행에 준 `target`(=workdir 상대경로)로 나오므로
+    `Candidate.location.file`(artifact 상대경로)과 같은 좌표계다. clang-tidy는 출력이
+    절대 컨테이너 경로 + 텍스트라 정규화 위험이 커 **여기서 다루지 않는다**(#70 후속).
+
+    **채워도 게이트 등급은 안 바뀐다**(#70): `p1 = static_ok or location_ok`이고
+    STATIC Evidence에만 location이 붙어 `static_ok`가 이미 참이다. 이 값의 쓰임은 등급이
+    아니라 신호를 심볼 단위로 귀속하는 후속 PR(신호 1건당 Evidence)의 입력이다. 형태가
+    어긋나면 채우지 않는다 — 틀린 위치를 넣느니 `None`이 낫다(`location_ok`는 그대로 거짓).
+    """
+    if tool != "semgrep" or not steps:
+        return None
+    results = semgrep_results(steps[-1].stdout)
+    if not results:
+        return None
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    path = first.get("path")
+    start = first.get("start")
+    if not isinstance(path, str) or not path or not isinstance(start, dict):
+        return None
+    line_start = start.get("line")
+    if not isinstance(line_start, int) or line_start < 1:
+        return None
+    end = first.get("end")
+    line_end = end.get("line") if isinstance(end, dict) else None
+    if not isinstance(line_end, int) or line_end < line_start:
+        line_end = line_start
+    return Location(file=path, line_start=line_start, line_end=line_end)
+
+
 class ContainerToolRunner:
     """`ToolRunner` 구현. 런타임만 다르고 계약·판정은 하나다."""
 
@@ -809,7 +845,15 @@ class ContainerToolRunner:
             # 머리에 넣는다 — JSON 본문 앞에 결론이 있어야 사람이 로그를 읽는다.
             sections.insert(2, summary)
         return self._write(
-            evidence_id, tool, kind, args, sections, ok=ok, exit_code=exit_code, error=error
+            evidence_id,
+            tool,
+            kind,
+            args,
+            sections,
+            ok=ok,
+            exit_code=exit_code,
+            error=error,
+            location=first_hit_location(tool, steps),
         )
 
     def _kill(self, name: str) -> None:
@@ -882,6 +926,7 @@ class ContainerToolRunner:
         ok: bool,
         exit_code: int,
         error: str | None,
+        location: Location | None = None,
     ) -> Evidence:
         """로그를 실제로 쓰고 그 내용의 sha256을 digest로 삼는다.
 
@@ -901,6 +946,7 @@ class ContainerToolRunner:
             kind=kind,
             source=tool,
             artifact_id=args.workdir,
+            location=location,
             payload_ref=f"artifacts/{self.run_id}/{slot}/{evidence_id}.log",
             digest=f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}",
             observed_at=self.observed_at,

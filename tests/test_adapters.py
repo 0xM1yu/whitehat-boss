@@ -344,6 +344,21 @@ def test_static_tool_finds_signal_only_where_it_exists(target_root: Path) -> Non
     assert hit.kind is EvidenceKind.STATIC
 
 
+def test_static_signal_carries_first_hit_location(target_root: Path) -> None:
+    """D23: Fake도 첫 정적 매치의 파일·줄을 Evidence.location에 싣는다.
+
+    등급은 이 값과 무관하다(`p1 = static_ok or location_ok`) — 채우는 목적은 신호를
+    심볼 단위로 귀속하는 후속 PR의 입력이다. 신호가 없는 파일은 위치도 없다.
+    """
+    hit = _runner(target_root).run("semgrep", _args("parser.c"), SANDBOX)
+    assert hit.location is not None
+    assert hit.location.file == "parser.c"
+    assert hit.location.line_start == 5  # memcpy(buf, src, len) 줄
+
+    miss = _runner(target_root).run("semgrep", _args("util.c"), SANDBOX)
+    assert miss.location is None
+
+
 def test_tool_failure_becomes_evidence_not_exception(target_root: Path) -> None:
     """engineering-guide.md §8.3: 도구 실패도 Evidence로 기록한다."""
     evidence = _runner(target_root).run("build", _args("없는디렉터리"), SANDBOX)
