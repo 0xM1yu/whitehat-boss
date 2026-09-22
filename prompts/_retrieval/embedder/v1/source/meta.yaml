@@ -1,0 +1,16 @@
+role: embedder
+side: query               # document(조각) 쪽은 ../../DOCUMENT_FORMAT.md 참고, instruction 없음
+version: v1
+profile: source            # manifest.jsonl 의 anchor == "source" 행에만 적용
+model: qwen3-embedding-0.6b
+placeholders:
+  - SYMBOL      # <- target.symbol
+  - FILE        # <- target.file
+  - LINE        # <- target.line_start
+  - TAINTED_BY  # <- slice_criterion.given.tainted_by
+render: "Instruct: {{prefix.md}}\nQuery: {{body.md}}"   # Qwen3-Embedding 표준 instruction 포맷
+based_on: null
+description: >
+  최초 버전. anchor=source(entry_point)용 질문 템플릿. prefix.md는 모든 source 질문에 공통인
+  고정 instruction, body.md는 manifest.jsonl의 target/given.tainted_by를 그대로 문자열
+  치환한다 (LLM 호출 없이 결정론적으로 생성).

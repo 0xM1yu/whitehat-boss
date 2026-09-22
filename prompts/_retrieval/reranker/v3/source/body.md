@@ -1,0 +1,2 @@
+<Query>: {{QUERY}}
+<Document>: {{DOCUMENT}}
