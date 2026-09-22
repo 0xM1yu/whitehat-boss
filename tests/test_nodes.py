@@ -33,7 +33,13 @@ from src.orchestrator.nodes import (
     validate,
 )
 from src.orchestrator.policy import FixedThresholdPolicy
-from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, build_facts, load_prompt
+from src.orchestrator.prompt_loader import (
+    PROMPTS_DIR,
+    PromptError,
+    build_facts,
+    evidence_summaries,
+    load_prompt,
+)
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import (
@@ -48,6 +54,7 @@ from src.schemas import (
     Role,
     Verdict,
 )
+from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 
 RUN_ID = "run_20260901_0001"
@@ -344,6 +351,101 @@ def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
     )
     assert verdict_decision.data["basis.verdict"] == Verdict.UPHOLD.value
     assert after.state is not FindingState.QUEUED  # 반박으로 탈락하지 않았다
+
+
+# --- Critic 근거 본문 배선 (#237 HIGH-1) ------------------------------------
+
+
+def _evidence(evidence_id: str, payload_ref: str = "artifacts/run/asan/e.log") -> Evidence:
+    return Evidence(
+        evidence_id=evidence_id,
+        run_id=RUN_ID,
+        kind=EvidenceKind.SANITIZER,
+        source="asan",
+        artifact_id="a.c",
+        payload_ref=payload_ref,
+        digest="sha256:" + "0" * 64,
+        observed_at=NOW,
+    )
+
+
+def test_evidence_summaries_bounds_and_skips_missing() -> None:
+    evs = [_evidence(f"evidence_000{i}", f"r{i}") for i in (1, 2, 3)]
+    payloads = {"r1": "short log", "r2": "x" * 5000}  # r3 has no payload
+    out = evidence_summaries(evs, lambda ref: payloads.get(ref))
+    assert out["evidence_0001"] == {"body": "short log", "truncated": False}
+    assert out["evidence_0002"]["truncated"] is True
+    assert "\n...\n" in out["evidence_0002"]["body"]  # deterministic head+tail
+    assert "evidence_0003" not in out  # missing payload skipped -> metadata only
+
+
+def test_evidence_summaries_respects_total_budget() -> None:
+    evs = [_evidence(f"evidence_000{i}", f"r{i}") for i in range(1, 4)]
+    out = evidence_summaries(evs, lambda _ref: "y" * 3000, per_cap=3000, total_cap=4000)
+    assert out["evidence_0001"]["body"]  # first fills
+    assert out["evidence_0003"]["body"] == ""  # past total budget -> empty body
+
+
+def test_build_facts_evidence_body_is_opt_in() -> None:
+    ev = _evidence("evidence_0001", "r1")
+    plain = build_facts(run_id=RUN_ID, ids={}, evidences=[ev])
+    assert plain["evidence"] == [
+        {"evidence_id": "evidence_0001", "kind": EvidenceKind.SANITIZER.value, "ok": True}
+    ]
+    with_body = build_facts(
+        run_id=RUN_ID,
+        ids={},
+        evidences=[ev],
+        evidence_bodies={"evidence_0001": {"body": "heap-overflow", "truncated": False}},
+    )
+    assert with_body["evidence"][0]["body"] == "heap-overflow"
+    assert with_body["evidence"][0]["truncated"] is False
+
+
+def test_describe_evidence_appends_body_when_present() -> None:
+    ev = _evidence("evidence_0001", "r1")
+    assert "heap-overflow" not in critic._describe_evidence([ev])
+    described = critic._describe_evidence(
+        [ev], {"evidence_0001": {"body": "heap-overflow", "truncated": True}}
+    )
+    assert "heap-overflow" in described and "[truncated]" in described
+
+
+def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
+    """dev_fake critic은 v1이라 payload가 있어도 본문을 안 싣는다 (배선은 v3 경로에만)."""
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    prompt = ctx.models.last_for(Role.CRITIC)
+    assert "heap-buffer-overflow" not in prompt.body  # v1 stays metadata-only (byte-identical)
+
+
+def test_critic_includes_evidence_body_when_version_is_content_aware(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """content-aware 버전에서는 payload 본문이 실제로 프롬프트에 실린다."""
+    monkeypatch.setattr(critic, "_CONTENT_AWARE_VERSIONS", frozenset({"v1"}))  # 게이트를 켠다
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    prompt = ctx.models.last_for(Role.CRITIC)
+    assert "heap-buffer-overflow" in prompt.body  # 본문이 EVIDENCE·FACTS에 닿는다
+
+
+def test_critic_v3_prompt_is_content_conditional() -> None:
+    """#237 HIGH-1: v3 prefix의 '현재 metadata-only' 현재형 단언이 조건부로 바뀌었다."""
+    prefix = (PROMPTS_DIR / "critic" / "v3" / "prefix.md").read_text(encoding="utf-8")
+    assert "For every current metadata-only call" not in prefix
+    assert "In the current metadata-only runtime" not in prefix
+    assert "carries a `body`" in prefix
 
 
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:

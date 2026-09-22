@@ -573,6 +573,7 @@ def run_pipeline(
     config: HarnessConfig,
     deps: Dependencies,
     read_source: Callable[[Location], str],
+    read_payload: Callable[[str], str | None] = lambda _ref: None,
     trace: TraceWriter,
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
@@ -596,6 +597,7 @@ def run_pipeline(
         ledger=BudgetLedger(config.budget, trace),
         policy=FixedThresholdPolicy(config.thresholds),
         read_source=read_source,
+        read_payload=read_payload,
         symbols_for=deps.symbols_for,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일

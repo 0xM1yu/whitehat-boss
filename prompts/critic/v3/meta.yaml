@@ -1,6 +1,8 @@
-# 미배선(disk-only): 이 PR(#237)은 critic/v3를 신설하지만 **켜지 않는다**. gpt-oss-20b은 v1로
-# 둔다 — critic/v3 prefix가 metadata-only 런타임에서 항상 need_evidence를 내 validated·proven이
-# 0이 되고 8단계가 안 돌기 때문이다(리뷰 #237 HIGH-1). evidence 본문이 Critic에 닿는 변경 뒤 올린다.
+# 아직 미활성(gpt-oss-20b은 v1): critic/v3는 신설(#237)됐고 근거 본문 배선이 들어왔다
+# (critic 노드가 v3 경로에서만 payload 본문을 EVIDENCE·FACTS에 싣는다). 그래서 이 prefix는
+# 더 이상 「항상 need_evidence」가 아니라 content-conditional이다 — 본문 있으면 rebut/uphold,
+# ID·metadata만이면 need_evidence. **다만 gpt-oss-20b을 v3로 켜는 것은 validated·proven이
+# 실제로 흐르는지 확인하는 run(#237 HIGH-1) 뒤 별도 단계다.** 그전까지 v1 유지.
 #
 # ⚠ **2026-09-12에 이 버전의 본문이 바뀌었고 `version`은 그대로다** (PR #182).
 # 그래서 `prompt_version: "v2"`가 **서로 다른 두 텍스트**를 가리킨다 — 그 날 이전 run의

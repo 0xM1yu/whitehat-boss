@@ -13,10 +13,12 @@ F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 `gate.was_normalized()`면 `critic_normalized`를 남긴 뒤 **정규화된 값**을 정책에 넘긴다.
 """
 
+from collections.abc import Mapping
+
 from src.orchestrator import gate
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
-from src.orchestrator.prompt_loader import build_facts, load_prompt
+from src.orchestrator.prompt_loader import build_facts, evidence_summaries, load_prompt
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.common import ProducedBy
@@ -29,6 +31,11 @@ ROLE = Role.CRITIC
 # 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조).
 # **`Decision`이 아니라 `DecisionDraft`다** — ID·`produced_by`는 하네스가 넣는다.
 OUTPUT_SCHEMA = DecisionDraft
+
+# 근거 본문을 FACTS·EVIDENCE에 싣는 것은 그 본문을 **읽도록 쓰인 프롬프트 버전**에만 한다.
+# v3만 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
+# v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
+_CONTENT_AWARE_VERSIONS = frozenset({"v3"})
 
 # 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와
 # 같은 꼴로 읽히도록 맞춘다 — 절단 사유는 어느 상한이 걸렸는지를 이름으로 말해야 한다.
@@ -104,16 +111,25 @@ def run(
 def _ask_model(
     ctx: RunContext, *, decision_id: str, finding: Finding, evidences: list[Evidence]
 ) -> Decision:
-    template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
+    version = ctx.config.model_for(ROLE.value).prompt_template_version
+    template = load_prompt(ROLE, version)
+    # content-aware 버전(v3)일 때만 payload 본문을 읽어 싣는다. 그 외 버전은 본문 없이
+    # 종전과 동일(#237 HIGH-1: 배선은 v3 경로에만, v1은 바이트 동일).
+    bodies = (
+        evidence_summaries(evidences, ctx.read_payload)
+        if version in _CONTENT_AWARE_VERSIONS
+        else {}
+    )
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
             ids={"finding_id": finding.finding_id, "decision_id": decision_id},
             evidences=evidences,
+            evidence_bodies=bodies,
         ),
         claim=f"{finding.title} ({finding.cwe})",
         path=_describe_path(finding),
-        evidence=_describe_evidence(evidences),
+        evidence=_describe_evidence(evidences, bodies),
     )
     # **verdict를 자유 문자열로 받는다** — `Decision`의 `verdict: Verdict`를 스키마에 `enum`으로
     # 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측
@@ -156,10 +172,19 @@ def _describe_path(finding: Finding) -> str:
     return "\n".join(f"- {step.step.value}: `{step.symbol}`" for step in finding.path)
 
 
-def _describe_evidence(evidences: list[Evidence]) -> str:
+def _describe_evidence(
+    evidences: list[Evidence], bodies: Mapping[str, Mapping[str, object]] | None = None
+) -> str:
     if not evidences:
         return "(근거 없음)"
-    return "\n".join(
-        f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
-        for ev in evidences
-    )
+    bodies = bodies or {}
+    lines = []
+    for ev in evidences:
+        line = f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
+        body = bodies.get(ev.evidence_id)
+        if body and body.get("body"):
+            snippet = str(body["body"]).replace("\n", "\n    ")
+            mark = " [truncated]" if body.get("truncated") else ""
+            line += f"\n    {snippet}{mark}"
+        lines.append(line)
+    return "\n".join(lines)
