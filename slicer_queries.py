@@ -82,6 +82,39 @@ def envelope(stage: str, body: str) -> str:
     )
 
 
+# Client-substituted placeholder for the out-of-band payload path. The client (JoernClient)
+# replaces this with a JSON string literal of a real, writable path before sending.
+OUT_PATH_TOKEN = "__SLICER_OUT_PATH__"
+
+
+def file_envelope(stage: str, body: str) -> str:
+    """Same as `envelope`, but the payload travels through a FILE, not the REPL return.
+
+    The candidate-enumeration payload (case_a/case_b) can reach several thousand rows on
+    large repos. Returned inline as one base64 string, that value overruns what Joern's
+    REPL renders as a single result, which comes back empty -- the envelope markers are
+    present but the payload between them is gone, so the stage aborts with 0 slices
+    (issue #219; the per-set `.take` cap in #241 only halved it, since api+readers can
+    still sum to ~2x the cap). Here Joern writes `ujson.write(result)` to `OUT_PATH_TOKEN`
+    and the block returns only the byte count, so the REPL return stays tiny regardless of
+    how many candidates there are. The client reads the file and checks the byte count.
+
+    Only the byte count is the block's rendered value; `__payload` lives inside a nested
+    block so the huge array is never echoed.
+    """
+    return (
+        "{ import io.shiftleft.semanticcpg.language._; "
+        "import io.joern.dataflowengineoss.language._; "
+        "import io.shiftleft.codepropertygraph.generated.nodes; "
+        f'"__SLICER_{stage}__" + {{ '
+        f"val __payload = ujson.write({{ {body} }})"
+        ".getBytes(java.nio.charset.StandardCharsets.UTF_8); "
+        f"java.nio.file.Files.write(java.nio.file.Paths.get({OUT_PATH_TOKEN}), __payload); "
+        "__payload.length }.toString + "
+        '"__END_SLICER__" }'
+    )
+
+
 def engine_context(limits: dict[str, int] | None = None) -> str:
     args = ", ".join(f"{key} = {value}" for key, value in sorted((limits or {}).items()))
     return (
@@ -203,7 +236,7 @@ CASE_A_CANDIDATE_CAP = 2000
 
 
 def candidates_a_query() -> str:
-    return envelope(
+    return file_envelope(
         "case_a",
         LOCATION
         + f"""
@@ -278,7 +311,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .replace("__WCAP__", str(CASE_B_WRITER_CAP))
         .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
     )
-    return envelope("case_b", body)
+    return file_envelope("case_b", body)
 
 
 def method_selector(scopes: list[dict]) -> str:

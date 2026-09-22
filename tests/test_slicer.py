@@ -71,7 +71,26 @@ class MockTransport:
             payload = payload(query)
         if isinstance(payload, Exception):
             raise payload
-        return self.Reply(payload)
+        return self.Reply(self._materialize(stage, query, payload))
+
+    @staticmethod
+    def _materialize(stage, query, payload):
+        """Emulate Joern's file transport: a query that writes to a path (case_a/case_b)
+        drops the payload in that file and returns only the byte count, mirroring
+        `slicer_queries.file_envelope`. Inline-marker stages are left untouched."""
+        target = re.search(r'Paths\.get\("([^"]*)"\)', query)
+        if target is None or not isinstance(payload, dict):
+            return payload
+        stdout = payload.get("stdout", "")
+        marker = re.search(rf"__SLICER_{stage}__([A-Za-z0-9+/=]+)__END_SLICER__", stdout)
+        if marker is None:
+            return payload
+        raw = base64.b64decode(marker[1])
+        Path(target[1]).write_bytes(raw)
+        return {
+            **payload,
+            "stdout": stdout.replace(marker[0], f"__SLICER_{stage}__{len(raw)}__END_SLICER__"),
+        }
 
     class Reply:
         def __init__(self, payload):
@@ -410,6 +429,49 @@ def test_a_terminated_osc_on_one_line_is_still_stripped():
 def test_payload_delimiters_and_error_words_are_data():
     payload = [{"symbol": 'ErrorException|,:"\\\n한글', "line": 1}]
     assert slicer.decode_response(response("case_a", payload), "case_a")[0] == payload
+
+
+def test_case_a_query_carries_the_payload_through_a_file_not_the_repl():
+    """#219/#241 follow-up: the enumeration payload must not ride the REPL return.
+
+    Returned inline, a few-thousand-row case_a payload overruns Joern's REPL and comes
+    back empty (markers present, base64 gone) -> 0 slices. `file_envelope` writes it to a
+    path and returns only the byte count, so the return stays tiny at any candidate count.
+    """
+    query = queries.candidates_a_query()
+
+    assert queries.OUT_PATH_TOKEN in query  # the client substitutes a real, writable path
+    assert "Files.write" in query
+    assert "Base64" not in query  # the payload no longer travels as a REPL-returned string
+    assert '"__SLICER_case_a__"' in query and '"__END_SLICER__"' in query
+
+
+def test_decode_response_reads_the_payload_from_the_file(tmp_path):
+    payload = [candidate("entry", 1)]
+    raw = json.dumps(payload).encode("utf-8")
+    path = tmp_path / "case_a.payload.json"
+    path.write_bytes(raw)
+    reply = {
+        "success": True,
+        "stdout": f'val res: String = "__SLICER_case_a__{len(raw)}__END_SLICER__"',
+        "stderr": "",
+    }
+
+    assert slicer.decode_response(reply, "case_a", path)[0] == payload
+
+
+def test_decode_response_rejects_a_short_payload_file(tmp_path):
+    """A truncated write must fail loudly, not hand half a JSON document downstream."""
+    path = tmp_path / "case_a.payload.json"
+    path.write_bytes(b'[{"partial"')  # 11 bytes on disk, marker claims more
+    reply = {
+        "success": True,
+        "stdout": 'val res: String = "__SLICER_case_a__999__END_SLICER__"',
+        "stderr": "",
+    }
+
+    with pytest.raises(slicer.QueryError, match="declared 999"):
+        slicer.decode_response(reply, "case_a", path)
 
 
 def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_path):
