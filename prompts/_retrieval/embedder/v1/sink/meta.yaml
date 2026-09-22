@@ -1,0 +1,15 @@
+role: embedder
+side: query
+version: v1
+profile: sink              # manifest.jsonl 의 anchor == "sink" 행에만 적용
+model: qwen3-embedding-0.6b
+placeholders:
+  - SYMBOL         # <- target.symbol
+  - FILE           # <- target.file
+  - LINE           # <- target.line_start
+  - WHY_SELECTED   # <- slice_criterion.given.why_selected
+render: "Instruct: {{prefix.md}}\nQuery: {{body.md}}"
+based_on: null
+description: >
+  최초 버전. anchor=sink(dangerous_op)용 질문 템플릿. source 프로필과 대칭 구조이나
+  tainted_by 대신 why_selected를 쓰고, 방향(역추적)이 반대다.

@@ -1,0 +1,6 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다. #240이 auditor를
+# v1로 유지하기로 명시했고, evidence 본문이 닿는 변경 전까지 v3는 올리지 않는다(리뷰 #237 LOW-1).
+role: auditor
+version: v3
+output_schema: Finding
+description: 원본 소스 기반 5단계 감사. `trigger_status`를 `confidence`·`rca_draft`·CWE **앞에서** 확정해 그 셋이 서로 모순되지 않게 한다

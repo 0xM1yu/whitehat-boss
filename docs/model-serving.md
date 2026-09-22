@@ -273,41 +273,27 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > `_model_client()`가 `model_name=model_key`로 만들고 `src/adapters/openai_compat.py`가
 > `"model": self.model_name`으로 보낸다. **역할 이름이 아니라 registry 키다.**
 >
-> **그래서 포트 하나가 여러 이름에 답해야 한다 — 그리고 그 이름 집합은 프로필마다 다르다.**
+> **그래서 포트 하나가 여러 이름에 답해야 할 수 있다 — 그 이름 집합은 프로필마다 다르다.**
 > 아래는 `config/profiles.yaml`·`config/models.yaml`을 파싱해 낸 것이다(개수를 손으로 세지 않는다):
 >
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
-> | **8001** | `qwen3-8b` ← `local_balanced`·`_hybrid` · **`qwen3-8b-v2`** ← 풀 둘 · `qwen3-4b` ← `single_gpu_12g` |
-> | **8002** | `qwen3-coder-30b-a3b` ← `b1_single`·`local_balanced`·`_hybrid`·**풀 둘(auditor)** · **`qwen3-coder-30b-a3b-v2`** ← 풀 둘(scout_memory) |
-> | **8003** | `devstral-small-2-24b` ← `local_balanced`·`_hybrid` · **`devstral-small-2-24b-v2`** ← 풀 둘 |
+> | **8001** | `qwen3-8b` ← `local_balanced`·`_hybrid` · `qwen3-4b` ← `single_gpu_12g` |
+> | **8002** | `qwen3-coder-30b-a3b` ← `b1_single`·`local_balanced`·`_hybrid` |
+> | **8006** | `gpt-oss-20b` ← `local_balanced_pool`·`_hybrid`(critic) |
+> | **8009** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
 >
-> **8002는 한 프로필 안에서 두 이름이 온다** — 풀 프로필이 `scout_memory`를 별칭으로,
-> `auditor`를 base로 가리킨다. **8001·8003은 프로필 사이에서 갈린다** — 풀로 돌리면 별칭
-> 이름만, 실서빙 `local_balanced`로 돌리면 base 이름만 온다.
+> **이 이름들은 프로필 사이에서 갈린다** — 예로 8001은 `local_balanced`로 돌리면 `qwen3-8b`만,
+> `single_gpu_12g`로 돌리면 `qwen3-4b`만 온다. **한 서버가 동시에 두 이름을 받아야 하는 자리는
+> 지금 없다.**
 >
-> ⚠ **8002는 회피 불가다 — 「주의」가 아니라 블로커다.** 위 표의 8001·8003은 프로필
-> **사이**의 갈림이라 고를 프로필이 있다. **8002는 풀 프로필 *안*에서 두 이름이 온다** —
-> `auditor`가 base를, `scout_memory`가 별칭을 가리킨다. 그러니 `local_balanced_pool`·
-> `local_balanced_pool_hybrid`는 **어느 프로필을 골라도** 한 서버가 두 이름에 동시에 답해야
-> 하고, 그 능력은 바로 아래 문단이 §0으로 **미검증**이라 못박은 것이다.
-> ⇒ **멀티네임이 확인되기 전까지 풀 프로필은 이 경로로 못 뜬다.** 위 처방(*"그날 돌릴
-> 프로필이 무엇인지 보고 맞춘다"*)을 **풀에까지 적용하지 마라** — 고를 다른 프로필이 없다.
->
-> **이 문단은 기계가 지킨다.** `tests/test_docs_format.py`의
-> `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해
-> 프로필 안 포트 공유를 세고, 있으면 그 선언과 포트 번호를 여기서 요구한다.
-> **양방향이다** — 확정 로스터에서 Auditor가 `qwen3-coder-30b-a3b`가 아니게 되면
-> `auditor`와 `scout_memory`가 다른 모델이 되어 이 충돌 자체가 사라지고, 그때는 같은
-> 검사가 **이 문단을 지우게 만든다.** 없어진 블로커를 주장하는 문장이 남는 것이
-> 이 저장소가 §2.3으로 반복해 밟은 자리다.
->
-> ⚠ **그래서 「별칭으로 띄우면 된다」가 아니다** — 그렇게 띄우면 `local_balanced`(비교표 run이
-> 쓰는 프로필)가 그 포트에서 깨진다. **그날 돌릴 프로필이 무엇인지 보고 맞춘다.**
->
-> 별칭은 무게·`checksum`·`endpoint`·`fallback`이 base와 같다(`prompt_template_version`이 다르고,
-> 셋 중 둘은 `benchmark`도 다르다 — 별칭 쪽이 전부 `0`, 즉 미실측 표시다). **그러니 모델을
-> 두 번 띄우는 것이 답은 아니다.**
+> ⚠ **한 프로필 안에서 한 포트로 두 모델이 오는 자리도 지금 없다 — 있으면 「주의」가 아니라
+> 블로커다.** 확정 로스터 배선 때 `seccoderx-8b`(Scout)가 `gpt-oss-20b`(Critic)와 같은 :8006이었는데
+> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
+> 두 모델을 요구하면 — 프로필을 골라 피할 수 없다. `tests/test_docs_format.py`의
+> `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해 그
+> 자리를 세고, 있으면 그 포트 번호와 선언을 여기서 요구한다 — **지금은 0건이라 이 문단이 선언을
+> 안 든다.**
 >
 > ⚠ **어떻게 한 서버가 여러 이름을 받게 하는지는 이 저장소가 모른다.** 기동 명령이 남은 자리를
 > 전수로 훑으면 `--served-model-name`이 **32곳**인데 **이름을 둘 이상 준 곳이 0건**이고,

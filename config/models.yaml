@@ -513,6 +513,10 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
+    # v1로 둔다. 이 PR은 critic/v3를 신설하지만 **켜지 않는다** — critic/v3 prefix가
+    # metadata-only 런타임에서 항상 need_evidence를 내므로, 켜면 validated·proven이 구조적으로
+    # 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). auditor/v3와 같이 디스크에만 두고,
+    # evidence 본문이 Critic에 닿는 변경이 먼저 들어온 뒤 올린다. 미참조 버전은 정상이다(v2도 그렇다).
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -630,6 +634,86 @@ models:
     license: "Apache-2.0"
     checksum: "sha256:c86e70830af4d7d1d0fded0bd2c48b5c296b3de32ca668ae37f2100760fcd082"
     source: "hf://Qwen/Qwen3-Reranker-4B@22e683669bc0f0bd69640a1354a6d0aebcfeede5"
+    family: "qwen"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
+  # ── 확정 로스터(2026-09-20 실험팀) registry 골격 ─────────────────────────────
+  # 아래 셋은 확정 모델이되 배선 전이다. checksum·source revision·benchmark는
+  # 미실측(placeholder)이고 프롬프트 v3는 아직 디스크에 없다(scout v3 신설 중, 이슈 #233).
+  # context_limit·quantization·license·arch는 hf config.json/카드에서 실측(2026-09-20).
+  # 프롬프트 이식 + 실험 서빙 스냅샷이 오면 §1 로스터·프로필로 승격한다.
+  seccoderx-8b:
+    # 확정 로스터 Scout memory·boundary (프롬프트 v3). SecCoderX Reasoning Vulnerability
+    # Detection Reward Model — config.json이 Qwen3ForCausalLM/qwen3라 생성형이고 Scout로 JSON을 낸다.
+    # 한 모델이 memory·boundary 두 역할을 v3로 담당한다 — 프롬프트 내용은 역할 폴더가 가른다
+    # (scout_memory/v3=옛 실험 v14s, scout_boundary/v3=옛 v15s). 버전이 같아 별칭 키가 필요 없다.
+    # ⚠ **포트는 8009다** — Critic `gpt-oss-20b`가 8006이라, 풀에서 scout·critic이 동시 상주할 때
+    #   같은 포트를 못 쓴다(#234 리뷰 HIGH-2). 골격 등재 때 8006이었던 것을 배선하며 갈랐다.
+    endpoint: "http://127.0.0.1:8009/v1"
+    context_limit: 40960
+    quantization: "bf16"
+    license: "MIT"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model"
+    family: "qwen"
+    prompt_template_version: "v3"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
+  deepseek-r1-distill-qwen-32b:
+    # 확정 로스터 Scout injection (프롬프트 v3). DeepSeek-R1-Distill-Qwen-32B.
+    # config.json: Qwen2ForCausalLM, context 131072, torch_dtype bfloat16.
+    # license MIT (베이스 Qwen2.5는 Apache-2.0). ⚠ family: 베이스 가중치는 Qwen2.5지만
+    # DeepSeek 재학습이라 계열 확정 필요 — ADR 0010 §4(베이스 제작사)로 일단 qwen.
+    # Scout라 family-split(Critic↔Auditor) 대상은 아니다.
+    endpoint: "http://127.0.0.1:8007/v1"
+    context_limit: 131072
+    quantization: "bf16"
+    license: "MIT"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+    family: "qwen"
+    prompt_template_version: "v3"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
+  qwen3.6-35b-a3b:
+    # 확정 로스터 Auditor. Qwen/Qwen3.6-35B-A3B — MoE 35B total/3B active(256 experts),
+    # config.json: Qwen3_5MoeForConditionalGeneration, context 262144.
+    # ⚠ **비전-언어 모델이다** — config.json에 vision_config(depth 27·hidden 1152)·
+    #   image_token_id 248056·video_token_id 248057이 있고 HF pipeline_tag가 image-text-to-text다
+    #   (`Qwen3_5MoeForConditionalGeneration` = 멀티모달 관례, `ForCausalLM` 아님). vLLM 멀티모달
+    #   서빙 경로, 「≈2B/param」 추정에 비전 타워 포함, R1·R8 범위가 그만큼 넓어진다(#234 리뷰 MEDIUM-2).
+    # torch_dtype는 top-level엔 없고 `text_config.dtype: "bfloat16"`으로 **선언**돼 있다 —
+    #   추정이 아니라 실값이다(#234 리뷰 MEDIUM-1). 카드 base 71.9GB(≈2B/param)와 일치.
+    # ⚠ 문서상 로딩만·GT 품질 미검증. Auditor 프롬프트가 아직 미확정이라 디스크에 있는 v1로 둔다
+    #   (auditor/v3는 #237이 신설 중 — 확정되면 그때 올린다).
+    endpoint: "http://127.0.0.1:8008/v1"
+    context_limit: 262144
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://Qwen/Qwen3.6-35B-A3B"
     family: "qwen"
     prompt_template_version: "v1"
     fallback: null

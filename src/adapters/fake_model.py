@@ -25,6 +25,7 @@ from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import EvidenceKind, FindingState, PathStepKind, Role, Verdict
 from src.schemas.finding import Finding, PathStep, ReproSpec
+from src.schemas.scout_response import AnalysisSummary, ScoutResponse
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 비용 지표 경로를 태우기 위한 근사다.
 _CHARS_PER_TOKEN = 4
@@ -294,8 +295,18 @@ def _build_decision_draft(context: FakeContext, produced_by: ProducedBy) -> Deci
     )
 
 
+def _build_scout_response(context: FakeContext, produced_by: ProducedBy) -> ScoutResponse:
+    """4단계 Scout 출력 래퍼. 판정은 `_build_candidate`와 같고, 근거(`analysis_summary`)는
+    최소로 채운다 — 하네스가 버리므로 결정론적 자리표시면 된다(scout_response.py)."""
+    return ScoutResponse(
+        candidate=_build_candidate(context, produced_by),
+        analysis_summary=AnalysisSummary(claim="fake scout analysis summary"),
+    )
+
+
 _BUILDERS = {
     Candidate: _build_candidate,
+    ScoutResponse: _build_scout_response,
     Finding: _build_finding,
     Decision: _build_decision,
     DecisionDraft: _build_decision_draft,
