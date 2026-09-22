@@ -1,0 +1,27 @@
+role: reranker
+version: v1
+profile: sink
+model: qwen3-reranker-4b
+input:
+  query: embedder/v1/sink의 렌더링된 query 문자열을 그대로 재사용한다 (prefix.md + body.md).
+  document: 후보 조각 1개 (data/chunks/chunks_manifest.jsonl의 text 필드, embedder top-32 중 1개)
+output:
+  format: '"yes" 토큰 vs "no" 토큰의 로짓/확률을 관련도 점수로 사용 (0~1)'
+  top_k: 5
+render: |
+  <|im_start|>system
+  {{../../SYSTEM.md}}<|im_end|>
+  <|im_start|>user
+  <Instruct>: {{prefix.md}}
+  {{body.md}}<|im_end|>
+  <|im_start|>assistant
+  <think>
+
+  </think>
+
+  # 점수는 이 빈 think 블록 다음 위치에서 "yes"/"no" 토큰의 로짓을 비교해 뽑는다.
+based_on: null
+description: >
+  최초 버전. source 프로필과 동일하게 공식 템플릿 수정 반영(2026-09-14) — system은
+  ../../SYSTEM.md 고정 문구, relevance 정의는 <Instruct>(prefix.md), assistant 턴에 빈
+  <think></think> 블록 추가. relevance 정의만 역추적(sink->source) 방향으로 다름.

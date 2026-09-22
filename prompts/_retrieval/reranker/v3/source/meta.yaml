@@ -1,0 +1,15 @@
+role: reranker
+version: v3
+profile: source
+model: qwen3-reranker-4b
+input:
+  query: embedder/v1 query_body 재사용 (embedder v1 고정)
+  document: embedder top-32 후보 1개
+output:
+  format: '"yes" vs "no" logit score'
+  top_k: 5
+based_on: v1
+description: >
+  Phase 3 (E1 only). v1 prefix에 슬라이스 경계 규칙 추가: 파일 헤더/함수 경계/청크 끝을
+  taint 경로의 종점으로 보지 말고, 같은 슬라이스 연속으로 이어서 판단하라는 금지→대체 2문장.
+  embedder는 v1 고정 — R@32 변화 없이 R@5만 보려는 기여 분리 실험.

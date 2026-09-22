@@ -1,0 +1,17 @@
+role: embedder
+side: query
+version: v2
+profile: source
+model: qwen3-embedding-0.6b
+placeholders:
+  - SYMBOL
+  - FILE
+  - LINE
+  - TAINTED_BY
+render: "Instruct: {{prefix.md}}\nQuery: {{body.md}}"
+based_on: v1
+description: >
+  E2 only. v1 prefix에 금지→대체 2문장 추가: 같은 함수/API 이름(정의)만으로 관련이라고
+  보지 말고, Query의 구체 file:line 지점을 담은 청크를 우선한다. body.md 불변.
+  live Phase 2에서 sample_01 sink miss@32가 send_msg 호출 vs 정의 혼동인 관측에 대응.
+
