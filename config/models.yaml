@@ -513,9 +513,11 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
-    # v3: 이 PR이 critic/v3를 신설(metadata-only 런타임에 맞춘 need_evidence 기본)했고 Critic이
-    # 이 모델이라, 그 프롬프트를 실제 로드하려면 여기가 v3여야 한다.
-    prompt_template_version: "v3"
+    # v1로 둔다. 이 PR은 critic/v3를 신설하지만 **켜지 않는다** — critic/v3 prefix가
+    # metadata-only 런타임에서 항상 need_evidence를 내므로, 켜면 validated·proven이 구조적으로
+    # 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). auditor/v3와 같이 디스크에만 두고,
+    # evidence 본문이 Critic에 닿는 변경이 먼저 들어온 뒤 올린다. 미참조 버전은 정상이다(v2도 그렇다).
+    prompt_template_version: "v1"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에

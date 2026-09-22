@@ -1,3 +1,5 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다. #240이 auditor를
+# v1로 유지하기로 명시했고, evidence 본문이 닿는 변경 전까지 v3는 올리지 않는다(리뷰 #237 LOW-1).
 role: auditor
 version: v3
 output_schema: Finding
