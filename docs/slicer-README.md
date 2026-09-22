@@ -49,8 +49,12 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 
 ### Case B — 선택한 호출 인자에서 역추적
 
-지역 배열 식별자를 인자로 받는 호출과, 같은 함수에서 같은 선언을 반복 해제하는 호출을
-후보로 삼는다. 해제 wrapper는 free로 흐르는 **매개변수 위치**를 보존한다.
+지역 배열 식별자를 인자로 받는 호출, 같은 함수에서 같은 선언을 반복 해제하는 호출, 위험
+write 함수(memcpy·strcpy 계열), 그리고 연산자 앵커 — 배열 인덱스 **쓰기**(`a[i] = …`)와
+포인터 산술(피연산자가 포인터 타입이거나 메모리 접근인 `p ± i`) — 를 후보로 삼는다. 해제
+wrapper는 free로 흐르는 **매개변수 위치**를 보존한다. write·연산자 집합은 대형 저장소에서
+폭증하므로(WavPack 실측: 인덱스 접근 3,042·add/sub 3,309) 좁힌 뒤 각각 상한(`CASE_B_*_CAP`)으로
+유계한다. 인덱스 **읽기**와 정수만의 산술은 제외한다 — 유계를 위한 recall 한계다.
 
 후보마다 호출의 소속 함수·줄·열·code·AST order 경로로 호출 한 개를 선택한다. 모호하면
 첫 호출을 임의로 쓰지 않고 실패를 기록한다. **이 실패는 그 후보 하나로 끝난다** —
@@ -58,8 +62,12 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 세고 다음 후보로 계속한다(#219). 매핑 실패(`candidates_unmapped`)가 후보 하나만 건너뛰고
 계속하는 것과 같은 결이다. ⚠ 단 `poisoned`(서버 상태 불확실) 실패가 **연속 `POISON_STOP_STREAK`회**면
 run을 멈춘다 — 서버가 그 뒤로 회복 못 하기 때문이고, 재기동 후 `--resume`이 저장 지점에서 잇는다. `trigger_arguments`는 후보 선정 근거이고,
-`sink_arguments`는 선택한 호출의 모든 인자다. `strcpy(dst, src)`에서 배열 dst만 보고 src를
-놓치지 않도록 구분한다. 반복 해제의 관련 호출은 anchor로도 남긴다.
+`sink_arguments`는 선택한 호출의 모든 인자다. 지역배열 인자 패턴에서는 `trigger_arguments`가
+그 배열 인자만이라 둘이 갈린다 — 무엇이 이 호출을 후보로 만들었는지가 남는다. ⚠ 단
+**WRITERS·operator 앵커는 트리거가 전 인자다** — 그 필터는 인자 하나가 아니라 호출 전체로
+발화하므로(`writers.contains(c) || operators.contains(c)`) 그 후보에서는 `trigger_arguments`가
+`sink_arguments`와 같아진다. `memcpy(dst, src, n)`의 dst·src·n을 모두 역추적하려는 의도다.
+반복 해제의 관련 호출은 anchor로도 남긴다.
 
 선택한 인자에서 `ddgIn` 관계를 역추적한다. 내부 호출의 반환과 formal parameter/actual
 argument 경계는 호출 위치 stack으로 연결한다. 의존성 그래프를 수집하며 모든 경로를 열거하지
