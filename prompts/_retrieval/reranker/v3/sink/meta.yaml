@@ -1,0 +1,14 @@
+role: reranker
+version: v3
+profile: sink
+model: qwen3-reranker-4b
+input:
+  query: embedder/v1 query_body 재사용 (embedder v1 고정)
+  document: embedder top-32 후보 1개
+output:
+  format: '"yes" vs "no" logit score'
+  top_k: 5
+based_on: v1
+description: >
+  Phase 3 (E1 only). source와 동일한 경계 규칙 — 역추적 방향(sink)에 맞게 "follow backward"
+  로만 표현 차이. embedder v1 고정.
