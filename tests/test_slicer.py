@@ -552,6 +552,20 @@ def test_context_query_stops_before_leaving_a_method():
     assert "case n if" not in query
 
 
+def test_case_b_query_adds_the_writer_sink_set_bounded():
+    # Query-contract check (not a claim that mock tests execute Scala): the case_b query
+    # gains a bounded WRITERS sink set that tags dangerous_write, on top of the existing
+    # local-array-argument and double-free patterns (issue #219 (b)).
+    query = queries.candidates_b_query()
+    assert "memcpy" in query and "strcpy" in query and "memset" in query
+    assert 'cpg.call.name("(' in query and ").take(" in query  # writer set, bounded
+    assert str(queries.CASE_B_WRITER_CAP) in query
+    assert '"dangerous_write"' in query
+    # The trigger includes every argument of a writer call so backtracking reaches dest,
+    # source and size — the union is unbounded strings, so the cap must be present.
+    assert "__WRITERS__" not in query  # the placeholder was substituted
+
+
 def test_noncode_delimiters_do_not_change_structure():
     text = '#define OPEN {\nvoid f() {\n// }\nputs("}");\n/* } */\n}\n'
     masked = mask_non_code(text)

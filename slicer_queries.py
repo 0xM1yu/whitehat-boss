@@ -11,6 +11,19 @@ READERS = (
     "getline|scanf|fscanf|vscanf|gets|getenv|fgetws|fgetwc|mmap"
 )
 
+# Case B (b) sink expansion (issue #219). The GT sinks are dominated by memory-write
+# operations that the local-array-argument and double-free patterns miss. WRITERS mirrors
+# READERS: calls to these copy/format functions are sinks whose arguments (dest, source,
+# size) are backtracked. Measured on the eval GT (40 samples): ~5 sinks are direct calls to
+# these, and the array-argument pattern alone caught almost none of them.
+WRITERS = (
+    "memcpy|memmove|memset|strcpy|strncpy|strcat|strncat|stpcpy|bcopy|"
+    "sprintf|snprintf|vsprintf|vsnprintf|wmemcpy|wmemmove|wcscpy|wcsncpy|wcscat"
+)
+# The writer set can be large on big repos; cap it so the case_b payload stays bounded
+# (the same failure mode #219 hit in case_a). Repos past the cap get bounded coverage.
+CASE_B_WRITER_CAP = 2000
+
 
 def literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
@@ -159,8 +172,7 @@ def candidates_a_query() -> str:
 
 
 def candidates_b_query(limits: dict[str, int] | None = None) -> str:
-    return envelope(
-        "case_b",
+    body = (
         LOCATION
         + CALL_IDENTITY
         + engine_context(limits)
@@ -180,24 +192,29 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       val repeated = releases.groupMap(_._1)(_._2).values
         .map(_.distinct).filter(_.size >= 2).toList
       val repeatedCalls = repeated.flatten.distinct
-      ujson.Arr.from((arrays ++ repeatedCalls).distinct.map(c => {
+      val writers = cpg.call.name("(__WRITERS__)").take(__WCAP__).l
+      ujson.Arr.from((arrays ++ repeatedCalls ++ writers).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
         ujson.Obj("symbol" -> c.name, "file" -> c.location.filename,
           "line" -> c.lineNumber.getOrElse(-1), "scope" -> scope(c.method),
           "selector" -> callSelector(c),
           "reasons" -> ujson.Arr.from(List(
             Option.when(arrays.contains(c))("local_array_argument"),
-            Option.when(repeatedCalls.contains(c))("repeated_release")).flatten),
+            Option.when(repeatedCalls.contains(c))("repeated_release"),
+            Option.when(writers.contains(c))("dangerous_write")).flatten),
           "trigger_arguments" -> ujson.Arr.from(c.argument.l.filter(a =>
             a.start.isIdentifier.refsTo.collect { case l: nodes.Local => l }
               .exists(_.typeFullName.contains("[")) ||
             (repeatedCalls.contains(c) && positions.getOrElse(c.name, Nil)
-              .contains(a.argumentIndex))).map(argumentInfo)),
+              .contains(a.argumentIndex)) ||
+            writers.contains(c)).map(argumentInfo)),
           "sink_arguments" -> ujson.Arr.from(c.argument.l.map(argumentInfo)),
           "anchors" -> ujson.Arr.from(anchors.map(loc)))
       }))
-    """,
+    """
     )
+    body = body.replace("__WRITERS__", WRITERS).replace("__WCAP__", str(CASE_B_WRITER_CAP))
+    return envelope("case_b", body)
 
 
 def method_selector(scopes: list[dict]) -> str:
