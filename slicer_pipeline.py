@@ -11,6 +11,12 @@ from slicer_source import assemble, cluster, normalize_points, recover_points
 
 STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 
+# A poisoned failure (deadline/HTTP/OOM) may leave the Joern server running the runaway
+# query, so the candidates right after it tend to time out too. Isolate each candidate,
+# but stop the run after this many *consecutive* poisoned failures — past that the server
+# will not recover without a restart, and a `--resume` picks up past the "failed" ones.
+POISON_STOP_STREAK = 3
+
 
 class SlicingStages:
     def collect_candidates(self) -> None:
@@ -190,8 +196,38 @@ class SlicingStages:
                         "baseline",
                         {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
                     )
+                from slicer import QueryError  # deferred: slicer imports this module
+
+                consecutive_poison = 0
                 for candidate in self.candidates:
-                    item = self.slice_candidate(candidate)
+                    try:
+                        item = self.slice_candidate(candidate)
+                    except QueryError as exc:
+                        # Isolate a per-candidate failure. A single flows/backward timeout
+                        # or abort used to propagate to the outer handler and discard every
+                        # remaining candidate (#219) — one pathological candidate should not
+                        # cost the whole run. Record it and move on. The candidate's own
+                        # checkpoint state is left as last saved, so a `--resume` retries it
+                        # from there (e.g. a context failure resumes the saved flow).
+                        self.increment("candidates_failed")
+                        self.event(
+                            "candidate_failed",
+                            candidate_key=candidate["candidate_key"],
+                            error=str(exc),
+                        )
+                        self.processed += 1
+                        if exc.poisoned:
+                            consecutive_poison += 1
+                            if consecutive_poison >= POISON_STOP_STREAK:
+                                self.errors.append(
+                                    f"Stopped after {consecutive_poison} consecutive poisoned "
+                                    "candidates; restart the dedicated server and --resume"
+                                )
+                                break
+                        else:
+                            consecutive_poison = 0
+                        continue
+                    consecutive_poison = 0
                     self.processed += 1
                     if item is not None:
                         self.completed.append(item)
