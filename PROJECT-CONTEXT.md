@@ -24,16 +24,20 @@
 | --- | --- | --- |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | ✅ |
 | 3단계 · 리랭커 | `qwen3-reranker-4b` | ✅ |
-| 4단계 · `scout_memory` (CWE-415·416) | `seccoderx-8b` | ✅ |
-| 4단계 · `scout_boundary` (CWE-119·125·787·190) | `seccoderx-8b` | ✅ |
-| 4단계 · `scout_injection` (CWE-78·22·134) | `deepseek-r1-distill-qwen-32b` | ✅ |
+| 4단계 · `scout_memory` (CWE-401·404·415·416·457·476·562·590·761·762·772·775·824·825) | `seccoderx-8b` | ✅ |
+| 4단계 · `scout_boundary` (CWE-119·120·121·122·124·125·126·127·129·131·170·190·191·193·194·195·197·369·680·681·787·805) | `seccoderx-8b` | ✅ |
+| 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `deepseek-r1-distill-qwen-32b` | ✅ |
 | 5단계 · Auditor | `qwen3.6-35b-a3b` | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
 | B1 기준(최강 단일 멤버) | `qwen3-coder-30b-a3b` | ✅ |
 
 ⚠ **scout_memory·boundary는 같은 키 `seccoderx-8b` 한 벌이다** — 프롬프트가 역할 폴더로
 갈린다(`scout_memory/v3`=옛 실험 v14s · `scout_boundary/v3`=옛 v15s). 같은 weights라 별칭 키를
-새로 두지 않는다.
+새로 두지 않는다. ⚠ **그 결과 공동오답 행렬(ADR 0010 §3 · `candidate.py` `scout_member`)의
+memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 차이다** — 그 축에서 "모델을 자리
+사이에서 옮기는 근거"는 성립하지 않는다. injection만 다른 키(`deepseek-r1-distill-qwen-32b`)라
+모델 대비가 산다. ⚠ **부수로 `prompt_template_version`이 모델 엔트리 단위이므로 두 자리를
+독립으로 버전 올릴 수 없다**(D67) — 지금은 둘 다 v3라 안 걸리지만 결합 자체가 이 교체로 생겼다.
 
 **Auditor의 A/B가 소멸했다.** 2026-09-21 교체가 5단계를 `qwen3.6-35b-a3b` 한 자리로 놓으면서,
 문헌이 정면으로 갈린 둘을 실측으로 가르려던 갈래가 §1에서 없어졌다 — B안 `nemotron-3-super-120b-a12b`도
