@@ -11,20 +11,55 @@ C-7(예산 소진)이 성립한다 — 첫 호출에서는 아직 후보 객체�
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
-from src.orchestrator.prompt_loader import build_facts, load_prompt
+from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.artifact import Artifact
-from src.schemas.candidate import Candidate
+from src.schemas.candidate import Candidate, scout_member_of
 from src.schemas.capsule import ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.evidence import Evidence
+from src.schemas.scout_response import ScoutResponse
 
 ROLE = Role.SCOUT
-# 이 역할로 모델을 부를 때 요청하는 구조화 출력 스키마. `prompts/<role>/*/meta.yaml`의
-# `output_schema`와 같아야 하고, `tests/test_config.py`가 그 둘을 묶는다 — 프롬프트가
-# 스키마에 없는 필드를 시키면 grammar 마스크가 그것을 막아 명령과 문법이 싸운다.
-OUTPUT_SCHEMA = Candidate
+# 이 역할이 낼 수 있는 구조화 출력 스키마. **버전별로 갈린다** — v1·v2 프롬프트는
+# `Candidate`를 바로 내고, v3는 `ScoutResponse`(근거 래퍼 `{candidate, analysis_summary}`)를
+# 낸다. 근거를 써야 Scout 판정이 정확해진다는 실측이 v3의 근거다.
+#
+# 어느 것을 요청할지는 노드가 박지 않고 **프롬프트 meta가 선언한 것**을 따른다
+# (`_ask_model` → `_resolve_schema`). 그래야 같은 역할에 v2(Candidate)와 v3(ScoutResponse)가
+# 공존한다 — dev·테스트·실서빙 단일 scout은 v1/v2를 그대로 쓰고, 풀 v3만 래퍼다.
+#
+# 그래도 **아무 스키마나 받지는 않는다.** meta가 이 집합 밖을 선언하면 `_resolve_schema`가
+# 실패한다. 프롬프트와 grammar가 어긋나면 `additionalProperties: false` 마스크가 추론을
+# 덮으므로(`tests/test_config.py`의 output_schema 검사), 이 집합이 그 가드레일의 폭이다.
+ALLOWED_OUTPUT_SCHEMAS: tuple[type[Candidate] | type[ScoutResponse], ...] = (
+    Candidate,
+    ScoutResponse,
+)
+_SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
+
+# 이 노드(`run`)가 도는 4단계 자리 전부 — 단일 `scout`과 풀 세 멤버. 전부 같은 `_ask_model`을
+# 타므로 버전별 스키마 해석도 같다. bench가 같은 자리를 잴 때 이 집합으로 scout 경로를
+# 가른다(`bench_report`).
+SCOUT_ROLES: frozenset[Role] = frozenset(
+    {Role.SCOUT, Role.SCOUT_MEMORY, Role.SCOUT_BOUNDARY, Role.SCOUT_INJECTION}
+)
+
+
+def resolve_output_schema(name: str) -> type[Candidate] | type[ScoutResponse]:
+    """프롬프트 meta의 `output_schema` 이름을 이 역할이 허용하는 스키마로 푼다.
+
+    집합 밖 이름은 조용히 넘기지 않는다 — grammar가 프롬프트와 싸우는 상태를
+    런타임 첫 호출(=GPU 시간)까지 미루지 않고 여기서 사유와 함께 세운다.
+    """
+    try:
+        return _SCHEMA_BY_NAME[name]
+    except KeyError:
+        raise PromptError(
+            f"scout meta의 output_schema `{name}`은 이 역할이 낼 수 없다 — "
+            f"허용: {sorted(_SCHEMA_BY_NAME)}"
+        ) from None
 
 
 def run(
@@ -80,6 +115,7 @@ def _ask_model(
 ) -> Candidate:
     """프롬프트를 만들어 모델에 묻는다. 실패는 사유 코드로 기록하고 그대로 올린다."""
     template = load_prompt(role, ctx.config.model_for(role.value).prompt_template_version)
+    schema = resolve_output_schema(template.output_schema)
     source = ctx.read_source(capsule.target)
     prompt = template.render(
         facts=build_facts(
@@ -99,7 +135,7 @@ def _ask_model(
         result = ctx.call_model(
             role=role,
             prompt=prompt,
-            schema=OUTPUT_SCHEMA,
+            schema=schema,
             stage=Stage.SCOUT,
             subject_kind="candidate",
             subject_id=candidate_id,
@@ -110,7 +146,20 @@ def _ask_model(
     except Exception:
         _queue_previous(ctx, previous, ReasonCode.SCHEMA_PARSE_FAILED)
         raise
-    return result.value
+    value = result.value
+    if isinstance(value, ScoutResponse):
+        # v3 래퍼: 안쪽 `candidate`만 파이프라인으로 흘리고 `analysis_summary`(근거)는
+        # 버린다 — 하네스에 근거 소비자가 없다(scout_response.py). 근거는 판정을 좋게 하는
+        # 추론 흔적이지 소비 대상이 아니다.
+        # **`scout_member`는 여기서 찍는다** — `call_model`은 결과 타입에 그 필드가 있을 때만
+        # 찍는데(ADR 0010 §3) `ScoutResponse`에는 없어 건너뛴다. `role`에서 유도한 값이라
+        # 「모델이 아니라 하네스가 stamp」라는 그 §3 취지는 그대로다.
+        return value.candidate.model_copy(
+            update={"scout_member": scout_member_of(role.value)}
+        )
+    # v1·v2: `Candidate`를 바로 낸다. `scout_member`는 `call_model`이 이미 찍었다 —
+    # 그 타입에 필드가 있어 §3의 stamp 경로가 성립한다.
+    return value
 
 
 def _queue_previous(ctx: RunContext, previous: Candidate | None, reason: ReasonCode) -> None:

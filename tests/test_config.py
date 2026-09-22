@@ -46,16 +46,18 @@ from tests.conftest import ALL_PROFILES
 ZERO_DIGEST = PLACEHOLDER_DIGEST
 
 # 역할 → 그 역할로 모델을 부르는 노드가 `ctx.call_model(schema=...)`에 넣는 스키마.
+# **scout 네 자리는 여기 없다** — 버전별로 스키마가 갈려(v1·v2=Candidate, v3=ScoutResponse
+# 래퍼) 노드가 「하나」를 박지 않고 프롬프트 meta 선언을 따른다(`nodes/scout.py`의
+# `resolve_output_schema`). 그래서 아래 검사는 scout을 **허용집합**으로 본다.
 # 풀 세 멤버는 별도 노드가 아니라 `nodes/scout.py`의 `run(role=...)`이 돈다(ADR 0010 §3).
 # `single`·`judge`는 아직 노드가 없어 여기 없다 — bench 쪽 검사만 선다.
 NODE_OUTPUT_SCHEMAS = {
-    Role.SCOUT: scout_node.OUTPUT_SCHEMA,
-    Role.SCOUT_MEMORY: scout_node.OUTPUT_SCHEMA,
-    Role.SCOUT_BOUNDARY: scout_node.OUTPUT_SCHEMA,
-    Role.SCOUT_INJECTION: scout_node.OUTPUT_SCHEMA,
     Role.AUDITOR: auditor_node.OUTPUT_SCHEMA,
     Role.CRITIC: critic_node.OUTPUT_SCHEMA,
 }
+
+# scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
+SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHEMAS}
 
 
 # --- 참조 정합성 ------------------------------------------------------------
@@ -338,6 +340,17 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
     role, version = Role(directory.parent.name), directory.name
 
     template = load_prompt(role, version)
+
+    # scout 네 자리는 버전별로 스키마가 갈린다 — 노드도 bench도 프롬프트 meta 선언을
+    # 허용집합 안에서 고른다(`nodes/scout.py`, `bench_report.py`). 그래서 「하나」와의
+    # 동치가 아니라 **집합 소속**을 본다. 집합 밖 이름(예: critic처럼 DecisionDraft)을
+    # scout meta가 선언하면 여기서 걸리고 런타임에서도 `resolve_output_schema`가 막는다.
+    if role in scout_node.SCOUT_ROLES:
+        assert template.output_schema in SCOUT_ALLOWED_SCHEMA_NAMES, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"scout 자리가 낼 수 있는 것은 {sorted(SCOUT_ALLOWED_SCHEMA_NAMES)}뿐이다"
+        )
+        return
 
     node_schema = NODE_OUTPUT_SCHEMAS.get(role)
     if node_schema is not None:

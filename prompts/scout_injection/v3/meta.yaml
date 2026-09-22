@@ -1,0 +1,15 @@
+role: scout_injection
+version: v3
+output_schema: ScoutResponse
+profile: injection
+model: DeepSeek-R1-Distill-Qwen-32B
+description: 'v14s: review 를 낼 때도 방어를 찾아본 흔적(counterevidence)을 남기게 했다.'
+cwe_scope:
+- CWE-77
+- CWE-78
+- CWE-88
+- CWE-89
+- CWE-94
+- CWE-116
+- CWE-134
+based_on: v11s/injection
