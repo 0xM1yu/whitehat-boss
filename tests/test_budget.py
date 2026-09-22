@@ -135,6 +135,10 @@ def _bogus_finding() -> Finding:
         cwe="CWE-787",
         state=FindingState.HYPOTHESIZED,
         confidence=0.5,
+        # 기본값이 없다 — `schemas/finding.py` 참조. 이 팩토리는 `produced_by` stamp만 보므로
+        # 빈 값으로 둔다(`hypothesized`라 `_promoted_states_need_backing`이 조기 반환한다).
+        path=[],
+        evidence_refs=[],
         produced_by=_BOGUS,
     )
 

@@ -37,6 +37,7 @@ from src.bench import (
 )
 from src.bench_metrics import METRIC_KV_USAGE
 from src.config import PROMPTED_ROLES, HarnessConfig
+from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import load_prompt
 from src.schemas.enums import Role
 
@@ -72,7 +73,7 @@ CHECKLIST: tuple[tuple[str, str], ...] = (
     # 2026-09-09에 전제가 사라졌다. 이 줄은 원래 "NVFP4 양자화 시 Critic 반박 정확도
     # 저하 여부"였는데, 그 물음은 Critic이 고정밀 체크포인트를 가진 모델일 때만 선다.
     # 확정 로스터의 Critic `gpt-oss-20b`는 **네이티브 MXFP4**라 비교할 원본이 없다
-    # (자리의 정본은 CONTEXT.md §1). #93이 그래서 「고정밀 대비 하락폭」이 아니라
+    # (자리의 정본은 PROJECT-CONTEXT.md §1). #93이 그래서 「고정밀 대비 하락폭」이 아니라
     # **「반박 정확도 표본 자체」**로 재정의했다. STATUS.md가 이 코드를 "아직 안 고쳤다"고
     # 가리키고 있었고, 이 줄이 그 가리킴을 닫는다.
     ("Critic 반박 정확도 표본 (#93 재정의 — 고정밀 대비가 아니다)", "미구현 — 평가셋 준비 중"),
@@ -132,6 +133,11 @@ def _measure_role(
     schema, level = ROLE_SPEC[role_enum]
     tokens = config.thresholds.budget_for(level)
     template = load_prompt(role_enum, entry.prompt_template_version)
+    # scout 자리는 버전별로 스키마가 갈린다(v1·v2=Candidate, v3=ScoutResponse 래퍼). 노드가
+    # 프롬프트 meta가 선언한 것을 요청하므로(`nodes/scout.py`), bench도 같은 것을 재야
+    # 운영 grammar를 재는 것이 된다 — ROLE_SPEC의 scout 스키마는 캡슐 레벨 전용이 된다.
+    if role_enum in scout_node.SCOUT_ROLES:
+        schema = scout_node.resolve_output_schema(template.output_schema)
     startup = check_startup(entry.endpoint, model_key)
     head |= {
         "capsule_level": level.value,

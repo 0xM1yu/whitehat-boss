@@ -20,7 +20,7 @@
 
 ## 2. 역할별 서빙 성질 — 초기 모델 구성 (2026-08 기록)
 
-**어느 모델이 어느 자리에 앉는지의 정본은 [CONTEXT.md](../CONTEXT.md) §1이다.** 아래 표는
+**어느 모델이 어느 자리에 앉는지의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다.** 아래 표는
 **2026-08 초기안의 기록**이고, 로스터는 그 뒤 2026-09-09에 확정됐다
 ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2). **이 표를 「지금 무엇이
 뜨는가」로 읽지 않는다** — 여기 남는 값은 그 시점의 선정 이유와, 그 뒤에 붙은 실측이다.
@@ -84,7 +84,7 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 ## 4. 양자화 품질 검증 (Critic 전용) — **전제가 사라진 절**
 
 > **⚠ 이 절은 Critic이 Devstral Small 2였을 때 쓰였고, 그 전제가 2026-09-09에 사라졌다.**
-> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [CONTEXT.md](../CONTEXT.md) §1**이고
+> 로스터가 확정되며 Critic 자리가 바뀌었다 — **그 자리의 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1**이고
 > 결정 기록은 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §2다.
 >
 > **무엇이 무너졌나.** 아래 본문이 요구하는 것은 *"고정밀도 대비 NVFP4의 `verdict` 일치율"*인데,
@@ -97,7 +97,7 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 > 것인가. **표본 크기와 합격선의 정본은 D4다.**
 >
 > **그래도 지우지 않는다.** §3 체크리스트 7번이 이 절을 이름으로 가리키고,
-> [R2](open-questions/R/R2.md)가 이 질문 위에 서 있다 — R2는 그 파일에서 아직 `열림`이고
+> [R2](open-questions/R/R2.md)가 이 질문 위에 서 있다 — R2는 **2026-09-09에 `닫힘`이 됐고**(⚠ 이 줄은 R2를 닫은 바로 그 커밋 `184aade`에서 *"아직 `열림`"*이라 적혔고 아흐레를 그대로 살았다 — 2026-09-20에 고쳤다)
 > ADR 0010 「후속」 2가 *"R2는 로스터 변경으로 닫힌다"*고 적는다. **아래는 「지금 하라」가
 > 아니라 「무엇을 물었던 절인가」로 읽는다.**
 
@@ -159,7 +159,7 @@ models:
 없는 것이지 다른 것이 아니다.
 
 **아래 예시의 모델 키는 구조를 보이려고 든 것이지 현재 로스터가 아니다** — 로스터의 정본은
-[CONTEXT.md](../CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
+[PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
 
 ```yaml
 # config/profiles.yaml (합성 예시 — 모델 키는 자리표시자다)
@@ -167,7 +167,7 @@ profiles:
   local_balanced:
     description: "전 역할 실서빙"
     production: false
-    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 CONTEXT.md §1
+    roles:                        # 역할 → models.yaml의 키. 어느 키인지는 PROJECT-CONTEXT.md §1
       scout: <모델 키>
       auditor: <모델 키>
       critic: <모델 키>
@@ -265,9 +265,73 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 ```
 
 **위 그림은 역할의 배선이지 상주 서버 수가 아니다.** 같은 모델이 앉은 두 역할은 **한 서버를
-공유하고**, 어느 자리가 그런지는 [CONTEXT.md](../CONTEXT.md) §1·§2가 든다. Scout를 역할 셋으로
-쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §3이고, **기존
-`scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
+공유하고**, 어느 자리가 그런지는 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1·§2가 든다.
+
+> ### ⚠ 공유는 공짜가 아니다 — **한 서버가 두 이름에 답해야 한다** (2026-09-20)
+>
+> 하네스는 **registry 키를 그대로** 요청 본문의 `model`에 싣는다 — `src/adapters/factory.py`의
+> `_model_client()`가 `model_name=model_key`로 만들고 `src/adapters/openai_compat.py`가
+> `"model": self.model_name`으로 보낸다. **역할 이름이 아니라 registry 키다.**
+>
+> **그래서 포트 하나가 여러 이름에 답해야 한다 — 그리고 그 이름 집합은 프로필마다 다르다.**
+> 아래는 `config/profiles.yaml`·`config/models.yaml`을 파싱해 낸 것이다(개수를 손으로 세지 않는다):
+>
+> | 포트 | 어느 프로필이 어느 이름을 보내나 |
+> | --- | --- |
+> | **8001** | `qwen3-8b` ← `local_balanced`·`_hybrid` · **`qwen3-8b-v2`** ← 풀 둘 · `qwen3-4b` ← `single_gpu_12g` |
+> | **8002** | `qwen3-coder-30b-a3b` ← `b1_single`·`local_balanced`·`_hybrid`·**풀 둘(auditor)** · **`qwen3-coder-30b-a3b-v2`** ← 풀 둘(scout_memory) |
+> | **8003** | `devstral-small-2-24b` ← `local_balanced`·`_hybrid` · **`devstral-small-2-24b-v2`** ← 풀 둘 |
+>
+> **8002는 한 프로필 안에서 두 이름이 온다** — 풀 프로필이 `scout_memory`를 별칭으로,
+> `auditor`를 base로 가리킨다. **8001·8003은 프로필 사이에서 갈린다** — 풀로 돌리면 별칭
+> 이름만, 실서빙 `local_balanced`로 돌리면 base 이름만 온다.
+>
+> ⚠ **8002는 회피 불가다 — 「주의」가 아니라 블로커다.** 위 표의 8001·8003은 프로필
+> **사이**의 갈림이라 고를 프로필이 있다. **8002는 풀 프로필 *안*에서 두 이름이 온다** —
+> `auditor`가 base를, `scout_memory`가 별칭을 가리킨다. 그러니 `local_balanced_pool`·
+> `local_balanced_pool_hybrid`는 **어느 프로필을 골라도** 한 서버가 두 이름에 동시에 답해야
+> 하고, 그 능력은 바로 아래 문단이 §0으로 **미검증**이라 못박은 것이다.
+> ⇒ **멀티네임이 확인되기 전까지 풀 프로필은 이 경로로 못 뜬다.** 위 처방(*"그날 돌릴
+> 프로필이 무엇인지 보고 맞춘다"*)을 **풀에까지 적용하지 마라** — 고를 다른 프로필이 없다.
+>
+> **이 문단은 기계가 지킨다.** `tests/test_docs_format.py`의
+> `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해
+> 프로필 안 포트 공유를 세고, 있으면 그 선언과 포트 번호를 여기서 요구한다.
+> **양방향이다** — 확정 로스터에서 Auditor가 `qwen3-coder-30b-a3b`가 아니게 되면
+> `auditor`와 `scout_memory`가 다른 모델이 되어 이 충돌 자체가 사라지고, 그때는 같은
+> 검사가 **이 문단을 지우게 만든다.** 없어진 블로커를 주장하는 문장이 남는 것이
+> 이 저장소가 §2.3으로 반복해 밟은 자리다.
+>
+> ⚠ **그래서 「별칭으로 띄우면 된다」가 아니다** — 그렇게 띄우면 `local_balanced`(비교표 run이
+> 쓰는 프로필)가 그 포트에서 깨진다. **그날 돌릴 프로필이 무엇인지 보고 맞춘다.**
+>
+> 별칭은 무게·`checksum`·`endpoint`·`fallback`이 base와 같다(`prompt_template_version`이 다르고,
+> 셋 중 둘은 `benchmark`도 다르다 — 별칭 쪽이 전부 `0`, 즉 미실측 표시다). **그러니 모델을
+> 두 번 띄우는 것이 답은 아니다.**
+>
+> ⚠ **어떻게 한 서버가 여러 이름을 받게 하는지는 이 저장소가 모른다.** 기동 명령이 남은 자리를
+> 전수로 훑으면 `--served-model-name`이 **32곳**인데 **이름을 둘 이상 준 곳이 0건**이고,
+> vLLM이 그것을 받는지 확인한 기록도 없다. **그러니 여기 문법을 적지 않는다**
+> ([CLAUDE.md](../CLAUDE.md) §0). **다음 기동 때 확인해 그 결과를 이 문단에 적는다** —
+> 확인 전까지 이것은 **미검증 선행조건**이다. 이름이 어긋났을 때 서버가 정확히 무엇을
+> 돌려주는지도 이 저장소에 **실측이 없다**(`src/bench.py`가 그 실패를 단언하지만 잰 기록은 아니다).
+>
+> ### 그런데 그것을 미리 잡는 검사가 이미 있다
+>
+> **`cli bench`가 역할별로 `GET /v1/models`를 읽어 registry 키가 그 목록에 있는지 본다** —
+> `src/bench.py`의 `check_startup()`이고, 그 docstring이 이 함정을 그대로 적는다:
+> *"`factory._model_client()`가 `model_name=model_key`를 그대로 실어 보내므로, 여기가 어긋나면
+> 실제 run의 `/chat/completions`도 같은 이유로 실패한다."* 판정이 **멤버십**(`model_key not in served`)
+> 이라 한 서버가 이름 여럿을 내도 통과한다. 호출부는 `src/bench_report.py`이고 **역할마다 돈다.**
+>
+> ⇒ **run 전에 `cli bench`를 그날의 프로필로 한 번 돌리는 것이 이 함정의 프리플라이트다.**
+>
+> ⚠ **`doctor`로는 안 된다** — 접속을 하지 않는다(`src/cli.py`의 `doctor()` docstring).
+> 다만 **접속이 없어서가 아니다**: `_check_wiring`이 이미 역할별 endpoint를 조립하므로
+> 「한 endpoint에 키가 둘」은 네트워크 없이도 볼 수 있다. **지금 그 검사가 없을 뿐이다.**
+
+Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
+§3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
 
 - vLLM: 온프레미스 inference server, OpenAI-compatible API 제공
 - LiteLLM: 역할별 routing·retry·fallback, spend/budget 관리

@@ -232,6 +232,35 @@ models:
   qwen3-coder-30b-a3b:
     # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
     #
+    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # 아래는 `vllm serve`를 치는 사람의 값이다. `ModelEntry`는 이 값들을 담지 않는다
+    # (`extra="forbid"` — `src/config.py`가 그 배제를 정본으로 적는다).
+    #
+    #   PATH=<venv>/bin:/usr/local/cuda/bin:$PATH VLLM_USE_DEEP_GEMM=0 \
+    #   vllm serve <스냅샷 경로> --port 8002 --served-model-name qwen3-coder-30b-a3b \
+    #     --max-model-len 32768 --gpu-memory-utilization 0.30 \
+    #     --structured-outputs-config.backend xgrammar \
+    #     --structured-outputs-config.disable_any_whitespace true
+    #
+    # - **`disable_any_whitespace true`가 필수다** — 2026-09-11 ATOM 실측(이슈 #172).
+    #   `Finding`의 `path`·`evidence_refs`를 스키마 `required`로 올리면 모델이 그 둘을 채우지만
+    #   (`stock`에서 20/20 비던 것 → `required` 팔은 성공한 10/10에서 채움) **공백 폭주**가
+    #   따라온다: 유효 JSON이 이 옵션 `false`에서 **5/15**(조건 A·B·D), `true`에서 **5/5**다.
+    #   꼬리 공백이 12,849~13,199자였고 전부 `output_tokens == max_tokens`였다.
+    #   ⚠ **`backend xgrammar`만으로는 재발한다** — 귀속은 `disable_any_whitespace` 단독이다.
+    #   ⚠ **비율로 읽지 마라 — n=5다.** 같은 인자의 조건 A·B가 2/5와 0/5를 냈다. 읽을 것은
+    #     *"조건 C만 전 팔 5/5"*이고, 한 프롬프트·한 모델·한 역할의 결과다.
+    #   ⚠ 위 수는 그 보고서 **§3.1 표에서 재계산**한 것이다 — §1 요약의 「13/13」·「5/20」은
+    #     그 표에서 재구성되지 않는다(원천 JSON이 ATOM에 있어 여기서 못 가른다).
+    # - **`PATH`가 인자의 일부다** — 빼면 기동이 막힌다(그 보고서 §4의 첫 벽).
+    #   ⚠ 원문은 venv의 `vllm`을 **절대 경로로** 부른다(`<venv>/bin/vllm serve`). 위 축약은
+    #     `PATH` 접두에 기대므로, 확실히 하려면 원문처럼 절대 경로를 쓴다.
+    # - **인자를 줬다고 실렸다고 읽지 않는다.** 기동 로그에서 확인한다:
+    #   `grep -o "StructuredOutputsConfig([^)]*)" <로그> | head -1`
+    # - 전체 원문(스냅샷 경로·`setsid nohup`·로그 리다이렉트·readiness 루프 포함)은
+    #   `docs/experiments/harness/2026-09-11-d67-required-schema-atom.md` §9다. 위는 그 축약이다.
+    #
     # **아래 값은 2026-09-04 ATOM 실측이고, 그 원천은
     # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §9다** — 그 절의
     # `--apply` 판이 `tok_s_single 53.4` · `tok_s_batch32 66.42` ·
@@ -312,7 +341,7 @@ models:
       prefix_hit_ratio_batch32: 0.5673
 
   devstral-small-2-24b:
-    # Mistral 계열 24B. **자리의 정본은 CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
+    # Mistral 계열 24B. **자리의 정본은 PROJECT-CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
     # 이 모델은 `scout_boundary`(CWE-119·125·787·190)이고, 아래 서술이 전제하던 Critic 자리가
     # 아니다. Primary와 다른 계열이어야 교차 검증의 가치가 나온다는 규칙 자체는 그대로이고
     # (model-serving.md §2), 지금은 `load_config`의 `_check_family_split`이 그것을 강제한다.
@@ -388,7 +417,7 @@ models:
       prefix_hit_ratio_batch32: null
 
   gpt-oss-20b:
-    # **7단계 Critic.** 자리의 정본은 `CONTEXT.md` §1이다 — 2026-09-09 확정 로스터에서 이
+    # **7단계 Critic.** 자리의 정본은 `PROJECT-CONTEXT.md` §1이다 — 2026-09-09 확정 로스터에서 이
     # 모델이 Critic이고 `reasoning_effort: high`다. Auditor(`qwen3-coder-30b-a3b`)와 계열이
     # 달라야 교차 검증의 가치가 나오고(model-serving.md §2), `load_config`의
     # `_check_family_split`이 그것을 강제한다 — `qwen` 대 `gpt-oss`로 갈린다.
@@ -419,7 +448,19 @@ models:
     # 아래는 `vllm serve`를 치는 사람의 값이다. **요청 본문에 실리는 것은 `reasoning_effort`
     # 하나**이고 그것만 이 엔트리에 있다(`src/config.py`의 `ModelEntry.reasoning_effort` 주석).
     #
-    #   VLLM_USE_DEEP_GEMM=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN     #   VLLM_USE_FLASHINFER_SAMPLER=0 TIKTOKEN_ENCODINGS_BASE=<harmony vocab dir>     #   vllm serve openai/gpt-oss-20b --port 8006 --served-model-name gpt-oss-20b     #     --max-model-len 32768 --gpu-memory-utilization 0.30 --enforce-eager     #     --structured-outputs-config.backend xgrammar
+    #   VLLM_USE_DEEP_GEMM=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN
+    #   VLLM_USE_FLASHINFER_SAMPLER=0 TIKTOKEN_ENCODINGS_BASE=<harmony vocab dir>
+    #   vllm serve openai/gpt-oss-20b --port 8006 --served-model-name gpt-oss-20b
+    #     --max-model-len 32768 --gpu-memory-utilization 0.30 --enforce-eager
+    #     --structured-outputs-config.backend xgrammar
+    #
+    # ⚠ **2026-09-20 — 위 다섯 줄은 한 줄로 접혀 있었다**(`#` 표지째로 한 물리적 줄). 폈다.
+    #   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의
+    #   「서버 — 조건 넷」 (A) 팔이다.
+    #   **여기 것은 축약이라 그대로 복붙하면 안 된다** — 원문에는 `PATH` export·`nohup`·
+    #   로그 리다이렉트·readiness 루프(`until curl -s -f …/v1/models`)가 더 있고, 줄 이음이
+    #   `\`다. 그리고 `TIKTOKEN_ENCODINGS_BASE`는 원문의 `$HOME/tiktoken_encodings`를
+    #   `<harmony vocab dir>` 자리표시자로 **바꿔** 적은 것이다.
     #
     # - **flashinfer가 JIT(ninja/nvcc)를 부르는데 ATOM에 없다** → 엔진 초기화가 죽는다.
     #   `TRITON_ATTN` + 샘플러 off + `--enforce-eager`로 피한다 (09-09 §1).
@@ -440,11 +481,21 @@ models:
     # 백엔드가 `xgrammar` 하나뿐이라 「구현 탓인가」는 대조가 없다.** 남은 미측정은
     # `enable_in_reasoning`·enum 제약 제거·케이스 축이고, **2단 추출은 아직 안 쟀다** —
     # 그 전에는 「이 모델은 구조화 출력이 안 된다」로 단정하지 않는다.
+    #
+    # ⚠ **2026-09-20 — 위 「enum 제약 제거」는 낡았다.** PR #182(2026-09-13)가 그 축을 재서
+    # **enum 강제 2/5 ↔ enum 제거(자유 문자열) 5/5**를 냈다 — rationale은 양쪽 다 정답이었고
+    # 그 수치는 `src/schemas/enums.py`의 `Verdict.from_text` docstring에 실려 있다. 하네스도
+    # 그대로 구현돼 있다(`DecisionDraft` + 매핑). ⚠ **그래도 「된다」로 단정하지 않는다** —
+    # 그 PR이 스스로 **통합 확인은 프로필 배선 뒤 follow-up**이라 적었고 아직 안 했다.
     # **이 등재가 R8을 닫지 않는다** — R8의 닫히는 조건은 **셋**이고 등재는 그중 어느 것도 아니다.
     # 1은 `cli bench`의 `structured_output.valid_ratio`가 **1.0**인 것이고(값이 나온 것이 아니라
     # 1.0이다 — `src/bench_report.py`의 `_judge_structured`가 쓰는 통과선), 3은 **반박 정확도**인데
     # 그쪽은 bench 밖이다(고정 반박 표본이 선행). **「등재하면 bench가 잰다」로 읽지 않는다** —
     # `cli bench`는 `--profile`이 필수이고 프로필의 `critic`은 아직 이 모델이 아니다.
+    # ⚠ **2026-09-20 — 뒷부분이 낡았다.** PR #190(2026-09-13)이 `local_balanced_pool`과
+    # `local_balanced_pool_hybrid`의 `critic`을 이 모델로 배선했다 — 줄 프로필이 있다.
+    # 실서빙 `local_balanced`는 여전히 `devstral-small-2-24b`다. **막는 것은 이제 배선이
+    # 아니라 그 프로필로 bench를 한 번 돌리는 일이다.**
     #
     # ⚠ **아직 안 해 본 손잡이가 하나 더 있다 — `disable_any_whitespace`.**
     # 2026-09-11에 **다른 모델**(`qwen3-coder-30b-a3b`)에서 구조화 출력 실패를 쟀더니 원인이
@@ -554,7 +605,27 @@ models:
     # `--hf-overrides {"architectures":["Qwen3ForSequenceClassification"], …}`가 필요하다
     # (0.6b가 쓴 것과 같은 reranker 서빙 인자). 그 기동·점수 정확성 검증은 등재와 별개이고
     # 아직 안 됐다 — 그래서 `benchmark`는 전부 `0`(미실측 표시, CLAUDE.md §0)이고 production
-    # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 CONTEXT.md와 open-questions가 든다.
+    # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 PROJECT-CONTEXT.md와 open-questions가 든다.
+    #
+    # ⚠ **2026-09-20 — 위 「아직 안 됐다」는 둘 중 앞을 잘못 든다.** **기동은 2026-09-13에 됐다** —
+    # ATOM 8005에 떴다 — #152의 **입력 모양 보고서**가 바로 그 `--hf-overrides`와
+    # `POST …:8005/v1/rerank → 200`을 메타 표에 적는다. (자매 템플릿 보고서는 8005 기동만 적고
+    # 상태 코드·오버라이드 문자열은 안 든다 — 200의 출처는 앞쪽 하나다.)
+    # **안 된 것은 점수 정확성이다.** `benchmark`가 전부 `0`인 것도, production에 못 들어가는 것도
+    # 그대로다 — 그 run들은 어댑터 밖 직접 호출이라 `run_id`가 없고 비교표 밖이다.
+    # ⚠ **그리고 2026-09-20에 두 풀 프로필이 이 키를 세웠다** — `config/profiles.yaml`의
+    # `local_balanced_pool`·`local_balanced_pool_hybrid`. 점수 검증 전에 올린 것이고 그 판단은
+    # open-questions가 든다. 둘 다 `production: false`라 위 마지막 문장은 그대로 유효하다.
+    #
+    # ⚠ **2026-09-21 — 메모리를 쟀다.** ATOM에서 가중치+non-torch **8.12~8.15 GiB**
+    # (util 0.15 · 0.12 각 1회). 같은 날 **KV 하한도 물렸다** — util 0.10 · max-model-len 40960에서
+    # 기동이 깨진다(가용 KV 3.81, 필요량 5.62). 원천은 `docs/experiments/` 아래 그 날짜의
+    # 로스터 메모리·KV 편이다.
+    # **위 두 문단은 이 실측으로 안 바뀐다** — 점수 정확성은 여전히 미검증이고 `benchmark`도
+    # 전부 `0` 그대로다. **잰 셋(기동·순위·메모리) 중 어느 것도 처리량이 아니다.**
+    # ⚠ **`mem_gb_ctx8k`도 채우지 않는다** — 위 8.12는 가중치+non-torch이고 그 칸이 뜻하는
+    # 「8k 컨텍스트에서의 메모리」와 같은 양이라는 보증이 없다(registry 전 항목이 이 칸을 `0`으로
+    # 둔다). **값은 `bench --apply`가 채운다 — 손으로 맞추면 조용히 다른 값이 나온다.**
     endpoint: "http://127.0.0.1:8005/v1"
     context_limit: 40960
     quantization: "bf16"

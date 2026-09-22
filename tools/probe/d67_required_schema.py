@@ -19,7 +19,7 @@ D67 ⓑ가 적은 축 차이가 여기서 되살아난다. **`required`로 올�
 
 | 팔 | 스키마 | 무엇을 가르는가 |
 | --- | --- | --- |
-| `stock` | 지금 그대로 (`default_factory=list`) | **대조군.** 09-04 관측이 이 조건에서 나왔다 |
+| `stock` | 두 필드를 `required`에서 **뺀다** | **대조군.** 09-04 관측이 이 조건에서 나왔다 |
 | `required` | 두 필드를 `required`에 넣는다 | 키를 강제하면 채우는가 |
 | `min_items` | `required` + `minItems: 1` | 빈 리스트를 막으면 **무엇을** 넣는가 |
 
@@ -103,6 +103,18 @@ def _schema_for(arm: str) -> dict[str, Any]:
     """
     schema = Finding.model_json_schema()
     if arm == "stock":
+        # ⚠ **대조군은 두 필드를 `required`에서 직접 뺀다.** 2026-09-20에 `Finding`이 그 둘을
+        # required로 올렸고(이슈 #172), 그때까지 이 자리는 `model_json_schema()`를 **그대로
+        # 돌려줬다.** 그 순간 대조군이 실험군과 바이트 동일해지는데 **아무 신호도 안 난다** —
+        # 다시 돌리면 `stock`이 100% 채우고, 읽는 사람은 09-11 관측이 재현 안 된다고 읽는다.
+        # 아래 `min_items` 팔이 스키마 변화에 `SystemExit`을 두는 것과 같은 자리다.
+        required = [name for name in schema.get("required", []) if name not in FIELDS]
+        if len(required) == len(schema.get("required", [])):
+            raise SystemExit(
+                "stock 팔에서 뺄 것이 없었다 — `Finding`의 두 필드가 required가 아니다. "
+                "대조군과 실험군이 같아지므로 그대로 돌리지 않는다"
+            )
+        schema["required"] = required
         return schema
     required = list(schema.get("required", []))
     for name in FIELDS:

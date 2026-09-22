@@ -1,0 +1,15 @@
+role: embedder
+side: query
+version: v3
+profile: source
+model: qwen3-embedding-0.6b
+placeholders:
+  - SYMBOL
+  - FILE
+  - LINE
+  - TAINTED_BY
+render: "Instruct: {{prefix.md}}\nQuery: {{body.md}}"
+based_on: v1
+description: >
+  E2 body-lead, sink only. source prefix/body는 v1과 바이트 동일(대조군).
+  변경은 sink/body.md에만 있다.

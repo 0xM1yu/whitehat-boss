@@ -46,16 +46,18 @@ from tests.conftest import ALL_PROFILES
 ZERO_DIGEST = PLACEHOLDER_DIGEST
 
 # 역할 → 그 역할로 모델을 부르는 노드가 `ctx.call_model(schema=...)`에 넣는 스키마.
+# **scout 네 자리는 여기 없다** — 버전별로 스키마가 갈려(v1·v2=Candidate, v3=ScoutResponse
+# 래퍼) 노드가 「하나」를 박지 않고 프롬프트 meta 선언을 따른다(`nodes/scout.py`의
+# `resolve_output_schema`). 그래서 아래 검사는 scout을 **허용집합**으로 본다.
 # 풀 세 멤버는 별도 노드가 아니라 `nodes/scout.py`의 `run(role=...)`이 돈다(ADR 0010 §3).
 # `single`·`judge`는 아직 노드가 없어 여기 없다 — bench 쪽 검사만 선다.
 NODE_OUTPUT_SCHEMAS = {
-    Role.SCOUT: scout_node.OUTPUT_SCHEMA,
-    Role.SCOUT_MEMORY: scout_node.OUTPUT_SCHEMA,
-    Role.SCOUT_BOUNDARY: scout_node.OUTPUT_SCHEMA,
-    Role.SCOUT_INJECTION: scout_node.OUTPUT_SCHEMA,
     Role.AUDITOR: auditor_node.OUTPUT_SCHEMA,
     Role.CRITIC: critic_node.OUTPUT_SCHEMA,
 }
+
+# scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
+SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHEMAS}
 
 
 # --- 참조 정합성 ------------------------------------------------------------
@@ -255,8 +257,11 @@ def test_the_pool_hybrid_profile_differs_from_local_balanced_pool_only_in_the_re
     assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
         exclude={"retriever"}
     )
-    # 검색 두 모델(0.6b)의 benchmark는 아직 0이고 별칭·gpt-oss도 0이라, production으로
-    # 올리지 않는다 — `cli._check_benchmarks`가 부분/미측정을 막는다(model-serving.md §5).
+    # 검색 두 모델(`qwen3-embedding-0.6b`·`qwen3-reranker-4b`)의 benchmark는 아직 0이고
+    # 별칭·gpt-oss도 0이라, production으로 올리지 않는다 — `cli._check_benchmarks`가
+    # 부분/미측정을 막는다(model-serving.md §5).
+    # ⚠ **리랭커를 「0.6b」로 뭉뚱그리지 않는다** — 2026-09-20에 이 쌍만 4b로 갈렸고(#152)
+    # `local_balanced` 쌍은 그대로 0.6b다. 이 주석은 단언이 아니라 CI가 안 잡는다.
     assert variant.production is False
 
 
@@ -335,6 +340,17 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
     role, version = Role(directory.parent.name), directory.name
 
     template = load_prompt(role, version)
+
+    # scout 네 자리는 버전별로 스키마가 갈린다 — 노드도 bench도 프롬프트 meta 선언을
+    # 허용집합 안에서 고른다(`nodes/scout.py`, `bench_report.py`). 그래서 「하나」와의
+    # 동치가 아니라 **집합 소속**을 본다. 집합 밖 이름(예: critic처럼 DecisionDraft)을
+    # scout meta가 선언하면 여기서 걸리고 런타임에서도 `resolve_output_schema`가 막는다.
+    if role in scout_node.SCOUT_ROLES:
+        assert template.output_schema in SCOUT_ALLOWED_SCHEMA_NAMES, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"scout 자리가 낼 수 있는 것은 {sorted(SCOUT_ALLOWED_SCHEMA_NAMES)}뿐이다"
+        )
+        return
 
     node_schema = NODE_OUTPUT_SCHEMAS.get(role)
     if node_schema is not None:
@@ -529,7 +545,8 @@ def test_a_profile_with_neither_a_single_scout_nor_the_pool_is_rejected() -> Non
 def test_a_profile_declaring_only_part_of_the_pool_is_rejected() -> None:
     """풀은 셋 전부이거나 하나도 없거나다.
 
-    둘만 선언하면 그 프로필은 **한 CWE 계열을 통째로 안 본다**([CONTEXT.md](../CONTEXT.md)
+    둘만 선언하면 그 프로필은 **한 CWE 계열을 통째로 안 본다**
+    ([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md)
     §1의 계열 배정). 그 사실이 후보 수 감소로만 나타나므로 run 결과만 봐서는 안 보인다.
     """
     with pytest.raises(ValidationError, match="Scout 자리"):
@@ -794,6 +811,9 @@ def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Pa
         [],
         {},
         {},
+        # compile_flags — 이 검사의 축이 아니다. 어댑터를 안 세웠으므로 `None`이고,
+        # 그것은 `RunRecord.compile_flags`가 정한 "이 기록은 남기지 않았다"와 같은 뜻이다.
+        None,
     )
     assert record.thresholds["output_max_by_role.critic"] == 8192.0, (
         "요청에는 실리는데 기록에 안 남는다 — engineering-guide.md §5가 그 run을 비교표에서 뺀다"
@@ -884,7 +904,7 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     ## 왜 필요한가
 
     확정 로스터의 Critic 자리는 `gpt-oss-20b` + **`reasoning_effort: high`**다
-    (`CONTEXT.md` §1). 그런데 그 값이 들어갈 자리가 코드에 없었다 — `ModelEntry`는
+    (`PROJECT-CONTEXT.md` §1). 그런데 그 값이 들어갈 자리가 코드에 없었다 — `ModelEntry`는
     `extra="forbid"`(`HarnessModel`)라 registry에 적으면 `load_config`가 죽고,
     `_request_payload`는 고정 dict라 실을 경로도 없었다. **registry 등재가 끝나도
     그 행은 배선되지 않는 상태였다.**
@@ -989,6 +1009,9 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         [],
         {},
         {},
+        # compile_flags — 이 검사의 축이 아니다. 어댑터를 안 세웠으므로 `None`이고,
+        # 그것은 `RunRecord.compile_flags`가 정한 "이 기록은 남기지 않았다"와 같은 뜻이다.
+        None,
     )
     assert record.model_reasoning_effort == {"auditor": "high"}, (
         "요청에는 실리는데 기록에 안 남는다 — §5가 그 run을 비교표에서 뺀다"

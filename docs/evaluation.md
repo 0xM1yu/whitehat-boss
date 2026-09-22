@@ -8,17 +8,38 @@
 
 ## 2. 비교 설계
 
-### 2.1 2×2 설계 (PRD §2.1)
+### 2.1 ~~2×2 설계 (PRD §2.1)~~ — **폐기.** 앙상블 축 정의만 살아 있다
 
-| 구분 | 같은 질문을 여러 번 | 서로 다른 질문으로 역할 분담 |
+> ### 2026-09-20 — 2×2는 폐기됐다. **Scout 오케스트레이터로 간다**
+>
+> **PM 결정이다.** 앞서 2026-09-01에 그 트랙이 전량 폐기됐고(`config/budgets.yaml`의
+> `output_max` 주석 — *"**2026-09-01 팀 2×2 전량 폐기로 이 제약은 소멸했다**"*), 2026-09-04에
+> 실험 프로필 넷이 `config/profiles.yaml`에서 걷혔다([스왑 조사](research/2026-09-04-swap.md)).
+> 이번 결정이 **라벨 축까지** 닫는다 — `RunRecord.condition`의 `@2x2`를
+> `src/schemas/run.py`의 `CONDITION_PATTERN`에서 **제거했다**(`@pipeline`만 받는다).
+> 커밋된 run 기록은 이 값에 의존하지 않는다 — `artifacts/`는 `.gitignore` 대상이다.
+>
+> **살아 있는 조건 축은 §2.2 하나다.**
+>
+> ⚠ **그런데 이 절 번호와 아래 각주는 남긴다.** 폐기된 것은 **표**이고, 그 아래 각주가 든
+> **앙상블 축 정의(「제작사가 다른 모델」)는 살아서 코드가 강제한다** —
+> `src/config.py`의 `_check_family_split`이 그것이고, 그 `ConfigError` 문구가 *"evaluation.md
+> §2.1이 조건으로 제작사가 다른 모델을 요구한다"*라고 **이 절 번호를 직접 부른다.**
+> 절을 없애면 그 오류가 존재하지 않는 자리를 가리킨다([CLAUDE.md](../CLAUDE.md) §2.3).
+> **그 정의는 이제 §2.2의 B3/B3'에 걸린다.**
+>
+> **이 결정이 [D1](open-questions/D/D1.md)을 닫는다** — *"같은 라벨이 두 축에서 다른 뜻으로
+> 쓰인다"*는 질문이 **축이 하나가 되면서 소멸했다.**
+
+| ~~구분~~ | ~~같은 질문을 여러 번~~ | ~~서로 다른 질문으로 역할 분담~~ |
 | --- | --- | --- |
-| 단일 모델 | B1 | B1' |
-| **여러 회사 모델**(앙상블) | B3 | B3' |
+| ~~단일 모델~~ | ~~B1~~ | ~~B1'~~ |
+| ~~**여러 회사 모델**(앙상블)~~ | ~~B3~~ | ~~B3'~~ |
 
-- **역할 분담 효과** = B1 → B1' 성능 향상
-- **모델 혼합 효과** = B1' → B3' 성능 향상
+- ~~**역할 분담 효과** = B1 → B1' 성능 향상~~
+- ~~**모델 혼합 효과** = B1' → B3' 성능 향상~~
 
-> 킥오프 발표자료 02-3은 앙상블 축을 "여러 **회사** 모델"로 정의한다. 같은 모델의 self-consistency나 같은 계열의 다른 크기가 아니라 **제작사가 다른 모델**을 섞는 것이 B3/B3'의 조건이다. **Auditor와 Critic을 서로 다른 제작사로 두는 근거가 여기서 나온다.** 어느 모델이 그 두 자리에 앉는지는 [CONTEXT.md](../CONTEXT.md) §1이 정본이고, **이 조건 자체는 모델이 바뀌어도 남는다** — [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4가 두 자리의 `family`(가중치 출처 조직)를 `load_config`가 검사하도록 정했고, **2026-09-09에 `src/config.py`의 `_check_family_split`으로 들어왔다** — auditor와 critic이 **다른 모델 키인데** 계열이 같으면 로드가 실패하고, 같은 키(B1이 그렇다)는 정의상 허용한다. `family`가 비어 있는 것은 통과가 아니라 실패다.
+> 킥오프 발표자료 02-3은 앙상블 축을 "여러 **회사** 모델"로 정의한다. 같은 모델의 self-consistency나 같은 계열의 다른 크기가 아니라 **제작사가 다른 모델**을 섞는 것이 B3/B3'의 조건이다. **Auditor와 Critic을 서로 다른 제작사로 두는 근거가 여기서 나온다.** 어느 모델이 그 두 자리에 앉는지는 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이 정본이고, **이 조건 자체는 모델이 바뀌어도 남는다** — [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4가 두 자리의 `family`(가중치 출처 조직)를 `load_config`가 검사하도록 정했고, **2026-09-09에 `src/config.py`의 `_check_family_split`으로 들어왔다** — auditor와 critic이 **다른 모델 키인데** 계열이 같으면 로드가 실패하고, 같은 키(B1이 그렇다)는 정의상 허용한다. `family`가 비어 있는 것은 통과가 아니라 실패다.
 
 ### 2.2 파이프라인 구성 조건 (PRD §5.2)
 
@@ -29,13 +50,21 @@
 | B3 | Multi-Agent Orchestration(Scout, Auditor, Critic) 적용 | 역할 분리·모델 협업 효과 검증 |
 | B3' | B3 + Evidence Gate + Tool Validation | 오탐 감소 및 근거 품질 향상 검증 |
 
-> 2.1의 2×2와 2.2의 파이프라인 조건은 같은 라벨을 쓰지만 축이 다르다. 실행 시 `RunRecord.condition`에 **어느 정의를 쓴 조건인지** 명시한다(`B1@2x2` / `B1@pipeline`). 라벨 통합 여부는 [open-questions.md](open-questions.md)에서 확정한다.
+> ~~2.1의 2×2와 2.2의 파이프라인 조건은 같은 라벨을 쓰지만 축이 다르다. 실행 시 `RunRecord.condition`에 **어느 정의를 쓴 조건인지** 명시한다(`B1@2x2` / `B1@pipeline`). 라벨 통합 여부는 [open-questions.md](open-questions.md)에서 확정한다.~~
+>
+> **2026-09-20 — 축이 하나가 됐다.** 2×2가 폐기되어(§2.1) 이 표의 조건이 **유일한 정의**다.
+> `RunRecord.condition`은 `@pipeline`만 받는다(`src/schemas/run.py`의 `CONDITION_PATTERN`).
+> ⚠ **접미사 자체는 남긴다** — 기존 `@pipeline` 값의 형식을 지키고, 축이 다시 늘 때 자리가 된다.
+> 라벨 통합 질문([D1](open-questions/D/D1.md))은 **이 결정으로 닫혔다.**
+>
+> ⚠ **앙상블 축 정의는 §2.1 각주가 계속 든다** — B3/B3'가 요구하는 *"제작사가 다른 모델"*이
+> 그것이고 `src/config.py`의 `_check_family_split`이 강제한다.
 
 ### 2.3 공정성 규칙
 
 1. 모든 조건은 **동일 계산 예산**(input/output token 상한, GPU-second 상한)에서 실행한다.
 2. 조건 간 차이는 프로필과 파이프라인 단계 활성화만. retrieval 설정·프롬프트 버전·데이터셋은 고정한다.
-   - **예외 하나**: `--tool-runner`가 프로필의 도구 런타임을 덮어쓸 수 있다([decisions/0005](decisions/0005-tool-runner-override.md)). **조건 비교에 쓰는 실서빙 프로필은 이 예외를 쓰지 않는다** — 각 프로필이 **선언한** 런타임이 주 실서빙 장비(ATOM)에 실제로 있기 때문이다([portability.md](portability.md) §3). **그 프로필이 어느 것인지는 `config/profiles.yaml`이 답한다** — 2026-08-28 시점에는 `b1_single`·`local_balanced` 둘이었고 **둘 다 `docker`를 선언한다**(그날 `podman`에서 되돌렸다 — [decisions/0005](decisions/0005-tool-runner-override.md) 마지막 절). **여기 개수를 현재형으로 못박지 않는 것은 의도다** — 프로필이 늘고 줄 때마다 그 숫자가 틀린다. 그 프로필의 역할에 어느 모델이 앉는지는 [CONTEXT.md](../CONTEXT.md) §1이 정본이고, **그것이 바뀌어도 이 규칙은 그대로다.** 예외가 남는 곳은 프로필이 선언한 런타임이 그 장비에 없는 경우다(예: `dev_singularity`를 ATOM에서 — ATOM에는 docker와 podman이 있고 singularity는 없다). 실제로 쓰인 값은 언제나 `RunRecord.tool_runner`에 남는다. **런타임이 다른 run은 같은 비교 셀에 넣지 않는다.** `tool_images` digest가 런타임 사이에서 비교되지 않기 때문이다([portability.md](portability.md) §5 #4). 그 프로필들이 같은 값을 선언하므로 지금은 이 규칙이 **과거 run에만** 걸린다 — podman으로 도구를 돌린 run은 `run_20260817_0001`(dev 프로필) 하나이고 그것은 조건 비교 대상이 아니다.
+   - **예외 하나**: `--tool-runner`가 프로필의 도구 런타임을 덮어쓸 수 있다([decisions/0005](decisions/0005-tool-runner-override.md)). **조건 비교에 쓰는 실서빙 프로필은 이 예외를 쓰지 않는다** — 각 프로필이 **선언한** 런타임이 주 실서빙 장비(ATOM)에 실제로 있기 때문이다([portability.md](portability.md) §3). **그 프로필이 어느 것인지는 `config/profiles.yaml`이 답한다** — 2026-08-28 시점에는 `b1_single`·`local_balanced` 둘이었고 **둘 다 `docker`를 선언한다**(그날 `podman`에서 되돌렸다 — [decisions/0005](decisions/0005-tool-runner-override.md) 마지막 절). **여기 개수를 현재형으로 못박지 않는 것은 의도다** — 프로필이 늘고 줄 때마다 그 숫자가 틀린다. 그 프로필의 역할에 어느 모델이 앉는지는 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이 정본이고, **그것이 바뀌어도 이 규칙은 그대로다.** 예외가 남는 곳은 프로필이 선언한 런타임이 그 장비에 없는 경우다(예: `dev_singularity`를 ATOM에서 — ATOM에는 docker와 podman이 있고 singularity는 없다). 실제로 쓰인 값은 언제나 `RunRecord.tool_runner`에 남는다. **런타임이 다른 run은 같은 비교 셀에 넣지 않는다.** `tool_images` digest가 런타임 사이에서 비교되지 않기 때문이다([portability.md](portability.md) §5 #4). 그 프로필들이 같은 값을 선언하므로 지금은 이 규칙이 **과거 run에만** 걸린다 — podman으로 도구를 돌린 run은 `run_20260817_0001`(dev 프로필) 하나이고 그것은 조건 비교 대상이 아니다.
 3. 같은 조건은 seed를 바꿔 최소 3회 반복하고 분산을 함께 보고한다.
 4. 프롬프트 버전이 바뀌면 이전 결과와 직접 비교하지 않고 재측정한다.
 5. **장비가 다른 run은 같은 비교 셀에 넣지 않는다.** 두 장비 모두 지원 대상이므로([portability.md](portability.md)) 같은 프로필·같은 조건의 run이 다른 하드웨어의 결과일 수 있다. 실제로 쓰인 장비는 `RunRecord.device`에 남는다([decisions/0006](decisions/0006-record-the-device-a-run-happened-on.md)). `--device`는 규칙 2의 **예외가 아니다** — 설정을 한 글자도 바꾸지 않고 기록만 남기므로 `--tool-runner`와 성격이 다르다.
@@ -81,6 +110,16 @@
 | AI-Human 일치도 | AI 판정과 사람 판정의 일치율 |
 | 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율 |
 | 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
+
+> ⚠ **`proven`은 「크래시가 재현됐다」가 아니다.** 그 상태를 여는 등급(E4)이 요구하는 것은
+> 런타임 Evidence의 `ok=True`인데, 그 `ok`가 뜻하는 것은 **도구가 실행됐다**는 것까지다 —
+> `container_tools.judge()`는 런타임 도구의 exit 0(=크래시 없음)도 `ok=True`로 올리고, Fake는
+> 실행 자체를 하지 않는다. 산출물을 `expected_signal`과 대조하는 코드는 없다.
+>
+> 그래서 Precision의 **분모**(`proven` + `validated`)에서 `proven`이 세는 것은 「재현된
+> 건수」가 아니라 **「도구가 돈 건수」**다. 그 차이를 가르는 것은 같은 행의 **사람 검토**이고
+> 그쪽이 분자다. **§5.2의 `proven finding당 GPU-hour`도 `proven`이 분모다.**
+> → [architecture.md](architecture.md) §4 · [open-questions.md](open-questions.md) D80(열림)
 
 ### 5.2 비용·효율
 

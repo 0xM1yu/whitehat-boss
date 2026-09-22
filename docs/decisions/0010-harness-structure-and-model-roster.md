@@ -1,6 +1,6 @@
 # 0010. 하네스 구조와 모델 로스터 확정 — Scout 풀 3역할 · Auditor A/B · Critic gpt-oss-20b · 단계 단위 실행 · Joern 슬라이서
 
-- 상태: **승인** — 2026-09-06 조민규 초안, **2026-09-09 조민규 확정**, 같은 날 **손수민 리뷰 승인**(PR #148, 커밋 `c347b9e`). 리뷰가 남긴 셋은 아래 「리뷰에서 정할 것」이 disposition을 든다. 아래 「결정」은 이제 정본이고 **저장소가 이 로스터를 바라본다**(→ [CONTEXT.md](../../CONTEXT.md)). ⚠ **모델은 계속 바뀐다** — 팀이 실험하며 정하는 중이고, 바꾸는 비용을 낮게 유지하는 것이 이 문서의 설계 목표다(「되돌리는 비용」). **바뀔 때 고치는 자리는 CONTEXT.md와 registry이지 문서 전부가 아니다.** 손수민 리뷰는 폐기되지 않았다 — 아래 「리뷰에서 정할 것」에 남은 셋이 그 몫이고, 로스터를 막지 않는다
+- 상태: **승인** — 2026-09-06 조민규 초안, **2026-09-09 조민규 확정**, 같은 날 **손수민 리뷰 승인**(PR #148, 커밋 `c347b9e`). 리뷰가 남긴 셋은 아래 「리뷰에서 정할 것」이 disposition을 든다. 아래 「결정」은 이제 정본이고 **저장소가 이 로스터를 바라본다**(→ [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)). ⚠ **모델은 계속 바뀐다** — 팀이 실험하며 정하는 중이고, 바꾸는 비용을 낮게 유지하는 것이 이 문서의 설계 목표다(「되돌리는 비용」). **바뀔 때 고치는 자리는 PROJECT-CONTEXT.md와 registry이지 문서 전부가 아니다.** 손수민 리뷰는 폐기되지 않았다 — 아래 「리뷰에서 정할 것」에 남은 셋이 그 몫이고, 로스터를 막지 않는다
 - 일자: 2026-09-06
 - 관련: [docs/research/2026-09-04-models.md](../research/2026-09-04-models.md) §2·§3.4·§3.5·§5, [docs/research/2026-09-04-quantization.md](../research/2026-09-04-quantization.md), [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §6·§7, `ADR 0009`, [build-plan.md](../build-plan.md) §2·§4·§7·§8, [model-serving.md](../model-serving.md) §1·§2, [evaluation.md](../evaluation.md) §2.1, [D9](../open-questions/D/D9.md)·[D59](../open-questions/D/D59.md)·[D63](../open-questions/D/D63.md)·[D64](../open-questions/D/D64.md), [R2](../open-questions/R/R2.md)·[R8](../open-questions/R/R8.md), [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), 중간발표 v3 슬라이드 10·18·23, 하네스 리스트럭처 계획(2026-09-04, 수민·민규 — 로컬 노트 `.claude/restructure-2026-09-04.md`, 저장소 밖)
 
@@ -107,9 +107,9 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 | 자리 | 모델 (registry 키) | 제작사 | 양자화 | 지금 상태 |
 | --- | --- | --- | --- | --- |
 | ~~1단계 · 쿼리 생성기(모델 자리 ①)~~ | ~~`qwen3-8b`~~ | — | — | **2026-09-13 이 자리가 소멸했다.** 슬라이싱 방식이 무모델로 확정되면서 1단계에 모델 자리가 없어졌다(아래 행). `qwen3-8b`는 `scout_injection`으로 남으므로 registry 키는 안 지운다 |
-| 0·1단계 · 슬라이서 | **Joern 기반 — 무모델 결정론.** Case A(source-first) · Case B(sink-first) 합집합 → 포함률 임계 클러스터링 | — | — | **2026-09-09 구조 확정 · 2026-09-13 방식 확정.** ⚠ **방식이 바뀌었다** — 앞 판본은 *"`LLM4FPM`(신호 주도) → `LLMxCPG-Q`(쿼리 생성) 순"*이었고, 실험 결과 **둘 다 안 쓴다**(LLM4FPM의 SAST 시작점도, LLMxCPG-Q의 모델 쿼리 생성도 없다). **tree-sitter 인덱서는 전환 대상이 아니라 짝으로 계속 남는다** — 슬라이스는 그래프가 아니라 그래프의 **투영**이라 E2의 `GRAPH` Evidence와 후보 열거를 대신하지 못한다. 정본은 [CONTEXT.md](../../CONTEXT.md) §2다 |
+| 0·1단계 · 슬라이서 | **Joern 기반 — 무모델 결정론.** Case A(source-first) · Case B(sink-first) 합집합 → 포함률 임계 클러스터링 | — | — | **2026-09-09 구조 확정 · 2026-09-13 방식 확정.** ⚠ **방식이 바뀌었다** — 앞 판본은 *"`LLM4FPM`(신호 주도) → `LLMxCPG-Q`(쿼리 생성) 순"*이었고, 실험 결과 **둘 다 안 쓴다**(LLM4FPM의 SAST 시작점도, LLMxCPG-Q의 모델 쿼리 생성도 없다). **tree-sitter 인덱서는 전환 대상이 아니라 짝으로 계속 남는다** — 슬라이스는 그래프가 아니라 그래프의 **투영**이라 E2의 `GRAPH` Evidence와 후보 열거를 대신하지 못한다. 정본은 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §2다 |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | Alibaba | fp16 | checksum 有 · 처리량 미실측 |
-| 3단계 · 리랭커 | **`qwen3-reranker-4b`** (신규) | Alibaba | fp16 | 미실측. **D63의 재측정 대상이 이 모델이다** — 0.6B는 registry에 남긴다 |
+| 3단계 · 리랭커 | **`qwen3-reranker-4b`** (신규) | Alibaba | fp16 | 미실측. **D63의 재측정 대상이 이 모델이다** — 0.6B는 registry에 남긴다. ⚠ **2026-09-20 — 이 행의 두 칸이 낡았다.** ① dtype은 **`bf16`**이다 — registry가 `bf16`으로 등재했고(`config/models.yaml`, 그 항목 주석이 *"양자화가 아니라 native dtype"*이라 적는다), 2026-09-13 **템플릿 보고서**도 bf16으로 적는다(입력 모양 보고서는 dtype을 안 든다). ② **`미실측`이 아니다** — 2026-09-13에 ATOM 8005 기동과 **D63 (a) 첫 실측**이 났다(`run_id` 없어 비교표 밖). 형제 행들이 그러듯 *"기동 실측 있음 · 점수 정확성 미실측"*으로 읽는다. **점수 정확성이 미실측인 것은 그대로다** |
 | 4단계 · `scout_memory` (CWE-415·416) | **`qwen3-coder-30b-a3b`** | Alibaba | nvfp4 | 실측 있음. **가장 어려운 계열에 가장 강한 모델**(09-08 조사) — Auditor A안과 같은 모델이라 **같은 서버로 상주한다** |
 | 4단계 · `scout_boundary` (CWE-119·125·787·190) | `devstral-small-2-24b` | Mistral | fp8 | 기동 확인(9/4) · 처리량 미실측 |
 | 4단계 · `scout_injection` (CWE-78·22·134) | **`qwen3-8b`** | Alibaba | nvfp4 | 실측 있음. 가장 쉬운 계열 + batch32 **388.46 tok/s** [실측] — 후보 전량이 지나는 단계에 맞는다. `phi-4`는 §7로 기각 |
@@ -200,7 +200,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 | 단계 | 상주 | 가중치+non-torch (GiB) | 라벨 |
 | --- | --- | --- | --- |
-| ~~1 · 쿼리 생성~~ | ~~`qwen3-8b`~~ | ~~6.38~~ | **2026-09-13 소멸** — 1단계가 무모델이 되어 상주가 없다(§2 · [CONTEXT.md](../../CONTEXT.md) §2). 실측 6.38은 그 자리가 있던 때의 값이다 |
+| ~~1 · 쿼리 생성~~ | ~~`qwen3-8b`~~ | ~~6.38~~ | **2026-09-13 소멸** — 1단계가 무모델이 되어 상주가 없다(§2 · [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §2). 실측 6.38은 그 자리가 있던 때의 값이다 |
 | 3 · 검색 | `qwen3-embedding-0.6b` + `qwen3-reranker-4b` | 1.62 + 약 9 = **약 10.6** | 실측 + 계산(4B × 2바이트 + non-torch) |
 | 4 · Scout 풀 | `qwen3-coder-30b-a3b` + `devstral-small-2-24b` + `qwen3-8b` | 18.28 + 26.8 + 6.38 = **51.46** | **셋 다 실측** — [09-08 조사](../research/2026-09-08-roster.md) §1.1 |
 | 5 · Auditor | **A** `qwen3-coder-30b-a3b` / **B** `nemotron-3-super-120b-a12b` | A **18.28** / B **79.12** | A는 실측 · B는 계산(HF 실파일 합) — [09-08 조사](../research/2026-09-08-roster.md) §1.1 |
@@ -240,7 +240,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 1. **온보딩 둘(Auditor B안이면 셋) — 순서와 각각의 관문.** 다운로드 → 스냅샷 → `tools/model_checksum.py` → `checksum`·`source` → §3 체크리스트 7개 → `benchmark`. 채우기 전엔 0이다. 순서는 위험이 큰 것부터:
    - `gpt-oss-20b` — **Harmony × structured output smoke가 첫 관문이다.** vLLM 이슈 #23120·#37359가 not-planned로 닫혀 있고 0.27.0의 PR #45560이 그 경로를 겨냥했는데 우리 0.27.1에서 재현되는지 모른다(models.md §3.5.4). 깨지면 "자유 서술 → 별도 추출" 2단(quantization.md 제안)이 다음 수다.
-   - `qwen3-reranker-4b` — **키우기 전에 [09-08 조사](../research/2026-09-08-roster.md) §2의 배제 셋을 먼저 한다** — [D63](../open-questions/D/D63.md)이 온보딩(스냅샷·`checksum`)과 그 배제 셋을 (a) 앞의 관문 둘로 세운다. 그 다음 **D63의 (a)**(40줄 코드 조각 × 식별자 질의)를 이 모델로 잰다. 0.6B의 관측은 이 모델에 이식하지 않는다.
+   - `qwen3-reranker-4b` — **키우기 전에 [09-08 조사](../research/2026-09-08-roster.md) §2의 배제 셋을 먼저 한다** — [D63](../open-questions/D/D63.md)이 온보딩(스냅샷·`checksum`)과 그 배제 셋을 (a) 앞의 관문 둘로 세운다. 그 다음 **D63의 (a)**(40줄 코드 조각 × 식별자 질의)를 이 모델로 잰다. 0.6B의 관측은 이 모델에 이식하지 않는다. ⚠ **2026-09-20 — 이 순서는 지켜지지 않았다. 살아 있는 지시로 읽지 마라.** 온보딩(등재·`checksum`)은 2026-09-11에, 기동과 **(a) 첫 실측**은 2026-09-13에 됐으나 **배제 셋은 ②(템플릿)만 닫혔고 ①(참조 구현 대조)·③(리랭커를 끈 기준선)이 열린 채** 두 풀 프로필(`local_balanced_pool`·`local_balanced_pool_hybrid`)이 이 모델로 배선됐다. **이 문서가 그 결정을 뒤집지 않는다** — 무엇을 알고 넘었는지와 남은 것은 [D63](../open-questions/D/D63.md)의 2026-09-20 블록이 든다. **「0.6B의 관측은 이식하지 않는다」는 그대로 유효하다.**
    - *(Auditor B안을 고른 경우에만)* `nemotron-3-super-120b-a12b` — **FlashInfer 금지 · Triton attention · MTP=1.** 카드의 "1M context"와 config의 `262144`가 달라 **262,144를 상한으로 잡는다.**
 2. **R8 등재** — 새 로스터 신규 모델 둘(Auditor B안이면 셋)의 sm_121 기동·구조화 출력·Critic 반박 정확도가 미검증이라는 프로젝트 수준 리스크. **등재 당시 넷이던 대상이 §7의 기각 둘(`phi-4`·`qwen3.6-35b-a3b`)로 줄었다.** R2(Devstral NVFP4 Critic)는 로스터 변경으로 닫힌다.
 3. **PR 셋.** A(이 문서 · registry · 문서 · D 상태) → B(스키마: `execution`·`family`·풀 역할·`scout_member` · 검증기 · 테스트) → C(러너 단계 단위 · 팬아웃 · 8단계 dedupe 선행). 모델 무관 선행 둘(계획 D절 — `Evidence.location` 채우기 #70, 도구 루프 재진입 신호 #60)은 **별도 PR**이다.
