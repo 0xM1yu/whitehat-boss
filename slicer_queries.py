@@ -24,6 +24,23 @@ WRITERS = (
 # (the same failure mode #219 hit in case_a). Repos past the cap get bounded coverage.
 CASE_B_WRITER_CAP = 2000
 
+# Operator-anchored sinks (#219 follow-up). The release GT sinks are dominated by the
+# index/pointer operators the call-anchored patterns miss (25/40 GT sinks), so anchor on
+# them directly. But raw operators explode, so narrow BEFORE taking, then cap. Measured on
+# WavPack (1020 methods):
+#   - array index a[i]: 3042 raw -> 550 when restricted to WRITE targets (a[i] = ...).
+#     Kept: writes (the OOB-write sink). Left out: variable-index reads (~1178 raw, ~2x the
+#     writes and mostly benign bounds-checked reads) -- a documented recall limit.
+#   - pointer arithmetic p +/- i: raw is ~3300; narrowed to a pointer-ish operand it measured
+#     1125 on WavPack (of 3309 raw) and 473 on pcre2 (of 1831 raw). "Pointer-ish" is two axes
+#     because evalType alone is unreliable: a raw-pointer type (contains "*") OR an operand
+#     that is itself a memory access (field/deref/index/addr-of). The second axis is what
+#     catches typedef'd pointers -- pcre2's `mb->end_subject - eptr` has operand evalType
+#     ANY/PCRE2_SPTR (no "*"), but the operand IS an indirectFieldAccess, so it qualifies.
+#     Integer-only arithmetic (both operands plain ints) drops out.
+# The cap is the final bound; a repo past it gets bounded (not full) operator coverage.
+CASE_B_OPERATOR_CAP = 2000
+
 
 def literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
@@ -193,7 +210,16 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .map(_.distinct).filter(_.size >= 2).toList
       val repeatedCalls = repeated.flatten.distinct
       val writers = cpg.call.name("(__WRITERS__)").take(__WCAP__).l
-      ujson.Arr.from((arrays ++ repeatedCalls ++ writers).distinct.map(c => {
+      // Operator anchors, narrowed before .take so the cap bounds a real subset (#219).
+      val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take(__OPCAP__).l
+      val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
+        .filter(c => c.argument.evalType.exists(_.contains("*")) ||
+          c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
+            "indirection|indirectIndexAccess|addressOf)").nonEmpty).take(__OPCAP__).l
+      val operators = (indexWrites ++ ptrArith).distinct
+      ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
         ujson.Obj("symbol" -> c.name, "file" -> c.location.filename,
           "line" -> c.lineNumber.getOrElse(-1), "scope" -> scope(c.method),
@@ -201,19 +227,25 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
           "reasons" -> ujson.Arr.from(List(
             Option.when(arrays.contains(c))("local_array_argument"),
             Option.when(repeatedCalls.contains(c))("repeated_release"),
-            Option.when(writers.contains(c))("dangerous_write")).flatten),
+            Option.when(writers.contains(c))("dangerous_write"),
+            Option.when(indexWrites.contains(c))("index_write"),
+            Option.when(ptrArith.contains(c))("pointer_arithmetic")).flatten),
           "trigger_arguments" -> ujson.Arr.from(c.argument.l.filter(a =>
             a.start.isIdentifier.refsTo.collect { case l: nodes.Local => l }
               .exists(_.typeFullName.contains("[")) ||
             (repeatedCalls.contains(c) && positions.getOrElse(c.name, Nil)
               .contains(a.argumentIndex)) ||
-            writers.contains(c)).map(argumentInfo)),
+            writers.contains(c) || operators.contains(c)).map(argumentInfo)),
           "sink_arguments" -> ujson.Arr.from(c.argument.l.map(argumentInfo)),
           "anchors" -> ujson.Arr.from(anchors.map(loc)))
       }))
     """
     )
-    body = body.replace("__WRITERS__", WRITERS).replace("__WCAP__", str(CASE_B_WRITER_CAP))
+    body = (
+        body.replace("__WRITERS__", WRITERS)
+        .replace("__WCAP__", str(CASE_B_WRITER_CAP))
+        .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
+    )
     return envelope("case_b", body)
 
 

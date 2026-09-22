@@ -566,6 +566,32 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     assert "__WRITERS__" not in query  # the placeholder was substituted
 
 
+def test_case_b_query_adds_operator_anchors_narrowed_before_the_cap():
+    # Query-contract check (issue #219 follow-up): the release GT sinks are dominated by
+    # index/pointer operators, so case_b anchors on them. Raw operators explode (measured on
+    # WavPack: 3042 index accesses, 3309 add/sub), so each anchor is NARROWED before .take —
+    # array index to WRITE targets, pointer arithmetic to a pointer-typed operand — and the
+    # cap is the final bound. Assert the narrowing precedes the cap, not just that a cap exists.
+    query = queries.candidates_b_query()
+    assert "<operator>.indirectIndexAccess" in query
+    assert "<operator>.(addition|subtraction)" in query
+    # index anchor is restricted to assignment targets (writes), not every a[i]:
+    assert '<operator>.assignment' in query and 'argumentIndex(1)' in query
+    # pointer-arithmetic anchor keeps a pointer-ish operand: a raw-pointer type OR a memory
+    # access (the latter catches typedef'd pointers whose evalType lacks "*", e.g. PCRE2_SPTR):
+    assert 'evalType.exists(_.contains("*"))' in query
+    assert "indirectFieldAccess" in query and "addressOf" in query
+    assert '"index_write"' in query and '"pointer_arithmetic"' in query
+    assert str(queries.CASE_B_OPERATOR_CAP) in query
+    assert "__OPCAP__" not in query  # the placeholder was substituted
+    # The narrowing filter must sit before .take(cap) so the cap bounds a real subset,
+    # not the raw 3000+ operator population.
+    for anchor in ("<operator>.indirectIndexAccess", "<operator>.(addition|subtraction)"):
+        start = query.index(anchor)
+        seg = query[start : query.index(".take(", start) + 6]
+        assert ".filter(" in seg and seg.index(".filter(") < seg.index(".take(")
+
+
 def test_noncode_delimiters_do_not_change_structure():
     text = '#define OPEN {\nvoid f() {\n// }\nputs("}");\n/* } */\n}\n'
     masked = mask_non_code(text)
