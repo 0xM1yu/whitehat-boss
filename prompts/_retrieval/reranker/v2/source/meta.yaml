@@ -1,0 +1,34 @@
+role: reranker
+version: v2
+profile: source
+model: qwen3-reranker-4b
+input:
+  query: embedder/v1/source의 렌더링된 query 문자열을 그대로 재사용한다 (prefix.md + body.md).
+  document: 후보 조각 1개 (data/chunks/chunks_manifest.jsonl의 text 필드, embedder top-32 중 1개)
+output:
+  format: '"yes" 토큰 vs "no" 토큰의 로짓/확률을 관련도 점수로 사용 (0~1)'
+  top_k: 5
+render: |
+  <|im_start|>system
+  {{../../SYSTEM.md}}<|im_end|>
+  <|im_start|>user
+  <Instruct>: {{prefix.md}}
+  {{body.md}}<|im_end|>
+  <|im_start|>assistant
+  <think>
+
+  </think>
+
+  # 점수는 이 빈 think 블록 다음 위치에서 "yes"/"no" 토큰의 로짓을 비교해 뽑는다.
+based_on: v1
+description: >
+  scout 프롬프트(yungyeong/prompts/scout/cwe/v*)를 다시 참고해 v1에 빠져 있던 세 요소를
+  추가(2026-09-14): ① 역할 부여 — 이 판정이 2단계 파이프라인의 어느 자리인지, 오판의 비용이
+  무엇인지 명시(scout의 "You are a Scout, not the final judge" 프레이밍과 같은 목적).
+  ② 명시적 절차 — "먼저 정확히 무엇이 오염값인지 특정 -> Document가 그 값과 실제로 연결되는지
+  4가지 관계로 확인 -> 우연한 토큰 일치는 배제" 3단계로 순서를 명시(scout의
+  Understand->Speculate->Analyze에 해당, 출력은 1토큰이라 눈에 보이는 산출물은 없지만
+  내부 판단 순서를 강제). ③ few-shot 2개 — v1은 "우연한 변수명 일치는 관련 없음"을 문장으로만
+  말했는데, 실제 sample_01(handle_TYPE/is_cont)의 진짜 코드로 양성/음성 예시를 만들어 이
+  기준을 구체화. v1과 달리 이 버전은 아직 recall@32/recall@5로 측정 안 됨(임베더/리랭커가
+  실제 모델이 아니라 어휘 중복 플레이스홀더인 상태라 v1/v2 비교 자체가 아직 무의미).
