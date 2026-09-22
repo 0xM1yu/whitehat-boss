@@ -192,6 +192,58 @@ def _poolify(mode: str | None):  # noqa: ANN202
     return configure
 
 
+def _poolify_v3():  # noqa: ANN202
+    """`dev_fake`를 **v3** Scout 풀로 바꾼다 — `_poolify`(v2)와 달리 ScoutResponse 경로를 태운다.
+
+    v3 scout 프롬프트는 `output_schema: ScoutResponse`라, fake가 `Candidate`가 아니라
+    `ScoutResponse`(래퍼)를 낸다. 그러면 `call_model`은 `scout_member`를 안 찍고(그 타입에
+    필드가 없다) `scout._ask_model`이 래퍼를 풀어 안쪽 `candidate`에 직접 stamp한다.
+    커밋된 fake 키는 v1(`fake`)·v2(`fake_v2`)뿐이라, v3 fake 엔트리는 여기서 조립한다
+    (models.yaml 주석대로 in-test — `fake`를 복사해 버전만 v3로).
+    """
+    def configure(config):  # noqa: ANN001, ANN202
+        models = {
+            **config.models,
+            "fake_v3": config.models["fake"].transition(prompt_template_version="v3"),
+        }
+        pool = {
+            "scout_memory": "fake_v3",
+            "scout_boundary": "fake_v3",
+            "scout_injection": "fake_v3",
+            "auditor": "fake",
+            "critic": "fake",
+            "embedding": "fake",
+            "reranker": "fake",
+        }
+        return config.transition(models=models, profile=config.profile.transition(roles=pool))
+
+    return configure
+
+
+def test_scout_pool_v3_unwraps_scout_response_and_stamps_member(tmp_path: Path) -> None:
+    """v3 풀은 fake가 낸 `ScoutResponse`를 풀어 안쪽 `Candidate`만 흘리고 멤버를 stamp한다.
+
+    이것이 리뷰 #239 MEDIUM-1이 「0건」이라고 한 경로다 — `_poolify`(v2)는 `Candidate`를 바로
+    내므로 `call_model`의 stamp만 타지, `scout._ask_model`의 `isinstance(value, ScoutResponse)`
+    언랩·수동 stamp는 안 탄다. 언랩이 빠지면 `run`이 `Candidate` 대신 `ScoutResponse`를 흘려
+    `ctx.create`에서 죽고, stamp가 어긋나면 아래 멤버 집합이 틀린다.
+    """
+    result, _ = _run(tmp_path, configure=_poolify_v3())
+
+    by_target: dict[str, list[str | None]] = {}
+    for candidate in result.candidates:
+        key = f"{candidate.location.file}:{candidate.location.symbol}"
+        by_target.setdefault(key, []).append(candidate.scout_member)
+
+    assert by_target, "v3 풀인데 후보가 안 나왔다 — ScoutResponse 언랩이 흐름을 끊었을 수 있다"
+    for key, members in by_target.items():
+        assert sorted(m or "" for m in members) == [
+            "scout_boundary",
+            "scout_injection",
+            "scout_memory",
+        ], f"{key}: v3 ScoutResponse 언랩 후 멤버 stamp가 어긋난다 — got {members}"
+
+
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
 def test_scout_pool_fans_one_target_into_three_members(tmp_path: Path, mode: str | None) -> None:
     """풀은 대상 하나를 멤버 셋이 각각 봐서 후보 셋을 낸다 (ADR 0010 §3 방식 ①).
