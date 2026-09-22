@@ -33,7 +33,7 @@ from src.orchestrator import runner, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
-from src.schemas.common import PLACEHOLDER_DIGEST
+from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from tests.conftest import ALL_PROFILES
@@ -2210,15 +2210,18 @@ def test_artifacts_without_symbols_make_no_candidates(tmp_path: Path) -> None:
 # --- 10. (a′) 정적 신호는 게이트가 아니라 순서다 ------------------------------
 
 
-def test_signal_bearing_artifacts_come_first_even_against_path_order(tmp_path: Path) -> None:
-    """신호가 붙은 artifact의 심볼이 먼저 돈다. **거르지는 않는다.**
+def test_signal_bearing_symbol_comes_first_even_against_path_order(tmp_path: Path) -> None:
+    """신호가 붙은 **심볼**이 먼저 돈다(#70). **거르지는 않는다.**
 
     거르면 하네스가 semgrep이 이미 찾은 것만 찾게 되고 이 프로젝트의 주장을 재는 경로가
     막힌다. 그래서 신호 없는 심볼도 후보가 되고, 뒤로 갈 뿐이다.
 
-    경로 순서로는 `aaa.c`가 앞이지만 신호는 `parser.c`에만 붙는다(`fake_tools`의 정적
-    패턴이 길이가 상수가 아닌 `memcpy`를 잡는다). 정렬이 신호를 먼저 보지 않으면 이
-    단언이 뒤집힌다 — 알파벳 순서와 신호 순서가 어긋나게 잡은 것이 이 테스트의 요점이다.
+    경로 순서로는 `aaa.c`가 앞이지만 신호는 `parser.c`의 `memcpy`(24줄)에 붙는다
+    (`fake_tools`의 정적 패턴이 길이가 상수가 아닌 `memcpy`를 잡고, `Evidence.location`이
+    그 줄을 든다). **신호가 심볼 단위가 되면서 `parser.c`의 두 심볼이 갈린다** —
+    `parse_header`(19~26)는 그 줄을 품어 맨 앞이고, 같은 파일 `recv_request`(28~31)는
+    신호가 없어 `aaa.c` 뒤로 밀린다. 옛 artifact 단위였다면 `parser.c` 둘이 붙어 맨
+    앞이었다 — 그 갈라짐이 이 테스트의 요점이다.
     """
     target = tmp_path / "src"
     target.mkdir()
@@ -2237,7 +2240,27 @@ def test_signal_bearing_artifacts_come_first_even_against_path_order(tmp_path: P
 
     assert _plan(trace_path)["signal_artifacts"] == 1
     files = [c.location.file for c in result.candidates]
-    assert files == ["parser.c", "parser.c", "aaa.c"]
+    # 신호 든 심볼(parser.c:parse_header) 맨 앞 → aaa.c → 신호 없는 parser.c:recv_request.
+    assert files == ["parser.c", "aaa.c", "parser.c"]
+
+
+def test_symbol_has_signal_matches_line_and_falls_back_when_unlocated() -> None:
+    """`_symbol_has_signal`의 세 갈래 (#70).
+
+    - 신호 줄이 심볼 범위에 들면 True, 벗어나면 False (심볼 단위 귀속).
+    - **위치를 못 뽑은 신호**(실 clang-tidy 등)가 있으면 심볼 귀속이 불가능하므로
+      artifact 전체에 붙던 옛 동작으로 되돌린다 — 회귀를 만들지 않는 자리다.
+    """
+    sym = Location(file="a.c", symbol="f", line_start=19, line_end=26)
+
+    assert runner._symbol_has_signal(sym, [24], unlocated_signal=False)
+    assert not runner._symbol_has_signal(sym, [30], unlocated_signal=False)
+    assert not runner._symbol_has_signal(sym, [], unlocated_signal=False)
+    # 위치 없는 신호 하나면 심볼 줄과 무관하게 붙는다(옛 동작 복귀).
+    assert runner._symbol_has_signal(sym, [], unlocated_signal=True)
+    # 심볼에 줄 정보가 없으면(방어적) 붙이지 않는다.
+    no_line = Location(file="a.c", symbol="f")
+    assert not runner._symbol_has_signal(no_line, [24], unlocated_signal=False)
 
 
 def test_candidate_max_defers_the_rest_and_records_them(tmp_path: Path) -> None:

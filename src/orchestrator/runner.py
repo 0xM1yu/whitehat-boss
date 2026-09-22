@@ -50,10 +50,11 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 그래서 신호는 **순서**로 쓴다: 신호가 붙은 artifact의 심볼이 큐 상위, 나머지는 뒤,
 `candidate_max`를 넘긴 나머지는 `target_skipped`로 **기록에 남긴다.**
 
-**신호 판정이 심볼이 아니라 artifact 단위인 것은 지금 그것밖에 못 하기 때문이다.**
-`Evidence.location`을 채우는 코드가 저장소에 없어(ToolRunner 두 구현 모두 기본값
-`None`) 어느 심볼에 붙은 신호인지 알 수 없다. `fake_model._has_static_signal()`도 같은
-입력을 보므로 이것이 "원래 하던 것"이기도 하다.
+**신호 판정은 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만
+신호가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로 간다. 단
+위치를 못 뽑은 신호(실 clang-tidy 등)와 인덱스 없는 폴백은 artifact 단위로 되돌아간다.
+**점수 축은 아직 artifact 단위다**: `fake_model._has_static_signal()`은 심볼별로
+거르지 않은 evidence를 보므로 가산점은 artifact 전체에 간다 — 순서만 심볼 단위다.
 
 ## 후보 하나의 실패가 run 전체를 죽이지 않는다
 
@@ -487,8 +488,8 @@ class _Target:
     artifact: Artifact
     location: Location
     evidences: tuple[Evidence, ...]
-    # 이 artifact에 정적 신호가 붙었는가. **심볼이 아니라 artifact 단위다** —
-    # `Evidence.location`이 비어 있어 어느 심볼의 신호인지 알 수 없다(모듈 docstring).
+    # 이 심볼에 정적 신호가 붙었는가. STATIC `Evidence.location`의 줄이 이 심볼 범위에
+    # 들면 True다(#70). 위치 없는 신호·폴백은 artifact 단위로 되돌아간다(`_plan_targets`).
     signal: bool
 
 
@@ -863,6 +864,24 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
         state.update(after)
 
 
+def _symbol_has_signal(
+    location: Location, signal_lines: list[int], unlocated_signal: bool
+) -> bool:
+    """이 심볼에 정적 신호가 붙었는가 — 신호 줄이 심볼 줄 범위에 드는지로 본다 (#70).
+
+    위치를 못 뽑은 STATIC 신호가 하나라도 있으면(실 clang-tidy 등) 심볼 귀속이
+    불가능하므로 artifact 전체에 붙던 옛 동작으로 되돌린다 — 회귀를 만들지 않는다.
+    심볼에 줄 정보가 없으면(폴백 전에 걸러지지만 방어적으로) 붙이지 않는다.
+    """
+    if unlocated_signal:
+        return True
+    start = location.line_start
+    if start is None:
+        return False
+    end = location.line_end or start
+    return any(start <= line <= end for line in signal_lines)
+
+
 def _plan_targets(
     ctx: RunContext,
     artifacts: list[Artifact],
@@ -886,20 +905,33 @@ def _plan_targets(
         evidences = (graph, *found)
         # **정적 신호만 순서에 쓴다.** `with_signal()`이 남기는 것에는 `build`(BUILD)도
         # 있는데 그쪽은 성공 자체가 신호라 **모든 artifact에 붙는다** — 그것까지 세면
-        # 정렬 키가 상수가 되어 (a′)가 아무 일도 하지 않는다.
-        #
-        # 판정을 `fake_model._has_static_signal()`과 같은 축에 둔다. 점수에서 가산점을
-        # 주는 신호와 순서를 정하는 신호가 다르면 (a′)가 "원래 하던 것"에서 벗어난다.
-        signal = any(evidence.kind is EvidenceKind.STATIC for evidence in found)
-        if signal:
+        # 정렬 키가 상수가 되어 신호 순서가 아무 일도 하지 않는다.
+        static = [ev for ev in found if ev.kind is EvidenceKind.STATIC]
+        if static:
             plan.signal_artifacts += 1
+        # 신호가 걸린 **줄**들(#70에서 채운 `Evidence.location`). 그 줄을 품는 심볼에만
+        # 신호를 귀속한다 — 예전엔 artifact의 모든 심볼에 똑같이 붙었다. **점수 축과는
+        # 갈린다**: `fake_model._has_static_signal()`은 여전히 artifact 단위 evidence를
+        # 보므로 가산점은 artifact 전체에 간다. 순서만 심볼 단위로 정밀해진다(#70 후속).
+        signal_lines = [
+            ev.location.line_start
+            for ev in static
+            if ev.location is not None and ev.location.line_start is not None
+        ]
+        # 위치를 못 뽑은 STATIC 신호가 있으면(실 clang-tidy 등) 어느 심볼인지 알 수 없다 —
+        # 그 신호는 artifact 전체에 붙던 옛 동작으로 되돌린다(회귀를 만들지 않는다).
+        unlocated_signal = any(
+            ev.location is None or ev.location.line_start is None for ev in static
+        )
         locations = ctx.symbols_for(artifact.path)
+        symbol_level = True
         if locations is None:
             # 인덱스가 없다(`dev_fake`·버전 모름·깨짐). 파일 단위로 되돌아간다 — 후보를
             # 안 만들면 그 프로필의 run이 통째로 비고, 폴백은 W2 이전 동작이라 회귀가
             # 아니다. **되돌아갔다는 사실이 기록에 남는 것**이 새로 얻는 것이다.
             plan.fallback_artifacts += 1
             locations = [Location(file=artifact.path)]
+            symbol_level = False
         elif not locations:
             # 인덱스는 있는데 이 파일에 심볼이 없다(`.h`·`.py`·바이너리는 인덱서에
             # 넘어가지 않는다). 후보를 만들지 않는다 — 대상 선정이 새던 자리가 여기서
@@ -909,7 +941,16 @@ def _plan_targets(
         else:
             plan.symbol_targets += len(locations)
         plan.collected += [
-            _Target(artifact=artifact, location=location, evidences=evidences, signal=signal)
+            _Target(
+                artifact=artifact,
+                location=location,
+                evidences=evidences,
+                # 파일 단위 폴백은 심볼 줄이 없어 라인 대조가 불가능하다 — artifact 신호를
+                # 그대로 쓴다(옛 동작). 심볼이 있으면 그 심볼에 걸린 신호만 True다.
+                signal=bool(static)
+                if not symbol_level
+                else _symbol_has_signal(location, signal_lines, unlocated_signal),
+            )
             for location in locations
         ]
     _order_and_cut(ctx, plan, state)
@@ -923,8 +964,9 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     나머지 세 항은 index.json의 순서와 같다 — 후보 순서가 곧 ID 발급 순서라 흔들리면
     두 run의 trace를 대조할 수 없다(engineering-guide.md §5).
 
-    **신호는 artifact 단위다.** 심볼 단위로 하려면 `Evidence.location`이 있어야 하는데
-    그것을 채우는 코드가 저장소에 없다(모듈 docstring).
+    **신호는 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만 신호가
+    붙는다. 위치를 못 뽑은 신호(실 clang-tidy 등)나 인덱스 없는 폴백은 artifact 단위로
+    되돌아간다(`_plan_targets`).
     """
     plan.collected.sort(
         key=lambda item: (
