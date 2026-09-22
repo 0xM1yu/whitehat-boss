@@ -32,6 +32,7 @@
 | [2026-09-08-retrieval.md](2026-09-08-retrieval.md) | 리랭커를 키우면 되나 | **4B까지만.** 벤더 자기 표에서 **0.6B는 코드에서 순손실**이고 4B→8B는 +0.02다. 다만 **지배적 손실은 크기가 아니라 질의 모양**(식별자 대 자연어 4.2배)이다 |
 | [2026-09-08-critic-quantization.md](2026-09-08-critic-quantization.md) | Critic을 키우면 무엇이 좋아지나 | **크기 +3.71점, reasoning effort +11~13점** — **3배 큰 손잡이가 20B에 이미 붙어 있다.** 그리고 후보 목록 안에서 **TNR 17.31짜리 고장난 judge**가 실측됐다 |
 | [2026-09-08-roster.md](2026-09-08-roster.md) | **그래서 조합은** | 위 다섯의 종합. 단계별 로스터 하나와 **Auditor 자리만 A/B** — 문헌이 그 자리에서 정면으로 갈린다 |
+| [2026-09-22-distillation.md](2026-09-22-distillation.md) | FT용 distillation이 무엇이고 우리에 어떻게 붙나 | **teacher가 supervision을 만들고 student를 FT.** KD·dataset distillation·distillation-for-FT는 서로 다르다. 우리 파이프라인 산출물(특히 버려지는 `analysis_summary`)이 곧 distill 원천이고, Evidence Gate가 검증 필터다. **release GT 누출만은 절대 금지** |
 
 > **2026-09-08의 다섯은 09-04 셋의 후속이다.** 팀이 *"30B MoE보다 큰 모델을 올려도
 > 무방할 것 같다"*고 판단해 그 위를 다시 훑었고, 범위를 Auditor·Critic에서
