@@ -14,8 +14,9 @@ READERS = (
 # Case B (b) sink expansion (issue #219). The GT sinks are dominated by memory-write
 # operations that the local-array-argument and double-free patterns miss. WRITERS mirrors
 # READERS: calls to these copy/format functions are sinks whose arguments (dest, source,
-# size) are backtracked. Measured on the eval GT (40 samples): ~5 sinks are direct calls to
-# these, and the array-argument pattern alone caught almost none of them.
+# size) are backtracked. The 40-GT-sink survey put ~5 sinks as direct calls to these; the
+# validation run (which sinks these newly catch vs baseline) is recorded in
+# docs/experiments/harness/2026-09-22-case-b-operator-anchors-atom.md (run_id: none).
 WRITERS = (
     "memcpy|memmove|memset|strcpy|strncpy|strcat|strncat|stpcpy|bcopy|"
     "sprintf|snprintf|vsprintf|vsnprintf|wmemcpy|wmemmove|wcscpy|wcsncpy|wcscat"
@@ -24,10 +25,14 @@ WRITERS = (
 # (the same failure mode #219 hit in case_a). Repos past the cap get bounded coverage.
 CASE_B_WRITER_CAP = 2000
 
-# Operator-anchored sinks (#219 follow-up). The release GT sinks are dominated by the
-# index/pointer operators the call-anchored patterns miss (25/40 GT sinks), so anchor on
-# them directly. But raw operators explode, so narrow BEFORE taking, then cap. Measured on
-# WavPack (1020 methods):
+# Operator-anchored sinks (#219 follow-up). Operator/deref sinks are the biggest GT bucket
+# (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). This PR anchors the two of
+# those it can narrow and bound: array-index WRITES (a subset of the 10) and pointer arithmetic
+# (3) -- the "13/40" the PR body counts. Deref/field (12) and array-index READS are NOT anchored
+# (a documented recall limit). Raw operators explode, so narrow BEFORE taking, then cap. All
+# counts below are ATOM measurements recorded in
+# docs/experiments/harness/2026-09-22-case-b-operator-anchors-atom.md (run_id: none). WavPack
+# (1020 methods):
 #   - array index a[i]: 3042 raw -> 550 when restricted to WRITE targets (a[i] = ...).
 #     Kept: writes (the OOB-write sink). Left out: variable-index reads (~1178 raw, ~2x the
 #     writes and mostly benign bounds-checked reads) -- a documented recall limit.
@@ -38,7 +43,10 @@ CASE_B_WRITER_CAP = 2000
 #     catches typedef'd pointers -- pcre2's `mb->end_subject - eptr` has operand evalType
 #     ANY/PCRE2_SPTR (no "*"), but the operand IS an indirectFieldAccess, so it qualifies.
 #     Integer-only arithmetic (both operands plain ints) drops out.
-# The cap is the final bound; a repo past it gets bounded (not full) operator coverage.
+# PER-ANCHOR bound (not a single total): this cap is applied to indexWrites AND to ptrArith
+# separately, so the operator population is bounded by 2*cap (<=4000), and with WRITERS
+# (CASE_B_WRITER_CAP) the new-sink total is bounded by <=6000. A repo past a cap gets bounded
+# (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
 
