@@ -143,14 +143,38 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
     )
 
 
+# Case A entry-point recovery (issue #219). The original filter kept only methods that are
+# never called (`.isEmpty`) — an "uncalled API" heuristic. But a message handler dispatched
+# once (e.g. TLS `client_handle_hello`) IS called, so `.isEmpty` dropped exactly the source
+# entry points a memory-safety pass wants. Keeping methods called at most K times recovers
+# them. Measured on the eval-release samples (ATOM 2026-09-22): sample_24 (Picotls) 501 → 748
+# case_a symbols (+247, incl. `client_handle_hello`·`handle_input_tls12`·…); sample_02 21 → 43.
+CASE_A_CALL_LIMIT = 1
+# The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
+# a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
+# and the whole slice aborted (0 slices). Measured: capping turns sample_01's abort into 2,198
+# candidates (2,000 api + 198 readers on THAT sample). Both `api` and `readers` are capped:
+# readers is not guaranteed small (it is every internal method calling read/getc/getline/mmap/…),
+# so an uncapped readers set could overrun the same way on a repo with many such methods.
+# A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
+# in CPG traversal order, which is not a documented/stable order, so a capped run's coverage is
+# an *unspecified* first-N subset (see known_limitations / measurement_notes, and D77 §4.5).
+# (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
+#  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
+CASE_A_CANDIDATE_CAP = 2000
+
+
 def candidates_a_query() -> str:
     return envelope(
         "case_a",
         LOCATION
         + f"""
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
-        .filter(m => cpg.call.nameExact(m.name).isEmpty).filter(_.parameter.size > 0).l
-      val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty).l
+        .filter(m =>
+          cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
+        .filter(_.parameter.size > 0).take({CASE_A_CANDIDATE_CAP}).l
+      val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty)
+        .take({CASE_A_CANDIDATE_CAP}).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
         "scope" -> scope(m), "anchors" -> ujson.Arr(loc(m)))))
