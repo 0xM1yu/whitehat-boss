@@ -152,9 +152,15 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
 CASE_A_CALL_LIMIT = 1
 # The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
 # a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
-# and the whole slice aborted (0 slices). Cap the relaxed `api` list — `readers` stay whole,
-# the input-API set is already small. A repo past the cap gets bounded coverage, not a failed
-# slice. Measured: the cap turns sample_01's abort into 2,198 candidates (2,000 api + readers).
+# and the whole slice aborted (0 slices). Measured: capping turns sample_01's abort into 2,198
+# candidates (2,000 api + 198 readers on THAT sample). Both `api` and `readers` are capped:
+# readers is not guaranteed small (it is every internal method calling read/getc/getline/mmap/…),
+# so an uncapped readers set could overrun the same way on a repo with many such methods.
+# A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
+# in CPG traversal order, which is not a documented/stable order, so a capped run's coverage is
+# an *unspecified* first-N subset (see known_limitations / measurement_notes, and D77 §4.5).
+# (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
+#  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
 CASE_A_CANDIDATE_CAP = 2000
 
 
@@ -164,9 +170,11 @@ def candidates_a_query() -> str:
         LOCATION
         + f"""
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
-        .filter(m => cpg.call.nameExact(m.name).size <= {CASE_A_CALL_LIMIT})
+        .filter(m =>
+          cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
         .filter(_.parameter.size > 0).take({CASE_A_CANDIDATE_CAP}).l
-      val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty).l
+      val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty)
+        .take({CASE_A_CANDIDATE_CAP}).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
         "scope" -> scope(m), "anchors" -> ujson.Arr(loc(m)))))
