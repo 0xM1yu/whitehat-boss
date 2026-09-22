@@ -249,6 +249,19 @@ def test_node_does_not_compare_thresholds_itself(ctx: RunContext) -> None:
     assert triage.data["policy"] == "fixed_threshold"
 
 
+def test_resolve_output_schema_rejects_names_outside_the_allowlist() -> None:
+    """허용집합 밖 `output_schema` 이름은 런타임 첫 호출(GPU)까지 미루지 않고 여기서 막는다.
+
+    `run`이 이 가드를 실제로 태우는 것은 `test_scout_pool_v3_...`(e2e)가 보고, 여기서는
+    가드 자체의 양·음 분기를 무는다 — 없으면 「집합 밖은 막힌다」는 서술이 검증되지 않는다
+    (리뷰 #239 MEDIUM-1).
+    """
+    assert scout.resolve_output_schema("Candidate").__name__ == "Candidate"
+    assert scout.resolve_output_schema("ScoutResponse").__name__ == "ScoutResponse"
+    with pytest.raises(PromptError):
+        scout.resolve_output_schema("DecisionDraft")
+
+
 # --- 5~6단계 ----------------------------------------------------------------
 
 
