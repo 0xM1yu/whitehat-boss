@@ -34,6 +34,14 @@ class SlicingStages:
             self.measure(
                 "candidates_case_" + case.lower(), len(collect({case: rows[case]}, self.repo))
             )
+        # HIGH-1 (#241 review): the .take cap in candidates_a_query is silent. When the count
+        # reaches the cap, api and/or readers may be truncated, so record a per-run note (measure
+        # popped any prior note). Below the cap it cannot have been truncated, so no note.
+        if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
+            self.result["measurement_notes"]["candidates_case_a"] = (
+                f"reached the cap ({queries.CASE_A_CANDIDATE_CAP}); api and/or readers may be "
+                "truncated to an unspecified first-N in CPG traversal order (slicer_queries)"
+            )
         self.candidates = collect(rows, self.repo)
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
         if self.checkpoint:

@@ -839,6 +839,24 @@ def test_inventory_query_keeps_the_overlays_list_flat():
     assert "flatten" not in inventory
 
 
+def test_case_a_query_bounds_are_pinned():
+    # #241 review MEDIUM-2: candidates_a_query had no regression pin, and the mock slicer tests
+    # never execute this Scala (tests/test_slicer.py header: candidates_case_a is a mock value).
+    # Pin the three properties a harmless-looking rewrite silently breaks.
+    q = queries.candidates_a_query()
+    lim, cap = queries.CASE_A_CALL_LIMIT, queries.CASE_A_CANDIDATE_CAP
+    # MEDIUM-1: the K=1 filter short-circuits at LIMIT+1 calls instead of enumerating the whole
+    # call set of a common name. Semantically == `.size <= LIMIT`; this pins the early-exit form.
+    assert f".take({lim} + 1).size <= {lim}" in q
+    # Property 1: the candidate cap .take sits AFTER both filters. Moving it before the param
+    # filter would take the first-N raw methods and then filter, shrinking the set toward 0.
+    # The param filter immediately preceding the take pins that ordering.
+    assert f".filter(_.parameter.size > 0).take({cap})" in q
+    # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
+    # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
+    assert q.count(f".take({cap})") == 2
+
+
 def test_context_query_excludes_synthetic_nodes_at_every_site():
     """결함 2 — 합성 METHOD_REF/TYPE_DECL 이 다시 `<global>` 로 올라간다.
 
