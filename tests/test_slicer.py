@@ -29,6 +29,7 @@ from urllib.error import URLError
 import pytest
 
 import slicer
+import slicer_pipeline
 import slicer_queries as queries
 from slicer_source import assemble, cluster, mask_non_code, normalize_points, recover_lines
 
@@ -411,8 +412,12 @@ def test_payload_delimiters_and_error_words_are_data():
     assert slicer.decode_response(response("case_a", payload), "case_a")[0] == payload
 
 
-def test_stack_overflow_stops_and_keeps_completed_slices(monkeypatch, repo, tmp_path):
-    data = payloads(case_a=[candidate("a"), candidate("z")], flow_count=2)
+def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_path):
+    # A single poisoned candidate (here a StackOverflow mid-run) used to propagate to the
+    # outer handler and discard every remaining candidate (#219). Now it is recorded as
+    # failed and the candidates *after* it are still sliced — the middle one poisons, the
+    # first and third both come back.
+    data = payloads(case_a=[candidate("a", 1), candidate("m", 2), candidate("z", 3)], flow_count=2)
     calls = []
 
     def flows(query):
@@ -424,12 +429,35 @@ def test_stack_overflow_stops_and_keeps_completed_slices(monkeypatch, repo, tmp_
         )
 
     data["flows"] = flows
-    code, result, transport = run_cli(monkeypatch, repo, tmp_path, data)
-    assert code == 2 and result["status"] == "partial"
-    assert len(result["slices"]) == 1
-    assert result["counters"]["candidates_not_processed"] == 1
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["status"] == "partial"
+    assert result["counters"]["candidates_failed"] == 1
+    # All three candidates were reached — the run did not cascade to a stop, so nothing is
+    # left unprocessed (a stop after the middle candidate would leave the third behind).
+    assert result["counters"]["candidates_not_processed"] == 0
+    assert result["slices"]  # at least the surviving candidates produced a slice
     assert result["counters"]["queries_aborted"] == 1
-    assert transport.stages[-1] == "flows"
+
+
+def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_path):
+    # Past a short streak the run stops rather than burning the per-query timeout on every
+    # remaining candidate. A failed candidate is NOT persisted as failed: the failure is
+    # before save_stage, so it has no checkpoint row and restore_stage returns "pending" ->
+    # --resume RE-RUNS it from scratch, it does not skip it (see test above). Restarting the
+    # dedicated server first lets resume progress IF the poison was server state; if the
+    # poison is candidate-intrinsic (a query that always exceeds the 600s deadline), resume
+    # re-burns the timeout on it and a streak of these never advances (documented limit).
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    data = payloads(case_a=cands, flow_count=2)
+
+    def flows(query):
+        return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+
+    data["flows"] = flows
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    streak = slicer_pipeline.POISON_STOP_STREAK
+    assert result["counters"]["candidates_failed"] == streak
+    assert result["counters"]["candidates_not_processed"] == len(cands) - streak
 
 
 @pytest.mark.parametrize("truncated", [False, True])
