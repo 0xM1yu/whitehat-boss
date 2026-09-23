@@ -58,7 +58,11 @@ def validate_candidates(args) -> None:
     from slicer import JoernClient
     from slicer_queries import candidates_b_query
 
-    client = JoernClient(args.endpoint, args.timeout)
+    # case_b is a file-transport stage: it writes its payload to a file the client reads,
+    # so the client needs a writable payload dir (the server runs on this same box).
+    payload_dir = args.out_dir / ".slicer-payloads"
+    payload_dir.mkdir(parents=True, exist_ok=True)
+    client = JoernClient(args.endpoint, args.timeout, payload_dir=payload_dir)
     candidates, logs = client.query("case_b", candidates_b_query())
     dump(args.out_dir / "case-b.json", {"candidates": candidates, "logs": logs})
     frees = [c for c in candidates if c["symbol"] in ("free", "release_second")]
