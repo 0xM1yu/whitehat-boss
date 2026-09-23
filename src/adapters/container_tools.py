@@ -272,9 +272,9 @@ def index_output_path(artifacts_root: Path, run_id: str) -> Path:
 
 
 # `Evidence.payload_ref`는 `artifacts/{run_id}/{slot}/{id}.log` 꼴이고, 실제 파일은
-# `{artifacts_root}/{run_id}/{slot}/{id}.log`다(위 `_evidence`가 쓰는 자리와 같은 규약).
+# `{artifacts_root}/{run_id}/{slot}/{id}.log`다(위 `_write`가 쓰는 자리와 같은 규약).
 # 선두 `artifacts/`를 떼고 artifacts_root에 붙인다. 접두사는 리터럴이라 root 이름과 무관하다.
-PAYLOAD_READ_CAP = 200_000  # 바이트. 폭주 로그를 통째로 메모리에 올리지 않는 가드
+PAYLOAD_READ_CAP = 200_000  # 글자(텍스트 모드 read). 폭주 로그를 통째로 메모리에 올리지 않는 가드
 
 
 def make_payload_reader(artifacts_root: Path) -> Callable[[str], str | None]:

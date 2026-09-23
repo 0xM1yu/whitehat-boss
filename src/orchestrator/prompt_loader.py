@@ -139,14 +139,27 @@ EVIDENCE_BODY_CHAR_CAP = 800  # evidence 1건당 상한
 EVIDENCE_BODY_TOTAL_CAP = 4000  # 전 evidence 합 상한(프롬프트 토큰 예산)
 
 
+_TRUNCATION_MARKER = "\n...\n"
+
+
 def _bound_text(text: str, cap: int) -> tuple[str, bool]:
-    """cap을 넘으면 head 2/3 + tail 1/3로 결정론 절단하고 truncated=True."""
+    """cap을 넘으면 head 2/3 + tail 1/3로 결정론 절단하고 truncated=True.
+
+    **구분자(`\\n...\\n`)까지 cap 안에 든다** — 결과 길이는 `cap`을 넘지 않는다(예산 초과
+    방지). cap이 구분자보다 작으면 tail 없이 head만 자른다 — `text[-0:]`가 원문 전체를
+    돌려주던 작은 cap 버그를 막는다.
+    """
     text = text.strip()
     if len(text) <= cap:
         return text, False
-    head = text[: (cap * 2) // 3]
-    tail = text[-(cap // 3) :]
-    return f"{head}\n...\n{tail}", True
+    budget = cap - len(_TRUNCATION_MARKER)
+    if budget <= 0:
+        return text[:cap], True
+    head_len = (budget * 2) // 3
+    tail_len = budget - head_len
+    head = text[:head_len]
+    tail = text[-tail_len:] if tail_len > 0 else ""
+    return f"{head}{_TRUNCATION_MARKER}{tail}", True
 
 
 def evidence_summaries(

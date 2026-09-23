@@ -386,6 +386,17 @@ def test_evidence_summaries_respects_total_budget() -> None:
     assert out["evidence_0003"]["body"] == ""  # past total budget -> empty body
 
 
+def test_evidence_body_never_exceeds_the_cap() -> None:
+    """#247 리뷰 LOW-3: 구분자까지 cap 안에 들어야 예산이 안 샌다. 그리고 cap이 구분자보다
+    작아도 `text[-0:]`로 원문 전체가 나가면 안 된다."""
+    evs = [_evidence("evidence_0001", "r1")]
+    for cap in (1, 2, 4, 5, 50, 800):
+        out = evidence_summaries(evs, lambda _ref: "z" * 5000, per_cap=cap, total_cap=10_000)
+        body = out["evidence_0001"]["body"]
+        assert len(body) <= cap, (cap, len(body))
+        assert out["evidence_0001"]["truncated"] is True
+
+
 def test_build_facts_evidence_body_is_opt_in() -> None:
     ev = _evidence("evidence_0001", "r1")
     plain = build_facts(run_id=RUN_ID, ids={}, evidences=[ev])
@@ -438,6 +449,14 @@ def test_critic_includes_evidence_body_when_version_is_content_aware(
 
     prompt = ctx.models.last_for(Role.CRITIC)
     assert "heap-buffer-overflow" in prompt.body  # 본문이 EVIDENCE·FACTS에 닿는다
+
+
+def test_critic_content_aware_versions_pins_v3() -> None:
+    """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
+    `_CONTENT_AWARE_VERSIONS`를 `frozenset()`으로 되돌리면 v3가 조용히 metadata만 받는데
+    (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
+    """
+    assert "v3" in critic._CONTENT_AWARE_VERSIONS
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
