@@ -47,8 +47,9 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 재려는 주장("LLM 여럿이 정적분석기가 놓친 것을 찾는다")의 측정 경로가 막힌다. 게다가
 만들지 않은 후보는 `queued`도 `skipped`도 아니라 **기록에 아예 안 남는다.**
 
-그래서 신호는 **순서**로 쓴다: 신호가 붙은 artifact의 심볼이 큐 상위, 나머지는 뒤,
-`candidate_max`를 넘긴 나머지는 `target_skipped`로 **기록에 남긴다.**
+그래서 신호는 **순서**로 쓴다: 신호가 붙은 심볼이 큐 상위(히트가 든 심볼 > 신호 artifact의
+다른 심볼 > 무신호), 나머지는 뒤, `candidate_max`를 넘긴 나머지는 `target_skipped`로
+**기록에 남긴다.**
 
 **신호 판정은 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만
 신호가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로 간다. 단
@@ -249,7 +250,7 @@ _DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 #
 # **크기 거절(`_SIZE_STATUS`)은 여기에 세지 않는다.** 세면 큰 심볼 셋이 연달아 오는
 # 것만으로 run이 멈추는데, 그것은 W2가 정확히 견디겠다고 한 경우다("후보 하나가
-# 컨텍스트를 넘겼다 → 그 후보만 버린다"). 정렬이 신호 붙은 artifact를 앞으로 모으므로
+# 컨텍스트를 넘겼다 → 그 후보만 버린다"). 정렬이 신호 붙은 심볼을 앞으로 모으므로
 # 큰 함수가 뭉쳐 오는 것은 드문 일도 아니다.
 #
 # **번갈아 실패하는 경우는 여전히 걸린다.** 크기 거절은 카운터를 올리지도 않지만
@@ -488,9 +489,10 @@ class _Target:
     artifact: Artifact
     location: Location
     evidences: tuple[Evidence, ...]
-    # 이 심볼에 정적 신호가 붙었는가. STATIC `Evidence.location`의 줄이 이 심볼 범위에
-    # 들면 True다(#70). 위치 없는 신호·폴백은 artifact 단위로 되돌아간다(`_plan_targets`).
-    signal: bool
+    # 이 심볼의 정적 신호 순위: 2=이 심볼에 히트 위치, 1=artifact에 신호는 있으나 이 심볼
+    # 미확정(results[0] 한 줄·위치 없는 신호·폴백), 0=신호 없음(#70). 큐 순서에만 쓴다
+    # (등급 아님). `_symbol_signal_rank`가 매긴다.
+    signal_rank: int
 
 
 @dataclass
@@ -864,22 +866,25 @@ def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, la
         state.update(after)
 
 
-def _symbol_has_signal(
-    location: Location, signal_lines: list[int], unlocated_signal: bool
-) -> bool:
-    """이 심볼에 정적 신호가 붙었는가 — 신호 줄이 심볼 줄 범위에 드는지로 본다 (#70).
+def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static: bool) -> int:
+    """이 심볼의 정적 신호 순위 — 클수록 큐 상위 (#70). 순서에만 쓴다(등급 아님).
 
-    위치를 못 뽑은 STATIC 신호가 하나라도 있으면(실 clang-tidy 등) 심볼 귀속이
-    불가능하므로 artifact 전체에 붙던 옛 동작으로 되돌린다 — 회귀를 만들지 않는다.
-    심볼에 줄 정보가 없으면(폴백 전에 걸러지지만 방어적으로) 붙이지 않는다.
+    - **2** = 신호 줄이 이 심볼 범위에 든다(정확히 여기에 붙은 히트).
+    - **1** = artifact에 정적 신호는 있으나 이 심볼에 든 줄을 확인 못 했다. `Evidence.location`이
+      `results[0]` 한 줄만 싣거나(#70 초석) 위치를 못 뽑은 신호(실 clang-tidy)라 같은 파일의
+      다른 히트를 못 본 경우다. **1로 두는 것이 핵심이다** — artifact에 신호가 있는데 이
+      심볼만 0으로 내리면 같은 파일의 두 번째 실히트가 신호 없는 심볼(0) 아래로 밀린다
+      (#249 리뷰 HIGH-1). 신호 1건당 Evidence(#70 (a))가 오면 이 1이 2/0으로 갈린다.
+    - **0** = 이 artifact에 정적 신호가 없다.
     """
-    if unlocated_signal:
-        return True
+    if not has_static:
+        return 0
     start = location.line_start
-    if start is None:
-        return False
-    end = location.line_end or start
-    return any(start <= line <= end for line in signal_lines)
+    if start is not None:
+        end = location.line_end or start
+        if any(start <= line <= end for line in signal_lines):
+            return 2
+    return 1
 
 
 def _plan_targets(
@@ -918,20 +923,14 @@ def _plan_targets(
             for ev in static
             if ev.location is not None and ev.location.line_start is not None
         ]
-        # 위치를 못 뽑은 STATIC 신호가 있으면(실 clang-tidy 등) 어느 심볼인지 알 수 없다 —
-        # 그 신호는 artifact 전체에 붙던 옛 동작으로 되돌린다(회귀를 만들지 않는다).
-        unlocated_signal = any(
-            ev.location is None or ev.location.line_start is None for ev in static
-        )
         locations = ctx.symbols_for(artifact.path)
-        symbol_level = True
         if locations is None:
             # 인덱스가 없다(`dev_fake`·버전 모름·깨짐). 파일 단위로 되돌아간다 — 후보를
             # 안 만들면 그 프로필의 run이 통째로 비고, 폴백은 W2 이전 동작이라 회귀가
-            # 아니다. **되돌아갔다는 사실이 기록에 남는 것**이 새로 얻는 것이다.
+            # 아니다. **되돌아갔다는 사실이 기록에 남는 것**이 새로 얻는 것이다. 심볼 줄이
+            # 없으므로 `_symbol_signal_rank`가 rank 1(신호 있음)/0(없음)으로 떨어진다.
             plan.fallback_artifacts += 1
             locations = [Location(file=artifact.path)]
-            symbol_level = False
         elif not locations:
             # 인덱스는 있는데 이 파일에 심볼이 없다(`.h`·`.py`·바이너리는 인덱서에
             # 넘어가지 않는다). 후보를 만들지 않는다 — 대상 선정이 새던 자리가 여기서
@@ -945,11 +944,7 @@ def _plan_targets(
                 artifact=artifact,
                 location=location,
                 evidences=evidences,
-                # 파일 단위 폴백은 심볼 줄이 없어 라인 대조가 불가능하다 — artifact 신호를
-                # 그대로 쓴다(옛 동작). 심볼이 있으면 그 심볼에 걸린 신호만 True다.
-                signal=bool(static)
-                if not symbol_level
-                else _symbol_has_signal(location, signal_lines, unlocated_signal),
+                signal_rank=_symbol_signal_rank(location, signal_lines, bool(static)),
             )
             for location in locations
         ]
@@ -960,17 +955,18 @@ def _plan_targets(
 def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> None:
     """(a′) — 정적 신호를 게이트가 아니라 순서로 쓰고, 상한 초과분을 기록에 남긴다.
 
-    정렬 키의 첫 항이 `not signal`이라 `False < True`로 신호 붙은 쪽이 앞에 온다.
+    정렬 키의 첫 항이 `-signal_rank`라 순위가 높은(히트 위치가 든) 심볼이 앞에 온다.
     나머지 세 항은 index.json의 순서와 같다 — 후보 순서가 곧 ID 발급 순서라 흔들리면
     두 run의 trace를 대조할 수 없다(engineering-guide.md §5).
 
-    **신호는 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만 신호가
-    붙는다. 위치를 못 뽑은 신호(실 clang-tidy 등)나 인덱스 없는 폴백은 artifact 단위로
-    되돌아간다(`_plan_targets`).
+    **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
+    나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
+    rank 1을 두는 이유는 같은 파일의 두 번째 히트를 신호 없는 심볼 아래로 안 내리기
+    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다.
     """
     plan.collected.sort(
         key=lambda item: (
-            not item.signal,
+            -item.signal_rank,
             item.location.file,
             item.location.line_start or 0,
             item.location.symbol or "",
