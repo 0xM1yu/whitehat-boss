@@ -6,6 +6,7 @@
 """
 
 from datetime import UTC, datetime
+from itertools import product
 
 from src.orchestrator import gate
 from src.schemas import (
@@ -36,6 +37,15 @@ FULL_PATH = [
     PathStep(step=PathStepKind.PROPAGATE, symbol="parse_header"),
     PathStep(step=PathStepKind.SINK, symbol="memcpy"),
 ]
+
+BLOCKING = MissingEvidence(
+    missing_id="mev_0001",
+    run_id=RUN_ID,
+    finding_id="find_0001",
+    need="빌드 플래그",
+    how_to_obtain="빌드 로그 첨부",
+    blocking=True,
+)
 
 
 def _evidence(
@@ -155,18 +165,7 @@ def test_blocking_missing_evidence_holds_at_e1_and_flags_ambiguous() -> None:
         _evidence("ev_static", EvidenceKind.STATIC),
         _evidence("ev_graph", EvidenceKind.GRAPH),
     ]
-    missings = [
-        MissingEvidence(
-            missing_id="mev_0001",
-            run_id=RUN_ID,
-            finding_id="find_0001",
-            need="빌드 플래그",
-            how_to_obtain="빌드 로그 첨부",
-            blocking=True,
-        )
-    ]
-
-    result = gate.evaluate(finding, evidences, missings=missings)
+    result = gate.evaluate(finding, evidences, missings=[BLOCKING])
 
     assert result.grade is EvidenceGrade.E1
     assert result.ambiguous
@@ -215,6 +214,77 @@ def test_upheld_with_repro_but_no_path_is_not_e3() -> None:
     assert not result.predicates["p3"]
     assert not result.predicates["path_ok"]
     assert result.predicates["upheld"] and result.predicates["has_repro_spec"]
+
+
+def test_upheld_with_repro_and_path_but_no_graph_is_not_e3() -> None:
+    """경로가 있어도 그래프 근거가 없으면 E3가 아니다 — E1에서 E3로 건너뛰지 못한다 (#154).
+
+    6단계에서 E1으로 보류된 Finding도 상태가 `hypothesized`라 7단계에 올라온다(러너는 등급이
+    아니라 상태로 고른다). `p3`가 E2의 조건을 안 보면 거기서 반박 실패 하나로 E3가 돼
+    `validated`로 간다. 경로는 이어졌으므로 E1↔E2 경계(`ambiguous`)이고 E1으로 남는다.
+    """
+    finding = _finding(refs=["ev_static"], path=FULL_PATH, repro=True)
+    evidences = [_evidence("ev_static", EvidenceKind.STATIC)]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
+
+    assert result.grade is EvidenceGrade.E1
+    assert not result.predicates["p3"]
+    assert result.predicates["path_ok"] and not result.predicates["graph_ok"]
+    assert result.predicates["upheld"] and result.predicates["has_repro_spec"]
+    assert result.ambiguous
+
+
+def test_upheld_with_repro_but_blocking_missing_is_not_e3() -> None:
+    """blocking 근거 요청이 남아 있으면 반박 실패·재현 명세가 있어도 E3가 아니다 (#154).
+
+    `blocking=True`는 "이 근거 없이는 Evidence Gate를 통과시키지 않는다"다(`MissingEvidence`).
+    6단계에서 그것이 E2를 막는데 7단계에서 E3를 열어 주면 그 약속이 한 단계 만에 풀린다.
+    """
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH, repro=True)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(
+        finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)], [BLOCKING]
+    )
+
+    assert result.grade is EvidenceGrade.E1
+    assert not result.predicates["p3"]
+    assert not result.predicates["unblocked"]
+    assert result.predicates["upheld"] and result.predicates["has_repro_spec"]
+    assert result.ambiguous
+
+
+def test_e3_requires_every_e2_condition_over_all_combinations() -> None:
+    """E3 ⇔ E2의 세 조건 + 반박 실패 + 재현 명세 — 다섯 축의 32개 조합 전부 (#154).
+
+    위 두 테스트는 축을 하나씩 핀으로 박는다. 이것은 성질 자체를 단언한다 — 어느 조합에서도
+    E2의 조건 하나라도 빠진 채 E3가 나오지 않고, 다섯이 다 서면 E3다(좁히기만 한 것도 아니다).
+    정적 근거는 늘 둬서 `p1`이 서고 런타임 근거는 안 둬서 `p4`는 안 선다 — E4는 이 성질 밖이다.
+    """
+    static = _evidence("ev_static", EvidenceKind.STATIC)
+    graph = _evidence("ev_graph", EvidenceKind.GRAPH)
+    for has_path, has_graph, unblocked, upheld, repro in product((False, True), repeat=5):
+        evidences = [static, graph] if has_graph else [static]
+        finding = _finding(
+            refs=[ev.evidence_id for ev in evidences],
+            path=FULL_PATH if has_path else None,
+            repro=repro,
+        )
+        verdict = Verdict.UPHOLD if upheld else Verdict.NEED_EVIDENCE
+
+        result = gate.evaluate(
+            finding,
+            evidences,
+            [_decision(verdict, grounded=True)],
+            [] if unblocked else [BLOCKING],
+        )
+
+        axes = (has_path, has_graph, unblocked, upheld, repro)
+        assert (result.grade is EvidenceGrade.E3) == all(axes), axes
 
 
 def test_ungrounded_rebut_normalizes_to_uphold() -> None:

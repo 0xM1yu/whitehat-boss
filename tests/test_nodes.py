@@ -346,6 +346,33 @@ def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
     assert after.state is not FindingState.QUEUED  # 반박으로 탈락하지 않았다
 
 
+def test_critic_uphold_does_not_lift_a_finding_held_at_e1(ctx: RunContext) -> None:
+    """6단계에서 E1으로 보류된 Finding은 7단계에서 반박 실패가 와도 `validated`가 안 된다 (#154).
+
+    러너는 등급이 아니라 상태(`hypothesized`)로 7단계에 올리므로 E1 보류분도 Critic에 간다 —
+    그것은 이 테스트가 안 바꾼다. 막는 것은 거기서 E3로 건너뛰는 것이다. 그래프 근거를 빼서
+    E2 조건 하나만 깬다 — 경로·재현 명세·정적 근거는 그대로다.
+    """
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    no_graph = tuple(ev for ev in evidences if ev.kind is not EvidenceKind.GRAPH)
+    held, gated = gate_node.run(
+        ctx,
+        finding=finding,
+        evidences=no_graph,
+        missings=tuple(missings),
+        candidate_location=candidate.location,
+    )
+    assert gated.grade.value == "E1" and held.state is FindingState.HYPOTHESIZED
+    assert held.path and held.repro_spec is not None
+
+    after, _ = critic.run(ctx, finding=held, evidences=no_graph, missings=tuple(missings))
+
+    assert after.state is FindingState.HYPOTHESIZED
+    last = [e for e in ctx.trace.events if e.kind is EventKind.GATE_EVAL][-1]
+    assert last.stage == Stage.CRITIC and last.data["grade"] == "E1"
+
+
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:
     """못 읽은 verdict는 `need_evidence`(보류)로 가고 **원문이 trace에 남는다**.
 
