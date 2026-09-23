@@ -513,10 +513,10 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
-    # v1로 둔다. 이 PR은 critic/v3를 신설하지만 **켜지 않는다** — critic/v3 prefix가
-    # metadata-only 런타임에서 항상 need_evidence를 내므로, 켜면 validated·proven이 구조적으로
-    # 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). auditor/v3와 같이 디스크에만 두고,
-    # evidence 본문이 Critic에 닿는 변경이 먼저 들어온 뒤 올린다. 미참조 버전은 정상이다(v2도 그렇다).
+    # v1로 둔다. critic/v3 prefix는 metadata-only 런타임에서 항상 need_evidence를 내므로,
+    # 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). **그
+    # 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — v3로 flip하는 것은
+    # validated·proven이 실제로 나오는지 확인하는 후속의 몫이다. 미참조 버전은 정상이다(v2도).
     prompt_template_version: "v1"
     fallback: null
     benchmark:
