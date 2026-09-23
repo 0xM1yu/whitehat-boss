@@ -724,3 +724,35 @@ models:
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
+
+  qwen3-14b:
+    # 스모크 전용(2026-09-24) — ADR 0012(제안) 결정 4의 injection 잠정 후보. 머지하지 않는 브랜치.
+    # ADR 0012는 PR #260(열림)에만 있고, 그 결정 4 표가 `scout_injection`을 「Qwen3-14B 잠정」·
+    # 「registry에 `qwen3-14b` 키가 아직 없어 새로 연다」로 적는다. 로스터(PROJECT-CONTEXT.md §1)가
+    # 아니고 `atom_smoke_scout_pool` 하나만 쓴다 — §1의 injection은 그대로 `deepseek-r1-distill-qwen-32b`다.
+    # 값은 2026-09-24 Hugging Face에서 직접 읽었다:
+    #   rev·license — `GET https://huggingface.co/api/models/Qwen/Qwen3-14B`의 `sha`·태그 `license:apache-2.0`
+    #   `config.json@<rev>` — architectures `['Qwen3ForCausalLM']` · max_position_embeddings 40960 ·
+    #     torch_dtype bfloat16 · `quantization_config` 없음 → `bf16`은 native dtype(`qwen3-reranker-4b`와 같은 관행)
+    #   safetensors 8개 29,536,665,640 B(`?blobs=true`의 파일 크기를 더한 계산값 · 27.51 GiB) · index
+    #     `total_size` 29,536,614,400 B · 파라미터 BF16 14,768,307,200(같은 API의 `safetensors`)
+    # `context_limit`은 모델 상한이지 그날 띄운 값이 아니다(`gpt-oss-20b` 항목과 같은 관례).
+    # 포트 8010은 이 registry에서 비어 있던 자리다(8001~8009 사용 중).
+    # ⚠ `checksum`은 자리표시자 0이다 — ATOM에서 받은 뒤 `tools/model_checksum.py`로 채운다(이 브랜치의
+    #   나중 커밋). 그전에 돈 run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
+    endpoint: "http://127.0.0.1:8010/v1"
+    context_limit: 40960
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
+    family: "qwen"
+    prompt_template_version: "v3"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null

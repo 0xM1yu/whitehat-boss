@@ -414,3 +414,48 @@ profiles:
       tool_runner: docker
       state_store: sqlite
     budget: default
+
+  # --- ATOM 역할별 실서빙 스모크(2026-09-24) — 머지하지 않는 브랜치 `exp/atom-roster-smoke` -------
+  # ADR 0012(제안, PR #260) 결정 4의 로스터를 **역할별로** 잰다. ATOM 할당은 80 GiB(≈85.9 GB,
+  # docs/portability.md §6 `atom` 행)인데 가중치만 `qwen3.6-35b-a3b` 71.9 GB(그 registry 항목 주석의
+  # 카드 값)와 `qwen3-14b` 29,536,665,640 B(그 항목 주석)를 더해도 넘는다(계산값) — 그래서 run을 둘로 가른다.
+  # 둘 다 `local_balanced_pool`의 변형이고, 실서빙 키의 checksum이 0이라 비교표에서 제외된다(CLAUDE.md §0).
+  # - embedding·reranker는 적지 않는다 — `retriever: fake`라 안 뜨고(`served_models()`), hybrid가
+  #   아니면 로드도 요구하지 않는다(`_hybrid_needs_retrieval_roles`).
+  # - `tool_runner`는 `docker`다 — ATOM은 docker·podman이 공존하고 `local_balanced_pool`을 포함한 ATOM
+  #   실서빙 프로필이 docker를 선언한다(docs/portability.md §3 표·§6 `atom` 행). podman은 `--tool-runner podman`.
+  # - 후보·Critic 상한은 이 브랜치의 `config/budgets.yaml` 전역 `thresholds`가 묶는다(12·4) —
+  #   예산(`budget`)은 그 두 값을 못 담는다(그 파일의 `candidate_max` 주석).
+  atom_smoke_scout_pool:
+    description: "ATOM 스모크 전용 — checksum 0이라 비교표 제외, 머지 안 하는 브랜치. Scout 풀만 실서빙(memory·boundary seccoderx-8b · injection qwen3-14b), auditor·critic fake"
+    production: false
+    roles:
+      scout_memory: seccoderx-8b
+      scout_boundary: seccoderx-8b
+      scout_injection: qwen3-14b
+      # 같은 키라 `_check_family_split`이 건너뛴다(같은 키는 정의상 허용).
+      auditor: fake
+      critic: fake
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: default
+
+  atom_smoke_auditor:
+    description: "ATOM 스모크 전용 — checksum 0이라 비교표 제외, 머지 안 하는 브랜치. Auditor만 실서빙(qwen3.6-35b-a3b, critic도 같은 키), Scout 풀 fake"
+    production: false
+    roles:
+      # 풀 프롬프트는 v2·v3뿐이라 v1 `fake`로는 못 부른다 — `fake_v2`(tests/test_pipeline_e2e.py `_poolify`와 같은 조립).
+      scout_memory: fake_v2
+      scout_boundary: fake_v2
+      scout_injection: fake_v2
+      # Auditor 가중치만 71.9 GB로 80 GiB의 대부분이라 Critic 실모델을 따로 안 띄운다(위 계산) — 같은 키라
+      # 계열 검사를 건너뛴다.
+      auditor: qwen3.6-35b-a3b
+      critic: qwen3.6-35b-a3b
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: default

@@ -51,7 +51,9 @@ thresholds:
 
   # 7단계 Critic에 올릴 상위 Finding 수. Critic은 가장 비싼 단계이므로 상한이 있어야 한다
   # (architecture.md §3 "상위 Finding만").
-  critic_top_n: 8
+  # ⚠ **이 브랜치(`exp/atom-roster-smoke`, 머지 안 함)에서만 4다 — main은 8.** 스모크 — run
+  # 시간을 묶는다. 전역값으로 둔 사유는 아래 `candidate_max`의 같은 표지 문단.
+  critic_top_n: 4
 
   # 한 run이 4단계(Scout)에 올릴 target 수 상한 (W2).
   #
@@ -69,7 +71,15 @@ thresholds:
   # 256을 고른 유일한 이유는 **(이슈 #71로 제거된) `queue_maxsize`가 쓰던 값**을 재사용해 새
   # 숫자를 지어내지 않기 위해서였다 — **근거가 아니라 관례다.** 그전까지 이 값의 목적은
   # 폭주 차단 하나다.
-  candidate_max: 256
+  #
+  # ⚠ **이 브랜치(`exp/atom-roster-smoke`, 머지 안 함)에서만 12다 — main은 256.** 스모크 — run
+  # 시간을 묶는다. 스모크 전용 예산(`budgets.smoke`)으로 가르려 했으나 이 값과 `critic_top_n`은
+  # `Thresholds`(전역)의 필드이고 `Budget`(`src/schemas/run.py`)은 `input_tokens`·`output_tokens`·
+  # `gpu_seconds`·`tool_seconds`만 받는 `extra="forbid"` 모델이라 프로필별로 못 가른다 — 그래서
+  # 이 브랜치의 **전 프로필**에 걸린다. 실제로 쓰인 값은 `RunRecord.thresholds`에 남는다.
+  # 위 「256을 고른 이유」와 `src/config.py`(`ExecutionPolicy`)·`docs/build-plan.md`(2.3 행)의
+  # 256·8 서술은 main 기준이다.
+  candidate_max: 12
 
   # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
   # 한도를 넘기면 후보를 queued로 두고 schema_parse_failed로 기록한다. 이 값을 올리면

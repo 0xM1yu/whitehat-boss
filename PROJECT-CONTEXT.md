@@ -61,6 +61,7 @@ memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 �
 | `qwen3-reranker-0.6b` | **지우지 않는다** — 4B와의 대조 기준. 서빙 역할에서만 내린다 |
 | `devstral-small-2-24b` | 2026-09-09 로스터의 Scout boundary였고 2026-09-21 교체로 §1에서 내려왔다. **살아 있는 배선이 있다** — `local_balanced`·`local_balanced_hybrid`의 `critic`이 이 키다. `-v2` 별칭도 같은 weights·서버·checksum이다 |
 | `qwen3-8b` | 2026-09-09 로스터의 Scout injection이었고 2026-09-21 교체로 §1에서 내려왔다. **살아 있는 배선이 있다** — `local_balanced`·`local_balanced_hybrid`의 단일 `scout`이 이 키다. `-v2` 별칭도 같은 weights·서버·checksum이다 |
+| `qwen3-14b` | **스모크 전용** — ATOM 역할별 실측(2026-09-24)용이고 `atom_smoke_scout_pool` 하나만 쓴다(머지하지 않는 브랜치 `exp/atom-roster-smoke`). ADR 0012(제안, PR #260) 결정 4의 injection 잠정 후보다. §1의 injection은 그대로 `deepseek-r1-distill-qwen-32b`다 |
 
 > **registry 키는 지우지 않는다.** ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
 > 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유이고, 그래서 되돌리기가 싸다.
