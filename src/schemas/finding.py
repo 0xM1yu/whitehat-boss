@@ -54,8 +54,8 @@ class MissingEvidence(HarnessModel):
 class ReproSpec(HarnessModel):
     """재현 명세.
 
-    제안: architecture.md §4의 E3 조건이 "Critic이 반박 실패 + **재현 명세 존재**"이고
-    §3의 8단계 입력이 "`Finding` + 재현 명세"인데, 문서에 이 구조체가 없다.
+    제안: architecture.md §4의 E3 조건이 "E2의 조건 전부 + Critic이 반박 실패 +
+    **재현 명세 존재**"이고 §3의 8단계 입력이 "`Finding` + 재현 명세"인데, 문서에 이 구조체가 없다.
     8단계 Tool Validation이 무엇을 실행하고 무엇을 성공으로 볼지가 없으면 E3→E4 판정이
     사람 판단이 되므로 신설했다.
     """
@@ -150,19 +150,19 @@ class Finding(HarnessModel):
     def _promoted_states_need_backing(self) -> "Finding":
         """validated 이상은 재현 명세·근거·경로를 동반해야 한다.
 
-        architecture.md §4: E3(`validated`)의 조건은 "Critic 반박 실패 + 재현 명세 존재"이고,
-        **경로(source→sink)는 그 앞 E2의 조건**이다 — §4 상태 흐름이 E2를 지난 뒤에야 E3로
-        오므로 `validated`에 이른 Finding은 그 경로를 들고 있어야 한다(그래서 아래가 `path`도
-        요구한다). E4(`proven`)는 재현 로그를 요구한다. 근거 0건짜리 `validated`는 이 시스템의
-        전제(Evidence 중심 판정)를 정면으로 뒤집으므로 만들어질 수 없어야 한다.
+        architecture.md §4: E3(`validated`)의 조건은 "E2의 조건 전부 + Critic 반박 실패 + 재현
+        명세 존재"이고, **경로(source→sink)는 그 E2의 조건**이다 — §4 상태 흐름이 E2를 지난
+        뒤에야 E3로 오므로 `validated`에 이른 Finding은 그 경로를 들고 있어야 한다(그래서 아래가
+        `path`도 요구한다). E4(`proven`)는 재현 로그를 요구한다. 근거 0건짜리 `validated`는 이
+        시스템의 전제(Evidence 중심 판정)를 정면으로 뒤집으므로 만들어질 수 없어야 한다.
         `hypothesized`/`queued` 초안 단계에는 요구하지 않는다.
 
-        **게이트는 이 전제 중 경로 조건만 강제한다** — `gate.py`의 `p3`가 `path_ok`를 포함해
-        경로 없는 Finding은 E3를 못 받는다(이슈 #154). 그 조건이 없던 때, 경로 없이 E3를 받은
-        Finding이 `validated`로 전이하려다 아래 `path` 검사에서 `ValidationError`로 run을 죽였다.
-        전제 전체(E3가 E2를 함의한다)는 아직 안 선다 — `p3`에 `graph_ok`·`unblocked`가 없어
-        E3는 E2를 함의하지 않고, 7단계 진입이 등급이 아니라 상태라 경로 없는 E1도 올라온다
-        (이슈 #154의 남은 항목).
+        **게이트가 이 전제를 강제한다** — `gate.py`의 `p3`가 `p2`(경로 양 끝·그래프 근거·
+        blocking 없음)를 통째로 요구해 E3가 E2를 함의한다(이슈 #154 — 2026-09-09에 경로,
+        2026-09-23에 나머지 둘). 경로 조건이 없던 때, 경로 없이 E3를 받은 Finding이 `validated`로
+        전이하려다 아래 `path` 검사에서 `ValidationError`로 run을 죽였다. 남은 것 둘(이슈 #154의
+        남은 항목): E4는 이 포함 밖이고(`p4`가 경로를 안 본다), 7단계 진입이 등급이 아니라
+        상태라 E1도 Critic까지 올라온다 — 다만 거기서 E3는 못 된다.
         """
         if self.state not in _EVIDENCE_BACKED_STATES:
             return self
