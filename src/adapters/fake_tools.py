@@ -15,6 +15,7 @@ from pathlib import Path
 from src.ids import IdFactory, sha256_text
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape, safe_join
+from src.schemas.common import Location
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 from src.schemas.run import CompileFlags
@@ -124,7 +125,42 @@ class FakeToolRunner:
             if _matches_any(path.read_text("utf-8", errors="replace"))
         )
         # 신호 없음은 실패가 아니다(architecture.md §3: "신호 부재로 기록").
-        return self.make_evidence(tool, kind, args, ok=True, exit_code=1 if hits else 0, hits=hits)
+        # **semgrep만** location을 싣는다 — 컨테이너의 `first_hit_location`이 semgrep 한정이라
+        # 그쪽과 맞춘다(clang-tidy는 #70 후속). 그러지 않으면 Fake가 clang-tidy에도 값을 실어
+        # 두 어댑터의 location 계약이 갈린다.
+        return self.make_evidence(
+            tool,
+            kind,
+            args,
+            ok=True,
+            exit_code=1 if hits else 0,
+            hits=hits,
+            location=self._first_static_location(workdir) if tool == "semgrep" else None,
+        )
+
+    def _first_static_location(self, workdir: Path) -> Location | None:
+        """첫 정적 매치의 위치 (#70 초석 — 컨테이너 `first_hit_location`의 Fake 짝).
+
+        실제 도구가 없으므로 `_STATIC_PATTERNS`가 처음 걸린 **줄 번호**를 위치로 삼는다.
+        파일은 `self.root` 기준 상대 POSIX 경로라 `Candidate.location.file`(artifact 경로)과
+        같은 좌표계다. `hits`가 0이면 매치가 없어 자연히 `None`이다 — 게이트 등급은 이 값과
+        무관하다(`p1 = static_ok or location_ok`, STATIC이 이미 `static_ok`).
+
+        ⚠ **`workdir`은 `safe_join`이 resolve한 절대경로**인데 `self.root`는 resolve 전이라,
+        `relative_to`가 그대로면 두 경로 형태가 어긋나 `ValueError`가 난다(상대 `--target`에서
+        실측). 도구는 예외를 던지지 않는 계약이므로 root를 resolve하고, 그래도 밖이면 `None`.
+        """
+        root = self.root.resolve()
+        for path in sources(workdir):
+            text = path.read_text("utf-8", errors="replace")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if _matches_any(line):
+                    try:
+                        rel = path.resolve().relative_to(root).as_posix()
+                    except ValueError:
+                        return None
+                    return Location(file=rel, line_start=lineno)
+        return None
 
     def _run_repro(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:
         """재현 실행. Fake에는 실행할 바이너리가 없으므로 대상 존재로 대체한다.
@@ -159,6 +195,7 @@ class FakeToolRunner:
         exit_code: int,
         error: str | None = None,
         hits: int | None = None,
+        location: Location | None = None,
     ) -> Evidence:
         evidence_id = self.ids.next("evidence")
         body = f"{tool} {' '.join(args.argv)} exit={exit_code} hits={hits}"
@@ -168,6 +205,7 @@ class FakeToolRunner:
             kind=kind,
             source=tool,
             artifact_id=args.workdir,
+            location=location,
             payload_ref=f"artifacts/{self.run_id}/{tool}/{evidence_id}.log",
             digest=sha256_text(body),
             observed_at=self.observed_at,
