@@ -37,7 +37,7 @@
 | F-5 | 정규화 포함 `uphold` 기록 | 7 | `hypothesized` | `hypothesized` | `critic_upheld` |
 | F-6 | `rebut` **이면서** `is_grounded` | 7 | `hypothesized` | `queued` | `critic_rebutted` |
 | F-7 | Critic `need_evidence` | 7 | `hypothesized` | `queued` | `critic_need_evidence` |
-| F-8 | Gate E3 (반박 실패 + 명세) | 7 | `hypothesized` | `validated` | `critic_upheld` |
+| F-8 | Gate E3 (E2 + 반박 실패 + 명세) | 7 | `hypothesized` | `validated` | `critic_upheld` |
 | F-9 | 반박 실패, `repro_spec` 부재 | 7 | `hypothesized` | `hypothesized` | `repro_spec_missing` |
 | F-10 | Gate E4 (재현 로그 `ok=True`) | 8 | `validated` | `proven` | `repro_confirmed` |
 | F-10b | 재현 성공, E4 미만 (무전이) | 8 | `validated` | `validated` | `evidence_below_proven` |
