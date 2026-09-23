@@ -96,6 +96,12 @@ class RunContext:
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     read_source: Callable[[Location], str] = field(default=_unwired_read_source)
+    # evidence payload(`Evidence.payload_ref`)의 원문 로그를 읽는다. Critic이 근거 본문을
+    # 받으려면 이 리더가 필요하다(#237 HIGH-1). **미배선 기본값이 예외가 아니라 `None`**인
+    # 것은 의도다 — `symbols_for`와 같은 성격으로, payload 파일이 없는 정상 상태(`dev_fake`는
+    # 로그 파일을 안 쓴다)가 실제로 있고, 그때는 근거 본문 없이 metadata만으로 진행한다.
+    # 배선은 factory/cli가 artifacts_root로 만든 리더를 넣는다.
+    read_payload: Callable[[str], str | None] = field(default=lambda _ref: None)
     # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만든다(W2).
     #
     # `read_source`와 달리 **미배선 기본값이 예외가 아니라 `None`("인덱스 없음")이다.**
