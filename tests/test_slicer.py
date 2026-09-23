@@ -580,6 +580,17 @@ def test_context_query_stops_before_leaving_a_method():
     assert "case n if" not in query
 
 
+def test_context_query_guards_target_against_argumentless_assignments():
+    """#219 후속: `cpg.assignment.filter(a => a.target …)`에서 인자 없는 assignment 노드가
+    오면 `a.target`(= argument(1))이 빈 iterator next로 죽는다(sample_40 context 단계 실측).
+    `.target` 앞에 argumentIndex(1)이 실재하는지 가드가 있어야 한다.
+    """
+    query = queries.context_query([("main.c", 1)], "/work/repo")
+
+    guard = query.index("a.argument.argumentIndex(1).nonEmpty")
+    assert guard < query.index("a.target.ast.isIdentifier.refsTo")
+
+
 def test_case_b_query_adds_the_writer_sink_set_bounded():
     # Query-contract check (not a claim that mock tests execute Scala): the case_b query
     # gains a bounded WRITERS sink set that tags dangerous_write, on top of the existing
