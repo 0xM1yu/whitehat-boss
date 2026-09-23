@@ -271,6 +271,35 @@ def index_output_path(artifacts_root: Path, run_id: str) -> Path:
     return scratch_dir(artifacts_root, run_id, INDEX_TOOL) / INDEX_FILE
 
 
+# `Evidence.payload_ref`는 `artifacts/{run_id}/{slot}/{id}.log` 꼴이고, 실제 파일은
+# `{artifacts_root}/{run_id}/{slot}/{id}.log`다(위 `_write`가 쓰는 자리와 같은 규약).
+# 선두 `artifacts/`를 떼고 artifacts_root에 붙인다. 접두사는 리터럴이라 root 이름과 무관하다.
+PAYLOAD_READ_CAP = 200_000  # 글자(텍스트 모드 read). 폭주 로그를 통째로 메모리에 올리지 않는 가드
+
+
+def make_payload_reader(artifacts_root: Path) -> Callable[[str], str | None]:
+    """`RunContext.read_payload` 배선용. payload_ref → 로그 원문(상한 내), 없으면 None.
+
+    최종 토큰 예산 절단은 `prompt_loader.evidence_summaries`가 한다. 여기서는 파일이
+    폭주해도 프로세스가 죽지 않게 바이트 상한까지만 읽는다.
+    """
+    root = Path(artifacts_root)
+
+    def read_payload(payload_ref: str) -> str | None:
+        rel = payload_ref.removeprefix("artifacts/")
+        try:
+            path = safe_join(root, rel)
+        except PathEscape:
+            return None
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                return handle.read(PAYLOAD_READ_CAP)
+        except OSError:
+            return None
+
+    return read_payload
+
+
 def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> list[Command]:
     """도구 이름 → 컨테이너 안에서 실제로 돌 명령들.
 
