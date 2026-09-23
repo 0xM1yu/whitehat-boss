@@ -1,7 +1,10 @@
 """Joern queries for the offline slicer; no harness imports or generated model queries.
 
 Each request is one Scala block: candidate locals never survive in the REPL.
-JSON travels as base64 in the block's result, since println can go to server logs.
+Most stages return their JSON as base64 in the block's result, since println can go to
+server logs. The candidate-enumeration stages (`FILE_TRANSPORT_STAGES`) instead write the
+payload to a file and return only its byte count -- their payload can outgrow what the REPL
+renders as a single string value (issue #219, see `file_envelope`).
 """
 
 import json
@@ -21,8 +24,10 @@ WRITERS = (
     "memcpy|memmove|memset|strcpy|strncpy|strcat|strncat|stpcpy|bcopy|"
     "sprintf|snprintf|vsprintf|vsnprintf|wmemcpy|wmemmove|wcscpy|wcsncpy|wcscat"
 )
-# The writer set can be large on big repos; cap it so the case_b payload stays bounded
-# (the same failure mode #219 hit in case_a). Repos past the cap get bounded coverage.
+# The writer set can be large on big repos. #250 moved the case_a/case_b payload to a file
+# (`file_envelope`), so it no longer overruns the REPL return -- but the cap stays: it bounds
+# the candidate count, and so the downstream per-candidate work. Repos past it get bounded
+# (not full) coverage.
 CASE_B_WRITER_CAP = 2000
 
 # Operator-anchored sinks (#219 follow-up). Operator/deref sinks are the biggest GT bucket
@@ -78,6 +83,45 @@ def envelope(stage: str, body: str) -> str:
         f"val result = {{ {body} }}; "
         f'"__SLICER_{stage}__" + java.util.Base64.getEncoder.encodeToString('
         "ujson.write(result).getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "
+        '"__END_SLICER__" }'
+    )
+
+
+# Client-substituted placeholder for the out-of-band payload path. The client (JoernClient)
+# replaces this with a JSON string literal of a real, writable path before sending.
+OUT_PATH_TOKEN = "__SLICER_OUT_PATH__"
+
+# Stages whose query is built with `file_envelope` (payload via file, not the REPL return).
+# The client keys file transport on this, not on the token's presence in the query text --
+# a repo file or symbol literally named like the token would otherwise be a false positive.
+# Must list exactly the stages that call `file_envelope`.
+FILE_TRANSPORT_STAGES = frozenset({"case_a", "case_b"})
+
+
+def file_envelope(stage: str, body: str) -> str:
+    """Same as `envelope`, but the payload travels through a FILE, not the REPL return.
+
+    The candidate-enumeration payload (case_a/case_b) can reach several thousand rows on
+    large repos. Returned inline as one base64 string, that value overruns what Joern's
+    REPL renders as a single result, which comes back empty -- the envelope markers are
+    present but the payload between them is gone, so the stage aborts with 0 slices
+    (issue #219; the per-set `.take` cap in #241 only halved it, since api+readers can
+    still sum to ~2x the cap). Here Joern writes `ujson.write(result)` to `OUT_PATH_TOKEN`
+    and the block returns only the byte count, so the REPL return stays tiny regardless of
+    how many candidates there are. The client reads the file and checks the byte count.
+
+    Only the byte count is the block's rendered value; `__payload` lives inside a nested
+    block so the huge array is never echoed.
+    """
+    return (
+        "{ import io.shiftleft.semanticcpg.language._; "
+        "import io.joern.dataflowengineoss.language._; "
+        "import io.shiftleft.codepropertygraph.generated.nodes; "
+        f'"__SLICER_{stage}__" + {{ '
+        f"val __payload = ujson.write({{ {body} }})"
+        ".getBytes(java.nio.charset.StandardCharsets.UTF_8); "
+        f"java.nio.file.Files.write(java.nio.file.Paths.get({OUT_PATH_TOKEN}), __payload); "
+        "__payload.length }.toString + "
         '"__END_SLICER__" }'
     )
 
@@ -197,13 +241,15 @@ CASE_A_CALL_LIMIT = 1
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
 # in CPG traversal order, which is not a documented/stable order, so a capped run's coverage is
 # an *unspecified* first-N subset (see known_limitations / measurement_notes, and D77 §4.5).
+# The stdout-overrun above is the pre-#250 mechanism; #250 moved the payload to a file, so the
+# cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
 #  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
 CASE_A_CANDIDATE_CAP = 2000
 
 
 def candidates_a_query() -> str:
-    return envelope(
+    return file_envelope(
         "case_a",
         LOCATION
         + f"""
@@ -278,7 +324,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .replace("__WCAP__", str(CASE_B_WRITER_CAP))
         .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
     )
-    return envelope("case_b", body)
+    return file_envelope("case_b", body)
 
 
 def method_selector(scopes: list[dict]) -> str:
