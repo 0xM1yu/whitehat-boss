@@ -585,18 +585,31 @@ class Slicer(SlicingStages):
                 # open() are two lookups, and this tool reads repositories written by
                 # whoever we are auditing. O_NOFOLLOW closes that window.
                 raw = _read_no_follow(path)
-                # Decode strictly -- no `errors=`, so invalid bytes raise instead of
-                # turning into replacement characters that silently change evidence.
-                text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
-                # Hash the bytes as they sit on disk, and only once the decode has
-                # succeeded. Folding newlines first would let a CRLF copy and an LF
-                # copy share a signature; hashing first would leave a hash with no
-                # `sources` entry, and `prepare_checkpoint`'s count check -- the one
-                # that refuses an incomplete read -- would balance on a short read.
+                # Decode UTF-8, and on invalid bytes fall back to latin-1 rather than
+                # raising. A single Latin-1 byte (`°`, an accented author name -- routine
+                # in real C/C++ comments and UI strings) used to make one file unreadable
+                # and abort the whole run through `prepare_checkpoint`'s count check (#254).
+                # latin-1 maps every byte to one codepoint, so it never fails and keeps
+                # byte-exact line and column offsets. surrogateescape would be more faithful
+                # but does not re-encode to UTF-8, and this text reaches the JSON output
+                # (`assemble`, `export_sources`) -- that crash would only move downstream.
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = raw.decode("latin-1")
+                    self.result["diagnostics"].append(
+                        {"stage": "load_sources", "file": name,
+                         "note": "decoded as latin-1: not valid UTF-8"}
+                    )
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+                # Hash the bytes as they sit on disk, and only after the read has
+                # succeeded: an OSError below leaves no `sources` entry and no hash, so
+                # `prepare_checkpoint`'s count check still refuses a genuinely short read.
+                # Folding newlines first would let a CRLF and an LF copy share a signature.
                 self.source_hashes[name] = hashlib.sha256(raw).hexdigest()
                 # splitlines also splits form feeds inside C source and shifts lineNumber.
                 self.sources[name] = text.removesuffix("\n").split("\n") if text else []
-            except (OSError, UnicodeError, ValueError) as exc:
+            except (OSError, ValueError) as exc:
                 self.increment("files_read_failed")
                 self.errors.append(f"Source read failed: {name}: {exc}")
 
