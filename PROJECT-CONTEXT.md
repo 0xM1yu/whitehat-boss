@@ -113,8 +113,8 @@ Notion 워크스페이스로 두고 기록을 이 저장소로 들이지 않는�
 그 결정의 인용 규칙으로 바뀐다 — 수치를 인용할 때 출처(Notion 페이지)와 판독 날짜를 같은 문장에 적고(페이지에
 있으면 `run_id`·실제로 서빙한 모델·끝난 시각도) `run_id`가 없으면 「팀 보고, run ID 없음」을 붙이며,
 하네스 결정의 근거로 쓰면 요약과 링크를 ADR·D 본문에 남긴다. [CLAUDE.md](CLAUDE.md) §0은 그대로다.
-보관 배너(`STATUS.md`·`docs/experiments/README.md`·`docs/research/README.md`)는 이 노트와 같은 PR이 달았고, 그
-PR은 ADR 0012 승인 전에 머지하지 않는다 — 배너와 이 줄은 main에 함께 들어간다.
+보관 배너(`STATUS.md`·`docs/experiments/README.md`·`docs/research/README.md`)는 이 노트와 같은 PR이 달았다 —
+배너와 이 줄은 main에 함께 들어간다.
 
 ---
 
