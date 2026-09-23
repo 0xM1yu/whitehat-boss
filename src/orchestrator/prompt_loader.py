@@ -30,7 +30,7 @@ C6의 leakage 스캐너가 `prompts/`도 검사한다.
 
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -134,6 +134,62 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
     )
 
 
+# Critic 근거 본문 절단(#237 HIGH-1). 결정론적 truncation — 모델 개입 없음, 재현 가능.
+EVIDENCE_BODY_CHAR_CAP = 800  # evidence 1건당 상한
+EVIDENCE_BODY_TOTAL_CAP = 4000  # 전 evidence 합 상한(프롬프트 토큰 예산)
+
+
+_TRUNCATION_MARKER = "\n...\n"
+
+
+def _bound_text(text: str, cap: int) -> tuple[str, bool]:
+    """cap을 넘으면 head 2/3 + tail 1/3로 결정론 절단하고 truncated=True.
+
+    **구분자(`\\n...\\n`)까지 cap 안에 든다** — 결과 길이는 `cap`을 넘지 않는다(예산 초과
+    방지). cap이 구분자보다 작으면 tail 없이 head만 자른다 — `text[-0:]`가 원문 전체를
+    돌려주던 작은 cap 버그를 막는다.
+    """
+    text = text.strip()
+    if len(text) <= cap:
+        return text, False
+    budget = cap - len(_TRUNCATION_MARKER)
+    if budget <= 0:
+        return text[:cap], True
+    head_len = (budget * 2) // 3
+    tail_len = budget - head_len
+    head = text[:head_len]
+    tail = text[-tail_len:] if tail_len > 0 else ""
+    return f"{head}{_TRUNCATION_MARKER}{tail}", True
+
+
+def evidence_summaries(
+    evidences: Iterable[Evidence],
+    read_payload: Callable[[str], str | None],
+    *,
+    per_cap: int = EVIDENCE_BODY_CHAR_CAP,
+    total_cap: int = EVIDENCE_BODY_TOTAL_CAP,
+) -> dict[str, dict[str, object]]:
+    """`payload_ref`에서 근거 본문을 읽어 결정론적으로 절단한 evidence_id → {body, truncated} 맵.
+
+    payload가 없으면(fake·미배선·파일 부재) 그 evidence는 맵에서 빠진다 → 호출부는 그
+    evidence를 metadata만으로 싣는다. 총 예산을 넘으면 이후 evidence는 body를 비운다.
+    """
+    out: dict[str, dict[str, object]] = {}
+    used = 0
+    for ev in evidences:
+        raw = read_payload(ev.payload_ref)
+        if raw is None:
+            continue
+        remaining = total_cap - used
+        if remaining <= 0:
+            out[ev.evidence_id] = {"body": "", "truncated": True}
+            continue
+        body, truncated = _bound_text(raw, min(per_cap, remaining))
+        used += len(body)
+        out[ev.evidence_id] = {"body": body, "truncated": truncated}
+    return out
+
+
 def build_facts(
     *,
     run_id: str,
@@ -144,6 +200,7 @@ def build_facts(
     source: str = "",
     evidences: Iterable[Evidence] = (),
     callers: Iterable[str] = (),
+    evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
@@ -170,8 +227,20 @@ def build_facts(
         if capsule
         else [],
         "source": source,
+        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 함께 싣는다. 안 주면
+        # (Scout·Auditor·Critic v1) 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
         "evidence": [
-            {"evidence_id": ev.evidence_id, "kind": ev.kind.value, "ok": ev.ok} for ev in evidences
+            {
+                "evidence_id": ev.evidence_id,
+                "kind": ev.kind.value,
+                "ok": ev.ok,
+                **(
+                    {"body": body["body"], "truncated": body["truncated"]}
+                    if (body := (evidence_bodies or {}).get(ev.evidence_id)) is not None
+                    else {}
+                ),
+            }
+            for ev in evidences
         ],
         "callers": list(callers),
     }
