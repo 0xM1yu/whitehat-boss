@@ -344,6 +344,49 @@ def test_static_tool_finds_signal_only_where_it_exists(target_root: Path) -> Non
     assert hit.kind is EvidenceKind.STATIC
 
 
+def test_static_signal_carries_first_hit_location(target_root: Path) -> None:
+    """D23: Fake도 첫 정적 매치의 파일·줄을 Evidence.location에 싣는다.
+
+    등급은 이 값과 무관하다(`p1 = static_ok or location_ok`) — 채우는 목적은 신호를
+    심볼 단위로 귀속하는 후속 PR의 입력이다. 신호가 없는 파일은 위치도 없다.
+    """
+    hit = _runner(target_root).run("semgrep", _args("parser.c"), SANDBOX)
+    assert hit.location is not None
+    assert hit.location.file == "parser.c"
+    assert hit.location.line_start == 5  # memcpy(buf, src, len) 줄
+
+    miss = _runner(target_root).run("semgrep", _args("util.c"), SANDBOX)
+    assert miss.location is None
+
+
+def test_fake_clang_tidy_carries_no_location(target_root: Path) -> None:
+    """#248: Fake도 컨테이너처럼 **semgrep만** location을 싣는다. clang-tidy는 None이라
+    두 어댑터의 location 계약이 갈리지 않는다."""
+    evidence = _runner(target_root).run("clang-tidy", _args("parser.c"), SANDBOX)
+
+    assert evidence.ok
+    assert evidence.location is None
+
+
+def test_static_location_survives_a_relative_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#248 회귀: 상대 root면 `safe_join`이 resolve한 workdir과 형태가 어긋나
+    `relative_to`가 `ValueError`로 죽었다(도구는 예외를 안 던지는 계약). root를 resolve해
+    완주한다."""
+    root = tmp_path / "target"
+    root.mkdir()
+    (root / "parser.c").write_text(VULNERABLE_C, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    runner = FakeToolRunner(ids=IdFactory(RUN_ID), run_id=RUN_ID, root=Path("target"))
+
+    evidence = runner.run("semgrep", _args("parser.c"), SANDBOX)
+
+    assert evidence.ok  # 예외로 죽지 않는다
+    assert evidence.location is not None
+    assert evidence.location.file == "parser.c"
+
+
 def test_tool_failure_becomes_evidence_not_exception(target_root: Path) -> None:
     """engineering-guide.md §8.3: 도구 실패도 Evidence로 기록한다."""
     evidence = _runner(target_root).run("build", _args("없는디렉터리"), SANDBOX)
