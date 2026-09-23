@@ -49,6 +49,16 @@ CASE_B_WRITER_CAP = 2000
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
+# The flows query targets memory-write sink calls instead of every call argument in the repo
+# (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
+# dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
+# sink universe to the dominant GT sink types (writers + write/pointer operators -- the same
+# calls Case B enumerates) keeps the dataflow bounded. The argument set is capped again after
+# the union so one huge repo cannot reinflate it. ⚠ This narrows recall: sinks past the cap,
+# and the local-array/double-free categories Case B also flags, are not targeted as flow sinks
+# (candidate enumeration still captures them). The before/after miss-rate is measured on ATOM.
+FLOWS_SINK_CAP = 2000
+
 
 def literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
@@ -309,8 +319,22 @@ def flows_query(
         .flatMap(_.parameter.l.sortBy(p => (p.index, p.code, p.typeFullName)))
       def nodeKey(n: nodes.AstNode): String = ujson.write(ujson.Arr(
         n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1), n.code))
-      val sinks = cpg.call.argument.filter(n => Option(n.method).nonEmpty).l.distinct.sortBy(n => (
-        nodeKey(n), n.argumentIndex, n.method.fullName))
+      // Memory-write sink calls only (#219): targeting every call argument in the repo makes
+      // the per-candidate dataflow exceed the deadline on large CPGs, so no slice is emitted.
+      // These are the dominant GT sink types. Cheap name/AST filters only (no dataflow), since
+      // this runs per candidate -- keep in sync with candidates_b_query's writers/operators.
+      val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
+      val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
+      val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
+        .filter(c => c.argument.evalType.exists(_.contains("*")) ||
+          c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
+            "indirection|indirectIndexAccess|addressOf)").nonEmpty).take({CASE_B_OPERATOR_CAP}).l
+      val sinkCalls = (writerSinks ++ indexWrites ++ ptrArith).distinct
+      val sinks = sinkCalls.flatMap(_.argument)
+        .filter(n => Option(n.method).nonEmpty).distinct.sortBy(n => (
+          nodeKey(n), n.argumentIndex, n.method.fullName)).take({FLOWS_SINK_CAP})
       // Each invocation builds an engine. Batch by enclosing method instead of
       // rebuilding it for every argument; the cap stops subsequent method batches.
       val batches = sinks.groupBy(_.method).toList.sortBy {{ case (m, _) =>
