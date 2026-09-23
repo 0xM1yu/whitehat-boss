@@ -289,7 +289,9 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
         raise QueryError(f"Invalid {stage} payload schema", logs)
 
 
-def decode_response(response: dict, stage: str) -> tuple[object, str]:
+def decode_response(
+    response: dict, stage: str, payload_path: Path | None = None
+) -> tuple[object, str]:
     if not isinstance(response, dict):
         raise QueryError("HTTP response is not an object")
     stdout, stderr = response.get("stdout", ""), response.get("stderr", "")
@@ -313,6 +315,26 @@ def decode_response(response: dict, stage: str) -> tuple[object, str]:
         raise QueryError(
             "Missing or incomplete query payload (empty stdout is not zero results)", logs
         )
+    if payload_path is not None:
+        # File transport: the marker carries the byte count Joern wrote, the payload is in
+        # the file. Confirming the count catches a truncated/partial write instead of
+        # feeding half a JSON document to json.loads (which would raise the same way).
+        try:
+            declared = int(match[1])
+        except ValueError as exc:
+            raise QueryError(f"Payload marker is not a byte count: {exc}", logs) from exc
+        try:
+            raw = payload_path.read_bytes()
+        except OSError as exc:
+            raise QueryError(f"Payload file unreadable: {exc}", logs) from exc
+        if len(raw) != declared:
+            raise QueryError(
+                f"Payload file is {len(raw)} bytes, marker declared {declared}", logs
+            )
+        try:
+            return json.loads(raw.decode("utf-8")), logs
+        except (ValueError, UnicodeError) as exc:
+            raise QueryError(f"Invalid query payload: {exc}", logs) from exc
     try:
         return json.loads(base64.b64decode(match[1], validate=True).decode("utf-8")), logs
     except (ValueError, UnicodeError) as exc:
@@ -320,9 +342,15 @@ def decode_response(response: dict, stage: str) -> tuple[object, str]:
 
 
 class JoernClient:
-    def __init__(self, endpoint: str, timeout: float | None):
+    def __init__(
+        self, endpoint: str, timeout: float | None, payload_dir: Path | None = None
+    ):
         self.url = endpoint.rstrip("/") + "/query-sync"
         self.timeout = timeout
+        # Where file-transport queries (case_a/case_b) drop their payload. Joern (the JVM)
+        # writes it and this process reads it, so the path must be on a filesystem both see
+        # -- the same box today; a shared writable mount once Joern runs sandboxed.
+        self.payload_dir = payload_dir
 
     def query(self, stage: str, query: str) -> tuple[object, str]:
         if self.timeout is None:
@@ -350,6 +378,20 @@ class JoernClient:
         return outcome[0]
 
     def _request(self, stage: str, query: str) -> tuple[object, str]:
+        payload_path = None
+        # Key file transport on the stage, not on the token appearing in the query text: a
+        # repo file or symbol named like the token would otherwise trip a non-transport query.
+        if stage in queries.FILE_TRANSPORT_STAGES:
+            if self.payload_dir is None:
+                raise QueryError(f"File-transport {stage} query has no payload_dir configured")
+            # A fresh name per request. Two runs sharing an output parent (or a resume) must
+            # not read a stale payload another wrote -- the marker carries only a byte count
+            # (`decode_response`), so a same-length payload from elsewhere would pass.
+            payload_path = self.payload_dir / f"{stage}.{uuid.uuid4().hex}.payload.json"
+            # `as_posix()` keeps the JSON literal backslash-free so the Scala string is valid
+            # on any host; `payload_dir` is resolved by the caller so this is absolute and both
+            # Joern and this process open the same file.
+            query = query.replace(queries.OUT_PATH_TOKEN, json.dumps(payload_path.as_posix()))
         try:
             request = Request(
                 self.url,
@@ -362,7 +404,16 @@ class JoernClient:
         except (OSError, URLError, ValueError, HTTPException) as exc:
             # HTTP timeout does not cancel Scala execution. Do not reuse this REPL.
             raise QueryError(f"HTTP request failed: {exc}", poisoned=True) from exc
-        return decode_response(decoded, stage)
+        try:
+            return decode_response(decoded, stage, payload_path)
+        finally:
+            # Drop the payload so a work dir does not accumulate them. A cleanup error must
+            # not mask a successful decode, so swallow it.
+            if payload_path is not None:
+                try:
+                    payload_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def initial_result(repo: Path, threshold: float) -> dict:
@@ -778,7 +829,14 @@ def main(argv: list[str] | None = None) -> int:
             # surfaces after the run: --out already holds a correct result and main()
             # still returns 1. Fail on the typo before paying for Joern.
             cli.error("--export-dir exists and is not a directory")
-    client = JoernClient(args.joern_endpoint, args.query_timeout_seconds)
+    # File-transport payloads (case_a/case_b) land here: a sibling of the run outputs (--out
+    # is required), so it shares their writable filesystem and stays out of --export-dir's
+    # replaced subtree. Resolve so the path handed to Joern is absolute -- Joern's JVM resolves
+    # a relative path against its own working directory, not this process's.
+    payload_dir = (args.out.parent / ".slicer-payloads").resolve()
+    client = JoernClient(
+        args.joern_endpoint, args.query_timeout_seconds, payload_dir=payload_dir
+    )
     limits = {
         k: v
         for k, v in (
@@ -807,6 +865,9 @@ def main(argv: list[str] | None = None) -> int:
     job.heartbeat_seconds = args.heartbeat_seconds
     attempt = None
     try:
+        # Inside the try so a non-writable output parent surfaces as a clean result error,
+        # not a bare traceback (same reasoning as the progress dir below).
+        payload_dir.mkdir(parents=True, exist_ok=True)
         if args.progress:
             args.progress.parent.mkdir(parents=True, exist_ok=True)
             job.progress = args.progress.open("a", encoding="utf-8", newline="\n")

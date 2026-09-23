@@ -26,6 +26,7 @@ from src.adapters.container_tools import (
     ContainerToolRunner,
     Step,
     container_argv,
+    first_hit_location,
     index_output_path,
     judge,
     plan,
@@ -483,6 +484,84 @@ def test_static_signal_absence_is_not_a_failure() -> None:
     """돌았는데 없음(0)과 돌아서 찾음(1) 둘 다 ok=True다."""
     assert judge("semgrep", [Step(0, _semgrep_json(0), "")], 1) == (True, 0, None)
     assert judge("semgrep", [Step(1, _semgrep_json(3), "")], 1) == (True, 1, None)
+
+
+def _semgrep_hit_json(path: str, start: int, end: int) -> str:
+    return json.dumps(
+        {
+            "results": [
+                {"check_id": "r0", "path": path, "start": {"line": start}, "end": {"line": end}}
+            ],
+            "errors": [],
+        }
+    )
+
+
+def test_first_hit_location_reads_semgrep_first_result_and_strips_the_mount() -> None:
+    """D23: semgrep 첫 결과의 path·start.line·end.line을 Location으로 옮긴다.
+
+    semgrep은 컨테이너 마운트 경로(`/src/parser.c`)를 스캔하므로 `path`가 그대로 나온다.
+    `Candidate.location.file`(저장소 상대)과 맞추려면 `/src/` 접두를 벗겨야 `overlaps`가
+    참이 된다 — 안 벗기면 `location_ok`가 계속 거짓이다.
+    """
+    loc = first_hit_location(
+        "semgrep", [Step(1, _semgrep_hit_json("/src/parser.c", 5, 6), "")]
+    )
+
+    assert loc is not None
+    assert (loc.file, loc.line_start, loc.line_end) == ("parser.c", 5, 6)
+
+
+def test_first_hit_location_is_none_without_a_hit() -> None:
+    """신호가 없거나(0건) semgrep이 아니면 위치도 없다 — 지어내지 않는다."""
+    assert first_hit_location("semgrep", [Step(0, _semgrep_json(0), "")]) is None
+    assert first_hit_location("clang-tidy", [Step(1, "warning: x [b]", "")]) is None
+    assert first_hit_location("semgrep", []) is None
+
+
+def test_first_hit_location_rejects_malformed_shapes() -> None:
+    """형태가 어긋나면 틀린 위치를 넣느니 None이다 (파싱 실패를 신호로 읽지 않는다)."""
+    assert first_hit_location("semgrep", [Step(1, "not json", "")]) is None
+    no_line = json.dumps({"results": [{"path": "a.c", "start": {}}], "errors": []})
+    assert first_hit_location("semgrep", [Step(1, no_line, "")]) is None
+    no_path = json.dumps({"results": [{"start": {"line": 3}}], "errors": []})
+    assert first_hit_location("semgrep", [Step(1, no_path, "")]) is None
+
+
+def test_first_hit_location_drops_an_invalid_end() -> None:
+    """end.line이 없거나 start보다 작으면 **채우지 않는다**(None) — 값을 지어내지 않는다.
+
+    `Location.overlaps`가 `line_end or line_start`로 처리하므로 None이어도 판정은 같고,
+    docstring의 "형태가 어긋나면 채우지 않는다"와도 맞는다.
+    """
+    loc = first_hit_location("semgrep", [Step(1, _semgrep_hit_json("a.c", 8, 2), "")])
+
+    assert loc is not None
+    assert (loc.line_start, loc.line_end) == (8, None)
+
+
+def test_container_semgrep_run_wires_the_hit_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """컨테이너 배선: semgrep run이 첫 히트 위치를 Evidence.location에 싣는다.
+
+    `_execute`의 `location=first_hit_location(...)`를 `location=None`으로 되돌리면 red다 —
+    파서 단위 테스트만으로는 그 회귀가 안 잡힌다.
+    """
+    monkeypatch.setattr(container_tools.shutil, "which", lambda name: f"/usr/bin/{name}")
+    hit = _semgrep_hit_json("/src/parser.c", 5, 6)
+    monkeypatch.setattr(
+        container_tools.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, hit, ""),
+    )
+
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "parser.c"], workdir="parser.c"), SANDBOX
+    )
+
+    assert evidence.location is not None
+    assert (evidence.location.file, evidence.location.line_start) == ("parser.c", 5)
 
 
 def test_semgrep_crash_with_exit_one_is_not_a_finding() -> None:
