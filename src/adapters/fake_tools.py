@@ -125,6 +125,9 @@ class FakeToolRunner:
             if _matches_any(path.read_text("utf-8", errors="replace"))
         )
         # 신호 없음은 실패가 아니다(architecture.md §3: "신호 부재로 기록").
+        # **semgrep만** location을 싣는다 — 컨테이너의 `first_hit_location`이 semgrep 한정이라
+        # 그쪽과 맞춘다(clang-tidy는 #70 후속). 그러지 않으면 Fake가 clang-tidy에도 값을 실어
+        # 두 어댑터의 location 계약이 갈린다.
         return self.make_evidence(
             tool,
             kind,
@@ -132,7 +135,7 @@ class FakeToolRunner:
             ok=True,
             exit_code=1 if hits else 0,
             hits=hits,
-            location=self._first_static_location(workdir),
+            location=self._first_static_location(workdir) if tool == "semgrep" else None,
         )
 
     def _first_static_location(self, workdir: Path) -> Location | None:
@@ -142,12 +145,21 @@ class FakeToolRunner:
         파일은 `self.root` 기준 상대 POSIX 경로라 `Candidate.location.file`(artifact 경로)과
         같은 좌표계다. `hits`가 0이면 매치가 없어 자연히 `None`이다 — 게이트 등급은 이 값과
         무관하다(`p1 = static_ok or location_ok`, STATIC이 이미 `static_ok`).
+
+        ⚠ **`workdir`은 `safe_join`이 resolve한 절대경로**인데 `self.root`는 resolve 전이라,
+        `relative_to`가 그대로면 두 경로 형태가 어긋나 `ValueError`가 난다(상대 `--target`에서
+        실측). 도구는 예외를 던지지 않는 계약이므로 root를 resolve하고, 그래도 밖이면 `None`.
         """
+        root = self.root.resolve()
         for path in sources(workdir):
             text = path.read_text("utf-8", errors="replace")
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if _matches_any(line):
-                    return Location(file=path.relative_to(self.root).as_posix(), line_start=lineno)
+                    try:
+                        rel = path.resolve().relative_to(root).as_posix()
+                    except ValueError:
+                        return None
+                    return Location(file=rel, line_start=lineno)
         return None
 
     def _run_repro(self, tool: str, kind: EvidenceKind, args: ToolArgs, workdir: Path) -> Evidence:

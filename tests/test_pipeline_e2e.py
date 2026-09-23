@@ -85,6 +85,38 @@ def _events(trace_path: Path) -> list[dict]:
     return [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_execute_wires_read_payload_from_the_artifacts_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#247 리뷰 HIGH-1: `cli.execute`가 `read_payload`를 `make_payload_reader`로 배선한다.
+
+    그 줄(`src/cli.py`)을 지우면 Critic이 근거 본문을 못 받는다(`RunContext.read_payload`
+    기본값이 `lambda _ref: None`). `run_pipeline`을 가로채 실제로 넘어온 reader가 payload
+    파일을 읽는지 본다 — 배선을 끊으면 red다.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_run_pipeline(spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["read_payload"] = kwargs.get("read_payload")
+        return None
+
+    monkeypatch.setattr(cli, "run_pipeline", fake_run_pipeline)
+    config = load_config("dev_fake")
+    run_dir = tmp_path / "run" / "run_20260901_0001"
+    run_dir.mkdir(parents=True)
+    payload = run_dir / "semgrep" / "ev_0001.log"
+    payload.parent.mkdir(parents=True)
+    payload.write_text("SEMGREP FINDING BODY", encoding="utf-8")
+    spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT)
+
+    cli.execute(config, spec, run_id=run_dir.name, run_dir=run_dir)
+
+    reader = captured["read_payload"]
+    assert callable(reader)
+    assert reader("artifacts/run_20260901_0001/semgrep/ev_0001.log") == "SEMGREP FINDING BODY"
+    assert reader("artifacts/run_20260901_0001/semgrep/missing.log") is None
+
+
 def _canonical(trace_path: Path) -> bytes:
     """재현성 비교 표현: `ts`·`wall_ms`만 제거한 JSONL."""
     lines = []
