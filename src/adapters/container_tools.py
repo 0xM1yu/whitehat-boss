@@ -104,6 +104,7 @@ from src.adapters.fake_tools import TOOL_KINDS, SandboxUnavailable, sources
 from src.ids import IdFactory
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape, safe_join
+from src.schemas.common import Location
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 from src.schemas.run import CompileFlags
@@ -269,6 +270,35 @@ def scratch_dir(artifacts_root: Path, run_id: str, tool: str) -> Path:
 def index_output_path(artifacts_root: Path, run_id: str) -> Path:
     """인덱서 산출물의 호스트 경로. `adapters/index_graph.py`가 읽는다."""
     return scratch_dir(artifacts_root, run_id, INDEX_TOOL) / INDEX_FILE
+
+
+# `Evidence.payload_ref`는 `artifacts/{run_id}/{slot}/{id}.log` 꼴이고, 실제 파일은
+# `{artifacts_root}/{run_id}/{slot}/{id}.log`다(위 `_write`가 쓰는 자리와 같은 규약).
+# 선두 `artifacts/`를 떼고 artifacts_root에 붙인다. 접두사는 리터럴이라 root 이름과 무관하다.
+PAYLOAD_READ_CAP = 200_000  # 글자(텍스트 모드 read). 폭주 로그를 통째로 메모리에 올리지 않는 가드
+
+
+def make_payload_reader(artifacts_root: Path) -> Callable[[str], str | None]:
+    """`RunContext.read_payload` 배선용. payload_ref → 로그 원문(상한 내), 없으면 None.
+
+    최종 토큰 예산 절단은 `prompt_loader.evidence_summaries`가 한다. 여기서는 파일이
+    폭주해도 프로세스가 죽지 않게 바이트 상한까지만 읽는다.
+    """
+    root = Path(artifacts_root)
+
+    def read_payload(payload_ref: str) -> str | None:
+        rel = payload_ref.removeprefix("artifacts/")
+        try:
+            path = safe_join(root, rel)
+        except PathEscape:
+            return None
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                return handle.read(PAYLOAD_READ_CAP)
+        except OSError:
+            return None
+
+    return read_payload
 
 
 def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> list[Command]:
@@ -608,6 +638,45 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     return f"# semgrep: {len(results)} findings"
 
 
+def first_hit_location(tool: str, steps: list[Step]) -> Location | None:
+    """정적 신호의 **첫 발견 위치**를 `Evidence.location`에 실을 수 있게 뽑는다 (#70 초석).
+
+    지금은 semgrep `--json`의 `results[0]`만 읽는다 — `path`·`start.line`·`end.line`을
+    옮긴다. semgrep은 명령행에 컨테이너 마운트 경로(`{MOUNT}/<rel>`)를 받으므로 `path`가
+    `/src/parser.c`로 나온다(실측). 그 접두를 벗겨 `Candidate.location.file`(저장소 상대
+    경로)과 같은 좌표계로 맞춘다 — 안 벗기면 `overlaps`의 파일 비교가 어긋나 `location_ok`가
+    계속 거짓이다. clang-tidy는 출력이 텍스트라 정규화 위험이 커 **여기서 다루지 않는다**(#70 후속).
+
+    **채워도 게이트 등급은 안 바뀐다**(#70): `p1 = static_ok or location_ok`이고
+    STATIC Evidence에만 location이 붙어 `static_ok`가 이미 참이다. 이 값의 쓰임은 등급이
+    아니라 신호를 심볼 단위로 귀속하는 후속 PR(신호 1건당 Evidence)의 입력이다. 형태가
+    어긋나면 채우지 않는다 — 틀린 위치를 넣느니 `None`이 낫다(`location_ok`는 그대로 거짓).
+    """
+    if tool != "semgrep" or not steps:
+        return None
+    results = semgrep_results(steps[-1].stdout)
+    if not results:
+        return None
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    path = first.get("path")
+    start = first.get("start")
+    if not isinstance(path, str) or not path or not isinstance(start, dict):
+        return None
+    # semgrep이 스캔한 컨테이너 경로(`/src/parser.c`)를 저장소 상대(`parser.c`)로 되돌린다.
+    file = path.removeprefix(MOUNT + "/") if path.startswith(MOUNT + "/") else path
+    line_start = start.get("line")
+    if not isinstance(line_start, int) or line_start < 1:
+        return None
+    # end가 없거나 형태가 어긋나면 채우지 않는다(`overlaps`가 `line_end or line_start`로
+    # 처리한다). 합성한 값을 넣지 않는 것이 docstring의 "형태가 어긋나면 채우지 않는다"다.
+    end = first.get("end")
+    end_line = end.get("line") if isinstance(end, dict) else None
+    line_end = end_line if isinstance(end_line, int) and end_line >= line_start else None
+    return Location(file=file, line_start=line_start, line_end=line_end)
+
+
 class ContainerToolRunner:
     """`ToolRunner` 구현. 런타임만 다르고 계약·판정은 하나다."""
 
@@ -809,7 +878,15 @@ class ContainerToolRunner:
             # 머리에 넣는다 — JSON 본문 앞에 결론이 있어야 사람이 로그를 읽는다.
             sections.insert(2, summary)
         return self._write(
-            evidence_id, tool, kind, args, sections, ok=ok, exit_code=exit_code, error=error
+            evidence_id,
+            tool,
+            kind,
+            args,
+            sections,
+            ok=ok,
+            exit_code=exit_code,
+            error=error,
+            location=first_hit_location(tool, steps),
         )
 
     def _kill(self, name: str) -> None:
@@ -882,6 +959,7 @@ class ContainerToolRunner:
         ok: bool,
         exit_code: int,
         error: str | None,
+        location: Location | None = None,
     ) -> Evidence:
         """로그를 실제로 쓰고 그 내용의 sha256을 digest로 삼는다.
 
@@ -901,6 +979,7 @@ class ContainerToolRunner:
             kind=kind,
             source=tool,
             artifact_id=args.workdir,
+            location=location,
             payload_ref=f"artifacts/{self.run_id}/{slot}/{evidence_id}.log",
             digest=f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}",
             observed_at=self.observed_at,
