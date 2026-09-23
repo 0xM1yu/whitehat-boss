@@ -410,8 +410,11 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
         }}
         selected ++= declarations
         val declarationIds = declarations.map(_.id).toSet
-        selected ++= cpg.assignment.filter(a => a.target.ast.isIdentifier.refsTo
-          .exists(d => declarationIds.contains(d.id))).l
+        // 퍼지 파싱(특히 C++)이 인자 없는 assignment 노드를 남기면 `a.target`(= argument(1))이
+        // 빈 iterator에서 next로 죽는다(#219 후속, sample_40 context 단계 NoSuchElement).
+        // target이 실재하는 assignment만 본다 — 인자 없는 노드는 선언을 참조할 수도 없다.
+        selected ++= cpg.assignment.filter(a => a.argument.argumentIndex(1).nonEmpty &&
+          a.target.ast.isIdentifier.refsTo.exists(d => declarationIds.contains(d.id))).l
         changed = selected.size != before
       }}
       ujson.Arr.from(selected.toList.map(loc))
