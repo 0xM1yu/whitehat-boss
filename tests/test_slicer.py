@@ -1009,6 +1009,17 @@ def test_flows_query_targets_memory_write_sinks_not_all_arguments():
     assert f".take({queries.FLOWS_SINK_CAP})" in flows  # sink universe is bounded
 
 
+def test_case_b_dealloc_scan_filters_to_methods_that_call_free():
+    """#219: the free-wrapper scan filters to methods that actually call free before the
+    per-parameter dataflow. Scanning every method's AST and building a dataflow engine per
+    parameter for the rest is what pushes case_b past the query deadline on a large C++ CPG
+    (sample_40). Exact filter -- a method with no free() call cannot reach one.
+    """
+    query = queries.candidates_b_query()
+
+    assert 'cpg.method.internal.filter(_.ast.isCall.nameExact("free").nonEmpty)' in query
+
+
 def test_flows_query_batches_by_enclosing_method():
     """결함 5 — sink 하나마다 엔진을 새로 짓지 않는다. 배치 단위는 enclosing method 다.
 

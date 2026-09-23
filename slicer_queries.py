@@ -240,9 +240,15 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .filter(c => c.argument.isIdentifier.refsTo.collect { case l: nodes.Local => l }
           .exists(_.typeFullName.contains("["))).l
       // Keep the parameter index: a wrapper may free its second argument, not its first.
-      val dealloc = cpg.method.internal.l.flatMap(m => m.parameter.l.filter(p =>
-        m.ast.isCall.nameExact("free").argument(1)
-          .reachableByFlows(List(p))(flowContext).hasNext).map(p => (m.name, p.index)))
+      // Only methods that actually call free can be free-wrappers, so filter to those first
+      // (#219). Scanning the rest walks every method's AST and builds a dataflow engine per
+      // parameter for nothing -- on a large C++ CPG that per-method cost is what pushes case_b
+      // past the query deadline (sample_40). The filter is exact: a method with no free() call
+      // cannot reach one, so no candidate is lost.
+      val dealloc = cpg.method.internal.filter(_.ast.isCall.nameExact("free").nonEmpty).l
+        .flatMap(m => m.parameter.l.filter(p =>
+          m.ast.isCall.nameExact("free").argument(1)
+            .reachableByFlows(List(p))(flowContext).hasNext).map(p => (m.name, p.index)))
       val positions = (dealloc :+ ("free", 1)).groupMap(_._1)(_._2)
       val releases = cpg.call.l.filter(c => positions.contains(c.name)).flatMap(c =>
         c.argument.isIdentifier.filter(i => positions(c.name).contains(i.argumentIndex))
