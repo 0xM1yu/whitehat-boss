@@ -747,13 +747,21 @@ def test_parse_failure_and_cpg_failure_are_separate(monkeypatch, repo, tmp_path)
     assert result["counters"]["files_cpg_failed"] == 2
 
 
-def test_invalid_utf8_source_is_counted(monkeypatch, repo, tmp_path):
+def test_non_utf8_source_falls_back_to_latin1_not_a_read_failure(monkeypatch, repo, tmp_path):
+    # D85/#254: invalid UTF-8 used to count as a read failure (and, under --checkpoint,
+    # abort the whole run through prepare_checkpoint). It is now decoded latin-1, so the
+    # file is read, not dropped -- one stray Latin-1 byte no longer kills the run.
     (repo / "bad.cpp").write_bytes(b"\xff\xfe\xfd")
     _, result, _ = run_cli(monkeypatch, repo, tmp_path, payloads())
-    assert result["status"] == "partial"
     assert result["counters"]["files_seen"] == 2
-    assert result["counters"]["files_read_failed"] == 1
-    assert "bad.cpp" in result["error"]
+    assert result["counters"]["files_read_failed"] == 0
+    assert result["status"] != "failed"
+    # 더는 읽기 실패가 아니다. (CPG inventory mock이 bad.cpp를 안 담아 "missing from CPG"로
+    # 뜨는 것은 별개 -- 실제 run에서는 CPG에 들어간다.)
+    assert "Source read failed" not in (result.get("error") or "")
+    # 폴백은 조용하지 않다 -- diagnostics에 남는다.
+    notes = [d for d in result["diagnostics"] if d.get("stage") == "load_sources"]
+    assert [n["file"] for n in notes] == ["bad.cpp"]
 
 
 def test_invalid_repo_still_writes_failure_json(monkeypatch, repo, tmp_path):
@@ -825,6 +833,19 @@ def test_source_form_feed_does_not_shift_joern_line_numbers(repo):
     job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("http://unused", None))
     job.load_sources()
     assert job.sources["main.c"] == ["int x;\f int y;", "int z;"]
+
+
+def test_non_utf8_source_keeps_prepare_checkpoint_whole(repo):
+    # D85/#254: one Latin-1 byte in an unrelated UI string used to leave source_hashes
+    # short of files_seen, which prepare_checkpoint refuses -- aborting the run under
+    # --checkpoint. The byte is now decoded latin-1 (0xb0 -> U+00B0), byte-exact, so the
+    # completeness condition holds and the ° is preserved for line-accurate extraction.
+    (repo / "ui.cpp").write_bytes(b'gtk_label_new("Track n\xb0:");\n')
+    job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("http://unused", None))
+    job.load_sources()
+    assert job.result["counters"]["files_read_failed"] == 0
+    assert len(job.source_hashes) == job.result["counters"]["files_seen"]
+    assert job.sources["ui.cpp"] == ['gtk_label_new("Track n°:");']
 
 
 def test_version_comes_only_from_the_explicit_command(monkeypatch, repo, tmp_path):
