@@ -446,6 +446,21 @@ def test_case_a_query_carries_the_payload_through_a_file_not_the_repl():
     assert '"__SLICER_case_a__"' in query and '"__END_SLICER__"' in query
 
 
+def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
+    """case_b has the same overrun risk as case_a and must use the same file transport.
+
+    Reverting `file_envelope("case_b")` to `envelope("case_b")` should turn this red -- a
+    metadata-only substring check on the other stages would not.
+    """
+    query = queries.candidates_b_query()
+
+    assert queries.OUT_PATH_TOKEN in query
+    assert "Files.write" in query
+    assert "Base64" not in query
+    assert '"__SLICER_case_b__"' in query and '"__END_SLICER__"' in query
+    assert "case_b" in queries.FILE_TRANSPORT_STAGES  # the client keys transport on this
+
+
 def test_decode_response_reads_the_payload_from_the_file(tmp_path):
     payload = [candidate("entry", 1)]
     raw = json.dumps(payload).encode("utf-8")

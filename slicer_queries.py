@@ -1,7 +1,10 @@
 """Joern queries for the offline slicer; no harness imports or generated model queries.
 
 Each request is one Scala block: candidate locals never survive in the REPL.
-JSON travels as base64 in the block's result, since println can go to server logs.
+Most stages return their JSON as base64 in the block's result, since println can go to
+server logs. The candidate-enumeration stages (`FILE_TRANSPORT_STAGES`) instead write the
+payload to a file and return only its byte count -- their payload can outgrow what the REPL
+renders as a single string value (issue #219, see `file_envelope`).
 """
 
 import json
@@ -21,8 +24,10 @@ WRITERS = (
     "memcpy|memmove|memset|strcpy|strncpy|strcat|strncat|stpcpy|bcopy|"
     "sprintf|snprintf|vsprintf|vsnprintf|wmemcpy|wmemmove|wcscpy|wcsncpy|wcscat"
 )
-# The writer set can be large on big repos; cap it so the case_b payload stays bounded
-# (the same failure mode #219 hit in case_a). Repos past the cap get bounded coverage.
+# The writer set can be large on big repos. #250 moved the case_a/case_b payload to a file
+# (`file_envelope`), so it no longer overruns the REPL return -- but the cap stays: it bounds
+# the candidate count, and so the downstream per-candidate work. Repos past it get bounded
+# (not full) coverage.
 CASE_B_WRITER_CAP = 2000
 
 # Operator-anchored sinks (#219 follow-up). Operator/deref sinks are the biggest GT bucket
@@ -85,6 +90,12 @@ def envelope(stage: str, body: str) -> str:
 # Client-substituted placeholder for the out-of-band payload path. The client (JoernClient)
 # replaces this with a JSON string literal of a real, writable path before sending.
 OUT_PATH_TOKEN = "__SLICER_OUT_PATH__"
+
+# Stages whose query is built with `file_envelope` (payload via file, not the REPL return).
+# The client keys file transport on this, not on the token's presence in the query text --
+# a repo file or symbol literally named like the token would otherwise be a false positive.
+# Must list exactly the stages that call `file_envelope`.
+FILE_TRANSPORT_STAGES = frozenset({"case_a", "case_b"})
 
 
 def file_envelope(stage: str, body: str) -> str:
@@ -230,6 +241,8 @@ CASE_A_CALL_LIMIT = 1
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
 # in CPG traversal order, which is not a documented/stable order, so a capped run's coverage is
 # an *unspecified* first-N subset (see known_limitations / measurement_notes, and D77 §4.5).
+# The stdout-overrun above is the pre-#250 mechanism; #250 moved the payload to a file, so the
+# cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
 #  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
 CASE_A_CANDIDATE_CAP = 2000
