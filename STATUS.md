@@ -570,9 +570,10 @@ JSON과 clang-tidy 출력에서 줄 번호를 파싱해 `Evidence.location`을 �
 (open-questions D23). **`location_ok`는 이번이 세 번째 전건 false 확인**이다 — 픽스처 6 ·
 zlib 55 · 오늘 63.
 
-**그러면 D23의 값은 어디에 남는가**: 등급 축이 아니라 **후보 정렬 해상도**다. 정적 신호가
-artifact 단위라 큰 파일의 **모든 심볼이 똑같이 "신호 있음"**이 되고, `runner._plan_targets()`가
-artifact 단위인 이유가 그것이다.
+**그러면 D23의 값은 어디에 남는가**: 등급 축이 아니라 **후보 정렬 해상도**다. #70이 정적
+신호를 심볼 단위로 올렸다 — 히트가 든 심볼은 상위(rank 2), 같은 artifact의 다른 심볼은
+rank 1, 무신호는 0. 예전에는 큰 파일의 **모든 심볼이 똑같이 "신호 있음"**이었고
+`runner._plan_targets()`가 artifact 단위였다.
 
 ### `report.md`의 "중복 제거 N건"을 제거율로 읽지 않는다
 
