@@ -613,9 +613,10 @@ def first_hit_location(tool: str, steps: list[Step]) -> Location | None:
     """정적 신호의 **첫 발견 위치**를 `Evidence.location`에 실을 수 있게 뽑는다 (#70 초석).
 
     지금은 semgrep `--json`의 `results[0]`만 읽는다 — `path`·`start.line`·`end.line`을
-    그대로 옮긴다. semgrep의 `path`는 명령행에 준 `target`(=workdir 상대경로)로 나오므로
-    `Candidate.location.file`(artifact 상대경로)과 같은 좌표계다. clang-tidy는 출력이
-    절대 컨테이너 경로 + 텍스트라 정규화 위험이 커 **여기서 다루지 않는다**(#70 후속).
+    옮긴다. semgrep은 명령행에 컨테이너 마운트 경로(`{MOUNT}/<rel>`)를 받으므로 `path`가
+    `/src/parser.c`로 나온다(실측). 그 접두를 벗겨 `Candidate.location.file`(저장소 상대
+    경로)과 같은 좌표계로 맞춘다 — 안 벗기면 `overlaps`의 파일 비교가 어긋나 `location_ok`가
+    계속 거짓이다. clang-tidy는 출력이 텍스트라 정규화 위험이 커 **여기서 다루지 않는다**(#70 후속).
 
     **채워도 게이트 등급은 안 바뀐다**(#70): `p1 = static_ok or location_ok`이고
     STATIC Evidence에만 location이 붙어 `static_ok`가 이미 참이다. 이 값의 쓰임은 등급이
@@ -634,14 +635,17 @@ def first_hit_location(tool: str, steps: list[Step]) -> Location | None:
     start = first.get("start")
     if not isinstance(path, str) or not path or not isinstance(start, dict):
         return None
+    # semgrep이 스캔한 컨테이너 경로(`/src/parser.c`)를 저장소 상대(`parser.c`)로 되돌린다.
+    file = path.removeprefix(MOUNT + "/") if path.startswith(MOUNT + "/") else path
     line_start = start.get("line")
     if not isinstance(line_start, int) or line_start < 1:
         return None
+    # end가 없거나 형태가 어긋나면 채우지 않는다(`overlaps`가 `line_end or line_start`로
+    # 처리한다). 합성한 값을 넣지 않는 것이 docstring의 "형태가 어긋나면 채우지 않는다"다.
     end = first.get("end")
-    line_end = end.get("line") if isinstance(end, dict) else None
-    if not isinstance(line_end, int) or line_end < line_start:
-        line_end = line_start
-    return Location(file=path, line_start=line_start, line_end=line_end)
+    end_line = end.get("line") if isinstance(end, dict) else None
+    line_end = end_line if isinstance(end_line, int) and end_line >= line_start else None
+    return Location(file=file, line_start=line_start, line_end=line_end)
 
 
 class ContainerToolRunner:
