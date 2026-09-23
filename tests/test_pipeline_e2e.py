@@ -33,7 +33,7 @@ from src.orchestrator import runner, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
-from src.schemas.common import PLACEHOLDER_DIGEST
+from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from tests.conftest import ALL_PROFILES
@@ -2242,15 +2242,18 @@ def test_artifacts_without_symbols_make_no_candidates(tmp_path: Path) -> None:
 # --- 10. (a′) 정적 신호는 게이트가 아니라 순서다 ------------------------------
 
 
-def test_signal_bearing_artifacts_come_first_even_against_path_order(tmp_path: Path) -> None:
-    """신호가 붙은 artifact의 심볼이 먼저 돈다. **거르지는 않는다.**
+def test_signal_artifact_symbols_stay_above_no_signal_ones(tmp_path: Path) -> None:
+    """신호 붙은 artifact의 심볼은 무신호 심볼 위에 남는다(#70, #249 리뷰 HIGH-1).
 
-    거르면 하네스가 semgrep이 이미 찾은 것만 찾게 되고 이 프로젝트의 주장을 재는 경로가
-    막힌다. 그래서 신호 없는 심볼도 후보가 되고, 뒤로 갈 뿐이다.
+    거르지는 않는다 — 신호 없는 심볼도 후보가 되고 뒤로 갈 뿐이다. `parser.c`의
+    `memcpy`(24줄)는 `parse_header`(19~26)에 들어 rank 2다. 같은 파일 `recv_request`
+    (28~31)는 그 한 줄을 안 품지만 artifact에 신호가 있어 **rank 1**이라, 신호 없는
+    `aaa.c:quiet`(rank 0) 아래로 내려가지 않는다.
 
-    경로 순서로는 `aaa.c`가 앞이지만 신호는 `parser.c`에만 붙는다(`fake_tools`의 정적
-    패턴이 길이가 상수가 아닌 `memcpy`를 잡는다). 정렬이 신호를 먼저 보지 않으면 이
-    단언이 뒤집힌다 — 알파벳 순서와 신호 순서가 어긋나게 잡은 것이 이 테스트의 요점이다.
+    ⚠ 첫 판(#249)은 `recv_request`를 rank 0으로 내려 `quiet` 아래로 밀었다 — `Evidence.
+    location`이 `results[0]` 한 줄만 실어 같은 파일의 두 번째 히트를 못 봤기 때문이다.
+    `candidate_max`로 자르면 **실히트 파일의 심볼이 잘리고 무신호 심볼이 분석**됐다.
+    경로 순서로는 `aaa.c`가 앞이지만 신호가 순서를 뒤집는다.
     """
     target = tmp_path / "src"
     target.mkdir()
@@ -2269,7 +2272,24 @@ def test_signal_bearing_artifacts_come_first_even_against_path_order(tmp_path: P
 
     assert _plan(trace_path)["signal_artifacts"] == 1
     files = [c.location.file for c in result.candidates]
+    # parse_header(rank 2) · recv_request(rank 1) 둘 다 quiet(rank 0) 위에 남는다.
     assert files == ["parser.c", "parser.c", "aaa.c"]
+
+
+def test_symbol_signal_rank_is_three_tier() -> None:
+    """`_symbol_signal_rank`의 3단 (#70). rank 1이 무신호(0)를 안 내리는 게 #249 HIGH-1이다.
+
+    2=이 심볼에 히트 위치 · 1=artifact 신호는 있으나 이 심볼에 든 줄 미확인(같은 파일의
+    다른 히트·위치 없는 신호·인덱스 없는 폴백) · 0=신호 없음.
+    """
+    sym = Location(file="a.c", symbol="f", line_start=19, line_end=26)
+
+    assert runner._symbol_signal_rank(sym, [24], has_static=True) == 2  # 히트가 이 심볼에
+    assert runner._symbol_signal_rank(sym, [30], has_static=True) == 1  # 신호 있으나 이 심볼 아님
+    assert runner._symbol_signal_rank(sym, [], has_static=True) == 1  # 줄 미확인(위치 없는 신호)
+    assert runner._symbol_signal_rank(sym, [24], has_static=False) == 0  # 신호 없음
+    no_line = Location(file="a.c", symbol="f")
+    assert runner._symbol_signal_rank(no_line, [24], has_static=True) == 1  # 폴백(줄 없음)
 
 
 def test_candidate_max_defers_the_rest_and_records_them(tmp_path: Path) -> None:
@@ -2534,7 +2554,7 @@ def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
 
     400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로 세면 큰
     함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
-    정렬이 신호 붙은 artifact를 앞으로 모으므로 드문 일도 아니다.
+    정렬이 신호 붙은 심볼을 앞으로 모으므로 드문 일도 아니다.
     """
     _failing_model(
         monkeypatch, [_context_overflow(), _context_overflow(), _context_overflow()]
