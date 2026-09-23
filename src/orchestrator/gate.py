@@ -22,16 +22,20 @@
 | E0 | `not finding.evidence_refs` |
 | E1 | `any(e.kind == STATIC)` **or** `any(e.location.overlaps(cand.location))` |
 | E2 | `{SOURCE, SINK} ⊆ path.steps` **and** `any(e.kind == GRAPH)` **and** `not any(m.blocking)` |
-| E3 | `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` **and** `path_ok` |
+| E3 | `p2` **and** `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` |
 | E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN})` |
 
 - 등급 = `E4 if p4 else E3 if p3 else E2 if p2 else E1 if p1 else E0` (단조 하강)
-- **E3의 경로 조건 (이슈 #154).** `path_ok`는 E2와 같은 `{SOURCE, SINK} ⊆ path.steps`다. E3은
-  `validated`로 승격되고, `validated`는 스키마가 source→sink 경로를 요구한다(`finding.py`
-  `_promoted_states_need_backing`). §4 상태 흐름상 경로는 E2에서 확인되고 E3는 그 뒤다 — 경로
-  없이 E3를 주면 경로 없는 `validated` 전이가 시도돼 실서빙 run이 7단계에서 `ValidationError`로
-  죽었다(이슈 #154, `run_20260904_0001`). 그래서 `p3`가 `path_ok`를 포함한다. 단조 하강이라 경로
-  없는 upheld+repro는 이제 E2(경로 없어 실패)를 지나 E1로 떨어진다.
+- **E3는 E2를 포함한다 (이슈 #154).** 단조 하강은 「위에서부터 처음 참인 것」이지 포함이
+  아니므로 포함은 술어가 직접 든다 — `p3`가 `p2`를 요구한다. 없으면 E2를 못 넘은 Finding이
+  7단계 반박 실패 + 재현 명세만으로 E1에서 E3로 건너뛴다: 러너는 등급이 아니라
+  상태(`hypothesized`)로 7단계에 올리므로 6단계 E1 보류분도 Critic에 간다. 경로 축은
+  실서빙에서 밟혔다 — 경로 없이 E3를 받은 Finding이 `validated` 전이에서 스키마
+  (`finding.py` `_promoted_states_need_backing`)에 걸려 run이 7단계에서 `ValidationError`로
+  죽었고(`run_20260904_0001`) 2026-09-09에 `path_ok`만 넣었다. 그래프 근거·blocking 축은
+  스키마가 안 보므로 죽지 않고 조용히 `validated`로 갈 수 있었다 — 2026-09-23에 마저 넣었다.
+  술어 사이의 포함은 **`p3 ⟹ p2` 하나다** — `p2`는 `p1`을 요구하지 않고, `p4`는 경로도
+  E2도 안 본다(E4는 이 포함 밖, 이슈 #154의 남은 항목).
 - `normalize()`: `verdict == REBUT and not is_grounded` → `UPHOLD`.
   이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
   (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").
@@ -43,6 +47,8 @@
 - **ambiguous(E1↔E2)**: `p1 and not p2 and (a and (not b or not c))`.
   경로는 이어졌는데 그래프 근거나 blocking 해소 중 하나가 빈 경우다.
   이때 `gate_ambiguous`를 기록하고 **E1으로 확정한다. 모델을 호출하지 않는다.**
+  `p3`가 `p2`를 포함하므로 반박 실패 판정이 있어도 이 Finding은 E3가 안 된다 — 그 포함이
+  없던 2026-09-23 전에는 이 표시가 E3와 함께 찍힐 수 있었다. 예외는 `p4`(E4)뿐이다.
   (architecture.md §3 6단계의 "애매한 경우에만 모델 호출"은 v1에서 열지 않는다 —
   판정 경로에 모델이 끼면 결정론이 깨지고 제거율이 조건마다 달라진다.)
 """
@@ -139,11 +145,12 @@ def evaluate(
     graph_ok = any(ev.kind is EvidenceKind.GRAPH for ev in usable)
     unblocked = not any(missing.blocking for missing in missings)
     upheld = any(normalize(decision) is Verdict.UPHOLD for decision in decisions)
+    p2 = path_ok and graph_ok and unblocked
 
     predicates = {
         "p1": static_ok or location_ok,
-        "p2": path_ok and graph_ok and unblocked,
-        "p3": upheld and finding.repro_spec is not None and path_ok,
+        "p2": p2,
+        "p3": p2 and upheld and finding.repro_spec is not None,
         "p4": any(ev.kind in _RUNTIME_KINDS for ev in usable),
         "static_ok": static_ok,
         "location_ok": location_ok,
