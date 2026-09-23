@@ -822,7 +822,10 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
     assert 'm.filename == "main.c"' in query
     assert 'm.filename == "other.cpp"' in query
     assert "m.lineNumber.getOrElse(-1) == 1" in query
-    assert ".take(" not in query
+    # max_flows=None means the FLOW enumeration is not truncated. The sink set is capped
+    # (writers/operators/FLOWS_SINK_CAP, #219) regardless, so a bare `.take(` no longer
+    # distinguishes the two -- pin the flow-truncation site itself.
+    assert "observed.take" not in query
     context = queries.context_query([("main.c", 1)], "/work/repo")
     assert '.stripPrefix("/work/repo/").stripPrefix("./")' in context
     assert "replace('\\\\', '/')" in context
@@ -988,7 +991,22 @@ def test_queries_guard_against_sinks_whose_method_is_null():
     # ⚠ **위치까지 문다.** #202 의 NPE 는 **정렬**에서 났으므로(`sortBy(… n.method.fullName)`)
     # 필터를 `sortBy` **뒤로** 옮기면 결함이 그대로 돌아오는데, 존재만 무는 판은 초록이었다
     # (4라운드 실측). 아래는 `cpg.call.argument` 직후 → `.l.distinct.sortBy` 직전을 통째로 박는다.
-    assert "cpg.call.argument.filter(n => Option(n.method).nonEmpty).l.distinct.sortBy" in flows
+    assert ".filter(n => Option(n.method).nonEmpty).distinct.sortBy" in flows
+
+
+def test_flows_query_targets_memory_write_sinks_not_all_arguments():
+    """#219: flows targets writer/operator sink calls, not every call argument in the repo.
+
+    `cpg.call.argument` grows with the whole CPG, so the per-candidate dataflow to all of it
+    exceeds the deadline on large CPGs and no slice is emitted. Restricting sinks to the
+    dominant memory-write types keeps it bounded; the argument set is capped again after.
+    """
+    flows = queries.flows_query([candidate()["scope"]], 3)
+
+    assert "cpg.call.argument.filter" not in flows  # no longer sinks the whole repo
+    assert 'cpg.call.name("(' in flows  # writer sink calls
+    assert "<operator>.indirectIndexAccess" in flows  # index-write operators
+    assert f".take({queries.FLOWS_SINK_CAP})" in flows  # sink universe is bounded
 
 
 def test_flows_query_batches_by_enclosing_method():
