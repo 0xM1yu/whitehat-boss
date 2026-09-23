@@ -23,6 +23,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TextIO, get_args
 
+from src.adapters.container_tools import make_payload_reader
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
 from src.bench import (
@@ -437,6 +438,9 @@ def execute(
         # Retriever와 **같은 함수**를 쓴다. 두 곳이 다르게 읽으면 캡슐의 토큰 수와
         # 실제 프롬프트가 어긋난다.
         read_source=lambda target: read_symbol_source(spec.target, target),
+        # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
+        # artifacts_root와 같은 루트). Critic이 근거 본문을 받는 배선(#237 HIGH-1).
+        read_payload=make_payload_reader(run_dir.parent),
         trace=trace,
         run_dir=run_dir,
         cache_hook=hook,
