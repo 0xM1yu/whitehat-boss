@@ -79,15 +79,28 @@ agent:
 ### 2.1 Scout / Triage
 
 - 목적: 많은 후보를 저비용으로 거른다. **최종 취약점 판정을 하지 않는다.**
-- 입력: 경량 Context Capsule(함수 시그니처, 위험 함수 호출, diff 요약, 정적분석 신호 헤드라인)
-- 출력: `Candidate[]`
+- 입력: 경량 Context Capsule(함수 시그니처, 위험 함수 호출, diff 요약, 정적분석 신호 헤드라인)과 대상 코드.
+  ⚠ **2026-09-24 — [ADR 0012(제안)](decisions/0012-harness-canon-v2.md) 결정 1: 대상 코드가 Joern
+  슬라이스가 된다** — 슬라이스 1개가 후보 1개이고, v3 프롬프트가 요구하는 모양(줄번호 gutter ·
+  `/* ===== path ===== */` 배너 · `FACTS.slice_criterion` — `prompts/scout_*/v3/prefix.md`)으로 간다.
+  **지금 코드는 아니다** — `nodes/scout.py`가 `ctx.read_source()`로 대상 심볼 본문(줄번호·배너 없음,
+  `read_symbol_source()`)을 `{{SOURCE}}`에 싣는다. 풀 프로필의 v3 프롬프트는 이미 슬라이스를 전제하므로 그
+  둘이 지금 어긋난다([D82](open-questions/D/D82.md)). 구현은 Phase 3이다.
+- 출력: `Candidate[]`. v3는 판정(`candidate`)과 근거(`analysis_summary`)를 한 호출에서 내는 `ScoutResponse`
+  (`src/schemas/scout_response.py`)이고 하네스는 `.candidate`만 흘린다. ⚠ **ADR 0012(제안) 결정 2 —
+  `reason_codes[0]`이 `triage_need_evidence`이면 하네스가 `requested_context`의 target을 심볼 인덱스에서
+  찾아 같은 세션 후속 턴으로 준다(최대 3홉 — 다른 좌석이 review를 냈으면 돌지 않는다, 결정 2 「좌석 집계」).**
+  지금은 그 루프가 0건이라 `triage_need_evidence`(0.30)도
+  `triage_reject`(0.10)처럼 `scout_threshold` 미만으로 `queued`된다. 구현은 Phase 5다.
 - 프롬프트 규약: thinking 최소화, 출력은 항목당 3줄 이내, 자유 서술 금지
 - 실패 모드: 위험 함수 존재만으로 높은 점수를 주는 편향 → benign 샘플로 반드시 교정 측정([evaluation.md](evaluation.md))
 
 ### 2.2 Primary Auditor
 
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
-- 입력: 확장 Context Capsule + `Candidate`
+- 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 그 표현을 슬라이스로 바꿀지는
+  [ADR 0012(제안)](decisions/0012-harness-canon-v2.md) 결정 1-b가 **열어 둔다** — 기본값은 원본 소스이고 Auditor
+  v3 프롬프트가 그것을 전제한다(`prompts/auditor/v3/body.md`의 `representation: original source code`).
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - 분석 축: source→sink 경로, memory lifetime/ownership, boundary check, 정수 연산, config·환경 조건 영향
 - 규칙: 코드에서 확인 불가한 사실은 주장하지 말고 `MissingEvidence`로 요청한다. "확인 불가"가 유효한 출력이다.
@@ -95,7 +108,7 @@ agent:
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 요약까지 싣는다 — #237/#247).
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 요약까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다** — 11 프로필의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
 - 출력: `Decision`
 - **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
 - **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
@@ -311,7 +324,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 | # | 제안 | 근거 |
 | --- | --- | --- |
 | P1 | 모든 구조체에 `run_id` 추가 | 위 예시에서 `run_id`를 가진 것은 Candidate뿐이었다. Evidence Store가 run 단위 수명이고([knowledge-base.md](knowledge-base.md) §1) 같은 조건을 seed만 바꿔 3회 반복하므로([evaluation.md](evaluation.md) §2.3), run 소속이 없으면 반복 실행 결과가 한 저장소에서 섞인다 |
-| P2 | `Artifact` 스키마 신설 | [architecture.md](architecture.md) §3의 0단계 출력이 `Artifact[]`인데 이 절에 스키마가 없었다. ~~펌웨어가 1급 입력이므로(D9)~~ → **1차는 C/C++ 소스이고 바이너리·펌웨어는 2차다**([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5 · D9 닫힘). 추출 원본을 가리키는 `parent_id`는 그 2차 경로용으로 **남긴다** — 지금 세팅하는 코드는 없다([STATUS.md](../STATUS.md) §5) |
+| P2 | `Artifact` 스키마 신설 | [architecture.md](architecture.md) §3의 0단계 출력이 `Artifact[]`인데 이 절에 스키마가 없었다. ~~펌웨어가 1급 입력이므로(D9)~~ → **1차는 C/C++ 소스이고 바이너리·펌웨어는 2차다**([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5 · D9 닫힘). 추출 원본을 가리키는 `parent_id`는 그 2차 경로용으로 **남긴다** — 지금 세팅하는 코드는 없다(`git grep parent_id -- src`가 `src/schemas/artifact.py`의 선언과 `nodes/preprocess.py`의 주석뿐이다 — 2026-09-24. [STATUS.md](../STATUS.md)는 그날부터 보관본이다 — ADR 0012(제안) 결정 5) |
 | P3 | `Evidence`에 `ok`·`exit_code`·`error` 추가 | [engineering-guide.md](engineering-guide.md) §8.3의 "도구 실패도 Evidence로 기록"과 §6 trace 필수 항목("도구 실행 명령·종료 코드")을 담을 자리가 없었다 |
 | P4 | `Finding`에 `repro_spec` 추가 | [architecture.md](architecture.md) §4의 E3 조건이 "재현 명세 존재"이고 §3 8단계 입력이 "`Finding` + 재현 명세"인데 그 구조체가 없었다. 없으면 E3→E4 판정이 사람 판단이 된다 |
 | P5 | `RunRecord`에 `source_hash`·`thresholds`·`sampling`·`kb_snapshot`·`finished_at`·`stopped_after` 추가 | 앞 다섯은 [engineering-guide.md](engineering-guide.md) §5 재현성 필수 항목인데 예시에 없었다. 뒤 둘은 [evaluation.md](evaluation.md) §6의 "기록이 불완전한 run은 비교표에 넣지 않는다"를 판정할 근거다 |
