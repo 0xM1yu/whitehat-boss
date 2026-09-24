@@ -81,6 +81,10 @@ class ModelGatewayError(RuntimeError):
     같은 예외에 뭉쳐 있었고, 그래서 러너가 가릴 수단이 없었다. 문자열을 파싱해 가르지
     않도록 상태 코드를 필드로 든다.
 
+    ⚠ **타임아웃은 서버가 살아 있어도 난다** — 생성이 느린 모델이 출력을 다 내기 전에 어댑터의
+    요청 타임아웃에 닿는 경우다(2026-09-24 ATOM 스모크에서 실제로 났다). 그 경우도 `status`가
+    `None`이라 러너가 서버 사망으로 읽고 run을 멈춘다 — 이슈 #261.
+
     `detail`은 응답 본문에서 잘라낸 서버 측 사유다. vLLM은 컨텍스트 초과를 그 본문에만
     담는다(`maximum context length is N, however you requested M`) — 예전에는 `exc.read()`를
     부르지 않아 **가장 알고 싶은 M이 버려졌다**.

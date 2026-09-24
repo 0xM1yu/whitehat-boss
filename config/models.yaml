@@ -650,6 +650,15 @@ models:
   # 미실측(placeholder)이고 프롬프트 v3는 아직 디스크에 없다(scout v3 신설 중, 이슈 #233).
   # context_limit·quantization·license·arch는 hf config.json/카드에서 실측(2026-09-20).
   # 프롬프트 이식 + 실험 서빙 스냅샷이 오면 §1 로스터·프로필로 승격한다.
+  # ⚠ **2026-09-24 — 위 문단의 「배선 전」·「v3는 아직 디스크에 없다」·「…오면 승격한다」는 main에 들어온
+  #   순간부터 틀렸다.** 이 문단은 #240(`ce6a4c8`, 2026-09-22 17:27 KST)이 넣었다. 그보다 먼저 #239(15:44)가
+  #   scout v3를, #237(16:18)이 auditor v3를 `prompts/*/v3`에 넣었다. 그리고 #240 자신이 이 셋을
+  #   PROJECT-CONTEXT.md §1과 두 풀 프로필(`local_balanced_pool`·`local_balanced_pool_hybrid`)에 올렸다
+  #   (`git log -L`). `checksum`·source revision·`benchmark`가 자리표시자라는 것은 그대로다.
+  # ⚠ **같은 날 ATOM에서 처음 띄웠다** — `seccoderx-8b`·`qwen3.6-35b-a3b` 항목의 「기동 조건」이 그 인자다.
+  #   `deepseek-r1-distill-qwen-32b`는 안 띄웠다. 원천은
+  #   docs/experiments/harness/2026-09-24-roster-smoke-atom.md 이다. **그 보고서는 PR #260 위에 쌓인 짝 문서 PR이
+  #   들여온다** — 이 파일이 먼저 머지되면 그 경로는 잠시 빈다.
   seccoderx-8b:
     # 확정 로스터 Scout memory·boundary (프롬프트 v3). SecCoderX Reasoning Vulnerability
     # Detection Reward Model — config.json이 Qwen3ForCausalLM/qwen3라 생성형이고 Scout로 JSON을 낸다.
@@ -657,6 +666,42 @@ models:
     # (scout_memory/v3=옛 실험 v14s, scout_boundary/v3=옛 v15s). 버전이 같아 별칭 키가 필요 없다.
     # ⚠ **포트는 8009다** — Critic `gpt-oss-20b`가 8006이라, 풀에서 scout·critic이 동시 상주할 때
     #   같은 포트를 못 쓴다(#234 리뷰 HIGH-2). 골격 등재 때 8006이었던 것을 배선하며 갈랐다.
+    #
+    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0001` — 머지하지 않는 스모크 브랜치, `checksum`이
+    # 0이라 비교표 밖). 원문은 위 머리 문단이 가리키는 보고서 §9다.
+    #
+    #   VLLM_USE_DEEP_GEMM=0 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_HOST_IP=127.0.0.1 \
+    #   NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
+    #   vllm serve SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model \
+    #     --revision 25d7f38146bdf0fad1eac09c586b1993ef3e6ee4 --served-model-name seccoderx-8b \
+    #     --host 127.0.0.1 --port 8009 --max-model-len 16384 --gpu-memory-utilization 0.20 \
+    #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
+    #
+    #   **축약이라 그대로 복붙하면 안 된다** — 원문은 venv의 `vllm`을 절대 경로로 부르고 `setsid nohup`·로그
+    #   리다이렉트·감시자·readiness 확인을 두르며, `--enable-log-requests --enable-log-outputs
+    #   --max-log-len 6000`을 더 준다(아래 `output_token_ids`·속도 수치가 그 로그에서 나왔다).
+    #
+    # - **사고 구간을 먼저 낸다 — parser가 그것을 본문에서 떼어 낸다.** 하네스는 `chat_template_kwargs`를
+    #   안 보내므로(`openai_compat._request_payload`) 사고가 켜진 채 돈다. 응답 21/21의 출력 토큰에
+    #   `<think>`·`</think>`(이 모델 어휘의 id 151667·151668)가 있고 본문은 JSON이다(서버 로그). 21/21이 첫
+    #   시도에 `ScoutResponse` 검증을 통과했다(`finish_reason` 전부 `stop`).
+    #   ⚠ **parser 없이는 안 쟀다.** vLLM 0.27.1은 parser가 없으면 구조화 출력 문법을 첫 토큰부터 건다
+    #   (`entrypoints/openai/chat_completion/serving.py`의 `reasoning_ended = None`) — 그러면 사고 없이 답하게
+    #   된다. 아래 `qwen3.6-35b-a3b` 항목이 그 경우다.
+    # - **사고가 출력의 2/3이다.** `</think>` 위치로 센 사고 길이가 중앙값 869토큰(488~2,220)이고, 합으로
+    #   출력 토큰의 67%다(서버 로그 `output_token_ids`).
+    # - **출력 상한을 다 쓰면 어댑터 타임아웃을 넘는다.** 단일 요청 생성이 **13.3 tok/s**(서버 로그 10초 창
+    #   `Running: 1 reqs`의 중앙값, 237창)라 `output_max` 4,096을 다 쓰면 ≈308 s(계산값, 프리필 제외) —
+    #   `_TIMEOUT_S` 300 s보다 길다. 그 run이 실제로 `scout_boundary` 호출 하나의 300,021 ms 타임아웃으로
+    #   멈췄다(trace `model_call` · 이슈 #261).
+    # - 메모리(서버 로그): 가중치 15.27 GiB(로드 113 s) · 가중치+non-torch 16.05 GiB · util 0.20에서 KV
+    #   7.69 GiB(55,952 tok — 16,384 길이에 3.42×). 기동 명령부터 `/v1/models`가 이 이름을 내기까지 약 135 s
+    #   (기동 스크립트의 5초 간격 확인이 140 s로 적었다 — 한 칸 늦게 센다).
+    #   `mem_gb_ctx8k`는 채우지 않는다 — 그 칸이 뜻하는 양이 아니다(위 `qwen3-reranker-4b` 항목과 같은 사유).
+    # - `--max-model-len 16384`는 그 run의 값이지 `context_limit`(모델 상한)이 아니다. 그 run의 최대 입력이
+    #   10,757토큰이라 4,096을 더해도 안 넘었다.
     endpoint: "http://127.0.0.1:8009/v1"
     context_limit: 40960
     quantization: "bf16"
@@ -708,6 +753,55 @@ models:
     #   추정이 아니라 실값이다(#234 리뷰 MEDIUM-1). 카드 base 71.9GB(≈2B/param)와 일치.
     # ⚠ 문서상 로딩만·GT 품질 미검증. Auditor 프롬프트가 아직 미확정이라 디스크에 있는 v1로 둔다
     #   (auditor/v3는 #237이 신설 중 — 확정되면 그때 올린다).
+    #   ⚠ **2026-09-24 — 「문서상 로딩만」은 지났다.** ATOM에서 실제로 떴다(아래 기동 조건). GT 품질은 여전히
+    #   미검증이다. #237은 2026-09-22에 머지돼 `prompts/auditor/v3`가 디스크에 있고, 이 항목은 아직 v1을 고른다.
+    #
+    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0003` — 머지하지 않는 스모크 브랜치, `checksum`이 0이라
+    # 비교표 밖). 원문은 `seccoderx-8b` 위 머리 문단이 가리키는 보고서 §9다.
+    #
+    #   VLLM_USE_DEEP_GEMM=0 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_HOST_IP=127.0.0.1 \
+    #   NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
+    #   vllm serve Qwen/Qwen3.6-35B-A3B --revision 995ad96eacd98c81ed38be0c5b274b04031597b0 \
+    #     --served-model-name qwen3.6-35b-a3b --host 127.0.0.1 --port 8008 --max-model-len 24576 \
+    #     --gpu-memory-utilization 0.64 --max-num-seqs 2 --enforce-eager \
+    #     --structured-outputs-config.backend xgrammar \
+    #     --structured-outputs-config.disable_any_whitespace true
+    #
+    #   축약이라 그대로 복붙하면 안 된다 — 빠진 것은 `seccoderx-8b` 항목의 같은 문단이 든다.
+    #
+    # - **이 인자로 띄우면 Auditor가 사고 없이 답한다.** 이 모델의 채팅 템플릿은 `enable_thinking`이 false가
+    #   아니면 생성 프롬프트 끝에 `<think>`를 연다. 하네스는 `chat_template_kwargs`를 안 보낸다. 그런데
+    #   parser가 없으면 vLLM이 구조화 출력 문법을 첫 토큰부터 건다(`seccoderx-8b` 항목의 `reasoning_ended =
+    #   None`). 그래서 모델이 사고하지 못하고 곧장 JSON을 낸다. 응답 41건(auditor 37시도 · critic 4)에 이 모델
+    #   어휘의 `<think>`·`</think>`(id 248068·248069)가 0건이고 첫 글자가 전부 `{`다(서버 로그). 그렇게 해서
+    #   auditor 36/36이 `Finding`을 통과했다. ⚠ **사고 없는 Auditor가 판정 품질에 무엇을 하는지는 안 쟀다.**
+    # - **같은 설정(`output_max` 4,096 · `chat_template_kwargs` 없음)에서 `--reasoning-parser deepseek_r1`을
+    #   걸었더니 7/7이 실패했다**(`run_20260924_0002`, 같은 날 먼저 띄운 판).
+    #   - parser가 있으면 문법이 사고가 끝난 뒤에야 걸린다. 그런데 사고가 4,096토큰 안에 끝나지 않았다.
+    #   - 호출마다 `output_tokens`가 8,192(= 2시도 × 상한)다.
+    #   - 실패 사유는 본문 `None` 6건 · 잘린 JSON 1건이다. 시도 단위로는 `None` 12/14 · 잘린 JSON 2/14다
+    #     (trace `error_detail`과 재시도 프롬프트 로그).
+    #   - `deepseek_r1` parser는 `</think>`가 없으면 출력 전부를 사고로 넘긴다(vLLM 0.27.1
+    #     `reasoning/basic_parsers.py`). 그래서 본문이 빈다.
+    #   ⚠ 그 판은 인자 셋이 **한꺼번에** 달랐다 — parser가 있었고 `xgrammar`·`disable_any_whitespace`가 없었다.
+    #   그 판의 서버 로그는 뒤 기동이 같은 파일을 덮어써 없다. **다른 두 길은 안 쟀다** — `enable_thinking:
+    #   false`를 보내 템플릿이 사고를 닫게 하는 판(하네스가 `chat_template_kwargs`를 보내야 한다)과, parser를
+    #   걸고 Auditor 상한을 올려 사고를 쓰게 하는 판이다.
+    # - **`disable_any_whitespace true`를 건다.** 옛 Auditor(`qwen3-coder-30b-a3b`)에서 필수로 잰 인자다(위 그
+    #   항목, 이슈 #172). parser 없이 이 인자만 빼 보지는 않았다. 재시도 1건은 공백이 아니라 **숫자 폭주**였다 —
+    #   `repro_spec.steps`의 명령 인자 안에 `9`가 3,808자 이어져 첫 시도가 4,096에서 잘렸다
+    #   (`finish_reason: length`). 두 번째 시도는 382토큰으로 끝났다(서버 로그). 이 인자는 그 폭주를 못 막는다.
+    # - 속도: 단일 요청 생성 26.2 tok/s다(서버 로그 10초 창 중앙값, 81창). 창의 절반에 프리필이 섞여 있고,
+    #   순수 디코드 42창만 보면 26.6이다. 그래서 `output_max` 4,096은 ≈156 s다(계산값). auditor 호출 wall은
+    #   중앙값 16.2 s · 최대 171.0 s였다(trace `model_call`).
+    # - 메모리(서버 로그): 가중치 65.53 GiB(로드 234 s) · 가중치+non-torch 68.6 GiB · util 0.64에서 KV 6.25 GiB
+    #   (282,168 tok — 24,576 길이에 11.48×). 기동 명령부터 `/v1/models`가 이 이름을 내기까지 약 315 s
+    #   (기동 스크립트 표기 320 s — 한 칸 늦게 센다).
+    #   떠 있는 동안 장비 `MemAvailable` 최저값이 36.0 GiB였다(감시자 로그) — **Scout 풀(`seccoderx-8b` +
+    #   Qwen3-14B)과 함께 올리지 못한다**. 그 풀만 올린 동안의 최저값이 49.1 GiB였고, 거기에 이 모델의
+    #   util 몫 76.6 GiB가 더해지면 장비를 넘는다(계산값).
     endpoint: "http://127.0.0.1:8008/v1"
     context_limit: 262144
     quantization: "bf16"
