@@ -146,7 +146,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > **⚠ 위 그림의 `new evidence` 재진입은 §3의 ⚠ 대로 배선이 없다** (2026-08-31, D25).
 > `queued`로 남기는 쪽은 동작하지만 새 Evidence로 되돌리는 쪽은 `DecisionPoint.REQUEUE`를
 > 내는 코드가 없고, 재평가 횟수를 세던 카운터도 사라졌다(D10). 설계이지 현황이 아니다.
-> **2026-09-24 — 이 재진입과 위 문단의 `requeue_max`는 폐기됐다**(2026-09-25 승인 — §3 Queue 규칙의 ⚠ —
+> **2026-09-24 — 이 재진입과 위 문단의 `requeue_max`는 폐기가 결정됐다**(2026-09-25 승인 — 코드(`config/budgets.yaml`의 `requeue_max` · `policy._requeue`)는 아직 남아 있고 지우는 것은 별도 PR이다 — §3 Queue 규칙의 ⚠ —
 > ADR 0012 결정 6).
 
 > 전이 표 전체(트리거·단계·사유 코드)는 `src/orchestrator/state_machine.py`의 모듈
