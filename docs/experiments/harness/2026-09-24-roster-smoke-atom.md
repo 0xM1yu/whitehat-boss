@@ -306,8 +306,12 @@ Auditor `qwen3.6-35b-a3b`를 실모델로 부른다. Scout는 `fake_v2`다.
 
 ### 해석
 - **이 인자로는 Auditor가 선다 — 사고 없이.** 36/36이 통과했고, 재시도 1건은 숫자 폭주였다. 다른 두 길은 안 쟀다.
-  하나는 `enable_thinking: false`를 보내 템플릿이 사고를 닫게 하는 판이다. 하네스가 `chat_template_kwargs`를 보내야
-  한다. 다른 하나는 parser를 걸고 Auditor 상한을 올려 사고를 쓰게 하는 판이다.
+  - 사고를 끄는 판 — `enable_thinking: false`로 템플릿이 사고를 닫는다. 서버 인자
+    `--default-chat-template-kwargs '{"enable_thinking": false}'`로 하네스 변경 없이 된다(vLLM 0.27.1).
+  - 사고를 쓰되 길이를 묶는 판 — parser를 걸고 요청에 `thinking_token_budget`(토큰 수)을 준다. 그 수에 닿으면 vLLM이
+    `</think>`를 강제로 넣는다. 하네스는 이 필드를 아직 안 보낸다.
+  - **등급(low·medium·high)으로는 못 고른다.** 이 모델의 템플릿이 읽는 사고 변수는 `enable_thinking` 하나다. vLLM의
+    `reasoning_effort`는 여기서 켜기/끄기로만 번역된다(`"none"`이면 끄고 나머지는 전부 켠다).
 - **E2 병목이 바뀌었다.**
   - 옛 로스터(Auditor `qwen3-coder-30b-a3b`)에서는 빈 `evidence_refs`·`path`가 막았다([D67](../../open-questions/D/D67.md)
     — 150건 중 `path` 150 · `evidence_refs` 148이 빔).
@@ -337,7 +341,7 @@ Auditor `qwen3.6-35b-a3b`를 실모델로 부른다. Scout는 `fake_v2`다.
 | --- | --- | --- |
 | `deepseek-r1-distill-qwen-32b`(정본 injection) | 사용자 지시로 잠정 후보 Qwen3-14B를 대신 띄웠다 | 같은 `launch.sh`로 8007에 띄운다 |
 | `checksum` | 셋 다 다운로드만 했다 — `tools/model_checksum.py`를 안 돌렸다 | 그 도구를 돌려 registry에 채운다. 그 전의 run은 전부 비교표 밖이다 |
-| Auditor 사고 모드 대조 | parser 판은 사고가 상한을 넘었고, parser 없는 판은 문법이 사고를 막았다 | `enable_thinking: false`로 템플릿이 사고를 닫는 판과, parser + Auditor 상한 인상으로 사고를 쓰는 판 |
+| Auditor 사고 모드 대조 | parser 판은 사고가 상한을 넘었고, parser 없는 판은 문법이 사고를 막았다 | `--default-chat-template-kwargs '{"enable_thinking": false}'`로 사고를 끈 판과, parser + `thinking_token_budget`으로 사고 길이를 묶은 판 |
 | parser 없는 `seccoderx-8b`·Qwen3-14B | 한 판만 띄웠다 | 같은 대상으로 parser를 빼고 한 번. 사고가 막히면 속도·판정이 둘 다 바뀔 수 있다 |
 | `disable_any_whitespace` 없는 `qwen3.6-35b-a3b` | 필수로 적힌 조건을 그대로 따랐다 — parser 판은 셋이 함께 달라 대조가 안 된다 | parser 없이 이 인자만 빼고 한 판 |
 | eager를 끈 속도 | 전부 `--enforce-eager`였다 | CUDA graph를 켜고 같은 요청으로 잰다 |
@@ -362,7 +366,7 @@ Auditor `qwen3.6-35b-a3b`를 실모델로 부른다. Scout는 `fake_v2`다.
 | 1 | 호출 하나의 타임아웃이 run을 멈춘다 | 이슈 #261(선택지 다섯) |
 | 1 | 해제 경로 없는 blocking이 새 Auditor의 E2 병목 둘 중 하나다 | [D65](../../open-questions/D/D65.md) — 이 보고서 날짜의 실측 절 |
 | 1 | Scout 풀이 기본 `gpu_seconds` 예산을 대상 ≈23개에 다 쓴다 | [D24](../../open-questions/D/D24.md) — 이 보고서 날짜의 절. 40샘플 run의 예산을 정하기 전에 본다 |
-| 1 | Auditor가 사고 없이 답한다 — 사고를 쓸지 정해야 한다 | 미등재. 길은 셋이다: 지금 그대로(문법이 사고를 막음) · `enable_thinking: false`(템플릿이 사고를 닫음) · parser + Auditor 상한 인상(사고를 씀). §5 「Auditor 사고 모드 대조」 |
+| 1 | Auditor가 사고 없이 답한다 — 사고를 쓸지 정해야 한다 | 미등재. 길은 셋이다: 지금 그대로(문법이 사고를 막음) · 서버 인자로 `enable_thinking: false`(템플릿이 사고를 닫음, 하네스 변경 없음) · parser + `thinking_token_budget`(사고를 쓰되 길이를 묶음, 하네스가 그 필드를 보내야 함). §5 「Auditor 사고 모드 대조」 |
 | 2 | Scout 계약 위반이 조용히 저장·승격된다 | [D82](../../open-questions/D/D82.md)(신호·점수 — 닫는 조건 ⑤ · `requested_context`) · [D83](../../open-questions/D/D83.md)(`location`) |
 | 2 | 기동 조건을 registry에 적는다 | `config/models.yaml`의 `seccoderx-8b`·`qwen3.6-35b-a3b` 「기동 조건」과 `config/budgets.yaml`의 `output_max` 주석 — 이 보고서와 짝인 설정 PR |
 | 3 | Qwen3-14B 키 편입 | ADR 0012(제안) 승인 뒤 — 지금은 스모크 브랜치에만 있다 |
