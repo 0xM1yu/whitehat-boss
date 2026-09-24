@@ -237,21 +237,23 @@ def test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retr
     assert variant.production is False
 
 
-POOL_HYBRID_PROFILE = "local_balanced_pool_hybrid"
+POOL_HYBRID_PROFILE = "harness_pool_hybrid"
 
 
-def test_the_pool_hybrid_profile_differs_from_local_balanced_pool_only_in_the_retriever() -> None:
-    """풀 검색 프로필도 대조군(`local_balanced_pool`)과의 차이가 `retriever` **하나**다.
+def test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever() -> None:
+    """풀 검색 프로필도 대조군(`harness_pool`)과의 차이가 `retriever` **하나**다.
 
     `local_balanced_hybrid`↔`local_balanced`와 같은 성질이다 — 이 프로필의 쓸모가 검색
     경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께 움직이면 풀 run의 차이가
     무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기 쉬워 기계로 고정한다.
     """
-    base = load_config("local_balanced_pool").profile
+    base = load_config("harness_pool").profile
     variant = load_config(POOL_HYBRID_PROFILE).profile
 
     assert variant.roles == base.roles
     assert variant.budget == base.budget
+    # 실행 단위도 같아야 한다 — 한쪽만 `per_stage`면 두 run이 루프 순서까지 갈린다.
+    assert variant.execution == base.execution
     assert variant.adapters.retriever == "hybrid"
     assert base.adapters.retriever == "fake"
     assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
@@ -378,8 +380,12 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     `local_balanced_pool`도 통과하는데, 그것은 이 검사가 잡을 뻔한 간극을 v2 별칭이
     메우기 때문이다** — 풀 세 역할의 프롬프트 디렉터리는 `v2`만 있고(D54), base 셋은 v1이라
     풀을 base로 배선했으면 여기서 걸렸을 것을, PR #190이 `prompt_template_version: v2` 별칭
-    셋을 등재해 그 프로필이 v2를 가리키게 했다. 그래서 이 검사는 **별칭이 실제로 v2를 가리키는지**를
-    지키는 자리로 선다 — 별칭 하나가 base로 되돌아가면 여기서 걸린다.
+    셋을 등재해 그 프로필이 v2를 가리키게 했다. 그래서 이 검사는 **별칭이 실제로 v2를
+    가리키는지**를 지키는 자리로 선다 — 별칭 하나가 base로 되돌아가면 여기서 걸린다.
+
+    ⚠ **2026-09-24 — 위 문단은 PR #190 때의 서술이다.** 2026-09-21 교체로 그 프로필(지금 이름
+    `harness_pool`)의 Scout 세 키가 v3를 가리키고 별칭 셋은 배선이 없다. 지금 이 검사가 풀에서
+    지키는 것은 **v3 디렉터리의 실재**다.
     """
     config = load_config(profile)
 
@@ -1243,18 +1249,32 @@ def test_b1_puts_one_model_in_every_role_and_still_loads() -> None:
 # --- 실행 정책 (ADR 0009) ------------------------------------------------------
 
 
+# 단계 단위로 도는 프로필 — 로스터 canonical 쌍(2026-09-24 @danielcho02).
+# 교대(`swap`)는 배선 전이라 어디에도 없다.
+PER_STAGE_PROFILES = frozenset({"harness_pool", "harness_pool_hybrid"})
+
+
 @pytest.mark.parametrize("profile", ALL_PROFILES)
-def test_no_profile_declares_execution_yet(profile: str) -> None:
-    """스키마만 열고 **값은 아직 안 박는다** (ADR 0009 결과 1).
+def test_only_the_canonical_pool_runs_per_stage_and_nothing_declares_swap(profile: str) -> None:
+    """실행 단위를 선언한 것은 canonical 풀 쌍뿐이고, **교대 값은 아직 아무 프로필도 안 박는다.**
 
-    기본이 `per_candidate`·`swap: None`이라 선언하지 않은 프로필은 동작이 안 바뀐다 —
-    그것이 이 ADR을 "되돌리기 싼 결정"으로 만드는 성질 전부다. 프로필 하나라도 값을
-    선언하는 순간 그 run은 지금까지의 run과 다른 것이 되고, 교대 예산이 실측되기 전에
-    (`swap.md` §9) 그런 값이 들어오면 근거 없는 수가 config에 굳는다.
+    2026-09-24 전에는 `execution`을 선언한 프로필이 0이었다(ADR 0009 결과 1 — 스키마만 열고 값은
+    안 박는다). 그날 @danielcho02가 로스터 canonical 배선(`harness_pool`·`_hybrid`)을 단계 단위로 정했다 —
+    ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
+    모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
+
+    **교대(`swap`)는 여전히 안 적는다** — `level`·`settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
+    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 배선(ADR 0009 결과 3)도 아직 없다.
+    나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
     """
-    profile_entry = load_config(profile).profile
+    execution = load_config(profile).profile.execution
 
-    assert profile_entry.execution is None
+    if profile in PER_STAGE_PROFILES:
+        assert execution is not None
+        assert execution.mode == "per_stage"
+        assert execution.swap is None
+    else:
+        assert execution is None
 
 
 def test_execution_defaults_preserve_todays_behaviour() -> None:

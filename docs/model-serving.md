@@ -280,7 +280,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > | --- | --- |
 > | **8001** | `qwen3-8b` ← `local_balanced`·`_hybrid` · `qwen3-4b` ← `single_gpu_12g` |
 > | **8002** | `qwen3-coder-30b-a3b` ← `b1_single`·`local_balanced`·`_hybrid` |
-> | **8006** | `gpt-oss-20b` ← `local_balanced_pool`·`_hybrid`(critic) |
+> | **8006** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8009** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
 >
 > **이 이름들은 프로필 사이에서 갈린다** — 예로 8001은 `local_balanced`로 돌리면 `qwen3-8b`만,
