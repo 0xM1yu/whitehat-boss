@@ -262,6 +262,9 @@ Auditor `qwen3.6-35b-a3b`를 실모델로 부른다. Scout는 `fake_v2`다.
 | auditor · `qwen3.6-35b-a3b` | 36 | 36 | 22.2 / 16.2 / 171.0 s | 2,126.5 / 6,389 | 402.5 / 4,478 | 1 |
 | critic · `qwen3.6-35b-a3b`(스모크 한정) | 4 | 4 | 4.8 / 4.7 / 5.0 s | 738.5 / 854 | 118 / 126 | 0 |
 
+- **장부** — 마지막 `budget` 이벤트(`seq` 2053 · 7단계)는 입력 200,020 · 출력 23,951토큰 · `gpu_seconds` 817
+  (`gpu_ms` 817,456)이다. 실모델 호출의 `gpu_ms` 합과 같다 — auditor 36건 798,455 ms + critic 4건 19,001 ms(둘 다 위
+  `qwen3.6-35b-a3b` 서버, trace `model_call`). Scout 셋은 `fake_v2`라 `gpu_ms`가 없어 청구되지 않는다.
 - **Auditor가 사고 없이 답했다.** parser가 없으면 vLLM이 구조화 출력 문법을 첫 토큰부터 건다(vLLM 0.27.1
   `entrypoints/openai/chat_completion/serving.py`의 `reasoning_ended = None`). 그래서 템플릿이 연 `<think>` 뒤에서도
   모델이 곧장 JSON을 냈다. 응답 41건(auditor 37시도 · critic 4)에 248068·248069가 0건이고, 첫 글자가 전부 `{`다
