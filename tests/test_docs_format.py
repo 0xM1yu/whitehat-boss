@@ -352,8 +352,9 @@ def test_config_comments_point_at_a_real_doc() -> None:
     assert _CONFIG_DOC_PATH.search(
         "#   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의"
     )
-    # 음성 핀 — 외부 문서 URL의 `/docs/` 경로 조각. config 주석이 외부 URL을 인용하는 꼴은 실제로 온다
-    # (같은 스택의 #266이 `config/models.yaml` `qwen3-14b` 항목에 `GET https://huggingface.co/api/…`를 들인다).
+    # 음성 핀 — 외부 문서 URL의 `/docs/` 경로 조각. config 주석이 외부 URL을
+    # 인용하는 꼴은 실제로 온다 — 같은 스택의 #266이 `config/models.yaml`
+    # `qwen3-14b` 항목에 `GET https://huggingface.co/api/…`를 들인다.
     assert not _CONFIG_DOC_PATH.search(
         "    # https://github.com/vllm-project/vllm/blob/main/docs/usage/faq.md"
     )
