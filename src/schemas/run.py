@@ -8,7 +8,7 @@ evaluation.md §6: "기록이 불완전한 run의 결과는 비교표에 넣지 
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from src.schemas.common import (
     HarnessModel,
@@ -282,6 +282,10 @@ class RunRecord(UtcModel):
     # `VllmEmbeddingClient`·`VllmRerankerClient`를 타고 이 파라미터를 안 보내므로, 그 역할의
     # "effort"를 적으면 거짓 정보다(`config.prompt_versions` docstring의 그 판단).
     model_reasoning_effort: dict[str, NonEmptyStr] | None = None
+    # 역할 → registry가 선언해 요청에 **얹은** 키(`ModelEntry.request_params()` — 샘플링 덮기·
+    # `chat_template_kwargs`·`thinking_token_budget`). 규칙은 바로 위와 같다: 선언한 역할만,
+    # `None`은 이 필드 이전의 manifest. `sampling`(프로필 공통)을 덮은 값도 여기 남는다.
+    model_request_params: dict[str, dict[str, JsonValue]] | None = None
     # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). 사유와 한계는 `CompileFlags`에
     # 있다 — 요점은 **사후 감사로는 잡히고 비교표로는 안 잡히던** 축을 여는 것이다.
     #

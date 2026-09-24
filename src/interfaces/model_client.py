@@ -82,8 +82,10 @@ class ModelGatewayError(RuntimeError):
     않도록 상태 코드를 필드로 든다.
 
     ⚠ **타임아웃은 서버가 살아 있어도 난다** — 생성이 느린 모델이 출력을 다 내기 전에 어댑터의
-    요청 타임아웃에 닿는 경우다(2026-09-24 ATOM 스모크에서 실제로 났다). 그 경우도 `status`가
-    `None`이라 러너가 서버 사망으로 읽고 run을 멈춘다 — 이슈 #261.
+    요청 타임아웃에 닿는 경우다(2026-09-24 ATOM 스모크에서 실제로 났다, 이슈 #261). `status`만
+    보면 서버 사망과 같은 모양이라 **`generating`이 그 둘을 가른다** — 어댑터가 요청 전·후
+    `/metrics` 생성 카운터를 대조해 채운다. `True`(그동안 토큰이 나왔다 = 느림)면 러너가 그
+    요청 하나만 버리고, `False`(멈춤)·`None`(못 쟀다·타임아웃이 아니다)이면 지금처럼 run을 멈춘다.
 
     `detail`은 응답 본문에서 잘라낸 서버 측 사유다. vLLM은 컨텍스트 초과를 그 본문에만
     담는다(`maximum context length is N, however you requested M`) — 예전에는 `exc.read()`를
@@ -101,10 +103,12 @@ class ModelGatewayError(RuntimeError):
         gpu_ms_source: "GpuMsSource | None" = None,
         attempts: int = 1,
         retry_bodies: tuple[str, ...] = (),
+        generating: bool | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self.generating = generating
         # 실패해도 이미 쓴 토큰·GPU는 실재한다 — 상위(`context.call_model`)가 장부에
         # 청구하도록 실어 올린다(#82). 게이트웨이가 요청 전에 거절하면(400 컨텍스트 초과)
         # 이 시도는 토큰을 안 만들지만 앞선 재시도의 소비가 `usage`에 남는다. `attempts`는
