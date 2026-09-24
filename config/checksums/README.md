@@ -31,11 +31,11 @@ registry의 `checksum`은 **이 파일 전체의 sha256**이다. 값 하나만 �
 넣는다(`src/config.py`) — 4.9 GB 스냅샷이 없는 CI에서는 어차피 검증할 대상이 없다.
 그래서 이 디렉터리는 **런타임 계약이 아니라 provenance 기록**이다.
 
-`qwen3-4b`가 그 관계의 첫 실례다.
+첫 실례는 `qwen3-4b`였다(2026-09-24 로스터 밖 정리로 키와 manifest를 지웠다). 지금 남은 예:
 
 ```
-$ sha256sum config/checksums/qwen3-4b.txt
-ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72
-$ grep 'checksum:' -A0 config/models.yaml   # qwen3-4b
-checksum: "sha256:ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72"
+$ sha256sum config/checksums/gpt-oss-20b.txt
+b57ed507ba1b9331067add44a7ec7ed6c9c91b8daa0b1a0bf187d0c5be260612
+$ grep 'checksum:' -A0 config/models.yaml   # gpt-oss-20b
+checksum: "sha256:b57ed507ba1b9331067add44a7ec7ed6c9c91b8daa0b1a0bf187d0c5be260612"
 ```

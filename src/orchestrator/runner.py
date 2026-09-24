@@ -689,7 +689,7 @@ def run_pipeline(
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
-    # 한다 — `single_gpu_12g`처럼 scout만 실서빙인 프로필에서 Fake 네 역할이 걸리면
+    # 한다 — scout만 실서빙인 프로필(옛 `single_gpu_12g`)에서 Fake 네 역할이 걸리면
     # `dev_*` 프로필이 매 run 같은 줄을 뱉고 진짜 문제가 묻힌다(checksum 검사와 같은 논법).
     served = config.served_models()
     gpu_warning = unmeasured_gpu_warning(
@@ -1757,8 +1757,8 @@ def incomplete_fields(
         # 프로필의 모든 run이 매번 이 줄을 뱉고, 그러면 진짜 문제가 묻힌다 — `tool_runner`를
         # 이 목록에서 뺀 것과 같은 논법이다(`schemas/run.py`의 그 필드 주석).
         #
-        # 판정이 **역할별**인 것도 의도다. `single_gpu_12g`처럼 한 프로필 안에서 Fake와
-        # 실서빙이 섞이므로, 프로필 단위로 켜고 끄면 그 프로필의 실서빙 역할을 놓친다.
+        # 판정이 **역할별**인 것도 의도다. 한 프로필 안에서 Fake와 실서빙이 섞일 수 있으므로
+        # (옛 `single_gpu_12g`), 프로필 단위로 켜고 끄면 그 프로필의 실서빙 역할을 놓친다.
         placeholder = sorted(
             f"{role}({key})"
             for role, key in served_models.items()

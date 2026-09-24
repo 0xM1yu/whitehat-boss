@@ -44,7 +44,7 @@ import difflib
 import re
 import subprocess
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import pytest
 import yaml
@@ -334,6 +334,41 @@ def test_internal_links_point_at_a_real_file(path: Path) -> None:
     assert broken == [], "\n".join(broken)
 
 
+# `config/*.yaml` 주석이 가리키는 저장소 문서 — `docs/`로 시작하는 `.md`. 앞 글자가 경로 글자면
+# 다른 경로(외부 URL 포함)의 가운데라 저장소 루트의 `docs/`가 아니다.
+_CONFIG_DOC_PATH = re.compile(r"(?<![\w/.-])(docs/[\w./-]+\.md)")
+
+
+def test_config_comments_point_at_a_real_doc() -> None:
+    """`config/*.yaml` 주석이 든 `docs/…md` 경로는 추적되는 파일이어야 한다.
+
+    **사고 —** PR #262(base main)가 `config/models.yaml` 머리 문단에서 ATOM 스모크 보고서를
+    가리켰는데 그 보고서는 짝 PR #263만 들여왔다. 머지 순서를 강제하는 장치가 없어 config가 없는
+    파일을 가리킨 채 main에 들어갈 수 있었다(sumin 리뷰 MEDIUM, 2026-09-24). 위 링크 검사는
+    마크다운만 읽어 YAML 주석을 못 본다. 추적 목록(`git ls-files`)과 대조하므로 긴 워크트리 경로의
+    `Path.exists()` 오판에는 안 걸린다.
+    """
+    # 양성 핀 — 실형태: `config/models.yaml`의 gpt-oss 기동 블록 2026-09-20 문단 원천 줄.
+    assert _CONFIG_DOC_PATH.search(
+        "#   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의"
+    )
+    # 음성 핀 — 외부 문서 URL의 `/docs/` 경로 조각. config 주석이 외부 URL을
+    # 인용하는 꼴은 실제로 온다 — 같은 스택의 #266이 `config/models.yaml`
+    # `qwen3-14b` 항목에 `GET https://huggingface.co/api/…`를 들인다.
+    assert not _CONFIG_DOC_PATH.search(
+        "    # https://github.com/vllm-project/vllm/blob/main/docs/usage/faq.md"
+    )
+    tracked = {p.relative_to(REPO_ROOT).as_posix() for p in _tracked()}
+    missing = [
+        f"{_rel(path)}:{lineno}: `{target}` 가 가리키는 파일이 없다"
+        for path in _tracked("config/*.yaml")
+        for lineno, line in enumerate(_read(path).splitlines(), 1)
+        for target in _CONFIG_DOC_PATH.findall(line)
+        if target not in tracked
+    ]
+    assert missing == [], "\n".join(missing)
+
+
 def test_experiment_filenames_carry_the_device_the_run_used() -> None:
     """파일명의 장비가 본문의 `--device`와 다르면 색인이 거짓말한다.
 
@@ -415,7 +450,8 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     `role:`을 같은 블록에 들고 있으므로 역할과 숫자를 **짝으로** 뽑아야 한다. 지금처럼
     전역값 하나와 대조하면, critic에 8,192를 주고 문서에 4,096을 적어도 통과한다.
 
-    **`b1_single`을 쓰는 것은 아무 프로필이나 된다는 뜻이다.** `config/budgets.yaml`이
+    **`harness_pool`을 쓰는 것은 아무 프로필이나 된다는 뜻이다**(2026-09-24 전에는 지운
+    `b1_single`이었다). `config/budgets.yaml`이
     "thresholds·sampling·seed는 프로필과 무관하게 공통"이라고 못박아 뒀다. 그 전제가
     깨지면 이 테스트는 한 프로필만 보게 되므로, 그때는 여기도 같이 고쳐야 한다.
     """
@@ -426,7 +462,7 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     declared = [int(m.group(1)) for m in pattern.finditer(contract)]
     assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
-    thresholds = load_config("b1_single").thresholds
+    thresholds = load_config("harness_pool").thresholds
     # **값이 없어도 막을 수 있다.** 아래 비교는 전역값 하나와 대조하므로, 역할별 상한이
     # 선언되는 날 critic에 8,192를 주고 문서에 4,096을 적어도 조용히 통과한다 — D42가
     # 나온 드리프트가 한 겹 아래에서 재현된다. 그날 이 줄이 먼저 빨개져서 아래를 역할
@@ -461,7 +497,7 @@ def test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared(
     """
     from src import config as config_module
 
-    loaded = config_module.load_config("b1_single")
+    loaded = config_module.load_config("harness_pool")
     declared = loaded.transition(
         thresholds=loaded.thresholds.transition(output_max_by_role={"critic": 8192})
     )
@@ -907,8 +943,8 @@ def _registry_keys() -> set[str]:
     """`config/models.yaml`이 등재한 model key. 로더가 읽는 것과 같은 방식으로 읽는다.
 
     **정규식으로 긁지 않는다.** 이 파일은 주석이 본문보다 길고 그 주석이 다른 항목의 키
-    이름을 여러 번 인용한다(`qwen3-8b` 블록이 `qwen3-4b`를 부르는 식) — 줄 단위로 긁으면
-    **주석에 이름이 나온 것만으로 「등재됐다」가 된다.**
+    이름을 여러 번 인용한다(`qwen3-14b` 블록이 지운 `deepseek-r1-distill-qwen-32b`를
+    부르는 식) — 줄 단위로 긁으면 **주석에 이름이 나온 것만으로 「등재됐다」가 된다.**
     """
     from src.config import CONFIG_DIR
 
@@ -984,13 +1020,14 @@ def test_every_registry_model_is_named_in_context() -> None:
     합집합이 `config/models.yaml`을 덮는다. 덮지 못하는 키는 **아무 문서도 설명하지 않는
     모델**이고, 그것을 프로필에 배선한 사람과 나중에 읽는 사람이 서로 다른 것을 안다.
 
-    이 저장소는 registry 키를 지우지 않는다(ADR 0010 「되돌리는 비용」). 그래서 로스터에서
-    내려온 키가 registry에 남는 것이 정상이고, **정상인 것과 잊힌 것을 가르는 유일한 자리가
-    그 두 번째 표다.** 표가 비면 둘을 못 가른다.
+    2026-09-24까지 이 저장소는 registry 키를 지우지 않았다(ADR 0010 「되돌리는 비용」). 그날
+    로스터 밖 키를 지우도록 규칙을 고쳤다(PROJECT-CONTEXT.md §1 끝) — 그래도 **로스터에 없이
+    남는 키(인프라 `fake`·`fake_v2`)의 사유를 적는 자리는 그 두 번째 표다.** 표가 비면 남긴 것과
+    잊힌 것을 못 가른다.
 
     **양방향으로 본다.** 두 번째 표가 "registry에 남는다"고 적은 키가 실제로는 지워졌다면
-    그 표가 거짓말이고, 특히 `qwen3-reranker-0.6b`는 그 표에서 **지우지 않는다**고 명시된
-    대조 기준이다 — 조용히 사라지면 4B와의 대조가 근거를 잃는다.
+    그 표가 거짓말이다 — 키를 지우는 PR은 그 행도 함께 지운다. (옛 표는 `qwen3-reranker-0.6b`를
+    「지우지 않는 대조 기준」으로 들고 있었고, 2026-09-24 정리가 키와 행을 함께 지웠다.)
     """
     text = _read(CONTEXT)
     roster_header, roster_rows = _first_table(text, _ROSTER_HEADING, _ROSTER_TABLE)
@@ -1024,9 +1061,11 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
     **왜 이 검사가 있나.** PROJECT-CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때
     손대는
-    넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **지금은 다르다.**
-    프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`다. 그 어긋남을 정본이
-    안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
+    넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **이 검사를 세울
+    때는 달랐다.** 프로필 전부가 단일 `scout`이고 `critic`은 `devstral-small-2-24b`였다. 그 어긋남을
+    정본이 안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
+    (2026-09-24 옛 로스터 프로필을 지워 지금은 실모델 프로필이 §1과 일치한다 — 아래 양방향 중
+    「재배선이 끝나면」 쪽이 도는 상태다.)
 
     **이 검사는 양방향으로 돈다.**
 
@@ -1073,6 +1112,32 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
 _MODEL_SERVING = REPO_ROOT / "docs" / "model-serving.md"
 _UNAVOIDABLE = "회피 불가"
+# `docs/model-serving.md` 포트 표의 행 — `> | **8004** | \`qwen3-embedding-0.6b\` ← …`.
+_PORT_ROW = re.compile(r"^> \| \*\*(\d{4})\*\* \| `([^`]+)`", re.M)
+
+
+def test_the_model_serving_port_table_matches_the_registry() -> None:
+    """포트 표는 **지금 상태를 현재형으로 적는 자리**라 registry와 같아야 한다(CLAUDE.md §2.3).
+
+    2026-09-24 포트를 띄우는 순서대로 다시 매겼다(`tests/test_config.py`의
+    `test_served_ports_count_up_from_8000_in_launch_order`). registry만 고치고 이 표를 놓치면
+    표가 옛 번호로 서빙 절차를 안내한다 — 그 불일치를 사람이 기억해서 잡기를 기대하지 않는다.
+    """
+    # 핀 — 양성은 저장소의 실제 행이다(`docs/model-serving.md` 포트 표의 8004 행 — 검색 모델이라
+    # 재배치에서 번호가 안 바뀐다). 음성은 같은 표의 머리 줄 모양이다 — 행이 아니다.
+    assert _PORT_ROW.search("> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid` |")
+    assert not _PORT_ROW.search("> | 포트 | 어느 프로필이 어느 이름을 보내나 |")
+    from src.config import CONFIG_DIR
+
+    rows = {key: int(port) for port, key in _PORT_ROW.findall(_read(_MODEL_SERVING))}
+    models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
+    served = {
+        key: urlparse(str(entry["endpoint"])).port
+        for key, entry in models.items()
+        if not str(entry["endpoint"]).startswith("fake://")
+    }
+
+    assert rows == served, f"포트 표 {rows} ≠ registry {served}"
 
 
 def _within_profile_port_clashes() -> dict[str, dict[str, list[str]]]:

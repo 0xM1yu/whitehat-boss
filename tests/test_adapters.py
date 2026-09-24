@@ -41,6 +41,7 @@ from src.schemas import (
     Role,
     Verdict,
 )
+from tests.conftest import served_scout_config
 
 RUN_ID = "run_20260901_0001"
 SANDBOX = SandboxSpec(image="fake:latest", cpu_limit=1.0, memory_mb=512, timeout_s=60)
@@ -565,7 +566,7 @@ def test_counter_report_says_file_absent_when_the_snapshot_is_not_there(
     이 구별이 없으면 ATOM에서 스냅샷이 안 받아진 run과 `dev_fake` run이 기록에서 같아 보인다.
     """
     source = f"file://{(tmp_path / 'nowhere').as_posix()}"
-    config = _with_source(load_config("single_gpu_12g"), "scout", source)
+    config = _with_source(served_scout_config(), "scout", source)
     deps = build_deps(
         config, run_id=RUN_ID, source_root=target_root, artifacts_root=tmp_path / "artifacts"
     )
@@ -576,10 +577,14 @@ def test_counter_report_says_file_absent_when_the_snapshot_is_not_there(
     assert deps.counter_report["scout_reason"] == "file_absent"
 
 
-def test_single_gpu_12g_mixes_real_and_fake(target_root: Path, tmp_path: Path) -> None:
-    """한 프로필 안에서 scout만 실서빙된다 — RoutingModelClient가 있는 이유다."""
+def test_one_profile_mixes_real_and_fake(target_root: Path, tmp_path: Path) -> None:
+    """한 프로필 안에서 scout만 실서빙된다 — RoutingModelClient가 있는 이유다.
+
+    옛 `single_gpu_12g`가 그 모양이었다(2026-09-24 삭제). 지금은 `tests/conftest.py`의
+    합성 config다.
+    """
     deps = build_deps(
-        load_config("single_gpu_12g"),
+        served_scout_config(),
         run_id=RUN_ID,
         source_root=target_root,
         artifacts_root=tmp_path,

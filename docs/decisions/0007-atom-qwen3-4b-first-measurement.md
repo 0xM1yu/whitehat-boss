@@ -4,6 +4,9 @@
 - 일자: 2026-08-17 (문서화 2026-08-18)
 - 관련: [model-serving.md](../model-serving.md) §3·§5, [portability.md](../portability.md) §5 #5·§6, [open-questions.md](../open-questions.md) R1, [decisions/0006](0006-record-the-device-a-run-happened-on.md), [STATUS.md](../../STATUS.md) §5·§6
 
+> ⏵ **2026-09-24** — `qwen3-4b` 키와 `config/checksums/qwen3-4b.txt`는 로스터 밖 정리로 지웠다. 이 문서가 드는
+> registry 값·checksum 파일 경로는 그날의 기록이다(원문은 git 이력).
+
 ## 배경
 
 `model-serving.md` §3은 **"이 장비에서 직접 검증하기 전까지 어떤 성능 수치도 계획에
