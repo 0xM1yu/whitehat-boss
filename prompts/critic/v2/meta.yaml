@@ -7,6 +7,9 @@
 # `fake`(dev 5개 + `single_gpu_12g`)와 `qwen3-coder-30b-a3b`(`b1_single`). critic만 v3로
 # 올리면 그 둘이 없는 `prompts/scout/v3`·`prompts/auditor/v3`를 찾는다 (D67 · 이슈 #172의
 # 선택지 (b)가 그 자리다).
+# ⚠ **2026-09-24 — 위 「7개」는 그때의 수다.** 지금 커밋된 프로필은 7개이고 critic 엔트리를 다른 역할과
+#   공유하는 것은 `dev_*` 다섯(`fake`)뿐이다 — `single_gpu_12g`·`b1_single`은 지웠고, `harness_pool`·`_hybrid`의
+#   critic `gpt-oss-20b`는 scout·auditor와 안 겹친다.
 #
 # **왜 되돌리지도 않았나.** 이 버전의 계약은 이미 `146fcf7`이 깨뜨렸다 — 노드가
 # `DecisionDraft`를 보내는데 아래 `output_schema`는 `Decision`이었다. 제자리 수정은

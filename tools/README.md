@@ -103,14 +103,14 @@ ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularit
 docker build -t harness-tools:v1 tools/harness-tools/
 
 # 실서빙 프로필은 `docker`를 선언하고 ATOM에 docker가 있다 — 플래그가 필요 없다 (2026-08-28)
-python -m src.cli run --profile b1_single --target <경로> --device atom --condition B1@pipeline
+python -m src.cli run --profile harness_pool --target <경로> --device atom --condition B3prime@pipeline
 
 # `dev_docker`도 이 장비에서는 덮을 것이 없다(2026-08-21 이후). 덮어야 하는 것은 ATOM에
 # 없는 런타임을 선언한 프로필뿐이고, 지금 그것은 `dev_singularity` 하나다
 python -m src.cli run --profile dev_singularity --tool-runner docker --target <경로> --device atom
 ```
 
-`local_balanced`·`b1_single`이 `docker`인 것은 주 실서빙 장비가 ATOM이기 때문이다
+실서빙 프로필(`harness_pool`·`_hybrid`)이 `docker`인 것은 주 실서빙 장비가 ATOM이기 때문이다
 (docs/portability.md §3 — 프로필은 주 실서빙 장비의 런타임을 선언하고 다른 장비가 덮는다).
 **기준은 그대로이고 바뀐 것은 ATOM의 런타임이 무엇이냐다** — 2026-08-17~08-28 사이에는 같은
 기준 아래 `podman`이었고, 되돌린 경위는
