@@ -248,7 +248,9 @@ class RunRecord(UtcModel):
     # 여기에는 그 run에서 실제로 쓰인 값을 박제한다.
     thresholds: dict[str, float]
     seed: int
-    # 하네스가 요청에 **보낸** 샘플링 (config `budgets.yaml`의 `sampling`).
+    # 하네스가 요청에 **보낸** 샘플링 (config `budgets.yaml`의 `sampling`) — **프로필 공통값이다.**
+    # registry가 모델별 `sampling`을 선언한 역할은 `temperature`·`top_p`가 그 값으로 덮여 나가고,
+    # 그 역할에 실제로 보낸 값은 `model_request_params[role]`에 있다. 비교할 때는 둘을 합쳐 읽는다.
     sampling: Sampling
     # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). `sampling`이
     # 보낸 값이라면 이쪽은 서버가 모델 파일에서 적용하는 값이다 — `top_k`·`repetition_penalty`는
