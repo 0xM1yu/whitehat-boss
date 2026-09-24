@@ -6,7 +6,9 @@
 
 **임계값은 추측 상수가 아니라 코드 상수에서 온다(§0).**
 
-- **stuck 하드 상한 T = (schema_retries+1) × `_TIMEOUT_S`.** 어댑터가 한 호출을 그만큼까지
+- **stuck 하드 상한 T = (schema_retries+1) × 요청 타임아웃.** 요청 타임아웃은 프로필이 부르는
+  모델 중 가장 긴 `request_timeout_s`이고, 선언이 없으면 `_TIMEOUT_S`다(`call_timeout_s`, W2).
+  어댑터가 한 호출을 그만큼까지
   재시도·타임아웃하므로, 그 시간을 넘긴 침묵은 정상 호출로 설명되지 않는다 = 확정 wedge.
   `schema_retries`는 **끝난 run**은 `run_manifest.json`의 값을 쓰고(그 run에 실제 적용된 값),
   **도는 run**은 매니페스트가 아직 없으므로 config 기본을 쓴다(폴 루프가 매니페스트가 생기면
@@ -28,6 +30,10 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.config import HarnessConfig
 
 # 실패 사유 (runner._REASON_GATEWAY·_REASON_SCHEMA와 같은 값 — test_monitor가 대조해 고정한다).
 # `over_candidate_max`(runner._REASON_OVER_MAX)는 실패가 아니라 예산 절단이라 제외한다.
@@ -193,6 +199,12 @@ def derive_status(
     }
 
 
+def call_timeout_s(config: "HarnessConfig", *, default: float) -> float:
+    """T의 한 호출 몫 — 프로필이 부르는 모델 중 가장 긴 `request_timeout_s`, 없으면 `default`."""
+    declared = (config.models[key].request_timeout_s for key in config.profile.roles.values())
+    return max([default, *(value for value in declared if value is not None)])
+
+
 def stuck_ceiling_s(
     manifest: dict | None, timeout_s: float, default_retries: int
 ) -> tuple[float, str]:
@@ -274,15 +286,17 @@ def main(argv: list[str] | None = None) -> int:
     from src.config import load_config
     from src.orchestrator.runner import _MAX_CONSECUTIVE_DROPS
 
-    default_retries = int(load_config(args.profile).thresholds.schema_retries)
-    print(f"# T=(schema_retries+1)×{_TIMEOUT_S:g}s · error_storm K={_MAX_CONSECUTIVE_DROPS}")
+    config = load_config(args.profile)
+    default_retries = int(config.thresholds.schema_retries)
+    timeout_s = call_timeout_s(config, default=_TIMEOUT_S)
+    print(f"# T=(schema_retries+1)×{timeout_s:g}s · error_storm K={_MAX_CONSECUTIVE_DROPS}")
 
     while True:
         # 매니페스트를 매 폴에서 다시 읽는다 — 끝난 run에서 T가 실제 적용값으로 좁혀진다(M1).
         status, basis = snapshot(
             args.run_dir,
             now=datetime.now(UTC),
-            timeout_s=_TIMEOUT_S,
+            timeout_s=timeout_s,
             default_retries=default_retries,
             error_storm_k=_MAX_CONSECUTIVE_DROPS,
         )

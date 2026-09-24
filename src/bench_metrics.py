@@ -34,6 +34,9 @@ METRIC_TOKENS_CACHED = "vllm:prompt_tokens_cached_total"
 METRIC_TOKENS_RECOMPUTED = "vllm:prompt_tokens_recomputed_total"
 METRIC_KV_USAGE = "vllm:kv_cache_usage_perc"
 METRIC_CACHE_CONFIG = "vllm:cache_config_info"
+# bench가 아니라 `openai_compat`이 읽는다 — 타임아웃이 「느림」인지 「멈춤」인지 가른다(#261).
+# 이름이 여기 있는 것은 위 fixture 대조를 같이 받기 위해서다.
+METRIC_GENERATION_TOKENS = "vllm:generation_tokens_total"
 
 METRIC_NAMES: tuple[str, ...] = (
     METRIC_PREFIX_QUERIES,
@@ -43,7 +46,12 @@ METRIC_NAMES: tuple[str, ...] = (
     METRIC_TOKENS_RECOMPUTED,
     METRIC_KV_USAGE,
     METRIC_CACHE_CONFIG,
+    METRIC_GENERATION_TOKENS,
 )
+
+# 생성 카운터 한 번 읽기의 상한. 요청마다 한 번 읽으므로 `_TIMEOUT_S`(60)를 쓰지 않는다 —
+# 행에 걸린 서버에서 `/metrics`까지 늦으면 판정 하나에 1분씩 붙는다. 로컬 루프백이라 짧게 둔다.
+_COUNTER_TIMEOUT_S = 5
 
 # `vllm:prompt_tokens_by_source_total`은 여기에 없다. 이번 범위에서 쓰지 않기 때문이지
 # 쓸모가 없어서가 아니다 — **local/external을 라벨 하나(`source=`)로 분해하는 가장 깨끗한
@@ -103,6 +111,18 @@ def _sum_metric(samples: Iterable[tuple[str, dict[str, str], float]], name: str)
     """같은 이름의 모든 라벨 조합을 더한다. 없으면 None — 0과 구분한다."""
     values = [value for metric, _, value in samples if metric == name]
     return sum(values) if values else None
+
+
+def generation_tokens(endpoint: str) -> float | None:
+    """그 서버가 지금까지 낸 생성 토큰 누계. 못 읽으면 `None` — 0(안 냈다)과 가른다."""
+    try:
+        with urllib.request.urlopen(  # noqa: S310
+            metrics_url(endpoint), timeout=_COUNTER_TIMEOUT_S
+        ) as response:
+            text = response.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    return _sum_metric(parse_prometheus(text), METRIC_GENERATION_TOKENS)
 
 
 @dataclass(frozen=True)
