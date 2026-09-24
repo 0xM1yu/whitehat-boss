@@ -182,10 +182,10 @@ class ModelEntry(HarnessModel):
     # `--apply`는 이 필드를 건드리지 않는다(`benchmark:` 블록 밖이고 `APPLY_KEYS`에 없다).
     source: NonEmptyStr | None = None
     # **베이스 가중치의 제작사** — 양자화한 조직이 아니라 가중치가 나온 조직이다
-    # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `qwen3-8b`의
-    # 출처는 `hf://nvidia/Qwen3-8B-NVFP4`지만 NVIDIA가 한 것은 양자화이고 가중치는
-    # Qwen3-8B이므로 계열은 `qwen`이다. 같은 이유로 `NVFP4/…`에서 받은
-    # `qwen3-coder-30b-a3b`도 `qwen`이다.
+    # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `seccoderx-8b`의
+    # 출처는 `hf://SecCoderX/…`지만 가중치의 베이스는 Qwen3-8B이므로 계열은 `qwen`이다.
+    # (2026-09-24에 지운 옛 키 `qwen3-8b`·`qwen3-coder-30b-a3b`도 NVIDIA·NVFP4 조직이 양자화한
+    # 가중치라 `qwen`이었다.)
     #
     # **왜 이 칸이 필요한가** (이슈 #121). evaluation.md §2.1이 B3/B3'의 조건으로
     # "제작사가 다른 모델"을 못박고 model-serving.md와 `orchestrator/nodes/critic.py`가
@@ -237,7 +237,7 @@ class AdapterSelection(HarnessModel):
     """ModelClient를 제외한 3개 인터페이스의 구현 선택.
 
     ModelClient가 여기 없는 것은 의도다. 역할마다 다른 모델을 쓰고 그중 일부만 실서빙일
-    수 있으므로(single_gpu_12g), 어댑터 선택은 `ModelEntry.endpoint` 스킴이 역할별로 한다.
+    수 있으므로(옛 `single_gpu_12g`처럼), 어댑터 선택은 `ModelEntry.endpoint` 스킴이 역할별로 한다.
 
     `Literal`로 닫아 둔 것도 의도다. 아직 없는 구현체 이름을 YAML에 적으면 factory가
     KeyError를 내는 대신 설정 로드에서 실패해야 한다.
@@ -661,8 +661,8 @@ class HarnessConfig(HarnessModel):
         `FakeModelClient`는 프로세스 안에서 도는 코드이므로 가중치도 토크나이저도 없고,
         그 checksum이 0인 것은 미기록이 아니라 정확한 값이다.
 
-        역할 단위인 것은 `single_gpu_12g`처럼 한 프로필에서 Fake와 실서빙이 섞이기
-        때문이다(그 프로필은 scout만 실서빙이다).
+        역할 단위인 것은 한 프로필에서 Fake와 실서빙이 섞일 수 있기 때문이다(옛
+        `single_gpu_12g`는 scout만 실서빙이었다 — 2026-09-24 삭제).
 
         **거르는 축이 둘이다** (이슈 #108, 선택지 b).
 
@@ -674,13 +674,14 @@ class HarnessConfig(HarnessModel):
            같다 — 그쪽은 "hybrid면 요구한다"이고 이쪽은 "hybrid가 아니면 안 센다"로,
            같은 사실의 양면이다.
 
-        **선언 자체는 지우지 않는다.** `b1_single`·`local_balanced`가 `retriever: fake`인
-        채로 그 두 역할에 실모델을 적어 둔 것은 실수가 아니라 의도다 — hybrid로 올리는 날
+        **선언 자체는 지우지 않는다.** `harness_pool`이 `retriever: fake`인 채로 그 두 역할에
+        실모델을 적어 둔 것은 실수가 아니라 의도다(처음 이 판단을 적을 때는 옛 `b1_single`·
+        `local_balanced`가 그 모양이었다) — hybrid로 올리는 날
         쓸 모델을 적어 둔 것이고, 지금 fake인 이유는 ATOM에 모델 5개를 동시에 띄우면
-        R1(sm_121 커널 호환성) 검증의 실패 지점이 늘기 때문이다(`config/profiles.yaml`의
-        `local_balanced` retriever 주석). 그 정보를 프로필에서 지우면 나중에 hybrid로
-        올릴 때 어느 모델을 쓸지 다시 정해야 한다. 그래서 **기록(`model_checksums`)은
-        그대로 두고 판정 대상만 좁힌다.**
+        R1(sm_121 커널 호환성) 검증의 실패 지점이 늘기 때문이다(그 근거를 적었던 옛
+        `local_balanced`의 retriever 주석은 2026-09-24 프로필과 함께 지웠다 — git 이력).
+        그 정보를 프로필에서 지우면 나중에 hybrid로 올릴 때 어느 모델을 쓸지 다시 정해야
+        한다. 그래서 **기록(`model_checksums`)은 그대로 두고 판정 대상만 좁힌다.**
         """
         wired = set(self.profile.roles)
         if self.profile.adapters.retriever != "hybrid":
