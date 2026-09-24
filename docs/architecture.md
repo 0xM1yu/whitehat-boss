@@ -74,7 +74,8 @@ graph LR
 >   `GRAPH` Evidence·`callers`/`callees`에 더해 need_evidence resolver의 심볼 표(index-v2, Phase 4)가 된다.
 > - **3단계 — 쓰임이 열려 있다**(결정 3, 2026-09-26 대면 논의). ADR 0012(제안)가 그 논의 전에 정해 두는
 >   것은 둘이다 — need_evidence는 결정론적 심볼 resolver가 풀고(결정 2), canonical 프로필은 합의 전까지
->   `retriever: hybrid`를 쓰지 않는다. canonical 프로필은 아직 없다(Phase 6). 임베딩·리랭커를
+>   `retriever: hybrid`를 쓰지 않는다. ~~canonical 프로필은 아직 없다(Phase 6).~~ (⏵ 2026-09-24 — 생겼다:
+>   `harness_pool`(`retriever: fake`)이다 — `config/profiles.yaml`.) 임베딩·리랭커를
 >   어디에 쓸지는 그 논의가 정한다. 지금 코드의 3단계는 위 칸 그대로 캡슐을 만들고, 임베딩·리랭커는
 >   `retriever: hybrid` 프로필의 EXPANDED·FOCUSED `related` 섹션에서만 돈다.
 > - **4단계 — Scout 입력이 슬라이스가 되고 need_evidence 루프가 붙는다**(결정 1·2). 슬라이스는 v3
