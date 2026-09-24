@@ -1734,6 +1734,38 @@ def test_the_index_status_column_matches_its_body_file() -> None:
     )
 
 
+# D 본문의 상태 셀(첫 칸)이 `닫힘`인데 그 칸이 「제안」 단계 결정을 근거로 드는 꼴.
+_CLOSED_ON_A_PROPOSAL = re.compile(r"^\|\s*\*{0,2}닫힘\*{0,2}[^|]*\(제안\)")
+
+
+def test_a_closed_d_does_not_rest_on_a_proposed_decision() -> None:
+    """상태의 원천이 `닫힘`을 단언하려면 그 근거 결정이 승인돼 있어야 한다.
+
+    **사고 —** PR #260 첫 판이 D10을 「**닫힘** (2026-09-24, ADR 0012(제안) 결정 6)」으로
+    적었다. 근거 결정이 승인 전인데 상태 원천이 닫힘을 단언했고, 안전은 「승인 전에는
+    머지하지 않는다」는 사람 규율 하나에 달려 있었다(sumin 리뷰 M1, 2026-09-24). 닫힘은
+    그 결정을 승인하는 커밋이 발화한다.
+    ⚠ 상태 칸만 본다 — 근거를 본문에만 적은 닫힘(같은 PR의 D12)은 이 검사가 못 잡는다.
+    """
+    # 양성 핀 — 실형태: PR #260 첫 판(`e18ac88`)의 `D10.md` 5행 앞부분.
+    assert _CLOSED_ON_A_PROPOSAL.match(
+        "| **닫힘** (2026-09-24, ADR 0012(제안) 결정 6) | [architecture.md](../architecture.md) |"
+    )
+    # 음성 핀 — 실형태: 같은 판의 `D12.md` 5행 앞부분(상태 칸에 제안 결정이 없다). 관련 문서 칸의
+    # 「ADR 0012(제안)」 링크도 상태 칸 밖이라 안 걸린다.
+    assert not _CLOSED_ON_A_PROPOSAL.match(
+        "| **닫힘** (2026-09-24, 선택지 (a)) | [ADR 0012(제안)](../../decisions/0012.md) |"
+    )
+    offenders = []
+    for path in sorted((REPO_ROOT / "docs" / "open-questions" / "D").glob("D*.md")):
+        cell = next((line for line in _read(path).splitlines() if _D_STATUS_CELL.match(line)), "")
+        if _CLOSED_ON_A_PROPOSAL.match(cell):
+            offenders.append(f"{_rel(path)}: {cell[:90]}")
+    assert offenders == [], (
+        "제안 단계 결정에 기대 닫힌 D가 있다 — 승인 커밋이 닫는다:\n" + "\n".join(offenders)
+    )
+
+
 # 폐기됐다는 표시. **`제거`는 뺐다** — `PROJECT-CONTEXT.md` §5가 「enum 제약 **제거**」로 상시 쓰는
 # 낱말이라, 폐기와 무관한 이웃 줄 하나가 검사를 통과시켰다(2라운드 리뷰가 주입으로 재현).
 _DEPRECATION_MARKER = re.compile(r"폐기|소멸|없앴")
