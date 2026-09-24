@@ -6,7 +6,7 @@
 
 ## 왜 이 기록이 필요한가
 
-**슬라이스가 무엇인지를 정본이 세 가지로 말하고, 코드는 그 어느 것도 아니다.** 이 ADR의 파일:줄은 `c301342`(그날의 `origin/main`) 기준이다. 코드(`src/`·`config/`·`prompts/`·`tools/`·`slicer*.py`)는 이 PR이 안 바꾸므로 그 줄 그대로 찾아지고, **이 PR이 고치는 문서는 절·문구로 가리킨다** — 줄 번호를 곁들인 곳은 `c301342`의 줄이라고 밝혔다. 줄마다 쓰인 때는 `git log -L`로 뽑았다([CLAUDE.md](../../CLAUDE.md) §2.4).
+**슬라이스가 무엇인지를 정본이 세 가지로 말하고, 코드는 그 어느 것도 아니다.** 이 ADR의 파일:줄은 `c301342`(그날의 `origin/main`) 기준이다. ~~코드(`src/`·`config/`·`prompts/`·`tools/`·`slicer*.py`)는 이 PR이 안 바꾸므로 그 줄 그대로 찾아지고,~~ (⏵ 2026-09-24 — 이 PR은 코드를 안 바꿨지만 같은 날 뒤에 머지된 PR들이 바꿨다. 코드 참조 가운데 **27곳이 main에서 그 줄이 아니다**(`c301342`의 줄 내용과 대조 · 같은 줄을 두 번 든 곳은 두 번 셌다). 파일별로 `config/models.yaml` 20(#262·#266·#267·#269 — 로스터 밖 키 아홉을 지운 #267이 가장 크다) · `slicer*.py` 5(#252·#255) · `src/interfaces/model_client.py` 2(#262)이고, 다른 파일의 참조는 그 줄 그대로다. 대부분은 옮겨졌고, 지운 `deepseek-r1-distill-qwen-32b` 항목을 가리키던 곳(`:677`·`:687`·`:688`·`:690`)은 줄이 없어졌다. 코드 줄은 `git show c301342:<경로>`로 읽는다.) **이 PR이 고치는 문서는 절·문구로 가리킨다** — 줄 번호를 곁들인 곳은 `c301342`의 줄이라고 밝혔다. 줄마다 쓰인 때는 `git log -L`로 뽑았다([CLAUDE.md](../../CLAUDE.md) §2.4).
 
 | 자리 | 슬라이스의 자리 | 그 줄이 쓰인 때 |
 | --- | --- | --- |
@@ -99,18 +99,20 @@
 
 ### 4. 로스터 — 제안
 
-**정본은 여전히 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1이다** — 2026-09-21 회의의 교체판이고 main에는 2026-09-22 #240(`ce6a4c8`)으로 들어왔다. 아래는 그 표를 바꾸자는 제안이고, 바꾸는 절차는 그 파일 §3의 넷이다 — registry 키가 먼저 서야 한다(Phase 6).
+**정본은 여전히 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1이다** — 2026-09-21 회의의 교체판이고 main에는 2026-09-22 #240(`ce6a4c8`)으로 들어왔다. ~~아래는 그 표를 바꾸자는 제안이고, 바꾸는 절차는 그 파일 §3의 넷이다 — registry 키가 먼저 서야 한다(Phase 6).~~ → ⏵ **2026-09-24 — 같은 날 조민규가 아래 표의 로스터를 확정했고 §3의 넷으로 옮겼다** — registry `qwen3-14b` 등재 · 두 풀 프로필(`harness_pool`·`_hybrid`) · PROJECT-CONTEXT.md §1 · ADR 0010 §2(#266·#267). 그래서 §1 정본이 이제 이 표의 로스터다. **이 ADR 문서의 상태(제안)는 그대로다** — 손수민 리뷰 전이고, 로스터 확정과 ADR 승인은 다른 일이다.
+
+⏵ 2026-09-24 — 이 절(아래 표·목록)의 `config/models.yaml` 줄 번호는 `c301342` 판이다. 그 뒤 #262·#266·#267·#269가 파일을 바꿔 main에서는 다른 줄이거나 없는 줄이다(머리 문단의 수) — 키 이름으로 찾는다.
 
 | 자리 | 제안 | 상태 | 근거 |
 | --- | --- | --- | --- |
-| 4 · `scout_memory` | **교체 가능** — 기본값 `seccoderx-8b`(`config/models.yaml:653`) | 결정 기한 2026-09-30 | 실험팀 실험 중 |
-| 4 · `scout_boundary` | **교체 가능** — 기본값 `seccoderx-8b` | 결정 기한 2026-09-30 | 실험팀 실험 중 |
-| 4 · `scout_injection` | **Qwen3-14B 잠정** — registry에 `qwen3-14b` 키가 아직 없어(`config/`에서 0건) 새로 연다. 지금 값은 `deepseek-r1-distill-qwen-32b`(`:677`) | 잠정 | 팀 피드백 2026-09-23 — 모델 크기를 줄인다 |
+| 4 · `scout_memory` | **교체 가능** — 기본값 `seccoderx-8b`(`config/models.yaml:653`) | ~~결정 기한 2026-09-30~~ → 2026-09-24 확정(조민규) — `seccoderx-8b` | 실험팀 실험 중 |
+| 4 · `scout_boundary` | **교체 가능** — 기본값 `seccoderx-8b` | ~~결정 기한 2026-09-30~~ → 2026-09-24 확정(조민규) — `seccoderx-8b` | 실험팀 실험 중 |
+| 4 · `scout_injection` | ~~**Qwen3-14B 잠정** — registry에 `qwen3-14b` 키가 아직 없어(`config/`에서 0건) 새로 연다. 지금 값은 `deepseek-r1-distill-qwen-32b`(`:677`)~~ → **`qwen3-14b`** — 2026-09-24 registry에 열었고(#266) `deepseek-r1-distill-qwen-32b`는 지웠다(#267) | ~~잠정~~ → 2026-09-24 확정(조민규) | 팀 피드백 2026-09-23 — 모델 크기를 줄인다 |
 | 5 · Auditor | `qwen3.6-35b-a3b`(`:700`) | 2026-09-21 교체로 선 자리(정본 PROJECT-CONTEXT.md §1 — 근거는 실험팀 2026-09-20 선정), 품질 미측정 | Notion 「Auditor·Critic 모델 최종 선정」(2026-09-23 판독) — 품질 근거는 5건 표본(팀 보고, run ID 없음) |
 | 7 · Critic | `gpt-oss-20b`(`:419`) | 2026-09-09 판부터 같은 키이고(ADR 0010 §2) 2026-09-21 교체판에도 남았다(근거는 같은 2026-09-20 선정), 품질 미측정 | 같은 문서 |
 
-- 새 키 `seccoderx-8b`·`deepseek-r1-distill-qwen-32b`·`qwen3.6-35b-a3b`는 `checksum`이 0이고(`config/models.yaml:664`·`:687`·`:715`) `source`에 `@rev`가 없다(`config/models.yaml:665`·`:688`·`:716`). `@rev`가 없으면 토크나이저 디렉터리를 못 정해 기본(글자수 근사) 카운터로 남는다(`src/adapters/tokenizer.py:119-122`). `gpt-oss-20b`·`qwen3-reranker-4b`는 두 칸이 다 있다(`config/models.yaml:512-513` · `:635-636`). `qwen3-14b`를 열면 같은 두 칸을 채워야 선다.
-- Scout 좌석이 「교체 가능」인 것은 실험팀이 아직 고르는 중이라서다(결정 기한 2026-09-30). 그 실험도 원본 함수 입력이었다 — 결정 1의 두 번째 ⚠.
+- 새 키 `seccoderx-8b`·`deepseek-r1-distill-qwen-32b`·`qwen3.6-35b-a3b`는 `checksum`이 0이고(`config/models.yaml:664`·`:687`·`:715`) `source`에 `@rev`가 없다(`config/models.yaml:665`·`:688`·`:716`). `@rev`가 없으면 토크나이저 디렉터리를 못 정해 기본(글자수 근사) 카운터로 남는다(`src/adapters/tokenizer.py:119-122`). `gpt-oss-20b`·`qwen3-reranker-4b`는 두 칸이 다 있다(`config/models.yaml:512-513` · `:635-636`). `qwen3-14b`를 열면 같은 두 칸을 채워야 선다. (⏵ 2026-09-24 — `qwen3-14b`를 열었다(#266): `source`에 `@rev`가 있고 `checksum`은 0이다. `deepseek-r1-distill-qwen-32b`는 지웠다(#267). `seccoderx-8b`·`qwen3.6-35b-a3b`는 `checksum` 0 · `@rev` 없음 그대로다.)
+- ~~Scout 좌석이 「교체 가능」인 것은 실험팀이 아직 고르는 중이라서다(결정 기한 2026-09-30).~~ → ⏵ 2026-09-24 — 조민규가 세 좌석을 확정했다(위 표). 그 실험도 원본 함수 입력이었다 — 결정 1의 두 번째 ⚠.
 
 ### 5. 저장소는 하네스 개발 전용이다 — 실험 기록의 원천은 팀 Notion
 
@@ -152,7 +154,7 @@
 - ⚠ **Auditor SFT가 무엇을 배우는지는 갈린다** — 가이드는 CPGQL 생성으로 적고, 11차 멘토링은 「하네스 Auditor는 CPGQL을 만들지도 받지도 않는다」를 확인했다(팀 문서). 이 ADR은 그것을 정하지 않는다 — 아래 「이 ADR이 열어 두는 것」 7.
 - **하네스의 책임은 셋이다.**
   1. **학습과 서빙의 입력 형식이 같다** — 같은 렌더러(결정 1의 gutter·배너)를 쓴다. FT 데이터 풀은 함수 단위라(팀 보고 550,731건 — 위 「팀 방향」의 Notion 문서, 2026-09-23 판독, run ID 없음) 함수를 배너·gutter만 두른 「퇴화 슬라이스」로 렌더하는 길이 필요하다. 짓는 것은 Phase 8이고, 데이터셋팀의 FT 레코드 형식이 온 뒤에 짓는다.
-  2. **모델 응답 원문을 남긴다** — 지금은 응답 본문·`reasoning_content`·`finish_reason`이 남지 않는다. `ModelResult`(`src/interfaces/model_client.py:187-221`)에 응답 본문 필드가 없고(`retry_bodies`는 보낸 요청이다) `src/adapters/openai_compat.py`에 두 이름이 0건이다 → [D84](../open-questions/D/D84.md).
+  2. **모델 응답 원문을 남긴다** — 지금은 응답 본문·`reasoning_content`·`finish_reason`이 남지 않는다(⏵ 2026-09-24 — vLLM 0.27.1 응답에서 추론을 싣는 필드 이름은 `reasoning`이다, `reasoning_content`가 아니다 — [2026-09-12 토큰 회계 보고서](../experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md) §4가 ATOM에서 확인했다. 남지 않는다는 것은 그대로다). `ModelResult`(`src/interfaces/model_client.py:187-221`)에 응답 본문 필드가 없고(`retry_bodies`는 보낸 요청이다) `src/adapters/openai_compat.py`에 두 이름이 0건이다 → [D84](../open-questions/D/D84.md).
   3. **역할별로 내보낸다(export)** — 지금 CLI 서브커맨드는 `doctor`·`estimate`·`run`·`bench`·`gc`뿐이다(`src/cli.py:860-889`).
 
 ## 결과
@@ -199,7 +201,7 @@
 | --- | --- | --- | --- | --- |
 | 1-b | Auditor 입력 표현 | 손수민 리뷰 | 2026-09-26 | (i) 원본 소스 |
 | 3 | 3단계의 쓰임 | 팀(손수민 리뷰) | 2026-09-26 대면 | resolver만 · `retriever: hybrid` 끔 |
-| 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키 |
+| 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키. ⏵ 2026-09-24 — 조민규가 확정했다: `seccoderx-8b`·`seccoderx-8b`·`qwen3-14b`(PROJECT-CONTEXT.md §1) |
 | 7 | Auditor SFT가 배울 것 | 팀 | 2026-10-04 전 | 벤치마크의 Auditor는 Finding 검증자다 |
 
 ## 대안

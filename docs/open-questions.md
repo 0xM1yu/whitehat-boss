@@ -33,7 +33,7 @@
 | R5 | Zero-day 제보 워크플로의 강제 수단 미정 | 열림 | [본문](open-questions/R/R5.md) |
 | R6 | prefix cache 효과를 장부에 잡지 못한다 (`cached_tokens`가 항상 0) | 열림 | [본문](open-questions/R/R6.md) |
 | R7 | `gc`가 지운 run_id를 같은 날 새 run이 재사용한다 | 보류 | [본문](open-questions/R/R7.md) |
-| R8 | **현 로스터(2026-09-21 교체판) 신규 모델의 sm_121 기동·구조화 출력·Critic 반박 정확도가 미검증이다** (2026-09-09 `gpt-oss-20b` 첫 관문 실측 — 기동 통과·구조화 출력 실패) | 열림 | [본문](open-questions/R/R8.md) |
+| R8 | **현 로스터(~~2026-09-21 교체판~~ 2026-09-24 확정판) 신규 모델의 sm_121 기동·구조화 출력·Critic 반박 정확도가 미검증이다** (2026-09-09 `gpt-oss-20b` 첫 관문 실측 — 기동 통과·구조화 출력 실패) | 열림 | [본문](open-questions/R/R8.md) |
 
 ## 2. 설계 결정 대기
 

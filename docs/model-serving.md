@@ -55,7 +55,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 - [ ] 단일 스트림 tok/s vs 배치(8/16/32 동시 요청) 합산 tok/s → `roles.*.throughput.tok_s_single` / `.by_concurrency.*`
 - [ ] automatic prefix caching 동작 확인 및 적중률 → `roles.*.prefix_cache.verdict` / `.metrics_delta` (장부가 비어도 `prompt_tokens_cached_delta`가 토큰 수를 준다 — 구간 합계라 BudgetLedger에는 넣지 않는다)
 - [ ] structured output(JSON schema 강제) 동작 확인 → `roles.*.structured_output.valid_ratio`
-- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다. ⚠ **이 항목이 묻던 질문은 2026-09-09에 성립을 잃었다 — §4 머리와 [D4](open-questions/D/D4.md)를 먼저 읽는다.** 문구는 `src/bench_report.py`의 `CHECKLIST[6]`과 같은 것이고 **코드는 아직 안 고쳤으므로 `bench` 출력에도 이 문장이 그대로 뜬다**
+- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다. ⚠ **이 항목이 묻던 질문은 2026-09-09에 성립을 잃었다 — §4 머리와 [D4](open-questions/D/D4.md)를 먼저 읽는다.** ~~문구는 `src/bench_report.py`의 `CHECKLIST[6]`과 같은 것이고 **코드는 아직 안 고쳤으므로 `bench` 출력에도 이 문장이 그대로 뜬다**~~ → ⏵ **2026-09-24 — 코드는 고쳐져 있다.** 이 줄과 같은 커밋 `184aade`(2026-09-11)가 `CHECKLIST[6]`을 「Critic 반박 정확도 표본 (#93 재정의 — 고정밀 대비가 아니다)」로 바꿨고 `bench` 출력도 그 문장이다. 가중치는 bf16 그대로 쓰기로 해(조민규) NVFP4 대비라는 물음은 지금 로스터에 대상이 없다
 
 `bench` 출력의 `checklist` 배열이 위 7개를 통과/실패/미측정으로 요약한다. **못 잰 값은 0으로
 남기고 사유를 함께 낸다** — 추정치를 넣으면 `Benchmark.is_measured`가 0 여부로 판정하므로
@@ -72,6 +72,16 @@ guided decoding이 그것을 억제하지 못하면 `schema.model_validate_json(
 있지만, **ATOM은 vLLM 버전도 모델도 다르다.** bench의 B 항목이 ATOM에서 실패하면
 `chat_template_kwargs`의 `enable_thinking` 계열부터 확인한다. 재현되지 않은 문제이므로
 코드는 지금 고치지 않는다.
+
+⏵ **2026-09-24 — ATOM(vLLM 0.27.1)에서 쟀다**([스모크 보고서](experiments/harness/2026-09-24-roster-smoke-atom.md) §3).
+reasoning parser 없이 띄우면 구조화 출력 문법이 첫 토큰부터 걸려 모델이 **사고 없이** 답하고 JSON은 깨지지 않는다
+(`qwen3.6-35b-a3b` `Finding` 36/36). parser를 걸면 문법이 사고가 끝난 뒤에야 걸리는데, 그 판에서는 사고가 `output_max`
+4,096 안에 안 끝나 7/7이 실패했다(본문 `None` 6 · 잘린 JSON 1 — 그 판은 `xgrammar`·`disable_any_whitespace`도 없어
+인자 셋이 함께 달랐다). 그래서 위 「첫 글자에서 깨진다」는 그대로 재현되지 않았고, 이 장비에서 관측된 실패는
+**사고 길이** 쪽이다. 하네스는
+`chat_template_kwargs`를 안 보낸다 — 모델별 기동 조건과 사고를 끄는 서버 인자는 `config/models.yaml`의 그 항목이,
+사고를 켜는 배선 방식(Auditor parser `qwen3` + `thinking_token_budget`)은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5
+「모델 배선」 행이 든다 — 아직 배선되지 않았다.
 
 **측정 순서가 결과를 바꾼다.** structured output을 먼저 돌리면 그 시점에 prefix cache가
 데워지므로, 적중률은 `/metrics` 카운터의 **구간 delta**로 잰다. 실제 순서는 출력의
@@ -250,7 +260,9 @@ python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \
 
 `source`는 그 스냅샷이 어디서 왔는지다(`hf://org/repo@rev` 또는 `file:///경로`). 후보가
 전부 커뮤니티·서드파티 산출물이라(2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의
-모델이 리포지터리마다 다르다** — checksum이 안 맞을 때 이 필드가 없으면 어느 리포의 어느
+모델이 리포지터리마다 다르다**(⏵ 2026-09-24 — 가중치를 bf16 원본 그대로 쓰기로 해(조민규) 지금 로스터에서 서드파티
+산출물은 `seccoderx-8b`(`hf://SecCoderX/…`) 하나이고 나머지는 제작사 리포다 — `config/models.yaml`의 `source`. 리비전을
+적어야 하는 이유는 그대로다) — checksum이 안 맞을 때 이 필드가 없으면 어느 리포의 어느
 리비전이었는지 답할 수 없다. 형식은 강제하지 않는다(ADR 0006이 `--device` 라벨 집합을
 열어 둔 것과 같은 판단).
 
