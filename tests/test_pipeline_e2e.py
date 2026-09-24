@@ -198,7 +198,8 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
 def _poolify(mode: str | None):  # noqa: ANN202
     """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
 
-    커밋된 풀 프로필 `local_balanced_pool`(PR #190)은 **실 모델**이라 GPU 없이는 못 돈다.
+    커밋된 풀 프로필 `harness_pool`(PR #190의 `local_balanced_pool`, 2026-09-24 이름 변경)은
+    **실 모델**이라 GPU 없이는 못 돈다.
     이 e2e 검사들은 팬아웃 **제어흐름**만 보므로 Fake로 충분하고, 그래서 실 프로필을 태우는
     대신 여기서 `dev_fake` 기반 풀을 조립한다 — 풀 세 자리는 v2 전용 풀 프롬프트를 부르는
     `fake_v2`, 나머지는 `fake`다. (실 프로필의 로드·게이트 정합은 `test_config.py`가 본다.)
@@ -1760,8 +1761,9 @@ def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> Non
     풀이면 조립한 첫 멤버(`SCOUT_POOL_ROLES[0]` = `scout_memory`)를 돌려주므로 재검증이 같은
     카운터를 본다. 아래 두 단언이 그 불변식을 고정한다.
 
-    ⚠ **`local_balanced_pool`(PR #190, provisional)이 커밋된 실 별칭 풀 프로필이다** — 이 검사가
-    가리키던 그 "커밋하는 순간"이 왔고, 그 순간에도 막음이 선다는 것을 여기서 지킨다. Fake는
+    ⚠ **`harness_pool`(PR #190의 `local_balanced_pool`, 2026-09-24 이름 변경)이 커밋된 실 풀
+    프로필이다** — 이 검사가 가리키던 그 "커밋하는 순간"이 왔고, 그 순간에도 막음이 선다는
+    것을 여기서 지킨다. Fake는
     `source`가 없어 `counter_for_role`이 `None`이라 이 검사는 **역할 키의 실재**만 본다(값이 아니라
     자리) — 실 토크나이저에서의 조립·재검증 일치는 아래 `..._the_runner_actually_uses`가 잡는다.
     """
