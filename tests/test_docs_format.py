@@ -44,7 +44,7 @@ import difflib
 import re
 import subprocess
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import pytest
 import yaml
@@ -1111,6 +1111,32 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
 _MODEL_SERVING = REPO_ROOT / "docs" / "model-serving.md"
 _UNAVOIDABLE = "회피 불가"
+# `docs/model-serving.md` 포트 표의 행 — `> | **8004** | \`qwen3-embedding-0.6b\` ← …`.
+_PORT_ROW = re.compile(r"^> \| \*\*(\d{4})\*\* \| `([^`]+)`", re.M)
+
+
+def test_the_model_serving_port_table_matches_the_registry() -> None:
+    """포트 표는 **지금 상태를 현재형으로 적는 자리**라 registry와 같아야 한다(CLAUDE.md §2.3).
+
+    2026-09-24 포트를 띄우는 순서대로 다시 매겼다(`tests/test_config.py`의
+    `test_served_ports_count_up_from_8000_in_launch_order`). registry만 고치고 이 표를 놓치면
+    표가 옛 번호로 서빙 절차를 안내한다 — 그 불일치를 사람이 기억해서 잡기를 기대하지 않는다.
+    """
+    # 핀 — 양성은 저장소의 실제 행이다(`docs/model-serving.md` 포트 표의 8004 행 — 검색 모델이라
+    # 재배치에서 번호가 안 바뀐다). 음성은 같은 표의 머리 줄 모양이다 — 행이 아니다.
+    assert _PORT_ROW.search("> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid` |")
+    assert not _PORT_ROW.search("> | 포트 | 어느 프로필이 어느 이름을 보내나 |")
+    from src.config import CONFIG_DIR
+
+    rows = {key: int(port) for port, key in _PORT_ROW.findall(_read(_MODEL_SERVING))}
+    models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
+    served = {
+        key: urlparse(str(entry["endpoint"])).port
+        for key, entry in models.items()
+        if not str(entry["endpoint"]).startswith("fake://")
+    }
+
+    assert rows == served, f"포트 표 {rows} ≠ registry {served}"
 
 
 def _within_profile_port_clashes() -> dict[str, dict[str, list[str]]]:
