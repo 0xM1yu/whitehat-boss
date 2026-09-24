@@ -112,3 +112,7 @@ class SliceRef(HarnessModel):
     location: Location
     # v3 `FACTS.slice_criterion.given_end` — Case A는 `source`, B는 `sink`.
     given_end: Literal["source", "sink"]
+    # 슬라이서가 준 entry **그대로**(file·line·symbol) — `FACTS.slice_criterion.given`이 된다.
+    # `location`과 따로 드는 이유: Case B의 entry `symbol`은 감싸는 함수가 아니라 sink 호출
+    # 이름이라(ADR 0012 결정 1의 ⚠) 한 필드로 합치면 둘 중 하나가 거짓이 된다.
+    entry: Location

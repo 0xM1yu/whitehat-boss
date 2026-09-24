@@ -67,11 +67,16 @@ graph LR
 
 > ⚠ **2026-09-24 — [ADR 0012](decisions/0012-harness-canon-v2.md)가 위 표의
 > 1·3·4·5단계 입력을 다시 정한다. 승인됐다(2026-09-25) — 코드는 아직이다 — 위 칸은 지금 구조이고 아래가 그 결정이다.**
+> (⏵ 2026-09-25 — 결정 1의 입력 쪽은 `run --slices`로 돈 run에 들어왔다(Phase 3a·3b·3c) — 아래 1·4·5단계 불릿의 ⏵가
+> 무엇이 들어왔는지 적는다. `--slices` 없는 run은 위 칸 그대로다.)
 >
 > - **1단계 — 슬라이스가 후보가 된다**(결정 1, Phase 3). Joern 슬라이스 1개 = 후보 1개. 지금 슬라이서는
 >   하네스 밖 오프라인 스크립트이고 러너의 후보는 tree-sitter `symbols_for()`의 심볼이다
 >   (`runner._plan_targets`) — `src/`·`config/`에 `slices.json`을 읽는 코드가 0건이다. tree-sitter 인덱스는
 >   `GRAPH` Evidence·`callers`/`callees`에 더해 need_evidence resolver의 심볼 표(index-v2, Phase 4)가 된다.
+>   (⏵ 2026-09-25 — `run --slices`면 슬라이스 1개가 타깃 1개다(`runner._plan_slice_targets` — Phase 3a PR #283 ·
+>   3b PR #284 · 3c). 후보는 그 타깃을 본 Scout 자리마다 하나라 풀이면 셋이다. 슬라이서는 여전히 run 밖에서 돌고
+>   하네스는 `slices.json`을 파일로 받는다. `--slices` 없는 run의 타깃은 앞 문장 그대로 tree-sitter 심볼이다.)
 > - **3단계 — 쓰임이 열려 있다**(결정 3, 2026-09-26 대면 논의). ADR 0012가 그 논의 전에 정해 두는
 >   것은 둘이다 — need_evidence는 결정론적 심볼 resolver가 풀고(결정 2), canonical 프로필은 합의 전까지
 >   `retriever: hybrid`를 쓰지 않는다. ~~canonical 프로필은 아직 없다(Phase 6).~~ (⏵ 2026-09-24 — 생겼다:
@@ -86,10 +91,14 @@ graph LR
 >   `read_symbol_source()`의 심볼 본문이고, v3 `ScoutResponse`의 `analysis_summary`는 버려지며
 >   (`nodes/scout.py`) `triage_need_evidence`(0.30)도 `triage_reject`(0.10)처럼 `scout_threshold` 미만으로
 >   `queued`된다 — 루프 0건. 풀 프로필의 v3 프롬프트가 이미 슬라이스를 전제해 지금 입력과 어긋난다 →
->   [D82](open-questions/D/D82.md). Phase 3·5.
+>   [D82](open-questions/D/D82.md). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
+>   됐다(Phase 3c): `SOURCE`가 슬라이스 렌더이고 FACTS에 `slice_criterion`이 붙으며 LIGHT 캡슐이 그 렌더를 센다.
+>   need_evidence 루프는 그대로 0건이다(Phase 5).)
 > - **5단계 — Auditor가 받을 표현은 열려 있다**(결정 1-b). 기본값은 원본 소스이고
 >   (`prompts/auditor/v3/body.md`의 `representation: original source code`) 슬라이스로 바꾸려면 프롬프트
->   개정이 먼저다.
+>   개정이 먼저다. (⏵ 2026-09-25 — 슬라이스 타깃의 Auditor는 entry 줄을 감싸는 함수 하나의 원본을 받는다 —
+>   인덱스가 없거나 품는 함수가 없으면 파일 전체다(`runner._auditor_target`, Phase 3c). 기본값을 좁게 푼 것이라
+>   군집 슬라이스가 걸친 다른 함수는 못 본다.)
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).
 

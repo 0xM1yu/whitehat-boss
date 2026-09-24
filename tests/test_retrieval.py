@@ -295,8 +295,8 @@ def test_cache_key_differs_from_fake_retriever(corpus: Path) -> None:
 
 # --- 슬라이스 타깃 (ADR 0012 결정 1 · #220 ②) ---------------------------------
 
-# 같은 entry(`target.py`:1)를 가진 두 슬라이스의 렌더. 러너가 `build_deps`에서 받은 조회 함수가
-# 이 dict의 `__getitem__`이다.
+# 같은 entry(`target.py`:1)를 가진 두 슬라이스의 렌더. `build_deps`가 Retriever에 넣는 것도 렌더
+# dict의 `__getitem__`이다 — 여기서는 그 dict를 손으로 만든다.
 _RENDERS = {
     "slice_0001": "/* ===== target.py ===== */\n1| def handle(req):",
     "slice_0002": "/* ===== target.py ===== */\n1| def handle(req):\n2|     return req.user.token",
