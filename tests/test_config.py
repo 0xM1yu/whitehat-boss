@@ -12,6 +12,7 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 import yaml
@@ -1451,3 +1452,60 @@ def test_an_unknown_execution_key_is_rejected() -> None:
                 "execution": {"modes": "per_stage"},
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# 포트 — 교대가 띄우는 순서대로 8000부터 (2026-09-24 @danielcho02)
+# ---------------------------------------------------------------------------
+
+# 교대가 첫 모델을 띄우는 포트.
+FIRST_PORT = 8000
+
+
+def _launch_order(config: HarnessConfig) -> list[str]:
+    """교대가 모델을 띄우는 순서 — Scout 풀(4단계) → Auditor(5) → Critic(7) → 검색(hybrid 전용).
+
+    러너가 단계마다 교대를 부르는 순서와 같다(Scout 풀 안에서는 `SCOUT_POOL_ROLES` 순서). 검색
+    두 모델은 hybrid에서만 뜨므로 canonical run의 넷 **뒤**에 둔다 — canonical run이 8000부터
+    차례로 올라가게 하려는 것이다.
+    """
+    roles = config.profile.roles
+    order = (*SCOUT_POOL_ROLES, "auditor", "critic", *RETRIEVAL_ROLES)
+    return list(dict.fromkeys(roles[role] for role in order if role in roles))
+
+
+def _port(entry: ModelEntry) -> int | None:
+    return urlparse(entry.endpoint).port
+
+
+def test_served_ports_count_up_from_8000_in_launch_order() -> None:
+    """포트는 교대가 띄우는 순서대로 8000부터 빈틈없이 올라간다.
+
+    2026-09-24 전까지는 로스터를 바꿀 때마다 빈 번호에 끼워 넣어, canonical run이
+    8009 → 8010 → 8008 → 8006 순서로 떴다(#267 기준 registry) — 번호만 보고는 어느 단계의
+    모델인지 알 수 없었다. 이제 번호가 곧 띄우는 순서다.
+    """
+    config = load_config("harness_pool")
+    keys = _launch_order(config)
+
+    actual = {key: _port(config.models[key]) for key in keys}
+    expected = {key: FIRST_PORT + index for index, key in enumerate(keys)}
+    assert actual == expected
+
+
+def test_no_two_served_models_share_a_port() -> None:
+    """실서빙 키마다 포트가 따로다.
+
+    한 포트로 두 모델을 부르는 프로필은 프로필을 골라 피할 수도 없다(`docs/model-serving.md`의
+    「회피 불가」 문단). 2026-09-24 로스터 밖 정리(#267) 전에는 대안 키끼리 포트를 나눠 썼다
+    (8001·8002·8005) — 지금은 그 대안이 없으므로 포트 하나에 키 하나다.
+    """
+    models = load_config("harness_pool").models
+    by_port: dict[int | None, list[str]] = {}
+    for key, entry in models.items():
+        if entry.endpoint.startswith("fake://"):
+            continue
+        by_port.setdefault(_port(entry), []).append(key)
+
+    shared = {port: keys for port, keys in by_port.items() if len(keys) > 1}
+    assert not shared, f"포트를 같이 쓰는 실서빙 키: {shared}"
