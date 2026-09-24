@@ -25,11 +25,11 @@ from src.adapters.tokenizer import (
     counter_reason_for_source,
     tokenizer_dir_from_source,
 )
-from src.config import load_config
 from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.tokens import estimate_tokens, using_counter
+from tests.conftest import served_scout_config
 
 
 def test_none_when_no_tokenizer_file(tmp_path: Path) -> None:
@@ -153,7 +153,7 @@ def test_build_deps_reports_real_when_the_tokenizer_file_is_there(tmp_path: Path
     tokenizer.save(str(model_dir / "tokenizer.json"))
 
     source = f"file://{model_dir.as_posix()}"
-    base = load_config("single_gpu_12g")
+    base = served_scout_config()
     key = base.model_key_for("scout")
     entries = dict(base.models)
     entries[key] = entries[key].model_copy(update={"source": source})

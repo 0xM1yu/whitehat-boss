@@ -30,7 +30,6 @@
 | 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `qwen3-14b` | ✅ |
 | 5단계 · Auditor | `qwen3.6-35b-a3b` | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
-| B1 기준(최강 단일 멤버) | `qwen3-coder-30b-a3b` | ✅ |
 
 ⚠ **scout_memory·boundary는 같은 키 `seccoderx-8b` 한 벌이다** — 프롬프트가 역할 폴더로
 갈린다(`scout_memory/v3`=옛 실험 v14s · `scout_boundary/v3`=옛 v15s). 같은 weights라 별칭 키를
@@ -45,9 +44,10 @@ memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 �
 §1에서 내려왔다(애초에 registry 미등재라 온보딩 전이었다). ⚠ **갈래가 없어진 것이지 실측이 나온
 것이 아니다** — 새 자리도 실측 전이고 그 상태는 §5가 든다([D24](docs/open-questions/D/D24.md)의 2026-09-21 절).
 
-⚠ **B1 기준 행의 `qwen3-coder-30b-a3b`는 이제 풀 멤버가 아니다.** 2026-09-21 전에는 그 키가
-`scout_memory`이자 Auditor A안이라 자명했는데, 지금 §1에 남는 자리는 이 한 줄뿐이다. 새 넷 중
-무엇이 그 자리를 이어받는지는 실측이 없어 이 파일이 말하지 않는다([CLAUDE.md](CLAUDE.md) §0).
+⚠ **2026-09-24 — 「B1 기준(최강 단일 멤버)」 행을 뺐다.** 그 행의 키 `qwen3-coder-30b-a3b`와 B1 프로필
+`b1_single`을 로스터 밖 정리로 지웠다(아래 표 끝). 로스터로 B1 조건([evaluation.md](docs/evaluation.md) §2.2)을
+다시 세울지, 세운다면 어느 키가 「최강 단일 멤버」인지는 실측이 없어 이 파일이 정하지 않는다 —
+벤치마크 조건과 함께 정한다([CLAUDE.md](CLAUDE.md) §0).
 
 ### 로스터에 없지만 registry에 남는 것
 
@@ -55,17 +55,16 @@ memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 �
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
 | `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. `test_pipeline_e2e`가 in-test로 조립한다 |
-| `qwen3-coder-30b-a3b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback이고 `prompt_template_version`만 v2 — 풀 프롬프트(v2뿐) 도달용(#103 — registry 별칭, D54 (b)가 아니라 별개 선택지). ⚠ **2026-09-22 현재 미배선** — 풀 `scout_memory`가 확정 키 `seccoderx-8b`(v3)로 옮겨 이 별칭을 더는 안 쓴다. 키는 지우지 않는다(아래 주) |
-| `devstral-small-2-24b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback, `prompt_template_version`만 v2. ⚠ **2026-09-22 현재 미배선** — 풀 `scout_boundary`가 `seccoderx-8b`(v3)로 옮겼다. 근거는 위 별칭과 같다(#103) |
-| `qwen3-8b-v2` | **임시 v2 별칭.** base와 같은 무게·서버·checksum·fallback(`qwen3-4b`), `prompt_template_version`만 v2. ⚠ **2026-09-22 현재 미배선** — 풀 `scout_injection`이 `deepseek-r1-distill-qwen-32b`(v3)로 옮겼다. 근거는 위 별칭과 같다(#103) |
-| `qwen3-4b` | `single_gpu_12g` 전용(12GB 장비) |
-| `deepseek-r1-distill-qwen-32b` | 2026-09-21 로스터의 Scout injection이었고 2026-09-24 `qwen3-14b`로 옮겼다(위 §1 머리). 배선된 프로필이 없다 |
-| `qwen3-reranker-0.6b` | **지우지 않는다** — 4B와의 대조 기준. 서빙 역할에서만 내린다 |
-| `devstral-small-2-24b` | 2026-09-09 로스터의 Scout boundary였고 2026-09-21 교체로 §1에서 내려왔다. **살아 있는 배선이 있다** — `local_balanced`·`local_balanced_hybrid`의 `critic`이 이 키다. `-v2` 별칭도 같은 weights·서버·checksum이다 |
-| `qwen3-8b` | 2026-09-09 로스터의 Scout injection이었고 2026-09-21 교체로 §1에서 내려왔다. **살아 있는 배선이 있다** — `local_balanced`·`local_balanced_hybrid`의 단일 `scout`이 이 키다. `-v2` 별칭도 같은 weights·서버·checksum이다 |
 
-> **registry 키는 지우지 않는다.** ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
-> 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유이고, 그래서 되돌리기가 싸다.
+> ~~**registry 키는 지우지 않는다.**~~ ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
+> 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유였고, 그래서 되돌리기가 쌌다.
+>
+> **2026-09-24 개정(@danielcho02) — 확정 로스터와 인프라(`fake`·`fake_v2`) 밖의 키·프로필은 지운다.** 로스터가
+> 확정됐고, 안 쓰는 키·프로필은 서빙·GPU 배선에 혼선만 만든다.
+> 되돌리기는 git 이력으로 한다(항목·checksum manifest·프로필이 한 커밋에 있다). 그날 지운 것 —
+> 키 9: `qwen3-4b` · `qwen3-8b`(+`-v2`) · `qwen3-coder-30b-a3b`(+`-v2`) · `devstral-small-2-24b`(+`-v2`) ·
+> `deepseek-r1-distill-qwen-32b` · `qwen3-reranker-0.6b` / 프로필 4: `single_gpu_12g` · `local_balanced` ·
+> `local_balanced_hybrid` · `b1_single`. 날짜가 붙은 과거 서술(ADR·D·실험 보고서)은 그때의 이름을 그대로 둔다.
 
 ---
 
@@ -105,7 +104,7 @@ tree-sitter는 **인덱스**(심볼 표·호출 그래프)를 낸다. 6단계 �
 바꿀 때 손대는 곳은 **넷뿐이다**:
 
 1. **이 파일 §1 표** — 정본 선언
-2. **`config/models.yaml`** — 새 키 등재(기존 키는 안 지운다)
+2. **`config/models.yaml`** — 새 키 등재, 로스터에서 내려온 키는 지운다(2026-09-24 개정 — §1 끝)
 3. **`config/profiles.yaml`** — `roles:` 한 줄씩
 4. **[ADR 0010](docs/decisions/0010-harness-structure-and-model-roster.md) §2** — 결정 기록과 근거
 
@@ -137,13 +136,12 @@ tree-sitter는 **인덱스**(심볼 표·호출 그래프)를 낸다. 6단계 �
 **둘 다 「로스터를 바꾸는 비용」이 아니라 「로스터를 처음 세우는 비용」이다** — 자리에
 모델을 바꿔 끼우는 일은 여전히 넷이다. 다만 이 파일만 읽고 "넷이면 끝난다"고 읽지 마라.
 
-⚠ **roles를 잠근 대조 쌍은 같은 diff에서 고친다.** `local_balanced`↔`local_balanced_hybrid`,
-그리고 `harness_pool`↔`harness_pool_hybrid` 둘이다 — 각 쌍은 `retriever`
-하나만 달라야 검색 경로 효과가 갈리고, 그래서 아래 두 검사가 roles 동일을 강제한다(그
-강제가 없는 `dev_fake`/`dev_hybrid`는 이 규칙 밖이다). `tests/test_config.py`의
-`test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retriever`와
+⚠ **roles를 잠근 대조 쌍은 같은 diff에서 고친다.** `harness_pool`↔`harness_pool_hybrid`다 —
+`retriever` 하나만 달라야 검색 경로 효과가 갈리고, 그래서 검사가 roles·실행 단위 동일을
+강제한다(그 강제가 없는 `dev_fake`/`dev_hybrid`는 이 규칙 밖이다). `tests/test_config.py`의
 `test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever`가
-`variant.roles == base.roles`를 단언한다 — 한쪽만 고치면 CI가 잡는다.
+`variant.roles == base.roles`를 단언한다 — 한쪽만 고치면 CI가 잡는다. (옛 쌍 `local_balanced`↔
+`local_balanced_hybrid`와 그 검사는 2026-09-24에 지웠다.)
 
 ---
 
@@ -176,8 +174,9 @@ tree-sitter는 **인덱스**(심볼 표·호출 그래프)를 낸다. 6단계 �
 ⚠ **그래서 `config/profiles.yaml`을 열면 §1과 다른 배정이 아직 보인다 — 이제 자리가 갈린다.**
 **canonical `harness_pool`·`_hybrid`는 §1과 일치한다**(위 표 마지막 줄 — 2026-09-24 `local_balanced_pool`에서
 이름을 바꾸고 injection을 `qwen3-14b`로 옮겼다).
-**실서빙 `local_balanced`·`_hybrid`·`b1_single`은 여전히 §1과 다르다**(단일 scout·critic devstral 등) —
-그것은 드리프트가 아니라 위 표 마지막 줄이 든 「아직 안 따라온」 상태다. §1이 정본이니 반대로 읽지 마라.
+~~**실서빙 `local_balanced`·`_hybrid`·`b1_single`은 여전히 §1과 다르다**(단일 scout·critic devstral 등) —
+그것은 드리프트가 아니라 위 표 마지막 줄이 든 「아직 안 따라온」 상태다.~~ **2026-09-24 — 그 셋(과
+`single_gpu_12g`)을 지웠다**(§1 끝). 이제 실모델을 쓰는 프로필은 `harness_pool`·`_hybrid` 둘이고 §1과 일치한다.
 `tests/test_docs_format.py`의 `test_context_declares_that_profiles_are_not_rewired_yet`이
 그 어긋남과 이 선언을 묶는다: **어느 프로필이든 Scout 풀 역할을 쓰면 「아직 안 됐다」 마커를
 지우게 만든다** — 2026-09-13에 `local_balanced_pool`이 풀을 배선하며 그 마커를 지웠다. 이제 그

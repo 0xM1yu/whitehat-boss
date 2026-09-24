@@ -2,7 +2,8 @@
 
 `index.json`이 **있는 경로와 없는 경로 둘 다** 태운다. 가르는 것은 `retriever`가 아니라
 **`tool_runner`다** — `docker`·`singularity`인 프로필이 내고 `fake`인 쪽(`dev_hybrid`·
-`dev_fake`·`single_gpu_12g`)은 안 낸다. 한쪽만 태우면 나머지 절반은 아무도 안 보는
+`dev_fake`, 그리고 2026-09-24에 지운 옛 `single_gpu_12g`)은 안 낸다. 한쪽만 태우면 나머지
+절반은 아무도 안 보는
 코드가 된다.
 
 **프로필 이름을 열거하지 않는다** — 예전 판이 다섯을 적었는데 그때도 이미 넷이 빠져

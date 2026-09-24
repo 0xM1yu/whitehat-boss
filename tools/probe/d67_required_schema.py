@@ -49,7 +49,7 @@ D67이 남긴 것: *"이 run의 메타는 `repo_commit`이 **미기재**라 당�
 
     python tools/probe/d67_required_schema.py \
         --run-dir /path/to/artifacts/run_20260904_0001 \
-        --profile local_balanced --trials 5 \
+        --profile harness_pool --trials 5 \
         --out d67_probe.json
 
 `--run-dir`의 `prompts/`에서 `_auditor.md`(1차만, `_retryK`는 제외)를 순번대로 읽는다.
@@ -271,7 +271,7 @@ def _run_arm(client: Any, *, arm: str, prompt: Prompt, trials: int, known: set[s
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="D67 — 스키마 required가 채움을 가르는가")
     parser.add_argument("--run-dir", type=Path, required=True, help="보존된 run 디렉터리")
-    parser.add_argument("--profile", default="local_balanced")
+    parser.add_argument("--profile", default="harness_pool")
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument(
         "--prompt-index", type=int, default=0, help="prompts/의 몇 번째 auditor 파일"
