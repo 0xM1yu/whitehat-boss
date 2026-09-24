@@ -15,8 +15,15 @@ Two things follow from doing this, both measured on the release eval:
 The database's `file` entries resolve against each entry's `directory`. Release samples ship a
 relative directory ("repo") that does not resolve on the Joern host, so every directory is
 rewritten to the absolute repository path before the copy is handed to c2cpg.
+
+The normalized copy is content-addressed and written atomically: two slicer runs that share an
+output parent (parallel slicing writes every sample under one payload dir) would otherwise
+overwrite one fixed filename and hand each other the wrong translation-unit set.
 """
+import hashlib
 import json
+import os
+import uuid
 from pathlib import Path
 
 
@@ -72,6 +79,13 @@ def resolve_compilation_database(
     if not compiled:
         raise ValueError("no compile_commands entry resolves inside the repository")
     out_dir.mkdir(parents=True, exist_ok=True)
-    normalized = out_dir / "compile_commands.resolved.json"
-    normalized.write_text(json.dumps(entries), encoding="utf-8")
+    payload = json.dumps(entries)
+    # Content-addressed name so distinct databases never collide in a shared dir; identical
+    # content maps to one file. Write to a unique temp then rename so a concurrent writer of the
+    # same name can never observe a half-written file.
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    normalized = out_dir / f"compile_commands.resolved.{digest}.json"
+    tmp = out_dir / f".compile_commands.{uuid.uuid4().hex}.tmp"
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, normalized)
     return normalized.resolve(), compiled

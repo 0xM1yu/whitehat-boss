@@ -120,6 +120,43 @@ def test_missing_database_raises_oserror(tmp_path):
         resolve_compilation_database(tmp_path / "nope.json", repo, tmp_path / "w")
 
 
+def test_distinct_databases_get_distinct_normalized_files(tmp_path):
+    # Parallel slicing writes every sample's normalized database under one shared dir; a fixed
+    # name would let two runs overwrite each other and import the wrong translation units.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    (repo / "src" / "b.c").write_text("int b;\n")
+    out = tmp_path / "shared"
+    ea = [{"directory": str(repo), "file": "src/a.c", "command": "cc a"}]
+    eb = [{"directory": str(repo), "file": "src/b.c", "command": "cc b"}]
+    db_a = _write_db(tmp_path / "a.json", ea)
+    db_b = _write_db(tmp_path / "b.json", eb)
+
+    norm_a, _ = resolve_compilation_database(db_a, repo, out)
+    norm_b, _ = resolve_compilation_database(db_b, repo, out)
+
+    assert norm_a != norm_b
+    assert norm_a.exists() and norm_b.exists()
+    # Each keeps its own translation unit; neither was overwritten.
+    assert "src/a.c" in norm_a.read_text()
+    assert "src/b.c" in norm_b.read_text()
+
+
+def test_identical_database_content_maps_to_one_file(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    out = tmp_path / "shared"
+    entry = [{"directory": str(repo), "file": "src/a.c", "command": "cc a"}]
+    db = _write_db(tmp_path / "cc.json", entry)
+
+    first, _ = resolve_compilation_database(db, repo, out)
+    second, _ = resolve_compilation_database(db, repo, out)
+
+    assert first == second
+
+
 def test_import_query_passes_the_compilation_database_flag():
     query = queries.import_query("/r", "proj", "/work/compile_commands.resolved.json")
     assert "--compilation-database" in query
