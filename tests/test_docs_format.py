@@ -334,6 +334,40 @@ def test_internal_links_point_at_a_real_file(path: Path) -> None:
     assert broken == [], "\n".join(broken)
 
 
+# `config/*.yaml` 주석이 가리키는 저장소 문서 — `docs/`로 시작하는 `.md`. 앞 글자가 경로 글자면
+# 다른 경로(외부 URL 포함)의 가운데라 저장소 루트의 `docs/`가 아니다.
+_CONFIG_DOC_PATH = re.compile(r"(?<![\w/.-])(docs/[\w./-]+\.md)")
+
+
+def test_config_comments_point_at_a_real_doc() -> None:
+    """`config/*.yaml` 주석이 든 `docs/…md` 경로는 추적되는 파일이어야 한다.
+
+    **사고 —** PR #262(base main)가 `config/models.yaml` 머리 문단에서 ATOM 스모크 보고서를
+    가리켰는데 그 보고서는 짝 PR #263만 들여왔다. 머지 순서를 강제하는 장치가 없어 config가 없는
+    파일을 가리킨 채 main에 들어갈 수 있었다(sumin 리뷰 MEDIUM, 2026-09-24). 위 링크 검사는
+    마크다운만 읽어 YAML 주석을 못 본다. 추적 목록(`git ls-files`)과 대조하므로 긴 워크트리 경로의
+    `Path.exists()` 오판에는 안 걸린다.
+    """
+    # 양성 핀 — 실형태: `config/models.yaml`의 gpt-oss 기동 블록 2026-09-20 문단 원천 줄.
+    assert _CONFIG_DOC_PATH.search(
+        "    #   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의"
+    )
+    # 음성 핀 — 외부 문서 URL의 `/docs/` 경로 조각. config 주석은 이미 외부 URL을 인용한다
+    # (`config/models.yaml`의 `GET https://huggingface.co/api/models/…` 줄들).
+    assert not _CONFIG_DOC_PATH.search(
+        "    # https://github.com/vllm-project/vllm/blob/main/docs/usage/faq.md"
+    )
+    tracked = {p.relative_to(REPO_ROOT).as_posix() for p in _tracked()}
+    missing = [
+        f"{_rel(path)}:{lineno}: `{target}` 가 가리키는 파일이 없다"
+        for path in _tracked("config/*.yaml")
+        for lineno, line in enumerate(_read(path).splitlines(), 1)
+        for target in _CONFIG_DOC_PATH.findall(line)
+        if target not in tracked
+    ]
+    assert missing == [], "\n".join(missing)
+
+
 def test_experiment_filenames_carry_the_device_the_run_used() -> None:
     """파일명의 장비가 본문의 `--device`와 다르면 색인이 거짓말한다.
 
