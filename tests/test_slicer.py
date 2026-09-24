@@ -848,6 +848,18 @@ def test_non_utf8_source_keeps_prepare_checkpoint_whole(repo):
     assert job.sources["ui.cpp"] == ['gtk_label_new("Track n°:");']
 
 
+def test_valid_utf8_non_ascii_is_read_as_utf8_without_fallback(repo):
+    # D85/#254 review MEDIUM: only INVALID bytes fall back to Latin-1. A valid non-ASCII
+    # UTF-8 source (©, a Korean comment) must be read as UTF-8 verbatim, with no fallback
+    # diagnostic -- a blanket `raw.decode("latin-1")` would mojibake these and this pins
+    # against that regression.
+    (repo / "u.c").write_bytes("int x; /* © 저작권 2024 */\n".encode())
+    job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("http://unused", None))
+    job.load_sources()
+    assert job.sources["u.c"] == ["int x; /* © 저작권 2024 */"]
+    assert [d for d in job.result["diagnostics"] if d.get("stage") == "load_sources"] == []
+
+
 def test_version_comes_only_from_the_explicit_command(monkeypatch, repo, tmp_path):
     commands = []
 
