@@ -786,9 +786,17 @@ models:
     #   - `deepseek_r1` parser는 `</think>`가 없으면 출력 전부를 사고로 넘긴다(vLLM 0.27.1
     #     `reasoning/basic_parsers.py`). 그래서 본문이 빈다.
     #   ⚠ 그 판은 인자 셋이 **한꺼번에** 달랐다 — parser가 있었고 `xgrammar`·`disable_any_whitespace`가 없었다.
-    #   그 판의 서버 로그는 뒤 기동이 같은 파일을 덮어써 없다. **다른 두 길은 안 쟀다** — `enable_thinking:
-    #   false`를 보내 템플릿이 사고를 닫게 하는 판(하네스가 `chat_template_kwargs`를 보내야 한다)과, parser를
-    #   걸고 Auditor 상한을 올려 사고를 쓰게 하는 판이다.
+    #   그 판의 서버 로그는 뒤 기동이 같은 파일을 덮어써 없다. **다른 두 길은 안 쟀다.**
+    #   - 사고를 끄는 판 — 템플릿이 사고를 닫는다(`enable_thinking: false`). 서버 인자
+    #     `--default-chat-template-kwargs '{"enable_thinking": false}'`로 하네스 변경 없이 된다(vLLM 0.27.1
+    #     `entrypoints/openai/cli_args.py`).
+    #   - 사고를 쓰되 길이를 묶는 판 — 요청의 `thinking_token_budget`(토큰 수)에 닿으면 vLLM이 `</think>`를
+    #     강제로 넣는다. `--reasoning-parser`가 있어야 받는다(0.27.1 `v1/engine/input_processor.py`). 하네스는
+    #     이 필드를 안 보낸다.
+    #   ⚠ **등급으로는 못 고른다.** 이 템플릿이 읽는 사고 변수는 `enable_thinking`(과 이력용
+    #   `preserve_thinking`)뿐이다. vLLM의 `reasoning_effort`는 이 템플릿에서 `enable_thinking = (값 !=
+    #   "none")`로만 번역돼 low·medium·high가 같다. 게다가 이 registry의 `reasoning_effort`는
+    #   `low|medium|high`만 받는다(`src/config.py`).
     # - **`disable_any_whitespace true`를 건다.** 옛 Auditor(`qwen3-coder-30b-a3b`)에서 필수로 잰 인자다(위 그
     #   항목, 이슈 #172). parser 없이 이 인자만 빼 보지는 않았다. 재시도 1건은 공백이 아니라 **숫자 폭주**였다 —
     #   `repro_spec.steps`의 명령 인자 안에 `9`가 3,808자 이어져 첫 시도가 4,096에서 잘렸다
