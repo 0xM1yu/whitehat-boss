@@ -36,8 +36,8 @@ dirty로 세는 것과 같은 판단이다 — 잘못된 clean이 훨씬 비싸�
 
 ## 쓰는 법
 
-    python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \\
-        --source hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<revision>
+    python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \\
+        --source hf://Qwen/Qwen3-14B@<revision>
 
 **첫 줄의 `[스냅샷]` 출력을 보고 넘어간다.** 엉뚱한 디렉터리를 해시해도 결과는 형식이
 완벽한 checksum이라 값만 봐서는 모른다 (이슈 #134). **현재 디렉터리로 귀착하는 입력은

@@ -44,7 +44,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 **양자화 커널은 이 체크리스트의 1번보다 앞에 있다.** 2026-08-17 ATOM 실측: `qwen3-4b`(fp8)가
 `VLLM_USE_DEEP_GEMM=0` 없이는 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`).
 **수치가 나빠지는 것이 아니라 서버가 안 뜬다** — 기동 인자를 모르면 1번부터 답할 수 없다.
-모델별 기동 조건은 `config/models.yaml`의 해당 항목 주석에 있고, 환경 축으로는
+모델별 기동 조건은 `config/models.yaml`의 해당 항목 주석에 있고(⏵ 2026-09-24 — 위 `qwen3-4b` 항목은 로스터 밖 정리로 지웠다 — 원문은 git 이력), 환경 축으로는
 [portability.md](portability.md) §5 #5다.
 
 검증 체크리스트 (각 항목 뒤는 `python -m src.cli bench`가 그 항목을 답하는 출력 필드다):
@@ -204,7 +204,7 @@ peak을 잡는다(2026-08-14 Slurm 실측 원문에서 사후 스크레이프 �
 필드를 registry에 쓰지 않는다.
 
 **`adapters`에 ModelClient가 없는 것은 의도다.** 역할마다 다른 모델을 쓰고 그중 일부만
-실서빙일 수 있으므로(12GB 프로필은 scout만 실서빙), ModelClient 선택은 프로필이 아니라
+실서빙일 수 있으므로(~~12GB 프로필은 scout만 실서빙~~ → ⏵ 2026-09-24 — 그 예였던 `single_gpu_12g`는 지웠다. 그 모양은 지금 `tests/conftest.py`의 합성 config `served_scout_config`가 든다), ModelClient 선택은 프로필이 아니라
 각 모델의 `endpoint` 스킴이 역할별로 한다. 프로필 단위로 하나를 고르는 구조였다면 그
 구성을 표현할 수 없다.
 
@@ -222,8 +222,8 @@ peak을 잡는다(2026-08-14 Slurm 실측 원문에서 사후 스크레이프 �
 **조용히 다른 값**이 나온다.
 
 ```bash
-python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \
-    --source hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<revision>
+python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \
+    --source hf://Qwen/Qwen3-14B@<revision>
 ```
 
 출력의 `checksum:`·`source:` 두 줄을 `models.yaml`에 **사람이 붙여넣는다.**
@@ -278,18 +278,26 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
-> | **8001** | `qwen3-8b` ← `local_balanced`·`_hybrid` · `qwen3-4b` ← `single_gpu_12g` |
-> | **8002** | `qwen3-coder-30b-a3b` ← `b1_single`·`local_balanced`·`_hybrid` |
-> | **8006** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
-> | **8009** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
+> | **8000** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
+> | **8001** | `qwen3-14b` ← 풀 둘(scout_injection) |
+> | **8002** | `qwen3.6-35b-a3b` ← `harness_pool`·`_hybrid`(auditor) |
+> | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
+> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
+> | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
 >
-> **이 이름들은 프로필 사이에서 갈린다** — 예로 8001은 `local_balanced`로 돌리면 `qwen3-8b`만,
-> `single_gpu_12g`로 돌리면 `qwen3-4b`만 온다. **한 서버가 동시에 두 이름을 받아야 하는 자리는
-> 지금 없다.**
+> **번호가 곧 띄우는 순서다 (2026-09-24).** 교대가 canonical run에서 모델을 올리는 순서(Scout 풀 → Auditor →
+> Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에 뒀다. 그 전에는 로스터를 바꿀 때마다
+> 빈 번호에 끼워 넣어 8009 → 8010 → 8008 → 8006 순서로 떴다. `tests/test_config.py`의
+> `test_served_ports_count_up_from_8000_in_launch_order`가 이 순서를, `tests/test_docs_format.py`의
+> `test_the_model_serving_port_table_matches_the_registry`가 이 표와 registry의 일치를 고정한다.
+>
+> **2026-09-24 로스터 밖 정리 뒤로는 포트마다 이름이 하나다.** 그 전에는 8001(`qwen3-8b`·`qwen3-4b`)·
+> 8002(`qwen3-coder-30b-a3b`)처럼 프로필에 따라 다른 이름이 같은 포트로 오는 자리가 있었다(그 키·프로필을
+> 지웠다). **한 서버가 동시에 두 이름을 받아야 하는 자리는 지금 없다.**
 >
 > ⚠ **한 프로필 안에서 한 포트로 두 모델이 오는 자리도 지금 없다 — 있으면 「주의」가 아니라
 > 블로커다.** 확정 로스터 배선 때 `seccoderx-8b`(Scout)가 `gpt-oss-20b`(Critic)와 같은 :8006이었는데
-> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
+> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2 — 지금 번호는 위 표의 :8000·:8003이다). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
 > 두 모델을 요구하면 — 프로필을 골라 피할 수 없다. `tests/test_docs_format.py`의
 > `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해 그
 > 자리를 세고, 있으면 그 포트 번호와 선언을 여기서 요구한다 — **지금은 0건이라 이 문단이 선언을
