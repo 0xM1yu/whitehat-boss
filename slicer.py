@@ -205,6 +205,17 @@ LIMITATIONS = [
     "an unterminated OSC escape leaves its payload as text: it can raise a false "
     "query error, or drop a frontend report row to null with a reason",
 ]
+# Added to known_limitations only when compile-aware import is active (see build_cpg). Two
+# consequences of analysing one build configuration through c2cpg --compilation-database:
+COMPILE_AWARE_LIMITATIONS = [
+    "compile-aware import analyzes ONE build configuration (the given compile_commands); code "
+    "compiled only under a different configuration is not in the graph (multi-config union is "
+    "not attempted -- Refs #271)",
+    "c2cpg --compilation-database does not define target/platform macros (e.g. __linux__, "
+    "__x86_64__) unless the command passes -D, so branches guarded by them are inactive and "
+    "this path does not parse inactive branches; such code can be dropped (verified by full "
+    "slicing, not by CI)",
+]
 
 
 class QueryError(Exception):
@@ -682,7 +693,7 @@ class Slicer(SlicingStages):
         compilation_database = None
         if self.compile_commands is not None:
             try:
-                normalized, compiled = resolve_compilation_database(
+                normalized, compiled, ignored = resolve_compilation_database(
                     self.compile_commands, self.repo, self.compile_db_dir
                 )
                 compilation_database = normalized.as_posix()
@@ -693,8 +704,15 @@ class Slicer(SlicingStages):
                         "compile_aware": True,
                         "compile_commands": self.compile_commands.as_posix(),
                         "compiled_units": len(compiled),
+                        # Entries dropped from the expected set because c2cpg ignores their
+                        # folder (test/, CMakeFiles/, dotdirs) or non-source extension. Recorded
+                        # so the exclusion is not silent (it must not read as a parse miss).
+                        "ignored_units": ignored,
                     }
                 )
+                # These hold only under compile-aware import, so they are added here rather
+                # than to the unconditional LIMITATIONS list.
+                self.result["known_limitations"].extend(COMPILE_AWARE_LIMITATIONS)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 # A missing or malformed database must not lose the run: fall back to
                 # importing every source file, which is the pre-compile-aware behaviour.
