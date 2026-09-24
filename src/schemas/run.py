@@ -300,6 +300,10 @@ class RunRecord(UtcModel):
     # `incomplete_fields()`에는 넣지 않는다 — `tool_runner`와 같은 사유다. Fake로 돈 run은
     # 이미 `tool_images`가 비어 경고에 걸리고, 같은 사실을 두 줄로 내면 진짜 문제가 묻힌다.
     compile_flags: CompileFlags | None = None
+    # `--slices`로 돈 run의 슬라이서 산출 — `{status, run_signature, slices}`(ADR 0012 결정 1).
+    # CPG가 못 본 줄은 모델도 못 본다 — `partial`로 돈 run이 그 사실 없이 비교표에 서지 않게
+    # 남긴다. `None`은 슬라이스 없이 돈 run(파일·심볼 타깃)이다.
+    slicer: dict[str, str | int | None] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime

@@ -62,7 +62,10 @@ _CASE_B = ("slice_0002", "B", ("parser.c", 24, "memcpy"), "parse_header", {21, 2
 
 
 def test_each_slice_becomes_one_candidate_stamped_with_its_slice_id(tmp_path: Path) -> None:
-    """타깃 = 슬라이스. 후보마다 `slice_id`가 하네스 도장으로 붙고, 위치는 entry 줄 + 감싸는 함수다."""
+    """타깃 = 슬라이스. 후보마다 `slice_id`가 하네스 도장으로 붙는다.
+
+    위치는 entry 줄 + 감싸는 함수 이름(Case B의 entry 이름 `memcpy`가 아니라)이다.
+    """
     path = _slices_file(tmp_path, [_slice(*_CASE_A), _slice(*_CASE_B)])
 
     result, trace_path = _run(tmp_path, slices_path=path)
@@ -128,3 +131,67 @@ def test_an_untrustworthy_slice_file_stops_the_run_before_it_starts(tmp_path: Pa
 def test_run_spec_keeps_the_slices_path() -> None:
     spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT)
     assert spec.slices_path is None
+
+
+# --- CLI `--slices` ---------------------------------------------------------
+
+
+def test_cli_run_takes_slices_and_records_them_in_the_manifest(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`main()`을 끝까지 돈다 — 파서만 보면 `RunSpec`까지의 배선이 끊겨도 초록이다."""
+    from src import cli
+
+    path = _slices_file(tmp_path, [_slice(*_CASE_A)])
+    out = tmp_path / "artifacts"
+
+    code = cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET),
+        "--slices", str(path), "--artifacts-root", str(out),
+    ])
+
+    assert code == 0, capsys.readouterr().err
+    (manifest,) = out.glob("*/run_manifest.json")
+    assert json.loads(manifest.read_text("utf-8"))["slicer"]["run_signature"] == "sig_0001"
+
+
+def test_cli_run_refuses_an_untrustworthy_slice_file_before_the_run_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """형식 라벨과 같은 자리(`_claim_run_dir` 앞)에서 막는다 — 번호도 디렉터리도 안 남긴다."""
+    from src import cli
+
+    bad = tmp_path / "slices.json"
+    bad.write_text(json.dumps({"slice_version": "slice-v1"}), encoding="utf-8")
+    out = tmp_path / "artifacts"
+    out.mkdir()
+
+    code = cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET),
+        "--slices", str(bad), "--artifacts-root", str(out),
+    ])
+
+    assert code == 2
+    assert "[ERROR]" in capsys.readouterr().err
+    assert not list(out.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_failed_twin_slice_counts_as_unanalysed_even_when_its_twin_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """entry가 같은 두 슬라이스 중 하나만 실패하면 「분석되지 않은 대상」은 1이다.
+
+    타깃 키가 위치만이면 두 슬라이스가 한 키가 되어, 살아남은 쪽이 죽은 쪽을 「분석됨」으로
+    덮는다 — 리포트가 0을 말한다. 위 검사(후보 둘)는 그 합쳐짐을 못 본다.
+    """
+    from src.interfaces.model_client import SchemaParseError
+    from tests.test_pipeline_e2e import _failing_model
+
+    twin = ("slice_0003", "B", ("parser.c", 24, "memcpy"), "parse_header", {24})
+    path = _slices_file(tmp_path, [_slice(*_CASE_B), _slice(*twin)])
+    _failing_model(monkeypatch, [SchemaParseError("첫 슬라이스만 실패(테스트)")])
+
+    result, _ = _run(tmp_path, slices_path=path)
+
+    assert [c.slice_id for c in result.candidates] == ["slice_0003"]
+    assert result.report.unanalyzed_targets == 1

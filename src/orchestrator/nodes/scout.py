@@ -70,6 +70,7 @@ def run(
     evidences: tuple[Evidence, ...] = (),
     previous: Candidate | None = None,
     role: Role = ROLE,
+    slice_id: str | None = None,
 ) -> Candidate:
     """후보 하나를 만들고 트리아지 결과까지 적용해 돌려준다.
 
@@ -90,6 +91,11 @@ def run(
             previous=previous,
             role=role,
         )
+        # **`slice_id`는 하네스가 덮는다** — `scout_member`와 같은 논법이다(`Candidate.slice_id`
+        # 주석). 스키마에 필드가 있어 구조화 출력이 채울 수 있으므로, 비어 오기를 기대하지 않고
+        # 저장 **전에** 매번 덮는다. `None`(슬라이스 없는 run)도 덮는다 — 모델이 지어낸 id가
+        # 살아남지 않게. `Candidate`에는 `model_validator`가 없어 `model_copy`가 안전하다.
+        candidate = candidate.model_copy(update={"slice_id": slice_id})
         ctx.create(candidate, reason=None, stage=Stage.SCOUT)
         action = ctx.decide(
             RoutingRequest(

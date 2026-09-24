@@ -26,6 +26,7 @@ from typing import TextIO, get_args
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
+from src.adapters.slices import SliceInputError, load_slices
 from src.bench import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CONTEXTS,
@@ -430,6 +431,8 @@ def execute(
         on_truncate=truncate_hook,
         on_usage=usage_hook,
         on_index=index_hook,
+        # 못 믿는 슬라이스 파일이면 여기서 멈춘다 — `run_pipeline`(첫 모델 호출) 전이다.
+        slices_path=spec.slices_path,
     )
     result = run_pipeline(
         spec,
@@ -641,6 +644,14 @@ def run(args: argparse.Namespace) -> int:
     if malformed is not None:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
+    # 슬라이스 파일도 같은 자리에서 본다 — `build_deps`가 다시 읽지만 그때는 이미 run 디렉터리와
+    # 번호가 나간 뒤다. ponytail: 두 번 읽는다(JSON 하나라 싸다). 커지면 적재 결과를 넘긴다.
+    if args.slices is not None:
+        try:
+            load_slices(args.slices)
+        except SliceInputError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            return 2
     started_at = datetime.now(UTC)
     spec = RunSpec(
         condition=DEFAULT_CONDITION if args.condition is None else args.condition,
@@ -649,6 +660,7 @@ def run(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         kb_snapshot=args.kb_snapshot,
         device=args.device,
+        slices_path=args.slices,
         started_at=started_at,
     )
     # **모델을 한 번도 안 부르는 run은 막지 않는다.** 게이트의 근거가 "비용을 쓰기 전에"라
@@ -875,6 +887,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_cmd.add_argument("--seed", type=int)
     run_cmd.add_argument("--stop-after", type=int, choices=range(MAX_STAGE + 1))
+    run_cmd.add_argument(
+        "--slices",
+        type=Path,
+        default=None,
+        help="슬라이서 산출물 slices.json(slice-v2). 주면 슬라이스 1개가 타깃 1개다"
+        "(ADR 0012 결정 1). 못 믿는 파일이면 run 디렉터리를 만들기 전에 거부한다(exit 2)",
+    )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
     run_cmd.add_argument("--kb-snapshot", default=DEFAULT_KB_SNAPSHOT)
