@@ -15,7 +15,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from src import bench_report, cli
+from src import bench, bench_report, cli
 from src.adapters.factory import WIRINGS
 from src.bench import BenchApplyError
 from src.config import CONFIG_DIR, Benchmark, ModelEntry, load_config
@@ -25,8 +25,10 @@ RUN_ID = "run_20260101_0001"
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 MEASURED_AT = "2026-08-17T00:00:00Z"
 
-# scout만 실서빙인 프로필. registry 갱신 대상 모델이 실재해야 apply 검사가 공허하지 않다.
-SERVED_PROFILE = "single_gpu_12g"
+# 실서빙 역할이 있는 프로필. registry 갱신 대상 모델이 실재해야 apply 검사가 공허하지 않다.
+# (2026-09-24 전에는 scout만 실서빙인 `single_gpu_12g`·갱신 대상 `qwen3-4b`였다 — 로스터 밖 정리로
+# 둘 다 지워 canonical `harness_pool`과 그 Scout 키 `seccoderx-8b`로 옮겼다.)
+SERVED_PROFILE = "harness_pool"
 
 
 # --- --apply -----------------------------------------------------------------
@@ -48,7 +50,7 @@ def test_apply_preserves_the_comments_that_are_the_documentation(tmp_path: Path)
     path = _models_copy(tmp_path)
     before = _comments(path)
 
-    bench_report.apply_benchmarks(path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT)
+    bench_report.apply_benchmarks(path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT)
 
     assert _comments(path) == before
     assert "tok_s_single: 12.5" in path.read_text(encoding="utf-8")
@@ -78,7 +80,7 @@ def _role_report(throughput: dict[str, object]) -> dict[str, object]:
     return {
         "roles": {
             "scout": {
-                "model_key": "qwen3-4b",
+                "model_key": "seccoderx-8b",
                 "skipped": None,
                 # `_is_measured`가 요구한다 — 없으면 이 역할이 통째로 건너뛰어져
                 # 기능 부재가 아니라 픽스처 결손으로 실패한다.
@@ -114,7 +116,7 @@ def test_pending_updates_carries_the_batch32_hit_ratio() -> None:
     """`--apply`가 쓸 값에 적중률이 함께 실린다 (#128)."""
     updates, _ = bench_report.pending_updates(_role_report(_throughput(hit_ratio=0.7776)))
 
-    assert updates["qwen3-4b"]["prefix_hit_ratio_batch32"] == 0.7776
+    assert updates["seccoderx-8b"]["prefix_hit_ratio_batch32"] == 0.7776
 
 
 def test_a_zero_hit_ratio_is_still_written(tmp_path: Path) -> None:
@@ -125,14 +127,14 @@ def test_a_zero_hit_ratio_is_still_written(tmp_path: Path) -> None:
     """
     updates, _ = bench_report.pending_updates(_role_report(_throughput(hit_ratio=0.0)))
 
-    assert updates["qwen3-4b"]["prefix_hit_ratio_batch32"] == 0.0
+    assert updates["seccoderx-8b"]["prefix_hit_ratio_batch32"] == 0.0
 
 
 def test_an_unreadable_hit_ratio_is_not_invented() -> None:
     """카운터를 못 읽었으면 그 자리는 비워 둔다 (#128). 0으로 접으면 적극적인 거짓말이다."""
     updates, skipped = bench_report.pending_updates(_role_report(_throughput(hit_ratio=None)))
 
-    assert "prefix_hit_ratio_batch32" not in updates["qwen3-4b"]
+    assert "prefix_hit_ratio_batch32" not in updates["seccoderx-8b"]
     assert any("prefix_hit_ratio_batch32" in reason for reason in skipped)
 
 
@@ -141,12 +143,12 @@ def test_apply_writes_the_hit_ratio_into_the_registry(tmp_path: Path) -> None:
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"qwen3-4b": {"tok_s_batch32": 68.64, "prefix_hit_ratio_batch32": 0.7776}},
+        path, {"seccoderx-8b": {"tok_s_batch32": 68.64, "prefix_hit_ratio_batch32": 0.7776}},
         MEASURED_AT,
     )
 
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert loaded["models"]["qwen3-4b"]["benchmark"]["prefix_hit_ratio_batch32"] == 0.7776
+    assert loaded["models"]["seccoderx-8b"]["benchmark"]["prefix_hit_ratio_batch32"] == 0.7776
 
 
 def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
@@ -157,7 +159,7 @@ def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
     report = {
         "roles": {
             "scout": {
-                "model_key": "qwen3-4b",
+                "model_key": "seccoderx-8b",
                 "startup": {"ok": True},
                 "skipped": None,
                 "throughput": {
@@ -180,7 +182,7 @@ def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
 
     updates, skipped = bench_report.pending_updates(report)
 
-    assert updates == {"qwen3-4b": {"tok_s_single": 30.0}}
+    assert updates == {"seccoderx-8b": {"tok_s_single": 30.0}}
     assert any("tok_s_batch32" in reason for reason in skipped)
 
     path = _models_copy(tmp_path)
@@ -195,7 +197,7 @@ def test_apply_refuses_memory_without_gpu_memory_utilization() -> None:
     report = {
         "roles": {
             "scout": {
-                "model_key": "qwen3-4b",
+                "model_key": "seccoderx-8b",
                 "startup": {"ok": True},
                 "skipped": None,
                 "throughput": {
@@ -215,7 +217,7 @@ def test_apply_refuses_memory_without_gpu_memory_utilization() -> None:
 
     updates, skipped = bench_report.pending_updates(report)
 
-    assert "mem_gb_ctx8k" not in updates["qwen3-4b"]
+    assert "mem_gb_ctx8k" not in updates["seccoderx-8b"]
     assert any("재현 불가" in reason for reason in skipped)
 
 
@@ -238,7 +240,7 @@ def test_apply_is_all_or_nothing_across_models(tmp_path: Path) -> None:
     with pytest.raises(BenchApplyError):
         bench_report.apply_benchmarks(
             path,
-            {"qwen3-4b": {"tok_s_single": 12.5}, "없는-모델": {"tok_s_single": 1.0}},
+            {"seccoderx-8b": {"tok_s_single": 12.5}, "없는-모델": {"tok_s_single": 1.0}},
             MEASURED_AT,
         )
 
@@ -252,11 +254,11 @@ def test_applied_registry_still_loads(tmp_path: Path) -> None:
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"qwen3-4b": {"tok_s_single": 12.5, "mem_gb_ctx8k": 8.25}}, MEASURED_AT
+        path, {"seccoderx-8b": {"tok_s_single": 12.5, "mem_gb_ctx8k": 8.25}}, MEASURED_AT
     )
 
     config = load_config(SERVED_PROFILE, config_dir=tmp_path)
-    benchmark = config.models["qwen3-4b"].benchmark
+    benchmark = config.models["seccoderx-8b"].benchmark
     assert benchmark.is_measured
     assert benchmark.tok_s_single == 12.5
     assert benchmark.measured_at is not None
@@ -265,7 +267,7 @@ def test_applied_registry_still_loads(tmp_path: Path) -> None:
 # --- measured_on -------------------------------------------------------------
 
 
-def _loaded(tmp_path: Path, key: str = "qwen3-4b") -> Benchmark:
+def _loaded(tmp_path: Path, key: str = "seccoderx-8b") -> Benchmark:
     """갱신 결과를 실제 로더로 되읽는다. 문자열 검사만으로는 스키마 통과를 못 본다."""
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
@@ -282,7 +284,7 @@ def test_apply_does_not_touch_the_source_field(tmp_path: Path) -> None:
     before = path.read_text(encoding="utf-8").count("source:")
 
     bench_report.apply_benchmarks(
-        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+        path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
     )
 
     text = path.read_text(encoding="utf-8")
@@ -307,7 +309,7 @@ def test_registry_loads_without_a_source_line(tmp_path: Path) -> None:
 
     config = load_config(SERVED_PROFILE, config_dir=tmp_path)
 
-    assert config.models["qwen3-4b"].source is None
+    assert config.models["seccoderx-8b"].source is None
 
 
 def test_a_source_value_survives_the_round_trip(tmp_path: Path) -> None:
@@ -347,7 +349,7 @@ def test_apply_records_which_device_measured_it(tmp_path: Path) -> None:
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+        path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
     )
 
     benchmark = _loaded(tmp_path)
@@ -363,7 +365,7 @@ def test_an_unknown_device_is_written_as_null_not_guessed(tmp_path: Path) -> Non
     """
     path = _models_copy(tmp_path)
 
-    bench_report.apply_benchmarks(path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT)
+    bench_report.apply_benchmarks(path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT)
 
     assert "measured_on: null" in path.read_text(encoding="utf-8")
     assert _loaded(tmp_path).measured_on is None
@@ -384,7 +386,7 @@ def test_a_hostile_label_neither_breaks_nor_silently_changes(tmp_path: Path, lab
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"qwen3-4b": {"tok_s_single": 1.0}}, MEASURED_AT, measured_on=label
+        path, {"seccoderx-8b": {"tok_s_single": 1.0}}, MEASURED_AT, measured_on=label
     )
 
     assert _loaded(tmp_path).measured_on == label
@@ -508,7 +510,7 @@ def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     path = _models_copy(tmp_path)
     bench_report.apply_benchmarks(
-        path, {"qwen3-4b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+        path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
     )
 
     same = doctor_lines(device="atom", config_dir=tmp_path)
@@ -517,7 +519,7 @@ def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -
     assert not [line for line in same if "다른 장비 기준" in line]
     mismatch = [line for line in other if "다른 장비 기준" in line]
     assert len(mismatch) == 1
-    assert "qwen3-4b(atom)" in mismatch[0]
+    assert "seccoderx-8b(atom)" in mismatch[0]
 
 
 def test_an_unmeasured_registry_is_not_reported_as_a_mismatch() -> None:
@@ -567,7 +569,7 @@ def test_serving_apply_without_a_device_refuses_to_write(
     monkeypatch.setattr(cli, "apply_benchmarks", lambda *a, **k: written.append(a) or {})
 
     code = cli.main(
-        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path), "--apply"]
+        ["bench", "--profile", "harness_pool", "--artifacts-root", str(tmp_path), "--apply"]
     )
 
     assert code == 2
@@ -580,9 +582,10 @@ def test_serving_apply_with_a_device_still_writes(
 ) -> None:
     """라벨을 주면 종전대로 쓴다 — 막는 것은 결여이지 `--apply` 자체가 아니다 (#124)."""
     monkeypatch.setattr(cli, "apply_benchmarks", lambda *a, **k: {"lines": 0})
+    _refuse_endpoints(monkeypatch)
 
     code = cli.main(
-        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path),
+        ["bench", "--profile", "harness_pool", "--artifacts-root", str(tmp_path),
          "--apply", "--device", "atom"]
     )
     capsys.readouterr()
@@ -590,15 +593,27 @@ def test_serving_apply_with_a_device_still_writes(
     assert code != 2
 
 
+def _refuse_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    """실서빙 엔드포인트 연결을 즉시 실패시킨다.
+
+    이 검사들이 보는 것은 라벨 게이트이지 서버가 아니다.
+
+    `harness_pool`은 실서빙 역할이 다섯이라 스텁이 없으면 역할마다 연결을 기다려 검사 하나에
+    10초가 넘게 걸렸다(2026-09-24 실측 — 옛 `single_gpu_12g`는 역할이 하나였다).
+    """
+    monkeypatch.setattr(bench, "fetch", lambda *a, **k: (None, "stub: 연결 거부"))
+
+
 def test_serving_bench_without_apply_is_not_blocked(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """읽기 전용 `bench`는 라벨 없이도 돈다 (#124).
 
     막는 근거가 "공용 파일이 오염된다"이므로 아무것도 안 쓰는 실행에는 그 근거가 없다.
     """
+    _refuse_endpoints(monkeypatch)
     code = cli.main(
-        ["bench", "--profile", "single_gpu_12g", "--artifacts-root", str(tmp_path)]
+        ["bench", "--profile", "harness_pool", "--artifacts-root", str(tmp_path)]
     )
     capsys.readouterr()
 
@@ -703,11 +718,13 @@ def test_matching_tool_runner_is_not_flagged_as_override(tmp_path: Path) -> None
 
     **되돌리면 이 테스트가 깨진다** — 옛 코드는 `is not None`만 봐서 같은 값에도 경고했다.
     """
-    assert cli.load_config("b1_single").profile.adapters.tool_runner == "docker"
+    # 그 run의 프로필 `b1_single`은 2026-09-24에 지웠다 — docker를 선언한 실서빙 프로필은 지금
+    # canonical `harness_pool`이다. 성질(같은 값이면 경고 없음)은 프로필과 무관하다.
+    assert cli.load_config("harness_pool").profile.adapters.tool_runner == "docker"
 
     rendered = "\n".join(
         check.render()
-        for check in cli.doctor("b1_single", artifacts_root=tmp_path, tool_runner="docker")
+        for check in cli.doctor("harness_pool", artifacts_root=tmp_path, tool_runner="docker")
     )
     assert "오버라이드가 걸렸다" not in rendered
 
@@ -732,7 +749,7 @@ def test_tool_runner_choices_come_from_the_config_schema() -> None:
 # --- 프로필 ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("profile", ["local_balanced", "b1_single"])
+@pytest.mark.parametrize("profile", ["harness_pool"])
 def test_serving_profiles_run_real_tools(profile: str) -> None:
     """`tool_images`가 채워져야 그 run이 비교표에 들어간다 (STATUS.md §8).
 
@@ -748,9 +765,11 @@ def test_serving_profiles_run_real_tools(profile: str) -> None:
     상태"를 그 선언이 오히려 만들고 있었다. 경위는
     docs/decisions/0005-tool-runner-override.md 마지막 절.
 
-    **둘이 같은 값이어야 한다는 것이 이 단언의 지금 이유다.** `tool_images` digest는
-    런타임 사이에서 비교할 수 없으므로(docs/portability.md §5 #4) 값이 갈리면 이 둘을
-    같은 비교표에 못 올린다. 예전에는 2x2 실험 프로필 넷도 같은 이유로 여기 묶여 있었고,
+    **실서빙 프로필끼리 같은 값이어야 한다는 것이 이 단언의 지금 이유다.** `tool_images` digest는
+    런타임 사이에서 비교할 수 없으므로(docs/portability.md §5 #4) 값이 갈리면 그 run들을
+    같은 비교표에 못 올린다. (2026-09-24까지는 `local_balanced`·`b1_single` 둘을 묶었고, 로스터 밖
+    정리로 둘을 지운 뒤 fake retriever 실서빙 프로필은 canonical `harness_pool` 하나다.)
+    예전에는 2x2 실험 프로필 넷도 같은 이유로 여기 묶여 있었고,
     그 트랙은 2026-09-01에 폐기됐고 2026-09-04에 저장소에서 걷어냈다.
     """
     config = load_config(profile)

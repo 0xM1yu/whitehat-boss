@@ -16,7 +16,7 @@ knowledge-base.md §3의 2단계 구조(광역 수집 → reranker 재선별)는
 논법). index.json을 낼지는 `retriever`가 아니라 **`tool_runner`가 정한다** —
 `docker`·`singularity`가 내고 `fake`는 안 낸다(`container_tools.INDEX_FILE`). 그렇게
 내는 프로필은 **대부분** `retriever: fake`라 **그 연결이 주로 도는 곳이 이 파일이다.**
-예외는 `dev_hybrid_docker`·`local_balanced_hybrid`이고 그 둘은 같은 index.json을
+예외는 `dev_hybrid_docker`·`harness_pool_hybrid`이고 그 둘은 같은 index.json을
 `HybridRetriever`로 태운다. **개수는 적지 않는다** — 프로필이 늘고 줄 때마다 틀린다.
 """
 

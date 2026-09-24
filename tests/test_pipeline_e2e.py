@@ -36,7 +36,7 @@ from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.enums import FindingState, ReasonCode, Role
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
-from tests.conftest import ALL_PROFILES
+from tests.conftest import ALL_PROFILES, SERVED_SCOUT_KEY, served_scout_config
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 STARTED_AT = datetime(2026, 9, 1, tzinfo=UTC)
@@ -198,7 +198,8 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
 def _poolify(mode: str | None):  # noqa: ANN202
     """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
 
-    커밋된 풀 프로필 `local_balanced_pool`(PR #190)은 **실 모델**이라 GPU 없이는 못 돈다.
+    커밋된 풀 프로필 `harness_pool`(PR #190의 `local_balanced_pool`, 2026-09-24 이름 변경)은
+    **실 모델**이라 GPU 없이는 못 돈다.
     이 e2e 검사들은 팬아웃 **제어흐름**만 보므로 Fake로 충분하고, 그래서 실 프로필을 태우는
     대신 여기서 `dev_fake` 기반 풀을 조립한다 — 풀 세 자리는 v2 전용 풀 프롬프트를 부르는
     `fake_v2`, 나머지는 `fake`다. (실 프로필의 로드·게이트 정합은 `test_config.py`가 본다.)
@@ -687,9 +688,12 @@ def test_dirty_and_unknown_both_reach_incomplete_fields(tmp_path: Path) -> None:
     assert repo_warnings(None), "확인 못 한 run이 경고 없이 비교표에 들어간다"
 
 
-def _checksum_warnings(record: RunRecord, profile: str) -> list[str]:
-    """checksum 자리표시자 경고만 골라낸다. 다른 경고가 섞이면 단언이 공허해진다."""
-    found = runner.incomplete_fields(record, served_models=load_config(profile).served_models())
+def _checksum_warnings(record: RunRecord, served: dict[str, str]) -> list[str]:
+    """checksum 자리표시자 경고만 골라낸다. 다른 경고가 섞이면 단언이 공허해진다.
+
+    `served`는 `HarnessConfig.served_models()`다 — 커밋된 프로필이든 합성 config든 같은 자리다.
+    """
+    found = runner.incomplete_fields(record, served_models=served)
     return [w for w in found if "model_checksums" in w]
 
 
@@ -701,7 +705,7 @@ def test_fake_roles_do_not_warn_about_placeholder_checksums(tmp_path: Path) -> N
     """
     result, _ = _run(tmp_path)
 
-    assert _checksum_warnings(result.record, "dev_fake") == []
+    assert _checksum_warnings(result.record, load_config("dev_fake").served_models()) == []
 
 
 def test_missing_run_labels_names_every_gap_the_operator_must_fill() -> None:
@@ -888,7 +892,7 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     _refuse_sockets(monkeypatch)
     code = cli.main(
         [
-            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -902,9 +906,10 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
 def _refuse_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
     """이 테스트가 네트워크를 치면 즉시 죽는다.
 
-    실서빙 프로필(`b1_single`)을 겨눈 첫 `run` 테스트다. 게이트가 회귀해 run이 실제로
-    시작되면 127.0.0.1:8001로 나가고 `_TIMEOUT_S`(300초)까지 매달릴 수 있다 — CI에서
-    "느리다"로 보이지 "게이트가 사라졌다"로 안 보인다. 같은 그물을
+    실서빙 프로필을 겨눈 첫 `run` 테스트다(처음엔 `b1_single` — 2026-09-24에 지웠고 지금은
+    `harness_pool`). 게이트가 회귀해 run이 실제로 시작되면 로스터 엔드포인트로 나가고
+    `_TIMEOUT_S`(300초)까지 매달릴 수 있다 — CI에서 "느리다"로 보이지 "게이트가 사라졌다"로
+    안 보인다. 같은 그물을
     `test_doctor_never_opens_a_socket`이 이미 쓴다.
     """
 
@@ -941,7 +946,7 @@ def test_a_serving_profile_refuses_when_only_the_device_is_missing(
     """
     code = cli.main(
         [
-            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
@@ -963,7 +968,7 @@ def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
     """
     code = cli.main(
         [
-            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--device", "atom", "--kb-snapshot", "kb-20260901",
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
@@ -1028,7 +1033,7 @@ def test_a_dry_run_is_not_blocked_by_the_serving_gate(
     """
     code = cli.main(
         [
-            "run", "--profile", "b1_single", "--target", str(TARGET), "--dry-run",
+            "run", "--profile", "harness_pool", "--target", str(TARGET), "--dry-run",
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -1051,7 +1056,7 @@ def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureF
     """
     code = cli.main(
         [
-            "run", "--profile", "b1_single", "--target", str(TARGET),
+            "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--device", "   ", "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
@@ -1119,7 +1124,7 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
     with pytest.raises(_Stop):
         cli.main(
             [
-                "run", "--profile", "b1_single", "--target", str(TARGET),
+                "run", "--profile", "harness_pool", "--target", str(TARGET),
                 "--condition", "B1prime@pipeline", "--device", "atom",
                 "--seed", "20260901", "--artifacts-root", str(tmp_path),
             ]
@@ -1137,34 +1142,35 @@ def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> N
     이름이 없으면 역할이 다섯인 프로필에서 어디를 채워야 하는지 알 수 없다.
     """
     result, _ = _run(tmp_path)
-    served = load_config("b1_single").served_models()
+    served = load_config("harness_pool").served_models()
     # dev_fake로 돈 run의 기록을 갈아 끼운다. 이 검사가 보는 것은 "자리표시자 digest +
     # 실서빙 역할"이라는 조합 하나뿐이다.
     record = result.record.transition(model_checksums=dict.fromkeys(served, PLACEHOLDER_DIGEST))
 
-    warnings = _checksum_warnings(record, "b1_single")
+    warnings = _checksum_warnings(record, served)
 
     assert warnings, "실서빙 역할이 전부 자리표시자인데 경고가 없다"
-    assert "auditor(qwen3-coder-30b-a3b)" in warnings[0]
+    assert "auditor(qwen3.6-35b-a3b)" in warnings[0]
     assert "비교표에서 제외" in warnings[0]
 
 
 def test_a_mixed_profile_warns_only_about_its_served_role(tmp_path: Path) -> None:
-    """`single_gpu_12g`는 scout만 실서빙이고 나머지는 Fake다.
+    """scout만 실서빙이고 나머지는 Fake인 프로필 — 옛 `single_gpu_12g`의 모양(2026-09-24 삭제,
+    지금은 `tests/conftest.py`의 합성 config).
 
     프로필 단위로 켜고 끄면 이 프로필에서 실서빙 역할을 통째로 놓치거나(끄면) Fake 네 개를
     헛되이 경고한다(켜면). 판정이 역할별이어야 하는 이유가 정확히 이 프로필이다.
     """
     result, _ = _run(tmp_path)
-    served = load_config("single_gpu_12g").served_models()
-    assert served == {"scout": "qwen3-4b"}, "프로필이 바뀌면 이 검사의 전제가 무너진다"
+    served = served_scout_config().served_models()
+    assert served == {"scout": SERVED_SCOUT_KEY}, "합성 config가 바뀌면 이 검사의 전제가 무너진다"
 
     record = result.record.transition(
         model_checksums={"scout": PLACEHOLDER_DIGEST, "auditor": PLACEHOLDER_DIGEST}
     )
-    warnings = _checksum_warnings(record, "single_gpu_12g")
+    warnings = _checksum_warnings(record, served)
 
-    assert warnings and "scout(qwen3-4b)" in warnings[0]
+    assert warnings and f"scout({SERVED_SCOUT_KEY})" in warnings[0]
     assert "auditor" not in warnings[0], "Fake 역할이 경고에 섞였다"
 
 
@@ -1760,8 +1766,9 @@ def test_estimate_revalidates_capsules_with_a_role_the_profile_declares() -> Non
     풀이면 조립한 첫 멤버(`SCOUT_POOL_ROLES[0]` = `scout_memory`)를 돌려주므로 재검증이 같은
     카운터를 본다. 아래 두 단언이 그 불변식을 고정한다.
 
-    ⚠ **`local_balanced_pool`(PR #190, provisional)이 커밋된 실 별칭 풀 프로필이다** — 이 검사가
-    가리키던 그 "커밋하는 순간"이 왔고, 그 순간에도 막음이 선다는 것을 여기서 지킨다. Fake는
+    ⚠ **`harness_pool`(PR #190의 `local_balanced_pool`, 2026-09-24 이름 변경)이 커밋된 실 풀
+    프로필이다** — 이 검사가 가리키던 그 "커밋하는 순간"이 왔고, 그 순간에도 막음이 선다는
+    것을 여기서 지킨다. Fake는
     `source`가 없어 `counter_for_role`이 `None`이라 이 검사는 **역할 키의 실재**만 본다(값이 아니라
     자리) — 실 토크나이저에서의 조립·재검증 일치는 아래 `..._the_runner_actually_uses`가 잡는다.
     """
@@ -2000,8 +2007,8 @@ def test_an_unmeasured_served_role_is_named(tmp_path: Path) -> None:
     2026-08-17까지 모델 호출이 GPU 시간을 **아예 청구하지 못했으므로**, 그 상태로 돈 run은
     전부 여기 걸려야 한다. 경고에 역할 이름이 없으면 어느 역할을 고쳐야 하는지 알 수 없다.
     """
-    served = load_config("single_gpu_12g").served_models()
-    assert served == {"scout": "qwen3-4b"}, "이 검사의 전제가 무너졌다"
+    served = served_scout_config().served_models()
+    assert served == {"scout": SERVED_SCOUT_KEY}, "이 검사의 전제가 무너졌다"
 
     warning = runner.unmeasured_gpu_warning(
         {role: 3 for role in ("scout", "auditor") if role in served}

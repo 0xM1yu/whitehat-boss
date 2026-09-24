@@ -5,7 +5,7 @@
 Protocol만 본다.
 
 **Fake 구현이 같은 파일에 있는 이유**: 역할별 실서빙 혼용이 이 프로젝트의 기본
-전제다(`single_gpu_12g`는 scout만 실서빙). embedding만 띄우고 reranker는 Fake로 두는
+전제다(옛 `single_gpu_12g`는 scout만 실서빙이었다). embedding만 띄우고 reranker는 Fake로 두는
 구성이 실제로 필요하고, 그 판정은 `ModelEntry.endpoint` 스킴이 역할별로 한다.
 """
 

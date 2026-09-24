@@ -202,6 +202,8 @@ def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompat
     3. 걸리는 경우가 곧 재야 할 이상이다. 2026-08-27 ATOM에서 30B가 폭주해 클라이언트
        타임아웃이 난 상황을 bench가 상한 없이 만나면 체크리스트가 "측정 못 함"으로 끝난다.
        운영과 같은 상한을 두면 그 자리에서 잘리고 수치가 남는다.
+       ⚠ 2026-09-24 — 생성이 느린 모델(ATOM 스모크에서 13.3 · 8.1 tok/s)에서는 상한보다 어댑터의
+       300초 요청 타임아웃이 먼저 온다. 그러면 잘린 수치 대신 게이트웨이 오류가 남는다 — 이슈 #261.
     """
     entry = config.models[model_key]
     return OpenAICompatModelClient(
@@ -398,7 +400,8 @@ def pending_updates(report: Mapping[str, object]) -> tuple[dict[str, dict[str, f
     **0인 값은 제외한다.** `Benchmark.is_measured`가 0 여부로 판정하므로, 못 잰 값을
     넣으면 미측정 모델이 측정된 것으로 보이고 production 프로필로 가는 길이 열린다.
 
-    같은 model key를 여러 역할이 쓰면(b1_single은 셋 다 같은 모델) **먼저 나온 역할의
+    같은 model key를 여러 역할이 쓰면(`harness_pool`의 scout_memory·scout_boundary가 같은
+    `seccoderx-8b`) **먼저 나온 역할의
     값을 쓴다.** 역할마다 캡슐 레벨이 달라 body 길이가 다르므로 수치도 다르다 — 평균이나
     최대를 취하면 어느 조건의 수치인지 말할 수 없게 된다. 어느 역할에서 왔는지는 사유에
     남는다.
