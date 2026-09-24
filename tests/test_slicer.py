@@ -1077,24 +1077,47 @@ def test_queries_guard_against_sinks_whose_method_is_null():
                        ("context", context_for_tautology)):
         assert not degenerate.search(text), f"{name} 질의의 술어에 불리언 리터럴이 붙었다"
     # ⚠ **위치까지 문다.** #202 의 NPE 는 **정렬**에서 났으므로(`sortBy(… n.method.fullName)`)
-    # 필터를 `sortBy` **뒤로** 옮기면 결함이 그대로 돌아오는데, 존재만 무는 판은 초록이었다
-    # (4라운드 실측). 아래는 `cpg.call.argument` 직후 → `.l.distinct.sortBy` 직전을 통째로 박는다.
-    assert ".filter(n => Option(n.method).nonEmpty).distinct.sortBy" in flows
+    # 필터를 `sortBy` **뒤로** 옮기면 결함이 그대로 돌아온다. 철자가 아니라 **순서**를 문다
+    # (#252 리뷰 §2.5): method-null 가드가 `n.method.fullName`을 처음 참조하는 `sortBy`보다
+    # 앞에 있어야 한다.
+    assert "Option(n.method).nonEmpty" in flows
+    assert flows.index("Option(n.method).nonEmpty") < flows.index("n.method.fullName"), (
+        "method-null 가드가 sortBy(n.method.fullName)보다 뒤로 가면 #202 NPE가 돌아온다"
+    )
 
 
-def test_flows_query_targets_memory_write_sinks_not_all_arguments():
-    """#219: flows targets writer/operator sink calls, not every call argument in the repo.
-
-    `cpg.call.argument` grows with the whole CPG, so the per-candidate dataflow to all of it
-    exceeds the deadline on large CPGs and no slice is emitted. Restricting sinks to the
-    dominant memory-write types keeps it bounded; the argument set is capped again after.
+def test_flows_query_uses_hybrid_local_and_bounded_global_sinks():
+    """#219 + #252 review HIGH-2/3: hybrid sinks. Inside the candidate methods EVERY call
+    argument is a sink (recall -- keeps deref/field & index-READ GT types and the live-probe
+    fixtures); globally only memory-write calls, capped, so the per-candidate dataflow stays
+    under the deadline on large CPGs. `cpg.call.argument` over the whole repo is what blew the
+    deadline, so it must not be the global set.
     """
     flows = queries.flows_query([candidate()["scope"]], 3)
 
-    assert "cpg.call.argument.filter" not in flows  # no longer sinks the whole repo
-    assert 'cpg.call.name("(' in flows  # writer sink calls
-    assert "<operator>.indirectIndexAccess" in flows  # index-write operators
-    assert f".take({queries.FLOWS_SINK_CAP})" in flows  # sink universe is bounded
+    assert "cpg.call.argument.filter" not in flows  # global set is NOT every repo call arg
+    assert "methods.flatMap(m => m.ast.isCall.argument.l)" in flows  # local: all candidate args
+    assert 'cpg.call.name("(' in flows  # global writer sink calls
+    assert "<operator>.indirectIndexAccess" in flows  # global index-write operators
+    assert f".take({queries.FLOWS_SINK_CAP})" in flows  # global sink universe is bounded
+    assert '"sinks_capped"' in flows and '"sinks_kept"' in flows  # cap is recorded, not silent
+
+
+def test_flows_and_case_b_share_the_same_operator_sink_definition():
+    """#252 review MEDIUM: the writer/index-write/ptr-arith sink defs are copied between
+    flows_query and candidates_b_query. Pin the shared operator filters in BOTH so a change
+    to one that isn't mirrored fails here instead of silently diverging.
+    """
+    flows = queries.flows_query([candidate()["scope"]], 3)
+    case_b = queries.candidates_b_query()
+    for fragment in (
+        'cpg.call.nameExact("<operator>.indirectIndexAccess")',
+        'c.inCall.nameExact("<operator>.assignment").argument',
+        'cpg.call.name("<operator>.(addition|subtraction)")',
+        'c.argument.evalType.exists(_.contains("*"))',
+        'indirection|indirectIndexAccess|addressOf)',
+    ):
+        assert fragment in flows and fragment in case_b, fragment
 
 
 def test_case_b_dealloc_scan_filters_to_methods_that_call_free():
