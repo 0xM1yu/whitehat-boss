@@ -278,12 +278,18 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
+> | **8000** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
+> | **8001** | `qwen3-14b` ← 풀 둘(scout_injection) |
+> | **8002** | `qwen3.6-35b-a3b` ← `harness_pool`·`_hybrid`(auditor) |
+> | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
 > | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
-> | **8006** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
-> | **8008** | `qwen3.6-35b-a3b` ← `harness_pool`·`_hybrid`(auditor) |
-> | **8009** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
-> | **8010** | `qwen3-14b` ← 풀 둘(scout_injection) |
+>
+> **번호가 곧 띄우는 순서다 (2026-09-24).** 교대가 canonical run에서 모델을 올리는 순서(Scout 풀 → Auditor →
+> Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에 뒀다. 그 전에는 로스터를 바꿀 때마다
+> 빈 번호에 끼워 넣어 8009 → 8010 → 8008 → 8006 순서로 떴다. `tests/test_config.py`의
+> `test_served_ports_count_up_from_8000_in_launch_order`가 이 순서를, `tests/test_docs_format.py`의
+> `test_the_model_serving_port_table_matches_the_registry`가 이 표와 registry의 일치를 고정한다.
 >
 > **2026-09-24 로스터 밖 정리 뒤로는 포트마다 이름이 하나다.** 그 전에는 8001(`qwen3-8b`·`qwen3-4b`)·
 > 8002(`qwen3-coder-30b-a3b`)처럼 프로필에 따라 다른 이름이 같은 포트로 오는 자리가 있었다(그 키·프로필을
@@ -291,7 +297,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⚠ **한 프로필 안에서 한 포트로 두 모델이 오는 자리도 지금 없다 — 있으면 「주의」가 아니라
 > 블로커다.** 확정 로스터 배선 때 `seccoderx-8b`(Scout)가 `gpt-oss-20b`(Critic)와 같은 :8006이었는데
-> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
+> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2 — 지금 번호는 위 표의 :8000·:8003이다). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
 > 두 모델을 요구하면 — 프로필을 골라 피할 수 없다. `tests/test_docs_format.py`의
 > `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해 그
 > 자리를 세고, 있으면 그 포트 번호와 선언을 여기서 요구한다 — **지금은 0건이라 이 문단이 선언을

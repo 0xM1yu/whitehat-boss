@@ -105,9 +105,13 @@ models:
     #
     #   VLLM_USE_DEEP_GEMM=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN
     #   VLLM_USE_FLASHINFER_SAMPLER=0 TIKTOKEN_ENCODINGS_BASE=<harmony vocab dir>
-    #   vllm serve openai/gpt-oss-20b --port 8006 --served-model-name gpt-oss-20b
+    #   vllm serve openai/gpt-oss-20b --port 8003 --served-model-name gpt-oss-20b
     #     --max-model-len 32768 --gpu-memory-utilization 0.30 --enforce-eager
     #     --structured-outputs-config.backend xgrammar
+    #
+    # ⚠ **2026-09-24 — `--port`를 8006에서 8003으로 옮겼다**(`endpoint`와 같다). 포트를 교대가 띄우는
+    #   순서대로 8000부터 다시 매겼다(`tests/test_config.py`의
+    #   `test_served_ports_count_up_from_8000_in_launch_order`). 아래 원천 보고서의 명령은 8006이다.
     #
     # ⚠ **2026-09-20 — 위 다섯 줄은 한 줄로 접혀 있었다**(`#` 표지째로 한 물리적 줄). 폈다.
     #   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의
@@ -162,7 +166,7 @@ models:
     # 않아 꼬리를 확인할 수 없고(보고서 메타), 모델도 양자화도 다르다. **그러니 "이 옵션이
     # 이 모델도 고친다"로 읽지 않는다.** 다만 위 기동 조건이 이미 `backend xgrammar`라
     # 옵션 한 줄을 더하는 값이 싸고, `tools/probe/gpt_oss_structured.py`의 팔로 그대로 잰다.
-    endpoint: "http://127.0.0.1:8006/v1"
+    endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 131072
     quantization: "mxfp4"
     license: "Apache-2.0"
@@ -291,8 +295,11 @@ models:
     # Detection Reward Model — config.json이 Qwen3ForCausalLM/qwen3라 생성형이고 Scout로 JSON을 낸다.
     # 한 모델이 memory·boundary 두 역할을 v3로 담당한다 — 프롬프트 내용은 역할 폴더가 가른다
     # (scout_memory/v3=옛 실험 v14s, scout_boundary/v3=옛 v15s). 버전이 같아 별칭 키가 필요 없다.
-    # ⚠ **포트는 8009다** — Critic `gpt-oss-20b`가 8006이라, 풀에서 scout·critic이 동시 상주할 때
-    #   같은 포트를 못 쓴다(#234 리뷰 HIGH-2). 골격 등재 때 8006이었던 것을 배선하며 갈랐다.
+    # ⚠ **포트는 8000이다** — 2026-09-24 포트를 교대가 띄우는 순서대로 8000부터 다시 매겼고 이 키가
+    #   첫 자리다(`tests/test_config.py`의 `test_served_ports_count_up_from_8000_in_launch_order`).
+    #   그 전에는 8009였다 — 골격 등재 때 Critic `gpt-oss-20b`와 같은 8006이라 배선하며 갈랐다
+    #   (#234 리뷰 HIGH-2). 지금은 키마다 포트가 따로라(`test_no_two_served_models_share_a_port`)
+    #   그 충돌이 다시 날 자리가 없다.
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
@@ -305,6 +312,8 @@ models:
     #     --revision 25d7f38146bdf0fad1eac09c586b1993ef3e6ee4 --served-model-name seccoderx-8b \
     #     --host 127.0.0.1 --port 8009 --max-model-len 16384 --gpu-memory-utilization 0.20 \
     #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
+    #   ⚠ 지금 포트는 8000이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8009`은 그날 친 값이라 기록으로 둔다.
     #
     #   **축약이라 그대로 복붙하면 안 된다** — 원문은 venv의 `vllm`을 절대 경로로 부르고 `setsid nohup`·로그
     #   리다이렉트·감시자·readiness 확인을 두르며, `--enable-log-requests --enable-log-outputs
@@ -329,7 +338,7 @@ models:
     #   `mem_gb_ctx8k`는 채우지 않는다 — 그 칸이 뜻하는 양이 아니다(위 `qwen3-reranker-4b` 항목과 같은 사유).
     # - `--max-model-len 16384`는 그 run의 값이지 `context_limit`(모델 상한)이 아니다. 그 run의 최대 입력이
     #   10,757토큰이라 4,096을 더해도 안 넘었다.
-    endpoint: "http://127.0.0.1:8009/v1"
+    endpoint: "http://127.0.0.1:8000/v1"
     context_limit: 40960
     quantization: "bf16"
     license: "MIT"
@@ -372,6 +381,8 @@ models:
     #     --gpu-memory-utilization 0.64 --max-num-seqs 2 --enforce-eager \
     #     --structured-outputs-config.backend xgrammar \
     #     --structured-outputs-config.disable_any_whitespace true
+    #   ⚠ 지금 포트는 8002이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8008`은 그날 친 값이라 기록으로 둔다.
     #
     #   축약이라 그대로 복붙하면 안 된다 — 빠진 것은 `seccoderx-8b` 항목의 같은 문단이 든다.
     #
@@ -414,7 +425,7 @@ models:
     #   떠 있는 동안 장비 `MemAvailable` 최저값이 36.0 GiB였다(감시자 로그) — **Scout 풀(`seccoderx-8b` +
     #   Qwen3-14B)과 함께 올리지 못한다**. 그 풀만 올린 동안의 최저값이 49.1 GiB였고, 거기에 이 모델의
     #   util 몫 76.6 GiB가 더해지면 장비를 넘는다(계산값).
-    endpoint: "http://127.0.0.1:8008/v1"
+    endpoint: "http://127.0.0.1:8002/v1"
     context_limit: 262144
     quantization: "bf16"
     license: "Apache-2.0"
@@ -456,6 +467,8 @@ models:
     #     --revision 40c069824f4251a91eefaf281ebe4c544efd3e18 --served-model-name qwen3-14b \
     #     --host 127.0.0.1 --port 8010 --max-model-len 16384 --gpu-memory-utilization 0.30 \
     #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
+    #   ⚠ 지금 포트는 8001이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8010`은 그날 친 값이라 기록으로 둔다.
     #
     #   **축약이라 그대로 복붙하면 안 된다** — `seccoderx-8b` 항목의 같은 문단을 본다.
     #
@@ -467,7 +480,7 @@ models:
     # - 메모리(서버 로그): 가중치 27.52 GiB(로드 160 s) · 가중치+non-torch 28.27 GiB · util 0.30에서 KV 7.37 GiB
     #   (48,256 tok — 16,384 길이에 2.95×). 기동 명령부터 `Starting vLLM server`까지 181 s.
     #   `seccoderx-8b`와 함께 떠 있는 동안 장비 `MemAvailable` 최저값이 49.1 GiB였다(감시자 로그).
-    endpoint: "http://127.0.0.1:8010/v1"
+    endpoint: "http://127.0.0.1:8001/v1"
     context_limit: 40960
     quantization: "bf16"
     license: "Apache-2.0"
