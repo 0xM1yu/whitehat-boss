@@ -47,7 +47,7 @@ v1은 SQLite로 간다. 파일 하나(`artifacts/<run_id>/state.db`)에 run 단�
 - 재검토 조건: 조건 간 비교를 `trace.jsonl`이 아니라 저장소 쿼리로 만들게 되거나, 한 run의
   Evidence가 수십만 건 규모가 되면
 - run 사이를 넘는 상태(재평가 횟수 등)를 저장할지는 별도 항목이다 — open-questions D10
-  - ⚠ **2026-09-24 — D10은 [ADR 0012(제안)](0012-harness-canon-v2.md) 결정 6이 승인되면 닫힌다** — 재평가를
+  - ⚠ **2026-09-24 — D10은 [ADR 0012](0012-harness-canon-v2.md) 결정 6이 승인되면 닫힌다** (⏵ 2026-09-25 — 승인됐고 닫혔다) — 재평가를
     배선하지 않으니 보관할 횟수가 없다. run을 넘는 상태 중 남는 것, 곧 resume의 스키마 버전 문제(구버전
     `state.db`를 `model_validate`로 되읽으면 필수 필드 누락으로 로드가 실패한다)는
     [D86](../open-questions/D/D86.md)이 승계한다

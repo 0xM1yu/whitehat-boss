@@ -1,6 +1,6 @@
 # 0012. 하네스 정본 v2 — 슬라이스 입력 · need_evidence · 검색 역할 · 저장소 범위
 
-- 상태: **제안** (2026-09-24 — @sumin0218 리뷰 대기). **제안인 채 머지한다 — 이 PR은 아무 항목도 닫지 않는다**(@sumin0218 리뷰 M1). 이 ADR에 기댄 [D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)는 `열림`이고 #60·#62는 `Refs`다(아래 「결과」). 승인되면 이 줄을 「승인」으로 바꾸는 커밋이 둘을 닫고, 그 커밋이 고칠 나머지 자리는 [README](README.md)의 0012 문단이 든다
+- 상태: **승인** (2026-09-25 — @sumin0218 구두 승인, @danielcho02가 전했다. 사인오프 기록은 [README](README.md)의 0012 문단이다). 2026-09-24에 「제안」인 채 머지됐고(#260 — @sumin0218 리뷰 M1), 이 ADR에 기댄 [D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)는 승인 커밋(PR #275)이 닫았다(`Closes #60`·`#62` — 아래 「결과」)
 - 일자: 2026-09-24
 - 관련: [ADR 0010](0010-harness-structure-and-model-roster.md) §2·§3·「리뷰에서 정할 것」 #2, [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1·§2·§5, [build-plan.md](../build-plan.md) §5·§6, [architecture.md](../architecture.md) §3, [D3](../open-questions/D/D3.md)·[D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)·[D13](../open-questions/D/D13.md)·[D20](../open-questions/D/D20.md)·[D74](../open-questions/D/D74.md)·[D78](../open-questions/D/D78.md)·[D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)·[D84](../open-questions/D/D84.md)·[D85](../open-questions/D/D85.md)·[D86](../open-questions/D/D86.md), `prompts/scout_{memory,boundary,injection}/v3/prefix.md`, `prompts/auditor/v3/`, 팀 Notion 워크스페이스 [화햇대장](#private-notion)(실험팀 「Scout RAG baseline」·「Auditor·Critic 모델 최종 선정」·「scout 모델 후보 실험」·「Embedder Reranker 재실험」, 「Agent Fine-Tuning 팀 가이드」 — 2026-09-23 판독, 원문은 저장소에 없다)
 
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §2 「tree-sitter를 왜 계속 두는가」 문단의 첫 문장(`c301342`의 `:86`) | *"Joern은 **슬라이스**(모델이 볼 코드)를"* — **모델 입력** | `520b51a`(#196), 2026-09-15 |
 | 같은 문단의 뒤 문장(`c301342`의 `:88-90`) | 후보 열거는 tree-sitter `symbols_for()`이고 *"슬라이스는 … 그 자리를 대신하지 못한다"* — **후보가 아니다** | 같은 커밋 |
-| [build-plan.md](../build-plan.md) §5 「1 · 인덱스 · 슬라이스」 문단의 첫 문장(`c301342`의 `:134`) | *"여기서 잘라낸 조각이 뒤 단계가 보는 전부다"* — **모델 입력**(`c301342`의 원문이다. 이 PR은 그 문장을 남기고 ⚠ 노트를 달았다 — 이 결정 쪽으로 좁히는 것은 승인 커밋이다) | `1787c55`(2026-09-02) → `520b51a`(2026-09-15) |
+| [build-plan.md](../build-plan.md) §5 「1 · 인덱스 · 슬라이스」 문단의 첫 문장(`c301342`의 `:134`) | *"여기서 잘라낸 조각이 뒤 단계가 보는 전부다"* — **모델 입력**(`c301342`의 원문이다. 이 PR은 그 문장을 남기고 ⚠ 노트를 달았다 — PR #275의 승인 커밋이 이 결정 쪽으로 좁혔다(2026-09-25)) | `1787c55`(2026-09-02) → `520b51a`(2026-09-15) |
 | [D74](../open-questions/D/D74.md) (a) → PROJECT-CONTEXT.md §5 「Joern 슬라이서」 행 · [ADR 0010](0010-harness-structure-and-model-roster.md) 「리뷰에서 정할 것」 #2 행(`c301342`의 `:167` · `:235`) | *"후보 열거에만"*, 캡슐 본문은 안 건드린다 — **후보이고 모델 입력이 아니다** | `b865ee6`(#218), 2026-09-19 |
 | Scout v3 프롬프트 (`scout_memory/v3/prefix.md:31` · `scout_boundary/v3/prefix.md:37-39` · `scout_injection/v3/prefix.md:24`) | *"`SOURCE` is a program slice"* — 원본 줄번호 gutter · `/* ===== path ===== */` 배너 · `FACTS.slice_criterion`(`scout_memory/v3/prefix.md:59-65`) — **모델 입력** | `5767a58`(#239), 2026-09-22 |
 
@@ -99,7 +99,7 @@
 
 ### 4. 로스터 — 제안
 
-**정본은 여전히 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1이다** — 2026-09-21 회의의 교체판이고 main에는 2026-09-22 #240(`ce6a4c8`)으로 들어왔다. ~~아래는 그 표를 바꾸자는 제안이고, 바꾸는 절차는 그 파일 §3의 넷이다 — registry 키가 먼저 서야 한다(Phase 6).~~ → ⏵ **2026-09-24 — 같은 날 @danielcho02가 아래 표의 로스터를 확정했고 §3의 넷으로 옮겼다** — registry `qwen3-14b` 등재 · 두 풀 프로필(`harness_pool`·`_hybrid`) · PROJECT-CONTEXT.md §1 · ADR 0010 §2(#266·#267). 그래서 §1 정본이 이제 이 표의 로스터다. **이 ADR 문서의 상태(제안)는 그대로다** — @sumin0218 리뷰 전이고, 로스터 확정과 ADR 승인은 다른 일이다.
+**정본은 여전히 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1이다** — 2026-09-21 회의의 교체판이고 main에는 2026-09-22 #240(`ce6a4c8`)으로 들어왔다. ~~아래는 그 표를 바꾸자는 제안이고, 바꾸는 절차는 그 파일 §3의 넷이다 — registry 키가 먼저 서야 한다(Phase 6).~~ → ⏵ **2026-09-24 — 같은 날 @danielcho02가 아래 표의 로스터를 확정했고 §3의 넷으로 옮겼다** — registry `qwen3-14b` 등재 · 두 풀 프로필(`harness_pool`·`_hybrid`) · PROJECT-CONTEXT.md §1 · ADR 0010 §2(#266·#267). 그래서 §1 정본이 이제 이 표의 로스터다. ~~**이 ADR 문서의 상태(제안)는 그대로다** — @sumin0218 리뷰 전이고,~~ (⏵ 2026-09-25 — @sumin0218 구두 승인(@danielcho02 전언)으로 이 문서도 승인됐다 — 머리 상태 줄.) 로스터 확정과 ADR 승인은 다른 일이다.
 
 ⏵ 2026-09-24 — 이 절(아래 표·목록)의 `config/models.yaml` 줄 번호는 `c301342` 판이다. 그 뒤 #262·#266·#267·#269가 파일을 바꿔 main에서는 다른 줄이거나 없는 줄이다(머리 문단의 수) — 키 이름으로 찾는다.
 
@@ -141,10 +141,10 @@
 
 - **폐기하는 것은 위 표의 세 경로 전부다.** `queued`에서 **돌아오는** 길(C-8·C-9·F-14, 그리고 그 길로 돌아온 후보에서만 서는 C-4·C-7의 `candidate` 행 — `scout.py`의 `previous`), 그리고 `queued`로 **들어가는** 캡슐 확장 길(C-5·`Retriever.expand`·`capsule_expansion_max`)이다. 탈락 후보를 `queued`로 **남기는** 쪽(C-3·C-6·C-7의 `triaged` 행·F-2 등)은 이 결정과 무관하다.
 - **모자란 맥락을 채우는 자리**: need_evidence 루프(결정 2)가 **같은 세션 안에서, 후보를 만들기 전에** 채운다. run을 넘는 재평가는 하지 않는다 — 새 Evidence로 `queued` 후보를 다시 보는 설계는 대체 없이 빠진다(아래 「잃는 것」 5).
-- **[D10](../open-questions/D/D10.md)은 질문이 소멸해 닫힌다**(승인 커밋이 닫는다 — 아래 「결과」) — 보관할 재평가 횟수가 없다. (a)·(b)·(c) 중 하나에 답한 것이 아니다([ADR 0011](0011-retire-the-2x2-condition-axis.md)이 D1을 닫은 논법이다). ⚠ D10 본문 끝의 resume·스키마 버전 문제(구버전 `state.db`를 되읽을 버전 게이트가 없다 — `SqliteStateStore._load()`가 `model_validate`로 되읽는다, `src/adapters/sqlite_store.py:85-87`)는 재평가와 별개라 이 결정으로 사라지지 않는다 — [D86](../open-questions/D/D86.md)이 승계한다.
+- **[D10](../open-questions/D/D10.md)은 질문이 소멸해 닫힌다**(ADR 0012 승인(2026-09-25) — 승인 커밋이 닫았다 · 아래 「결과」) — 보관할 재평가 횟수가 없다. (a)·(b)·(c) 중 하나에 답한 것이 아니다([ADR 0011](0011-retire-the-2x2-condition-axis.md)이 D1을 닫은 논법이다). ⚠ D10 본문 끝의 resume·스키마 버전 문제(구버전 `state.db`를 되읽을 버전 게이트가 없다 — `SqliteStateStore._load()`가 `model_validate`로 되읽는다, `src/adapters/sqlite_store.py:85-87`)는 재평가와 별개라 이 결정으로 사라지지 않는다 — [D86](../open-questions/D/D86.md)이 승계한다.
 - **[D3](../open-questions/D/D3.md)의 확장 상한(`capsule_expansion_max`)은 `max_hops`로 대체한다** — D3을 닫는 것은 그 값을 배선하는 Phase 5 PR이다.
 - **폐기는 「배선하지 않는다」는 결정이다.** 코드 삭제(열거형 값·전이 행·처리기 `_requeue`·`_capsule_expansion`(`policy.py:200-214` · `:122-131`)·노드 `retrieval.expand()`(`src/orchestrator/nodes/retrieval.py:63-90`)·인터페이스 메서드·`requeue_max`·`capsule_expansion_max`)는 이 PR(코드 0줄) 밖에서 따로 한다. **같은 PR이 그 경로를 앞으로 올 일처럼 서술하는 주석·docstring도 지운다**([CLAUDE.md](../../CLAUDE.md) §2.3) — `src/tokens.py:21-28`(*"배선하는 사람이 확장도 `using_counter(...)` 안에서 돌려야 한다"*), `src/orchestrator/nodes/scout.py:6-8`(`previous`), `src/interfaces/retriever.py:31-33`(확장 상한 판정), `state_machine.py` docstring 표의 해당 행.
-- 이 결정과 어긋나는 서술 — [architecture.md](../architecture.md) §3 「Queue 규칙」의 재평가 절반, [knowledge-base.md](../knowledge-base.md) §5의 `expand()` 확장 사다리 — 은 이 결정을 따라 고칠 자리다. **고치는 쪽은 둘로 갈린다.** 「Queue 규칙」의 둘째 문장(새 Evidence로 재평가)은 대체 없이 빠지는 설계라 기다릴 코드가 없다 — 승인 커밋이 취소선을 긋는다. §5 사다리는 need_evidence 루프로 다시 그려야 하므로 그 루프를 짓는 Phase 5 PR이 코드와 함께 고치고, 그때까지는 그 자리의 ⚠ 노트가 범위를 짓는다([README](README.md)의 0012 문단 4번 (a)).
+- 이 결정과 어긋나는 서술 — [architecture.md](../architecture.md) §3 「Queue 규칙」의 재평가 절반, [knowledge-base.md](../knowledge-base.md) §5의 `expand()` 확장 사다리 — 은 이 결정을 따라 고칠 자리다. **고치는 쪽은 둘로 갈린다.** 「Queue 규칙」의 둘째 문장(새 Evidence로 재평가)은 대체 없이 빠지는 설계라 기다릴 코드가 없다 — 승인 커밋이 취소선을 그었다(2026-09-25). §5 사다리는 need_evidence 루프로 다시 그려야 하므로 그 루프를 짓는 Phase 5 PR이 코드와 함께 고치고, 그때까지는 그 자리의 ⚠ 노트가 범위를 짓는다([README](README.md)의 0012 문단 4번 (a)).
 
 ### 7. 파인튜닝 계획을 갱신한다 — Auditor·Critic 먼저, Scout 증류는 조건부
 
@@ -161,12 +161,12 @@
 
 **이 PR이 여는 것 · 승인 커밋이 닫는 것.**
 
-- [D10](../open-questions/D/D10.md) — 결정 6이 이 질문의 대상을 없앤다. **닫힘은 승인 커밋이다**(아래 ⚠). 본문 끝의 resume·스키마 버전 문제는 재평가와 별개라 [D86](../open-questions/D/D86.md)으로 옮긴다.
-- [D12](../open-questions/D/D12.md) — 선택지 (a): [architecture.md](../architecture.md) §3을 코드에 맞춘다(이 PR). build는 2단계 신호 도구다(`src/orchestrator/nodes/signals.py:26`의 `SIGNAL_TOOLS`). 이 ADR의 결정이 아니라 같은 PR의 정본 정렬이다. **닫힘은 승인 커밋이다**(아래 ⚠).
+- [D10](../open-questions/D/D10.md) — 결정 6이 이 질문의 대상을 없앤다. **ADR 0012 승인(2026-09-25) — 승인 커밋이 닫았다**(아래 ⚠). 본문 끝의 resume·스키마 버전 문제는 재평가와 별개라 [D86](../open-questions/D/D86.md)으로 옮긴다.
+- [D12](../open-questions/D/D12.md) — 선택지 (a): [architecture.md](../architecture.md) §3을 코드에 맞춘다(이 PR). build는 2단계 신호 도구다(`src/orchestrator/nodes/signals.py:26`의 `SIGNAL_TOOLS`). 이 ADR의 결정이 아니라 같은 PR의 정본 정렬이다. **ADR 0012 승인(2026-09-25) — 승인 커밋이 닫았다**(아래 ⚠).
 - [D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)·[D84](../open-questions/D/D84.md) 등재 — Scout v3 계약과 하네스 입력·스키마의 불일치(결정 1·2) · 모델이 쓴 `state`·ID를 대조하지 않아 run이 중단될 수 있음(코드 추론, 관측 없음) · 모델 응답 원문·`reasoning_content`·`finish_reason` 미보존(결정 7).
 - [D86](../open-questions/D/D86.md) 등재 — D10에서 승계한 resume·스키마 버전 잔여(구버전 `state.db`를 되읽는 버전 게이트가 없다).
 
-⚠ **이 PR은 「제안」인 채 머지하므로 아무것도 닫지 않는다**(@sumin0218 리뷰 M1, 2026-09-24). 첫 판은 D10·D12를 닫고 `Closes #60`·`#62`를 걸어 둔 채 머지 순서(승인 전 머지 금지) 하나로 그것을 받쳤다 — 순서가 어긋나면 `Closes`가 이슈를 먼저 닫는다([ADR 0010](0010-harness-structure-and-model-roster.md) 「2026-09-08 갱신」 ④가 같은 이유로 D9를 미뤘다). 그래서 둘을 `열림`·`Refs`로 두고, 닫힘과 `Closes #60`·`#62`는 ADR 0012(제안)를 승인하는 커밋(이 PR이 머지된 뒤면 그 커밋을 싣는 PR)이 발화한다. 그 커밋이 고칠 자리는 [README](README.md)의 0012 문단이 든다.
+⚠ **#260은 「제안」인 채 머지해 아무것도 닫지 않았다**(@sumin0218 리뷰 M1, 2026-09-24). 첫 판은 D10·D12를 닫고 `Closes #60`·`#62`를 걸어 둔 채 머지 순서(승인 전 머지 금지) 하나로 그것을 받쳤다 — 순서가 어긋나면 `Closes`가 이슈를 먼저 닫는다([ADR 0010](0010-harness-structure-and-model-roster.md) 「2026-09-08 갱신」 ④가 같은 이유로 D9를 미뤘다). 그래서 둘을 `열림`·`Refs`로 두었고, ADR 0012 승인(2026-09-25) — 승인 커밋(PR #275)이 닫힘과 `Closes #60`·`#62`를 발화했다. 그 커밋이 고친 자리는 [README](README.md)의 0012 문단이 적는다.
 
 **후속 — Phase 번호.** 2026-09-24부터 이 저장소의 하네스 문서(ADR·정본·설계 문서·D·R 본문)가 「Phase N」으로 가리키는 번호는 이 목록이 정의한다. 그 전에 쓰인 실험 보고서·프롬프트 메타의 「Phase」는 다른 뜻이다(예: `docs/experiments/harness/2026-08-18-retrieval-atom.md`의 「실험 1 — … (Phase 1)」, `prompts/_retrieval/`의 `meta.yaml`). 순서·담당은 이 저장소가 들지 않는다 — 번호는 식별자이지 순서가 아니다(Phase 2가 Phase 1보다 먼저 끝났다).
 
@@ -176,6 +176,7 @@
 - Phase 4 — tree-sitter 심볼 인덱스 v2(index-v2): 결정 1의 심볼 인덱스, [D13](../open-questions/D/D13.md)의 데이터원.
 - Phase 5 — need_evidence resolver·루프: 결정 2, 결정 6의 `max_hops`, D82의 스키마 쪽, D20·D3을 닫는 자리. knowledge-base.md §5의 확장 사다리를 이 루프로 다시 그린다(결정 6 끝 불릿).
 - Phase 6 — 로스터·프로필·프롬프트 배선과 스모크 전 방탄: 결정 4(`qwen3-14b` 신설 · 새 키의 `@rev`·checksum), 결정 3의 canonical 프로필, 그리고 로스터와 무관하게 스모크 전에 막아야 하는 D83(모델이 쓴 `state`·ID를 하네스가 대조하지 않는다 — 처리는 D83의 선택지). ⚠ 결정 1의 「슬라이스 없이 v3 Scout 프롬프트를 부르는 run은 시작 전에 거부」가 Phase 3에서 들어가면 canonical 프로필은 그때부터 슬라이스 입력이 있어야 시작한다 — 이 Phase의 프로필 배선이 그 상태를 이어받아 푼다(@sumin0218 리뷰 L2).
+- Phase 6.5 — GPU 배선: 단계 단위 콜드 재기동 교대([ADR 0009](0009-stage-unit-execution-and-model-swap.md)) · 모델별 요청 설정(사고·샘플링·타임아웃) · 단계 안 동시 요청 · 기동 조건을 장비별 데이터로. 방식은 2026-09-24 @danielcho02가 채택했다([PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행). ⚠ **2026-09-25 추가 — 이 ADR의 승인(같은 날) 뒤에 덧붙인 번호라 @sumin0218 승인 범위 밖이다.** 6과 7 사이 번호는 식별자일 뿐이다(위 — 순서가 아니다).
 - Phase 7 — 평가 어댑터·채점기·배치 실행.
 - Phase 8 — 모델 원문 기록·내보내기: 결정 7, D84.
 - Phase 9 — GPU 스모크(GPU 서버에서 팀원이 실행 — 에이전트가 돌리지 않는다).
