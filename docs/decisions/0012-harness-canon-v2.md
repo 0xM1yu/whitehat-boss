@@ -1,6 +1,6 @@
 # 0012. 하네스 정본 v2 — 슬라이스 입력 · need_evidence · 검색 역할 · 저장소 범위
 
-- 상태: **승인** (2026-09-25 — 손수민 구두 승인, 조민규가 전했다. 사인오프 기록은 [README](README.md)의 0012 문단이다). 2026-09-24에 「제안」인 채 머지됐고(#260 — sumin 리뷰 M1), 이 ADR에 기댄 [D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)는 승인 커밋(PR #APPR)이 닫았다(`Closes #60`·`#62` — 아래 「결과」)
+- 상태: **승인** (2026-09-25 — 손수민 구두 승인, 조민규가 전했다. 사인오프 기록은 [README](README.md)의 0012 문단이다). 2026-09-24에 「제안」인 채 머지됐고(#260 — sumin 리뷰 M1), 이 ADR에 기댄 [D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)는 승인 커밋(PR #275)이 닫았다(`Closes #60`·`#62` — 아래 「결과」)
 - 일자: 2026-09-24
 - 관련: [ADR 0010](0010-harness-structure-and-model-roster.md) §2·§3·「리뷰에서 정할 것」 #2, [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1·§2·§5, [build-plan.md](../build-plan.md) §5·§6, [architecture.md](../architecture.md) §3, [D3](../open-questions/D/D3.md)·[D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)·[D13](../open-questions/D/D13.md)·[D20](../open-questions/D/D20.md)·[D74](../open-questions/D/D74.md)·[D78](../open-questions/D/D78.md)·[D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)·[D84](../open-questions/D/D84.md)·[D85](../open-questions/D/D85.md)·[D86](../open-questions/D/D86.md), `prompts/scout_{memory,boundary,injection}/v3/prefix.md`, `prompts/auditor/v3/`, 팀 Notion 워크스페이스 [화햇대장](https://app.notion.com/p/3aebec1a15bc80c18c66fddd77844013)(실험팀 「Scout RAG baseline」·「Auditor·Critic 모델 최종 선정」·「scout 모델 후보 실험」·「Embedder Reranker 재실험」, 「Agent Fine-Tuning 팀 가이드」 — 2026-09-23 판독, 원문은 저장소에 없다)
 
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §2 「tree-sitter를 왜 계속 두는가」 문단의 첫 문장(`c301342`의 `:86`) | *"Joern은 **슬라이스**(모델이 볼 코드)를"* — **모델 입력** | `520b51a`(#196), 2026-09-15 |
 | 같은 문단의 뒤 문장(`c301342`의 `:88-90`) | 후보 열거는 tree-sitter `symbols_for()`이고 *"슬라이스는 … 그 자리를 대신하지 못한다"* — **후보가 아니다** | 같은 커밋 |
-| [build-plan.md](../build-plan.md) §5 「1 · 인덱스 · 슬라이스」 문단의 첫 문장(`c301342`의 `:134`) | *"여기서 잘라낸 조각이 뒤 단계가 보는 전부다"* — **모델 입력**(`c301342`의 원문이다. 이 PR은 그 문장을 남기고 ⚠ 노트를 달았다 — PR #APPR의 승인 커밋이 이 결정 쪽으로 좁혔다(2026-09-25)) | `1787c55`(2026-09-02) → `520b51a`(2026-09-15) |
+| [build-plan.md](../build-plan.md) §5 「1 · 인덱스 · 슬라이스」 문단의 첫 문장(`c301342`의 `:134`) | *"여기서 잘라낸 조각이 뒤 단계가 보는 전부다"* — **모델 입력**(`c301342`의 원문이다. 이 PR은 그 문장을 남기고 ⚠ 노트를 달았다 — PR #275의 승인 커밋이 이 결정 쪽으로 좁혔다(2026-09-25)) | `1787c55`(2026-09-02) → `520b51a`(2026-09-15) |
 | [D74](../open-questions/D/D74.md) (a) → PROJECT-CONTEXT.md §5 「Joern 슬라이서」 행 · [ADR 0010](0010-harness-structure-and-model-roster.md) 「리뷰에서 정할 것」 #2 행(`c301342`의 `:167` · `:235`) | *"후보 열거에만"*, 캡슐 본문은 안 건드린다 — **후보이고 모델 입력이 아니다** | `b865ee6`(#218), 2026-09-19 |
 | Scout v3 프롬프트 (`scout_memory/v3/prefix.md:31` · `scout_boundary/v3/prefix.md:37-39` · `scout_injection/v3/prefix.md:24`) | *"`SOURCE` is a program slice"* — 원본 줄번호 gutter · `/* ===== path ===== */` 배너 · `FACTS.slice_criterion`(`scout_memory/v3/prefix.md:59-65`) — **모델 입력** | `5767a58`(#239), 2026-09-22 |
 
@@ -166,7 +166,7 @@
 - [D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)·[D84](../open-questions/D/D84.md) 등재 — Scout v3 계약과 하네스 입력·스키마의 불일치(결정 1·2) · 모델이 쓴 `state`·ID를 대조하지 않아 run이 중단될 수 있음(코드 추론, 관측 없음) · 모델 응답 원문·`reasoning_content`·`finish_reason` 미보존(결정 7).
 - [D86](../open-questions/D/D86.md) 등재 — D10에서 승계한 resume·스키마 버전 잔여(구버전 `state.db`를 되읽는 버전 게이트가 없다).
 
-⚠ **#260은 「제안」인 채 머지해 아무것도 닫지 않았다**(sumin 리뷰 M1, 2026-09-24). 첫 판은 D10·D12를 닫고 `Closes #60`·`#62`를 걸어 둔 채 머지 순서(승인 전 머지 금지) 하나로 그것을 받쳤다 — 순서가 어긋나면 `Closes`가 이슈를 먼저 닫는다([ADR 0010](0010-harness-structure-and-model-roster.md) 「2026-09-08 갱신」 ④가 같은 이유로 D9를 미뤘다). 그래서 둘을 `열림`·`Refs`로 두었고, ADR 0012 승인(2026-09-25) — 승인 커밋(PR #APPR)이 닫힘과 `Closes #60`·`#62`를 발화했다. 그 커밋이 고친 자리는 [README](README.md)의 0012 문단이 적는다.
+⚠ **#260은 「제안」인 채 머지해 아무것도 닫지 않았다**(sumin 리뷰 M1, 2026-09-24). 첫 판은 D10·D12를 닫고 `Closes #60`·`#62`를 걸어 둔 채 머지 순서(승인 전 머지 금지) 하나로 그것을 받쳤다 — 순서가 어긋나면 `Closes`가 이슈를 먼저 닫는다([ADR 0010](0010-harness-structure-and-model-roster.md) 「2026-09-08 갱신」 ④가 같은 이유로 D9를 미뤘다). 그래서 둘을 `열림`·`Refs`로 두었고, ADR 0012 승인(2026-09-25) — 승인 커밋(PR #275)이 닫힘과 `Closes #60`·`#62`를 발화했다. 그 커밋이 고친 자리는 [README](README.md)의 0012 문단이 적는다.
 
 **후속 — Phase 번호.** 2026-09-24부터 이 저장소의 하네스 문서(ADR·정본·설계 문서·D·R 본문)가 「Phase N」으로 가리키는 번호는 이 목록이 정의한다. 그 전에 쓰인 실험 보고서·프롬프트 메타의 「Phase」는 다른 뜻이다(예: `docs/experiments/harness/2026-08-18-retrieval-atom.md`의 「실험 1 — … (Phase 1)」, `prompts/_retrieval/`의 `meta.yaml`). 순서·담당은 이 저장소가 들지 않는다 — 번호는 식별자이지 순서가 아니다(Phase 2가 Phase 1보다 먼저 끝났다).
 
