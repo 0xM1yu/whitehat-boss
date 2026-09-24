@@ -310,7 +310,7 @@ class OpenAICompatModelClient:
         before = generation_tokens(self.endpoint)
         try:
             with urllib.request.urlopen(  # noqa: S310
-                request, timeout=self.timeout_s or _TIMEOUT_S
+                request, timeout=_TIMEOUT_S if self.timeout_s is None else self.timeout_s
             ) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:

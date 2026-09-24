@@ -8,6 +8,8 @@
 
 - **stuck 하드 상한 T = (schema_retries+1) × 요청 타임아웃.** 요청 타임아웃은 프로필이 부르는
   모델 중 가장 긴 `request_timeout_s`이고, 선언이 없으면 `_TIMEOUT_S`다(`call_timeout_s`, W2).
+  ⚠ 이 몫은 **지금 config**에서 읽는다 — `schema_retries`와 달리 매니페스트에 안 남기 때문이다.
+  registry의 타임아웃을 바꾼 뒤 옛 run을 보면 그 run이 실제로 쓴 값과 T가 갈린다.
   어댑터가 한 호출을 그만큼까지
   재시도·타임아웃하므로, 그 시간을 넘긴 침묵은 정상 호출로 설명되지 않는다 = 확정 wedge.
   `schema_retries`는 **끝난 run**은 `run_manifest.json`의 값을 쓰고(그 run에 실제 적용된 값),
