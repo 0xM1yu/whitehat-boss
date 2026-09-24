@@ -105,13 +105,9 @@ models:
     #
     #   VLLM_USE_DEEP_GEMM=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN
     #   VLLM_USE_FLASHINFER_SAMPLER=0 TIKTOKEN_ENCODINGS_BASE=<harmony vocab dir>
-    #   vllm serve openai/gpt-oss-20b --port 8003 --served-model-name gpt-oss-20b
+    #   vllm serve openai/gpt-oss-20b --port 8006 --served-model-name gpt-oss-20b
     #     --max-model-len 32768 --gpu-memory-utilization 0.30 --enforce-eager
     #     --structured-outputs-config.backend xgrammar
-    #
-    # ⚠ **2026-09-24 — `--port`를 8006에서 8003으로 옮겼다**(`endpoint`와 같다). 포트를 교대가 띄우는
-    #   순서대로 8000부터 다시 매겼다(`tests/test_config.py`의
-    #   `test_served_ports_count_up_from_8000_in_launch_order`). 아래 원천 보고서의 명령은 8006이다.
     #
     # ⚠ **2026-09-20 — 위 다섯 줄은 한 줄로 접혀 있었다**(`#` 표지째로 한 물리적 줄). 폈다.
     #   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의
@@ -120,6 +116,8 @@ models:
     #   로그 리다이렉트·readiness 루프(`until curl -s -f …/v1/models`)가 더 있고, 줄 이음이
     #   `\`다. 그리고 `TIKTOKEN_ENCODINGS_BASE`는 원문의 `$HOME/tiktoken_encodings`를
     #   `<harmony vocab dir>` 자리표시자로 **바꿔** 적은 것이다.
+    #   ⚠ 지금 포트는 8003이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8006`은 그 (A) 팔의 값이라 기록으로 둔다.
     #
     # - **flashinfer가 JIT(ninja/nvcc)를 부르는데 ATOM에 없다** → 엔진 초기화가 죽는다.
     #   `TRITON_ATTN` + 샘플러 off + `--enforce-eager`로 피한다 (09-09 §1).
