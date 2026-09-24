@@ -30,12 +30,12 @@ from src.bench_metrics import (
     METRIC_TOKENS_CACHED,
     METRIC_TOKENS_RECOMPUTED,
 )
-from src.config import load_config
 from src.interfaces.model_client import Prompt
 from src.orchestrator.prompt_loader import load_prompt
 from src.schemas.candidate import Candidate
 from src.schemas.common import Location
 from src.schemas.enums import FindingState, Role
+from tests.conftest import served_scout_config
 
 RUN_ID = "run_20260101_0001"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -49,9 +49,8 @@ METRICS_DIR = FIXTURES / "metrics"
 SERAPH_METRICS = METRICS_DIR / "vllm_0191_seraph_sm86.txt"
 SERAPH_COMPLETION = METRICS_DIR / "vllm_0191_chat_completion.json"
 
-# scout만 실서빙인 프로필. 실제 엔드포인트를 가리키는 역할이 하나는 있어야 스텁이
-# 의미를 갖는다.
-SERVED_PROFILE = "single_gpu_12g"
+# scout만 실서빙인 config. 실제 엔드포인트를 가리키는 역할이 하나는 있어야 스텁이
+# 의미를 갖는다. (옛 `single_gpu_12g` 프로필의 모양 — `tests/conftest.py`의 합성 config.)
 
 
 def _candidate_json() -> str:
@@ -180,7 +179,7 @@ class _Server:
 @pytest.fixture
 def served() -> tuple:
     """실서빙 역할 하나의 (client, template, tokens). 실제 config·프롬프트를 쓴다."""
-    config = load_config(SERVED_PROFILE)
+    config = served_scout_config()
     key = config.model_key_for("scout")
     entry = config.models[key]
     template = load_prompt(Role.SCOUT, entry.prompt_template_version)
@@ -291,7 +290,7 @@ def test_missing_metrics_is_not_the_same_as_no_cache_hit(
 
 def test_startup_failure_skips_the_rest_and_says_why(monkeypatch: pytest.MonkeyPatch) -> None:
     """죽은 엔드포인트에 C·E까지 태우면 타임아웃만 쌓이고 결과는 못 쓴다."""
-    config = load_config(SERVED_PROFILE)
+    config = served_scout_config()
     server = _Server(models=None, metrics=[metrics_fixture()])
     monkeypatch.setattr(urllib.request, "urlopen", server)
 
@@ -310,7 +309,7 @@ def test_startup_compares_served_id_with_the_registry_key(monkeypatch: pytest.Mo
     """서버가 다른 이름으로 떠 있으면 실제 run의 `/chat/completions`도 같은 이유로 죽는다."""
     monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["Qwen/Qwen3-4B"]))
 
-    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3-4b")
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.6-35b-a3b")
 
     assert result["ok"] is False
     assert "--served-model-name" in result["reason"]
@@ -323,10 +322,10 @@ def test_startup_keeps_the_servers_max_model_len(monkeypatch: pytest.MonkeyPatch
     `prompt + max_tokens > max_model_len`으로 **항상 400**을 받는다.
     """
     monkeypatch.setattr(
-        urllib.request, "urlopen", _Server(models=["qwen3-4b"], max_model_len=32768)
+        urllib.request, "urlopen", _Server(models=["qwen3.6-35b-a3b"], max_model_len=32768)
     )
 
-    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3-4b")
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.6-35b-a3b")
 
     assert result["ok"] is True
     assert result["max_model_len"] == 32768
@@ -336,9 +335,9 @@ def test_startup_reports_no_max_model_len_when_the_server_omits_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """그 키가 없는 서버도 있다. 그때는 종전 동작으로 떨어져야 한다 (#126)."""
-    monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["qwen3-4b"]))
+    monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["qwen3.6-35b-a3b"]))
 
-    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3-4b")
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.6-35b-a3b")
 
     assert result["ok"] is True
     assert result["max_model_len"] is None
@@ -389,7 +388,7 @@ def test_body_length_follows_the_configured_capsule_budget(served: tuple) -> Non
 
 def test_bench_client_matches_the_factory(tmp_path: Path) -> None:
     """다르면 bench가 잰 것이 운영 성능이 아니다 (bench.py 모듈 docstring 원칙 1)."""
-    config = load_config(SERVED_PROFILE)
+    config = served_scout_config()
     deps = build_deps(config, run_id=RUN_ID, source_root=TARGET, artifacts_root=tmp_path)
 
     from_factory = deps.models.client_for("scout")
@@ -635,7 +634,7 @@ def test_no_traffic_is_unmeasured_not_a_failure() -> None:
     """pass도 fail도 아니다. 캐시 동작에 대한 정보가 없는 구간이다."""
     measured = [
         {
-            "model_key": "qwen3-4b",
+            "model_key": "qwen3.6-35b-a3b",
             "startup": {"ok": True},
             "skipped": None,
             "prefix_cache": {"verdict": "no_traffic"},
@@ -660,7 +659,7 @@ def test_a_context_whose_call_failed_does_not_vanish_from_the_pass() -> None:
     """
     measured = [
         {
-            "model_key": "qwen3-4b",
+            "model_key": "qwen3.6-35b-a3b",
             "startup": {"ok": True},
             "skipped": None,
             "memory": {
@@ -692,7 +691,7 @@ def test_all_contexts_failing_is_not_blamed_on_metrics() -> None:
     """
     measured = [
         {
-            "model_key": "qwen3-4b",
+            "model_key": "qwen3.6-35b-a3b",
             "startup": {"ok": True},
             "skipped": None,
             "memory": {
