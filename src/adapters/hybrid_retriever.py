@@ -73,7 +73,11 @@ from src.tokens import estimate_tokens
 # **hybrid-v3 → hybrid-v4 (2026-08-23)**: `related`에 `body`가 생기고 조각당 비용이
 #   `chunk.tokens`에서 `estimate_tokens(file:line\n+text)`로 커졌다 — 같은 키가 다른
 #   구성을 덮으면 안 되므로 올린다(#25가 v3, 이 변경이 v4 — 서로 다른 구성이다).
-CAPSULE_POLICY_VERSION = "hybrid-v4"
+# **hybrid-v4 → hybrid-v5 (2026-09-25, ADR 0012 결정 1 · #220 ②)**: 슬라이스 질의
+#   (`Query.slice_id`)면 `target_function`이 슬라이스 렌더를 세고 키에 slice id·슬라이서
+#   `run_signature`가 붙는다 — Fake의 v3→v4와 같은 변경이다
+#   (`fake_retriever.CAPSULE_POLICY_VERSION` 주석).
+CAPSULE_POLICY_VERSION = "hybrid-v5"
 
 # 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
 # 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
@@ -157,6 +161,8 @@ class HybridRetriever:
         top_k: int = DEFAULT_TOP_K,
         top_n: int = DEFAULT_TOP_N,
         max_chunks: int = MAX_CHUNKS,
+        read_slice: Callable[[str], str] | None = None,
+        slice_signature: str | None = None,
     ) -> None:
         self.root = Path(root)
         self.ids = ids
@@ -166,6 +172,9 @@ class HybridRetriever:
         # 주입되지 않으면 경로 없는 인덱스다 — `status=missing`이라 그래프 섹션이
         # 부재한다. 빈 그래프를 지어내지 않는다(`FakeRetriever`와 같은 처리).
         self.graph = graph if graph is not None else GraphIndex(None)
+        # 슬라이스 타깃의 렌더 조회와 그 슬라이서 run의 신원 — `FakeRetriever`와 같은 계약이다.
+        self.read_slice = read_slice
+        self.slice_signature = slice_signature
         self.on_cache = on_cache
         self.on_truncate = on_truncate
         self.on_usage = on_usage
@@ -188,7 +197,7 @@ class HybridRetriever:
         if cached is not None:
             return cached
 
-        source = read_symbol_source(self.root, query.target)
+        source = self._target_source(query)
         kinds = LEVEL_SECTIONS[level]
         selected: list[Chunk] = []
         if "related" in kinds:
@@ -280,11 +289,23 @@ class HybridRetriever:
         target = query.target
         digest = sha256_text(_read_source(self.root, target.file))
         # `line_start`를 함께 넣는 이유는 `FakeRetriever.cache_key_for()`에 적었다 —
-        # 동명 `static` 함수 둘이 한 키를 공유하는 것을 막는다(W2).
+        # 동명 `static` 함수 둘이 한 키를 공유하는 것을 막는다(W2). 슬라이스 신원이 붙는
+        # 이유도 같은 자리에 적었다(#220 ②).
         symbol = f"{target.symbol or ''}@{target.line_start or ''}"
-        return sha256_text(f"{digest}|{symbol}|{level.value}|{CAPSULE_POLICY_VERSION}")
+        key = f"{digest}|{symbol}|{level.value}|{CAPSULE_POLICY_VERSION}"
+        if query.slice_id is not None:
+            key = f"{key}|{query.slice_id}@{self.slice_signature}"
+        return sha256_text(key)
 
     # --- 내부 ------------------------------------------------------------
+
+    def _target_source(self, query: Query) -> str:
+        """`target_function`이 셀 본문 — `FakeRetriever._target_source`와 같은 계약이다."""
+        if query.slice_id is None:
+            return read_symbol_source(self.root, query.target)
+        if self.read_slice is None:
+            raise ValueError(f"슬라이스 {query.slice_id} 질의인데 read_slice가 배선되지 않았다")
+        return self.read_slice(query.slice_id)
 
     def _transition(
         self, capsule: ContextCapsule, sections: list[CapsuleSection], need: MissingEvidence

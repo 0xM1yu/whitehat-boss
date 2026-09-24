@@ -221,8 +221,9 @@ thresholds:
     #   예산이 묶는 것은 `related`·그래프 섹션·보조 섹션뿐이고 **프롬프트에서 가장 큰
     #   덩어리인 대상 원문은 안 묶는다.** `target_function` 섹션은 본문 없이 토큰 수만 들고
     #   (`_sections_for`의 `min(cost, remaining)`), 실제 원문은 노드가 `ctx.read_source()`로
-    #   따로 읽어 `{{SOURCE}}`와 사실 블록에 싣는다 — `nodes/scout.py`의 `describe_sections`
-    #   docstring이 "`target_function`(원문은 `{{SOURCE}}`가 싣는다)"이라고 적어 뒀다.
+    #   (슬라이스 타깃의 Scout는 `ctx.read_slice()`로) 따로 읽어 `{{SOURCE}}`와 사실 블록에 싣는다 —
+    #   `nodes/scout.py`의 `describe_sections` docstring이 "`target_function`(원문은 `{{SOURCE}}`가
+    #   싣는다)"이라고 적어 뒀다.
     #   2026-08-21 zlib run이 `cand_0033`에서 HTTP 400으로 죽은 원인인
     #   `contrib/minizip/unzip.c`(67,662 B)는 `estimate_tokens`로 16,915라 **24,000에도
     #   18,000에도 안 걸린다.** 그 경로는 이 손잡이로 닫히지 않는다.
