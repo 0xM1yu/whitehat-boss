@@ -5,7 +5,8 @@
 # `endpoint`의 스킴이 어댑터를 고른다:
 #   fake://  → FakeModelClient (결정론적, GPU 불필요)
 #   그 외    → OpenAICompatModelClient (vLLM OpenAI-compatible)
-# 이 규칙 덕분에 한 프로필 안에서 역할별로 실서빙과 Fake를 섞을 수 있다(profiles.yaml single_gpu_12g).
+# 이 규칙 덕분에 한 프로필 안에서 역할별로 실서빙과 Fake를 섞을 수 있다(2026-09-24에 지운 옛 프로필
+# `single_gpu_12g`가 그랬다 — scout만 실서빙, 나머지 fake).
 #
 # `benchmark` 값이 전부 0인 모델은 아직 실측 전이라는 뜻이다. model-serving.md §5에 따라
 # production 프로필에 넣지 않으며 `cli doctor`가 경고한다. 값은 §3 체크리스트 실측 후 채운다.
@@ -20,9 +21,9 @@
 # 이 필드가 없으면 어느 리포의 어느 리비전이었는지 답할 수 없다. `--apply`는 건드리지 않는다.
 #
 # family는 **베이스 가중치의 제작사**다 — 양자화한 조직이 아니라 가중치가 나온 조직이다
-# (ADR 0010 §4). 그래서 `source`의 org와 다를 수 있다: `qwen3-8b`는 `hf://nvidia/…`에서
-# 받았지만 NVIDIA가 한 것은 NVFP4 양자화이므로 `qwen`이고, `qwen3-coder-30b-a3b`의 `NVFP4/…`도
-# 같다. auditor와 critic이 **다른 모델 키면 계열이 달라야 한다**를 `load_config`가 검사한다
+# (ADR 0010 §4). 그래서 `source`의 org와 다를 수 있다: `seccoderx-8b`는 `hf://SecCoderX/…`에서
+# 받지만 베이스가 Qwen3-8B라 `qwen`이다(2026-09-24에 지운 옛 키 `qwen3-8b`·`qwen3-coder-30b-a3b`도
+# NVIDIA가 NVFP4로 양자화한 가중치라 `qwen`이었다). auditor와 critic이 **다른 모델 키면 계열이 달라야 한다**를 `load_config`가 검사한다
 # (같은 키인 B1은 정의상 허용). 그 요구는 evaluation.md §2.1·model-serving.md·critic 노드에
 # 문장으로만 있었고 강제하는 코드가 없었다 — 이슈 #121.
 
@@ -70,357 +71,9 @@ models:
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
 
-  # --- 임시 v2 별칭 셋 — Scout 풀 배선 플러밍용 (#103) --------------------------
-  # **모델 선정은 미확정이다.** 풀 프롬프트(scout_{memory,boundary,injection}/v2)는 v2뿐인데
-  # 프롬프트 버전은 모델에 붙고(`load_prompt(role, model.version)`) base 셋은 전부 v1이라, 풀을
-  # 배선하려면 v2를 가리키는 항목이 필요하다. **이것은 「프로필로만 가르는」 안(#103)이 아니다** —
-  # 그 안은 `models.yaml`을 안 건드리지만, 아래는 registry에 항목 셋을 **더한다**. 책임이 흐려지는
-  # 자리를 프로필이 아니라 registry로 옮긴 별개 선택지다(#103 본문에 그렇게 등재). 아래 셋은 **base와
-  # 같은 무게·서버·checksum·fallback**이고 `prompt_template_version`만 v2다 — 진짜 별칭이다.
-  # 로스터 §1의 자리는 base(v1)가 정본이고 이 별칭은 v2 프롬프트 도달용이다.
-  # **`benchmark`는 0(별칭 자체 미실측 · §0).** base 처리량을 여기 옮기는 코드 경로는 없고
-  # (`_gpu_estimate`가 별칭을 그대로 미실측으로 본다), devstral base는 그 값이 애초에 0이다.
-  # 풀 프로필 `local_balanced_pool`이 이 셋을 scout 자리에 배선한다.
-  # ⚠ **2026-09-24 — 위 줄은 PR #190 때의 서술이다.** 2026-09-21 교체로 그 프로필(지금 이름 `harness_pool`)의
-  #   Scout 자리가 v3 키로 옮겨 이 셋은 배선이 없다(PROJECT-CONTEXT.md 「로스터에 없지만 registry에 남는 것」).
-  # ⚠ **base가 바뀌면 여기도 손으로 맞춰야 한다** — 「base ↔ 별칭」 짝을 잠그는 검사가 없다
-  #   (`test_the_context_roster_matches_the_model_registry`는 registry 등재 여부만 본다).
-  qwen3-coder-30b-a3b-v2:
-    endpoint: "http://127.0.0.1:8002/v1"
-    context_limit: 262144
-    quantization: "nvfp4"
-    license: "Apache-2.0"
-    checksum: "sha256:69c4c69eb5fe52d59f2c4fe015986d76495f2f2674aabf7c087e0f6307e00e44"
-    source: "hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048"
-    family: "qwen"
-    prompt_template_version: "v2"
-    fallback: null
-    benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
-      mem_gb_ctx8k: 0
-      prefix_hit_ratio_batch32: null
-
-  devstral-small-2-24b-v2:
-    endpoint: "http://127.0.0.1:8003/v1"
-    context_limit: 262144
-    quantization: "fp8"
-    license: "Apache-2.0"
-    checksum: "sha256:b352c3e63c12f9f14d0841790d09675801587ded6d3cbdbd47d233ade1f27b4d"
-    source: "hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128"
-    family: "mistral"
-    prompt_template_version: "v2"
-    fallback: null
-    benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
-      mem_gb_ctx8k: 0
-      prefix_hit_ratio_batch32: null
-
-  qwen3-8b-v2:
-    endpoint: "http://127.0.0.1:8001/v1"
-    context_limit: 131072
-    quantization: "nvfp4"
-    license: "Apache-2.0"
-    checksum: "sha256:38fa6aacb2da61c5c3eba2e4f636a0f37acaeb1bcdb3cb3e93c3f15f5615f09f"
-    source: "hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e"
-    family: "qwen"
-    prompt_template_version: "v2"
-    fallback: "qwen3-4b"
-    benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
-      mem_gb_ctx8k: 0
-      prefix_hit_ratio_batch32: null
-
-  qwen3-4b:
-    # 12GB 단일 카드에서 scout만 실서빙할 때 쓰는 소형 모델. profiles.yaml single_gpu_12g 참조.
-    #
-    # **ATOM(sm_121)에서는 `VLLM_USE_DEEP_GEMM=0` 없이 기동하지 않는다** (2026-08-17 실측).
-    # DeepGEMM이 이 모델의 fp8 scale-factor 레이아웃을 sm_121에서 변환하지 못하고 가중치
-    # 로딩 **후처리**에서 죽는다:
-    #
-    #   RuntimeError: Assertion error (deepgemm-src/csrc/apis/layout.hpp:60):
-    #                 Unknown SF transformation
-    #   fp8.py:434 → deep_gemm.py:96 → fp8_utils.py:1137 → utils/deep_gemm.py:494
-    #
-    # **오진 방향을 못박는다: 플래그 없이 재측정하면 "수치가 안 나오는" 것이 아니라 "서버가
-    # 안 뜬다".** 크래시가 가중치를 다 읽은 뒤에 나오므로 모델 파일이나 checksum을 의심하기
-    # 쉬운데, 원인은 백엔드 커널이다. 아래 benchmark는 그 플래그를 준 상태의 측정이다.
-    #
-    #   VLLM_USE_DEEP_GEMM=0 vllm serve <스냅샷 경로> --served-model-name qwen3-4b …
-    #
-    # **R1(sm_121 커널 호환성) 통과와 별건이다.** 그 검증은 bf16 Qwen3-0.6B로 했고
-    # (.claude/plans/atom-memory-arm64-pr10.plan.md의 R1 범위 정의) 양자화 커널 경로는 그
-    # 범위 밖이었다. 이것이 그 "별건"의 첫 구체 사례이고, 다른 양자화(`nvfp4`)도 같은 종류의
-    # 백엔드 문제를 따로 만날 수 있다. 상세는 docs/portability.md §5 #5.
-    endpoint: "http://127.0.0.1:8001/v1"
-    context_limit: 131072
-    quantization: "fp8"
-    license: "Apache-2.0"
-    checksum: "sha256:ab78c8e5fc2b4f8f6972c3c19c6888a39a31642b11d857185ebbd14c03e5ff72"
-    source: "hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98"
-    family: "qwen"
-    prompt_template_version: "v1"
-    fallback: "fake"
-    benchmark:
-      measured_at: "2026-08-17T15:16:27Z"
-      measured_on: "atom"
-      tok_s_single: 39.65
-      tok_s_batch32: 127.69
-      mem_gb_ctx8k: 0
-      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
-      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: null
-
-  qwen3-8b:
-    # 2026-08-25 ATOM에서는 **기동만** 했다(추론 없음). 상세는
-    # docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §3.
-    # 처리량은 그 뒤 2026-09-04에 쟀다 — 아래 benchmark 문단.
-    #
-    # `quantization`이 `fp4`였는데 **틀린 값이다.** 체크포인트가 선언하는 것은 NVFP4이고
-    # (기동 로그: `Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4)`,
-    # `quantization=modelopt_fp4`) `fp4`는 이 registry의 다른 어느 모델도 쓰지 않는 값이다.
-    # docs/portability.md §5 #1이 이 모델을 `fp4`로 세고 있었던 것도 여기서 왔다.
-    #
-    # **2026-09-04 ATOM 실측으로 처리량이 채워졌다** — 이 모델의 첫 처리량 측정이다.
-    # `cli bench --profile local_balanced_hybrid --device atom --roles scout auditor
-    # --concurrency 8 16 32 --apply`, 8001·8002·8004·8005 넷이 동시에 뜬 상태.
-    #
-    # **`tok_s_batch32` 388.46은 캐시 ON에서 나왔다** — 옆 필드의 적중률 0.9981이 그
-    # 근거다. 같은 축의 캐시 OFF 값은 재지 않았으므로 이 수를 캐시 OFF 값과 나란히
-    # 놓지 마라(#128이 auditor에서 1.81배 갈림을 보인 것과 같은 함정이다).
-    #
-    # **`mem_gb_ctx8k`는 여전히 0이다** — `nvidia-smi --query-gpu`가 통합메모리 장비에서
-    # `[N/A]`를 준다. 그래서 이 모델은 `unmeasured_models()`에서 빠지되
-    # `partially_measured_models()`에 들어가고, production 프로필에서는 **여전히
-    # ERROR다**(cli.py `_check_benchmarks` — 부분 측정도 막는다). model-serving.md §5의
-    # 게이트는 열리지 않았다.
-    #
-    # **아래 세 값의 원천은
-    # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §9다** — 그 절의
-    # `--apply` 판이 `tok_s_single 35.78` · `tok_s_batch32 388.46` ·
-    # `prefix_hit_ratio_batch32 0.9981`로 이 블록에 적힌 것과 같고, 동시성 1/8/16/32의
-    # tok/s·적중률 원표와 실패 0건도 거기 있다.
-    #
-    # ⚠ **그 파일은 #142가 들여온다** — 이 주석이 그 PR보다 먼저 도는 순간이 있다. 경로로만
-    # 적고 마크다운 링크로 바꾸지 않는다: 링크 검사(`test_internal_links_point_at_a_real_file`)는
-    # `*.md`만 수집해 YAML을 안 보지만, #142 전에는 링크가 읽는 사람에게 끊어진 포인터다.
-    endpoint: "http://127.0.0.1:8001/v1"
-    context_limit: 131072
-    quantization: "nvfp4"
-    license: "Apache-2.0"
-    checksum: "sha256:38fa6aacb2da61c5c3eba2e4f636a0f37acaeb1bcdb3cb3e93c3f15f5615f09f"
-    source: "hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e"
-    family: "qwen"
-    prompt_template_version: "v1"
-    fallback: "qwen3-4b"
-    benchmark:
-      measured_at: "2026-09-04T05:08:19Z"
-      measured_on: "atom"
-      tok_s_single: 35.78
-      tok_s_batch32: 388.46
-      mem_gb_ctx8k: 0
-      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
-      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: 0.9981
-
-  qwen3-coder-30b-a3b:
-    # 30.5B total / 3.3B active MoE. 좁은 대역폭에서 총 파라미터 대비 유리(model-serving.md §2).
-    #
-    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
-    #
-    # 아래는 `vllm serve`를 치는 사람의 값이다. `ModelEntry`는 이 값들을 담지 않는다
-    # (`extra="forbid"` — `src/config.py`가 그 배제를 정본으로 적는다).
-    #
-    #   PATH=<venv>/bin:/usr/local/cuda/bin:$PATH VLLM_USE_DEEP_GEMM=0 \
-    #   vllm serve <스냅샷 경로> --port 8002 --served-model-name qwen3-coder-30b-a3b \
-    #     --max-model-len 32768 --gpu-memory-utilization 0.30 \
-    #     --structured-outputs-config.backend xgrammar \
-    #     --structured-outputs-config.disable_any_whitespace true
-    #
-    # - **`disable_any_whitespace true`가 필수다** — 2026-09-11 ATOM 실측(이슈 #172).
-    #   `Finding`의 `path`·`evidence_refs`를 스키마 `required`로 올리면 모델이 그 둘을 채우지만
-    #   (`stock`에서 20/20 비던 것 → `required` 팔은 성공한 10/10에서 채움) **공백 폭주**가
-    #   따라온다: 유효 JSON이 이 옵션 `false`에서 **5/15**(조건 A·B·D), `true`에서 **5/5**다.
-    #   꼬리 공백이 12,849~13,199자였고 전부 `output_tokens == max_tokens`였다.
-    #   ⚠ **`backend xgrammar`만으로는 재발한다** — 귀속은 `disable_any_whitespace` 단독이다.
-    #   ⚠ **비율로 읽지 마라 — n=5다.** 같은 인자의 조건 A·B가 2/5와 0/5를 냈다. 읽을 것은
-    #     *"조건 C만 전 팔 5/5"*이고, 한 프롬프트·한 모델·한 역할의 결과다.
-    #   ⚠ 위 수는 그 보고서 **§3.1 표에서 재계산**한 것이다 — §1 요약의 「13/13」·「5/20」은
-    #     그 표에서 재구성되지 않는다(원천 JSON이 ATOM에 있어 여기서 못 가른다).
-    # - **`PATH`가 인자의 일부다** — 빼면 기동이 막힌다(그 보고서 §4의 첫 벽).
-    #   ⚠ 원문은 venv의 `vllm`을 **절대 경로로** 부른다(`<venv>/bin/vllm serve`). 위 축약은
-    #     `PATH` 접두에 기대므로, 확실히 하려면 원문처럼 절대 경로를 쓴다.
-    # - **인자를 줬다고 실렸다고 읽지 않는다.** 기동 로그에서 확인한다:
-    #   `grep -o "StructuredOutputsConfig([^)]*)" <로그> | head -1`
-    # - 전체 원문(스냅샷 경로·`setsid nohup`·로그 리다이렉트·readiness 루프 포함)은
-    #   `docs/experiments/harness/2026-09-11-d67-required-schema-atom.md` §9다. 위는 그 축약이다.
-    #
-    # **아래 값은 2026-09-04 ATOM 실측이고, 그 원천은
-    # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §9다** — 그 절의
-    # `--apply` 판이 `tok_s_single 53.4` · `tok_s_batch32 66.42` ·
-    # `prefix_hit_ratio_batch32 0.5673`으로 이 블록에 적힌 것과 같다. 명령은
-    # `cli bench --profile local_balanced_hybrid --device atom --roles scout auditor
-    # --concurrency 8 16 32 --apply`였고 8001·8002·8004·8005 넷이 동시에 뜬 상태였다.
-    # ⚠ **그 보고서는 #142가 들여온다** — 위 `qwen3-8b` 블록과 같은 사유로 링크로 걸지 않는다.
-    # 2026-09-02 재측정(아래 #128 문단의 근거)은
-    # docs/experiments/harness/2026-09-02-bench-concurrency-atom.md,
-    # 첫 측정은 2026-08-25이고 docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md §4~§5다.
-    #
-    # **아래 두 수치는 성격이 다르다. 같은 신뢰도로 읽으면 안 된다.**
-    #
-    # `tok_s_single`은 2026-09-02 캐시 ON 세 판에서 52.96 / 53.06 / 52.36으로 산포
-    # 1.34%였고(계산값), 2026-09-04 판이 **53.4**로 그 폭 안에 들어온다 — 지금 필드에
-    # 있는 값이 그것이다. **캐시를 끄면 21.96으로 2.4배 떨어진다** — 이 값도 캐시가 사고 있었다.
-    #
-    # **`tok_s_batch32`는 몇 번째 판이냐에 달려 있다 (이슈 #128).** 같은 서버·같은 인자로
-    # 돌린 세 판이 59.45 / 68.64 / 107.32로 **1.81배** 갈렸고, 원인은 산포가 아니라 prefix
-    # cache 적중률이다(0.5142 / 0.7776 / 0.8577). 동시성 8·16·32 각각에서 세 판을 적중률로
-    # 정렬하면 tok/s 정렬과 같고 **아홉 칸에 역전이 0건**이다. `bench`의 `variant`가
-    # **한 판 안에서만** 본문을 흔들어서(`bench.py:432`), seed가 같은 다음 판은 자기 자신을
-    # 캐시에서 읽는다. **그래서 이 필드는 오래 0이었다 — 미실측이 아니라 판단이었다**
-    # (CLAUDE.md §0). 당시 `--apply`가 쓴 68.64는 적중률 0.7776짜리 데워진 값이었고,
-    # `benchmark`에 **캐시 온도를 적을 칸이 없어서** 값을 넣으면 다음 사람이 조건 없는
-    # 처리량으로 읽었다 — 그것이 0으로 되돌린 이유다(#127).
-    #
-    # **그 칸이 생겨서 이제 적는다.** #133이 `prefix_hit_ratio_batch32`를 넣어 값과 캐시
-    # 상태가 같은 레코드에 앉는다(#128의 (b) 채택). 지금 값 **66.42는 적중률 0.5673**이다.
-    #
-    # ⚠ **66.42를 아래 운영 범위(39.64~59.45)와 같은 축에 놓지 마라.** 두 가지가 다르다 —
-    # ① 캐시 ON이라 그 범위의 상한 위에 있고, ② 그 범위는 `b1_single`에서 이 모델 **혼자**
-    # 떠 있을 때 잰 곡선인데 66.42는 **네 서버가 동시에 상주한** 상태에서 나왔다.
-    # 배치 크기 예산의 근거로 쓸 것은 여전히 아래 4판 캐시 OFF 곡선이다.
-    #
-    # **`tok_s_single`은 왜 0이 아닌가.** 그쪽은 세 판의 적중률이 전부 0.9996으로 같아서
-    # (동시성 1은 즉시 포화한다) 같은 조건이 재현되고 산포가 1.34%다. batch32는 적중률
-    # 자체가 판마다 달라 **재현되는 조건이 없었다** — 그 차이가 한쪽만 0으로 두었던
-    # 이유이고, 옆 칸의 적중률이 그 조건을 적게 되면서 없어진 이유다.
-    #
-    # **캐시를 끄고 잰 하한선이 있다** — `--no-enable-prefix-caching`으로 다시 띄운 4판이
-    # 21.96 / 35.23 / 39.77 / 39.64(동시성 1/8/16/32)다. 그러니 **운영 값은 39.64(공유 0)와
-    # 59.45(1판, 본문 일부 공유) 사이**이고 68.64는 그 위다. 배치 크기 예산의 근거로 쓸
-    # 것은 그 4판 곡선이다 — **이득 1.81배이고 동시성 16에서 포화한다.**
-    #
-    # **옛 주석의 「배치가 단일보다 느리다(54.83 → 38.93)」는 반증됐다.** 그 38.93은
-    # `tok_s = produced / elapsed`인데 **실패한 호출의 벽시계가 분모에 들어간** 값이었다.
-    # 재측정은 두 판 네 수준(1·8·16·32) 전부 실패 0건이고 둘 다 batch32 > single이다.
-    # **그렇다고 「배칭 이득이 얼마다」를 대신 적을 수는 없다** — 단일 대비 최대 배율이
-    # 1판 1.18배(동시성 8), 2판 2.42배(동시성 16)로 갈린다(계산값).
-    # `qwen3-4b`의 3.2배와 비교하려면 그 폭부터 좁혀야 한다.
-    #
-    # **`mem_gb_ctx8k`는 0으로 남긴다 — 지어내지 않는다.** `nvidia-smi --query-gpu`가
-    # 이 장비에서 `[N/A]`를 낸다(GB10은 통합메모리라 별도 VRAM 카운터가 없다).
-    # **쿼리를 적는 이유**: `--query-compute-apps`는 이 장비에서도 프로세스별 값을 준다
-    # (2026-09-03 실측 54,716 MiB). 그러나 그것은 **카드 점유가 아니라 PID별**이고
-    # context 8K에 고정된 값도 아니라 이 필드를 바로 채우지 못한다 — 아래 보고서 §3.4. `bench --apply`도 이
-    # 필드만 `skipped`로 두고 건드리지 않았다. **값을 채우면 `Benchmark.is_measured`가 0
-    # 여부로 판정하므로 안 잰 모델이 production 프로필에 오르는 길이 열린다**
-    # (model-serving.md §3의 같은 규칙). 재는 방법은 보고서 §7에 적혀 있다.
-    endpoint: "http://127.0.0.1:8002/v1"
-    context_limit: 262144
-    quantization: "nvfp4"
-    license: "Apache-2.0"
-    checksum: "sha256:69c4c69eb5fe52d59f2c4fe015986d76495f2f2674aabf7c087e0f6307e00e44"
-    source: "hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048"
-    family: "qwen"
-    prompt_template_version: "v1"
-    fallback: null
-    benchmark:
-      measured_at: "2026-09-04T05:08:19Z"
-      measured_on: "atom"
-      tok_s_single: 53.4
-      tok_s_batch32: 66.42
-      mem_gb_ctx8k: 0
-      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
-      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: 0.5673
-
-  devstral-small-2-24b:
-    # Mistral 계열 24B. **자리의 정본은 PROJECT-CONTEXT.md §1이다** — 2026-09-09 확정 로스터에서
-    # 이 모델은 `scout_boundary`(CWE-119·125·787·190)이고, 아래 서술이 전제하던 Critic 자리가
-    # 아니다. Primary와 다른 계열이어야 교차 검증의 가치가 나온다는 규칙 자체는 그대로이고
-    # (model-serving.md §2), 지금은 `load_config`의 `_check_family_split`이 그것을 강제한다.
-    #
-    # **2026-09-04 ATOM에서 처음 띄웠다.** 상세는
-    # docs/experiments/harness/2026-09-04-five-model-residency-atom.md §7.
-    # 그 전까지 이 주석은 "받지도 띄우지도 않았다"고 적고 있었는데 **「띄우지도」가 거짓이 됐다** —
-    # 띄운 것이 2026-09-04다. ⚠ **「받지도」는 안 뒤집었다** — 2026-09-04에 조회한 HF 캐시
-    # 스냅샷 날짜가 2026-08-25일 뿐이고, 그것이 그날 실험 전인지는 저장소로 못 가른다.
-    # 게다가 그 문장이 걸려 있던 대상은 아래 nvfp4 빌드이고 그것은 지금도 안 받았다.
-    # 어긋남의 정본 기록은 docs/experiments/README.md 확정 #7이다.
-    #
-    # **`quantization`이 `nvfp4`였는데 틀린 값이다. 실제는 `fp8`이다.** 근거 셋이 같은 방향이다:
-    #   config.json  `quantization_config.quant_method: 'fp8'`
-    #   vLLM 기동 로그 `quantization=fp8`
-    #   파일 크기     18,921 MiB + 5,678 MiB = 24.0 GiB — 24B × 1바이트다(bf16이면 약 48 GiB).
-    # portability.md §5 #1이 이 모델을 `nvfp4`로 세고 있던 것도 여기서 왔다.
-    #
-    # **멀티모달이다 — dense 텍스트 24B로만 읽으면 안 된다.** config.json의
-    # `architectures: ['Mistral3ForConditionalGeneration']` · `model_type: 'mistral3'`이고
-    # `modules_to_not_convert`에 `model.vision_tower`·`model.multi_modal_projector`가 있다.
-    # vLLM은 `Resolved architecture: PixtralForConditionalGeneration`으로 해석했다.
-    #
-    # **기동에 전용 로더 인자가 필요하다** — 스냅샷에 `consolidated-*.safetensors`·`params.json`·
-    # `tekken.json`만 있고 HF transformers 포맷 파일이 없다(mistral 네이티브):
-    #
-    #   --tokenizer-mode mistral --config-format mistral --load-format mistral
-    #
-    # 인자를 모르면 수치가 나빠지는 것이 아니라 **서버가 안 뜬다**(qwen3-4b의 fp8 항목과 같은
-    # 종류의 함정이다). 환경변수는 그날 전 기동 공통으로 `VLLM_USE_DEEP_GEMM=0`이 걸려 있었다.
-    #
-    # 메모리 실측(같은 보고서 §7. vLLM 기동 로그의 자기 회계다):
-    #   util 0.45  가중치+non-torch 26.8 GiB · KV 26.3 · nvidia-smi 53,330 MiB
-    #   util 0.30  가중치+non-torch 25.48 GiB · KV 9.67
-    #   로딩 24.12 GiB / 173.2초, 전체 콜드 약 330초
-    #
-    # **`source`·`checksum`을 2026-09-04에 채웠다.** 이 항목이 최초 커밋부터 비워 두던 자리다.
-    # manifest는 `config/checksums/devstral-small-2-24b.txt`(파일 8개)이고 registry의 이 값은
-    # **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
-    #
-    # **서버를 내린 뒤에 만들었다.** 떠 있는 동안 24 GiB를 읽으면 페이지 캐시가 차서 돌고 있는
-    # 다른 서버가 CUDA OOM으로 죽는다(같은 보고서 §4.3) — 순서가 제약이었다.
-    #
-    # ⚠ **채워진 것은 「어느 파일로 돌았나」이지 「비교표에 들어간다」가 아니다.** 이 모델의
-    # `benchmark`는 여전히 전부 0이고(미실측), model-serving.md §5에 따라 production 프로필에
-    # 넣지 않는다. 그리고 2026-09-04 run(`run_20260904_0001`)은 이 값이 채워지기 **전**에
-    # 돌았으므로 그 run의 `RunRecord.model_checksums`에는 0이 남아 있다.
-    # 그 run의 보고서는 docs/experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md다
-    # — PR #166으로 2026-09-10에 들어왔다. **그전에는 저장소에 없어 이 인용을 따라갈 데가
-    # 없었고**, 그 상태가 결함으로 등재돼 있었다(CLAUDE.md §0 — 출처를 같은 문장에 적는다).
-    #
-    # **`nvfp4` 빌드는 여전히 안 받았다**(주석이지 값이 아니다):
-    #   Firworks/Devstral-Small-2-24B-Instruct-2512-nvfp4 — 이름만 확인. 받지도 띄우지도 않았다
-    # NVFP4 양자화 시 반박 정확도 저하 위험(model-serving.md §4, docs/open-questions/R/R2.md)은
-    # 그 별도 빌드에 대한 것이고, **여기 값은 그것이 아니다.**
-    endpoint: "http://127.0.0.1:8003/v1"
-    context_limit: 262144
-    quantization: "fp8"
-    license: "Apache-2.0"
-    checksum: "sha256:b352c3e63c12f9f14d0841790d09675801587ded6d3cbdbd47d233ade1f27b4d"
-    source: "hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128"
-    family: "mistral"
-    prompt_template_version: "v1"
-    fallback: null
-    benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
-      mem_gb_ctx8k: 0
-      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
-      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: null
-
   gpt-oss-20b:
     # **7단계 Critic.** 자리의 정본은 `PROJECT-CONTEXT.md` §1이다 — 2026-09-09 확정 로스터에서 이
-    # 모델이 Critic이고 `reasoning_effort: high`다. Auditor(`qwen3-coder-30b-a3b`)와 계열이
+    # 모델이 Critic이고 `reasoning_effort: high`다. Auditor(그때 `qwen3-coder-30b-a3b`, 지금 `qwen3.6-35b-a3b`)와 계열이
     # 달라야 교차 검증의 가치가 나오고(model-serving.md §2), `load_config`의
     # `_check_family_split`이 그것을 강제한다 — `qwen` 대 `gpt-oss`로 갈린다.
     #
@@ -433,13 +86,13 @@ models:
     # **`quantization`이 vLLM 로그와 다르다 — 갈려서 모델이 선언한 쪽을 적는다.**
     # config.json의 `quantization_config.quant_method`는 `mxfp4`이고, 09-09 보고서 §1이 적은
     # `quantization=gpt_oss_mxfp4`는 **vLLM이 고른 커널 경로의 이름**이다(같은 줄이
-    # `Using 'MARLIN' Mxfp4 MoE backend`으로 이어진다). 위 `devstral-small-2-24b`는 config.json과
+    # `Using 'MARLIN' Mxfp4 MoE backend`으로 이어진다). 옛 `devstral-small-2-24b` 항목(2026-09-24 삭제)은 config.json과
     # 기동 로그가 **일치했으므로**(둘 다 `fp8`) 그 값을 적었다 — 여기는 일치하지 않아 같은
     # 규칙을 못 쓴다. 모델이 선언한 값을 적고 해석된 이름은 이 주석에 남긴다.
     #
     # **`context_limit`은 모델 상한이지 그날 띄운 값이 아니다.** config.json의
     # `max_position_embeddings`가 131,072다. 09-09 스모크의 `--max-model-len 32768`은 그
-    # 기동의 선택이고, 다른 항목(`qwen3-8b: 131072`)이 모델 상한을 적으므로 축을 맞춘다.
+    # 기동의 선택이고, 다른 항목(`qwen3.6-35b-a3b: 262144`)이 모델 상한을 적으므로 축을 맞춘다.
     #
     # ⚠ **license는 Apache-2.0이지만 스냅샷에 `USAGE_POLICY`가 함께 있다.** 이 필드는 가중치
     # 라이선스 한 축만 담으므로 그 문서의 제약은 여기 안 실린다 — 배포·공개 판단이 필요하면
@@ -463,6 +116,8 @@ models:
     #   로그 리다이렉트·readiness 루프(`until curl -s -f …/v1/models`)가 더 있고, 줄 이음이
     #   `\`다. 그리고 `TIKTOKEN_ENCODINGS_BASE`는 원문의 `$HOME/tiktoken_encodings`를
     #   `<harmony vocab dir>` 자리표시자로 **바꿔** 적은 것이다.
+    #   ⚠ 지금 포트는 8003이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8006`은 그 (A) 팔의 값이라 기록으로 둔다.
     #
     # - **flashinfer가 JIT(ninja/nvcc)를 부르는데 ATOM에 없다** → 엔진 초기화가 죽는다.
     #   `TRITON_ATTN` + 샘플러 off + `--enforce-eager`로 피한다 (09-09 §1).
@@ -498,6 +153,8 @@ models:
     # `local_balanced_pool_hybrid`의 `critic`을 이 모델로 배선했다 — 줄 프로필이 있다.
     # 실서빙 `local_balanced`는 여전히 `devstral-small-2-24b`다. **막는 것은 이제 배선이
     # 아니라 그 프로필로 bench를 한 번 돌리는 일이다.**
+    # ⚠ **2026-09-24 — `local_balanced`와 `devstral-small-2-24b`를 지웠다**(로스터 밖 정리). 이 모델을 배선한
+    # 프로필은 `harness_pool`·`harness_pool_hybrid`다(위 두 풀 프로필의 새 이름).
     #
     # ⚠ **아직 안 해 본 손잡이가 하나 더 있다 — `disable_any_whitespace`.**
     # 2026-09-11에 **다른 모델**(`qwen3-coder-30b-a3b`)에서 구조화 출력 실패를 쟀더니 원인이
@@ -507,7 +164,7 @@ models:
     # 않아 꼬리를 확인할 수 없고(보고서 메타), 모델도 양자화도 다르다. **그러니 "이 옵션이
     # 이 모델도 고친다"로 읽지 않는다.** 다만 위 기동 조건이 이미 `backend xgrammar`라
     # 옵션 한 줄을 더하는 값이 싸고, `tools/probe/gpt_oss_structured.py`의 팔로 그대로 잰다.
-    endpoint: "http://127.0.0.1:8006/v1"
+    endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 131072
     quantization: "mxfp4"
     license: "Apache-2.0"
@@ -540,7 +197,7 @@ models:
     #
     # ⚠ **#108은 2026-09-09 닫혔다.** 등재된 결함(안 뜨는 역할을 서빙으로 세어 이 `checksum`이
     # 비교표 제외 판정에 끌려듦)은 `served_models()`가 `retriever != hybrid`면 검색 역할을 빼는
-    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(`b1_single` 등)의
+    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(지금 `harness_pool` 등)의
     # `RunRecord.model_checksums`가 이 실해시를 담는 것은 — 그 run이 이 모델을 띄운 적이 없어도 —
     # 결함이 아니라 **선언 기록 설계**다: `model_checksums`는 "프로필이 선언한 역할→모델"의 완전
     # 기록이고(그 계약을 `tests/test_config.py`가 강제한다), "실제로 뜬 역할"은 `served_models()`가
@@ -551,36 +208,6 @@ models:
     license: "Apache-2.0"
     checksum: "sha256:2f0df70974121b6286d288c6b8639b576c4157fc7499fff717984cce3ab72323"
     source: "hf://Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
-    family: "qwen"
-    prompt_template_version: "v1"
-    fallback: null
-    benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
-      mem_gb_ctx8k: 0
-      # `tok_s_batch32`가 어떤 캐시 상태에서 나온 값인가 (이슈 #128).
-      # null은 미판독, 0.0은 "캐시를 끄고 쟀다"라는 실측이다 — 둘은 다르다.
-      prefix_hit_ratio_batch32: null
-
-  qwen3-reranker-0.6b:
-    # **2026-09-03 ATOM에서 실측해 채웠다.** manifest는 `config/checksums/qwen3-reranker-0.6b.txt`이고
-    # registry의 이 값은 **그 파일 전체의 sha256**이다(`tools/model_checksum.py`).
-    #
-    # ⚠ **#108은 2026-09-09 닫혔다.** 등재된 결함(안 뜨는 역할을 서빙으로 세어 이 `checksum`이
-    # 비교표 제외 판정에 끌려듦)은 `served_models()`가 `retriever != hybrid`면 검색 역할을 빼는
-    # #108 (b)로 해소됐다(doctor OK 실측). `retriever: fake` 프로필(`b1_single` 등)의
-    # `RunRecord.model_checksums`가 이 실해시를 담는 것은 — 그 run이 이 모델을 띄운 적이 없어도 —
-    # 결함이 아니라 **선언 기록 설계**다: `model_checksums`는 "프로필이 선언한 역할→모델"의 완전
-    # 기록이고(그 계약을 `tests/test_config.py`가 강제한다), "실제로 뜬 역할"은 `served_models()`가
-    # 따로 판정한다. #131이 채운 이 값은 그 선언 기록의 참값이다.
-    endpoint: "http://127.0.0.1:8005/v1"
-    context_limit: 32768
-    quantization: "fp16"
-    license: "Apache-2.0"
-    checksum: "sha256:3e15b7c8147b36afb2937406a9015ad62286132e12ed4b21d0f7b2f64fe97f9a"
-    source: "hf://Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473"
     family: "qwen"
     prompt_template_version: "v1"
     fallback: null
@@ -666,8 +293,11 @@ models:
     # Detection Reward Model — config.json이 Qwen3ForCausalLM/qwen3라 생성형이고 Scout로 JSON을 낸다.
     # 한 모델이 memory·boundary 두 역할을 v3로 담당한다 — 프롬프트 내용은 역할 폴더가 가른다
     # (scout_memory/v3=옛 실험 v14s, scout_boundary/v3=옛 v15s). 버전이 같아 별칭 키가 필요 없다.
-    # ⚠ **포트는 8009다** — Critic `gpt-oss-20b`가 8006이라, 풀에서 scout·critic이 동시 상주할 때
-    #   같은 포트를 못 쓴다(#234 리뷰 HIGH-2). 골격 등재 때 8006이었던 것을 배선하며 갈랐다.
+    # ⚠ **포트는 8000이다** — 2026-09-24 포트를 교대가 띄우는 순서대로 8000부터 다시 매겼고 이 키가
+    #   첫 자리다(`tests/test_config.py`의 `test_served_ports_count_up_from_8000_in_launch_order`).
+    #   그 전에는 8009였다 — 골격 등재 때 Critic `gpt-oss-20b`와 같은 8006이라 배선하며 갈랐다
+    #   (#234 리뷰 HIGH-2). 지금은 키마다 포트가 따로라(`test_no_two_served_models_share_a_port`)
+    #   그 충돌이 다시 날 자리가 없다.
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
@@ -680,6 +310,8 @@ models:
     #     --revision 25d7f38146bdf0fad1eac09c586b1993ef3e6ee4 --served-model-name seccoderx-8b \
     #     --host 127.0.0.1 --port 8009 --max-model-len 16384 --gpu-memory-utilization 0.20 \
     #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
+    #   ⚠ 지금 포트는 8000이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8009`은 그날 친 값이라 기록으로 둔다.
     #
     #   **축약이라 그대로 복붙하면 안 된다** — 원문은 venv의 `vllm`을 절대 경로로 부르고 `setsid nohup`·로그
     #   리다이렉트·감시자·readiness 확인을 두르며, `--enable-log-requests --enable-log-outputs
@@ -704,37 +336,12 @@ models:
     #   `mem_gb_ctx8k`는 채우지 않는다 — 그 칸이 뜻하는 양이 아니다(위 `qwen3-reranker-4b` 항목과 같은 사유).
     # - `--max-model-len 16384`는 그 run의 값이지 `context_limit`(모델 상한)이 아니다. 그 run의 최대 입력이
     #   10,757토큰이라 4,096을 더해도 안 넘었다.
-    endpoint: "http://127.0.0.1:8009/v1"
+    endpoint: "http://127.0.0.1:8000/v1"
     context_limit: 40960
     quantization: "bf16"
     license: "MIT"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model"
-    family: "qwen"
-    prompt_template_version: "v3"
-    fallback: null
-    benchmark:
-      measured_at: null
-      measured_on: null
-      tok_s_single: 0
-      tok_s_batch32: 0
-      mem_gb_ctx8k: 0
-      prefix_hit_ratio_batch32: null
-
-  deepseek-r1-distill-qwen-32b:
-    # 확정 로스터 Scout injection (프롬프트 v3). DeepSeek-R1-Distill-Qwen-32B.
-    # ⚠ **2026-09-24 — 위 「확정 로스터 Scout injection」은 지났다.** 그 자리는 `qwen3-14b`로 옮겼고(아래 그 항목)
-    #   이 키를 배선한 프로필은 없다. 키는 registry에 남는다(PROJECT-CONTEXT.md 「로스터에 없지만 registry에 남는 것」).
-    # config.json: Qwen2ForCausalLM, context 131072, torch_dtype bfloat16.
-    # license MIT (베이스 Qwen2.5는 Apache-2.0). ⚠ family: 베이스 가중치는 Qwen2.5지만
-    # DeepSeek 재학습이라 계열 확정 필요 — ADR 0010 §4(베이스 제작사)로 일단 qwen.
-    # Scout라 family-split(Critic↔Auditor) 대상은 아니다.
-    endpoint: "http://127.0.0.1:8007/v1"
-    context_limit: 131072
-    quantization: "bf16"
-    license: "MIT"
-    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: "hf://deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
     family: "qwen"
     prompt_template_version: "v3"
     fallback: null
@@ -772,6 +379,8 @@ models:
     #     --gpu-memory-utilization 0.64 --max-num-seqs 2 --enforce-eager \
     #     --structured-outputs-config.backend xgrammar \
     #     --structured-outputs-config.disable_any_whitespace true
+    #   ⚠ 지금 포트는 8002이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8008`은 그날 친 값이라 기록으로 둔다.
     #
     #   축약이라 그대로 복붙하면 안 된다 — 빠진 것은 `seccoderx-8b` 항목의 같은 문단이 든다.
     #
@@ -801,8 +410,8 @@ models:
     #   `preserve_thinking`)뿐이다. vLLM의 `reasoning_effort`는 이 템플릿에서 `enable_thinking = (값 !=
     #   "none")`로만 번역돼 low·medium·high가 같다. 게다가 이 registry의 `reasoning_effort`는
     #   `low|medium|high`만 받는다(`src/config.py`).
-    # - **`disable_any_whitespace true`를 건다.** 옛 Auditor(`qwen3-coder-30b-a3b`)에서 필수로 잰 인자다(위 그
-    #   항목, 이슈 #172). parser 없이 이 인자만 빼 보지는 않았다. 재시도 1건은 공백이 아니라 **숫자 폭주**였다 —
+    # - **`disable_any_whitespace true`를 건다.** 옛 Auditor(`qwen3-coder-30b-a3b`)에서 필수로 잰 인자다(그
+    #   항목은 2026-09-24에 지웠다 — 원천은 이슈 #172). parser 없이 이 인자만 빼 보지는 않았다. 재시도 1건은 공백이 아니라 **숫자 폭주**였다 —
     #   `repro_spec.steps`의 명령 인자 안에 `9`가 3,808자 이어져 첫 시도가 4,096에서 잘렸다
     #   (`finish_reason: length`). 두 번째 시도는 382토큰으로 끝났다(서버 로그). 이 인자는 그 폭주를 못 막는다.
     # - 속도: 단일 요청 생성 26.2 tok/s다(서버 로그 10초 창 중앙값, 81창). 창의 절반에 프리필이 섞여 있고,
@@ -814,7 +423,7 @@ models:
     #   떠 있는 동안 장비 `MemAvailable` 최저값이 36.0 GiB였다(감시자 로그) — **Scout 풀(`seccoderx-8b` +
     #   Qwen3-14B)과 함께 올리지 못한다**. 그 풀만 올린 동안의 최저값이 49.1 GiB였고, 거기에 이 모델의
     #   util 몫 76.6 GiB가 더해지면 장비를 넘는다(계산값).
-    endpoint: "http://127.0.0.1:8008/v1"
+    endpoint: "http://127.0.0.1:8002/v1"
     context_limit: 262144
     quantization: "bf16"
     license: "Apache-2.0"
@@ -856,6 +465,8 @@ models:
     #     --revision 40c069824f4251a91eefaf281ebe4c544efd3e18 --served-model-name qwen3-14b \
     #     --host 127.0.0.1 --port 8010 --max-model-len 16384 --gpu-memory-utilization 0.30 \
     #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
+    #   ⚠ 지금 포트는 8001이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   `--port 8010`은 그날 친 값이라 기록으로 둔다.
     #
     #   **축약이라 그대로 복붙하면 안 된다** — `seccoderx-8b` 항목의 같은 문단을 본다.
     #
@@ -867,7 +478,7 @@ models:
     # - 메모리(서버 로그): 가중치 27.52 GiB(로드 160 s) · 가중치+non-torch 28.27 GiB · util 0.30에서 KV 7.37 GiB
     #   (48,256 tok — 16,384 길이에 2.95×). 기동 명령부터 `Starting vLLM server`까지 181 s.
     #   `seccoderx-8b`와 함께 떠 있는 동안 장비 `MemAvailable` 최저값이 49.1 GiB였다(감시자 로그).
-    endpoint: "http://127.0.0.1:8010/v1"
+    endpoint: "http://127.0.0.1:8001/v1"
     context_limit: 40960
     quantization: "bf16"
     license: "Apache-2.0"

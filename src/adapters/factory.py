@@ -5,7 +5,8 @@
 성립한다. 노드는 `Deps`가 들고 있는 4개 Protocol만 본다.
 
 역할별 ModelClient 선택은 `ModelEntry.endpoint`의 스킴이 정한다. 프로필 단위로 어댑터를
-하나 고르는 구조였다면 `single_gpu_12g`(scout만 실서빙)를 표현할 수 없다.
+하나 고르는 구조였다면 scout만 실서빙인 프로필(옛 `single_gpu_12g`, 2026-09-24 삭제)을
+표현할 수 없다.
 """
 
 from collections.abc import Callable
@@ -171,7 +172,7 @@ _RETRIEVERS: dict[str, _Wiring] = {
             on_cache=a.on_cache,
             # **index.json을 내는 프로필은 대부분 이쪽이다** — 내는 조건은
             # `tool_runner`가 docker·singularity인 것이고, 그중 `retriever: hybrid`인
-            # dev_hybrid_docker·local_balanced_hybrid만 아래 hybrid 빌더로 간다.
+            # dev_hybrid_docker·harness_pool_hybrid만 아래 hybrid 빌더로 간다.
             # 여기 그래프를 안 물리면 1단계 산출물을 아무도 읽지 않는다.
             graph=a.graph_index(),
         ),
