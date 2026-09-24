@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 
 import slicer_queries as queries
 from slicer_checkpoint import Checkpoint
+from slicer_compile import resolve_compilation_database
 from slicer_export import export_sources
 from slicer_pipeline import SlicingStages
 from slicer_source import (
@@ -475,6 +476,13 @@ class Slicer(SlicingStages):
         self.processed = 0
         self.checkpoint = None
         self.export_only = False
+        # Compile-aware import (set from the CLI). compile_commands is the input database;
+        # compile_db_dir is where the normalized copy is written (a shared location a remote
+        # Joern can read); compiled_files is the set the database compiles, filled in by
+        # build_cpg and used by inventory to tell a genuine parse miss from an uncompiled file.
+        self.compile_commands: Path | None = None
+        self.compile_db_dir: Path | None = None
+        self.compiled_files: set[str] | None = None
         self.settings = {}
         self.code_hashes = {}
         self.source_hashes = {}
@@ -671,10 +679,39 @@ class Slicer(SlicingStages):
     def build_cpg(self) -> None:
         started = time.perf_counter()
         logs = ""
+        compilation_database = None
+        if self.compile_commands is not None:
+            try:
+                normalized, compiled = resolve_compilation_database(
+                    self.compile_commands, self.repo, self.compile_db_dir
+                )
+                compilation_database = normalized.as_posix()
+                self.compiled_files = compiled
+                self.result["diagnostics"].append(
+                    {
+                        "stage": "build_cpg",
+                        "compile_aware": True,
+                        "compile_commands": self.compile_commands.as_posix(),
+                        "compiled_units": len(compiled),
+                    }
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                # A missing or malformed database must not lose the run: fall back to
+                # importing every source file, which is the pre-compile-aware behaviour.
+                self.compiled_files = None
+                self.errors.append(
+                    f"Compile-aware import unavailable, importing all sources: {exc}"
+                )
+                self.result["diagnostics"].append(
+                    {"stage": "build_cpg", "compile_aware": False, "reason": str(exc)}
+                )
         try:
             # A unique project prevents reuse of a stale graph from an earlier batch.
             payload, logs = self.query(
-                "import", queries.import_query(self.repo.as_posix(), "slicer_" + uuid.uuid4().hex)
+                "import",
+                queries.import_query(
+                    self.repo.as_posix(), "slicer_" + uuid.uuid4().hex, compilation_database
+                ),
             )
             if not isinstance(payload, dict) or payload.get("imported") is not True:
                 raise ValueError("CPG import did not confirm completion")
@@ -693,7 +730,11 @@ class Slicer(SlicingStages):
         files = {relative_file(file, self.repo) for file in data["files"]}
         found = set(self.sources) & files
         self.measure("files_in_cpg", len(found))
-        missing = sorted(set(self.sources) - files)
+        # Under compile-aware import the graph holds only the compiled units, so an uncompiled
+        # source is absent by design and must not read as a parse miss. Expect exactly the
+        # files the database compiles; without a database, expect every source as before.
+        expected = self.compiled_files if self.compiled_files is not None else set(self.sources)
+        missing = sorted(expected - files)
         self.measure("files_missing_from_cpg", len(missing))
         if missing:
             self.errors.append("Source files missing from CPG: " + ", ".join(missing))
@@ -754,6 +795,9 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--repo", required=True, type=Path)
     result.add_argument("--out", required=True, type=Path)
+    # Optional compile_commands.json. When given, c2cpg builds a compile-aware graph from the
+    # compiled units only; when absent, every source file is imported (unchanged behaviour).
+    result.add_argument("--compile-commands", type=Path)
     result.add_argument("--joern-endpoint", default="http://localhost:16240")
     result.add_argument("--checkpoint", type=Path)
     result.add_argument("--resume", action="store_true")
@@ -881,8 +925,13 @@ def main(argv: list[str] | None = None) -> int:
         "backward_depth": args.backward_depth,
         "backward_nodes": args.backward_nodes,
         "candidate_timeout_seconds": args.candidate_timeout_seconds,
+        "compile_commands": args.compile_commands.as_posix() if args.compile_commands else None,
     }
     job.result["settings"] = job.settings
+    # The normalized database lands in payload_dir, which is already on the filesystem Joern
+    # shares for file-transport payloads.
+    job.compile_commands = args.compile_commands.resolve() if args.compile_commands else None
+    job.compile_db_dir = payload_dir
     job.code_hashes = {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(Path(__file__).parent.glob("slicer*.py"))
