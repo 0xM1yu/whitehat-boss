@@ -12,6 +12,7 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 import yaml
@@ -36,7 +37,7 @@ from src.config import (
 from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import scout as scout_node
-from src.orchestrator.prompt_loader import PromptError, load_prompt
+from src.orchestrator.prompt_loader import load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
@@ -127,7 +128,8 @@ def test_served_models_skips_roles_this_profile_never_wires(profile: str) -> Non
     `local_balanced`가 그 두 역할에 실모델을 선언해서 — 그 선언 자체는 의도다,
     hybrid로 올리는 날 쓸 모델을 적어 둔 것이다(`profiles.yaml`의 `local_balanced`
     retriever 주석) — 안 뜨는 모델의 미실측 checksum이 "비교표에서 제외한다" 판정에
-    들어왔다.
+    들어왔다. (두 프로필은 2026-09-24에 지웠다 — 지금 같은 모양은 `harness_pool`이다:
+    `retriever: fake`인데 embedding·reranker에 실모델을 선언한다.)
 
     **기록은 그대로 둔다.** `model_checksums()`는 계속 전 역할을 담는다 — 프로필이
     선언한 사실이고 빠짐이 없어야 한다. 갈리는 것은 **판정 대상**뿐이다.
@@ -162,10 +164,11 @@ def test_a_hybrid_profile_keeps_its_retrieval_roles() -> None:
     `is_fake` 축과 `retriever` 축이 같은 답을 냈다.
 
     **그래도 이 테스트는 남는다.** 실프로필 쪽은 `profiles.yaml`의 내용에 기대므로,
-    그 파일이 다시 바뀌면 함께 사라진다. 합성 프로필은 그 내용과 무관하게 `b1_single`
-    하나만 있으면 서므로 게이트 자체를 지키는 그물은 이쪽이다.
+    그 파일이 다시 바뀌면 함께 사라진다. 합성 프로필은 `retriever: fake`에 실서빙 검색 모델을
+    선언한 프로필 하나만 있으면 서므로 게이트 자체를 지키는 그물은 이쪽이다. 그 기반이
+    `b1_single`이었고 2026-09-24에 그것을 지우며 `harness_pool`로 옮겼다(같은 모양이다).
     """
-    base = load_config("b1_single")
+    base = load_config("harness_pool")
     profile = base.profile.model_copy(
         update={"adapters": base.profile.adapters.model_copy(update={"retriever": "hybrid"})}
     )
@@ -174,11 +177,6 @@ def test_a_hybrid_profile_keeps_its_retrieval_roles() -> None:
     assert set(RETRIEVAL_ROLES) <= set(served), (
         "hybrid 배선에서는 embedding·reranker가 실제로 뜬다 — 판정 대상에 있어야 한다"
     )
-
-
-# `local_balanced`와 같은 roles·budget에 `retriever: hybrid`만 다른 프로필. 아래 두
-# 테스트가 이 이름을 공유한다.
-HYBRID_SERVING_PROFILE = "local_balanced_hybrid"
 
 
 def test_a_real_profile_pairs_a_hybrid_retriever_with_served_retrieval_models() -> None:
@@ -210,42 +208,16 @@ def test_a_real_profile_pairs_a_hybrid_retriever_with_served_retrieval_models() 
         assert set(RETRIEVAL_ROLES) <= set(served), f"{profile}: 뜨는데 판정 대상에서 빠졌다"
 
 
-def test_the_hybrid_serving_profile_differs_from_local_balanced_only_in_the_retriever() -> None:
-    """대조군과의 차이가 `retriever` **하나**로 유지된다.
-
-    이 프로필의 쓸모가 그 하나에 걸려 있다. roles나 budget이 함께 움직이면 두 프로필의
-    run 차이가 무엇에서 왔는지 못 가른다 — evaluation.md §2.3 규칙 1이 조건 비교에
-    요구하는 것과 같은 성질이고, 여기서는 조건 비교표가 아니라 **검색 경로를 켠 효과**를
-    보려는 것이라 축이 하나여야 한다는 요구가 더 강하다.
-
-    한쪽만 고치는 것을 사람이 알아채기 어려워 기계로 고정한다.
-    """
-    base = load_config("local_balanced").profile
-    variant = load_config(HYBRID_SERVING_PROFILE).profile
-
-    assert variant.roles == base.roles
-    assert variant.budget == base.budget
-    assert variant.adapters.retriever == "hybrid"
-    assert base.adapters.retriever == "fake"
-    assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
-        exclude={"retriever"}
-    )
-    # 두 검색 모델의 benchmark는 checksum과 달리 아직 전부 0이다 — config/profiles.yaml의
-    # 같은 프로필 주석과 같은 문장이다. scout·auditor는 2026-09-04에 처리량이 채워졌지만
-    # `mem_gb_ctx8k`가 0이라 부분 측정이고, `cli._check_benchmarks`가 부분 측정도
-    # production에서 막는다 (model-serving.md §5).
-    assert variant.production is False
-
-
 POOL_HYBRID_PROFILE = "harness_pool_hybrid"
 
 
 def test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever() -> None:
     """풀 검색 프로필도 대조군(`harness_pool`)과의 차이가 `retriever` **하나**다.
 
-    `local_balanced_hybrid`↔`local_balanced`와 같은 성질이다 — 이 프로필의 쓸모가 검색
-    경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께 움직이면 풀 run의 차이가
-    무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기 쉬워 기계로 고정한다.
+    이 프로필의 쓸모가 검색 경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께
+    움직이면 풀 run의 차이가 무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기
+    쉬워 기계로 고정한다. (같은 성질을 지키던 옛 `local_balanced` 쌍 검사는 그 쌍을
+    2026-09-24에 지우며 함께 뺐다 — 남은 실서빙 hybrid 짝은 이 둘뿐이다.)
     """
     base = load_config("harness_pool").profile
     variant = load_config(POOL_HYBRID_PROFILE).profile
@@ -262,8 +234,8 @@ def test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever
     # 검색 두 모델(`qwen3-embedding-0.6b`·`qwen3-reranker-4b`)의 benchmark는 아직 0이고
     # 별칭·gpt-oss도 0이라, production으로 올리지 않는다 — `cli._check_benchmarks`가
     # 부분/미측정을 막는다(model-serving.md §5).
-    # ⚠ **리랭커를 「0.6b」로 뭉뚱그리지 않는다** — 2026-09-20에 이 쌍만 4b로 갈렸고(#152)
-    # `local_balanced` 쌍은 그대로 0.6b다. 이 주석은 단언이 아니라 CI가 안 잡는다.
+    # 리랭커는 4b다(2026-09-20, #152). 0.6b를 쓰던 옛 `local_balanced` 쌍과 그 키는
+    # 2026-09-24에 지웠다.
     assert variant.production is False
 
 
@@ -427,17 +399,6 @@ def test_dev_fake_needs_no_gpu() -> None:
     config = load_config("dev_fake")
     assert all(config.model_for(role).is_fake for role in config.profile.roles)
     assert config.profile.adapters.state_store == "memory"
-
-
-def test_single_gpu_12g_serves_scout_only() -> None:
-    """12GB 카드에는 scout만 올린다(profiles.yaml의 KV cache 계산 근거 참조).
-
-    embedding·reranker를 포함한 나머지가 Fake가 아니게 되면 이 프로필의 전제가 깨진다.
-    """
-    config = load_config("single_gpu_12g")
-    assert not config.model_for("scout").is_fake
-    others = set(config.profile.roles) - {"scout"}
-    assert all(config.model_for(role).is_fake for role in others)
 
 
 # --- 실패 경로 --------------------------------------------------------------
@@ -605,19 +566,20 @@ def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
     assert len(set(versions.values())) == 1, f"풀 멤버의 프롬프트 버전이 갈렸다: {versions}"
 
 
-# ADR 0010 §2가 4단계 풀 세 자리에 앉힌 registry 키. auditor·critic은 계열이 갈리는
-# 쌍이라(`qwen` × `mistral`) `_check_family_split`을 지난다.
+# PROJECT-CONTEXT.md §1이 4단계 풀 세 자리와 5·7단계에 앉힌 registry 키. auditor·critic은
+# 계열이 갈리는 쌍이라(`qwen` × `gpt-oss`) `_check_family_split`을 지난다. (2026-09-24 전에는
+# 옛 로스터 키 셋이었다 — 그 키들은 로스터 밖 정리로 지웠다.)
 #
-# **`fake`로 대신하지 않는다.** 아래 두 검사가 보는 것은 「풀 역할이 고른 버전의
+# **`fake`로 대신하지 않는다.** 아래 검사가 보는 것은 「풀 역할이 고른 버전의
 # 디렉터리가 있는가」이고, 그 값을 실제로 움직일 PR은 로스터 모델의
-# `prompt_template_version`을 올리는 쪽이다(D54의 다음 입력). `fake`를 쓰면 그 PR이
-# 이 검사를 안 건드리고 지나간다.
+# `prompt_template_version`을 올리는 쪽이다. `fake`를 쓰면 그 PR이 이 검사를 안 건드리고
+# 지나간다.
 _POOL_PROFILE_ROLES = {
-    "scout_memory": "qwen3-coder-30b-a3b",
-    "scout_boundary": "devstral-small-2-24b",
-    "scout_injection": "qwen3-8b",
-    "auditor": "qwen3-coder-30b-a3b",
-    "critic": "devstral-small-2-24b",
+    "scout_memory": "seccoderx-8b",
+    "scout_boundary": "seccoderx-8b",
+    "scout_injection": "qwen3-14b",
+    "auditor": "qwen3.6-35b-a3b",
+    "critic": "gpt-oss-20b",
 }
 
 
@@ -649,9 +611,10 @@ def test_a_scout_pool_profile_resolves_every_prompt_it_declares(tmp_path: Path) 
     `load_prompt`보다 앞이다. 그러니 이 검사가 지키는 것은 **러너를 옮긴 뒤의 두 번째
     관문**이고, 첫 관문(러너의 역할 고정)은 아직 아무도 안 지킨다.
 
-    registry가 그 버전을 고르게 하려고 `model_patch`로 세 모델의
-    `prompt_template_version`을 디스크에 있는 값으로 올린다. **저장소 registry는 아직
-    그 값이 아니다** — 그 사실 자체는 아래 검사가 따로 고정한다.
+    registry가 그 버전을 고르게 하려고 `model_patch`로 풀 모델의
+    `prompt_template_version`을 디스크에 있는 공통 버전으로 맞춘다. (예전에는 저장소
+    registry가 그 값이 아니었고 그 간극을 따로 고정하는 검사가 있었다 — 2026-09-21 교체로
+    풀 키가 v3를 가리키게 되어 간극이 닫혔고, 2026-09-24 옛 키를 지우며 그 검사도 뺐다.)
     """
     version = _scout_pool_prompt_version()
     _copy_config(
@@ -668,37 +631,6 @@ def test_a_scout_pool_profile_resolves_every_prompt_it_declares(tmp_path: Path) 
         template = load_prompt(Role(role), config.model_for(role).prompt_template_version)
         assert template.role is Role(role)
         assert config.prompt_versions()[role] == version
-
-
-def test_the_prompt_version_a_scout_pool_would_select_is_not_on_disk_yet(tmp_path: Path) -> None:
-    """**지금은 열리지 않는다.** 그 간극을 스위트가 들고 있게 한다 (D54 · 이슈 #103).
-
-    registry 7항목이 전부 `prompt_template_version: "v1"`인데 풀 세 역할의 프롬프트
-    디렉터리는 `v2`뿐이다. 그래서 풀 프로필은 **로드되고, `prompt_versions()`도 멀쩡한
-    맵을 낸다** — `run`이 `doctor`를 부르지 않으므로 어긋남이 조립 시점에 안 보이고,
-    드러날 때는 이미 GPU 시간을 쓴 뒤다.
-
-    ⚠ **다만 지금 4단계에서 먼저 나는 것은 이 `PromptError`가 아니다.**
-    `nodes/scout.py`가 `ROLE = Role.SCOUT` 하나라 `model_for("scout")`가 앞서 `ConfigError`를
-    낸다. 즉 이 간극은 **러너를 옮긴 뒤에 드러나는 두 번째 간극**이다. 둘 다 열려 있다.
-
-    **여기서 registry를 v2로 올리지 않는다.** 어느 조건이 어느 버전을 쓰는가는 D54의
-    미결이고, 그 항목은 *"로스터 모델의 `prompt_template_version`을 v2로 올리는 PR"*을
-    다음 입력으로 적으면서 **그 PR로도 닫히지 않는다**고 못박는다. 이 PR이 하는 것은
-    간극을 보이게 만드는 것까지다.
-
-    ⚠ **그 PR이 이 검사를 뒤집는다.** 뒤집히면 지울 것은 이 검사이고, 위
-    `test_a_scout_pool_profile_resolves_every_prompt_it_declares`가 그 자리를 대신한다.
-    """
-    _copy_config(tmp_path, profile_patch={"roles": dict(_POOL_PROFILE_ROLES)})
-
-    config = load_config("dev_fake", config_dir=tmp_path)
-
-    # 로드도 기록도 멀쩡해 보인다 — 그것이 이 함정의 전부다.
-    assert set(SCOUT_POOL_ROLES) <= set(config.prompt_versions())
-    for role in SCOUT_POOL_ROLES:
-        with pytest.raises(PromptError, match="프롬프트 파일이 없다"):
-            load_prompt(Role(role), config.model_for(role).prompt_template_version)
 
 
 def test_unknown_adapter_name_is_rejected() -> None:
@@ -738,11 +670,13 @@ def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> Non
     `_model_client`를 직접 부르는 것은 `build_deps()`가 tool_runner까지 조립해 docker·podman이
     없는 환경에서 못 도는 반면, 여기서 재려는 것은 모델 클라이언트 하나이기 때문이다.
     """
-    config = load_config("single_gpu_12g")  # scout만 실서빙이라 실클라이언트가 하나 나온다
+    # 실서빙 역할이 있는 프로필이어야 실클라이언트가 나온다
+    # (2026-09-24 전에는 `single_gpu_12g`의 scout).
+    config = load_config("harness_pool")
 
     assert config.thresholds.flatten()["output_max"] == float(config.thresholds.output_max)
 
-    client = _model_client(config.profile.roles["scout"], config, role="scout")
+    client = _model_client(config.profile.roles["scout_memory"], config, role="scout_memory")
     payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
 
     assert payload["max_tokens"] == config.thresholds.output_max
@@ -762,7 +696,7 @@ def test_a_role_without_a_declared_cap_is_untouched_by_the_new_slot() -> None:
     키가 안 생긴다. `RunRecord.thresholds`에 `output_max_by_role.*`가 빈 채로 생기면
     **기존 manifest와 새 manifest가 다른 모양**이 되는데, 그 차이가 뜻하는 것이 없다.
     """
-    thresholds = load_config("b1_single").thresholds
+    thresholds = load_config("harness_pool").thresholds
 
     assert all(
         thresholds.output_max_for(role) == thresholds.output_max for role in PROMPTED_ROLES
@@ -787,12 +721,12 @@ def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Pa
         tmp_path,
         # critic만 선언한다 — scout이 안 바뀌는 것까지 함께 고정해야 "전 역할에 같은
         # 값이 실렸다"는 반대 방향 결함이 안 지나간다.
-        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × gpt-oss.
         profile_patch={
             "roles": {
-                "scout": "qwen3-4b",
-                "auditor": "qwen3-8b",
-                "critic": "devstral-small-2-24b",
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
             }
         },
         thresholds_patch={"output_max_by_role": {"critic": 8192}},
@@ -837,9 +771,9 @@ def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: P
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "qwen3-4b",
-                "auditor": "qwen3-8b",
-                "critic": "devstral-small-2-24b",
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
             }
         },
         thresholds_patch={"output_max_by_role": {"critick": 8192}},
@@ -861,9 +795,9 @@ def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "qwen3-4b",
-                "auditor": "qwen3-8b",
-                "critic": "devstral-small-2-24b",
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
             }
         },
         thresholds_patch={"output_max_by_role": {"critic": cap}},
@@ -882,7 +816,7 @@ def test_asking_the_cap_for_a_role_that_is_not_a_role_fails_loudly() -> None:
     떨어져 **선언한 상한이 무시된 채** 돌고, 그 run은 "역할별 상한을 줬다"고 기록된다.
     `output_max_by_role`의 오타를 로드 때 막는 것과 같은 자리다.
     """
-    thresholds = load_config("b1_single").thresholds
+    thresholds = load_config("harness_pool").thresholds
 
     for unknown in ("CRITIC", "critick", "nonsense", ""):
         with pytest.raises(ConfigError, match="프롬프트 역할"):
@@ -897,7 +831,7 @@ def test_every_capsule_level_has_a_budget(level: CapsuleLevel) -> None:
 
 def test_unmeasured_models_are_reported_not_blocked() -> None:
     """실측 전 모델을 판정만 하고 차단하지는 않는다 (dev 프로필에서는 정상 상태)."""
-    config = load_config("local_balanced")
+    config = load_config("harness_pool")
     assert isinstance(config, HarnessConfig)
     assert isinstance(config.unmeasured_models(), list)
 
@@ -931,15 +865,17 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     """
     _copy_config(
         tmp_path,
-        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — gpt-oss × qwen.
+        # registry가 **실제로** `reasoning_effort: high`를 선언한 키가 `gpt-oss-20b` 하나라 그것을
+        # auditor 자리에, 선언 안 한 `qwen3.6-35b-a3b`를 critic 자리에 둔다 — 패치 없이 registry
+        # 그대로를 잰다(2026-09-24 전에는 옛 키 `qwen3-8b`에 패치로 선언시켰다).
         profile_patch={
             "roles": {
-                "scout": "qwen3-8b",
-                "auditor": "qwen3-8b",
-                "critic": "devstral-small-2-24b",
+                "scout": "seccoderx-8b",
+                "auditor": "gpt-oss-20b",
+                "critic": "qwen3.6-35b-a3b",
             }
         },
-        model_patch={"qwen3-8b": {"reasoning_effort": "high"}},
     )
 
     config = load_config("dev_fake", config_dir=tmp_path)
@@ -991,15 +927,15 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         tmp_path,
         # auditor만 선언한다 — scout·critic이 빈 것까지 함께 고정해야 "전 역할에
         # 같은 값이 실렸다"는 반대 방향 결함이 안 지나간다.
-        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × mistral.
+        # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — gpt-oss × qwen. 선언한
+        # 키는 registry 그대로의 `gpt-oss-20b`(high)다(위 검사와 같은 배치).
         profile_patch={
             "roles": {
-                "scout": "qwen3-4b",
-                "auditor": "qwen3-8b",
-                "critic": "devstral-small-2-24b",
+                "scout": "seccoderx-8b",
+                "auditor": "gpt-oss-20b",
+                "critic": "qwen3.6-35b-a3b",
             }
         },
-        model_patch={"qwen3-8b": {"reasoning_effort": "high"}},
     )
     config = load_config("dev_fake", config_dir=tmp_path)
 
@@ -1113,10 +1049,11 @@ def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     models = (CONFIG_DIR / "models.yaml").read_text(encoding="utf-8")
-    # **`qwen3-4b` 블록만** 채운다. registry의 첫 블록은 `fake`이므로 앞에서부터
+    # **`seccoderx-8b` 블록만** 채운다. registry의 첫 블록은 `fake`이므로 앞에서부터
     # 치환하면 엉뚱한 모델이 부분 측정이 되고, 이 검사가 보려던 것을 못 본다.
-    head, marker, tail = models.partition("  qwen3-4b:")
-    assert marker, "registry에 qwen3-4b 블록이 없다 — 이 검사의 전제가 무너졌다"
+    # (2026-09-24 전에는 `qwen3-4b` 블록이었다 — 그 키를 지우며 로스터 키로 옮겼다.)
+    head, marker, tail = models.partition("  seccoderx-8b:")
+    assert marker, "registry에 seccoderx-8b 블록이 없다 — 이 검사의 전제가 무너졌다"
     patched = (
         head
         + marker
@@ -1128,11 +1065,11 @@ def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path
     )
     (tmp_path / "models.yaml").write_text(patched, encoding="utf-8")
 
-    config = load_config("single_gpu_12g", config_dir=tmp_path)
+    config = load_config("harness_pool", config_dir=tmp_path)
 
-    assert config.partially_measured_models() == {"qwen3-4b": ("mem_gb_ctx8k",)}
+    assert config.partially_measured_models() == {"seccoderx-8b": ("mem_gb_ctx8k",)}
     # 부분 측정은 "아직 안 쟀다"와 다르다 — 두 목록이 겹치면 안 된다.
-    assert "qwen3-4b" not in config.unmeasured_models()
+    assert "seccoderx-8b" not in config.unmeasured_models()
 
 
 # --- 계열 규칙 (ADR 0010 §4 · 이슈 #121) ---------------------------------------
@@ -1161,17 +1098,17 @@ def test_a_critic_from_the_same_family_as_the_auditor_is_rejected(tmp_path: Path
     Critic이 Auditor와 같은 계열이 되어도 그 run은 `B3prime@...` 라벨을 달고 완주하고,
     registry에 계열을 적을 칸이 없어 **사후에도 자동으로 못 가린다.**
 
-    여기서 쓰는 쌍(`qwen3-coder-30b-a3b` × `qwen3-8b`)은 registry에 실재하는 모델
+    여기서 쓰는 쌍(`qwen3.6-35b-a3b` × `qwen3-14b`)은 registry에 실재하는 모델
     둘이고 키가 다르다 — 즉 지금 프로필에 그대로 적을 수 있는 조합이다. 그것이 이
-    검사가 막아야 하는 실물이다.
+    검사가 막아야 하는 실물이다. (2026-09-24 전에는 옛 키 `qwen3-coder-30b-a3b` × `qwen3-8b`였다.)
     """
     _copy_config(
         tmp_path,
         profile_patch={
             "roles": {
                 "scout": "fake",
-                "auditor": "qwen3-coder-30b-a3b",
-                "critic": "qwen3-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "qwen3-14b",
             }
         },
     )
@@ -1192,11 +1129,11 @@ def test_a_family_unknown_model_does_not_pass_the_cross_check(tmp_path: Path) ->
         profile_patch={
             "roles": {
                 "scout": "fake",
-                "auditor": "qwen3-coder-30b-a3b",
-                "critic": "devstral-small-2-24b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
             }
         },
-        model_patch={"devstral-small-2-24b": {"family": None}},
+        model_patch={"gpt-oss-20b": {"family": None}},
     )
 
     with pytest.raises(ConfigError, match="계열"):
@@ -1222,25 +1159,39 @@ def test_the_family_check_reads_case_and_padding_as_the_same_family(
         profile_patch={
             "roles": {
                 "scout": "fake",
-                "auditor": "qwen3-coder-30b-a3b",  # family: qwen
-                "critic": "devstral-small-2-24b",
+                "auditor": "qwen3.6-35b-a3b",  # family: qwen
+                "critic": "gpt-oss-20b",
             }
         },
-        model_patch={"devstral-small-2-24b": {"family": written}},
+        model_patch={"gpt-oss-20b": {"family": written}},
     )
 
     with pytest.raises(ConfigError, match="계열"):
         load_config("dev_fake", config_dir=tmp_path)
 
 
-def test_b1_puts_one_model_in_every_role_and_still_loads() -> None:
+def test_b1_puts_one_model_in_every_role_and_still_loads(tmp_path: Path) -> None:
     """B1은 **정의상** auditor와 critic이 같은 모델이다 — 막으면 안 된다.
 
     build-plan §8이 요구하는 "항상 최강 단일 멤버와 비교"의 그 조건이고, 계열 검사가
     단순 부등이면 이 프로필이 로드에서 죽어 **비교표의 기준선이 통째로 사라진다**
     (ADR 0010 §4 "같은 키(B1)는 정의상 허용한다").
+
+    **합성 프로필로 잰다.** 커밋된 프로필 `b1_single`(옛 로스터 `qwen3-coder-30b-a3b`)은
+    2026-09-24 로스터 밖 정리로 지웠다. 이 검사가 지키는 것은 `load_config`의 계열 규칙이라
+    프로필과 무관하다.
     """
-    config = load_config("b1_single")
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "qwen3.6-35b-a3b",
+            }
+        },
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
 
     assert config.model_key_for("auditor") == config.model_key_for("critic")
     assert config.model_for("auditor").family == config.model_for("critic").family
@@ -1501,3 +1452,60 @@ def test_an_unknown_execution_key_is_rejected() -> None:
                 "execution": {"modes": "per_stage"},
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# 포트 — 교대가 띄우는 순서대로 8000부터 (2026-09-24 조민규)
+# ---------------------------------------------------------------------------
+
+# 교대가 첫 모델을 띄우는 포트.
+FIRST_PORT = 8000
+
+
+def _launch_order(config: HarnessConfig) -> list[str]:
+    """교대가 모델을 띄우는 순서 — Scout 풀(4단계) → Auditor(5) → Critic(7) → 검색(hybrid 전용).
+
+    러너가 단계마다 교대를 부르는 순서와 같다(Scout 풀 안에서는 `SCOUT_POOL_ROLES` 순서). 검색
+    두 모델은 hybrid에서만 뜨므로 canonical run의 넷 **뒤**에 둔다 — canonical run이 8000부터
+    차례로 올라가게 하려는 것이다.
+    """
+    roles = config.profile.roles
+    order = (*SCOUT_POOL_ROLES, "auditor", "critic", *RETRIEVAL_ROLES)
+    return list(dict.fromkeys(roles[role] for role in order if role in roles))
+
+
+def _port(entry: ModelEntry) -> int | None:
+    return urlparse(entry.endpoint).port
+
+
+def test_served_ports_count_up_from_8000_in_launch_order() -> None:
+    """포트는 교대가 띄우는 순서대로 8000부터 빈틈없이 올라간다.
+
+    2026-09-24 전까지는 로스터를 바꿀 때마다 빈 번호에 끼워 넣어, canonical run이
+    8009 → 8010 → 8008 → 8006 순서로 떴다(#267 기준 registry) — 번호만 보고는 어느 단계의
+    모델인지 알 수 없었다. 이제 번호가 곧 띄우는 순서다.
+    """
+    config = load_config("harness_pool")
+    keys = _launch_order(config)
+
+    actual = {key: _port(config.models[key]) for key in keys}
+    expected = {key: FIRST_PORT + index for index, key in enumerate(keys)}
+    assert actual == expected
+
+
+def test_no_two_served_models_share_a_port() -> None:
+    """실서빙 키마다 포트가 따로다.
+
+    한 포트로 두 모델을 부르는 프로필은 프로필을 골라 피할 수도 없다(`docs/model-serving.md`의
+    「회피 불가」 문단). 2026-09-24 로스터 밖 정리(#267) 전에는 대안 키끼리 포트를 나눠 썼다
+    (8001·8002·8005) — 지금은 그 대안이 없으므로 포트 하나에 키 하나다.
+    """
+    models = load_config("harness_pool").models
+    by_port: dict[int | None, list[str]] = {}
+    for key, entry in models.items():
+        if entry.endpoint.startswith("fake://"):
+            continue
+        by_port.setdefault(_port(entry), []).append(key)
+
+    shared = {port: keys for port, keys in by_port.items() if len(keys) > 1}
+    assert not shared, f"포트를 같이 쓰는 실서빙 키: {shared}"

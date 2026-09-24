@@ -7,7 +7,7 @@
 ```yaml
 agent:
   role: auditor              # scout | auditor | critic | judge
-  model_profile: qwen3-coder-30b-a3b   # model-serving.md의 registry key
+  model_profile: qwen3.6-35b-a3b   # model-serving.md의 registry key
   tool_policy:               # 이 역할이 호출 가능한 도구 화이트리스트
     - retriever.expand_capsule
     - index.callers
@@ -194,7 +194,7 @@ agent:
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3-coder-30b-a3b", "prompt_version": "v1"}
+  "produced_by": {"role": "auditor", "model": "qwen3.6-35b-a3b", "prompt_version": "v1"}
 }
 ```
 
@@ -252,7 +252,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "rebuttal_axis": ["guard", "reachability"],
   "rationale": "상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
   "evidence_refs": ["ev_graph_0012"],
-  "produced_by": {"role": "critic", "model": "devstral-small-2-24b", "prompt_version": "v1"}
+  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v1"}
 }
 ```
 
@@ -264,7 +264,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 {
   "run_id": "run_20260901_0001",
   "condition": "B3prime@pipeline",
-  "profile": "local_balanced",
+  "profile": "harness_pool",
   "repo_commit": "0000000000000000000000000000000000000000",
   "repo_dirty": false,
   "source_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -343,6 +343,10 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > `prompts/auditor/v3`를 찾는다. 역할별 `prompt_version`([D67](open-questions/D/D67.md) ·
 > 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다. 되돌리지 않은 이유는
 > `prompts/critic/v1/meta.yaml` 머리 주석에 있다.
+>
+> ⚠ **2026-09-24 — 위 「9개 중 7개」는 그때의 수다.** 지금 커밋된 프로필은 7개이고 critic 엔트리를
+> 다른 역할과 공유하는 것은 `dev_*` 다섯(`fake`)뿐이다 — `single_gpu_12g`·`b1_single`은 지웠고
+> `harness_pool`·`_hybrid`의 critic `gpt-oss-20b`는 scout·auditor와 안 겹친다.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·
