@@ -7,6 +7,7 @@ an empty successful query must carry a valid payload, never an empty REPL respon
 
 import argparse
 import base64
+import codecs
 import hashlib
 import json
 import math
@@ -112,6 +113,20 @@ def scannable(text: str) -> str:
         for line in text.splitlines()
         if report_row(line) is None
     )
+
+
+def _decode_bad_bytes_as_latin1(exc: UnicodeDecodeError) -> tuple[str, int]:
+    """Map only the invalid bytes to their Latin-1 characters (U+0080..U+00FF).
+
+    Valid UTF-8 elsewhere in the file is left intact (a `©` or a Korean comment stays
+    what it is), unlike a blanket `raw.decode("latin-1")` that would reinterpret every
+    byte. The result has no surrogates, so it still re-encodes to UTF-8 for the JSON
+    output (`assemble`, `export_sources`) -- surrogateescape would crash there instead.
+    """
+    return bytes(exc.object[exc.start:exc.end]).decode("latin-1"), exc.end
+
+
+codecs.register_error("slicer_latin1_bad_bytes", _decode_bad_bytes_as_latin1)
 
 
 def _read_no_follow(path: Path) -> bytes:
@@ -585,18 +600,29 @@ class Slicer(SlicingStages):
                 # open() are two lookups, and this tool reads repositories written by
                 # whoever we are auditing. O_NOFOLLOW closes that window.
                 raw = _read_no_follow(path)
-                # Decode strictly -- no `errors=`, so invalid bytes raise instead of
-                # turning into replacement characters that silently change evidence.
-                text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
-                # Hash the bytes as they sit on disk, and only once the decode has
-                # succeeded. Folding newlines first would let a CRLF copy and an LF
-                # copy share a signature; hashing first would leave a hash with no
-                # `sources` entry, and `prepare_checkpoint`'s count check -- the one
-                # that refuses an incomplete read -- would balance on a short read.
+                # Decode UTF-8; on invalid bytes, map ONLY those bytes to Latin-1 rather
+                # than raising. A single stray Latin-1 byte (`°`, an accented author name
+                # -- routine in real C/C++ comments and UI strings) used to make one file
+                # unreadable and abort the whole run through `prepare_checkpoint`'s count
+                # check (#254). Valid UTF-8 elsewhere is preserved (see the error handler),
+                # and the text never carries surrogates so it re-encodes cleanly.
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = raw.decode("utf-8", errors="slicer_latin1_bad_bytes")
+                    self.result["diagnostics"].append(
+                        {"stage": "load_sources", "file": name,
+                         "note": "invalid UTF-8 bytes decoded as Latin-1"}
+                    )
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+                # Hash the bytes as they sit on disk, and only after the read has
+                # succeeded: an OSError below leaves no `sources` entry and no hash, so
+                # `prepare_checkpoint`'s count check still refuses a genuinely short read.
+                # Folding newlines first would let a CRLF and an LF copy share a signature.
                 self.source_hashes[name] = hashlib.sha256(raw).hexdigest()
                 # splitlines also splits form feeds inside C source and shifts lineNumber.
                 self.sources[name] = text.removesuffix("\n").split("\n") if text else []
-            except (OSError, UnicodeError, ValueError) as exc:
+            except (OSError, ValueError) as exc:
                 self.increment("files_read_failed")
                 self.errors.append(f"Source read failed: {name}: {exc}")
 
