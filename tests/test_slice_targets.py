@@ -24,14 +24,17 @@ from src.orchestrator.runner import RunSpec
 from src.schemas.common import Location
 from src.tokens import estimate_tokens
 from tests.test_pipeline_e2e import (
+    _FIXTURE_INDEX,
     CONDITION,
     STARTED_AT,
     TARGET,
     _events,
     _of,
     _plan,
+    _poolify_v3,
     _run,
     _with_index,
+    _with_mode,
 )
 
 _PARSER = split_source((TARGET / "parser.c").read_bytes())
@@ -203,6 +206,26 @@ def test_scout_sees_the_slice_render_and_the_end_it_was_given(tmp_path: Path) ->
     assert facts["target"]["symbol"] == "parse_header"
 
 
+def test_the_v3_pool_gets_the_slice_contract_its_prompt_declares(tmp_path: Path) -> None:
+    """D82 ①②의 과녁은 풀의 v3 Scout다 — 세 좌석이 같은 렌더와 `slice_criterion`을 받는다.
+
+    위 검사는 `dev_fake`(scout v1)로 돈다. 노드 경로는 같지만 v3 prefix가 선언한 모양이 v3
+    프롬프트의 `SOURCE`·FACTS에 실제로 실리는지는 v3로 돌려야 보인다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, configure=_poolify_v3())
+
+    for role in ("scout_memory", "scout_boundary", "scout_injection"):
+        ((body, facts),) = _prompts(trace_path, role)
+        assert facts["source"] == _CASE_B_RENDER, role
+        assert f"```c\n{_CASE_B_RENDER}\n```" in body, role
+        assert facts["slice_criterion"] == {
+            "given_end": "sink",
+            "given": {"file": "parser.c", "line": 24, "symbol": "memcpy"},
+        }, role
+
+
 def test_each_slice_capsule_counts_the_render_its_prompt_carries(tmp_path: Path) -> None:
     """LIGHT 캡슐의 `target_function` 토큰은 그 슬라이스의 렌더에서 나온다 — 프롬프트가 싣는
     것을 센다.
@@ -226,15 +249,24 @@ def test_each_slice_capsule_counts_the_render_its_prompt_carries(tmp_path: Path)
         assert tokens == estimate_tokens(facts["source"])
 
 
-def test_the_auditor_reads_the_original_function_around_the_entry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_the_auditor_reads_the_original_function_around_the_entry(
+    tmp_path: Path, mode: str | None
+) -> None:
     """Auditor는 슬라이스가 아니라 **원본**을 본다(ADR 0012 결정 1-b 기본값 (i)) — entry 줄을 감싸는
     함수 전체다. entry만 읽으면 함수 머리·버퍼 선언이 빠진 한 줄(24)이 된다.
 
     후보의 위치는 그대로 entry다 — Auditor가 보는 범위를 넓혀도 후보의 신원은 안 바뀐다.
+    단계 단위(`per_stage`)도 같은 `_TRIAGE_STEPS`를 도는지 같이 본다.
     """
     path = _slices_file(tmp_path, [_slice(*_CASE_B)])
 
-    result, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+    result, trace_path = _run(
+        tmp_path,
+        slices_path=path,
+        before=_with_index(),
+        configure=_with_mode(mode) if mode is not None else None,
+    )
 
     ((_, facts),) = _prompts(trace_path, "auditor")
     assert facts["source"] == "\n".join(_PARSER[18:26])
@@ -244,6 +276,25 @@ def test_the_auditor_reads_the_original_function_around_the_entry(tmp_path: Path
     assert [c.location for c in result.candidates] == [
         Location(file="parser.c", line_start=24, symbol="parse_header")
     ]
+
+
+def test_the_auditor_takes_the_narrowest_symbol_around_the_entry(tmp_path: Path) -> None:
+    """entry를 품는 심볼이 여럿이면 가장 좁은 것이다 — 바깥 범위를 고르면 함수 하나가 아니라 그
+    바깥 전체가 Auditor에 간다.
+
+    ⚠ 인덱스를 손으로 적는다. 지금 인덱서(index-v1)는 찾은 정의 안으로 안 들어가
+    (`tools/harness-tools/indexer.py`의 `_iter_definitions`) 겹치는 심볼을 내지 않는다. 이 규칙은
+    겹침을 내는 인덱스(index-v2 — ADR 0012 Phase 4)가 오는 날의 것이고, 바깥 심볼을 **앞에** 둬
+    「처음 찾은 것」으로 골라도 빨개지게 했다.
+    """
+    outer = {"name": "outer_scope", "file": "parser.c", "line_start": 17, "line_end": 31}
+    index = {**_FIXTURE_INDEX, "symbols": [outer, *_FIXTURE_INDEX["symbols"]]}
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(index))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("parse_header", 19)
 
 
 def test_without_an_index_the_auditor_reads_the_whole_entry_file(tmp_path: Path) -> None:

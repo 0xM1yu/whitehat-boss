@@ -22,6 +22,10 @@ CPG 없이 끝난 `partial`은 run 시작 전에 이유를 대고 멈춘다.
 `code`(배너 + 맨 줄)는 슬라이서가 **그때 읽은** 파일에서 조립한 것이다. 하네스는 자기 사본을
 읽어 같은 조립을 다시 하고, `code`와 한 글자라도 다르면 렌더하지 않는다 — 줄번호 gutter가
 다른 파일의 줄을 가리키게 되기 때문이다(v3는 그 번호를 인용하라고 시킨다).
+
+**렌더는 run을 시작하기 전에 전부 한다**(`render_slices` — `factory.build_deps`와 `cli.run`의
+시작 전 검사가 부른다). 러너는 렌더 오류를 잡지 않으므로, 슬라이스마다 그때그때 렌더하면
+앞 슬라이스의 모델 호출을 태운 뒤 리포트·매니페스트 없이 죽는다.
 """
 
 import codecs
@@ -30,6 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.paths import PathEscape, safe_join
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 
@@ -151,18 +156,24 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
     Case B의 `entry.symbol`은 sink 호출 이름(`memcpy` 등)이라 심볼 이름으로 못 쓴다 —
     대표 후보의 `scopes[0].symbol`(Joern이 준 메서드 이름)을 쓴다. `scopes`가 없으면 entry의
     이름으로 떨어진다(Case A의 entry는 메서드 자신이다). `scopes[].file`은 Joern 원경로라
-    쓰지 않는다 — 파일은 이미 상대화된 entry의 것이다.
+    쓰지 않는다 — 파일은 이미 상대화된 entry의 것이다. entry는 `SliceRef.entry`로 **그대로**
+    따로 싣는다 — v3 `slice_criterion.given`이 그것이다.
     """
     refs = []
     for item in loaded.slices:
         scopes = (loaded.candidate_manifest.get(item.candidate_key) or {}).get("scopes") or []
         symbol = scopes[0].get("symbol") if scopes else None
-        location = Location(
-            file=item.entry["file"],
-            line_start=item.entry["line"],
-            symbol=symbol or item.entry["symbol"],
+        entry = Location(
+            file=item.entry["file"], line_start=item.entry["line"], symbol=item.entry["symbol"]
         )
-        refs.append(SliceRef(slice_id=item.id, location=location, given_end=item.given_end))
+        location = Location(
+            file=entry.file, line_start=entry.line_start, symbol=symbol or entry.symbol
+        )
+        refs.append(
+            SliceRef(
+                slice_id=item.id, location=location, given_end=item.given_end, entry=entry
+            )
+        )
     return tuple(refs)
 
 
@@ -179,7 +190,7 @@ def render(item: Slice, read_bytes: Callable[[str], bytes]) -> str:
     """배너 + `<원본줄>| <코드>` gutter. 하네스 사본이 슬라이서가 본 것과 다르면 `SliceInputError`.
 
     `read_bytes`는 저장소 상대 경로를 받아 원 바이트를 돌려준다 — 루트 탈출 검사는 부르는
-    쪽 몫이다(`src/paths.py`).
+    쪽 몫이다(`render_slices` — `src/paths.py`).
     """
     files = sorted({file for file, _ in item.lines})
     sources = {file: split_source(read_bytes(file)) for file in files}
@@ -200,3 +211,34 @@ def render(item: Slice, read_bytes: Callable[[str], bytes]) -> str:
             f"{item.id}: {', '.join(files)}이 슬라이서가 본 것과 다르다 — drift라 렌더하지 않는다"
         )
     return "\n".join(gutter)
+
+
+def render_slices(loaded: SliceSet, root: Path) -> dict[str, str]:
+    """슬라이스 id → 렌더. run을 시작하기 **전에** 전부 한다(모듈 docstring 「렌더」 절).
+
+    entry 파일이 대상 트리(`root`)에 없는 슬라이스는 렌더하지 않는다 — 러너가 그 슬라이스를
+    타깃으로 못 세우고 `target_plan.unmatched_slices`로 센다. drift는 빼지 않고
+    `SliceInputError`로 올린다 — 조용히 빼면 「슬라이스가 적었다」로 읽힌다.
+
+    읽기는 `root` 아래로만 간다(`src/paths.py`). `slices.json`의 경로는 하네스가 만든 값이
+    아니라서 루트 밖을 가리키면 못 믿는 입력으로 멈춘다.
+    """
+
+    def read_bytes(relative: str) -> bytes:
+        try:
+            return _under(root, relative).read_bytes()
+        except OSError as exc:
+            raise SliceInputError(f"{relative}: 하네스 사본에 없다 — drift ({exc})") from exc
+
+    return {
+        item.id: render(item, read_bytes)
+        for item in loaded.slices
+        if _under(root, item.entry["file"]).is_file()
+    }
+
+
+def _under(root: Path, relative: str) -> Path:
+    try:
+        return safe_join(root, relative)
+    except PathEscape as exc:
+        raise SliceInputError(f"{relative}: 대상 루트 밖을 가리킨다 — {exc}") from exc

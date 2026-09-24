@@ -53,6 +53,10 @@ FACTS_TOKEN = "FACTS"
 
 # `build_facts()`가 만드는 키. S1이 굳힌 계약이며 어댑터의 `FakeContext`와 같은 집합이다
 # (`extra="forbid"`이므로 여기서 키를 하나 더 넣으면 Fake가 로드 시점에 실패한다).
+#
+# **`slice_criterion`만 opt-in이다** — 슬라이스 타깃의 Scout 프롬프트에만 실린다(ADR 0012 결정 1,
+# v3 prefix의 「Slice criterion」 절). 나머지 여덟은 늘 실린다. 슬라이스 없는 프롬프트는 이 키가
+# 생기기 전과 글자가 같다 — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
     "ids",
@@ -62,6 +66,7 @@ FACT_KEYS = (
     "source",
     "evidence",
     "callers",
+    "slice_criterion",
 )
 
 
@@ -201,11 +206,15 @@ def build_facts(
     evidences: Iterable[Evidence] = (),
     callers: Iterable[str] = (),
     evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
+    slice_criterion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
     실제 모델도 같은 블록을 읽으므로 Fake 전용 우회로가 아니다. `ids`는 노드가 미리
     발급한 식별자이며 모델은 그 값을 그대로 출력에 넣는다.
+
+    `slice_criterion`은 준 경우에만 키가 생긴다(`FACT_KEYS` 주석) — `None`을 `null`로 싣지
+    않는다. 실으면 슬라이스 없는 프롬프트까지 글자가 바뀐다.
     """
     return {
         "run_id": run_id,
@@ -243,6 +252,7 @@ def build_facts(
             for ev in evidences
         ],
         "callers": list(callers),
+        **({"slice_criterion": dict(slice_criterion)} if slice_criterion is not None else {}),
     }
 
 
