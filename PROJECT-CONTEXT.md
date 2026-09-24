@@ -70,10 +70,11 @@ memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 �
 | 3단계 · 리랭커 | `qwen3-reranker-4b` | bf16 | 8.15 GiB | 해당 없음 | — |
 | 4단계 · memory·boundary | `seccoderx-8b`(SecCoderX RM, Qwen3-8B 기반) | bf16 | 15.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다(스모크 §3 실험 1) | 등급이 없다. 길이 예산(`thinking_token_budget`)은 이 모델에 안 먹는다 — dense라 V2 러너로 돌고 V2가 그 필드를 거절한다 |
 | 4단계 · injection | `qwen3-14b` | bf16 | 27.52 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 위와 같다 |
-| 5단계 · Auditor | `qwen3.6-35b-a3b`(MoE 35B·활성 3B · GDN hybrid · VLM) | bf16 | 65.53 GiB | **사고 없이 답한다** — reasoning parser 없이 띄운 판이라 구조화 출력 문법이 첫 토큰부터 걸렸다(스모크 §3 실험 3) | 등급이 없다 — `reasoning_effort`는 켜기/끄기로만 번역된다. parser(`qwen3`)를 걸어야 사고가 살고, 그러면 `thinking_token_budget`으로 길이를 묶을 수 있다(V1 러너) |
+| 5단계 · Auditor | `qwen3.6-35b-a3b`(MoE 35B·활성 3B · GDN hybrid · VLM) | bf16 | 65.53 GiB | **사고 없이 답한다** — reasoning parser 없이 띄운 판이라 구조화 출력 문법이 첫 토큰부터 걸렸다(스모크 §3 실험 3) | 등급이 없다 — `reasoning_effort`는 켜기/끄기로만 번역된다. reasoning parser를 걸어야 사고가 살고(스모크 §3 실험 2는 `deepseek_r1`로 띄웠다 · 배선은 `qwen3`로 정했다 — §5 「모델 배선」), 그러면 `thinking_token_budget`으로 길이를 묶을 수 있다(V1 러너) |
 | 7단계 · Critic | `gpt-oss-20b` | MXFP4(원래 형식) | 14.65 GiB | `reasoning_effort: high` | 등급 low·medium·high가 harmony system message에 실제로 들어간다. 길이 예산은 못 쓴다 |
 
-⚠ 「추론 손잡이」 칸은 vLLM `v0.27.1` 소스에서 읽은 것이다 — `vllm/v1/engine/input_processor.py:111-125`(V2 러너나
+⚠ 「추론 손잡이」 칸은 vLLM `v0.27.1` 태그의 소스에서 읽은 것이다(줄 번호는 2026-09-24에 그 태그와 다시 대조했다 ·
+parser 이름 `qwen3`·`deepseek_r1`은 둘 다 `vllm/reasoning/__init__.py`에 등록돼 있다) — `vllm/v1/engine/input_processor.py:111-125`(V2 러너나
 parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/protocol.py:569-573`(`reasoning_effort` →
 `enable_thinking`) · `vllm/entrypoints/openai/parser/harmony_utils.py:104-139`(gpt-oss 등급). **우리 장비에서 budget을
 걸어 본 적은 아직 없다.** 사고를 켜는 배선은 §5 「모델 배선」 행이 든다.
