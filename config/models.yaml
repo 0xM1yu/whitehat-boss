@@ -448,7 +448,7 @@ models:
   qwen3-14b:
     # 로스터 Scout injection (프롬프트 v3). Qwen/Qwen3-14B — dense 14.8B.
     # 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서 옮겼다 — 근거는
-    # ADR 0012(제안, PR #260) 결정 4의 표이고, 2026-09-24 조민규가 로스터 확정으로 배선을 지시했다.
+    # ADR 0012(PR #260) 결정 4의 표이고, 2026-09-24 조민규가 로스터 확정으로 배선을 지시했다.
     # 값은 2026-09-24 Hugging Face에서 직접 읽었다:
     #   rev·license — `GET https://huggingface.co/api/models/Qwen/Qwen3-14B`의 `sha`·태그 `license:apache-2.0`
     #   `config.json@<rev>` — architectures `['Qwen3ForCausalLM']` · max_position_embeddings 40960 ·

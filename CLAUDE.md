@@ -12,7 +12,7 @@
 > 하네스 결정(ADR)·결함(D·R)이다. **실험팀의 실험 — 모델 비교·선정, 조건(B1·B3 등)·벤치마크 설계 — 은
 > 실험팀 일이고 원천은 팀 Notion(화햇대장)이다.** 그 설계를 여기서 정하지 않고 사용자에게 묻지도 않는다.
 > **하네스 실험 보고서는 쓴다** — 하네스를 실서빙으로 돌린 스모크·서빙 실측은 하네스 결함(D·R)을 관리하는
-> 근거라 `docs/experiments/`에 남긴다. 조민규 결정(2026-09-23) — ADR 0012(제안) 결정 5(PR #260).
+> 근거라 `docs/experiments/`에 남긴다. 조민규 결정(2026-09-23) — ADR 0012 결정 5(PR #260).
 >
 > **사고 —** 2026-09-24 에이전트가 하네스 설정을 정하려는 실측을 조건부 실험(팔 여섯)으로 설계해 보고했고,
 > 로스터 정리 PR에서는 「B1 비교 조건을 다시 세울지」를 사용자에게 물었다. 둘 다 이 저장소가 할 일이 아니다.
@@ -305,7 +305,7 @@ python -m pytest -q
 | **미해결 결함 — 작업 추적** | **GitHub Issues** |
 | 미해결 결함 — 본문·선택지 | [docs/open-questions.md](docs/open-questions.md) 와 그 아래 번호별 파일 |
 | 되돌리기 비싼 결정 | `docs/decisions/` |
-| **실험 기록 — 원천** | **Notion 팀 워크스페이스 [화햇대장](https://app.notion.com/p/3aebec1a15bc80c18c66fddd77844013).** 저장소의 `docs/experiments/`·`docs/research/`는 옮기지 않고 보관한다([ADR 0012(제안)](docs/decisions/0012-harness-canon-v2.md) 결정 5) |
+| **실험 기록 — 원천** | **Notion 팀 워크스페이스 [화햇대장](https://app.notion.com/p/3aebec1a15bc80c18c66fddd77844013).** 저장소의 `docs/experiments/`·`docs/research/`는 옮기지 않고 보관한다([ADR 0012](docs/decisions/0012-harness-canon-v2.md) 결정 5) |
 | **외부 문헌 조사 — 남이 주장한 것** (실측 아님) | [docs/research/](docs/research/README.md) — 보관(위 행) |
 
 ---
