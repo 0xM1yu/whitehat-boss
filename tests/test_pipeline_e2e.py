@@ -2970,7 +2970,7 @@ def test_a_timeout_while_the_server_was_generating_drops_only_that_target(
 
     `run_20260924_0001`이 300,021 ms 타임아웃으로 멈췄는데 그 5분 동안 서버는 13.4 tok/s로
     생성하고 있었다(이슈 #261 「재현 / 근거」). 상태 코드가 없다는 것만으로는 「죽음」과
-    「느림」이 안 갈린다 — 어댑터가 `/metrics` 생성 카운터로 가른 결과(`generating`)를 러너가 읽는다.
+    「느림」이 안 갈린다 — 어댑터가 `/metrics` 생성 카운터로 가른 `generating`을 러너가 읽는다.
     """
     slow = ModelGatewayError(
         "http://127.0.0.1:8000/v1 호출 실패: timed out", detail="timed out", generating=True

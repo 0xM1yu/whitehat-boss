@@ -16,9 +16,11 @@ import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 
 from pydantic import BaseModel, ValidationError
 
+from src.bench_metrics import generation_tokens
 from src.interfaces.model_client import (
     ModelGatewayError,
     ModelResult,
@@ -118,6 +120,8 @@ class OpenAICompatModelClient:
         seed: int,
         max_tokens: int,
         reasoning_effort: str | None = None,
+        extra_params: Mapping[str, object] | None = None,
+        timeout_s: float | None = None,
         retries: int = 1,
         api_key: str = "EMPTY",
     ) -> None:
@@ -129,6 +133,14 @@ class OpenAICompatModelClient:
         # `None`인 것은 여기서는 "안 보낸다"이고, 그래야 이 파라미터를 모르는 서버가
         # 거절하지 않는다.
         self.reasoning_effort = reasoning_effort
+        # registry가 모델별로 선언한 요청 파라미터(`config.ModelEntry.request_params()` —
+        # 샘플링·`chat_template_kwargs`·`thinking_token_budget`). 기본 키 **위에** 얹으므로
+        # 같은 키(`temperature`·`top_p`)면 그 모델에서 프로필 공통값을 덮는다. 안 주면 키 집합이
+        # 그대로다 — `reasoning_effort`와 같은 규칙.
+        self.extra_params = dict(extra_params or {})
+        # 요청 하나의 벽시계 상한. `None`이면 `_TIMEOUT_S`. 좌석마다 생성 속도가 달라 값은
+        # 모델 것이다(`ModelEntry.request_timeout_s`, #261).
+        self.timeout_s = timeout_s
         # seed를 요청에 실어야 같은 조건 재실행이 같은 결과를 낸다(engineering-guide.md §5).
         self.seed = seed
         # **기본값을 두지 않는다.** 이 값이 payload에 없으면 서버가 `--max-model-len`까지
@@ -279,7 +291,7 @@ class OpenAICompatModelClient:
         # 거절할 수 있고, 성공 경로 payload의 키 집합이 모델마다 달라진다.
         if self.reasoning_effort is not None:
             payload["reasoning_effort"] = self.reasoning_effort
-        return payload
+        return {**payload, **self.extra_params}
 
     def _post(self, payload: dict) -> tuple[str, Usage]:
         request = urllib.request.Request(  # noqa: S310 - 스킴은 config가 정한 http(s)다
@@ -291,8 +303,15 @@ class OpenAICompatModelClient:
             },
             method="POST",
         )
+        # 타임아웃이 「느림」인지 「멈춤」인지 가를 기준점. **요청 전에** 읽는다 — 타임아웃 뒤에는
+        # 우리가 끊어 서버가 그 요청을 abort하므로, 그때 두 번 재면 느린 서버도 멈춘 것으로 보인다.
+        # ponytail: 서버 전체 카운터라 같은 서버에 동시 요청이 있으면(W3) 남의 생성도 「느림」으로
+        # 센다 — 요청별 판정이 필요해지면 스트리밍으로 첫 토큰 이후 진행을 직접 본다.
+        before = generation_tokens(self.endpoint)
         try:
-            with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+            with urllib.request.urlopen(  # noqa: S310
+                request, timeout=self.timeout_s or _TIMEOUT_S
+            ) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             # **`URLError`보다 먼저 잡는다.** `HTTPError`가 그 하위 클래스라 순서를
@@ -304,7 +323,17 @@ class OpenAICompatModelClient:
                 status=exc.code,
                 detail=detail,
             ) from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except TimeoutError as exc:
+            # 상태 코드가 없다. 그 사이 서버가 토큰을 냈으면(`generating=True`) 느린 것이라
+            # 러너가 이 요청 하나만 버린다. 못 쟀거나(`None`) 안 냈으면(`False`) 멈춘다(#261).
+            after = generation_tokens(self.endpoint)
+            generating = None if before is None or after is None else after > before
+            raise ModelGatewayError(
+                f"{self.endpoint} 호출 실패: {exc} (생성 중: {generating})",
+                detail=f"{exc}",
+                generating=generating,
+            ) from exc
+        except (urllib.error.URLError, json.JSONDecodeError) as exc:
             # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는
             # 이것을 "서버가 죽었다"로 읽고 즉시 멈춘다.
             raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}", detail=f"{exc}") from exc

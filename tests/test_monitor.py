@@ -268,3 +268,25 @@ def test_main_returns_0_on_a_stopped_run_even_with_stale_heartbeat(tmp_path: Pat
 def test_main_exits_2_when_run_dir_is_missing(tmp_path: Path) -> None:
     """N6: 못 읽는 run_dir은 시작 시 보고하고 끝낸다 — 조용히 영원히 돌지 않는다."""
     assert monitor.main([str(tmp_path / "does_not_exist")]) == 2
+
+
+def test_the_stuck_ceiling_follows_the_longest_declared_request_timeout() -> None:
+    """모델이 `request_timeout_s`를 선언하면 T의 한 호출 몫이 그 값이다(W2 · #261).
+
+    전역 `_TIMEOUT_S`만 쓰면 1,800 s를 선언한 좌석이 300 s 넘게 생성하는 정상 호출을 stuck으로
+    경보한다. 프로필이 **부르는** 모델만 본다 — registry의 딴 키가 T를 늘리면 경보가 무뎌진다.
+    """
+    from src.config import load_config
+
+    config = load_config("harness_pool")
+    auditor_key = config.model_key_for("auditor")
+    declared = config.transition(
+        models={
+            **config.models,
+            auditor_key: config.models[auditor_key].transition(request_timeout_s=1800),
+            "fake": config.models["fake"].transition(request_timeout_s=99999),
+        }
+    )
+
+    assert monitor.call_timeout_s(config, default=300) == 300
+    assert monitor.call_timeout_s(declared, default=300) == 1800
