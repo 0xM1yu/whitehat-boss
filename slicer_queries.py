@@ -54,6 +54,16 @@ CASE_B_WRITER_CAP = 2000
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
+# The flows query targets memory-write sink calls instead of every call argument in the repo
+# (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
+# dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
+# sink universe to the dominant GT sink types (writers + write/pointer operators -- the same
+# calls Case B enumerates) keeps the dataflow bounded. The argument set is capped again after
+# the union so one huge repo cannot reinflate it. ⚠ This narrows recall: sinks past the cap,
+# and the local-array/double-free categories Case B also flags, are not targeted as flow sinks
+# (candidate enumeration still captures them). The before/after miss-rate is measured on ATOM.
+FLOWS_SINK_CAP = 2000
+
 
 def literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
@@ -276,9 +286,15 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .filter(c => c.argument.isIdentifier.refsTo.collect { case l: nodes.Local => l }
           .exists(_.typeFullName.contains("["))).l
       // Keep the parameter index: a wrapper may free its second argument, not its first.
-      val dealloc = cpg.method.internal.l.flatMap(m => m.parameter.l.filter(p =>
-        m.ast.isCall.nameExact("free").argument(1)
-          .reachableByFlows(List(p))(flowContext).hasNext).map(p => (m.name, p.index)))
+      // Only methods that actually call free can be free-wrappers, so filter to those first
+      // (#219). Scanning the rest walks every method's AST and builds a dataflow engine per
+      // parameter for nothing -- on a large C++ CPG that per-method cost is what pushes case_b
+      // past the query deadline (sample_40). The filter is exact: a method with no free() call
+      // cannot reach one, so no candidate is lost.
+      val dealloc = cpg.method.internal.filter(_.ast.isCall.nameExact("free").nonEmpty).l
+        .flatMap(m => m.parameter.l.filter(p =>
+          m.ast.isCall.nameExact("free").argument(1)
+            .reachableByFlows(List(p))(flowContext).hasNext).map(p => (m.name, p.index)))
       val positions = (dealloc :+ ("free", 1)).groupMap(_._1)(_._2)
       val releases = cpg.call.l.filter(c => positions.contains(c.name)).flatMap(c =>
         c.argument.isIdentifier.filter(i => positions(c.name).contains(i.argumentIndex))
@@ -355,19 +371,52 @@ def flows_query(
         .flatMap(_.parameter.l.sortBy(p => (p.index, p.code, p.typeFullName)))
       def nodeKey(n: nodes.AstNode): String = ujson.write(ujson.Arr(
         n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1), n.code))
-      val sinks = cpg.call.argument.filter(n => Option(n.method).nonEmpty).l.distinct.sortBy(n => (
-        nodeKey(n), n.argumentIndex, n.method.fullName))
+      // Recall-preserving hybrid (#252 review HIGH-2/3). Inside the candidate methods EVERY
+      // call argument is a sink -- cheap (few methods) and it keeps the deref/field and
+      // index-READ GT sink types that a memory-write-only set drops, and keeps the live-probe
+      // fixtures' calls anchored. Globally, narrow to memory-write calls (capped) so the
+      // per-candidate cross-repo dataflow stays under the deadline (#219). Cheap name/AST
+      // filters only (no dataflow) -- keep the writers/operators in sync with candidates_b_query.
+      val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
+      val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
+      val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
+      val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
+        .filter(c => c.argument.evalType.exists(_.contains("*")) ||
+          c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
+            "indirection|indirectIndexAccess|addressOf)").nonEmpty).take({CASE_B_OPERATOR_CAP}).l
+      val globalArgs = (writerSinks ++ indexWrites ++ ptrArith).distinct
+        .flatMap(_.argument).filter(n => Option(n.method).nonEmpty).distinct
+      val sinksCapped = globalArgs.size > {FLOWS_SINK_CAP}
+      val globalKept = globalArgs.sortBy(n => (
+        nodeKey(n), n.argumentIndex, n.method.fullName)).take({FLOWS_SINK_CAP})
+      val sinks = (localSinks ++ globalKept)
+        .filter(n => Option(n.method).nonEmpty).distinct
+        .sortBy(n => (nodeKey(n), n.argumentIndex, n.method.fullName))
       // Each invocation builds an engine. Batch by enclosing method instead of
       // rebuilding it for every argument; the cap stops subsequent method batches.
       val batches = sinks.groupBy(_.method).toList.sortBy {{ case (m, _) =>
         (m.filename, m.lineNumber.getOrElse(-1), m.fullName)
       }}.map(_._2)
+      // distinctBy path (#252 review): the broadened local sink set can yield several flows
+      // with an identical location sequence (same evidence); deduping by serialized path both
+      // removes the redundant flow and makes the order deterministic (a sort tie between two
+      // identical paths was leaving `analysis.lines` order run-dependent -> non-reproducible).
       val observed = (if (srcs.isEmpty) Iterator.empty else batches.iterator).flatMap(batch =>
-        batch.iterator.reachableByFlows(srcs)(flowContext).toList.sortBy(p =>
-          ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))){limit}.toList
+        batch.iterator.reachableByFlows(srcs)(flowContext).toList
+          .distinctBy(p => ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))
+          .sortBy(p => ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))){limit}.toList
       val kept = {retained}
+      // Canonical line set (#252 review): the dense local sink set makes reachableByFlows
+      // return path variants whose element ORDER differs across fresh CPGs, so the raw
+      // flatMap dump was run-dependent. The consumer only uses these as a point SET, so emit
+      // a deduped, sorted set -- same points, reproducible bytes. (Slice points already matched.)
+      val keptLines = kept.flatMap(_.elements).distinctBy(n => nodeKey(n))
+        .sortBy(n => nodeKey(n)).map(loc)
       ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
-        "lines" -> ujson.Arr.from(kept.flatMap(_.elements).map(loc)))
+        "sinks_capped" -> sinksCapped, "sinks_kept" -> sinks.size,
+        "lines" -> ujson.Arr.from(keptLines))
     """,
     )
 
@@ -426,8 +475,11 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
         }}
         selected ++= declarations
         val declarationIds = declarations.map(_.id).toSet
-        selected ++= cpg.assignment.filter(a => a.target.ast.isIdentifier.refsTo
-          .exists(d => declarationIds.contains(d.id))).l
+        // 퍼지 파싱(특히 C++)이 인자 없는 assignment 노드를 남기면 `a.target`(= argument(1))이
+        // 빈 iterator에서 next로 죽는다(#219 후속, sample_40 context 단계 NoSuchElement).
+        // target이 실재하는 assignment만 본다 — 인자 없는 노드는 선언을 참조할 수도 없다.
+        selected ++= cpg.assignment.filter(a => a.argument.argumentIndex(1).nonEmpty &&
+          a.target.ast.isIdentifier.refsTo.exists(d => declarationIds.contains(d.id))).l
         changed = selected.size != before
       }}
       ujson.Arr.from(selected.toList.map(loc))
