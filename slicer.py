@@ -917,6 +917,18 @@ def main(argv: list[str] | None = None) -> int:
         if v is not None
     }
     job = Slicer(args.repo, args.threshold, args.max_flows_per_candidate, client, limits)
+    # Hash the database content, not just its path: it steers the CPG the same way sources do,
+    # so a same-path rebuild with different build flags must change the run signature (the path
+    # string alone would collide). None when absent or unreadable; build_cpg then reports the
+    # unreadable case and falls back.
+    compile_commands_sha256 = None
+    if args.compile_commands:
+        try:
+            compile_commands_sha256 = hashlib.sha256(
+                args.compile_commands.read_bytes()
+            ).hexdigest()
+        except OSError:
+            compile_commands_sha256 = None
     job.settings = {
         "threshold": args.threshold,
         "max_flows_per_candidate": args.max_flows_per_candidate,
@@ -926,6 +938,7 @@ def main(argv: list[str] | None = None) -> int:
         "backward_nodes": args.backward_nodes,
         "candidate_timeout_seconds": args.candidate_timeout_seconds,
         "compile_commands": args.compile_commands.as_posix() if args.compile_commands else None,
+        "compile_commands_sha256": compile_commands_sha256,
     }
     job.result["settings"] = job.settings
     # The normalized database lands in payload_dir, which is already on the filesystem Joern
