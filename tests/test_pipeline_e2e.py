@@ -1136,6 +1136,42 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
     assert "kb_snapshot" in err, "막지 않는 결여의 경고까지 사라졌다"
 
 
+def test_a_slice_input_profile_refuses_to_start_without_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """슬라이스 입력 프롬프트(v3 Scout)를 부르는 run은 `--slices` 없이 시작하지 않는다
+    (ADR 0012 결정 1).
+
+    v3는 `SOURCE`를 슬라이스(원본 줄번호 gutter·파일 배너)로 정의하는데, 슬라이스가 없으면
+    그 자리에 심볼 본문이 가고 **오류 없이** 어긋난다(#278). 라벨은 다 준다 — 남는 결여가
+    `--slices` 하나여야 실서빙 게이트가 아니라 이 가드가 막았다는 것이 선다. 그래서 거부
+    줄이 `--slices`를 대는지까지 본다(실서빙 게이트의 거부 줄은 그 이름을 안 댄다).
+
+    `execute`를 막아 둔다. 가드가 사라지면 이 run은 실서빙 프로필로 도구 컨테이너와
+    엔드포인트에 나간다 — 빨간 불이 느린 테스트로 보이면 안 된다(`_refuse_sockets`와 같은 뜻).
+    """
+
+    class _Started(RuntimeError):
+        """가드를 지나 run 디렉터리를 잡고 실행까지 들어왔다."""
+
+    def _boom(*_: object, **__: object) -> None:
+        raise _Started
+
+    monkeypatch.setattr(cli, "execute", _boom)
+    code = cli.main(
+        [
+            "run", "--profile", "harness_pool", "--target", str(TARGET),
+            "--condition", "B1@pipeline", "--device", "atom", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "슬라이스 입력 프롬프트를 부르는 run이 --slices 없이 시작한다"
+    assert [line for line in _errors(err) if "--slices" in line], "거부 줄이 --slices를 안 댄다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
     """실서빙 역할의 0은 경고하고 **어느 역할의 어느 model key인지**를 담는다.
 
@@ -1505,6 +1541,23 @@ def test_doctor_output_differs_between_profiles(tmp_path: Path) -> None:
     assert fake != hybrid
     assert "HybridRetriever" in hybrid
     assert "HybridRetriever" not in fake
+
+
+def test_doctor_warns_that_a_slice_input_profile_needs_slices(tmp_path: Path) -> None:
+    """`run`이 `--slices` 없이 거부할 프로필을 doctor가 미리 말한다 — **WARN이지 ERROR가 아니다.**
+
+    doctor는 `--slices`를 받지 않으니 막을 대상이 없다. ERROR로 두면 설정이 멀쩡한 풀 프로필의
+    `doctor`가 exit 1이 된다. 슬라이스 입력 프롬프트가 없는 프로필(`dev_fake` — scout v1)에는
+    그 줄이 없어야 한다 — 전 프로필에 뜨는 경고는 아무도 안 읽는다.
+    """
+
+    def slice_lines(profile: str) -> list[str]:
+        return [line for line in _doctor_text(profile, tmp_path).splitlines() if "--slices" in line]
+
+    pool = slice_lines("harness_pool")
+    assert pool, "슬라이스 입력 프로필인데 doctor가 --slices를 말하지 않는다"
+    assert all(line.startswith("[WARN ") for line in pool), f"WARN이 아니다: {pool}"
+    assert slice_lines("dev_fake") == [], "슬라이스 입력이 없는 프로필에도 경고한다"
 
 
 @pytest.mark.parametrize("profile", ["dev_fake", "dev_hybrid"])
