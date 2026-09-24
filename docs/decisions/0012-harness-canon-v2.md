@@ -41,7 +41,7 @@
 - **tree-sitter는 짝으로 남는다 — 심볼 인덱스로.** E2의 `GRAPH` Evidence와 캡슐의 `callers`/`callees`(`names_for()`)를 계속 내고, 결정 2 resolver의 심볼 표(index-v2)가 된다. 인덱스를 Joern CPG로 옮기지 않는 것은 2026-09-24 조민규 결정이다 — ATOM 실행에서 실제로 부족할 때 다시 본다(아래 「대안」 (F)).
 - **하네스는 슬라이서를 import하지 않는다** — `slices.json`을 파일로 받는다. 코드 경계는 인덱서와 같다 — 둘 다 `src/`와 서로 import하지 않고 JSON 파일 하나로만 만난다(인덱서 쪽 선언 `tools/harness-tools/indexer.py:11-14` · `slicer*.py`도 `src`를 import하지 않는다). **다른 것은 실행 주체다** — 인덱서는 하네스가 1단계에서 도구 컨테이너로 부르고(`indexer.py:4`), 슬라이서는 **run이 부르지 않는다** — Joern과 함께 하네스 run 밖에서 미리 돌아 `slices.json`을 남긴다(도구 이미지 `tools/harness-tools/Dockerfile`에 Joern·JDK가 없다). **여기서 「하네스 밖」은 이 뜻이다** — run이 부르지 않고 파일로만 만난다는 것이지 저장소 밖이라는 뜻이 아니다. 슬라이서는 이 저장소에서 개발한다(결정 5).
 - **슬라이서의 `status`(`ok`·`partial`·`failed` — `slicer.py:426`)와 `run_signature`(`slicer_pipeline.py:168`)를 run 기록에 싣는다.** CPG가 못 본 줄은 모델도 못 본다([D74](../open-questions/D/D74.md)가 (a)를 고른 근거 ③) — 그 한계가 조용하지 않게 기록에 남아야 한다.
-- 슬라이스 없이 v3 Scout 프롬프트를 부르는 run은 **시작 전에 거부**한다 — 지금의 조용한 불일치([D82](../open-questions/D/D82.md))가 서는 자리다. 슬라이스를 안 쓰는 프로필(dev·단일 `scout`)은 지금 경로 그대로다.
+- 슬라이스 없이 v3 Scout 프롬프트를 부르는 run은 **시작 전에 거부**한다 — 지금의 조용한 불일치([D82](../open-questions/D/D82.md))가 서는 자리다. 슬라이스를 안 쓰는 프로필(dev·단일 `scout`)은 지금 경로 그대로다. (⏵ 2026-09-25 — 가드가 들어갔다: 프롬프트 meta가 `input: slice`를 선언하고(v3 Scout 셋) `cli.run`이 그런 프롬프트를 `--slices` 없이 부르는 run을 run 디렉터리를 잡기 전에 exit 2로 거부한다. 모델에 안 닿는 run(`--dry-run`·낮은 `--stop-after`)은 막지 않고 `doctor`는 같은 판정을 WARN으로 낸다. 불일치를 없애는 쪽 — 슬라이스를 `SOURCE`로 렌더하는 것 — 은 별도 PR이다. 그래서 D82의 「닫히는 조건」은 그대로다.)
 
 **[D78](../open-questions/D/D78.md)의 셋은 이렇게 푼다.**
 
@@ -175,7 +175,7 @@
 - Phase 3 — 슬라이스를 Scout 입력으로: 결정 1(과 1-b가 정하는 Auditor 입력), D78 ①②③, D82의 입력 쪽.
 - Phase 4 — tree-sitter 심볼 인덱스 v2(index-v2): 결정 1의 심볼 인덱스, [D13](../open-questions/D/D13.md)의 데이터원.
 - Phase 5 — need_evidence resolver·루프: 결정 2, 결정 6의 `max_hops`, D82의 스키마 쪽, D20·D3을 닫는 자리. knowledge-base.md §5의 확장 사다리를 이 루프로 다시 그린다(결정 6 끝 불릿).
-- Phase 6 — 로스터·프로필·프롬프트 배선과 스모크 전 방탄: 결정 4(`qwen3-14b` 신설 · 새 키의 `@rev`·checksum), 결정 3의 canonical 프로필, 그리고 로스터와 무관하게 스모크 전에 막아야 하는 D83(모델이 쓴 `state`·ID를 하네스가 대조하지 않는다 — 처리는 D83의 선택지). ⚠ 결정 1의 「슬라이스 없이 v3 Scout 프롬프트를 부르는 run은 시작 전에 거부」가 Phase 3에서 들어가면 canonical 프로필은 그때부터 슬라이스 입력이 있어야 시작한다 — 이 Phase의 프로필 배선이 그 상태를 이어받아 푼다(sumin 리뷰 L2).
+- Phase 6 — 로스터·프로필·프롬프트 배선과 스모크 전 방탄: 결정 4(`qwen3-14b` 신설 · 새 키의 `@rev`·checksum), 결정 3의 canonical 프로필, 그리고 로스터와 무관하게 스모크 전에 막아야 하는 D83(모델이 쓴 `state`·ID를 하네스가 대조하지 않는다 — 처리는 D83의 선택지). ⚠ 결정 1의 「슬라이스 없이 v3 Scout 프롬프트를 부르는 run은 시작 전에 거부」가 Phase 3에서 들어가면 canonical 프로필은 그때부터 슬라이스 입력이 있어야 시작한다 — 이 Phase의 프로필 배선이 그 상태를 이어받아 푼다(sumin 리뷰 L2). (⏵ 2026-09-25 — 들어갔다: `harness_pool`·`_hybrid`로 모델에 닿는 run은 이제 `--slices` 없이 시작하지 않는다 — 결정 1의 같은 날 노트. `SOURCE` 렌더는 별도 PR이다.)
 - Phase 6.5 — GPU 배선: 단계 단위 콜드 재기동 교대([ADR 0009](0009-stage-unit-execution-and-model-swap.md)) · 모델별 요청 설정(사고·샘플링·타임아웃) · 단계 안 동시 요청 · 기동 조건을 장비별 데이터로. 방식은 2026-09-24 조민규가 채택했다([PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행). ⚠ **2026-09-25 추가 — 이 ADR의 승인(같은 날) 뒤에 덧붙인 번호라 손수민 승인 범위 밖이다.** 6과 7 사이 번호는 식별자일 뿐이다(위 — 순서가 아니다).
 - Phase 7 — 평가 어댑터·채점기·배치 실행.
 - Phase 8 — 모델 원문 기록·내보내기: 결정 7, D84.

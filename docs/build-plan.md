@@ -487,7 +487,9 @@ bf16 그대로(`gpt-oss-20b`만 원래 MXFP4)이고 양자화로 공동 상주�
 > 팬아웃 메커니즘이 아니다. 그리고 이 프로필은 **비교표에 조용히 들어가지 못한다** — 근거는
 > `production: false`가 **아니라**(그건 안전장치가 아니다 — `config/profiles.yaml`의 그 주석)
 > `served_models()`가 5역할을 돌려줘 러너가 **실서빙으로 취급**하는 것이다: 돌리려면 사람이
-> `--device`·`--condition`을 명시해야 하고, 별칭·gpt-oss의 `benchmark`가 0이라 checksum/벤치
+> `--device`·`--condition`을 명시해야 하고(⏵ 2026-09-25 — 지금은 `--slices`도다. Scout 세 자리의 v3
+> 프롬프트가 슬라이스 입력이라 `cli.run`이 그것 없이 시작하지 않는다 — [ADR 0012](decisions/0012-harness-canon-v2.md)
+> 결정 1), 별칭·gpt-oss의 `benchmark`가 0이라 checksum/벤치
 > 게이트가 그 run을 비교표 밖에 둔다(§0). #178이 등재한 풀 결함 넷(차단기 맹점·토큰 카운터·
 > 기록 단위·공유 캡슐 예산 — [인덱스](open-questions.md))은 **#195가 닫았다**(#191·#192·#193, 그리고
 > #194는 예산 마진으로 강제). #178이 *"풀 프로필을 커밋하는 PR에서 물린다"*로 그은 범위는

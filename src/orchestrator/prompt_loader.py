@@ -10,11 +10,18 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 
     prompts/<role>/<version>/prefix.md    # 캐시되는 고정부
     prompts/<role>/<version>/body.md      # {{TOKEN}} 자리표시자를 가진 가변부
-    prompts/<role>/<version>/meta.yaml    # role·version·output_schema
+    prompts/<role>/<version>/meta.yaml    # role·version·output_schema·input
 
 버전은 config에서 온다(`ModelEntry.prompt_template_version`). 노드가 문자열로 박지
 않는다 — 버전이 바뀌면 이전 결과와 직접 비교하지 않는다는 규약(§4.1)이 성립하려면
 그 값이 `RunRecord.prompt_versions`와 같은 곳에서 나와야 한다.
+
+## meta의 `input` — 그 프롬프트의 `SOURCE`가 무엇인가
+
+`source`(원본 소스 — 키가 없으면 이것)와 `slice`(슬라이서가 자른 슬라이스 — ADR 0012 결정 1)
+둘뿐이다. v3 Scout가 `slice`다 — `SOURCE`를 원본 줄번호 gutter·파일 배너가 붙은 슬라이스로
+정의한다. 로더는 값을 닫기만 하고, `slice` 프롬프트를 `--slices` 없이 부르는 run을 막는 것은
+`cli.run`이다. **모르는 값은 기본값으로 읽지 않는다** — 오타 하나가 그 가드를 조용히 끈다.
 
 ## body의 마지막 ```json 펜스
 
@@ -69,6 +76,10 @@ class PromptError(Exception):
     """프롬프트 파일이 없거나 자리표시자가 맞지 않는다. 조용히 빈 값으로 채우지 않는다."""
 
 
+# meta.yaml의 `input`이 가질 수 있는 값(모듈 docstring 「meta의 `input`」).
+INPUT_KINDS = ("source", "slice")
+
+
 @dataclass(frozen=True)
 class PromptTemplate:
     """한 역할·버전의 프롬프트. prefix는 재사용되고 body만 매 호출 렌더링된다."""
@@ -78,6 +89,8 @@ class PromptTemplate:
     prefix: str
     body: str
     output_schema: str
+    # `INPUT_KINDS` 중 하나. meta에 키가 없으면 `source`다.
+    input: str
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -128,9 +141,20 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
     output_schema = meta.get("output_schema")
     if not isinstance(output_schema, str) or not output_schema:
         raise PromptError(f"{directory}/meta.yaml에 output_schema가 없다")
+    input_kind = meta.get("input", "source")
+    if input_kind not in INPUT_KINDS:
+        raise PromptError(
+            f"{directory}/meta.yaml의 input {input_kind!r}은 모르는 값이다 — "
+            f"{list(INPUT_KINDS)} 중 하나다"
+        )
 
     return PromptTemplate(
-        role=role, version=version, prefix=prefix, body=body, output_schema=output_schema
+        role=role,
+        version=version,
+        prefix=prefix,
+        body=body,
+        output_schema=output_schema,
+        input=input_kind,
     )
 
 
