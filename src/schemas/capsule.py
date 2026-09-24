@@ -38,8 +38,9 @@ class CapsuleSection(HarnessModel):
     | `target_function` | `[]` | 본문은 있지만 캡슐이 담지 않는다 (아래 주) |
     | `static_signal`·`known_facts` | `[]` | 데이터원이 아직 없다. 고정 64토큰 자리표시자 |
 
-    `target_function`의 원문은 프롬프트를 만드는 쪽이 `read_symbol_source()`로 따로 읽는다 —
-    파일 전체를 캡슐에 복사하면 매니페스트가 아니라 사본이 된다.
+    `target_function`의 원문은 프롬프트를 만드는 쪽이 `read_symbol_source()`로(슬라이스 타깃의
+    Scout는 `read_slice`로) 따로 읽는다 — 파일 전체를 캡슐에 복사하면 매니페스트가 아니라 사본이
+    된다.
 
     즉 `body=[]`를 "본문이 없다"로 읽으면 안 되고 "이 섹션은 본문을 여기 담지 않는다"로
     읽어야 한다. 지어낸 줄로 채우지 않는 것이 이 구별의 값이다.
@@ -100,7 +101,8 @@ class ContextCapsule(HarnessModel):
     budget_tokens: int = Field(gt=0)
     sections: list[CapsuleSection] = Field(default_factory=list)
     evidence_refs: list[Identifier] = Field(default_factory=list)
-    # artifact digest + symbol + 정책 버전으로 만든 캐시 키 (knowledge-base.md §6).
+    # artifact digest + symbol + 정책 버전으로 만든 캐시 키 (knowledge-base.md §6). 슬라이스 질의면
+    # slice id와 슬라이서 `run_signature`도 든다(두 Retriever의 `cache_key_for()`).
     cache_key: Sha256Digest
     # Progressive Context Expansion 횟수 (knowledge-base.md §5).
     # **상한은 여기서 강제하지 않는다.** 문서가 "초기값 3, 실측 후 조정"으로 둔 정책값이고

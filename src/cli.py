@@ -26,7 +26,7 @@ from typing import TextIO, get_args
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
-from src.adapters.slices import SliceInputError, load_slices
+from src.adapters.slices import SliceInputError, load_slices, render_slices
 from src.bench import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CONTEXTS,
@@ -660,10 +660,12 @@ def run(args: argparse.Namespace) -> int:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
     # 슬라이스 파일도 같은 자리에서 본다 — `build_deps`가 다시 읽지만 그때는 이미 run 디렉터리와
-    # 번호가 나간 뒤다. ponytail: 두 번 읽는다(JSON 하나라 싸다). 커지면 적재 결과를 넘긴다.
+    # 번호가 나간 뒤다. **렌더까지 본다** — 형식이 맞아도 대상 파일이 슬라이서가 본 것과 다르면
+    # (drift) gutter가 다른 파일의 줄을 가리킨다. ponytail: 적재·렌더를 두 번 한다(JSON 하나와
+    # 슬라이스가 걸친 파일들이라 싸다). 커지면 결과를 `build_deps`로 넘긴다.
     if args.slices is not None:
         try:
-            load_slices(args.slices)
+            render_slices(load_slices(args.slices), args.target)
         except SliceInputError as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             return 2
@@ -931,9 +933,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="슬라이서 산출물 slices.json(slice-v2). 주면 슬라이스 1개가 타깃 1개다"
-        "(ADR 0012 결정 1). 못 믿는 파일이면 run 디렉터리를 만들기 전에 거부한다(exit 2). "
-        "슬라이스 입력 프롬프트(meta input: slice — v3 Scout)를 부르는 run은 이것 없이 "
-        "거부한다(exit 2)",
+        "(ADR 0012 결정 1). 못 믿는 파일이거나 --target과 어긋나면(drift) run 디렉터리를"
+        " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice — v3 Scout)를"
+        " 부르는 run은 이것 없이 거부한다(exit 2)",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")

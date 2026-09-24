@@ -1,21 +1,41 @@
-"""`--slices`를 주면 슬라이스 1개가 타깃 1개다 — 신원(타깃·키·도장·기록) (Phase 3b).
+"""`--slices`를 주면 슬라이스 1개가 타깃 1개다 — 신원(Phase 3b)과 모델이 보는 것(Phase 3c).
 
 ADR 0012 결정 1과 그 D78 ① 풀이: `Location`은 슬라이스의 **대표 위치**(entry의 file·line)이고,
 어느 슬라이스인지는 **`Candidate.slice_id`**가 든다 — 하네스가 도장하고 모델은 쓰지 않는다.
 Case B의 `entry.symbol`은 sink 호출 이름이라 `Location.symbol`은 후보의 `scopes`에서 감싸는
-함수 이름을 가져온다. Scout가 **무엇을 보는가**(SOURCE 렌더·`slice_criterion`)는 다음 PR이다.
+함수 이름을 가져온다.
+
+**모델이 보는 것**(3c): Scout의 `SOURCE`는 슬라이스 렌더(gutter·배너)이고 FACTS에
+`slice_criterion`이 붙는다. LIGHT 캡슐은 그 렌더를 센다. Auditor는 슬라이스가 아니라 entry를 감싸는
+함수의 원본을 본다(결정 1-b의 기본값 (i)). 검사는 run이 남긴 프롬프트 파일(`run_dir/prompts/`)을
+읽는다 — 모델이 실제로 받은 글자다.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from slicer_source import assemble
 from src.adapters.slices import SliceInputError, split_source
+from src.orchestrator.prompt_log import BODY_MARK
 from src.orchestrator.runner import RunSpec
 from src.schemas.common import Location
-from tests.test_pipeline_e2e import CONDITION, STARTED_AT, TARGET, _events, _of, _plan, _run
+from src.tokens import estimate_tokens
+from tests.test_pipeline_e2e import (
+    _FIXTURE_INDEX,
+    CONDITION,
+    STARTED_AT,
+    TARGET,
+    _events,
+    _of,
+    _plan,
+    _poolify_v3,
+    _run,
+    _with_index,
+    _with_mode,
+)
 
 _PARSER = split_source((TARGET / "parser.c").read_bytes())
 
@@ -59,6 +79,20 @@ def _slices_file(tmp_path: Path, slices: list[dict]) -> Path:
 
 _CASE_A = ("slice_0001", "A", ("parser.c", 19, "parse_header"), "parse_header", {19, 24})
 _CASE_B = ("slice_0002", "B", ("parser.c", 24, "memcpy"), "parse_header", {21, 24})
+# `_CASE_B`의 렌더 — 픽스처의 원본 줄 앞에 원본 줄번호, 위에 파일 배너(v3가 선언한 모양).
+_CASE_B_RENDER = "\n".join(
+    ["/* ===== parser.c ===== */", f"21| {_PARSER[20]}", f"24| {_PARSER[23]}"]
+)
+
+
+def _prompts(trace_path: Path, role: str) -> list[tuple[str, dict]]:
+    """run이 남긴 `role` 프롬프트마다 (본문, FACTS) — FACTS는 본문의 마지막 ```json 펜스다."""
+    out = []
+    for path in sorted((trace_path.parent / "prompts").glob(f"*_{role}.md")):
+        body = path.read_text(encoding="utf-8").split(BODY_MARK, 1)[1]
+        facts = re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1]
+        out.append((body, json.loads(facts)))
+    return out
 
 
 def test_each_slice_becomes_one_candidate_stamped_with_its_slice_id(tmp_path: Path) -> None:
@@ -111,11 +145,14 @@ def test_the_run_record_carries_the_slicer_status_and_signature(tmp_path: Path) 
 
 
 def test_without_slices_the_record_says_none_and_targets_come_from_files(tmp_path: Path) -> None:
+    """슬라이스 없는 run은 그 이전 그대로다 — FACTS에 `slice_criterion` 키 자체가 없다(opt-in)."""
     result, trace_path = _run(tmp_path)
 
     assert result.record.slicer is None
     assert _plan(trace_path)["slice_targets"] == 0
     assert all(c.slice_id is None for c in result.candidates)
+    scout_facts = [facts for _, facts in _prompts(trace_path, "scout")]
+    assert scout_facts and all("slice_criterion" not in facts for facts in scout_facts)
 
 
 def test_an_untrustworthy_slice_file_stops_the_run_before_it_starts(tmp_path: Path) -> None:
@@ -131,6 +168,147 @@ def test_an_untrustworthy_slice_file_stops_the_run_before_it_starts(tmp_path: Pa
 def test_run_spec_keeps_the_slices_path() -> None:
     spec = RunSpec(condition=CONDITION, target=TARGET, started_at=STARTED_AT)
     assert spec.slices_path is None
+
+
+def test_a_drifted_slice_stops_the_run_before_any_model_call(tmp_path: Path) -> None:
+    """렌더는 run 전에 **전부** 한다. 러너는 렌더 오류를 안 잡으므로, 슬라이스마다 그때그때
+    렌더하면 앞 슬라이스(`_CASE_B` — 정적 신호 줄이라 먼저 돈다)의 모델 호출을 태운 뒤 산출물
+    없이 죽는다."""
+    drifted = _slice("slice_0005", "A", ("parser.c", 19, "parse_header"), "parse_header", {19})
+    drifted["code"] = "/* ===== parser.c ===== */\nvoid parse_header(void)"
+    path = _slices_file(tmp_path, [_slice(*_CASE_B), drifted])
+
+    with pytest.raises(SliceInputError, match="slice_0005"):
+        _run(tmp_path, slices_path=path)
+    assert not _of(_events(tmp_path / "run" / "run_20260901_0001" / "trace.jsonl"), "model_call")
+
+
+# --- 모델이 보는 것 (Phase 3c) ------------------------------------------------
+
+
+def test_scout_sees_the_slice_render_and_the_end_it_was_given(tmp_path: Path) -> None:
+    """Scout의 `SOURCE`는 슬라이스 렌더(gutter·배너)이고 FACTS가 `slice_criterion`을 싣는다.
+
+    `given`은 슬라이서의 entry 그대로다 — Case B라 `symbol`이 sink 호출(`memcpy`)이고
+    `FACTS.target.symbol`(감싸는 함수)과 다른 것이 정상이다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path)
+
+    ((body, facts),) = _prompts(trace_path, "scout")
+    assert facts["source"] == _CASE_B_RENDER
+    assert f"```c\n{_CASE_B_RENDER}\n```" in body
+    assert facts["slice_criterion"] == {
+        "given_end": "sink",
+        "given": {"file": "parser.c", "line": 24, "symbol": "memcpy"},
+    }
+    assert facts["target"]["symbol"] == "parse_header"
+
+
+def test_the_v3_pool_gets_the_slice_contract_its_prompt_declares(tmp_path: Path) -> None:
+    """D82 ①②의 과녁은 풀의 v3 Scout다 — 세 좌석이 같은 렌더와 `slice_criterion`을 받는다.
+
+    위 검사는 `dev_fake`(scout v1)로 돈다. 노드 경로는 같지만 v3 prefix가 선언한 모양이 v3
+    프롬프트의 `SOURCE`·FACTS에 실제로 실리는지는 v3로 돌려야 보인다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, configure=_poolify_v3())
+
+    for role in ("scout_memory", "scout_boundary", "scout_injection"):
+        ((body, facts),) = _prompts(trace_path, role)
+        assert facts["source"] == _CASE_B_RENDER, role
+        assert f"```c\n{_CASE_B_RENDER}\n```" in body, role
+        assert facts["slice_criterion"] == {
+            "given_end": "sink",
+            "given": {"file": "parser.c", "line": 24, "symbol": "memcpy"},
+        }, role
+
+
+def test_each_slice_capsule_counts_the_render_its_prompt_carries(tmp_path: Path) -> None:
+    """LIGHT 캡슐의 `target_function` 토큰은 그 슬라이스의 렌더에서 나온다 — 프롬프트가 싣는
+    것을 센다.
+
+    entry가 같은 두 슬라이스(쌍둥이)는 렌더가 다르다. Retriever의 캐시 키에 슬라이스 신원이 없으면
+    둘째가 첫째의 캡슐을 받아 **자기가 안 싣는 코드**를 센다(#220 ②).
+    """
+    twin = ("slice_0003", "B", ("parser.c", 24, "memcpy"), "parse_header", {24})
+    path = _slices_file(tmp_path, [_slice(*_CASE_B), _slice(*twin)])
+
+    _, trace_path = _run(tmp_path, slices_path=path)
+
+    prompts = _prompts(trace_path, "scout")
+    assert len({facts["source"] for _, facts in prompts}) == 2
+    for _, facts in prompts:
+        (tokens,) = [
+            section["tokens"]
+            for section in facts["capsule_sections"]
+            if section["kind"] == "target_function"
+        ]
+        assert tokens == estimate_tokens(facts["source"])
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_the_auditor_reads_the_original_function_around_the_entry(
+    tmp_path: Path, mode: str | None
+) -> None:
+    """Auditor는 슬라이스가 아니라 **원본**을 본다(ADR 0012 결정 1-b 기본값 (i)) — entry 줄을 감싸는
+    함수 전체다. entry만 읽으면 함수 머리·버퍼 선언이 빠진 한 줄(24)이 된다.
+
+    후보의 위치는 그대로 entry다 — Auditor가 보는 범위를 넓혀도 후보의 신원은 안 바뀐다.
+    단계 단위(`per_stage`)도 같은 `_TRIAGE_STEPS`를 도는지 같이 본다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    result, trace_path = _run(
+        tmp_path,
+        slices_path=path,
+        before=_with_index(),
+        configure=_with_mode(mode) if mode is not None else None,
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[18:26])
+    assert facts["target"] == {
+        "file": "parser.c", "symbol": "parse_header", "line_start": 19, "line_end": 26,
+    }
+    assert [c.location for c in result.candidates] == [
+        Location(file="parser.c", line_start=24, symbol="parse_header")
+    ]
+
+
+def test_the_auditor_takes_the_narrowest_symbol_around_the_entry(tmp_path: Path) -> None:
+    """entry를 품는 심볼이 여럿이면 가장 좁은 것이다 — 바깥 범위를 고르면 함수 하나가 아니라 그
+    바깥 전체가 Auditor에 간다.
+
+    ⚠ 인덱스를 손으로 적는다. 지금 인덱서(index-v1)는 찾은 정의 안으로 안 들어가
+    (`tools/harness-tools/indexer.py`의 `_iter_definitions`) 겹치는 심볼을 내지 않는다. 이 규칙은
+    겹침을 내는 인덱스(index-v2 — ADR 0012 Phase 4)가 오는 날의 것이고, 바깥 심볼을 **앞에** 둬
+    「처음 찾은 것」으로 골라도 빨개지게 했다.
+    """
+    outer = {"name": "outer_scope", "file": "parser.c", "line_start": 17, "line_end": 31}
+    index = {**_FIXTURE_INDEX, "symbols": [outer, *_FIXTURE_INDEX["symbols"]]}
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(index))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("parse_header", 19)
+
+
+def test_without_an_index_the_auditor_reads_the_whole_entry_file(tmp_path: Path) -> None:
+    """인덱스가 없으면 entry를 감싸는 함수를 모른다 — 파일 전체로 되돌아간다(W2의 인덱스 없는
+    폴백과 같은 자리). 한 줄로 떨어지지 않는다."""
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path)
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == (TARGET / "parser.c").read_text(encoding="utf-8")
+    assert facts["target"] == {
+        "file": "parser.c", "symbol": None, "line_start": None, "line_end": None,
+    }
 
 
 # --- CLI `--slices` ---------------------------------------------------------
@@ -173,6 +351,30 @@ def test_cli_run_refuses_an_untrustworthy_slice_file_before_the_run_dir(
 
     assert code == 2
     assert "[ERROR]" in capsys.readouterr().err
+    assert not list(out.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_cli_run_refuses_a_slice_that_drifted_from_the_target_before_the_run_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """형식은 맞는데 `code`가 대상 파일과 다르다(drift) — 같은 자리에서 막는다. 적재만 보는
+    검사는 이것을 통과시키고, 그러면 gutter가 다른 파일의 줄을 가리키는 run이 선다."""
+    from src import cli
+
+    drifted = _slice(*_CASE_B)
+    drifted["code"] = "/* ===== parser.c ===== */\n    char buf[8];\n    memcpy(buf, src, len);"
+    path = _slices_file(tmp_path, [drifted])
+    out = tmp_path / "artifacts"
+    out.mkdir()
+
+    code = cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET),
+        "--slices", str(path), "--artifacts-root", str(out),
+    ])
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "[ERROR]" in err and "drift" in err
     assert not list(out.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
