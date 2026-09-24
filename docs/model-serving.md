@@ -222,8 +222,8 @@ peak을 잡는다(2026-08-14 Seraph 실측 원문에서 사후 스크레이프 �
 **조용히 다른 값**이 나온다.
 
 ```bash
-python tools/model_checksum.py <스냅샷 경로> --key qwen3-coder-30b-a3b \
-    --source hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@<revision>
+python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \
+    --source hf://Qwen/Qwen3-14B@<revision>
 ```
 
 출력의 `checksum:`·`source:` 두 줄을 `models.yaml`에 **사람이 붙여넣는다.**
@@ -278,14 +278,16 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
-> | **8001** | `qwen3-8b` ← `local_balanced`·`_hybrid` · `qwen3-4b` ← `single_gpu_12g` |
-> | **8002** | `qwen3-coder-30b-a3b` ← `b1_single`·`local_balanced`·`_hybrid` |
+> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
+> | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
 > | **8006** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
+> | **8008** | `qwen3.6-35b-a3b` ← `harness_pool`·`_hybrid`(auditor) |
 > | **8009** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
+> | **8010** | `qwen3-14b` ← 풀 둘(scout_injection) |
 >
-> **이 이름들은 프로필 사이에서 갈린다** — 예로 8001은 `local_balanced`로 돌리면 `qwen3-8b`만,
-> `single_gpu_12g`로 돌리면 `qwen3-4b`만 온다. **한 서버가 동시에 두 이름을 받아야 하는 자리는
-> 지금 없다.**
+> **2026-09-24 로스터 밖 정리 뒤로는 포트마다 이름이 하나다.** 그 전에는 8001(`qwen3-8b`·`qwen3-4b`)·
+> 8002(`qwen3-coder-30b-a3b`)처럼 프로필에 따라 다른 이름이 같은 포트로 오는 자리가 있었다(그 키·프로필을
+> 지웠다). **한 서버가 동시에 두 이름을 받아야 하는 자리는 지금 없다.**
 >
 > ⚠ **한 프로필 안에서 한 포트로 두 모델이 오는 자리도 지금 없다 — 있으면 「주의」가 아니라
 > 블로커다.** 확정 로스터 배선 때 `seccoderx-8b`(Scout)가 `gpt-oss-20b`(Critic)와 같은 :8006이었는데
