@@ -66,7 +66,7 @@ E2 미만은 7단계에 못 간다.
 
     python tools/probe/critic_output_budget.py \
         --state-db /srv/tenants/user/artifacts/run_20260912_0001/state.db \
-        --profile local_balanced --model-key gpt-oss-20b --dry-run \
+        --profile harness_pool --model-key gpt-oss-20b --dry-run \
         --out ~/probe_results/critic_budget_dryrun.json
 
 2단계 — 두 질문이 `--max-tokens`로 갈린다:
@@ -264,7 +264,7 @@ def _load_findings(state_db: Path, run_id: str | None) -> tuple[list[Finding], l
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Critic 출력 상한 — 재구성 프롬프트로 잰다")
     parser.add_argument("--state-db", type=Path, required=True, help="보존된 run의 state.db")
-    parser.add_argument("--profile", default="local_balanced")
+    parser.add_argument("--profile", default="harness_pool")
     parser.add_argument(
         "--model-key",
         default=None,
