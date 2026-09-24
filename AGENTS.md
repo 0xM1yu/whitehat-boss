@@ -268,7 +268,7 @@ python -m pytest -q
 | "숫자가 있으니 실측이겠지" | `0`은 미실측 표시다 |
 | "Fake로 돌려도 경로는 같다" | Fake는 **항등식**을 만든다. `chars/token 4.0`은 측정이 아니라 상수 |
 | "토큰 수는 대충 맞겠지" | `len//4` 추정이 실서빙보다 **1.8배 과소**다 |
-| "게이트가 E1을 올렸으니 근거가 있다" | E1은 `p1 = static_ok or location_ok`라 STATIC 신호만 있으면 오른다(위치 겹침이 아니라). `location`은 #70이 semgrep 히트에 대해 채우지만 **등급은 그 값과 무관하다** |
+| "게이트가 E1을 올렸으니 근거가 있다" | E1은 `p1 = static_ok or location_ok`라 STATIC 신호만 있으면 오른다(위치 겹침이 아니라). `location`은 #70이 semgrep 첫 히트로 채우지만 **등급은 그 값과 무관하다** — 위치를 싣는 것이 STATIC Evidence뿐이라서다(`location_ok`는 종류를 안 본다) |
 | "성공 한 건이니 한 번에 됐겠지" | 어댑터가 재시도를 **안에서 삼켜** 한 건으로 낸다 |
 | "실패했으니 비용은 안 들었겠지" | 실패 경로가 장부에 **청구하지 않는다** |
 | "점수가 0.62면 중간쯤이겠지" | 고유값이 **9개**뿐이고 71%가 정확히 `0.0`이다 |
@@ -294,7 +294,8 @@ python -m pytest -q
 | **미해결 결함 — 작업 추적** | **GitHub Issues** |
 | 미해결 결함 — 본문·선택지 | [docs/open-questions.md](docs/open-questions.md) 와 그 아래 번호별 파일 |
 | 되돌리기 비싼 결정 | `docs/decisions/` |
-| **외부 문헌 조사 — 남이 주장한 것** (실측 아님) | [docs/research/](docs/research/README.md) |
+| **실험 기록 — 원천** | **Notion 팀 워크스페이스 [화햇대장](https://app.notion.com/p/3aebec1a15bc80c18c66fddd77844013).** 저장소의 `docs/experiments/`·`docs/research/`는 옮기지 않고 보관한다([ADR 0012(제안)](docs/decisions/0012-harness-canon-v2.md) 결정 5) |
+| **외부 문헌 조사 — 남이 주장한 것** (실측 아님) | [docs/research/](docs/research/README.md) — 보관(위 행) |
 
 ---
 
