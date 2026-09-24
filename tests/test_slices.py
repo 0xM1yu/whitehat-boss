@@ -16,7 +16,10 @@ import pytest
 from slicer_source import assemble
 from src.adapters.slices import SliceInputError, load_slices, render
 
-_MAIN = "int parse(char *buf, int n)\n{\n    char tmp[16];\n    int k = n;\n    memcpy(tmp, buf, k);\n    return 0;\n}\n"
+_MAIN = (
+    "int parse(char *buf, int n)\n{\n    char tmp[16];\n    int k = n;\n"
+    "    memcpy(tmp, buf, k);\n    return 0;\n}\n"
+)
 _HELPER = "void helper(char *p)\n{\n    free(p);\n    free(p);\n}\n"
 
 
@@ -79,7 +82,8 @@ _SOURCES = {"main.c": _split(_MAIN), "helper.c": _split(_HELPER)}
 
 
 def test_a_slice_v2_file_loads_with_its_status_signature_and_given_end(tmp_path: Path) -> None:
-    """슬라이스 1개가 타깃 1개다. Case A는 source 끝을, B는 sink 끝을 준다(v3 「Slice criterion」)."""
+    """슬라이스 1개가 타깃 1개다. Case A는 source 끝을, B는 sink 끝을 준다(v3 「Slice criterion」).
+    """
     document = _document([
         _slice("slice_0001", "A", {("main.c", 1), ("main.c", 5)}, _SOURCES),
         _slice("slice_0002", "B", {("helper.c", 3), ("helper.c", 4)}, _SOURCES),
@@ -114,7 +118,10 @@ def test_a_partial_run_that_reached_the_cpg_loads_and_keeps_its_status(tmp_path:
 def test_a_slice_file_the_harness_cannot_trust_is_refused_at_load(
     tmp_path: Path, top: dict, reason: str
 ) -> None:
-    """모르는 판·실패한 run·CPG 없이 끝난 run은 **로드에서** 죽는다 — 조용히 빈 타깃 목록이 되지 않는다."""
+    """모르는 판·실패한 run·CPG 없이 끝난 run은 **로드에서** 죽는다.
+
+    조용히 빈 타깃 목록이 되면 「슬라이스 0개」와 「못 읽었다」가 같은 run이 된다.
+    """
     document = _document([_slice("slice_0001", "A", {("main.c", 1)}, _SOURCES)], **top)
 
     with pytest.raises(SliceInputError, match=reason):
