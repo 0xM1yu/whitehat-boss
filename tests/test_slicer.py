@@ -657,6 +657,17 @@ def test_context_query_stops_before_leaving_a_method():
     assert "case n if" not in query
 
 
+def test_context_query_guards_target_against_argumentless_assignments():
+    """#219 후속: `cpg.assignment.filter(a => a.target …)`에서 인자 없는 assignment 노드가
+    오면 `a.target`(= argument(1))이 빈 iterator next로 죽는다(sample_40 context 단계 실측).
+    `.target` 앞에 argumentIndex(1)이 실재하는지 가드가 있어야 한다.
+    """
+    query = queries.context_query([("main.c", 1)], "/work/repo")
+
+    guard = query.index("a.argument.argumentIndex(1).nonEmpty")
+    assert guard < query.index("a.target.ast.isIdentifier.refsTo")
+
+
 def test_case_b_query_adds_the_writer_sink_set_bounded():
     # Query-contract check (not a claim that mock tests execute Scala): the case_b query
     # gains a bounded WRITERS sink set that tags dangerous_write, on top of the existing
@@ -932,7 +943,10 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
     assert 'm.filename == "main.c"' in query
     assert 'm.filename == "other.cpp"' in query
     assert "m.lineNumber.getOrElse(-1) == 1" in query
-    assert ".take(" not in query
+    # max_flows=None means the FLOW enumeration is not truncated. The sink set is capped
+    # (writers/operators/FLOWS_SINK_CAP, #219) regardless, so a bare `.take(` no longer
+    # distinguishes the two -- pin the flow-truncation site itself.
+    assert "observed.take" not in query
     context = queries.context_query([("main.c", 1)], "/work/repo")
     assert '.stripPrefix("/work/repo/").stripPrefix("./")' in context
     assert "replace('\\\\', '/')" in context
@@ -1096,9 +1110,58 @@ def test_queries_guard_against_sinks_whose_method_is_null():
                        ("context", context_for_tautology)):
         assert not degenerate.search(text), f"{name} 질의의 술어에 불리언 리터럴이 붙었다"
     # ⚠ **위치까지 문다.** #202 의 NPE 는 **정렬**에서 났으므로(`sortBy(… n.method.fullName)`)
-    # 필터를 `sortBy` **뒤로** 옮기면 결함이 그대로 돌아오는데, 존재만 무는 판은 초록이었다
-    # (4라운드 실측). 아래는 `cpg.call.argument` 직후 → `.l.distinct.sortBy` 직전을 통째로 박는다.
-    assert "cpg.call.argument.filter(n => Option(n.method).nonEmpty).l.distinct.sortBy" in flows
+    # 필터를 `sortBy` **뒤로** 옮기면 결함이 그대로 돌아온다. 철자가 아니라 **순서**를 문다
+    # (#252 리뷰 §2.5): method-null 가드가 `n.method.fullName`을 처음 참조하는 `sortBy`보다
+    # 앞에 있어야 한다.
+    assert "Option(n.method).nonEmpty" in flows
+    assert flows.index("Option(n.method).nonEmpty") < flows.index("n.method.fullName"), (
+        "method-null 가드가 sortBy(n.method.fullName)보다 뒤로 가면 #202 NPE가 돌아온다"
+    )
+
+
+def test_flows_query_uses_hybrid_local_and_bounded_global_sinks():
+    """#219 + #252 review HIGH-2/3: hybrid sinks. Inside the candidate methods EVERY call
+    argument is a sink (recall -- keeps deref/field & index-READ GT types and the live-probe
+    fixtures); globally only memory-write calls, capped, so the per-candidate dataflow stays
+    under the deadline on large CPGs. `cpg.call.argument` over the whole repo is what blew the
+    deadline, so it must not be the global set.
+    """
+    flows = queries.flows_query([candidate()["scope"]], 3)
+
+    assert "cpg.call.argument.filter" not in flows  # global set is NOT every repo call arg
+    assert "methods.flatMap(m => m.ast.isCall.argument.l)" in flows  # local: all candidate args
+    assert 'cpg.call.name("(' in flows  # global writer sink calls
+    assert "<operator>.indirectIndexAccess" in flows  # global index-write operators
+    assert f".take({queries.FLOWS_SINK_CAP})" in flows  # global sink universe is bounded
+    assert '"sinks_capped"' in flows and '"sinks_kept"' in flows  # cap is recorded, not silent
+
+
+def test_flows_and_case_b_share_the_same_operator_sink_definition():
+    """#252 review MEDIUM: the writer/index-write/ptr-arith sink defs are copied between
+    flows_query and candidates_b_query. Pin the shared operator filters in BOTH so a change
+    to one that isn't mirrored fails here instead of silently diverging.
+    """
+    flows = queries.flows_query([candidate()["scope"]], 3)
+    case_b = queries.candidates_b_query()
+    for fragment in (
+        'cpg.call.nameExact("<operator>.indirectIndexAccess")',
+        'c.inCall.nameExact("<operator>.assignment").argument',
+        'cpg.call.name("<operator>.(addition|subtraction)")',
+        'c.argument.evalType.exists(_.contains("*"))',
+        'indirection|indirectIndexAccess|addressOf)',
+    ):
+        assert fragment in flows and fragment in case_b, fragment
+
+
+def test_case_b_dealloc_scan_filters_to_methods_that_call_free():
+    """#219: the free-wrapper scan filters to methods that actually call free before the
+    per-parameter dataflow. Scanning every method's AST and building a dataflow engine per
+    parameter for the rest is what pushes case_b past the query deadline on a large C++ CPG
+    (sample_40). Exact filter -- a method with no free() call cannot reach one.
+    """
+    query = queries.candidates_b_query()
+
+    assert 'cpg.method.internal.filter(_.ast.isCall.nameExact("free").nonEmpty)' in query
 
 
 def test_flows_query_batches_by_enclosing_method():
