@@ -74,7 +74,7 @@
 | D21 | **토큰 계상이 실서빙 실측보다 1.8배 과소다** | 부분 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
 | D23 | **`Evidence.location`을 채우는 코드가 저장소에 없어 Gate E1의 `location_ok`가 구조적으로 거짓이다** | 열림 | [본문](open-questions/D/D23.md) |
-| D24 | **후보 1건당 토큰·시간을 한 번도 재지 않아 `candidate_max`에 근거가 없다** | 열림 | [본문](open-questions/D/D24.md) |
+| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — **`candidate_max`에 근거가 없는 것은 그대로** | 열림 | [본문](open-questions/D/D24.md) |
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | **장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다** | 열림 | [본문](open-questions/D/D27.md) |
