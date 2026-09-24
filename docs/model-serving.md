@@ -44,7 +44,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 **양자화 커널은 이 체크리스트의 1번보다 앞에 있다.** 2026-08-17 ATOM 실측: `qwen3-4b`(fp8)가
 `VLLM_USE_DEEP_GEMM=0` 없이는 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`).
 **수치가 나빠지는 것이 아니라 서버가 안 뜬다** — 기동 인자를 모르면 1번부터 답할 수 없다.
-모델별 기동 조건은 `config/models.yaml`의 해당 항목 주석에 있고, 환경 축으로는
+모델별 기동 조건은 `config/models.yaml`의 해당 항목 주석에 있고(⏵ 2026-09-24 — 위 `qwen3-4b` 항목은 로스터 밖 정리로 지웠다 — 원문은 git 이력), 환경 축으로는
 [portability.md](portability.md) §5 #5다.
 
 검증 체크리스트 (각 항목 뒤는 `python -m src.cli bench`가 그 항목을 답하는 출력 필드다):
@@ -204,7 +204,7 @@ peak을 잡는다(2026-08-14 Slurm 실측 원문에서 사후 스크레이프 �
 필드를 registry에 쓰지 않는다.
 
 **`adapters`에 ModelClient가 없는 것은 의도다.** 역할마다 다른 모델을 쓰고 그중 일부만
-실서빙일 수 있으므로(12GB 프로필은 scout만 실서빙), ModelClient 선택은 프로필이 아니라
+실서빙일 수 있으므로(~~12GB 프로필은 scout만 실서빙~~ → ⏵ 2026-09-24 — 그 예였던 `single_gpu_12g`는 지웠다. 그 모양은 지금 `tests/conftest.py`의 합성 config `served_scout_config`가 든다), ModelClient 선택은 프로필이 아니라
 각 모델의 `endpoint` 스킴이 역할별로 한다. 프로필 단위로 하나를 고르는 구조였다면 그
 구성을 표현할 수 없다.
 
