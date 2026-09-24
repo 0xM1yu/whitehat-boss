@@ -293,6 +293,62 @@ def test_cache_key_differs_from_fake_retriever(corpus: Path) -> None:
     )
 
 
+# --- 슬라이스 타깃 (ADR 0012 결정 1 · #220 ②) ---------------------------------
+
+# 같은 entry(`target.py`:1)를 가진 두 슬라이스의 렌더. 러너가 `build_deps`에서 받은 조회 함수가
+# 이 dict의 `__getitem__`이다.
+_RENDERS = {
+    "slice_0001": "/* ===== target.py ===== */\n1| def handle(req):",
+    "slice_0002": "/* ===== target.py ===== */\n1| def handle(req):\n2|     return req.user.token",
+}
+
+
+def _slice_retriever(kind: str, root: Path, *, signature: str = "sig_0001"):  # noqa: ANN202
+    kwargs = {"read_slice": _RENDERS.__getitem__, "slice_signature": signature}
+    if kind == "fake":
+        return FakeRetriever(root=root, ids=IdFactory(RUN_ID), run_id=RUN_ID, **kwargs)
+    return _retriever(root, **kwargs)[0]
+
+
+def _slice_query(slice_id: str) -> Query:
+    return Query(
+        run_id=RUN_ID,
+        target=Location(file="target.py", line_start=1, symbol="handle"),
+        budget_tokens=4096,
+        slice_id=slice_id,
+    )
+
+
+@pytest.mark.parametrize("kind", ["fake", "hybrid"])
+def test_twin_slices_get_their_own_capsule_built_from_their_render(corpus: Path, kind: str) -> None:
+    """entry가 같은 두 슬라이스는 다른 캡슐이다. 키에 slice id가 없으면 둘째가 첫째의 캡슐을
+    재사용하고, `target_function` 토큰이 자기가 싣지 않는 코드를 센다."""
+    retriever = _slice_retriever(kind, corpus)
+
+    capsules = {sid: retriever.search(_slice_query(sid), CapsuleLevel.LIGHT) for sid in _RENDERS}
+
+    assert capsules["slice_0001"].capsule_id != capsules["slice_0002"].capsule_id
+    for sid, capsule in capsules.items():
+        (section,) = [s for s in capsule.sections if s.kind == "target_function"]
+        assert section.tokens == estimate_tokens(_RENDERS[sid])
+
+
+@pytest.mark.parametrize("kind", ["fake", "hybrid"])
+def test_another_slicer_run_changes_the_capsule_key(corpus: Path, kind: str) -> None:
+    """slice id는 슬라이서 run 안의 순번이다(`slicer_candidates.py`의 `slice_{number:04d}`) — 다른
+    run에서는 같은 id가 다른 슬라이스일 수 있다. 그래서 `run_signature`가 키에 든다."""
+    query = _slice_query("slice_0001")
+
+    first = _slice_retriever(kind, corpus, signature="sig_0001").cache_key_for(
+        query, CapsuleLevel.LIGHT
+    )
+    second = _slice_retriever(kind, corpus, signature="sig_0002").cache_key_for(
+        query, CapsuleLevel.LIGHT
+    )
+
+    assert first != second
+
+
 def test_truncation_is_reported_not_silent(corpus: Path) -> None:
     """상한에 걸려 잘린 것을 조용히 두면 '전부 봤다'로 읽힌다."""
     seen: list[tuple[int, int]] = []
