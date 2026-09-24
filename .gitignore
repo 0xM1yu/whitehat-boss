@@ -31,7 +31,8 @@ harness-tools_*.tar
 .claude/reviews/
 
 # 개인 메모·브리핑·프로젝트 가이드 (`.claude/` 루트의 md). `.claude/plans/`와 같은 성격 —
-# 원문은 공유 대상이 아니고 요약만 STATUS.md·open-questions.md에 남는다. `git add -A`가
+# 원문은 공유 대상이 아니고 요약만 정본 자리(CLAUDE.md §6 표 — 결함은 D 본문, 결정은 ADR,
+# 실험 기록은 Notion)에 남는다. `git add -A`가
 # 이것들을 실수로 추적한 적이 있다(PR #31에서 4건이 딸려 갔다 빠졌다). 팀이 공유하기로
 # 정한 문서가 생기면 `git add -f`로 그 파일만 강제 추적한다.
 # 날짜별 리서치·회의록 폴더(`.claude/2026-09-01/` 등)의 md도 같은 성격이므로 서브폴더까지 무시한다.
@@ -39,7 +40,8 @@ harness-tools_*.tar
 .claude/**/*.md
 
 # Slurm 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
-# 검증 결과의 요약은 STATUS.md §7에 남긴다 — 원문 메모는 공유하지 않는다.
+# 검증 결과의 요약은 장비 제약·실패 사례면 docs/portability.md에, 실험 기록이면 Notion에
+# 남긴다(CLAUDE.md §6) — 원문 메모는 공유하지 않는다.
 .claude/slurm/
 slurm_tutorial/
 slurm-2026-08-11-issues.md

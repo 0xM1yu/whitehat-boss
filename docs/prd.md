@@ -41,6 +41,8 @@
 
 최고 성능이 아니라 **정확도와 비용을 함께 고려한 최적의 Multi-Agent 구조를 설계하는 것**이 목표다. 계산량을 고정한 뒤 다음 4개 조건을 비교한다.
 
+> ⚠ **2026-09-24 — 아래 2×2 축은 2026-09-20에 폐기됐다**([ADR 0011](decisions/0011-retire-the-2x2-condition-axis.md), PM 결정). 조건 정의는 [evaluation.md](evaluation.md) §2.2 하나이고(`RunRecord.condition`은 `@pipeline`만 받는다) 방향은 Scout 오케스트레이터다. 아래 표와 두 효과 정의는 2026-08 초안의 기록이다.
+
 | 구분 | 같은 질문을 여러 번 | 서로 다른 질문으로 역할 분담 |
 | --- | --- | --- |
 | 단일 모델 | B1 | B1' |
@@ -138,8 +140,10 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 ### 4.5 초기 모델 구성 (2026-08 기록)
 
 **정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다.** 아래는 2026-08 초기안이고 로스터는 2026-09-09에
-확정됐다. 표의 다섯 중 셋은 **자리가 바뀌었다** — `Qwen3-8B`는 Scout·Injection,
-`Qwen3-Coder-30B-A3B`는 Scout·Memory, `Devstral Small 2`는 Scout·Boundary다.
+확정됐다. ~~표의 다섯 중 셋은 **자리가 바뀌었다** — `Qwen3-8B`는 Scout·Injection,
+`Qwen3-Coder-30B-A3B`는 Scout·Memory, `Devstral Small 2`는 Scout·Boundary다.~~ → **2026-09-24 — 그
+2026-09-09 판도 2026-09-21에 교체됐다**(Scout 세 자리·Auditor가 바뀌고 Auditor A/B가 소멸했다). 지금
+어느 모델이 어느 자리인지는 그 파일만 본다 — 아래 표는 2026-08 기록이다.
 
 
 | 역할 | 초기 추천 모델 | 비고 |
