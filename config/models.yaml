@@ -19,6 +19,8 @@
 # source는 그 checksum이 **어디서 나왔는가**다 (`hf://org/repo@rev` 또는 `file:///경로`).
 # 후보가 전부 커뮤니티 산출물이라 같은 이름의 모델이 리포지터리마다 다르다 — 값이 안 맞을 때
 # 이 필드가 없으면 어느 리포의 어느 리비전이었는지 답할 수 없다. `--apply`는 건드리지 않는다.
+# ⏵ 2026-09-24 — 「후보가 전부 커뮤니티 산출물」은 옛 로스터의 사정이다. 지금 로스터는 bf16 원본이라 제작사 리포가
+# 아닌 것은 `seccoderx-8b` 하나다. 이 필드가 답하는 물음(어느 리포의 어느 리비전)은 그대로다.
 #
 # family는 **베이스 가중치의 제작사**다 — 양자화한 조직이 아니라 가중치가 나온 조직이다
 # (ADR 0010 §4). 그래서 `source`의 org와 다를 수 있다: `seccoderx-8b`는 `hf://SecCoderX/…`에서
@@ -53,6 +55,9 @@ models:
   # **커밋된 프로필은 아직 이 키를 안 쓴다** — `tests/test_pipeline_e2e.py`가 풀 config를
   # in-test로 조립해서 쓴다(풀 프로필 커밋은 별도 PR). 어댑터 선택은 endpoint 스킴(`fake://`)이 하므로
   # `fake`와 같은 FakeModelClient로 뜬다 — 바뀌는 것은 `load_prompt`가 고르는 버전뿐이다.
+  # ⏵ 2026-09-24 — 「v2 전용」·「새 로스터는 v2」·「풀 프로필 커밋은 별도 PR」은 낡았다. 풀 프롬프트는 v2·v3 둘이고
+  # 지금 로스터의 Scout 풀은 v3다(PROJECT-CONTEXT.md §1). 풀 프로필 `harness_pool`·`_hybrid`는 커밋됐다 — 실모델
+  # 키라 GPU가 필요하다. GPU 없이 풀을 도는 커밋된 프로필이 이 키를 안 쓰는 것은 그대로다.
   fake_v2:
     endpoint: "fake://deterministic"
     context_limit: 32768

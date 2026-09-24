@@ -28,8 +28,8 @@
 
 | 확인 | 방법 | 현재 |
 | --- | --- | --- |
-| 실행 코드에 장비 고유명이 없다 | `src/**`를 AST로 파싱해 주석·docstring을 뺀 뒤 장비명·아키·스케줄러 이름을 찾는다 | 0건. 남는 것은 `docker`/`singularity`/`podman`(config가 고르는 런타임 이름)과 `NVFP4`(registry의 양자화 값)뿐이고, 둘 다 장비가 아니라 설정을 가리킨다 |
-| 전 프로필이 GPU·네트워크 없이 진단을 통과한다 | 모든 프로필에 `doctor` 실행 | 8/8, ERROR 0건 |
+| 실행 코드에 장비 고유명이 없다 | `src/**`를 AST로 파싱해 주석·docstring을 뺀 뒤 장비명·아키·스케줄러 이름을 찾는다 | 0건. 남는 것은 `docker`/`singularity`/`podman`(config가 고르는 런타임 이름)과 ~~`NVFP4`(registry의 양자화 값)~~뿐이고, 둘 다 장비가 아니라 설정을 가리킨다. ⏵ 2026-09-24 — `NVFP4`는 이제 안 남는다: `src/` 문자열 상수(docstring 제외)에 0건이고 registry의 `quantization`에도 없다(가중치는 bf16 그대로 · `gpt-oss-20b`만 MXFP4 — 조민규). 장비명 쪽 판정은 다시 안 쟀다 |
+| 전 프로필이 GPU·네트워크 없이 진단을 통과한다 | 모든 프로필에 `doctor` 실행 | ~~8/8~~, ERROR 0건. ⏵ 2026-09-24 — 지금 프로필은 일곱이고 다시 돌려 **7/7 · ERROR 0건**이다(`cli doctor --profile` 일곱, 로스터 밖 정리 뒤) |
 | GPU 없이 파이프라인이 완주한다 | `dev_fake`·`dev_hybrid`로 `run` | 완주 |
 | 테스트가 GPU·네트워크 없이 돈다 | CI(`ubuntu-latest`, GPU 없음) | 전 테스트 통과 |
 | 프로브가 `pip install` 없이 돈다 | import 그래프를 따라가며 `sys.stdlib_module_names` 밖을 찾는다(`tests/test_probe.py`) | stdlib 밖 0건. `src/__init__.py`까지 따라간다 |
