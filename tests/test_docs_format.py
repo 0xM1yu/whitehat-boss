@@ -350,7 +350,7 @@ def test_config_comments_point_at_a_real_doc() -> None:
     """
     # 양성 핀 — 실형태: `config/models.yaml`의 gpt-oss 기동 블록 2026-09-20 문단 원천 줄.
     assert _CONFIG_DOC_PATH.search(
-        "    #   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의"
+        "#   원천은 `docs/experiments/harness/2026-09-11-gpt-oss-structured-vocab-flag-atom.md`의"
     )
     # 음성 핀 — 외부 문서 URL의 `/docs/` 경로 조각. config 주석은 이미 외부 URL을 인용한다
     # (`config/models.yaml`의 `GET https://huggingface.co/api/models/…` 줄들).
