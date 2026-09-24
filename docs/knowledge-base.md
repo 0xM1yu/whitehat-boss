@@ -79,7 +79,7 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 - 관련 diff·trace·정적분석 신호
 - 이미 확인된 사실과 아직 필요한 evidence
 
-⚠ **2026-09-24 — [ADR 0012(제안)](decisions/0012-harness-canon-v2.md) 결정 1: Scout가 받는 대상 코드가
+⚠ **2026-09-24 — [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1: Scout가 받는 대상 코드가
 바뀐다.** 그 결정은 Joern 슬라이스를 Scout의 코드 입력으로 두고 후보 = 슬라이스 1개로
 정한다 — 위 「target function 본문」 자리를 Scout에서는 슬라이스가 잇는다. **지금 코드는 아니다**
 (Phase 3) — 대상 원문은 `read_symbol_source()`가 심볼 줄 범위를 잘라 싣는다(아래 예시 밑 문단).
@@ -142,7 +142,7 @@ Auditor가 받을 표현(원본 소스 ↔ 슬라이스)은 열려 있다(결정
 
 `expansion_count`는 Progressive Context Expansion(§5) 횟수다. **상한은 이 구조체가 아니라
 config에서 온다** — `capsule_expansion_max`가 정책값이고 초과 판정은 오케스트레이터가 한다
-(초과 시 후보를 폐기하지 않고 `queued`로 둔다). (→ §5 머리 2026-09-24 ⚠ — ADR 0012(제안) 결정 6이 이
+(초과 시 후보를 폐기하지 않고 `queued`로 둔다). (→ §5 머리 2026-09-24 ⚠ — ADR 0012 결정 6이 이
 상한을 `max_hops`로 대체한다)
 
 > 이 예시는 `tests/test_doc_examples.py`가 `ContextCapsule`로 실제 파싱해 본다.
@@ -161,13 +161,13 @@ light capsule (callers/callees 1-hop 포함)
 
 확장 횟수 상한은 계약의 `retries`와 별개로 캡슐 정책에 둔다(초기값 3, 실측 후 조정).
 
-> ⚠ **2026-09-24 — [ADR 0012(제안)](decisions/0012-harness-canon-v2.md) 결정 2·6: 이 사다리를
+> ⚠ **2026-09-24 — [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 2·6: 이 사다리를
 > need_evidence 루프가 대체한다.** Scout에서 부족을 알리는 것은 `MissingEvidence`가 아니라
 > `triage_need_evidence` 신호와 `requested_context`이고(Auditor의 `MissingEvidence`는 그대로 남는다 —
 > Auditor·Critic의 요청은 같은 resolver를 2차로 쓴다, 결정 2), 하네스는 그 target만 믿고 결정론적
 > 심볼 resolver로 찾아 **같은 세션 후속 턴**으로 RETRIEVED를 준다 — (슬라이스, 좌석)마다 세션 하나,
-> 최대 3홉, 정지 조건 여섯, 그리고 한 좌석이라도 review면 다른 좌석의 루프는 돌지 않는다(좌석 집계). 명세의 원천은 실험팀 Notion 「Scout RAG baseline」이고 ADR 0012(제안)가 요약한다. 위 「초기값 3」의 상한
-> (`capsule_expansion_max`)은 결정 6이 `max_hops`로 대체한다. **아직 코드가 아니다**(Phase 5) — 아래
+> 최대 3홉, 정지 조건 여섯, 그리고 한 좌석이라도 review면 다른 좌석의 루프는 돌지 않는다(좌석 집계). 명세의 원천은 실험팀 Notion 「Scout RAG baseline」이고 ADR 0012가 요약한다. 위 「초기값 3」의 상한
+> (`capsule_expansion_max`)은 결정 6이 `max_hops`로 대체한다. **승인됐다(2026-09-25) — 코드는 아직이다**(Phase 5) — 아래
 > 「사다리의 첫 칸」 절 끝의 ⚠.
 
 ### 사다리의 첫 칸을 기본값으로 올렸다 (2026-08-23, D20을 (a)로 확정)
@@ -203,11 +203,11 @@ status=loaded`(심볼 4·호출 5)인데 그래프를 담은 프롬프트는 aud
 > `triage_need_evidence`(0.30)가 `triage_reject`(0.10)와 같이 `below_scout_threshold`로 `queued`된다
 > (`policy._scout_triage`, `scout_threshold` 0.5). 그리고 스키마의 `requested_context`는 문자열
 > 목록인데 v3 프롬프트는 객체를 요구한다([D82](open-questions/D/D82.md)). 그 루프가 §5 머리 ⚠의
-> need_evidence 루프다(ADR 0012(제안) 결정 2 — Phase 5).
+> need_evidence 루프다(ADR 0012 결정 2 — Phase 5).
 
 **즉 이 절은 지금 절반만 구현돼 있다.** 첫 칸은 기본값이 되어 항상 실리고, 나머지
 `──부족──>` 화살표는 **아무도 밟지 않는다.** 그 사실을 그림에서 지우지 않는 이유는
-설계를 포기한 것이 아니기 때문이고(→ §5 머리 2026-09-24 ⚠ — ADR 0012(제안) 결정 2·6이 그 화살표를
+설계를 포기한 것이 아니기 때문이고(→ §5 머리 2026-09-24 ⚠ — ADR 0012 결정 2·6이 그 화살표를
 need_evidence 루프로 바꾼다), 진행 상태는 open-questions D20 관측 ③에 있다.
 
 ## 6. 캐시 정책

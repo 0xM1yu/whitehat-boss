@@ -49,11 +49,11 @@ graph LR
 | # | 단계 | 입력 | 처리 | 출력 | 다음 단계 통과 조건 |
 | --- | --- | --- | --- | --- | --- |
 | 0 | Preprocessor | repo / firmware image / crash bundle | 펌웨어 추출(binwalk), 파일 타입 분류(file), 바이너리·소스·설정 식별, artifact hash 부여 | `Artifact[]` | 파일 타입 분류 성공 |
-| 1 | Index & Graph | `Artifact[]` | 소스: tree-sitter로 함수·symbol·AST 분해 · **Joern 슬라이서**(무모델 Case A·B — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2. 지금은 하네스 밖 오프라인 `slicer.py`) / 바이너리·펌웨어: strings, readelf, objdump, Ghidra Headless. 공통으로 symbol table, xref, function boundary, call graph 추출 | Code Index, Graph · `slices.json`(아래 ⚠ ADR 0012(제안)) | 대상 함수 심볼 해석 성공 |
+| 1 | Index & Graph | `Artifact[]` | 소스: tree-sitter로 함수·symbol·AST 분해 · **Joern 슬라이서**(무모델 Case A·B — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2. 지금은 하네스 밖 오프라인 `slicer.py`) / 바이너리·펌웨어: strings, readelf, objdump, Ghidra Headless. 공통으로 symbol table, xref, function boundary, call graph 추출 | Code Index, Graph · `slices.json`(아래 ⚠ ADR 0012) | 대상 함수 심볼 해석 성공 |
 | 2 | Signal Collection | Artifact, Index | Semgrep · clang-tidy · grep/custom rule 정적분석, **build 프로브**(빌드되는가 — Auditor가 `repro_spec`을 쓸 근거, 아래 build 주), sanitizer log·stack trace 파싱, AFL++/libFuzzer coverage, diff 분석 | `Evidence[]` | 실패해도 진행(신호 부재로 기록) |
-| 3 | Retrieval | 후보 seed | symbol·graph·keyword 광역 수집 → embedding + reranker 재선별(쓰임은 아래 ⚠ ADR 0012(제안) — 열림) | `ContextCapsule` | capsule 토큰 상한 이내 |
-| 4 | Scout / Triage | `ContextCapsule`(경량) + 대상 코드(아래 ⚠ ADR 0012(제안) — 슬라이스로 바뀐다) | 후보 우선순위 분류, 위험 카테고리 부여 | `Candidate[]` (score, CWE 추정) | `score >= scout_threshold` |
-| 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(표현은 아래 ⚠ ADR 0012(제안) — 열림) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
+| 3 | Retrieval | 후보 seed | symbol·graph·keyword 광역 수집 → embedding + reranker 재선별(쓰임은 아래 ⚠ ADR 0012 — 열림) | `ContextCapsule` | capsule 토큰 상한 이내 |
+| 4 | Scout / Triage | `ContextCapsule`(경량) + 대상 코드(아래 ⚠ ADR 0012 — 슬라이스로 바뀐다) | 후보 우선순위 분류, 위험 카테고리 부여 | `Candidate[]` (score, CWE 추정) | `score >= scout_threshold` |
+| 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(표현은 아래 ⚠ ADR 0012 — 열림) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
 | 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 그 갈래는 아직 안 탄다, §4) |
@@ -65,14 +65,14 @@ graph LR
 >
 > **단계 순서 주의**: 위 표는 `Evidence Gate(6) → Critic(7)` 순서다. 킥오프 04-6 표는 `Critic(4차) → Evidence Gate(5차)`로 반대이나, 같은 자료의 05-2 구조도와 하네스 제안서 §3은 위 순서를 따른다. 다수 근거를 채택했고 확정은 [open-questions.md](open-questions.md) D8.
 
-> ⚠ **2026-09-24 — [ADR 0012(제안)](decisions/0012-harness-canon-v2.md)가 위 표의
-> 1·3·4·5단계 입력을 다시 정한다. 아직 코드가 아니다 — 위 칸은 지금 구조이고 아래가 그 제안이다.**
+> ⚠ **2026-09-24 — [ADR 0012](decisions/0012-harness-canon-v2.md)가 위 표의
+> 1·3·4·5단계 입력을 다시 정한다. 승인됐다(2026-09-25) — 코드는 아직이다 — 위 칸은 지금 구조이고 아래가 그 결정이다.**
 >
 > - **1단계 — 슬라이스가 후보가 된다**(결정 1, Phase 3). Joern 슬라이스 1개 = 후보 1개. 지금 슬라이서는
 >   하네스 밖 오프라인 스크립트이고 러너의 후보는 tree-sitter `symbols_for()`의 심볼이다
 >   (`runner._plan_targets`) — `src/`·`config/`에 `slices.json`을 읽는 코드가 0건이다. tree-sitter 인덱스는
 >   `GRAPH` Evidence·`callers`/`callees`에 더해 need_evidence resolver의 심볼 표(index-v2, Phase 4)가 된다.
-> - **3단계 — 쓰임이 열려 있다**(결정 3, 2026-09-26 대면 논의). ADR 0012(제안)가 그 논의 전에 정해 두는
+> - **3단계 — 쓰임이 열려 있다**(결정 3, 2026-09-26 대면 논의). ADR 0012가 그 논의 전에 정해 두는
 >   것은 둘이다 — need_evidence는 결정론적 심볼 resolver가 풀고(결정 2), canonical 프로필은 합의 전까지
 >   `retriever: hybrid`를 쓰지 않는다. ~~canonical 프로필은 아직 없다(Phase 6).~~ (⏵ 2026-09-24 — 생겼다:
 >   `harness_pool`(`retriever: fake`)이다 — `config/profiles.yaml`.) 임베딩·리랭커를
@@ -101,18 +101,18 @@ graph LR
 > sanitizer·PoC를 돌린다(`nodes/validate.py`의 `BUILD_TOOL`). 위 2단계 칸의 나머지(sanitizer log·stack
 > trace 파싱, fuzz coverage, diff 분석)는 책임 정의이고, 오늘 2단계에서 그 일을 하는 도구는 없다.
 
-**Queue 규칙**: 4·6단계에서 탈락한 후보는 즉시 버리지 않고 `queued` 상태로 남긴다. 새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다.
+**Queue 규칙**: 4·6단계에서 탈락한 후보는 즉시 버리지 않고 `queued` 상태로 남긴다. ~~새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다.~~ (⏵ 2026-09-25 — ADR 0012 결정 6으로 폐기 — 아래 ⚠)
 
 > **⚠ 절반만 구현이다 (2026-08-31, D25).** `queued`로 남기는 쪽은 동작한다(`policy.py`의 `Route.QUEUE`).
 > **새 Evidence로 재평가하는 쪽은 배선이 없다** — `DecisionPoint.REQUEUE`를 내는 코드가 저장소에 없고,
 > 재평가 횟수를 보관하던 `queue.py`도 D25로 사라졌다(D10). 이 문단은 설계이지 현황이 아니다.
 >
-> ⚠ **2026-09-24 — [ADR 0012(제안)](decisions/0012-harness-canon-v2.md) 결정 6: 이 재평가 경로를
+> ⚠ **2026-09-24 — [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 6: 이 재평가 경로를
 > 폐기한다.** 대상은 생산자·호출처가 0건인 세 경로와 그 소비부다 — ① 재평가: `DecisionPoint.REQUEUE`와
 > `policy._requeue`·전이 C-8·C-9·F-14·`requeue_max` ② 캡슐 확장: `Retriever.expand`·노드
 > `retrieval.expand()`와 전이 C-5(`triaged`→`queued`)·`capsule_expansion_max` — 돌아오는 길이 아니라
 > `queued`로 **들어가는** 길이다 ③ `previous` 재판정: `scout.run(previous=…)`에서만 서는 전이 C-4와 C-7의
-> `candidate` 행. **제안이라 코드는 그대로다.** 탈락 후보를 `queued`로 남기는 쪽(위 첫 문장의 4·6단계
+> `candidate` 행. **승인됐다(2026-09-25) — 코드는 아직 그대로다**(코드 삭제는 별도 PR). 탈락 후보를 `queued`로 남기는 쪽(위 첫 문장의 4·6단계
 > 탈락 C-3·F-2와, 5단계에서 남기는 C-6·C-7의 `triaged` 행 등)은 이 결정과 무관하다. ⚠ **위 규칙의 뒤 절반은 대체 없이 없어진다** —
 > 4단계 need_evidence 루프(결정 2)는 같은 세션 안에서 후보를 만들기 전에 모자란 맥락을 채울 뿐이고,
 > 나중에 들어온 새 Evidence(신규 crash·신규 룰)로 `queued` 후보를 다시 보는 길은 없다(run을 넘는
@@ -146,8 +146,8 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > **⚠ 위 그림의 `new evidence` 재진입은 §3의 ⚠ 대로 배선이 없다** (2026-08-31, D25).
 > `queued`로 남기는 쪽은 동작하지만 새 Evidence로 되돌리는 쪽은 `DecisionPoint.REQUEUE`를
 > 내는 코드가 없고, 재평가 횟수를 세던 카운터도 사라졌다(D10). 설계이지 현황이 아니다.
-> **2026-09-24 — 이 재진입과 위 문단의 `requeue_max`는 폐기가 제안됐다**(§3 Queue 규칙의 ⚠ —
-> ADR 0012(제안) 결정 6).
+> **2026-09-24 — 이 재진입과 위 문단의 `requeue_max`는 폐기됐다**(2026-09-25 승인 — §3 Queue 규칙의 ⚠ —
+> ADR 0012 결정 6).
 
 > 전이 표 전체(트리거·단계·사유 코드)는 `src/orchestrator/state_machine.py`의 모듈
 > docstring에 있다. 이 그림은 그 표의 요약이며, 둘이 어긋나면 표가 기준이다.
