@@ -371,10 +371,13 @@ def flows_query(
         .flatMap(_.parameter.l.sortBy(p => (p.index, p.code, p.typeFullName)))
       def nodeKey(n: nodes.AstNode): String = ujson.write(ujson.Arr(
         n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1), n.code))
-      // Memory-write sink calls only (#219): targeting every call argument in the repo makes
-      // the per-candidate dataflow exceed the deadline on large CPGs, so no slice is emitted.
-      // These are the dominant GT sink types. Cheap name/AST filters only (no dataflow), since
-      // this runs per candidate -- keep in sync with candidates_b_query's writers/operators.
+      // Recall-preserving hybrid (#252 review HIGH-2/3). Inside the candidate methods EVERY
+      // call argument is a sink -- cheap (few methods) and it keeps the deref/field and
+      // index-READ GT sink types that a memory-write-only set drops, and keeps the live-probe
+      // fixtures' calls anchored. Globally, narrow to memory-write calls (capped) so the
+      // per-candidate cross-repo dataflow stays under the deadline (#219). Cheap name/AST
+      // filters only (no dataflow) -- keep the writers/operators in sync with candidates_b_query.
+      val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
       val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
@@ -383,21 +386,37 @@ def flows_query(
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty).take({CASE_B_OPERATOR_CAP}).l
-      val sinkCalls = (writerSinks ++ indexWrites ++ ptrArith).distinct
-      val sinks = sinkCalls.flatMap(_.argument)
-        .filter(n => Option(n.method).nonEmpty).distinct.sortBy(n => (
-          nodeKey(n), n.argumentIndex, n.method.fullName)).take({FLOWS_SINK_CAP})
+      val globalArgs = (writerSinks ++ indexWrites ++ ptrArith).distinct
+        .flatMap(_.argument).filter(n => Option(n.method).nonEmpty).distinct
+      val sinksCapped = globalArgs.size > {FLOWS_SINK_CAP}
+      val globalKept = globalArgs.sortBy(n => (
+        nodeKey(n), n.argumentIndex, n.method.fullName)).take({FLOWS_SINK_CAP})
+      val sinks = (localSinks ++ globalKept)
+        .filter(n => Option(n.method).nonEmpty).distinct
+        .sortBy(n => (nodeKey(n), n.argumentIndex, n.method.fullName))
       // Each invocation builds an engine. Batch by enclosing method instead of
       // rebuilding it for every argument; the cap stops subsequent method batches.
       val batches = sinks.groupBy(_.method).toList.sortBy {{ case (m, _) =>
         (m.filename, m.lineNumber.getOrElse(-1), m.fullName)
       }}.map(_._2)
+      // distinctBy path (#252 review): the broadened local sink set can yield several flows
+      // with an identical location sequence (same evidence); deduping by serialized path both
+      // removes the redundant flow and makes the order deterministic (a sort tie between two
+      // identical paths was leaving `analysis.lines` order run-dependent -> non-reproducible).
       val observed = (if (srcs.isEmpty) Iterator.empty else batches.iterator).flatMap(batch =>
-        batch.iterator.reachableByFlows(srcs)(flowContext).toList.sortBy(p =>
-          ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))){limit}.toList
+        batch.iterator.reachableByFlows(srcs)(flowContext).toList
+          .distinctBy(p => ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))
+          .sortBy(p => ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))){limit}.toList
       val kept = {retained}
+      // Canonical line set (#252 review): the dense local sink set makes reachableByFlows
+      // return path variants whose element ORDER differs across fresh CPGs, so the raw
+      // flatMap dump was run-dependent. The consumer only uses these as a point SET, so emit
+      // a deduped, sorted set -- same points, reproducible bytes. (Slice points already matched.)
+      val keptLines = kept.flatMap(_.elements).distinctBy(n => nodeKey(n))
+        .sortBy(n => nodeKey(n)).map(loc)
       ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
-        "lines" -> ujson.Arr.from(kept.flatMap(_.elements).map(loc)))
+        "sinks_capped" -> sinksCapped, "sinks_kept" -> sinks.size,
+        "lines" -> ujson.Arr.from(keptLines))
     """,
     )
 
