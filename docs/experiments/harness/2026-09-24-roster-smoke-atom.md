@@ -1,6 +1,6 @@
 # 새 로스터 역할별 실서빙 스모크 — Scout 풀 · Auditor — ATOM
 
-> **왜 돌렸나.** [ADR 0012(제안)](../../decisions/0012-harness-canon-v2.md) 결정 4의 새 키 `seccoderx-8b`(Scout
+> **왜 돌렸나.** [ADR 0012](../../decisions/0012-harness-canon-v2.md) 결정 4의 새 키 `seccoderx-8b`(Scout
 > memory·boundary)·`qwen3.6-35b-a3b`(Auditor)는 등재·배선까지 됐지만, **이 저장소에 뜬 기록이 없었다** —
 > `checksum`·`benchmark`가 전부 0이다. 그 둘과 injection 잠정 후보 Qwen3-14B(registry 밖)를 역할별로 띄워
 > ① sm_121에서 뜨는가 ② 하네스 스키마를 통과하는가 ③ 메모리·속도가 run을 막지 않는가를 봤다.
@@ -10,7 +10,7 @@
 > **비교표 밖이다** — 실서빙 키의 `checksum`이 전부 0이다([CLAUDE.md](../../../CLAUDE.md) §0). run은
 > 머지하지 않는 브랜치에서 돌았다 — `exp/atom-roster-smoke` @ `fdbc465`이고, main `c301342`에 설정만 얹었다(§9).
 >
-> **이 폴더에 적은 이유** — ADR 0012(제안) 결정 5는 실험 기록의 원천을 Notion으로 옮기지만 아직 제안이다.
+> **이 폴더에 적은 이유** — ADR 0012 결정 5는 실험 기록의 원천을 Notion으로 옮기지만 아직 제안이다(⏵ 2026-09-25 — 승인됐다).
 > 그래서 현행 규칙(이 폴더 [README](../README.md)의 첫 규약)을 따랐다(2026-09-24 조민규 결정).
 
 ## 메타
@@ -96,7 +96,7 @@
 
 → **Scout 풀과 Auditor는 같이 못 올린다** — 49.1 GiB 남은 자리에 util 몫 76.6 GiB가 들어가야 한다(계산값).
 ⚠ 정본 injection인 `deepseek-r1-distill-qwen-32b`는 **띄우지 않았다** — 그 자리의 잠정 후보 Qwen3-14B를 띄웠다
-(사용자 지시 — ADR 0012(제안) 결정 4). 그래서 「정본 Scout 풀이 한 장비에 들어가는가」는 이 표로 답하지 않는다.
+(사용자 지시 — ADR 0012 결정 4). 그래서 「정본 Scout 풀이 한 장비에 들어가는가」는 이 표로 답하지 않는다.
 
 ## 3. 실험 1 — `run_20260924_0001`: Scout 풀
 
@@ -204,7 +204,7 @@ run_id: run_20260924_0001
     63 tok/s였다.
 - **Scout 계약 위반은 하네스를 조용히 지나간다.** 신호와 점수의 모순, 첫 코드 형식 이탈, `location` 누락이 모두
   예외 없이 저장됐고, 앞의 둘은 승격까지 됐다. 판정을 점수가 아니라 최종 신호로 하는 것은
-  [ADR 0012(제안)](../../decisions/0012-harness-canon-v2.md) 결정 2다. 그 결정의 근거는 반대 방향(약한 review가 낮은
+  [ADR 0012](../../decisions/0012-harness-canon-v2.md) 결정 2다. 그 결정의 근거는 반대 방향(약한 review가 낮은
   점수로 떨어진다)이었다. 이 run에서는 그 방향이 0건이었고, 다른 방향(reject가 높은 점수로 올라간다)이 2건 나왔다.
 - **따라 나오지 않는 것**
   - 탐지 정확도 — 정답 대조가 없다.
@@ -372,7 +372,7 @@ Auditor `qwen3.6-35b-a3b`를 실모델로 부른다. Scout는 `fake_v2`다.
 | 1 | Auditor가 사고 없이 답한다 — 사고를 쓸지 정해야 한다 | 미등재. 길은 셋이다: 지금 그대로(문법이 사고를 막음) · 서버 인자로 `enable_thinking: false`(템플릿이 사고를 닫음, 하네스 변경 없음) · parser + `thinking_token_budget`(사고를 쓰되 길이를 묶음, 하네스가 그 필드를 보내야 함). §5 「Auditor 사고 모드 대조」 |
 | 2 | Scout 계약 위반이 조용히 저장·승격된다 | [D82](../../open-questions/D/D82.md)(신호·점수 — 닫는 조건 ⑤ · `requested_context`) · [D83](../../open-questions/D/D83.md)(`location`) |
 | 2 | 기동 조건을 registry에 적는다 | `config/models.yaml`의 `seccoderx-8b`·`qwen3.6-35b-a3b` 「기동 조건」과 `config/budgets.yaml`의 `output_max` 주석 — 이 보고서와 짝인 설정 PR |
-| 3 | Qwen3-14B 키 편입 | ADR 0012(제안) 승인 뒤 — 지금은 스모크 브랜치에만 있다 |
+| 3 | Qwen3-14B 키 편입 | ADR 0012 승인 뒤 — 지금은 스모크 브랜치에만 있다 |
 
 ## 8. 정리 상태
 
