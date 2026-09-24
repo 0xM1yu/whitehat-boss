@@ -867,7 +867,10 @@ def test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects() -> None
 
 
 def test_a_serving_profile_refuses_to_start_without_the_labels(
-    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    empty_slices: Path,
 ) -> None:
     """**실서빙 run에서는 경고로 부족하다** (@sumin0218 리뷰 #119).
 
@@ -893,6 +896,7 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     code = cli.main(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -930,8 +934,33 @@ def _errors(stderr: str) -> list[str]:
     return [line for line in stderr.splitlines() if line.startswith("[ERROR]")]
 
 
+@pytest.fixture
+def empty_slices(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """비었지만 믿을 수 있는 `slices.json` — `load_slices`를 통과하고 타깃은 0개다.
+
+    **실서빙 게이트 테스트가 제 게이트만 보게 한다.** `harness_pool`의 Scout 세 자리는 슬라이스
+    입력(v3)이라 `--slices`가 없으면 슬라이스 가드도 exit 2로 막는다 — 그러면 실서빙 게이트가
+    사라져도 거부 테스트가 초록이다. `tmp_path` 밖에 두는 것은 그 테스트들이 「run 디렉터리를
+    안 남겼다」를 `tmp_path`가 비었는지로 보기 때문이다.
+    """
+    path = tmp_path_factory.mktemp("slices") / "slices.json"
+    path.write_text(
+        json.dumps(
+            {
+                "slice_version": "slice-v2",
+                "status": "ok",
+                "joern_engine_config": {"maxCallDepth": 2},
+                "slices": [],
+                "candidate_manifest": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_a_serving_profile_refuses_when_only_the_device_is_missing(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, empty_slices: Path
 ) -> None:
     """**게이트의 절반씩을 따로 잠근다.** 둘을 한 번에 뺀 케이스만 보면 절반이 무검사다.
 
@@ -948,6 +977,7 @@ def test_a_serving_profile_refuses_when_only_the_device_is_missing(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -959,7 +989,7 @@ def test_a_serving_profile_refuses_when_only_the_device_is_missing(
 
 
 def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, empty_slices: Path
 ) -> None:
     """위와 짝. `_CONDITION_DEFAULTED`가 목록에서 빠지는 순간 죽는다.
 
@@ -970,6 +1000,7 @@ def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--device", "atom", "--kb-snapshot", "kb-20260901",
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -1030,6 +1061,10 @@ def test_a_dry_run_is_not_blocked_by_the_serving_gate(
     "그럴듯한 값으로 채우지 않는다"를 검사가 어기게 만드는 셈이다.
 
     경고는 그대로 낸다 — 알려 주는 것과 막는 것은 다르다.
+
+    **슬라이스 가드도 여기서 선다.** `--slices`를 안 주지만 Scout에 닿지 않으므로 슬라이스
+    입력 프롬프트(v3)를 부르지 않는다 — 가드가 「모델에 닿는가」를 안 보게 되면 이 run이
+    exit 2로 걸린다(2026-09-25 변이로 확인).
     """
     code = cli.main(
         [
@@ -1044,7 +1079,9 @@ def test_a_dry_run_is_not_blocked_by_the_serving_gate(
     assert not _errors(err), "dry-run에 [ERROR]가 붙었다"
 
 
-def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_a_blank_label_counts_as_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture, empty_slices: Path
+) -> None:
     """빈 문자열은 "줬다"가 아니다 — `--device ""`가 게이트와 사후 판정을 **둘 다** 통과했다.
 
     실측: `--device "" --condition B1@pipeline --kb-snapshot kb-x`로 돌면 exit 0으로 완주하고
@@ -1058,6 +1095,7 @@ def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureF
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--device", "   ", "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -1106,12 +1144,19 @@ def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureF
 
 
 def test_a_serving_profile_with_the_labels_passes_the_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    empty_slices: Path,
 ) -> None:
     """라벨을 주면 게이트를 통과한다 — 막는 것이 목적이 아니라 **묻는** 것이 목적이다.
 
     `_claim_run_dir`에 도달했다는 것으로 통과를 본다. 그 뒤는 실서빙 엔드포인트가 필요해
     이 테스트의 범위가 아니다.
+
+    `--slices`도 준다 — Scout 세 자리가 슬라이스 입력(v3)이라 없으면 슬라이스 가드가 먼저
+    막는다(바로 아래 테스트). 그래서 이 테스트가 **두 게이트의 양성 대조**다 — 가드가
+    `--slices`를 줘도 막도록 넓어지면 여기서 걸린다.
     """
 
     class _Stop(RuntimeError):
@@ -1126,6 +1171,7 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
             [
                 "run", "--profile", "harness_pool", "--target", str(TARGET),
                 "--condition", "B1prime@pipeline", "--device", "atom",
+                "--slices", str(empty_slices),
                 "--seed", "20260901", "--artifacts-root", str(tmp_path),
             ]
         )
