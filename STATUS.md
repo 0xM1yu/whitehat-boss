@@ -1,5 +1,10 @@
 # 하네스 구현 현황
 
+> ⚠ **보관 — 2026-09-24 [ADR 0012(제안)](docs/decisions/0012-harness-canon-v2.md) 결정 5.** 실험 기록의
+> 원천은 Notion 팀 워크스페이스다. 이 파일은 옮기지 않고 보관한다 — 절마다 든 날짜의 기록으로 읽고,
+> 아래 「갱신 규칙」도 그날까지의 규칙이다. **현재 상태의 정본은 [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)·
+> [docs/architecture.md](docs/architecture.md)·D·R 본문이다**([CLAUDE.md](CLAUDE.md) §6).
+
 > 대상: `src/` 전체 · 기준일: **절마다 다르다.** 각 절이 자기 날짜를 들고, 이 문서 전체가
 > 한 날짜 기준이라는 표기는 쓰지 않는다.
 >
@@ -129,6 +134,7 @@
 - Gate E1의 `location_ok`(`Location.overlaps`)는 **그래도 작동하지 않는다.** 원인이 후보
   위치가 아니라 `Evidence.location`이 어디서도 채워지지 않는 것이었다 — 이 문단이 오래
   틀리게 짚어 온 자리다(§10 정정, open-questions D23).
+  ⚠ **2026-09-24 — #248 전의 서술이다.** #248부터 semgrep이 첫 히트 위치를 싣는다(§10의 같은 날 노트).
 
 ---
 
@@ -466,6 +472,10 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 ## 9. 미해결 결정 사항
 
+> 2026-09-24 — 이 표는 그날 D10·D12·D3 세 행만 다시 보고 표시를 달았다. 나머지 행은 행마다 적힌 날짜까지의
+> 기록이라 그날의 상태가 아니다 — 예컨대 D13 행의 「해소(2026-08-20)」는 인덱스·본문의 상태와 다르다.
+> 현재 상태는 D 본문이 든다(머리의 보관 배너).
+
 | # | 항목 | 영향 |
 |---|---|---|
 | **D2** | `scout_threshold: 0.5`가 근거 없는 초기값 | 조건 간 비교 전 확정 필요. `cli.py`의 `PROVISIONAL_THRESHOLDS`가 `doctor`에서 경고. **2026-08-14 실측: benign 표본이 정확히 0.50으로 경계 통과.** 지금 바꾸지 않는다 — 픽스처가 떨어지도록 맞춘 값이 될 뿐이다 |
@@ -474,10 +484,10 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 | **D17** | 프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 장식으로 만든다 | **신규(2026-08-21)** — 지금은 사실 블록에 같은 내용을 넣어 우회하고 대가는 토큰 2배 계상. 고치면 `prompt_template_version`이 올라가 이전 결과와 비교가 끊긴다 |
 | **D18** | ~~8단계 정책이 게이트 등급을 읽지 않는다~~ | **해소(2026-09-20 — 커밋 `3e5c19f`, 선택지 (a))** — 8단계 승격이 `ok`에 더해 게이트 등급을 읽는다. 재현에 성공해도 E4 미만이면 무전이로 `validated`에 홀드한다(F-10b, `evidence_below_proven`). ⚠ **그 F-10b 갈래는 오늘 노드 경로에서 안 탄다** — `ok=True`면 게이트 등급이 반드시 E4다. 고친 것은 구조이지 오늘의 관측이 아니다. 그전에는 `ok` 하나로 정해졌고 그것이 §5의 "지금은 세 단계 전부에서 판정한다"를 한정하고 있었다. 내용은 [open-questions D18](docs/open-questions.md)에만 둔다 |
 | **D1** | ~~B1/B1'/B3/B3' 라벨이 2×2와 파이프라인 두 축으로 사용됨~~ | **해소(2026-09-20)** — 2×2가 폐기되고 Scout 오케스트레이터로 확정돼 **축이 하나만 남았다.** `CONDITION_PATTERN`에서 `@2x2`를 뺐다 |
-| D10 | 재평가 횟수를 **아무 데도 보관하지 않는다** (2026-08-31 D25로 in-memory 카운터 제거) | `requeue_count` 생산자가 없어 `requeue_limit_reached`가 단일 run 안에서도 발동하지 않는다 |
+| **D10** | ~~재평가 횟수를 **아무 데도 보관하지 않는다** (2026-08-31 D25로 in-memory 카운터 제거)~~ | **해소(2026-09-24 — [ADR 0012(제안)](docs/decisions/0012-harness-canon-v2.md) 결정 6)** — 재평가(requeue) 경로를 배선하지 않기로 해 보관할 횟수가 없다. 그전의 영향은 「`requeue_count` 생산자가 없어 `requeue_limit_reached`가 단일 run 안에서도 발동하지 않는다」였다. D10 본문 끝의 resume·스키마 버전 잔여(구버전 `state.db` 로드)는 [D86](docs/open-questions/D/D86.md)이 든다 |
 | D11 | `Evidence`에 "발견 건수" 필드 부재 | **semgrep은 해소**: `--json` 결과 문서의 유무로 판정하므로 exit code 관례에 의존하지 않는다(2026-08-14 크래시가 "발견함"으로 집계된 사건 이후). **clang-tidy는 여전히 미해결** — 컴파일 실패와 경고 발견이 같은 exit code라 출력 문자열(`clang-diagnostic-error`)로 가른다 |
-| D12 | build 실행 단계 소속 (2단계 vs 8단계) | 문서와 구현 불일치. 현재 코드는 2단계에 프로브 |
-| D3 | `capsule_expansion_max: 3` 초기값 | 실측 후 조정 |
+| **D12** | ~~build 실행 단계 소속 (2단계 vs 8단계)~~ | **해소(2026-09-24 — 선택지 (a))** — [architecture.md](docs/architecture.md) §3을 코드에 맞췄다. build는 2단계 신호 도구다(`src/orchestrator/nodes/signals.py:26`의 `SIGNAL_TOOLS`). 그전의 영향은 「문서와 구현 불일치. 현재 코드는 2단계에 프로브」였다 |
+| D3 | `capsule_expansion_max: 3` 초기값 | 실측 후 조정. ⚠ 2026-09-24 — 확장 상한은 need_evidence 루프의 `max_hops`로 대체 예정이다([ADR 0012(제안)](docs/decisions/0012-harness-canon-v2.md) 결정 6) — 그 값을 배선하는 PR이 D3을 닫는다 |
 
 ---
 
@@ -536,6 +546,13 @@ zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그�
 섞으면 같은 run이 세 개의 다른 제거율을 낸다. 분모로 쓸 값은 `target_plan.planned`다.
 
 ### Gate E1의 `location_ok`는 여전히 작동하지 않는다 — 원인은 후보 위치가 아니었다
+
+> ⚠ **2026-09-24 — 이 절의 제목과 2026-08-23 문단들(「왼쪽에 값이 없다」·「어느 쪽도 `location=`을 넘기지
+> 않는다」·「…채워야 하고, 그것은 별개의 작업이다」)은 #248 전의 서술이다.**
+> #248부터 semgrep은 첫 히트 위치를 `Evidence.location`에 싣는다(컨테이너 `first_hit_location()`과
+> Fake 짝이 함께). clang-tidy는 그대로 `None`이다. 등급 영향이 0인 것은 아래 2026-08-25 블록 그대로다 —
+> 위치를 싣는 것이 STATIC Evidence뿐이다. 본문은 날짜 기록이라 고치지 않고, 경과는
+> [D23](docs/open-questions/D/D23.md) 본문이 든다.
 
 **2026-08-23 정정.** 이 문서는 오래 "심볼 단위로 좁혀지면 `location_ok`가 비로소 작동을
 시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다)"고 적어 왔다.
