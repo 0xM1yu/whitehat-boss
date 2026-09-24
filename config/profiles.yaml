@@ -328,6 +328,9 @@ profiles:
     # - **Auditor = §1의 `qwen3.6-35b-a3b`.** Auditor 프롬프트가 아직 미확정이라 registry가
     #   디스크의 v1을 고른다(auditor/v3는 #237 신설 중 — 확정되면 그때 올린다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`).
+    #   ⚠ **2026-09-24 — 「#237 신설 중」은 이 줄이 들어온 #240(2026-09-22 17:27 KST) 때 이미 지났다** — #237은
+    #   같은 날 16:18에 머지돼 `prompts/auditor/v3`가 디스크에 있다. registry가 아직 v1을 고르는 것은 그대로다.
+    #   이 Auditor의 기동 조건(parser 없이 띄우면 사고 없이 답한다)은 `config/models.yaml`의 그 항목이 든다.
     # ⚠ **local_balanced와 더는 같지 않다** — 전 역할이 §1 확정 로스터로 갈렸다
     #   (`local_balanced`는 단일 scout · auditor `qwen3-coder-30b-a3b` · critic `devstral-small-2-24b`
     #   · 리랭커 `qwen3-reranker-0.6b`). embedding만 같다.
