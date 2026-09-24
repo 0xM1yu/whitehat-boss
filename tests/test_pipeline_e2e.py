@@ -318,10 +318,11 @@ def test_scout_pool_builds_the_light_capsule_once_per_target(
     original = retrieval_node.run
     light_calls: list[tuple[object, ...]] = []
 
-    def spy(ctx: object, *, target: object, level: object) -> object:  # noqa: ANN401
+    def spy(ctx: object, *, target: object, level: object, **kwargs: object) -> object:  # noqa: ANN401
         if level is CapsuleLevel.LIGHT:
             light_calls.append((target.file, target.symbol, target.line_start, target.line_end))
-        return original(ctx, target=target, level=level)
+        # 러너가 넘기는 나머지(`slice_id` — 슬라이스 없는 run이면 `None`)는 그대로 흘린다.
+        return original(ctx, target=target, level=level, **kwargs)
 
     monkeypatch.setattr(retrieval_node, "run", spy)
     result, _ = _run(tmp_path, configure=_poolify(mode))
