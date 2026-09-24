@@ -415,7 +415,8 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     `role:`을 같은 블록에 들고 있으므로 역할과 숫자를 **짝으로** 뽑아야 한다. 지금처럼
     전역값 하나와 대조하면, critic에 8,192를 주고 문서에 4,096을 적어도 통과한다.
 
-    **`b1_single`을 쓰는 것은 아무 프로필이나 된다는 뜻이다.** `config/budgets.yaml`이
+    **`harness_pool`을 쓰는 것은 아무 프로필이나 된다는 뜻이다**(2026-09-24 전에는 지운
+    `b1_single`이었다). `config/budgets.yaml`이
     "thresholds·sampling·seed는 프로필과 무관하게 공통"이라고 못박아 뒀다. 그 전제가
     깨지면 이 테스트는 한 프로필만 보게 되므로, 그때는 여기도 같이 고쳐야 한다.
     """
@@ -426,7 +427,7 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     declared = [int(m.group(1)) for m in pattern.finditer(contract)]
     assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
 
-    thresholds = load_config("b1_single").thresholds
+    thresholds = load_config("harness_pool").thresholds
     # **값이 없어도 막을 수 있다.** 아래 비교는 전역값 하나와 대조하므로, 역할별 상한이
     # 선언되는 날 critic에 8,192를 주고 문서에 4,096을 적어도 조용히 통과한다 — D42가
     # 나온 드리프트가 한 겹 아래에서 재현된다. 그날 이 줄이 먼저 빨개져서 아래를 역할
@@ -461,7 +462,7 @@ def test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared(
     """
     from src import config as config_module
 
-    loaded = config_module.load_config("b1_single")
+    loaded = config_module.load_config("harness_pool")
     declared = loaded.transition(
         thresholds=loaded.thresholds.transition(output_max_by_role={"critic": 8192})
     )
@@ -907,8 +908,8 @@ def _registry_keys() -> set[str]:
     """`config/models.yaml`이 등재한 model key. 로더가 읽는 것과 같은 방식으로 읽는다.
 
     **정규식으로 긁지 않는다.** 이 파일은 주석이 본문보다 길고 그 주석이 다른 항목의 키
-    이름을 여러 번 인용한다(`qwen3-8b` 블록이 `qwen3-4b`를 부르는 식) — 줄 단위로 긁으면
-    **주석에 이름이 나온 것만으로 「등재됐다」가 된다.**
+    이름을 여러 번 인용한다(`qwen3-14b` 블록이 지운 `deepseek-r1-distill-qwen-32b`를
+    부르는 식) — 줄 단위로 긁으면 **주석에 이름이 나온 것만으로 「등재됐다」가 된다.**
     """
     from src.config import CONFIG_DIR
 
@@ -984,13 +985,14 @@ def test_every_registry_model_is_named_in_context() -> None:
     합집합이 `config/models.yaml`을 덮는다. 덮지 못하는 키는 **아무 문서도 설명하지 않는
     모델**이고, 그것을 프로필에 배선한 사람과 나중에 읽는 사람이 서로 다른 것을 안다.
 
-    이 저장소는 registry 키를 지우지 않는다(ADR 0010 「되돌리는 비용」). 그래서 로스터에서
-    내려온 키가 registry에 남는 것이 정상이고, **정상인 것과 잊힌 것을 가르는 유일한 자리가
-    그 두 번째 표다.** 표가 비면 둘을 못 가른다.
+    2026-09-24까지 이 저장소는 registry 키를 지우지 않았다(ADR 0010 「되돌리는 비용」). 그날
+    로스터 밖 키를 지우도록 규칙을 고쳤다(PROJECT-CONTEXT.md §1 끝) — 그래도 **로스터에 없이
+    남는 키(인프라 `fake`·`fake_v2`)의 사유를 적는 자리는 그 두 번째 표다.** 표가 비면 남긴 것과
+    잊힌 것을 못 가른다.
 
     **양방향으로 본다.** 두 번째 표가 "registry에 남는다"고 적은 키가 실제로는 지워졌다면
-    그 표가 거짓말이고, 특히 `qwen3-reranker-0.6b`는 그 표에서 **지우지 않는다**고 명시된
-    대조 기준이다 — 조용히 사라지면 4B와의 대조가 근거를 잃는다.
+    그 표가 거짓말이다 — 키를 지우는 PR은 그 행도 함께 지운다. (옛 표는 `qwen3-reranker-0.6b`를
+    「지우지 않는 대조 기준」으로 들고 있었고, 2026-09-24 정리가 키와 행을 함께 지웠다.)
     """
     text = _read(CONTEXT)
     roster_header, roster_rows = _first_table(text, _ROSTER_HEADING, _ROSTER_TABLE)
@@ -1024,9 +1026,11 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
     **왜 이 검사가 있나.** PROJECT-CONTEXT.md §3이 `config/profiles.yaml`을 「로스터를 바꿀 때
     손대는
-    넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **지금은 다르다.**
-    프로필 전부가 아직 단일 `scout`이고 `critic`은 `devstral-small-2-24b`다. 그 어긋남을 정본이
-    안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
+    넷」에 넣는다. 그러니 정본만 읽은 사람은 그 파일이 §1과 같다고 읽는다 — **이 검사를 세울
+    때는 달랐다.** 프로필 전부가 단일 `scout`이고 `critic`은 `devstral-small-2-24b`였다. 그 어긋남을
+    정본이 안 들면, 정본을 먼저 읽으라는 `CLAUDE.md` §7의 지시가 오히려 오독을 만든다.
+    (2026-09-24 옛 로스터 프로필을 지워 지금은 실모델 프로필이 §1과 일치한다 — 아래 양방향 중
+    「재배선이 끝나면」 쪽이 도는 상태다.)
 
     **이 검사는 양방향으로 돈다.**
 

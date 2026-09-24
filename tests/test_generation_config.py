@@ -145,6 +145,11 @@ def _without_source(config, role: str):
     거스른다(받아서 띄운 모델은 적는다). 그래서 대조군을 합성으로 만든다 —
     `tests/test_config.py::test_a_hybrid_profile_keeps_its_retrieval_roles`가 같은
     이유로 쓰는 방식이다. 이러면 registry 내용이 바뀌어도 이 검사가 안 흔들린다.
+
+    ⚠ **2026-09-24 — `local_balanced`와 그 키들을 지웠다**(로스터 밖 정리). 아래 검사는
+    canonical `harness_pool`로 옮겼다. 그 프로필에서 `hf://…@rev`로 **읽히는** 프롬프트 역할은
+    `scout_injection`(`qwen3-14b`)·`critic`(`gpt-oss-20b`) 둘이다 — `seccoderx-8b`와
+    `qwen3.6-35b-a3b`는 `source`에 `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
     """
     key = config.profile.roles[role]
     entry = config.models[key].model_copy(update={"source": None})
@@ -160,18 +165,18 @@ def test_the_role_map_keeps_a_model_that_read_but_declared_nothing(
     **모두** 뜻했다. 그중 마지막만 실험 사실이고 나머지는 우리 쪽 구멍인데, 부재
     하나로 뭉개지면 "그 모델은 선언이 없다"로 읽는 것을 막을 방법이 없다.
     """
-    config = _without_source(load_config("local_balanced"), "critic")
+    config = _without_source(load_config("harness_pool"), "critic")
     served = config.served_models()
-    scout_source = config.models[served["scout"]].source
+    scout_source = config.models[served["scout_injection"]].source
     assert scout_source is not None
     assert config.models[served["critic"]].source is None  # 대조군: 읽을 것이 없다 (합성)
-    # scout에만 파일을 깐다 — bos만 들어 샘플링 선언이 0개다
+    # scout_injection에만 파일을 깐다 — bos만 들어 샘플링 선언이 0개다
     _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1})
 
     by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
 
-    assert "scout" in by_role, "읽었으나 선언이 0개인 역할은 맵에 남아야 한다"
-    assert by_role["scout"].top_k is None
+    assert "scout_injection" in by_role, "읽었으나 선언이 0개인 역할은 맵에 남아야 한다"
+    assert by_role["scout_injection"].top_k is None
     assert "critic" not in by_role, "source가 없어 읽지 못한 역할만 빠진다"
     assert "auditor" not in by_role, "파일을 안 깐 역할도 못 읽은 쪽이다"
 
@@ -281,36 +286,37 @@ def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:
     """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
-    `local_balanced`는 scout·auditor가 `hf://` source를 갖고, critic은 `_without_source`가
-    합성으로 비운다. scout·auditor에만 파일을 깔면 맵에 둘만 들어오고 critic은 빠진다 —
-    "이 역할은 선언 샘플링을 못 읽었다"가 부재로 드러난다.
+    `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout_injection·critic이고, auditor는
+    `_without_source`가 합성으로 비운다. 두 역할에만 파일을 깔면 맵에 둘만 들어오고 나머지는
+    빠진다 — "이 역할은 선언 샘플링을 못 읽었다"가 부재로 드러난다. (2026-09-24 전에는
+    `local_balanced`의 scout·auditor가 읽히는 쪽, critic이 대조군이었다.)
 
-    **critic을 합성으로 비우는 이유는 `_without_source`의 docstring에 있다** — 2026-09-04에
+    **auditor를 합성으로 비우는 이유는 `_without_source`의 docstring에 있다** — 2026-09-04에
     registry에서 `source` 없는 실서빙 모델이 사라졌다.
     """
-    config = _without_source(load_config("local_balanced"), "critic")
+    config = _without_source(load_config("harness_pool"), "auditor")
     served = config.served_models()
-    scout_source = config.models[served["scout"]].source
-    auditor_source = config.models[served["auditor"]].source
-    assert scout_source and auditor_source
-    assert config.models[served["critic"]].source is None  # 전제 (합성)
+    scout_source = config.models[served["scout_injection"]].source
+    critic_source = config.models[served["critic"]].source
+    assert scout_source and critic_source
+    assert config.models[served["auditor"]].source is None  # 전제 (합성)
 
     _write_generation_config(tmp_path, scout_source, {"top_k": 20, "temperature": 0.6})
-    _write_generation_config(tmp_path, auditor_source, {"top_k": 20, "repetition_penalty": 1.05})
+    _write_generation_config(tmp_path, critic_source, {"top_k": 20, "repetition_penalty": 1.05})
 
     by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
 
-    assert set(by_role) == {"scout", "auditor"}
-    assert by_role["scout"].top_k == 20
-    assert by_role["auditor"].repetition_penalty == 1.05
-    assert "critic" not in by_role  # source 없음
+    assert set(by_role) == {"scout_injection", "critic"}
+    assert by_role["scout_injection"].top_k == 20
+    assert by_role["critic"].repetition_penalty == 1.05
+    assert "auditor" not in by_role  # source 없음
     assert "embedding" not in by_role  # PROMPTED_ROLES 아님
 
 
 def test_by_role_is_empty_not_none_when_nothing_resolves(tmp_path: Path) -> None:
     """읽을 게 없어도 **빈 dict**를 준다 — `RunRecord.model_sampling`의 `None`은
     옛 manifest 전용이고, 새 run은 비어도 dict를 남긴다(그 구분이 필드 주석의 근거다)."""
-    config = load_config("local_balanced")  # 파일을 하나도 안 깐다
+    config = load_config("harness_pool")  # 파일을 하나도 안 깐다
 
     assert declared_sampling_by_role(config, hub_cache=tmp_path) == {}
 
@@ -326,11 +332,11 @@ def test_the_read_but_empty_role_survives_the_manifest_round_trip(tmp_path: Path
     객체**로, 못 읽은 역할은 **키 자체가 없음**으로 남는다. 그 둘이 재검증을 통과해도
     구별된 채 돌아오는 것을 여기서 못 박는다.
     """
-    config = load_config("local_balanced")
+    config = load_config("harness_pool")
     served = config.served_models()
-    scout_source = config.models[served["scout"]].source
+    scout_source = config.models[served["scout_injection"]].source
     assert scout_source is not None
-    # scout만 bos/eos로 깐다 — 읽혔고 선언이 0개인 역할이다. auditor는 안 깐다.
+    # scout_injection만 bos/eos로 깐다 — 읽혔고 선언이 0개인 역할이다. auditor는 안 깐다.
     _write_generation_config(tmp_path, scout_source, {"bos_token_id": 1, "eos_token_id": 2})
 
     by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
@@ -355,7 +361,7 @@ def test_the_read_but_empty_role_survives_the_manifest_round_trip(tmp_path: Path
     )
 
     written = json.loads(record.model_dump_json())
-    assert written["model_sampling"]["scout"] == {
+    assert written["model_sampling"]["scout_injection"] == {
         "temperature": None,
         "top_p": None,
         "top_k": None,
@@ -365,5 +371,5 @@ def test_the_read_but_empty_role_survives_the_manifest_round_trip(tmp_path: Path
 
     reloaded = RunRecord.model_validate_json(record.model_dump_json())
     assert reloaded.model_sampling is not None
-    assert reloaded.model_sampling["scout"] == ModelSampling()
+    assert reloaded.model_sampling["scout_injection"] == ModelSampling()
     assert "auditor" not in reloaded.model_sampling
