@@ -400,6 +400,11 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     ⚠ **2026-09-24 — 위 문단은 PR #190 때의 서술이다.** 2026-09-21 교체로 그 프로필(지금 이름
     `harness_pool`)의 Scout 세 키가 v3를 가리키고 별칭 셋은 배선이 없다. 지금 이 검사가 풀에서
     지키는 것은 **v3 디렉터리의 실재**다.
+
+    ⚠ **2026-09-25 — 첫 문단의 「첫 모델 호출에서 처음 열린다」는 이제 `--slices`를 준 run에만
+    맞다.** 모델에 닿는 run이 `--slices` 없이 시작하면 `cli.run`의 슬라이스 가드가 시작 전에
+    프로필의 프롬프트를 전부 열고, 로드 실패도 거기서 exit 2다. 풀 프로필의 run은 `--slices`를
+    줘야 서므로 그 run에서는 여전히 첫 호출에서 연다 — 이 검사는 그대로 필요하다.
     """
     config = load_config(profile)
 
