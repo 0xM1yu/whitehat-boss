@@ -1,6 +1,6 @@
 # 외부 문헌 조사
 
-> ⚠ **보관 — 2026-09-24 [ADR 0012(제안)](../decisions/0012-harness-canon-v2.md) 결정 5.** 실험 기록의 원천은
+> ⚠ **보관 — 2026-09-24 [ADR 0012](../decisions/0012-harness-canon-v2.md) 결정 5.** 실험 기록의 원천은
 > Notion 팀 워크스페이스다. 이 폴더는 옮기지 않고 보관한다 — **보관이지 폐기가 아니다.** ADR·D·R 본문과
 > [CLAUDE.md](../../CLAUDE.md)가 근거로 드는 조사는 그 날짜의 조사로 그대로 인용한다. 로스터의 현재 정본은
 > [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1이다.
