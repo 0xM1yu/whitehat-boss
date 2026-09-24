@@ -93,6 +93,17 @@ class SlicingStages:
             if candidate["case"] == "A":
                 query = queries.flows_query(candidate["scopes"], self.max_flows, self.engine_limits)
                 payload, _ = self.query("flows", query)
+                if payload.get("sinks_capped"):
+                    # HIGH-1 (#252 review): the global memory-write sink set hit FLOWS_SINK_CAP,
+                    # so the kept subset is an unspecified first-N by source order. Candidate-method
+                    # sinks are always kept, so this bounds only cross-function reach, not the
+                    # candidate's own function. Record it -- a silent cap would look complete.
+                    self.result["diagnostics"].append({
+                        "stage": "flows",
+                        "candidate": candidate["candidate_key"],
+                        "note": f"global memory-write sinks exceeded {queries.FLOWS_SINK_CAP}; "
+                        "kept first-N by source order (candidate-method sinks always kept)",
+                    })
             else:
                 query = backward_b_query(
                     candidate,
