@@ -81,6 +81,8 @@ models:
   # **`benchmark`는 0(별칭 자체 미실측 · §0).** base 처리량을 여기 옮기는 코드 경로는 없고
   # (`_gpu_estimate`가 별칭을 그대로 미실측으로 본다), devstral base는 그 값이 애초에 0이다.
   # 풀 프로필 `local_balanced_pool`이 이 셋을 scout 자리에 배선한다.
+  # ⚠ **2026-09-24 — 위 줄은 PR #190 때의 서술이다.** 2026-09-21 교체로 그 프로필(지금 이름 `harness_pool`)의
+  #   Scout 자리가 v3 키로 옮겨 이 셋은 배선이 없다(PROJECT-CONTEXT.md 「로스터에 없지만 registry에 남는 것」).
   # ⚠ **base가 바뀌면 여기도 손으로 맞춰야 한다** — 「base ↔ 별칭」 짝을 잠그는 검사가 없다
   #   (`test_the_context_roster_matches_the_model_registry`는 registry 등재 여부만 본다).
   qwen3-coder-30b-a3b-v2:
@@ -721,6 +723,8 @@ models:
 
   deepseek-r1-distill-qwen-32b:
     # 확정 로스터 Scout injection (프롬프트 v3). DeepSeek-R1-Distill-Qwen-32B.
+    # ⚠ **2026-09-24 — 위 「확정 로스터 Scout injection」은 지났다.** 그 자리는 `qwen3-14b`로 옮겼고(아래 그 항목)
+    #   이 키를 배선한 프로필은 없다. 키는 registry에 남는다(PROJECT-CONTEXT.md 「로스터에 없지만 registry에 남는 것」).
     # config.json: Qwen2ForCausalLM, context 131072, torch_dtype bfloat16.
     # license MIT (베이스 Qwen2.5는 Apache-2.0). ⚠ family: 베이스 가중치는 Qwen2.5지만
     # DeepSeek 재학습이라 계열 확정 필요 — ADR 0010 §4(베이스 제작사)로 일단 qwen.
@@ -818,6 +822,59 @@ models:
     source: "hf://Qwen/Qwen3.6-35B-A3B"
     family: "qwen"
     prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
+  qwen3-14b:
+    # 로스터 Scout injection (프롬프트 v3). Qwen/Qwen3-14B — dense 14.8B.
+    # 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서 옮겼다 — 근거는
+    # ADR 0012(제안, PR #260) 결정 4의 표이고, 2026-09-24 조민규가 로스터 확정으로 배선을 지시했다.
+    # 값은 2026-09-24 Hugging Face에서 직접 읽었다:
+    #   rev·license — `GET https://huggingface.co/api/models/Qwen/Qwen3-14B`의 `sha`·태그 `license:apache-2.0`
+    #   `config.json@<rev>` — architectures `['Qwen3ForCausalLM']` · max_position_embeddings 40960 ·
+    #     torch_dtype bfloat16 · `quantization_config` 없음 → `bf16`은 native dtype(`qwen3-reranker-4b`와 같은 관행)
+    #   safetensors 8개 29,536,665,640 B(`?blobs=true`의 파일 크기를 더한 계산값 · 27.51 GiB) · index
+    #     `total_size` 29,536,614,400 B · 파라미터 BF16 14,768,307,200(같은 API의 `safetensors`)
+    # `context_limit`은 모델 상한이지 그날 띄운 값이 아니다(`gpt-oss-20b` 항목과 같은 관례).
+    # ⚠ `checksum`은 자리표시자 0이다 — ATOM에서 받은 뒤 `tools/model_checksum.py`로 채운다. 그전에 돈
+    #   run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
+    #
+    # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0001` — 머지하지 않는 스모크 브랜치, `checksum`이
+    # 0이라 비교표 밖). 원문은 docs/experiments/harness/2026-09-24-roster-smoke-atom.md §9다.
+    #
+    #   VLLM_USE_DEEP_GEMM=0 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_HOST_IP=127.0.0.1 \
+    #   NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
+    #   vllm serve Qwen/Qwen3-14B \
+    #     --revision 40c069824f4251a91eefaf281ebe4c544efd3e18 --served-model-name qwen3-14b \
+    #     --host 127.0.0.1 --port 8010 --max-model-len 16384 --gpu-memory-utilization 0.30 \
+    #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
+    #
+    #   **축약이라 그대로 복붙하면 안 된다** — `seccoderx-8b` 항목의 같은 문단을 본다.
+    #
+    # - **사고 구간을 먼저 낸다 — parser가 떼어 낸다.** 이 모델 어휘의 `</think>`(151668) 위치로 센 사고 길이가
+    #   중앙값 444토큰(320~1,279)이고 출력의 64%다. 10/10이 첫 시도에 `ScoutResponse`를 통과했다.
+    # - **느리다.** 단일 요청 생성 **8.1 tok/s**(서버 로그 10초 창 중앙값, 106창) — `output_max` 4,096을 다 쓰면
+    #   ≈506 s(계산값)라 `_TIMEOUT_S` 300 s 안에는 ≈2,430토큰까지다(이슈 #261). 그 run의 injection 호출 wall은
+    #   중앙값 94.7 s · 최대 195.8 s였다.
+    # - 메모리(서버 로그): 가중치 27.52 GiB(로드 160 s) · 가중치+non-torch 28.27 GiB · util 0.30에서 KV 7.37 GiB
+    #   (48,256 tok — 16,384 길이에 2.95×). 기동 명령부터 `Starting vLLM server`까지 181 s.
+    #   `seccoderx-8b`와 함께 떠 있는 동안 장비 `MemAvailable` 최저값이 49.1 GiB였다(감시자 로그).
+    endpoint: "http://127.0.0.1:8010/v1"
+    context_limit: 40960
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
+    family: "qwen"
+    prompt_template_version: "v3"
     fallback: null
     benchmark:
       measured_at: null
