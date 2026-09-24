@@ -1090,7 +1090,7 @@ def test_the_model_serving_port_table_matches_the_registry() -> None:
     """
     # 핀 — 양성은 저장소의 실제 행이다(`docs/model-serving.md` 포트 표의 8004 행 — 검색 모델이라
     # 재배치에서 번호가 안 바뀐다). 음성은 같은 표의 머리 줄 모양이다 — 행이 아니다.
-    assert _PORT_ROW.search("> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding) |")
+    assert _PORT_ROW.search("> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid` |")
     assert not _PORT_ROW.search("> | 포트 | 어느 프로필이 어느 이름을 보내나 |")
     from src.config import CONFIG_DIR
 
