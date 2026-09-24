@@ -49,7 +49,7 @@ from src.tokens import estimate_tokens
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
 ZERO_COMMIT = "0" * 40
-AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3-coder-30b-a3b", prompt_version="v1")
+AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3.6-35b-a3b", prompt_version="v1")
 
 
 def _finding(**overrides: object) -> Finding:
@@ -140,7 +140,7 @@ def test_decision_example_parses() -> None:
         rationale="상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
         evidence_refs=["ev_graph_0012"],
         produced_by=ProducedBy(
-            role=Role.CRITIC, model="devstral-small-2-24b", prompt_version="v1"
+            role=Role.CRITIC, model="gpt-oss-20b", prompt_version="v1"
         ),
     )
     assert decision.is_grounded
