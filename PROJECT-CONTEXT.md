@@ -60,17 +60,19 @@ memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 �
 ### 모델별 정밀도 · 추론(사고) — 2026-09-24
 
 값의 정본은 `config/models.yaml`(`quantization`·`reasoning_effort`)과 그 항목의 「기동 조건」 주석이다. 이 표는
-한 화면 조망이고, 어긋나면 그쪽을 믿고 이 표를 고친다. 적재 크기는 vLLM 로그 실측이다 —
-[2026-09-24 스모크](docs/experiments/harness/2026-09-24-roster-smoke-atom.md) §2(Scout 둘·Auditor, 가중치)와
-[2026-09-21 메모리 보고서](docs/experiments/harness/2026-09-21-roster-memory-kv-atom.md) §1(검색 둘·Critic, 가중치+non-torch).
+한 화면 조망이고, 어긋나면 그쪽을 믿고 이 표를 고친다. 적재 크기는 vLLM 로그 실측의 **가중치+non-torch**다 —
+[2026-09-24 스모크](docs/experiments/harness/2026-09-24-roster-smoke-atom.md) §2(Scout 둘·Auditor — Auditor는 두 번째 기동)와
+[2026-09-21 메모리 보고서](docs/experiments/harness/2026-09-21-roster-memory-kv-atom.md) §1(검색 둘·Critic). 가중치만은 스모크 §2의
+「가중치」 칸이다(15.27 · 27.52 · 65.53 GiB). non-torch 항은 util·기동마다 움직여 한 점이 아니다 — 리랭커가 두 판에서
+8.12·8.15다(메모리 보고서 §1).
 
-| 자리 | 모델 | 가중치 정밀도 | 적재 크기 | 추론(사고) — 지금 설정에서 | 추론 손잡이(vLLM 0.27.1) |
+| 자리 | 모델 | 가중치 정밀도 | 적재 크기(가중치+non-torch) | 추론(사고) — 지금 설정에서 | 추론 손잡이(vLLM 0.27.1) |
 | --- | --- | --- | --- | --- | --- |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | fp16 | 1.76 GiB | 해당 없음 | — |
-| 3단계 · 리랭커 | `qwen3-reranker-4b` | bf16 | 8.15 GiB | 해당 없음 | — |
-| 4단계 · memory·boundary | `seccoderx-8b`(SecCoderX RM, Qwen3-8B 기반) | bf16 | 15.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다(스모크 §3 실험 1) | 등급이 없다. 길이 예산(`thinking_token_budget`)은 이 모델에 안 먹는다 — dense라 V2 러너로 돌고 V2가 그 필드를 거절한다 |
-| 4단계 · injection | `qwen3-14b` | bf16 | 27.52 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 위와 같다 |
-| 5단계 · Auditor | `qwen3.6-35b-a3b`(MoE 35B·활성 3B · GDN hybrid · VLM) | bf16 | 65.53 GiB | **사고 없이 답한다** — reasoning parser 없이 띄운 판이라 구조화 출력 문법이 첫 토큰부터 걸렸다(스모크 §3 실험 3) | 등급이 없다 — `reasoning_effort`는 켜기/끄기로만 번역된다. reasoning parser를 걸어야 사고가 살고(스모크 §3 실험 2는 `deepseek_r1`로 띄웠다 · 배선은 `qwen3`로 정했다 — §5 「모델 배선」), 그러면 `thinking_token_budget`으로 길이를 묶을 수 있다(V1 러너) |
+| 3단계 · 리랭커 | `qwen3-reranker-4b` | bf16 | 8.12~8.15 GiB | 해당 없음 | — |
+| 4단계 · memory·boundary | `seccoderx-8b`(SecCoderX RM, Qwen3-8B 기반) | bf16 | 16.05 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다(스모크 §3 실험 1) | 등급이 없다. 길이 예산(`thinking_token_budget`)은 이 모델에 안 먹는다 — dense라 V2 러너로 돌고 V2가 그 필드를 거절한다 |
+| 4단계 · injection | `qwen3-14b` | bf16 | 28.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 위와 같다 |
+| 5단계 · Auditor | `qwen3.6-35b-a3b`(MoE 35B·활성 3B · GDN hybrid · VLM) | bf16 | 68.6 GiB | **사고 없이 답한다** — reasoning parser 없이 띄운 판이라 구조화 출력 문법이 첫 토큰부터 걸렸다(스모크 §3 실험 3) | 등급이 없다 — `reasoning_effort`는 켜기/끄기로만 번역된다. reasoning parser를 걸어야 사고가 살고(스모크 §3 실험 2는 `deepseek_r1`로 띄웠다 · 배선은 `qwen3`로 정했다 — §5 「모델 배선」), 그러면 `thinking_token_budget`으로 길이를 묶을 수 있다(V1 러너) |
 | 7단계 · Critic | `gpt-oss-20b` | MXFP4(원래 형식) | 14.65 GiB | `reasoning_effort: high` | 등급 low·medium·high가 harmony system message에 실제로 들어간다. 길이 예산은 못 쓴다 |
 
 ⚠ 「추론 손잡이」 칸은 vLLM `v0.27.1` 태그의 소스에서 읽은 것이다(줄 번호는 2026-09-24에 그 태그와 다시 대조했다 ·
