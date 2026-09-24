@@ -353,14 +353,22 @@ def test_an_export_dir_that_is_a_file_is_refused_before_the_run(tmp_path):
     assert error.value.code == 2
 
 
-def test_an_undecodable_source_blocks_the_checkpoint(monkeypatch, repo, tmp_path):
-    """A file counted as read but never decoded must not let a run_contract bind.
+def test_an_unreadable_source_blocks_the_checkpoint(monkeypatch, repo, tmp_path):
+    """A file counted (files_seen) but not actually read must not let a run_contract bind.
 
-    The hash was taken before the decode, so `source_hashes` balanced against
-    `files_seen` while `sources` was short an entry -- the exact state
-    `Cannot checkpoint incomplete source reads` exists to refuse.
+    Invalid encoding no longer triggers this -- latin-1 fallback reads it (D85/#254). A
+    genuine I/O failure still does: `source_hashes` stays short of `files_seen`, the exact
+    state `Cannot checkpoint incomplete source reads` exists to refuse.
     """
-    (repo / "bad.cpp").write_bytes(b"\xff\xfe\xfd")
+    (repo / "bad.cpp").write_text("int x;\n", encoding="utf-8")
+    real_read = slicer._read_no_follow
+
+    def failing_read(path):
+        if path.name == "bad.cpp":
+            raise OSError("simulated read failure")
+        return real_read(path)
+
+    monkeypatch.setattr(slicer, "_read_no_follow", failing_read)
     _, result, _ = run_cli(
         monkeypatch, repo, tmp_path, payloads(), "--checkpoint", str(tmp_path / "state.db")
     )
