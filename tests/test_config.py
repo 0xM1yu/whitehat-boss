@@ -1509,3 +1509,95 @@ def test_no_two_served_models_share_a_port() -> None:
 
     shared = {port: keys for port, keys in by_port.items() if len(keys) > 1}
     assert not shared, f"포트를 같이 쓰는 실서빙 키: {shared}"
+
+
+# --- 모델별 요청 손잡이 (ADR 0012 Phase 6.5 · #261) ------------------------------
+
+_KNOBS = {
+    "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0},
+    "chat_template_kwargs": {"enable_thinking": True},
+    "thinking_token_budget": 30720,
+    "request_timeout_s": 1800,
+}
+
+
+def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
+    tmp_path: Path,
+) -> None:
+    """registry가 선언한 손잡이가 **요청과 기록 양쪽에 같은 값으로** 간다.
+
+    `reasoning_effort`의 두 검사(바로 위)를 한 번에 옮긴 것이다 — 요청에만 실리면 기록이
+    거짓이고, 기록에만 있으면 서버가 기본값으로 돈다. `sampling`은 프로필 공통
+    `temperature`·`top_p`를 **그 모델에서 덮는다** — 그래서 덮은 값이 기록에 남아야 한다.
+
+    `request_timeout_s`는 요청 본문이 아니라 클라이언트 쪽 값이라 payload·기록 맵에 안 간다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
+            }
+        },
+        model_patch={"qwen3.6-35b-a3b": _KNOBS},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    sent = {
+        "temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+        "chat_template_kwargs": {"enable_thinking": True},
+        "thinking_token_budget": 30720,
+    }
+    assert config.request_params() == {"auditor": sent}
+
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config, "run_20260925_0001", datetime(2026, 9, 25, tzinfo=UTC), [], {}, {}, None,
+    )
+    assert json.loads(record.model_dump_json())["model_request_params"] == {"auditor": sent}
+
+    auditor = _model_client(config.profile.roles["auditor"], config, role="auditor")
+    payload = auditor._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert {key: payload[key] for key in sent} == sent
+    assert "request_timeout_s" not in payload
+    assert auditor.timeout_s == 1800
+
+    scout = _model_client(config.profile.roles["scout"], config, role="scout")
+    quiet = scout._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert not set(quiet) & {"top_k", "min_p", "chat_template_kwargs", "thinking_token_budget"}
+    assert scout.timeout_s is None, "선언 안 한 모델은 어댑터 기본 타임아웃을 쓴다"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        None,  # 대조군 — 이것이 죽으면 아래 넷이 손잡이 때문에 죽는지 모른다
+        {"sampling": {"top_p": 0.0}},
+        {"sampling": {"topk": 20}},
+        {"thinking_token_budget": 0},
+        {"request_timeout_s": 0},
+    ],
+)
+def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> None:
+    """손잡이는 **우리가 적는 설정**이라 오타·범위 밖 값이 곧 결함이다 — 로드에서 죽는다.
+
+    서버가 조용히 무시하거나 400을 내면 그 run은 「선언했다」고 기록되고 실제로는 안 쓴 것이다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
+            }
+        },
+        model_patch={"seccoderx-8b": patch or {}},
+    )
+    if patch is None:
+        load_config("dev_fake", config_dir=tmp_path)
+        return
+    with pytest.raises(ValidationError):
+        load_config("dev_fake", config_dir=tmp_path)
