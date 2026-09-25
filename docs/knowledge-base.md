@@ -227,7 +227,8 @@ need_evidence 루프로 바꾼다), 진행 상태는 open-questions D20 관측 �
 더 붙는다(두 Retriever의 `cache_key_for()` — ADR 0012 결정 1의 #220 ②). Auditor의 EXPANDED 캡슐은 entry를
 감싸는 함수가 대상이라 붙지 않는다. 무효화 조건에 「`run_signature`가
 바뀜」이 더해진다 — 슬라이서가 본 소스·설정·Joern 판 등이 바뀌면 바뀌는 값이다(`slicer_pipeline.py`의
-`prepare_checkpoint`). 그 변경으로 정책 버전도 올렸다(Fake `v4` · Hybrid `hybrid-v5`).
+`prepare_checkpoint`). 그 변경으로 정책 버전도 올렸다(Fake `v4` · Hybrid `hybrid-v5`). 같은 날 슬라이스 질의의 그래프 섹션 본문이
+슬라이스의 줄 집합이 되면서(#288 — D78 ①) 다시 올렸다(`v5` · `hybrid-v6`).
 
 동일 artifact에 대한 summary를 반복 생성하지 않는다. cache hit ratio는 필수 지표다([evaluation.md](evaluation.md)).
 

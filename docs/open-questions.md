@@ -129,7 +129,7 @@
 | D75 | 실험1이 확증한 Scout CWE→Agent 세부 목록이 로스터·프롬프트의 목록과 다르다 — 어느 것을 정본으로 할지 미결 | 닫힘 | [본문](open-questions/D/D75.md) |
 | D76 | ~~하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다~~ | 닫힘 | [본문](open-questions/D/D76.md) |
 | D77 | ~~슬라이서 sink-first 의미·제어문 보존·단계별 재개~~ | 닫힘 | [본문](open-questions/D/D77.md) |
-| D78 | **슬라이스를 Scout 입력으로 올리기 전에 풀어야 할 것 셋** — `Location` 표현력·캐시 키·E1 STATIC (ADR 0012 결정 1 방향) | 열림 | [본문](open-questions/D/D78.md) |
+| D78 | ~~슬라이스를 Scout 입력으로 올리기 전에 풀어야 할 것 셋 — `Location` 표현력·캐시 키·E1 STATIC~~ (Phase 3에서 셋 다 풀림) | 닫힘 | [본문](open-questions/D/D78.md) |
 | D79 | 조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다 | 열림 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** | 열림 | [본문](open-questions/D/D80.md) |
 | D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** | 열림 | [본문](open-questions/D/D81.md) |
