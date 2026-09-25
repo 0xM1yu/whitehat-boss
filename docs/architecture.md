@@ -53,7 +53,7 @@ graph LR
 | 2 | Signal Collection | Artifact, Index | Semgrep · clang-tidy · grep/custom rule 정적분석, **build 프로브**(빌드되는가 — Auditor가 `repro_spec`을 쓸 근거, 아래 build 주), sanitizer log·stack trace 파싱, AFL++/libFuzzer coverage, diff 분석 | `Evidence[]` | 실패해도 진행(신호 부재로 기록) |
 | 3 | Retrieval | 후보 seed | symbol·graph·keyword 광역 수집 → embedding + reranker 재선별(쓰임은 아래 ⚠ ADR 0012 — 열림) | `ContextCapsule` | capsule 토큰 상한 이내 |
 | 4 | Scout / Triage | `ContextCapsule`(경량) + 대상 코드(아래 ⚠ ADR 0012 — 슬라이스로 바뀐다) | 후보 우선순위 분류, 위험 카테고리 부여 | `Candidate[]` (score, CWE 추정) | `score >= scout_threshold` |
-| 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(표현은 아래 ⚠ ADR 0012 — 열림) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
+| 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(슬라이스 타깃이면 걸친 함수들 — 아래 ⚠ ADR 0012 결정 1-b) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
 | 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 그 갈래는 아직 안 탄다, §4) |
@@ -94,12 +94,12 @@ graph LR
 >   [D82](open-questions/D/D82.md). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
 >   됐다(Phase 3c): `SOURCE`가 슬라이스 렌더이고 FACTS에 `slice_criterion`이 붙으며 LIGHT 캡슐이 그 렌더를 센다.
 >   need_evidence 루프는 그대로 0건이다(Phase 5).)
-> - **5단계 — Auditor가 받을 표현은 열려 있다**(결정 1-b). 기본값은 원본 소스이고
->   (`prompts/auditor/v3/body.md`의 `representation: original source code`) 슬라이스로 바꾸려면 프롬프트
->   개정이 먼저다. (⏵ 2026-09-25 — 슬라이스 타깃의 Auditor는 entry 줄을 감싸는 함수 하나의 원본을 받는다 —
->   품는 함수를 모르면(인덱스가 없거나 `.h`처럼 그 파일에 심볼이 없으면) entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`)이다
->   (`runner._auditor_target`, Phase 3c — 파일 전체는 상한 없이 실려 막았다). 기본값을 좁게 푼 것이라
->   군집 슬라이스가 걸친 다른 함수는 못 본다.)
+> - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
+>   `prompts/auditor/v3/body.md`의 `representation: original source code`). 슬라이스 타깃이면 슬라이스가 걸친
+>   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 `.h`처럼 그 파일에 심볼이
+>   없으면 — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
+>   안에서 함수째 붙는다(`runner._auditor_source` — 파일 전체는 상한 없이 실려 막았다). 상한이 뺀 함수와 어느
+>   함수에도 안 든 줄은 trace `auditor_source`가 센다.
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).
 

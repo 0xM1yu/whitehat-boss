@@ -4,6 +4,7 @@ The end-to-end effect (dead #ifdef branches and uncompiled files leaving the gra
 c2cpg behaviour verified on the Joern server; these tests fix the Python contract around it.
 """
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -240,6 +241,121 @@ def test_identical_database_content_maps_to_one_file(tmp_path):
     second, _, _ = resolve_compilation_database(db, repo, out)
 
     assert first == second
+
+
+def test_relative_include_paths_are_absolutized(tmp_path):
+    # c2cpg resolves -I against its own working directory, not the entry directory, so a relative
+    # include (a node addon's generated nan headers) is never found and NAN_METHOD-defined methods
+    # never parse. The normalized command must carry absolute include paths anchored at the entry
+    # directory. Only the attached form (-Ipath) is what c2cpg's `-I(\S+)` command-string regex
+    # actually captures (JSONCompilationDatabaseParser.scala); a separated `-I path` is merged
+    # into one attached token here so it reaches c2cpg at all -- see test below for that merge
+    # asserted at the token level, not by substring.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        tmp_path / "cc.json",
+        [{"directory": "repo", "file": "src/a.c",
+          "command": "gcc -I../gen/nan -Iinclude -c src/a.c"}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    command = json.loads(normalized.read_text())[0]["command"]
+
+    assert os.path.normpath(str(repo.parent / "gen" / "nan")) in command
+    assert os.path.normpath(str(repo / "include")) in command
+    # No relative include token survives.
+    assert "-I../" not in command and "../gen" not in command
+
+
+def test_separated_include_flag_is_merged_into_one_attached_token(tmp_path):
+    # c2cpg's `-I(\S+)` command regex and its `arguments.filter(_.startsWith("-I"))` rule both
+    # only match a path that shares a token with the flag. A separated `["-I", "path"]` pair
+    # yields an empty include for c2cpg (the "-I" token alone strips to ""), so the fix must
+    # merge the pair into one token rather than absolutizing the path token in place.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        tmp_path / "cc.json",
+        [{"directory": str(repo), "file": "src/a.c",
+          "arguments": ["gcc", "-I", "../gen/nan", "-c", "src/a.c"]}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    arguments = json.loads(normalized.read_text())[0]["arguments"]
+
+    expected = "-I" + os.path.normpath(str(repo.parent / "gen" / "nan"))
+    assert expected in arguments
+    assert "-I" not in arguments  # the bare flag token must not survive on its own
+    assert "../gen/nan" not in arguments
+
+
+def test_absolute_include_paths_are_left_unchanged(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    abs_inc = str(tmp_path / "external" / "inc")
+    # arguments form avoids a shell string, so an absolute path with backslashes on Windows is
+    # not re-escaped by the tokenizer.
+    db = _write_db(
+        tmp_path / "cc.json",
+        [{"directory": str(repo), "file": "src/a.c",
+          "arguments": ["gcc", "-I" + abs_inc, "-c", "src/a.c"]}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    arguments = json.loads(normalized.read_text())[0]["arguments"]
+
+    assert abs_inc in " ".join(arguments)
+
+
+def test_arguments_form_entries_keep_arguments_shape_and_define_values(tmp_path):
+    # H1: c2cpg extracts a -D value differently per entry shape -- an `arguments` token splits
+    # cleanly on '=', but its `command`-string regex only keeps a value that is quoted. Collapsing
+    # every entry into a `command` string (the pre-fix behaviour) silently dropped every -D value
+    # for `arguments`-shaped entries. The fix must keep the entry's original shape.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        tmp_path / "cc.json",
+        [{"directory": str(repo), "file": "src/a.c",
+          "arguments": ["gcc", "-DHAVE_CONFIG_H=1", "-D_FILE_OFFSET_BITS=64", "-c", "src/a.c"]}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    out_entry = json.loads(normalized.read_text())[0]
+
+    assert "command" not in out_entry
+    assert "-DHAVE_CONFIG_H=1" in out_entry["arguments"]
+    assert "-D_FILE_OFFSET_BITS=64" in out_entry["arguments"]
+
+
+def test_one_malformed_command_does_not_fail_the_whole_database(tmp_path):
+    # L1: shlex.split raises ValueError on unbalanced quoting. That must not propagate out of
+    # resolve_compilation_database and take every other (well-formed) entry down with it via the
+    # caller's fallback to full-source import (slicer.py build_cpg's except ValueError clause).
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    (repo / "src" / "b.c").write_text("int b;\n")
+    db = _write_db(
+        tmp_path / "cc.json",
+        [
+            {"directory": str(repo), "file": "src/a.c", "command": "gcc -I../gen -c src/a.c"},
+            {"directory": str(repo), "file": "src/b.c", "command": 'gcc -DMSG="x -c src/b.c'},
+        ],
+    )
+
+    normalized, compiled, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    entries = json.loads(normalized.read_text())
+
+    assert len(compiled) == 2
+    assert "gen" in entries[0]["command"] and ".." not in entries[0]["command"]
+    # The malformed entry is left exactly as it came in.
+    assert entries[1]["command"] == 'gcc -DMSG="x -c src/b.c'
 
 
 def test_import_query_passes_the_compilation_database_flag():

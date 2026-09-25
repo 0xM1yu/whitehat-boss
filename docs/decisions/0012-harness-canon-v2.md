@@ -51,18 +51,20 @@
 | ② | 캡슐 캐시 키에 슬라이서 신원이 없다 | `cache_key_for()`(두 Retriever)에 slice id와 `run_signature`를 넣고 `CAPSULE_POLICY_VERSION`(`fake_retriever.py:47` · `hybrid_retriever.py:76`)을 올린다 |
 | ③ | 슬라이스를 STATIC Evidence로 적으면 E1이 구조적으로 참이다 | 슬라이스와 RETRIEVED 블록은 **Evidence로 기록하지 않는다** — `static_ok`·`graph_ok`가 후보와 결합 없는 존재 검사라(`src/orchestrator/gate.py:140` · `:145`) 적는 순간 E1·E2가 부푼다 |
 
-⚠ **①은 절반만 풀린다.** Case B의 `entry.symbol`은 감싸는 함수가 아니라 sink 호출 이름이고(`slicer_queries.py:302` — `"symbol" -> c.name`) 감싸는 함수는 후보의 `scopes`에 있다(`slicer_candidates.py:31`). 군집 슬라이스는 `members`를 합쳐 여러 함수에 걸친다(`slicer_source.py:223`). `Location.symbol`을 무엇으로 채울지, `names_for()`의 「본문 줄 범위」 술어를 슬라이스 대상에 어떻게 쓸지는 Phase 3이 정한다. (⏵ 2026-09-25 — 앞의 것은 정해졌다: 대표 후보의 `scopes[0].symbol`(감싸는 함수), 없으면 entry 이름이다(Phase 3b PR #284 — `src/adapters/slices.py`의 `slice_refs`). 뒤의 것은 아직이다 — 슬라이스 타깃의 캡슐 그래프 섹션이 entry 줄 하나를 「본문」으로 본다. 그 관측은 [D78](../open-questions/D/D78.md)의 2026-09-25 ⏵다.)
+⚠ **①은 절반만 풀린다.** Case B의 `entry.symbol`은 감싸는 함수가 아니라 sink 호출 이름이고(`slicer_queries.py:302` — `"symbol" -> c.name`) 감싸는 함수는 후보의 `scopes`에 있다(`slicer_candidates.py:31`). 군집 슬라이스는 `members`를 합쳐 여러 함수에 걸친다(`slicer_source.py:223`). `Location.symbol`을 무엇으로 채울지, `names_for()`의 「본문 줄 범위」 술어를 슬라이스 대상에 어떻게 쓸지는 Phase 3이 정한다. (⏵ 2026-09-25 — 앞의 것은 정해졌다: 대표 후보의 `scopes[0].symbol`(감싸는 함수), 없으면 Case A는 entry 이름이고 Case B는 비운다 — sink 호출 이름은 함수 이름이 아니다(Phase 3b PR #284와 그 리뷰 수정 — `src/adapters/slices.py`의 `slice_refs`). ~~뒤의 것은 아직이다 — 슬라이스 타깃의 캡슐 그래프 섹션이 entry 줄 하나를 「본문」으로 본다. 그 관측은 [D78](../open-questions/D/D78.md)의 2026-09-25 ⏵다.~~ → 뒤의 것도 같은 날 정해졌다(#288): 슬라이스의 (file, line) 집합이 본문이고 「본문 안에 정의」는 정의 범위가 그 집합과 겹치는가다 — [D78](../open-questions/D/D78.md) 닫힘.)
 
 ⚠ **이 결정은 슬라이스 입력의 탐지 품질을 근거로 하지 않는다 — 그 값이 없다.** Scout 좌석 모델을 고른 실험팀 「scout 모델 후보 실험」은 원본 함수로 쟀다(「슬라이스 품질 문제로 원본 파일 제공」 — 팀 보고, run ID 없음). 근거는 방향의 정렬이다 — 정본(PROJECT-CONTEXT.md §2 「tree-sitter를 왜 계속 두는가」 · build-plan.md §5 1단계 — 위 「왜」 표), 풀 프로필이 부르는 v3 프롬프트, 하네스팀 브리핑(2026-09-09~14, 「슬라이스 한 개가 후보 한 개」 — 팀 문서)이 같은 쪽을 가리킨다.
 
-### 1-b. Auditor의 입력 표현 — **열림**
+### 1-b. Auditor의 입력 표현 — **정해짐: 넓은 (i)** (2026-09-25)
 
 현 Auditor v3 프롬프트는 입력을 원본 소스로 선언한다 — `prompts/auditor/v3/body.md:13`(*"representation: original source code"*) · `prompts/auditor/v3/prefix.md:9`(*"contains **original source code**"*). registry의 Auditor는 아직 v1을 고르고(`config/models.yaml:718`) v3는 디스크에만 있다(`prompts/auditor/v3/meta.yaml:1-2`).
 
-- **(i) 원본 소스 — 제안 기본값.** Auditor는 슬라이스가 걸친 함수의 원본 본문을 받는다. 프롬프트가 기대하지 않는 표현을 넣으면 Scout의 D82가 Auditor에서 재현된다. 대가: Scout와 Auditor가 다른 코드를 본다 — 슬라이스는 여러 파일에 걸칠 수 있어(`scout_boundary/v3/prefix.md:50`) 「어느 함수(들)의 본문인가」를 Phase 3이 정해야 한다. (⏵ 2026-09-25 — Phase 3c는 이것을 좁게 풀었다: entry 줄을 품는 함수 하나다(인덱스의 가장 좁은 심볼, 품는 심볼을 모르면 entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`) — `runner._auditor_target`). 군집 슬라이스가 걸친 다른 함수는 Auditor가 아직 못 본다. 1-b 결정 자체는 그대로 열려 있다.)
+- **(i) 원본 소스 — 제안 기본값.** Auditor는 슬라이스가 걸친 함수의 원본 본문을 받는다. 프롬프트가 기대하지 않는 표현을 넣으면 Scout의 D82가 Auditor에서 재현된다. 대가: Scout와 Auditor가 다른 코드를 본다 — 슬라이스는 여러 파일에 걸칠 수 있어(`scout_boundary/v3/prefix.md:50`) 「어느 함수(들)의 본문인가」를 Phase 3이 정해야 한다. (⏵ 2026-09-25 — Phase 3c는 이것을 좁게 풀었다: entry 줄을 품는 함수 하나다(인덱스의 가장 좁은 심볼, 품는 심볼을 모르면 entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`) — `runner._auditor_target`). 군집 슬라이스가 걸친 다른 함수는 Auditor가 아직 못 본다. 1-b 결정 자체는 그대로 열려 있다. ⏵ 같은 날 넓혔다 — 아래 결정 문단.)
 - **(ii) 슬라이스 렌더** — Scout와 같은 입력. 팀 계약(Notion 「Auditor·Critic 모델 최종 선정」)이 Auditor 입력을 「슬라이스+줄번호+정적 근거」 캡슐로 적는 쪽이다. 선행: Auditor 프롬프트 개정(위 두 줄).
 
 결정권은 손수민 리뷰, 기한 2026-09-26(아래 「이 ADR이 열어 두는 것」 1-b). 결정 전까지는 (i)이다.
+
+**⏵ 2026-09-25 — 결정: 넓은 (i) + 크기 상한**(팀원 전원 합의 — 조민규 전언, 기한 전). Auditor의 `SOURCE`는 슬라이스가 걸친 함수의 원본 전부다 — entry를 감싸는 함수(`runner._auditor_target` — 위 ⏵ 노트의 범위 그대로이고 캡슐의 대상이다)가 먼저이고, 나머지는 슬라이스 줄마다 그 줄을 품는 가장 좁은 인덱스 심볼을 (파일, 시작 줄) 순으로 붙인다(`runner._auditor_source`). 문자 수 상한 `_AUDITOR_SOURCE_CHARS`(15,000 — 고를 때는 계산값이었고 **2026-09-25 ATOM에서 쟀다**: 이 상한으로 실서빙 Auditor에 태운 147호출이 서빙 입력 몫 20,480토큰 안에 들었다 — 초과 0건 · 최대 `input_tokens` 15,437 · 여유 5,043. run `run_20260925_0002`·`0003`·`0004`, 브랜치 `exp/atom-slice-smoke` @ `41f802a`(머지 안 함), `checksum` 0이라 비교표 밖. ⚠ 같은 측정에서 글자/토큰 비가 1.22~3.32로 벌어져 **글자 상한이 토큰을 묶어 주지는 않는다** — 근거는 이 실측이지 환산이 아니다. 자세한 것은 그 상수의 주석)를 넘는 함수는 함수째 빼고 entry 함수는 늘 넣는다. 뺀 함수 수와 어느 함수에도 안 든 줄 수(구조체 필드·전역·인덱서가 안 받는 `.h`), 그리고 entry 함수 혼자의 크기(`anchor_chars` — 상한이 그것은 안 본다)는 trace `auditor_source`가 든다. (ii)는 고르지 않았다 — Auditor 프롬프트가 원본을 선언한다(위 첫 문단).
 
 ### 2. need_evidence 정본 프로토콜 — 팀 Notion 「Scout RAG baseline」
 
@@ -191,7 +193,7 @@
 1. **슬라이서의 기여를 따로 재는 설계** — D74가 (a)를 고른 근거 ①이다. 후보 집합과 모델 입력이 한 번에 바뀌므로 전후 차이는 원인을 못 가른다. 이 구성으로 낸 결론에는 그 교락을 같은 문장에 적는다.
 2. **CPG가 못 본 줄은 모델도 못 본다** — D74 근거 ③. 되받는 길은 원본 파일을 읽는 resolver(결정 2)뿐이고, 이 결정이 약속하는 것은 그 한계를 기록에 남기는 데까지다(결정 1의 `status`). 슬라이서가 실패하면(`status: failed` — `slicer.py:426`) 입력이 없다 — 2026-09-24 등재 시점의 [D85](../open-questions/D/D85.md)(UTF-8 아닌 파일 하나에 run 전체 실패, 수정 PR #255 열림)가 그 한 사례다.
 3. **Scout 좌석 모델의 품질 근거가 원본 함수 입력이다**(팀 보고, run ID 없음) — 슬라이스 입력의 품질은 미측정이다.
-4. **Auditor와 Scout가 다른 코드를 볼 수 있다** — 1-b가 (i)로 가면.
+4. **Auditor와 Scout가 다른 코드를 볼 수 있다** — 1-b가 (i)로 가면. (⏵ 2026-09-25 — (i)로 갔다. Scout는 슬라이스 렌더를, Auditor는 슬라이스가 걸친 함수들의 원본을 본다 — 상한에 빠진 함수와 함수 밖 줄은 Auditor가 못 본다. trace `auditor_source`가 센다.)
 5. **새 Evidence로 `queued` 후보를 다시 보는 설계가 대체 없이 빠진다** — [architecture.md](../architecture.md) §3 「Queue 규칙」의 둘째 문장(*"새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다"*)이다. 배선된 적은 없지만(생산자 0 — 결정 6 표) 설계에서 빠진다. need_evidence 루프는 같은 run 안에서 모델이 요청한 맥락을 채우는 길이지(결정 2), run 밖에서 들어온 새 근거로 다시 보는 길이 아니다. 다시 필요해지면 새 ADR이다.
 6. **실험 기록이 저장소 밖으로 나간다**(결정 5). `docs/experiments/`가 막으려던 어긋남을 저장소의 검사와 PR 리뷰가 다시 못 잡는다 — 그 폴더가 생긴 계기가 2026-08-18에 메신저 첨부로만 있던 ATOM 보고서 두 건이 다섯 군데 갈린 일이고, 그중 셋은 어느 모델을 실제로 서빙했는지·실험이 언제 끝났는지가 양쪽에 없어 생긴 오독이었다([그 README](../experiments/README.md) 머리). 줄이는 수단은 ADR·D 요약이 그 두 필드와 run ID를 싣는 것이다(결정 5의 인용 규칙). 그리고 Notion 페이지는 git 이력이 없어 줄이 언제 쓰였는지를 `git log -L`로 못 잰다 — 그래서 결정 5가 판독 날짜를 같은 문장에 적게 한다.
 
@@ -201,7 +203,7 @@
 
 | # | 무엇 | 결정권 | 기한 | 그때까지의 기본값 |
 | --- | --- | --- | --- | --- |
-| 1-b | Auditor 입력 표현 | 손수민 리뷰 | 2026-09-26 | (i) 원본 소스 |
+| 1-b | Auditor 입력 표현 | 손수민 리뷰 | 2026-09-26 | (i) 원본 소스. ⏵ 2026-09-25 — 정해졌다: 넓은 (i) + 크기 상한(팀 합의 — 위 1-b) |
 | 3 | 3단계의 쓰임 | 팀(손수민 리뷰) | 2026-09-26 대면 | resolver만 · `retriever: hybrid` 끔 |
 | 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키. ⏵ 2026-09-24 — 조민규가 확정했다: `seccoderx-8b`·`seccoderx-8b`·`qwen3-14b`(PROJECT-CONTEXT.md §1) ⏵ 2026-09-25 — memory가 다시 바뀌었다: `qwen3-14b`·`seccoderx-8b`·`qwen3-14b`(memory·boundary·injection 순 — 실험팀 최종 권고, 조민규. PROJECT-CONTEXT.md §1) |
 | 7 | Auditor SFT가 배울 것 | 팀 | 2026-10-04 전 | 벤치마크의 Auditor는 Finding 검증자다 |
@@ -217,12 +219,12 @@
 
 ## 검증
 
-**결정 6만 지금 참인 불변식이고, 코드 조건이 있는 나머지는 전부 지금 미충족이다** — 이 ADR은 코드가 따라갈 정본이지 코드의 서술이 아니다. (⏵ 2026-09-25 — 결정 1의 네 조건은 Phase 3a·3b·3c 뒤 선다 — 아래 표 결정 1 행의 ⏵. 나머지는 이 문장 그대로다.) 각 Phase의 PR은 자기 줄을 테스트로 잠그고, 배선을 되돌리면 빨개지는지 확인한다([CLAUDE.md](../../CLAUDE.md) §2.5).
+**결정 6만 지금 참인 불변식이고, 코드 조건이 있는 나머지는 전부 지금 미충족이다** — 이 ADR은 코드가 따라갈 정본이지 코드의 서술이 아니다. (⏵ 2026-09-25 — 결정 1의 네 조건은 Phase 3a·3b·3c 뒤 선다 — 아래 표 결정 1 행의 ⏵. 1-b도 같은 날 선다 — 그 행의 ⏵. 나머지는 이 문장 그대로다.) 각 Phase의 PR은 자기 줄을 테스트로 잠그고, 배선을 되돌리면 빨개지는지 확인한다([CLAUDE.md](../../CLAUDE.md) §2.5).
 
 | 결정 | 참이 되는 조건 | 2026-09-24 (`c301342`) |
 | --- | --- | --- |
-| 1 | `git grep -n slice_criterion -- src` ≥ 1이고 `FACT_KEYS`(`src/orchestrator/prompt_loader.py:56-65`)에 그 키가 있다 · `Candidate.slice_id`가 있다 · `src/`가 `slicer*.py`를 import하지 않는다 · 슬라이스에서 만든 `Evidence`가 없다 | 미충족 — `git grep -n -i slice -- src config` 0건. ⏵ 2026-09-25 — 네 조건이 Phase 3a(PR #283) · 3b(PR #284) · 3c 뒤 선다: `git grep -n slice_criterion -- src`가 비지 않고 `FACT_KEYS`에 그 키가 opt-in으로 있다(슬라이스 타깃에만 실린다) · `Candidate.slice_id`(3b) · `src/`의 `slicer` import 0건 · 슬라이스로 만드는 `Evidence` 0건(`Evidence(`를 만드는 `src/` 파일 어디에도 슬라이스가 안 들어간다). 결정 1의 다른 불릿 — 슬라이스 없이 v3 Scout 프롬프트를 부르는 run의 시작 전 거부 — 은 이 칸의 조건 밖이고 세 PR에 없다(⏵ 같은 날 3d가 3c 위에 넣었다 — 위 결정 1 불릿의 노트) |
-| 1-b | 고른 표현과 Auditor 프롬프트의 `representation` 선언이 같다 | 결정 전 |
+| 1 | `git grep -n slice_criterion -- src` ≥ 1이고 `FACT_KEYS`(`src/orchestrator/prompt_loader.py:56-65`)에 그 키가 있다 · `Candidate.slice_id`가 있다 · `src/`가 `slicer*.py`를 import하지 않는다 · 슬라이스에서 만든 `Evidence`가 없다 | 미충족 — `git grep -n -i slice -- src config` 0건. ⏵ 2026-09-25 — 네 조건이 Phase 3a(PR #283) · 3b(PR #284) · 3c 뒤 선다: `git grep -n slice_criterion -- src`가 비지 않고 `FACT_KEYS`에 그 키가 opt-in으로 있다(슬라이스 타깃에만 실린다) · `Candidate.slice_id`(3b) · `src/`의 `slicer` import 0건 · 슬라이스로 만드는 `Evidence` 0건(`Evidence(`를 만드는 `src/` 파일 어디에도 슬라이스가 안 들어간다). 결정 1의 다른 불릿 — 슬라이스 없이 v3 Scout 프롬프트를 부르는 run의 시작 전 거부 — 은 이 칸의 조건 밖이고 세 PR에 없다(⏵ 같은 날 3d가 3c 위에 넣었다 — 위 결정 1 불릿의 노트). ⏵ 같은 날 #288이 마지막 조건을 출처 테스트로 잠갔다 — 게이트가 받은 Evidence ⊆ 도구 러너 반환분(`test_the_gate_sees_only_evidence_the_tool_runner_returned`) |
+| 1-b | 고른 표현과 Auditor 프롬프트의 `representation` 선언이 같다 | 결정 전. ⏵ 2026-09-25 — **충족**: 넓은 (i)을 골랐고 디스크의 Auditor 프롬프트 전부(v1·v2·v3)의 입력 선언(`meta.yaml`의 `input`, 없으면 `source`)이 `source`다 — `test_every_auditor_prompt_declares_the_original_source_the_runner_gives_it`가 잠근다(`input: slice`로 바꾸면 빨개진다) |
 | 2 | `requested_context`가 네 키 객체다 · `src/`가 `triage_need_evidence`를 읽는다 · `max_hops`가 설정에 있다 · 홉마다 trace 이벤트가 남는다 | 미충족 — `list[NonEmptyStr]`(`src/schemas/scout_response.py:46`) · 0건 · 0건 |
 | 3 | canonical 프로필의 `retriever`가 `hybrid`가 아니다 | canonical 프로필이 아직 없다(Phase 6) |
 | 4 | registry에 `qwen3-14b`가 있다 · 새 키에 `@rev`와 실 checksum이 있다 | 미충족 — 0건 · `config/models.yaml:664-665`·`:687-688`·`:715-716` |
