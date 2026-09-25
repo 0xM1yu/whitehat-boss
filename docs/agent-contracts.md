@@ -112,8 +112,8 @@ agent:
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 그 표현을 슬라이스로 바꿀지는
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b가 **열어 둔다** — 기본값은 원본 소스이고 Auditor
   v3 프롬프트가 그것을 전제한다(`prompts/auditor/v3/body.md`의 `representation: original source code`).
-  ⏵ 2026-09-25 — 슬라이스 타깃이면 「대상」은 entry 줄을 감싸는 함수 하나다(인덱스가 없거나 품는 함수가 없으면
-  파일 전체 — `runner._auditor_target`). 기본값 (i)을 좁게 푼 것이다 — (i)이 적는 「슬라이스가 걸친 함수」 중
+  ⏵ 2026-09-25 — 슬라이스 타깃이면 「대상」은 entry 줄을 감싸는 함수 하나다(품는 함수를 모르면 — 인덱스가 없거나
+  `.h`처럼 그 파일에 심볼이 없으면 — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`), `runner._auditor_target`). 기본값 (i)을 좁게 푼 것이다 — (i)이 적는 「슬라이스가 걸친 함수」 중
   entry를 품는 하나만 보고 군집 슬라이스가 걸친 다른 함수는 못 본다. 결정은 여전히 1-b에 있다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - 분석 축: source→sink 경로, memory lifetime/ownership, boundary check, 정수 연산, config·환경 조건 영향
