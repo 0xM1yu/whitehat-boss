@@ -1,6 +1,7 @@
 role: scout_injection
 version: v3
 output_schema: ScoutResponse
+input: slice
 profile: injection
 model: DeepSeek-R1-Distill-Qwen-32B
 description: 'v14s: review 를 낼 때도 방어를 찾아본 흔적(counterevidence)을 남기게 했다.'

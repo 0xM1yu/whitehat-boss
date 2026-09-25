@@ -8,7 +8,8 @@ knowledge-base.md §3의 2단계 구조(광역 수집 → reranker 재선별)는
 `ContextCapsule`은 **매니페스트이면서 그래프 섹션의 본문을 담는다.** `callers`/`callees`는
 `CapsuleSection.body`에 줄이 그대로 실리고, 스키마 검증기가 `tokens`와 그 줄들의 일치를
 강제한다. `target_function`의 원문은 여전히 담지 않는다 — 호출자가 `read_symbol_source()`로
-따로 읽는다. 파일 전체를 캡슐에 복사하면 매니페스트가 아니라 사본이 된다.
+(슬라이스 타깃이면 `read_slice`로) 따로 읽는다. 파일 전체를 캡슐에 복사하면 매니페스트가 아니라
+사본이 된다.
 
 **`callers`/`callees`는 1단계 인덱서 산출물에서 온다**(`adapters/index_graph.py`, #63).
 `HybridRetriever`와 **같은 모듈**을 쓴다 — 두 구현이 같은 index.json에서 다른 섹션을 내면
@@ -44,7 +45,11 @@ from src.tokens import estimate_tokens
 #
 # **v2 → v3 (W2/#95)**: LIGHT에 `callers`/`callees`가 들어갔고(#95 (a)) target이 파일에서
 # 심볼로 좁혀졌다. 둘 다 같은 키에 다른 캡슐을 만드는 변경이다.
-CAPSULE_POLICY_VERSION = "v3"
+#
+# **v3 → v4 (2026-09-25, ADR 0012 결정 1 · #220 ②)**: 슬라이스 질의(`Query.slice_id`)면
+# `target_function`이 슬라이스 렌더를 세고, 키에 slice id와 슬라이서 `run_signature`가 붙는다.
+# 같은 entry 위치에 다른 캡슐이 생기는 변경이다 — 키 조립 규칙이 바뀌었으므로 올린다.
+CAPSULE_POLICY_VERSION = "v4"
 
 # 본문이 없는 보조 섹션의 고정 비용.
 #
@@ -103,6 +108,8 @@ class FakeRetriever:
         run_id: str,
         on_cache: CacheHook | None = None,
         graph: GraphIndex | None = None,
+        read_slice: Callable[[str], str] | None = None,
+        slice_signature: str | None = None,
     ) -> None:
         self.root = Path(root)
         self.ids = ids
@@ -111,6 +118,11 @@ class FakeRetriever:
         # 그래프가 주입되지 않은 호출부(어댑터 단위 테스트)는 경로 없는 인덱스를 쓴다 —
         # `status=missing`이 되어 그래프 섹션이 부재한다. 빈 그래프를 지어내지 않는다.
         self.graph = graph if graph is not None else GraphIndex(None)
+        # 슬라이스 id → 렌더. Scout `SOURCE`와 **같은 조회**다(`build_deps`가 둘에 같은 것을
+        # 넣는다) — 다르면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다(`read_symbol_source` 주석).
+        self.read_slice = read_slice
+        # 그 렌더를 낸 슬라이서 run의 `run_signature`. 캐시 키에 든다(`cache_key_for`).
+        self.slice_signature = slice_signature
         self._cache: dict[str, ContextCapsule] = {}
 
     def search(self, query: Query, level: CapsuleLevel) -> ContextCapsule:
@@ -121,7 +133,7 @@ class FakeRetriever:
         if cached is not None:
             return cached
 
-        source = read_symbol_source(self.root, query.target)
+        source = self._target_source(query)
         capsule = ContextCapsule(
             capsule_id=self.ids.next("capsule"),
             run_id=self.run_id,
@@ -183,11 +195,26 @@ class FakeRetriever:
         **`line_start`도 넣는다(W2).** 인덱서가 파일 스코프를 구분하지 않아 같은 파일에
         동명 `static` 함수가 둘 있을 수 있고(모듈 docstring의 알려진 오차), 이름만으로는
         그 둘이 한 키를 공유해 **다른 심볼의 캡슐이 재사용된다.**
+
+        **슬라이스 질의면 slice id와 슬라이서 `run_signature`가 붙는다(#220 ②).** target은
+        entry라 entry가 같은 두 슬라이스가 위치만으로는 한 키가 되고, slice id는 슬라이서 run
+        안의 순번이라(`slice_{number:04d}`) 다른 run에서는 같은 id가 다른 슬라이스일 수 있다.
         """
         target = query.target
         digest = sha256_text(_read_source(self.root, target.file))
         symbol = f"{target.symbol or ''}@{target.line_start or ''}"
-        return sha256_text(f"{digest}|{symbol}|{level.value}|{CAPSULE_POLICY_VERSION}")
+        key = f"{digest}|{symbol}|{level.value}|{CAPSULE_POLICY_VERSION}"
+        if query.slice_id is not None:
+            key = f"{key}|{query.slice_id}@{self.slice_signature}"
+        return sha256_text(key)
+
+    def _target_source(self, query: Query) -> str:
+        """`target_function`이 셀 본문. 슬라이스 타깃이면 렌더(Scout가 받는 그것)다."""
+        if query.slice_id is None:
+            return read_symbol_source(self.root, query.target)
+        if self.read_slice is None:
+            raise ValueError(f"슬라이스 {query.slice_id} 질의인데 read_slice가 배선되지 않았다")
+        return self.read_slice(query.slice_id)
 
 
 def read_symbol_source(root: Path, target: Location) -> str:

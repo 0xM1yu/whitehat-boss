@@ -37,11 +37,16 @@ def run(
     target: Location,
     level: CapsuleLevel,
     keywords: tuple[str, ...] = (),
+    slice_id: str | None = None,
 ) -> ContextCapsule:
     """레벨에 맞는 캡슐을 만들어 저장한다.
 
     캐시 적중 여부는 Retriever의 훅이 `cache` 이벤트로 남긴다 — 노드가 캐시를 아는
     구조였다면 구현마다 적중률 정의가 갈라졌을 것이다.
+
+    `slice_id`는 러너가 슬라이스 타깃의 LIGHT 캡슐에만 준다(`runner._step_retrieval`) —
+    `target_function`이 Scout가 받는 렌더를 센다. Auditor의 EXPANDED는 entry를 감싸는 함수의 원본을
+    보므로 주지 않는다(`runner._auditor_target`).
     """
     with ctx.stage(Stage.RETRIEVAL):
         budget = ctx.config.thresholds.budget_for(level)
@@ -54,6 +59,7 @@ def run(
             target=target,
             keywords=list(keywords),
             budget_tokens=budget,
+            slice_id=slice_id,
         )
         capsule = ctx.retriever.search(query, level)
         ctx.store.put(capsule)

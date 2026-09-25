@@ -14,7 +14,7 @@ from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.artifact import Artifact
-from src.schemas.candidate import Candidate, scout_member_of
+from src.schemas.candidate import Candidate, SliceRef, scout_member_of
 from src.schemas.capsule import ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import FindingState, ReasonCode, Role
@@ -70,6 +70,7 @@ def run(
     evidences: tuple[Evidence, ...] = (),
     previous: Candidate | None = None,
     role: Role = ROLE,
+    slice: SliceRef | None = None,
 ) -> Candidate:
     """후보 하나를 만들고 트리아지 결과까지 적용해 돌려준다.
 
@@ -78,6 +79,9 @@ def run(
     (`Stage.SCOUT`)이고 임계값·전이 경로는 같다** — 바뀌는 것은 어느 프롬프트·모델을
     부르는가뿐이다. `Candidate.scout_member` stamp는 노드가 아니라 `RunContext.call_model`이
     이 `role`에서 만든다(ADR 0010 §3, `candidate.py` 필드 주석).
+
+    `slice`는 슬라이스 타깃이면 그 슬라이스다(ADR 0012 결정 1) — `SOURCE`가 그 렌더가 되고
+    FACTS에 `slice_criterion`이 붙는다(`_ask_model`). `None`이면 지금처럼 심볼 본문이다.
     """
     candidate_id = ctx.ids.next("candidate")
     with ctx.stage(Stage.SCOUT):
@@ -89,6 +93,14 @@ def run(
             evidences=evidences,
             previous=previous,
             role=role,
+            slice=slice,
+        )
+        # **`slice_id`는 하네스가 덮는다** — `scout_member`와 같은 논법이다(`Candidate.slice_id`
+        # 주석). 스키마에 필드가 있어 구조화 출력이 채울 수 있으므로, 비어 오기를 기대하지 않고
+        # 저장 **전에** 매번 덮는다. `None`(슬라이스 없는 run)도 덮는다 — 모델이 지어낸 id가
+        # 살아남지 않게. `Candidate`에는 `model_validator`가 없어 `model_copy`가 안전하다.
+        candidate = candidate.model_copy(
+            update={"slice_id": slice.slice_id if slice is not None else None}
         )
         ctx.create(candidate, reason=None, stage=Stage.SCOUT)
         action = ctx.decide(
@@ -112,11 +124,20 @@ def _ask_model(
     evidences: tuple[Evidence, ...],
     previous: Candidate | None,
     role: Role,
+    slice: SliceRef | None,
 ) -> Candidate:
-    """프롬프트를 만들어 모델에 묻는다. 실패는 사유 코드로 기록하고 그대로 올린다."""
+    """프롬프트를 만들어 모델에 묻는다. 실패는 사유 코드로 기록하고 그대로 올린다.
+
+    **슬라이스 타깃이면 `SOURCE`가 슬라이스 렌더다**(ADR 0012 결정 1) — `read_source`로 읽으면
+    `capsule.target`이 entry(대표 위치, 줄 하나)라 그 한 줄만 간다. 렌더는 run 전에 이미
+    만들어져 있고(`build_deps`) 여기서는 id로 찾기만 한다.
+    """
     template = load_prompt(role, ctx.config.model_for(role.value).prompt_template_version)
     schema = resolve_output_schema(template.output_schema)
-    source = ctx.read_source(capsule.target)
+    if slice is None:
+        source = ctx.read_source(capsule.target)
+    else:
+        source = ctx.read_slice(slice.slice_id)
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -126,6 +147,7 @@ def _ask_model(
             capsule=capsule,
             source=source,
             evidences=evidences,
+            slice_criterion=None if slice is None else _slice_criterion(slice),
         ),
         target=describe_target(capsule.target),
         capsule_sections=describe_sections(capsule),
@@ -162,6 +184,29 @@ def _ask_model(
     return value
 
 
+def _slice_criterion(ref: SliceRef) -> dict[str, object]:
+    """v3 `FACTS.slice_criterion` — 슬라이서가 경로의 **어느 끝**을 쥐여 줬는가.
+
+    `given_end`는 v3 prefix가 정의한 키다(「Slice criterion」 절 — `source`면 앞으로, `sink`면
+    뒤로 자른 것). `given`은 그 쥐여 준 끝의 위치다 — memory·injection v3가 *"You are told where
+    a value enters"*라 적는(boundary v3는 *"This identifies where a value enters"*) 그 끝이 FACTS에
+    없으면 모델은 어느 줄이 주어진 끝인지 모른다. 이름은
+    `prompts/_retrieval/embedder/v1/*/meta.yaml`이 이미 가리키는 `slice_criterion.given.*`을 따른다.
+
+    **슬라이서 산출이 드는 것만 싣는다** — entry의 file·line·symbol(`SliceRef.entry`). 그 meta가
+    드는 `why_selected`·`tainted_by`는 slice-v2 `slices[]`에 없어 지어내지 않는다. Case B의
+    `symbol`은 sink 호출 이름이라 `FACTS.target.symbol`(감싸는 함수)과 다른 것이 정상이다.
+    """
+    return {
+        "given_end": ref.given_end,
+        "given": {
+            "file": ref.entry.file,
+            "line": ref.entry.line_start,
+            "symbol": ref.entry.symbol,
+        },
+    }
+
+
 def _queue_previous(ctx: RunContext, previous: Candidate | None, reason: ReasonCode) -> None:
     """재평가 중이던 후보만 전이시킨다. 첫 호출에는 대상이 없다(표 C-4·C-7)."""
     if previous is None or previous.state is not FindingState.CANDIDATE:
@@ -170,11 +215,17 @@ def _queue_previous(ctx: RunContext, previous: Candidate | None, reason: ReasonC
 
 
 def describe_target(target: Location) -> str:
-    """프롬프트 본문의 사람이 읽는 대상 표기. 사실 블록에는 구조화된 값이 따로 간다."""
-    lines = ""
-    if target.line_start is not None:
-        lines = f" (줄 {target.line_start}-{target.line_end or target.line_start})"
-    return f"`{target.file}` 의 `{target.symbol or '(파일 전체)'}`{lines}"
+    """프롬프트 본문의 사람이 읽는 대상 표기. 사실 블록에는 구조화된 값이 따로 간다.
+
+    「파일 전체」는 **줄 범위가 없을 때만**이다 — 이름 없이 줄만 든 대상(scopes 없는 슬라이스
+    Case B의 entry, Auditor의 entry 앞뒤 창)을 그렇게 부르면 같은 프롬프트의 FACTS와 어긋난다.
+    """
+    if target.line_start is None:
+        return f"`{target.file}` 의 `{target.symbol or '(파일 전체)'}`"
+    lines = f" (줄 {target.line_start}-{target.line_end or target.line_start})"
+    if not target.symbol:
+        return f"`{target.file}`{lines}"
+    return f"`{target.file}` 의 `{target.symbol}`{lines}"
 
 
 def describe_sections(capsule: ContextCapsule) -> str:
