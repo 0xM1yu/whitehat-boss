@@ -25,7 +25,9 @@
 
 **심볼 단위다(W2).** 1단계 인덱서 산출물에서 심볼마다 `Location(file, symbol,
 line_start, line_end)`을 만든다. 인덱스가 없는 프로필(`dev_fake`)은 **파일 단위로
-되돌아가고 그 사실이 `target_plan`에 남는다.**
+되돌아가고 그 사실이 `target_plan`에 남는다.** `--slices`로 돈 run은 **슬라이스 1개가 대상
+하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를, Auditor는 entry를
+감싸는 함수의 원본을 본다(`_step_scout`·`_auditor_target`).
 
 ⚠ **그 `Location` 하나가 후보 **몇 개**가 되는지는 Scout 자리 수가 정한다.** 단일
 `scout`면 하나이고, **풀이면 멤버마다 하나씩 셋이다** — 4단계에서 대상 하나를 세 멤버가
@@ -327,6 +329,9 @@ class Dependencies(Protocol):
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
     slicer: dict[str, str | int | None] | None
+    # 슬라이스 id → 렌더(gutter·배너). 슬라이스 타깃의 Scout `SOURCE`다. 어댑터가 run 전에 전부
+    # 렌더해 둔 것을 콜러블로 받는다 — `read_source`와 같이 러너는 렌더러를 import 하지 않는다.
+    read_slice: Callable[[str], str]
     # 역할 → 그 역할 모델의 실 토크나이저 카운터(#96 (b)). `None`이면 기본 카운터
     # (글자수 근사)를 유지한다. `symbols_for`와 같은 경로다 — factory가 채우고 러너는
     # `ctx`로 받아 역할 캡슐 조립 직전에 `using_counter(...)`로 켠다. 러너가
@@ -506,9 +511,16 @@ class _Target:
     # 미확정(results[0] 한 줄·위치 없는 신호·폴백), 0=신호 없음(#70). 큐 순서에만 쓴다
     # (등급 아님). `_symbol_signal_rank`가 매긴다.
     signal_rank: int
-    # 슬라이스 타깃이면 그 id(ADR 0012 결정 1). entry가 같은 두 슬라이스를 이것이 가른다 —
-    # 타깃 키(`_target_key`)와 `Candidate.slice_id` 도장이 이 값을 쓴다.
-    slice_id: str | None = None
+    # 슬라이스 타깃이면 그 슬라이스(ADR 0012 결정 1). id만이 아니라 통째로 드는 것은 4·5단계가
+    # 더 꺼내 쓰기 때문이다 — Scout는 렌더 id와 `given_end`·entry(`slice_criterion`)를, Auditor는
+    # entry 줄(감싸는 함수를 찾는 데)을 본다.
+    slice: SliceRef | None = None
+
+    @property
+    def slice_id(self) -> str | None:
+        """entry가 같은 두 슬라이스를 가르는 값 — 타깃 키(`_target_key`)와 `Candidate.slice_id`
+        도장이 이것을 쓴다."""
+        return self.slice.slice_id if self.slice is not None else None
 
 
 @dataclass
@@ -531,6 +543,12 @@ class _TargetPlan:
     targets: list[_Target] = field(default_factory=list)
 
 
+# `_target_key`가 만드는 키 — (file, symbol, line_start, line_end, slice_id). 한 이름으로 두는 것은
+# 칸이 늘 때 아래 캐시·집합의 타입 표기가 같이 따라오게 하려는 것이다 — slice id가 붙은 뒤에도
+# 그 셋이 네 칸짜리 튜플로 적혀 있었다.
+_TargetKey = tuple[str, str | None, int | None, int | None, str | None]
+
+
 @dataclass
 class _Accumulator:
     """단계 사이에 들고 다니는 중간 산출물.
@@ -546,21 +564,16 @@ class _Accumulator:
     # 3단계 LIGHT 캡슐을 target별로 한 번만 만들어 공유한다 (ADR 0010 §3 "캡슐은 한 번
     # 만든다"). Scout 풀은 대상 하나를 멤버 셋이 각각 보므로 팬아웃 뒤 세 `_InFlight`가
     # 같은 target을 공유하는데, 캡슐을 멤버마다 다시 만들면 검색 호출이 3배가 되고 세 멤버가
-    # 조금씩 다른 캡슐을 볼 수 있다(토크나이저별 예산 컷). 키는 target Location이다.
-    capsules: dict[tuple[str, str | None, int | None, int | None], ContextCapsule] = field(
-        default_factory=dict
-    )
+    # 조금씩 다른 캡슐을 볼 수 있다(토크나이저별 예산 컷). 키는 `_target_key` — target
+    # Location에 slice id를 더한 것이다(entry가 같은 두 슬라이스가 한 캡슐을 나눠 갖지 않게).
+    capsules: dict[_TargetKey, ContextCapsule] = field(default_factory=dict)
     # 그 캡슐을 **어느 역할 카운터로 계산했나**(공유 캡슐 토큰 회계 근거, #192 조건②). 첫 멤버가
     # 자기 토크나이저로 `tokens`를 정하고 2·3번 멤버는 그것을 공유하므로, 그 사실을 캐시-적중
     # 이벤트에 실어 「멤버 2·3의 프롬프트를 무엇으로 셌나」가 기록에서 안 지워지게 한다.
-    capsule_counter: dict[tuple[str, str | None, int | None, int | None], str] = field(
-        default_factory=dict
-    )
+    capsule_counter: dict[_TargetKey, str] = field(default_factory=dict)
     # 팬아웃된(deferred 아닌) 대상 키 집합 (#193 ①). 「모든 자리가 실패한 대상 수」 =
     # 이 집합에서 후보를 낸 대상을 뺀 것. 단일 `scout`에서도 성립한다(자리가 하나).
-    dispatched_targets: set[tuple[str, str | None, int | None, int | None]] = field(
-        default_factory=set
-    )
+    dispatched_targets: set[_TargetKey] = field(default_factory=set)
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -619,6 +632,7 @@ def run_pipeline(
         ledger=BudgetLedger(config.budget, trace),
         policy=FixedThresholdPolicy(config.thresholds),
         read_source=read_source,
+        read_slice=deps.read_slice,
         read_payload=read_payload,
         symbols_for=deps.symbols_for,
         counter_for_role=deps.counter_for_role,
@@ -1043,7 +1057,7 @@ def _plan_slice_targets(
                 location=ref.location,
                 evidences=evidences,
                 signal_rank=_symbol_signal_rank(ref.location, signal_lines, has_static),
-                slice_id=ref.slice_id,
+                slice=ref,
             )
         )
 
@@ -1183,9 +1197,7 @@ def _scout_roles(ctx: RunContext) -> tuple[Role, ...]:
     return (Role.SCOUT,)
 
 
-def _target_key(
-    location: Location, slice_id: str | None
-) -> tuple[str, str | None, int | None, int | None, str | None]:
+def _target_key(location: Location, slice_id: str | None) -> _TargetKey:
     """캡슐 캐시 키. 같은 대상을 보는 풀 멤버 item들이 같은 키를 낸다.
 
     **`slice_id`가 키에 든다**(ADR 0012 결정 1). 슬라이스 타깃의 `location`은 entry라, entry가
@@ -1200,7 +1212,7 @@ def _target_key(
     return (location.file, location.symbol, location.line_start, location.line_end, slice_id)
 
 
-def _cache_key_str(key: tuple[str, str | None, int | None, int | None, str | None]) -> str:
+def _cache_key_str(key: _TargetKey) -> str:
     """`_target_key` 튜플을 `cache` 이벤트의 문자열 라벨로. **캐시 조회 키가 아니라 이벤트
     라벨이다** — 충돌은 무해하다(hit ratio는 이벤트 수를 센다). 그래서 튜플을 그냥 잇는다.
 
@@ -1254,7 +1266,14 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
         ctx.record_cache(_cache_key_str(key), hit=True, counted_by=state.capsule_counter.get(key))
         return True
     with using_counter(ctx.counter_for_role(item.role.value)):
-        item.capsule = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.LIGHT)
+        # 슬라이스 타깃이면 slice id를 넘긴다 — LIGHT 캡슐의 `target_function`이 Scout가 받는
+        # 렌더를 세고, Retriever의 캐시가 entry가 같은 두 슬라이스를 가른다(#220 ②).
+        item.capsule = retrieval.run(
+            ctx,
+            target=item.target.location,
+            level=CapsuleLevel.LIGHT,
+            slice_id=item.target.slice_id,
+        )
     state.capsules[key] = item.capsule
     state.capsule_counter[key] = item.role.value
     return True
@@ -1271,7 +1290,7 @@ def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
         capsule=item.capsule,
         evidences=item.target.evidences,
         role=item.role,
-        slice_id=item.target.slice_id,
+        slice=item.target.slice,
     )
     item.candidate = candidate
     state.candidates.append(candidate)
@@ -1284,6 +1303,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     auditor는 EXPANDED 캡슐을 보므로 auditor 카운터로 켠다. 역할마다 모델(=토크나이저)이
     다를 수 있어 scout와 따로 감싼다 — 조립과 `CapsuleSection` 검증이 같은 카운터를 봐야
     한다(`src/tokens.py` docstring).
+
+    슬라이스 타깃이면 캡슐의 대상이 후보 위치(entry)가 아니라 **entry를 감싸는 함수**다
+    (`_auditor_target`). 후보의 위치는 그대로 entry다.
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
@@ -1291,7 +1313,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         raise _StageOutOfOrder("5단계가 4단계보다 먼저 돌았다 — candidate가 비어 있다")
     evidences, artifact = item.target.evidences, item.target.artifact
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
-        expanded = retrieval.run(ctx, target=item.target.location, level=CapsuleLevel.EXPANDED)
+        expanded = retrieval.run(
+            ctx, target=_auditor_target(ctx, item.target), level=CapsuleLevel.EXPANDED
+        )
     finding, missings = auditor.run(
         ctx, candidate=candidate, capsule=expanded, evidences=evidences
     )
@@ -1301,6 +1325,56 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     state.missings[finding.finding_id] = tuple(missings)
     state.workdirs[finding.finding_id] = artifact.path
     return True
+
+
+# entry를 품는 심볼을 모를 때 Auditor가 읽는 entry 앞뒤 줄 수. **잰 값이 아니라 설계 상수다** —
+# 헤더의 static inline 함수 하나를 덮고(대개 수십 줄) 프롬프트를 파일 크기와 무관하게 묶는 폭이다.
+_AUDITOR_WINDOW_LINES = 50
+
+
+def _auditor_target(ctx: RunContext, target: _Target) -> Location:
+    """5단계 캡슐의 대상. 슬라이스 타깃이면 entry 줄을 감싸는 함수, 아니면 타깃 위치 그대로.
+
+    **Auditor는 슬라이스가 아니라 원본을 본다** — ADR 0012 결정 1-b의 기본값 (i)이다(Auditor v3
+    프롬프트가 입력을 `original source code`로 선언한다. 결정권은 손수민 리뷰, 기한 2026-09-26).
+    슬라이스 타깃의 위치는 entry(줄 하나, `line_end` 없음)라 그대로 두면 Auditor가 그 한 줄만
+    읽는다 — 함수 머리도 버퍼 선언도 없이.
+
+    감싸는 함수는 인덱스(`symbols_for`)에서 entry 줄을 품는 심볼이고, 여럿이면 가장 좁은 것이다.
+    품는 심볼을 모르면 **entry 앞뒤 `_AUDITOR_WINDOW_LINES`줄**이다 — 파일 전체가 아니다. 인덱스가
+    없을 때만이 아니라 **있어도** 그렇다: `.h`는 artifact인데 인덱서가 안 받아 `symbols_for()`가
+    `[]`이고, 이름을 못 뽑은 정의도 인덱서가 버린다. 파일 전체는 상한 없이 프롬프트에 실려 위
+    모듈 docstring의 unzip.c(67,662자 → HTTP 400)를 다시 연다. W2는 같은 `[]`에서 후보를 아예 안
+    만들지만 슬라이스 타깃은 이미 서 있다. 창의 `line_end`는 파일 끝을 넘을 수 있다 — 읽기가 자른다.
+
+    ponytail: entry를 품는 함수 하나(모르면 고정 창)만 본다 — 슬라이스가 걸친 다른 함수(군집
+    슬라이스)는 Auditor가 못 본다. 넓히려면 `SliceRef`가 슬라이스 `lines`를 들어야 한다
+    (`_plan_slice_targets`의 순위 ponytail과 같은 선행). 1-b(손수민 결정)가 (i)로 정해지면 「걸친
+    함수 전부 + 크기 상한」으로 올린다 — 하네스 쪽 권고안이다(2026-09-25).
+    """
+    if target.slice is None:
+        return target.location
+    entry = target.slice.entry
+    line = entry.line_start
+    enclosing = [
+        symbol
+        for symbol in ctx.symbols_for(entry.file) or []
+        if line is not None
+        and symbol.line_start is not None
+        and symbol.line_start <= line <= (symbol.line_end or symbol.line_start)
+    ]
+    if enclosing:
+        return min(
+            enclosing,
+            key=lambda symbol: (symbol.line_end or symbol.line_start) - symbol.line_start,
+        )
+    if line is None:  # `slice_refs`가 entry 줄을 늘 채운다 — 줄이 없으면 창을 세울 자리가 없다
+        return Location(file=entry.file)
+    return Location(
+        file=entry.file,
+        line_start=max(1, line - _AUDITOR_WINDOW_LINES),
+        line_end=line + _AUDITOR_WINDOW_LINES,
+    )
 
 
 def _step_gate(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:

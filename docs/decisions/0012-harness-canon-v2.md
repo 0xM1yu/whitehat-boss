@@ -6,7 +6,7 @@
 
 ## 왜 이 기록이 필요한가
 
-**슬라이스가 무엇인지를 정본이 세 가지로 말하고, 코드는 그 어느 것도 아니다.** 이 ADR의 파일:줄은 `c301342`(그날의 `origin/main`) 기준이다. ~~코드(`src/`·`config/`·`prompts/`·`tools/`·`slicer*.py`)는 이 PR이 안 바꾸므로 그 줄 그대로 찾아지고,~~ (⏵ 2026-09-24 — 이 PR은 코드를 안 바꿨지만 같은 날 뒤에 머지된 PR들이 바꿨다. 코드 참조 가운데 **27곳이 main에서 그 줄이 아니다**(`c301342`의 줄 내용과 대조 · 같은 줄을 두 번 든 곳은 두 번 셌다). 파일별로 `config/models.yaml` 20(#262·#266·#267·#269 — 로스터 밖 키 아홉을 지운 #267이 가장 크다) · `slicer*.py` 5(#252·#255) · `src/interfaces/model_client.py` 2(#262)이고, 다른 파일의 참조는 그 줄 그대로다. 대부분은 옮겨졌고, 지운 `deepseek-r1-distill-qwen-32b` 항목을 가리키던 곳(`:677`·`:687`·`:688`·`:690`)은 줄이 없어졌다. 코드 줄은 `git show c301342:<경로>`로 읽는다.) **이 PR이 고치는 문서는 절·문구로 가리킨다** — 줄 번호를 곁들인 곳은 `c301342`의 줄이라고 밝혔다. 줄마다 쓰인 때는 `git log -L`로 뽑았다([CLAUDE.md](../../CLAUDE.md) §2.4).
+**슬라이스가 무엇인지를 정본이 세 가지로 말하고, 코드는 그 어느 것도 아니다.** 이 ADR의 파일:줄은 `c301342`(그날의 `origin/main`) 기준이다. ~~코드(`src/`·`config/`·`prompts/`·`tools/`·`slicer*.py`)는 이 PR이 안 바꾸므로 그 줄 그대로 찾아지고,~~ (⏵ 2026-09-24 — 이 PR은 코드를 안 바꿨지만 같은 날 뒤에 머지된 PR들이 바꿨다. 코드 참조 가운데 **27곳이 main에서 그 줄이 아니다**(`c301342`의 줄 내용과 대조 · 같은 줄을 두 번 든 곳은 두 번 셌다). 파일별로 `config/models.yaml` 20(#262·#266·#267·#269 — 로스터 밖 키 아홉을 지운 #267이 가장 크다) · `slicer*.py` 5(#252·#255) · `src/interfaces/model_client.py` 2(#262)이고, 다른 파일의 참조는 그 줄 그대로다. 대부분은 옮겨졌고, 지운 `deepseek-r1-distill-qwen-32b` 항목을 가리키던 곳(`:677`·`:687`·`:688`·`:690`)은 줄이 없어졌다. 코드 줄은 `git show c301342:<경로>`로 읽는다.) (⏵ 2026-09-25 — Phase 3a·3b·3c가 `src/`를 더 바꿔(러너 · `nodes/scout.py` · `prompt_loader.py` · 두 Retriever 등) 그 파일들의 참조도 줄이 움직였다 — 위 「다른 파일의 참조는 그 줄 그대로다」는 2026-09-24까지다. 코드 줄은 여전히 `git show c301342:<경로>`로 읽는다.) **이 PR이 고치는 문서는 절·문구로 가리킨다** — 줄 번호를 곁들인 곳은 `c301342`의 줄이라고 밝혔다. 줄마다 쓰인 때는 `git log -L`로 뽑았다([CLAUDE.md](../../CLAUDE.md) §2.4).
 
 | 자리 | 슬라이스의 자리 | 그 줄이 쓰인 때 |
 | --- | --- | --- |
@@ -51,7 +51,7 @@
 | ② | 캡슐 캐시 키에 슬라이서 신원이 없다 | `cache_key_for()`(두 Retriever)에 slice id와 `run_signature`를 넣고 `CAPSULE_POLICY_VERSION`(`fake_retriever.py:47` · `hybrid_retriever.py:76`)을 올린다 |
 | ③ | 슬라이스를 STATIC Evidence로 적으면 E1이 구조적으로 참이다 | 슬라이스와 RETRIEVED 블록은 **Evidence로 기록하지 않는다** — `static_ok`·`graph_ok`가 후보와 결합 없는 존재 검사라(`src/orchestrator/gate.py:140` · `:145`) 적는 순간 E1·E2가 부푼다 |
 
-⚠ **①은 절반만 풀린다.** Case B의 `entry.symbol`은 감싸는 함수가 아니라 sink 호출 이름이고(`slicer_queries.py:302` — `"symbol" -> c.name`) 감싸는 함수는 후보의 `scopes`에 있다(`slicer_candidates.py:31`). 군집 슬라이스는 `members`를 합쳐 여러 함수에 걸친다(`slicer_source.py:223`). `Location.symbol`을 무엇으로 채울지, `names_for()`의 「본문 줄 범위」 술어를 슬라이스 대상에 어떻게 쓸지는 Phase 3이 정한다.
+⚠ **①은 절반만 풀린다.** Case B의 `entry.symbol`은 감싸는 함수가 아니라 sink 호출 이름이고(`slicer_queries.py:302` — `"symbol" -> c.name`) 감싸는 함수는 후보의 `scopes`에 있다(`slicer_candidates.py:31`). 군집 슬라이스는 `members`를 합쳐 여러 함수에 걸친다(`slicer_source.py:223`). `Location.symbol`을 무엇으로 채울지, `names_for()`의 「본문 줄 범위」 술어를 슬라이스 대상에 어떻게 쓸지는 Phase 3이 정한다. (⏵ 2026-09-25 — 앞의 것은 정해졌다: 대표 후보의 `scopes[0].symbol`(감싸는 함수), 없으면 entry 이름이다(Phase 3b PR #284 — `src/adapters/slices.py`의 `slice_refs`). 뒤의 것은 아직이다 — 슬라이스 타깃의 캡슐 그래프 섹션이 entry 줄 하나를 「본문」으로 본다. 그 관측은 [D78](../open-questions/D/D78.md)의 2026-09-25 ⏵다.)
 
 ⚠ **이 결정은 슬라이스 입력의 탐지 품질을 근거로 하지 않는다 — 그 값이 없다.** Scout 좌석 모델을 고른 실험팀 「scout 모델 후보 실험」은 원본 함수로 쟀다(「슬라이스 품질 문제로 원본 파일 제공」 — 팀 보고, run ID 없음). 근거는 방향의 정렬이다 — 정본(PROJECT-CONTEXT.md §2 「tree-sitter를 왜 계속 두는가」 · build-plan.md §5 1단계 — 위 「왜」 표), 풀 프로필이 부르는 v3 프롬프트, 하네스팀 브리핑(2026-09-09~14, 「슬라이스 한 개가 후보 한 개」 — 팀 문서)이 같은 쪽을 가리킨다.
 
@@ -59,7 +59,7 @@
 
 현 Auditor v3 프롬프트는 입력을 원본 소스로 선언한다 — `prompts/auditor/v3/body.md:13`(*"representation: original source code"*) · `prompts/auditor/v3/prefix.md:9`(*"contains **original source code**"*). registry의 Auditor는 아직 v1을 고르고(`config/models.yaml:718`) v3는 디스크에만 있다(`prompts/auditor/v3/meta.yaml:1-2`).
 
-- **(i) 원본 소스 — 제안 기본값.** Auditor는 슬라이스가 걸친 함수의 원본 본문을 받는다. 프롬프트가 기대하지 않는 표현을 넣으면 Scout의 D82가 Auditor에서 재현된다. 대가: Scout와 Auditor가 다른 코드를 본다 — 슬라이스는 여러 파일에 걸칠 수 있어(`scout_boundary/v3/prefix.md:50`) 「어느 함수(들)의 본문인가」를 Phase 3이 정해야 한다.
+- **(i) 원본 소스 — 제안 기본값.** Auditor는 슬라이스가 걸친 함수의 원본 본문을 받는다. 프롬프트가 기대하지 않는 표현을 넣으면 Scout의 D82가 Auditor에서 재현된다. 대가: Scout와 Auditor가 다른 코드를 본다 — 슬라이스는 여러 파일에 걸칠 수 있어(`scout_boundary/v3/prefix.md:50`) 「어느 함수(들)의 본문인가」를 Phase 3이 정해야 한다. (⏵ 2026-09-25 — Phase 3c는 이것을 좁게 풀었다: entry 줄을 품는 함수 하나다(인덱스의 가장 좁은 심볼, 품는 심볼을 모르면 entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`) — `runner._auditor_target`). 군집 슬라이스가 걸친 다른 함수는 Auditor가 아직 못 본다. 1-b 결정 자체는 그대로 열려 있다.)
 - **(ii) 슬라이스 렌더** — Scout와 같은 입력. 팀 계약(Notion 「Auditor·Critic 모델 최종 선정」)이 Auditor 입력을 「슬라이스+줄번호+정적 근거」 캡슐로 적는 쪽이다. 선행: Auditor 프롬프트 개정(위 두 줄).
 
 결정권은 손수민 리뷰, 기한 2026-09-26(아래 「이 ADR이 열어 두는 것」 1-b). 결정 전까지는 (i)이다.
@@ -194,7 +194,7 @@
 5. **새 Evidence로 `queued` 후보를 다시 보는 설계가 대체 없이 빠진다** — [architecture.md](../architecture.md) §3 「Queue 규칙」의 둘째 문장(*"새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다"*)이다. 배선된 적은 없지만(생산자 0 — 결정 6 표) 설계에서 빠진다. need_evidence 루프는 같은 run 안에서 모델이 요청한 맥락을 채우는 길이지(결정 2), run 밖에서 들어온 새 근거로 다시 보는 길이 아니다. 다시 필요해지면 새 ADR이다.
 6. **실험 기록이 저장소 밖으로 나간다**(결정 5). `docs/experiments/`가 막으려던 어긋남을 저장소의 검사와 PR 리뷰가 다시 못 잡는다 — 그 폴더가 생긴 계기가 2026-08-18에 메신저 첨부로만 있던 ATOM 보고서 두 건이 다섯 군데 갈린 일이고, 그중 셋은 어느 모델을 실제로 서빙했는지·실험이 언제 끝났는지가 양쪽에 없어 생긴 오독이었다([그 README](../experiments/README.md) 머리). 줄이는 수단은 ADR·D 요약이 그 두 필드와 run ID를 싣는 것이다(결정 5의 인용 규칙). 그리고 Notion 페이지는 git 이력이 없어 줄이 언제 쓰였는지를 `git log -L`로 못 잰다 — 그래서 결정 5가 판독 날짜를 같은 문장에 적게 한다.
 
-**되돌리는 비용.** 지금은 문서뿐이다 — 이 결정의 코드는 한 줄도 없다(아래 「검증」). Phase 3 뒤에도 슬라이스를 안 쓰는 경로가 그대로 남도록 짓는 것이 결정 1의 조건이라, 되돌리기가 프로필 선택이 된다. 결정 6은 코드 삭제 PR 전까지 되살리는 비용이 지금과 같다 — 생산자가 원래 없다.
+**되돌리는 비용.** 지금은 문서뿐이다 — 이 결정의 코드는 한 줄도 없다(아래 「검증」). Phase 3 뒤에도 슬라이스를 안 쓰는 경로가 그대로 남도록 짓는 것이 결정 1의 조건이라, 되돌리기가 프로필 선택이 된다. (⏵ 2026-09-25 — 결정 1의 입력 쪽 코드가 들어왔다: Phase 3a(PR #283) · 3b(PR #284) · 3c. 슬라이스를 안 쓰는 경로는 그대로 남았다 — `run`에 `--slices`를 안 주면 옛 경로라, 지금 되돌리기는 그 플래그를 빼는 것이다.) 결정 6은 코드 삭제 PR 전까지 되살리는 비용이 지금과 같다 — 생산자가 원래 없다.
 
 ## 이 ADR이 열어 두는 것
 
@@ -216,11 +216,11 @@
 
 ## 검증
 
-**결정 6만 지금 참인 불변식이고, 코드 조건이 있는 나머지는 전부 지금 미충족이다** — 이 ADR은 코드가 따라갈 정본이지 코드의 서술이 아니다. 각 Phase의 PR은 자기 줄을 테스트로 잠그고, 배선을 되돌리면 빨개지는지 확인한다([CLAUDE.md](../../CLAUDE.md) §2.5).
+**결정 6만 지금 참인 불변식이고, 코드 조건이 있는 나머지는 전부 지금 미충족이다** — 이 ADR은 코드가 따라갈 정본이지 코드의 서술이 아니다. (⏵ 2026-09-25 — 결정 1의 네 조건은 Phase 3a·3b·3c 뒤 선다 — 아래 표 결정 1 행의 ⏵. 나머지는 이 문장 그대로다.) 각 Phase의 PR은 자기 줄을 테스트로 잠그고, 배선을 되돌리면 빨개지는지 확인한다([CLAUDE.md](../../CLAUDE.md) §2.5).
 
 | 결정 | 참이 되는 조건 | 2026-09-24 (`c301342`) |
 | --- | --- | --- |
-| 1 | `git grep -n slice_criterion -- src` ≥ 1이고 `FACT_KEYS`(`src/orchestrator/prompt_loader.py:56-65`)에 그 키가 있다 · `Candidate.slice_id`가 있다 · `src/`가 `slicer*.py`를 import하지 않는다 · 슬라이스에서 만든 `Evidence`가 없다 | 미충족 — `git grep -n -i slice -- src config` 0건 |
+| 1 | `git grep -n slice_criterion -- src` ≥ 1이고 `FACT_KEYS`(`src/orchestrator/prompt_loader.py:56-65`)에 그 키가 있다 · `Candidate.slice_id`가 있다 · `src/`가 `slicer*.py`를 import하지 않는다 · 슬라이스에서 만든 `Evidence`가 없다 | 미충족 — `git grep -n -i slice -- src config` 0건. ⏵ 2026-09-25 — 네 조건이 Phase 3a(PR #283) · 3b(PR #284) · 3c 뒤 선다: `git grep -n slice_criterion -- src`가 비지 않고 `FACT_KEYS`에 그 키가 opt-in으로 있다(슬라이스 타깃에만 실린다) · `Candidate.slice_id`(3b) · `src/`의 `slicer` import 0건 · 슬라이스로 만드는 `Evidence` 0건(`Evidence(`를 만드는 `src/` 파일 어디에도 슬라이스가 안 들어간다). 결정 1의 다른 불릿 — 슬라이스 없이 v3 Scout 프롬프트를 부르는 run의 시작 전 거부 — 은 이 칸의 조건 밖이고 세 PR에 없다 |
 | 1-b | 고른 표현과 Auditor 프롬프트의 `representation` 선언이 같다 | 결정 전 |
 | 2 | `requested_context`가 네 키 객체다 · `src/`가 `triage_need_evidence`를 읽는다 · `max_hops`가 설정에 있다 · 홉마다 trace 이벤트가 남는다 | 미충족 — `list[NonEmptyStr]`(`src/schemas/scout_response.py:46`) · 0건 · 0건 |
 | 3 | canonical 프로필의 `retriever`가 `hybrid`가 아니다 | canonical 프로필이 아직 없다(Phase 6) |

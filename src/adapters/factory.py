@@ -24,7 +24,13 @@ from src.adapters.index_graph import GraphIndex, IndexHook
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
-from src.adapters.slices import load_slices, slice_refs, slicer_summary
+from src.adapters.slices import (
+    SliceInputError,
+    load_slices,
+    render_slices,
+    slice_refs,
+    slicer_summary,
+)
 from src.adapters.sqlite_store import SqliteStateStore
 from src.adapters.tokenizer import (
     REASON_NO_SOURCE,
@@ -48,6 +54,34 @@ from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 from src.schemas.run import CompileFlags, ModelSampling
 from src.tokens import COUNTED_ROLES
+
+
+def _no_slices(slice_id: str) -> str:
+    """`Deps.read_slice`의 기본값 — `build_deps` 밖에서 조립된 `Deps`만 이것을 든다.
+
+    `build_deps`는 늘 렌더 조회를 넣는다(`--slices`가 없으면 빈 dict의 조회). 어느 쪽이든 부를
+    자리가 없다 — 불렸으면 배선 결함이다.
+    """
+    raise KeyError(f"렌더된 슬라이스가 없다 — {slice_id}")
+
+
+def _read_rendered(rendered: dict[str, str]) -> Callable[[str], str]:
+    """`build_deps`가 `Deps`와 Retriever에 **같이** 넣는 렌더 조회. 없는 id는 이름을 대고 멈춘다.
+
+    타깃이 되는지(artifact 멤버십 — 러너 `_plan_slice_targets`)와 렌더되는지(`is_file` —
+    `render_slices`)는 다른 술어다. 둘 다 run 시작 때 같은 트리를 봐서 현실 입력으로는 안 갈리지만,
+    갈리면(시작과 전처리 사이의 트리 변경) 맨 `KeyError` 트레이스백으로 죽었다(#285 리뷰).
+    """
+
+    def read(slice_id: str) -> str:
+        try:
+            return rendered[slice_id]
+        except KeyError:
+            raise SliceInputError(
+                f"{slice_id}: 렌더가 없다 — run 시작 때 entry 파일이 대상 트리에 없던 슬라이스다"
+            ) from None
+
+    return read
 
 
 @dataclass(frozen=True)
@@ -93,6 +127,11 @@ class Deps:
     slice_refs: tuple[SliceRef, ...] | None = None
     # `RunRecord.slicer`가 될 슬라이서 산출 요약. `slice_refs`와 같이 `None`이다.
     slicer: dict[str, str | int | None] | None = None
+    # 슬라이스 id → 렌더(gutter·배너). `build_deps`가 run 전에 **전부** 렌더해 둔 dict의 조회다 —
+    # drift가 첫 모델 호출 전에 `SliceInputError`로 나야 해서다(러너는 그 예외를 안 잡는다).
+    # Scout `SOURCE`와 Retriever의 `target_function`이 이 한 조회에서 나온다 — `read_source`가
+    # Retriever와 같은 함수여야 하는 것과 같은 이유다.
+    read_slice: Callable[[str], str] = _no_slices
     # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다(#96 (b)).
     #
@@ -131,6 +170,10 @@ class _BuildArgs:
     on_truncate: TruncateHook | None = None
     on_usage: UsageHook | None = None
     on_index: IndexHook | None = None
+    # 슬라이스 렌더 조회와 그 슬라이서 run의 `run_signature` — Retriever가 슬라이스 타깃의
+    # `target_function`을 세고 캐시 키를 가르는 데 쓴다(#220 ②). `Deps.read_slice`와 같은 것이다.
+    read_slice: Callable[[str], str] | None = None
+    slice_signature: str | None = None
 
     # **한 run에 하나만 만든다.** `graph_index()`가 호출마다 새 로더를 만들던 시절에는
     # Retriever와 `symbols_for`가 각각 하나씩 갖게 되고, 그러면 지연 로드가 두 번 일어나
@@ -182,6 +225,8 @@ _RETRIEVERS: dict[str, _Wiring] = {
             # dev_hybrid_docker·harness_pool_hybrid만 아래 hybrid 빌더로 간다.
             # 여기 그래프를 안 물리면 1단계 산출물을 아무도 읽지 않는다.
             graph=a.graph_index(),
+            read_slice=a.read_slice,
+            slice_signature=a.slice_signature,
         ),
     ),
     # embedding·reranker의 실서빙 여부는 여기서 정하지 않는다 — 모델과 마찬가지로
@@ -199,6 +244,8 @@ _RETRIEVERS: dict[str, _Wiring] = {
             on_truncate=a.on_truncate,
             on_usage=a.on_usage,
             graph=a.graph_index(),
+            read_slice=a.read_slice,
+            slice_signature=a.slice_signature,
         ),
     ),
 }
@@ -307,8 +354,12 @@ def build_deps(
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
     `slices_path`를 믿을 수 없으면 여기서 `SliceInputError`로 멈춘다 — 모델을 부르기 전이다.
+    **렌더(drift 검사)까지 여기서 전부 한다** — 러너는 그 예외를 안 잡으므로 run 도중에
+    렌더하면 앞 슬라이스의 모델 호출을 태운 뒤 산출물 없이 죽는다(`slices` 모듈 docstring).
     """
     loaded = load_slices(slices_path) if slices_path is not None else None
+    rendered = render_slices(loaded, source_root) if loaded is not None else {}
+    read_slice = _read_rendered(rendered)
     ids = IdFactory(run_id)
     # 경로 조립을 여기서 하지 않고 `container_tools.index_output_path()`에 묻는다 —
     # 쓰는 쪽과 읽는 쪽이 갈리면 예외가 아니라 "인덱서가 안 돌았다"로 기록된다.
@@ -323,6 +374,8 @@ def build_deps(
         on_truncate=on_truncate,
         on_usage=on_usage,
         on_index=on_index,
+        read_slice=read_slice,
+        slice_signature=loaded.run_signature if loaded is not None else None,
         graph=graph,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
@@ -411,6 +464,9 @@ def build_deps(
         symbols_for=graph.symbols_for,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
+        # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의
+        # `target_function` 토큰이 한 렌더에서 나온다.
+        read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
     )
