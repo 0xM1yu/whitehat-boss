@@ -241,3 +241,34 @@ profiles:
     # 실행 단위도 `harness_pool`과 같아야 한다 — 다르면 두 run의 차이가 검색 경로 하나로 안 갈린다.
     execution:
       mode: per_stage
+
+  # --- ATOM index-v2 스모크(2026-09-26) — 머지하지 않는 브랜치 `smoke/index-v2-atom*` -----------
+  # main(index-v1 · harness-tools:v1)과 이 PR(index-v2 · harness-tools:v2)을 같은 슬라이스로 태워
+  # 모델이 받는 프롬프트가 바뀌는지 본다. 실서빙 키의 `checksum`이 0이라 비교표 밖이다.
+  atom_index_v2_fake:
+    description: "ATOM index-v2 스모크 전용(머지 안 함) — 모델 전부 fake, 도구 docker. 슬라이스 241개의 프롬프트를 main과 대조한다"
+    production: false
+    roles:
+      scout: fake
+      auditor: fake
+      critic: fake
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: atom_index_v2_smoke
+
+  atom_index_v2_scout:
+    description: "ATOM index-v2 스모크 전용(머지 안 함) — Scout 풀만 실서빙(memory·injection qwen3-14b · boundary seccoderx-8b), auditor·critic fake. checksum 0이라 비교표 제외"
+    production: false
+    roles:
+      scout_memory: qwen3-14b
+      scout_boundary: seccoderx-8b
+      scout_injection: qwen3-14b
+      auditor: fake
+      critic: fake
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: atom_index_v2_smoke
