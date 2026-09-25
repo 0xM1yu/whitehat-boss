@@ -47,8 +47,9 @@ def run(
     구조였다면 구현마다 적중률 정의가 갈라졌을 것이다.
 
     `slice_id`는 러너가 슬라이스 타깃의 LIGHT 캡슐에만 준다(`runner._step_retrieval`) —
-    `target_function`이 Scout가 받는 렌더를 센다. Auditor의 EXPANDED는 entry를 감싸는 함수의 원본을
-    보므로 주지 않는다(`runner._auditor_target`).
+    `target_function`이 Scout가 받는 렌더를 센다. Auditor의 EXPANDED는 entry를 감싸는 함수가
+    대상이라 주지 않는다(`runner._auditor_target`) — 슬라이스가 걸친 다른 함수는 캡슐이 아니라
+    `SOURCE`에만 붙는다(`runner._auditor_source`).
     """
     with ctx.stage(Stage.RETRIEVAL):
         budget = ctx.config.thresholds.budget_for(level)
