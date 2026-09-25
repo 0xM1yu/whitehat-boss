@@ -622,7 +622,7 @@ def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
 # `prompt_template_version`을 올리는 쪽이다. `fake`를 쓰면 그 PR이 이 검사를 안 건드리고
 # 지나간다.
 _POOL_PROFILE_ROLES = {
-    "scout_memory": "seccoderx-8b",
+    "scout_memory": "qwen3-14b",
     "scout_boundary": "seccoderx-8b",
     "scout_injection": "qwen3-14b",
     "auditor": "qwen3.6-35b-a3b",
@@ -1509,16 +1509,24 @@ def test_an_unknown_execution_key_is_rejected() -> None:
 FIRST_PORT = 8000
 
 
-def _launch_order(config: HarnessConfig) -> list[str]:
-    """교대가 모델을 띄우는 순서 — Scout 풀(4단계) → Auditor(5) → Critic(7) → 검색(hybrid 전용).
+def _launch_stages(config: HarnessConfig) -> list[set[str]]:
+    """교대가 모델을 띄우는 단계 묶음 — Scout 풀(4) → Auditor(5) → Critic(7) → 검색(hybrid 전용).
 
-    러너가 단계마다 교대를 부르는 순서와 같다(Scout 풀 안에서는 `SCOUT_POOL_ROLES` 순서). 검색
-    두 모델은 hybrid에서만 뜨므로 canonical run의 넷 **뒤**에 둔다 — canonical run이 8000부터
-    차례로 올라가게 하려는 것이다.
+    러너가 단계마다 교대를 부르는 순서와 같다. **한 묶음 안의 모델은 함께 뜬다** — Scout 풀의 두
+    모델은 한 장비에 공존해 같은 단계에 떠 있으므로 그 사이에는 띄우는 순서가 없다(2026-09-25
+    `scout_memory`가 `qwen3-14b`로 옮겨 풀의 첫 자리 모델이 바뀌었을 때 포트를 안 바꾼 이유다).
+    검색 두 모델은 hybrid에서만 뜨므로 canonical run의 묶음 **뒤**에 둔다 — canonical run이
+    8000부터 차례로 올라가게 하려는 것이다. 앞 묶음에 이미 나온 키는 다시 세지 않는다.
     """
     roles = config.profile.roles
-    order = (*SCOUT_POOL_ROLES, "auditor", "critic", *RETRIEVAL_ROLES)
-    return list(dict.fromkeys(roles[role] for role in order if role in roles))
+    stages: list[set[str]] = []
+    seen: set[str] = set()
+    for group in (SCOUT_POOL_ROLES, ("auditor",), ("critic",), RETRIEVAL_ROLES):
+        keys = {roles[role] for role in group if role in roles} - seen
+        if keys:
+            stages.append(keys)
+            seen |= keys
+    return stages
 
 
 def _port(entry: ModelEntry) -> int | None:
@@ -1526,18 +1534,20 @@ def _port(entry: ModelEntry) -> int | None:
 
 
 def test_served_ports_count_up_from_8000_in_launch_order() -> None:
-    """포트는 교대가 띄우는 순서대로 8000부터 빈틈없이 올라간다.
+    """포트는 교대가 띄우는 단계 순서대로 8000부터 빈틈없이 올라간다(한 단계 안의 순서는 없다).
 
     2026-09-24 전까지는 로스터를 바꿀 때마다 빈 번호에 끼워 넣어, canonical run이
     8009 → 8010 → 8008 → 8006 순서로 떴다(#267 기준 registry) — 번호만 보고는 어느 단계의
     모델인지 알 수 없었다. 이제 번호가 곧 띄우는 순서다.
     """
     config = load_config("harness_pool")
-    keys = _launch_order(config)
-
-    actual = {key: _port(config.models[key]) for key in keys}
-    expected = {key: FIRST_PORT + index for index, key in enumerate(keys)}
-    assert actual == expected
+    first = FIRST_PORT
+    for keys in _launch_stages(config):
+        ports = {key: _port(config.models[key]) for key in keys}
+        assert set(ports.values()) == set(range(first, first + len(keys))), (
+            f"{sorted(keys)}의 포트 {ports}가 {first}부터 차례로 이어지지 않는다"
+        )
+        first += len(keys)
 
 
 def test_no_two_served_models_share_a_port() -> None:

@@ -76,6 +76,9 @@ from src.schemas.capsule import CapsuleSection
 from src.schemas.common import Location
 from src.tokens import estimate_tokens
 
+# 슬라이스의 줄 집합 — (file, line). 슬라이스 타깃 캡슐의 「본문」이다(`GraphIndex.names_for`).
+SliceBody = frozenset[tuple[str, int]]
+
 # `indexer.py`의 `INDEX_VERSION`과 같아야 한다.
 #
 # 그 스크립트는 이미지 안에서 살고 `src/`를 import 하지 않아 **형식이 양쪽에 따로
@@ -191,7 +194,9 @@ class GraphIndex:
             for name, start, end in self._defined.get(file, [])
         ]
 
-    def names_for(self, kind: str, target: Location) -> list[str] | None:
+    def names_for(
+        self, kind: str, target: Location, body: SliceBody | None = None
+    ) -> list[str] | None:
         """`kind` 섹션에 실을 항목. `None`은 **그래프 자체가 없다**는 뜻이다.
 
         빈 리스트(`[]`)와 섞지 않는다 — 그쪽은 "봤는데 간선이 0건"이다. 호출자는 이
@@ -223,34 +228,45 @@ class GraphIndex:
         `symbols`에 아예 없는 이름(`memcpy` 같은 외부 함수)은 남긴다 — 본문 안에 없는
         것이 확실하기 때문이다.
 
-        ⚠ **슬라이스 타깃(`run --slices`)에서는 위 등식이 깨진다**(2026-09-25). 그 run의 LIGHT
-        `target_function`과 Scout `SOURCE`는 슬라이스 렌더인데 `target`은 entry(줄 하나)라,
-        여기의 「본문」은 entry 줄 하나다 — entry가 sink 줄이면(Case B) 감싸는 함수의 호출자가,
-        함수 머리면(Case A) 본문의 호출이 빠진다. 슬라이스 타깃의 본문을 무엇으로 볼지는
-        #220 ①의 남은 절반이다(ADR 0012 결정 1의 ⚠ — 「`names_for()`의 술어」).
+        ## 슬라이스 타깃의 본문은 슬라이스다 (#220 ①)
+
+        `run --slices`면 LIGHT `target_function`과 Scout `SOURCE`가 슬라이스 렌더다. 위 등식을
+        지키는 본문은 `target`(entry 줄 하나)의 범위가 아니라 **슬라이스의 (file, line) 집합**
+        (`body`)이다 — entry만 보면 Case B(sink 줄)는 감싸는 함수의 호출자가, Case A(함수 머리)는
+        본문의 호출이 빠졌다. 「본문 안에 정의」는 정의 **범위**가 그 집합과 겹치는가로 본다 —
+        시작 줄로 보면 머리 줄을 안 품은 슬라이스(K&R 머리 · 손으로 만든 줄 집합)에서 callers가
+        조용히 빈다. 실 슬라이서는 본문 줄이 뽑히면 함수 머리를 통째로 넣어(`slicer_source.py`의
+        `recover_lines`) 대개 둘이 같지만 그 보장에 기대지 않는다. 집합은 파일을 가로질러도 된다
+        (군집 슬라이스) — 양 끝이 다 보이는 간선은 어느 섹션에도 없다.
+
+        ponytail: 슬라이스가 걸친 **모든** 함수의 외부 호출자를 싣는다 — 널리 불리는 헬퍼 본문을
+        지나는 슬라이스면 그 호출자들이 정렬 순서대로 예산을 먼저 먹을 수 있다. 「뿌리 함수의
+        호출자만」으로 좁히면 Case B의 sink 함수(슬라이스 안에서 불린다)의 호출자가 빠져서 좁히지
+        않았다 — 실 `slices.json`에서 섹션 줄 수를 재고 정한다.
         """
         if kind not in GRAPH_SECTION_KINDS:
             raise ValueError(f"그래프 섹션이 아니다: {kind}")
         if self._load().status != STATUS_LOADED:
             return None
 
+        in_body, defined_in_body = self._rules(target, body)
         if kind == "callers":
             rows = [
                 (caller, row_file, line)
                 for caller, callee, row_file, line in self._calls
                 # 선택: 본문 안에 정의된 심볼로 들어오는 호출.
-                if self._defined_in_body(callee, target)
+                if defined_in_body(callee)
                 # 제외: 호출 지점이 본문 안이면 원문에 이미 있다(자기 재귀·형제 호출).
-                and not self._in_body(row_file, line, target)
+                and not in_body(row_file, line)
             ]
         else:
             rows = [
                 (callee, row_file, line)
                 for _, callee, row_file, line in self._calls
                 # 선택: 본문 안에서 나가는 호출.
-                if self._in_body(row_file, line, target)
+                if in_body(row_file, line)
                 # 제외: 대상 정의가 본문 안이면 원문에 이미 있다.
-                and not self._defined_in_body(callee, target)
+                and not defined_in_body(callee)
             ]
         # 정렬·중복 제거로 결정론을 지킨다. 같은 입력에 같은 캡슐이 나오지 않으면
         # engineering-guide.md §5의 재현성이 깨진다.
@@ -259,7 +275,41 @@ class GraphIndex:
     # --- 본문 판정 -------------------------------------------------------
     #
     # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**
-    # 심볼 target이면 그 심볼의 줄 범위, 파일 target이면 그 파일 전체다.
+    # 심볼 target이면 그 심볼의 줄 범위, 파일 target이면 그 파일 전체다. 슬라이스 타깃이면
+    # 슬라이스의 줄 집합이다(`body` — `names_for` docstring 마지막 절).
+
+    def _rules(
+        self, target: Location, body: SliceBody | None
+    ) -> tuple[Callable[[str, int], bool], Callable[[str], bool]]:
+        """(호출 지점이 본문 안인가, 이름의 정의가 본문 안인가) — 두 규칙이 쓰는 한 본문.
+
+        ⚠ **두 규칙의 정밀도가 다르다.** 호출 지점 쪽은 `(file, line)`으로 파일을 보는데,
+        정의 쪽(`shown`)은 **이름만** 든다. 군집 슬라이스가 파일을 가로지르면 여러 파일의
+        이름이 한 집합에 섞여, 같은 이름이 슬라이스와 안 겹치는 다른 파일에도 정의돼 있으면
+        그쪽으로 가는 호출까지 callers에 실린다(#288 리뷰 LOW-2 ·
+        `test_a_slice_body_cannot_tell_two_definitions_apart_by_file`이 박았다).
+
+        **지금은 좁힐 수 없다** — 인덱스의 `calls` 행은 callee를 **파일 없는 이름**으로만 들고,
+        그 행의 `file`·`line`은 호출 지점이지 정의 위치가 아니다(`index-v1` 스키마).
+        비슬라이스 경로는 `target.file`로 스코프돼 이 문제가 없다. 인덱스가 callee 파일을
+        들게 되면 `(file, name)`으로 좁힌다.
+        """
+        if body is None:
+            return (
+                lambda file, line: self._in_body(file, line, target),
+                lambda name: self._defined_in_body(name, target),
+            )
+        lines: dict[str, list[int]] = {}
+        for file, line in body:
+            lines.setdefault(file, []).append(line)
+        # 정의 **범위**가 슬라이스 줄과 겹치면 본문 안이다 — 시작 줄이 아니다(docstring).
+        shown = {
+            name
+            for file, file_lines in lines.items()
+            for name, start, end in self._defined.get(file, [])
+            if any(start <= line <= (end or start) for line in file_lines)
+        }
+        return (lambda file, line: (file, line) in body), shown.__contains__
 
     def _in_body(self, file: str, line: int, target: Location) -> bool:
         """(file, line)이 본문 안인가."""
@@ -339,7 +389,11 @@ class GraphIndex:
 
 
 def graph_section(
-    kind: str, graph: "GraphIndex", target: Location, remaining: int
+    kind: str,
+    graph: "GraphIndex",
+    target: Location,
+    remaining: int,
+    body: SliceBody | None = None,
 ) -> tuple[CapsuleSection | None, bool]:
     """그래프 섹션 하나를 만든다. `(섹션, 멈춰야 하는가)`.
 
@@ -361,13 +415,16 @@ def graph_section(
     `remaining` 이하로 맞춰 돌려주므로 깎을 것이 없고, 굳이 깎으면 줄은 그대로 두고
     토큰만 줄이는 것이 되어 `CapsuleSection`의 검증기에서 죽는다.
     """
-    names = graph.names_for(kind, target)
+    names = graph.names_for(kind, target, body)
     if names is None:
         return None, False
-    tokens, items, body = fit_names(names, remaining)
+    # `fitted`로 받는다 — 매개변수 `body`(SliceBody: (file, line) 집합)와 섹션의 `body`
+    # (담은 줄 `list[str]`)는 **다른 것**이다. 한 이름에 둘을 담으면 `names_for` 아래에
+    # 슬라이스 본문을 다시 쓰는 코드가 들어왔을 때 조용히 틀린다(#288 리뷰 LOW-1).
+    tokens, items, fitted = fit_names(names, remaining)
     if names and items == 0:
         return None, True
-    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=body), False
+    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=fitted), False
 
 
 def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:

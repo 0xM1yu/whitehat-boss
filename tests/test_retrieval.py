@@ -5,12 +5,14 @@
 경로는 vLLM을 붙여도 같은 경로다.
 """
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
 from src import cli
+from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import FakeRetriever
 from src.adapters.hybrid_retriever import (
@@ -18,6 +20,7 @@ from src.adapters.hybrid_retriever import (
     _chunk_body,
     read_symbol_source,
 )
+from src.adapters.index_graph import GraphIndex
 from src.adapters.vllm_retrieval import (
     FakeEmbeddingClient,
     FakeRerankerClient,
@@ -221,7 +224,8 @@ def test_sections_never_exceed_the_capsule_budget(corpus: Path) -> None:
 def test_pool_profile_shrinks_the_capsule_budget_by_the_margin() -> None:
     """풀 프로필에서 3단계 예산이 마진(#194)만큼 줄어 Query에 실린다. 단일은 안 줄어든다.
 
-    공유 캡슐을 첫 멤버(qwen) 토크나이저로 재는데 다른 계열(mistral=scout_boundary)이
+    공유 캡슐을 첫 멤버(qwen) 토크나이저로 재는데 계열이 다른 멤버(2026-09-13 실측 때의 mistral
+    `scout_boundary`)가
     같은 텍스트를 최대 ~11% 더 세므로, 첫 멤버 기준 예산을 factor로 줄여 담아야 세 자리가
     전부 상한 안에 든다(2026-09-13 ATOM 실측). 단일 프로필은 자리가 하나라 마진이 없다 —
     실측 없이 상한을 줄이면 §0의 "안 잰 값으로 채우지 않는다"에 걸린다.
@@ -301,10 +305,20 @@ _RENDERS = {
     "slice_0001": "/* ===== target.py ===== */\n1| def handle(req):",
     "slice_0002": "/* ===== target.py ===== */\n1| def handle(req):\n2|     return req.user.token",
 }
+# 위 렌더가 보여 주는 줄. `build_deps`는 렌더 조회와 **같이** 줄 조회도 넣는다(#220 ①).
+_LINES = {
+    "slice_0001": frozenset({("target.py", 1)}),
+    "slice_0002": frozenset({("target.py", 1), ("target.py", 2)}),
+}
 
 
-def _slice_retriever(kind: str, root: Path, *, signature: str = "sig_0001"):  # noqa: ANN202
-    kwargs = {"read_slice": _RENDERS.__getitem__, "slice_signature": signature}
+def _slice_retriever(kind: str, root: Path, *, signature: str = "sig_0001", **extra):  # noqa: ANN202
+    kwargs = {
+        "read_slice": _RENDERS.__getitem__,
+        "slice_signature": signature,
+        "slice_lines": _LINES.__getitem__,
+        **extra,
+    }
     if kind == "fake":
         return FakeRetriever(root=root, ids=IdFactory(RUN_ID), run_id=RUN_ID, **kwargs)
     return _retriever(root, **kwargs)[0]
@@ -331,6 +345,42 @@ def test_twin_slices_get_their_own_capsule_built_from_their_render(corpus: Path,
     for sid, capsule in capsules.items():
         (section,) = [s for s in capsule.sections if s.kind == "target_function"]
         assert section.tokens == estimate_tokens(_RENDERS[sid])
+
+
+# `target.py`의 1–2줄이 `handle`이고, 2줄에서 `token`을 부르며, 다른 파일이 `handle`을 부른다.
+_SLICE_INDEX = {
+    "version": "index-v1",
+    "files": ["target.py", "app.py"],
+    "skipped": [],
+    "symbols": [{"name": "handle", "file": "target.py", "line_start": 1, "line_end": 2}],
+    "calls": [
+        {"caller": "main", "callee": "handle", "file": "app.py", "line": 7},
+        {"caller": "handle", "callee": "token", "file": "target.py", "line": 2},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+
+
+@pytest.mark.parametrize("kind", ["fake", "hybrid"])
+def test_a_slice_capsule_draws_its_graph_from_the_slice_lines(
+    corpus: Path, tmp_path: Path, kind: str
+) -> None:
+    """두 Retriever 모두 슬라이스 질의의 그래프 섹션을 **슬라이스의 줄**로 센다(#220 ①).
+
+    target은 entry(1줄)지만 슬라이스는 2줄도 보여 준다 — 2줄의 `token` 호출이 callees에 선다.
+    한쪽 Retriever만 배선되면 `dev_fake`와 `dev_hybrid_docker`가 같은 슬라이스에 다른 캡슐을 낸다.
+    """
+    path = index_output_path(tmp_path / "artifacts", RUN_ID)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_SLICE_INDEX), encoding="utf-8")
+    retriever = _slice_retriever(kind, corpus, graph=GraphIndex(path))
+
+    capsule = retriever.search(_slice_query("slice_0002"), CapsuleLevel.LIGHT)
+
+    graph = {s.kind: s.body for s in capsule.sections if s.kind in ("callers", "callees")}
+    assert graph == {"callers": ["main app.py:7"], "callees": ["token target.py:2"]}
 
 
 @pytest.mark.parametrize("kind", ["fake", "hybrid"])

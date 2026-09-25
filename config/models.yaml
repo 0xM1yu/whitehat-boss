@@ -294,10 +294,10 @@ models:
   #   docs/experiments/harness/2026-09-24-roster-smoke-atom.md 이다. **그 보고서는 PR #260 위에 쌓인 짝 문서 PR이
   #   들여온다** — 이 파일이 먼저 머지되면 그 경로는 잠시 빈다.
   seccoderx-8b:
-    # 확정 로스터 Scout memory·boundary (프롬프트 v3). SecCoderX Reasoning Vulnerability
+    # 확정 로스터 Scout boundary (프롬프트 v3). SecCoderX Reasoning Vulnerability
     # Detection Reward Model — config.json이 Qwen3ForCausalLM/qwen3라 생성형이고 Scout로 JSON을 낸다.
-    # 한 모델이 memory·boundary 두 역할을 v3로 담당한다 — 프롬프트 내용은 역할 폴더가 가른다
-    # (scout_memory/v3=옛 실험 v14s, scout_boundary/v3=옛 v15s). 버전이 같아 별칭 키가 필요 없다.
+    # ⏵ 2026-09-25 — memory는 `qwen3-14b`로 옮겼다(그 항목 참조). 이 키는 이제 boundary 하나다
+    # (scout_boundary/v3=옛 v15s). memory·boundary가 한 키를 쓰던 것은 그 전 상태다.
     # ⚠ **포트는 8000이다** — 2026-09-24 포트를 교대가 띄우는 순서대로 8000부터 다시 매겼고 이 키가
     #   첫 자리다(`tests/test_config.py`의 `test_served_ports_count_up_from_8000_in_launch_order`).
     #   그 전에는 8009였다 — 골격 등재 때 Critic `gpt-oss-20b`와 같은 8006이라 배선하며 갈랐다
@@ -446,7 +446,9 @@ models:
       prefix_hit_ratio_batch32: null
 
   qwen3-14b:
-    # 로스터 Scout injection (프롬프트 v3). Qwen/Qwen3-14B — dense 14.8B.
+    # 로스터 Scout injection·memory (프롬프트 v3). Qwen/Qwen3-14B — dense 14.8B.
+    # ⏵ 2026-09-25 — memory가 `seccoderx-8b`에서 이 키로 옮겼다(PROJECT-CONTEXT.md §1). 포트는
+    # 그대로다 — memory가 injection과 같은 서버(8001)를 쓴다.
     # 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서 옮겼다 — 근거는
     # ADR 0012(PR #260) 결정 4의 표이고, 2026-09-24 @danielcho02가 로스터 확정으로 배선을 지시했다.
     # 값은 2026-09-24 Hugging Face에서 직접 읽었다:
