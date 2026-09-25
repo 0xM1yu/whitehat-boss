@@ -88,12 +88,21 @@ def _resolved_directory(directory: object, repo: Path) -> Path:
 
 
 # Include flags whose path is a separate following token, and the attached forms (-Ipath).
-# c2cpg's compilation-database parser resolves these against the JVM working directory, not the
-# entry's `directory`, so a relative include is never found on the Joern host. That silently
-# drops any code behind an unfound header -- for a node addon, the nan.h that defines NAN_METHOD
-# is under a relative `-I../build_context/generated_headers/nan`, so every method declared with
-# that macro (WrappedRE2::Split, the GT sink) fails to parse and cannot become a candidate.
-# Anchoring each relative include at the entry directory recovers them.
+# Of these, c2cpg's compilation-database parser (JSONCompilationDatabaseParser.scala) only ever
+# extracts `-I`: `arguments.filter(_.startsWith("-I"))` for an `arguments` entry, and the regex
+# `-I(\S+)` for a `command` string -- both only match the path when it is in the SAME token as
+# the flag (a separated `-I path` yields an empty string in `arguments` form, and no match at all
+# in `command` form). `-isystem`/`-iquote`/`-idirafter`/`-imacros`/`-include`/`-cxx-isystem` are
+# never read by c2cpg's include resolution at all; they are normalized here only for consistency
+# with `-I`, not because c2cpg consults them.
+#
+# c2cpg resolves whatever it does extract against the JVM working directory, not the entry's
+# `directory`, so a relative include is never found on the Joern host. That silently drops any
+# code behind an unfound header -- for a node addon, the nan.h that defines NAN_METHOD is under a
+# relative `-I../build_context/generated_headers/nan`, so every method declared with that macro
+# (WrappedRE2::Split, the GT sink) fails to parse and cannot become a candidate. Anchoring each
+# relative include at the entry directory, and merging a separated flag+path into one attached
+# token so c2cpg's `-I` extraction actually sees it, recovers them.
 _INCLUDE_SEP_FLAGS = frozenset(
     {"-I", "-isystem", "-iquote", "-idirafter", "-imacros", "-include", "-cxx-isystem"}
 )
@@ -106,7 +115,11 @@ def _abs_include(path: str, directory: str) -> str:
 
 def _absolutize_includes(entry: dict, directory: str) -> list[str]:
     """Rewrite the compile args so every relative include path is absolute (anchored at the
-    entry directory). Returns the rewritten argument list."""
+    entry directory), returning the rewritten argument list. A separated flag+path pair
+    (`-I path`) is merged into one attached token (`-I<abspath>`) -- see the module-level comment
+    above `_INCLUDE_SEP_FLAGS` for why the separated form does not reach c2cpg otherwise. Raises
+    ValueError via `shlex.split` if `entry["command"]` has unbalanced quoting; the caller decides
+    what to do with one malformed entry."""
     if isinstance(entry.get("arguments"), list):
         tokens = [str(t) for t in entry["arguments"]]
     else:
@@ -116,8 +129,7 @@ def _absolutize_includes(entry: dict, directory: str) -> list[str]:
     while i < len(tokens):
         token = tokens[i]
         if token in _INCLUDE_SEP_FLAGS and i + 1 < len(tokens):
-            out.append(token)
-            out.append(_abs_include(tokens[i + 1], directory))
+            out.append(token + _abs_include(tokens[i + 1], directory))
             i += 2
             continue
         for prefix in _INCLUDE_ATTACHED:
@@ -160,12 +172,19 @@ def resolve_compilation_database(
 ) -> tuple[Path, set[str], int]:
     """Normalize a compile_commands database and report the files it compiles.
 
-    Returns the path to a normalized copy (every entry's `directory` made absolute), the set of
-    compiled files relative to the repository (with c2cpg's ignored folders and non-source
-    extensions already removed), and the count of database entries c2cpg would ignore by those
-    rules. The copy is written under `out_dir`, the same shared location the file-transport
-    payloads use, so a remote Joern can read it. Raises OSError/ValueError/json.JSONDecodeError
-    on a missing or unusable database; the caller falls back to importing every source file.
+    Returns the path to a normalized copy (every entry's `directory` made absolute and every
+    relative include path anchored at it -- see `_absolutize_includes`), the set of compiled
+    files relative to the repository (with c2cpg's ignored folders and non-source extensions
+    already removed), and the count of database entries c2cpg would ignore by those rules. Each
+    entry keeps its original `arguments`-array-vs-`command`-string shape: c2cpg extracts `-D`
+    macro values differently per shape (an `arguments` token splits cleanly on `=`; a `command`
+    string only keeps a quoted value), so collapsing every entry into `command` strings would
+    silently drop `-D` values for `arguments`-shaped entries. The copy is written under
+    `out_dir`, the same shared location the file-transport payloads use, so a remote Joern can
+    read it. Raises OSError/ValueError/json.JSONDecodeError on a missing or unusable database;
+    the caller falls back to importing every source file. A single entry with unparsable
+    `command` quoting does not raise: that entry is kept unmodified (matching pre-absolutize
+    behaviour) so it alone doesn't take every other entry's compile-aware import down with it.
     """
     repo = repo.resolve()
     raw = json.loads(cc_path.read_text(encoding="utf-8"))
@@ -176,9 +195,16 @@ def resolve_compilation_database(
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             continue
         directory = str(_resolved_directory(entry.get("directory"), repo))
-        arguments = _absolutize_includes(entry, directory)
-        entry = {**entry, "directory": directory, "command": shlex.join(arguments)}
-        entry.pop("arguments", None)
+        try:
+            tokens = _absolutize_includes(entry, directory)
+        except ValueError:
+            entries.append({**entry, "directory": directory})
+            continue
+        if isinstance(entry.get("arguments"), list):
+            entry = {**entry, "directory": directory, "arguments": tokens}
+            entry.pop("command", None)
+        else:
+            entry = {**entry, "directory": directory, "command": shlex.join(tokens)}
         entries.append(entry)
     if not entries:
         raise ValueError("compile_commands.json has no usable entries")
