@@ -507,7 +507,8 @@ def test_types_section_is_not_emitted_because_index_v1_has_no_type_data(
 ):
     """index-v1은 symbols·calls만 낸다. 데이터원 없이 섹션을 내면 지어낸 값이다.
 
-    채우려면 인덱서에 struct·class·typedef 수집을 넣고 `INDEX_VERSION`을 올려야 한다.
+    채우려면 인덱서에 struct·class·typedef 수집을 넣고 `INDEX_VERSION`을 올려야 한다 —
+    index-v2가 그 표를 냈지만 캡슐로는 싣지 않는다(아래 v2 절).
     """
     assert "types" not in GRAPH_SECTION_KINDS
     for level in CapsuleLevel:
@@ -734,7 +735,7 @@ def test_symbols_for_separates_no_index_from_no_symbols(tmp_path: Path):
     """`None`("인덱서가 안 돌았다")과 `[]`("봤는데 심볼 0건")를 섞지 않는다.
 
     러너가 이 둘에 다르게 대응한다 — 앞은 파일 단위 폴백, 뒤는 후보를 만들지 않는다.
-    섞이면 `.h`처럼 인덱서에 안 넘어가는 파일과 인덱서가 죽은 run이 같은 모양이 된다.
+    섞이면 `.py`처럼 인덱서에 안 넘어가는 파일과 인덱서가 죽은 run이 같은 모양이 된다.
     """
     assert _graph(tmp_path, document=None).symbols_for("parser.c") is None
     assert _graph(tmp_path).symbols_for("header.h") == []
