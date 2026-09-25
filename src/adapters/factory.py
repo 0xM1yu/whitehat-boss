@@ -24,6 +24,7 @@ from src.adapters.index_graph import GraphIndex, IndexHook
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
+from src.adapters.slices import load_slices, slice_refs, slicer_summary
 from src.adapters.sqlite_store import SqliteStateStore
 from src.adapters.tokenizer import (
     REASON_NO_SOURCE,
@@ -43,6 +44,7 @@ from src.interfaces.retrieval import EmbeddingClient, RerankerClient
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
+from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 from src.schemas.run import CompileFlags, ModelSampling
 from src.tokens import COUNTED_ROLES
@@ -86,6 +88,11 @@ class Deps:
     # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
+    # `--slices`로 준 슬라이스 → 타깃(ADR 0012 결정 1). `None`이면 슬라이스 없이 도는 run이고
+    # 러너는 지금처럼 파일·심볼 타깃을 만든다. 빈 튜플("슬라이스 0개")과 섞지 않는다.
+    slice_refs: tuple[SliceRef, ...] | None = None
+    # `RunRecord.slicer`가 될 슬라이서 산출 요약. `slice_refs`와 같이 `None`이다.
+    slicer: dict[str, str | int | None] | None = None
     # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다(#96 (b)).
     #
@@ -295,8 +302,13 @@ def build_deps(
     on_truncate: TruncateHook | None = None,
     on_usage: UsageHook | None = None,
     on_index: IndexHook | None = None,
+    slices_path: Path | None = None,
 ) -> Deps:
-    """프로필 하나에 대응하는 어댑터 묶음을 만든다."""
+    """프로필 하나에 대응하는 어댑터 묶음을 만든다.
+
+    `slices_path`를 믿을 수 없으면 여기서 `SliceInputError`로 멈춘다 — 모델을 부르기 전이다.
+    """
+    loaded = load_slices(slices_path) if slices_path is not None else None
     ids = IdFactory(run_id)
     # 경로 조립을 여기서 하지 않고 `container_tools.index_output_path()`에 묻는다 —
     # 쓰는 쪽과 읽는 쪽이 갈리면 예외가 아니라 "인덱서가 안 돌았다"로 기록된다.
@@ -397,6 +409,8 @@ def build_deps(
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,
+        slice_refs=slice_refs(loaded) if loaded is not None else None,
+        slicer=slicer_summary(loaded) if loaded is not None else None,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
     )

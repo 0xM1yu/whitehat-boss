@@ -70,6 +70,7 @@ def run(
     evidences: tuple[Evidence, ...] = (),
     previous: Candidate | None = None,
     role: Role = ROLE,
+    slice_id: str | None = None,
 ) -> Candidate:
     """후보 하나를 만들고 트리아지 결과까지 적용해 돌려준다.
 
@@ -90,6 +91,11 @@ def run(
             previous=previous,
             role=role,
         )
+        # **`slice_id`는 하네스가 덮는다** — `scout_member`와 같은 논법이다(`Candidate.slice_id`
+        # 주석). 스키마에 필드가 있어 구조화 출력이 채울 수 있으므로, 비어 오기를 기대하지 않고
+        # 저장 **전에** 매번 덮는다. `None`(슬라이스 없는 run)도 덮는다 — 모델이 지어낸 id가
+        # 살아남지 않게. `Candidate`에는 `model_validator`가 없어 `model_copy`가 안전하다.
+        candidate = candidate.model_copy(update={"slice_id": slice_id})
         ctx.create(candidate, reason=None, stage=Stage.SCOUT)
         action = ctx.decide(
             RoutingRequest(
@@ -170,11 +176,17 @@ def _queue_previous(ctx: RunContext, previous: Candidate | None, reason: ReasonC
 
 
 def describe_target(target: Location) -> str:
-    """프롬프트 본문의 사람이 읽는 대상 표기. 사실 블록에는 구조화된 값이 따로 간다."""
-    lines = ""
-    if target.line_start is not None:
-        lines = f" (줄 {target.line_start}-{target.line_end or target.line_start})"
-    return f"`{target.file}` 의 `{target.symbol or '(파일 전체)'}`{lines}"
+    """프롬프트 본문의 사람이 읽는 대상 표기. 사실 블록에는 구조화된 값이 따로 간다.
+
+    「파일 전체」는 **줄 범위가 없을 때만**이다 — 이름 없이 줄만 든 대상(scopes 없는 슬라이스
+    Case B의 entry, Auditor의 entry 앞뒤 창)을 그렇게 부르면 같은 프롬프트의 FACTS와 어긋난다.
+    """
+    if target.line_start is None:
+        return f"`{target.file}` 의 `{target.symbol or '(파일 전체)'}`"
+    lines = f" (줄 {target.line_start}-{target.line_end or target.line_start})"
+    if not target.symbol:
+        return f"`{target.file}`{lines}"
+    return f"`{target.file}` 의 `{target.symbol}`{lines}"
 
 
 def describe_sections(capsule: ContextCapsule) -> str:
