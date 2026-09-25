@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 
 import slicer_queries as queries
 from slicer_checkpoint import Checkpoint
-from slicer_compile import resolve_compilation_database
+from slicer_compile import generated_header_dirs, resolve_compilation_database
 from slicer_export import export_sources
 from slicer_pipeline import SlicingStages
 from slicer_source import (
@@ -708,6 +708,10 @@ class Slicer(SlicingStages):
                         # folder (test/, CMakeFiles/, dotdirs) or non-source extension. Recorded
                         # so the exclusion is not silent (it must not read as a parse miss).
                         "ignored_units": ignored,
+                        # Sibling generated_headers dirs added to the include path (relative), or
+                        # [] when the convention did not match -- so this attachment is not a
+                        # silent no-op the result JSON cannot show (review M2).
+                        "generated_header_dirs": generated_header_dirs(self.compile_commands),
                     }
                 )
                 # These hold only under compile-aware import, so they are added here rather
@@ -957,6 +961,14 @@ def main(argv: list[str] | None = None) -> int:
         "candidate_timeout_seconds": args.candidate_timeout_seconds,
         "compile_commands": args.compile_commands.as_posix() if args.compile_commands else None,
         "compile_commands_sha256": compile_commands_sha256,
+        # The generated_headers dirs folded into the include set are an implicit input that steers
+        # the CPG (their presence changes which config-macro'd methods parse) yet leaves
+        # compile_commands_sha256 unchanged, so record them here to keep the run signature honest
+        # (review M2). Hashing the external headers' content stays out of scope, as it was for the
+        # command's own out-of-repo -I paths before this (#291).
+        "generated_header_dirs": (
+            generated_header_dirs(args.compile_commands) if args.compile_commands else None
+        ),
     }
     job.result["settings"] = job.settings
     # The normalized database lands in payload_dir, which is already on the filesystem Joern
