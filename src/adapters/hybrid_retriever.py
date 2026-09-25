@@ -49,6 +49,7 @@ from pathlib import Path
 from src.adapters.index_graph import (
     GRAPH_SECTION_KINDS,
     GraphIndex,
+    SliceBody,
     graph_section,
 )
 from src.ids import IdFactory, sha256_text
@@ -77,7 +78,9 @@ from src.tokens import estimate_tokens
 #   (`Query.slice_id`)면 `target_function`이 슬라이스 렌더를 세고 키에 slice id·슬라이서
 #   `run_signature`가 붙는다 — Fake의 v3→v4와 같은 변경이다
 #   (`fake_retriever.CAPSULE_POLICY_VERSION` 주석).
-CAPSULE_POLICY_VERSION = "hybrid-v5"
+# **hybrid-v5 → hybrid-v6 (2026-09-25, #220 ①)**: 슬라이스 질의의 그래프 섹션이 슬라이스의 줄
+#   집합을 본문으로 센다 — Fake의 v4→v5와 같은 변경이다.
+CAPSULE_POLICY_VERSION = "hybrid-v6"
 
 # 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
 # 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
@@ -163,6 +166,7 @@ class HybridRetriever:
         max_chunks: int = MAX_CHUNKS,
         read_slice: Callable[[str], str] | None = None,
         slice_signature: str | None = None,
+        slice_lines: Callable[[str], SliceBody] | None = None,
     ) -> None:
         self.root = Path(root)
         self.ids = ids
@@ -175,6 +179,9 @@ class HybridRetriever:
         # 슬라이스 타깃의 렌더 조회와 그 슬라이서 run의 신원 — `FakeRetriever`와 같은 계약이다.
         self.read_slice = read_slice
         self.slice_signature = slice_signature
+        # 슬라이스 id → 그 슬라이스의 (file, line) 집합. 슬라이스 질의의 그래프 섹션 본문이다
+        # (`index_graph.names_for`, #220 ①) — `read_slice`와 같이 `build_deps`가 넣는다.
+        self.slice_lines = slice_lines
         self.on_cache = on_cache
         self.on_truncate = on_truncate
         self.on_usage = on_usage
@@ -211,7 +218,13 @@ class HybridRetriever:
             level=level,
             budget_tokens=query.budget_tokens,
             sections=_sections_for(
-                kinds, source, selected, query.budget_tokens, self.graph, query.target
+                kinds,
+                source,
+                selected,
+                query.budget_tokens,
+                self.graph,
+                query.target,
+                self._slice_body(query),
             ),
             cache_key=cache_key,
         )
@@ -262,6 +275,8 @@ class HybridRetriever:
                 continue
             if kind in GRAPH_SECTION_KINDS:
                 # 그래프 분기는 `FakeRetriever.expand()`와 **같은 함수**를 부른다.
+                # ponytail: 캡슐이 slice id를 안 들어 슬라이스 캡슐도 entry 한 줄로 센다(#220 ①의
+                # 줄 집합이 아니다). 호출 지점이 0이라 둔다 — 배선할 때 캡슐에 slice id를 싣는다.
                 section, stop = graph_section(kind, self.graph, capsule.target, remaining)
                 if section is None:
                     if stop:
@@ -298,6 +313,14 @@ class HybridRetriever:
         return sha256_text(key)
 
     # --- 내부 ------------------------------------------------------------
+
+    def _slice_body(self, query: Query) -> SliceBody | None:
+        """그래프 섹션의 본문. 슬라이스 질의면 그 슬라이스의 줄 집합이다(#220 ① — `names_for`)."""
+        if query.slice_id is None:
+            return None
+        if self.slice_lines is None:
+            raise ValueError(f"슬라이스 {query.slice_id} 질의인데 slice_lines가 배선되지 않았다")
+        return self.slice_lines(query.slice_id)
 
     def _target_source(self, query: Query) -> str:
         """`target_function`이 셀 본문 — `FakeRetriever._target_source`와 같은 계약이다."""
@@ -457,6 +480,7 @@ def _sections_for(
     budget: int,
     graph: GraphIndex,
     target: Location,
+    slice_body: SliceBody | None = None,
 ) -> list[CapsuleSection]:
     """예산을 넘기지 않는 선에서 섹션을 채운다.
 
@@ -474,7 +498,7 @@ def _sections_for(
         if kind in GRAPH_SECTION_KINDS:
             # 그래프 분기는 `FakeRetriever._sections_for()`와 **같은 함수**를 부른다.
             # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
-            section, stop = graph_section(kind, graph, target, remaining)
+            section, stop = graph_section(kind, graph, target, remaining, slice_body)
             if section is None:
                 if stop:
                     break
