@@ -66,6 +66,15 @@ def _unwired_read_source(_target: Location) -> str:
     )
 
 
+def _unwired_read_slice(slice_id: str) -> str:
+    """`read_slice`가 배선되지 않은 채 슬라이스 타깃이 왔다. `read_source`와 같은 이유로 터뜨린다 —
+    심볼 본문으로 대신 채우면 v3가 슬라이스로 읽을 `SOURCE`에 줄번호도 배너도 없는 한 줄이 간다."""
+    raise NotImplementedError(
+        f"RunContext.read_slice가 배선되지 않았다(슬라이스 {slice_id}). 렌더는 어댑터 쪽에 있고 "
+        "조립부(`build_deps`)가 주입한다."
+    )
+
+
 @dataclass
 class RunContext:
     """한 run의 의존성과 기록 장치.
@@ -96,6 +105,10 @@ class RunContext:
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     read_source: Callable[[Location], str] = field(default=_unwired_read_source)
+    # 슬라이스 id → 그 슬라이스의 렌더(gutter·배너 — ADR 0012 결정 1). 슬라이스 타깃의 Scout
+    # `SOURCE`가 여기서 온다. Retriever의 `target_function`과 **같은 함수**다(`build_deps`가 둘에
+    # 같은 조회를 넣는다) — `read_source`가 Retriever와 같아야 하는 것과 같은 이유다.
+    read_slice: Callable[[str], str] = field(default=_unwired_read_slice)
     # evidence payload(`Evidence.payload_ref`)의 원문 로그를 읽는다. Critic이 근거 본문을
     # 받으려면 이 리더가 필요하다(#237 HIGH-1). **미배선 기본값이 예외가 아니라 `None`**인
     # 것은 의도다 — `symbols_for`와 같은 성격으로, payload 파일이 없는 정상 상태(`dev_fake`는

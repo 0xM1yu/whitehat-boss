@@ -54,6 +54,7 @@ from src.schemas import (
     Role,
     Verdict,
 )
+from src.schemas.candidate import SliceRef
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 
@@ -755,7 +756,40 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
     assert facts["ids"]["candidate_id"] == candidate.candidate_id
     assert facts["run_id"] == RUN_ID
+    # `slice_criterion`은 슬라이스 타깃에만 붙는다(opt-in) — 슬라이스 없는 프롬프트는 그 키가
+    # 생기기 전과 글자가 같아야 한다. 이 호출은 슬라이스 타깃이 아니다.
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"slice_criterion"}
+
+
+def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) -> None:
+    """슬라이스 타깃이면 `SOURCE`가 렌더이고 FACTS에 `slice_criterion`이 붙는다(ADR 0012 결정 1).
+
+    `read_source`(심볼 본문)를 부르면 entry 한 줄만 간다 — 줄번호도 배너도 없이.
+    """
+    render = "/* ===== parser.c ===== */\n4|     char buf[64];\n5|     memcpy(buf, src, len);"
+    ctx.read_slice = {"slice_0001": render}.__getitem__
+    ref = SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+    )
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+
+    candidate = scout.run(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+    body = ctx.models.last_for(Role.SCOUT).body
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
     assert set(facts) == set(prompt_loader.FACT_KEYS)
+    assert facts["source"] == render
+    assert facts["slice_criterion"] == {
+        "given_end": "sink",
+        "given": {"file": "parser.c", "line": 5, "symbol": "memcpy"},
+    }
+    assert candidate.slice_id == "slice_0001"
 
 
 def test_render_rejects_missing_and_unknown_placeholders() -> None:
