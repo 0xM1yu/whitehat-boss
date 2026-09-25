@@ -27,6 +27,7 @@ from pathlib import Path
 from src.adapters.index_graph import (
     GRAPH_SECTION_KINDS,
     GraphIndex,
+    SliceBody,
     graph_section,
 )
 from src.ids import IdFactory, sha256_text
@@ -49,7 +50,10 @@ from src.tokens import estimate_tokens
 # **v3 → v4 (2026-09-25, ADR 0012 결정 1 · #220 ②)**: 슬라이스 질의(`Query.slice_id`)면
 # `target_function`이 슬라이스 렌더를 세고, 키에 slice id와 슬라이서 `run_signature`가 붙는다.
 # 같은 entry 위치에 다른 캡슐이 생기는 변경이다 — 키 조립 규칙이 바뀌었으므로 올린다.
-CAPSULE_POLICY_VERSION = "v4"
+#
+# **v4 → v5 (2026-09-25, #220 ①)**: 슬라이스 질의의 `callers`/`callees`가 entry 한 줄이 아니라
+# 슬라이스의 줄 집합을 본문으로 센다(`index_graph.names_for`). 같은 키에 다른 그래프 섹션이다.
+CAPSULE_POLICY_VERSION = "v5"
 
 # 본문이 없는 보조 섹션의 고정 비용.
 #
@@ -110,6 +114,7 @@ class FakeRetriever:
         graph: GraphIndex | None = None,
         read_slice: Callable[[str], str] | None = None,
         slice_signature: str | None = None,
+        slice_lines: Callable[[str], SliceBody] | None = None,
     ) -> None:
         self.root = Path(root)
         self.ids = ids
@@ -123,6 +128,9 @@ class FakeRetriever:
         self.read_slice = read_slice
         # 그 렌더를 낸 슬라이서 run의 `run_signature`. 캐시 키에 든다(`cache_key_for`).
         self.slice_signature = slice_signature
+        # 슬라이스 id → 그 슬라이스의 (file, line) 집합. 슬라이스 질의의 그래프 섹션 본문이다
+        # (`index_graph.names_for`, #220 ①) — `read_slice`와 같이 `build_deps`가 넣는다.
+        self.slice_lines = slice_lines
         self._cache: dict[str, ContextCapsule] = {}
 
     def search(self, query: Query, level: CapsuleLevel) -> ContextCapsule:
@@ -140,7 +148,14 @@ class FakeRetriever:
             target=query.target,
             level=level,
             budget_tokens=query.budget_tokens,
-            sections=_sections_for(level, source, query.budget_tokens, self.graph, query.target),
+            sections=_sections_for(
+                level,
+                source,
+                query.budget_tokens,
+                self.graph,
+                query.target,
+                self._slice_body(query),
+            ),
             cache_key=cache_key,
         )
         self._cache[cache_key] = capsule
@@ -166,6 +181,8 @@ class FakeRetriever:
                 continue
             if kind in GRAPH_SECTION_KINDS:
                 # 그래프 분기는 `HybridRetriever.expand()`와 **같은 함수**를 부른다.
+                # ponytail: 캡슐이 slice id를 안 들어 슬라이스 캡슐도 entry 한 줄로 센다(#220 ①의
+                # 줄 집합이 아니다). 호출 지점이 0이라 둔다 — 배선할 때 캡슐에 slice id를 싣는다.
                 section, stop = graph_section(kind, self.graph, capsule.target, remaining)
                 if section is None:
                     if stop:
@@ -208,6 +225,14 @@ class FakeRetriever:
             key = f"{key}|{query.slice_id}@{self.slice_signature}"
         return sha256_text(key)
 
+    def _slice_body(self, query: Query) -> SliceBody | None:
+        """그래프 섹션의 본문. 슬라이스 질의면 그 슬라이스의 줄 집합이다(#220 ① — `names_for`)."""
+        if query.slice_id is None:
+            return None
+        if self.slice_lines is None:
+            raise ValueError(f"슬라이스 {query.slice_id} 질의인데 slice_lines가 배선되지 않았다")
+        return self.slice_lines(query.slice_id)
+
     def _target_source(self, query: Query) -> str:
         """`target_function`이 셀 본문. 슬라이스 타깃이면 렌더(Scout가 받는 그것)다."""
         if query.slice_id is None:
@@ -244,7 +269,12 @@ def _read_source(root: Path, relative: str) -> str:
 
 
 def _sections_for(
-    level: CapsuleLevel, source: str, budget: int, graph: GraphIndex, target: Location
+    level: CapsuleLevel,
+    source: str,
+    budget: int,
+    graph: GraphIndex,
+    target: Location,
+    slice_body: SliceBody | None = None,
 ) -> list[CapsuleSection]:
     """예산을 넘기지 않는 선에서 레벨별 섹션을 채운다.
 
@@ -261,7 +291,7 @@ def _sections_for(
         if kind in GRAPH_SECTION_KINDS:
             # 그래프 분기는 `HybridRetriever._sections_for()`와 **같은 함수**를 부른다.
             # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
-            section, stop = graph_section(kind, graph, target, remaining)
+            section, stop = graph_section(kind, graph, target, remaining, slice_body)
             if section is None:
                 if stop:
                     # 붙일 것은 있는데 예산이 없다.

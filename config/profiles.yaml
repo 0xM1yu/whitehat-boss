@@ -127,9 +127,10 @@ profiles:
     # 그 이름으로 적힌 날짜 붙은 서술(PR #190·#240 등)은 이 프로필의 옛 이름을 가리킨다.
     #
     # - **Scout 풀** — scout_{memory,boundary,injection}이 각자 CWE 계열을 본다(ADR 0010 §3).
-    #   memory·boundary = `seccoderx-8b`(한 키가 두 역할, 프롬프트 v3 폴더가 내용을 가름:
-    #   scout_memory/v3=옛 v14s · scout_boundary/v3=옛 v15s), injection = `qwen3-14b`(v3) —
-    #   2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서 옮겼다.
+    #   memory·injection = `qwen3-14b`(한 키가 두 역할, 프롬프트 v3 폴더가 내용을 가름 —
+    #   scout_memory/v3=옛 v14s), boundary = `seccoderx-8b`(v3, scout_boundary/v3=옛 v15s).
+    #   injection은 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서,
+    #   memory는 2026-09-25 실험팀 최종 권고로 `seccoderx-8b`에서 옮겼다(PROJECT-CONTEXT.md §1).
     # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v1이다 — v3로 올리는 것은
     #   검증 run 뒤의 별도 단계다(`prompts/critic/v3/meta.yaml`).
     # - **Auditor = §1의 `qwen3.6-35b-a3b`.** registry가 아직 디스크의 v1을 고른다(auditor/v3는 2026-09-22
@@ -160,7 +161,7 @@ profiles:
     description: "로스터 canonical 배선(§1 정본: Scout 풀 seccoderx·qwen3-14b + Auditor qwen3.6 + Critic gpt-oss + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
     production: false
     roles:
-      scout_memory: seccoderx-8b
+      scout_memory: qwen3-14b
       scout_boundary: seccoderx-8b
       scout_injection: qwen3-14b
       auditor: qwen3.6-35b-a3b
@@ -224,7 +225,7 @@ profiles:
     # `harness_pool`과 **같아야 한다.** 차이가 retriever 하나여야 검색 경로 효과가
     # 갈린다. tests/test_config.py가 roles·budget·나머지 어댑터까지 기계로 고정한다.
     roles:
-      scout_memory: seccoderx-8b
+      scout_memory: qwen3-14b
       scout_boundary: seccoderx-8b
       scout_injection: qwen3-14b
       auditor: qwen3.6-35b-a3b

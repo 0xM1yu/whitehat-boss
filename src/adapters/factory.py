@@ -20,12 +20,13 @@ from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.generation_config import declared_sampling_by_role
 from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook, UsageHook
-from src.adapters.index_graph import GraphIndex, IndexHook
+from src.adapters.index_graph import GraphIndex, IndexHook, SliceBody
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
 from src.adapters.slices import (
     SliceInputError,
+    SliceSet,
     load_slices,
     render_slices,
     slice_refs,
@@ -79,6 +80,26 @@ def _read_rendered(rendered: dict[str, str]) -> Callable[[str], str]:
         except KeyError:
             raise SliceInputError(
                 f"{slice_id}: 렌더가 없다 — run 시작 때 entry 파일이 대상 트리에 없던 슬라이스다"
+            ) from None
+
+    return read
+
+
+def _slice_lines(loaded: SliceSet | None) -> Callable[[str], SliceBody] | None:
+    """Retriever가 슬라이스 질의의 그래프 섹션 본문으로 쓰는 줄 집합 조회(#220 ①).
+
+    `_read_rendered`와 같은 자리·같은 실패 모양이다 — 없는 id는 이름을 대고 멈춘다.
+    """
+    if loaded is None:
+        return None
+    lines = {item.id: frozenset(item.lines) for item in loaded.slices}
+
+    def read(slice_id: str) -> SliceBody:
+        try:
+            return lines[slice_id]
+        except KeyError:
+            raise SliceInputError(
+                f"{slice_id}: 슬라이스 줄이 없다 — 이 run의 slices.json에 없는 id다"
             ) from None
 
     return read
@@ -174,6 +195,8 @@ class _BuildArgs:
     # `target_function`을 세고 캐시 키를 가르는 데 쓴다(#220 ②). `Deps.read_slice`와 같은 것이다.
     read_slice: Callable[[str], str] | None = None
     slice_signature: str | None = None
+    # 슬라이스 id → 줄 집합. Retriever가 슬라이스 질의의 그래프 섹션 본문으로 쓴다(#220 ①).
+    slice_lines: Callable[[str], SliceBody] | None = None
 
     # **한 run에 하나만 만든다.** `graph_index()`가 호출마다 새 로더를 만들던 시절에는
     # Retriever와 `symbols_for`가 각각 하나씩 갖게 되고, 그러면 지연 로드가 두 번 일어나
@@ -227,6 +250,7 @@ _RETRIEVERS: dict[str, _Wiring] = {
             graph=a.graph_index(),
             read_slice=a.read_slice,
             slice_signature=a.slice_signature,
+            slice_lines=a.slice_lines,
         ),
     ),
     # embedding·reranker의 실서빙 여부는 여기서 정하지 않는다 — 모델과 마찬가지로
@@ -246,6 +270,7 @@ _RETRIEVERS: dict[str, _Wiring] = {
             graph=a.graph_index(),
             read_slice=a.read_slice,
             slice_signature=a.slice_signature,
+            slice_lines=a.slice_lines,
         ),
     ),
 }
@@ -376,6 +401,7 @@ def build_deps(
         on_index=on_index,
         read_slice=read_slice,
         slice_signature=loaded.run_signature if loaded is not None else None,
+        slice_lines=_slice_lines(loaded),
         graph=graph,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker

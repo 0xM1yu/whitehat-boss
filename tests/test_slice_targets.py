@@ -6,9 +6,9 @@ Case B의 `entry.symbol`은 sink 호출 이름이라 `Location.symbol`은 후보
 함수 이름을 가져온다.
 
 **모델이 보는 것**(3c): Scout의 `SOURCE`는 슬라이스 렌더(gutter·배너)이고 FACTS에
-`slice_criterion`이 붙는다. LIGHT 캡슐은 그 렌더를 센다. Auditor는 슬라이스가 아니라 entry를 감싸는
-함수의 원본을 본다(결정 1-b의 기본값 (i)). 검사는 run이 남긴 프롬프트 파일(`run_dir/prompts/`)을
-읽는다 — 모델이 실제로 받은 글자다.
+`slice_criterion`이 붙는다. LIGHT 캡슐은 그 렌더를 센다. Auditor는 슬라이스가 아니라 슬라이스가
+걸친 함수들의 원본을 본다 — entry 함수 먼저, 문자 수 상한 안에서(결정 1-b = 넓은 (i), 2026-09-25
+팀 합의). 검사는 run이 남긴 프롬프트 파일(`run_dir/prompts/`)을 읽는다 — 모델이 실제로 받은 글자다.
 """
 
 import json
@@ -19,9 +19,11 @@ import pytest
 
 from slicer_source import assemble
 from src.adapters.slices import SliceInputError, split_source
+from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.orchestrator.prompt_log import BODY_MARK
 from src.orchestrator.runner import RunSpec
 from src.schemas.common import Location
+from src.schemas.enums import Role
 from src.tokens import estimate_tokens
 from tests.test_pipeline_e2e import (
     _FIXTURE_INDEX,
@@ -38,11 +40,14 @@ from tests.test_pipeline_e2e import (
 )
 
 _PARSER = split_source((TARGET / "parser.c").read_bytes())
+_UTIL = split_source((TARGET / "util.c").read_bytes())
+_SOURCES = {"parser.c": _PARSER, "util.c": _UTIL}
 
 
-def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: set[int]) -> dict:
+def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: set) -> dict:
+    """`lines`의 정수는 entry 파일의 줄, `(파일, 줄)`은 다른 파일의 줄이다."""
     file, line, symbol = entry
-    points = {(file, n) for n in lines}
+    points = {(file, n) if isinstance(n, int) else n for n in lines}
     return {
         "id": sid,
         "candidate_key": f"key_{sid}",
@@ -51,7 +56,7 @@ def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: 
         "members": [f"key_{sid}"],
         "absorbed": [],
         "lines": [{"file": f, "line": n} for f, n in sorted(points)],
-        "code": assemble(points, {"parser.c": _PARSER}) if file == "parser.c" else "",
+        "code": assemble(points, _SOURCES) if {f for f, _ in points} <= _SOURCES.keys() else "",
         "_scope": scope,
     }
 
@@ -253,8 +258,9 @@ def test_each_slice_capsule_counts_the_render_its_prompt_carries(tmp_path: Path)
 def test_the_auditor_reads_the_original_function_around_the_entry(
     tmp_path: Path, mode: str | None
 ) -> None:
-    """Auditor는 슬라이스가 아니라 **원본**을 본다(ADR 0012 결정 1-b 기본값 (i)) — entry 줄을 감싸는
-    함수 전체다. entry만 읽으면 함수 머리·버퍼 선언이 빠진 한 줄(24)이 된다.
+    """Auditor는 슬라이스가 아니라 **원본**을 본다(ADR 0012 결정 1-b (i)) — entry 줄을 감싸는
+    함수 전체다. entry만 읽으면 함수 머리·버퍼 선언이 빠진 한 줄(24)이 된다. 슬라이스가 그 함수
+    하나 안이면 배너 없이 그 함수의 글자 그대로다 — 넓은 (i) 이전의 프롬프트와 바이트가 같다.
 
     후보의 위치는 그대로 entry다 — Auditor가 보는 범위를 넓혀도 후보의 신원은 안 바뀐다.
     단계 단위(`per_stage`)도 같은 `_TRIAGE_STEPS`를 도는지 같이 본다.
@@ -338,6 +344,209 @@ def test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_fi
     assert facts["source"] == "\n".join(_PARSER[21:26])
 
 
+# entry(28)는 `recv_request`(28–31) 안이고 24는 `parse_header`(19–26) 안이다. entry 함수가 줄
+# 순서로는 **뒤**라 「entry 함수 먼저」와 「줄 순서」가 갈린다.
+_SPANS_TWO = ("slice_0004", "A", ("parser.c", 28, "recv_request"), "recv_request", {24, 28, 30})
+
+
+def _joined(lines: list[str]) -> str:
+    """줄바꿈으로 잇는다 — 테스트가 기대하는 원문 모양."""
+    return chr(10).join(lines)
+
+
+def _banner(file: str, start: int, end: int) -> str:
+    return f"/* ===== {file}:{start}-{end} ===== */"
+
+
+def _source_events(trace_path: Path) -> list[dict]:
+    return [event["data"] for event in _of(_events(trace_path), "auditor_source")]
+
+
+def test_the_auditor_reads_every_function_the_slice_spans_entry_function_first(
+    tmp_path: Path,
+) -> None:
+    """결정 1-b = 넓은 (i)(2026-09-25 팀 합의): Auditor는 슬라이스가 걸친 함수의 원본을 **전부**
+    본다 — entry를 감싸는 함수 하나가 아니다. entry 함수가 맨 앞이고(줄 순서가 아니다) 함수마다
+    `파일:시작-끝` 배너가 붙는다. 사실 블록과 `{{SOURCE}}` 자리가 같은 글자다.
+
+    캡슐의 대상은 그대로 entry 함수다 — 호출자·피호출자 섹션이 그 함수의 것이다. 몇 함수를
+    넣었는지는 `auditor_source` 이벤트가 든다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((body, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(
+        [_banner("parser.c", 28, 31), *_PARSER[27:31], _banner("parser.c", 19, 26), *_PARSER[18:26]]
+    )
+    assert facts["source"] in body
+    assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("recv_request", 28)
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0004", "functions": 2, "dropped": 0, "uncovered_lines": 0,
+         "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[27:31]))},
+    ]
+
+
+def test_the_auditor_source_cap_drops_whole_functions_but_never_the_entry_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """원문에는 문자 수 상한이 있다(`_AUDITOR_SOURCE_CHARS`). 함수는 통째로 넣거나 뺀다 — 중간을
+    자르면 끊긴 함수를 본다. entry 함수는 상한보다 커도 넣는다 — 빼면 볼 것이 없다. 뺀 수는
+    `auditor_source`가 든다 — 안 남기면 잘린 입력이 온전한 입력으로 읽힌다.
+
+    상한을 1자로 줄인다 — entry 함수(4줄) 혼자서도 넘는다. 하나만 남으면 배너도 없다.
+    """
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", 1, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0004", "functions": 1, "dropped": 1, "uncovered_lines": 0,
+         "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[27:31]))},
+    ]
+
+
+def test_the_auditor_source_records_the_entry_function_size_the_cap_never_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """상한은 **뒤에 붙는** 함수만 거른다 — entry 함수(`anchor`)는 상한보다 커도 늘 들어간다
+    (바로 위 테스트). 그래서 `SOURCE` 하나가 상한을 넘을 수 있고, 그러면 서빙 입력 몫을
+    넘겨 400으로 거절된다(#289 리뷰 LOW-2).
+
+    `chars`만으로는 그것이 entry 함수 혼자 때문인지 합 때문인지 **함수가 둘 이상이면 못
+    가른다.** `anchor_chars`가 그 자리를 든다 — 고치는 것이 아니라 **보이게 하는 것**이다.
+    entry 함수에도 상한을 둘지는 이 이벤트가 실서빙에서 무엇을 내는지 보고 정한다.
+    """
+    from src.orchestrator import runner
+
+    cap = 1  # entry 함수(4줄) 혼자서도 넘는다
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", cap, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    (event,) = _source_events(trace_path)
+    # entry 함수 혼자 남았고, 그 크기가 상한을 넘는다 — 이벤트가 그것을 말한다.
+    assert event["anchor_chars"] == len(_joined(_PARSER[27:31]))
+    assert event["anchor_chars"] > cap
+    assert event["chars"] == len(facts["source"]) == event["anchor_chars"]
+
+
+@pytest.mark.parametrize(("slack", "fits"), [(0, True), (-1, False)], ids=["exact", "one-short"])
+def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slack: int, fits: bool
+) -> None:
+    """상한은 앞에서부터 **들어가는 것을 넣는다** — 안 들어가는 함수 하나에서 멈추지 않는다.
+    나머지 함수의 순서는 (파일, 시작 줄)이라 `parser.c`의 `parse_header`(8줄)가 `util.c`의
+    `name_length`(4줄)보다 먼저 오는데, 상한을 entry 함수 + `name_length`에 딱 맞춘다.
+
+    상한은 모델이 받는 글자 그대로다 — 배너와 함수 사이 줄바꿈까지 센다. 딱 맞으면 들어가고
+    1자 모자라면 빠진다.
+    """
+    from src.orchestrator import runner
+
+    first = "\n".join([_banner("parser.c", 28, 31), *_PARSER[27:31]])
+    last = "\n".join([_banner("util.c", 26, 29), *_UTIL[25:29]])
+    cap = len(first) + 1 + len(last) + slack
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", cap, raising=False)
+    spans = ("slice_0006", "A", ("parser.c", 28, "recv_request"), "recv_request",
+             {24, 28, 30, ("util.c", 28)})
+    path = _slices_file(tmp_path, [_slice(*spans)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == (f"{first}\n{last}" if fits else "\n".join(_PARSER[27:31]))
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0006", "functions": 2 if fits else 1, "dropped": 1 if fits else 2,
+         "uncovered_lines": 0, "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[27:31]))},
+    ]
+
+
+def test_the_other_functions_follow_in_file_then_line_order(tmp_path: Path) -> None:
+    """entry 함수 뒤의 순서는 (파일, 시작 줄)이다 — 줄이 먼저가 아니다. `util.c`의 `copy_name`(14)은
+    `parser.c`의 `parse_header`(19)보다 줄이 앞이지만 파일이 뒤라 뒤에 온다. 상한 아래에서는 이
+    순서가 어느 함수가 먼저 자리를 차지하는지를 정한다.
+    """
+    spans = ("slice_0007", "A", ("parser.c", 28, "recv_request"), "recv_request",
+             {24, 28, 30, ("util.c", 16)})
+    path = _slices_file(tmp_path, [_slice(*spans)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join([
+        _banner("parser.c", 28, 31), *_PARSER[27:31],
+        _banner("parser.c", 19, 26), *_PARSER[18:26],
+        _banner("util.c", 14, 24), *_UTIL[13:24],
+    ])
+
+
+def test_the_auditor_source_is_read_inside_the_auditor_stage(tmp_path: Path) -> None:
+    """원문을 모으는 읽기와 `auditor_source` 이벤트는 5단계 구간(`stage_start`~`stage_end`) 안이다.
+
+    러너가 `auditor.run`의 인자로 원문을 미리 만들면 그 파일 읽기가 5단계 `stage_end.wall_ms`에서
+    빠지고 이벤트가 5단계 `stage_start`보다 먼저 난다 — 구간으로 단계를 가르는 쪽이 그 이벤트를 어느
+    단계에도 못 넣는다(적대 리뷰에서 재현).
+    """
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    open_stage, seen = None, []
+    for event in _events(trace_path):
+        if event["kind"] == "stage_start":
+            open_stage = event["stage"]
+        elif event["kind"] == "stage_end":
+            open_stage = None
+        elif event["kind"] == "auditor_source":
+            seen.append(open_stage)
+    assert seen == [5]
+
+
+def test_slice_lines_outside_every_known_function_are_counted_not_read(tmp_path: Path) -> None:
+    """어느 인덱스 함수에도 안 드는 슬라이스 줄(구조체 필드·전역·인덱서가 안 받는 `.h`)은
+    Auditor가 못 본다 — 창을 따로 세우지 않고 **센다**. 안 세면 「슬라이스가 한 함수 안이었다」와
+    「슬라이스 일부를 못 봤다」가 같은 기록이 된다. 13은 `struct header`의 필드다.
+    """
+    field = ("slice_0005", "B", ("parser.c", 24, "memcpy"), "parse_header", {13, 24})
+    path = _slices_file(tmp_path, [_slice(*field)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[18:26])
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0005", "functions": 1, "dropped": 0, "uncovered_lines": 1,
+         "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[18:26]))},
+    ]
+
+
+@pytest.mark.parametrize(
+    "version", sorted(p.name for p in (PROMPTS_DIR / "auditor").iterdir() if p.is_dir())
+)
+def test_every_auditor_prompt_declares_the_original_source_the_runner_gives_it(
+    version: str,
+) -> None:
+    """ADR 0012 검증 표의 1-b 행 — 고른 표현((i) 원본 소스)과 Auditor 프롬프트의 선언이 같다.
+
+    러너는 Auditor에 늘 원본을 준다(슬라이스 렌더를 주는 길이 없다). 슬라이스를 선언한 Auditor
+    프롬프트가 생기면 약속과 다른 입력을 받는다 — Scout의 D82가 Auditor에서 되풀이된다.
+    """
+    assert load_prompt(Role.AUDITOR, version).input == "source"
+
+
 def test_a_slice_without_a_render_fails_by_name_rather_than_as_a_bare_key_error(
     tmp_path: Path,
 ) -> None:
@@ -364,6 +573,98 @@ def test_a_slice_without_a_render_fails_by_name_rather_than_as_a_bare_key_error(
     assert deps.read_slice("slice_0002").startswith("/* ===== parser.c ===== */")
     with pytest.raises(SliceInputError, match="slice_0009"):
         deps.read_slice("slice_0009")
+
+
+# --- 그래프 섹션의 「본문」은 슬라이스다 (#220 ①) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "case", [pytest.param(_CASE_A, id="case-a"), pytest.param(_CASE_B, id="case-b")]
+)
+def test_the_scout_graph_sections_describe_the_slice_it_shows(
+    tmp_path: Path, case: tuple
+) -> None:
+    """Scout 캡슐의 callers/callees는 **슬라이스가 보여 주는 코드**의 간선이다(#220 ①).
+
+    본문 = 슬라이스의 (file, line) 집합, 「본문 안에 정의」 = 정의 **범위**가 그 집합과 겹친다.
+    예전에는 entry 한 줄이 본문이라 Case A(함수 머리 19)는 callees가, Case B(sink 줄 24)는 callers가
+    비었다. Case B의 줄 {21, 24}는 `parse_header`(19–26)의 머리 줄을 안 품는다 — 정의 **시작 줄**로
+    판정하면 callers가 다시 빈다(K&R 머리·손으로 만든 줄 집합이 그 모양이다).
+    """
+    path = _slices_file(tmp_path, [_slice(*case)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "scout")
+    lines = {section["kind"]: section["lines"] for section in facts["capsule_sections"]}
+    assert (lines["callers"], lines["callees"]) == (
+        ["recv_request parser.c:30"],
+        ["memcpy parser.c:24"],
+    )
+
+
+# --- 슬라이스는 Evidence가 아니다 (ADR 0012 결정 1 ③ · #220 ③) ----------------------
+
+
+def _shape(evidence: object) -> dict:
+    """run마다 달라지는 id·run·payload 경로를 뺀 Evidence의 모양."""
+    return evidence.model_dump(exclude={"evidence_id", "run_id", "payload_ref"}, mode="json")
+
+
+def test_the_gate_sees_only_evidence_the_tool_runner_returned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """게이트가 보는 Evidence는 전부 도구 러너가 낸 것이다 — 슬라이스는 그 길에 없다(#220 ③).
+
+    `static_ok`·`graph_ok`는 후보와 결합 없는 존재 검사라(`gate.py`) 슬라이스를 STATIC·GRAPH
+    Evidence로 적는 순간 E1·E2가 부푼다. 철자(`Evidence(` 생성 지점 목록)가 아니라 **출처**로
+    잠근다 —
+    게이트 호출마다 받은 Evidence가 도구 러너 반환분의 부분집합인가(`evidences_for`가 Finding의
+    인용으로 거르므로 같음이 아니라 부분집합이다). 같은 트리를 `--slices` 없이 한 번 더 돌려
+    `--slices`가 도구 산출에 **새로 보탠 Evidence가 없는지**도 본다.
+
+    ⚠ 한계: 슬라이서를 **두 run 모두에서 도는** 도구로 등록하면 둘 다 통과한다. `dev_fake`는
+    `ContainerToolRunner`를 안 타 실 도구 러너의 경로는 못 본다.
+    """
+    from src.adapters.fake_tools import FakeToolRunner
+    from src.orchestrator import gate
+
+    def recorded(name: str, slices_path: Path | None) -> tuple[list, list, object, Path]:
+        returned: list = []
+        seen: list = []
+        run_tool, evaluate = FakeToolRunner.run, gate.evaluate
+
+        def recording_run(self, *args, **kwargs):
+            evidence = run_tool(self, *args, **kwargs)
+            returned.append(evidence)
+            return evidence
+
+        def recording_evaluate(finding, evidences, *args, **kwargs):
+            seen.append(tuple(evidences))
+            return evaluate(finding, evidences, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(FakeToolRunner, "run", recording_run)
+            patch.setattr(gate, "evaluate", recording_evaluate)
+            result, trace_path = _run(
+                tmp_path, name, slices_path=slices_path, before=_with_index()
+            )
+        return returned, seen, result, trace_path
+
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+    returned, seen, result, trace_path = recorded("sliced", path)
+
+    assert [candidate.slice_id for candidate in result.candidates] == ["slice_0002"]
+    # 스파이가 trace에 남은 판정을 전부 봤다. 더 많은 것은 정상이다 — 러너가 보고서 등급을 순수
+    # `gate.evaluate`로 다시 매기고 분모 이중 계상을 막으려 `gate_eval`을 안 남긴다(`runner.py`).
+    assert len(seen) >= len(_of(_events(trace_path), "gate_eval")) > 0
+    assert any(seen), "슬라이스 후보가 Evidence를 들고 게이트에 안 닿았다 — 빈 집합이면 늘 초록"
+    for evidences in seen:
+        assert [evidence for evidence in evidences if evidence not in returned] == []
+
+    plain, _, _, _ = recorded("plain", None)
+    plain_shapes = [_shape(evidence) for evidence in plain]
+    assert [_shape(e) for e in returned if _shape(e) not in plain_shapes] == []
 
 
 # --- CLI `--slices` ---------------------------------------------------------
