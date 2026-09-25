@@ -360,18 +360,33 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
     """설정이 가리키는 프롬프트 파일이 실제로 있는지 본다.
 
     run 도중에 없는 것을 알면 그때까지 쓴 시간을 버린다(config.py의 판단과 같다).
+
+    **슬라이스 입력 프롬프트는 WARN 한 줄을 더한다** — `run`은 그것을 `--slices` 없이 시작하지
+    않는다(ADR 0012 결정 1). ERROR가 아닌 것은 doctor가 `--slices`를 받지 않아 막을 대상이
+    없어서다 — ERROR면 설정이 멀쩡한 프로필의 doctor가 exit 1이 된다.
     """
     checks: list[Check] = []
+    slice_input: list[str] = []
     for role in PROMPTED_ROLES:
         if role not in config.profile.roles:
             continue  # 이 프로필이 안 쓰는 역할(예: single-pass 전용 single)은 건너뛴다
         version = config.model_for(role).prompt_template_version
         try:
-            load_prompt(Role(role), version)
+            template = load_prompt(Role(role), version)
         except PromptError as exc:
             checks.append(Check(Severity.ERROR, f"{role} 프롬프트 로드 실패: {exc}"))
-        else:
-            checks.append(Check(Severity.OK, f"{role} 프롬프트 {version} 확인"))
+            continue
+        checks.append(Check(Severity.OK, f"{role} 프롬프트 {version} 확인"))
+        if template.input == "slice":
+            slice_input.append(f"{role}/{version}")
+    if slice_input:
+        checks.append(
+            Check(
+                Severity.WARN,
+                f"슬라이스 입력 프롬프트({', '.join(slice_input)})라 run은 --slices 없이 "
+                "시작하지 않는다 (ADR 0012 결정 1)",
+            )
+        )
     return checks
 
 
@@ -682,6 +697,30 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    # **슬라이스 입력 프롬프트는 `--slices` 없이 부르지 않는다**(ADR 0012 결정 1). v3 Scout는
+    # `SOURCE`를 슬라이스(원본 줄번호 gutter·파일 배너)로 정의하는데, 슬라이스가 없으면 그 자리에
+    # 심볼 본문이 가고 **오류 없이** 어긋난다(#278). 실서빙 여부와 무관하다 — 어긋나는 것은
+    # 프롬프트 계약이지 비용이 아니다. 모델에 안 닿는 run(`--dry-run`·낮은 `--stop-after`)은
+    # 그 프롬프트를 부르지 않으므로 막지 않는다. 어느 프롬프트인지는 meta의 `input`이 정한다 —
+    # 역할·버전을 여기 박으면 프롬프트가 바뀔 때 이 가드만 뒤처진다.
+    if reaches_model and spec.slices_path is None:
+        try:
+            slice_input = [
+                f"{role}/{version}"
+                for role, version in config.prompt_versions().items()
+                if load_prompt(Role(role), version).input == "slice"
+            ]
+        except PromptError as exc:
+            print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
+            return 2
+        if slice_input:
+            print(
+                f"[ERROR] 슬라이스 입력 프롬프트({', '.join(slice_input)})를 부르는 run이라 "
+                "--slices 없이는 시작하지 않는다 — 슬라이스가 없으면 그 SOURCE가 계약과 "
+                "어긋난다 (ADR 0012 결정 1)",
+                file=sys.stderr,
+            )
+            return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
         result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
@@ -895,7 +934,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="슬라이서 산출물 slices.json(slice-v2). 주면 슬라이스 1개가 타깃 1개다"
         "(ADR 0012 결정 1). 못 믿는 파일이거나 --target과 어긋나면(drift) run 디렉터리를"
-        " 만들기 전에 거부한다(exit 2)",
+        " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice — v3 Scout)를"
+        " 부르는 run은 이것 없이 거부한다(exit 2)",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
