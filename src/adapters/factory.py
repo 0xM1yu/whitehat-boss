@@ -482,7 +482,7 @@ def _model_client(model_key: str, config: HarnessConfig, *, role: str) -> ModelC
         # **모델별 값이다** — 위 넷과 달리 `config.sampling`·`thresholds`(프로필 공통)가
         # 아니라 registry 항목에서 온다. 선언 안 한 모델은 `None`이라 요청에 안 실린다.
         reasoning_effort=entry.reasoning_effort,
-        # 같은 규칙의 나머지 모델별 값(W2). 비었으면 payload 키 집합이 그대로다.
+        # 같은 규칙의 나머지 모델별 값(ADR 0012 Phase 6.5). 비었으면 payload 키 집합이 그대로다.
         extra_params=entry.request_params(),
         timeout_s=entry.request_timeout_s,
         retries=config.thresholds.schema_retries,
