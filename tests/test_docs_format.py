@@ -1079,7 +1079,9 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
     ⚠ **이 검사는 「자리 ↔ 모델」 짝을 잠그지 않는다.** 잠그는 것은 「풀 역할이 프로필에
     쓰였나」 하나다. 로스터가 옛 배정으로 되돌아가는 것 자체는 여전히 사람이 본다 —
     §1 표의 세 열 중 기계가 답할 수 있는 것은 `registry 등재`뿐이기 때문이다
-    (`test_the_context_roster_matches_the_model_registry`의 docstring).
+    (`test_the_context_roster_matches_the_model_registry`의 docstring). (⏵ 2026-09-25 — 그 짝이
+    `profiles.yaml`과 같은지는 `test_the_canonical_profiles_seat_the_context_roster`가 잠근다. §1 표
+    자체가 옳은지는 여전히 사람이 본다.)
     """
     from src.config import CONFIG_DIR
 
@@ -1107,6 +1109,52 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
             f"프로필 어느 것도 Scout 풀을 안 쓰는데 "
             f"PROJECT-CONTEXT.md에 「{_REWIRE_MARKER}」 줄이 없다. "
             "정본만 읽은 사람은 profiles.yaml이 §1과 같다고 읽는다 — §5에 그 어긋남을 적어라."
+        )
+
+
+# §1 표의 `자리` 열. 백틱 역할 이름이 없는 칸의 낱말 → 프로필 `roles`의 키.
+_SEAT_COLUMN = "자리"
+_SEAT_LABELS = {"임베딩": "embedding", "리랭커": "reranker", "Auditor": "auditor", "Critic": "critic"}
+# §1 로스터를 통째로 배선한 프로필. 검색 경로만 다른 쌍이다(`test_config.py`의 짝 검사).
+_CANONICAL_PROFILES = ("harness_pool", "harness_pool_hybrid")
+
+
+def _seat_role(cell: str) -> str:
+    """§1 `자리` 칸 → 프로필 역할 키. 백틱 역할 이름이 있으면 그것, 없으면 `_SEAT_LABELS`의 낱말."""
+    named = re.search(r"`([a-z_]+)`", cell)
+    return named.group(1) if named else _SEAT_LABELS[cell.split("·", 1)[1].strip()]
+
+
+def test_the_canonical_profiles_seat_the_context_roster() -> None:
+    """§1 표의 자리 ↔ 키가 canonical 프로필(`harness_pool`·`harness_pool_hybrid`)의 `roles`와 같다.
+
+    §1 표가 옳은지는 팀의 결정이라 기계가 말할 수 없다(위 두 검사의 docstring). 그러나
+    **`profiles.yaml`이 그 표를 따르는지**는 파일 둘을 열면 답이 나온다. 로스터를 바꿀 때 손대는
+    넷(PROJECT-CONTEXT.md §3) 중 이 둘이 갈리면 정본은 새 로스터를 말하는데 run은 옛 로스터로
+    돈다. 2026-09-25 `scout_memory` 교체(`seccoderx-8b` → `qwen3-14b`)에서 세웠다.
+
+    모르는 `자리` 낱말이 표에 생기면 `KeyError`로 죽는다 — 새 자리를 조용히 건너뛰지 않는다.
+    """
+    # 핀 — 양성은 §1 표의 실제 칸 모양이다(4단계 풀 행 · 5단계 행).
+    assert _seat_role("4단계 · `scout_injection` (CWE-77·78)") == "scout_injection"
+    assert _seat_role("5단계 · Auditor") == "auditor"
+    from src.config import CONFIG_DIR
+
+    header, rows = _first_table(_read(CONTEXT), _ROSTER_HEADING, _ROSTER_TABLE)
+    seat_at = _column(header, _SEAT_COLUMN, _ROSTER_TABLE)
+    key_at = _column(header, _KEY_COLUMN, _ROSTER_TABLE)
+    declared = {}
+    for lineno, row in rows:
+        key = _LEADING_KEY.match(row[key_at])
+        assert key is not None, f"PROJECT-CONTEXT.md:{lineno}: 키 칸이 백틱 키로 시작하지 않는다"
+        declared[_seat_role(row[seat_at])] = key.group(1)
+
+    profiles = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))["profiles"]
+    for name in _CANONICAL_PROFILES:
+        roles = profiles[name]["roles"]
+        assert {role: roles.get(role) for role in declared} == declared, (
+            f"config/profiles.yaml `{name}`의 roles가 PROJECT-CONTEXT.md §1 표와 갈렸다 — "
+            "로스터를 바꿀 때는 넷(§3)을 함께 고친다"
         )
 
 
