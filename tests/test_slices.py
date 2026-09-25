@@ -1,7 +1,7 @@
 """`src/adapters/slices.py` — 슬라이서 산출물(`slices.json`)을 읽고 Scout의 `SOURCE`로 렌더한다.
 
-ADR 0012 결정 1 · 마스터 플랜 Phase 3 할 일 1. 이 파일은 **읽기·검증·렌더만** 본다 — 러너 배선은
-다음 PR이다.
+ADR 0012 결정 1(그 ADR 「후속 — Phase 번호」의 Phase 3). 이 파일은 **읽기·검증·렌더만** 본다 —
+러너 배선(타깃·캡슐·Auditor)은 러너 쪽 테스트가 본다.
 
 **기대값의 `code`는 슬라이서 자신이 만든다**(`slicer_source.assemble`). 하네스(`src/`)는 슬라이서를
 import하지 않지만 테스트는 한다 — 렌더러의 줄 규칙이 슬라이서와 같다는 것을 지어낸 문자열이
