@@ -20,6 +20,7 @@ import pytest
 
 from src.adapters import index_graph
 from src.adapters.container_tools import _INDEX_SUFFIXES, INDEX_FILE, plan
+from src.schemas.common import Location
 
 _INDEXER_PATH = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "indexer.py"
 
@@ -66,6 +67,19 @@ def _index(root: Path, *names: str) -> dict:
     return indexer.build_index([root / name for name in names], root)
 
 
+def _edges(index: dict) -> list[dict]:
+    """index-v2의 `calls`(callee → 호출 지점)를 v1의 간선 행으로 편다.
+
+    아래 테스트들의 **기대값은 index-v1 시절 그대로다** — 형식만 callee 키로 묶였고 간선은
+    한 줄도 안 바뀌었다는 것이 그 대조로 선다.
+    """
+    return [
+        {"caller": site["caller"], "callee": callee, "file": site["file"], "line": site["line"]}
+        for callee, sites in index["calls"].items()
+        for site in sites
+    ]
+
+
 # --- 뽑아내는 것 ---------------------------------------------------------------
 
 
@@ -90,7 +104,7 @@ def test_symbol_carries_the_line_range(sample: Path) -> None:
 def test_call_graph_links_caller_to_callee(sample: Path) -> None:
     """`callers`/`callees` 섹션이 이 간선에서 나온다(D13)."""
     index = _index(sample, "parser.c")
-    edges = {(c["caller"], c["callee"]) for c in index["calls"]}
+    edges = {(c["caller"], c["callee"]) for c in _edges(index)}
 
     assert ("recv_request", "parse_header") in edges
     assert ("parse_header", "memcpy") in edges
@@ -119,7 +133,7 @@ def test_functions_inside_ifdef_are_found(tmp_path: Path) -> None:
     index = _index(tmp_path, "guard.c")
 
     assert [s["name"] for s in index["symbols"]] == ["guarded", "plain"]
-    assert ("guarded", "helper") in {(c["caller"], c["callee"]) for c in index["calls"]}
+    assert ("guarded", "helper") in {(c["caller"], c["callee"]) for c in _edges(index)}
 
 
 def test_both_branches_of_a_conditional_are_indexed(tmp_path: Path) -> None:
@@ -139,7 +153,7 @@ def test_both_branches_of_a_conditional_are_indexed(tmp_path: Path) -> None:
     index = _index(tmp_path, "plat.c")
 
     assert [s["name"] for s in index["symbols"]] == ["plat_init", "plat_init"]
-    assert {c["callee"] for c in index["calls"]} == {"linux_setup", "other_setup"}
+    assert {c["callee"] for c in _edges(index)} == {"linux_setup", "other_setup"}
 
 
 def test_parse_error_does_not_suppress_the_symbols_in_that_file(tmp_path: Path) -> None:
@@ -164,7 +178,7 @@ def test_parse_error_does_not_suppress_the_symbols_in_that_file(tmp_path: Path) 
 
     assert index["parse_errors"] == ["zexport.c"]
     assert [s["name"] for s in index["symbols"]] == ["deflate"]
-    assert ("deflate", "compress2") in {(c["caller"], c["callee"]) for c in index["calls"]}
+    assert ("deflate", "compress2") in {(c["caller"], c["callee"]) for c in _edges(index)}
 
 
 def test_cpp_class_namespace_and_extern_c_are_indexed(tmp_path: Path) -> None:
@@ -190,7 +204,7 @@ def test_cpp_class_namespace_and_extern_c_are_indexed(tmp_path: Path) -> None:
     index = _index(tmp_path, "net.cpp")
 
     assert {s["name"] for s in index["symbols"]} == {"inline_method", "c_api"}
-    assert {c["callee"] for c in index["calls"]} == {"memcpy", "strcpy"}
+    assert {c["callee"] for c in _edges(index)} == {"memcpy", "strcpy"}
 
 
 def test_cpp_qualified_names_are_kept_whole(tmp_path: Path) -> None:
@@ -214,7 +228,7 @@ def test_cpp_qualified_names_are_kept_whole(tmp_path: Path) -> None:
         "Parser::~Parser",
         "Parser::operator==",
     ]
-    assert ("Parser::parse", "memcpy") in {(c["caller"], c["callee"]) for c in index["calls"]}
+    assert ("Parser::parse", "memcpy") in {(c["caller"], c["callee"]) for c in _edges(index)}
 
 
 def test_a_definition_inside_a_body_is_not_a_separate_symbol(tmp_path: Path) -> None:
@@ -233,7 +247,7 @@ def test_a_definition_inside_a_body_is_not_a_separate_symbol(tmp_path: Path) -> 
     index = _index(tmp_path, "nested.c")
 
     assert [s["name"] for s in index["symbols"]] == ["outer"]
-    assert len([c for c in index["calls"] if c["callee"] == "target"]) == 1
+    assert len([c for c in _edges(index) if c["callee"] == "target"]) == 1
 
 
 # --- 못 잡는 것을 드러내는가 ----------------------------------------------------
@@ -257,7 +271,7 @@ def test_indirect_calls_are_counted_not_invented(tmp_path: Path) -> None:
     assert index["unresolved_calls"] >= 1
     # `fp(2)`는 identifier라 간선이 생기지만 그 대상은 매개변수다. 지금 구현의 한계이며
     # 없는 함수를 가리키는 간선이 나올 수 있다 — 읽는 쪽이 심볼 표와 대조해야 한다.
-    assert all(c["caller"] == "run" for c in index["calls"])
+    assert all(c["caller"] == "run" for c in _edges(index))
 
 
 def test_unnamed_definitions_are_counted_not_silently_dropped(tmp_path: Path) -> None:
@@ -322,7 +336,7 @@ def test_include_fragment_is_indexed_not_skipped(tmp_path: Path) -> None:
     assert index["skipped"] == []
     assert index["files"] == ["session_core.inc", "target.c"]
     assert [s["name"] for s in index["symbols"]] == ["helper", "session_read"]
-    assert {(c["caller"], c["callee"]) for c in index["calls"]} == {
+    assert {(c["caller"], c["callee"]) for c in _edges(index)} == {
         ("helper", "strlen"),
         ("session_read", "memcpy"),
         ("session_read", "helper"),
@@ -403,7 +417,7 @@ def test_index_no_longer_shells_out_to_clang() -> None:
 
 
 def test_version_is_stamped_so_readers_can_reject_unknown_formats() -> None:
-    assert indexer.INDEX_VERSION == "index-v1"
+    assert indexer.INDEX_VERSION == "index-v2"
 
 
 def test_the_reader_knows_the_version_this_script_writes() -> None:
@@ -413,7 +427,7 @@ def test_the_reader_knows_the_version_this_script_writes() -> None:
     사라진다.** 그 모양은 "인덱서가 안 돌았다"와 같아서 캡슐만 봐서는 구별되지 않는다.
     `_INDEX_SUFFIXES` ↔ `_GRAMMARS`와 같은 종류의 이중화이고 같은 방식으로 막는다.
     """
-    assert index_graph.SUPPORTED_INDEX_VERSION == indexer.INDEX_VERSION
+    assert indexer.INDEX_VERSION in index_graph.SUPPORTED_INDEX_VERSIONS
 
 
 def test_script_runs_as_a_subprocess_and_exits_zero(sample: Path, tmp_path: Path) -> None:
@@ -439,3 +453,246 @@ def test_missing_source_exits_nonzero(tmp_path: Path) -> None:
     assert indexer.main(
         ["--out", str(tmp_path / "x.json"), "--root", str(tmp_path), str(tmp_path / "없다.c")]
     ) == 2
+
+
+# --- index-v2 조회 표 (NE resolver 몫, #63) ---------------------------------------
+#
+# 표의 모양은 실험팀 Notion 「Scout RAG baseline」 §1.2를 따른다 — 다음 단계(NE resolver)가 그
+# 명세를 이식한다. 단 `src`(파일 전문) 표와 매크로 `value`는 없다: 원문은 하네스가 파일에서 읽는다.
+#
+# **노드 이름은 실파싱으로 확인했다**(호스트 · tree-sitter 0.26.0 · tree-sitter-c 0.24.2 ·
+# Python 3.14.5, 2026-09-26 — Dockerfile 핀과 같은 판). 추측했으면 틀렸을 셋이 아래에 핀으로 있다:
+# `preproc_def`의 끝이 다음 줄 0열이라는 것, `parenthesized_declarator`에 `declarator` 필드가
+# 없다는 것, 프로토타입도 `declaration`이라는 것.
+#
+# 줄 번호가 단언에 들어가므로 이 픽스처는 **한 줄도 옮기지 않는다.** 오른쪽 숫자가 줄 번호다.
+_TABLES_C = (
+    "#define LEN 16\n"                              # 1
+    "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n"   # 2
+    "#define MULTI \\\n"                            # 3
+    "    1\n"                                       # 4
+    "struct header {\n"                             # 5
+    "    int len;\n"                                # 6
+    "    char *buf;\n"                              # 7
+    "};\n"                                          # 8
+    "typedef struct {\n"                            # 9
+    "    int x;\n"                                  # 10
+    "    struct header *h;\n"                       # 11
+    "} Box;\n"                                      # 12
+    "typedef unsigned int u32;\n"                   # 13
+    "typedef int (*cb_t)(int);\n"                   # 14
+    "static char *g_buf = 0;\n"                     # 15
+    "int g_count, g_arr[LEN];\n"                    # 16
+    "extern int g_ext;\n"                           # 17
+    "int proto(int a);\n"                           # 18
+    "void (*g_fp)(int);\n"                          # 19
+    "int doit(char *text, int n, ...) {\n"          # 20
+    "    int i = 0, j;\n"                           # 21
+    "    char buf[LEN];\n"                          # 22
+    "    Box *b = 0;\n"                             # 23
+    "    i = n;\n"                                  # 24
+    "    j += 2;\n"                                 # 25
+    "    b->h->len = n;\n"                          # 26
+    "    b->x -= i;\n"                              # 27
+    "    buf[0] = 1;\n"                             # 28
+    "    *text = 0;\n"                              # 29
+    "    i++;\n"                                    # 30
+    "    memcpy(buf, text,\n"                       # 31
+    "           n *\n"                              # 32
+    "           2);\n"                              # 33
+    '    helper(g(1), /* why */ "s");\n'            # 34
+    "    return i;\n"                               # 35
+    "}\n"                                           # 36
+)
+
+
+@pytest.fixture
+def tables(tmp_path: Path) -> dict:
+    (tmp_path / "t.c").write_text(_TABLES_C, encoding="utf-8")
+    return _index(tmp_path, "t.c")
+
+
+def _defs(*ranges: tuple[int, int]) -> list[dict]:
+    return [{"file": "t.c", "line_start": start, "line_end": end} for start, end in ranges]
+
+
+def test_macros_table_spans_each_define_to_its_own_last_line(tables: dict) -> None:
+    """`#define`의 범위가 **그 줄에서 끝난다.**
+
+    tree-sitter-c의 `preproc_def`·`preproc_function_def`는 끝나는 개행까지 품어서 끝 지점이
+    **다음 줄 0열**이다 — `#define LEN 16`의 노드가 1~2행으로 나온다(실측). `end_point + 1`을
+    그대로 쓰면 매크로마다 뒤의 무관한 줄이 하나씩 붙고, 그 줄이 조회 결과로 모델에게 간다.
+    줄 잇기(`\\`)로 이어진 매크로는 이어진 줄까지다.
+    """
+    assert tables["macros"] == {
+        "LEN": _defs((1, 1)),
+        "MAX": _defs((2, 2)),
+        "MULTI": _defs((3, 4)),
+    }
+
+
+def test_types_table_carries_struct_and_typedef_ranges(tables: dict) -> None:
+    """이름 있는 struct는 그 정의, typedef는 선언문 전체 — 이름 없는 struct를 감싼 typedef면
+    본문까지 든다(RAG baseline의 `stl_file` 예시가 그 모양이다). 함수 포인터 typedef의 이름도
+    괄호 선언자 안에서 찾는다."""
+    assert tables["types"] == {
+        "header": [{**_defs((5, 8))[0], "kind": "struct"}],
+        "Box": [{**_defs((9, 12))[0], "kind": "typedef"}],
+        "u32": [{**_defs((13, 13))[0], "kind": "typedef"}],
+        "cb_t": [{**_defs((14, 14))[0], "kind": "typedef"}],
+    }
+
+
+def test_fields_table_names_the_struct_that_declares_each_field(tables: dict) -> None:
+    """`b->h->len`을 따라가려면 `len`을 선언한 타입과 그 범위를 알아야 한다. 이름 없는 struct는
+    그것을 감싼 typedef 이름(`Box`)으로 든다."""
+    header = [{"type": "header", **_defs((5, 8))[0]}]
+    box = [{"type": "Box", **_defs((9, 12))[0]}]
+
+    assert tables["fields"] == {"len": header, "buf": header, "x": box, "h": box}
+
+
+def test_file_vars_table_keeps_globals_and_function_pointers_but_not_prototypes(
+    tables: dict,
+) -> None:
+    """`int proto(int a);`도 tree-sitter에서는 `declaration`이다 — 걸러내지 않으면 함수가 전역
+    변수로 올라간다. 반대로 `void (*g_fp)(int);`는 **변수**다(함수를 가리키는 포인터). 가르는
+    것은 이름에 가장 가까운 선언자가 `function_declarator`인가다. `g_fp`의 이름은
+    `parenthesized_declarator` 안에 있는데 그 노드에는 `declarator` 필드가 없다(실측)."""
+    assert tables["file_vars"] == {
+        "g_buf": _defs((15, 15)),
+        "g_count": _defs((16, 16)),
+        "g_arr": _defs((16, 16)),
+        "g_ext": _defs((17, 17)),
+        "g_fp": _defs((19, 19)),
+    }
+
+
+def test_functions_table_carries_the_symbol_range_and_params(tables: dict) -> None:
+    """`symbols`(v1)와 **같은 정의·같은 범위**에 파라미터 이름을 더한 것이다. 가변 인자(`...`)는
+    이름이 없다."""
+    assert tables["functions"] == {"doit": [{**_defs((20, 36))[0], "params": ["text", "n"]}]}
+    assert tables["symbols"] == [{"name": "doit", **_defs((20, 36))[0]}]
+
+
+def test_locals_table_carries_params_and_every_declarator(tables: dict) -> None:
+    """파일 → 함수 → 이름 → 선언 줄. 파라미터도 지역이다 — 선언 줄이 시그니처다(RAG
+    baseline이 파라미터를 `declaration (local)`로 준다). 한 선언문의 선언자 여럿
+    (`int i = 0, j;`)은 각각이다."""
+    assert tables["locals"] == {
+        "t.c": {
+            "doit": {"text": [20], "n": [20], "i": [21], "j": [21], "buf": [22], "b": [23]}
+        }
+    }
+
+
+def test_assigns_table_records_only_assignments_to_a_plain_name(tables: dict) -> None:
+    """좌변이 이름 하나인 대입만 든다 — 복합 대입(`+=`)도 대입이다. 원소 대입(`buf[0] = 1`)·
+    역참조 대입(`*text = 0`)·증감(`i++`)은 **그 이름에 대입한 것이 아니라서** 안 든다."""
+    assert tables["assigns"] == {"t.c": {"doit": {"i": [24], "j": [25]}}}
+
+
+def test_field_assigns_table_records_lhs_rhs_and_the_operator(tables: dict) -> None:
+    """필드 이름이 키다 — `b->h->len`은 `len`에 대입한 것이다. 연산자를 든다: `b->x -= i`를
+    `lhs`·`rhs`만으로 적으면 「x에 i를 넣었다」로 읽힌다."""
+    assert tables["field_assigns"] == {
+        "len": [
+            {"file": "t.c", "line": 26, "func": "doit", "lhs": "b->h->len", "rhs": "n", "op": "="}
+        ],
+        "x": [{"file": "t.c", "line": 27, "func": "doit", "lhs": "b->x", "rhs": "i", "op": "-="}],
+    }
+
+
+def test_calls_table_groups_call_sites_by_callee_with_their_args(tables: dict) -> None:
+    """index-v1의 간선 목록을 callee로 묶고 인자를 더한 것이다. 인자는 요약용이라 공백을 하나로
+    접는다(여러 줄에 걸친 `n *\\n 2` → `n * 2`) — 원문은 하네스가 파일에서 읽는다. 인자 목록 안의
+    주석은 tree-sitter에서 이름 있는 `comment` 노드라(실측) 거르지 않으면 인자로 셈해진다."""
+    site = {"file": "t.c", "caller": "doit"}
+
+    assert tables["calls"] == {
+        "memcpy": [{**site, "line": 31, "args": ["buf", "text", "n * 2"]}],
+        "helper": [{**site, "line": 34, "args": ["g(1)", '"s"']}],
+        "g": [{**site, "line": 34, "args": ["1"]}],
+    }
+
+
+def test_the_index_carries_no_source_text_table(tables: dict) -> None:
+    """RAG baseline의 `src`(파일 → 줄 목록)와 매크로 `value`를 싣지 않는다 — 원문은 하네스가
+    파일에서 직접 읽는다. 인덱스에 소스를 복제하면 두 사본이 어긋날 자리가 생긴다."""
+    assert "src" not in tables
+    assert {key for records in tables["macros"].values() for r in records for key in r} == {
+        "file",
+        "line_start",
+        "line_end",
+    }
+
+
+def test_params_come_from_the_declarator_closest_to_the_name(tmp_path: Path) -> None:
+    """파라미터는 **이름에 가장 가까운** `function_declarator`의 것이다.
+
+    K&R 머리는 파라미터가 `identifier`로 온다. 함수 포인터 파라미터의 이름은 괄호 선언자 안에
+    있다. 포인터를 돌려주는 함수는 `pointer_declarator`가 한 겹 더 끼어 있다. `(void)`와 이름
+    없는 파라미터는 이름이 없다.
+    """
+    (tmp_path / "p.c").write_text(
+        "int kr(a, b) int a; char *b; { return a; }\n"
+        "void cb(int v[], int (*fp)(int)) { fp(1); }\n"
+        "char *dup(const char *s) { return 0; }\n"
+        "int none(void) { return 0; }\n",
+        encoding="utf-8",
+    )
+    functions = _index(tmp_path, "p.c")["functions"]
+
+    assert {name: records[0]["params"] for name, records in functions.items()} == {
+        "kr": ["a", "b"],
+        "cb": ["v", "fp"],
+        "dup": ["s"],
+        "none": [],
+    }
+
+
+def test_an_unnamed_bitfield_is_not_a_field(tmp_path: Path) -> None:
+    """`int : 5;`(자리 채움 비트필드)의 선언자는 **폭 0짜리 `field_identifier`**다(실측 — 글자가
+    빈 문자열). 거르지 않으면 이름이 `""`인 필드가 표에 든다."""
+    (tmp_path / "bits.c").write_text("struct s { int a : 3; int : 5; };\n", encoding="utf-8")
+
+    assert _index(tmp_path, "bits.c")["fields"] == {
+        "a": [{"type": "s", "file": "bits.c", "line_start": 1, "line_end": 1}]
+    }
+
+
+def test_file_scope_is_everything_outside_a_function_even_under_ifdef(tmp_path: Path) -> None:
+    """`#ifdef` 안의 전역·매크로는 `preproc_ifdef` 아래에 있다 — 최상위만 보면 빠진다(v1
+    `_iter_definitions`가 겪은 것과 같은 구멍). 함수 안의 선언은 전역이 아니라 지역이다."""
+    (tmp_path / "cfg.c").write_text(
+        "#ifdef FEATURE\n"
+        "static int g_feat = 1;\n"
+        "#define FEAT_ON 1\n"
+        "#endif\n"
+        "void f(void) { int local; }\n",
+        encoding="utf-8",
+    )
+    index = _index(tmp_path, "cfg.c")
+
+    assert index["file_vars"] == {"g_feat": [{"file": "cfg.c", "line_start": 2, "line_end": 2}]}
+    assert index["macros"] == {"FEAT_ON": [{"file": "cfg.c", "line_start": 3, "line_end": 3}]}
+    assert index["locals"] == {"cfg.c": {"f": {"local": [5]}}}
+
+
+def test_the_reader_builds_the_graph_from_this_scripts_v2_output(
+    sample: Path, tmp_path: Path
+) -> None:
+    """**경계를 건너는 대조.** 이 스크립트가 쓴 index-v2를 하네스의 읽는 쪽이 받아 캡슐 간선을
+    만든다. 기대값은 `sample`의 원문에서 손으로 뽑았다 — `recv_request`(16행)가 `parse_header`를
+    부르고, `parse_header` 본문(9~13행)이 `memcpy`(11행)·`helper`(12행)를 부른다."""
+    out = tmp_path / "out" / INDEX_FILE
+    assert indexer.main(["--out", str(out), "--root", str(sample), str(sample / "parser.c")]) == 0
+    graph = index_graph.GraphIndex(out)
+    parse_header = Location(file="parser.c", symbol="parse_header", line_start=9, line_end=13)
+
+    assert graph.names_for("callers", parse_header) == ["recv_request parser.c:16"]
+    assert graph.names_for("callees", parse_header) == [
+        "helper parser.c:12",
+        "memcpy parser.c:11",
+    ]
+    assert graph.summary.calls == 4
