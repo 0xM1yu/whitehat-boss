@@ -3003,3 +3003,46 @@ def test_a_step_run_out_of_order_raises_instead_of_flowing_none_onward(
         step(object(), item, object())  # type: ignore[operator]
 
     assert getattr(item, field) is None, "가드가 값을 채우지 않고 거절해야 한다"
+
+
+def test_a_timeout_while_the_server_was_generating_drops_only_that_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """타임아웃이어도 **서버가 그동안 토큰을 냈으면** 그 후보만 버린다 (#261 (다)).
+
+    `run_20260924_0001`이 300,021 ms 타임아웃으로 멈췄는데 그 5분 동안 서버는 13.4 tok/s로
+    생성하고 있었다(이슈 #261 「재현 / 근거」). 상태 코드가 없다는 것만으로는 「죽음」과
+    「느림」이 안 갈린다 — 어댑터가 `/metrics` 생성 카운터로 가른 `generating`을 러너가 읽는다.
+    """
+    slow = ModelGatewayError(
+        "http://127.0.0.1:8000/v1 호출 실패: timed out", detail="timed out", generating=True
+    )
+    _failing_model(monkeypatch, [slow])
+
+    result, trace_path = _run(tmp_path, name="slow", before=_with_index())
+
+    assert result.record.is_complete, "느린 후보 하나가 run을 세웠다 — #261이 그대로다"
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["gateway_error"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"]) - 1
+
+
+def test_a_timeout_with_no_generation_still_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """생성 카운터가 안 늘었으면(행) 또는 못 읽었으면(모름) 지금처럼 run을 멈춘다.
+
+    「모름」을 「느림」으로 읽으면 죽은 서버 앞에서 후보를 연속 폐기 상한까지 태운다 —
+    `None`은 통과가 아니다(`ModelEntry.family`와 같은 규칙).
+    """
+    for name, generating in (("hung", False), ("unknown", None)):
+        stuck = ModelGatewayError(
+            "http://127.0.0.1:8000/v1 호출 실패: timed out",
+            detail="timed out",
+            generating=generating,
+        )
+        _failing_model(monkeypatch, [stuck])
+
+        _, trace_path = _run(tmp_path, name=name, before=_with_index())
+
+        assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable", name
