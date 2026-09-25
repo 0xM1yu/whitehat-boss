@@ -113,8 +113,13 @@ def load_slices(path: Path) -> SliceSet:
         raise SliceInputError(f"{path}: 슬라이서 status가 {status!r}다 — 쓸 슬라이스가 없다")
     if status == "partial" and document.get("joern_engine_config") is None:
         raise SliceInputError(f"{path}: partial인데 CPG 설정이 없다 — CPG에 닿기 전에 끝난 run이다")
+    items = document.get("slices")
+    if not isinstance(items, list):
+        raise SliceInputError(
+            f"{path}: 슬라이스 목록(`slices`)이 배열이 아니다 — {type(items).__name__}"
+        )
     try:
-        slices = tuple(_slice(item) for item in document["slices"])
+        slices = tuple(_slice(item) for item in items)
     except (KeyError, TypeError, ValueError) as exc:
         raise SliceInputError(f"{path}: 슬라이스 항목 모양이 slice-v2가 아니다 — {exc!r}") from exc
     seen: set[str] = set()
@@ -122,12 +127,39 @@ def load_slices(path: Path) -> SliceSet:
         if item.id in seen:
             raise SliceInputError(f"{path}: 슬라이스 id {item.id}가 둘이다")
         seen.add(item.id)
+    try:
+        manifest = _manifest(document.get("candidate_manifest"))
+    except ValueError as exc:
+        raise SliceInputError(
+            f"{path}: candidate_manifest 모양이 slice-v2가 아니다 — {exc}"
+        ) from exc
     return SliceSet(
         status=status,
         run_signature=document.get("run_signature"),
         slices=slices,
-        candidate_manifest=dict(document.get("candidate_manifest") or {}),
+        candidate_manifest=manifest,
     )
+
+
+def _manifest(raw: object) -> dict:
+    """`candidate_manifest` — **`slice_refs`가 읽는 길**(항목 → `scopes` → 원소 → `symbol`)만 본다.
+
+    그 길의 모양을 로드에서 안 보면 `slice_refs`가 run 디렉터리가 생긴 뒤 `.get()`에서 죽는다
+    (#284 리뷰). 없거나 `null`이면 빈 manifest다 — 슬라이스마다 `scopes`가 없는 것과 같다.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"객체가 아니다 — {type(raw).__name__}")
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"{key}: 객체가 아니다")
+        scopes = entry.get("scopes") or []
+        if not isinstance(scopes, list) or not all(isinstance(s, dict) for s in scopes):
+            raise ValueError(f"{key}: scopes가 객체 배열이 아니다")
+        if not all(isinstance(s.get("symbol"), str | None) for s in scopes):
+            raise ValueError(f"{key}: scopes[].symbol이 문자열이 아니다")
+    return dict(raw)
 
 
 def _slice(item: dict) -> Slice:
@@ -154,10 +186,11 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
     """러너 타깃으로 넘길 모양. `Location`은 entry의 file·line + **감싸는 함수 이름**이다.
 
     Case B의 `entry.symbol`은 sink 호출 이름(`memcpy` 등)이라 심볼 이름으로 못 쓴다 —
-    대표 후보의 `scopes[0].symbol`(Joern이 준 메서드 이름)을 쓴다. `scopes`가 없으면 entry의
-    이름으로 떨어진다(Case A의 entry는 메서드 자신이다). `scopes[].file`은 Joern 원경로라
-    쓰지 않는다 — 파일은 이미 상대화된 entry의 것이다. entry는 `SliceRef.entry`로 **그대로**
-    따로 싣는다 — v3 `slice_criterion.given`이 그것이다.
+    대표 후보의 `scopes[0].symbol`(Joern이 준 메서드 이름)을 쓴다. `scopes`가 없으면 Case A는
+    entry의 이름으로 떨어지고(entry가 메서드 자신이다) **Case B는 비운다** — sink 이름을 함수
+    이름 자리에 조용히 적지 않는다(#284 리뷰). `scopes[].file`은 Joern 원경로라 쓰지 않는다 —
+    파일은 이미 상대화된 entry의 것이다. entry는 `SliceRef.entry`로 **그대로** 따로 싣는다 —
+    v3 `slice_criterion.given`이 그것이다.
     """
     refs = []
     for item in loaded.slices:
@@ -166,8 +199,9 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
         entry = Location(
             file=item.entry["file"], line_start=item.entry["line"], symbol=item.entry["symbol"]
         )
+        fallback = entry.symbol if item.case == "A" else None
         location = Location(
-            file=entry.file, line_start=entry.line_start, symbol=symbol or entry.symbol
+            file=entry.file, line_start=entry.line_start, symbol=symbol or fallback
         )
         refs.append(
             SliceRef(

@@ -197,11 +197,19 @@ ANCESTORS = """
 """
 
 
-def import_query(repo: str, project: str) -> str:
+def import_query(repo: str, project: str, compilation_database: str | None = None) -> str:
+    # With a compilation database, c2cpg processes only the compiled translation units with
+    # their real flags (compile-aware import): dead #ifdef branches and uncompiled files drop
+    # out. Without one, every source file is imported as before.
+    extra = (
+        f', args=List("--compilation-database", {literal(compilation_database)})'
+        if compilation_database is not None
+        else ""
+    )
     return envelope(
         "import",
         f"""
-      val imported = importCode.c(inputPath={literal(repo)}, projectName={literal(project)})
+      val imported = importCode.c(inputPath={literal(repo)}, projectName={literal(project)}{extra})
       require(imported.metaData.nonEmpty, "Imported CPG has no metadata")
       ujson.Obj("imported" -> true)
     """,
