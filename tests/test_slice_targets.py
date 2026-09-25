@@ -176,6 +176,51 @@ def test_cli_run_refuses_an_untrustworthy_slice_file_before_the_run_dir(
     assert not list(out.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
+@pytest.mark.parametrize(
+    "entry", [pytest.param("oops", id="entry"), pytest.param({"scopes": ["oops"]}, id="scope")]
+)
+def test_cli_run_refuses_a_broken_candidate_manifest_before_the_run_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture, entry: object
+) -> None:
+    """manifest가 깨져도 같은 자리에서 막는다 — `slice_refs`가 run 디렉터리를 만든 뒤
+    `AttributeError`로 죽던 자리다(#284 리뷰 MEDIUM, 재현: `run_20260925_0001`이 남았다)."""
+    from src import cli
+
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+    document = json.loads(path.read_text("utf-8"))
+    document["candidate_manifest"]["key_slice_0002"] = entry
+    path.write_text(json.dumps(document), encoding="utf-8")
+    out = tmp_path / "artifacts"
+    out.mkdir()
+
+    code = cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET),
+        "--slices", str(path), "--artifacts-root", str(out),
+    ])
+
+    assert code == 2
+    assert "candidate_manifest" in capsys.readouterr().err
+    assert not list(out.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_a_case_b_slice_without_scopes_names_no_function_rather_than_the_sink(
+    tmp_path: Path,
+) -> None:
+    """Case B의 entry 이름은 sink 호출(`memcpy`)이라 함수 이름이 아니다 — scopes가 없으면
+    `symbol`을 비운다. Case A의 entry는 메서드 자신이라 그 이름을 쓴다(#284 리뷰 LOW)."""
+    from src.adapters.slices import load_slices, slice_refs
+
+    path = _slices_file(tmp_path, [_slice(*_CASE_A), _slice(*_CASE_B)])
+    document = json.loads(path.read_text("utf-8"))
+    for entry in document["candidate_manifest"].values():
+        entry["scopes"] = []
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    symbols = {ref.slice_id: ref.location.symbol for ref in slice_refs(load_slices(path))}
+
+    assert symbols == {"slice_0001": "parse_header", "slice_0002": None}
+
+
 def test_a_failed_twin_slice_counts_as_unanalysed_even_when_its_twin_succeeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
