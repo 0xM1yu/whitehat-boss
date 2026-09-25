@@ -440,8 +440,8 @@ def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_
 
 def test_the_other_functions_follow_in_file_then_line_order(tmp_path: Path) -> None:
     """entry 함수 뒤의 순서는 (파일, 시작 줄)이다 — 줄이 먼저가 아니다. `util.c`의 `copy_name`(14)은
-    `parser.c`의 `parse_header`(19)보다 줄이 앞이지만 파일이 뒤라 뒤에 온다. 상한 아래에서는 이 순서가
-    어느 함수가 먼저 자리를 차지하는지를 정한다.
+    `parser.c`의 `parse_header`(19)보다 줄이 앞이지만 파일이 뒤라 뒤에 온다. 상한 아래에서는 이
+    순서가 어느 함수가 먼저 자리를 차지하는지를 정한다.
     """
     spans = ("slice_0007", "A", ("parser.c", 28, "recv_request"), "recv_request",
              {24, 28, 30, ("util.c", 16)})

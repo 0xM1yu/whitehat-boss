@@ -20,6 +20,8 @@
 생기고 그 둘이 갈릴 자리가 만들어진다. 여기서 파생시키면 갈릴 것이 없다.
 """
 
+from collections.abc import Callable
+
 from src.graph_entry import name_of
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
@@ -53,12 +55,15 @@ def run(
     candidate: Candidate,
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...] = (),
-    source: str | None = None,
+    source: Callable[[], str] | None = None,
 ) -> tuple[Finding, list[MissingEvidence]]:
     """가설 Finding과 그것이 요청한 MissingEvidence를 만들어 저장한다.
 
-    `source`를 주면 그것이 `SOURCE`다 — 슬라이스 타깃이면 러너가 슬라이스가 걸친 함수들을 이어
-    붙여 준다(`runner._auditor_source`, 결정 1-b). 안 주면 캡슐 대상의 원문이다.
+    `source`를 주면 그것을 불러 `SOURCE`를 얻는다 — 슬라이스 타깃이면 러너가 슬라이스가 걸친
+    함수들을 이어 붙이는 콜러블을 준다(`runner._auditor_source`, 결정 1-b). 안 주면 캡슐 대상의
+    원문이다. **값이 아니라 콜러블인 것은 그 읽기를 5단계 구간 안에서 하려는 것이다** — 러너가 미리
+    읽으면 파일 읽기가 5단계 `stage_end.wall_ms`에서 빠지고 `auditor_source` 이벤트가 5단계
+    `stage_start`보다 먼저 난다.
     """
     ids = {
         "candidate_id": candidate.candidate_id,
@@ -88,11 +93,10 @@ def _ask_model(
     candidate: Candidate,
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...],
-    source: str | None,
+    source: Callable[[], str] | None,
 ) -> Finding:
     template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
-    if source is None:
-        source = ctx.read_source(capsule.target)
+    text = ctx.read_source(capsule.target) if source is None else source()
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -100,14 +104,14 @@ def _ask_model(
             artifact_id=candidate.artifact_id,
             target=capsule.target,
             capsule=capsule,
-            source=source,
+            source=text,
             evidences=evidences,
             callers=caller_names(capsule),
         ),
         candidate=_describe_candidate(candidate),
         target=describe_target(capsule.target),
         capsule_sections=describe_sections(capsule),
-        source=source,
+        source=text,
     )
     try:
         result = ctx.call_model(
