@@ -221,6 +221,29 @@ def test_a_case_b_slice_without_scopes_names_no_function_rather_than_the_sink(
     assert symbols == {"slice_0001": "parse_header", "slice_0002": None}
 
 
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        pytest.param(
+            Location(file="parser.c", symbol="parse_header", line_start=19, line_end=26),
+            "`parser.c` 의 `parse_header` (줄 19-26)",
+            id="symbol",
+        ),
+        pytest.param(Location(file="parser.c"), "`parser.c` 의 `(파일 전체)`", id="whole-file"),
+        pytest.param(Location(file="parser.c", line_start=24), "`parser.c` (줄 24-24)", id="lines"),
+    ],
+)
+def test_the_prompt_never_calls_a_line_range_the_whole_file(
+    target: Location, expected: str
+) -> None:
+    """이름 없이 줄만 든 대상이 생겼다 — scopes 없는 Case B(바로 위 테스트)가 그렇다. 「이름이
+    없으면 파일 전체」라는 옛 등식으로 그리면 프롬프트가 「`(파일 전체)` (줄 24-24)」로 자기
+    FACTS와 어긋난다(코드 리뷰 MEDIUM, 재현)."""
+    from src.orchestrator.nodes.scout import describe_target
+
+    assert describe_target(target) == expected
+
+
 def test_a_failed_twin_slice_counts_as_unanalysed_even_when_its_twin_succeeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
