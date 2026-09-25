@@ -76,10 +76,11 @@ Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다.
 
 **캡슐까지 이어졌다(2026-08-20).** 산출물(`{SCRATCH}/index.json`)의 호스트 경로는
 `index_output_path()`가 내고, `adapters/index_graph.py`가 그것을 읽어 두 Retriever의
-`callers`/`callees` 섹션을 채운다. `types`는 아직 아니다 — index-v1에 타입 데이터가 없다.
-헤더(`.h`)는 `_INDEX_SUFFIXES`에 없어 인덱서에 넘어가지 않으므로 헤더에 정의된
-`static inline` 함수는 아직 심볼에 없다. `.inc`는 넘어간다 — 그쪽은 실제 코드가 통째로
-들어 있어 빠지면 대상의 대부분이 사라지기 때문이다(`_INDEX_SUFFIXES` 주석).
+`callers`/`callees` 섹션을 채운다. `types`는 캡슐 섹션이 아니다 — index-v2에 타입 표가
+생겼지만 NE resolver가 요청받았을 때 주는 조회 표이고 캡슐로 싣지 않는다
+(`index_graph.GRAPH_SECTION_KINDS` 주석). 헤더(`.h`)와 `.inc`도 인덱서에 넘어간다 — `.inc`는
+실제 코드가 통째로 들어 있어 빠지면 대상의 대부분이 사라지고, `.h`에는 매크로·타입 정의와
+`static inline` 함수가 있다(`_INDEX_SUFFIXES` 주석).
 
 ## semgrep 룰셋은 이미지에 구워 넣는다
 
@@ -111,7 +112,9 @@ from src.schemas.run import CompileFlags
 
 # `nodes/sandbox.DEFAULT_SANDBOX.image`와 같아야 한다. 어댑터는 오케스트레이터를 import 하지
 # 않으므로(engineering-guide.md §3) 값을 복제하고 tests/test_container_tools.py가 대조한다.
-DEFAULT_IMAGE = "harness-tools:v1"
+# v2부터 인덱서가 index-v2(조회 표)를 낸다 — v1 이미지는 지우지 않는다(지난 run 매니페스트가
+# 그 digest를 적었다).
+DEFAULT_IMAGE = "harness-tools:v2"
 
 # 컨테이너 안 경로. 분석 대상은 항상 읽기 전용이고, 쓰기는 scratch 한 곳에서만 일어난다.
 MOUNT = "/src"
@@ -171,13 +174,21 @@ _CXX_SUFFIXES = (".cc", ".cpp")
 # 17KB를 못 본다. 그리고 **에러가 아니므로 "그 파일에 함수가 없다"와 구별되지 않는다.**
 #
 # **여기 있는 확장자는 전부 `tools/harness-tools/indexer.py`의 `_GRAMMARS`에도 있어야
-# 한다**(반대는 아니다 — `_GRAMMARS`는 아직 안 보내는 `.h`·`.hpp`도 안다). 그 스크립트는
+# 한다**(반대는 아니다 — `_GRAMMARS`는 아직 안 보내는 `.hpp`도 안다). 그 스크립트는
 # 이미지 안에서 독립 실행되고 `src/`를 import 하지 않아 목록이 양쪽에 따로 존재한다 —
 # **어긋나면 예외가 아니라 `skipped`에 이름만 남고 조용히 빈 그래프가 나온다.**
 #
-# `.h`는 아직 없다. 헤더의 `static inline`이 심볼에서 빠지는 것은 별개의 알려진
-# 구멍이고(모듈 docstring), 이 목록과는 다른 판단이 필요하다.
-_INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc")
+# **`.h`도 보낸다(#63, index-v2).** 매크로·타입 정의의 대부분과 헤더 `static inline` 함수가
+# 거기 있어서, 안 보내면 NE resolver가 쓸 조회 표가 비고 슬라이스가 헤더 함수에 걸칠 때
+# Auditor가 그 함수 대신 앞뒤 창을 받는다. v1 심볼·간선에도 헤더 함수가 들어간다 — 따로
+# 「조회 전용」 목록을 두면 한 index.json이 같은 파일에 두 답(v2 표엔 있고 `symbols_for`는
+# `[]`)을 내고, 프로세스 경계를 넘는 확장자 목록이 하나 더 생긴다. 헤더는 여전히 clang에
+# 직접 주지 않는다 — 단독 컴파일 대상이 아니다(`_COMPILE_SUFFIXES`).
+#
+# ⚠ **대상 트리 밖의 헤더는 여전히 안 온다** — 인덱서는 `sources(workdir)`(대상 트리)만 받는다.
+# 평가 표본의 `build_context/generated_headers`(설정 매크로)는 슬라이서만 `-I`로 본다
+# (`slicer_compile.py`의 generated_headers).
+_INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc", ".h")
 
 # 컴파일 방언. **clang을 쓰는 모든 도구가 같은 값을 쓴다 — 단 그 규칙은 언어 안에서만
 # 성립한다.**
