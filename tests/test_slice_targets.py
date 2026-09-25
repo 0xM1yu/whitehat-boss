@@ -366,6 +366,98 @@ def test_a_slice_without_a_render_fails_by_name_rather_than_as_a_bare_key_error(
         deps.read_slice("slice_0009")
 
 
+# --- 그래프 섹션의 「본문」은 슬라이스다 (#220 ①) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "case", [pytest.param(_CASE_A, id="case-a"), pytest.param(_CASE_B, id="case-b")]
+)
+def test_the_scout_graph_sections_describe_the_slice_it_shows(
+    tmp_path: Path, case: tuple
+) -> None:
+    """Scout 캡슐의 callers/callees는 **슬라이스가 보여 주는 코드**의 간선이다(#220 ①).
+
+    본문 = 슬라이스의 (file, line) 집합, 「본문 안에 정의」 = 정의 **범위**가 그 집합과 겹친다.
+    예전에는 entry 한 줄이 본문이라 Case A(함수 머리 19)는 callees가, Case B(sink 줄 24)는 callers가
+    비었다. Case B의 줄 {21, 24}는 `parse_header`(19–26)의 머리 줄을 안 품는다 — 정의 **시작 줄**로
+    판정하면 callers가 다시 빈다(K&R 머리·손으로 만든 줄 집합이 그 모양이다).
+    """
+    path = _slices_file(tmp_path, [_slice(*case)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "scout")
+    lines = {section["kind"]: section["lines"] for section in facts["capsule_sections"]}
+    assert (lines["callers"], lines["callees"]) == (
+        ["recv_request parser.c:30"],
+        ["memcpy parser.c:24"],
+    )
+
+
+# --- 슬라이스는 Evidence가 아니다 (ADR 0012 결정 1 ③ · #220 ③) ----------------------
+
+
+def _shape(evidence: object) -> dict:
+    """run마다 달라지는 id·run·payload 경로를 뺀 Evidence의 모양."""
+    return evidence.model_dump(exclude={"evidence_id", "run_id", "payload_ref"}, mode="json")
+
+
+def test_the_gate_sees_only_evidence_the_tool_runner_returned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """게이트가 보는 Evidence는 전부 도구 러너가 낸 것이다 — 슬라이스는 그 길에 없다(#220 ③).
+
+    `static_ok`·`graph_ok`는 후보와 결합 없는 존재 검사라(`gate.py`) 슬라이스를 STATIC·GRAPH
+    Evidence로 적는 순간 E1·E2가 부푼다. 철자(`Evidence(` 생성 지점 목록)가 아니라 **출처**로
+    잠근다 —
+    게이트 호출마다 받은 Evidence가 도구 러너 반환분의 부분집합인가(`evidences_for`가 Finding의
+    인용으로 거르므로 같음이 아니라 부분집합이다). 같은 트리를 `--slices` 없이 한 번 더 돌려
+    `--slices`가 도구 산출에 **새로 보탠 Evidence가 없는지**도 본다.
+
+    ⚠ 한계: 슬라이서를 **두 run 모두에서 도는** 도구로 등록하면 둘 다 통과한다. `dev_fake`는
+    `ContainerToolRunner`를 안 타 실 도구 러너의 경로는 못 본다.
+    """
+    from src.adapters.fake_tools import FakeToolRunner
+    from src.orchestrator import gate
+
+    def recorded(name: str, slices_path: Path | None) -> tuple[list, list, object, Path]:
+        returned: list = []
+        seen: list = []
+        run_tool, evaluate = FakeToolRunner.run, gate.evaluate
+
+        def recording_run(self, *args, **kwargs):
+            evidence = run_tool(self, *args, **kwargs)
+            returned.append(evidence)
+            return evidence
+
+        def recording_evaluate(finding, evidences, *args, **kwargs):
+            seen.append(tuple(evidences))
+            return evaluate(finding, evidences, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(FakeToolRunner, "run", recording_run)
+            patch.setattr(gate, "evaluate", recording_evaluate)
+            result, trace_path = _run(
+                tmp_path, name, slices_path=slices_path, before=_with_index()
+            )
+        return returned, seen, result, trace_path
+
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+    returned, seen, result, trace_path = recorded("sliced", path)
+
+    assert [candidate.slice_id for candidate in result.candidates] == ["slice_0002"]
+    # 스파이가 trace에 남은 판정을 전부 봤다. 더 많은 것은 정상이다 — 러너가 보고서 등급을 순수
+    # `gate.evaluate`로 다시 매기고 분모 이중 계상을 막으려 `gate_eval`을 안 남긴다(`runner.py`).
+    assert len(seen) >= len(_of(_events(trace_path), "gate_eval")) > 0
+    assert any(seen), "슬라이스 후보가 Evidence를 들고 게이트에 안 닿았다 — 빈 집합이면 늘 초록"
+    for evidences in seen:
+        assert [evidence for evidence in evidences if evidence not in returned] == []
+
+    plain, _, _, _ = recorded("plain", None)
+    plain_shapes = [_shape(evidence) for evidence in plain]
+    assert [_shape(e) for e in returned if _shape(e) not in plain_shapes] == []
+
+
 # --- CLI `--slices` ---------------------------------------------------------
 
 
