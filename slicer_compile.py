@@ -40,6 +40,7 @@ overwrite one fixed filename and hand each other the wrong translation-unit set.
 import hashlib
 import json
 import os
+import shlex
 import uuid
 from pathlib import Path, PurePosixPath
 
@@ -84,6 +85,49 @@ def _resolved_directory(directory: object, repo: Path) -> Path:
             return candidate if candidate.is_dir() else repo
         return (repo.parent / candidate).resolve()
     return repo
+
+
+# Include flags whose path is a separate following token, and the attached forms (-Ipath).
+# c2cpg's compilation-database parser resolves these against the JVM working directory, not the
+# entry's `directory`, so a relative include is never found on the Joern host. That silently
+# drops any code behind an unfound header -- for a node addon, the nan.h that defines NAN_METHOD
+# is under a relative `-I../build_context/generated_headers/nan`, so every method declared with
+# that macro (WrappedRE2::Split, the GT sink) fails to parse and cannot become a candidate.
+# Anchoring each relative include at the entry directory recovers them.
+_INCLUDE_SEP_FLAGS = frozenset(
+    {"-I", "-isystem", "-iquote", "-idirafter", "-imacros", "-include", "-cxx-isystem"}
+)
+_INCLUDE_ATTACHED = ("-I", "-iquote", "-isystem", "-idirafter")
+
+
+def _abs_include(path: str, directory: str) -> str:
+    return path if os.path.isabs(path) else os.path.normpath(os.path.join(directory, path))
+
+
+def _absolutize_includes(entry: dict, directory: str) -> list[str]:
+    """Rewrite the compile args so every relative include path is absolute (anchored at the
+    entry directory). Returns the rewritten argument list."""
+    if isinstance(entry.get("arguments"), list):
+        tokens = [str(t) for t in entry["arguments"]]
+    else:
+        tokens = shlex.split(entry.get("command", "") or "")
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _INCLUDE_SEP_FLAGS and i + 1 < len(tokens):
+            out.append(token)
+            out.append(_abs_include(tokens[i + 1], directory))
+            i += 2
+            continue
+        for prefix in _INCLUDE_ATTACHED:
+            if token.startswith(prefix) and len(token) > len(prefix):
+                out.append(prefix + _abs_include(token[len(prefix):], directory))
+                break
+        else:
+            out.append(token)
+        i += 1
+    return out
 
 
 def _compiled_files(entries: list[dict], repo: Path) -> tuple[set[str], int]:
@@ -131,7 +175,10 @@ def resolve_compilation_database(
     for entry in raw:
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             continue
-        entry = {**entry, "directory": str(_resolved_directory(entry.get("directory"), repo))}
+        directory = str(_resolved_directory(entry.get("directory"), repo))
+        arguments = _absolutize_includes(entry, directory)
+        entry = {**entry, "directory": directory, "command": shlex.join(arguments)}
+        entry.pop("arguments", None)
         entries.append(entry)
     if not entries:
         raise ValueError("compile_commands.json has no usable entries")
