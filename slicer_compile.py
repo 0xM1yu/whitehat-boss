@@ -113,6 +113,23 @@ def _abs_include(path: str, directory: str) -> str:
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(directory, path))
 
 
+def _generated_header_includes(cc_path: Path) -> list[str]:
+    """`-I` flags for a sibling generated_headers directory and its immediate subdirs, if present.
+
+    Some samples ship generated config headers (pnglibconf.h, config.h) under
+    build_context/generated_headers but leave the compile command's -I pointing only at the repo
+    root, so c2cpg never finds them. Then every function behind a config macro (libpng's
+    PNG_READ_SUPPORTED) is #ifdef'd out and the file parses to no methods at all. Adding these
+    directories to the include path recovers them. Absent directory means no flags added. The
+    flags are the attached `-I<abspath>` form, the only include form c2cpg's database parser reads.
+    """
+    gh = cc_path.parent / "generated_headers"
+    if not gh.is_dir():
+        return []
+    dirs = [gh] + [d for d in sorted(gh.iterdir()) if d.is_dir()]
+    return ["-I" + str(d.resolve()) for d in dirs]
+
+
 def _absolutize_includes(entry: dict, directory: str) -> list[str]:
     """Rewrite the compile args so every relative include path is absolute (anchored at the
     entry directory), returning the rewritten argument list. A separated flag+path pair
@@ -190,6 +207,7 @@ def resolve_compilation_database(
     raw = json.loads(cc_path.read_text(encoding="utf-8"))
     if not isinstance(raw, list) or not raw:
         raise ValueError("compile_commands.json is empty or not a JSON array")
+    gen_includes = _generated_header_includes(cc_path)
     entries: list[dict] = []
     for entry in raw:
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
@@ -200,6 +218,9 @@ def resolve_compilation_database(
         except ValueError:
             entries.append({**entry, "directory": directory})
             continue
+        # Add the sibling generated-header dirs after the compiler token so config macros resolve.
+        if gen_includes:
+            tokens = tokens[:1] + gen_includes + tokens[1:] if tokens else gen_includes
         if isinstance(entry.get("arguments"), list):
             entry = {**entry, "directory": directory, "arguments": tokens}
             entry.pop("command", None)

@@ -358,6 +358,49 @@ def test_one_malformed_command_does_not_fail_the_whole_database(tmp_path):
     assert entries[1]["command"] == 'gcc -DMSG="x -c src/b.c'
 
 
+def test_generated_headers_dir_is_added_to_includes(tmp_path):
+    # Some samples ship generated config headers under build_context/generated_headers but the
+    # compile command's -I points only at the repo root, so c2cpg never finds them and the file
+    # parses to no methods (libpng: PNG_READ_SUPPORTED undefined -> everything #ifdef'd out). The
+    # normalization adds that directory and its subdirs to the include path.
+    bc = tmp_path / "build_context"
+    (bc / "generated_headers").mkdir(parents=True)
+    (bc / "generated_headers" / "pnglibconf.h").write_text("#define PNG_READ_SUPPORTED\n")
+    (bc / "generated_headers" / "nan").mkdir()
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        bc / "compile_commands.json",
+        [{"directory": str(repo), "file": "src/a.c", "command": "gcc -I. -c src/a.c"}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    command = json.loads(normalized.read_text())[0]["command"]
+
+    assert str((bc / "generated_headers").resolve()) in command
+    assert str((bc / "generated_headers" / "nan").resolve()) in command
+    assert command.split()[0] == "gcc"
+
+
+def test_command_unchanged_when_no_gen_dir(tmp_path):
+    # Without a sibling gen dir, no include flags are added. The test name avoids the gen-dir
+    # spelling because pytest puts the test name in tmp_path, which would then match by accident.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        tmp_path / "compile_commands.json",
+        [{"directory": str(repo), "file": "src/a.c", "command": "gcc -Isrc -c src/a.c"}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    command = json.loads(normalized.read_text())[0]["command"]
+
+    # Exactly one include flag survives (the absolutized -Isrc), none added.
+    assert command.count("-I") == 1
+
+
 def test_import_query_passes_the_compilation_database_flag():
     query = queries.import_query("/r", "proj", "/work/compile_commands.resolved.json")
     assert "--compilation-database" in query
