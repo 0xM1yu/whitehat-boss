@@ -261,7 +261,7 @@ def test_missing_sif_is_reported_with_its_path(tmp_path: Path, spy: _Spy) -> Non
 
     assert evidence.ok is False
     assert "SIF가 없다" in evidence.error
-    assert "harness-tools_v1.sif" in evidence.error
+    assert "harness-tools_v2.sif" in evidence.error
     assert spy.calls == []
 
 

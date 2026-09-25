@@ -67,9 +67,11 @@ trace의 `graph_index` 이벤트가 된다.
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
 from src.graph_entry import render_entry
 from src.schemas.capsule import CapsuleSection
@@ -79,18 +81,46 @@ from src.tokens import estimate_tokens
 # 슬라이스의 줄 집합 — (file, line). 슬라이스 타깃 캡슐의 「본문」이다(`GraphIndex.names_for`).
 SliceBody = frozenset[tuple[str, int]]
 
-# `indexer.py`의 `INDEX_VERSION`과 같아야 한다.
+# `indexer.py`의 `INDEX_VERSION`이 이 안에 있어야 한다.
 #
 # 그 스크립트는 이미지 안에서 살고 `src/`를 import 하지 않아 **형식이 양쪽에 따로
 # 존재한다**(`container_tools._INDEX_SUFFIXES` ↔ `indexer._GRAMMARS`와 같은 이중화).
 # 어긋나면 예외가 아니라 `unsupported_version`이 되고 그래프 섹션이 통째로 사라지므로,
-# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다.
-SUPPORTED_INDEX_VERSION = "index-v1"
+# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1도 계속 읽는다 — 이미지가
+# v1인 run의 산출물이 남아 있고, 캡슐 그래프는 두 형식에서 같은 간선을 낸다(`_call_edges`).
+SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2")
+_INDEX_V2 = "index-v2"
 
-# 이 모듈이 채우는 섹션. `types`는 없다 — index-v1에 타입 데이터가 없기 때문이다
-# (`indexer.build_index()`가 내는 것은 symbols·calls뿐이고 struct·class·typedef를 뽑는
-# 코드가 없다). 데이터원이 없는데 섹션을 발행하면 이 모듈이 없애려는 거짓말이 된다.
-# 채우려면 인덱서에 타입 수집을 넣고 `INDEX_VERSION`을 올려야 한다(#63).
+# index-v2의 조회 표 — NE resolver(#63 후속)가 `GraphIndex.table()`로 읽는다. 모양은
+# `indexer.py` 모듈 docstring의 표다. **캡슐 섹션이 아니다**(`GRAPH_SECTION_KINDS` 주석).
+V2_TABLES = (
+    "functions",
+    "macros",
+    "types",
+    "file_vars",
+    "fields",
+    "locals",
+    "assigns",
+    "field_assigns",
+    "calls",
+)
+
+# 이름 → 기록 목록 모양인 표의 기록마다 있어야 하는 키. `locals`·`assigns`는
+# 파일 → 함수 → 이름 → [줄]이라 따로 본다(`_v2_tables`).
+_RECORD_KEYS = {
+    "functions": ("file", "line_start", "line_end", "params"),
+    "macros": ("file", "line_start", "line_end"),
+    "types": ("file", "line_start", "line_end", "kind"),
+    "file_vars": ("file", "line_start", "line_end"),
+    "fields": ("type", "file", "line_start", "line_end"),
+    "field_assigns": ("file", "line", "func", "lhs", "rhs", "op"),
+    "calls": ("file", "line", "caller", "args"),
+}
+
+# 이 모듈이 채우는 섹션. `types`는 없다 — index-v1에는 타입 데이터가 없고, index-v2에는
+# 있지만(`types` 표) **캡슐로 싣지 않는다.** 표는 NE resolver가 모델이 요청했을 때 준다 —
+# 캡슐마다 실으면 Scout 프롬프트가 늘 커지는데, 그 프롬프트가 서빙 창을 넘는 결함이 열려 있다
+# (#63 후속 · `tests/test_index_graph.py`의 v2 절이 캡슐이 v1과 같음을 박는다).
 GRAPH_SECTION_KINDS = ("callers", "callees")
 
 # `IndexSummary.status` 값. "못 읽었다"의 사유를 하나로 뭉치지 않는다 — 인덱서가 안 돈
@@ -166,6 +196,8 @@ class GraphIndex:
         # (`indexer._walk_calls`). 그래서 (file, line)이 곧 호출 지점이고, 그것이 본문
         # 줄 범위 안인지로 "이미 캡슐에 있는가"를 판정할 수 있다.
         self._calls: list[tuple[str, str, str, int]] = []
+        # index-v2 조회 표(읽기 전용). v1이거나 못 읽었으면 `None`이다(`table()`).
+        self._tables: dict[str, Mapping[str, Any]] | None = None
 
     # --- 조회 -----------------------------------------------------------
 
@@ -272,6 +304,27 @@ class GraphIndex:
         # engineering-guide.md §5의 재현성이 깨진다.
         return sorted({render_entry(name, row_file, line) for name, row_file, line in rows})
 
+    def table(self, name: str) -> Mapping[str, Any] | None:
+        """index-v2 조회 표 하나 — NE resolver가 읽는다. `None`은 **v2 표가 없다**는 뜻이다.
+
+        | 반환 | 뜻 |
+        | --- | --- |
+        | `None` | 인덱스 없음·버전 모름·깨짐, 또는 **index-v1**(표가 없는 형식) |
+        | `{}` | v2인데 그 표가 0건 |
+        | `{...}` | 표. 모양은 `indexer.py` 모듈 docstring의 표다 |
+
+        `names_for()`가 「없다」와 「0건」을 가르는 것과 **같은 구별**이다 — v1에서 `{}`를 내면
+        「인덱스가 v2가 아니다」와 「찾았는데 없다」가 섞이고, resolver는 그 둘을 모델에게 다르게
+        알려야 한다.
+
+        **읽기 전용이다.** 표는 run 동안 모든 조회가 공유한다 — 고치면 다음 조회가 오염된다.
+        **캡슐로 가지 않는다** — 이 메서드를 부르는 것은 resolver뿐이다(`GRAPH_SECTION_KINDS` 주석).
+        """
+        if name not in V2_TABLES:
+            raise ValueError(f"조회 표가 아니다: {name}")
+        self._load()
+        return None if self._tables is None else self._tables[name]
+
     # --- 본문 판정 -------------------------------------------------------
     #
     # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**
@@ -362,13 +415,15 @@ class GraphIndex:
             return IndexSummary(status=STATUS_MALFORMED)
         if not isinstance(document, dict):
             return IndexSummary(status=STATUS_MALFORMED)
-        if document.get("version") != SUPPORTED_INDEX_VERSION:
+        version = document.get("version")
+        if version not in SUPPORTED_INDEX_VERSIONS:
             # `indexer.py` docstring이 "읽는 쪽이 모르는 버전은 거절한다"고 정했다.
             # 거절하는 쪽 코드가 여기다.
             return IndexSummary(status=STATUS_UNSUPPORTED)
         try:
             defined = _defined_symbols(document["symbols"])
-            calls = _call_edges(document["calls"])
+            calls = _call_edges(document["calls"], version)
+            tables = _v2_tables(document) if version == _INDEX_V2 else None
             summary = IndexSummary(
                 status=STATUS_LOADED,
                 files=len(document["files"]),
@@ -379,12 +434,12 @@ class GraphIndex:
                 unresolved_symbols=int(document["unresolved_symbols"]),
                 parse_errors=len(document["parse_errors"]),
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, AttributeError):
             # 버전은 맞는데 필드가 없거나 형이 다르다. 부분 결과를 쓰면 어디까지 믿을 수
-            # 있는지 알 수 없으므로 통째로 거절한다. 여기 도달하면 `_defined`·`_calls`는
-            # 초기값 그대로다 — 절반만 채워진 그래프가 남지 않는다.
+            # 있는지 알 수 없으므로 통째로 거절한다. 여기 도달하면 `_defined`·`_calls`·
+            # `_tables`는 초기값 그대로다 — 절반만 채워진 그래프도 표도 남지 않는다.
             return IndexSummary(status=STATUS_MALFORMED)
-        self._defined, self._calls = defined, calls
+        self._defined, self._calls, self._tables = defined, calls, tables
         return summary
 
 
@@ -471,5 +526,56 @@ def _defined_symbols(symbols: list[dict]) -> dict[str, list[tuple[str, int, int]
     return defined
 
 
-def _call_edges(calls: list[dict]) -> list[tuple[str, str, str, int]]:
-    return [(c["caller"], c["callee"], c["file"], int(c["line"])) for c in calls]
+def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, int]]:
+    """(caller, callee, 호출 지점 file, 호출 지점 line). **두 형식에서 같은 간선이다.**
+
+    index-v1의 `calls`는 간선 목록이고, index-v2는 같은 간선을 callee → 호출 지점(+ 인자)으로
+    묶었다. 캡슐 그래프 섹션은 이 튜플만 보므로 형식이 바뀌어도 한 글자도 안 바뀐다 —
+    `tests/test_index_graph.py`의 v2 절이 박는다. 버전과 모양이 어긋나면(v1인데 묶음, v2인데
+    목록) 거절한다 — 형이 다르면 여기서 `TypeError`가 난다.
+    """
+    if version != _INDEX_V2:
+        return [(c["caller"], c["callee"], c["file"], int(c["line"])) for c in calls]
+    if not isinstance(calls, dict):
+        raise TypeError("index-v2의 calls는 callee → 호출 지점이다")
+    return [
+        (site["caller"], callee, site["file"], int(site["line"]))
+        for callee, sites in calls.items()
+        for site in sites
+    ]
+
+
+def _v2_tables(document: dict) -> dict[str, Mapping[str, Any]]:
+    """v2 조회 표를 검사하고 읽기 전용으로 얼린다. 모양이 다르면 예외 — `_read`가 통째로 거절한다.
+
+    기록의 필수 키까지 본다. 절반만 맞는 표를 받으면 resolver가 조회 도중에 죽거나, 더 나쁘게는
+    빈 결과를 「못 찾았다」로 모델에게 전한다.
+    """
+    tables = {}
+    for name in V2_TABLES:
+        table = document[name]
+        if not isinstance(table, dict):
+            raise TypeError(f"index-v2의 {name}는 매핑이다")
+        if name in _RECORD_KEYS:
+            keys = _RECORD_KEYS[name]
+            for records in table.values():
+                for record in records:
+                    if not isinstance(record, dict) or not all(key in record for key in keys):
+                        raise KeyError(f"index-v2의 {name} 기록에는 {keys}가 있어야 한다")
+        else:  # 파일 → 함수 → 이름 → [줄]
+            for functions in table.values():
+                for names in functions.values():
+                    for lines in names.values():
+                        if not all(isinstance(line, int) for line in lines):
+                            raise TypeError(f"index-v2의 {name}는 줄 번호 목록이다")
+        tables[name] = _freeze(table)
+    return tables
+
+
+def _freeze(value: Any) -> Any:
+    """JSON 값 → 읽기 전용(매핑은 `MappingProxyType`, 목록은 튜플)."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
