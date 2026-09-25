@@ -297,18 +297,70 @@ def test_the_auditor_takes_the_narrowest_symbol_around_the_entry(tmp_path: Path)
     assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("parse_header", 19)
 
 
-def test_without_an_index_the_auditor_reads_the_whole_entry_file(tmp_path: Path) -> None:
-    """인덱스가 없으면 entry를 감싸는 함수를 모른다 — 파일 전체로 되돌아간다(W2의 인덱스 없는
-    폴백과 같은 자리). 한 줄로 떨어지지 않는다."""
+_NO_PARSER_SYMBOLS = {
+    **_FIXTURE_INDEX,
+    "symbols": [s for s in _FIXTURE_INDEX["symbols"] if s["file"] != "parser.c"],
+}
+
+
+@pytest.mark.parametrize(
+    "index",
+    [pytest.param(None, id="no-index"), pytest.param(_NO_PARSER_SYMBOLS, id="file-with-no-symbols")],
+)
+def test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, index: dict | None
+) -> None:
+    """entry를 품는 심볼을 모르면 entry 앞뒤 창이다 — 파일 전체가 아니다. 한 줄도 아니다.
+
+    인덱스가 **있어도** 걸린다: `.h`는 artifact인데 인덱서가 안 받아 `symbols_for()`가 `[]`이고,
+    이름을 못 뽑은 정의도 인덱서가 버린다. 파일 전체는 상한 없이 Auditor 프롬프트에 실려
+    unzip.c 67,662자 → HTTP 400(`runner.py` 모듈 docstring)을 다시 연다 — W2는 같은 `[]`에서
+    후보를 안 만들지만 슬라이스 타깃은 이미 서 있다.
+
+    창을 2줄로 줄여 본다 — 픽스처 `parser.c`는 31줄이라 기본 창이면 파일 전체와 구별되지 않는다.
+    """
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_WINDOW_LINES", 2, raising=False)
     path = _slices_file(tmp_path, [_slice(*_CASE_B)])
 
-    _, trace_path = _run(tmp_path, slices_path=path)
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=None if index is None else _with_index(index)
+    )
 
     ((_, facts),) = _prompts(trace_path, "auditor")
-    assert facts["source"] == (TARGET / "parser.c").read_text(encoding="utf-8")
     assert facts["target"] == {
-        "file": "parser.c", "symbol": None, "line_start": None, "line_end": None,
+        "file": "parser.c", "symbol": None, "line_start": 22, "line_end": 26,
     }
+    assert facts["source"] == "\n".join(_PARSER[21:26])
+
+
+def test_a_slice_without_a_render_fails_by_name_rather_than_as_a_bare_key_error(
+    tmp_path: Path,
+) -> None:
+    """렌더가 없는 슬라이스를 물으면 어느 슬라이스인지 대는 `SliceInputError`다(#285 리뷰 MEDIUM).
+
+    타깃이 되는지(artifact 멤버십)와 렌더되는지(`is_file`)는 다른 술어다. 둘 다 `spec.target`
+    한 트리를 run 시작 때 보므로 현실 입력으로는 안 갈린다 — 재현되는 길은 `build_deps`와 전처리
+    사이에 트리가 바뀌는 경쟁뿐이었다. 그래도 갈리는 날 맨 `KeyError` 트레이스백이 아니라 이름을
+    대고 멈춘다.
+    """
+    from src.adapters.factory import build_deps
+    from src.config import load_config
+
+    stray = ("slice_0009", "B", ("missing.c", 3, "strcpy"), "main", {3})
+    path = _slices_file(tmp_path, [_slice(*_CASE_B), _slice(*stray)])
+    deps = build_deps(
+        load_config("dev_fake"),
+        run_id="run_20260901_0001",
+        source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+        slices_path=path,
+    )
+
+    assert deps.read_slice("slice_0002").startswith("/* ===== parser.c ===== */")
+    with pytest.raises(SliceInputError, match="slice_0009"):
+        deps.read_slice("slice_0009")
 
 
 # --- CLI `--slices` ---------------------------------------------------------
