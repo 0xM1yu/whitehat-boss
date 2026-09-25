@@ -1,7 +1,8 @@
 """러너가 살아 있는지를 밖에서 읽게 하는 heartbeat 파일 (이슈 #208 ②).
 
 타이머 스레드가 N초마다 `run_dir/heartbeat.json`을 갱신한다. **모델 호출 하나가
-멈춰도** — 어댑터가 `(schema_retries+1)×_TIMEOUT_S`초까지 침묵할 수 있다 — 이 스레드는
+멈춰도** — 어댑터가 `(schema_retries+1)×`요청 타임아웃(모델의 `request_timeout_s`, 없으면
+`_TIMEOUT_S`)초까지 침묵할 수 있다 — 이 스레드는
 계속 틱하므로 "프로세스가 죽었나 / 느린 호출 중인가"를 밖에서 가른다. trace 이벤트는
 단계·호출 경계에서만 나 그 사이 침묵하지만 heartbeat는 안 그친다.
 

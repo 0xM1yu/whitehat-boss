@@ -103,7 +103,8 @@ ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularit
 docker build -t harness-tools:v1 tools/harness-tools/
 
 # 실서빙 프로필은 `docker`를 선언하고 ATOM에 docker가 있다 — 플래그가 필요 없다 (2026-08-28)
-python -m src.cli run --profile harness_pool --target <경로> --device atom --condition B3prime@pipeline
+# `--slices`는 런타임과 무관하게 필요하다 — Scout v3가 슬라이스 입력이라 없으면 시작 전에 거부한다
+python -m src.cli run --profile harness_pool --target <경로> --slices <slices.json> --device atom --condition B3prime@pipeline
 
 # `dev_docker`도 이 장비에서는 덮을 것이 없다(2026-08-21 이후). 덮어야 하는 것은 ATOM에
 # 없는 런타임을 선언한 프로필뿐이고, 지금 그것은 `dev_singularity` 하나다
