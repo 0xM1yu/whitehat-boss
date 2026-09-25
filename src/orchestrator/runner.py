@@ -242,7 +242,8 @@ _SIZE_STATUS = frozenset({400, 413})
 # 422(스키마 거절)는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다.
 #
 # 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
-# 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다.
+# 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다. **예외는 서버가 생성 중이던
+# 타임아웃 하나다**(`ModelGatewayError.generating`, #261) — 판정은 `_is_droppable`에 있다.
 _DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 
 # 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다·요청 모양이 틀렸다)이면
@@ -277,7 +278,12 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     한쪽만 고쳐질 때 같은 오류가 자리에 따라 다르게 처리된다.
 
     `status`가 없으면(연결 실패·타임아웃·비-JSON 응답) 서버 쪽 사건이라 버릴 수 없다.
+    **예외 하나 — 타임아웃인데 서버가 그동안 토큰을 냈다**(`generating is True`, 어댑터가
+    `/metrics`로 잰다). 느린 것이지 죽은 것이 아니다(#261). 연속 폐기 상한은 그대로 센다 —
+    느린 후보가 셋 연달아면 run이 선다.
     """
+    if exc.generating is True:
+        return True
     return exc.status is not None and exc.status in _DROPPABLE_STATUS
 
 
@@ -1653,6 +1659,7 @@ def _new_record(
         # registry가 선언해 하네스가 **요청에 실은** 모델별 파라미터. `model_sampling`과
         # 달리 어댑터를 안 거친다 — config에서 바로 유도되므로 `deps`를 탈 이유가 없다.
         model_reasoning_effort=config.reasoning_efforts(),
+        model_request_params=config.request_params(),
         # 어댑터가 낸 컴파일 조건 (#74). `tool_images`와 같은 경로로 받는다 — 러너는
         # `src/adapters/`를 import 하지 않으므로 `_STD_ARGS`를 여기서 읽을 수 없고, 읽을 수
         # 있더라도 읽으면 안 된다: 값을 두 곳에 두면 갈라진다.
