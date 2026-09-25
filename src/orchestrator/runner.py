@@ -86,6 +86,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Protocol
 
@@ -1313,7 +1314,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     if candidate is None:
         raise _StageOutOfOrder("5단계가 4단계보다 먼저 돌았다 — candidate가 비어 있다")
     evidences, artifact = item.target.evidences, item.target.artifact
-    anchor = _auditor_target(ctx, item.target)
+    anchor, ref = _auditor_target(ctx, item.target), item.target.slice
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=anchor, level=CapsuleLevel.EXPANDED)
     finding, missings = auditor.run(
@@ -1321,7 +1322,10 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         candidate=candidate,
         capsule=expanded,
         evidences=evidences,
-        source=_auditor_source(ctx, item.target, anchor, candidate.candidate_id),
+        # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring).
+        source=None
+        if ref is None
+        else partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id),
     )
     item.finding, item.missings = finding, tuple(missings)
     state.update(finding)
@@ -1380,10 +1384,9 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 _AUDITOR_SOURCE_CHARS = 15_000
 
 
-def _auditor_source(
-    ctx: RunContext, target: _Target, anchor: Location, candidate_id: str
-) -> str | None:
-    """5단계 `SOURCE`. 슬라이스 타깃이 아니면 `None`이다 — 노드가 캡슐 대상(`anchor`)을 읽는다.
+def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
+    """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
+    타깃이 아니면 부르지 않고 노드가 캡슐 대상(`anchor`)을 그대로 읽는다.
 
     결정 1-b = 넓은 (i)(2026-09-25 팀 합의): **슬라이스가 걸친 함수의 원본을 전부** 준다. 맨 앞이
     entry 함수(`anchor` — `_auditor_target`)이고, 나머지는 슬라이스 줄마다 그 줄을 품는 가장 좁은
@@ -1400,9 +1403,6 @@ def _auditor_source(
     겹치는 심볼(index-v2)이면 같은 줄이 두 블록에 실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
     """
-    ref = target.slice
-    if ref is None:
-        return None
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
     spanned: dict[Location, None] = {}
     uncovered = 0
