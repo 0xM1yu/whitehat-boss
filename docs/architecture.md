@@ -97,7 +97,8 @@ graph LR
 > - **5단계 — Auditor가 받을 표현은 열려 있다**(결정 1-b). 기본값은 원본 소스이고
 >   (`prompts/auditor/v3/body.md`의 `representation: original source code`) 슬라이스로 바꾸려면 프롬프트
 >   개정이 먼저다. (⏵ 2026-09-25 — 슬라이스 타깃의 Auditor는 entry 줄을 감싸는 함수 하나의 원본을 받는다 —
->   인덱스가 없거나 품는 함수가 없으면 파일 전체다(`runner._auditor_target`, Phase 3c). 기본값을 좁게 푼 것이라
+>   품는 함수를 모르면(인덱스가 없거나 `.h`처럼 그 파일에 심볼이 없으면) entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`)이다
+>   (`runner._auditor_target`, Phase 3c — 파일 전체는 상한 없이 실려 막았다). 기본값을 좁게 푼 것이라
 >   군집 슬라이스가 걸친 다른 함수는 못 본다.)
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).

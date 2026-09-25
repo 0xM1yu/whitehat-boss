@@ -24,7 +24,13 @@ from src.adapters.index_graph import GraphIndex, IndexHook
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
-from src.adapters.slices import load_slices, render_slices, slice_refs, slicer_summary
+from src.adapters.slices import (
+    SliceInputError,
+    load_slices,
+    render_slices,
+    slice_refs,
+    slicer_summary,
+)
 from src.adapters.sqlite_store import SqliteStateStore
 from src.adapters.tokenizer import (
     REASON_NO_SOURCE,
@@ -57,6 +63,25 @@ def _no_slices(slice_id: str) -> str:
     자리가 없다 — 불렸으면 배선 결함이다.
     """
     raise KeyError(f"렌더된 슬라이스가 없다 — {slice_id}")
+
+
+def _read_rendered(rendered: dict[str, str]) -> Callable[[str], str]:
+    """`build_deps`가 `Deps`와 Retriever에 **같이** 넣는 렌더 조회. 없는 id는 이름을 대고 멈춘다.
+
+    타깃이 되는지(artifact 멤버십 — 러너 `_plan_slice_targets`)와 렌더되는지(`is_file` —
+    `render_slices`)는 다른 술어다. 둘 다 run 시작 때 같은 트리를 봐서 현실 입력으로는 안 갈리지만,
+    갈리면(시작과 전처리 사이의 트리 변경) 맨 `KeyError` 트레이스백으로 죽었다(#285 리뷰).
+    """
+
+    def read(slice_id: str) -> str:
+        try:
+            return rendered[slice_id]
+        except KeyError:
+            raise SliceInputError(
+                f"{slice_id}: 렌더가 없다 — run 시작 때 entry 파일이 대상 트리에 없던 슬라이스다"
+            ) from None
+
+    return read
 
 
 @dataclass(frozen=True)
@@ -334,6 +359,7 @@ def build_deps(
     """
     loaded = load_slices(slices_path) if slices_path is not None else None
     rendered = render_slices(loaded, source_root) if loaded is not None else {}
+    read_slice = _read_rendered(rendered)
     ids = IdFactory(run_id)
     # 경로 조립을 여기서 하지 않고 `container_tools.index_output_path()`에 묻는다 —
     # 쓰는 쪽과 읽는 쪽이 갈리면 예외가 아니라 "인덱서가 안 돌았다"로 기록된다.
@@ -348,7 +374,7 @@ def build_deps(
         on_truncate=on_truncate,
         on_usage=on_usage,
         on_index=on_index,
-        read_slice=rendered.__getitem__,
+        read_slice=read_slice,
         slice_signature=loaded.run_signature if loaded is not None else None,
         graph=graph,
     )
@@ -440,7 +466,7 @@ def build_deps(
         slicer=slicer_summary(loaded) if loaded is not None else None,
         # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의
         # `target_function` 토큰이 한 렌더에서 나온다.
-        read_slice=rendered.__getitem__,
+        read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
     )
