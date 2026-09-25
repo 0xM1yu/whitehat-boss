@@ -349,6 +349,9 @@ models:
     source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model"
     family: "qwen"
     prompt_template_version: "v3"
+    # ⚠ index-v2 스모크 브랜치(`smoke/index-v2-atom*`, 머지 안 함)에만 있다 — 기본 300 s로는
+    # 긴 Scout 호출에서 run 전체가 멈춘다(이슈 #261). 2026-09-25 스모크와 같은 값이다.
+    request_timeout_s: 1200
     fallback: null
     benchmark:
       measured_at: null
@@ -493,6 +496,9 @@ models:
     source: "hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
     family: "qwen"
     prompt_template_version: "v3"
+    # ⚠ index-v2 스모크 브랜치(`smoke/index-v2-atom*`, 머지 안 함)에만 있다 — 기본 300 s로는
+    # 긴 Scout 호출에서 run 전체가 멈춘다(이슈 #261). 2026-09-25 스모크와 같은 값이다.
+    request_timeout_s: 1200
     fallback: null
     benchmark:
       measured_at: null
