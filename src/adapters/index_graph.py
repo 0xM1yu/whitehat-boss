@@ -281,7 +281,19 @@ class GraphIndex:
     def _rules(
         self, target: Location, body: SliceBody | None
     ) -> tuple[Callable[[str, int], bool], Callable[[str], bool]]:
-        """(호출 지점이 본문 안인가, 이름의 정의가 본문 안인가) — 두 규칙이 쓰는 한 본문."""
+        """(호출 지점이 본문 안인가, 이름의 정의가 본문 안인가) — 두 규칙이 쓰는 한 본문.
+
+        ⚠ **두 규칙의 정밀도가 다르다.** 호출 지점 쪽은 `(file, line)`으로 파일을 보는데,
+        정의 쪽(`shown`)은 **이름만** 든다. 군집 슬라이스가 파일을 가로지르면 여러 파일의
+        이름이 한 집합에 섞여, 같은 이름이 슬라이스와 안 겹치는 다른 파일에도 정의돼 있으면
+        그쪽으로 가는 호출까지 callers에 실린다(#288 리뷰 LOW-2 ·
+        `test_a_slice_body_cannot_tell_two_definitions_apart_by_file`이 박았다).
+
+        **지금은 좁힐 수 없다** — 인덱스의 `calls` 행은 callee를 **파일 없는 이름**으로만 들고,
+        그 행의 `file`·`line`은 호출 지점이지 정의 위치가 아니다(`index-v1` 스키마).
+        비슬라이스 경로는 `target.file`로 스코프돼 이 문제가 없다. 인덱스가 callee 파일을
+        들게 되면 `(file, name)`으로 좁힌다.
+        """
         if body is None:
             return (
                 lambda file, line: self._in_body(file, line, target),
@@ -406,10 +418,13 @@ def graph_section(
     names = graph.names_for(kind, target, body)
     if names is None:
         return None, False
-    tokens, items, body = fit_names(names, remaining)
+    # `fitted`로 받는다 — 매개변수 `body`(SliceBody: (file, line) 집합)와 섹션의 `body`
+    # (담은 줄 `list[str]`)는 **다른 것**이다. 한 이름에 둘을 담으면 `names_for` 아래에
+    # 슬라이스 본문을 다시 쓰는 코드가 들어왔을 때 조용히 틀린다(#288 리뷰 LOW-1).
+    tokens, items, fitted = fit_names(names, remaining)
     if names and items == 0:
         return None, True
-    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=body), False
+    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=fitted), False
 
 
 def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
