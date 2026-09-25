@@ -23,11 +23,13 @@ from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
 
-# 풀 공유 캡슐 예산 마진 (#194). 캡슐은 첫 멤버(qwen) 토크나이저로 예산이 정해지는데 다른
-# 계열(mistral=scout_boundary)은 같은 텍스트를 최대 ~11% 더 센다(2026-09-13 ATOM 실측:
-# 캡슐 합 +4%, 조각 최대 +10.6%). 첫 멤버 기준을 이 factor로 줄여 담으면 그 최대 갈림(1/0.90 ≈
-# 1.111)까지 세 자리 전부 상한 안에 든다 — strict per-member drop 없이 예산이 강제된다.
-# 단일 프로필은 자리가 하나라 적용하지 않는다.
+# 풀 공유 캡슐 예산 마진 (#194). 캡슐은 첫 멤버(qwen) 토크나이저로 예산이 정해지는데 계열이 다른
+# 멤버는 같은 텍스트를 최대 ~11% 더 센다(2026-09-13 ATOM 실측 — 그때 로스터의 mistral
+# `scout_boundary`: 캡슐 합 +4%, 조각 최대 +10.6%). 첫 멤버 기준을 이 factor로 줄여 담으면 그 최대
+# 갈림(1/0.90 ≈ 1.111)까지 세 자리 전부 상한 안에 든다 — strict per-member drop 없이 예산이
+# 강제된다. 단일 프로필은 자리가 하나라 적용하지 않는다. ⏵ 2026-09-21 로스터 교체 뒤 Scout 세 자리가
+# 모두 qwen 계열이라 그 실측의 조건(계열이 다른 자리)이 지금은 없다 — 마진은 계열이 다른 모델이 풀에
+# 다시 들어오는 날을 위해 그대로 둔다.
 _POOL_CAPSULE_MARGIN = 0.90
 
 
@@ -51,7 +53,8 @@ def run(
     with ctx.stage(Stage.RETRIEVAL):
         budget = ctx.config.thresholds.budget_for(level)
         # #194 — 풀은 공유 캡슐을 세 계열이 나눠 보므로 첫 멤버 기준 예산을 마진만큼 줄여
-        # 담는다(위 `_POOL_CAPSULE_MARGIN`). 그래야 mistral 자리도 상한 안에 든다.
+        # 담는다(위 `_POOL_CAPSULE_MARGIN`). 그래야 계열이 다른 자리도 상한 안에 든다(지금
+        # 로스터에는 없다 — 위 주석).
         if all(member in ctx.config.profile.roles for member in SCOUT_POOL_ROLES):
             budget = int(budget * _POOL_CAPSULE_MARGIN)
         query = Query(
