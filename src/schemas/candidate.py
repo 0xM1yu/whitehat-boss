@@ -116,3 +116,6 @@ class SliceRef(HarnessModel):
     # `location`과 따로 드는 이유: Case B의 entry `symbol`은 감싸는 함수가 아니라 sink 호출
     # 이름이라(ADR 0012 결정 1의 ⚠) 한 필드로 합치면 둘 중 하나가 거짓이 된다.
     entry: Location
+    # 슬라이스가 걸친 (file, line) 전부 — 슬라이서의 `lines` 그대로. Auditor가 슬라이스가 걸친
+    # 함수들을 찾는 데 쓴다(`runner._auditor_source` — 결정 1-b = 넓은 (i)).
+    lines: tuple[tuple[str, int], ...]
