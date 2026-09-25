@@ -250,6 +250,50 @@ def test_a_slice_body_spans_files_and_drops_edges_whose_both_ends_it_shows(tmp_p
     assert graph.names_for("callees", entry, body) == [_CALLEE_ENTRY]
 
 
+def test_a_slice_body_cannot_tell_two_definitions_apart_by_file(tmp_path: Path):
+    """⚠ **이것은 한계를 박은 핀이지 바람직한 동작이 아니다**(#288 리뷰 LOW-2).
+
+    「본문 안에 정의」 판정은 **이름만** 본다. 호출 지점 판정이 `(file, line)`으로 파일을 보는 것과
+    대비된다(바로 위 두 테스트). 군집 슬라이스가 파일을 가로지르면 `shown`이 여러 파일의 이름을
+    한 집합에 담아, 같은 이름이 두 파일에 정의돼 있을 때 어느 쪽으로 가는 호출인지 구별하지 못한다.
+
+    여기서 `parse_header`는 parser.c(9–22, 슬라이스와 겹침)와 other.c(40–60, 안 겹침) 둘에 있다.
+    z.c:3의 `zeta → parse_header`가 other.c 쪽을 가리켜도 callers에 실린다.
+
+    **인덱스의 `calls`가 callee를 파일 없는 이름으로만 들어 지금은 고칠 수 없다** —
+    `{"caller": ..., "callee": ..., "file": ..., "line": ...}`의 file·line은 **호출 지점**이지
+    정의 위치가 아니다. 인덱스가 callee 파일을 들게 되면 이 테스트가 빨개진다. 그때
+    `_rules`의 `shown`을 `(file, name)`으로 좁히고 이 핀을 뒤집는다.
+    """
+    document = {
+        **_INDEX_V1,
+        "files": ["main.c", "parser.c", "other.c", "z.c"],
+        "symbols": [
+            *_INDEX_V1["symbols"],
+            {"name": "parse_header", "file": "other.c", "line_start": 40, "line_end": 60},
+        ],
+        "calls": [
+            *_INDEX_V1["calls"],
+            {"caller": "zeta", "callee": "parse_header", "file": "z.c", "line": 3},
+        ],
+    }
+    graph = _graph(tmp_path, document)
+    body = frozenset({("parser.c", 20)})
+    entry = Location(file="parser.c", line_start=20)
+
+    callers = graph.names_for("callers", entry, body)
+
+    # `zeta`의 호출이 other.c의 동명 정의를 가리켜도 구별하지 못해 실린다.
+    assert "zeta z.c:3" in callers
+    # 그 실림이 **겹침 때문**임을 같이 박는다 — 슬라이스가 `helper`(3-6)만 지나면 `shown`에
+    # `parse_header`가 없어 같은 간선이 안 실린다. 이 대비가 없으면 위 단언이 「늘 실린다」와
+    # 구별되지 않아 핀이 성질을 안 문다.
+    helper_only = frozenset({("parser.c", 4)})
+    assert "zeta z.c:3" not in graph.names_for(
+        "callers", Location(file="parser.c", line_start=4), helper_only
+    )
+
+
 def test_graph_entries_are_sorted_for_determinism(tmp_path: Path):
     """같은 입력에 같은 캡슐이 나오지 않으면 재현성이 깨진다(engineering-guide.md §5)."""
     document = {
