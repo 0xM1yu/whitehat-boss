@@ -1,7 +1,7 @@
 """`src/adapters/slices.py` — 슬라이서 산출물(`slices.json`)을 읽고 Scout의 `SOURCE`로 렌더한다.
 
 ADR 0012 결정 1(그 ADR 「후속 — Phase 번호」의 Phase 3). 이 파일은 **읽기·검증·렌더만** 본다 —
-러너 배선(타깃·캡슐·Auditor)은 러너 쪽 테스트가 본다.
+러너 배선(타깃·Scout가 보는 것·캡슐·Auditor)은 `tests/test_slice_targets.py`가 본다.
 
 **기대값의 `code`는 슬라이서 자신이 만든다**(`slicer_source.assemble`). 하네스(`src/`)는 슬라이서를
 import하지 않지만 테스트는 한다 — 렌더러의 줄 규칙이 슬라이서와 같다는 것을 지어낸 문자열이
@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from slicer_source import assemble
-from src.adapters.slices import SliceInputError, load_slices, render
+from src.adapters.slices import SliceInputError, load_slices, render, render_slices, slice_refs
+from src.schemas.common import Location
 
 _MAIN = (
     "int parse(char *buf, int n)\n{\n    char tmp[16];\n    int k = n;\n"
@@ -154,6 +155,21 @@ def test_duplicate_slice_ids_are_refused(tmp_path: Path) -> None:
         load_slices(_write(tmp_path, _document([item, dict(item)])))
 
 
+def test_a_slice_ref_keeps_the_raw_entry_beside_the_enclosing_function(tmp_path: Path) -> None:
+    """`entry`는 슬라이서가 준 그대로다 — v3 `FACTS.slice_criterion.given`이 이것에서 나온다.
+
+    Case B의 entry `symbol`은 sink 호출 이름(`memcpy`)이고 `location.symbol`은 감싸는 함수다.
+    한 필드로 합치면 둘 중 하나가 거짓이 된다.
+    """
+    document = _document([_slice("slice_0001", "B", {("main.c", 5)}, _SOURCES)])
+    document["candidate_manifest"] = {"key_slice_0001": {"scopes": [{"symbol": "parse"}]}}
+
+    (ref,) = slice_refs(load_slices(_write(tmp_path, document)))
+
+    assert ref.entry == Location(file="main.c", line_start=5, symbol="memcpy")
+    assert ref.location == Location(file="main.c", line_start=5, symbol="parse")
+
+
 @pytest.mark.parametrize(
     "slices",
     [pytest.param(..., id="missing"), pytest.param({"slice_0001": {}}, id="object")],
@@ -258,3 +274,60 @@ def test_render_folds_crlf_and_decodes_invalid_bytes_like_the_slicer(tmp_path: P
     loaded = load_slices(_write(tmp_path, _document([item])))
 
     assert render(loaded.slices[0], _reader(root)) == '/* ===== w.c ===== */\n2| char *s = "\xff";'
+
+
+# --- run 전 일괄 렌더 ---------------------------------------------------------
+
+
+def test_render_slices_renders_each_slice_whose_entry_file_is_in_the_tree(tmp_path: Path) -> None:
+    """run 전에 전부 렌더해 id로 찾게 한다. entry 파일이 대상 트리에 없는 슬라이스는 뺀다 —
+    러너가 그 슬라이스를 타깃으로 못 세우고 `unmatched_slices`로 센다."""
+    root = _repo(tmp_path, {"main.c": _MAIN.encode()})
+    kept = _slice("slice_0001", "A", {("main.c", 1), ("main.c", 5)}, _SOURCES)
+    stray = _slice("slice_0002", "B", {("gone.c", 1)}, {"gone.c": ["int gone;"]})
+    loaded = load_slices(_write(tmp_path, _document([kept, stray])))
+
+    assert render_slices(loaded, root) == {
+        "slice_0001": "/* ===== main.c ===== */\n"
+        "1| int parse(char *buf, int n)\n"
+        "5|     memcpy(tmp, buf, k);"
+    }
+
+
+def test_render_slices_refuses_drift_instead_of_skipping_it(tmp_path: Path) -> None:
+    edited = _MAIN.replace("memcpy(tmp, buf, k);", "memcpy(tmp, buf, 16);")
+    root = _repo(tmp_path, {"main.c": edited.encode()})
+    loaded = load_slices(
+        _write(tmp_path, _document([_slice("slice_0001", "A", {("main.c", 5)}, _SOURCES)]))
+    )
+
+    with pytest.raises(SliceInputError, match="drift"):
+        render_slices(loaded, root)
+
+
+def test_render_slices_refuses_a_slice_file_the_tree_does_not_have(tmp_path: Path) -> None:
+    """entry는 있는데 슬라이스가 걸친 다른 파일이 하네스 사본에 없다 — 슬라이서와 다른 트리다."""
+    root = _repo(tmp_path, {"main.c": _MAIN.encode()})
+    item = _slice("slice_0001", "A", {("main.c", 1), ("helper.c", 3)}, _SOURCES)
+    item["entry"] = {"file": "main.c", "line": 1, "symbol": "parse"}
+    loaded = load_slices(_write(tmp_path, _document([item])))
+
+    with pytest.raises(SliceInputError, match="helper.c"):
+        render_slices(loaded, root)
+
+
+@pytest.mark.parametrize("entry_file", ["main.c", "../outside.c"])
+def test_render_slices_never_reads_outside_the_target_root(tmp_path: Path, entry_file: str) -> None:
+    """`slices.json`의 경로는 하네스가 만든 값이 아니다 — 루트 밖을 가리키면 못 믿는 입력이다.
+
+    entry가 루트 밖인 경우와, entry는 안인데 슬라이스의 다른 줄이 루트 밖인 경우 둘 다다.
+    """
+    root = _repo(tmp_path, {"main.c": _MAIN.encode()})
+    (tmp_path / "outside.c").write_text("int secret;\n", encoding="utf-8")
+    sources = {**_SOURCES, "../outside.c": ["int secret;"]}
+    item = _slice("slice_0001", "A", {("main.c", 1), ("../outside.c", 1)}, sources)
+    item["entry"] = {"file": entry_file, "line": 1, "symbol": "parse"}
+    loaded = load_slices(_write(tmp_path, _document([item])))
+
+    with pytest.raises(SliceInputError, match="outside.c"):
+        render_slices(loaded, root)

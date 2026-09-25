@@ -69,7 +69,7 @@ agent:
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
 > 단계로 되돌려 capsule 축소"를 수행하는 코드가 없다. 더구나 **캡슐 예산은 프롬프트 크기의
-> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로 따로 실려 예산 밖에서 프롬프트를 키운다
+> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로(슬라이스 타깃의 Scout는 `ctx.read_slice()`로) 따로 실려 예산 밖에서 프롬프트를 키운다
 > (`config/budgets.yaml`의 주석, [open-questions.md](open-questions.md) D21·D17). 그래서 이
 > 숫자를 "프롬프트가 이 안에 들어온다"로 읽으면 안 된다.
 
@@ -94,6 +94,9 @@ agent:
   **지금 코드는 아니다** — `nodes/scout.py`가 `ctx.read_source()`로 대상 심볼 본문(줄번호·배너 없음,
   `read_symbol_source()`)을 `{{SOURCE}}`에 싣는다. 풀 프로필의 v3 프롬프트는 이미 슬라이스를 전제하므로 그
   둘이 지금 어긋난다([D82](open-questions/D/D82.md)). 구현은 Phase 3이다.
+  ⏵ 2026-09-25 — `run --slices`로 돈 run은 이제 그 모양이다(Phase 3a PR #283 · 3b PR #284 · 3c): `{{SOURCE}}`가
+  슬라이스 렌더이고 FACTS에 `slice_criterion`(`given_end`와, 슬라이서 entry의 file·line·symbol인 `given`)이
+  붙는다. `--slices` 없는 run은 앞 문장 그대로라, 풀 프로필을 슬라이스 없이 돌리면 그 어긋남도 그대로다.
 - 출력: `Candidate[]`. v3는 판정(`candidate`)과 근거(`analysis_summary`)를 한 호출에서 내는 `ScoutResponse`
   (`src/schemas/scout_response.py`)이고 하네스는 `.candidate`만 흘린다. ⚠ **ADR 0012 결정 2 —
   `reason_codes[0]`이 `triage_need_evidence`이면 하네스가 `requested_context`의 target을 심볼 인덱스에서
@@ -109,6 +112,9 @@ agent:
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 그 표현을 슬라이스로 바꿀지는
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b가 **열어 둔다** — 기본값은 원본 소스이고 Auditor
   v3 프롬프트가 그것을 전제한다(`prompts/auditor/v3/body.md`의 `representation: original source code`).
+  ⏵ 2026-09-25 — 슬라이스 타깃이면 「대상」은 entry 줄을 감싸는 함수 하나다(품는 함수를 모르면 — 인덱스가 없거나
+  `.h`처럼 그 파일에 심볼이 없으면 — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`), `runner._auditor_target`). 기본값 (i)을 좁게 푼 것이다 — (i)이 적는 「슬라이스가 걸친 함수」 중
+  entry를 품는 하나만 보고 군집 슬라이스가 걸친 다른 함수는 못 본다. 결정은 여전히 1-b에 있다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - 분석 축: source→sink 경로, memory lifetime/ownership, boundary check, 정수 연산, config·환경 조건 영향
 - 규칙: 코드에서 확인 불가한 사실은 주장하지 말고 `MissingEvidence`로 요청한다. "확인 불가"가 유효한 출력이다.

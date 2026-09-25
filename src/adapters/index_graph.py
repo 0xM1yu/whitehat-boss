@@ -222,6 +222,12 @@ class GraphIndex:
 
         `symbols`에 아예 없는 이름(`memcpy` 같은 외부 함수)은 남긴다 — 본문 안에 없는
         것이 확실하기 때문이다.
+
+        ⚠ **슬라이스 타깃(`run --slices`)에서는 위 등식이 깨진다**(2026-09-25). 그 run의 LIGHT
+        `target_function`과 Scout `SOURCE`는 슬라이스 렌더인데 `target`은 entry(줄 하나)라,
+        여기의 「본문」은 entry 줄 하나다 — entry가 sink 줄이면(Case B) 감싸는 함수의 호출자가,
+        함수 머리면(Case A) 본문의 호출이 빠진다. 슬라이스 타깃의 본문을 무엇으로 볼지는
+        #220 ①의 남은 절반이다(ADR 0012 결정 1의 ⚠ — 「`names_for()`의 술어」).
         """
         if kind not in GRAPH_SECTION_KINDS:
             raise ValueError(f"그래프 섹션이 아니다: {kind}")
