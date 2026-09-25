@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import ClassVar, Literal
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from src.schemas.common import HarnessModel, NonEmptyStr, Sha256Digest
 from src.schemas.enums import CapsuleLevel
@@ -156,6 +156,21 @@ class Benchmark(HarnessModel):
         return not self.missing_measurements
 
 
+class RequestSampling(HarnessModel):
+    """registry가 모델별로 **보내라고** 선언한 샘플링. 이름은 vLLM 요청 필드 그대로다.
+
+    `schemas.run.ModelSampling`(모델 파일이 **선언한** 것을 받아 적는 자리)과 다르다 — 이쪽은
+    우리가 적는 설정이라 범위 밖 값·오타가 곧 결함이고, 로드에서 죽는다(`extra="forbid"`).
+    `top_k`의 `-1`은 vLLM의 「끔」이다.
+    """
+
+    temperature: float | None = Field(default=None, ge=0.0)
+    top_p: float | None = Field(default=None, gt=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=-1)
+    min_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+
+
 class ModelEntry(HarnessModel):
     """Model Registry 한 항목 (model-serving.md §5)."""
 
@@ -201,8 +216,9 @@ class ModelEntry(HarnessModel):
     # registry 항목에 이 키가 없으면 로드가 통째로 실패한다. **다만 `None`은 통과가
     # 아니다**: `_check_family_split`이 "미상"을 "다르다"로 읽지 않는다(CLAUDE.md §0).
     family: NonEmptyStr | None = None
-    # **모델별 추가 요청 파라미터.** 지금 이 축에 있는 것은 이것 하나다 — 확정 로스터의
+    # **모델별 추가 요청 파라미터.** 이 축의 첫 필드가 이것이다 — 확정 로스터의
     # Critic이 `gpt-oss-20b` + `reasoning_effort: high`이기 때문이다(`PROJECT-CONTEXT.md` §1).
+    # 같은 규칙으로 선 넷은 아래 `sampling`부터다.
     #
     # **서버를 띄우는 값과 가른다.** `TRITON_ATTN`·flashinfer off·`--enforce-eager`·
     # `--structured-outputs-config.*`는 **하네스가 안 보낸다** — 그것은 `vllm serve`를 치는
@@ -224,6 +240,22 @@ class ModelEntry(HarnessModel):
     # 내는 값**이라 분포를 보기 전에 좁히면 기록이 버려지고, 이쪽은 **우리가 적는 설정**이라
     # 오타가 곧 결함이다. 값이 늘면 여기 한 줄을 늘리고 그 전까지는 크게 실패한다.
     reasoning_effort: Literal["low", "medium", "high"] | None = None
+    # **(2026-09-25 — ADR 0012 Phase 6.5 「모델별 요청 설정」) 이 축에 넷이 더 선다.** 규칙은 위
+    # `reasoning_effort` 그대로다 — 선언 안 하면 `None`이고 payload에 키가 안 생긴다. 값은 아직
+    # 아무 모델에도 없다 — 샘플링은 모델 카드 값으로 바꿀지 결정이 남았고, 나머지(사고 켜기·사고
+    # 상한·요청 타임아웃)는 ATOM 실측 뒤에 채운다.
+    # - `sampling` — 프로필 공통 `Sampling`(temperature·top_p)을 **이 모델에서 덮고** top_k 등을
+    #   더한다. 좌석마다 모델 카드 권장이 갈리기 때문이다(Qwen 계열 「DO NOT use greedy」).
+    # - `chat_template_kwargs` — 템플릿 인자(`enable_thinking` 등). 서버 기본 kwargs로 끄지 않고
+    #   요청마다 명시한다.
+    # - `thinking_token_budget` — 사고 토큰 상한. vLLM 0.27.1에서 V1 러너 모델(qwen3.6)만 받고
+    #   dense Qwen3(V2)·gpt-oss는 거절한다 — 그 모델에 적으면 400이다.
+    # - `request_timeout_s` — **요청 본문이 아니다.** 어댑터의 벽시계 상한(`_TIMEOUT_S` 대체,
+    #   #261). 그래서 `request_params()`에 안 들어간다.
+    sampling: RequestSampling | None = None
+    chat_template_kwargs: dict[str, JsonValue] | None = None
+    thinking_token_budget: int | None = Field(default=None, gt=0)
+    request_timeout_s: float | None = Field(default=None, gt=0)
     prompt_template_version: NonEmptyStr
     fallback: str | None = None
     benchmark: Benchmark
@@ -231,6 +263,17 @@ class ModelEntry(HarnessModel):
     @property
     def is_fake(self) -> bool:
         return self.endpoint.startswith(FAKE_SCHEME)
+
+    def request_params(self) -> dict[str, JsonValue]:
+        """이 모델의 요청 payload에 **얹을** 키 전부. 선언한 것만 담는다 — 비면 `{}`."""
+        params: dict[str, JsonValue] = (
+            self.sampling.model_dump(exclude_none=True) if self.sampling else {}
+        )
+        if self.chat_template_kwargs is not None:
+            params["chat_template_kwargs"] = self.chat_template_kwargs
+        if self.thinking_token_budget is not None:
+            params["thinking_token_budget"] = self.thinking_token_budget
+        return params
 
 
 class AdapterSelection(HarnessModel):
@@ -651,6 +694,15 @@ class HarnessConfig(HarnessModel):
             for role in PROMPTED_ROLES
             if role in self.profile.roles
             and (entry := self.models[self.profile.roles[role]]).reasoning_effort is not None
+        }
+
+    def request_params(self) -> dict[str, dict[str, JsonValue]]:
+        """`RunRecord.model_request_params`에 넣을 역할 → 요청에 얹은 키. 규칙은 바로 위와 같다."""
+        return {
+            role: params
+            for role in PROMPTED_ROLES
+            if role in self.profile.roles
+            and (params := self.models[self.profile.roles[role]].request_params())
         }
 
     def served_models(self) -> dict[str, str]:
