@@ -83,10 +83,11 @@ KB의 데이터 소스는 **공개 지식**이다: CWE/CVE, 패치 정보, CTF w
 바뀐다.** 그 결정은 Joern 슬라이스를 Scout의 코드 입력으로 두고 후보 = 슬라이스 1개로
 정한다 — 위 「target function 본문」 자리를 Scout에서는 슬라이스가 잇는다. **지금 코드는 아니다**
 (Phase 3) — 대상 원문은 `read_symbol_source()`가 심볼 줄 범위를 잘라 싣는다(아래 예시 밑 문단).
-Auditor가 받을 표현(원본 소스 ↔ 슬라이스)은 열려 있다(결정 1-b).
+Auditor는 슬라이스가 아니라 원본 소스를 받는다(결정 1-b = 넓은 (i), 2026-09-25 팀 합의).
 (⏵ 2026-09-25 — `run --slices`로 돈 run의 Scout는 슬라이스 렌더(줄번호 gutter · 파일 배너)를 받고, LIGHT 캡슐의
-`target_function`이 그 렌더를 센다(Phase 3c). Auditor는 entry를 감싸는 함수 하나의 원본을 받는다(인덱스가
-없으면 파일 전체 — 기본값 (i)을 좁게 푼 것).
+`target_function`이 그 렌더를 센다(Phase 3c). Auditor의 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry를
+감싸는 함수(품는 함수를 모르면 entry 앞뒤 고정 창)가 먼저이고 나머지는 문자 수 상한 안에서 함수째 붙는다. EXPANDED
+캡슐의 `target_function`은 entry 함수만 센다 — 상한이 뺀 함수와 못 본 줄은 trace `auditor_source`가 든다.
 `--slices` 없는 run은 앞 문장 그대로다.)
 
 ```json
@@ -227,7 +228,8 @@ need_evidence 루프로 바꾼다), 진행 상태는 open-questions D20 관측 �
 더 붙는다(두 Retriever의 `cache_key_for()` — ADR 0012 결정 1의 #220 ②). Auditor의 EXPANDED 캡슐은 entry를
 감싸는 함수가 대상이라 붙지 않는다. 무효화 조건에 「`run_signature`가
 바뀜」이 더해진다 — 슬라이서가 본 소스·설정·Joern 판 등이 바뀌면 바뀌는 값이다(`slicer_pipeline.py`의
-`prepare_checkpoint`). 그 변경으로 정책 버전도 올렸다(Fake `v4` · Hybrid `hybrid-v5`).
+`prepare_checkpoint`). 그 변경으로 정책 버전도 올렸다(Fake `v4` · Hybrid `hybrid-v5`). 같은 날 슬라이스 질의의 그래프 섹션 본문이
+슬라이스의 줄 집합이 되면서(#288 — D78 ①) 다시 올렸다(`v5` · `hybrid-v6`).
 
 동일 artifact에 대한 summary를 반복 생성하지 않는다. cache hit ratio는 필수 지표다([evaluation.md](evaluation.md)).
 

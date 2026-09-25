@@ -190,7 +190,8 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
     entry의 이름으로 떨어지고(entry가 메서드 자신이다) **Case B는 비운다** — sink 이름을 함수
     이름 자리에 조용히 적지 않는다(#284 리뷰). `scopes[].file`은 Joern 원경로라 쓰지 않는다 —
     파일은 이미 상대화된 entry의 것이다. entry는 `SliceRef.entry`로 **그대로** 따로 싣는다 —
-    v3 `slice_criterion.given`이 그것이다.
+    v3 `slice_criterion.given`이 그것이다. 줄은 `SliceRef.lines`로 싣는다 — Auditor가 슬라이스가
+    걸친 함수들을 찾는다(결정 1-b).
     """
     refs = []
     for item in loaded.slices:
@@ -205,7 +206,11 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
         )
         refs.append(
             SliceRef(
-                slice_id=item.id, location=location, given_end=item.given_end, entry=entry
+                slice_id=item.id,
+                location=location,
+                given_end=item.given_end,
+                entry=entry,
+                lines=item.lines,
             )
         )
     return tuple(refs)
