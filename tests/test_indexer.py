@@ -627,12 +627,13 @@ def test_the_index_carries_no_source_text_table(tables: dict) -> None:
     }
 
 
-def test_params_come_from_the_declarator_closest_to_the_name(tmp_path: Path) -> None:
-    """파라미터는 **이름에 가장 가까운** `function_declarator`의 것이다.
+def test_params_are_read_through_each_declarator_shape(tmp_path: Path) -> None:
+    """파라미터 이름을 선언자 모양마다 찾는다.
 
     K&R 머리는 파라미터가 `identifier`로 온다. 함수 포인터 파라미터의 이름은 괄호 선언자 안에
     있다. 포인터를 돌려주는 함수는 `pointer_declarator`가 한 겹 더 끼어 있다. `(void)`와 이름
-    없는 파라미터는 이름이 없다.
+    없는 파라미터는 이름이 없다. (함수 포인터를 **돌려주는** 정의 `int (*f(int))(int)`는 v1부터
+    이름을 못 뽑아 `unresolved_symbols`로 세므로 여기 오지 않는다 — 2026-09-26 실파싱 확인.)
     """
     (tmp_path / "p.c").write_text(
         "int kr(a, b) int a; char *b; { return a; }\n"
