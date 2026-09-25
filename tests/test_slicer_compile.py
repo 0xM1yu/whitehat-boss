@@ -4,6 +4,7 @@ The end-to-end effect (dead #ifdef branches and uncompiled files leaving the gra
 c2cpg behaviour verified on the Joern server; these tests fix the Python contract around it.
 """
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -240,6 +241,49 @@ def test_identical_database_content_maps_to_one_file(tmp_path):
     second, _, _ = resolve_compilation_database(db, repo, out)
 
     assert first == second
+
+
+def test_relative_include_paths_are_absolutized(tmp_path):
+    # c2cpg resolves -I against its own working directory, not the entry directory, so a relative
+    # include (a node addon's generated nan headers) is never found and NAN_METHOD-defined methods
+    # never parse. The normalized command must carry absolute include paths anchored at the entry
+    # directory. Both the attached form (-Ipath) and the separated form (-I path) are rewritten.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        tmp_path / "cc.json",
+        [{"directory": "repo", "file": "src/a.c",
+          "command": "gcc -I../gen/nan -isystem ../gen/node -Iinclude -c src/a.c"}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    command = json.loads(normalized.read_text())[0]["command"]
+
+    assert os.path.normpath(str(repo.parent / "gen" / "nan")) in command
+    assert os.path.normpath(str(repo.parent / "gen" / "node")) in command
+    assert os.path.normpath(str(repo / "include")) in command
+    # No relative include token survives.
+    assert "-I../" not in command and "../gen" not in command
+
+
+def test_absolute_include_paths_are_left_unchanged(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.c").write_text("int a;\n")
+    abs_inc = str(tmp_path / "external" / "inc")
+    # arguments form avoids a shell string, so an absolute path with backslashes on Windows is
+    # not re-escaped by the tokenizer.
+    db = _write_db(
+        tmp_path / "cc.json",
+        [{"directory": str(repo), "file": "src/a.c",
+          "arguments": ["gcc", "-I" + abs_inc, "-c", "src/a.c"]}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    command = json.loads(normalized.read_text())[0]["command"]
+
+    assert abs_inc in command
 
 
 def test_import_query_passes_the_compilation_database_flag():
