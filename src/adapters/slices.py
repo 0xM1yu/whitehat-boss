@@ -108,8 +108,13 @@ def load_slices(path: Path) -> SliceSet:
         raise SliceInputError(f"{path}: 슬라이서 status가 {status!r}다 — 쓸 슬라이스가 없다")
     if status == "partial" and document.get("joern_engine_config") is None:
         raise SliceInputError(f"{path}: partial인데 CPG 설정이 없다 — CPG에 닿기 전에 끝난 run이다")
+    items = document.get("slices")
+    if not isinstance(items, list):
+        raise SliceInputError(
+            f"{path}: 슬라이스 목록(`slices`)이 배열이 아니다 — {type(items).__name__}"
+        )
     try:
-        slices = tuple(_slice(item) for item in document["slices"])
+        slices = tuple(_slice(item) for item in items)
     except (KeyError, TypeError, ValueError) as exc:
         raise SliceInputError(f"{path}: 슬라이스 항목 모양이 slice-v2가 아니다 — {exc!r}") from exc
     seen: set[str] = set()
@@ -117,12 +122,39 @@ def load_slices(path: Path) -> SliceSet:
         if item.id in seen:
             raise SliceInputError(f"{path}: 슬라이스 id {item.id}가 둘이다")
         seen.add(item.id)
+    try:
+        manifest = _manifest(document.get("candidate_manifest"))
+    except ValueError as exc:
+        raise SliceInputError(
+            f"{path}: candidate_manifest 모양이 slice-v2가 아니다 — {exc}"
+        ) from exc
     return SliceSet(
         status=status,
         run_signature=document.get("run_signature"),
         slices=slices,
-        candidate_manifest=dict(document.get("candidate_manifest") or {}),
+        candidate_manifest=manifest,
     )
+
+
+def _manifest(raw: object) -> dict:
+    """`candidate_manifest` — **`slice_refs`가 읽는 길**(항목 → `scopes` → 원소 → `symbol`)만 본다.
+
+    그 길의 모양을 로드에서 안 보면 `slice_refs`가 run 디렉터리가 생긴 뒤 `.get()`에서 죽는다
+    (#284 리뷰). 없거나 `null`이면 빈 manifest다 — `slice_refs`가 entry 이름으로 떨어지는 경우다.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"객체가 아니다 — {type(raw).__name__}")
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"{key}: 객체가 아니다")
+        scopes = entry.get("scopes") or []
+        if not isinstance(scopes, list) or not all(isinstance(s, dict) for s in scopes):
+            raise ValueError(f"{key}: scopes가 객체 배열이 아니다")
+        if not all(isinstance(s.get("symbol"), str | None) for s in scopes):
+            raise ValueError(f"{key}: scopes[].symbol이 문자열이 아니다")
+    return dict(raw)
 
 
 def _slice(item: dict) -> Slice:
