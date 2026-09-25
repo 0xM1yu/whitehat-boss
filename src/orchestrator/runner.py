@@ -1321,6 +1321,11 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     return True
 
 
+# entry를 품는 심볼을 모를 때 Auditor가 읽는 entry 앞뒤 줄 수. **잰 값이 아니라 설계 상수다** —
+# 헤더의 static inline 함수 하나를 덮고(대개 수십 줄) 프롬프트를 파일 크기와 무관하게 묶는 폭이다.
+_AUDITOR_WINDOW_LINES = 50
+
+
 def _auditor_target(ctx: RunContext, target: _Target) -> Location:
     """5단계 캡슐의 대상. 슬라이스 타깃이면 entry 줄을 감싸는 함수, 아니면 타깃 위치 그대로.
 
@@ -1330,10 +1335,16 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
     읽는다 — 함수 머리도 버퍼 선언도 없이.
 
     감싸는 함수는 인덱스(`symbols_for`)에서 entry 줄을 품는 심볼이고, 여럿이면 가장 좁은 것이다.
-    인덱스가 없거나 품는 심볼이 없으면 **파일 전체**다 — W2의 인덱스 없는 폴백과 같은 자리다.
-    ponytail: entry를 품는 함수 하나만 본다 — 슬라이스가 걸친 다른 함수(군집 슬라이스)는 Auditor가
-    못 본다. 넓히려면 `SliceRef`가 슬라이스 `lines`를 들어야 한다(`_plan_slice_targets`의 순위
-    ponytail과 같은 선행). 1-b가 (i)로 정해지고 그 한계가 판정을 가를 때 올린다.
+    품는 심볼을 모르면 **entry 앞뒤 `_AUDITOR_WINDOW_LINES`줄**이다 — 파일 전체가 아니다. 인덱스가
+    없을 때만이 아니라 **있어도** 그렇다: `.h`는 artifact인데 인덱서가 안 받아 `symbols_for()`가
+    `[]`이고, 이름을 못 뽑은 정의도 인덱서가 버린다. 파일 전체는 상한 없이 프롬프트에 실려 위
+    모듈 docstring의 unzip.c(67,662자 → HTTP 400)를 다시 연다. W2는 같은 `[]`에서 후보를 아예 안
+    만들지만 슬라이스 타깃은 이미 서 있다. 창의 `line_end`는 파일 끝을 넘을 수 있다 — 읽기가 자른다.
+
+    ponytail: entry를 품는 함수 하나(모르면 고정 창)만 본다 — 슬라이스가 걸친 다른 함수(군집
+    슬라이스)는 Auditor가 못 본다. 넓히려면 `SliceRef`가 슬라이스 `lines`를 들어야 한다
+    (`_plan_slice_targets`의 순위 ponytail과 같은 선행). 1-b(@sumin0218 결정)가 (i)로 정해지면 「걸친
+    함수 전부 + 크기 상한」으로 올린다 — 하네스 쪽 권고안이다(2026-09-25).
     """
     if target.slice is None:
         return target.location
@@ -1346,11 +1357,17 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
         and symbol.line_start is not None
         and symbol.line_start <= line <= (symbol.line_end or symbol.line_start)
     ]
-    if not enclosing:
+    if enclosing:
+        return min(
+            enclosing,
+            key=lambda symbol: (symbol.line_end or symbol.line_start) - symbol.line_start,
+        )
+    if line is None:  # `slice_refs`가 entry 줄을 늘 채운다 — 줄이 없으면 창을 세울 자리가 없다
         return Location(file=entry.file)
-    return min(
-        enclosing,
-        key=lambda symbol: (symbol.line_end or symbol.line_start) - symbol.line_start,
+    return Location(
+        file=entry.file,
+        line_start=max(1, line - _AUDITOR_WINDOW_LINES),
+        line_end=line + _AUDITOR_WINDOW_LINES,
     )
 
 

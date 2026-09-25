@@ -305,7 +305,10 @@ _NO_PARSER_SYMBOLS = {
 
 @pytest.mark.parametrize(
     "index",
-    [pytest.param(None, id="no-index"), pytest.param(_NO_PARSER_SYMBOLS, id="file-with-no-symbols")],
+    [
+        pytest.param(None, id="no-index"),
+        pytest.param(_NO_PARSER_SYMBOLS, id="file-with-no-symbols"),
+    ],
 )
 def test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, index: dict | None
