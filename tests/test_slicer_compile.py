@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import slicer_queries as queries
-from slicer_compile import resolve_compilation_database
+from slicer_compile import generated_header_dirs, resolve_compilation_database
 
 
 def _write_db(path: Path, entries: list[dict]) -> Path:
@@ -383,9 +383,10 @@ def test_generated_headers_dir_is_added_to_includes(tmp_path):
     assert command.split()[0] == "gcc"
 
 
-def test_command_unchanged_when_no_gen_dir(tmp_path):
-    # Without a sibling gen dir, no include flags are added. The test name avoids the gen-dir
-    # spelling because pytest puts the test name in tmp_path, which would then match by accident.
+def test_no_sibling_gen_dir_adds_no_include(tmp_path):
+    # With no sibling generated_headers directory next to compile_commands.json, nothing is added:
+    # only the absolutized -Isrc from the original command survives. (Detection is an is_dir()
+    # check for that exact sibling, so the tmp_path spelling never matters.)
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     (repo / "src" / "a.c").write_text("int a;\n")
@@ -399,6 +400,52 @@ def test_command_unchanged_when_no_gen_dir(tmp_path):
 
     # Exactly one include flag survives (the absolutized -Isrc), none added.
     assert command.count("-I") == 1
+
+
+def test_generated_headers_are_appended_after_the_command_includes(tmp_path):
+    # M1: generated_headers recover a header the command references nowhere, so they must be the
+    # lowest-priority include -- a header the command already resolves must not be shadowed by a
+    # same-named one under generated_headers. c2cpg searches -I in token order, so every original
+    # include must precede every generated_headers include in the normalized entry. arguments form
+    # keeps this at the token level (no shell string to re-split).
+    bc = tmp_path / "build_context"
+    (bc / "generated_headers" / "nan").mkdir(parents=True)
+    (bc / "generated_headers" / "config.h").write_text("#define X 1\n")
+    repo = tmp_path / "repo"
+    (repo / "include").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.c").write_text("int a;\n")
+    db = _write_db(
+        bc / "compile_commands.json",
+        [{"directory": str(repo), "file": "src/a.c",
+          "arguments": ["gcc", "-Iinclude", "-c", "src/a.c"]}],
+    )
+
+    normalized, _, _ = resolve_compilation_database(db, repo, tmp_path / "w")
+    arguments = json.loads(normalized.read_text())[0]["arguments"]
+
+    # Exact tokens, not a path substring: pytest puts this test's name (which contains
+    # "generated_headers") into tmp_path, so every include path would match a substring check.
+    gen = {"-I" + str((bc / "generated_headers").resolve()),
+           "-I" + str((bc / "generated_headers" / "nan").resolve())}
+    gen_idx = [i for i, t in enumerate(arguments) if t in gen]
+    orig_idx = [i for i, t in enumerate(arguments) if t.startswith("-I") and t not in gen]
+    assert orig_idx and gen_idx
+    assert max(orig_idx) < min(gen_idx)
+
+
+def test_generated_header_dirs_lists_relative_paths(tmp_path):
+    # review M2: the run record must name the dirs the include path gained (relative), so a run
+    # with generated_headers is distinguishable from one without.
+    bc = tmp_path / "build_context"
+    (bc / "generated_headers" / "nan").mkdir(parents=True)
+    db = _write_db(bc / "compile_commands.json", [])
+    assert generated_header_dirs(db) == ["generated_headers", "generated_headers/nan"]
+
+
+def test_generated_header_dirs_empty_when_absent(tmp_path):
+    db = _write_db(tmp_path / "compile_commands.json", [])
+    assert generated_header_dirs(db) == []
 
 
 def test_import_query_passes_the_compilation_database_flag():
