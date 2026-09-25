@@ -407,19 +407,23 @@ def test_the_auditor_source_cap_drops_whole_functions_but_never_the_entry_functi
     ]
 
 
+@pytest.mark.parametrize(("slack", "fits"), [(0, True), (-1, False)], ids=["exact", "one-short"])
 def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_in(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slack: int, fits: bool
 ) -> None:
     """상한은 앞에서부터 **들어가는 것을 넣는다** — 안 들어가는 함수 하나에서 멈추지 않는다.
     나머지 함수의 순서는 (파일, 시작 줄)이라 `parser.c`의 `parse_header`(8줄)가 `util.c`의
-    `name_length`(4줄)보다 먼저 오는데, 상한을 entry 함수 + `name_length`에 딱 맞춘다(배너·
-    구분 줄바꿈 포함 — 같으면 들어간다).
+    `name_length`(4줄)보다 먼저 오는데, 상한을 entry 함수 + `name_length`에 딱 맞춘다.
+
+    상한은 모델이 받는 글자 그대로다 — 배너와 함수 사이 줄바꿈까지 센다. 딱 맞으면 들어가고
+    1자 모자라면 빠진다.
     """
     from src.orchestrator import runner
 
     first = "\n".join([_banner("parser.c", 28, 31), *_PARSER[27:31]])
     last = "\n".join([_banner("util.c", 26, 29), *_UTIL[25:29]])
-    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", len(first) + 1 + len(last), raising=False)
+    cap = len(first) + 1 + len(last) + slack
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", cap, raising=False)
     spans = ("slice_0006", "A", ("parser.c", 28, "recv_request"), "recv_request",
              {24, 28, 30, ("util.c", 28)})
     path = _slices_file(tmp_path, [_slice(*spans)])
@@ -427,10 +431,10 @@ def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_
     _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
 
     ((_, facts),) = _prompts(trace_path, "auditor")
-    assert facts["source"] == f"{first}\n{last}"
+    assert facts["source"] == (f"{first}\n{last}" if fits else "\n".join(_PARSER[27:31]))
     assert _source_events(trace_path) == [
-        {"slice_id": "slice_0006", "functions": 2, "dropped": 1, "uncovered_lines": 0,
-         "chars": len(facts["source"])},
+        {"slice_id": "slice_0006", "functions": 2 if fits else 1, "dropped": 1 if fits else 2,
+         "uncovered_lines": 0, "chars": len(facts["source"])},
     ]
 
 
