@@ -6,9 +6,9 @@ Case B의 `entry.symbol`은 sink 호출 이름이라 `Location.symbol`은 후보
 함수 이름을 가져온다.
 
 **모델이 보는 것**(3c): Scout의 `SOURCE`는 슬라이스 렌더(gutter·배너)이고 FACTS에
-`slice_criterion`이 붙는다. LIGHT 캡슐은 그 렌더를 센다. Auditor는 슬라이스가 아니라 entry를 감싸는
-함수의 원본을 본다(결정 1-b의 기본값 (i)). 검사는 run이 남긴 프롬프트 파일(`run_dir/prompts/`)을
-읽는다 — 모델이 실제로 받은 글자다.
+`slice_criterion`이 붙는다. LIGHT 캡슐은 그 렌더를 센다. Auditor는 슬라이스가 아니라 슬라이스가
+걸친 함수들의 원본을 본다 — entry 함수 먼저, 문자 수 상한 안에서(결정 1-b = 넓은 (i), 2026-09-25
+팀 합의). 검사는 run이 남긴 프롬프트 파일(`run_dir/prompts/`)을 읽는다 — 모델이 실제로 받은 글자다.
 """
 
 import json
@@ -19,9 +19,11 @@ import pytest
 
 from slicer_source import assemble
 from src.adapters.slices import SliceInputError, split_source
+from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.orchestrator.prompt_log import BODY_MARK
 from src.orchestrator.runner import RunSpec
 from src.schemas.common import Location
+from src.schemas.enums import Role
 from src.tokens import estimate_tokens
 from tests.test_pipeline_e2e import (
     _FIXTURE_INDEX,
@@ -38,11 +40,14 @@ from tests.test_pipeline_e2e import (
 )
 
 _PARSER = split_source((TARGET / "parser.c").read_bytes())
+_UTIL = split_source((TARGET / "util.c").read_bytes())
+_SOURCES = {"parser.c": _PARSER, "util.c": _UTIL}
 
 
-def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: set[int]) -> dict:
+def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: set) -> dict:
+    """`lines`의 정수는 entry 파일의 줄, `(파일, 줄)`은 다른 파일의 줄이다."""
     file, line, symbol = entry
-    points = {(file, n) for n in lines}
+    points = {(file, n) if isinstance(n, int) else n for n in lines}
     return {
         "id": sid,
         "candidate_key": f"key_{sid}",
@@ -51,7 +56,7 @@ def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: 
         "members": [f"key_{sid}"],
         "absorbed": [],
         "lines": [{"file": f, "line": n} for f, n in sorted(points)],
-        "code": assemble(points, {"parser.c": _PARSER}) if file == "parser.c" else "",
+        "code": assemble(points, _SOURCES) if {f for f, _ in points} <= _SOURCES.keys() else "",
         "_scope": scope,
     }
 
@@ -253,8 +258,9 @@ def test_each_slice_capsule_counts_the_render_its_prompt_carries(tmp_path: Path)
 def test_the_auditor_reads_the_original_function_around_the_entry(
     tmp_path: Path, mode: str | None
 ) -> None:
-    """Auditor는 슬라이스가 아니라 **원본**을 본다(ADR 0012 결정 1-b 기본값 (i)) — entry 줄을 감싸는
-    함수 전체다. entry만 읽으면 함수 머리·버퍼 선언이 빠진 한 줄(24)이 된다.
+    """Auditor는 슬라이스가 아니라 **원본**을 본다(ADR 0012 결정 1-b (i)) — entry 줄을 감싸는
+    함수 전체다. entry만 읽으면 함수 머리·버퍼 선언이 빠진 한 줄(24)이 된다. 슬라이스가 그 함수
+    하나 안이면 배너 없이 그 함수의 글자 그대로다 — 넓은 (i) 이전의 프롬프트와 바이트가 같다.
 
     후보의 위치는 그대로 entry다 — Auditor가 보는 범위를 넓혀도 후보의 신원은 안 바뀐다.
     단계 단위(`per_stage`)도 같은 `_TRIAGE_STEPS`를 도는지 같이 본다.
@@ -336,6 +342,128 @@ def test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_fi
         "file": "parser.c", "symbol": None, "line_start": 22, "line_end": 26,
     }
     assert facts["source"] == "\n".join(_PARSER[21:26])
+
+
+# entry(28)는 `recv_request`(28–31) 안이고 24는 `parse_header`(19–26) 안이다. entry 함수가 줄
+# 순서로는 **뒤**라 「entry 함수 먼저」와 「줄 순서」가 갈린다.
+_SPANS_TWO = ("slice_0004", "A", ("parser.c", 28, "recv_request"), "recv_request", {24, 28, 30})
+
+
+def _banner(file: str, start: int, end: int) -> str:
+    return f"/* ===== {file}:{start}-{end} ===== */"
+
+
+def _source_events(trace_path: Path) -> list[dict]:
+    return [event["data"] for event in _of(_events(trace_path), "auditor_source")]
+
+
+def test_the_auditor_reads_every_function_the_slice_spans_entry_function_first(
+    tmp_path: Path,
+) -> None:
+    """결정 1-b = 넓은 (i)(2026-09-25 팀 합의): Auditor는 슬라이스가 걸친 함수의 원본을 **전부**
+    본다 — entry를 감싸는 함수 하나가 아니다. entry 함수가 맨 앞이고(줄 순서가 아니다) 함수마다
+    `파일:시작-끝` 배너가 붙는다. 사실 블록과 `{{SOURCE}}` 자리가 같은 글자다.
+
+    캡슐의 대상은 그대로 entry 함수다 — 호출자·피호출자 섹션이 그 함수의 것이다. 몇 함수를
+    넣었는지는 `auditor_source` 이벤트가 든다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((body, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(
+        [_banner("parser.c", 28, 31), *_PARSER[27:31], _banner("parser.c", 19, 26), *_PARSER[18:26]]
+    )
+    assert facts["source"] in body
+    assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("recv_request", 28)
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0004", "functions": 2, "dropped": 0, "uncovered_lines": 0,
+         "chars": len(facts["source"])},
+    ]
+
+
+def test_the_auditor_source_cap_drops_whole_functions_but_never_the_entry_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """원문에는 문자 수 상한이 있다(`_AUDITOR_SOURCE_CHARS`). 함수는 통째로 넣거나 뺀다 — 중간을
+    자르면 끊긴 함수를 본다. entry 함수는 상한보다 커도 넣는다 — 빼면 볼 것이 없다. 뺀 수는
+    `auditor_source`가 든다 — 안 남기면 잘린 입력이 온전한 입력으로 읽힌다.
+
+    상한을 1자로 줄인다 — entry 함수(4줄) 혼자서도 넘는다. 하나만 남으면 배너도 없다.
+    """
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", 1, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0004", "functions": 1, "dropped": 1, "uncovered_lines": 0,
+         "chars": len(facts["source"])},
+    ]
+
+
+def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """상한은 앞에서부터 **들어가는 것을 넣는다** — 안 들어가는 함수 하나에서 멈추지 않는다.
+    나머지 함수의 순서는 (파일, 시작 줄)이라 `parser.c`의 `parse_header`(8줄)가 `util.c`의
+    `name_length`(4줄)보다 먼저 오는데, 상한을 entry 함수 + `name_length`에 딱 맞춘다(배너·
+    구분 줄바꿈 포함 — 같으면 들어간다).
+    """
+    from src.orchestrator import runner
+
+    first = "\n".join([_banner("parser.c", 28, 31), *_PARSER[27:31]])
+    last = "\n".join([_banner("util.c", 26, 29), *_UTIL[25:29]])
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", len(first) + 1 + len(last), raising=False)
+    spans = ("slice_0006", "A", ("parser.c", 28, "recv_request"), "recv_request",
+             {24, 28, 30, ("util.c", 28)})
+    path = _slices_file(tmp_path, [_slice(*spans)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == f"{first}\n{last}"
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0006", "functions": 2, "dropped": 1, "uncovered_lines": 0,
+         "chars": len(facts["source"])},
+    ]
+
+
+def test_slice_lines_outside_every_known_function_are_counted_not_read(tmp_path: Path) -> None:
+    """어느 인덱스 함수에도 안 드는 슬라이스 줄(구조체 필드·전역·인덱서가 안 받는 `.h`)은
+    Auditor가 못 본다 — 창을 따로 세우지 않고 **센다**. 안 세면 「슬라이스가 한 함수 안이었다」와
+    「슬라이스 일부를 못 봤다」가 같은 기록이 된다. 13은 `struct header`의 필드다.
+    """
+    field = ("slice_0005", "B", ("parser.c", 24, "memcpy"), "parse_header", {13, 24})
+    path = _slices_file(tmp_path, [_slice(*field)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[18:26])
+    assert _source_events(trace_path) == [
+        {"slice_id": "slice_0005", "functions": 1, "dropped": 0, "uncovered_lines": 1,
+         "chars": len(facts["source"])},
+    ]
+
+
+@pytest.mark.parametrize(
+    "version", sorted(p.name for p in (PROMPTS_DIR / "auditor").iterdir() if p.is_dir())
+)
+def test_every_auditor_prompt_declares_the_original_source_the_runner_gives_it(
+    version: str,
+) -> None:
+    """ADR 0012 검증 표의 1-b 행 — 고른 표현((i) 원본 소스)과 Auditor 프롬프트의 선언이 같다.
+
+    러너는 Auditor에 늘 원본을 준다(슬라이스 렌더를 주는 길이 없다). 슬라이스를 선언한 Auditor
+    프롬프트가 생기면 약속과 다른 입력을 받는다 — Scout의 D82가 Auditor에서 되풀이된다.
+    """
+    assert load_prompt(Role.AUDITOR, version).input == "source"
 
 
 def test_a_slice_without_a_render_fails_by_name_rather_than_as_a_bare_key_error(
