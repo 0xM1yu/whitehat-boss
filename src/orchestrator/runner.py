@@ -513,7 +513,7 @@ class _Target:
     signal_rank: int
     # 슬라이스 타깃이면 그 슬라이스(ADR 0012 결정 1). id만이 아니라 통째로 드는 것은 4·5단계가
     # 더 꺼내 쓰기 때문이다 — Scout는 렌더 id와 `given_end`·entry(`slice_criterion`)를, Auditor는
-    # entry 줄(감싸는 함수를 찾는 데)을 본다.
+    # entry 줄(감싸는 함수를 찾는 데)과 슬라이스 줄(걸친 함수를 찾는 데 — `_auditor_source`)을 본다.
     slice: SliceRef | None = None
 
     @property
@@ -1373,8 +1373,9 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # (entry 함수는 늘 넣는다 — `_auditor_source`). **잰 값이 아니라 계산값이다.** 2026-09-24 서빙이
 # `--max-model-len` 24,576에 `output_max` 4,096이라 입력 몫이 20,480토큰이고, 원문은 사실 블록과
 # `{{SOURCE}}`에 두 번 실린다. 같은 서빙의 Auditor(v1) 호출 35건에서 서버가 센 `input_tokens`와
-# 프롬프트 글자 수의 비가 2.51~2.97자/토큰이었다(`run_20260924_0003`). 가장 낮은 2.51로 셈하면
-# 원문 15,000자 두 벌과 그 run에서 가장 큰 나머지(6,692자)가 ≈15,000토큰이다 — 입력 몫 안이다.
+# 프롬프트 글자 수의 비가 2.51~2.97자/토큰이었다(`run_20260924_0003`). 표본 셋 v2 슬라이스 241개
+# (2026-09-15 슬라이서)를 이 상한으로 하네스에 태우면 Auditor 프롬프트가 최대 37,365자이고, 가장
+# 낮은 비 2.51로 셈하면 ≈14,900토큰이다 — 입력 몫 안이다(계산값). 상한이 없으면 최대 412,554자였다.
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
