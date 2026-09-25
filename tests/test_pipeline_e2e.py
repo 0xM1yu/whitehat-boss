@@ -2283,6 +2283,48 @@ def test_signal_artifact_symbols_stay_above_no_signal_ones(tmp_path: Path) -> No
     assert files == ["parser.c", "parser.c", "aaa.c"]
 
 
+def test_a_hit_symbol_in_a_later_file_beats_a_non_hit_symbol_in_an_earlier_one(
+    tmp_path: Path,
+) -> None:
+    """히트가 든 심볼(rank 2)은 **파일 순서를 가로질러** 같은 artifact의 비히트 심볼(rank 1)을
+    앞선다 — #249가 있는 이유다(#257 1).
+
+    위 검사의 기대값은 #249 이전 순서로도 나와서, 3단을 불리언으로 접거나(`-min(rank, 1)`)
+    #248이 채운 위치를 순서가 안 쓰게 해도(`signal_lines = []`) 전체 pytest가 초록이었다(#257
+    본문의 두 변이). 여기서는 두 변이 모두 `[a1, a2]`를 낸다.
+
+    **위치 없는 신호를 넣지 않는다** — 그 심볼의 순위는 #257 2가 아직 정하지 않았다.
+    """
+    target = tmp_path / "src"
+    target.mkdir()
+    # `aaa.c`: a1에 히트(3줄) · a2는 같은 artifact의 다른 심볼. `zzz.c`: z2에 히트.
+    # 히트 모양은 Fake semgrep 규칙(`fake_tools._STATIC_PATTERNS`의 memcpy — 길이가 상수 아님)이다.
+    (target / "aaa.c").write_text(
+        "void a1(char *d, char *s, int n)\n{\n    memcpy(d, s, n);\n}\n"
+        "int a2(void)\n{\n    return 0;\n}\n",
+        encoding="utf-8",
+    )
+    (target / "zzz.c").write_text(
+        "void z2(char *d, char *s, int n)\n{\n    memcpy(d, s, n);\n}\n", encoding="utf-8"
+    )
+    index = {
+        **_FIXTURE_INDEX,
+        "files": ["aaa.c", "zzz.c"],
+        "symbols": [
+            {"name": "a1", "file": "aaa.c", "line_start": 1, "line_end": 4},
+            {"name": "a2", "file": "aaa.c", "line_start": 5, "line_end": 8},
+            {"name": "z2", "file": "zzz.c", "line_start": 1, "line_end": 4},
+        ],
+    }
+
+    result, trace_path = _run(
+        tmp_path, name="cross", target=target, candidate_max=2, before=_with_index(index)
+    )
+
+    assert _plan(trace_path)["signal_artifacts"] == 2
+    assert [c.location.symbol for c in result.candidates] == ["a1", "z2"]
+
+
 def test_symbol_signal_rank_is_three_tier() -> None:
     """`_symbol_signal_rank`의 3단 (#70). rank 1이 무신호(0)를 안 내리는 게 #249 HIGH-1이다.
 
@@ -2961,3 +3003,46 @@ def test_a_step_run_out_of_order_raises_instead_of_flowing_none_onward(
         step(object(), item, object())  # type: ignore[operator]
 
     assert getattr(item, field) is None, "가드가 값을 채우지 않고 거절해야 한다"
+
+
+def test_a_timeout_while_the_server_was_generating_drops_only_that_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """타임아웃이어도 **서버가 그동안 토큰을 냈으면** 그 후보만 버린다 (#261 (다)).
+
+    `run_20260924_0001`이 300,021 ms 타임아웃으로 멈췄는데 그 5분 동안 서버는 13.4 tok/s로
+    생성하고 있었다(이슈 #261 「재현 / 근거」). 상태 코드가 없다는 것만으로는 「죽음」과
+    「느림」이 안 갈린다 — 어댑터가 `/metrics` 생성 카운터로 가른 `generating`을 러너가 읽는다.
+    """
+    slow = ModelGatewayError(
+        "http://127.0.0.1:8000/v1 호출 실패: timed out", detail="timed out", generating=True
+    )
+    _failing_model(monkeypatch, [slow])
+
+    result, trace_path = _run(tmp_path, name="slow", before=_with_index())
+
+    assert result.record.is_complete, "느린 후보 하나가 run을 세웠다 — #261이 그대로다"
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["gateway_error"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"]) - 1
+
+
+def test_a_timeout_with_no_generation_still_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """생성 카운터가 안 늘었으면(행) 또는 못 읽었으면(모름) 지금처럼 run을 멈춘다.
+
+    「모름」을 「느림」으로 읽으면 죽은 서버 앞에서 후보를 연속 폐기 상한까지 태운다 —
+    `None`은 통과가 아니다(`ModelEntry.family`와 같은 규칙).
+    """
+    for name, generating in (("hung", False), ("unknown", None)):
+        stuck = ModelGatewayError(
+            "http://127.0.0.1:8000/v1 호출 실패: timed out",
+            detail="timed out",
+            generating=generating,
+        )
+        _failing_model(monkeypatch, [stuck])
+
+        _, trace_path = _run(tmp_path, name=name, before=_with_index())
+
+        assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable", name
