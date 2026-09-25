@@ -1399,6 +1399,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     센다. 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source` 이벤트가 든다 — EXPANDED 캡슐의
     `target_function`은 entry 함수만 센다.
 
+    ⚠ **상한은 entry 함수를 안 본다** — 뒤에 붙는 함수만 거른다. 감싸는 함수가 거대하면 `SOURCE`
+    하나가 상한과 무관히 커지고, 서빙 입력 몫을 넘으면 400으로 거절된다. 이 함수가 그 경로를 막지
+    않으므로 **보이게만 한다** — `anchor_chars`가 entry 함수 혼자의 크기다(#289 리뷰 LOW-2).
+    `chars`만으로는 함수가 둘 이상일 때 entry 혼자 때문인지 합 때문인지 안 갈린다. entry 함수에도
+    상한을 둘지는 이 이벤트가 실서빙에서 내는 값을 보고 정한다.
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(index-v2)이면 같은 줄이 두 블록에 실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
@@ -1435,6 +1441,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
+        anchor_chars=len(anchor_text),
     )
     return source
 

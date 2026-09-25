@@ -19,7 +19,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
-| Auditor 원문 범위 | `auditor_source` | 상한이 뺀 함수·못 본 줄. **슬라이스 run만 남는다** |
+| Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
@@ -215,7 +215,12 @@ class EventKind(StrEnum):
     # 슬라이스 타깃의 Auditor `SOURCE`를 무엇으로 채웠나 — 5단계 호출 1건당 1행(결정 1-b = 넓은
     # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(문자 수
     # 상한에 걸려 뺀 함수 수)·`uncovered_lines`(어느 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
-    # `chars`(원문 글자 수)와 `slice_id`를 싣는다. `subject_id`는 후보다.
+    # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
+    # `subject_id`는 후보다.
+    #
+    # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
+    # 커도 늘 들어간다. 그래서 `chars`가 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry
+    # 혼자 때문인지 합 때문인지 `chars`만으로는 안 갈린다(#289 리뷰 LOW-2).
     #
     # **캡슐이 이것을 못 센다.** EXPANDED 캡슐의 `target_function`은 entry 함수만 세고 그것도
     # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다
