@@ -213,7 +213,7 @@ class GraphIndex:
         | `[...]` | 심볼 N건 | 심볼당 target 하나 |
 
         `names_for()`가 "없다"와 "0건"을 가르는 것과 **같은 구별**이고 같은 이유다 —
-        `.h`처럼 인덱서에 넘어가지 않는 파일과 인덱서가 아예 안 돈 run을 한 값으로
+        `.py`처럼 인덱서에 넘어가지 않는 파일과 인덱서가 아예 안 돈 run을 한 값으로
         뭉치면 후보가 사라진 이유를 사후에 알 수 없다.
 
         정렬은 index.json의 순서(file, line_start, name)를 그대로 쓴다. 후보 순서가 곧
@@ -343,7 +343,8 @@ class GraphIndex:
         `test_a_slice_body_cannot_tell_two_definitions_apart_by_file`이 박았다).
 
         **지금은 좁힐 수 없다** — 인덱스의 `calls` 행은 callee를 **파일 없는 이름**으로만 들고,
-        그 행의 `file`·`line`은 호출 지점이지 정의 위치가 아니다(`index-v1` 스키마).
+        그 행의 `file`·`line`은 호출 지점이지 정의 위치가 아니다(index-v1·v2 둘 다 — v2가 callee로
+        묶었어도 정의 파일은 안 든다. C 구문만으로는 어느 정의로 가는지 모른다).
         비슬라이스 경로는 `target.file`로 스코프돼 이 문제가 없다. 인덱스가 callee 파일을
         들게 되면 `(file, name)`으로 좁힌다.
         """
@@ -532,12 +533,10 @@ def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, i
     index-v1의 `calls`는 간선 목록이고, index-v2는 같은 간선을 callee → 호출 지점(+ 인자)으로
     묶었다. 캡슐 그래프 섹션은 이 튜플만 보므로 형식이 바뀌어도 한 글자도 안 바뀐다 —
     `tests/test_index_graph.py`의 v2 절이 박는다. 버전과 모양이 어긋나면(v1인데 묶음, v2인데
-    목록) 거절한다 — 형이 다르면 여기서 `TypeError`가 난다.
+    목록) 여기서 예외가 나고 `_read`가 문서를 통째로 거절한다.
     """
     if version != _INDEX_V2:
         return [(c["caller"], c["callee"], c["file"], int(c["line"])) for c in calls]
-    if not isinstance(calls, dict):
-        raise TypeError("index-v2의 calls는 callee → 호출 지점이다")
     return [
         (site["caller"], callee, site["file"], int(site["line"]))
         for callee, sites in calls.items()

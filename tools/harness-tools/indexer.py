@@ -98,7 +98,7 @@ INDEX_VERSION = "index-v2"
 
 # 확장자 → tree-sitter 문법 모듈 이름. **`container_tools._INDEX_SUFFIXES`가 보내는
 # 확장자를 전부 담아야 한다**(그쪽이 이 스크립트에 넘길 파일을 고른다). 여기가 더 넓은
-# 것은 괜찮다 — `.h`·`.hpp`는 알지만 아직 넘어오지 않는다.
+# 것은 괜찮다 — `.hpp`는 알지만 아직 넘어오지 않는다(`.h`는 index-v2부터 넘어온다).
 #
 # **이 스크립트는 `src/`를 import 하지 않는다**(모듈 docstring). 그래서 목록이 양쪽에
 # 따로 존재하고, 어긋나면 예외가 아니라 `skipped`에 이름만 남는다 — 즉 **조용히 빈
@@ -234,10 +234,11 @@ def _declared_name(declarator):
 
 
 def _params(definition) -> list:
-    """정의의 파라미터 이름 노드. **이름에 가장 가까운** `function_declarator`의 것이다.
+    """정의의 파라미터 이름 노드 — `_function_name`과 같은 사슬 위의 `function_declarator`의 것이다.
 
-    함수 포인터를 돌려주는 함수는 바깥 `function_declarator`가 반환형의 파라미터를 든다 —
-    `_function_name`과 같은 사슬을 타며 마지막으로 본 것을 쓴다. K&R 머리는 파라미터가
+    그 사슬에는 `function_declarator`가 하나뿐이다: 함수 포인터를 돌려주는 정의
+    (`int (*f(int))(int)`)는 사슬이 `parenthesized_declarator`에서 끊겨 `_function_name`이 이름을
+    못 뽑고, 그런 정의는 여기 오지 않는다(`unresolved_symbols`가 센다). K&R 머리는 파라미터가
     `identifier`로 오고, `(void)`·가변 인자·이름 없는 파라미터는 이름이 없다.
     """
     node = definition.child_by_field_name("declarator")
