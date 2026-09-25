@@ -203,7 +203,8 @@ def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompat
        타임아웃이 난 상황을 bench가 상한 없이 만나면 체크리스트가 "측정 못 함"으로 끝난다.
        운영과 같은 상한을 두면 그 자리에서 잘리고 수치가 남는다.
        ⚠ 2026-09-24 — 생성이 느린 모델(ATOM 스모크에서 13.3 · 8.1 tok/s)에서는 상한보다 어댑터의
-       300초 요청 타임아웃이 먼저 온다. 그러면 잘린 수치 대신 게이트웨이 오류가 남는다 — 이슈 #261.
+       요청 타임아웃(기본 300초 — 모델이 `request_timeout_s`를 선언하면 그 값)이 먼저 온다.
+       그러면 잘린 수치 대신 게이트웨이 오류가 남는다 — 이슈 #261.
     """
     entry = config.models[model_key]
     return OpenAICompatModelClient(
@@ -219,6 +220,8 @@ def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompat
         # 보내면서 같은 것을 쟀다고 적는다 — 이 함수 docstring이 `max_tokens`에 대해 편
         # 논거가 그대로 걸린다.
         reasoning_effort=entry.reasoning_effort,
+        extra_params=entry.request_params(),
+        timeout_s=entry.request_timeout_s,
         retries=config.thresholds.schema_retries,
     )
 
