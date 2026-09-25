@@ -15,7 +15,10 @@
 **2026-09-09 확정(@danielcho02) → 2026-09-21 회의에서 아래 로스터로 교체했다 → 2026-09-24 `scout_injection`을
 `qwen3-14b`로 바꿨다**(2026-09-23 팀 피드백 「모델 크기를 내리자」 — ADR 0012(PR #260) 결정 4 · @danielcho02 배선 지시).
 **→ 같은 날 @danielcho02가 아래 표를 확정 로스터로 못박았다** — 가중치는 bf16 그대로(`gpt-oss-20b`만 원래 MXFP4)이고
-양자화로 공동 상주하지 않는다(모델별 정밀도·추론은 아래 「모델별 정밀도 · 추론(사고)」). 앞 판(Scout
+양자화로 공동 상주하지 않는다(모델별 정밀도·추론은 아래 「모델별 정밀도 · 추론(사고)」). **→ 2026-09-25
+`scout_memory`를 `qwen3-14b`로 바꿨다**(실험팀 최종 권고를 @danielcho02가 받았다 — memory 자리는 파인튜닝한 Qwen3-14B를
+쓸 계획이고 체크포인트가 오기 전까지 베이스 키다. boundary의 `seccoderx-8b`는 그대로다 — 팀 보고로는 파인튜닝
+데이터와 비슷한 데이터로 학습됐고 후보 중 Recall이 가장 높다. run ID 없음). 앞 판(Scout
 `qwen3-coder-30b-a3b`·`devstral-small-2-24b`·`qwen3-8b` · Auditor A/B)의 근거는
 [ADR 0010](docs/decisions/0010-harness-structure-and-model-roster.md) §2와
 [2026-09-08 로스터 조사](docs/research/2026-09-08-roster.md) §1이었다.
@@ -27,19 +30,23 @@
 | --- | --- | --- |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | ✅ |
 | 3단계 · 리랭커 | `qwen3-reranker-4b` | ✅ |
-| 4단계 · `scout_memory` (CWE-401·404·415·416·457·476·562·590·761·762·772·775·824·825) | `seccoderx-8b` | ✅ |
+| 4단계 · `scout_memory` (CWE-401·404·415·416·457·476·562·590·761·762·772·775·824·825) | `qwen3-14b` | ✅ |
 | 4단계 · `scout_boundary` (CWE-119·120·121·122·124·125·126·127·129·131·170·190·191·193·194·195·197·369·680·681·787·805) | `seccoderx-8b` | ✅ |
 | 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `qwen3-14b` | ✅ |
 | 5단계 · Auditor | `qwen3.6-35b-a3b` | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
 
-⚠ **scout_memory·boundary는 같은 키 `seccoderx-8b` 한 벌이다** — 프롬프트가 역할 폴더로
-갈린다(`scout_memory/v3`=옛 실험 v14s · `scout_boundary/v3`=옛 v15s). 같은 weights라 별칭 키를
-새로 두지 않는다. ⚠ **그 결과 공동오답 행렬(ADR 0010 §3 · `candidate.py` `scout_member`)의
-memory↔boundary 축이 재는 것은 모델 차이가 아니라 프롬프트 차이다** — 그 축에서 "모델을 자리
-사이에서 옮기는 근거"는 성립하지 않는다. injection만 다른 키(`qwen3-14b`)라
-모델 대비가 산다. ⚠ **부수로 `prompt_template_version`이 모델 엔트리 단위이므로 두 자리를
-독립으로 버전 올릴 수 없다**(D67) — 지금은 둘 다 v3라 안 걸리지만 결합 자체가 이 교체로 생겼다.
+⚠ **scout_memory·injection은 같은 키 `qwen3-14b` 한 벌이다**(2026-09-25부터 — 그 전에는
+memory·boundary가 `seccoderx-8b` 한 벌이었다) — 프롬프트가 역할 폴더로 갈린다(`scout_memory/v3`=옛
+실험 v14s · `scout_injection/v3`). 같은 weights라 별칭 키를 새로 두지 않는다 — 같은 서버(포트)를 두
+자리가 함께 쓴다. ⚠ **그 결과 공동오답 행렬(ADR 0010 §3 · `candidate.py` `scout_member`)의
+memory↔injection 축이 재는 것은 모델 차이가 아니라 프롬프트 차이다** — 그 축에서 "모델을 자리
+사이에서 옮기는 근거"는 성립하지 않는다. boundary만 다른 키(`seccoderx-8b`)라 모델 대비가 산다.
+⚠ **부수로 `prompt_template_version`이 모델 엔트리 단위이므로 memory·injection을 독립으로 버전 올릴
+수 없다**(D67) — memory 프롬프트를 새 버전으로 올리면 injection에도 그 버전 폴더가 있어야 한다.
+파인튜닝 체크포인트가 새 키로 들어오면 풀린다. ⚠ **프롬프트는 이 교체에서 안 바꿨다** — boundary를
+SecCoderX가 파인튜닝에 쓴 전용 프롬프트로 바꾸는 것(출력 스키마가 크게 달라 하네스 수정이 따른다)과
+memory 프롬프트 개선(스키마 재조정 가능)은 실험팀이 변경을 정리해 공유한 뒤의 일이다.
 
 **Auditor의 A/B가 소멸했다.** 2026-09-21 교체가 5단계를 `qwen3.6-35b-a3b` 한 자리로 놓으면서,
 문헌이 정면으로 갈린 둘을 실측으로 가르려던 갈래가 §1에서 없어졌다 — B안 `nemotron-3-super-120b-a12b`도

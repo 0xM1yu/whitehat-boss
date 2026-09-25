@@ -622,7 +622,7 @@ def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
 # `prompt_template_version`을 올리는 쪽이다. `fake`를 쓰면 그 PR이 이 검사를 안 건드리고
 # 지나간다.
 _POOL_PROFILE_ROLES = {
-    "scout_memory": "seccoderx-8b",
+    "scout_memory": "qwen3-14b",
     "scout_boundary": "seccoderx-8b",
     "scout_injection": "qwen3-14b",
     "auditor": "qwen3.6-35b-a3b",
