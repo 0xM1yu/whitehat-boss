@@ -121,7 +121,7 @@ from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas.artifact import Artifact
-from src.schemas.candidate import Candidate
+from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
 from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.decision import Decision
@@ -323,6 +323,10 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
+    # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
+    slice_refs: tuple[SliceRef, ...] | None
+    # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
+    slicer: dict[str, str | int | None] | None
     # 역할 → 그 역할 모델의 실 토크나이저 카운터(#96 (b)). `None`이면 기본 카운터
     # (글자수 근사)를 유지한다. `symbols_for`와 같은 경로다 — factory가 채우고 러너는
     # `ctx`로 받아 역할 캡슐 조립 직전에 `using_counter(...)`로 켠다. 러너가
@@ -345,6 +349,9 @@ class RunSpec:
     # 어느 장비에서 돌리는가. `--device`가 준 라벨 그대로이고, 안 주면 `None`이다.
     # config에서 오지 않으므로 여기 있다 — `kb_snapshot`과 같은 성격이다.
     device: str | None = None
+    # 슬라이서 산출물(`slices.json`). 주면 슬라이스 1개가 타깃 1개다(ADR 0012 결정 1) — 하네스
+    # run 밖에서 미리 돈 것을 파일로 받는다. `None`이면 파일·심볼 타깃(지금 경로).
+    slices_path: Path | None = None
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
@@ -499,6 +506,9 @@ class _Target:
     # 미확정(results[0] 한 줄·위치 없는 신호·폴백), 0=신호 없음(#70). 큐 순서에만 쓴다
     # (등급 아님). `_symbol_signal_rank`가 매긴다.
     signal_rank: int
+    # 슬라이스 타깃이면 그 id(ADR 0012 결정 1). entry가 같은 두 슬라이스를 이것이 가른다 —
+    # 타깃 키(`_target_key`)와 `Candidate.slice_id` 도장이 이 값을 쓴다.
+    slice_id: str | None = None
 
 
 @dataclass
@@ -514,6 +524,9 @@ class _TargetPlan:
     fallback_artifacts: int = 0
     no_symbol_artifacts: int = 0
     signal_artifacts: int = 0
+    # `--slices`로 세운 타깃 수와, entry 파일이 이 run의 분석 대상 artifact가 아니라 못 세운 수.
+    slice_targets: int = 0
+    unmatched_slices: int = 0
     collected: list[_Target] = field(default_factory=list)
     targets: list[_Target] = field(default_factory=list)
 
@@ -633,6 +646,7 @@ def run_pipeline(
         deps.tool_images,
         deps.model_sampling,
         deps.compile_flags,
+        slicer=deps.slicer,
     )
     ctx.record = record
     ctx.store.put(record)
@@ -659,7 +673,7 @@ def run_pipeline(
             clock=now,
         ).start()
     try:
-        _analyze(ctx, artifacts, state, last)
+        _analyze(ctx, artifacts, state, last, slice_refs=deps.slice_refs)
     except BudgetExhausted as exc:
         # 예산 소진이 사용자 지정 상한보다 먼저 왔다. 사유를 덮어쓴다 — 실제로 실행을
         # 끊은 것이 이쪽이다.
@@ -780,7 +794,7 @@ def run_pipeline(
     }
     # 「모든 자리가 실패해 분석되지 않은 대상 수」(#193 ①). 팬아웃된 대상 중 후보를 하나도
     # 못 낸 것 — 형제 멤버가 같은 대상을 보므로 `dropped`(시도)로는 못 세던 값이다.
-    analyzed_targets = {_target_key(c.location) for c in state.candidates}
+    analyzed_targets = {_target_key(c.location, c.slice_id) for c in state.candidates}
     unanalyzed_targets = len(state.dispatched_targets - analyzed_targets)
     rendered = report.run(
         ctx,
@@ -812,12 +826,26 @@ def run_pipeline(
     )
 
 
-def _analyze(ctx: RunContext, artifacts: list[Artifact], state: _Accumulator, last: int) -> None:
+def _analyze(
+    ctx: RunContext,
+    artifacts: list[Artifact],
+    state: _Accumulator,
+    last: int,
+    *,
+    slice_refs: tuple[SliceRef, ...] | None = None,
+) -> None:
     """1~8단계. 9단계 리포트는 예산이 끊겨도 돌아야 하므로 호출자가 따로 부른다."""
     if last < Stage.INDEX:
         return
     graph = index.run(ctx, workdir=".")
-    plan = _plan_targets(ctx, [a for a in artifacts if a.kind in _ANALYZABLE], graph, state, last)
+    plan = _plan_targets(
+        ctx,
+        [a for a in artifacts if a.kind in _ANALYZABLE],
+        graph,
+        state,
+        last,
+        slice_refs=slice_refs,
+    )
     _triage_all(ctx, plan, state, last)
     if last < Stage.CRITIC:
         return
@@ -901,6 +929,8 @@ def _plan_targets(
     graph: Evidence,
     state: _Accumulator,
     last: int,
+    *,
+    slice_refs: tuple[SliceRef, ...] | None = None,
 ) -> _TargetPlan:
     """2단계를 artifact마다 돌리고 4단계에 올릴 target 목록을 확정한다 (W2).
 
@@ -909,28 +939,21 @@ def _plan_targets(
     구조에서는 뒤쪽 artifact의 신호를 아직 모르므로 앞쪽의 신호 없는 심볼이 먼저 돈다.
 
     도구 호출 횟수는 예전과 같다. 그때도 2단계가 artifact 전부에 대해 돌았다.
+
+    **`slice_refs`가 있으면 슬라이스 1개가 타깃 1개다**(ADR 0012 결정 1) — 심볼 인덱스로
+    타깃을 만들지 않고, 2단계는 슬라이스가 가리키는 artifact에만 돈다.
     """
     plan = _TargetPlan(analyzable_artifacts=len(artifacts))
     if last < Stage.SIGNALS:
         return plan
+    if slice_refs is not None:
+        _plan_slice_targets(ctx, plan, artifacts, graph, slice_refs)
+        _order_and_cut(ctx, plan, state)
+        return plan
     for artifact in artifacts:
-        found = signals.with_signal(signals.run(ctx, workdir=artifact.path))
-        evidences = (graph, *found)
-        # **정적 신호만 순서에 쓴다.** `with_signal()`이 남기는 것에는 `build`(BUILD)도
-        # 있는데 그쪽은 성공 자체가 신호라 **모든 artifact에 붙는다** — 그것까지 세면
-        # 정렬 키가 상수가 되어 신호 순서가 아무 일도 하지 않는다.
-        static = [ev for ev in found if ev.kind is EvidenceKind.STATIC]
-        if static:
+        evidences, signal_lines, has_static = _artifact_signals(ctx, artifact, graph)
+        if has_static:
             plan.signal_artifacts += 1
-        # 신호가 걸린 **줄**들(#70에서 채운 `Evidence.location`). 그 줄을 품는 심볼에만
-        # 신호를 귀속한다 — 예전엔 artifact의 모든 심볼에 똑같이 붙었다. **점수 축과는
-        # 갈린다**: `fake_model._has_static_signal()`은 여전히 artifact 단위 evidence를
-        # 보므로 가산점은 artifact 전체에 간다. 순서만 심볼 단위로 정밀해진다(#70 후속).
-        signal_lines = [
-            ev.location.line_start
-            for ev in static
-            if ev.location is not None and ev.location.line_start is not None
-        ]
         locations = ctx.symbols_for(artifact.path)
         if locations is None:
             # 인덱스가 없다(`dev_fake`·버전 모름·깨짐). 파일 단위로 되돌아간다 — 후보를
@@ -952,12 +975,77 @@ def _plan_targets(
                 artifact=artifact,
                 location=location,
                 evidences=evidences,
-                signal_rank=_symbol_signal_rank(location, signal_lines, bool(static)),
+                signal_rank=_symbol_signal_rank(location, signal_lines, has_static),
             )
             for location in locations
         ]
     _order_and_cut(ctx, plan, state)
     return plan
+
+
+def _artifact_signals(
+    ctx: RunContext, artifact: Artifact, graph: Evidence
+) -> tuple[tuple[Evidence, ...], list[int], bool]:
+    """artifact 하나의 2단계 — (그 artifact의 근거, 정적 신호가 걸린 줄들, 정적 신호 유무).
+
+    **정적 신호만 순서에 쓴다.** `with_signal()`이 남기는 것에는 `build`(BUILD)도 있는데
+    그쪽은 성공 자체가 신호라 **모든 artifact에 붙는다** — 그것까지 세면 정렬 키가 상수가
+    되어 신호 순서가 아무 일도 하지 않는다.
+
+    줄은 #70에서 채운 `Evidence.location`이다. 그 줄을 품는 심볼에만 신호를 귀속한다 —
+    예전엔 artifact의 모든 심볼에 똑같이 붙었다. **점수 축과는 갈린다**:
+    `fake_model._has_static_signal()`은 여전히 artifact 단위 evidence를 보므로 가산점은
+    artifact 전체에 간다. 순서만 심볼 단위로 정밀해진다(#70 후속).
+    """
+    found = signals.with_signal(signals.run(ctx, workdir=artifact.path))
+    static = [ev for ev in found if ev.kind is EvidenceKind.STATIC]
+    signal_lines = [
+        ev.location.line_start
+        for ev in static
+        if ev.location is not None and ev.location.line_start is not None
+    ]
+    return (graph, *found), signal_lines, bool(static)
+
+
+def _plan_slice_targets(
+    ctx: RunContext,
+    plan: _TargetPlan,
+    artifacts: list[Artifact],
+    graph: Evidence,
+    refs: tuple[SliceRef, ...],
+) -> None:
+    """슬라이스 1개 = 타깃 1개(ADR 0012 결정 1). 2단계는 슬라이스가 가리키는 artifact에만 한 번씩.
+
+    entry 파일이 이 run의 분석 대상 artifact가 아니면 타깃을 못 세운다 — **세어서**
+    `target_plan.unmatched_slices`에 남긴다. 슬라이서와 하네스가 다른 트리를 봤다는 신호라
+    조용히 버리면 「슬라이스가 적었다」로 읽힌다.
+
+    순위는 entry 줄로 매긴다(`_symbol_signal_rank`) — 히트가 entry 줄에 걸리면 2, 같은
+    artifact의 다른 줄이면 1이다.
+    ponytail: entry 한 줄만 본다 — 슬라이스 `lines`에 든 히트로 매기려면 `SliceRef`가 줄
+    목록을 들어야 한다. `candidate_max`가 슬라이스를 실제로 자르는 run이 오면 올린다.
+    """
+    by_path = {artifact.path: artifact for artifact in artifacts}
+    seen: dict[str, tuple[tuple[Evidence, ...], list[int], bool]] = {}
+    for ref in refs:
+        artifact = by_path.get(ref.location.file)
+        if artifact is None:
+            plan.unmatched_slices += 1
+            continue
+        if artifact.path not in seen:
+            seen[artifact.path] = _artifact_signals(ctx, artifact, graph)
+            plan.signal_artifacts += seen[artifact.path][2]
+        evidences, signal_lines, has_static = seen[artifact.path]
+        plan.slice_targets += 1
+        plan.collected.append(
+            _Target(
+                artifact=artifact,
+                location=ref.location,
+                evidences=evidences,
+                signal_rank=_symbol_signal_rank(ref.location, signal_lines, has_static),
+                slice_id=ref.slice_id,
+            )
+        )
 
 
 def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> None:
@@ -978,6 +1066,8 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
             item.location.file,
             item.location.line_start or 0,
             item.location.symbol or "",
+            # entry가 같은 슬라이스끼리의 순서 — 슬라이서가 매긴 id 순(슬라이스 없으면 모두 "").
+            item.slice_id or "",
         )
     )
     limit = ctx.config.thresholds.candidate_max
@@ -991,6 +1081,8 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         fallback_artifacts=plan.fallback_artifacts,
         no_symbol_artifacts=plan.no_symbol_artifacts,
         signal_artifacts=plan.signal_artifacts,
+        slice_targets=plan.slice_targets,
+        unmatched_slices=plan.unmatched_slices,
         planned=len(plan.targets),
         deferred=len(deferred),
         candidate_max=limit,
@@ -1002,13 +1094,18 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     # 모델을 부르기 전에 낸다. `target_plan`과 같은 계약이고, 그 뒤 어디서 죽어도 이 run이
     # 무엇을 보려 했는지는 남는다.
     for item in plan.targets:
-        _emit_planned(ctx, item.location)
+        _emit_planned(ctx, item.location, slice_id=item.slice_id)
     # 팬아웃되는(deferred 아닌) 대상 키. 리포트가 「모든 자리가 실패해 분석되지 않은 대상 수」를
     # 이것에서 뺀다(#193 ①) — 후보를 하나도 못 낸 대상이 곧 그 수다.
-    state.dispatched_targets = {_target_key(item.location) for item in plan.targets}
+    state.dispatched_targets = {
+        _target_key(item.location, item.slice_id) for item in plan.targets
+    }
     state.deferred = len(deferred)
     for item in deferred:
-        _emit_skipped(ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX)
+        _emit_skipped(
+            ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX,
+            slice_id=item.slice_id,
+        )
 
 
 @dataclass
@@ -1086,21 +1183,31 @@ def _scout_roles(ctx: RunContext) -> tuple[Role, ...]:
     return (Role.SCOUT,)
 
 
-def _target_key(location: Location) -> tuple[str, str | None, int | None, int | None]:
+def _target_key(
+    location: Location, slice_id: str | None
+) -> tuple[str, str | None, int | None, int | None, str | None]:
     """캡슐 캐시 키. 같은 대상을 보는 풀 멤버 item들이 같은 키를 낸다.
+
+    **`slice_id`가 키에 든다**(ADR 0012 결정 1). 슬라이스 타깃의 `location`은 entry라, entry가
+    같은 두 슬라이스가 위치만으로는 한 키가 되어 둘째가 첫째의 캡슐·「분석됨」을 물려받는다.
+    기본값을 두지 않는다 — 부르는 자리가 슬라이스를 잊으면 조용히 합쳐지기 때문이다.
 
     **튜플인 것은 의도다.** 예전에는 네 필드를 `::`로 이어 문자열로 접었는데, 구분자가
     값 안에 나타나면 서로 다른 대상이 같은 키가 된다. 캐시가 섞이면 **멤버가 다른
     대상의 캡슐을 보고** 그 사실이 기록 어디에도 안 남는다. 지금 필드 값으로 그 충돌이
     일어나는지는 안 셌다 — 튜플이면 **세어 볼 필요 자체가 없다**(PR #178 리뷰 L2).
     """
-    return (location.file, location.symbol, location.line_start, location.line_end)
+    return (location.file, location.symbol, location.line_start, location.line_end, slice_id)
 
 
-def _cache_key_str(key: tuple[str, str | None, int | None, int | None]) -> str:
+def _cache_key_str(key: tuple[str, str | None, int | None, int | None, str | None]) -> str:
     """`_target_key` 튜플을 `cache` 이벤트의 문자열 라벨로. **캐시 조회 키가 아니라 이벤트
-    라벨이다** — 충돌은 무해하다(hit ratio는 이벤트 수를 센다). 그래서 튜플을 그냥 잇는다."""
-    return "::".join("" if part is None else str(part) for part in key)
+    라벨이다** — 충돌은 무해하다(hit ratio는 이벤트 수를 센다). 그래서 튜플을 그냥 잇는다.
+
+    `slice_id`는 있을 때만 붙인다 — 슬라이스 없는 run의 라벨이 이 필드 이전과 같게 남는다."""
+    *location, slice_id = key
+    label = "::".join("" if part is None else str(part) for part in location)
+    return label if slice_id is None else f"{label}::{slice_id}"
 
 
 def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
@@ -1135,7 +1242,7 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     전부 상한 안에 든다. 캡슐을 멤버마다 재계산하지 않고(공유 보장 유지) 담을 때 여유만 둔다.
     ⚠ **Fake 프로필에서는 전 역할이 같은 기본 카운터라 이 갈림이 없다** — 마진은 무해하다.
     """
-    key = _target_key(item.target.location)
+    key = _target_key(item.target.location, item.target.slice_id)
     cached = state.capsules.get(key)
     if cached is not None:
         item.capsule = cached
@@ -1164,6 +1271,7 @@ def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
         capsule=item.capsule,
         evidences=item.target.evidences,
         role=item.role,
+        slice_id=item.target.slice_id,
     )
     item.candidate = candidate
     state.candidates.append(candidate)
@@ -1478,7 +1586,7 @@ def _drop(
     """
     _emit_skipped(
         ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc),
-        member=role.value,
+        member=role.value, slice_id=target.slice_id,
     )
     state.dropped += 1
     if not systematic:
@@ -1513,7 +1621,7 @@ def _drop_finding(
     )
 
 
-def _emit_planned(ctx: RunContext, target: Location) -> None:
+def _emit_planned(ctx: RunContext, target: Location, *, slice_id: str | None) -> None:
     """4단계에 올린 target 하나를 기록한다 (해소).
 
     **`_emit_skipped`와 같은 필드를 같은 이름으로 싣는다.** 둘을 나란히 놓고 세는 것이 이
@@ -1530,6 +1638,9 @@ def _emit_planned(ctx: RunContext, target: Location) -> None:
         file=target.file,
         symbol=target.symbol or "",
         line_start=target.line_start or 0,
+        # 슬라이스 타깃이면 그 id — entry가 같은 두 슬라이스를 가른다. 없으면 키를 안 만든다
+        # (슬라이스 없는 run의 이벤트가 이 필드 이전과 같게 남는다). `_emit_skipped`와 같은 규칙.
+        **({"slice_id": slice_id} if slice_id is not None else {}),
     )
 
 
@@ -1541,6 +1652,7 @@ def _emit_skipped(
     reason: str,
     detail: str = "",
     member: str | None = None,
+    slice_id: str | None = None,
 ) -> None:
     """4단계에 올리지 못한 target 하나를 기록한다.
 
@@ -1577,6 +1689,7 @@ def _emit_skipped(
         # 이것이 없으면 「모든 자리가 실패한 대상」과 「한 자리만 실패한 대상」을 못 가른다.
         # 단일 프로필은 `scout` 하나라 항상 같다. `None`이면 예산 절단(팬아웃 전)이라 자리가 없다.
         **({"scout_member": member} if member is not None else {}),
+        **({"slice_id": slice_id} if slice_id is not None else {}),
         **({"error_detail": detail} if detail else {}),
     )
 
@@ -1618,6 +1731,7 @@ def _new_record(
     tool_images: dict[str, str],
     model_sampling: dict[str, ModelSampling],
     compile_flags: CompileFlags | None,
+    slicer: dict[str, str | int | None] | None = None,
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -1664,6 +1778,8 @@ def _new_record(
         # `src/adapters/`를 import 하지 않으므로 `_STD_ARGS`를 여기서 읽을 수 없고, 읽을 수
         # 있더라도 읽으면 안 된다: 값을 두 곳에 두면 갈라진다.
         compile_flags=compile_flags,
+        # `--slices`로 돈 run의 슬라이서 산출(ADR 0012 결정 1). 어댑터가 만든 값을 받는다.
+        slicer=slicer,
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
