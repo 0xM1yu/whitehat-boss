@@ -113,6 +113,7 @@
 
 - 새 키 `seccoderx-8b`·`deepseek-r1-distill-qwen-32b`·`qwen3.6-35b-a3b`는 `checksum`이 0이고(`config/models.yaml:664`·`:687`·`:715`) `source`에 `@rev`가 없다(`config/models.yaml:665`·`:688`·`:716`). `@rev`가 없으면 토크나이저 디렉터리를 못 정해 기본(글자수 근사) 카운터로 남는다(`src/adapters/tokenizer.py:119-122`). `gpt-oss-20b`·`qwen3-reranker-4b`는 두 칸이 다 있다(`config/models.yaml:512-513` · `:635-636`). `qwen3-14b`를 열면 같은 두 칸을 채워야 선다. (⏵ 2026-09-24 — `qwen3-14b`를 열었다(#266): `source`에 `@rev`가 있고 `checksum`은 0이다. `deepseek-r1-distill-qwen-32b`는 지웠다(#267). `seccoderx-8b`·`qwen3.6-35b-a3b`는 `checksum` 0 · `@rev` 없음 그대로다.)
 - ~~Scout 좌석이 「교체 가능」인 것은 실험팀이 아직 고르는 중이라서다(결정 기한 2026-09-30).~~ → ⏵ 2026-09-24 — 조민규가 세 좌석을 확정했다(위 표). 그 실험도 원본 함수 입력이었다 — 결정 1의 두 번째 ⚠.
+- ⏵ **2026-09-25 — `scout_memory`가 다시 움직였다.** 실험팀 최종 권고로 `seccoderx-8b`에서 `qwen3-14b`로 확정(조민규) — 파인튜닝 체크포인트가 오기 전까지 베이스 키. `scout_boundary`는 위 확정(`seccoderx-8b`) 그대로다. 정본은 PROJECT-CONTEXT.md §1.
 
 ### 5. 저장소는 하네스 개발 전용이다 — 실험 기록의 원천은 팀 Notion
 
@@ -202,7 +203,7 @@
 | --- | --- | --- | --- | --- |
 | 1-b | Auditor 입력 표현 | 손수민 리뷰 | 2026-09-26 | (i) 원본 소스 |
 | 3 | 3단계의 쓰임 | 팀(손수민 리뷰) | 2026-09-26 대면 | resolver만 · `retriever: hybrid` 끔 |
-| 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키. ⏵ 2026-09-24 — 조민규가 확정했다: `seccoderx-8b`·`seccoderx-8b`·`qwen3-14b`(PROJECT-CONTEXT.md §1) |
+| 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키. ⏵ 2026-09-24 — 조민규가 확정했다: `seccoderx-8b`·`seccoderx-8b`·`qwen3-14b`(PROJECT-CONTEXT.md §1) ⏵ 2026-09-25 — memory가 다시 바뀌었다: `qwen3-14b`·`seccoderx-8b`·`qwen3-14b`(memory·boundary·injection 순 — 실험팀 최종 권고, 조민규. PROJECT-CONTEXT.md §1) |
 | 7 | Auditor SFT가 배울 것 | 팀 | 2026-10-04 전 | 벤치마크의 Auditor는 Finding 검증자다 |
 
 ## 대안

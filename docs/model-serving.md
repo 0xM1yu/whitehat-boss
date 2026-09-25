@@ -290,8 +290,8 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
-> | **8000** | `seccoderx-8b` ← 풀 둘(scout_memory·boundary) |
-> | **8001** | `qwen3-14b` ← 풀 둘(scout_injection) |
+> | **8000** | `seccoderx-8b` ← 풀 둘(scout_boundary) |
+> | **8001** | `qwen3-14b` ← 풀 둘(scout_memory·scout_injection) |
 > | **8002** | `qwen3.6-35b-a3b` ← `harness_pool`·`_hybrid`(auditor) |
 > | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
