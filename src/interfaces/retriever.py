@@ -23,6 +23,11 @@ class Query(HarnessModel):
     keywords: list[NonEmptyStr] = Field(default_factory=list)
     # 만들 캡슐의 토큰 상한. config에서 온 값이 여기로 전달된다.
     budget_tokens: int = Field(gt=0)
+    # 슬라이스 질의면 그 슬라이스의 id(ADR 0012 결정 1) — 러너는 슬라이스 타깃의 LIGHT(Scout용)
+    # 캡슐에만 싣는다. `target`은 슬라이스의 대표 위치(entry)라 entry가 같은 두 슬라이스를 못
+    # 가른다 — 구현은 이것으로 `target_function`을 슬라이스 렌더로 세고 캐시 키를 가른다(#220 ②).
+    # `None`이면 지금처럼 `target`의 줄 범위가 본문이다.
+    slice_id: NonEmptyStr | None = None
 
 
 class Retriever(Protocol):

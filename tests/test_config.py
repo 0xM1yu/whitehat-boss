@@ -10,6 +10,7 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 """
 
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -37,7 +38,7 @@ from src.config import (
 from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import scout as scout_node
-from src.orchestrator.prompt_loader import load_prompt
+from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
@@ -338,6 +339,47 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
     )
 
 
+# `input: slice`를 선언해야 하는 프롬프트 — `SOURCE`를 슬라이스로 정의한 v3 Scout 셋이다
+# (ADR 0012 결정 1 · 각 `prefix.md`의 「SOURCE」 정의).
+SLICE_INPUT_PROMPTS = {"scout_memory/v3", "scout_boundary/v3", "scout_injection/v3"}
+
+
+def test_only_the_v3_scout_prompts_declare_slice_input() -> None:
+    """`input: slice`를 선언한 프롬프트는 v3 Scout 셋뿐이고, 나머지는 전부 원본 소스다.
+
+    `cli.run`의 슬라이스 가드가 보는 것이 이 선언 하나다 — `--slices` 없이 슬라이스 입력
+    프롬프트를 부르는 run을 시작 전에 거부한다(ADR 0012 결정 1). **선언이 새면 가드가 조용히
+    꺼진다**: meta 키를 `inputs:`로 잘못 적으면 로더는 기본값(`source`)으로 읽고, v3 Scout가
+    슬라이스 없이 심볼 본문을 받는 run이 오류 없이 다시 돈다. 그래서 있는지가 아니라
+    **집합이 같은지**를 본다 — 반대쪽(원본 소스 프롬프트가 슬라이스를 선언해 dev run까지
+    막는 것)도 같은 단언이 잡는다.
+    """
+    declared = {
+        f"{d.parent.name}/{d.name}": load_prompt(Role(d.parent.name), d.name).input
+        for d in _prompt_dirs()
+    }
+
+    assert {key for key, kind in declared.items() if kind == "slice"} == SLICE_INPUT_PROMPTS
+    assert {kind for key, kind in declared.items() if key not in SLICE_INPUT_PROMPTS} == {
+        "source"
+    }
+
+
+def test_an_unknown_input_kind_is_refused_at_load(tmp_path: Path) -> None:
+    """`input`은 닫힌 두 값(`source`·`slice`)이다. 모르는 값은 로드에서 죽는다.
+
+    기본값으로 읽어 넘기면 오타 하나(`slices`)가 슬라이스 가드를 조용히 끈다 — 바로 위
+    검사가 키 쪽에서 막는 실패가 값 쪽에서 난다. 복사본 meta에 그 오타를 붙인다.
+    """
+    copy = tmp_path / "scout" / "v1"
+    shutil.copytree(PROMPTS_DIR / "scout" / "v1", copy)
+    meta = copy / "meta.yaml"
+    meta.write_text(meta.read_text(encoding="utf-8") + "input: slices\n", encoding="utf-8")
+
+    with pytest.raises(PromptError, match="'slices'"):
+        load_prompt(Role.SCOUT, "v1", root=tmp_path)
+
+
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> None:
     """프로필이 **고른** 프롬프트 버전이 디스크에 실재한다.
@@ -358,6 +400,11 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     ⚠ **2026-09-24 — 위 문단은 PR #190 때의 서술이다.** 2026-09-21 교체로 그 프로필(지금 이름
     `harness_pool`)의 Scout 세 키가 v3를 가리키고 별칭 셋은 배선이 없다. 지금 이 검사가 풀에서
     지키는 것은 **v3 디렉터리의 실재**다.
+
+    ⚠ **2026-09-25 — 첫 문단의 「첫 모델 호출에서 처음 열린다」는 이제 `--slices`를 준 run에만
+    맞다.** 모델에 닿는 run이 `--slices` 없이 시작하면 `cli.run`의 슬라이스 가드가 시작 전에
+    프로필의 프롬프트를 전부 열고, 로드 실패도 거기서 exit 2다. 풀 프로필의 run은 `--slices`를
+    줘야 서므로 그 run에서는 여전히 첫 호출에서 연다 — 이 검사는 그대로 필요하다.
     """
     config = load_config(profile)
 
@@ -1509,3 +1556,95 @@ def test_no_two_served_models_share_a_port() -> None:
 
     shared = {port: keys for port, keys in by_port.items() if len(keys) > 1}
     assert not shared, f"포트를 같이 쓰는 실서빙 키: {shared}"
+
+
+# --- 모델별 요청 손잡이 (ADR 0012 Phase 6.5 · #261) ------------------------------
+
+_KNOBS = {
+    "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0},
+    "chat_template_kwargs": {"enable_thinking": True},
+    "thinking_token_budget": 30720,
+    "request_timeout_s": 1800,
+}
+
+
+def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
+    tmp_path: Path,
+) -> None:
+    """registry가 선언한 손잡이가 **요청과 기록 양쪽에 같은 값으로** 간다.
+
+    `reasoning_effort`의 두 검사(바로 위)를 한 번에 옮긴 것이다 — 요청에만 실리면 기록이
+    거짓이고, 기록에만 있으면 서버가 기본값으로 돈다. `sampling`은 프로필 공통
+    `temperature`·`top_p`를 **그 모델에서 덮는다** — 그래서 덮은 값이 기록에 남아야 한다.
+
+    `request_timeout_s`는 요청 본문이 아니라 클라이언트 쪽 값이라 payload·기록 맵에 안 간다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
+            }
+        },
+        model_patch={"qwen3.6-35b-a3b": _KNOBS},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    sent = {
+        "temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+        "chat_template_kwargs": {"enable_thinking": True},
+        "thinking_token_budget": 30720,
+    }
+    assert config.request_params() == {"auditor": sent}
+
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config, "run_20260925_0001", datetime(2026, 9, 25, tzinfo=UTC), [], {}, {}, None,
+    )
+    assert json.loads(record.model_dump_json())["model_request_params"] == {"auditor": sent}
+
+    auditor = _model_client(config.profile.roles["auditor"], config, role="auditor")
+    payload = auditor._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert {key: payload[key] for key in sent} == sent
+    assert "request_timeout_s" not in payload
+    assert auditor.timeout_s == 1800
+
+    scout = _model_client(config.profile.roles["scout"], config, role="scout")
+    quiet = scout._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert not set(quiet) & {"top_k", "min_p", "chat_template_kwargs", "thinking_token_budget"}
+    assert scout.timeout_s is None, "선언 안 한 모델은 어댑터 기본 타임아웃을 쓴다"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        None,  # 대조군 — 이것이 죽으면 아래 넷이 손잡이 때문에 죽는지 모른다
+        {"sampling": {"top_p": 0.0}},
+        {"sampling": {"topk": 20}},
+        {"thinking_token_budget": 0},
+        {"request_timeout_s": 0},
+    ],
+)
+def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> None:
+    """손잡이는 **우리가 적는 설정**이라 오타·범위 밖 값이 곧 결함이다 — 로드에서 죽는다.
+
+    서버가 조용히 무시하거나 400을 내면 그 run은 「선언했다」고 기록되고 실제로는 안 쓴 것이다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={
+            "roles": {
+                "scout": "seccoderx-8b",
+                "auditor": "qwen3.6-35b-a3b",
+                "critic": "gpt-oss-20b",
+            }
+        },
+        model_patch={"seccoderx-8b": patch or {}},
+    )
+    if patch is None:
+        load_config("dev_fake", config_dir=tmp_path)
+        return
+    with pytest.raises(ValidationError):
+        load_config("dev_fake", config_dir=tmp_path)

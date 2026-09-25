@@ -8,7 +8,7 @@ evaluation.md §6: "기록이 불완전한 run의 결과는 비교표에 넣지 
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from src.schemas.common import (
     HarnessModel,
@@ -248,7 +248,9 @@ class RunRecord(UtcModel):
     # 여기에는 그 run에서 실제로 쓰인 값을 박제한다.
     thresholds: dict[str, float]
     seed: int
-    # 하네스가 요청에 **보낸** 샘플링 (config `budgets.yaml`의 `sampling`).
+    # 하네스가 요청에 **보낸** 샘플링 (config `budgets.yaml`의 `sampling`) — **프로필 공통값이다.**
+    # registry가 모델별 `sampling`을 선언한 역할은 `temperature`·`top_p`가 그 값으로 덮여 나가고,
+    # 그 역할에 실제로 보낸 값은 `model_request_params[role]`에 있다. 비교할 때는 둘을 합쳐 읽는다.
     sampling: Sampling
     # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). `sampling`이
     # 보낸 값이라면 이쪽은 서버가 모델 파일에서 적용하는 값이다 — `top_k`·`repetition_penalty`는
@@ -282,6 +284,10 @@ class RunRecord(UtcModel):
     # `VllmEmbeddingClient`·`VllmRerankerClient`를 타고 이 파라미터를 안 보내므로, 그 역할의
     # "effort"를 적으면 거짓 정보다(`config.prompt_versions` docstring의 그 판단).
     model_reasoning_effort: dict[str, NonEmptyStr] | None = None
+    # 역할 → registry가 선언해 요청에 **얹은** 키(`ModelEntry.request_params()` — 샘플링 덮기·
+    # `chat_template_kwargs`·`thinking_token_budget`). 규칙은 바로 위와 같다: 선언한 역할만,
+    # `None`은 이 필드 이전의 manifest. `sampling`(프로필 공통)을 덮은 값도 여기 남는다.
+    model_request_params: dict[str, dict[str, JsonValue]] | None = None
     # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). 사유와 한계는 `CompileFlags`에
     # 있다 — 요점은 **사후 감사로는 잡히고 비교표로는 안 잡히던** 축을 여는 것이다.
     #
@@ -300,6 +306,10 @@ class RunRecord(UtcModel):
     # `incomplete_fields()`에는 넣지 않는다 — `tool_runner`와 같은 사유다. Fake로 돈 run은
     # 이미 `tool_images`가 비어 경고에 걸리고, 같은 사실을 두 줄로 내면 진짜 문제가 묻힌다.
     compile_flags: CompileFlags | None = None
+    # `--slices`로 돈 run의 슬라이서 산출 — `{status, run_signature, slices}`(ADR 0012 결정 1).
+    # CPG가 못 본 줄은 모델도 못 본다 — `partial`로 돈 run이 그 사실 없이 비교표에 서지 않게
+    # 남긴다. `None`은 슬라이스 없이 돈 run(파일·심볼 타깃)이다.
+    slicer: dict[str, str | int | None] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime

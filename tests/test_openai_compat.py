@@ -14,6 +14,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -630,3 +631,126 @@ def test_gateway_failure_carries_the_spend_and_its_own_wall_clock(
     # 두 시도가 각자 20ms를 태웠다 — 게이트웨이 시도의 시간도 포함된다(F1). 한 시도(≈20ms)만
     # 세면 30 미만이라, 게이트웨이 시도가 안 잡히는 회귀를 이 임계가 잡는다.
     assert exc.gpu_ms >= 30
+
+
+# --- 요청 타임아웃과 행 판정 (#261) -------------------------------------------
+
+_METRICS_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "metrics" / "vllm_0191_seraph_sm86.txt"
+).read_text("utf-8")
+
+
+def _metrics_with_generation(tokens: float) -> bytes:
+    """실측 원문(vLLM 0.19.1 Seraph)에서 생성 카운터 값만 바꾼다 — 이름·라벨은 원문 그대로다."""
+    text, count = re.subn(
+        r'^(vllm:generation_tokens_total\{[^}]*\}) \S+$',
+        rf"\g<1> {tokens}",
+        _METRICS_FIXTURE,
+        flags=re.MULTILINE,
+    )
+    assert count == 1, "원문에 생성 카운터 줄이 정확히 하나여야 한다"
+    return text.encode("utf-8")
+
+
+class _Body(io.BytesIO):
+    def __enter__(self) -> "_Body":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+
+def _server(
+    monkeypatch: pytest.MonkeyPatch, *, counters: list[float | None]
+) -> list[float | None]:
+    """채팅 요청은 늘 타임아웃이고 `/metrics`는 `counters`를 차례로 낸다(`None`이면 못 읽음).
+
+    채팅 요청에 넘어온 `timeout`을 모아 돌려준다.
+    """
+    timeouts: list[float | None] = []
+    reads = iter(counters)
+
+    def fake_urlopen(request, timeout=None):  # noqa: ANN001, ANN202
+        url = request if isinstance(request, str) else request.full_url
+        if url.endswith("/metrics"):
+            value = next(reads)
+            if value is None:
+                raise urllib.error.URLError("connection refused")
+            return _Body(_metrics_with_generation(value))
+        timeouts.append(timeout)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    return timeouts
+
+
+def test_the_request_timeout_is_the_models_own_when_it_declares_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`request_timeout_s`를 받으면 그 값이, 안 받으면 전역 기본이 `urlopen`에 간다.
+
+    전역 300 s는 새 로스터 속도에서 출력 상한보다 먼저 온다(#261 표 — 8.1 tok/s면 300 s에
+    ≈2,430토큰). 좌석마다 속도가 다르므로 값은 모델 것이다.
+    """
+    timeouts = _server(monkeypatch, counters=[None, None, None, None])
+    slow_seat = OpenAICompatModelClient(
+        endpoint="http://127.0.0.1:9/v1", model_name="m", temperature=0.0, top_p=1.0,
+        seed=7, max_tokens=8, retries=0, timeout_s=1800,
+    )
+    with pytest.raises(ModelGatewayError):
+        slow_seat.complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    with pytest.raises(ModelGatewayError):
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert timeouts == [1800, 300]
+
+
+@pytest.mark.parametrize(
+    ("counters", "expected"),
+    [
+        ([100.0, 4100.0], True),  # 기다리는 동안 4,000토큰을 냈다 — 느리다
+        ([100.0, 100.0], False),  # 하나도 안 냈다 — 멈췄다
+        ([None, 100.0], None),  # 앞을 못 읽었다 — 모른다
+        ([100.0, None], None),  # 뒤를 못 읽었다 — 모른다
+    ],
+)
+def test_a_timeout_says_whether_the_server_was_generating(
+    monkeypatch: pytest.MonkeyPatch, counters: list[float | None], expected: bool | None
+) -> None:
+    """타임아웃이면 요청 전·후 `vllm:generation_tokens_total`을 대조해 `generating`에 싣는다.
+
+    **앞을 요청 전에 읽는 이유** — 타임아웃 뒤에는 클라이언트가 끊어 서버가 그 요청을
+    abort한다(#261의 `Aborted request(s)`). 끊은 뒤에 두 번 재면 느린 서버도 멈춘 것으로 보인다.
+    """
+    _server(monkeypatch, counters=counters)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert caught.value.generating is expected
+
+
+def test_declared_request_params_ride_the_payload_and_undeclared_add_no_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`extra_params`는 기본 키 위에 얹히고(같은 키면 덮는다), 안 주면 키 집합이 그대로다."""
+    payloads = _capture(monkeypatch, '{"ok": true}')
+    plain = _client(retries=0)
+    knobs = OpenAICompatModelClient(
+        endpoint="http://127.0.0.1:9/v1", model_name="m", temperature=0.2, top_p=1.0,
+        seed=7, max_tokens=8, retries=0,
+        extra_params={"temperature": 0.6, "top_k": 20, "thinking_token_budget": 30720,
+                      "chat_template_kwargs": {"enable_thinking": True}},
+    )
+    plain.complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    knobs.complete(role=Role.AUDITOR, prompt=PROMPT, schema=Tiny)
+
+    base, declared = payloads
+    assert set(base) == {
+        "model", "messages", "temperature", "top_p", "seed", "max_tokens", "response_format"
+    }
+    assert declared["temperature"] == 0.6
+    assert declared["top_k"] == 20
+    assert declared["thinking_token_budget"] == 30720
+    assert declared["chat_template_kwargs"] == {"enable_thinking": True}

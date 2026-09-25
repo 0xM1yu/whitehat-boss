@@ -99,11 +99,14 @@ class FakeContext(HarnessModel):
     # 캡슐에 담긴 섹션과 그 본문. 점수 산정에는 쓰지 않는다 — `_has_static_signal()`
     # 주석이 그 이유를 적는다(섹션 존재는 레벨이 정하는 것이라 신호가 아니다).
     capsule_sections: list[FakeCapsuleSection] = Field(default_factory=list)
-    # 대상 함수 본문. 위험 호출 탐지의 근거다.
+    # 대상 함수 본문(슬라이스 타깃의 Scout면 슬라이스 렌더). 위험 호출 탐지의 근거다.
     source: str = ""
     evidence: list[FakeEvidenceRef] = Field(default_factory=list)
     # source→sink 경로 구성용. 없으면 target.symbol만 쓴다.
     callers: list[str] = Field(default_factory=list)
+    # 슬라이스 타깃의 v3 `slice_criterion`(`prompt_loader.FACT_KEYS`의 opt-in 키). Fake는 판정에
+    # 안 쓰지만 사실 블록을 파싱할 때 거부하면 안 되므로 받는다(`FakeEvidenceRef.body`와 같은 처리).
+    slice_criterion: dict[str, object] | None = None
 
 
 class FakeModelError(RuntimeError):

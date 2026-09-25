@@ -10,11 +10,18 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 
     prompts/<role>/<version>/prefix.md    # 캐시되는 고정부
     prompts/<role>/<version>/body.md      # {{TOKEN}} 자리표시자를 가진 가변부
-    prompts/<role>/<version>/meta.yaml    # role·version·output_schema
+    prompts/<role>/<version>/meta.yaml    # role·version·output_schema·input
 
 버전은 config에서 온다(`ModelEntry.prompt_template_version`). 노드가 문자열로 박지
 않는다 — 버전이 바뀌면 이전 결과와 직접 비교하지 않는다는 규약(§4.1)이 성립하려면
 그 값이 `RunRecord.prompt_versions`와 같은 곳에서 나와야 한다.
+
+## meta의 `input` — 그 프롬프트의 `SOURCE`가 무엇인가
+
+`source`(원본 소스 — 키가 없으면 이것)와 `slice`(슬라이서가 자른 슬라이스 — ADR 0012 결정 1)
+둘뿐이다. v3 Scout가 `slice`다 — `SOURCE`를 원본 줄번호 gutter·파일 배너가 붙은 슬라이스로
+정의한다. 로더는 값을 닫기만 하고, `slice` 프롬프트를 `--slices` 없이 부르는 run을 막는 것은
+`cli.run`이다. **모르는 값은 기본값으로 읽지 않는다** — 오타 하나가 그 가드를 조용히 끈다.
 
 ## body의 마지막 ```json 펜스
 
@@ -53,6 +60,10 @@ FACTS_TOKEN = "FACTS"
 
 # `build_facts()`가 만드는 키. S1이 굳힌 계약이며 어댑터의 `FakeContext`와 같은 집합이다
 # (`extra="forbid"`이므로 여기서 키를 하나 더 넣으면 Fake가 로드 시점에 실패한다).
+#
+# **`slice_criterion`만 opt-in이다** — 슬라이스 타깃의 Scout 프롬프트에만 실린다(ADR 0012 결정 1,
+# v3 prefix의 「Slice criterion」 절). 나머지 여덟은 늘 실린다. 슬라이스 없는 프롬프트는 이 키가
+# 생기기 전과 글자가 같다 — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
     "ids",
@@ -62,11 +73,16 @@ FACT_KEYS = (
     "source",
     "evidence",
     "callers",
+    "slice_criterion",
 )
 
 
 class PromptError(Exception):
     """프롬프트 파일이 없거나 자리표시자가 맞지 않는다. 조용히 빈 값으로 채우지 않는다."""
+
+
+# meta.yaml의 `input`이 가질 수 있는 값(모듈 docstring 「meta의 `input`」).
+INPUT_KINDS = ("source", "slice")
 
 
 @dataclass(frozen=True)
@@ -78,6 +94,8 @@ class PromptTemplate:
     prefix: str
     body: str
     output_schema: str
+    # `INPUT_KINDS` 중 하나. meta에 키가 없으면 `source`다.
+    input: str
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -128,9 +146,20 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
     output_schema = meta.get("output_schema")
     if not isinstance(output_schema, str) or not output_schema:
         raise PromptError(f"{directory}/meta.yaml에 output_schema가 없다")
+    input_kind = meta.get("input", "source")
+    if input_kind not in INPUT_KINDS:
+        raise PromptError(
+            f"{directory}/meta.yaml의 input {input_kind!r}은 모르는 값이다 — "
+            f"{list(INPUT_KINDS)} 중 하나다"
+        )
 
     return PromptTemplate(
-        role=role, version=version, prefix=prefix, body=body, output_schema=output_schema
+        role=role,
+        version=version,
+        prefix=prefix,
+        body=body,
+        output_schema=output_schema,
+        input=input_kind,
     )
 
 
@@ -201,11 +230,15 @@ def build_facts(
     evidences: Iterable[Evidence] = (),
     callers: Iterable[str] = (),
     evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
+    slice_criterion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
     실제 모델도 같은 블록을 읽으므로 Fake 전용 우회로가 아니다. `ids`는 노드가 미리
     발급한 식별자이며 모델은 그 값을 그대로 출력에 넣는다.
+
+    `slice_criterion`은 준 경우에만 키가 생긴다(`FACT_KEYS` 주석) — `None`을 `null`로 싣지
+    않는다. 실으면 슬라이스 없는 프롬프트까지 글자가 바뀐다.
     """
     return {
         "run_id": run_id,
@@ -243,6 +276,7 @@ def build_facts(
             for ev in evidences
         ],
         "callers": list(callers),
+        **({"slice_criterion": dict(slice_criterion)} if slice_criterion is not None else {}),
     }
 
 

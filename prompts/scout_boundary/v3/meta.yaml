@@ -1,6 +1,7 @@
 role: scout_boundary
 version: v3
 output_schema: ScoutResponse
+input: slice
 profile: boundary
 model: SecCoderX-8B
 description: 'v14s의 기본 분석 방법을 유지하면서 프롬프트를 간소화했다.'

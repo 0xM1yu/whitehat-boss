@@ -318,10 +318,11 @@ def test_scout_pool_builds_the_light_capsule_once_per_target(
     original = retrieval_node.run
     light_calls: list[tuple[object, ...]] = []
 
-    def spy(ctx: object, *, target: object, level: object) -> object:  # noqa: ANN401
+    def spy(ctx: object, *, target: object, level: object, **kwargs: object) -> object:  # noqa: ANN401
         if level is CapsuleLevel.LIGHT:
             light_calls.append((target.file, target.symbol, target.line_start, target.line_end))
-        return original(ctx, target=target, level=level)
+        # 러너가 넘기는 나머지(`slice_id` — 슬라이스 없는 run이면 `None`)는 그대로 흘린다.
+        return original(ctx, target=target, level=level, **kwargs)
 
     monkeypatch.setattr(retrieval_node, "run", spy)
     result, _ = _run(tmp_path, configure=_poolify(mode))
@@ -867,7 +868,10 @@ def test_the_blocking_messages_do_not_name_an_axis_the_pattern_rejects() -> None
 
 
 def test_a_serving_profile_refuses_to_start_without_the_labels(
-    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    empty_slices: Path,
 ) -> None:
     """**실서빙 run에서는 경고로 부족하다** (수민 리뷰 #119).
 
@@ -893,6 +897,7 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     code = cli.main(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -930,8 +935,33 @@ def _errors(stderr: str) -> list[str]:
     return [line for line in stderr.splitlines() if line.startswith("[ERROR]")]
 
 
+@pytest.fixture
+def empty_slices(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """비었지만 믿을 수 있는 `slices.json` — `load_slices`를 통과하고 타깃은 0개다.
+
+    **실서빙 게이트 테스트가 제 게이트만 보게 한다.** `harness_pool`의 Scout 세 자리는 슬라이스
+    입력(v3)이라 `--slices`가 없으면 슬라이스 가드도 exit 2로 막는다 — 그러면 실서빙 게이트가
+    사라져도 거부 테스트가 초록이다. `tmp_path` 밖에 두는 것은 그 테스트들이 「run 디렉터리를
+    안 남겼다」를 `tmp_path`가 비었는지로 보기 때문이다.
+    """
+    path = tmp_path_factory.mktemp("slices") / "slices.json"
+    path.write_text(
+        json.dumps(
+            {
+                "slice_version": "slice-v2",
+                "status": "ok",
+                "joern_engine_config": {"maxCallDepth": 2},
+                "slices": [],
+                "candidate_manifest": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_a_serving_profile_refuses_when_only_the_device_is_missing(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, empty_slices: Path
 ) -> None:
     """**게이트의 절반씩을 따로 잠근다.** 둘을 한 번에 뺀 케이스만 보면 절반이 무검사다.
 
@@ -948,6 +978,7 @@ def test_a_serving_profile_refuses_when_only_the_device_is_missing(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -959,7 +990,7 @@ def test_a_serving_profile_refuses_when_only_the_device_is_missing(
 
 
 def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, empty_slices: Path
 ) -> None:
     """위와 짝. `_CONDITION_DEFAULTED`가 목록에서 빠지는 순간 죽는다.
 
@@ -970,6 +1001,7 @@ def test_a_serving_profile_refuses_when_only_the_condition_is_missing(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--device", "atom", "--kb-snapshot", "kb-20260901",
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -1030,6 +1062,10 @@ def test_a_dry_run_is_not_blocked_by_the_serving_gate(
     "그럴듯한 값으로 채우지 않는다"를 검사가 어기게 만드는 셈이다.
 
     경고는 그대로 낸다 — 알려 주는 것과 막는 것은 다르다.
+
+    **슬라이스 가드도 여기서 선다.** `--slices`를 안 주지만 Scout에 닿지 않으므로 슬라이스
+    입력 프롬프트(v3)를 부르지 않는다 — 가드가 「모델에 닿는가」를 안 보게 되면 이 run이
+    exit 2로 걸린다(2026-09-25 변이로 확인).
     """
     code = cli.main(
         [
@@ -1044,7 +1080,9 @@ def test_a_dry_run_is_not_blocked_by_the_serving_gate(
     assert not _errors(err), "dry-run에 [ERROR]가 붙었다"
 
 
-def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_a_blank_label_counts_as_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture, empty_slices: Path
+) -> None:
     """빈 문자열은 "줬다"가 아니다 — `--device ""`가 게이트와 사후 판정을 **둘 다** 통과했다.
 
     실측: `--device "" --condition B1@pipeline --kb-snapshot kb-x`로 돌면 exit 0으로 완주하고
@@ -1058,6 +1096,7 @@ def test_a_blank_label_counts_as_missing(tmp_path: Path, capsys: pytest.CaptureF
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
             "--device", "   ", "--condition", "B1@pipeline", "--kb-snapshot", "kb-20260901",
+            "--slices", str(empty_slices),
             "--seed", "20260901", "--artifacts-root", str(tmp_path),
         ]
     )
@@ -1106,12 +1145,19 @@ def test_a_fake_profile_still_only_warns(tmp_path: Path, capsys: pytest.CaptureF
 
 
 def test_a_serving_profile_with_the_labels_passes_the_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    empty_slices: Path,
 ) -> None:
     """라벨을 주면 게이트를 통과한다 — 막는 것이 목적이 아니라 **묻는** 것이 목적이다.
 
     `_claim_run_dir`에 도달했다는 것으로 통과를 본다. 그 뒤는 실서빙 엔드포인트가 필요해
     이 테스트의 범위가 아니다.
+
+    `--slices`도 준다 — Scout 세 자리가 슬라이스 입력(v3)이라 없으면 슬라이스 가드가 먼저
+    막는다(바로 아래 테스트). 그래서 이 테스트가 **두 게이트의 양성 대조**다 — 가드가
+    `--slices`를 줘도 막도록 넓어지면 여기서 걸린다.
     """
 
     class _Stop(RuntimeError):
@@ -1126,6 +1172,7 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
             [
                 "run", "--profile", "harness_pool", "--target", str(TARGET),
                 "--condition", "B1prime@pipeline", "--device", "atom",
+                "--slices", str(empty_slices),
                 "--seed", "20260901", "--artifacts-root", str(tmp_path),
             ]
         )
@@ -1134,6 +1181,42 @@ def test_a_serving_profile_with_the_labels_passes_the_gate(
     assert not _errors(err), "라벨을 다 줬는데 거부됐다"
     # `kb_snapshot`은 막지 않는다 — 경고만 나는 것이 계약이다.
     assert "kb_snapshot" in err, "막지 않는 결여의 경고까지 사라졌다"
+
+
+def test_a_slice_input_profile_refuses_to_start_without_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """슬라이스 입력 프롬프트(v3 Scout)를 부르는 run은 `--slices` 없이 시작하지 않는다
+    (ADR 0012 결정 1).
+
+    v3는 `SOURCE`를 슬라이스(원본 줄번호 gutter·파일 배너)로 정의하는데, 슬라이스가 없으면
+    그 자리에 심볼 본문이 가고 **오류 없이** 어긋난다(#278). 라벨은 다 준다 — 남는 결여가
+    `--slices` 하나여야 실서빙 게이트가 아니라 이 가드가 막았다는 것이 선다. 그래서 거부
+    줄이 `--slices`를 대는지까지 본다(실서빙 게이트의 거부 줄은 그 이름을 안 댄다).
+
+    `execute`를 막아 둔다. 가드가 사라지면 이 run은 실서빙 프로필로 도구 컨테이너와
+    엔드포인트에 나간다 — 빨간 불이 느린 테스트로 보이면 안 된다(`_refuse_sockets`와 같은 뜻).
+    """
+
+    class _Started(RuntimeError):
+        """가드를 지나 run 디렉터리를 잡고 실행까지 들어왔다."""
+
+    def _boom(*_: object, **__: object) -> None:
+        raise _Started
+
+    monkeypatch.setattr(cli, "execute", _boom)
+    code = cli.main(
+        [
+            "run", "--profile", "harness_pool", "--target", str(TARGET),
+            "--condition", "B1@pipeline", "--device", "atom", "--kb-snapshot", "kb-20260901",
+            "--seed", "20260901", "--artifacts-root", str(tmp_path),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 2, "슬라이스 입력 프롬프트를 부르는 run이 --slices 없이 시작한다"
+    assert [line for line in _errors(err) if "--slices" in line], "거부 줄이 --slices를 안 댄다"
+    assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
 
 
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
@@ -1505,6 +1588,23 @@ def test_doctor_output_differs_between_profiles(tmp_path: Path) -> None:
     assert fake != hybrid
     assert "HybridRetriever" in hybrid
     assert "HybridRetriever" not in fake
+
+
+def test_doctor_warns_that_a_slice_input_profile_needs_slices(tmp_path: Path) -> None:
+    """`run`이 `--slices` 없이 거부할 프로필을 doctor가 미리 말한다 — **WARN이지 ERROR가 아니다.**
+
+    doctor는 `--slices`를 받지 않으니 막을 대상이 없다. ERROR로 두면 설정이 멀쩡한 풀 프로필의
+    `doctor`가 exit 1이 된다. 슬라이스 입력 프롬프트가 없는 프로필(`dev_fake` — scout v1)에는
+    그 줄이 없어야 한다 — 전 프로필에 뜨는 경고는 아무도 안 읽는다.
+    """
+
+    def slice_lines(profile: str) -> list[str]:
+        return [line for line in _doctor_text(profile, tmp_path).splitlines() if "--slices" in line]
+
+    pool = slice_lines("harness_pool")
+    assert pool, "슬라이스 입력 프로필인데 doctor가 --slices를 말하지 않는다"
+    assert all(line.startswith("[WARN ") for line in pool), f"WARN이 아니다: {pool}"
+    assert slice_lines("dev_fake") == [], "슬라이스 입력이 없는 프로필에도 경고한다"
 
 
 @pytest.mark.parametrize("profile", ["dev_fake", "dev_hybrid"])
@@ -2283,6 +2383,48 @@ def test_signal_artifact_symbols_stay_above_no_signal_ones(tmp_path: Path) -> No
     assert files == ["parser.c", "parser.c", "aaa.c"]
 
 
+def test_a_hit_symbol_in_a_later_file_beats_a_non_hit_symbol_in_an_earlier_one(
+    tmp_path: Path,
+) -> None:
+    """히트가 든 심볼(rank 2)은 **파일 순서를 가로질러** 같은 artifact의 비히트 심볼(rank 1)을
+    앞선다 — #249가 있는 이유다(#257 1).
+
+    위 검사의 기대값은 #249 이전 순서로도 나와서, 3단을 불리언으로 접거나(`-min(rank, 1)`)
+    #248이 채운 위치를 순서가 안 쓰게 해도(`signal_lines = []`) 전체 pytest가 초록이었다(#257
+    본문의 두 변이). 여기서는 두 변이 모두 `[a1, a2]`를 낸다.
+
+    **위치 없는 신호를 넣지 않는다** — 그 심볼의 순위는 #257 2가 아직 정하지 않았다.
+    """
+    target = tmp_path / "src"
+    target.mkdir()
+    # `aaa.c`: a1에 히트(3줄) · a2는 같은 artifact의 다른 심볼. `zzz.c`: z2에 히트.
+    # 히트 모양은 Fake semgrep 규칙(`fake_tools._STATIC_PATTERNS`의 memcpy — 길이가 상수 아님)이다.
+    (target / "aaa.c").write_text(
+        "void a1(char *d, char *s, int n)\n{\n    memcpy(d, s, n);\n}\n"
+        "int a2(void)\n{\n    return 0;\n}\n",
+        encoding="utf-8",
+    )
+    (target / "zzz.c").write_text(
+        "void z2(char *d, char *s, int n)\n{\n    memcpy(d, s, n);\n}\n", encoding="utf-8"
+    )
+    index = {
+        **_FIXTURE_INDEX,
+        "files": ["aaa.c", "zzz.c"],
+        "symbols": [
+            {"name": "a1", "file": "aaa.c", "line_start": 1, "line_end": 4},
+            {"name": "a2", "file": "aaa.c", "line_start": 5, "line_end": 8},
+            {"name": "z2", "file": "zzz.c", "line_start": 1, "line_end": 4},
+        ],
+    }
+
+    result, trace_path = _run(
+        tmp_path, name="cross", target=target, candidate_max=2, before=_with_index(index)
+    )
+
+    assert _plan(trace_path)["signal_artifacts"] == 2
+    assert [c.location.symbol for c in result.candidates] == ["a1", "z2"]
+
+
 def test_symbol_signal_rank_is_three_tier() -> None:
     """`_symbol_signal_rank`의 3단 (#70). rank 1이 무신호(0)를 안 내리는 게 #249 HIGH-1이다.
 
@@ -2961,3 +3103,46 @@ def test_a_step_run_out_of_order_raises_instead_of_flowing_none_onward(
         step(object(), item, object())  # type: ignore[operator]
 
     assert getattr(item, field) is None, "가드가 값을 채우지 않고 거절해야 한다"
+
+
+def test_a_timeout_while_the_server_was_generating_drops_only_that_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """타임아웃이어도 **서버가 그동안 토큰을 냈으면** 그 후보만 버린다 (#261 (다)).
+
+    `run_20260924_0001`이 300,021 ms 타임아웃으로 멈췄는데 그 5분 동안 서버는 13.4 tok/s로
+    생성하고 있었다(이슈 #261 「재현 / 근거」). 상태 코드가 없다는 것만으로는 「죽음」과
+    「느림」이 안 갈린다 — 어댑터가 `/metrics` 생성 카운터로 가른 `generating`을 러너가 읽는다.
+    """
+    slow = ModelGatewayError(
+        "http://127.0.0.1:8000/v1 호출 실패: timed out", detail="timed out", generating=True
+    )
+    _failing_model(monkeypatch, [slow])
+
+    result, trace_path = _run(tmp_path, name="slow", before=_with_index())
+
+    assert result.record.is_complete, "느린 후보 하나가 run을 세웠다 — #261이 그대로다"
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["gateway_error"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"]) - 1
+
+
+def test_a_timeout_with_no_generation_still_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """생성 카운터가 안 늘었으면(행) 또는 못 읽었으면(모름) 지금처럼 run을 멈춘다.
+
+    「모름」을 「느림」으로 읽으면 죽은 서버 앞에서 후보를 연속 폐기 상한까지 태운다 —
+    `None`은 통과가 아니다(`ModelEntry.family`와 같은 규칙).
+    """
+    for name, generating in (("hung", False), ("unknown", None)):
+        stuck = ModelGatewayError(
+            "http://127.0.0.1:8000/v1 호출 실패: timed out",
+            detail="timed out",
+            generating=generating,
+        )
+        _failing_model(monkeypatch, [stuck])
+
+        _, trace_path = _run(tmp_path, name=name, before=_with_index())
+
+        assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable", name
