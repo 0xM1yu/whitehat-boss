@@ -1,6 +1,7 @@
 role: scout_memory
 version: v3
 output_schema: ScoutResponse
+input: slice
 profile: memory
 model: SecCoderX-8B
 description: 'v14s: review 를 낼 때도 방어를 찾아본 흔적(counterevidence)을 남기게 했다.'
