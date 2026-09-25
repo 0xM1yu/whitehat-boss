@@ -1624,7 +1624,12 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
     scout = _model_client(config.profile.roles["scout"], config, role="scout")
     quiet = scout._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
     assert not set(quiet) & {"top_k", "min_p", "chat_template_kwargs", "thinking_token_budget"}
-    assert scout.timeout_s is None, "선언 안 한 모델은 어댑터 기본 타임아웃을 쓴다"
+    # ⚠ **이 줄만 브랜치(`exp/atom-slice-smoke`, 머지 안 함) 값이다 — main은 `is None`이다.**
+    # main의 registry는 `request_timeout_s`를 아무 키에도 선언하지 않아 `seccoderx-8b`가
+    # 「선언 안 한 모델」의 자리였다. 이 브랜치는 그 키에 1,200 s를 선언했다
+    # (`config/models.yaml`의 그 항목 — 2026-09-24에 Scout 호출이 300 s에 걸려 run이 멈췄다).
+    # 무는 성질은 그대로다 — **선언한 값이 어댑터에 그대로 간다**(위 auditor 1,800과 짝).
+    assert scout.timeout_s == 1200, "선언한 모델은 그 값을 어댑터 타임아웃으로 쓴다"
 
 
 @pytest.mark.parametrize(

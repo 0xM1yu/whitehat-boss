@@ -288,5 +288,10 @@ def test_the_stuck_ceiling_follows_the_longest_declared_request_timeout() -> Non
         }
     )
 
-    assert monitor.call_timeout_s(config, default=300) == 300
+    # ⚠ **이 줄만 브랜치(`exp/atom-slice-smoke`, 머지 안 함) 값이다 — main은 300이다.**
+    # main의 registry는 `request_timeout_s`를 **아무 키에도 선언하지 않아서** 기본값이 그대로
+    # 살아 300이다. 이 브랜치는 Scout 둘에 1,200 s, Auditor에 900 s를 선언했다(그 사유는
+    # `config/models.yaml`의 각 항목) — `harness_pool`이 그 셋을 다 부르므로 최댓값이 1,200이다.
+    # **이 테스트가 무는 성질은 그 아래 줄이다** — 선언이 있으면 그 값이 T의 한 호출 몫이 된다.
+    assert monitor.call_timeout_s(config, default=300) == 1200
     assert monitor.call_timeout_s(declared, default=300) == 1800

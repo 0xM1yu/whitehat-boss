@@ -349,6 +349,13 @@ models:
     source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model"
     family: "qwen"
     prompt_template_version: "v3"
+    # ⚠ **`request_timeout_s`는 이 브랜치(`exp/atom-slice-smoke`, 머지 안 함)에만 있다.**
+    # 어댑터의 벽시계 상한이다(요청 본문이 아니다 — `src/config.py`의 그 필드 주석, #274).
+    # 기본값 300 s로는 이 스모크가 멈춘다: 2026-09-24에 Scout 호출 하나가 300 s에 걸려
+    # **run 전체가 멈췄다**(`run_20260924_0001` · 이슈 #261 · 서버는 그동안 생성 중이었다).
+    # 13.3 tok/s(2026-09-24 실측)로 `output_max` 4,096을 다 쓰면 ≈308 s다(계산값). 슬라이스
+    # 프롬프트의 프리필이 그 위에 얹히고 재시도가 한 번 더 있다(`schema_retries: 1`).
+    request_timeout_s: 1200
     fallback: null
     benchmark:
       measured_at: null
@@ -436,6 +443,14 @@ models:
     source: "hf://Qwen/Qwen3.6-35B-A3B"
     family: "qwen"
     prompt_template_version: "v1"
+    # ⚠ **`request_timeout_s`는 이 브랜치(`exp/atom-slice-smoke`, 머지 안 함)에만 있다.**
+    # 어댑터의 벽시계 상한이다(요청 본문이 아니다 — `src/config.py`의 그 필드 주석, #274).
+    # 기본값 300 s로는 이 스모크가 멈춘다: 2026-09-24에 Scout 호출 하나가 300 s에 걸려
+    # **run 전체가 멈췄다**(`run_20260924_0001` · 이슈 #261 · 서버는 그동안 생성 중이었다).
+    # 26.2 tok/s(2026-09-24 실측)로 4,096은 ≈156 s다(계산값). 그날 최대 wall은 171 s였는데
+    # 그때 입력 중앙값이 2,126토큰이었다 — 이 스모크의 Auditor 입력은 최대 ≈14,900토큰
+    # (계산값)이라 프리필이 훨씬 크다.
+    request_timeout_s: 900
     fallback: null
     benchmark:
       measured_at: null
@@ -493,6 +508,13 @@ models:
     source: "hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
     family: "qwen"
     prompt_template_version: "v3"
+    # ⚠ **`request_timeout_s`는 이 브랜치(`exp/atom-slice-smoke`, 머지 안 함)에만 있다.**
+    # 어댑터의 벽시계 상한이다(요청 본문이 아니다 — `src/config.py`의 그 필드 주석, #274).
+    # 기본값 300 s로는 이 스모크가 멈춘다: 2026-09-24에 Scout 호출 하나가 300 s에 걸려
+    # **run 전체가 멈췄다**(`run_20260924_0001` · 이슈 #261 · 서버는 그동안 생성 중이었다).
+    # 8.1 tok/s(2026-09-24 실측 — 셋 중 가장 느리다)로 4,096을 다 쓰면 ≈506 s다(계산값).
+    # 이 키가 이제 memory·injection 두 자리라 run S 호출의 2/3가 이 서버로 간다.
+    request_timeout_s: 1200
     fallback: null
     benchmark:
       measured_at: null

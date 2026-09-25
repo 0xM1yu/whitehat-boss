@@ -37,6 +37,19 @@ budgets:
     # 관용구다(`BudgetLedger._overrun`).
     tool_seconds: 0
 
+  # --- ATOM 슬라이스 스모크 전용(2026-09-25) — 머지하지 않는 브랜치 `exp/atom-slice-smoke` ---
+  # 아래 `atom_slice_*` 두 프로필만 쓴다. 폭주 차단 하나가 목적이라 넉넉히 둔다 —
+  # 이 값들은 측정이 아니라 상한이고, 스모크가 그 상한에 닿으면 안 된다.
+  # 근거: 2026-09-24 스모크(`run_20260924_0001`)가 대상 11개 × 3좌석에 `gpu_seconds` 3,453을
+  # 청구했다([스모크 보고서](../docs/experiments/harness/2026-09-24-roster-smoke-atom.md) §1).
+  # 이 스모크는 그보다 대상이 많고(run A는 241개) 슬라이스라 프롬프트가 훨씬 크다.
+  atom_slice_smoke:
+    input_tokens: 40000000
+    output_tokens: 4000000
+    gpu_seconds: 100000
+    # 인덱서가 sample_03(파일 534개)을 훑는다 — `default`의 1,800보다 크게 둔다.
+    tool_seconds: 18000
+
 thresholds:
   # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — 이슈 #91.
   scout_threshold: 0.5
