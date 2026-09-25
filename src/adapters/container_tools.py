@@ -264,7 +264,7 @@ class Step:
 
 
 def sif_path(sif_dir: Path, image: str) -> Path:
-    """`harness-tools:v1` → `{sif_dir}/harness-tools_v1.sif`."""
+    """`harness-tools:v2` → `{sif_dir}/harness-tools_v2.sif`."""
     return Path(sif_dir) / f"{image.replace('/', '_').replace(':', '_')}.sif"
 
 
