@@ -30,6 +30,19 @@ python slicer.py --repo /work/repo --out /work/results/slices.json \
 override다. 생략 시 설치본 기본값을 읽어 `joern_engine_config`에 기록한다. 분석 상한은
 생략하면 제한하지 않는다. heartbeat 기본 간격은 CLI `--heartbeat-seconds 30`이다.
 
+`--compile-commands`는 `compile_commands.json`을 받아 c2cpg의 `--compilation-database`로 켠다.
+컴파일되는 번역단위만 그 실제 플래그로 파싱하므로 미컴파일 파일과 비활성 `#ifdef` 분기가
+그래프에서 빠진다. 생략하면 모든 소스를 파싱하는 기존 동작이다. c2cpg가 무시하는 폴더
+`test/`·`tests/`·`CMakeFiles/`·점디렉토리와 비-C/C++ 확장자 항목은 기대집합에서 빼므로
+누락으로 오인하지 않는다. 뺀 개수는 `build_cpg` diagnostic의 `ignored_units`에 남긴다. 두
+한계를 유의한다.
+
+- **빌드 설정 하나만 본다.** DB 하나 = 설정 하나이고, 다른 설정에서만 컴파일되는 코드는
+  그래프에 없다. 여러 설정의 union은 시도하지 않는다 -> #271.
+- **비활성 분기는 파싱하지 않는다.** c2cpg는 `-D` 미지정 시 `__linux__`·`__x86_64__` 같은
+  타깃 매크로를 정의하지 않으므로, 그 매크로에 걸린 분기가 비활성이 되어 빠질 수 있다. 이
+  매크로 동작의 실증은 Joern 실행이 필요하고 풀 슬라이싱에서 확인한다.
+
 종료 코드는 `ok=0`, `partial=2`, `failed=1`이다. CPG 준비 뒤 질의 실패·위치 누락·분석 절단은
 부분 결과를 남긴다. 정상적인 빈 결과와 질의 실패를 구별한다. 출력은 UTF-8·LF이고, 최종
 JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불가능하면 stderr에 사유를 쓴다.
