@@ -26,8 +26,8 @@
 **심볼 단위다(W2).** 1단계 인덱서 산출물에서 심볼마다 `Location(file, symbol,
 line_start, line_end)`을 만든다. 인덱스가 없는 프로필(`dev_fake`)은 **파일 단위로
 되돌아가고 그 사실이 `target_plan`에 남는다.** `--slices`로 돈 run은 **슬라이스 1개가 대상
-하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를, Auditor는 entry를
-감싸는 함수의 원본을 본다(`_step_scout`·`_auditor_target`).
+하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를, Auditor는 슬라이스가
+걸친 함수들의 원본을 entry 함수부터 문자 수 상한 안에서 본다(`_step_scout`·`_auditor_source`).
 
 ⚠ **그 `Location` 하나가 후보 **몇 개**가 되는지는 Scout 자리 수가 정한다.** 단일
 `scout`면 하나이고, **풀이면 멤버마다 하나씩 셋이다** — 4단계에서 대상 하나를 세 멤버가
@@ -1036,8 +1036,8 @@ def _plan_slice_targets(
 
     순위는 entry 줄로 매긴다(`_symbol_signal_rank`) — 히트가 entry 줄에 걸리면 2, 같은
     artifact의 다른 줄이면 1이다.
-    ponytail: entry 한 줄만 본다 — 슬라이스 `lines`에 든 히트로 매기려면 `SliceRef`가 줄
-    목록을 들어야 한다. `candidate_max`가 슬라이스를 실제로 자르는 run이 오면 올린다.
+    ponytail: entry 한 줄만 본다 — 슬라이스 줄(`SliceRef.lines`)에 든 히트로 매기지 않는다.
+    `candidate_max`가 슬라이스를 실제로 자르는 run이 오면 그 줄로 매긴다.
     """
     by_path = {artifact.path: artifact for artifact in artifacts}
     seen: dict[str, tuple[tuple[Evidence, ...], list[int], bool]] = {}
@@ -1305,19 +1305,23 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     한다(`src/tokens.py` docstring).
 
     슬라이스 타깃이면 캡슐의 대상이 후보 위치(entry)가 아니라 **entry를 감싸는 함수**다
-    (`_auditor_target`). 후보의 위치는 그대로 entry다.
+    (`_auditor_target`). `SOURCE`는 그 함수에 슬라이스가 걸친 다른 함수들을 이어 붙인 것이다
+    (`_auditor_source`). 후보의 위치는 그대로 entry다.
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
     if candidate is None:
         raise _StageOutOfOrder("5단계가 4단계보다 먼저 돌았다 — candidate가 비어 있다")
     evidences, artifact = item.target.evidences, item.target.artifact
+    anchor = _auditor_target(ctx, item.target)
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
-        expanded = retrieval.run(
-            ctx, target=_auditor_target(ctx, item.target), level=CapsuleLevel.EXPANDED
-        )
+        expanded = retrieval.run(ctx, target=anchor, level=CapsuleLevel.EXPANDED)
     finding, missings = auditor.run(
-        ctx, candidate=candidate, capsule=expanded, evidences=evidences
+        ctx,
+        candidate=candidate,
+        capsule=expanded,
+        evidences=evidences,
+        source=_auditor_source(ctx, item.target, anchor, candidate.candidate_id),
     )
     item.finding, item.missings = finding, tuple(missings)
     state.update(finding)
@@ -1335,10 +1339,9 @@ _AUDITOR_WINDOW_LINES = 50
 def _auditor_target(ctx: RunContext, target: _Target) -> Location:
     """5단계 캡슐의 대상. 슬라이스 타깃이면 entry 줄을 감싸는 함수, 아니면 타깃 위치 그대로.
 
-    **Auditor는 슬라이스가 아니라 원본을 본다** — ADR 0012 결정 1-b의 기본값 (i)이다(Auditor v3
-    프롬프트가 입력을 `original source code`로 선언한다. 결정권은 @sumin0218 리뷰, 기한 2026-09-26).
-    슬라이스 타깃의 위치는 entry(줄 하나, `line_end` 없음)라 그대로 두면 Auditor가 그 한 줄만
-    읽는다 — 함수 머리도 버퍼 선언도 없이.
+    **Auditor는 슬라이스가 아니라 원본을 본다** — ADR 0012 결정 1-b = 넓은 (i)(2026-09-25 팀 합의.
+    Auditor 프롬프트가 입력을 `original source code`로 선언한다). 슬라이스 타깃의 위치는 entry(줄
+    하나, `line_end` 없음)라 그대로 두면 Auditor가 그 한 줄만 읽는다 — 함수 머리도 버퍼 선언도 없이.
 
     감싸는 함수는 인덱스(`symbols_for`)에서 entry 줄을 품는 심볼이고, 여럿이면 가장 좁은 것이다.
     품는 심볼을 모르면 **entry 앞뒤 `_AUDITOR_WINDOW_LINES`줄**이다 — 파일 전체가 아니다. 인덱스가
@@ -1347,34 +1350,114 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
     모듈 docstring의 unzip.c(67,662자 → HTTP 400)를 다시 연다. W2는 같은 `[]`에서 후보를 아예 안
     만들지만 슬라이스 타깃은 이미 서 있다. 창의 `line_end`는 파일 끝을 넘을 수 있다 — 읽기가 자른다.
 
-    ponytail: entry를 품는 함수 하나(모르면 고정 창)만 본다 — 슬라이스가 걸친 다른 함수(군집
-    슬라이스)는 Auditor가 못 본다. 넓히려면 `SliceRef`가 슬라이스 `lines`를 들어야 한다
-    (`_plan_slice_targets`의 순위 ponytail과 같은 선행). 1-b(@sumin0218 결정)가 (i)로 정해지면 「걸친
-    함수 전부 + 크기 상한」으로 올린다 — 하네스 쪽 권고안이다(2026-09-25).
+    이것은 **캡슐의 대상**이고 `SOURCE`의 첫 함수다 — 슬라이스가 걸친 다른 함수는
+    `_auditor_source`가 그 뒤에 붙인다(결정 1-b = 넓은 (i)).
     """
     if target.slice is None:
         return target.location
     entry = target.slice.entry
     line = entry.line_start
-    enclosing = [
-        symbol
-        for symbol in ctx.symbols_for(entry.file) or []
-        if line is not None
-        and symbol.line_start is not None
-        and symbol.line_start <= line <= (symbol.line_end or symbol.line_start)
-    ]
-    if enclosing:
-        return min(
-            enclosing,
-            key=lambda symbol: (symbol.line_end or symbol.line_start) - symbol.line_start,
-        )
     if line is None:  # `slice_refs`가 entry 줄을 늘 채운다 — 줄이 없으면 창을 세울 자리가 없다
         return Location(file=entry.file)
+    enclosing = _narrowest_symbol(ctx.symbols_for(entry.file) or [], line)
+    if enclosing is not None:
+        return enclosing
     return Location(
         file=entry.file,
         line_start=max(1, line - _AUDITOR_WINDOW_LINES),
         line_end=line + _AUDITOR_WINDOW_LINES,
     )
+
+
+# Auditor `SOURCE`의 문자 수 상한 — 슬라이스가 걸친 함수를 앞에서부터 넣다가 넘치는 함수는 뺀다
+# (entry 함수는 늘 넣는다 — `_auditor_source`). **잰 값이 아니라 계산값이다.** 2026-09-24 서빙이
+# `--max-model-len` 24,576에 `output_max` 4,096이라 입력 몫이 20,480토큰이고, 원문은 사실 블록과
+# `{{SOURCE}}`에 두 번 실린다. 같은 서빙의 Auditor(v1) 호출 35건에서 서버가 센 `input_tokens`와
+# 프롬프트 글자 수의 비가 2.51~2.97자/토큰이었다(`run_20260924_0003`). 가장 낮은 2.51로 셈하면
+# 원문 15,000자 두 벌과 그 run에서 가장 큰 나머지(6,692자)가 ≈15,000토큰이다 — 입력 몫 안이다.
+# ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
+_AUDITOR_SOURCE_CHARS = 15_000
+
+
+def _auditor_source(
+    ctx: RunContext, target: _Target, anchor: Location, candidate_id: str
+) -> str | None:
+    """5단계 `SOURCE`. 슬라이스 타깃이 아니면 `None`이다 — 노드가 캡슐 대상(`anchor`)을 읽는다.
+
+    결정 1-b = 넓은 (i)(2026-09-25 팀 합의): **슬라이스가 걸친 함수의 원본을 전부** 준다. 맨 앞이
+    entry 함수(`anchor` — `_auditor_target`)이고, 나머지는 슬라이스 줄마다 그 줄을 품는 가장 좁은
+    인덱스 심볼을 (파일, 시작 줄) 순으로 붙인다. 둘 이상이면 함수마다 `파일:시작-끝` 배너를 단다 —
+    하나면 배너 없이 그 함수 그대로라 넓히기 전과 바이트가 같다.
+
+    상한(`_AUDITOR_SOURCE_CHARS`)은 함수 단위다 — 앞에서부터 들어가는 함수를 넣고 넘치는 것은
+    뺀다(중간을 자르면 끊긴 함수를 본다). entry 함수는 상한보다 커도 넣는다. `anchor` 범위 안의 줄은
+    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·인덱서가 안 받는 `.h`)은 읽지 않고
+    센다. 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source` 이벤트가 든다 — EXPANDED 캡슐의
+    `target_function`은 entry 함수만 센다.
+
+    ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
+    겹치는 심볼(index-v2)이면 같은 줄이 두 블록에 실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
+    관계로 거른다.
+    """
+    ref = target.slice
+    if ref is None:
+        return None
+    symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
+    spanned: dict[Location, None] = {}
+    uncovered = 0
+    for file, line in ref.lines:
+        if file == anchor.file and _spans(anchor, line):
+            continue
+        symbol = _narrowest_symbol(symbols[file], line)
+        if symbol is None:
+            uncovered += 1
+        else:
+            spanned[symbol] = None
+    anchor_text = ctx.read_source(anchor)
+    blocks = [_block(anchor, anchor_text)]
+    size, dropped = len(blocks[0]), 0
+    for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
+        block = _block(symbol, ctx.read_source(symbol))
+        if size + 1 + len(block) > _AUDITOR_SOURCE_CHARS:
+            dropped += 1
+            continue
+        blocks.append(block)
+        size += 1 + len(block)
+    source = "\n".join(blocks) if len(blocks) > 1 else anchor_text
+    ctx.trace.emit(
+        EventKind.AUDITOR_SOURCE,
+        stage=Stage.AUDITOR,
+        subject_kind="candidate",
+        subject_id=candidate_id,
+        slice_id=ref.slice_id,
+        functions=len(blocks),
+        dropped=dropped,
+        uncovered_lines=uncovered,
+        chars=len(source),
+    )
+    return source
+
+
+def _narrowest_symbol(symbols: list[Location], line: int) -> Location | None:
+    """`line`을 품는 심볼 중 가장 좁은 것. 없으면 `None`. `symbols`는 한 파일의 것이다."""
+    return min(
+        (symbol for symbol in symbols if _spans(symbol, line)),
+        key=lambda symbol: (symbol.line_end or symbol.line_start or 0) - (symbol.line_start or 0),
+        default=None,
+    )
+
+
+def _spans(location: Location, line: int) -> bool:
+    start = location.line_start
+    return start is not None and start <= line <= (location.line_end or start)
+
+
+def _block(location: Location, text: str) -> str:
+    """`SOURCE`에 함수가 둘 이상일 때 그 하나 — 슬라이스 렌더와 같은 꼴의 배너 + 원문. 끝 줄은
+    읽힌 줄로 센다 — 창은 파일 끝을 넘을 수 있고 읽기가 자른다."""
+    start = location.line_start or 1
+    end = start + text.count("\n")
+    return f"/* ===== {location.file}:{start}-{end} ===== */\n{text}"
 
 
 def _step_gate(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:

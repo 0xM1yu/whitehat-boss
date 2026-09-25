@@ -773,6 +773,7 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
         location=Location(file="parser.c", line_start=5, symbol="parse_header"),
         given_end="sink",
         entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
     )
     artifact = next(
         a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"

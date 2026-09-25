@@ -19,6 +19,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
+| Auditor 원문 범위 | `auditor_source` | 상한이 뺀 함수·못 본 줄. **슬라이스 run만 남는다** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
@@ -211,6 +212,17 @@ class EventKind(StrEnum):
     # `subject_id`는 `finding_id`이고 `reason`·`error_detail`을 함께 싣는다. 사유를 안 실으면
     # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
     CRITIC_FAILED = "critic_failed"
+    # 슬라이스 타깃의 Auditor `SOURCE`를 무엇으로 채웠나 — 5단계 호출 1건당 1행(결정 1-b = 넓은
+    # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(문자 수
+    # 상한에 걸려 뺀 함수 수)·`uncovered_lines`(어느 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
+    # `chars`(원문 글자 수)와 `slice_id`를 싣는다. `subject_id`는 후보다.
+    #
+    # **캡슐이 이것을 못 센다.** EXPANDED 캡슐의 `target_function`은 entry 함수만 세고 그것도
+    # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다
+    # (`retrieval_truncated`가 막는 것과 같은 오독이다).
+    #
+    # **슬라이스 없는 run은 0건이다** — 그 run의 Auditor는 캡슐 대상 하나를 그대로 읽는다.
+    AUDITOR_SOURCE = "auditor_source"
     # 이 run이 **어느 토큰 카운터로 셌는가** (#96 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
     #
