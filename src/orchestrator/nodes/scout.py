@@ -215,11 +215,17 @@ def _queue_previous(ctx: RunContext, previous: Candidate | None, reason: ReasonC
 
 
 def describe_target(target: Location) -> str:
-    """프롬프트 본문의 사람이 읽는 대상 표기. 사실 블록에는 구조화된 값이 따로 간다."""
-    lines = ""
-    if target.line_start is not None:
-        lines = f" (줄 {target.line_start}-{target.line_end or target.line_start})"
-    return f"`{target.file}` 의 `{target.symbol or '(파일 전체)'}`{lines}"
+    """프롬프트 본문의 사람이 읽는 대상 표기. 사실 블록에는 구조화된 값이 따로 간다.
+
+    「파일 전체」는 **줄 범위가 없을 때만**이다 — 이름 없이 줄만 든 대상(scopes 없는 슬라이스
+    Case B의 entry, Auditor의 entry 앞뒤 창)을 그렇게 부르면 같은 프롬프트의 FACTS와 어긋난다.
+    """
+    if target.line_start is None:
+        return f"`{target.file}` 의 `{target.symbol or '(파일 전체)'}`"
+    lines = f" (줄 {target.line_start}-{target.line_end or target.line_start})"
+    if not target.symbol:
+        return f"`{target.file}`{lines}"
+    return f"`{target.file}` 의 `{target.symbol}`{lines}"
 
 
 def describe_sections(capsule: ContextCapsule) -> str:
