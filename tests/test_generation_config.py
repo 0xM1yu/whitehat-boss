@@ -148,8 +148,9 @@ def _without_source(config, role: str):
 
     ⚠ **2026-09-24 — `local_balanced`와 그 키들을 지웠다**(로스터 밖 정리). 아래 검사는
     canonical `harness_pool`로 옮겼다. 그 프로필에서 `hf://…@rev`로 **읽히는** 프롬프트 역할은
-    `scout_injection`(`qwen3-14b`)·`critic`(`gpt-oss-20b`) 둘이다 — `seccoderx-8b`와
-    `qwen3.6-35b-a3b`는 `source`에 `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
+    `scout_memory`·`scout_injection`(같은 `qwen3-14b` — 2026-09-25부터 memory도)·`critic`
+    (`gpt-oss-20b`) 셋이다 — `seccoderx-8b`(scout_boundary)와 `qwen3.6-35b-a3b`는 `source`에
+    `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
     """
     key = config.profile.roles[role]
     entry = config.models[key].model_copy(update={"source": None})
@@ -286,10 +287,12 @@ def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:
     """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
-    `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout_injection·critic이고, auditor는
-    `_without_source`가 합성으로 비운다. 두 역할에만 파일을 깔면 맵에 둘만 들어오고 나머지는
-    빠진다 — "이 역할은 선언 샘플링을 못 읽었다"가 부재로 드러난다. (2026-09-24 전에는
-    `local_balanced`의 scout·auditor가 읽히는 쪽, critic이 대조군이었다.)
+    `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout_memory·scout_injection(같은 키
+    `qwen3-14b`)·critic이고, auditor는 `_without_source`가 합성으로 비운다. 두 모델에만 파일을
+    깔면 그 모델을 쓰는 세 역할만 맵에 들어오고 나머지는 빠진다 — "이 역할은 선언 샘플링을 못
+    읽었다"가 부재로 드러난다. `@rev`가 없는 `seccoderx-8b`의 scout_boundary가 그 부재다.
+    (2026-09-24 전에는 `local_balanced`의 scout·auditor가 읽히는 쪽, critic이 대조군이었다.
+    2026-09-25 scout_memory가 `qwen3-14b`로 옮겨 셋이 됐다.)
 
     **auditor를 합성으로 비우는 이유는 `_without_source`의 docstring에 있다** — 2026-09-04에
     registry에서 `source` 없는 실서빙 모델이 사라졌다.
@@ -306,8 +309,10 @@ def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path)
 
     by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
 
-    assert set(by_role) == {"scout_injection", "critic"}
+    assert set(by_role) == {"scout_memory", "scout_injection", "critic"}
     assert by_role["scout_injection"].top_k == 20
+    assert by_role["scout_memory"] == by_role["scout_injection"]  # 같은 키 — 같은 선언
+    assert "scout_boundary" not in by_role  # `seccoderx-8b`는 @rev가 없다
     assert by_role["critic"].repetition_penalty == 1.05
     assert "auditor" not in by_role  # source 없음
     assert "embedding" not in by_role  # PROMPTED_ROLES 아님
