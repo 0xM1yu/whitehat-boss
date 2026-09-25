@@ -30,6 +30,8 @@ from src.adapters.index_graph import (
     STATUS_MALFORMED,
     STATUS_MISSING,
     STATUS_UNSUPPORTED,
+    SUPPORTED_INDEX_VERSIONS,
+    V2_TABLES,
     GraphIndex,
     IndexSummary,
     fit_names,
@@ -780,4 +782,186 @@ def test_both_retrievers_put_the_graph_at_the_same_level(source: Path, tmp_path:
         for capsule in (fake, hybrid)
     ]
     assert graph_kinds[0] == graph_kinds[1] == ["callers", "callees"]
+
+
+# --- index-v2 (#63): 조회 표를 더해도 캡슐은 그대로다 -------------------------------
+#
+# v2는 v1 필드를 그대로 두고 NE resolver가 쓸 조회 표를 더한다. `calls`만 모양이 바뀐다 —
+# 간선 목록이 callee → 호출 지점(+ 인자)으로 묶였다. 아래 `_INDEX_V2`는 `_INDEX_V1`과 **같은
+# 심볼·같은 간선**을 v2 모양으로 적은 쌍둥이다. 쌍둥이 관계는 손으로 적은 데이터다 — 변환 함수로
+# 만들면 읽는 쪽과 같은 오류를 공유해 대조가 동어반복이 된다.
+_INDEX_V2 = {
+    **{key: value for key, value in _INDEX_V1.items() if key != "calls"},
+    "version": "index-v2",
+    "calls": {
+        "parse_header": [{"file": "main.c", "line": 12, "caller": "main", "args": ["buf"]}],
+        "helper": [{"file": "parser.c", "line": 18, "caller": "parse_header", "args": []}],
+        "memcpy": [
+            {"file": "parser.c", "line": 20, "caller": "parse_header", "args": ["d", "s", "n"]}
+        ],
+    },
+    "functions": {
+        "main": [{"file": "main.c", "line_start": 5, "line_end": 15, "params": []}],
+        "helper": [{"file": "parser.c", "line_start": 3, "line_end": 6, "params": []}],
+        "parse_header": [
+            {"file": "parser.c", "line_start": 9, "line_end": 22, "params": ["src"]}
+        ],
+    },
+    # 캡슐로 새면 눈에 띄도록 표마다 실제 항목을 둔다 — 빈 표면 「안 샜다」가 공허하다.
+    "macros": {"HDR_LEN": [{"file": "parser.c", "line_start": 1, "line_end": 1}]},
+    "types": {
+        "header": [{"file": "parser.c", "line_start": 2, "line_end": 2, "kind": "struct"}]
+    },
+    "file_vars": {"g_hdr": [{"file": "main.c", "line_start": 3, "line_end": 3}]},
+    "fields": {"len": [{"type": "header", "file": "parser.c", "line_start": 2, "line_end": 2}]},
+    "locals": {"parser.c": {"parse_header": {"src": [9], "buf": [10]}}},
+    "assigns": {"parser.c": {"parse_header": {"n": [11]}}},
+    "field_assigns": {
+        "len": [
+            {"file": "main.c", "line": 13, "func": "main", "lhs": "h->len", "rhs": "n", "op": "="}
+        ]
+    },
+}
+
+
+def _v1_v2(tmp_path: Path) -> tuple[GraphIndex, GraphIndex]:
+    return _graph(tmp_path / "v1"), _graph(tmp_path / "v2", _INDEX_V2)
+
+
+def test_the_reader_still_accepts_index_v1():
+    """v1 문서는 계속 읽힌다 — 이미지가 v1인 run의 산출물이 남아 있다."""
+    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2"}
+
+
+def test_v2_calls_give_the_same_graph_edges_as_the_v1_list(tmp_path: Path):
+    """**캡슐 그래프 섹션의 데이터원이 v1 목록에서 v2 묶음으로 바뀌어도 간선이 같다.**
+
+    파일·심볼·슬라이스 본문 세 종류의 본문에서 callers·callees 둘 다 대조한다. 비교가 공허하지
+    않도록 간선이 실제로 나오는 자리가 섞여 있다(마지막 단언).
+    """
+    v1, v2 = _v1_v2(tmp_path)
+    targets = [
+        (_file_target("parser.c"), None),
+        (_file_target("main.c"), None),
+        (_PARSE_HEADER, None),
+        (Location(file="parser.c", symbol="helper", line_start=3, line_end=6), None),
+        (
+            Location(file="parser.c", line_start=20),
+            frozenset({("parser.c", 12), ("parser.c", 18), ("parser.c", 20)}),
+        ),
+        (Location(file="main.c", line_start=12), frozenset({("main.c", 12), ("parser.c", 20)})),
+    ]
+
+    for kind in GRAPH_SECTION_KINDS:
+        for target, body in targets:
+            assert v2.names_for(kind, target, body) == v1.names_for(kind, target, body), (
+                kind,
+                target,
+                body,
+            )
+    assert v2.summary == v1.summary
+    assert v2.names_for("callers", _PARSE_HEADER) == [_CALLER_ENTRY]
+
+
+def test_v2_tables_never_reach_the_capsule(source: Path, tmp_path: Path):
+    """**조회 표는 `table()`로만 나간다 — 캡슐 섹션을 키우지 않는다.**
+
+    Scout 프롬프트가 서빙 창을 넘는 결함이 열려 있고(그 거절된 프롬프트에서 Capsule이 8,621자를
+    먹었다) 표는 NE resolver가 **요청받았을 때** 줄 것이다. 두 Retriever · 모든 레벨 · 파일/심볼
+    대상에서 v2 문서의 캡슐이 v1 쌍둥이의 캡슐과 **바이트까지 같다**(`model_dump` — 섹션의 줄
+    본문을 포함한다).
+
+    이 테스트가 무는 것은 캡슐이다. 노드가 훅으로 표를 따로 읽어 프롬프트에 붙이는 경로는 여기서
+    안 잡힌다 — 그런 훅은 지금 0개다(`table()`을 부르는 곳이 `src/`에 없다).
+    """
+    queries = [
+        _query(),
+        _query("main.c"),
+        Query(run_id=RUN_ID, target=_PARSE_HEADER, keywords=[], budget_tokens=4096),
+    ]
+    for make in (_fake, _hybrid):
+        for level in CapsuleLevel:
+            for query in queries:
+                one = make(source, _graph(tmp_path / "v1")).search(query, level)
+                two = make(source, _graph(tmp_path / "v2", _INDEX_V2)).search(query, level)
+                assert [s.model_dump() for s in two.sections] == [
+                    s.model_dump() for s in one.sections
+                ], (make.__name__, level, query.target)
+    assert GRAPH_SECTION_KINDS == ("callers", "callees")
+
+
+def test_table_is_none_when_the_index_has_no_v2_tables(tmp_path: Path):
+    """`None`은 **v2 표가 없다**는 뜻이다 — 인덱스가 없거나, 깨졌거나, 표가 없는 형식(v1)이다.
+
+    v1 문서에서 `{}`를 내면 「표를 봤는데 0건」과 섞인다. NE resolver가 그 둘에 다르게 대응해야
+    한다 — 앞은 「인덱스가 v2가 아니다」를 기록하고, 뒤는 「못 찾았다」를 모델에게 알린다.
+    """
+    assert _graph(tmp_path / "none", document=None).table("macros") is None
+    assert _graph(tmp_path / "v1").table("macros") is None
+    assert _graph(tmp_path / "broken", "{ not json").table("macros") is None
+
+
+def test_an_empty_v2_table_is_zero_rows_not_missing(tmp_path: Path):
+    """v2인데 그 표가 비었으면 빈 매핑이다 — `None`이 아니다(바로 위 테스트와 짝)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, "macros": {}})
+
+    assert graph.table("macros") == {}
+    assert graph.table("macros") is not None
+
+
+def test_table_returns_the_rows_read_only(tmp_path: Path):
+    """조회 표는 run 동안 모든 캡슐·후보가 공유한다. 호출자가 고치면 다음 조회가 오염된다."""
+    macros = _graph(tmp_path, _INDEX_V2).table("macros")
+
+    assert macros["HDR_LEN"][0]["line_start"] == 1
+    with pytest.raises(TypeError):
+        macros["NEW"] = []
+    with pytest.raises(TypeError):
+        macros["HDR_LEN"][0]["line_start"] = 99
+
+
+def test_every_v2_table_is_reachable(tmp_path: Path):
+    """`V2_TABLES`의 이름은 전부 조회된다.
+
+    목록과 읽기가 어긋나면 조회가 `KeyError`로 죽는다."""
+    graph = _graph(tmp_path, _INDEX_V2)
+
+    assert {name: bool(graph.table(name)) for name in V2_TABLES} == dict.fromkeys(V2_TABLES, True)
+
+
+def test_an_unknown_table_name_is_a_programming_error(tmp_path: Path):
+    """오타로 부른 표가 조용히 `None`을 내면 「v2 표가 없다」로 읽힌다.
+
+    `names_for`가 모르는 kind를 거절하는 것과 같다."""
+    with pytest.raises(ValueError, match="조회 표가 아니다"):
+        _graph(tmp_path, _INDEX_V2).table("src")
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param({**_INDEX_V2, "macros": []}, id="table-not-a-mapping"),
+        pytest.param(
+            {key: value for key, value in _INDEX_V2.items() if key != "fields"}, id="table-missing"
+        ),
+        pytest.param(
+            {**_INDEX_V2, "macros": {"HDR_LEN": [{"file": "parser.c", "line_start": 1}]}},
+            id="row-missing-a-key",
+        ),
+        pytest.param({**_INDEX_V2, "locals": {"parser.c": ["buf"]}}, id="nested-not-a-mapping"),
+        pytest.param({**_INDEX_V2, "calls": _INDEX_V1["calls"]}, id="v2-with-v1-calls"),
+        pytest.param({**_INDEX_V1, "calls": _INDEX_V2["calls"]}, id="v1-with-v2-calls"),
+    ],
+)
+def test_a_misshapen_document_is_refused_whole(broken: dict, tmp_path: Path):
+    """버전은 맞는데 모양이 다르면 **통째로** 거절한다 — v1이 필드 누락을 거절하는 것과 같다.
+
+    절반만 읽힌 표가 남으면 어디까지 믿을지 알 수 없다. 그래프도 표도 후보도 함께 내려간다.
+    """
+    graph = _graph(tmp_path, broken)
+
+    assert graph.summary.status == STATUS_MALFORMED
+    assert graph.names_for("callers", _PARSE_HEADER) is None
+    assert graph.symbols_for("parser.c") is None
+    assert graph.table("macros") is None
 
