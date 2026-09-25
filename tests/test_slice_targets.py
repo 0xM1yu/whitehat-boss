@@ -384,7 +384,8 @@ def test_the_auditor_reads_every_function_the_slice_spans_entry_function_first(
     assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("recv_request", 28)
     assert _source_events(trace_path) == [
         {"slice_id": "slice_0004", "functions": 2, "dropped": 0, "uncovered_lines": 0,
-         "chars": len(facts["source"])},
+         "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[27:31]))},
     ]
 
 
@@ -408,7 +409,8 @@ def test_the_auditor_source_cap_drops_whole_functions_but_never_the_entry_functi
     assert facts["source"] == "\n".join(_PARSER[27:31])
     assert _source_events(trace_path) == [
         {"slice_id": "slice_0004", "functions": 1, "dropped": 1, "uncovered_lines": 0,
-         "chars": len(facts["source"])},
+         "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[27:31]))},
     ]
 
 
@@ -466,7 +468,8 @@ def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_
     assert facts["source"] == (f"{first}\n{last}" if fits else "\n".join(_PARSER[27:31]))
     assert _source_events(trace_path) == [
         {"slice_id": "slice_0006", "functions": 2 if fits else 1, "dropped": 1 if fits else 2,
-         "uncovered_lines": 0, "chars": len(facts["source"])},
+         "uncovered_lines": 0, "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[27:31]))},
     ]
 
 
@@ -525,7 +528,8 @@ def test_slice_lines_outside_every_known_function_are_counted_not_read(tmp_path:
     assert facts["source"] == "\n".join(_PARSER[18:26])
     assert _source_events(trace_path) == [
         {"slice_id": "slice_0005", "functions": 1, "dropped": 0, "uncovered_lines": 1,
-         "chars": len(facts["source"])},
+         "chars": len(facts["source"]),
+         "anchor_chars": len(_joined(_PARSER[18:26]))},
     ]
 
 
