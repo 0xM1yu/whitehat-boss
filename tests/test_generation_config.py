@@ -148,8 +148,9 @@ def _without_source(config, role: str):
 
     ⚠ **2026-09-24 — `local_balanced`와 그 키들을 지웠다**(로스터 밖 정리). 아래 검사는
     canonical `harness_pool`로 옮겼다. 그 프로필에서 `hf://…@rev`로 **읽히는** 프롬프트 역할은
-    `scout_injection`(`qwen3-14b`)·`critic`(`gpt-oss-20b`) 둘이다 — `seccoderx-8b`와
-    `qwen3.6-35b-a3b`는 `source`에 `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
+    `scout_memory`·`scout_injection`(같은 `qwen3-14b` — 2026-09-25부터 memory도)·`critic`
+    (`gpt-oss-20b`) 셋이다 — `seccoderx-8b`(scout_boundary)와 `qwen3.6-35b-a3b`는 `source`에
+    `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
     """
     key = config.profile.roles[role]
     entry = config.models[key].model_copy(update={"source": None})

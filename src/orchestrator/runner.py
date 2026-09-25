@@ -1248,8 +1248,9 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     카운터(글자수 근사)가 유지된다.
 
     **`capsule_budget_tokens`는 풀에서 마진으로 강제된다(#194).** 캐시 적중은 `model_validate`를
-    다시 타지 않아 첫 멤버(qwen) 기준으로만 검증되는데, 다른 계열(mistral=`scout_boundary`)은 같은
-    텍스트를 최대 ~11% 더 센다(2026-09-13 ATOM 실측: 캡슐 합 +4%). 그래서 `nodes.retrieval`이 풀
+    다시 타지 않아 첫 멤버(qwen) 기준으로만 검증되는데, 계열이 다른 멤버는 같은 텍스트를 최대 ~11%
+    더 센다(2026-09-13 ATOM 실측 — 그때 로스터의 mistral `scout_boundary`: 캡슐 합 +4%. 2026-09-21
+    교체 뒤 Scout 세 자리는 모두 qwen 계열이다). 그래서 `nodes.retrieval`이 풀
     프로필에서 예산을 `_POOL_CAPSULE_MARGIN`(0.90)만큼 줄여 담는다 — 그 최대 갈림까지 세 자리
     전부 상한 안에 든다. 캡슐을 멤버마다 재계산하지 않고(공유 보장 유지) 담을 때 여유만 둔다.
     ⚠ **Fake 프로필에서는 전 역할이 같은 기본 카운터라 이 갈림이 없다** — 마진은 무해하다.
