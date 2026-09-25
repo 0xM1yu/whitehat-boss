@@ -1,0 +1,201 @@
+"""슬라이서 산출물(`slices.json`)을 읽어 Scout의 `SOURCE`로 렌더한다 (ADR 0012 결정 1).
+
+슬라이서(`slicer.py`)는 하네스 run 밖에서 Joern과 함께 미리 돌고, 여기는 **읽는 쪽**이다.
+`src/`는 `slicer*.py`를 import하지 않는다 — 인덱서(`index_graph.py`)와 같이 JSON 파일 하나로만
+만난다. 그래서 슬라이서의 규칙 중 이쪽이 따라야 하는 둘(줄 세기 · 바이트 해석)을 여기 다시 적는다.
+
+## 슬라이스 1개가 타깃 1개다
+
+`slices[]`의 한 항목이 러너 타깃 하나가 된다(배선은 러너 쪽). `case`가 v3 프롬프트의
+`FACTS.slice_criterion.given_end`를 정한다 — Case A는 진입점에서 앞으로 자른 것(`source`),
+Case B는 위험 연산에서 뒤로 자른 것(`sink`)이다.
+
+## 로드에서 죽는다 — `index_graph`와 반대다
+
+`index_graph`는 index.json이 없거나 깨져도 run을 살리고 사유만 센다. 여기는 거꾸로다 —
+`--slices`는 조작자가 **명시적으로 준** 입력이고, 그것을 못 믿는데 조용히 빈 타깃 목록으로
+돌면 「슬라이스가 0개였다」와 「파일을 못 읽었다」가 같은 run이 된다. 모르는 판·`failed`·
+CPG 없이 끝난 `partial`은 run 시작 전에 이유를 대고 멈춘다.
+
+## 렌더 — 슬라이서가 본 파일과 같을 때만
+
+`code`(배너 + 맨 줄)는 슬라이서가 **그때 읽은** 파일에서 조립한 것이다. 하네스는 자기 사본을
+읽어 같은 조립을 다시 하고, `code`와 한 글자라도 다르면 렌더하지 않는다 — 줄번호 gutter가
+다른 파일의 줄을 가리키게 되기 때문이다(v3는 그 번호를 인용하라고 시킨다).
+"""
+
+import codecs
+import json
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+SUPPORTED_SLICE_VERSION = "slice-v2"
+
+# 슬라이서 `case` → v3 `slice_criterion.given_end`
+# (`prompts/scout_*/v3/prefix.md` 「Slice criterion」).
+_GIVEN_END = {"A": "source", "B": "sink"}
+
+
+class SliceInputError(ValueError):
+    """`slices.json`을 믿을 수 없다 — 읽기 실패·모르는 판·CPG 없음·파일 drift."""
+
+
+def _decode_bad_bytes_as_latin1(exc: UnicodeDecodeError) -> tuple[str, int]:
+    """무효 UTF-8 바이트만 Latin-1 글자로 — `slicer.py`의 같은 이름 처리기와 같은 규칙(#254)."""
+    return bytes(exc.object[exc.start : exc.end]).decode("latin-1"), exc.end
+
+
+codecs.register_error("harness_latin1_bad_bytes", _decode_bad_bytes_as_latin1)
+
+
+def split_source(raw: bytes) -> list[str]:
+    """슬라이서가 소스를 줄로 나누는 규칙 그대로(`slicer.py`의 소스 적재).
+
+    CR을 접은 뒤 `\\n`으로만 자른다. `splitlines()`는 폼피드 같은 글자에서도 끊어 Joern의
+    줄 번호와 어긋난다(#259).
+    """
+    text = raw.decode("utf-8", errors="harness_latin1_bad_bytes")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text.removesuffix("\n").split("\n") if text else []
+
+
+@dataclass(frozen=True)
+class Slice:
+    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석 세부(`analysis` 등)는 버린다."""
+
+    id: str
+    candidate_key: str
+    case: str
+    # 슬라이스의 대표 위치 — `{file, line, symbol}`. Case B의 `symbol`은 감싸는 함수가 아니라
+    # sink 호출 이름이다(ADR 0012 결정 1의 ⚠). 감싸는 함수는 `candidate_manifest`의 `scopes`에 있다.
+    entry: dict
+    members: tuple[str, ...]
+    lines: tuple[tuple[str, int], ...]
+    code: str
+
+    @property
+    def given_end(self) -> str:
+        return _GIVEN_END[self.case]
+
+
+@dataclass(frozen=True)
+class SliceSet:
+    status: str
+    run_signature: str | None
+    slices: tuple[Slice, ...]
+    candidate_manifest: dict
+
+
+def load_slices(path: Path) -> SliceSet:
+    """`slices.json`을 읽고 검증한다. 믿을 수 없으면 `SliceInputError`."""
+    try:
+        document = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SliceInputError(f"{path}: 슬라이스 파일을 읽지 못했다 — {exc}") from exc
+    if not isinstance(document, dict):
+        raise SliceInputError(f"{path}: 최상위가 객체가 아니다")
+    version = document.get("slice_version")
+    if version != SUPPORTED_SLICE_VERSION:
+        raise SliceInputError(
+            f"{path}: 슬라이스 판 {version!r}는 읽지 않는다 — {SUPPORTED_SLICE_VERSION}만 받는다"
+        )
+    status = document.get("status")
+    if status not in ("ok", "partial"):
+        raise SliceInputError(f"{path}: 슬라이서 status가 {status!r}다 — 쓸 슬라이스가 없다")
+    if status == "partial" and document.get("joern_engine_config") is None:
+        raise SliceInputError(f"{path}: partial인데 CPG 설정이 없다 — CPG에 닿기 전에 끝난 run이다")
+    items = document.get("slices")
+    if not isinstance(items, list):
+        raise SliceInputError(
+            f"{path}: 슬라이스 목록(`slices`)이 배열이 아니다 — {type(items).__name__}"
+        )
+    try:
+        slices = tuple(_slice(item) for item in items)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SliceInputError(f"{path}: 슬라이스 항목 모양이 slice-v2가 아니다 — {exc!r}") from exc
+    seen: set[str] = set()
+    for item in slices:
+        if item.id in seen:
+            raise SliceInputError(f"{path}: 슬라이스 id {item.id}가 둘이다")
+        seen.add(item.id)
+    try:
+        manifest = _manifest(document.get("candidate_manifest"))
+    except ValueError as exc:
+        raise SliceInputError(
+            f"{path}: candidate_manifest 모양이 slice-v2가 아니다 — {exc}"
+        ) from exc
+    return SliceSet(
+        status=status,
+        run_signature=document.get("run_signature"),
+        slices=slices,
+        candidate_manifest=manifest,
+    )
+
+
+def _manifest(raw: object) -> dict:
+    """`candidate_manifest` — **`slice_refs`가 읽는 길**(항목 → `scopes` → 원소 → `symbol`)만 본다.
+
+    그 길의 모양을 로드에서 안 보면 `slice_refs`가 run 디렉터리가 생긴 뒤 `.get()`에서 죽는다
+    (#284 리뷰). 없거나 `null`이면 빈 manifest다 — 슬라이스마다 `scopes`가 없는 것과 같다.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"객체가 아니다 — {type(raw).__name__}")
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"{key}: 객체가 아니다")
+        scopes = entry.get("scopes") or []
+        if not isinstance(scopes, list) or not all(isinstance(s, dict) for s in scopes):
+            raise ValueError(f"{key}: scopes가 객체 배열이 아니다")
+        if not all(isinstance(s.get("symbol"), str | None) for s in scopes):
+            raise ValueError(f"{key}: scopes[].symbol이 문자열이 아니다")
+    return dict(raw)
+
+
+def _slice(item: dict) -> Slice:
+    case = item["case"]
+    if case not in _GIVEN_END:
+        raise ValueError(f"case {case!r}")
+    entry = item["entry"]
+    entry = {"file": str(entry["file"]), "line": int(entry["line"]), "symbol": entry["symbol"]}
+    code = item["code"]
+    if not isinstance(code, str):
+        raise TypeError("code")
+    return Slice(
+        id=str(item["id"]),
+        candidate_key=str(item["candidate_key"]),
+        case=case,
+        entry=entry,
+        members=tuple(str(m) for m in item["members"]),
+        lines=tuple((str(p["file"]), int(p["line"])) for p in item["lines"]),
+        code=code,
+    )
+
+
+def render(item: Slice, read_bytes: Callable[[str], bytes]) -> str:
+    """배너 + `<원본줄>| <코드>` gutter. 하네스 사본이 슬라이서가 본 것과 다르면 `SliceInputError`.
+
+    `read_bytes`는 저장소 상대 경로를 받아 원 바이트를 돌려준다 — 루트 탈출 검사는 부르는
+    쪽 몫이다(`src/paths.py`).
+    """
+    files = sorted({file for file, _ in item.lines})
+    sources = {file: split_source(read_bytes(file)) for file in files}
+    plain: list[str] = []
+    gutter: list[str] = []
+    for file in files:
+        banner = f"/* ===== {file} ===== */"
+        plain.append(banner)
+        gutter.append(banner)
+        for _, line in sorted(p for p in item.lines if p[0] == file):
+            text = sources[file][line - 1] if 0 < line <= len(sources[file]) else None
+            if text is None:
+                raise SliceInputError(f"{item.id}: {file}:{line}이 하네스 사본에 없다 — drift")
+            plain.append(text)
+            gutter.append(f"{line}| {text}")
+    if "\n".join(plain) != item.code:
+        raise SliceInputError(
+            f"{item.id}: {', '.join(files)}이 슬라이서가 본 것과 다르다 — drift라 렌더하지 않는다"
+        )
+    return "\n".join(gutter)
