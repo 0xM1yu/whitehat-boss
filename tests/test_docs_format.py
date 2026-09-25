@@ -1114,7 +1114,9 @@ def test_context_declares_that_profiles_are_not_rewired_yet() -> None:
 
 # §1 표의 `자리` 열. 백틱 역할 이름이 없는 칸의 낱말 → 프로필 `roles`의 키.
 _SEAT_COLUMN = "자리"
-_SEAT_LABELS = {"임베딩": "embedding", "리랭커": "reranker", "Auditor": "auditor", "Critic": "critic"}
+_SEAT_LABELS = {
+    "임베딩": "embedding", "리랭커": "reranker", "Auditor": "auditor", "Critic": "critic",
+}
 # §1 로스터를 통째로 배선한 프로필. 검색 경로만 다른 쌍이다(`test_config.py`의 짝 검사).
 _CANONICAL_PROFILES = ("harness_pool", "harness_pool_hybrid")
 
@@ -1149,7 +1151,8 @@ def test_the_canonical_profiles_seat_the_context_roster() -> None:
         assert key is not None, f"PROJECT-CONTEXT.md:{lineno}: 키 칸이 백틱 키로 시작하지 않는다"
         declared[_seat_role(row[seat_at])] = key.group(1)
 
-    profiles = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))["profiles"]
+    raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8"))
+    profiles = raw["profiles"]
     for name in _CANONICAL_PROFILES:
         roles = profiles[name]["roles"]
         assert {role: roles.get(role) for role in declared} == declared, (
