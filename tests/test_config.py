@@ -10,6 +10,7 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 """
 
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -37,7 +38,7 @@ from src.config import (
 from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import scout as scout_node
-from src.orchestrator.prompt_loader import load_prompt
+from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
@@ -338,6 +339,47 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
     )
 
 
+# `input: slice`를 선언해야 하는 프롬프트 — `SOURCE`를 슬라이스로 정의한 v3 Scout 셋이다
+# (ADR 0012 결정 1 · 각 `prefix.md`의 「SOURCE」 정의).
+SLICE_INPUT_PROMPTS = {"scout_memory/v3", "scout_boundary/v3", "scout_injection/v3"}
+
+
+def test_only_the_v3_scout_prompts_declare_slice_input() -> None:
+    """`input: slice`를 선언한 프롬프트는 v3 Scout 셋뿐이고, 나머지는 전부 원본 소스다.
+
+    `cli.run`의 슬라이스 가드가 보는 것이 이 선언 하나다 — `--slices` 없이 슬라이스 입력
+    프롬프트를 부르는 run을 시작 전에 거부한다(ADR 0012 결정 1). **선언이 새면 가드가 조용히
+    꺼진다**: meta 키를 `inputs:`로 잘못 적으면 로더는 기본값(`source`)으로 읽고, v3 Scout가
+    슬라이스 없이 심볼 본문을 받는 run이 오류 없이 다시 돈다. 그래서 있는지가 아니라
+    **집합이 같은지**를 본다 — 반대쪽(원본 소스 프롬프트가 슬라이스를 선언해 dev run까지
+    막는 것)도 같은 단언이 잡는다.
+    """
+    declared = {
+        f"{d.parent.name}/{d.name}": load_prompt(Role(d.parent.name), d.name).input
+        for d in _prompt_dirs()
+    }
+
+    assert {key for key, kind in declared.items() if kind == "slice"} == SLICE_INPUT_PROMPTS
+    assert {kind for key, kind in declared.items() if key not in SLICE_INPUT_PROMPTS} == {
+        "source"
+    }
+
+
+def test_an_unknown_input_kind_is_refused_at_load(tmp_path: Path) -> None:
+    """`input`은 닫힌 두 값(`source`·`slice`)이다. 모르는 값은 로드에서 죽는다.
+
+    기본값으로 읽어 넘기면 오타 하나(`slices`)가 슬라이스 가드를 조용히 끈다 — 바로 위
+    검사가 키 쪽에서 막는 실패가 값 쪽에서 난다. 복사본 meta에 그 오타를 붙인다.
+    """
+    copy = tmp_path / "scout" / "v1"
+    shutil.copytree(PROMPTS_DIR / "scout" / "v1", copy)
+    meta = copy / "meta.yaml"
+    meta.write_text(meta.read_text(encoding="utf-8") + "input: slices\n", encoding="utf-8")
+
+    with pytest.raises(PromptError, match="'slices'"):
+        load_prompt(Role.SCOUT, "v1", root=tmp_path)
+
+
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> None:
     """프로필이 **고른** 프롬프트 버전이 디스크에 실재한다.
@@ -358,6 +400,11 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     ⚠ **2026-09-24 — 위 문단은 PR #190 때의 서술이다.** 2026-09-21 교체로 그 프로필(지금 이름
     `harness_pool`)의 Scout 세 키가 v3를 가리키고 별칭 셋은 배선이 없다. 지금 이 검사가 풀에서
     지키는 것은 **v3 디렉터리의 실재**다.
+
+    ⚠ **2026-09-25 — 첫 문단의 「첫 모델 호출에서 처음 열린다」는 이제 `--slices`를 준 run에만
+    맞다.** 모델에 닿는 run이 `--slices` 없이 시작하면 `cli.run`의 슬라이스 가드가 시작 전에
+    프로필의 프롬프트를 전부 열고, 로드 실패도 거기서 exit 2다. 풀 프로필의 run은 `--slices`를
+    줘야 서므로 그 run에서는 여전히 첫 호출에서 연다 — 이 검사는 그대로 필요하다.
     """
     config = load_config(profile)
 

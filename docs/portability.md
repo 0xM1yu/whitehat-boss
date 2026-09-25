@@ -112,7 +112,7 @@
 고른다.
 
 ```bash
-python -m src.cli run    --profile harness_pool --target <경로> --device atom --condition B3prime@pipeline
+python -m src.cli run    --profile harness_pool --target <경로> --slices <slices.json> --device atom --condition B3prime@pipeline
 python -m src.cli bench  --profile harness_pool --apply --device atom
 python -m src.cli doctor --profile harness_pool --device seraph
 ```
