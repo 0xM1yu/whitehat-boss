@@ -48,7 +48,7 @@ v1 필드(`symbols`·`files`·`skipped`·`unresolved_*`·`parse_errors`)는 그�
 | `macros` | 이름 → [{file, line_start, line_end}] |
 | `types` | 이름 → [{file, line_start, line_end, kind}] — struct·union·enum·typedef |
 | `file_vars` | 이름 → [{file, line_start, line_end}] — 파일 스코프 선언문 |
-| `fields` | 필드 → [{type, file, line_start, line_end}] — 그 필드를 선언한 타입과 그 범위 |
+| `fields` | 필드 → [{type, file, line_start, line_end}] — 선언한 타입(없으면 `null`)과 범위 |
 | `locals` | 파일 → 함수 → 이름 → [선언 줄] — 파라미터 포함 |
 | `assigns` | 파일 → 함수 → 이름 → [대입 줄] |
 | `field_assigns` | 필드 → [{file, line, func, lhs, rhs, op}] |
@@ -345,9 +345,9 @@ def _lookup_tables(root, relative: str) -> dict:
     - **함수** — `None`이면 파일 스코프, `""`이면 이름을 못 뽑은 정의 안이다. 그 안의 지역·대입은
       버린다(v1도 그 정의를 `unresolved_symbols`로 세고 호출을 버린다). 중첩 정의는 바깥 정의의
       것으로 센다 — `_walk_calls`와 같다.
-    - **필드 주인** — `(이름, 범위)`. 이름 있는 struct·union이면 그것, 이름이 없으면 감싼 typedef,
-      그것도 없으면 바깥 주인을 물려받는다(익명 union 멤버는 바깥 struct로 접근한다). 끝까지
-      없으면 이름이 `None`이다.
+    - **필드 주인** — `(이름, 범위)`. 이름 있는 struct·union이면 그것이다. 이름이 없으면
+      typedef의 타입일 때 그 typedef, C11 익명 멤버일 때 바깥 주인을 물려받고(`_lends_owner`),
+      그 밖에는 이름이 `None`이고 범위가 그 지정자다.
     """
     tables: dict = {
         name: {} for name in ("macros", "types", "fields", "file_vars", "field_assigns")
@@ -368,12 +368,12 @@ def _lookup_tables(root, relative: str) -> dict:
                 _add_line(scoped["locals"], func, _text(param), param)
         elif kind in _TYPE_SPECIFIERS and node.child_by_field_name("body") is not None:
             name = node.child_by_field_name("name")
+            span = _span(node, relative)
             if name is not None:
-                span = _span(node, relative)
                 _add(tables["types"], _text(name), {**span, "kind": _TYPE_SPECIFIERS[kind]})
                 owner = (_text(name), span)
-            elif owner is None:
-                owner = (None, _span(node, relative))
+            elif not _lends_owner(node):
+                owner = (None, span)
         elif kind == "type_definition":
             span = _span(node, relative)
             names = [
@@ -403,6 +403,22 @@ def _lookup_tables(root, relative: str) -> dict:
             _record_assignment(node, func, relative, tables["field_assigns"], scoped["assigns"])
         stack.extend((child, func, owner) for child in reversed(node.children))
     return {**tables, **scoped}
+
+
+def _lends_owner(specifier) -> bool:
+    """이름 없는 struct·union이 바깥 주인을 그대로 물려받는가.
+
+    둘뿐이다: typedef의 타입일 때(주인은 그 typedef 이름 — `type_definition` 갈래가 먼저 정했다)와
+    **선언자 없는 필드**일 때(C11 익명 멤버 `union { int b; };` — `o.b`로 바깥에서 닿는다).
+    이름 있는 필드의 익명 타입(`struct { int d; } named;`)은 아니다 — `d`는 `o.named.d`로만 닿으므로
+    주인이 바깥 struct가 아니다(#63 코드리뷰가 잡았다).
+    """
+    parent = specifier.parent
+    if parent is None:
+        return False
+    if parent.type == "type_definition":
+        return True
+    return parent.type == "field_declaration" and not parent.children_by_field_name("declarator")
 
 
 def _record_assignment(node, func: str, relative: str, field_assigns: dict, assigns: dict) -> None:
