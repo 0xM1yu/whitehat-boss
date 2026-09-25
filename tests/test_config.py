@@ -1511,7 +1511,7 @@ def test_no_two_served_models_share_a_port() -> None:
     assert not shared, f"포트를 같이 쓰는 실서빙 키: {shared}"
 
 
-# --- 모델별 요청 손잡이 (MASTER-PLAN §9-A W2 · #261) ---------------------------
+# --- 모델별 요청 손잡이 (ADR 0012 Phase 6.5 · #261) ------------------------------
 
 _KNOBS = {
     "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0},
