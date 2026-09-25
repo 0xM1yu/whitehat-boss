@@ -219,6 +219,37 @@ def test_external_callee_not_in_the_symbol_table_is_kept(tmp_path: Path):
     assert _graph(tmp_path).names_for("callees", _file_target("parser.c")) == [_CALLEE_ENTRY]
 
 
+# --- 슬라이스 본문 (#220 ①) ------------------------------------------------------
+#
+# 슬라이스 타깃의 본문은 연속 범위가 아니라 슬라이스의 (file, line) 집합이다 — 프롬프트가 싣는
+# 것이 그 렌더라서다. 「본문 안에 정의」는 정의의 **범위**가 그 집합과 겹치는가다.
+
+
+def test_a_slice_body_counts_a_definition_whose_range_it_overlaps(tmp_path: Path):
+    """{12, 18, 20}은 `parse_header`(9–22)의 머리 줄 9를 안 품지만 그 범위 안이다 — `main`의
+    호출이 callers에 남는다. 시작 줄로 판정하면 빠진다(K&R 머리·손으로 만든 줄 집합의 모양).
+    callees는 보이는 줄의 호출이다 — `helper`(3–6)는 본문과 안 겹쳐 남는다. parser.c:12는
+    main.c:12와 **줄 번호만** 같다 — 파일을 안 보고 줄만 보면 `main`의 호출이 본문 안으로
+    읽혀 빠진다."""
+    graph = _graph(tmp_path)
+    body = frozenset({("parser.c", 12), ("parser.c", 18), ("parser.c", 20)})
+    entry = Location(file="parser.c", line_start=20)
+
+    assert graph.names_for("callers", entry, body) == [_CALLER_ENTRY]
+    assert graph.names_for("callees", entry, body) == ["helper parser.c:18", _CALLEE_ENTRY]
+
+
+def test_a_slice_body_spans_files_and_drops_edges_whose_both_ends_it_shows(tmp_path: Path):
+    """군집 슬라이스는 파일을 가로지른다. main.c:12의 `main → parse_header`는 양 끝이 다 본문이라
+    어느 섹션에도 없다 — 이미 원문에 있다."""
+    graph = _graph(tmp_path)
+    body = frozenset({("main.c", 12), ("parser.c", 20)})
+    entry = Location(file="main.c", line_start=12)
+
+    assert graph.names_for("callers", entry, body) == []
+    assert graph.names_for("callees", entry, body) == [_CALLEE_ENTRY]
+
+
 def test_graph_entries_are_sorted_for_determinism(tmp_path: Path):
     """같은 입력에 같은 캡슐이 나오지 않으면 재현성이 깨진다(engineering-guide.md §5)."""
     document = {
