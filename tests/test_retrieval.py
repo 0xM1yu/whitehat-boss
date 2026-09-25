@@ -304,10 +304,20 @@ _RENDERS = {
     "slice_0001": "/* ===== target.py ===== */\n1| def handle(req):",
     "slice_0002": "/* ===== target.py ===== */\n1| def handle(req):\n2|     return req.user.token",
 }
+# 위 렌더가 보여 주는 줄. `build_deps`는 렌더 조회와 **같이** 줄 조회도 넣는다(#220 ①).
+_LINES = {
+    "slice_0001": frozenset({("target.py", 1)}),
+    "slice_0002": frozenset({("target.py", 1), ("target.py", 2)}),
+}
 
 
 def _slice_retriever(kind: str, root: Path, *, signature: str = "sig_0001", **extra):  # noqa: ANN202
-    kwargs = {"read_slice": _RENDERS.__getitem__, "slice_signature": signature, **extra}
+    kwargs = {
+        "read_slice": _RENDERS.__getitem__,
+        "slice_signature": signature,
+        "slice_lines": _LINES.__getitem__,
+        **extra,
+    }
     if kind == "fake":
         return FakeRetriever(root=root, ids=IdFactory(RUN_ID), run_id=RUN_ID, **kwargs)
     return _retriever(root, **kwargs)[0]
@@ -364,10 +374,7 @@ def test_a_slice_capsule_draws_its_graph_from_the_slice_lines(
     path = index_output_path(tmp_path / "artifacts", RUN_ID)
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(_SLICE_INDEX), encoding="utf-8")
-    lines = {"slice_0002": frozenset({("target.py", 1), ("target.py", 2)})}
-    retriever = _slice_retriever(
-        kind, corpus, graph=GraphIndex(path), slice_lines=lines.__getitem__
-    )
+    retriever = _slice_retriever(kind, corpus, graph=GraphIndex(path))
 
     capsule = retriever.search(_slice_query("slice_0002"), CapsuleLevel.LIGHT)
 

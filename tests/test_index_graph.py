@@ -226,11 +226,13 @@ def test_external_callee_not_in_the_symbol_table_is_kept(tmp_path: Path):
 
 
 def test_a_slice_body_counts_a_definition_whose_range_it_overlaps(tmp_path: Path):
-    """{18, 20}은 `parse_header`(9–22)의 머리 줄 9를 안 품지만 그 범위 안이다 — `main`의 호출이
-    callers에 남는다. 시작 줄로 판정하면 빠진다(K&R 머리·손으로 만든 줄 집합의 모양).
-    callees는 보이는 두 줄의 호출이다 — `helper`(3–6)는 본문과 안 겹쳐 남는다."""
+    """{12, 18, 20}은 `parse_header`(9–22)의 머리 줄 9를 안 품지만 그 범위 안이다 — `main`의
+    호출이 callers에 남는다. 시작 줄로 판정하면 빠진다(K&R 머리·손으로 만든 줄 집합의 모양).
+    callees는 보이는 줄의 호출이다 — `helper`(3–6)는 본문과 안 겹쳐 남는다. parser.c:12는
+    main.c:12와 **줄 번호만** 같다 — 파일을 안 보고 줄만 보면 `main`의 호출이 본문 안으로
+    읽혀 빠진다."""
     graph = _graph(tmp_path)
-    body = frozenset({("parser.c", 18), ("parser.c", 20)})
+    body = frozenset({("parser.c", 12), ("parser.c", 18), ("parser.c", 20)})
     entry = Location(file="parser.c", line_start=20)
 
     assert graph.names_for("callers", entry, body) == [_CALLER_ENTRY]
