@@ -978,9 +978,9 @@ def _plan_targets(
             plan.fallback_artifacts += 1
             locations = [Location(file=artifact.path)]
         elif not locations:
-            # 인덱스는 있는데 이 파일에 심볼이 없다(`.h`·`.py`·바이너리는 인덱서에
-            # 넘어가지 않는다). 후보를 만들지 않는다 — 대상 선정이 새던 자리가 여기서
-            # 닫힌다(zlib run의 후보 32건 중 C 소스는 12건이었다).
+            # 인덱스는 있는데 이 파일에 심볼이 없다(`.py`·바이너리는 인덱서에 넘어가지
+            # 않고, 함수 정의가 없는 `.h`도 여기로 온다). 후보를 만들지 않는다 — 대상 선정이
+            # 새던 자리가 여기서 닫힌다(zlib run의 후보 32건 중 C 소스는 12건이었다).
             plan.no_symbol_artifacts += 1
             continue
         else:
@@ -1337,7 +1337,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
 
 
 # entry를 품는 심볼을 모를 때 Auditor가 읽는 entry 앞뒤 줄 수. **잰 값이 아니라 설계 상수다** —
-# 헤더의 static inline 함수 하나를 덮고(대개 수십 줄) 프롬프트를 파일 크기와 무관하게 묶는 폭이다.
+# 함수 하나 정도를 덮고(대개 수십 줄) 프롬프트를 파일 크기와 무관하게 묶는 폭이다. 헤더의
+# `static inline` 함수는 2026-09-26부터 인덱서가 받아 여기로 오지 않는다(`_INDEX_SUFFIXES`).
 _AUDITOR_WINDOW_LINES = 50
 
 
@@ -1350,9 +1351,11 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 
     감싸는 함수는 인덱스(`symbols_for`)에서 entry 줄을 품는 심볼이고, 여럿이면 가장 좁은 것이다.
     품는 심볼을 모르면 **entry 앞뒤 `_AUDITOR_WINDOW_LINES`줄**이다 — 파일 전체가 아니다. 인덱스가
-    없을 때만이 아니라 **있어도** 그렇다: `.h`는 artifact인데 인덱서가 안 받아 `symbols_for()`가
-    `[]`이고, 이름을 못 뽑은 정의도 인덱서가 버린다. 파일 전체는 상한 없이 프롬프트에 실려 위
-    모듈 docstring의 unzip.c(67,662자 → HTTP 400)를 다시 연다. W2는 같은 `[]`에서 후보를 아예 안
+    없을 때만이 아니라 **있어도** 그렇다: entry가 어느 정의에도 안 드는 줄(프로토타입·전역·
+    매크로 — 2026-09-26 표본 셋에서 헤더에 entry가 있는 슬라이스 7개가 전부 프로토타입 한
+    줄이었다)이면 `symbols_for()`가 품는 심볼을 못 주고, 이름을 못 뽑은 정의도 인덱서가 버린다.
+    파일 전체는 상한 없이 프롬프트에 실려 위 모듈 docstring의 unzip.c(67,662자 → HTTP 400)를
+    다시 연다. W2는 같은 `[]`에서 후보를 아예 안
     만들지만 슬라이스 타깃은 이미 서 있다. 창의 `line_end`는 파일 끝을 넘을 수 있다 — 읽기가 자른다.
 
     이것은 **캡슐의 대상**이고 `SOURCE`의 첫 함수다 — 슬라이스가 걸친 다른 함수는
@@ -1409,7 +1412,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
 
     상한(`_AUDITOR_SOURCE_CHARS`)은 함수 단위다 — 앞에서부터 들어가는 함수를 넣고 넘치는 것은
     뺀다(중간을 자르면 끊긴 함수를 본다). entry 함수는 상한보다 커도 넣는다. `anchor` 범위 안의 줄은
-    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·인덱서가 안 받는 `.h`)은 읽지 않고
+    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·프로토타입·매크로)은 읽지 않고
     센다. 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source` 이벤트가 든다 — EXPANDED 캡슐의
     `target_function`은 entry 함수만 센다.
 
@@ -1420,7 +1423,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     상한을 둘지는 이 이벤트가 실서빙에서 내는 값을 보고 정한다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
-    겹치는 심볼(index-v2)이면 같은 줄이 두 블록에 실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
+    겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
+    실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
     """
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
