@@ -224,7 +224,8 @@ def test_sections_never_exceed_the_capsule_budget(corpus: Path) -> None:
 def test_pool_profile_shrinks_the_capsule_budget_by_the_margin() -> None:
     """풀 프로필에서 3단계 예산이 마진(#194)만큼 줄어 Query에 실린다. 단일은 안 줄어든다.
 
-    공유 캡슐을 첫 멤버(qwen) 토크나이저로 재는데 다른 계열(mistral=scout_boundary)이
+    공유 캡슐을 첫 멤버(qwen) 토크나이저로 재는데 계열이 다른 멤버(2026-09-13 실측 때의 mistral
+    `scout_boundary`)가
     같은 텍스트를 최대 ~11% 더 세므로, 첫 멤버 기준 예산을 factor로 줄여 담아야 세 자리가
     전부 상한 안에 든다(2026-09-13 ATOM 실측). 단일 프로필은 자리가 하나라 마진이 없다 —
     실측 없이 상한을 줄이면 §0의 "안 잰 값으로 채우지 않는다"에 걸린다.
