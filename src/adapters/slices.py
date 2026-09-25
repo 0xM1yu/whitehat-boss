@@ -30,6 +30,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.schemas.candidate import SliceRef
+from src.schemas.common import Location
+
 SUPPORTED_SLICE_VERSION = "slice-v2"
 
 # 슬라이서 `case` → v3 `slice_criterion.given_end`
@@ -172,6 +175,38 @@ def _slice(item: dict) -> Slice:
         lines=tuple((str(p["file"]), int(p["line"])) for p in item["lines"]),
         code=code,
     )
+
+
+def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
+    """러너 타깃으로 넘길 모양. `Location`은 entry의 file·line + **감싸는 함수 이름**이다.
+
+    Case B의 `entry.symbol`은 sink 호출 이름(`memcpy` 등)이라 심볼 이름으로 못 쓴다 —
+    대표 후보의 `scopes[0].symbol`(Joern이 준 메서드 이름)을 쓴다. `scopes`가 없으면 Case A는
+    entry의 이름으로 떨어지고(entry가 메서드 자신이다) **Case B는 비운다** — sink 이름을 함수
+    이름 자리에 조용히 적지 않는다(#284 리뷰). `scopes[].file`은 Joern 원경로라 쓰지 않는다 —
+    파일은 이미 상대화된 entry의 것이다.
+    """
+    refs = []
+    for item in loaded.slices:
+        scopes = (loaded.candidate_manifest.get(item.candidate_key) or {}).get("scopes") or []
+        symbol = scopes[0].get("symbol") if scopes else None
+        fallback = item.entry["symbol"] if item.case == "A" else None
+        location = Location(
+            file=item.entry["file"],
+            line_start=item.entry["line"],
+            symbol=symbol or fallback,
+        )
+        refs.append(SliceRef(slice_id=item.id, location=location, given_end=item.given_end))
+    return tuple(refs)
+
+
+def slicer_summary(loaded: SliceSet) -> dict[str, str | int | None]:
+    """`RunRecord.slicer`가 될 값 — CPG가 못 본 줄의 한계가 기록에 남는 자리(ADR 0012 결정 1)."""
+    return {
+        "status": loaded.status,
+        "run_signature": loaded.run_signature,
+        "slices": len(loaded.slices),
+    }
 
 
 def render(item: Slice, read_bytes: Callable[[str], bytes]) -> str:

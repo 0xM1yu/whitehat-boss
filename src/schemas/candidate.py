@@ -93,3 +93,22 @@ class Candidate(HarnessModel):
     # 9단계 dedupe(`orchestrator/nodes/report.py`)가 어느 필드를 봐야 하는지는 그 문서가
     # 정하지 않았다 — 지금 넘기면 그 미결을 코드가 임의로 답한 것이 된다.
     scout_member: ScoutMemberRole | None = None
+    # 이 후보가 나온 **슬라이스**(`slices.json`의 `slices[].id` — ADR 0012 결정 1의 #220 ① 풀이).
+    # `location`은 슬라이스의 대표 위치(entry)라 불연속 줄 집합을 못 들고, entry가 같은 두
+    # 슬라이스를 가르지도 못한다 — 그것을 이 필드가 든다. `scout_member`와 같은 논법으로
+    # **하네스가 덮는다**(`nodes/scout.run`). `None`은 `--slices` 없이 돈 run의 후보다.
+    slice_id: NonEmptyStr | None = None
+
+
+class SliceRef(HarnessModel):
+    """러너가 슬라이스 하나를 타깃으로 세우는 데 필요한 것 — 어댑터가 `slices.json`에서 만든다.
+
+    러너는 `src/adapters/`를 import하지 않으므로(계층 규칙) 슬라이서 형식이 아니라 이 스키마가
+    경계를 넘는다 — `symbols_for`가 `Location`을 나르는 것과 같은 자리다.
+    """
+
+    slice_id: NonEmptyStr
+    # entry의 file·line + 감싸는 함수 이름(후보의 `scopes`) — `Candidate.location`이 된다.
+    location: Location
+    # v3 `FACTS.slice_criterion.given_end` — Case A는 `source`, B는 `sink`.
+    given_end: Literal["source", "sink"]
