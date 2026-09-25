@@ -1,4 +1,7 @@
-# harness-tools:v1 — 파이프라인 2단계·8단계가 쓰는 도구 이미지.
+# harness-tools:v2 — 파이프라인 1·2·8단계가 쓰는 도구 이미지.
+#
+# v2 = 인덱서가 index-v2(조회 표 — `indexer.py` 모듈 docstring)를 낸다. v1 이미지는 지우지 않는다 —
+# 지난 run 매니페스트의 `tool_images`가 그 digest를 적었다.
 #
 # **태그를 latest로 두지 않는다.** 이 이미지의 digest가 `RunRecord.tool_images`에 박히므로
 # 버전이 고정돼야 두 run의 비교가 성립한다(evaluation.md §6).
@@ -72,11 +75,13 @@ RUN printf 'int main(void){return 0;}\n' > /tmp/smoke.c \
 # 인덱서 연막 검사. 파서 휠이 이 아키텍처에 없으면 여기서 터진다 — ATOM이 aarch64라
 # x86에서만 되는 휠을 물고 있으면 8단계가 아니라 지금 알아야 한다.
 # 심볼과 호출이 **실제로 잡히는지**까지 본다. import만 확인하면 문법 모듈이 바뀌어
-# 아무것도 못 뽑게 돼도 통과한다.
-RUN printf 'void a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx.c \
+# 아무것도 못 뽑게 돼도 통과한다. index-v2의 `calls`는 callee → 호출 지점이라 간선 수는
+# 값 목록의 길이 합이다(키 수가 아니다). 조회 표도 하나(`macros`) 실제로 차는지 본다.
+RUN printf '#define N 1\nvoid a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx.c \
  && python3 /opt/indexer.py --out /tmp/idx.json --root /tmp /tmp/idx.c \
  && python3 -c "import json,sys; d=json.load(open('/tmp/idx.json')); \
-sys.exit(0 if len(d['symbols'])==2 and len(d['calls'])==1 else 1)" \
+e=sum(map(len, d['calls'].values())); \
+sys.exit(0 if len(d['symbols'])==2 and e==1 and 'N' in d['macros'] else 1)" \
  && rm -f /tmp/idx.c /tmp/idx.json
 
 # `.inc` 연막 검사. 실측 샘플은 `target.c`가 `#include` 한 줄이고 코드가 전부 `.inc`에
@@ -88,7 +93,8 @@ RUN printf 'void a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx_core.inc \
  && python3 /opt/indexer.py --out /tmp/idx_inc.json --root /tmp \
       /tmp/idx_inc.c /tmp/idx_core.inc \
  && python3 -c "import json,sys; d=json.load(open('/tmp/idx_inc.json')); \
-sys.exit(0 if len(d['symbols'])==2 and len(d['calls'])==1 and d['skipped']==[] else 1)" \
+e=sum(map(len, d['calls'].values())); \
+sys.exit(0 if len(d['symbols'])==2 and e==1 and d['skipped']==[] else 1)" \
  && rm -f /tmp/idx_core.inc /tmp/idx_inc.c /tmp/idx_inc.json
 
 # 대상은 읽기 전용으로 /src에, 쓰기는 /work에만 일어난다(container_tools 모듈 docstring).
