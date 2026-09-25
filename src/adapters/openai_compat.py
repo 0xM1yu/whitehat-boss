@@ -305,8 +305,9 @@ class OpenAICompatModelClient:
         )
         # 타임아웃이 「느림」인지 「멈춤」인지 가를 기준점. **요청 전에** 읽는다 — 타임아웃 뒤에는
         # 우리가 끊어 서버가 그 요청을 abort하므로, 그때 두 번 재면 느린 서버도 멈춘 것으로 보인다.
-        # ponytail: 서버 전체 카운터라 같은 서버에 동시 요청이 있으면(W3) 남의 생성도 「느림」으로
-        # 센다 — 요청별 판정이 필요해지면 스트리밍으로 첫 토큰 이후 진행을 직접 본다.
+        # ponytail: 서버 전체 카운터라 같은 서버에 동시 요청이 있으면(ADR 0012 Phase 6.5의 단계 안
+        # 동시 요청) 남의 생성도 「느림」으로 센다 — 요청별 판정이 필요해지면 스트리밍으로 첫 토큰
+        # 이후 진행을 직접 본다.
         before = generation_tokens(self.endpoint)
         try:
             with urllib.request.urlopen(  # noqa: S310

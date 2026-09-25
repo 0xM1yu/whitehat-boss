@@ -271,7 +271,7 @@ def test_main_exits_2_when_run_dir_is_missing(tmp_path: Path) -> None:
 
 
 def test_the_stuck_ceiling_follows_the_longest_declared_request_timeout() -> None:
-    """모델이 `request_timeout_s`를 선언하면 T의 한 호출 몫이 그 값이다(W2 · #261).
+    """모델이 `request_timeout_s`를 선언하면 T의 한 호출 몫이 그 값이다(ADR 0012 Phase 6.5 · #261).
 
     전역 `_TIMEOUT_S`만 쓰면 1,800 s를 선언한 좌석이 300 s 넘게 생성하는 정상 호출을 stuck으로
     경보한다. 프로필이 **부르는** 모델만 본다 — registry의 딴 키가 T를 늘리면 경보가 무뎌진다.

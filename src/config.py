@@ -240,9 +240,10 @@ class ModelEntry(HarnessModel):
     # 내는 값**이라 분포를 보기 전에 좁히면 기록이 버려지고, 이쪽은 **우리가 적는 설정**이라
     # 오타가 곧 결함이다. 값이 늘면 여기 한 줄을 늘리고 그 전까지는 크게 실패한다.
     reasoning_effort: Literal["low", "medium", "high"] | None = None
-    # **(2026-09-25 — MASTER-PLAN §9-A W2) 이 축에 넷이 더 선다.** 규칙은 위 `reasoning_effort`
-    # 그대로다 — 선언 안 하면 `None`이고 payload에 키가 안 생긴다. 값은 아직 아무 모델에도 없다
-    # (샘플링은 B21, 나머지는 X2·X3 실측 뒤).
+    # **(2026-09-25 — ADR 0012 Phase 6.5 「모델별 요청 설정」) 이 축에 넷이 더 선다.** 규칙은 위
+    # `reasoning_effort` 그대로다 — 선언 안 하면 `None`이고 payload에 키가 안 생긴다. 값은 아직
+    # 아무 모델에도 없다 — 샘플링은 모델 카드 값으로 바꿀지 결정이 남았고, 나머지(사고 켜기·사고
+    # 상한·요청 타임아웃)는 ATOM 실측 뒤에 채운다.
     # - `sampling` — 프로필 공통 `Sampling`(temperature·top_p)을 **이 모델에서 덮고** top_k 등을
     #   더한다. 좌석마다 모델 카드 권장이 갈리기 때문이다(Qwen 계열 「DO NOT use greedy」).
     # - `chat_template_kwargs` — 템플릿 인자(`enable_thinking` 등). 서버 기본 kwargs로 끄지 않고

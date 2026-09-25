@@ -7,7 +7,8 @@
 **임계값은 추측 상수가 아니라 코드 상수에서 온다(§0).**
 
 - **stuck 하드 상한 T = (schema_retries+1) × 요청 타임아웃.** 요청 타임아웃은 프로필이 부르는
-  모델 중 가장 긴 `request_timeout_s`이고, 선언이 없으면 `_TIMEOUT_S`다(`call_timeout_s`, W2).
+  모델 중 가장 긴 `request_timeout_s`이고, 선언이 없으면 `_TIMEOUT_S`다(`call_timeout_s`,
+  ADR 0012 Phase 6.5).
   ⚠ 이 몫은 **지금 config**에서 읽는다 — `schema_retries`와 달리 매니페스트에 안 남기 때문이다.
   registry의 타임아웃을 바꾼 뒤 옛 run을 보면 그 run이 실제로 쓴 값과 T가 갈린다.
   어댑터가 한 호출을 그만큼까지
