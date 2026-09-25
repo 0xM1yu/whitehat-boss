@@ -438,6 +438,47 @@ def test_a_function_that_does_not_fit_is_skipped_and_a_later_one_that_fits_goes_
     ]
 
 
+def test_the_other_functions_follow_in_file_then_line_order(tmp_path: Path) -> None:
+    """entry 함수 뒤의 순서는 (파일, 시작 줄)이다 — 줄이 먼저가 아니다. `util.c`의 `copy_name`(14)은
+    `parser.c`의 `parse_header`(19)보다 줄이 앞이지만 파일이 뒤라 뒤에 온다. 상한 아래에서는 이 순서가
+    어느 함수가 먼저 자리를 차지하는지를 정한다.
+    """
+    spans = ("slice_0007", "A", ("parser.c", 28, "recv_request"), "recv_request",
+             {24, 28, 30, ("util.c", 16)})
+    path = _slices_file(tmp_path, [_slice(*spans)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join([
+        _banner("parser.c", 28, 31), *_PARSER[27:31],
+        _banner("parser.c", 19, 26), *_PARSER[18:26],
+        _banner("util.c", 14, 24), *_UTIL[13:24],
+    ])
+
+
+def test_the_auditor_source_is_read_inside_the_auditor_stage(tmp_path: Path) -> None:
+    """원문을 모으는 읽기와 `auditor_source` 이벤트는 5단계 구간(`stage_start`~`stage_end`) 안이다.
+
+    러너가 `auditor.run`의 인자로 원문을 미리 만들면 그 파일 읽기가 5단계 `stage_end.wall_ms`에서
+    빠지고 이벤트가 5단계 `stage_start`보다 먼저 난다 — 구간으로 단계를 가르는 쪽이 그 이벤트를 어느
+    단계에도 못 넣는다(적대 리뷰에서 재현).
+    """
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    open_stage, seen = None, []
+    for event in _events(trace_path):
+        if event["kind"] == "stage_start":
+            open_stage = event["stage"]
+        elif event["kind"] == "stage_end":
+            open_stage = None
+        elif event["kind"] == "auditor_source":
+            seen.append(open_stage)
+    assert seen == [5]
+
+
 def test_slice_lines_outside_every_known_function_are_counted_not_read(tmp_path: Path) -> None:
     """어느 인덱스 함수에도 안 드는 슬라이스 줄(구조체 필드·전역·인덱서가 안 받는 `.h`)은
     Auditor가 못 본다 — 창을 따로 세우지 않고 **센다**. 안 세면 「슬라이스가 한 함수 안이었다」와
