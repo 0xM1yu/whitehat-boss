@@ -113,21 +113,34 @@ def _abs_include(path: str, directory: str) -> str:
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(directory, path))
 
 
-def _generated_header_includes(cc_path: Path) -> list[str]:
-    """`-I` flags for a sibling generated_headers directory and its immediate subdirs, if present.
+def _generated_header_dirs(cc_path: Path) -> list[Path]:
+    """The sibling generated_headers directory and its immediate subdirs, resolved, if present.
 
     Some samples ship generated config headers (pnglibconf.h, config.h) under
     build_context/generated_headers but leave the compile command's -I pointing only at the repo
     root, so c2cpg never finds them. Then every function behind a config macro (libpng's
     PNG_READ_SUPPORTED) is #ifdef'd out and the file parses to no methods at all. Adding these
-    directories to the include path recovers them. Absent directory means no flags added. The
-    flags are the attached `-I<abspath>` form, the only include form c2cpg's database parser reads.
+    directories to the include path recovers them. Absent directory means an empty list.
     """
     gh = cc_path.parent / "generated_headers"
     if not gh.is_dir():
         return []
-    dirs = [gh] + [d for d in sorted(gh.iterdir()) if d.is_dir()]
-    return ["-I" + str(d.resolve()) for d in dirs]
+    return [gh.resolve()] + [d.resolve() for d in sorted(gh.iterdir()) if d.is_dir()]
+
+
+def _generated_header_includes(cc_path: Path) -> list[str]:
+    """Attached `-I<abspath>` flags for `_generated_header_dirs` -- the only include form c2cpg's
+    database parser reads. Empty when the directory is absent."""
+    return ["-I" + str(d) for d in _generated_header_dirs(cc_path)]
+
+
+def generated_header_dirs(cc_path: Path) -> list[str]:
+    """Relative posix paths of the generated_header dirs the include path gains, for the run
+    record. Empty when the convention (`cc_path.parent/generated_headers`) is absent, so a run can
+    tell compile-aware-with-generated-headers from without rather than the attachment being a
+    silent no-op the result JSON cannot reveal (review M2)."""
+    base = cc_path.parent.resolve()
+    return [d.relative_to(base).as_posix() for d in _generated_header_dirs(cc_path)]
 
 
 def _absolutize_includes(entry: dict, directory: str) -> list[str]:
@@ -216,11 +229,25 @@ def resolve_compilation_database(
         try:
             tokens = _absolutize_includes(entry, directory)
         except ValueError:
-            entries.append({**entry, "directory": directory})
+            # Unbalanced quoting: keep the entry untokenized so it alone doesn't take the whole
+            # compile-aware import down. Still attach the generated-header dirs, or this one TU
+            # loses its config macros while every well-formed entry gets them (review L1). The
+            # appended tokens are well-formed regardless of the entry's own quoting.
+            kept = {**entry, "directory": directory}
+            if gen_includes:
+                if isinstance(entry.get("arguments"), list):
+                    kept["arguments"] = list(entry["arguments"]) + gen_includes
+                elif isinstance(entry.get("command"), str):
+                    kept["command"] = entry["command"] + " " + shlex.join(gen_includes)
+            entries.append(kept)
             continue
-        # Add the sibling generated-header dirs after the compiler token so config macros resolve.
+        # Append the sibling generated-header dirs as the LOWEST-priority includes: they recover a
+        # header the command references nowhere (libpng pnglibconf.h), which a trailing -I finds,
+        # without shadowing a header the command already resolves with a same-named one under
+        # generated_headers (review M1). c2cpg extracts -I regardless of token position; order
+        # among -I flags is the include search priority, so last means only-if-not-found-earlier.
         if gen_includes:
-            tokens = tokens[:1] + gen_includes + tokens[1:] if tokens else gen_includes
+            tokens = tokens + gen_includes
         if isinstance(entry.get("arguments"), list):
             entry = {**entry, "directory": directory, "arguments": tokens}
             entry.pop("command", None)
