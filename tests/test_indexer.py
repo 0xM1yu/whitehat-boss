@@ -652,6 +652,32 @@ def test_params_are_read_through_each_declarator_shape(tmp_path: Path) -> None:
     }
 
 
+def test_only_a_true_anonymous_member_lends_its_fields_to_the_outer_struct(
+    tmp_path: Path,
+) -> None:
+    """C11 익명 멤버(`union { int b; };` — 선언자가 없다)의 필드는 바깥 struct로 접근하므로
+    바깥 struct가 주인이다. **이름 있는 필드의 익명 타입**(`struct { int d; } named;`)은 다르다 —
+    `d`는 `o.named.d`로만 닿으므로 주인은 그 익명 struct(이름 없음, 그 범위)다. 둘을 같은 모양으로
+    적으면 「`d`를 선언한 타입은 `outer`」라는 거짓이 표에 든다(#63 코드리뷰 MEDIUM 재현)."""
+    (tmp_path / "nest.c").write_text(
+        "struct outer {\n"                      # 1
+        "    int a;\n"                          # 2
+        "    union { int b; float c; };\n"      # 3
+        "    struct { int d; } named;\n"        # 4
+        "};\n",                                 # 5
+        encoding="utf-8",
+    )
+    outer = [{"type": "outer", "file": "nest.c", "line_start": 1, "line_end": 5}]
+
+    assert _index(tmp_path, "nest.c")["fields"] == {
+        "a": outer,
+        "b": outer,
+        "c": outer,
+        "named": outer,
+        "d": [{"type": None, "file": "nest.c", "line_start": 4, "line_end": 4}],
+    }
+
+
 def test_an_unnamed_bitfield_is_not_a_field(tmp_path: Path) -> None:
     """`int : 5;`(자리 채움 비트필드)의 선언자는 **폭 0짜리 `field_identifier`**다(실측 — 글자가
     빈 문자열). 거르지 않으면 이름이 `""`인 필드가 표에 든다."""
