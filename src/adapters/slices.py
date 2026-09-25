@@ -137,7 +137,7 @@ def _manifest(raw: object) -> dict:
     """`candidate_manifest` — **`slice_refs`가 읽는 길**(항목 → `scopes` → 원소 → `symbol`)만 본다.
 
     그 길의 모양을 로드에서 안 보면 `slice_refs`가 run 디렉터리가 생긴 뒤 `.get()`에서 죽는다
-    (#284 리뷰). 없거나 `null`이면 빈 manifest다 — `slice_refs`가 entry 이름으로 떨어지는 경우다.
+    (#284 리뷰). 없거나 `null`이면 빈 manifest다 — 슬라이스마다 `scopes`가 없는 것과 같다.
     """
     if raw is None:
         return {}
