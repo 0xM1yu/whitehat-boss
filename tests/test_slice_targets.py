@@ -349,6 +349,11 @@ def test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_fi
 _SPANS_TWO = ("slice_0004", "A", ("parser.c", 28, "recv_request"), "recv_request", {24, 28, 30})
 
 
+def _joined(lines: list[str]) -> str:
+    """줄바꿈으로 잇는다 — 테스트가 기대하는 원문 모양."""
+    return chr(10).join(lines)
+
+
 def _banner(file: str, start: int, end: int) -> str:
     return f"/* ===== {file}:{start}-{end} ===== */"
 
@@ -405,6 +410,33 @@ def test_the_auditor_source_cap_drops_whole_functions_but_never_the_entry_functi
         {"slice_id": "slice_0004", "functions": 1, "dropped": 1, "uncovered_lines": 0,
          "chars": len(facts["source"])},
     ]
+
+
+def test_the_auditor_source_records_the_entry_function_size_the_cap_never_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """상한은 **뒤에 붙는** 함수만 거른다 — entry 함수(`anchor`)는 상한보다 커도 늘 들어간다
+    (바로 위 테스트). 그래서 `SOURCE` 하나가 상한을 넘을 수 있고, 그러면 서빙 입력 몫을
+    넘겨 400으로 거절된다(#289 리뷰 LOW-2).
+
+    `chars`만으로는 그것이 entry 함수 혼자 때문인지 합 때문인지 **함수가 둘 이상이면 못
+    가른다.** `anchor_chars`가 그 자리를 든다 — 고치는 것이 아니라 **보이게 하는 것**이다.
+    entry 함수에도 상한을 둘지는 이 이벤트가 실서빙에서 무엇을 내는지 보고 정한다.
+    """
+    from src.orchestrator import runner
+
+    cap = 1  # entry 함수(4줄) 혼자서도 넘는다
+    monkeypatch.setattr(runner, "_AUDITOR_SOURCE_CHARS", cap, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    (event,) = _source_events(trace_path)
+    # entry 함수 혼자 남았고, 그 크기가 상한을 넘는다 — 이벤트가 그것을 말한다.
+    assert event["anchor_chars"] == len(_joined(_PARSER[27:31]))
+    assert event["anchor_chars"] > cap
+    assert event["chars"] == len(facts["source"]) == event["anchor_chars"]
 
 
 @pytest.mark.parametrize(("slack", "fits"), [(0, True), (-1, False)], ids=["exact", "one-short"])
