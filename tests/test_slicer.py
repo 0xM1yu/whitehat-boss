@@ -819,6 +819,85 @@ def test_crossfile_flow_and_new_context_survive_assembly(monkeypatch, repo, tmp_
     assert "char buf[32]" in item["code"]
 
 
+def _import_query(transport):
+    for request, _ in transport.requests:
+        query = json.loads(request.data)["query"]
+        if "__SLICER_import__" in query:
+            return query
+    raise AssertionError("no import query was sent")
+
+
+def _write_compile_commands(path, entries):
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    return path
+
+
+def test_compile_aware_import_excludes_uncompiled_sources(monkeypatch, repo, tmp_path):
+    # Compile-aware import expects the compiled units, not every source file. An uncompiled
+    # source in the repo must therefore NOT read as "missing from CPG" (which is a partial).
+    (repo / "extra.c").write_text(
+        "int extra(void) { return 0; }\n", encoding="utf-8", newline="\n"
+    )
+    cc = _write_compile_commands(
+        tmp_path / "compile_commands.json",
+        [{"directory": "repo", "file": "main.c", "command": "cc -c main.c"}],
+    )
+    # Without the database every source is expected, so extra.c is reported missing (partial).
+    _, plain, _ = run_cli(monkeypatch, repo, tmp_path, payloads())
+    assert plain["status"] == "partial"
+    assert plain["counters"]["files_missing_from_cpg"] == 1
+    # With it, extra.c is not a compiled unit, so nothing is missing and the flag is passed.
+    _, aware, transport = run_cli(
+        monkeypatch, repo, tmp_path, payloads(), "--compile-commands", str(cc)
+    )
+    assert aware["counters"]["files_missing_from_cpg"] == 0
+    assert "Source files missing from CPG" not in (aware.get("error") or "")
+    assert "--compilation-database" in _import_query(transport)
+
+
+def test_compile_aware_import_excludes_c2cpg_ignored_folders(monkeypatch, repo, tmp_path):
+    # A database entry under a c2cpg-ignored folder (test/) is not expected, so it is not
+    # reported missing; the skip is recorded as a diagnostic (ignored_units), not silent.
+    (repo / "test").mkdir()
+    (repo / "test" / "foo.c").write_text(
+        "int foo(void) { return 0; }\n", encoding="utf-8", newline="\n"
+    )
+    cc = _write_compile_commands(
+        tmp_path / "compile_commands.json",
+        [
+            {"directory": "repo", "file": "main.c", "command": "cc -c main.c"},
+            {"directory": "repo", "file": "test/foo.c", "command": "cc -c test/foo.c"},
+        ],
+    )
+    _, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(), "--compile-commands", str(cc)
+    )
+    assert result["counters"]["files_missing_from_cpg"] == 0
+    diags = [
+        d
+        for d in result["diagnostics"]
+        if d.get("stage") == "build_cpg" and d.get("compile_aware")
+    ]
+    assert diags and diags[0]["compiled_units"] == 1 and diags[0]["ignored_units"] == 1
+
+
+def test_broken_compile_commands_falls_back_to_importing_all_sources(
+    monkeypatch, repo, tmp_path
+):
+    # A malformed database must not lose the run: build_cpg falls back to importing every
+    # source, so the import query carries no --compilation-database and the fallback is recorded.
+    cc = tmp_path / "compile_commands.json"
+    cc.write_text("{ this is not valid json", encoding="utf-8")
+    _, result, transport = run_cli(
+        monkeypatch, repo, tmp_path, payloads(), "--compile-commands", str(cc)
+    )
+    assert "--compilation-database" not in _import_query(transport)
+    diags = [d for d in result["diagnostics"] if d.get("stage") == "build_cpg"]
+    assert diags and diags[0]["compile_aware"] is False
+    # The repo's lone source still imports, so the run completes rather than failing.
+    assert result["counters"]["files_missing_from_cpg"] == 0
+
+
 def test_query_deadline_does_not_wait_for_blocked_transport(monkeypatch, repo, tmp_path):
     released = threading.Event()
 

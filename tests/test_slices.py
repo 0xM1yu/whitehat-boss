@@ -170,6 +170,54 @@ def test_a_slice_ref_keeps_the_raw_entry_beside_the_enclosing_function(tmp_path:
     assert ref.location == Location(file="main.c", line_start=5, symbol="parse")
 
 
+@pytest.mark.parametrize(
+    "slices",
+    [pytest.param(..., id="missing"), pytest.param({"slice_0001": {}}, id="object")],
+)
+def test_a_file_without_a_slice_list_says_the_list_is_missing(
+    tmp_path: Path, slices: object
+) -> None:
+    """목록이 통째로 없으면 「항목 모양」이 아니라 「목록이 없다」고 말한다 — 조작자가 엉뚱한
+    항목을 찾지 않게(#283 리뷰 LOW)."""
+    document = _document([])
+    if slices is ...:
+        del document["slices"]
+    else:
+        document["slices"] = slices
+
+    with pytest.raises(SliceInputError, match="슬라이스 목록"):
+        load_slices(_write(tmp_path, document))
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        pytest.param([1], id="array"),
+        pytest.param("ab", id="string"),
+        pytest.param({"key_slice_0001": "oops"}, id="entry-not-object"),
+        pytest.param({"key_slice_0001": {"scopes": "oops"}}, id="scopes-not-array"),
+        pytest.param({"key_slice_0001": {"scopes": ["oops"]}}, id="scope-not-object"),
+        pytest.param({"key_slice_0001": {"scopes": [{"symbol": 5}]}}, id="symbol-not-string"),
+    ],
+)
+def test_a_malformed_candidate_manifest_is_refused_at_load(
+    tmp_path: Path, manifest: object
+) -> None:
+    """manifest도 **로드에서** 죽는다 — 그 모양을 믿고 읽는 `slice_refs`는 run 디렉터리가 생긴
+    뒤에 돈다(#283·#284 리뷰 MEDIUM).
+
+    최상위가 객체가 아니면 `dict()`가 맨 `TypeError`·`ValueError`를 냈고, 안쪽 모양은 아무도 안 봐서
+    `slice_refs`의 `.get()`이 `AttributeError`로 죽었다. 문형은 `slice_refs`가 읽는 길을 따라
+    센다 — 항목 → `scopes` → 원소 → `symbol`.
+    """
+    document = _document(
+        [_slice("slice_0001", "A", {("main.c", 1)}, _SOURCES)], candidate_manifest=manifest
+    )
+
+    with pytest.raises(SliceInputError, match="candidate_manifest"):
+        load_slices(_write(tmp_path, document))
+
+
 # --- 렌더 -------------------------------------------------------------------
 
 
