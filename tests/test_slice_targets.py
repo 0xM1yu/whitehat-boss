@@ -288,9 +288,10 @@ def test_the_auditor_takes_the_narrowest_symbol_around_the_entry(tmp_path: Path)
     """entry를 품는 심볼이 여럿이면 가장 좁은 것이다 — 바깥 범위를 고르면 함수 하나가 아니라 그
     바깥 전체가 Auditor에 간다.
 
-    ⚠ 인덱스를 손으로 적는다. 지금 인덱서(index-v1)는 찾은 정의 안으로 안 들어가
-    (`tools/harness-tools/indexer.py`의 `_iter_definitions`) 겹치는 심볼을 내지 않는다. 이 규칙은
-    겹침을 내는 인덱스(index-v2 — ADR 0012 Phase 4)가 오는 날의 것이고, 바깥 심볼을 **앞에** 둬
+    ⚠ 인덱스를 손으로 적는다. 지금 인덱서는 찾은 정의 안으로 안 들어가
+    (`tools/harness-tools/indexer.py`의 `_iter_definitions`) 겹치는 심볼을 내지 않는다 —
+    index-v2도 `symbols`는 그대로다(2026-09-26). 이 규칙은 겹침을 내는 인덱스가 오는 날의
+    것이고, 바깥 심볼을 **앞에** 둬
     「처음 찾은 것」으로 골라도 빨개지게 했다.
     """
     outer = {"name": "outer_scope", "file": "parser.c", "line_start": 17, "line_end": 31}
@@ -321,8 +322,9 @@ def test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_fi
 ) -> None:
     """entry를 품는 심볼을 모르면 entry 앞뒤 창이다 — 파일 전체가 아니다. 한 줄도 아니다.
 
-    인덱스가 **있어도** 걸린다: `.h`는 artifact인데 인덱서가 안 받아 `symbols_for()`가 `[]`이고,
-    이름을 못 뽑은 정의도 인덱서가 버린다. 파일 전체는 상한 없이 Auditor 프롬프트에 실려
+    인덱스가 **있어도** 걸린다: entry가 어느 정의에도 안 드는 줄(헤더의 프로토타입·전역·
+    매크로)이면 `symbols_for()`가 품는 심볼을 못 주고, 이름을 못 뽑은 정의도 인덱서가 버린다.
+    파일 전체는 상한 없이 Auditor 프롬프트에 실려
     unzip.c 67,662자 → HTTP 400(`runner.py` 모듈 docstring)을 다시 연다 — W2는 같은 `[]`에서
     후보를 안 만들지만 슬라이스 타깃은 이미 서 있다.
 
@@ -515,7 +517,7 @@ def test_the_auditor_source_is_read_inside_the_auditor_stage(tmp_path: Path) -> 
 
 
 def test_slice_lines_outside_every_known_function_are_counted_not_read(tmp_path: Path) -> None:
-    """어느 인덱스 함수에도 안 드는 슬라이스 줄(구조체 필드·전역·인덱서가 안 받는 `.h`)은
+    """어느 인덱스 함수에도 안 드는 슬라이스 줄(구조체 필드·전역·프로토타입·매크로)은
     Auditor가 못 본다 — 창을 따로 세우지 않고 **센다**. 안 세면 「슬라이스가 한 함수 안이었다」와
     「슬라이스 일부를 못 봤다」가 같은 기록이 된다. 13은 `struct header`의 필드다.
     """
