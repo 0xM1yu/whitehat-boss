@@ -9,8 +9,9 @@
 표현할 수 없다.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +32,10 @@ from src.adapters.slices import (
     render_slices,
     slice_refs,
     slicer_summary,
+    split_source,
 )
 from src.adapters.sqlite_store import SqliteStateStore
+from src.adapters.symbol_resolver import resolve
 from src.adapters.tokenizer import (
     REASON_NO_SOURCE,
     counter_for_source,
@@ -51,6 +54,7 @@ from src.interfaces.retrieval import EmbeddingClient, RerankerClient
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
+from src.paths import safe_join
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 from src.schemas.need_evidence import Resolution, ResolveQuery
@@ -84,6 +88,18 @@ def _read_rendered(rendered: dict[str, str]) -> Callable[[str], str]:
             ) from None
 
     return read
+
+
+def _read_target_lines(root: Path, relative: str) -> Sequence[str]:
+    """NE resolver의 `read_lines` hook — 대상 트리 파일 하나를 줄 목록으로.
+
+    `slices.split_source`를 그대로 쓴다(#259 회피 선례 — `"\n"`로만 나눈다. CR을 접고
+    UTF-8이 아닌 바이트는 latin-1로 대체한다 — #254/#255가 슬라이서 쪽에서 정한 정책이고
+    파일 하나의 인코딩 문제로 run 전체가 죽지 않는 이유가 그것이다). 못 읽으면
+    `OSError`/`PathEscape`(`ValueError` 하위형)가 그대로 오른다 — `resolve()`가 그
+    요청·블록만 건너뛴다(그 안에서 잡는다).
+    """
+    return split_source(safe_join(root, relative).read_bytes())
 
 
 def _slice_lines(loaded: SliceSet | None) -> Callable[[str], SliceBody] | None:
@@ -501,9 +517,12 @@ def build_deps(
         read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
-        # resolver 배선은 아직 없다 — need_evidence 루프가 실제로 연결한다
-        # (ADR 0012 결정 2 — Phase 5).
-        resolve_requests=None,
+        # NE resolver 배선(ADR 0012 결정 2). `graph`는 인덱스 판을 몰라도 늘 만들어지므로
+        # 훅은 항상 꽂는다 — v1·인덱스 없음 판정은 `resolve()` 안에서 한다(그 모듈 docstring).
+        # 루프(need_evidence 루프, Phase 5)가 실제로 이 hook을 부른다.
+        resolve_requests=partial(
+            resolve, table=graph.table, read_lines=partial(_read_target_lines, source_root)
+        ),
     )
 
 
