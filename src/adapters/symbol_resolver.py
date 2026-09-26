@@ -24,6 +24,9 @@
 - UNFILLED 사유 사이의 우선순위(원문이 순서를 안 준다) — libc를 가장 먼저 본다(그러지
   않으면 `strdup`이 `calls` 표에도 잡혀 outside_repo로 잘못 읽힌다 — hop 1 예가 그 근거),
   다음 outside_repo(호출은 있음), 다음 closest_name(비슷한 철자), 마지막 not_found.
+- **Already in SOURCE 줄이 실리는 자리** — 골격(§5.6)에 Already 전용 자리가 없다. 둘 다
+  "요청한 것을 그대로 안 준다"는 통지라 UNFILLED와 같은 자리에 already를 먼저, Not
+  resolved를 뒤에 넣는다(`resolve()`) — **추측**이다.
 """
 
 import difflib
@@ -343,6 +346,16 @@ _CALLER_SITE_RADIUS = 3
 # 라벨 4·13 — 대입 줄 반경. 라벨 4(같은 함수)는 그 줄 하나, 라벨 13(전역)은 ±1(명세 표).
 _GLOBAL_ASSIGN_RADIUS = 1
 
+# 요청 개수 상한(리뷰 5.1 [HIGH]) — v3 prefix 세 좌석이 모델에게 허락하는 상한과 같다:
+# `prompts/scout_memory/v3/prefix.md:146`·`scout_injection/v3/prefix.md:146`이 똑같이
+# "at most 3 actionable requests", `scout_boundary/v3/prefix.md:135`은 "always present,
+# at most 3 entries"로 문구는 갈려도 숫자는 셋 다 3이다(2026-09-26 세 파일 확인). 없으면
+# 모델이 규칙을 어기거나 파싱이 더 실었을 때 `resolve()`가 그대로 다 돈다 — 리뷰어가
+# 존재하지 않는 target 500개로 재현했다(1.1초, `max_chars=15000`인데 `followup_text`
+# 44,800자, 전부 UNFILLED 줄). 스키마에 `max_length`를 걸지 않는 이유는 비객체 가드를
+# 기각한 것과 같다 — 걸면 응답 전체가 파싱 실패가 된다.
+_MAX_REQUESTS = 3
+
 _TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*")
 _MACRO_TOKEN_RE = re.compile(r"[A-Z][A-Z0-9_]{2,}")
 
@@ -509,11 +522,21 @@ def _resolve_caller_sites(
 
 
 def _resolve_macro_named_in_declaration(
-    line_text: str, *, table: _Table, read_lines: _ReadLines
+    line_text: str,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible_files: frozenset[str],
 ) -> list[_Block]:
     """라벨 11 — 선언 줄의 대문자 식별자를 `macros`에서 찾는다.
 
-    2단계 — target이 함수·구조체가 아닐 때만 호출부가 이 함수를 부른다.
+    2단계 — target이 함수·구조체가 아닐 때만 호출부가 이 함수를 부른다. 동명 매크로가
+    여럿이면 `_pick_record`가 §5.3 점수로 고른다(리뷰 5.2 [HIGH]) — 호출부(지역·전역
+    선언 분기)가 그 선언이 실제로 있는 `target_file`·`visible_files`를 넘긴다. 이 값을
+    하드코딩(빈 문자열·빈 집합)하면 동점 처리인 `(file, line)` 사전순으로만 떨어져 모듈의
+    다른 동명 조회 자리(`_resolve_flat`·전역 분기·`_resolve_chain`·`_resolve_field_fallback`)
+    와 다른 결과가 난다.
     """
     macros_table = table("macros") or {}
     blocks: list[_Block] = []
@@ -522,8 +545,8 @@ def _resolve_macro_named_in_declaration(
             macros_table.get(token, ()),
             definition_kind="macro",
             requested_kind="macro",
-            target_file="",
-            visible_files=frozenset(),
+            target_file=target_file,
+            visible_files=visible_files,
         )
         if record is not None:
             blocks.extend(
@@ -639,6 +662,7 @@ def _resolve_declaration(
     """선언(라벨 2·10) + 딸린 블록 — 파라미터면 caller site(라벨 9), 대문자 식별자면 매크로
     (라벨 11), 지역이면 같은 함수 대입(라벨 4)·전역이면 저장소 전체 대입(라벨 13)."""
     blocks: list[_Block] = []
+    visible_files = frozenset(visible)
     site = _declaration_site(base, table=table, target_file=target_file, visible=visible)
     if site is not None:
         func, file, line = site
@@ -647,7 +671,13 @@ def _resolve_declaration(
             decl = _Block(name=base, label=LABEL_DECLARATION_LOCAL, file=file, text_lines=span)
             blocks.append(decl)
             blocks.extend(
-                _resolve_macro_named_in_declaration(span[0][1], table=table, read_lines=read_lines)
+                _resolve_macro_named_in_declaration(
+                    span[0][1],
+                    table=table,
+                    read_lines=read_lines,
+                    target_file=file,
+                    visible_files=visible_files,
+                )
             )
             blocks.extend(
                 _resolve_same_function_assignment(
@@ -658,7 +688,6 @@ def _resolve_declaration(
             blocks.extend(_resolve_caller_sites(func, table=table, read_lines=read_lines))
         return blocks
 
-    visible_files = frozenset(visible)
     global_record = _pick_record(
         (table("file_vars") or {}).get(base, ()),
         definition_kind=_VARIABLE_KIND,
@@ -671,10 +700,17 @@ def _resolve_declaration(
             _record_block(base, LABEL_DECLARATION_FILE_SCOPE, global_record, read_lines)
         )
         line = int(global_record["line_start"])
-        span = _read_span(read_lines, str(global_record["file"]), line, line)
+        global_file = str(global_record["file"])
+        span = _read_span(read_lines, global_file, line, line)
         if span is not None:
             blocks.extend(
-                _resolve_macro_named_in_declaration(span[0][1], table=table, read_lines=read_lines)
+                _resolve_macro_named_in_declaration(
+                    span[0][1],
+                    table=table,
+                    read_lines=read_lines,
+                    target_file=global_file,
+                    visible_files=visible_files,
+                )
             )
         blocks.extend(_resolve_global_assignment(base, table=table, read_lines=read_lines))
     return blocks
@@ -884,12 +920,18 @@ def _all_symbol_names(table: _Table) -> frozenset[str]:
 def _unfilled_lookup_reason(base: str, *, table: _Table) -> tuple[UnfilledReason, str]:
     """조회에 실패했을 때 사유 넷 중 하나 — 원문이 순서를 안 줘서 이 저장소가 정한다
     (모듈 docstring). libc를 가장 먼저 본다: `strdup`도 `calls` 표에 잡히므로, outside_repo를
-    먼저 보면 hop 1 예의 `strdup`이 거기로 잘못 읽힌다."""
+    먼저 보면 hop 1 예의 `strdup`이 거기로 잘못 읽힌다.
+
+    `closest_name`의 후보에서 `base` 자신은 뺀다(리뷰 5.3 [MEDIUM]) — 인덱스에는 있는데
+    파일을 못 읽어 여기까지 왔을 때(`_all_symbol_names`는 표의 키를 그대로 모아 렌더
+    성공 여부를 안 본다), 빼지 않으면 "가장 비슷한 이름"이 매번 자기 자신이 되어
+    `closest_name` 사유가 무의미해진다.
+    """
     if is_libc_symbol(base):
         return UnfilledReason.LIBC, ""
     if base in (table("calls") or {}):
         return UnfilledReason.OUTSIDE_REPO, ""
-    match = closest_name(base, _all_symbol_names(table))
+    match = closest_name(base, _all_symbol_names(table) - {base})
     if match is not None:
         return UnfilledReason.CLOSEST_NAME, match
     return UnfilledReason.NOT_FOUND, ""
@@ -974,13 +1016,19 @@ def resolve(
     `table("functions") is None`이면(v1 인덱스·인덱스 없음) 빈 `Resolution`을 돌려준다 —
     factory는 run 전에 인덱스 판을 모르므로 훅은 항상 꽂히고, 판단은 여기서 한다. 루프
     (Phase 5)는 빈 결과를 "하나도 못 줌"(`nothing_resolved`)으로 본다.
+
+    `query.requests`가 `_MAX_REQUESTS`(3)를 넘으면 앞 3개만 처리한다(리뷰 5.1 [HIGH] —
+    상수 주석). 넘친 요청은 이 호출의 결과에서 조용히 빠지지만, 루프의 홉 이벤트가 모델이
+    보낸 `requests` 전체를 그대로 들고 있어 기록에서는 사라지지 않는다. 한 요청이 블록을
+    여럿 낼 수 있어(예: 선언+대입) `blocks`·`already`의 합까지 3 이하로 묶이는 것은 아니다
+    — `unfilled`만 요청당 최대 하나라 그 수는 처리한 요청 수(3 이하)를 넘지 않는다.
     """
     if table("functions") is None:
         return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
 
     all_blocks: list[_Block] = []
     unfilled: list[Unfilled] = []
-    for request in query.requests:
+    for request in query.requests[:_MAX_REQUESTS]:
         blocks, missed = _resolve_request(
             request,
             table=table,
@@ -1013,16 +1061,19 @@ def resolve(
     fitted, truncated = _fit_budget(kept, query.max_chars)
 
     fragments = [block.render() for block in fitted]
-    unfilled_lines = [item.text for item in unfilled]
+    # 알림 줄 = already + not-resolved(리뷰 §1) — 골격(§5.6)에 Already 전용 자리는 없고,
+    # 둘 다 "요청한 것을 그대로 안 준다"는 통지라 같은 UNFILLED 자리에 already를 먼저,
+    # Not resolved를 뒤에 넣는다(모듈 docstring "명세 밖이거나 해석이 든 자리").
+    alert_lines = [*already, *(item.text for item in unfilled)]
     note = needs_assignment_note(block.label for block in fitted)
     followup_text = (
         render_followup(
             hop=query.hop,
             fragments=fragments,
-            unfilled_lines=unfilled_lines,
+            unfilled_lines=alert_lines,
             include_assignment_note=note,
         )
-        if fragments or unfilled_lines
+        if fragments or alert_lines
         else ""
     )
 
