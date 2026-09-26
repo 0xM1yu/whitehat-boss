@@ -116,6 +116,8 @@ _RECORD_KEYS = {
     "field_assigns": ("file", "line", "func", "lhs", "rhs", "op"),
     "calls": ("file", "line", "caller", "args"),
 }
+# 위 키 중 줄 번호 — 정수여야 한다(`_v2_tables`).
+_LINE_KEYS = frozenset({"line", "line_start", "line_end"})
 
 # 이 모듈이 채우는 섹션. `types`는 없다 — index-v1에는 타입 데이터가 없고, index-v2에는
 # 있지만(`types` 표) **캡슐로 싣지 않는다.** 표는 NE resolver가 모델이 요청했을 때 준다 —
@@ -547,8 +549,10 @@ def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, i
 def _v2_tables(document: dict) -> dict[str, Mapping[str, Any]]:
     """v2 조회 표를 검사하고 읽기 전용으로 얼린다. 모양이 다르면 예외 — `_read`가 통째로 거절한다.
 
-    기록의 필수 키까지 본다. 절반만 맞는 표를 받으면 resolver가 조회 도중에 죽거나, 더 나쁘게는
-    빈 결과를 「못 찾았다」로 모델에게 전한다.
+    기록의 필수 키와 **줄 번호의 형**까지 본다. 절반만 맞는 표를 받으면 resolver가 조회 도중에
+    죽거나, 더 나쁘게는 빈 결과를 「못 찾았다」로 모델에게 전한다. 표는 값을 고치지 않고 내주므로
+    (`_freeze`) `"12"`가 그대로 resolver까지 간다 — v1처럼 `int()`로 읽어 들이는 자리가 없다.
+    줄 번호 밖의 값 형(`file`·`params` 등)은 안 본다 — v1도 안 본다.
     """
     tables = {}
     for name in V2_TABLES:
@@ -561,14 +565,23 @@ def _v2_tables(document: dict) -> dict[str, Mapping[str, Any]]:
                 for record in records:
                     if not isinstance(record, dict) or not all(key in record for key in keys):
                         raise KeyError(f"index-v2의 {name} 기록에는 {keys}가 있어야 한다")
+                    if not all(_is_line(record[key]) for key in keys if key in _LINE_KEYS):
+                        raise TypeError(f"index-v2의 {name} 기록의 줄 번호는 정수다")
         else:  # 파일 → 함수 → 이름 → [줄]
             for functions in table.values():
                 for names in functions.values():
                     for lines in names.values():
-                        if not all(isinstance(line, int) for line in lines):
+                        if not all(_is_line(line) for line in lines):
                             raise TypeError(f"index-v2의 {name}는 줄 번호 목록이다")
         tables[name] = _freeze(table)
     return tables
+
+
+def _is_line(value: Any) -> bool:
+    """줄 번호인가 — JSON 정수.
+
+    `bool`은 `int`의 하위형이라 `isinstance`로 보면 `true`가 통과한다."""
+    return type(value) is int
 
 
 def _freeze(value: Any) -> Any:
