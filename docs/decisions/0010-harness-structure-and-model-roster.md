@@ -9,7 +9,8 @@
 > ① **슬라이스의 역할** — §2 슬라이서 행의 *"후보 열거를 대신하지 못한다"*와 「리뷰에서 정할 것」 #2 행의
 > *"(a) 후보 열거에만"*을 그 ADR 결정 1이 대체한다(슬라이스 = Scout의 코드 입력, 후보 = 슬라이스 1개).
 > ② **재평가(requeue) 경로** — 후속 3의 *"도구 루프 재진입 신호 #60"*을 결정 6이 폐기한다(모자란 맥락은
-> need_evidence 루프가 채운다 — Phase 5, 미구현).
+> need_evidence 루프가 채운다 — Phase 5, 미구현). (⏵ 2026-09-26 — 구현됐다: `src/orchestrator/runner.py`의
+> `_run_ne_hops`. 상세는 [ADR 0012](0012-harness-canon-v2.md) 결정 2 검증표 · [knowledge-base.md](../knowledge-base.md) §5.)
 > ③ **Scout 후보를 5단계로 보내는 기준** — §3 「팬아웃」 불릿의 합집합(방식 ①)이 보내는 *"임계값을 넘은 멤버의
 > 후보"*를 결정 2가 「최종 신호가 `triage_review`인 좌석의 후보」로 바꾼다. 고르지도 합치지도 않고 좌석마다
 > 각각 보내는 방식 ①은 그대로다.
@@ -209,7 +210,7 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 
 **얻는 것.** 발표안과 research가 같은 방향을 가리키는 자리(Scout 오케스트레이터·MoE 둘·단계 단위)가 코드 좌표로 내려온다(§1·§3). 계열 규칙이 코드로 지켜진다(§4 — D59 (a)).
 
-**보류는 여기에 넣지 않는다.** 여섯을 `열림`으로 바꾼 것은 #151이고, **이 문서가 새로 푸는 것은 없다.** 남은 둘이 그것을 보여 준다 — **D51**은 `trigger_status`를 내는 것이 Auditor라 A/B 미결이 단독으로 막는 유일한 항목인데(인덱스 §2 머리) **이 문서는 그 A/B를 리뷰의 몫으로 남긴다**(위 ②·⑤). **D3**은 애초에 모델 문제가 아니다 — `expand()`의 호출부가 저장소에 없어 어떤 모델로 돌아도 `capsule_expansion_max`가 안 걸린다(D3 본문 2026-09-08). **이 문서가 보류에 대해 갖는 몫은 「로스터 제안」이라는 근거 자리 하나이고, 리뷰가 로스터를 바꾸면 그 근거도 함께 움직인다.** ⚠ **2026-09-24 — 이 문단의 「A/B 미결」은 2026-09-21 교체로 대상이 사라졌다.** D51을 막는 것은 *"「그 단일 모델의 run이 아직 없다」"*로 바뀌었다 — [D51](../open-questions/D/D51.md)의 2026-09-21 절. 그리고 D3의 확장 상한은 [ADR 0012](0012-harness-canon-v2.md) 결정 6이 need_evidence 루프의 `max_hops`로 대체한다(Phase 5, 미구현 — `c301342`에 `max_hops` 0건).
+**보류는 여기에 넣지 않는다.** 여섯을 `열림`으로 바꾼 것은 #151이고, **이 문서가 새로 푸는 것은 없다.** 남은 둘이 그것을 보여 준다 — **D51**은 `trigger_status`를 내는 것이 Auditor라 A/B 미결이 단독으로 막는 유일한 항목인데(인덱스 §2 머리) **이 문서는 그 A/B를 리뷰의 몫으로 남긴다**(위 ②·⑤). **D3**은 애초에 모델 문제가 아니다 — `expand()`의 호출부가 저장소에 없어 어떤 모델로 돌아도 `capsule_expansion_max`가 안 걸린다(D3 본문 2026-09-08). **이 문서가 보류에 대해 갖는 몫은 「로스터 제안」이라는 근거 자리 하나이고, 리뷰가 로스터를 바꾸면 그 근거도 함께 움직인다.** ⚠ **2026-09-24 — 이 문단의 「A/B 미결」은 2026-09-21 교체로 대상이 사라졌다.** D51을 막는 것은 *"「그 단일 모델의 run이 아직 없다」"*로 바뀌었다 — [D51](../open-questions/D/D51.md)의 2026-09-21 절. 그리고 D3의 확장 상한은 [ADR 0012](0012-harness-canon-v2.md) 결정 6이 need_evidence 루프의 `max_hops`로 대체한다(Phase 5, 미구현 — `c301342`에 `max_hops` 0건). (⏵ 2026-09-26 — 구현됐다 — `max_hops`가 config에 있고 `_run_ne_hops`가 그 값을 강제한다. D3 닫힘.)
 
 **잃는 것.** ~~다음 벤치마크 전에 **새 모델 둘**(`gpt-oss-20b`·`qwen3-reranker-4b`) — Auditor B안을 고르면 `nemotron-3-super-120b-a12b`까지 **셋** —~~ **2026-09-21 대상이 바뀌었다**(§2). B안이 소멸해 조건절이 없어졌고, ~~오늘 `config/models.yaml`에서 `checksum`이 placeholder(0)인 것은 확정 로스터의 **다섯 키**(`gpt-oss-20b`·`qwen3-reranker-4b`·`seccoderx-8b`·`deepseek-r1-distill-qwen-32b`·`qwen3.6-35b-a3b`)다([R8](../open-questions/R/R8.md)의 2026-09-21 절이 그 표를 든다).~~ 무엇이든 ATOM에서 받아 checksum과 §3 체크리스트를 통과시켜야 한다 — 공용 장비 시간이 가장 비싼 자원이다. 그리고 취약점 탐지 성능은 **후보 전부 문헌에 없으므로**(models.md §3.3.1) 이 로스터가 낫다는 근거는 우리가 만들어야 한다. ⚠ **2026-09-24 — 이 문단의 「다섯 키」는 틀렸다**(취소선 — [R8](../open-questions/R/R8.md)의 2026-09-21 절도 같은 문장을 그었다). `gpt-oss-20b`(`config/models.yaml:512`)·`qwen3-reranker-4b`(`:635`)의 checksum은 0이 아니고 `config/checksums/`에 파일도 있다 — 2026-09-11 등재 때부터다(`3100061` #176 · `3f84d59` #179). 그 문장(`ce6a4c8`, 2026-09-22 — 가리킨 로스터는 2026-09-21 교체판)은 그 열하루 뒤에 쓰였다. placeholder(0)이고 `source`에 `@rev`도 없는 것은 `seccoderx-8b`(`:664-665`)·`deepseek-r1-distill-qwen-32b`(`:687-688`)·`qwen3.6-35b-a3b`(`:715-716`)다. (⏵ 2026-09-24 — 이 문단의 줄 번호는 `c301342` 기준이다. 그 뒤 injection이 `qwen3-14b`로 확정돼 `deepseek-r1-distill-qwen-32b`는 지웠고, `qwen3-14b`는 `checksum`이 0이지만 `source`에 `@rev`가 있다. 두 칸이 다 빈 것은 지금 `seccoderx-8b`·`qwen3.6-35b-a3b`다. ⏵ 2026-09-26 — `@rev`를 박아(2026-09-24 스모크가 서빙한 리비전) 그 둘도 `source`에 `@rev`가 있고, 빈 칸은 `checksum`뿐이다.)
 
@@ -264,7 +265,8 @@ registry는 **10개에서 7개**가 됐고 프로필은 **12개에서 9개**다.
 > 두 Auditor가 없다. 1이 든 두 모델(`gpt-oss-20b`·`qwen3-reranker-4b`)은 2026-09-11에 등재·checksum을 마쳤다
 > (`3100061` #176 · `3f84d59` #179).
 > **3의 「도구 루프 재진입 신호 #60」은 [ADR 0012](0012-harness-canon-v2.md) 결정 6이 폐기한다** — 모자란
-> 맥락은 재평가(requeue) 대신 need_evidence 루프가 같은 세션 안에서 채운다(Phase 5, 미구현). 같은 줄의 「`Evidence.location` 채우기 #70」은 #248(`73b1fba`, 2026-09-24)이
+> 맥락은 재평가(requeue) 대신 need_evidence 루프가 같은 세션 안에서 채운다(Phase 5, 미구현 — ⏵ 2026-09-26
+> 구현됐다, `src/orchestrator/runner.py`의 `_run_ne_hops`). 같은 줄의 「`Evidence.location` 채우기 #70」은 #248(`73b1fba`, 2026-09-24)이
 > **semgrep 히트에 한해** 채웠다 — clang-tidy는 채우지 않는다(`src/adapters/container_tools.py`의 `first_hit_location`).
 
 1. **온보딩 둘(Auditor B안이면 셋) — 순서와 각각의 관문.** (⚠ 위 2026-09-24 노트) 다운로드 → 스냅샷 → `tools/model_checksum.py` → `checksum`·`source` → §3 체크리스트 7개 → `benchmark`. 채우기 전엔 0이다. 순서는 위험이 큰 것부터:
