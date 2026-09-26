@@ -131,11 +131,10 @@ class FakeModelClient:
         schema: type[BaseModel],
         history: Sequence[ChatTurn] = (),
     ) -> ModelResult:
-        if history:
-            raise NotImplementedError(
-                "FakeModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 아직이다(#95)"
-            )
-        context = _parse_context(prompt.body)
+        # 사실 블록은 **첫 user 턴**에서 읽는다 — history가 있으면 그것이 hop0 본문이고,
+        # 이번 turn(`prompt.body`)은 후속 질문이라 펜스가 없다(ADR 0012 결정 2).
+        fact_source = history[0].content if history else prompt.body
+        context = _parse_context(fact_source)
         builder = _BUILDERS.get(schema)
         if builder is None:
             known = sorted(model.__name__ for model in _BUILDERS)
@@ -146,7 +145,12 @@ class FakeModelClient:
             role=role, model=self.model_name, prompt_version=prompt.prompt_version
         )
         value = builder(context, produced_by)
-        return ModelResult(value=value, usage=self._usage(prompt, value), model=self.model_name)
+        return ModelResult(
+            value=value,
+            usage=self._usage(prompt, value),
+            model=self.model_name,
+            raw_text=value.model_dump_json(),
+        )
 
     def _usage(self, prompt: Prompt, value: BaseModel) -> Usage:
         prefix_tokens = len(prompt.prefix) // _CHARS_PER_TOKEN
