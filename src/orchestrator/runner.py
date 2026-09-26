@@ -719,6 +719,9 @@ def run_pipeline(
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
         prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        # need_evidence resolver hook (ADR 0012 결정 2) — `symbols_for`·`counter_for_role`과
+        # 같은 경계다. `None`이면 이 run에 resolver가 없다.
+        resolve_requests=deps.resolve_requests,
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
