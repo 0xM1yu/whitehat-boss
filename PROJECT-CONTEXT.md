@@ -148,6 +148,9 @@ Phase 3, 심볼 인덱스 v2는 Phase 4, need_evidence 루프는 Phase 5의 몫�
 Auditor는 슬라이스가 걸친 함수들의 원본을 본다 — entry를 감싸는 함수(품는 함수를 모르면 entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(결정 1-b = 넓은 (i), 2026-09-25 팀 합의). **`--slices` 없이 도는 run은 위 문장
 그대로다** — 후보는 `symbols_for()`의 심볼이고 Scout는 심볼 본문을 받는다. 슬라이스 없이 v3 Scout를 부르는
 run의 시작 전 거부(결정 1)와 need_evidence 루프(Phase 5)는 이 세 PR에 없다.)
+(⏵ 2026-09-26 — need_evidence 루프가 배선됐다(별도 변경, Phase 5): `src/orchestrator/runner.py`의
+`_run_ne_hops`가 (슬라이스, 좌석) 세션마다 `max_hops`까지 되묻고, `policy._scout_triage`가 그 신호를
+점수보다 먼저 본다. 상세·한계는 [knowledge-base.md](docs/knowledge-base.md) §5.)
 
 ⚠ **되면 적용한다.** 「확정」은 *이 구조로 간다*는 뜻이지 *이미 선다*는 뜻이 아니다 — §5가 그
 상태를 든다. **그리고 방식을 정한 실험 기록은 아직 이 저장소에 없다** — `docs/experiments/`의
