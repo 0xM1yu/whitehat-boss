@@ -1,4 +1,4 @@
-"""`src/adapters/symbol_resolver.resolve()`의 조회·조립 (#63 후속, ADR 0012 결정 2).
+"""`src/adapters/symbol_resolver.resolve()`의 조회·조립 (#95 후속, ADR 0012 결정 2).
 
 A 단계(`tests/test_symbol_resolver.py`)는 렌더·정규화 순수 함수를 본다. 여기는 실 인덱서
 (`tools/harness-tools/indexer.py`)로 만든 픽스처 저장소를 `GraphIndex`에 태워 `resolve()`가
@@ -445,7 +445,7 @@ def test_resolve_processes_only_the_first_three_requests(ne2_graph, ne2_read_lin
 def test_resolve_prefers_the_function_in_the_target_file_when_names_collide(
     ne2_graph, ne2_read_lines
 ):
-    """§5.3 동명 점수 — `init`이 `scoring/a_main.c`·`scoring/a_parser.c`(둘 다 function) ·
+    """명세 §4.4.3 동명 점수 — `init`이 `scoring/a_main.c`·`scoring/a_parser.c`(둘 다 function) ·
     `scoring/a_other.c`(variable)에 있다. target_file과 같은 파일이 이긴다(A 8점 > B 5점)."""
     query = _query(
         requests=(_request("function", "init"),),
