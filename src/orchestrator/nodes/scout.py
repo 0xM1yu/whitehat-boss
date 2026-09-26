@@ -205,7 +205,7 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
     **오직 v3에서만 불린다** — `session.signal`이 `triage_need_evidence`일 때만 좌석 집계가
     이 함수를 부르므로, 이 홉의 스키마도 항상 `ScoutResponse`다. 실패는 여기서 처리하지
     않는다 — `previous` 큐잉이 없다(재평가 개념이 아니다). 흡수할지·정지할지는 그 예외를
-    본 호출자(러너의 need_evidence 루프)가 정한다(ADR 0012 결정 2 Q6).
+    본 호출자(러너의 need_evidence 루프)가 정한다(ADR 0012 결정 2).
     """
     hop = session.hop + 1
     prompt = Prompt(
