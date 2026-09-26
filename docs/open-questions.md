@@ -55,7 +55,7 @@
 | --- | --- | --- | --- |
 | D1 | ~~벤치마크 라벨 통합~~ | 닫힘 | [본문](open-questions/D/D1.md) |
 | D2 | Scout 임계값·단계별 승격 비율 | 열림 | [본문](open-questions/D/D2.md) |
-| D3 | Capsule 확장 횟수 상한 | 보류 | [본문](open-questions/D/D3.md) |
+| D3 | ~~Capsule 확장 횟수 상한~~ (need_evidence 루프의 `max_hops`로 대체 — ADR 0012 결정 6) | 닫힘 | [본문](open-questions/D/D3.md) |
 | D4 | Critic 양자화 검증 표본 크기와 허용 하락폭 | 열림 | [본문](open-questions/D/D4.md) |
 | D5 | GPU-hour → 금액 환산식 | 열림 | [본문](open-questions/D/D5.md) |
 | D6 | 상태 저장소 SQLite vs DuckDB | 결정 | [본문](open-questions/D/D6.md) |
@@ -72,7 +72,7 @@
 | D17 | **프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다** | 열림 | [본문](open-questions/D/D17.md) |
 | D18 | ~~8단계 정책이 게이트 등급을 읽지 않는다~~ (2026-09-20 선택지 (a) — F-10b) | 닫힘 | [본문](open-questions/D/D18.md) |
 | D19 | **프롬프트 본문이 실행 산출물에 남지 않아 W1을 실행에서 검증할 수 없다** | 부분 | [본문](open-questions/D/D19.md) |
-| D20 | **Scout이 캡슐로 호출 그래프를 받지 못한다** | 부분 | [본문](open-questions/D/D20.md) |
+| D20 | ~~Scout이 캡슐로 호출 그래프를 받지 못한다~~ (잔여는 need_evidence 루프의 조회가 대신 채운다) | 닫힘 | [본문](open-questions/D/D20.md) |
 | D21 | **토큰 계상이 실서빙 실측보다 1.8배 과소다** | 부분 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
 | D23 | **`Evidence.location`을 semgrep 첫 히트만 채운다(#248) — 신호 1건당 Evidence·clang-tidy 위치가 남았다** | 열림 | [본문](open-questions/D/D23.md) |
