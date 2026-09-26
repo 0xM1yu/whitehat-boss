@@ -65,10 +65,10 @@ _AUX_SECTION_TOKENS = 64
 # 레벨별 섹션 구성 (knowledge-base.md §4).
 # light=Scout용, expanded=Auditor용, focused=Critic용(반박 축 관련 섹션만).
 #
-# **`types`가 없다.** knowledge-base.md §4의 목표 구성에는 있지만 index-v1이 타입 데이터를
-# 내지 않는다(`indexer.build_index()`는 symbols·calls뿐). 이름만 남겨 두면 다음 사람이
-# "채워야 하는데 비었다"로 읽고, 고정값으로 채우면 없는 근거를 지어내는 것이라 뺀다.
-# 채우려면 인덱서에 타입 수집을 넣고 `INDEX_VERSION`을 올려야 한다(#63).
+# **`types`가 없다.** knowledge-base.md §4의 목표 구성에는 있지만 index-v1에는 타입 데이터가
+# 없었고, index-v2의 `types` 표는 **캡슐로 싣지 않는다** — NE resolver가 모델이 요청했을 때
+# 준다(`index_graph.GRAPH_SECTION_KINDS` 주석, #63). 이름만 남겨 두면 다음 사람이 "채워야
+# 하는데 비었다"로 읽고, 고정값으로 채우면 없는 근거를 지어내는 것이라 뺀다.
 # **LIGHT에 그래프 섹션이 들어간 이유 (#95을 (a)로 확정, 2026-08-23).**
 #
 # 그전까지 LIGHT는 `("target_function", "static_signal")`이었고 `EXPANDED`부터 그래프가

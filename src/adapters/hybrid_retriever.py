@@ -31,9 +31,10 @@ embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않
 선택이지 그 예산이 이 2배 계상을 감안했다는 판정이 아니다. 여기서 예산을 재잡으려면 실제로
 실린 토큰을 먼저 재야 하고, 그 측정은 아직 없다. 근본 해법은 위 문단이 이미 가리킨 #67이다.
 
-**`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에 타입
-데이터가 없다(`indexer.build_index()`는 symbols·calls뿐). 없는 그래프에서 나온 척 섹션을
-채우면 토큰 회계가 거짓말을 한다.
+**`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에는 타입
+데이터가 없었고, index-v2의 `types` 표는 캡슐로 싣지 않는다 — NE resolver 몫이다
+(`index_graph.GRAPH_SECTION_KINDS` 주석). 없는 그래프에서 나온 척 섹션을 채우면 토큰 회계가
+거짓말을 한다.
 
 `CapsuleSection.kind`가 `NonEmptyStr`로 열려 있는 것이 이 확장을 허용한다(스키마 주석).
 → 이슈 #63

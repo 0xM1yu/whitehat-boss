@@ -103,14 +103,17 @@
 
 **`types`는 채우지 않는다.** index-v1에 타입 데이터가 없어(`build_index()`는 symbols·calls
 뿐) 섹션 자체를 없앴다 — 고정 64토큰으로 두면 없는 근거를 지어내는 것이고, 이름만 남기면
-다음 사람이 "채워야 하는데 비었다"로 읽는다.
+다음 사람이 "채워야 하는데 비었다"로 읽는다. (⏵ 2026-09-26 — index-v2가 `types` 표를 낸다.
+캡슐 섹션으로는 여전히 싣지 않는다 — NE resolver가 요청받았을 때 주는 조회 표다.)
 
 **바로잡음: 고정 64토큰이 오염시킨 것은 토큰 회계이지 E2 판정이 아니었다.**
 `gate.py`의 `graph_ok`는 `any(ev.kind is GRAPH for ev in usable)`로 **Evidence만** 보고
 캡슐 섹션을 읽지 않는다. E2의 실제 약점은 따로 있고 그대로 남아 있다 — 심볼 0개도
 `Evidence(ok=True)`라 **빈 그래프 위에서 E2가 열린다**(open-questions D13 ②).
 
-**실제 산출물 형식** (`indexer.INDEX_VERSION == "index-v1"`, 읽는 쪽이 모르는 버전은 거절):
+**실제 산출물 형식** (`indexer.INDEX_VERSION == "index-v1"`, 읽는 쪽이 모르는 버전은 거절).
+⏵ 2026-09-26 — 지금은 `index-v2`다: `calls`가 callee → [{file, line, caller, args}]로 묶였고
+조회 표 여덟이 더해졌다(`tools/README.md` 인덱서 절). 아래는 v1 시절 모양이다:
 ```json
 {
   "version": "index-v1",
@@ -149,7 +152,8 @@
 2026-08-17~08-28 사이 그 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
 **목록의 정본은 `config/profiles.yaml`이다 — 여기 개수를 현재형으로 못박지 않는다.**
 프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
-`harness-tools:v1` 하나이며 semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
+`harness-tools:v2` 하나이며(2026-09-26 v1에서 올렸다 — v1은 지난 run의 digest 때문에 지우지
+않는다) semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
 (준비 절차는 `tools/README.md`).
 
@@ -433,7 +437,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 | 항목 | 사유 | 해소 조건 |
 |---|---|---|
-| `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v1` 이미지 |
+| `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v2` 이미지 |
 | `kb_snapshot` | KB 미구축 (`kb-none` 자리표시자) | KB 구축 + `--kb-snapshot` |
 | `model_checksums` | registry가 합성 예시값(전부 0) | 실서빙 모델 확정 + checksum 산출 (model-serving.md §5) |
 | GPU-second | ~~실측 전~~ → **코드가 청구하지 않았다** (2026-08-17 발견). 모델 호출은 `ModelResult`에 GPU 시간 필드가 아예 없었고, 검색·도구는 초로 내림해 1초 미만을 버렸다 | 청구 경로 수정 + 실서빙 run. `incomplete_fields()`가 실서빙 역할의 미측정을 판정한다 |

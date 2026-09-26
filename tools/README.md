@@ -59,13 +59,21 @@ digest면 같은 도구·같은 룰로 돈 것이다.
 ### 로컬 빌드 (Docker)
 
 ```bash
-docker build -t harness-tools:v1 tools/harness-tools/
+docker build -t harness-tools:v2 tools/harness-tools/
+```
+
+**v1이 있는 장비에서 v2를 만들 때는 룰셋 커밋을 v1과 맞춘다** — `SEMGREP_RULES_COMMIT`의 기본값이
+브랜치(`develop`)라 그냥 빌드하면 인덱서만 바꾸려던 이미지에서 정적 신호까지 움직인다. v1 이미지는
+지우지 않는다(지난 run 매니페스트의 `tool_images`가 그 digest를 적었다).
+
+```bash
+docker build -t harness-tools:v2 --build-arg SEMGREP_RULES_COMMIT="$(docker run --rm harness-tools:v1 cat /opt/semgrep-rules/COMMIT)" tools/harness-tools/
 ```
 
 digest 확인:
 
 ```bash
-docker image inspect harness-tools:v1 --format '{{index .RepoDigests 0}}|{{.Id}}'
+docker image inspect harness-tools:v2 --format '{{index .RepoDigests 0}}|{{.Id}}'
 ```
 
 **`RepoDigests`는 push된 적 없는 로컬 빌드 이미지에서 비어 있다.** 그 경우 `.Id`가 쓰인다 —
@@ -76,7 +84,7 @@ docker image inspect harness-tools:v1 --format '{{index .RepoDigests 0}}|{{.Id}}
 룰셋 커밋을 확인하려면:
 
 ```bash
-docker run --rm harness-tools:v1 cat /opt/semgrep-rules/COMMIT
+docker run --rm harness-tools:v2 cat /opt/semgrep-rules/COMMIT
 ```
 
 ### ATOM 빌드·실행
@@ -98,9 +106,9 @@ ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularit
 
 ```bash
 # 둘 중 어느 쪽으로 빌드해도 된다. 다만 이미지 저장소가 갈려 있어 digest가 서로 다르다
-# (같은 harness-tools:v1에 podman RepoDigest sha256:3a63ba2e… / docker sha256:b5d7048b… —
-#  experiments/README.md 확정 #6). 실행할 런타임 쪽에 빌드해 둔다.
-docker build -t harness-tools:v1 tools/harness-tools/
+# (2026-08 같은 harness-tools:v1에 podman RepoDigest sha256:3a63ba2e… / docker sha256:b5d7048b… —
+#  experiments/README.md 확정 #6). 실행할 런타임 쪽에 빌드해 둔다. 룰셋 커밋은 위 절처럼 맞춘다.
+docker build -t harness-tools:v2 tools/harness-tools/
 
 # 실서빙 프로필은 `docker`를 선언하고 ATOM에 docker가 있다 — 플래그가 필요 없다 (2026-08-28)
 # `--slices`는 런타임과 무관하게 필요하다 — Scout v3가 슬라이스 입력이라 없으면 시작 전에 거부한다
@@ -144,28 +152,28 @@ buildx가 만든 tar(manifest list + attestation manifest 포함)를 그대로 �
 
 ```bash
 export SINGULARITY_CACHEDIR=/data/daniel3290/.cache/singularity
-srun -p debug_ce_ugrad -w moana-u3 singularity build /data/daniel3290/sif/harness-tools_v1.sif docker://<레지스트리>/harness-tools:v1
+srun -p debug_ce_ugrad -w moana-u3 singularity build /data/daniel3290/sif/harness-tools_v2.sif docker://<레지스트리>/harness-tools:v2
 ```
 
 레지스트리를 못 쓰는 경우 (로컬에서 tar로 내보내 옮긴다):
 
 ```bash
-docker save harness-tools:v1 -o harness-tools_v1.tar
+docker save harness-tools:v2 -o harness-tools_v2.tar
 ```
 
 ```bash
-scp harness-tools_v1.tar <계정>@seraph:/data/daniel3290/
+scp harness-tools_v2.tar <계정>@seraph:/data/daniel3290/
 ```
 
 ```bash
-srun -p debug_ce_ugrad -w moana-u3 --mem=8G singularity build /data/daniel3290/sif/harness-tools_v1.sif docker-archive:///data/daniel3290/harness-tools_v1.tar
+srun -p debug_ce_ugrad -w moana-u3 --mem=8G singularity build /data/daniel3290/sif/harness-tools_v2.sif docker-archive:///data/daniel3290/harness-tools_v2.tar
 ```
 
 `--mem=8G`는 변환이 레이어를 푸는 동안 쓰는 메모리다. 실행 자체에는 그만큼 필요 없다 —
 도구를 돌릴 때의 상한은 `srun --cpus-per-task=2 --mem=4G`로 줬다(아래 "런타임이 강제하지
 못하는 항목").
 
-SIF 경로 규칙은 `harness-tools:v1` → `{sif_dir}/harness-tools_v1.sif`이고, `sif_dir`은
+SIF 경로 규칙은 `harness-tools:v2` → `{sif_dir}/harness-tools_v2.sif`이고, `sif_dir`은
 환경변수 `HARNESS_SIF_DIR`, 없으면 `{artifacts_root}/sif`다.
 
 ```bash
@@ -251,7 +259,8 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | 뽑는 것 | 예 |
 | --- | --- |
 | `symbols` | `{"name": "parse_header", "file": "parser.c", "line_start": 19, "line_end": 26}` |
-| `calls` | `{"caller": "parse_header", "callee": "memcpy", "file": "parser.c", "line": 24}` |
+| `calls` | `{"memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf", "src", "len"]}]}` — callee → 호출 지점(index-v2. v1은 같은 간선의 목록이었다) |
+| 조회 표(index-v2) | `functions`·`macros`·`types`·`file_vars`·`fields`·`locals`·`assigns`·`field_assigns` — 모양은 `indexer.py` 모듈 docstring. NE resolver 몫이고 캡슐로 가지 않는다 |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
 | `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
 | `files` | 실제로 인덱싱한 파일 — 분모다. `symbols`가 적을 때 "함수가 없다"와 "파일이 안 왔다"를 가른다 |
@@ -284,8 +293,10 @@ tree-sitter가 그 파일을 표시하는데, zlib에서는 43개 중 39개(91%)
 받으면 안 된다 — 함수 본문 조각이라 단독 컴파일이 되지 않아 **일어나지 않은 빌드 실패가
 신호로 기록된다.** 그래서 두 목록을 합치지 않는다.
 
-헤더(`.h`)는 아직 인덱싱하지 않는다 — `_INDEX_SUFFIXES`에 없어서이고, 그래서 헤더에
-정의된 `static inline` 함수가 심볼에 없다.
+헤더(`.h`)도 인덱서에 넘긴다(index-v2, 2026-09-26) — 매크로·타입 정의와 `static inline` 함수가
+대개 거기 있어서다. clang 계열에는 여전히 안 준다. **대상 트리 밖의 헤더는 아직 안 온다** — 인덱서는
+대상 트리 안 파일만 받는데, 평가 표본의 `build_context/generated_headers`(설정 매크로)는 트리
+밖이다(슬라이서는 그것을 `-I`로 본다).
 
 ### 컴파일 방언
 
