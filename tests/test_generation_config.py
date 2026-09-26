@@ -149,8 +149,9 @@ def _without_source(config, role: str):
     ⚠ **2026-09-24 — `local_balanced`와 그 키들을 지웠다**(로스터 밖 정리). 아래 검사는
     canonical `harness_pool`로 옮겼다. 그 프로필에서 `hf://…@rev`로 **읽히는** 프롬프트 역할은
     `scout_memory`·`scout_injection`(같은 `qwen3-14b` — 2026-09-25부터 memory도)·`critic`
-    (`gpt-oss-20b`) 셋이다 — `seccoderx-8b`(scout_boundary)와 `qwen3.6-35b-a3b`는 `source`에
-    `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
+    (`gpt-oss-20b`)·`auditor`(`qwen3.8-27b` — 2026-09-26부터) 넷이다 —
+    `seccoderx-8b`(scout_boundary)만 `source`에 `@rev`가 없어 리졸버가 못 읽는다(registry
+    무결성이 채울 자리). (그 전 Auditor `qwen3.6-35b-a3b`도 `@rev`가 없어 셋이었다.)
     """
     key = config.profile.roles[role]
     entry = config.models[key].model_copy(update={"source": None})
@@ -288,7 +289,8 @@ def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path)
     """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
     `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout_memory·scout_injection(같은 키
-    `qwen3-14b`)·critic이고, auditor는 `_without_source`가 합성으로 비운다. 두 모델에만 파일을
+    `qwen3-14b`)·critic·auditor(2026-09-26부터 `qwen3.8-27b`)이고, auditor는
+    `_without_source`가 합성으로 비운다. 두 모델에만 파일을
     깔면 그 모델을 쓰는 세 역할만 맵에 들어오고 나머지는 빠진다 — "이 역할은 선언 샘플링을 못
     읽었다"가 부재로 드러난다. `@rev`가 없는 `seccoderx-8b`의 scout_boundary가 그 부재다.
     (2026-09-24 전에는 `local_balanced`의 scout·auditor가 읽히는 쪽, critic이 대조군이었다.

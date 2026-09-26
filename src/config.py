@@ -231,7 +231,7 @@ class ModelEntry(HarnessModel):
     # 같은 규칙).
     #
     # **`Literal`로 닫는다** — 위 `family`가 안 닫는 것과 반대다. 저쪽은 로스터가 계속
-    # 바뀌는 **열린 집합**이고 이쪽은 서버가 아는 값이 셋뿐인 **닫힌 집합**이라,
+    # 바뀌는 **열린 집합**이고 이쪽은 서버가 아는 값의 **닫힌 집합**이라,
     # `AdapterSelection`의 판단이 그대로 걸린다 — *"아직 없는 구현체 이름을 YAML에 적으면
     # factory가 KeyError를 내는 대신 설정 로드에서 실패해야 한다."* 자유 문자열이면
     # `High`·`hgih`가 로드를 통과해 **서빙 때만**, 혹은 조용히 무시된 채로 드러난다.
@@ -239,17 +239,27 @@ class ModelEntry(HarnessModel):
     # ⚠ `Finding.trigger_status`가 일부러 `str`인 것과 헷갈리지 않는다. 그쪽은 **모델이
     # 내는 값**이라 분포를 보기 전에 좁히면 기록이 버려지고, 이쪽은 **우리가 적는 설정**이라
     # 오타가 곧 결함이다. 값이 늘면 여기 한 줄을 늘리고 그 전까지는 크게 실패한다.
-    reasoning_effort: Literal["low", "medium", "high"] | None = None
+    # ⏵ 2026-09-26 — 그렇게 한 값을 늘렸다: `xhigh`. Auditor `qwen3.8-27b`의 템플릿 등급이
+    #   `xhigh`(기본)·`medium`·`low`이고 `high`가 없다. **모델마다 받는 값이 다르다** — gpt-oss는
+    #   low·medium·high다. vLLM 0.27.1은 이 값을 템플릿 변수로 넘기므로(`chat_completion/
+    #   protocol.py`의 `build_chat_params`) 모델이 모르는 등급은 서빙 때 400이다. 이 `Literal`은
+    #   합집합이라 그 짝까지는 못 막는다.
+    reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
     # **(2026-09-25 — ADR 0012 Phase 6.5 「모델별 요청 설정」) 이 축에 넷이 더 선다.** 규칙은 위
     # `reasoning_effort` 그대로다 — 선언 안 하면 `None`이고 payload에 키가 안 생긴다. 값은 아직
     # 아무 모델에도 없다 — 샘플링은 모델 카드 값으로 바꿀지 결정이 남았고, 나머지(사고 켜기·사고
     # 상한·요청 타임아웃)는 ATOM 실측 뒤에 채운다.
+    # ⏵ 2026-09-26 — Auditor(`qwen3.8-27b`)가 처음으로 셋을 선언했다 — `sampling`(모델 카드의
+    #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 조민규
+    #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
+    #   모델은 여전히 비어 있다.
     # - `sampling` — 프로필 공통 `Sampling`(temperature·top_p)을 **이 모델에서 덮고** top_k 등을
     #   더한다. 좌석마다 모델 카드 권장이 갈리기 때문이다(Qwen 계열 「DO NOT use greedy」).
     # - `chat_template_kwargs` — 템플릿 인자(`enable_thinking` 등). 서버 기본 kwargs로 끄지 않고
     #   요청마다 명시한다.
-    # - `thinking_token_budget` — 사고 토큰 상한. vLLM 0.27.1에서 V1 러너 모델(qwen3.6)만 받고
-    #   dense Qwen3(V2)·gpt-oss는 거절한다 — 그 모델에 적으면 400이다.
+    # - `thinking_token_budget` — 사고 토큰 상한. vLLM 0.27.1에서 V1 러너 모델(GDN hybrid — 지금
+    #   로스터에서는 Auditor `qwen3.8-27b`, 전에는 `qwen3.6-35b-a3b`)만 받고 dense Qwen3(V2)·
+    #   gpt-oss는 거절한다 — 그 모델에 적으면 400이다.
     # - `request_timeout_s` — **요청 본문이 아니다.** 어댑터의 벽시계 상한(`_TIMEOUT_S` 대체,
     #   #261). 그래서 `request_params()`에 안 들어간다.
     sampling: RequestSampling | None = None
