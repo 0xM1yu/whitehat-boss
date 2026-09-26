@@ -1,10 +1,13 @@
 # 실험 기록
 
-> ⚠ **보관 — 2026-09-24 [ADR 0012](../decisions/0012-harness-canon-v2.md) 결정 5.** 실험 기록의 원천은
-> Notion 팀 워크스페이스다. 이 디렉터리는 옮기지 않고 보관한다 — 있는 보고서는 그 run의 기록으로 인용하고,
-> 새 실험은 Notion에 적는다(하네스 결정의 근거가 되면 ADR·D 본문에 요약과 링크). 그래서 **바로 아래 첫
-> 문장은 그날까지의 규약이다.** 서버 stdout 보존 규약(아래 절)은 그대로다. 현재 상태의 정본은
-> [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)·[architecture.md](../architecture.md)·D·R 본문이다.
+> ⏵ **2026-09-26 — 보관이 풀렸다**([ADR 0012](../decisions/0012-harness-canon-v2.md) 결정 5의 ⏵).
+> **하네스를 돌린 run 기록은 여기 쓴다** — 스모크·서빙 실측·기동 실측이고, run ID·장비·프로필·commit을 든다.
+> **실험팀 실험은 여기 안 쓴다** — 모델 비교·선정, 조건·벤치마크 설계, 데이터셋·정답지, 프롬프트 A/B,
+> 그리고 슬라이서·인덱서의 품질 측정은 팀 Notion이 원천이고, 하네스 결정의 근거가 되면 ADR·D 본문에
+> 요약과 링크를 둔다(그 결정의 인용 규칙).
+> **2026-09-24~26 사이 이 머리가 「보관」이었다** — 그 기간에도 아래 첫 문장의 규약은 살아 있었다
+> ([CLAUDE.md](../../CLAUDE.md) 머리 블록이 2026-09-24 17:29에 그렇게 정정했다).
+> 현재 상태의 정본은 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)·[architecture.md](../architecture.md)·D·R 본문이다.
 
 **실험 보고서를 저장소 안에 둔다.** 밖에 있으면 서로 어긋난 것을 아무도 못 잡는다.
 
@@ -80,6 +83,7 @@
 | 2026-09-21 | [로스터 여섯 자리의 가중치·KV 단가와 교대의 시간 단가](harness/2026-09-21-roster-memory-kv-atom.md) | **A안 로스터의 실측이 찼다** — 여섯 자리 전부 가중치와 KV 토큰 단가를 얻었고, 마지막 빈칸이던 `qwen3-reranker-4b`가 **8.12~8.15 GiB**다. 이제 남은 미실측은 `nemotron-3-super-120b-a12b` 하나이고, 그 키는 registry 미등재다. **KV 토큰 단가가 자리마다 5.9배 갈리고 방향이 직관과 반대다** — devstral(24B) **160** · 리랭커(4B) **144** 대 `qwen3-coder-30b-a3b`(30B) **48** · `gpt-oss-20b` **27.1** KiB/token으로 **작은 모델이 더 비싸다**. 가르는 것은 파라미터 수가 아니라 **KV헤드 × 층수 × `kv_cache_dtype` × 슬라이딩 윈도**이고, 구조식 `2 × kv헤드 × head_dim × dtype바이트 × 층`이 **다섯 모델에서 실측 역산과 맞았다**(`gpt-oss-20b`만 `sliding_window: 128` 때문에 구조식의 56%). ⚠ **`kv_cache_dtype: auto`는 가중치 양자화에서 추정할 수 없다** — NVFP4 둘은 `fp8_e4m3`(1바이트)인데 **fp8 가중치인 devstral은 bf16**(2바이트)다. **4단계(A안 피크) 최소 ≈ 61 GiB** — 2026-09-04 §8이 같은 셋에서 본 **99 GiB는 요구량이 아니라 그때 준 `util`**이었다(그 보고서 *"제약은 KV 예산 배분"*의 수치판). **교대로 가면 단가가 시간이다** — 콜드 기동 **16~186초**, 4단계 셋 순차 **≈ 6.8분**(ADR 0009의 「왕복 2~6초」는 잠재우기/깨우기라 다른 수다). 재현 넷: devstral 25.83↔25.48 · 30b 17.76↔18.28 · 8b 7.06↔6.38 · embedding 1.76↔1.62. **NVFP4는 `--attention-config.backend TRITON_ATTN`을 CLI 인자로 줘야 `ninja`로 안 죽는다**(env는 무효). ⚠ **동시 상주는 안 쟀다**(한 번에 하나씩) · 처리량·정확도 밖 · 잠재우기/깨우기 왕복 안 쟀다 · `run_id` 없음(비교표 밖). ⚠ **2026-09-24 — 이 행의 「A안」·「남은 미실측」은 교체 전 로스터 기준이다.** 로스터는 2026-09-21에 교체됐고 Auditor A/B는 그때 소멸했다([PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1 · #240). 보고서 본문은 날짜 기록이라 고치지 않는다 | `atom` | 조민규 |
 | 2026-09-22 | [Case B operator 앵커·WRITERS 실측](harness/2026-09-22-case-b-operator-anchors-atom.md) | PR #243의 cap·좁힘 근거. operator 모집단이 폭증한다 — WavPack에서 인덱스 접근 **3,042**(쓰기만 550)·add/sub **3,309**(포인터 피연산자 278). 포인터 판정은 **`*`만으론 typedef 포인터를 놓쳐** star∨메모리접근 두 축으로 간다(pcre2 `mb->end_subject - eptr`가 star 198엔 없고 메모리접근 293엔 있다). 새 질의 후보 수 sample_09 815·25 1,910·08 3,169(전부 앵커별 cap 2000 이하). **동일 CPG baseline↔new(sample_09): GT sink 486이 baseline 0 → new 1**(`pointer_arithmetic`). sample_25는 매크로 메서드 `FilterGradientBPP` 본문이 CPG에 없어 미포착(#244), sample_08은 인덱스 읽기라 writes-only 유계의 한계. WRITERS는 sample_04 필드포인터 memset을 새로 잡는다. ⚠ **후보 생성만 쟀다**(슬라이스·판정 없음) · 표본 3~5개(40 전수 아님) · 탐지 recall 아님 · `run_id` 없음(비교표 밖) | `atom` | 손수민 |
 | 2026-09-24 | [새 로스터 역할별 실서빙 스모크 — Scout 풀 · Auditor](harness/2026-09-24-roster-smoke-atom.md) | **[ADR 0012](../decisions/0012-harness-canon-v2.md) 결정 4의 새 키 둘(`seccoderx-8b`·`qwen3.6-35b-a3b`)과 injection 잠정 후보 Qwen3-14B(registry 밖)가 처음 떴다** — 셋 다 sm_121에서 기동했고 Scout는 31/31이 스키마를 통과했다. `seccoderx-8b`와 Qwen3-14B는 한 장비에 함께 올라간다. 정본 injection `deepseek-r1-distill-qwen-32b`는 안 띄웠다. Auditor는 그 풀과 함께 못 올린다(계산). **Auditor 템플릿은 사고를 열지만 완주한 판은 사고 없이 답했다** — `--reasoning-parser`를 걸면 사고가 4,096토큰 안에 안 끝나 Finding이 0/7이다. parser를 빼고 `xgrammar`·`disable_any_whitespace`로 띄우면 36/36인데, 문법이 첫 토큰부터 걸려 **사고 없이 답한다**(품질 영향은 안 쟀다). **호출 하나가 `_TIMEOUT_S` 300 s에 걸려 run 전체가 멈췄다** — 서버는 생성 중이었다(13.3 · 8.1 tok/s, 이슈 #261). Scout 계약 위반(reject인데 1.0 · 첫 코드 형식 이탈 · `location` 누락)은 조용히 저장·승격된다([D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)). Auditor `missing_evidence` 26/36은 해제 경로 없는 blocking이 됐다([D65](../open-questions/D/D65.md)). E1 32건은 blocking만 9 · GRAPH 근거 없음만 6 · 둘 다 17이고, Critic은 넷 다 반박했으며, **E3는 0**이다. ⚠ 실서빙 키 `checksum` 0(비교표 밖) · 머지하지 않는 브랜치 · 후보 12 · 정답 대조 없음 · ADR 0012 결정 5가 승인 전이라 이 폴더에 적었다(⏵ 2026-09-25 승인) | `atom` | 조민규 |
+| 2026-09-26 | [슬라이스 입력 실서빙 스모크 — Auditor · Scout 풀](harness/2026-09-26-slice-smoke-atom.md) | **Phase 3(슬라이스 입력)을 실모델로 처음 돌렸다.** ① **1-b는 입력 몫 안에 든다** — Auditor 실호출 147건에서 서버가 센 `input_tokens` 최대 15,437, 입력 몫 20,480 초과 **0건**(여유 5,043). ⚠ **논거는 틀렸었다** — 글자/토큰 비가 1.22~3.32로 벌어지고 **글자 최대 프롬프트가 토큰 최대가 아니다**(37,081자=13,944토큰 vs 20,917자=15,437토큰). 글자 상한은 폭주 차단이지 토큰 상한이 아니다 — 상수 주석과 ADR 0012 결정 1-b를 이 실측으로 고쳤다. 슬라이스 147개 중 **103개가 함수 둘 이상**에 걸쳤다(최대 25) — 넓히기 전이면 하나만 봤다. 상한이 5개 슬라이스에서 함수 249개를 뺐다. ② **Scout는 컨텍스트를 넘는다** — 실 호출 33건 중 12건이 400으로 거절됐고 한 run은 9/9가 거절돼 **후보 0·Finding 0**이다([D87](../open-questions/D/D87.md)). 원인이 슬라이스 렌더가 아니다 — 거절된 프롬프트 50,949자가 FACTS 13,081·Capsule 8,621·**렌더 2,212**·고정 접두 ≈27,000이다. Scout 스키마는 **21/21이 첫 시도 통과**. 실패한 Auditor 호출 하나가 310.9 s라 **기본 타임아웃 300 s였으면 run이 멈췄다**(#261). ⚠ 탐지 품질 미측정(정답 대조 없음 · 한쪽이 늘 Fake) · 사고 켠 Auditor 미측정 · 실 Scout은 11개만 · 실서빙 키 `checksum` 0(비교표 밖) · 머지하지 않는 브랜치 | `atom` | 조민규 |
 
 ### 전처리 실험 (`preprocessing/`)
 
