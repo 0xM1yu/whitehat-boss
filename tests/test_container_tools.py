@@ -261,7 +261,7 @@ def test_missing_sif_is_reported_with_its_path(tmp_path: Path, spy: _Spy) -> Non
 
     assert evidence.ok is False
     assert "SIF가 없다" in evidence.error
-    assert "harness-tools_v1.sif" in evidence.error
+    assert "harness-tools_v2.sif" in evidence.error
     assert spy.calls == []
 
 
@@ -802,6 +802,39 @@ def test_indexer_does_receive_the_include_fragment(
 
     assert "/src/target.c" in argv
     assert "/src/session_core.inc" in argv
+
+
+def test_indexer_receives_headers_but_clang_tools_do_not(tmp_path: Path, spy: _Spy) -> None:
+    """헤더(`.h`)는 인덱서에 간다 — 매크로·타입 정의와 `static inline` 함수가 대개 거기 있다.
+
+    안 가면 index-v2의 조회 표(NE resolver 몫)가 실제 저장소에서 대부분 빈다 — 표본 셋의
+    `#define`은 69~100%가 헤더에 있었다(2026-09-26 ATOM, grep 기준 근사). 슬라이스가 헤더 함수에
+    걸치면 Auditor도 그 함수 대신 앞뒤 창을 받는다. clang 계열에는 여전히 안 간다 — 헤더는 단독
+    컴파일 대상이 아니다.
+    """
+    root = tmp_path / "hdr"
+    root.mkdir()
+    (root / "api.c").write_text('#include "api.h"\nint f(void) { return LEN; }\n', encoding="utf-8")
+    (root / "api.h").write_text(
+        "#define LEN 4\nstatic inline int g(void) { return 1; }\n", encoding="utf-8"
+    )
+    runner = _runner(tmp_path, root=root)
+
+    runner.run("index", ToolArgs(argv=["index"], workdir="."), SANDBOX)
+    index_argv = spy.calls[-1]
+    runner.run("build", ToolArgs(argv=["build"], workdir="."), SANDBOX)
+    build_argv = spy.calls[-1]
+
+    assert "/src/api.h" in index_argv
+    assert "/src/api.h" not in build_argv
+    assert "/src/api.c" in build_argv
+
+
+def test_the_default_image_is_the_one_that_bakes_index_v2() -> None:
+    """index-v2 인덱서는 `harness-tools:v2`에 구워졌다. v1 태그로 돌면 index-v1이 나오고 — 읽는
+    쪽은 받지만 — 조회 표가 `None`이 된다. `RunRecord.tool_images`는 이 태그의 digest를 적는다
+    (`images()`가 `self.image` 기본값 = 이 상수를 쓴다)."""
+    assert DEFAULT_IMAGE == "harness-tools:v2"
 
 
 def test_the_adapter_compares_against_the_constant_not_a_literal() -> None:
