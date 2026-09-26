@@ -149,8 +149,11 @@ def _without_source(config, role: str):
     ⚠ **2026-09-24 — `local_balanced`와 그 키들을 지웠다**(로스터 밖 정리). 아래 검사는
     canonical `harness_pool`로 옮겼다. 그 프로필에서 `hf://…@rev`로 **읽히는** 프롬프트 역할은
     `scout_memory`·`scout_injection`(같은 `qwen3-14b` — 2026-09-25부터 memory도)·`critic`
-    (`gpt-oss-20b`) 셋이다 — `seccoderx-8b`(scout_boundary)와 `qwen3.6-35b-a3b`는 `source`에
-    `@rev`가 없어 리졸버가 못 읽는다(registry 무결성이 채울 자리).
+    (`gpt-oss-20b`)·`auditor`(`qwen3.8-27b` — 2026-09-26부터)에 `scout_boundary`(`seccoderx-8b` —
+    #294로 `@rev`가 생겼다)까지 다섯 전부다(그 전 Auditor `qwen3.6-35b-a3b`도 #294로 `@rev`가
+    생겼다가 같은 날 지웠다). 경로가 풀려도 스냅샷에 `generation_config.json`이 없으면
+    `file_absent`로 빠진다(리졸브 실패가 아니다). 이 테스트는 그것과 무관하게 `source`를
+    `None`으로 비워 no-source 경로를 본다.
     """
     key = config.profile.roles[role]
     entry = config.models[key].model_copy(update={"source": None})
@@ -288,9 +291,11 @@ def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path)
     """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
     `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout_memory·scout_injection(같은 키
-    `qwen3-14b`)·critic이고, auditor는 `_without_source`가 합성으로 비운다. 두 모델에만 파일을
+    `qwen3-14b`)·critic·auditor(2026-09-26부터 `qwen3.8-27b`)이고, auditor는
+    `_without_source`가 합성으로 비운다. 두 모델에만 파일을
     깔면 그 모델을 쓰는 세 역할만 맵에 들어오고 나머지는 빠진다 — "이 역할은 선언 샘플링을 못
-    읽었다"가 부재로 드러난다. `@rev`가 없는 `seccoderx-8b`의 scout_boundary가 그 부재다.
+    읽었다"가 부재로 드러난다. `seccoderx-8b`의 scout_boundary가 그 부재다 — #294로 `@rev`가
+    생겨 경로는 풀리지만 이 테스트가 그 스냅샷에 파일을 안 깔아 `file_absent`로 빠진다.
     (2026-09-24 전에는 `local_balanced`의 scout·auditor가 읽히는 쪽, critic이 대조군이었다.
     2026-09-25 scout_memory가 `qwen3-14b`로 옮겨 셋이 됐다.)
 
@@ -312,7 +317,7 @@ def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path)
     assert set(by_role) == {"scout_memory", "scout_injection", "critic"}
     assert by_role["scout_injection"].top_k == 20
     assert by_role["scout_memory"] == by_role["scout_injection"]  # 같은 키 — 같은 선언
-    assert "scout_boundary" not in by_role  # `seccoderx-8b`는 @rev가 없다
+    assert "scout_boundary" not in by_role  # seccoderx-8b: 파일 미설치 → file_absent
     assert by_role["critic"].repetition_penalty == 1.05
     assert "auditor" not in by_role  # source 없음
     assert "embedding" not in by_role  # PROMPTED_ROLES 아님

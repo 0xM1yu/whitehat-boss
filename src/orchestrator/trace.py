@@ -128,7 +128,7 @@ class EventKind(StrEnum):
     # 볼 수 있어야 하기 때문이다(STATUS.md §10 지표 단절).
     #
     # `fallback_artifacts`(인덱스가 없어 파일 단위로 되돌아간 수)와
-    # `no_symbol_artifacts`(인덱스는 있는데 심볼 0건)를 가른다 — `.h`처럼 인덱서에
+    # `no_symbol_artifacts`(인덱스는 있는데 심볼 0건)를 가른다 — `.py`처럼 인덱서에
     # 넘어가지 않는 파일과 인덱서가 아예 안 돈 run은 다른 사건이다.
     TARGET_PLAN = "target_plan"
     # 4단계에 올리지 못한 target 하나 (W2). `reason`이 사유다.
