@@ -682,6 +682,27 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     assert "__WRITERS__" not in query  # the placeholder was substituted
 
 
+def test_case_b_query_adds_the_injection_sink_set_bounded():
+    # Query-contract check (2026-09-26 injection candidate-capture measurement): the injection
+    # eval set's GT sinks are command/SQL execution, which the memory-write WRITERS/operator sets
+    # miss (sample_13 `make_tunnel` -> `apr_proc_create` matched nothing). case_b gains a bounded
+    # exec/query sink set that tags `injection_sink`, mirroring WRITERS.
+    query = queries.candidates_b_query()
+    assert "apr_proc_create" in query and "system" in query and "popen" in query
+    assert "sqlite3_exec" in query and "mysql_query" in query  # SQL-query sinks too
+    assert '"injection_sink"' in query
+    assert str(queries.CASE_B_EXEC_CAP) in query  # bounded like WRITERS
+    assert "__EXECS__" not in query  # the placeholder was substituted
+
+
+def test_flows_query_keeps_injection_sinks_in_sync_with_case_b():
+    # The flows query comment requires its global sink set stay in sync with candidates_b_query,
+    # or a candidate anchored on an injection sink would have no flow target. Assert the exec set
+    # reaches the global sink universe there too.
+    query = queries.flows_query([{"file": "x.c", "full_name": "foo", "line": 1}], None)
+    assert "execSinks" in query and "apr_proc_create" in query
+
+
 def test_case_b_query_adds_operator_anchors_narrowed_before_the_cap():
     # Query-contract check (issue #219 follow-up): the release GT sinks are dominated by
     # index/pointer operators, so case_b anchors on them. Raw operators explode (measured on
