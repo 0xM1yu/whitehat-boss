@@ -1635,6 +1635,8 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
         {"sampling": {"topk": 20}},
         {"thinking_token_budget": 0},
         {"request_timeout_s": 0},
+        # 등급은 닫힌 집합이다 — `xhigh`를 더한 뒤에도(2026-09-26) 모르는 값은 로드에서 죽는다
+        {"reasoning_effort": "ultra"},
     ],
 )
 def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> None:
@@ -1658,3 +1660,41 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
         return
     with pytest.raises(ValidationError):
         load_config("dev_fake", config_dir=tmp_path)
+
+
+# 사고 켠 Auditor의 디코드 속도(tok/s) — Qwen3.8-27B bf16 단일 스트림의 **외부 보고**
+# (GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목). 우리 장비
+# 미실측이고, 아래 검사가 「타임아웃이 출력 상한보다 먼저 끊지 않는다」를 재는 기준으로만
+# 쓴다 — 대역 상한 계산값 4.9보다 느린 쪽이다.
+_AUDITOR_DECODE_TOK_S = 4.5
+
+
+def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> None:
+    """canonical Auditor는 가장 높은 등급으로 사고하고, 그 사고가 끝날 자리가 예산에 있다.
+
+    2026-09-26 조민규 — Auditor를 `qwen3.8-27b`로 바꾸고 사고를 켠다. **켜기만 하면 셋이 깨진다**
+    (같은 날 council): ① 사고가 출력 상한 안에 안 끝나면 본문이 비어 스키마 실패다 — 옛 Auditor에
+    parser를 걸고 4,096으로 돌린 판이 7/7이었다 ② 요청 타임아웃이 상한보다 먼저 오면 호출이 끊기고
+    연속 셋이면 run이 선다(#261) ③ 사고 상한이 출력 상한과 같으면 답 몫이 없다. 그래서 **값이 아니라
+    관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
+    """
+    config = load_config("harness_pool")
+    auditor = config.model_for("auditor")
+    cap = config.thresholds.output_max_for("auditor")
+
+    assert auditor.reasoning_effort == "xhigh", (
+        "사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
+    )
+    assert auditor.thinking_token_budget is not None and auditor.thinking_token_budget < cap, (
+        "사고 상한이 출력 상한 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 </think>를 넣고 답을 쓴다"
+    )
+    assert auditor.request_timeout_s is not None, "어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
+    assert auditor.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
+        "타임아웃이 출력 상한보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 멈춘다(#261)"
+    )
+
+    client = _model_client(config.profile.roles["auditor"], config, role="auditor")
+    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert payload["reasoning_effort"] == config.reasoning_efforts()["auditor"] == "xhigh"
+    assert payload["thinking_token_budget"] == auditor.thinking_token_budget
+    assert payload["max_tokens"] == cap
