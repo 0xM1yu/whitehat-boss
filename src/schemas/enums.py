@@ -287,9 +287,11 @@ class NeStopReason(StrEnum):
     """need_evidence 루프가 서는 사유 (ADR 0012 결정 2 · Notion 「Scout RAG baseline」).
 
     앞 셋(`TRIAGE_REVIEW`·`TRIAGE_REJECT`·`MAX_HOP`)은 명세가 이름을 준 값이다. 나머지는
-    이 하네스가 결정표(council 판정 Q5·Q6·Q9)에서 붙인 값이라 명세 원문에는 없다.
+    hop≥1의 실패·중복·미해결과 다른 좌석의 review가 이 좌석의 루프를 막는 경우를
+    가리키려고 이 하네스가 붙인 값이라 명세 원문에는 없다.
 
-    이 열거형은 **자리만 연다** — 실제로 루프를 돌며 이 값을 내는 코드는 Phase 5(P5)다.
+    이 열거형은 **자리만 연다** — 실제로 루프를 돌며 이 값을 내는 코드는 need_evidence
+    루프 자신이다(Phase 5).
     """
 
     TRIAGE_REVIEW = "triage_review"
@@ -312,7 +314,8 @@ class UnfilledReason(StrEnum):
     target 문자열 자체가 조회할 수 있는 모양이 아니다. 앞 넷은 target은 멀쩡한데 그
     이름으로 저장소를 조회한 결과가 사유다. `FIXABLE_UNFILLED_REASONS`가 그 구별을
     코드로 든다 — "잘 쓴 이름이 전부 조회에 실패했다"(그래서 `nothing_resolved`)와
-    "형식이 잘못됐다"를 가른다(council 판정 Q5).
+    "형식이 잘못됐다"를 가른다. 형식 사유가 있으면 모델에게 다시 물을 수 있으므로
+    그 자리에서 멈추지 않는다.
     """
 
     OUTSIDE_REPO = "outside_repo"

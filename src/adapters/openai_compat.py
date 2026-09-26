@@ -165,7 +165,7 @@ class OpenAICompatModelClient:
     ) -> ModelResult:
         if history:
             raise NotImplementedError(
-                "OpenAICompatModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 PR-B다(#95)"
+                "OpenAICompatModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 아직이다(#95)"
             )
         last_error: Exception | None = None
         body = prompt.body

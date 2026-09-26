@@ -133,7 +133,7 @@ class FakeModelClient:
     ) -> ModelResult:
         if history:
             raise NotImplementedError(
-                "FakeModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 PR-B다(#95)"
+                "FakeModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 아직이다(#95)"
             )
         context = _parse_context(prompt.body)
         builder = _BUILDERS.get(schema)
