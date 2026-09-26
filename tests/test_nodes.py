@@ -290,7 +290,7 @@ def test_open_session_makes_no_candidate_and_finish_completes_it(ctx: RunContext
         for e in ctx.trace.events
         if e.kind is EventKind.TRANSITION and e.stage == Stage.SCOUT
     ]
-    assert rules == ["C-1", "C-2"], "쪼갠 뒤에도 test_scout_records_creation_then_triage와 같아야 한다"
+    assert rules == ["C-1", "C-2"], "쪼갠 뒤에도 creation_then_triage 검사와 같은 전이여야 한다"
 
 
 def _ne_session(
