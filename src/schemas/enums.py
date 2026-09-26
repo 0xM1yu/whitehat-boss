@@ -271,6 +271,73 @@ class FindingState(StrEnum):
     REPORTED = "reported"
 
 
+class ScoutSignal(StrEnum):
+    """Scout v3가 `reason_codes[0]`의 접두로 내는 최종 판정 신호 (ADR 0012 결정 2).
+
+    v3는 이 셋 중 하나로 점수를 묶는다(약한 review의 낮은 점수 하나만 예외 —
+    `prompts/scout_*/v3/prefix.md`). `scout_response.signal_of()`가 문자열에서 뽑는다.
+    """
+
+    REVIEW = "triage_review"
+    REJECT = "triage_reject"
+    NEED_EVIDENCE = "triage_need_evidence"
+
+
+class NeStopReason(StrEnum):
+    """need_evidence 루프가 서는 사유 (ADR 0012 결정 2 · Notion 「Scout RAG baseline」).
+
+    앞 셋(`TRIAGE_REVIEW`·`TRIAGE_REJECT`·`MAX_HOP`)은 명세가 이름을 준 값이다. 나머지는
+    hop≥1의 실패·중복·미해결과 다른 좌석의 review가 이 좌석의 루프를 막는 경우를
+    가리키려고 이 하네스가 붙인 값이라 명세 원문에는 없다.
+
+    이 열거형은 **자리만 연다** — 실제로 루프를 돌며 이 값을 내는 코드는 need_evidence
+    루프 자신이다(Phase 5).
+    """
+
+    TRIAGE_REVIEW = "triage_review"
+    TRIAGE_REJECT = "triage_reject"
+    MAX_HOP = "max_hop"
+    PARSE_FAILED = "parse_failed"
+    REPEAT_REQUEST = "repeat_request"
+    EMPTY_REQUEST = "empty_request"
+    NOTHING_RESOLVED = "nothing_resolved"
+    PEER_REVIEW = "peer_review"
+    CONTEXT_OVERFLOW = "context_overflow"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    GATEWAY_ERROR = "gateway_error"
+
+
+class UnfilledReason(StrEnum):
+    """resolver가 요청 하나를 못 채운 사유 (명세 §4.3 UNFILLED 사유 8개).
+
+    뒤 넷(`PLACEHOLDER`·`NO_TARGET`·`NO_IDENTIFIER`·`NOT_IDENTIFIER`)은 **형식** 사유다 —
+    target 문자열 자체가 조회할 수 있는 모양이 아니다. 앞 넷은 target은 멀쩡한데 그
+    이름으로 저장소를 조회한 결과가 사유다. `FIXABLE_UNFILLED_REASONS`가 그 구별을
+    코드로 든다 — "잘 쓴 이름이 전부 조회에 실패했다"(그래서 `nothing_resolved`)와
+    "형식이 잘못됐다"를 가른다. 형식 사유가 있으면 모델에게 다시 물을 수 있으므로
+    그 자리에서 멈추지 않는다.
+    """
+
+    OUTSIDE_REPO = "outside_repo"
+    NOT_FOUND = "not_found"
+    CLOSEST_NAME = "closest_name"
+    LIBC = "libc"
+    PLACEHOLDER = "placeholder"
+    NO_TARGET = "no_target"
+    NO_IDENTIFIER = "no_identifier"
+    NOT_IDENTIFIER = "not_identifier"
+
+
+FIXABLE_UNFILLED_REASONS: frozenset[UnfilledReason] = frozenset(
+    {
+        UnfilledReason.PLACEHOLDER,
+        UnfilledReason.NO_TARGET,
+        UnfilledReason.NO_IDENTIFIER,
+        UnfilledReason.NOT_IDENTIFIER,
+    }
+)
+
+
 class ReasonCode(StrEnum):
     """상태 전이 사유 코드.
 
@@ -283,6 +350,10 @@ class ReasonCode(StrEnum):
     # 4단계 Scout
     SCOUT_PROMOTED = "scout_promoted"
     BELOW_SCOUT_THRESHOLD = "below_scout_threshold"
+    # v3 신호 판정(ADR 0012 결정 2 — C-3에 사유 행을 늘린다). 신호가 없으면(v1·v2, 또는
+    # 세 신호 밖 접두) 위 `BELOW_SCOUT_THRESHOLD`로 지금처럼 판정한다.
+    SCOUT_REJECT = "scout_reject"
+    NEED_EVIDENCE_UNRESOLVED = "need_evidence_unresolved"
     # 5단계 Auditor
     AUDITOR_HYPOTHESIZED = "auditor_hypothesized"
     # 6단계 Evidence Gate
