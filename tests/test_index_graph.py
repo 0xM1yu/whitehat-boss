@@ -938,6 +938,22 @@ def test_an_unknown_table_name_is_a_programming_error(tmp_path: Path):
         _graph(tmp_path, _INDEX_V2).table("src")
 
 
+def _string_line_numbers():
+    """기록이 든 표마다 줄 칸 하나를 `"12"`로 바꾼 문서. 표·칸은 **픽스처에서 센다** — 소스의 키 목록에서
+    세면 읽는 쪽이 빠뜨린 칸을 이 목록도 같이 빠뜨린다. `"12"`는 v1 읽기의 `int()`를 통과하는 모양이다."""
+    for table, rows in _INDEX_V2.items():
+        if not isinstance(rows, dict) or table in ("locals", "assigns"):
+            continue
+        name, records = next(iter(rows.items()))
+        for key in records[0]:
+            if key.startswith("line"):
+                row = {**records[0], key: "12"}
+                yield pytest.param(
+                    {**_INDEX_V2, table: {**rows, name: [row, *records[1:]]}},
+                    id=f"{table}.{key}-is-a-string",
+                )
+
+
 @pytest.mark.parametrize(
     "broken",
     [
@@ -952,12 +968,29 @@ def test_an_unknown_table_name_is_a_programming_error(tmp_path: Path):
         pytest.param({**_INDEX_V2, "locals": {"parser.c": ["buf"]}}, id="nested-not-a-mapping"),
         pytest.param({**_INDEX_V2, "calls": _INDEX_V1["calls"]}, id="v2-with-v1-calls"),
         pytest.param({**_INDEX_V1, "calls": _INDEX_V2["calls"]}, id="v1-with-v2-calls"),
+        *_string_line_numbers(),
+        pytest.param(
+            {
+                **_INDEX_V2,
+                "macros": {"HDR_LEN": [{"file": "parser.c", "line_start": True, "line_end": 1}]},
+            },
+            id="record-line-is-a-bool",
+        ),
+        pytest.param(
+            {**_INDEX_V2, "locals": {"parser.c": {"parse_header": {"src": [True]}}}},
+            id="nested-line-is-a-bool",
+        ),
     ],
 )
 def test_a_misshapen_document_is_refused_whole(broken: dict, tmp_path: Path):
     """버전은 맞는데 모양이 다르면 **통째로** 거절한다 — v1이 필드 누락을 거절하는 것과 같다.
 
     절반만 읽힌 표가 남으면 어디까지 믿을지 알 수 없다. 그래프도 표도 후보도 함께 내려간다.
+
+    **줄 번호가 정수가 아닌 것도 모양이 다른 것이다**(PR #295 리뷰 LOW-1). `table()`은 값을 고치지
+    않고 내주므로 키만 보면 `"12"`가 resolver까지 가서, 줄 범위를 세는 자리에서 죽거나 정수와의 비교가
+    늘 거짓이라 「못 찾았다」가 된다. JSON `true`도 막는다 — `bool`이 `int`의 하위형이라
+    `isinstance`로 보면 통과한다.
     """
     graph = _graph(tmp_path, broken)
 
