@@ -262,7 +262,7 @@ def test_node_does_not_compare_thresholds_itself(ctx: RunContext) -> None:
 
 
 def test_open_session_makes_no_candidate_and_finish_completes_it(ctx: RunContext) -> None:
-    """`run()` = `open_session()` + `finish()`다 (계획 §7-1). 나눠 불러도 결과가 같아야 한다.
+    """`run()` = `open_session()` + `finish()`다(ADR 0012 결정 2). 나눠 불러도 결과가 같아야 한다.
 
     `open_session`은 hop0 호출만 한다 — 후보를 만들지 않는다. 만드는 것은 `finish()`이고,
     그래서 그 사이에는 이 candidate_id로 저장된 것이 아무것도 없어야 한다.
@@ -384,7 +384,7 @@ def test_continue_session_sends_full_history_and_advances_the_hop(ctx: RunContex
 
 
 def test_finish_uses_the_signal_for_the_triage_decision_when_present(ctx: RunContext) -> None:
-    """v3 신호가 있으면 `finish()`가 점수 대신 그 신호로 판정한다(Q7).
+    """v3 신호가 있으면 `finish()`가 점수 대신 그 신호로 판정한다(ADR 0012 결정 2).
 
     `reject` + 점수 1.0 — 점수만 보면 승격되지만, 최종 신호가 판정이라 QUEUED다(D82 ⑤).
     """

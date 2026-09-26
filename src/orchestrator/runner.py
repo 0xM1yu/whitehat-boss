@@ -83,6 +83,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import json
 import re
 import subprocess
 from collections.abc import Callable, Mapping
@@ -135,6 +136,7 @@ from src.schemas.enums import (
     CapsuleLevel,
     EvidenceKind,
     FindingState,
+    NeStopReason,
     ReasonCode,
     Role,
     ScoutSignal,
@@ -658,6 +660,9 @@ class _Accumulator:
     # 적고 `_step_scout_settle`이 읽는다 — 같은 target의 다른 좌석이 review면 이 좌석의 NE
     # 루프는 안 돈다. hop0에서 실패해 버려진 좌석은 여기 안 남는다("신호 없음"으로 친다).
     hop0_signals: dict[_TargetKey, dict[Role, ScoutSignal | None]] = field(default_factory=dict)
+    # hop≥1에서 흡수한 예외 건수, `NeStopReason` 값별(ADR 0012 결정 2). 조용히 두지
+    # 않는다 — `deferred`·`dropped`와 같은 자리로 리포트에 싣는다(`_analyze` 끝).
+    ne_absorbed: dict[str, int] = field(default_factory=dict)
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -907,6 +912,7 @@ def run_pipeline(
         critic_top_n=config.thresholds.critic_top_n,
         files=files,
         grades=grades,
+        ne_absorbed=state.ne_absorbed,
     )
     finished = state_machine.finish_run(
         record,
@@ -1251,7 +1257,7 @@ class _InFlight:
     # `scout.run(role=...)`에 넘기고, `scout_member` stamp는 그 role에서 나온다.
     role: Role = Role.SCOUT
     capsule: ContextCapsule | None = None
-    # 4단계 개시(hop0)가 채우고 정착이 읽는다 — 둘이 표에서 갈린 자리다(계획 §7-2).
+    # 4단계 개시(hop0)가 채우고 정착이 읽는다 — 둘이 표에서 갈린 자리다(ADR 0012 결정 2).
     # `_step_scout_settle`이 이것 없이 불리면 배선 결함이다(`_StageOutOfOrder`).
     scout_session: scout.ScoutSession | None = None
     candidate: Candidate | None = None
@@ -1377,7 +1383,7 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
 
 
 def _step_scout_open(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
-    """4단계 개시 — hop0만 (계획 §7-2). 후보를 만들지 않는다. **항상 `True`다** —
+    """4단계 개시 — hop0만(ADR 0012 결정 2). 후보를 만들지 않는다. **항상 `True`다** —
 
     탈락 여부는 아직 안 정해진다(v1·v2 점수 경로도, v3 신호도 정착이 본다). 세션을
     `item`에 싣고, 이 좌석의 hop0 신호를 `state`에 target 키로 적는다 — 같은 target의
@@ -1406,7 +1412,7 @@ def _step_scout_open(ctx: RunContext, item: _InFlight, state: _Accumulator) -> b
 
 
 def _step_scout_settle(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
-    """4단계 정착 — 동료 확인 → need_evidence 루프(#95 · Phase 5) → 판정 적용.
+    """4단계 정착 — 동료 확인 → need_evidence 루프(ADR 0012 결정 2 · #95) → 판정 적용.
 
     승격되지 않은 후보는 여기서 멈춘다(`False`), `_step_scout`(하나였던 시절)과 같다.
     `_step_scout_open`과 같은 이유로 여기서 `ctx.stage(Stage.SCOUT)`를 연다 — need_evidence
@@ -1417,10 +1423,281 @@ def _step_scout_settle(ctx: RunContext, item: _InFlight, state: _Accumulator) ->
     if session is None:
         raise _StageOutOfOrder("Scout 정착이 개시보다 먼저 돌았다 — scout_session이 비어 있다")
     with ctx.stage(Stage.SCOUT):
-        candidate = scout.finish(ctx, session)
+        candidate = scout.finish(ctx, _settle_scout_session(ctx, item, state, session))
     item.candidate = candidate
     state.candidates.append(candidate)
     return candidate.state is FindingState.TRIAGED
+
+
+def _settle_scout_session(
+    ctx: RunContext, item: _InFlight, state: _Accumulator, session: scout.ScoutSession
+) -> scout.ScoutSession:
+    """`finish()`에 넘길 최종 세션을 정한다 — 신호가 없으면(v1·v2) 손대지 않는다.
+
+    v3(신호가 있음)면 hop0을 포함해 홉마다 `SCOUT_HOP`을 낸다. 신호가 NE가 아니면(review·
+    reject) 그 자리에서 끝난다. NE면 동료 확인 → 아니면 need_evidence 루프(`_run_ne_hops`).
+    """
+    if session.signal is None:
+        return session
+    if session.signal is not ScoutSignal.NEED_EVIDENCE:
+        _emit_scout_hop(ctx, item, session, stop_reason=session.signal.value)
+        return session
+    key = _target_key(item.target.location, item.target.slice_id)
+    peers = state.hop0_signals.get(key, {})
+    if any(signal is ScoutSignal.REVIEW for role, signal in peers.items() if role != item.role):
+        _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.PEER_REVIEW.value)
+        return session
+    return _run_ne_hops(ctx, item, state, session)
+
+
+# 한 홉이 RETRIEVED에 실을 수 있는 글자 상한(폭주 차단 — 토큰 상한이 아니다. 글자 상한은
+# 토큰을 안 묶는다). `_AUDITOR_SOURCE_CHARS`와 값을 맞췄다(1-b 선례) — Auditor는
+# `src/orchestrator`를 상수로 재사용하지만(같은 계층) resolver(`src/adapters`)는 이 값을
+# import 할 수 없어(계층 규칙) 여기 새로 둔다.
+_HOP_CHARS_MAX = 15_000
+
+# 직전 홉 usage에서 뺄 여유. **설계값이고 미실측이다** — 추정이 빗나가면 크기 400이 나고
+# `NeStopReason.CONTEXT_OVERFLOW`가 받친다. 첫 실대상 run이 이 값의 근거를 만든다
+# (`_MAX_CONSECUTIVE_DROPS`와 같은 상태).
+_HOP_TOKEN_MARGIN = 512
+
+# Scout 좌석 글자/토큰 비의 **실측 하한**
+# (docs/experiments/harness/2026-09-26-slice-smoke-atom.md:158 — 좌석별 3.28~4.23). 하한을
+# 쓰는 것은 넘치는 쪽보다 못 미치는 쪽이 안전해서다 — 실제 글자/토큰 비가 더 크면 이 상한이
+# 실제보다 적게 담아 넘기지 않는다. Auditor의 1.22~3.32와 다르다(토크나이저가 다르다,
+# `_AUDITOR_SOURCE_CHARS` 주석). RETRIEVED 코드 블록만의 비는 안 쟀다 — 이 상한은 **계산값**이다.
+_HOP_CHARS_PER_TOKEN = 3.28
+
+
+def _ne_visible(slice_ref: SliceRef | None) -> dict[str, frozenset[int]]:
+    """`ResolveQuery.visible` — 슬라이스가 이미 보여준 줄을 파일별로 묶는다.
+
+    슬라이스가 없는 target(`--slices` 없이 돈 run)은 `{}`다 — resolver가 "이미 SOURCE에
+    있다"를 가를 근거가 없다는 뜻이지, 빈 파일 목록이 아니다.
+    """
+    if slice_ref is None:
+        return {}
+    grouped: dict[str, set[int]] = {}
+    for file, line in slice_ref.lines:
+        grouped.setdefault(file, set()).add(line)
+    return {file: frozenset(lines) for file, lines in grouped.items()}
+
+
+def _ne_hop_max_chars(ctx: RunContext, role: Role, session: scout.ScoutSession) -> int:
+    """이 홉이 resolver에 요청할 글자 상한 — `min(15,000, floor(남은 토큰 × 3.28))`.
+
+    남은 토큰 = 창 − 이 역할의 출력 상한 − 직전 홉 usage(입력+출력) − 여유. 0 이하면
+    0이다 — 호출자가 그 값을 보고 호출 없이 `context_overflow`로 선다.
+    """
+    model_key = ctx.config.model_key_for(role.value)
+    context_limit = ctx.config.models[model_key].context_limit
+    output_max = ctx.config.thresholds.output_max_for(role.value)
+    remaining_tokens = (
+        context_limit
+        - output_max
+        - session.usage.input_tokens
+        - session.usage.output_tokens
+        - _HOP_TOKEN_MARGIN
+    )
+    if remaining_tokens <= 0:
+        return 0
+    return min(_HOP_CHARS_MAX, int(remaining_tokens * _HOP_CHARS_PER_TOKEN))
+
+
+def _ne_classify_exception(exc: Exception) -> NeStopReason | None:
+    """hop≥1 예외를 흡수 여부 표로 가른다(ADR 0012 결정 2). `None`이면 **흡수하지 않는다** —
+
+    크기가 아닌 400(`_rejects_every_request`)뿐이다. 다음 요청도 같으므로 흡수하면 #296이
+    막은 조용한 전량 실패가 되살아난다 — 호출자가 그대로 올려 러너 핸들러(`_drop`)가
+    run을 멈추게 한다.
+    """
+    if isinstance(exc, BudgetExhausted):
+        return NeStopReason.BUDGET_EXHAUSTED
+    if isinstance(exc, SchemaParseError):
+        return NeStopReason.PARSE_FAILED
+    if isinstance(exc, ModelGatewayError):
+        if _is_size_rejection(exc):
+            return NeStopReason.CONTEXT_OVERFLOW
+        if _rejects_every_request(exc):
+            return None
+        return NeStopReason.GATEWAY_ERROR
+    return None
+
+
+def _requests_json(requests: tuple[object, ...]) -> str:
+    return json.dumps(
+        [{"kind": r.kind, "target": r.target} for r in requests], ensure_ascii=False  # type: ignore[attr-defined]
+    )
+
+
+def _usage_json(usage: object) -> str:
+    return json.dumps(
+        {
+            "input_tokens": usage.input_tokens,  # type: ignore[attr-defined]
+            "output_tokens": usage.output_tokens,  # type: ignore[attr-defined]
+            "cached_tokens": usage.cached_tokens,  # type: ignore[attr-defined]
+        }
+    )
+
+
+def _emit_scout_hop(
+    ctx: RunContext,
+    item: _InFlight,
+    session: scout.ScoutSession,
+    *,
+    stop_reason: str | None = None,
+    resolution: Resolution | None = None,
+    failed_hop: tuple[int, Exception, float] | None = None,
+) -> None:
+    """`SCOUT_HOP` 이벤트 하나 — hop0을 포함해 홉마다(신호가 있는 v3 좌석만).
+
+    `subject_id`(candidate_id)·`role`(`data`)·`hop`(`data`)이 조인 키다 — 같은 키의
+    `model_call.prompt_ref`로 붙는다(#95). `followup_text`는 이벤트에 경로를 새로 싣지
+    않는다 — 그 조인만으로 로그를 다시 찾을 수 있다.
+
+    `failed_hop`이 있으면 **그 홉의 시도 자체가 실패했다**(흡수된 hop≥1 예외) —
+    `session`은 그 직전(성공한 마지막) 홉의 것이고, `hop`·`schema_ok`·`raw_text`·`requests`·
+    `usage`는 실패한 시도의 것으로 따로 채운다(성공한 응답이 없어 `session`에서 못 읽는다).
+    """
+    if failed_hop is not None:
+        hop, exc, latency_s = failed_hop
+        usage = getattr(exc, "usage", None)
+        data: dict[str, object] = {
+            "hop": hop,
+            "role": item.role.value,
+            "signal": session.signal.value if session.signal is not None else None,
+            "schema_ok": not isinstance(exc, SchemaParseError),
+            "requests": "[]",
+            "raw_text": None,
+            "latency_s": latency_s,
+            "usage": None if usage is None else _usage_json(usage),
+        }
+    else:
+        data = {
+            "hop": session.hop,
+            "role": item.role.value,
+            "signal": session.signal.value if session.signal is not None else None,
+            "schema_ok": True,
+            "requests": _requests_json(session.requested_context),
+            "raw_text": session.raw_text,
+            "latency_s": session.latency_s,
+            "usage": _usage_json(session.usage),
+        }
+    if stop_reason is not None:
+        data["stop_reason"] = stop_reason
+    if resolution is not None:
+        data["resolved"] = len(resolution.blocks) + len(resolution.already)
+        data["already"] = len(resolution.already)
+        data["fixable_count"] = resolution.fixable_count
+        data["unfilled"] = ",".join(item_.reason.value for item_ in resolution.unfilled)
+        data["truncated"] = ",".join(resolution.truncated)
+    ctx.trace.emit(
+        EventKind.SCOUT_HOP,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=session.candidate_id,
+        **data,
+    )
+
+
+def _run_ne_hops(
+    ctx: RunContext, item: _InFlight, state: _Accumulator, session: scout.ScoutSession
+) -> scout.ScoutSession:
+    """need_evidence 루프 본체 — hop1..`max_hops`. 정지하면 그 판정의 세션을 돌려준다.
+
+    **정지 판정 순서**(hop k+1을 부르기 전에 본다) — 1. 신호가 NE가 아님(호출자가 이미
+    걸렀다, 여기서는 hop≥1 응답이 NE를 벗어난 경우) 2. 빈 요청 3. 직전 홉과 같은
+    (kind, target) 집합 4. resolver 없음 또는 아무것도 못 채움 — "잘 쓴 이름이 전부 조회에
+    실패했다"와 "형식이 잘못됐다"를 가른다(`Resolution.fixable_count`) 5. `max_hops` 소진.
+    글자 상한(`_ne_hop_max_chars`)이 만드는 "호출 없이 context_overflow" 두 경우(남은 토큰
+    ≤ 0, 블록 0인데 truncated 있음)는 4의 처리 안에 끼운다. hop k+1 호출 자체가 실패하면
+    (게이트웨이·스키마·예산) 별도 표로 흡수 여부를 가른다(`_ne_classify_exception`).
+    """
+    max_hops = ctx.config.thresholds.max_hops
+    previous_keys: frozenset[tuple[str, str]] | None = None
+    target_file = item.target.location.file
+    visible = _ne_visible(item.target.slice)
+    while True:
+        requests = session.requested_context
+        if session.signal is not ScoutSignal.NEED_EVIDENCE:
+            # hop≥1 응답이 review·reject로 돌아섰다 — 최종 신호로 끝난다.
+            _emit_scout_hop(ctx, item, session, stop_reason=session.signal.value)
+            return session
+        if not requests:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.EMPTY_REQUEST.value)
+            return session
+        keys = frozenset((r.kind, r.target) for r in requests)
+        if previous_keys is not None and keys == previous_keys:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.REPEAT_REQUEST.value)
+            return session
+        if ctx.resolve_requests is None:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.NOTHING_RESOLVED.value)
+            return session
+        max_chars = _ne_hop_max_chars(ctx, item.role, session)
+        if max_chars <= 0:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.CONTEXT_OVERFLOW.value)
+            return session
+        resolution = ctx.resolve_requests(
+            ResolveQuery(
+                requests=requests,
+                hop=session.hop + 1,
+                target_file=target_file,
+                visible=visible,
+                max_chars=max_chars,
+            )
+        )
+        if not resolution.blocks and resolution.truncated:
+            # 채울 만한 것을 찾았는데 상한 때문에 하나도 못 실었다 — 크기 문제다.
+            _emit_scout_hop(
+                ctx,
+                item,
+                session,
+                stop_reason=NeStopReason.CONTEXT_OVERFLOW.value,
+                resolution=resolution,
+            )
+            return session
+        resolved = len(resolution.blocks) + len(resolution.already)
+        if resolved == 0 and resolution.fixable_count == 0:
+            _emit_scout_hop(
+                ctx,
+                item,
+                session,
+                stop_reason=NeStopReason.NOTHING_RESOLVED.value,
+                resolution=resolution,
+            )
+            return session
+        if session.hop >= max_hops:
+            _emit_scout_hop(
+                ctx, item, session, stop_reason=NeStopReason.MAX_HOP.value, resolution=resolution
+            )
+            return session
+        # **이 홉(session.hop) 자신의 이벤트를 hop k+1을 시도하기 전에 낸다.** hop k+1
+        # 호출이 실패하면(흡수하든 안 하든) 그 실패는 이 홉의 응답과는 다른 사건이고,
+        # 특히 흡수하지 않는 경우 아래서 그대로 올려 run이 멈춘다 — 그 전에 이 홉의
+        # 이벤트가 이미 안 나갔으면 이 좌석은 SCOUT_HOP이 하나도 없는 채로 run이 선다.
+        _emit_scout_hop(ctx, item, session, resolution=resolution)
+        started = ctx.monotonic_ms()
+        try:
+            next_session = scout.continue_session(ctx, session, resolution.followup_text)
+        except (ModelGatewayError, SchemaParseError, BudgetExhausted) as exc:
+            absorbed = _ne_classify_exception(exc)
+            if absorbed is None:
+                # 크기 아닌 400이다 — 흡수하지 않는다. 그대로 올려 러너 핸들러(`_drop`)가
+                # run을 멈추게 한다(#296). 이 홉(session.hop) 자신의 이벤트는 바로 위에서
+                # 이미 났다 — 실패한 것은 그다음 시도(hop k+1)다.
+                raise
+            state.ne_absorbed[absorbed.value] = state.ne_absorbed.get(absorbed.value, 0) + 1
+            latency_s = (ctx.monotonic_ms() - started) / 1000.0
+            _emit_scout_hop(
+                ctx,
+                item,
+                session,
+                stop_reason=absorbed.value,
+                failed_hop=(session.hop + 1, exc, latency_s),
+            )
+            return session
+        session = next_session
+        previous_keys = keys
 
 
 def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
@@ -1651,7 +1928,7 @@ _TRIAGE_STEPS: tuple[tuple[Stage, TriageStep], ...] = (
 
 # 국면을 가르는 자리 — `_step_scout_settle`의 인덱스(표에서 읽는다, 하드코딩하지 않는다).
 # **국면 A**(전 좌석 개시)는 이 인덱스 앞, **국면 B**(정착부터 끝까지)는 이 인덱스부터다
-# (계획 §7-2 — `_triage_by_candidate`의 두 국면).
+# (`_triage_by_candidate`의 두 국면).
 _SCOUT_SETTLE_INDEX = next(
     index for index, (_, step) in enumerate(_TRIAGE_STEPS) if step is _step_scout_settle
 )
@@ -1854,7 +2131,7 @@ def _triage_by_candidate(
     마지막 단계만 못 지났다. 「Scout가 안 올렸다」도 시도의 완주라 자리 키로 세면 Auditor가
     전부 거절해도 안 선다 — 그래서 키가 `_caller`다.
 
-    ## Scout는 국면 둘로 갈린다(계획 §7-2)
+    ## Scout는 국면 둘로 갈린다(ADR 0012 결정 2)
 
     4단계는 표에서 개시(`_step_scout_open`)와 정착(`_step_scout_settle`) 두 행이다(둘 다
     `Stage.SCOUT`). **target 하나 안에서 좌석 순서가 바뀐다** — 「좌석1 전 단계 → 좌석2 …」가
