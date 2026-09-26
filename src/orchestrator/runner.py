@@ -1695,6 +1695,20 @@ def _run_ne_hops(
                 failed_hop=(session.hop + 1, exc, latency_s),
             )
             return session
+        if next_session.signal is None:
+            # hop k+1 응답이 스키마는 통과했지만(`ScoutResponse.candidate.reason_codes[0]`)
+            # `ScoutSignal` 세 접두 밖이다 — `signal_of`가 `None`을 준다. hop0은 호출자
+            # (`_settle_scout_session`)가 이미 NE로 걸러 여기 안 오므로 이 분기는 hop≥1뿐이다.
+            # 판정으로 쓸 수 없으니 파싱 실패와 같은 부류로 흡수한다: 직전 홉(`session`,
+            # 아직 재대입 전)의 판정으로 finish하고, 이 홉(`next_session`) 자신의 `SCOUT_HOP`은
+            # 따로 낸다. `schema_ok`는 참으로 남는다(구조화 출력 자체는 파싱됐다) — 스키마
+            # 실패(`parse_failed`의 다른 경로, `_ne_classify_exception`)와 신호 이탈이
+            # 기록에서 갈린다. 흡수하지 않으면 다음 반복에서 `session.signal.value`가
+            # `None.value`를 불러 run 전체가 `AttributeError`로 죽는다.
+            reason = NeStopReason.PARSE_FAILED.value
+            state.ne_absorbed[reason] = state.ne_absorbed.get(reason, 0) + 1
+            _emit_scout_hop(ctx, item, next_session, stop_reason=reason)
+            return session
         session = next_session
         previous_keys = keys
 

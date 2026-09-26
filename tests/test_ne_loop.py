@@ -2,8 +2,12 @@
 
 **Fake는 NE 신호를 내지 않는다**(`fake_model.py` — `reason_codes`가 `triage_*` 접두를 절대
 안 쓴다). 그래서 이 파일은 `FakeModelClient.complete`를 감싸 역할별로 홉 응답을 스크립트한다
-(`_script_ne_client`, `tests/test_pipeline_e2e.py`의 `_failing_model` 꼴). resolver도
-스크립트한 함수다 — 실 resolver 구현(별도 브랜치)은 이 범위 밖이다.
+(`_script_ne_client`, `tests/test_pipeline_e2e.py`의 `_failing_model` 꼴). resolver도 대개
+스크립트한 함수다 — `test_ne_hop1_uses_the_real_resolver_against_the_real_indexer` 하나만
+`src.adapters.symbol_resolver.resolve`를 실 인덱서(`tests/test_symbol_resolver.py`가 쓰는
+방법 그대로)와 `tests/fixtures/ne_repo` 픽스처에 태워 돌린다 — resolver 조립 자체의
+단위 검사는 `test_symbol_resolver.py` 몫이고, 여기서는 그 real resolver가 루프 안에서
+실제로 불려 hop1 프롬프트에 결과가 실리는지만 본다.
 
 **단일 `scout` 자리가 아니라 v3 풀로 돈다.** 바깥 `scout` 역할은 `prompts/scout/`에 v3가
 없다(v1·v2뿐) — v3(`ScoutResponse`, 신호가 실리는 스키마)를 쓰려면 풀 멤버 셋(`scout_memory`·
@@ -19,6 +23,7 @@ NE 시나리오를, 나머지 둘은 즉시 끝나는 응답(reject 한 번)을 
 import dataclasses
 import json
 import re
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +31,7 @@ import pytest
 
 from src.adapters.factory import build_deps
 from src.adapters.fake_model import FakeModelClient
+from src.adapters.symbol_resolver import resolve as real_resolve
 from src.config import load_config
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import runner
@@ -39,6 +45,8 @@ from src.schemas.enums import FindingState, NeStopReason, Role, ScoutSignal
 from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 from tests.test_pipeline_e2e import TARGET, _events, _of, _poolify_v3, _run, _run_transition
+from tests.test_symbol_resolver import _HOP1_ROOT, _graph_index
+from tests.test_symbol_resolver import _read_lines as _hop1_read_lines
 
 _MODES = pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
 
@@ -57,6 +65,31 @@ def _single_target(tmp_path: Path) -> Path:
         root.mkdir()
         (root / "parser.c").write_text(
             (TARGET / "parser.c").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    return root
+
+
+# `tests/fixtures/ne_repo`의 명세 hop 1 예 대상 — 실 인덱서·실 resolver 인덱싱 결과의
+# 경로와 같은 문자열이다(`tests/test_symbol_resolver.py`의 `target_file`과 같은 값).
+_HOP1_TARGET_FILE = "android-gif-drawable/src/main/c/giflib/dgif_lib.c"
+
+
+def _hop1_pipeline_target(tmp_path: Path) -> Path:
+    """파이프라인 스캔용 사본 — `dgif_lib.c` 하나만 담는다(`_single_target`과 같은 이유).
+
+    `tests/fixtures/ne_repo`에는 `gif_lib.h`도 있는데(`GIF_STAMP_LEN` 매크로가 거기 있어
+    실 인덱서가 둘 다 봐야 한다), 그 파일까지 파이프라인 스캔 루트에 두면 0단계가 그것도
+    별도 target(SOURCE artifact)으로 잡아 `_SEAT`의 스크립트가 두 target에 걸쳐 순서가
+    꼬인다(모드마다 hop0 개시 순서가 달라 `_script_ne_client`의 역할별 평평한 목록이 어느
+    모드에서도 같은 순서로 안 맞는다). 그래서 여기서는 `.c` 하나만 복사해 target을 하나로
+    묶는다 — 실 resolver 자체는 이 사본이 아니라 `_HOP1_ROOT`(헤더 포함 원본)를 본다.
+    """
+    root = tmp_path / "hop1_pipeline_target"
+    if not root.exists():
+        dest = root / _HOP1_TARGET_FILE
+        dest.parent.mkdir(parents=True)
+        dest.write_text(
+            (_HOP1_ROOT / _HOP1_TARGET_FILE).read_text(encoding="utf-8"), encoding="utf-8"
         )
     return root
 
@@ -95,6 +128,32 @@ def _ne_response(
                 state=FindingState.CANDIDATE,
             ),
             analysis_summary=AnalysisSummary(claim="scripted", requested_context=list(requested)),
+        )
+
+    return build
+
+
+def _off_vocab_response(*, score: float = 0.8):
+    """스크립트 항목 하나 — `reason_codes[0]`이 세 신호(`ScoutSignal`) 밖이다.
+
+    스키마(`ScoutResponse`)는 통과하지만 `signal_of`가 `None`을 준다 — 자유 문자열인
+    `reason_codes`(grammar로 안 묶는다, `scout_response.py` `RequestedContext` docstring과
+    같은 이유)라 모델이 세 접두 중 어느 것도 아닌 값을 낼 수 있다."""
+
+    def build(candidate_id: str) -> ScoutResponse:
+        return ScoutResponse(
+            candidate=Candidate(
+                candidate_id=candidate_id,
+                run_id="run_20260901_0001",
+                artifact_id="artifact_0001",
+                location=Location(
+                    file="parser.c", symbol="parse_header", line_start=3, line_end=6
+                ),
+                score=score,
+                reason_codes=["off_vocab_code:whatever"],
+                state=FindingState.CANDIDATE,
+            ),
+            analysis_summary=AnalysisSummary(claim="off-vocab"),
         )
 
     return build
@@ -377,6 +436,82 @@ def test_ne_resolver_that_finds_nothing_stops_the_loop(
 
 
 @_MODES
+def test_ne_context_overflow_without_a_call_when_nothing_fit_the_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """resolver가 채울 만한 것을 찾았지만(`truncated`) 상한 안에 하나도 못 실었다(`blocks`
+    0개) — hop1을 부르지 않고 그대로 `context_overflow`로 선다(`_ne_hop_max_chars`가 만드는
+    "호출 없이 context_overflow" 두 경우 중 하나, 지금까지 E2E가 안 탔다)."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request())],
+            **_other_seats_script(),
+        },
+    )
+
+    def truncated_only(query: ResolveQuery) -> Resolution:
+        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=("doit",))
+
+    _wire_resolver(monkeypatch, truncated_only)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 1, "블록 0개 + truncated면 hop1을 부르면 안 된다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 1
+    assert hops[0]["stop_reason"] == NeStopReason.CONTEXT_OVERFLOW.value
+    assert hops[0]["truncated"] == "doit"
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_context_overflow_without_a_call_when_max_chars_is_non_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """`_ne_hop_max_chars`가 0 이하를 주면(남은 토큰 ≤ 0) resolver도 hop1도 부르지 않고
+    그대로 `context_overflow`로 선다 — 위 검사와 짝인 나머지 한 경우. 좌석 모델
+    (`fake_v3`)의 `context_limit`을 작게 잡아 hop0 usage(120+25)+여유(512)가 이미 그 창을
+    넘게 한다(`_ne_hop_max_chars` 공식 — 값은 `context_limit`에 무관하게 음수가 된다:
+    `output_max`는 항상 양수라야 하므로 `200 - output_max - 657 < 0`)."""
+    resolver_calls: list[ResolveQuery] = []
+
+    def resolver_spy(query: ResolveQuery) -> Resolution:
+        resolver_calls.append(query)
+        return _nothing_resolves(query)
+
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request())],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, resolver_spy)
+
+    def configure(config):  # noqa: ANN001, ANN202
+        base = _v3_pool(mode)(config)
+        tiny_seat = base.models["fake_v3"].transition(context_limit=200)
+        return base.transition(models={**base.models, "fake_v3": tiny_seat})
+
+    _, trace_path = _run(
+        tmp_path,
+        configure=configure,
+        target=_single_target(tmp_path),
+        stop_after=int(Stage.SCOUT),
+    )
+
+    assert len(_seat_calls(calls)) == 1, "max_chars <= 0이면 hop1을 부르면 안 된다"
+    assert not resolver_calls, "max_chars <= 0이면 resolver를 부르면 안 된다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 1
+    assert hops[0]["stop_reason"] == NeStopReason.CONTEXT_OVERFLOW.value
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
 def test_ne_max_hop_exhausts_the_budget_and_queues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
@@ -434,6 +569,41 @@ def test_ne_hop1_parse_failure_is_absorbed_and_keeps_hop0_judgement(
     assert len(hops) == 2
     assert hops[-1]["stop_reason"] == NeStopReason.PARSE_FAILED.value
     assert hops[-1]["hop"] == 1
+    # 직전 홉(hop0)이 NE였으므로 흡수 뒤에도 signal은 NE → C-3 need_evidence_unresolved.
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_hop1_off_vocab_signal_is_absorbed_as_parse_failed_and_keeps_hop0_judgement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """hop1 응답이 스키마는 통과하지만 `reason_codes[0]`이 세 신호 밖이다(`signal_of`가
+    `None`) — 판정으로 못 쓰니 파싱 실패와 같은 부류로 흡수하고 **직전 홉(hop0)의 판정**으로
+    finish한다. 흡수 전에는 다음 반복에서 `session.signal.value`가 `None.value`를 불러
+    `AttributeError`로 run 전체가 죽었다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request()),
+                _off_vocab_response(),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2, "hop1은 시도됐다(신호 이탈이어도 흡수한다)"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 2
+    assert hops[-1]["hop"] == 1
+    assert hops[-1]["stop_reason"] == NeStopReason.PARSE_FAILED.value
+    # 스키마는 통과했다(파싱 자체는 됐다) — 신호 이탈과 스키마 실패가 기록에서 갈린다.
+    assert hops[-1]["schema_ok"] is True
+    assert hops[-1]["signal"] is None
     # 직전 홉(hop0)이 NE였으므로 흡수 뒤에도 signal은 NE → C-3 need_evidence_unresolved.
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
 
@@ -709,6 +879,74 @@ def test_scout_hop_event_carries_resolver_stats(
     assert hop0["already"] == 1
     assert hop0["fixable_count"] == 0
     assert hop0["unfilled"] == "not_found"
+
+
+# --- 실 resolver E2E (계획 §7-7) ----------------------------------------------
+
+
+@_MODES
+def test_ne_hop1_uses_the_real_resolver_against_the_real_indexer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """루프가 스크립트한 resolve 훅이 아니라 **실 resolver**(`symbol_resolver.resolve` + 실
+    인덱서 index-v2 표)와 Fake history로 끝까지 돈다.
+
+    `_SEAT`가 hop0에 명세 hop 1 예의 요청(`variable:Buf`·`function:strdup`)을 내고, hop1에서
+    review를 낸다. hop1 프롬프트 로그에 실 resolver가 만든 RETRIEVED 조각과 UNFILLED 줄이
+    그대로 실려야 한다 — `assignment in the same function` 조각은 없다(실 인덱서의 `assigns`
+    표가 원소 대입을 안 올린다, `tests/test_symbol_resolver.py` 모듈 docstring의 발견과 같다).
+    """
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=(
+                        RequestedContext(
+                            kind="variable", target="Buf", purpose="p", request_code="c"
+                        ),
+                        RequestedContext(
+                            kind="function", target="strdup", purpose="p", request_code="c"
+                        ),
+                    ),
+                ),
+                _ne_response(ScoutSignal.REVIEW),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    graph = _graph_index(_HOP1_ROOT, tmp_path)
+    resolver = partial(real_resolve, table=graph.table, read_lines=_hop1_read_lines(_HOP1_ROOT))
+    _wire_resolver(monkeypatch, resolver)
+
+    result, trace_path = _run(
+        tmp_path,
+        configure=_v3_pool(mode),
+        target=_hop1_pipeline_target(tmp_path),
+        stop_after=int(Stage.SCOUT),
+    )
+
+    assert len(_seat_calls(calls)) == 2, "hop0·hop1 두 번을 기대했는데"
+    model_calls = [e for e in _of(_events(trace_path), "model_call") if e["data"]["role"] == _SEAT]
+    subjects = {e["subject_id"] for e in model_calls}
+    assert len(subjects) == 1, "루프 동안 candidate_id는 하나여야 한다"
+    candidate_id = subjects.pop()
+    assert sorted(c["data"]["hop"] for c in model_calls) == [0, 1]
+
+    hop1_call = next(c for c in model_calls if c["data"]["hop"] == 1)
+    hop1_log = (trace_path.parent / hop1_call["data"]["prompt_ref"]).read_text(encoding="utf-8")
+    assert "/* --- retrieved: Buf (declaration (local)) --- */" in hop1_log
+    assert "/* --- retrieved: GIF_STAMP_LEN (macro named in the declaration) --- */" in hop1_log
+    assert "Not resolved: function:strdup (C standard library symbol)." in hop1_log
+    assert "assignment in the same function" not in hop1_log
+
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-2"]
+    # RETRIEVED는 Evidence가 되지 않는다 — 캡슐을 Evidence로 묶는 유일한 자리(5단계
+    # Auditor)가 `stop_after=Stage.SCOUT`라 아예 안 돈다(구조로 보장된다, `findings`가
+    # 비었다는 것으로 그 자리에 안 갔다는 것만 확인한다 — 이 확인은 "안 갔다"이지
+    # RETRIEVED 자체를 Evidence로 바꾸는 코드가 없다는 것의 전수 증명은 아니다).
+    assert result.findings == ()
 
 
 # --- 단위 검사 — visible 묶기 · max_chars 계산 · 예외 분류 --------------------
