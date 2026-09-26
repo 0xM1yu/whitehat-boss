@@ -939,8 +939,10 @@ def test_an_unknown_table_name_is_a_programming_error(tmp_path: Path):
 
 
 def _string_line_numbers():
-    """기록이 든 표마다 줄 칸 하나를 `"12"`로 바꾼 문서. 표·칸은 **픽스처에서 센다** — 소스의 키 목록에서
-    세면 읽는 쪽이 빠뜨린 칸을 이 목록도 같이 빠뜨린다. `"12"`는 v1 읽기의 `int()`를 통과하는 모양이다."""
+    """기록이 든 표마다 줄 칸 하나를 `"12"`로 바꾼 문서.
+
+    표·칸은 **픽스처에서 센다** — 소스의 키 목록에서 세면 읽는 쪽이 빠뜨린 칸을 이 목록도
+    같이 빠뜨린다. `"12"`는 v1 읽기의 `int()`를 통과하는 모양이다."""
     for table, rows in _INDEX_V2.items():
         if not isinstance(rows, dict) or table in ("locals", "assigns"):
             continue
@@ -987,10 +989,10 @@ def test_a_misshapen_document_is_refused_whole(broken: dict, tmp_path: Path):
 
     절반만 읽힌 표가 남으면 어디까지 믿을지 알 수 없다. 그래프도 표도 후보도 함께 내려간다.
 
-    **줄 번호가 정수가 아닌 것도 모양이 다른 것이다**(PR #295 리뷰 LOW-1). `table()`은 값을 고치지
-    않고 내주므로 키만 보면 `"12"`가 resolver까지 가서, 줄 범위를 세는 자리에서 죽거나 정수와의 비교가
-    늘 거짓이라 「못 찾았다」가 된다. JSON `true`도 막는다 — `bool`이 `int`의 하위형이라
-    `isinstance`로 보면 통과한다.
+    **줄 번호가 정수가 아닌 것도 모양이 다른 것이다**(PR #295 리뷰 LOW-1). `table()`은 값을
+    고치지 않고 내주므로 키만 보면 `"12"`가 resolver까지 가서, 줄 범위를 세는 자리에서 죽거나
+    정수와의 비교가 늘 거짓이라 「못 찾았다」가 된다. JSON `true`도 막는다 — `bool`이 `int`의
+    하위형이라 `isinstance`로 보면 통과한다.
     """
     graph = _graph(tmp_path, broken)
 
