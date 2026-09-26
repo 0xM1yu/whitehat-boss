@@ -700,6 +700,17 @@ def test_case_b_query_adds_operator_anchors_narrowed_before_the_cap():
     assert '"index_write"' in query and '"pointer_arithmetic"' in query
     assert str(queries.CASE_B_OPERATOR_CAP) in query
     assert "__OPCAP__" not in query  # the placeholder was substituted
+
+
+def test_case_b_query_anchors_deref_field_writes_in_write_context():
+    # 2026-09-26: deref/field is the biggest GT sink bucket but raw explodes; anchor only the
+    # WRITE context (`p->x = ...` / `*p = ...` / `s.f = ...`) with the same assignment-LHS
+    # narrowing as indexWrites, bounded by the same cap. Bind the wiring, not the spelling.
+    query = queries.candidates_b_query()
+    assert "val derefWrites =" in query
+    assert 'cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")' in query
+    assert "(indexWrites ++ derefWrites ++ ptrArith).distinct" in query  # in the operator union
+    assert '"deref_write"' in query                                       # tagged reason
     # The narrowing filter must sit before .take(cap) so the cap bounds a real subset,
     # not the raw 3000+ operator population.
     for anchor in ("<operator>.indirectIndexAccess", "<operator>.(addition|subtraction)"):
@@ -1228,6 +1239,8 @@ def test_flows_and_case_b_share_the_same_operator_sink_definition():
         'cpg.call.name("<operator>.(addition|subtraction)")',
         'c.argument.evalType.exists(_.contains("*"))',
         'indirection|indirectIndexAccess|addressOf)',
+        # deref/field WRITE anchor is copied between the two queries (2026-09-26) -- pin it too.
+        'cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")',
     ):
         assert fragment in flows and fragment in case_b, fragment
 

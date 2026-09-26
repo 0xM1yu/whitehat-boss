@@ -31,10 +31,11 @@ WRITERS = (
 CASE_B_WRITER_CAP = 2000
 
 # Operator-anchored sinks (#219 follow-up). Operator/deref sinks are the biggest GT bucket
-# (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). This PR anchors the two of
-# those it can narrow and bound: array-index WRITES (a subset of the 10) and pointer arithmetic
-# (3) -- the "13/40" the PR body counts. Deref/field (12) and array-index READS are NOT anchored
-# (a documented recall limit). Raw operators explode, so narrow BEFORE taking, then cap. All
+# (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). The write-context anchors
+# narrow-and-bound: array-index WRITES (subset of the 10), deref/field WRITES (`p->x=`·`*p=`·
+# `s.f=`, subset of the 12 -- added 2026-09-26), and pointer arithmetic (3). Array-index and
+# deref/field READS are still NOT anchored (a documented recall limit -- reads are ~2x the writes
+# and mostly benign). Raw operators explode, so narrow BEFORE taking, then cap. All
 # counts below are ATOM measurements recorded in
 # docs/experiments/harness/2026-09-22-case-b-operator-anchors-atom.md (run_id: none). WavPack
 # (1020 methods):
@@ -48,9 +49,9 @@ CASE_B_WRITER_CAP = 2000
 #     catches typedef'd pointers -- pcre2's `mb->end_subject - eptr` has operand evalType
 #     ANY/PCRE2_SPTR (no "*"), but the operand IS an indirectFieldAccess, so it qualifies.
 #     Integer-only arithmetic (both operands plain ints) drops out.
-# PER-ANCHOR bound (not a single total): this cap is applied to indexWrites AND to ptrArith
-# separately, so the operator population is bounded by 2*cap (<=4000), and with WRITERS
-# (CASE_B_WRITER_CAP) the new-sink total is bounded by <=6000. A repo past a cap gets bounded
+# PER-ANCHOR bound (not a single total): this cap is applied to indexWrites, derefWrites AND
+# ptrArith separately, so the operator population is bounded by 3*cap (<=6000), and with WRITERS
+# (CASE_B_WRITER_CAP) the new-sink total is bounded by <=8000. A repo past a cap gets bounded
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
@@ -316,11 +317,18 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
           .argumentIndex(1).contains(c)).take(__OPCAP__).l
+      // Deref/field WRITES (`p->x = ...`, `*p = ...`, `s.f = ...`): the same assignment-LHS
+      // narrowing as indexWrites, so the cap bounds it. Deref/field is the biggest GT sink
+      // bucket but raw explodes; restricting to WRITE targets keeps the OOB-write case and drops
+      // the far-more-common reads (a bounded recall gain -- 2026-09-26 measurement).
+      val derefWrites = cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take(__OPCAP__).l
       val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty).take(__OPCAP__).l
-      val operators = (indexWrites ++ ptrArith).distinct
+      val operators = (indexWrites ++ derefWrites ++ ptrArith).distinct
       ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
         ujson.Obj("symbol" -> c.name, "file" -> c.location.filename,
@@ -331,6 +339,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
             Option.when(repeatedCalls.contains(c))("repeated_release"),
             Option.when(writers.contains(c))("dangerous_write"),
             Option.when(indexWrites.contains(c))("index_write"),
+            Option.when(derefWrites.contains(c))("deref_write"),
             Option.when(ptrArith.contains(c))("pointer_arithmetic")).flatten),
           "trigger_arguments" -> ujson.Arr.from(c.argument.l.filter(a =>
             a.start.isIdentifier.refsTo.collect { case l: nodes.Local => l }
@@ -390,11 +399,14 @@ def flows_query(
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
           .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
+      val derefWrites = cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
       val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty).take({CASE_B_OPERATOR_CAP}).l
-      val globalArgs = (writerSinks ++ indexWrites ++ ptrArith).distinct
+      val globalArgs = (writerSinks ++ indexWrites ++ derefWrites ++ ptrArith).distinct
         .flatMap(_.argument).filter(n => Option(n.method).nonEmpty).distinct
       val sinksCapped = globalArgs.size > {FLOWS_SINK_CAP}
       val globalKept = globalArgs.sortBy(n => (
