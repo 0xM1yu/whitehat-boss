@@ -232,8 +232,8 @@ def test_apply_records_transition_and_persists() -> None:
 def test_c3_accepts_the_v3_signal_reasons_too(reason: ReasonCode) -> None:
     """C-3 — v3 신호 판정이 낸 두 새 사유(`scout_reject`·`need_evidence_unresolved`)도
 
-    `candidate` → `queued`로 간다 — 같은 번호, C-7이 두 `from_state`를 쓰는 것과 같은
-    선례로 같은 (from, to)에 사유만 늘렸다(Q7).
+    `candidate` → `queued`로 간다 — 같은 (from, to)에 사유만 늘린다. 전이는 추가하지
+    않는다(ADR 0012 결정 2) — C-7이 두 `from_state`를 같은 사유로 쓰는 것과 같은 선례다.
     """
     store, trace = InMemoryStateStore(), _writer()
 

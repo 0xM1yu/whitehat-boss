@@ -22,7 +22,7 @@ STARTED_AT = datetime(2026, 9, 15, tzinfo=UTC)
 def test_scout_hop_event_kind_is_the_spec_value() -> None:
     """`EventKind.SCOUT_HOP` — 홉 하나의 Scout 되묻기 자리. 이 이벤트를 내는 루프는
 
-    Phase 5(P5)가 짠다 — 여기서는 값만 고정한다.
+    need_evidence 루프 자신이 짠다(ADR 0012 결정 2 — Phase 5) — 여기서는 값만 고정한다.
     """
     assert EventKind.SCOUT_HOP == "scout_hop"
 
