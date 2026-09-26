@@ -18,7 +18,9 @@
 양자화로 공동 상주하지 않는다(모델별 정밀도·추론은 아래 「모델별 정밀도 · 추론(사고)」). **→ 2026-09-25
 `scout_memory`를 `qwen3-14b`로 바꿨다**(실험팀 최종 권고를 @danielcho02가 받았다 — memory 자리는 파인튜닝한 Qwen3-14B를
 쓸 계획이고 체크포인트가 오기 전까지 베이스 키다. boundary의 `seccoderx-8b`는 그대로다 — 팀 보고로는 파인튜닝
-데이터와 비슷한 데이터로 학습됐고 후보 중 Recall이 가장 높다. run ID 없음). 앞 판(Scout
+데이터와 비슷한 데이터로 학습됐고 후보 중 Recall이 가장 높다. run ID 없음). **→ 2026-09-26 Auditor를
+`qwen3.8-27b`로 바꾸고 추론(사고)을 켰다**(@danielcho02 — 옛 `qwen3.6-35b-a3b`는 로스터 밖이라 registry에서 지웠다.
+고른 근거는 벤더 모델 카드뿐이다 `[출처주장]` — 아래 「모델별 정밀도 · 추론(사고)」). 앞 판(Scout
 `qwen3-coder-30b-a3b`·`devstral-small-2-24b`·`qwen3-8b` · Auditor A/B)의 근거는
 [ADR 0010](docs/decisions/0010-harness-structure-and-model-roster.md) §2와
 [2026-09-08 로스터 조사](docs/research/2026-09-08-roster.md) §1이었다.
@@ -33,7 +35,7 @@
 | 4단계 · `scout_memory` (CWE-401·404·415·416·457·476·562·590·761·762·772·775·824·825) | `qwen3-14b` | ✅ |
 | 4단계 · `scout_boundary` (CWE-119·120·121·122·124·125·126·127·129·131·170·190·191·193·194·195·197·369·680·681·787·805) | `seccoderx-8b` | ✅ |
 | 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `qwen3-14b` | ✅ |
-| 5단계 · Auditor | `qwen3.6-35b-a3b` | ✅ |
+| 5단계 · Auditor | `qwen3.8-27b` (`reasoning_effort: xhigh`) | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
 
 ⚠ **scout_memory·injection은 같은 키 `qwen3-14b` 한 벌이다**(2026-09-25부터 — 그 전에는

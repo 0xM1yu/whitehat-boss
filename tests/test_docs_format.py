@@ -1161,6 +1161,44 @@ def test_the_canonical_profiles_seat_the_context_roster() -> None:
         )
 
 
+# §1 키 칸이 적는 추론 등급 — `gpt-oss-20b` (`reasoning_effort: high`)의 괄호.
+_KEY_EFFORT = re.compile(r"`reasoning_effort:\s*([a-z]+)`")
+
+
+def test_the_context_roster_states_the_registry_reasoning_effort() -> None:
+    """§1 키 칸의 `reasoning_effort`가 registry의 그 키 선언과 같다 — 양방향.
+
+    §1이 추론 등급을 적는 자리는 키 칸의 괄호다. registry만 바꾸고 표를 놓치면 정본이 옛 등급을
+    말하고, 표만 바꾸면 run은 옛 등급으로 돈다. 선언 안 한 키는 표에도 괄호가 없어야 한다 — 「안
+    적음」이 「서버 기본값으로 돈다」와 같은 뜻이 되게. 2026-09-26 Auditor를 `qwen3.8-27b`로 바꾸며
+    사고를 켤 때(`xhigh`) 세웠다 — 그전에는 Critic 한 칸뿐이라 사람이 봤다.
+    """
+    # 핀 — 양성은 PROJECT-CONTEXT.md §1 Critic 행의 실제 칸, 음성은 같은 표 memory 행의 실제 칸이다.
+    assert _KEY_EFFORT.search("`gpt-oss-20b` (`reasoning_effort: high`)").group(1) == "high"
+    assert _KEY_EFFORT.search("`qwen3-14b`") is None
+    from src.config import CONFIG_DIR
+
+    header, rows = _first_table(_read(CONTEXT), _ROSTER_HEADING, _ROSTER_TABLE)
+    key_at = _column(header, _KEY_COLUMN, _ROSTER_TABLE)
+    models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
+    offenders: list[str] = []
+    for lineno, row in rows:
+        key = _LEADING_KEY.match(row[key_at])
+        if key is None:
+            continue  # 키 칸 모양은 `test_the_context_roster_matches_the_model_registry`가 잡는다
+        stated = _KEY_EFFORT.search(row[key_at])
+        declared = (models.get(key.group(1)) or {}).get("reasoning_effort")
+        if (stated.group(1) if stated else None) != declared:
+            offenders.append(
+                f"PROJECT-CONTEXT.md:{lineno}: `{key.group(1)}` — 표 "
+                f"{stated.group(1) if stated else None!r} · config/models.yaml {declared!r}"
+            )
+    assert offenders == [], (
+        "PROJECT-CONTEXT.md §1 키 칸의 `reasoning_effort`가 registry와 갈렸다 — 등급을 바꿀 때는 "
+        "표와 config/models.yaml을 함께 고친다.\n" + "\n".join(offenders)
+    )
+
+
 _MODEL_SERVING = REPO_ROOT / "docs" / "model-serving.md"
 _UNAVOIDABLE = "회피 불가"
 # `docs/model-serving.md` 포트 표의 행 — `> | **8004** | \`qwen3-embedding-0.6b\` ← …`.
