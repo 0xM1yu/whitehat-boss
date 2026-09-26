@@ -137,6 +137,7 @@ from src.schemas.enums import (
     FindingState,
     ReasonCode,
     Role,
+    ScoutSignal,
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
@@ -653,6 +654,10 @@ class _Accumulator:
     # 팬아웃된(deferred 아닌) 대상 키 집합 (#193 ①). 「모든 자리가 실패한 대상 수」 =
     # 이 집합에서 후보를 낸 대상을 뺀 것. 단일 `scout`에서도 성립한다(자리가 하나).
     dispatched_targets: set[_TargetKey] = field(default_factory=set)
+    # target별 각 Scout 자리의 hop0 신호 (ADR 0012 결정 2 — 동료 확인). `_step_scout_open`이
+    # 적고 `_step_scout_settle`이 읽는다 — 같은 target의 다른 좌석이 review면 이 좌석의 NE
+    # 루프는 안 돈다. hop0에서 실패해 버려진 좌석은 여기 안 남는다("신호 없음"으로 친다).
+    hop0_signals: dict[_TargetKey, dict[Role, ScoutSignal | None]] = field(default_factory=dict)
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -1246,6 +1251,9 @@ class _InFlight:
     # `scout.run(role=...)`에 넘기고, `scout_member` stamp는 그 role에서 나온다.
     role: Role = Role.SCOUT
     capsule: ContextCapsule | None = None
+    # 4단계 개시(hop0)가 채우고 정착이 읽는다 — 둘이 표에서 갈린 자리다(계획 §7-2).
+    # `_step_scout_settle`이 이것 없이 불리면 배선 결함이다(`_StageOutOfOrder`).
+    scout_session: scout.ScoutSession | None = None
     candidate: Candidate | None = None
     finding: Finding | None = None
     missings: tuple[MissingEvidence, ...] = ()
@@ -1368,19 +1376,48 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     return True
 
 
-def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
-    """4단계 — 분류. 승격되지 않은 후보는 여기서 멈춘다(`False`)."""
+def _step_scout_open(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """4단계 개시 — hop0만 (계획 §7-2). 후보를 만들지 않는다. **항상 `True`다** —
+
+    탈락 여부는 아직 안 정해진다(v1·v2 점수 경로도, v3 신호도 정착이 본다). 세션을
+    `item`에 싣고, 이 좌석의 hop0 신호를 `state`에 target 키로 적는다 — 같은 target의
+    **다른** 좌석이 이것을 동료 확인(정착)에서 읽는다.
+
+    **여기서 `ctx.stage(Stage.SCOUT)`를 연다** — 노드(`scout.open_session`)는 더 이상 자기
+    stage span을 안 열므로(개시·정착이 갈리면서 "언제 열고 닫나"가 노드 하나의 일이 아니게
+    됐다), 이 표 항목이 그 자리를 대신한다. `run()`(직접 호출 경로)은 자기 span을 그대로 연다.
+    """
     item.reached.stage = Stage.SCOUT
     if item.capsule is None:
         raise _StageOutOfOrder("4단계가 3단계보다 먼저 돌았다 — capsule이 비어 있다")
-    candidate = scout.run(
-        ctx,
-        artifact=item.target.artifact,
-        capsule=item.capsule,
-        evidences=item.target.evidences,
-        role=item.role,
-        slice=item.target.slice,
-    )
+    with ctx.stage(Stage.SCOUT):
+        session = scout.open_session(
+            ctx,
+            artifact=item.target.artifact,
+            capsule=item.capsule,
+            evidences=item.target.evidences,
+            role=item.role,
+            slice=item.target.slice,
+        )
+    item.scout_session = session
+    key = _target_key(item.target.location, item.target.slice_id)
+    state.hop0_signals.setdefault(key, {})[item.role] = session.signal
+    return True
+
+
+def _step_scout_settle(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """4단계 정착 — 동료 확인 → need_evidence 루프(#95 · Phase 5) → 판정 적용.
+
+    승격되지 않은 후보는 여기서 멈춘다(`False`), `_step_scout`(하나였던 시절)과 같다.
+    `_step_scout_open`과 같은 이유로 여기서 `ctx.stage(Stage.SCOUT)`를 연다 — need_evidence
+    루프의 되묻기 호출(hop≥1)도 이 span 안에서 돈다.
+    """
+    item.reached.stage = Stage.SCOUT
+    session = item.scout_session
+    if session is None:
+        raise _StageOutOfOrder("Scout 정착이 개시보다 먼저 돌았다 — scout_session이 비어 있다")
+    with ctx.stage(Stage.SCOUT):
+        candidate = scout.finish(ctx, session)
     item.candidate = candidate
     state.candidates.append(candidate)
     return candidate.state is FindingState.TRIAGED
@@ -1606,10 +1643,20 @@ TriageStep = Callable[[RunContext, "_InFlight", "_Accumulator"], bool]
 # `test_every_triage_step_takes_the_same_arguments`가 그 균일성을 고정한다.
 _TRIAGE_STEPS: tuple[tuple[Stage, TriageStep], ...] = (
     (Stage.RETRIEVAL, _step_retrieval),
-    (Stage.SCOUT, _step_scout),
+    (Stage.SCOUT, _step_scout_open),
+    (Stage.SCOUT, _step_scout_settle),
     (Stage.AUDITOR, _step_auditor),
     (Stage.GATE, _step_gate),
 )
+
+# 국면을 가르는 자리 — `_step_scout_settle`의 인덱스(표에서 읽는다, 하드코딩하지 않는다).
+# **국면 A**(전 좌석 개시)는 이 인덱스 앞, **국면 B**(정착부터 끝까지)는 이 인덱스부터다
+# (계획 §7-2 — `_triage_by_candidate`의 두 국면).
+_SCOUT_SETTLE_INDEX = next(
+    index for index, (_, step) in enumerate(_TRIAGE_STEPS) if step is _step_scout_settle
+)
+_PHASE_A_STEPS = _TRIAGE_STEPS[:_SCOUT_SETTLE_INDEX]
+_PHASE_B_STEPS = _TRIAGE_STEPS[_SCOUT_SETTLE_INDEX:]
 
 
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
@@ -1664,10 +1711,23 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
         for target in plan.targets
         for role in roles
     ]
-    for stage, step in _TRIAGE_STEPS:
+    # **성공 0 백스톱은 표의 행이 아니라 단계 번호 단위로 본다(#95).** Scout가 두 행
+    # (개시·정착, 둘 다 `Stage.SCOUT`)으로 갈리면서, 행마다 바로 확인하면 개시 행만 보고
+    # "이 자리는 아무것도 못 봤다"고 너무 일찍 판단하게 된다 — 그 시점엔 정착이 아직 후보를
+    # 하나도 못 만들었다(개시는 후보를 안 만든다). 그래서 같은 단계 번호의 행을 전부 돈
+    # 뒤에만 `_stop_if_a_caller_saw_nothing`을 부른다 — `_run_stage_for_all`은 이제 그 판단을
+    # 내리지 않고 그 재료(`starved`)만 돌려준다.
+    pending_starved: set[tuple[Stage, Role | None]] = set()
+    steps = _TRIAGE_STEPS
+    for row, (stage, step) in enumerate(steps):
         if last < stage:
             return
-        items = _run_stage_for_all(ctx, stage, step, items, state)
+        items, starved = _run_stage_for_all(ctx, stage, step, items, state)
+        pending_starved |= starved
+        next_stage = steps[row + 1][0] if row + 1 < len(steps) else None
+        if next_stage != stage:
+            _stop_if_a_caller_saw_nothing(pending_starved)
+            pending_starved = set()
 
 
 def _run_stage_for_all(
@@ -1676,8 +1736,9 @@ def _run_stage_for_all(
     step: TriageStep,
     items: list[_InFlight],
     state: _Accumulator,
-) -> list[_InFlight]:
-    """한 단계를 살아 있는 target 전부에 태우고, 다음 단계로 갈 것만 돌려준다.
+) -> tuple[list[_InFlight], set[tuple[Stage, Role | None]]]:
+    """한 단계를 살아 있는 target 전부에 태우고, (다음 단계로 갈 것, 이 행에서 아무것도
+    못 본 caller 집합)을 돌려준다.
 
     폐기 판정은 후보 단위(`_triage_by_candidate`)와 **같은 표**다 — `_is_droppable`이
     그 판정을 함수로 들고 있는 이유가 정확히 이것이다(그 docstring). 여기서 다시
@@ -1714,10 +1775,14 @@ def _run_stage_for_all(
 
     ## 성공 0 백스톱 (#296)
 
-    단계를 다 돈 뒤 **모델을 부른 자리 중 한 번도 성공하지 못한 것**이 있으면 멈춘다
-    (`_stop_if_a_caller_saw_nothing`). 크기 거절은 카운터에 안 세므로, 작게 띄운 서버 창이
-    전량을 거절해도 카운터로는 안 선다. 키는 `item.role`이 아니라 `_caller`다 — 5단계부터는
-    부르는 역할이 하나라서다(위 「키가 4단계 자리다」의 오분류를 이 백스톱에 들이지 않는다).
+    이 행을 다 돈 뒤 **모델을 부른 자리 중 한 번도 성공하지 못한 것**(`starved`)을 돌려준다
+    — **멈추지는 않는다.** 그 판단(`_stop_if_a_caller_saw_nothing`)은 호출자(`_triage_by_stage`)
+    가 **같은 단계 번호의 행을 전부 돈 뒤**에 내린다 — Scout가 개시·정착 두 행으로 갈리면서
+    (둘 다 `Stage.SCOUT`), 행 하나만 보고 판단하면 정착이 아직 후보를 못 만든 시점에
+    "이 자리는 아무것도 못 봤다"로 너무 일찍 판정하게 된다(#95). 크기 거절은 카운터에 안
+    세므로, 작게 띄운 서버 창이 전량을 거절해도 카운터로는 안 선다. 키는 `item.role`이
+    아니라 `_caller`다 — 5단계부터는 부르는 역할이 하나라서다(위 「키가 4단계 자리다」의
+    오분류를 이 백스톱에 들이지 않는다).
     """
     # 연속 폐기를 역할별로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
     consecutive: dict[Role, int] = {}
@@ -1753,8 +1818,7 @@ def _run_stage_for_all(
             passed.add(_caller(stage, role))
             if keep:
                 survivors.append(item)
-    _stop_if_a_caller_saw_nothing(tried - passed)
-    return survivors
+    return survivors, tried - passed
 
 
 def _triage_by_candidate(
@@ -1789,28 +1853,49 @@ def _triage_by_candidate(
     단계별 성공을 `reached`에서 거꾸로 읽는다 — 시도가 들어간 단계는 전부 지났고, 실패했으면
     마지막 단계만 못 지났다. 「Scout가 안 올렸다」도 시도의 완주라 자리 키로 세면 Auditor가
     전부 거절해도 안 선다 — 그래서 키가 `_caller`다.
+
+    ## Scout는 국면 둘로 갈린다(계획 §7-2)
+
+    4단계는 표에서 개시(`_step_scout_open`)와 정착(`_step_scout_settle`) 두 행이다(둘 다
+    `Stage.SCOUT`). **target 하나 안에서 좌석 순서가 바뀐다** — 「좌석1 전 단계 → 좌석2 …」가
+    아니라 「전 좌석 개시(국면 A) → 국면 A에서 살아남은 좌석마다 정착부터 끝까지(국면
+    B)」다. 동료 확인(같은 target의 다른 좌석이 hop0에서 review인가)이 이 순서에 기댄다 —
+    국면 B가 시작될 때는 이미 전 좌석의 hop0 신호를 안다. 역할별 호출 **순서**는 그대로라
+    (좌석마다 `_scout_roles(ctx)` 순서로 한 번씩 개시하고, 그다음 그 순서로 정착한다) 인덱스
+    기반 실패 주입은 안 흔들린다.
+
+    예외 처리(`_drop`·연속 카운터·`tried`/`passed`)는 **국면마다** 같은 패턴을 적용한다 —
+    국면 A에서 실패한 좌석은 국면 B에 들어가지 않는다(그 시도는 거기서 끝난다). **「완주」
+    리셋(`consecutive[role] = 0`)은 국면 B가 예외 없이 끝났을 때만 한다** — 국면 A만
+    통과한 것은 아직 "이 역할이 체계적으로 고장 나지 않았다"를 증명하지 못한다(전체
+    3~6단계를 관통해야 하던 예전 기준과 같다). 국면을 가르는 자리는 하드코딩하지 않고
+    표에서 읽는다(`_SCOUT_SETTLE_INDEX`, `_PHASE_A_STEPS`/`_PHASE_B_STEPS`).
     """
     # 연속 폐기를 **역할별로** 센다(풀 팬아웃 #178 후속). 시도 단위가 `(target, role)`이고, 풀에서
     # 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던 단일 카운터로는 상한에 안 닿았다
     # (Scout 커버리지 1/3이 빈 run이 정상 완주로 기록됐다). 역할별로 세면 그 멤버가 자기 카운터로
     # `_MAX_CONSECUTIVE_DROPS`에 닿는다. 단일 `scout`은 키가 하나라 동작이 그대로다.
+    #
+    # **국면 A·B가 같은 dict를 공유한다** — target 여러 개, 국면 둘을 거치며 누적된다. 예전에
+    # target당 (역할 하나 × 3~6단계 한 번)이던 것이 (역할 하나 × 국면 둘)로 바뀌었을 뿐,
+    # "이 역할이 상한에 닿을 때까지 몇 번 연속으로 실패했나"라는 뜻은 그대로다.
     consecutive: dict[Role, int] = {}
     tried: set[tuple[Stage, Role | None]] = set()
     passed: set[tuple[Stage, Role | None]] = set()
-    # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 각 (target, role)이
-    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 그 역할만 리셋된다.
-    # 풀에서는 같은 target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+    # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 풀에서는 같은
+    # target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
     roles = _scout_roles(ctx)
     for target in plan.targets:
+        survivors: dict[Role, _InFlight] = {}
+        # 국면 A — 전 좌석의 RETRIEVAL + Scout 개시(hop0)까지.
         for role in roles:
-            # 이번 시도가 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (PR #50). 예외는
-            # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
-            # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
-            # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
             reached = _Reached()
+            item = _InFlight(target=target, reached=reached, role=role)
             finished = False
             try:
-                _triage_one(ctx, target, state, last, reached, role=role)
+                _triage_one(
+                    ctx, target, state, last, reached, role=role, item=item, steps=_PHASE_A_STEPS
+                )
             except ModelGatewayError as exc:
                 if not _is_droppable(exc):
                     # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
@@ -1837,7 +1922,34 @@ def _triage_by_candidate(
                     stage=reached.stage, role=role,
                 )
             else:
-                # 완주했다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
+                # 국면 A만 통과했다 — 「완주」는 아직이다(국면 B 끝에서만 리셋한다).
+                finished = True
+                survivors[role] = item
+            entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
+            tried |= entered
+            passed |= entered if finished else entered - {_caller(reached.stage, role)}
+        # 국면 B — 국면 A에서 살아남은 좌석만, Scout 정착부터 끝까지.
+        for role, item in survivors.items():
+            reached = item.reached
+            finished = False
+            try:
+                _triage_one(
+                    ctx, target, state, last, reached, role=role, item=item, steps=_PHASE_B_STEPS
+                )
+            except ModelGatewayError as exc:
+                if not _is_droppable(exc):
+                    raise
+                consecutive[role] = _drop(
+                    ctx, state, target, _REASON_GATEWAY, exc, consecutive.get(role, 0),
+                    stage=reached.stage, role=role,
+                )
+            except SchemaParseError as exc:
+                consecutive[role] = _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                    stage=reached.stage, role=role,
+                )
+            else:
+                # 완주했다(국면 B까지) — 앞의 실패는 이 역할의 체계적 고장이 아니었다.
                 consecutive[role] = 0
                 finished = True
             entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
@@ -2011,24 +2123,34 @@ def _triage_one(
     reached: _Reached,
     *,
     role: Role = Role.SCOUT,
-) -> None:
-    """target 하나를 한 Scout 자리(`role`)로 3~6단계에 태운다. 승격되지 않은 후보는 멈춘다.
+    item: _InFlight | None = None,
+    steps: tuple[tuple[Stage, TriageStep], ...] = _TRIAGE_STEPS,
+) -> _InFlight:
+    """target 하나를 한 Scout 자리(`role`)로 `steps`(기본은 3~6단계 전부)에 태운다.
 
-    **후보 단위(`execution.mode: per_candidate`, 기본값)의 경로다.** 단계 단위는
-    `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만 뒤집어** 돈다. 풀 프로필에서
-    `_triage_by_candidate`가 target × 멤버로 이 함수를 여러 번 부르고(Option C), 첫 멤버가
-    만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+    승격되지 않은 후보는 멈춘다. **후보 단위(`execution.mode: per_candidate`, 기본값)의
+    경로다.** 단계 단위는 `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만
+    뒤집어** 돈다. 풀 프로필에서 `_triage_by_candidate`가 target × 멤버로 이 함수를 여러
+    번 부르고(Option C), 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+
+    **`item`을 넘기면 그 객체에 이어서 쌓는다.** Scout 개시·정착을 국면으로 나눌 때
+    (`_triage_by_candidate`) 같은 시도(target, role)의 두 호출이 같은 `_InFlight`
+    (`capsule`·`scout_session`)를 봐야 하므로, 국면 A 호출이 만든 `item`을 국면 B 호출에
+    그대로 다시 넘긴다. `None`이면(기본, `steps`도 기본일 때만 쓰는 옛 경로) 새로 만든다.
 
     **`reached.stage`를 노드에 들어가기 직전에 올린다 (PR #50).** 끝난 뒤에 올리면 그
     노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
     (그 올리는 일은 이제 각 `_step_*`이 자기 첫 줄에서 한다.)
     """
-    item = _InFlight(target=target, reached=reached, role=role)
-    for stage, step in _TRIAGE_STEPS:
+    resolved_item = (
+        item if item is not None else _InFlight(target=target, reached=reached, role=role)
+    )
+    for stage, step in steps:
         if last < stage:
-            return
-        if not step(ctx, item, state):
-            return
+            return resolved_item
+        if not step(ctx, resolved_item, state):
+            return resolved_item
+    return resolved_item
 
 
 def _new_record(
