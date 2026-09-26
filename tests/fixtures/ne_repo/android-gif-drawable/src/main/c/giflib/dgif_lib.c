@@ -57,7 +57,7 @@ int DGifGetRecordType(GifFileType *GifFile, int *Type)
     /* filler statement 57 */
     /* filler statement 58 */
     /* filler statement 59 */
-    /* filler statement 60 */
+    strdup(Buf);
     /* filler statement 61 */
     /* filler statement 62 */
     /* filler statement 63 */

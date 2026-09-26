@@ -1,31 +1,39 @@
-"""NE(need_evidence) resolver의 순수 함수 — Scout가 후속 턴에 요청한 심볼을 정규화하고,
+"""NE(need_evidence) resolver — Scout가 후속 턴에 요청한 심볼을 정규화·조회하고,
 그 결과를 RETRIEVED/UNFILLED 텍스트로 렌더한다 (#63 후속, ADR 0012 결정 2·3).
 
 명세 원천은 Notion 「Scout RAG baseline」이다(스냅샷
 `…/ddaa755d-…/scratchpad/notion_rag_baseline_2026-09-26.txt` — 바이트 대조 통과). 이 모듈의
 문자열은 그 원문을 그대로 옮긴 것이고, 의역하지 않는다.
 
-사유 키는 계약(`src/schemas/enums.py`의 `UnfilledReason`·`FIXABLE_UNFILLED_REASONS`)을
-그대로 쓴다 — 이 모듈이 따로 정의하지 않는다(중복 정의 제거).
-
-`table()` 조회·`read_lines` 파일 읽기·`resolve()` 조립은 다음 커밋에서 더한다.
+`resolve()`가 조립 지점이다 — `GraphIndex.table()`(조회)과 `read_lines`(파일 읽기) 훅을
+받아 `Resolution`을 낸다. 계약(`ResolveQuery`·`Resolution`·`UnfilledReason` 등)은
+`src/schemas/need_evidence.py`·`src/schemas/enums.py`에 있다 — 이 모듈은 그것을 그대로 쓴다.
 
 ## 명세 밖이거나 해석이 든 자리
 
 - 동점 처리(`(file, line)` 오름차순) — `pick_best_candidate`. 결정론을 위해 정했다.
 - `closest_name`의 cutoff, `_LIBC_SYMBOLS`의 목록 — 명세가 값을 안 준다.
-- 선언 줄에서 타입 이름을 뽑는 휴리스틱(체인 라벨 7)은 표 조회가 있어야 해서 다음 커밋 몫이다.
+- 선언 줄에서 타입 이름을 뽑는 휴리스틱(체인 라벨 7) — `_type_name_from_line`.
 - 대입 주의문(라벨 3·13이 있을 때만)의 정확한 삽입 자리 — 골격 원문(스냅샷 :370-381)은
   위치를 산문으로만 설명하고, hop 1 예(라벨 4뿐)에는 주의문이 없어 위치를 못 보여준다.
   RETRIEVED 조각들과 UNFILLED 사이로 뒀다 — **추측**이다.
+- **"같은 함수"를 아는 방법** — `ResolveQuery`에 현재 함수 필드가 없다(계약 고정). 지역
+  변수·파라미터 검색은 `target_file` 안에서 이름이 겹치면 `visible`에 보이는 선언을
+  우선한다(`_resolve_declaration`) — 파라미터의 caller site 예(스냅샷 §4.4.2 4-3)가 같은
+  방식으로 "슬라이스에 쓰인 F"를 고른다.
+- UNFILLED 사유 사이의 우선순위(원문이 순서를 안 준다) — libc를 가장 먼저 본다(그러지
+  않으면 `strdup`이 `calls` 표에도 잡혀 outside_repo로 잘못 읽힌다 — hop 1 예가 그 근거),
+  다음 outside_repo(호출은 있음), 다음 closest_name(비슷한 철자), 마지막 not_found.
 """
 
 import difflib
 import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 
 from src.schemas.enums import UnfilledReason
+from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
+from src.schemas.scout_response import RequestedContext
 
 # --- UNFILLED 문구 -----------------------------------------------------------
 #
@@ -315,3 +323,715 @@ def pick_best_candidate(
 
     return min(candidates, key=key)
 
+
+# --- resolve(): 조회·조립 ----------------------------------------------------
+#
+# 여기부터는 `table`(조회)·`read_lines`(파일 읽기) 훅만 쓴다 — 인덱스·파일에 직접 손대지
+# 않는다. 두 훅 다 factory가 만든다(`GraphIndex.table`·대상 트리 읽기).
+
+# 반복되는 훅 시그니처의 줄임 별칭 — 함수 서명이 100칸을 넘기지 않게 한다.
+_Table = Callable[[str], Mapping[str, object] | None]
+_ReadLines = Callable[[str], Sequence[str]]
+_Visible = Mapping[str, frozenset[int]]
+
+# ponytail: v3 kind 어휘의 "variable" — 선언(지역·전역) 동명 점수의 `definition_kind`다.
+_VARIABLE_KIND = "variable"
+
+# caller site 반경 — 원문이 갈린다: 라벨 표(스냅샷 :395)는 ±3, 본문 4-3 문단(:308)은
+# "앞뒤 5줄"이라 적는다. 라벨 표가 이 블록 자체의 정의라 ±3을 쓴다.
+_CALLER_SITE_RADIUS = 3
+# 라벨 4·13 — 대입 줄 반경. 라벨 4(같은 함수)는 그 줄 하나, 라벨 13(전역)은 ±1(명세 표).
+_GLOBAL_ASSIGN_RADIUS = 1
+
+_TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*")
+_MACRO_TOKEN_RE = re.compile(r"[A-Z][A-Z0-9_]{2,}")
+
+
+def _record_range(record: Mapping[str, object]) -> tuple[int, int]:
+    start = int(record["line_start"])
+    end = record.get("line_end")
+    return start, int(end) if end is not None else start
+
+
+def _clip(lo: int, hi: int, total: int) -> tuple[int, int]:
+    """파일 밖으로 안 나가게 자른다(1-index)."""
+    return max(lo, 1), min(hi, total)
+
+
+def _read_span(
+    read_lines: _ReadLines, file: str, lo: int, hi: int
+) -> tuple[tuple[int, str], ...] | None:
+    """[lo, hi] 구간을 (줄번호, 원본 줄)로. 못 읽으면 `None` — 호출부가 그 블록만 건너뛴다.
+
+    대상 파일이 사라졌거나 대상 루트 밖을 가리키면 `read_lines`가 `OSError`/`ValueError`를
+    올린다(`safe_join`의 `PathEscape`가 `ValueError`다) — 여기서 삼켜 그 블록만 빠진다.
+    """
+    try:
+        lines = read_lines(file)
+    except (OSError, ValueError):
+        return None
+    lo, hi = _clip(lo, hi, len(lines))
+    if lo > hi:
+        return None
+    return tuple((n, lines[n - 1]) for n in range(lo, hi + 1))
+
+
+@dataclass(frozen=True)
+class _Block:
+    """RETRIEVED 조각 하나 — `RetrievedBlock`(줄번호만)으로 줄이기 전의 중간 표현.
+
+    `request_kind`는 이 블록을 만든 요청의 모델 kind다 — 95% 중복이면 `Already in SOURCE`
+    줄의 `<kind>` 자리에 쓴다(그 줄도 UNFILLED처럼 요청의 kind를 그대로 쓴다).
+    """
+
+    name: str
+    label: str
+    file: str
+    text_lines: tuple[tuple[int, str], ...]
+    request_kind: str = ""
+
+    @property
+    def lines(self) -> tuple[int, ...]:
+        return tuple(n for n, _ in self.text_lines)
+
+    def render(self) -> str:
+        return render_fragment(
+            name=self.name, label=self.label, file=self.file, lines=self.text_lines
+        )
+
+
+def _record_block(
+    name: str, label: str, record: Mapping[str, object], read_lines: _ReadLines
+) -> list[_Block]:
+    lo, hi = _record_range(record)
+    span = _read_span(read_lines, str(record["file"]), lo, hi)
+    if span is None:
+        return []
+    return [_Block(name=name, label=label, file=str(record["file"]), text_lines=span)]
+
+
+def _type_name_from_line(line_text: str, types_table: Mapping[str, object]) -> str | None:
+    """선언 줄에서 `types` 표에 있는 식별자를 찾는다 — 체인 라벨 7의 휴리스틱(명세 밖).
+
+    선언 줄의 식별자를 왼쪽부터 보고 `types`에 등록된 첫 토큰을 쓴다 — 변수 이름 자신은
+    거의 항상 `types`에 없어 자연히 걸러진다. 한계: 같은 줄에 타입 이름이 둘 이상 있으면
+    (드묾) 왼쪽 것을 고른다 — ponytail: 결정론을 위한 선택이고 명세에 없다.
+    """
+    for token in _TYPE_TOKEN_RE.findall(line_text):
+        if token in types_table:
+            return token
+    return None
+
+
+def _pick_record(
+    records: Sequence[Mapping[str, object]],
+    *,
+    definition_kind: str,
+    requested_kind: str,
+    target_file: str,
+    visible_files: frozenset[str],
+) -> Mapping[str, object] | None:
+    """§5.3 점수로 같은 형식 안 여러 정의 중 하나를 고른다(`score_candidate` 재사용).
+
+    비었으면 `None`.
+    """
+    if not records:
+        return None
+
+    def key(record: Mapping[str, object]) -> tuple[int, str, int]:
+        candidate = Candidate(
+            definition_kind=definition_kind,
+            file=str(record["file"]),
+            line=int(record["line_start"]),
+        )
+        score = score_candidate(
+            candidate,
+            requested_kind=requested_kind,
+            target_file=target_file,
+            visible_files=visible_files,
+        )
+        return (-score, candidate.file, candidate.line)
+
+    return min(records, key=key)
+
+
+def _declaration_site(
+    base: str,
+    *,
+    table: _Table,
+    target_file: str,
+    visible: _Visible,
+) -> tuple[str, str, int] | None:
+    """base가 지역변수·파라미터로 선언된 (함수, 파일, 줄) — `target_file` 안에서만 찾는다.
+
+    `ResolveQuery`에 "현재 함수" 필드가 없다(계약 고정) — `target_file` 안에 같은 이름이
+    여럿이면 `visible`에 보이는 선언을 우선한다(스냅샷 §4.4.2 4-3의 caller-site 예가
+    "슬라이스에 쓰인 F"로 고르는 것과 같은 생각이다). 그래도 여럿이면 함수 이름·줄 순 —
+    ponytail: 결정론을 위한 선택이고 명세에 없다.
+    """
+    file_locals = (table("locals") or {}).get(target_file, {})
+    matches = [
+        (func, min(names[base]))
+        for func, names in file_locals.items()
+        if base in names and names[base]
+    ]
+    if not matches:
+        return None
+    visible_lines = visible.get(target_file, frozenset())
+    func, line = min(matches, key=lambda item: (item[1] not in visible_lines, item[0], item[1]))
+    return (func, target_file, line)
+
+
+def _is_parameter(
+    func: str, base: str, *, table: _Table, file: str
+) -> bool:
+    records = (table("functions") or {}).get(func, ())
+    return any(
+        record.get("file") == file and base in record.get("params", ()) for record in records
+    )
+
+
+def _resolve_caller_sites(
+    func: str, *, table: _Table, read_lines: _ReadLines
+) -> list[_Block]:
+    """라벨 9 — base를 파라미터로 가진 함수 F의 호출부 ±3(라벨 표 값)."""
+    blocks: list[_Block] = []
+    for site in (table("calls") or {}).get(func, ()):
+        line = int(site["line"])
+        span = _read_span(
+            read_lines, str(site["file"]), line - _CALLER_SITE_RADIUS, line + _CALLER_SITE_RADIUS
+        )
+        if span is not None:
+            blocks.append(
+                _Block(name=func, label=LABEL_CALLER_SITE, file=str(site["file"]), text_lines=span)
+            )
+    return blocks
+
+
+def _resolve_macro_named_in_declaration(
+    line_text: str, *, table: _Table, read_lines: _ReadLines
+) -> list[_Block]:
+    """라벨 11 — 선언 줄의 대문자 식별자를 `macros`에서 찾는다.
+
+    2단계 — target이 함수·구조체가 아닐 때만 호출부가 이 함수를 부른다.
+    """
+    macros_table = table("macros") or {}
+    blocks: list[_Block] = []
+    for token in _MACRO_TOKEN_RE.findall(line_text):
+        record = _pick_record(
+            macros_table.get(token, ()),
+            definition_kind="macro",
+            requested_kind="macro",
+            target_file="",
+            visible_files=frozenset(),
+        )
+        if record is not None:
+            blocks.extend(
+                _record_block(token, LABEL_MACRO_NAMED_IN_DECLARATION, record, read_lines)
+            )
+    return blocks
+
+
+def _resolve_same_function_assignment(
+    base: str,
+    func: str,
+    file: str,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+) -> list[_Block]:
+    """라벨 4 — 같은 함수 안 대입 줄(1줄, 반경 0)."""
+    lines = (table("assigns") or {}).get(file, {}).get(func, {}).get(base, ())
+    blocks: list[_Block] = []
+    for line in lines:
+        span = _read_span(read_lines, file, int(line), int(line))
+        if span is not None:
+            blocks.append(
+                _Block(name=base, label=LABEL_ASSIGNMENT_SAME_FUNCTION, file=file, text_lines=span)
+            )
+    return blocks
+
+
+def _resolve_global_assignment(
+    base: str, *, table: _Table, read_lines: _ReadLines
+) -> list[_Block]:
+    """라벨 13 — 파일 전역 변수 대입을 저장소 전체에서 찾는다(±1, 명세 표)."""
+    label = LABEL_ASSIGNMENT_TO_GLOBAL.format(global_name=base)
+    blocks: list[_Block] = []
+    for file, funcs in (table("assigns") or {}).items():
+        for names in funcs.values():
+            for line in names.get(base, ()):
+                span = _read_span(
+                    read_lines,
+                    file,
+                    int(line) - _GLOBAL_ASSIGN_RADIUS,
+                    int(line) + _GLOBAL_ASSIGN_RADIUS,
+                )
+                if span is not None:
+                    blocks.append(_Block(name=base, label=label, file=file, text_lines=span))
+    return blocks
+
+
+def _resolve_field_assignment(
+    field: str, *, table: _Table, read_lines: _ReadLines
+) -> list[_Block]:
+    """라벨 3 — 체인 마지막 필드의 대입을 저장소 전체에서 찾는다(±1, 명세 표)."""
+    label = LABEL_ASSIGNMENT_TO_FIELD.format(field=field)
+    blocks: list[_Block] = []
+    for record in (table("field_assigns") or {}).get(field, ()):
+        line = int(record["line"])
+        span = _read_span(
+            read_lines,
+            str(record["file"]),
+            line - _GLOBAL_ASSIGN_RADIUS,
+            line + _GLOBAL_ASSIGN_RADIUS,
+        )
+        if span is not None:
+            blocks.append(
+                _Block(name=field, label=label, file=str(record["file"]), text_lines=span)
+            )
+    return blocks
+
+
+def _resolve_callee_body(
+    base: str,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    visible: _Visible,
+) -> list[_Block]:
+    """라벨 5 — 슬라이스 안에서 base를 인자로 넘기는 호출이 보이면 그 callee 전체(#63 baseline
+    §4.4.2 5번 — `doit(text4)`가 슬라이스에 보이면 `text4`가 아니라 `doit`의 본문을 준다)."""
+    functions_table = table("functions") or {}
+    blocks: list[_Block] = []
+    seen: set[str] = set()
+    for callee, sites in (table("calls") or {}).items():
+        if callee in seen:
+            continue
+        for site in sites:
+            file = str(site["file"])
+            line = int(site["line"])
+            if line not in visible.get(file, frozenset()) or base not in site.get("args", ()):
+                continue
+            record = _pick_record(
+                functions_table.get(callee, ()),
+                definition_kind="function",
+                requested_kind="function",
+                target_file=file,
+                visible_files=frozenset(visible),
+            )
+            if record is not None:
+                blocks.extend(_record_block(callee, LABEL_CALLEE_BODY, record, read_lines))
+                seen.add(callee)
+            break
+    return blocks
+
+
+def _resolve_declaration(
+    base: str,
+    request: RequestedContext,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible: _Visible,
+) -> list[_Block]:
+    """선언(라벨 2·10) + 딸린 블록 — 파라미터면 caller site(라벨 9), 대문자 식별자면 매크로
+    (라벨 11), 지역이면 같은 함수 대입(라벨 4)·전역이면 저장소 전체 대입(라벨 13)."""
+    blocks: list[_Block] = []
+    site = _declaration_site(base, table=table, target_file=target_file, visible=visible)
+    if site is not None:
+        func, file, line = site
+        span = _read_span(read_lines, file, line, line)
+        if span is not None:
+            decl = _Block(name=base, label=LABEL_DECLARATION_LOCAL, file=file, text_lines=span)
+            blocks.append(decl)
+            blocks.extend(
+                _resolve_macro_named_in_declaration(span[0][1], table=table, read_lines=read_lines)
+            )
+            blocks.extend(
+                _resolve_same_function_assignment(
+                    base, func, file, table=table, read_lines=read_lines
+                )
+            )
+        if _is_parameter(func, base, table=table, file=file):
+            blocks.extend(_resolve_caller_sites(func, table=table, read_lines=read_lines))
+        return blocks
+
+    visible_files = frozenset(visible)
+    global_record = _pick_record(
+        (table("file_vars") or {}).get(base, ()),
+        definition_kind=_VARIABLE_KIND,
+        requested_kind=request.kind,
+        target_file=target_file,
+        visible_files=visible_files,
+    )
+    if global_record is not None:
+        blocks.extend(
+            _record_block(base, LABEL_DECLARATION_FILE_SCOPE, global_record, read_lines)
+        )
+        line = int(global_record["line_start"])
+        span = _read_span(read_lines, str(global_record["file"]), line, line)
+        if span is not None:
+            blocks.extend(
+                _resolve_macro_named_in_declaration(span[0][1], table=table, read_lines=read_lines)
+            )
+        blocks.extend(_resolve_global_assignment(base, table=table, read_lines=read_lines))
+    return blocks
+
+
+def _declared_type_name(
+    base: str,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible: _Visible,
+) -> str | None:
+    """base 선언 줄에서 타입 이름을 찾는다 — 지역변수·파라미터 먼저, 없으면 파일 전역."""
+    site = _declaration_site(base, table=table, target_file=target_file, visible=visible)
+    if site is not None:
+        _func, file, line = site
+        span = _read_span(read_lines, file, line, line)
+    else:
+        record = _pick_record(
+            (table("file_vars") or {}).get(base, ()),
+            definition_kind=_VARIABLE_KIND,
+            requested_kind=_VARIABLE_KIND,
+            target_file=target_file,
+            visible_files=frozenset(visible),
+        )
+        span = None
+        if record is not None:
+            line = int(record["line_start"])
+            span = _read_span(read_lines, str(record["file"]), line, line)
+    if not span:
+        return None
+    return _type_name_from_line(span[0][1], table("types") or {})
+
+
+def _field_own_type(
+    field: str,
+    struct_record: Mapping[str, object],
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+) -> str | None:
+    """체인을 이어가려고 필드 자신의 타입을 찾는다 — struct 본문에서 그 필드 줄을 찾아 같은
+    휴리스틱을 다시 쓴다(`fields` 표는 필드 줄이 아니라 **선언한 struct의 범위**만 준다)."""
+    lo, hi = _record_range(struct_record)
+    span = _read_span(read_lines, str(struct_record["file"]), lo, hi)
+    if span is None:
+        return None
+    pattern = re.compile(rf"\b{re.escape(field)}\b")
+    for _line_no, text in span:
+        if pattern.search(text):
+            return _type_name_from_line(text, table("types") or {})
+    return None
+
+
+def _resolve_chain(
+    base: str,
+    chain: Sequence[str],
+    request: RequestedContext,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible: _Visible,
+) -> list[_Block]:
+    """체인(§4.4.2 3-2) — base의 타입을 따라 왼쪽부터, 지나는 타입 정의 전부(라벨 7) +
+    마지막 필드의 대입(라벨 3). base 자체를 못 찾으면(선언도 전역도 없음) 빈 목록이다 —
+    그 경우는 조회 실패 판정(`_unfilled_lookup_reason`)으로 넘어간다."""
+    type_name = _declared_type_name(
+        base, table=table, read_lines=read_lines, target_file=target_file, visible=visible
+    )
+    if type_name is None:
+        return []
+    blocks: list[_Block] = []
+    types_table = table("types") or {}
+    visible_files = frozenset(visible)
+    for i, field in enumerate(chain):
+        record = _pick_record(
+            types_table.get(type_name, ()),
+            definition_kind="type",
+            requested_kind=request.kind,
+            target_file=target_file,
+            visible_files=visible_files,
+        )
+        if record is None:
+            break
+        blocks.extend(
+            _record_block(
+                type_name, LABEL_TYPE_OF.format(requested=request.target), record, read_lines
+            )
+        )
+        if i == len(chain) - 1:
+            blocks.extend(_resolve_field_assignment(field, table=table, read_lines=read_lines))
+            break
+        type_name_next = _field_own_type(field, record, table=table, read_lines=read_lines)
+        if type_name_next is None:
+            break
+        type_name = type_name_next
+    return blocks
+
+
+def _resolve_field_fallback(
+    base: str,
+    request: RequestedContext,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible: _Visible,
+) -> list[_Block]:
+    """라벨 12 — base가 어디서도 안 나왔는데 필드 이름이면(예: `stl->facet_start` 대신 그냥
+    `facet_start`) 그 필드를 선언한 struct의 정의를 base로 준다(스냅샷 §4.4.2 3-2 후반)."""
+    record = _pick_record(
+        (table("fields") or {}).get(base, ()),
+        definition_kind="field",
+        requested_kind=request.kind,
+        target_file=target_file,
+        visible_files=frozenset(visible),
+    )
+    if record is None:
+        return []
+    return _record_block(str(record["type"]), LABEL_STRUCT_DECLARES_FIELD, record, read_lines)
+
+
+def _resolve_flat(
+    base: str,
+    request: RequestedContext,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible: _Visible,
+) -> list[_Block]:
+    """체인이 없는 target — §4.4.1 우선순위(function > macro > type > local > global >
+    field > unknown)로 **맞는 형식을 전부** 쓴다. field(라벨 12)만 예외로, 다른 형식이
+    하나도 안 맞았을 때만 본다."""
+    visible_files = frozenset(visible)
+    blocks: list[_Block] = []
+
+    func_record = _pick_record(
+        (table("functions") or {}).get(base, ()),
+        definition_kind="function",
+        requested_kind=request.kind,
+        target_file=target_file,
+        visible_files=visible_files,
+    )
+    if func_record is not None:
+        blocks.extend(_record_block(base, LABEL_FUNCTION_BODY, func_record, read_lines))
+
+    macro_record = _pick_record(
+        (table("macros") or {}).get(base, ()),
+        definition_kind="macro",
+        requested_kind=request.kind,
+        target_file=target_file,
+        visible_files=visible_files,
+    )
+    if macro_record is not None:
+        blocks.extend(_record_block(base, LABEL_MACRO, macro_record, read_lines))
+
+    type_record = _pick_record(
+        (table("types") or {}).get(base, ()),
+        definition_kind="type",
+        requested_kind=request.kind,
+        target_file=target_file,
+        visible_files=visible_files,
+    )
+    if type_record is not None:
+        blocks.extend(_record_block(base, LABEL_TYPE_DEFINITION, type_record, read_lines))
+
+    blocks.extend(
+        _resolve_declaration(
+            base,
+            request,
+            table=table,
+            read_lines=read_lines,
+            target_file=target_file,
+            visible=visible,
+        )
+    )
+    blocks.extend(_resolve_callee_body(base, table=table, read_lines=read_lines, visible=visible))
+
+    if not blocks:
+        blocks.extend(
+            _resolve_field_fallback(
+                base,
+                request,
+                table=table,
+                read_lines=read_lines,
+                target_file=target_file,
+                visible=visible,
+            )
+        )
+
+    return blocks
+
+
+def _all_symbol_names(table: _Table) -> frozenset[str]:
+    """`closest_name`이 비교할 이름 전부 — 표 다섯의 키를 합친다."""
+    names: set[str] = set()
+    for name in ("functions", "macros", "types", "file_vars", "fields"):
+        value = table(name)
+        if value:
+            names.update(value.keys())
+    return frozenset(names)
+
+
+def _unfilled_lookup_reason(base: str, *, table: _Table) -> tuple[UnfilledReason, str]:
+    """조회에 실패했을 때 사유 넷 중 하나 — 원문이 순서를 안 줘서 이 저장소가 정한다
+    (모듈 docstring). libc를 가장 먼저 본다: `strdup`도 `calls` 표에 잡히므로, outside_repo를
+    먼저 보면 hop 1 예의 `strdup`이 거기로 잘못 읽힌다."""
+    if is_libc_symbol(base):
+        return UnfilledReason.LIBC, ""
+    if base in (table("calls") or {}):
+        return UnfilledReason.OUTSIDE_REPO, ""
+    match = closest_name(base, _all_symbol_names(table))
+    if match is not None:
+        return UnfilledReason.CLOSEST_NAME, match
+    return UnfilledReason.NOT_FOUND, ""
+
+
+def _resolve_request(
+    request: RequestedContext,
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+    target_file: str,
+    visible: _Visible,
+) -> tuple[list[_Block], Unfilled | None]:
+    """요청 하나 — 정규화 실패면 형식 사유, 성공이면 체인/평면 경로, 둘 다 못 채우면 조회
+    실패 사유. `request.kind`는 각 블록에 실어 95% 중복 판정의 `Already in SOURCE` 줄에 쓴다."""
+    normalized = normalize_target(request.target)
+    if is_rejected(normalized):
+        reason, detail = normalized
+        return [], _unfilled(request, reason, detail)
+
+    base, chain = normalized
+    if chain:
+        blocks = _resolve_chain(
+            base,
+            chain,
+            request,
+            table=table,
+            read_lines=read_lines,
+            target_file=target_file,
+            visible=visible,
+        )
+    else:
+        blocks = _resolve_flat(
+            base,
+            request,
+            table=table,
+            read_lines=read_lines,
+            target_file=target_file,
+            visible=visible,
+        )
+
+    if blocks:
+        return [replace(b, request_kind=request.kind) for b in blocks], None
+
+    reason, detail = _unfilled_lookup_reason(base, table=table)
+    return [], _unfilled(request, reason, detail)
+
+
+def _unfilled(request: RequestedContext, reason: UnfilledReason, detail: str) -> Unfilled:
+    text = render_unfilled(kind=request.kind, target=request.target, reason=reason, detail=detail)
+    return Unfilled(kind=request.kind, target=request.target, reason=reason, text=text)
+
+
+def _fit_budget(blocks: Sequence[_Block], max_chars: int) -> tuple[list[_Block], list[str]]:
+    """§4.4.4 — 블록 단위 first-fit. 넘친 블록은 통째로 빼고 이름을 `truncated`에.
+
+    글자 상한은 폭주 차단이지 토큰 상한이 아니다(글자 상한은 토큰을 안 묶는다 — 모델마다
+    글자/토큰 비가 다르다). `ResolveQuery.max_chars`는 루프가 남은 예산에서 계산해 넘긴다 —
+    여기서는 그 값을 그대로 쓴다.
+    """
+    fitted: list[_Block] = []
+    truncated: list[str] = []
+    used = 0
+    for block in blocks:
+        cost = len(block.render()) + 2  # 뒤에 붙는 빈 줄("\n\n") 몫까지 어림
+        if used + cost > max_chars:
+            truncated.append(block.name)
+            continue
+        fitted.append(block)
+        used += cost
+    return fitted, truncated
+
+
+def resolve(
+    query: ResolveQuery,
+    *,
+    table: Callable[[str], Mapping[str, object] | None],
+    read_lines: _ReadLines,
+) -> Resolution:
+    """§4 조회·조립 — `ResolveQuery`를 받아 `Resolution`을 낸다.
+
+    `table("functions") is None`이면(v1 인덱스·인덱스 없음) 빈 `Resolution`을 돌려준다 —
+    factory는 run 전에 인덱스 판을 모르므로 훅은 항상 꽂히고, 판단은 여기서 한다. 루프
+    (Phase 5)는 빈 결과를 "하나도 못 줌"(`nothing_resolved`)으로 본다.
+    """
+    if table("functions") is None:
+        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
+
+    all_blocks: list[_Block] = []
+    unfilled: list[Unfilled] = []
+    for request in query.requests:
+        blocks, missed = _resolve_request(
+            request,
+            table=table,
+            read_lines=read_lines,
+            target_file=query.target_file,
+            visible=query.visible,
+        )
+        all_blocks.extend(blocks)
+        if missed is not None:
+            unfilled.append(missed)
+
+    kept: list[_Block] = []
+    already: list[str] = []
+    for block in all_blocks:
+        visible_here = query.visible.get(block.file, frozenset())
+        if is_duplicate_in_source(frozenset(block.lines), visible_here):
+            lo, hi = min(block.lines), max(block.lines)
+            already.append(
+                render_already_in_source(
+                    kind=block.request_kind,
+                    name=block.name,
+                    file=block.file,
+                    line_start=lo,
+                    line_end=hi,
+                )
+            )
+        else:
+            kept.append(block)
+
+    fitted, truncated = _fit_budget(kept, query.max_chars)
+
+    fragments = [block.render() for block in fitted]
+    unfilled_lines = [item.text for item in unfilled]
+    note = needs_assignment_note(block.label for block in fitted)
+    followup_text = (
+        render_followup(
+            hop=query.hop,
+            fragments=fragments,
+            unfilled_lines=unfilled_lines,
+            include_assignment_note=note,
+        )
+        if fragments or unfilled_lines
+        else ""
+    )
+
+    return Resolution(
+        followup_text=followup_text,
+        blocks=tuple(
+            RetrievedBlock(name=b.name, label=b.label, file=b.file, lines=b.lines) for b in fitted
+        ),
+        unfilled=tuple(unfilled),
+        already=tuple(already),
+        truncated=tuple(truncated),
+    )
