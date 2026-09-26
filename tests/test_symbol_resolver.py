@@ -1,11 +1,12 @@
-"""`src/adapters/symbol_resolver.py`의 렌더·정규화 순수 함수 테스트 (#63 후속, ADR 0012 결정 2).
+"""`src/adapters/symbol_resolver.py`의 렌더·정규화 순수 함수 테스트 (#95 후속, ADR 0012 결정 2).
 
-명세 문자열은 Notion 「Scout RAG baseline」 원문 스냅샷(바이트 대조 통과 —
-`…\\ddaa755d-b591-40f7-92b6-119955ecd128\\scratchpad\\notion_rag_baseline_2026-09-26.txt`)에서
-그대로 옮겼다 — 의역하지 않는다. 대입 주의문(라벨 3·13에만 붙는다)의 근거는
-`needs_assignment_note`의 docstring과 그 옆 상수 주석에 있다 — 원문(스냅샷 :378)이 대입
-블록을 "target에 들어갈 수 있는 경우의 수 집합"이라 적고, 그 집합에 해당하는 것은 라벨
-3·13뿐이며 라벨 4(같은 함수 안 대입 1줄)는 집합이 아니다.
+명세 문자열은 팀 Notion 「화햇대장 › 실험팀 › Scout RAG baseline」
+(https://app.notion.com/p/Scout-RAG-baseline-3e1bec1a15bc80fa9fb8e15540f5def7,
+2026-09-26 판독 — 2026-09-26 판독본과 바이트 대조 통과)에서 그대로 옮겼다 — 의역하지 않는다.
+대입 주의문(라벨 3·13에만 붙는다)의 근거는 `needs_assignment_note`의 docstring과 그 옆
+상수 주석에 있다 — 원문(명세 §4.4.5 주의문 조건 문단)이 대입 블록을 "target에 들어갈 수
+있는 경우의 수 집합"이라 적고, 그 집합에 해당하는 것은 라벨 3·13뿐이며 라벨 4(같은 함수 안
+대입 1줄)는 집합이 아니다.
 
 이 파일은 조회(`table()`)·파일 읽기가 없는 순수 함수만 본다 — `resolve()` 조립은
 `tests/test_symbol_resolver_resolve.py`가 실 인덱서 픽스처로 본다.
@@ -35,7 +36,7 @@ from src.adapters.symbol_resolver import (
 )
 from src.schemas.enums import UnfilledReason
 
-# --- normalize_target: §5.2 8단계 표 ----------------------------------------
+# --- normalize_target: 명세 §4.3 8단계 표 ----------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -48,7 +49,7 @@ from src.schemas.enums import UnfilledReason
         ("st1->facet_start", "st1", ("facet_start",)),  # 5단계 — -> 분해
         ("*buf", "buf", ()),  # 6단계 — 앞쪽 * 제거
         ("st1_file initialization", "st1_file", ()),  # 7단계 — 공백 뒤 서술 제거
-        # 전체 예(§5.2) — 3단계([facet] 제거) 다음 5단계(-> . 분해)까지 이어진다.
+        # 전체 예(명세 §4.3) — 3단계([facet] 제거) 다음 5단계(-> . 분해)까지 이어진다.
         ("stl->neighbors_start[facet].neighbor", "stl", ("neighbors_start", "neighbor")),
     ],
 )
@@ -94,7 +95,7 @@ def test_is_rejected_tells_success_from_failure_by_the_second_elements_type():
     assert is_rejected(normalize_target("buf")) is False
 
 
-# --- render_unfilled: §5.6 UNFILLED 사유 여덜 --------------------------------
+# --- render_unfilled: 명세 §4.4.5 UNFILLED 사유 여덜 --------------------------------
 
 
 def test_render_unfilled_reproduces_the_placeholder_rejection_example():
@@ -317,7 +318,7 @@ def test_render_followup_inserts_the_note_between_retrieved_and_unfilled_when_re
     assert "code under review.\n\nUNFILLED" in followup
 
 
-# --- score_candidate / pick_best_candidate: §5.3 ----------------------------
+# --- score_candidate / pick_best_candidate: 명세 §4.4.3 ----------------------------
 
 
 def test_pick_best_candidate_reproduces_the_spec_example_8_5_0():
