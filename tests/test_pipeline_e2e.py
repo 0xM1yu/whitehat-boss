@@ -3024,7 +3024,7 @@ _RUN_REJECTIONS = {
     "template_rejects_reasoning_effort": _vllm_400_body(
         "Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low."
     ),
-    # vllm/renderers/params.py:226-236 — 역할 출력 상한이 서버 창보다 크다(`output_max_by_role`).
+    # vllm/renderers/params.py:225-237 — 역할 출력 상한이 서버 창보다 크다(`output_max_by_role`).
     # 창의 이름은 `vllm/entrypoints/openai/chat_completion/protocol.py:595-608`이 붙인다.
     "output_cap_over_window": _vllm_400_body(
         "max_tokens=32768 cannot be greater than max_model_len=max_total_tokens=24576. "
@@ -3178,6 +3178,27 @@ def test_a_critic_that_never_succeeds_stops_the_run(
     assert len(critic) > 1, "전제: Critic이 둘 이상을 봤다 — 하나뿐이면 첫 건 정지와 못 가른다"
     assert result.record.stopped_after == int(Stage.CRITIC)
     assert not result.record.is_complete
+
+
+def test_a_seat_whose_only_attempt_fails_saw_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**작은 run에도 바닥이 없다 (D88, 리뷰 MEDIUM).**
+
+    자리당 시도가 한 건이면 그 한 건의 실패 — 스키마 실패 한 번이어도 — 로 run이 선다. 예전에는
+    연속 상한(3)에 못 닿아 완주했다. 그 run은 그 자리에서 아무것도 못 봤으므로 완주로 두지 않는
+    것이 성공 0 백스톱의 정의다.
+
+    **최소 시도 수를 넣어 이 검사를 고치지 마라.** 그 수는 근거 없는 상수이고, 넣는 순간 대상
+    하나짜리 run의 창 오설정이 다시 완주로 남는다.
+    """
+    _failing_model(monkeypatch, [SchemaParseError("단 한 번의 스키마 실패(테스트)")])
+
+    result, trace_path = _run(tmp_path, name="one-shot", before=_with_index(), candidate_max=1)
+
+    assert len(_calls(trace_path, Role.SCOUT)) == 1, "전제: 자리당 시도가 한 건뿐이다"
+    assert not result.record.is_complete, "그 자리가 아무것도 못 봤는데 run이 완주로 남는다"
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
