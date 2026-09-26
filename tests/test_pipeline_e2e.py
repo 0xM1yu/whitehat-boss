@@ -354,10 +354,11 @@ def _with_mode(mode: str):  # noqa: ANN202
 def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
     """`broken` 역할의 모델 호출만 **체계적으로** 실패시킨다 (HTTP 422).
 
-    **422인 것이 핵심이다.** 400·413은 `_SIZE_STATUS`라 러너가 **일부러** 연속 폐기
-    카운터에 안 센다 — 그 주석이 *"이 후보에 대한 사실이지 run에 대한 사실이 아니다"*라고
-    적는다. 그걸로 재면 차단기가 안 걸리는 것이 **맹점 때문인지 설계 때문인지 못 가른다.**
-    422는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다(`_DROPPABLE_STATUS` 주석).
+    **422인 것이 핵심이다.** 크기 거절(413과 컨텍스트 초과 문구의 400)은 러너가 **일부러**
+    연속 폐기 카운터에 안 센다 — 그 주석이 *"이 후보에 대한 사실이지 run에 대한 사실이
+    아니다"*라고 적는다. 그걸로 재면 차단기가 안 걸리는 것이 **맹점 때문인지 설계 때문인지 못
+    가른다.** 크기가 아닌 400은 세지 않고 첫 건에서 멈추므로(D88) 역시 카운터를 못 잰다.
+    422는 크기가 아니라 체계적 신호로 센다(`_DROPPABLE_STATUS` 주석).
     """
     original = FakeModelClient.complete
 
@@ -2701,9 +2702,13 @@ def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
 ) -> None:
     """**크기 거절은 체계적 고장이 아니다.**
 
-    400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로 세면 큰
-    함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
+    컨텍스트 초과 400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로
+    세면 큰 함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
     정렬이 신호 붙은 심볼을 앞으로 모으므로 드문 일도 아니다.
+
+    **D88의 두 기각을 여기서 무는 짝이다.** 「첫 성공 전엔 크기도 센다」와 「같은 문구가 N번
+    연속이면 멈춘다」(vLLM 0.27.1은 같은 서버의 초과 문구가 전부 같다)는 상한이 지금 값(3)이면
+    둘 다 이 run을 세운다.
     """
     _failing_model(
         monkeypatch, [_context_overflow(), _context_overflow(), _context_overflow()]
@@ -2911,7 +2916,7 @@ def _critic_context_overflow() -> ModelGatewayError:
 def test_a_request_level_rejection_in_critic_drops_only_that_finding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**400은 이 Finding에 대한 사실이지 run에 대한 사실이 아니다 (D44 후속).**
+    """**크기 400은 이 Finding에 대한 사실이지 run에 대한 사실이 아니다 (D44 후속).**
 
     처음에는 critic 루프에서 `ModelGatewayError`를 일부러 안 잡았고, 그 판단대로
     `run_20260828_0001`이 7단계 400에서 `stopped_after: 7`로 끊겼다 — 후보 단위였다면
@@ -2935,7 +2940,8 @@ def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
 ) -> None:
     """**5xx는 서버 쪽 사건이라 그대로 올려 보낸다.** 남은 Finding을 태워도 얻는 게 없다.
 
-    `_is_droppable`이 가르는 축이 이것이다 — 400은 요청 하나의 문제이고 503은 run의 문제다.
+    `_is_droppable`이 가르는 축이 이것이다 — 크기 400은 요청 하나의 문제이고 503은 run의
+    문제다(크기가 아닌 400도 run의 문제라 첫 건에서 멈춘다 — D88).
     올려 보내도 `run_pipeline`이 받아 매니페스트까지 가므로 산출물은 남는다.
     """
     _failing_model(
