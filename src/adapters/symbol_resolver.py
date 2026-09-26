@@ -1,9 +1,10 @@
 """NE(need_evidence) resolver — Scout가 후속 턴에 요청한 심볼을 정규화·조회하고,
-그 결과를 RETRIEVED/UNFILLED 텍스트로 렌더한다 (#63 후속, ADR 0012 결정 2·3).
+그 결과를 RETRIEVED/UNFILLED 텍스트로 렌더한다 (#95 후속, ADR 0012 결정 2·3).
 
-명세 원천은 Notion 「Scout RAG baseline」이다(스냅샷
-`…/ddaa755d-…/scratchpad/notion_rag_baseline_2026-09-26.txt` — 바이트 대조 통과). 이 모듈의
-문자열은 그 원문을 그대로 옮긴 것이고, 의역하지 않는다.
+명세 원천은 팀 Notion 「화햇대장 › 실험팀 › Scout RAG baseline」
+(#private-notion,
+2026-09-26 판독 — 2026-09-26 판독본과 바이트 대조 통과)이다. 이 모듈의 문자열은 그 원문을
+그대로 옮긴 것이고, 의역하지 않는다.
 
 `resolve()`가 조립 지점이다 — `GraphIndex.table()`(조회)과 `read_lines`(파일 읽기) 훅을
 받아 `Resolution`을 낸다. 계약(`ResolveQuery`·`Resolution`·`UnfilledReason` 등)은
@@ -14,17 +15,17 @@
 - 동점 처리(`(file, line)` 오름차순) — `pick_best_candidate`. 결정론을 위해 정했다.
 - `closest_name`의 cutoff, `_LIBC_SYMBOLS`의 목록 — 명세가 값을 안 준다.
 - 선언 줄에서 타입 이름을 뽑는 휴리스틱(체인 라벨 7) — `_type_name_from_line`.
-- 대입 주의문(라벨 3·13이 있을 때만)의 정확한 삽입 자리 — 골격 원문(스냅샷 :370-381)은
+- 대입 주의문(라벨 3·13이 있을 때만)의 정확한 삽입 자리 — 골격 원문(명세 §4.4.5 골격)은
   위치를 산문으로만 설명하고, hop 1 예(라벨 4뿐)에는 주의문이 없어 위치를 못 보여준다.
   RETRIEVED 조각들과 UNFILLED 사이로 뒀다 — **추측**이다.
 - **"같은 함수"를 아는 방법** — `ResolveQuery`에 현재 함수 필드가 없다(계약 고정). 지역
   변수·파라미터 검색은 `target_file` 안에서 이름이 겹치면 `visible`에 보이는 선언을
-  우선한다(`_resolve_declaration`) — 파라미터의 caller site 예(스냅샷 §4.4.2 4-3)가 같은
+  우선한다(`_resolve_declaration`) — 파라미터의 caller site 예(명세 §4.4.2 4-3)가 같은
   방식으로 "슬라이스에 쓰인 F"를 고른다.
 - UNFILLED 사유 사이의 우선순위(원문이 순서를 안 준다) — libc를 가장 먼저 본다(그러지
   않으면 `strdup`이 `calls` 표에도 잡혀 outside_repo로 잘못 읽힌다 — hop 1 예가 그 근거),
   다음 outside_repo(호출은 있음), 다음 closest_name(비슷한 철자), 마지막 not_found.
-- **Already in SOURCE 줄이 실리는 자리** — 골격(§5.6)에 Already 전용 자리가 없다. 둘 다
+- **Already in SOURCE 줄이 실리는 자리** — 골격(명세 §4.4.5)에 Already 전용 자리가 없다. 둘 다
   "요청한 것을 그대로 안 준다"는 통지라 UNFILLED와 같은 자리에 already를 먼저, Not
   resolved를 뒤에 넣는다(`resolve()`) — **추측**이다.
 """
@@ -58,7 +59,7 @@ _REASON_PHRASES: Mapping[UnfilledReason, str] = {
 
 
 def render_unfilled(*, kind: str, target: str, reason: UnfilledReason, detail: str = "") -> str:
-    """UNFILLED 한 줄 — `Not resolved: <kind>:<target> (<사유>).`(§5.6).
+    """UNFILLED 한 줄 — `Not resolved: <kind>:<target> (<사유>).`(명세 §4.4.5).
 
     `target`은 호출부가 쥔 **원문 그대로**(모델이 보낸 raw target)를 넣는다 — 정규화된 값이
     아니다. 명세의 거부 예 둘(`unknown`·`stl:error`)이 원문을 그대로 보여준다.
@@ -69,7 +70,7 @@ def render_unfilled(*, kind: str, target: str, reason: UnfilledReason, detail: s
 
 # --- target 정규화 ----------------------------------------------------------
 #
-# §5.2 8단계 + 0단계(`@file:L…` 접미 제거 — 아래 주석). 성공은 (base, chain), 실패는
+# 명세 §4.3 8단계 + 0단계(`@file:L…` 접미 제거 — 아래 주석). 성공은 (base, chain), 실패는
 # (사유 키, 상세값) — 둘 다 2-튜플이라 `is_rejected()`로 가른다(두 번째 원소가 str이면 실패).
 
 _PLACEHOLDER_VALUES = frozenset({"unknown", "n/a", "none", "null", "-", "tbd"})
@@ -83,7 +84,7 @@ _C_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
 
 
 def normalize_target(raw: str) -> tuple[str, tuple[str, ...]] | tuple[UnfilledReason, str]:
-    """§5.2 정규화. 성공: `(base, chain)`. 실패: `(사유, 상세값)`.
+    """명세 §4.3 정규화. 성공: `(base, chain)`. 실패: `(사유, 상세값)`.
 
     상세값은 `not_identifier`에서만 쓴다(정규화가 남긴, 식별자가 아닌 값 — 「got '<값>'」에
     그대로 들어간다). 나머지 세 실패 사유는 고정 문구라 상세값이 빈 문자열이다.
@@ -121,12 +122,12 @@ _CLOSEST_NAME_CUTOFF = 0.6
 
 
 def closest_name(target: str, candidates: Iterable[str]) -> str | None:
-    """비슷한 철자의 심볼 이름 하나(§5.6 UNFILLED `closest_name`). 없으면 `None`."""
+    """비슷한 철자의 심볼 이름 하나(명세 §4.4.5 UNFILLED `closest_name`). 없으면 `None`."""
     matches = difflib.get_close_matches(target, list(candidates), n=1, cutoff=_CLOSEST_NAME_CUTOFF)
     return matches[0] if matches else None
 
 
-# ISO C 표준 라이브러리 + 흔한 POSIX 함수. 명세는 목록을 안 준다(§5.6). ponytail: 전체
+# ISO C 표준 라이브러리 + 흔한 POSIX 함수. 명세는 목록을 안 준다(명세 §4.4.5). ponytail: 전체
 # libc를 담지 않는다 — 새 오탐·누락이 나오면 추가하되 완전한 목록으로 키우지 않는다.
 _LIBC_SYMBOLS = frozenset(
     {
@@ -152,13 +153,13 @@ _LIBC_SYMBOLS = frozenset(
 
 
 def is_libc_symbol(name: str) -> bool:
-    """§5.6 UNFILLED `libc` 판정 — `_LIBC_SYMBOLS` 안에 있는가."""
+    """명세 §4.4.5 UNFILLED `libc` 판정 — `_LIBC_SYMBOLS` 안에 있는가."""
     return name in _LIBC_SYMBOLS
 
 
 # --- RETRIEVED 조각 렌더 -----------------------------------------------------
 #
-# 13 라벨(§5.6, 원문 그대로). 3·7·13은 템플릿이다 — 호출부(B 단계)가 `.format()`한다.
+# 13 라벨(명세 §4.4.5, 원문 그대로). 3·7·13은 템플릿이다 — 호출부(B 단계)가 `.format()`한다.
 
 LABEL_FUNCTION_BODY = "function body"
 LABEL_DECLARATION_FILE_SCOPE = "declaration (file scope)"
@@ -176,17 +177,17 @@ LABEL_ASSIGNMENT_TO_GLOBAL = "assignment to {global_name}"
 
 # 대입 주의문은 라벨 3·13에만 건다(아래 `needs_assignment_note`) — 둘 다 이 접두로 시작한다
 # (필드는 뒤에 `.`이 더 붙을 뿐이다). 라벨 4 `assignment in the same function`은 "assignment
-# in"이라 안 걸린다 — 원문(스냅샷 :378)이 주의문을 붙이는 "대입 블록"을 "target에 들어갈 수
-# 있는 경우의 수 집합"이라 적고, 라벨 13 설명도 "가능한 값의 집합"이라고 적는데 그 집합에
-# 해당하는 것은 라벨 3·13뿐이다(같은 함수 안 대입 1줄인 라벨 4는 집합이 아니다).
+# in"이라 안 걸린다 — 원문(명세 §4.4.5 주의문 조건 문단)이 주의문을 붙이는 "대입 블록"을
+# "target에 들어갈 수 있는 경우의 수 집합"이라 적고, 라벨 13 설명도 "가능한 값의 집합"이라고
+# 적는데 그 집합에 해당하는 것은 라벨 3·13뿐이다(같은 함수 안 대입 1줄인 라벨 4는 집합이 아니다).
 _ASSIGNMENT_NOTE_LABEL_PREFIX = "assignment to "
 
 
 def render_fragment(*, name: str, label: str, file: str, lines: Sequence[tuple[int, str]]) -> str:
-    """조각 하나 — §5.6 원문 틀. `lines`는 (원본 줄번호, 원본 줄 텍스트) 순서 그대로.
+    """조각 하나 — 명세 §4.4.5 원문 틀. `lines`는 (원본 줄번호, 원본 줄 텍스트) 순서 그대로.
 
     줄번호는 4칸 오른쪽 맞춤. 원본 줄이 빈 문자열이면 `| ` 뒤 공백을 안 붙인다(명세 예
-    실측 — 스냅샷의 빈 줄 자리가 그렇게 비어 있다).
+    실측 — 명세 hop 1 예의 빈 줄 자리가 그렇게 비어 있다).
     """
     header = f"/* --- retrieved: {name} ({label}) --- */"
     banner = f"/* ===== {file} ===== */"
@@ -197,17 +198,17 @@ def render_fragment(*, name: str, label: str, file: str, lines: Sequence[tuple[i
 def render_already_in_source(
     *, kind: str, name: str, file: str, line_start: int, line_end: int
 ) -> str:
-    """`Already in SOURCE: <kind>:<이름> at <파일>:L<시작>-<끝>.`(§5.5)."""
+    """`Already in SOURCE: <kind>:<이름> at <파일>:L<시작>-<끝>.`(명세 §4.4.4)."""
     return f"Already in SOURCE: {kind}:{name} at {file}:L{line_start}-{line_end}."
 
 
-# §5.5 — 95% 이상 겹치면 중복. 정수 교차곱으로 봐 부동소수 경계(94.999...%) 오판을 피한다.
+# 명세 §4.4.4 — 95% 이상 겹치면 중복. 정수 교차곱으로 봐 부동소수 경계(94.999...%) 오판을 피한다.
 _DUPLICATE_THRESHOLD_NUMERATOR = 95
 _DUPLICATE_THRESHOLD_DENOMINATOR = 100
 
 
 def is_duplicate_in_source(block_lines: frozenset[int], visible_lines: frozenset[int]) -> bool:
-    """블록 줄 집합이 SOURCE에 보이는 줄과 95% 이상 겹치면 참(§5.5). 빈 블록은 거짓이다."""
+    """블록 줄 집합이 SOURCE에 보이는 줄과 95% 이상 겹치면 참(명세 §4.4.4). 빈 블록은 거짓이다."""
     if not block_lines:
         return False
     overlap = len(block_lines & visible_lines)
@@ -227,12 +228,13 @@ _ASSIGNMENT_NOTE = (
 
 
 def needs_assignment_note(labels: Iterable[str]) -> bool:
-    """라벨 3·13 블록이 하나라도 있으면 대입 주의문을 넣는다(§5.6, 원문 근거는 위 모듈 상수 주석).
+    """라벨 3·13 블록이 하나라도 있으면 대입 주의문을 넣는다(명세 §4.4.5, 원문 근거는 위
+    모듈 상수 주석).
 
-    라벨 4(`assignment in the same function`)만으로는 넣지 않는다 — 원문(스냅샷 :378)의
-    "대입 블록(target에 들어갈 수 있는 경우의 수 집합)"과 라벨 13 설명의 "가능한 값의
-    집합"에 해당하는 것은 라벨 3·13뿐이다. 아직 필드/전역변수 이름이 안 채워진 템플릿
-    (`LABEL_ASSIGNMENT_TO_FIELD` 등)과 이미 채워진 라벨 둘 다 이 접두 검사로 맞는다.
+    라벨 4(`assignment in the same function`)만으로는 넣지 않는다 — 원문(명세 §4.4.5 주의문
+    조건 문단)의 "대입 블록(target에 들어갈 수 있는 경우의 수 집합)"과 라벨 13 설명의
+    "가능한 값의 집합"에 해당하는 것은 라벨 3·13뿐이다. 아직 필드/전역변수 이름이 안 채워진
+    템플릿(`LABEL_ASSIGNMENT_TO_FIELD` 등)과 이미 채워진 라벨 둘 다 이 접두 검사로 맞는다.
     """
     return any(label.startswith(_ASSIGNMENT_NOTE_LABEL_PREFIX) for label in labels)
 
@@ -244,9 +246,9 @@ def render_followup(
     unfilled_lines: Sequence[str],
     include_assignment_note: bool,
 ) -> str:
-    """§5.6 골격 그대로 조립한 후속 턴 전체 텍스트.
+    """명세 §4.4.5 골격 그대로 조립한 후속 턴 전체 텍스트.
 
-    빈 줄 배치는 명세 hop 1 출력 예(스냅샷 :424-445)에서 역산했다 — 조각과 UNFILLED 줄은
+    빈 줄 배치는 명세 §4.4.5 「실제 출력 전문」(hop 1 예)에서 역산했다 — 조각과 UNFILLED 줄은
     각각 뒤에 빈 줄 하나를 달고, 그것들을 이어 붙인 사이에 골격이 빈 줄을 더 넣지 않는다.
     대입 주의문의 삽입 자리(조각들과 UNFILLED 사이)는 모듈 docstring에 적었듯 추측이다.
     끝에는 줄바꿈을 안 붙인다(이 저장소의 다른 렌더 함수들과 같은 관례 — `slices.render`).
@@ -287,7 +289,7 @@ class Candidate:
 def score_candidate(
     candidate: Candidate, *, requested_kind: str, target_file: str, visible_files: frozenset[str]
 ) -> int:
-    """§5.3 점수 — +3 kind 일치 · +3 target_file 일치 · +2 SOURCE에 보임."""
+    """명세 §4.4.3 점수 — +3 kind 일치 · +3 target_file 일치 · +2 SOURCE에 보임."""
     score = 0
     if candidate.definition_kind == requested_kind:
         score += 3
@@ -305,7 +307,7 @@ def pick_best_candidate(
     target_file: str,
     visible_files: frozenset[str],
 ) -> Candidate | None:
-    """§5.3 동명 점수로 후보 하나를 고른다. 후보가 없으면 `None`.
+    """명세 §4.4.3 동명 점수로 후보 하나를 고른다. 후보가 없으면 `None`.
 
     동점 처리(`(file, line)` 오름차순)는 명세 밖이다 — ponytail: 결정론을 위해 정했다.
     """
@@ -340,8 +342,8 @@ _Visible = Mapping[str, frozenset[int]]
 # ponytail: v3 kind 어휘의 "variable" — 선언(지역·전역) 동명 점수의 `definition_kind`다.
 _VARIABLE_KIND = "variable"
 
-# caller site 반경 — 원문이 갈린다: 라벨 표(스냅샷 :395)는 ±3, 본문 4-3 문단(:308)은
-# "앞뒤 5줄"이라 적는다. 라벨 표가 이 블록 자체의 정의라 ±3을 쓴다.
+# caller site 반경 — 원문이 갈린다: 라벨 표(명세 §4.4.5 라벨 표 9행)는 ±3, 본문 4-3 문단
+# (명세 §4.4.2 파라미터 문단)은 "앞뒤 5줄"이라 적는다. 라벨 표가 이 블록 자체의 정의라 ±3을 쓴다.
 _CALLER_SITE_RADIUS = 3
 # 라벨 4·13 — 대입 줄 반경. 라벨 4(같은 함수)는 그 줄 하나, 라벨 13(전역)은 ±1(명세 표).
 _GLOBAL_ASSIGN_RADIUS = 1
@@ -444,7 +446,7 @@ def _pick_record(
     target_file: str,
     visible_files: frozenset[str],
 ) -> Mapping[str, object] | None:
-    """§5.3 점수로 같은 형식 안 여러 정의 중 하나를 고른다(`score_candidate` 재사용).
+    """명세 §4.4.3 점수로 같은 형식 안 여러 정의 중 하나를 고른다(`score_candidate` 재사용).
 
     비었으면 `None`.
     """
@@ -478,7 +480,7 @@ def _declaration_site(
     """base가 지역변수·파라미터로 선언된 (함수, 파일, 줄) — `target_file` 안에서만 찾는다.
 
     `ResolveQuery`에 "현재 함수" 필드가 없다(계약 고정) — `target_file` 안에 같은 이름이
-    여럿이면 `visible`에 보이는 선언을 우선한다(스냅샷 §4.4.2 4-3의 caller-site 예가
+    여럿이면 `visible`에 보이는 선언을 우선한다(명세 §4.4.2 4-3의 caller-site 예가
     "슬라이스에 쓰인 F"로 고르는 것과 같은 생각이다). 그래도 여럿이면 함수 이름·줄 순 —
     ponytail: 결정론을 위한 선택이고 명세에 없다.
     """
@@ -532,7 +534,7 @@ def _resolve_macro_named_in_declaration(
     """라벨 11 — 선언 줄의 대문자 식별자를 `macros`에서 찾는다.
 
     2단계 — target이 함수·구조체가 아닐 때만 호출부가 이 함수를 부른다. 동명 매크로가
-    여럿이면 `_pick_record`가 §5.3 점수로 고른다(리뷰 5.2 [HIGH]) — 호출부(지역·전역
+    여럿이면 `_pick_record`가 명세 §4.4.3 점수로 고른다(리뷰 5.2 [HIGH]) — 호출부(지역·전역
     선언 분기)가 그 선언이 실제로 있는 `target_file`·`visible_files`를 넘긴다. 이 값을
     하드코딩(빈 문자열·빈 집합)하면 동점 처리인 `(file, line)` 사전순으로만 떨어져 모듈의
     다른 동명 조회 자리(`_resolve_flat`·전역 분기·`_resolve_chain`·`_resolve_field_fallback`)
@@ -623,7 +625,7 @@ def _resolve_callee_body(
     read_lines: _ReadLines,
     visible: _Visible,
 ) -> list[_Block]:
-    """라벨 5 — 슬라이스 안에서 base를 인자로 넘기는 호출이 보이면 그 callee 전체(#63 baseline
+    """라벨 5 — 슬라이스 안에서 base를 인자로 넘기는 호출이 보이면 그 callee 전체(명세
     §4.4.2 5번 — `doit(text4)`가 슬라이스에 보이면 `text4`가 아니라 `doit`의 본문을 준다)."""
     functions_table = table("functions") or {}
     blocks: list[_Block] = []
@@ -822,7 +824,7 @@ def _resolve_field_fallback(
     visible: _Visible,
 ) -> list[_Block]:
     """라벨 12 — base가 어디서도 안 나왔는데 필드 이름이면(예: `stl->facet_start` 대신 그냥
-    `facet_start`) 그 필드를 선언한 struct의 정의를 base로 준다(스냅샷 §4.4.2 3-2 후반)."""
+    `facet_start`) 그 필드를 선언한 struct의 정의를 base로 준다(명세 §4.4.2 3-2 후반)."""
     record = _pick_record(
         (table("fields") or {}).get(base, ()),
         definition_kind="field",
@@ -1061,7 +1063,7 @@ def resolve(
     fitted, truncated = _fit_budget(kept, query.max_chars)
 
     fragments = [block.render() for block in fitted]
-    # 알림 줄 = already + not-resolved(리뷰 §1) — 골격(§5.6)에 Already 전용 자리는 없고,
+    # 알림 줄 = already + not-resolved(리뷰 §1) — 골격(명세 §4.4.5)에 Already 전용 자리는 없고,
     # 둘 다 "요청한 것을 그대로 안 준다"는 통지라 같은 UNFILLED 자리에 already를 먼저,
     # Not resolved를 뒤에 넣는다(모듈 docstring "명세 밖이거나 해석이 든 자리").
     alert_lines = [*already, *(item.text for item in unfilled)]
