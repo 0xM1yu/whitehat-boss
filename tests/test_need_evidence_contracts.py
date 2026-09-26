@@ -1,8 +1,8 @@
-"""`src/schemas/need_evidence.py` 계약 테스트 — PR-0(P2)의 이름·모양만 고정한다.
+"""`src/schemas/need_evidence.py` 계약 테스트 — 이름·모양만 고정한다.
 
-resolver 구현(PR-A)·러너 루프(PR-C)는 여기 없다. 여기서 고정하는 것은 세 가지다:
+resolver 구현·러너 루프는 여기 없다. 여기서 고정하는 것은 세 가지다:
 `HarnessModel`의 `frozen=True, extra="forbid"`가 이 모델들에도 걸려 있는가, `hop`이
-1 이상으로 강제되는가, 그리고 `Resolution.fixable_count`가 형식 사유(Q5)만 세는가.
+1 이상으로 강제되는가, 그리고 `Resolution.fixable_count`가 형식 사유만 세는가.
 """
 
 import pytest
@@ -70,7 +70,7 @@ def test_retrieved_block_and_unfilled_are_frozen() -> None:
 
 
 def test_fixable_count_only_counts_format_reasons() -> None:
-    """Q5 — 형식 사유(자리표시자·target 없음·식별자 없음·식별자 아님)만 센다.
+    """형식 사유(자리표시자·target 없음·식별자 없음·식별자 아님)만 센다.
 
     조회에 실패한 것(outside_repo·not_found·closest_name·libc)은 안 센다 — 그것은
     "잘 쓴 이름이 조회에 실패했다"이고 형식 문제가 아니다. 이 구별이 `nothing_resolved`

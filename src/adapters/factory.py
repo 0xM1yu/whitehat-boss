@@ -175,8 +175,8 @@ class Deps:
     counter_report: dict[str, str | None] = field(default_factory=dict)
     # need_evidence resolver hook (ADR 0012 결정 2). `symbols_for`와 같은 자리 — 기본값
     # `None`("resolver 없음")이 이 필드 없이 조립된 `Deps`(단위 테스트)의 옛 동작을 지킨다.
-    # **이 PR(P2)은 자리만 연다** — `build_deps`도 아직 `None`을 넘긴다. 실제로 배선하는
-    # 것은 PR-A(resolver)·PR-C(러너 루프)다.
+    # **아직 자리만 있다** — `build_deps`도 아직 `None`을 넘긴다. resolver 구현과 이 hook을
+    # 실제로 부르는 좌석 집계 루프는 need_evidence 루프다(ADR 0012 결정 2 — Phase 5).
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
 
 
@@ -501,7 +501,8 @@ def build_deps(
         read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
-        # resolver 배선은 PR-A·PR-C 몫이다 — 이 PR(P2)은 이름·모양만 연다.
+        # resolver 배선은 아직 없다 — need_evidence 루프가 실제로 연결한다
+        # (ADR 0012 결정 2 — Phase 5).
         resolve_requests=None,
     )
 

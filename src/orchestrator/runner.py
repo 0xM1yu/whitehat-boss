@@ -345,8 +345,8 @@ class Dependencies(Protocol):
     # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 그 run에 resolver가 없다
     # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 러너는
     # `src/adapters/`를 import 하지 않으므로 resolver 구현이 아니라 이 콜러블로 경계를
-    # 넘는다. **이 PR(P2)은 자리만 연다** — 이 hook을 실제로 부르는 좌석 집계 루프는
-    # Phase 5(P5)다.
+    # 넘는다. **아직 자리만 있다** — 이 hook을 실제로 부르는 좌석 집계 루프는
+    # need_evidence 루프다(ADR 0012 결정 2 — Phase 5).
     resolve_requests: Callable[[ResolveQuery], Resolution] | None
 
 

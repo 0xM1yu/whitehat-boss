@@ -124,8 +124,9 @@ TRANSITIONS: tuple[TransitionRule, ...] = (
     TransitionRule("C-1", "candidate", None, _S.CANDIDATE, None),
     TransitionRule("C-2", "candidate", _S.CANDIDATE, _S.TRIAGED, _R.SCOUT_PROMOTED),
     TransitionRule("C-3", "candidate", _S.CANDIDATE, _S.QUEUED, _R.BELOW_SCOUT_THRESHOLD),
-    # v3 신호 판정(ADR 0012 결정 2, council 판정 Q7) — 같은 번호, C-7이 두 `from_state`를
-    # 같은 사유로 쓰는 선례를 뒤집어 같은 (from, to)에 사유를 늘렸다.
+    # v3 신호 판정(ADR 0012 결정 2) — 같은 (from, to)에 사유만 늘린다. 전이는 추가하지
+    # 않는다 — C-7이 두 `from_state`를 같은 사유로 쓰는 선례를 뒤집어, 같은 번호에
+    # 사유를 늘리는 쪽을 썼다.
     TransitionRule("C-3", "candidate", _S.CANDIDATE, _S.QUEUED, _R.SCOUT_REJECT),
     TransitionRule("C-3", "candidate", _S.CANDIDATE, _S.QUEUED, _R.NEED_EVIDENCE_UNRESOLVED),
     TransitionRule("C-4", "candidate", _S.CANDIDATE, _S.QUEUED, _R.SCHEMA_PARSE_FAILED),

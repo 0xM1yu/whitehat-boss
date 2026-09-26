@@ -150,11 +150,11 @@ def test_exhausted_retries_still_raise_instead_of_returning_a_default(
     assert attempts == [1, 2]
 
 
-# --- history=() (PR-0 — 멀티턴 클라이언트는 PR-B) ------------------------------
+# --- history=() (멀티턴 배선은 아직 없다 — #95) -------------------------------
 
 
 def test_complete_still_works_with_an_empty_history(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`history=()`는 지금 동작 그대로다 — PR-0은 인자만 받는다."""
+    """`history=()`는 지금 동작 그대로다 — 아직 인자만 받는다."""
     _stub(monkeypatch, succeed_on=1)
 
     result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, history=())
@@ -163,7 +163,8 @@ def test_complete_still_works_with_an_empty_history(monkeypatch: pytest.MonkeyPa
 
 
 def test_complete_refuses_a_non_empty_history_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """비어 있지 않은 history는 조용히 무시하지 않고 크게 실패한다 — PR-B가 채운다(#95)."""
+    """비어 있지 않은 history는 조용히 무시하지 않고 크게 실패한다 — 멀티턴 배선은 아직
+    없다(#95)."""
     _stub(monkeypatch, succeed_on=1)
 
     with pytest.raises(NotImplementedError):

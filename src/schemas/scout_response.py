@@ -44,7 +44,7 @@ class RequestedContext(HarnessModel):
 
     `kind`는 `Literal`로 묶지 않는다 — 프롬프트가 여덟 어휘를 예시로 주지만(`variable`·
     `type`·`macro`·`function`·`caller`·`allocation`·`guard`·`context`) 그 밖 값도 모델이
-    낼 수 있고, grammar로 묶으면 출력이 강제된다. resolver(PR-A)가 값을 해석한다.
+    낼 수 있고, grammar로 묶으면 출력이 강제된다. resolver가 값을 해석한다.
     """
 
     kind: str
