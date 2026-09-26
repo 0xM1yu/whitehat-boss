@@ -100,6 +100,32 @@ def _ne_response(
     return build
 
 
+def _off_vocab_response(*, score: float = 0.8):
+    """스크립트 항목 하나 — `reason_codes[0]`이 세 신호(`ScoutSignal`) 밖이다.
+
+    스키마(`ScoutResponse`)는 통과하지만 `signal_of`가 `None`을 준다 — 자유 문자열인
+    `reason_codes`(grammar로 안 묶는다, `scout_response.py` `RequestedContext` docstring과
+    같은 이유)라 모델이 세 접두 중 어느 것도 아닌 값을 낼 수 있다."""
+
+    def build(candidate_id: str) -> ScoutResponse:
+        return ScoutResponse(
+            candidate=Candidate(
+                candidate_id=candidate_id,
+                run_id="run_20260901_0001",
+                artifact_id="artifact_0001",
+                location=Location(
+                    file="parser.c", symbol="parse_header", line_start=3, line_end=6
+                ),
+                score=score,
+                reason_codes=["off_vocab_code:whatever"],
+                state=FindingState.CANDIDATE,
+            ),
+            analysis_summary=AnalysisSummary(claim="off-vocab"),
+        )
+
+    return build
+
+
 def _script_ne_client(
     monkeypatch: pytest.MonkeyPatch, scripts: dict[str, list[object]]
 ) -> list[dict[str, object]]:
@@ -434,6 +460,41 @@ def test_ne_hop1_parse_failure_is_absorbed_and_keeps_hop0_judgement(
     assert len(hops) == 2
     assert hops[-1]["stop_reason"] == NeStopReason.PARSE_FAILED.value
     assert hops[-1]["hop"] == 1
+    # 직전 홉(hop0)이 NE였으므로 흡수 뒤에도 signal은 NE → C-3 need_evidence_unresolved.
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_hop1_off_vocab_signal_is_absorbed_as_parse_failed_and_keeps_hop0_judgement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """hop1 응답이 스키마는 통과하지만 `reason_codes[0]`이 세 신호 밖이다(`signal_of`가
+    `None`) — 판정으로 못 쓰니 파싱 실패와 같은 부류로 흡수하고 **직전 홉(hop0)의 판정**으로
+    finish한다. 흡수 전에는 다음 반복에서 `session.signal.value`가 `None.value`를 불러
+    `AttributeError`로 run 전체가 죽었다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request()),
+                _off_vocab_response(),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2, "hop1은 시도됐다(신호 이탈이어도 흡수한다)"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 2
+    assert hops[-1]["hop"] == 1
+    assert hops[-1]["stop_reason"] == NeStopReason.PARSE_FAILED.value
+    # 스키마는 통과했다(파싱 자체는 됐다) — 신호 이탈과 스키마 실패가 기록에서 갈린다.
+    assert hops[-1]["schema_ok"] is True
+    assert hops[-1]["signal"] is None
     # 직전 홉(hop0)이 NE였으므로 흡수 뒤에도 signal은 NE → C-3 need_evidence_unresolved.
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
 
