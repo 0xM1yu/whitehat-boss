@@ -223,9 +223,12 @@ status=loaded`(심볼 4·호출 5)인데 그래프를 담은 프롬프트는 aud
 > resolver(`src/adapters/symbol_resolver.py`)에 넘긴다. `analysis_summary` 자체(근거 문자열)는 여전히
 > 버려진다 — 판정에 쓰는 것은 신호·요청이지 근거 서술이 아니다. **정지 사유는 명세의 여섯보다
 > 많다** — 명세 여섯(신호가 NE 아님·파싱 실패·`max_hops` 소진·요청 반복·요청 없음·resolver
-> 전무)에 하네스가 넷을 더 붙였다(council Q6·Q9 판정) — `peer_review`(동료가 review)·
-> `context_overflow`(홉 글자 상한 소진)·`budget_exhausted`(예산 소진)·`gateway_error`(그 밖 일시
-> 오류) — `src/schemas/enums.py`의 `NeStopReason` 열 개. **홉당 글자 상한**은 계산값이다 —
+> 전무)에 하네스가 넷을 더 붙였다 — `peer_review`(다른 좌석이 hop0에 review)·`context_overflow`
+> (후속 턴이 창에 안 든다 — 홉 글자 상한이 바닥나거나 서버가 크기로 거절)·`budget_exhausted`(예산
+> 소진)·`gateway_error`(그 밖 게이트웨이 오류). 명세의 파싱 실패와 뒤 셋은 hop≥1 실패를 흡수해 직전
+> 판정을 지키는 자리이고, 크기 아닌 400은 흡수하지 않고 run을 멈춘다(D88 —
+> `runner._ne_classify_exception`). 기록은 `src/schemas/enums.py`의 `NeStopReason` 열한 개다 —
+> 「신호가 NE 아님」은 최종 신호 이름 `triage_review`·`triage_reject` 둘로 적는다. **홉당 글자 상한**은 계산값이다 —
 > `min(15,000자, 남은 토큰 × 3.28)`이고 3.28은 Scout 좌석 전체의 실측 하한이지 RETRIEVED 코드
 > 블록만의 비는 안 쟀다. 여유 512토큰은 설계값·미실측이다. **실서빙 루프 실측은 아직 없다**
 > (ATOM 스모크 전).)
