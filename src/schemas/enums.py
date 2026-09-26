@@ -290,8 +290,8 @@ class NeStopReason(StrEnum):
     hop≥1의 실패·중복·미해결과 다른 좌석의 review가 이 좌석의 루프를 막는 경우를
     가리키려고 이 하네스가 붙인 값이라 명세 원문에는 없다.
 
-    이 열거형은 **자리만 연다** — 실제로 루프를 돌며 이 값을 내는 코드는 need_evidence
-    루프 자신이다(Phase 5).
+    이 값을 내는 것은 `runner._run_ne_hops`(와 동료 확인)이고, 홉 이벤트(`SCOUT_HOP`)의
+    `stop_reason`으로 남는다.
     """
 
     TRIAGE_REVIEW = "triage_review"

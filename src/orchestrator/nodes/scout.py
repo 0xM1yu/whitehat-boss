@@ -320,9 +320,9 @@ def _call_hop(
     latency_s = (ctx.monotonic_ms() - started) / 1000.0
     value = result.value
     if isinstance(value, ScoutResponse):
-        # v3 래퍼: 안쪽 `candidate`만 파이프라인으로 흘리고 `analysis_summary`(근거)는
-        # 버린다 — 하네스에 근거 소비자가 없다(scout_response.py). 근거는 판정을 좋게 하는
-        # 추론 흔적이지 소비 대상이 아니다.
+        # v3 래퍼: 안쪽 `candidate`를 파이프라인으로 흘린다. `analysis_summary`는 세션에 실어
+        # need_evidence 루프가 `requested_context`를 읽게 하고, 근거 서술은 어디에도 안 넘긴다
+        # (scout_response.py). 근거는 판정을 좋게 하는 추론 흔적이지 소비 대상이 아니다.
         # **`scout_member`는 여기서 찍는다** — `call_model`은 결과 타입에 그 필드가 있을 때만
         # 찍는데(ADR 0010 §3) `ScoutResponse`에는 없어 건너뛴다. `role`에서 유도한 값이라
         # 「모델이 아니라 하네스가 stamp」라는 그 §3 취지는 그대로다.

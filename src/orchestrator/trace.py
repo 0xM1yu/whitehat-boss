@@ -267,8 +267,8 @@ class EventKind(StrEnum):
     CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
-    # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). **자리만 연다** —
-    # 이 이벤트를 실제로 내는 루프·필드 확정은 need_evidence 루프 자신이다(Phase 5).
+    # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
+    # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
 
 
