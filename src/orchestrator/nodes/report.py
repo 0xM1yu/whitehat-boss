@@ -86,6 +86,11 @@ class Report:
     # 대표를 고를 때 등급을 못 봐 E3가 사라졌고(#101) 최종 산출물이 등급을 못 실었다(PR #37).
     # 노드가 다시 매기지 않고 러너 값을 받는 것은 `deferred`·`critic_deferred`와 같은 이유다.
     grades: dict[str, str] = field(default_factory=dict)
+    # need_evidence 루프가 hop≥1에서 흡수한 예외 건수, `NeStopReason` 값별(ADR 0012 결정 2 —
+    # #95). 조용히 두지 않는다 — 흡수는 그 좌석이 직전 홉 판정으로 finish했다는 뜻이라,
+    # 몇 건이 어떤 사유로 그랬는지가 안 보이면 "루프가 잘 돌았다"와 "매번 흡수하며 버텼다"가
+    # 리포트에서 안 갈린다. `deferred`·`dropped`와 같은 자리다 — 러너가 센 값을 그대로 받는다.
+    ne_absorbed: dict[str, int] = field(default_factory=dict)
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
@@ -121,6 +126,16 @@ class Report:
             lines += [
                 f"분석되지 않은 대상(모든 Scout 자리 실패): {self.unanalyzed_targets}건 "
                 f"(어느 멤버로 무엇이 실패했는지는 trace의 `target_skipped.scout_member`)",
+                "",
+            ]
+        if self.ne_absorbed:
+            # 사유별로 적는다 — 한 수로 묶으면 "크기 문제로 버텼다"와 "게이트웨이가 흔들렸다"가
+            # 안 갈린다(위 필드 주석과 같은 판단).
+            parts = " · ".join(
+                f"{reason} {count}건" for reason, count in sorted(self.ne_absorbed.items())
+            )
+            lines += [
+                f"need_evidence 홉 예외 흡수: {parts} (그 좌석은 직전 홉 판정으로 finish했다)",
                 "",
             ]
         if self.critic_deferred:
@@ -194,15 +209,16 @@ def run(
     critic_top_n: int = 0,
     grades: dict[str, str] | None = None,
     files: dict[str, str | None] | None = None,
+    ne_absorbed: dict[str, int] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
-    `deferred`·`dropped`·`critic_deferred`는 러너가 센 값을 그대로 받는다 — 노드가 다시
-    세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로 받는다:
-    노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도 같다 —
-    등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시 매기지 않는다.
-    `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어 넘긴다 — dedupe 키가
-    파일을 가르는 데 쓴다(#101 a).
+    `deferred`·`dropped`·`critic_deferred`·`ne_absorbed`는 러너가 센 값을 그대로 받는다 —
+    노드가 다시 세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로
+    받는다: 노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도
+    같다 — 등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시
+    매기지 않는다. `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어
+    넘긴다 — dedupe 키가 파일을 가르는 데 쓴다(#101 a).
     """
     grades = grades or {}
     with ctx.stage(Stage.REPORT):
@@ -217,6 +233,7 @@ def run(
         critic_deferred=critic_deferred,
         critic_top_n=critic_top_n,
         grades=dict(grades),
+        ne_absorbed=dict(ne_absorbed) if ne_absorbed else {},
     )
 
 

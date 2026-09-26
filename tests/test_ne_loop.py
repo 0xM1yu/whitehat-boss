@@ -1,9 +1,9 @@
-"""need_evidence 루프 (ADR 0012 결정 2 · Phase 5) — 정지 판정·resolver 호출·동료 확인.
+"""need_evidence 루프(ADR 0012 결정 2) — 정지 판정·resolver 호출·동료 확인.
 
 **Fake는 NE 신호를 내지 않는다**(`fake_model.py` — `reason_codes`가 `triage_*` 접두를 절대
 안 쓴다). 그래서 이 파일은 `FakeModelClient.complete`를 감싸 역할별로 홉 응답을 스크립트한다
 (`_script_ne_client`, `tests/test_pipeline_e2e.py`의 `_failing_model` 꼴). resolver도
-스크립트한 함수다 — 실 resolver(PR-A)는 이 범위 밖이다.
+스크립트한 함수다 — 실 resolver 구현(별도 브랜치)은 이 범위 밖이다.
 
 **단일 `scout` 자리가 아니라 v3 풀로 돈다.** 바깥 `scout` 역할은 `prompts/scout/`에 v3가
 없다(v1·v2뿐) — v3(`ScoutResponse`, 신호가 실리는 스키마)를 쓰려면 풀 멤버 셋(`scout_memory`·
@@ -12,8 +12,8 @@
 NE 시나리오를, 나머지 둘은 즉시 끝나는 응답(reject 한 번)을 받아 잡음을 줄인다. 단언은
 그 좌석의 `candidate_id`로 걸러서 본다.
 
-두 실행 모드(`per_candidate`·`per_stage`)가 같은 스크립트에서 같은 결과를 내야 한다
-(계획 §7-2) — 계획 §7-6대로 모든 시나리오를 두 모드로 돈다.
+두 실행 모드(`per_candidate`·`per_stage`)가 같은 스크립트에서 같은 결과를 내야 한다 —
+아래 시나리오 전부를 두 모드로 돈다.
 """
 
 import dataclasses
@@ -38,7 +38,7 @@ from src.schemas.common import Location
 from src.schemas.enums import FindingState, NeStopReason, Role, ScoutSignal
 from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
-from tests.test_pipeline_e2e import TARGET, _events, _of, _poolify_v3, _run
+from tests.test_pipeline_e2e import TARGET, _events, _of, _poolify_v3, _run, _run_transition
 
 _MODES = pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
 
@@ -47,12 +47,17 @@ _OTHER_SEATS = ("scout_boundary", "scout_injection")
 
 
 def _single_target(tmp_path: Path) -> Path:
-    """analyzable 파일 하나뿐인 트리 — target·좌석 수를 손으로 셀 수 있게 한다."""
+    """analyzable 파일 하나뿐인 트리 — target·좌석 수를 손으로 셀 수 있게 한다.
+
+    **멱등이다** — 한 검사 안에서 두 모드를 돌리며 같은 `tmp_path`로 두 번 부를 수 있다
+    (두 모드가 같은 결과를 내는지 재는 검사가 그렇게 한다).
+    """
     root = tmp_path / "single_target"
-    root.mkdir()
-    (root / "parser.c").write_text(
-        (TARGET / "parser.c").read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    if not root.exists():
+        root.mkdir()
+        (root / "parser.c").write_text(
+            (TARGET / "parser.c").read_text(encoding="utf-8"), encoding="utf-8"
+        )
     return root
 
 
@@ -346,7 +351,7 @@ def test_ne_resolver_that_finds_nothing_stops_the_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
     """resolver는 있지만 아무것도 못 채웠다(`resolved == 0`이고 `fixable_count == 0`) —
-    "잘 쓴 이름이 전부 조회에 실패했다"이므로 `nothing_resolved`다(Q5)."""
+    "잘 쓴 이름이 전부 조회에 실패했다"이므로 `nothing_resolved`다."""
     calls = _script_ne_client(
         monkeypatch,
         {
@@ -461,7 +466,13 @@ def test_ne_hop1_size_400_is_absorbed_as_context_overflow(
     result, trace_path = _run_ne(tmp_path, mode=mode)
 
     assert len(_seat_calls(calls)) == 2
-    assert result.record.is_complete, "크기 거절은 흡수한다 — run이 멈추면 안 된다"
+    # `stop_after=Stage.SCOUT`라 `is_complete`는 이 검사들 전부에서 항상 False다(의도한
+    # 절단) — 흡수가 실제로 됐는지는 run이 **왜** 섰는지로 본다. 흡수 안 됐으면 D88대로
+    # `consecutive_target_failures`가 나야 하는데, 여기서는 절단 사유(`user_stop_requested`)
+    # 그대로여야 한다.
+    assert _run_transition(trace_path)["data"]["reason"] == "user_stop_requested", (
+        "크기 거절이 흡수되지 않고 run을 세웠다"
+    )
     candidate_id = _candidate_id_for_seat(trace_path)
     hops = _scout_hops(trace_path, candidate_id)
     assert hops[-1]["stop_reason"] == NeStopReason.CONTEXT_OVERFLOW.value
@@ -494,8 +505,12 @@ def test_ne_hop1_non_size_400_stops_the_run(
     result, trace_path = _run_ne(tmp_path, mode=mode)
 
     assert len(_seat_calls(calls)) == 2, "hop1은 시도됐지만 흡수되지 않았다"
-    assert not result.record.is_complete, "크기 아닌 400은 run을 멈춰야 한다(#296·D88)"
-    assert result.record.stopped_after is not None
+    # `stop_after=Stage.SCOUT`라 is_complete는 다른 검사에서도 항상 False다(의도한 절단) —
+    # 흡수하지 않았다는 것은 **사유**로 본다: D88대로 `consecutive_target_failures`여야
+    # 한다(절단 사유 `user_stop_requested`가 아니다).
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures", (
+        "크기 아닌 400이 흡수됐다 — D88이 되살아났다"
+    )
     # 흡수하지 않았으므로 이 좌석에 대한 마지막 SCOUT_HOP은 hop0뿐이다(hop1 실패 이벤트 없음).
     candidate_id = _candidate_id_for_seat(trace_path)
     hops = _scout_hops(trace_path, candidate_id)
@@ -613,7 +628,7 @@ def test_ne_loop_keeps_one_candidate_id_across_hops(
 def test_ne_two_modes_agree_on_transitions_and_hop_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """같은 스크립트에서 두 모드가 같은 전이 집합과 같은 SCOUT_HOP 다중집합을 낸다(계획 §7-6).
+    """같은 스크립트에서 두 모드가 같은 전이 집합과 같은 SCOUT_HOP 다중집합을 낸다.
 
     이벤트 순서는 모드마다 다를 수 있어 순서 무관으로 비교한다. `latency_s`는 실행마다
     다른 wall-clock이라(순번이 든 값과 같은 이유로) 비교에서 뺀다.
@@ -633,7 +648,7 @@ def test_ne_two_modes_agree_on_transitions_and_hop_events(
     for mode in (None, "per_stage"):
         _script_ne_client(monkeypatch, script())
         _wire_resolver(monkeypatch, _always_resolves())
-        _, trace_path = _run_ne(tmp_path, mode=mode)
+        _, trace_path = _run_ne(tmp_path, mode=mode, name=f"mode-{mode}")
         candidate_id = _candidate_id_for_seat(trace_path)
         transitions = sorted(
             (e["data"]["rule"], e["data"]["from_state"], e["data"]["to_state"], e["data"]["reason"])
@@ -760,7 +775,7 @@ def test_ne_hop_max_chars_is_zero_when_remaining_is_non_positive(tmp_path: Path)
 
 
 def test_ne_classify_exception_maps_the_q6_table() -> None:
-    """hop≥1 예외 분류(ADR 0012 결정 2 Q6) — 크기 아닌 400만 `None`(흡수하지 않는다)이다."""
+    """hop≥1 예외 분류(ADR 0012 결정 2) — 크기 아닌 400만 `None`(흡수하지 않는다)이다."""
     size_400 = ModelGatewayError(
         "HTTP 400", status=400, detail="This model's maximum context length is 10 tokens."
     )
