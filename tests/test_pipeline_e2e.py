@@ -3079,10 +3079,10 @@ def _every_call_fails(monkeypatch: pytest.MonkeyPatch, broken: Role, error: Exce
     """`broken` 역할의 모델 호출을 **매번** 같은 예외로 실패시킨다(`_failing_model`은 N번째만)."""
     original = FakeModelClient.complete
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
+    def complete(self, *, role, prompt, schema, **kwargs):  # noqa: ANN001, ANN003, ANN202
         if role is broken:
             raise error
-        return original(self, role=role, prompt=prompt, schema=schema)
+        return original(self, role=role, prompt=prompt, schema=schema, **kwargs)
 
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
@@ -3270,13 +3270,13 @@ def test_one_seats_candidates_overflowing_the_auditor_do_not_stop_the_run(
     original = FakeModelClient.complete
     calls = {"n": 0}
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
+    def complete(self, *, role, prompt, schema, **kwargs):  # noqa: ANN001, ANN003, ANN202
         if role is Role.AUDITOR:
             index = calls["n"]
             calls["n"] += 1
             if index % len(SCOUT_POOL_ROLES) == 1:
                 raise _context_overflow()
-        return original(self, role=role, prompt=prompt, schema=schema)
+        return original(self, role=role, prompt=prompt, schema=schema, **kwargs)
 
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
