@@ -20,6 +20,7 @@ from time import perf_counter
 from src.config import HarnessConfig
 from src.ids import IdFactory
 from src.interfaces.model_client import (
+    ChatTurn,
     ModelClient,
     ModelResult,
     Prompt,
@@ -171,6 +172,8 @@ class RunContext:
         stage: Stage,
         subject_kind: str | None = None,
         subject_id: str | None = None,
+        history: Sequence[ChatTurn] = (),
+        hop: int = 0,
     ) -> ModelResult[SchemaT]:
         """모델 호출 + usage 기록 + 예산 차감 + trace. 노드는 이것만 쓴다.
 
@@ -183,15 +186,22 @@ class RunContext:
         초과를 응답 본문에만 담는데(`ModelGatewayError.detail`) 기록에는 `error`
         문자열 하나뿐이라, 무엇이 얼마나 넘쳤는지가 산출물 어디에도 없었다.
         `_error_detail()`이 잘라낸 상세를 함께 싣는다.
+
+        **`history`·`hop`은 need_evidence 되묻기의 후속 턴이다** (ADR 0012 결정 2).
+        `hop=0`이 첫 호출이고, 조립(system·history·이번 turn 순서)은 여기가 아니라
+        `models.complete()`(어댑터의 `_request_payload`)가 한다 — 여기서는 그대로
+        위임하고 `hop`을 `MODEL_CALL`과 프롬프트 로그 파일명에 싣는다.
         """
         self.ledger.ensure(stage)
         # **예산 확인 뒤, 시계 시작 전.** 뒤인 이유는 `ensure`가 막은 호출에는 대응하는
         # `model_call`이 없어서 파일만 남으면 개수가 어긋나기 때문이고, 앞인 이유는 이
         # 파일 쓰기가 모델 지연(`wall_ms`)에 섞이면 안 되기 때문이다.
-        prompt_fields = self._record_prompt(role=role, stage=stage, prompt=prompt)
+        prompt_fields = self._record_prompt(
+            role=role, stage=stage, prompt=prompt, history=history, hop=hop
+        )
         started = self.monotonic_ms()
         try:
-            result = self.models.complete(role=role, prompt=prompt, schema=schema)
+            result = self.models.complete(role=role, prompt=prompt, schema=schema, history=history)
         except Exception as exc:
             # **실패해도 이미 쓴 토큰·GPU를 청구하고 이벤트에 싣는다(#82).** 실패 경로가
             # 청구를 건너뛰면 evaluation.md §5.2의 분자가 비어 폭주가 잦은 조건일수록 싸 보인다.
@@ -218,6 +228,7 @@ class RunContext:
             retry_fields = self._record_retries(
                 role=role, stage=stage, prompt=prompt,
                 retry_bodies=getattr(exc, "retry_bodies", ()),
+                history=history, hop=hop,
             )
             self.trace.emit(
                 EventKind.MODEL_CALL,
@@ -228,6 +239,7 @@ class RunContext:
                 role=role.value,
                 model=self.config.model_key_for(role.value),
                 prompt_version=prompt.prompt_version,
+                hop=hop,
                 **prompt_fields,
                 **retry_fields,
                 schema=schema.__name__,
@@ -250,7 +262,8 @@ class RunContext:
         # 재시도로 살아난 성공도 실제로 간 요청을 남긴다(#80). 재시도가 없으면 빈 dict라
         # 이벤트 키가 늘지 않는다.
         retry_fields = self._record_retries(
-            role=role, stage=stage, prompt=prompt, retry_bodies=result.retry_bodies
+            role=role, stage=stage, prompt=prompt, retry_bodies=result.retry_bodies,
+            history=history, hop=hop,
         )
         self.trace.emit(
             EventKind.MODEL_CALL,
@@ -261,6 +274,7 @@ class RunContext:
             role=role.value,
             model=result.model,
             prompt_version=prompt.prompt_version,
+            hop=hop,
             **prompt_fields,
             **retry_fields,
             schema=schema.__name__,
@@ -339,7 +353,13 @@ class RunContext:
         return result
 
     def _record_prompt(
-        self, *, role: Role, stage: Stage, prompt: Prompt
+        self,
+        *,
+        role: Role,
+        stage: Stage,
+        prompt: Prompt,
+        history: Sequence[ChatTurn] = (),
+        hop: int = 0,
     ) -> dict[str, TraceValue]:
         """프롬프트를 산출물로 남기고 `model_call`에 실을 참조를 돌려준다 (해소).
 
@@ -348,16 +368,27 @@ class RunContext:
         때문이다 — `graph_index`가 "없다"와 "0건"을 가르는 것과 같은 이유다.
 
         본문은 trace에 싣지 않는다. 그 판단의 근거는 `prompt_log` 모듈 docstring에 있다.
+        `hop`·`history`는 그대로 `PromptLog.write`에 넘긴다 — 파일명(`_hop{k}`)과 hop0
+        로그 참조는 그쪽이 정한다.
         """
         if self.prompts is None:
             return {}
-        ref, digest = self.prompts.write(role=role.value, stage=int(stage), prompt=prompt)
+        ref, digest = self.prompts.write(
+            role=role.value, stage=int(stage), prompt=prompt, hop=hop, history=history
+        )
         # `prompt_sha256`은 **1차 시도**의 것이다. 재시도가 있으면 실제로 간 것과 다르므로,
         # `_record_retries`가 `sent_sha256`(마지막으로 간 것)을 함께 싣는다(#80).
         return {"prompt_ref": ref, "prompt_sha256": digest}
 
     def _record_retries(
-        self, *, role: Role, stage: Stage, prompt: Prompt, retry_bodies: tuple[str, ...]
+        self,
+        *,
+        role: Role,
+        stage: Stage,
+        prompt: Prompt,
+        retry_bodies: tuple[str, ...],
+        history: Sequence[ChatTurn] = (),
+        hop: int = 0,
     ) -> dict[str, TraceValue]:
         """재시도 회차(2~N차)의 프롬프트를 산출물로 남기고 `model_call`에 실을 필드를 돌려준다.
 
@@ -377,7 +408,12 @@ class RunContext:
                 prefix=prompt.prefix, body=body, prompt_version=prompt.prompt_version
             )
             _, last_digest = self.prompts.write_retry(
-                role=role.value, stage=int(stage), prompt=retry_prompt, index=index
+                role=role.value,
+                stage=int(stage),
+                prompt=retry_prompt,
+                index=index,
+                hop=hop,
+                history=history,
             )
         return {"sent_sha256": last_digest}
 

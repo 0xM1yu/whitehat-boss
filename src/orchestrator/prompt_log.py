@@ -58,10 +58,11 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
 필요해지면 그때가 업그레이드 지점이다.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from src.ids import sha256_text
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ChatTurn, Prompt
 
 # run_dir 아래 디렉터리 이름. `eval/leakage/__main__.py`의 스캔 glob이 이 이름을 안다.
 DIR_NAME = "prompts"
@@ -77,18 +78,26 @@ PREFIX_MARK = "<!-- prefix -->"
 BODY_MARK = "<!-- body -->"
 
 
-def render(*, role: str, stage: int, prompt: Prompt) -> str:
-    """파일에 쓸 텍스트. 순번을 담지 않으므로 같은 프롬프트면 같은 문자열이다."""
-    return "\n".join(
-        (
-            HEADER.format(role=role, stage=stage, version=prompt.prompt_version),
-            PREFIX_MARK,
-            prompt.prefix,
-            BODY_MARK,
-            prompt.body,
-            "",
-        )
-    )
+def render(
+    *, role: str, stage: int, prompt: Prompt, hop: int = 0, continues: str | None = None
+) -> str:
+    """파일에 쓸 텍스트. 순번을 담지 않으므로 같은 프롬프트면 같은 문자열이다.
+
+    hop=0(기본값)은 바이트까지 예전과 같다. hop>0이면 본문 앞에 이어지는 hop0 로그
+    참조를 한 줄 남긴다 — history 전문을 다시 쓰지 않는다(hop0 로그가 이미 그 프롬프트를
+    들고 있다). `prompt.body`는 이 경우 이번 turn의 후속 텍스트다.
+    """
+    lines = [
+        HEADER.format(role=role, stage=stage, version=prompt.prompt_version),
+        PREFIX_MARK,
+        prompt.prefix,
+        BODY_MARK,
+    ]
+    if hop:
+        lines.append(f"<!-- continues {continues or '(hop0 로그를 못 찾았다)'} -->")
+    lines.append(prompt.body)
+    lines.append("")
+    return "\n".join(lines)
 
 
 class PromptLog:
@@ -108,26 +117,63 @@ class PromptLog:
     def __init__(self, run_dir: Path) -> None:
         self._dir = Path(run_dir) / DIR_NAME
         self._seq = 0
+        # hop0 호출의 본문(`prompt.body`) → 그 호출이 남긴 파일 참조. 후속 홉의
+        # `history[0].content`가 정확히 그 문자열이다(세션이 hop0 turn을 그대로 들고
+        # 다닌다, ADR 0012 결정 2) — 그래서 내용으로 식별한다. 세션 객체가 생기면(Phase 5)
+        # 그게 정본이 된다.
+        # ponytail: 두 세션의 hop0 본문이 우연히 바이트까지 같으면 참조가 섞인다 —
+        # 실제로는 안 난다(캡슐마다 candidate_id가 다르다). 이 참조는 사람이 읽는 진단용
+        # 주석일 뿐 계산에는 안 쓰인다.
+        self._hop0_ref: dict[str, str] = {}
 
     @property
     def directory(self) -> Path:
         return self._dir
 
-    def write(self, *, role: str, stage: int, prompt: Prompt) -> tuple[str, str]:
+    def _continues(self, hop: int, history: Sequence[ChatTurn]) -> str | None:
+        if not hop or not history:
+            return None
+        return self._hop0_ref.get(history[0].content)
+
+    def write(
+        self,
+        *,
+        role: str,
+        stage: int,
+        prompt: Prompt,
+        hop: int = 0,
+        history: Sequence[ChatTurn] = (),
+    ) -> tuple[str, str]:
         """파일을 쓰고 `(run_dir 상대 경로, 내용 sha256)`을 돌려준다.
 
         **개행을 LF로 고정한다.** 기본값으로 두면 Windows에서 CRLF가 섞여, 같은 입력의
         두 실행이 장비에 따라 다른 `prompt_sha256`을 남긴다.
+
+        hop>0이면 파일명에 `_hop{k}`가 붙는다 — `_retryK`와 같은 자리에 나란히 쌓인다
+        (`…_hop1_retry1.md`). hop=0(기본값)은 지금까지의 이름·내용 그대로다.
         """
         self._seq += 1
-        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}.md"
-        text = render(role=role, stage=stage, prompt=prompt)
+        suffix = f"_hop{hop}" if hop else ""
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}.md"
+        text = render(
+            role=role, stage=stage, prompt=prompt, hop=hop, continues=self._continues(hop, history)
+        )
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
-        return f"{DIR_NAME}/{name}", sha256_text(text)
+        ref = f"{DIR_NAME}/{name}"
+        if not hop:
+            self._hop0_ref[prompt.body] = ref
+        return ref, sha256_text(text)
 
     def write_retry(
-        self, *, role: str, stage: int, prompt: Prompt, index: int
+        self,
+        *,
+        role: str,
+        stage: int,
+        prompt: Prompt,
+        index: int,
+        hop: int = 0,
+        history: Sequence[ChatTurn] = (),
     ) -> tuple[str, str]:
         """재시도 회차(`index`=1..)의 프롬프트를 **직전 `write`와 같은 순번**으로 남긴다.
 
@@ -138,10 +184,14 @@ class PromptLog:
 
         같은 `prompts/` 아래이므로 `eval/leakage`의 스캔이 이 파일도 본다 — **실제로 서버에
         간 요청**이 누출 검증 대상이 되는 것이 (a)의 목적이다(#80). LF 고정은 `write`와 같은
-        이유다(장비별 해시 흔들림 방지).
+        이유다(장비별 해시 흔들림 방지). hop 접미는 `write`와 같은 자리이고 `_retryK`보다
+        앞에 온다.
         """
-        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}_retry{index}.md"
-        text = render(role=role, stage=stage, prompt=prompt)
+        suffix = f"_hop{hop}" if hop else ""
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}_retry{index}.md"
+        text = render(
+            role=role, stage=stage, prompt=prompt, hop=hop, continues=self._continues(hop, history)
+        )
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
         return f"{DIR_NAME}/{name}", sha256_text(text)
