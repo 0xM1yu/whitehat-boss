@@ -90,9 +90,9 @@ class RecordingModelClient:
         self._inner = inner
         self.prompts: list[tuple[Role, object]] = []
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         self.prompts.append((role, prompt))
-        return self._inner.complete(role=role, prompt=prompt, schema=schema)
+        return self._inner.complete(role=role, prompt=prompt, schema=schema, history=history)
 
     def last_for(self, role: Role):  # noqa: ANN201
         return next(prompt for seen, prompt in reversed(self.prompts) if seen is role)
