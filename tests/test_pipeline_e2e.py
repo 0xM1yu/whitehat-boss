@@ -2346,6 +2346,37 @@ def test_artifacts_without_symbols_make_no_candidates(tmp_path: Path) -> None:
     assert plan["symbol_targets"] == 2
 
 
+def test_a_header_function_definition_becomes_a_non_slice_target(tmp_path: Path) -> None:
+    """함수 정의를 가진 `.h`는 (위 테스트의 함수 없는 `.h`와 반대로) 심볼이 있으므로 비슬라이스
+    run에서 `_Target`을 하나 더 만든다(`runner.py:972` `ctx.symbols_for(artifact.path)`).
+    index-v2 보고서(2026-09-26-index-v2-atom.md)의 표본 셋은 헤더 함수 정의가 0개라 이 경로를 안
+    다뤘다(§5 「말하지 않는 것」·§6).
+    """
+    target = tmp_path / "src"
+    target.mkdir()
+    (target / "parser.c").write_text((TARGET / "parser.c").read_text(encoding="utf-8"), "utf-8")
+    (target / "util.c").write_text((TARGET / "util.c").read_text(encoding="utf-8"), "utf-8")
+    (target / "util.h").write_text("static inline int clamp(int v) {\n    return v;\n}\n", "utf-8")
+    index = {
+        **_FIXTURE_INDEX,
+        "files": [*_FIXTURE_INDEX["files"], "util.h"],
+        "symbols": [
+            *_FIXTURE_INDEX["symbols"],
+            {"name": "clamp", "file": "util.h", "line_start": 1, "line_end": 3},
+        ],
+    }
+
+    result, trace_path = _run(tmp_path, target=target, before=_with_index(index))
+
+    plan = _plan(trace_path)
+    assert plan["analyzable_artifacts"] == 3
+    assert plan["symbol_targets"] == len(index["symbols"]) == 5
+    assert plan["no_symbol_artifacts"] == 0
+    assert ("util.h", "clamp") in {
+        (c.location.file, c.location.symbol) for c in result.candidates
+    }
+
+
 # --- 10. (a′) 정적 신호는 게이트가 아니라 순서다 ------------------------------
 
 
