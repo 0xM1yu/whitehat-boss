@@ -1016,8 +1016,8 @@ def resolve(
     """§4 조회·조립 — `ResolveQuery`를 받아 `Resolution`을 낸다.
 
     `table("functions") is None`이면(v1 인덱스·인덱스 없음) 빈 `Resolution`을 돌려준다 —
-    factory는 run 전에 인덱스 판을 모르므로 훅은 항상 꽂히고, 판단은 여기서 한다. 루프
-    (Phase 5)는 빈 결과를 "하나도 못 줌"(`nothing_resolved`)으로 본다.
+    factory는 run 전에 인덱스 판을 모르므로 훅은 항상 꽂히고, 판단은 여기서 한다. 빈
+    결과는 "하나도 못 줌"이다 — 부르는 쪽은 `nothing_resolved`로 선다.
 
     `query.requests`가 `_MAX_REQUESTS`(3)를 넘으면 앞 3개만 처리한다(리뷰 5.1 [HIGH] —
     상수 주석). 넘친 요청은 이 호출의 결과에서 조용히 빠지지만, 루프의 홉 이벤트가 모델이
