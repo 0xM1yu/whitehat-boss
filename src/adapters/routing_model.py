@@ -10,9 +10,11 @@ model-serving.md §6의 게이트웨이 그림(역할 → vLLM #1/#2/#3)을 코�
 import 하지 않으므로 새 백엔드가 생겨도 여기는 그대로다.
 """
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel
 
-from src.interfaces.model_client import ModelClient, ModelResult, Prompt
+from src.interfaces.model_client import ChatTurn, ModelClient, ModelResult, Prompt
 from src.schemas.enums import Role
 
 
@@ -35,8 +37,21 @@ class RoutingModelClient:
             )
         return client
 
-    def complete(self, *, role: Role, prompt: Prompt, schema: type[BaseModel]) -> ModelResult:
-        return self.client_for(role).complete(role=role, prompt=prompt, schema=schema)
+    def complete(
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[BaseModel],
+        history: Sequence[ChatTurn] = (),
+    ) -> ModelResult:
+        client = self.client_for(role)
+        # 비어 있을 때는 `history` 키워드 자체를 안 보낸다 — 그래야 아직 그 인자를 모르는
+        # 구현(테스트 더블 열 개, `call_model`이 아직 아무도 안 넘긴다)이 그대로 돈다.
+        # 실제로 채워지면(PR-B) 그 값을 그대로 위임한다 — 여기서 삼키지 않는다.
+        if history:
+            return client.complete(role=role, prompt=prompt, schema=schema, history=history)
+        return client.complete(role=role, prompt=prompt, schema=schema)
 
     @property
     def roles(self) -> list[str]:

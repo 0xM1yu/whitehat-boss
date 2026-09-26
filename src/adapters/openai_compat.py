@@ -16,12 +16,13 @@ import json
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ValidationError
 
 from src.bench_metrics import generation_tokens
 from src.interfaces.model_client import (
+    ChatTurn,
     ModelGatewayError,
     ModelResult,
     Prompt,
@@ -154,7 +155,18 @@ class OpenAICompatModelClient:
         # 실제 키가 필요한 게이트웨이라면 환경변수에서 주입한다 — 소스에 두지 않는다.
         self.api_key = api_key
 
-    def complete(self, *, role: Role, prompt: Prompt, schema: type[BaseModel]) -> ModelResult:
+    def complete(
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[BaseModel],
+        history: Sequence[ChatTurn] = (),
+    ) -> ModelResult:
+        if history:
+            raise NotImplementedError(
+                "OpenAICompatModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 PR-B다(#95)"
+            )
         last_error: Exception | None = None
         body = prompt.body
         # **재시도분까지 더한다.** 스키마 파싱에 실패한 응답도 서버는 이미 만들어 냈고
