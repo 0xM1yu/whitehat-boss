@@ -117,6 +117,47 @@ def test_execute_wires_read_payload_from_the_artifacts_root(
     assert reader("artifacts/run_20260901_0001/semgrep/missing.log") is None
 
 
+def test_run_pipeline_wires_resolve_requests_from_deps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Dependencies.resolve_requests`가 `RunContext.resolve_requests`로 그대로 이어진다.
+
+    러너가 `src/adapters/`를 import하지 않으므로(모듈 docstring) resolver 구현은 이 hook으로만
+    경계를 넘는다(ADR 0012 결정 2). 조립(`run_pipeline`)이 `deps.resolve_requests`를 `ctx`에
+    심지 않으면, need_evidence 루프가 아무리 잘 짜여도 그 hook을 영영 못 본다 — `symbols_for`·
+    `read_slice`·`counter_for_role`과 같은 자리인데 그 셋과 달리 아직 조립되지 않았다.
+    """
+    from src.adapters import factory as factory_mod
+    from src.orchestrator import context as context_mod
+
+    def sentinel(_query: object) -> object:
+        return None
+
+    captured: dict[str, object] = {}
+    original_init = context_mod.RunContext.__init__
+
+    def spy_init(self: object, *args: object, **kwargs: object) -> None:
+        captured["resolve_requests"] = kwargs.get("resolve_requests")
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(context_mod.RunContext, "__init__", spy_init)
+
+    original_build_deps = factory_mod.build_deps
+
+    def spy_build_deps(*args: object, **kwargs: object) -> object:
+        deps = original_build_deps(*args, **kwargs)
+        return dataclasses.replace(deps, resolve_requests=sentinel)
+
+    monkeypatch.setattr("src.cli.build_deps", spy_build_deps)
+
+    _run(tmp_path)
+
+    assert captured.get("resolve_requests") is sentinel, (
+        "run_pipeline이 deps.resolve_requests를 RunContext에 안 심었다 — 받은 값: "
+        f"{captured.get('resolve_requests')!r}"
+    )
+
+
 def _canonical(trace_path: Path) -> bytes:
     """재현성 비교 표현: `ts`·`wall_ms`만 제거한 JSONL."""
     lines = []
