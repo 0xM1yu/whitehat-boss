@@ -89,6 +89,21 @@ _CASE_B_RENDER = "\n".join(
     ["/* ===== parser.c ===== */", f"21| {_PARSER[20]}", f"24| {_PARSER[23]}"]
 )
 
+# 헤더(.h)의 `static inline` 함수 — entry가 그 **본문** 줄일 때의 Auditor 앵커를 잰다
+# (index-v2 보고서 2026-09-26-index-v2-atom.md §5 「말하지 않는 것」). 2026-09-26 표본 셋의 헤더
+# entry는 전부 프로토타입 한 줄이었다 — 본문 줄인 경우는 이 픽스처가 처음이다. sink를
+# `memcpy`(길이가 상수가 아닌 꼴)로 둔 것은 `_CASE_B`와 같은 이유다 — `fake_model.RISKY_CALLS`
+# 가산점 없이는 점수(0.30)가 `scout_threshold`(0.5)를 못 넘어 Auditor까지 안 간다.
+_HEADER_FN = (
+    "static inline void copy_field(char *dst, const char *src, int n) {\n"
+    "    if (dst == NULL) {\n"
+    "        return;\n"
+    "    }\n"
+    "    memcpy(dst, src, n);\n"
+    "}\n"
+)
+_HEADER_LINES = split_source(_HEADER_FN.encode("utf-8"))
+
 
 def _prompts(trace_path: Path, role: str) -> list[tuple[str, dict]]:
     """run이 남긴 `role` 프롬프트마다 (본문, FACTS) — FACTS는 본문의 마지막 ```json 펜스다."""
@@ -302,6 +317,48 @@ def test_the_auditor_takes_the_narrowest_symbol_around_the_entry(tmp_path: Path)
 
     ((_, facts),) = _prompts(trace_path, "auditor")
     assert (facts["target"]["symbol"], facts["target"]["line_start"]) == ("parse_header", 19)
+
+
+def test_the_auditor_anchors_on_the_exact_range_of_a_header_function(tmp_path: Path) -> None:
+    """entry가 헤더(`.h`)의 `static inline` 함수 **본문** 줄(프로토타입 한 줄이 아니라)이면 Auditor
+    대상이 그 함수의 정확한 범위다 — `_AUDITOR_WINDOW_LINES`(50줄 창)가 아니다. index-v2 보고서
+    (2026-09-26-index-v2-atom.md §5 「말하지 않는 것」)의 표본 셋은 헤더 entry가 전부 프로토타입
+    한 줄이라 이 경로를 안 탔다 — `:320`(창 폴백) 테스트의 대칭 짝이다.
+    """
+    points = {("util.h", 1), ("util.h", 5)}
+    header_slice = {
+        "id": "slice_0100",
+        "candidate_key": "key_slice_0100",
+        "case": "B",
+        "entry": {"file": "util.h", "line": 5, "symbol": "memcpy"},
+        "members": ["key_slice_0100"],
+        "absorbed": [],
+        "lines": [{"file": f, "line": n} for f, n in sorted(points)],
+        "code": assemble(points, {"util.h": _HEADER_LINES}),
+        "_scope": "copy_field",
+    }
+    path = _slices_file(tmp_path, [header_slice])
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "util.h").write_text(_HEADER_FN, encoding="utf-8")
+    index = {
+        "version": "index-v1",
+        "files": ["util.h"],
+        "skipped": [],
+        "symbols": [{"name": "copy_field", "file": "util.h", "line_start": 1, "line_end": 6}],
+        "calls": [],
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+
+    _, trace_path = _run(tmp_path, slices_path=path, target=repo, before=_with_index(index))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["target"] == {
+        "file": "util.h", "symbol": "copy_field", "line_start": 1, "line_end": 6,
+    }
+    assert facts["source"] == "\n".join(_HEADER_LINES)
 
 
 _NO_PARSER_SYMBOLS = {
