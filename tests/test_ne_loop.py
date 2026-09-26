@@ -403,6 +403,82 @@ def test_ne_resolver_that_finds_nothing_stops_the_loop(
 
 
 @_MODES
+def test_ne_context_overflow_without_a_call_when_nothing_fit_the_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """resolver가 채울 만한 것을 찾았지만(`truncated`) 상한 안에 하나도 못 실었다(`blocks`
+    0개) — hop1을 부르지 않고 그대로 `context_overflow`로 선다(`_ne_hop_max_chars`가 만드는
+    "호출 없이 context_overflow" 두 경우 중 하나, 지금까지 E2E가 안 탔다)."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request())],
+            **_other_seats_script(),
+        },
+    )
+
+    def truncated_only(query: ResolveQuery) -> Resolution:
+        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=("doit",))
+
+    _wire_resolver(monkeypatch, truncated_only)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 1, "블록 0개 + truncated면 hop1을 부르면 안 된다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 1
+    assert hops[0]["stop_reason"] == NeStopReason.CONTEXT_OVERFLOW.value
+    assert hops[0]["truncated"] == "doit"
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_context_overflow_without_a_call_when_max_chars_is_non_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """`_ne_hop_max_chars`가 0 이하를 주면(남은 토큰 ≤ 0) resolver도 hop1도 부르지 않고
+    그대로 `context_overflow`로 선다 — 위 검사와 짝인 나머지 한 경우. 좌석 모델
+    (`fake_v3`)의 `context_limit`을 작게 잡아 hop0 usage(120+25)+여유(512)가 이미 그 창을
+    넘게 한다(`_ne_hop_max_chars` 공식 — 값은 `context_limit`에 무관하게 음수가 된다:
+    `output_max`는 항상 양수라야 하므로 `200 - output_max - 657 < 0`)."""
+    resolver_calls: list[ResolveQuery] = []
+
+    def resolver_spy(query: ResolveQuery) -> Resolution:
+        resolver_calls.append(query)
+        return _nothing_resolves(query)
+
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request())],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, resolver_spy)
+
+    def configure(config):  # noqa: ANN001, ANN202
+        base = _v3_pool(mode)(config)
+        tiny_seat = base.models["fake_v3"].transition(context_limit=200)
+        return base.transition(models={**base.models, "fake_v3": tiny_seat})
+
+    _, trace_path = _run(
+        tmp_path,
+        configure=configure,
+        target=_single_target(tmp_path),
+        stop_after=int(Stage.SCOUT),
+    )
+
+    assert len(_seat_calls(calls)) == 1, "max_chars <= 0이면 hop1을 부르면 안 된다"
+    assert not resolver_calls, "max_chars <= 0이면 resolver를 부르면 안 된다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 1
+    assert hops[0]["stop_reason"] == NeStopReason.CONTEXT_OVERFLOW.value
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
 def test_ne_max_hop_exhausts_the_budget_and_queues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
