@@ -349,7 +349,7 @@ models:
     quantization: "bf16"
     license: "MIT"
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model"
+    source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model@25d7f38146bdf0fad1eac09c586b1993ef3e6ee4"
     family: "qwen"
     prompt_template_version: "v3"
     fallback: null
