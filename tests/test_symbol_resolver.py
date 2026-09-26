@@ -376,7 +376,7 @@ def test_resolve_skips_a_block_whose_file_no_longer_exists(ne2_read_lines):
     전체를 손으로 짜서 이 경계 사례를 직접 겨냥한다(실 인덱서로는 만들 수 없는 상태다).
 
     빠진 블록은 조용히 사라지지 않는다 — `_resolve_flat`이 아무것도 못 채웠으니
-    `_unfilled_lookup_reason`이 사유를 고른다. 5.3 [MEDIUM] — `ghost` 자신은 후보에서
+    `_unfilled_lookup_reason`이 사유를 고른다. `ghost` 자신은 후보에서
     뺀다(`_all_symbol_names`가 표의 키를 그대로 모아 렌더 성공 여부를 안 보므로, 빼지
     않으면 "가장 비슷한 이름"이 자기 자신이 되어 사유가 무의미해진다). `ghosts`처럼
     실제로 비슷한 다른 이름이 있으면 그것이 나와야 한다. "찾았지만 못 읽었다"를 구분하는
@@ -428,11 +428,11 @@ def test_resolve_picks_the_right_unfilled_reason_when_lookup_fails(
 
 
 def test_resolve_processes_only_the_first_three_requests(ne2_graph, ne2_read_lines):
-    """5.1 [HIGH] — 요청 개수 상한. v3 prefix 세 좌석 다 모델에게 최대 3개까지만 허락한다
+    """요청 개수 상한. v3 prefix 세 좌석 다 모델에게 최대 3개까지만 허락한다
     (`prompts/scout_memory/v3/prefix.md:146` 「at most 3 actionable requests」·
     `scout_injection/v3/prefix.md:146` 같은 문구·`scout_boundary/v3/prefix.md:135`
-    「always present, at most 3 entries」 — 문구는 갈려도 숫자는 셋 다 3). 리뷰어가 존재하지
-    않는 target 500개로 재현했다(1.1초, `followup_text` 44,800자) — resolve()는 앞 3개만 본다."""
+    「always present, at most 3 entries」 — 문구는 갈려도 숫자는 셋 다 3). 상한이 없으면
+    존재하지 않는 target 500개에 1.1초·`followup_text` 44,800자였다 — resolve()는 앞 3개만 본다."""
     targets = [f"no_such_symbol_{i}" for i in range(5)]
     query = _query(
         requests=tuple(_request("function", t) for t in targets),
@@ -467,7 +467,7 @@ def test_resolve_prefers_the_function_in_the_target_file_when_names_collide(
 
 
 def test_resolve_prefers_the_macro_in_the_target_file_when_names_collide(ne2_graph, ne2_read_lines):
-    """5.2 [HIGH] — 라벨 11(macro named in the declaration)의 동명 점수. `LIMIT`이
+    """라벨 11(macro named in the declaration)의 동명 점수. `LIMIT`이
     `scoring/a_wrong.c`(target 아님·안 보임)와 `scoring/target.c`(target_file·visible) 둘에
     정의돼 있다. `cap`(target.c 5행)의 선언 줄에서 `LIMIT`을 찾으면 target.c의 정의가
     나와야 한다 — 위 함수 동명 충돌 테스트의 매크로 판."""
