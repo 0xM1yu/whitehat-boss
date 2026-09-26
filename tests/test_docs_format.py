@@ -454,56 +454,71 @@ def test_the_contract_example_output_max_matches_the_config() -> None:
     `b1_single`이었다). `config/budgets.yaml`이
     "thresholds·sampling·seed는 프로필과 무관하게 공통"이라고 못박아 뒀다. 그 전제가
     깨지면 이 테스트는 한 프로필만 보게 되므로, 그때는 여기도 같이 고쳐야 한다.
+
+    **2026-09-26 — 첫 역할값이 들어와 역할 짝 비교로 고쳤다.** Auditor가 사고를 켜며
+    `output_max_by_role.auditor`가 32,768이 됐다(`config/budgets.yaml`). 위 ⚠ 문단대로 비교
+    대상이 전역값이 아니라 `thresholds.output_max_for(<그 예시 블록의 role>)`이 됐고, 그 날을
+    기다리던 가드(`test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared`)는 할 일을
+    마쳐 지웠다 — 짝 비교가 선 것은 바로 아래 검사가 잠근다.
     """
     from src.config import load_config
 
-    contract = _read(REPO_ROOT / "docs" / "agent-contracts.md")
-    pattern = re.compile(r"^\s*output_max:\s*(\d+)", re.MULTILINE)
-    declared = [int(m.group(1)) for m in pattern.finditer(contract)]
-    assert declared, "docs/agent-contracts.md에 output_max 선언이 없다"
+    # 핀 — 역할과 짝을 짓는가(양성), 역할 없는 블록을 역할 없음으로 두는가(음성).
+    assert _contract_caps("```yaml\nagent:\n  role: critic\n    output_max: 8192\n```") == [
+        ("critic", 8192)
+    ]
+    assert _contract_caps("```yaml\ntoken_budget:\n  output_max: 4096\n```") == [(None, 4096)]
+
+    caps = _contract_caps(_read(REPO_ROOT / "docs" / "agent-contracts.md"))
+    assert caps, "docs/agent-contracts.md에 output_max 선언이 없다"
 
     thresholds = load_config("harness_pool").thresholds
-    # **값이 없어도 막을 수 있다.** 아래 비교는 전역값 하나와 대조하므로, 역할별 상한이
-    # 선언되는 날 critic에 8,192를 주고 문서에 4,096을 적어도 조용히 통과한다 — D42가
-    # 나온 드리프트가 한 겹 아래에서 재현된다. 그날 이 줄이 먼저 빨개져서 아래를 역할
-    # 짝으로 고치게 만든다. 위 ⚠ 문단이 그 고치는 방법이고, 이 줄이 그 강제다.
-    assert not thresholds.output_max_by_role, (
-        f"역할별 상한이 선언됐다({sorted(thresholds.output_max_by_role)}) — 아래 비교를 "
-        f"`thresholds.output_max_for(<그 예시 블록의 role>)`와의 짝 비교로 고쳐야 한다. "
-        f"⚠ 그렇게 고치면 다음으로 `test_the_contract_guard_goes_red_the_day_a_role_cap_"
-        f"is_declared`가 DID NOT RAISE로 죽는다 — 그 테스트는 **이 줄이 있다는 것**을 "
-        f"확인하는 테스트라 이 줄과 함께 지우는 것이 맞다. 가드가 고장 난 게 아니다."
-    )
-    actual = thresholds.output_max
-    assert declared == [actual] * len(declared), (
-        f"docs/agent-contracts.md의 output_max 선언 {declared}이 "
-        f"config의 값({actual})과 다르다 — 둘을 함께 고친다"
+    offenders = []
+    for role, cap in caps:
+        actual = thresholds.output_max_for(role) if role else thresholds.output_max
+        if cap != actual:
+            offenders.append(f"role={role}: 문서 {cap} · config {actual}")
+    assert offenders == [], (
+        "docs/agent-contracts.md의 output_max 선언이 그 블록 역할의 config 값과 다르다 — "
+        "둘을 함께 고친다\n" + "\n".join(offenders)
     )
 
 
-def test_the_contract_guard_goes_red_the_day_a_role_cap_is_declared(
+def _contract_caps(text: str) -> list[tuple[str | None, int]]:
+    """계약 문서의 yaml 예시 블록마다 (그 블록의 `role:`, `output_max:`) 짝. 역할이 없으면 None."""
+    caps: list[tuple[str | None, int]] = []
+    for block in re.findall(r"```yaml\n(.*?)```", text, re.DOTALL):
+        role = re.search(r"^\s*role:\s*([a-z_]+)", block, re.MULTILINE)
+        caps += [
+            (role.group(1) if role else None, int(cap.group(1)))
+            for cap in re.finditer(r"^\s*output_max:\s*(\d+)", block, re.MULTILINE)
+        ]
+    return caps
+
+
+def test_the_contract_check_pairs_the_cap_with_the_blocks_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """역할값이 선언되는 순간 **위 검사가 실패해야 한다**.
+    """위 검사는 **그 블록 역할의 값**과 대조한다 — 전역값만 흔들면 통과, 역할값을 흔들면 죽는다.
 
-    위 docstring이 *"값을 처음 넣는 PR이 여기를 함께 고친다"*고 적어 뒀지만 docstring은
-    강제가 아니다. 실제로 `output_max_by_role: {critic: 8192}`를 넣고 문서를 4,096에 둬도
-    위 검사는 **통과한다** — D42가 나온 드리프트("계약 문서가 선언하고 하네스가 다른 값을
-    쓴다")가 한 겹 아래에서 그대로 재현된다.
-
-    **값 없이도 막을 수 있다.** 선언이 생기면 역할 짝으로 비교하도록 고치게 만드는 것이
-    이 테스트다. 그때 위 검사의 비교 대상은 전역값이 아니라 그 예시 블록의
-    `thresholds.output_max_for(<role>)`이고, 여기는 그 PR이 함께 지운다.
+    전역값 하나와 대조하던 동안에는 critic에 8,192를 주고 문서에 4,096을 적어도 통과했다(D42가
+    나온 드리프트가 한 겹 아래에서 재현되는 모양). 그 날을 기다리던 옛 가드는 2026-09-26 첫
+    역할값(Auditor)과 함께 지웠고, 이 검사가 짝 비교의 결과를 잠근다.
     """
     from src import config as config_module
 
     loaded = config_module.load_config("harness_pool")
-    declared = loaded.transition(
-        thresholds=loaded.thresholds.transition(output_max_by_role={"critic": 8192})
-    )
-    monkeypatch.setattr(config_module, "load_config", lambda *args, **kwargs: declared)
+    moved_global = loaded.transition(thresholds=loaded.thresholds.transition(output_max=2048))
+    monkeypatch.setattr(config_module, "load_config", lambda *args, **kwargs: moved_global)
+    test_the_contract_example_output_max_matches_the_config()  # 전역값은 비교 대상이 아니다
 
-    with pytest.raises(AssertionError, match="역할별"):
+    moved_role = loaded.transition(
+        thresholds=loaded.thresholds.transition(
+            output_max_by_role={**loaded.thresholds.output_max_by_role, "auditor": 16384}
+        )
+    )
+    monkeypatch.setattr(config_module, "load_config", lambda *args, **kwargs: moved_role)
+    with pytest.raises(AssertionError, match="role=auditor"):
         test_the_contract_example_output_max_matches_the_config()
 
 
@@ -1159,6 +1174,44 @@ def test_the_canonical_profiles_seat_the_context_roster() -> None:
             f"config/profiles.yaml `{name}`의 roles가 PROJECT-CONTEXT.md §1 표와 갈렸다 — "
             "로스터를 바꿀 때는 넷(§3)을 함께 고친다"
         )
+
+
+# §1 키 칸이 적는 추론 등급 — `gpt-oss-20b` (`reasoning_effort: high`)의 괄호.
+_KEY_EFFORT = re.compile(r"`reasoning_effort:\s*([a-z]+)`")
+
+
+def test_the_context_roster_states_the_registry_reasoning_effort() -> None:
+    """§1 키 칸의 `reasoning_effort`가 registry의 그 키 선언과 같다 — 양방향.
+
+    §1이 추론 등급을 적는 자리는 키 칸의 괄호다. registry만 바꾸고 표를 놓치면 정본이 옛 등급을
+    말하고, 표만 바꾸면 run은 옛 등급으로 돈다. 선언 안 한 키는 표에도 괄호가 없어야 한다 — 「안
+    적음」이 「서버 기본값으로 돈다」와 같은 뜻이 되게. 2026-09-26 Auditor를 `qwen3.8-27b`로 바꾸며
+    사고를 켤 때(`xhigh`) 세웠다 — 그전에는 Critic 한 칸뿐이라 사람이 봤다.
+    """
+    # 핀 — 양성은 PROJECT-CONTEXT.md §1 Critic 행의 실제 칸, 음성은 같은 표 memory 행의 실제 칸이다.
+    assert _KEY_EFFORT.search("`gpt-oss-20b` (`reasoning_effort: high`)").group(1) == "high"
+    assert _KEY_EFFORT.search("`qwen3-14b`") is None
+    from src.config import CONFIG_DIR
+
+    header, rows = _first_table(_read(CONTEXT), _ROSTER_HEADING, _ROSTER_TABLE)
+    key_at = _column(header, _KEY_COLUMN, _ROSTER_TABLE)
+    models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
+    offenders: list[str] = []
+    for lineno, row in rows:
+        key = _LEADING_KEY.match(row[key_at])
+        if key is None:
+            continue  # 키 칸 모양은 `test_the_context_roster_matches_the_model_registry`가 잡는다
+        stated = _KEY_EFFORT.search(row[key_at])
+        declared = (models.get(key.group(1)) or {}).get("reasoning_effort")
+        if (stated.group(1) if stated else None) != declared:
+            offenders.append(
+                f"PROJECT-CONTEXT.md:{lineno}: `{key.group(1)}` — 표 "
+                f"{stated.group(1) if stated else None!r} · config/models.yaml {declared!r}"
+            )
+    assert offenders == [], (
+        "PROJECT-CONTEXT.md §1 키 칸의 `reasoning_effort`가 registry와 갈렸다 — 등급을 바꿀 때는 "
+        "표와 config/models.yaml을 함께 고친다.\n" + "\n".join(offenders)
+    )
 
 
 _MODEL_SERVING = REPO_ROOT / "docs" / "model-serving.md"
