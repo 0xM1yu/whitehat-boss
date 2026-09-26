@@ -7,14 +7,14 @@
 ```yaml
 agent:
   role: auditor              # scout | auditor | critic | judge
-  model_profile: qwen3.6-35b-a3b   # model-serving.md의 registry key
+  model_profile: qwen3.8-27b       # model-serving.md의 registry key
   tool_policy:               # 이 역할이 호출 가능한 도구 화이트리스트
     - retriever.expand_capsule
     - index.callers
     - index.callees
   token_budget:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
-    output_max: 4096         # config의 thresholds.output_max와 같은 값. 요청에 max_tokens로 실린다
+    output_max: 32768        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
   output_schema: Finding     # 아래 §3
 ```
@@ -47,6 +47,10 @@ agent:
 > `thresholds.output_max_by_role`이고 선언이 없는 역할은 위 값을 그대로 쓴다
 > (`Thresholds.output_max_for`). **값은 아직 어느 역할도 선언하지 않았다** — 실측과
 > 한계는 `config/budgets.yaml`의 `output_max` 주석에 있다.
+> ⏵ **2026-09-26 — 처음으로 한 역할이 선언했다.** Auditor(`qwen3.8-27b`)가 추론(사고)을 켜며
+> `output_max_by_role.auditor`가 32,768이 됐다 — 전역 4,096은 그대로다. 값은 실측이 아니라 사고를 켜서
+> 들어갔다(근거·한계는 `config/budgets.yaml`의 그 주석). 위 예시 블록이 그 값을 들고,
+> `tests/test_docs_format.py`가 블록의 `role:`과 짝으로 대조한다.
 >
 > **2026-09-12 — 값을 안 정하기로 했고 그것이 실측의 결론이다.** 실제 Critic 프롬프트로
 > 재니 `prompt_tokens`가 **646~654**이고(캡슐도 원문도 안 실린다) `gpt-oss-20b`의 출력은
@@ -222,7 +226,7 @@ agent:
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.6-35b-a3b", "prompt_version": "v1"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v1"}
 }
 ```
 
