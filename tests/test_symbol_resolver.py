@@ -21,10 +21,10 @@ from src.adapters.symbol_resolver import (
     LABEL_MACRO_NAMED_IN_DECLARATION,
     REASON_CLOSEST_NAME,
     REASON_LIBC,
-    REASON_NOT_FOUND,
-    REASON_NOT_IDENTIFIER,
     REASON_NO_IDENTIFIER,
     REASON_NO_TARGET,
+    REASON_NOT_FOUND,
+    REASON_NOT_IDENTIFIER,
     REASON_OUTSIDE_REPO,
     REASON_PLACEHOLDER,
     Candidate,
@@ -335,18 +335,14 @@ def test_pick_best_candidate_reproduces_the_spec_example_8_5_0():
     c = Candidate(definition_kind="variable", file="src/other.c", line=30)
     visible = frozenset({"src/main.c", "src/parser.c"})
 
-    assert (
-        score_candidate(a, requested_kind="function", target_file="src/main.c", visible_files=visible)
-        == 8
-    )
-    assert (
-        score_candidate(b, requested_kind="function", target_file="src/main.c", visible_files=visible)
-        == 5
-    )
-    assert (
-        score_candidate(c, requested_kind="function", target_file="src/main.c", visible_files=visible)
-        == 0
-    )
+    def scored(candidate: Candidate) -> int:
+        return score_candidate(
+            candidate, requested_kind="function", target_file="src/main.c", visible_files=visible
+        )
+
+    assert scored(a) == 8
+    assert scored(b) == 5
+    assert scored(c) == 0
 
     winner = pick_best_candidate(
         [a, b, c], requested_kind="function", target_file="src/main.c", visible_files=visible
