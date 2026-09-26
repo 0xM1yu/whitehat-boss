@@ -24,7 +24,7 @@ from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
 from src.config import AdapterSelection, HarnessConfig, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ChatTurn, Prompt
 from src.interfaces.retriever import Query
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape
@@ -252,6 +252,28 @@ def test_risky_call_detection_ignores_substrings() -> None:
     assert risky_calls_in("my_memcpyx(a);") == []
 
 
+# --- history=() (PR-0 — 멀티턴 클라이언트는 PR-B) ------------------------------
+
+
+def test_fake_model_ignores_an_empty_history() -> None:
+    """`history=()`는 지금 동작 그대로다 — PR-0은 인자만 받는다."""
+    result = FakeModelClient().complete(
+        role=Role.SCOUT, prompt=_prompt(_context(VULNERABLE_C)), schema=Candidate, history=()
+    )
+    assert result.value is not None
+
+
+def test_fake_model_refuses_a_non_empty_history_loudly() -> None:
+    """비어 있지 않은 history는 조용히 무시하지 않고 크게 실패한다 — PR-B가 채운다(#95)."""
+    with pytest.raises(NotImplementedError):
+        FakeModelClient().complete(
+            role=Role.SCOUT,
+            prompt=_prompt(_context(VULNERABLE_C)),
+            schema=Candidate,
+            history=(ChatTurn(speaker="user", content="이전 턴"),),
+        )
+
+
 # --- RoutingModelClient -----------------------------------------------------
 
 
@@ -262,6 +284,18 @@ def test_routing_sends_each_role_to_its_own_client() -> None:
     assert router.client_for("critic") is critic
     with pytest.raises(UnknownRoleError, match="auditor"):
         router.client_for(Role.AUDITOR)
+
+
+def test_routing_forwards_history_to_the_underlying_client() -> None:
+    """routing은 그대로 위임한다 — 자기 검사를 두지 않는다(계획 §4 항목 5)."""
+    router = RoutingModelClient({"scout": FakeModelClient(model_name="s")})
+    with pytest.raises(NotImplementedError):
+        router.complete(
+            role=Role.SCOUT,
+            prompt=_prompt(_context(VULNERABLE_C)),
+            schema=Candidate,
+            history=(ChatTurn(speaker="user", content="이전 턴"),),
+        )
 
 
 # --- FakeRetriever ----------------------------------------------------------
