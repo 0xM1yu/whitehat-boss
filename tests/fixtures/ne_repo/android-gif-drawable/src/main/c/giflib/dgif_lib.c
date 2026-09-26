@@ -1,4 +1,4 @@
-/* dgif_lib.c fixture -- Phase 5 P3 (NE resolver) hop1 example. */
+/* dgif_lib.c fixture -- need_evidence resolver — Scout RAG baseline 명세 hop 1 예의 줄 번호에 맞춘 합성 파일(filler 줄은 자리 맞춤). */
 
 #include "gif_lib.h"
 
