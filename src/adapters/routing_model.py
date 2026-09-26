@@ -45,13 +45,12 @@ class RoutingModelClient:
         schema: type[BaseModel],
         history: Sequence[ChatTurn] = (),
     ) -> ModelResult:
+        # 자기 검사를 두지 않는다 — history를 그대로 위임하고 실제 판정(비어 있으면
+        # 단일 턴, 있으면 멀티턴으로 답하는 것)은 하위 클라이언트가 한다. 구현체
+        # (`fake_model.py`·`openai_compat.py`)와 테스트 더블 전부가 `history=()`를 받으므로,
+        # 비어 있을 때만 키워드를 감추던 자리가 더는 필요 없다.
         client = self.client_for(role)
-        # 비어 있을 때는 `history` 키워드 자체를 안 보낸다 — 그래야 아직 그 인자를 모르는
-        # 구현(테스트 더블 열 개, `call_model`이 아직 아무도 안 넘긴다)이 그대로 돈다.
-        # 실제로 채워지면 그 값을 그대로 위임한다 — 여기서 삼키지 않는다.
-        if history:
-            return client.complete(role=role, prompt=prompt, schema=schema, history=history)
-        return client.complete(role=role, prompt=prompt, schema=schema)
+        return client.complete(role=role, prompt=prompt, schema=schema, history=history)
 
     @property
     def roles(self) -> list[str]:

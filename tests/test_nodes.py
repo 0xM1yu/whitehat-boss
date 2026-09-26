@@ -508,8 +508,8 @@ def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None
     raw = "I cannot rule out a use-after-free here"
     inner = ctx.models.complete
 
-    def unreadable(*, role, prompt, schema):  # noqa: ANN001, ANN202
-        result = inner(role=role, prompt=prompt, schema=schema)
+    def unreadable(*, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+        result = inner(role=role, prompt=prompt, schema=schema, history=history)
         if role is not Role.CRITIC:
             return result
         return result.model_copy(update={"value": result.value.model_copy(update={"verdict": raw})})
