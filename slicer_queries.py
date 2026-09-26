@@ -34,13 +34,14 @@ CASE_B_WRITER_CAP = 2000
 # GT sinks are command/SQL execution, not memory writes: sample_13's sink `make_tunnel` calls
 # `apr_proc_create` (process spawn) and matched NONE of READERS/WRITERS/operator patterns, so it
 # was never a Case B candidate. This mirrors WRITERS -- a call to one of these is a sink whose
-# arguments (the command/query string) are backtracked. Names are the standard command-exec and
+# arguments (all of them, like WRITERS -- backward_b seeds every sink arg, not only the command/
+# query string) are backtracked. Names are the standard command-exec and
 # DB-query APIs plus `apr_proc_create` (the one observed in the measured miss). Measured on a local
 # candidate-capture run (no persisted run_id); the durable figure comes from the full slicing run.
 EXEC_SINKS = (
     "system|popen|wsystem|_wsystem|"
     "execl|execlp|execle|execv|execvp|execvpe|execve|execveat|"
-    "posix_spawn|posix_spawnp|apr_proc_create|CreateProcessA|CreateProcessW|"
+    "posix_spawn|posix_spawnp|apr_proc_create|CreateProcess|CreateProcessA|CreateProcessW|"
     "sqlite3_exec|sqlite3_prepare|sqlite3_prepare_v2|sqlite3_prepare_v3|sqlite3_prepare16|"
     "mysql_query|mysql_real_query|PQexec|PQexecParams|PQprepare"
 )
@@ -66,18 +67,20 @@ CASE_B_EXEC_CAP = 2000
 #     Integer-only arithmetic (both operands plain ints) drops out.
 # PER-ANCHOR bound (not a single total): this cap is applied to indexWrites AND to ptrArith
 # separately, so the operator population is bounded by 2*cap (<=4000), and with WRITERS
-# (CASE_B_WRITER_CAP) the new-sink total is bounded by <=6000. A repo past a cap gets bounded
+# (CASE_B_WRITER_CAP) and EXEC_SINKS (CASE_B_EXEC_CAP) the new-sink total is bounded by
+# <=8000. A repo past a cap gets bounded
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
 # The flows query targets memory-write sink calls instead of every call argument in the repo
 # (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
 # dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
-# sink universe to the dominant GT sink types (writers + write/pointer operators -- the same
-# calls Case B enumerates) keeps the dataflow bounded. The argument set is capped again after
-# the union so one huge repo cannot reinflate it. ⚠ This narrows recall: sinks past the cap,
-# and the local-array/double-free categories Case B also flags, are not targeted as flow sinks
-# (candidate enumeration still captures them). The before/after miss-rate is measured on ATOM.
+# sink universe to the dominant GT sink types (writers + command/SQL-exec sinks + write/pointer
+# operators -- the same calls Case B enumerates) keeps the dataflow bounded. The argument set is
+# capped again after the union so one huge repo cannot reinflate it. ⚠ This narrows recall:
+# sinks past the cap, and the local-array/double-free categories Case B also flags, are not
+# targeted as flow sinks (candidate enumeration still captures them). The before/after miss-rate
+# is measured on ATOM.
 FLOWS_SINK_CAP = 2000
 
 
@@ -402,9 +405,10 @@ def flows_query(
       // Recall-preserving hybrid (#252 review HIGH-2/3). Inside the candidate methods EVERY
       // call argument is a sink -- cheap (few methods) and it keeps the deref/field and
       // index-READ GT sink types that a memory-write-only set drops, and keeps the live-probe
-      // fixtures' calls anchored. Globally, narrow to memory-write calls (capped) so the
-      // per-candidate cross-repo dataflow stays under the deadline (#219). Cheap name/AST
-      // filters only (no dataflow) -- keep the writers/operators in sync with candidates_b_query.
+      // fixtures' calls anchored. Globally, narrow to memory-write and command/SQL-exec calls
+      // (capped) so the per-candidate cross-repo dataflow stays under the deadline (#219). Cheap
+      // name/AST filters only (no dataflow) -- keep writers/execs/operators in sync with
+      // candidates_b_query.
       val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
       val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
       val execSinks = cpg.call.name("({EXEC_SINKS})").take({CASE_B_EXEC_CAP}).l
