@@ -19,6 +19,8 @@
 | C-1 | Scout 출력 생성 | 4 | (신규) | `candidate` | — |
 | C-2 | `score >= scout_threshold` | 4 | `candidate` | `triaged` | `scout_promoted` |
 | C-3 | `score < scout_threshold` | 4 | `candidate` | `queued` | `below_scout_threshold` |
+| C-3 | v3 신호 `triage_reject`(`signal_of`) | 4 | `candidate` | `queued` | `scout_reject` |
+| C-3 | v3 NE 미해결(루프 소진) | 4 | `candidate` | `queued` | `need_evidence_unresolved` |
 | C-4 | 구조화 출력 재시도 한도 초과 | 4 | `candidate` | `queued` | `schema_parse_failed` |
 | C-5 | 캡슐 확장 상한 초과 | 3·5 | `triaged` | `queued` | `capsule_expansion_exhausted` |
 | C-6 | Auditor 구조화 출력 실패 | 5 | `triaged` | `queued` | `schema_parse_failed` |
@@ -122,6 +124,10 @@ TRANSITIONS: tuple[TransitionRule, ...] = (
     TransitionRule("C-1", "candidate", None, _S.CANDIDATE, None),
     TransitionRule("C-2", "candidate", _S.CANDIDATE, _S.TRIAGED, _R.SCOUT_PROMOTED),
     TransitionRule("C-3", "candidate", _S.CANDIDATE, _S.QUEUED, _R.BELOW_SCOUT_THRESHOLD),
+    # v3 신호 판정(ADR 0012 결정 2, council 판정 Q7) — 같은 번호, C-7이 두 `from_state`를
+    # 같은 사유로 쓰는 선례를 뒤집어 같은 (from, to)에 사유를 늘렸다.
+    TransitionRule("C-3", "candidate", _S.CANDIDATE, _S.QUEUED, _R.SCOUT_REJECT),
+    TransitionRule("C-3", "candidate", _S.CANDIDATE, _S.QUEUED, _R.NEED_EVIDENCE_UNRESOLVED),
     TransitionRule("C-4", "candidate", _S.CANDIDATE, _S.QUEUED, _R.SCHEMA_PARSE_FAILED),
     TransitionRule("C-5", "candidate", _S.TRIAGED, _S.QUEUED, _R.CAPSULE_EXPANSION_EXHAUSTED),
     TransitionRule("C-6", "candidate", _S.TRIAGED, _S.QUEUED, _R.SCHEMA_PARSE_FAILED),

@@ -53,6 +53,7 @@ from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
+from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CompileFlags, ModelSampling
 from src.tokens import COUNTED_ROLES
 
@@ -172,6 +173,11 @@ class Deps:
     # 기본값이 빈 dict인 것도 `symbols_for`·`counter_for_role`과 같은 의도다 — 이 필드 없이
     # 조립된 `Deps`(단위 테스트)가 이벤트를 못 내도 파이프라인은 옛 동작 그대로 돈다.
     counter_report: dict[str, str | None] = field(default_factory=dict)
+    # need_evidence resolver hook (ADR 0012 결정 2). `symbols_for`와 같은 자리 — 기본값
+    # `None`("resolver 없음")이 이 필드 없이 조립된 `Deps`(단위 테스트)의 옛 동작을 지킨다.
+    # **이 PR(P2)은 자리만 연다** — `build_deps`도 아직 `None`을 넘긴다. 실제로 배선하는
+    # 것은 PR-A(resolver)·PR-C(러너 루프)다.
+    resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
 
 
 @dataclass(frozen=True)
@@ -495,6 +501,8 @@ def build_deps(
         read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
+        # resolver 배선은 PR-A·PR-C 몫이다 — 이 PR(P2)은 이름·모양만 연다.
+        resolve_requests=None,
     )
 
 
