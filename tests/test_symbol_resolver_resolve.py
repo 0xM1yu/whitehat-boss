@@ -30,7 +30,12 @@ import pytest
 from src.adapters.factory import build_deps
 from src.adapters.index_graph import GraphIndex
 from src.adapters.slices import split_source
-from src.adapters.symbol_resolver import resolve
+from src.adapters.symbol_resolver import (
+    _CALLER_SITE_RADIUS,
+    _GLOBAL_ASSIGN_RADIUS,
+    _clip,
+    resolve,
+)
 from src.config import load_config
 from src.paths import safe_join
 from src.schemas.enums import UnfilledReason
@@ -80,6 +85,22 @@ def _request(kind: str, target: str) -> RequestedContext:
 def _query(**kwargs) -> ResolveQuery:
     base = {"requests": (), "hop": 1, "target_file": "", "visible": {}, "max_chars": 15_000}
     return ResolveQuery(**(base | kwargs))
+
+
+# --- _clip 경계 (5.4 [LOW], 리뷰 회귀 방지 — 로직 자체는 맞다고 확인됐다) -----------
+
+
+@pytest.mark.parametrize(
+    ("line", "radius", "total", "expected"),
+    [
+        (1, _CALLER_SITE_RADIUS, 10, (1, 4)),  # 라벨 9(caller site ±3) — 파일 1행 근처
+        (10, _CALLER_SITE_RADIUS, 10, (7, 10)),  # 라벨 9 — 마지막 줄 근처
+        (1, _GLOBAL_ASSIGN_RADIUS, 10, (1, 2)),  # 라벨 4·13(대입 ±1) — 파일 1행 근처
+        (10, _GLOBAL_ASSIGN_RADIUS, 10, (9, 10)),  # 라벨 4·13 — 마지막 줄 근처
+    ],
+)
+def test_clip_keeps_caller_site_and_assignment_radii_inside_the_file(line, radius, total, expected):
+    assert _clip(line - radius, line + radius, total) == expected
 
 
 # --- v1/인덱스 없음 -----------------------------------------------------------
@@ -179,6 +200,54 @@ def test_resolve_gives_the_callee_body_when_the_declaration_is_already_visible(
     assert resolution.blocks[0].name == "helper_a"
     assert resolution.blocks[0].lines == (16, 17, 18, 19)
     assert len(resolution.already) == 2  # 선언 줄 하나 + 대입 줄 하나
+
+
+def test_resolve_carries_the_already_in_source_line_into_the_followup_alongside_a_kept_block(
+    ne2_graph, ne2_read_lines
+):
+    """§4.4.4 — `g_buf`의 선언 줄만 이미 보이면(대입 줄은 안 보임) 선언은 `already`로 빠지고
+    대입은 블록으로 남는다. 둘 다 후속 턴에 실려야 한다 — 조각이 먼저, Already 줄이 뒤다."""
+    query = _query(
+        requests=(_request("variable", "g_buf"),),
+        target_file="main.c",
+        visible={"main.c": frozenset({13})},
+    )
+
+    resolution = resolve(query, table=ne2_graph.table, read_lines=ne2_read_lines)
+
+    assert [b.label for b in resolution.blocks] == ["assignment to g_buf"]
+    assert resolution.already == ("Already in SOURCE: variable:g_buf at main.c:L13-13.",)
+    fragment_marker = "/* --- retrieved: g_buf (assignment to g_buf) --- */"
+    already_line = "Already in SOURCE: variable:g_buf at main.c:L13-13."
+    assert fragment_marker in resolution.followup_text
+    assert already_line in resolution.followup_text
+    assert resolution.followup_text.index(fragment_marker) < resolution.followup_text.index(
+        already_line
+    )
+
+
+def test_resolve_still_sends_a_followup_when_every_request_is_already_in_source(
+    ne2_graph, ne2_read_lines
+):
+    """§4.4.4 — 요청이 전부 이미 보이면 `blocks`는 비지만, Already 알림은 후속 턴에 실려야
+    한다. 빈 후속 턴을 내보내면 모델이 왜 아무것도 안 왔는지 모른다."""
+    query = _query(
+        requests=(_request("variable", "g_buf"),),
+        target_file="main.c",
+        visible={"main.c": frozenset({13, 36, 37, 38})},
+    )
+
+    resolution = resolve(query, table=ne2_graph.table, read_lines=ne2_read_lines)
+
+    assert resolution.blocks == ()
+    assert resolution.already == (
+        "Already in SOURCE: variable:g_buf at main.c:L13-13.",
+        "Already in SOURCE: variable:g_buf at main.c:L36-38.",
+    )
+    assert resolution.followup_text != ""
+    assert "## Retrieved context (hop 1)" in resolution.followup_text
+    assert "Already in SOURCE: variable:g_buf at main.c:L13-13." in resolution.followup_text
+    assert "Already in SOURCE: variable:g_buf at main.c:L36-38." in resolution.followup_text
 
 
 def test_resolve_gives_the_caller_site_for_a_parameter(ne2_graph, ne2_read_lines):
@@ -303,15 +372,20 @@ def test_resolve_skips_a_block_whose_file_no_longer_exists(ne2_read_lines):
     전체를 손으로 짜서 이 경계 사례를 직접 겨냥한다(실 인덱서로는 만들 수 없는 상태다).
 
     빠진 블록은 조용히 사라지지 않는다 — `_resolve_flat`이 아무것도 못 채웠으니
-    `_unfilled_lookup_reason`이 사유를 고르고, `ghost`는 `_all_symbol_names`(표의 키를
-    그대로 모은다 — 렌더 성공 여부를 안 본다)에 여전히 있어 자기 자신과
-    `closest_name`으로 맞는다. "찾았지만 못 읽었다"를 구분하는 아홉 번째 사유는 명세
-    8개에 없어 만들지 않았다 — ponytail: 이 정도로 조용하지 않은 것으로 충분하다.
+    `_unfilled_lookup_reason`이 사유를 고른다. 5.3 [MEDIUM] — `ghost` 자신은 후보에서
+    뺀다(`_all_symbol_names`가 표의 키를 그대로 모아 렌더 성공 여부를 안 보므로, 빼지
+    않으면 "가장 비슷한 이름"이 자기 자신이 되어 사유가 무의미해진다). `ghosts`처럼
+    실제로 비슷한 다른 이름이 있으면 그것이 나와야 한다. "찾았지만 못 읽었다"를 구분하는
+    아홉 번째 사유는 명세 8개에 없어 만들지 않았다 — ponytail: 이 정도로 조용하지 않은
+    것으로 충분하다.
     """
 
     def stale_table(name: str):
         if name == "functions":
-            return {"ghost": [{"file": "missing.c", "line_start": 1, "line_end": 1, "params": []}]}
+            return {
+                "ghost": [{"file": "missing.c", "line_start": 1, "line_end": 1, "params": []}],
+                "ghosts": [{"file": "main.c", "line_start": 1, "line_end": 1, "params": []}],
+            }
         return {}
 
     query = _query(requests=(_request("function", "ghost"),), target_file="main.c")
@@ -321,6 +395,9 @@ def test_resolve_skips_a_block_whose_file_no_longer_exists(ne2_read_lines):
     assert resolution.blocks == ()
     assert len(resolution.unfilled) == 1
     assert resolution.unfilled[0].reason == UnfilledReason.CLOSEST_NAME
+    assert resolution.unfilled[0].text == (
+        "Not resolved: function:ghost (closest name in repository: ghosts)."
+    )
 
 
 @pytest.mark.parametrize(
@@ -346,6 +423,25 @@ def test_resolve_picks_the_right_unfilled_reason_when_lookup_fails(
         assert expected_detail in item.text
 
 
+def test_resolve_processes_only_the_first_three_requests(ne2_graph, ne2_read_lines):
+    """5.1 [HIGH] — 요청 개수 상한. v3 prefix 세 좌석 다 모델에게 최대 3개까지만 허락한다
+    (`prompts/scout_memory/v3/prefix.md:146` 「at most 3 actionable requests」·
+    `scout_injection/v3/prefix.md:146` 같은 문구·`scout_boundary/v3/prefix.md:135`
+    「always present, at most 3 entries」 — 문구는 갈려도 숫자는 셋 다 3). 리뷰어가 존재하지
+    않는 target 500개로 재현했다(1.1초, `followup_text` 44,800자) — resolve()는 앞 3개만 본다."""
+    targets = [f"no_such_symbol_{i}" for i in range(5)]
+    query = _query(
+        requests=tuple(_request("function", t) for t in targets),
+        target_file="main.c",
+    )
+
+    resolution = resolve(query, table=ne2_graph.table, read_lines=ne2_read_lines)
+
+    assert [item.target for item in resolution.unfilled] == targets[:3]
+    assert targets[3] not in resolution.followup_text
+    assert targets[4] not in resolution.followup_text
+
+
 def test_resolve_prefers_the_function_in_the_target_file_when_names_collide(
     ne2_graph, ne2_read_lines
 ):
@@ -364,6 +460,23 @@ def test_resolve_prefers_the_function_in_the_target_file_when_names_collide(
 
     function_blocks = [b for b in resolution.blocks if b.label == "function body"]
     assert [b.file for b in function_blocks] == ["scoring/a_main.c"]
+
+
+def test_resolve_prefers_the_macro_in_the_target_file_when_names_collide(ne2_graph, ne2_read_lines):
+    """5.2 [HIGH] — 라벨 11(macro named in the declaration)의 동명 점수. `LIMIT`이
+    `scoring/a_wrong.c`(target 아님·안 보임)와 `scoring/target.c`(target_file·visible) 둘에
+    정의돼 있다. `cap`(target.c 5행)의 선언 줄에서 `LIMIT`을 찾으면 target.c의 정의가
+    나와야 한다 — 위 함수 동명 충돌 테스트의 매크로 판."""
+    query = _query(
+        requests=(_request("variable", "cap"),),
+        target_file="scoring/target.c",
+        visible={"scoring/target.c": frozenset({5})},
+    )
+
+    resolution = resolve(query, table=ne2_graph.table, read_lines=ne2_read_lines)
+
+    macro_blocks = [b for b in resolution.blocks if b.label == "macro named in the declaration"]
+    assert [b.file for b in macro_blocks] == ["scoring/target.c"]
 
 
 def test_resolve_truncates_blocks_that_do_not_fit_the_budget(ne2_graph, ne2_read_lines):
