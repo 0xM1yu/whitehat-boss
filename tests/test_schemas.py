@@ -49,7 +49,7 @@ from src.tokens import estimate_tokens
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
 ZERO_COMMIT = "0" * 40
-AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3.6-35b-a3b", prompt_version="v1")
+AUDITOR = ProducedBy(role=Role.AUDITOR, model="qwen3.8-27b", prompt_version="v1")
 
 
 def _finding(**overrides: object) -> Finding:

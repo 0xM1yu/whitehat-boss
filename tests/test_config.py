@@ -625,7 +625,7 @@ _POOL_PROFILE_ROLES = {
     "scout_memory": "qwen3-14b",
     "scout_boundary": "seccoderx-8b",
     "scout_injection": "qwen3-14b",
-    "auditor": "qwen3.6-35b-a3b",
+    "auditor": "qwen3.8-27b",
     "critic": "gpt-oss-20b",
 }
 
@@ -742,14 +742,21 @@ def test_a_role_without_a_declared_cap_is_untouched_by_the_new_slot() -> None:
     `ModelEntry.reasoning_effort`가 낸 전례다: 선언 안 한 역할은 요청에도 기록에도
     키가 안 생긴다. `RunRecord.thresholds`에 `output_max_by_role.*`가 빈 채로 생기면
     **기존 manifest와 새 manifest가 다른 모양**이 되는데, 그 차이가 뜻하는 것이 없다.
+
+    ⏵ 2026-09-26 — 저장소가 처음으로 한 역할을 선언했다(Auditor 32,768 — 사고를 켰다). 그 뒤로
+    이 검사는 **선언 안 한 역할**만 보고, 기록에는 선언한 역할의 키만 생기는지를 본다.
     """
     thresholds = load_config("harness_pool").thresholds
+    declared = set(thresholds.output_max_by_role)
+    undeclared = [role for role in PROMPTED_ROLES if role not in declared]
+    assert undeclared, "전 역할이 선언해 이 검사가 볼 역할이 없다"
 
-    assert all(
-        thresholds.output_max_for(role) == thresholds.output_max for role in PROMPTED_ROLES
-    ), "선언이 없는데 역할마다 다른 값이 나온다"
-    assert not [key for key in thresholds.flatten() if key.startswith("output_max_by_role")], (
-        "선언이 없는데 기록에 키가 생겼다 — 기존 manifest와 모양이 갈린다"
+    assert all(thresholds.output_max_for(role) == thresholds.output_max for role in undeclared), (
+        "선언이 없는데 역할마다 다른 값이 나온다"
+    )
+    recorded = {key for key in thresholds.flatten() if key.startswith("output_max_by_role")}
+    assert recorded == {f"output_max_by_role.{role}" for role in declared}, (
+        "선언 안 한 역할의 키가 기록에 생겼다 — 기존 manifest와 모양이 갈린다"
     )
 
 
@@ -772,7 +779,7 @@ def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Pa
         profile_patch={
             "roles": {
                 "scout": "seccoderx-8b",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
@@ -819,7 +826,7 @@ def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: P
         profile_patch={
             "roles": {
                 "scout": "seccoderx-8b",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
@@ -843,7 +850,7 @@ def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None
         profile_patch={
             "roles": {
                 "scout": "seccoderx-8b",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
@@ -913,14 +920,16 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
     _copy_config(
         tmp_path,
         # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — gpt-oss × qwen.
-        # registry가 **실제로** `reasoning_effort: high`를 선언한 키가 `gpt-oss-20b` 하나라 그것을
-        # auditor 자리에, 선언 안 한 `qwen3.6-35b-a3b`를 critic 자리에 둔다 — 패치 없이 registry
+        # registry가 **실제로** `reasoning_effort: high`를 선언한 키 `gpt-oss-20b`를 auditor
+        # 자리에, 선언 안 한 `qwen3-14b`를 critic 자리에 둔다(2026-09-26 전에는
+        # `qwen3.6-35b-a3b`였다 — 그 자리의 새 키 `qwen3.8-27b`는 `xhigh`를 선언해 대조군이
+        # 못 된다) — 패치 없이 registry
         # 그대로를 잰다(2026-09-24 전에는 옛 키 `qwen3-8b`에 패치로 선언시켰다).
         profile_patch={
             "roles": {
                 "scout": "seccoderx-8b",
                 "auditor": "gpt-oss-20b",
-                "critic": "qwen3.6-35b-a3b",
+                "critic": "qwen3-14b",
             }
         },
     )
@@ -980,7 +989,7 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
             "roles": {
                 "scout": "seccoderx-8b",
                 "auditor": "gpt-oss-20b",
-                "critic": "qwen3.6-35b-a3b",
+                "critic": "qwen3-14b",
             }
         },
     )
@@ -1145,7 +1154,7 @@ def test_a_critic_from_the_same_family_as_the_auditor_is_rejected(tmp_path: Path
     Critic이 Auditor와 같은 계열이 되어도 그 run은 `B3prime@...` 라벨을 달고 완주하고,
     registry에 계열을 적을 칸이 없어 **사후에도 자동으로 못 가린다.**
 
-    여기서 쓰는 쌍(`qwen3.6-35b-a3b` × `qwen3-14b`)은 registry에 실재하는 모델
+    여기서 쓰는 쌍(`qwen3.8-27b` × `qwen3-14b`)은 registry에 실재하는 모델
     둘이고 키가 다르다 — 즉 지금 프로필에 그대로 적을 수 있는 조합이다. 그것이 이
     검사가 막아야 하는 실물이다. (2026-09-24 전에는 옛 키 `qwen3-coder-30b-a3b` × `qwen3-8b`였다.)
     """
@@ -1154,7 +1163,7 @@ def test_a_critic_from_the_same_family_as_the_auditor_is_rejected(tmp_path: Path
         profile_patch={
             "roles": {
                 "scout": "fake",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "qwen3-14b",
             }
         },
@@ -1176,7 +1185,7 @@ def test_a_family_unknown_model_does_not_pass_the_cross_check(tmp_path: Path) ->
         profile_patch={
             "roles": {
                 "scout": "fake",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
@@ -1206,7 +1215,7 @@ def test_the_family_check_reads_case_and_padding_as_the_same_family(
         profile_patch={
             "roles": {
                 "scout": "fake",
-                "auditor": "qwen3.6-35b-a3b",  # family: qwen
+                "auditor": "qwen3.8-27b",  # family: qwen
                 "critic": "gpt-oss-20b",
             }
         },
@@ -1232,9 +1241,9 @@ def test_b1_puts_one_model_in_every_role_and_still_loads(tmp_path: Path) -> None
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "qwen3.6-35b-a3b",
-                "auditor": "qwen3.6-35b-a3b",
-                "critic": "qwen3.6-35b-a3b",
+                "scout": "qwen3.8-27b",
+                "auditor": "qwen3.8-27b",
+                "critic": "qwen3.8-27b",
             }
         },
     )
@@ -1594,11 +1603,11 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
         profile_patch={
             "roles": {
                 "scout": "seccoderx-8b",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
-        model_patch={"qwen3.6-35b-a3b": _KNOBS},
+        model_patch={"qwen3.8-27b": _KNOBS},
     )
     config = load_config("dev_fake", config_dir=tmp_path)
 
@@ -1635,6 +1644,8 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
         {"sampling": {"topk": 20}},
         {"thinking_token_budget": 0},
         {"request_timeout_s": 0},
+        # 등급은 닫힌 집합이다 — `xhigh`를 더한 뒤에도(2026-09-26) 모르는 값은 로드에서 죽는다
+        {"reasoning_effort": "ultra"},
     ],
 )
 def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> None:
@@ -1647,7 +1658,7 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
         profile_patch={
             "roles": {
                 "scout": "seccoderx-8b",
-                "auditor": "qwen3.6-35b-a3b",
+                "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
@@ -1658,3 +1669,42 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
         return
     with pytest.raises(ValidationError):
         load_config("dev_fake", config_dir=tmp_path)
+
+
+# 사고 켠 Auditor의 디코드 속도(tok/s) — Qwen3.8-27B bf16 단일 스트림의 **외부 보고**
+# (GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목). 우리 장비
+# 미실측이고, 아래 검사가 「타임아웃이 출력 상한보다 먼저 끊지 않는다」를 재는 기준으로만
+# 쓴다 — 대역 상한 계산값 4.9보다 느린 쪽이다.
+_AUDITOR_DECODE_TOK_S = 4.5
+
+
+def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> None:
+    """canonical Auditor는 가장 높은 등급으로 사고하고, 그 사고가 끝날 자리가 예산에 있다.
+
+    2026-09-26 @danielcho02 — Auditor를 `qwen3.8-27b`로 바꾸고 사고를 켠다. **켜기만 하면 셋이 깨진다**
+    (같은 날 council): ① 사고가 출력 상한 안에 안 끝나면 본문이 비거나 잘려 스키마 실패다 — 옛
+    Auditor에 parser를 걸고 4,096으로 돌린 판이 7/7(본문 `None` 6 · 잘린 JSON 1)이었다 ② 요청
+    타임아웃이 상한보다 먼저 오면 호출이 끊기고
+    연속 셋이면 run이 선다(#261) ③ 사고 상한이 출력 상한과 같으면 답 몫이 없다. 그래서 **값이 아니라
+    관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
+    """
+    config = load_config("harness_pool")
+    auditor = config.model_for("auditor")
+    cap = config.thresholds.output_max_for("auditor")
+
+    assert auditor.reasoning_effort == "xhigh", (
+        "사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
+    )
+    assert auditor.thinking_token_budget is not None and auditor.thinking_token_budget < cap, (
+        "사고 상한이 출력 상한 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 </think>를 넣고 답을 쓴다"
+    )
+    assert auditor.request_timeout_s is not None, "어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
+    assert auditor.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
+        "타임아웃이 출력 상한보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 멈춘다(#261)"
+    )
+
+    client = _model_client(config.profile.roles["auditor"], config, role="auditor")
+    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert payload["reasoning_effort"] == config.reasoning_efforts()["auditor"] == "xhigh"
+    assert payload["thinking_token_budget"] == auditor.thinking_token_budget
+    assert payload["max_tokens"] == cap

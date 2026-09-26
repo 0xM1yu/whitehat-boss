@@ -309,7 +309,7 @@ def test_startup_compares_served_id_with_the_registry_key(monkeypatch: pytest.Mo
     """서버가 다른 이름으로 떠 있으면 실제 run의 `/chat/completions`도 같은 이유로 죽는다."""
     monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["Qwen/Qwen3-4B"]))
 
-    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.6-35b-a3b")
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.8-27b")
 
     assert result["ok"] is False
     assert "--served-model-name" in result["reason"]
@@ -322,10 +322,10 @@ def test_startup_keeps_the_servers_max_model_len(monkeypatch: pytest.MonkeyPatch
     `prompt + max_tokens > max_model_len`으로 **항상 400**을 받는다.
     """
     monkeypatch.setattr(
-        urllib.request, "urlopen", _Server(models=["qwen3.6-35b-a3b"], max_model_len=32768)
+        urllib.request, "urlopen", _Server(models=["qwen3.8-27b"], max_model_len=32768)
     )
 
-    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.6-35b-a3b")
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.8-27b")
 
     assert result["ok"] is True
     assert result["max_model_len"] == 32768
@@ -335,9 +335,9 @@ def test_startup_reports_no_max_model_len_when_the_server_omits_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """그 키가 없는 서버도 있다. 그때는 종전 동작으로 떨어져야 한다 (#126)."""
-    monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["qwen3.6-35b-a3b"]))
+    monkeypatch.setattr(urllib.request, "urlopen", _Server(models=["qwen3.8-27b"]))
 
-    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.6-35b-a3b")
+    result = bench.check_startup("http://127.0.0.1:8001/v1", "qwen3.8-27b")
 
     assert result["ok"] is True
     assert result["max_model_len"] is None
@@ -634,7 +634,7 @@ def test_no_traffic_is_unmeasured_not_a_failure() -> None:
     """pass도 fail도 아니다. 캐시 동작에 대한 정보가 없는 구간이다."""
     measured = [
         {
-            "model_key": "qwen3.6-35b-a3b",
+            "model_key": "qwen3.8-27b",
             "startup": {"ok": True},
             "skipped": None,
             "prefix_cache": {"verdict": "no_traffic"},
@@ -659,7 +659,7 @@ def test_a_context_whose_call_failed_does_not_vanish_from_the_pass() -> None:
     """
     measured = [
         {
-            "model_key": "qwen3.6-35b-a3b",
+            "model_key": "qwen3.8-27b",
             "startup": {"ok": True},
             "skipped": None,
             "memory": {
@@ -691,7 +691,7 @@ def test_all_contexts_failing_is_not_blamed_on_metrics() -> None:
     """
     measured = [
         {
-            "model_key": "qwen3.6-35b-a3b",
+            "model_key": "qwen3.8-27b",
             "startup": {"ok": True},
             "skipped": None,
             "memory": {

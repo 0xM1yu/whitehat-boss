@@ -278,7 +278,14 @@ def test_the_stuck_ceiling_follows_the_longest_declared_request_timeout() -> Non
     """
     from src.config import load_config
 
-    config = load_config("harness_pool")
+    loaded = load_config("harness_pool")
+    # 대조군은 선언을 걷어 합성한다 — 2026-09-26부터 저장소의 Auditor(`qwen3.8-27b`)가 7,500 s를
+    # 선언해, 저장소 값을 대조군으로 쓰면 그 값에 이 검사가 묶인다.
+    config = loaded.transition(
+        models={
+            key: entry.transition(request_timeout_s=None) for key, entry in loaded.models.items()
+        }
+    )
     auditor_key = config.model_key_for("auditor")
     declared = config.transition(
         models={
@@ -290,3 +297,5 @@ def test_the_stuck_ceiling_follows_the_longest_declared_request_timeout() -> Non
 
     assert monitor.call_timeout_s(config, default=300) == 300
     assert monitor.call_timeout_s(declared, default=300) == 1800
+    real = loaded.model_for("auditor").request_timeout_s
+    assert monitor.call_timeout_s(loaded, default=300) == real

@@ -120,7 +120,7 @@ profiles:
       state_store: sqlite
     budget: dev_fake
 
-  # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout seccoderx·qwen3-14b + Auditor qwen3.6 + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
+  # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
   harness_pool:
     # **§1 정본의 로스터를 배선한 canonical 프로필이다. checksum·처리량 검증 전.**
     # 2026-09-24 `local_balanced_pool`에서 이름을 바꿨다(@danielcho02 — 로스터 확정에 따라 프로필 배선).
@@ -133,18 +133,20 @@ profiles:
     #   memory는 2026-09-25 실험팀 최종 권고로 `seccoderx-8b`에서 옮겼다(PROJECT-CONTEXT.md §1).
     # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v1이다 — v3로 올리는 것은
     #   검증 run 뒤의 별도 단계다(`prompts/critic/v3/meta.yaml`).
-    # - **Auditor = §1의 `qwen3.6-35b-a3b`.** registry가 아직 디스크의 v1을 고른다(auditor/v3는 2026-09-22
-    #   #237로 디스크에 있고 올리는 것은 별도 단계다). critic gpt-oss와 계열이 갈린다(qwen × gpt-oss,
-    #   `_check_family_split`). 이 Auditor의 기동 조건(parser 없이 띄우면 사고 없이 답한다)은
-    #   `config/models.yaml`의 그 항목이 든다.
+    # - **Auditor = §1의 `qwen3.8-27b`**(2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). registry가 아직 디스크의
+    #   v1을 고른다(auditor/v3는 2026-09-22 #237로 디스크에 있고 올리는 것은 별도 단계다). critic gpt-oss와
+    #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
+    #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
+    #   항목이 든다.
     # - **리랭커 = §1의 `qwen3-reranker-4b`** — 근거·범위는 `harness_pool_hybrid`의 주석이 든다.
     #   **`retriever: fake`인 이 프로필은 그것을 부르지 않지만** 쌍의 roles가 같아야 해서 같이 적는다.
     #
     # ## 실행 — 단계 단위(`execution.mode: per_stage` — ADR 0009, ADR 0010 §1이 승인)
     #
     # 모든 target이 한 단계를 마친 뒤에 다음 단계가 시작한다(`runner._triage_by_stage`). 그래야 단계마다
-    # 그 단계의 모델만 떠 있으면 된다 — 네 서버를 한 장비에 다 올리면 util 합이 1.44로 1을 넘는다
-    # (0.20 + 0.30 + 0.64 + 0.30 — `config/models.yaml` 각 항목 「기동 조건」의 util, 계산값).
+    # 그 단계의 모델만 떠 있으면 된다 — 네 서버를 한 장비에 다 올리면 util 합이 1.60으로 1을 넘는다
+    # (0.20 + 0.30 + 0.80 + 0.30 — `config/models.yaml` 각 항목 「기동 조건」의 util, 계산값. Auditor
+    # 0.80은 2026-09-26 교체 뒤의 계획값이고, 그 전 `qwen3.6-35b-a3b`는 0.64로 떠서 합이 1.44였다).
     # ⚠ **교대(`execution.swap`)는 아직 적지 않는다 — 배선이 없다**(ADR 0009 결과 3). 적으면 러너가 아무것도
     #   재우지 않는데 정책이 선 것처럼 보인다. 교대 배선 PR이 여기에 함께 적는다. 그때까지 이 프로필로
     #   끝까지 도는 run은 네 서버가 동시에 떠 있어야 하고, ATOM에는 그렇게 못 올린다.
@@ -156,15 +158,15 @@ profiles:
     #   실서빙 여부와 무관하게 Scout 세 자리의 v3 프롬프트가 슬라이스 입력(meta `input: slice`)이라서다
     #   (`cli.run` — ADR 0012 결정 1). `production: false`가 실제로
     #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. Scout·Auditor 세 키
-    #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.6-35b-a3b`)의 `checksum`이 0이라 이 프로필로 돈 run은
+    #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`)의 `checksum`이 0이라 이 프로필로 돈 run은
     #   비교표에서 제외된다(CLAUDE.md §0).
-    description: "로스터 canonical 배선(§1 정본: Scout 풀 seccoderx·qwen3-14b + Auditor qwen3.6 + Critic gpt-oss + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
+    description: "로스터 canonical 배선(§1 정본: Scout 풀 seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
     production: false
     roles:
       scout_memory: qwen3-14b
       scout_boundary: seccoderx-8b
       scout_injection: qwen3-14b
-      auditor: qwen3.6-35b-a3b
+      auditor: qwen3.8-27b
       critic: gpt-oss-20b
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-4b
@@ -189,7 +191,7 @@ profiles:
     # `local_balanced`와 나뉘었다(둘 다 2026-09-24에 지웠다).
     #
     # ⚠ **전 역할이 `harness_pool`과 같은 §1 키다** — Scout seccoderx·qwen3-14b(v3),
-    #   Auditor `qwen3.6-35b-a3b`(프롬프트 미확정이라 디스크의 v1), Critic gpt-oss.
+    #   Auditor `qwen3.8-27b`(프롬프트 미확정이라 디스크의 v1 · 사고 켬), Critic gpt-oss.
     #   checksum·검증 전. **reranker는 2026-09-20에 §1 정본대로 `qwen3-reranker-4b`로
     #   올렸다** — 두 풀 프로필을 같은 diff에서 고친다(`tests/test_config.py`가 쌍의 roles 동일을
     #   기계로 고정하므로 한쪽만 고치면 red다).
@@ -228,7 +230,7 @@ profiles:
       scout_memory: qwen3-14b
       scout_boundary: seccoderx-8b
       scout_injection: qwen3-14b
-      auditor: qwen3.6-35b-a3b
+      auditor: qwen3.8-27b
       critic: gpt-oss-20b
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-4b
