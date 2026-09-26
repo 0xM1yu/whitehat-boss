@@ -1,32 +1,24 @@
-"""`src/adapters/symbol_resolver.py`의 순수 함수 테스트 — Phase 5 P3(PR-A resolver) A 단계.
+"""`src/adapters/symbol_resolver.py`의 렌더·정규화 순수 함수 테스트 (#63 후속, ADR 0012 결정 2).
 
-명세 문자열은 Notion 「Scout RAG baseline」 스냅샷(바이트 대조 통과 —
-`…\\444e006f-1c8b-4b5e-ac54-12900872bf08\\scratchpad\\PHASE5_@sumin0218.md` §5, 원문 스냅샷
+명세 문자열은 Notion 「Scout RAG baseline」 원문 스냅샷(바이트 대조 통과 —
 `…\\ddaa755d-b591-40f7-92b6-119955ecd128\\scratchpad\\notion_rag_baseline_2026-09-26.txt`)에서
-그대로 옮겼다 — 의역하지 않는다. Q10(대입 주의문은 라벨 3·13에만)은
-`PLAN_PHASE5_NE_LOOP.md` §2.0 council 판정을 따른다 — `PHASE5_@sumin0218.md`의 「주의문을 넣은
-판」 지시는 여기서는 폐기된 것으로 취급한다.
+그대로 옮겼다 — 의역하지 않는다. 대입 주의문(라벨 3·13에만 붙는다)의 근거는
+`needs_assignment_note`의 docstring과 그 옆 상수 주석에 있다 — 원문(스냅샷 :378)이 대입
+블록을 "target에 들어갈 수 있는 경우의 수 집합"이라 적고, 그 집합에 해당하는 것은 라벨
+3·13뿐이며 라벨 4(같은 함수 안 대입 1줄)는 집합이 아니다.
 
-이 파일은 A 단계 범위만 본다 — 조회(`table()`)·파일 읽기·`resolve()` 조립은 B 단계다.
+이 파일은 조회(`table()`)·파일 읽기가 없는 순수 함수만 본다 — `resolve()` 조립은
+`tests/test_symbol_resolver_resolve.py`가 실 인덱서 픽스처로 본다.
 """
 
 import pytest
 
 from src.adapters.symbol_resolver import (
-    FIXABLE_REASONS,
     LABEL_ASSIGNMENT_SAME_FUNCTION,
     LABEL_ASSIGNMENT_TO_FIELD,
     LABEL_ASSIGNMENT_TO_GLOBAL,
     LABEL_DECLARATION_LOCAL,
     LABEL_MACRO_NAMED_IN_DECLARATION,
-    REASON_CLOSEST_NAME,
-    REASON_LIBC,
-    REASON_NO_IDENTIFIER,
-    REASON_NO_TARGET,
-    REASON_NOT_FOUND,
-    REASON_NOT_IDENTIFIER,
-    REASON_OUTSIDE_REPO,
-    REASON_PLACEHOLDER,
     Candidate,
     closest_name,
     is_duplicate_in_source,
@@ -41,6 +33,7 @@ from src.adapters.symbol_resolver import (
     render_unfilled,
     score_candidate,
 )
+from src.schemas.enums import UnfilledReason
 
 # --- normalize_target: §5.2 8단계 표 ----------------------------------------
 
@@ -48,7 +41,7 @@ from src.adapters.symbol_resolver import (
 @pytest.mark.parametrize(
     ("raw", "base", "chain"),
     [
-        ("buf@src/a.c:L10-12", "buf", ()),  # 0단계(Q2) — @file:L 접미 제거, 점수엔 안 쓴다
+        ("buf@src/a.c:L10-12", "buf", ()),  # 0단계 — @file:L 접미 제거, 점수엔 안 쓴다
         ("CNV_PARTS_SO_FAR()", "CNV_PARTS_SO_FAR", ()),  # 2단계 — 괄호 제거
         ("patches[i][1]", "patches", ()),  # 3단계 — 배열 첨자 제거
         ("struct ndp_msg", "ndp_msg", ()),  # 4단계 — struct/union 등 접두 제거
@@ -67,33 +60,33 @@ def test_normalize_target_applies_each_spec_step(raw, base, chain):
 def test_normalize_target_rejects_placeholder_values(raw):
     result = normalize_target(raw)
     assert is_rejected(result)
-    assert result[0] == REASON_PLACEHOLDER
+    assert result[0] == UnfilledReason.PLACEHOLDER
 
 
 def test_normalize_target_rejects_an_empty_target_as_no_target():
     result = normalize_target("")
     assert is_rejected(result)
-    assert result[0] == REASON_NO_TARGET
+    assert result[0] == UnfilledReason.NO_TARGET
 
 
 def test_normalize_target_rejects_a_target_with_no_identifier_left():
     # 괄호를 걷어내면 아무것도 안 남는 경우 — "정규화 후 식별자가 하나도 남지 않은 경우".
     result = normalize_target("()")
     assert is_rejected(result)
-    assert result[0] == REASON_NO_IDENTIFIER
+    assert result[0] == UnfilledReason.NO_IDENTIFIER
 
 
 def test_normalize_target_rejects_a_bracket_only_value_as_no_identifier_too():
     result = normalize_target("[]")
     assert is_rejected(result)
-    assert result[0] == REASON_NO_IDENTIFIER
+    assert result[0] == UnfilledReason.NO_IDENTIFIER
 
 
 def test_normalize_target_rejects_a_value_that_is_not_a_c_identifier():
     # 명세 거부 예 — 원문 오타(got 'stl:err')가 아니라 남은 값을 그대로 넣는 규칙으로 쓴다.
     result = normalize_target("stl:error")
     assert is_rejected(result)
-    assert result == (REASON_NOT_IDENTIFIER, "stl:error")
+    assert result == (UnfilledReason.NOT_IDENTIFIER, "stl:error")
 
 
 def test_is_rejected_tells_success_from_failure_by_the_second_elements_type():
@@ -105,7 +98,7 @@ def test_is_rejected_tells_success_from_failure_by_the_second_elements_type():
 
 
 def test_render_unfilled_reproduces_the_placeholder_rejection_example():
-    line = render_unfilled(kind="variable", target="unknown", reason=REASON_PLACEHOLDER)
+    line = render_unfilled(kind="variable", target="unknown", reason=UnfilledReason.PLACEHOLDER)
     assert line == (
         "Not resolved: variable:unknown (the target was a placeholder, so there was "
         "nothing to look up; name the symbol you need)."
@@ -115,7 +108,10 @@ def test_render_unfilled_reproduces_the_placeholder_rejection_example():
 def test_render_unfilled_reproduces_the_not_identifier_rejection_example():
     # 원문이 'stl:err'로 적혀 있으나(오타로 보임) 테스트는 남은 값을 그대로 넣는 규칙을 쓴다.
     line = render_unfilled(
-        kind="variable", target="stl:error", reason=REASON_NOT_IDENTIFIER, detail="stl:error"
+        kind="variable",
+        target="stl:error",
+        reason=UnfilledReason.NOT_IDENTIFIER,
+        detail="stl:error",
     )
     assert line == (
         "Not resolved: variable:stl:error (could not read a symbol name out of it "
@@ -124,18 +120,18 @@ def test_render_unfilled_reproduces_the_not_identifier_rejection_example():
 
 
 def test_render_unfilled_reproduces_the_hop1_libc_line():
-    line = render_unfilled(kind="function", target="strdup", reason=REASON_LIBC)
+    line = render_unfilled(kind="function", target="strdup", reason=UnfilledReason.LIBC)
     assert line == "Not resolved: function:strdup (C standard library symbol)."
 
 
 @pytest.mark.parametrize(
     ("reason", "detail", "expected_phrase"),
     [
-        (REASON_OUTSIDE_REPO, "", "called in this repository but defined outside it"),
-        (REASON_NOT_FOUND, "", "no definition found in the repository"),
-        (REASON_CLOSEST_NAME, "ndp_msg_free", "closest name in repository: ndp_msg_free"),
-        (REASON_NO_TARGET, "", "no target was given"),
-        (REASON_NO_IDENTIFIER, "", "the target held no identifier"),
+        (UnfilledReason.OUTSIDE_REPO, "", "called in this repository but defined outside it"),
+        (UnfilledReason.NOT_FOUND, "", "no definition found in the repository"),
+        (UnfilledReason.CLOSEST_NAME, "ndp_msg_free", "closest name in repository: ndp_msg_free"),
+        (UnfilledReason.NO_TARGET, "", "no target was given"),
+        (UnfilledReason.NO_IDENTIFIER, "", "the target held no identifier"),
     ],
 )
 def test_render_unfilled_covers_the_remaining_reasons(reason, detail, expected_phrase):
@@ -143,13 +139,8 @@ def test_render_unfilled_covers_the_remaining_reasons(reason, detail, expected_p
     assert line == f"Not resolved: function:doit ({expected_phrase})."
 
 
-def test_fixable_reasons_are_exactly_the_four_normalization_failures():
-    assert FIXABLE_REASONS == {
-        REASON_PLACEHOLDER,
-        REASON_NO_TARGET,
-        REASON_NO_IDENTIFIER,
-        REASON_NOT_IDENTIFIER,
-    }
+# `FIXABLE_UNFILLED_REASONS`(정확히 이 넷)는 `tests/test_need_evidence_contracts.py`가
+# 계약 쪽에서 이미 고정한다 — 여기서 다시 정의·검증하지 않는다(중복 정의 제거).
 
 
 # --- closest_name / is_libc_symbol ------------------------------------------
@@ -227,7 +218,7 @@ def test_is_duplicate_in_source_is_false_for_an_empty_block():
     assert is_duplicate_in_source(frozenset(), frozenset({1, 2, 3})) is False
 
 
-# --- needs_assignment_note (Q10 — council 원문 근거) -------------------------
+# --- needs_assignment_note (라벨 3·13에만 대입 주의문) ------------------------
 
 
 def test_needs_assignment_note_is_false_for_label_4_alone():
@@ -302,7 +293,7 @@ def test_render_followup_reproduces_the_hop1_example_byte_for_byte():
             lines=[(17, "#define GIF_STAMP_LEN sizeof(GIF_STAMP) - 1")],
         ),
     ]
-    unfilled = [render_unfilled(kind="function", target="strdup", reason=REASON_LIBC)]
+    unfilled = [render_unfilled(kind="function", target="strdup", reason=UnfilledReason.LIBC)]
 
     followup = render_followup(
         hop=1, fragments=fragments, unfilled_lines=unfilled, include_assignment_note=False
@@ -312,7 +303,7 @@ def test_render_followup_reproduces_the_hop1_example_byte_for_byte():
 
 
 def test_render_followup_omits_the_note_when_no_assignment_block_is_present():
-    # hop 1 예는 라벨 4·10·11뿐이라(라벨 3·13이 없다) 주의문이 없다 — council Q10.
+    # hop 1 예는 라벨 4·10·11뿐이라(라벨 3·13이 없다) 주의문이 없다.
     assert "Note: assignment blocks" not in _HOP1_EXPECTED
 
 

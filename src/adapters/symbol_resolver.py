@@ -2,24 +2,22 @@
 그 결과를 RETRIEVED/UNFILLED 텍스트로 렌더한다 (#63 후속, ADR 0012 결정 2·3).
 
 명세 원천은 Notion 「Scout RAG baseline」이다(스냅샷
-`…/scratchpad/notion_rag_baseline_2026-09-26.txt` — 바이트 대조 통과). 이 모듈의 문자열은
-그 원문을 그대로 옮긴 것이고, 의역하지 않는다.
+`…/ddaa755d-…/scratchpad/notion_rag_baseline_2026-09-26.txt` — 바이트 대조 통과). 이 모듈의
+문자열은 그 원문을 그대로 옮긴 것이고, 의역하지 않는다.
 
-## 이 파일은 A 단계다 — 조회·조립·파일 읽기는 없다
+사유 키는 계약(`src/schemas/enums.py`의 `UnfilledReason`·`FIXABLE_UNFILLED_REASONS`)을
+그대로 쓴다 — 이 모듈이 따로 정의하지 않는다(중복 정의 제거).
 
-여기 있는 함수는 인덱스도 파일도 읽지 않는다. `GraphIndex.table()`로 후보를 모으고 파일을
-읽어 `resolve()`로 조립해 factory에 배선하는 것은 B 단계다(`ResolveQuery`·`Resolution`·
-`UnfilledReason` — `src/schemas/need_evidence.py`, 아직 없다). 그래서 UNFILLED 사유는
-문자열 상수로 두었다 — B 단계가 그것을 자기 enum 값과 맞춰 쓴다.
+`table()` 조회·`read_lines` 파일 읽기·`resolve()` 조립은 다음 커밋에서 더한다.
 
 ## 명세 밖이거나 해석이 든 자리
 
 - 동점 처리(`(file, line)` 오름차순) — `pick_best_candidate`. 결정론을 위해 정했다.
 - `closest_name`의 cutoff, `_LIBC_SYMBOLS`의 목록 — 명세가 값을 안 준다.
-- 선언 줄에서 타입 이름을 뽑는 휴리스틱(체인 라벨 7)은 표 조회가 있어야 해서 B 단계 몫이다.
-- 대입 주의문(라벨 3·13이 있을 때만, council Q10)의 정확한 삽입 자리 — 골격 원문(스냅샷
-  :370-381)은 위치를 산문으로만 설명하고, hop 1 예(라벨 4뿐)에는 주의문이 없어 위치를 못
-  보여준다. RETRIEVED 조각들과 UNFILLED 사이로 뒀다 — **추측**이다.
+- 선언 줄에서 타입 이름을 뽑는 휴리스틱(체인 라벨 7)은 표 조회가 있어야 해서 다음 커밋 몫이다.
+- 대입 주의문(라벨 3·13이 있을 때만)의 정확한 삽입 자리 — 골격 원문(스냅샷 :370-381)은
+  위치를 산문으로만 설명하고, hop 1 예(라벨 4뿐)에는 주의문이 없어 위치를 못 보여준다.
+  RETRIEVED 조각들과 UNFILLED 사이로 뒀다 — **추측**이다.
 """
 
 import difflib
@@ -27,42 +25,29 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-# --- UNFILLED 사유 키 -------------------------------------------------------
+from src.schemas.enums import UnfilledReason
+
+# --- UNFILLED 문구 -----------------------------------------------------------
 #
-# B 단계의 `UnfilledReason` enum과 같은 값이 될 문자열 상수다(§5.6). 뒤 넷은 정규화
-# 실패에서만 나오는 "형식 사유"라 후속 턴을 보낼 근거가 된다(Q5 — `fixable_count`).
-
-REASON_OUTSIDE_REPO = "outside_repo"
-REASON_NOT_FOUND = "not_found"
-REASON_CLOSEST_NAME = "closest_name"
-REASON_LIBC = "libc"
-REASON_PLACEHOLDER = "placeholder"
-REASON_NO_TARGET = "no_target"
-REASON_NO_IDENTIFIER = "no_identifier"
-REASON_NOT_IDENTIFIER = "not_identifier"
-
-FIXABLE_REASONS = frozenset(
-    {REASON_PLACEHOLDER, REASON_NO_TARGET, REASON_NO_IDENTIFIER, REASON_NOT_IDENTIFIER}
-)
-
-# 사유 문구(마침표 없이, Q4) — 공통 틀 `Not resolved: <kind>:<target> (<문구>).`이 마침표를
-# 닫는다. `closest_name`·`not_identifier`만 `detail`을 쓴다.
-_REASON_PHRASES: Mapping[str, str] = {
-    REASON_OUTSIDE_REPO: "called in this repository but defined outside it",
-    REASON_NOT_FOUND: "no definition found in the repository",
-    REASON_CLOSEST_NAME: "closest name in repository: {detail}",
-    REASON_LIBC: "C standard library symbol",
-    REASON_PLACEHOLDER: (
+# 사유 문구는 마침표 없이 둔다 — 공통 틀 `Not resolved: <kind>:<target> (<문구>).`이 마침표를
+# 닫는다(명세 원문은 `libc`·`not_found`처럼 문구 끝에 마침표가 있는 사유도 있어, 여기서 뗀다).
+# `closest_name`·`not_identifier`만 `detail`을 쓴다.
+_REASON_PHRASES: Mapping[UnfilledReason, str] = {
+    UnfilledReason.OUTSIDE_REPO: "called in this repository but defined outside it",
+    UnfilledReason.NOT_FOUND: "no definition found in the repository",
+    UnfilledReason.CLOSEST_NAME: "closest name in repository: {detail}",
+    UnfilledReason.LIBC: "C standard library symbol",
+    UnfilledReason.PLACEHOLDER: (
         "the target was a placeholder, so there was nothing to look up; name the symbol you need"
     ),
-    REASON_NO_TARGET: "no target was given",
-    REASON_NO_IDENTIFIER: "the target held no identifier",
-    REASON_NOT_IDENTIFIER: "could not read a symbol name out of it (got '{detail}')",
+    UnfilledReason.NO_TARGET: "no target was given",
+    UnfilledReason.NO_IDENTIFIER: "the target held no identifier",
+    UnfilledReason.NOT_IDENTIFIER: "could not read a symbol name out of it (got '{detail}')",
 }
 
 
-def render_unfilled(*, kind: str, target: str, reason: str, detail: str = "") -> str:
-    """UNFILLED 한 줄 — `Not resolved: <kind>:<target> (<사유>).`(§5.6, Q4).
+def render_unfilled(*, kind: str, target: str, reason: UnfilledReason, detail: str = "") -> str:
+    """UNFILLED 한 줄 — `Not resolved: <kind>:<target> (<사유>).`(§5.6).
 
     `target`은 호출부가 쥔 **원문 그대로**(모델이 보낸 raw target)를 넣는다 — 정규화된 값이
     아니다. 명세의 거부 예 둘(`unknown`·`stl:error`)이 원문을 그대로 보여준다.
@@ -73,28 +58,30 @@ def render_unfilled(*, kind: str, target: str, reason: str, detail: str = "") ->
 
 # --- target 정규화 ----------------------------------------------------------
 #
-# §5.2 8단계 + Q2(council 채택)의 0단계. 성공은 (base, chain), 실패는 (사유 키, 상세값) —
-# 둘 다 2-튜플이라 `is_rejected()`로 가른다(두 번째 원소가 str이면 실패).
+# §5.2 8단계 + 0단계(`@file:L…` 접미 제거 — 아래 주석). 성공은 (base, chain), 실패는
+# (사유 키, 상세값) — 둘 다 2-튜플이라 `is_rejected()`로 가른다(두 번째 원소가 str이면 실패).
 
 _PLACEHOLDER_VALUES = frozenset({"unknown", "n/a", "none", "null", "-", "tbd"})
-# Q2 — 프롬프트(`prompts/scout_memory/v3/prefix.md:127`)가 허용하는 접미. 점수엔 안 쓴다.
+# 0단계 — 프롬프트(`prompts/scout_memory/v3/prefix.md:127`)가 허용하는 접미
+# (`@file:Lstart[-Lend]`)이지만 명세 8단계 표에는 없다. 정규화 맨 앞에서 떼고 점수엔 안 쓴다
+# — 안 떼면 이 접미를 붙인 target이 전부 식별자 검증(8단계)에서 거부된다.
 _LOCATION_SUFFIX_RE = re.compile(r"@\S*:L\d+(?:-\d+)?$")
 # ponytail: 명세가 "등"이라 적어 목록을 안 준다 — 흔한 C 집계 타입 키워드로 한정했다.
 _AGGREGATE_TYPE_PREFIXES = ("struct", "union", "enum")
 _C_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
 
 
-def normalize_target(raw: str) -> tuple[str, tuple[str, ...]] | tuple[str, str]:
-    """§5.2 정규화. 성공: `(base, chain)`. 실패: `(사유 키, 상세값)`.
+def normalize_target(raw: str) -> tuple[str, tuple[str, ...]] | tuple[UnfilledReason, str]:
+    """§5.2 정규화. 성공: `(base, chain)`. 실패: `(사유, 상세값)`.
 
     상세값은 `not_identifier`에서만 쓴다(정규화가 남긴, 식별자가 아닌 값 — 「got '<값>'」에
     그대로 들어간다). 나머지 세 실패 사유는 고정 문구라 상세값이 빈 문자열이다.
     """
     if not raw:
-        return (REASON_NO_TARGET, "")
-    value = _LOCATION_SUFFIX_RE.sub("", raw)  # 0단계(Q2)
+        return (UnfilledReason.NO_TARGET, "")
+    value = _LOCATION_SUFFIX_RE.sub("", raw)  # 0단계
     if value.strip().lower() in _PLACEHOLDER_VALUES:  # 1단계
-        return (REASON_PLACEHOLDER, "")
+        return (UnfilledReason.PLACEHOLDER, "")
     value = re.sub(r"\([^)]*\)", "", value)  # 2단계: 괄호 제거
     value = re.sub(r"\[[^\]]*\]", "", value)  # 3단계: 배열 첨자 제거
     parts = value.split(None, 1)
@@ -105,14 +92,14 @@ def normalize_target(raw: str) -> tuple[str, tuple[str, ...]] | tuple[str, str]:
     if base:
         base = base.split(None, 1)[0]  # 7단계: 공백 뒤 서술 제거
     if not base:
-        return (REASON_NO_IDENTIFIER, "")
+        return (UnfilledReason.NO_IDENTIFIER, "")
     if not _C_IDENTIFIER_RE.match(base):  # 8단계
-        return (REASON_NOT_IDENTIFIER, base)
+        return (UnfilledReason.NOT_IDENTIFIER, base)
     return (base, tuple(c.strip() for c in chain))
 
 
-def is_rejected(result: tuple[str, tuple[str, ...]] | tuple[str, str]) -> bool:
-    """`normalize_target`의 결과가 거부인가 — 두 번째 원소가 `str`이면 거부(사유 키)다."""
+def is_rejected(result: tuple[str, tuple[str, ...]] | tuple[UnfilledReason, str]) -> bool:
+    """`normalize_target`의 결과가 거부인가 — 두 번째 원소가 `str`이면 거부(사유)다."""
     return isinstance(result[1], str)
 
 
@@ -128,7 +115,7 @@ def closest_name(target: str, candidates: Iterable[str]) -> str | None:
     return matches[0] if matches else None
 
 
-# ISO C 표준 라이브러리 + 흔한 POSIX 함수. 명세는 목록을 안 준다(§5.6 Q4). ponytail: 전체
+# ISO C 표준 라이브러리 + 흔한 POSIX 함수. 명세는 목록을 안 준다(§5.6). ponytail: 전체
 # libc를 담지 않는다 — 새 오탐·누락이 나오면 추가하되 완전한 목록으로 키우지 않는다.
 _LIBC_SYMBOLS = frozenset(
     {
@@ -176,8 +163,11 @@ LABEL_MACRO_NAMED_IN_DECLARATION = "macro named in the declaration"
 LABEL_STRUCT_DECLARES_FIELD = "struct that declares this field"
 LABEL_ASSIGNMENT_TO_GLOBAL = "assignment to {global_name}"
 
-# Q10(council 원문 근거) — 라벨 3·13은 둘 다 이 접두로 시작한다(필드는 뒤에 `.`이 더 붙을
-# 뿐이다). 라벨 4 `assignment in the same function`은 "assignment in"이라 안 걸린다.
+# 대입 주의문은 라벨 3·13에만 건다(아래 `needs_assignment_note`) — 둘 다 이 접두로 시작한다
+# (필드는 뒤에 `.`이 더 붙을 뿐이다). 라벨 4 `assignment in the same function`은 "assignment
+# in"이라 안 걸린다 — 원문(스냅샷 :378)이 주의문을 붙이는 "대입 블록"을 "target에 들어갈 수
+# 있는 경우의 수 집합"이라 적고, 라벨 13 설명도 "가능한 값의 집합"이라고 적는데 그 집합에
+# 해당하는 것은 라벨 3·13뿐이다(같은 함수 안 대입 1줄인 라벨 4는 집합이 아니다).
 _ASSIGNMENT_NOTE_LABEL_PREFIX = "assignment to "
 
 
@@ -226,7 +216,7 @@ _ASSIGNMENT_NOTE = (
 
 
 def needs_assignment_note(labels: Iterable[str]) -> bool:
-    """Q10(council 원문 근거) — 라벨 3·13 블록이 하나라도 있으면 대입 주의문을 넣는다.
+    """라벨 3·13 블록이 하나라도 있으면 대입 주의문을 넣는다(§5.6, 원문 근거는 위 모듈 상수 주석).
 
     라벨 4(`assignment in the same function`)만으로는 넣지 않는다 — 원문(스냅샷 :378)의
     "대입 블록(target에 들어갈 수 있는 경우의 수 집합)"과 라벨 13 설명의 "가능한 값의
@@ -324,3 +314,4 @@ def pick_best_candidate(
         )
 
     return min(candidates, key=key)
+
