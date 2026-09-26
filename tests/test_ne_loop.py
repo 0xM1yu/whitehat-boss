@@ -45,7 +45,8 @@ from src.schemas.enums import FindingState, NeStopReason, Role, ScoutSignal
 from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 from tests.test_pipeline_e2e import TARGET, _events, _of, _poolify_v3, _run, _run_transition
-from tests.test_symbol_resolver import _HOP1_ROOT, _graph_index, _read_lines as _hop1_read_lines
+from tests.test_symbol_resolver import _HOP1_ROOT, _graph_index
+from tests.test_symbol_resolver import _read_lines as _hop1_read_lines
 
 _MODES = pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
 
@@ -902,7 +903,9 @@ def test_ne_hop1_uses_the_real_resolver_against_the_real_indexer(
                 _ne_response(
                     ScoutSignal.NEED_EVIDENCE,
                     requested=(
-                        RequestedContext(kind="variable", target="Buf", purpose="p", request_code="c"),
+                        RequestedContext(
+                            kind="variable", target="Buf", purpose="p", request_code="c"
+                        ),
                         RequestedContext(
                             kind="function", target="strdup", purpose="p", request_code="c"
                         ),
@@ -914,9 +917,8 @@ def test_ne_hop1_uses_the_real_resolver_against_the_real_indexer(
         },
     )
     graph = _graph_index(_HOP1_ROOT, tmp_path)
-    _wire_resolver(
-        monkeypatch, partial(real_resolve, table=graph.table, read_lines=_hop1_read_lines(_HOP1_ROOT))
-    )
+    resolver = partial(real_resolve, table=graph.table, read_lines=_hop1_read_lines(_HOP1_ROOT))
+    _wire_resolver(monkeypatch, resolver)
 
     result, trace_path = _run(
         tmp_path,
