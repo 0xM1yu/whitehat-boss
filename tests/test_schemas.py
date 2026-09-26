@@ -45,6 +45,13 @@ from src.schemas import (
 )
 from src.schemas.candidate import scout_member_of
 from src.schemas.common import PLACEHOLDER_DIGEST
+from src.schemas.enums import ScoutSignal
+from src.schemas.scout_response import (
+    AnalysisCondition,
+    AnalysisSummary,
+    RequestedContext,
+    signal_of,
+)
 from src.tokens import estimate_tokens
 
 ZERO_DIGEST = PLACEHOLDER_DIGEST
@@ -413,6 +420,82 @@ def test_candidate_state_rejects_finding_only_values() -> None:
             score=0.5,
             state=FindingState.PROVEN,  # type: ignore[arg-type]
         )
+
+
+# --- Scout v3 requested_context · conditions (D82 ③④) ---------------------
+
+
+def test_requested_context_accepts_the_v3_object_and_rejects_a_string() -> None:
+    """D82 ③ — v3 프롬프트가 내는 4키 객체가 스키마를 통과하고, 문자열은 거부된다.
+
+    main에서는 반대였다 — `AnalysisSummary.requested_context: list[NonEmptyStr]`라
+    객체가 거부되고 문자열만 통과했다(`scout_response.py:46`). 이 재현 테스트는 지금
+    저장소에 없다 — `git grep -n requested_context -- tests`가 0건이다.
+    """
+    summary = AnalysisSummary(
+        claim="strdup 결과를 free하지 않는다",
+        requested_context=[
+            {
+                "kind": "function",
+                "target": "strdup",
+                "purpose": "정의 확인",
+                "request_code": "missing_request:function:strdup:정의",
+            }
+        ],
+    )
+    assert summary.requested_context == [
+        RequestedContext(
+            kind="function",
+            target="strdup",
+            purpose="정의 확인",
+            request_code="missing_request:function:strdup:정의",
+        )
+    ]
+    with pytest.raises(ValidationError):
+        AnalysisSummary(
+            claim="x", requested_context=["missing_request:function:strdup:정의"]
+        )
+
+
+def test_requested_context_target_may_be_empty() -> None:
+    """target이 빈 문자열이어도 통과한다 — `UnfilledReason.NO_TARGET`(no target was given)이
+    resolver 쪽에서 그 값을 받아야 하기 때문이다(`kind`는 `Literal`로 묶지 않는다)."""
+    context = RequestedContext(
+        kind="context",
+        target="",
+        purpose="이 변수의 가능한 값",
+        request_code="missing_request:context::가능한 값",
+    )
+    assert context.target == ""
+
+
+def test_analysis_condition_accepts_an_optional_description() -> None:
+    """D82 ④ — boundary v3가 허용하는 `description`을 스키마가 더 이상 거부하지 않는다.
+
+    `condition`·`status`만으로도 여전히 유효하다 — 요구가 아니라 허용이다.
+    """
+    AnalysisCondition(
+        condition="길이 검증 없음", status="confirmed", description="strcpy 호출 앞에 가드가 없다"
+    )
+    AnalysisCondition(condition="길이 검증 없음", status="confirmed")
+
+
+@pytest.mark.parametrize(
+    ("reason_codes", "expected"),
+    [
+        (["triage_review"], ScoutSignal.REVIEW),
+        (["triage_reject"], ScoutSignal.REJECT),
+        # 명세 §4.2 원문 예. 접두만 보고 나머지(`missing_request:function:doit`)는 안 본다.
+        (["triage_need_evidence:missing_request:function:doit"], ScoutSignal.NEED_EVIDENCE),
+        ([], None),
+        (["unknown_reason"], None),
+    ],
+)
+def test_signal_of_reads_the_first_reason_codes_prefix(
+    reason_codes: list[str], expected: ScoutSignal | None
+) -> None:
+    """`signal_of`가 `reason_codes[0]`의 접두를 본다. 접두 비교는 명세 밖이다(함수 docstring)."""
+    assert signal_of(reason_codes) is expected
 
 
 # --- Scout 풀 멤버 태깅 (ADR 0010 §3) --------------------------------------
