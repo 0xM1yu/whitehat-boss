@@ -519,7 +519,6 @@ def build_deps(
         counter_report=counter_report(),
         # NE resolver 배선(ADR 0012 결정 2). `graph`는 인덱스 판을 몰라도 늘 만들어지므로
         # 훅은 항상 꽂는다 — v1·인덱스 없음 판정은 `resolve()` 안에서 한다(그 모듈 docstring).
-        # 루프(need_evidence 루프, Phase 5)가 실제로 이 hook을 부른다.
         resolve_requests=partial(
             resolve, table=graph.table, read_lines=partial(_read_target_lines, source_root)
         ),
