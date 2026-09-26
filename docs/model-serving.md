@@ -292,7 +292,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > | --- | --- |
 > | **8000** | `seccoderx-8b` ← 풀 둘(scout_boundary) |
 > | **8001** | `qwen3-14b` ← 풀 둘(scout_memory·scout_injection) |
-> | **8002** | `qwen3.6-35b-a3b` ← `harness_pool`·`_hybrid`(auditor) |
+> | **8002** | `qwen3.8-27b` ← `harness_pool`·`_hybrid`(auditor) |
 > | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
 > | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |

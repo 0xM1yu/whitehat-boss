@@ -20,8 +20,8 @@ ALL_PROFILES: list[str] = sorted(
 
 
 # scout 자리만 실서빙인 합성 config의 scout 키. `prompts/scout`에 있는 버전(v1)을 고르는
-# 로스터 키여야 프롬프트까지 열린다 — `qwen3.6-35b-a3b`가 v1이다.
-SERVED_SCOUT_KEY = "qwen3.6-35b-a3b"
+# 로스터 키여야 프롬프트까지 열린다 — `qwen3.8-27b`가 v1이다.
+SERVED_SCOUT_KEY = "qwen3.8-27b"
 
 
 def served_scout_config():  # noqa: ANN201 - src.config를 모듈 머리에서 끌어오지 않으려고 반환형을 안 적는다
