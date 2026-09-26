@@ -1,0 +1,779 @@
+"""need_evidence 루프 (ADR 0012 결정 2 · Phase 5) — 정지 판정·resolver 호출·동료 확인.
+
+**Fake는 NE 신호를 내지 않는다**(`fake_model.py` — `reason_codes`가 `triage_*` 접두를 절대
+안 쓴다). 그래서 이 파일은 `FakeModelClient.complete`를 감싸 역할별로 홉 응답을 스크립트한다
+(`_script_ne_client`, `tests/test_pipeline_e2e.py`의 `_failing_model` 꼴). resolver도
+스크립트한 함수다 — 실 resolver(PR-A)는 이 범위 밖이다.
+
+**단일 `scout` 자리가 아니라 v3 풀로 돈다.** 바깥 `scout` 역할은 `prompts/scout/`에 v3가
+없다(v1·v2뿐) — v3(`ScoutResponse`, 신호가 실리는 스키마)를 쓰려면 풀 멤버 셋(`scout_memory`·
+`scout_boundary`·`scout_injection`)이 필요하다(`_poolify_v3`, `tests/test_pipeline_e2e.py`).
+그래서 이 파일의 검사는 **셋을 전부 스크립트한다** — 보는 좌석(`scout_memory`, 대개)은
+NE 시나리오를, 나머지 둘은 즉시 끝나는 응답(reject 한 번)을 받아 잡음을 줄인다. 단언은
+그 좌석의 `candidate_id`로 걸러서 본다.
+
+두 실행 모드(`per_candidate`·`per_stage`)가 같은 스크립트에서 같은 결과를 내야 한다
+(계획 §7-2) — 계획 §7-6대로 모든 시나리오를 두 모드로 돈다.
+"""
+
+import dataclasses
+import json
+import re
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from src.adapters.factory import build_deps
+from src.adapters.fake_model import FakeModelClient
+from src.config import load_config
+from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
+from src.orchestrator import runner
+from src.orchestrator.budget import BudgetExhausted, BudgetLedger
+from src.orchestrator.context import RunContext
+from src.orchestrator.policy import FixedThresholdPolicy
+from src.orchestrator.stages import Stage
+from src.schemas.candidate import Candidate, SliceRef
+from src.schemas.common import Location
+from src.schemas.enums import FindingState, NeStopReason, Role, ScoutSignal
+from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
+from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
+from tests.test_pipeline_e2e import TARGET, _events, _of, _poolify_v3, _run
+
+_MODES = pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+
+_SEAT = "scout_memory"  # 시나리오를 스크립트하는 좌석. 나머지 둘은 즉시 reject로 끝낸다.
+_OTHER_SEATS = ("scout_boundary", "scout_injection")
+
+
+def _single_target(tmp_path: Path) -> Path:
+    """analyzable 파일 하나뿐인 트리 — target·좌석 수를 손으로 셀 수 있게 한다."""
+    root = tmp_path / "single_target"
+    root.mkdir()
+    (root / "parser.c").write_text(
+        (TARGET / "parser.c").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    return root
+
+
+def _extract_candidate_id(body: str) -> str:
+    """hop0 프롬프트 본문의 FACTS에서 candidate_id를 읽는다(Fake와 같은 파싱)."""
+    match = re.search(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)
+    assert match, f"hop0 본문에 사실 블록이 없다: {body!r}"
+    return json.loads(match.group(1))["ids"]["candidate_id"]
+
+
+def _request(target: str = "doit") -> tuple[RequestedContext, ...]:
+    """되묻기 요청 하나 — 대부분의 시나리오가 이 모양이면 충분하다."""
+    return (RequestedContext(kind="function", target=target, purpose="p", request_code="c"),)
+
+
+def _ne_response(
+    signal: ScoutSignal,
+    *,
+    score: float = 0.8,
+    requested: tuple[RequestedContext, ...] = (),
+):
+    """스크립트 항목 하나 — `candidate_id`를 받아 `ScoutResponse`를 짓는 빌더."""
+
+    def build(candidate_id: str) -> ScoutResponse:
+        return ScoutResponse(
+            candidate=Candidate(
+                candidate_id=candidate_id,
+                run_id="run_20260901_0001",
+                artifact_id="artifact_0001",
+                location=Location(
+                    file="parser.c", symbol="parse_header", line_start=3, line_end=6
+                ),
+                score=score,
+                reason_codes=[f"{signal.value}:missing_request:function:doit"],
+                state=FindingState.CANDIDATE,
+            ),
+            analysis_summary=AnalysisSummary(claim="scripted", requested_context=list(requested)),
+        )
+
+    return build
+
+
+def _script_ne_client(
+    monkeypatch: pytest.MonkeyPatch, scripts: dict[str, list[object]]
+) -> list[dict[str, object]]:
+    """역할별로 홉 응답(또는 예외)을 순서대로 스크립트한다.
+
+    `scripts`에 없는 역할, 또는 스크립트를 다 쓴 뒤의 호출은 실제 `FakeModelClient`로
+    넘어간다. 스크립트 항목은 `Exception`(그대로 던진다) 또는 `_ne_response(...)`가
+    돌려준 빌더(callable, `candidate_id`를 받는다)다. 호출마다 `(role, hop, body)`를
+    돌려주는 목록에 남긴다 — `hop`은 `history` 길이에서 유도한다(빈 history = hop0).
+    """
+    original = FakeModelClient.complete
+    counters: dict[str, int] = {}
+    known_ids: dict[str, str] = {}
+    calls: list[dict[str, object]] = []
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+        key = role.value
+        hop = len(history) // 2
+        script = scripts.get(key)
+        if script is None or counters.get(key, 0) >= len(script):
+            return original(self, role=role, prompt=prompt, schema=schema, history=history)
+        index = counters.get(key, 0)
+        counters[key] = index + 1
+        if hop == 0:
+            known_ids[key] = _extract_candidate_id(prompt.body)
+        calls.append({"role": key, "hop": hop, "body": prompt.body})
+        entry = script[index]
+        if isinstance(entry, Exception):
+            raise entry
+        value = entry(known_ids[key])
+        return ModelResult(
+            value=value,
+            usage=Usage(input_tokens=120, output_tokens=25, cached_tokens=0),
+            model="scripted",
+            raw_text=f"RAW-{key}-hop{hop}",
+        )
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+    return calls
+
+
+def _other_seats_script(signal: ScoutSignal = ScoutSignal.REJECT) -> dict[str, list[object]]:
+    """`_SEAT` 말고 나머지 풀 좌석 — 한 번에 끝나 잡음을 줄인다."""
+    return {seat: [_ne_response(signal)] for seat in _OTHER_SEATS}
+
+
+def _always_resolves(followup: str = "RETRIEVED: doit @parser.c:3\n") -> object:
+    """어떤 요청이든 블록 하나로 채우는 resolver 스텁 — 루프가 계속 돌게 한다."""
+
+    def resolve(query: ResolveQuery) -> Resolution:
+        return Resolution(
+            followup_text=followup,
+            blocks=(RetrievedBlock(name="doit", label="function", file="parser.c", lines=(3,)),),
+            unfilled=(),
+            already=(),
+            truncated=(),
+        )
+
+    return resolve
+
+
+def _nothing_resolves(query: ResolveQuery) -> Resolution:
+    return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
+
+
+def _wire_resolver(monkeypatch: pytest.MonkeyPatch, resolver: object | None) -> None:
+    """`Dependencies.resolve_requests`에 스텁을 심는다(또는 `None`으로 비운다) — factory는
+    손대지 않는다(`resolve_requests=None`이 그대로인 것이 브리프 §0의 전제다)."""
+    original_build_deps = build_deps
+
+    def spy_build_deps(*args: object, **kwargs: object) -> object:
+        deps = original_build_deps(*args, **kwargs)
+        return dataclasses.replace(deps, resolve_requests=resolver)
+
+    monkeypatch.setattr("src.cli.build_deps", spy_build_deps)
+
+
+def _v3_pool(mode: str | None):  # noqa: ANN202
+    """`_poolify_v3`와 같지만 이 파일 전용 별칭 — 읽는 쪽에서 의도(v3 풀)가 바로 보이게."""
+    return _poolify_v3(mode)
+
+
+def _run_ne(
+    tmp_path: Path,
+    *,
+    mode: str | None,
+    stop_after: int = int(Stage.SCOUT),
+    **overrides: object,
+):
+    return _run(
+        tmp_path,
+        configure=_v3_pool(mode),
+        target=_single_target(tmp_path),
+        stop_after=stop_after,
+        **overrides,
+    )
+
+
+def _scout_transitions(trace_path: Path, candidate_id: str) -> list[str]:
+    return [
+        e["data"]["rule"]
+        for e in _of(_events(trace_path), "transition")
+        if e["stage"] == int(Stage.SCOUT) and e["subject_id"] == candidate_id
+    ]
+
+
+def _scout_hops(trace_path: Path, candidate_id: str) -> list[dict]:
+    return [
+        e["data"]
+        for e in _of(_events(trace_path), "scout_hop")
+        if e["subject_id"] == candidate_id
+    ]
+
+
+def _seat_calls(calls: list[dict[str, object]], role: str = _SEAT) -> list[dict[str, object]]:
+    return [c for c in calls if c["role"] == role]
+
+
+# --- 정지 판정 여섯 + peer_review + reject -----------------------------------
+
+
+@_MODES
+def test_ne_review_after_one_followup_promotes_with_only_scout_transitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """NE → review: 호출 2회 · hop1 로그(본문)에 RETRIEVED 텍스트 · TRIAGED · 전이 C-1, C-2만."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request()),
+                _ne_response(ScoutSignal.REVIEW),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves("RETRIEVED: doit is a helper\n"))
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    seat_calls = _seat_calls(calls)
+    assert len(seat_calls) == 2, f"hop0·hop1 두 번을 기대했는데: {seat_calls}"
+    assert seat_calls[1]["body"] == "RETRIEVED: doit is a helper\n"
+
+    # candidate_id는 두 호출이 공유한다 — 스크립트 클로저가 안 돌려주므로 trace에서 역할로 찾는다.
+    scout_hop_events = [
+        e for e in _of(_events(trace_path), "scout_hop") if e["data"]["role"] == _SEAT
+    ]
+    assert scout_hop_events, "scout_memory의 SCOUT_HOP 이벤트가 없다"
+    candidate_id = scout_hop_events[0]["subject_id"]
+
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-2"]
+    hops = _scout_hops(trace_path, candidate_id)
+    assert [h["hop"] for h in hops] == [0, 1]
+    assert hops[0].get("stop_reason") is None
+    assert hops[1]["stop_reason"] == ScoutSignal.REVIEW.value
+
+
+def _candidate_id_for_seat(trace_path: Path, role: str = _SEAT) -> str:
+    events = [e for e in _of(_events(trace_path), "scout_hop") if e["data"]["role"] == role]
+    assert events, f"{role}의 SCOUT_HOP 이벤트가 없다"
+    return events[0]["subject_id"]
+
+
+@_MODES
+def test_ne_repeat_request_stops_the_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """직전 홉과 (kind, target) 집합이 같은 요청 — `repeat_request`로 서고 QUEUED다."""
+    same_request = _request()
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=same_request),
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=same_request),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2, "hop1이 hop0과 같은 요청을 반복했으니 hop2는 없어야 한다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+    hops = _scout_hops(trace_path, candidate_id)
+    assert hops[-1]["stop_reason"] == NeStopReason.REPEAT_REQUEST.value
+    transition = next(
+        e
+        for e in _of(_events(trace_path), "transition")
+        if e["subject_id"] == candidate_id and e["data"]["rule"] == "C-3"
+    )
+    assert transition["data"]["reason"] == "need_evidence_unresolved"
+
+
+@_MODES
+def test_ne_empty_request_stops_the_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """NE인데 `requested_context`가 비었다 — 되물을 것이 없으니 `empty_request`로 선다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {_SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=())], **_other_seats_script()},
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 1, "빈 요청이면 resolver도 hop1도 없어야 한다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 1
+    assert hops[0]["stop_reason"] == NeStopReason.EMPTY_REQUEST.value
+
+
+@_MODES
+def test_ne_nothing_resolved_when_the_hook_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """이 run에 resolver가 없다(v1 인덱스·미로드와 같은 자리) — `nothing_resolved`로 선다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request(),
+                )
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, None)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 1, "resolver가 없으면 hop1도 없어야 한다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_resolver_that_finds_nothing_stops_the_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """resolver는 있지만 아무것도 못 채웠다(`resolved == 0`이고 `fixable_count == 0`) —
+    "잘 쓴 이름이 전부 조회에 실패했다"이므로 `nothing_resolved`다(Q5)."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request(),
+                )
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _nothing_resolves)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 1
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    assert hops[0]["resolved"] == 0
+    assert hops[0]["fixable_count"] == 0
+
+
+@_MODES
+def test_ne_max_hop_exhausts_the_budget_and_queues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """`max_hops`(config 3) 홉을 다 쓰고도 NE면 `max_hop`으로 선다 — 호출은 `1 + max_hops`회."""
+    max_hops = load_config("dev_fake").thresholds.max_hops
+    script = [
+        _ne_response(
+            ScoutSignal.NEED_EVIDENCE,
+            requested=(
+                RequestedContext(kind="function", target=f"doit{i}", purpose="p", request_code="c"),
+            ),
+        )
+        for i in range(max_hops + 1)
+    ]
+    calls = _script_ne_client(monkeypatch, {_SEAT: script, **_other_seats_script()})
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == max_hops + 1, (
+        f"홉 상한 {max_hops}에 hop0을 더해 {max_hops + 1}회를 기대했다"
+    )
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert [h["hop"] for h in hops] == list(range(max_hops + 1))
+    assert hops[-1]["stop_reason"] == NeStopReason.MAX_HOP.value
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_hop1_parse_failure_is_absorbed_and_keeps_hop0_judgement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """hop1 파싱 실패 → `parse_failed`로 흡수하고 **직전 홉(hop0)의 판정**으로 finish한다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request(),
+                ),
+                SchemaParseError("scout이 2회 안에 ScoutResponse를 못 만들었다"),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2, "hop1은 시도됐다(실패해도 흡수한다)"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert len(hops) == 2
+    assert hops[-1]["stop_reason"] == NeStopReason.PARSE_FAILED.value
+    assert hops[-1]["hop"] == 1
+    # 직전 홉(hop0)이 NE였으므로 흡수 뒤에도 signal은 NE → C-3 need_evidence_unresolved.
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_hop1_size_400_is_absorbed_as_context_overflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """hop1 크기 400(`_is_size_rejection`) → `context_overflow`로 흡수 + hop0 판정 유지."""
+    overflow = ModelGatewayError(
+        "HTTP 400 maximum context length exceeded",
+        status=400,
+        detail="This model's maximum context length is 40960 tokens.",
+    )
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request(),
+                ),
+                overflow,
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    result, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2
+    assert result.record.is_complete, "크기 거절은 흡수한다 — run이 멈추면 안 된다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert hops[-1]["stop_reason"] == NeStopReason.CONTEXT_OVERFLOW.value
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+def test_ne_hop1_non_size_400_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """hop1의 크기 아닌 400(`_rejects_every_request`) — **흡수하지 않는다.** run이 선다(D88)."""
+    not_size = ModelGatewayError(
+        "HTTP 400 bad request shape", status=400, detail="unknown parameter 'thinking_token_budget'"
+    )
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request(),
+                ),
+                not_size,
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    result, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2, "hop1은 시도됐지만 흡수되지 않았다"
+    assert not result.record.is_complete, "크기 아닌 400은 run을 멈춰야 한다(#296·D88)"
+    assert result.record.stopped_after is not None
+    # 흡수하지 않았으므로 이 좌석에 대한 마지막 SCOUT_HOP은 hop0뿐이다(hop1 실패 이벤트 없음).
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hops = _scout_hops(trace_path, candidate_id)
+    assert [h["hop"] for h in hops] == [0]
+
+
+@_MODES
+def test_ne_peer_review_stops_other_ne_seats_without_a_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """한 좌석이 review면 **다른** NE 좌석은 호출 없이 `peer_review`로 선다(ADR 0012 결정 2)."""
+    ne_request = _request()
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            "scout_memory": [_ne_response(ScoutSignal.REVIEW)],
+            "scout_boundary": [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=ne_request),
+                _ne_response(ScoutSignal.REVIEW),  # 불려서는 안 된다
+            ],
+            "scout_injection": [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=ne_request),
+                _ne_response(ScoutSignal.REVIEW),  # 불려서는 안 된다
+            ],
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls, "scout_memory")) == 1
+    assert len(_seat_calls(calls, "scout_boundary")) == 1, "동료가 review인데 hop1을 불렀다"
+    assert len(_seat_calls(calls, "scout_injection")) == 1, "동료가 review인데 hop1을 불렀다"
+
+    for seat in ("scout_boundary", "scout_injection"):
+        candidate_id = _candidate_id_for_seat(trace_path, seat)
+        hops = _scout_hops(trace_path, candidate_id)
+        assert len(hops) == 1, f"{seat}: 동료 확인 뒤에도 홉 이벤트가 하나여야 한다"
+        assert hops[0]["stop_reason"] == NeStopReason.PEER_REVIEW.value
+        # 아직 NE 신호이므로(동료 확인이 신호를 안 바꾼다) 판정은 미해소로 큐잉된다.
+        assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+    memory_id = _candidate_id_for_seat(trace_path, "scout_memory")
+    assert _scout_transitions(trace_path, memory_id) == ["C-1", "C-2"]
+
+
+@_MODES
+def test_ne_reject_with_high_score_is_queued_not_promoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """reject + 점수 1.0 → QUEUED `scout_reject`다(D82 ⑤) — 판정은 점수가 아니라 신호다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {_SEAT: [_ne_response(ScoutSignal.REJECT, score=1.0)], **_other_seats_script()},
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 1, "reject는 루프를 안 돈다"
+    candidate_id = _candidate_id_for_seat(trace_path)
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+    transition = next(
+        e
+        for e in _of(_events(trace_path), "transition")
+        if e["subject_id"] == candidate_id and e["data"]["rule"] == "C-3"
+    )
+    assert transition["data"]["reason"] == "scout_reject"
+
+
+@_MODES
+def test_ne_loop_keeps_one_candidate_id_across_hops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """루프가 홉을 여러 번 돌아도 candidate_id는 하나다 — model_call·scout_hop·transition이
+    전부 같은 subject_id를 쓴다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request("a"),
+                ),
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request("b"),
+                ),
+                _ne_response(ScoutSignal.REVIEW),
+            ],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 3
+    candidate_id = _candidate_id_for_seat(trace_path)
+    model_calls = [
+        e
+        for e in _of(_events(trace_path), "model_call")
+        if e["subject_id"] == candidate_id and e["data"]["role"] == _SEAT
+    ]
+    assert [c["data"]["hop"] for c in model_calls] == [0, 1, 2]
+    hop_subjects = {
+        e["subject_id"]
+        for e in _of(_events(trace_path), "scout_hop")
+        if e["data"]["role"] == _SEAT
+    }
+    assert hop_subjects == {candidate_id}
+    assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-2"]
+
+
+def test_ne_two_modes_agree_on_transitions_and_hop_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """같은 스크립트에서 두 모드가 같은 전이 집합과 같은 SCOUT_HOP 다중집합을 낸다(계획 §7-6).
+
+    이벤트 순서는 모드마다 다를 수 있어 순서 무관으로 비교한다. `latency_s`는 실행마다
+    다른 wall-clock이라(순번이 든 값과 같은 이유로) 비교에서 뺀다.
+    """
+    ne_request = _request()
+
+    def script() -> dict[str, list[object]]:
+        return {
+            _SEAT: [
+                _ne_response(ScoutSignal.NEED_EVIDENCE, requested=ne_request),
+                _ne_response(ScoutSignal.REVIEW),
+            ],
+            **_other_seats_script(),
+        }
+
+    results = {}
+    for mode in (None, "per_stage"):
+        _script_ne_client(monkeypatch, script())
+        _wire_resolver(monkeypatch, _always_resolves())
+        _, trace_path = _run_ne(tmp_path, mode=mode)
+        candidate_id = _candidate_id_for_seat(trace_path)
+        transitions = sorted(
+            (e["data"]["rule"], e["data"]["from_state"], e["data"]["to_state"], e["data"]["reason"])
+            for e in _of(_events(trace_path), "transition")
+            if e["subject_id"] == candidate_id
+        )
+        hops = [
+            tuple(sorted((k, v) for k, v in h.items() if k != "latency_s"))
+            for h in _scout_hops(trace_path, candidate_id)
+        ]
+        results[mode] = (transitions, sorted(hops, key=str))
+
+    assert results[None][0] == results["per_stage"][0], "두 모드의 전이 집합이 다르다"
+    assert results[None][1] == results["per_stage"][1], "두 모드의 SCOUT_HOP 다중집합이 다르다"
+
+
+@_MODES
+def test_scout_hop_event_carries_resolver_stats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """홉 이벤트에 resolver 통계(`resolved`·`already`·`fixable_count`·`unfilled`·`truncated`)가
+    실린다."""
+    calls = _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [
+                _ne_response(
+                    ScoutSignal.NEED_EVIDENCE,
+                    requested=_request(),
+                ),
+                _ne_response(ScoutSignal.REVIEW),
+            ],
+            **_other_seats_script(),
+        },
+    )
+
+    def resolver(query: ResolveQuery) -> Resolution:
+        return Resolution(
+            followup_text="RETRIEVED: doit\nAlready in SOURCE: helper\nNot resolved: ghost",
+            blocks=(RetrievedBlock(name="doit", label="function", file="parser.c", lines=(3,)),),
+            unfilled=(
+                Unfilled(
+                    kind="function", target="ghost", reason="not_found", text="Not resolved: ghost"
+                ),
+            ),
+            already=("helper",),
+            truncated=(),
+        )
+
+    _wire_resolver(monkeypatch, resolver)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    assert len(_seat_calls(calls)) == 2
+    candidate_id = _candidate_id_for_seat(trace_path)
+    hop0 = _scout_hops(trace_path, candidate_id)[0]
+    assert hop0["resolved"] == 2, "len(blocks) + len(already) = 1 + 1"
+    assert hop0["already"] == 1
+    assert hop0["fixable_count"] == 0
+    assert hop0["unfilled"] == "not_found"
+
+
+# --- 단위 검사 — visible 묶기 · max_chars 계산 · 예외 분류 --------------------
+
+
+def test_ne_visible_groups_slice_lines_by_file() -> None:
+    ref = SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 3), ("parser.c", 4), ("util.c", 10)),
+    )
+
+    visible = runner._ne_visible(ref)
+
+    assert visible == {"parser.c": frozenset({3, 4}), "util.c": frozenset({10})}
+
+
+def test_ne_visible_is_empty_without_a_slice() -> None:
+    assert runner._ne_visible(None) == {}
+
+
+def _minimal_ctx(tmp_path: Path) -> RunContext:
+    """`_ne_hop_max_chars`처럼 `ctx.config`만 읽는 단위 검사용 — 파이프라인을 안 돌린다."""
+    config = load_config("dev_fake")
+    trace = runner.TraceWriter("run_test_0001")
+    deps = build_deps(
+        config, run_id="run_test_0001", source_root=tmp_path, artifacts_root=tmp_path / "artifacts"
+    )
+    return RunContext(
+        run_id="run_test_0001",
+        config=config,
+        models=deps.models,
+        retriever=deps.retriever,
+        tools=deps.tools,
+        store=deps.store,
+        ids=deps.ids,
+        trace=trace,
+        ledger=BudgetLedger(config.budget, trace),
+        policy=FixedThresholdPolicy(config.thresholds),
+    )
+
+
+def test_ne_hop_max_chars_caps_at_the_hop_ceiling(tmp_path: Path) -> None:
+    """남은 예산이 넉넉하면 15,000자 상한(`_HOP_CHARS_MAX`)에서 묶인다.
+
+    fake 모델의 `context_limit`은 32,768, 전역 `output_max`는 4,096이다(config/budgets.yaml).
+    입력·출력 합 150에 여유 512를 빼도 남는 토큰이 충분해 3.28을 곱하면 상한을 넘는다.
+    """
+    ctx = _minimal_ctx(tmp_path)
+    session = SimpleNamespace(usage=Usage(input_tokens=100, output_tokens=50, cached_tokens=0))
+
+    assert runner._ne_hop_max_chars(ctx, Role.SCOUT, session) == runner._HOP_CHARS_MAX
+
+
+def test_ne_hop_max_chars_is_zero_when_remaining_is_non_positive(tmp_path: Path) -> None:
+    """직전 홉이 이미 창을 거의 다 썼으면(남은 토큰 ≤ 0) 0이다 — 호출자가 여기서 선다."""
+    ctx = _minimal_ctx(tmp_path)
+    # 32,768 − 4,096 − 30,000 − 0 − 512 < 0.
+    session = SimpleNamespace(usage=Usage(input_tokens=30_000, output_tokens=0, cached_tokens=0))
+
+    assert runner._ne_hop_max_chars(ctx, Role.SCOUT, session) == 0
+
+
+def test_ne_classify_exception_maps_the_q6_table() -> None:
+    """hop≥1 예외 분류(ADR 0012 결정 2 Q6) — 크기 아닌 400만 `None`(흡수하지 않는다)이다."""
+    size_400 = ModelGatewayError(
+        "HTTP 400", status=400, detail="This model's maximum context length is 10 tokens."
+    )
+    not_size_400 = ModelGatewayError("HTTP 400", status=400, detail="unknown request field")
+    other_gateway = ModelGatewayError("HTTP 422", status=422, detail="x")
+
+    assert runner._ne_classify_exception(size_400) is NeStopReason.CONTEXT_OVERFLOW
+    assert runner._ne_classify_exception(not_size_400) is None, "크기 아닌 400은 흡수하지 않는다"
+    assert runner._ne_classify_exception(other_gateway) is NeStopReason.GATEWAY_ERROR
+    assert (
+        runner._ne_classify_exception(SchemaParseError("파싱 실패")) is NeStopReason.PARSE_FAILED
+    )
+    assert (
+        runner._ne_classify_exception(BudgetExhausted(4, "input_tokens", 100, 100))
+        is NeStopReason.BUDGET_EXHAUSTED
+    )
