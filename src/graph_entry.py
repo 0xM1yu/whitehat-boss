@@ -4,7 +4,7 @@
 길이가 곧 섹션의 토큰 수다(`src/tokens.estimate_tokens`). 만드는 쪽과 되읽는 쪽이 갈리면
 형식을 바꾼 사람이 한쪽만 고치고 다른 쪽은 **조용히 틀린 값**을 낸다 — 이 저장소가
 `indexer._GRAMMARS`↔`container_tools._INDEX_SUFFIXES`와 `INDEX_VERSION`↔
-`SUPPORTED_INDEX_VERSION`에서 이미 두 번 처리한 이중화다. 그 둘은 프로세스 경계 때문에
+`SUPPORTED_INDEX_VERSIONS`에서 이미 두 번 처리한 이중화다. 그 둘은 프로세스 경계 때문에
 갈라질 수밖에 없었지만 이쪽은 그럴 이유가 없다.
 
 ## 왜 `adapters/index_graph.py`가 아니라 여기인가

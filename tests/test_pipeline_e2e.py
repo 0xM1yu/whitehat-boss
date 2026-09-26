@@ -1234,7 +1234,7 @@ def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> N
     warnings = _checksum_warnings(record, served)
 
     assert warnings, "실서빙 역할이 전부 자리표시자인데 경고가 없다"
-    assert "auditor(qwen3.6-35b-a3b)" in warnings[0]
+    assert "auditor(qwen3.8-27b)" in warnings[0]
     assert "비교표에서 제외" in warnings[0]
 
 
@@ -2330,7 +2330,7 @@ def test_missing_index_falls_back_to_files_and_says_so(tmp_path: Path) -> None:
 
 
 def test_artifacts_without_symbols_make_no_candidates(tmp_path: Path) -> None:
-    """`.h`·`.py`·바이너리는 인덱서에 넘어가지 않아 심볼이 없다.
+    """`.py`·바이너리는 인덱서에 넘어가지 않고, 함수 정의가 없는 `.h`도 심볼이 없다.
 
     zlib run에서 artifact 300건 중 C 소스가 12건인데 후보가 32건 생겼다 — 대상 선정이
     새고 있었고, 심볼이 후보를 정하면서 그 자리가 닫힌다.
