@@ -1,14 +1,16 @@
 """ScoutResponse — Scout의 래퍼 출력 `{candidate, analysis_summary}`.
 
 Scout 프롬프트(v3)는 판정(`candidate`)과 근거(`analysis_summary`)를 **한 호출에서 함께** 낸다.
-근거는 downstream으로 넘어가지 않는다 — 하네스에 `analysis_summary` 소비자가 없다. 그런데도
+근거 서술은 downstream으로 넘어가지 않는다 — 하네스가 `analysis_summary`에서 읽는 것은
+need_evidence 루프의 `requested_context`뿐이다(ADR 0012 결정 2). 그런데도
 출력에 남기는 이유는 **모델이 근거를 써 보면 판정이 정확해진다**는 실측 때문이다(실험팀 로스터
 선정: memory·injection은 근거 자세한 v14s, boundary는 간소화 v15s가 이겼다). 근거는 모델의
 사고 발판이지 파이프라인 데이터가 아니다.
 
-노드(`orchestrator/nodes/scout.py`)가 이 래퍼를 받아 `.candidate`만 취하고 `analysis_summary`는
-버린다. 안쪽 `candidate`는 하네스 `Candidate`와 **정확히 같은** 구조라(프롬프트 v3가 "exactly the
-nine Candidate keys"로 못박음) 그대로 파이프라인에 흐른다.
+노드(`orchestrator/nodes/scout.py`)가 이 래퍼를 받아 `.candidate`를 파이프라인에 흘린다.
+`analysis_summary`는 세션이 루프 동안 들고 있다가(`requested_context`) 파이프라인에는 넘기지
+않는다. 안쪽 `candidate`는 하네스 `Candidate`와 **정확히 같은** 구조라(프롬프트 v3가 "exactly
+the nine Candidate keys"로 못박음) 그대로 파이프라인에 흐른다.
 """
 
 from collections.abc import Sequence
