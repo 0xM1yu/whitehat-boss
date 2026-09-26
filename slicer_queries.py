@@ -28,7 +28,12 @@ WRITERS = (
 # (`file_envelope`), so it no longer overruns the REPL return -- but the cap stays: it bounds
 # the candidate count, and so the downstream per-candidate work. Repos past it get bounded
 # (not full) coverage.
-CASE_B_WRITER_CAP = 2000
+# ⏵ 2026-09-27 — 2,000 → 4,000 (가설·WIP). injection sample_18(gpac)은 sink 함수가 sprintf·
+# operator를 부르는데 후보가 15,745개라 그 writer/operator가 2,000 캡 밖으로 truncate된 것으로
+# 추정(미확인 — CPG 재빌드로 확정). ⚠ writer/operator는 "폭증하는" 집합이라(아래 Operator 주석)
+# Case A 캡(#300)보다 폭증 위험이 크다. 재측정으로 (a) inj_18 회수 (b) 후보·per-candidate 비용
+# 폭증 여부를 확인하고 확정 또는 되돌린다. 4,000은 측정 전 잠정치(§0). draft.
+CASE_B_WRITER_CAP = 4000
 
 # Injection sinks (2026-09-26 injection candidate-capture measurement). The injection eval set's
 # GT sinks are command/SQL execution, not memory writes: sample_13's sink `make_tunnel` calls
@@ -70,7 +75,7 @@ CASE_B_EXEC_CAP = 2000
 # (CASE_B_WRITER_CAP) and EXEC_SINKS (CASE_B_EXEC_CAP) the new-sink total is bounded by
 # <=8000. A repo past a cap gets bounded
 # (not full) coverage for that anchor.
-CASE_B_OPERATOR_CAP = 2000
+CASE_B_OPERATOR_CAP = 4000  # ⏵ 2026-09-27 — 2,000 → 4,000 (가설·WIP; 위 CASE_B_WRITER_CAP 노트)
 
 # The flows query targets memory-write sink calls instead of every call argument in the repo
 # (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
