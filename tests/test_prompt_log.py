@@ -116,18 +116,10 @@ def test_write_retry_shares_the_first_seq_without_bumping(tmp_path: Path) -> Non
 def test_hop_greater_than_zero_gets_a_hop_suffixed_filename(tmp_path: Path) -> None:
     """hop=0(기본값)은 지금과 같은 파일명이다. hop>0이면 `_hop{k}`가 붙는다."""
     log = PromptLog(tmp_path)
-    hop0_body = "hop0 본문 — FACTS가 있다"
-    hop0_prompt = Prompt(prefix=PROMPT.prefix, body=hop0_body, prompt_version="v1")
     followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
 
-    hop0_ref, _ = log.write(role="scout", stage=4, prompt=hop0_prompt)
-    hop1_ref, _ = log.write(
-        role="scout",
-        stage=4,
-        prompt=followup,
-        hop=1,
-        history=(ChatTurn(speaker="user", content=hop0_body),),
-    )
+    hop0_ref, _ = log.write(role="scout", stage=4, prompt=PROMPT)
+    hop1_ref, _ = log.write(role="scout", stage=4, prompt=followup, hop=1)
 
     assert hop0_ref == f"{DIR_NAME}/0001_scout.md"
     assert hop1_ref == f"{DIR_NAME}/0002_scout_hop1.md"
@@ -136,43 +128,43 @@ def test_hop_greater_than_zero_gets_a_hop_suffixed_filename(tmp_path: Path) -> N
 def test_hop_retry_suffix_comes_after_the_hop_suffix(tmp_path: Path) -> None:
     """`_retryK`는 `_hop{k}` 뒤에 붙는다 — 1차·재시도가 한 순번으로 묶이는 것과 같은 자리다."""
     log = PromptLog(tmp_path)
-    hop0_body = "hop0 본문"
-    history = (ChatTurn(speaker="user", content=hop0_body),)
     followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
 
-    hop0_prompt = Prompt(prefix=PROMPT.prefix, body=hop0_body, prompt_version="v1")
-    log.write(role="scout", stage=4, prompt=hop0_prompt)
-    log.write(role="scout", stage=4, prompt=followup, hop=1, history=history)
-    retry_ref, _ = log.write_retry(
-        role="scout", stage=4, prompt=followup, index=1, hop=1, history=history
-    )
+    log.write(role="scout", stage=4, prompt=PROMPT)
+    log.write(role="scout", stage=4, prompt=followup, hop=1)
+    retry_ref, _ = log.write_retry(role="scout", stage=4, prompt=followup, index=1, hop=1)
 
     assert retry_ref == f"{DIR_NAME}/0002_scout_hop1_retry1.md"
 
 
-def test_the_hop_log_names_which_hop0_log_it_continues(tmp_path: Path) -> None:
-    """후속 턴 로그 본문에 hop0 파일 참조와 후속 텍스트가 실린다.
+def test_a_hop_log_hashes_the_same_whatever_its_sequence(tmp_path: Path) -> None:
+    """후속 턴 로그도 **순번을 담지 않는다** — `render()`의 불변식이 hop에서도 선다.
 
-    **history 전문은 다시 쓰지 않는다** — hop0 로그가 이미 그 프롬프트를 들고 있다.
+    hop0 참조(`prompts/0001_…`)를 본문에 실으면 그 해시가 실행 순서를 따라간다 —
+    같은 요청이 per_stage와 per_candidate에서 다른 `prompt_sha256`을 받는다. 홉 사슬은
+    `model_call`의 (`subject_id`, `role`, `hop`)이 이미 든다.
     """
-    log = PromptLog(tmp_path)
-    hop0_body = "hop0 본문 — 원래 질문"
-    hop0_prompt = Prompt(prefix=PROMPT.prefix, body=hop0_body, prompt_version="v1")
     followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
+    history = (ChatTurn(speaker="user", content=PROMPT.body),)
+    other = Prompt(prefix=PROMPT.prefix, body="다른 후보의 hop0", prompt_version="v1")
 
-    hop0_ref, _ = log.write(role="scout", stage=4, prompt=hop0_prompt)
-    hop1_ref, _ = log.write(
-        role="scout",
-        stage=4,
-        prompt=followup,
-        hop=1,
-        history=(ChatTurn(speaker="user", content=hop0_body),),
-    )
+    def hop1_call(ctx: RunContext) -> dict:
+        ctx.call_model(
+            role=Role.SCOUT, prompt=followup, schema=Candidate, stage=Stage.SCOUT,
+            history=history, hop=1,
+        )
+        return _model_calls(ctx)[-1]
 
-    text = (tmp_path / hop1_ref).read_text(encoding="utf-8")
-    assert hop0_ref in text
-    assert "후속 질문" in text
-    assert hop0_body not in text
+    early = _context(prompts=PromptLog(tmp_path / "early"))
+    early.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    late = _context(prompts=PromptLog(tmp_path / "late"))
+    late.call_model(role=Role.SCOUT, prompt=other, schema=Candidate, stage=Stage.SCOUT)
+    late.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    early_call, late_call = hop1_call(early), hop1_call(late)
+
+    assert early_call["prompt_ref"] != late_call["prompt_ref"]
+    assert early_call["prompt_sha256"] == late_call["prompt_sha256"]
 
 
 # --- RunContext 배선 ----------------------------------------------------------
