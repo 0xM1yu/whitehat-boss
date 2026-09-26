@@ -111,7 +111,12 @@ def test_complete_candidate_survives_later_sink_error(monkeypatch, repo, tmp_pat
     data["backward"] = {"success": False, "stderr": "java.lang.OutOfMemoryError"}
     options = checkpoint_options(tmp_path)
     _, first, _ = run_cli(monkeypatch, repo, tmp_path, data, *options)
-    assert first["counters"]["slices_before_clustering"] == 1
+    # The case_a candidate completes; the case_b one's backward query OOMs. It is no longer
+    # DROPPED -- it degrades to an anchor-only slice (its capture survives) -- so there are two
+    # slices before clustering (one full, one degraded), and its checkpoint stays pending so
+    # --resume re-attempts a full slice below.
+    assert first["counters"]["slices_before_clustering"] == 2
+    assert first["counters"]["candidates_degraded"] == 1
     data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=2)
     _, second, transport = run_cli(monkeypatch, repo, tmp_path, data, *options, "--resume")
     assert second["counters"]["candidates_reused"] == 1

@@ -514,16 +514,20 @@ def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_pa
     assert result["counters"]["candidates_not_processed"] == 0
     assert result["slices"]  # at least the surviving candidates produced a slice
     assert result["counters"]["queries_aborted"] == 1
+    # The poisoned candidate is not DROPPED: it survives as an anchor-only degraded slice, so its
+    # capture (the recall unit) still reaches the output (the degraded slice may then be absorbed
+    # into an overlapping full slice by clustering, so the counter -- not a marker on the
+    # representative -- is the binding).
+    assert result["counters"]["candidates_degraded"] == 1
 
 
-def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_path):
-    # Past a short streak the run stops rather than burning the per-query timeout on every
-    # remaining candidate. A failed candidate is NOT persisted as failed: the failure is
-    # before save_stage, so it has no checkpoint row and restore_stage returns "pending" ->
-    # --resume RE-RUNS it from scratch, it does not skip it (see test above). Restarting the
-    # dedicated server first lets resume progress IF the poison was server state; if the
-    # poison is candidate-intrinsic (a query that always exceeds the 600s deadline), resume
-    # re-burns the timeout on it and a streak of these never advances (documented limit).
+def test_a_streak_of_poisoned_candidates_switches_to_degraded_not_stop(monkeypatch, repo, tmp_path):
+    # Past a short streak the server is likely unusable, but the remaining candidates were
+    # captured (that capture is the recall unit). Instead of ABORTING the run -- which dropped
+    # every remaining candidate's slice, leaving them unprocessed -- the run switches to
+    # anchor-only degraded slices without querying the server. No captured candidate is lost:
+    # every one is processed and appears in slices.json marked `degraded`, and the checkpoint
+    # stays "pending" so --resume re-attempts full slices after the server is restarted.
     cands = [candidate("c" + str(i), i + 1) for i in range(6)]
     data = payloads(case_a=cands, flow_count=2)
 
@@ -533,8 +537,12 @@ def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_pa
     data["flows"] = flows
     code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
     streak = slicer_pipeline.POISON_STOP_STREAK
+    # The first `streak` candidates each fail their flow query (then degrade); after the streak
+    # the rest skip the server and degrade directly. Every candidate is processed, none dropped.
     assert result["counters"]["candidates_failed"] == streak
-    assert result["counters"]["candidates_not_processed"] == len(cands) - streak
+    assert result["counters"]["candidates_not_processed"] == 0
+    assert result["counters"]["candidates_degraded"] == len(cands)
+    assert result["slices"] and all(s.get("degraded") for s in result["slices"])
 
 
 @pytest.mark.parametrize("truncated", [False, True])
