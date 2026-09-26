@@ -2968,16 +2968,10 @@ def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
 # ---------------------------------------------------------------------------
 
 
-def _vllm_400_body(message: str, param: str | None = None) -> str:
-    """vLLM 0.27.1이 400에 싣는 본문. 어댑터는 이것을 그대로 `ModelGatewayError.detail`에 싣는다.
-
-    `create_error_response`(`vllm/entrypoints/serve/utils/error_response.py`)가 `ErrorInfo`
-    (`vllm/entrypoints/openai/engine/protocol.py:63-67`)를 만들고 Starlette `JSONResponse`가 공백
-    없이 직렬화한다 — 실측 본문(아래 2026-08-28)이 같은 모양이다.
-    """
-    error = {"message": message, "type": "BadRequestError", "param": param, "code": 400}
-    return json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":"))
-
+# 이 절의 서버 문구 핀은 전부 실측이다(`unreadable_body` 하나만 어댑터 자신의 문구다).
+# 2026-09-26 ATOM 프로브의 원문은 `_PROBE` §3 「근거 로그」에 있고 아래는 그 줄을 인용한다 —
+# vLLM 0.27.1이 준 본문을 하네스 어댑터가 받은 `detail` 그대로다. 문구를 만드는 소스도 함께 적는다.
+_PROBE = "docs/experiments/harness/2026-09-26-vllm-400-bodies-atom.md"
 
 # 양성 핀 — 크기 거절. **저장소의 실측 문구다**(보고서 파일:줄).
 _SIZE_REJECTIONS = {
@@ -3000,40 +2994,78 @@ _SIZE_REJECTIONS = {
         "output tokens and your prompt contains at least 12289 input tokens, for a total of "
         "at least 16385"
     ),
+    # _PROBE:98 — 같은 날 프로브. 어댑터가 받은 본문 JSON째다(`param: input_tokens`).
+    # 소스는 vllm/renderers/params.py:449-459.
+    "2026-09-26-probe": (
+        '{"error":{"message":"This model\'s maximum context length is 4096 tokens. However, '
+        'you requested 64 output tokens and your prompt contains at least 4033 input tokens, '
+        'for a total of at least 4097 tokens. Please reduce the length of the input prompt or '
+        'the number of requested output tokens. (parameter=input_tokens, '
+        'value=4033)","type":"BadRequestError","param":"input_tokens","code":400}}'
+    ),
 }
 
-# 음성 핀 — 크기가 아닌 400. **우리 장비에서 관측된 적이 없다.** vLLM 0.27.1(`6e448d0`)과 모델
-# 템플릿이 만드는 문구를 소스에서 옮겼다(파일:줄). 고른 기준은 「우리 요청이 실제로 밟을 수
-# 있는가」이고, 줄마다 그 경로를 적는다.
+# 음성 핀 — 크기가 아닌 400. **2026-09-26 ATOM 실측 원문이다**(`_PROBE`의 줄). 고른 기준은
+# 「우리 요청이 실제로 밟을 수 있는가」이고, 줄마다 그 경로를 적는다.
 _RUN_REJECTIONS = {
-    # vllm/v1/engine/input_processor.py:116-119 — 요청에 `thinking_token_budget`을 싣는데
-    # 서버를 `--reasoning-parser` 없이 띄웠다(`ModelEntry.thinking_token_budget`).
-    "thinking_budget_without_parser": _vllm_400_body(
-        "thinking_token_budget is set but reasoning_config is not configured. Please set "
-        "--reasoning-parser and/or --reasoning-config to use thinking_token_budget."
+    # _PROBE:102 — vllm/v1/engine/input_processor.py:111-119. 요청에 `thinking_token_budget`을
+    # 싣는데 서버를 `--reasoning-parser` 없이 띄웠다(`ModelEntry.thinking_token_budget`).
+    "thinking_budget_without_parser": (
+        '{"error":{"message":"thinking_token_budget is set but reasoning_config is not '
+        'configured. Please set --reasoning-parser and/or --reasoning-config to use '
+        'thinking_token_budget.","type":"BadRequestError","param":null,"code":400}}'
     ),
-    # vllm/v1/engine/input_processor.py:122-125 — 같은 예산을 V2 러너 모델에 실었다
-    # (`src/config.py:251-252`가 적는 그 400이다).
-    "thinking_budget_on_v2_runner": _vllm_400_body(
-        "thinking_token_budget is not yet supported by the V2 model runner. Run vLLM with "
-        "VLLM_USE_V2_MODEL_RUNNER=0 to use thinking_token_budget."
+    # _PROBE:108 — vllm/v1/engine/input_processor.py:121-125. 같은 예산을 V2 러너 모델에
+    # 실었다(`src/config.py:251-252`가 적는 그 400이다). parser가 있어도 난다.
+    "thinking_budget_on_v2_runner": (
+        '{"error":{"message":"thinking_token_budget is not yet supported by the V2 model '
+        'runner. Run vLLM with VLLM_USE_V2_MODEL_RUNNER=0 to use '
+        'thinking_token_budget.","type":"BadRequestError","param":null,"code":400}}'
     ),
-    # Qwen/Qwen3.8-27B@1d4bf0f `chat_template.jinja:46-49` — 사고를 켠 채 템플릿이 모르는
-    # `reasoning_effort`(`high`)를 보냈다. jinja `TemplateError`는 `error_response.py`가
-    # 400으로 바꾼다.
-    "template_rejects_reasoning_effort": _vllm_400_body(
-        "Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low."
+    # _PROBE:104 — Qwen/Qwen3.8-27B@1d4bf0f `chat_template.jinja:46-49`. 사고를 켠 채 템플릿이
+    # 모르는 `reasoning_effort`(`high`)를 보냈다. jinja `TemplateError`를 vLLM이 400으로 바꾼다.
+    "template_rejects_reasoning_effort": (
+        '{"error":{"message":"Unexpected reasoning effort high. Supported types are xhigh '
+        '(default), medium, and low.","type":"BadRequestError","param":null,"code":400}}'
     ),
-    # vllm/renderers/params.py:225-237 — 역할 출력 상한이 서버 창보다 크다(`output_max_by_role`).
-    # 창의 이름은 `vllm/entrypoints/openai/chat_completion/protocol.py:595-608`이 붙인다.
-    "output_cap_over_window": _vllm_400_body(
-        "max_tokens=32768 cannot be greater than max_model_len=max_total_tokens=24576. "
-        "Please request fewer output tokens. (parameter=max_tokens, value=32768)",
-        param="max_tokens",
+    # _PROBE:100 — vllm/renderers/params.py:225-237. 역할 출력 상한이 서버 창보다 크다
+    # (`output_max_by_role`).
+    "output_cap_over_window": (
+        '{"error":{"message":"max_tokens=8192 cannot be greater than '
+        'max_model_len=max_total_tokens=4096. Please request fewer output tokens. '
+        '(parameter=max_tokens, value=8192)","type":"BadRequestError","param":"max_tokens","cod'
+        'e":400}}'
     ),
-    # src/adapters/openai_compat.py:354 — 400인데 본문을 못 읽었다. 모르는 400은 크기로 안 읽는다.
+    # _PROBE:106 — vllm/entrypoints/serve/utils/server_utils.py:498-541. 요청 본문 검증 —
+    # 422가 아니라 400이다(`type`도 `Bad Request`).
+    "request_validation": (
+        '{"error":{"message":"1 validation error:\\n {\'type\': \'literal_error\', \'loc\': '
+        '(\'body\', \'reasoning_effort\'), \'msg\': \\"Input should be \'none\', \'minimal\', '
+        '\'low\', \'medium\', \'high\', \'xhigh\' or \'max\'\\", \'input\': \'bogus\', '
+        '\'ctx\': {\'expected\': \\"\'none\', \'minimal\', \'low\', \'medium\', \'high\', '
+        '\'xhigh\' or \'max\'\\"}}","type":"Bad Request","param":"body.reasoning_effort","code"'
+        ':400}}'
+    ),
+    # src/adapters/openai_compat.py:354 — 400인데 본문을 못 읽었다(어댑터 자신의 문구 — 서버
+    # 실측이 아니다). 모르는 400은 크기로 안 읽는다.
     "unreadable_body": "(응답 본문을 읽지 못했다: OSError)",
 }
+
+
+def test_the_observed_400_pins_are_quoted_from_the_probe_report() -> None:
+    """**실측 핀은 보고서 원문과 글자 그대로 같다.** 핀을 고치고 보고서를 안 고치면(또는 거꾸로)
+    「실측」이라는 말이 거짓이 된다 — 그래서 대조를 기계에 맡긴다. 어댑터 자신의 문구
+    (`unreadable_body`)와 다른 날 보고서의 핀은 이 보고서에 없으므로 뺀다.
+    """
+    report = (Path(__file__).resolve().parents[1] / _PROBE).read_text(encoding="utf-8")
+    observed = {
+        name: detail
+        for name, detail in {**_SIZE_REJECTIONS, **_RUN_REJECTIONS}.items()
+        if name not in {"2026-08-25", "2026-08-28", "2026-09-26", "unreadable_body"}
+    }
+    assert len(observed) == 6, "전제: 프로브 원문 핀이 여섯이다"
+    missing = [name for name, detail in observed.items() if detail not in report.splitlines()]
+    assert missing == [], f"보고서 원문과 다른 핀: {missing}"
 
 
 def _rejected(detail: str) -> ModelGatewayError:
