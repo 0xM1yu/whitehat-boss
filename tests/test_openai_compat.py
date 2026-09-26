@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from src.adapters.openai_compat import RETRY_ERROR_MAX_CHARS, OpenAICompatModelClient
 from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
+    ChatTurn,
     ModelGatewayError,
     Prompt,
     SchemaParseError,
@@ -147,6 +148,32 @@ def test_exhausted_retries_still_raise_instead_of_returning_a_default(
         _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
 
     assert attempts == [1, 2]
+
+
+# --- history=() (멀티턴 배선은 아직 없다 — #95) -------------------------------
+
+
+def test_complete_still_works_with_an_empty_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`history=()`는 지금 동작 그대로다 — 아직 인자만 받는다."""
+    _stub(monkeypatch, succeed_on=1)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, history=())
+
+    assert result.value.ok is True
+
+
+def test_complete_refuses_a_non_empty_history_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """비어 있지 않은 history는 조용히 무시하지 않고 크게 실패한다 — 멀티턴 배선은 아직
+    없다(#95)."""
+    _stub(monkeypatch, succeed_on=1)
+
+    with pytest.raises(NotImplementedError):
+        _client().complete(
+            role=Role.SCOUT,
+            prompt=PROMPT,
+            schema=Tiny,
+            history=(ChatTurn(speaker="user", content="이전 턴"),),
+        )
 
 
 # --- 재시도 프롬프트 (D47) -----------------------------------------------------

@@ -138,6 +138,7 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
+from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
 from src.tokens import using_counter
 
@@ -341,6 +342,12 @@ class Dependencies(Protocol):
     # 위 카운터가 무엇으로 정해졌는지 (#96 (b)). `token_counter` 이벤트의 `data`가 된다.
     # `IndexSummaryLike`와 같은 이유로 **스칼라 dict**다 — 러너가 어댑터 타입을 모른다.
     counter_report: dict[str, str | None]
+    # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 그 run에 resolver가 없다
+    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 러너는
+    # `src/adapters/`를 import 하지 않으므로 resolver 구현이 아니라 이 콜러블로 경계를
+    # 넘는다. **아직 자리만 있다** — 이 hook을 실제로 부르는 좌석 집계 루프는
+    # need_evidence 루프다(ADR 0012 결정 2 — Phase 5).
+    resolve_requests: Callable[[ResolveQuery], Resolution] | None
 
 
 @dataclass(frozen=True)

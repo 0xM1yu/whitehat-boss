@@ -175,7 +175,8 @@ light capsule (callers/callees 1-hop 포함)
 > 심볼 resolver로 찾아 **같은 세션 후속 턴**으로 RETRIEVED를 준다 — (슬라이스, 좌석)마다 세션 하나,
 > 최대 3홉, 정지 조건 여섯, 그리고 한 좌석이라도 review면 다른 좌석의 루프는 돌지 않는다(좌석 집계). 명세의 원천은 실험팀 Notion 「Scout RAG baseline」이고 ADR 0012가 요약한다. 위 「초기값 3」의 상한
 > (`capsule_expansion_max`)은 결정 6이 `max_hops`로 대체한다. **승인됐다(2026-09-25) — 코드는 아직이다**(Phase 5) — 아래
-> 「사다리의 첫 칸」 절 끝의 ⚠.
+> 「사다리의 첫 칸」 절 끝의 ⚠. (⏵ 2026-09-26 — `Thresholds.max_hops`가 config에 생겼다(PR #302,
+> `config/budgets.yaml`의 thresholds 블록). 그 값을 세고 강제하는 루프는 그대로 Phase 5다.)
 
 ### 사다리의 첫 칸을 기본값으로 올렸다 (2026-08-23, D20을 (a)로 확정)
 
@@ -211,7 +212,8 @@ status=loaded`(심볼 4·호출 5)인데 그래프를 담은 프롬프트는 aud
 > `triage_need_evidence`(0.30)가 `triage_reject`(0.10)와 같이 `below_scout_threshold`로 `queued`된다
 > (`policy._scout_triage`, `scout_threshold` 0.5). 그리고 스키마의 `requested_context`는 문자열
 > 목록인데 v3 프롬프트는 객체를 요구한다([D82](open-questions/D/D82.md)). 그 루프가 §5 머리 ⚠의
-> need_evidence 루프다(ADR 0012 결정 2 — Phase 5).
+> need_evidence 루프다(ADR 0012 결정 2 — Phase 5). (⏵ 2026-09-26 — 스키마가 객체 `RequestedContext`를
+> 받는다(PR #302). 판정이 그것을 소비하는 루프는 그대로 0건이다.)
 
 **즉 이 절은 지금 절반만 구현돼 있다.** 첫 칸은 기본값이 되어 항상 실리고, 나머지
 `──부족──>` 화살표는 **아무도 밟지 않는다.** 그 사실을 그림에서 지우지 않는 이유는

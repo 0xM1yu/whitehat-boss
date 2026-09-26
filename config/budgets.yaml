@@ -45,6 +45,11 @@ thresholds:
   # 초과하면 후보를 폐기하지 않고 queued로 둔다.
   capsule_expansion_max: 3
 
+  # need_evidence 루프 상한 — Scout가 NE 신호를 낸 뒤 같은 세션에서 되물을 수 있는 최대
+  # 홉 수(ADR 0012 결정 6 — 위 capsule_expansion_max를 대체한다. 이슈 #92). 0이면 루프가
+  # 꺼진다. **명세값이고 이 하네스에서 안 쟀다** — cli.PROVISIONAL_THRESHOLDS에 있다.
+  max_hops: 3
+
   # queued 후보의 재평가 횟수 상한. 새 Evidence가 들어올 때마다 무한히 재평가하면
   # 토큰이 샌다. 초과 시에도 폐기하지 않고 queued를 유지하며 사유 코드만 남긴다.
   requeue_max: 2
