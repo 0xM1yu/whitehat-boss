@@ -173,7 +173,7 @@
 - `fields` 주인 결함을 PR 안에서 고쳤다(`5661585` RED → `68d4de5` GREEN) — §3 끝.
 - 운영 창에서도 넘는 큰 슬라이스(§4 끝) — Scout 프롬프트 초과 결함 [D87](../../open-questions/D/D87.md)(PR #293에서 등재)의 관측으로 넘긴다.
 - 대상 트리 밖 헤더(`build_context/generated_headers`)는 여전히 인덱서에 안 온다 — 표본 셋에는 없지만 평가 표본에는 있다(슬라이서는 `-I`로 본다).
-- **헤더에 함수 정의가 있는 표본으로 다시 잰다**(§5 「말하지 않는 것」 첫 항목) — Phase 5가 이 인덱스에 기대기 전에 한다(PR #295 리뷰 LOW-2). 볼 것은 캡슐 섹션 구성(callers·callees 항목 수)과 Auditor 앵커다.
+- **헤더에 함수 정의가 있는 표본으로 다시 잰다**(§5 「말하지 않는 것」 첫 항목) — Phase 5가 이 인덱스에 기대기 전에 한다(PR #295 리뷰 LOW-2). 볼 것은 캡슐 섹션 구성(callers·callees 항목 수)과 Auditor 앵커다. (⏵ 2026-09-26 — (a) 메커니즘은 브랜치 `test/index-v2-header-paths`의 테스트 다섯 개가 로컬에서 핀했다: Auditor 앵커가 헤더 `static inline` 함수의 정확한 범위를 잡는 것(`tests/test_slice_targets.py`), 캡슐 `callers`·`callees`가 헤더에 정의된 함수를 담는 것(`tests/test_index_graph.py`), 비슬라이스 run에서 함수 정의가 있는 `.h`가 `_Target`을 더 만드는 것(`tests/test_pipeline_e2e.py`), 실 인덱서가 헤더 함수를 v1 `symbols`·v2 `functions` 표에 `file: util.h`로 내는 것(`tests/test_indexer.py`). (b) 헤더 함수 정의가 있는 ATOM 실표본 측정은 아직이다.)
 
 ## 9. 부록 — 재현 절차
 
