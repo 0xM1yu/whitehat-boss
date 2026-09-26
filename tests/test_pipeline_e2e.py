@@ -266,7 +266,7 @@ def _poolify(mode: str | None):  # noqa: ANN202
     return configure
 
 
-def _poolify_v3():  # noqa: ANN202
+def _poolify_v3(mode: str | None = None):  # noqa: ANN202
     """`dev_fake`를 **v3** Scout 풀로 바꾼다 — `_poolify`(v2)와 달리 ScoutResponse 경로를 태운다.
 
     v3 scout 프롬프트는 `output_schema: ScoutResponse`라, fake가 `Candidate`가 아니라
@@ -274,6 +274,9 @@ def _poolify_v3():  # noqa: ANN202
     필드가 없다) `scout._ask_model`이 래퍼를 풀어 안쪽 `candidate`에 직접 stamp한다.
     커밋된 fake 키는 v1(`fake`)·v2(`fake_v2`)뿐이라, v3 fake 엔트리는 여기서 조립한다
     (models.yaml 주석대로 in-test — `fake`를 복사해 버전만 v3로).
+
+    `mode`는 `_poolify`와 같은 자리다(`execution.mode`) — 두 실행 모드에서 v3 풀을 재는
+    검사가 매번 이 조립을 새로 쓰지 않게 한다.
     """
     def configure(config):  # noqa: ANN001, ANN202
         models = {
@@ -289,9 +292,59 @@ def _poolify_v3():  # noqa: ANN202
             "embedding": "fake",
             "reranker": "fake",
         }
-        return config.transition(models=models, profile=config.profile.transition(roles=pool))
+        updates: dict[str, object] = {"roles": pool}
+        if mode is not None:
+            from src.config import ExecutionPolicy
+
+            updates["execution"] = ExecutionPolicy(mode=mode)
+        return config.transition(models=models, profile=config.profile.transition(**updates))
 
     return configure
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_every_seats_hop0_finishes_before_any_seats_settle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """4단계는 개시(hop0)와 정착으로 나뉜다(계획 §7-2) — **모든 좌석의 개시가 어느 좌석의
+    정착보다 먼저 끝난다.**
+
+    per_stage는 표를 단계 순서로 도는 것만으로 성립한다(`_run_stage_for_all`을 개시로 한
+    번, 정착으로 한 번 돈다). per_candidate는 target마다 국면 A(전 좌석 개시) → 국면
+    B(국면 A에서 살아남은 좌석마다 정착)로 다시 짠다 — 예전에는 좌석 하나가 개시부터
+    게이트까지 관통한 뒤에야 다음 좌석으로 갔다. 동료 확인(peer review)이 이 순서에
+    기댄다 — 국면 B가 시작될 때는 이미 전 좌석의 hop0 신호를 알아야 한다.
+    """
+    from src.orchestrator.nodes import scout as scout_node
+
+    events: list[str] = []
+    original_open = scout_node.open_session
+    original_finish = scout_node.finish
+
+    def spy_open(*args: object, **kwargs: object) -> object:
+        session = original_open(*args, **kwargs)
+        events.append(f"open:{session.role.value}")
+        return session
+
+    def spy_finish(*args: object, **kwargs: object) -> object:
+        result = original_finish(*args, **kwargs)
+        session = args[1] if len(args) > 1 else kwargs["session"]
+        events.append(f"finish:{session.role.value}")
+        return result
+
+    monkeypatch.setattr(scout_node, "open_session", spy_open)
+    monkeypatch.setattr(scout_node, "finish", spy_finish)
+
+    _run(tmp_path, configure=_poolify_v3(mode))
+
+    opens = [e for e in events if e.startswith("open:")]
+    finishes = [e for e in events if e.startswith("finish:")]
+    assert len(opens) == 3, f"좌석 셋의 개시를 기대했는데: {opens}"
+    assert len(finishes) == 3, f"좌석 셋의 정착을 기대했는데: {finishes}"
+    first_finish_at = events.index(finishes[0])
+    assert all(events.index(o) < first_finish_at for o in opens), (
+        f"어떤 정착이 어느 개시보다 먼저 일어났다 — 순서: {events}"
+    )
 
 
 def test_scout_pool_v3_unwraps_scout_response_and_stamps_member(tmp_path: Path) -> None:
@@ -3441,19 +3494,34 @@ def test_the_triage_table_covers_stages_three_to_six_in_order() -> None:
 
     두 실행 모드가 이 표 하나를 읽으므로(`_triage_by_candidate`·`_triage_by_stage`),
     표가 곧 「3~6단계가 무엇인가」의 정의다. 단계를 더하거나 빼면 여기가 먼저 바뀐다.
+
+    ⚠ **4단계(Scout)가 두 행이다**(계획 §7-2) — 개시(hop0)와 정착(동료 확인 →
+    need_evidence 루프 → 판정)으로 나뉜다. 둘 다 `Stage.SCOUT`이라 `_triage_by_stage`의
+    단계 컷(`last < stage`)은 그대로고, `_run_stage_for_all`이 이 표를 따라 한 번은
+    개시로, 한 번은 정착으로 전 target을 돈다 — 모든 좌석의 개시가 어느 정착보다 먼저
+    끝나는 것이 그래서 성립한다.
     """
     assert [stage for stage, _ in runner._TRIAGE_STEPS] == [
         Stage.RETRIEVAL,
         Stage.SCOUT,
+        Stage.SCOUT,
         Stage.AUDITOR,
         Stage.GATE,
+    ]
+    assert [step.__name__ for _, step in runner._TRIAGE_STEPS] == [
+        "_step_retrieval",
+        "_step_scout_open",
+        "_step_scout_settle",
+        "_step_auditor",
+        "_step_gate",
     ]
 
 
 @pytest.mark.parametrize(
     ("step", "field", "stage_pair"),
     [
-        (runner._step_scout, "capsule", "4단계가 3단계보다"),
+        (runner._step_scout_open, "capsule", "4단계가 3단계보다"),
+        (runner._step_scout_settle, "scout_session", "정착이 개시보다"),
         (runner._step_auditor, "candidate", "5단계가 4단계보다"),
         (runner._step_gate, "finding", "6단계가 5단계보다"),
     ],
