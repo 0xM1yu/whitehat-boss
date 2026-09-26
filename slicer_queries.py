@@ -263,7 +263,13 @@ CASE_A_CALL_LIMIT = 1
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
 #  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
-CASE_A_CANDIDATE_CAP = 2000
+# ⏵ 2026-09-26 — 2,000 → 4,000 (가설, 미확정 · WIP). 2026-09-26 injection 후보포착 측정에서
+# injection sample_13 source `ra_svn_open`이 READER를 직접 부르는데 Case A 후보로 안 잡혔고,
+# 큰 저장소(subversion)에서 `readers` 집합이 2,000 캡에 밀린 것이 유력하나 **미확인**이다(CPG
+# 재빌드가 있어야 확정). 재측정으로 (a) 그 source가 회수되는지 (b) 늘어난 후보의 per-candidate
+# 비용이 감당되는지(#250 뒤 캡은 그 비용을 묶는다 — 위)를 확인하고, 안 맞으면 되돌린다. 4,000은
+# 측정 전 잠정치다(§0 — 확정 수치 아님). 이 PR은 draft다.
+CASE_A_CANDIDATE_CAP = 4000
 
 
 def candidates_a_query() -> str:
