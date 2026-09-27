@@ -56,7 +56,7 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 **한 번 호출되는 핸들러 진입점**(예: TLS `client_handle_hello`)을 놓치므로 K회 이하로 완화한다
 (#219). 완화된 집합은 대형 저장소에서 폭증한다. 예전에는 그 payload가 Joern stdout을 넘겨
 슬라이스가 통째로 실패했는데, #250이 payload를 파일로 옮겨 그 overrun은 사라졌다. 그래도
-`CASE_A_CANDIDATE_CAP`(기본 2000)로 유계하는 것은 후보 수(와 하류 per-candidate 비용)를 묶기
+`CASE_A_CANDIDATE_CAP`으로 유계하는 것은 후보 수(와 하류 per-candidate 비용)를 묶기
 위해서다 — 입력 API 호출자는 집합이 작아 유계 대상이 아니다. 소속 함수 파라미터에서 CPG의 호출 인자로 이어지는
 `reachableByFlows` 경로를 구한다. 함수별 sink batch를 유지한다. 매개변수 없는 reader는
 0경로일 수 있다.
