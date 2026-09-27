@@ -81,6 +81,10 @@ class Slice:
     members: tuple[str, ...]
     lines: tuple[tuple[str, int], ...]
     code: str
+    # anchor-only 대체 슬라이스(#307): flow/backward 질의가 실패·건너뛴 후보라 dataflow 문맥이
+    # 없다. 슬라이서가 `slices.json`에 이 marker를 남기는데, 러너가 안 실으면 consumer가 절단
+    # 슬라이스를 full로 오인한다(@danielcho02 #307 리뷰). 기본 False라 정상 슬라이스는 영향 없다.
+    degraded: bool = False
 
     @property
     def given_end(self) -> str:
@@ -179,6 +183,7 @@ def _slice(item: dict) -> Slice:
         members=tuple(str(m) for m in item["members"]),
         lines=tuple((str(p["file"]), int(p["line"])) for p in item["lines"]),
         code=code,
+        degraded=bool(item.get("degraded", False)),
     )
 
 
