@@ -176,7 +176,12 @@ class SlicingStages:
         a consumer sees the anchor, not a traced slice, and can `--resume` for the full slice.
         """
         entry = candidate["entry"]
-        anchors = self.points(candidate["anchors"]) | {(entry["file"], entry["line"])}
+        # Normalize WITHOUT counting (#307 review LOW): in the except-QueryError path
+        # slice_candidate already ran self.points on these anchors, folding their unmapped count
+        # into locations_unmapped -- re-counting here via self.points would double-count that
+        # diagnostic. normalize_points is the count-free path.
+        mapped, _ = normalize_points(candidate["anchors"], self.sources, self.repo)
+        anchors = set(mapped) | {(entry["file"], entry["line"])}
         points = sorted(anchors)
         return {
             "id": candidate["id"],
@@ -263,6 +268,17 @@ class SlicingStages:
                 degrade_only = False
                 for candidate in self.candidates:
                     if degrade_only:
+                        # A prior run may have already completed this candidate's full slice (a
+                        # "complete" checkpoint). That reuse needs NO server, so restore it rather
+                        # than degrading a slice we already have -- degrading it would drop the full
+                        # dataflow that `--resume` promises to keep (#307 review HIGH).
+                        state = self.restore_stage(candidate)
+                        if state["phase"] == "complete":
+                            self.increment("candidates_reused")
+                            if state["item"] is not None:
+                                self.completed.append(state["item"])
+                            self.processed += 1
+                            continue
                         if not self.points([candidate["entry"]]):
                             self.increment("candidates_unmapped")
                             self.processed += 1
@@ -278,8 +294,10 @@ class SlicingStages:
                         # abort used to propagate to the outer handler and discard every remaining
                         # candidate (#219). Record it, and instead of DROPPING this candidate's
                         # slice, emit an anchor-only degraded slice so its capture survives into
-                        # the output (the checkpoint stays "pending", so --resume re-attempts a
-                        # full slice).
+                        # the output. The checkpoint is left at its last saved phase -- "pending"
+                        # for a flows/backward-query failure (nothing saved yet), or "flow_saved"
+                        # for a context (expand_context) failure -- so --resume re-attempts from
+                        # there (a context failure resumes the saved flow, not from scratch).
                         self.increment("candidates_failed")
                         self.event(
                             "candidate_failed",
