@@ -30,6 +30,23 @@ WRITERS = (
 # (not full) coverage.
 CASE_B_WRITER_CAP = 2000
 
+# Injection sinks (2026-09-26 injection candidate-capture measurement). The injection eval set's
+# GT sinks are command/SQL execution, not memory writes: sample_13's sink `make_tunnel` calls
+# `apr_proc_create` (process spawn) and matched NONE of READERS/WRITERS/operator patterns, so it
+# was never a Case B candidate. This mirrors WRITERS -- a call to one of these is a sink whose
+# arguments (all of them, like WRITERS -- backward_b seeds every sink arg, not only the command/
+# query string) are backtracked. Names are the standard command-exec and
+# DB-query APIs plus `apr_proc_create` (the one observed in the measured miss). Measured on a local
+# candidate-capture run (no persisted run_id); the durable figure comes from the full slicing run.
+EXEC_SINKS = (
+    "system|popen|wsystem|_wsystem|"
+    "execl|execlp|execle|execv|execvp|execvpe|execve|execveat|"
+    "posix_spawn|posix_spawnp|apr_proc_create|CreateProcess|CreateProcessA|CreateProcessW|"
+    "sqlite3_exec|sqlite3_prepare|sqlite3_prepare_v2|sqlite3_prepare_v3|sqlite3_prepare16|"
+    "mysql_query|mysql_real_query|PQexec|PQexecParams|PQprepare"
+)
+CASE_B_EXEC_CAP = 2000
+
 # Operator-anchored sinks (#219 follow-up). Operator/deref sinks are the biggest GT bucket
 # (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). This PR anchors the two of
 # those it can narrow and bound: array-index WRITES (a subset of the 10) and pointer arithmetic
@@ -50,18 +67,20 @@ CASE_B_WRITER_CAP = 2000
 #     Integer-only arithmetic (both operands plain ints) drops out.
 # PER-ANCHOR bound (not a single total): this cap is applied to indexWrites AND to ptrArith
 # separately, so the operator population is bounded by 2*cap (<=4000), and with WRITERS
-# (CASE_B_WRITER_CAP) the new-sink total is bounded by <=6000. A repo past a cap gets bounded
+# (CASE_B_WRITER_CAP) and EXEC_SINKS (CASE_B_EXEC_CAP) the new-sink total is bounded by
+# <=8000. A repo past a cap gets bounded
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
 # The flows query targets memory-write sink calls instead of every call argument in the repo
 # (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
 # dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
-# sink universe to the dominant GT sink types (writers + write/pointer operators -- the same
-# calls Case B enumerates) keeps the dataflow bounded. The argument set is capped again after
-# the union so one huge repo cannot reinflate it. ⚠ This narrows recall: sinks past the cap,
-# and the local-array/double-free categories Case B also flags, are not targeted as flow sinks
-# (candidate enumeration still captures them). The before/after miss-rate is measured on ATOM.
+# sink universe to the dominant GT sink types (writers + command/SQL-exec sinks + write/pointer
+# operators -- the same calls Case B enumerates) keeps the dataflow bounded. The argument set is
+# capped again after the union so one huge repo cannot reinflate it. ⚠ This narrows recall:
+# sinks past the cap, and the local-array/double-free categories Case B also flags, are not
+# targeted as flow sinks (candidate enumeration still captures them). The before/after miss-rate
+# is measured on ATOM.
 FLOWS_SINK_CAP = 2000
 
 
@@ -312,6 +331,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .map(_.distinct).filter(_.size >= 2).toList
       val repeatedCalls = repeated.flatten.distinct
       val writers = cpg.call.name("(__WRITERS__)").take(__WCAP__).l
+      val execs = cpg.call.name("(__EXECS__)").take(__ECAP__).l
       // Operator anchors, narrowed before .take so the cap bounds a real subset (#219).
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
@@ -321,7 +341,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty).take(__OPCAP__).l
       val operators = (indexWrites ++ ptrArith).distinct
-      ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ operators).distinct.map(c => {
+      ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ execs ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
         ujson.Obj("symbol" -> c.name, "file" -> c.location.filename,
           "line" -> c.lineNumber.getOrElse(-1), "scope" -> scope(c.method),
@@ -330,6 +350,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
             Option.when(arrays.contains(c))("local_array_argument"),
             Option.when(repeatedCalls.contains(c))("repeated_release"),
             Option.when(writers.contains(c))("dangerous_write"),
+            Option.when(execs.contains(c))("injection_sink"),
             Option.when(indexWrites.contains(c))("index_write"),
             Option.when(ptrArith.contains(c))("pointer_arithmetic")).flatten),
           "trigger_arguments" -> ujson.Arr.from(c.argument.l.filter(a =>
@@ -337,7 +358,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
               .exists(_.typeFullName.contains("[")) ||
             (repeatedCalls.contains(c) && positions.getOrElse(c.name, Nil)
               .contains(a.argumentIndex)) ||
-            writers.contains(c) || operators.contains(c)).map(argumentInfo)),
+            writers.contains(c) || execs.contains(c) || operators.contains(c)).map(argumentInfo)),
           "sink_arguments" -> ujson.Arr.from(c.argument.l.map(argumentInfo)),
           "anchors" -> ujson.Arr.from(anchors.map(loc)))
       }))
@@ -345,7 +366,9 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
     )
     body = (
         body.replace("__WRITERS__", WRITERS)
+        .replace("__EXECS__", EXEC_SINKS)
         .replace("__WCAP__", str(CASE_B_WRITER_CAP))
+        .replace("__ECAP__", str(CASE_B_EXEC_CAP))
         .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
     )
     return file_envelope("case_b", body)
@@ -382,11 +405,13 @@ def flows_query(
       // Recall-preserving hybrid (#252 review HIGH-2/3). Inside the candidate methods EVERY
       // call argument is a sink -- cheap (few methods) and it keeps the deref/field and
       // index-READ GT sink types that a memory-write-only set drops, and keeps the live-probe
-      // fixtures' calls anchored. Globally, narrow to memory-write calls (capped) so the
-      // per-candidate cross-repo dataflow stays under the deadline (#219). Cheap name/AST
-      // filters only (no dataflow) -- keep the writers/operators in sync with candidates_b_query.
+      // fixtures' calls anchored. Globally, narrow to memory-write and command/SQL-exec calls
+      // (capped) so the per-candidate cross-repo dataflow stays under the deadline (#219). Cheap
+      // name/AST filters only (no dataflow) -- keep writers/execs/operators in sync with
+      // candidates_b_query.
       val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
       val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
+      val execSinks = cpg.call.name("({EXEC_SINKS})").take({CASE_B_EXEC_CAP}).l
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
           .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
@@ -394,7 +419,7 @@ def flows_query(
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty).take({CASE_B_OPERATOR_CAP}).l
-      val globalArgs = (writerSinks ++ indexWrites ++ ptrArith).distinct
+      val globalArgs = (writerSinks ++ execSinks ++ indexWrites ++ ptrArith).distinct
         .flatMap(_.argument).filter(n => Option(n.method).nonEmpty).distinct
       val sinksCapped = globalArgs.size > {FLOWS_SINK_CAP}
       val globalKept = globalArgs.sortBy(n => (
