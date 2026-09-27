@@ -51,8 +51,10 @@ CASE_B_EXEC_CAP = 2000
 # (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). The write-context anchors
 # narrow-and-bound: array-index WRITES (subset of the 10), deref/field WRITES (`p->x=`·`*p=`·
 # `s.f=`, subset of the 12 -- added 2026-09-26), and pointer arithmetic (3). Array-index and
-# deref/field READS are still NOT anchored (a documented recall limit -- reads are ~2x the writes
-# and mostly benign). Raw operators explode, so narrow BEFORE taking, then cap. All
+# deref/field READS are still NOT anchored (a documented recall limit). The ~2x reads-to-writes
+# ratio below was measured for ARRAY-INDEX only (mostly benign bounds-checked reads); the
+# deref/field read/write ratio is NOT measured -- do not assume ~2x there. Raw operators explode,
+# so narrow BEFORE taking, then cap. All
 # counts below are ATOM measurements recorded in
 # docs/experiments/harness/2026-09-22-case-b-operator-anchors-atom.md (run_id: none). WavPack
 # (1020 methods):

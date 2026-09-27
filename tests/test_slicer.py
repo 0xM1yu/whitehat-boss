@@ -747,6 +747,13 @@ def test_case_b_query_anchors_deref_field_writes_in_write_context():
         start = query.index(anchor)
         seg = query[start : query.index(".take(", start) + 6]
         assert ".filter(" in seg and seg.index(".filter(") < seg.index(".take(")
+    # derefWrites shares its operator name with ptrArith's filter, so `.index(name)` would hit
+    # the wrong spot -- anchor on its `val` line (#308 review MED). Its narrowing filter
+    # (assignment-LHS, write context) must also precede .take(cap); otherwise raw field/deref
+    # writes -- the 3万+ population this anchor is bounded against -- flow back uncaught.
+    dstart = query.index("val derefWrites =")
+    dseg = query[dstart : query.index(".take(", dstart) + 6]
+    assert ".filter(" in dseg and dseg.index(".filter(") < dseg.index(".take(")
 
 
 def test_noncode_delimiters_do_not_change_structure():
