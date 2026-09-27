@@ -190,6 +190,18 @@ _CXX_SUFFIXES = (".cc", ".cpp")
 # (`slicer_compile.py`의 generated_headers).
 _INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc", ".h")
 
+# ⚠ 스모크 브랜치(`smoke/ne-loop-atom`, 머지 안 함) 전용 — 인덱서에 128 KiB 넘는 `.h`를 안 넘긴다.
+# 2026-09-27 ATOM: sample_07(libwebsockets)에서 그림·폰트 바이트 배열 헤더(최대 3.0 MB)가 섞여
+# 인덱서가 샌드박스 300 s를 넘겼다(exit 124, index.json 없음). 그 10개만 빼니 19 s에 끝났다.
+_SMOKE_INDEX_HEADER_MAX_BYTES = 128 * 1024
+
+
+def _smoke_skip_big_header(tool: str, path: Path) -> bool:
+    if tool != INDEX_TOOL or path.suffix != ".h":
+        return False
+    return path.stat().st_size > _SMOKE_INDEX_HEADER_MAX_BYTES
+
+
 # 컴파일 방언. **clang을 쓰는 모든 도구가 같은 값을 쓴다 — 단 그 규칙은 언어 안에서만
 # 성립한다.**
 #
@@ -806,7 +818,7 @@ class ContainerToolRunner:
             compile_sources=[
                 _in_container(self.root, path)
                 for path in sources(resolved)
-                if path.suffix in suffixes
+                if path.suffix in suffixes and not _smoke_skip_big_header(tool, path)
             ],
             cwd=_in_container(self.root, resolved if resolved.is_dir() else resolved.parent),
         )
