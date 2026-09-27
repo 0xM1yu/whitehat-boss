@@ -56,6 +56,7 @@ possible path, kept the statements that reach it, and dropped the rest of the pr
 
 - `given_end: "source"` — cut forward. You are told where a value enters, usually an entry point and its parameters. Which operation that value eventually reaches is NOT given; finding it, or establishing that it reaches none that matters, is your work.
 - `given_end: "sink"` — cut backward. You are told one operation the slicer thought worth examining. Where its inputs come from is NOT given; tracing them back is your work.
+- `degraded: true` — the slicer's dataflow query for this candidate FAILED or was skipped, so this slice is an anchor-only fallback: it kept ONLY the given end's own statements, NOT the path reaching it. The "kept the statements that reach it" above does NOT hold for it. Treat the code as just the given end's neighbourhood, lean on the capsule (`callers`/`callees`) and your own reading rather than a traced path, and do not assume an absent path means safe — record the missing reach as unknown.
 
 The given end is a selection heuristic, not a finding and not a verdict. It was chosen by a
 pattern - an entry point, a call with a fixed-size destination, a pointer that reaches a release routine twice - and most slices selected that way contain nothing wrong. Three consequences:
