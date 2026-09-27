@@ -526,8 +526,9 @@ def test_a_streak_of_poisoned_candidates_switches_to_degraded_not_stop(monkeypat
     # captured (that capture is the recall unit). Instead of ABORTING the run -- which dropped
     # every remaining candidate's slice, leaving them unprocessed -- the run switches to
     # anchor-only degraded slices without querying the server. No captured candidate is lost:
-    # every one is processed and appears in slices.json marked `degraded`, and the checkpoint
-    # stays "pending" so --resume re-attempts full slices after the server is restarted.
+    # every one is processed and appears in slices.json marked `degraded`, and each candidate's
+    # checkpoint is left at its last saved phase (pending for a query-stage failure) so --resume
+    # re-attempts from there after the server is restarted.
     cands = [candidate("c" + str(i), i + 1) for i in range(6)]
     data = payloads(case_a=cands, flow_count=2)
 
@@ -543,6 +544,14 @@ def test_a_streak_of_poisoned_candidates_switches_to_degraded_not_stop(monkeypat
     assert result["counters"]["candidates_not_processed"] == 0
     assert result["counters"]["candidates_degraded"] == len(cands)
     assert result["slices"] and all(s.get("degraded") for s in result["slices"])
+    # §2.5 (#307 review): a degraded slice must still CARRY the candidate's capture coords --
+    # a degraded_slice that returned empty lines/code would silently lose the capture this PR
+    # exists to keep, yet the counter/marker asserts above would still pass. Bind the coords:
+    # every candidate's entry line must appear in some slice, and no slice is empty.
+    all_lines = {(p["file"], p["line"]) for s in result["slices"] for p in s["lines"]}
+    for i in range(len(cands)):
+        assert ("main.c", i + 1) in all_lines
+    assert all(s["lines"] and s["code"] for s in result["slices"])
 
 
 @pytest.mark.parametrize("truncated", [False, True])
