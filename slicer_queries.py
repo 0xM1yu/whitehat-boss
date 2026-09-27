@@ -271,8 +271,10 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
 CASE_A_CALL_LIMIT = 1
 # The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
 # a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
-# and the whole slice aborted (0 slices). Measured: capping turns sample_01's abort into 2,198
-# candidates (2,000 api + 198 readers on THAT sample). Both `api` and `readers` are capped:
+# and the whole slice aborted (0 slices). Measured at the earlier cap 2,000 (before #310):
+# capping turned sample_01's abort into 2,198 candidates (2,000 api + 198 readers on THAT
+# sample). At cap 4,000 sample_01's api set -- which hit the cap -- can reach up to 4,000, so this
+# 2,198 is a cap-2,000 figure, not the current cap's. Both `api` and `readers` are capped:
 # readers is not guaranteed small (it is every internal method calling read/getc/getline/mmap/…),
 # so an uncapped readers set could overrun the same way on a repo with many such methods.
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
@@ -282,7 +284,16 @@ CASE_A_CALL_LIMIT = 1
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
 #  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
-CASE_A_CANDIDATE_CAP = 2000
+# ⏵ 2026-09-26 — 2,000 → 4,000. 2026-09-26 injection 후보포착(level-2) 재측정에서 injection
+# sample_13 source `ra_svn_open`(subversion, READER 직접 호출)이 2,000 캡에선 Case A 후보로 안
+# 잡히다가 4,000에서 잡혔다 — **source 회수(+4)는 확정(level-2)**이다. 단 `.take`가 불안정 CPG
+# traversal 순서라 이 회수는 readers 총수 < 4,000일 때만 보장된다(위 「unspecified first-N」).
+# **미측정으로 남은 것은 full-slice(level-3) 비용뿐**이다 — 늘어난 후보의 per-candidate flows_a
+# (Joern/Python 슬라이서 단계라 하네스 모델 장부의 gpu_seconds가 아니라 query deadline·wall 시간·
+# candidate timeout으로 잰다)에 별도 상한이 없어, 후보가 2배가 되면 애초에 이 캡이 막으려던
+# 0-slices 실패로 되돌 수 있는지는 level-3 실측이 필요하다(#250 뒤 캡은 그 비용을 묶는다 — 위).
+# 그 비용이 감당 안 되면 되돌린다.
+CASE_A_CANDIDATE_CAP = 4000
 
 
 def candidates_a_query() -> str:
