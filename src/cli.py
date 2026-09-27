@@ -544,9 +544,13 @@ def _scout_places(config: HarnessConfig) -> int:
 
 
 def _expected_calls(config: HarnessConfig, capsules: int) -> int:
-    """후보 하나당 scout 1회, 승격되면 auditor 1회, 상위만 critic 1회.
+    """후보 하나당 scout **`1 + max_hops`**회(need_evidence 상한), 승격되면 auditor 1회,
+    상위만 critic 1회.
 
-    승격률을 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이 무의미해진다.
+    승격률도 NE 홉 수도 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이
+    무의미해진다. Scout 쪽이 특히 그렇다 — v3 좌석이 매번 `max_hops`까지 되물으면 그
+    상한까지 GPU 시간이 실제로 든다(ADR 0012 결정 2). v1·v2(신호 없음)는 늘 1회뿐이라
+    이 상한을 안 채우지만, 예산은 **최악을 견뎌야** 하므로 여기서 낙관하지 않는다.
 
     **⚠ 캡슐 수와 후보 수는 같지 않다.** 캡슐은 **target당 하나**인데(ADR 0010 §3 —
     풀 멤버 셋이 같은 캡슐을 공유한다) 4단계는 **자리마다 한 번** 돈다. 그래서 후보가
@@ -555,7 +559,9 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
     """
     candidates = capsules * _scout_places(config)
-    return candidates * 2 + min(candidates, config.thresholds.critic_top_n)
+    scout_calls = candidates * (1 + config.thresholds.max_hops)
+    auditor_calls = candidates
+    return scout_calls + auditor_calls + min(candidates, config.thresholds.critic_top_n)
 
 
 def _prefix_tokens(config: HarnessConfig) -> int:

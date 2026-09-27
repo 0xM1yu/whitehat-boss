@@ -293,8 +293,8 @@ class NeStopReason(StrEnum):
     하네스가 붙였다. 그 여섯 밖은 `PEER_REVIEW`(같은 ADR이 붙인 제안 초안)와
     `CONTEXT_OVERFLOW`·`BUDGET_EXHAUSTED`·`GATEWAY_ERROR`(하네스가 더한 실행 실패)다.
 
-    이 열거형은 **자리만 연다** — 실제로 루프를 돌며 이 값을 내는 코드는 need_evidence
-    루프 자신이다(Phase 5).
+    이 값을 내는 것은 `runner._run_ne_hops`(와 동료 확인)이고, 홉 이벤트(`SCOUT_HOP`)의
+    `stop_reason`으로 남는다.
     """
 
     TRIAGE_REVIEW = "triage_review"

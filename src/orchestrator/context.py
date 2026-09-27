@@ -45,6 +45,7 @@ from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
+from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import RunRecord
 
 # 도구 실행은 토큰을 쓰지 않는다. 매번 만들지 않도록 상수로 둔다.
@@ -141,6 +142,11 @@ class RunContext:
     # 호출 경로(단위 테스트, `--dry-run`)에서 빈 참조를 남기면 "안 썼다"와 "쓸 곳이
     # 없었다"가 구별되지 않는다.
     prompts: PromptLog | None = None
+    # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 이 run에 resolver가 없다
+    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 노드는
+    # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
+    # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
+    resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
 
