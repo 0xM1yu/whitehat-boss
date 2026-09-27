@@ -109,12 +109,13 @@ def _error_storm(events: list[dict], k: int) -> bool:
     풀 멤버 셋에서 각 1회씩 죽는 것(자리별 1)은 storm이 아니다(차단기도 안 터진다).
 
     ⚠ **차단기와 값(K)·역할 축은 맞추되, systematic 축 하나가 근사로 남는다.** `role`은
-    `target_skipped.scout_member`에 실려 있어 위처럼 자리별로 세지만, `_drop`이 `systematic`
-    (크기 거절 400/413을 카운터에서 빼는 그 구분)은 trace에 안 싣는다 — 400/413도 real
-    gateway 실패와 똑같이 `gateway_error`로만 남는다. 그래서 **크기 거절이 한 자리에서 K회
-    연속되면 오탐이 난다**(차단기는 그것을 일부러 안 센다, `_MAX_CONSECUTIVE_DROPS` 주석).
-    이 오탐을 없애려면 `_emit_skipped`가 `status`(또는 `systematic`)를 한 필드 실어야 하고,
-    그건 이 폴러 밖(러너)이다. 여기서는 그 한계를 명시만 한다.
+    `target_skipped.scout_member`에 실려 있어 위처럼 자리별로 세지만, `_drop`이 크기 거절
+    (413과 컨텍스트 초과 문구의 400, `runner._is_size_rejection`)을 카운터에서 빼는 그 구분은
+    trace에 판정으로 안 실린다 — 크기 거절도 real gateway 실패와 똑같이 `gateway_error`로만
+    남는다. 그래서 **크기 거절이 한 자리에서 K회 연속되면 오탐이 난다**(차단기는 그것을 일부러
+    안 센다, `_MAX_CONSECUTIVE_DROPS` 주석). 이 오탐을 없애려면 폴러가 `error_detail`에 러너와
+    같은 판정을 걸거나 `_emit_skipped`가 판정을 한 필드 실어야 하고, 그건 이 PR 밖이다. 여기서는
+    그 한계를 명시만 한다. 크기가 아닌 400은 러너가 첫 건에서 멈추므로(#296) 사후 판정이 잡는다.
     """
     if k <= 0:
         return False
