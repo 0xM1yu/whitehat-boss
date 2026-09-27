@@ -30,7 +30,7 @@
 
 | 항목 | 결과 |
 | --- | --- |
-| **모델이 받는 입력이 바뀌는가** | **표본 셋에서는 안 바뀐다.** 슬라이스 241개를 main(index-v1)과 이 PR(index-v2)로 태운 fake run의 프롬프트 **412/412개가 바이트 동일**하다(`run_id`만 정규화 — Scout·Auditor·Critic 전부). ⚠ 표본 헤더에 함수 정의가 0개라서다 — 헤더에 정의가 있는 저장소에서는 그 정의가 심볼·간선이 되어 캡슐이 움직일 수 있고, 그런 표본은 안 쟀다(§5) |
+| **모델이 받는 입력이 바뀌는가** | **표본 셋에서는 안 바뀐다.** 슬라이스 241개를 main(index-v1)과 이 PR(index-v2)로 태운 fake run의 프롬프트 **412/412개가 바이트 동일**하다(`run_id`만 정규화 — Scout·Auditor·Critic 전부). ⚠ 표본 헤더에 함수 정의가 0개라서다 — 헤더에 정의가 있는 저장소에서는 그 정의가 심볼·간선이 되어 캡슐이 움직일 수 있고, 그런 표본은 안 쟀다(§5). (⏵ 2026-09-26 저녁 — 쟀다. 헤더 정의가 있는 평가 표본 sample_24에서는 **바뀐다**: Scout 프롬프트 207개 중 53개, Auditor 94개 중 23개 — §7) |
 | v1 필드 | `symbols`·간선이 표본 셋 모두 **같다**(98·83·466 심볼 / 750·498·3,015 간선). `auditor_source` 이벤트도 같다 |
 | 헤더 | 인덱서가 헤더 1·2·15개를 더 받는다. **표본 셋 헤더에는 함수 정의가 0개**라 심볼·간선이 안 움직였다. 파싱 오류는 그 헤더만큼 는다(+1·+1·+9) |
 | 조회 표가 헤더에서 오는 몫 | sample_03 `macros` 707행 중 **489행(69%)**, `types` 100행 중 67행, `fields` 283행 중 144행이 헤더에서 왔다 — 헤더를 안 넘겼으면 빠졌을 행이다 |
@@ -163,6 +163,7 @@
 
 - **헤더에 함수 정의가 있는 저장소는 재지 않았다.** 표본 셋 헤더는 정의 0개라, 헤더 `static inline` 헬퍼가 캡슐 callers를
   채우거나 Auditor 앵커가 되는 경로는 이 run에서 안 탔다. 그 경우 캡슐이 바뀔 수 있고 섹션 구성(항목 수·섹션 유무)으로 봐야 한다.
+  (⏵ 2026-09-26 저녁 — §7이 헤더 정의가 있는 sample_24로 쟀다.)
 - **C++ 헤더를 C 문법으로 파싱한 품질은 재지 않았다**(표본에 C++ 0개).
 - main 쪽 v3 프롬프트를 실서빙하지 않았다 — 프롬프트가 바이트 동일하므로 서버가 세는 `input_tokens`도 같다는 것은 **추론**이다.
 - 탐지 품질·NE resolver 동작은 안 쟀다(resolver는 다음 단계다).
@@ -173,7 +174,96 @@
 - `fields` 주인 결함을 PR 안에서 고쳤다(`5661585` RED → `68d4de5` GREEN) — §3 끝.
 - 운영 창에서도 넘는 큰 슬라이스(§4 끝) — Scout 프롬프트 초과 결함 [D87](../../open-questions/D/D87.md)(PR #293에서 등재)의 관측으로 넘긴다.
 - 대상 트리 밖 헤더(`build_context/generated_headers`)는 여전히 인덱서에 안 온다 — 표본 셋에는 없지만 평가 표본에는 있다(슬라이서는 `-I`로 본다).
-- **헤더에 함수 정의가 있는 표본으로 다시 잰다**(§5 「말하지 않는 것」 첫 항목) — Phase 5가 이 인덱스에 기대기 전에 한다(PR #295 리뷰 LOW-2). 볼 것은 캡슐 섹션 구성(callers·callees 항목 수)과 Auditor 앵커다.
+- **헤더에 함수 정의가 있는 표본으로 다시 잰다**(§5 「말하지 않는 것」 첫 항목) — Phase 5가 이 인덱스에 기대기 전에 한다(PR #295 리뷰 LOW-2). 볼 것은 캡슐 섹션 구성(callers·callees 항목 수)과 Auditor 앵커다. (⏵ 2026-09-26 — (a) 메커니즘은 PR #301의 테스트 다섯 개가 핀했다: Auditor 앵커가 헤더 `static inline` 함수의 정확한 범위를 잡는 것(`tests/test_slice_targets.py`), 캡슐 `callers`·`callees`가 헤더에 정의된 함수를 담는 것(`tests/test_index_graph.py`), 비슬라이스 run에서 함수 정의가 있는 `.h`가 `_Target`을 더 만드는 것(`tests/test_pipeline_e2e.py`), 실 인덱서가 헤더 함수를 v1 `symbols`·v2 `functions` 표에 `file: util.h`로 내는 것(`tests/test_indexer.py`). (b) 헤더 함수 정의가 있는 ATOM 실표본 측정은 §7이다.)
+- **동시에 돈 run 둘이 컨테이너 이름을 겹쳐 도구가 조용히 실패한다** — §7 끝. §7의 첫 시도에서 드러났고 이슈 #303으로 넘겼다.
+
+## 7. 추가 측정 — 헤더에 함수 정의가 있는 표본 (sample_24, 2026-09-26 저녁)
+
+> **왜 쟀나.** §5 「말하지 않는 것」 첫 항목과 §6 — 표본 셋은 헤더 함수 정의가 0개라 헤더 `static inline` 함수가 캡슐 `callers`·`callees`와
+> Auditor 앵커에 들어오는 경로를 안 탔다. Phase 5(NE resolver)가 이 인덱스에 기대기 전에 재기로 했다. 확인하는 것은 §3과 같다 —
+> **모델이 받는 입력이 바뀌는가**다. 탐지 정확도를 잰 것이 아니다(모델은 전부 fake).
+
+### 메타
+
+| 항목 | 값 |
+| --- | --- |
+| 실험 종료 시각 | `2026-09-26 19:51 KST`(v2 쪽 재실행 종료) |
+| 장비 | ATOM `atom-host` — 착수 전 GPU 연산 프로세스·docker 컨테이너·다른 harness run 0, `MemAvailable` 115 GiB |
+| 모델 | 전부 fake — 프로필 `atom_index_v2_fake`(두 스모크 브랜치의 설정 커밋, §9) |
+| 두 트리 | v1 = `smoke/index-v2-atom-main` `edcf4ef`(→ `harness-tools:v1`) · v2 = `smoke/index-v2-atom` `0c2f7f2`(→ `harness-tools:v2`). 두 run 모두 `repo_dirty: false` |
+| `tool_images` digest | v1 `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` · v2 `sha256:09e5a5bf54d9c864b4a6f2502b0db9501bfbafc3df6920e7a392222899b1db47`(§메타와 같다) |
+| 표본 | 평가 표본 `sample_24` — ATOM `/srv/tenants/user/release-eval-slices-20260918/samples/sample_24/repo`(읽기만). `.h` 54개, `.c` 86개 |
+| 슬라이스 | 같은 디렉터리의 `runs/sample_24/export/slices.json`(2026-09-18 슬라이서 산출, 읽기만) — 207개, `run_signature` `b6f3e0e39a09…`. entry가 `.h`에 있는 것 23개, `.h` 줄을 지나는 것 50개 |
+| `run_id` | v1 `~/index-v2/artifacts/h-main/run_20260926_0002` · v2 `~/index-v2/artifacts/h-pr/run_20260926_0002`(날짜는 UTC). **버린 run 둘** — 같은 경로의 `run_20260926_0001` 둘(아래 「첫 시도」) |
+| 대조 스크립트 | `~/index-v2/compare_fake.py`(§9) · `~/index-v2/compare_caps.py`(이번에 새로 — **슬라이스 id로 짝짓는다**, 아래) |
+| 감시자 | `guard.sh`(§2와 같은 판) — 개입 0회 |
+
+**표본을 고른 방법.** 평가 표본 40개의 저장소를 `static inline … {` 꼴 정규식으로 훑으면 **26개**가 헤더에 그런 정의를 가진다
+[정규식 휴리스틱 — 선언·매크로를 섞을 수 있다]. 그중 슬라이서 산출(2026-09-18)이 비어 있지 않고 크기가 작은 것을 골랐다
+(sample_13·08은 슬라이스 0개였다).
+
+### 결과
+
+| 항목 | v1 | v2 |
+| --- | --- | --- |
+| 인덱스 파일 | 87(건너뜀 8 — 전부 `.inc`) | 149(건너뜀 0) — `.h` 54 + `.inc` 8 더 |
+| 심볼 · 간선 | 1,202 · 7,473 | 1,386 · 8,124 |
+| 파싱 오류 | 25 | 41(+11 `.h` · +5 `.inc`) |
+| v2 `functions` 행 중 헤더에서 온 것 | — | **130** |
+| 후보 · Finding(fake) | 207 · 94 | 207 · 94 |
+| 타깃 순서 · 정적 신호 파일 | 같다(207/207 같은 자리) · 19 | 같다 · 19 |
+
+**모델 입력** — 같은 슬라이스의 프롬프트끼리 짝지어, `run_id`·`cand_`·`ev_`·`find_` id를 정규화한 뒤 비교했다.
+
+| 역할 | 짝 | 같다 | 다르다 | 무엇이 다른가 |
+| --- | --- | --- | --- | --- |
+| Scout | 207 | 154 | **53** | 캡슐 `callers` 항목 **756 → 1,698**(44개 프롬프트) · `callees` **274 → 182**(41개) |
+| Auditor | 94 | 71 | **23** | FACTS 대상이 바뀐 5개 — 전부 헤더 entry다. v1은 50줄 창(심볼 없음, 예 `cutest.h` 292-392), v2는 헤더 함수의 정확한 범위(`test_error__` 342-361) · 걸친 함수에 헤더 `static inline`이 들어온다(예 `bitops.h`의 `rotl32`) |
+| Critic | 7 | 5 | 2 | `dec_` id 번호뿐(정규화 대상 밖) — 1건씩은 한쪽만 불렸다 |
+
+`auditor_source` — 94개 중 **23개**가 바뀐다. 걸친 함수 수가 늘고 `uncovered_lines`가 0으로 준다.
+- 예 `slice_0054`: 함수 2 → 4, 덮지 못한 줄 11 → 0.
+- 가장 큰 변화 `slice_0058`: 함수 1 → 9, 덮지 못한 줄 399 → 115, SOURCE 3,093 → 13,385자. 상한 15,000자 안이다.
+
+### 해석
+
+- **헤더에 함수 정의가 있으면 index-v2는 모델 입력을 바꾼다.** 표본 셋의 「412/412 동일」(§3)은 헤더 정의가 0개인 표본의 성질이었다.
+- **`callers`가 느는 것** — 헤더 함수가 인덱스의 정의가 되어, 그 함수로 들어오는 호출이 잡힌다. 예 `slice_0052`는 0 → 44건.
+- **`callees`가 주는 것** — 슬라이스가 걸친 헤더 줄 안에 정의된 callee는 이제 「본문 안에 정의」라 다시 싣지 않는다(#288의 슬라이스 본문 규칙). v1에서는 그 정의를 몰라 바깥 callee로 적었다.
+  - 예 `slice_0054`: `read32_le` 8건이 빠진다. 24 → 8이고, 빠진 것은 전부 `bitops.h`에 정의된 함수다.
+  - 설계대로다 — 이미 SOURCE에 보이는 정의를 중복으로 싣지 않는다.
+- **Auditor** — 헤더 entry가 50줄 창 대신 정확한 함수 범위를 받고, 슬라이스가 지나는 헤더 헬퍼가 SOURCE에 들어온다. PR #301의 테스트가 핀한 메커니즘이 실표본에서 그대로 돈다.
+
+### 말하지 않는 것
+
+- 표본 **하나**다. 26개 중 나머지의 크기는 안 쟀다.
+- 탐지 품질 — 모델이 fake라 Finding 94 = 94는 품질이 아니다.
+- 입력이 커진 만큼 실서빙 창(Scout 입력 몫 36,864토큰)에 미치는 영향은 안 쟀다. `callers` 1,698건은 [D87](../../open-questions/D/D87.md)(Scout 프롬프트 초과)과 같은 쪽으로 민다 **[추정]**.
+- `.inc` 8개를 C 문법으로 파싱한 품질(파싱 오류 +5)은 안 봤다.
+
+### 첫 시도 — 버렸다: 동시에 돈 run 둘이 컨테이너 이름을 겹쳤다
+
+- **무엇을 했나** — 처음에 두 트리의 run을 **동시에** 띄웠다.
+- **무엇이 겹쳤나** — 두 run은 artifacts 루트가 달라도 `run_id`가 둘 다 `run_20260926_0001`이다. 도구 컨테이너 이름은 `harness-{run_id}-{evidence_id}-{index}`(`src/adapters/container_tools.py:828`)라 두 run이 **같은 이름**을 만든다.
+- **결과** — 도구 호출 **12건씩**이 `docker run` exit 125로 실패했다(`h-main`·`h-pr`의 `run_20260926_0001`). v1은 인덱서가 실패해 인덱스가 아예 없었고(`graph_index: missing`), v2는 semgrep 일부가 실패했다(예 `boot.c` — `signal_artifacts` 19 → 16).
+- **그래도 두 run 다 「완주」였다.** Finding은 v1 84 · v2 60으로, 인덱스와 무관하게 벌어져 있었다.
+- **어떻게 했나** — 둘 다 **하나씩 따로** 다시 돌렸다(`run_20260926_0002`, exit 125 0건). 위 결과는 그 둘이다.
+- **하네스 결함이다** — 같은 장비에서 run 둘을 나란히 돌리면(Phase 7의 프로세스 병렬이 그 꼴이다) 도구 실패가 조용히 Evidence 결손이 된다. 이슈 #303으로 넘겼다.
+
+### 재현
+
+```bash
+MAX_HOURS=3 setsid nohup bash ~/index-v2/guard.sh > /dev/null 2>&1 < /dev/null &
+bash ~/index-v2/run_h.sh h-main ~/index-v2/wt-main ~/index-v2/artifacts/h-main atom_index_v2_fake /srv/tenants/user/release-eval-slices-20260918/samples/sample_24/repo /srv/tenants/user/release-eval-slices-20260918/runs/sample_24/export/slices.json
+bash ~/index-v2/run_h.sh h-pr ~/index-v2/wt ~/index-v2/artifacts/h-pr atom_index_v2_fake /srv/tenants/user/release-eval-slices-20260918/samples/sample_24/repo /srv/tenants/user/release-eval-slices-20260918/runs/sample_24/export/slices.json
+python3 ~/index-v2/compare_fake.py ~/index-v2/artifacts/h-main ~/index-v2/artifacts/h-pr
+python3 ~/index-v2/compare_caps.py ~/index-v2/artifacts/h-main ~/index-v2/artifacts/h-pr
+touch ~/index-v2/STOP_GUARD
+```
+
+- `run_h.sh`는 `run_chain.sh`의 변형이다 — 표본 저장소와 슬라이스 경로를 직접 받는다.
+- **두 run은 반드시 차례로 돈다**(위 「첫 시도」).
+- `compare_fake.py`의 프롬프트 줄은 파일 이름으로 짝지으므로, 타깃 순서가 다르면 틀린 짝을 비교한다. 슬라이스 단위 대조는 `compare_caps.py`로 한다.
 
 ## 9. 부록 — 재현 절차
 
