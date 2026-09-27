@@ -78,7 +78,12 @@ BODY_MARK = "<!-- body -->"
 
 
 def render(*, role: str, stage: int, prompt: Prompt) -> str:
-    """파일에 쓸 텍스트. 순번을 담지 않으므로 같은 프롬프트면 같은 문자열이다."""
+    """파일에 쓸 텍스트. 순번을 담지 않으므로 같은 프롬프트면 같은 문자열이다.
+
+    need_evidence 후속 턴(hop>0)도 같다 — 본문은 그 홉의 후속 텍스트뿐이고 history도
+    hop0 로그 참조도 싣지 않는다. 참조를 실으면 순번이 들어가 같은 요청의 해시가 실행
+    순서를 따라간다. 홉 사슬은 `model_call`의 (`subject_id`, `role`, `hop`)이 든다.
+    """
     return "\n".join(
         (
             HEADER.format(role=role, stage=stage, version=prompt.prompt_version),
@@ -113,21 +118,27 @@ class PromptLog:
     def directory(self) -> Path:
         return self._dir
 
-    def write(self, *, role: str, stage: int, prompt: Prompt) -> tuple[str, str]:
+    def write(
+        self, *, role: str, stage: int, prompt: Prompt, hop: int = 0
+    ) -> tuple[str, str]:
         """파일을 쓰고 `(run_dir 상대 경로, 내용 sha256)`을 돌려준다.
 
         **개행을 LF로 고정한다.** 기본값으로 두면 Windows에서 CRLF가 섞여, 같은 입력의
         두 실행이 장비에 따라 다른 `prompt_sha256`을 남긴다.
+
+        hop>0이면 파일명에 `_hop{k}`가 붙는다 — `_retryK`와 같은 자리에 나란히 쌓인다
+        (`…_hop1_retry1.md`). hop=0(기본값)은 지금까지의 이름·내용 그대로다.
         """
         self._seq += 1
-        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}.md"
+        suffix = f"_hop{hop}" if hop else ""
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}.md"
         text = render(role=role, stage=stage, prompt=prompt)
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
         return f"{DIR_NAME}/{name}", sha256_text(text)
 
     def write_retry(
-        self, *, role: str, stage: int, prompt: Prompt, index: int
+        self, *, role: str, stage: int, prompt: Prompt, index: int, hop: int = 0
     ) -> tuple[str, str]:
         """재시도 회차(`index`=1..)의 프롬프트를 **직전 `write`와 같은 순번**으로 남긴다.
 
@@ -138,9 +149,11 @@ class PromptLog:
 
         같은 `prompts/` 아래이므로 `eval/leakage`의 스캔이 이 파일도 본다 — **실제로 서버에
         간 요청**이 누출 검증 대상이 되는 것이 (a)의 목적이다(#80). LF 고정은 `write`와 같은
-        이유다(장비별 해시 흔들림 방지).
+        이유다(장비별 해시 흔들림 방지). hop 접미는 `write`와 같은 자리이고 `_retryK`보다
+        앞에 온다.
         """
-        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}_retry{index}.md"
+        suffix = f"_hop{hop}" if hop else ""
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}_retry{index}.md"
         text = render(role=role, stage=stage, prompt=prompt)
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")

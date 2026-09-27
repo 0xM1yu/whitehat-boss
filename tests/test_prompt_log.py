@@ -19,7 +19,7 @@ from src import cli
 from src.adapters.memory_store import InMemoryStateStore
 from src.config import load_config
 from src.ids import IdFactory, sha256_text
-from src.interfaces.model_client import ModelResult, Prompt, Usage
+from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, Usage
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
@@ -110,6 +110,63 @@ def test_write_retry_shares_the_first_seq_without_bumping(tmp_path: Path) -> Non
     assert b"\r\n" not in (tmp_path / retry).read_bytes()
 
 
+# --- hop (ADR 0012 결정 2 — need_evidence 되묻기의 후속 턴) --------------------
+
+
+def test_hop_greater_than_zero_gets_a_hop_suffixed_filename(tmp_path: Path) -> None:
+    """hop=0(기본값)은 지금과 같은 파일명이다. hop>0이면 `_hop{k}`가 붙는다."""
+    log = PromptLog(tmp_path)
+    followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
+
+    hop0_ref, _ = log.write(role="scout", stage=4, prompt=PROMPT)
+    hop1_ref, _ = log.write(role="scout", stage=4, prompt=followup, hop=1)
+
+    assert hop0_ref == f"{DIR_NAME}/0001_scout.md"
+    assert hop1_ref == f"{DIR_NAME}/0002_scout_hop1.md"
+
+
+def test_hop_retry_suffix_comes_after_the_hop_suffix(tmp_path: Path) -> None:
+    """`_retryK`는 `_hop{k}` 뒤에 붙는다 — 1차·재시도가 한 순번으로 묶이는 것과 같은 자리다."""
+    log = PromptLog(tmp_path)
+    followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
+
+    log.write(role="scout", stage=4, prompt=PROMPT)
+    log.write(role="scout", stage=4, prompt=followup, hop=1)
+    retry_ref, _ = log.write_retry(role="scout", stage=4, prompt=followup, index=1, hop=1)
+
+    assert retry_ref == f"{DIR_NAME}/0002_scout_hop1_retry1.md"
+
+
+def test_a_hop_log_hashes_the_same_whatever_its_sequence(tmp_path: Path) -> None:
+    """후속 턴 로그도 **순번을 담지 않는다** — `render()`의 불변식이 hop에서도 선다.
+
+    hop0 참조(`prompts/0001_…`)를 본문에 실으면 그 해시가 실행 순서를 따라간다 —
+    같은 요청이 per_stage와 per_candidate에서 다른 `prompt_sha256`을 받는다. 홉 사슬은
+    `model_call`의 (`subject_id`, `role`, `hop`)이 이미 든다.
+    """
+    followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
+    history = (ChatTurn(speaker="user", content=PROMPT.body),)
+    other = Prompt(prefix=PROMPT.prefix, body="다른 후보의 hop0", prompt_version="v1")
+
+    def hop1_call(ctx: RunContext) -> dict:
+        ctx.call_model(
+            role=Role.SCOUT, prompt=followup, schema=Candidate, stage=Stage.SCOUT,
+            history=history, hop=1,
+        )
+        return _model_calls(ctx)[-1]
+
+    early = _context(prompts=PromptLog(tmp_path / "early"))
+    early.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    late = _context(prompts=PromptLog(tmp_path / "late"))
+    late.call_model(role=Role.SCOUT, prompt=other, schema=Candidate, stage=Stage.SCOUT)
+    late.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    early_call, late_call = hop1_call(early), hop1_call(late)
+
+    assert early_call["prompt_ref"] != late_call["prompt_ref"]
+    assert early_call["prompt_sha256"] == late_call["prompt_sha256"]
+
+
 # --- RunContext 배선 ----------------------------------------------------------
 
 
@@ -119,7 +176,7 @@ class StubModelClient:
     def __init__(self, *, fail: bool = False) -> None:
         self._fail = fail
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         if self._fail:
             raise RuntimeError("구조화 출력 파싱 실패")
         value = Candidate(
@@ -142,7 +199,7 @@ class RetryingStubModelClient:
 
     RETRY_BODY = "후보별 본문\n\n[스키마 오류] 재시도가 실제로 보낸 것"
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201, ARG002
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
         value = Candidate(
             candidate_id="cand_0001",
             run_id=RUN_ID,
@@ -204,6 +261,28 @@ def test_wired_context_points_model_call_at_the_file(tmp_path: Path) -> None:
     assert data["prompt_ref"] == f"{DIR_NAME}/0001_scout.md"
     written = (tmp_path / data["prompt_ref"]).read_text(encoding="utf-8")
     assert data["prompt_sha256"] == sha256_text(written)
+
+
+def test_call_model_threads_hop_into_the_model_call_event_and_the_log_name(
+    tmp_path: Path,
+) -> None:
+    """`hop`은 `model_call`에 실리고, 그 홉의 1차 프롬프트 파일명에도 반영된다."""
+    ctx = _context(prompts=PromptLog(tmp_path))
+
+    ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    ctx.call_model(
+        role=Role.SCOUT,
+        prompt=PROMPT,
+        schema=Candidate,
+        stage=Stage.SCOUT,
+        history=(ChatTurn(speaker="user", content="이전 턴"),),
+        hop=1,
+    )
+
+    calls = _model_calls(ctx)
+    assert calls[0]["hop"] == 0
+    assert calls[1]["hop"] == 1
+    assert calls[1]["prompt_ref"] == f"{DIR_NAME}/0002_scout_hop1.md"
 
 
 def test_failed_call_still_leaves_the_prompt(tmp_path: Path) -> None:

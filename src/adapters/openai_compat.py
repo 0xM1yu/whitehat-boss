@@ -16,12 +16,13 @@ import json
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ValidationError
 
 from src.bench_metrics import generation_tokens
 from src.interfaces.model_client import (
+    ChatTurn,
     ModelGatewayError,
     ModelResult,
     Prompt,
@@ -154,7 +155,14 @@ class OpenAICompatModelClient:
         # 실제 키가 필요한 게이트웨이라면 환경변수에서 주입한다 — 소스에 두지 않는다.
         self.api_key = api_key
 
-    def complete(self, *, role: Role, prompt: Prompt, schema: type[BaseModel]) -> ModelResult:
+    def complete(
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[BaseModel],
+        history: Sequence[ChatTurn] = (),
+    ) -> ModelResult:
         last_error: Exception | None = None
         body = prompt.body
         # **재시도분까지 더한다.** 스키마 파싱에 실패한 응답도 서버는 이미 만들어 냈고
@@ -184,7 +192,9 @@ class OpenAICompatModelClient:
                 retry_bodies.append(body)
             started = time.monotonic()
             try:
-                raw, usage = self._post(self._request_payload(prompt.prefix, body, schema))
+                raw, usage = self._post(
+                    self._request_payload(prompt.prefix, body, schema, history)
+                )
             except ModelGatewayError as exc:
                 # 게이트웨이 거절(컨텍스트 초과 400 등)은 재시도 대상이 아니라 그대로 올린다.
                 # **이 시도가 태운 wall-clock을 먼저 누적한다.** 안 그러면 재보지도 않은 0에
@@ -249,6 +259,7 @@ class OpenAICompatModelClient:
                 gpu_ms_source="request_wall_clock",
                 attempts=attempt,
                 retry_bodies=tuple(retry_bodies),
+                raw_text=raw,
             )
         raise SchemaParseError(
             f"{role} 역할의 {self.model_name}이 {self.retries + 1}회 안에 "
@@ -260,16 +271,28 @@ class OpenAICompatModelClient:
             retry_bodies=tuple(retry_bodies),
         )
 
-    def _request_payload(self, prefix: str, body: str, schema: type[BaseModel]) -> dict:
+    def _request_payload(
+        self,
+        prefix: str,
+        body: str,
+        schema: type[BaseModel],
+        history: Sequence[ChatTurn] = (),
+    ) -> dict:
         """prefix는 system 메시지로 고정한다 — automatic prefix caching의 전제다.
 
         prefix와 가변부를 한 문자열로 뭉개면 캐시 적중률을 측정할 수도, 지킬 수도 없다
         (agent-contracts.md §4.2).
+
+        **history는 system과 이번 turn(user) 사이에 순서대로 얹는다** (ADR 0012 결정 2).
+        비어 있으면 메시지는 지금까지처럼 `[system, user]` 둘뿐이다. history가 있으면
+        user 본문은 늘 마지막(`messages[-1]`)이다 — 재시도 회차에도 history는 그대로
+        두고 이 `body`만 바뀐다(`complete()`가 넘기는 값이 매 시도 같은 `history`다).
         """
         payload = {
             "model": self.model_name,
             "messages": [
                 {"role": "system", "content": prefix},
+                *({"role": turn.speaker, "content": turn.content} for turn in history),
                 {"role": "user", "content": body},
             ],
             "temperature": self.temperature,

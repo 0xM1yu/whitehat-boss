@@ -221,6 +221,35 @@ def test_apply_records_transition_and_persists() -> None:
     assert event.stage == Stage.SCOUT
 
 
+@pytest.mark.parametrize(
+    "reason",
+    [
+        ReasonCode.BELOW_SCOUT_THRESHOLD,
+        ReasonCode.SCOUT_REJECT,
+        ReasonCode.NEED_EVIDENCE_UNRESOLVED,
+    ],
+)
+def test_c3_accepts_the_v3_signal_reasons_too(reason: ReasonCode) -> None:
+    """C-3 — v3 신호 판정이 낸 두 새 사유(`scout_reject`·`need_evidence_unresolved`)도
+
+    `candidate` → `queued`로 간다 — 같은 (from, to)에 사유만 늘린다. 전이는 추가하지
+    않는다(ADR 0012 결정 2) — C-7이 두 `from_state`를 같은 사유로 쓰는 것과 같은 선례다.
+    """
+    store, trace = InMemoryStateStore(), _writer()
+
+    updated = state_machine.apply(
+        _candidate(),
+        to=FindingState.QUEUED,
+        reason=reason,
+        stage=Stage.SCOUT,
+        store=store,
+        trace=trace,
+    )
+
+    assert updated.state is FindingState.QUEUED
+    assert trace.events[-1].data["rule"] == "C-3"
+
+
 def test_self_transition_is_still_recorded() -> None:
     """`from == to`도 기록한다 — 6·7단계 통과율의 분모가 여기서 나온다."""
     trace = _writer()

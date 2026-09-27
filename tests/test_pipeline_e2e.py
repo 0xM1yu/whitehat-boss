@@ -117,6 +117,47 @@ def test_execute_wires_read_payload_from_the_artifacts_root(
     assert reader("artifacts/run_20260901_0001/semgrep/missing.log") is None
 
 
+def test_run_pipeline_wires_resolve_requests_from_deps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Dependencies.resolve_requests`가 `RunContext.resolve_requests`로 그대로 이어진다.
+
+    러너가 `src/adapters/`를 import하지 않으므로(모듈 docstring) resolver 구현은 이 hook으로만
+    경계를 넘는다(ADR 0012 결정 2). 조립(`run_pipeline`)이 `deps.resolve_requests`를 `ctx`에
+    심지 않으면, need_evidence 루프가 아무리 잘 짜여도 그 hook을 영영 못 본다 — `symbols_for`·
+    `read_slice`·`counter_for_role`과 같은 자리인데 그 셋과 달리 아직 조립되지 않았다.
+    """
+    from src.adapters import factory as factory_mod
+    from src.orchestrator import context as context_mod
+
+    def sentinel(_query: object) -> object:
+        return None
+
+    captured: dict[str, object] = {}
+    original_init = context_mod.RunContext.__init__
+
+    def spy_init(self: object, *args: object, **kwargs: object) -> None:
+        captured["resolve_requests"] = kwargs.get("resolve_requests")
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(context_mod.RunContext, "__init__", spy_init)
+
+    original_build_deps = factory_mod.build_deps
+
+    def spy_build_deps(*args: object, **kwargs: object) -> object:
+        deps = original_build_deps(*args, **kwargs)
+        return dataclasses.replace(deps, resolve_requests=sentinel)
+
+    monkeypatch.setattr("src.cli.build_deps", spy_build_deps)
+
+    _run(tmp_path)
+
+    assert captured.get("resolve_requests") is sentinel, (
+        "run_pipeline이 deps.resolve_requests를 RunContext에 안 심었다 — 받은 값: "
+        f"{captured.get('resolve_requests')!r}"
+    )
+
+
 def _canonical(trace_path: Path) -> bytes:
     """재현성 비교 표현: `ts`·`wall_ms`만 제거한 JSONL."""
     lines = []
@@ -225,7 +266,7 @@ def _poolify(mode: str | None):  # noqa: ANN202
     return configure
 
 
-def _poolify_v3():  # noqa: ANN202
+def _poolify_v3(mode: str | None = None):  # noqa: ANN202
     """`dev_fake`를 **v3** Scout 풀로 바꾼다 — `_poolify`(v2)와 달리 ScoutResponse 경로를 태운다.
 
     v3 scout 프롬프트는 `output_schema: ScoutResponse`라, fake가 `Candidate`가 아니라
@@ -233,6 +274,9 @@ def _poolify_v3():  # noqa: ANN202
     필드가 없다) `scout._ask_model`이 래퍼를 풀어 안쪽 `candidate`에 직접 stamp한다.
     커밋된 fake 키는 v1(`fake`)·v2(`fake_v2`)뿐이라, v3 fake 엔트리는 여기서 조립한다
     (models.yaml 주석대로 in-test — `fake`를 복사해 버전만 v3로).
+
+    `mode`는 `_poolify`와 같은 자리다(`execution.mode`) — 두 실행 모드에서 v3 풀을 재는
+    검사가 매번 이 조립을 새로 쓰지 않게 한다.
     """
     def configure(config):  # noqa: ANN001, ANN202
         models = {
@@ -248,9 +292,70 @@ def _poolify_v3():  # noqa: ANN202
             "embedding": "fake",
             "reranker": "fake",
         }
-        return config.transition(models=models, profile=config.profile.transition(roles=pool))
+        updates: dict[str, object] = {"roles": pool}
+        if mode is not None:
+            from src.config import ExecutionPolicy
+
+            updates["execution"] = ExecutionPolicy(mode=mode)
+        return config.transition(models=models, profile=config.profile.transition(**updates))
 
     return configure
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_every_seats_hop0_finishes_before_any_seats_settle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """4단계는 개시(hop0)와 정착으로 나뉜다(ADR 0012 결정 2) — **모든 좌석의 개시가 어느
+    좌석의 정착보다 먼저 끝난다.**
+
+    per_stage는 표를 단계 순서로 도는 것만으로 성립한다(`_run_stage_for_all`을 개시로 한
+    번, 정착으로 한 번 돈다). per_candidate는 target마다 국면 A(전 좌석 개시) → 국면
+    B(국면 A에서 살아남은 좌석마다 정착)로 다시 짠다 — 예전에는 좌석 하나가 개시부터
+    게이트까지 관통한 뒤에야 다음 좌석으로 갔다. 동료 확인(peer review)이 이 순서에
+    기댄다 — 국면 B가 시작될 때는 이미 전 좌석의 hop0 신호를 알아야 한다.
+
+    **target이 하나뿐인 트리로 돈다.** per_candidate는 target마다 국면을 새로 도므로
+    (target1의 국면 B가 target2의 국면 A보다 먼저 온다), target이 둘 이상이면 "모든
+    개시가 첫 정착보다 먼저"가 **전역으로는 거짓이다** — 이 검사가 재는 것은 **같은
+    target 안**의 순서이지, target을 가로지르는 순서가 아니다.
+    """
+    from src.orchestrator.nodes import scout as scout_node
+
+    single_target = tmp_path / "single_target"
+    single_target.mkdir()
+    (single_target / "parser.c").write_text(
+        (TARGET / "parser.c").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    events: list[str] = []
+    original_open = scout_node.open_session
+    original_finish = scout_node.finish
+
+    def spy_open(*args: object, **kwargs: object) -> object:
+        session = original_open(*args, **kwargs)
+        events.append(f"open:{session.role.value}")
+        return session
+
+    def spy_finish(*args: object, **kwargs: object) -> object:
+        result = original_finish(*args, **kwargs)
+        session = args[1] if len(args) > 1 else kwargs["session"]
+        events.append(f"finish:{session.role.value}")
+        return result
+
+    monkeypatch.setattr(scout_node, "open_session", spy_open)
+    monkeypatch.setattr(scout_node, "finish", spy_finish)
+
+    _run(tmp_path, configure=_poolify_v3(mode), target=single_target)
+
+    opens = [e for e in events if e.startswith("open:")]
+    finishes = [e for e in events if e.startswith("finish:")]
+    assert len(opens) == 3, f"좌석 셋의 개시를 기대했는데: {opens}"
+    assert len(finishes) == 3, f"좌석 셋의 정착을 기대했는데: {finishes}"
+    first_finish_at = events.index(finishes[0])
+    assert all(events.index(o) < first_finish_at for o in opens), (
+        f"어떤 정착이 어느 개시보다 먼저 일어났다 — 순서: {events}"
+    )
 
 
 def test_scout_pool_v3_unwraps_scout_response_and_stamps_member(tmp_path: Path) -> None:
@@ -362,10 +467,12 @@ def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
     """
     original = FakeModelClient.complete
 
-    def complete(self, *, role: Role, prompt: object, schema: object) -> object:  # noqa: ANN001
+    def complete(  # noqa: ANN001
+        self, *, role: Role, prompt: object, schema: object, history: object = ()
+    ) -> object:
         if role.value == broken:
             raise ModelGatewayError(f"{broken} 체계적 고장(테스트)", status=422)
-        return original(self, role=role, prompt=prompt, schema=schema)
+        return original(self, role=role, prompt=prompt, schema=schema, history=history)
 
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
@@ -1965,6 +2072,10 @@ def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
 
     auditor·critic은 **후보** 수를 따르므로 팬아웃과 함께 는다. critic만 `critic_top_n`이
     다시 막는다.
+
+    ⚠ **scout는 후보당 한 번이 아니라 `1 + max_hops`번이다**(ADR 0012 결정 2 — need_evidence
+    루프의 되묻기 상한). v1·v2(신호 없음)는 늘 1회뿐이라 이 상한을 안 채우지만, 예산은
+    최악(v3가 매번 `max_hops`까지 되묻는 경우)을 견뎌야 한다.
     """
     from src.cli import _expected_calls
 
@@ -1984,14 +2095,18 @@ def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
     )
     capsules = 4
     top_n = base.thresholds.critic_top_n
+    max_hops = base.thresholds.max_hops
+    per_candidate = 1 + max_hops + 1  # scout(1 + max_hops) + auditor(1)
 
-    assert _expected_calls(base, capsules) == capsules * 2 + min(capsules, top_n), (
+    assert _expected_calls(base, capsules) == capsules * per_candidate + min(capsules, top_n), (
         "단일 scout 프로필의 값이 바뀌었다 — 회귀다"
     )
 
     members = len(SCOUT_POOL_ROLES)
     candidates = capsules * members
-    assert _expected_calls(pool, capsules) == candidates * 2 + min(candidates, top_n), (
+    assert _expected_calls(pool, capsules) == candidates * per_candidate + min(
+        candidates, top_n
+    ), (
         f"풀인데 호출 상한이 멤버 수({members})를 안 센다 — "
         "캡슐 하나가 후보 셋이 되고 4·5단계가 그만큼 돈다"
     )
@@ -2591,13 +2706,13 @@ def _failing_model(
     original = FakeModelClient.complete
     calls = {"n": 0}
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
         if role is role_under_test:
             index = calls["n"]
             calls["n"] += 1
             if index < len(errors) and errors[index] is not None:
                 raise errors[index]
-        return original(self, role=role, prompt=prompt, schema=schema)
+        return original(self, role=role, prompt=prompt, schema=schema, history=history)
 
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
@@ -3429,19 +3544,34 @@ def test_the_triage_table_covers_stages_three_to_six_in_order() -> None:
 
     두 실행 모드가 이 표 하나를 읽으므로(`_triage_by_candidate`·`_triage_by_stage`),
     표가 곧 「3~6단계가 무엇인가」의 정의다. 단계를 더하거나 빼면 여기가 먼저 바뀐다.
+
+    ⚠ **4단계(Scout)가 두 행이다**(ADR 0012 결정 2) — 개시(hop0)와 정착(동료 확인 →
+    need_evidence 루프 → 판정)으로 나뉜다. 둘 다 `Stage.SCOUT`이라 `_triage_by_stage`의
+    단계 컷(`last < stage`)은 그대로고, `_run_stage_for_all`이 이 표를 따라 한 번은
+    개시로, 한 번은 정착으로 전 target을 돈다 — 모든 좌석의 개시가 어느 정착보다 먼저
+    끝나는 것이 그래서 성립한다.
     """
     assert [stage for stage, _ in runner._TRIAGE_STEPS] == [
         Stage.RETRIEVAL,
         Stage.SCOUT,
+        Stage.SCOUT,
         Stage.AUDITOR,
         Stage.GATE,
+    ]
+    assert [step.__name__ for _, step in runner._TRIAGE_STEPS] == [
+        "_step_retrieval",
+        "_step_scout_open",
+        "_step_scout_settle",
+        "_step_auditor",
+        "_step_gate",
     ]
 
 
 @pytest.mark.parametrize(
     ("step", "field", "stage_pair"),
     [
-        (runner._step_scout, "capsule", "4단계가 3단계보다"),
+        (runner._step_scout_open, "capsule", "4단계가 3단계보다"),
+        (runner._step_scout_settle, "scout_session", "정착이 개시보다"),
         (runner._step_auditor, "candidate", "5단계가 4단계보다"),
         (runner._step_gate, "finding", "6단계가 5단계보다"),
     ],
