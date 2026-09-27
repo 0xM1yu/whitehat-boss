@@ -111,6 +111,36 @@ def test_call_graph_links_caller_to_callee(sample: Path) -> None:
     assert ("parse_header", "helper") in edges
 
 
+def test_a_static_inline_header_function_is_indexed_with_the_header_as_its_file(
+    tmp_path: Path,
+) -> None:
+    """`.h`도 인덱서에 간다(#63, index-v2) — 헤더의 `static inline` 함수가 v1 `symbols`와 v2
+    `functions` 표 양쪽에 `file`이 그 헤더로 들어와야 NE resolver의 조회와 Auditor 앵커
+    (`runner._auditor_target`)가 그 정의를 찾는다. `.c`만 줄 때는 이 심볼이 없다는 대조로,
+    들어오는 이유가 헤더를 넘겼기 때문임을 보인다."""
+    (tmp_path / "main.c").write_text(
+        '#include "util.h"\nint f(void) { return clamp(0, 9, 3); }\n', encoding="utf-8"
+    )
+    (tmp_path / "util.h").write_text(
+        "static inline int clamp(int lo, int hi, int v) {\n"
+        "    if (v < lo) return lo;\n"
+        "    if (v > hi) return hi;\n"
+        "    return v;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    c_only = _index(tmp_path, "main.c")
+    with_header = _index(tmp_path, "main.c", "util.h")
+
+    assert "clamp" not in [s["name"] for s in c_only["symbols"]]
+    clamp = next(s for s in with_header["symbols"] if s["name"] == "clamp")
+    assert clamp == {"name": "clamp", "file": "util.h", "line_start": 1, "line_end": 5}
+    assert with_header["functions"]["clamp"] == [
+        {"file": "util.h", "line_start": 1, "line_end": 5, "params": ["lo", "hi", "v"]}
+    ]
+
+
 # --- 최상위에 없는 정의 ---------------------------------------------------------
 #
 # 이 절이 없어서 첫 구현이 `root_node.children`(최상위 한 겹)만 보고도 초록불이었다.
