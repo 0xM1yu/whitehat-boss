@@ -514,16 +514,21 @@ def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_pa
     assert result["counters"]["candidates_not_processed"] == 0
     assert result["slices"]  # at least the surviving candidates produced a slice
     assert result["counters"]["queries_aborted"] == 1
+    # The poisoned candidate is not DROPPED: it survives as an anchor-only degraded slice, so its
+    # capture (the recall unit) still reaches the output (the degraded slice may then be absorbed
+    # into an overlapping full slice by clustering, so the counter -- not a marker on the
+    # representative -- is the binding).
+    assert result["counters"]["candidates_degraded"] == 1
 
 
-def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_path):
-    # Past a short streak the run stops rather than burning the per-query timeout on every
-    # remaining candidate. A failed candidate is NOT persisted as failed: the failure is
-    # before save_stage, so it has no checkpoint row and restore_stage returns "pending" ->
-    # --resume RE-RUNS it from scratch, it does not skip it (see test above). Restarting the
-    # dedicated server first lets resume progress IF the poison was server state; if the
-    # poison is candidate-intrinsic (a query that always exceeds the 600s deadline), resume
-    # re-burns the timeout on it and a streak of these never advances (documented limit).
+def test_a_streak_of_poisoned_candidates_switches_to_degraded_not_stop(monkeypatch, repo, tmp_path):
+    # Past a short streak the server is likely unusable, but the remaining candidates were
+    # captured (that capture is the recall unit). Instead of ABORTING the run -- which dropped
+    # every remaining candidate's slice, leaving them unprocessed -- the run switches to
+    # anchor-only degraded slices without querying the server. No captured candidate is lost:
+    # every one is processed and appears in slices.json marked `degraded`, and each candidate's
+    # checkpoint is left at its last saved phase (pending for a query-stage failure) so --resume
+    # re-attempts from there after the server is restarted.
     cands = [candidate("c" + str(i), i + 1) for i in range(6)]
     data = payloads(case_a=cands, flow_count=2)
 
@@ -533,8 +538,20 @@ def test_a_streak_of_poisoned_candidates_stops_the_run(monkeypatch, repo, tmp_pa
     data["flows"] = flows
     code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
     streak = slicer_pipeline.POISON_STOP_STREAK
+    # The first `streak` candidates each fail their flow query (then degrade); after the streak
+    # the rest skip the server and degrade directly. Every candidate is processed, none dropped.
     assert result["counters"]["candidates_failed"] == streak
-    assert result["counters"]["candidates_not_processed"] == len(cands) - streak
+    assert result["counters"]["candidates_not_processed"] == 0
+    assert result["counters"]["candidates_degraded"] == len(cands)
+    assert result["slices"] and all(s.get("degraded") for s in result["slices"])
+    # §2.5 (#307 review): a degraded slice must still CARRY the candidate's capture coords --
+    # a degraded_slice that returned empty lines/code would silently lose the capture this PR
+    # exists to keep, yet the counter/marker asserts above would still pass. Bind the coords:
+    # every candidate's entry line must appear in some slice, and no slice is empty.
+    all_lines = {(p["file"], p["line"]) for s in result["slices"] for p in s["lines"]}
+    for i in range(len(cands)):
+        assert ("main.c", i + 1) in all_lines
+    assert all(s["lines"] and s["code"] for s in result["slices"])
 
 
 @pytest.mark.parametrize("truncated", [False, True])
@@ -725,7 +742,7 @@ def test_flows_query_keeps_injection_sinks_in_the_global_sink_set():
     # source can REACH an exec sink's argument. Bind the wiring (union membership + collected set),
     # not the spelling: removing `execSinks ++` from the union or the cap left the suite green.
     query = queries.flows_query([{"file": "x.c", "full_name": "foo", "line": 1}], None)
-    assert "(writerSinks ++ execSinks ++ indexWrites ++ ptrArith)" in query
+    assert "(writerSinks ++ execSinks ++ indexWrites ++ derefWrites ++ ptrArith)" in query
     assert f'cpg.call.name("({queries.EXEC_SINKS})").take({queries.CASE_B_EXEC_CAP}).l' in query
 
 
@@ -754,6 +771,30 @@ def test_case_b_query_adds_operator_anchors_narrowed_before_the_cap():
         start = query.index(anchor)
         seg = query[start : query.index(f".l, {queries.CASE_B_PER_METHOD},", start)]
         assert ".filter(" in seg
+
+
+def test_case_b_query_anchors_deref_field_writes_in_write_context():
+    # 2026-09-26: deref/field is the biggest GT sink bucket but raw explodes; anchor only the
+    # WRITE context (`p->x = ...` / `*p = ...` / `s.f = ...`) with the same assignment-LHS
+    # narrowing as indexWrites, bounded by the same cap. Bind the wiring, not the spelling.
+    query = queries.candidates_b_query()
+    assert "val derefWrites =" in query
+    assert 'cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")' in query
+    assert "(indexWrites ++ derefWrites ++ ptrArith).distinct" in query  # in the operator union
+    assert '"deref_write"' in query                                       # tagged reason
+    # The narrowing filter must sit before .take(cap) so the cap bounds a real subset,
+    # not the raw 3000+ operator population.
+    for anchor in ("<operator>.indirectIndexAccess", "<operator>.(addition|subtraction)"):
+        start = query.index(anchor)
+        seg = query[start : query.index(".take(", start) + 6]
+        assert ".filter(" in seg and seg.index(".filter(") < seg.index(".take(")
+    # derefWrites shares its operator name with ptrArith's filter, so `.index(name)` would hit
+    # the wrong spot -- anchor on its `val` line (#308 review MED). Its narrowing filter
+    # (assignment-LHS, write context) must also precede .take(cap); otherwise raw field/deref
+    # writes -- the 3万+ population this anchor is bounded against -- flow back uncaught.
+    dstart = query.index("val derefWrites =")
+    dseg = query[dstart : query.index(".take(", dstart) + 6]
+    assert ".filter(" in dseg and dseg.index(".filter(") < dseg.index(".take(")
 
 
 def test_noncode_delimiters_do_not_change_structure():
@@ -1277,6 +1318,8 @@ def test_flows_and_case_b_share_the_same_operator_sink_definition():
         'cpg.call.name("<operator>.(addition|subtraction)")',
         'c.argument.evalType.exists(_.contains("*"))',
         'indirection|indirectIndexAccess|addressOf)',
+        # deref/field WRITE anchor is copied between the two queries (2026-09-26) -- pin it too.
+        'cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")',
         # exec sink PATTERN is copied between the two queries (#299) -- pin it here too. The
         # collection wrappers now differ intentionally (flows: flat cap; case_b: per-method
         # budget), so pin the shared name set, not the take/budget form.

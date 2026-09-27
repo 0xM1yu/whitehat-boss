@@ -58,6 +58,7 @@ Do not conclude that an object is handled correctly merely because the visible p
 
 - `given_end: "source"`: forward slicing. This identifies where a value enters, usually an entry point and its parameters. The operation that value eventually reaches is not given. Find it, or establish that the value reaches no problematic operation.
 - `given_end: "sink"`: backward slicing. This identifies one operation the slicer considered worth examining. The origin of its inputs is not given.
+- `degraded: true`: the slicer's dataflow query for this candidate failed or was skipped, so this slice is an anchor-only fallback. It retained ONLY the given end's own statements, not the path reaching it — the "retained statements that reach it" above does not hold for it. Treat the code as just the given end's neighbourhood, rely on the capsule (`callers`/`callees`) and your own reading rather than a traced path, and treat the missing reach as unknown, not safe.
 
 The given end is a selection heuristic, neither a finding nor a verdict. Selection uses patterns such as entry points, calls receiving fixed-size destinations, or pointers reaching a release routine twice. Most slices selected this way contain nothing wrong.
 Three consequences:
