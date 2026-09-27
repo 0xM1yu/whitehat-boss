@@ -677,7 +677,8 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     # Bind the wiring: writers are collected then per-method budgeted (CASE_B_PER_METHOD) under
     # the writer cap ceiling. A bare `.take(` check passed even after the flat cap was replaced.
     assert "def budget(" in query  # per-method budgeting present
-    assert (f'val writers = budget(cpg.call.name("({queries.WRITERS})").l, '
+    assert (f'val writers = budget(cpg.call.name("({queries.WRITERS})")'
+            f'.take({queries.CASE_B_MATERIALIZE_CAP}).l, '
             f'{queries.CASE_B_PER_METHOD}, {queries.CASE_B_WRITER_CAP})') in query
     # §2.5 (#311 review): pin the round-robin BODY, not just the call site. The starvation this
     # PR fixes comes back with a depth-first rewrite (`groups.flatMap(_._2)`) that leaves the
@@ -685,6 +686,11 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     assert "groupBy(_.method.id)" in query  # grouped per enclosing method
     assert "(0 until k).flatMap(i =>" in query  # round-robin over rounds (breadth-first)
     assert "g.lift(i)" in query  # the i-th anchor of every method before any method's next
+    # #311 review robustness: budget guards a null enclosing method (else `.method.id` NPEs and
+    # drops the whole case_b query), and each anchor traversal is capped BEFORE .l so a huge CPG
+    # cannot OOM before any candidate is produced. Pin both so a regression that drops them reddens.
+    assert "Option(c.method).isDefined" in query  # null-method guard
+    assert f".take({queries.CASE_B_MATERIALIZE_CAP}).l" in query  # materialization bound
     assert '"dangerous_write"' in query
     # The trigger includes every argument of a writer call so backtracking reaches dest,
     # source and size — the union is unbounded strings, so the cap must be present.
@@ -701,7 +707,8 @@ def test_case_b_query_adds_the_injection_sink_set_bounded():
     # with `++ execs` or the cap replace removed (review MEDIUM). Pin the collected+capped set,
     # its membership in the union, the tag, both placeholder substitutions, and bare `system`
     # (a `system` substring alone is satisfied by `wsystem`).
-    exec_set = (f'budget(cpg.call.name("({queries.EXEC_SINKS})").l, '
+    exec_set = (f'budget(cpg.call.name("({queries.EXEC_SINKS})")'
+                f'.take({queries.CASE_B_MATERIALIZE_CAP}).l, '
                 f'{queries.CASE_B_PER_METHOD}, {queries.CASE_B_EXEC_CAP})')
     assert f"val execs = {exec_set}" in query
     assert "(arrays ++ repeatedCalls ++ writers ++ execs ++ operators)" in query

@@ -100,6 +100,15 @@ CASE_B_OPERATOR_CAP = 2000
 # Run record: docs/experiments/harness/2026-09-27-case-b-per-method-budget.md.
 CASE_B_PER_METHOD = 16
 
+# Materialization guard (#311 review): budget() groups its input by method, so it needs the list
+# materialized -- unlike the old flat `.take(cap)`, which stopped the lazy traversal at `cap`.
+# Cap each anchor traversal at this bound BEFORE `.l` so a pathological/huge CPG cannot OOM or
+# time out the whole case_b query before any candidate is produced. It is far above any per-type
+# count seen (writers/index/ptr are single-digit thousands), so it does not bite normal repos --
+# a repo past it gets the first-N by traversal order for that type (a documented extreme-case
+# limit, same shape as the ceiling).
+CASE_B_MATERIALIZE_CAP = 40000
+
 # The flows query targets memory-write sink calls instead of every call argument in the repo
 # (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
 # dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
@@ -367,19 +376,25 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       // methods by id, not to win a global first-N race). Deterministic: methods sorted by id,
       // each method's anchors keep CPG order.
       def budget(cs: List[nodes.Call], k: Int, ceil: Int): List[nodes.Call] = {
-        val groups = cs.groupBy(_.method.id).toList.sortBy(_._1).map(_._2.take(k))
+        // Guard a null enclosing method (a call not attached to a method in a malformed/partial
+        // CPG) so `.method.id` cannot NPE and drop the whole case_b query (#311 review).
+        val groups = cs.filter(c => Option(c.method).isDefined)
+          .groupBy(_.method.id).toList.sortBy(_._1).map(_._2.take(k))
         (0 until k).flatMap(i => groups.flatMap(g => g.lift(i))).take(ceil).toList
       }
-      val writers = budget(cpg.call.name("(__WRITERS__)").l, __KPM__, __WCAP__)
-      val execs = budget(cpg.call.name("(__EXECS__)").l, __KPM__, __ECAP__)
+      // .take(MCAP) bounds materialization BEFORE .l (#311 review): budget needs the list to group
+      // by method, so unlike the old flat .take(cap) it would otherwise materialize the whole set.
+      val writers = budget(cpg.call.name("(__WRITERS__)").take(__MCAP__).l, __KPM__, __WCAP__)
+      val execs = budget(cpg.call.name("(__EXECS__)").take(__MCAP__).l, __KPM__, __ECAP__)
       // Operator anchors, narrowed before budgeting so the budget bounds a real subset (#219).
       val indexWrites = budget(cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
-          .argumentIndex(1).contains(c)).l, __KPM__, __OPCAP__)
+          .argumentIndex(1).contains(c)).take(__MCAP__).l, __KPM__, __OPCAP__)
       val ptrArith = budget(cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
-            "indirection|indirectIndexAccess|addressOf)").nonEmpty).l, __KPM__, __OPCAP__)
+            "indirection|indirectIndexAccess|addressOf)").nonEmpty)
+        .take(__MCAP__).l, __KPM__, __OPCAP__)
       val operators = (indexWrites ++ ptrArith).distinct
       ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ execs ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
@@ -411,6 +426,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .replace("__ECAP__", str(CASE_B_EXEC_CAP))
         .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
         .replace("__KPM__", str(CASE_B_PER_METHOD))
+        .replace("__MCAP__", str(CASE_B_MATERIALIZE_CAP))
     )
     return file_envelope("case_b", body)
 
