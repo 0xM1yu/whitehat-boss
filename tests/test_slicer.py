@@ -1180,10 +1180,20 @@ def test_case_a_query_bounds_are_pinned():
     # MEDIUM-1: the K=1 filter short-circuits at LIMIT+1 calls instead of enumerating the whole
     # call set of a common name. Semantically == `.size <= LIMIT`; this pins the early-exit form.
     assert f".take({lim} + 1).size <= {lim}" in q
-    # Property 1: the candidate cap .take sits AFTER both filters. Moving it before the param
-    # filter would take the first-N raw methods and then filter, shrinking the set toward 0.
-    # The param filter immediately preceding the take pins that ordering.
-    assert f".filter(_.parameter.size > 0).take({cap})" in q
+    # Property 1: the candidate cap .take sits AFTER the param filter (moving it before would
+    # take first-N raw methods then filter, shrinking toward 0) AND after the D90 relevance sort
+    # (moving it before the sort re-introduces traversal-order starvation, #318). Pin the
+    # ordering by segment, not adjacency, since the sort now sits between the filter and the cap.
+    astart = q.index("val api =")
+    aseg = q[astart : q.index(f".take({cap})", astart)]
+    assert ".filter(_.parameter.size > 0).l" in aseg
+    assert ".sortBy(" in aseg and "hotIds.contains(m.id)" in aseg  # sort precedes the cap
+    # D90 (#318): "hot" = writes memory (WRITER/EXEC call OR assignment into index/field/deref).
+    # hotIds is a Set computed once; the api sort key is its membership. Pin the signal so a
+    # rewrite that drops the write-context half (leaving only WRITER calls) fails here.
+    assert "val hotIds =" in q
+    assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in q
+    assert 'nameExact("<operator>.assignment").filter(_.argument(1).isCall.name(' in q
     # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
     # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
     assert q.count(f".take({cap})") == 2
