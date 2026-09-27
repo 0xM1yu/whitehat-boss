@@ -286,9 +286,12 @@ class ScoutSignal(StrEnum):
 class NeStopReason(StrEnum):
     """need_evidence 루프가 서는 사유 (ADR 0012 결정 2 · Notion 「Scout RAG baseline」).
 
-    앞 셋(`TRIAGE_REVIEW`·`TRIAGE_REJECT`·`MAX_HOP`)은 명세가 이름을 준 값이다. 나머지는
-    hop≥1의 실패·중복·미해결과 다른 좌석의 review가 이 좌석의 루프를 막는 경우를
-    가리키려고 이 하네스가 붙인 값이라 명세 원문에는 없다.
+    ADR 0012 결정 2가 정지를 **여섯**으로 든다 — 신호가 NE가 아님(`TRIAGE_REVIEW`·
+    `TRIAGE_REJECT` 둘로 가른다) · 파싱 실패(`PARSE_FAILED`) · 3홉 초과(`MAX_HOP`) ·
+    직전과 같은 요청 반복(`REPEAT_REQUEST`) · `requested_context`가 비었음(`EMPTY_REQUEST`) ·
+    resolver가 하나도 못 줌(`NOTHING_RESOLVED`). 사유는 명세의 것이고 문자열 값은 이
+    하네스가 붙였다. 그 여섯 밖은 `PEER_REVIEW`(같은 ADR이 붙인 제안 초안)와
+    `CONTEXT_OVERFLOW`·`BUDGET_EXHAUSTED`·`GATEWAY_ERROR`(하네스가 더한 실행 실패)다.
 
     이 값을 내는 것은 `runner._run_ne_hops`(와 동료 확인)이고, 홉 이벤트(`SCOUT_HOP`)의
     `stop_reason`으로 남는다.

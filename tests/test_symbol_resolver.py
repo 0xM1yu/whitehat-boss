@@ -254,6 +254,26 @@ def test_resolve_still_sends_a_followup_when_every_request_is_already_in_source(
     assert "Already in SOURCE: variable:g_buf at main.c:L36-38." in resolution.followup_text
 
 
+def test_resolve_keeps_already_lines_inside_the_budget(ne2_graph, ne2_read_lines):
+    """Already 줄도 `max_chars`에 든다 — 전역 대입이 전부 SOURCE와 겹치면 요청 하나가 Already
+    줄을 수십 개 낼 수 있어서다(#305 리뷰). 넘친 줄은 수만 한 줄로 남기고 `already`에는 다 둔다."""
+    first = "Already in SOURCE: variable:g_buf at main.c:L13-13."
+    second = "Already in SOURCE: variable:g_buf at main.c:L36-38."
+    query = _query(
+        requests=(_request("variable", "g_buf"),),
+        target_file="main.c",
+        visible={"main.c": frozenset({13, 36, 37, 38})},
+        max_chars=len(first) + 2,
+    )
+
+    resolution = resolve(query, table=ne2_graph.table, read_lines=ne2_read_lines)
+
+    assert resolution.already == (first, second)
+    assert first in resolution.followup_text
+    assert second not in resolution.followup_text
+    assert "(+1 more Already in SOURCE line omitted for budget.)" in resolution.followup_text
+
+
 def test_resolve_gives_the_caller_site_for_a_parameter(ne2_graph, ne2_read_lines):
     """라벨 10 + 9 — `n`은 `use_box`의 파라미터라 시그니처 한 줄 + 호출부 ±3(라벨 표 값)을 준다."""
     query = _query(requests=(_request("variable", "n"),), target_file="main.c")
