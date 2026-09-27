@@ -6,6 +6,7 @@
 계산할 수 있고 0%도 100%도 아니다)뿐이다.
 """
 
+import dataclasses
 import json
 import re
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ import pytest
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import load_config
+from src.interfaces.model_client import ChatTurn, ModelResult, Usage
 from src.orchestrator import prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
@@ -54,9 +56,11 @@ from src.schemas import (
     Role,
     Verdict,
 )
-from src.schemas.candidate import SliceRef
+from src.schemas.candidate import Candidate, SliceRef
+from src.schemas.enums import ScoutSignal
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
+from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -90,9 +94,9 @@ class RecordingModelClient:
         self._inner = inner
         self.prompts: list[tuple[Role, object]] = []
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         self.prompts.append((role, prompt))
-        return self._inner.complete(role=role, prompt=prompt, schema=schema)
+        return self._inner.complete(role=role, prompt=prompt, schema=schema, history=history)
 
     def last_for(self, role: Role):  # noqa: ANN201
         return next(prompt for seen, prompt in reversed(self.prompts) if seen is role)
@@ -255,6 +259,166 @@ def test_node_does_not_compare_thresholds_itself(ctx: RunContext) -> None:
     triage = next(e for e in decisions if e.data["point"] == "scout_triage")
     assert triage.data["basis.scout_threshold"] == ctx.config.thresholds.scout_threshold
     assert triage.data["policy"] == "fixed_threshold"
+
+
+def test_open_session_makes_no_candidate_and_finish_completes_it(ctx: RunContext) -> None:
+    """`run()` = `open_session()` + `finish()`다(ADR 0012 결정 2). 나눠 불러도 결과가 같아야 한다.
+
+    `open_session`은 hop0 호출만 한다 — 후보를 만들지 않는다. 만드는 것은 `finish()`이고,
+    그래서 그 사이에는 이 candidate_id로 저장된 것이 아무것도 없어야 한다.
+    """
+    artifacts = preprocess.run(ctx, source_root=_root_of(ctx))
+    artifact = next(a for a in artifacts if a.path == VULN_TARGET.file)
+    graph = index.run(ctx, workdir=VULN_TARGET.file)
+    found = signals.with_signal(signals.run(ctx, workdir=VULN_TARGET.file))
+    capsule = retrieval.run(ctx, target=VULN_TARGET, level=CapsuleLevel.LIGHT)
+
+    session = scout.open_session(ctx, artifact=artifact, capsule=capsule, evidences=(graph, *found))
+
+    assert session.hop == 0
+    assert session.signal is None, "dev_fake는 v1/v2 스키마라 신호가 없어야 한다"
+    assert ctx.store.get("candidate", session.candidate_id) is None, (
+        "open_session이 후보를 만들면 안 된다 — finish()가 만든다"
+    )
+
+    candidate = scout.finish(ctx, session)
+
+    assert candidate.candidate_id == session.candidate_id
+    assert candidate.state is FindingState.TRIAGED
+    rules = [
+        e.data["rule"]
+        for e in ctx.trace.events
+        if e.kind is EventKind.TRANSITION and e.stage == Stage.SCOUT
+    ]
+    assert rules == ["C-1", "C-2"], "쪼갠 뒤에도 creation_then_triage 검사와 같은 전이여야 한다"
+
+
+def _ne_session(
+    *,
+    candidate_id: str = "cand_ne_0001",
+    signal: ScoutSignal = ScoutSignal.NEED_EVIDENCE,
+    score: float = 0.8,
+    requested: tuple[RequestedContext, ...] = (
+        RequestedContext(kind="function", target="doit", purpose="확인", request_code="stl:err"),
+    ),
+    hop: int = 0,
+    history: tuple[ChatTurn, ...] = (
+        ChatTurn(speaker="user", content="HOP0 BODY"),
+        ChatTurn(speaker="assistant", content="HOP0 RAW"),
+    ),
+) -> "scout.ScoutSession":
+    """손으로 짠 v3 세션 — `continue_session`·`finish`를 렌더 파이프라인 없이 단위로 잰다."""
+    candidate = Candidate(
+        candidate_id=candidate_id,
+        run_id=RUN_ID,
+        artifact_id="artifact_0001",
+        location=VULN_TARGET,
+        score=score,
+        reason_codes=[f"{signal.value}:missing_request:function:doit"],
+        state=FindingState.CANDIDATE,
+    )
+    return scout.ScoutSession(
+        candidate_id=candidate_id,
+        role=Role.SCOUT,
+        slice=None,
+        hop=hop,
+        candidate=candidate,
+        summary=AnalysisSummary(claim="fake", requested_context=list(requested)),
+        signal=signal,
+        requested_context=requested,
+        raw_text="HOP0 RAW",
+        usage=Usage(input_tokens=100, output_tokens=20, cached_tokens=0),
+        latency_s=0.05,
+        prefix="SYSTEM PREFIX",
+        prompt_version="v3",
+        history=history,
+    )
+
+
+def test_continue_session_sends_full_history_and_advances_the_hop(ctx: RunContext) -> None:
+    """`continue_session`은 `[user hop0, assistant raw0, user followup]`을 그대로 보낸다.
+
+    `prompt.body`는 되묻기 본문 자체다(전체 프롬프트를 다시 렌더하지 않는다) — 렌더 자체는
+    hop0(`open_session`)에서만 하고, hop≥1은 resolver가 만든 후속 문답만 오간다.
+    """
+    session = _ne_session()
+    captured: dict[str, object] = {}
+
+    class _Stub:
+        def complete(self, *, role: Role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+            captured["role"] = role
+            captured["prompt"] = prompt
+            captured["schema"] = schema
+            captured["history"] = tuple(history)
+            value = ScoutResponse(
+                candidate=session.candidate.model_copy(
+                    update={"reason_codes": ["triage_review"]}
+                ),
+                analysis_summary=AnalysisSummary(claim="hop1"),
+            )
+            return ModelResult(
+                value=value,
+                usage=Usage(input_tokens=110, output_tokens=15, cached_tokens=90),
+                model="stub",
+                raw_text="HOP1 RAW",
+            )
+
+    stub_ctx = dataclasses.replace(ctx, models=_Stub())
+
+    next_session = scout.continue_session(stub_ctx, session, "FOLLOWUP TEXT")
+
+    assert next_session.candidate_id == session.candidate_id, "루프 동안 candidate_id는 하나다"
+    assert next_session.hop == 1
+    assert captured["history"] == session.history
+    assert captured["prompt"].body == "FOLLOWUP TEXT"
+    assert captured["prompt"].prefix == session.prefix
+    assert captured["schema"] is ScoutResponse
+    assert next_session.signal is ScoutSignal.REVIEW
+    assert next_session.raw_text == "HOP1 RAW"
+    # 다음 홉으로 이어질 history에 이번 문답이 쌓인다.
+    assert next_session.history == (
+        *session.history,
+        ChatTurn(speaker="user", content="FOLLOWUP TEXT"),
+        ChatTurn(speaker="assistant", content="HOP1 RAW"),
+    )
+
+
+def test_finish_uses_the_signal_for_the_triage_decision_when_present(ctx: RunContext) -> None:
+    """v3 신호가 있으면 `finish()`가 점수 대신 그 신호로 판정한다(ADR 0012 결정 2).
+
+    `reject` + 점수 1.0 — 점수만 보면 승격되지만, 최종 신호가 판정이라 QUEUED다(D82 ⑤).
+    """
+    session = _ne_session(candidate_id="cand_ne_reject", signal=ScoutSignal.REJECT, score=1.0)
+
+    candidate = scout.finish(ctx, session)
+
+    assert candidate.state is FindingState.QUEUED, "reject 신호인데 점수로 승격됐다"
+    decisions = [e for e in ctx.trace.events if e.kind is EventKind.POLICY_DECISION]
+    triage = next(e for e in decisions if e.data["point"] == "scout_triage")
+    assert triage.data["basis.signal"] == "triage_reject"
+    rules = [
+        e.data["rule"]
+        for e in ctx.trace.events
+        if e.kind is EventKind.TRANSITION and e.stage == Stage.SCOUT
+    ]
+    assert rules == ["C-1", "C-3"]
+    transition = next(
+        e for e in ctx.trace.events if e.kind is EventKind.TRANSITION and e.data["rule"] == "C-3"
+    )
+    assert transition.data["reason"] == "scout_reject"
+
+
+def test_finish_promotes_on_review_signal_regardless_of_score(ctx: RunContext) -> None:
+    """review 신호 + 낮은 점수 — v3는 약한 review에 낮은 점수를 허용한다(프롬프트 계약)."""
+    session = _ne_session(candidate_id="cand_ne_review", signal=ScoutSignal.REVIEW, score=0.1)
+
+    candidate = scout.finish(ctx, session)
+
+    assert candidate.state is FindingState.TRIAGED
+    transition = next(
+        e for e in ctx.trace.events if e.kind is EventKind.TRANSITION and e.data["rule"] == "C-2"
+    )
+    assert transition.data["reason"] == "scout_promoted"
 
 
 def test_resolve_output_schema_rejects_names_outside_the_allowlist() -> None:
@@ -508,8 +672,8 @@ def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None
     raw = "I cannot rule out a use-after-free here"
     inner = ctx.models.complete
 
-    def unreadable(*, role, prompt, schema):  # noqa: ANN001, ANN202
-        result = inner(role=role, prompt=prompt, schema=schema)
+    def unreadable(*, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+        result = inner(role=role, prompt=prompt, schema=schema, history=history)
         if role is not Role.CRITIC:
             return result
         return result.model_copy(update={"value": result.value.model_copy(update={"verdict": raw})})

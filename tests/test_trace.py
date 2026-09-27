@@ -19,6 +19,14 @@ RUN_ID = "run_20260915_0001"
 STARTED_AT = datetime(2026, 9, 15, tzinfo=UTC)
 
 
+def test_scout_hop_event_kind_is_the_spec_value() -> None:
+    """`EventKind.SCOUT_HOP` — 홉 하나의 Scout 되묻기 자리. 이 이벤트를 내는 루프는
+
+    need_evidence 루프 자신이 짠다(ADR 0012 결정 2 — Phase 5) — 여기서는 값만 고정한다.
+    """
+    assert EventKind.SCOUT_HOP == "scout_hop"
+
+
 def test_emit_puts_the_event_on_disk_before_the_stream_is_closed(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     # cli.py:668과 같은 기본(블록) 버퍼링. flush가 없으면 이 한 줄은 버퍼에 갇힌다.
