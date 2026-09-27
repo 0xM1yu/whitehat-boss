@@ -354,10 +354,11 @@ def _with_mode(mode: str):  # noqa: ANN202
 def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
     """`broken` 역할의 모델 호출만 **체계적으로** 실패시킨다 (HTTP 422).
 
-    **422인 것이 핵심이다.** 400·413은 `_SIZE_STATUS`라 러너가 **일부러** 연속 폐기
-    카운터에 안 센다 — 그 주석이 *"이 후보에 대한 사실이지 run에 대한 사실이 아니다"*라고
-    적는다. 그걸로 재면 차단기가 안 걸리는 것이 **맹점 때문인지 설계 때문인지 못 가른다.**
-    422는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다(`_DROPPABLE_STATUS` 주석).
+    **422인 것이 핵심이다.** 크기 거절(413과 컨텍스트 초과 문구의 400)은 러너가 **일부러**
+    연속 폐기 카운터에 안 센다 — 그 주석이 *"이 후보에 대한 사실이지 run에 대한 사실이
+    아니다"*라고 적는다. 그걸로 재면 차단기가 안 걸리는 것이 **맹점 때문인지 설계 때문인지 못
+    가른다.** 크기가 아닌 400은 세지 않고 첫 건에서 멈추므로(D88) 역시 카운터를 못 잰다.
+    422는 크기가 아니라 체계적 신호로 센다(`_DROPPABLE_STATUS` 주석).
     """
     original = FakeModelClient.complete
 
@@ -2732,9 +2733,13 @@ def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
 ) -> None:
     """**크기 거절은 체계적 고장이 아니다.**
 
-    400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로 세면 큰
-    함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
+    컨텍스트 초과 400은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니다. 세 건을 연속으로
+    세면 큰 함수가 몰려 오는 것만으로 멈추는데, 그것은 이 절이 정확히 견디겠다고 한 경우다 —
     정렬이 신호 붙은 심볼을 앞으로 모으므로 드문 일도 아니다.
+
+    **D88의 두 기각을 여기서 무는 짝이다.** 「첫 성공 전엔 크기도 센다」와 「같은 문구가 N번
+    연속이면 멈춘다」(vLLM 0.27.1은 같은 서버의 초과 문구가 전부 같다)는 상한이 지금 값(3)이면
+    둘 다 이 run을 세운다.
     """
     _failing_model(
         monkeypatch, [_context_overflow(), _context_overflow(), _context_overflow()]
@@ -2942,7 +2947,7 @@ def _critic_context_overflow() -> ModelGatewayError:
 def test_a_request_level_rejection_in_critic_drops_only_that_finding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**400은 이 Finding에 대한 사실이지 run에 대한 사실이 아니다 (D44 후속).**
+    """**크기 400은 이 Finding에 대한 사실이지 run에 대한 사실이 아니다 (D44 후속).**
 
     처음에는 critic 루프에서 `ModelGatewayError`를 일부러 안 잡았고, 그 판단대로
     `run_20260828_0001`이 7단계 400에서 `stopped_after: 7`로 끊겼다 — 후보 단위였다면
@@ -2966,7 +2971,8 @@ def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
 ) -> None:
     """**5xx는 서버 쪽 사건이라 그대로 올려 보낸다.** 남은 Finding을 태워도 얻는 게 없다.
 
-    `_is_droppable`이 가르는 축이 이것이다 — 400은 요청 하나의 문제이고 503은 run의 문제다.
+    `_is_droppable`이 가르는 축이 이것이다 — 크기 400은 요청 하나의 문제이고 503은 run의
+    문제다(크기가 아닌 400도 run의 문제라 첫 건에서 멈춘다 — D88).
     올려 보내도 `run_pipeline`이 받아 매니페스트까지 가므로 산출물은 남는다.
     """
     _failing_model(
@@ -2981,6 +2987,338 @@ def test_a_server_side_gateway_error_in_critic_still_stops_the_run(
     assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable"
     assert (trace_path.parent / "run_manifest.json").is_file()
     assert not result.record.is_complete
+
+
+# ---------------------------------------------------------------------------
+# D88 — 400은 크기만의 값이 아니다
+#
+# vLLM(0.27.1)은 컨텍스트 초과 말고도 요청 모양·서버 설정 때문에 400을 준다. **크기 400만**
+# 「이 후보에 대한 사실」이고, 나머지 400은 다음 요청도 같으므로 첫 건에서 멈춘다. 크기 400이라도
+# **한 자리가 시도한 대상에서 한 번도 성공하지 못하면** 그 자리는 아무것도 못 봤다 — 루프 끝에서
+# 멈춘다(`run_20260925_0006`의 모양).
+# ---------------------------------------------------------------------------
+
+
+# 이 절의 서버 문구 핀은 전부 실측이다(`unreadable_body` 하나만 어댑터 자신의 문구다).
+# 2026-09-26 ATOM 프로브의 원문은 `_PROBE` §3 「근거 로그」에 있고 아래는 그 줄을 인용한다 —
+# vLLM 0.27.1이 준 본문을 하네스 어댑터가 받은 `detail` 그대로다. 문구를 만드는 소스도 함께 적는다.
+_PROBE = "docs/experiments/harness/2026-09-26-vllm-400-bodies-atom.md"
+
+# 양성 핀 — 크기 거절. **저장소의 실측 문구다**(보고서 파일:줄).
+_SIZE_REJECTIONS = {
+    # docs/experiments/harness/2026-08-25-serving-nvfp4-atom.md:236-239
+    "2026-08-25": (
+        "This model's maximum context length is 32768 tokens. However, you requested 0 output "
+        "tokens and your prompt contains at least 32769 input tokens, for a total of at least "
+        "32769 tokens. Please reduce the length of the input prompt or the number of requested "
+        "output tokens. (parameter=input_tokens, value=32769)"
+    ),
+    # docs/experiments/harness/2026-08-28-runA-harness-validation-atom.md:334-335 — 보고서가
+    # 잘라 옮긴 모양 그대로다(본문 JSON째).
+    "2026-08-28": (
+        '{"error":{"message":"This model\'s maximum context length is 32768 tokens. '
+        "However, you requested 8192 output t…"
+    ),
+    # docs/experiments/harness/2026-09-26-slice-smoke-atom.md:165-166 — vLLM 0.27.1
+    "2026-09-26": (
+        "This model's maximum context length is 16384 tokens. However, you requested 4096 "
+        "output tokens and your prompt contains at least 12289 input tokens, for a total of "
+        "at least 16385"
+    ),
+    # _PROBE:98 — 같은 날 프로브. 어댑터가 받은 본문 JSON째다(`param: input_tokens`).
+    # 소스는 vllm/renderers/params.py:449-459.
+    "2026-09-26-probe": (
+        '{"error":{"message":"This model\'s maximum context length is 4096 tokens. However, '
+        'you requested 64 output tokens and your prompt contains at least 4033 input tokens, '
+        'for a total of at least 4097 tokens. Please reduce the length of the input prompt or '
+        'the number of requested output tokens. (parameter=input_tokens, '
+        'value=4033)","type":"BadRequestError","param":"input_tokens","code":400}}'
+    ),
+}
+
+# 음성 핀 — 크기가 아닌 400. **2026-09-26 ATOM 실측 원문이다**(`_PROBE`의 줄). 고른 기준은
+# 「우리 요청이 실제로 밟을 수 있는가」이고, 줄마다 그 경로를 적는다.
+_RUN_REJECTIONS = {
+    # _PROBE:102 — vllm/v1/engine/input_processor.py:111-119. 요청에 `thinking_token_budget`을
+    # 싣는데 서버를 `--reasoning-parser` 없이 띄웠다(`ModelEntry.thinking_token_budget`).
+    "thinking_budget_without_parser": (
+        '{"error":{"message":"thinking_token_budget is set but reasoning_config is not '
+        'configured. Please set --reasoning-parser and/or --reasoning-config to use '
+        'thinking_token_budget.","type":"BadRequestError","param":null,"code":400}}'
+    ),
+    # _PROBE:108 — vllm/v1/engine/input_processor.py:121-125. 같은 예산을 V2 러너 모델에
+    # 실었다(`src/config.py:251-252`가 적는 그 400이다). parser가 있어도 난다.
+    "thinking_budget_on_v2_runner": (
+        '{"error":{"message":"thinking_token_budget is not yet supported by the V2 model '
+        'runner. Run vLLM with VLLM_USE_V2_MODEL_RUNNER=0 to use '
+        'thinking_token_budget.","type":"BadRequestError","param":null,"code":400}}'
+    ),
+    # _PROBE:104 — Qwen/Qwen3.8-27B@1d4bf0f `chat_template.jinja:46-49`. 사고를 켠 채 템플릿이
+    # 모르는 `reasoning_effort`(`high`)를 보냈다. jinja `TemplateError`를 vLLM이 400으로 바꾼다.
+    "template_rejects_reasoning_effort": (
+        '{"error":{"message":"Unexpected reasoning effort high. Supported types are xhigh '
+        '(default), medium, and low.","type":"BadRequestError","param":null,"code":400}}'
+    ),
+    # _PROBE:100 — vllm/renderers/params.py:225-237. 역할 출력 상한이 서버 창보다 크다
+    # (`output_max_by_role`).
+    "output_cap_over_window": (
+        '{"error":{"message":"max_tokens=8192 cannot be greater than '
+        'max_model_len=max_total_tokens=4096. Please request fewer output tokens. '
+        '(parameter=max_tokens, value=8192)","type":"BadRequestError","param":"max_tokens","cod'
+        'e":400}}'
+    ),
+    # _PROBE:106 — vllm/entrypoints/serve/utils/server_utils.py:498-541. 요청 본문 검증 —
+    # 422가 아니라 400이다(`type`도 `Bad Request`).
+    "request_validation": (
+        '{"error":{"message":"1 validation error:\\n {\'type\': \'literal_error\', \'loc\': '
+        '(\'body\', \'reasoning_effort\'), \'msg\': \\"Input should be \'none\', \'minimal\', '
+        '\'low\', \'medium\', \'high\', \'xhigh\' or \'max\'\\", \'input\': \'bogus\', '
+        '\'ctx\': {\'expected\': \\"\'none\', \'minimal\', \'low\', \'medium\', \'high\', '
+        '\'xhigh\' or \'max\'\\"}}","type":"Bad Request","param":"body.reasoning_effort","code"'
+        ':400}}'
+    ),
+    # src/adapters/openai_compat.py:354 — 400인데 본문을 못 읽었다(어댑터 자신의 문구 — 서버
+    # 실측이 아니다). 모르는 400은 크기로 안 읽는다.
+    "unreadable_body": "(응답 본문을 읽지 못했다: OSError)",
+}
+
+
+def test_the_observed_400_pins_are_quoted_from_the_probe_report() -> None:
+    """**실측 핀은 보고서 원문과 글자 그대로 같다.** 핀을 고치고 보고서를 안 고치면(또는 거꾸로)
+    「실측」이라는 말이 거짓이 된다 — 그래서 대조를 기계에 맡긴다. 어댑터 자신의 문구
+    (`unreadable_body`)와 다른 날 보고서의 핀은 이 보고서에 없으므로 뺀다.
+    """
+    report = (Path(__file__).resolve().parents[1] / _PROBE).read_text(encoding="utf-8")
+    observed = {
+        name: detail
+        for name, detail in {**_SIZE_REJECTIONS, **_RUN_REJECTIONS}.items()
+        if name not in {"2026-08-25", "2026-08-28", "2026-09-26", "unreadable_body"}
+    }
+    assert len(observed) == 6, "전제: 프로브 원문 핀이 여섯이다"
+    missing = [name for name, detail in observed.items() if detail not in report.splitlines()]
+    assert missing == [], f"보고서 원문과 다른 핀: {missing}"
+
+
+def _rejected(detail: str) -> ModelGatewayError:
+    """어댑터가 400에 올리는 예외 모양(`openai_compat._post`) 그대로."""
+    return ModelGatewayError(f"HTTP 400 {detail}", status=400, detail=detail)
+
+
+def _every_call_fails(monkeypatch: pytest.MonkeyPatch, broken: Role, error: Exception) -> None:
+    """`broken` 역할의 모델 호출을 **매번** 같은 예외로 실패시킨다(`_failing_model`은 N번째만)."""
+    original = FakeModelClient.complete
+
+    def complete(self, *, role, prompt, schema, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if role is broken:
+            raise error
+        return original(self, role=role, prompt=prompt, schema=schema, **kwargs)
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+
+def _calls(trace_path: Path, role: Role) -> list[dict]:
+    """그 역할의 `model_call` 이벤트. 러너가 몇 번 불렀는지를 trace에서 센다."""
+    return [e for e in _of(_events(trace_path), "model_call") if e["data"]["role"] == role.value]
+
+
+@pytest.mark.parametrize("detail", list(_SIZE_REJECTIONS.values()), ids=list(_SIZE_REJECTIONS))
+def test_a_context_overflow_400_is_a_size_rejection(detail: str) -> None:
+    """양성 핀. 이것이 빨개지면 큰 후보 하나가 run을 세운다 — W2가 견디겠다고 한 경우다."""
+    assert runner._is_size_rejection(_rejected(detail))
+
+
+@pytest.mark.parametrize("detail", list(_RUN_REJECTIONS.values()), ids=list(_RUN_REJECTIONS))
+def test_a_400_without_the_overflow_phrase_is_not_a_size_rejection(detail: str) -> None:
+    """음성 핀. 이것이 빨개지면 설정 400이 다시 「이 후보가 크다」로 읽혀 run이 안 멈춘다 (D88)."""
+    assert not runner._is_size_rejection(_rejected(detail))
+
+
+def test_a_413_is_a_size_rejection_whatever_its_body_says() -> None:
+    """413은 본문 초과다 — 서버 문구로 가르는 것은 400뿐이다."""
+    assert runner._is_size_rejection(ModelGatewayError("HTTP 413", status=413))
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_config_400_at_the_auditor_stops_the_run_at_the_first_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**설정 400은 다음 요청도 같다 — 첫 건에서 멈춘다 (D88).**
+
+    Auditor를 `--reasoning-parser` 없이 띄우면 사고 예산을 실은 요청이 전부 400이다. 예전에는
+    400이면 전부 크기 거절로 읽어 카운터에 안 셌고, run은 Auditor 결과가 전부 빈 채 완주했다.
+
+    **세지 않고 첫 건에서 멈추는 이유.** 후보 단위에서는 Scout가 안 올린 대상이 카운터를 0으로
+    되돌리고 키가 Scout 자리라(D73), 세는 방식으로는 Auditor가 전부 거절해도 안 설 수 있다.
+    """
+    _every_call_fails(
+        monkeypatch, Role.AUDITOR, _rejected(_RUN_REJECTIONS["thinking_budget_without_parser"])
+    )
+
+    configure = None if mode is None else _with_mode(mode)
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=configure)
+
+    assert len(_calls(trace_path, Role.AUDITOR)) == 1, "설정 400을 받고도 다음 대상을 또 불렀다"
+    assert result.record.stopped_after == int(Stage.AUDITOR)
+    assert not result.record.is_complete
+    # 서버 사망(`model_gateway_unavailable`)과 가른다 — 서버는 살아 있고 요청을 거절했다.
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
+    assert (trace_path.parent / "run_manifest.json").is_file()
+
+
+def test_a_config_400_in_critic_stops_the_run_at_the_first_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Critic 루프에는 카운터가 없다 — 그래도 설정 400은 첫 건에서 멈춘다 (D88).**
+
+    카운터를 두지 않는 이유(`_drop_finding` — 상한이 다른 두 루프에 같은 카운터를 두면 어느
+    쪽이 닿았는지 사유에서 사라진다)는 그대로다. 첫 건 정지는 카운터가 아니다.
+    """
+    _every_call_fails(
+        monkeypatch, Role.CRITIC, _rejected(_RUN_REJECTIONS["template_rejects_reasoning_effort"])
+    )
+
+    result, trace_path = _run(tmp_path, name="critic-config-400", before=_with_index())
+
+    assert len(_calls(trace_path, Role.CRITIC)) == 1, "설정 400을 받고도 다음 Finding을 또 불렀다"
+    assert result.record.stopped_after == int(Stage.CRITIC)
+    assert not result.record.is_complete
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_scout_that_never_succeeds_stops_the_run_even_on_size_rejections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**`run_20260925_0006`의 모양 — 서버 창이 작아 모든 호출이 크기 400이다 (D88).**
+
+    크기 400 하나하나는 그 후보에 대한 사실이라 카운터에 안 센다. 그러나 한 자리가 시도한 대상
+    전부에서 거절되면 그 자리는 아무것도 못 봤다 — 그 run을 완주로 두면 「취약점이 없다」로 읽힌다.
+
+    **끝까지 시도한 뒤에** 멈춘다. 앞 몇 건만 보고 멈추면 큰 대상이 정렬 앞에 몰린 run이 늘 같은
+    자리에서 선다 — `test_three_oversized_targets_in_a_row_do_not_stop_the_run`이 그 짝이다.
+    """
+    _every_call_fails(monkeypatch, Role.SCOUT, _context_overflow())
+
+    configure = None if mode is None else _with_mode(mode)
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=configure)
+
+    assert len(_calls(trace_path, Role.SCOUT)) == len(_FIXTURE_INDEX["symbols"]), (
+        "끝까지 시도하지 않았다 — 앞 몇 건으로 멈추면 정상 창에서도 선다"
+    )
+    assert not result.record.is_complete, "Scout가 한 번도 성공 못 했는데 run이 완주로 남는다"
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_an_auditor_that_never_succeeds_stops_the_run_even_when_the_scout_seat_did(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**백스톱의 키는 그 단계에서 모델을 부른 자리다 — Scout 자리가 아니다 (D88, D73).**
+
+    후보 단위에서는 Scout가 안 올린 대상이 그 자리의 「성공」이다. 키를 Scout 자리로 두면 Auditor가
+    전부 거절돼도 안 선다 — 이 fixture에서 대상 넷 중 Auditor까지 가는 것은 일부뿐이다.
+    """
+    _every_call_fails(monkeypatch, Role.AUDITOR, _context_overflow())
+
+    configure = None if mode is None else _with_mode(mode)
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=configure)
+
+    auditor = _calls(trace_path, Role.AUDITOR)
+    assert auditor and not any(e["data"]["ok"] for e in auditor), "전제: Auditor가 전부 거절됐다"
+    assert len(auditor) < len(_calls(trace_path, Role.SCOUT)), "전제: Scout가 안 올린 대상이 있다"
+    assert not result.record.is_complete, "Auditor가 한 번도 성공 못 했는데 run이 완주로 남는다"
+
+
+def test_a_critic_that_never_succeeds_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """고른 Finding 전부에서 Critic이 실패하면 7단계는 아무것도 못 봤다 (D88)."""
+    _every_call_fails(monkeypatch, Role.CRITIC, _critic_context_overflow())
+
+    result, trace_path = _run(tmp_path, name="critic-starved", before=_with_index())
+
+    critic = _calls(trace_path, Role.CRITIC)
+    assert len(critic) > 1, "전제: Critic이 둘 이상을 봤다 — 하나뿐이면 첫 건 정지와 못 가른다"
+    assert result.record.stopped_after == int(Stage.CRITIC)
+    assert not result.record.is_complete
+
+
+def test_a_seat_whose_only_attempt_fails_saw_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**작은 run에도 바닥이 없다 (D88, 리뷰 MEDIUM).**
+
+    자리당 시도가 한 건이면 그 한 건의 실패 — 스키마 실패 한 번이어도 — 로 run이 선다. 예전에는
+    연속 상한(3)에 못 닿아 완주했다. 그 run은 그 자리에서 아무것도 못 봤으므로 완주로 두지 않는
+    것이 성공 0 백스톱의 정의다.
+
+    **최소 시도 수를 넣어 이 검사를 고치지 마라.** 그 수는 근거 없는 상수이고, 넣는 순간 대상
+    하나짜리 run의 창 오설정이 다시 완주로 남는다.
+    """
+    _failing_model(monkeypatch, [SchemaParseError("단 한 번의 스키마 실패(테스트)")])
+
+    result, trace_path = _run(tmp_path, name="one-shot", before=_with_index(), candidate_max=1)
+
+    assert len(_calls(trace_path, Role.SCOUT)) == 1, "전제: 자리당 시도가 한 건뿐이다"
+    assert not result.record.is_complete, "그 자리가 아무것도 못 봤는데 run이 완주로 남는다"
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_pool_seat_whose_every_call_overflows_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**4단계는 자리마다 모델·프롬프트가 다르다** — 한 자리가 전부 크기 400이면 그 자리는
+    아무것도 못 봤다. D68이 체계적 실패로 멈추게 한 「Scout 커버리지 1/3이 빈 run」을 크기
+    400으로도 멈춘다 (D88).
+    """
+    _every_call_fails(monkeypatch, Role("scout_boundary"), _context_overflow())
+
+    result, _ = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    assert {c.scout_member for c in result.candidates} == {"scout_memory", "scout_injection"}, (
+        "전제: 나머지 두 자리는 후보를 냈다"
+    )
+    assert not result.record.is_complete, "한 자리가 한 번도 성공 못 했는데 run이 완주로 남는다"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_one_seats_candidates_overflowing_the_auditor_do_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**5단계부터는 모델을 부르는 역할이 Auditor 하나다 (D88).**
+
+    백스톱을 Scout 자리(`item.role`)로 키 잡으면 한 자리의 후보들만 Auditor 창을 넘어도 「그
+    자리가 한 번도 성공 못 했다」가 되어 run이 선다. Auditor는 다른 자리 후보에서 멀쩡히 돌았으므로
+    오정지다 — 크기 400은 여전히 그 후보에 대한 사실이다.
+
+    자리를 고르는 수단이 호출 순서다(Auditor 프롬프트는 자리를 안 싣는다). 팬아웃 순서가
+    `SCOUT_POOL_ROLES` 그대로라(`runner._scout_roles`) 셋째마다 둘째가 `scout_boundary`다 —
+    그 전제를 trace로 확인한다.
+    """
+    original = FakeModelClient.complete
+    calls = {"n": 0}
+
+    def complete(self, *, role, prompt, schema, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if role is Role.AUDITOR:
+            index = calls["n"]
+            calls["n"] += 1
+            if index % len(SCOUT_POOL_ROLES) == 1:
+                raise _context_overflow()
+        return original(self, role=role, prompt=prompt, schema=schema, **kwargs)
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    skipped = _of(_events(trace_path), "target_skipped", stage=Stage.AUDITOR)
+    assert skipped, "전제: Auditor 거절이 났다"
+    assert {e["data"]["scout_member"] for e in skipped} == {"scout_boundary"}, (
+        "전제: 한 자리(scout_boundary)의 Auditor 호출만 거절했다"
+    )
+    assert result.record.is_complete, (
+        "Auditor는 다른 자리 후보에서 성공했는데 run이 섰다 — 백스톱 키가 Scout 자리다"
+    )
 
 
 # ---------------------------------------------------------------------------
