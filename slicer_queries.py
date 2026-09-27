@@ -48,10 +48,13 @@ EXEC_SINKS = (
 CASE_B_EXEC_CAP = 2000
 
 # Operator-anchored sinks (#219 follow-up). Operator/deref sinks are the biggest GT bucket
-# (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). This PR anchors the two of
-# those it can narrow and bound: array-index WRITES (a subset of the 10) and pointer arithmetic
-# (3) -- the "13/40" the PR body counts. Deref/field (12) and array-index READS are NOT anchored
-# (a documented recall limit). Raw operators explode, so narrow BEFORE taking, then cap. All
+# (25/40 = deref-or-field 12 + array-index 10 + pointer-arith 3). The write-context anchors
+# narrow-and-bound: array-index WRITES (subset of the 10), deref/field WRITES (`p->x=`·`*p=`·
+# `s.f=`, subset of the 12 -- added 2026-09-26), and pointer arithmetic (3). Array-index and
+# deref/field READS are still NOT anchored (a documented recall limit). The ~2x reads-to-writes
+# ratio below was measured for ARRAY-INDEX only (mostly benign bounds-checked reads); the
+# deref/field read/write ratio is NOT measured -- do not assume ~2x there. Raw operators explode,
+# so narrow BEFORE taking, then cap. All
 # counts below are ATOM measurements recorded in
 # docs/experiments/harness/2026-09-22-case-b-operator-anchors-atom.md (run_id: none). WavPack
 # (1020 methods):
@@ -65,10 +68,10 @@ CASE_B_EXEC_CAP = 2000
 #     catches typedef'd pointers -- pcre2's `mb->end_subject - eptr` has operand evalType
 #     ANY/PCRE2_SPTR (no "*"), but the operand IS an indirectFieldAccess, so it qualifies.
 #     Integer-only arithmetic (both operands plain ints) drops out.
-# PER-ANCHOR bound (not a single total): this cap is applied to indexWrites AND to ptrArith
-# separately, so the operator population is bounded by 2*cap (<=4000), and with WRITERS
-# (CASE_B_WRITER_CAP) and EXEC_SINKS (CASE_B_EXEC_CAP) the new-sink total is bounded by
-# <=8000. A repo past a cap gets bounded
+# PER-ANCHOR bound (not a single total): this cap is applied to indexWrites, derefWrites AND
+# ptrArith separately, so the operator population is bounded by 3*cap (<=6000), and with WRITERS
+# (CASE_B_WRITER_CAP) and EXEC_SINKS (CASE_B_EXEC_CAP) the new-sink total is bounded by <=10,000
+# (writers 2000 + exec 2000 + 3 operator types * 2000). A repo past a cap gets bounded
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
@@ -299,8 +302,10 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
 CASE_A_CALL_LIMIT = 1
 # The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
 # a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
-# and the whole slice aborted (0 slices). Measured: capping turns sample_01's abort into 2,198
-# candidates (2,000 api + 198 readers on THAT sample). Both `api` and `readers` are capped:
+# and the whole slice aborted (0 slices). Measured at the earlier cap 2,000 (before #310):
+# capping turned sample_01's abort into 2,198 candidates (2,000 api + 198 readers on THAT
+# sample). At cap 4,000 sample_01's api set -- which hit the cap -- can reach up to 4,000, so this
+# 2,198 is a cap-2,000 figure, not the current cap's. Both `api` and `readers` are capped:
 # readers is not guaranteed small (it is every internal method calling read/getc/getline/mmap/…),
 # so an uncapped readers set could overrun the same way on a repo with many such methods.
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
@@ -310,7 +315,16 @@ CASE_A_CALL_LIMIT = 1
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
 #  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
-CASE_A_CANDIDATE_CAP = 2000
+# ⏵ 2026-09-26 — 2,000 → 4,000. 2026-09-26 injection 후보포착(level-2) 재측정에서 injection
+# sample_13 source `ra_svn_open`(subversion, READER 직접 호출)이 2,000 캡에선 Case A 후보로 안
+# 잡히다가 4,000에서 잡혔다 — **source 회수(+4)는 확정(level-2)**이다. 단 `.take`가 불안정 CPG
+# traversal 순서라 이 회수는 readers 총수 < 4,000일 때만 보장된다(위 「unspecified first-N」).
+# **미측정으로 남은 것은 full-slice(level-3) 비용뿐**이다 — 늘어난 후보의 per-candidate flows_a
+# (Joern/Python 슬라이서 단계라 하네스 모델 장부의 gpu_seconds가 아니라 query deadline·wall 시간·
+# candidate timeout으로 잰다)에 별도 상한이 없어, 후보가 2배가 되면 애초에 이 캡이 막으려던
+# 0-slices 실패로 되돌 수 있는지는 level-3 실측이 필요하다(#250 뒤 캡은 그 비용을 묶는다 — 위).
+# 그 비용이 감당 안 되면 되돌린다.
+CASE_A_CANDIDATE_CAP = 4000
 
 
 def candidates_a_query() -> str:
@@ -381,12 +395,20 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       val indexWrites = budget(cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
           .argumentIndex(1).contains(c)).take(__MCAP__).l, __KPM__, __OPCAP__)
+      // Deref/field WRITES (`p->x = ...`, `*p = ...`, `s.f = ...`): same assignment-LHS narrowing
+      // as indexWrites -- biggest GT sink bucket, raw explodes, so restrict to WRITE targets
+      // (keeps the OOB-write case, drops far-more-common reads). Routed through budget() like the
+      // other operator anchors so per-method budgeting bounds it too (#308 x #311 reconciliation).
+      val derefWrites = budget(
+        cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take(__MCAP__).l, __KPM__, __OPCAP__)
       val ptrArith = budget(cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty)
         .take(__MCAP__).l, __KPM__, __OPCAP__)
-      val operators = (indexWrites ++ ptrArith).distinct
+      val operators = (indexWrites ++ derefWrites ++ ptrArith).distinct
       ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ execs ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
         ujson.Obj("symbol" -> c.name, "file" -> c.location.filename,
@@ -398,6 +420,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
             Option.when(writers.contains(c))("dangerous_write"),
             Option.when(execs.contains(c))("injection_sink"),
             Option.when(indexWrites.contains(c))("index_write"),
+            Option.when(derefWrites.contains(c))("deref_write"),
             Option.when(ptrArith.contains(c))("pointer_arithmetic")).flatten),
           "trigger_arguments" -> ujson.Arr.from(c.argument.l.filter(a =>
             a.start.isIdentifier.refsTo.collect { case l: nodes.Local => l }
@@ -465,11 +488,14 @@ def flows_query(
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
           .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
+      val derefWrites = cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")
+        .filter(c => c.inCall.nameExact("<operator>.assignment").argument
+          .argumentIndex(1).contains(c)).take({CASE_B_OPERATOR_CAP}).l
       val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
             "indirection|indirectIndexAccess|addressOf)").nonEmpty).take({CASE_B_OPERATOR_CAP}).l
-      val globalArgs = (writerSinks ++ execSinks ++ indexWrites ++ ptrArith).distinct
+      val globalArgs = (writerSinks ++ execSinks ++ indexWrites ++ derefWrites ++ ptrArith).distinct
         .flatMap(_.argument).filter(n => Option(n.method).nonEmpty).distinct
       val sinksCapped = globalArgs.size > {FLOWS_SINK_CAP}
       val globalKept = globalArgs.sortBy(n => (

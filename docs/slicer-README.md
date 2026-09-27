@@ -56,7 +56,7 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 **한 번 호출되는 핸들러 진입점**(예: TLS `client_handle_hello`)을 놓치므로 K회 이하로 완화한다
 (#219). 완화된 집합은 대형 저장소에서 폭증한다. 예전에는 그 payload가 Joern stdout을 넘겨
 슬라이스가 통째로 실패했는데, #250이 payload를 파일로 옮겨 그 overrun은 사라졌다. 그래도
-`CASE_A_CANDIDATE_CAP`(기본 2000)로 유계하는 것은 후보 수(와 하류 per-candidate 비용)를 묶기
+`CASE_A_CANDIDATE_CAP`으로 유계하는 것은 후보 수(와 하류 per-candidate 비용)를 묶기
 위해서다 — 입력 API 호출자는 집합이 작아 유계 대상이 아니다. 소속 함수 파라미터에서 CPG의 호출 인자로 이어지는
 `reachableByFlows` 경로를 구한다. 함수별 sink batch를 유지한다. 매개변수 없는 reader는
 0경로일 수 있다.
@@ -64,8 +64,9 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 ### Case B — 선택한 호출 인자에서 역추적
 
 지역 배열 식별자를 인자로 받는 호출, 같은 함수에서 같은 선언을 반복 해제하는 호출, 위험
-write 함수(memcpy·strcpy 계열), command/SQL 실행 호출(system·popen·exec*·apr_proc_create·sqlite3_*·mysql_* 계열), 그리고 연산자 앵커 — 배열 인덱스 **쓰기**(`a[i] = …`)와
-포인터 산술(피연산자가 포인터 타입이거나 메모리 접근인 `p ± i`) — 를 후보로 삼는다. 해제
+write 함수(memcpy·strcpy 계열), command/SQL 실행 호출(system·popen·exec*·apr_proc_create·sqlite3_*·mysql_* 계열), 그리고 연산자 앵커 — 배열 인덱스 **쓰기**(`a[i] = …`), deref/field
+**쓰기**(`p->x = …`·`*p = …`·`s.f = …`), 포인터 산술(피연산자가 포인터 타입이거나 메모리 접근인
+`p ± i`) — 를 후보로 삼는다. 인덱스·deref/field **읽기**는 제외한다(폭증 방지·recall 한계). 해제
 wrapper는 free로 흐르는 **매개변수 위치**를 보존한다. write·연산자 집합은 대형 저장소에서
 폭증하므로(WavPack 실측: 인덱스 접근 3,042·add/sub 3,309) 좁힌 뒤 각각 상한(`CASE_B_*_CAP`)으로
 유계한다. 인덱스 **읽기**와 정수만의 산술은 제외한다 — 유계를 위한 recall 한계다.

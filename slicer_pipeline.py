@@ -169,6 +169,43 @@ class SlicingStages:
             if old == points:
                 return
 
+    def degraded_slice(self, candidate: dict) -> dict:
+        """Server-free fallback for a candidate whose flow/backward query failed or was skipped
+        after a poison streak. The candidate was already captured (that capture is the recall
+        unit -- source/sink is labelled), so keep it in the output with its own coordinates and
+        the source at them instead of DROPPING it. Builds nothing from the CPG, so it works even
+        when the server is unresponsive. `degraded` marks that the dataflow context is absent:
+        a consumer sees the anchor, not a traced slice, and can `--resume` for the full slice.
+        """
+        entry = candidate["entry"]
+        # Normalize WITHOUT counting (#307 review LOW): in the except-QueryError path
+        # slice_candidate already ran self.points on these anchors, folding their unmapped count
+        # into locations_unmapped -- re-counting here via self.points would double-count that
+        # diagnostic. normalize_points is the count-free path.
+        mapped, _ = normalize_points(candidate["anchors"], self.sources, self.repo)
+        anchors = set(mapped) | {(entry["file"], entry["line"])}
+        points = sorted(anchors)
+        return {
+            "id": candidate["id"],
+            "candidate_key": candidate["candidate_key"],
+            "case": candidate["case"],
+            "entry": entry,
+            "members": [candidate["candidate_key"]],
+            "absorbed": [],
+            "lines": [{"file": f, "line": n} for f, n in points],
+            "code": assemble(anchors, self.sources),
+            "flow_count": 0,
+            "truncated": False,
+            "degraded": True,
+            "analysis_kind": "degraded_anchor_only",
+            "analysis": {"lines": [], "flow_count": 0, "truncated": False, "degraded": True},
+            "measurement_notes": {
+                "degraded": "flow/backward query failed or was skipped (poison streak); "
+                "anchor-only slice, no dataflow context -- --resume re-attempts a full slice"
+            },
+            "line_provenance": {"data_dependency": [], "candidate_anchor": points, "context": []},
+        }
+
     def prepare_checkpoint(self) -> None:
         contract = {
             "source_hashes": self.source_hashes,
@@ -225,16 +262,44 @@ class SlicingStages:
                 from slicer import QueryError  # deferred: slicer imports this module
 
                 consecutive_poison = 0
+                # After a poison streak the server is likely unusable, but the remaining
+                # candidates were already captured (that capture is the recall unit). Rather than
+                # abort the run -- which DROPPED every remaining candidate's slice (#219 left them
+                # unprocessed) -- switch to emitting anchor-only degraded slices without querying
+                # the server, so no captured candidate is lost from slices.json.
+                degrade_only = False
                 for candidate in self.candidates:
+                    if degrade_only:
+                        # A prior run may have already completed this candidate's full slice (a
+                        # "complete" checkpoint). That reuse needs NO server, so restore it rather
+                        # than degrading a slice we already have -- degrading it would drop the full
+                        # dataflow that `--resume` promises to keep (#307 review HIGH).
+                        state = self.restore_stage(candidate)
+                        if state["phase"] == "complete":
+                            self.increment("candidates_reused")
+                            if state["item"] is not None:
+                                self.completed.append(state["item"])
+                            self.processed += 1
+                            continue
+                        if not self.points([candidate["entry"]]):
+                            self.increment("candidates_unmapped")
+                            self.processed += 1
+                            continue
+                        self.completed.append(self.degraded_slice(candidate))
+                        self.increment("candidates_degraded")
+                        self.processed += 1
+                        continue
                     try:
                         item = self.slice_candidate(candidate)
                     except QueryError as exc:
-                        # Isolate a per-candidate failure. A single flows/backward timeout
-                        # or abort used to propagate to the outer handler and discard every
-                        # remaining candidate (#219) — one pathological candidate should not
-                        # cost the whole run. Record it and move on. The candidate's own
-                        # checkpoint state is left as last saved, so a `--resume` retries it
-                        # from there (e.g. a context failure resumes the saved flow).
+                        # Isolate a per-candidate failure. A single flows/backward timeout or
+                        # abort used to propagate to the outer handler and discard every remaining
+                        # candidate (#219). Record it, and instead of DROPPING this candidate's
+                        # slice, emit an anchor-only degraded slice so its capture survives into
+                        # the output. The checkpoint is left at its last saved phase -- "pending"
+                        # for a flows/backward-query failure (nothing saved yet), or "flow_saved"
+                        # for a context (expand_context) failure -- so --resume re-attempts from
+                        # there (a context failure resumes the saved flow, not from scratch).
                         self.increment("candidates_failed")
                         self.event(
                             "candidate_failed",
@@ -242,16 +307,18 @@ class SlicingStages:
                             error=str(exc),
                         )
                         self.processed += 1
+                        self.completed.append(self.degraded_slice(candidate))
+                        self.increment("candidates_degraded")
                         if exc.poisoned:
                             consecutive_poison += 1
                             if consecutive_poison >= POISON_STOP_STREAK:
                                 self.errors.append(
-                                    f"Stopped after {consecutive_poison} consecutive poisoned "
-                                    "candidates; restart the dedicated server and --resume. If "
-                                    "these are deadline-intrinsic (not server state), resume "
-                                    "re-runs them and will re-stop here"
+                                    f"{consecutive_poison} consecutive poisoned candidates; "
+                                    "remaining candidates get degraded (anchor-only) slices "
+                                    "without querying the server. Restart the dedicated server "
+                                    "and --resume to re-attempt full slices"
                                 )
-                                break
+                                degrade_only = True
                         else:
                             consecutive_poison = 0
                         continue
