@@ -789,6 +789,7 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
     assert facts["slice_criterion"] == {
         "given_end": "sink",
         "given": {"file": "parser.c", "line": 5, "symbol": "memcpy"},
+        "degraded": False,
     }
     assert candidate.slice_id == "slice_0001"
 

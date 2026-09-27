@@ -216,6 +216,7 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 given_end=item.given_end,
                 entry=entry,
                 lines=item.lines,
+                degraded=item.degraded,
             )
         )
     return tuple(refs)

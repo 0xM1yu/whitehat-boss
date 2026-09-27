@@ -119,3 +119,7 @@ class SliceRef(HarnessModel):
     # 슬라이스가 걸친 (file, line) 전부 — 슬라이서의 `lines` 그대로. Auditor가 슬라이스가 걸친
     # 함수들을 찾는 데 쓴다(`runner._auditor_source` — 결정 1-b = 넓은 (i)).
     lines: tuple[tuple[str, int], ...]
+    # anchor-only 대체 슬라이스(#307)면 True — flow/backward 질의가 실패·건너뛴 후보라 dataflow
+    # 문맥이 없다. FACTS와 RunRecord slicer summary가 이걸 실어야 모델·사후 기록이 절단 슬라이스를
+    # full로 오인하지 않는다(@danielcho02 #307 리뷰). 기본 False = 정상 full 슬라이스.
+    degraded: bool = False
