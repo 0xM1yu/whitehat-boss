@@ -79,7 +79,8 @@ CASE_B_OPERATOR_CAP = 2000
 # the GT source fn holds indexWrites 12 / writers 3 / ptrArith 5 and the GT sink fn writers 2 /
 # ptrArith 2, yet all three types exceed cap 2000 repo-wide (writers 4174, indexWrites 4259,
 # ptrArith 6069) so the flat take dropped the GT functions -- a miss that raising the cap to
-# 4000 (#310) only papered over, at the price of a candidate explosion (+7,309 on this sample).
+# 4000 (#310) only papered over, at the price of a candidate explosion (inj_18 rose to ~23,000
+# candidates; that figure is from a separate P1+P2+P3+#310 stack run, not the measurement below).
 # Budgeting takes at most this many anchors PER enclosing method (grouped by method id) BEFORE
 # the global cap, ROUND-ROBIN (1 anchor from every method, then a 2nd from every method, ... up
 # to this many rounds). Round-robin so the ceiling is spent breadth-first: every method gets its
@@ -91,11 +92,12 @@ CASE_B_OPERATOR_CAP = 2000
 # flat cap 2000): k=16 round-robin recovers 3 GT elements (inj_18 source+sink, inj_13 sink) with
 # ZERO regressions, lifting recall 77.9% -> 81.8% (inj 66.7% -> 83.3%, main 81.4% unchanged). It
 # does this while CUTTING total candidates 230,926 -> 225,283 (no explosion) -- inj_18 goes miss
-# -> captured with cands 11,745 -> 12,025 (+280), where #310's flat cap-raise needed +11,309.
-# k=4 round-robin left one regression (main_09: a GT method with >4 same-type anchors lost its
-# GT-covering one); k=16 gives each method more depth WITHOUT dropping any method's first anchor
-# (round-robin fills breadth-first) or exceeding the cap -- main_09 recovers (cands 1,643 ->
-# 1,226) with no new explosion, a strict gain over k=4.
+# -> captured with cands 11,745 -> 12,025 (+280) here, whereas #310's cap-raise left inj_18 near
+# ~23,000 in that separate stack run. k=4 round-robin left one regression (main_09: a GT method
+# with >4 same-type anchors lost its GT-covering one); k=16 gives each method more depth WITHOUT
+# dropping any method's first anchor (round-robin fills breadth-first) or exceeding the cap --
+# main_09 recovers (cands 1,643 -> 1,226) with no new explosion, a strict gain over k=4.
+# Run record: docs/experiments/harness/2026-09-27-case-b-per-method-budget.md.
 CASE_B_PER_METHOD = 16
 
 # The flows query targets memory-write sink calls instead of every call argument in the repo
@@ -446,8 +448,10 @@ def flows_query(
       // index-READ GT sink types that a memory-write-only set drops, and keeps the live-probe
       // fixtures' calls anchored. Globally, narrow to memory-write and command/SQL-exec calls
       // (capped) so the per-candidate cross-repo dataflow stays under the deadline (#219). Cheap
-      // name/AST filters only (no dataflow) -- keep writers/execs/operators in sync with
-      // candidates_b_query.
+      // name/AST filters only (no dataflow) -- keep the writers/execs/operators NAME+FILTER
+      // definitions in sync with candidates_b_query. The collection WRAPPER intentionally differs:
+      // flows uses flat `.take(cap)` here, candidates_b uses per-method round-robin budget() (#311)
+      // -- do not "sync" that away (test_flows_and_case_b_share pins only the shared name/filter).
       val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
       val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
       val execSinks = cpg.call.name("({EXEC_SINKS})").take({CASE_B_EXEC_CAP}).l
