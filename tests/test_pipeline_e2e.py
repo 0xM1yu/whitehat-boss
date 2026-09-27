@@ -362,10 +362,12 @@ def _break_one_role(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
     """
     original = FakeModelClient.complete
 
-    def complete(self, *, role: Role, prompt: object, schema: object) -> object:  # noqa: ANN001
+    def complete(  # noqa: ANN001
+        self, *, role: Role, prompt: object, schema: object, history: object = ()
+    ) -> object:
         if role.value == broken:
             raise ModelGatewayError(f"{broken} 체계적 고장(테스트)", status=422)
-        return original(self, role=role, prompt=prompt, schema=schema)
+        return original(self, role=role, prompt=prompt, schema=schema, history=history)
 
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
@@ -2591,13 +2593,13 @@ def _failing_model(
     original = FakeModelClient.complete
     calls = {"n": 0}
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN202
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
         if role is role_under_test:
             index = calls["n"]
             calls["n"] += 1
             if index < len(errors) and errors[index] is not None:
                 raise errors[index]
-        return original(self, role=role, prompt=prompt, schema=schema)
+        return original(self, role=role, prompt=prompt, schema=schema, history=history)
 
     monkeypatch.setattr(FakeModelClient, "complete", complete)
 
