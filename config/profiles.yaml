@@ -243,3 +243,34 @@ profiles:
     # 실행 단위도 `harness_pool`과 같아야 한다 — 다르면 두 run의 차이가 검색 경로 하나로 안 갈린다.
     execution:
       mode: per_stage
+
+  # --- ATOM need_evidence 루프 스모크(2026-09-27) — 머지하지 않는 브랜치 `smoke/ne-loop-atom` -----------
+  # Phase 5(PR #298·#301·#302·#305·#306·#309)를 합친 트리로 need_evidence 루프를 실서빙에서 돌린다.
+  # 실서빙 키의 `checksum`이 0이라 비교표 밖이다.
+  atom_ne_loop_fake:
+    description: "ATOM NE 루프 스모크 전용(머지 안 함) — 모델 전부 fake, 도구 docker. 실서빙 전 예행(배선·슬라이스 적재 확인)"
+    production: false
+    roles:
+      scout: fake
+      auditor: fake
+      critic: fake
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: atom_ne_loop_smoke
+
+  atom_ne_loop_scout:
+    description: "ATOM NE 루프 스모크 전용(머지 안 함) — Scout 풀만 실서빙(memory·injection qwen3-14b · boundary seccoderx-8b), auditor·critic fake. checksum 0이라 비교표 제외"
+    production: false
+    roles:
+      scout_memory: qwen3-14b
+      scout_boundary: seccoderx-8b
+      scout_injection: qwen3-14b
+      auditor: fake
+      critic: fake
+    adapters:
+      retriever: fake
+      tool_runner: docker
+      state_store: sqlite
+    budget: atom_ne_loop_smoke
