@@ -233,6 +233,24 @@ def test_the_v3_pool_gets_the_slice_contract_its_prompt_declares(tmp_path: Path)
         }, role
 
 
+def test_a_degraded_slice_tells_the_v3_scout_its_path_is_absent(tmp_path: Path) -> None:
+    """#307 재리뷰(@danielcho02): FACTS가 degraded를 실어도 v3 prefix가 그 의미를 안 주면, 모델은
+    "모든 slice가 도달 문장을 보존했다"는 prefix 단언과 충돌한다. degraded=true가 실제 v3
+    프롬프트의 FACTS까지 가고, 세 prefix가 그 anchor-only 제한을 설명하는지 검사한다.
+    """
+    path = _slices_file(tmp_path, [{**_slice(*_CASE_B), "degraded": True}])
+
+    _, trace_path = _run(tmp_path, slices_path=path, configure=_poolify_v3())
+
+    for role in ("scout_memory", "scout_boundary", "scout_injection"):
+        ((_body, facts),) = _prompts(trace_path, role)
+        assert facts["slice_criterion"]["degraded"] is True, role  # marker가 모델 FACTS까지 간다
+    # 세 v3 prefix가 degraded=true의 anchor-only 제한을 설명해야 FACTS 필드가 무력하지 않다.
+    for role in ("scout_memory", "scout_boundary", "scout_injection"):
+        prefix = (PROMPTS_DIR / role / "v3" / "prefix.md").read_text(encoding="utf-8")
+        assert "`degraded: true`" in prefix, role
+
+
 def test_each_slice_capsule_counts_the_render_its_prompt_carries(tmp_path: Path) -> None:
     """LIGHT 캡슐의 `target_function` 토큰은 그 슬라이스의 렌더에서 나온다 — 프롬프트가 싣는
     것을 센다.
