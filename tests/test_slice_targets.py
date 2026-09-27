@@ -324,7 +324,8 @@ def test_the_auditor_anchors_on_the_exact_range_of_a_header_function(tmp_path: P
     대상이 그 함수의 정확한 범위다 — `_AUDITOR_WINDOW_LINES`(50줄 창)가 아니다. index-v2 보고서
     (2026-09-26-index-v2-atom.md §5 「말하지 않는 것」)의 표본 셋은 헤더 entry가 전부 프로토타입
     한 줄이라 이 경로를 안 탔다 — 창 폴백 테스트
-    (`test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_file`)의 대칭 짝이다.
+    (`test_without_an_enclosing_symbol_the_auditor_reads_a_window_not_the_whole_file`)의
+    대칭 짝이다.
     """
     points = {("util.h", 1), ("util.h", 5)}
     header_slice = {
