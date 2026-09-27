@@ -17,6 +17,7 @@
 안 걸린다.
 """
 
+from collections.abc import Sequence
 from typing import Generic, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
@@ -174,6 +175,17 @@ class Prompt(HarnessModel):
     prompt_version: NonEmptyStr
 
 
+class ChatTurn(HarnessModel):
+    """멀티턴 history의 한 턴 (ADR 0012 결정 2 — need_evidence 되묻기).
+
+    `Prompt`와 같은 자리다 — 시스템 prefix는 여기 없다. **아직 모양만 고정한다.**
+    실제로 history를 조립해 요청에 싣는 배선은 아직 없다(#95).
+    """
+
+    speaker: Literal["user", "assistant"]
+    content: str
+
+
 class Usage(HarnessModel):
     """토큰 사용량.
 
@@ -231,6 +243,10 @@ class ModelResult(HarnessModel, Generic[SchemaT]):
     # 상위(`context.call_model`)가 이 본문을 재시도 파일로 남겨 **실제로 간 요청을 재현**할
     # 수 있게 한다(#80). 재시도가 없으면 빈 튜플이다.
     retry_bodies: tuple[str, ...] = ()
+    # 성공한 시도의 응답 원문(`_post`가 읽는 `message.content`). **사고 토큰은 담지 않는다**
+    # 그 자리는 Phase 8이다 — 지금은 자리만 있다. 값을 실제로 채우는 배선은 아직 없다(#95).
+    # 안 채우면(구현체가 아직 그대로면) `None`이고, 이것도 미실측 표시다.
+    raw_text: str | None = None
 
 
 class ModelClient(Protocol):
@@ -238,8 +254,19 @@ class ModelClient(Protocol):
 
     스키마 파싱 실패 시 재요청(계약의 `retries`)은 구현체 책임이다. 한도를 넘기면
     예외를 던지고, 오케스트레이터가 `ReasonCode.SCHEMA_PARSE_FAILED`로 기록한다.
+
+    **`history`는 이 저장소 첫 Protocol 키워드 전용 기본값이다** (ADR 0012 결정 2 —
+    need_evidence 되묻기의 멀티턴). 지금의 구현 셋(`fake_model.py`·`openai_compat.py`·
+    `routing_model.py`)은 인자만 받는다: 비어 있으면 지금 동작 그대로이고, 비어 있지
+    않으면 조용히 무시하지 않고 `NotImplementedError`로 크게 실패한다 — 실제로 채우는
+    멀티턴 배선은 아직 없다(#95).
     """
 
     def complete(
-        self, *, role: Role, prompt: Prompt, schema: type[SchemaT]
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[SchemaT],
+        history: Sequence[ChatTurn] = (),
     ) -> ModelResult[SchemaT]: ...

@@ -267,6 +267,9 @@ class EventKind(StrEnum):
     CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
+    # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). **자리만 연다** —
+    # 이 이벤트를 실제로 내는 루프·필드 확정은 need_evidence 루프 자신이다(Phase 5).
+    SCOUT_HOP = "scout_hop"
 
 
 class TraceEvent(HarnessModel):

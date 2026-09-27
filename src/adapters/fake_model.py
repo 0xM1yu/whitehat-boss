@@ -16,10 +16,11 @@
 
 import json
 import re
+from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-from src.interfaces.model_client import ModelResult, Prompt, Usage
+from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, Usage
 from src.schemas.candidate import Candidate
 from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
@@ -122,7 +123,18 @@ class FakeModelClient:
         # (agent-contracts.md §4.2, evaluation.md §5.2 cache hit ratio).
         self._seen_prefixes: set[str] = set()
 
-    def complete(self, *, role: Role, prompt: Prompt, schema: type[BaseModel]) -> ModelResult:
+    def complete(
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[BaseModel],
+        history: Sequence[ChatTurn] = (),
+    ) -> ModelResult:
+        if history:
+            raise NotImplementedError(
+                "FakeModelClient는 아직 history를 받지 않는다 — 멀티턴 배선은 아직이다(#95)"
+            )
         context = _parse_context(prompt.body)
         builder = _BUILDERS.get(schema)
         if builder is None:
