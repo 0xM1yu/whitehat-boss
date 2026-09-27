@@ -794,6 +794,24 @@ def _fit_budget(blocks: Sequence[_Block], max_chars: int) -> tuple[list[_Block],
     return fitted, truncated
 
 
+def _cost(lines: Sequence[str]) -> int:
+    return sum(len(line) + 2 for line in lines)  # `_fit_budget`과 같은 어림
+
+
+def _fit_already(lines: Sequence[str], budget: int) -> list[str]:
+    """Already 줄을 남은 예산에 first-fit으로 싣고, 넘친 줄은 수만 한 줄로 남긴다."""
+    kept: list[str] = []
+    for line in lines:
+        if _cost([*kept, line]) > budget:
+            break
+        kept.append(line)
+    omitted = len(lines) - len(kept)
+    if omitted:
+        plural = "" if omitted == 1 else "s"
+        kept.append(f"(+{omitted} more Already in SOURCE line{plural} omitted for budget.)")
+    return kept
+
+
 def resolve(
     query: ResolveQuery,
     *,
@@ -853,7 +871,12 @@ def resolve(
     # 알림 줄 = already + not-resolved — 골격(명세 §4.4.5)에 Already 전용 자리는 없고,
     # 둘 다 "요청한 것을 그대로 안 준다"는 통지라 같은 UNFILLED 자리에 already를 먼저,
     # Not resolved를 뒤에 넣는다(모듈 docstring "명세 밖이거나 해석이 든 자리").
-    alert_lines = [*already, *(item.text for item in unfilled)]
+    # Already 줄은 블록이 쓰고 남은 예산에 든다 — 전역 대입(라벨 13)이 전부 SOURCE와
+    # 겹치면 요청 하나가 수십 줄을 낼 수 있어서다. Not resolved는 요청당 하나라(3 이하) 늘 싣는다.
+    alert_lines = [
+        *_fit_already(already, query.max_chars - _cost(fragments)),
+        *(item.text for item in unfilled),
+    ]
     note = needs_assignment_note(block.label for block in fitted)
     followup_text = (
         render_followup(
