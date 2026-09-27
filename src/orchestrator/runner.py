@@ -67,13 +67,15 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 
 단, 무조건 잡지 않는다. 후보 하나가 컨텍스트를 넘긴 것(그 후보만 버린다)과 서버가
 죽은 것(순회를 멈춘다)은 대응이 다르고, 둘을 가르는 정보가 `ModelGatewayError.status`에
-있다. 서버는 응답하는데 후보가 계속 죽는 경우를 위해 **연속 폐기 카운터**가 하나 더 있고,
-그쪽은 사유가 갈린다(`_TooManyDrops`).
+있다 — **400이면 서버가 준 문구까지 본다(#296).** vLLM은 요청 모양·서버 설정 때문에도 400을
+주고, 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다. 서버는 응답하는데 후보가 계속 죽는
+경우를 위해 **연속 폐기 카운터**가 하나 더 있고, 그쪽은 사유가 갈린다(`_TooManyDrops`).
 
-그 카운터가 세는 것은 **체계적 고장의 신호**뿐이다. 크기 거절(400·413)은 "이 후보가
-크다"이지 "이 run이 고장 났다"가 아니라서 세지 않는다 — 세면 큰 함수 셋이 연달아 오는
-것만으로 멈추고, 그것이 이 절이 견디겠다고 한 바로 그 경우다. 대신 **내리지도 않으므로**
-체계적 실패와 번갈아 나와도 상한에 닿는다.
+그 카운터가 세는 것은 **체계적 고장의 신호**뿐이다. 크기 거절(413과 컨텍스트 초과 문구의
+400)은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니라서 세지 않는다 — 세면 큰 함수 셋이
+연달아 오는 것만으로 멈추고, 그것이 이 절이 견디겠다고 한 바로 그 경우다. 대신 **내리지도
+않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다. 그리고 **끝까지 시도한 뒤** 한 자리가
+한 번도 성공하지 못했으면 원인이 크기여도 멈춘다 — 그 자리는 아무것도 못 봤다.
 
 **멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
@@ -81,6 +83,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import json
 import re
 import subprocess
 from collections.abc import Callable, Mapping
@@ -133,11 +136,14 @@ from src.schemas.enums import (
     CapsuleLevel,
     EvidenceKind,
     FindingState,
+    NeStopReason,
     ReasonCode,
     Role,
+    ScoutSignal,
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
+from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
 from src.tokens import using_counter
 
@@ -236,23 +242,31 @@ _REASON_OVER_MAX = "over_candidate_max"
 _REASON_GATEWAY = "gateway_error"
 _REASON_SCHEMA = "schema_parse_failed"
 
-# **이 후보가 크다**는 뜻의 HTTP 상태. 400은 vLLM이 컨텍스트 초과에 주는 값이고
-# 413은 본문 초과다. 다음 후보는 작을 수 있으므로 **이 후보에 대한 사실**이지 run에
-# 대한 사실이 아니다 — 그래서 아래 `_MAX_CONSECUTIVE_DROPS`가 세지 않는다.
-_SIZE_STATUS = frozenset({400, 413})
+# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만 「이 후보가
+# 크다」다** — 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
+# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다(`_is_size_rejection`).
+#
+# **400은 크기만의 값이 아니다(#296).** vLLM 0.27.1은 요청 모양(본문 검증)·서버 설정
+# (`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이 모르는 `reasoning_effort`, 출력
+# 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다(`_drop`). 이 문구는
+# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
+# 400은 크기로 읽지 않는다** — 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
+_CONTEXT_OVERFLOW = "maximum context length"
 
-# 후보만 버리고 계속 가도 되는 HTTP 상태. **요청 하나가 거절된 것**이다.
-# 422(스키마 거절)는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다.
+# 후보만 버리고 계속 가도 되는 HTTP 상태 — **서버는 살아 있고 요청 하나에 답했다.** 그 거절이
+# 이 후보에 대한 사실(크기)인지 run에 대한 사실(크기가 아닌 400)인지는 상태만으로 못 가른다 —
+# `_drop`이 가른다. 422는 크기가 아니라 체계적 신호로 센다. vLLM 0.27.1은 요청 모양 거절도 422가
+# 아니라 400으로 준다(#296).
 #
 # 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
 # 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다. **예외는 서버가 생성 중이던
 # 타임아웃 하나다**(`ModelGatewayError.generating`, #261) — 판정은 `_is_droppable`에 있다.
-_DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
+_DROPPABLE_STATUS = frozenset({400, 413, 422})
 
-# 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다·요청 모양이 틀렸다)이면
+# 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다 등)이면
 # 남은 target을 전부 태우고도 쓸 수 있는 결과가 안 나온다.
 #
-# **크기 거절(`_SIZE_STATUS`)은 여기에 세지 않는다.** 세면 큰 심볼 셋이 연달아 오는
+# **크기 거절(`_is_size_rejection`)은 여기에 세지 않는다.** 세면 큰 심볼 셋이 연달아 오는
 # 것만으로 run이 멈추는데, 그것은 W2가 정확히 견디겠다고 한 경우다("후보 하나가
 # 컨텍스트를 넘겼다 → 그 후보만 버린다"). 정렬이 신호 붙은 심볼을 앞으로 모으므로
 # 큰 함수가 뭉쳐 오는 것은 드문 일도 아니다.
@@ -261,11 +275,11 @@ _DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 # **내리지도 않는다** — 리셋 조건은 오직 완주다. 그래서 스키마 → 400 → 스키마 →
 # 400 → 스키마는 1·1·2·2·3으로 상한에 닿는다. 이 값이 잡으려는 것이 그 모양이다.
 #
-# **크기 거절만 계속 나오는 run은 멈추지 않는다.** 그래도 폭주하지 않는 것은
-# `candidate_max`가 이미 목록을 묶어 두기 때문이고, 끝난 뒤에는 모든 행에 서버가
-# 말해 준 사유가 붙은 완전한 기록이 남는다 — 중간에 끊긴 run보다 진단이 쉽다.
-# 400이 크기가 아닌 이유(페이로드 자체가 틀렸다)로 올 수도 있는데, 그 경우에도 결과는
-# "전량 스킵 + 매 행에 사유"라 한 번 보면 갈린다.
+# **크기 거절만 계속 나오는 run은 중간에 멈추지 않는다.** 그래도 폭주하지 않는 것은
+# `candidate_max`가 이미 목록을 묶어 두기 때문이다. 대신 **끝까지 시도한 뒤** 한 자리가 한 번도
+# 성공하지 못했으면 멈춘다(`_stop_if_a_caller_saw_nothing`, #296) — 서버 창을 작게 띄우면 크기
+# 거절이 전량이 되는데(`run_20260925_0006`), 그 run을 완주로 두면 「못 봤다」가 「없다」로
+# 읽힌다. 예전에는 여기서 *"한 번 보면 갈린다"*며 받아들였다 — 사람이 본다는 전제였다.
 #
 # **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
 # 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
@@ -273,7 +287,7 @@ _MAX_CONSECUTIVE_DROPS = 3
 
 
 def _is_droppable(exc: ModelGatewayError) -> bool:
-    """이 게이트웨이 오류가 **요청 하나에 대한 사실**인가 — 그 하나만 버리고 계속 갈 수 있는가.
+    """이 게이트웨이 오류가 **요청 하나에 대한 답**인가 — 서버가 살아 있어 그 시도를 버릴 수 있는가.
 
     후보 단위(`_triage_by_candidate`)·단계 단위(`_run_stage_for_all`)·Finding 단위
     (`_analyze`의 critic 루프) **셋**이 같은 판정을 쓴다.
@@ -284,10 +298,65 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     **예외 하나 — 타임아웃인데 서버가 그동안 토큰을 냈다**(`generating is True`, 어댑터가
     `/metrics`로 잰다). 느린 것이지 죽은 것이 아니다(#261). 연속 폐기 상한은 그대로 센다 —
     느린 후보가 셋 연달아면 run이 선다.
+
+    ⚠ **버릴 수 있다고 계속 가는 것은 아니다(#296).** 크기가 아닌 400도 여기서 참이지만
+    `_drop`·`_drop_finding`이 첫 건에서 run을 멈춘다. 여기서 거짓으로 돌려 올려 보내면
+    `run_pipeline`이 「게이트웨이가 응답하지 않는다」(`MODEL_GATEWAY_UNAVAILABLE`)로 적는다 —
+    서버는 살아 있고 요청을 거절했으므로 그 사유는 틀린다.
     """
     if exc.generating is True:
         return True
     return exc.status is not None and exc.status in _DROPPABLE_STATUS
+
+
+def _is_size_rejection(exc: Exception) -> bool:
+    """이 실패가 **이 후보가 크다**인가 — 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
+
+    413(본문 초과)과, vLLM의 컨텍스트 초과 문구(`_CONTEXT_OVERFLOW`)가 실린 400뿐이다.
+    게이트웨이 오류가 아니면(스키마 실패) 크기가 아니다.
+    """
+    if not isinstance(exc, ModelGatewayError):
+        return False
+    return exc.status == 413 or (exc.status == 400 and _CONTEXT_OVERFLOW in exc.detail)
+
+
+def _rejects_every_request(exc: Exception) -> bool:
+    """크기가 아닌 400인가 — 요청 모양·서버 설정 거절이라 **다음 요청도 같다**(#296).
+
+    그래서 세지 않고 첫 건에서 멈춘다. 세면 후보 단위에서는 Scout가 안 올린 대상이 카운터를
+    0으로 되돌리고 키가 Scout 자리라(#197), 뒤 단계가 전부 거절해도 상한에 안 닿을 수 있다.
+    """
+    return (
+        isinstance(exc, ModelGatewayError) and exc.status == 400 and not _is_size_rejection(exc)
+    )
+
+
+def _caller(stage: Stage, seat: Role) -> tuple[Stage, Role | None]:
+    """성공 0 백스톱의 키 — **그 단계에서 모델을 부른 자리**다(#296).
+
+    4단계만 Scout 자리마다 모델·프롬프트가 다르다. 5단계부터는 부르는 역할이 하나라, 자리
+    (`item.role`, #197)로 나누면 한 자리의 후보만 창을 넘어도 「그 자리가 한 번도 성공 못
+    했다」가 되어 멈춘다 — 그 역할은 다른 자리 후보에서 멀쩡히 돌았는데.
+    """
+    return (stage, seat if stage is Stage.SCOUT else None)
+
+
+def _stop_if_a_caller_saw_nothing(starved: set[tuple[Stage, Role | None]]) -> None:
+    """시도한 자리 중 **한 번도 성공하지 못한 것**이 있으면 멈춘다 — 그 자리는 아무것도 못 봤다.
+
+    실패 하나하나는 크기 거절처럼 그 후보에 대한 사실일 수 있다. 그래서 **끝까지 시도한 뒤에**
+    본다 — 앞 몇 건으로 판정하면 큰 대상이 정렬 앞에 몰린 run이 정상 창에서도 늘 같은 자리에서
+    선다(정렬이 결정론적이라 다시 돌려도 같다). 전부 실패했다면 원인이 무엇이든 — 작게 띄운
+    서버 창이 그랬다(`run_20260925_0006`) — 그 run을 완주로 두면 「못 봤다」가 「없다」로
+    읽힌다(#296). 상수가 없다: 「한 번도」는 세는 값이 아니다.
+    """
+    if not starved:
+        return
+    names = ", ".join(
+        f"{int(stage)}단계" + (f" {seat.value}" if seat is not None else "")
+        for stage, seat in sorted(starved, key=lambda key: (int(key[0]), key[1] or ""))
+    )
+    raise _TooManyDrops(f"{names}: 시도한 대상에서 한 번도 성공하지 못했다 — 아무것도 못 봤다")
 
 
 class _TooManyDrops(RuntimeError):
@@ -296,6 +365,12 @@ class _TooManyDrops(RuntimeError):
     게이트웨이가 응답을 주는데도 후보가 계속 실패하는 상태다 — 프롬프트·예산·스키마 쪽을
     봐야 하고, 서버를 살리는 것으로는 낫지 않는다. 같은 예외로 올리면 `RunRecord`의 중단
     사유가 하나로 뭉쳐 그 구별이 사라진다.
+
+    **같은 사유로 두 정지가 더 온다(#296)** — 크기가 아닌 400(다음 요청도 같으므로 첫 건에서,
+    `_drop`·`_drop_finding`)과, 한 자리가 한 번도 성공하지 못한 루프(끝에서,
+    `_stop_if_a_caller_saw_nothing`). 둘 다 「서버는 살아 있는데 요청이 죽는다」라
+    `ReasonCode.CONSECUTIVE_TARGET_FAILURES`의 주석이 가르는 그 칸이다. 사유 이름의 「연속」은
+    첫 쓰임에서 왔다.
 
     러너 밖으로 새지 않는다. `run_pipeline`이 잡아 `stopped_after`와 사유로 바꾼다.
     """
@@ -341,6 +416,11 @@ class Dependencies(Protocol):
     # 위 카운터가 무엇으로 정해졌는지 (#96 (b)). `token_counter` 이벤트의 `data`가 된다.
     # `IndexSummaryLike`와 같은 이유로 **스칼라 dict**다 — 러너가 어댑터 타입을 모른다.
     counter_report: dict[str, str | None]
+    # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 그 run에 resolver가 없다
+    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 러너는
+    # `src/adapters/`를 import 하지 않으므로 resolver 구현이 아니라 이 콜러블로 경계를
+    # 넘는다. 부르는 쪽은 Scout 정착 단계의 need_evidence 루프(`_run_ne_hops`)다.
+    resolve_requests: Callable[[ResolveQuery], Resolution] | None
 
 
 @dataclass(frozen=True)
@@ -575,6 +655,13 @@ class _Accumulator:
     # 팬아웃된(deferred 아닌) 대상 키 집합 (#193 ①). 「모든 자리가 실패한 대상 수」 =
     # 이 집합에서 후보를 낸 대상을 뺀 것. 단일 `scout`에서도 성립한다(자리가 하나).
     dispatched_targets: set[_TargetKey] = field(default_factory=set)
+    # target별 각 Scout 자리의 hop0 신호 (ADR 0012 결정 2 — 동료 확인). `_step_scout_open`이
+    # 적고 `_step_scout_settle`이 읽는다 — 같은 target의 다른 좌석이 review면 이 좌석의 NE
+    # 루프는 안 돈다. hop0에서 실패해 버려진 좌석은 여기 안 남는다("신호 없음"으로 친다).
+    hop0_signals: dict[_TargetKey, dict[Role, ScoutSignal | None]] = field(default_factory=dict)
+    # hop≥1에서 흡수한 예외 건수, `NeStopReason` 값별(ADR 0012 결정 2). 조용히 두지
+    # 않는다 — `deferred`·`dropped`와 같은 자리로 리포트에 싣는다(`_analyze` 끝).
+    ne_absorbed: dict[str, int] = field(default_factory=dict)
     # 7단계 Critic 판정. **8단계 게이트 재판정의 입력이다** — 없으면 `p3`(uphold)이 거짓이
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
@@ -641,6 +728,9 @@ def run_pipeline(
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
         prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        # need_evidence resolver hook (ADR 0012 결정 2) — `symbols_for`·`counter_for_role`과
+        # 같은 경계다. `None`이면 이 run에 resolver가 없다.
+        resolve_requests=deps.resolve_requests,
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
@@ -821,6 +911,7 @@ def run_pipeline(
         critic_top_n=config.thresholds.critic_top_n,
         files=files,
         grades=grades,
+        ne_absorbed=state.ne_absorbed,
     )
     finished = state_machine.finish_run(
         record,
@@ -886,7 +977,7 @@ def _analyze(
             _drop_finding(ctx, state, finding, _REASON_SCHEMA, exc)
             continue
         except ModelGatewayError as exc:
-            # **요청 단위 거절은 이 Finding에 대한 사실이다 (해소 후속).** 처음에는 여기서
+            # **크기 거절은 이 Finding에 대한 사실이다 (해소 후속).** 처음에는 여기서
             # `ModelGatewayError`를 일부러 안 잡았다 — `_DROPPABLE_STATUS` 판정을 복사하면
             # 같은 규칙이 두 곳에 따로 산다는 이유였고, "그때는 `_drop`의 갈래를 Finding
             # 쪽으로 끌어오는 것이 맞다"고 적어 뒀다. **그때가 첫 실서빙 run에서 바로 왔다**:
@@ -896,6 +987,8 @@ def _analyze(
             #
             # 그래서 판정을 복사하지 않고 `_is_droppable`로 **빼서 공유한다.** 서버 쪽
             # 사건(상태 없음·5xx)은 그대로 올려 보내고 `run_pipeline`이 매니페스트까지 간다.
+            # 크기가 아닌 400은 이 Finding이 아니라 run에 대한 사실이라 `_drop_finding`이
+            # 첫 건에서 멈춘다(#296).
             if not _is_droppable(exc):
                 raise
             _drop_finding(ctx, state, finding, _REASON_GATEWAY, exc)
@@ -903,6 +996,10 @@ def _analyze(
         # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
         state.decisions[finding.finding_id] = (decision,)
         state.update(after)
+    # 고른 Finding 전부에서 실패했으면 7단계는 아무것도 못 봤다(#296). 카운터가 아니다 —
+    # `_drop_finding`이 카운터를 두지 않는 이유는 그대로다.
+    if selected and state.critic_failed == len(selected):
+        _stop_if_a_caller_saw_nothing({_caller(Stage.CRITIC, Role.CRITIC)})
     if last < Stage.VALIDATE:
         return
     for finding in state.in_state(FindingState.VALIDATED):
@@ -1159,6 +1256,9 @@ class _InFlight:
     # `scout.run(role=...)`에 넘기고, `scout_member` stamp는 그 role에서 나온다.
     role: Role = Role.SCOUT
     capsule: ContextCapsule | None = None
+    # 4단계 개시(hop0)가 채우고 정착이 읽는다 — 둘이 표에서 갈린 자리다(ADR 0012 결정 2).
+    # `_step_scout_settle`이 이것 없이 불리면 배선 결함이다(`_StageOutOfOrder`).
+    scout_session: scout.ScoutSession | None = None
     candidate: Candidate | None = None
     finding: Finding | None = None
     missings: tuple[MissingEvidence, ...] = ()
@@ -1281,22 +1381,336 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
     return True
 
 
-def _step_scout(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
-    """4단계 — 분류. 승격되지 않은 후보는 여기서 멈춘다(`False`)."""
+def _step_scout_open(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """4단계 개시 — hop0만(ADR 0012 결정 2). 후보를 만들지 않는다. **항상 `True`다** —
+
+    탈락 여부는 아직 안 정해진다(v1·v2 점수 경로도, v3 신호도 정착이 본다). 세션을
+    `item`에 싣고, 이 좌석의 hop0 신호를 `state`에 target 키로 적는다 — 같은 target의
+    **다른** 좌석이 이것을 동료 확인(정착)에서 읽는다.
+
+    **여기서 `ctx.stage(Stage.SCOUT)`를 연다** — 노드(`scout.open_session`)는 더 이상 자기
+    stage span을 안 열므로(개시·정착이 갈리면서 "언제 열고 닫나"가 노드 하나의 일이 아니게
+    됐다), 이 표 항목이 그 자리를 대신한다. `run()`(직접 호출 경로)은 자기 span을 그대로 연다.
+    """
     item.reached.stage = Stage.SCOUT
     if item.capsule is None:
         raise _StageOutOfOrder("4단계가 3단계보다 먼저 돌았다 — capsule이 비어 있다")
-    candidate = scout.run(
-        ctx,
-        artifact=item.target.artifact,
-        capsule=item.capsule,
-        evidences=item.target.evidences,
-        role=item.role,
-        slice=item.target.slice,
-    )
+    with ctx.stage(Stage.SCOUT):
+        session = scout.open_session(
+            ctx,
+            artifact=item.target.artifact,
+            capsule=item.capsule,
+            evidences=item.target.evidences,
+            role=item.role,
+            slice=item.target.slice,
+        )
+    item.scout_session = session
+    key = _target_key(item.target.location, item.target.slice_id)
+    state.hop0_signals.setdefault(key, {})[item.role] = session.signal
+    return True
+
+
+def _step_scout_settle(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
+    """4단계 정착 — 동료 확인 → need_evidence 루프(ADR 0012 결정 2 · #95) → 판정 적용.
+
+    승격되지 않은 후보는 여기서 멈춘다(`False`), `_step_scout`(하나였던 시절)과 같다.
+    `_step_scout_open`과 같은 이유로 여기서 `ctx.stage(Stage.SCOUT)`를 연다 — need_evidence
+    루프의 되묻기 호출(hop≥1)도 이 span 안에서 돈다.
+    """
+    item.reached.stage = Stage.SCOUT
+    session = item.scout_session
+    if session is None:
+        raise _StageOutOfOrder("Scout 정착이 개시보다 먼저 돌았다 — scout_session이 비어 있다")
+    with ctx.stage(Stage.SCOUT):
+        candidate = scout.finish(ctx, _settle_scout_session(ctx, item, state, session))
     item.candidate = candidate
     state.candidates.append(candidate)
     return candidate.state is FindingState.TRIAGED
+
+
+def _settle_scout_session(
+    ctx: RunContext, item: _InFlight, state: _Accumulator, session: scout.ScoutSession
+) -> scout.ScoutSession:
+    """`finish()`에 넘길 최종 세션을 정한다 — 신호가 없으면(v1·v2) 손대지 않는다.
+
+    v3(신호가 있음)면 hop0을 포함해 홉마다 `SCOUT_HOP`을 낸다. 신호가 NE가 아니면(review·
+    reject) 그 자리에서 끝난다. NE면 동료 확인 → 아니면 need_evidence 루프(`_run_ne_hops`).
+    """
+    if session.signal is None:
+        return session
+    if session.signal is not ScoutSignal.NEED_EVIDENCE:
+        _emit_scout_hop(ctx, item, session, stop_reason=session.signal.value)
+        return session
+    key = _target_key(item.target.location, item.target.slice_id)
+    peers = state.hop0_signals.get(key, {})
+    if any(signal is ScoutSignal.REVIEW for role, signal in peers.items() if role != item.role):
+        _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.PEER_REVIEW.value)
+        return session
+    return _run_ne_hops(ctx, item, state, session)
+
+
+# 한 홉이 RETRIEVED에 실을 수 있는 글자 상한(폭주 차단 — 토큰 상한이 아니다. 글자 상한은
+# 토큰을 안 묶는다). `_AUDITOR_SOURCE_CHARS`와 값을 맞췄다(1-b 선례) — Auditor는
+# `src/orchestrator`를 상수로 재사용하지만(같은 계층) resolver(`src/adapters`)는 이 값을
+# import 할 수 없어(계층 규칙) 여기 새로 둔다.
+_HOP_CHARS_MAX = 15_000
+
+# 직전 홉 usage에서 뺄 여유. **설계값이고 미실측이다** — 추정이 빗나가면 크기 400이 나고
+# `NeStopReason.CONTEXT_OVERFLOW`가 받친다. 첫 실대상 run이 이 값의 근거를 만든다
+# (`_MAX_CONSECUTIVE_DROPS`와 같은 상태).
+_HOP_TOKEN_MARGIN = 512
+
+# Scout 좌석 글자/토큰 비의 **실측 하한**
+# (docs/experiments/harness/2026-09-26-slice-smoke-atom.md:158 — 좌석별 3.28~4.23). 하한을
+# 쓰는 것은 넘치는 쪽보다 못 미치는 쪽이 안전해서다 — 실제 글자/토큰 비가 더 크면 이 상한이
+# 실제보다 적게 담아 넘기지 않는다. Auditor의 1.22~3.32와 다르다(토크나이저가 다르다,
+# `_AUDITOR_SOURCE_CHARS` 주석). RETRIEVED 코드 블록만의 비는 안 쟀다 — 이 상한은 **계산값**이다.
+_HOP_CHARS_PER_TOKEN = 3.28
+
+
+def _ne_visible(slice_ref: SliceRef | None) -> dict[str, frozenset[int]]:
+    """`ResolveQuery.visible` — 슬라이스가 이미 보여준 줄을 파일별로 묶는다.
+
+    슬라이스가 없는 target(`--slices` 없이 돈 run)은 `{}`다 — resolver가 "이미 SOURCE에
+    있다"를 가를 근거가 없다는 뜻이지, 빈 파일 목록이 아니다.
+    """
+    if slice_ref is None:
+        return {}
+    grouped: dict[str, set[int]] = {}
+    for file, line in slice_ref.lines:
+        grouped.setdefault(file, set()).add(line)
+    return {file: frozenset(lines) for file, lines in grouped.items()}
+
+
+def _ne_hop_max_chars(ctx: RunContext, role: Role, session: scout.ScoutSession) -> int:
+    """이 홉이 resolver에 요청할 글자 상한 — `min(15,000, floor(남은 토큰 × 3.28))`.
+
+    남은 토큰 = 창 − 이 역할의 출력 상한 − 직전 홉 usage(입력+출력) − 여유. 0 이하면
+    0이다 — 호출자가 그 값을 보고 호출 없이 `context_overflow`로 선다.
+    """
+    model_key = ctx.config.model_key_for(role.value)
+    context_limit = ctx.config.models[model_key].context_limit
+    output_max = ctx.config.thresholds.output_max_for(role.value)
+    remaining_tokens = (
+        context_limit
+        - output_max
+        - session.usage.input_tokens
+        - session.usage.output_tokens
+        - _HOP_TOKEN_MARGIN
+    )
+    if remaining_tokens <= 0:
+        return 0
+    return min(_HOP_CHARS_MAX, int(remaining_tokens * _HOP_CHARS_PER_TOKEN))
+
+
+def _ne_classify_exception(exc: Exception) -> NeStopReason | None:
+    """hop≥1 예외를 흡수 여부 표로 가른다(ADR 0012 결정 2). `None`이면 **흡수하지 않는다** —
+
+    크기가 아닌 400(`_rejects_every_request`)뿐이다. 다음 요청도 같으므로 흡수하면 #296이
+    막은 조용한 전량 실패가 되살아난다 — 호출자가 그대로 올려 러너 핸들러(`_drop`)가
+    run을 멈추게 한다.
+    """
+    if isinstance(exc, BudgetExhausted):
+        return NeStopReason.BUDGET_EXHAUSTED
+    if isinstance(exc, SchemaParseError):
+        return NeStopReason.PARSE_FAILED
+    if isinstance(exc, ModelGatewayError):
+        if _is_size_rejection(exc):
+            return NeStopReason.CONTEXT_OVERFLOW
+        if _rejects_every_request(exc):
+            return None
+        return NeStopReason.GATEWAY_ERROR
+    return None
+
+
+def _requests_json(requests: tuple[object, ...]) -> str:
+    return json.dumps(
+        [{"kind": r.kind, "target": r.target} for r in requests], ensure_ascii=False  # type: ignore[attr-defined]
+    )
+
+
+def _usage_json(usage: object) -> str:
+    return json.dumps(
+        {
+            "input_tokens": usage.input_tokens,  # type: ignore[attr-defined]
+            "output_tokens": usage.output_tokens,  # type: ignore[attr-defined]
+            "cached_tokens": usage.cached_tokens,  # type: ignore[attr-defined]
+        }
+    )
+
+
+def _emit_scout_hop(
+    ctx: RunContext,
+    item: _InFlight,
+    session: scout.ScoutSession,
+    *,
+    stop_reason: str | None = None,
+    resolution: Resolution | None = None,
+    failed_hop: tuple[int, Exception, float] | None = None,
+) -> None:
+    """`SCOUT_HOP` 이벤트 하나 — hop0을 포함해 홉마다(신호가 있는 v3 좌석만).
+
+    `subject_id`(candidate_id)·`role`(`data`)·`hop`(`data`)이 조인 키다 — 같은 키의
+    `model_call.prompt_ref`로 붙는다(#95). `followup_text`는 이벤트에 경로를 새로 싣지
+    않는다 — 그 조인만으로 로그를 다시 찾을 수 있다.
+
+    `failed_hop`이 있으면 **그 홉의 시도 자체가 실패했다**(흡수된 hop≥1 예외) —
+    `session`은 그 직전(성공한 마지막) 홉의 것이고, `hop`·`schema_ok`·`raw_text`·`requests`·
+    `usage`는 실패한 시도의 것으로 따로 채운다(성공한 응답이 없어 `session`에서 못 읽는다).
+    """
+    if failed_hop is not None:
+        hop, exc, latency_s = failed_hop
+        usage = getattr(exc, "usage", None)
+        data: dict[str, object] = {
+            "hop": hop,
+            "role": item.role.value,
+            "signal": session.signal.value if session.signal is not None else None,
+            "schema_ok": not isinstance(exc, SchemaParseError),
+            "requests": "[]",
+            "raw_text": None,
+            "latency_s": latency_s,
+            "usage": None if usage is None else _usage_json(usage),
+        }
+    else:
+        data = {
+            "hop": session.hop,
+            "role": item.role.value,
+            "signal": session.signal.value if session.signal is not None else None,
+            "schema_ok": True,
+            "requests": _requests_json(session.requested_context),
+            "raw_text": session.raw_text,
+            "latency_s": session.latency_s,
+            "usage": _usage_json(session.usage),
+        }
+    if stop_reason is not None:
+        data["stop_reason"] = stop_reason
+    if resolution is not None:
+        data["resolved"] = len(resolution.blocks) + len(resolution.already)
+        data["already"] = len(resolution.already)
+        data["fixable_count"] = resolution.fixable_count
+        data["unfilled"] = ",".join(item_.reason.value for item_ in resolution.unfilled)
+        data["truncated"] = ",".join(resolution.truncated)
+    ctx.trace.emit(
+        EventKind.SCOUT_HOP,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=session.candidate_id,
+        **data,
+    )
+
+
+def _run_ne_hops(
+    ctx: RunContext, item: _InFlight, state: _Accumulator, session: scout.ScoutSession
+) -> scout.ScoutSession:
+    """need_evidence 루프 본체 — hop1..`max_hops`. 정지하면 그 판정의 세션을 돌려준다.
+
+    **정지 판정 순서**(hop k+1을 부르기 전에 본다) — 1. 신호가 NE가 아님(호출자가 이미
+    걸렀다, 여기서는 hop≥1 응답이 NE를 벗어난 경우) 2. 빈 요청 3. 직전 홉과 같은
+    (kind, target) 집합 4. resolver 없음 또는 아무것도 못 채움 — "잘 쓴 이름이 전부 조회에
+    실패했다"와 "형식이 잘못됐다"를 가른다(`Resolution.fixable_count`) 5. `max_hops` 소진.
+    글자 상한(`_ne_hop_max_chars`)이 만드는 "호출 없이 context_overflow" 두 경우(남은 토큰
+    ≤ 0, 블록 0인데 truncated 있음)는 4의 처리 안에 끼운다. hop k+1 호출 자체가 실패하면
+    (게이트웨이·스키마·예산) 별도 표로 흡수 여부를 가른다(`_ne_classify_exception`).
+    """
+    max_hops = ctx.config.thresholds.max_hops
+    previous_keys: frozenset[tuple[str, str]] | None = None
+    target_file = item.target.location.file
+    visible = _ne_visible(item.target.slice)
+    while True:
+        requests = session.requested_context
+        if session.signal is not ScoutSignal.NEED_EVIDENCE:
+            # hop≥1 응답이 review·reject로 돌아섰다 — 최종 신호로 끝난다.
+            _emit_scout_hop(ctx, item, session, stop_reason=session.signal.value)
+            return session
+        if not requests:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.EMPTY_REQUEST.value)
+            return session
+        keys = frozenset((r.kind, r.target) for r in requests)
+        if previous_keys is not None and keys == previous_keys:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.REPEAT_REQUEST.value)
+            return session
+        if ctx.resolve_requests is None:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.NOTHING_RESOLVED.value)
+            return session
+        max_chars = _ne_hop_max_chars(ctx, item.role, session)
+        if max_chars <= 0:
+            _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.CONTEXT_OVERFLOW.value)
+            return session
+        resolution = ctx.resolve_requests(
+            ResolveQuery(
+                requests=requests,
+                hop=session.hop + 1,
+                target_file=target_file,
+                visible=visible,
+                max_chars=max_chars,
+            )
+        )
+        if not resolution.blocks and resolution.truncated:
+            # 채울 만한 것을 찾았는데 상한 때문에 하나도 못 실었다 — 크기 문제다.
+            _emit_scout_hop(
+                ctx,
+                item,
+                session,
+                stop_reason=NeStopReason.CONTEXT_OVERFLOW.value,
+                resolution=resolution,
+            )
+            return session
+        resolved = len(resolution.blocks) + len(resolution.already)
+        if resolved == 0 and resolution.fixable_count == 0:
+            _emit_scout_hop(
+                ctx,
+                item,
+                session,
+                stop_reason=NeStopReason.NOTHING_RESOLVED.value,
+                resolution=resolution,
+            )
+            return session
+        if session.hop >= max_hops:
+            _emit_scout_hop(
+                ctx, item, session, stop_reason=NeStopReason.MAX_HOP.value, resolution=resolution
+            )
+            return session
+        # **이 홉(session.hop) 자신의 이벤트를 hop k+1을 시도하기 전에 낸다.** hop k+1
+        # 호출이 실패하면(흡수하든 안 하든) 그 실패는 이 홉의 응답과는 다른 사건이고,
+        # 특히 흡수하지 않는 경우 아래서 그대로 올려 run이 멈춘다 — 그 전에 이 홉의
+        # 이벤트가 이미 안 나갔으면 이 좌석은 SCOUT_HOP이 하나도 없는 채로 run이 선다.
+        _emit_scout_hop(ctx, item, session, resolution=resolution)
+        started = ctx.monotonic_ms()
+        try:
+            next_session = scout.continue_session(ctx, session, resolution.followup_text)
+        except (ModelGatewayError, SchemaParseError, BudgetExhausted) as exc:
+            absorbed = _ne_classify_exception(exc)
+            if absorbed is None:
+                # 크기 아닌 400이다 — 흡수하지 않는다. 그대로 올려 러너 핸들러(`_drop`)가
+                # run을 멈추게 한다(#296). 이 홉(session.hop) 자신의 이벤트는 바로 위에서
+                # 이미 났다 — 실패한 것은 그다음 시도(hop k+1)다.
+                raise
+            state.ne_absorbed[absorbed.value] = state.ne_absorbed.get(absorbed.value, 0) + 1
+            latency_s = (ctx.monotonic_ms() - started) / 1000.0
+            _emit_scout_hop(
+                ctx,
+                item,
+                session,
+                stop_reason=absorbed.value,
+                failed_hop=(session.hop + 1, exc, latency_s),
+            )
+            return session
+        if next_session.signal is None:
+            # hop k+1 응답이 스키마는 통과했지만(`ScoutResponse.candidate.reason_codes[0]`)
+            # `ScoutSignal` 세 접두 밖이다 — `signal_of`가 `None`을 준다. hop0은 호출자
+            # (`_settle_scout_session`)가 이미 NE로 걸러 여기 안 오므로 이 분기는 hop≥1뿐이다.
+            # 판정으로 쓸 수 없으니 파싱 실패와 같은 부류로 흡수한다: 직전 홉(`session`,
+            # 아직 재대입 전)의 판정으로 finish하고, 이 홉(`next_session`) 자신의 `SCOUT_HOP`은
+            # 따로 낸다. `schema_ok`는 참으로 남는다(구조화 출력 자체는 파싱됐다) — 스키마
+            # 실패(`parse_failed`의 다른 경로, `_ne_classify_exception`)와 신호 이탈이
+            # 기록에서 갈린다. 흡수하지 않으면 다음 반복에서 `session.signal.value`가
+            # `None.value`를 불러 run 전체가 `AttributeError`로 죽는다.
+            reason = NeStopReason.PARSE_FAILED.value
+            state.ne_absorbed[reason] = state.ne_absorbed.get(reason, 0) + 1
+            _emit_scout_hop(ctx, item, next_session, stop_reason=reason)
+            return session
+        session = next_session
+        previous_keys = keys
 
 
 def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool:
@@ -1519,10 +1933,20 @@ TriageStep = Callable[[RunContext, "_InFlight", "_Accumulator"], bool]
 # `test_every_triage_step_takes_the_same_arguments`가 그 균일성을 고정한다.
 _TRIAGE_STEPS: tuple[tuple[Stage, TriageStep], ...] = (
     (Stage.RETRIEVAL, _step_retrieval),
-    (Stage.SCOUT, _step_scout),
+    (Stage.SCOUT, _step_scout_open),
+    (Stage.SCOUT, _step_scout_settle),
     (Stage.AUDITOR, _step_auditor),
     (Stage.GATE, _step_gate),
 )
+
+# 국면을 가르는 자리 — `_step_scout_settle`의 인덱스(표에서 읽는다, 하드코딩하지 않는다).
+# **국면 A**(전 좌석 개시)는 이 인덱스 앞, **국면 B**(정착부터 끝까지)는 이 인덱스부터다
+# (`_triage_by_candidate`의 두 국면).
+_SCOUT_SETTLE_INDEX = next(
+    index for index, (_, step) in enumerate(_TRIAGE_STEPS) if step is _step_scout_settle
+)
+_PHASE_A_STEPS = _TRIAGE_STEPS[:_SCOUT_SETTLE_INDEX]
+_PHASE_B_STEPS = _TRIAGE_STEPS[_SCOUT_SETTLE_INDEX:]
 
 
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
@@ -1577,10 +2001,23 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
         for target in plan.targets
         for role in roles
     ]
-    for stage, step in _TRIAGE_STEPS:
+    # **성공 0 백스톱은 표의 행이 아니라 단계 번호 단위로 본다(#95).** Scout가 두 행
+    # (개시·정착, 둘 다 `Stage.SCOUT`)으로 갈리면서, 행마다 바로 확인하면 개시 행만 보고
+    # "이 자리는 아무것도 못 봤다"고 너무 일찍 판단하게 된다 — 그 시점엔 정착이 아직 후보를
+    # 하나도 못 만들었다(개시는 후보를 안 만든다). 그래서 같은 단계 번호의 행을 전부 돈
+    # 뒤에만 `_stop_if_a_caller_saw_nothing`을 부른다 — `_run_stage_for_all`은 이제 그 판단을
+    # 내리지 않고 그 재료(`starved`)만 돌려준다.
+    pending_starved: set[tuple[Stage, Role | None]] = set()
+    steps = _TRIAGE_STEPS
+    for row, (stage, step) in enumerate(steps):
         if last < stage:
             return
-        items = _run_stage_for_all(ctx, stage, step, items, state)
+        items, starved = _run_stage_for_all(ctx, stage, step, items, state)
+        pending_starved |= starved
+        next_stage = steps[row + 1][0] if row + 1 < len(steps) else None
+        if next_stage != stage:
+            _stop_if_a_caller_saw_nothing(pending_starved)
+            pending_starved = set()
 
 
 def _run_stage_for_all(
@@ -1589,8 +2026,9 @@ def _run_stage_for_all(
     step: TriageStep,
     items: list[_InFlight],
     state: _Accumulator,
-) -> list[_InFlight]:
-    """한 단계를 살아 있는 target 전부에 태우고, 다음 단계로 갈 것만 돌려준다.
+) -> tuple[list[_InFlight], set[tuple[Stage, Role | None]]]:
+    """한 단계를 살아 있는 target 전부에 태우고, (다음 단계로 갈 것, 이 행에서 아무것도
+    못 본 caller 집합)을 돌려준다.
 
     폐기 판정은 후보 단위(`_triage_by_candidate`)와 **같은 표**다 — `_is_droppable`이
     그 판정을 함수로 들고 있는 이유가 정확히 이것이다(그 docstring). 여기서 다시
@@ -1624,9 +2062,22 @@ def _run_stage_for_all(
 
     `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`가
     이 동작을 고정한다.
+
+    ## 성공 0 백스톱 (#296)
+
+    이 행을 다 돈 뒤 **모델을 부른 자리 중 한 번도 성공하지 못한 것**(`starved`)을 돌려준다
+    — **멈추지는 않는다.** 그 판단(`_stop_if_a_caller_saw_nothing`)은 호출자(`_triage_by_stage`)
+    가 **같은 단계 번호의 행을 전부 돈 뒤**에 내린다 — Scout가 개시·정착 두 행으로 갈리면서
+    (둘 다 `Stage.SCOUT`), 행 하나만 보고 판단하면 정착이 아직 후보를 못 만든 시점에
+    "이 자리는 아무것도 못 봤다"로 너무 일찍 판정하게 된다(#95). 크기 거절은 카운터에 안
+    세므로, 작게 띄운 서버 창이 전량을 거절해도 카운터로는 안 선다. 키는 `item.role`이
+    아니라 `_caller`다 — 5단계부터는 부르는 역할이 하나라서다(위 「키가 4단계 자리다」의
+    오분류를 이 백스톱에 들이지 않는다).
     """
     # 연속 폐기를 역할별로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
     consecutive: dict[Role, int] = {}
+    tried = {_caller(stage, item.role) for item in items}
+    passed: set[tuple[Stage, Role | None]] = set()
     survivors: list[_InFlight] = []
     for item in items:
         role = item.role
@@ -1645,7 +2096,6 @@ def _run_stage_for_all(
                 consecutive.get(role, 0),
                 stage=item.reached.stage,
                 role=role,
-                systematic=exc.status not in _SIZE_STATUS,
             )
         except SchemaParseError as exc:
             consecutive[role] = _drop(
@@ -1655,9 +2105,10 @@ def _run_stage_for_all(
         else:
             # 이 역할이 이 단계를 마쳤다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
             consecutive[role] = 0
+            passed.add(_caller(stage, role))
             if keep:
                 survivors.append(item)
-    return survivors
+    return survivors, tried - passed
 
 
 def _triage_by_candidate(
@@ -1678,7 +2129,8 @@ def _triage_by_candidate(
 
     | 사건 | 판정 | 대응 |
     | --- | --- | --- |
-    | 후보 하나가 컨텍스트를 넘겼다 | `status`가 요청 단위 거절(4xx) | 그 후보만 버린다 |
+    | 후보 하나가 컨텍스트를 넘겼다 | 413, 또는 400 + 컨텍스트 초과 문구 | 그 후보만 버린다 |
+    | 요청 모양·서버 설정이 틀렸다 | 그 밖의 400 | 첫 건에서 멈춘다(#296) |
     | 서버가 죽었다 | `status`가 없거나 5xx | 즉시 멈춘다 |
     | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
 
@@ -1686,25 +2138,54 @@ def _triage_by_candidate(
     실패할 때 어느 쪽도 상한에 닿지 않고 target 수백 개를 전부 태운다. 리셋 조건이
     "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
     고장 났다"는 판정을 무르게 하지 않는다.
+
+    **끝까지 돈 뒤 성공 0 백스톱을 본다(#296).** 여기서는 시도 하나가 3~6단계를 관통하므로
+    단계별 성공을 `reached`에서 거꾸로 읽는다 — 시도가 들어간 단계는 전부 지났고, 실패했으면
+    마지막 단계만 못 지났다. 「Scout가 안 올렸다」도 시도의 완주라 자리 키로 세면 Auditor가
+    전부 거절해도 안 선다 — 그래서 키가 `_caller`다.
+
+    ## Scout는 국면 둘로 갈린다(ADR 0012 결정 2)
+
+    4단계는 표에서 개시(`_step_scout_open`)와 정착(`_step_scout_settle`) 두 행이다(둘 다
+    `Stage.SCOUT`). **target 하나 안에서 좌석 순서가 바뀐다** — 「좌석1 전 단계 → 좌석2 …」가
+    아니라 「전 좌석 개시(국면 A) → 국면 A에서 살아남은 좌석마다 정착부터 끝까지(국면
+    B)」다. 동료 확인(같은 target의 다른 좌석이 hop0에서 review인가)이 이 순서에 기댄다 —
+    국면 B가 시작될 때는 이미 전 좌석의 hop0 신호를 안다. 역할별 호출 **순서**는 그대로라
+    (좌석마다 `_scout_roles(ctx)` 순서로 한 번씩 개시하고, 그다음 그 순서로 정착한다) 인덱스
+    기반 실패 주입은 안 흔들린다.
+
+    예외 처리(`_drop`·연속 카운터·`tried`/`passed`)는 **국면마다** 같은 패턴을 적용한다 —
+    국면 A에서 실패한 좌석은 국면 B에 들어가지 않는다(그 시도는 거기서 끝난다). **「완주」
+    리셋(`consecutive[role] = 0`)은 국면 B가 예외 없이 끝났을 때만 한다** — 국면 A만
+    통과한 것은 아직 "이 역할이 체계적으로 고장 나지 않았다"를 증명하지 못한다(전체
+    3~6단계를 관통해야 하던 예전 기준과 같다). 국면을 가르는 자리는 하드코딩하지 않고
+    표에서 읽는다(`_SCOUT_SETTLE_INDEX`, `_PHASE_A_STEPS`/`_PHASE_B_STEPS`).
     """
     # 연속 폐기를 **역할별로** 센다(풀 팬아웃 #178 후속). 시도 단위가 `(target, role)`이고, 풀에서
     # 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던 단일 카운터로는 상한에 안 닿았다
     # (Scout 커버리지 1/3이 빈 run이 정상 완주로 기록됐다). 역할별로 세면 그 멤버가 자기 카운터로
     # `_MAX_CONSECUTIVE_DROPS`에 닿는다. 단일 `scout`은 키가 하나라 동작이 그대로다.
+    #
+    # **국면 A·B가 같은 dict를 공유한다** — target 여러 개, 국면 둘을 거치며 누적된다. 예전에
+    # target당 (역할 하나 × 3~6단계 한 번)이던 것이 (역할 하나 × 국면 둘)로 바뀌었을 뿐,
+    # "이 역할이 상한에 닿을 때까지 몇 번 연속으로 실패했나"라는 뜻은 그대로다.
     consecutive: dict[Role, int] = {}
-    # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 각 (target, role)이
-    # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 그 역할만 리셋된다.
-    # 풀에서는 같은 target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+    tried: set[tuple[Stage, Role | None]] = set()
+    passed: set[tuple[Stage, Role | None]] = set()
+    # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 풀에서는 같은
+    # target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
     roles = _scout_roles(ctx)
     for target in plan.targets:
+        survivors: dict[Role, _InFlight] = {}
+        # 국면 A — 전 좌석의 RETRIEVAL + Scout 개시(hop0)까지.
         for role in roles:
-            # 이번 시도가 어디까지 갔는지를 `_triage_one`이 여기에 적는다 (PR #50). 예외는
-            # 어느 노드에서 났는지를 안 들고 온다 — 들고 오게 하려면 `ModelGatewayError`·
-            # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
-            # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
             reached = _Reached()
+            item = _InFlight(target=target, reached=reached, role=role)
+            finished = False
             try:
-                _triage_one(ctx, target, state, last, reached, role=role)
+                _triage_one(
+                    ctx, target, state, last, reached, role=role, item=item, steps=_PHASE_A_STEPS
+                )
             except ModelGatewayError as exc:
                 if not _is_droppable(exc):
                     # 서버 쪽 사건이다. 여기서 잡으면 남은 target을 전부 실패시키며 돈다.
@@ -1713,9 +2194,8 @@ def _triage_by_candidate(
                     # 리포트와 매니페스트까지 간 뒤 중단 사유를 적는다 — 그러지 않으면
                     # 이 변경이 없애려던 "산출물이 하나도 안 남는다"가 그대로 남는다.
                     raise
-                # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
-                # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
-                systematic = exc.status not in _SIZE_STATUS
+                # 셀지·멈출지는 `_drop`이 가른다 — 크기 거절은 안 세고, 크기가 아닌 400은
+                # 첫 건에서 멈춘다(#296).
                 consecutive[role] = _drop(
                     ctx,
                     state,
@@ -1725,7 +2205,6 @@ def _triage_by_candidate(
                     consecutive.get(role, 0),
                     stage=reached.stage,
                     role=role,
-                    systematic=systematic,
                 )
             except SchemaParseError as exc:
                 consecutive[role] = _drop(
@@ -1733,8 +2212,40 @@ def _triage_by_candidate(
                     stage=reached.stage, role=role,
                 )
             else:
-                # 완주했다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
+                # 국면 A만 통과했다 — 「완주」는 아직이다(국면 B 끝에서만 리셋한다).
+                finished = True
+                survivors[role] = item
+            entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
+            tried |= entered
+            passed |= entered if finished else entered - {_caller(reached.stage, role)}
+        # 국면 B — 국면 A에서 살아남은 좌석만, Scout 정착부터 끝까지.
+        for role, item in survivors.items():
+            reached = item.reached
+            finished = False
+            try:
+                _triage_one(
+                    ctx, target, state, last, reached, role=role, item=item, steps=_PHASE_B_STEPS
+                )
+            except ModelGatewayError as exc:
+                if not _is_droppable(exc):
+                    raise
+                consecutive[role] = _drop(
+                    ctx, state, target, _REASON_GATEWAY, exc, consecutive.get(role, 0),
+                    stage=reached.stage, role=role,
+                )
+            except SchemaParseError as exc:
+                consecutive[role] = _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                    stage=reached.stage, role=role,
+                )
+            else:
+                # 완주했다(국면 B까지) — 앞의 실패는 이 역할의 체계적 고장이 아니었다.
                 consecutive[role] = 0
+                finished = True
+            entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
+            tried |= entered
+            passed |= entered if finished else entered - {_caller(reached.stage, role)}
+    _stop_if_a_caller_saw_nothing(tried - passed)
 
 
 def _drop(
@@ -1747,7 +2258,6 @@ def _drop(
     *,
     stage: Stage,
     role: Role,
-    systematic: bool = True,
 ) -> int:
     """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
 
@@ -1757,9 +2267,13 @@ def _drop(
     죽었는지 남긴다 — 그래야 「모든 자리가 실패한 대상」을 trace에서 셀 수 있고, 리포트의
     `unanalyzed_targets`(팬아웃된 대상 − 후보 낸 대상)가 그 수를 요약으로 낸다.
 
-    `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
-    (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
-    않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+    **무엇을 세고 언제 멈추는지를 여기서 가른다(#296)** — 기록은 어느 갈래든 먼저 남긴다.
+    - 크기 거절(`_is_size_rejection`)은 "이 후보에 대한 사실이지 run에 대한 사실이 아니다".
+      카운터를 건드리지 않는다 — **내리지도 않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+    - 크기가 아닌 400(`_rejects_every_request`)은 다음 요청도 같으므로 **첫 건에서** 멈춘다.
+    - 나머지(스키마 실패·422·생성 중 타임아웃)는 센다.
+    예전에는 호출자가 `systematic=exc.status not in {400, 413}`을 넘겼고, 그래서 400이면
+    무엇이든 크기였다.
 
     **`stage`는 호출자가 준다 (PR #50).** 예전에는 여기서 `Stage.SCOUT`으로 박았는데,
     `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 기록은 4가 됐다.
@@ -1772,7 +2286,12 @@ def _drop(
         member=role.value, slice_id=target.slice_id,
     )
     state.dropped += 1
-    if not systematic:
+    if _rejects_every_request(exc):
+        raise _TooManyDrops(
+            f"{int(stage)}단계 요청이 크기가 아닌 사유로 거절됐다 — 다음 요청도 같다: "
+            f"{error_detail(exc)}"
+        ) from exc
+    if _is_size_rejection(exc):
         return consecutive
     if consecutive + 1 >= _MAX_CONSECUTIVE_DROPS:
         raise _TooManyDrops(
@@ -1790,6 +2309,10 @@ def _drop_finding(
     태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
     상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이 상한에 닿았는지가 사유에서 사라진다.
 
+    **카운터가 아닌 정지 둘은 여기도 있다(#296).** 크기가 아닌 400은 기록한 뒤 첫 건에서
+    멈추고(다음 Finding도 같다), 고른 Finding 전부가 실패하면 `_analyze`가 루프 끝에서 멈춘다.
+    둘 다 `stopped_after`가 7이라 어느 루프였는지가 사유에서 안 사라진다.
+
     **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 시도를 세고 이쪽은
     Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
     """
@@ -1802,6 +2325,11 @@ def _drop_finding(
         reason=reason,
         error_detail=error_detail(exc),
     )
+    if _rejects_every_request(exc):
+        raise _TooManyDrops(
+            f"{int(Stage.CRITIC)}단계 요청이 크기가 아닌 사유로 거절됐다 — 다음 요청도 같다: "
+            f"{error_detail(exc)}"
+        ) from exc
 
 
 def _emit_planned(ctx: RunContext, target: Location, *, slice_id: str | None) -> None:
@@ -1885,24 +2413,34 @@ def _triage_one(
     reached: _Reached,
     *,
     role: Role = Role.SCOUT,
-) -> None:
-    """target 하나를 한 Scout 자리(`role`)로 3~6단계에 태운다. 승격되지 않은 후보는 멈춘다.
+    item: _InFlight | None = None,
+    steps: tuple[tuple[Stage, TriageStep], ...] = _TRIAGE_STEPS,
+) -> _InFlight:
+    """target 하나를 한 Scout 자리(`role`)로 `steps`(기본은 3~6단계 전부)에 태운다.
 
-    **후보 단위(`execution.mode: per_candidate`, 기본값)의 경로다.** 단계 단위는
-    `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만 뒤집어** 돈다. 풀 프로필에서
-    `_triage_by_candidate`가 target × 멤버로 이 함수를 여러 번 부르고(Option C), 첫 멤버가
-    만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+    승격되지 않은 후보는 멈춘다. **후보 단위(`execution.mode: per_candidate`, 기본값)의
+    경로다.** 단계 단위는 `_triage_by_stage`가 **같은 `_TRIAGE_STEPS`를 바깥 루프만
+    뒤집어** 돈다. 풀 프로필에서 `_triage_by_candidate`가 target × 멤버로 이 함수를 여러
+    번 부르고(Option C), 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
+
+    **`item`을 넘기면 그 객체에 이어서 쌓는다.** Scout 개시·정착을 국면으로 나눌 때
+    (`_triage_by_candidate`) 같은 시도(target, role)의 두 호출이 같은 `_InFlight`
+    (`capsule`·`scout_session`)를 봐야 하므로, 국면 A 호출이 만든 `item`을 국면 B 호출에
+    그대로 다시 넘긴다. `None`이면(기본, `steps`도 기본일 때만 쓰는 옛 경로) 새로 만든다.
 
     **`reached.stage`를 노드에 들어가기 직전에 올린다 (PR #50).** 끝난 뒤에 올리면 그
     노드에서 죽은 target이 앞 단계로 기록된다 — 고치려던 것이 정확히 그 어긋남이다.
     (그 올리는 일은 이제 각 `_step_*`이 자기 첫 줄에서 한다.)
     """
-    item = _InFlight(target=target, reached=reached, role=role)
-    for stage, step in _TRIAGE_STEPS:
+    resolved_item = (
+        item if item is not None else _InFlight(target=target, reached=reached, role=role)
+    )
+    for stage, step in steps:
         if last < stage:
-            return
-        if not step(ctx, item, state):
-            return
+            return resolved_item
+        if not step(ctx, resolved_item, state):
+            return resolved_item
+    return resolved_item
 
 
 def _new_record(

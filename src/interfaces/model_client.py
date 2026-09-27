@@ -17,6 +17,7 @@
 안 걸린다.
 """
 
+from collections.abc import Sequence
 from typing import Generic, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
@@ -80,6 +81,10 @@ class ModelGatewayError(RuntimeError):
     초과가 여기 온다)과 서버가 죽은 것(연결 실패·타임아웃이면 `None`, 서버 오류면 5xx)은
     같은 예외에 뭉쳐 있었고, 그래서 러너가 가릴 수단이 없었다. 문자열을 파싱해 가르지
     않도록 상태 코드를 필드로 든다.
+
+    ⚠ **400 하나는 상태만으로 안 갈린다(#296).** vLLM은 컨텍스트 초과와 요청 모양·서버 설정
+    거절에 같은 400을 준다 — 앞은 이 후보에 대한 사실이고 뒤는 다음 요청도 같다. 그래서 러너는
+    400일 때만 `detail`의 서버 문구를 한 번 더 본다(`runner._is_size_rejection`).
 
     ⚠ **타임아웃은 서버가 살아 있어도 난다** — 생성이 느린 모델이 출력을 다 내기 전에 어댑터의
     요청 타임아웃에 닿는 경우다(2026-09-24 ATOM 스모크에서 실제로 났다, 이슈 #261). `status`만
@@ -170,6 +175,18 @@ class Prompt(HarnessModel):
     prompt_version: NonEmptyStr
 
 
+class ChatTurn(HarnessModel):
+    """멀티턴 history의 한 턴 (ADR 0012 결정 2 — need_evidence 되묻기).
+
+    `Prompt`와 같은 자리다 — 시스템 prefix는 여기 없다. 요청에 실릴 때는
+    `OpenAICompatModelClient._request_payload`가 system 메시지 뒤·이번 turn(user) 앞에
+    `speaker`를 그대로 역할로 써서 순서대로 얹는다.
+    """
+
+    speaker: Literal["user", "assistant"]
+    content: str
+
+
 class Usage(HarnessModel):
     """토큰 사용량.
 
@@ -227,6 +244,10 @@ class ModelResult(HarnessModel, Generic[SchemaT]):
     # 상위(`context.call_model`)가 이 본문을 재시도 파일로 남겨 **실제로 간 요청을 재현**할
     # 수 있게 한다(#80). 재시도가 없으면 빈 튜플이다.
     retry_bodies: tuple[str, ...] = ()
+    # 성공한 시도의 응답 원문(`_post`가 읽는 `message.content`. `FakeModelClient`는 낸
+    # 값의 JSON). **사고 토큰은 담지 않는다** — 그 자리는 Phase 8이다. 구현체가 안 채우면
+    # `None`이고, 이것도 미실측 표시다.
+    raw_text: str | None = None
 
 
 class ModelClient(Protocol):
@@ -234,8 +255,20 @@ class ModelClient(Protocol):
 
     스키마 파싱 실패 시 재요청(계약의 `retries`)은 구현체 책임이다. 한도를 넘기면
     예외를 던지고, 오케스트레이터가 `ReasonCode.SCHEMA_PARSE_FAILED`로 기록한다.
+
+    **`history`는 이 저장소 첫 Protocol 키워드 전용 기본값이다** (ADR 0012 결정 2 —
+    need_evidence 되묻기의 멀티턴). 구현체 셋(`fake_model.py`·`openai_compat.py`·
+    `routing_model.py`) 모두 `history[k].speaker`를 그대로 역할로 써서 system과 이번
+    turn(user) 사이에 순서대로 얹는다 — 비어 있으면 지금까지의 단일 턴 동작 그대로다.
+    재시도는 이 history를 그대로 두고 이번 turn의 본문만 바꾼다 — 실패한 응답을
+    history에 끼우지 않는다.
     """
 
     def complete(
-        self, *, role: Role, prompt: Prompt, schema: type[SchemaT]
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[SchemaT],
+        history: Sequence[ChatTurn] = (),
     ) -> ModelResult[SchemaT]: ...

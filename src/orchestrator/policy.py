@@ -21,7 +21,7 @@ from pydantic import Field
 from src.config import Thresholds
 from src.interfaces.state_store import ObjectKind
 from src.schemas.common import HarnessModel, Identifier, NonEmptyStr
-from src.schemas.enums import EvidenceGrade, FindingState, ReasonCode, Verdict
+from src.schemas.enums import EvidenceGrade, FindingState, ReasonCode, ScoutSignal, Verdict
 
 # `basis`·`signals`에 담을 수 있는 값. 판정에 실제로 쓴 신호만 넣는다.
 Signal = float | int | str | bool | None
@@ -111,10 +111,29 @@ class FixedThresholdPolicy:
     # --- 지점별 판정. 각각 state_machine.py 표의 어느 행으로 가는지 주석에 적는다. ---
 
     def _scout_triage(self, request: RoutingRequest) -> Action:
-        """C-2 / C-3."""
+        """C-2 / C-3.
+
+        **판정은 최종 신호다**(ADR 0012 결정 2) — `signals`에 `"signal"`이 있으면(v3) 점수를
+        보지 않고 그 신호로 가른다. review는 약한 것도 승격 대상이다(v3 프롬프트 계약, 점수는
+        `basis`에만 참고로 남는다). 없으면(v1·v2, 또는 세 신호 밖 접두) 지금 점수 경로다.
+        """
+        signal = request.signals.get("signal")
+        if signal is not None:
+            basis: dict[str, Signal] = {"signal": signal}
+            if signal == ScoutSignal.REVIEW.value:
+                return self._act(
+                    Route.ADVANCE, FindingState.TRIAGED, ReasonCode.SCOUT_PROMOTED, basis
+                )
+            if signal == ScoutSignal.REJECT.value:
+                return self._act(Route.QUEUE, FindingState.QUEUED, ReasonCode.SCOUT_REJECT, basis)
+            # 남은 값은 `triage_need_evidence`뿐이다 — 신호가 있는데 review·reject가 아니면
+            # NE 루프가 소진돼 이 판정에 왔다는 뜻이다(좌석 집계가 그 경우에만 signal을 싣는다).
+            return self._act(
+                Route.QUEUE, FindingState.QUEUED, ReasonCode.NEED_EVIDENCE_UNRESOLVED, basis
+            )
         score = float(_signal(request, "score"))
         limit = self._t.scout_threshold
-        basis: dict[str, Signal] = {"score": score, "scout_threshold": limit}
+        basis = {"score": score, "scout_threshold": limit}
         if score >= limit:
             return self._act(Route.ADVANCE, FindingState.TRIAGED, ReasonCode.SCOUT_PROMOTED, basis)
         return self._act(Route.QUEUE, FindingState.QUEUED, ReasonCode.BELOW_SCOUT_THRESHOLD, basis)

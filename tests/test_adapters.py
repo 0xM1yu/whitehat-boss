@@ -24,7 +24,7 @@ from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
 from src.config import AdapterSelection, HarnessConfig, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ChatTurn, Prompt
 from src.interfaces.retriever import Query
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape
@@ -252,6 +252,37 @@ def test_risky_call_detection_ignores_substrings() -> None:
     assert risky_calls_in("my_memcpyx(a);") == []
 
 
+# --- history (ADR 0012 결정 2 — need_evidence 되묻기의 멀티턴) -----------------
+
+
+def test_fake_model_ignores_an_empty_history() -> None:
+    """`history=()`는 지금까지의 단일 턴 동작 그대로다 — 사실 블록은 이번 턴 본문에서 읽는다."""
+    result = FakeModelClient().complete(
+        role=Role.SCOUT, prompt=_prompt(_context(VULNERABLE_C)), schema=Candidate, history=()
+    )
+    assert result.value is not None
+
+
+def test_fake_model_reads_facts_from_the_first_history_turn() -> None:
+    """history가 있으면 사실 블록은 **첫 user 턴**(hop0 본문)에서 읽는다.
+
+    후속 턴 본문(`prompt.body`)에는 사실 블록이 없다 — 실제 후속 질문도 그렇다. 이번 턴
+    본문을 읽으려 들면 펜스가 없어 `FakeModelError`가 난다.
+    """
+    hop0_body = _prompt(_context(VULNERABLE_C)).body
+    followup = Prompt(prefix="SYSTEM", body="strdup를 봤다 — 어디서 왔나?", prompt_version="v1")
+
+    result = FakeModelClient().complete(
+        role=Role.SCOUT,
+        prompt=followup,
+        schema=Candidate,
+        history=(ChatTurn(speaker="user", content=hop0_body),),
+    )
+
+    assert result.value.candidate_id == "cand_0001"
+    assert result.raw_text == result.value.model_dump_json()
+
+
 # --- RoutingModelClient -----------------------------------------------------
 
 
@@ -262,6 +293,27 @@ def test_routing_sends_each_role_to_its_own_client() -> None:
     assert router.client_for("critic") is critic
     with pytest.raises(UnknownRoleError, match="auditor"):
         router.client_for(Role.AUDITOR)
+
+
+def test_routing_forwards_history_to_the_underlying_client() -> None:
+    """routing은 그대로 위임한다 — 자기 검사를 두지 않고, 실제 판정은 하위 클라이언트에
+    맡긴다.
+
+    Fake가 실제로 history를 받았는지는 결과로 증명한다 — `followup`(아래) 본문에는
+    사실 블록이 없으므로, history가 조용히 버려졌다면 `FakeModelError`로 실패한다.
+    """
+    router = RoutingModelClient({"scout": FakeModelClient(model_name="s")})
+    hop0_body = _prompt(_context(VULNERABLE_C)).body
+    followup = Prompt(prefix="SYSTEM", body="후속 질문", prompt_version="v1")
+
+    result = router.complete(
+        role=Role.SCOUT,
+        prompt=followup,
+        schema=Candidate,
+        history=(ChatTurn(speaker="user", content=hop0_body),),
+    )
+
+    assert result.value.candidate_id == "cand_0001"
 
 
 # --- FakeRetriever ----------------------------------------------------------
