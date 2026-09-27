@@ -99,6 +99,22 @@ def test_a_slice_v2_file_loads_with_its_status_signature_and_given_end(tmp_path:
     assert loaded.slices[1].entry == {"file": "helper.c", "line": 3, "symbol": "memcpy"}
 
 
+def test_a_degraded_slice_keeps_its_marker_through_load(tmp_path: Path) -> None:
+    """#307 리뷰(@danielcho02): 슬라이서는 anchor-only 대체 슬라이스에 `degraded`를 남기지만 consumer가
+    그것을 버려서 절단 슬라이스가 러너에 full로 보였다. marker가 적재를 넘어 살아야 하고, 정상
+    슬라이스는 False로 남는다.
+    """
+    document = _document([
+        _slice("slice_0001", "A", {("main.c", 1), ("main.c", 5)}, _SOURCES, degraded=True),
+        _slice("slice_0002", "B", {("helper.c", 3), ("helper.c", 4)}, _SOURCES),
+    ])
+
+    loaded = load_slices(_write(tmp_path, document))
+
+    assert loaded.slices[0].degraded is True
+    assert loaded.slices[1].degraded is False
+
+
 def test_a_partial_run_that_reached_the_cpg_loads_and_keeps_its_status(tmp_path: Path) -> None:
     """`partial`은 거부 사유가 아니다 — CPG가 섰으면 받고, 그 사실을 `status`로 들고 간다."""
     document = _document(
