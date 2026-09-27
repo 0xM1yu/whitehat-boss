@@ -72,8 +72,9 @@ class Resolution(HarnessModel):
     def fixable_count(self) -> int:
         """형식 사유(자리표시자·target 없음·식별자 없음·식별자 아님)만 센 수.
 
-        이것이 0이고 `blocks`도 비었으면(=아무것도 못 채웠는데 형식 문제도 아니면)
-        `NeStopReason.NOTHING_RESOLVED`로 선다 — "잘 쓴 이름이 전부 조회에 실패했다"와
+        이것이 0이고 `blocks`·`already`가 둘 다 비었으면(=아무것도 못 채웠는데 형식 문제도
+        아니면) `NeStopReason.NOTHING_RESOLVED`로 선다 — `already`(이미 SOURCE에 있음)는 조회
+        성공이라 서지 않는다 — "잘 쓴 이름이 전부 조회에 실패했다"와
         "형식이 잘못됐다"를 가르는 값이다.
         """
         return sum(1 for item in self.unfilled if item.reason in FIXABLE_UNFILLED_REASONS)
