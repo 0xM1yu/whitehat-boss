@@ -94,6 +94,14 @@ graph LR
 >   [D82](open-questions/D/D82.md). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
 >   됐다(Phase 3c): `SOURCE`가 슬라이스 렌더이고 FACTS에 `slice_criterion`이 붙으며 LIGHT 캡슐이 그 렌더를 센다.
 >   need_evidence 루프는 그대로 0건이다(Phase 5).)
+> (⏵ 2026-09-26 — 루프가 이 변경으로 배선됐다: `runner._step_scout_open`(hop0)·`_step_scout_settle`
+> (동료 확인 → `_run_ne_hops`)이 `Stage.SCOUT`을 두 행으로 가르고, `triage_need_evidence`는 더 이상
+> `scout_threshold` 미만 취급으로 `below_scout_threshold`에 묻히지 않는다 — `policy._scout_triage`가
+> `signals["signal"]`을 점수보다 먼저 보고 승격(review)·보류(reject·need_evidence 소진)를 가른다. 홉마다
+> `EventKind.SCOUT_HOP`이 난다. **한계** — 홉당 글자 상한(`_HOP_CHARS_MAX` 15,000자, 남은 토큰 × 3.28)의
+> 여유 `_HOP_TOKEN_MARGIN`(512)은 설계값이고 미실측이다. RETRIEVED 코드 블록만의 글자/토큰 비는 안
+> 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
+> (ATOM 스모크 전).)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
 >   `prompts/auditor/v3/body.md`의 `representation: original source code`). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도

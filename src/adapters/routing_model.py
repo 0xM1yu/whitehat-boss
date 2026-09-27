@@ -10,9 +10,11 @@ model-serving.md §6의 게이트웨이 그림(역할 → vLLM #1/#2/#3)을 코�
 import 하지 않으므로 새 백엔드가 생겨도 여기는 그대로다.
 """
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel
 
-from src.interfaces.model_client import ModelClient, ModelResult, Prompt
+from src.interfaces.model_client import ChatTurn, ModelClient, ModelResult, Prompt
 from src.schemas.enums import Role
 
 
@@ -35,8 +37,20 @@ class RoutingModelClient:
             )
         return client
 
-    def complete(self, *, role: Role, prompt: Prompt, schema: type[BaseModel]) -> ModelResult:
-        return self.client_for(role).complete(role=role, prompt=prompt, schema=schema)
+    def complete(
+        self,
+        *,
+        role: Role,
+        prompt: Prompt,
+        schema: type[BaseModel],
+        history: Sequence[ChatTurn] = (),
+    ) -> ModelResult:
+        # 자기 검사를 두지 않는다 — history를 그대로 위임하고 실제 판정(비어 있으면
+        # 단일 턴, 있으면 멀티턴으로 답하는 것)은 하위 클라이언트가 한다. 구현체
+        # (`fake_model.py`·`openai_compat.py`)와 테스트 더블 전부가 `history=()`를 받으므로,
+        # 비어 있을 때만 키워드를 감추던 자리가 더는 필요 없다.
+        client = self.client_for(role)
+        return client.complete(role=role, prompt=prompt, schema=schema, history=history)
 
     @property
     def roles(self) -> list[str]:

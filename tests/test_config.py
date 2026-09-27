@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from src import schemas
 from src.adapters.factory import _model_client
 from src.bench import ROLE_SPEC
+from src.cli import PROVISIONAL_THRESHOLDS
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
@@ -705,6 +706,24 @@ def test_thresholds_flatten_is_float_map() -> None:
     flat = load_config("dev_fake").thresholds.flatten()
     assert all(isinstance(value, float) for value in flat.values())
     assert any(key.startswith("capsule_budget_tokens.") for key in flat)
+
+
+def test_max_hops_reaches_the_run_record_and_is_provisional() -> None:
+    """`max_hops`(ADR 0012 결정 6 — `capsule_expansion_max`를 대체)가 `flatten()`으로
+
+    run 기록에 실리고, `capsule_expansion_max`와 같은 자리(명세값·미실측)로
+    `PROVISIONAL_THRESHOLDS`에도 있다.
+    """
+    thresholds = load_config("dev_fake").thresholds
+    assert thresholds.max_hops >= 0
+    assert thresholds.flatten()["max_hops"] == float(thresholds.max_hops)
+    assert "max_hops" in PROVISIONAL_THRESHOLDS
+
+
+def test_max_hops_rejects_negative() -> None:
+    thresholds = load_config("dev_fake").thresholds
+    with pytest.raises(ValidationError):
+        thresholds.transition(max_hops=-1)
 
 
 def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> None:

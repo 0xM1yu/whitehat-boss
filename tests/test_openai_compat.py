@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from src.adapters.openai_compat import RETRY_ERROR_MAX_CHARS, OpenAICompatModelClient
 from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
+    ChatTurn,
     ModelGatewayError,
     Prompt,
     SchemaParseError,
@@ -147,6 +148,66 @@ def test_exhausted_retries_still_raise_instead_of_returning_a_default(
         _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
 
     assert attempts == [1, 2]
+
+
+# --- history (ADR 0012 결정 2 — need_evidence 되묻기의 멀티턴) -----------------
+
+
+def test_complete_still_works_with_an_empty_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`history=()`는 지금까지의 단일 턴 동작 그대로다."""
+    _stub(monkeypatch, succeed_on=1)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, history=())
+
+    assert result.value.ok is True
+
+
+def test_history_turns_land_between_the_system_prefix_and_the_user_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """messages는 `[system] + history + [user]`다.
+
+    history가 있으면 사용자 본문은 더 이상 두 번째 메시지가 아니다 — `_user_content`의
+    `messages[1]` 가정은 history가 없을 때만 맞고, 그래서 아래는 `messages[-1]`로 본다.
+    """
+    payloads = _capture(monkeypatch, '{"ok": true}')
+    history = (
+        ChatTurn(speaker="user", content="이전 턴의 질문"),
+        ChatTurn(speaker="assistant", content="이전 턴의 답"),
+    )
+
+    _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, history=history)
+
+    assert payloads[0]["messages"] == [
+        {"role": "system", "content": PROMPT.prefix},
+        {"role": "user", "content": "이전 턴의 질문"},
+        {"role": "assistant", "content": "이전 턴의 답"},
+        {"role": "user", "content": PROMPT.body},
+    ]
+
+
+def test_the_retry_keeps_history_unchanged_and_still_hides_the_failed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """재시도는 history를 그대로 두고 이번 turn의 본문만 바꾼다.
+
+    `test_the_retry_does_not_echo_the_failed_response_into_the_prompt`(D47)의 history
+    판이다 — 실패한 응답이 history에도 안 낀다. history가 회차마다 달라지면 다음 홉이
+    이어받을 대화 자체가 흔들린다.
+    """
+    payloads = _capture(monkeypatch, _RUNAWAY)
+    history = (ChatTurn(speaker="user", content="이전 턴의 질문"),)
+
+    with pytest.raises(SchemaParseError):
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, history=history)
+
+    assert len(payloads) == 2
+    first, second = payloads
+    assert first["messages"][1:-1] == [{"role": "user", "content": "이전 턴의 질문"}]
+    assert second["messages"][1:-1] == first["messages"][1:-1]
+    assert _SENTINEL not in json.dumps(second["messages"])
+    # 덧붙는 것은 오류 메시지뿐이다 — 이번 turn 본문만 늘어난다.
+    assert len(second["messages"][-1]["content"]) - len(first["messages"][-1]["content"]) < 1_000
 
 
 # --- 재시도 프롬프트 (D47) -----------------------------------------------------
@@ -566,6 +627,24 @@ def test_the_result_carries_how_many_attempts_it_took(monkeypatch: pytest.Monkey
     result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
 
     assert result.attempts == 3
+
+
+# --- raw_text (성공한 시도의 원문, ADR 0012 결정 2) ----------------------------
+
+
+def test_the_result_carries_the_successful_attempts_raw_text_not_a_failed_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`raw_text`는 성공한 시도의 원문이다 — 실패한 시도의 원문이 섞이면 안 된다.
+
+    사고 원문은 여기 안 담는다(Phase 8) — `_post`가 돌려주는 것 자체가
+    `message.content`뿐이라 이 테스트가 볼 수 있는 것도 그것뿐이다.
+    """
+    _stub(monkeypatch, succeed_on=3)
+
+    result = _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.raw_text == '{"ok": true}'
 
 
 def test_a_first_try_success_reports_one_attempt(monkeypatch: pytest.MonkeyPatch) -> None:

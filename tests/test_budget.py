@@ -35,7 +35,7 @@ class StubModelClient:
         self._fail = fail
         self.calls = 0
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         self.calls += 1
         if self._fail:
             raise RuntimeError("구조화 출력 파싱 실패")
@@ -161,7 +161,7 @@ class _BogusProducedByStub:
     def __init__(self, value) -> None:  # noqa: ANN001
         self._value = value
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         return ModelResult(value=self._value, usage=_usage(), model="served-30b")
 
 
@@ -212,7 +212,7 @@ class _FixedValueStub:
     def __init__(self, value) -> None:  # noqa: ANN001
         self._value = value
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         return ModelResult(value=self._value, usage=_usage(), model="served-8b")
 
 
@@ -315,7 +315,7 @@ class _FailingWithSpendStub:
         self._attempts = attempts
         self.calls = 0
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         self.calls += 1
         raise SchemaParseError(
             "3회 안에 스키마를 만들지 못했다",
@@ -333,7 +333,7 @@ class _AttemptsStub:
         self._usage = usage
         self._attempts = attempts
 
-    def complete(self, *, role, prompt, schema):  # noqa: ANN001, ANN201
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         value = Candidate(
             candidate_id="cand_0001",
             run_id=RUN_ID,
