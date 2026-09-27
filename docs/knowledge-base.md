@@ -176,7 +176,9 @@ light capsule (callers/callees 1-hop 포함)
 > 최대 3홉, 정지 조건 여섯, 그리고 한 좌석이라도 review면 다른 좌석의 루프는 돌지 않는다(좌석 집계). 명세의 원천은 실험팀 Notion 「Scout RAG baseline」이고 ADR 0012가 요약한다. 위 「초기값 3」의 상한
 > (`capsule_expansion_max`)은 결정 6이 `max_hops`로 대체한다. **승인됐다(2026-09-25) — 코드는 아직이다**(Phase 5) — 아래
 > 「사다리의 첫 칸」 절 끝의 ⚠. (⏵ 2026-09-26 — `Thresholds.max_hops`가 config에 생겼다(PR #302,
-> `config/budgets.yaml`의 thresholds 블록). 그 값을 세고 강제하는 루프는 그대로 Phase 5다.)
+> `config/budgets.yaml`의 thresholds 블록). 그 값을 세고 강제하는 루프는 그대로 Phase 5다. ⏵ 이 변경이
+> 세고 강제한다 — `src/orchestrator/runner.py`의 `_run_ne_hops`가 `session.hop >= max_hops`에서
+> `NeStopReason.MAX_HOP`으로 선다.)
 
 ### 사다리의 첫 칸을 기본값으로 올렸다 (2026-08-23, D20을 (a)로 확정)
 
@@ -214,6 +216,22 @@ status=loaded`(심볼 4·호출 5)인데 그래프를 담은 프롬프트는 aud
 > 목록인데 v3 프롬프트는 객체를 요구한다([D82](open-questions/D/D82.md)). 그 루프가 §5 머리 ⚠의
 > need_evidence 루프다(ADR 0012 결정 2 — Phase 5). (⏵ 2026-09-26 — 스키마가 객체 `RequestedContext`를
 > 받는다(PR #302). 판정이 그것을 소비하는 루프는 그대로 0건이다.)
+> (⏵ 2026-09-26 — 이 변경이 그 루프를 짓는다. `policy._scout_triage`가 `signals["signal"]`을 점수보다
+> 먼저 보므로 `triage_need_evidence`는 더 이상 `triage_reject`와 나란히 `below_scout_threshold`로
+> 떨어지지 않는다 — NE 신호는 좌석 집계 루프(`runner._run_ne_hops`)를 거쳐 최종 신호(review·reject)나
+> `NeStopReason`(정지 사유)으로 선다. `requested_context`도 이제 소비된다 — `_run_ne_hops`가 그것을 읽어
+> resolver(`src/adapters/symbol_resolver.py`)에 넘긴다. `analysis_summary` 자체(근거 문자열)는 여전히
+> 버려진다 — 판정에 쓰는 것은 신호·요청이지 근거 서술이 아니다. **정지 사유는 명세의 여섯보다
+> 많다** — 명세 여섯(신호가 NE 아님·파싱 실패·`max_hops` 소진·요청 반복·요청 없음·resolver
+> 전무)에 하네스가 넷을 더 붙였다 — `peer_review`(다른 좌석이 hop0에 review)·`context_overflow`
+> (후속 턴이 창에 안 든다 — 홉 글자 상한이 바닥나거나 서버가 크기로 거절)·`budget_exhausted`(예산
+> 소진)·`gateway_error`(그 밖 게이트웨이 오류). 명세의 파싱 실패와 뒤 셋은 hop≥1 실패를 흡수해 직전
+> 판정을 지키는 자리이고, 크기 아닌 400은 흡수하지 않고 run을 멈춘다(D88 —
+> `runner._ne_classify_exception`). 기록은 `src/schemas/enums.py`의 `NeStopReason` 열한 개다 —
+> 「신호가 NE 아님」은 최종 신호 이름 `triage_review`·`triage_reject` 둘로 적는다. **홉당 글자 상한**은 계산값이다 —
+> `min(15,000자, 남은 토큰 × 3.28)`이고 3.28은 Scout 좌석 전체의 실측 하한이지 RETRIEVED 코드
+> 블록만의 비는 안 쟀다. 여유 512토큰은 설계값·미실측이다. **실서빙 루프 실측은 아직 없다**
+> (ATOM 스모크 전).)
 
 **즉 이 절은 지금 절반만 구현돼 있다.** 첫 칸은 기본값이 되어 항상 실리고, 나머지
 `──부족──>` 화살표는 **아무도 밟지 않는다.** 그 사실을 그림에서 지우지 않는 이유는

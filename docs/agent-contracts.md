@@ -107,6 +107,10 @@ agent:
   찾아 같은 세션 후속 턴으로 준다(최대 3홉 — 다른 좌석이 review를 냈으면 돌지 않는다, 결정 2 「좌석 집계」).**
   지금은 그 루프가 0건이라 `triage_need_evidence`(0.30)도
   `triage_reject`(0.10)처럼 `scout_threshold` 미만으로 `queued`된다. 구현은 Phase 5다.
+  ⏵ 2026-09-26 — 이 변경이 배선했다: `triage_need_evidence`는 더 이상 점수 임계로 떨어지지 않는다 —
+  `policy._scout_triage`가 신호를 먼저 보고, NE 좌석은 같은 세션 후속 턴(최대 `max_hops`)을 거쳐
+  정지 사유로 `queued`되거나(`NeStopReason`) 신호가 review·reject로 바뀌면 그 신호로 선다
+  (`src/orchestrator/runner.py`의 `_run_ne_hops`·`_step_scout_settle`).
 - 프롬프트 규약: thinking 최소화, 출력은 항목당 3줄 이내, 자유 서술 금지
 - 실패 모드: 위험 함수 존재만으로 높은 점수를 주는 편향 → benign 샘플로 반드시 교정 측정([evaluation.md](evaluation.md))
 
