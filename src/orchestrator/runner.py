@@ -1439,7 +1439,14 @@ def _settle_scout_session(
     """
     if session.signal is None:
         return session
-    if session.signal is not ScoutSignal.NEED_EVIDENCE:
+    # ⚠ 스모크 전용 — 신청서를 채운 review·reject 좌석도 한 번은 되묻게 한다
+    # (RAG가 판정을 바꾸는지 재려고). 환경 변수가 없으면 설계 그대로다.
+    forced = (
+        os.environ.get("HARNESS_SMOKE_FORCE_LOOP") == "1"
+        and session.signal is not ScoutSignal.NEED_EVIDENCE
+        and bool(session.requested_context)
+    )
+    if session.signal is not ScoutSignal.NEED_EVIDENCE and not forced:
         _emit_scout_hop(ctx, item, session, stop_reason=session.signal.value)
         return session
     key = _target_key(item.target.location, item.target.slice_id)
@@ -1451,7 +1458,7 @@ def _settle_scout_session(
     if any(signal is ScoutSignal.REVIEW for role, signal in peers.items() if role != item.role):
         _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.PEER_REVIEW.value)
         return session
-    return _run_ne_hops(ctx, item, state, session)
+    return _run_ne_hops(ctx, item, state, session, forced=forced)
 
 
 # 한 홉이 RETRIEVED에 실을 수 있는 글자 상한(폭주 차단 — 토큰 상한이 아니다. 글자 상한은
@@ -1605,7 +1612,12 @@ def _emit_scout_hop(
 
 
 def _run_ne_hops(
-    ctx: RunContext, item: _InFlight, state: _Accumulator, session: scout.ScoutSession
+    ctx: RunContext,
+    item: _InFlight,
+    state: _Accumulator,
+    session: scout.ScoutSession,
+    *,
+    forced: bool = False,
 ) -> scout.ScoutSession:
     """need_evidence 루프 본체 — hop1..`max_hops`. 정지하면 그 판정의 세션을 돌려준다.
 
@@ -1623,7 +1635,8 @@ def _run_ne_hops(
     visible = _ne_visible(item.target.slice)
     while True:
         requests = session.requested_context
-        if session.signal is not ScoutSignal.NEED_EVIDENCE:
+        first_forced = forced and previous_keys is None
+        if session.signal is not ScoutSignal.NEED_EVIDENCE and not first_forced:
             # hop≥1 응답이 review·reject로 돌아섰다 — 최종 신호로 끝난다.
             _emit_scout_hop(ctx, item, session, stop_reason=session.signal.value)
             return session
