@@ -252,8 +252,10 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
 CASE_A_CALL_LIMIT = 1
 # The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
 # a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
-# and the whole slice aborted (0 slices). Measured: capping turns sample_01's abort into 2,198
-# candidates (2,000 api + 198 readers on THAT sample). Both `api` and `readers` are capped:
+# and the whole slice aborted (0 slices). Measured at the earlier cap 2,000 (before #310):
+# capping turned sample_01's abort into 2,198 candidates (2,000 api + 198 readers on THAT
+# sample). At cap 4,000 sample_01's api set -- which hit the cap -- can reach up to 4,000, so this
+# 2,198 is a cap-2,000 figure, not the current cap's. Both `api` and `readers` are capped:
 # readers is not guaranteed small (it is every internal method calling read/getc/getline/mmap/…),
 # so an uncapped readers set could overrun the same way on a repo with many such methods.
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
@@ -266,8 +268,11 @@ CASE_A_CALL_LIMIT = 1
 # ⏵ 2026-09-26 — 2,000 → 4,000 (가설, 미확정 · WIP). 2026-09-26 injection 후보포착 측정에서
 # injection sample_13 source `ra_svn_open`이 READER를 직접 부르는데 Case A 후보로 안 잡혔고,
 # 큰 저장소(subversion)에서 `readers` 집합이 2,000 캡에 밀린 것이 유력하나 **미확인**이다(CPG
-# 재빌드가 있어야 확정). 재측정으로 (a) 그 source가 회수되는지 (b) 늘어난 후보의 per-candidate
-# 비용이 감당되는지(#250 뒤 캡은 그 비용을 묶는다 — 위)를 확인하고, 안 맞으면 되돌린다. 4,000은
+# 재빌드가 있어야 확정). 재측정으로 (a) 그 source가 회수되는지 — 단 `.take`가 불안정 CPG
+# traversal 순서라 회수는 readers 총수 < 4,000일 때만 보장된다(위 「unspecified first-N」) —
+# (b) 늘어난 후보의 per-candidate 비용, 특히 flows_a 단계 gpu_seconds·deadline(그 단계엔 별도
+# 상한이 없다 — 후보 2배면 flows가 예산을 넘겨 애초에 이 캡이 막으려던 0-slices 실패로 되돌 수
+# 있다)이 감당되는지(#250 뒤 캡은 그 비용을 묶는다 — 위)를 확인하고, 안 맞으면 되돌린다. 4,000은
 # 측정 전 잠정치다(§0 — 확정 수치 아님). 이 PR은 draft다.
 CASE_A_CANDIDATE_CAP = 4000
 
