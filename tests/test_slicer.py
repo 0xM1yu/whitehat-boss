@@ -674,8 +674,11 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     # local-array-argument and double-free patterns (issue #219 (b)).
     query = queries.candidates_b_query()
     assert "memcpy" in query and "strcpy" in query and "memset" in query
-    assert 'cpg.call.name("(' in query and ").take(" in query  # writer set, bounded
-    assert str(queries.CASE_B_WRITER_CAP) in query
+    # Bind the wiring: writers are collected then per-method budgeted (CASE_B_PER_METHOD) under
+    # the writer cap ceiling. A bare `.take(` check passed even after the flat cap was replaced.
+    assert "def budget(" in query  # per-method budgeting present
+    assert (f'val writers = budget(cpg.call.name("({queries.WRITERS})").l, '
+            f'{queries.CASE_B_PER_METHOD}, {queries.CASE_B_WRITER_CAP})') in query
     assert '"dangerous_write"' in query
     # The trigger includes every argument of a writer call so backtracking reaches dest,
     # source and size — the union is unbounded strings, so the cap must be present.
@@ -692,7 +695,8 @@ def test_case_b_query_adds_the_injection_sink_set_bounded():
     # with `++ execs` or the cap replace removed (review MEDIUM). Pin the collected+capped set,
     # its membership in the union, the tag, both placeholder substitutions, and bare `system`
     # (a `system` substring alone is satisfied by `wsystem`).
-    exec_set = f'cpg.call.name("({queries.EXEC_SINKS})").take({queries.CASE_B_EXEC_CAP}).l'
+    exec_set = (f'budget(cpg.call.name("({queries.EXEC_SINKS})").l, '
+                f'{queries.CASE_B_PER_METHOD}, {queries.CASE_B_EXEC_CAP})')
     assert f"val execs = {exec_set}" in query
     assert "(arrays ++ repeatedCalls ++ writers ++ execs ++ operators)" in query
     assert 'Option.when(execs.contains(c))("injection_sink")' in query
@@ -730,12 +734,13 @@ def test_case_b_query_adds_operator_anchors_narrowed_before_the_cap():
     assert '"index_write"' in query and '"pointer_arithmetic"' in query
     assert str(queries.CASE_B_OPERATOR_CAP) in query
     assert "__OPCAP__" not in query  # the placeholder was substituted
-    # The narrowing filter must sit before .take(cap) so the cap bounds a real subset,
-    # not the raw 3000+ operator population.
+    # The narrowing filter must sit before the anchor list is handed to budget(), so the
+    # per-method budget + cap ceiling bound a real (narrowed) subset, not the raw 3000+
+    # operator population. budget's args close with `.l, {CASE_B_PER_METHOD},`.
     for anchor in ("<operator>.indirectIndexAccess", "<operator>.(addition|subtraction)"):
         start = query.index(anchor)
-        seg = query[start : query.index(".take(", start) + 6]
-        assert ".filter(" in seg and seg.index(".filter(") < seg.index(".take(")
+        seg = query[start : query.index(f".l, {queries.CASE_B_PER_METHOD},", start)]
+        assert ".filter(" in seg
 
 
 def test_noncode_delimiters_do_not_change_structure():
@@ -1259,8 +1264,10 @@ def test_flows_and_case_b_share_the_same_operator_sink_definition():
         'cpg.call.name("<operator>.(addition|subtraction)")',
         'c.argument.evalType.exists(_.contains("*"))',
         'indirection|indirectIndexAccess|addressOf)',
-        # exec sink set is also copied between the two queries (#299) -- pin it here too.
-        f'cpg.call.name("({queries.EXEC_SINKS})").take({queries.CASE_B_EXEC_CAP}).l',
+        # exec sink PATTERN is copied between the two queries (#299) -- pin it here too. The
+        # collection wrappers now differ intentionally (flows: flat cap; case_b: per-method
+        # budget), so pin the shared name set, not the take/budget form.
+        f'cpg.call.name("({queries.EXEC_SINKS})")',
     ):
         assert fragment in flows and fragment in case_b, fragment
 

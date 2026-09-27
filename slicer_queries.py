@@ -72,6 +72,32 @@ CASE_B_EXEC_CAP = 2000
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
+# Per-method anchor budget (candidate starvation fix). Each cap above used to be a FLAT
+# `.take(cap)` over the whole CPG in traversal order, so on a large repo a few busy functions
+# fill the first `cap` anchors and a GT function's anchors -- which exist -- never get taken
+# (they rank past `cap`). Measured on inj_sample_18 (GPAC, 2026-09-27, vast RTX PRO 6000):
+# the GT source fn holds indexWrites 12 / writers 3 / ptrArith 5 and the GT sink fn writers 2 /
+# ptrArith 2, yet all three types exceed cap 2000 repo-wide (writers 4174, indexWrites 4259,
+# ptrArith 6069) so the flat take dropped the GT functions -- a miss that raising the cap to
+# 4000 (#310) only papered over, at the price of a candidate explosion (+7,309 on this sample).
+# Budgeting takes at most this many anchors PER enclosing method (grouped by method id) BEFORE
+# the global cap, ROUND-ROBIN (1 anchor from every method, then a 2nd from every method, ... up
+# to this many rounds). Round-robin so the ceiling is spent breadth-first: every method gets its
+# first anchor before any method gets a second, so a GT method is captured as long as it is among
+# the first `cap` methods by id -- it no longer has to win a global first-N race that busy
+# functions dominate. The cap stays the worst-case ceiling and raising it does NOT reintroduce the
+# explosion, because within-function redundancy (many field writes in one function) collapses to
+# this budget. Measured 2026-09-27 (vast RTX PRO 6000, full 51-sample level-2, vs origin/main
+# flat cap 2000): k=16 round-robin recovers 3 GT elements (inj_18 source+sink, inj_13 sink) with
+# ZERO regressions, lifting recall 77.9% -> 81.8% (inj 66.7% -> 83.3%, main 81.4% unchanged). It
+# does this while CUTTING total candidates 230,926 -> 225,283 (no explosion) -- inj_18 goes miss
+# -> captured with cands 11,745 -> 12,025 (+280), where #310's flat cap-raise needed +11,309.
+# k=4 round-robin left one regression (main_09: a GT method with >4 same-type anchors lost its
+# GT-covering one); k=16 gives each method more depth WITHOUT dropping any method's first anchor
+# (round-robin fills breadth-first) or exceeding the cap -- main_09 recovers (cands 1,643 ->
+# 1,226) with no new explosion, a strict gain over k=4.
+CASE_B_PER_METHOD = 16
+
 # The flows query targets memory-write sink calls instead of every call argument in the repo
 # (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
 # dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
@@ -330,16 +356,28 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       val repeated = releases.groupMap(_._1)(_._2).values
         .map(_.distinct).filter(_.size >= 2).toList
       val repeatedCalls = repeated.flatten.distinct
-      val writers = cpg.call.name("(__WRITERS__)").take(__WCAP__).l
-      val execs = cpg.call.name("(__EXECS__)").take(__ECAP__).l
-      // Operator anchors, narrowed before .take so the cap bounds a real subset (#219).
-      val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
+      // Per-method budget (CASE_B_PER_METHOD): round-robin at most k anchors per enclosing
+      // method BEFORE the global cap, so a GT function is never starved by the flat traversal
+      // take (see the CASE_B_PER_METHOD note in slicer_queries). ROUND-ROBIN, not per-method
+      // depth-first: take the 1st anchor of EVERY method, then the 2nd of every method, ... up
+      // to k rounds, then the ceiling. So under the ceiling the FIRST thing spent is one anchor
+      // per method (max method coverage -> a GT method needs only to be among the first `ceil`
+      // methods by id, not to win a global first-N race). Deterministic: methods sorted by id,
+      // each method's anchors keep CPG order.
+      def budget(cs: List[nodes.Call], k: Int, ceil: Int): List[nodes.Call] = {
+        val groups = cs.groupBy(_.method.id).toList.sortBy(_._1).map(_._2.take(k))
+        (0 until k).flatMap(i => groups.flatMap(g => g.lift(i))).take(ceil).toList
+      }
+      val writers = budget(cpg.call.name("(__WRITERS__)").l, __KPM__, __WCAP__)
+      val execs = budget(cpg.call.name("(__EXECS__)").l, __KPM__, __ECAP__)
+      // Operator anchors, narrowed before budgeting so the budget bounds a real subset (#219).
+      val indexWrites = budget(cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
-          .argumentIndex(1).contains(c)).take(__OPCAP__).l
-      val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
+          .argumentIndex(1).contains(c)).l, __KPM__, __OPCAP__)
+      val ptrArith = budget(cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
-            "indirection|indirectIndexAccess|addressOf)").nonEmpty).take(__OPCAP__).l
+            "indirection|indirectIndexAccess|addressOf)").nonEmpty).l, __KPM__, __OPCAP__)
       val operators = (indexWrites ++ ptrArith).distinct
       ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ execs ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
@@ -370,6 +408,7 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .replace("__WCAP__", str(CASE_B_WRITER_CAP))
         .replace("__ECAP__", str(CASE_B_EXEC_CAP))
         .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
+        .replace("__KPM__", str(CASE_B_PER_METHOD))
     )
     return file_envelope("case_b", body)
 
