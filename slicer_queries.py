@@ -75,6 +75,34 @@ CASE_B_EXEC_CAP = 2000
 # (not full) coverage for that anchor.
 CASE_B_OPERATOR_CAP = 2000
 
+# Per-method anchor budget (candidate starvation fix). Each cap above used to be a FLAT
+# `.take(cap)` over the whole CPG in traversal order, so on a large repo a few busy functions
+# fill the first `cap` anchors and a GT function's anchors -- which exist -- never get taken
+# (they rank past `cap`); raising the cap only papers that over at the price of a candidate
+# explosion. Budgeting instead takes at most this many anchors PER enclosing method (grouped by
+# method id) BEFORE the global cap, ROUND-ROBIN (1 anchor from every method, then a 2nd from
+# every method, ... up to this many rounds). Round-robin so the ceiling is spent breadth-first:
+# every method gets its first anchor before any method gets a second, so a GT method is captured
+# as long as it is among the first `cap` methods by id -- it no longer has to win a global
+# first-N race that busy functions dominate. The cap stays the worst-case ceiling and raising it
+# does NOT reintroduce the explosion, because within-function redundancy (many field writes in one
+# function) collapses to this budget.
+# The empirical level-2 recall/candidate figures that chose k=16 -- and that confirmed it recovers
+# the starved GT with no regression and no explosion vs the flat cap -- are a slicer QUALITY
+# measurement. Per docs/experiments/README.md that kind of measurement's durable source is the
+# team Notion (not this file, not docs/experiments/). This comment carries the mechanism only; the
+# k=16 value's numbers live in the team Notion.
+CASE_B_PER_METHOD = 16
+
+# Materialization guard (#311 review): budget() groups its input by method, so it needs the list
+# materialized -- unlike the old flat `.take(cap)`, which stopped the lazy traversal at `cap`.
+# Cap each anchor traversal at this bound BEFORE `.l` so a pathological/huge CPG cannot OOM or
+# time out the whole case_b query before any candidate is produced. It is far above any per-type
+# count seen (writers/index/ptr are single-digit thousands), so it does not bite normal repos --
+# a repo past it gets the first-N by traversal order for that type (a documented extreme-case
+# limit, same shape as the ceiling).
+CASE_B_MATERIALIZE_CAP = 40000
+
 # The flows query targets memory-write sink calls instead of every call argument in the repo
 # (#219). `cpg.call.argument` grows with the whole CPG, so on a large repo the per-candidate
 # dataflow to all of them exceeds the query deadline and NO slice is emitted. Restricting the
@@ -344,23 +372,42 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       val repeated = releases.groupMap(_._1)(_._2).values
         .map(_.distinct).filter(_.size >= 2).toList
       val repeatedCalls = repeated.flatten.distinct
-      val writers = cpg.call.name("(__WRITERS__)").take(__WCAP__).l
-      val execs = cpg.call.name("(__EXECS__)").take(__ECAP__).l
-      // Operator anchors, narrowed before .take so the cap bounds a real subset (#219).
-      val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
+      // Per-method budget (CASE_B_PER_METHOD): round-robin at most k anchors per enclosing
+      // method BEFORE the global cap, so a GT function is never starved by the flat traversal
+      // take (see the CASE_B_PER_METHOD note in slicer_queries). ROUND-ROBIN, not per-method
+      // depth-first: take the 1st anchor of EVERY method, then the 2nd of every method, ... up
+      // to k rounds, then the ceiling. So under the ceiling the FIRST thing spent is one anchor
+      // per method (max method coverage -> a GT method needs only to be among the first `ceil`
+      // methods by id, not to win a global first-N race). Deterministic: methods sorted by id,
+      // each method's anchors keep CPG order.
+      def budget(cs: List[nodes.Call], k: Int, ceil: Int): List[nodes.Call] = {
+        // Guard a null enclosing method (a call not attached to a method in a malformed/partial
+        // CPG) so `.method.id` cannot NPE and drop the whole case_b query (#311 review).
+        val groups = cs.filter(c => Option(c.method).isDefined)
+          .groupBy(_.method.id).toList.sortBy(_._1).map(_._2.take(k))
+        (0 until k).flatMap(i => groups.flatMap(g => g.lift(i))).take(ceil).toList
+      }
+      // .take(MCAP) bounds materialization BEFORE .l (#311 review): budget needs the list to group
+      // by method, so unlike the old flat .take(cap) it would otherwise materialize the whole set.
+      val writers = budget(cpg.call.name("(__WRITERS__)").take(__MCAP__).l, __KPM__, __WCAP__)
+      val execs = budget(cpg.call.name("(__EXECS__)").take(__MCAP__).l, __KPM__, __ECAP__)
+      // Operator anchors, narrowed before budgeting so the budget bounds a real subset (#219).
+      val indexWrites = budget(cpg.call.nameExact("<operator>.indirectIndexAccess")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
-          .argumentIndex(1).contains(c)).take(__OPCAP__).l
-      // Deref/field WRITES (`p->x = ...`, `*p = ...`, `s.f = ...`): the same assignment-LHS
-      // narrowing as indexWrites, so the cap bounds it. Deref/field is the biggest GT sink
-      // bucket but raw explodes; restricting to WRITE targets keeps the OOB-write case and drops
-      // the far-more-common reads (a bounded recall gain -- 2026-09-26 measurement).
-      val derefWrites = cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")
+          .argumentIndex(1).contains(c)).take(__MCAP__).l, __KPM__, __OPCAP__)
+      // Deref/field WRITES (`p->x = ...`, `*p = ...`, `s.f = ...`): same assignment-LHS narrowing
+      // as indexWrites -- biggest GT sink bucket, raw explodes, so restrict to WRITE targets
+      // (keeps the OOB-write case, drops far-more-common reads). Routed through budget() like the
+      // other operator anchors so per-method budgeting bounds it too (#308 x #311 reconciliation).
+      val derefWrites = budget(
+        cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")
         .filter(c => c.inCall.nameExact("<operator>.assignment").argument
-          .argumentIndex(1).contains(c)).take(__OPCAP__).l
-      val ptrArith = cpg.call.name("<operator>.(addition|subtraction)")
+          .argumentIndex(1).contains(c)).take(__MCAP__).l, __KPM__, __OPCAP__)
+      val ptrArith = budget(cpg.call.name("<operator>.(addition|subtraction)")
         .filter(c => c.argument.evalType.exists(_.contains("*")) ||
           c.argument.isCall.name("<operator>.(indirectFieldAccess|fieldAccess|" +
-            "indirection|indirectIndexAccess|addressOf)").nonEmpty).take(__OPCAP__).l
+            "indirection|indirectIndexAccess|addressOf)").nonEmpty)
+        .take(__MCAP__).l, __KPM__, __OPCAP__)
       val operators = (indexWrites ++ derefWrites ++ ptrArith).distinct
       ujson.Arr.from((arrays ++ repeatedCalls ++ writers ++ execs ++ operators).distinct.map(c => {
         val anchors = (List(c) ++ repeated.filter(_.contains(c)).flatten).distinct
@@ -392,6 +439,8 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
         .replace("__WCAP__", str(CASE_B_WRITER_CAP))
         .replace("__ECAP__", str(CASE_B_EXEC_CAP))
         .replace("__OPCAP__", str(CASE_B_OPERATOR_CAP))
+        .replace("__KPM__", str(CASE_B_PER_METHOD))
+        .replace("__MCAP__", str(CASE_B_MATERIALIZE_CAP))
     )
     return file_envelope("case_b", body)
 
@@ -429,8 +478,10 @@ def flows_query(
       // index-READ GT sink types that a memory-write-only set drops, and keeps the live-probe
       // fixtures' calls anchored. Globally, narrow to memory-write and command/SQL-exec calls
       // (capped) so the per-candidate cross-repo dataflow stays under the deadline (#219). Cheap
-      // name/AST filters only (no dataflow) -- keep writers/execs/operators in sync with
-      // candidates_b_query.
+      // name/AST filters only (no dataflow) -- keep the writers/execs/operators NAME+FILTER
+      // definitions in sync with candidates_b_query. The collection WRAPPER intentionally differs:
+      // flows uses flat `.take(cap)` here, candidates_b uses per-method round-robin budget() (#311)
+      // -- do not "sync" that away (test_flows_and_case_b_share pins only the shared name/filter).
       val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
       val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
       val execSinks = cpg.call.name("({EXEC_SINKS})").take({CASE_B_EXEC_CAP}).l
