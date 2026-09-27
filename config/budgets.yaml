@@ -37,6 +37,15 @@ budgets:
     # 관용구다(`BudgetLedger._overrun`).
     tool_seconds: 0
 
+  # --- ATOM need_evidence 루프 스모크 전용(2026-09-27) — 머지하지 않는 브랜치 `smoke/ne-loop-atom` ---
+  # 폭주 차단 하나가 목적인 상한이다(측정이 아니다). 2026-09-25 스모크의 `atom_slice_smoke`와 같다 —
+  # 루프가 켜진 Scout 풀 실서빙 run이 여러 표본을 태운다.
+  atom_ne_loop_smoke:
+    input_tokens: 40000000
+    output_tokens: 4000000
+    gpu_seconds: 100000
+    tool_seconds: 18000
+
 thresholds:
   # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — 이슈 #91.
   scout_threshold: 0.5
