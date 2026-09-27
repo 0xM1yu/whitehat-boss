@@ -84,6 +84,7 @@ GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함�
 """
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping
@@ -1443,6 +1444,10 @@ def _settle_scout_session(
         return session
     key = _target_key(item.target.location, item.target.slice_id)
     peers = state.hop0_signals.get(key, {})
+    # ⚠ 스모크 브랜치(`smoke/ne-loop-atom`, 머지 안 함) 전용 — 동료 확인을 끄는 스위치.
+    # RAG(resolver·루프) 자체를 재려고 GT 슬라이스 run에서만 켠다. 기본값은 설계 그대로다.
+    if os.environ.get("HARNESS_SMOKE_NO_PEER_REVIEW") == "1":
+        peers = {}
     if any(signal is ScoutSignal.REVIEW for role, signal in peers.items() if role != item.role):
         _emit_scout_hop(ctx, item, session, stop_reason=NeStopReason.PEER_REVIEW.value)
         return session
