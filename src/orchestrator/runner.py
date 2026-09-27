@@ -67,13 +67,15 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 
 단, 무조건 잡지 않는다. 후보 하나가 컨텍스트를 넘긴 것(그 후보만 버린다)과 서버가
 죽은 것(순회를 멈춘다)은 대응이 다르고, 둘을 가르는 정보가 `ModelGatewayError.status`에
-있다. 서버는 응답하는데 후보가 계속 죽는 경우를 위해 **연속 폐기 카운터**가 하나 더 있고,
-그쪽은 사유가 갈린다(`_TooManyDrops`).
+있다 — **400이면 서버가 준 문구까지 본다(#296).** vLLM은 요청 모양·서버 설정 때문에도 400을
+주고, 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다. 서버는 응답하는데 후보가 계속 죽는
+경우를 위해 **연속 폐기 카운터**가 하나 더 있고, 그쪽은 사유가 갈린다(`_TooManyDrops`).
 
-그 카운터가 세는 것은 **체계적 고장의 신호**뿐이다. 크기 거절(400·413)은 "이 후보가
-크다"이지 "이 run이 고장 났다"가 아니라서 세지 않는다 — 세면 큰 함수 셋이 연달아 오는
-것만으로 멈추고, 그것이 이 절이 견디겠다고 한 바로 그 경우다. 대신 **내리지도 않으므로**
-체계적 실패와 번갈아 나와도 상한에 닿는다.
+그 카운터가 세는 것은 **체계적 고장의 신호**뿐이다. 크기 거절(413과 컨텍스트 초과 문구의
+400)은 "이 후보가 크다"이지 "이 run이 고장 났다"가 아니라서 세지 않는다 — 세면 큰 함수 셋이
+연달아 오는 것만으로 멈추고, 그것이 이 절이 견디겠다고 한 바로 그 경우다. 대신 **내리지도
+않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다. 그리고 **끝까지 시도한 뒤** 한 자리가
+한 번도 성공하지 못했으면 원인이 크기여도 멈춘다 — 그 자리는 아무것도 못 봤다.
 
 **멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
@@ -236,23 +238,31 @@ _REASON_OVER_MAX = "over_candidate_max"
 _REASON_GATEWAY = "gateway_error"
 _REASON_SCHEMA = "schema_parse_failed"
 
-# **이 후보가 크다**는 뜻의 HTTP 상태. 400은 vLLM이 컨텍스트 초과에 주는 값이고
-# 413은 본문 초과다. 다음 후보는 작을 수 있으므로 **이 후보에 대한 사실**이지 run에
-# 대한 사실이 아니다 — 그래서 아래 `_MAX_CONSECUTIVE_DROPS`가 세지 않는다.
-_SIZE_STATUS = frozenset({400, 413})
+# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만 「이 후보가
+# 크다」다** — 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
+# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다(`_is_size_rejection`).
+#
+# **400은 크기만의 값이 아니다(#296).** vLLM 0.27.1은 요청 모양(본문 검증)·서버 설정
+# (`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이 모르는 `reasoning_effort`, 출력
+# 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다(`_drop`). 이 문구는
+# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
+# 400은 크기로 읽지 않는다** — 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
+_CONTEXT_OVERFLOW = "maximum context length"
 
-# 후보만 버리고 계속 가도 되는 HTTP 상태. **요청 하나가 거절된 것**이다.
-# 422(스키마 거절)는 크기가 아니라 요청 모양의 문제라 체계적 신호로 센다.
+# 후보만 버리고 계속 가도 되는 HTTP 상태 — **서버는 살아 있고 요청 하나에 답했다.** 그 거절이
+# 이 후보에 대한 사실(크기)인지 run에 대한 사실(크기가 아닌 400)인지는 상태만으로 못 가른다 —
+# `_drop`이 가른다. 422는 크기가 아니라 체계적 신호로 센다. vLLM 0.27.1은 요청 모양 거절도 422가
+# 아니라 400으로 준다(#296).
 #
 # 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
 # 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다. **예외는 서버가 생성 중이던
 # 타임아웃 하나다**(`ModelGatewayError.generating`, #261) — 판정은 `_is_droppable`에 있다.
-_DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
+_DROPPABLE_STATUS = frozenset({400, 413, 422})
 
-# 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다·요청 모양이 틀렸다)이면
+# 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다 등)이면
 # 남은 target을 전부 태우고도 쓸 수 있는 결과가 안 나온다.
 #
-# **크기 거절(`_SIZE_STATUS`)은 여기에 세지 않는다.** 세면 큰 심볼 셋이 연달아 오는
+# **크기 거절(`_is_size_rejection`)은 여기에 세지 않는다.** 세면 큰 심볼 셋이 연달아 오는
 # 것만으로 run이 멈추는데, 그것은 W2가 정확히 견디겠다고 한 경우다("후보 하나가
 # 컨텍스트를 넘겼다 → 그 후보만 버린다"). 정렬이 신호 붙은 심볼을 앞으로 모으므로
 # 큰 함수가 뭉쳐 오는 것은 드문 일도 아니다.
@@ -261,11 +271,11 @@ _DROPPABLE_STATUS = _SIZE_STATUS | frozenset({422})
 # **내리지도 않는다** — 리셋 조건은 오직 완주다. 그래서 스키마 → 400 → 스키마 →
 # 400 → 스키마는 1·1·2·2·3으로 상한에 닿는다. 이 값이 잡으려는 것이 그 모양이다.
 #
-# **크기 거절만 계속 나오는 run은 멈추지 않는다.** 그래도 폭주하지 않는 것은
-# `candidate_max`가 이미 목록을 묶어 두기 때문이고, 끝난 뒤에는 모든 행에 서버가
-# 말해 준 사유가 붙은 완전한 기록이 남는다 — 중간에 끊긴 run보다 진단이 쉽다.
-# 400이 크기가 아닌 이유(페이로드 자체가 틀렸다)로 올 수도 있는데, 그 경우에도 결과는
-# "전량 스킵 + 매 행에 사유"라 한 번 보면 갈린다.
+# **크기 거절만 계속 나오는 run은 중간에 멈추지 않는다.** 그래도 폭주하지 않는 것은
+# `candidate_max`가 이미 목록을 묶어 두기 때문이다. 대신 **끝까지 시도한 뒤** 한 자리가 한 번도
+# 성공하지 못했으면 멈춘다(`_stop_if_a_caller_saw_nothing`, #296) — 서버 창을 작게 띄우면 크기
+# 거절이 전량이 되는데(`run_20260925_0006`), 그 run을 완주로 두면 「못 봤다」가 「없다」로
+# 읽힌다. 예전에는 여기서 *"한 번 보면 갈린다"*며 받아들였다 — 사람이 본다는 전제였다.
 #
 # **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
 # 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
@@ -273,7 +283,7 @@ _MAX_CONSECUTIVE_DROPS = 3
 
 
 def _is_droppable(exc: ModelGatewayError) -> bool:
-    """이 게이트웨이 오류가 **요청 하나에 대한 사실**인가 — 그 하나만 버리고 계속 갈 수 있는가.
+    """이 게이트웨이 오류가 **요청 하나에 대한 답**인가 — 서버가 살아 있어 그 시도를 버릴 수 있는가.
 
     후보 단위(`_triage_by_candidate`)·단계 단위(`_run_stage_for_all`)·Finding 단위
     (`_analyze`의 critic 루프) **셋**이 같은 판정을 쓴다.
@@ -284,10 +294,65 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     **예외 하나 — 타임아웃인데 서버가 그동안 토큰을 냈다**(`generating is True`, 어댑터가
     `/metrics`로 잰다). 느린 것이지 죽은 것이 아니다(#261). 연속 폐기 상한은 그대로 센다 —
     느린 후보가 셋 연달아면 run이 선다.
+
+    ⚠ **버릴 수 있다고 계속 가는 것은 아니다(#296).** 크기가 아닌 400도 여기서 참이지만
+    `_drop`·`_drop_finding`이 첫 건에서 run을 멈춘다. 여기서 거짓으로 돌려 올려 보내면
+    `run_pipeline`이 「게이트웨이가 응답하지 않는다」(`MODEL_GATEWAY_UNAVAILABLE`)로 적는다 —
+    서버는 살아 있고 요청을 거절했으므로 그 사유는 틀린다.
     """
     if exc.generating is True:
         return True
     return exc.status is not None and exc.status in _DROPPABLE_STATUS
+
+
+def _is_size_rejection(exc: Exception) -> bool:
+    """이 실패가 **이 후보가 크다**인가 — 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
+
+    413(본문 초과)과, vLLM의 컨텍스트 초과 문구(`_CONTEXT_OVERFLOW`)가 실린 400뿐이다.
+    게이트웨이 오류가 아니면(스키마 실패) 크기가 아니다.
+    """
+    if not isinstance(exc, ModelGatewayError):
+        return False
+    return exc.status == 413 or (exc.status == 400 and _CONTEXT_OVERFLOW in exc.detail)
+
+
+def _rejects_every_request(exc: Exception) -> bool:
+    """크기가 아닌 400인가 — 요청 모양·서버 설정 거절이라 **다음 요청도 같다**(#296).
+
+    그래서 세지 않고 첫 건에서 멈춘다. 세면 후보 단위에서는 Scout가 안 올린 대상이 카운터를
+    0으로 되돌리고 키가 Scout 자리라(#197), 뒤 단계가 전부 거절해도 상한에 안 닿을 수 있다.
+    """
+    return (
+        isinstance(exc, ModelGatewayError) and exc.status == 400 and not _is_size_rejection(exc)
+    )
+
+
+def _caller(stage: Stage, seat: Role) -> tuple[Stage, Role | None]:
+    """성공 0 백스톱의 키 — **그 단계에서 모델을 부른 자리**다(#296).
+
+    4단계만 Scout 자리마다 모델·프롬프트가 다르다. 5단계부터는 부르는 역할이 하나라, 자리
+    (`item.role`, #197)로 나누면 한 자리의 후보만 창을 넘어도 「그 자리가 한 번도 성공 못
+    했다」가 되어 멈춘다 — 그 역할은 다른 자리 후보에서 멀쩡히 돌았는데.
+    """
+    return (stage, seat if stage is Stage.SCOUT else None)
+
+
+def _stop_if_a_caller_saw_nothing(starved: set[tuple[Stage, Role | None]]) -> None:
+    """시도한 자리 중 **한 번도 성공하지 못한 것**이 있으면 멈춘다 — 그 자리는 아무것도 못 봤다.
+
+    실패 하나하나는 크기 거절처럼 그 후보에 대한 사실일 수 있다. 그래서 **끝까지 시도한 뒤에**
+    본다 — 앞 몇 건으로 판정하면 큰 대상이 정렬 앞에 몰린 run이 정상 창에서도 늘 같은 자리에서
+    선다(정렬이 결정론적이라 다시 돌려도 같다). 전부 실패했다면 원인이 무엇이든 — 작게 띄운
+    서버 창이 그랬다(`run_20260925_0006`) — 그 run을 완주로 두면 「못 봤다」가 「없다」로
+    읽힌다(#296). 상수가 없다: 「한 번도」는 세는 값이 아니다.
+    """
+    if not starved:
+        return
+    names = ", ".join(
+        f"{int(stage)}단계" + (f" {seat.value}" if seat is not None else "")
+        for stage, seat in sorted(starved, key=lambda key: (int(key[0]), key[1] or ""))
+    )
+    raise _TooManyDrops(f"{names}: 시도한 대상에서 한 번도 성공하지 못했다 — 아무것도 못 봤다")
 
 
 class _TooManyDrops(RuntimeError):
@@ -296,6 +361,12 @@ class _TooManyDrops(RuntimeError):
     게이트웨이가 응답을 주는데도 후보가 계속 실패하는 상태다 — 프롬프트·예산·스키마 쪽을
     봐야 하고, 서버를 살리는 것으로는 낫지 않는다. 같은 예외로 올리면 `RunRecord`의 중단
     사유가 하나로 뭉쳐 그 구별이 사라진다.
+
+    **같은 사유로 두 정지가 더 온다(#296)** — 크기가 아닌 400(다음 요청도 같으므로 첫 건에서,
+    `_drop`·`_drop_finding`)과, 한 자리가 한 번도 성공하지 못한 루프(끝에서,
+    `_stop_if_a_caller_saw_nothing`). 둘 다 「서버는 살아 있는데 요청이 죽는다」라
+    `ReasonCode.CONSECUTIVE_TARGET_FAILURES`의 주석이 가르는 그 칸이다. 사유 이름의 「연속」은
+    첫 쓰임에서 왔다.
 
     러너 밖으로 새지 않는다. `run_pipeline`이 잡아 `stopped_after`와 사유로 바꾼다.
     """
@@ -886,7 +957,7 @@ def _analyze(
             _drop_finding(ctx, state, finding, _REASON_SCHEMA, exc)
             continue
         except ModelGatewayError as exc:
-            # **요청 단위 거절은 이 Finding에 대한 사실이다 (해소 후속).** 처음에는 여기서
+            # **크기 거절은 이 Finding에 대한 사실이다 (해소 후속).** 처음에는 여기서
             # `ModelGatewayError`를 일부러 안 잡았다 — `_DROPPABLE_STATUS` 판정을 복사하면
             # 같은 규칙이 두 곳에 따로 산다는 이유였고, "그때는 `_drop`의 갈래를 Finding
             # 쪽으로 끌어오는 것이 맞다"고 적어 뒀다. **그때가 첫 실서빙 run에서 바로 왔다**:
@@ -896,6 +967,8 @@ def _analyze(
             #
             # 그래서 판정을 복사하지 않고 `_is_droppable`로 **빼서 공유한다.** 서버 쪽
             # 사건(상태 없음·5xx)은 그대로 올려 보내고 `run_pipeline`이 매니페스트까지 간다.
+            # 크기가 아닌 400은 이 Finding이 아니라 run에 대한 사실이라 `_drop_finding`이
+            # 첫 건에서 멈춘다(#296).
             if not _is_droppable(exc):
                 raise
             _drop_finding(ctx, state, finding, _REASON_GATEWAY, exc)
@@ -903,6 +976,10 @@ def _analyze(
         # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
         state.decisions[finding.finding_id] = (decision,)
         state.update(after)
+    # 고른 Finding 전부에서 실패했으면 7단계는 아무것도 못 봤다(#296). 카운터가 아니다 —
+    # `_drop_finding`이 카운터를 두지 않는 이유는 그대로다.
+    if selected and state.critic_failed == len(selected):
+        _stop_if_a_caller_saw_nothing({_caller(Stage.CRITIC, Role.CRITIC)})
     if last < Stage.VALIDATE:
         return
     for finding in state.in_state(FindingState.VALIDATED):
@@ -1624,9 +1701,18 @@ def _run_stage_for_all(
 
     `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`가
     이 동작을 고정한다.
+
+    ## 성공 0 백스톱 (#296)
+
+    단계를 다 돈 뒤 **모델을 부른 자리 중 한 번도 성공하지 못한 것**이 있으면 멈춘다
+    (`_stop_if_a_caller_saw_nothing`). 크기 거절은 카운터에 안 세므로, 작게 띄운 서버 창이
+    전량을 거절해도 카운터로는 안 선다. 키는 `item.role`이 아니라 `_caller`다 — 5단계부터는
+    부르는 역할이 하나라서다(위 「키가 4단계 자리다」의 오분류를 이 백스톱에 들이지 않는다).
     """
     # 연속 폐기를 역할별로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
     consecutive: dict[Role, int] = {}
+    tried = {_caller(stage, item.role) for item in items}
+    passed: set[tuple[Stage, Role | None]] = set()
     survivors: list[_InFlight] = []
     for item in items:
         role = item.role
@@ -1645,7 +1731,6 @@ def _run_stage_for_all(
                 consecutive.get(role, 0),
                 stage=item.reached.stage,
                 role=role,
-                systematic=exc.status not in _SIZE_STATUS,
             )
         except SchemaParseError as exc:
             consecutive[role] = _drop(
@@ -1655,8 +1740,10 @@ def _run_stage_for_all(
         else:
             # 이 역할이 이 단계를 마쳤다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
             consecutive[role] = 0
+            passed.add(_caller(stage, role))
             if keep:
                 survivors.append(item)
+    _stop_if_a_caller_saw_nothing(tried - passed)
     return survivors
 
 
@@ -1678,7 +1765,8 @@ def _triage_by_candidate(
 
     | 사건 | 판정 | 대응 |
     | --- | --- | --- |
-    | 후보 하나가 컨텍스트를 넘겼다 | `status`가 요청 단위 거절(4xx) | 그 후보만 버린다 |
+    | 후보 하나가 컨텍스트를 넘겼다 | 413, 또는 400 + 컨텍스트 초과 문구 | 그 후보만 버린다 |
+    | 요청 모양·서버 설정이 틀렸다 | 그 밖의 400 | 첫 건에서 멈춘다(#296) |
     | 서버가 죽었다 | `status`가 없거나 5xx | 즉시 멈춘다 |
     | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
 
@@ -1686,12 +1774,19 @@ def _triage_by_candidate(
     실패할 때 어느 쪽도 상한에 닿지 않고 target 수백 개를 전부 태운다. 리셋 조건이
     "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
     고장 났다"는 판정을 무르게 하지 않는다.
+
+    **끝까지 돈 뒤 성공 0 백스톱을 본다(#296).** 여기서는 시도 하나가 3~6단계를 관통하므로
+    단계별 성공을 `reached`에서 거꾸로 읽는다 — 시도가 들어간 단계는 전부 지났고, 실패했으면
+    마지막 단계만 못 지났다. 「Scout가 안 올렸다」도 시도의 완주라 자리 키로 세면 Auditor가
+    전부 거절해도 안 선다 — 그래서 키가 `_caller`다.
     """
     # 연속 폐기를 **역할별로** 센다(풀 팬아웃 #178 후속). 시도 단위가 `(target, role)`이고, 풀에서
     # 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던 단일 카운터로는 상한에 안 닿았다
     # (Scout 커버리지 1/3이 빈 run이 정상 완주로 기록됐다). 역할별로 세면 그 멤버가 자기 카운터로
     # `_MAX_CONSECUTIVE_DROPS`에 닿는다. 단일 `scout`은 키가 하나라 동작이 그대로다.
     consecutive: dict[Role, int] = {}
+    tried: set[tuple[Stage, Role | None]] = set()
+    passed: set[tuple[Stage, Role | None]] = set()
     # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 각 (target, role)이
     # 한 시도이고, 연속 폐기 카운터는 그 시도 단위로 센다 — 한 멤버가 완주하면 그 역할만 리셋된다.
     # 풀에서는 같은 target의 첫 멤버가 만든 캡슐을 `state.capsules`가 나머지에 물려 준다.
@@ -1703,6 +1798,7 @@ def _triage_by_candidate(
             # `SchemaParseError`에 필드를 늘려야 하고 그것은 `src/interfaces/` 변경이다.
             # 실패 단계를 아는 유일한 자리가 `_triage_one` 자신이라 그쪽이 적고 이쪽이 읽는다.
             reached = _Reached()
+            finished = False
             try:
                 _triage_one(ctx, target, state, last, reached, role=role)
             except ModelGatewayError as exc:
@@ -1713,9 +1809,8 @@ def _triage_by_candidate(
                     # 리포트와 매니페스트까지 간 뒤 중단 사유를 적는다 — 그러지 않으면
                     # 이 변경이 없애려던 "산출물이 하나도 안 남는다"가 그대로 남는다.
                     raise
-                # 크기 거절은 이 후보에 대한 사실이라 체계적 고장으로 세지 않는다.
-                # 올리지도 내리지도 않는다 — 사유는 `_MAX_CONSECUTIVE_DROPS` 주석에 있다.
-                systematic = exc.status not in _SIZE_STATUS
+                # 셀지·멈출지는 `_drop`이 가른다 — 크기 거절은 안 세고, 크기가 아닌 400은
+                # 첫 건에서 멈춘다(#296).
                 consecutive[role] = _drop(
                     ctx,
                     state,
@@ -1725,7 +1820,6 @@ def _triage_by_candidate(
                     consecutive.get(role, 0),
                     stage=reached.stage,
                     role=role,
-                    systematic=systematic,
                 )
             except SchemaParseError as exc:
                 consecutive[role] = _drop(
@@ -1735,6 +1829,11 @@ def _triage_by_candidate(
             else:
                 # 완주했다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
                 consecutive[role] = 0
+                finished = True
+            entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
+            tried |= entered
+            passed |= entered if finished else entered - {_caller(reached.stage, role)}
+    _stop_if_a_caller_saw_nothing(tried - passed)
 
 
 def _drop(
@@ -1747,7 +1846,6 @@ def _drop(
     *,
     stage: Stage,
     role: Role,
-    systematic: bool = True,
 ) -> int:
     """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
 
@@ -1757,9 +1855,13 @@ def _drop(
     죽었는지 남긴다 — 그래야 「모든 자리가 실패한 대상」을 trace에서 셀 수 있고, 리포트의
     `unanalyzed_targets`(팬아웃된 대상 − 후보 낸 대상)가 그 수를 요약으로 낸다.
 
-    `systematic=False`는 "이 후보에 대한 사실이지 run에 대한 사실이 아니다"라는 뜻이다
-    (크기 거절). 버리고 기록하는 것은 같고 카운터만 건드리지 않는다 — **내리지도
-    않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+    **무엇을 세고 언제 멈추는지를 여기서 가른다(#296)** — 기록은 어느 갈래든 먼저 남긴다.
+    - 크기 거절(`_is_size_rejection`)은 "이 후보에 대한 사실이지 run에 대한 사실이 아니다".
+      카운터를 건드리지 않는다 — **내리지도 않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다.
+    - 크기가 아닌 400(`_rejects_every_request`)은 다음 요청도 같으므로 **첫 건에서** 멈춘다.
+    - 나머지(스키마 실패·422·생성 중 타임아웃)는 센다.
+    예전에는 호출자가 `systematic=exc.status not in {400, 413}`을 넘겼고, 그래서 400이면
+    무엇이든 크기였다.
 
     **`stage`는 호출자가 준다 (PR #50).** 예전에는 여기서 `Stage.SCOUT`으로 박았는데,
     `_triage_one`은 3~6단계를 연달아 태우므로 auditor에서 죽은 target도 기록은 4가 됐다.
@@ -1772,7 +1874,12 @@ def _drop(
         member=role.value, slice_id=target.slice_id,
     )
     state.dropped += 1
-    if not systematic:
+    if _rejects_every_request(exc):
+        raise _TooManyDrops(
+            f"{int(stage)}단계 요청이 크기가 아닌 사유로 거절됐다 — 다음 요청도 같다: "
+            f"{error_detail(exc)}"
+        ) from exc
+    if _is_size_rejection(exc):
         return consecutive
     if consecutive + 1 >= _MAX_CONSECUTIVE_DROPS:
         raise _TooManyDrops(
@@ -1790,6 +1897,10 @@ def _drop_finding(
     태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
     상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이 상한에 닿았는지가 사유에서 사라진다.
 
+    **카운터가 아닌 정지 둘은 여기도 있다(#296).** 크기가 아닌 400은 기록한 뒤 첫 건에서
+    멈추고(다음 Finding도 같다), 고른 Finding 전부가 실패하면 `_analyze`가 루프 끝에서 멈춘다.
+    둘 다 `stopped_after`가 7이라 어느 루프였는지가 사유에서 안 사라진다.
+
     **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 시도를 세고 이쪽은
     Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
     """
@@ -1802,6 +1913,11 @@ def _drop_finding(
         reason=reason,
         error_detail=error_detail(exc),
     )
+    if _rejects_every_request(exc):
+        raise _TooManyDrops(
+            f"{int(Stage.CRITIC)}단계 요청이 크기가 아닌 사유로 거절됐다 — 다음 요청도 같다: "
+            f"{error_detail(exc)}"
+        ) from exc
 
 
 def _emit_planned(ctx: RunContext, target: Location, *, slice_id: str | None) -> None:
