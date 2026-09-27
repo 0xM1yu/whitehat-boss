@@ -97,7 +97,11 @@ CASE_B_OPERATOR_CAP = 2000
 # with >4 same-type anchors lost its GT-covering one); k=16 gives each method more depth WITHOUT
 # dropping any method's first anchor (round-robin fills breadth-first) or exceeding the cap --
 # main_09 recovers (cands 1,643 -> 1,226) with no new explosion, a strict gain over k=4.
-# Run record: docs/experiments/harness/2026-09-27-case-b-per-method-budget.md.
+# The 51-sample recall figures are a slicer QUALITY measurement, whose durable source is the team
+# Notion, not docs/experiments/ (that folder is for harness serving/smoke runs -- see
+# docs/experiments/README.md). They are level-2 candidate-capture only (per-candidate/level-3 cost
+# unmeasured), run on a throwaway vast box with no run_id and artifacts not kept in the repo, so
+# treat them as the rationale for k=16, not a repo-reproducible result.
 CASE_B_PER_METHOD = 16
 
 # Materialization guard (#311 review): budget() groups its input by method, so it needs the list
