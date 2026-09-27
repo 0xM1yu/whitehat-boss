@@ -28,11 +28,15 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
 
 ## 남기는 것과 남기지 않는 것
 
-- **prefix + body 전체**를 남긴다. 사실 블록만 남기면 #67이 지적한 산문 자리표시자
+- **prefix + body 전체**를 남긴다. need_evidence 후속 턴(hop>0)이면 그 사이에 **history 내용**도
+  남긴다 — 서버에 간 것이 `[system]+history+[이번 turn]`이라서다.
+  사실 블록만 남기면 #67이 지적한 산문 자리표시자
   (`{{TARGET}}`·`{{CAPSULE_SECTIONS}}`·`{{SOURCE}}`)가 기록에서 사라지는데, **정확히 그
   블록이 W1이 채운 자리**다.
 - **응답은 남기지 않는다.** `Candidate`·`Finding`·`Decision`이 이미 StateStore에 통째로
   들어가고 usage·`gpu_ms`는 `model_call`에 있다. 사본을 만들면 정본을 물어야 한다.
+  예외 하나 — hop>0 파일의 history에는 앞 홉의 응답 원문(assistant 턴)이 실린다. 응답을
+  기록하려는 것이 아니라 그 홉에 **입력으로** 간 바이트라서다.
 - **호출이 실패해도 남는다.** 호출자가 모델을 부르기 **전에** 쓴다 — 실패 분기가
   "스키마 파싱 실패율"의 분자(시도 단위 `attempts`, 정본은 `trace.py`)에 드는데
   (`context.call_model`), 그 입력이 없으면 왜 실패했는지 조사할 수 없다.
@@ -58,10 +62,11 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
 필요해지면 그때가 업그레이드 지점이다.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from src.ids import sha256_text
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ChatTurn, Prompt
 
 # run_dir 아래 디렉터리 이름. `eval/leakage/__main__.py`의 스캔 glob이 이 이름을 안다.
 DIR_NAME = "prompts"
@@ -75,20 +80,31 @@ SEQ_WIDTH = 4
 HEADER = "<!-- harness-prompt role={role} stage={stage} prompt_version={version} -->"
 PREFIX_MARK = "<!-- prefix -->"
 BODY_MARK = "<!-- body -->"
+HISTORY_MARK = "<!-- history speaker={speaker} -->"
 
 
-def render(*, role: str, stage: int, prompt: Prompt) -> str:
+def render(
+    *, role: str, stage: int, prompt: Prompt, history: Sequence[ChatTurn] = ()
+) -> str:
     """파일에 쓸 텍스트. 순번을 담지 않으므로 같은 프롬프트면 같은 문자열이다.
 
-    need_evidence 후속 턴(hop>0)도 같다 — 본문은 그 홉의 후속 텍스트뿐이고 history도
-    hop0 로그 참조도 싣지 않는다. 참조를 실으면 순번이 들어가 같은 요청의 해시가 실행
-    순서를 따라간다. 홉 사슬은 `model_call`의 (`subject_id`, `role`, `hop`)이 든다.
+    need_evidence 후속 턴(hop>0)은 prefix와 body 사이에 history **내용**을 턴마다 싣는다 —
+    서버에 간 요청이 `[system]+history+[이번 turn]`이라, 빠지면 `eval/leakage`가 그 바이트를
+    못 보고 #80의 「그 파일이 곧 실제 요청」이 거짓이 된다. hop0 로그 **참조**는 싣지 않는다
+    — 참조는 순번을 들여 같은 요청의 해시가 실행 순서를 따라가지만, 내용은 그러지 않는다.
+    history가 비면(hop0) 지금까지와 같은 문자열이다.
     """
+    turns = [
+        line
+        for turn in history
+        for line in (HISTORY_MARK.format(speaker=turn.speaker), turn.content)
+    ]
     return "\n".join(
         (
             HEADER.format(role=role, stage=stage, version=prompt.prompt_version),
             PREFIX_MARK,
             prompt.prefix,
+            *turns,
             BODY_MARK,
             prompt.body,
             "",
@@ -119,7 +135,13 @@ class PromptLog:
         return self._dir
 
     def write(
-        self, *, role: str, stage: int, prompt: Prompt, hop: int = 0
+        self,
+        *,
+        role: str,
+        stage: int,
+        prompt: Prompt,
+        hop: int = 0,
+        history: Sequence[ChatTurn] = (),
     ) -> tuple[str, str]:
         """파일을 쓰고 `(run_dir 상대 경로, 내용 sha256)`을 돌려준다.
 
@@ -132,13 +154,20 @@ class PromptLog:
         self._seq += 1
         suffix = f"_hop{hop}" if hop else ""
         name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}.md"
-        text = render(role=role, stage=stage, prompt=prompt)
+        text = render(role=role, stage=stage, prompt=prompt, history=history)
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
         return f"{DIR_NAME}/{name}", sha256_text(text)
 
     def write_retry(
-        self, *, role: str, stage: int, prompt: Prompt, index: int, hop: int = 0
+        self,
+        *,
+        role: str,
+        stage: int,
+        prompt: Prompt,
+        index: int,
+        hop: int = 0,
+        history: Sequence[ChatTurn] = (),
     ) -> tuple[str, str]:
         """재시도 회차(`index`=1..)의 프롬프트를 **직전 `write`와 같은 순번**으로 남긴다.
 
@@ -154,7 +183,7 @@ class PromptLog:
         """
         suffix = f"_hop{hop}" if hop else ""
         name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}_retry{index}.md"
-        text = render(role=role, stage=stage, prompt=prompt)
+        text = render(role=role, stage=stage, prompt=prompt, history=history)
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
         return f"{DIR_NAME}/{name}", sha256_text(text)
