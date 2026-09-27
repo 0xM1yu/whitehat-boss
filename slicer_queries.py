@@ -265,15 +265,15 @@ CASE_A_CALL_LIMIT = 1
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
 #  LIMIT+1 calls instead of enumerating its whole call set — semantically == `.size <= LIMIT`.)
-# ⏵ 2026-09-26 — 2,000 → 4,000 (가설, 미확정 · WIP). 2026-09-26 injection 후보포착 측정에서
-# injection sample_13 source `ra_svn_open`이 READER를 직접 부르는데 Case A 후보로 안 잡혔고,
-# 큰 저장소(subversion)에서 `readers` 집합이 2,000 캡에 밀린 것이 유력하나 **미확인**이다(CPG
-# 재빌드가 있어야 확정). 재측정으로 (a) 그 source가 회수되는지 — 단 `.take`가 불안정 CPG
-# traversal 순서라 회수는 readers 총수 < 4,000일 때만 보장된다(위 「unspecified first-N」) —
-# (b) 늘어난 후보의 per-candidate 비용, 특히 flows_a 단계 gpu_seconds·deadline(그 단계엔 별도
-# 상한이 없다 — 후보 2배면 flows가 예산을 넘겨 애초에 이 캡이 막으려던 0-slices 실패로 되돌 수
-# 있다)이 감당되는지(#250 뒤 캡은 그 비용을 묶는다 — 위)를 확인하고, 안 맞으면 되돌린다. 4,000은
-# 측정 전 잠정치다(§0 — 확정 수치 아님). 이 PR은 draft다.
+# ⏵ 2026-09-26 — 2,000 → 4,000. 2026-09-26 injection 후보포착(level-2) 재측정에서 injection
+# sample_13 source `ra_svn_open`(subversion, READER 직접 호출)이 2,000 캡에선 Case A 후보로 안
+# 잡히다가 4,000에서 잡혔다 — **source 회수(+4)는 확정(level-2)**이다. 단 `.take`가 불안정 CPG
+# traversal 순서라 이 회수는 readers 총수 < 4,000일 때만 보장된다(위 「unspecified first-N」).
+# **미측정으로 남은 것은 full-slice(level-3) 비용뿐**이다 — 늘어난 후보의 per-candidate flows_a
+# (Joern/Python 슬라이서 단계라 하네스 모델 장부의 gpu_seconds가 아니라 query deadline·wall 시간·
+# candidate timeout으로 잰다)에 별도 상한이 없어, 후보가 2배가 되면 애초에 이 캡이 막으려던
+# 0-slices 실패로 되돌 수 있는지는 level-3 실측이 필요하다(#250 뒤 캡은 그 비용을 묶는다 — 위).
+# 그 비용이 감당 안 되면 되돌린다.
 CASE_A_CANDIDATE_CAP = 4000
 
 
