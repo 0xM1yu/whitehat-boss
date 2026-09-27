@@ -332,10 +332,22 @@ def candidates_a_query() -> str:
         "case_a",
         LOCATION
         + f"""
+      // D90 (#318): rank methods that WRITE memory ahead of the flat cap, so a GT function is
+      // not starved by traversal order when >CAP methods qualify. "Writes memory" = calls a
+      // WRITER/EXEC sink, OR assigns into an index/field/deref target (the same write-context as
+      // case_b's indexWrites/derefWrites). Plain field reads are excluded -- too common to
+      // discriminate. hotIds is computed once (Set), so the sort key is an O(1) lookup, not a
+      // per-method AST walk. Same cap, same count: this reorders, it does not add candidates.
+      val hotIds = (cpg.call.name("({WRITERS}|{EXEC_SINKS})").method.id.l ++
+        cpg.call.nameExact("<operator>.assignment").filter(_.argument(1).isCall.name(
+          "<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
+          .nonEmpty).method.id.l).toSet
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
         .filter(m =>
           cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
-        .filter(_.parameter.size > 0).take({CASE_A_CANDIDATE_CAP}).l
+        .filter(_.parameter.size > 0).l
+        .sortBy(m => if (hotIds.contains(m.id)) 0 else 1)
+        .take({CASE_A_CANDIDATE_CAP})
       val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty)
         .take({CASE_A_CANDIDATE_CAP}).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
