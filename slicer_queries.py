@@ -75,33 +75,20 @@ CASE_B_OPERATOR_CAP = 2000
 # Per-method anchor budget (candidate starvation fix). Each cap above used to be a FLAT
 # `.take(cap)` over the whole CPG in traversal order, so on a large repo a few busy functions
 # fill the first `cap` anchors and a GT function's anchors -- which exist -- never get taken
-# (they rank past `cap`). Measured on inj_sample_18 (GPAC, 2026-09-27, vast RTX PRO 6000):
-# the GT source fn holds indexWrites 12 / writers 3 / ptrArith 5 and the GT sink fn writers 2 /
-# ptrArith 2, yet all three types exceed cap 2000 repo-wide (writers 4174, indexWrites 4259,
-# ptrArith 6069) so the flat take dropped the GT functions -- a miss that raising the cap to
-# 4000 (#310) only papered over, at the price of a candidate explosion (inj_18 rose to ~23,000
-# candidates; that figure is from a separate P1+P2+P3+#310 stack run, not the measurement below).
-# Budgeting takes at most this many anchors PER enclosing method (grouped by method id) BEFORE
-# the global cap, ROUND-ROBIN (1 anchor from every method, then a 2nd from every method, ... up
-# to this many rounds). Round-robin so the ceiling is spent breadth-first: every method gets its
-# first anchor before any method gets a second, so a GT method is captured as long as it is among
-# the first `cap` methods by id -- it no longer has to win a global first-N race that busy
-# functions dominate. The cap stays the worst-case ceiling and raising it does NOT reintroduce the
-# explosion, because within-function redundancy (many field writes in one function) collapses to
-# this budget. Measured 2026-09-27 (vast RTX PRO 6000, full 51-sample level-2, vs origin/main
-# flat cap 2000): k=16 round-robin recovers 3 GT elements (inj_18 source+sink, inj_13 sink) with
-# ZERO regressions, lifting recall 77.9% -> 81.8% (inj 66.7% -> 83.3%, main 81.4% unchanged). It
-# does this while CUTTING total candidates 230,926 -> 225,283 (no explosion) -- inj_18 goes miss
-# -> captured with cands 11,745 -> 12,025 (+280) here, whereas #310's cap-raise left inj_18 near
-# ~23,000 in that separate stack run. k=4 round-robin left one regression (main_09: a GT method
-# with >4 same-type anchors lost its GT-covering one); k=16 gives each method more depth WITHOUT
-# dropping any method's first anchor (round-robin fills breadth-first) or exceeding the cap --
-# main_09 recovers (cands 1,643 -> 1,226) with no new explosion, a strict gain over k=4.
-# The 51-sample recall figures are a slicer QUALITY measurement, whose durable source is the team
-# Notion, not docs/experiments/ (that folder is for harness serving/smoke runs -- see
-# docs/experiments/README.md). They are level-2 candidate-capture only (per-candidate/level-3 cost
-# unmeasured), run on a throwaway vast box with no run_id and artifacts not kept in the repo, so
-# treat them as the rationale for k=16, not a repo-reproducible result.
+# (they rank past `cap`); raising the cap only papers that over at the price of a candidate
+# explosion. Budgeting instead takes at most this many anchors PER enclosing method (grouped by
+# method id) BEFORE the global cap, ROUND-ROBIN (1 anchor from every method, then a 2nd from
+# every method, ... up to this many rounds). Round-robin so the ceiling is spent breadth-first:
+# every method gets its first anchor before any method gets a second, so a GT method is captured
+# as long as it is among the first `cap` methods by id -- it no longer has to win a global
+# first-N race that busy functions dominate. The cap stays the worst-case ceiling and raising it
+# does NOT reintroduce the explosion, because within-function redundancy (many field writes in one
+# function) collapses to this budget.
+# The empirical level-2 recall/candidate figures that chose k=16 -- and that confirmed it recovers
+# the starved GT with no regression and no explosion vs the flat cap -- are a slicer QUALITY
+# measurement. Per docs/experiments/README.md that kind of measurement's durable source is the
+# team Notion (not this file, not docs/experiments/). This comment carries the mechanism only; the
+# k=16 value's numbers live in the team Notion.
 CASE_B_PER_METHOD = 16
 
 # Materialization guard (#311 review): budget() groups its input by method, so it needs the list
