@@ -167,6 +167,48 @@ def test_a_hop_log_hashes_the_same_whatever_its_sequence(tmp_path: Path) -> None
     assert early_call["prompt_sha256"] == late_call["prompt_sha256"]
 
 
+
+def test_a_hop_log_carries_the_history_it_actually_sent(tmp_path: Path) -> None:
+    """hop>0에 실제로 간 요청은 `[system]+history+[이번 turn]`이다 — 로그 파일에 history가
+    없으면 `eval/leakage`가 그 바이트를 못 보고 #80의 「그 파일이 곧 실제 요청」이 거짓이 된다
+    (#306 리뷰). history 내용은 순번을 안 들이므로 위 해시 불변식과 양립한다."""
+    followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
+    history = (
+        ChatTurn(speaker="user", content="hop0 본문 — 유출 탐지 대상"),
+        ChatTurn(speaker="assistant", content='{"hop0": "응답 원문"}'),
+    )
+    log = PromptLog(tmp_path)
+
+    ref, digest = log.write(role="scout", stage=4, prompt=followup, hop=1, history=history)
+    retry, _ = log.write_retry(
+        role="scout", stage=4, prompt=followup, index=1, hop=1, history=history
+    )
+
+    for path in (ref, retry):
+        text = (tmp_path / path).read_text(encoding="utf-8")
+        assert text.index(PROMPT.prefix) < text.index("hop0 본문 — 유출 탐지 대상")
+        assert text.index('{"hop0": "응답 원문"}') < text.index("후속 질문")
+        assert "speaker=assistant" in text
+    assert digest == sha256_text((tmp_path / ref).read_text(encoding="utf-8"))
+    assert render(role="scout", stage=4, prompt=PROMPT) == render(
+        role="scout", stage=4, prompt=PROMPT, history=()
+    )
+
+
+def test_run_context_passes_history_into_the_hop_log(tmp_path: Path) -> None:
+    """배선 — `call_model(history=…)`가 그 history를 로그 파일까지 넘긴다."""
+    ctx = _context(prompts=PromptLog(tmp_path))
+    followup = Prompt(prefix=PROMPT.prefix, body="후속 질문", prompt_version="v1")
+    history = (ChatTurn(speaker="user", content="hop0 본문 — 배선"),)
+
+    ctx.call_model(
+        role=Role.SCOUT, prompt=followup, schema=Candidate, stage=Stage.SCOUT,
+        history=history, hop=1,
+    )
+
+    ref = _model_calls(ctx)[-1]["prompt_ref"]
+    assert "hop0 본문 — 배선" in (tmp_path / ref).read_text(encoding="utf-8")
+
 # --- RunContext 배선 ----------------------------------------------------------
 
 
