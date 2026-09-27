@@ -679,6 +679,12 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     assert "def budget(" in query  # per-method budgeting present
     assert (f'val writers = budget(cpg.call.name("({queries.WRITERS})").l, '
             f'{queries.CASE_B_PER_METHOD}, {queries.CASE_B_WRITER_CAP})') in query
+    # §2.5 (#311 review): pin the round-robin BODY, not just the call site. The starvation this
+    # PR fixes comes back with a depth-first rewrite (`groups.flatMap(_._2)`) that leaves the
+    # call sites and `def budget(` green -- these three fragments turn that regression red.
+    assert "groupBy(_.method.id)" in query  # grouped per enclosing method
+    assert "(0 until k).flatMap(i =>" in query  # round-robin over rounds (breadth-first)
+    assert "g.lift(i)" in query  # the i-th anchor of every method before any method's next
     assert '"dangerous_write"' in query
     # The trigger includes every argument of a writer call so backtracking reaches dest,
     # source and size — the union is unbounded strings, so the cap must be present.
