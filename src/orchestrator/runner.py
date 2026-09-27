@@ -956,6 +956,7 @@ def _analyze(
     _triage_all(ctx, plan, state, last)
     if last < Stage.CRITIC:
         return
+    _smoke_stage_hook(Stage.CRITIC)
     # **절단 수를 노드가 아니라 여기서 센다.** 노드가 세고 러너가 또 세면 경고와 리포트가
     # 다른 수를 말할 수 있다(report.py `run()`의 `deferred`·`dropped`와 같은 처리).
     promoted = state.in_state(FindingState.HYPOTHESIZED)
@@ -1981,6 +1982,13 @@ def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: i
     _triage_by_candidate(ctx, plan, state, last)
 
 
+def _smoke_stage_hook(stage: Stage) -> None:
+    """스모크 전용(머지 안 함) — 단계 경계에서 서버 교대 스크립트를 부르고 끝날 때까지 기다린다."""
+    hook = os.environ.get("HARNESS_SMOKE_STAGE_HOOK")
+    if hook:
+        subprocess.run(f"{hook} {int(stage)}", shell=True, check=True)
+
+
 def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
     """**모든 target이 K단계를 마친 뒤에 K+1이 시작한다** (ADR 0009 결과 2).
 
@@ -2030,6 +2038,8 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
     for row, (stage, step) in enumerate(steps):
         if last < stage:
             return
+        if row == 0 or steps[row - 1][0] != stage:
+            _smoke_stage_hook(stage)
         items, starved = _run_stage_for_all(ctx, stage, step, items, state)
         pending_starved |= starved
         next_stage = steps[row + 1][0] if row + 1 < len(steps) else None
