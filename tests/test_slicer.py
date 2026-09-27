@@ -682,6 +682,36 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     assert "__WRITERS__" not in query  # the placeholder was substituted
 
 
+def test_case_b_query_adds_the_injection_sink_set_bounded():
+    # Query-contract check (2026-09-26 injection candidate-capture measurement): the injection
+    # eval set's GT sinks are command/SQL execution, which the memory-write WRITERS/operator sets
+    # miss (sample_13 `make_tunnel` -> `apr_proc_create` matched nothing). case_b gains a bounded
+    # exec/query sink set that tags `injection_sink`, mirroring WRITERS.
+    query = queries.candidates_b_query()
+    # Bind the wiring, not the spelling: a substring check on "2000"/"injection_sink" passed even
+    # with `++ execs` or the cap replace removed (review MEDIUM). Pin the collected+capped set,
+    # its membership in the union, the tag, both placeholder substitutions, and bare `system`
+    # (a `system` substring alone is satisfied by `wsystem`).
+    exec_set = f'cpg.call.name("({queries.EXEC_SINKS})").take({queries.CASE_B_EXEC_CAP}).l'
+    assert f"val execs = {exec_set}" in query
+    assert "(arrays ++ repeatedCalls ++ writers ++ execs ++ operators)" in query
+    assert 'Option.when(execs.contains(c))("injection_sink")' in query
+    assert "__EXECS__" not in query and "__ECAP__" not in query
+    assert "system" in queries.EXEC_SINKS.split("|")
+    assert "apr_proc_create" in queries.EXEC_SINKS and "sqlite3_exec" in queries.EXEC_SINKS
+
+
+def test_flows_query_keeps_injection_sinks_in_the_global_sink_set():
+    # flows_query runs only for Case A candidates (slicer_pipeline: case == "A"); a Case B
+    # candidate anchored on an injection sink backtracks that call's OWN args (backward_b_query),
+    # not this global set -- so the effect of adding execSinks here is that a flow FROM a Case A
+    # source can REACH an exec sink's argument. Bind the wiring (union membership + collected set),
+    # not the spelling: removing `execSinks ++` from the union or the cap left the suite green.
+    query = queries.flows_query([{"file": "x.c", "full_name": "foo", "line": 1}], None)
+    assert "(writerSinks ++ execSinks ++ indexWrites ++ derefWrites ++ ptrArith)" in query
+    assert f'cpg.call.name("({queries.EXEC_SINKS})").take({queries.CASE_B_EXEC_CAP}).l' in query
+
+
 def test_case_b_query_adds_operator_anchors_narrowed_before_the_cap():
     # Query-contract check (issue #219 follow-up): the release GT sinks are dominated by
     # index/pointer operators, so case_b anchors on them. Raw operators explode (measured on
@@ -1212,8 +1242,9 @@ def test_queries_guard_against_sinks_whose_method_is_null():
 def test_flows_query_uses_hybrid_local_and_bounded_global_sinks():
     """#219 + #252 review HIGH-2/3: hybrid sinks. Inside the candidate methods EVERY call
     argument is a sink (recall -- keeps deref/field & index-READ GT types and the live-probe
-    fixtures); globally only memory-write calls, capped, so the per-candidate dataflow stays
-    under the deadline on large CPGs. `cpg.call.argument` over the whole repo is what blew the
+    fixtures); globally the memory-write and command/SQL-exec sink calls, capped, so the
+    per-candidate dataflow stays under the deadline on large CPGs. `cpg.call.argument` over the
+    whole repo is what blew the
     deadline, so it must not be the global set.
     """
     flows = queries.flows_query([candidate()["scope"]], 3)
@@ -1241,6 +1272,8 @@ def test_flows_and_case_b_share_the_same_operator_sink_definition():
         'indirection|indirectIndexAccess|addressOf)',
         # deref/field WRITE anchor is copied between the two queries (2026-09-26) -- pin it too.
         'cpg.call.name("<operator>.(indirectFieldAccess|fieldAccess|indirection)")',
+        # exec sink set is also copied between the two queries (#299) -- pin it here too.
+        f'cpg.call.name("({queries.EXEC_SINKS})").take({queries.CASE_B_EXEC_CAP}).l',
     ):
         assert fragment in flows and fragment in case_b, fragment
 

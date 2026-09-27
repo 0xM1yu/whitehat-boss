@@ -180,9 +180,10 @@ config에 넣지 않는다.**~~ (⏵ 2026-09-24 — 이 문단 끝의 노트) �
 - **후보를 휴리스틱으로 연다.** Case A는 「매개변수가 있고 저장소 안에서 한 번 이하로 불리는
   함수」와 「입력을 읽는 함수(`read`·`recv`·`fgets` 등)를 부르는 함수」를 source로 보고, Case B는
   「고정 크기 지역 배열을 받는 호출」·「같은 함수 안에서 두 번 해제되는 포인터(해제 래퍼 포함)」에
-  더해 「위험한 쓰기 함수(`memcpy`·`strcpy`·`sprintf` 등) 호출」과 operator 앵커(배열 인덱스 쓰기·
+  더해 「위험한 쓰기 함수(`memcpy`·`strcpy`·`sprintf` 등) 호출」·「command/SQL 실행 호출(`system`·
+  `popen`·`exec*`·`apr_proc_create`·`sqlite3_*`·`mysql_*` 등)」과 operator 앵커(배열 인덱스 쓰기·
   deref/field 쓰기(`p->x=`·`*p=`)·포인터 산술)를 sink로 본다. 재현율을 얻고 오탐을 떠안는 쪽이며, 그 비용은 뒤 단계가 낸다. 개수
-  상한이 걸린 집합(`CASE_A_CANDIDATE_CAP`·`CASE_B_WRITER_CAP`·`CASE_B_OPERATOR_CAP`)은 큰 저장소에서
+  상한이 걸린 집합(`CASE_A_CANDIDATE_CAP`·`CASE_B_WRITER_CAP`·`CASE_B_EXEC_CAP`·`CASE_B_OPERATOR_CAP`)은 큰 저장소에서
   부분 커버리지다. **2026-09-24 갱신** — 이 줄의 첫 판(2026-09-15 11:42)은 Case A를 「아무도 안
   부르는 함수」 하나로, Case B를 앞의 두 sink로만 적었다.
   입력을 읽는 함수 쪽은 그날 12:06의 첫 슬라이서(#201)부터 있었고, 호출 1회 이하 완화는 #241, 쓰기

@@ -221,6 +221,50 @@ def test_external_callee_not_in_the_symbol_table_is_kept(tmp_path: Path):
     assert _graph(tmp_path).names_for("callees", _file_target("parser.c")) == [_CALLEE_ENTRY]
 
 
+# --- 헤더에 정의된 함수 (index-v2 재측정 (a), 2026-09-26) --------------------------
+#
+#   a.c:5      caller       → helper   (외부에서 헤더 함수로 들어오는 호출)
+#   util.h:2   helper       → memcpy   (헤더 함수 본문에서 나가는 호출)
+#
+# 캡슐 대상이 헤더(`.h`)에 정의된 함수여도(Auditor 앵커가 그렇게 될 수 있다,
+# `runner._auditor_target`) 그래프 섹션이 비지 않는지를 index-v2 보고서가 안 잰 경로다
+# (2026-09-26-index-v2-atom.md §5 「말하지 않는 것」).
+_INDEX_WITH_HEADER = {
+    "version": "index-v1",
+    "files": ["a.c", "util.h"],
+    "skipped": [],
+    "symbols": [
+        {"name": "caller", "file": "a.c", "line_start": 4, "line_end": 6},
+        {"name": "helper", "file": "util.h", "line_start": 1, "line_end": 3},
+    ],
+    "calls": [
+        {"caller": "caller", "callee": "helper", "file": "a.c", "line": 5},
+        {"caller": "helper", "callee": "memcpy", "file": "util.h", "line": 2},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+
+_HELPER_TARGET = Location(file="util.h", symbol="helper", line_start=1, line_end=3)
+
+
+def test_callers_into_a_header_defined_function_are_counted(tmp_path: Path):
+    """캡슐 대상이 헤더에 정의된 함수(`helper`)여도 그 함수로 들어오는 외부 호출이 `callers`에
+    실린다 — 정의 파일이 `.c`인가 `.h`인가는 판정(`_defined_in_body`)이 안 본다."""
+    graph = _graph(tmp_path, _INDEX_WITH_HEADER)
+
+    assert graph.names_for("callers", _HELPER_TARGET) == ["caller a.c:5"]
+
+
+def test_callees_from_a_header_defined_function_are_counted(tmp_path: Path):
+    """헤더 함수 본문에서 나가는 호출(`memcpy`)도 `callees`에 실린다 — 호출 지점이 헤더 파일
+    자신인 경우다."""
+    graph = _graph(tmp_path, _INDEX_WITH_HEADER)
+
+    assert graph.names_for("callees", _HELPER_TARGET) == ["memcpy util.h:2"]
+
+
 # --- 슬라이스 본문 (#220 ①) ------------------------------------------------------
 #
 # 슬라이스 타깃의 본문은 연속 범위가 아니라 슬라이스의 (file, line) 집합이다 — 프롬프트가 싣는

@@ -64,7 +64,7 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 ### Case B — 선택한 호출 인자에서 역추적
 
 지역 배열 식별자를 인자로 받는 호출, 같은 함수에서 같은 선언을 반복 해제하는 호출, 위험
-write 함수(memcpy·strcpy 계열), 그리고 연산자 앵커 — 배열 인덱스 **쓰기**(`a[i] = …`), deref/field
+write 함수(memcpy·strcpy 계열), command/SQL 실행 호출(system·popen·exec*·apr_proc_create·sqlite3_*·mysql_* 계열), 그리고 연산자 앵커 — 배열 인덱스 **쓰기**(`a[i] = …`), deref/field
 **쓰기**(`p->x = …`·`*p = …`·`s.f = …`), 포인터 산술(피연산자가 포인터 타입이거나 메모리 접근인
 `p ± i`) — 를 후보로 삼는다. 인덱스·deref/field **읽기**는 제외한다(폭증 방지·recall 한계). 해제
 wrapper는 free로 흐르는 **매개변수 위치**를 보존한다. write·연산자 집합은 대형 저장소에서
@@ -79,8 +79,8 @@ wrapper는 free로 흐르는 **매개변수 위치**를 보존한다. write·연
 run을 멈춘다 — 서버가 그 뒤로 회복 못 하기 때문이고, 재기동 후 `--resume`이 저장 지점에서 잇는다. `trigger_arguments`는 후보 선정 근거이고,
 `sink_arguments`는 선택한 호출의 모든 인자다. 지역배열 인자 패턴에서는 `trigger_arguments`가
 그 배열 인자만이라 둘이 갈린다 — 무엇이 이 호출을 후보로 만들었는지가 남는다. ⚠ 단
-**WRITERS·operator 앵커는 트리거가 전 인자다** — 그 필터는 인자 하나가 아니라 호출 전체로
-발화하므로(`writers.contains(c) || operators.contains(c)`) 그 후보에서는 `trigger_arguments`가
+**WRITERS·exec·operator 앵커는 트리거가 전 인자다** — 그 필터는 인자 하나가 아니라 호출 전체로
+발화하므로(`writers.contains(c) || execs.contains(c) || operators.contains(c)`) 그 후보에서는 `trigger_arguments`가
 `sink_arguments`와 같아진다. `memcpy(dst, src, n)`의 dst·src·n을 모두 역추적하려는 의도다.
 반복 해제의 관련 호출은 anchor로도 남긴다.
 
