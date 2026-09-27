@@ -207,6 +207,7 @@ def test_scout_sees_the_slice_render_and_the_end_it_was_given(tmp_path: Path) ->
     assert facts["slice_criterion"] == {
         "given_end": "sink",
         "given": {"file": "parser.c", "line": 24, "symbol": "memcpy"},
+        "degraded": False,
     }
     assert facts["target"]["symbol"] == "parse_header"
 
@@ -228,6 +229,7 @@ def test_the_v3_pool_gets_the_slice_contract_its_prompt_declares(tmp_path: Path)
         assert facts["slice_criterion"] == {
             "given_end": "sink",
             "given": {"file": "parser.c", "line": 24, "symbol": "memcpy"},
+            "degraded": False,
         }, role
 
 

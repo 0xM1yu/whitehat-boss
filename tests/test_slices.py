@@ -186,6 +186,21 @@ def test_a_slice_ref_keeps_the_raw_entry_beside_the_enclosing_function(tmp_path:
     assert ref.location == Location(file="main.c", line_start=5, symbol="parse")
 
 
+def test_a_degraded_slice_carries_its_marker_to_the_sliceref_boundary(tmp_path: Path) -> None:
+    """#307 재리뷰(민규): marker가 Slice에서 멈추면 러너 소비 경계(SliceRef)와 FACTS·기록이
+    절단 슬라이스를 full로 오인한다. SliceRef까지 살아야 하고, 정상 슬라이스는 False다.
+    """
+    document = _document([
+        _slice("slice_0001", "A", {("main.c", 1), ("main.c", 5)}, _SOURCES, degraded=True),
+        _slice("slice_0002", "B", {("helper.c", 3)}, _SOURCES),
+    ])
+
+    refs = slice_refs(load_slices(_write(tmp_path, document)))
+
+    assert refs[0].degraded is True
+    assert refs[1].degraded is False
+
+
 @pytest.mark.parametrize(
     "slices",
     [pytest.param(..., id="missing"), pytest.param({"slice_0001": {}}, id="object")],
