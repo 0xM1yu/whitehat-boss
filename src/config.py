@@ -545,8 +545,8 @@ class Thresholds(HarnessModel):
     # need_evidence 루프 상한 — Scout가 NE 신호를 낸 뒤 같은 세션에서 되물을 수 있는
     # 최대 홉 수 (ADR 0012 결정 6 — 이 값이 위 `capsule_expansion_max`를 대체한다.
     # 이슈 #92). 0이면 루프가 꺼진다. **명세값이고 이 하네스에서 안 쟀다** —
-    # `cli.PROVISIONAL_THRESHOLDS`에 있다. 이 PR은 자리만 연다 — 홉을 세고 이 값과
-    # 비교하는 루프는 Phase 5다.
+    # `cli.PROVISIONAL_THRESHOLDS`에 있다. 홉을 세고 이 값과 비교하는 것은
+    # `runner._run_ne_hops`다.
     max_hops: int = Field(ge=0)
     requeue_max: int = Field(ge=0)
     critic_top_n: int = Field(gt=0)
