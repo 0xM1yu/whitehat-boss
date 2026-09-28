@@ -139,8 +139,9 @@ def run(
     `role`은 Scout 자리를 고른다 — 풀 없는 단일 `scout`(기본)이거나 풀 멤버
     (`scout_memory`·`scout_boundary`·`scout_injection`). **어느 쪽이든 단계는 4단계
     (`Stage.SCOUT`)이고 임계값·전이 경로는 같다** — 바뀌는 것은 어느 프롬프트·모델을
-    부르는가뿐이다. `Candidate.scout_member` stamp는 노드가 아니라 `RunContext.call_model`이
-    이 `role`에서 만든다(ADR 0010 §3, `candidate.py` 필드 주석).
+    부르는가뿐이다. `Candidate.scout_member` stamp는 이 `role`에서 만든다 — v1·v2는
+    `RunContext.call_model`이, v3는 `_call_hop`이 찍는다(ADR 0010 §3, `candidate.py` 필드 주석).
+    발급 ID·`run_id`·`artifact_id`·초기 `state`는 `_call_hop`이 `RunContext.stamp_issued`로 덮는다.
 
     `slice`는 슬라이스 타깃이면 그 슬라이스다(ADR 0012 결정 1) — `SOURCE`가 그 렌더가 되고
     FACTS에 `slice_criterion`이 붙는다(`_ask_model`). `None`이면 지금처럼 심볼 본문이다.
