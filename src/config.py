@@ -253,6 +253,8 @@ class ModelEntry(HarnessModel):
     #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 @danielcho02
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
     #   모델은 여전히 비어 있다.
+    # ⏵ 2026-09-29 — `request_timeout_s`는 Scout·Critic 실서빙 키 셋(`seccoderx-8b`·`qwen3-14b`·
+    #   `gpt-oss-20b`)도 선언한다(#261 — 계산값). 나머지 셋은 여전히 Auditor뿐이다.
     # - `sampling` — 프로필 공통 `Sampling`(temperature·top_p)을 **이 모델에서 덮고** top_k 등을
     #   더한다. 좌석마다 모델 카드 권장이 갈리기 때문이다(Qwen 계열 「DO NOT use greedy」).
     # - `chat_template_kwargs` — 템플릿 인자(`enable_thinking` 등). 서버 기본 kwargs로 끄지 않고
