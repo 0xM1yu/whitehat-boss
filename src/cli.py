@@ -41,7 +41,9 @@ from src.config import (
     AdapterSelection,
     ConfigError,
     HarnessConfig,
+    check_serving,
     load_config,
+    load_serving,
 )
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
@@ -82,6 +84,12 @@ TOOL_RUNNERS: tuple[str, ...] = get_args(AdapterSelection.model_fields["tool_run
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 추정용 근사다(어댑터와 같은 상수).
 _CHARS_PER_TOKEN = 4
+
+# `run`의 거부와 `doctor`의 경고가 같은 문장이다 — 갈라지면 doctor가 run과 다른 말을 한다.
+_SWAP_NEEDS_DEVICE = (
+    "교대를 선언한 프로필이라 run은 --device 없이 모델에 닿지 않는다 — 장비 파일 "
+    "config/serving/<device>.yaml이 교대 명령과 서버 기동 조건을 든다 (ADR 0012 Phase 6.5)"
+)
 
 
 class Severity(StrEnum):
@@ -161,6 +169,7 @@ def doctor(
         checks.append(_override_note(tool_runner))
     checks.append(_check_tool_runtime(config))
     checks.extend(_check_device(config, device))
+    checks.extend(_check_serving(config, device, config_dir))
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
@@ -271,6 +280,38 @@ def _check_device(config: HarnessConfig, device: str | None) -> list[Check]:
             )
         )
     return checks
+
+
+def _serving_error(config: HarnessConfig, device: str, config_dir: Path) -> str | None:
+    """장비 파일을 읽어 registry·교대 선언과 대조한다. 어긋나면 그 사유다 — `run`·`doctor` 공용."""
+    try:
+        check_serving(config, load_serving(device, config_dir=config_dir))
+    except ConfigError as exc:
+        return f"{exc}"
+    return None
+
+
+def _check_serving(config: HarnessConfig, device: str | None, config_dir: Path) -> list[Check]:
+    """교대 프로필의 장비 파일 — `run`이 모델에 닿기 전에 거부할 것을 미리 말한다.
+
+    **`--device`가 없으면 WARN이다.** doctor는 run이 모델에 닿는지 모르고(`--dry-run`은 안
+    막는다), ERROR면 설정이 멀쩡한 교대 프로필의 doctor가 exit 1이 된다 — `_check_prompts`의
+    슬라이스 경고와 같은 판단이다. **장비를 줬으면 ERROR다** — run과 같은 판정이고 그 run은
+    시작하지 않는다. 교대 없는 프로필에는 말하지 않는다(전 프로필에 뜨는 줄은 안 읽힌다).
+    """
+    if config.swap is None:
+        return []
+    if device is None:
+        return [Check(Severity.WARN, _SWAP_NEEDS_DEVICE)]
+    problem = _serving_error(config, device, config_dir)
+    if problem is not None:
+        return [Check(Severity.ERROR, problem)]
+    return [
+        Check(
+            Severity.OK,
+            f"장비 파일 config/serving/{device}.yaml — registry·교대 선언과 맞는다",
+        )
+    ]
 
 
 def _check_benchmarks(config: HarnessConfig) -> list[Check]:
@@ -727,6 +768,20 @@ def run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+    # **교대 프로필은 장비 파일 없이 모델에 닿지 않는다**(ADR 0012 Phase 6.5). 교대 명령과 서버
+    # 기동 조건(util·창·인자)은 `config/serving/<device>.yaml`이 든다 — 장비를 모르면 무엇으로
+    # 띄울지 모르고, 파일이 registry와 어긋나면(창 ≠ `context_limit`) 크기 거절을 조용히 먹는다.
+    # 모델에 안 닿는 run은 교대도 안 하므로 막지 않는다 — 위 두 가드와 같은 판단이다.
+    # ponytail: `build_deps`가 파일을 한 번 더 읽는다(`--slices`와 같은 이유 — 작다).
+    if reaches_model and config.swap is not None:
+        problem = (
+            _SWAP_NEEDS_DEVICE
+            if args.device is None
+            else _serving_error(config, args.device, CONFIG_DIR)
+        )
+        if problem is not None:
+            print(f"[ERROR] {problem}", file=sys.stderr)
+            return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
         result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
@@ -913,7 +968,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="이 실행이 돌아간 장비의 라벨. run 기록과 --apply에 그대로 남는다. "
         "값 집합은 열려 있다(ADR 0006) — 팀이 쓰는 라벨은 docs/portability.md에 있다. "
         "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다. "
-        "run에서 실서빙 프로필이면 거부한다(exit 2)",
+        "run에서 실서빙 프로필이면 거부한다(exit 2). 교대를 선언한 프로필이면 장비 파일 "
+        "config/serving/<device>.yaml을 고르고, 없거나 registry와 어긋나면 거부한다(exit 2)",
     )
 
     subs.add_parser("doctor", parents=[common, device])
