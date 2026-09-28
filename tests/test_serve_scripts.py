@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -121,9 +122,12 @@ _PORT = 8000
 
 # 가짜 vLLM — 받은 argv를 첫 줄에 찍고(교대 명령이 로그 파일로 돌린다) `/v1/models`·채팅에 답한다.
 _FAKE_VLLM = """#!{python}
-import json, sys
+import json, os, signal, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+if os.environ.get("STUB_IGNORE_TERM"):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+HANG = os.path.join(os.environ.get("STUB_HANG_DIR", "/nonexistent"), str(os.getpid()))
 args = sys.argv[1:]
 print("fake-vllm", " ".join(args), flush=True)
 opt = dict(zip(args, args[1:]))
@@ -144,6 +148,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.rfile.read(int(self.headers["Content-Length"]))
+        if os.path.exists(HANG):
+            self.send_error(500)
+            return
         self._reply({{"choices": [{{"message": {{"content": "p"}}}}]}})
 
     def log_message(self, *_):
@@ -175,6 +182,32 @@ class Rig(NamedTuple):
     @property
     def servers(self) -> Path:
         return self.dir / "servers"
+
+    def pgid(self, key: str) -> int:
+        """이 run의 SERVERS 행에서 그 키의 프로세스 그룹."""
+        for line in self.servers.read_text().splitlines():
+            fields = line.split()
+            if fields[0] == key and fields[2] == RUN_ID:
+                return int(fields[1])
+        raise AssertionError(f"{key} 행이 없다: {self.servers.read_text()!r}")
+
+    def guard(self, **env: str) -> subprocess.Popen:
+        """감시자를 띄우고 pid 파일이 그 감시자를 가리킬 때까지 기다린다."""
+        pid_file = self.dir / "guard.pid"
+        if pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+            pid_file.unlink()  # fixture의 대역(이 테스트 프로세스) — 진짜 감시자가 아니다
+        guard = subprocess.Popen(
+            ["bash", GUARD.as_posix()],
+            cwd=ROOT,
+            env={**self.env, "GUARD_POLL_S": "1", **env},
+            start_new_session=True,
+        )
+        for _ in range(100):
+            if pid_file.exists() and pid_file.read_text().strip() == str(guard.pid):
+                return guard
+            time.sleep(0.05)
+        guard.kill()
+        raise AssertionError("감시자가 pid 파일을 안 적었다")
 
     def run(self, *keys: str, **env: str) -> Swap:
         done = subprocess.run(
@@ -250,10 +283,12 @@ def test_the_swap_script_launches_reports_and_tears_down_only_its_own_run(rig: R
 
         empty = rig.run()
         assert (empty.code, empty.report.get("ok")) == (0, True), empty.stderr
+        assert empty.report["models"] == []
 
         up = rig.run("seccoderx-8b")
         assert up.code == 0, up.stderr
         assert (up.report["ok"], up.report["memory"], up.report["run_id"]) == (True, "vram", RUN_ID)
+        assert up.report["models"] == ["seccoderx-8b"]
         server = up.report["server"]["seccoderx-8b"]
         assert (server["action"], server["attempts"], server["max_model_len"]) == (
             "launch", 1, 40960
@@ -264,7 +299,7 @@ def test_the_swap_script_launches_reports_and_tears_down_only_its_own_run(rig: R
         assert "--max-model-len 40960" in argv
         assert "--revision 25d7f38146bdf0fad1eac09c586b1993ef3e6ee4" in argv
         ours = [line.split() for line in rig.servers.read_text().splitlines() if RUN_ID in line]
-        assert [(key, run) for key, _, run in ours] == [("seccoderx-8b", RUN_ID)]
+        assert [(key, run) for key, _, run, *_ in ours] == [("seccoderx-8b", RUN_ID)]
 
         down = rig.run()
         assert down.code == 0, down.stderr
@@ -316,3 +351,209 @@ def test_the_swap_script_gives_up_on_a_held_lock_at_the_deadline(rig: Rig) -> No
 
     assert result.code != 0
     assert "잠금" in result.report["error"]
+
+
+def _setsid(*command: str) -> subprocess.Popen:
+    """다른 run이 띄운 서버 대역 — 자기 프로세스 그룹의 리더."""
+    return subprocess.Popen(["setsid", *command])
+
+
+def _wait_exit(process: subprocess.Popen, seconds: float) -> bool:
+    try:
+        process.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
+def _port_free(port: int) -> bool:
+    with socket.socket() as probe:
+        return probe.connect_ex(("127.0.0.1", port)) != 0
+
+
+@needs_linux
+def test_one_call_stops_the_previous_key_and_launches_the_next(rig: Rig) -> None:
+    """실제 교대 — 한 호출이 앞 키를 내리고 새 키를 띄운다. 보고에 둘 다 있고 앞 서버는 없어진다."""
+    if not _port_free(8001):
+        pytest.skip("포트 8001이 이미 쓰인다")
+    assert rig.run("seccoderx-8b").code == 0
+    before = rig.pgid("seccoderx-8b")
+
+    swapped = rig.run("qwen3-14b")
+
+    assert swapped.code == 0, swapped.stderr
+    assert swapped.report["server"]["seccoderx-8b"]["action"] == "stop"
+    assert swapped.report["server"]["qwen3-14b"]["action"] == "launch"
+    assert not _alive_group(before)
+    assert [line.split()[0] for line in rig.servers.read_text().splitlines()] == ["qwen3-14b"]
+
+
+@needs_linux
+def test_a_server_that_ignores_term_is_killed(rig: Rig) -> None:
+    """TERM을 무시하는 서버는 TERM 대기 뒤 KILL로 내린다 — 내림이 서버를 남기지 않는다."""
+    assert rig.run("seccoderx-8b", STUB_IGNORE_TERM="1").code == 0
+    group = rig.pgid("seccoderx-8b")
+
+    started = time.monotonic()
+    down = rig.run()
+
+    assert down.code == 0, down.stderr
+    assert not _alive_group(group)
+    assert time.monotonic() - started >= _constants()["TERM_WAIT_S"]
+
+
+@needs_linux
+def test_a_stale_server_is_stopped_and_launched_again(rig: Rig, tmp_path: Path) -> None:
+    """떠 있으나 답하지 않는 서버(stale)는 내리고 새로 띄운다 — 「유지」로 보고하지 않는다."""
+    hang = tmp_path / "hang"
+    hang.mkdir()
+    assert rig.run("seccoderx-8b", STUB_HANG_DIR=str(hang)).code == 0
+    stale = rig.pgid("seccoderx-8b")
+    (hang / str(stale)).touch()
+
+    again = rig.run("seccoderx-8b", STUB_HANG_DIR=str(hang))
+
+    assert again.code == 0, again.stderr
+    assert again.report["server"]["seccoderx-8b"]["action"] == "launch"
+    assert not _alive_group(stale)
+    assert rig.pgid("seccoderx-8b") != stale
+
+
+@needs_linux
+def test_a_reused_pgid_is_not_killed(rig: Rig) -> None:
+    """SERVERS 행의 PGID를 남의 프로세스가 물려받았으면(시작 시각이 다르면) 죽이지 않고 행만 지운다.
+
+    공용 장비에서 남의 것을 죽이지 않는 것이 원칙이다 — 리더 PID가 살아 있는 한 커널이 그 번호를
+    내주지 않으므로, 리더가 있는데 시작 시각이 다르면 우리 그룹이 아니다.
+    """
+    stranger = _setsid("sleep", "300")
+    try:
+        time.sleep(0.2)
+        rig.servers.write_text(f"seccoderx-8b {stranger.pid} {RUN_ID} 1\n", encoding="utf-8")
+
+        down = rig.run()
+
+        assert down.code == 0, down.stderr
+        assert stranger.poll() is None, "PGID가 재사용된 남의 프로세스를 죽였다"
+        assert RUN_ID not in rig.servers.read_text()
+    finally:
+        stranger.kill()
+
+
+@needs_linux
+def test_a_guard_keeps_one_run_and_refuses_a_second(rig: Rig) -> None:
+    """감시자는 run 하나만 지킨다 — 다른 run이 그 감시자 아래 띄우려 하면 거부한다(안 죽인다)."""
+    guard = rig.guard()
+    try:
+        assert rig.run("seccoderx-8b").code == 0
+
+        other = rig.run("gpt-oss-20b", HARNESS_RUN_ID="run_y")
+
+        assert other.code != 0
+        assert "감시자" in other.report["error"] and RUN_ID in other.report["error"]
+        assert _alive_group(rig.pgid("seccoderx-8b"))
+    finally:
+        rig.run(HARNESS_RUN_ID="run_y")
+        guard.kill()
+
+
+@needs_linux
+def test_a_guard_stops_with_its_run_and_never_kills_the_next_run(rig: Rig) -> None:
+    """재사용 시나리오 — 감시자 A 아래 run 1이 끝나면 A가 멈추고, 새 감시자 B 아래 run 2는 A의
+    마감에 안 죽는다.
+
+    2026-09-29 적대 리뷰(HIGH): 09:00 감시자 A(12시간) → run 1 11:00 끝 → 같은 A 아래 run 2
+    11:05 시작 → 21:00 A의 마감이 run 2 서버를 통째로 내린다. 여기서는 A의 마감을 초로 줄였다.
+    """
+    started = time.monotonic()
+    guard_a = rig.guard(GUARD_MAX_S="15")
+    guard_b = None
+    try:
+        assert rig.run("seccoderx-8b").code == 0
+        down = rig.run()
+        assert down.code == 0, down.stderr
+        assert _wait_exit(guard_a, 5), "run이 끝났는데 그 run의 감시자가 안 멈췄다"
+        refused = rig.run("seccoderx-8b", HARNESS_RUN_ID="run_2")
+        assert refused.code != 0 and "감시자" in refused.report["error"]
+
+        guard_b = rig.guard(GUARD_MAX_S="600")
+        assert rig.run("seccoderx-8b", HARNESS_RUN_ID="run_2").code == 0
+        second = int(
+            next(
+                line.split()[1]
+                for line in rig.servers.read_text().splitlines()
+                if line.split()[2] == "run_2"
+            )
+        )
+        time.sleep(max(0.0, 18 - (time.monotonic() - started)))
+
+        assert _alive_group(second), "끝난 run의 감시자 마감이 다음 run 서버를 죽였다"
+        assert guard_b.poll() is None
+    finally:
+        rig.run(HARNESS_RUN_ID="run_2")
+        guard_a.kill()
+        if guard_b is not None:
+            guard_b.kill()
+
+
+@needs_linux
+def test_the_guard_deadline_terms_then_kills_only_its_own_run(rig: Rig) -> None:
+    """마감이면 자기 run의 서버만 TERM → (대기) → KILL. 다른 run의 행은 건드리지 않는다."""
+    stubborn = _setsid("bash", "-c", "trap '' TERM; sleep 300")
+    polite = _setsid("sleep", "300")
+    stranger = _setsid("sleep", "300")
+    guard = None
+    try:
+        time.sleep(0.2)
+        guard = rig.guard(GUARD_MAX_S="2", GUARD_TERM_WAIT_S="2")
+        rig.servers.write_text(
+            "".join(
+                f"{key} {proc.pid} {run} {_starttime(proc.pid)}\n"
+                for key, proc, run in (
+                    ("seccoderx-8b", stubborn, RUN_ID),
+                    ("qwen3-14b", polite, RUN_ID),
+                    ("gpt-oss-20b", stranger, "run_other"),
+                )
+            ),
+            encoding="utf-8",
+        )
+        (rig.dir / "guard.owner").write_text(f"{guard.pid} {RUN_ID}\n", encoding="utf-8")
+
+        assert _wait_exit(guard, 15), "마감이 지났는데 감시자가 안 끝났다"
+
+        assert not _alive_group(stubborn.pid) and not _alive_group(polite.pid)
+        assert stranger.poll() is None, "다른 run의 서버를 마감으로 죽였다"
+        log = (rig.dir / "logs" / "guard.log").read_text(encoding="utf-8")
+        assert log.index(f"TERM seccoderx-8b -{stubborn.pid}") < log.index(
+            f"KILL seccoderx-8b -{stubborn.pid}"
+        )
+        assert "deadline" in (rig.dir / "KILLED").read_text(encoding="utf-8")
+    finally:
+        for proc in (stubborn, polite, stranger):
+            proc.kill()
+        if guard is not None:
+            guard.kill()
+
+
+@needs_linux
+def test_stop_guard_ends_the_guard_without_killing(rig: Rig) -> None:
+    server = _setsid("sleep", "300")
+    try:
+        time.sleep(0.2)
+        rig.servers.write_text(
+            f"seccoderx-8b {server.pid} {RUN_ID} {_starttime(server.pid)}\n", encoding="utf-8"
+        )
+        guard = rig.guard()
+        (rig.dir / "STOP_GUARD").touch()
+
+        assert _wait_exit(guard, 5)
+        assert server.poll() is None
+        assert not (rig.dir / "guard.pid").exists()
+        assert not (rig.dir / "KILLED").exists()
+    finally:
+        server.kill()
+
+
+def _starttime(pid: int) -> str:
+    """`/proc/<pid>/stat` 22번 필드 — 교대 명령이 SERVERS 행에 싣는 값."""
+    return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
