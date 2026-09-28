@@ -25,11 +25,15 @@ def backward_b_query(
         c.code == {literal(selector["code"])} && astPath(c) == {path}).distinct
       require(matches.size == 1, "Sink selector is missing or ambiguous")
       val sink = matches.head
+      mark("select_sink")
       case class State(node: nodes.CfgNode, stack: List[nodes.Call], depth: Int)
-      def key(n: nodes.CfgNode): String = ujson.write(ujson.Arr(
-        n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1),
-        n.label, n.code, Option(n.method).map(_.fullName).getOrElse(""),
-        ujson.Arr.from(n match {{ case a: nodes.AstNode => astPath(a); case _ => Nil }})))
+      def key(n: nodes.CfgNode): String = within("key_inclusive") {{
+        count("key_calls")
+        ujson.write(ujson.Arr(
+          n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1),
+          n.label, n.code, Option(n.method).map(_.fullName).getOrElse(""),
+          ujson.Arr.from(n match {{ case a: nodes.AstNode => astPath(a); case _ => Nil }})))
+      }}
       def stateKey(s: State): String = key(s.node) + s.stack.map(key).mkString("[", ",", "]")
       val queue = scala.collection.mutable.Queue.empty[State]
       val seen = scala.collection.mutable.Set.empty[String]
@@ -80,14 +84,17 @@ def backward_b_query(
           if (seen.contains(stateKey(s))) edges += ((stateKey(s), stateKey(current)))
         }})
       }}
+      mark("traversal")
       val locations = nodesSeen.toList.sortBy(_._1).flatMap {{ case (_, n) => n match {{
         case a: nodes.AstNode if a.lineNumber.exists(_ > 0) => List(loc(a))
         case _ => Nil
       }} }}
+      mark("locations")
       ujson.Obj("flow_count" -> ujson.Null, "truncated" -> cuts.nonEmpty,
         "lines" -> ujson.Arr.from(locations), "node_count" -> nodesSeen.size,
         "state_count" -> seen.size, "dependency_count" -> edges.size,
         "boundaries" -> ujson.Arr.from(boundaries.toList.sortBy(_._1).map(_._2)),
         "truncation_reasons" -> ujson.Arr.from(cuts.toList.sorted))
     """,
+        timed=True,
     )
