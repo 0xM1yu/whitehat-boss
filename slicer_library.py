@@ -23,10 +23,6 @@ import slicer_queries as queries
 from slicer_backward import backward_b_query
 
 SCOPES = "scopes: List[(String, String, Int)]"
-SCOPE_FILTER = (
-    "cpg.method.internal.filter(m => scopes.exists { case (f, fn, l) => "
-    "m.filename == f && m.fullName == fn && m.lineNumber.getOrElse(-1) == l }).l"
-)
 # Placeholders: values no real candidate carries, each appearing once in the generated text.
 PLACEHOLDER_SCOPES = [{"file": "__LIB_FILE__", "full_name": "__LIB_FULL_NAME__", "line": 999004}]
 PLACEHOLDER_POINTS = [("__LIB_POINT__", 0)]
@@ -38,8 +34,16 @@ def as_function(stage: str, text: str, name: str, params: str, swaps: list) -> s
         if text.count(old) != 1:
             raise ValueError(f"{stage}: placeholder {old!r} occurs {text.count(old)} times")
         text = text.replace(old, new)
-    head = text[len("{ ") : text.index(f'"__SLICER_{stage}__"')]
-    return f"def {name}({params}): String = {{ {head} ujson.write({queries.TIMED_RESULT}) }}"
+    # Cut at the envelope's own seams, not at hard-coded text: reframing `envelope` moves the
+    # cut with it instead of emitting Scala that only a live server rejects (#322 review).
+    opening, closing = queries.envelope(stage, "\0", timed=True).split("\0")
+    if not (text.startswith(opening) and text.endswith(closing)):
+        raise ValueError(f"{stage}: not a timed envelope")
+    body = text[len(opening) : len(text) - len(closing)]
+    return (
+        f"def {name}({params}): String = "
+        f"{{ {queries.statements(body, timed=True)} ujson.write({queries.TIMED_RESULT}) }}"
+    )
 
 
 def scope_list(scopes: list[dict]) -> str:
@@ -60,12 +64,14 @@ class Library:
         max_nodes: int | None,
         max_call_depth: int,
     ):
+        # From method_selector itself, so a predicate edit reaches the library too (#322 review).
+        scope_filter = queries.method_selector("scopes")
         flows = as_function(
             "flows",
             queries.flows_query(PLACEHOLDER_SCOPES, max_flows, limits),
             "flows",
             SCOPES,
-            [(queries.method_selector(PLACEHOLDER_SCOPES), SCOPE_FILTER)],
+            [(queries.method_selector(PLACEHOLDER_SCOPES), scope_filter)],
         )
         context = as_function(
             "context",
@@ -93,7 +99,7 @@ class Library:
                 ("== 999002", "== column"),
                 (queries.literal("__LIB_CODE__"), "code"),
                 ("List(999003)", "path"),
-                (queries.method_selector(PLACEHOLDER_SCOPES), SCOPE_FILTER),
+                (queries.method_selector(PLACEHOLDER_SCOPES), scope_filter),
             ],
         )
         body = f"{flows}\n{context}\n{backward}"
