@@ -344,13 +344,13 @@ class SwapPolicy(HarnessModel):
     때문이다 — `resident: []` + `swappable: []`가 통과했다. 사유를 적고 강제하지 않으면
     다음 사람은 그 사유를 강제되는 것으로 읽는다.
 
-    - **`swappable`이 비면 거절한다.** 교대를 선언해 놓고 아무도 재우지 않는 선언이라
+    - **`swappable`이 비면 거절한다.** 교대를 선언해 놓고 아무도 내리지 않는 선언이라
       「정책이 선 것처럼 보이면서 아무 일도 안 한다」 — 아래
       `ProfileEntry._swap_names_roles_this_profile_has`가 오타에 대해 막는 것과 같은
       상태다. 그 배선의 정본 표현은 `swap`을 **생략하는** 것이고 그쪽은 지금도 정당하다
       — ADR 0010 §1이 *"교대(`execution.swap`)는 스키마만 열고 기본은 끈다"*로 적은 그
       배선이다.
-    - **한 역할이 두 목록에 함께 있으면 거절한다.** "재우지 않는다"와 "재운다"를 동시에
+    - **한 역할이 두 목록에 함께 있으면 거절한다.** "내리지 않는다"와 "내린다"를 동시에
       선언한 것이라 어느 쪽이 이기는지 config만 보고 못 정한다.
     - **한 목록 안의 중복을 거절한다.** 두 목록은 역할 집합이고, 같은 이름이 두 번 적힌
       것의 유일한 효과는 그 사실을 눈에서 가리는 것이다.
@@ -386,7 +386,7 @@ class SwapPolicy(HarnessModel):
             )
         if not self.swappable:
             raise ValueError(
-                "execution.swap.swappable이 비었다 — 교대한다고 선언하고 아무도 재우지 "
+                "execution.swap.swappable이 비었다 — 교대한다고 선언하고 아무도 내리지 "
                 "않는다. 교대하지 않는 배선은 execution.swap을 생략해 적는다"
             )
         retrieval = sorted({*self.resident, *self.swappable} & set(RETRIEVAL_ROLES))
@@ -405,8 +405,10 @@ class ExecutionPolicy(HarnessModel):
     러너이고, 그래서 이 필드를 선언하지 않은 프로필은 run이 바뀌지 않는다. ADR 0009가
     이 결정을 "되돌리기 싼" 것으로 부른 근거가 그것이고, 러너를 단계 단위로 재작성하는
     쪽은 **별도 PR**이었고 그 PR이 들어왔다(ADR 0009 결과 2) — `per_stage`를 적으면
-    `runner._triage_by_stage`가 돈다. 여기서 정하는 것은 **어느 루프인가**뿐이고,
-    교대(`swap`) 배선은 아직 아니다(결과 3, `swap.md §9` 실측이 선행).
+    `runner._triage_by_stage`가 돈다. 여기서 정하는 것은 **어느 루프인가**와 교대 선언이다.
+    교대(`swap`)를 적으면 러너가 단계 경계에서 교대 콜러블(`Dependencies.swap_to`)을 부르고 run
+    끝에 내린다 — 교대 명령과 기동 조건은 프로필이 아니라 장비 파일이 든다(`ServingConfig`, ADR 0009
+    「2026-09-29 제안」 절).
     """
 
     mode: Literal["per_candidate", "per_stage"] = "per_candidate"

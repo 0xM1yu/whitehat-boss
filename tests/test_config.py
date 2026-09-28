@@ -1276,7 +1276,8 @@ def test_b1_puts_one_model_in_every_role_and_still_loads(tmp_path: Path) -> None
 
 
 # 단계 단위로 도는 프로필 — 로스터 canonical 쌍(2026-09-24 조민규).
-# 교대(`swap`)는 배선 전이라 어디에도 없다.
+# 교대(`swap`)는 아직 어느 프로필도 적지 않는다 — 하네스 쪽 배선은 들어왔고 선언은 장비 파일과
+# 같이 온다.
 PER_STAGE_PROFILES = frozenset({"harness_pool", "harness_pool_hybrid"})
 
 
@@ -1290,7 +1291,8 @@ def test_only_the_canonical_pool_runs_per_stage_and_nothing_declares_swap(profil
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
     **교대(`swap`)는 여전히 안 적는다** — `settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
-    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 러너 배선(ADR 0009 결과 3)도 아직 없다.
+    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 교대 명령과 장비 파일(ADR 0009
+    「2026-09-29 제안」 절)도 아직 없다 — 러너 쪽 배선은 들어왔다.
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
     """
     execution = load_config(profile).profile.execution
@@ -1358,7 +1360,7 @@ def test_swap_without_per_stage_is_rejected() -> None:
 def test_swap_naming_a_role_the_profile_does_not_have_is_rejected() -> None:
     """`swap`이 부르는 역할은 그 프로필의 `roles`에 실재해야 한다 (ADR 0009 불변식 2).
 
-    없는 역할을 재우고 깨우는 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다** —
+    없는 역할을 내리고 띄우는 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다** —
     오타 하나(`embeding`)면 그 모델만 교대에서 빠지고, 그 run은 메모리가 왜 안 줄었는지
     설명할 수 없는 상태로 끝난다. `roles`가 참조 무결성을 로드 시점에 보는 것과 같은
     자리다(`_check_model_refs`).
@@ -1503,7 +1505,7 @@ def _per_stage_swap(**swap: object) -> dict[str, object]:
 def test_a_swap_that_wakes_nobody_is_rejected() -> None:
     """`swappable`이 빈 교대 선언은 막는다 — **ADR 0009의 두 불변식이 아니다.**
 
-    `SwapPolicy`의 docstring이 네 값에 기본을 안 주는 이유로 *"`swap: {}`이 「교대한다」고
+    `SwapPolicy`의 docstring이 세 값에 기본을 안 주는 이유로 *"`swap: {}`이 「교대한다」고
     선언하면서 아무 역할도 안 부르는 상태"*를 든다. 그런데 `resident: []` +
     `swappable: []`가 그대로 통과해 **정확히 그 상태**를 만들었다 — 사유를 적고 강제하지
     않으면 다음 사람은 그 사유가 강제되는 것으로 읽는다.
@@ -1523,7 +1525,7 @@ def test_a_swap_that_wakes_nobody_is_rejected() -> None:
 def test_a_role_in_both_swap_lists_is_rejected() -> None:
     """한 역할이 상주이면서 교대일 수는 없다 — 이것도 ADR의 둘이 아니다.
 
-    "재우지 않는다"와 "단계 경계에서 재운다"를 같은 역할에 함께 선언한 것이라, 어느 쪽이
+    "내리지 않는다"와 "단계 경계에서 내린다"를 같은 역할에 함께 선언한 것이라, 어느 쪽이
     이기는지 **config만 보고 정할 수 없다.** 배선하는 사람이 아무 쪽이나 고르면 그 run은
     메모리가 왜 그만큼인지 설명할 수 없는 상태로 끝난다.
     """
