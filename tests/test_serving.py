@@ -5,12 +5,14 @@ seqs·창·인자)은 프로필이 아니라 **장비 데이터**다 — 같은 
 값만 갈린다. 여기서는 그 파일의 스키마·로더·registry와의 교차 검사를 본다.
 """
 
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
+from src import cli
 from src.config import (
     ConfigError,
     ExecutionPolicy,
@@ -23,6 +25,14 @@ from src.config import (
 )
 
 POOL = "harness_pool"
+TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
+SWAPPED = ("scout_memory", "scout_boundary", "scout_injection", "auditor", "critic")
+
+
+def _with_swap(base: HarnessConfig, swappable: tuple[str, ...]) -> HarnessConfig:
+    swap = SwapPolicy(resident=(), swappable=swappable, settle_timeout_s=600.0)
+    execution = ExecutionPolicy(mode="per_stage", swap=swap)
+    return base.transition(profile=base.profile.transition(execution=execution))
 
 
 def _swap_pool() -> HarnessConfig:
@@ -31,14 +41,16 @@ def _swap_pool() -> HarnessConfig:
     커밋된 프로필은 아직 교대를 안 적는다(장비 파일과 함께 다음 PR이 적는다). 모양만 있으면
     되므로 여기서 조립한다(`tests/conftest.py`의 `served_scout_config`와 같은 방식).
     """
-    base = load_config(POOL)
-    swap = SwapPolicy(
-        resident=(),
-        swappable=("scout_memory", "scout_boundary", "scout_injection", "auditor", "critic"),
-        settle_timeout_s=600.0,
-    )
-    execution = ExecutionPolicy(mode="per_stage", swap=swap)
-    return base.transition(profile=base.profile.transition(execution=execution))
+    return _with_swap(load_config(POOL), SWAPPED)
+
+
+def _swap_fake() -> HarnessConfig:
+    """`dev_fake`에 교대를 선언한 config — 실서빙 역할이 없어 실서빙 게이트가 안 선다.
+
+    그래서 거부가 나면 **교대 게이트가** 낸 것이다(`harness_pool`이면 `--device` 결여를 실서빙
+    게이트가 먼저 막아, 교대 게이트가 사라져도 거부 테스트가 초록이다).
+    """
+    return _with_swap(load_config("dev_fake"), ("scout", "auditor", "critic"))
 
 
 def _rows(config: HarnessConfig) -> dict[str, dict[str, object]]:
@@ -197,3 +209,178 @@ def test_a_window_other_than_the_context_limit_is_rejected() -> None:
 
     with pytest.raises(ConfigError, match=r"seccoderx-8b.*16384.*40960"):
         check_serving(config, ServingConfig.model_validate({"command": ["x"], "servers": rows}))
+
+
+# --- CLI: 교대 프로필은 장비 파일 없이 모델에 닿지 않는다 -----------------------------
+
+
+class _Claimed(RuntimeError):
+    """게이트를 지나 run 디렉터리 확보까지 왔다는 표시."""
+
+
+def _errors(stderr: str) -> list[str]:
+    return [line for line in stderr.splitlines() if line.startswith("[ERROR]")]
+
+
+def _use(monkeypatch: pytest.MonkeyPatch, config: HarnessConfig, config_dir: Path) -> None:
+    """CLI가 이 config를 쓰고, 장비 파일을 `config_dir/serving/`에서 찾게 하고, run 디렉터리를
+    잡는 순간 멈추게 한다 — 게이트를 지나면 `_Claimed`가 난다."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Claimed
+
+    real = load_serving
+    monkeypatch.setattr(cli, "load_profile", lambda *_a, **_k: config)
+    monkeypatch.setattr(cli, "load_serving", lambda device, **_k: real(device, config_dir))
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+
+
+def _run_argv(tmp_path: Path, *extra: str) -> list[str]:
+    return [
+        "run", "--profile", "x", "--target", str(TARGET), "--condition", "B1@pipeline",
+        "--kb-snapshot", "kb-20260901", "--seed", "20260901",
+        "--artifacts-root", str(tmp_path / "artifacts"), *extra,
+    ]  # fmt: skip
+
+
+@pytest.fixture
+def empty_slices(tmp_path: Path) -> Path:
+    """비었지만 믿을 수 있는 slices.json — `harness_pool`의 v3 Scout 슬라이스 가드를 지나게 한다."""
+    path = tmp_path / "slices.json"
+    body = {
+        "slice_version": "slice-v2",
+        "status": "ok",
+        "joern_engine_config": {"maxCallDepth": 2},
+        "slices": [],
+        "candidate_manifest": {},
+    }
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_a_swap_run_refuses_to_start_without_a_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """교대 프로필로 모델에 닿는 run은 `--device` 없이 시작하지 않는다 — 어느 장비 파일로 서버를
+    띄울지 모른다. **run 디렉터리를 잡기 전에** exit 2다(`--slices` 가드와 같은 자리)."""
+    _use(monkeypatch, _swap_fake(), tmp_path)
+
+    code = cli.main(_run_argv(tmp_path))
+
+    errors = _errors(capsys.readouterr().err)
+    assert code == 2, "교대 프로필이 --device 없이 시작한다"
+    assert [line for line in errors if "--device" in line and "교대" in line], errors
+
+
+def test_a_swap_run_refuses_to_start_without_the_device_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _use(monkeypatch, _swap_fake(), tmp_path)
+
+    code = cli.main(_run_argv(tmp_path, "--device", "nowhere"))
+
+    errors = _errors(capsys.readouterr().err)
+    assert code == 2, "장비 파일이 없는데 시작한다"
+    assert [line for line in errors if "nowhere" in line], errors
+
+
+def test_a_swap_run_refuses_a_device_file_that_disagrees_with_the_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    empty_slices: Path,
+) -> None:
+    """파일이 있어도 교차 검사가 틀리면 막는다 — 창을 작게 적은 파일이 run에 닿으면 안 된다."""
+    config = _swap_pool()
+    rows = _rows(config)
+    rows["seccoderx-8b"] = {**rows["seccoderx-8b"], "max_model_len": 16384}
+    _write(tmp_path, "rig", {"command": ["x"], "servers": rows})
+    _use(monkeypatch, config, tmp_path)
+
+    code = cli.main(_run_argv(tmp_path, "--device", "rig", "--slices", str(empty_slices)))
+
+    errors = _errors(capsys.readouterr().err)
+    assert code == 2
+    assert [line for line in errors if "16384" in line], errors
+
+
+def test_a_swap_run_with_a_matching_device_file_passes_the_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    empty_slices: Path,
+) -> None:
+    """양성 대조 — 막는 것이 목적이 아니다. 맞는 파일이면 run 디렉터리 확보까지 간다."""
+    config = _swap_pool()
+    _write(tmp_path, "rig", {"command": ["x"], "servers": _rows(config)})
+    _use(monkeypatch, config, tmp_path)
+
+    with pytest.raises(_Claimed):
+        cli.main(_run_argv(tmp_path, "--device", "rig", "--slices", str(empty_slices)))
+
+    assert not _errors(capsys.readouterr().err)
+
+
+@pytest.mark.parametrize("flags", [("--dry-run",), ("--stop-after", "3")], ids=["dry", "stop3"])
+def test_a_swap_run_that_never_reaches_a_model_is_not_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: tuple[str, ...]
+) -> None:
+    """모델에 안 닿는 run은 교대도 안 한다 — 막으면 통과시키려고 장비 라벨을 **지어내게** 된다
+    (`cli.run`의 실서빙 게이트가 같은 이유로 그 run을 안 막는다)."""
+    _use(monkeypatch, _swap_fake(), tmp_path)
+
+    with pytest.raises(_Claimed):
+        cli.main(_run_argv(tmp_path, *flags))
+
+
+# --- doctor ------------------------------------------------------------------------
+
+
+def _doctor(
+    monkeypatch: pytest.MonkeyPatch, config: HarnessConfig, tmp_path: Path, device: str | None
+) -> list[str]:
+    """doctor 출력 중 장비 파일을 말하는 줄. 장비 파일은 `tmp_path/serving/`에서 찾는다."""
+    monkeypatch.setattr(cli, "load_profile", lambda *_a, **_k: config)
+    checks = cli.doctor(
+        "x", artifacts_root=tmp_path / "artifacts", device=device, config_dir=tmp_path
+    )
+    return [check.render() for check in checks if "장비 파일" in check.message]
+
+
+def test_doctor_warns_that_a_swap_profile_needs_a_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """doctor는 모델에 닿는 run인지 모른다 — `--device`가 없으면 WARN이지 ERROR가 아니다
+    (`--slices` 가드의 doctor 짝과 같은 판단 — ERROR면 멀쩡한 프로필의 doctor가 exit 1이다)."""
+    lines = _doctor(monkeypatch, _swap_pool(), tmp_path, None)
+
+    assert lines, "교대 프로필인데 doctor가 장비 파일을 말하지 않는다"
+    assert all(line.startswith("[WARN ") and "--device" in line for line in lines), lines
+
+
+def test_doctor_errors_on_a_missing_or_disagreeing_device_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--device`를 줬으면 doctor도 run과 같은 판정을 낸다 — 파일이 없거나 교차 검사가 틀리면
+    그 run은 시작하지 않으므로 ERROR다."""
+    config = _swap_pool()
+    rows = _rows(config)
+    rows.pop("seccoderx-8b")
+    _write(tmp_path, "short", {"command": ["x"], "servers": rows})
+
+    for device in ("nowhere", "short"):
+        lines = _doctor(monkeypatch, config, tmp_path, device)
+        assert lines, device
+        assert all(line.startswith("[ERROR") for line in lines), (device, lines)
+
+
+def test_doctor_passes_a_matching_device_file_and_is_silent_without_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _swap_pool()
+    _write(tmp_path, "rig", {"command": ["x"], "servers": _rows(config)})
+
+    ok = _doctor(monkeypatch, config, tmp_path, "rig")
+    assert ok, "맞는 장비 파일인데 doctor가 말하지 않는다"
+    assert all(line.startswith("[OK") for line in ok), ok
+    assert _doctor(monkeypatch, load_config(POOL), tmp_path, "rig") == [], "교대 없는 프로필"
