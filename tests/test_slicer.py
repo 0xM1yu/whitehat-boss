@@ -1449,3 +1449,46 @@ def test_skipped_directory_links_are_counted(monkeypatch, repo, tmp_path):
     assert result["status"] == "partial"
     assert result["counters"]["directories_skipped"] == 1
     assert "Directory symlink not traversed" in result["error"]
+
+
+def test_query_timings_reach_the_progress_log_and_nothing_else(monkeypatch, repo, tmp_path):
+    """Timed stages wrap their payload (`queries.TIMING`). The client must unwrap it so the
+    slices are byte-identical to an untimed run, and the timings must land only in the
+    progress log -- they change every run, so in `slices` they would break reproducibility.
+    """
+    def timed(stage, value):
+        return response(stage, {"value": value, "timings_ms": {"dataflow": 7.0},
+                                "counts": {"batches": 2}, "body_ms": 9.0})
+
+    def payload(stage, data):
+        return json.loads(base64.b64decode(
+            re.search(r"__SLICER_\w+__([A-Za-z0-9+/=]+)__END", data[stage]["stdout"])[1]))
+
+    plain = payloads(case_a=[candidate()], flow_count=1)
+    wrapped = {**plain, **{s: timed(s, payload(s, plain)) for s in ("flows", "context")}}
+    _, expected, _ = run_cli(monkeypatch, repo, tmp_path / "plain", plain)
+    progress = tmp_path / "progress.jsonl"
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path / "timed", wrapped,
+                           "--progress", str(progress))
+
+    assert result["slices"] == expected["slices"] and result["slices"]
+    assert "timings" not in json.dumps(result)
+    ends = [json.loads(line) for line in progress.read_text(encoding="utf-8").splitlines()]
+    timed_ends = [e for e in ends if e["event"] == "query_end" and "timings" in e]
+    assert {e["stage"] for e in timed_ends} == {"flows", "context"}
+    assert timed_ends[0]["timings"]["timings_ms"] == {"dataflow": 7.0}
+
+
+def test_only_per_candidate_stages_are_timed():
+    """The per-candidate stages carry the timing prelude; one-shot and file-transport stages
+    do not (`file_envelope` has its own result shape)."""
+    from slicer_backward import backward_b_query
+
+    back = backward_b_query({**candidate(), "entry": candidate(), "scopes": [candidate()["scope"]]},
+                            max_depth=None, max_nodes=None, max_call_depth=4)
+    for text in (queries.flows_query([candidate()["scope"]], 3),
+                 queries.context_query([("main.c", 1)], "/work/repo"), back):
+        assert "def mark(k: String)" in text and '"timings_ms"' in text
+    for text in (queries.candidates_a_query(), queries.candidates_b_query(),
+                 queries.inventory_query(), queries.import_query("/r", "p")):
+        assert "def mark(" not in text
