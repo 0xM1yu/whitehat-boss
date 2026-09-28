@@ -453,14 +453,14 @@ models:
     # - 레시피는 transformers 5.8.0 이상을 요구한다(config.json이 5.8.0.dev0로 쓰였다 — Qwen3-VL 프로세서).
     #   ATOM venv의 버전은 안 봤다. `--language-model-only`면 비전 타워를 안 올린다(레시피 — 미실측).
     #
-    # ## 속도·메모리 — 우리 장비 미실측
+    # ## 속도·메모리 — ~~우리 장비 미실측~~ → GB10 미실측 · vast.ai 2026-09-29 실측(이 절 끝 ⏵)
     #
     # - dense bf16이라 토큰마다 가중치를 다 읽는다 — GB10 대역 273 GB/s ÷ 55.6 GB ≈ **4.9 tok/s가 단일
     #   스트림 상한**이다(계산값). 외부 보고는 4.5 tok/s · MTP(n=3) 9.9 tok/s다(NVIDIA 포럼 2026-08-24, 이미지
     #   `vllm/vllm-openai:qwen38` — 우리 0.27.1이 아니다). 옛 Auditor 실측 26.2 tok/s의 약 1/5.8이다.
     # - 그래서 어댑터 기본 타임아웃(`_TIMEOUT_S` 300 s) 안에는 ≈1,470토큰(계산값)까지만 낸다 — 위
     #   `request_timeout_s`가 없으면 사고를 켠 호출은 거기서 끊긴다(이슈 #261).
-    # - 메모리: 가중치 51.75 GiB(위 파일 크기 합, 계산값). 적재 크기(가중치+non-torch)·KV는 안 쟀다. KV는
+    # - 메모리: 가중치 51.75 GiB(위 파일 크기 합, 계산값). 적재 크기(가중치+non-torch)·KV는 안 쟀다(⏵ vast에서 쟀다 — 끝 줄). KV는
     #   full attention 16층만 토큰마다 자란다 — 16층 × KV 헤드 4 × head_dim 256 × (K·V) 2 × bf16 2 B =
     #   64 KiB/토큰(계산값, linear attention 층의 고정 상태는 뺐다).
     # - ⏵ 2026-09-29 vast.ai(RTX PRO 6000 · 전용 VRAM · vllm 0.27.1)에서 쟀다 — 모델 로딩 51.1 GiB · 가중치+
