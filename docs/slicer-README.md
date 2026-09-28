@@ -8,7 +8,11 @@ Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다
 [slicer.py](../slicer.py), [slicer_queries.py](../slicer_queries.py),
 [slicer_backward.py](../slicer_backward.py), [slicer_candidates.py](../slicer_candidates.py),
 [slicer_source.py](../slicer_source.py), [slicer_pipeline.py](../slicer_pipeline.py),
-[slicer_checkpoint.py](../slicer_checkpoint.py), [slicer_export.py](../slicer_export.py)를 함께 배포한다.
+[slicer_checkpoint.py](../slicer_checkpoint.py), [slicer_export.py](../slicer_export.py),
+[slicer_library.py](../slicer_library.py)를 함께 배포한다.
+후보별 질의(flows·context·backward)의 로직은 inventory 뒤에 **서버 세션당 한 번** 함수로 정의하고,
+후보마다 그 함수 호출만 보낸다 — 질의마다 Scala 전체를 다시 컴파일하던 비용을 없앤다. 세션에 남는 것은
+함수뿐이고 후보 데이터는 호출 안에만 있다. 서버를 새로 띄우면 다음 run이 다시 정의한다.
 하네스 설치나 서드파티 런타임 패키지는 필요 없다.
 
 Python과 Joern의 `--repo`는 같은 절대경로의 같은 소스를 가리켜야 한다. 실행 중 소스를

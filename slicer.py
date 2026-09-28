@@ -265,7 +265,7 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
         valid = isinstance(data, list) and all(valid_location(row) for row in data)
     elif stage == "import":
         valid = isinstance(data, dict) and data.get("imported") is True
-    elif stage == "overlay":
+    elif stage in ("overlay", "library"):
         valid = data is True
     elif stage == "backward" and isinstance(data, dict):
         valid = (
