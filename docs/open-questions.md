@@ -141,6 +141,7 @@
 | D87 | **run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다** (2026-09-25 ATOM에서 실제로 났다) | 열림 | [본문](open-questions/D/D87.md) |
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |
+| D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
 
 ## 3. 팀·운영 미정
 
