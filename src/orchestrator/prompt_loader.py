@@ -261,7 +261,8 @@ def build_facts(
         else [],
         "source": source,
         # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 함께 싣는다. 안 주면
-        # (Scout·Auditor·Critic v1) 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
+        # (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
+        # 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,
