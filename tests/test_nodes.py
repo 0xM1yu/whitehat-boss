@@ -697,6 +697,40 @@ def test_auditor_content_aware_versions_pins_v3() -> None:
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
+def test_auditor_v3_renders_slice_source_and_evidence_body_through_the_node(
+    ctx: RunContext,
+) -> None:
+    """registry가 auditor에 v3를 고르면 **노드를 거친** 렌더가 v3 body를 남는 토큰 없이 채운다 —
+    슬라이스 렌더가 `SOURCE`로, payload 본문이 FACTS `evidence[].body`로 간다.
+
+    위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → v3 렌더**를 한 호출로
+    묶는다 — 상수를 비우거나 노드가 버전을 안 보면 본문이 빠져 빨개진다. v3 fake 엔트리는
+    `test_pipeline_e2e._poolify_v3`처럼 `fake`를 복사해 버전만 바꾼다(커밋된 fake 키는 v1·v2뿐).
+    """
+    fake_v3 = ctx.config.models["fake"].transition(prompt_template_version="v3")
+    ctx.config = ctx.config.transition(
+        models={**ctx.config.models, "fake_v3": fake_v3},
+        profile=ctx.config.profile.transition(
+            roles={**ctx.config.profile.roles, "auditor": "fake_v3"}
+        ),
+    )
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    render = "/* ===== parser.c ===== */\n4|     char buf[64];\n5|     memcpy(buf, src, len);"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+
+    auditor.run(
+        ctx, candidate=candidate, capsule=capsule, evidences=evidences, source=lambda: render
+    )
+
+    prompt = ctx.models.last_for(Role.AUDITOR)
+    assert prompt.prompt_version == "v3"
+    assert "{{" not in prompt.body
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
+    assert facts["source"] == render
+    bodies = [ev["body"] for ev in facts["evidence"] if "body" in ev]
+    assert any("heap-buffer-overflow" in body for body in bodies)
+
+
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:
     """못 읽은 verdict는 `need_evidence`(보류)로 가고 **원문이 trace에 남는다**.
 
