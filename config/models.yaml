@@ -345,6 +345,8 @@ models:
     #   `Running: 1 reqs`의 중앙값, 237창)라 `output_max` 4,096을 다 쓰면 ≈308 s(계산값, 프리필 제외) —
     #   `_TIMEOUT_S` 300 s보다 길다. 그 run이 실제로 `scout_boundary` 호출 하나의 300,021 ms 타임아웃으로
     #   멈췄다(trace `model_call` · 이슈 #261).
+    #   ⏵ 2026-09-29 — 이 키는 이제 `request_timeout_s` 1,200 s를 선언한다(아래). 그래서 이 문단의 「넘는다」는
+    #   선언이 없던 때의 이야기다.
     # - 메모리(서버 로그): 가중치 15.27 GiB(로드 113 s) · 가중치+non-torch 16.05 GiB · util 0.20에서 KV
     #   7.69 GiB(55,952 tok — 16,384 길이에 3.42×). 기동 명령부터 서버가 `Starting vLLM server`를 찍기까지 132 s
     #   (기동 스크립트 로그의 시각 → 서버 로그의 시각).
@@ -525,6 +527,7 @@ models:
     # - **느리다.** 단일 요청 생성 **8.1 tok/s**(서버 로그 10초 창 중앙값, 106창) — `output_max` 4,096을 다 쓰면
     #   ≈506 s(계산값)라 `_TIMEOUT_S` 300 s 안에는 ≈2,430토큰까지다(이슈 #261). 그 run의 injection 호출 wall은
     #   중앙값 94.7 s · 최대 195.8 s였다.
+    #   ⏵ 2026-09-29 — 이 키는 이제 `request_timeout_s` 1,800 s를 선언한다(아래). 그래서 300 s는 이 키의 벽이 아니다.
     # - 메모리(서버 로그): 가중치 27.52 GiB(로드 160 s) · 가중치+non-torch 28.27 GiB · util 0.30에서 KV 7.37 GiB
     #   (48,256 tok — 16,384 길이에 2.95×). 기동 명령부터 `Starting vLLM server`까지 181 s.
     #   `seccoderx-8b`와 함께 떠 있는 동안 장비 `MemAvailable` 최저값이 49.1 GiB였다(감시자 로그).
