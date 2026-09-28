@@ -44,6 +44,7 @@ from src.schemas.evidence import Evidence
 
 RUN_ID = "run_20260901_0001"
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
+GDB_TARGET = Path(__file__).resolve().parent / "fixtures" / "gdb"
 OBSERVED_AT = datetime(2026, 9, 1, tzinfo=UTC)
 
 SANDBOX = SandboxSpec(
@@ -1113,6 +1114,33 @@ def test_real_container_splits_vulnerable_from_benign(tmp_path: Path) -> None:
 
     assert ours["parser.c"], "하네스 룰셋이 취약 표본을 잡지 못했다"
     assert not ours["util.c"], f"하네스 룰셋이 benign 표본을 잡았다: {ours['util.c']}"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker가 없다")
+def test_real_gdb_runs_clean_and_crashing_targets_without_ptrace_capability(tmp_path: Path) -> None:
+    """Docker 실경로: 자식 실행형 gdb는 capability 추가 없이 정상/신호 종료를 기록한다."""
+    try:
+        probe = subprocess.run(
+            ["docker", "image", "inspect", DEFAULT_IMAGE],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pytest.skip("docker 데몬이 응답하지 않는다")
+    if probe.returncode:
+        pytest.skip(f"{DEFAULT_IMAGE} 이미지가 없다")
+
+    runner = _runner(tmp_path, root=GDB_TARGET)
+    clean = runner.run("gdb", ToolArgs(argv=["gdb", "normal.c"], workdir="normal.c"), SANDBOX)
+    crash = runner.run("gdb", ToolArgs(argv=["gdb", "crash.c"], workdir="crash.c"), SANDBOX)
+
+    assert clean.ok and clean.kind is EvidenceKind.CRASH and clean.exit_code == 0
+    assert crash.ok and crash.kind is EvidenceKind.CRASH and crash.exit_code != 0
+    clean_log = tmp_path / RUN_ID / "gdb" / f"{clean.evidence_id}.log"
+    crash_log = tmp_path / RUN_ID / "gdb" / f"{crash.evidence_id}.log"
+    assert "exited normally" in clean_log.read_text(encoding="utf-8")
+    assert "Program received signal SIGSEGV" in crash_log.read_text(encoding="utf-8")
 
 
 def _rules_in(artifacts_root: Path, evidence: Evidence) -> list[str]:

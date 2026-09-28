@@ -157,7 +157,7 @@ UNENFORCED: dict[str, tuple[str, ...]] = {
 #
 # **아래 `_INDEX_SUFFIXES`와 일부러 갈라져 있다. 합치면 build가 깨진다.**
 # `.inc`는 `#include`로 펼쳐지는 함수 본문 조각이라 **단독 컴파일이 되지 않는다.**
-# clang 계열(build·clang-tidy·asan)은 `target.c`만 주면 전처리가 `.inc`를 끌어오므로
+# clang 계열(build·clang-tidy·asan·gdb)은 `target.c`만 주면 전처리가 `.inc`를 끌어오므로
 # 직접 줄 이유가 없고, 직접 주면 컴파일이 실패해 `ok=False`가 된다 —
 # **일어나지 않은 실패가 신호로 기록된다.**
 _COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
