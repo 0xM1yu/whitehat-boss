@@ -553,6 +553,7 @@ class Slicer(SlicingStages):
         worker = threading.Thread(target=heartbeat, daemon=True)
         self.event("query_start", stage=stage)
         worker.start()
+        timings = {}
         try:
             budget = self.settings.get("candidate_timeout_seconds")
             if budget is not None and self.candidate_started is not None:
@@ -561,6 +562,11 @@ class Slicer(SlicingStages):
                     raise QueryError("Candidate deadline exceeded")
                 self.client.timeout = min(left, original_timeout) if original_timeout else left
             data, logs = self.client.query(stage, query)
+            # A timed envelope (queries.TIMING) wraps the payload. Timings go to the progress
+            # log only: they change every run, so the checkpoint and `slices` never see them.
+            if isinstance(data, dict) and data.keys() == queries.TIMED_KEYS:
+                timings = {"timings": {k: data[k] for k in ("body_ms", "timings_ms", "counts")}}
+                data = data["value"]
             validate_payload(stage, data, logs)
             return data, logs
         except QueryError as exc:
@@ -586,7 +592,9 @@ class Slicer(SlicingStages):
             ended.set()
             worker.join()
             self.client.timeout = original_timeout
-            self.event("query_end", stage=stage, elapsed_seconds=time.perf_counter() - started)
+            self.event(
+                "query_end", stage=stage, elapsed_seconds=time.perf_counter() - started, **timings
+            )
 
     def load_sources(self) -> None:
         self.repo = self.repo.resolve()
