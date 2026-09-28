@@ -19,11 +19,21 @@
 #   내린 직후에는 메모리가 돌아올 때까지 MEM_WAIT_S까지 기다렸다가 판정한다.
 #
 # 안전장치 — 하나라도 걸리면 띄우지 않고 0이 아닌 코드로 끝난다(하네스가 run을 멈춘다).
-#   · 감시자(tools/serve/guard.sh)가 떠 있어야 띄운다.
+#   · 감시자(tools/serve/guard.sh)가 떠 있어야 띄우고, **감시자 하나는 run 하나만 지킨다.** 이 run이 처음
+#     띄울 때 감시자를 자기 것으로 적는다($SERVE_DIR/guard.owner = "감시자PID RUN_ID"). 다른 run이 이미 적은
+#     감시자 아래서는 띄우지 않는다. run 끝 내림(인자 없음)이 이 run 서버를 다 내리면 그 감시자를 멈춘다
+#     (STOP_GUARD) — 다음 run은 새 감시자를 띄운다. 교대 중간(내리고 띄우기 전)에는 멈추지 않는다 — 인자
+#     없는 호출에서만. 그래서 끝난 run의 감시자 마감이 다음 run 서버를 죽이지 않는다.
+#     아무것도 띄우지 않은 run(모델 전 단계에서 끝남)은 감시자를 적지 않아 멈추지도 않는다 — 다음 run이 그
+#     감시자를 쓰고, 마감은 그 감시자가 뜬 때부터다.
 #   · 이 run 밖의 GPU 프로세스(nvidia-smi compute-apps)가 있으면 띄우지 않는다 — 남의 서버도, 지난 run의
 #     고아도. ⚠ 컨테이너에서 nvidia-smi가 호스트 PID를 내면 자기 서버도 남으로 보여 멈춘다(안전한 쪽).
 #   · 포트가 이미 쓰이면 띄우지 않는다 — 남의 서버에 준비 확인이 붙는 것을 막는다.
 #   · registry source에 @rev가 없으면 띄우지 않는다.
+#
+# SERVERS 한 줄 = "KEY PGID RUN_ID STARTTIME". STARTTIME은 그룹 리더의 /proc/<pid>/stat 22번 필드다. 리더가
+# 살아 있는데 값이 다르면 그 번호를 남이 물려받은 것이라 건드리지 않고 행만 지운다. 리더가 없고 구성원만 남았으면
+# 우리 그룹이다 — PGID로 쓰이는 동안 그 번호는 재사용되지 않는다(POSIX 「process group lifetime」).
 #
 # 준비 판정: 채팅 1토큰 요청이 200 → `/v1/models`에 그 이름이 있고 max_model_len = 장비 파일 창.
 # 기동은 한 번에 하나씩이다(동시에 띄우면 메모리 프로파일링이 서로를 센다). vLLM stdout·stderr는 기동마다
@@ -37,7 +47,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT" # 하네스 인터프리터가 `src`를 import한다
 D="${SERVE_DIR:-$HOME/harness-serve}"
-SERVERS="$D/servers" # 한 줄에 "KEY PGID RUN_ID"
+SERVERS="$D/servers" # 한 줄에 "KEY PGID RUN_ID STARTTIME"
+OWNER="$D/guard.owner" # "감시자PID RUN_ID" — 그 감시자가 지키는 run
 VLLM="${VLLM_BIN:-vllm}"
 PY="${HARNESS_PYTHON:-python3}"
 RUN_ID="${HARNESS_RUN_ID:-}"
@@ -64,7 +75,8 @@ touch "$SERVERS"
 
 log() { echo "$(date -u +%FT%TZ) [$RUN_ID] $*" | tee -a "$D/logs/swap.log" >&2; }
 str() { REPORT+=("s|$1=$2"); } # 보고 필드 — 문자열
-num() { REPORT+=("j|$1=$2"); } # 보고 필드 — JSON 값(수·참거짓·목록)
+num() { REPORT+=("j|$1=$2"); } # 보고 필드 — JSON 값(수·참거짓)
+item() { REPORT+=("l|$1=$2"); } # 보고 필드 — 문자열 목록에 하나 더한다(빈 값이면 빈 목록만 만든다)
 fail() {
   ERROR=$1
   log "ABORT: $1"
@@ -92,7 +104,11 @@ for item in sys.argv[1:]:
     *parents, leaf = path.split("/")
     for part in parents:
         node = node.setdefault(part, {})
-    if not raw:
+    if kind == "l":
+        items = node.setdefault(leaf, [])
+        if raw:
+            items.append(raw)
+    elif not raw:
         node[leaf] = None
     elif kind == "j":
         node[leaf] = json.loads(raw)
@@ -186,25 +202,36 @@ procs_in() { # PGID들 → 그 그룹에 산 프로세스(좀비 제외)의 PID.
   }' || true
 }
 
-alive() { [ -n "$(procs_in "$1")" ]; }
+starttime() { sed 's/.*) //' "/proc/$1/stat" 2> /dev/null | awk '{print $20}'; }
 
-ours() { awk -v r="$RUN_ID" '$3 == r {print $1, $2}' "$SERVERS"; }
+group_ok() { # $1 PGID $2 기록한 STARTTIME — 그 번호가 아직 우리 그룹을 가리키는가(모듈 머리 주석)
+  [ ! -e "/proc/$1/stat" ] || [ "$(starttime "$1")" = "${2:-}" ]
+}
+
+alive() { group_ok "$1" "${2:-}" && [ -n "$(procs_in "$1")" ]; }
+
+ours() { awk -v r="$RUN_ID" '$3 == r {print $1, $2, $4}' "$SERVERS"; }
 
 forget() {
   awk -v k="$1" -v r="$RUN_ID" '!($1 == k && $3 == r)' "$SERVERS" > "$SERVERS.tmp"
   mv "$SERVERS.tmp" "$SERVERS"
 }
 
-stop_group() { # TERM → TERM_WAIT_S 안에 안 죽으면 KILL → 그룹이 빌 때까지 KILL_WAIT_S
-  local pg=$1 i
+stop_group() { # $1 PGID $2 STARTTIME. TERM → TERM_WAIT_S 안에 안 죽으면 KILL → 그룹이 빌 때까지 KILL_WAIT_S
+  local pg=$1 start=${2:-} i
+  if ! group_ok "$pg" "$start"; then
+    log "pgid $pg는 남이 물려받았다(시작 시각이 다르다) — 건드리지 않고 행만 지운다"
+    return 0
+  fi
   kill -TERM -- "-$pg" 2> /dev/null || return 0
   for ((i = 0; i < TERM_WAIT_S; i++)); do
-    alive "$pg" || return 0
+    alive "$pg" "$start" || return 0
     sleep 1
   done
+  log "pgid $pg가 TERM ${TERM_WAIT_S}s 안에 안 끝났다 — KILL"
   kill -KILL -- "-$pg" 2> /dev/null || true
   for ((i = 0; i < KILL_WAIT_S; i++)); do
-    alive "$pg" || return 0
+    alive "$pg" "$start" || return 0
     sleep 1
   done
   return 1
@@ -212,7 +239,7 @@ stop_group() { # TERM → TERM_WAIT_S 안에 안 죽으면 KILL → 그룹이 �
 
 foreign_check() { # 이 run 밖의 GPU 프로세스가 있으면 멈춘다
   local mine listed foreign
-  mine=$(procs_in $(awk -v r="$RUN_ID" '$3 == r {print $2}' "$SERVERS"))
+  mine=$(procs_in $(ours | while read -r _ pg start; do group_ok "$pg" "$start" && echo "$pg"; done))
   listed=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2> /dev/null | tr -d ' ') || listed=""
   foreign=$(printf '%s\n' "$listed" | grep -vxF -f <(printf '%s\n' $mine 0) | grep . || true)
   if [ -n "$foreign" ]; then
@@ -220,7 +247,39 @@ foreign_check() { # 이 run 밖의 GPU 프로세스가 있으면 멈춘다
   fi
 }
 
-guard_alive() { [ -f "$D/guard.pid" ] && kill -0 "$(cat "$D/guard.pid")" 2> /dev/null; }
+guard_pid() { cat "$D/guard.pid" 2> /dev/null || true; }
+
+guard_alive() { # 떠 있고 멈추는 중(STOP_GUARD)이 아니다
+  local gp
+  gp=$(guard_pid)
+  [ -n "$gp" ] && kill -0 "$gp" 2> /dev/null && [ ! -e "$D/STOP_GUARD" ]
+}
+
+owner() { # 지금 감시자가 지키는 run — 옛 감시자가 적은 줄은 무효다
+  local gp p r
+  gp=$(guard_pid)
+  [ -n "$gp" ] && [ -f "$OWNER" ] && read -r p r < "$OWNER" && [ "$p" = "$gp" ] && echo "$r"
+}
+
+claim_guard() { # 띄우기 전 — 감시자가 이 run 것이 아니면 멈춘다(모듈 머리 주석)
+  local held
+  guard_alive || fail "감시자가 안 떠 있다 — tools/serve/guard.sh를 먼저 띄운다(run마다 하나 — run 끝 내림이 멈춘다)"
+  held=$(owner) || held=""
+  if [ -n "$held" ] && [ "$held" != "$RUN_ID" ]; then
+    fail "감시자(pid $(guard_pid))는 run $held를 지킨다 — 감시자 하나는 run 하나만 지킨다. 그 run의 서버를 내리고(HARNESS_RUN_ID=$held bash tools/serve/swap.sh) 새 감시자를 띄운다"
+  fi
+  echo "$(guard_pid) $RUN_ID" > "$OWNER"
+}
+
+release_guard() { # run 끝 내림 뒤 — 이 run이 지키게 한 감시자를 멈춘다. 이 run 서버가 남았으면 안 멈춘다
+  local held
+  held=$(owner) || return 0
+  [ "$held" = "$RUN_ID" ] && [ -z "$(ours)" ] || return 0
+  touch "$D/STOP_GUARD"
+  rm -f "$OWNER"
+  str guard stopped
+  log "감시자 $(guard_pid)를 멈춘다 — run $RUN_ID의 서버를 다 내렸다"
+}
 
 port_busy() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
 
@@ -284,7 +343,7 @@ PY
 }
 
 launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 때까지 본다. 안 되면 ATTEMPTS까지 다시.
-  local attempt logf pid t0 now window
+  local attempt logf pid start t0 now window
   local -a args=(serve "$repo" --revision "$rev" --served-model-name "$key" --host 127.0.0.1
     --port "$port" --gpu-memory-utilization "$util" --max-model-len "$maxlen"
     --max-num-seqs "$seqs" "${extra[@]}")
@@ -306,7 +365,8 @@ launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 �
     # 9>&- — 서버가 잠금 fd를 물려받으면 살아 있는 동안 잠금이 안 풀려 다음 교대가 못 들어온다.
     env "${envs[@]}" setsid "$VLLM" "${args[@]}" > "$logf" 2>&1 < /dev/null 9>&- &
     pid=$!
-    echo "$key $pid $RUN_ID" >> "$SERVERS" # 준비 전에 적는다 — 여기서 끊겨도 run 끝 내림이 내린다
+    start=$(starttime "$pid")
+    echo "$key $pid $RUN_ID $start" >> "$SERVERS" # 준비 전에 적는다 — 여기서 끊겨도 run 끝 내림이 내린다
     while :; do
       if probe_chat; then
         window=$(served_window) || fail "$key: 채팅은 답하는데 /v1/models 확인이 실패했다(위 stderr)"
@@ -321,7 +381,7 @@ launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 �
         log "ready $key after $((now - t0))s"
         return 0
       fi
-      if ! alive "$pid"; then
+      if ! alive "$pid" "$start"; then
         log "DIED $key (attempt $attempt) — $logf 꼬리:"
         tail -25 "$logf" >&2 || true
         break
@@ -336,7 +396,7 @@ launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 �
       fi
       sleep "$POLL_S"
     done
-    stop_group "$pid" || fail "$key 프로세스 그룹 $pid가 KILL 뒤에도 남았다" 3
+    stop_group "$pid" "$start" || fail "$key 프로세스 그룹 $pid가 KILL 뒤에도 남았다" 3
     forget "$key"
   done
   fail "$key가 ${ATTEMPTS}번 다 안 떴다 — 마지막 로그 $logf" 3
@@ -347,7 +407,8 @@ launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 �
 [[ "$RUN_ID" =~ ^[A-Za-z0-9._-]+$ ]] || fail "HARNESS_RUN_ID가 없거나 파일 이름에 못 쓰는 글자가 있다: '$RUN_ID'"
 str run_id "$RUN_ID"
 str device "$DEVICE"
-if [ $# -eq 0 ]; then num models "[]"; else num models "[$(printf '"%s",' "$@" | sed 's/,$//')]"; fi
+item models ""
+for key in "$@"; do item models "$key"; done
 
 exec 9>> "$D/swap.lock"
 flock -w "$(remaining)" 9 || fail "교대 잠금($D/swap.lock)을 마감 안에 못 잡았다 — 다른 교대가 돌고 있다"
@@ -358,25 +419,26 @@ log "swap → [${*:-전부 내림}] memory=$MEM_KIND"
 
 # 1) 이 run의 서버 중 원하지 않는 것과 죽은 것을 내린다.
 wanted=" $* "
-while read -r key pg; do
-  if [[ "$wanted" == *" $key "* ]] && alive "$pg"; then continue; fi
+while read -r key pg start; do
+  if [[ "$wanted" == *" $key "* ]] && alive "$pg" "$start"; then continue; fi
   log "stop $key (pgid $pg)"
-  stop_group "$pg" || fail "$key 프로세스 그룹 $pg가 KILL 뒤에도 남았다" 3
+  stop_group "$pg" "$start" || fail "$key 프로세스 그룹 $pg가 KILL 뒤에도 남았다" 3
   forget "$key"
   str "server/$key/action" stop
 done < <(ours)
+if [ $# -eq 0 ]; then release_guard; fi
 
 # 2) 원하는 것 — 떠 있으면 요청 한 건으로 확인해 두고, 없으면 하나씩 띄운다.
 if [ $# -gt 0 ]; then
   [ -n "$DEVICE" ] || fail "HARNESS_DEVICE가 없다 — 어느 장비 파일로 띄울지 모른다"
-  guard_alive || fail "감시자가 안 떠 있다 — tools/serve/guard.sh를 먼저 띄운다"
+  claim_guard
 fi
 for key in "$@"; do
   spec=$(row "$key") || fail "장비 파일·registry에서 $key를 못 읽었다(위 stderr)"
   eval "$spec"
   [ "$probe" = chat ] || fail "$key: 준비 판정 $probe는 교대 대상이 아니다 — 검색 모델은 교대하지 않는다"
   [ -n "$rev" ] || fail "$key: registry source에 @rev가 없다 — revision 없이 띄우지 않는다"
-  pg=$(ours | awk -v k="$key" '$1 == k {print $2}')
+  read -r pg start < <(ours | awk -v k="$key" '$1 == k {print $2, $3}') || pg=""
   if [ -n "$pg" ]; then
     if probe_chat; then
       log "keep $key"
@@ -384,7 +446,7 @@ for key in "$@"; do
       continue
     fi
     log "stale $key — 응답이 없어 다시 띄운다"
-    stop_group "$pg" || fail "$key 프로세스 그룹 $pg가 KILL 뒤에도 남았다" 3
+    stop_group "$pg" "$start" || fail "$key 프로세스 그룹 $pg가 KILL 뒤에도 남았다" 3
     forget "$key"
   fi
   launch
