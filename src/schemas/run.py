@@ -92,7 +92,7 @@ class ModelSampling(HarnessModel):
 
 
 class CompileFlags(HarnessModel):
-    """그 run의 clang 계열 도구(build·clang-tidy·asan)가 쓴 컴파일 조건 (#74).
+    """그 run의 clang 계열 도구(build·clang-tidy·asan·gdb)가 쓴 컴파일 조건 (#74).
 
     **왜 남기나.** `container_tools._STD_ARGS` 주석이 자기 자신에 대해 이미 적어 뒀다 —
     *"판정 임계값은 아니지만 **분석 결과를 바꾸므로 조건 간 비교에 영향을 준다**"*.
