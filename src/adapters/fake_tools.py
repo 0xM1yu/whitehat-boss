@@ -27,6 +27,7 @@ TOOL_KINDS: dict[str, EvidenceKind] = {
     "clang-tidy": EvidenceKind.STATIC,
     "build": EvidenceKind.BUILD,
     "asan": EvidenceKind.SANITIZER,
+    "gdb": EvidenceKind.CRASH,
     "poc": EvidenceKind.POC_RUN,
     "index": EvidenceKind.GRAPH,
 }
@@ -229,4 +230,4 @@ def sources(workdir: Path) -> list[Path]:
 
 
 _STATIC_TOOLS = frozenset({"semgrep", "clang-tidy"})
-_REPRO_TOOLS = frozenset({"asan", "poc"})
+_REPRO_TOOLS = frozenset({"asan", "gdb", "poc"})

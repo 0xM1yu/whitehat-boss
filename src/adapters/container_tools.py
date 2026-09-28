@@ -40,7 +40,7 @@ Singularity 3.7.3은 `cpu_limit`·`memory_mb`를 강제하지 못한다(HPC에�
 생기면 그때 거절해야 한다(`container_argv` 주석). `UNENFORCED`에 넣지 않은 것은 그쪽이
 "강제하지 **못하는** 항목"이고 이것은 "**끌 수 없는** 항목"이라 뜻이 반대이기 때문이다.
 
-## asan·poc는 실행까지 성공해야 ok=True다
+## asan·gdb·poc는 실행까지 성공해야 ok=True다
 
 Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다. 컴파일 성공을
 실행으로 세면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.** 그래서 `ok=False`로
@@ -114,7 +114,7 @@ from src.schemas.run import CompileFlags
 # 않으므로(engineering-guide.md §3) 값을 복제하고 tests/test_container_tools.py가 대조한다.
 # v2부터 인덱서가 index-v2(조회 표)를 낸다 — v1 이미지는 지우지 않는다(지난 run 매니페스트가
 # 그 digest를 적었다).
-DEFAULT_IMAGE = "harness-tools:v2"
+DEFAULT_IMAGE = "harness-tools:v3"
 
 # 컨테이너 안 경로. 분석 대상은 항상 읽기 전용이고, 쓰기는 scratch 한 곳에서만 일어난다.
 MOUNT = "/src"
@@ -129,6 +129,9 @@ SEMGREP_CONFIGS = ("/opt/semgrep-rules/c", "/opt/semgrep-rules/harness")
 # `index_output_path()` 하나다 — `adapters/index_graph.py`가 읽는다(이슈 #63).
 _INDEXER = "/opt/indexer.py"
 INDEX_FILE = "index.json"
+
+# 이미지에 구워 넣은 비대화형 gdb 명령 파일. pwndbg 같은 UI 확장을 기본 경로에 싣지 않는다.
+_GDB_SCRIPT = "/opt/gdb.batch"
 
 # scratch 하위 디렉터리 이름은 도구 이름이다(`_execute`가 `tool`로 만든다).
 # `nodes/index.INDEX_TOOL`과 같은 값이어야 하지만 어댑터는 오케스트레이터를 import 하지
@@ -228,7 +231,7 @@ _SEMGREP_OK = (0, 1)
 _EXEC_FAILED = (125, 126, 127)
 
 # 실행 흔적을 만드는 도구. 마지막 명령이 "실제로 뜬 프로그램"이다.
-_RUNTIME_TOOLS = frozenset({"asan", "poc"})
+_RUNTIME_TOOLS = frozenset({"asan", "gdb", "poc"})
 
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
 _TIMEOUT_EXIT = 124
@@ -264,7 +267,7 @@ class Step:
 
 
 def sif_path(sif_dir: Path, image: str) -> Path:
-    """`harness-tools:v2` → `{sif_dir}/harness-tools_v2.sif`."""
+    """`harness-tools:v3` → `{sif_dir}/harness-tools_v3.sif`."""
     return Path(sif_dir) / f"{image.replace('/', '_').replace(':', '_')}.sif"
 
 
@@ -407,6 +410,31 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
                 cwd=SCRATCH,
             ),
             Command([binary], cwd=SCRATCH),
+        ]
+    if tool == "gdb":
+        _require_sources(tool, compile_sources)
+        # gdb도 실행 파일 하나를 링크한다. 언어별로 나눠 같은 `-o`를 두 번 쓰면 마지막
+        # 언어만 남은 바이너리를 디버깅하게 되므로, asan과 같은 이유로 혼합 대상을 거절한다.
+        groups = _by_language(compile_sources)
+        if len(groups) > 1:
+            raise ValueError(f"{tool}: C와 C++이 섞인 대상은 링크 규칙이 없다 (#75)")
+        language, sources_ = groups[0]
+        binary = f"{SCRATCH}/gdb.bin"
+        return [
+            Command(
+                [
+                    "clang", "-g", "-O0", "-fno-omit-frame-pointer",
+                    _STD_ARGS[language], *_include_args(cwd), "-o", binary, *sources_,
+                ],
+                cwd=SCRATCH,
+            ),
+            Command(
+                [
+                    "gdb", "--nx", "-batch", "--return-child-result",
+                    "-x", _GDB_SCRIPT, "--", binary,
+                ],
+                cwd=SCRATCH,
+            ),
         ]
     if tool == "poc":
         # PoC 실행 파일을 만드는 주체가 아직 없다(STATUS.md §5 PoV). 없는 것을 성공으로
@@ -1017,7 +1045,7 @@ def _include_args(cwd: str) -> list[str]:
     관측된 20건을 전부 덮는다 — `zlib.h`·`zutil.h`는 대상 루트에 있고, 로컬 헤더는
     artifact 디렉터리에 있다.
 
-    **세 도구(build·clang-tidy·asan)가 같은 값을 받아야 한다.** `_STD_ARGS` 주석이 방언에
+    **네 도구(build·clang-tidy·asan·gdb)가 같은 값을 받아야 한다.** `_STD_ARGS` 주석이 방언에
     대해 적어 둔 이유가 그대로 걸린다 — 갈리면 같은 파일에 대한 두 진단이 어긋나고, 그
     차이가 코드의 성질인지 우리 플래그의 산물인지 구분할 수 없다.
 

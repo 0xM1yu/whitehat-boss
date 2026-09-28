@@ -894,7 +894,10 @@ def test_the_tool_image_installs_and_smokes_gdb_batch_mode() -> None:
     ).read_text(encoding="utf-8")
 
     assert "gdb" in dockerfile
-    assert "gdb --nx -batch -x /opt/gdb.batch -- /tmp/gdb-smoke" in dockerfile
+    assert (
+        "gdb --nx -batch --return-child-result -x /opt/gdb.batch -- /tmp/gdb-smoke"
+        in dockerfile
+    )
 
 
 def test_the_adapter_compares_against_the_constant_not_a_literal() -> None:
