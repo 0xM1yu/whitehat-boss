@@ -424,7 +424,11 @@ class Dependencies(Protocol):
     resolve_requests: Callable[[ResolveQuery], Resolution] | None
     # 단계 경계 모델 교대 (ADR 0012 Phase 6.5 — 콜드 재기동). `keys`만 떠 있게 하고 교대 명령의
     # 보고를 스칼라 dict로 돌려준다(`model_swap` 이벤트의 `report.*`). `keys`가 비면 전부 내린다.
-    # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다. `None`이면 교대가 없는 run이다 —
+    # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다 — **러너는 단계 진입 교대에서 이 계약을
+    # 믿는다.** 그 밖의 예외는 정지 갈래가 못 잡아 매니페스트 없이 `run_pipeline` 밖으로 샌다
+    # (`models`의 계약 밖 예외와 같은 대우다). 계약은 구현이 지킨다 — 실 구현
+    # `src/adapters/model_swap.py`가 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. run 끝
+    # 내림만은 `finally`라 무엇이든 경고로 줄인다(`run_pipeline`). `None`이면 교대가 없는 run이다 —
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
     # 어댑터가 하고 러너는 이 콜러블만 받는다(`resolve_requests`와 같은 자리).
     swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None
@@ -805,7 +809,8 @@ def run_pipeline(
     except ModelSwapError as exc:
         # **아래 게이트웨이 갈래보다 먼저 잡는다** — `ModelSwapError`는 그 하위형이다. 떠 있던
         # 서버가 죽은 것이 아니라 다음 단계 서버를 띄우지 못한 것이라 대응이 다르다(장비 파일과
-        # 교대 명령의 로그를 본다). `model_swap ok=false`는 `_swap`이 이미 남겼다.
+        # 교대 명령의 로그를 본다). 교대(`_swap`)에서 난 실패면 `model_swap ok=false`가 이미
+        # 남았다 — 교대 밖에서 올라온 것(방어선 경로)에는 그 이벤트가 없다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.MODEL_SWAP_FAILED
         warnings.append(f"모델 교대가 실패해 중단했다: {error_detail(exc)}")
@@ -839,11 +844,19 @@ def run_pipeline(
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
         # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
         # 교대 명령은 자기 run의 서버만 내리고 떠 있는 것이 없으면 아무것도 안 한다.
+        #
+        # **여기서는 `ModelSwapError`만 잡지 않는다.** `finally`에서 새는 예외는 run의 결과(아래
+        # 매니페스트)와 원래 예외를 통째로 덮는다. 그래서 교대 콜러블이 계약 밖 예외를 내도,
+        # `_swap`이 `ok=false`를 기록하다 실패해도 경고 하나로 줄인다. `ModelSwapError`면 `_swap`이
+        # `ok=false`를 trace에 먼저 남겼고, 그 밖의 예외면 이 경고가 유일한 흔적이다.
+        # `BaseException`(인터럽트)은 잡지 않는다 — 그때는 원래 예외도 결과도 덮인다.
         try:
             _swap(ctx, (), stage=None)
-        except ModelSwapError as exc:
-            # 내림 실패가 원래 결과(예외)를 가리지 않는다 — `ok=false`는 trace에 남았다.
-            warnings.append(f"run 끝 모델 내림이 실패했다 — 서버가 남았을 수 있다: {exc}")
+        except Exception as exc:
+            warnings.append(
+                "run 끝 모델 내림이 예외로 끝났다 — 서버가 남았을 수 있다: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -2017,7 +2030,9 @@ def _swap_for(ctx: RunContext, stage: Stage) -> None:
 
 
 def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> None:
-    """교대 한 번을 부르고 `model_swap`을 남긴다. 실패면 `ok=false`를 **먼저** 남기고 올려 보낸다.
+    """교대 한 번을 부르고 `model_swap`을 남긴다. 실패(`ModelSwapError`)면 `ok=false`를 **먼저**
+    남기고 올려 보낸다. 그 밖의 예외는 남기지 않고 그대로 올린다 — 계약 밖이다
+    (`Dependencies.swap_to`).
 
     교대 콜러블이 없는 run(교대 없음)에서는 아무것도 안 한다.
     """

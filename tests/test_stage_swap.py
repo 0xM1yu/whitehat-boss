@@ -7,6 +7,7 @@ config만 역할을 실서빙 모양의 키(엔드포인트가 `fake://`가 아�
 
 import dataclasses
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,11 +57,17 @@ class _Rig:
     """가짜 교대 + 호출 감시. 교대가 올린 키를 들고, 호출마다 그 역할의 키가 떠 있는지 본다."""
 
     def __init__(
-        self, config: HarnessConfig, models: object, *, fail_at: int | None = None
+        self,
+        config: HarnessConfig,
+        models: object,
+        *,
+        fail_at: int | None = None,
+        error: Exception | None = None,
     ) -> None:
         self.config = config
         self._models = models
         self._fail_at = fail_at
+        self._error = error
         self.up: frozenset[str] = frozenset()
         self.swaps: list[tuple[str, ...]] = []
         self.calls: list[tuple[str, str]] = []
@@ -69,7 +76,7 @@ class _Rig:
     def swap_to(self, keys: tuple[str, ...]) -> dict[str, object]:
         self.swaps.append(keys)
         if self._fail_at == len(self.swaps):
-            raise ModelSwapError("가짜 교대 실패", report={"server.x.load_s": 3})
+            raise self._error or ModelSwapError("가짜 교대 실패", report={"server.x.load_s": 3})
         self.up = frozenset(keys)
         return {"ok": True, "models": " ".join(keys)}
 
@@ -234,10 +241,33 @@ def test_a_run_that_fails_elsewhere_still_tears_down(tmp_path: Path) -> None:
     assert rig.swaps[-1] == ()
 
 
+class _Unforeseen(Exception):
+    """표준 예외 계층 밖의 `Exception` — 「`Exception`을 잡는다」를 철자가 아니라 성질로 문다.
+
+    `RuntimeError`만 두면 `except (ModelSwapError, RuntimeError)`로 좁혀도 초록이다(2026-09-29
+    적대적 리뷰 실측). 어떤 표준 예외도 상속하지 않아 그 튜플 어디에도 안 걸린다.
+    """
+
+
+# 내림 실패의 모양 — 계약대로(`ModelSwapError`)와 계약 밖(날것 · 표준 계층 밖). 러너의 `finally`는
+# 교대 콜러블이 계약을 지킨다고 믿지 않는다 — 거기서 새는 예외는 run의 결과·원래 예외를 덮는다.
+# 인스턴스를 테스트마다 새로 만든다 — 한 번 올린 예외는 `__context__`·`__traceback__`를 든다.
+_TEARDOWN_ERRORS = pytest.mark.parametrize(
+    "make_error",
+    [
+        lambda: ModelSwapError("가짜 내림 실패"),
+        lambda: RuntimeError("계약 밖 내림 실패"),
+        lambda: _Unforeseen("표준 계층 밖 내림 실패"),
+    ],
+    ids=["swap-error", "raw-error", "unforeseen-error"],
+)
+
+
+@_TEARDOWN_ERRORS
 def test_a_failed_teardown_does_not_hide_the_original_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception]
 ) -> None:
-    """내림이 실패해도 원래 예외가 올라간다 — 내림 실패는 trace의 `ok=false`로만 남는다."""
+    """내림이 실패해도 원래 예외가 올라간다 — 내림 실패는 경고로 남고 원래 예외를 바꾸지 않는다."""
 
     class _Boom(RuntimeError):
         pass
@@ -251,12 +281,36 @@ def test_a_failed_teardown_does_not_hide_the_original_error(
         load_config("dev_fake"), run_id=RUN_ID, source_root=TARGET,
         artifacts_root=tmp_path / "artifacts",
     ).models  # fmt: skip
-    rig = _Rig(config, inner, fail_at=4)  # 4번째 = run 끝 내림
+    rig = _Rig(config, inner, fail_at=4, error=make_error())  # 4번째 = run 끝 내림
 
     with pytest.raises(_Boom):
         _run(tmp_path, config, rig=rig)
 
     assert rig.swaps == [(SCOUT,), (AUDITOR,), (CRITIC,), ()]
+
+
+@_TEARDOWN_ERRORS
+def test_a_failed_teardown_still_writes_the_manifest_of_a_finished_run(
+    tmp_path: Path, make_error: Callable[[], Exception]
+) -> None:
+    """완주한 run의 run 끝 내림이 실패해도 매니페스트까지 가고 경고가 남는다 — 내림 실패가
+    `run_pipeline` 밖으로 새면 8단계까지 돈 run이 산출물 없이 사라진다."""
+    config = _config()
+    inner = build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+    ).models  # fmt: skip
+    error = make_error()
+    rig = _Rig(config, inner, fail_at=4, error=error)  # 4번째 = run 끝 내림
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [(SCOUT,), (AUDITOR,), (CRITIC,), ()]
+    assert result.record.stopped_after is None, "내림 실패가 완주를 중단으로 바꿨다"
+    assert (tmp_path / "artifacts" / RUN_ID / "run_manifest.json").exists()
+    assert any(
+        "run 끝 모델 내림" in warning and str(error) in warning for warning in result.warnings
+    )
 
 
 # --- 교대 콜러블 없이 모델에 닿는 run ---------------------------------------------------
