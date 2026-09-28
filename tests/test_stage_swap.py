@@ -241,13 +241,25 @@ def test_a_run_that_fails_elsewhere_still_tears_down(tmp_path: Path) -> None:
     assert rig.swaps[-1] == ()
 
 
-# 내림 실패의 두 모양 — 계약대로(`ModelSwapError`)와 계약 밖(날것). 러너의 `finally`는 교대
-# 콜러블이 계약을 지킨다고 믿지 않는다 — 거기서 새는 예외는 run의 결과·원래 예외를 덮는다.
+class _Unforeseen(Exception):
+    """표준 예외 계층 밖의 `Exception` — 「`Exception`을 잡는다」를 철자가 아니라 성질로 문다.
+
+    `RuntimeError`만 두면 `except (ModelSwapError, RuntimeError)`로 좁혀도 초록이다(2026-09-29
+    적대적 리뷰 실측). 어떤 표준 예외도 상속하지 않아 그 튜플 어디에도 안 걸린다.
+    """
+
+
+# 내림 실패의 모양 — 계약대로(`ModelSwapError`)와 계약 밖(날것 · 표준 계층 밖). 러너의 `finally`는
+# 교대 콜러블이 계약을 지킨다고 믿지 않는다 — 거기서 새는 예외는 run의 결과·원래 예외를 덮는다.
 # 인스턴스를 테스트마다 새로 만든다 — 한 번 올린 예외는 `__context__`·`__traceback__`를 든다.
 _TEARDOWN_ERRORS = pytest.mark.parametrize(
     "make_error",
-    [lambda: ModelSwapError("가짜 내림 실패"), lambda: RuntimeError("계약 밖 내림 실패")],
-    ids=["swap-error", "raw-error"],
+    [
+        lambda: ModelSwapError("가짜 내림 실패"),
+        lambda: RuntimeError("계약 밖 내림 실패"),
+        lambda: _Unforeseen("표준 계층 밖 내림 실패"),
+    ],
+    ids=["swap-error", "raw-error", "unforeseen-error"],
 )
 
 
