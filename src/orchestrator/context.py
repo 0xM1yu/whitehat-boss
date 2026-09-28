@@ -13,7 +13,7 @@
 받으며 어댑터 조립은 `src/adapters/factory.py`가 한다(engineering-guide.md §3).
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
 
@@ -54,6 +54,11 @@ _NO_TOKENS = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
 
 def _default_monotonic_ms() -> int:
     return int(perf_counter() * 1000)
+
+
+def _trace_scalar(value: object) -> str:
+    """발급값 필드를 trace 값(스칼라)으로 — ID 리스트(`missing_evidence`)는 쉼표로 잇는다."""
+    return ",".join(value) if isinstance(value, list) else str(value)
 
 
 def _unwired_read_source(_target: Location) -> str:
@@ -360,6 +365,55 @@ class RunContext:
             )
             result = result.model_copy(update={"value": tagged})
         return result
+
+    def stamp_issued(
+        self,
+        value: SchemaT,
+        issued: Mapping[str, object],
+        *,
+        stage: Stage,
+        subject_kind: str,
+        subject_id: str,
+    ) -> SchemaT:
+        """**하네스가 발급한 값을 모델 출력 위에 도장 찍는다** (이슈 #279).
+
+        논거는 `call_model`의 `produced_by`·`scout_member` 도장과 같다 — 그 값의 원천이 모델이
+        아니라 하네스다. ID(`candidate_id`·`finding_id`)는 노드가 `ids.next()`로 발급해 사실
+        블록에 싣고, `run_id`·`artifact_id`도 사실 블록의 값이며, 생성 시점 `state`는 전이 표의
+        생성 행(C-1 `candidate`·F-1 `hypothesized`)이 정한다. 모델은 그것을 베낄 뿐인데 스키마가
+        그 필드를 요구하니 구조화 출력이 채운다. 안 베끼면 두 갈래로 샌다:
+
+        - `state` — 스키마가 받는 값(`triaged`·`queued` 등)이라 파싱은 통과하고, `create()`의
+          생성 행 조회에서 `IllegalTransition`이 난다. 그 예외를 잡는 곳이 없어 run이
+          매니페스트 없이 끝난다.
+        - ID·`run_id` — 저장소 `put()`이 `(kind, obj_id)` upsert라 남의 ID면 **예외 없이** 그
+          행을 덮는다. `transition`의 `subject_id`도 모델 값을 따라간다.
+
+        그래서 맞아 오기를 기대하지 않고 **저장 전에 매번 덮는다.** 부르는 곳은 둘이다 —
+        Scout의 `_call_hop`(v1·v2·v3, hop0·hop k 전부)과 Auditor의 `run`. Critic은 처음부터
+        ID를 모델 스키마에서 뺐다(`DecisionDraft`).
+
+        **달랐던 필드는 덮기 전에 `issued_override`로 남긴다** — 모델이 사실 블록을 안 따랐다는
+        관측이고, 덮고 나면 그 사실이 산출물 어디에도 없다. 모델이 쓴 원래 값을 `written.<필드>`로
+        싣는다 — `TraceValue`가 스칼라라 리스트는 `,`로 잇는다. 같으면 이벤트가 없다.
+
+        **재검증으로 덮는다 — `model_copy(update=)`가 아니다.** `state`를 덮으므로 위 `produced_by`
+        블록이 적은 경계에 걸린다 — 그 호출은 `Finding._promoted_states_need_backing`을 우회한다.
+        `HarnessModel.transition()`과 같은 식이되 반환 타입(`SchemaT`)을 살리려고 여기서 직접 쓴다.
+
+        **`location`은 덮지 않는다** — 발급값이 아니라 모델이 사실 블록의 대상을 옮겨 적는 값이다.
+        """
+        differed = [name for name, want in issued.items() if getattr(value, name) != want]
+        if differed:
+            self.trace.emit(
+                EventKind.ISSUED_OVERRIDE,
+                stage=stage,
+                subject_kind=subject_kind,
+                subject_id=subject_id,
+                fields=",".join(differed),
+                **{f"written.{name}": _trace_scalar(getattr(value, name)) for name in differed},
+            )
+        return type(value).model_validate({**value.model_dump(), **issued})
 
     def _record_prompt(
         self,
