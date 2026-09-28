@@ -339,8 +339,8 @@ def candidates_a_query() -> str:
       // discriminate. hotIds is computed once (Set), so the sort key is an O(1) lookup, not a
       // per-method AST walk. Same cap, same count: this reorders, it does not add candidates.
       val hotIds = (cpg.call.name("({WRITERS}|{EXEC_SINKS})").method.id.l ++
-        cpg.call.nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall
-          .name("<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
+        cpg.call.nameExact("<operator>.assignment").filter(_.argument(1).isCall.name(
+          "<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
           .nonEmpty).method.id.l).toSet
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
         .filter(m =>
@@ -390,17 +390,13 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
       // depth-first: take the 1st anchor of EVERY method, then the 2nd of every method, ... up
       // to k rounds, then the ceiling. So under the ceiling the FIRST thing spent is one anchor
       // per method (max method coverage -> a GT method needs only to be among the first `ceil`
-      // methods by ANCHOR COUNT, not to win a global first-N race). Deterministic: methods sorted
-      // by anchor count desc then id (D90 #318 -- id order starved high-id GT methods), each
-      // method's anchors keep CPG order.
+      // methods by id, not to win a global first-N race). Deterministic: methods sorted by id,
+      // each method's anchors keep CPG order.
       def budget(cs: List[nodes.Call], k: Int, ceil: Int): List[nodes.Call] = {
         // Guard a null enclosing method (a call not attached to a method in a malformed/partial
         // CPG) so `.method.id` cannot NPE and drop the whole case_b query (#311 review).
-        // D90 (#318): order groups by anchor count (desc), method.id as tiebreak. A method with
-        // more anchors of this type is a hotter spot; ordering by id starved a GT method whose id
-        // ranked past the ceiling. Deterministic (size then id). Same round-robin + ceiling after.
         val groups = cs.filter(c => Option(c.method).isDefined)
-          .groupBy(_.method.id).toList.sortBy(g => (-g._2.size, g._1)).map(_._2.take(k))
+          .groupBy(_.method.id).toList.sortBy(_._1).map(_._2.take(k))
         (0 until k).flatMap(i => groups.flatMap(g => g.lift(i))).take(ceil).toList
       }
       // .take(MCAP) bounds materialization BEFORE .l (#311 review): budget needs the list to group
