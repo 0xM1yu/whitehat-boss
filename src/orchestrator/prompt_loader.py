@@ -163,7 +163,9 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
     )
 
 
-# Critic 근거 본문 절단(#237 HIGH-1). 결정론적 truncation — 모델 개입 없음, 재현 가능.
+# 근거 본문 절단 — Critic·Auditor의 content-aware 버전(각 노드의 `_CONTENT_AWARE_VERSIONS`)이
+# 같은 상한을 쓴다(#237 HIGH-1 · Auditor는 2026-09-29부터). 결정론적 truncation — 모델 개입
+# 없음, 재현 가능.
 EVIDENCE_BODY_CHAR_CAP = 800  # evidence 1건당 상한
 EVIDENCE_BODY_TOTAL_CAP = 4000  # 전 evidence 합 상한(프롬프트 토큰 예산)
 
@@ -262,7 +264,8 @@ def build_facts(
         else [],
         "source": source,
         # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 함께 싣는다. 안 주면
-        # (Scout·Auditor·Critic v1) 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
+        # (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
+        # 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,

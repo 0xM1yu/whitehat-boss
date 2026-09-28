@@ -422,6 +422,15 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
         assert load_prompt(Role(role), version).version == version
 
 
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_selects_prompt_v3(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 근거 본문 배선과 함께
+    `v3`를 고른다(#256 항목 4). 되돌리면(registry를 `v1`로) 이 핀이 빨개진다 — 오염 확인 ②."""
+    config = load_config(profile)
+
+    assert config.model_for("auditor").prompt_template_version == "v3"
+
+
 def test_every_prompted_role_is_a_real_role() -> None:
     """`Role(role)`이 `PROMPTED_ROLES`의 모든 값에 대해 성립한다.
 

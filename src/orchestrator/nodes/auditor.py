@@ -27,7 +27,7 @@ from src.graph_entry import name_of
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.scout import describe_sections, describe_target
-from src.orchestrator.prompt_loader import build_facts, load_prompt
+from src.orchestrator.prompt_loader import build_facts, evidence_summaries, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.candidate import Candidate
 from src.schemas.capsule import ContextCapsule
@@ -38,6 +38,15 @@ from src.schemas.finding import Finding, MissingEvidence
 ROLE = Role.AUDITOR
 # 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조).
 OUTPUT_SCHEMA = Finding
+
+# 근거 본문을 FACTS에 싣는 것은 그 본문을 **전제로 쓰인 프롬프트 버전**에만 한다
+# (`critic._CONTENT_AWARE_VERSIONS`와 같은 패턴 — **자기 상수다, critic 것을 import하지 않는다**:
+# 본문을 전제로 쓰였는지는 역할별 프롬프트의 성질이라 두 역할이 같은 집합을 공유할 이유가 없다).
+# v3가 드는 것은 `prompts/auditor/v3/meta.yaml`이 스스로 「evidence 본문이 닿는 변경 전까지 v3는
+# 올리지 않는다」를 조건으로 걸었기 때문이다. ⚠ v3 prefix는 critic v3와 달리 `body` 필드를 이름으로
+# 부르지 않는다(「supplied source or facts」만) — 모델이 그 본문을 실제로 쓰는지는 미측정이다.
+# v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
+_CONTENT_AWARE_VERSIONS = frozenset({"v3"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
@@ -116,8 +125,16 @@ def _ask_model(
     evidences: tuple[Evidence, ...],
     source: Callable[[], str] | None,
 ) -> Finding:
-    template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
+    version = ctx.config.model_for(ROLE.value).prompt_template_version
+    template = load_prompt(ROLE, version)
     text = ctx.read_source(capsule.target) if source is None else source()
+    # content-aware 버전(v3)일 때만 payload 본문을 읽어 싣는다. 그 외 버전은 본문 없이
+    # 종전과 동일(`critic._ask_model`과 같은 패턴).
+    bodies = (
+        evidence_summaries(evidences, ctx.read_payload)
+        if version in _CONTENT_AWARE_VERSIONS
+        else {}
+    )
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -127,6 +144,7 @@ def _ask_model(
             capsule=capsule,
             source=text,
             evidences=evidences,
+            evidence_bodies=bodies,
             callers=caller_names(capsule),
         ),
         candidate=_describe_candidate(candidate),

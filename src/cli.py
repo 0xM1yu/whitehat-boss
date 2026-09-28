@@ -500,7 +500,8 @@ def execute(
         # 실제 프롬프트가 어긋난다.
         read_source=lambda target: read_symbol_source(spec.target, target),
         # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
-        # artifacts_root와 같은 루트). Critic이 근거 본문을 받는 배선(#237 HIGH-1).
+        # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
+        # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
         read_payload=make_payload_reader(run_dir.parent),
         trace=trace,
         run_dir=run_dir,

@@ -132,6 +132,10 @@ agent:
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
+  Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
+  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`)에서는 근거 본문의 유계 요약(`evidence_summaries`)까지 싣는다.
+  ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
+  이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
   `missing_evidence`는 발급 `missing_id`와의 교집합만 남기고, 그 밖의 ID로는 `MissingEvidence`를 만들지 않는다
@@ -230,11 +234,10 @@ agent:
   "candidate_id": "cand_0001",
   "state": "hypothesized",
   "path": [
-    {"step": "source", "symbol": "recv_request", "note": "네트워크 입력"},
     {"step": "propagate", "symbol": "parse_header", "note": "len이 검증 없이 전달"},
     {"step": "sink", "symbol": "memcpy", "note": "고정 크기 스택 버퍼"}
   ],
-  "trigger_status": null,
+  "trigger_status": "reachability_unknown",
   "confidence": 0.6,
   "rca_draft": "…",
   "cwe": "CWE-787",
@@ -242,7 +245,7 @@ agent:
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v1"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v3"}
 }
 ```
 
@@ -266,6 +269,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 시키지 않는데 하네스는 그 디렉터리에서만 프롬프트를 읽는다
 > ([prompt_loader.py](../src/orchestrator/prompt_loader.py)). **그래서 이 필드는 해당 프롬프트가
 > 저장소에 들어오기 전까지 어느 run에서든 `null`이다** — 채움률 0을 "모델이 안 냈다"로 읽으면 안 된다.
+>
+> ⏵ **2026-09-29 — 이 블록은 쓰인 지 14분 뒤에 틀려졌다.** 블록은 `93b06e6`(2026-08-29 15:16)이고,
+> `52d9e82`(15:30)가 `prompts/auditor/v2`를 들이며 `trigger_status` 다섯 값(`no_signal` 포함)을 정의했다.
+> `prompts/auditor/v3`(#237, 2026-09-22)도 같다. 그래도 registry가 v1만 골라 run에서는 `null`이었다 —
+> **2026-09-29부터 registry의 Auditor(`qwen3.8-27b`)가 v3를 고른다.** 그 판으로 돈 run은 아직 없어
+> 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시도 그날 v3 계약에 맞췄다.
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
@@ -320,7 +329,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout": "v1", "auditor": "v1", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v3", "critic": "v1"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -412,6 +421,11 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > [2026-09-04 실서빙 run](experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md)은
 > **7단계에서 죽었고 그 보고서 자신이 "비교표에 못 들어간다"고 적는다.** 확인 방법은
 > `git grep -n "prompt_version" -- docs/` + 각 보고서의 조건·프로필 절이다.
+
+> ⏵ **2026-09-29 — Auditor가 v1 → v3로 바뀌었다**(`harness_pool`·`_hybrid`의 `qwen3.8-27b`, 근거 본문 배선과
+> 같은 변경). 이 규칙대로 **그 뒤 run의 Auditor 출력은 그 전 run과 직접 비교하지 않는다** — run의
+> `prompt_versions.auditor`가 가른다. ⚠ 규칙 5(고정 표본 회귀 측정 뒤 반영)와 [evaluation.md](evaluation.md) §2.3
+> 규칙 4(재측정)는 이 변경 전에 돌지 않았다 — 측정 없이 켰다. Critic은 v1 그대로다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
