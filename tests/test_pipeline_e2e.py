@@ -117,6 +117,49 @@ def test_execute_wires_read_payload_from_the_artifacts_root(
     assert reader("artifacts/run_20260901_0001/semgrep/missing.log") is None
 
 
+def _content_aware_auditor_and_critic(config):  # noqa: ANN001, ANN202
+    """auditor·critic 자리를 v3 fake로 바꾼다 — 두 노드가 근거 본문을 읽는 버전이다.
+
+    커밋된 fake 키는 v1·v2뿐이라 `_poolify_v3`처럼 `fake`를 복사해 버전만 v3로 올린다.
+    Scout 자리는 건드리지 않는다.
+    """
+    fake_v3 = config.models["fake"].transition(prompt_template_version="v3")
+    roles = {**config.profile.roles, "auditor": "fake_v3", "critic": "fake_v3"}
+    return config.transition(
+        models={**config.models, "fake_v3": fake_v3},
+        profile=config.profile.transition(roles=roles),
+    )
+
+
+def test_run_pipeline_carries_read_payload_to_auditor_and_critic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cli.execute` → `run_pipeline` → `RunContext` → 노드까지 `read_payload`가 **실제로** 닿는다.
+
+    위 검사는 `run_pipeline`을 가짜로 바꿔 `cli.execute`가 인자를 넘기는지만 보고, 노드
+    검사(`test_nodes.py`)는 `ctx.read_payload`를 픽스처에 직접 꽂는다 — 그래서 `run_pipeline`이
+    받은 reader를 `RunContext`에 안 심어도 둘 다 초록이다. 여기서는 파이프라인을 진짜로
+    돌리고 reader만 표지를 돌려주게 해, auditor·critic 프롬프트 로그에 그 표지가 실렸는지
+    본다. `src/cli.py`의 `read_payload=` 줄이나 `runner.run_pipeline`의 `RunContext(...)`
+    안 `read_payload=` 줄 중 하나라도 지우면 기본값(`lambda _ref: None`)으로 떨어져 빨개진다.
+
+    fake 도구는 payload 파일을 쓰지 않으므로 reader 공장(`cli.make_payload_reader`)만
+    바꾼다 — 파일을 읽는 쪽은 바로 위 검사가 문다.
+    """
+    marker = "PAYLOAD-BODY-MARKER-read_payload"
+    monkeypatch.setattr(cli, "make_payload_reader", lambda _root: lambda _ref: marker)
+
+    _, trace_path = _run(tmp_path, configure=_content_aware_auditor_and_critic)
+
+    prompts = trace_path.parent / "prompts"
+    for role in ("auditor", "critic"):
+        files = sorted(prompts.glob(f"*_{role}*.md"))
+        assert files, f"{role} 프롬프트가 한 건도 안 남았다 — 이 검사가 그 노드를 안 탔다"
+        assert any(marker in f.read_text(encoding="utf-8") for f in files), (
+            f"{role} v3 프롬프트에 근거 본문이 없다 — read_payload가 노드까지 안 닿았다"
+        )
+
+
 def test_run_pipeline_wires_resolve_requests_from_deps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
