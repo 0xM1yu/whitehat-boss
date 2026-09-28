@@ -29,14 +29,15 @@
 
 | 항목 | 결과 |
 | --- | --- |
-| **need_evidence 0/24** | 세 표본 24좌석(파싱 성공 23)에서 hop0 need_evidence가 **하나도 없었다** — 루프는 한 번도 안 돌았다 |
+| **need_evidence 0/24 (Scout-only run)** | 세 표본 24좌석(파싱 성공 23)에서 hop0 need_evidence가 **하나도 없었다** — 이 run에서는 루프가 한 번도 안 돌았다. ⏵ 같은 입력의 재실행(`harness_pool` 0006, §5)에서는 tf `Compute` boundary가 need_evidence를 내 hop 1을 받고 review로 섰다 — 두 실행의 판정은 합쳐 세지 않는다 |
 | **라벨 함수 판정 8개 중 review 3개** | 라벨 함수가 직접 타깃인 세 행은 9좌석 중 파싱 성공 8이고, review는 **3개**였다 — xdr `xdr_set_page_base`의 boundary와 vmxnet3 `vmxnet3_put_rxq_descr`의 memory·boundary. tf `Compute`는 reject 2 + 파싱 실패 1이다. **나머지 승격 6개는 정상 라벨이 붙지 않은 xdr의 다른 함수 5개**에서 나왔다 |
 | 전체 타깃별 좌석 | 여덟 타깃의 파싱 성공 23좌석 중 triage_review 8 + 신호 밖 1 = 9가 승격하고 reject 14였다. injection **8/8 reject** · memory 6 reject / 2 review · boundary **0 reject**(review 6 · 신호 밖 1 · 파싱 실패 1). 이는 파일 하나에서 고른 여덟 타깃의 좌석 수이지 정상 라벨 9건이 아니다 |
 | **신청서는 review에 붙어 나온다** | review 7좌석이 `requests`를 **13개** 달았다(변수 5 · 함수 4 · 타입 2 · 매크로 1 · caller 1). 설계상 루프는 need_evidence에서만 돌므로 **아무것도 조회되지 않았다** |
 | `scout_boundary` 신호 이탈·파싱 실패 | 8좌석 중 **1**이 세 신호 밖 코드(`source_@net/sunrpc/xdr.c:L859`)를 첫 reason code로 내 점수 경로(0.8)로 올라갔다 — GT 스모크의 4/28과 같은 모양. **1**(tf_requant)은 두 시도 모두 출력 상한 8,192토큰에 닿아 `schema_parse_failed`로 건너뛰었다(650 s) |
-| 슬라이싱 | 5표본 중 **라벨 함수에 걸치는 슬라이스가 나온 것은 셋** — tf_requant 1/6 · linux_xdr 6/68 · qemu_vmxnet3 1/94. linux_keyboard **0/102**, bpf_verifier는 **슬라이싱 2시간 상한 예상으로 제외**(§2) |
+| 슬라이싱 | 5표본 중 **라벨 함수에 걸치는 슬라이스가 나온 것은 셋** — tf_requant 1/6 · linux_xdr 6/68 · qemu_vmxnet3 1/94. linux_keyboard **0/102**, bpf_verifier는 **슬라이싱 2시간 상한 예상으로 제외**(§2). ⚠ 모델에 올린 세 표본의 슬라이서 산출은 **전부 `partial`**이고 linux_xdr는 7,200 s 상한(rc 124) 뒤 체크포인트를 `--export-only`로 내보낸 것이다 — 완주 산출이 아니라, 판정은 부분 입력 위의 것이다 |
 | 비용 | Scout 호출 wall **83~200 s**(파싱 실패 1건 650 s 제외) · 입력 5,413~15,091토큰(창 40,960 안). 창 초과·400·타임아웃 **0**. run wall: tf_requant 14분 · linux_xdr 41분 · qemu_vmxnet3 6분 |
 | 감시자 | **개입 0회.** `MemAvailable` 최저 **28.5 GiB**(슬라이서 둘과 겹친 구간) · cgroup anon 최대 26.9 GiB · 표본 476 |
+| Auditor·Critic까지(재실행 §5) | 라벨 함수 셋에서 E2 이상은 0. xdr·vmxnet3 boundary의 E1 가설은 `hypothesized`로 남았다 — xdr는 GPU 예산 7,353/7,200 s 소진으로 Critic 미호출, vmxnet3는 Critic upheld이나 repro spec 없음. 모델 호출 33건 전부 성공 |
 
 ## 2. 입력 — 정상 표본과 슬라이싱
 
@@ -66,23 +67,23 @@ linux_xdr는 끝까지 못 돈 슬라이서가 체크포인트에 저장한 후�
 
 ## 3. 좌석별 판정 (hop0)
 
-| 표본 · 타깃 | scout_memory | scout_boundary | scout_injection |
-| --- | --- | --- | --- |
-| tf_requant `Compute` | reject 0.1 | **파싱 실패**(8,192 ×2) | reject 0.1 |
-| xdr `xdr_stream_set_pos` | reject | **신호 밖** → 0.8 승격(CWE-190) | reject |
-| xdr `xdr_set_page_base` | reject | review(CWE-119) · 신청 2 | reject |
-| xdr `xdr_init_decode_pages` | reject | review(CWE-129) · 신청 1 | reject |
-| xdr `xdr_copy_to_scratch` | reject | review(CWE-119·120·191) · 신청 2 | reject |
-| xdr `xdr_inline_decode` | reject | review(CWE-119) · 신청 3 | reject |
-| xdr `xdr_stream_subsegment` | review(CWE-457) | review(CWE-119) · 신청 2 | reject |
-| vmxnet3 `vmxnet3_put_rxq_descr` | review(CWE-476) · 신청 1 | review(CWE-125) · 신청 2 | reject |
+| 표본 · 타깃 | 라벨 함수 | scout_memory | scout_boundary | scout_injection |
+| --- | --- | --- | --- | --- |
+| tf_requant `Compute` | **예** | reject 0.1 | **파싱 실패**(8,192 ×2) | reject 0.1 |
+| xdr `xdr_stream_set_pos` | — | reject | **신호 밖** → 0.8 승격(CWE-190) | reject |
+| xdr `xdr_set_page_base` | **예** | reject | review(CWE-119) · 신청 2 | reject |
+| xdr `xdr_init_decode_pages` | — | reject | review(CWE-129) · 신청 1 | reject |
+| xdr `xdr_copy_to_scratch` | — | reject | review(CWE-119·120·191) · 신청 2 | reject |
+| xdr `xdr_inline_decode` | — | reject | review(CWE-119) · 신청 3 | reject |
+| xdr `xdr_stream_subsegment` | — | review(CWE-457) | review(CWE-119) · 신청 2 | reject |
+| vmxnet3 `vmxnet3_put_rxq_descr` | **예** | review(CWE-476) · 신청 1 | review(CWE-125) · 신청 2 | reject |
 
 - 정상 라벨 함수가 직접 타깃인 행은 `Compute` · `xdr_set_page_base` · `vmxnet3_put_rxq_descr` 셋이다. 이 셋의
   파싱 판정 8개 중 review는 **3개**(xdr boundary · vmxnet3 memory와 boundary)다.
 - 나머지 승격 **6개**(review 5 · 신호 밖 1)는 라벨 함수와 같은 슬라이스에 걸렸지만 정상 라벨이 직접 붙지 않은
   xdr의 다른 함수 다섯에서 나왔다. 그러므로 전체 승격 9개를 「정상 코드를 올린 9좌석」으로 세지 않는다.
 - 승격된 9개는 auditor(`fake`)·critic(`fake`)을 거쳤다 — 그 뒤 판정은 가짜 모델의 것이라 **적지 않는다**.
-- need_evidence 0이라 GT 스모크의 「가져온 코드로 판정이 바뀌나」는 이 입력에서 **잴 대상이 없었다**.
+- need_evidence 0이라 GT 스모크의 「가져온 코드로 판정이 바뀌나」는 이 run에서 **잴 대상이 없었다**(재실행의 hop 1 한 건은 §5).
 
 ## 4. 해석 — 여기까지만 말할 수 있다
 
@@ -92,7 +93,7 @@ linux_xdr는 끝까지 못 돈 슬라이서가 체크포인트에 저장한 후�
   이것이 설계 결함인지(review+requests도 조회해야 하나)는 **24좌석으로 정할 수 없다** — 사례로만 적는다.
 - **좌석 편차가 크다.** boundary(`seccoderx-8b`)는 8좌석 중 reject가 0이고, injection은 8/8 reject다.
   정상 표본만의 수라 오탐률로 읽지 않는다.
-- GT 스모크(84좌석 중 NE 5)와 합쳐도 **need_evidence는 108좌석 중 5**다.
+- GT 스모크(84좌석 중 NE 5)와 이 Scout-only run을 합쳐도 **need_evidence는 108좌석 중 5**다(§5 재실행은 따로 센다).
 
 ## 5. Auditor·Critic까지 실서빙 (`harness_pool`)
 
