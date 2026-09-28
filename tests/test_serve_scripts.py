@@ -70,7 +70,8 @@ _STAGE_ROLES = (("scout_memory", "scout_boundary", "scout_injection"), ("auditor
 def test_the_swap_deadline_covers_every_swap_on_every_device(device: str) -> None:
     """`settle_timeout_s`(교대 한 번의 마감)가 그 장비의 가장 무거운 교대를 덮는다.
 
-    교대 한 번의 최악 = 앞 단계 서버 내림 + 키마다 시도 × (준비 상한 + 메모리 대기 + 실패 기동 내림).
+    교대 한 번의 최악 = 앞 단계 서버 내림 + 키마다 시도 × (준비 상한 + 메모리 대기 +
+    실패 기동 내림).
     마감이 모자라면 느린 기동이 도중에 끊겨 run이 `model_swap_failed`로 선다 — 준비 상한을 올리고
     마감을 안 올리는 실수를 잡는다. 한계: 준비 상한이 실제 기동 시간을 덮는지는 이 검사 밖이다
     (장비 파일 주석의 계산 — 미실측).
@@ -189,7 +190,7 @@ class Rig(NamedTuple):
 
 
 def _alive_group(pgid: int) -> bool:
-    """그 프로세스 그룹에 좀비가 아닌 프로세스가 있는가(`/proc/<pid>/stat` — 교대 명령과 같은 판정)."""
+    """그 프로세스 그룹에 좀비가 아닌 프로세스가 있는가(`/proc/<pid>/stat` — 교대 명령과 같다)."""
     for stat in Path("/proc").glob("[0-9]*/stat"):
         try:
             fields = stat.read_text().rsplit(")", 1)[1].split()
@@ -238,7 +239,8 @@ def rig(tmp_path: Path):
 def test_the_swap_script_launches_reports_and_tears_down_only_its_own_run(rig: Rig) -> None:
     """띄우고(보고·로그·소유 기록) 내린다 — 남의 run이 적은 서버는 건드리지 않는다.
 
-    첫 호출은 **이 run 몫이 하나도 없을 때의 내림**이다. 2026-09-28 ATOM 스모크의 교대 훅이 정확히 그
+    첫 호출은 **이 run 몫이 하나도 없을 때의 내림**이다. 2026-09-28 ATOM 스모크의 교대 훅이
+    정확히 그
     자리에서 빈 `pgrep` + `pipefail`로 exit 1을 냈다(docs/experiments/harness/
     2026-09-28-ne-loop-smoke-benign-atom.md 「첫 시도는 결과에서 제외」).
     """
@@ -287,7 +289,8 @@ def test_the_swap_script_refuses_to_launch_beside_a_foreign_gpu_process(rig: Rig
 
 @needs_linux
 def test_the_swap_script_judges_unified_memory_by_mem_available(rig: Rig) -> None:
-    """`nvidia-smi` 메모리가 `[N/A]`면(GB10 — ATOM) 통합메모리 판정이다. 하한을 크게 줘 거절을 본다."""
+    """`nvidia-smi` 메모리가 `[N/A]`면(GB10 — ATOM) 통합메모리 판정이다. 하한을 크게 줘
+    거절을 본다."""
     result = rig.run(
         "seccoderx-8b",
         STUB_GPU_MEM="[N/A], [N/A]",
