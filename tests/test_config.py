@@ -1437,7 +1437,8 @@ def test_a_retrieval_role_in_swap_is_rejected(resident: list[str], swappable: li
     검색은 3단계에서 돌고, 5단계 검색을 어떻게 가를지(ADR 0012 결정 3)가 정해지기 전에는 그
     모델을 어느 단계에 띄울지 config가 말할 수 없다. 상주로 두면 모든 단계의 메모리를 먹고,
     교대로 두면 러너가 부를 단계 표가 없다 — 어느 쪽이든 「선 것처럼 보이는 정책」이다.
-    `roles`에는 그 역할이 있어도(`_swap_names_roles_this_profile_has`를 통과하는 모양) 거부해야 한다.
+    `roles`에는 그 역할이 있어도(`_swap_names_roles_this_profile_has`를 통과하는 모양)
+    거부해야 한다.
     """
     with pytest.raises(ValidationError, match="ADR 0012 결정 3"):
         ProfileEntry.model_validate(
