@@ -1193,7 +1193,7 @@ def test_case_a_query_bounds_are_pinned():
     # rewrite that drops the write-context half (leaving only WRITER calls) fails here.
     assert "val hotIds =" in q
     assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in q
-    assert 'nameExact("<operator>.assignment").filter(_.argument(1).isCall.name(' in q
+    assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in q
     # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
     # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
     assert q.count(f".take({cap})") == 2
