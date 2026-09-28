@@ -214,6 +214,9 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
     hop_response = _call_hop(
         ctx,
         candidate_id=session.candidate_id,
+        # hop0이 이미 발급값으로 덮은 값이다 — 사실 블록은 hop0 본문(`history[0]`)에 한 번 실리고
+        # 되묻기 홉은 그것을 다시 싣지 않으므로, 이 세션의 발급 `artifact_id`는 이것뿐이다.
+        artifact_id=session.candidate.artifact_id,
         role=session.role,
         prompt=prompt,
         schema=ScoutResponse,
@@ -299,6 +302,7 @@ def _call_hop(
     ctx: RunContext,
     *,
     candidate_id: str,
+    artifact_id: str,
     role: Role,
     prompt: Prompt,
     schema: type[Candidate] | type[ScoutResponse],
@@ -333,6 +337,21 @@ def _call_hop(
         # 그 타입에 필드가 있어 §3의 stamp 경로가 성립한다.
         candidate = value
         summary = None
+    # **발급값은 하네스가 도장 찍는다**(이슈 #279) — v1·v2·v3, hop0·hop k가 전부 여기를 지난다.
+    # 논거·방식은 `RunContext.stamp_issued` docstring. `finish()`가 이 후보를 `create()`하므로
+    # 초기 `state`가 C-1(`candidate`)이 아니면 거기서 `IllegalTransition`이 났다.
+    candidate = ctx.stamp_issued(
+        candidate,
+        {
+            "candidate_id": candidate_id,
+            "run_id": ctx.run_id,
+            "artifact_id": artifact_id,
+            "state": FindingState.CANDIDATE,
+        },
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate_id,
+    )
     return _HopResponse(
         candidate=candidate,
         summary=summary,
@@ -387,6 +406,7 @@ def _ask_model(
         return _call_hop(
             ctx,
             candidate_id=candidate_id,
+            artifact_id=artifact.artifact_id,
             role=role,
             prompt=prompt,
             schema=schema,
