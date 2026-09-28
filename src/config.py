@@ -988,7 +988,7 @@ def load_serving(device: str, config_dir: Path = CONFIG_DIR) -> ServingConfig:
     try:
         path = safe_join(config_dir / "serving", f"{device}.yaml")
         return ServingConfig.model_validate(_read_yaml(path))
-    except ValueError as exc:  # PathEscape · ValidationError
+    except (ConfigError, ValueError) as exc:  # 파일 없음 · PathEscape · ValidationError
         raise ConfigError(f"장비 파일 {device!r}: {exc}") from exc
 
 
