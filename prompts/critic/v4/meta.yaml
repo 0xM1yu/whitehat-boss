@@ -1,0 +1,4 @@
+role: critic
+version: v4
+output_schema: DecisionDraft
+description: gpt-oss Harmony 응답과 metadata-only 입력을 고려한 독립 비판. 근거 없는 `rebut`·`uphold`를 금지하고 필요한 자료를 요구한다
