@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -521,7 +522,9 @@ def test_the_guard_deadline_terms_then_kills_only_its_own_run(rig: Rig) -> None:
 
         assert _wait_exit(guard, 15), "마감이 지났는데 감시자가 안 끝났다"
 
-        assert not _alive_group(stubborn.pid) and not _alive_group(polite.pid)
+        # 순한 서버는 TERM에, TERM을 무시하는 서버는 대기 뒤 KILL에 죽었다 — 순서까지 문다.
+        assert polite.wait(timeout=5) == -signal.SIGTERM
+        assert stubborn.wait(timeout=5) == -signal.SIGKILL
         assert stranger.poll() is None, "다른 run의 서버를 마감으로 죽였다"
         log = (rig.dir / "logs" / "guard.log").read_text(encoding="utf-8")
         assert log.index(f"TERM seccoderx-8b -{stubborn.pid}") < log.index(
