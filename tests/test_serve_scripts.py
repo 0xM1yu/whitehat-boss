@@ -129,6 +129,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 if os.environ.get("STUB_IGNORE_TERM"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 HANG = os.path.join(os.environ.get("STUB_HANG_DIR", "/nonexistent"), str(os.getpid()))
+if os.environ.get("STUB_KILL_GUARD"):
+    try:
+        with open(os.path.join(os.environ["SERVE_DIR"], "guard.pid")) as guard_pid:
+            os.kill(int(guard_pid.read()), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
 args = sys.argv[1:]
 print("fake-vllm", " ".join(args), flush=True)
 opt = dict(zip(args, args[1:]))
@@ -464,7 +470,10 @@ def test_a_guard_stops_with_its_run_and_never_kills_the_next_run(rig: Rig) -> No
     마감에 안 죽는다.
 
     2026-09-29 적대 리뷰(HIGH): 09:00 감시자 A(12시간) → run 1 11:00 끝 → 같은 A 아래 run 2
-    11:05 시작 → 21:00 A의 마감이 run 2 서버를 통째로 내린다. 여기서는 A의 마감을 초로 줄였다.
+    11:05 시작 → 21:00 A의 마감이 run 2 서버를 통째로 내린다. 여기서는 A의 마감을 초로 줄였다 —
+    A가 run 1과 함께 멈추지 않으면 테스트 안에서 그 마감이 run 2 서버를 내린다. A가 제대로 멈추면
+    마감 분기는 안 탄다 — 마감이 자기 run만 내리는지는
+    `test_the_guard_deadline_terms_then_kills_only_its_own_run`이 본다.
     """
     started = time.monotonic()
     guard_a = rig.guard(GUARD_MAX_S="15")
@@ -560,3 +569,76 @@ def test_stop_guard_ends_the_guard_without_killing(rig: Rig) -> None:
 def _starttime(pid: int) -> str:
     """`/proc/<pid>/stat` 22번 필드 — 교대 명령이 SERVERS 행에 싣는 값."""
     return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+
+
+@needs_linux
+def test_a_batch_rechecks_the_guard_before_every_launch(rig: Rig) -> None:
+    """두 키를 한 호출로 띄우는 중(Scout 쌍) 감시자가 끝나면 둘째 키는 안 띄운다 — 감시자 확인은
+    배치 시작의 사진이 아니라 기동마다다. 첫 키의 가짜 vLLM이 뜨자마자 감시자를 죽인다(테스트 전용
+    훅).
+
+    2026-09-29 감시자 적대 리뷰(HIGH): 첫 키를 띄운 직후 감시자가 통합메모리 하한에 걸려 서버를
+    내리고 끝나면, 재확인 없이 둘째 키를 띄웠다(방금 내려가 메모리 대기도 쉽게 지난다).
+    """
+    if not _port_free(8001):
+        pytest.skip("포트 8001이 이미 쓰인다")
+    guard = rig.guard()
+    try:
+        result = rig.run("seccoderx-8b", "qwen3-14b", STUB_KILL_GUARD="1")
+
+        assert guard.wait(timeout=5) == -signal.SIGKILL
+        assert result.code != 0
+        assert "감시자" in result.report["error"]
+        assert result.report["server"]["seccoderx-8b"]["action"] == "launch"
+        assert "qwen3-14b" not in rig.servers.read_text()
+        assert not list((rig.dir / "logs").glob("qwen3-14b.*"))
+    finally:
+        guard.kill()
+
+
+@needs_linux
+def test_the_swap_script_ignores_an_owner_record_from_another_guard(rig: Rig) -> None:
+    """옛 감시자가 남긴 소유 기록(지금 감시자와 다른 pid)은 무효다 — 새 감시자 아래서 띄우고
+    다시 적는다."""
+    (rig.dir / "guard.owner").write_text("4194302 run_old\n", encoding="utf-8")
+
+    up = rig.run("seccoderx-8b")
+
+    assert up.code == 0, up.stderr
+    assert (rig.dir / "guard.owner").read_text().split() == [str(os.getpid()), RUN_ID]
+
+
+@needs_linux
+def test_the_guard_ignores_an_owner_record_from_another_guard(rig: Rig) -> None:
+    """감시자는 자기 pid가 적힌 소유 기록만 믿는다 — 옛 감시자의 기록으로 마감에 그 run 서버를
+    내리지 않는다."""
+    server = _setsid("sleep", "300")
+    guard = None
+    try:
+        time.sleep(0.2)
+        rig.servers.write_text(
+            f"seccoderx-8b {server.pid} {RUN_ID} {_starttime(server.pid)}\n", encoding="utf-8"
+        )
+        (rig.dir / "guard.owner").write_text(f"4194302 {RUN_ID}\n", encoding="utf-8")
+        guard = rig.guard(GUARD_MAX_S="2", GUARD_TERM_WAIT_S="1")
+
+        assert _wait_exit(guard, 10)
+        assert server.poll() is None, "옛 감시자의 소유 기록으로 서버를 내렸다"
+        assert "지키던 run이 없어" in (rig.dir / "KILLED").read_text(encoding="utf-8")
+    finally:
+        server.kill()
+        if guard is not None:
+            guard.kill()
+
+
+@needs_linux
+def test_a_stopping_guard_is_refused_by_name(rig: Rig) -> None:
+    """STOP_GUARD가 있으면(run 끝 내림이나 사람이 감시자를 멈추는 중) 띄우지 않고 그 원인을
+    말한다."""
+    (rig.dir / "STOP_GUARD").touch()
+
+    result = rig.run("seccoderx-8b")
+
+    assert result.code != 0
+    assert "STOP_GUARD" in result.report["error"]
+    assert RUN_ID not in rig.servers.read_text()
