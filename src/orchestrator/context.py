@@ -634,7 +634,9 @@ class RunContext:
         report: Mapping[str, TraceValue],
         error: str | None = None,
     ) -> None:
-        """단계 경계 교대 한 번 (ADR 0012 Phase 6.5). **성공·실패 모두** 한 줄이다.
+        """단계 경계 교대 한 번 (ADR 0012 Phase 6.5). **성공·실패 모두** 한 줄이다 — 부르는 곳은
+        `runner._swap`이고, 실패는 `ModelSwapError`일 때만 여기 온다(그 밖의 예외는 기록 없이
+        올라간다).
 
         `stage`는 이 교대가 **준비하는** 단계다 — run 끝 내림은 준비하는 단계가 없어 `None`이고
         `keys`가 빈다. `current_stage`를 쓰지 않는 것은 교대가 단계에 들어가기 **전**에 일어나서다.

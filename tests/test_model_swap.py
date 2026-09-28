@@ -204,13 +204,24 @@ def test_the_last_stdout_line_is_flattened_into_scalars(tmp_path: Path) -> None:
     }
 
 
+# 못 내려가는 깊이의 두 자리. 목록 10만 겹은 **파서**(`json.loads`)가 못 내려가고, 객체 재귀
+# 한도 + 50 겹은 C 파서는 읽지만(2026-09-29 CPython 3.14에서 1,500 겹까지 읽었다) **펴기**
+# (`_flatten`, 파이썬 재귀)가 못 내려간다. 앞쪽만 막았을 때 뒤쪽이 교대 콜러블 밖으로 샜다.
+_DEPTH = sys.getrecursionlimit() + 50
+_DEEP_REPORTS = {
+    "list-parser": "[" * 100_000 + "]" * 100_000,
+    "dict-flatten": '{"a":' * _DEPTH + "1" + "}" * _DEPTH,
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_DEEP_REPORTS))
 @pytest.mark.parametrize("failing", [False, True], ids=["exit0", "exit1"])
 def test_a_report_too_deep_to_parse_is_an_empty_report_not_a_crash(
-    tmp_path: Path, failing: bool
+    tmp_path: Path, failing: bool, shape: str
 ) -> None:
-    """마지막 줄이 JSON이어도 파서가 못 내려가는 깊이면(RecursionError) 보고가 없는 것으로 읽는다 —
+    """마지막 줄이 JSON이어도 못 내려가는 깊이면(RecursionError) 보고가 없는 것으로 읽는다 —
     성공 경로의 날것 예외로 run이 죽지 않고, 실패 경로는 `ModelSwapError`로 멈춘다."""
-    deep = "[" * 100_000 + "]" * 100_000
+    deep = _DEEP_REPORTS[shape]
     body = f"print({deep!r})" + ("\nsys.exit(1)" if failing else "")
     swap_to = _swap(_command(tmp_path, body), _probe())
 
@@ -220,6 +231,42 @@ def test_a_report_too_deep_to_parse_is_an_empty_report_not_a_crash(
         assert caught.value.report == {}
     else:
         assert swap_to(("seccoderx-8b",)) == {}
+
+
+class _Unforeseen(Exception):
+    """표준 예외 계층 밖의 `Exception` — 「`Exception`을 감싼다」를 철자가 아니라 성질로 문다.
+
+    `RuntimeError`만 두면 감싸기를 `except (RuntimeError, OSError)`로 좁혀도 초록이다(2026-09-29
+    적대적 리뷰 실측). 어떤 표준 예외도 상속하지 않아 그 튜플 어디에도 안 걸린다.
+    """
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (RuntimeError("probe exploded"), ModelSwapError),
+        (_Unforeseen("probe went sideways"), ModelSwapError),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+    ids=["exception-is-wrapped", "unforeseen-is-wrapped", "base-exception-passes"],
+)
+def test_an_unexpected_error_inside_the_swap_is_a_swap_error(
+    tmp_path: Path, error: BaseException, expected: type[BaseException]
+) -> None:
+    """교대 콜러블의 실패는 `ModelSwapError` 하나다 — 러너가 그것만 「교대 실패로 run 정지」로
+    읽는다. 그 밖의 예외가 새면 단계 진입 교대는 매니페스트 없이 run을 끝내고, run 끝 내림은
+    원래 결과를 덮는다. 인터럽트(`BaseException`)는 감싸지 않는다 — 사람이 멈춘 것을 교대
+    실패로 적으면 사유가 틀린다."""
+
+    def probe(_endpoint: str, _key: str) -> dict[str, object]:
+        raise error
+
+    with pytest.raises(expected) as caught:
+        _swap(_command(tmp_path), probe)(("seccoderx-8b",))
+
+    if expected is ModelSwapError:
+        assert caught.value.__cause__ is error
+        assert type(error).__name__ in str(caught.value)
 
 
 def test_a_failed_command_raises_with_its_partial_report_and_output_tail(tmp_path: Path) -> None:
