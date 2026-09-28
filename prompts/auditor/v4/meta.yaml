@@ -1,0 +1,4 @@
+role: auditor
+version: v4
+output_schema: Finding
+description: Qwen3.8 대응 원본 소스·Context Capsule 기반 감사. Scout 가설과 실제 SOURCE·FACTS를 구분하고 source-to-sink 경로를 검증한다
