@@ -489,6 +489,8 @@ def execute(
         on_index=index_hook,
         # 못 믿는 슬라이스 파일이면 여기서 멈춘다 — `run_pipeline`(첫 모델 호출) 전이다.
         slices_path=spec.slices_path,
+        # 교대 프로필의 장비 파일을 고른다(ADR 0012 Phase 6.5). 없으면 교대 콜러블을 안 만든다.
+        device=spec.device,
     )
     result = run_pipeline(
         spec,
