@@ -1514,3 +1514,42 @@ def test_session_library_replaces_every_placeholder_and_calls_carry_the_data():
     assert slicer_library.Library("/work/repo", 4, {}, 30, 5000, 4).name != lib.name
     with pytest.raises(ValueError, match="occurs 0 times"):
         slicer_library.as_function("flows", "{ x }", "f", "", [("absent", "y")])
+
+
+def test_session_library_scope_filter_follows_method_selector(monkeypatch):
+    """#322 review MEDIUM-1: the library kept its own copy of the `method_selector`
+    predicate, so editing `method_selector` changed the inline builders and left the session
+    library on the old predicate -- with every test green. Edit the predicate the way a real
+    change would; the library must follow it."""
+    import slicer_backward
+    import slicer_library
+
+    real = queries.method_selector
+
+    def edited(scopes):
+        return real(scopes).replace("m.fullName ==", "m.name ==")
+
+    monkeypatch.setattr(queries, "method_selector", edited)
+    monkeypatch.setattr(slicer_backward, "method_selector", edited)
+    definition = slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition
+    assert "m.fullName ==" not in definition
+    assert definition.count("m.name == fn") == 2  # flows and backward
+
+
+def test_session_library_cuts_the_body_at_the_envelopes_own_seams(monkeypatch):
+    """#322 review MEDIUM-2: `as_function` cut the Scala body out of the envelope by
+    hard-coded text (a leading `{ ` and the marker), so reframing the envelope produced a
+    library that only fails to compile on a live server -- with every test green. The
+    generated definition must not depend on how the envelope frames its body."""
+    import slicer_backward
+    import slicer_library
+
+    expected = slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition
+    real = queries.envelope
+
+    def reframed(stage, body, *, timed=False):
+        return "locally " + real(stage, body, timed=timed)
+
+    monkeypatch.setattr(queries, "envelope", reframed)
+    monkeypatch.setattr(slicer_backward, "envelope", reframed)
+    assert slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition == expected
