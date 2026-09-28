@@ -145,7 +145,8 @@ profiles:
     #
     # 모든 target이 한 단계를 마친 뒤에 다음 단계가 시작한다(`runner._triage_by_stage`). 그래야 단계마다
     # 그 단계의 모델만 떠 있으면 된다 — 네 서버를 한 장비에 다 올리면 util 합이 1.80으로 1을 넘는다
-    # (0.30 + 0.40 + 0.80 + 0.30 — `config/serving/atom.yaml`의 util, 계획값).
+    # (0.30 + 0.40 + 0.80 + 0.30 — `config/serving/atom.yaml`의 util, 계획값). 2026-09-24 판에서는 1.44였다
+    # (Scout 0.20·0.30 · 옛 Auditor `qwen3.6-35b-a3b` 0.64 · Critic 0.30 — 그날 ATOM에서 뜬 util).
     #
     # ## 교대 — 단계 경계 콜드 재기동(`execution.swap`, 2026-09-29 — ADR 0009 「2026-09-29 제안」 절)
     #
