@@ -42,7 +42,7 @@
 끝나면 올린 키마다 `/v1/models`를 읽어 그 이름으로 떠 있는지와 `max_model_len`이 registry
 `context_limit`과 **같은지** 본다. 2026-09-25 ATOM에서 `context_limit` 40,960인 Scout를 16,384로
 띄운 채 돌렸고 하네스는 아무 말도 안 했다 — 프롬프트 12건이 400으로 거절됐는데, 400은 러너가
-**그 후보만 버리는** 크기 거절이라 run은 「완주」로 끝났다(`run_20260925_0005`·`0006`).
+**그 후보만 버리는** 크기 거절이라 run은 「완주」로 끝났다(`run_20260925_0005`·`0006`, #331).
 """
 
 import json
@@ -106,7 +106,20 @@ def swap_runner(
         )
 
     def swap_to(keys: tuple[str, ...]) -> SwapReport:
+        # **실패는 `ModelSwapError` 하나다** — 러너가 그것만 「교대 실패」로 읽는다. 그 밖의 예외가
+        # 새면 단계 진입 교대는 run을 매니페스트 없이 끝낸다(러너의 정지 갈래가 못 잡는다). 그래서
+        # 이 경계에서 감싼다. `BaseException`(인터럽트)은 감싸지 않는다 — 사람이 멈춘 것이다.
         label = " ".join(keys) or "(전부 내림)"
+        try:
+            return swap_once(keys, label)
+        except ModelSwapError:
+            raise
+        except Exception as exc:
+            raise ModelSwapError(
+                f"모델 교대 중 예상 밖 오류({type(exc).__name__}: {exc}): {label}"
+            ) from exc
+
+    def swap_once(keys: tuple[str, ...], label: str) -> SwapReport:
         try:
             done = run([*command, *keys])
         except subprocess.TimeoutExpired as exc:
@@ -178,9 +191,11 @@ def _report(stdout: str | bytes | None) -> SwapReport:
     lines = _text(stdout).strip().splitlines()
     try:
         parsed = json.loads(lines[-1]) if lines else None
-    except (ValueError, RecursionError):  # 파서가 못 내려가는 깊이도 「못 읽었다」다
+        return _flatten(parsed) if isinstance(parsed, dict) else {}
+    # 못 내려가는 깊이도 「못 읽었다」다. 파서(C)가 읽는 깊이를 `_flatten`(파이썬 재귀)이 못
+    # 내려갈 수 있어 펴기까지 이 try 안에 둔다 — 2026-09-29 CPython 3.14에서 객체 1,500 겹이 그랬다.
+    except (ValueError, RecursionError):
         return {}
-    return _flatten(parsed) if isinstance(parsed, dict) else {}
 
 
 def _flatten(value: Mapping[str, object], prefix: str = "") -> SwapReport:
