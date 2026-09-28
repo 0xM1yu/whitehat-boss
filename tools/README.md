@@ -195,10 +195,11 @@ export HARNESS_SIF_DIR=/data/daniel3290/sif
 걸린 것은 실행 실패가 아니다. 목록은 `src/adapters/container_tools.py`의 `UNENFORCED`가
 들고 있다. Singularity로 돌릴 때 상한이 필요하면 `srun`에 붙인다.
 
-gdb의 자식 실행형 배치 경로는 2026-09-28 Docker에서 `SYS_PTRACE` capability 없이 정상
-종료·SIGSEGV 백트레이스를 둘 다 냈다. Podman과 Singularity/Apptainer는 실행 파일이 없어
-각각 **0회/미실측**이며, 권한 필요 여부를 확정하지 않는다([D92](../docs/open-questions/D/D92.md)).
-attach 모드는 이 결과의 범위가 아니다.
+gdb의 자식 실행형 배치 경로는 2026-09-28 Docker와 ATOM rootless Podman 4.9.3에서
+`SYS_PTRACE` capability 없이 정상 종료·SIGSEGV 백트레이스를 둘 다 냈다. Podman은 권한
+없음/추가 두 조건에서 정상·크래시를 각각 실행한 **4회 실측**이고 결과가 같았다.
+Singularity/Apptainer만 접속 경로를 확보하지 못해 **0회/미실측**이며, 권한 필요 여부를
+확정하지 않는다([D92](../docs/open-questions/D/D92.md)). attach 모드는 이 결과의 범위가 아니다.
 
 ### 반대로, 끌 수 없는 항목
 

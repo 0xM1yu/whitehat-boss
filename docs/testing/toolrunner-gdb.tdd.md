@@ -43,6 +43,9 @@
   gdb·ASAN·clang-tidy·semgrep·인덱서 빌드 연막이 같은 빌드에서 통과했다.
 - `python -m pytest -q tests/test_container_tools.py::test_real_gdb_runs_clean_and_crashing_targets_without_ptrace_capability`
   → **1 passed**. capability 추가 없이 정상 종료와 SIGSEGV 백트레이스를 확인했다.
+- ATOM rootless Podman 4.9.3/aarch64에서 현재 v3 Dockerfile 빌드 → **exit 0**. 이어 capability
+  없음/`SYS_PTRACE` 추가 조건에서 정상·SIGSEGV 대상을 각각 실행한 총 4회가 exit
+  `0·1·0·1`과 같은 정상/백트레이스 출력을 냈다.
 - `python -m pytest -q` → **2062 passed, 2 skipped**.
 - `python -m ruff check .` → **All checks passed!**
 
@@ -70,8 +73,8 @@
 
 - 전체 실행의 2 skip은 Windows에서 심볼릭 링크 생성이 불가능할 때 건너뛰는 기존
   `tests/test_model_checksum.py` 두 건이다. gdb 테스트는 skip되지 않았다.
-- Podman과 Singularity/Apptainer는 이 장비에 실행 파일이 없어 각각 **0회/미실측**이다.
-  D92는 이 때문에 열림이다.
+- Podman은 ATOM에서 직접 실측했다. Singularity/Apptainer는 로컬 실행 파일이 없고 Seraph
+  접속 경로도 열리지 않아 **0회/미실측**이다. D92는 이 조건 때문에 열림이다.
 - Docker 실측은 gdb가 새 자식 프로세스를 실행하는 배치 모드만 보증한다. 기존 프로세스에
   attach하는 모드와 pwndbg는 범위 밖이다.
 - `validate.tool_for()`는 gdb를 선택하지 않는다. 따라서 독립 ToolRunner 실측은 파이프라인
