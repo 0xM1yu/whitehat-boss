@@ -339,8 +339,8 @@ def candidates_a_query() -> str:
       // discriminate. hotIds is computed once (Set), so the sort key is an O(1) lookup, not a
       // per-method AST walk. Same cap, same count: this reorders, it does not add candidates.
       val hotIds = (cpg.call.name("({WRITERS}|{EXEC_SINKS})").method.id.l ++
-        cpg.call.nameExact("<operator>.assignment").filter(_.argument(1).isCall.name(
-          "<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
+        cpg.call.nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall
+          .name("<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
           .nonEmpty).method.id.l).toSet
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
         .filter(m =>
