@@ -659,6 +659,44 @@ def test_critic_v3_prompt_is_content_conditional() -> None:
     assert "carries a `body`" in prefix
 
 
+# --- Auditor 근거 본문 배선 (v3, #256 항목 4) --------------------------------
+
+
+def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
+    """dev_fake auditor는 v1이라 payload가 있어도 본문을 안 싣는다 (배선은 v3 경로에만)."""
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+
+    auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    prompt = ctx.models.last_for(Role.AUDITOR)
+    assert "heap-buffer-overflow" not in prompt.body  # v1 stays metadata-only (byte-identical)
+
+
+def test_auditor_includes_evidence_body_when_version_is_content_aware(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """content-aware 버전에서는 payload 본문이 실제로 FACTS에 실린다."""
+    monkeypatch.setattr(auditor, "_CONTENT_AWARE_VERSIONS", frozenset({"v1"}))  # 게이트를 켠다
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+
+    auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    prompt = ctx.models.last_for(Role.AUDITOR)
+    assert "heap-buffer-overflow" in prompt.body  # 본문이 FACTS에 닿는다
+
+
+def test_auditor_content_aware_versions_pins_v3() -> None:
+    """critic 쪽 #247 리뷰 HIGH-1과 같은 이유 — 위 테스트는 monkeypatch로 게이트를 켜므로
+    **실제 값**을 안 문다. `_CONTENT_AWARE_VERSIONS`를 `frozenset()`으로 되돌리면 v3가
+    조용히 metadata만 받는데 그걸 잡는 것은 이 단언뿐이다. **critic의 상수를 import하지
+    않는다** — 본문을 읽도록 쓰였는지는 역할별 프롬프트의 성질이다.
+    """
+    assert "v3" in auditor._CONTENT_AWARE_VERSIONS
+    assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
+
+
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:
     """못 읽은 verdict는 `need_evidence`(보류)로 가고 **원문이 trace에 남는다**.
 
