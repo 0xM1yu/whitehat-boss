@@ -809,7 +809,8 @@ def run_pipeline(
     except ModelSwapError as exc:
         # **아래 게이트웨이 갈래보다 먼저 잡는다** — `ModelSwapError`는 그 하위형이다. 떠 있던
         # 서버가 죽은 것이 아니라 다음 단계 서버를 띄우지 못한 것이라 대응이 다르다(장비 파일과
-        # 교대 명령의 로그를 본다). `model_swap ok=false`는 `_swap`이 이미 남겼다.
+        # 교대 명령의 로그를 본다). 교대(`_swap`)에서 난 실패면 `model_swap ok=false`가 이미
+        # 남았다 — 교대 밖에서 올라온 것(방어선 경로)에는 그 이벤트가 없다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.MODEL_SWAP_FAILED
         warnings.append(f"모델 교대가 실패해 중단했다: {error_detail(exc)}")
@@ -2029,7 +2030,9 @@ def _swap_for(ctx: RunContext, stage: Stage) -> None:
 
 
 def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> None:
-    """교대 한 번을 부르고 `model_swap`을 남긴다. 실패면 `ok=false`를 **먼저** 남기고 올려 보낸다.
+    """교대 한 번을 부르고 `model_swap`을 남긴다. 실패(`ModelSwapError`)면 `ok=false`를 **먼저**
+    남기고 올려 보낸다. 그 밖의 예외는 남기지 않고 그대로 올린다 — 계약 밖이다
+    (`Dependencies.swap_to`).
 
     교대 콜러블이 없는 run(교대 없음)에서는 아무것도 안 한다.
     """
