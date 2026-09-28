@@ -185,6 +185,14 @@ models:
     # 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). **그
     # 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — v3로 flip하는 것은
     # validated·proven이 실제로 나오는지 확인하는 후속의 몫이다. 미참조 버전은 정상이다(v2도).
+    # **request_timeout_s — 계산값, 미실측**(2026-09-24 로딩·배선 조사 ②-2): 900 s ≥ 8,192 ÷ 12 tok/s
+    # ≈ 683 s. 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두
+    # Scout 키와 달리 여유 배수(× 1.3)를 안 적었다.
+    # 지금(4,096 · 순차)은 기본 300 s로도 든다 — 2026-09-12 토큰 회계 보고서 §3.3의 한 호출이
+    # 16,384토큰에 382초였고(≈42.9 tok/s), 그 속도면 4,096은 ≈95 s다(계산값).
+    # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
+    # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
+    request_timeout_s: 900
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -346,6 +354,8 @@ models:
     #   `Running: 1 reqs`의 중앙값, 237창)라 `output_max` 4,096을 다 쓰면 ≈308 s(계산값, 프리필 제외) —
     #   `_TIMEOUT_S` 300 s보다 길다. 그 run이 실제로 `scout_boundary` 호출 하나의 300,021 ms 타임아웃으로
     #   멈췄다(trace `model_call` · 이슈 #261).
+    #   ⏵ 2026-09-29 — 이 키는 이제 `request_timeout_s` 1,200 s를 선언한다(아래). 그래서 이 문단의 「넘는다」는
+    #   선언이 없던 때의 이야기다.
     # - 메모리(서버 로그): 가중치 15.27 GiB(로드 113 s) · 가중치+non-torch 16.05 GiB · util 0.20에서 KV
     #   7.69 GiB(55,952 tok — 16,384 길이에 3.42×). 기동 명령부터 서버가 `Starting vLLM server`를 찍기까지 132 s
     #   (기동 스크립트 로그의 시각 → 서버 로그의 시각).
@@ -359,6 +369,13 @@ models:
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model@25d7f38146bdf0fad1eac09c586b1993ef3e6ee4"
     family: "qwen"
+    # **request_timeout_s — 계산값, 미실측**(2026-09-24 로딩·배선 조사 ②-2): 1,200 s ≥ 8,192 ÷ 9.1 tok/s × 1.3
+    # ≈ 1,170 s.
+    # 9.1은 서버 동시 8에서 스트림당 속도를 대역 모형으로 낸 값이다(이것도 계산값).
+    # 지금(4,096 · 순차)은 위 「출력 상한을 다 쓰면…」 문단의 실측 13.3 tok/s로 ≈308 s다(계산값).
+    # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
+    # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
+    request_timeout_s: 1200
     prompt_template_version: "v3"
     fallback: null
     benchmark:
@@ -534,6 +551,7 @@ models:
     # - **느리다.** 단일 요청 생성 **8.1 tok/s**(서버 로그 10초 창 중앙값, 106창) — `output_max` 4,096을 다 쓰면
     #   ≈506 s(계산값)라 `_TIMEOUT_S` 300 s 안에는 ≈2,430토큰까지다(이슈 #261). 그 run의 injection 호출 wall은
     #   중앙값 94.7 s · 최대 195.8 s였다.
+    #   ⏵ 2026-09-29 — 이 키는 이제 `request_timeout_s` 1,800 s를 선언한다(아래). 그래서 300 s는 이 키의 벽이 아니다.
     # - 메모리(서버 로그): 가중치 27.52 GiB(로드 160 s) · 가중치+non-torch 28.27 GiB · util 0.30에서 KV 7.37 GiB
     #   (48,256 tok — 16,384 길이에 2.95×). 기동 명령부터 `Starting vLLM server`까지 181 s.
     #   `seccoderx-8b`와 함께 떠 있는 동안 장비 `MemAvailable` 최저값이 49.1 GiB였다(감시자 로그).
@@ -544,6 +562,13 @@ models:
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: "hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
     family: "qwen"
+    # **request_timeout_s — 계산값, 미실측**(2026-09-24 로딩·배선 조사 ②-2): 1,800 s ≥ 8,192 ÷ 6.2 tok/s × 1.3
+    # ≈ 1,718 s.
+    # 6.2는 서버 동시 8에서 스트림당 속도를 대역 모형으로 낸 값이다(이것도 계산값).
+    # 지금(4,096 · 순차)은 위 「느리다」 문단의 실측 8.1 tok/s로 ≈506 s다(계산값).
+    # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
+    # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
+    request_timeout_s: 1800
     prompt_template_version: "v3"
     fallback: null
     benchmark:
