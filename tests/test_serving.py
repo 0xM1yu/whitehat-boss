@@ -6,6 +6,8 @@ seqs·창·인자)은 프로필이 아니라 **장비 데이터**다 — 같은 
 """
 
 import json
+import sys
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,8 @@ import yaml
 from pydantic import ValidationError
 
 from src import cli
+from src.adapters import factory
+from src.adapters.factory import Deps, build_deps
 from src.config import (
     ConfigError,
     ExecutionPolicy,
@@ -23,6 +27,7 @@ from src.config import (
     load_config,
     load_serving,
 )
+from src.orchestrator.runner import DEFAULT_CONDITION, Dependencies, RunSpec
 
 POOL = "harness_pool"
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
@@ -384,3 +389,120 @@ def test_doctor_passes_a_matching_device_file_and_is_silent_without_swap(
     assert ok, "맞는 장비 파일인데 doctor가 말하지 않는다"
     assert all(line.startswith("[OK") for line in ok), ok
     assert _doctor(monkeypatch, load_config(POOL), tmp_path, "rig") == [], "교대 없는 프로필"
+
+
+# --- 의존성: 교대 실행은 콜러블로만 러너에 넘어간다 ----------------------------------------
+
+RUN_ID = "run_20260929_0001"
+
+# 가짜 교대 명령 — argv와 환경을 `calls.jsonl`에 적는다.
+_RECORDER = """
+import json, os, sys
+from pathlib import Path
+
+names = ("SWAP_DEADLINE_S", "HARNESS_RUN_ID", "HARNESS_DEVICE")
+with (Path(__file__).parent / "calls.jsonl").open("a", encoding="utf-8") as calls:
+    calls.write(json.dumps({"argv": sys.argv[1:], "env": {n: os.environ[n] for n in names}}))
+"""
+
+
+def _device_with_recorder(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """`rig` 장비 파일의 명령을 기록기로 두고, factory가 그 파일을 `tmp_path`에서 찾게 한다."""
+    script = tmp_path / "swap.py"
+    script.write_text(_RECORDER, encoding="utf-8")
+    _write(tmp_path, "rig", {"command": [sys.executable, str(script)], "servers": {}})
+    real = load_serving
+    monkeypatch.setattr(factory, "load_serving", lambda device, **_k: real(device, tmp_path))
+    return tmp_path / "calls.jsonl"
+
+
+def test_the_runner_protocol_and_the_factory_deps_both_carry_swap_to() -> None:
+    """러너는 `src/adapters/`를 import 하지 않는다 — 교대 실행은 `Deps.swap_to` 콜러블로만 넘는다.
+    Protocol이 선언한 필드는 전부 factory의 `Deps`에 있어야 한다(구조적 만족)."""
+    assert "swap_to" in Dependencies.__annotations__
+    assert set(Dependencies.__annotations__) <= {field.name for field in fields(Deps)}
+
+
+def test_build_deps_wires_swap_to_from_the_device_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """교대 프로필 + 장비면 `swap_to`가 장비 파일의 `command`를 부른다 — 마감은
+    `settle_timeout_s`, run·장비는 이 run의 것이다."""
+    calls = _device_with_recorder(monkeypatch, tmp_path)
+
+    deps = build_deps(
+        _swap_fake(),
+        run_id=RUN_ID,
+        source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+        device="rig",
+    )
+    assert deps.swap_to is not None
+    deps.swap_to(("fake",))
+
+    (call,) = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
+    assert call == {
+        "argv": ["fake"],
+        "env": {"SWAP_DEADLINE_S": "600", "HARNESS_RUN_ID": RUN_ID, "HARNESS_DEVICE": "rig"},
+    }
+
+
+def test_build_deps_leaves_swap_to_empty_without_a_swap_or_a_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """교대가 없는 프로필은 장비를 줘도 `None`이다. 교대 프로필이라도 장비가 없으면 `None`이다 —
+    모델에 안 닿는 run(`--dry-run`)은 장비 없이 조립돼야 하고, 닿는 run은 CLI가 먼저 막는다."""
+    _device_with_recorder(monkeypatch, tmp_path)
+
+    def swap_to(config: HarnessConfig, device: str | None) -> object:
+        return build_deps(
+            config,
+            run_id=RUN_ID,
+            source_root=TARGET,
+            artifacts_root=tmp_path / "artifacts",
+            device=device,
+        ).swap_to
+
+    assert swap_to(load_config("dev_fake"), "rig") is None
+    assert swap_to(_swap_fake(), None) is None
+
+
+def test_build_deps_refuses_a_device_file_that_disagrees_with_the_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """factory는 CLI 밖에서도 불린다 — 틀린 장비 파일로 교대 어댑터를 만들지 않는다."""
+    _device_with_recorder(monkeypatch, tmp_path)
+    row = _rows(_swap_pool())["seccoderx-8b"]
+    _write(tmp_path, "rig", {"command": ["x"], "servers": {"qwen9-999b": row}})
+
+    with pytest.raises(ConfigError, match="qwen9-999b"):
+        build_deps(
+            _swap_fake(),
+            run_id=RUN_ID,
+            source_root=TARGET,
+            artifacts_root=tmp_path / "artifacts",
+            device="rig",
+        )
+
+
+def test_execute_hands_the_run_device_to_build_deps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CLI 접합부가 `RunSpec.device`를 factory에 넘긴다 — 안 넘기면 교대 run이 `swap_to` 없이
+    돈다."""
+    seen: dict[str, object] = {}
+
+    class _Built(RuntimeError):
+        pass
+
+    def spy(*_: object, **kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _Built
+
+    monkeypatch.setattr(cli, "build_deps", spy)
+    spec = RunSpec(condition=DEFAULT_CONDITION, target=TARGET, device="rig")
+
+    with pytest.raises(_Built):
+        cli.execute(_swap_fake(), spec, run_id=RUN_ID, run_dir=tmp_path / RUN_ID)
+
+    assert seen["device"] == "rig"
