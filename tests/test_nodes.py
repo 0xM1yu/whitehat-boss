@@ -14,6 +14,7 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import read_symbol_source
@@ -625,6 +626,29 @@ def test_auditor_materializes_only_the_issued_missing_id(
     assert override.data["fields"] == "missing_evidence"
     written = f"{issued},mev_9999" if keep_issued else "mev_9999"
     assert override.data["written.missing_evidence"] == written
+
+
+@pytest.mark.parametrize("state", [FindingState.VALIDATED, FindingState.PROVEN])
+def test_stamp_issued_revalidates_instead_of_copying(ctx: RunContext, state: FindingState) -> None:
+    """도장이 **재검증**으로 덮는다 — `model_copy(update=)`면 이 검사가 빨개진다.
+
+    지금 호출부가 덮는 `state`는 `candidate`·`hypothesized`뿐이라, 거기서는 `model_copy`로 바꿔도
+    `Finding._promoted_states_need_backing`(`validated` 이상에서만 발동)이 안 걸려 전 스위트가
+    초록이었다(D83 리뷰 변이 ⑤). 그 검증기를 직접 태운다 — 재현 명세 없는 `validated`·`proven`은
+    만들어질 수 없어야 한다.
+    """
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+    assert finding.repro_spec is None, "픽스처 전제 — 재현 명세 없는 Finding이어야 검증기가 문다"
+
+    with pytest.raises(ValidationError, match="repro_spec"):
+        ctx.stamp_issued(
+            finding,
+            {"state": state},
+            stage=Stage.AUDITOR,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+        )
 
 
 def test_gate_records_grade_and_applies_transition(ctx: RunContext) -> None:
