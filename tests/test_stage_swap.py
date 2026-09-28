@@ -53,9 +53,11 @@ def _config(
 
 
 class _Rig:
-    """가짜 교대 + 모델 호출 감시. 교대가 올린 키를 들고, 호출마다 그 역할의 키가 올라 있는지 본다."""
+    """가짜 교대 + 호출 감시. 교대가 올린 키를 들고, 호출마다 그 역할의 키가 떠 있는지 본다."""
 
-    def __init__(self, config: HarnessConfig, models: object, *, fail_at: int | None = None) -> None:
+    def __init__(
+        self, config: HarnessConfig, models: object, *, fail_at: int | None = None
+    ) -> None:
         self.config = config
         self._models = models
         self._fail_at = fail_at
