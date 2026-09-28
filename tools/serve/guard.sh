@@ -4,7 +4,7 @@
 #
 #   MAX_HOURS=12 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &
 #
-# 감시자 하나는 run 하나만 지킨다 — 그 run이 처음 띄울 때 $SERVE_DIR/guard.owner에 자기를 적고, run 끝
+# 감시자 하나는 run 하나만 지킨다 — 그 run이 서버를 띄우기 직전마다 $SERVE_DIR/guard.owner에 자기를 적고, run 끝
 # 내림이 그 run 서버를 다 내리면 STOP_GUARD로 이 감시자를 멈춘다(swap.sh 머리 주석). 떠 있는 감시자가 있으면
 # (멈추는 중이 아니면) 새로 뜨지 않는다. pid 파일이 다른 감시자로 바뀌면 조용히 끝난다.
 #
@@ -19,6 +19,10 @@
 #   어느 쪽이든 SERVERS에 없는 프로세스는 건드리지 않고, 시작 시각이 다른 PGID(남이 물려받은 번호)도 건너뛴다.
 # 30 s마다 자기 서버의 생존과 여유 메모리를 $SERVE_DIR/logs/guard.log에 적는다.
 # 멈춤: touch $SERVE_DIR/STOP_GUARD (죽이지 않고 감시만 끝낸다).
+# ⚠ STOP_GUARD는 두 뜻이다 — run 끝 내림이 감시자를 멈추는 신호이자 사람의 멈춤 스위치다. run 도중 사람이 만들면
+#   감시자가 멈추고, 그 run의 다음 기동은 swap.sh가 「STOP_GUARD가 있다」로 거부해 run이 `model_swap_failed`로
+#   멈춘다. 그때까지 떠 있던 서버는 감시 없이 남는다 — 그 단계가 끝나 다음 교대가 거부되고 run 끝 내림(감시자
+#   없이도 된다)이 내릴 때까지. 죽이지는 않는다. 새 감시자는 뜨면서 STOP_GUARD를 지운다.
 #
 # ⚠ run 끝 내림(swap.sh 인자 없음)이 실패해도 러너는 run 결과를 바꾸지 않고 경고로만 남긴다 — 그때는 감시자도
 #   안 멈추므로(서버가 남았다) 남은 서버를 이 감시자의 마감이나 사람의 `HARNESS_RUN_ID=<run> bash

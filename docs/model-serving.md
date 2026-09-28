@@ -357,11 +357,15 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   | `vastai`(RTX PRO 6000 · 97,887 MiB) | 전용 VRAM — `total − used` ≥ util × total | Auditor 기동 하나만 실측(util 0.90 · 창 262,144 — 2026-09-29), 나머지 계획값 |
 
 - **감시자** — `tools/serve/guard.sh`, **run마다 하나 띄운다.** 교대 명령은 감시자가 떠 있고 다른 run 것이
-  아닐 때만 띄우고(처음 띄우는 run이 감시자를 자기 것으로 적는다), run 끝 내림이 그 run 서버를 다 내리면
+  아닐 때만 띄우고(띄우는 run이 기동 직전마다 감시자를 자기 것으로 적는다), run 끝 내림이 그 run 서버를 다 내리면
   감시자를 멈춘다 — 끝난 run의 감시자 마감이 다음 run 서버를 죽이지 않게. 마감(`MAX_HOURS`)은 지키는 run의
   서버만, 통합메모리의 MemAvailable 하한은 장비 보호라 교대 명령이 띄운 서버를 run과 무관하게 전부 내린다.
   run 끝 내림이 실패하면(러너는 run 결과를 바꾸지 않고 경고로 남긴다) 감시자도 안 멈추므로, 남은 서버는 그
-  마감이나 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`가 치운다.
+  마감이나 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`가 치운다. 감시자 확인은 서버를 띄우기 직전마다 한다 —
+  한 교대가 두 키를 띄우는 중 감시자가 끝나면 둘째 키는 안 띄운다.
+  ⚠ `STOP_GUARD`는 run 끝 내림의 신호이자 사람의 멈춤 스위치다. run 도중 사람이 만들면 감시자가 멈추고 그 run의
+  다음 기동이 「STOP_GUARD가 있다」로 거부돼 run이 `model_swap_failed`로 멈춘다 — 그때까지 떠 있던 서버는 그
+  단계가 끝나 run 끝 내림이 내릴 때까지 감시 없이 돈다.
 - ⚠ vast.ai 컨테이너에는 docker·podman이 없다(2026-09-29) — 도구 단계를 어디서 돌릴지 정하기 전에는 vast로
   끝까지 도는 run이 없다. `vastai.yaml`의 `command`는 로컬 실행이고 원격 실행 경로는 짓지 않았다.
 
