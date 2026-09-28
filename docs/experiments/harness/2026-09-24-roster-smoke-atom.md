@@ -370,7 +370,7 @@ Auditor `qwen3.6-35b-a3b`를 실모델로 부른다. Scout는 `fake_v2`다.
 | 1 | 해제 경로 없는 blocking이 새 Auditor의 E2 병목 둘 중 하나다 | [D65](../../open-questions/D/D65.md) — 이 보고서 날짜의 실측 절 |
 | 1 | Scout 풀이 기본 `gpu_seconds` 예산을 대상 ≈23개에 다 쓴다 | [D24](../../open-questions/D/D24.md) — 이 보고서 날짜의 절. 40샘플 run의 예산을 정하기 전에 본다 |
 | 1 | Auditor가 사고 없이 답한다 — 사고를 쓸지 정해야 한다 | 미등재. 길은 셋이다: 지금 그대로(문법이 사고를 막음) · 서버 인자로 `enable_thinking: false`(템플릿이 사고를 닫음, 하네스 변경 없음) · parser + `thinking_token_budget`(사고를 쓰되 길이를 묶음, 하네스가 그 필드를 보내야 함). §5 「Auditor 사고 모드 대조」 |
-| 2 | Scout 계약 위반이 조용히 저장·승격된다 | [D82](../../open-questions/D/D82.md)(신호·점수 — 닫는 조건 ⑤ · `requested_context`) · [D83](../../open-questions/D/D83.md)(`location`) |
+| 2 | Scout 계약 위반이 조용히 저장·승격된다 | [D82](../../open-questions/D/D82.md)(신호·점수 — 닫는 조건 ⑤ · `requested_context`) · [D83](../../open-questions/D/D83.md)(`location`) (⏵ 2026-09-29 — D83은 `location`을 도장 목록에 안 넣고 닫혔다. 이 누출은 지금 추적하는 자리가 없다) |
 | 2 | 기동 조건을 registry에 적는다 | `config/models.yaml`의 `seccoderx-8b`·`qwen3.6-35b-a3b` 「기동 조건」과 `config/budgets.yaml`의 `output_max` 주석 — 이 보고서와 짝인 설정 PR |
 | 3 | Qwen3-14B 키 편입 | ADR 0012 승인 뒤 — 지금은 스모크 브랜치에만 있다 (⏵ 2026-09-25 — 승인 전인 09-24에 PR #266이 이미 `qwen3-14b` 키로 편입했다) |
 

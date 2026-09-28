@@ -111,6 +111,10 @@ agent:
   `policy._scout_triage`가 신호를 먼저 보고, NE 좌석은 같은 세션 후속 턴(최대 `max_hops`)을 거쳐
   정지 사유로 `queued`되거나(`NeStopReason`) 신호가 review·reject로 바뀌면 그 신호로 선다
   (`src/orchestrator/runner.py`의 `_run_ne_hops`·`_step_scout_settle`).
+- **하네스가 덮는 필드** — `candidate_id`·`run_id`·`artifact_id`와 `state`(=`candidate`)는 모델이 쓴 값이 아니라
+  하네스 발급값으로 저장한다(`RunContext.stamp_issued` — [D83](open-questions/D/D83.md)). v1·v2·v3와 되묻기 홉이
+  전부 같다. `scout_member`·`slice_id`도 하네스가 채운다. 모델 값이 달랐으면 덮기 전에 trace `issued_override`에
+  남긴다. `location`은 덮지 않는다 — 모델이 사실 블록의 대상을 옮겨 적는 값이다.
 - 프롬프트 규약: thinking 최소화, 출력은 항목당 3줄 이내, 자유 서술 금지
 - 실패 모드: 위험 함수 존재만으로 높은 점수를 주는 편향 → benign 샘플로 반드시 교정 측정([evaluation.md](evaluation.md))
 
@@ -125,6 +129,10 @@ agent:
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
+- **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
+  `missing_evidence`는 발급 `missing_id`와의 교집합만 남기고, 그 밖의 ID로는 `MissingEvidence`를 만들지 않는다
+  (`RunContext.stamp_issued` — [D83](open-questions/D/D83.md)). `produced_by`도 하네스가 stamp한다(`call_model`).
+  모델 값이 달랐으면 덮기 전에 trace `issued_override`에 남긴다.
 - 분석 축: source→sink 경로, memory lifetime/ownership, boundary check, 정수 연산, config·환경 조건 영향
 - 규칙: 코드에서 확인 불가한 사실은 주장하지 말고 `MissingEvidence`로 요청한다. "확인 불가"가 유효한 출력이다.
 
