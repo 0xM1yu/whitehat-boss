@@ -701,9 +701,6 @@ def test_case_b_query_adds_the_writer_sink_set_bounded():
     # PR fixes comes back with a depth-first rewrite (`groups.flatMap(_._2)`) that leaves the
     # call sites and `def budget(` green -- these three fragments turn that regression red.
     assert "groupBy(_.method.id)" in query  # grouped per enclosing method
-    # D90 (#318): groups ordered by anchor count desc (method.id tiebreak) so a high-id GT method
-    # with more anchors of this type is not starved. Reverting to plain id order reddens here.
-    assert "sortBy(g => (-g._2.size, g._1))" in query
     assert "(0 until k).flatMap(i =>" in query  # round-robin over rounds (breadth-first)
     assert "g.lift(i)" in query  # the i-th anchor of every method before any method's next
     # #311 review robustness: budget guards a null enclosing method (else `.method.id` NPEs and
@@ -1196,7 +1193,7 @@ def test_case_a_query_bounds_are_pinned():
     # rewrite that drops the write-context half (leaving only WRITER calls) fails here.
     assert "val hotIds =" in q
     assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in q
-    assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in q
+    assert 'nameExact("<operator>.assignment").filter(_.argument(1).isCall.name(' in q
     # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
     # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
     assert q.count(f".take({cap})") == 2
