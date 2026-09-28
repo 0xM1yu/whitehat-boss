@@ -245,7 +245,7 @@ DEVICES = ("atom", "vastai")
 def test_the_committed_device_file_serves_every_model_the_canonical_pool_swaps(
     device: str,
 ) -> None:
-    """커밋된 장비 파일이 `harness_pool`의 교대 선언·registry와 맞는다 — run 시작 게이트와 같은 검사다.
+    """커밋된 장비 파일이 `harness_pool`의 교대 선언·registry와 맞는다 — run 시작 게이트의 검사.
 
     ⚠ **교대 선언이 먼저 있어야 이 검사가 무엇을 잰다.** `check_serving`의 「교대가 올릴 모델마다
     행이 있다」는 `swap`이 없으면 건너뛴다 — 그래서 선언을 같이 단언한다.
@@ -430,7 +430,11 @@ def test_doctor_passes_a_matching_device_file_and_is_silent_without_swap(
     ok = _doctor(monkeypatch, config, tmp_path, "rig")
     assert ok, "맞는 장비 파일인데 doctor가 말하지 않는다"
     assert all(line.startswith("[OK") for line in ok), ok
-    assert _doctor(monkeypatch, load_config(POOL), tmp_path, "rig") == [], "교대 없는 프로필"
+    # 교대를 안 선언한 실서빙 프로필 — `harness_pool`은 2026-09-29부터 교대를 선언해 hybrid
+    # 짝을 쓴다.
+    no_swap = load_config("harness_pool_hybrid")
+    assert no_swap.swap is None
+    assert _doctor(monkeypatch, no_swap, tmp_path, "rig") == [], "교대 없는 프로필"
 
 
 # --- 의존성: 교대 실행은 콜러블로만 러너에 넘어간다 ----------------------------------------
