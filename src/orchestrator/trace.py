@@ -29,6 +29,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
+| 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로** |
 
 「스키마 파싱 실패율」 산식: 분자 `Σ(attempts−1 if ok else attempts) −
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
@@ -287,6 +288,16 @@ class EventKind(StrEnum):
     # 것이다(서버별 `report.server.<key>.<field>` — util·창·기동 초 등). 둘을 섞지 않는다 — 명령도
     # `ok`·`wall_ms`를 보고하므로 접두사 없이 펴면 하네스의 값과 이름이 겹친다.
     MODEL_SWAP = "model_swap"
+    # 모델이 쓴 발급값(ID·`run_id`·`artifact_id`·초기 `state`·`missing_evidence`)이 하네스
+    # 발급값과 **달라서 덮었다** (이슈 #279). 내는 곳은 `RunContext.stamp_issued` 하나다 —
+    # Scout·Auditor 출력 1건당 최대 1행이고 **이벤트 부재 = 모델이 발급값을 그대로 썼다**
+    # (`critic_skipped`와 같은 읽기).
+    #
+    # `fields`가 달랐던 필드 이름(쉼표로 이음)이고 `written.<필드>`가 모델이 쓴 원래 값이다 —
+    # 덮은 뒤에는 그 값이 저장소에도 `transition`에도 없어서, 「모델이 사실 블록을 안 따랐다」는
+    # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
+    # 같은 키).
+    ISSUED_OVERRIDE = "issued_override"
 
 
 class TraceEvent(HarnessModel):
