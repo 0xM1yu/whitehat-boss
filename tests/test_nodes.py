@@ -451,6 +451,182 @@ def test_auditor_creates_finding_and_materializes_missing_evidence(ctx: RunConte
     assert created.data["reason"] == ReasonCode.AUDITOR_HYPOTHESIZED.value
 
 
+# --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
+
+
+class _RewritingModelClient:
+    """픽스처 모델(Fake)의 출력을 `rewrite`로 고쳐 돌려준다 — 사실 블록을 안 따른 모델.
+
+    고친 값은 테스트가 `transition()`으로 만든다 — 스키마 검증을 통과하는 값이어야 실제 파서가
+    내보낼 수 있는 출력이다(D83: 파싱은 통과하고 생성·저장에서 터지거나 조용히 덮인다).
+    """
+
+    def __init__(self, inner: object, rewrite) -> None:  # noqa: ANN001
+        self._inner = inner
+        self._rewrite = rewrite
+        self.written: list[object] = []
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
+        result = self._inner.complete(role=role, prompt=prompt, schema=schema, history=history)
+        self.written.append(result.value)
+        return result.model_copy(update={"value": self._rewrite(result.value)})
+
+
+def _overrides(ctx: RunContext) -> list:  # noqa: ANN202
+    return [e for e in ctx.trace.events if e.kind == "issued_override"]
+
+
+def test_scout_stamps_the_issued_ids_over_the_ones_the_model_wrote(ctx: RunContext) -> None:
+    """D83 ② — Scout가 **남의** `candidate_id`·다른 `run_id`·`artifact_id`를 써도 둘 다 남는다.
+
+    저장소 `put()`이 `(kind, obj_id)` upsert라, 모델 값을 그대로 쓰면 예외 없이 첫 후보의 행을
+    덮었다. 도장 뒤에는 둘째 후보가 발급값으로 저장되고, `transition`의 `subject_id`도 발급값이며,
+    모델이 쓴 값은 덮기 전에 `issued_override`로 남는다.
+    """
+    first, _, _ = _triage(ctx, VULN_TARGET)
+    foreign_run = "run_19990101_0001"
+    stub = _RewritingModelClient(
+        ctx.models,
+        lambda value: value.transition(
+            candidate_id=first.candidate_id, run_id=foreign_run, artifact_id=first.artifact_id
+        ),
+    )
+
+    second, _, _ = _triage(dataclasses.replace(ctx, models=stub), BENIGN_TARGET)
+
+    assert second.candidate_id != first.candidate_id, "모델이 쓴 남의 candidate_id가 살아남았다"
+    assert ctx.store.get("candidate", first.candidate_id) == first, "첫 후보의 행이 덮였다"
+    stored = ctx.store.get("candidate", second.candidate_id)
+    assert stored is not None and stored.run_id == RUN_ID
+    assert ctx.store.get("artifact", stored.artifact_id).path == BENIGN_TARGET.file
+    created = [
+        e.subject_id
+        for e in ctx.trace.events
+        if e.kind is EventKind.TRANSITION and e.data["rule"] == "C-1"
+    ]
+    assert created == [first.candidate_id, second.candidate_id]
+    (override,) = _overrides(ctx)
+    assert override.subject_id == second.candidate_id
+    assert override.data["fields"] == "candidate_id,run_id,artifact_id"
+    assert override.data["written.candidate_id"] == first.candidate_id
+    assert override.data["written.run_id"] == foreign_run
+
+
+def test_scout_v3_follow_up_hop_is_stamped_too(ctx: RunContext) -> None:
+    """D83 — v3 되묻기 홉(hop k)의 `ScoutResponse.candidate`도 발급값으로 덮는다.
+
+    hop0(`open_session`)만 막으면 되묻기 루프의 마지막 판정이 `finish()`로 그대로 간다 —
+    `state: triaged`면 C-1 조회가 `IllegalTransition`을 내고, 남의 ID면 그 행을 덮는다.
+    """
+    session = _ne_session()
+
+    class _Stub:
+        def complete(self, *, role: Role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+            written = session.candidate.transition(
+                candidate_id="cand_9999",
+                run_id="run_19990101_0001",
+                artifact_id="art_9999",
+                state=FindingState.TRIAGED,
+                reason_codes=["triage_review"],
+            )
+            value = ScoutResponse(candidate=written, analysis_summary=AnalysisSummary(claim="h1"))
+            return ModelResult(
+                value=value,
+                usage=Usage(input_tokens=110, output_tokens=15, cached_tokens=90),
+                model="stub",
+                raw_text="HOP1 RAW",
+            )
+
+    next_session = scout.continue_session(
+        dataclasses.replace(ctx, models=_Stub()), session, "FOLLOWUP"
+    )
+
+    stamped = next_session.candidate
+    assert (stamped.candidate_id, stamped.run_id, stamped.artifact_id, stamped.state) == (
+        session.candidate_id,
+        RUN_ID,
+        session.candidate.artifact_id,
+        FindingState.CANDIDATE,
+    )
+    candidate = scout.finish(ctx, next_session)
+    assert candidate.candidate_id == session.candidate_id
+    (override,) = _overrides(ctx)
+    assert override.data["fields"] == "candidate_id,run_id,artifact_id,state"
+    assert override.data["written.state"] == "triaged"
+
+
+def test_auditor_stamps_the_issued_ids_over_the_ones_the_model_wrote(ctx: RunContext) -> None:
+    """D83 ② — Auditor가 **남의** `finding_id`·`candidate_id`, 다른 `run_id`를 써도 둘 다 남는다."""
+    first_candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    first, _ = auditor.run(ctx, candidate=first_candidate, capsule=capsule, evidences=evidences)
+    second_candidate, capsule2, evidences2 = _triage(ctx, VULN_TARGET)
+    foreign_run = "run_19990101_0001"
+    stub = _RewritingModelClient(
+        ctx.models,
+        lambda value: value.transition(
+            finding_id=first.finding_id,
+            candidate_id=first_candidate.candidate_id,
+            run_id=foreign_run,
+        ),
+    )
+
+    second, _ = auditor.run(
+        dataclasses.replace(ctx, models=stub),
+        candidate=second_candidate,
+        capsule=capsule2,
+        evidences=evidences2,
+    )
+
+    assert second.finding_id != first.finding_id, "모델이 쓴 남의 finding_id가 살아남았다"
+    assert ctx.store.get("finding", first.finding_id) == first, "첫 Finding의 행이 덮였다"
+    stored = ctx.store.get("finding", second.finding_id)
+    assert stored is not None
+    assert (stored.candidate_id, stored.run_id) == (second_candidate.candidate_id, RUN_ID)
+    created = [
+        e.subject_id
+        for e in ctx.trace.events
+        if e.kind is EventKind.TRANSITION and e.data["rule"] == "F-1"
+    ]
+    assert created == [first.finding_id, second.finding_id]
+    (override,) = _overrides(ctx)
+    assert override.subject_id == second.finding_id
+    assert override.data["fields"] == "finding_id,run_id,candidate_id"
+    assert override.data["written.finding_id"] == first.finding_id
+
+
+@pytest.mark.parametrize("keep_issued", [True, False], ids=["issued_plus_foreign", "foreign_only"])
+def test_auditor_materializes_only_the_issued_missing_id(
+    ctx: RunContext, keep_issued: bool
+) -> None:
+    """D83 ③ — `missing_evidence`에 발급되지 않은 ID를 쓰면 그 ID는 저장되지 않는다.
+
+    노드가 발급하는 `missing_id`는 호출당 하나다. 그 밖의 ID마다 `blocking=True`
+    MissingEvidence가 만들어지면 해제 경로가 없어 그 Finding은 run 끝까지 E2 미만이다(D65).
+    도장은 **발급값과의 교집합**만 남긴다 — 발급 ID를 쓴 blocking은 그대로다(D65는 안 닫힌다).
+    """
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    stub = _RewritingModelClient(
+        ctx.models,
+        lambda value: value.transition(
+            missing_evidence=[*(value.missing_evidence if keep_issued else []), "mev_9999"]
+        ),
+    )
+
+    finding, missings = auditor.run(
+        dataclasses.replace(ctx, models=stub), candidate=candidate, capsule=capsule
+    )
+
+    (issued,) = stub.written[0].missing_evidence  # Fake는 정적 신호 없는 대상에 발급 ID를 쓴다
+    assert ctx.store.get("missing_evidence", "mev_9999") is None, "발급 안 된 ID가 저장됐다"
+    expected = [issued] if keep_issued else []
+    assert finding.missing_evidence == expected
+    assert [m.missing_id for m in missings] == expected
+    (override,) = _overrides(ctx)
+    assert override.data["fields"] == "missing_evidence"
+    written = f"{issued},mev_9999" if keep_issued else "mev_9999"
+    assert override.data["written.missing_evidence"] == written
+
+
 def test_gate_records_grade_and_applies_transition(ctx: RunContext) -> None:
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
     finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
