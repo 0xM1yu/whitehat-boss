@@ -1727,3 +1727,53 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     assert payload["reasoning_effort"] == config.reasoning_efforts()["auditor"] == "xhigh"
     assert payload["thinking_token_budget"] == auditor.thinking_token_budget
     assert payload["max_tokens"] == cap
+
+
+# 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 이슈 #261 본문, 2026-09-24 ATOM
+# `run_20260924_0001`, vLLM 서버 로그 `Avg generation throughput`의 `Running: 1 reqs` 10초
+# 창 중앙값(237·106창). Auditor(그때 `qwen3.6-35b-a3b`, 지금 `qwen3.8-27b`)는 로스터가
+# 바뀌었고 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가 이미
+# 잠그므로 여기 넣지 않는다.
+#
+# **`gpt-oss-20b`(critic)는 이 표에 없다.** `git grep -n "tok/s" docs/experiments`로 훑으면
+# gpt-oss를 언급하는 실험 문서가 여덟 개 있지만, 단일 요청 생성 속도(tok/s)를 잰 것은
+# 하나도 없다 — 2026-09-24 스모크는 Auditor와 Critic을 함께 띄우는 조합을 "안 쟀다"고
+# 스스로 적고(`docs/experiments/harness/2026-09-24-roster-smoke-atom.md`), 2026-09-12
+# 토큰 회계 보고서는 `completion_tokens`(사고+본문 토큰 수)만 재지 `tok/s`가 아니다. 그래서
+# 속도 관계는 못 잠그고, 아래 테스트는 `request_timeout_s` 선언 자체만 본다.
+_MEASURED_DECODE_TOK_S = {
+    "seccoderx-8b": 13.3,
+    "qwen3-14b": 8.1,
+}
+
+
+def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
+    """실서빙 Scout·Critic 좌석마다 `request_timeout_s`가 있고, 속도를 아는 좌석은 벽시계가
+    출력 상한보다 먼저 끊지 않는다(#261).
+
+    ATOM 09-24 실측 단일 요청 속도로는 `seccoderx-8b` 13.3 · `qwen3-14b` 8.1 tok/s라
+    전역 `output_max` 4,096에 각각 ≈308 s · ≈506 s가 걸려 어댑터 기본 300 s를 넘는다.
+    #274 뒤에는 그 후보만 버리지만, 연속 셋이면 `_MAX_CONSECUTIVE_DROPS`가 run을 세운다.
+
+    Auditor는 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가
+    이미 잠갔으므로 여기서 다시 보지 않는다. `_MEASURED_DECODE_TOK_S`에 없는 모델
+    (`gpt-oss-20b`)은 속도 실측이 저장소에 없어 관계를 못 재고, 선언 여부만 본다.
+    """
+    config = load_config("harness_pool")
+    served = config.served_models()
+    roles_to_check = {role: key for role, key in served.items() if role != "auditor"}
+    assert roles_to_check, "harness_pool의 실서빙 역할 목록이 비어 있다 — 프로필이 바뀌었다"
+
+    for role, model_key in roles_to_check.items():
+        entry = config.models[model_key]
+        cap = config.thresholds.output_max_for(role)
+        assert entry.request_timeout_s is not None, (
+            f"{model_key}({role}) — 어댑터 기본 300 s로는 느린 좌석이 출력 상한 {cap}을 "
+            "다 못 낸다(#261)"
+        )
+        tok_s = _MEASURED_DECODE_TOK_S.get(model_key)
+        if tok_s is None:
+            continue
+        assert entry.request_timeout_s >= cap / tok_s, (
+            f"{model_key}({role}) — 타임아웃이 출력 상한보다 먼저 끊는다(#261)"
+        )
