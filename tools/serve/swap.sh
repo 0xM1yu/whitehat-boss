@@ -19,9 +19,11 @@
 #   내린 직후에는 메모리가 돌아올 때까지 MEM_WAIT_S까지 기다렸다가 판정한다.
 #
 # 안전장치 — 하나라도 걸리면 띄우지 않고 0이 아닌 코드로 끝난다(하네스가 run을 멈춘다).
-#   · 감시자(tools/serve/guard.sh)가 떠 있어야 띄우고, **감시자 하나는 run 하나만 지킨다.** 이 run이 처음
-#     띄울 때 감시자를 자기 것으로 적는다($SERVE_DIR/guard.owner = "감시자PID RUN_ID"). 다른 run이 이미 적은
-#     감시자 아래서는 띄우지 않는다. run 끝 내림(인자 없음)이 이 run 서버를 다 내리면 그 감시자를 멈춘다
+#   · 감시자(tools/serve/guard.sh)가 떠 있어야 띄우고, **감시자 하나는 run 하나만 지킨다.** 서버를 띄우기
+#     직전마다(시도마다 — 한 호출이 두 키를 띄우면 둘 다) 감시자가 살아 있고 멈추는 중(STOP_GUARD)이 아니며
+#     다른 run 것이 아닌지 다시 보고, 이 run 것으로 적는다($SERVE_DIR/guard.owner = "감시자PID RUN_ID" —
+#     멱등). 어긋나면 그 자리에서 실패한다 — 이미 띄운 키는 run 끝 내림이 내린다. 적힌 감시자 PID가 지금
+#     감시자와 다르면 옛 기록이라 무효다. run 끝 내림(인자 없음)이 이 run 서버를 다 내리면 그 감시자를 멈춘다
 #     (STOP_GUARD) — 다음 run은 새 감시자를 띄운다. 교대 중간(내리고 띄우기 전)에는 멈추지 않는다 — 인자
 #     없는 호출에서만. 그래서 끝난 run의 감시자 마감이 다음 run 서버를 죽이지 않는다.
 #     아무것도 띄우지 않은 run(모델 전 단계에서 끝남)은 감시자를 적지 않아 멈추지도 않는다 — 다음 run이 그
@@ -249,10 +251,16 @@ foreign_check() { # 이 run 밖의 GPU 프로세스가 있으면 멈춘다
 
 guard_pid() { cat "$D/guard.pid" 2> /dev/null || true; }
 
+live() { # 그 PID가 살아 있다 — 좀비는 죽은 것이다(`kill -0`은 좀비에도 성공한다)
+  local state
+  state=$(sed 's/.*) //' "/proc/$1/stat" 2> /dev/null | cut -d' ' -f1)
+  [ -n "$state" ] && [ "$state" != Z ]
+}
+
 guard_alive() { # 떠 있고 멈추는 중(STOP_GUARD)이 아니다
   local gp
   gp=$(guard_pid)
-  [ -n "$gp" ] && kill -0 "$gp" 2> /dev/null && [ ! -e "$D/STOP_GUARD" ]
+  [ -n "$gp" ] && live "$gp" && [ ! -e "$D/STOP_GUARD" ]
 }
 
 owner() { # 지금 감시자가 지키는 run — 옛 감시자가 적은 줄은 무효다
@@ -261,8 +269,11 @@ owner() { # 지금 감시자가 지키는 run — 옛 감시자가 적은 줄은
   [ -n "$gp" ] && [ -f "$OWNER" ] && read -r p r < "$OWNER" && [ "$p" = "$gp" ] && echo "$r"
 }
 
-claim_guard() { # 띄우기 전 — 감시자가 이 run 것이 아니면 멈춘다(모듈 머리 주석)
+claim_guard() { # 서버를 띄우기 직전마다 — 감시자가 떠 있고 이 run 것인지 다시 보고 적는다(모듈 머리 주석)
   local held
+  if [ -e "$D/STOP_GUARD" ]; then
+    fail "STOP_GUARD가 있다 — 감시자가 멈추는 중이다(run 끝 내림이나 사람이 멈췄다). 감시 없이 띄우지 않는다 — 새 감시자를 띄운다(뜨면서 STOP_GUARD를 지운다)"
+  fi
   guard_alive || fail "감시자가 안 떠 있다 — tools/serve/guard.sh를 먼저 띄운다(run마다 하나 — run 끝 내림이 멈춘다)"
   held=$(owner) || held=""
   if [ -n "$held" ] && [ "$held" != "$RUN_ID" ]; then
@@ -357,6 +368,7 @@ launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 �
     foreign_check
     wait_for_memory "$key" "$util"
     if port_busy "$port"; then fail "포트 $port가 이미 쓰인다 — $key를 띄우지 않는다"; fi
+    claim_guard # 배치 시작의 사진이 아니라 이 기동 직전의 감시자다 — 앞 키를 띄우는 사이에 끝났을 수 있다
     logf="$D/logs/$key.$RUN_ID.$(date -u +%Y%m%dT%H%M%SZ).log"
     if [ -e "$logf" ]; then fail "로그 $logf가 이미 있다 — 덮어쓰지 않는다"; fi
     str "server/$key/log" "$logf"
@@ -431,7 +443,6 @@ if [ $# -eq 0 ]; then release_guard; fi
 # 2) 원하는 것 — 떠 있으면 요청 한 건으로 확인해 두고, 없으면 하나씩 띄운다.
 if [ $# -gt 0 ]; then
   [ -n "$DEVICE" ] || fail "HARNESS_DEVICE가 없다 — 어느 장비 파일로 띄울지 모른다"
-  claim_guard
 fi
 for key in "$@"; do
   spec=$(row "$key") || fail "장비 파일·registry에서 $key를 못 읽었다(위 stderr)"

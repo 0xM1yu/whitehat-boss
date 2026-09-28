@@ -42,7 +42,13 @@ DEADLINE=$(($(date +%s) + MAX_S))
 mkdir -p "$D/logs"
 touch "$SERVERS"
 
-if [ -f "$D/guard.pid" ] && kill -0 "$(cat "$D/guard.pid")" 2> /dev/null && [ ! -e "$D/STOP_GUARD" ]; then
+live() { # 그 PID가 살아 있다 — 좀비는 죽은 것이다(`kill -0`은 좀비에도 성공한다)
+  local state
+  state=$(sed 's/.*) //' "/proc/$1/stat" 2> /dev/null | cut -d' ' -f1)
+  [ -n "$state" ] && [ "$state" != Z ]
+}
+
+if [ -f "$D/guard.pid" ] && live "$(cat "$D/guard.pid")" && [ ! -e "$D/STOP_GUARD" ]; then
   echo "감시자 $(cat "$D/guard.pid")가 이미 떠 있다 — 그 run이 끝나면 멈춘다(또는 touch $D/STOP_GUARD)" >&2
   exit 2
 fi
