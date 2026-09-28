@@ -233,10 +233,22 @@ def test_a_report_too_deep_to_parse_is_an_empty_report_not_a_crash(
         assert swap_to(("seccoderx-8b",)) == {}
 
 
+class _Unforeseen(Exception):
+    """표준 예외 계층 밖의 `Exception` — 「`Exception`을 감싼다」를 철자가 아니라 성질로 문다.
+
+    `RuntimeError`만 두면 감싸기를 `except (RuntimeError, OSError)`로 좁혀도 초록이다(2026-09-29
+    적대적 리뷰 실측). 어떤 표준 예외도 상속하지 않아 그 튜플 어디에도 안 걸린다.
+    """
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
-    [(RuntimeError("probe exploded"), ModelSwapError), (KeyboardInterrupt(), KeyboardInterrupt)],
-    ids=["exception-is-wrapped", "base-exception-passes"],
+    [
+        (RuntimeError("probe exploded"), ModelSwapError),
+        (_Unforeseen("probe went sideways"), ModelSwapError),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+    ids=["exception-is-wrapped", "unforeseen-is-wrapped", "base-exception-passes"],
 )
 def test_an_unexpected_error_inside_the_swap_is_a_swap_error(
     tmp_path: Path, error: BaseException, expected: type[BaseException]
@@ -254,7 +266,7 @@ def test_an_unexpected_error_inside_the_swap_is_a_swap_error(
 
     if expected is ModelSwapError:
         assert caught.value.__cause__ is error
-        assert "RuntimeError" in str(caught.value)
+        assert type(error).__name__ in str(caught.value)
 
 
 def test_a_failed_command_raises_with_its_partial_report_and_output_tail(tmp_path: Path) -> None:
