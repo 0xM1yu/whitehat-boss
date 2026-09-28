@@ -150,6 +150,7 @@ def payloads(*, case_a=None, case_b=None, flow_count=0, truncated=False):
                 },
             },
         ),
+        "library": response("library", True),
         "case_a": response("case_a", [] if case_a is None else case_a),
         "case_b": response("case_b", [] if case_b is None else case_b),
         "flows": response(
@@ -574,12 +575,10 @@ def test_flow_cap_records_observed_truncation(monkeypatch, repo, tmp_path, trunc
     assert result["counters"]["flows_truncated"] == int(truncated)
     assert result["status"] == ("partial" if truncated else "ok")
     assert all(timeout == 7 for _, timeout in transport.requests)
-    flow = next(
-        json.loads(req.data)["query"]
-        for req, _ in transport.requests
-        if "__SLICER_flows__" in json.loads(req.data)["query"]
-    )
-    assert ".take(4)" in flow and "observed.take(3)" in flow
+    # The flow cap is a run setting, so it is compiled into the session library (slicer_library).
+    sent = [json.loads(req.data)["query"] for req, _ in transport.requests]
+    library = next(q for q in sent if "__SLICER_library__" in q)
+    assert ".take(4)" in library and "observed.take(3)" in library
 
 
 def test_deterministic_slices_under_reordered_candidates(monkeypatch, repo, tmp_path):
@@ -1098,7 +1097,8 @@ def test_engine_overrides_reach_every_flow_query(monkeypatch, repo, tmp_path):
     }
     for request, _ in transport.requests:
         query = json.loads(request.data)["query"]
-        if any(f"__SLICER_{stage}__" in query for stage in ("case_b", "inventory", "flows")):
+        # flows reach the overrides through the session library they call (slicer_library).
+        if any(f"__SLICER_{stage}__" in query for stage in ("case_b", "inventory", "library")):
             assert "maxCallDepth = 8" in query
             assert "maxArgsToAllow = 200" in query
             assert "maxOutputArgsExpansion = 300" in query
@@ -1492,3 +1492,25 @@ def test_only_per_candidate_stages_are_timed():
     for text in (queries.candidates_a_query(), queries.candidates_b_query(),
                  queries.inventory_query(), queries.import_query("/r", "p")):
         assert "def mark(" not in text
+
+
+def test_session_library_replaces_every_placeholder_and_calls_carry_the_data():
+    """slicer_library generates functions from the self-contained builders by swapping
+    placeholders for parameters. A leftover placeholder would silently query a fake
+    candidate; a builder edit that duplicates or drops one must fail construction."""
+    import slicer_library
+
+    lib = slicer_library.Library("/work/repo", 3, {"maxCallDepth": 8}, 30, 5000, 4)
+    assert re.search(r"__LIB_|99900\d", lib.definition) is None
+    for name in ("flows", "context", "backward"):
+        assert f"def {name}(" in lib.definition
+    assert lib.definition.startswith(f"object {lib.name} {{")
+    assert "maxCallDepth = 8" in lib.definition and "observed.take(3)" in lib.definition
+    call = lib.backward({**candidate("sprintf", 5), "entry": candidate("sprintf", 5),
+                         "scopes": [candidate()["scope"]]})
+    assert f"{lib.name}.backward(" in call and '"sprintf(buf)"' in call
+    assert '__SLICER_context__' in lib.context([("main.c", 1)])
+    # Different settings -> different object name: a session never reuses a stale library.
+    assert slicer_library.Library("/work/repo", 4, {}, 30, 5000, 4).name != lib.name
+    with pytest.raises(ValueError, match="occurs 0 times"):
+        slicer_library.as_function("flows", "{ x }", "f", "", [("absent", "y")])

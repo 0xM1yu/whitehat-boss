@@ -4,9 +4,9 @@ import copy
 import time
 
 import slicer_queries as queries
-from slicer_backward import backward_b_query
 from slicer_candidates import collect
 from slicer_checkpoint import digest
+from slicer_library import Library
 from slicer_source import assemble, cluster, normalize_points, recover_points
 
 STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
@@ -46,6 +46,18 @@ class SlicingStages:
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
         if self.checkpoint:
             self.checkpoint.bind("candidates", self.candidates)
+
+    def define_library(self) -> None:
+        """Compile the per-candidate query logic once for this Joern session (slicer_library)."""
+        self.library = Library(
+            self.repo.as_posix(),
+            self.max_flows,
+            self.engine_limits,
+            self.settings.get("backward_depth"),
+            self.settings.get("backward_nodes"),
+            self.result["joern_engine_config"]["maxCallDepth"],
+        )
+        self.query("library", self.library.definition)
 
     def points(self, raw: list[dict]) -> set[tuple[str, int]]:
         points, invalid = normalize_points(raw, self.sources, self.repo)
@@ -91,7 +103,7 @@ class SlicingStages:
                 return None
             points = self.points(candidate["anchors"]) | {(entry["file"], entry["line"])}
             if candidate["case"] == "A":
-                query = queries.flows_query(candidate["scopes"], self.max_flows, self.engine_limits)
+                query = self.library.flows(candidate["scopes"])
                 payload, _ = self.query("flows", query)
                 if payload.get("sinks_capped"):
                     # HIGH-1 (#252 review): the global memory-write/command-SQL-exec sink set
@@ -107,12 +119,7 @@ class SlicingStages:
                         "(candidate-method sinks always kept)",
                     })
             else:
-                query = backward_b_query(
-                    candidate,
-                    max_depth=self.settings.get("backward_depth"),
-                    max_nodes=self.settings.get("backward_nodes"),
-                    max_call_depth=self.result["joern_engine_config"]["maxCallDepth"],
-                )
+                query = self.library.backward(candidate)
                 payload, _ = self.query("backward", query)
             dependency_points = self.points(payload["lines"])
             state.update(
@@ -160,7 +167,7 @@ class SlicingStages:
         while True:
             old = points.copy()
             data, _ = self.query(
-                "context", queries.context_query(sorted(points), self.repo.as_posix())
+                "context", self.library.context(sorted(points))
             )
             points |= self.points(data)
             points = recover_points(points, self.sources)
@@ -251,6 +258,7 @@ class SlicingStages:
             else:
                 self.build_cpg()
                 self.inventory()
+                self.define_library()
                 if self.checkpoint:
                     self.checkpoint.bind("engine_config", self.result["joern_engine_config"])
                 self.collect_candidates()
