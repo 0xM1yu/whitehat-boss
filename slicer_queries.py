@@ -170,13 +170,21 @@ TIMED_RESULT = (
 TIMED_KEYS = frozenset({"value", "timings_ms", "counts", "body_ms"})
 
 
-def envelope(stage: str, body: str, *, timed: bool = False) -> str:
+def statements(body: str, *, timed: bool = False) -> str:
+    """The envelope's Scala statements up to `result`; slicer_library reuses them verbatim."""
     return (
-        "{ import io.shiftleft.semanticcpg.language._; "
+        "import io.shiftleft.semanticcpg.language._; "
         "import io.joern.dataflowengineoss.language._; "
         "import io.shiftleft.codepropertygraph.generated.nodes; "
         + (TIMING if timed else "")
         + f"val result = {{ {body} }}; "
+    )
+
+
+def envelope(stage: str, body: str, *, timed: bool = False) -> str:
+    return (
+        "{ "
+        + statements(body, timed=timed)
         + f'"__SLICER_{stage}__" + java.util.Base64.getEncoder.encodeToString('
         + f"ujson.write({TIMED_RESULT if timed else 'result'})"
         + ".getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "
@@ -482,14 +490,21 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
     return file_envelope("case_b", body)
 
 
-def method_selector(scopes: list[dict]) -> str:
-    predicates = [
-        f"(m.filename == {literal(s['file'])} && "
-        f"m.fullName == {literal(s['full_name'])} && "
-        f"m.lineNumber.getOrElse(-1) == {s['line']})"
-        for s in scopes
-    ]
-    return "cpg.method.internal.filter(m => " + " || ".join(predicates) + ").l"
+def method_selector(scopes: list[dict] | str) -> str:
+    """Select the candidate's methods. A str instead names a Scala `List[(file, fullName, line)]`
+    value (slicer_library's parameter), so both forms share the one predicate below."""
+
+    def match(file: str, full_name: str, line: object) -> str:
+        return (f"(m.filename == {file} && m.fullName == {full_name} && "
+                f"m.lineNumber.getOrElse(-1) == {line})")
+
+    if isinstance(scopes, str):
+        predicate = f"{scopes}.exists {{ case (f, fn, l) => {match('f', 'fn', 'l')} }}"
+    else:
+        predicate = " || ".join(
+            match(literal(s["file"]), literal(s["full_name"]), s["line"]) for s in scopes
+        )
+    return f"cpg.method.internal.filter(m => {predicate}).l"
 
 
 def flows_query(
