@@ -317,3 +317,35 @@ def test_the_role_declaration_names_every_stage_that_calls_a_model() -> None:
         runner.Stage.AUDITOR,
         runner.Stage.CRITIC,
     }
+
+
+# --- 교대 실패는 후보·Finding 하나의 실패가 아니다 --------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["per_stage", "per_candidate"])
+@pytest.mark.parametrize("role", ["scout", "auditor", "critic"])
+def test_a_swap_error_is_never_dropped_as_one_candidate_or_finding(
+    tmp_path: Path, role: str, mode: str
+) -> None:
+    """`ModelSwapError`가 폐기 판정 try 안에서 나도(단계 루프·후보 루프·Critic 루프) 그 시도만
+    버리지 않고 run을 `model_swap_failed`로 멈춘다 — `_is_droppable`이 거짓이라 다시 올라간다.
+
+    지금 교대는 그 try **밖**에서만 불리므로 이 경로는 방어선이다. 누가 교대 호출을 스텝 안으로
+    옮기거나 `_is_droppable`을 넓히면 교대 실패가 「시도 하나 폐기」로 둔갑한다 — 그것을 문다.
+    """
+    base = load_config("dev_fake")
+    profile = base.profile.transition(execution=ExecutionPolicy(mode=mode))
+    config = base.transition(profile=profile)
+    inner = build_deps(
+        base, run_id=RUN_ID, source_root=TARGET, artifacts_root=tmp_path / "artifacts"
+    ).models
+
+    class _SwapFails:
+        def complete(self, **kwargs):  # noqa: ANN003, ANN202
+            if kwargs["role"].value == role:
+                raise ModelSwapError("교대가 이 호출 안에서 실패했다")
+            return inner.complete(**kwargs)
+
+    _, events, _ = _run(tmp_path, config, rig=_Rig(config, _SwapFails()), wire=False)
+
+    assert _stop_reason(events) == "model_swap_failed"
