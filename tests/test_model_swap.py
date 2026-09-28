@@ -205,8 +205,10 @@ def test_the_last_stdout_line_is_flattened_into_scalars(tmp_path: Path) -> None:
 
 
 def test_a_failed_command_raises_with_its_partial_report_and_output_tail(tmp_path: Path) -> None:
+    # stderr 문구를 ASCII로 둔다 — 가짜 명령(파이썬)의 stderr 인코딩은 로캘을 따라 Windows에서
+    # cp949로 나온다. 실 명령(bash)과 무관한 이 테스트 환경의 성질이다.
     body = (
-        "sys.stderr.write('메모리 부족\\n')\n"
+        "sys.stderr.write('out of memory\\n')\n"
         "print(json.dumps({'ok': False, 'error': 'no mem'}))\n"
         "sys.exit(3)"
     )
@@ -215,7 +217,7 @@ def test_a_failed_command_raises_with_its_partial_report_and_output_tail(tmp_pat
         _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
 
     assert caught.value.report == {"ok": False, "error": "no mem"}
-    assert "메모리 부족" in caught.value.detail
+    assert "out of memory" in caught.value.detail
 
 
 def test_a_command_past_its_deadline_is_torn_down_before_raising(
