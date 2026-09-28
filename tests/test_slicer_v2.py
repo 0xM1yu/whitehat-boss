@@ -65,14 +65,14 @@ def test_b_reports_graph_measurements_instead_of_fake_flow_count(monkeypatch, re
     assert item["analysis"]["node_count"] == 2
     assert "flow_count" in item["measurement_notes"]
     assert "backward" in transport.stages and "flows" not in transport.stages
-    query = next(
-        json.loads(req.data)["query"]
-        for req, _ in transport.requests
-        if "__SLICER_backward__" in json.loads(req.data)["query"]
-    )
-    assert 'c.code == "sprintf(buf)"' in query
-    assert "astPath(c) == List(1,2)" in query
-    assert "sink.argument.l" in query
+    # The selector logic is compiled once into the session library; each call carries the data.
+    sent = [json.loads(req.data)["query"] for req, _ in transport.requests]
+    library = next(q for q in sent if "__SLICER_library__" in q)
+    call = next(q for q in sent if "__SLICER_backward__" in q and q is not library)
+    assert "c.code == code" in library and "astPath(c) == path" in library
+    assert "sink.argument.l" in library
+    assert '"sprintf(buf)"' in call and "List(1,2)" in call
+    assert call.count(library.split()[1] + ".backward(") == 1  # calls THIS session's object
     assert item["members"] == [item["candidate_key"]]
 
 

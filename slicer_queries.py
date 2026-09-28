@@ -1,6 +1,8 @@
 """Joern queries for the offline slicer; no harness imports or generated model queries.
 
-Each request is one Scala block: candidate locals never survive in the REPL.
+Each builder returns one self-contained Scala block: candidate locals never survive in the
+REPL. The per-candidate builders (flows, context, backward) are also the source that
+`slicer_library` compiles once per session into functions; the run sends calls to those.
 Most stages return their JSON as base64 in the block's result, since println can go to
 server logs. The candidate-enumeration stages (`FILE_TRANSPORT_STAGES`) instead write the
 payload to a file and return only its byte count -- their payload can outgrow what the REPL
