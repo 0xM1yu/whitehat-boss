@@ -57,7 +57,11 @@ def _default_monotonic_ms() -> int:
 
 
 def _trace_scalar(value: object) -> str:
-    """발급값 필드를 trace 값(스칼라)으로 — ID 리스트(`missing_evidence`)는 쉼표로 잇는다."""
+    """발급값 필드를 trace 값(스칼라)으로 — ID 리스트(`missing_evidence`)는 쉼표로 잇는다.
+
+    ⚠ 쉼표가 든 ID는 이어 붙인 값에서 경계가 안 갈린다 — `Identifier`는 길이만 제약한다
+    (`src/schemas/common.py`). 필드가 달랐다는 사실(`fields`)은 그래도 정확하다.
+    """
     return ",".join(value) if isinstance(value, list) else str(value)
 
 
@@ -395,7 +399,8 @@ class RunContext:
 
         **달랐던 필드는 덮기 전에 `issued_override`로 남긴다** — 모델이 사실 블록을 안 따랐다는
         관측이고, 덮고 나면 그 사실이 산출물 어디에도 없다. 모델이 쓴 원래 값을 `written.<필드>`로
-        싣는다 — `TraceValue`가 스칼라라 리스트는 `,`로 잇는다. 같으면 이벤트가 없다.
+        싣는다 — `TraceValue`가 스칼라라 리스트는 `,`로 잇는다(쉼표가 든 ID는 경계가 안 갈린다 —
+        `_trace_scalar`). 같으면 이벤트가 없다.
 
         **재검증으로 덮는다 — `model_copy(update=)`가 아니다.** `state`를 덮으므로 위 `produced_by`
         블록이 적은 경계에 걸린다 — 그 호출은 `Finding._promoted_states_need_backing`을 우회한다.
