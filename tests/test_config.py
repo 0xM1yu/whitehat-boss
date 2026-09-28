@@ -1289,8 +1289,8 @@ def test_only_the_canonical_pool_runs_per_stage_and_nothing_declares_swap(profil
     ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
-    **교대(`swap`)는 여전히 안 적는다** — `level`·`settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
-    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 배선(ADR 0009 결과 3)도 아직 없다.
+    **교대(`swap`)는 여전히 안 적는다** — `settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
+    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 러너 배선(ADR 0009 결과 3)도 아직 없다.
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
     """
     execution = load_config(profile).profile.execution
@@ -1348,7 +1348,6 @@ def test_swap_without_per_stage_is_rejected() -> None:
                     "swap": {
                         "resident": ["critic"],
                         "swappable": ["scout", "auditor"],
-                        "level": 1,
                         "settle_timeout_s": 30.0,
                     },
                 },
@@ -1376,7 +1375,6 @@ def test_swap_naming_a_role_the_profile_does_not_have_is_rejected() -> None:
                     "swap": {
                         "resident": ["critic"],
                         "swappable": ["scout", "embeding"],
-                        "level": 1,
                         "settle_timeout_s": 30.0,
                     },
                 },
@@ -1401,7 +1399,6 @@ def test_a_complete_swap_declaration_on_per_stage_is_accepted() -> None:
                 "swap": {
                     "resident": ["critic"],
                     "swappable": ["scout", "auditor"],
-                    "level": 2,
                     "settle_timeout_s": 30.0,
                 },
             },
@@ -1413,7 +1410,58 @@ def test_a_complete_swap_declaration_on_per_stage_is_accepted() -> None:
     assert entry.execution.swap is not None
     assert entry.execution.swap.resident == ("critic",)
     assert entry.execution.swap.swappable == ("scout", "auditor")
-    assert entry.execution.swap.level == 2
+    assert entry.execution.swap.settle_timeout_s == 30.0
+
+
+def test_a_swap_that_names_a_sleep_level_is_rejected() -> None:
+    """교대는 **콜드 재기동**이다 — vLLM `/sleep?level=`의 단계를 적을 자리가 없다.
+
+    `level`은 sleep/wake 교대의 스키마였고, 채택된 방식(단계 경계에서 서버를 끄고 다음 단계
+    모델을 새로 띄운다)에는 그 개념이 없다. 필드를 지운 뒤 옛 YAML이 `level:`을 적어 오면
+    **조용히 무시되지 않고** 로드에서 죽어야 한다 — 적은 사람은 그 값이 무언가를 고른다고 믿는다.
+    """
+    with pytest.raises(ValidationError, match="level"):
+        ProfileEntry.model_validate(
+            _per_stage_swap(resident=["critic"], swappable=["scout", "auditor"], level=1)
+        )
+
+
+@pytest.mark.parametrize(
+    ("resident", "swappable"),
+    [([], ["scout", "embedding"]), (["reranker"], ["scout"])],
+    ids=["swappable-embedding", "resident-reranker"],
+)
+def test_a_retrieval_role_in_swap_is_rejected(resident: list[str], swappable: list[str]) -> None:
+    """검색 역할(embedding·reranker)은 교대 집합에 못 온다 — **hybrid 교대는 뒤로 미뤘다.**
+
+    검색은 3단계에서 돌고, 5단계 검색을 어떻게 가를지(ADR 0012 결정 3)가 정해지기 전에는 그
+    모델을 어느 단계에 띄울지 config가 말할 수 없다. 상주로 두면 모든 단계의 메모리를 먹고,
+    교대로 두면 러너가 부를 단계 표가 없다 — 어느 쪽이든 「선 것처럼 보이는 정책」이다.
+    `roles`에는 그 역할이 있어도(`_swap_names_roles_this_profile_has`를 통과하는 모양) 거부해야 한다.
+    """
+    with pytest.raises(ValidationError, match="ADR 0012 결정 3"):
+        ProfileEntry.model_validate(
+            {
+                "description": "x",
+                "roles": {
+                    "scout": "fake",
+                    "auditor": "fake",
+                    "critic": "fake",
+                    "embedding": "fake",
+                    "reranker": "fake",
+                },
+                "adapters": {"retriever": "hybrid", "tool_runner": "fake", "state_store": "memory"},
+                "budget": "dev_fake",
+                "execution": {
+                    "mode": "per_stage",
+                    "swap": {
+                        "resident": resident,
+                        "swappable": swappable,
+                        "settle_timeout_s": 30.0,
+                    },
+                },
+            }
+        )
 
 
 def test_per_stage_without_swap_is_allowed() -> None:
@@ -1446,7 +1494,7 @@ def _per_stage_swap(**swap: object) -> dict[str, object]:
         "budget": "dev_fake",
         "execution": {
             "mode": "per_stage",
-            "swap": {"level": 1, "settle_timeout_s": 30.0, **swap},
+            "swap": {"settle_timeout_s": 30.0, **swap},
         },
     }
 
