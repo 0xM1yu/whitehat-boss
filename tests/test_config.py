@@ -1616,6 +1616,9 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
     `temperature`·`top_p`를 **그 모델에서 덮는다** — 그래서 덮은 값이 기록에 남아야 한다.
 
     `request_timeout_s`는 요청 본문이 아니라 클라이언트 쪽 값이라 payload·기록 맵에 안 간다.
+
+    `scout` 자리는 「선언 안 한 모델」 대조군이다. registry의 `seccoderx-8b`가 2026-09-29부터
+    `request_timeout_s`를 선언하므로(#261) 이 복사본에서만 그 필드를 비운다.
     """
     _copy_config(
         tmp_path,
@@ -1626,7 +1629,7 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
                 "critic": "gpt-oss-20b",
             }
         },
-        model_patch={"qwen3.8-27b": _KNOBS},
+        model_patch={"qwen3.8-27b": _KNOBS, "seccoderx-8b": {"request_timeout_s": None}},
     )
     config = load_config("dev_fake", config_dir=tmp_path)
 
@@ -1735,15 +1738,15 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
 # 바뀌었고 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가 이미
 # 잠그므로 여기 넣지 않는다.
 #
-# **`gpt-oss-20b`(critic)는 이 표에 없다.** `git grep -n "tok/s" docs/experiments`로 훑으면
-# gpt-oss를 언급하는 실험 문서가 여덟 개 있지만, 단일 요청 생성 속도(tok/s)를 잰 것은
-# 하나도 없다 — 2026-09-24 스모크는 Auditor와 Critic을 함께 띄우는 조합을 "안 쟀다"고
-# 스스로 적고(`docs/experiments/harness/2026-09-24-roster-smoke-atom.md`), 2026-09-12
-# 토큰 회계 보고서는 `completion_tokens`(사고+본문 토큰 수)만 재지 `tok/s`가 아니다. 그래서
-# 속도 관계는 못 잠그고, 아래 테스트는 `request_timeout_s` 선언 자체만 본다.
+# `gpt-oss-20b`(critic)는 재는 법이 다르다 — 호출 하나의 출력 토큰 ÷ wall(계산값).
+# `docs/experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md` §3.3의
+# `find_0014`가 16,384토큰(`finish=length`)에 382초였다(같은 revision · vLLM 0.27.1 · 세 서버
+# 동시 상주 경합 아래). 2026-09-24 스모크의 critic은 이 모델이 아니었다(스모크 한정
+# `qwen3.6-35b-a3b` — 그 보고서 §2).
 _MEASURED_DECODE_TOK_S = {
     "seccoderx-8b": 13.3,
     "qwen3-14b": 8.1,
+    "gpt-oss-20b": 16384 / 382,
 }
 
 
@@ -1756,8 +1759,12 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
     #274 뒤에는 그 후보만 버리지만, 연속 셋이면 `_MAX_CONSECUTIVE_DROPS`가 run을 세운다.
 
     Auditor는 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가
-    이미 잠갔으므로 여기서 다시 보지 않는다. `_MEASURED_DECODE_TOK_S`에 없는 모델
-    (`gpt-oss-20b`)은 속도 실측이 저장소에 없어 관계를 못 재고, 선언 여부만 본다.
+    이미 잠갔으므로 여기서 다시 보지 않는다. `_MEASURED_DECODE_TOK_S`에 없는 모델은
+    선언 여부만 본다.
+
+    ⚠ 무는 것은 **순차 요청의 속도**다. `gpt-oss-20b`는 ≈95 s라 300 s로도 이 관계가 서서,
+    그 값을 300으로 내려도 초록이다. 단계 안 동시 요청이 들어오면 스트림당 속도가 떨어지는데
+    그것은 이 검사 밖이다.
     """
     config = load_config("harness_pool")
     served = config.served_models()
