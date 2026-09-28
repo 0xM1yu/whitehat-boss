@@ -64,13 +64,15 @@ RUN pip3 install --no-cache-dir \
 COPY indexer.py /opt/indexer.py
 COPY gdb.batch /opt/gdb.batch
 
-# 빌드 시점 연막 검사. ASAN 런타임이 빠진 이미지는 8단계에서야 드러나는데, 그때는
-# "재현 실패"와 구분되지 않는다 — 여기서 터지는 편이 훨씬 싸다.
+# 빌드 시점 연막 검사. gdb 자체나 ASAN 런타임이 빠진 이미지는 8단계에서야 드러나는데,
+# 그때는 "재현 실패"와 구분되지 않는다 — 여기서 터지는 편이 훨씬 싸다.
+# 2026-09-28 로컬 Docker에서 ASAN 뒤에 gdb를 둔 순서는 이 RUN이 exit 139로 두 번 끝났고,
+# 아래 순서는 전체 빌드를 통과했다. 그 exit 139의 원인은 실측하지 않았다(D92).
 RUN printf 'int main(void){return 0;}\n' > /tmp/smoke.c \
- && clang -fsanitize=address,undefined -o /tmp/smoke /tmp/smoke.c \
- && /tmp/smoke \
  && clang -g -O0 -fno-omit-frame-pointer -o /tmp/gdb-smoke /tmp/smoke.c \
  && gdb --nx -batch --return-child-result -x /opt/gdb.batch -- /tmp/gdb-smoke \
+ && clang -fsanitize=address,undefined -o /tmp/smoke /tmp/smoke.c \
+ && /tmp/smoke \
  && clang-tidy --version > /dev/null \
  && semgrep scan --config /opt/semgrep-rules/c --config /opt/semgrep-rules/harness \
       --metrics=off --disable-version-check --quiet /tmp/smoke.c \

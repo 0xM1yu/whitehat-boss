@@ -226,7 +226,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > → [open-questions.md](open-questions.md) D18(닫힘)
 
 > ⚠ **위에서 「재현이 성공한(`ok=True`)」이라 부른 것은 「크래시했다」가 아니라 「도구가
-> 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`poc`)를 `ok=False`로
+> 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`gdb`·`poc`)를 `ok=False`로
 > 내리는 갈래는 셋이다 — 명령이 하나도 안 돈 경우, 빌드에서 끊긴 경우(`len(steps) < total`),
 > 띄우지도 못한 경우(`_EXEC_FAILED` = 125·126·127). **exit 0은 그 셋에 없다** — 깨끗이 끝난
 > 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
