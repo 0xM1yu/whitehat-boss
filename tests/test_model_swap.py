@@ -204,6 +204,24 @@ def test_the_last_stdout_line_is_flattened_into_scalars(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize("failing", [False, True], ids=["exit0", "exit1"])
+def test_a_report_too_deep_to_parse_is_an_empty_report_not_a_crash(
+    tmp_path: Path, failing: bool
+) -> None:
+    """마지막 줄이 JSON이어도 파서가 못 내려가는 깊이면(RecursionError) 보고가 없는 것으로 읽는다 —
+    성공 경로의 날것 예외로 run이 죽지 않고, 실패 경로는 `ModelSwapError`로 멈춘다."""
+    deep = "[" * 100_000 + "]" * 100_000
+    body = f"print({deep!r})" + ("\nsys.exit(1)" if failing else "")
+    swap_to = _swap(_command(tmp_path, body), _probe())
+
+    if failing:
+        with pytest.raises(ModelSwapError) as caught:
+            swap_to(("seccoderx-8b",))
+        assert caught.value.report == {}
+    else:
+        assert swap_to(("seccoderx-8b",)) == {}
+
+
 def test_a_failed_command_raises_with_its_partial_report_and_output_tail(tmp_path: Path) -> None:
     # stderr 문구를 ASCII로 둔다 — 가짜 명령(파이썬)의 stderr 인코딩은 로캘을 따라 Windows에서
     # cp949로 나온다. 실 명령(bash)과 무관한 이 테스트 환경의 성질이다.
