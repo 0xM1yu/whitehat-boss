@@ -1001,7 +1001,7 @@ def check_serving(config: HarnessConfig, serving: ServingConfig) -> None:
     2. 교대가 올릴 served 모델(상주 ∪ 교대 역할의 실서빙 키)마다 행이 있다.
     3. 서버 창 `max_model_len`이 registry `context_limit`과 같다. 2026-09-25 ATOM에서 40,960인
        Scout 둘을 16,384로 띄운 채 돌렸고 하네스는 아무 말도 안 했다 — 프롬프트 12건이 400으로
-       거절됐다(`run_20260925_0005`·`0006`). 파일에 다른 값을 적으면 그 실수가 굳는다.
+       거절됐다(`run_20260925_0005`·`0006`, #331). 파일에 다른 값을 적으면 그 실수가 굳는다.
     """
     unknown = sorted(set(serving.servers) - set(config.models))
     if unknown:
