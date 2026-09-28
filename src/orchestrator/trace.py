@@ -270,6 +270,20 @@ class EventKind(StrEnum):
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
+    # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
+    # `RunContext.record_model_swap`이다.
+    #
+    # **교대 한 번당 1건이다** — 교대를 선언한 역할이 있는 단계에 처음 들어갈 때 하나, run 끝
+    # 내림 하나(`models`가 빈 문자열, `stage`가 없다). **성공·실패 모두 낸다** — 실패면
+    # `ok=false`를 예외보다 먼저 낸다. 그래야 run이 멈춘 자리가 trace 끝에 남는다.
+    #
+    # **이 이벤트가 없으면 「교대하지 않았다」이다**(교대를 선언하지 않은 프로필은 0건이다).
+    # 「교대가 다 성공했다」로 읽지 않는다.
+    #
+    # `wall_ms`는 하네스가 잰 것(교대 명령 + 준비 확인)이고, `report.*`는 교대 명령이 보고한
+    # 것이다(서버별 `report.server.<key>.<field>` — util·창·기동 초 등). 둘을 섞지 않는다 — 명령도
+    # `ok`·`wall_ms`를 보고하므로 접두사 없이 펴면 하네스의 값과 이름이 겹친다.
+    MODEL_SWAP = "model_swap"
 
 
 class TraceEvent(HarnessModel):

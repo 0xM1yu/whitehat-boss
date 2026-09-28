@@ -13,7 +13,7 @@
 받으며 어댑터 조립은 `src/adapters/factory.py`가 한다(engineering-guide.md §3).
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
 
@@ -619,6 +619,35 @@ class RunContext:
         2026-08-26 재측정은 run **전에** 사람이 손으로 세 모델을 확인해야 했다.
         """
         self.trace.emit(EventKind.TOKEN_COUNTER, stage=self.current_stage, **fields)
+
+    def record_model_swap(
+        self,
+        keys: tuple[str, ...],
+        *,
+        stage: Stage | None,
+        ok: bool,
+        wall_ms: int,
+        report: Mapping[str, TraceValue],
+        error: str | None = None,
+    ) -> None:
+        """단계 경계 교대 한 번 (ADR 0012 Phase 6.5). **성공·실패 모두** 한 줄이다.
+
+        `stage`는 이 교대가 **준비하는** 단계다 — run 끝 내림은 준비하는 단계가 없어 `None`이고
+        `keys`가 빈다. `current_stage`를 쓰지 않는 것은 교대가 단계에 들어가기 **전**에 일어나서다.
+
+        `report`는 교대 명령의 보고(어댑터가 스칼라로 편 것)이고 `report.` 아래로 싣는다 — 명령도
+        `ok`·`stage`·`wall_ms`를 보고하므로 그대로 펴면 하네스가 잰 값과 이름이 겹친다. 어댑터
+        타입이 아니라 스칼라 dict만 받는 것은 `record_token_counter`와 같은 이유다.
+        """
+        self.trace.emit(
+            EventKind.MODEL_SWAP,
+            stage=stage,
+            wall_ms=wall_ms,
+            models=" ".join(keys),
+            ok=ok,
+            error=error,
+            **{f"report.{key}": value for key, value in report.items()},
+        )
 
     def record_retrieval(self, component: str, result: RetrievalResult, candidates: int) -> None:
         """검색 호출의 비용을 trace와 예산에 반영한다. Retriever의 `on_usage` 훅에 연결된다.
