@@ -966,6 +966,10 @@ class ServerLaunch(HarnessModel):
     env: dict[NonEmptyStr, str] = Field(default_factory=dict)
     # 준비 판정에 보낼 요청의 종류. 채팅 모델·임베딩·리랭커가 받는 엔드포인트가 다르다.
     probe: Literal["chat", "embed", "rerank"]
+    # 기동 한 번의 준비 상한(초) — 명령을 친 뒤 준비 요청이 돌아오기까지. 넘으면 교대 명령이
+    # 그 기동을 버리고 다시 시도한다. 장비·모델마다 몇 배씩 갈려 기본값을 두지 않는다(근거는
+    # 장비 파일 주석).
+    ready_timeout_s: float = Field(gt=0)
 
 
 class ServingConfig(HarnessModel):

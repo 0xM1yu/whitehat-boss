@@ -213,8 +213,8 @@ def test_a_real_profile_pairs_a_hybrid_retriever_with_served_retrieval_models() 
 POOL_HYBRID_PROFILE = "harness_pool_hybrid"
 
 
-def test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever() -> None:
-    """풀 검색 프로필도 대조군(`harness_pool`)과의 차이가 `retriever` **하나**다.
+def test_the_pool_hybrid_profile_differs_from_harness_pool_in_the_retriever_and_swap() -> None:
+    """풀 검색 프로필과 대조군(`harness_pool`)의 차이는 `retriever`와 교대 선언 유무뿐이다.
 
     이 프로필의 쓸모가 검색 경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께
     움직이면 풀 run의 차이가 무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기
@@ -1297,9 +1297,10 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
     ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
-    **교대는 2026-09-29에 `harness_pool`이 선언했다** — 교대 명령(`tools/serve/swap.sh`)과 장비
-    파일(`config/serving/`)이 같이 왔다(ADR 0009 「2026-09-29 제안」 절). 교대하는 역할은 모델을 부르는
-    다섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에 들어간다.
+    **교대는 2026-09-29에 `harness_pool`이 선언했다** — 교대 명령(`tools/serve/swap.sh`)과
+    장비 파일(`config/serving/`)이 같이 왔다(ADR 0009 「2026-09-29 제안」 절). 교대하는 역할은
+    모델을 부르는 다섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에
+    들어간다.
     `settle_timeout_s`는 계산값이다(그 주석 — 미실측).
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
     """
