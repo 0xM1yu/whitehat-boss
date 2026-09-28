@@ -9,14 +9,33 @@
 읽는다. 러너는 `src/adapters/`를 import 하지 않으므로 여기서 만든 콜러블이 `Deps.swap_to`로 경계를
 넘는다(`symbols_for`·`counter_for_role`과 같은 자리).
 
-## 명령과의 계약
+## 명령과의 계약 — 장비별 교대 스크립트가 지킬 것
 
-- argv = `command + keys`. 환경에 `HARNESS_PYTHON`(하네스 인터프리터 — 장비 파일을 같은 파이썬으로
-  읽는다) · `SWAP_DEADLINE_S`(= `SwapPolicy.settle_timeout_s`) · `HARNESS_RUN_ID`(자기 run의 서버만
-  내린다) · `HARNESS_DEVICE`.
-- stdout **마지막 줄**이 JSON 보고다. 실패해도 낼 수 있으면 낸다.
-- ⚠ **띄운 서버의 stdout·stderr는 로그 파일로 돌린다.** 서버가 이 파이프를 물고 있으면
-  `subprocess.run`이 EOF를 못 받아 서버가 죽을 때까지 안 돌아온다.
+하네스 쪽은 이 모듈이 전부다. 교대 명령(예: ATOM 스크립트)은 장비마다 따로 쓰고 아래를 지킨다.
+
+- **argv = `command + keys`.** 끝나면 **정확히 `keys`만** 떠 있어야 한다 — `keys`에 없는 자기 서버는
+  내리고, 없는 것은 띄운다. 이미 떠 있는 키(상주 역할)를 다시 띄울지는 명령이 정한다.
+- **인자 없음 = 자기 run의 서버를 전부 내린다.** 러너가 run 끝에 성공·실패와 무관하게 부른다.
+  떠 있는 것이 없으면 아무것도 안 하고 0으로 끝난다.
+- **자기 run의 서버만 건드린다.** 소유는 `HARNESS_RUN_ID`로 가린다 — 남의 프로세스는 내리지 않는다.
+- **환경** — `HARNESS_PYTHON`(하네스 인터프리터 — 장비 파일 `config/serving/$HARNESS_DEVICE.yaml`과
+  registry를 같은 파이썬으로 읽는다) · `SWAP_DEADLINE_S`(= `SwapPolicy.settle_timeout_s`, 교대 한
+  번의 마감) · `HARNESS_RUN_ID` · `HARNESS_DEVICE`. 작업 디렉터리는 저장소 루트다.
+- **준비 확인은 명령이 먼저 한다.** 0으로 끝내기 전에 띄운 서버마다 요청 하나(채팅이면 1토큰)가
+  돌아오는 것을 본다. 하네스의 `/v1/models` 재확인(아래)은 **2차 확인**이다 — 재시도가 없다.
+- **종료코드** — 0은 「`keys`만 떠 있고 요청을 받는다」다. 0이 아니면 이유를 가리지 않고
+  `ModelSwapError`다 — 교대면 run이 멈추고(`model_swap_failed`), run 끝 내림이면 경고로 남는다.
+  실패해도 띄운 것을 남길 수 있다 — run 끝 내림이 다시 부른다.
+- **마감** — `SWAP_DEADLINE_S` 안에 끝낸다. 넘으면 부분 보고를 내고 0이 아닌 코드로 끝낸다. 하네스는
+  마감 + `_REPORT_GRACE_S` 뒤에 명령을 죽이고 인자 없이 한 번 부른다.
+- **stdout 마지막 비지 않은 줄이 JSON 객체 보고다.** 실패해도 낼 수 있으면 낸다. 중첩은
+  `server.<key>.<field>`로 펴서 `model_swap` 이벤트의 `report.*`에 싣는다(목록은 JSON 문자열).
+  JSON이 아니거나 못 읽으면 보고가 없는 것으로 읽는다. 그 앞 줄은 사람용 로그로 자유다 — 실패하면
+  하네스가 stdout·stderr 꼬리를 오류 상세에 싣는다. 권하는 필드: `ok`·`models`·서버별
+  `action`·`util`·`max_num_seqs`·`max_model_len`·`args`·`revision`·`load_s`·`ready_s`·`attempts` ·
+  `memavail_before`·`memavail_after`·`vllm_version`·`error`.
+- ⚠ **띄운 vLLM의 stdout·stderr는 로그 파일로 돌린다**(기동마다 새 파일). 서버가 명령의 파이프를
+  물려받으면 `subprocess.run`이 EOF를 못 받아 **서버가 죽을 때까지 안 돌아온다.**
 
 ## 명령이 0으로 끝났다고 믿지 않는다
 
@@ -50,6 +69,7 @@ Scalar = str | int | float | bool | None
 SwapReport = dict[str, Scalar]
 SwapTo = Callable[[tuple[str, ...]], SwapReport]
 # `/v1/models` 조회: (endpoint, key) → `ok`·`reason`·`max_model_len`. 기본은 `bench.check_startup`.
+# 요청 실패·응답 파싱 실패를 예외로 올리지 않고 `ok=False`와 `reason`으로 싣는다(대역도 같다).
 Probe = Callable[[str, str], Mapping[str, object]]
 
 
@@ -116,7 +136,12 @@ def swap_runner(
 def _teardown(
     run: Callable[[list[str]], subprocess.CompletedProcess[str]], command: tuple[str, ...]
 ) -> str:
-    """내림 명령을 한 번 부르고 결과를 한 마디로. 원래 실패를 가리지 않도록 예외를 안 올린다."""
+    """내림 명령을 한 번 부르고 결과를 한 마디로. 원래 실패를 가리지 않도록 예외를 안 올린다.
+
+    ⚠ **원 호출과 같은 상한**(마감 + `_REPORT_GRACE_S`)이라 마감을 넘긴 교대는 최악 그 두 배를
+    기다린다. 내림 전용으로 짧게 자르지 않는 것은 그 값을 잰 적이 없어서다 — 지어낸 상한으로
+    내림을 도중에 죽이면 서버가 남고, 그쪽이 기다리는 것보다 나쁘다.
+    """
     try:
         return f"exit {run(list(command)).returncode}"
     except (subprocess.TimeoutExpired, OSError) as exc:
@@ -124,7 +149,12 @@ def _teardown(
 
 
 def _verify(key: str, entry: ModelEntry, probe: Probe, report: SwapReport) -> None:
-    """`key`가 그 이름으로 떠 있고 창이 registry `context_limit`과 같은가. fake는 서버가 없다."""
+    """`key`가 그 이름으로 떠 있고 창이 registry `context_limit`과 같은가. fake는 서버가 없다.
+
+    **2차 확인이다** — 명령이 0으로 끝나기 전에 자기 준비 확인을 했다는 계약(모듈 docstring)을
+    전제하므로 재시도하지 않고 마감에도 묶지 않는다. 조회 한 번은 `bench.check_startup`의 상한
+    (60 초)을 받아, 서버가 응답하지 않으면 키 수만큼 더 기다릴 수 있다.
+    """
     if entry.is_fake:
         return
     served = probe(entry.endpoint, key)
@@ -148,7 +178,7 @@ def _report(stdout: str | bytes | None) -> SwapReport:
     lines = _text(stdout).strip().splitlines()
     try:
         parsed = json.loads(lines[-1]) if lines else None
-    except ValueError:
+    except (ValueError, RecursionError):  # 파서가 못 내려가는 깊이도 「못 읽었다」다
         return {}
     return _flatten(parsed) if isinstance(parsed, dict) else {}
 
