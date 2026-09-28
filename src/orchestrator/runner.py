@@ -125,7 +125,7 @@ from src.orchestrator.nodes.report import Report
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceWriter
+from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -421,6 +421,12 @@ class Dependencies(Protocol):
     # `src/adapters/`를 import 하지 않으므로 resolver 구현이 아니라 이 콜러블로 경계를
     # 넘는다. 부르는 쪽은 Scout 정착 단계의 need_evidence 루프(`_run_ne_hops`)다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None
+    # 단계 경계 모델 교대 (ADR 0012 Phase 6.5 — 콜드 재기동). `keys`만 떠 있게 하고 교대 명령의
+    # 보고를 스칼라 dict로 돌려준다(`model_swap` 이벤트의 `report.*`). `keys`가 비면 전부 내린다.
+    # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다. `None`이면 교대가 없는 run이다 —
+    # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
+    # 어댑터가 하고 러너는 이 콜러블만 받는다(`resolve_requests`와 같은 자리).
+    swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None
 
 
 @dataclass(frozen=True)
