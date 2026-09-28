@@ -1514,6 +1514,8 @@ def test_session_library_replaces_every_placeholder_and_calls_carry_the_data():
     assert slicer_library.Library("/work/repo", 4, {}, 30, 5000, 4).name != lib.name
     with pytest.raises(ValueError, match="occurs 0 times"):
         slicer_library.as_function("flows", "{ x }", "f", "", [("absent", "y")])
+    with pytest.raises(ValueError, match="not a timed envelope"):
+        slicer_library.as_function("flows", "{ x }", "f", "", [])
 
 
 def test_session_library_scope_filter_follows_method_selector(monkeypatch):
