@@ -211,6 +211,15 @@ for f in glob.glob('/srv/tenants/ext01/.cache/huggingface/hub/**/*.safetensors',
 
 모델 파일 44개에 걸어 `free -g` 기준 버퍼/캐시 **35 → 8 GiB**, 여분 **81 → 108 GiB**였다
 (같은 보고서 §6). **기동 사이마다 돌린다** — 모델을 읽을 때마다 캐시가 다시 찬다.
+⏵ 2026-09-29 — 교대 명령(`tools/serve/swap.sh`)이 통합메모리 장비(`nvidia-smi` 메모리 `[N/A]`)에서
+기동마다 이 절차를 돈다. 전용 VRAM 장비에서는 캐시가 VRAM과 안 다퉈 떼지 않는다.
+
+**`atom` — Auditor(util 0.80)가 떠 있는 동안 Joern(슬라이서)을 돌리지 않는다.** 로딩·배선 조사
+(2026-09-24, 저장소 밖) ③36의 규칙이고, 저장소 안의 근거는 2026-09-28 정상 표본 스모크다
+([보고서](experiments/harness/2026-09-28-ne-loop-smoke-benign-atom.md)) — Auditor를 포함한 재실행 동안
+MemAvailable 최저가 16.2 GiB로 감시자 하한 12 GiB와 4.2 GiB 차였고, Scout 단계에서 슬라이서 둘과 겹친
+구간은 28.5 GiB였다. JVM 하나가 그 몇 GiB를 더 쓰면 감시자가 서버를 내린다[추론]. 교대 명령의 기동 전
+여유 검사도 같은 이유로 Auditor에서 얇다(`config/serving/atom.yaml`의 그 행 — 계산값 0.5 GiB).
 
 **이 항목도 §5가 아니라 여기다.** 서버 기동은 하네스 밖이라(그 경계는
 [experiments/README.md](experiments/README.md)의 "서빙 서버 stdout을 파일로 받는다" 절이

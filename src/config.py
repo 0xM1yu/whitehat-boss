@@ -452,7 +452,8 @@ class ProfileEntry(HarnessModel):
     # budgets.yaml의 budgets 키
     budget: NonEmptyStr
     # 실행 단위와 교대 정책 (ADR 0009). **기본 `None`이 지금 동작이다** — 선언하지 않은
-    # 프로필은 후보 단위로 돌고 교대하지 않는다. 지금 저장소의 프로필은 전부 그쪽이다.
+    # 프로필은 후보 단위로 돌고 교대하지 않는다. 지금은 `harness_pool`·`_hybrid`가 단계 단위를
+    # 선언하고 그중 `harness_pool`만 교대한다(2026-09-29).
     execution: ExecutionPolicy | None = None
 
     @model_validator(mode="after")
