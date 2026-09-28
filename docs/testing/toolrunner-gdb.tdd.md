@@ -46,7 +46,7 @@
 - ATOM rootless Podman 4.9.3/aarch64에서 현재 v3 Dockerfile 빌드 → **exit 0**. 이어 capability
   없음/`SYS_PTRACE` 추가 조건에서 정상·SIGSEGV 대상을 각각 실행한 총 4회가 exit
   `0·1·0·1`과 같은 정상/백트레이스 출력을 냈다.
-- `python -m pytest -q` → **2062 passed, 2 skipped**.
+- `python -m pytest -q` → **2064 passed, 2 skipped**.
 - `python -m ruff check .` → **All checks passed!**
 
 ## 테스트 명세
@@ -86,7 +86,7 @@
 
 - RED: `c25d5eb` — 의도한 미구현 때문에 15개 실패.
 - GREEN: `5bdfbfa` — 같은 표적 모음 144개 통과.
-- 최종: 전체 2062개 통과, Ruff 통과, 전체 커버리지 95%, Docker v3 빌드와 실 gdb 통합
+- 최종: 전체 2064개 통과, Ruff 통과, 전체 커버리지 95%, Docker v3 빌드와 실 gdb 통합
   테스트 통과.
 
 스쿼시 머지를 한다면 위 RED/GREEN/최종 네 줄을 PR 본문 또는 스쿼시 커밋 본문에 보존한다.
