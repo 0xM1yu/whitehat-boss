@@ -1,6 +1,6 @@
 # 0009. 단계 단위 실행과 모델 교대 — `execution.mode` / `execution.swap`
 
-- 상태: **승인** — 2026-09-06 초안, **2026-09-09 @danielcho02 사인오프.** 사인오프는 별도 문서가 아니라 [ADR 0010](0010-harness-structure-and-model-roster.md)이 들고 있다 — 같은 날 **승인**된 그 문서의 §1이 *"`ADR 0009`의 `execution.mode: per_stage`를 **승인**한다"*고 적고, 같은 절이 교대를 *"교대(`execution.swap`)는 스키마만 열고 기본은 끈다"*로 좁힌다. ⚠ **승인된 것과 머지된 것을 같이 읽지 않는다** — 아래 「결과」 넷 중 들어온 것은 **1(스키마)뿐이다**: `ProfileEntry.execution`·`ExecutionPolicy`·`SwapPolicy`와 불변식 둘이 ADR 0010 후속 3의 **PR B**로 왔다(`fd12191`). ~~**2(러너 단계 단위)·3(sleep/wake 배선)·4(프로필의 `execution` 선언)는 저장소에 없고**~~, 아래 「미결」 셋도 그대로다. ⏵ **2026-09-24 — 「1뿐이다」와 취소선 절은 낡았다.** 2는 `cd65500`(#161, 이 줄과 같은 2026-09-11)로 들어왔다(`runner._triage_by_stage`). 4는 절반이다 — `harness_pool`·`_hybrid`가 `execution.mode: per_stage`를 선언했고 `swap`은 안 적었다(`config/profiles.yaml`). 3은 아직 없고 방식이 바뀌었다 — sleep/wake가 아니라 단계 단위 콜드 재기동이다(@danielcho02). 착수는 열린 PR을 모두 머지한 뒤다([PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행)
+- 상태: **승인** — 2026-09-06 초안, **2026-09-09 @danielcho02 사인오프.** 사인오프는 별도 문서가 아니라 [ADR 0010](0010-harness-structure-and-model-roster.md)이 들고 있다 — 같은 날 **승인**된 그 문서의 §1이 *"`ADR 0009`의 `execution.mode: per_stage`를 **승인**한다"*고 적고, 같은 절이 교대를 *"교대(`execution.swap`)는 스키마만 열고 기본은 끈다"*로 좁힌다. ⚠ **승인된 것과 머지된 것을 같이 읽지 않는다** — 아래 「결과」 넷 중 들어온 것은 **1(스키마)뿐이다**: `ProfileEntry.execution`·`ExecutionPolicy`·`SwapPolicy`와 불변식 둘이 ADR 0010 후속 3의 **PR B**로 왔다(`fd12191`). ~~**2(러너 단계 단위)·3(sleep/wake 배선)·4(프로필의 `execution` 선언)는 저장소에 없고**~~, 아래 「미결」 셋도 그대로다. ⏵ **2026-09-24 — 「1뿐이다」와 취소선 절은 낡았다.** 2는 `cd65500`(#161, 이 줄과 같은 2026-09-11)로 들어왔다(`runner._triage_by_stage`). 4는 절반이다 — `harness_pool`·`_hybrid`가 `execution.mode: per_stage`를 선언했고 `swap`은 안 적었다(`config/profiles.yaml`). 3은 아직 없고 방식이 바뀌었다 — sleep/wake가 아니라 단계 단위 콜드 재기동이다(@danielcho02). 착수는 열린 PR을 모두 머지한 뒤다([PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행). ⏵ **2026-09-29 — 3의 하네스 쪽이 들어왔다**(러너의 단계 경계 교대 · 교대 어댑터 · 장비 파일 스키마 · `model_swap` 기록). 모양은 아래 「2026-09-29 제안 — 단계 단위 콜드 재기동」 절이고 **그 절은 제안이다 — @sumin0218 사인오프 필요.** 교대 명령(ATOM 스크립트)·장비 파일·`harness_pool`의 `swap` 선언은 다음 PR이라 아직 어느 프로필도 교대하지 않는다
 - 일자: 2026-09-06
 - 관련: [build-plan.md](../build-plan.md) §4·§7·§8, [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §7, [model-serving.md](../model-serving.md) §1·§3·§7, [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), [2026-09-03 교대 보고서](../experiments/harness/2026-09-03-model-swap-sleep-atom.md), [로스터 조사](../research/2026-09-08-roster.md) §1, `src/schemas/common.py`(`HarnessModel` `extra="forbid"`), `src/config.py`(`ProfileEntry`), `config/profiles.yaml`, `.claude/restructure-2026-09-04.md` C절(이 초안이 처음 근거로 든 저장소 밖 작업 메모 — `.gitignore`로 배제돼 열람 불가라 **근거로는 안 쓴다** — 열람이 안 되므로 내용이 무엇인지 여기서 확인할 수 없다. 이 ADR이 쓰는 로스터의 원천은 위 [로스터 조사](../research/2026-09-08-roster.md) §1이다. 이 줄은 출처 이력으로만 남긴다)
 
@@ -20,12 +20,12 @@
 **실행 단위를 후보 단위 → 단계 단위로 전환할 수 있게 하고, 그 축을 config 스키마에 연다.** 스키마 모양은 `swap.md §7 제안 A`를 따른다:
 
 - **`execution.mode`**: `per_candidate`(현행) | `per_stage`(단계 단위).
-- **`execution.swap`**: `{resident, swappable, level, settle_timeout_s}` — 어느 역할이 상주하고(재우지 않고) 어느 역할이 단계 경계에서 재우고 깨우는가. **`none|sleep` 스칼라로는 이 역할 구분을 못 적는다**(`swap.md §4`가 스키마 사례를 **"정수 하나 + LRU"**와 **"역할/그룹별 명시 선언"** 두 갈래로 가르고 **"우리는 (b)다"**로 고른 것이 이 모양이다).
+- **`execution.swap`**: `{resident, swappable, level, settle_timeout_s}` — 어느 역할이 상주하고(재우지 않고) 어느 역할이 단계 경계에서 재우고 깨우는가. **`none|sleep` 스칼라로는 이 역할 구분을 못 적는다**(`swap.md §4`가 스키마 사례를 **"정수 하나 + LRU"**와 **"역할/그룹별 명시 선언"** 두 갈래로 가르고 **"우리는 (b)다"**로 고른 것이 이 모양이다). ⏵ **2026-09-29 — `level`은 지웠다**(sleep 단계라 콜드 재기동에는 없는 개념이다 — 적어 오면 로드에서 거부된다). 지금 모양은 `{resident, swappable, settle_timeout_s}`이고 「재우고 깨운다」는 「단계 경계에서 내리고 새로 띄운다」로 읽는다 — 아래 「2026-09-29 제안 — 단계 단위 콜드 재기동」 절(제안).
 - **불변식(스키마가 강제)**: `swap`이 있으면 `mode == per_stage`여야 하고(후보 단위 + 교대는 §6.2의 512회 조합이라 스키마가 막는다 — `swap.md §7 (a)`), `swap.resident ∪ swap.swappable ⊆ roles`.
 
 > **⚠ 지금 스키마는 `extra="forbid"`라 이 키를 프로필에 넣으면 로드 단계에서 거부된다**(`common.py` `HarnessModel:62`). 그래서 **스키마에 필드를 추가하는 것**이 이 결정의 코드 몫이고, **값(어느 프로필이 per_stage냐·swap 정책)은 실측 후** 채운다 — 지금 값을 박지 않는다(CLAUDE.md §0). 새 필드는 전부 기본값을 준다 — 없으면 기존 프로필이 전부 로드 실패한다(`swap.md §5.2`).
 >
-> ⚠ **위 문단은 2026-09-06 초안 시점의 서술이다.** 그 코드 몫은 2026-09-09에 들어왔다 — `ProfileEntry.execution`이 생겨 두 키를 적어도 로드가 거부되지 않고, 기본값(`mode: per_candidate` · `swap: None`)이 선언 안 한 프로필의 동작을 그대로 둔다. **값은 여전히 안 박았다** — ~~프로필 아홉 중 `execution`을 선언한 것은 없다(결과 4).~~ → ⏵ **2026-09-24 — 지금 프로필은 일곱이고 `harness_pool`·`_hybrid` 둘이 `mode: per_stage`를 선언한다. `swap`을 적은 프로필은 없다**(교대 배선 전 — 결과 3의 노트).
+> ⚠ **위 문단은 2026-09-06 초안 시점의 서술이다.** 그 코드 몫은 2026-09-09에 들어왔다 — `ProfileEntry.execution`이 생겨 두 키를 적어도 로드가 거부되지 않고, 기본값(`mode: per_candidate` · `swap: None`)이 선언 안 한 프로필의 동작을 그대로 둔다. **값은 여전히 안 박았다** — ~~프로필 아홉 중 `execution`을 선언한 것은 없다(결과 4).~~ → ⏵ **2026-09-24 — 지금 프로필은 일곱이고 `harness_pool`·`_hybrid` 둘이 `mode: per_stage`를 선언한다. `swap`을 적은 프로필은 없다**(교대 배선 전 — 결과 3의 노트). ⏵ 2026-09-29 — 하네스 쪽 배선은 들어왔고(결과 3의 노트) `swap`을 적은 프로필은 여전히 없다 — 선언은 장비 파일·교대 명령과 같이 온다.
 
 **단계 단위 실행이란**(`build-plan.md §4`): 모든 후보가 한 단계씩 함께 통과한다. 교대 비용이 그 단계의 후보 수로 나뉘고, 상주 모델이 그 단계의 것만 남는다. 대신 후보 하나의 종단 지연은 늘어난다 — **배치 분석기라 문제되지 않는다.**
 
@@ -55,7 +55,7 @@
 
 1. **스키마에 `execution.mode`·`execution.swap` 필드 추가**(허용성만, 기본 `per_candidate`·`swap: None` = 지금 동작 보존) + swap 역할 실재·불변식 검증기. 프로필은 아직 선언 안 함.
 2. **러너의 단계 단위 루프** — 연속 폐기 카운터·부분 결과 의미를 위 「함께 옮겨야 하는 것」대로 재정의(회귀 위험 대부분이 여기).
-3. **교대 배선** — ~~vLLM sleep/wake. `swap.md §8` 운영 규칙 준수, `swap.md §9`의 교대 예산 실측을 선행.~~ → ⏵ **2026-09-24 — 방식은 단계 단위 콜드 재기동으로 정했다(@danielcho02) — sleep/wake가 아니라 단계마다 서버를 완전히 내리고 올린다.** 로딩·배선 조사가 권한 방식이고, 사고·동시성·메모리 배분을 함께 얹는다. **아직 배선되지 않았고 착수는 열린 PR을 모두 머지한 뒤다** — [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행.
+3. **교대 배선** — ~~vLLM sleep/wake. `swap.md §8` 운영 규칙 준수, `swap.md §9`의 교대 예산 실측을 선행.~~ → ⏵ **2026-09-24 — 방식은 단계 단위 콜드 재기동으로 정했다(@danielcho02) — sleep/wake가 아니라 단계마다 서버를 완전히 내리고 올린다.** 로딩·배선 조사가 권한 방식이고, 사고·동시성·메모리 배분을 함께 얹는다. **아직 배선되지 않았고 착수는 열린 PR을 모두 머지한 뒤다** — [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행. ⏵ **2026-09-29 — 하네스 쪽이 들어왔다** — 아래 「2026-09-29 제안 — 단계 단위 콜드 재기동」 절(제안 — @sumin0218 사인오프 필요). 교대 명령·장비 파일·프로필 선언은 다음 PR이다.
 4. **profiles에 `execution` 선언** — 값은 `model-serving.md §3` 체크리스트·교대 실측 후.
 
 **되돌리는 비용.** *이 ADR이 여는 것*은 기본값 있는 스키마 필드 둘이다 — 되돌리기 = 그 둘을 지우는 것이고, 기본이 `per_candidate`라 선언 안 한 프로필은 동작이 안 바뀐다(기존 run에 영향 없음). **러너 재작성(결과 2)이 되돌리기 비싼 부분**이고 그래서 스키마와 러너를 **다른 PR로 가른다** — 이 ADR은 앞엣것만 결정한다.
@@ -65,3 +65,20 @@
 - **교대가 정말 필요한가는 실측이 정한다.** `docs/research/2026-09-04-models.md §5.6`이 NVFP4 두 모델이면 상주가 넉넉해 교대 자체가 필요 없을 수 있다고 본다(요지 — 원문 축자 아님). **§5.6의 결론이 일곱 자리에서도 성립한다면** 대안 (c)가 살고 `per_candidate`로 충분하다. ⚠ **다만 그 산술은 모델 두 개짜리이고 위 배경이 세는 자리는 일곱이다** — 그대로 옮겨 쓸 수 없고, 일곱 자리의 상주 합은 새 모델셋으로 다시 재야 한다. **스키마는 두 경우를 다 지원**하게 열되, 어느 쪽인지는 새 모델셋을 ATOM에서 실측해야 안다. ⏵ **2026-09-24 — 정했다(@danielcho02).** 가중치는 전부 bf16 그대로 쓰고(`gpt-oss-20b`만 원래 MXFP4) 양자화로 공동 상주하지 않는다. 그래서 대안 (c)는 지금 로스터에서 서지 않는다 — 네 서버를 한 장비에 다 올리면 util 합이 1.44다(`config/profiles.yaml`의 `harness_pool` 주석, 계산값). 교대를 켜고 방식은 결과 3의 노트대로다.
 - **교대 예산** — 왕복·잠재우기 반환·잠든 서버 잔류를 wake 뒤 추론까지 포함해 다시 측정(`swap.md §9`의 1·2·3과 4번 — 잠재우기 반환이 4번이다. 현 2~6초는 못 씀). ⏵ **2026-09-24 — 방식이 콜드 재기동으로 정해져(결과 3의 노트) 잠재우기 왕복·잔류는 재야 할 대상에서 빠진다.** 남는 것은 단계마다 서버를 올리고 내리는 시간이고, 성능이 먼저이며 시간은 재서 보고만 한다(@danielcho02).
 - **단계 단위가 트레이스·지표에 주는 의미 변화** — 연속 폐기·부분 결과의 재정의를 evaluation.md와 맞춘다.
+
+## 2026-09-29 제안 — 단계 단위 콜드 재기동
+
+- 상태: **제안 — @sumin0218 사인오프 필요.** 방식(콜드 재기동)은 2026-09-24 @danielcho02가 정했다(결과 3의 노트). 이 절은 그 방식의 **하네스 쪽 모양**을 적고, 결과 3의 취소선 방식(sleep/wake)을 대체한다. vLLM `/sleep`·`/wake_up`은 쓰지 않는다.
+- 코드: `src/config.py`(`SwapPolicy`·`ServingConfig`·`check_serving`) · `src/orchestrator/runner.py`(`_ROLES_CALLED`·`_swap_for`·`run_pipeline`의 내림) · `src/adapters/model_swap.py` · `src/cli.py`(`--device` 게이트).
+
+1. **스키마 — `level`을 지운다.** `execution.swap`은 `{resident, swappable, settle_timeout_s}`다. `level`은 sleep 단계라 콜드 재기동에 없는 개념이고, 적어 오면 로드에서 거부된다(`extra="forbid"`). `settle_timeout_s`는 교대 한 번(내림 · 기동 · 준비 확인)의 마감이고 교대 명령에 `SWAP_DEADLINE_S`로 간다. **검색 역할(embedding·reranker)은 교대 선언에서 거부한다** — 검색 모델을 어느 단계에 띄울지는 [ADR 0012](0012-harness-canon-v2.md) 결정 3(5단계 검색 분리) 뒤다. 위 「결정」의 불변식 둘은 그대로다.
+2. **장비 파일 `config/serving/<device>.yaml`.** 교대 명령(`command`)과 모델별 기동 조건(`servers.<model key>` — util · `max_num_seqs` · `max_model_len` · 추가 인자 · 환경 · 준비 판정 종류)은 **프로필이 아니라 장비가 든다** — 같은 프로필을 다른 장비에서 돌리면 그 값만 갈린다. `run --device <device>`가 파일을 고른다. 교대 프로필로 모델에 닿는 run은 장비가 없거나, 파일이 없거나, 교차 검사(`check_serving`: 행의 키가 registry에 있다 · 교대가 올릴 실서빙 모델마다 행이 있다 · `max_model_len`이 `context_limit`과 같다)가 틀리면 **run 디렉터리를 잡기 전에** exit 2다. 모델에 안 닿는 run(`--dry-run` · 낮은 `--stop-after`)은 막지 않는다.
+3. **교대 시점.** 모델을 부르는 역할을 선언한 단계(4 Scout · 5 Auditor)에 **처음 들어갈 때** — 그 단계에 대상이 있을 때만 · 7단계 Critic **앞** — 고른 Finding이 있을 때만 · **run 끝**(아래 4). 3·6·8단계는 모델을 안 불러 교대하지 않는다 — 앞 단계 서버가 그대로 있다. 단계 → 역할 선언은 한 곳(`runner._ROLES_CALLED`)이고 교대 코드는 단계 번호로 갈라 쓰지 않는다 — 모델을 부르는 좌석이 생기면 그 표에 한 줄이다. 교대 대상은 **상주 ∪ (그 단계 역할 ∩ 교대)**의 실서빙 모델 키다 — Fake 역할은 서버가 없어 빼고, 한 키에 앉은 두 역할은 한 번만 넣는다.
+4. **run 끝 내림.** 성공·실패와 무관하게 run 끝에 교대 명령을 **키 없이** 부른다 — 자기 run의 서버를 전부 내린다. 교대가 실패한 run도 내린다(명령이 일부만 띄우고 죽었을 수 있다). 내림 실패는 원래 결과를 가리지 않는다 — `model_swap ok=false`와 run 경고로만 남는다.
+5. **준비 확인 — 창은 `context_limit`.** 교대 명령이 0으로 끝나도 믿지 않고, 올린 키마다 `/v1/models`에서 그 이름으로 떠 있는지와 `max_model_len`을 다시 본다. 창이 registry `context_limit`과 다르면 교대 실패다(`ModelSwapError` → run이 멈추고 사유는 `model_swap_failed`). 창은 registry 값 그대로 띄운다 — 기동이 실패할 때만 내리고, 그때는 registry도 같이 고친다. [D87](../open-questions/D/D87.md) ①의 교대 프로필 몫이 이것이다.
+6. **교대 명령은 하네스와 같은 기계의 로컬 subprocess다.** 하네스·vLLM·도구가 한 장비에서 돈다. `ssh` 원격 교대는 두지 않는다. 명령이 지킬 계약(인자 · 환경 · 종료코드 · stdout 보고 · 서버 로그)은 `src/adapters/model_swap.py`의 모듈 docstring이 든다.
+7. **기록.** 교대 한 번당 `model_swap` 이벤트 1건이다(성공·실패 모두 — 실패면 예외보다 먼저 낸다). 교대 실패의 중단 사유 `model_swap_failed`는 서버 사망(`model_gateway_unavailable`)과 가른다 — 대응이 다르다(장비 파일과 교대 명령 로그를 본다).
+
+**이 절이 정하지 않는 것.** 값(util · `settle_timeout_s` 등 — ATOM 기동 실측으로 정한다) · 비동기 교대 · 단계 안 동시 요청 · 검색 모델 교대(hybrid) · 교대 시간 예산.
+
+**아직 없는 것.** 교대 명령(ATOM 스크립트) · `config/serving/atom.yaml` · `harness_pool`의 `swap` 선언은 다음 PR이다(결과 4의 나머지 절반). 그 전까지 어느 프로필도 교대하지 않는다.
