@@ -90,9 +90,11 @@ def test_execute_wires_read_payload_from_the_artifacts_root(
 ) -> None:
     """#247 리뷰 HIGH-1: `cli.execute`가 `read_payload`를 `make_payload_reader`로 배선한다.
 
-    그 줄(`src/cli.py`)을 지우면 Critic이 근거 본문을 못 받는다(`RunContext.read_payload`
-    기본값이 `lambda _ref: None`). `run_pipeline`을 가로채 실제로 넘어온 reader가 payload
-    파일을 읽는지 본다 — 배선을 끊으면 red다.
+    그 줄(`src/cli.py`)을 지우면 Critic·Auditor의 v3가 근거 본문을 못 받는다
+    (`RunContext.read_payload` 기본값이 `lambda _ref: None`). `run_pipeline`을 가로채 실제로
+    넘어온 reader가 payload 파일을 읽는지 본다 — 배선을 끊으면 red다. 그 reader가 노드까지
+    닿는지는 이 검사가 아니라 아래 `test_run_pipeline_carries_read_payload_to_auditor_and_critic`이
+    문다.
     """
     captured: dict[str, object] = {}
 
