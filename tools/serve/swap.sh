@@ -273,7 +273,6 @@ served_window() { # /v1/models에 그 이름이 있으면 max_model_len을 낸�
   "$PY" - "$key" "$port" << 'PY'
 import sys
 
-import src.adapters  # noqa: F401 — `src.bench`를 먼저 열면 adapters와 순환 import로 죽는다
 from src.bench import check_startup
 
 key, port = sys.argv[1:]
