@@ -53,7 +53,6 @@ import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from src.bench import check_startup
 from src.config import CONFIG_DIR, ModelEntry
 from src.interfaces.model_client import ModelSwapError
 
@@ -81,10 +80,24 @@ def swap_runner(
     deadline_s: float,
     run_id: str,
     device: str,
-    probe: Probe = check_startup,
+    probe: Probe | None = None,
     cwd: Path = REPO_ROOT,
 ) -> SwapTo:
-    """`keys`만 떠 있게 하는 콜러블. 돌려주는 값은 명령의 보고를 스칼라로 편 것이다."""
+    """`keys`만 떠 있게 하는 콜러블. 돌려주는 값은 명령의 보고를 스칼라로 편 것이다.
+
+    `probe`를 안 주면 `bench.check_startup`이다. **부를 때 import한다** — `src.bench`가
+    `src.adapters.openai_compat`을 import하면 이 패키지(`__init__` → `factory` → 이 모듈)가 먼저
+    초기화되므로, 모듈 머리에서 import하면 `import src.bench`가 첫 import일 때 반쯤 초기화된
+    `src.bench`를 만나 죽는다(`tests/test_import_order.py`).
+    """
+    if probe is None:
+        # ponytail: 순환을 호출 시점으로 미룬 것이다. 의존 방향(어댑터 → bench)은 그대로다.
+        # 끊으려면 `check_startup`을 표준 라이브러리만 쓰는 `bench_metrics`로 내린다
+        # (`openai_compat`이 이미 서버를 거기서 읽는다). 그때는 그 함수의 자리(`src/bench.py`)를
+        # 적은 문서를 같이 고친다(`git grep check_startup -- docs`).
+        from src.bench import check_startup
+
+        probe = check_startup
     env = {
         **os.environ,
         "HARNESS_PYTHON": sys.executable,
