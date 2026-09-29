@@ -610,3 +610,58 @@ models:
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
+
+  # ── 8단계 PoV 모델 — 사용자(조민규) 선정. **등재만이고 배선 전이다** ────────────────
+  # CyberGym Level 1(PoV 생성)용. Feyospace-v1-small — Qwen/Qwen3.8-27B를 사이버 에이전트
+  # 연구용으로 post-train한 28B다(HF 카드 · `base_model` 태그 Qwen/Qwen3.8-27B). 그래서 아키텍처·
+  # 크기·창·추론 템플릿이 지금 Auditor(`qwen3.8-27b`)와 같다 — `family`는 베이스 가중치 제작사
+  # Qwen이다(ADR 0010 §4: family=베이스 제작사, 양자화·파인튜닝 조직이 아니다).
+  #
+  # 값은 2026-09-30 Hugging Face에서 직접 읽었다(`source` rev fd02711…):
+  #   config.json@<rev> — architectures ['Qwen3_5ForConditionalGeneration'](model_type qwen3_5) ·
+  #     text_config.max_position_embeddings 262144 · dtype bfloat16 · quantization_config 없음
+  #     → `bf16`은 native dtype · num_hidden_layers 64(48 linear + 16 full attention, interval 4 —
+  #     GDN hybrid, Auditor와 같은 계열) · vocab 248320 · MTP 1층 · vision_config(depth 27)가 있는
+  #     비전-언어 모델(하네스는 텍스트만 보낸다) · transformers_version 5.12.1
+  #   safetensors 12개 · 파라미터 BF16 27,781,427,952(HF API `safetensors` · 카드는 "28B")
+  # `context_limit`은 모델 상한이지 띄울 값이 아니다(`qwen3.8-27b` 항목과 같은 관례).
+  #
+  # ⚠ **license 미선언이다.** HF API 태그·config.json·README 어디에도 라이선스가 없다(2026-09-30
+  #   확인 — 카드는 "research release · authorized defensive-security research"만 적는다). 실측이
+  #   아니라 **부재**라 checksum처럼 0으로 못 둔다(license는 NonEmptyStr) — `unknown`으로 두고
+  #   가중치를 받아 쓰기 전에 원저자·팀에 확인한다(`gpt-oss-20b`의 USAGE_POLICY 주석과 같은 자리).
+  # ⚠ **checksum·benchmark는 전부 미실측(0/null)이다** — 아직 우리 장비에서 받지도 띄우지도
+  #   않았다(ATOM 종료 · 서빙+도구 되는 호스트 미확보). 그전에 돈 run은 비교표 제외(CLAUDE.md §0).
+  #   `tools/model_checksum.py`가 스냅샷을 받은 뒤 checksum을, `bench --apply`가 benchmark를 채운다.
+  #
+  # ## 배선은 아직 — 이 항목은 등재만이다 (프로필 roles에 없다)
+  # PoV 노드(`nodes/pov.py`)는 단발로 붙었지만 **러너 8단계 라우팅에 아직 안 들어갔다**(호스트 필요).
+  # 그래서 이 키를 **어느 프로필의 roles에도 넣지 않는다** — 넣으면 러너가 부르지도 않는 서버를
+  # 교대가 콜드 기동/정지하게 되고(SwapPolicy docstring의 「선 것처럼 보이는 정책」), `check_serving`이
+  # 없는 장비 파일 서버 행을 요구한다. PROJECT-CONTEXT §1 자리·`harness_pool` 배선·`config/serving/*.yaml`
+  # 서버 행·요청 손잡이(reasoning_effort·sampling·thinking_token_budget·request_timeout_s)는 러너가
+  # pov를 라우팅하고 서빙 호스트가 잡힌 뒤 실측과 함께 채운다. 등재만으로도 model-serving.md 포트 표
+  # (8006)와 PROJECT-CONTEXT 「로스터에 없지만 registry에 남는 것」 표가 이 키를 들어야 한다(doc 검사).
+  #
+  # ## 추론(사고) — 배선 때 켠다(지금은 요청 손잡이 미선언)
+  # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
+  # 사고 · hybrid라 V1 러너로 `thinking_token_budget`을 받는다 · `--reasoning-parser qwen3`가 없으면
+  # 사고가 죽는다(`qwen3.8-27b` 항목의 같은 문단). PoV 출력은 작은 구성 스펙(PovSpec)이라 Auditor만큼
+  # 큰 출력 예산이 필요한지는 실측 전이다 — 그래서 지금은 손잡이를 안 적는다(안 적으면 payload에 안 실린다).
+  feyospace-v1-small:
+    endpoint: "http://127.0.0.1:8006/v1"
+    context_limit: 262144
+    quantization: "bf16"
+    license: "unknown"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://feyospace/feyospace-v1-small@fd02711ea1eb8ea15772d0b7fbded18ecfe8c9d1"
+    family: "qwen"
+    prompt_template_version: "v1"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
