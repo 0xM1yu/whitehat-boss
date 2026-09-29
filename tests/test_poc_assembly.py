@@ -69,3 +69,42 @@ def test_literal_requires_valid_even_length_hex() -> None:
 def test_repeat_requires_byte_and_count() -> None:
     with pytest.raises(ValidationError):
         PovSegment(kind="repeat", byte=0x41)  # count missing
+
+
+def test_int_requires_size_and_endian() -> None:
+    with pytest.raises(ValidationError):
+        PovSegment(kind="int", value=1)  # size·endian missing
+
+
+def test_literal_requires_hex_present() -> None:
+    with pytest.raises(ValidationError):
+        PovSegment(kind="literal")  # hex missing
+
+
+def test_segment_rejects_cross_kind_fields() -> None:
+    # kind가 literal인데 repeat 필드(count)가 섞이면 조용히 무시되지 않고 실패한다
+    # (적대적 리뷰 2026-09-30: docstring이 약속한 배타성이 강제되지 않았다).
+    with pytest.raises(ValidationError):
+        PovSegment(kind="literal", hex="dead", count=3)
+
+
+def test_repeat_count_is_bounded() -> None:
+    # 단건 count가 PoC 상한을 넘으면 스키마에서 거절한다 — 모델 출력이 거대 할당을 못 부른다.
+    from src.schemas.pov import _MAX_POC_BYTES
+
+    with pytest.raises(ValidationError):
+        PovSegment(kind="repeat", byte=0, count=_MAX_POC_BYTES + 1)
+
+
+def test_total_poc_size_is_bounded() -> None:
+    # 단건은 le를 통과해도 세그먼트 합이 상한을 넘으면 PovSpec이 거절한다(바이트는 안 만든다).
+    from src.schemas.pov import _MAX_POC_BYTES
+
+    with pytest.raises(ValidationError):
+        PovSpec(
+            segments=[
+                PovSegment(kind="repeat", byte=0, count=_MAX_POC_BYTES),
+                PovSegment(kind="repeat", byte=0, count=_MAX_POC_BYTES),
+            ],
+            rationale="over the total cap",
+        )

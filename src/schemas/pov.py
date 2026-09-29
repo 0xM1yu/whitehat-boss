@@ -25,6 +25,24 @@ from src.schemas.common import HarnessModel, NonEmptyStr
 # 덮는다. 더 큰 값이 필요하면 literal 세그먼트로 직접 쓴다.
 _MAX_INT_SIZE = 8
 
+# PoC 총 바이트 상한 — 모델 출력에서 온 스펙이 조립 때 프로세스 메모리를 폭주시키지 못하게
+# 하는 **안전 한도**다(실측이 아니라 신뢰 경계 입력 검증). `assemble_poc`는 검증을 통과한
+# PovSpec만 받으므로(pydantic가 생성 시 검증) 상한을 여기서 걸면 조립기는 순수·단순한 채로
+# 둔다. CyberGym PoC 입력은 보통 바이트~KB라(docs/research/2026-09-29-cybergym-pov-design.md)
+# 8 MiB면 넉넉하다. 부족하면 실측으로 올린다 — 그때 config로 옮길 수 있다(`_MAX_INT_SIZE`처럼
+# 지금은 지역 상수). **없으면** `count`·`hex`가 상한이 없어 15자짜리 스펙이 테라바이트
+# 할당을 부른다(적대적 리뷰 2026-09-30 HIGH).
+_MAX_POC_BYTES = 8 * 1024 * 1024
+# 세그먼트 개수 상한 — 작은 세그먼트를 수없이 쌓아 파싱·객체 수를 불리는 벡터를 막는다.
+_MAX_SEGMENTS = 4096
+
+# `kind`별로 그 kind가 쓰는 필드. `_check_kind`가 다른 kind의 필드가 섞였는지 본다.
+_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "literal": ("hex",),
+    "repeat": ("byte", "count"),
+    "int": ("value", "size", "endian"),
+}
+
 
 class PovSegment(HarnessModel):
     """PoC 바이트의 한 조각. `kind`가 어느 필드를 쓰는지 정한다.
@@ -39,9 +57,10 @@ class PovSegment(HarnessModel):
     """
 
     kind: Literal["literal", "repeat", "int"]
-    hex: str | None = None
+    hex: str | None = Field(default=None, max_length=2 * _MAX_POC_BYTES)
     byte: int | None = Field(default=None, ge=0, le=255)
-    count: int | None = Field(default=None, ge=0)
+    # 한 세그먼트가 총 상한을 혼자 넘지 못하게 `le`로 못 박는다. 총합은 `PovSpec._check_total_size`.
+    count: int | None = Field(default=None, ge=0, le=_MAX_POC_BYTES)
     value: int | None = Field(default=None, ge=0)
     size: int | None = Field(default=None, ge=1, le=_MAX_INT_SIZE)
     endian: Literal["little", "big"] | None = None
@@ -65,6 +84,21 @@ class PovSegment(HarnessModel):
                 raise ValueError(
                     f"value {self.value}는 {self.size}바이트에 담기지 않는다"
                 )
+        # 다른 kind의 필드가 섞이면 거절한다 — docstring이 약속한 것이 이것이다. `extra="forbid"`는
+        # **없는 필드 이름**만 막지, 선언된 필드를 엉뚱한 kind에 채운 것은 못 잡는다(적대적 리뷰
+        # 2026-09-30: `kind="literal"`인데 byte·count가 실려도 통과했다 — 조용히 무시됐다).
+        stray = sorted(
+            name
+            for other_kind, fields in _FIELDS_BY_KIND.items()
+            if other_kind != self.kind
+            for name in fields
+            if getattr(self, name) is not None
+        )
+        if stray:
+            raise ValueError(
+                f"{self.kind} 세그먼트에 다른 kind의 필드가 섞였다: {stray} — "
+                f"{self.kind}가 쓰는 필드는 {list(_FIELDS_BY_KIND[self.kind])}뿐이다"
+            )
         return self
 
 
@@ -75,5 +109,25 @@ class PovSpec(HarnessModel):
     친다고 보는지의 한 줄 근거 — 사람 검수·trace용이고 바이트에는 안 들어간다.
     """
 
-    segments: list[PovSegment] = Field(min_length=1)
+    segments: list[PovSegment] = Field(min_length=1, max_length=_MAX_SEGMENTS)
     rationale: NonEmptyStr
+
+    @model_validator(mode="after")
+    def _check_total_size(self) -> "PovSpec":
+        """세그먼트 바이트 **합**이 `_MAX_POC_BYTES`를 넘지 않는지 — 바이트를 만들지 않고 길이만
+        센다. 한 세그먼트의 `count` `le`는 단건을, 이 검사는 여러 세그먼트가 합쳐 넘치는 것을
+        막는다. 조립 전(모델 출력 검증 시점)에 걸려야 `call_model`이 재시도로 더 작은 스펙을
+        받을 수 있다."""
+        total = 0
+        for seg in self.segments:
+            if seg.kind == "literal":
+                total += len(seg.hex or "") // 2  # 검증된 짝수 길이 hex
+            elif seg.kind == "repeat":
+                total += seg.count or 0
+            else:  # int — size는 ge=1이라 항상 있다
+                total += seg.size or 0
+        if total > _MAX_POC_BYTES:
+            raise ValueError(
+                f"PoC 총 바이트 {total}가 상한 {_MAX_POC_BYTES}를 넘는다 — 스펙을 줄인다"
+            )
+        return self

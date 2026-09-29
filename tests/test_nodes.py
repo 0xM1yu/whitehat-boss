@@ -466,7 +466,21 @@ def test_pov_builds_a_poc_from_a_finding(ctx: RunContext) -> None:
 
     assert updated.finding_id == finding.finding_id
     assert isinstance(poc, bytes) and len(poc) > 0
-    assert any(role is Role.POV for role, _ in ctx.models.prompts)
+    # 단순 「불렸나」가 아니라 **그 Finding이 프롬프트에 닿았나**를 본다(auditor 테스트와 같은 형).
+    prompt = ctx.models.last_for(Role.POV)
+    assert finding.finding_id in prompt.body
+    assert "{{" not in prompt.body  # 템플릿 토큰이 다 치환됐다
+
+
+def test_pov_reads_the_source_override(ctx: RunContext) -> None:
+    """`source=` 콜러블을 주면 그 텍스트가 프롬프트에 실린다 — P2 계약(auditor와 같다)."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+    marker = "MARKER_SOURCE_pov_override_2a7f"
+
+    pov.run(ctx, finding=finding, capsule=capsule, source=lambda: marker)
+
+    assert marker in ctx.models.last_for(Role.POV).body
 
 
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
