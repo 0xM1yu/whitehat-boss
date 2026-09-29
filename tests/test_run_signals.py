@@ -129,6 +129,47 @@ def test_a_signal_ignored_at_start_stays_ignored(tmp_path: Path, name: str) -> N
     )
 
 
+# 한 신호만 시작 때 무시하고 다른 신호는 살아 있는 조합 — (무시한 신호, 신호 순서열).
+MIXED = [
+    ("SIGHUP", ("SIGTERM",)),  # nohup + TERM — 무시 안 한 신호는 여전히 SystemExit이다
+    ("SIGHUP", ("SIGTERM", "SIGHUP")),  # 내림 도중 HUP — 무시한 채로 남아 내림을 안 끊는다
+    ("SIGTERM", ("SIGHUP",)),
+    ("SIGTERM", ("SIGHUP", "SIGTERM")),
+]
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="SIGHUP이 없는 플랫폼(Windows)")
+@pytest.mark.parametrize(
+    ("ignored", "sequence"),
+    MIXED,
+    ids=["hup-ignored+TERM", "hup-ignored+TERM+HUP", "term-ignored+HUP", "term-ignored+HUP+TERM"],
+)
+def test_one_signal_ignored_at_start_leaves_the_other_live(
+    tmp_path: Path, ignored: str, sequence: tuple[str, ...]
+) -> None:
+    """한 신호만 무시한 채 띄운 run(`nohup` 등)도 다른 신호에는 내림을 돈다 — 무시한 신호가 있다고
+    가드를 통째로 끄면 `nohup` 사용자의 TERM 내림이 사라진다. 무시한 신호는 첫 신호 뒤에도 무시로
+    남는다 — 내림 도중에 와도 내림을 안 끊는다."""
+    done = _run_child(tmp_path, sequence, ignored=(ignored,))
+
+    assert (tmp_path / "teardown").exists(), (
+        f"{ignored} 무시 · {sequence}에 run 끝 내림이 끝까지 안 돌았다 (rc={done.returncode})"
+    )
+    assert done.returncode == 128 + getattr(signal, sequence[0]), done.stderr[-400:]
+
+
+@pytest.mark.parametrize("name", SIGNALS)
+def test_the_guard_leaves_a_signal_ignored_at_start_ignored(name: str) -> None:
+    """무시한 채 들어온 신호는 블록 안에서도, 나간 뒤에도 무시다 — 되돌릴 때 기본으로 덮으면
+    운영자가 건 무시가 run 뒤에 사라진다."""
+    signum = getattr(signal, name)
+
+    with _disposition(signum, signal.SIG_IGN):
+        with cli._terminate_as_exit():
+            assert signal.getsignal(signum) is signal.SIG_IGN
+        assert signal.getsignal(signum) is signal.SIG_IGN
+
+
 def test_the_guard_puts_back_the_handlers_it_replaced() -> None:
     """블록 안에서만 신호를 바꾼다 — 같은 프로세스에서 `cli.main`을 부르는 쪽(테스트 등)에 새지
     않는다."""
