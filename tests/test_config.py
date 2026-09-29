@@ -228,7 +228,8 @@ def test_the_pool_hybrid_profile_differs_from_harness_pool_in_the_retriever_and_
     assert variant.budget == base.budget
     # 실행 단위도 같아야 한다 — 한쪽만 `per_stage`면 두 run이 루프 순서까지 갈린다.
     # ⚠ **교대 선언은 다르다**(2026-09-29) — hybrid는 검색 역할 때문에 교대를 선언할 수 없다
-    # (`SwapPolicy`가 거부 — ADR 0012 결정 3 뒤). 그래서 두 run은 서버를 띄우는 방식이 갈린다
+    # (목록에 넣으면 `SwapPolicy`가, 빼면 `load_config`가 거부 — ADR 0012 결정 3 뒤).
+    # 그래서 두 run은 서버를 띄우는 방식이 갈린다
     # (`harness_pool`은 단계마다 교대 · hybrid는 사람이 띄운다). 모델 호출 순서는 같다.
     assert base.execution is not None and variant.execution is not None
     assert variant.execution.mode == base.execution.mode
