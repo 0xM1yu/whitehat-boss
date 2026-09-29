@@ -142,7 +142,7 @@ HANG = os.path.join(os.environ.get("STUB_HANG_DIR", "/nonexistent"), str(os.getp
 if os.environ.get("STUB_KILL_GUARD"):
     try:
         with open(os.path.join(os.environ["SERVE_DIR"], "guard.pid")) as guard_pid:
-            os.kill(int(guard_pid.read()), signal.SIGKILL)
+            os.kill(int(guard_pid.read().split()[0]), signal.SIGKILL)
     except (OSError, ValueError):
         pass
 args = sys.argv[1:]
@@ -211,7 +211,7 @@ class Rig(NamedTuple):
     def guard(self, **env: str) -> subprocess.Popen:
         """감시자를 띄우고 pid 파일이 그 감시자를 가리킬 때까지 기다린다."""
         pid_file = self.dir / "guard.pid"
-        if pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+        if pid_file.exists() and pid_file.read_text().split()[:1] == [str(os.getpid())]:
             pid_file.unlink()  # fixture의 대역(이 테스트 프로세스) — 진짜 감시자가 아니다
         guard = subprocess.Popen(
             ["bash", GUARD.as_posix()],
@@ -220,7 +220,7 @@ class Rig(NamedTuple):
             start_new_session=True,
         )
         for _ in range(100):
-            if pid_file.exists() and pid_file.read_text().strip() == str(guard.pid):
+            if pid_file.exists() and pid_file.read_text().split()[:1] == [str(guard.pid)]:
                 return guard
             time.sleep(0.05)
         guard.kill()
@@ -265,8 +265,8 @@ def rig(tmp_path: Path):
     serve = tmp_path / "serve"
     serve.mkdir()
     (tmp_path / "hub").mkdir()
-    # 감시자 대역 — 교대 명령은 감시자가 살아 있어야 띄운다. pid만 살아 있으면 된다.
-    (serve / "guard.pid").write_text(str(os.getpid()), encoding="utf-8")
+    # 감시자 대역 — 교대 명령은 감시자가 살아 있어야 띄운다. 번호·시작 시각이 맞는 산 프로세스다.
+    (serve / "guard.pid").write_text(f"{os.getpid()} {_starttime(os.getpid())}\n", encoding="utf-8")
     env = {
         **os.environ,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
@@ -718,9 +718,11 @@ _CG_LIMIT = 80 * _GIB
 
 def _cgroup(path: Path, limit: int | str, anon: int, *, v1: bool = False) -> Path:
     """cgroup 디렉터리 대역 하나 — v2는 `memory.max`·`memory.stat`의 `anon`, v1은
-    `memory.limit_in_bytes`·`memory.stat`의 `total_rss`."""
+    `memory.limit_in_bytes`·`memory.stat`의 `total_rss`. `cgroup.procs`는 v1·v2 모두 모든 cgroup에
+    있다(대역 트리 밖의 부모에는 없다)."""
     limit_file, anon_key = ("memory.limit_in_bytes", "total_rss") if v1 else ("memory.max", "anon")
     path.mkdir(parents=True)
+    (path / "cgroup.procs").write_text("", encoding="utf-8")
     (path / limit_file).write_text(f"{limit}\n", encoding="utf-8")
     (path / "memory.stat").write_text(f"{anon_key} {anon}\nfile {_GIB}\n", encoding="utf-8")
     return path
