@@ -339,7 +339,9 @@ class SwapPolicy(HarnessModel):
 
     **아래 넷은 ADR 0009의 불변식이 아니다.** ADR이 「스키마가 강제」로 이름 붙인 것은
     둘뿐이고(`swap`이 있으면 `mode == per_stage` · `resident ∪ swappable ⊆ roles`),
-    아래는 이 스키마가 **더 얹는 것**이다. 얹는 이유는 바로 위 문단이 *"아무 역할도 안
+    아래는 이 스키마가 **더 얹는 것**이다. 셋째 불변식(실서빙 역할은 전부 목록에 있다)은
+    registry를 봐야 해서 스키마가 아니라 `load_config`가 강제한다
+    (`_check_swap_lists_every_served_role`). 얹는 이유는 바로 위 문단이 *"아무 역할도 안
     부르는 상태"*를 피하려고 기본값을 거절해 놓고 **정작 그 상태를 막지 않았기**
     때문이다 — `resident: []` + `swappable: []`가 통과했다. 사유를 적고 강제하지 않으면
     다음 사람은 그 사유를 강제되는 것으로 읽는다.
@@ -371,7 +373,7 @@ class SwapPolicy(HarnessModel):
 
     @model_validator(mode="after")
     def _lists_are_disjoint_role_sets_that_swap_someone(self) -> "SwapPolicy":
-        """위 docstring의 넷. **ADR 0009의 두 불변식과 별개다.**"""
+        """위 docstring의 넷. **ADR 0009의 불변식과 별개다.**"""
         for field_name, names in (("resident", self.resident), ("swappable", self.swappable)):
             repeated = sorted({name for name in names if names.count(name) > 1})
             if repeated:
@@ -900,6 +902,31 @@ def _check_family_split(name: str, profile: ProfileEntry, models: dict[str, Mode
         )
 
 
+def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
+    """교대를 선언한 프로필은 실서빙 역할을 **전부** `resident ∪ swappable`에 적는다 (ADR 0009
+    불변식 3 — 「2026-09-29 제안」 절 1).
+
+    `⊆ roles`(불변식 2)는 한 방향뿐이다. 목록 밖의 실서빙 역할은 교대 명령이 그 서버를 띄우지
+    않고, 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상 「자기 run의 서버 전부 내림」으로
+    — 불린다(`runner._swap_for`). 그 호출은 서버 없이 나가 run이 틀린 사유
+    (`model_gateway_unavailable`)로 멈춘다. 그래서 검색 역할이 실서빙인 hybrid 프로필은 교대를
+    선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가, 빼면 이 검사가 거부한다.
+
+    `ProfileEntry`가 아니라 여기 있는 것은 실서빙 판정(`served_models()`)이 registry의
+    `is_fake`를 봐야 해서다 — `_check_family_split`과 같은 자리다.
+    """
+    swap = config.swap
+    if swap is None:
+        return
+    unlisted = sorted(set(config.served_models()) - {*swap.resident, *swap.swappable})
+    if unlisted:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}의 execution.swap이 실서빙 역할 {unlisted}을 "
+            "안 적었다 — 교대 명령은 목록의 역할만 띄우므로 그 역할의 호출은 서버 없이 나간다. "
+            "전부 적거나(검색 역할은 못 적는다 — ADR 0012 결정 3 뒤) 교대를 선언하지 않는다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -932,7 +959,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     if not isinstance(seed, int):
         raise ConfigError("budgets.yaml에 정수 seed 항목이 없다")
 
-    return HarnessConfig(
+    config = HarnessConfig(
         profile_name=profile,
         profile=entry,
         models=models,
@@ -941,6 +968,8 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         sampling=Sampling.model_validate(_require(budgets_raw, "sampling", "budgets.yaml")),
         seed=seed,
     )
+    _check_swap_lists_every_served_role(config)
+    return config
 
 
 # --- 장비 파일 (ADR 0012 Phase 6.5 — 단계 단위 콜드 재기동 교대) -----------------------
