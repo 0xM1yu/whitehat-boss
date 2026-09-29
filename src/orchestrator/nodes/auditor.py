@@ -47,8 +47,10 @@ OUTPUT_SCHEMA = Finding
 # v3가 드는 것은 `prompts/auditor/v3/meta.yaml`이 스스로 「evidence 본문이 닿는 변경 전까지 v3는
 # 올리지 않는다」를 조건으로 걸었기 때문이다. ⚠ v3 prefix는 critic v3와 달리 `body` 필드를 이름으로
 # 부르지 않는다(「supplied source or facts」만) — 모델이 그 본문을 실제로 쓰는지는 미측정이다.
+# v4가 드는 것은 v4 prefix가 「등록된 evidence의 content가 주장을 뒷받침할 때만」을 전제로 쓰였기
+# 때문이다(#328 리뷰 MEDIUM-1 — 빠져 있으면 v3→v4 전환이 툴 로그 본문을 조용히 떨군다).
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
@@ -130,8 +132,8 @@ def _ask_model(
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
     text = ctx.read_source(capsule.target) if source is None else source()
-    # content-aware 버전(v3)일 때만 payload 본문을 읽어 싣는다. 그 외 버전은 본문 없이
-    # 종전과 동일(`critic._ask_model`과 같은 패턴).
+    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽어 싣는다.
+    # 그 외 버전은 본문 없이 종전과 동일(`critic._ask_model`과 같은 패턴).
     bodies = (
         evidence_summaries(evidences, ctx.read_payload)
         if version in _CONTENT_AWARE_VERSIONS
