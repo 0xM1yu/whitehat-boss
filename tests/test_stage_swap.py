@@ -62,7 +62,7 @@ class _Rig:
         models: object,
         *,
         fail_at: int | None = None,
-        error: Exception | None = None,
+        error: BaseException | None = None,
     ) -> None:
         self.config = config
         self._models = models
@@ -313,6 +313,21 @@ def test_a_failed_teardown_still_writes_the_manifest_of_a_finished_run(
     )
 
 
+def _swaps_at_heartbeat_stop(
+    monkeypatch: pytest.MonkeyPatch, rig: _Rig
+) -> list[list[tuple[str, ...]]]:
+    """`Heartbeat.stop`이 불릴 때마다 그때까지의 교대 기록을 남긴다."""
+    seen: list[list[tuple[str, ...]]] = []
+    real_stop = runner.Heartbeat.stop
+
+    def stop(self: runner.Heartbeat) -> None:
+        seen.append(list(rig.swaps))
+        real_stop(self)
+
+    monkeypatch.setattr(runner.Heartbeat, "stop", stop)
+    return seen
+
+
 def test_the_heartbeat_stops_only_after_the_run_end_teardown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -324,19 +339,60 @@ def test_the_heartbeat_stops_only_after_the_run_end_teardown(
     """
     config = _config()
     rig = _Rig(config, _inner_models(tmp_path))
-    swaps_at_stop: list[list[tuple[str, ...]]] = []
-    real_stop = runner.Heartbeat.stop
-
-    def stop(self: runner.Heartbeat) -> None:
-        swaps_at_stop.append(list(rig.swaps))
-        real_stop(self)
-
-    monkeypatch.setattr(runner.Heartbeat, "stop", stop)
+    swaps_at_stop = _swaps_at_heartbeat_stop(monkeypatch, rig)
 
     _run(tmp_path, config, rig=rig)
 
     assert rig.swaps[-1] == ()
     assert swaps_at_stop == [rig.swaps], "heartbeat가 run 끝 내림 전에 멈췄다"
+
+
+# 인터럽트 — Ctrl-C(`KeyboardInterrupt`)와 TERM·HUP(`cli._terminate_as_exit`가 올리는 `SystemExit`).
+_INTERRUPTS = pytest.mark.parametrize(
+    "make_interrupt", [KeyboardInterrupt, lambda: SystemExit(143)], ids=["ctrl-c", "term"]
+)
+
+
+@_INTERRUPTS
+def test_an_interrupt_in_the_run_still_tears_down_then_stops_the_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_interrupt: Callable[[], BaseException]
+) -> None:
+    """인터럽트가 run을 지나가도 run 끝 내림이 돌고 heartbeat는 그 뒤에 **한 번** 멈춘다 —
+    인터럽트는 그대로 올라간다. 신호 경로(`cli._terminate_as_exit`)가 믿는 보증을 실제
+    `run_pipeline`에 건다."""
+    config = _config()
+    rig = _Rig(config, _inner_models(tmp_path))
+    swaps_at_stop = _swaps_at_heartbeat_stop(monkeypatch, rig)
+    interrupt = make_interrupt()
+
+    def interrupted(*_args: object, **_kwargs: object) -> None:
+        raise interrupt
+
+    monkeypatch.setattr(runner, "_analyze", interrupted)
+
+    with pytest.raises(type(interrupt)):
+        _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [()], "인터럽트가 지나간 run이 run 끝 내림을 안 불렀다"
+    assert swaps_at_stop == [[()]], "heartbeat가 내림 뒤에 한 번 멈추지 않았다"
+
+
+@_INTERRUPTS
+def test_an_interrupt_during_the_teardown_still_stops_the_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_interrupt: Callable[[], BaseException]
+) -> None:
+    """내림 도중에 인터럽트가 와도 heartbeat는 멈춘다(안쪽 `finally`) — 인터럽트는 그대로
+    올라간다."""
+    config = _config()
+    interrupt = make_interrupt()
+    rig = _Rig(config, _inner_models(tmp_path), fail_at=4, error=interrupt)  # 4번째 = run 끝 내림
+    swaps_at_stop = _swaps_at_heartbeat_stop(monkeypatch, rig)
+
+    with pytest.raises(type(interrupt)):
+        _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [(SCOUT,), (AUDITOR,), (CRITIC,), ()]
+    assert swaps_at_stop == [rig.swaps], "내림 도중 인터럽트에 heartbeat가 안 멈췄다"
 
 
 # --- 기록: 교대 명령이 올린 서버의 기동 조건을 보고했는가 -----------------------------------
