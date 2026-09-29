@@ -259,3 +259,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - LLM 기반 리포트 생성 에이전트 (템플릿 + 규칙으로 처리)
 - LLM 기반 dedupe 에이전트
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
+- CyberGym PoV 전 루프 — 모델-주도 툴 루프(코드열람·Python·ASan/디버거)와 외부 oracle 차분 검증은
+  MVP 밖이다. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` 단발 · `PovSpec`→`assemble_poc`)는 들어왔지만
+  러너 8단계 라우팅·서빙 배선은 P3/P5다(STATUS.md 「PoV(PoC) 생성」). 벤치마크 채택·단계 프레이밍은
+  팀 기록 대기라 여기서 단정하지 않는다.
