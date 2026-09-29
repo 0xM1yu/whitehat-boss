@@ -11,6 +11,8 @@ import subprocess
 import sys
 import textwrap
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -35,7 +37,9 @@ SEQUENCES = [
 # 자식 프로세스: `cli.execute`를 러너의 `try: … finally: run 끝 내림` 모양으로 바꿔 끼우고
 # `cli.main(["run", …])`을 돈다. 서버가 떠 있는 동안 첫 신호가 오고, 내림 도중에 나머지가
 # 온다(감독자의 재촉). 내림이 끝까지 돌면 표지 파일을 남긴다. 신호가 run을 끝내지 않으면
-# 0으로 끝난다. `ignored`면 `cli.main` 전에 첫 신호를 무시로 건다 — `nohup`(HUP)·
+# 0으로 끝난다.
+# **출발 처분은 자식이 정한다** — TERM·HUP를 기본으로 두고 `ignored`에 든 것만 무시로 건다.
+# 시험 러너가 `nohup`·`trap '' TERM`으로 떴어도 그 무시를 물려받지 않는다. 무시는 `nohup`(HUP)·
 # `trap '' TERM`으로 띄운 run과 파이썬에게는 같은 상태다(`getsignal`이 `SIG_IGN`을 돌려준다).
 _CHILD = textwrap.dedent(
     """
@@ -43,10 +47,13 @@ _CHILD = textwrap.dedent(
     from pathlib import Path
     from src import cli
 
-    marker, mode = Path(sys.argv[1]), sys.argv[2]
+    marker = Path(sys.argv[1])
+    ignored = {getattr(signal, name) for name in sys.argv[2].split(",") if name}
     first, *later = (getattr(signal, name) for name in sys.argv[3].split(","))
-    if mode == "ignored":
-        signal.signal(first, signal.SIG_IGN)
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signum = getattr(signal, name)
+            signal.signal(signum, signal.SIG_IGN if signum in ignored else signal.SIG_DFL)
 
     def execute(*_args, **_kwargs):
         try:
@@ -64,19 +71,32 @@ _CHILD = textwrap.dedent(
 
 
 def _run_child(
-    tmp_path: Path, sequence: tuple[str, ...], *, ignored: bool = False
+    tmp_path: Path, sequence: tuple[str, ...], *, ignored: tuple[str, ...] = ()
 ) -> subprocess.CompletedProcess[str]:
     argv = [
         "run", "--profile", "dev_fake", "--target", str(TARGET), "--condition", "B1@pipeline",
         "--kb-snapshot", "kb-20260901", "--seed", "20260901",
         "--artifacts-root", str(tmp_path / "artifacts"),
     ]  # fmt: skip
-    mode = "ignored" if ignored else "handled"
+    marker, order = str(tmp_path / "teardown"), ",".join(sequence)
     return subprocess.run(
-        [sys.executable, "-c", _CHILD, str(tmp_path / "teardown"), mode, ",".join(sequence), *argv],
+        [sys.executable, "-c", _CHILD, marker, ",".join(ignored), order, *argv],
         cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=120, check=False,
     )  # fmt: skip
+
+
+@contextmanager
+def _disposition(signum: int, handler: object) -> Iterator[None]:
+    """`signum`을 `handler`로 두고 끝나면 원래 처분으로 되돌린다 — 시험 러너가 어떻게 떴든
+    (`nohup pytest`·`trap '' TERM`) 같은 출발점에서 돌고, 프로세스 전역 상태를 다음 테스트로
+    새게 두지 않는다."""
+    original = signal.signal(signum, handler)
+    try:
+        yield
+    finally:
+        if original is not None:  # 파이썬 밖에서 건 핸들러는 되돌릴 수 없다
+            signal.signal(signum, original)
 
 
 @pytest.mark.parametrize("sequence", SEQUENCES, ids="-".join)
@@ -102,7 +122,7 @@ def test_a_run_ended_by_a_signal_still_runs_its_teardown(
 def test_a_signal_ignored_at_start_stays_ignored(tmp_path: Path, name: str) -> None:
     """무시한 채 띄운 신호는 무시한 채로 둔다 — `nohup`으로 띄운 run이 터미널이 닫혀(HUP) 죽지
     않는다. 운영자가 무시하라고 띄운 것을 하네스가 종료로 되살리면 안 된다."""
-    done = _run_child(tmp_path, (name,), ignored=True)
+    done = _run_child(tmp_path, (name,), ignored=(name,))
 
     assert done.returncode == 0, (
         f"{name}을 무시한 채 띄운 run이 그 신호에 끝났다 (rc={done.returncode})"
@@ -112,19 +132,17 @@ def test_a_signal_ignored_at_start_stays_ignored(tmp_path: Path, name: str) -> N
 def test_the_guard_puts_back_the_handlers_it_replaced() -> None:
     """블록 안에서만 신호를 바꾼다 — 같은 프로세스에서 `cli.main`을 부르는 쪽(테스트 등)에 새지
     않는다."""
-    before = signal.getsignal(signal.SIGTERM)
+    with _disposition(signal.SIGTERM, signal.SIG_DFL):
+        with cli._terminate_as_exit():
+            inside = signal.getsignal(signal.SIGTERM)
 
-    with cli._terminate_as_exit():
-        inside = signal.getsignal(signal.SIGTERM)
-
-    assert inside is not before
-    assert signal.getsignal(signal.SIGTERM) is before
+        assert inside is not signal.SIG_DFL
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
 
 
 def test_the_guard_does_nothing_off_the_main_thread() -> None:
     """`signal.signal`은 메인 스레드에서만 된다 — 다른 스레드에서 `run`을 불러도 죽지 않고 신호를
     안 바꾼다(그 스레드의 run은 신호에 내림을 못 돌린다)."""
-    before = signal.getsignal(signal.SIGTERM)
     seen: list[object] = []
 
     def body() -> None:
@@ -134,8 +152,9 @@ def test_the_guard_does_nothing_off_the_main_thread() -> None:
         except ValueError as exc:  # 메인 스레드 밖의 `signal.signal`
             seen.append(exc)
 
-    thread = threading.Thread(target=body)
-    thread.start()
-    thread.join()
+    with _disposition(signal.SIGTERM, signal.SIG_DFL):
+        thread = threading.Thread(target=body)
+        thread.start()
+        thread.join()
 
-    assert seen == [before]
+    assert seen == [signal.SIG_DFL]
