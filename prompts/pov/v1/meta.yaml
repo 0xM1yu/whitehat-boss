@@ -1,0 +1,4 @@
+role: pov
+version: v1
+output_schema: PovSpec
+description: Auditor Finding에서 PoC 바이트 구성 스펙(PovSpec)을 세우는 8단계 PoV 프롬프트

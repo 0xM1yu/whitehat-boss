@@ -25,6 +25,7 @@ profiles:
       scout: fake
       auditor: fake
       critic: fake
+      pov: fake
       embedding: fake
       reranker: fake
     adapters:
@@ -43,6 +44,7 @@ profiles:
       scout: fake
       auditor: fake
       critic: fake
+      pov: fake
       embedding: fake
       reranker: fake
     adapters:
@@ -76,6 +78,7 @@ profiles:
       scout: fake
       auditor: fake
       critic: fake
+      pov: fake
       embedding: fake
       reranker: fake
     adapters:
@@ -94,6 +97,7 @@ profiles:
       scout: fake
       auditor: fake
       critic: fake
+      pov: fake
       embedding: fake
       reranker: fake
     adapters:
@@ -112,6 +116,7 @@ profiles:
       scout: fake
       auditor: fake
       critic: fake
+      pov: fake
       embedding: fake
       reranker: fake
     adapters:
