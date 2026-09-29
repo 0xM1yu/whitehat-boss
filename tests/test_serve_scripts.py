@@ -1028,7 +1028,10 @@ def test_the_guard_logs_cgroup_anon_and_warns_once_when_the_cgroup_goes_unreadab
     log_path = rig.dir / "logs" / "guard.log"
     guard = rig.guard(GUARD_CGROUP_DIR=str(start), GUARD_MAX_S="8")
     try:
-        assert _eventually(lambda: "cg_anon=10.0GiB" in log_path.read_text(encoding="utf-8"), 30)
+        # pid 파일이 첫 로그 줄보다 먼저 생긴다 — 로그가 아직 없을 수 있다.
+        assert _eventually(
+            lambda: log_path.exists() and "cg_anon=10.0GiB" in log_path.read_text("utf-8"), 30
+        )
         shutil.rmtree(start)
 
         assert _wait_exit(guard, 30), "마감이 지났는데 감시자가 안 끝났다"
