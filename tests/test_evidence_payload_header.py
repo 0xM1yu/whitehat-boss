@@ -6,7 +6,8 @@
 근거를 증거당 800자(head 2/3 + tail 1/3)로 자르므로 그 머리가 남으면 head를 먹어 semgrep의
 `check_id`가 잘려 나가고, 명령줄의 호스트 절대경로(사용자명 · `--target`으로 준 대상 디렉터리
 이름)가 모델 입력에 실린다. 여기서 지키는 것은 **그 머리줄만** 빠진다는 것이다 — 발견 수 ·
-종료 코드 · 도구가 낸 줄은 남는다.
+종료 코드 · 도구가 낸 줄은 남는다(도구가 낸 줄이라도 줄 머리가 머리줄 접두면 빠진다 — 받아들인
+오탐이고 `prompt_loader`의 머리줄 정규식 주석이 한계를 든다).
 
 위쪽 검사의 하네스 로그는 **실제 `ContainerToolRunner.run`이 쓴다**(`subprocess.run`만 대역) —
 로그 포맷을 손으로 짓지 않는다. semgrep·clang-tidy·build의 종료 코드 · stdout · stderr는 로컬 실
@@ -278,11 +279,12 @@ def test_the_index_summary_line_is_not_a_header(tmp_path: Path, spy: _Spy) -> No
 def test_a_tool_output_line_that_starts_with_a_dollar_sign_is_kept(
     tmp_path: Path, spy: _Spy  # noqa: F811
 ) -> None:
-    """도구 출력에서 `$ `로 시작하는 줄은 머리줄이 아니다.
+    """도구 출력에서 `$ `로 시작하는 줄이라도 런타임 이름이 이어지지 않으면 머리줄이 아니다.
 
     하네스의 명령줄은 늘 `$ <런타임> `으로 시작한다(`container_argv`). `$ ` 접두를 통째로 걷는
     수정은 도구 출력을 지운다. `poc`는 명령이 대상 프로그램 하나라(`plan`) stdout이 곧 그
-    프로그램이 찍은 것이다.
+    프로그램이 찍은 것이다. ⚠ 도구 출력의 줄 머리가 `$ docker ` 같은 런타임 이름이면 그 줄은
+    걷힌다 — 받아들인 오탐이다(`prompt_loader`의 머리줄 정규식 주석).
     """
     spy.returncode, spy.stdout, spy.stderr = 0, "$ echo hello\nhello\n", ""
     runner = _runner(tmp_path, root=_sample_tree(tmp_path, 1))

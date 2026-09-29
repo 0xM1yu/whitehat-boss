@@ -180,18 +180,29 @@ _TRUNCATION_MARKER = "\n...\n"
 # 그 경로가 모델 입력에 실리고, 증거당 상한의 head를 먹어 도구 출력(semgrep의 `check_id`
 # 등)이 잘린다. 로그 파일과 `digest`는 그대로다 — 모델로 가는 사본에서만 뺀다.
 #
-# 나머지 하네스 줄 — 발견 수(`# semgrep: …`) · `(exit=N)`·`(timeout after …)` · 절 구분
-# (`--- stdout ---`·`--- stderr ---`) · 미실행 명령 수 — 은 도구 결과를 말하거나 절을 갈라서
-# 남긴다. `$ `는 런타임 이름이 이어질 때만 머리줄이다 — 도구 출력의 다른 `$ ` 줄은 건드리지
-# 않는다. 런타임 이름은 `container_tools.UNENFORCED`의 키와 맞아야 하는데 어댑터를 import할
-# 수 없어(engineering-guide.md §3) 여기 따로 든다 — tests/test_evidence_payload_header.py가
+# 나머지 하네스 줄 — 발견 수(`# semgrep: …`) · `(exit=N)`·`(timeout after …)` · 실행 예외
+# (`(<예외형>: …)`) · 실행 전 거절 사유 · 절 구분(`--- stdout ---`·`--- stderr ---`) · 미실행
+# 명령 수 — 은 결과·실패 사유를 말하거나 절을 갈라서 남긴다. 머리줄은 **줄 머리**에서만
+# 보고, `$ `는 런타임 이름과 공백이 이어질 때만 머리줄이다(`$ echo …`는 남는다). 런타임
+# 이름은 `container_tools.UNENFORCED`의 키와 맞아야 하는데 어댑터를 import할 수 없어
+# (engineering-guide.md §3) 여기 따로 든다 — tests/test_evidence_payload_header.py가
 # 런타임마다 실제 러너로 대조한다.
 #
 # ⚠ 뺀 뒤에도 **절단이지 요약이 아니다** — semgrep JSON의 `message` 같은 가운데는 잘릴
-# 수 있다(구조 추출은 #256 항목 3에 남는다). 못 빼는 호스트 경로도 있다: 실행 전 거절
-# 사유(`# 실행하지 않았다: …` — 그 줄이 곧 실패 사유다), 런타임 CLI가 stderr에 쓴 문구
-# (도구 stderr와 한 절이라 가를 표지가 없다), 파일 이름·env 값의 줄바꿈이 쪼갠 명령줄의
-# 둘째 줄부터.
+# 수 있다(구조 추출은 #256 항목 3에 남는다). 그리고:
+# - 못 빼는 호스트 경로 — 실행 전 거절 사유(`# 실행하지 않았다: …` — 그 줄이 곧 실패
+#   사유다), 런타임 CLI가 stderr에 쓴 문구(도구 stderr와 한 절이라 가를 표지가 없다),
+#   줄바꿈이 쪼갠 명령줄의 둘째 줄: env 키·값에 줄바꿈이 있으면 그 뒤의 바인드 인자가
+#   거기 가고(지금 env를 채우는 노드는 없다), singularity면 작업 디렉터리 이름의 줄바꿈
+#   뒤에 SIF 경로가 간다. 호스트 경로(대상 루트 · artifacts 루트) 자체에 줄바꿈이 있어도 그
+#   뒷부분이 남는다. 파일 이름의 줄바꿈은 컨테이너 경로 조각만 남긴다.
+# - 오탐 — 도구 출력의 줄 머리가 `$ docker `·`$ podman `·`$ singularity `·`# runtime: `·
+#   `# node argv: `이면 그 줄도 모델 사본에서 빠진다. 호스트 경로를 놓치는 것보다 싸서
+#   받아들인 비용이다. Auditor가 받는 도구에서는 사실상 없다 — semgrep `--json` 출력은 한
+#   물리 줄이라 구조적으로 0, clang-tidy·build는 인용한 소스 줄의 머리가 그 접두일 때만,
+#   index의 stdout은 `# index: …` 한 줄뿐이다.
+# - 읽기 상한(`PAYLOAD_READ_CAP`)이 머리줄 안에서 끝나면 그 뒤 도구 출력 없이 `truncated`가
+#   False일 수 있다(본문이 빌 수도 있다) — 리더는 자른 사실을 알리지 않는다.
 _HARNESS_HEADER_LINE = re.compile(
     r"^(?:# node argv: |# runtime: |\$ (?:docker|podman|singularity) )[^\n]*\n?", re.MULTILINE
 )
@@ -227,7 +238,8 @@ def evidence_summaries(
     """`payload_ref`에서 근거 본문을 읽어 결정론적으로 절단한 evidence_id → {body, truncated} 맵.
 
     **하네스가 쓴 실행 기록 머리줄(`_HARNESS_HEADER_LINE`)은 절단 전에 뺀다** — 절단 예산을 도구
-    출력에 쓰고 명령줄의 호스트 경로를 모델에 싣지 않는다. 로그 파일은 그대로다.
+    출력에 쓰고 명령줄의 호스트 경로를 모델에 싣지 않는다(못 빼는 형태와 오탐은 그 정규식의
+    주석). 로그 파일은 그대로다.
 
     payload가 없으면(fake·미배선·파일 부재) 그 evidence는 맵에서 빠진다 → 호출부는 그
     evidence를 metadata만으로 싣는다. 총 예산을 넘으면 이후 evidence는 body를 비운다.
