@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -111,6 +112,18 @@ def test_the_swap_deadline_covers_every_swap_on_every_device(device: str) -> Non
         )
         assert config.swap.settle_timeout_s >= worst, (device, sorted(keys), worst)
         previous = keys
+
+
+def test_the_readiness_request_waits_at_most_the_constant_the_deadline_reads() -> None:
+    """⚠ 철자 검사다(CLAUDE.md §2.5). 위 마감 식은 `PROBE_MAX_S`를 읽는다 — 준비 확인 요청의
+    `curl -m`이 그 상수로 자른 값(`$m`)을 써야 식이 실제 대기와 맞는다. `probe_chat`이 리터럴로
+    자르면(예: `m=300`) 식은 120을 읽은 채 초록이다. 그 결합만 문다 — 실제로 몇 초 붙잡는지는 안
+    잰다."""
+    text = (ROOT / SWAP).read_text("utf-8")
+    probe = re.search(r"^probe_chat\(\) \{.*?^\}$", text, re.M | re.S)
+    assert probe, "probe_chat 정의를 못 찾았다"
+    assert 'if [ "$m" -gt "$PROBE_MAX_S" ]; then m=$PROBE_MAX_S; fi' in probe[0]
+    assert 'curl -sf -m "$m" ' in probe[0]
 
 
 # --- 3. 계약의 뼈대(철자) -------------------------------------------------------------
@@ -719,124 +732,312 @@ def test_a_new_guard_takes_over_a_pid_file_that_names_an_unrelated_process(
 
 _GIB = 2**30
 # 80 GiB — ATOM `user-1004.slice`의 `memory.max`(docs/portability.md §6 ATOM 행 ·
-# docs/experiments/README.md 확정 #4).
+# docs/experiments/README.md 확정 #4). 기본 임계(90%)는 72 GiB다.
 _CG_LIMIT = 80 * _GIB
+# v1 `memory.limit_in_bytes`의 「제한 없음」(4 KiB 페이지).
+_V1_UNLIMITED = 9223372036854771712
 
 
-def _cgroup(path: Path, limit: int | str, anon: int, *, v1: bool = False) -> Path:
-    """cgroup 디렉터리 대역 하나 — v2는 `memory.max`·`memory.stat`의 `anon`, v1은
-    `memory.limit_in_bytes`·`memory.stat`의 `total_rss`. `cgroup.procs`는 v1·v2 모두 모든 cgroup에
-    있다(대역 트리 밖의 부모에는 없다)."""
-    limit_file, anon_key = ("memory.limit_in_bytes", "total_rss") if v1 else ("memory.max", "anon")
+def _eventually(check: Callable[[], bool], seconds: float) -> bool:
+    """`check`가 참이 될 때까지 짧게 폴링한다 — 느린 러너에서도 고정 sleep 대신 쓴다."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if check():
+            return True
+        time.sleep(0.05)
+    return check()
+
+
+def _stat(path: Path, anon_gib: float) -> None:
+    """`memory.stat`을 통째로 바꿔 쓴다(감시자가 반쯤 쓴 파일을 읽지 않게). 진짜 키(v2 `anon` ·
+    v1 `total_rss`) 앞뒤에 이름이 비슷한 키(`active_anon`·`anon_thp` … / `rss`·`total_rss_huge`
+    …)를 상한보다 큰 값으로 둔다 — 실제 파일에도 있는 키들이고, 느슨하게 읽으면 상한을 넘은
+    것으로 오독한다."""
+    anon, big = int(anon_gib * _GIB), 500 * _GIB
+    if (path / "memory.limit_in_bytes").exists():
+        keys = [
+            f"rss {big}",
+            f"total_rss {anon}",
+            f"total_rss_huge {big}",
+            f"total_active_anon {big}",
+        ]
+    else:
+        keys = [f"active_anon {big}", f"anon {anon}", f"anon_thp {big}", f"inactive_anon {big}"]
+    tmp = path / "memory.stat.tmp"
+    tmp.write_text("\n".join([*keys, f"file {_GIB}", ""]), encoding="utf-8")
+    tmp.replace(path / "memory.stat")
+
+
+def _cgroup(path: Path, limit: int | str, anon_gib: float, *, v1: bool = False) -> Path:
+    """cgroup 디렉터리 대역 하나 — `cgroup.procs`(v1·v2 모두 모든 cgroup에 있다 — 대역 트리 밖의
+    부모에는 없다) · 상한(v2 `memory.max` · v1 `memory.limit_in_bytes`) · `memory.stat`."""
     path.mkdir(parents=True)
     (path / "cgroup.procs").write_text("", encoding="utf-8")
+    limit_file = "memory.limit_in_bytes" if v1 else "memory.max"
     (path / limit_file).write_text(f"{limit}\n", encoding="utf-8")
-    (path / "memory.stat").write_text(f"{anon_key} {anon}\nfile {_GIB}\n", encoding="utf-8")
+    _stat(path, anon_gib)
     return path
 
 
 def _cgroup_tree(root: Path, layout: str, anon_gib: float) -> tuple[Path, Path]:
-    """(감시자에게 줄 시작 디렉터리 `GUARD_CGROUP_DIR`, 상한이 걸린 디렉터리). anon은 상한 쪽
-    값이다.
+    """(감시자에게 줄 시작 디렉터리 `GUARD_CGROUP_DIR`, 상한이 걸린 디렉터리). anon은 상한이 걸린
+    쪽의 값이고, 두 층이면 말단은 anon 1 GiB다.
 
-    - `v2` — 시작 디렉터리에 상한이 있다.
+    - `v2` · `v1` — 시작 디렉터리에 상한(80 GiB)이 있다.
     - `v2_leaf_max` — 상한이 말단이 아니라 부모 slice에 걸린 배치(확정 #4 — 2026-08-28의
-      `user-1004.slice/session-*.scope`). 말단은 `max`이고 anon이 작다.
-    - `v1` — `memory.limit_in_bytes` · `total_rss`.
+      `user-1004.slice/session-*.scope`). 말단은 `max`다.
+    - `v2_leaf_zero` — 말단 `memory.max`가 0이다. 상한이 아니다 — 상한으로 치면 첫 폴링에 전부
+      내린다.
+    - `v1_leaf_unlimited` — 말단이 v1의 「제한 없음」 값이다.
     - `no_limit` — 말단도 부모도 `max`(2026-09-02처럼 상한이 경로에 없다).
     """
-    anon = int(anon_gib * _GIB)
-    if layout == "v2":
-        cg = _cgroup(root / "cg", _CG_LIMIT, anon)
+    if layout in ("v2", "v1"):
+        cg = _cgroup(root / "cg", _CG_LIMIT, anon_gib, v1=layout == "v1")
         return cg, cg
-    if layout == "v1":
-        cg = _cgroup(root / "memory", _CG_LIMIT, anon, v1=True)
-        return cg, cg
-    top = _cgroup(root / "user-1004.slice", "max" if layout == "no_limit" else _CG_LIMIT, anon)
-    return _cgroup(top / "session-3.scope", "max", _GIB), top
+    v1 = layout.startswith("v1")
+    leaf_limit = {"v2_leaf_zero": 0, "v1_leaf_unlimited": _V1_UNLIMITED}.get(layout, "max")
+    top_limit = "max" if layout == "no_limit" else _CG_LIMIT
+    top = _cgroup(root / "user-1004.slice", top_limit, anon_gib, v1=v1)
+    return _cgroup(top / "session-3.scope", leaf_limit, 1, v1=v1), top
+
+
+def _two_runs(rig: Rig) -> tuple[subprocess.Popen, subprocess.Popen]:
+    """서버 대역 둘 — 이 run의 것과 다른 run의 것. SERVERS에 둘 다 적는다."""
+    ours, other = _setsid("sleep", "300"), _setsid("sleep", "300")
+    time.sleep(0.2)
+    rig.servers.write_text(
+        f"seccoderx-8b {ours.pid} {RUN_ID} {_starttime(ours.pid)}\n"
+        f"gpt-oss-20b {other.pid} run_other {_starttime(other.pid)}\n",
+        encoding="utf-8",
+    )
+    return ours, other
 
 
 @needs_linux
-@pytest.mark.parametrize("layout", ["v2", "v2_leaf_max", "v1"])
-def test_the_guard_terms_the_servers_when_cgroup_anon_passes_ninety_percent_of_the_limit(
-    rig: Rig, tmp_path: Path, layout: str
+@pytest.mark.parametrize(
+    ("layout", "anon_gib", "pct"),
+    [
+        pytest.param("v2", 72.1, None, id="v2-72.1GiB"),  # 기본 임계 72 GiB 바로 위
+        pytest.param("v1", 72.1, None, id="v1-72.1GiB"),
+        pytest.param("v2_leaf_max", 73, None, id="v2_leaf_max"),
+        pytest.param("v1_leaf_unlimited", 73, None, id="v1_leaf_unlimited"),
+        pytest.param("v2", 41, "50", id="v2-41GiB-pct50"),  # 임계 40 GiB — 기본 90%면 안 걸린다
+    ],
+)
+def test_the_guard_terms_every_server_once_cgroup_anon_passes_the_threshold(
+    rig: Rig, tmp_path: Path, layout: str, anon_gib: float, pct: str | None
 ) -> None:
-    """상한이 걸린 cgroup의 anon이 상한의 90%를 넘으면 run과 무관하게 서버를 내린다 — 상한에 닿으면
-    예고 없이 OOM kill이라(`memory.high`가 `max` — docs/portability.md §6) 그 전에 내린다. 옛
-    감시자(2026-09-24~28 스모크)의 「anon > 72 GiB(80 GiB × 0.9)」 층이다. 이 리그는 전용 VRAM
-    (`STUB_GPU_MEM`이 숫자)이라 통합메모리 하한이 안 돈다 — 이 층은 장비 무관이다.
+    """상한이 걸린 cgroup의 anon이 임계(상한 × `GUARD_CGROUP_PCT` — 기본 90%)를 넘으면 서버를
+    내린다 — 상한에 닿으면 예고 없이 OOM kill이라(`memory.high`가 `max` — docs/portability.md
+    §6) 그 전에 내린다. 옛 감시자(2026-09-24~28 스모크)의 「anon > 72 GiB(80 GiB × 0.9)」
+    층이다. 기본 임계는 여기의 72.1 GiB와 아래 대조의 71.9 GiB가 양쪽에서 문다.
 
-    `v2_leaf_max`는 말단만 읽는 판정을 문다(말단은 `max`다). 시작 로그가 실제로 보는 cgroup을
-    적는다.
+    **run과 무관하게 전부** 내린다 — 상한은 run이 아니라 cgroup 단위라서다(guard.sh 머리 주석
+    3). 그래서 이 감시자가 지키는 run(guard.owner)의 서버와 다른 run의 서버가 둘 다 TERM을
+    받는다. 소유 기록을 먼저 적고 anon을 올린다 — 반대면 소유 기록 없이 걸려 run 한정 판정과
+    구별이 안 된다.
+
+    `v2_leaf_max`는 말단만 읽는 판정을, `v1_leaf_unlimited`는 v1 「제한 없음」을 상한으로 치는
+    판정을 문다(둘 다 부모 상한으로 걸린다). 시작 로그가 실제로 보는 cgroup을 적는다. 이 리그는
+    전용 VRAM(`STUB_GPU_MEM`이 숫자)이라 통합메모리 하한이 안 돈다.
     """
-    server = _setsid("sleep", "300")
+    ours, other = _two_runs(rig)
     guard = None
     try:
-        time.sleep(0.2)
-        rig.servers.write_text(
-            f"seccoderx-8b {server.pid} {RUN_ID} {_starttime(server.pid)}\n", encoding="utf-8"
-        )
-        start, limited = _cgroup_tree(tmp_path, layout, anon_gib=73)
-        guard = rig.guard(GUARD_CGROUP_DIR=str(start), GUARD_TERM_WAIT_S="1")
+        start, limited = _cgroup_tree(tmp_path, layout, anon_gib=0)
+        env = {"GUARD_CGROUP_DIR": str(start), "GUARD_TERM_WAIT_S": "1"}
+        guard = rig.guard(**env, **({"GUARD_CGROUP_PCT": pct} if pct else {}))
+        (rig.dir / "guard.owner").write_text(f"{guard.pid} {RUN_ID}\n", encoding="utf-8")
+        _stat(limited, anon_gib)
 
-        assert _wait_exit(guard, 10), "cgroup anon이 상한의 90%를 넘었는데 감시자가 안 끝났다"
-        assert server.wait(timeout=5) == -signal.SIGTERM
+        assert _wait_exit(guard, 30), "cgroup anon이 임계를 넘었는데 감시자가 안 끝났다"
+        assert ours.wait(timeout=10) == -signal.SIGTERM
+        assert other.wait(timeout=10) == -signal.SIGTERM, "cgroup 층이 지키는 run의 서버만 내렸다"
         assert "cgroup" in (rig.dir / "KILLED").read_text(encoding="utf-8")
         log = (rig.dir / "logs" / "guard.log").read_text(encoding="utf-8")
         assert f"cgroup={limited} " in log
     finally:
-        server.kill()
+        for proc in (ours, other):
+            proc.kill()
         if guard is not None:
             guard.kill()
 
 
 @needs_linux
-def test_the_guard_leaves_the_servers_while_cgroup_anon_is_under_the_ceiling(
-    rig: Rig, tmp_path: Path
+@pytest.mark.parametrize(
+    ("layout", "anon_gib"),
+    [
+        pytest.param("v2", 71.9, id="v2-71.9GiB"),  # 기본 임계 72 GiB 바로 아래
+        pytest.param("v1", 71.9, id="v1-71.9GiB"),
+        pytest.param("v2_leaf_zero", 10, id="v2_leaf_zero"),
+    ],
+)
+def test_the_guard_leaves_every_server_while_cgroup_anon_stays_under_the_threshold(
+    rig: Rig, tmp_path: Path, layout: str, anon_gib: float
 ) -> None:
-    """상한 아래(anon 10 / 80 GiB)면 그대로 둔다 — 위 층은 cgroup이 있다고 내리지 않는다."""
-    server = _setsid("sleep", "300")
+    """임계 아래면 아무것도 안 내린다 — 위 테스트의 72.1 GiB와 함께 기본 임계 90%를 문다(20%·
+    50%·91%로 바꾸면 어느 한쪽이 빨개진다). `_stat`의 이름이 비슷한 큰 키는 정확히 `anon`·
+    `total_rss`만 읽는지를, `v2_leaf_zero`는 `memory.max` 0을 상한으로 치지 않고 그 위의 진짜
+    상한을 보는지를 문다.
+
+    기다림은 감시자 자신의 마감(`GUARD_MAX_S`)이다 — 마감까지 폴링마다 cgroup을 보고, 지키던
+    run이 없어 아무것도 안 내린 채 끝난다. 감시자가 끝나는 것을 기다리지 고정 sleep이 아니다.
+    """
+    ours, other = _two_runs(rig)
     guard = None
     try:
-        time.sleep(0.2)
-        rig.servers.write_text(
-            f"seccoderx-8b {server.pid} {RUN_ID} {_starttime(server.pid)}\n", encoding="utf-8"
-        )
-        start, _ = _cgroup_tree(tmp_path, "v2", anon_gib=10)
-        guard = rig.guard(GUARD_CGROUP_DIR=str(start), GUARD_TERM_WAIT_S="1")
+        start, limited = _cgroup_tree(tmp_path, layout, anon_gib)
+        guard = rig.guard(GUARD_CGROUP_DIR=str(start), GUARD_MAX_S="3", GUARD_TERM_WAIT_S="1")
 
-        assert not _wait_exit(guard, 4), "상한 아래인데 감시자가 끝났다"
-        assert server.poll() is None
+        assert _wait_exit(guard, 30), "마감이 지났는데 감시자가 안 끝났다"
+        killed = (rig.dir / "KILLED").read_text(encoding="utf-8")
+        assert "지키던 run이 없어" in killed, f"임계 아래에서 내렸다: {killed}"
+        assert ours.poll() is None and other.poll() is None
+        log = (rig.dir / "logs" / "guard.log").read_text(encoding="utf-8")
+        assert f"cgroup={limited} " in log
     finally:
-        server.kill()
+        for proc in (ours, other):
+            proc.kill()
         if guard is not None:
             guard.kill()
 
 
 @needs_linux
-def test_the_guard_refuses_a_cgroup_dir_without_a_limit_above_it(rig: Rig, tmp_path: Path) -> None:
-    """`GUARD_CGROUP_DIR`를 줬는데 거기서 위로 숫자 상한을 못 찾으면(경로 오타 · 말단부터 끝까지
-    `max`) 뜨지 않는다 — 보라고 한 층을 조용히 건너뛰면 그 층이 있다고 믿은 채 run이 돈다. 이름을
-    대고 exit 2이고, pid 파일을 적기 전이다. 올라가는 탐색이 대역 트리 밖에서 끝나는 것도 본다."""
+@pytest.mark.parametrize(
+    ("knob", "value"),
+    [
+        pytest.param("GUARD_CGROUP_DIR", "no_limit", id="dir-no_limit_above"),
+        pytest.param("GUARD_CGROUP_DIR", "not_a_cgroup", id="dir-not_a_cgroup"),
+        pytest.param("GUARD_CGROUP_PCT", "abc", id="pct-abc"),
+        pytest.param("GUARD_CGROUP_PCT", "9.5", id="pct-9.5"),
+        pytest.param("GUARD_CGROUP_PCT", "0", id="pct-0"),
+        pytest.param("GUARD_CGROUP_PCT", "101", id="pct-101"),
+    ],
+)
+def test_the_guard_refuses_to_start_on_a_cgroup_setting_it_cannot_use(
+    rig: Rig, tmp_path: Path, knob: str, value: str
+) -> None:
+    """cgroup 설정을 못 쓰면 뜨지 않는다 — 이름을 대고 exit 2다.
+
+    - `GUARD_CGROUP_DIR`에서 위로 숫자 상한을 못 찾으면(끝까지 `max` · `cgroup.procs`가 없는
+      일반 디렉터리 — memory 파일이 있어도 cgroup이 아니다) — 보라고 한 층을 조용히 건너뛰면 그
+      층이 있다고 믿은 채 run이 돈다. 올라가는 탐색이 대역 트리 밖에서 끝나는 것도 여기서 본다.
+    - `GUARD_CGROUP_PCT`가 1~100 정수가 아니면 — 소수·문자는 셸 산술에서 감시자가 소리 없이
+      죽고(pid 파일만 남는다), 0은 첫 폴링에 전부 내린다.
+
+    거부는 pid 파일·STOP_GUARD를 건드리기 **전**이고, 사유는 stderr와 guard.log 둘 다에 남는다
+    — 문서의 기동 줄은 stderr를 버린다(`> /dev/null 2>&1`).
+    """
+    if value == "no_limit":
+        value = str(_cgroup_tree(tmp_path, "no_limit", anon_gib=500)[0])
+    elif value == "not_a_cgroup":
+        plain = _cgroup(tmp_path / "plain", _CG_LIMIT, 500)
+        (plain / "cgroup.procs").unlink()
+        value = str(plain)
     # fixture의 감시자 대역을 치운다 — 있으면 「이미 떠 있다」가 먼저 걸린다.
     (rig.dir / "guard.pid").unlink()
-    start, _ = _cgroup_tree(tmp_path, "no_limit", anon_gib=500)
+    (rig.dir / "STOP_GUARD").touch()  # 거부가 STOP_GUARD를 지우기 전인지 본다
     guard = subprocess.Popen(
         ["bash", GUARD.as_posix()],
         cwd=ROOT,
-        env={**rig.env, "GUARD_POLL_S": "1", "GUARD_CGROUP_DIR": str(start)},
+        env={**rig.env, "GUARD_POLL_S": "1", knob: value},
         start_new_session=True,
         stderr=subprocess.PIPE,
         text=True,
     )
     try:
-        assert _wait_exit(guard, 5), "보라고 한 cgroup에서 상한을 못 찾았는데 감시자가 떴다"
+        assert _wait_exit(guard, 15), f"{knob}={value}를 못 쓰는데 감시자가 떴다"
         assert guard.returncode == 2
-        assert "GUARD_CGROUP_DIR" in guard.stderr.read()
+        assert knob in guard.stderr.read()
+        log_path = rig.dir / "logs" / "guard.log"
+        log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        assert "시작 거부" in log and knob in log, "거부 사유가 guard.log에 없다"
         assert not (rig.dir / "guard.pid").exists()
+        assert (rig.dir / "STOP_GUARD").exists()
     finally:
         guard.kill()
         guard.stderr.close()
+
+
+@needs_linux
+def test_a_second_guard_refuses_while_the_first_is_alive(rig: Rig) -> None:
+    """살아 있는 감시자(pid 파일의 번호·시작 시각이 맞다) 앞에서 둘째 감시자는 exit 2로
+    물러난다 — 감시자는 run당 하나다. 둘째가 넘겨받으면 첫째는 다음 폴링에 「다른 감시자가
+    대신했다」로 끝나 지키던 run의 감시가 소리 없이 바뀐다. 거부 사유는 guard.log에도 남고
+    첫째의 pid 파일은 그대로다."""
+    first = rig.guard()
+    second = None
+    try:
+        second = subprocess.Popen(
+            ["bash", GUARD.as_posix()],
+            cwd=ROOT,
+            env={**rig.env, "GUARD_POLL_S": "1"},
+            start_new_session=True,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert _wait_exit(second, 15), "살아 있는 감시자 앞에서 둘째 감시자가 떴다"
+        assert second.returncode == 2
+        assert "이미 떠 있다" in second.stderr.read()
+        log = (rig.dir / "logs" / "guard.log").read_text(encoding="utf-8")
+        assert f"시작 거부 — 감시자 {first.pid}가 이미 떠 있다" in log
+        assert (rig.dir / "guard.pid").read_text().split()[0] == str(first.pid)
+        assert first.poll() is None
+    finally:
+        first.kill()
+        if second is not None:
+            second.kill()
+            second.stderr.close()
+
+
+@needs_linux
+def test_a_guard_quits_quietly_once_its_pid_file_names_another_guard(rig: Rig) -> None:
+    """pid 파일이 다른 감시자로 바뀌면 감시자는 조용히 끝난다 — 서버를 안 내리고 그 파일도 안
+    지운다(머리 주석). 다른 감시자 자리에는 fixture의 감시자 대역(이 테스트 프로세스의 번호·시작
+    시각)을 적는다."""
+    ours, other = _two_runs(rig)
+    guard = None
+    try:
+        guard = rig.guard()
+        replacement = f"{os.getpid()} {_starttime(os.getpid())}\n"
+        (rig.dir / "guard.pid").write_text(replacement, encoding="utf-8")
+
+        assert _wait_exit(guard, 30), "pid 파일이 다른 감시자로 바뀌었는데 감시자가 안 끝났다"
+        assert guard.returncode == 0
+        assert (rig.dir / "guard.pid").read_text() == replacement
+        assert ours.poll() is None and other.poll() is None
+        assert not (rig.dir / "KILLED").exists()
+        log = (rig.dir / "logs" / "guard.log").read_text(encoding="utf-8")
+        assert "다른 감시자가 대신했다" in log
+    finally:
+        for proc in (ours, other):
+            proc.kill()
+        if guard is not None:
+            guard.kill()
+
+
+@needs_linux
+def test_the_guard_logs_cgroup_anon_and_warns_once_when_the_cgroup_goes_unreadable(
+    rig: Rig, tmp_path: Path
+) -> None:
+    """30 s 상태 줄에 cgroup anon과 내리는 임계를 적는다 — 스모크 보고서가 「cgroup anon 최대」를
+    여기서 뽑는다(옛 감시자의 `cg_anon`). 시작 뒤 cgroup을 못 읽게 되면 조용히 넘어가지 않고 경고를
+    **한 번** 적는다 — 그동안 cgroup 층이 멈춘다는 것이 로그에 남는다. 폴링마다 적으면 로그가 경고로
+    찬다. 마감(`GUARD_MAX_S`)까지 여러 번 폴링한 뒤에도 경고가 하나인지 본다."""
+    start, _ = _cgroup_tree(tmp_path, "v2", anon_gib=10)
+    log_path = rig.dir / "logs" / "guard.log"
+    guard = rig.guard(GUARD_CGROUP_DIR=str(start), GUARD_MAX_S="8")
+    try:
+        assert _eventually(lambda: "cg_anon=10.0GiB" in log_path.read_text(encoding="utf-8"), 30)
+        shutil.rmtree(start)
+
+        assert _wait_exit(guard, 30), "마감이 지났는데 감시자가 안 끝났다"
+        log = log_path.read_text(encoding="utf-8")
+        assert "cg_kill_at=72.0GiB" in log
+        assert log.count("를 못 읽는다") == 1, log
+        assert "지키던 run이 없어" in (rig.dir / "KILLED").read_text(encoding="utf-8")
+    finally:
+        guard.kill()
 
 
 def _drain_until(fd: int, needle: bytes, seconds: float) -> bool:
@@ -855,14 +1056,19 @@ def _drain_until(fd: int, needle: bytes, seconds: float) -> bool:
 
 
 @needs_linux
-def test_a_replaced_guard_does_not_delete_the_new_guards_pid_file(rig: Rig) -> None:
-    """감시자는 pid 파일이 자기 것일 때만 지운다. 옛 감시자가 STOP_GUARD를 보고 끝나는 사이(확인과
-    삭제 사이) 새 감시자가 STOP_GUARD를 지우고 자기 pid를 적으면, 옛 감시자가 지우는 것은 새
-    감시자의 파일이다 — 새 감시자는 다음 루프에서 「다른 감시자가 대신했다」로 조용히 끝나고, 교대는
+@pytest.mark.parametrize("exit_path", ["stop_guard", "deadline_without_run", "deadline_kill"])
+def test_a_replaced_guard_does_not_delete_the_new_guards_pid_file(rig: Rig, exit_path: str) -> None:
+    """감시자는 pid 파일이 자기 것일 때만 지운다 — 지우는 자리 셋 모두(STOP_GUARD · 지키던
+    run이 없는 마감 · 내림 끝). 옛 감시자가 끝나는 사이(자기 것인지 확인한 뒤 지우기 전) 새
+    감시자가 STOP_GUARD를 지우고 자기 pid를 적으면, 옛 감시자가 지우는 것은 새 감시자의
+    파일이다 — 새 감시자는 다음 루프에서 「다른 감시자가 대신했다」로 조용히 끝나고, 교대는
     「감시자가 안 떠 있다」로 거부된다(안전한 쪽이지만 원인을 알기 어렵다).
 
-    로그를 FIFO로 만들어 그 틈을 결정적으로 세운다 — 읽는 쪽이 없으면 옛 감시자의
-    `echo … >> guard.log`가 열기에서 멈추고, 그 자리가 STOP_GUARD 확인과 삭제 사이다.
+    로그를 FIFO로 만들어 그 틈을 결정적으로 세운다 — 읽는 쪽이 없으면 옛 감시자의 로그 쓰기가
+    열기에서 멈춘다. `stop_guard`는 `stop requested`를, 마감 둘은 KILLED 줄(`… | tee -a
+    guard.log > KILLED`)을 쓰다 멈춘다 — `deadline_kill`은 지키던 run을 내리는 `kill_rows`의 첫
+    줄이다. 마감 둘은 KILLED가 생기는 것(표준출력 리다이렉트가 FIFO 열기보다 먼저다)을 멈춘
+    신호로 삼는다.
     """
     logs = rig.dir / "logs"
     logs.mkdir(exist_ok=True)
@@ -871,12 +1077,21 @@ def test_a_replaced_guard_does_not_delete_the_new_guards_pid_file(rig: Rig) -> N
     reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)  # 읽는 쪽이 있는 동안 쓰기는 안 멈춘다
     old = new = None
     try:
-        old = rig.guard()
-        assert _drain_until(reader, b"up=[", 5), "옛 감시자의 첫 상태 줄이 안 나왔다"
+        if exit_path == "stop_guard":
+            old = rig.guard()
+        else:
+            old = rig.guard(GUARD_MAX_S="5", GUARD_TERM_WAIT_S="1")
+        if exit_path == "deadline_kill":
+            (rig.dir / "guard.owner").write_text(f"{old.pid} {RUN_ID}\n", encoding="utf-8")
+        assert _drain_until(reader, b"up=[", 10), "옛 감시자의 첫 상태 줄이 안 나왔다"
         os.close(reader)  # 읽는 쪽 없음 — 옛 감시자의 다음 로그 쓰기는 열기에서 멈춘다
         reader = -1
-        (rig.dir / "STOP_GUARD").touch()
-        time.sleep(1.8)
+        if exit_path == "stop_guard":
+            (rig.dir / "STOP_GUARD").touch()
+            time.sleep(1.8)
+        else:
+            assert _eventually((rig.dir / "KILLED").exists, 30), "마감 갈래에 안 들어섰다"
+            (rig.dir / "STOP_GUARD").touch()  # 새 감시자가 넘겨받게
         assert old.poll() is None, "옛 감시자가 로그 쓰기에서 멈춰 있어야 한다"
 
         new = subprocess.Popen(
