@@ -8,11 +8,19 @@
 
 import dataclasses
 
+from src.interfaces.model_client import ModelResult, Usage
 from src.orchestrator.context import RunContext
-from src.orchestrator.nodes import auditor
+from src.orchestrator.nodes import auditor, scout
 from src.schemas import ProducedBy, Role
+from src.schemas.scout_response import AnalysisSummary, ScoutResponse
 from tests import test_nodes
-from tests.test_nodes import VULN_TARGET, _overrides, _RewritingModelClient, _triage
+from tests.test_nodes import (
+    VULN_TARGET,
+    _ne_session,
+    _overrides,
+    _RewritingModelClient,
+    _triage,
+)
 
 # 같은 픽스처를 이 모듈 이름으로 등록한다 — `import ctx`는 인자 이름과 겹쳐 ruff F811이다.
 ctx = test_nodes.ctx
@@ -27,6 +35,34 @@ def test_scout_member_and_slice_id_are_overwritten_with_no_event(ctx: RunContext
     candidate, _, _ = _triage(dataclasses.replace(ctx, models=stub), VULN_TARGET)
 
     assert candidate.scout_member is None and candidate.slice_id is None  # 덮였다
+    assert _overrides(ctx) == []  # 기록은 없다
+
+
+def test_v3_scout_member_is_overwritten_with_no_event(ctx: RunContext) -> None:
+    """v3(`ScoutResponse`)에서도 모델이 낸 `scout_member`는 덮이는데 `issued_override`는 0건이다.
+
+    위 테스트는 v1 `Candidate`라 `call_model`의 덮기를 탄다. v3 래퍼에는 그 필드가 없어
+    `call_model`이 건너뛰고 `_call_hop`이 덮는다 — 그 자리는 이 테스트만 지난다.
+    """
+    session = _ne_session()  # `scout` 한 역할 — 하네스가 찍는 값은 `None`이다
+
+    class _Stub:
+        def complete(self, *, role: Role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+            written = session.candidate.transition(scout_member="scout_boundary")
+            value = ScoutResponse(candidate=written, analysis_summary=AnalysisSummary(claim="h1"))
+            return ModelResult(
+                value=value,
+                usage=Usage(input_tokens=110, output_tokens=15, cached_tokens=90),
+                model="stub",
+                raw_text="HOP1 RAW",
+            )
+
+    next_session = scout.continue_session(
+        dataclasses.replace(ctx, models=_Stub()), session, "FOLLOWUP"
+    )
+    candidate = scout.finish(ctx, next_session)
+
+    assert candidate.scout_member is None  # 덮였다
     assert _overrides(ctx) == []  # 기록은 없다
 
 
