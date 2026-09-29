@@ -14,9 +14,12 @@
 import argparse
 import json
 import shutil
+import signal
 import sys
 import tempfile
-from collections.abc import Sequence
+import threading
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -500,7 +503,8 @@ def execute(
         # 실제 프롬프트가 어긋난다.
         read_source=lambda target: read_symbol_source(spec.target, target),
         # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
-        # artifacts_root와 같은 루트). Critic이 근거 본문을 받는 배선(#237 HIGH-1).
+        # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
+        # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
         read_payload=make_payload_reader(run_dir.parent),
         trace=trace,
         run_dir=run_dir,
@@ -676,6 +680,53 @@ def _next_sequence(artifacts_root: Path, started_at: datetime) -> int:
     return max(used, default=0) + 1
 
 
+# 파이썬 기본 동작이 `finally`를 안 거치고 죽는 종료 신호. Windows에는 SIGHUP이 없다.
+_TERMINATING = tuple(
+    getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
+)
+
+
+@contextmanager
+def _terminate_as_exit() -> Iterator[None]:
+    """TERM·HUP를 `SystemExit(128 + 신호 번호)`로 바꾼다 — 러너의 `finally`(run 끝 내림)가 돌게.
+
+    파이썬 기본 동작은 두 신호에 `finally`도 `atexit`도 안 거치고 죽는다. 교대가 띄운 서버는
+    다른 세션이라 같이 안 죽으므로, 그대로 두면 `timeout`·`kill`·세션 끊김으로 끝난 run의 서버가
+    `HARNESS_RUN_ID`째 남는다.
+
+    - **무시한 채 띄운 신호는 그대로 둔다** — `nohup`은 HUP을 무시로 걸고 띄운다. 그 무시를 종료로
+      바꾸면 터미널이 닫힐 때 run이 죽는다. 파이썬은 물려받은 무시를 `getsignal`로 `SIG_IGN`이라
+      돌려준다.
+    - **첫 신호 뒤에는 두 신호를 무시한다** — 내림 도중에 온 재촉이 내림을 끊으면 서버가 남는다.
+      끊어야 하면 KILL이고 그것은 감독자 몫이다.
+    - **못 받는 것** — KILL·OOM·전원에는 내림이 안 돈다(장비 쪽 감시자 몫이다). 내림이 이미 도는
+      중에 온 **첫** 신호는 그 내림을 끊는다. 신호로 끝난 run은 `run_manifest.json`을 안 남긴다 —
+      매니페스트는 러너의 `finally` 뒤에 쓴다(Ctrl-C도 같다).
+    - 메인 스레드에서만 건다(`signal.signal`의 제약) — 다른 스레드에서는 아무것도 안 한다. 끝나면
+      이전 핸들러를 되돌린다.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def exit_once(signum: int, _frame: object) -> None:
+        for terminating in _TERMINATING:
+            signal.signal(terminating, signal.SIG_IGN)
+        raise SystemExit(128 + signum)
+
+    previous = {
+        signum: signal.signal(signum, exit_once)
+        for signum in _TERMINATING
+        if signal.getsignal(signum) is not signal.SIG_IGN
+    }
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            # `None` = 파이썬 밖에서 건 핸들러 — 되돌릴 수 없어 기본으로 둔다.
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
+
+
 def run(args: argparse.Namespace) -> int:
     try:
         config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
@@ -785,7 +836,8 @@ def run(args: argparse.Namespace) -> int:
             print(f"[ERROR] {problem}", file=sys.stderr)
             return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
-    with (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
+    # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
+    with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
         result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
     report_path = write_report(run_dir, result, args.format)
 
