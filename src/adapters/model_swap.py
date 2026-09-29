@@ -18,7 +18,10 @@
 - **인자 없음 = 자기 run의 서버를 전부 내린다.** 러너가 run 끝에 성공·실패와 무관하게 부른다 —
   TERM·HUP로 끝나는 run도 부른다(`cli.run`이 `SystemExit`으로 바꾼다). KILL·OOM으로 죽은 run은 못
   부른다 — 그 뒤처리는 명령 쪽(감시자 등)이 맡는다. 떠 있는 것이 없으면 아무것도 안 하고 0으로
-  끝난다.
+  끝난다. ⚠ 신호로 끝난 run의 이 호출은 TERM·HUP를 **무시한 채** 시작한다 — 하네스가 첫 신호 뒤
+  두 신호를 `SIG_IGN`으로 두고(내림을 끊지 않게) exec는 무시를 물려준다. 명령이 띄우는 자식도
+  물려받아 그 자식에 보낸 TERM·HUP가 안 먹을 수 있다(WSL 실측: `sleep`은 `kill -TERM`을
+  무시했고, GNU `timeout` 9.4는 제 자식을 TERM으로 끝냈다).
 - **자기 run의 서버만 건드린다.** 소유는 `HARNESS_RUN_ID`로 가린다 — 남의 프로세스는 내리지 않는다.
 - **환경** — `HARNESS_PYTHON`(하네스 인터프리터 — 장비 파일 `config/serving/$HARNESS_DEVICE.yaml`과
   registry를 같은 파이썬으로 읽는다) · `SWAP_DEADLINE_S`(= `SwapPolicy.settle_timeout_s`, 교대 한
