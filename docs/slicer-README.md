@@ -181,6 +181,32 @@ python slicer.py --repo /work/repo --out /work/results/exported.json \
   --checkpoint /work/results/state.db --export-only --export-dir /work/results/export
 ```
 
+### 한 repo를 샤드로 나누기
+
+후보별 질의(flows·backward·context)는 CPG를 읽기만 한다 → 후보를 여러 Joern 서버에 나눠도
+후보 하나의 계산은 같다. 한 repo 안의 후보는 원래 순차라 벽시계 시간이 후보 수에 비례한다.
+⚠ 샤드마다 CPG를 새로 만들므로 **잘린(truncated) 후보는** 샤딩 없는 재실행끼리처럼 흔들릴 수 있다
+([2026-09-15 보고서](experiments/harness/2026-09-15-joern-slicer-v2-atom.md) §4.5 — 절단된 Case A는 CPG를 다시 만들면 같은 경로를 고르지 않는다). 2026-09-29 vast 실측(평가셋 main sample_38 ·
+후보 1,980): 8샤드 병합 ↔ 샤딩 없음 -> 안 잘린 후보 1,965개 전부 동일, 다른 15개는 전부 truncated.
+
+- `--shard I/N` → 후보 목록의 위치 p 중 `p % N == I`만 자른다. 체크포인트 필수
+- 샤드마다 전용 Joern 서버·자기 체크포인트. CPG는 샤드마다 새로 만든다
+- 샤드 자신의 `slices.json`은 일부라 `partial`(종료 코드 2)이고 `shard` 필드를 단다
+- `tools/merge_slicer_shards.py`가 체크포인트를 합친다 → 실행 계약·EngineConfig·후보 manifest가
+  샤드끼리 다르면 거부(다른 CPG를 자른 것)
+- 합친 체크포인트의 `--export-only`가 결과다. 클러스터링은 여기서 한 번
+
+```bash
+# 샤드 i = 0..N-1, 각자 다른 서버. 분석 인자는 전부 같게
+python slicer.py --repo /work/repo --out /work/s0/slices.json \
+  --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
+  --checkpoint /work/s0/state.db --shard 0/4 --max-flows-per-candidate 10
+python tools/merge_slicer_shards.py /work/merged.db /work/s0/state.db /work/s1/state.db \
+  /work/s2/state.db /work/s3/state.db
+python slicer.py --repo /work/repo --out /work/results/slices.json \
+  --checkpoint /work/merged.db --export-only
+```
+
 Joern HTTP timeout은 서버의 Scala 계산을 취소하지 않는다. 후보 하나의 실패
 (OOM·StackOverflow·timeout·HTTP)는 `candidates_failed`에 세고 다음 후보로 계속한다(#219) —
 한 후보가 run 전체를 버리지 않는다. ⚠ 단 `poisoned` 실패가 **연속 `POISON_STOP_STREAK`(3)회**면
