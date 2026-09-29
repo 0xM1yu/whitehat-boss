@@ -1245,6 +1245,22 @@ def test_context_query_excludes_synthetic_nodes_at_every_site():
     assert "sourceNode(parent.get)" in context
 
 
+def test_context_relevant_methods_indexes_points_by_file():
+    """relevant_methods가 메서드 × 점 전수 비교로 돌아가지 않는다.
+
+    철자 pin이다 — 성질은 live diff가 본다. 전수 비교(`points.exists` 안에서 `filename(m)`을
+    점마다 다시 만듦)가 context 시간의 대부분이었다.
+    같은 술어를 파일별 정렬 줄 배열 + 이분 탐색으로 푼다. 이 pin은 **그 형태로 쓰였다**만 문다 —
+    뽑히는 메서드 집합이 같다는 것은 Scala 실행이 필요해 실서버 전후 비교로 확인한다.
+    """
+    context = queries.context_query([("a.c", 3)], "/repo")
+    head = context.split('mark("relevant_methods")', 1)[0]
+    assert "points.exists" not in head
+    assert "pointLines.get(filename(m))" in head
+    assert "java.util.Arrays.binarySearch(lines, start)" in head
+    # 경계: 시작 이상 첫 줄이 끝 이하인지. `>=` 를 `>` 로 바꾸면 끝 줄에만 걸린 점을 놓친다.
+    assert "m.lineNumberEnd.forall(_ >= lines(first))" in head
+
 def test_flows_query_parenthesizes_the_truncated_comparison():
     """결함 3 — 괄호가 빠지면 Scala 가 `"truncated" -> observed.size > 3` 을 튜플 비교로 파싱한다.
 
