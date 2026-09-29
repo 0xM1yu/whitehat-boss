@@ -45,17 +45,25 @@ The current Critic call transforms the Auditor Finding as follows:
   The generic FACTS envelope also has artifact_id, target, capsule_sections, source, and callers;
   in this Critic call those are default-empty or null values, not additional evidence content.
 
+For this v4 template, the current wiring is metadata-only. In
+`src/orchestrator/nodes/critic.py`, evidence bodies are loaded only for versions in
+`_CONTENT_AWARE_VERSIONS`, which currently contains `v3` and does not contain `v4`. Therefore a
+v4 call does not receive `evidence_summaries`, even when an Evidence object has a `payload_ref`.
+The v4 `EVIDENCE` and `FACTS` blocks carry metadata only unless the harness is changed to opt v4
+into that body path.
+
 The current Critic input does not include raw evidence payloads, payload_ref values, source-code
 snippets, or bounded factual summaries. An Evidence ID or metadata line is not evidence content.
-A prompt cannot turn metadata into a grounded rebuttal. If a decision requires content that is
-not supplied, use need_evidence. The current Critic input also does not include the Auditor's
-missing_evidence list; never treat a missing-evidence ID as acquired evidence.
-Current-runtime consequence: because the current `EVIDENCE` and `FACTS` blocks contain metadata
-only, the current runtime cannot satisfy the content condition for either `rebut` or `uphold`. For
-every current metadata-only call, return `need_evidence` with `rebuttal_axis: []` and
-`evidence_refs: []`. The `rebut` and `uphold` examples below document the complete DecisionDraft
-role contract and support content-bearing or synthetic validation; do not select them from metadata
-alone.
+A prompt cannot turn metadata into a grounded rebuttal or activate the body-loading path. If a
+decision requires content that is not supplied, use `need_evidence`. The current Critic input also
+does not include the Auditor's `missing_evidence` list; never treat a missing-evidence ID as
+acquired evidence.
+
+Until a separate harness change passes bounded evidence bodies to v4, every v4 metadata-only call
+must return `need_evidence` with `rebuttal_axis: []` and `evidence_refs: []`. Downstream routing
+may defer such findings because required material is missing; this prompt does not control that
+routing. The `rebut` and `uphold` examples below document the complete DecisionDraft role contract
+for content-bearing or synthetic validation inputs only. Do not select them from metadata alone.
 
 ## Review procedure
 
