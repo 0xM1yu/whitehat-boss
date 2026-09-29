@@ -20,7 +20,8 @@
 #
 # 안전장치 — 하나라도 걸리면 띄우지 않고 0이 아닌 코드로 끝난다(하네스가 run을 멈춘다).
 #   · 감시자(tools/serve/guard.sh)가 떠 있어야 띄우고, **감시자 하나는 run 하나만 지킨다.** 서버를 띄우기
-#     직전마다(시도마다 — 한 호출이 두 키를 띄우면 둘 다) 감시자가 살아 있고 멈추는 중(STOP_GUARD)이 아니며
+#     직전마다(시도마다 — 한 호출이 두 키를 띄우면 둘 다) 감시자가 살아 있고(pid 파일 "PID STARTTIME"의 번호와
+#     시작 시각이 함께 맞는다 — 번호만 맞으면 남이 물려받은 번호일 수 있다) 멈추는 중(STOP_GUARD)이 아니며
 #     다른 run 것이 아닌지 다시 보고, 이 run 것으로 적는다($SERVE_DIR/guard.owner = "감시자PID RUN_ID" —
 #     멱등). 어긋나면 그 자리에서 실패한다 — 이미 띄운 키는 run 끝 내림이 내린다. 적힌 감시자 PID가 지금
 #     감시자와 다르면 옛 기록이라 무효다. run 끝 내림(인자 없음)이 이 run 서버를 다 내리면 그 감시자를 멈춘다
@@ -249,7 +250,7 @@ foreign_check() { # 이 run 밖의 GPU 프로세스가 있으면 멈춘다
   fi
 }
 
-guard_pid() { cat "$D/guard.pid" 2> /dev/null || true; }
+guard_pid() { awk 'NR == 1 {print $1}' "$D/guard.pid" 2> /dev/null || true; } # 파일은 "PID STARTTIME"
 
 live() { # 그 PID가 살아 있다 — 좀비는 죽은 것이다(`kill -0`은 좀비에도 성공한다)
   local state
@@ -257,10 +258,10 @@ live() { # 그 PID가 살아 있다 — 좀비는 죽은 것이다(`kill -0`은 
   [ -n "$state" ] && [ "$state" != Z ]
 }
 
-guard_alive() { # 떠 있고 멈추는 중(STOP_GUARD)이 아니다
-  local gp
-  gp=$(guard_pid)
-  [ -n "$gp" ] && live "$gp" && [ ! -e "$D/STOP_GUARD" ]
+guard_alive() { # pid 파일의 번호가 살아 있고 시작 시각까지 같으며(guard.sh 머리 주석) 멈추는 중이 아니다
+  local gp="" gs=""
+  read -r gp gs 2> /dev/null < "$D/guard.pid" || true
+  [ -n "$gp" ] && [ -n "$gs" ] && live "$gp" && [ "$(starttime "$gp")" = "$gs" ] && [ ! -e "$D/STOP_GUARD" ]
 }
 
 owner() { # 지금 감시자가 지키는 run — 옛 감시자가 적은 줄은 무효다
