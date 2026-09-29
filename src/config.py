@@ -906,11 +906,14 @@ def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
     """교대를 선언한 프로필은 실서빙 역할을 **전부** `resident ∪ swappable`에 적는다 (ADR 0009
     불변식 3 — 「2026-09-29 제안」 절 1).
 
-    `⊆ roles`(불변식 2)는 한 방향뿐이다. 목록 밖의 실서빙 역할은 교대 명령이 그 서버를 띄우지
-    않고, 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상 「자기 run의 서버 전부 내림」으로
-    — 불린다(`runner._swap_for`). 그 호출은 서버 없이 나가 run이 틀린 사유
-    (`model_gateway_unavailable`)로 멈춘다. 그래서 검색 역할이 실서빙인 hybrid 프로필은 교대를
-    선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가, 빼면 이 검사가 거부한다.
+    `⊆ roles`(불변식 2)는 한 방향뿐이다. 교대는 목록에 적힌 역할의 서버만 띄운다
+    (`runner._swap_for`) — 목록 밖의 실서빙 역할은 같은 키를 쓰는 다른 역할이 그때 떠 있을 때만
+    서버를 만나고, 아니면 그 호출이 서버 없이 나가 run이 틀린 사유(`model_gateway_unavailable`)로
+    멈춘다. 상주가 없으면 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상 「자기 run의 서버
+    전부 내림」으로 — 불린다. **같은 키가 다른 역할(상주 등) 덕에 떠 있어 당장은 도는 배선도
+    거부한다** — 그 역할의 서버를 다른 역할의 선언에 기대게 두지 않는 엄격한 규칙이다. 그래서
+    검색 역할이 실서빙인 hybrid 프로필은 교대를 선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가,
+    빼면 이 검사가 거부한다.
 
     `ProfileEntry`가 아니라 여기 있는 것은 실서빙 판정(`served_models()`)이 registry의
     `is_fake`를 봐야 해서다 — `_check_family_split`과 같은 자리다.
@@ -922,8 +925,9 @@ def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
     if unlisted:
         raise ConfigError(
             f"프로필 {config.profile_name!r}의 execution.swap이 실서빙 역할 {unlisted}을 "
-            "안 적었다 — 교대 명령은 목록의 역할만 띄우므로 그 역할의 호출은 서버 없이 나간다. "
-            "전부 적거나(검색 역할은 못 적는다 — ADR 0012 결정 3 뒤) 교대를 선언하지 않는다"
+            "안 적었다 — 교대는 목록에 적힌 역할의 서버만 띄우므로 그 역할은 같은 키를 쓰는 다른 "
+            "역할이 그때 떠 있을 때만 서버를 만난다. 전부 적거나(검색 역할은 못 적는다 — ADR 0012 "
+            "결정 3 뒤) 교대를 선언하지 않는다"
         )
 
 
