@@ -151,6 +151,10 @@ class RunContext:
     # 것이다 — `resolve_requests`와 같은 자리. `None`이면 이 run은 교대하지 않는다. 부르는 곳은
     # 러너의 `_swap_for`·run 끝 내림뿐이고 노드는 이것을 쓰지 않는다.
     swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None = None
+    # 교대가 올렸는데 교대 명령이 그 서버를 하나도 보고하지 않은(`server.<key>.*`가 없는) model key.
+    # `gpu_unmeasured_roles`와 같은 자리다 — 러너(`_swap`)가 모으고 `run_pipeline`이 run 경고로
+    # 올린다.
+    swap_unreported: set[str] = field(default_factory=set)
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
 

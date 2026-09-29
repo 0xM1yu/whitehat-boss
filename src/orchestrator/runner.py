@@ -868,6 +868,11 @@ def run_pipeline(
     )
     if gpu_warning:
         warnings.append(gpu_warning)
+    if ctx.swap_unreported:
+        warnings.append(
+            f"교대 명령이 올린 서버의 기동 인자를 보고하지 않았다: {sorted(ctx.swap_unreported)}. "
+            "기록(`model_swap`의 `report.server.<key>.*`)이 이 run의 기동 조건을 지시하지 못한다"
+        )
 
     # **4단계에 못 올라간 target을 경고로 올린다 (W2).** trace의 `target_skipped`가
     # 목록이지만 사용자가 run 결과로 읽는 것은 cli 출력과 report.md다. 여기 안 올리면
@@ -2053,6 +2058,10 @@ def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> Non
         raise
     ctx.record_model_swap(
         keys, stage=stage, ok=True, wall_ms=ctx.monotonic_ms() - started, report=report
+    )
+    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 무엇이든 하나 있으면 보고한 것이다.
+    ctx.swap_unreported.update(
+        key for key in keys if not any(name.startswith(f"server.{key}.") for name in report)
     )
 
 
