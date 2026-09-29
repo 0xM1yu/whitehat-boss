@@ -103,7 +103,8 @@ graph LR
 > 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
 > (ATOM 스모크 전).)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
->   `prompts/auditor/v3/body.md`의 `representation: original source code`). 슬라이스 타깃이면 슬라이스가 걸친
+>   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
+>   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
 >   안에서 함수째 붙는다(`runner._auditor_source` — 파일 전체는 상한 없이 실려 막았다). 상한이 뺀 함수와 어느

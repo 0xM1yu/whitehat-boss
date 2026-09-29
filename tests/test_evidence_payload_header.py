@@ -236,7 +236,8 @@ def test_the_auditor_v3_prompt_carries_the_rule_id_but_no_host_path(
 
     `evidence_summaries` 단위가 아니라 **모델에 실제로 가는 문자열**을 본다. registry가 Auditor에
     v3를 고르는 구성은 `test_nodes`의
-    `test_auditor_v3_renders_slice_source_and_evidence_body_through_the_node`와 같다.
+    `test_auditor_content_aware_version_renders_slice_source_and_evidence_body_through_the_node`
+    와 같다.
     """
     fake_v3 = ctx.config.models["fake"].transition(prompt_template_version="v3")
     ctx.config = ctx.config.transition(
