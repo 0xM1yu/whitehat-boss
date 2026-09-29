@@ -9,7 +9,7 @@
 > run은 머지하지 않는 브랜치 [`smoke/phase6-atom`](https://github.com/0xM1yu/whitehat-boss/tree/smoke/phase6-atom)에서 돌았다.
 > 이 브랜치는 origin/main `b52f847`에 다섯 PR을 머지 순서대로 합친 트리이고, 충돌은 전부 「두 쪽 다 남긴다」로 풀었다(머지 커밋 `e9d7e23` · `23ab9f2`).
 > Auditor 프롬프트가 v3로 바뀐 뒤의 run이라, 이 run의 Auditor 출력을 이전 run과 직접 비교하지 않는다
-> (`docs/agent-contracts.md` §4 규칙 1 — PR #330이 적는 규칙).
+> (`docs/agent-contracts.md` §4 규칙 1 — main에 있는 규칙이고, PR #330이 그 아래에 Auditor v1 → v3 적용 노트를 단다).
 
 ## 메타
 
@@ -18,6 +18,7 @@
 | 실험 종료 시각 | `2026-09-29 07:28 KST`(매니페스트 `finished_at` `2026-09-28T22:28:36Z`). 서버 정리·감시자 정지 07:28:37 |
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18`(별칭 `qwen3-14b`) · `hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model@25d7f38146bdf0fad1eac09c586b1993ef3e6ee4`(`seccoderx-8b`) · `hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`(`qwen3.8-27b`) · `hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee`(`gpt-oss-20b`) — revision은 교대 보고 `report.server.<key>.revision`과 vLLM `non-default args`가 같다 |
 | `repo_commit` | `23ab9f20bb5afcb62d25f2d26a12d22e94b8a23e`(`repo_dirty: false`) = `smoke/phase6-atom` |
+| 돌린 PR 헤드 | #332 `1301ef4` · #334 `e49dac2` · #329 `605a30d` · #333 `c127032` · #330 `54bc4e7` — 다섯 모두 `23ab9f2`의 조상이다(`git merge-base --is-ancestor`, 2026-09-29). 2026-09-29 현재 다섯 PR 모두 열려 있어 이후 커밋이 얹히면 PR 헤드가 이 값과 달라진다 — **이 run이 돈 판은 브랜치 `smoke/phase6-atom`(`23ab9f2`)이 든다. 지우지 않는다** |
 | `run_id` | `run_20260928_0001`(날짜는 UTC) |
 | run 산출물 경로·보존 여부 | ATOM `~/phase6-smoke/artifacts/run_20260928_0001/` — 지우지 않았다. 저장소에는 없다. `trace.jsonl` sha256 `7667b344…4b73` · `run_manifest.json` sha256 `e9f6a26a…5c9f`(ATOM과 회수본이 같다) |
 | 프로필 | `harness_pool`(실서빙 다섯 역할 · 검색은 Fake) · 조건 라벨 `B3prime@pipeline`(2026-09-28 스모크와 같은 라벨) · 동료 확인을 끄는 스모크 스위치는 이 브랜치에 없다(설계 그대로). hop0 need_evidence가 0이라 동료 확인·되묻기 루프는 발동하지 않았다 |
@@ -98,7 +99,7 @@
 | `gpt-oss-20b` | 0.30 | 131,072 | 13.8 GiB | 96.5 s | 131 s | 21.14 GiB · 894,488토큰 | 6.82배 | 115.2 GiB |
 
 - 「준비」는 교대 명령이 잰 기동부터 준비 확인 통과까지다(`ready_s`). 적재 시간은 vLLM의 `Model loading took`이다.
-- 준비 상한(`atom.yaml` `ready_timeout_s` — 400 · 550 · 1,720 · 300 s, 계산값)은 모두 실측의 2.3~3.9배다. `settle_timeout_s` 3,800 s는 가장 긴 교대(445 s)의 8.5배다.
+- 준비 상한(`atom.yaml` `ready_timeout_s`)은 표의 준비 시간 대비 `qwen3-14b` 550 s = 2.9배 · `seccoderx-8b` 400 s = 3.2배 · `qwen3.8-27b` 1,720 s = 3.9배 · `gpt-oss-20b` 300 s = 2.3배다(계산값). 장비 파일 주석은 `seccoderx-8b`·`qwen3-14b`·`gpt-oss-20b` 셋을 이전 ATOM 기동 실측 × 3으로, Auditor만 계산값 × 3(vast 기동에서 적재 밖 시간 + ATOM에서 잰 가장 느린 적재 속도로 셈한 적재 시간)으로 적는다. `settle_timeout_s` 3,800 s는 가장 긴 교대(445 s)의 8.5배다.
 
 ### 결과 — 모델 호출 (`trace.jsonl` `model_call`)
 
@@ -175,8 +176,8 @@ run 끝(`swap.log` · `guard.log` · `chain.log`):
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| Scout·Auditor 실서빙 키 `checksum` | 이 스모크 범위가 아니다(0이라 비교표 밖) | `tools/model_checksum.py`로 네 스냅샷을 잰다(ADR 0012 Phase 6 항목 1) |
-| Auditor 사고/본문 토큰 분리 | trace가 `output_tokens` 합만 싣는다 | 서버 응답의 `reasoning_content` 길이를 따로 센다 |
+| Scout·Auditor 실서빙 키 `checksum` | 이 스모크 범위가 아니다(0이라 비교표 밖) | `tools/model_checksum.py`로 네 스냅샷을 잰다(ADR 0012 Phase 6 줄 — 결정 4의 새 키 `@rev`·checksum) |
+| Auditor 사고/본문 토큰 분리 | trace가 `output_tokens` 합만 싣는다 — 하네스 어댑터가 응답의 추론 필드를 안 남긴다([D84](../../open-questions/D/D84.md)) | 응답의 `message.reasoning`(vLLM 0.27.1의 필드 이름이다 — `reasoning_content`는 없다, [2026-09-12 보고서](2026-09-12-critic-gptoss-token-accounting-atom.md) §4)과 `message.content`를 따로 꺼내 그 모델 토크나이저로 센다 — 0.27.1의 `usage`에는 추론 토큰 수가 없다(소스 판독) |
 | 큰 v3 Auditor 입력에서의 호출 시간·GPU 예산 소진 | 슬라이스가 함수 2개 · 719자로 작다(입력 3.8k — 창의 1.4%, 계산값). 옛 창(입력 몫 20,480) 기준의 「여유 5,043」 우려는 이 run에 해당 없다 — 이 창의 입력 몫은 229,376(계산값)이다 | 큰 슬라이스(2026-09-26 스모크의 147건 같은 입력)로 돌려 입력 토큰별 호출 wall과 GPU 예산(7,200 s) 소진을 잰다 |
 | 교대 실패 경로(기동 실패 · 창 불일치 · 감시자 사망)의 실장비 동작 | 이 run에서는 안 탔다 — 테스트(가짜 vLLM)로만 고정됐다 | 일부러 창을 어긋나게 한 장비 파일로 한 번 돈다 |
 | vast.ai 종단 | 도구 단계를 어디서 돌릴지 정해지지 않았다(컨테이너에 docker 없음) | 그 결정 뒤 `--device vastai` |
