@@ -1732,8 +1732,9 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     assert payload["max_tokens"] == cap
 
 
-# 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 이슈 #261 본문, 2026-09-24 ATOM
-# `run_20260924_0001`, vLLM 서버 로그 `Avg generation throughput`의 `Running: 1 reqs` 10초
+# 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 2026-09-24 ATOM `run_20260924_0001`
+# (`docs/experiments/harness/2026-09-24-roster-smoke-atom.md` §1·§2 · 이슈 #261 본문도 같은 수),
+# vLLM 서버 로그 `Avg generation throughput`의 `Running: 1 reqs` 10초
 # 창 중앙값(237·106창). Auditor(그때 `qwen3.6-35b-a3b`, 지금 `qwen3.8-27b`)는 로스터가
 # 바뀌었고 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가 이미
 # 잠그므로 여기 넣지 않는다.
@@ -1765,6 +1766,11 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
     ⚠ 무는 것은 **순차 요청의 속도**다. `gpt-oss-20b`는 ≈95 s라 300 s로도 이 관계가 서서,
     그 값을 300으로 내려도 초록이다. 단계 안 동시 요청이 들어오면 스트림당 속도가 떨어지는데
     그것은 이 검사 밖이다.
+
+    ⚠ 그리고 **하한 하나**(`선언값 ≥ 상한 ÷ 속도`)만 문다 — 경계값이어도 초록이다(위 ≈308 s ·
+    ≈506 s 바로 위의 값이면 지나간다). 여유 배수·프리필은 안 물므로 초록이 1,200 · 1,800 s에
+    여유가 있다는 뜻은 아니다. 선언값의 유도식(`config/models.yaml`이 인용하는 ÷9.1 · ÷6.2 ·
+    ÷12 · × 1.3)도 이 검사 밖이다.
     """
     config = load_config("harness_pool")
     served = config.served_models()
