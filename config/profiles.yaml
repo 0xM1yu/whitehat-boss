@@ -187,11 +187,13 @@ profiles:
         resident: []
         swappable: [scout_memory, scout_boundary, scout_injection, auditor, critic]
         # 교대 한 번(내림 + 기동 + 준비 확인)의 마감 — **계산값, 미실측.** 두 장비 파일 중 가장 무거운 교대인
-        # ATOM Auditor 교대로 잡았다: 앞 단계 Scout 둘 내림 2 × 50 s + 시도 2 × (준비 상한 1,720 s + 메모리 대기
-        # 60 s + 실패 기동 내림 50 s) = 3,760 s → 3,800 s. 준비 상한의 근거는 `config/serving/atom.yaml`의 그
-        # 행이고, 시도 2 · 내림 50 s(TERM 20 + KILL 30) · 메모리 대기 60 s는 `tools/serve/swap.sh`의 상수다.
-        # `tests/test_serve_scripts.py`가 두 장비 파일의 모든 교대에 대해 이 식을 잠근다.
-        settle_timeout_s: 3800
+        # ATOM Auditor 교대로 잡았다: 앞 단계 Scout 둘 내림 2 × 50 s + 시도 2 × (준비 상한 1,720 s + 시도당
+        # 300 s) = 4,140 s → 4,200 s. 시도당 300 s = 메모리 대기 60 s + 마지막 폴링 둘 2 × 5 s + 마지막 채팅
+        # 요청의 `curl -m` 상한 120 s(준비 상한을 넘겨서도 붙잡는다) + `/v1/models` 확인 60 s + 실패 기동 내림
+        # 50 s(TERM 20 + KILL 30). 준비 상한의 근거는 `config/serving/atom.yaml`의 그 행이고, 나머지는
+        # `tools/serve/swap.sh`의 상수와 `src/bench_metrics.py`의 `_TIMEOUT_S`다. `tests/test_serve_scripts.py`가
+        # 두 장비 파일의 모든 교대에 대해 이 식을 잠근다.
+        settle_timeout_s: 4200
 
   harness_pool_hybrid:
     # `harness_pool`에 **검색 경로를 켠 것** — embedding·reranker를 실제로 부르는
