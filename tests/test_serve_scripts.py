@@ -36,7 +36,9 @@ GUARD = Path("tools/serve/guard.sh")
 DEVICES = ("atom", "vastai")
 
 # 교대 마감 식에 들어가는 스크립트 상수 — `NAME=숫자` 한 줄.
-_CONST = re.compile(r"^(ATTEMPTS|TERM_WAIT_S|KILL_WAIT_S|MEM_WAIT_S|POLL_S)=(\d+)$", re.M)
+_CONST = re.compile(
+    r"^(ATTEMPTS|TERM_WAIT_S|KILL_WAIT_S|MEM_WAIT_S|POLL_S|PROBE_MAX_S)=(\d+)$", re.M
+)
 
 
 def _constants() -> dict[str, int]:
@@ -59,9 +61,16 @@ def test_the_serve_scripts_parse(script: Path) -> None:
 
 
 def test_the_constant_pattern_reads_the_real_script() -> None:
-    """검출기 핀 — 양성: `tools/serve/swap.sh`의 상수 다섯. 음성: 기본값을 든 환경 변수 줄은 상수가
+    """검출기 핀 — 양성: `tools/serve/swap.sh`의 상수 여섯. 음성: 기본값을 든 환경 변수 줄은 상수가
     아니다(같은 파일의 `MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"` 꼴 — 장비마다 조정하는 손잡이다)."""
-    assert set(_constants()) == {"ATTEMPTS", "TERM_WAIT_S", "KILL_WAIT_S", "MEM_WAIT_S", "POLL_S"}
+    assert set(_constants()) == {
+        "ATTEMPTS",
+        "TERM_WAIT_S",
+        "KILL_WAIT_S",
+        "MEM_WAIT_S",
+        "POLL_S",
+        "PROBE_MAX_S",
+    }
     assert _CONST.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
 
 
@@ -87,11 +96,9 @@ def test_the_swap_deadline_covers_every_swap_on_every_device(device: str) -> Non
     config = load_config("harness_pool")
     serving = load_serving(device)
     const = _constants()
-    probe = re.search(r'if \[ "\$m" -gt (\d+) \]; then m=\1; fi', (ROOT / SWAP).read_text("utf-8"))
-    assert probe, "probe_chat의 curl -m 상한을 못 찾았다"
     stop = const["TERM_WAIT_S"] + const["KILL_WAIT_S"]
     per_attempt = (
-        const["MEM_WAIT_S"] + 2 * const["POLL_S"] + int(probe[1]) + _SERVED_WINDOW_S + stop
+        const["MEM_WAIT_S"] + 2 * const["POLL_S"] + const["PROBE_MAX_S"] + _SERVED_WINDOW_S + stop
     )
     served = config.served_models()
     assert config.swap is not None
