@@ -143,7 +143,7 @@
 | D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |
 | D90 | **Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다** (줄 기준 재검증 +2 · (a) 정렬 PR #324) | 열림 | [본문](open-questions/D/D90.md) |
 | D91 | **앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다** | 열림 | [본문](open-questions/D/D91.md) |
-| D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 열림 | [본문](open-questions/D/D93.md) |
+| D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
 
 ## 3. 팀·운영 미정
 
