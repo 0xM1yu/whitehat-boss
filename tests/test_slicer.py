@@ -1204,6 +1204,32 @@ def test_case_a_query_bounds_are_pinned():
     assert q.count(f".take({cap})") == 2
 
 
+def test_case_a_adds_hot_multi_call_methods_as_a_separate_bounded_list():
+    """#338: hot methods the K=1 filter drops join Case A as their own list, bounded twice.
+
+    The 2026-09-29 diagnosis found all 7 remaining line-criterion misses in hot methods called
+    2..47 times. Pin the three properties a rewrite could silently lose: `api` is untouched (the
+    extra list does not compete for its cap), the extra list keeps both bounds (call-count window
+    and its own cap, fewest callers first), and it is actually emitted. ⚠ Spelling pins (CLAUDE.md
+    §2.5) -- the mock tests never run this Scala; the behaviour was measured on vast, not here.
+    """
+    q = queries.candidates_a_query()
+    lim, mx, extra = (queries.CASE_A_CALL_LIMIT, queries.CASE_A_HOT_CALL_MAX,
+                      queries.CASE_A_HOT_EXTRA_CAP)
+    assert mx > lim and extra > 0
+    aseg = q[q.index("val api =") : q.index("val hotMulti =")]
+    assert f".take({lim} + 1).size <= {lim})" in aseg              # api keeps the K=1 filter
+    assert f".take({queries.CASE_A_CANDIDATE_CAP})" in aseg         # and its own cap
+    mseg = q[q.index("val hotMulti =") : q.index("val readers =")]
+    assert ".filter(m => hotIds.contains(m.id))" in mseg            # hot only
+    assert ".filter(_.parameter.size > 0)" in mseg
+    assert f".take({mx} + 1).size))" in mseg                        # bounded call count
+    assert f".filter(p => p._2 > {lim} && p._2 <= {mx}).l" in mseg  # window (lim, mx]
+    assert ".sortBy(_._2).map(_._1)" in mseg                        # fewest callers first
+    assert mseg.rstrip().endswith(f".take({extra})")                # its own cap
+    assert "(api ++ hotMulti ++ readers).distinct" in q             # emitted
+
+
 def test_context_query_excludes_synthetic_nodes_at_every_site():
     """결함 2 — 합성 METHOD_REF/TYPE_DECL 이 다시 `<global>` 로 올라간다.
 
