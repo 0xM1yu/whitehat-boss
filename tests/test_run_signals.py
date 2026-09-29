@@ -10,9 +10,12 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 
 import pytest
+
+from src import cli
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
@@ -70,3 +73,35 @@ def test_a_run_ended_by_a_signal_still_runs_its_teardown(
 
     assert marker.exists(), f"{name}에 run 끝 내림이 끝까지 안 돌았다 (rc={done.returncode})"
     assert done.returncode == 128 + getattr(signal, name), done.stderr[-400:]
+
+
+def test_the_guard_puts_back_the_handlers_it_replaced() -> None:
+    """블록 안에서만 신호를 바꾼다 — 같은 프로세스에서 `cli.main`을 부르는 쪽(테스트 등)에 새지
+    않는다."""
+    before = signal.getsignal(signal.SIGTERM)
+
+    with cli._terminate_as_exit():
+        inside = signal.getsignal(signal.SIGTERM)
+
+    assert inside is not before
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_the_guard_does_nothing_off_the_main_thread() -> None:
+    """`signal.signal`은 메인 스레드에서만 된다 — 다른 스레드에서 `run`을 불러도 죽지 않고 신호를
+    안 바꾼다(그 스레드의 run은 신호에 내림을 못 돌린다)."""
+    before = signal.getsignal(signal.SIGTERM)
+    seen: list[object] = []
+
+    def body() -> None:
+        try:
+            with cli._terminate_as_exit():
+                seen.append(signal.getsignal(signal.SIGTERM))
+        except ValueError as exc:  # 메인 스레드 밖의 `signal.signal`
+            seen.append(exc)
+
+    thread = threading.Thread(target=body)
+    thread.start()
+    thread.join()
+
+    assert seen == [before]
