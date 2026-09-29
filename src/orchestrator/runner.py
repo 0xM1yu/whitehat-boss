@@ -838,9 +838,6 @@ def run_pipeline(
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
     finally:
-        # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다.
-        if heartbeat is not None:
-            heartbeat.stop()
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
         # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
         # 교대 명령은 자기 run의 서버만 내리고 떠 있는 것이 없으면 아무것도 안 한다.
@@ -851,12 +848,20 @@ def run_pipeline(
         # `ok=false`를 trace에 먼저 남겼고, 그 밖의 예외면 이 경고가 유일한 흔적이다.
         # `BaseException`(인터럽트)은 잡지 않는다 — 그때는 원래 예외도 결과도 덮인다.
         try:
-            _swap(ctx, (), stage=None)
-        except Exception as exc:
-            warnings.append(
-                "run 끝 모델 내림이 예외로 끝났다 — 서버가 남았을 수 있다: "
-                f"{type(exc).__name__}: {exc}"
-            )
+            try:
+                _swap(ctx, (), stage=None)
+            except Exception as exc:
+                warnings.append(
+                    "run 끝 모델 내림이 예외로 끝났다 — 서버가 남았을 수 있다: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        finally:
+            # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다 — **내림
+            # 뒤에**. 내림이 도는 동안 heartbeat가 서 있으면 외부 감시자(`tools/monitor.py`)가
+            # 살아 있는 run을 `DEAD`로 끝낸다. 내림이 오래 멈추면 감시자는 그것을 stuck(살아
+            # 있는데 멈춤)으로 본다 — 죽음과 갈린다.
+            if heartbeat is not None:
+                heartbeat.stop()
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -868,6 +873,11 @@ def run_pipeline(
     )
     if gpu_warning:
         warnings.append(gpu_warning)
+    if ctx.swap_unreported:
+        warnings.append(
+            f"교대 명령이 올린 서버의 기동 인자를 보고하지 않았다: {sorted(ctx.swap_unreported)}. "
+            "기록(`model_swap`의 `report.server.<key>.*`)이 이 run의 기동 조건을 지시하지 못한다"
+        )
 
     # **4단계에 못 올라간 target을 경고로 올린다 (W2).** trace의 `target_skipped`가
     # 목록이지만 사용자가 run 결과로 읽는 것은 cli 출력과 report.md다. 여기 안 올리면
@@ -1861,6 +1871,14 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⚠ 그 147호출은 **프롬프트 전체**를 잰 것이고 `SOURCE`는 그 일부다 — 같은 run의 SOURCE는 최대
 # 14,995자였다(상한에 걸린 슬라이스 5 · 뺀 함수 249). entry 함수는 상한을 안 받는다
 # (`_auditor_source`의 ⚠ · `anchor_chars`).
+#
+# ⚠ **2026-09-29 — 위 [실측]은 프롬프트 v1의 것이다.** registry의 Auditor가 v3가 되며(근거 본문
+# 배선과 같은 변경) 입력이 +3,212~8,740토큰 늘 수 있다 — **계산값**이다: prefix +6,469자 · body 틀
+# +194자 · FACTS의 근거 본문 최대 4,000자(JSON 이스케이프 전) = 10,663자를 위 글자/토큰 비
+# 1.22~3.32로 나눴다. 그 측정의 입력 몫(20,480)이면 여유 5,043을 넘을 수 있고, 지금 넘치는지는
+# 서빙 창에 달렸다(`config/models.yaml`의 `qwen3.8-27b` 기동 조건). **v3의 입력 토큰은 안
+# 쟀다(미실측)** — 이 상한이 v3에서도 입력 몫에 든다는 실측은 없다. 첫 v3 run의 `input_tokens`
+# 최대가 그 답이다.
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
@@ -2053,6 +2071,11 @@ def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> Non
         raise
     ctx.record_model_swap(
         keys, stage=stage, ok=True, wall_ms=ctx.monotonic_ms() - started, report=report
+    )
+    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로
+    # 본다(그대로 둔 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
+    ctx.swap_unreported.update(
+        key for key in keys if not any(name.startswith(f"server.{key}.") for name in report)
     )
 
 

@@ -26,6 +26,7 @@ from src import cli, console
 from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps, describe_wiring
 from src.adapters.fake_model import FakeModelClient
+from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
@@ -33,9 +34,12 @@ from src.orchestrator import runner, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
+from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.enums import FindingState, ReasonCode, Role
+from src.schemas.finding import Finding
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
+from src.schemas.scout_response import ScoutResponse
 from tests.conftest import ALL_PROFILES, SERVED_SCOUT_KEY, served_scout_config
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
@@ -90,9 +94,11 @@ def test_execute_wires_read_payload_from_the_artifacts_root(
 ) -> None:
     """#247 리뷰 HIGH-1: `cli.execute`가 `read_payload`를 `make_payload_reader`로 배선한다.
 
-    그 줄(`src/cli.py`)을 지우면 Critic이 근거 본문을 못 받는다(`RunContext.read_payload`
-    기본값이 `lambda _ref: None`). `run_pipeline`을 가로채 실제로 넘어온 reader가 payload
-    파일을 읽는지 본다 — 배선을 끊으면 red다.
+    그 줄(`src/cli.py`)을 지우면 Critic·Auditor의 v3가 근거 본문을 못 받는다
+    (`RunContext.read_payload` 기본값이 `lambda _ref: None`). `run_pipeline`을 가로채 실제로
+    넘어온 reader가 payload 파일을 읽는지 본다 — 배선을 끊으면 red다. 그 reader가 노드까지
+    닿는지는 이 검사가 아니라 아래 `test_run_pipeline_carries_read_payload_to_auditor_and_critic`이
+    문다.
     """
     captured: dict[str, object] = {}
 
@@ -115,6 +121,49 @@ def test_execute_wires_read_payload_from_the_artifacts_root(
     assert callable(reader)
     assert reader("artifacts/run_20260901_0001/semgrep/ev_0001.log") == "SEMGREP FINDING BODY"
     assert reader("artifacts/run_20260901_0001/semgrep/missing.log") is None
+
+
+def _content_aware_auditor_and_critic(config):  # noqa: ANN001, ANN202
+    """auditor·critic 자리를 v3 fake로 바꾼다 — 두 노드가 근거 본문을 읽는 버전이다.
+
+    커밋된 fake 키는 v1·v2뿐이라 `_poolify_v3`처럼 `fake`를 복사해 버전만 v3로 올린다.
+    Scout 자리는 건드리지 않는다.
+    """
+    fake_v3 = config.models["fake"].transition(prompt_template_version="v3")
+    roles = {**config.profile.roles, "auditor": "fake_v3", "critic": "fake_v3"}
+    return config.transition(
+        models={**config.models, "fake_v3": fake_v3},
+        profile=config.profile.transition(roles=roles),
+    )
+
+
+def test_run_pipeline_carries_read_payload_to_auditor_and_critic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cli.execute` → `run_pipeline` → `RunContext` → 노드까지 `read_payload`가 **실제로** 닿는다.
+
+    위 검사는 `run_pipeline`을 가짜로 바꿔 `cli.execute`가 인자를 넘기는지만 보고, 노드
+    검사(`test_nodes.py`)는 `ctx.read_payload`를 픽스처에 직접 꽂는다 — 그래서 `run_pipeline`이
+    받은 reader를 `RunContext`에 안 심어도 둘 다 초록이다. 여기서는 파이프라인을 진짜로
+    돌리고 reader만 표지를 돌려주게 해, auditor·critic 프롬프트 로그에 그 표지가 실렸는지
+    본다. `src/cli.py`의 `read_payload=` 줄이나 `runner.run_pipeline`의 `RunContext(...)`
+    안 `read_payload=` 줄 중 하나라도 지우면 기본값(`lambda _ref: None`)으로 떨어져 빨개진다.
+
+    fake 도구는 payload 파일을 쓰지 않으므로 reader 공장(`cli.make_payload_reader`)만
+    바꾼다 — 파일을 읽는 쪽은 바로 위 검사가 문다.
+    """
+    marker = "PAYLOAD-BODY-MARKER-read_payload"
+    monkeypatch.setattr(cli, "make_payload_reader", lambda _root: lambda _ref: marker)
+
+    _, trace_path = _run(tmp_path, configure=_content_aware_auditor_and_critic)
+
+    prompts = trace_path.parent / "prompts"
+    for role in ("auditor", "critic"):
+        files = sorted(prompts.glob(f"*_{role}*.md"))
+        assert files, f"{role} 프롬프트가 한 건도 안 남았다 — 이 검사가 그 노드를 안 탔다"
+        assert any(marker in f.read_text(encoding="utf-8") for f in files), (
+            f"{role} v3 프롬프트에 근거 본문이 없다 — read_payload가 노드까지 안 닿았다"
+        )
 
 
 def test_run_pipeline_wires_resolve_requests_from_deps(
@@ -1021,8 +1070,8 @@ def _refuse_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
 
     실서빙 프로필을 겨눈 첫 `run` 테스트다(처음엔 `b1_single` — 2026-09-24에 지웠고 지금은
     `harness_pool`). 게이트가 회귀해 run이 실제로 시작되면 로스터 엔드포인트로 나가고
-    `_TIMEOUT_S`(300초)까지 매달릴 수 있다 — CI에서 "느리다"로 보이지 "게이트가 사라졌다"로
-    안 보인다. 같은 그물을
+    요청 타임아웃(모델이 선언한 `request_timeout_s`, 선언이 없으면 `_TIMEOUT_S`)까지 매달릴 수
+    있다 — CI에서 "느리다"로 보이지 "게이트가 사라졌다"로 안 보인다. 같은 그물을
     `test_doctor_never_opens_a_socket`이 이미 쓴다.
     """
 
@@ -2975,6 +3024,127 @@ def test_a_critic_schema_failure_drops_only_that_finding(
     # 실패한 호출 자체는 `model_call ok=False`로 남는다. 잡았다고 분자가 사라지지 않는다.
     assert len([e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]) == 1
     assert result.record.is_complete
+
+
+def _model_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    candidate: dict[str, object],
+    finding: dict[str, object],
+) -> None:
+    """Fake가 낸 Scout·Auditor 출력의 필드를 덮어 **사실 블록을 안 따른 모델**을 흉내 낸다 (D83).
+
+    값은 `transition()`으로 만든다 — 스키마를 통과하는 출력이어야 실제 파서가 내보낼 수 있다.
+    v3(`ScoutResponse`)는 안쪽 `candidate`를 고친다.
+    """
+    original = FakeModelClient.complete
+
+    def complete(  # noqa: ANN001
+        self, *, role: Role, prompt: object, schema: object, history: object = ()
+    ) -> object:
+        result = original(self, role=role, prompt=prompt, schema=schema, history=history)
+        value = result.value
+        if isinstance(value, ScoutResponse):
+            value = value.transition(candidate=value.candidate.transition(**candidate))
+        elif isinstance(value, Candidate):
+            value = value.transition(**candidate)
+        elif isinstance(value, Finding):
+            value = value.transition(**finding)
+        return result.model_copy(update={"value": value})
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+
+def _on_sqlite(configure=None):  # noqa: ANN001, ANN202
+    """저장소를 `sqlite`로 바꾸는 `configure` 훅 — run 뒤 `state.db`를 열어 행을 센다.
+
+    실서빙 프로필은 전부 `state_store: sqlite`다. `memory`로는 덮인 행을 run 밖에서 못 본다.
+    """
+
+    def wrapped(config):  # noqa: ANN001, ANN202
+        if configure is not None:
+            config = configure(config)
+        adapters = config.profile.adapters.transition(state_store="sqlite")
+        return config.transition(profile=config.profile.transition(adapters=adapters))
+
+    return wrapped
+
+
+_SCOUT_PATHS = pytest.mark.parametrize(
+    "scout_path", [None, _poolify_v3()], ids=["single_v1_candidate", "pool_v3_scout_response"]
+)
+
+
+@_SCOUT_PATHS
+def test_a_model_written_initial_state_does_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scout_path: object
+) -> None:
+    """D83 ① — Scout가 `state: "triaged"`, Auditor가 `state: "queued"`를 써도 매니페스트까지 간다.
+
+    둘 다 스키마는 받는 값이라 파싱은 통과하고, 생성 행 조회(C-1·F-1)에서 `IllegalTransition`이
+    났다 — 그 예외를 잡는 곳이 러너에도 cli에도 없어 `run_manifest.json`이 안 남았다. 하네스가
+    초기 `state`를 도장 찍으면 생성은 늘 C-1(`candidate`)·F-1(`hypothesized`)이다.
+    """
+    _model_writes(
+        monkeypatch,
+        candidate={"state": FindingState.TRIAGED},
+        finding={"state": FindingState.QUEUED},
+    )
+
+    result, trace_path = _run(tmp_path, name="state", configure=_on_sqlite(scout_path))
+
+    assert (trace_path.parent / "run_manifest.json").is_file()
+    assert result.report.render().startswith("#")
+    events = _events(trace_path)
+    created = [
+        e
+        for e in _of(events, "transition")
+        if e["data"]["from_state"] is None and e["subject_kind"] in ("candidate", "finding")
+    ]
+    to_state = {kind: {e["data"]["to_state"] for e in created if e["subject_kind"] == kind}
+                for kind in ("candidate", "finding")}
+    assert to_state == {"candidate": {"candidate"}, "finding": {"hypothesized"}}
+    overridden = {e["subject_id"] for e in _of(events, "issued_override")
+                  if "state" in e["data"]["fields"].split(",")}
+    assert overridden == {e["subject_id"] for e in created}, "덮은 state가 trace에 안 남았다"
+
+
+@_SCOUT_PATHS
+def test_model_written_foreign_ids_do_not_overwrite_other_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scout_path: object
+) -> None:
+    """D83 ② — 모델이 **모든** 출력에 같은 남의 ID·다른 `run_id`를 써도 객체가 안 합쳐진다.
+
+    저장소 `put()`은 `(kind, obj_id)` upsert라 예외 없이 앞 행을 덮었고, `transition`의
+    `subject_id`는 모델 값이라 trace도 한 ID로 뭉쳤다. 도장 뒤에는 저장소 행 수가 생성 수와 같고
+    전부 이 run의 `run_id`로 조회된다.
+    """
+    _model_writes(
+        monkeypatch,
+        # `score`는 단일 scout(v1) 경로에서 fixture 대상 둘을 다 승격시켜 Finding을 둘 이상 만든다 —
+        # 하나면 덮임을 못 잰다. v3 풀은 신호로 판정해 점수를 안 보고, 좌석 셋이 이미 여럿을 낸다.
+        candidate={"candidate_id": "cand_0001", "run_id": "run_19990101_0001", "score": 1.0},
+        finding={"finding_id": "find_0001", "run_id": "run_19990101_0001"},
+    )
+
+    result, trace_path = _run(tmp_path, name="ids", configure=_on_sqlite(scout_path))
+
+    events = _events(trace_path)
+    created = [
+        e
+        for e in _of(events, "transition")
+        if e["data"]["from_state"] is None and e["subject_kind"] in ("candidate", "finding")
+    ]
+    store = SqliteStateStore(trace_path.parent / "state.db")
+    for kind in ("candidate", "finding"):
+        ids = [e["subject_id"] for e in created if e["subject_kind"] == kind]
+        assert len(ids) > 1, f"{kind}가 둘 이상 생겨야 덮임을 잰다 — fixture를 늘린다"
+        assert len(set(ids)) == len(ids), f"{kind} 생성 trace가 한 ID로 뭉쳤다: {ids}"
+        stored = store.query(kind, run_id=result.record.run_id)
+        assert sorted(obj.model_dump()[f"{kind}_id"] for obj in stored) == sorted(ids), (
+            f"저장소 {kind} 행이 생성 수와 다르다 — 덮였거나 다른 run_id로 들어갔다"
+        )
+    assert _of(events, "issued_override"), "덮은 ID가 trace에 안 남았다"
 
 
 def test_the_seventh_stage_still_splits_three_ways_when_a_critic_call_dies(
