@@ -456,6 +456,14 @@ models:
     # - **`--max-model-len`은 입력 몫 + 출력 상한 이상이어야 한다.** 53,248 = 입력 몫 20,480(2026-09-25
     #   슬라이스 스모크와 같은 몫 — 그 147호출의 최대 입력이 15,437토큰) + 출력 32,768. 모자라면 요청마다
     #   **400**이다.
+    #   ⚠ **2026-09-29 — 그 15,437은 Auditor 프롬프트 v1로 잰 값이다**(그날 배선된 유일한 판 · 모델
+    #   `qwen3.6-35b-a3b`). 아래 `prompt_template_version`이 v3가 되면서 prefix가 +6,469자 · body 틀이 +194자이고
+    #   FACTS에 근거 본문이 최대 4,000자(`EVIDENCE_BODY_TOTAL_CAP`, JSON 이스케이프 전) 더 실린다 — 합 10,663자를
+    #   같은 스모크의 글자/토큰 비 1.22~3.32로 나누면 +3,212~8,740토큰(계산값)이다. 넘치는지는 창에 달렸다 —
+    #   창을 위 53,248로 띄우면(입력 몫 20,480) 여유 5,043을 넘을 수 있고, 창이 `context_limit` 262,144이면
+    #   입력 몫이 229,376(= 262,144 − 32,768, 계산값)이라 그 스모크의 최대에 증가분의 큰 쪽을 더한 24,177토큰
+    #   (= 15,437 + 8,740, 계산값)보다 크다. **v3 입력 토큰은 안 쟀다(미실측)** — 첫 v3 run의 `input_tokens`
+    #   최대가 그 답이다.
     #   ⚠ **400은 run을 세운다**(이슈 #296 — 2026-09-26 전에는 조용했다). parser가 빠지면(사고 예산 거절)
     #   또는 창이 출력 상한보다 작으면 첫 Auditor 요청에서 멈춘다(`consecutive_target_failures`). 창은 상한
     #   이상인데 입력 몫이 모자라 Auditor 요청이 전부 넘치면 루프 끝에서 멈춘다. 일부만 넘치면 그 후보만
@@ -494,7 +502,12 @@ models:
       presence_penalty: 0.0
     thinking_token_budget: 28672
     request_timeout_s: 7500
-    prompt_template_version: "v1"
+    # ⏵ 2026-09-29 — v1에서 v3로 올렸다. `prompts/auditor/v3/meta.yaml`이 스스로 건 조건
+    # ("evidence 본문이 닿는 변경 전까지 v3는 올리지 않는다")을 `nodes/auditor.py`의 근거
+    # 본문 배선(`_CONTENT_AWARE_VERSIONS`, critic.py와 같은 opt-in 패턴)과 같은 PR로
+    # 채웠다. 이 PR 뒤 run부터 Auditor v3 — 이전(v1) run과 직접 비교하지 않는다
+    # (agent-contracts.md §4 규칙 1).
+    prompt_template_version: "v3"
     fallback: null
     benchmark:
       measured_at: null
