@@ -262,6 +262,8 @@ profiles:
     budget: default
     # 실행 단위도 `harness_pool`과 같아야 한다 — 다르면 두 run의 차이가 검색 경로 하나로 안 갈린다.
     # ⚠ 교대(`swap`)는 선언하지 않는다(2026-09-29) — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤라
-    #   스키마가 거부한다. 그래서 이 프로필은 서버를 사람이 띄운다 — `harness_pool`과 갈리는 둘째 자리다.
+    #   선언할 수 없다: 목록에 넣으면 `SwapPolicy`가, 빼면 `load_config`가 거부한다
+    #   (`_check_swap_lists_every_served_role`). 그래서 이 프로필은 서버를 사람이 띄운다 —
+    #   `harness_pool`과 갈리는 둘째 자리다.
     execution:
       mode: per_stage
