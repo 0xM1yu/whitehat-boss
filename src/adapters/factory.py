@@ -23,6 +23,7 @@ from src.adapters.generation_config import declared_sampling_by_role
 from src.adapters.hybrid_retriever import HybridRetriever, TruncateHook, UsageHook
 from src.adapters.index_graph import GraphIndex, IndexHook, SliceBody
 from src.adapters.memory_store import InMemoryStateStore
+from src.adapters.model_swap import SwapTo, swap_runner
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.adapters.routing_model import RoutingModelClient
 from src.adapters.slices import (
@@ -47,7 +48,14 @@ from src.adapters.vllm_retrieval import (
     VllmEmbeddingClient,
     VllmRerankerClient,
 )
-from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, HarnessConfig, ModelEntry
+from src.config import (
+    PROMPTED_ROLES,
+    SCOUT_POOL_ROLES,
+    HarnessConfig,
+    ModelEntry,
+    check_serving,
+    load_serving,
+)
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
 from src.interfaces.retrieval import EmbeddingClient, RerankerClient
@@ -194,6 +202,10 @@ class Deps:
     # `build_deps`는 `symbol_resolver.resolve`를 꽂는다 — 인덱스 판을 run 전에 모르므로 늘
     # 꽂고, v1·인덱스 없음은 `resolve()`가 빈 결과로 가른다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
+    # 단계 경계 모델 교대(ADR 0012 Phase 6.5). `build_deps`가 교대 프로필 + 장비일 때만
+    # `model_swap.swap_runner`로 만든다. 기본 `None`("교대 없음")이 이 필드 없이 조립된 `Deps`의
+    # 옛 동작이다 — `resolve_requests`와 같은 자리.
+    swap_to: SwapTo | None = None
 
 
 @dataclass(frozen=True)
@@ -397,12 +409,16 @@ def build_deps(
     on_usage: UsageHook | None = None,
     on_index: IndexHook | None = None,
     slices_path: Path | None = None,
+    device: str | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
     `slices_path`를 믿을 수 없으면 여기서 `SliceInputError`로 멈춘다 — 모델을 부르기 전이다.
     **렌더(drift 검사)까지 여기서 전부 한다** — 러너는 그 예외를 안 잡으므로 run 도중에
     렌더하면 앞 슬라이스의 모델 호출을 태운 뒤 산출물 없이 죽는다(`slices` 모듈 docstring).
+
+    `device`는 교대 프로필의 장비 파일(`config/serving/<device>.yaml`)을 고른다. 파일이 없거나
+    registry와 어긋나면 `ConfigError`로 멈춘다 — 역시 모델을 부르기 전이다.
     """
     loaded = load_slices(slices_path) if slices_path is not None else None
     rendered = render_slices(loaded, source_root) if loaded is not None else {}
@@ -522,6 +538,27 @@ def build_deps(
         resolve_requests=partial(
             resolve, table=graph.table, read_lines=partial(_read_target_lines, source_root)
         ),
+        swap_to=_swap_to(config, run_id=run_id, device=device),
+    )
+
+
+def _swap_to(config: HarnessConfig, *, run_id: str, device: str | None) -> SwapTo | None:
+    """교대 프로필 + 장비면 장비 파일의 명령으로 교대 콜러블을 만든다. 아니면 `None`.
+
+    **장비가 없으면 만들지 않는다** — 모델에 안 닿는 run(`--dry-run`·낮은 `--stop-after`)은 교대도
+    안 하므로 장비 없이 조립돼야 한다. 닿는 run은 `cli.run`이 `--device` 없이 먼저 거부한다.
+    """
+    swap = config.swap
+    if swap is None or device is None:
+        return None
+    serving = load_serving(device)
+    check_serving(config, serving)
+    return swap_runner(
+        serving.command,
+        models=config.models,
+        deadline_s=swap.settle_timeout_s,
+        run_id=run_id,
+        device=device,
     )
 
 

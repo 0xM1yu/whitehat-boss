@@ -211,6 +211,23 @@ for f in glob.glob('/srv/tenants/ext01/.cache/huggingface/hub/**/*.safetensors',
 
 모델 파일 44개에 걸어 `free -g` 기준 버퍼/캐시 **35 → 8 GiB**, 여분 **81 → 108 GiB**였다
 (같은 보고서 §6). **기동 사이마다 돌린다** — 모델을 읽을 때마다 캐시가 다시 찬다.
+⏵ 2026-09-29 — 교대 명령(`tools/serve/swap.sh`)이 통합메모리 장비(`nvidia-smi` 메모리 `[N/A]`)에서
+기동마다 이 절차를 돈다. 전용 VRAM 장비에서는 캐시가 VRAM과 안 다퉈 떼지 않는다.
+
+**`atom` — Auditor(util 0.80)가 떠 있는 동안 Joern(슬라이서)을 돌리지 않는다.** 로딩·배선 조사
+(2026-09-24, 저장소 밖) ③36의 규칙이고, 저장소 안의 근거는 2026-09-28 정상 표본 스모크다
+([보고서](experiments/harness/2026-09-28-ne-loop-smoke-benign-atom.md)) — Auditor를 포함한 재실행 동안
+MemAvailable 최저가 16.2 GiB로 감시자 하한 12 GiB와 4.2 GiB 차였고, Scout 단계에서 슬라이서 둘과 겹친
+구간은 28.5 GiB였다. JVM 하나가 그 몇 GiB를 더 쓰면 감시자가 서버를 내린다[추론]. 교대 명령의 기동 전
+여유 검사도 Auditor에서 얇다 — 필요량 114.76 GiB(계산값) 대 빈 장비 MemAvailable 실측 114.6~115.4 GiB(다섯
+날 — 잰 조건이 같지 않다)라 날에 따라 통과·거부가 갈린다(`config/serving/atom.yaml`의 그 행).
+**운영 규약이다 — 코드가 강제하지 않는다.** 슬라이서는 하네스 run 밖에서 돌고(run 입력 `--slices`를
+만든다), 교대 명령의 남의-프로세스 검사는 GPU 프로세스(`nvidia-smi` compute-apps)만 본다 — CPU에서 도는
+Joern JVM은 안 보인다. 사후 방어선은 감시자(`tools/serve/guard.sh`)의 두 메모리 층이다 — MemAvailable이
+12 GiB 밑으로 내려가거나, 상한이 걸린 cgroup(감시자 자신의 cgroup에서 위로 찾는다 — ATOM에서 경로에 걸리면
+위 표의 `memory.max` 80 GiB)의 anon이 상한의 90%를 넘으면 Auditor를 포함해 교대 명령이 띄운 서버를 run과 무관하게
+전부 TERM → KILL한다. 그 run은 서버를 잃고 멈춘다[추론 — 서버가 죽으면 호출이 `model_gateway_unavailable`로
+끝난다].
 
 **이 항목도 §5가 아니라 여기다.** 서버 기동은 하네스 밖이라(그 경계는
 [experiments/README.md](experiments/README.md)의 "서빙 서버 stdout을 파일로 받는다" 절이
