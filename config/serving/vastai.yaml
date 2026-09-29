@@ -15,7 +15,8 @@
 #   이 장비로 끝까지 도는 run은 아직 없다. 첫 종단 검증은 ATOM이다(`atom.yaml`).
 # ⚠ 컨테이너 메모리 상한은 감시자의 cgroup 층이 본다(`tools/serve/guard.sh` 머리 주석 3). 감시자의 자동 탐색은
 #   cgroup v2(`/proc/self/cgroup`의 `0::` 줄)만이라, v1 컨테이너(`memory.limit_in_bytes`)면 감시자를 띄울 때
-#   `GUARD_CGROUP_DIR=/sys/fs/cgroup/memory`를 준다. 시작 로그의 `cgroup=`이 `없음`이면 이 층이 안 돈다.
+#   `GUARD_CGROUP_DIR=/sys/fs/cgroup/memory`를 준다 — **미검증 처방이다**(v1 읽기는 가짜 트리로만 확인했다 —
+#   실제 v1 커널·vast 컨테이너에서 안 돌려 봤다). 시작 로그의 `cgroup=`이 `없음`이면 이 층이 안 돈다.
 #
 # ## command — 로컬 실행
 # 하네스와 같은 기계의 로컬 subprocess다(ADR 0009 「2026-09-29 제안」 절 6). 하네스를 vast 밖에서 돌리게 되면 이
