@@ -1504,7 +1504,7 @@ def _per_stage_swap(**swap: object) -> dict[str, object]:
 
 
 def test_a_swap_that_wakes_nobody_is_rejected() -> None:
-    """`swappable`이 빈 교대 선언은 막는다 — **ADR 0009의 두 불변식이 아니다.**
+    """`swappable`이 빈 교대 선언은 막는다 — **ADR 0009의 불변식이 아니다.**
 
     `SwapPolicy`의 docstring이 세 값에 기본을 안 주는 이유로 *"`swap: {}`이 「교대한다」고
     선언하면서 아무 역할도 안 부르는 상태"*를 든다. 그런데 `resident: []` +
@@ -1524,7 +1524,7 @@ def test_a_swap_that_wakes_nobody_is_rejected() -> None:
 
 
 def test_a_role_in_both_swap_lists_is_rejected() -> None:
-    """한 역할이 상주이면서 교대일 수는 없다 — 이것도 ADR의 둘이 아니다.
+    """한 역할이 상주이면서 교대일 수는 없다 — 이것도 ADR의 불변식이 아니다.
 
     "내리지 않는다"와 "단계 경계에서 내린다"를 같은 역할에 함께 선언한 것이라, 어느 쪽이
     이기는지 **config만 보고 정할 수 없다.** 배선하는 사람이 아무 쪽이나 고르면 그 run은
