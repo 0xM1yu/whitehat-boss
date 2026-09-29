@@ -26,6 +26,7 @@ from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import EvidenceKind, FindingState, PathStepKind, Role, Verdict
 from src.schemas.finding import Finding, PathStep, ReproSpec
+from src.schemas.pov import PovSegment, PovSpec
 from src.schemas.scout_response import AnalysisSummary, ScoutResponse
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 비용 지표 경로를 태우기 위한 근사다.
@@ -328,10 +329,25 @@ def _build_scout_response(context: FakeContext, produced_by: ProducedBy) -> Scou
     )
 
 
+def _build_pov(_context: FakeContext, _produced_by: ProducedBy) -> PovSpec:
+    """Fake PoV 구성 스펙 — 흔한 오버플로 모양(64바이트 패딩 + 4바이트 정수). dev_fake 전용.
+
+    `assemble_poc`가 결정론적으로 바이트를 만드므로 dev_fake run이 재현 가능하다.
+    """
+    return PovSpec(
+        segments=[
+            PovSegment(kind="repeat", byte=0x41, count=64),
+            PovSegment(kind="int", value=0xDEADBEEF, size=4, endian="little"),
+        ],
+        rationale="fake: 64바이트 패딩 뒤 4바이트 정수",
+    )
+
+
 _BUILDERS = {
     Candidate: _build_candidate,
     ScoutResponse: _build_scout_response,
     Finding: _build_finding,
     Decision: _build_decision,
     DecisionDraft: _build_decision_draft,
+    PovSpec: _build_pov,
 }
