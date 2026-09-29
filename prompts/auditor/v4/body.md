@@ -20,4 +20,6 @@
 
 The JSON below is the complete set of facts and identifiers available to you:
 
-    {{FACTS}}
+```json
+{{FACTS}}
+```
