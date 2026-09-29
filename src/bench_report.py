@@ -205,6 +205,8 @@ def _client(config: HarnessConfig, model_key: str, *, role: str) -> OpenAICompat
        ⚠ 2026-09-24 — 생성이 느린 모델(ATOM 스모크에서 13.3 · 8.1 tok/s)에서는 상한보다 어댑터의
        요청 타임아웃(기본 300초 — 모델이 `request_timeout_s`를 선언하면 그 값)이 먼저 온다.
        그러면 잘린 수치 대신 게이트웨이 오류가 남는다 — 이슈 #261.
+       ⏵ 2026-09-29 — 그 두 모델이 1,200 · 1,800 s를 선언해서, 4,096 · 순차 요청이면 이제 상한이
+       먼저 온다(계산값). 동시 요청이면 스트림당 속도가 떨어지므로 이 말이 서지 않는다.
     """
     entry = config.models[model_key]
     return OpenAICompatModelClient(
