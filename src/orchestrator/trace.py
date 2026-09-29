@@ -285,6 +285,23 @@ class EventKind(StrEnum):
     # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
     # 같은 키).
     ISSUED_OVERRIDE = "issued_override"
+    # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
+    # `RunContext.record_model_swap`이다.
+    #
+    # **교대 한 번당 1건이다** — 교대를 선언한 역할이 있는 단계에 처음 들어갈 때 하나, run 끝
+    # 내림 하나(`models`가 빈 문자열, `stage`가 없다). **성공과 `ModelSwapError` 실패에 낸다** —
+    # 실패면 `ok=false`를 예외보다 먼저 낸다. 그래야 run이 멈춘 자리가 trace 끝에 남는다. 실
+    # 어댑터는 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. 계약 밖 예외(어댑터가 아닌 구현)와
+    # 인터럽트는 이 이벤트 없이 올라간다 — run 끝 내림의 계약 밖 예외는 run 경고만 남는다.
+    #
+    # **이 이벤트가 없으면 「교대하지 않았다」이다**(교대를 선언하지 않은 프로필은 0건이다) — 위의
+    # 계약 밖 예외·인터럽트가 없었다면.
+    # 「교대가 다 성공했다」로 읽지 않는다.
+    #
+    # `wall_ms`는 하네스가 잰 것(교대 명령 + 준비 확인)이고, `report.*`는 교대 명령이 보고한
+    # 것이다(서버별 `report.server.<key>.<field>` — util·창·기동 초 등). 둘을 섞지 않는다 — 명령도
+    # `ok`·`wall_ms`를 보고하므로 접두사 없이 펴면 하네스의 값과 이름이 겹친다.
+    MODEL_SWAP = "model_swap"
 
 
 class TraceEvent(HarnessModel):

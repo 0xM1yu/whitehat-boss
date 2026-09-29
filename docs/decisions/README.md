@@ -97,6 +97,7 @@
 들어왔고 4는 절반이다** — `harness_pool`·`_hybrid`가 `execution.mode: per_stage`를 선언했고 `swap`은 안 적었다.
 3(교대 배선)은 아직 없고 방식이 sleep/wake에서 단계 단위 콜드 재기동으로 바뀌었다(@danielcho02) — 착수는 열린 PR을
 모두 머지한 뒤다(0009 결과 3의 노트 · [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §5 「모델 배선」 행).
+⏵ **2026-09-29 — 교대의 하네스 쪽이 들어왔다** — 러너가 단계 경계에서 교대 콜러블을 부르고 run 끝에 내린다(`runner._swap_for`) · 교대 어댑터(`src/adapters/model_swap.py`) · 장비 파일 스키마(`config/serving/<device>.yaml`) · `model_swap` 기록. 모양은 [ADR 0009](0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안 — 단계 단위 콜드 재기동」 절이고 **제안이다(@sumin0218 사인오프 필요).** 교대 명령(ATOM 스크립트)·장비 파일·프로필의 `swap` 선언은 다음 PR이라 아직 어느 프로필도 교대하지 않는다.
 
 0010은 **2026-09-09에 승인됐다**(@danielcho02 확정). 로스터와 인덱서가 그날 정본이 됐고 그 정본은
 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)다 — **로스터를 바꿀 때 고치는 자리는 그 파일과 registry이지
