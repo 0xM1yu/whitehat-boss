@@ -438,6 +438,42 @@ def test_a_swap_that_does_not_report_a_server_is_warned_by_key(tmp_path: Path) -
     assert AUDITOR not in flagged[0], flagged
 
 
+def _two_keys_out_of_sorted_order() -> tuple[str, str]:
+    """(먼저, 나중) — 러너처럼 하나씩 집합에 넣었을 때 이 프로세스에서 순회 순서가 정렬과 어긋나는
+    키 둘. 문자열 해시는 프로세스마다 달라 고정 이름이면 정렬 단언이 우연히 맞을 수 있다."""
+    for n in range(1000):
+        first, second = f"served-z{n}", f"served-a{n}"
+        unreported: set[str] = set()
+        unreported.update([first])
+        unreported.update([second])
+        if list(unreported) != sorted(unreported):
+            return first, second
+    raise AssertionError("정렬과 어긋나는 집합 순서를 못 찾았다")
+
+
+def test_the_warning_names_each_key_exactly_in_sorted_order(tmp_path: Path) -> None:
+    """경고는 보고 없는 키를 **정확히**·**정렬해** 부른다.
+
+    - 판정은 `server.<key>.`의 끝 점까지다 — 이 키로 시작하는 다른 키(`<key>-x`)의 보고를 이
+      키의 보고로 읽지 않는다. 지금 registry에는 그런 키 쌍이 없어 판정 규칙의 핀이다.
+    - 순서는 집합 순서가 아니라 정렬이다 — 같은 결여가 run마다 같은 줄로 나온다. 키 이름은 이
+      프로세스의 집합 순서가 정렬과 어긋나게 고른다(`_two_keys_out_of_sorted_order`).
+    """
+    scout, critic = _two_keys_out_of_sorted_order()
+    resident = f"{scout}-x"
+    config = _config(
+        resident=("auditor",), swappable=("scout", "critic"),
+        keys={"scout": scout, "auditor": resident, "critic": critic},
+    )  # fmt: skip
+    rig = _ReportsOnly(config, _inner_models(tmp_path), reported={resident})
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    flagged = [warning for warning in result.warnings if "기동 인자" in warning]
+    assert len(flagged) == 1, result.warnings
+    assert str(sorted([scout, critic])) in flagged[0], flagged
+
+
 def test_a_swap_that_reports_every_server_raises_no_such_warning(tmp_path: Path) -> None:
     """위의 짝 — 올린 키마다 `server.<key>.*`가 무엇이든 하나 있으면 보고한 것이다."""
     config = _config()
