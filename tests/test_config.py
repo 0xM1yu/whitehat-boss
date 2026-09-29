@@ -424,12 +424,41 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v3(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 근거 본문 배선과 함께
-    `v3`를 고른다(#256 항목 4). 되돌리면(registry를 `v1`로) 이 핀이 빨개진다 — 오염 확인 ②."""
+def test_the_canonical_auditor_selects_prompt_v4(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v4`를 고른다(#328 머지 뒤
+    재배선 — 2026-09-29 v1→v3(#256 항목 4)의 다음 판). 되돌리면 이 핀이 빨개진다."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v3"
+    assert config.model_for("auditor").prompt_template_version == "v4"
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) -> None:
+    """위 핀은 철자다. 막으려는 성질은 **registry가 고른 Auditor 판이 근거 본문을 받는다**이다 —
+    `_CONTENT_AWARE_VERSIONS`에 없는 판을 고르면 FACTS에 id·kind·ok만 실려 툴 로그 본문이 조용히
+    빠진다(#328 리뷰 MEDIUM-1). 판을 바꾸면서 그 집합을 안 고치면 여기서 빨개진다."""
+    config = load_config(profile)
+
+    version = config.model_for("auditor").prompt_template_version
+    assert version in auditor_node._CONTENT_AWARE_VERSIONS
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> None:
+    """`meta.yaml` 머리 주석의 「미배선(disk-only)」은 **어느 registry 엔트리도 이 판을 안 고른다**는
+    현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다(CLAUDE.md §2.3) — 이
+    검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다."""
+    config = load_config(profile)
+
+    stale = [
+        f"{role}/{version}"
+        for role in PROMPTED_ROLES
+        if role in config.profile.roles
+        for version in [config.model_for(role).prompt_template_version]
+        if "미배선(disk-only)"
+        in (PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8")
+    ]
+    assert stale == []
 
 
 def test_every_prompted_role_is_a_real_role() -> None:
