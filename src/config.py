@@ -254,6 +254,9 @@ class ModelEntry(HarnessModel):
     #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 @danielcho02
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
     #   모델은 여전히 비어 있다.
+    # ⏵ 2026-09-29 — `request_timeout_s`는 Scout·Critic 실서빙 키 셋(`seccoderx-8b`·`qwen3-14b`·
+    #   `gpt-oss-20b`)도 선언한다(#261 — 계산값). `sampling`·`thinking_token_budget`은 여전히
+    #   Auditor뿐이고, `chat_template_kwargs`는 어느 모델도 안 쓴다.
     # - `sampling` — 프로필 공통 `Sampling`(temperature·top_p)을 **이 모델에서 덮고** top_k 등을
     #   더한다. 좌석마다 모델 카드 권장이 갈리기 때문이다(Qwen 계열 「DO NOT use greedy」).
     # - `chat_template_kwargs` — 템플릿 인자(`enable_thinking` 등). 서버 기본 kwargs로 끄지 않고
@@ -339,7 +342,9 @@ class SwapPolicy(HarnessModel):
 
     **아래 넷은 ADR 0009의 불변식이 아니다.** ADR이 「스키마가 강제」로 이름 붙인 것은
     둘뿐이고(`swap`이 있으면 `mode == per_stage` · `resident ∪ swappable ⊆ roles`),
-    아래는 이 스키마가 **더 얹는 것**이다. 얹는 이유는 바로 위 문단이 *"아무 역할도 안
+    아래는 이 스키마가 **더 얹는 것**이다. 셋째 불변식(실서빙 역할은 전부 목록에 있다)은
+    registry를 봐야 해서 스키마가 아니라 `load_config`가 강제한다
+    (`_check_swap_lists_every_served_role`). 얹는 이유는 바로 위 문단이 *"아무 역할도 안
     부르는 상태"*를 피하려고 기본값을 거절해 놓고 **정작 그 상태를 막지 않았기**
     때문이다 — `resident: []` + `swappable: []`가 통과했다. 사유를 적고 강제하지 않으면
     다음 사람은 그 사유를 강제되는 것으로 읽는다.
@@ -371,7 +376,7 @@ class SwapPolicy(HarnessModel):
 
     @model_validator(mode="after")
     def _lists_are_disjoint_role_sets_that_swap_someone(self) -> "SwapPolicy":
-        """위 docstring의 넷. **ADR 0009의 두 불변식과 별개다.**"""
+        """위 docstring의 넷. **ADR 0009의 불변식과 별개다.**"""
         for field_name, names in (("resident", self.resident), ("swappable", self.swappable)):
             repeated = sorted({name for name in names if names.count(name) > 1})
             if repeated:
@@ -901,6 +906,35 @@ def _check_family_split(name: str, profile: ProfileEntry, models: dict[str, Mode
         )
 
 
+def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
+    """교대를 선언한 프로필은 실서빙 역할을 **전부** `resident ∪ swappable`에 적는다 (ADR 0009
+    불변식 3 — 「2026-09-29 제안」 절 1).
+
+    `⊆ roles`(불변식 2)는 한 방향뿐이다. 교대는 목록에 적힌 역할의 서버만 띄운다
+    (`runner._swap_for`) — 목록 밖의 실서빙 역할은 같은 키를 쓰는 다른 역할이 그때 떠 있을 때만
+    서버를 만나고, 아니면 그 호출이 서버 없이 나가 run이 틀린 사유(`model_gateway_unavailable`)로
+    멈춘다. 상주가 없으면 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상 「자기 run의 서버
+    전부 내림」으로 — 불린다. **같은 키가 다른 역할(상주 등) 덕에 떠 있어 당장은 도는 배선도
+    거부한다** — 그 역할의 서버를 다른 역할의 선언에 기대게 두지 않는 엄격한 규칙이다. 그래서
+    검색 역할이 실서빙인 hybrid 프로필은 교대를 선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가,
+    빼면 이 검사가 거부한다.
+
+    `ProfileEntry`가 아니라 여기 있는 것은 실서빙 판정(`served_models()`)이 registry의
+    `is_fake`를 봐야 해서다 — `_check_family_split`과 같은 자리다.
+    """
+    swap = config.swap
+    if swap is None:
+        return
+    unlisted = sorted(set(config.served_models()) - {*swap.resident, *swap.swappable})
+    if unlisted:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}의 execution.swap이 실서빙 역할 {unlisted}을 "
+            "안 적었다 — 교대는 목록에 적힌 역할의 서버만 띄우므로 그 역할은 같은 키를 쓰는 다른 "
+            "역할이 그때 떠 있을 때만 서버를 만난다. 전부 적거나(검색 역할은 못 적는다 — ADR 0012 "
+            "결정 3 뒤) 교대를 선언하지 않는다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -933,7 +967,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     if not isinstance(seed, int):
         raise ConfigError("budgets.yaml에 정수 seed 항목이 없다")
 
-    return HarnessConfig(
+    config = HarnessConfig(
         profile_name=profile,
         profile=entry,
         models=models,
@@ -942,6 +976,8 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         sampling=Sampling.model_validate(_require(budgets_raw, "sampling", "budgets.yaml")),
         seed=seed,
     )
+    _check_swap_lists_every_served_role(config)
+    return config
 
 
 # --- 장비 파일 (ADR 0012 Phase 6.5 — 단계 단위 콜드 재기동 교대) -----------------------

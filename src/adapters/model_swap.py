@@ -16,8 +16,13 @@
 
 - **argv = `command + keys`.** 끝나면 **정확히 `keys`만** 떠 있어야 한다 — `keys`에 없는 자기 서버는
   내리고, 없는 것은 띄운다. 이미 떠 있는 키(상주 역할)를 다시 띄울지는 명령이 정한다.
-- **인자 없음 = 자기 run의 서버를 전부 내린다.** 러너가 run 끝에 성공·실패와 무관하게 부른다.
-  떠 있는 것이 없으면 아무것도 안 하고 0으로 끝난다.
+- **인자 없음 = 자기 run의 서버를 전부 내린다.** 러너가 run 끝에 성공·실패와 무관하게 부른다 —
+  TERM·HUP로 끝나는 run도 부른다(`cli.run`이 `SystemExit`으로 바꾼다). KILL·OOM으로 죽은 run은 못
+  부른다 — 그 뒤처리는 명령 쪽(감시자 등)이 맡는다. 떠 있는 것이 없으면 아무것도 안 하고 0으로
+  끝난다. ⚠ 신호로 끝난 run의 이 호출은 TERM·HUP를 **무시한 채** 시작한다 — 하네스가 첫 신호 뒤
+  두 신호를 `SIG_IGN`으로 두고(내림을 끊지 않게) exec는 무시를 물려준다. 명령이 띄우는 자식도
+  물려받아 그 자식에 보낸 TERM·HUP가 안 먹을 수 있다(WSL 실측: `sleep`은 `kill -TERM`을
+  무시했고, GNU `timeout` 9.4는 제 자식을 TERM으로 끝냈다).
 - **자기 run의 서버만 건드린다.** 소유는 `HARNESS_RUN_ID`로 가린다 — 남의 프로세스는 내리지 않는다.
 - **환경** — `HARNESS_PYTHON`(하네스 인터프리터 — 장비 파일 `config/serving/$HARNESS_DEVICE.yaml`과
   registry를 같은 파이썬으로 읽는다) · `SWAP_DEADLINE_S`(= `SwapPolicy.settle_timeout_s`, 교대 한
@@ -34,7 +39,9 @@
   JSON이 아니거나 못 읽으면 보고가 없는 것으로 읽는다. 그 앞 줄은 사람용 로그로 자유다 — 실패하면
   하네스가 stdout·stderr 꼬리를 오류 상세에 싣는다. 권하는 필드: `ok`·`models`·서버별
   `action`·`util`·`max_num_seqs`·`max_model_len`·`args`·`revision`·`load_s`·`ready_s`·`attempts` ·
-  `memavail_before`·`memavail_after`·`vllm_version`·`error`.
+  `memavail_before`·`memavail_after`·`vllm_version`·`error`. 서버의 기동 조건은 이 보고로만 기록에
+  남는다 — 올린 키의 `server.<key>.*`가 하나도 없으면 교대가 성공해도 러너가 run 경고로 그 키를
+  부른다.
 - ⚠ **띄운 vLLM의 stdout·stderr는 로그 파일로 돌린다**(기동마다 새 파일). 서버가 명령의 파이프를
   물려받으면 `subprocess.run`이 EOF를 못 받아 **서버가 죽을 때까지 안 돌아온다.**
 
@@ -165,9 +172,12 @@ def _teardown(
 ) -> str:
     """내림 명령을 한 번 부르고 결과를 한 마디로. 원래 실패를 가리지 않도록 예외를 안 올린다.
 
-    ⚠ **원 호출과 같은 상한**(마감 + `_REPORT_GRACE_S`)이라 마감을 넘긴 교대는 최악 그 두 배를
-    기다린다. 내림 전용으로 짧게 자르지 않는 것은 그 값을 잰 적이 없어서다 — 지어낸 상한으로
-    내림을 도중에 죽이면 서버가 남고, 그쪽이 기다리는 것보다 나쁘다.
+    ⚠ **원 호출과 같은 상한**(마감 + `_REPORT_GRACE_S`)이다. 교대 콜러블 한 번은 최악 그 두 배를
+    기다리고, 그 실패로 run이 멈추면 러너의 run 끝 내림(키 없이 한 번 더)이 또 두 배를 쓴다 —
+    명령이 부를 때마다 마감을 넘기면 run은 명령을 네 번 부르고(교대 · 그 내림 · run 끝 내림 · 그
+    내림) 최악 **네 배**를 기다린다. 계약대로 마감에 스스로 끝내는 명령이면 이 함수까지 오지 않아
+    교대와 run 끝 내림 두 번이다. 내림 전용으로 짧게 자르지 않는 것은 그 값을 잰 적이 없어서다 —
+    지어낸 상한으로 내림을 도중에 죽이면 서버가 남고, 그쪽이 기다리는 것보다 나쁘다.
     """
     try:
         return f"exit {run(list(command)).returncode}"

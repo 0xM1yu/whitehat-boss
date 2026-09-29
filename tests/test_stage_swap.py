@@ -62,7 +62,7 @@ class _Rig:
         models: object,
         *,
         fail_at: int | None = None,
-        error: Exception | None = None,
+        error: BaseException | None = None,
     ) -> None:
         self.config = config
         self._models = models
@@ -311,6 +311,177 @@ def test_a_failed_teardown_still_writes_the_manifest_of_a_finished_run(
     assert any(
         "run 끝 모델 내림" in warning and str(error) in warning for warning in result.warnings
     )
+
+
+def _swaps_at_heartbeat_stop(
+    monkeypatch: pytest.MonkeyPatch, rig: _Rig
+) -> list[list[tuple[str, ...]]]:
+    """`Heartbeat.stop`이 불릴 때마다 그때까지의 교대 기록을 남긴다."""
+    seen: list[list[tuple[str, ...]]] = []
+    real_stop = runner.Heartbeat.stop
+
+    def stop(self: runner.Heartbeat) -> None:
+        seen.append(list(rig.swaps))
+        real_stop(self)
+
+    monkeypatch.setattr(runner.Heartbeat, "stop", stop)
+    return seen
+
+
+def test_the_heartbeat_stops_only_after_the_run_end_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run 끝 내림이 도는 동안 heartbeat가 산다 — 멈추는 것은 내림 뒤다.
+
+    내림은 서버마다 수십 초가 걸릴 수 있는데(명령이 정한다), heartbeat가 그 전에 멈추면 외부
+    감시자(`tools/monitor.py`)는 heartbeat가 `alive_grace × interval_s`를 넘어 낡았고 매니페스트가
+    아직 없다는 것만 보고 살아 있는 run을 `DEAD`로 끝낸다.
+    """
+    config = _config()
+    rig = _Rig(config, _inner_models(tmp_path))
+    swaps_at_stop = _swaps_at_heartbeat_stop(monkeypatch, rig)
+
+    _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps[-1] == ()
+    assert swaps_at_stop == [rig.swaps], "heartbeat가 run 끝 내림 전에 멈췄다"
+
+
+# 인터럽트 — Ctrl-C(`KeyboardInterrupt`)와 TERM·HUP(`cli._terminate_as_exit`가 올리는 `SystemExit`).
+_INTERRUPTS = pytest.mark.parametrize(
+    "make_interrupt", [KeyboardInterrupt, lambda: SystemExit(143)], ids=["ctrl-c", "term"]
+)
+
+
+@_INTERRUPTS
+def test_an_interrupt_in_the_run_still_tears_down_then_stops_the_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_interrupt: Callable[[], BaseException]
+) -> None:
+    """인터럽트가 run을 지나가도 run 끝 내림이 돌고 heartbeat는 그 뒤에 **한 번** 멈춘다 —
+    인터럽트는 그대로 올라간다. 신호 경로(`cli._terminate_as_exit`)가 믿는 보증을 실제
+    `run_pipeline`에 건다."""
+    config = _config()
+    rig = _Rig(config, _inner_models(tmp_path))
+    swaps_at_stop = _swaps_at_heartbeat_stop(monkeypatch, rig)
+    interrupt = make_interrupt()
+
+    def interrupted(*_args: object, **_kwargs: object) -> None:
+        raise interrupt
+
+    monkeypatch.setattr(runner, "_analyze", interrupted)
+
+    with pytest.raises(type(interrupt)):
+        _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [()], "인터럽트가 지나간 run이 run 끝 내림을 안 불렀다"
+    assert swaps_at_stop == [[()]], "heartbeat가 내림 뒤에 한 번 멈추지 않았다"
+
+
+@_INTERRUPTS
+def test_an_interrupt_during_the_teardown_still_stops_the_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_interrupt: Callable[[], BaseException]
+) -> None:
+    """내림 도중에 인터럽트가 와도 heartbeat는 멈춘다(안쪽 `finally`) — 인터럽트는 그대로
+    올라간다."""
+    config = _config()
+    interrupt = make_interrupt()
+    rig = _Rig(config, _inner_models(tmp_path), fail_at=4, error=interrupt)  # 4번째 = run 끝 내림
+    swaps_at_stop = _swaps_at_heartbeat_stop(monkeypatch, rig)
+
+    with pytest.raises(type(interrupt)):
+        _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [(SCOUT,), (AUDITOR,), (CRITIC,), ()]
+    assert swaps_at_stop == [rig.swaps], "내림 도중 인터럽트에 heartbeat가 안 멈췄다"
+
+
+# --- 기록: 교대 명령이 올린 서버의 기동 조건을 보고했는가 -----------------------------------
+
+
+class _ReportsOnly(_Rig):
+    """교대 명령이 `reported`에 든 키의 서버만 보고하는 기록기(`server.<key>.action`만)."""
+
+    def __init__(self, config: HarnessConfig, models: object, *, reported: set[str]) -> None:
+        super().__init__(config, models)
+        self._reported = reported
+
+    def swap_to(self, keys: tuple[str, ...]) -> dict[str, object]:
+        report = super().swap_to(keys)
+        servers = {f"server.{key}.action": "keep" for key in keys if key in self._reported}
+        return {**report, **servers}
+
+
+def _inner_models(tmp_path: Path) -> object:
+    return build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+    ).models  # fmt: skip
+
+
+def test_a_swap_that_does_not_report_a_server_is_warned_by_key(tmp_path: Path) -> None:
+    """올린 키의 `server.<key>.*` 보고가 하나도 없으면 run 경고가 그 키를 부른다.
+
+    PROJECT-CONTEXT §5 「모델 배선」 행이 교대 기록에 실제 기동 인자를 요구하는데, 하네스는 그 값을
+    교대 명령의 보고로만 받는다. 보고가 없어도 교대는 `ok`라 — 조용히 지나가면 기록이 이 run의
+    기동 조건을 지시하지 못하는데 아무도 모른다. **판정은 키별이다** — 상주 키의 `action`만 보고한
+    교대가 같이 올린 다른 키까지 보고한 것으로 읽히면 안 된다.
+    """
+    config = _config(resident=("auditor",), swappable=("scout", "critic"))
+    rig = _ReportsOnly(config, _inner_models(tmp_path), reported={AUDITOR})
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [(AUDITOR, SCOUT), (AUDITOR,), (AUDITOR, CRITIC), ()]
+    flagged = [warning for warning in result.warnings if "기동 인자" in warning]
+    assert len(flagged) == 1, f"보고 없는 교대가 경고 없이 지나갔다: {list(result.warnings)}"
+    assert SCOUT in flagged[0] and CRITIC in flagged[0], flagged
+    assert AUDITOR not in flagged[0], flagged
+
+
+def _two_keys_out_of_sorted_order() -> tuple[str, str]:
+    """(먼저, 나중) — 러너처럼 하나씩 집합에 넣었을 때 이 프로세스에서 순회 순서가 정렬과 어긋나는
+    키 둘. 문자열 해시는 프로세스마다 달라 고정 이름이면 정렬 단언이 우연히 맞을 수 있다."""
+    for n in range(1000):
+        first, second = f"served-z{n}", f"served-a{n}"
+        unreported: set[str] = set()
+        unreported.update([first])
+        unreported.update([second])
+        if list(unreported) != sorted(unreported):
+            return first, second
+    raise AssertionError("정렬과 어긋나는 집합 순서를 못 찾았다")
+
+
+def test_the_warning_names_each_key_exactly_in_sorted_order(tmp_path: Path) -> None:
+    """경고는 보고 없는 키를 **정확히**·**정렬해** 부른다.
+
+    - 판정은 `server.<key>.`의 끝 점까지다 — 이 키로 시작하는 다른 키(`<key>-x`)의 보고를 이
+      키의 보고로 읽지 않는다. 지금 registry에는 그런 키 쌍이 없어 판정 규칙의 핀이다.
+    - 순서는 집합 순서가 아니라 정렬이다 — 같은 결여가 run마다 같은 줄로 나온다. 키 이름은 이
+      프로세스의 집합 순서가 정렬과 어긋나게 고른다(`_two_keys_out_of_sorted_order`).
+    """
+    scout, critic = _two_keys_out_of_sorted_order()
+    resident = f"{scout}-x"
+    config = _config(
+        resident=("auditor",), swappable=("scout", "critic"),
+        keys={"scout": scout, "auditor": resident, "critic": critic},
+    )  # fmt: skip
+    rig = _ReportsOnly(config, _inner_models(tmp_path), reported={resident})
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    flagged = [warning for warning in result.warnings if "기동 인자" in warning]
+    assert len(flagged) == 1, result.warnings
+    assert str(sorted([scout, critic])) in flagged[0], flagged
+
+
+def test_a_swap_that_reports_every_server_raises_no_such_warning(tmp_path: Path) -> None:
+    """위의 짝 — 올린 키마다 `server.<key>.*`가 무엇이든 하나 있으면 보고한 것이다."""
+    config = _config()
+    rig = _ReportsOnly(config, _inner_models(tmp_path), reported={SCOUT, AUDITOR, CRITIC})
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    assert not [warning for warning in result.warnings if "기동 인자" in warning], result.warnings
 
 
 # --- 교대 콜러블 없이 모델에 닿는 run ---------------------------------------------------

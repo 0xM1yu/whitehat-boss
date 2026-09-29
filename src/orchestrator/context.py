@@ -56,6 +56,15 @@ def _default_monotonic_ms() -> int:
     return int(perf_counter() * 1000)
 
 
+def _trace_scalar(value: object) -> str:
+    """발급값 필드를 trace 값(스칼라)으로 — ID 리스트(`missing_evidence`)는 쉼표로 잇는다.
+
+    ⚠ 쉼표가 든 ID는 이어 붙인 값에서 경계가 안 갈린다 — `Identifier`는 길이만 제약한다
+    (`src/schemas/common.py`). 필드가 달랐다는 사실(`fields`)은 그래도 정확하다.
+    """
+    return ",".join(value) if isinstance(value, list) else str(value)
+
+
 def _unwired_read_source(_target: Location) -> str:
     """`read_source`가 배선되지 않은 채 호출됐다. 빈 문자열로 넘기지 않는다.
 
@@ -111,8 +120,9 @@ class RunContext:
     # `SOURCE`가 여기서 온다. Retriever의 `target_function`과 **같은 함수**다(`build_deps`가 둘에
     # 같은 조회를 넣는다) — `read_source`가 Retriever와 같아야 하는 것과 같은 이유다.
     read_slice: Callable[[str], str] = field(default=_unwired_read_slice)
-    # evidence payload(`Evidence.payload_ref`)의 원문 로그를 읽는다. Critic이 근거 본문을
-    # 받으려면 이 리더가 필요하다(#237 HIGH-1). **미배선 기본값이 예외가 아니라 `None`**인
+    # evidence payload(`Evidence.payload_ref`)의 원문 로그를 읽는다. Critic·Auditor의 content-aware
+    # 버전(각 노드의 `_CONTENT_AWARE_VERSIONS`)이 근거 본문을 받으려면 이 리더가 필요하다(#237
+    # HIGH-1 · Auditor는 2026-09-29부터). **미배선 기본값이 예외가 아니라 `None`**인
     # 것은 의도다 — `symbols_for`와 같은 성격으로, payload 파일이 없는 정상 상태(`dev_fake`는
     # 로그 파일을 안 쓴다)가 실제로 있고, 그때는 근거 본문 없이 metadata만으로 진행한다.
     # 배선은 factory/cli가 artifacts_root로 만든 리더를 넣는다.
@@ -151,6 +161,10 @@ class RunContext:
     # 것이다 — `resolve_requests`와 같은 자리. `None`이면 이 run은 교대하지 않는다. 부르는 곳은
     # 러너의 `_swap_for`·run 끝 내림뿐이고 노드는 이것을 쓰지 않는다.
     swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None = None
+    # 교대가 올렸는데 교대 명령이 그 서버를 하나도 보고하지 않은(`server.<key>.*`가 없는) model key.
+    # `gpu_unmeasured_roles`와 같은 자리다 — 러너(`_swap`)가 모으고 `run_pipeline`이 run 경고로
+    # 올린다.
+    swap_unreported: set[str] = field(default_factory=set)
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
 
@@ -364,6 +378,56 @@ class RunContext:
             )
             result = result.model_copy(update={"value": tagged})
         return result
+
+    def stamp_issued(
+        self,
+        value: SchemaT,
+        issued: Mapping[str, object],
+        *,
+        stage: Stage,
+        subject_kind: str,
+        subject_id: str,
+    ) -> SchemaT:
+        """**하네스가 발급한 값을 모델 출력 위에 도장 찍는다** (이슈 #279).
+
+        논거는 `call_model`의 `produced_by`·`scout_member` 도장과 같다 — 그 값의 원천이 모델이
+        아니라 하네스다. ID(`candidate_id`·`finding_id`)는 노드가 `ids.next()`로 발급해 사실
+        블록에 싣고, `run_id`·`artifact_id`도 사실 블록의 값이며, 생성 시점 `state`는 전이 표의
+        생성 행(C-1 `candidate`·F-1 `hypothesized`)이 정한다. 모델은 그것을 베낄 뿐인데 스키마가
+        그 필드를 요구하니 구조화 출력이 채운다. 안 베끼면 두 갈래로 샌다:
+
+        - `state` — 스키마가 받는 값(`triaged`·`queued` 등)이라 파싱은 통과하고, `create()`의
+          생성 행 조회에서 `IllegalTransition`이 난다. 그 예외를 잡는 곳이 없어 run이
+          매니페스트 없이 끝난다.
+        - ID·`run_id` — 저장소 `put()`이 `(kind, obj_id)` upsert라 남의 ID면 **예외 없이** 그
+          행을 덮는다. `transition`의 `subject_id`도 모델 값을 따라간다.
+
+        그래서 맞아 오기를 기대하지 않고 **저장 전에 매번 덮는다.** 부르는 곳은 둘이다 —
+        Scout의 `_call_hop`(v1·v2·v3, hop0·hop k 전부)과 Auditor의 `run`. Critic은 처음부터
+        ID를 모델 스키마에서 뺐다(`DecisionDraft`).
+
+        **달랐던 필드는 덮기 전에 `issued_override`로 남긴다** — 모델이 사실 블록을 안 따랐다는
+        관측이고, 덮고 나면 그 사실이 산출물 어디에도 없다. 모델이 쓴 원래 값을 `written.<필드>`로
+        싣는다 — `TraceValue`가 스칼라라 리스트는 `,`로 잇는다(쉼표가 든 ID는 경계가 안 갈린다 —
+        `_trace_scalar`). 같으면 이벤트가 없다.
+
+        **재검증으로 덮는다 — `model_copy(update=)`가 아니다.** `state`를 덮으므로 위 `produced_by`
+        블록이 적은 경계에 걸린다 — 그 호출은 `Finding._promoted_states_need_backing`을 우회한다.
+        `HarnessModel.transition()`과 같은 식이되 반환 타입(`SchemaT`)을 살리려고 여기서 직접 쓴다.
+
+        **`location`은 덮지 않는다** — 발급값이 아니라 모델이 사실 블록의 대상을 옮겨 적는 값이다.
+        """
+        differed = [name for name, want in issued.items() if getattr(value, name) != want]
+        if differed:
+            self.trace.emit(
+                EventKind.ISSUED_OVERRIDE,
+                stage=stage,
+                subject_kind=subject_kind,
+                subject_id=subject_id,
+                fields=",".join(differed),
+                **{f"written.{name}": _trace_scalar(getattr(value, name)) for name in differed},
+            )
+        return type(value).model_validate({**value.model_dump(), **issued})
 
     def _record_prompt(
         self,
