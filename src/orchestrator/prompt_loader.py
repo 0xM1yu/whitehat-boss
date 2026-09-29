@@ -235,8 +235,10 @@ def build_facts(
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
     실제 모델도 같은 블록을 읽으므로 Fake 전용 우회로가 아니다. `ids`는 노드가 미리
-    발급한 식별자이고 모델은 그 값을 그대로 출력에 넣으라고 지시받는다. 안 넣어도 노드가
-    저장 전에 발급값으로 덮는다(`RunContext.stamp_issued`, 이슈 #279).
+    발급한 식별자다. Scout·Auditor는 그 값을 그대로 출력에 넣으라고 지시받고, 안 넣어도 노드가
+    저장 전에 발급값으로 덮는다(`RunContext.stamp_issued`, 이슈 #279) — 단 `missing_id`는
+    `missing_evidence`가 비어 있지 않을 때만 그 하나로 정규화하고 비어 있으면 그대로 둔다.
+    Critic은 ID를 출력하지 않고 `DecisionDraft.to_decision()`이 발급값으로 조립한다.
 
     `slice_criterion`은 준 경우에만 키가 생긴다(`FACT_KEYS` 주석) — `None`을 `null`로 싣지
     않는다. 실으면 슬라이스 없는 프롬프트까지 글자가 바뀐다.
