@@ -622,9 +622,19 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
       val points = ujson.read({encoded}).arr.map(p => (p(0).str, p(1).num.toInt)).toSet
       def filename(n: nodes.AstNode): String = n.location.filename.replace('\\\\', '/')
         .stripPrefix({literal(repo.rstrip("/") + "/")}).stripPrefix("./")
-      val relevantMethods = cpg.method.internal.filter(m => points.exists {{ case (f, line) =>
-        filename(m) == f && m.lineNumber.exists(_ <= line) &&
-          m.lineNumberEnd.forall(_ >= line)
+      // A method is relevant when some point of its file lies in [lineNumber, lineNumberEnd].
+      // Checking every method against every point (and rebuilding filename per pair) was most of
+      // the context time. Same predicate: group points by file once, compute each method's
+      // filename once, and test only the smallest point line >= its start.
+      val pointLines: Map[String, Array[Int]] = points.groupBy(_._1).map {{ case (f, ps) =>
+        f -> ps.toArray.map(_._2).sorted }}
+      val relevantMethods = cpg.method.internal.filter(m => m.lineNumber.exists {{ lineStart =>
+        val start: Int = lineStart
+        pointLines.get(filename(m)).exists {{ lines =>
+          val found = java.util.Arrays.binarySearch(lines, start)
+          val first = if (found >= 0) found else -found - 1
+          first < lines.length && m.lineNumberEnd.forall(_ >= lines(first))
+        }}
       }}).l
       mark("relevant_methods")
       val all = relevantMethods.flatMap(_.ast.l).filter(sourceNode).distinct
