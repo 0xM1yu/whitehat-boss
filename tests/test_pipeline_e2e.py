@@ -1021,8 +1021,8 @@ def _refuse_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
 
     실서빙 프로필을 겨눈 첫 `run` 테스트다(처음엔 `b1_single` — 2026-09-24에 지웠고 지금은
     `harness_pool`). 게이트가 회귀해 run이 실제로 시작되면 로스터 엔드포인트로 나가고
-    `_TIMEOUT_S`(300초)까지 매달릴 수 있다 — CI에서 "느리다"로 보이지 "게이트가 사라졌다"로
-    안 보인다. 같은 그물을
+    요청 타임아웃(모델이 선언한 `request_timeout_s`, 선언이 없으면 `_TIMEOUT_S`)까지 매달릴 수
+    있다 — CI에서 "느리다"로 보이지 "게이트가 사라졌다"로 안 보인다. 같은 그물을
     `test_doctor_never_opens_a_socket`이 이미 쓴다.
     """
 
