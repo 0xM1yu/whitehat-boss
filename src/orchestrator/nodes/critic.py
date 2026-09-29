@@ -113,8 +113,8 @@ def _ask_model(
 ) -> Decision:
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
-    # content-aware 버전(v3)일 때만 payload 본문을 읽어 싣는다. 그 외 버전은 본문 없이
-    # 종전과 동일(#237 HIGH-1: 배선은 v3 경로에만, v1은 바이트 동일).
+    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽어 싣는다.
+    # 그 외 버전은 본문 없이 종전과 동일(#237 HIGH-1 — v1은 바이트 동일).
     bodies = (
         evidence_summaries(evidences, ctx.read_payload)
         if version in _CONTENT_AWARE_VERSIONS
