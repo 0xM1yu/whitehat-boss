@@ -28,4 +28,4 @@
 role: critic
 version: v3
 output_schema: DecisionDraft
-description: 주장·경로·근거(있으면 본문 요약까지)를 받아 반박하는 7단계 비판. 근거 없는 `rebut`을 금지하고 `need_evidence`로 보낸다
+description: 주장·경로·근거(있으면 머리줄을 뺀 도구 로그의 결정론적 절단까지)를 받아 반박하는 7단계 비판. 근거 없는 `rebut`을 금지하고 `need_evidence`로 보낸다

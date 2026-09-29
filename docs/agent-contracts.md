@@ -128,6 +128,14 @@ agent:
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
+  Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
+  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
+  머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
+  **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
+  요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
+  선택지 (a)로 남는다.
+  ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
+  이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - 분석 축: source→sink 경로, memory lifetime/ownership, boundary check, 정수 연산, config·환경 조건 영향
 - 규칙: 코드에서 확인 불가한 사실은 주장하지 말고 `MissingEvidence`로 요청한다. "확인 불가"가 유효한 출력이다.
@@ -135,7 +143,7 @@ agent:
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 요약까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다** — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다** — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
 - 출력: `Decision`
 - **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
 - **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
@@ -222,11 +230,10 @@ agent:
   "candidate_id": "cand_0001",
   "state": "hypothesized",
   "path": [
-    {"step": "source", "symbol": "recv_request", "note": "네트워크 입력"},
     {"step": "propagate", "symbol": "parse_header", "note": "len이 검증 없이 전달"},
     {"step": "sink", "symbol": "memcpy", "note": "고정 크기 스택 버퍼"}
   ],
-  "trigger_status": null,
+  "trigger_status": "reachability_unknown",
   "confidence": 0.6,
   "rca_draft": "…",
   "cwe": "CWE-787",
@@ -234,7 +241,7 @@ agent:
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v1"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v3"}
 }
 ```
 
@@ -258,6 +265,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 시키지 않는데 하네스는 그 디렉터리에서만 프롬프트를 읽는다
 > ([prompt_loader.py](../src/orchestrator/prompt_loader.py)). **그래서 이 필드는 해당 프롬프트가
 > 저장소에 들어오기 전까지 어느 run에서든 `null`이다** — 채움률 0을 "모델이 안 냈다"로 읽으면 안 된다.
+>
+> ⏵ **2026-09-29 — 이 블록은 쓰인 지 14분 뒤에 틀려졌다.** 블록은 `93b06e6`(2026-08-29 15:16)이고,
+> `52d9e82`(15:30)가 `prompts/auditor/v2`를 들이며 `trigger_status` 다섯 값(`no_signal` 포함)을 정의했다.
+> `prompts/auditor/v3`(#237, 2026-09-22)도 같다. 그래도 registry가 v1만 골라 run에서는 `null`이었다 —
+> **2026-09-29부터 registry의 Auditor(`qwen3.8-27b`)가 v3를 고른다.** 그 판으로 돈 run은 아직 없어
+> 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시도 그날 v3 계약에 맞췄다.
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
@@ -312,7 +325,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout": "v1", "auditor": "v1", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v3", "critic": "v1"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -404,6 +417,11 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > [2026-09-04 실서빙 run](experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md)은
 > **7단계에서 죽었고 그 보고서 자신이 "비교표에 못 들어간다"고 적는다.** 확인 방법은
 > `git grep -n "prompt_version" -- docs/` + 각 보고서의 조건·프로필 절이다.
+
+> ⏵ **2026-09-29 — Auditor가 v1 → v3로 바뀌었다**(`harness_pool`·`_hybrid`의 `qwen3.8-27b`, 근거 본문 배선과
+> 같은 변경). 이 규칙대로 **그 뒤 run의 Auditor 출력은 그 전 run과 직접 비교하지 않는다** — run의
+> `prompt_versions.auditor`가 가른다. ⚠ 규칙 5(고정 표본 회귀 측정 뒤 반영)와 [evaluation.md](evaluation.md) §2.3
+> 규칙 4(재측정)는 이 변경 전에 돌지 않았다 — 측정 없이 켰다. Critic은 v1 그대로다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
