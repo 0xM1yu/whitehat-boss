@@ -838,9 +838,6 @@ def run_pipeline(
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
     finally:
-        # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다.
-        if heartbeat is not None:
-            heartbeat.stop()
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
         # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
         # 교대 명령은 자기 run의 서버만 내리고 떠 있는 것이 없으면 아무것도 안 한다.
@@ -851,12 +848,20 @@ def run_pipeline(
         # `ok=false`를 trace에 먼저 남겼고, 그 밖의 예외면 이 경고가 유일한 흔적이다.
         # `BaseException`(인터럽트)은 잡지 않는다 — 그때는 원래 예외도 결과도 덮인다.
         try:
-            _swap(ctx, (), stage=None)
-        except Exception as exc:
-            warnings.append(
-                "run 끝 모델 내림이 예외로 끝났다 — 서버가 남았을 수 있다: "
-                f"{type(exc).__name__}: {exc}"
-            )
+            try:
+                _swap(ctx, (), stage=None)
+            except Exception as exc:
+                warnings.append(
+                    "run 끝 모델 내림이 예외로 끝났다 — 서버가 남았을 수 있다: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        finally:
+            # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다 — **내림
+            # 뒤에**. 내림이 도는 동안 heartbeat가 서 있으면 외부 감시자(`tools/monitor.py`)가
+            # 살아 있는 run을 `DEAD`로 끝낸다. 내림이 오래 멈추면 감시자는 그것을 stuck(살아
+            # 있는데 멈춤)으로 본다 — 죽음과 갈린다.
+            if heartbeat is not None:
+                heartbeat.stop()
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
