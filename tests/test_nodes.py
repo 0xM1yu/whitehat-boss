@@ -17,6 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.adapters.factory import build_deps
+from src.adapters.fake_model import _parse_context
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import load_config
 from src.interfaces.model_client import ChatTurn, ModelResult, Usage
@@ -846,12 +847,35 @@ def test_critic_includes_evidence_body_when_version_is_content_aware(
     assert "heap-buffer-overflow" in prompt.body  # 본문이 EVIDENCE·FACTS에 닿는다
 
 
-def test_critic_content_aware_versions_pins_v3() -> None:
+def test_critic_v4_wiring_includes_evidence_body(ctx: RunContext) -> None:
+    """#328 2차 HIGH: 실제 v4 선택이 payload 본문을 EVIDENCE·FACTS에 싣는다."""
+    key = ctx.config.model_key_for(Role.CRITIC.value)
+    models = {
+        **ctx.config.models,
+        "fake_critic_v4": ctx.config.models[key].transition(prompt_template_version="v4"),
+    }
+    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_v4"}
+    ctx.config = ctx.config.transition(
+        models=models,
+        profile=ctx.config.profile.transition(roles=roles),
+    )
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    prompt = ctx.models.last_for(Role.CRITIC)
+    assert "heap-buffer-overflow" in prompt.body
+
+
+def test_critic_content_aware_versions_pin_v3_and_v4() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
-    `_CONTENT_AWARE_VERSIONS`를 `frozenset()`으로 되돌리면 v3가 조용히 metadata만 받는데
+    `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert "v3" in critic._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4"} <= critic._CONTENT_AWARE_VERSIONS
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -932,6 +956,42 @@ def test_auditor_v3_renders_slice_source_and_evidence_body_through_the_node(
     assert facts["source"] == render
     bodies = [ev["body"] for ev in facts["evidence"] if "body" in ev]
     assert any("heap-buffer-overflow" in body for body in bodies)
+def test_critic_v4_prompt_is_content_conditional() -> None:
+    """#328 2차 HIGH: v4가 본문을 받으면서 metadata-only라고 단언하지 않는다."""
+    prefix = (PROMPTS_DIR / "critic" / "v4" / "prefix.md").read_text(encoding="utf-8")
+    assert "current wiring is metadata-only" not in prefix
+    assert "does not receive `evidence_summaries`" not in prefix
+    assert "contain no body text" in prefix
+
+
+@pytest.mark.parametrize(
+    ("role", "fields"),
+    [
+        pytest.param(
+            Role.AUDITOR,
+            {
+                "candidate": "candidate",
+                "target": "target",
+                "capsule_sections": "sections",
+                "source": "source",
+            },
+            id="auditor-v4",
+        ),
+        pytest.param(
+            Role.CRITIC,
+            {"claim": "claim", "path": "path", "evidence": "evidence"},
+            id="critic-v4",
+        ),
+    ],
+)
+def test_v4_fact_blocks_follow_the_fake_parser_contract(
+    role: Role, fields: dict[str, str]
+) -> None:
+    """#328 2차 MEDIUM-2: 렌더된 마지막 json 펜스를 Fake 경로가 실제로 읽는다."""
+    facts = build_facts(run_id="run_prompt_v4", ids={})
+    rendered = load_prompt(role, "v4").render(facts=facts, **fields)
+
+    assert _parse_context(rendered.body).run_id == "run_prompt_v4"
 
 
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:

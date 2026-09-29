@@ -1,3 +1,4 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
 role: auditor
 version: v4
 output_schema: Finding

@@ -10,8 +10,9 @@
 
 ### Evidence
 
-The block below is the only material that can ground a rebuttal. An ID or metadata-only line is
-not enough for rebut.
+Bounded body text in this block and the matching `FACTS.evidence` entry is the only evidence
+content that can ground a rebuttal. An ID or metadata-only line is not enough; when available,
+the body text is indented below its metadata line.
 
 {{EVIDENCE}}
 
@@ -19,4 +20,6 @@ not enough for rebut.
 
 The JSON below is the complete set of additional facts and identifiers available to you:
 
-    {{FACTS}}
+```json
+{{FACTS}}
+```
