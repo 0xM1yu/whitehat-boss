@@ -50,29 +50,44 @@ When the capsule omits a caller, guard, source-to-sink connection, or other mate
 decision, treat it as unavailable rather than as proof of absence; use
 `reachability_unknown` and the pre-issued missing-evidence ID when the contract permits it.
 
-## Wide original-source context contract
+## Original-source input contract
 
-`SOURCE` is the original-source context for the selected Joern slice, not a request to analyze
-the entire repository. The harness should construct it as follows:
+`SOURCE` is the exact original-source text supplied by the Auditor node. It is not a request to
+analyze the entire repository, and it is not the Joern slice rendering. `CANDIDATE` contains the
+Scout candidate ID, suspected CWE, and triage signals; it does **not** contain an `entry` field.
+The slice entry is used inside the runner to construct `TARGET` and `SOURCE`.
 
-- Put the complete original function body that encloses `CANDIDATE.entry` first.
-- After that, include complete original function bodies needed to inspect the slice's other
-  steps, callers, guards, aliases, lifetime, or arithmetic, in the source/call-flow order
-  available from the slice and facts.
-- For every function crossed by the selected slice, provide its complete original body rather
-  than only the Joern-selected line snippets, as long as it fits within the cap.
-- Preserve the original source text and function boundaries. Do not synthesize missing bodies,
-  splice unrelated code into a function, or treat a Joern line list as a replacement for source.
-- Keep the supplied source context within an approximately 20,000-token input budget. Prefer
-  candidate-relevant complete functions; omit lower-priority functions when the cap is reached.
-- A size cap or an omitted function means that material is unavailable, not that the omitted code
-  is safe, unreachable, or absent. Do not infer facts from the omission. Use
-  `reachability_unknown` and the pre-issued missing-evidence ID when the omitted material is
-  necessary to decide a source-to-sink or caller connection.
+When the run uses `--slices`, the runner applies ADR 0012 decision 1-b (wide original source):
 
-Treat the selected slice and its `entry` as the analysis anchor, but inspect the wider `SOURCE`
-context before deciding whether the candidate is connected, guarded, or reachable. Do not expand
-the analysis to unrelated vulnerabilities merely because additional functions are present.
+- It resolves the slice entry to the narrowest indexed symbol that encloses the entry line. That
+  complete original function is the Auditor capsule target and the first `SOURCE` block.
+- If no enclosing symbol is available, it uses a bounded window of 50 lines before and after the
+  entry line. This window is the first source context; it is not the whole file.
+- It then finds the narrowest indexed symbol containing each other slice line and appends each
+  complete original function body in `(file, start line)` order. The entry-covered lines are not
+  used to add a duplicate function.
+- After always including the anchor block, the runner appends a function only when the resulting
+  accumulated source stays within the 15,000-character cap. A function that would exceed that
+  cap is omitted as a whole. The anchor is always included even when it alone exceeds the cap.
+  Lines that no indexed symbol contains may also be absent.
+
+When the run does not use a slice, `SOURCE` is the original source returned for the expanded
+capsule target. In either case, preserve the supplied source text and function boundaries. Do not
+synthesize missing bodies, splice unrelated code into a function, or treat a line list as a
+replacement for source. The 15,000-character source-construction cap is not a guarantee of a
+fixed token count; do not convert it into an invented token budget.
+
+`TARGET` describes the expanded capsule target, while `CAPSULE_SECTIONS` and
+`FACTS.capsule_sections` contain retrieved capsule sections. Use those sections to locate callers,
+guards, types, configuration, or related symbols, but keep them separate from the original source
+in `SOURCE`/`FACTS.source`. A cap, omitted function, or uncovered line means that material is
+unavailable, not safe, unreachable, or absent. If the missing material is necessary to decide a
+source-to-sink or caller connection, use `reachability_unknown` and the pre-issued
+missing-evidence ID when the contract permits it.
+
+Inspect the wider supplied `SOURCE` before deciding whether the candidate is connected, guarded,
+or reachable. Do not expand the analysis to unrelated vulnerabilities merely because additional
+functions are present.
 
 ## FACTS is authoritative for identifiers
 
@@ -101,7 +116,8 @@ available.
 
 ### 1. Trace the candidate path in the provided source context
 
-Start at the candidate entry and inspect the complete enclosing function first. Then use the
+Start with the anchor represented by `TARGET`: inspect the complete enclosing function first, or
+the bounded ±50-line fallback when no indexed symbol encloses the slice entry. Then use the
 additional complete functions supplied in `SOURCE` to trace the relevant pointer, index, length,
 size, or arithmetic result in this order:
 
