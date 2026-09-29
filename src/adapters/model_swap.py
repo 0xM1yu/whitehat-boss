@@ -15,8 +15,10 @@
 
 - **argv = `command + keys`.** 끝나면 **정확히 `keys`만** 떠 있어야 한다 — `keys`에 없는 자기 서버는
   내리고, 없는 것은 띄운다. 이미 떠 있는 키(상주 역할)를 다시 띄울지는 명령이 정한다.
-- **인자 없음 = 자기 run의 서버를 전부 내린다.** 러너가 run 끝에 성공·실패와 무관하게 부른다.
-  떠 있는 것이 없으면 아무것도 안 하고 0으로 끝난다.
+- **인자 없음 = 자기 run의 서버를 전부 내린다.** 러너가 run 끝에 성공·실패와 무관하게 부른다 —
+  TERM·HUP로 끝나는 run도 부른다(`cli.run`이 `SystemExit`으로 바꾼다). KILL·OOM으로 죽은 run은 못
+  부른다 — 그 뒤처리는 명령 쪽(감시자 등)이 맡는다. 떠 있는 것이 없으면 아무것도 안 하고 0으로
+  끝난다.
 - **자기 run의 서버만 건드린다.** 소유는 `HARNESS_RUN_ID`로 가린다 — 남의 프로세스는 내리지 않는다.
 - **환경** — `HARNESS_PYTHON`(하네스 인터프리터 — 장비 파일 `config/serving/$HARNESS_DEVICE.yaml`과
   registry를 같은 파이썬으로 읽는다) · `SWAP_DEADLINE_S`(= `SwapPolicy.settle_timeout_s`, 교대 한
@@ -33,7 +35,9 @@
   JSON이 아니거나 못 읽으면 보고가 없는 것으로 읽는다. 그 앞 줄은 사람용 로그로 자유다 — 실패하면
   하네스가 stdout·stderr 꼬리를 오류 상세에 싣는다. 권하는 필드: `ok`·`models`·서버별
   `action`·`util`·`max_num_seqs`·`max_model_len`·`args`·`revision`·`load_s`·`ready_s`·`attempts` ·
-  `memavail_before`·`memavail_after`·`vllm_version`·`error`.
+  `memavail_before`·`memavail_after`·`vllm_version`·`error`. 서버의 기동 조건은 이 보고로만 기록에
+  남는다 — 올린 키의 `server.<key>.*`가 하나도 없으면 교대가 성공해도 러너가 run 경고로 그 키를
+  부른다.
 - ⚠ **띄운 vLLM의 stdout·stderr는 로그 파일로 돌린다**(기동마다 새 파일). 서버가 명령의 파이프를
   물려받으면 `subprocess.run`이 EOF를 못 받아 **서버가 죽을 때까지 안 돌아온다.**
 
