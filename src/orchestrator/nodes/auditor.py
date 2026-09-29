@@ -5,8 +5,11 @@
 
 **MissingEvidence 객체는 노드가 만든다.** 구조화 출력 스키마가 `Finding` 하나여서
 모델은 미리 발급된 `missing_id`만 참조하고, 실제 객체는 여기서 템플릿 문구로 만든다
-(S1 계약, C4에서 확정). `blocking=True`인 이유: 모델이 이 ID를 참조했다는 것은 "코드에서
-확인 불가"라고 판단했다는 뜻이고, 그것이 곧 Evidence Gate E2가 막아야 할 상태다
+(S1 계약, C4에서 확정). 모델이 `missing_evidence`를 비우지 않았으면 `run()`의 발급값 도장이
+어떤 ID를 썼든 발급 `missing_id` 하나로 정규화한다(이슈 #279) — 발급 ID와의 교집합만 남기면
+발급 안 된 ID만 쓴 「확인 불가」 요청이 사라져 E2가 열린다. `blocking=True`인 이유: 모델이
+`missing_evidence`에 무엇이든 적었다는 것은 "코드에서 확인 불가"라고 판단했다는 뜻이고, 그것이
+곧 Evidence Gate E2가 막아야 할 상태다
 (계획 D-h: E2의 "guard 부재"를 blocking MissingEvidence 부재로 환원).
 
 ## `callers` 사실은 캡슐에서 파생한다
@@ -87,6 +90,26 @@ def run(
             capsule=capsule,
             evidences=evidences,
             source=source,
+        )
+        # **발급값은 하네스가 도장 찍는다**(이슈 #279) — 논거·방식은 `RunContext.stamp_issued`.
+        # 초기 `state`가 F-1(`hypothesized`)이 아니면 `create()`가 `IllegalTransition`을 냈고,
+        # 남의 `finding_id`면 그 행을 예외 없이 덮었다. `missing_evidence`는 **비어 있지 않으면 발급
+        # `missing_id` 하나로 정규화한다** — 모델이 쓴 ID마다 해제 경로 없는 blocking이 생겼고
+        # (`_materialize_missing`), 발급 ID와의 교집합만 남기면 발급 안 된 ID만 쓴 「확인 불가」
+        # 요청이 MissingEvidence 0건이 되어 E2 blocking 축이 열린다. 비어 있으면 그대로 비어 있다
+        # (누락 없음).
+        finding = ctx.stamp_issued(
+            finding,
+            {
+                "finding_id": ids["finding_id"],
+                "run_id": ctx.run_id,
+                "candidate_id": ids["candidate_id"],
+                "state": FindingState.HYPOTHESIZED,
+                "missing_evidence": [ids["missing_id"]] if finding.missing_evidence else [],
+            },
+            stage=Stage.AUDITOR,
+            subject_kind="finding",
+            subject_id=ids["finding_id"],
         )
         ctx.create(finding, reason=ReasonCode.AUDITOR_HYPOTHESIZED, stage=Stage.AUDITOR)
         missings = _materialize_missing(ctx, finding)
