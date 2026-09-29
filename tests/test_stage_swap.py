@@ -313,6 +313,32 @@ def test_a_failed_teardown_still_writes_the_manifest_of_a_finished_run(
     )
 
 
+def test_the_heartbeat_stops_only_after_the_run_end_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run 끝 내림이 도는 동안 heartbeat가 산다 — 멈추는 것은 내림 뒤다.
+
+    내림은 서버마다 수십 초가 걸릴 수 있는데(명령이 정한다), heartbeat가 그 전에 멈추면 외부
+    감시자(`tools/monitor.py`)는 heartbeat가 `alive_grace × interval_s`를 넘어 낡았고 매니페스트가
+    아직 없다는 것만 보고 살아 있는 run을 `DEAD`로 끝낸다.
+    """
+    config = _config()
+    rig = _Rig(config, _inner_models(tmp_path))
+    swaps_at_stop: list[list[tuple[str, ...]]] = []
+    real_stop = runner.Heartbeat.stop
+
+    def stop(self: runner.Heartbeat) -> None:
+        swaps_at_stop.append(list(rig.swaps))
+        real_stop(self)
+
+    monkeypatch.setattr(runner.Heartbeat, "stop", stop)
+
+    _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps[-1] == ()
+    assert swaps_at_stop == [rig.swaps], "heartbeat가 run 끝 내림 전에 멈췄다"
+
+
 # --- 기록: 교대 명령이 올린 서버의 기동 조건을 보고했는가 -----------------------------------
 
 
