@@ -40,30 +40,18 @@ The current Critic call transforms the Auditor Finding as follows:
 - PATH contains only each path step and symbol. Auditor notes and rca_draft are intentionally not
   passed to the Critic.
 - EVIDENCE contains one line per selected Evidence with evidence_id, kind, ok/failed, and the
-  Evidence producer's source label.
-- FACTS contains run_id, ids.decision_id, ids.finding_id, and Evidence IDs/kind/ok.
+  Evidence producer's source label. When bounded evidence content is available, it appears as an
+  indented snippet immediately below that metadata line, with a truncation marker when applicable.
+- FACTS contains run_id, ids.decision_id, ids.finding_id, and Evidence IDs/kind/ok. An Evidence
+  entry also contains `body` and `truncated` when bounded content is available.
   The generic FACTS envelope also has artifact_id, target, capsule_sections, source, and callers;
   in this Critic call those are default-empty or null values, not additional evidence content.
 
-For this v4 template, the current wiring is metadata-only. In
-`src/orchestrator/nodes/critic.py`, evidence bodies are loaded only for versions in
-`_CONTENT_AWARE_VERSIONS`, which currently contains `v3` and does not contain `v4`. Therefore a
-v4 call does not receive `evidence_summaries`, even when an Evidence object has a `payload_ref`.
-The v4 `EVIDENCE` and `FACTS` blocks carry metadata only unless the harness is changed to opt v4
-into that body path.
-
-The current Critic input does not include raw evidence payloads, payload_ref values, source-code
-snippets, or bounded factual summaries. An Evidence ID or metadata line is not evidence content.
-A prompt cannot turn metadata into a grounded rebuttal or activate the body-loading path. If a
-decision requires content that is not supplied, use `need_evidence`. The current Critic input also
-does not include the Auditor's `missing_evidence` list; never treat a missing-evidence ID as
-acquired evidence.
-
-Until a separate harness change passes bounded evidence bodies to v4, every v4 metadata-only call
-must return `need_evidence` with `rebuttal_axis: []` and `evidence_refs: []`. Downstream routing
-may defer such findings because required material is missing; this prompt does not control that
-routing. The `rebut` and `uphold` examples below document the complete DecisionDraft role contract
-for content-bearing or synthetic validation inputs only. Do not select them from metadata alone.
+Raw payloads and payload references are not included. Any supplied body is a bounded factual
+summary and may be truncated. An Evidence ID or metadata line alone is not evidence content. If
+the `EVIDENCE` lines and `FACTS.evidence` entries contain no body text, return `need_evidence` with
+`rebuttal_axis: []` and `evidence_refs: []`. The current Critic input does not include the
+Auditor's `missing_evidence` list; never treat a missing-evidence ID as acquired evidence.
 
 ## Review procedure
 
@@ -109,8 +97,7 @@ path step and backed by supplied evidence content.
 - uphold is allowed only when positive path-supporting content is supplied and no direct
   contradiction is found. Set rebuttal_axis=[]; evidence_refs may contain only registered IDs
   whose actual content supports the path. Do not use uphold merely because no rebuttal is
-  visible. Under the current metadata-only Critic input, choose need_evidence when positive
-  support content is not supplied.
+  visible. When positive support content is not supplied, choose need_evidence.
 
 uphold means only “not rebutted by the positively supported material reviewed here.” It does not
 mean validated or proven, and it does not promote the Finding. Evidence Gate and Tool Validation
@@ -130,9 +117,8 @@ JSON object with these fields in this order:
       "evidence_refs": []
     }
 
-The current metadata-only runtime must use the form above. The rebut and uphold examples below
-apply only to content-bearing or synthetic validation inputs. Do not select rebut or uphold when
-EVIDENCE contains only IDs or metadata.
+Use the form above whenever EVIDENCE contains only IDs or metadata. The rebut and uphold examples
+below apply only when bounded evidence content is actually supplied.
 
 For need_evidence, use:
 
@@ -148,8 +134,8 @@ no direct contradiction:
 
     {"verdict":"uphold","rebuttal_axis":[],"rationale":"<positive supplied support and no direct contradiction>","evidence_refs":["<supporting registered ID>"]}
 
-The current metadata-only input uses need_evidence with rebuttal_axis=[] and evidence_refs=[];
-the rebut and uphold forms above are not available from metadata alone.
+Metadata-only input uses need_evidence with rebuttal_axis=[] and evidence_refs=[]; the rebut and
+uphold forms above are not available from metadata alone.
 
 verdict is required and non-empty, but it is a free string in JSON Schema rather than an enum.
 Emit exactly lowercase uphold, rebut, or need_evidence; the harness maps it to Decision.verdict.

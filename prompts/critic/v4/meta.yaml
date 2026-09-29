@@ -1,4 +1,6 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다. Critic 노드는 이
+# 버전을 content-aware로 취급하므로, 활성화하면 bounded evidence body를 함께 싣는다.
 role: critic
 version: v4
 output_schema: DecisionDraft
-description: gpt-oss Harmony 응답과 metadata-only 입력을 고려한 독립 비판. 근거 없는 `rebut`·`uphold`를 금지하고 필요한 자료를 요구한다
+description: gpt-oss Harmony 응답과 bounded evidence body를 고려한 독립 비판. 본문 없는 metadata-only 입력은 `need_evidence`로 보낸다
