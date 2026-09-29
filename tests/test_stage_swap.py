@@ -313,6 +313,59 @@ def test_a_failed_teardown_still_writes_the_manifest_of_a_finished_run(
     )
 
 
+# --- 기록: 교대 명령이 올린 서버의 기동 조건을 보고했는가 -----------------------------------
+
+
+class _ReportsOnly(_Rig):
+    """교대 명령이 `reported`에 든 키의 서버만 보고하는 기록기(`server.<key>.action`만)."""
+
+    def __init__(self, config: HarnessConfig, models: object, *, reported: set[str]) -> None:
+        super().__init__(config, models)
+        self._reported = reported
+
+    def swap_to(self, keys: tuple[str, ...]) -> dict[str, object]:
+        report = super().swap_to(keys)
+        servers = {f"server.{key}.action": "keep" for key in keys if key in self._reported}
+        return {**report, **servers}
+
+
+def _inner_models(tmp_path: Path) -> object:
+    return build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+    ).models  # fmt: skip
+
+
+def test_a_swap_that_does_not_report_a_server_is_warned_by_key(tmp_path: Path) -> None:
+    """올린 키의 `server.<key>.*` 보고가 하나도 없으면 run 경고가 그 키를 부른다.
+
+    PROJECT-CONTEXT §5 「모델 배선」 행이 교대 기록에 실제 기동 인자를 요구하는데, 하네스는 그 값을
+    교대 명령의 보고로만 받는다. 보고가 없어도 교대는 `ok`라 — 조용히 지나가면 기록이 이 run의
+    기동 조건을 지시하지 못하는데 아무도 모른다. **판정은 키별이다** — 상주 키의 `action`만 보고한
+    교대가 같이 올린 다른 키까지 보고한 것으로 읽히면 안 된다.
+    """
+    config = _config(resident=("auditor",), swappable=("scout", "critic"))
+    rig = _ReportsOnly(config, _inner_models(tmp_path), reported={AUDITOR})
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    assert rig.swaps == [(AUDITOR, SCOUT), (AUDITOR,), (AUDITOR, CRITIC), ()]
+    flagged = [warning for warning in result.warnings if "기동 인자" in warning]
+    assert len(flagged) == 1, f"보고 없는 교대가 경고 없이 지나갔다: {list(result.warnings)}"
+    assert SCOUT in flagged[0] and CRITIC in flagged[0], flagged
+    assert AUDITOR not in flagged[0], flagged
+
+
+def test_a_swap_that_reports_every_server_raises_no_such_warning(tmp_path: Path) -> None:
+    """위의 짝 — 올린 키마다 `server.<key>.*`가 무엇이든 하나 있으면 보고한 것이다."""
+    config = _config()
+    rig = _ReportsOnly(config, _inner_models(tmp_path), reported={SCOUT, AUDITOR, CRITIC})
+
+    result, _, _ = _run(tmp_path, config, rig=rig)
+
+    assert not [warning for warning in result.warnings if "기동 인자" in warning], result.warnings
+
+
 # --- 교대 콜러블 없이 모델에 닿는 run ---------------------------------------------------
 
 
