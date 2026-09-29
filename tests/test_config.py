@@ -1055,8 +1055,9 @@ def _copy_config(
     profile_patch: dict,
     model_patch: dict | None = None,
     thresholds_patch: dict | None = None,
+    profile: str = "dev_fake",
 ) -> None:
-    """저장소 config를 tmp_path로 복사하고 dev_fake 프로필만 덮어쓴다.
+    """저장소 config를 tmp_path로 복사하고 `profile`(기본 dev_fake) 하나만 덮어쓴다.
 
     `model_patch`(model key → 덮어쓸 필드)를 주면 registry 항목도 함께 바꾼다. 그때만
     models.yaml이 yaml 왕복을 거치므로 **주석이 사라진다** — 주석이 살아 있어야 하는
@@ -1086,7 +1087,7 @@ def _copy_config(
             yaml.safe_dump(raw_models, allow_unicode=True), encoding="utf-8"
         )
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
-    raw["profiles"]["dev_fake"].update(profile_patch)
+    raw["profiles"][profile].update(profile_patch)
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
 
 
@@ -1560,6 +1561,81 @@ def test_an_empty_resident_list_is_still_accepted() -> None:
     assert entry.execution.swap is not None
     assert entry.execution.swap.resident == ()
     assert entry.execution.swap.swappable == ("scout",)
+
+
+# 풀 프로필에서 모델을 부르는 실서빙 역할 다섯 — `harness_pool`의 `served_models()`.
+_POOL_SERVED = [*SCOUT_POOL_ROLES, "auditor", "critic"]
+
+
+def _swap_execution(swappable: list[str]) -> dict[str, object]:
+    """상주 없이 `swappable`만 교대하는 `execution` 블록."""
+    return {
+        "mode": "per_stage",
+        "swap": {"resident": [], "swappable": swappable, "settle_timeout_s": 60.0},
+    }
+
+
+@pytest.mark.parametrize(
+    ("omitted", "on_the_auditors_key"),
+    [("scout_boundary", False), ("auditor", False), ("critic", False), ("critic", True)],
+    ids=["scout-member", "auditor", "critic", "critic-on-the-auditors-key"],
+)
+def test_a_swap_that_leaves_out_a_served_role_is_rejected(
+    tmp_path: Path, omitted: str, on_the_auditors_key: bool
+) -> None:
+    """교대를 선언한 프로필은 **실서빙 역할을 전부** `resident ∪ swappable`에 적는다.
+
+    `⊆ roles`(ADR 0009 불변식 2)는 한 방향뿐이다. 목록 밖의 실서빙 역할은 교대 명령이 그 서버를
+    띄우지 않고, 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상 「자기 run의 서버 전부
+    내림」으로 — 불린다. 그 호출은 서버 없이 나가 run이 틀린 사유(`model_gateway_unavailable`)로
+    멈춘다. 다른 역할과 **같은 키**여도 같다 — 교대 대상은 그 단계의 역할에서 고르므로 앞 단계에
+    그 키가 떠 있었어도 내려간다.
+    """
+    pool = load_config("harness_pool").profile.roles
+    patch: dict[str, object] = {
+        "execution": _swap_execution([role for role in _POOL_SERVED if role != omitted])
+    }
+    if on_the_auditors_key:
+        patch["roles"] = {**pool, omitted: pool["auditor"]}
+    _copy_config(tmp_path, profile="harness_pool", profile_patch=patch)
+
+    with pytest.raises(ConfigError, match=omitted):
+        load_config("harness_pool", config_dir=tmp_path)
+
+
+def test_a_swap_that_lists_every_served_role_loads(tmp_path: Path) -> None:
+    """위 거부의 짝 — 다섯을 다 적으면 로드된다. 거부만 보면 교대 선언을 통째로 거부하는 구현도
+    지난다(`test_a_complete_swap_declaration_on_per_stage_is_accepted`와 같은 이유)."""
+    patch = {"execution": _swap_execution(_POOL_SERVED)}
+    _copy_config(tmp_path, profile="harness_pool", profile_patch=patch)
+
+    swap = load_config("harness_pool", config_dir=tmp_path).swap
+
+    assert swap is not None
+    assert set(swap.swappable) == set(_POOL_SERVED)
+
+
+def test_a_fake_role_may_stay_out_of_the_swap_lists(tmp_path: Path) -> None:
+    """세는 것은 `roles`가 아니라 **실서빙** 역할이다 — Fake 역할은 서버가 없어 교대가 다룰 것이
+    없다. `dev_fake`는 전 역할이 Fake라 `scout` 하나만 적어도 로드된다."""
+    _copy_config(tmp_path, profile_patch={"execution": _swap_execution(["scout"])})
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.swap is not None
+    assert config.served_models() == {}
+
+
+def test_a_hybrid_profile_cannot_declare_a_swap(tmp_path: Path) -> None:
+    """검색 역할이 실서빙인 hybrid 프로필은 교대를 선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가
+    거부하고(ADR 0012 결정 3 뒤 — `test_a_retrieval_role_in_swap_is_rejected`), 빼면 위 규칙이
+    거부한다. 빼고 통과하면 교대 명령이 검색 서버를 띄우지 않는다 — 교대가 띄우는 것은 목록의
+    역할뿐이다."""
+    patch = {"execution": _swap_execution(_POOL_SERVED)}
+    _copy_config(tmp_path, profile="harness_pool_hybrid", profile_patch=patch)
+
+    with pytest.raises(ConfigError, match="embedding.*reranker"):
+        load_config("harness_pool_hybrid", config_dir=tmp_path)
 
 
 def test_an_unknown_execution_key_is_rejected() -> None:
