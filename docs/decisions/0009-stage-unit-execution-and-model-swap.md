@@ -81,4 +81,4 @@
 
 **이 절이 정하지 않는 것.** 값(util · `settle_timeout_s` 등 — ATOM 기동 실측으로 정한다) · 비동기 교대 · 단계 안 동시 요청 · 검색 모델 교대(hybrid) · 교대 시간 예산.
 
-**결과 4의 나머지 절반도 같은 날 들어왔다.** 교대 명령은 장비 무관 `tools/serve/swap.sh` 하나이고 장비 차이는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)과 명령의 메모리 판정 자동 감지(전용 VRAM / 통합메모리)가 가른다. `harness_pool`이 `swap`을 선언한다(상주 없음 · 모델을 부르는 다섯 교대 · `settle_timeout_s` 3,800 — 계산값). **아직 없는 것은 실장비 종단이다** — 장비 파일 값은 계획값이고 ATOM에서 먼저 돈다. hybrid는 검색 역할 때문에 교대를 선언하지 않는다(위 1).
+**결과 4의 나머지 절반도 같은 날 들어왔다.** 교대 명령은 장비 무관 `tools/serve/swap.sh` 하나이고 장비 차이는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)과 명령의 메모리 판정 자동 감지(전용 VRAM / 통합메모리)가 가른다. `harness_pool`이 `swap`을 선언한다(상주 없음 · 모델을 부르는 다섯 교대 · `settle_timeout_s` 4,200 — 계산값). **아직 없는 것은 실장비 종단이다** — 장비 파일 값은 계획값이고 ATOM에서 먼저 돈다. hybrid는 검색 역할 때문에 교대를 선언하지 않는다(위 1).

@@ -62,12 +62,15 @@ HF_HUB="${HF_HUB_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/hub}"
 MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"
 SERVER_HOST_GIB="${SERVER_HOST_GIB:-3}"
 SWAP_MARGIN_GIB="${SWAP_MARGIN_GIB:-4}"
-# 교대 마감 식의 상수 — config/profiles.yaml의 settle_timeout_s가 이 넷으로 계산된다(tests가 잠근다).
+# 교대 마감 식의 상수 — config/profiles.yaml의 settle_timeout_s가 이 여섯과 `/v1/models` 확인의 상한
+# (src/bench_metrics.py `_TIMEOUT_S`)으로 계산된다(tests가 잠근다).
 ATTEMPTS=2
 TERM_WAIT_S=20
 KILL_WAIT_S=30
 MEM_WAIT_S=60
 POLL_S=5
+# 준비 확인 채팅 요청 한 번의 `curl -m` 상한 — 준비 상한을 넘겨서도 이만큼 붙잡는다.
+PROBE_MAX_S=120
 
 END=$(($(date +%s) + ${DEADLINE_S%.*}))
 REPORT=()
@@ -333,7 +336,7 @@ PY
 probe_chat() { # 1토큰 추론이 200으로 돌아와야 준비됐다 — /v1/models만으로는 답하는지 모른다
   local m body
   m=$(remaining)
-  if [ "$m" -gt 120 ]; then m=120; fi
+  if [ "$m" -gt "$PROBE_MAX_S" ]; then m=$PROBE_MAX_S; fi
   if [ "$m" -lt 1 ]; then return 1; fi
   body="{\"model\":\"$key\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}"
   curl -sf -m "$m" -H 'Content-Type: application/json' -d "$body" \
