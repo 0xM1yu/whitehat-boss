@@ -14,7 +14,7 @@ from test_slicer import candidate, make_slice, payloads, response, run_cli
 import slicer
 import slicer_queries as queries
 from slicer_candidates import collect
-from slicer_checkpoint import Checkpoint
+from slicer_checkpoint import Checkpoint, merge_shards
 from slicer_export import export_sources
 from slicer_source import cluster, recover_lines
 
@@ -162,7 +162,7 @@ def test_real_sqlite_commit_and_os_lock_survive_process_death(tmp_path):
     program = """
 import os, sys
 from pathlib import Path
-from slicer_checkpoint import Checkpoint
+from slicer_checkpoint import Checkpoint, merge_shards
 store = Checkpoint(Path(sys.argv[1]), resume=True)
 store.conn.execute('DELETE FROM stages')
 os._exit(19)
@@ -490,3 +490,61 @@ def test_context_query_reassembles_the_same_points_at_runtime():
     assert chunks, "points are no longer passed through ujson.read(...)"
     rebuilt = "".join(json.loads(s) for s in SCALA_STRING.findall(chunks.group(1)))
     assert json.loads(rebuilt) == [list(p) for p in points]
+
+
+def run_shards(monkeypatch, repo, tmp_path, data, count):
+    databases = []
+    for index in range(count):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir(parents=True)
+        databases.append(folder / "state.db")
+        code, result, _ = run_cli(
+            monkeypatch, repo, folder, data, "--checkpoint", str(databases[-1]),
+            "--shard", f"{index}/{count}",
+        )
+        # A shard's own output is a fraction of the run and must not read as complete.
+        assert code == 2 and result["status"] == "partial"
+        assert result["shard"] == {"index": index, "count": count}
+    return databases
+
+
+def test_merged_shards_export_the_same_slices_as_one_run(monkeypatch, repo, tmp_path):
+    def data():
+        return payloads(
+            case_a=[candidate(), candidate("other", 3)], case_b=[candidate("sprintf", 5)],
+            flow_count=1,
+        )
+
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, data())
+    databases = run_shards(monkeypatch, repo, tmp_path, data(), 2)
+    merged = tmp_path / "merged.db"
+    summary = merge_shards(merged, databases)
+    assert summary == {"shards": 2, "candidates": 3, "complete": 3}
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, transport = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert transport.stages == []
+    assert exported["status"] == "ok" and "shard" not in exported
+    assert exported["slices"] == single["slices"]
+
+
+def test_shards_of_different_runs_are_not_merged(monkeypatch, repo, tmp_path):
+    first = run_shards(monkeypatch, repo, tmp_path / "a", payloads(case_a=[candidate()]), 2)
+    other = run_shards(
+        monkeypatch, repo, tmp_path / "b", payloads(case_a=[candidate("different")]), 2
+    )
+    with pytest.raises(ValueError, match="Shard mismatch on candidates"):
+        merge_shards(tmp_path / "merged.db", [first[0], other[1]])
+    assert not (tmp_path / "merged.db").exists()
+
+
+def test_a_shard_without_a_checkpoint_is_refused(repo, tmp_path):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), "--shard", "0/2"])
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), "--shard", "2/2",
+                     "--checkpoint", str(tmp_path / "state.db")])
