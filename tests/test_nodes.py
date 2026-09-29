@@ -17,6 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.adapters.factory import build_deps
+from src.adapters.fake_model import _parse_context
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import load_config
 from src.interfaces.model_client import ChatTurn, ModelResult, Usage
@@ -846,12 +847,35 @@ def test_critic_includes_evidence_body_when_version_is_content_aware(
     assert "heap-buffer-overflow" in prompt.body  # 본문이 EVIDENCE·FACTS에 닿는다
 
 
-def test_critic_content_aware_versions_pins_v3() -> None:
+def test_critic_v4_wiring_includes_evidence_body(ctx: RunContext) -> None:
+    """#328 2차 HIGH: 실제 v4 선택이 payload 본문을 EVIDENCE·FACTS에 싣는다."""
+    key = ctx.config.model_key_for(Role.CRITIC.value)
+    models = {
+        **ctx.config.models,
+        "fake_critic_v4": ctx.config.models[key].transition(prompt_template_version="v4"),
+    }
+    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_v4"}
+    ctx.config = ctx.config.transition(
+        models=models,
+        profile=ctx.config.profile.transition(roles=roles),
+    )
+    ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    prompt = ctx.models.last_for(Role.CRITIC)
+    assert "heap-buffer-overflow" in prompt.body
+
+
+def test_critic_content_aware_versions_pin_v3_and_v4() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
-    `_CONTENT_AWARE_VERSIONS`를 `frozenset()`으로 되돌리면 v3가 조용히 metadata만 받는데
+    `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert "v3" in critic._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4"} <= critic._CONTENT_AWARE_VERSIONS
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -862,11 +886,11 @@ def test_critic_v3_prompt_is_content_conditional() -> None:
     assert "carries a `body`" in prefix
 
 
-# --- Auditor 근거 본문 배선 (v3, #256 항목 4) --------------------------------
+# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328) ------------------------
 
 
 def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
-    """dev_fake auditor는 v1이라 payload가 있어도 본문을 안 싣는다 (배선은 v3 경로에만)."""
+    """dev_fake auditor는 v1이라 payload가 있어도 본문을 안 싣는다 (배선은 v3·v4 경로에만)."""
     ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
 
@@ -890,31 +914,33 @@ def test_auditor_includes_evidence_body_when_version_is_content_aware(
     assert "heap-buffer-overflow" in prompt.body  # 본문이 FACTS에 닿는다
 
 
-def test_auditor_content_aware_versions_pins_v3() -> None:
+def test_auditor_content_aware_versions_pin_v3_and_v4() -> None:
     """critic 쪽 #247 리뷰 HIGH-1과 같은 이유 — 위 테스트는 monkeypatch로 게이트를 켜므로
-    **실제 값**을 안 문다. `_CONTENT_AWARE_VERSIONS`를 `frozenset()`으로 되돌리면 v3가
-    조용히 metadata만 받는데 그걸 잡는 것은 이 단언뿐이다. **critic의 상수를 import하지
-    않는다** — 본문을 읽도록 쓰였는지는 역할별 프롬프트의 성질이다.
+    **실제 값**을 안 문다. `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히
+    metadata만 받는데 그걸 잡는 것은 이 단언뿐이다(#328 리뷰 MEDIUM-1 — v4 prefix가 evidence
+    content를 전제로 쓰였다). **critic의 상수를 import하지 않는다** — 본문을 읽도록 쓰였는지는
+    역할별 프롬프트의 성질이다.
     """
-    assert "v3" in auditor._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4"} <= auditor._CONTENT_AWARE_VERSIONS
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
-def test_auditor_v3_renders_slice_source_and_evidence_body_through_the_node(
-    ctx: RunContext,
+@pytest.mark.parametrize("version", ["v3", "v4"])
+def test_auditor_content_aware_version_renders_slice_source_and_evidence_body_through_the_node(
+    ctx: RunContext, version: str
 ) -> None:
-    """registry가 auditor에 v3를 고르면 **노드를 거친** 렌더가 v3 body를 남는 토큰 없이 채운다 —
+    """registry가 auditor에 v3·v4를 고르면 **노드를 거친** 렌더가 body를 남는 토큰 없이 채운다 —
     슬라이스 렌더가 `SOURCE`로, payload 본문이 FACTS `evidence[].body`로 간다.
 
-    위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → v3 렌더**를 한 호출로
-    묶는다 — 상수를 비우거나 노드가 버전을 안 보면 본문이 빠져 빨개진다. v3 fake 엔트리는
+    위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → 렌더**를 한 호출로
+    묶는다 — 상수에서 버전을 빼거나 노드가 버전을 안 보면 본문이 빠져 빨개진다. fake 엔트리는
     `test_pipeline_e2e._poolify_v3`처럼 `fake`를 복사해 버전만 바꾼다(커밋된 fake 키는 v1·v2뿐).
     """
-    fake_v3 = ctx.config.models["fake"].transition(prompt_template_version="v3")
+    fake_entry = ctx.config.models["fake"].transition(prompt_template_version=version)
     ctx.config = ctx.config.transition(
-        models={**ctx.config.models, "fake_v3": fake_v3},
+        models={**ctx.config.models, "fake_content_aware": fake_entry},
         profile=ctx.config.profile.transition(
-            roles={**ctx.config.profile.roles, "auditor": "fake_v3"}
+            roles={**ctx.config.profile.roles, "auditor": "fake_content_aware"}
         ),
     )
     ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
@@ -926,12 +952,50 @@ def test_auditor_v3_renders_slice_source_and_evidence_body_through_the_node(
     )
 
     prompt = ctx.models.last_for(Role.AUDITOR)
-    assert prompt.prompt_version == "v3"
+    assert prompt.prompt_version == version
     assert "{{" not in prompt.body
     facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
     assert facts["source"] == render
     bodies = [ev["body"] for ev in facts["evidence"] if "body" in ev]
     assert any("heap-buffer-overflow" in body for body in bodies)
+
+
+def test_critic_v4_prompt_is_content_conditional() -> None:
+    """#328 2차 HIGH: v4가 본문을 받으면서 metadata-only라고 단언하지 않는다."""
+    prefix = (PROMPTS_DIR / "critic" / "v4" / "prefix.md").read_text(encoding="utf-8")
+    assert "current wiring is metadata-only" not in prefix
+    assert "does not receive `evidence_summaries`" not in prefix
+    assert "contain no body text" in prefix
+
+
+@pytest.mark.parametrize(
+    ("role", "fields"),
+    [
+        pytest.param(
+            Role.AUDITOR,
+            {
+                "candidate": "candidate",
+                "target": "target",
+                "capsule_sections": "sections",
+                "source": "source",
+            },
+            id="auditor-v4",
+        ),
+        pytest.param(
+            Role.CRITIC,
+            {"claim": "claim", "path": "path", "evidence": "evidence"},
+            id="critic-v4",
+        ),
+    ],
+)
+def test_v4_fact_blocks_follow_the_fake_parser_contract(
+    role: Role, fields: dict[str, str]
+) -> None:
+    """#328 2차 MEDIUM-2: 렌더된 마지막 json 펜스를 Fake 경로가 실제로 읽는다."""
+    facts = build_facts(run_id="run_prompt_v4", ids={})
+    rendered = load_prompt(role, "v4").render(facts=facts, **fields)
+
+    assert _parse_context(rendered.body).run_id == "run_prompt_v4"
 
 
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:
