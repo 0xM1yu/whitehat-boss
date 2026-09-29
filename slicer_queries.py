@@ -373,17 +373,6 @@ CASE_A_CALL_LIMIT = 1
 # 0-slices 실패로 되돌 수 있는지는 level-3 실측이 필요하다(#250 뒤 캡은 그 비용을 묶는다 — 위).
 # 그 비용이 감당 안 되면 되돌린다.
 CASE_A_CANDIDATE_CAP = 4000
-# #338: Hot methods called MORE than CASE_A_CALL_LIMIT times are dropped by the K=1 filter
-# above even when they write memory. The 2026-09-29 line-criterion diagnosis (vast 51931415)
-# found that all 7 GT elements the improved slicer still missed sit in such methods (call
-# counts 2..47, all hot, all with params). They join Case A as a SEPARATE, bounded list so the
-# existing `api` set (and its cap) is untouched -- nothing already selected is pushed out:
-#   - CASE_A_HOT_CALL_MAX: skip ubiquitous helpers. 64 is an initial value (the 7 GT methods max
-#     out at 47 calls), not a measured optimum.
-#   - CASE_A_HOT_EXTRA_CAP: at most this many extra candidates, fewest-callers first (more
-#     specific first). 2000 is an initial value, half the api cap.
-CASE_A_HOT_CALL_MAX = 64
-CASE_A_HOT_EXTRA_CAP = 2000
 
 
 def candidates_a_query() -> str:
@@ -412,19 +401,9 @@ def candidates_a_query() -> str:
         .filter(_.parameter.size > 0).l
         .sortBy(m => if (hotIds.contains(m.id)) 0 else 1)
         .take({CASE_A_CANDIDATE_CAP})
-      // Hot methods the K=1 filter drops (called > LIMIT times): a separate list with its own
-      // bounds (see CASE_A_HOT_CALL_MAX / CASE_A_HOT_EXTRA_CAP), so `api` above is unchanged.
-      // Fewest callers first; ties keep CPG traversal order.
-      val hotMulti = cpg.method.internal.filterNot(_.name.startsWith("<"))
-        .filter(m => hotIds.contains(m.id))
-        .filter(_.parameter.size > 0)
-        .map(m => (m, cpg.call.nameExact(m.name).take({CASE_A_HOT_CALL_MAX} + 1).size))
-        .filter(p => p._2 > {CASE_A_CALL_LIMIT} && p._2 <= {CASE_A_HOT_CALL_MAX}).l
-        .sortBy(_._2).map(_._1)
-        .take({CASE_A_HOT_EXTRA_CAP})
       val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty)
         .take({CASE_A_CANDIDATE_CAP}).l
-      ujson.Arr.from((api ++ hotMulti ++ readers).distinct.map(m => ujson.Obj(
+      ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
         "scope" -> scope(m), "anchors" -> ujson.Arr(loc(m)))))
     """,
