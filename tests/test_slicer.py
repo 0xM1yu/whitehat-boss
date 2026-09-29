@@ -1180,10 +1180,25 @@ def test_case_a_query_bounds_are_pinned():
     # MEDIUM-1: the K=1 filter short-circuits at LIMIT+1 calls instead of enumerating the whole
     # call set of a common name. Semantically == `.size <= LIMIT`; this pins the early-exit form.
     assert f".take({lim} + 1).size <= {lim}" in q
-    # Property 1: the candidate cap .take sits AFTER both filters. Moving it before the param
-    # filter would take the first-N raw methods and then filter, shrinking the set toward 0.
-    # The param filter immediately preceding the take pins that ordering.
-    assert f".filter(_.parameter.size > 0).take({cap})" in q
+    # Property 1: the candidate cap .take sits AFTER the param filter (moving it before would
+    # take first-N raw methods then filter, shrinking toward 0) AND after the D90 relevance sort
+    # (moving it before the sort re-introduces traversal-order starvation, #318). Pin the
+    # ordering by segment, not adjacency, since the sort now sits between the filter and the cap.
+    astart = q.index("val api =")
+    aseg = q[astart : q.index(f".take({cap})", astart)]
+    assert ".filter(_.parameter.size > 0).l" in aseg
+    # D90 (#318): the WHOLE sort key, not just its location (#324 review MEDIUM-1: `1 else 0`
+    # -- hot last --, `0 else 0` -- no-op sort -- and an emptied hotIds all passed the old
+    # location-only pin). ⚠ These are still spelling pins (CLAUDE.md §2.5): they fail when the
+    # key is re-spelled, they do not prove the ordering property. The mock tests never run Scala.
+    assert ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)" in aseg  # hot first, before cap
+    # "hot" = writes memory (WRITER/EXEC call OR assignment into index/field/deref). Pin both
+    # halves and their method-null guards, and that hotIds is not post-filtered away.
+    hseg = q[q.index("val hotIds =") : q.index("val api =")]
+    assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in hseg
+    assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in hseg
+    assert hseg.count(".filter(c => Option(c.method).isDefined).method.id.l") == 2
+    assert hseg.rstrip().endswith(".method.id.l).toSet")
     # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
     # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
     assert q.count(f".take({cap})") == 2
