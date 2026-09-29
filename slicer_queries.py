@@ -373,11 +373,11 @@ CASE_A_CALL_LIMIT = 1
 # 0-slices 실패로 되돌 수 있는지는 level-3 실측이 필요하다(#250 뒤 캡은 그 비용을 묶는다 — 위).
 # 그 비용이 감당 안 되면 되돌린다.
 CASE_A_CANDIDATE_CAP = 4000
-# #338: Hot methods called MORE than CASE_A_CALL_LIMIT times are dropped by the K=1 filter above even
-# when they write memory. The 2026-09-29 line-criterion diagnosis (vast 51931415) found that all 7
-# GT elements the improved slicer still missed sit in such methods (call counts 2..47, all hot,
-# all with params). They join Case A as a SEPARATE, bounded list so the existing `api` set (and its
-# cap) is untouched -- nothing already selected is pushed out:
+# #338: Hot methods called MORE than CASE_A_CALL_LIMIT times are dropped by the K=1 filter
+# above even when they write memory. The 2026-09-29 line-criterion diagnosis (vast 51931415)
+# found that all 7 GT elements the improved slicer still missed sit in such methods (call
+# counts 2..47, all hot, all with params). They join Case A as a SEPARATE, bounded list so the
+# existing `api` set (and its cap) is untouched -- nothing already selected is pushed out:
 #   - CASE_A_HOT_CALL_MAX: skip ubiquitous helpers. 64 is an initial value (the 7 GT methods max
 #     out at 47 calls), not a measured optimum.
 #   - CASE_A_HOT_EXTRA_CAP: at most this many extra candidates, fewest-callers first (more
