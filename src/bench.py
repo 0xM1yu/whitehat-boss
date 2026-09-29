@@ -55,6 +55,7 @@ from src.schemas.common import Location
 from src.schemas.decision import DecisionDraft
 from src.schemas.enums import CapsuleLevel, Role
 from src.schemas.finding import Finding
+from src.schemas.pov import PovSpec
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 길이 맞춤용 근사다(cli·어댑터와 같은 상수).
 CHARS_PER_TOKEN = 4
@@ -107,6 +108,9 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     # `Role.SINGLE`만 추가하고 여기를 비워 두면 `bench_report._role_report()`의
     # `ROLE_SPEC[role_enum]`이 `KeyError`가 된다 — 고치려던 크래시가 자리만 옮긴다.
     Role.SINGLE: (Finding, CapsuleLevel.EXPANDED),
+    # PoV — 모델은 PovSpec(구성 스펙)을 낸다(council 2026-09-30). ⚠ 실bench로 이 역할을
+    # 세우려면 `_render`에 pov 토큰(FINDING·TARGET·SOURCE) 분기를 더해야 한다(P7, 현재 미배선).
+    Role.POV: (PovSpec, CapsuleLevel.EXPANDED),
 }
 
 MEASUREMENT_ORDER = ("startup", "structured_output", "prefix_cache", "throughput", "memory")

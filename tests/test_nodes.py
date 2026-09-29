@@ -29,6 +29,7 @@ from src.orchestrator.nodes import (
     critic,
     gate_node,
     index,
+    pov,
     preprocess,
     report,
     retrieval,
@@ -451,6 +452,21 @@ def test_auditor_creates_finding_and_materializes_missing_evidence(ctx: RunConte
         e for e in ctx.trace.events if e.kind is EventKind.TRANSITION and e.data["rule"] == "F-1"
     )
     assert created.data["reason"] == ReasonCode.AUDITOR_HYPOTHESIZED.value
+
+
+def test_pov_builds_a_poc_from_a_finding(ctx: RunContext) -> None:
+    """PoV(단발)가 Finding을 받아 PoV 역할로 모델을 부르고 비어 있지 않은 PoC 바이트를 낸다.
+
+    러너 8단계 라우팅은 실도구·상태전이와 함께 P3에서 다룬다 — 이 테스트는 노드 계약만 고정한다.
+    """
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    updated, poc = pov.run(ctx, finding=finding, capsule=capsule)
+
+    assert updated.finding_id == finding.finding_id
+    assert isinstance(poc, bytes) and len(poc) > 0
+    assert any(role is Role.POV for role, _ in ctx.models.prompts)
 
 
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
