@@ -2064,7 +2064,8 @@ def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> Non
     ctx.record_model_swap(
         keys, stage=stage, ok=True, wall_ms=ctx.monotonic_ms() - started, report=report
     )
-    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 무엇이든 하나 있으면 보고한 것이다.
+    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로
+    # 본다(그대로 둔 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
     ctx.swap_unreported.update(
         key for key in keys if not any(name.startswith(f"server.{key}.") for name in report)
     )
