@@ -172,6 +172,30 @@ EVIDENCE_BODY_TOTAL_CAP = 4000  # 전 evidence 합 상한(프롬프트 토큰 �
 
 _TRUNCATION_MARKER = "\n...\n"
 
+# 하네스가 도구 로그에 쓰는 실행 기록 머리줄. `evidence_summaries`가 **절단 전에**
+# 뺀다(#256 항목 3). 로그(`adapters/container_tools.py`의
+# `ContainerToolRunner._execute`)는 도구 출력 앞에 노드의 자리표시자 argv(`# node argv: `) ·
+# 런타임 이름(`# runtime: `) · 명령마다 실제로 돈 명령줄(`$ <런타임> …`)을 쓴다. 명령줄은
+# 호스트 절대경로(바인드한 대상 루트 · scratch, singularity면 SIF 파일)를 싣는다 — 남겨 두면
+# 그 경로가 모델 입력에 실리고, 증거당 상한의 head를 먹어 도구 출력(semgrep의 `check_id`
+# 등)이 잘린다. 로그 파일과 `digest`는 그대로다 — 모델로 가는 사본에서만 뺀다.
+#
+# 나머지 하네스 줄 — 발견 수(`# semgrep: …`) · `(exit=N)`·`(timeout after …)` · 절 구분
+# (`--- stdout ---`·`--- stderr ---`) · 미실행 명령 수 — 은 도구 결과를 말하거나 절을 갈라서
+# 남긴다. `$ `는 런타임 이름이 이어질 때만 머리줄이다 — 도구 출력의 다른 `$ ` 줄은 건드리지
+# 않는다. 런타임 이름은 `container_tools.UNENFORCED`의 키와 맞아야 하는데 어댑터를 import할
+# 수 없어(engineering-guide.md §3) 여기 따로 든다 — tests/test_evidence_payload_header.py가
+# 런타임마다 실제 러너로 대조한다.
+#
+# ⚠ 뺀 뒤에도 **절단이지 요약이 아니다** — semgrep JSON의 `message` 같은 가운데는 잘릴
+# 수 있다(구조 추출은 #256 항목 3에 남는다). 못 빼는 호스트 경로도 있다: 실행 전 거절
+# 사유(`# 실행하지 않았다: …` — 그 줄이 곧 실패 사유다), 런타임 CLI가 stderr에 쓴 문구
+# (도구 stderr와 한 절이라 가를 표지가 없다), 파일 이름·env 값의 줄바꿈이 쪼갠 명령줄의
+# 둘째 줄부터.
+_HARNESS_HEADER_LINE = re.compile(
+    r"^(?:# node argv: |# runtime: |\$ (?:docker|podman|singularity) )[^\n]*\n?", re.MULTILINE
+)
+
 
 def _bound_text(text: str, cap: int) -> tuple[str, bool]:
     """cap을 넘으면 head 2/3 + tail 1/3로 결정론 절단하고 truncated=True.
@@ -202,6 +226,9 @@ def evidence_summaries(
 ) -> dict[str, dict[str, object]]:
     """`payload_ref`에서 근거 본문을 읽어 결정론적으로 절단한 evidence_id → {body, truncated} 맵.
 
+    **하네스가 쓴 실행 기록 머리줄(`_HARNESS_HEADER_LINE`)은 절단 전에 뺀다** — 절단 예산을 도구
+    출력에 쓰고 명령줄의 호스트 경로를 모델에 싣지 않는다. 로그 파일은 그대로다.
+
     payload가 없으면(fake·미배선·파일 부재) 그 evidence는 맵에서 빠진다 → 호출부는 그
     evidence를 metadata만으로 싣는다. 총 예산을 넘으면 이후 evidence는 body를 비운다.
     """
@@ -215,7 +242,7 @@ def evidence_summaries(
         if remaining <= 0:
             out[ev.evidence_id] = {"body": "", "truncated": True}
             continue
-        body, truncated = _bound_text(raw, min(per_cap, remaining))
+        body, truncated = _bound_text(_HARNESS_HEADER_LINE.sub("", raw), min(per_cap, remaining))
         used += len(body)
         out[ev.evidence_id] = {"body": body, "truncated": truncated}
     return out
