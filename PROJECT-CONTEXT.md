@@ -97,6 +97,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
 | `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. `test_pipeline_e2e`가 in-test로 조립한다 |
+| `feyospace-v1-small` | 8단계 PoV 모델로 선정(@danielcho02 · CyberGym Level 1). registry 등재·포트(8006)만이고 **아직 프로필 roles에 없다** — PoV 노드가 러너 8단계 라우팅에 들어가고(P3/P5) 서빙 호스트가 잡히면 §1 자리로 승격한다. checksum·benchmark 미실측 · license 미선언(원저자 미공개) |
 
 > ~~**registry 키는 지우지 않는다.**~~ ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
 > 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유였고, 그래서 되돌리기가 쌌다.
