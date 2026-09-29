@@ -626,19 +626,22 @@ models:
   #   safetensors 12개 · 파라미터 BF16 27,781,427,952(HF API `safetensors` · 카드는 "28B")
   # `context_limit`은 모델 상한이지 띄울 값이 아니다(`qwen3.8-27b` 항목과 같은 관례).
   #
-  # ⚠ **license 미선언이다.** HF API 태그·config.json·README 어디에도 라이선스가 없다(2026-09-30
-  #   확인 — 카드는 "research release · authorized defensive-security research"만 적는다). 실측이
-  #   아니라 **부재**라 checksum처럼 0으로 못 둔다(license는 NonEmptyStr) — `unknown`으로 두고
-  #   가중치를 받아 쓰기 전에 원저자·팀에 확인한다(`gpt-oss-20b`의 USAGE_POLICY 주석과 같은 자리).
+  # ⚠ **license 미선언이다.** HF API 태그·config.json·README 프런트매터·파일 목록 어디에도 라이선스가
+  #   없다(2026-09-30 확인 — 카드는 "research release · authorized defensive-security research" 용도와
+  #   금지 용도 목록만 적는다). 실측이 아니라 **부재**라 checksum처럼 0으로 못 둔다(license는
+  #   NonEmptyStr) — `unknown`으로 둔다. ⚠ **베이스 Qwen3.8-27B가 Apache-2.0인 것이 이 파인튜닝의
+  #   라이선스를 자동으로 정하지 않는다** — 가중치를 받아 쓰기 전에 원저자·팀에 확인하고 카드의 금지
+  #   용도 목록을 읽는다(`gpt-oss-20b`의 USAGE_POLICY 주석과 같은 자리).
   # ⚠ **checksum·benchmark는 전부 미실측(0/null)이다** — 아직 우리 장비에서 받지도 띄우지도
   #   않았다(ATOM 종료 · 서빙+도구 되는 호스트 미확보). 그전에 돈 run은 비교표 제외(CLAUDE.md §0).
   #   `tools/model_checksum.py`가 스냅샷을 받은 뒤 checksum을, `bench --apply`가 benchmark를 채운다.
   #
   # ## 배선은 아직 — 이 항목은 등재만이다 (프로필 roles에 없다)
   # PoV 노드(`nodes/pov.py`)는 단발로 붙었지만 **러너 8단계 라우팅에 아직 안 들어갔다**(호스트 필요).
-  # 그래서 이 키를 **어느 프로필의 roles에도 넣지 않는다** — 넣으면 러너가 부르지도 않는 서버를
-  # 교대가 콜드 기동/정지하게 되고(SwapPolicy docstring의 「선 것처럼 보이는 정책」), `check_serving`이
-  # 없는 장비 파일 서버 행을 요구한다. PROJECT-CONTEXT §1 자리·`harness_pool` 배선·`config/serving/*.yaml`
+  # 그래서 이 키를 **어느 프로필의 roles에도 넣지 않는다** — 넣으면 `load_config`가 pov를 swap
+  # 목록(resident/swappable)에 요구하고 `check_serving`이 장비 파일 서버 행을 요구한다. 게다가
+  # resident로 두면 러너가 부르지도 않는 서버를 콜드 기동한다(SwapPolicy docstring의 「선 것처럼
+  # 보이는 정책」). PROJECT-CONTEXT §1 자리·`harness_pool` 배선·`config/serving/*.yaml`
   # 서버 행·요청 손잡이(reasoning_effort·sampling·thinking_token_budget·request_timeout_s)는 러너가
   # pov를 라우팅하고 서빙 호스트가 잡힌 뒤 실측과 함께 채운다. 등재만으로도 model-serving.md 포트 표
   # (8006)와 PROJECT-CONTEXT 「로스터에 없지만 registry에 남는 것」 표가 이 키를 들어야 한다(doc 검사).

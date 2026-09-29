@@ -172,17 +172,20 @@ agent:
 
 ### 2.5 PoV (PoC 생성) — 스캐폴드
 
-⚠ **스캐폴드다** — 러너 8단계 라우팅·모델-주도 툴 루프·외부 oracle 검증은 후속(P3/P5, 서빙+도구 되는
-호스트 필요). CyberGym 벤치마크 채택·단계 프레이밍은 팀 기록 대기라 여기서 단정하지 않는다.
+⚠ **스캐폴드다** — 러너 8단계 라우팅·모델-주도 툴 루프·외부 oracle 검증은 후속(서빙+도구 되는 호스트가
+잡힌 뒤의 배선)이다. 목표 벤치마크는 **CyberGym Level 1**(조민규 지시, 2026-09-30)이고, 정식 ADR/Phase
+프레이밍과 벤치마크 설계 세부는 팀 몫이라(ADR 0012 결정 5) 여기서 대신 확정하지 않는다.
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 **PoC 입력의 구성 스펙**을 만든다.
 - 입력: `Finding` + 대상 원문(source).
-- 출력: **`PovSpec`** — 바이트를 직접 내지 않는다(council 2026-09-30, fork B-iii: 큰 base64를 구조화
-  출력에 물리면 문법 마스크가 출력을 깎는 실측 회피 · 모델이 쓴 스크립트를 돌리는 임의 코드 실행
-  회피). 순수·결정론 함수 `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로
-  조립한다 — 모델 밖이라 같은 스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
+- 출력: **`PovSpec`** — 바이트를 직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
+  스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
+  깎을 수 있다는 **추정**을 피한다(base64는 안 쟀다 · 인접 실측은 enum 강제 verdict라는 다른 현상 —
+  `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
+  `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
+  스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
 - 실행: `Stage.VALIDATE` 아래 **단발**이다 — 새 단계 번호를 만들지 않는다(`Stage`는 0~9 고정). 도구는
-  아직 없다(모델-주도 툴 루프는 P3).
+  아직 없다(모델-주도 툴 루프는 후속).
 - 출력 상한: 역할별 `output_max_by_role`에 pov를 선언하지 않아 전역값을 그대로 쓴다 — `PovSpec`는 작은
   구조라 Auditor만큼 큰 예산이 필요한지는 실측 전이다.
 - 모델: `feyospace-v1-small` 선정(등재만·미배선 — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) 「로스터에
