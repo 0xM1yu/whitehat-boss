@@ -693,6 +693,9 @@ def _terminate_as_exit() -> Iterator[None]:
     다른 세션이라 같이 안 죽으므로, 그대로 두면 `timeout`·`kill`·세션 끊김으로 끝난 run의 서버가
     `HARNESS_RUN_ID`째 남는다.
 
+    - **무시한 채 띄운 신호는 그대로 둔다** — `nohup`은 HUP을 무시로 걸고 띄운다. 그 무시를 종료로
+      바꾸면 터미널이 닫힐 때 run이 죽는다. 파이썬은 물려받은 무시를 `getsignal`로 `SIG_IGN`이라
+      돌려준다.
     - **첫 신호 뒤에는 두 신호를 무시한다** — 내림 도중에 온 재촉이 내림을 끊으면 서버가 남는다.
       끊어야 하면 KILL이고 그것은 감독자 몫이다.
     - **못 받는 것** — KILL·OOM·전원에는 내림이 안 돈다(장비 쪽 감시자 몫이다). 내림이 이미 도는
@@ -710,7 +713,11 @@ def _terminate_as_exit() -> Iterator[None]:
             signal.signal(terminating, signal.SIG_IGN)
         raise SystemExit(128 + signum)
 
-    previous = {signum: signal.signal(signum, exit_once) for signum in _TERMINATING}
+    previous = {
+        signum: signal.signal(signum, exit_once)
+        for signum in _TERMINATING
+        if signal.getsignal(signum) is not signal.SIG_IGN
+    }
     try:
         yield
     finally:
