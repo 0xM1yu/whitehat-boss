@@ -145,14 +145,17 @@ profiles:
     # ## 실행 — 단계 단위(`execution.mode: per_stage` — ADR 0009, ADR 0010 §1이 승인)
     #
     # 모든 target이 한 단계를 마친 뒤에 다음 단계가 시작한다(`runner._triage_by_stage`). 그래야 단계마다
-    # 그 단계의 모델만 떠 있으면 된다 — 네 서버를 한 장비에 다 올리면 util 합이 1.60으로 1을 넘는다
-    # (0.20 + 0.30 + 0.80 + 0.30 — `config/models.yaml` 각 항목 「기동 조건」의 util, 계산값. Auditor
-    # 0.80은 2026-09-26 교체 뒤의 계획값이고, 그 전 `qwen3.6-35b-a3b`는 0.64로 떠서 합이 1.44였다).
-    # ⚠ **교대(`execution.swap`)는 아직 적지 않는다.** 하네스 쪽 배선(러너의 단계 경계 교대 · run 끝 내림 ·
-    #   `src/adapters/model_swap.py` · 장비 파일 스키마 — ADR 0009 「2026-09-29 제안」 절)은 들어왔고, 선언은
-    #   ATOM 교대 스크립트·장비 파일(`config/serving/atom.yaml`)과 같이 온다 — 장비 파일 없이 적으면 모델에
-    #   닿는 run이 `--device`에서 거부된다. 그때까지 이 프로필로 끝까지 도는 run은 네 서버가 동시에 떠
-    #   있어야 하고, ATOM에는 그렇게 못 올린다.
+    # 그 단계의 모델만 떠 있으면 된다 — 네 서버를 한 장비에 다 올리면 util 합이 1.80으로 1을 넘는다
+    # (0.30 + 0.40 + 0.80 + 0.30 — `config/serving/atom.yaml`의 util, 계획값). 2026-09-24 판에서는 1.44였다
+    # (Scout 0.20·0.30 · 옛 Auditor `qwen3.6-35b-a3b` 0.64 · Critic 0.30 — 그날 ATOM에서 뜬 util).
+    #
+    # ## 교대 — 단계 경계 콜드 재기동(`execution.swap`, 2026-09-29 — ADR 0009 「2026-09-29 제안」 절)
+    #
+    # 모델을 부르는 단계(4 Scout · 5 Auditor · 7 Critic)에 들어갈 때 러너가 교대 명령을 불러 앞 단계 서버를
+    # 끄고 그 단계 모델만 띄운다. run 끝에 전부 내린다. 명령과 기동 조건(util·창·인자)은 **장비 파일**
+    # (`config/serving/<device>.yaml`)이 들고 `run --device`가 고른다 — 이 선언은 장비와 무관하다. 장비 파일
+    # 없이 모델에 닿는 run은 run 디렉터리를 잡기 전에 거부된다. **실장비 종단은 미실측이다**(ATOM 먼저).
+    # hybrid 짝은 교대를 선언하지 않는다 — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤다.
     #
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 5역할
     #   (scout 셋+auditor+critic)을 돌려주므로 러너는 이것을 **실서빙 프로필로 취급**하고
@@ -180,11 +183,25 @@ profiles:
     budget: default
     execution:
       mode: per_stage
+      swap:
+        # 상주 없음 — 단계마다 그 단계 모델만 떠 있어야 한 장비에 들어간다(위 util 합).
+        resident: []
+        swappable: [scout_memory, scout_boundary, scout_injection, auditor, critic]
+        # 교대 한 번(내림 + 기동 + 준비 확인)의 마감 — **계산값, 미실측.** 두 장비 파일 중 가장 무거운 교대인
+        # ATOM Auditor 교대로 잡았다: 앞 단계 Scout 둘 내림 2 × 50 s + 시도 2 × (준비 상한 1,720 s + 시도당
+        # 300 s) = 4,140 s → 4,200 s. 시도당 300 s = 메모리 대기 60 s + 마지막 폴링 둘 2 × 5 s + 마지막 채팅
+        # 요청의 `curl -m` 상한 120 s(준비 상한을 넘겨서도 붙잡는다) + `/v1/models` 확인 60 s + 실패 기동 내림
+        # 50 s(TERM 20 + KILL 30). 준비 상한의 근거는 `config/serving/atom.yaml`의 그 행이고, 나머지는
+        # `tools/serve/swap.sh`의 상수와 `src/bench_metrics.py`의 `_TIMEOUT_S`다. `tests/test_serve_scripts.py`가
+        # 두 장비 파일의 모든 교대에 대해 이 식을 잠근다.
+        settle_timeout_s: 4200
 
   harness_pool_hybrid:
     # `harness_pool`에 **검색 경로를 켠 것** — embedding·reranker를 실제로 부르는
     # 풀 프로필. 지운 옛 짝 `local_balanced`↔`local_balanced_hybrid`와 같은 결이고, 유일한 차이가
     # `retriever` 하나여야 두 프로필의 run 차이를 검색 경로로 돌릴 수 있다(아래 테스트가 고정).
+    # ⚠ 2026-09-29부터 차이가 하나 더 있다 — `harness_pool`만 교대를 선언한다(아래 `execution` 주석). 모델
+    #   호출 순서는 같고 서버를 누가 띄우는지만 갈린다.
     # 2026-09-24 `local_balanced_pool_hybrid`에서 이름을 바꿨다. 검색 3단계를 어떻게 쓸지는 팀 논의가
     # 남아 있어(2026-09-26 대면) canonical은 `harness_pool`(fake retriever)이다.
     #
@@ -238,11 +255,15 @@ profiles:
       embedding: qwen3-embedding-0.6b
       reranker: qwen3-reranker-4b
     adapters:
-      # 이 한 줄이 harness_pool과 다른 전부다.
+      # 이 한 줄이 harness_pool과 다른 어댑터 전부다(교대 선언 유무는 아래 `execution`).
       retriever: hybrid
       tool_runner: docker
       state_store: sqlite
     budget: default
     # 실행 단위도 `harness_pool`과 같아야 한다 — 다르면 두 run의 차이가 검색 경로 하나로 안 갈린다.
+    # ⚠ 교대(`swap`)는 선언하지 않는다(2026-09-29) — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤라
+    #   선언할 수 없다: 목록에 넣으면 `SwapPolicy`가, 빼면 `load_config`가 거부한다
+    #   (`_check_swap_lists_every_served_role`). 그래서 이 프로필은 서버를 사람이 띄운다 —
+    #   `harness_pool`과 갈리는 둘째 자리다.
     execution:
       mode: per_stage

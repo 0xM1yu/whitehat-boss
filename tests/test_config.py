@@ -213,8 +213,8 @@ def test_a_real_profile_pairs_a_hybrid_retriever_with_served_retrieval_models() 
 POOL_HYBRID_PROFILE = "harness_pool_hybrid"
 
 
-def test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever() -> None:
-    """풀 검색 프로필도 대조군(`harness_pool`)과의 차이가 `retriever` **하나**다.
+def test_the_pool_hybrid_profile_differs_from_harness_pool_in_the_retriever_and_swap() -> None:
+    """풀 검색 프로필과 대조군(`harness_pool`)의 차이는 `retriever`와 교대 선언 유무뿐이다.
 
     이 프로필의 쓸모가 검색 경로를 켜는 그 한 줄에 걸려 있고, roles나 budget이 함께
     움직이면 풀 run의 차이가 무엇에서 왔는지 못 가른다. 한쪽만 고치는 것을 사람이 놓치기
@@ -227,7 +227,14 @@ def test_the_pool_hybrid_profile_differs_from_harness_pool_only_in_the_retriever
     assert variant.roles == base.roles
     assert variant.budget == base.budget
     # 실행 단위도 같아야 한다 — 한쪽만 `per_stage`면 두 run이 루프 순서까지 갈린다.
-    assert variant.execution == base.execution
+    # ⚠ **교대 선언은 다르다**(2026-09-29) — hybrid는 검색 역할 때문에 교대를 선언할 수 없다
+    # (목록에 넣으면 `SwapPolicy`가, 빼면 `load_config`가 거부 — ADR 0012 결정 3 뒤).
+    # 그래서 두 run은 서버를 띄우는 방식이 갈린다
+    # (`harness_pool`은 단계마다 교대 · hybrid는 사람이 띄운다). 모델 호출 순서는 같다.
+    assert base.execution is not None and variant.execution is not None
+    assert variant.execution.mode == base.execution.mode
+    assert base.execution.swap is not None
+    assert variant.execution.swap is None
     assert variant.adapters.retriever == "hybrid"
     assert base.adapters.retriever == "fake"
     assert variant.adapters.model_dump(exclude={"retriever"}) == base.adapters.model_dump(
@@ -1286,33 +1293,43 @@ def test_b1_puts_one_model_in_every_role_and_still_loads(tmp_path: Path) -> None
 
 
 # 단계 단위로 도는 프로필 — 로스터 canonical 쌍(2026-09-24 @danielcho02).
-# 교대(`swap`)는 아직 어느 프로필도 적지 않는다 — 하네스 쪽 배선은 들어왔고 선언은 장비 파일과
-# 같이 온다.
 PER_STAGE_PROFILES = frozenset({"harness_pool", "harness_pool_hybrid"})
+# 그중 교대를 선언한 프로필(2026-09-29 — 교대 명령·장비 파일과 같이 왔다). hybrid는 검색 역할을
+# 어느 단계에 띄울지가 ADR 0012 결정 3 뒤라 선언하지 않는다(`SwapPolicy`가 검색 역할을 거부한다).
+SWAP_PROFILES = frozenset({"harness_pool"})
 
 
 @pytest.mark.parametrize("profile", ALL_PROFILES)
-def test_only_the_canonical_pool_runs_per_stage_and_nothing_declares_swap(profile: str) -> None:
-    """실행 단위를 선언한 것은 canonical 풀 쌍뿐이고, **교대 값은 아직 아무 프로필도 안 박는다.**
+def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(profile: str) -> None:
+    """실행 단위를 선언한 것은 canonical 풀 쌍뿐이고, **교대는 `harness_pool` 하나만 선언한다.**
 
     2026-09-24 전에는 `execution`을 선언한 프로필이 0이었다(ADR 0009 결과 1 — 스키마만 열고 값은
     안 박는다). 그날 @danielcho02가 로스터 canonical 배선(`harness_pool`·`_hybrid`)을 단계 단위로 정했다 —
     ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
-    **교대(`swap`)는 여전히 안 적는다** — `settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
-    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 교대 명령과 장비 파일(ADR 0009
-    「2026-09-29 제안」 절)도 아직 없다 — 러너 쪽 배선은 들어왔다.
+    **교대는 2026-09-29에 `harness_pool`이 선언했다** — 교대 명령(`tools/serve/swap.sh`)과
+    장비 파일(`config/serving/`)이 같이 왔다(ADR 0009 「2026-09-29 제안」 절). 교대하는 역할은
+    모델을 부르는 다섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에
+    들어간다.
+    `settle_timeout_s`는 계산값이다(그 주석 — 미실측).
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
     """
     execution = load_config(profile).profile.execution
 
-    if profile in PER_STAGE_PROFILES:
-        assert execution is not None
-        assert execution.mode == "per_stage"
-        assert execution.swap is None
-    else:
+    if profile not in PER_STAGE_PROFILES:
         assert execution is None
+        return
+    assert execution is not None
+    assert execution.mode == "per_stage"
+    if profile not in SWAP_PROFILES:
+        assert execution.swap is None
+        return
+    assert execution.swap is not None
+    assert execution.swap.resident == ()
+    assert set(execution.swap.swappable) == {
+        "scout_memory", "scout_boundary", "scout_injection", "auditor", "critic"
+    }
 
 
 def test_execution_defaults_preserve_todays_behaviour() -> None:

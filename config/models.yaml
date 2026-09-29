@@ -105,6 +105,10 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
     # 아래는 `vllm serve`를 치는 사람의 값이다. **요청 본문에 실리는 것은 `reasoning_effort`
     # 하나**이고 그것만 이 엔트리에 있다(`src/config.py`의 `ModelEntry.reasoning_effort` 주석).
     #
@@ -321,6 +325,10 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
     # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0001` — 머지하지 않는 스모크 브랜치, `checksum`이
     # 0이라 비교표 밖). 원문은 위 머리 문단이 가리키는 보고서 §9다.
     #
@@ -439,8 +447,14 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
-    # **우리 장비에서 띄운 적이 없다.** 아래는 옛 Auditor가 2026-09-24 ATOM에서 뜬 인자(공통 env ·
-    # `--enforce-eager` · `xgrammar`)에 사고를 살리는 `--reasoning-parser qwen3`를 더한 **계획값**이다.
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
+    # ~~**우리 장비에서 띄운 적이 없다.**~~ → ⏵ 2026-09-28 ATOM에서 util 0.80으로 떴고(정상 표본 스모크 §5 —
+    # 창은 보고서에 없다), 2026-09-29 vast.ai에서 `--max-model-len 262144` · util 0.90으로 떴다(그 인자·수치는
+    # `config/serving/vastai.yaml`의 이 키 행). 아래는 옛 Auditor가 2026-09-24 ATOM에서 뜬 인자(공통 env ·
+    # `--enforce-eager` · `xgrammar`)에 사고를 살리는 `--reasoning-parser qwen3`를 더한 **계획값**이었다.
     #
     #   VLLM_USE_DEEP_GEMM=0 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_HOST_IP=127.0.0.1 \
     #   NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
@@ -455,7 +469,7 @@ models:
     #   명령마다 이 인자가 있다. `thinking_token_budget`도 parser가 있어야 받는다 — 없으면 **400**이다.
     # - **`--max-model-len`은 입력 몫 + 출력 상한 이상이어야 한다.** 53,248 = 입력 몫 20,480(2026-09-25
     #   슬라이스 스모크와 같은 몫 — 그 147호출의 최대 입력이 15,437토큰) + 출력 32,768. 모자라면 요청마다
-    #   **400**이다.
+    #   **400**이다. ⏵ 2026-09-29 — 창은 이제 `context_limit` 262,144다(장비 파일) — 53,248은 그 전 계획값이다.
     #   ⚠ **2026-09-29 — 그 15,437은 Auditor 프롬프트 v1로 잰 값이다**(그날 배선된 유일한 판 · 모델
     #   `qwen3.6-35b-a3b`). 아래 `prompt_template_version`이 v3가 되면서 prefix가 +6,469자 · body 틀이 +194자이고
     #   FACTS에 근거 본문이 최대 4,000자(`EVIDENCE_BODY_TOTAL_CAP`, JSON 이스케이프 전) 더 실린다 — 합 10,663자를
@@ -471,21 +485,25 @@ models:
     #   이 모델을 처음 띄우면 **400이 나는지부터** 본다.
     # - hybrid라 V1 러너로 돈다 — `thinking_token_budget`을 받는다(0.27.1 `config/vllm.py`의
     #   `_is_default_v2_model_runner_model`: hybrid이고 기본 V2 목록에 없으면 V1. 소스 판독, 미실측).
-    # - util 0.80은 2026-09-24 채택 배선의 Auditor 값이다(단계마다 그 단계 모델에 메모리를 몰아준다). 그 값으로
-    #   뜬 것은 옛 Auditor뿐이다.
+    # - util 0.80은 2026-09-24 채택 배선의 Auditor 값이다(단계마다 그 단계 모델에 메모리를 몰아준다). ~~그 값으로
+    #   뜬 것은 옛 Auditor뿐이다.~~ → ⏵ 2026-09-28 ATOM에서 이 모델도 그 값으로 떴다(위 ⏵).
     # - 레시피는 transformers 5.8.0 이상을 요구한다(config.json이 5.8.0.dev0로 쓰였다 — Qwen3-VL 프로세서).
     #   ATOM venv의 버전은 안 봤다. `--language-model-only`면 비전 타워를 안 올린다(레시피 — 미실측).
     #
-    # ## 속도·메모리 — 우리 장비 미실측
+    # ## 속도·메모리 — ~~우리 장비 미실측~~ → GB10 미실측 · vast.ai 2026-09-29 실측(이 절 끝 ⏵)
     #
     # - dense bf16이라 토큰마다 가중치를 다 읽는다 — GB10 대역 273 GB/s ÷ 55.6 GB ≈ **4.9 tok/s가 단일
     #   스트림 상한**이다(계산값). 외부 보고는 4.5 tok/s · MTP(n=3) 9.9 tok/s다(NVIDIA 포럼 2026-08-24, 이미지
     #   `vllm/vllm-openai:qwen38` — 우리 0.27.1이 아니다). 옛 Auditor 실측 26.2 tok/s의 약 1/5.8이다.
     # - 그래서 어댑터 기본 타임아웃(`_TIMEOUT_S` 300 s) 안에는 ≈1,470토큰(계산값)까지만 낸다 — 위
     #   `request_timeout_s`가 없으면 사고를 켠 호출은 거기서 끊긴다(이슈 #261).
-    # - 메모리: 가중치 51.75 GiB(위 파일 크기 합, 계산값). 적재 크기(가중치+non-torch)·KV는 안 쟀다. KV는
+    # - 메모리: 가중치 51.75 GiB(위 파일 크기 합, 계산값). 적재 크기(가중치+non-torch)·KV는 안 쟀다(⏵ vast에서 쟀다 — 끝 줄). KV는
     #   full attention 16층만 토큰마다 자란다 — 16층 × KV 헤드 4 × head_dim 256 × (K·V) 2 × bf16 2 B =
     #   64 KiB/토큰(계산값, linear attention 층의 고정 상태는 뺐다).
+    # - ⏵ 2026-09-29 vast.ai(RTX PRO 6000 · 전용 VRAM · vllm 0.27.1)에서 쟀다 — 모델 로딩 51.1 GiB · 가중치+
+    #   non-torch 51.91 GiB · util 0.90에서 KV 29.84 GiB = 483,182 토큰(≈64.8 KiB/토큰 — 위 계산과 맞는다,
+    #   나눗셈은 계산값) · 정상 상태 생성 16.2 tok/s(서버 로그 10초 창). ⚠ 장비가 다르다 — GB10 속도로 옮기지
+    #   않는다. `benchmark`는 여전히 0이다(`cli bench`로 잰 값이 아니다).
     endpoint: "http://127.0.0.1:8002/v1"
     context_limit: 262144
     quantization: "bf16"
@@ -534,6 +552,10 @@ models:
     #   run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
+    #
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
     #
     # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0001` — 머지하지 않는 스모크 브랜치, `checksum`이
     # 0이라 비교표 밖). 원문은 docs/experiments/harness/2026-09-24-roster-smoke-atom.md §9다.
