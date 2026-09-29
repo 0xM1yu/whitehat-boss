@@ -5,8 +5,11 @@
 
 **MissingEvidence 객체는 노드가 만든다.** 구조화 출력 스키마가 `Finding` 하나여서
 모델은 미리 발급된 `missing_id`만 참조하고, 실제 객체는 여기서 템플릿 문구로 만든다
-(S1 계약, C4에서 확정). `blocking=True`인 이유: 모델이 이 ID를 참조했다는 것은 "코드에서
-확인 불가"라고 판단했다는 뜻이고, 그것이 곧 Evidence Gate E2가 막아야 할 상태다
+(S1 계약, C4에서 확정). 모델이 `missing_evidence`를 비우지 않았으면 `run()`의 발급값 도장이
+어떤 ID를 썼든 발급 `missing_id` 하나로 정규화한다(이슈 #279) — 발급 ID와의 교집합만 남기면
+발급 안 된 ID만 쓴 「확인 불가」 요청이 사라져 E2가 열린다. `blocking=True`인 이유: 모델이
+`missing_evidence`에 무엇이든 적었다는 것은 "코드에서 확인 불가"라고 판단했다는 뜻이고, 그것이
+곧 Evidence Gate E2가 막아야 할 상태다
 (계획 D-h: E2의 "guard 부재"를 blocking MissingEvidence 부재로 환원).
 
 ## `callers` 사실은 캡슐에서 파생한다
@@ -26,7 +29,7 @@ from src.graph_entry import name_of
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.scout import describe_sections, describe_target
-from src.orchestrator.prompt_loader import build_facts, load_prompt
+from src.orchestrator.prompt_loader import build_facts, evidence_summaries, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.candidate import Candidate
 from src.schemas.capsule import ContextCapsule
@@ -37,6 +40,15 @@ from src.schemas.finding import Finding, MissingEvidence
 ROLE = Role.AUDITOR
 # 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조).
 OUTPUT_SCHEMA = Finding
+
+# 근거 본문을 FACTS에 싣는 것은 그 본문을 **전제로 쓰인 프롬프트 버전**에만 한다
+# (`critic._CONTENT_AWARE_VERSIONS`와 같은 패턴 — **자기 상수다, critic 것을 import하지 않는다**:
+# 본문을 전제로 쓰였는지는 역할별 프롬프트의 성질이라 두 역할이 같은 집합을 공유할 이유가 없다).
+# v3가 드는 것은 `prompts/auditor/v3/meta.yaml`이 스스로 「evidence 본문이 닿는 변경 전까지 v3는
+# 올리지 않는다」를 조건으로 걸었기 때문이다. ⚠ v3 prefix는 critic v3와 달리 `body` 필드를 이름으로
+# 부르지 않는다(「supplied source or facts」만) — 모델이 그 본문을 실제로 쓰는지는 미측정이다.
+# v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
+_CONTENT_AWARE_VERSIONS = frozenset({"v3"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
@@ -79,6 +91,26 @@ def run(
             evidences=evidences,
             source=source,
         )
+        # **발급값은 하네스가 도장 찍는다**(이슈 #279) — 논거·방식은 `RunContext.stamp_issued`.
+        # 초기 `state`가 F-1(`hypothesized`)이 아니면 `create()`가 `IllegalTransition`을 냈고,
+        # 남의 `finding_id`면 그 행을 예외 없이 덮었다. `missing_evidence`는 **비어 있지 않으면 발급
+        # `missing_id` 하나로 정규화한다** — 모델이 쓴 ID마다 해제 경로 없는 blocking이 생겼고
+        # (`_materialize_missing`), 발급 ID와의 교집합만 남기면 발급 안 된 ID만 쓴 「확인 불가」
+        # 요청이 MissingEvidence 0건이 되어 E2 blocking 축이 열린다. 비어 있으면 그대로 비어 있다
+        # (누락 없음).
+        finding = ctx.stamp_issued(
+            finding,
+            {
+                "finding_id": ids["finding_id"],
+                "run_id": ctx.run_id,
+                "candidate_id": ids["candidate_id"],
+                "state": FindingState.HYPOTHESIZED,
+                "missing_evidence": [ids["missing_id"]] if finding.missing_evidence else [],
+            },
+            stage=Stage.AUDITOR,
+            subject_kind="finding",
+            subject_id=ids["finding_id"],
+        )
         ctx.create(finding, reason=ReasonCode.AUDITOR_HYPOTHESIZED, stage=Stage.AUDITOR)
         missings = _materialize_missing(ctx, finding)
         for missing in missings:
@@ -95,8 +127,16 @@ def _ask_model(
     evidences: tuple[Evidence, ...],
     source: Callable[[], str] | None,
 ) -> Finding:
-    template = load_prompt(ROLE, ctx.config.model_for(ROLE.value).prompt_template_version)
+    version = ctx.config.model_for(ROLE.value).prompt_template_version
+    template = load_prompt(ROLE, version)
     text = ctx.read_source(capsule.target) if source is None else source()
+    # content-aware 버전(v3)일 때만 payload 본문을 읽어 싣는다. 그 외 버전은 본문 없이
+    # 종전과 동일(`critic._ask_model`과 같은 패턴).
+    bodies = (
+        evidence_summaries(evidences, ctx.read_payload)
+        if version in _CONTENT_AWARE_VERSIONS
+        else {}
+    )
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -106,6 +146,7 @@ def _ask_model(
             capsule=capsule,
             source=text,
             evidences=evidences,
+            evidence_bodies=bodies,
             callers=caller_names(capsule),
         ),
         candidate=_describe_candidate(candidate),

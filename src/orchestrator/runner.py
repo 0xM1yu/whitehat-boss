@@ -1871,6 +1871,14 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⚠ 그 147호출은 **프롬프트 전체**를 잰 것이고 `SOURCE`는 그 일부다 — 같은 run의 SOURCE는 최대
 # 14,995자였다(상한에 걸린 슬라이스 5 · 뺀 함수 249). entry 함수는 상한을 안 받는다
 # (`_auditor_source`의 ⚠ · `anchor_chars`).
+#
+# ⚠ **2026-09-29 — 위 [실측]은 프롬프트 v1의 것이다.** registry의 Auditor가 v3가 되며(근거 본문
+# 배선과 같은 변경) 입력이 +3,212~8,740토큰 늘 수 있다 — **계산값**이다: prefix +6,469자 · body 틀
+# +194자 · FACTS의 근거 본문 최대 4,000자(JSON 이스케이프 전) = 10,663자를 위 글자/토큰 비
+# 1.22~3.32로 나눴다. 그 측정의 입력 몫(20,480)이면 여유 5,043을 넘을 수 있고, 지금 넘치는지는
+# 서빙 창에 달렸다(`config/models.yaml`의 `qwen3.8-27b` 기동 조건). **v3의 입력 토큰은 안
+# 쟀다(미실측)** — 이 상한이 v3에서도 입력 몫에 든다는 실측은 없다. 첫 v3 run의 `input_tokens`
+# 최대가 그 답이다.
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 

@@ -48,10 +48,11 @@ ScoutMemberRole = Annotated[str, Field(pattern=SCOUT_MEMBER_PATTERN, max_length=
 def scout_member_of(role_value: str) -> str | None:
     """호출 역할 키가 Scout 풀 멤버면 그 키를, 아니면 `None`을 돌려준다.
 
-    stamp 하는 쪽(`orchestrator/context.py`)이 이것만 부른다. 규칙과 그 규칙이 채우는
-    필드를 한 파일에 두는 것이 요점이다 — 둘이 갈라지면 패턴은 거부하는데 stamp는 만들어
-    내는 값이 생기고, stamp가 쓰는 `model_copy(update=)`는 검증을 우회하므로 그 값이
-    그대로 매니페스트에 남는다.
+    stamp 하는 쪽 둘(v1·v2 `Candidate`는 `orchestrator/context.py`의 `call_model`, v3
+    `ScoutResponse`는 `orchestrator/nodes/scout.py`의 `_call_hop`)이 이것만 부른다. 규칙과 그
+    규칙이 채우는 필드를 한 파일에 두는 것이 요점이다 — 둘이 갈라지면 패턴은 거부하는데
+    stamp는 만들어 내는 값이 생기고, stamp가 쓰는 `model_copy(update=)`는 검증을 우회하므로
+    그 값이 그대로 매니페스트에 남는다.
     """
     return role_value if re.fullmatch(SCOUT_MEMBER_PATTERN, role_value) else None
 
@@ -79,7 +80,10 @@ class Candidate(HarnessModel):
     #
     # 모델이 채우는 값이 아니다(`produced_by`와 같은 논법). 모델은 자기가 풀의 어느 자리에서
     # 불렸는지 모르고, 이 필드는 그 자리를 증언하는 **증거**다 — 모델이 쓴 값이 살아남으면
-    # 증언이 아니라 자기소개가 된다. 덮는 자리는 `RunContext.call_model` 하나다.
+    # 증언이 아니라 자기소개가 된다. 덮는 자리는 둘이다 — v1·v2(`Candidate`)는
+    # `RunContext.call_model`, v3(`ScoutResponse`)는 `nodes/scout._call_hop`이다(래퍼에는 이
+    # 필드가 없어 `call_model`이 건너뛴다). 발급 ID·`run_id`·`artifact_id`·초기 `state`는 같은
+    # `_call_hop`에서 `RunContext.stamp_issued`가 덮는다.
     #
     # **`None`은 미실측 표시가 아니다**(CLAUDE.md §0). 풀이 없는 프로필 — `roles:`에 `scout`
     # 한 역할 — 로 돈 후보라는 관측이고, 풀 프로필의 후보에는 stamp가 반드시 값을 채우므로
@@ -96,7 +100,7 @@ class Candidate(HarnessModel):
     # 이 후보가 나온 **슬라이스**(`slices.json`의 `slices[].id` — ADR 0012 결정 1의 #220 ① 풀이).
     # `location`은 슬라이스의 대표 위치(entry)라 불연속 줄 집합을 못 들고, entry가 같은 두
     # 슬라이스를 가르지도 못한다 — 그것을 이 필드가 든다. `scout_member`와 같은 논법으로
-    # **하네스가 덮는다**(`nodes/scout.run`). `None`은 `--slices` 없이 돈 run의 후보다.
+    # **하네스가 덮는다**(`nodes/scout.finish`). `None`은 `--slices` 없이 돈 run의 후보다.
     slice_id: NonEmptyStr | None = None
 
 
