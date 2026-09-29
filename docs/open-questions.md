@@ -132,7 +132,7 @@
 | D78 | ~~슬라이스를 Scout 입력으로 올리기 전에 풀어야 할 것 셋 — `Location` 표현력·캐시 키·E1 STATIC~~ (Phase 3에서 셋 다 풀림) | 닫힘 | [본문](open-questions/D/D78.md) |
 | D79 | 조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다 | 열림 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** | 열림 | [본문](open-questions/D/D80.md) |
-| D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** | 열림 | [본문](open-questions/D/D81.md) |
+| D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** (⏵ 2026-09-29 ATOM 종료 — vast 박스 고정 문제로 좁혀짐) | 열림 | [본문](open-questions/D/D81.md) |
 | D82 | **Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다 — 풀 프로필에서 라이브** (`slice_criterion`·슬라이스 SOURCE·`requested_context` 객체) | 열림 | [본문](open-questions/D/D82.md) |
 | D83 | **모델이 쓴 `state`·ID를 하네스가 대조하지 않는다 — run이 매니페스트 없이 중단되거나 기록이 조용히 덮일 수 있다** (코드 추론 — 실관측 0) | 열림 | [본문](open-questions/D/D83.md) |
 | D84 | **모델 응답 원문·`reasoning_content`·`finish_reason`을 보존하지 않는다** — 증류 데이터·D46 진단 불가 | 열림 | [본문](open-questions/D/D84.md) |
