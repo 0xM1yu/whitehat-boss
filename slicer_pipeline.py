@@ -40,7 +40,8 @@ class SlicingStages:
         if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
             self.result["measurement_notes"]["candidates_case_a"] = (
                 f"reached the cap ({queries.CASE_A_CANDIDATE_CAP}); api and/or readers may be "
-                "truncated to an unspecified first-N in CPG traversal order (slicer_queries)"
+                "truncated to an unspecified first-N in CPG traversal order (api: write-context "
+                "methods first, then traversal order within each layer; slicer_queries)"
             )
         self.candidates = collect(rows, self.repo)
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
