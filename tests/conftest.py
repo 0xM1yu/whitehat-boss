@@ -19,9 +19,11 @@ ALL_PROFILES: list[str] = sorted(
 )
 
 
-# scout 자리만 실서빙인 합성 config의 scout 키. `prompts/scout`에 있는 버전(v1)을 고르는
-# 로스터 키여야 프롬프트까지 열린다 — `qwen3.8-27b`가 v1이다.
+# scout 자리만 실서빙인 합성 config의 scout 키. `prompts/scout`에 있는 버전(v1)을 골라야
+# 프롬프트까지 열린다. ⏵ 2026-09-29 — 이 키의 registry 버전이 Auditor v3가 되어(`prompts/scout/v3`는
+# 없다) `served_scout_config`가 합성 엔트리에서 v1로 고정한다 — registry 버전에 기대지 않는다.
 SERVED_SCOUT_KEY = "qwen3.8-27b"
+_SERVED_SCOUT_PROMPT_VERSION = "v1"
 
 
 def served_scout_config():  # noqa: ANN201 - src.config를 모듈 머리에서 끌어오지 않으려고 반환형을 안 적는다
@@ -34,8 +36,11 @@ def served_scout_config():  # noqa: ANN201 - src.config를 모듈 머리에서 �
     from src.config import load_config
 
     base = load_config("dev_fake")
+    entry = base.models[SERVED_SCOUT_KEY].transition(
+        prompt_template_version=_SERVED_SCOUT_PROMPT_VERSION
+    )
     profile = base.profile.transition(
         roles={**base.profile.roles, "scout": SERVED_SCOUT_KEY},
         adapters=base.profile.adapters.transition(state_store="sqlite"),
     )
-    return base.transition(profile=profile)
+    return base.transition(models={**base.models, SERVED_SCOUT_KEY: entry}, profile=profile)

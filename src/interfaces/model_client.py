@@ -127,6 +127,29 @@ class ModelGatewayError(RuntimeError):
         self.retry_bodies = retry_bodies
 
 
+class ModelSwapError(ModelGatewayError):
+    """단계 경계 교대가 모델을 못 띄웠다 — 교대 명령 실패·마감 초과·준비 확인의 창 불일치.
+
+    **`ModelGatewayError`의 하위형이다.** 다음 단계의 서버가 없다는 사건이라 러너의 게이트웨이
+    갈래가 run을 멈추고 매니페스트까지 간다. `status`·`generating`이 `None`이라
+    `runner._is_droppable`이 후보 하나의 실패로 읽지 않는다. 사유 코드는 서버 사망과 갈라
+    `ReasonCode.MODEL_SWAP_FAILED`로 적는다 — 러너가 이 타입을 먼저 잡아야 한다.
+
+    `report`는 교대 명령이 stdout 마지막 줄에 낸 JSON 보고를 스칼라로 편 것이다. 실패해도
+    파싱되는 보고가 있으면 싣는다 — 무엇을 띄우다 죽었는지가 `model_swap ok=false`에 남는다.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        detail: str = "",
+        report: dict[str, str | int | float | bool | None] | None = None,
+    ) -> None:
+        super().__init__(message, detail=detail)
+        self.report = dict(report or {})
+
+
 class SchemaParseError(RuntimeError):
     """`retries` 한도 안에 구조화 출력을 얻지 못했다.
 
