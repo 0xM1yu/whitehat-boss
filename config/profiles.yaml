@@ -155,6 +155,8 @@ profiles:
     # 끄고 그 단계 모델만 띄운다. run 끝에 전부 내린다. 명령과 기동 조건(util·창·인자)은 **장비 파일**
     # (`config/serving/<device>.yaml`)이 들고 `run --device`가 고른다 — 이 선언은 장비와 무관하다. 장비 파일
     # 없이 모델에 닿는 run은 run 디렉터리를 잡기 전에 거부된다. **실장비 종단은 미실측이다**(ATOM 먼저).
+    # ⏵ 2026-09-29 — ATOM에서 한 번 돌았다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md` — 교대 네 번
+    #   전부 `ok=true`, 슬라이스 1개·n=1). vast는 미실측이다.
     # hybrid 짝은 교대를 선언하지 않는다 — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤다.
     #
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 5역할
