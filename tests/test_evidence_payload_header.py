@@ -8,11 +8,13 @@
 이름)가 모델 입력에 실린다. 여기서 지키는 것은 **그 머리줄만** 빠진다는 것이다 — 발견 수 ·
 종료 코드 · 도구가 낸 줄은 남는다.
 
-하네스 로그는 **실제 `ContainerToolRunner.run`이 쓴다**(`subprocess.run`만 대역) — 로그 포맷을
-손으로 짓지 않는다. 로그가 아닌 입력은 머리말 없는 문자열 가드
-(`test_a_payload_without_a_harness_header_is_untouched`) 하나다. semgrep·clang-tidy·build의 종료
-코드 · stdout · stderr는 로컬 실 run `run_20260813_0002`(gitignore라 저장소에 없다)의
-`semgrep/ev_0002.log`·`clang-tidy/ev_0003.log`·`build/ev_0004.log`에서 그대로 옮겼다.
+위쪽 검사의 하네스 로그는 **실제 `ContainerToolRunner.run`이 쓴다**(`subprocess.run`만 대역) —
+로그 포맷을 손으로 짓지 않는다. semgrep·clang-tidy·build의 종료 코드 · stdout · stderr는 로컬 실
+run `run_20260813_0002`(gitignore라 저장소에 없다)의 `semgrep/ev_0002.log`·`clang-tidy/ev_0003.log`
+·`build/ev_0004.log`에서 그대로 옮겼다. 문자열로 짓는 입력은 머리말 없는 문자열 가드
+(`test_a_payload_without_a_harness_header_is_untouched`)와 파일 끝의 단위 핀(걷은 뒤 기준의
+`truncated`·합 예산 · 줄 머리 · 끝줄 개행 · 남기는 하네스 줄)뿐이다 — 그 머리줄은 `_execute`가
+쓰는 모양 그대로다.
 """
 
 import json
@@ -301,3 +303,74 @@ def test_a_payload_without_a_harness_header_is_untouched() -> None:
     out = evidence_summaries([evidence], lambda _ref: text)
 
     assert out["evidence_0001"] == {"body": text, "truncated": False}
+
+
+# --- 걷은 뒤 기준 — `evidence_summaries` 단위 핀 -----------------------------------------
+#
+# 머리 세 줄은 `_execute`가 쓰는 모양 그대로이고 명령줄 길이만 늘렸다 — 원문은 증거당 상한
+# (800자)을 넘고 걷은 뒤에는 안 넘게 해서 「걷기 전 길이」와 「걷은 뒤 길이」가 갈리게 한다.
+_LONG_HEADER = (
+    "# node argv: index --callgraph .\n# runtime: docker\n$ docker run " + "x" * 970 + "\n"
+)
+
+
+def _bare(number: int) -> Evidence:
+    return Evidence.model_construct(evidence_id=f"evidence_{number:04d}", payload_ref=f"r{number}")
+
+
+def _summary_of(text: str) -> dict[str, object]:
+    return evidence_summaries([_bare(1)], lambda _ref: text)["evidence_0001"]
+
+
+def test_truncated_and_the_shared_budget_are_measured_after_the_header_strip() -> None:
+    """`truncated`와 합 예산은 **걷은 뒤** 길이로 잰다.
+
+    원문이 증거당 상한을 넘어도 걷은 뒤 길이가 상한 안이면 `truncated`는 False이고, 합 예산에는
+    걷은 뒤 길이만 청구된다. `truncated`를 원문 길이로 판정하거나 `used`를 걷기 전 길이로
+    청구하는 수정은 여기서 빨개진다.
+    """
+    raws = {"r1": _LONG_HEADER + "c" * 300, "r2": _LONG_HEADER + "d" * 900}
+
+    out = evidence_summaries(
+        [_bare(1), _bare(2)], raws.__getitem__, per_cap=800, total_cap=1000
+    )
+
+    assert out["evidence_0001"] == {"body": "c" * 300, "truncated": False}
+    assert len(str(out["evidence_0002"]["body"])) == 700  # 합 1,000 − 첫 증거 300
+    assert out["evidence_0002"]["truncated"] is True
+
+
+def test_only_a_line_that_starts_with_a_header_prefix_is_dropped() -> None:
+    """줄 머리가 아니면(줄 가운데 · 들여쓴 줄 · 한 줄 JSON 안) 머리줄 모양이어도 남는다."""
+    text = 'x# runtime: y  $ docker run z\n  $ docker run indented\n{"m": "# node argv: k"}'
+
+    assert _summary_of(text)["body"] == text
+
+
+def test_a_command_word_that_only_begins_with_a_runtime_name_is_kept() -> None:
+    """`$ ` 뒤 낱말이 런타임 이름으로 **시작만** 하면 머리줄이 아니다 — 이름 뒤 공백까지 본다."""
+    assert _summary_of("$ dockerfile-lint a\n")["body"] == "$ dockerfile-lint a"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "--- stdout ---",
+        "--- stderr ---",
+        "(timeout after 300s)",
+        "(FileNotFoundError: [Errno 2] No such file or directory: 'docker')",
+        "# 실행하지 않았다: x",
+        "# 실행되지 않은 명령 1개 — 앞 명령이 non-zero로 끝나 break됨",
+    ],
+)
+def test_the_harness_lines_outside_the_three_headers_are_kept(line: str) -> None:
+    """머리줄 셋 밖의 하네스 줄(절 구분 · timeout · 실행 예외 · 실행 전 거절 사유 · 미실행
+    명령 수)은 남는다. 발견 수와 `(exit=N)`은 위 semgrep 검사가 본다."""
+    body = str(_summary_of(f"{_LONG_HEADER}(exit=1)\n{line}\ntool output\n")["body"])
+
+    assert line in body
+
+
+def test_a_header_line_without_a_final_newline_is_dropped_too() -> None:
+    """읽기 상한이 로그를 머리줄 한가운데서 자르면 개행 없는 끝줄이 남는다 — 그 줄도 걷는다."""
+    assert _summary_of("keep\n$ docker run " + "y" * 50) == {"body": "keep", "truncated": False}
