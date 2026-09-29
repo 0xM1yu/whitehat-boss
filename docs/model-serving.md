@@ -332,6 +332,8 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⇒ **run 전에 `cli bench`를 그날의 프로필로 한 번 돌리는 것이 이 함정의 프리플라이트다.**
 >
+> ⏵ **2026-09-29 — 교대 프로필은 run이 스스로 본다.** 교대마다 올린 키를 `check_startup()`으로 다시 읽어 이름이 없거나 `max_model_len`이 registry `context_limit`과 다르면 run을 멈춘다(`src/adapters/model_swap.py` — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안」 절, 제안). **교대를 선언하지 않은 프로필(서버를 사람이 띄운다)은 그대로 위 프리플라이트가 유일하다** — 아직 교대를 선언한 프로필은 없다.
+>
 > ⚠ **`doctor`로는 안 된다** — 접속을 하지 않는다(`src/cli.py`의 `doctor()` docstring).
 > 다만 **접속이 없어서가 아니다**: `_check_wiring`이 이미 역할별 endpoint를 조립하므로
 > 「한 endpoint에 키가 둘」은 네트워크 없이도 볼 수 있다. **지금 그 검사가 없을 뿐이다.**
