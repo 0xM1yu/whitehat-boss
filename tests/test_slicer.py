@@ -1187,13 +1187,18 @@ def test_case_a_query_bounds_are_pinned():
     astart = q.index("val api =")
     aseg = q[astart : q.index(f".take({cap})", astart)]
     assert ".filter(_.parameter.size > 0).l" in aseg
-    assert ".sortBy(" in aseg and "hotIds.contains(m.id)" in aseg  # sort precedes the cap
-    # D90 (#318): "hot" = writes memory (WRITER/EXEC call OR assignment into index/field/deref).
-    # hotIds is a Set computed once; the api sort key is its membership. Pin the signal so a
-    # rewrite that drops the write-context half (leaving only WRITER calls) fails here.
-    assert "val hotIds =" in q
-    assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in q
-    assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in q
+    # D90 (#318): the WHOLE sort key, not just its location (#324 review MEDIUM-1: `1 else 0`
+    # -- hot last --, `0 else 0` -- no-op sort -- and an emptied hotIds all passed the old
+    # location-only pin). ⚠ These are still spelling pins (CLAUDE.md §2.5): they fail when the
+    # key is re-spelled, they do not prove the ordering property. The mock tests never run Scala.
+    assert ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)" in aseg  # hot first, before cap
+    # "hot" = writes memory (WRITER/EXEC call OR assignment into index/field/deref). Pin both
+    # halves and their method-null guards, and that hotIds is not post-filtered away.
+    hseg = q[q.index("val hotIds =") : q.index("val api =")]
+    assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in hseg
+    assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in hseg
+    assert hseg.count(".filter(c => Option(c.method).isDefined).method.id.l") == 2
+    assert hseg.rstrip().endswith(".method.id.l).toSet")
     # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
     # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
     assert q.count(f".take({cap})") == 2

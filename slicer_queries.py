@@ -311,6 +311,9 @@ CASE_A_CALL_LIMIT = 1
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
 # in CPG traversal order, which is not a documented/stable order, so a capped run's coverage is
 # an *unspecified* first-N subset (see known_limitations / measurement_notes, and D77 §4.5).
+# Since D90 (#318) `api` is sorted write-context-first before its `.take`, so the kept set is
+# "hot methods first", but within each layer (hot, then the rest) the cut is still that
+# unspecified traversal order. `readers` is not sorted.
 # The stdout-overrun above is the pre-#250 mechanism; #250 moved the payload to a file, so the
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
@@ -332,16 +335,21 @@ def candidates_a_query() -> str:
         "case_a",
         LOCATION
         + f"""
-      // D90 (#318): rank methods that WRITE memory ahead of the flat cap, so a GT function is
-      // not starved by traversal order when >CAP methods qualify. "Writes memory" = calls a
-      // WRITER/EXEC sink, OR assigns into an index/field/deref target (the same write-context as
-      // case_b's indexWrites/derefWrites). Plain field reads are excluded -- too common to
-      // discriminate. hotIds is computed once (Set), so the sort key is an O(1) lookup, not a
-      // per-method AST walk. Same cap, same count: this reorders, it does not add candidates.
-      val hotIds = (cpg.call.name("({WRITERS}|{EXEC_SINKS})").method.id.l ++
+      // D90 (#318): write-context-first ordering before the flat cap. Methods that WRITE memory
+      // ("hot": call a WRITER/EXEC sink, OR assign into an index/field/deref target -- the same
+      // write-context as case_b's indexWrites/derefWrites) are kept ahead of the rest. Plain
+      // field reads are excluded -- too common to discriminate. This is a REORDER, not a
+      // starvation fix in general: same cap, same count. If |hot ∩ api| <= CAP every hot method
+      // survives the cap; if it exceeds CAP the cut falls inside the hot layer, again in CPG
+      // traversal order, and every non-hot method is dropped. hotIds is computed once (Set), so
+      // the sort key is an O(1) lookup. Only Long ids are materialized (no node lists), so the
+      // uncapped `.l` here costs time, not the memory the case_b MCAP guards; a call whose
+      // enclosing method is null (malformed/partial CPG) is skipped, as in case_b's budget().
+      val hotIds = (cpg.call.name("({WRITERS}|{EXEC_SINKS})")
+        .filter(c => Option(c.method).isDefined).method.id.l ++
         cpg.call.nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall
           .name("<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
-          .nonEmpty).method.id.l).toSet
+          .nonEmpty).filter(c => Option(c.method).isDefined).method.id.l).toSet
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
         .filter(m =>
           cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
