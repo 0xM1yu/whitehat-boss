@@ -394,6 +394,11 @@ class ReasonCode(StrEnum):
     # 계속 죽는 것이라 프롬프트·예산·스키마를 봐야 한다.
     MODEL_GATEWAY_UNAVAILABLE = "model_gateway_unavailable"
     CONSECUTIVE_TARGET_FAILURES = "consecutive_target_failures"
+    # 단계 경계 교대(ADR 0012 Phase 6.5)가 다음 단계 모델을 못 띄웠다 — 교대 명령 실패·마감
+    # 초과·준비 확인의 창 불일치(`ModelSwapError`). 위 `MODEL_GATEWAY_UNAVAILABLE`과 가르는 것은
+    # 대응이 다르기 때문이다: 그쪽은 떠 있던 서버가 죽은 것이라 서버를 살리고, 이쪽은 띄우지를
+    # 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를 본다.
+    MODEL_SWAP_FAILED = "model_swap_failed"
     TOOL_POLICY_VIOLATION = "tool_policy_violation"
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"
     # Queue 규칙 (architecture.md §3)

@@ -1064,8 +1064,9 @@ def _copy_config(
     profile_patch: dict,
     model_patch: dict | None = None,
     thresholds_patch: dict | None = None,
+    profile: str = "dev_fake",
 ) -> None:
-    """저장소 config를 tmp_path로 복사하고 dev_fake 프로필만 덮어쓴다.
+    """저장소 config를 tmp_path로 복사하고 `profile`(기본 dev_fake) 하나만 덮어쓴다.
 
     `model_patch`(model key → 덮어쓸 필드)를 주면 registry 항목도 함께 바꾼다. 그때만
     models.yaml이 yaml 왕복을 거치므로 **주석이 사라진다** — 주석이 살아 있어야 하는
@@ -1095,7 +1096,7 @@ def _copy_config(
             yaml.safe_dump(raw_models, allow_unicode=True), encoding="utf-8"
         )
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
-    raw["profiles"]["dev_fake"].update(profile_patch)
+    raw["profiles"][profile].update(profile_patch)
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
 
 
@@ -1285,7 +1286,8 @@ def test_b1_puts_one_model_in_every_role_and_still_loads(tmp_path: Path) -> None
 
 
 # 단계 단위로 도는 프로필 — 로스터 canonical 쌍(2026-09-24 조민규).
-# 교대(`swap`)는 배선 전이라 어디에도 없다.
+# 교대(`swap`)는 아직 어느 프로필도 적지 않는다 — 하네스 쪽 배선은 들어왔고 선언은 장비 파일과
+# 같이 온다.
 PER_STAGE_PROFILES = frozenset({"harness_pool", "harness_pool_hybrid"})
 
 
@@ -1298,8 +1300,9 @@ def test_only_the_canonical_pool_runs_per_stage_and_nothing_declares_swap(profil
     ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
-    **교대(`swap`)는 여전히 안 적는다** — `level`·`settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
-    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 배선(ADR 0009 결과 3)도 아직 없다.
+    **교대(`swap`)는 여전히 안 적는다** — `settle_timeout_s`는 교대 예산 실측(`swap.md` §9)
+    전에 적으면 근거 없는 수가 config에 굳는 그 자리이고, 교대 명령과 장비 파일(ADR 0009
+    「2026-09-29 제안」 절)도 아직 없다 — 러너 쪽 배선은 들어왔다.
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
     """
     execution = load_config(profile).profile.execution
@@ -1357,7 +1360,6 @@ def test_swap_without_per_stage_is_rejected() -> None:
                     "swap": {
                         "resident": ["critic"],
                         "swappable": ["scout", "auditor"],
-                        "level": 1,
                         "settle_timeout_s": 30.0,
                     },
                 },
@@ -1368,7 +1370,7 @@ def test_swap_without_per_stage_is_rejected() -> None:
 def test_swap_naming_a_role_the_profile_does_not_have_is_rejected() -> None:
     """`swap`이 부르는 역할은 그 프로필의 `roles`에 실재해야 한다 (ADR 0009 불변식 2).
 
-    없는 역할을 재우고 깨우는 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다** —
+    없는 역할을 내리고 띄우는 선언은 **아무 일도 안 하면서 정책이 선 것처럼 보인다** —
     오타 하나(`embeding`)면 그 모델만 교대에서 빠지고, 그 run은 메모리가 왜 안 줄었는지
     설명할 수 없는 상태로 끝난다. `roles`가 참조 무결성을 로드 시점에 보는 것과 같은
     자리다(`_check_model_refs`).
@@ -1385,7 +1387,6 @@ def test_swap_naming_a_role_the_profile_does_not_have_is_rejected() -> None:
                     "swap": {
                         "resident": ["critic"],
                         "swappable": ["scout", "embeding"],
-                        "level": 1,
                         "settle_timeout_s": 30.0,
                     },
                 },
@@ -1410,7 +1411,6 @@ def test_a_complete_swap_declaration_on_per_stage_is_accepted() -> None:
                 "swap": {
                     "resident": ["critic"],
                     "swappable": ["scout", "auditor"],
-                    "level": 2,
                     "settle_timeout_s": 30.0,
                 },
             },
@@ -1422,7 +1422,59 @@ def test_a_complete_swap_declaration_on_per_stage_is_accepted() -> None:
     assert entry.execution.swap is not None
     assert entry.execution.swap.resident == ("critic",)
     assert entry.execution.swap.swappable == ("scout", "auditor")
-    assert entry.execution.swap.level == 2
+    assert entry.execution.swap.settle_timeout_s == 30.0
+
+
+def test_a_swap_that_names_a_sleep_level_is_rejected() -> None:
+    """교대는 **콜드 재기동**이다 — vLLM `/sleep?level=`의 단계를 적을 자리가 없다.
+
+    `level`은 sleep/wake 교대의 스키마였고, 채택된 방식(단계 경계에서 서버를 끄고 다음 단계
+    모델을 새로 띄운다)에는 그 개념이 없다. 필드를 지운 뒤 옛 YAML이 `level:`을 적어 오면
+    **조용히 무시되지 않고** 로드에서 죽어야 한다 — 적은 사람은 그 값이 무언가를 고른다고 믿는다.
+    """
+    with pytest.raises(ValidationError, match="level"):
+        ProfileEntry.model_validate(
+            _per_stage_swap(resident=["critic"], swappable=["scout", "auditor"], level=1)
+        )
+
+
+@pytest.mark.parametrize(
+    ("resident", "swappable"),
+    [([], ["scout", "embedding"]), (["reranker"], ["scout"])],
+    ids=["swappable-embedding", "resident-reranker"],
+)
+def test_a_retrieval_role_in_swap_is_rejected(resident: list[str], swappable: list[str]) -> None:
+    """검색 역할(embedding·reranker)은 교대 집합에 못 온다 — **hybrid 교대는 뒤로 미뤘다.**
+
+    검색은 3단계에서 돌고, 5단계 검색을 어떻게 가를지(ADR 0012 결정 3)가 정해지기 전에는 그
+    모델을 어느 단계에 띄울지 config가 말할 수 없다. 상주로 두면 모든 단계의 메모리를 먹고,
+    교대로 두면 러너가 부를 단계 표가 없다 — 어느 쪽이든 「선 것처럼 보이는 정책」이다.
+    `roles`에는 그 역할이 있어도(`_swap_names_roles_this_profile_has`를 통과하는 모양)
+    거부해야 한다.
+    """
+    with pytest.raises(ValidationError, match="ADR 0012 결정 3"):
+        ProfileEntry.model_validate(
+            {
+                "description": "x",
+                "roles": {
+                    "scout": "fake",
+                    "auditor": "fake",
+                    "critic": "fake",
+                    "embedding": "fake",
+                    "reranker": "fake",
+                },
+                "adapters": {"retriever": "hybrid", "tool_runner": "fake", "state_store": "memory"},
+                "budget": "dev_fake",
+                "execution": {
+                    "mode": "per_stage",
+                    "swap": {
+                        "resident": resident,
+                        "swappable": swappable,
+                        "settle_timeout_s": 30.0,
+                    },
+                },
+            }
+        )
 
 
 def test_per_stage_without_swap_is_allowed() -> None:
@@ -1455,15 +1507,15 @@ def _per_stage_swap(**swap: object) -> dict[str, object]:
         "budget": "dev_fake",
         "execution": {
             "mode": "per_stage",
-            "swap": {"level": 1, "settle_timeout_s": 30.0, **swap},
+            "swap": {"settle_timeout_s": 30.0, **swap},
         },
     }
 
 
 def test_a_swap_that_wakes_nobody_is_rejected() -> None:
-    """`swappable`이 빈 교대 선언은 막는다 — **ADR 0009의 두 불변식이 아니다.**
+    """`swappable`이 빈 교대 선언은 막는다 — **ADR 0009의 불변식이 아니다.**
 
-    `SwapPolicy`의 docstring이 네 값에 기본을 안 주는 이유로 *"`swap: {}`이 「교대한다」고
+    `SwapPolicy`의 docstring이 세 값에 기본을 안 주는 이유로 *"`swap: {}`이 「교대한다」고
     선언하면서 아무 역할도 안 부르는 상태"*를 든다. 그런데 `resident: []` +
     `swappable: []`가 그대로 통과해 **정확히 그 상태**를 만들었다 — 사유를 적고 강제하지
     않으면 다음 사람은 그 사유가 강제되는 것으로 읽는다.
@@ -1481,9 +1533,9 @@ def test_a_swap_that_wakes_nobody_is_rejected() -> None:
 
 
 def test_a_role_in_both_swap_lists_is_rejected() -> None:
-    """한 역할이 상주이면서 교대일 수는 없다 — 이것도 ADR의 둘이 아니다.
+    """한 역할이 상주이면서 교대일 수는 없다 — 이것도 ADR의 불변식이 아니다.
 
-    "재우지 않는다"와 "단계 경계에서 재운다"를 같은 역할에 함께 선언한 것이라, 어느 쪽이
+    "내리지 않는다"와 "단계 경계에서 내린다"를 같은 역할에 함께 선언한 것이라, 어느 쪽이
     이기는지 **config만 보고 정할 수 없다.** 배선하는 사람이 아무 쪽이나 고르면 그 run은
     메모리가 왜 그만큼인지 설명할 수 없는 상태로 끝난다.
     """
@@ -1518,6 +1570,82 @@ def test_an_empty_resident_list_is_still_accepted() -> None:
     assert entry.execution.swap is not None
     assert entry.execution.swap.resident == ()
     assert entry.execution.swap.swappable == ("scout",)
+
+
+# 풀 프로필에서 모델을 부르는 실서빙 역할 다섯 — `harness_pool`의 `served_models()`.
+_POOL_SERVED = [*SCOUT_POOL_ROLES, "auditor", "critic"]
+
+
+def _swap_execution(swappable: list[str]) -> dict[str, object]:
+    """상주 없이 `swappable`만 교대하는 `execution` 블록."""
+    return {
+        "mode": "per_stage",
+        "swap": {"resident": [], "swappable": swappable, "settle_timeout_s": 60.0},
+    }
+
+
+@pytest.mark.parametrize(
+    ("omitted", "on_the_auditors_key"),
+    [("scout_boundary", False), ("auditor", False), ("critic", False), ("critic", True)],
+    ids=["scout-member", "auditor", "critic", "critic-on-the-auditors-key"],
+)
+def test_a_swap_that_leaves_out_a_served_role_is_rejected(
+    tmp_path: Path, omitted: str, on_the_auditors_key: bool
+) -> None:
+    """교대를 선언한 프로필은 **실서빙 역할을 전부** `resident ∪ swappable`에 적는다.
+
+    `⊆ roles`(ADR 0009 불변식 2)는 한 방향뿐이다. 상주가 없는 이 배선에서 목록 밖의 실서빙 역할은
+    교대 명령이 그 서버를 띄우지 않고, 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상
+    「자기 run의 서버 전부 내림」으로 — 불린다. 그 호출은 서버 없이 나가 run이 틀린 사유
+    (`model_gateway_unavailable`)로 멈춘다. 다른 역할과 **같은 키**여도 같다 — 교대 대상은 그
+    단계의 역할에서 고르므로 앞 단계에 그 키가 떠 있었어도 내려간다. (그 키가 상주로 떠 있어
+    당장은 도는 배선도 거부한다 — 규칙이 엄격하다.)
+    """
+    pool = load_config("harness_pool").profile.roles
+    patch: dict[str, object] = {
+        "execution": _swap_execution([role for role in _POOL_SERVED if role != omitted])
+    }
+    if on_the_auditors_key:
+        patch["roles"] = {**pool, omitted: pool["auditor"]}
+    _copy_config(tmp_path, profile="harness_pool", profile_patch=patch)
+
+    with pytest.raises(ConfigError, match=omitted):
+        load_config("harness_pool", config_dir=tmp_path)
+
+
+def test_a_swap_that_lists_every_served_role_loads(tmp_path: Path) -> None:
+    """위 거부의 짝 — 다섯을 다 적으면 로드된다. 거부만 보면 교대 선언을 통째로 거부하는 구현도
+    지난다(`test_a_complete_swap_declaration_on_per_stage_is_accepted`와 같은 이유)."""
+    patch = {"execution": _swap_execution(_POOL_SERVED)}
+    _copy_config(tmp_path, profile="harness_pool", profile_patch=patch)
+
+    swap = load_config("harness_pool", config_dir=tmp_path).swap
+
+    assert swap is not None
+    assert set(swap.swappable) == set(_POOL_SERVED)
+
+
+def test_a_fake_role_may_stay_out_of_the_swap_lists(tmp_path: Path) -> None:
+    """세는 것은 `roles`가 아니라 **실서빙** 역할이다 — Fake 역할은 서버가 없어 교대가 다룰 것이
+    없다. `dev_fake`는 전 역할이 Fake라 `scout` 하나만 적어도 로드된다."""
+    _copy_config(tmp_path, profile_patch={"execution": _swap_execution(["scout"])})
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.swap is not None
+    assert config.served_models() == {}
+
+
+def test_a_hybrid_profile_cannot_declare_a_swap(tmp_path: Path) -> None:
+    """검색 역할이 실서빙인 hybrid 프로필은 교대를 선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가
+    거부하고(ADR 0012 결정 3 뒤 — `test_a_retrieval_role_in_swap_is_rejected`), 빼면 위 규칙이
+    거부한다. 빼고 통과하면 교대 명령이 검색 서버를 띄우지 않는다 — 교대가 띄우는 것은 목록의
+    역할뿐이다."""
+    patch = {"execution": _swap_execution(_POOL_SERVED)}
+    _copy_config(tmp_path, profile="harness_pool_hybrid", profile_patch=patch)
+
+    with pytest.raises(ConfigError, match="embedding.*reranker"):
+        load_config("harness_pool_hybrid", config_dir=tmp_path)
 
 
 def test_an_unknown_execution_key_is_rejected() -> None:

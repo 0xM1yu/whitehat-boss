@@ -18,6 +18,7 @@ from typing import ClassVar, Literal
 import yaml
 from pydantic import Field, JsonValue, model_validator
 
+from src.paths import safe_join
 from src.schemas.common import HarnessModel, NonEmptyStr, Sha256Digest
 from src.schemas.enums import CapsuleLevel
 from src.schemas.run import Budget, Sampling
@@ -326,7 +327,12 @@ class SwapPolicy(HarnessModel):
     어느 역할이 상주인지가 우리 파이프라인에서는 단계 순서로 정해지지 LRU로 정해지지
     않기 때문이다.
 
-    **네 값에 기본을 주지 않는다.** 하위 호환을 위해 기본값이 필요한 것은 기존 YAML이
+    **교대는 콜드 재기동이다**(2026-09-29 — ADR 0012 Phase 6.5). 단계 경계에서 교대 명령이 앞
+    단계 서버를 끄고 다음 단계 모델을 새로 띄운다. vLLM `/sleep`·`/wake_up`을 쓰지 않으므로 옛
+    `level`(sleep 단계) 필드는 지웠고, 적어 오면 로드에서 죽는다(`extra="forbid"`). 서버를 띄우는
+    값(util·창·인자)과 명령은 프로필이 아니라 장비 파일이 든다(`ServingConfig`).
+
+    **세 값에 기본을 주지 않는다.** 하위 호환을 위해 기본값이 필요한 것은 기존 YAML이
     선언하지 않는 필드(`ProfileEntry.execution`·`ExecutionPolicy.mode`)이고, 이 모델은
     `swap:`을 **적은 프로필에서만** 만들어지므로 그 사유가 걸리지 않는다. 반대로 기본을
     주면 `swap: {}`이 "교대한다"고 선언하면서 아무 역할도 안 부르는 상태가 되고, 교대
@@ -334,49 +340,43 @@ class SwapPolicy(HarnessModel):
     의 기본값은 아무도 재지 않은 수가 config에 굳는 것이다 — ADR 0009가 "값은 실측 후
     채운다. 지금 값을 박지 않는다"고 적은 그 값이다(CLAUDE.md §0).
 
-    **아래 셋은 ADR 0009의 불변식이 아니다.** ADR이 「스키마가 강제」로 이름 붙인 것은
+    **아래 넷은 ADR 0009의 불변식이 아니다.** ADR이 「스키마가 강제」로 이름 붙인 것은
     둘뿐이고(`swap`이 있으면 `mode == per_stage` · `resident ∪ swappable ⊆ roles`),
-    아래는 이 스키마가 **더 얹는 것**이다. 얹는 이유는 바로 위 문단이 *"아무 역할도 안
+    아래는 이 스키마가 **더 얹는 것**이다. 셋째 불변식(실서빙 역할은 전부 목록에 있다)은
+    registry를 봐야 해서 스키마가 아니라 `load_config`가 강제한다
+    (`_check_swap_lists_every_served_role`). 얹는 이유는 바로 위 문단이 *"아무 역할도 안
     부르는 상태"*를 피하려고 기본값을 거절해 놓고 **정작 그 상태를 막지 않았기**
     때문이다 — `resident: []` + `swappable: []`가 통과했다. 사유를 적고 강제하지 않으면
     다음 사람은 그 사유를 강제되는 것으로 읽는다.
 
-    - **`swappable`이 비면 거절한다.** 교대를 선언해 놓고 아무도 재우지 않는 선언이라
+    - **`swappable`이 비면 거절한다.** 교대를 선언해 놓고 아무도 내리지 않는 선언이라
       「정책이 선 것처럼 보이면서 아무 일도 안 한다」 — 아래
       `ProfileEntry._swap_names_roles_this_profile_has`가 오타에 대해 막는 것과 같은
       상태다. 그 배선의 정본 표현은 `swap`을 **생략하는** 것이고 그쪽은 지금도 정당하다
       — ADR 0010 §1이 *"교대(`execution.swap`)는 스키마만 열고 기본은 끈다"*로 적은 그
       배선이다.
-    - **한 역할이 두 목록에 함께 있으면 거절한다.** "재우지 않는다"와 "재운다"를 동시에
+    - **한 역할이 두 목록에 함께 있으면 거절한다.** "내리지 않는다"와 "내린다"를 동시에
       선언한 것이라 어느 쪽이 이기는지 config만 보고 못 정한다.
     - **한 목록 안의 중복을 거절한다.** 두 목록은 역할 집합이고, 같은 이름이 두 번 적힌
       것의 유일한 효과는 그 사실을 눈에서 가리는 것이다.
+    - **검색 역할(`RETRIEVAL_ROLES`)을 거절한다.** 검색 모델을 어느 단계에 띄울지는 5단계
+      검색을 가르는 결정(ADR 0012 결정 3) 뒤에야 정해진다. 그 전에 적으면 상주든 교대든
+      「선 것처럼 보이는 정책」이다 — 그래서 hybrid 프로필은 아직 교대를 선언하지 않는다.
 
     **`resident`가 비는 것은 막지 않는다** — 전부 교대시키는 정책은 말이 된다.
     """
 
-    # 재우지 않는 역할.
+    # 단계 경계에서 내리지 않는 역할.
     resident: tuple[NonEmptyStr, ...]
-    # 단계 경계에서 재우고 깨우는 역할.
+    # 단계 경계에서 내리고 다시 띄우는 역할.
     swappable: tuple[NonEmptyStr, ...]
-    # vLLM `/sleep?level=`.
-    #
-    # **둘 중 하나를 못 고른다 — 근거가 없어서다.** 2026-09-03 ATOM 측정에서 L1과 L2가
-    # 세 계측기 전부에서 같았지만(`docs/research/2026-09-04-swap.md` §1.2), 그 문서는 그
-    # 관측을 설계 근거로 쓰는 것을 명시적으로 막는다: *"우리 L2 측정은 완결된 wake가
-    # 아니다 … 이 수치를 설계 근거로 쓰면 안 된다"* — `reload_weights`를 안 부르고
-    # `/v1/models` 응답만 봤다. 구별이 안 된 이유도 *"설명 못 한다. 가설 셋을 남긴다"*로
-    # 열려 있고, 벤더 쪽은 반대로 L2 wake가 **약 3배 느리다**고 적는다.
-    #
-    # 그래서 여기서 하는 것은 "둘이 같더라"가 아니라 **판정을 미루는 것**이다. 값은
-    # 프로필이 적고, 어느 쪽이 맞는지는 §1.2 (a)의 여러 판 측정이 답한다.
-    level: Literal[1, 2]
-    # 재우거나 깨운 뒤 `is_sleeping`이 뒤집힐 때까지 기다리는 상한.
+    # 교대 한 번(내림 + 기동 + 준비 확인)의 마감. 교대 명령에 `SWAP_DEADLINE_S`로 넘어간다
+    # (`adapters.model_swap`). 값은 기동 실측으로 정한다 — 위 docstring의 「박지 않는다」.
     settle_timeout_s: float = Field(gt=0)
 
     @model_validator(mode="after")
     def _lists_are_disjoint_role_sets_that_swap_someone(self) -> "SwapPolicy":
-        """위 docstring의 셋. **ADR 0009의 두 불변식과 별개다.**"""
+        """위 docstring의 넷. **ADR 0009의 불변식과 별개다.**"""
         for field_name, names in (("resident", self.resident), ("swappable", self.swappable)):
             repeated = sorted({name for name in names if names.count(name) > 1})
             if repeated:
@@ -391,8 +391,14 @@ class SwapPolicy(HarnessModel):
             )
         if not self.swappable:
             raise ValueError(
-                "execution.swap.swappable이 비었다 — 교대한다고 선언하고 아무도 재우지 "
+                "execution.swap.swappable이 비었다 — 교대한다고 선언하고 아무도 내리지 "
                 "않는다. 교대하지 않는 배선은 execution.swap을 생략해 적는다"
+            )
+        retrieval = sorted({*self.resident, *self.swappable} & set(RETRIEVAL_ROLES))
+        if retrieval:
+            raise ValueError(
+                f"execution.swap이 검색 역할을 부른다: {retrieval}. hybrid 교대는 ADR 0012 "
+                "결정 3(5단계 검색 분리) 뒤다 — 그때까지 검색 역할은 교대에 넣지 않는다"
             )
         return self
 
@@ -404,8 +410,10 @@ class ExecutionPolicy(HarnessModel):
     러너이고, 그래서 이 필드를 선언하지 않은 프로필은 run이 바뀌지 않는다. ADR 0009가
     이 결정을 "되돌리기 싼" 것으로 부른 근거가 그것이고, 러너를 단계 단위로 재작성하는
     쪽은 **별도 PR**이었고 그 PR이 들어왔다(ADR 0009 결과 2) — `per_stage`를 적으면
-    `runner._triage_by_stage`가 돈다. 여기서 정하는 것은 **어느 루프인가**뿐이고,
-    교대(`swap`) 배선은 아직 아니다(결과 3, `swap.md §9` 실측이 선행).
+    `runner._triage_by_stage`가 돈다. 여기서 정하는 것은 **어느 루프인가**와 교대 선언이다.
+    교대(`swap`)를 적으면 러너가 단계 경계에서 교대 콜러블(`Dependencies.swap_to`)을 부르고 run
+    끝에 내린다 — 교대 명령과 기동 조건은 프로필이 아니라 장비 파일이 든다(`ServingConfig`, ADR 0009
+    「2026-09-29 제안」 절).
     """
 
     mode: Literal["per_candidate", "per_stage"] = "per_candidate"
@@ -666,6 +674,11 @@ class HarnessConfig(HarnessModel):
     sampling: Sampling
     seed: int
 
+    @property
+    def swap(self) -> SwapPolicy | None:
+        """이 프로필의 교대 선언. 없으면(`execution` 미선언 포함) `None`이다."""
+        return self.profile.execution.swap if self.profile.execution is not None else None
+
     def model_key_for(self, role: str) -> str:
         try:
             return self.profile.roles[role]
@@ -892,6 +905,35 @@ def _check_family_split(name: str, profile: ProfileEntry, models: dict[str, Mode
         )
 
 
+def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
+    """교대를 선언한 프로필은 실서빙 역할을 **전부** `resident ∪ swappable`에 적는다 (ADR 0009
+    불변식 3 — 「2026-09-29 제안」 절 1).
+
+    `⊆ roles`(불변식 2)는 한 방향뿐이다. 교대는 목록에 적힌 역할의 서버만 띄운다
+    (`runner._swap_for`) — 목록 밖의 실서빙 역할은 같은 키를 쓰는 다른 역할이 그때 떠 있을 때만
+    서버를 만나고, 아니면 그 호출이 서버 없이 나가 run이 틀린 사유(`model_gateway_unavailable`)로
+    멈춘다. 상주가 없으면 그 역할만 부르는 단계의 교대는 키 없이 — 명령 계약상 「자기 run의 서버
+    전부 내림」으로 — 불린다. **같은 키가 다른 역할(상주 등) 덕에 떠 있어 당장은 도는 배선도
+    거부한다** — 그 역할의 서버를 다른 역할의 선언에 기대게 두지 않는 엄격한 규칙이다. 그래서
+    검색 역할이 실서빙인 hybrid 프로필은 교대를 선언할 수 없다 — 목록에 넣으면 `SwapPolicy`가,
+    빼면 이 검사가 거부한다.
+
+    `ProfileEntry`가 아니라 여기 있는 것은 실서빙 판정(`served_models()`)이 registry의
+    `is_fake`를 봐야 해서다 — `_check_family_split`과 같은 자리다.
+    """
+    swap = config.swap
+    if swap is None:
+        return
+    unlisted = sorted(set(config.served_models()) - {*swap.resident, *swap.swappable})
+    if unlisted:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}의 execution.swap이 실서빙 역할 {unlisted}을 "
+            "안 적었다 — 교대는 목록에 적힌 역할의 서버만 띄우므로 그 역할은 같은 키를 쓰는 다른 "
+            "역할이 그때 떠 있을 때만 서버를 만난다. 전부 적거나(검색 역할은 못 적는다 — ADR 0012 "
+            "결정 3 뒤) 교대를 선언하지 않는다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -924,7 +966,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     if not isinstance(seed, int):
         raise ConfigError("budgets.yaml에 정수 seed 항목이 없다")
 
-    return HarnessConfig(
+    config = HarnessConfig(
         profile_name=profile,
         profile=entry,
         models=models,
@@ -933,3 +975,91 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         sampling=Sampling.model_validate(_require(budgets_raw, "sampling", "budgets.yaml")),
         seed=seed,
     )
+    _check_swap_lists_every_served_role(config)
+    return config
+
+
+# --- 장비 파일 (ADR 0012 Phase 6.5 — 단계 단위 콜드 재기동 교대) -----------------------
+
+
+class ServerLaunch(HarnessModel):
+    """장비 파일의 서버 한 행 — 교대 명령이 그 모델을 **어떻게 띄우는가**.
+
+    하네스는 이 값을 쓰지 않는다. 읽는 쪽은 교대 명령(장비마다 다른 스크립트)이고, 하네스가
+    여기 스키마를 두는 이유는 오타·범위 밖 값이 **run 시작 전에** 죽게 하려는 것과 창을
+    registry와 대조하려는 것(`check_serving`) 둘이다.
+    """
+
+    # `--gpu-memory-utilization`.
+    util: float = Field(gt=0, le=1)
+    # `--max-num-seqs`.
+    max_num_seqs: int = Field(gt=0)
+    # `--max-model-len`. registry `context_limit`과 **같아야 한다**(`check_serving`).
+    max_model_len: int = Field(gt=0)
+    # 위 셋 밖의 기동 인자(parser·attention backend 등). 비어 있을 수 있다.
+    extra_args: tuple[NonEmptyStr, ...] = ()
+    # 기동 프로세스에만 거는 환경변수.
+    env: dict[NonEmptyStr, str] = Field(default_factory=dict)
+    # 준비 판정에 보낼 요청의 종류. 채팅 모델·임베딩·리랭커가 받는 엔드포인트가 다르다.
+    probe: Literal["chat", "embed", "rerank"]
+
+
+class ServingConfig(HarnessModel):
+    """`config/serving/<device>.yaml` — 한 장비에서 교대 명령과 모델별 기동 조건.
+
+    **프로필에 적지 않는다.** 같은 프로필을 다른 장비에서 돌리면 명령과 util·창만 갈린다 —
+    그 값을 프로필에 적으면 장비 수만큼 프로필이 는다. `run --device <device>`가 파일을 고른다.
+    """
+
+    # 교대 명령 argv 머리. 하네스가 뒤에 올릴 model key들을 붙인다(키 없음 = 전부 내림).
+    command: tuple[NonEmptyStr, ...] = Field(min_length=1)
+    # model key → 기동 조건.
+    servers: dict[NonEmptyStr, ServerLaunch]
+
+
+def load_serving(device: str, config_dir: Path = CONFIG_DIR) -> ServingConfig:
+    """`config_dir/serving/<device>.yaml`을 읽는다. 없거나 깨졌으면 `ConfigError`다.
+
+    장비 라벨은 값 집합이 열려 있어(ADR 0006) 경로 조각으로 쓰기 전에 `serving/` 안에 가둔다.
+    스키마 오류도 `ConfigError`로 바꾼다 — CLI가 한 갈래로 잡아 run 디렉터리 전에 멈추게.
+    """
+    try:
+        path = safe_join(config_dir / "serving", f"{device}.yaml")
+        return ServingConfig.model_validate(_read_yaml(path))
+    except (ConfigError, ValueError) as exc:  # 파일 없음 · PathEscape · ValidationError
+        raise ConfigError(f"장비 파일 {device!r}: {exc}") from exc
+
+
+def check_serving(config: HarnessConfig, serving: ServingConfig) -> None:
+    """장비 파일이 이 config의 registry·교대 선언과 맞는가. 어긋나면 `ConfigError`다.
+
+    1. 행의 키가 registry에 있다 — 없는 키는 교대 명령이 띄울 수 없는 모델이다.
+    2. 교대가 올릴 served 모델(상주 ∪ 교대 역할의 실서빙 키)마다 행이 있다.
+    3. 서버 창 `max_model_len`이 registry `context_limit`과 같다. 2026-09-25 ATOM에서 40,960인
+       Scout 둘을 16,384로 띄운 채 돌렸고 하네스는 아무 말도 안 했다 — 프롬프트 12건이 400으로
+       거절됐다(`run_20260925_0005`·`0006`, #331). 파일에 다른 값을 적으면 그 실수가 굳는다.
+    """
+    unknown = sorted(set(serving.servers) - set(config.models))
+    if unknown:
+        raise ConfigError(f"장비 파일의 서버 행이 registry에 없는 모델을 부른다: {unknown}")
+    swap = config.swap
+    if swap is not None:
+        roles = {*swap.resident, *swap.swappable}
+        needed = {key for role, key in config.served_models().items() if role in roles}
+        missing = sorted(needed - set(serving.servers))
+        if missing:
+            raise ConfigError(
+                f"프로필 {config.profile_name!r}이 교대로 올릴 모델의 서버 행이 장비 파일에 "
+                f"없다: {missing}"
+            )
+    wrong = [
+        f"{key}: max_model_len {row.max_model_len} ≠ context_limit "
+        f"{config.models[key].context_limit}"
+        for key, row in sorted(serving.servers.items())
+        if row.max_model_len != config.models[key].context_limit
+    ]
+    if wrong:
+        raise ConfigError(
+            f"장비 파일의 서버 창이 registry와 다르다: {'; '.join(wrong)} — 창은 context_limit "
+            "그대로 띄운다"
+        )

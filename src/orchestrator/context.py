@@ -157,6 +157,14 @@ class RunContext:
     # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
+    # 단계 경계 모델 교대 (ADR 0012 Phase 6.5). `Dependencies.swap_to`(runner.py)를 옮겨 온
+    # 것이다 — `resolve_requests`와 같은 자리. `None`이면 이 run은 교대하지 않는다. 부르는 곳은
+    # 러너의 `_swap_for`·run 끝 내림뿐이고 노드는 이것을 쓰지 않는다.
+    swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None = None
+    # 교대가 올렸는데 교대 명령이 그 서버를 하나도 보고하지 않은(`server.<key>.*`가 없는) model key.
+    # `gpu_unmeasured_roles`와 같은 자리다 — 러너(`_swap`)가 모으고 `run_pipeline`이 run 경고로
+    # 올린다.
+    swap_unreported: set[str] = field(default_factory=set)
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
 
@@ -679,6 +687,37 @@ class RunContext:
         2026-08-26 재측정은 run **전에** 사람이 손으로 세 모델을 확인해야 했다.
         """
         self.trace.emit(EventKind.TOKEN_COUNTER, stage=self.current_stage, **fields)
+
+    def record_model_swap(
+        self,
+        keys: tuple[str, ...],
+        *,
+        stage: Stage | None,
+        ok: bool,
+        wall_ms: int,
+        report: Mapping[str, TraceValue],
+        error: str | None = None,
+    ) -> None:
+        """단계 경계 교대 한 번 (ADR 0012 Phase 6.5). **성공·실패 모두** 한 줄이다 — 부르는 곳은
+        `runner._swap`이고, 실패는 `ModelSwapError`일 때만 여기 온다(그 밖의 예외는 기록 없이
+        올라간다).
+
+        `stage`는 이 교대가 **준비하는** 단계다 — run 끝 내림은 준비하는 단계가 없어 `None`이고
+        `keys`가 빈다. `current_stage`를 쓰지 않는 것은 교대가 단계에 들어가기 **전**에 일어나서다.
+
+        `report`는 교대 명령의 보고(어댑터가 스칼라로 편 것)이고 `report.` 아래로 싣는다 — 명령도
+        `ok`·`stage`·`wall_ms`를 보고하므로 그대로 펴면 하네스가 잰 값과 이름이 겹친다. 어댑터
+        타입이 아니라 스칼라 dict만 받는 것은 `record_token_counter`와 같은 이유다.
+        """
+        self.trace.emit(
+            EventKind.MODEL_SWAP,
+            stage=stage,
+            wall_ms=wall_ms,
+            models=" ".join(keys),
+            ok=ok,
+            error=error,
+            **{f"report.{key}": value for key, value in report.items()},
+        )
 
     def record_retrieval(self, component: str, result: RetrievalResult, candidates: int) -> None:
         """검색 호출의 비용을 trace와 예산에 반영한다. Retriever의 `on_usage` 훅에 연결된다.
