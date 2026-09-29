@@ -41,12 +41,10 @@ def _with_swap(base: HarnessConfig, swappable: tuple[str, ...]) -> HarnessConfig
 
 
 def _swap_pool() -> HarnessConfig:
-    """`harness_pool`에 교대를 선언한 config — 모든 프롬프트 역할이 교대한다.
-
-    커밋된 프로필은 아직 교대를 안 적는다(장비 파일과 함께 다음 PR이 적는다). 모양만 있으면
-    되므로 여기서 조립한다(`tests/conftest.py`의 `served_scout_config`와 같은 방식).
-    """
-    return _with_swap(load_config(POOL), SWAPPED)
+    """커밋된 `harness_pool` — 모든 프롬프트 역할이 교대한다(2026-09-29부터 프로필이 선언한다)."""
+    config = load_config(POOL)
+    assert config.swap is not None and config.swap.swappable == SWAPPED
+    return config
 
 
 def _swap_fake() -> HarnessConfig:
@@ -67,6 +65,7 @@ def _rows(config: HarnessConfig) -> dict[str, dict[str, object]]:
             "max_num_seqs": 8,
             "max_model_len": config.models[key].context_limit,
             "probe": "chat",
+            "ready_timeout_s": 300.0,
         }
         for key in keys
     }
@@ -80,6 +79,9 @@ def _write(config_dir: Path, device: str, body: dict[str, object]) -> Path:
 
 
 # --- 스키마 ---------------------------------------------------------------------
+
+# 거부 케이스의 출발점 — 통과하는 한 행(`test_the_row_every_malformed_case_starts_from_is_valid`).
+_ROW = {"util": 0.3, "max_num_seqs": 8, "max_model_len": 1, "probe": "chat", "ready_timeout_s": 1}
 
 
 def test_a_complete_serving_file_is_accepted() -> None:
@@ -95,6 +97,7 @@ def test_a_complete_serving_file_is_accepted() -> None:
                     "extra_args": ["--enable-prompt-tokens-details"],
                     "env": {"VLLM_X": "1"},
                     "probe": "chat",
+                    "ready_timeout_s": 400,
                 }
             },
         }
@@ -105,6 +108,7 @@ def test_a_complete_serving_file_is_accepted() -> None:
     assert (row.util, row.max_num_seqs, row.max_model_len, row.probe) == (0.3, 8, 40960, "chat")
     assert row.extra_args == ("--enable-prompt-tokens-details",)
     assert row.env == {"VLLM_X": "1"}
+    assert row.ready_timeout_s == 400
 
 
 @pytest.mark.parametrize(
@@ -125,17 +129,32 @@ def test_a_serving_file_without_a_command_is_rejected(body: dict[str, object]) -
 @pytest.mark.parametrize(
     "row",
     [
-        {"util": 0.3, "max_num_seqs": 8, "max_model_len": 1, "probe": "generate"},
-        {"util": 1.5, "max_num_seqs": 8, "max_model_len": 1, "probe": "chat"},
-        {"util": 0.3, "max_num_seqs": 0, "max_model_len": 1, "probe": "chat"},
-        {"util": 0.3, "max_num_seqs": 8, "max_model_len": 1, "probe": "chat", "gpu_util": 0.3},
+        {**_ROW, "probe": "generate"},
+        {**_ROW, "util": 1.5},
+        {**_ROW, "max_num_seqs": 0},
+        {**_ROW, "gpu_util": 0.3},
+        {key: value for key, value in _ROW.items() if key != "ready_timeout_s"},
+        {**_ROW, "ready_timeout_s": 0},
     ],
-    ids=["unknown-probe", "util-over-1", "zero-seqs", "typo-field"],
+    ids=[
+        "unknown-probe", "util-over-1", "zero-seqs", "typo-field", "no-ready-timeout",
+        "zero-ready-timeout",
+    ],
 )
 def test_a_malformed_server_row_is_rejected(row: dict[str, object]) -> None:
-    """오타·범위 밖 값은 조용히 무시되지 않는다(`HarnessModel` — extra forbid)."""
+    """오타·범위 밖 값은 조용히 무시되지 않는다(`HarnessModel` — extra forbid).
+
+    **준비 상한(`ready_timeout_s`)에는 기본값이 없다** — 장비마다 기동 시간이 몇 배씩 갈리고
+    (ATOM 기동 132~313 s vs vast Auditor 244 s — `config/serving/`의 두 파일 주석), 기본값은 아무도
+    재지 않은 수가 굳는 자리다(CLAUDE.md §0).
+    """
     with pytest.raises(ValidationError):
         ServingConfig.model_validate({"command": ["x"], "servers": {"k": row}})
+
+
+def test_the_row_every_malformed_case_starts_from_is_valid() -> None:
+    """위 거부 케이스가 **자기 결함 하나로만** 죽는지 — 출발점이 통과해야 그 말이 선다."""
+    ServingConfig.model_validate({"command": ["x"], "servers": {"k": _ROW}})
 
 
 # --- 로더 -----------------------------------------------------------------------
@@ -214,6 +233,29 @@ def test_a_window_other_than_the_context_limit_is_rejected() -> None:
 
     with pytest.raises(ConfigError, match=r"seccoderx-8b.*16384.*40960"):
         check_serving(config, ServingConfig.model_validate({"command": ["x"], "servers": rows}))
+
+
+# --- 커밋된 장비 파일 ------------------------------------------------------------
+
+# `run --device <label>`로 고를 수 있는 장비. ATOM이 첫 검증 대상이다(2026-09-29 사용자).
+DEVICES = ("atom", "vastai")
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_the_committed_device_file_serves_every_model_the_canonical_pool_swaps(
+    device: str,
+) -> None:
+    """커밋된 장비 파일이 `harness_pool`의 교대 선언·registry와 맞는다 — run 시작 게이트의 검사.
+
+    ⚠ **교대 선언이 먼저 있어야 이 검사가 무엇을 잰다.** `check_serving`의 「교대가 올릴 모델마다
+    행이 있다」는 `swap`이 없으면 건너뛴다 — 그래서 선언을 같이 단언한다.
+    """
+    config = load_config(POOL)
+    serving = load_serving(device)
+
+    assert config.swap is not None
+    check_serving(config, serving)
+    assert serving.command == ("bash", "tools/serve/swap.sh")
 
 
 # --- CLI: 교대 프로필은 장비 파일 없이 모델에 닿지 않는다 -----------------------------
@@ -388,7 +430,11 @@ def test_doctor_passes_a_matching_device_file_and_is_silent_without_swap(
     ok = _doctor(monkeypatch, config, tmp_path, "rig")
     assert ok, "맞는 장비 파일인데 doctor가 말하지 않는다"
     assert all(line.startswith("[OK") for line in ok), ok
-    assert _doctor(monkeypatch, load_config(POOL), tmp_path, "rig") == [], "교대 없는 프로필"
+    # 교대를 안 선언한 실서빙 프로필 — `harness_pool`은 2026-09-29부터 교대를 선언해 hybrid
+    # 짝을 쓴다.
+    no_swap = load_config("harness_pool_hybrid")
+    assert no_swap.swap is None
+    assert _doctor(monkeypatch, no_swap, tmp_path, "rig") == [], "교대 없는 프로필"
 
 
 # --- 의존성: 교대 실행은 콜러블로만 러너에 넘어간다 ----------------------------------------
