@@ -327,6 +327,34 @@ class GraphIndex:
         self._load()
         return None if self._tables is None else self._tables[name]
 
+    def neighbor_files(self, target: Location) -> list[str] | None:
+        """대상의 호출 그래프 이웃이 정의된 파일들. `None`은 **그래프 자체가 없다**는 뜻이다.
+
+        hybrid 검색이 후보 풀을 대상 근처부터 채우는 데 쓴다(#336). 두 갈래를 합친다:
+
+        - callers -> 대상 심볼을 부르는 호출 지점의 파일(간선의 `file`은 호출자가 정의된 파일)
+        - callees -> 대상 본문 안의 호출 지점이 부르는 이름이 정의된 파일
+
+        대상 파일 자신은 뺀다(검색 쪽에서 따로 맨 앞에 둔다). 정렬해서 돌려준다(결정론).
+        ⚠ 이름만으로 잇는다 — 같은 이름의 `static` 함수가 여러 파일에 있으면 그 파일이 다
+        이웃이 된다(`_rules` docstring의 같은 한계). 후보 풀의 순서만 바꾸는 용도라 넓게 잡는
+        쪽이 안전하다.
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        defined_in: dict[str, set[str]] = {}
+        for file, symbols in self._defined.items():
+            for name, _, _ in symbols:
+                defined_in.setdefault(name, set()).add(file)
+        files: set[str] = set()
+        for _, callee, file, line in self._calls:
+            if target.symbol and callee == target.symbol:
+                files.add(file)
+            if self._in_body(file, line, target):
+                files |= defined_in.get(callee, set())
+        files.discard(target.file)
+        return sorted(files)
+
     # --- 본문 판정 -------------------------------------------------------
     #
     # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**
