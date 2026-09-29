@@ -1879,6 +1879,9 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 서빙 창에 달렸다(`config/models.yaml`의 `qwen3.8-27b` 기동 조건). **v3의 입력 토큰은 안
 # 쟀다(미실측)** — 이 상한이 v3에서도 입력 몫에 든다는 실측은 없다. 첫 v3 run의 `input_tokens`
 # 최대가 그 답이다.
+# ⏵ 2026-09-29 — 같은 날 Auditor가 v4가 됐다. 같은 계산으로 +4,923~13,396토큰(계산값 — prefix
+# +12,251자 · body 틀 +92자 · 근거 본문 4,000자 = 16,343자). v4 입력 토큰은 미실측이다
+# (`config/models.yaml`의 `qwen3.8-27b` — v3는 스모크가 2호출로 쟀다, 그 항목의 ⏵).
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 

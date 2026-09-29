@@ -445,9 +445,10 @@ def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) ->
 
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> None:
-    """`meta.yaml` 머리 주석의 「미배선(disk-only)」은 **어느 registry 엔트리도 이 판을 안 고른다**는
-    현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다(CLAUDE.md §2.3) — 이
-    검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다."""
+    """`meta.yaml` 머리 주석의 「미배선(disk-only)」은 **어느 registry 엔트리도 이 판을
+    안 고른다**는 현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다
+    (CLAUDE.md §2.3) — 이 검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다.
+    ⚠ 철자 pin이다 — 정확한 `미배선(disk-only)`만 문다. 표현을 바꿔 쓰면 못 잡는다."""
     config = load_config(profile)
 
     stale = [
