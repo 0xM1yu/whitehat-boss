@@ -93,11 +93,12 @@ from functools import partial
 from pathlib import Path
 from typing import Protocol
 
-from src.config import SCOUT_POOL_ROLES, HarnessConfig
+from src.config import SCOUT_POOL_ROLES, ConfigError, HarnessConfig
 from src.ids import IdFactory, sha256_text
 from src.interfaces.model_client import (
     ModelClient,
     ModelGatewayError,
+    ModelSwapError,
     SchemaParseError,
     error_detail,
 )
@@ -125,7 +126,7 @@ from src.orchestrator.nodes.report import Report
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceWriter
+from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -421,6 +422,16 @@ class Dependencies(Protocol):
     # `src/adapters/`를 import 하지 않으므로 resolver 구현이 아니라 이 콜러블로 경계를
     # 넘는다. 부르는 쪽은 Scout 정착 단계의 need_evidence 루프(`_run_ne_hops`)다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None
+    # 단계 경계 모델 교대 (ADR 0012 Phase 6.5 — 콜드 재기동). `keys`만 떠 있게 하고 교대 명령의
+    # 보고를 스칼라 dict로 돌려준다(`model_swap` 이벤트의 `report.*`). `keys`가 비면 전부 내린다.
+    # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다 — **러너는 단계 진입 교대에서 이 계약을
+    # 믿는다.** 그 밖의 예외는 정지 갈래가 못 잡아 매니페스트 없이 `run_pipeline` 밖으로 샌다
+    # (`models`의 계약 밖 예외와 같은 대우다). 계약은 구현이 지킨다 — 실 구현
+    # `src/adapters/model_swap.py`가 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. run 끝
+    # 내림만은 `finally`라 무엇이든 경고로 줄인다(`run_pipeline`). `None`이면 교대가 없는 run이다 —
+    # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
+    # 어댑터가 하고 러너는 이 콜러블만 받는다(`resolve_requests`와 같은 자리).
+    swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None
 
 
 @dataclass(frozen=True)
@@ -706,6 +717,15 @@ def run_pipeline(
     clock: Callable[[], datetime] | None = None,
 ) -> RunResult:
     """단계 0~9를 순서대로 돌리고 `RunRecord`를 닫는다."""
+    # **교대를 선언했는데 교대 콜러블이 없으면 모델에 닿는 run은 시작하지 않는다**(ADR 0012
+    # Phase 6.5). 서버가 안 뜬 채 4단계에 들어가면 게이트웨이 오류로 멈추고 그 사유는 틀린다.
+    # CLI(`cli.run`)가 같은 것을 먼저 막는다 — 이것은 CLI 밖의 호출자 가드다. 기준은 CLI와 같다:
+    # Scout에 안 닿는 run(`--dry-run`·낮은 `--stop-after`)은 교대도 안 하므로 막지 않는다.
+    if config.swap is not None and deps.swap_to is None and spec.stop_at()[0] >= Stage.SCOUT:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}은 교대를 선언했는데 교대 콜러블이 없다 — 장비 "
+            "(`--device`) 없이 조립한 deps로는 모델에 닿는 run을 시작하지 않는다"
+        )
     now = clock or (lambda: datetime.now(UTC))
     started_at = spec.started_at or now()
     ctx = RunContext(
@@ -731,6 +751,8 @@ def run_pipeline(
         # need_evidence resolver hook (ADR 0012 결정 2) — `symbols_for`·`counter_for_role`과
         # 같은 경계다. `None`이면 이 run에 resolver가 없다.
         resolve_requests=deps.resolve_requests,
+        # 단계 경계 교대(ADR 0012 Phase 6.5) — `resolve_requests`와 같은 경계다.
+        swap_to=deps.swap_to,
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
@@ -784,6 +806,14 @@ def run_pipeline(
         # 끊은 것이 이쪽이다.
         stopped_after, stop_reason = exc.stage, ReasonCode.BUDGET_EXHAUSTED
         warnings.append(f"{exc.stage}단계에서 예산 소진: {exc.item} {exc.spent}/{exc.limit}")
+    except ModelSwapError as exc:
+        # **아래 게이트웨이 갈래보다 먼저 잡는다** — `ModelSwapError`는 그 하위형이다. 떠 있던
+        # 서버가 죽은 것이 아니라 다음 단계 서버를 띄우지 못한 것이라 대응이 다르다(장비 파일과
+        # 교대 명령의 로그를 본다). 교대(`_swap`)에서 난 실패면 `model_swap ok=false`가 이미
+        # 남았다 — 교대 밖에서 올라온 것(방어선 경로)에는 그 이벤트가 없다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.MODEL_SWAP_FAILED
+        warnings.append(f"모델 교대가 실패해 중단했다: {error_detail(exc)}")
     except ModelGatewayError as exc:
         # 서버 쪽 사건이라 남은 target을 태워도 얻는 것이 없다. **그래도 여기까지 만든
         # 것은 남긴다** — 예산 소진과 같은 자리에서 같은 방식으로 끝낸다(전이 표 R-2).
@@ -808,9 +838,30 @@ def run_pipeline(
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
     finally:
-        # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다.
-        if heartbeat is not None:
-            heartbeat.stop()
+        # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
+        # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
+        # 교대 명령은 자기 run의 서버만 내리고 떠 있는 것이 없으면 아무것도 안 한다.
+        #
+        # **여기서는 `ModelSwapError`만 잡지 않는다.** `finally`에서 새는 예외는 run의 결과(아래
+        # 매니페스트)와 원래 예외를 통째로 덮는다. 그래서 교대 콜러블이 계약 밖 예외를 내도,
+        # `_swap`이 `ok=false`를 기록하다 실패해도 경고 하나로 줄인다. `ModelSwapError`면 `_swap`이
+        # `ok=false`를 trace에 먼저 남겼고, 그 밖의 예외면 이 경고가 유일한 흔적이다.
+        # `BaseException`(인터럽트)은 잡지 않는다 — 그때는 원래 예외도 결과도 덮인다.
+        try:
+            try:
+                _swap(ctx, (), stage=None)
+            except Exception as exc:
+                warnings.append(
+                    "run 끝 모델 내림이 예외로 끝났다 — 서버가 남았을 수 있다: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        finally:
+            # 어느 갈래로 끝나든 스레드를 세우고 종료 상태를 마지막으로 한 번 남긴다 — **내림
+            # 뒤에**. 내림이 도는 동안 heartbeat가 서 있으면 외부 감시자(`tools/monitor.py`)가
+            # 살아 있는 run을 `DEAD`로 끝낸다. 내림이 오래 멈추면 감시자는 그것을 stuck(살아
+            # 있는데 멈춤)으로 본다 — 죽음과 갈린다.
+            if heartbeat is not None:
+                heartbeat.stop()
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -822,6 +873,11 @@ def run_pipeline(
     )
     if gpu_warning:
         warnings.append(gpu_warning)
+    if ctx.swap_unreported:
+        warnings.append(
+            f"교대 명령이 올린 서버의 기동 인자를 보고하지 않았다: {sorted(ctx.swap_unreported)}. "
+            "기록(`model_swap`의 `report.server.<key>.*`)이 이 run의 기동 조건을 지시하지 못한다"
+        )
 
     # **4단계에 못 올라간 target을 경고로 올린다 (W2).** trace의 `target_skipped`가
     # 목록이지만 사용자가 run 결과로 읽는 것은 cli 출력과 report.md다. 여기 안 올리면
@@ -960,6 +1016,10 @@ def _analyze(
     promoted = state.in_state(FindingState.HYPOTHESIZED)
     selected = critic.select(ctx, promoted)
     state.critic_deferred = len(promoted) - len(selected)
+    # 고른 것이 없으면 Critic 모델을 띄울 이유가 없다. 폐기 판정 try **밖**이다 — 교대 실패는
+    # Finding 하나가 아니라 run의 사건이다(`run_pipeline`의 `ModelSwapError` 갈래).
+    if selected:
+        _swap_for(ctx, Stage.CRITIC)
     for finding in selected:
         try:
             after, decision = critic.run(
@@ -1811,6 +1871,14 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⚠ 그 147호출은 **프롬프트 전체**를 잰 것이고 `SOURCE`는 그 일부다 — 같은 run의 SOURCE는 최대
 # 14,995자였다(상한에 걸린 슬라이스 5 · 뺀 함수 249). entry 함수는 상한을 안 받는다
 # (`_auditor_source`의 ⚠ · `anchor_chars`).
+#
+# ⚠ **2026-09-29 — 위 [실측]은 프롬프트 v1의 것이다.** registry의 Auditor가 v3가 되며(근거 본문
+# 배선과 같은 변경) 입력이 +3,212~8,740토큰 늘 수 있다 — **계산값**이다: prefix +6,469자 · body 틀
+# +194자 · FACTS의 근거 본문 최대 4,000자(JSON 이스케이프 전) = 10,663자를 위 글자/토큰 비
+# 1.22~3.32로 나눴다. 그 측정의 입력 몫(20,480)이면 여유 5,043을 넘을 수 있고, 지금 넘치는지는
+# 서빙 창에 달렸다(`config/models.yaml`의 `qwen3.8-27b` 기동 조건). **v3의 입력 토큰은 안
+# 쟀다(미실측)** — 이 상한이 v3에서도 입력 몫에 든다는 실측은 없다. 첫 v3 run의 `input_tokens`
+# 최대가 그 답이다.
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
@@ -1948,6 +2016,68 @@ _SCOUT_SETTLE_INDEX = next(
 _PHASE_A_STEPS = _TRIAGE_STEPS[:_SCOUT_SETTLE_INDEX]
 _PHASE_B_STEPS = _TRIAGE_STEPS[_SCOUT_SETTLE_INDEX:]
 
+# 단계 → 그 단계에서 **모델을 부르는 역할** (ADR 0012 Phase 6.5 — 단계 단위 교대가 읽는다).
+# 4·5단계는 위 표의 단계이고 7단계는 `_analyze`의 Critic이다. 여기 없는 단계는 모델을 안 부른다
+# — 3단계 검색의 embedding·reranker는 `SwapPolicy`가 교대에서 거절한다(ADR 0012 결정 3 뒤).
+#
+# **교대 코드는 `Stage`로 갈라 쓰지 않고 이 표만 읽는다.** 모델을 부르는 좌석이 생기면 여기 한
+# 줄이다. 줄을 빼먹으면 `tests/test_stage_swap.py`의 성질 테스트(모든 호출 시점에 그 모델이 떠
+# 있다)가 그 좌석의 첫 호출에서 빨개진다. 역할 자체는 각 스텝이 따로 들고 있다(`_step_auditor`의
+# `Role.AUDITOR` 등) — 둘이 어긋나는 것을 잡는 것이 그 성질 테스트다.
+_ROLES_CALLED: dict[Stage, Callable[[RunContext], tuple[Role, ...]]] = {
+    Stage.SCOUT: _scout_roles,
+    Stage.AUDITOR: lambda _ctx: (Role.AUDITOR,),
+    Stage.CRITIC: lambda _ctx: (Role.CRITIC,),
+}
+
+
+def _swap_for(ctx: RunContext, stage: Stage) -> None:
+    """교대하는 run이면 `stage`가 부르는 모델만 떠 있게 한다 (ADR 0012 Phase 6.5).
+
+    대상 = 상주 ∪ (그 단계 역할 ∩ 교대) → 실서빙 모델 키. Fake 역할은 서버가 없어 빼고
+    (`served_models()`), 두 역할이 한 키면 한 번만 넣는다. 키는 정렬한다 — 띄우는 순서는 교대
+    명령이 정한다. 교대가 없거나 그 단계가 모델을 안 부르면 아무것도 안 한다.
+    """
+    swap = ctx.config.swap
+    roles_called = _ROLES_CALLED.get(stage)
+    if swap is None or roles_called is None:
+        return
+    wanted = {*swap.resident, *(r.value for r in roles_called(ctx) if r.value in swap.swappable)}
+    served = ctx.config.served_models()
+    _swap(ctx, tuple(sorted({served[role] for role in wanted if role in served})), stage=stage)
+
+
+def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> None:
+    """교대 한 번을 부르고 `model_swap`을 남긴다. 실패(`ModelSwapError`)면 `ok=false`를 **먼저**
+    남기고 올려 보낸다. 그 밖의 예외는 남기지 않고 그대로 올린다 — 계약 밖이다
+    (`Dependencies.swap_to`).
+
+    교대 콜러블이 없는 run(교대 없음)에서는 아무것도 안 한다.
+    """
+    if ctx.swap_to is None:
+        return
+    started = ctx.monotonic_ms()
+    try:
+        report = ctx.swap_to(keys)
+    except ModelSwapError as exc:
+        ctx.record_model_swap(
+            keys,
+            stage=stage,
+            ok=False,
+            wall_ms=ctx.monotonic_ms() - started,
+            report=exc.report,
+            error=error_detail(exc),
+        )
+        raise
+    ctx.record_model_swap(
+        keys, stage=stage, ok=True, wall_ms=ctx.monotonic_ms() - started, report=report
+    )
+    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로
+    # 본다(그대로 둔 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
+    ctx.swap_unreported.update(
+        key for key in keys if not any(name.startswith(f"server.{key}.") for name in report)
+    )
+
 
 def _triage_all(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, last: int) -> None:
     """3~6단계를 돈다. **어느 루프인지는 프로필의 `execution.mode`가 정한다** (ADR 0009).
@@ -2012,6 +2142,10 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
     for row, (stage, step) in enumerate(steps):
         if last < stage:
             return
+        # 단계에 **처음 들어갈 때**(Scout 정착 행은 개시 행과 같은 단계라 다시 안 부른다) 그 단계가
+        # 부르는 모델만 떠 있게 한다. 올릴 대상이 없으면 부르지 않는다.
+        if items and (row == 0 or steps[row - 1][0] != stage):
+            _swap_for(ctx, stage)
         items, starved = _run_stage_for_all(ctx, stage, step, items, state)
         pending_starved |= starved
         next_stage = steps[row + 1][0] if row + 1 < len(steps) else None

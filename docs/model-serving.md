@@ -332,9 +332,48 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⇒ **run 전에 `cli bench`를 그날의 프로필로 한 번 돌리는 것이 이 함정의 프리플라이트다.**
 >
+> ⏵ **2026-09-29 — 교대 프로필은 run이 스스로 본다.** 교대마다 올린 키를 `check_startup()`으로 다시 읽어 이름이 없거나 `max_model_len`이 registry `context_limit`과 다르면 run을 멈춘다(`src/adapters/model_swap.py` — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안」 절, 제안). **교대를 선언하지 않은 프로필(서버를 사람이 띄운다)은 그대로 위 프리플라이트가 유일하다** — 교대를 선언한 프로필은 `harness_pool` 하나다(`harness_pool_hybrid`는 검색 역할 때문에 선언할 수 없다).
+>
 > ⚠ **`doctor`로는 안 된다** — 접속을 하지 않는다(`src/cli.py`의 `doctor()` docstring).
 > 다만 **접속이 없어서가 아니다**: `_check_wiring`이 이미 역할별 endpoint를 조립하므로
 > 「한 endpoint에 키가 둘」은 네트워크 없이도 볼 수 있다. **지금 그 검사가 없을 뿐이다.**
+
+### 교대 명령과 장비 파일 (2026-09-29)
+
+`harness_pool`은 단계 경계에서 서버를 끄고 켠다(콜드 재기동 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md)
+「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다.
+
+- **교대 명령** — `tools/serve/swap.sh`, 장비 무관. 하네스가 단계마다 `bash tools/serve/swap.sh <키…>`를
+  부르고 run 끝에 인자 없이 부른다. 계약(인자 · 환경 · 종료코드 · stdout 마지막 줄 JSON 보고 · 서버 로그)은
+  `src/adapters/model_swap.py` 모듈 docstring이 든다. 기동마다 vLLM 출력을 새 파일
+  `$SERVE_DIR/logs/<key>.<run_id>.<UTC>.log`로 받는다 — 아래 「서버 stdout은 파일로 받는다」 규약을 명령이 지킨다.
+- **장비 파일** — `config/serving/<device>.yaml`이 모델별 util · `max_num_seqs` · 창 · 추가 인자 · 환경 · 준비
+  상한을 든다. `run --device <device>`가 고르고, 창은 registry `context_limit` 그대로여야 run이 시작한다
+  (`check_serving`). 포트·체크포인트·revision은 registry가 든다.
+
+  | 장비 | 메모리 판정 | 값의 성격 |
+  | --- | --- | --- |
+  | `atom`(GB10) | 통합메모리 — `nvidia-smi` 메모리 `[N/A]` → 모델 파일 페이지 캐시를 떼고 MemAvailable | 전부 계획값(ATOM 미실측) |
+  | `vastai`(RTX PRO 6000 · 97,887 MiB) | 전용 VRAM — `total − used` ≥ util × total | Auditor 기동 하나만 실측(util 0.90 · 창 262,144 — 2026-09-29), 나머지 계획값 |
+
+- **감시자** — `tools/serve/guard.sh`, **run마다 하나 띄운다.** 교대 명령은 감시자가 떠 있고 다른 run 것이
+  아닐 때만 띄우고(띄우는 run이 기동 직전마다 감시자를 자기 것으로 적는다), run 끝 내림이 그 run 서버를 다 내리면
+  감시자를 멈춘다 — 끝난 run의 감시자 마감이 다음 run 서버를 죽이지 않게. 「떠 있다」는 pid 파일의 번호와 시작
+  시각이 함께 맞는다는 것이다 — 번호만 든 옛 형식은 감시자가 아니다. 마감(`MAX_HOURS`)은 지키는 run의
+  서버만 내린다. 메모리 두 층 — 통합메모리의 MemAvailable 하한, 그리고 cgroup 층(상한이 걸린 cgroup의 anon >
+  상한의 90% — 옛 스모크 감시자의 「anon > 72 GiB」) — 은 장비 보호라 교대 명령이 띄운 서버를 run과 무관하게 전부
+  내린다. cgroup 층의 판정은 장비 무관이지만 **자동 탐색은 cgroup v2만이다** — v1이면 `GUARD_CGROUP_DIR`로 시작
+  디렉터리를 줘야 한다(v1은 가짜 트리로만 확인했다). 무엇을 보는지는 감시자 시작 로그의 `cgroup=`이 적는다(자동
+  탐색이 상한을 못 찾으면 `없음` — 그 층은 안 돈다. `GUARD_CGROUP_DIR`로 준 곳에서 못 찾으면 감시자가 뜨지 않는다).
+  감시자가 뜨지 못한 사유는 `$SERVE_DIR/logs/guard.log`의 「시작 거부」 줄에도 남는다(기동 줄이 stderr를 버린다).
+  run 끝 내림이 실패하면(러너는 run 결과를 바꾸지 않고 경고로 남긴다) 감시자도 안 멈추므로, 남은 서버는 그
+  마감이나 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`가 치운다. 감시자 확인은 서버를 띄우기 직전마다 한다 —
+  한 교대가 두 키를 띄우는 중 감시자가 끝나면 둘째 키는 안 띄운다.
+  ⚠ `STOP_GUARD`는 run 끝 내림의 신호이자 사람의 멈춤 스위치다. run 도중 사람이 만들면 감시자가 멈추고 그 run의
+  다음 기동이 「STOP_GUARD가 있다」로 거부돼 run이 `model_swap_failed`로 멈춘다 — 그때까지 떠 있던 서버는 그
+  단계가 끝나 run 끝 내림이 내릴 때까지 감시 없이 돈다.
+- ⚠ vast.ai 컨테이너에는 docker·podman이 없다(2026-09-29) — 도구 단계를 어디서 돌릴지 정하기 전에는 vast로
+  끝까지 도는 run이 없다. `vastai.yaml`의 `command`는 로컬 실행이고 원격 실행 경로는 짓지 않았다.
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
