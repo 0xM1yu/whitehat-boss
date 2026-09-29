@@ -97,7 +97,7 @@ cg_read() { # $1 cgroup 디렉터리 → "상한 anon"(바이트). 상한이 양
   echo "$limit $anon"
 }
 
-cg_find() { # $1 cgroup 디렉터리 → 거기서 위로 올라가며 상한이 숫자인 첫 cgroup. cgroup 밖에 닿으면 실패
+cg_find() { # $1 cgroup 디렉터리 → 거기서 위로 올라가며 상한이 양의 숫자인 첫 cgroup. cgroup 밖에 닿으면 실패
   local dir=${1%/}
   while [ -e "$dir/cgroup.procs" ]; do # 모든 cgroup(v1·v2)에 있다 — memory 컨트롤러가 없는 말단도 지나간다
     if cg_read "$dir" > /dev/null; then
