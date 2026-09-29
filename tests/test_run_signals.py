@@ -21,10 +21,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 # 이 플랫폼에 있는 종료 신호 — Windows에는 SIGHUP이 없다.
 SIGNALS = [name for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)]
-# (첫 신호, 내림 도중에 오는 신호…) — 이 플랫폼에 있는 것만.
+# (첫 신호, 내림 도중에 오는 신호…) — 이 플랫폼에 있는 것만. 교차(HUP→TERM·TERM→HUP)는 「첫 신호
+# 뒤에는 **두** 신호를 무시한다」를 문다 — 받은 신호 하나만 무시하면 다른 신호가 내림을 끊는다.
 SEQUENCES = [
     sequence
-    for sequence in [("SIGTERM",), ("SIGTERM", "SIGTERM"), ("SIGHUP",), ("SIGHUP", "SIGHUP")]
+    for sequence in [
+        ("SIGTERM",), ("SIGTERM", "SIGTERM"), ("SIGHUP",), ("SIGHUP", "SIGHUP"),
+        ("SIGHUP", "SIGTERM"), ("SIGTERM", "SIGHUP"),
+    ]  # fmt: skip
     if all(hasattr(signal, name) for name in sequence)
 ]
 
