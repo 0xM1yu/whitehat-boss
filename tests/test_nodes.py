@@ -603,7 +603,10 @@ def test_auditor_materializes_only_the_issued_missing_id(
 
     노드가 발급하는 `missing_id`는 호출당 하나다. 그 밖의 ID마다 `blocking=True`
     MissingEvidence가 만들어지면 해제 경로가 없어 그 Finding은 run 끝까지 E2 미만이다(D65).
-    도장은 **발급값과의 교집합**만 남긴다 — 발급 ID를 쓴 blocking은 그대로다(D65는 안 닫힌다).
+    도장은 **비어 있지 않으면 발급 ID 하나로 정규화한다** — 발급 안 된 ID만 써도 「확인 불가」
+    요청은 blocking 하나로 남는다(교집합만 남기면 0건이 되어 E2가 열린다 —
+    `test_auditor_missing_evidence_gate.py`). 그 blocking을 내리는 경로는 여전히 없다(D65는
+    안 닫힌다).
     """
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     stub = _RewritingModelClient(
@@ -619,9 +622,9 @@ def test_auditor_materializes_only_the_issued_missing_id(
 
     (issued,) = stub.written[0].missing_evidence  # Fake는 정적 신호 없는 대상에 발급 ID를 쓴다
     assert ctx.store.get("missing_evidence", "mev_9999") is None, "발급 안 된 ID가 저장됐다"
-    expected = [issued] if keep_issued else []
-    assert finding.missing_evidence == expected
-    assert [m.missing_id for m in missings] == expected
+    assert finding.missing_evidence == [issued]
+    assert [m.missing_id for m in missings] == [issued]
+    assert all(m.blocking for m in missings)
     (override,) = _overrides(ctx)
     assert override.data["fields"] == "missing_evidence"
     written = f"{issued},mev_9999" if keep_issued else "mev_9999"

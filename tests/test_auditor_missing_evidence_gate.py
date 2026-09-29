@@ -77,7 +77,11 @@ CASES = {
 
 
 def test_precondition_an_empty_missing_evidence_reaches_e2(ctx: RunContext) -> None:
-    """전제 — `missing_evidence`를 비운 같은 Finding은 E2다. 아래 차이가 그 필드 하나 탓이다."""
+    """전제 — `missing_evidence`를 비운 같은 Finding은 E2다. 아래 차이가 그 필드 하나 탓이다.
+
+    정규화가 빈 요청을 발급 ID로 채우지 않는다는 것도 이것이 문다 — 「누락 없음」은 blocking이
+    아니다.
+    """
     *_, finding, missings, graded, result = _to_gate(ctx, lambda _: [])
 
     assert finding.missing_evidence == [] and missings == []
