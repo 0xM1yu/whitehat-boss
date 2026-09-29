@@ -135,7 +135,7 @@ agent:
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
-  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
+  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
   **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
