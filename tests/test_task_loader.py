@@ -46,14 +46,54 @@ def test_safe_extract_rejects_path_traversal(tmp_path: Path) -> None:
     assert not (tmp_path / "escape.txt").exists(), "경로 이탈 파일이 dest 밖에 써졌다"
 
 
-def test_safe_extract_rejects_symlink_members(tmp_path: Path) -> None:
-    """심볼릭 링크 멤버는 거부한다 — 해제 후 링크를 타고 밖을 읽거나 덮을 수 있다."""
+def test_safe_extract_rejects_an_absolute_symlink_member(tmp_path: Path) -> None:
+    """dest 밖(여기서는 절대경로)을 가리키는 심볼릭 링크는 거부한다 — 링크를 타고 밖을 읽거나
+    덮을 수 있다. (dest 안 상대 링크는 data 필터가 허용한다 — 이 검사의 범위 밖이다.)"""
     tar = tmp_path / "link.tar.gz"
     with tarfile.open(tar, "w:gz") as t:
         info = tarfile.TarInfo(name="evil-link")
         info.type = tarfile.SYMTYPE
         info.linkname = "/etc/passwd"
         t.addfile(info)
+
+    with pytest.raises(task_loader.UnsafeArchiveError):
+        task_loader.safe_extract(tar, tmp_path / "out")
+
+
+def test_safe_extract_contains_absolute_path_members_under_dest(tmp_path: Path) -> None:
+    """절대경로 멤버는 **거부가 아니라** dest 안으로 눌러 담긴다(data 필터 동작) — 밖에 안 써진다.
+    로더 docstring이 이 동작을 정확히 적게 하는 핀이다(예전엔 「거부」로 과대주장했다)."""
+    tar = tmp_path / "abs.tar.gz"
+    with tarfile.open(tar, "w:gz") as t:
+        payload = b"x"
+        info = tarfile.TarInfo(name="/abs_evil.txt")
+        info.size = len(payload)
+        t.addfile(info, io.BytesIO(payload))
+
+    root = task_loader.safe_extract(tar, tmp_path / "out")
+
+    assert (root / "abs_evil.txt").exists()  # 절대경로가 dest 안으로 눌러 담김
+
+
+def test_safe_extract_rejects_a_decompression_bomb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """해제 크기 상한을 넘는 아카이브는 거부한다 — data 필터가 안 묶는 자원 상한(디스크 폭탄)."""
+    tar = tmp_path / "bomb.tar.gz"
+    _make_tar(tar, {"big.bin": b"x" * 5000})
+    monkeypatch.setattr(task_loader, "_MAX_TOTAL_BYTES", 1000)
+
+    with pytest.raises(task_loader.UnsafeArchiveError):
+        task_loader.safe_extract(tar, tmp_path / "out")
+
+
+def test_safe_extract_rejects_too_many_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """멤버 수 상한을 넘는 아카이브는 거부한다 — 수많은 작은 파일도 자원 폭탄이다."""
+    tar = tmp_path / "many.tar.gz"
+    _make_tar(tar, {f"f{i}.c": b"x" for i in range(10)})
+    monkeypatch.setattr(task_loader, "_MAX_MEMBERS", 3)
 
     with pytest.raises(task_loader.UnsafeArchiveError):
         task_loader.safe_extract(tar, tmp_path / "out")
