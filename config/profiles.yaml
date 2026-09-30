@@ -145,9 +145,12 @@ profiles:
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.
     # - **PoV = §1의 `feyospace-v1-small`**(8단계 · Qwen3.8-27B 사이버 post-train, Auditor와 같은 계열).
-    #   pov 노드가 VALIDATED Finding에서 PoC를 만든다(추가형 — 러너가 validate.run 뒤에 부른다). 사고는
-    #   기본값(reasoning_effort 미선언 → xhigh) · `--reasoning-parser qwen3` 필요 · checksum·benchmark
-    #   미실측이라 이 run은 비교표 제외. `request_timeout_s`만 선언한다(서빙 역할 필수) — `config/models.yaml`.
+    #   pov 노드가 8단계에 들어온(진입 시 `VALIDATED`인) Finding에서 PoC를 만든다 — `validate.run`이 `QUEUED`로
+    #   내린 것도 포함한다(추가형 — 대상 목록은 `validate.run` 전에 잡히고 러너가 그 뒤에 부른다). 사고를 켠다 —
+    #   Auditor의 손잡이 넷(`reasoning_effort` `xhigh` · `sampling` · `thinking_token_budget` ·
+    #   `request_timeout_s`)을 물려받아 선언하고 출력 상한은 `output_max_by_role.pov`(`config/budgets.yaml`)다
+    #   (계획값 · feyospace 미실측 — `config/models.yaml`). `--reasoning-parser qwen3` 필요 ·
+    #   checksum·benchmark 미실측이라 이 run은 비교표 제외.
     # - **리랭커 = §1의 `qwen3-reranker-4b`** — 근거·범위는 `harness_pool_hybrid`의 주석이 든다.
     #   **`retriever: fake`인 이 프로필은 그것을 부르지 않지만** 쌍의 roles가 같아야 해서 같이 적는다.
     #

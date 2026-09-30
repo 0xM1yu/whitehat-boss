@@ -281,8 +281,10 @@ class EventKind(StrEnum):
     # 종단 홉은 `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
-    # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 VALIDATED Finding당 최대
-    # 1건이다. `poc_bytes`가 최종 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다.
+    # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **8단계에 들어온**(진입 시
+    # `VALIDATED`인) Finding당 최대 1건이다. `validate.run`이 그중 하나를 `QUEUED`로 내려도(재현
+    # 실패·도구 정책 위반) pov는 돈다 — 대상 목록이 `validate.run` **전에** 잡히는 추가형이다.
+    # `poc_bytes`가 최종 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다.
     # submit이 아닌 종단(max_hop·repeat·흡수된 예외·gen 없는 submit)은 여기가 아니라 POV_SKIPPED다.
     POV_GENERATED = "pov_generated"
     # PoV가 최종 PoC 없이 끝난 기록. `reason`이 `capsule_missing`(캡슐 없음)이거나 정지 사유

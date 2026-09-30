@@ -30,6 +30,7 @@ Windows에서 파이썬이 텍스트 모드로 파일을 쓰면(`Path.write_text
 
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -461,4 +462,30 @@ def test_the_workspace_ignore_rule_names_itself_in_its_own_comment() -> None:
         f"  이 규칙이 든 블록의 주석: {comment or '(주석 없음)'}\n"
         f"  그 블록이 든 패턴: {patterns}\n"
         "무엇이 거기 쌓이는지와 왜 추적하지 않는지를 이 규칙 자신의 주석에 적는다."
+    )
+
+
+def test_the_declared_python_floor_covers_the_tarfile_filter_api() -> None:
+    """`requires-python` 하한이 `task_loader`가 부르는 `tarfile` 추출 필터 API(`filter="data"`)를
+    처음 갖춘 패치(3.11.4)를 덮는다.
+
+    하한이 3.11이던 동안 저장소는 로더가 첫 멤버에서 `TypeError`로 죽는 3.11.0~3.11.3을 지원으로
+    선언했다(PR #343 리뷰 M-1). CI는 `python-version: "3.11"`이 최신 3.11.x로 풀려 그 아래 패치를
+    안 돌므로 선언이 낡아도 CI가 못 본다 — 이 검사가 선언을 API 하한에 묶는다.
+
+    ⚠ **선언과 로더가 요구하는 API가 맞는지만 본다.** 하한 아래 인터프리터에서 로더가 명확히
+    거부하는지는 `tests/test_task_loader.py`가 본다 — 하네스는 체크아웃에서 돌아서(`python -m
+    pytest`·`python -m src.cli`) `requires-python`이 실행을 막지 못한다(pip이 설치할 때만 읽는다).
+    문자 pin이라 하한의 **철자**를 묻지, 그 인터프리터의 필터가 안전한지는 묻지 않는다.
+    """
+    spec = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "requires-python"
+    ]
+    match = re.search(r">=\s*(\d+)\.(\d+)(?:\.(\d+))?", spec)
+    assert match, f"`requires-python`({spec!r})에서 하한을 못 읽었다"
+    floor = tuple(int(part or 0) for part in match.groups())
+
+    assert floor >= (3, 11, 4), (
+        f"`requires-python`({spec!r})의 하한 {floor}이 3.11.4보다 낮다 — `task_loader`의 "
+        "`tar.extract(..., filter=\"data\")`는 3.11.4에서 들어온 API다(PEP 706)."
     )
