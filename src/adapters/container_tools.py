@@ -236,8 +236,9 @@ _COMPILE_ERROR_MARKER = "clang-diagnostic-error"
 _SEMGREP_OK = (0, 1)
 
 # 컨테이너가 명령을 띄우지도 못했을 때 런타임이 쓰는 코드. 크래시(=신호)와 구분해야 한다.
-# **마지막 명령이 대상인 도구(asan·poc)에만 쓴다** — gdb는 대상의 종료 코드가 같은 숫자
-# 공간에 실려(`--return-child-result`) 판별자가 못 된다.
+# 실행류에서는 마지막 명령이 대상인 asan·poc만 쓰고(그 밖에는 clang-tidy가 쓴다), **gdb에는
+# 쓰지 않는다** — gdb는 대상의 종료 코드가 같은 숫자 공간에 실려(`--return-child-result`)
+# 판별자가 못 된다.
 _EXEC_FAILED = (125, 126, 127)
 
 # 실행 흔적을 만드는 도구. asan·poc는 마지막 명령이 "실제로 뜬 프로그램"이고, gdb는 마지막
@@ -445,6 +446,9 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         if len(groups) > 1:
             raise ValueError(f"{tool}: C와 C++이 섞인 대상은 링크 규칙이 없다 (#75)")
         language, sources_ = groups[0]
+        # 경로를 입력에서 받지 않는다 — `judge()`의 판정이 이 고정에 기댄다. gdb는 실행 파일
+        # 경로를 stdout에 에코하는 경우가 있어(대상에 인라인 스크립트가 있을 때의 auto-load 안내),
+        # 경로가 수명주기 줄 모양이면 안 뜬 대상이 떴다고 읽힌다(2026-10-01 검토의 가정 실측).
         binary = f"{SCRATCH}/gdb.bin"
         return [
             Command(
