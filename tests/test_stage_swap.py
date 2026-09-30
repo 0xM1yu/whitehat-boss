@@ -34,16 +34,20 @@ def _config(
 ) -> HarnessConfig:
     """`dev_fake`의 세 프롬프트 역할을 실서빙 모양의 키로 돌리고 교대를 선언한 config.
 
-    키는 `fake` 항목을 엔드포인트만 바꿔 복제한다 — 프롬프트 버전이 `dev_fake`와 같아야
-    Fake 클라이언트가 같은 답을 낸다.
+    키는 Fake 항목을 엔드포인트만 바꿔 복제한다 — 프롬프트 버전이 `dev_fake`와 같아야
+    Fake 클라이언트가 같은 답을 낸다. pov는 `dev_fake`가 `fake_v2`(v2 프롬프트)로 돌리므로
+    (툴 루프, prompts/pov/v2) pov 좌석만 `fake_v2`를 복제하고 나머지는 `fake`(v1)를 복제한다.
     """
     base = load_config("dev_fake")
     keys = keys or {"scout": SCOUT, "auditor": AUDITOR, "critic": CRITIC}
-    fake = base.models["fake"]
+    fake, fake_v2 = base.models["fake"], base.models["fake_v2"]
+    pov_key = keys.get("pov")
     served = {
-        key: fake.transition(endpoint=f"http://127.0.0.1:9/{key}")
+        key: (fake_v2 if key == pov_key else fake).transition(
+            endpoint=f"http://127.0.0.1:9/{key}"
+        )
         for key in set(keys.values())
-        if key != "fake"
+        if key not in ("fake", "fake_v2")
     }
     execution = ExecutionPolicy(
         mode="per_stage",

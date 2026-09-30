@@ -44,6 +44,7 @@ from src.orchestrator.nodes import (
     signals,
     validate,
 )
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import (
     PROMPTS_DIR,
@@ -462,31 +463,29 @@ def test_auditor_creates_finding_and_materializes_missing_evidence(ctx: RunConte
     assert created.data["reason"] == ReasonCode.AUDITOR_HYPOTHESIZED.value
 
 
-def test_pov_builds_a_poc_from_a_finding(ctx: RunContext) -> None:
-    """PoV(단발)가 Finding을 받아 PoV 역할로 모델을 부르고 비어 있지 않은 PoC 바이트를 낸다.
-
-    러너 8단계 라우팅은 실도구·상태전이와 함께 P3에서 다룬다 — 이 테스트는 노드 계약만 고정한다.
+def test_pov_open_hop_puts_the_finding_in_the_prompt(ctx: RunContext) -> None:
+    """PoV 루프의 hop0(`open_hop`)이 Finding을 프롬프트에 실어 PoV 역할로 모델을 부르고
+    `PovAction`을 받는다. 노드 계약만 고정한다 — 루프 제어·PoC 바이트는 test_pov_loop이 본다.
     """
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
 
-    updated, poc = pov.run(ctx, finding=finding, capsule=capsule)
+    hop = pov.open_hop(ctx, finding=finding, capsule=capsule)
 
-    assert updated.finding_id == finding.finding_id
-    assert isinstance(poc, bytes) and len(poc) > 0
+    assert hop.action.action in ("gen", "inspect", "submit")
     # 단순 「불렸나」가 아니라 **그 Finding이 프롬프트에 닿았나**를 본다(auditor 테스트와 같은 형).
     prompt = ctx.models.last_for(Role.POV)
     assert finding.finding_id in prompt.body
     assert "{{" not in prompt.body  # 템플릿 토큰이 다 치환됐다
 
 
-def test_pov_reads_the_source_override(ctx: RunContext) -> None:
-    """`source=` 콜러블을 주면 그 텍스트가 프롬프트에 실린다 — P2 계약(auditor와 같다)."""
+def test_pov_open_hop_reads_the_source_override(ctx: RunContext) -> None:
+    """`source=` 콜러블을 주면 그 텍스트가 hop0 프롬프트에 실린다 — auditor와 같은 규약."""
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
     marker = "MARKER_SOURCE_pov_override_2a7f"
 
-    pov.run(ctx, finding=finding, capsule=capsule, source=lambda: marker)
+    pov.open_hop(ctx, finding=finding, capsule=capsule, source=lambda: marker)
 
     assert marker in ctx.models.last_for(Role.POV).body
 
@@ -511,12 +510,15 @@ def _pov_state(ctx: RunContext) -> tuple[runner._Accumulator, Finding]:
 
 
 def test_run_pov_generates_and_records_the_poc_byte_size(ctx: RunContext) -> None:
-    """러너 8단계 라우팅(추가형 — PoV 배선): capsule이 있으면 pov를 돌려 PoC를 만들고
+    """러너 8단계 라우팅(추가형 — PoV 배선): capsule이 있으면 루프를 돌려 PoC를 만들고
     `pov_generated`에 **실제** 바이트 크기·sha256을 남긴다 — 기대값을 조립 결과에서 뽑는다
-    (truthy·하드코딩 검사는 회귀를 못 잡는다)."""
+    (truthy·하드코딩 검사는 회귀를 못 잡는다). 결정론 fake라 hop0 gen의 spec을 그대로 조립하면
+    루프가 만든 PoC와 같다."""
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
-    _, expected = pov.run(ctx, finding=finding, capsule=capsule)  # 결정론 fake → 같은 PoC
+    hop0 = pov.open_hop(ctx, finding=finding, capsule=capsule)  # 결정론 fake → hop0는 gen
+    assert hop0.action.action == "gen" and hop0.action.spec is not None
+    expected = assemble_poc(hop0.action.spec)
 
     runner._run_pov(ctx, state, finding)
 
