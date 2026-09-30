@@ -64,6 +64,7 @@ from src.schemas.enums import ScoutSignal
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
+from src.tokens import estimate_tokens
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -519,6 +520,38 @@ def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
     assert skipped and skipped[-1].data["reason"] == "capsule_missing"
     assert not any(e.kind is EventKind.POV_GENERATED for e in ctx.trace.events)
+
+
+# --- CyberGym 과제 설명 → 캡슐 섹션 (PoV 배선 — D2) -----------------------------
+
+
+def test_retrieval_injects_the_vuln_description_when_set(ctx: RunContext) -> None:
+    """ctx.vuln_description가 있으면 캡슐에 vuln_description 섹션이 실린다(PoV 배선 — D2:
+    Scout 설명기반 트리아지 입력). 기본(None)이면 섹션이 없다 — 지어내지 않는다."""
+    plain = retrieval.run(ctx, target=VULN_TARGET, level=CapsuleLevel.LIGHT)
+    assert not any(s.kind == retrieval.VULN_DESCRIPTION_KIND for s in plain.sections)
+
+    ctx.vuln_description = "Heap overflow in parse_header when len exceeds 64."
+    withdesc = retrieval.run(ctx, target=BENIGN_TARGET, level=CapsuleLevel.LIGHT)
+
+    section = next(s for s in withdesc.sections if s.kind == retrieval.VULN_DESCRIPTION_KIND)
+    assert section.body and "parse_header" in " ".join(section.body)
+    assert section.items == len(section.body)
+    assert withdesc.used_tokens <= withdesc.budget_tokens  # 예산 안에 든다
+
+
+def test_vuln_description_section_fits_the_budget(ctx: RunContext) -> None:
+    """설명 섹션은 남은 예산 안에 드는 줄까지만 담고 tokens를 실측으로 채운다 — 한 줄도 못
+    담으면 None(고정 자리표시자가 아니라 실측이라 §0을 안 어긴다)."""
+    text = "\n".join(f"line {i} of the vulnerability description text" for i in range(50))
+
+    tiny = retrieval._vuln_description_section(text, budget=3)
+    assert tiny is None or tiny.tokens <= 3
+
+    full = retrieval._vuln_description_section(text, budget=100_000)
+    assert full is not None
+    assert full.body and full.tokens <= 100_000
+    assert full.tokens == sum(estimate_tokens(line) for line in full.body)
 
 
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
