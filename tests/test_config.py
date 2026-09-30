@@ -426,12 +426,145 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v3(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 근거 본문 배선과 함께
-    `v3`를 고른다(#256 항목 4). 되돌리면(registry를 `v1`로) 이 핀이 빨개진다 — 오염 확인 ②."""
+def test_the_canonical_auditor_selects_prompt_v4(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v4`를 고른다(#328 머지 뒤
+    재배선 — 2026-09-29 v1→v3(#256 항목 4)의 다음 판). 되돌리면 이 핀이 빨개진다."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v3"
+    assert config.model_for("auditor").prompt_template_version == "v4"
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) -> None:
+    """위 핀은 철자다. 막으려는 성질은 **registry가 고른 Auditor 판이 근거 본문을 받는다**이다 —
+    `_CONTENT_AWARE_VERSIONS`에 없는 판을 고르면 FACTS에 id·kind·ok만 실려 툴 로그 본문이 조용히
+    빠진다(#328 리뷰 MEDIUM-1). 판을 바꾸면서 그 집합을 안 고치면 여기서 빨개진다."""
+    config = load_config(profile)
+
+    version = config.model_for("auditor").prompt_template_version
+    assert version in auditor_node._CONTENT_AWARE_VERSIONS
+
+
+# meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
+# **저장소 실물에서 온 것만 적는다**(양성 핀 — 출처는 같은 자리):
+_UNSELECTED_CLAIM_SPELLINGS = (
+    "미배선(disk-only)",  # prompts/critic/v4/meta.yaml:1
+    "아직 미활성",  # prompts/critic/v3/meta.yaml:1
+    "어느 registry 엔트리도 이 버전을 고르지 않는다",  # prompts/auditor/v3/meta.yaml:5-6
+)
+
+
+def _fold(raw: str) -> str:
+    """meta.yaml 본문을 한 문자열로 접는다 — 주석 줄바꿈·공백 런은 한 칸으로, 굵게(`**`)와
+    백틱은 뺀다. 구절이 주석 줄바꿈으로 갈리는 실물(auditor/v3 meta)이 있고, meta 머리 주석은
+    굵게·백틱을 쓰는 문체다(critic/v3 meta)."""
+    folded = " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
+    return " ".join(folded.replace("**", "").replace("`", "").split())
+
+
+def _meta_text(role: str, version: str) -> str:
+    """meta.yaml 본문을 `_fold`로 접은 것."""
+    return _fold((PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8"))
+
+
+def _prompts_whose_meta_claims_unselected(config: HarnessConfig) -> list[str]:
+    """`config`의 각 역할이 고른 판 중 meta.yaml이 「안 고른다」고 적은 것 — `role/version` 목록."""
+    return [
+        f"{role}/{version}"
+        for role in PROMPTED_ROLES
+        if role in config.profile.roles
+        for version in [config.model_for(role).prompt_template_version]
+        if any(spelling in _meta_text(role, version) for spelling in _UNSELECTED_CLAIM_SPELLINGS)
+    ]
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> None:
+    """`meta.yaml` 머리 주석의 「안 고른다」(미배선·미활성 등)는 **어느 registry 엔트리도 이 판을
+    안 고른다**는 현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다
+    (CLAUDE.md §2.3) — 이 검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다.
+    ⚠ 철자 pin이다 — `_UNSELECTED_CLAIM_SPELLINGS`의 세 철자(저장소 실물: critic/v4·critic/v3·
+    auditor/v3 meta)만 문다. 다른 표현으로 쓰면 못 잡는다. 저장소 config만 돌리므로 어느
+    프로필도 안 고르는 판의 철자는 여기서 시험되지 않는다 — 판독기가 철자를 읽는지는 아래
+    검사들이 고정한다(#341 L-1)."""
+    assert _prompts_whose_meta_claims_unselected(load_config(profile)) == []
+
+
+@pytest.mark.parametrize(
+    ("role", "model_key", "version", "expected"),
+    [
+        # 통제 — prompts/critic/v4/meta.yaml:1. 첫째·셋째 철자를 함께 들어 여기서는 철자를
+        # 못 가른다 — 철자별로는 `test_the_known_metas_…`가 본다.
+        ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
+        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
+        ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
+        # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
+        # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
+        ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
+        # 음성 통제 — auditor/v4 meta는 「배선됨」이다. 고르면 안 걸려야 한다.
+        ("auditor", "qwen3.8-27b", "v4", []),
+    ],
+)
+def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
+    tmp_path: Path, role: str, model_key: str, version: str, expected: list[str]
+) -> None:
+    """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
+    읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
+    고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
+    meta 넷만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
+    _copy_config(
+        tmp_path,
+        profile_patch={"roles": roles},
+        model_patch={model_key: {"prompt_template_version": version}},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.model_for(role).prompt_template_version == version  # 변이가 실제로 들어갔다
+    stale = [s for s in _prompts_whose_meta_claims_unselected(config) if s.startswith(f"{role}/")]
+    assert stale == expected
+
+
+@pytest.mark.parametrize(
+    ("role", "version", "expected"),
+    [
+        # prompts/critic/v4/meta.yaml:1 — 첫째·셋째 철자를 한 줄에 함께 든다.
+        ("critic", "v4", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # prompts/critic/v3/meta.yaml:1
+        ("critic", "v3", {"아직 미활성"}),
+        # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
+        ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — 정본 Auditor가 고르는 판이다(「배선됨」).
+        ("auditor", "v4", set()),
+    ],
+)
+def test_the_known_metas_match_exactly_these_claim_spellings(
+    role: str, version: str, expected: set[str]
+) -> None:
+    """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
+    한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
+    critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
+    않는다(#341 R2). ⚠ 이 네 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
+    assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "# 어느 registry 엔트리도 이 버전을\n#\n# 고르지 않는다.\n",  # 셋째 철자 · 빈 주석 줄
+        "# 어느 registry  엔트리도 이 버전을 고르지 않는다.\n",  # 셋째 · 공백 2칸
+        "# 어느 registry 엔트리도 **이 버전을 고르지 않는다**.\n",  # 셋째 · 굵게
+        "# **미배선**(disk-only): 이 판은 registry가 안 고른다.\n",  # 첫째 · 굵게
+        "# 어느 registry 엔트리도 이 버전을 `고르지 않는다`.\n",  # 셋째 · 백틱
+    ],
+    ids=["blank-comment-line", "double-space", "bold", "bold-disk-only", "backtick"],
+)
+def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
+    """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
+    굵게·백틱을 쓰는 문체다(prompts/critic/v3/meta.yaml:4·7). 다섯 형은 검토 변이
+    B8·B9·B17·B18·B19에서 가져왔다(실물 meta의 형이 아니다) — 접기가 이것들을 못 넘으면 같은
+    주장을 그 문체로 적었을 때 판독기가 못 본다(#341 R5)."""
+    assert any(spelling in _fold(raw) for spelling in _UNSELECTED_CLAIM_SPELLINGS), _fold(raw)
 
 
 def test_every_prompted_role_is_a_real_role() -> None:
