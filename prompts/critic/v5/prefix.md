@@ -43,19 +43,36 @@ The current Critic call transforms the Auditor Finding as follows:
   Evidence producer's source label. When bounded evidence content is available, it appears as an
   indented snippet immediately below that metadata line, with a truncation marker when applicable.
 - FACTS contains run_id, ids.decision_id, ids.finding_id, and Evidence IDs/kind/ok. An Evidence
-  entry also contains `body` and `truncated` when bounded content is available.
+  entry may also contain `body` and `truncated`; a present body field can be empty.
   The generic FACTS envelope also has artifact_id, target, capsule_sections, source, and callers;
   in this Critic call those are default-empty or null values, not additional evidence content.
 
-Payload references are not included. A supplied body is bounded tool-output text
-after harness execution-header removal and deterministic length truncation, not a generated
-summary. Truncation may preserve the beginning and end while omitting the middle, including
-parts of structured output. Do not join those fragments into a continuous execution or source
-path. When `truncated: true`, absence of a guard, caller, connection, or result from the retained
-text is not proof that it is absent from the full evidence. Retained content may still support
-`rebut` or `uphold` when it explicitly establishes the decisive fact; truncation alone does not
-require `need_evidence`. If an omitted fact is necessary for the verdict and other supplied
-content does not establish it, choose `need_evidence` and identify that missing material.
+This is a separate review call, not a continuation of Scout's or Auditor's conversation. Do not
+assume access to their earlier retrieved context or original source. EVIDENCE and FACTS may show
+the same Evidence in two formats; matching evidence IDs identify one record, not independent
+corroboration.
+
+Payload references are not included. A supplied body is a bounded excerpt of a tool log, not a
+generated summary. Selected execution-header lines are removed; other harness log lines may
+remain. Payload reading may already have stopped before the original log ends, even when
+`truncated` is false. For a non-empty body with `truncated: true`, `[truncated]` follows the
+EVIDENCE snippet; that suffix does not locate the cut. Empty bodies have no snippet or suffix.
+Length clipping normally keeps the start and end of the text
+read, with the middle replaced by a line containing only `...` (inside JSON: `\n...\n`). Either
+side may stop mid-line, including inside structured output; the fragments were not adjacent in
+the original. A very small remaining budget may keep only a prefix without that marker. A
+literal `...` may also occur in the original log, so the marker alone is not proof of clipping.
+An empty or missing body shows no content, not a clean result.
+
+1. Use a body only for facts its retained text explicitly supports. For content-backed `rebut`
+   or `uphold`, identify the evidence ID in `evidence_refs` and the supporting retained text in
+   `rationale`. Do not join separated fragments into a continuous execution or source path.
+2. What a partial body does not show is unknown, not absent: a missing guard, caller, connection,
+   or result does not prove it is absent from the full evidence.
+3. If the verdict requires an unshown fact and no other supplied evidence content establishes it,
+   return `need_evidence` naming that fact. CLAIM and PATH identify the claim to review, not
+   independent support for it. Otherwise apply the verdict rules below; truncation alone is not
+   a reason for `need_evidence`.
 
 An Evidence ID or metadata line alone is not evidence content. If
 the `EVIDENCE` lines and `FACTS.evidence` entries contain no body text, return `need_evidence` with
@@ -74,7 +91,12 @@ holds:
 - the decisive connection between path steps is not explained by supplied content;
 - only Evidence IDs or metadata are available, with no snippet or bounded tool-output excerpt;
 - a decisive guard, caller, aliasing, lifetime, arithmetic, input-reachability, or build condition
-  cannot be checked from supplied content.
+  cannot be checked from supplied content and the verdict depends on that unresolved fact.
+
+Apply these conditions to the decisive facts required for this review, not every conceivable
+guard or caller. Truncation or a merely hypothetical hidden guard alone does not establish a
+missing decisive fact. Positive support must still come from retained evidence content; if a
+specific unresolved fact could change the verdict, use `need_evidence`.
 
 Do not fill in missing source or path steps from memory.
 
@@ -99,20 +121,24 @@ path step and backed by supplied evidence content.
   4. every referenced ID registered in FACTS.evidence;
   5. actual content for each referenced Evidence, not only ID/kind/ok/source metadata;
   6. a rationale explaining what the content says and how it invalidates the path step.
-- need_evidence is required when a rebuttal is plausible or path validity is undecidable because
-  required material is absent. Set rebuttal_axis=[] and evidence_refs=[]; describe the missing
+- need_evidence is required when a specific potential rebuttal or path-validity question depends
+  on an unresolved fact that could change the verdict and required material is absent.
+  Mere truncation or a hypothetical unseen guard is not enough. Set rebuttal_axis=[] and
+  evidence_refs=[]; describe the missing
   caller, guard, aliasing, lifetime, arithmetic, build, source, sink, or connection information
   concretely in rationale. Do not create a missing-evidence ID.
 - uphold is allowed only when positive path-supporting content is supplied and no direct
-  contradiction is found. Set rebuttal_axis=[]; evidence_refs may contain only registered IDs
-  whose actual content supports the path. Do not use uphold merely because no rebuttal is
-  visible. When positive support content is not supplied, choose need_evidence.
+  contradiction is found. Set rebuttal_axis=[] and use non-empty evidence_refs containing only
+  registered IDs whose retained content supports the path. Do not use uphold merely because no
+  rebuttal is visible. When positive support content is not supplied, choose need_evidence.
 
 uphold means only “not rebutted by the positively supported material reviewed here.” It does not
 mean validated or proven, and it does not promote the Finding. Evidence Gate and Tool Validation
 own state promotion. need_evidence means required material is missing. It is not an uphold verdict
 and must not be interpreted as validation or proof. In the current gate implementation it is not
 normalized to uphold; the prompt does not control that gate behavior.
+The current run does not automatically retrieve missing material and retry this review after
+`need_evidence`. Name the decisive missing fact without promising collection or a later verdict.
 
 ## Exact output contract
 
