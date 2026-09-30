@@ -1245,6 +1245,34 @@ def test_context_query_excludes_synthetic_nodes_at_every_site():
     assert "sourceNode(parent.get)" in context
 
 
+def test_context_relevant_methods_indexes_points_by_file():
+    """relevant_methods가 이 철자로 쓰였다 — 파일별 정렬 배열 + 이분 탐색.
+
+    철자 pin이다. 저장소 관례(`val all …` 줄 전체)대로 세 덩어리를 통째로 문다 — 탐색 결과를
+    무시하거나(`first = 0`) 삽입점을 틀리게 바꾸거나 전수 스캔을 끼워 넣으면 빨갛다. 동치
+    재작성도 빨갛다. 뽑히는 메서드 집합이 옛 전수 비교와 같다는 성질은 Scala 실행이 필요해
+    2026-09-30 vast 1회 실측(4샘플 · 안 잘린 후보 차이 0, #345 본문)으로만 확인했고, 그것을
+    되풀이할 도구는 저장소에 없다.
+    """
+    context = queries.context_query([("a.c", 3)], "/repo")
+    head = context.split('mark("relevant_methods")', 1)[0]
+    assert "points.exists" not in head
+    assert (
+        "val pointLines: Map[String, Array[Int]] = points.groupBy(_._1).map { case (f, ps) =>\n"
+        "        f -> ps.toArray.map(_._2).sorted }"
+    ) in head
+    assert (
+        "val relevantMethods = cpg.method.internal.filter(m => m.lineNumber.exists { lineStart =>\n"
+        "        val start: Int = lineStart\n"
+        "        pointLines.get(filename(m)).exists { lines =>\n"
+        "          val found = java.util.Arrays.binarySearch(lines, start)\n"
+        "          val first = if (found >= 0) found else -found - 1\n"
+        "          first < lines.length && m.lineNumberEnd.forall(_ >= lines(first))\n"
+        "        }\n"
+        "      }).l"
+    ) in head
+
+
 def test_flows_query_parenthesizes_the_truncated_comparison():
     """결함 3 — 괄호가 빠지면 Scala 가 `"truncated" -> observed.size > 3` 을 튜플 비교로 파싱한다.
 
