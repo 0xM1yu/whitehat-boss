@@ -275,7 +275,7 @@ class EventKind(StrEnum):
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
-    # 홉 하나의 PoV 툴 루프 기록 (Phase 3, Option C — 모델-주도 루프). 내는 곳은
+    # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`·`action`(gen/inspect/submit)이
     # 조인 키고, gen/inspect 홉은 도구 결과(`tool`·`tool_ok`·`exit_code`·`evidence_kind`)를,
     # 종단 홉은 `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.

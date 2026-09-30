@@ -361,7 +361,7 @@ def _build_pov(
 def _build_pov_action(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovAction:
-    """PoV 툴 루프의 fake 액션 (Phase 3, Option C). 홉을 `history` 길이로 가른다.
+    """PoV 툴 루프의 fake 액션 (Option C). 홉을 `history` 길이로 가른다.
 
     hop0(history 빔)은 `gen` — `_build_pov`의 스펙을 실어 순수 `assemble_poc`가 바이트를
     만든다. hop≥1(history 있음)은 `submit` — 도구 관측을 되먹임받은 뒤 후보가 버그에

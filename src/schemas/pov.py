@@ -146,7 +146,7 @@ _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
 
 
 class PovAction(HarnessModel):
-    """PoV 툴 루프가 매 홉 내는 제어 액션 (Phase 3, Option C — council+사용자 2026-09-30).
+    """PoV 툴 루프가 매 홉 내는 제어 액션 (Option C — council+사용자 2026-09-30).
 
     `action`이 어느 필드를 쓰는지 정한다:
     - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.

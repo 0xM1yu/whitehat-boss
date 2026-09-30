@@ -1,4 +1,4 @@
-"""8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Phase 3, Option C).
+"""8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
 매 홉 모델이 `PovAction`(gen/inspect/submit) 하나를 낸다. `gen`은 `PovSpec`을 실어 순수 함수
 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로 대상에서 실행해 관측을 다음
