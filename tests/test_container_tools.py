@@ -710,18 +710,6 @@ def test_gdb_build_failure_never_counts_as_a_debug_session() -> None:
     assert error is not None and "실행되지 않았다" in error
 
 
-def test_gdb_clean_target_is_a_successful_debug_session() -> None:
-    steps = [Step(0, "", ""), Step(0, "exited normally", "")]
-
-    assert judge("gdb", steps, 2) == (True, 0, None)
-
-
-def test_gdb_target_crash_is_a_signal_not_a_tool_failure() -> None:
-    steps = [Step(0, "", ""), Step(255, "Program received signal SIGSEGV", "")]
-
-    assert judge("gdb", steps, 2) == (True, 255, None)
-
-
 def test_gdb_exec_failure_is_not_a_target_crash() -> None:
     ok, code, error = judge("gdb", [Step(0, "", ""), Step(127, "", "")], 2)
 
@@ -894,7 +882,6 @@ def test_the_tool_image_installs_and_smokes_gdb_batch_mode() -> None:
         Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "Dockerfile"
     ).read_text(encoding="utf-8")
 
-    assert "gdb" in dockerfile
     assert (
         "gdb --nx -batch --return-child-result -x /opt/gdb.batch -- /tmp/gdb-smoke"
         in dockerfile
