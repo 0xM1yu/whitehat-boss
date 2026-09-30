@@ -276,7 +276,9 @@ class EventKind(StrEnum):
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
     # 8단계 PoV가 Finding에서 PoC를 만들어 낸 기록 (PoV 배선 — 추가형 라우팅). 내는 곳은
-    # `runner._run_pov`다 — 프로필이 pov 좌석을 선언한 run에서 VALIDATED Finding당 최대 1건이다.
+    # `runner._run_pov`다 — 프로필이 pov 좌석을 선언한 run에서 **8단계에 들어온**(진입 시
+    # `VALIDATED`인) Finding당 최대 1건이다. `validate.run`이 그중 하나를 `QUEUED`로 내려도(재현
+    # 실패·도구 정책 위반) pov는 돈다 — 대상 목록이 `validate.run` **전에** 잡히는 추가형이다.
     # `poc_bytes`가 조립된 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다. 바이트를
     # 파일로 쓰거나 실행·게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
     POV_GENERATED = "pov_generated"
