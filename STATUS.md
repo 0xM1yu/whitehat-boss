@@ -151,9 +151,9 @@
 전부 `docker`다(주 실서빙 장비가 ATOM이므로 — docs/portability.md §3.
 2026-08-17~08-28 사이 그 둘은 `podman`이었다. 되돌린 경위는 ADR 0005 마지막 절).
 **목록의 정본은 `config/profiles.yaml`이다 — 여기 개수를 현재형으로 못박지 않는다.**
-프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 이미지는
-`harness-tools:v2` 하나이며(2026-09-26 v1에서 올렸다 — v1은 지난 run의 digest 때문에 지우지
-않는다) semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
+프로필이 선언한 런타임이 없는 장비에서는 `--tool-runner`로 덮는다(ADR 0005). 기본 이미지는
+`harness-tools:v3`이며(2026-09-28 v2에 비대화 gdb를 더했다 — v1·v2는 지난 run의 digest 때문에
+지우지 않는다) semgrep 룰셋까지 구워 넣는다 — 샌드박스가 `--network=none`이라
 레지스트리를 못 보기 때문이고, 그 덕에 이미지 digest가 도구 버전과 룰셋 버전을 함께 고정한다
 (준비 절차는 `tools/README.md`).
 
@@ -168,9 +168,15 @@
 > **실도구 경로**에 대한 서술이고 그쪽은 그대로다.
 
 E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴파일 성공을 실행으로 세지
-않는다.** `asan`·`poc`는 링크와 실행까지 성공해야 `ok=True`이고, 빌드 단계에서 끊기면
+않는다.** `asan`·`gdb`·`poc`는 링크와 실행까지 성공해야 `ok=True`이고, 빌드 단계에서 끊기면
 `ok=False`다. 그렇게 하지 않으면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다** —
 게이트가 가장 비싼 곳에서 거짓말을 하게 된다.
+
+gdb는 2026-09-28 독립 `ContainerToolRunner` 실행에서 정상 종료·SIGSEGV 백트레이스를 모두
+냈다. 다만 `validate.tool_for()`는 아직 gdb를 선택하지 않으므로 **파이프라인의 실도구 E4
+도달을 보인 것은 아니다.** 그 실행 규칙은 도구 배선 후 후속 범위다. ⏵ 2026-09-30 — gdb가
+대상을 띄웠는지는 종료 코드가 아니라 gdb가 stdout에 남긴 대상 수명주기 줄로 가른다(안 뜬
+대상은 `ok=False` — `tests/test_gdb_lifecycle_judgement.py`).
 
 지금 픽스처(`tests/fixtures/target/parser.c`)에는 `main`이 없어 링크되지 않고, `./poc`를
 만드는 주체도 없다. 즉 **E4를 막고 있는 것은 실행 환경이 아니라 PoC 생성**이다(아래 PoV 항목).
@@ -195,7 +201,8 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
   **교훈: 빌드 시점 연막 검사는 `--read-only`를 재현하지 못한다.** 회귀 그물은
   `tests/test_container_tools.py::test_real_container_splits_vulnerable_from_benign`가 맡는다.
 - **clang-tidy만 `-std=c11`이었다.** 같은 `util.c`가 index에서는 통과하고 clang-tidy에서는
-  `strnlen` 미선언 오류였다. 모든 clang 도구를 `-std=gnu17`로 통일했다(`_STD_ARG`).
+  `strnlen` 미선언 오류였다. 현재 clang 계열 도구는 C에 `-std=gnu17`, C++에
+  `-std=gnu++17`을 쓴다(`_STD_ARGS`).
 
 **Slurm 검증 완료 (2026-08-14, <node>).** `dev_singularity` 프로필이 Docker와 같은
 결과를 냈다.
@@ -452,7 +459,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 
 | 항목 | 사유 | 해소 조건 |
 |---|---|---|
-| `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v2` 이미지 |
+| `tool_images` | 컨테이너 미사용 (`fake` tool_runner) | `dev_docker`/`dev_singularity`/`local_balanced`/`b1_single` 프로필 + `harness-tools:v3` 이미지 |
 | `kb_snapshot` | KB 미구축 (`kb-none` 자리표시자) | KB 구축 + `--kb-snapshot` |
 | `model_checksums` | registry가 합성 예시값(전부 0) | 실서빙 모델 확정 + checksum 산출 (model-serving.md §5) |
 | GPU-second | ~~실측 전~~ → **코드가 청구하지 않았다** (2026-08-17 발견). 모델 호출은 `ModelResult`에 GPU 시간 필드가 아예 없었고, 검색·도구는 초로 내림해 1초 미만을 버렸다 | 청구 경로 수정 + 실서빙 run. `incomplete_fields()`가 실서빙 역할의 미측정을 판정한다 |
