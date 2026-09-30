@@ -452,10 +452,14 @@ _UNSELECTED_CLAIM_SPELLINGS = (
 )
 
 
-def _meta_text(role: str, version: str) -> str:
-    """meta.yaml 본문 — 주석 줄바꿈을 접는다(구절이 `# ` 줄바꿈으로 갈리는 실물이 있다)."""
-    raw = (PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8")
+def _fold(raw: str) -> str:
+    """meta.yaml 본문의 주석 줄바꿈을 접는다(구절이 `# ` 줄바꿈으로 갈리는 실물이 있다)."""
     return " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
+
+
+def _meta_text(role: str, version: str) -> str:
+    """meta.yaml 본문을 `_fold`로 접은 것."""
+    return _fold((PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8"))
 
 
 def _prompts_whose_meta_claims_unselected(config: HarnessConfig) -> list[str]:
@@ -535,6 +539,24 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
     않는다(#341 R2). ⚠ 이 네 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "# 어느 registry 엔트리도 이 버전을\n#\n# 고르지 않는다.\n",  # 셋째 철자 · 빈 주석 줄
+        "# 어느 registry  엔트리도 이 버전을 고르지 않는다.\n",  # 셋째 · 공백 2칸
+        "# 어느 registry 엔트리도 **이 버전을 고르지 않는다**.\n",  # 셋째 · 굵게
+        "# **미배선**(disk-only): 이 판은 registry가 안 고른다.\n",  # 첫째 · 굵게
+        "# 어느 registry 엔트리도 이 버전을 `고르지 않는다`.\n",  # 셋째 · 백틱
+    ],
+)
+def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
+    """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
+    굵게·백틱을 쓰는 문체다(prompts/critic/v3/meta.yaml:4·7). 다섯 형은 저장소에 아직 없어
+    검토 변이 B8·B9·B17·B18·B19에서 가져왔다 — 접기가 이것들을 못 넘으면 같은 주장을 그
+    문체로 적었을 때 판독기가 못 본다(#341 R5)."""
+    assert any(spelling in _fold(raw) for spelling in _UNSELECTED_CLAIM_SPELLINGS), _fold(raw)
 
 
 def test_every_prompted_role_is_a_real_role() -> None:
