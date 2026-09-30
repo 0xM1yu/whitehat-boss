@@ -277,7 +277,9 @@ class SlicingStages:
                 # unprocessed) -- switch to emitting anchor-only degraded slices without querying
                 # the server, so no captured candidate is lost from slices.json.
                 degrade_only = False
-                for candidate in self.candidates:
+                for position, candidate in enumerate(self.candidates):
+                    if self.shard and position % self.shard[1] != self.shard[0]:
+                        continue
                     if degrade_only:
                         # A prior run may have already completed this candidate's full slice (a
                         # "complete" checkpoint). That reuse needs NO server, so restore it rather
@@ -346,6 +348,15 @@ class SlicingStages:
         return self.result
 
     def finish(self, started: float) -> None:
+        if self.shard:
+            # After the checkpoint baseline, so a merged --export-only does not inherit it.
+            index, count = self.shard
+            self.result["shard"] = {"index": index, "count": count}
+            self.errors.append(
+                f"Shard {index}/{count}: only candidates at positions p % {count} == {index} "
+                "were sliced; merge the shard checkpoints (tools/merge_slicer_shards.py) and "
+                "run --export-only for the full result"
+            )
         if self.cpg_ready:
             truncated = [c for c in self.completed if c["truncated"]]
             if truncated:
