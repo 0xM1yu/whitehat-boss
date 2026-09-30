@@ -1032,6 +1032,22 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> N
     assert "need_evidence is required when a rebuttal is plausible" not in normalized
 
 
+def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
+    """#346 sumin0218 M1 잔여: 「세 결과」 요약도 보류를 판정을 좌우하는 반박으로 한정한다.
+
+    v4에서 상속된 무한정 문구 「the path or a possible rebuttal cannot be decided」는 잘린
+    본문에서 숨은 guard가 늘 「possible」하므로 §1·§3과 규칙 3(「truncation alone is not a
+    reason」)의 반대로 읽힌다. 출처: critic/v5/prefix.md 「The three outcomes are distinct」 목록.
+    철자 핀이다 — 옛 문구가 돌아오거나 한정이 빠지면 빨개질 뿐, 이 철자를 남긴 채 무한정 조건을
+    다른 문장으로 덧붙이는 변이는 못 잡고, 모델이 어느 쪽을 따르는지는 안 쟀다.
+    """
+    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    assert "the path or a possible rebuttal cannot be decided" not in normalized
+    summary = "need_evidence: the path, or a specific rebuttal that could change the verdict,"
+    assert f"{summary} cannot be decided" in normalized
+
+
 @pytest.mark.parametrize(
     ("role", "fields"),
     [
