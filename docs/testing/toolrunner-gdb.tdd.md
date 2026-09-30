@@ -94,6 +94,36 @@
   금지 2 · 묶음 `{0,2}` 10 · stdout과 stderr를 합쳐 찾기(검토 J02) 3이 죽는다. 이름 자리 필수화·스레드
   번호를 정수로 한정은 산다 — 녹음에 이름 없는 형태·`1.2` 꼴 번호가 없어 녹음 위에서는 같은 판정이다.
 
+### ⏵ 2026-10-01 — 2차 독립 검토 N1·N2 수정 (스레드 이름의 CR)
+
+2차 검토 N1: gdb는 스레드 이름(comm)을 `fgets`로 읽고 LF만 지운다(gdb 12.1·15.1
+`gdb/nat/linux-procfs.c`의 `linux_proc_tid_get_name`) — 이름 안의 CR은 정지 줄에 그대로 찍힌다.
+`_execute`의 text 모드 캡처는 CR·CRLF를 LF로 바꾼다(`Lib/subprocess.py`의 `_translate_newlines`,
+Windows는 `TextIOWrapper(newline=None)`). 그래서 이름 자리 `[^\n]{0,64}`가 못 넘어 진짜 크래시가
+다시 「띄우지 못했다」가 됐다. 다른 구분 문자(탭·VT·FF·FS·GS·RS·U+0085·U+2028·U+2029)는 text 모드가
+바꾸지 않아 문제가 없었다(실측).
+
+- 재녹음: 실제 gdb 12.1·15.1로 22개 시나리오 — CR 이름 8종(가운데·끝·CR만·앞·CRLF·CR×15·15바이트
+  끝 CR·main 스레드), 구분 문자 하나씩과 합친 것, 15자 이름, `Thread 13`, 11KB·4MB 출력 뒤 크래시,
+  컨테이너 메모리 6MB(gdb 자체가 죽는다 — 한 번은 대상이 뜨기 전이라 stdout 0 → `ok=False`, 한 번은
+  대상이 정상 종료한 뒤라 수명주기 줄 → `ok=True`이고 `exit_code` 137은 gdb의 값 — 경합이다). 수정
+  전 정규식은 CR 8종 × 두 판 16줄을 오판했다. 그중 12개를 JSON에 두 판씩 더 싣는다(녹음 42건).
+- RED: `76aec89` — 새 파일 78개 중 **17 failed, 61 passed**(CR 16 + CR 경로 검사 1).
+- GREEN: `7232cfa` — 이름 자리 `[\s\S]{0,64}`(줄바꿈 포함, 64자 묶음 그대로). **78 passed**.
+- 선형성(이 장비 실측, 별도 프로세스, 1천만 자 기준): 적대 입력 7족 0.02~0.24초(10배 길이에 약 10배
+  시간), 줄바꿈이 섞인 적대 입력 0.15초, `judge` 종단 1억 자 1.66~1.86초. 묶지 않은 `[\s\S]*?`는
+  20만 자에서 12.9~15.2초였다.
+- 교차 확인: 저장된 실제 gdb stdout 434건(시나리오 163종 — 이 녹음들과 두 독립 검토의 녹음)에서 뜬
+  대상 거절이 2차 수정 뒤 head 32 → 0이다. 안 뜬 대상 수용 10은 두 정규식이 같고, 전부 검토가 도달
+  불가·선행으로 분류한 경우다(경로 위조 가정 실측·로더 실패·이 장비의 binfmt).
+- 변이(새 파일): 이름 자리를 `[^\n]`·`[^\r\n]`로 되돌림 각 17 · 스레드 번호 한 자리(`[\d.]`·`\d`) 각 2 ·
+  이름 상한 `{0,14}` 6·`{0,7}` 8 · stdout 앞 1000자만 검색 2 · 묶지 않음(탐욕·게으름, 선형성) 각 1 ·
+  따옴표 금지 2 · 스레드 갈래 삭제 37 · `{0,2}` 31 · stdout과 stderr 합침 3이 죽는다.
+  `(?s:.{0,64})`는 산다 — 같은 뜻이다.
+- 옛 변이 재집계(최종 78개 기준): 앵커판 2 · 「exit 1이면 실패」 8 · stderr 음성 표지 6 · 리뷰의 양성
+  표지 세 개 목록 41(`terminated with`도 스레드 형태도 없다 — `terminated with`만 뺀 형은 4) ·
+  Dockerfile·`gdb.batch` 변이 각 1.
+
 ## 테스트 명세
 
 | # | 보증하는 것 | 테스트 또는 명령 | 종류 | 결과 |
@@ -111,9 +141,10 @@
 | 11 | Fake·컨테이너 양 경로와 저장소 문서 규약에 회귀가 없다 | `python -m pytest -q` | 전체 회귀 | PASS |
 | 12 | Dockerfile이 apt 목록에 gdb를, 주석 아닌 줄에 `COPY gdb.batch`를 둔다(공허한 문자열 단언 대체) | `tests/test_gdb_lifecycle_judgement.py::test_dockerfile_installs_gdb_in_the_apt_list_and_bakes_the_script` | 정적 통합 | PASS |
 | 13 | `gdb.batch`가 `run` 뒤에 백트레이스를 낸다(스크립트 내용 핀) | `tests/test_gdb_lifecycle_judgement.py::test_gdb_batch_script_runs_the_target_and_then_prints_backtraces` | 정적 통합 | PASS |
-| 14 | 스레드를 만든 대상의 신호 정지(`Thread N "이름" received signal`)도 떴다고 읽는다 — 따옴표 든 이름·빈 이름·깨진 UTF-8 포함 | `tests/test_gdb_lifecycle_judgement.py::test_a_threaded_target_stopped_by_a_signal_is_reported_per_thread` | 단위 | PASS |
+| 14 | 스레드를 만든 대상의 신호 정지(`Thread N "이름" received signal`)도 떴다고 읽는다 — 따옴표·빈 이름·깨진 UTF-8·CR·다른 구분 문자가 든 이름, 15자 이름, 두 자리 번호, 긴 출력 뒤 정지 포함 | `tests/test_gdb_lifecycle_judgement.py::test_a_threaded_target_stopped_by_a_signal_is_reported_per_thread` | 단위 | PASS |
 | 15 | 판정은 stdout만 본다 — 안 뜬 대상의 경로 에코로 stderr에 든 수명주기 줄 모양 문자열은 세지 않는다 | `tests/test_gdb_lifecycle_judgement.py::test_only_stdout_counts_even_when_stderr_carries_a_lifecycle_line` | 단위 | PASS |
 | 16 | 대상이 찍은 적대적 긴 줄에서도 판정이 선형 시간이다(합성 입력) | `tests/test_gdb_lifecycle_judgement.py::test_the_lifecycle_search_stays_linear_on_a_hostile_stdout` | 단위 | PASS |
+| 17 | 이름 안의 CR을 text 모드 캡처가 LF로 바꿔도 떴다고 읽는다 | `tests/test_gdb_lifecycle_judgement.py::test_a_carriage_return_in_a_thread_name_reaches_judge_as_a_newline` | 단위 | PASS |
 
 ## 커버리지와 남은 공백
 
@@ -146,6 +177,9 @@
 - ⏵ 2026-10-01 R1 RED: `5cbc4d9` — 스레드 신호 정지 녹음 12개가 실패(새 파일 53개 중).
 - ⏵ 2026-10-01 R1 GREEN: `4c95568` — 스레드 갈래(이름 자리 64자로 묶음)로 새 파일 53개 통과. 전체
   2336개 통과·46 skip, Ruff 통과.
+- ⏵ 2026-10-01 N1 RED: `76aec89` — 스레드 이름 CR 녹음 16개와 CR 경로 검사 1개가 실패(새 파일 78개 중).
+- ⏵ 2026-10-01 N1 GREEN: `7232cfa` — 이름 자리가 줄바꿈도 받게(64자 묶음 그대로) 새 파일 78개 통과.
+  전체 2361개 통과·46 skip, Ruff 통과.
 
 스쿼시 머지를 한다면 위 RED/GREEN/최종 줄들을 PR 본문 또는 스쿼시 커밋 본문에 보존한다.
 
