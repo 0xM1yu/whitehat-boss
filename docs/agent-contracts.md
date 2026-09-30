@@ -166,7 +166,7 @@ agent:
 
 **본문 누락에 대한 보류는 자동 재요청이 아니다.** Auditor의 비어 있지 않은 `missing_evidence`는
 blocking `MissingEvidence`로 남아 `gate.evaluate`의 `unblocked`를 거짓으로 만들고 E3 승격을 막는다.
-Critic의 `need_evidence`는 `policy._critic`에서 `QUEUED`로 간다. 현재 오케스트레이터에는
+Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)에서 `QUEUED`로 간다. 현재 오케스트레이터에는
 `DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
 따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
 정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
