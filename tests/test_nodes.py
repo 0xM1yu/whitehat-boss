@@ -768,6 +768,17 @@ def test_the_description_is_cut_at_the_first_line_that_does_not_fit() -> None:
 # --- 8단계 pov의 대상 (PoV 배선 · 추가형) ----------------------------------------------
 
 
+def _demoted_at_validate(ctx: RunContext) -> tuple[runner._Accumulator, Finding]:
+    """8단계에 `VALIDATED`로 들어와 `validate.run`이 `QUEUED`로 내릴 Finding 하나(캡슐 포함) —
+    허용 도구로 안 매핑되는 기대 신호라 `tool_policy_violation`으로 내려간다."""
+    _, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    demoted = _finding("find_0001", state=FindingState.VALIDATED, signal="로그에 WARN이 찍힌다")
+    state = runner._Accumulator()
+    state.update(demoted)
+    state.finding_capsules[demoted.finding_id] = capsule
+    return state, demoted
+
+
 def test_pov_also_runs_for_a_finding_that_validate_demotes_to_queued(ctx: RunContext) -> None:
     """pov는 **8단계에 들어온 Finding**(진입 시 `VALIDATED`) 전부에 돈다 — `validate.run`이 그중
     하나를 `QUEUED`로 내려도(여기서는 허용 도구로 안 매핑되는 기대 신호 →
@@ -781,11 +792,7 @@ def test_pov_also_runs_for_a_finding_that_validate_demotes_to_queued(ctx: RunCon
     검사를 의식적으로 고친다. 이벤트의 대상(`subject_id`)을 보므로 러너가 그 사이를 어떻게
     엮는지에는 묶이지 않는다.
     """
-    _, capsule, _ = _triage(ctx, BENIGN_TARGET)
-    demoted = _finding("find_0001", state=FindingState.VALIDATED, signal="로그에 WARN이 찍힌다")
-    state = runner._Accumulator()
-    state.update(demoted)
-    state.finding_capsules[demoted.finding_id] = capsule
+    state, demoted = _demoted_at_validate(ctx)
 
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
@@ -794,6 +801,31 @@ def test_pov_also_runs_for_a_finding_that_validate_demotes_to_queued(ctx: RunCon
     )
     generated = [e for e in ctx.trace.events if e.kind is EventKind.POV_GENERATED]
     assert [e.subject_id for e in generated] == [demoted.finding_id]
+
+
+def test_pov_is_handed_the_finding_as_validate_run_left_it(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pov에 넘어가는 Finding은 `validate.run`이 전이시킨 **최신** 것이다 — 진입 시점 사본이
+    아니다(`runner._analyze`의 「validate.run이 전이시킨 최신 finding으로 돈다」). 위 검사가
+    **어느** Finding에 pov가 도는지를 보고, 이 검사는 **어떤 상태의 사본**이 넘어가는지를 본다.
+
+    ⚠ 러너 안의 이음매 `runner._run_pov`에 스파이를 건다 — 그 이름·인자가 바뀌면 이 검사도
+    고친다(위 검사와 달리 러너 배선에 묶인다).
+    """
+    state, demoted = _demoted_at_validate(ctx)
+    handed: list[FindingState] = []
+    real_run_pov = runner._run_pov
+
+    def spy(ctx_: RunContext, state_: runner._Accumulator, finding: Finding) -> None:
+        handed.append(finding.state)
+        real_run_pov(ctx_, state_, finding)
+
+    monkeypatch.setattr(runner, "_run_pov", spy)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert handed == [FindingState.QUEUED], f"pov가 validate.run 전 사본을 받았다: {handed}"
 
 
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
