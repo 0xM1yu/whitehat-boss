@@ -68,6 +68,7 @@ PROMPTED_ROLES = (
     "auditor",
     "critic",
     "single",
+    "pov",
 )
 
 # 이 스킴이면 FakeModelClient로 간다. 역할별로 갈리므로 프로필 안에서 혼용이 가능하다.

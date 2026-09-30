@@ -38,6 +38,7 @@ from src.config import (
 )
 from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
+from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
@@ -57,6 +58,7 @@ ZERO_DIGEST = PLACEHOLDER_DIGEST
 NODE_OUTPUT_SCHEMAS = {
     Role.AUDITOR: auditor_node.OUTPUT_SCHEMA,
     Role.CRITIC: critic_node.OUTPUT_SCHEMA,
+    Role.POV: pov_node.OUTPUT_SCHEMA,
 }
 
 # scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
