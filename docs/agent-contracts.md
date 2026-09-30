@@ -174,7 +174,7 @@ agent:
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형). **남은 것은 모델-주도 툴
 루프·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
-[ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
+[ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
 어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 **PoC 입력의 구성 스펙**을 만든다.
