@@ -287,7 +287,10 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > **2026-09-29부터 registry의 Auditor(`qwen3.8-27b`)가 v3를 고른다.** 그 판으로 돈 run은 아직 없어
 > 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시는 그날 v3 계약에 맞췄고, 같은 날 v4로 올리며 `prompt_version`만 v4로 고쳤다.
 > ⏵ 2026-09-29 — 같은 날 registry의 Auditor가 v4를 고른다. v4도 `trigger_status` 다섯 값을 묻는다
-> (`prompts/auditor/v4/prefix.md`). v4로 돈 run도 아직 없다.
+> (`prompts/auditor/v4/prefix.md`). v4로 돈 run은 아직 없다. ⚠ 위 v3 서술(run 없음)은
+> 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
+> 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
+> 그대로 미측정이다.
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
