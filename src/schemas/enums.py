@@ -83,6 +83,10 @@ class Role(StrEnum):
     #
     # `tests/test_config.py`가 `PROMPTED_ROLES ⊆ Role`을 강제한다.
     SINGLE = "single"
+    # 8단계 PoV — Auditor Finding에서 PoC 구성 스펙(PovSpec)을 세운다 (council 2026-09-30).
+    # SINGLE 주석의 함정이 그대로다: `config.PROMPTED_ROLES`·`bench.ROLE_SPEC`에 함께 넣지
+    # 않으면 harness check·bench가 죽고, `prompts/pov/`도 같은 커밋에 있어야 test_config가 산다.
+    POV = "pov"
 
 
 class EvidenceKind(StrEnum):
