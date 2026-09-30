@@ -1312,7 +1312,7 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
 
     **교대는 2026-09-29에 `harness_pool`이 선언했다** — 교대 명령(`tools/serve/swap.sh`)과
     장비 파일(`config/serving/`)이 같이 왔다(ADR 0009 「2026-09-29 제안」 절). 교대하는 역할은
-    모델을 부르는 다섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에
+    모델을 부르는 여섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에
     들어간다.
     `settle_timeout_s`는 계산값이다(그 주석 — 미실측).
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
@@ -1633,7 +1633,7 @@ def test_a_swap_that_leaves_out_a_served_role_is_rejected(
 
 
 def test_a_swap_that_lists_every_served_role_loads(tmp_path: Path) -> None:
-    """위 거부의 짝 — 다섯을 다 적으면 로드된다. 거부만 보면 교대 선언을 통째로 거부하는 구현도
+    """위 거부의 짝 — 여섯을 다 적으면 로드된다. 거부만 보면 교대 선언을 통째로 거부하는 구현도
     지난다(`test_a_complete_swap_declaration_on_per_stage_is_accepted`와 같은 이유)."""
     patch = {"execution": _swap_execution(_POOL_SERVED)}
     _copy_config(tmp_path, profile="harness_pool", profile_patch=patch)
