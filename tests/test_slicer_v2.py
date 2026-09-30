@@ -162,7 +162,7 @@ def test_real_sqlite_commit_and_os_lock_survive_process_death(tmp_path):
     program = """
 import os, sys
 from pathlib import Path
-from slicer_checkpoint import Checkpoint, merge_shards
+from slicer_checkpoint import Checkpoint
 store = Checkpoint(Path(sys.argv[1]), resume=True)
 store.conn.execute('DELETE FROM stages')
 os._exit(19)
@@ -548,3 +548,98 @@ def test_a_shard_without_a_checkpoint_is_refused(repo, tmp_path):
     with pytest.raises(SystemExit):
         slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), "--shard", "2/2",
                      "--checkpoint", str(tmp_path / "state.db")])
+    for bad in ("0/1", "٠/٤", "-1/2"):
+        with pytest.raises(SystemExit):
+            slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), "--shard", bad,
+                         "--checkpoint", str(tmp_path / "state.db")])
+
+
+def three_candidates():
+    return payloads(
+        case_a=[candidate(), candidate("other", 3)], case_b=[candidate("sprintf", 5)],
+        flow_count=1,
+    )
+
+
+@pytest.mark.parametrize("count", [2, 3])
+def test_each_shard_slices_exactly_its_positions(monkeypatch, repo, tmp_path, count):
+    """분할 자체를 문다 — `%`의 비교를 뒤집거나 건너뛰기를 끄면 샤드가 남의 몫을 자른다."""
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), count)
+    for index, database in enumerate(databases):
+        with Checkpoint(database, resume=True) as store:
+            keys = [c["candidate_key"] for c in store.get("candidates")]
+            saved = {row[0] for row in store.conn.execute("SELECT candidate_key FROM stages")}
+        assert saved == {key for position, key in enumerate(keys) if position % count == index}
+
+
+def test_a_missing_shard_exports_as_unfinished(monkeypatch, repo, tmp_path):
+    """병합 export의 완결성 그물 — 샤드 하나가 빠지면 완성처럼 보이면 안 된다."""
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), 3)
+    merged = tmp_path / "merged.db"
+    summary = merge_shards(merged, databases[:2])
+    assert summary["complete"] < summary["candidates"]
+    export = tmp_path / "export"
+    export.mkdir()
+    code, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert code == 2 and exported["status"] == "partial"
+    assert "unfinished candidates" in exported["error"]
+
+
+def test_the_merge_tool_exits_nonzero_when_candidates_are_missing(monkeypatch, repo, tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "merge_tool", Path(slicer.__file__).parent / "tools" / "merge_slicer_shards.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), 3)
+    assert tool.main(["x", str(tmp_path / "part.db"), *map(str, databases[:2])]) == 2
+    assert tool.main(["x", str(tmp_path / "full.db"), *map(str, databases)]) == 0
+
+
+@pytest.mark.parametrize("key", ["run_contract", "engine_config"])
+def test_shards_that_disagree_on_the_run_are_not_merged(monkeypatch, repo, tmp_path, key):
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), 2)
+    with Checkpoint(databases[1], resume=True) as store:
+        value = store.get(key)
+        value["tampered"] = True
+        store.set(key, value)
+    with pytest.raises(ValueError, match=f"Shard mismatch on {key}"):
+        merge_shards(tmp_path / "merged.db", databases)
+    assert not (tmp_path / "merged.db").exists()
+    assert not (tmp_path / "merged.db.lock").exists()
+
+
+def test_the_merged_errors_do_not_depend_on_shard_order(monkeypatch, repo, tmp_path):
+    """baseline은 첫 샤드 것이지만 오류는 합집합 — 순서로 ok/partial이 갈리면 안 된다."""
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), 2)
+    with Checkpoint(databases[1], resume=True) as store:
+        baseline = store.get("baseline")
+        baseline["errors"].append("Skipped 2 flow sinks without an enclosing method")
+        store.set("baseline", baseline)
+    for name, order in (("forward", databases), ("reverse", databases[::-1])):
+        merged = tmp_path / f"{name}.db"
+        merge_shards(merged, order)
+        export = tmp_path / name
+        export.mkdir()
+        code, exported, _ = run_cli(
+            monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+        )
+        assert code == 2 and "without an enclosing method" in exported["error"], name
+
+
+def test_the_same_shard_twice_is_refused(monkeypatch, repo, tmp_path):
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), 2)
+    with pytest.raises(ValueError, match="twice"):
+        merge_shards(tmp_path / "merged.db", [databases[0], databases[0]])
+
+
+def test_the_harness_refuses_a_shard_fragment(monkeypatch, repo, tmp_path):
+    from src.adapters.slices import SliceInputError, load_slices
+
+    run_shards(monkeypatch, repo, tmp_path, three_candidates(), 2)
+    with pytest.raises(SliceInputError, match="샤드 조각"):
+        load_slices(tmp_path / "shard0" / "slices.json")
