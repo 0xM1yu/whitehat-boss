@@ -7,12 +7,13 @@
 gdb는 정상적으로 떠서 종료 코드 1이나 255로 끝나고, 반대로 대상이 **자기 종료
 코드**로 125~127을 돌려주면(`return 127;`) `--return-child-result`가 그 값을 gdb의
 종료 코드에 실어 두 숫자 공간이 섞인다. 그래서 대상이 떴는지는 gdb가 **stdout**에
-남긴 대상 수명주기 줄(`[Inferior … exited …]` · `Program … signal …`)로만 가른다.
-이 파일은 그 판정을 녹음된 출력으로 고정한다 — 안 뜬 대상은 `ok=False`, 뜬 대상은
-종료 코드가 무엇이든 `ok=True`다.
+남긴 대상 수명주기 줄(`[Inferior … exited …]` · `Program … signal …` · 스레드를 만든
+대상이면 `Thread N "…" received signal …`)로만 가른다. 이 파일은 그 판정을 녹음된
+출력으로 고정한다 — 안 뜬 대상은 `ok=False`, 뜬 대상은 종료 코드가 무엇이든 `ok=True`다.
 
-**이 파일의 문자열은 전부 녹음이다.** 지어낸 stdout이 아니다. 출처와 재현 방법은
-`RECORDED_*` 머리에 적었다.
+**gdb 출력 문자열은 전부 녹음이다**(선형성 검사의 적대 입력 하나만 합성이고, 그 docstring에
+그렇게 적었다). 출처와 재현 방법은 `GDB_12`·`GDB_15`·`RECORDED_DOCKER_FAILURES` 머리 주석과
+`fixtures/gdb/thread_and_stderr_recordings.json`의 `_provenance`에 적었다.
 
 **한계.** 이 검사는 gdb 12.1(v3 이미지)과 15.1의 **출력 형태**를 고정한다. 다른 gdb
 버전이나 로케일에서 같은 문구가 나온다는 보증은 아니다 — 이미지가 gdb 버전을
@@ -421,7 +422,7 @@ GDB_15: dict[str, Recorded] = {
         ),
         'warning: 2\t/src/noeol-crash.c: No such file or directory\n',
     ),
-    # 컴파일 산출물 /work/gdb.bin에 `chmod -x`(별도 컨테이너) — 대상이 안 뜬다
+    # 같은 바이너리를 /tmp/rv327/noexec.bin으로 두고 `chmod -x` — 대상이 안 뜬다
     "noexec": Recorded(
         1,
         "",
@@ -431,7 +432,7 @@ GDB_15: dict[str, Recorded] = {
             'During startup program exited with code 126.\n'
         ),
     ),
-    # 컴파일 산출물 /work/gdb.bin을 지웠다 — 대상이 없다
+    # 없는 경로(/tmp/rv327/missing.bin)로 돌렸다 — 대상이 없다
     "missing": Recorded(
         1,
         "",
@@ -442,7 +443,7 @@ GDB_15: dict[str, Recorded] = {
             'Use the "file" or "exec-file" command.\n'
         ),
     ),
-    # gdb의 `-x`를 없는 파일(/opt/none.batch)로 — gdb가 스크립트를 못 읽는다
+    # gdb의 `-x`를 없는 파일(/tmp/rv327/none.batch)로 — gdb가 스크립트를 못 읽는다
     "gdb-script-missing": Recorded(
         255,
         "",
@@ -552,13 +553,13 @@ def test_a_target_that_started_is_ok_whatever_exit_code_gdb_returns(
 ) -> None:
     """대상이 떴으면(정상 종료·자기 종료 코드·신호로 죽음) `ok=True`, 종료 코드는 그대로다.
 
-    `ret127`은 현 판정을 빨갛게 만드는 한 건이다 — 대상이 `return 127;`로 끝났을 뿐
-    멀쩡히 떴는데 종료 코드가 `_EXEC_FAILED`에 든다는 이유로 「실행 파일을 띄우지
-    못했다」가 된다(현 판정은 종료 코드만 본다).
+    `ret127`: 대상이 `return 127;`로 끝나면 gdb도 127을 돌려준다 — 컨테이너 기동 실패
+    코드(`_EXEC_FAILED`)와 같은 숫자지만 대상은 떴으므로 `ok=True`다. 종료 코드만 보는
+    판정은 이 한 건을 「띄우지 못했다」로 읽는다.
 
-    `noeol`은 **고친 판정**을 겨눈다 — 대상이 개행 없이 stdout에 쓰면 gdb의 수명주기 줄이
+    `noeol`: 대상이 개행 없이 stdout에 쓰면 gdb의 수명주기 줄이
     `done[Inferior 1 (process 24) exited normally]`처럼 줄 **중간**에 붙는다. 줄 머리에
-    앵커(`^`)를 건 정규식은 여기서 멀쩡한 실행을 「안 떴다」로 읽는다(고치기 전에는 초록).
+    앵커(`^`)를 건 정규식은 여기서 멀쩡한 실행을 「안 떴다」로 읽는다.
     """
     record = RECORDED[version][name]
 
@@ -569,8 +570,9 @@ def test_a_target_that_started_is_ok_whatever_exit_code_gdb_returns(
 def test_a_target_that_never_started_is_not_a_crash_evidence(version: str, name: str) -> None:
     """대상이 한 번도 안 떴으면 gdb가 exit 1(또는 255)로 끝나도 `ok=False`다.
 
-    `container_tools.py` 모듈 docstring이 막겠다던 「한 번도 돌지 않은 프로그램이 재현
-    완료로 기록된다」가 이 네 건에서 실제로 일어난다. 종료 코드는 gdb의 값이므로
+    gdb 자신은 정상적으로 떠서 끝나므로 종료 코드만으로는 이것이 「대상이 크래시했다」와
+    갈리지 않는다 — `container_tools.py` 모듈 docstring이 막으려는 「한 번도 돌지 않은
+    프로그램이 재현 완료로 기록된다」가 이 표본들에서 걸린다. 종료 코드는 gdb의 값이므로
     그대로 남긴다(합성하지 않는다).
     """
     record = RECORDED[version][name]
@@ -648,11 +650,11 @@ def test_the_lifecycle_search_stays_linear_on_a_hostile_stdout() -> None:
 
 @pytest.mark.parametrize("name", sorted(RECORDED_DOCKER_FAILURES))
 def test_a_container_that_could_not_start_gdb_stays_a_failure(name: str) -> None:
-    """현 `_EXEC_FAILED`가 잡으려던 갈래(컨테이너·gdb 기동 실패)는 고친 뒤에도 실패다.
+    """컨테이너나 gdb 자체를 못 띄운 실행(종료 코드 125·127)은 실패다.
 
     실제 docker 출력이다 — 이름 충돌(병렬 pytest가 실제로 밟는다)·실행 파일 없음·이미지
-    없음. 셋 다 stdout이 비어 있다. **이 검사는 고치기 전에도 초록이다** — 고친 판정이
-    너무 세게 조여 이 갈래를 놓치지 않는지 지킨다.
+    없음. 셋 다 stdout이 비어 있어 수명주기 줄이 없다. 수명주기 줄로 판정하는 규칙이 이
+    갈래를 놓치지 않는지 지키는 음성 대조다.
     """
     record = RECORDED_DOCKER_FAILURES[name]
 
@@ -710,10 +712,7 @@ def test_the_runner_records_a_never_started_target_as_a_failure(
 def test_the_runner_still_records_a_real_crash_as_ok(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """양성 대조 — 위 검사를 통과시키려 크래시까지 거절하는 고침을 여기서 잡는다.
-
-    고치기 전에도 초록이다.
-    """
+    """양성 대조 — 안 뜬 대상을 거절하려다 진짜 크래시까지 거절하는 판정을 여기서 잡는다."""
     record = RECORDED["12.1"]["crash"]
 
     evidence = _run_gdb_through_the_runner(tmp_path, monkeypatch, record)
@@ -722,16 +721,16 @@ def test_the_runner_still_records_a_real_crash_as_ok(
     assert evidence.exit_code == record.exit_code
 
 
-# --- 아래 둘은 결함이 아니라 **검사의 구멍**이다 -------------------------------------------
-# 고치기 전에도 초록이고, 변이(돌연변이)를 넣어야 빨개진다.
+# --- 아래 둘은 이미지 입력의 철자를 핀한다 ---------------------------------------------------
+# 판정 코드가 아니라 Dockerfile·gdb.batch의 내용을 묻는다 — 그 줄을 지우는 변이에서 빨개진다.
 
 
 def test_dockerfile_installs_gdb_in_the_apt_list_and_bakes_the_script() -> None:
-    """LOW-2: 기존 `assert "gdb" in dockerfile`은 헤더 주석만으로 참이다.
+    """gdb는 apt 설치 목록 **안에**, `COPY gdb.batch /opt/gdb.batch`는 주석이 아닌 줄에 있다.
 
-    apt 설치 목록의 `gdb \\` 줄이나 `COPY gdb.batch /opt/gdb.batch`를 지워도 통과했다
-    (변이로 확인). **철자를 묻는다** — 설치가 실제로 되는지는 이미지를 빌드해야 안다
-    (빌드 시점 연막 검사가 맡는다).
+    Dockerfile 어딘가에 `gdb`라는 글자가 있는지만 보면 헤더 주석만으로 참이 된다 — 그래서
+    설치 블록과 COPY 줄을 따로 본다. **철자를 묻는다** — 설치가 실제로 되는지는 이미지를
+    빌드해야 안다(빌드 시점 연막 검사가 맡는다).
     """
     dockerfile = (REPO_ROOT / "tools" / "harness-tools" / "Dockerfile").read_text(encoding="utf-8")
 
@@ -747,11 +746,12 @@ def test_dockerfile_installs_gdb_in_the_apt_list_and_bakes_the_script() -> None:
 
 
 def test_gdb_batch_script_runs_the_target_and_then_prints_backtraces() -> None:
-    """MEDIUM(보류 리뷰 4): `gdb.batch`의 `run`을 주석으로 만들어도 테스트 전부가 초록이었다.
+    """`gdb.batch`는 대상을 `run`한 뒤 모든 스레드의 백트레이스를 찍는다.
 
     실컨테이너 테스트는 **이미지에 구워진 사본**을 쓰므로 저장소의 스크립트를 바꿔도
-    이미지를 다시 빌드하기 전에는 아무것도 안 바뀐다. **철자를 묻는다** — 스크립트의
-    실제 동작(대상이 뜨고 백트레이스가 나온다)은 이미지를 다시 빌드한 뒤
+    이미지를 다시 빌드하기 전에는 아무것도 안 바뀐다 — 저장소 사본의 내용은 이 검사만
+    본다. **철자를 묻는다** — 스크립트의 실제 동작(대상이 뜨고 백트레이스가 나온다)은
+    이미지를 다시 빌드한 뒤
     `test_real_gdb_runs_clean_and_crashing_targets_without_ptrace_capability`만 본다.
     """
     script = (REPO_ROOT / "tools" / "harness-tools" / "gdb.batch").read_text(encoding="utf-8")
