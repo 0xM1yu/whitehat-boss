@@ -610,3 +610,83 @@ models:
       tok_s_batch32: 0
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
+
+  # ── 8단계 PoV 모델 — 사용자(조민규) 선정. **`harness_pool`·`_hybrid`에 배선됨(8단계 pov 좌석)** ──
+  # CyberGym Level 1(PoV 생성)용. Feyospace-v1-small — Qwen/Qwen3.8-27B를 사이버 에이전트
+  # 연구용으로 post-train한 28B다(HF 카드 · `base_model` 태그 Qwen/Qwen3.8-27B). 그래서 아키텍처·
+  # 크기·창·추론 템플릿이 지금 Auditor(`qwen3.8-27b`)와 같다 — `family`는 베이스 가중치 제작사
+  # Qwen이다(ADR 0010 §4: family=베이스 제작사, 양자화·파인튜닝 조직이 아니다).
+  #
+  # 값은 2026-09-30 Hugging Face에서 직접 읽었다(`source` rev fd02711…):
+  #   config.json@<rev> — architectures ['Qwen3_5ForConditionalGeneration'](model_type qwen3_5) ·
+  #     text_config.max_position_embeddings 262144 · dtype bfloat16 · quantization_config 없음
+  #     → `bf16`은 native dtype · num_hidden_layers 64(48 linear + 16 full attention, interval 4 —
+  #     GDN hybrid, Auditor와 같은 계열) · vocab 248320 · MTP 1층 · vision_config(depth 27)가 있는
+  #     비전-언어 모델(하네스는 텍스트만 보낸다) · transformers_version 5.12.1
+  #   safetensors 12개 · 파라미터 BF16 27,781,427,952(HF API `safetensors` · 카드는 "28B")
+  # `context_limit`은 모델 상한이지 띄울 값이 아니다(`qwen3.8-27b` 항목과 같은 관례).
+  #
+  # ⚠ **license 미선언이다.** HF API 태그·config.json·README 프런트매터·파일 목록 어디에도 라이선스가
+  #   없다(2026-09-30 확인 — 카드는 "research release · authorized defensive-security research" 용도와
+  #   금지 용도 목록만 적는다). 실측이 아니라 **부재**라 checksum처럼 0으로 못 둔다(license는
+  #   NonEmptyStr) — `unknown`으로 둔다. ⚠ **베이스 Qwen3.8-27B가 Apache-2.0인 것이 이 파인튜닝의
+  #   라이선스를 자동으로 정하지 않는다** — 가중치를 받아 쓰기 전에 원저자·팀에 확인하고 카드의 금지
+  #   용도 목록을 읽는다(`gpt-oss-20b`의 USAGE_POLICY 주석과 같은 자리).
+  # ⚠ **checksum·benchmark는 전부 미실측(0/null)이다** — 아직 우리 장비에서 받지도 띄우지도
+  #   않았다(ATOM 종료 · 서빙+도구 되는 호스트 미확보). 그전에 돈 run은 비교표 제외(CLAUDE.md §0).
+  #   `tools/model_checksum.py`가 스냅샷을 받은 뒤 checksum을, `bench --apply`가 benchmark를 채운다.
+  #
+  # ## 배선됨 — `harness_pool`·`harness_pool_hybrid`의 8단계 pov 좌석
+  # PoV 노드(`nodes/pov.py`)가 러너 8단계(Stage.VALIDATE) 라우팅에 들어갔다(추가형 — validate.run 뒤).
+  # 이 키를 두 canonical 프로필 roles에 넣었고 `harness_pool.swap.swappable`에 pov를 올렸다 —
+  # `load_config`의 swap 검사와 `check_serving`의 장비 파일 행 요구를 그래서 채웠다(`config/serving/*.yaml`에
+  # feyospace 행). resident가 아니라 swappable이라 8단계에 들어갈 때만 콜드 기동한다. PROJECT-CONTEXT
+  # §1 로스터·model-serving.md 포트 표(8006)가 이 키를 든다.
+  # ⚠ **실장비 종단은 미실측이다** — checksum·benchmark 0(위), 서빙+도구 되는 호스트 확보 뒤 실측한다.
+  #
+  # ## 추론(사고) — Auditor 손잡이를 물려받았다(사고 켬)
+  # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
+  # 사고 · hybrid라 V1 러너로 `thinking_token_budget`을 받는다 · `--reasoning-parser qwen3`가 없으면
+  # 사고가 죽는다(`qwen3.8-27b` 항목의 같은 문단, 장비 파일 extra_args). 사고가 기본(xhigh)이라
+  # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
+  # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
+  # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 스키마(`src/schemas/pov.py`)는 PoC 8 MiB ·
+  # `hex` 필드 16 Mi자까지 받는다. 답 몫은 Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라
+  # 사고가 예산을 다 쓰면 큰 스펙은 거기서 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다.
+  # 값은 실측 뒤 조정.
+  feyospace-v1-small:
+    endpoint: "http://127.0.0.1:8006/v1"
+    context_limit: 262144
+    quantization: "bf16"
+    license: "unknown"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "hf://feyospace/feyospace-v1-small@fd02711ea1eb8ea15772d0b7fbded18ecfe8c9d1"
+    family: "qwen"
+    # **추론 손잡이 — Auditor(`qwen3.8-27b`)와 같은 베이스·같은 chat_template이라 그 값을 물려받는다
+    # (계획값, feyospace 미실측).** 사고를 켠다 — `--reasoning-parser qwen3`(장비 파일)로 파싱하고,
+    # `thinking_token_budget`(28,672) < `output_max_by_role.pov`(32,768, `config/budgets.yaml`)라 사고가
+    # 다 차도 답 토큰 자리가 남는다. ⚠ 이 손잡이 없이(옛 전역 4,096 cap · budget 없음) 사고를 켜면 본문이
+    # None이거나 JSON이 잘려 스키마가 깨진다 — Auditor가 4,096으로 그 실패를 7/7 냈다(그 항목 주석).
+    reasoning_effort: "xhigh"
+    sampling:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+    thinking_token_budget: 28672
+    prompt_template_version: "v1"
+    fallback: null
+    # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
+    # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
+    # (`test_served_scout_and_critic_roles_declare_a_request_timeout`), `monitor.call_timeout_s`의
+    # 상한과 함께 Auditor와 같은 7,500이 최대다.
+    request_timeout_s: 7500
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null

@@ -1,7 +1,8 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC 구성 스펙을 세운다 (council 2026-09-30).
 
 단발판이다. 모델이 `PovSpec`을 내면 순수 함수 `assemble_poc`가 결정론적으로 바이트를
-만든다(fork B-iii). 러너 8단계 라우팅·실도구 실행(asan/poc)·상태 전이는 후속(P3/P5)이라
+만든다(fork B-iii). 러너가 8단계에서 이 노드를 `validate.run`과 나란히 부른다(추가형 —
+`runner._run_pov`). 실도구 실행(asan/poc)·모델-주도 툴 루프·상태 전이는 후속(호스트 필요)이라
 여기서는 **Finding → PovSpec → 바이트**까지가 계약이다.
 
 `Stage.VALIDATE` 아래에서 돈다 — 새 단계 번호를 만들지 않는다(Stage는 0~9 고정).
