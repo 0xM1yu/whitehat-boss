@@ -150,6 +150,7 @@ def payloads(*, case_a=None, case_b=None, flow_count=0, truncated=False):
                 },
             },
         ),
+        "library": response("library", True),
         "case_a": response("case_a", [] if case_a is None else case_a),
         "case_b": response("case_b", [] if case_b is None else case_b),
         "flows": response(
@@ -574,12 +575,10 @@ def test_flow_cap_records_observed_truncation(monkeypatch, repo, tmp_path, trunc
     assert result["counters"]["flows_truncated"] == int(truncated)
     assert result["status"] == ("partial" if truncated else "ok")
     assert all(timeout == 7 for _, timeout in transport.requests)
-    flow = next(
-        json.loads(req.data)["query"]
-        for req, _ in transport.requests
-        if "__SLICER_flows__" in json.loads(req.data)["query"]
-    )
-    assert ".take(4)" in flow and "observed.take(3)" in flow
+    # The flow cap is a run setting, so it is compiled into the session library (slicer_library).
+    sent = [json.loads(req.data)["query"] for req, _ in transport.requests]
+    library = next(q for q in sent if "__SLICER_library__" in q)
+    assert ".take(4)" in library and "observed.take(3)" in library
 
 
 def test_deterministic_slices_under_reordered_candidates(monkeypatch, repo, tmp_path):
@@ -1098,7 +1097,8 @@ def test_engine_overrides_reach_every_flow_query(monkeypatch, repo, tmp_path):
     }
     for request, _ in transport.requests:
         query = json.loads(request.data)["query"]
-        if any(f"__SLICER_{stage}__" in query for stage in ("case_b", "inventory", "flows")):
+        # flows reach the overrides through the session library they call (slicer_library).
+        if any(f"__SLICER_{stage}__" in query for stage in ("case_b", "inventory", "library")):
             assert "maxCallDepth = 8" in query
             assert "maxArgsToAllow = 200" in query
             assert "maxOutputArgsExpansion = 300" in query
@@ -1180,10 +1180,25 @@ def test_case_a_query_bounds_are_pinned():
     # MEDIUM-1: the K=1 filter short-circuits at LIMIT+1 calls instead of enumerating the whole
     # call set of a common name. Semantically == `.size <= LIMIT`; this pins the early-exit form.
     assert f".take({lim} + 1).size <= {lim}" in q
-    # Property 1: the candidate cap .take sits AFTER both filters. Moving it before the param
-    # filter would take the first-N raw methods and then filter, shrinking the set toward 0.
-    # The param filter immediately preceding the take pins that ordering.
-    assert f".filter(_.parameter.size > 0).take({cap})" in q
+    # Property 1: the candidate cap .take sits AFTER the param filter (moving it before would
+    # take first-N raw methods then filter, shrinking toward 0) AND after the D90 relevance sort
+    # (moving it before the sort re-introduces traversal-order starvation, #318). Pin the
+    # ordering by segment, not adjacency, since the sort now sits between the filter and the cap.
+    astart = q.index("val api =")
+    aseg = q[astart : q.index(f".take({cap})", astart)]
+    assert ".filter(_.parameter.size > 0).l" in aseg
+    # D90 (#318): the WHOLE sort key, not just its location (#324 review MEDIUM-1: `1 else 0`
+    # -- hot last --, `0 else 0` -- no-op sort -- and an emptied hotIds all passed the old
+    # location-only pin). ⚠ These are still spelling pins (CLAUDE.md §2.5): they fail when the
+    # key is re-spelled, they do not prove the ordering property. The mock tests never run Scala.
+    assert ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)" in aseg  # hot first, before cap
+    # "hot" = writes memory (WRITER/EXEC call OR assignment into index/field/deref). Pin both
+    # halves and their method-null guards, and that hotIds is not post-filtered away.
+    hseg = q[q.index("val hotIds =") : q.index("val api =")]
+    assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in hseg
+    assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in hseg
+    assert hseg.count(".filter(c => Option(c.method).isDefined).method.id.l") == 2
+    assert hseg.rstrip().endswith(".method.id.l).toSet")
     # Property 2 / MEDIUM-3: readers is ALSO capped (an uncapped readers set can overrun the
     # same stdout the api cap guards). So the cap .take appears exactly twice: api and readers.
     assert q.count(f".take({cap})") == 2
@@ -1228,6 +1243,34 @@ def test_context_query_excludes_synthetic_nodes_at_every_site():
     # (`relevantMethods` 로 제한되지 않은 전역 traversal)가 다음 패스의 등반 기점이 되어
     # TypeDecl/NamespaceBlock/File 로 샌다(#202: *"형제 함수와 파일 첫 주석을 끌어왔다"*).
     assert "sourceNode(parent.get)" in context
+
+
+def test_context_relevant_methods_indexes_points_by_file():
+    """relevant_methods가 이 철자로 쓰였다 — 파일별 정렬 배열 + 이분 탐색.
+
+    철자 pin이다. 저장소 관례(`val all …` 줄 전체)대로 세 덩어리를 통째로 문다 — 탐색 결과를
+    무시하거나(`first = 0`) 삽입점을 틀리게 바꾸거나 전수 스캔을 끼워 넣으면 빨갛다. 동치
+    재작성도 빨갛다. 뽑히는 메서드 집합이 옛 전수 비교와 같다는 성질은 Scala 실행이 필요해
+    2026-09-30 vast 1회 실측(4샘플 · 안 잘린 후보 차이 0, #345 본문)으로만 확인했고, 그것을
+    되풀이할 도구는 저장소에 없다.
+    """
+    context = queries.context_query([("a.c", 3)], "/repo")
+    head = context.split('mark("relevant_methods")', 1)[0]
+    assert "points.exists" not in head
+    assert (
+        "val pointLines: Map[String, Array[Int]] = points.groupBy(_._1).map { case (f, ps) =>\n"
+        "        f -> ps.toArray.map(_._2).sorted }"
+    ) in head
+    assert (
+        "val relevantMethods = cpg.method.internal.filter(m => m.lineNumber.exists { lineStart =>\n"
+        "        val start: Int = lineStart\n"
+        "        pointLines.get(filename(m)).exists { lines =>\n"
+        "          val found = java.util.Arrays.binarySearch(lines, start)\n"
+        "          val first = if (found >= 0) found else -found - 1\n"
+        "          first < lines.length && m.lineNumberEnd.forall(_ >= lines(first))\n"
+        "        }\n"
+        "      }).l"
+    ) in head
 
 
 def test_flows_query_parenthesizes_the_truncated_comparison():
@@ -1449,3 +1492,109 @@ def test_skipped_directory_links_are_counted(monkeypatch, repo, tmp_path):
     assert result["status"] == "partial"
     assert result["counters"]["directories_skipped"] == 1
     assert "Directory symlink not traversed" in result["error"]
+
+
+def test_query_timings_reach_the_progress_log_and_nothing_else(monkeypatch, repo, tmp_path):
+    """Timed stages wrap their payload (`queries.TIMING`). The client must unwrap it so the
+    slices are byte-identical to an untimed run, and the timings must land only in the
+    progress log -- they change every run, so in `slices` they would break reproducibility.
+    """
+    def timed(stage, value):
+        return response(stage, {"value": value, "timings_ms": {"dataflow": 7.0},
+                                "counts": {"batches": 2}, "body_ms": 9.0})
+
+    def payload(stage, data):
+        return json.loads(base64.b64decode(
+            re.search(r"__SLICER_\w+__([A-Za-z0-9+/=]+)__END", data[stage]["stdout"])[1]))
+
+    plain = payloads(case_a=[candidate()], flow_count=1)
+    wrapped = {**plain, **{s: timed(s, payload(s, plain)) for s in ("flows", "context")}}
+    _, expected, _ = run_cli(monkeypatch, repo, tmp_path / "plain", plain)
+    progress = tmp_path / "progress.jsonl"
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path / "timed", wrapped,
+                           "--progress", str(progress))
+
+    assert result["slices"] == expected["slices"] and result["slices"]
+    assert "timings" not in json.dumps(result)
+    ends = [json.loads(line) for line in progress.read_text(encoding="utf-8").splitlines()]
+    timed_ends = [e for e in ends if e["event"] == "query_end" and "timings" in e]
+    assert {e["stage"] for e in timed_ends} == {"flows", "context"}
+    assert timed_ends[0]["timings"]["timings_ms"] == {"dataflow": 7.0}
+
+
+def test_only_per_candidate_stages_are_timed():
+    """The per-candidate stages carry the timing prelude; one-shot and file-transport stages
+    do not (`file_envelope` has its own result shape)."""
+    from slicer_backward import backward_b_query
+
+    back = backward_b_query({**candidate(), "entry": candidate(), "scopes": [candidate()["scope"]]},
+                            max_depth=None, max_nodes=None, max_call_depth=4)
+    for text in (queries.flows_query([candidate()["scope"]], 3),
+                 queries.context_query([("main.c", 1)], "/work/repo"), back):
+        assert "def mark(k: String)" in text and '"timings_ms"' in text
+    for text in (queries.candidates_a_query(), queries.candidates_b_query(),
+                 queries.inventory_query(), queries.import_query("/r", "p")):
+        assert "def mark(" not in text
+
+
+def test_session_library_replaces_every_placeholder_and_calls_carry_the_data():
+    """slicer_library generates functions from the self-contained builders by swapping
+    placeholders for parameters. A leftover placeholder would silently query a fake
+    candidate; a builder edit that duplicates or drops one must fail construction."""
+    import slicer_library
+
+    lib = slicer_library.Library("/work/repo", 3, {"maxCallDepth": 8}, 30, 5000, 4)
+    assert re.search(r"__LIB_|99900\d", lib.definition) is None
+    for name in ("flows", "context", "backward"):
+        assert f"def {name}(" in lib.definition
+    assert lib.definition.startswith(f"object {lib.name} {{")
+    assert "maxCallDepth = 8" in lib.definition and "observed.take(3)" in lib.definition
+    call = lib.backward({**candidate("sprintf", 5), "entry": candidate("sprintf", 5),
+                         "scopes": [candidate()["scope"]]})
+    assert f"{lib.name}.backward(" in call and '"sprintf(buf)"' in call
+    assert '__SLICER_context__' in lib.context([("main.c", 1)])
+    # Different settings -> different object name: a session never reuses a stale library.
+    assert slicer_library.Library("/work/repo", 4, {}, 30, 5000, 4).name != lib.name
+    with pytest.raises(ValueError, match="occurs 0 times"):
+        slicer_library.as_function("flows", "{ x }", "f", "", [("absent", "y")])
+    with pytest.raises(ValueError, match="not a timed envelope"):
+        slicer_library.as_function("flows", "{ x }", "f", "", [])
+
+
+def test_session_library_scope_filter_follows_method_selector(monkeypatch):
+    """#322 review MEDIUM-1: the library kept its own copy of the `method_selector`
+    predicate, so editing `method_selector` changed the inline builders and left the session
+    library on the old predicate -- with every test green. Edit the predicate the way a real
+    change would; the library must follow it."""
+    import slicer_backward
+    import slicer_library
+
+    real = queries.method_selector
+
+    def edited(scopes):
+        return real(scopes).replace("m.fullName ==", "m.name ==")
+
+    monkeypatch.setattr(queries, "method_selector", edited)
+    monkeypatch.setattr(slicer_backward, "method_selector", edited)
+    definition = slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition
+    assert "m.fullName ==" not in definition
+    assert definition.count("m.name == fn") == 2  # flows and backward
+
+
+def test_session_library_cuts_the_body_at_the_envelopes_own_seams(monkeypatch):
+    """#322 review MEDIUM-2: `as_function` cut the Scala body out of the envelope by
+    hard-coded text (a leading `{ ` and the marker), so reframing the envelope produced a
+    library that only fails to compile on a live server -- with every test green. The
+    generated definition must not depend on how the envelope frames its body."""
+    import slicer_backward
+    import slicer_library
+
+    expected = slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition
+    real = queries.envelope
+
+    def reframed(stage, body, *, timed=False):
+        return "locally " + real(stage, body, timed=timed)
+
+    monkeypatch.setattr(queries, "envelope", reframed)
+    monkeypatch.setattr(slicer_backward, "envelope", reframed)
+    assert slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition == expected

@@ -265,7 +265,7 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
         valid = isinstance(data, list) and all(valid_location(row) for row in data)
     elif stage == "import":
         valid = isinstance(data, dict) and data.get("imported") is True
-    elif stage == "overlay":
+    elif stage in ("overlay", "library"):
         valid = data is True
     elif stage == "backward" and isinstance(data, dict):
         valid = (
@@ -488,6 +488,7 @@ class Slicer(SlicingStages):
         self.processed = 0
         self.checkpoint = None
         self.export_only = False
+        self.shard: tuple[int, int] | None = None
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
         # Joern can read); compiled_files is the set the database compiles, filled in by
@@ -553,6 +554,7 @@ class Slicer(SlicingStages):
         worker = threading.Thread(target=heartbeat, daemon=True)
         self.event("query_start", stage=stage)
         worker.start()
+        timings = {}
         try:
             budget = self.settings.get("candidate_timeout_seconds")
             if budget is not None and self.candidate_started is not None:
@@ -561,6 +563,11 @@ class Slicer(SlicingStages):
                     raise QueryError("Candidate deadline exceeded")
                 self.client.timeout = min(left, original_timeout) if original_timeout else left
             data, logs = self.client.query(stage, query)
+            # A timed envelope (queries.TIMING) wraps the payload. Timings go to the progress
+            # log only: they change every run, so the checkpoint and `slices` never see them.
+            if isinstance(data, dict) and data.keys() == queries.TIMED_KEYS:
+                timings = {"timings": {k: data[k] for k in ("body_ms", "timings_ms", "counts")}}
+                data = data["value"]
             validate_payload(stage, data, logs)
             return data, logs
         except QueryError as exc:
@@ -586,7 +593,9 @@ class Slicer(SlicingStages):
             ended.set()
             worker.join()
             self.client.timeout = original_timeout
-            self.event("query_end", stage=stage, elapsed_seconds=time.perf_counter() - started)
+            self.event(
+                "query_end", stage=stage, elapsed_seconds=time.perf_counter() - started, **timings
+            )
 
     def load_sources(self) -> None:
         self.repo = self.repo.resolve()
@@ -808,6 +817,14 @@ def positive_seconds(value: str) -> float:
     return number
 
 
+def shard_value(value: str) -> tuple[int, int]:
+    """`I/N`: slice the candidates at 0-based positions p with p % N == I (0 <= I < N, N >= 2)."""
+    match = re.fullmatch(r"([0-9]+)/([0-9]+)", value)
+    if not match or not 0 <= int(match[1]) < int(match[2]) or int(match[2]) < 2:
+        raise argparse.ArgumentTypeError("must be I/N with 0 <= I < N and N >= 2")
+    return int(match[1]), int(match[2])
+
+
 def threshold_value(value: str) -> float:
     number = float(value)
     if not math.isfinite(number) or not 0 <= number <= 1:
@@ -835,6 +852,16 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--threshold", type=threshold_value, default=0.95)
     result.add_argument("--max-flows-per-candidate", type=positive_int, default=None)
     result.add_argument("--query-timeout-seconds", type=positive_seconds, default=None)
+    # Per-candidate queries only read the CPG, so N processes on N Joern servers can split one
+    # repo's candidates. Each shard builds its own CPG, so a shard's result equals an unsharded
+    # run's only as far as Joern itself is deterministic (docs/slicer-README.md). Each shard
+    # checkpoints its share; tools/merge_slicer_shards.py joins the checkpoints (refusing shards
+    # of a different run) and --export-only clusters.
+    result.add_argument(
+        "--shard",
+        type=shard_value,
+        help="I/N: slice candidates at positions p %% N == I; needs --checkpoint",
+    )
     for option in ("--max-call-depth", "--max-args-to-allow", "--max-output-args-expansion"):
         result.add_argument(
             option,
@@ -907,6 +934,10 @@ def main(argv: list[str] | None = None) -> int:
     args = cli.parse_args(argv)
     if (args.resume or args.export_only) and not args.checkpoint:
         cli.error("--resume/--export-only requires --checkpoint")
+    if args.shard and (args.export_only or not args.checkpoint):
+        # A shard's own slices.json is a fraction of the run; only the merged checkpoint's
+        # --export-only is the result, so a shard without a checkpoint would be lost work.
+        cli.error("--shard requires --checkpoint and cannot be combined with --export-only")
     outputs = [p.resolve() for p in (args.out, args.checkpoint, args.progress) if p]
     if len(outputs) != len(set(outputs)):
         cli.error("Output, checkpoint and progress paths must be distinct")
@@ -982,6 +1013,9 @@ def main(argv: list[str] | None = None) -> int:
         for p in sorted(Path(__file__).parent.glob("slicer*.py"))
     }
     job.export_only = args.export_only
+    # Not in settings: the shard picks WHICH candidates run, not how, so every shard shares the
+    # run contract and their checkpoints can be merged.
+    job.shard = args.shard
     job.heartbeat_seconds = args.heartbeat_seconds
     attempt = None
     try:
