@@ -50,7 +50,7 @@ OUTPUT_SCHEMA = Finding
 # v4가 드는 것은 v4 prefix가 「등록된 evidence의 content가 주장을 뒷받침할 때만」을 전제로 쓰였기
 # 때문이다(#328 리뷰 MEDIUM-1 — 빠져 있으면 v3→v4 전환이 툴 로그 본문을 조용히 떨군다).
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
