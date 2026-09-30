@@ -5,11 +5,13 @@ config에서 오므로 테스트에 숫자를 박지 않고 `config.thresholds`�
 `budgets.yaml`을 조정해도 이 테스트는 여전히 옳아야 한다.
 """
 
+import re
 from pathlib import Path
 
 import pytest
 
 from src.config import Thresholds, load_config
+from src.orchestrator import policy as policy_module
 from src.orchestrator.policy import (
     Action,
     DecisionPoint,
@@ -22,6 +24,7 @@ from src.orchestrator.stages import Stage
 from src.schemas import EvidenceGrade, FindingState, ReasonCode, Verdict
 
 ORCHESTRATOR_DIR = Path(__file__).resolve().parent.parent / "src" / "orchestrator"
+AGENT_CONTRACTS = Path(__file__).resolve().parent.parent / "docs" / "agent-contracts.md"
 
 
 @pytest.fixture
@@ -273,3 +276,58 @@ def test_orchestrator_source_has_no_adapter_import() -> None:
     ]
 
     assert offenders == []
+
+
+def _policy_names(text: str) -> set[str]:
+    """문서가 `policy.<이름>`·`FixedThresholdPolicy.<이름>`으로 부르는 밑줄 이름(뒤 `()`는 뗀다)."""
+    names = set()
+    for token in re.findall(r"`([^`\n]+)`", text):
+        parts = token.removesuffix("()").split(".")
+        if parts[0] in {"policy", "FixedThresholdPolicy"} and parts[-1].startswith("_"):
+            names.add(parts[-1])
+    return names
+
+
+def _absent_from_policy(names: set[str]) -> list[str]:
+    """`policy.py`에 없는 이름 — 클래스 속성(처리기)도 모듈 속성(`_HANDLERS` 등)도 아닌 것."""
+    return sorted(
+        name
+        for name in names
+        if not hasattr(FixedThresholdPolicy, name) and not hasattr(policy_module, name)
+    )
+
+
+def test_agent_contracts_names_a_real_policy_handler() -> None:
+    """agent-contracts가 부르는 정책 처리기 이름은 `policy.py`에 실재한다(CLAUDE.md §2.1).
+
+    **사고 —** #346의 리뷰 반영 커밋이 없는 이름 `policy._critic`을 적었다(처리기는
+    `FixedThresholdPolicy._critic_verdict`). 어느 테스트도 그 이름을 안 봐서 CI가 초록이었다.
+    이름이 있는지만 본다 — 그 처리기가 문서가 말한 대로 라우팅하는지는
+    `test_grounded_rebut_and_need_evidence_go_to_queue`가 묻는다. 백틱 밖의 이름, 다른 접두
+    (`runner.`·`gate.` 등), 다른 문서는 안 본다.
+    """
+    named = _policy_names(AGENT_CONTRACTS.read_text(encoding="utf-8"))
+
+    assert named, "문서가 정책 처리기를 부르는 곳이 없다 — 이 검사가 아무것도 안 본다"
+    missing = _absent_from_policy(named)
+    assert not missing, f"agent-contracts.md가 policy.py에 없는 이름을 부른다: {missing}"
+
+
+def test_the_policy_name_check_flags_the_incident_and_passes_real_names() -> None:
+    """위 검사의 오염 핀 — 양성은 실제 사고, 음성은 `policy.py`에 있는 이름의 표기다.
+
+    뒤 `()`를 떼지 않거나 모듈 속성을 안 보는 판은 음성 표본을 없는 이름으로 읽는다(#346
+    수정 중 실행으로 확인한 오탐). 철자 핀이라 여기 없는 표기(백틱 밖·다른 접두)는 안 묻는다.
+    """
+    # 양성 — docs/agent-contracts.md:169 (41924cc)
+    assert _absent_from_policy(_policy_names("`policy._critic`에서")) == ["_critic"]
+    for sample in (
+        "`policy._repro_result()`",  # docs/architecture.md:217
+        "`FixedThresholdPolicy._repro_result()`",  # docs/open-questions/D/D18.md:5
+        "`policy._scout_triage`",  # docs/agent-contracts.md:115
+        # 저장소 표기는 아니다 — `policy.py`의 처리기 표(:247). ADR 0012가 「처리기 등록표」로
+        # 부르는 자리라 이 이름으로 적힐 수 있다.
+        "`policy._HANDLERS`",
+    ):
+        assert _policy_names(sample), sample
+        assert _absent_from_policy(_policy_names(sample)) == [], sample
