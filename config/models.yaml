@@ -647,10 +647,14 @@ models:
   # ## 추론(사고) — Auditor 손잡이를 물려받았다(사고 켬)
   # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
   # 사고 · hybrid라 V1 러너로 `thinking_token_budget`을 받는다 · `--reasoning-parser qwen3`가 없으면
-  # 사고가 죽는다(`qwen3.8-27b` 항목의 같은 문단, 장비 파일 extra_args). PoV 출력(PovSpec)은 작지만
-  # 사고가 기본(xhigh)이라 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·
-  # sampling·thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
-  # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다. 값은 실측 뒤 조정.
+  # 사고가 죽는다(`qwen3.8-27b` 항목의 같은 문단, 장비 파일 extra_args). 사고가 기본(xhigh)이라
+  # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
+  # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
+  # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 스키마(`src/schemas/pov.py`)는 PoC 8 MiB ·
+  # `hex` 필드 16 Mi자까지 받는다. 답 몫은 Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라
+  # 사고가 예산을 다 쓰면 큰 스펙은 거기서 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다.
+  # 값은 실측 뒤 조정.
   feyospace-v1-small:
     endpoint: "http://127.0.0.1:8006/v1"
     context_limit: 262144
