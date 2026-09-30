@@ -562,7 +562,7 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     share = f"{tokens / budget:.1%}" if budget else "예산 0"
     return [
         f"대상 artifact: {len(result.candidates) or len(capsules)}개 / 캡슐 {len(capsules)}개",
-        f"예상 모델 호출: 최대 {calls}회 (scout + auditor + critic 상한)",
+        f"예상 모델 호출: 최대 {calls}회 (scout + auditor + critic 상한 · pov 제외)",
         f"예상 input 토큰: 약 {tokens:,} / 예산 {budget:,} ({share})",
         _gpu_estimate(config),
     ]
@@ -604,6 +604,10 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     `캡슐 × 자리 수`이고 4·5단계 호출이 그것을 따른다. 예전에는 「캡슐 하나당 scout 1회」로
     세어 풀 프로필에서 **실제의 1/3**을 냈다 — 그 값으로 예산을 잡으면 run이 도중에
     `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
+
+    **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 finding당 최대
+    `1 + max_hops`회 더 부른다(VALIDATED = critic 통과분이라 최대 `min(candidates, critic_top_n)
+    × (1 + max_hops)`, 계산값). 이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
     scout_calls = candidates * (1 + config.thresholds.max_hops)

@@ -252,14 +252,18 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 **현재:** `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
 `PovSpec` → 순수·결정론 `assemble_poc` → 바이트, council 2026-09-30 fork B-iii)에 더해, 러너가
 `Stage.VALIDATE`에서 `validate.run`과 **나란히** pov를 `_run_pov_hops` 루프로 부른다(추가형 — 캡슐
-미스·모델 실패는 finding을 안 죽이고 `pov_skipped`로 남긴다). CyberGym Level 1
+미스·스키마·버릴 수 있는 게이트웨이 실패는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽
+사건·예산 소진은 run으로 올린다). CyberGym Level 1
 과제 로더(`task_loader` — repo-vul.tar.gz 안전 해제 + description.txt)와 설명 주입(캡슐 `vuln_description`
 섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(@danielcho02 선정)는 §1 8단계 pov 좌석으로
 `harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
-**남은 것(서빙+도구 되는 호스트 필요):** gen-script(Option B, 코드열람·Python 스크립팅) 확장 ·
-`poc` 실행파일 materialize + E4 게이트 · 외부 CyberGym oracle 차분 검증 · feyospace 실서빙 실측
-(checksum·benchmark·홉수).
+⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트가 아직 도구 입력으로 안 들어가
+(`run_tool`이 도구 argv·workdir만 넘긴다) 관측이 PoC와 무관하다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
+
+**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · 외부 CyberGym oracle
+차분 검증 · feyospace 실서빙 실측(checksum·benchmark·홉수). `PovSpec` 표현력 절벽(계산 크로스필드)이
+실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
 
 **선택지:**
 | 방향 | 내용 |
