@@ -20,8 +20,10 @@ gdb는 정상적으로 떠서 종료 코드 1이나 255로 끝나고, 반대로 
 `/locale/`이 0건)이 근거이고, 이미지를 올리면 이 녹음을 다시 뜬다.
 """
 
+import json
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -448,7 +450,17 @@ GDB_15: dict[str, Recorded] = {
     ),
 }
 
-RECORDED: dict[str, dict[str, Recorded]] = {"12.1": GDB_12, "15.1": GDB_15}
+# 스레드를 한 번이라도 만든 대상의 신호 정지 녹음과 stderr 에코 녹음은 길어서(15.1 백트레이스가
+# libc 지역 변수까지 찍는다) 원문 그대로 JSON에 둔다 — 출처는 그 파일의 `_provenance`, 대상
+# 소스는 `_sources`다.
+_JSON_RECORDED = json.loads(
+    (GDB_TARGET / "thread_and_stderr_recordings.json").read_text(encoding="utf-8")
+)
+
+RECORDED: dict[str, dict[str, Recorded]] = {
+    version: {**inline, **{n: Recorded(**r) for n, r in _JSON_RECORDED[version].items()}}
+    for version, inline in (("12.1", GDB_12), ("15.1", GDB_15))
+}
 
 # 컨테이너·gdb 자체를 못 띄운 실제 docker 출력(GDB_12와 같은 docker 29.5.3). stdout은 전부 비었다.
 RECORDED_DOCKER_FAILURES: dict[str, Recorded] = {
@@ -497,11 +509,31 @@ RECORDED_DOCKER_FAILURES: dict[str, Recorded] = {
 # 컴파일 단계(`plan("gdb", …)`의 첫 명령)는 어느 경우에도 성공했다 — 대상이 뜨느냐는 그 다음이다.
 _BUILD_OK = Step(0, "", "")
 
-STARTED = ("normal", "crash", "ret1", "ret42", "ret127", "abort", "sigkill", "noeol", "noeol-crash")
-NEVER_STARTED = ("noexec", "missing", "ptrace-denied", "gdb-script-missing")
+STARTED = (
+    "normal", "crash", "ret1", "ret42", "ret127", "abort", "sigkill", "noeol", "noeol-crash",
+    "thread-clean", "thread-sigkill",
+)
+NEVER_STARTED = (
+    "noexec", "missing", "ptrace-denied", "gdb-script-missing", "lifecycle-shaped-path-missing",
+)
+# 스레드를 만든 대상이 신호로 멈춘 녹음 — gdb가 `Thread N "이름" received signal`을 찍는다.
+THREAD_SIGNAL_STOPS = (
+    "thread-crash", "thread-joined-then-main-crash", "thread-joined-then-abort",
+    "thread-name-quote", "thread-name-empty", "thread-name-badutf8",
+)
+# 녹음이 없는 조합 — 이 장비에서 만들 수 없었다(GDB_15 머리 주석). 이 밖의 빈자리는 오류다.
+_NOT_RECORDED = frozenset({("15.1", "ptrace-denied")})
 
 
 def _cases(names: tuple[str, ...]) -> list:
+    absent = [
+        (version, name)
+        for version, recorded in RECORDED.items()
+        for name in names
+        if name not in recorded and (version, name) not in _NOT_RECORDED
+    ]
+    if absent:  # 이름을 잘못 적으면 그 표본이 소리 없이 빠진다 — 모으는 자리에서 막는다
+        raise ValueError(f"녹음에 없는 이름: {absent}")
     return [
         pytest.param(version, name, id=f"gdb{version}-{name}")
         for version, recorded in RECORDED.items()
@@ -563,6 +595,55 @@ def test_exit_255_is_a_crash_or_a_failure_only_by_what_gdb_printed() -> None:
     assert crash.exit_code == unreadable_script.exit_code == 255
     assert _judge_recorded(crash)[0] is True
     assert _judge_recorded(unreadable_script)[0] is False
+
+
+@pytest.mark.parametrize(("version", "name"), _cases(THREAD_SIGNAL_STOPS))
+def test_a_threaded_target_stopped_by_a_signal_is_reported_per_thread(
+    version: str, name: str
+) -> None:
+    """스레드를 한 번이라도 만든 대상이 신호로 멈추면 gdb는 `Program received signal`이 아니라
+    `Thread N "이름" received signal`을 찍는다 — 스레드가 끝난 뒤 main이 죽어도 그렇다. 이름은
+    따옴표 안에 날것으로 찍힌다: 따옴표가 든 이름(`"a"b"`)·빈 이름(`""`)·깨진 UTF-8(디코드 뒤
+    U+FFFD)도 녹음에 있다. 대상은 떴으므로 `ok=True`이고 종료 코드는 gdb의 값 그대로다.
+
+    첫 두 단언은 녹음이 정말 스레드 형태인지 본다 — 다시 녹음하다 그 형태를 잃으면 이 검사가
+    무는 것도 사라진다.
+    """
+    record = RECORDED[version][name]
+
+    assert re.search(r'^Thread \d+ ".*" received signal ', record.stdout, re.MULTILINE)
+    assert "Program received signal" not in record.stdout
+    assert _judge_recorded(record) == (True, record.exit_code, None)
+
+
+def test_only_stdout_counts_even_when_stderr_carries_a_lifecycle_line() -> None:
+    """안 뜬 대상이라도 gdb는 실행 파일 경로를 stderr에 에코한다 — 경로가 수명주기 줄 모양이면
+    그 문자열이 stderr에 실제로 든다(녹음 `lifecycle-shaped-path-missing`). 판정은 gdb가
+    **stdout**에 남긴 줄만 본다. stdout과 stderr를 합쳐 찾는 판정은 이 녹음에서 틀린다.
+    """
+    for recorded in RECORDED.values():
+        record = recorded["lifecycle-shaped-path-missing"]
+
+        assert "[Inferior 1 (process 1) exited normally]" in record.stderr
+        assert record.stdout == ""
+        assert _judge_recorded(record)[0] is False
+
+
+def test_the_lifecycle_search_stays_linear_on_a_hostile_stdout() -> None:
+    """(합성 입력 — 녹음이 아니다) 뜬 대상은 stdout을 마음대로 쓴다. 한 줄에 `Thread 1 "`만
+    20만 자를 찍어도 판정이 그 줄을 시작점마다 끝까지 되짚지 않아야 한다. 스레드 이름 자리를
+    묶지 않은 정규식은 이 입력 꼴에서 입력 길이의 제곱으로 느려졌다(2026-10-01 이 장비 실측:
+    묶지 않은 탐욕형 20만 자 4.6초·40만 자 19.3초, 게으른형 20만 자 20.5초 / 64자로 묶은 형
+    80만 자 0.023초). 수명주기 줄이 없으므로 결과는 `ok=False`다.
+    """
+    hostile = 'Thread 1 "' * 20_000
+
+    started = time.perf_counter()
+    ok, _, _ = judge("gdb", [_BUILD_OK, Step(0, hostile, "")], 2)
+    elapsed = time.perf_counter() - started
+
+    assert ok is False
+    assert elapsed < 1.0, f"{elapsed:.2f}s — 이름 자리를 묶지 않으면 입력 길이의 제곱으로 느려진다"
 
 
 @pytest.mark.parametrize("name", sorted(RECORDED_DOCKER_FAILURES))
