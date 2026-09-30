@@ -1862,9 +1862,15 @@ _AUDITOR_DECODE_TOK_S = 4.5
 def _assert_thinking_seat_holds_together(role: str) -> None:
     """사고 켠 좌석 하나의 「사고가 끝날 자리 + 시계」 관계 — Auditor·PoV가 같이 쓴다.
 
-    무는 것은 **관계**다: ① `xhigh` ② 사고 상한 < 출력 상한 ③ 타임아웃 ≥ 출력 상한 ÷ 속도
-    ④ 요청 payload가 그 값들을 싣는다. 속도는 `_AUDITOR_DECODE_TOK_S` 하나라 좌석마다 다른
-    속도를 못 넣는다(위 주석).
+    무는 것은 **관계**다: ① `xhigh` ② 템플릿 인자가 사고를 끄지 않는다(`enable_thinking`이
+    `false`가 아니다) ③ 사고 상한 < 출력 상한이고, 답 몫(출력 상한 − 사고 상한)이 전역 출력
+    상한 이상이다 — `config/budgets.yaml`의 「사고 상한 28,672가 답 몫 4,096(위 전역 상한)을
+    남긴다」 ④ 타임아웃 ≥ 출력 상한 ÷ 속도 ⑤ 요청 payload가 그 값들을 싣는다. 속도는
+    `_AUDITOR_DECODE_TOK_S` 하나라 좌석마다 다른 속도를 못 넣는다(위 주석).
+
+    안 묻는 것: `sampling`(값이다) · `chat_template_kwargs`의 `enable_thinking: false` 밖의
+    키 · 답 몫이 **충분한지**(PoV라면 `PovSpec` 실제 길이 — 실측 전이다). ③·④는 하한만
+    문다 — 경계 바로 위 값도 초록이다.
     """
     config = load_config("harness_pool")
     entry = config.model_for(role)
@@ -1873,12 +1879,19 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
     assert entry.reasoning_effort == "xhigh", (
         f"{role} — 사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
     )
+    assert (entry.chat_template_kwargs or {}).get("enable_thinking") is not False, (
+        f"{role} — 템플릿 인자 enable_thinking: false가 사고를 끈다 — 사고 좌석의 전제와 모순이다"
+    )
     assert entry.thinking_token_budget is not None, (
         f"{role} — 사고 상한 선언이 없다 — 사고가 출력 상한 {cap}까지 가서 답 몫이 없을 수 있다"
     )
     assert entry.thinking_token_budget < cap, (
         f"{role} — 사고 상한이 출력 상한 {cap} 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 "
         "</think>를 넣고 답을 쓴다"
+    )
+    assert cap - entry.thinking_token_budget >= config.thresholds.output_max, (
+        f"{role} — 답 몫(출력 상한 − 사고 상한)이 전역 출력 상한 "
+        f"{config.thresholds.output_max}보다 작다 — 사고가 예산을 다 쓰면 답이 그보다 짧게 잘린다"
     )
     assert entry.request_timeout_s is not None, (
         f"{role} — 어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
@@ -1920,8 +1933,10 @@ def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> 
     호출을 끊는다.
 
     ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 Auditor의 외부 보고
-    (`_AUDITOR_DECODE_TOK_S`)를 빌린 값이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다. 그리고
-    하한 하나만 문다: 값이 경계 바로 위여도 초록이고, 여유 배수·프리필은 안 본다.
+    (`_AUDITOR_DECODE_TOK_S`)를 빌린 값이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다.
+    타임아웃과 답 몫은 하한만 문다: 값이 경계 바로 위여도 초록이고, 여유 배수·프리필은 안
+    본다. 답 몫이 `PovSpec`에 **충분한지**는 실측 전이라 안 묻는다. `sampling`은 값이라
+    안 묻고, `chat_template_kwargs`는 사고를 끄는 `enable_thinking: false` 하나만 문다.
     """
     _assert_thinking_seat_holds_together("pov")
 
