@@ -64,7 +64,7 @@ class Recorded:
 #
 # GDB_12 — 이 PR의 이미지 그대로:
 #   `harness-tools:v3` (sha256:98b440ab23ba…, Ubuntu 22.04 · GNU gdb 12.1-0ubuntu1~22.04.2 ·
-#   clang 14.0.0), Docker Desktop 29.5.3 · Linux/x86_64. /opt/gdb.batch는 저장소의
+#   clang 14.0.0), Docker Engine 29.5.3 · Linux/x86_64. /opt/gdb.batch는 저장소의
 #   `tools/harness-tools/gdb.batch`와 내용이 같았다(diff 무차이).
 #   컴파일 = `plan("gdb", …)[0]`, gdb = `plan("gdb", …)[1]` =
 #   `gdb --nx -batch --return-child-result -x /opt/gdb.batch -- /work/gdb.bin`.
@@ -650,7 +650,7 @@ def test_the_lifecycle_search_stays_linear_on_a_hostile_stdout() -> None:
 
 @pytest.mark.parametrize("name", sorted(RECORDED_DOCKER_FAILURES))
 def test_a_container_that_could_not_start_gdb_stays_a_failure(name: str) -> None:
-    """컨테이너나 gdb 자체를 못 띄운 실행(종료 코드 125·127)은 실패다.
+    """컨테이너나 gdb 자체를 못 띄운 실행은 실패다 — 수명주기 줄이 없어서다(종료 코드가 아니다).
 
     실제 docker 출력이다 — 이름 충돌(병렬 pytest가 실제로 밟는다)·실행 파일 없음·이미지
     없음. 셋 다 stdout이 비어 있어 수명주기 줄이 없다. 수명주기 줄로 판정하는 규칙이 이
