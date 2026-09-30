@@ -44,6 +44,7 @@ from src.orchestrator.nodes import (
     signals,
     validate,
 )
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import (
     PROMPTS_DIR,
@@ -462,37 +463,37 @@ def test_auditor_creates_finding_and_materializes_missing_evidence(ctx: RunConte
     assert created.data["reason"] == ReasonCode.AUDITOR_HYPOTHESIZED.value
 
 
-def test_pov_builds_a_poc_from_a_finding(ctx: RunContext) -> None:
-    """PoV(단발)가 Finding을 받아 PoV 역할로 모델을 부르고 비어 있지 않은 PoC 바이트를 낸다.
-
-    러너 8단계 라우팅은 실도구·상태전이와 함께 P3에서 다룬다 — 이 테스트는 노드 계약만 고정한다.
+def test_pov_open_hop_puts_the_finding_in_the_prompt(ctx: RunContext) -> None:
+    """PoV 루프의 hop0(`open_hop`)이 Finding을 프롬프트에 실어 PoV 역할로 모델을 부르고
+    `PovAction`을 받는다. 노드 계약만 고정한다 — 루프 제어·PoC 바이트는 test_pov_loop이 본다.
     """
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
 
-    updated, poc = pov.run(ctx, finding=finding, capsule=capsule)
+    hop = pov.open_hop(ctx, finding=finding, capsule=capsule)
 
-    assert updated.finding_id == finding.finding_id
-    assert isinstance(poc, bytes) and len(poc) > 0
+    # hop0은 사실 블록을 실은 첫 호출이다 — history에 (user, assistant) 두 턴이 쌓인다.
+    assert hop.hop == 0
+    assert [t.speaker for t in hop.history] == ["user", "assistant"]
     # 단순 「불렸나」가 아니라 **그 Finding이 프롬프트에 닿았나**를 본다(auditor 테스트와 같은 형).
     prompt = ctx.models.last_for(Role.POV)
     assert finding.finding_id in prompt.body
     assert "{{" not in prompt.body  # 템플릿 토큰이 다 치환됐다
 
 
-def test_pov_reads_the_source_override(ctx: RunContext) -> None:
-    """`source=` 콜러블을 주면 그 텍스트가 프롬프트에 실린다 — P2 계약(auditor와 같다)."""
+def test_pov_open_hop_reads_the_source_override(ctx: RunContext) -> None:
+    """`source=` 콜러블을 주면 그 텍스트가 hop0 프롬프트에 실린다 — auditor와 같은 규약."""
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
     marker = "MARKER_SOURCE_pov_override_2a7f"
 
-    pov.run(ctx, finding=finding, capsule=capsule, source=lambda: marker)
+    pov.open_hop(ctx, finding=finding, capsule=capsule, source=lambda: marker)
 
     assert marker in ctx.models.last_for(Role.POV).body
 
 
 def _raise(exc: Exception):  # noqa: ANN202
-    """`pov.run`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
+    """`pov.open_hop`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
 
     def _fn(*_args: object, **_kwargs: object) -> object:
         raise exc
@@ -511,12 +512,15 @@ def _pov_state(ctx: RunContext) -> tuple[runner._Accumulator, Finding]:
 
 
 def test_run_pov_generates_and_records_the_poc_byte_size(ctx: RunContext) -> None:
-    """러너 8단계 라우팅(추가형 — PoV 배선): capsule이 있으면 pov를 돌려 PoC를 만들고
+    """러너 8단계 라우팅(추가형 — PoV 배선): capsule이 있으면 루프를 돌려 PoC를 만들고
     `pov_generated`에 **실제** 바이트 크기·sha256을 남긴다 — 기대값을 조립 결과에서 뽑는다
-    (truthy·하드코딩 검사는 회귀를 못 잡는다)."""
+    (truthy·하드코딩 검사는 회귀를 못 잡는다). 결정론 fake라 hop0 gen의 spec을 그대로 조립하면
+    루프가 만든 PoC와 같다."""
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
-    _, expected = pov.run(ctx, finding=finding, capsule=capsule)  # 결정론 fake → 같은 PoC
+    hop0 = pov.open_hop(ctx, finding=finding, capsule=capsule)  # 결정론 fake → hop0는 gen
+    assert hop0.action.action == "gen" and hop0.action.spec is not None
+    expected = assemble_poc(hop0.action.spec)
 
     runner._run_pov(ctx, state, finding)
 
@@ -546,36 +550,43 @@ def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> 
 def test_run_pov_records_a_skip_on_a_schema_parse_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """모델이 스키마를 못 맞추면 pov_skipped(schema_parse_failed) — finding은 안 죽는다."""
+    """모델이 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
+
+    루프가 hop 호출 예외를 흡수한다(`_pov_classify_exception`) — 홉을 여는 `pov.open_hop`을
+    스텁해 hop0에서 실패시킨다."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "run", _raise(SchemaParseError("bad pov json")))
+    monkeypatch.setattr(runner.pov, "open_hop", _raise(SchemaParseError("bad pov json")))
 
     runner._run_pov(ctx, state, finding)
 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
-    assert skipped and skipped[-1].data["reason"] == "schema_parse_failed"
+    assert skipped and skipped[-1].data["reason"] == "parse_failed"
 
 
 def test_run_pov_records_a_skip_on_a_droppable_gateway_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """크기·체계적 거절(droppable)은 pov_skipped(gateway) — 이 finding에 대한 사실이다."""
+    """버릴 수 있는 게이트웨이(droppable 422)는 pov_skipped(gateway_error) — 이 finding의 사실."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "run", _raise(ModelGatewayError("systematic", status=422)))
+    monkeypatch.setattr(
+        runner.pov, "open_hop", _raise(ModelGatewayError("systematic", status=422))
+    )
 
     runner._run_pov(ctx, state, finding)
 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
-    assert skipped and skipped[-1].data["reason"] == "gateway"
+    assert skipped and skipped[-1].data["reason"] == "gateway_error"
 
 
 def test_run_pov_reraises_a_non_droppable_gateway_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """서버 쪽 사건(status 없음·5xx)은 run의 사실이라 올려 보낸다 — 조용히 삼키지 않는다
-    (critic 루프와 같은 _is_droppable 판정)."""
+    (critic 루프와 같은 _is_droppable 판정). 루프가 흡수하지 않고 그대로 올린다."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "run", _raise(ModelGatewayError("server down", status=None)))
+    monkeypatch.setattr(
+        runner.pov, "open_hop", _raise(ModelGatewayError("server down", status=None))
+    )
 
     with pytest.raises(ModelGatewayError):
         runner._run_pov(ctx, state, finding)

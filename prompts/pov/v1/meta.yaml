@@ -1,4 +1,0 @@
-role: pov
-version: v1
-output_schema: PovSpec
-description: Auditor Finding에서 취약점을 재현하는 PoC 구성 스펙(PovSpec)을 세우는 8단계 PoV 프롬프트 — CyberGym Level 1 PoV 도메인 최적화(단발·무실행 제약 명시)

@@ -26,7 +26,7 @@ from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import EvidenceKind, FindingState, PathStepKind, Role, Verdict
 from src.schemas.finding import Finding, PathStep, ReproSpec
-from src.schemas.pov import PovSegment, PovSpec
+from src.schemas.pov import PovAction, PovSegment, PovSpec
 from src.schemas.scout_response import AnalysisSummary, ScoutResponse
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 비용 지표 경로를 태우기 위한 근사다.
@@ -146,7 +146,9 @@ class FakeModelClient:
         produced_by = ProducedBy(
             role=role, model=self.model_name, prompt_version=prompt.prompt_version
         )
-        value = builder(context, produced_by)
+        # `history`도 넘긴다 — PoV 툴 루프의 fake는 홉(=history 길이)마다 다른 액션을 낸다
+        # (`_build_pov_action`). 다른 빌더는 홉을 안 보지만 dict 디스패치라 시그니처가 하나다.
+        value = builder(context, produced_by, history)
         return ModelResult(
             value=value,
             usage=self._usage(prompt, value),
@@ -200,7 +202,9 @@ def _require_id(context: FakeContext, key: str) -> str:
     return value
 
 
-def _build_candidate(context: FakeContext, _produced_by: ProducedBy) -> Candidate:
+def _build_candidate(
+    context: FakeContext, _produced_by: ProducedBy, _history: Sequence[ChatTurn]
+) -> Candidate:
     """4단계 Scout 출력.
 
     점수는 세 신호의 가중합이다. 위험 호출만 있고 정적 신호도 실행 흔적도 없는 후보는
@@ -233,7 +237,9 @@ def _build_candidate(context: FakeContext, _produced_by: ProducedBy) -> Candidat
     )
 
 
-def _build_finding(context: FakeContext, produced_by: ProducedBy) -> Finding:
+def _build_finding(
+    context: FakeContext, produced_by: ProducedBy, _history: Sequence[ChatTurn]
+) -> Finding:
     """5단계 Auditor 출력.
 
     `repro_spec`은 build Evidence가 있을 때만 채운다 — 빌드 방법을 모르는 채로 재현
@@ -278,7 +284,9 @@ def _repro_spec(target: Location, sink: str) -> ReproSpec:
     )
 
 
-def _build_decision(context: FakeContext, produced_by: ProducedBy) -> Decision:
+def _build_decision(
+    context: FakeContext, produced_by: ProducedBy, _history: Sequence[ChatTurn]
+) -> Decision:
     """7단계 Critic 출력.
 
     call graph 근거가 있으면 근거를 붙여 `uphold`, 없으면 **근거 없는 `rebut`**을 낸다.
@@ -304,14 +312,16 @@ def _build_decision(context: FakeContext, produced_by: ProducedBy) -> Decision:
     )
 
 
-def _build_decision_draft(context: FakeContext, produced_by: ProducedBy) -> DecisionDraft:
+def _build_decision_draft(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> DecisionDraft:
     """7단계 Critic 출력 — 자유 verdict 판(실서빙 Critic이 이 스키마로 받는다).
 
     `_build_decision`과 같은 판정을 내되 `verdict`를 문자열로 낸다. Fake는 표준 어휘를
     그대로 써 `Verdict.from_text` 매핑이 항등이다 — 매핑 로직 자체는 단위 테스트가 덮고,
     여기서는 배선(자유 verdict → `to_decision`)이 e2e에서 도는지만 고정한다.
     """
-    decision = _build_decision(context, produced_by)
+    decision = _build_decision(context, produced_by, history)
     return DecisionDraft(
         verdict=decision.verdict.value,
         rebuttal_axis=decision.rebuttal_axis,
@@ -320,19 +330,24 @@ def _build_decision_draft(context: FakeContext, produced_by: ProducedBy) -> Deci
     )
 
 
-def _build_scout_response(context: FakeContext, produced_by: ProducedBy) -> ScoutResponse:
+def _build_scout_response(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> ScoutResponse:
     """4단계 Scout 출력 래퍼. 판정은 `_build_candidate`와 같고, 근거(`analysis_summary`)는
     최소로 채운다 — 하네스가 버리므로 결정론적 자리표시면 된다(scout_response.py)."""
     return ScoutResponse(
-        candidate=_build_candidate(context, produced_by),
+        candidate=_build_candidate(context, produced_by, history),
         analysis_summary=AnalysisSummary(claim="fake scout analysis summary"),
     )
 
 
-def _build_pov(_context: FakeContext, _produced_by: ProducedBy) -> PovSpec:
+def _build_pov(
+    _context: FakeContext, _produced_by: ProducedBy, _history: Sequence[ChatTurn]
+) -> PovSpec:
     """Fake PoV 구성 스펙 — 흔한 오버플로 모양(64바이트 패딩 + 4바이트 정수). dev_fake 전용.
 
-    `assemble_poc`가 결정론적으로 바이트를 만드므로 dev_fake run이 재현 가능하다.
+    `assemble_poc`가 결정론적으로 바이트를 만드므로 dev_fake run이 재현 가능하다. 툴 루프의 gen
+    액션(`_build_pov_action`)이 이 스펙을 실어 낸다.
     """
     return PovSpec(
         segments=[
@@ -343,11 +358,34 @@ def _build_pov(_context: FakeContext, _produced_by: ProducedBy) -> PovSpec:
     )
 
 
+def _build_pov_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> PovAction:
+    """PoV 툴 루프의 fake 액션 (Option C). 홉을 `history` 길이로 가른다.
+
+    hop0(history 빔)은 `gen` — `_build_pov`의 스펙을 실어 순수 `assemble_poc`가 바이트를
+    만든다. hop≥1(history 있음)은 `submit` — 도구 관측을 되먹임받은 뒤 후보가 버그에
+    닿는다고 보고 루프를 끝낸다. 결정론이라 dev_fake run이 재현 가능하다(`_build_pov`와 같다).
+
+    실제 모델은 도구 관측을 보고 gen/inspect/submit을 스스로 고른다 — fake는 그 루프 배선
+    (gen→도구→되먹임→submit)이 도는지만 고정한다.
+    """
+    if history:
+        return PovAction(action="submit", rationale="fake: candidate reaches the bug")
+    return PovAction(
+        action="gen",
+        spec=_build_pov(context, produced_by, history),
+        rationale="fake: try the overflow spec",
+    )
+
+
+# `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
+# 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 _BUILDERS = {
     Candidate: _build_candidate,
     ScoutResponse: _build_scout_response,
     Finding: _build_finding,
     Decision: _build_decision,
     DecisionDraft: _build_decision_draft,
-    PovSpec: _build_pov,
+    PovAction: _build_pov_action,
 }
