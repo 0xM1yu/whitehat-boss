@@ -82,7 +82,10 @@ from src.tokens import estimate_tokens
 #   (`fake_retriever.CAPSULE_POLICY_VERSION` 주석).
 # **hybrid-v5 → hybrid-v6 (2026-09-25, #220 ①)**: 슬라이스 질의의 그래프 섹션이 슬라이스의 줄
 #   집합을 본문으로 센다 — Fake의 v4→v5와 같은 변경이다.
-CAPSULE_POLICY_VERSION = "hybrid-v6"
+# **hybrid-v6 → hybrid-v7 (2026-09-30, #336)**: 후보 풀을 대상 근처부터 채운다(같은 파일 →
+#   그래프 이웃 → 같은 폴더 → 나머지, C/C++ 대상은 C/C++ 조각만) — 같은 키에서 `related`에
+#   드는 조각이 바뀐다.
+CAPSULE_POLICY_VERSION = "hybrid-v7"
 
 # 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
 # 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
@@ -104,13 +107,14 @@ DEFAULT_TOP_K = 32
 DEFAULT_TOP_N = 5
 
 SOURCE_SUFFIXES = frozenset(
-    {".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".java", ".js", ".ts", ".go", ".rs", ".php", ".rb"}
+    {".py", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".java", ".js", ".ts", ".go",
+     ".rs", ".php", ".rb"}
 )
 SKIP_DIRS = frozenset({".git", "__pycache__", "artifacts", "node_modules", ".venv", "venv"})
 
 # 대상이 이 계열이면 후보도 이 계열 조각만 쓴다(#336). C 대상에 `.py`·`.rs` 조각이 섞이던
 # 자리다. 다른 언어 대상은 예전처럼 `SOURCE_SUFFIXES` 전체를 본다.
-C_FAMILY_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".h", ".hpp"})
+C_FAMILY_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
 
 # 레벨별 섹션 구성. LIGHT는 검색하지 않는다 — Scout는 후보 전량에 대해 도는 단계라
 # 여기서 임베딩을 부르면 model-serving.md §2의 "Scout는 크게 배칭" 전제가 무너진다.
@@ -397,9 +401,13 @@ class HybridRetriever:
         """키워드로 1차 필터. 힌트가 없으면 전체(상한까지)가 후보다.
 
         **상한 안에 무엇이 드는지는 순서가 정한다(#336).** 대상 근처부터 채운다 —
-        같은 파일(0) → 호출 그래프 이웃 파일(1) → 같은 폴더(2) → 나머지(3). 같은 층 안은
-        코퍼스 순서(경로 정렬)를 그대로 쓴다(정렬이 안정적이라 결정론). 그래프가 없으면 1층이
-        비고 나머지는 그대로 선다. 대상이 C/C++면 C/C++ 조각만 본다.
+        같은 파일(0) → 호출 그래프 이웃 파일(1) → 같은 폴더(2) → 나머지(3). 같은 파일 안은
+        대상 줄에서 가까운 조각부터, 다른 층 안은 코퍼스 순서(경로 정렬)다(안정 정렬이라 결정론).
+        같은 파일이 상한의 절반을 넘으면 절반만 먼저 두고 나머지 층 뒤로 보낸다 — 대상 파일
+        하나가 풀을 다 먹어 이웃·폴더 조각이 0이 되지 않게. 그래프가 없으면 1층이 빈다.
+        대상이 C/C++면 C/C++ 조각만 본다.
+
+        `on_truncate`의 수는 언어 필터 **뒤** 후보 수다 — 필터로 버린 조각은 안 센다.
         """
         corpus = self._load_corpus()
         target = query.target
@@ -426,7 +434,18 @@ class HybridRetriever:
                 return 2
             return 3
 
-        picked.sort(key=tier)
+        line = target.line_start
+
+        def order(chunk: Chunk) -> tuple[int, int]:
+            rank = tier(chunk)
+            distance = abs(chunk.line_start - line) if rank == 0 and line is not None else 0
+            return rank, distance
+
+        picked.sort(key=order)
+        half = self.max_chunks // 2
+        same = [chunk for chunk in picked if chunk.file == target.file]
+        if len(same) > half:
+            picked = same[:half] + [c for c in picked if c.file != target.file] + same[half:]
         if len(picked) > self.max_chunks and self.on_truncate is not None:
             self.on_truncate(len(picked), self.max_chunks)
         return picked[: self.max_chunks]

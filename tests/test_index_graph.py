@@ -1046,7 +1046,6 @@ def test_a_misshapen_document_is_refused_whole(broken: dict, tmp_path: Path):
     assert graph.table("macros") is None
 
 
-
 def test_neighbor_files_joins_callers_and_callee_definitions(tmp_path: Path) -> None:
     """D93 (#336): 호출자 파일 + 본문 안 호출의 피호출자 정의 파일. 대상 파일 자신은 뺀다.
 
