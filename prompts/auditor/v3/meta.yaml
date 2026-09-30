@@ -2,6 +2,8 @@
 # v3를 고르고, `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`가 이 버전에서 근거 본문을
 # FACTS에 싣는다(critic.py와 같은 opt-in 패턴). 스스로 걸었던 조건("evidence 본문이 닿는
 # 변경 전까지 v3는 올리지 않는다", 리뷰 #237 LOW-1)이 이 PR로 채워졌다.
+# ⏵ 2026-09-29 — 같은 날 `qwen3.8-27b`를 v4로 올려 지금은 어느 registry 엔트리도 이 버전을
+# 고르지 않는다. 이 판으로 돈 run은 스모크 1건뿐이다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md`).
 role: auditor
 version: v3
 output_schema: Finding
