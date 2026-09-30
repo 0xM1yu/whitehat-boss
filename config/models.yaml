@@ -105,6 +105,10 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
     # 아래는 `vllm serve`를 치는 사람의 값이다. **요청 본문에 실리는 것은 `reasoning_effort`
     # 하나**이고 그것만 이 엔트리에 있다(`src/config.py`의 `ModelEntry.reasoning_effort` 주석).
     #
@@ -181,6 +185,19 @@ models:
     # 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). **그
     # 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — v3로 flip하는 것은
     # validated·proven이 실제로 나오는지 확인하는 후속의 몫이다. 미참조 버전은 정상이다(v2도).
+    # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
+    # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
+    # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
+    # 달리 여유 배수(× 1.3)를 안 적었다.
+    # 지금(4,096 · 순차)은 기본 300 s로도 든다 — 2026-09-12 토큰 회계 보고서
+    # (`docs/experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md`)가 같은 폭주를
+    # `max_tokens 4096`에서 93 s로 적고(§3.3 해석 ③ — 표 행은 없다) 하네스 설정 재현 16콜의 최대를 71.8 s로 적는다
+    # (§3.4). 한 호출이 16,384토큰에 382 s였으니(§3.3) ≈42.9 tok/s이고 4,096은 ≈95 s다(계산값). 셋 다 세 서버가
+    # 함께 떠 있던 경합 아래 값이고(그 보고서 메타) 출력 상한도 8,192가 아니라, 위 12 tok/s 가정과 직접 비교하지 않는다.
+    # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
+    # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
+    # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
+    request_timeout_s: 900
     prompt_template_version: "v1"
     fallback: null
     benchmark:
@@ -308,6 +325,10 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
     # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0001` — 머지하지 않는 스모크 브랜치, `checksum`이
     # 0이라 비교표 밖). 원문은 위 머리 문단이 가리키는 보고서 §9다.
     #
@@ -338,6 +359,8 @@ models:
     #   `Running: 1 reqs`의 중앙값, 237창)라 `output_max` 4,096을 다 쓰면 ≈308 s(계산값, 프리필 제외) —
     #   `_TIMEOUT_S` 300 s보다 길다. 그 run이 실제로 `scout_boundary` 호출 하나의 300,021 ms 타임아웃으로
     #   멈췄다(trace `model_call` · 이슈 #261).
+    #   ⏵ 2026-09-29 — 이 키는 이제 `request_timeout_s` 1,200 s를 선언한다(아래). 그래서 이 문단의 「넘는다」는
+    #   선언이 없던 때의 이야기다.
     # - 메모리(서버 로그): 가중치 15.27 GiB(로드 113 s) · 가중치+non-torch 16.05 GiB · util 0.20에서 KV
     #   7.69 GiB(55,952 tok — 16,384 길이에 3.42×). 기동 명령부터 서버가 `Starting vLLM server`를 찍기까지 132 s
     #   (기동 스크립트 로그의 시각 → 서버 로그의 시각).
@@ -351,6 +374,20 @@ models:
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: "hf://SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model@25d7f38146bdf0fad1eac09c586b1993ef3e6ee4"
     family: "qwen"
+    # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 1,200 s ≥ 8,192 ÷ 9.1 tok/s × 1.3 ≈ 1,170 s.
+    # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
+    # 9.1은 서버 동시 8에서 스트림당 속도를 대역 모형으로 낸 값이다(이것도 계산값).
+    # 지금(4,096 · 순차)은 위 「출력 상한을 다 쓰면…」 문단의 2026-09-24 실측 13.3 tok/s로 ≈308 s다(계산값).
+    # 운영 근거 — `docs/experiments/harness/`의 스모크 관측(비교표 밖 · 순차 · 상한 4,096). 세 스모크가 이 키에
+    # 선언한 값도 1,200 s였다(09-26 §2 · 09-27 §3 · 09-28은 스모크 커밋 `7e612ce`의 이 파일).
+    # 2026-09-28 정상 표본 스모크 §1에서 이 키의 `scout_boundary` 호출 하나가 두 시도 모두 출력 상한에 닿아 650 s
+    # 만에 `schema_parse_failed`로 끝났다 — 두 시도의 합이라 시도 평균 ≈325 s(계산값)로 기본 300 s보다 길다.
+    # 2026-09-26 슬라이스 스모크 §4에서 이 좌석 wall 최대는 147.2 s였다. 2026-09-27·09-28 스모크의 타임아웃은 0이다
+    # (각 보고서 §1). 관측한 호출 wall이 재시도 합으로도 모두 1,200 s 아래라 1,200 s 자체를 검증하지는 않는다.
+    # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
+    # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
+    # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
+    request_timeout_s: 1200
     prompt_template_version: "v3"
     fallback: null
     benchmark:
@@ -410,8 +447,14 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
-    # **우리 장비에서 띄운 적이 없다.** 아래는 옛 Auditor가 2026-09-24 ATOM에서 뜬 인자(공통 env ·
-    # `--enforce-eager` · `xgrammar`)에 사고를 살리는 `--reasoning-parser qwen3`를 더한 **계획값**이다.
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
+    # ~~**우리 장비에서 띄운 적이 없다.**~~ → ⏵ 2026-09-28 ATOM에서 util 0.80으로 떴고(정상 표본 스모크 §5 —
+    # 창은 보고서에 없다), 2026-09-29 vast.ai에서 `--max-model-len 262144` · util 0.90으로 떴다(그 인자·수치는
+    # `config/serving/vastai.yaml`의 이 키 행). 아래는 옛 Auditor가 2026-09-24 ATOM에서 뜬 인자(공통 env ·
+    # `--enforce-eager` · `xgrammar`)에 사고를 살리는 `--reasoning-parser qwen3`를 더한 **계획값**이었다.
     #
     #   VLLM_USE_DEEP_GEMM=0 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_HOST_IP=127.0.0.1 \
     #   NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
@@ -426,7 +469,15 @@ models:
     #   명령마다 이 인자가 있다. `thinking_token_budget`도 parser가 있어야 받는다 — 없으면 **400**이다.
     # - **`--max-model-len`은 입력 몫 + 출력 상한 이상이어야 한다.** 53,248 = 입력 몫 20,480(2026-09-25
     #   슬라이스 스모크와 같은 몫 — 그 147호출의 최대 입력이 15,437토큰) + 출력 32,768. 모자라면 요청마다
-    #   **400**이다.
+    #   **400**이다. ⏵ 2026-09-29 — 창은 이제 `context_limit` 262,144다(장비 파일) — 53,248은 그 전 계획값이다.
+    #   ⚠ **2026-09-29 — 그 15,437은 Auditor 프롬프트 v1로 잰 값이다**(그날 배선된 유일한 판 · 모델
+    #   `qwen3.6-35b-a3b`). 아래 `prompt_template_version`이 v3가 되면서 prefix가 +6,469자 · body 틀이 +194자이고
+    #   FACTS에 근거 본문이 최대 4,000자(`EVIDENCE_BODY_TOTAL_CAP`, JSON 이스케이프 전) 더 실린다 — 합 10,663자를
+    #   같은 스모크의 글자/토큰 비 1.22~3.32로 나누면 +3,212~8,740토큰(계산값)이다. 넘치는지는 창에 달렸다 —
+    #   창을 위 53,248로 띄우면(입력 몫 20,480) 여유 5,043을 넘을 수 있고, 창이 `context_limit` 262,144이면
+    #   입력 몫이 229,376(= 262,144 − 32,768, 계산값)이라 그 스모크의 최대에 증가분의 큰 쪽을 더한 24,177토큰
+    #   (= 15,437 + 8,740, 계산값)보다 크다. **v3 입력 토큰은 안 쟀다(미실측)** — 첫 v3 run의 `input_tokens`
+    #   최대가 그 답이다.
     #   ⚠ **400은 run을 세운다**(이슈 #296 — 2026-09-26 전에는 조용했다). parser가 빠지면(사고 예산 거절)
     #   또는 창이 출력 상한보다 작으면 첫 Auditor 요청에서 멈춘다(`consecutive_target_failures`). 창은 상한
     #   이상인데 입력 몫이 모자라 Auditor 요청이 전부 넘치면 루프 끝에서 멈춘다. 일부만 넘치면 그 후보만
@@ -434,21 +485,25 @@ models:
     #   이 모델을 처음 띄우면 **400이 나는지부터** 본다.
     # - hybrid라 V1 러너로 돈다 — `thinking_token_budget`을 받는다(0.27.1 `config/vllm.py`의
     #   `_is_default_v2_model_runner_model`: hybrid이고 기본 V2 목록에 없으면 V1. 소스 판독, 미실측).
-    # - util 0.80은 2026-09-24 채택 배선의 Auditor 값이다(단계마다 그 단계 모델에 메모리를 몰아준다). 그 값으로
-    #   뜬 것은 옛 Auditor뿐이다.
+    # - util 0.80은 2026-09-24 채택 배선의 Auditor 값이다(단계마다 그 단계 모델에 메모리를 몰아준다). ~~그 값으로
+    #   뜬 것은 옛 Auditor뿐이다.~~ → ⏵ 2026-09-28 ATOM에서 이 모델도 그 값으로 떴다(위 ⏵).
     # - 레시피는 transformers 5.8.0 이상을 요구한다(config.json이 5.8.0.dev0로 쓰였다 — Qwen3-VL 프로세서).
     #   ATOM venv의 버전은 안 봤다. `--language-model-only`면 비전 타워를 안 올린다(레시피 — 미실측).
     #
-    # ## 속도·메모리 — 우리 장비 미실측
+    # ## 속도·메모리 — ~~우리 장비 미실측~~ → GB10 미실측 · vast.ai 2026-09-29 실측(이 절 끝 ⏵)
     #
     # - dense bf16이라 토큰마다 가중치를 다 읽는다 — GB10 대역 273 GB/s ÷ 55.6 GB ≈ **4.9 tok/s가 단일
     #   스트림 상한**이다(계산값). 외부 보고는 4.5 tok/s · MTP(n=3) 9.9 tok/s다(NVIDIA 포럼 2026-08-24, 이미지
     #   `vllm/vllm-openai:qwen38` — 우리 0.27.1이 아니다). 옛 Auditor 실측 26.2 tok/s의 약 1/5.8이다.
     # - 그래서 어댑터 기본 타임아웃(`_TIMEOUT_S` 300 s) 안에는 ≈1,470토큰(계산값)까지만 낸다 — 위
     #   `request_timeout_s`가 없으면 사고를 켠 호출은 거기서 끊긴다(이슈 #261).
-    # - 메모리: 가중치 51.75 GiB(위 파일 크기 합, 계산값). 적재 크기(가중치+non-torch)·KV는 안 쟀다. KV는
+    # - 메모리: 가중치 51.75 GiB(위 파일 크기 합, 계산값). 적재 크기(가중치+non-torch)·KV는 안 쟀다(⏵ vast에서 쟀다 — 끝 줄). KV는
     #   full attention 16층만 토큰마다 자란다 — 16층 × KV 헤드 4 × head_dim 256 × (K·V) 2 × bf16 2 B =
     #   64 KiB/토큰(계산값, linear attention 층의 고정 상태는 뺐다).
+    # - ⏵ 2026-09-29 vast.ai(RTX PRO 6000 · 전용 VRAM · vllm 0.27.1)에서 쟀다 — 모델 로딩 51.1 GiB · 가중치+
+    #   non-torch 51.91 GiB · util 0.90에서 KV 29.84 GiB = 483,182 토큰(≈64.8 KiB/토큰 — 위 계산과 맞는다,
+    #   나눗셈은 계산값) · 정상 상태 생성 16.2 tok/s(서버 로그 10초 창). ⚠ 장비가 다르다 — GB10 속도로 옮기지
+    #   않는다. `benchmark`는 여전히 0이다(`cli bench`로 잰 값이 아니다).
     endpoint: "http://127.0.0.1:8002/v1"
     context_limit: 262144
     quantization: "bf16"
@@ -465,7 +520,12 @@ models:
       presence_penalty: 0.0
     thinking_token_budget: 28672
     request_timeout_s: 7500
-    prompt_template_version: "v1"
+    # ⏵ 2026-09-29 — v1에서 v3로 올렸다. `prompts/auditor/v3/meta.yaml`이 스스로 건 조건
+    # ("evidence 본문이 닿는 변경 전까지 v3는 올리지 않는다")을 `nodes/auditor.py`의 근거
+    # 본문 배선(`_CONTENT_AWARE_VERSIONS`, critic.py와 같은 opt-in 패턴)과 같은 PR로
+    # 채웠다. 이 PR 뒤 run부터 Auditor v3 — 이전(v1) run과 직접 비교하지 않는다
+    # (agent-contracts.md §4 규칙 1).
+    prompt_template_version: "v3"
     fallback: null
     benchmark:
       measured_at: null
@@ -493,6 +553,10 @@ models:
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
+    # ⏵ 2026-09-29 — `harness_pool`의 교대가 띄우는 인자는 장비 파일(`config/serving/atom.yaml`·`vastai.yaml`)이
+    #   든다. 창(`--max-model-len`)은 이 항목의 `context_limit` 그대로다 — `check_serving`이 강제하고 교대가
+    #   `/v1/models`로 다시 본다(#331). 아래 줄의 `--max-model-len`은 그날 친 값의 기록이다.
+    #
     # 2026-09-24 ATOM에서 이 인자로 떴다(`run_20260924_0001` — 머지하지 않는 스모크 브랜치, `checksum`이
     # 0이라 비교표 밖). 원문은 docs/experiments/harness/2026-09-24-roster-smoke-atom.md §9다.
     #
@@ -512,6 +576,7 @@ models:
     # - **느리다.** 단일 요청 생성 **8.1 tok/s**(서버 로그 10초 창 중앙값, 106창) — `output_max` 4,096을 다 쓰면
     #   ≈506 s(계산값)라 `_TIMEOUT_S` 300 s 안에는 ≈2,430토큰까지다(이슈 #261). 그 run의 injection 호출 wall은
     #   중앙값 94.7 s · 최대 195.8 s였다.
+    #   ⏵ 2026-09-29 — 이 키는 이제 `request_timeout_s` 1,800 s를 선언한다(아래). 그래서 300 s는 이 키의 벽이 아니다.
     # - 메모리(서버 로그): 가중치 27.52 GiB(로드 160 s) · 가중치+non-torch 28.27 GiB · util 0.30에서 KV 7.37 GiB
     #   (48,256 tok — 16,384 길이에 2.95×). 기동 명령부터 `Starting vLLM server`까지 181 s.
     #   `seccoderx-8b`와 함께 떠 있는 동안 장비 `MemAvailable` 최저값이 49.1 GiB였다(감시자 로그).
@@ -522,6 +587,20 @@ models:
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: "hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
     family: "qwen"
+    # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 1,800 s ≥ 8,192 ÷ 6.2 tok/s × 1.3 ≈ 1,718 s.
+    # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
+    # 6.2는 서버 동시 8에서 스트림당 속도를 대역 모형으로 낸 값이다(이것도 계산값).
+    # 지금(4,096 · 순차)은 위 「느리다」 문단의 2026-09-24 실측 8.1 tok/s로 ≈506 s다(계산값).
+    # 운영 근거 — `docs/experiments/harness/`의 스모크 관측(비교표 밖 · 순차 · 상한 4,096). 두 스모크가 이 키에
+    # 선언한 값은 1,200 s였다(09-26 §2 · 09-27 §3 — 이 키의 값 1,800 s가 아니다).
+    # 2026-09-27 스모크의 추가 호출 11건이 wall 99.4~437.6 s였고(§6) 그 스모크의 타임아웃은 0이다(§1). 11건 중
+    # 7건이 이 키의 좌석이지만(§6 표에서 셌다) 어느 wall이 어느 좌석인지와 시도 수는 적혀 있지 않다. 2026-09-26 슬라이스
+    # 스모크 §4에서 이 키의 좌석 wall 최대는 223.7 s(`scout_memory`)였다. 둘 다 1,200 s 아래의 관측이라
+    # 1,800 s를 검증하지는 않는다.
+    # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
+    # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
+    # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
+    request_timeout_s: 1800
     prompt_template_version: "v3"
     fallback: null
     benchmark:
