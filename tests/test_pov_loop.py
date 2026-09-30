@@ -319,9 +319,9 @@ def test_pov_loop_repeat_detection_catches_a_different_encoding(ctx: RunContext)
 
     `_gen(count=8)`은 repeat 세그먼트로, `_gen_literal_same_bytes`는 literal hex로 같은 8바이트
     (b"AAAAAAAA")를 만든다 — spec JSON은 다르다(kind·필드가 다름). 반복 판정을 spec 표현(세그먼트
-    kind 등)으로 하면 이 둘을 못 잡지만, 조립 바이트로 하면 잡는다. `_run_pov_hops` docstring이
-    약속한 「다른 인코딩·같은 바이트도 잡는다」를 이 케이스가 처음 실제로 문다
-    (`test_pov_loop_repeat_detection_ignores_rationale`은 같은 kind·다른 rationale만 봤다).
+    kind 등)으로 하면 이 둘을 못 잡지만, 조립 바이트로 하면 잡는다 — `_run_pov_hops` docstring이
+    약속한 「다른 인코딩·같은 바이트도 잡는다」가 이것이다
+    (`test_pov_loop_repeat_detection_ignores_rationale`은 같은 kind·다른 rationale만 본다).
 
     한계: literal↔repeat 두 kind만 본다(int 세그먼트·여러 세그먼트 조합은 안 본다). Fake 도구·
     dev_fake 경로만 돈다 — 트레이스 필드 전수가 아니다. 세 번째 액션 `submit`은 판정이 바이트가
@@ -411,10 +411,10 @@ def test_pov_hop_join_key_matches_between_model_call_and_pov_hop(
     ctx: RunContext,  # noqa: F811
 ) -> None:
     """`PovHop.hop`(→ `ctx.call_model(hop=...)` → `model_call.data['hop']`)과 `POV_HOP.data['hop']`
-    (러너 `_run_pov_hops`의 로컬 `hop` 변수)은 **같은 홉의 조인 키**라고 문서가 약속한다
-    (`PovHop`·`_call_hop` docstring — `model_call`의 (subject_id, role, hop)이 조인 키). 두 값이
-    각자 다른 변수(`prev.hop + 1` vs 로컬 `while` 카운터)에서 나오므로 어긋나도 루프 동작 자체는
-    안 깨진다 — 그래서 이 계약은 hop별로 두 이벤트의 `hop`을 직접 대조해야만 잡힌다."""
+    (러너 `_run_pov_hops`의 로컬 `hop` 변수)은 **같은 홉의 조인 키**라고 정본이 약속한다
+    (`context.py`의 `model_call` 사슬 = (subject_id, role, hop) · `trace.py` `POV_HOP` = hop).
+    두 값이 다른 변수(`prev.hop + 1` vs 로컬 카운터)에서 나와 어긋나도 루프 동작은 안 깨진다 —
+    그래서 이 계약은 hop별로 두 이벤트의 `hop`을 직접 대조해야만 잡힌다."""
     scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -446,9 +446,9 @@ def test_pov_hop_event_tool_ok_reflects_a_failing_tool_directly(ctx: RunContext)
 
     hop0 = _hops(ctx)[0]
     assert hop0.data["action"] == "gen"
-    # gen 홉은 `poc` 도구를 돌린다 — `POV_HOP.tool`이 그 도구를 **직접** 실어야 한다. gen의
-    # `tool="poc"`를 `"build"`로 바꾸는 변이(M16)가 여기서 죽는다: 이 스위트의 두 workdir(정상
-    # 트리아지·없는 디렉터리)에서는 poc·build가 같은 부울로 귀결돼 `tool_ok`만으론 못 가른다.
+    # gen 홉은 `poc` 도구를 돌린다 — `POV_HOP.tool`이 그 도구를 **직접** 실어야 한다. gen의 도구를
+    # `"build"`로 바꿔도 이 스위트의 두 workdir(정상 트리아지·없는 디렉터리)에서는 poc·build가 같은
+    # 부울로 귀결돼 `tool_ok`만으론 못 가른다 — 그래서 `tool` 필드를 직접 단언한다.
     assert hop0.data["tool"] == "poc"
     assert hop0.data["tool_ok"] is False, (
         f"실패한 도구 호출인데 POV_HOP.tool_ok={hop0.data['tool_ok']!r}다"
@@ -468,3 +468,180 @@ def test_pov_classify_exception_follows_the_additive_droppable_contract() -> Non
     assert clf(ModelGatewayError("big", status=413)) is R.CONTEXT_OVERFLOW  # 크기 거절은 따로 센다
     # status 없음(서버 쪽 사건)은 흡수하지 않는다(None) — 루프가 그대로 올려 보낸다.
     assert clf(ModelGatewayError("down", status=None)) is None
+
+
+# --- 이웃 변이 갭 — 새 테스트가 무는 축 옆에서 살아남던 변이들 (독립 검토 M-10) -----------
+
+
+def _gen_byte(*, byte: int, count: int, rationale: str = "try") -> PovAction:
+    """`repeat` 세그먼트로 `byte`를 `count`번 — 바이트 내용·길이를 둘 다 고를 수 있는 gen."""
+    return PovAction(
+        action="gen",
+        spec=PovSpec(
+            segments=[PovSegment(kind="repeat", byte=byte, count=count)],
+            rationale=f"b{byte}-c{count}",
+        ),
+        rationale=rationale,
+    )
+
+
+def test_pov_loop_repeat_needs_the_same_bytes_not_just_the_same_length(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """같은 **길이**·다른 바이트인 두 gen은 REPEAT가 아니다 — 판정은 바이트 내용이지 길이가 아니다.
+
+    반복 판정을 `len(poc)==len(last_poc)`로 바꾸는 변이가 여기서 죽는다: 실 모델이 같은 길이로 값만
+    바꿔 가며 시도하는 흔한 경우를 길이 비교면 REPEAT로 오판한다. 한계: 8바이트 두 gen만 본다."""
+    scripted = _scripted(
+        ctx,
+        [_gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8),
+         PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert reason is PovStopReason.SUBMITTED  # 길이만 같아선 REPEAT가 아니다
+
+
+def test_pov_loop_repeat_compares_only_the_immediately_previous_gen(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """A→B→A(진동)는 REPEAT가 아니다 — 판정은 **직전** gen과만 비교한다(「직전 gen」 계약).
+
+    직전이 아니라 이전 모든 gen과 비교하는 변이가 여기서 죽는다: 세 번째 A가 첫 A와 같아도 직전(B)과
+    다르므로 반복이 아니다. 한계: A-B-A 한 패턴만 본다."""
+    a = _gen_byte(byte=0x41, count=8)
+    b = _gen_byte(byte=0x42, count=8)
+    scripted = _scripted(ctx, [a, b, a, PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert reason is PovStopReason.SUBMITTED  # 직전과만 비교 — A-B-A는 반복 아님
+
+
+def test_pov_loop_repeat_survives_an_inspect_between_two_identical_gens(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """gen(A) → inspect → gen(A)는 REPEAT다 — inspect 홉이 직전 gen의 `last_poc`를 안 지운다.
+
+    inspect 분기가 `last_poc`를 지우는 변이가 여기서 죽는다: 지우면 두 번째 A가 반복으로 안 잡혀
+    루프가 이어진다. inspect는 새 PoC를 안 만들므로 「직전 gen」은 그대로 첫 A다."""
+    a = _gen_byte(byte=0x41, count=8)
+    scripted = _scripted(
+        ctx,
+        [a, PovAction(action="inspect", tool="asan", rationale="look"), a,
+         PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert reason is PovStopReason.REPEAT_SPEC  # inspect가 사이에 있어도 A==A는 반복
+
+
+def test_pov_loop_inspect_runs_the_tool_the_model_chose_not_a_default(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """inspect 홉은 **모델이 고른** 도구를 돌린다 — 기본값(asan)으로 굳지 않는다.
+
+    inspect를 asan으로 고정하는 변이가 여기서 죽는다: 기존 inspect 테스트는 asan만 써서 그 변이와
+    구별이 안 됐다. `build`를 골라 `POV_HOP.tool`이 build인지 직접 본다."""
+    scripted = _scripted(
+        ctx,
+        [PovAction(action="inspect", tool="build", rationale="check build"),
+         PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    hop0 = _hops(scripted)[0]
+    assert hop0.data["action"] == "inspect"
+    assert hop0.data["tool"] == "build"  # asan 고정 변이면 여기서 죽는다
+
+
+def test_pov_hop_join_key_matches_across_more_than_two_hops(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """조인 키 일치를 3홉 이상에서도 본다 — 2홉만 보면 hop≥2에서만 어긋나는 변이를 놓친다.
+
+    `PovHop.hop`을 `min(prev.hop+1, 1)`(hop≥2에서 고정)·`prev.hop+1 if prev.hop<2 else prev.hop`
+    (hop≥3에서 고정)으로 바꾸는 변이가 여기서 죽는다: 2홉(0,1)만 보면 그 갈래가 안 드러난다."""
+    scripted = _scripted(
+        ctx,
+        [_gen_byte(byte=0x41, count=1), _gen_byte(byte=0x42, count=2),
+         _gen_byte(byte=0x43, count=3), PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    pov_hops = [h.data["hop"] for h in _hops(scripted)]
+    model_calls = [
+        e.data["hop"]
+        for e in scripted.trace.events
+        if e.kind is EventKind.MODEL_CALL and e.data.get("role") == Role.POV.value
+    ]
+    assert pov_hops == [0, 1, 2, 3]
+    assert model_calls == pov_hops, (
+        f"model_call.hop={model_calls} != pov_hop.hop={pov_hops} — 3홉 이상에서도 같아야 한다"
+    )
+
+
+def test_pov_loop_with_max_hops_zero_stops_before_submitting(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """현재 동작 고정 — `max_hops=0`이면 pov는 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다:
+    `pov_generated` 0, 종단은 `POV_SKIPPED`. NE 루프를 끄는 설정(`max_hops=0`)이 PoV 산출을 조용히
+    0으로 만드는 결합을 못 박는다 — pov 전용 상한 분리는 설정 결정(지금은 미결)이다."""
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(max_hops=0)
+    )
+    scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert reason is PovStopReason.MAX_HOP
+    assert [h.data["hop"] for h in _hops(scripted)] == [0]  # hop0에서 멈춘다
+    assert not any(e.kind is EventKind.POV_GENERATED for e in scripted.trace.events)
+
+
+def test_pov_action_rejects_an_unknown_action() -> None:
+    """`PovAction.action`은 gen/inspect/submit만 받는다 — 표에 없는 액션(예: abort)은 거절한다.
+
+    `action` Literal에 다른 값을 더하는 변이가 여기서 죽는다(Literal은 통과시켜도 `_check_action`의
+    허용-필드 표에 없어 검증이 샌다). 한계: 스키마 계약만 본다."""
+    with pytest.raises(ValidationError):
+        PovAction(action="abort", rationale="unknown action")
+
+
+def test_pov_schema_caps_are_the_documented_values() -> None:
+    """models.yaml·agent-contracts가 인용하는 상한을 **값째** 고정한다 — PoC 8 MiB · hex 16 Mi자.
+
+    상수를 임포트해 `+1`만 재는 테스트는 값이 바뀌어도 초록이라(상한 키우는 변이가 샌다) 값 자체를
+    단언한다. 한계: 이 둘(총 바이트·hex 길이)만, 성질이 아니라 숫자를 고정한다."""
+    from src.schemas.pov import _MAX_POC_BYTES
+
+    assert _MAX_POC_BYTES == 8 * 1024 * 1024  # 8 MiB
+    hex_caps = [m.max_length for m in PovSegment.model_fields["hex"].metadata
+                if getattr(m, "max_length", None) is not None]
+    assert hex_caps == [2 * _MAX_POC_BYTES]  # hex 16 Mi자 = 바이트 2자
+
+
+def test_pov_stop_reason_and_event_kind_spellings_are_pinned() -> None:
+    """정지 사유·홉 이벤트의 **값 문자열**을 고정한다 — trace 주석·직렬화가 이 철자에 의존한다.
+
+    값 철자를 바꾸는 변이가 여기서 죽는다. 한계: wire 철자를 단언하지 성질을 단언하지 않는다."""
+    assert PovStopReason.MAX_HOP.value == "max_hop"
+    assert PovStopReason.REPEAT_SPEC.value == "repeat_spec"
+    assert PovStopReason.SUBMITTED.value == "submitted"
+    assert EventKind.POV_HOP.value == "pov_hop"
