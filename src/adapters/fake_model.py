@@ -63,8 +63,9 @@ class FakeEvidenceRef(HarnessModel):
     evidence_id: str
     kind: EvidenceKind
     ok: bool = True
-    # Critic v3 경로에서 근거 본문이 실린다(#237 HIGH-1). fake는 판정에 본문을 쓰지 않지만
-    # FACTS를 파싱할 때 이 키를 거부하면 안 되므로 optional로 받는다.
+    # Critic·Auditor v3·v4 경로에서 근거 본문이 실린다(#237 HIGH-1 · Auditor는 2026-09-29부터).
+    # fake는 판정에 본문을 쓰지 않지만 FACTS를 파싱할 때 이 키를 거부하면 안 되므로
+    # optional로 받는다.
     body: str | None = None
     truncated: bool | None = None
 
