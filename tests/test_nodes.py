@@ -1021,31 +1021,37 @@ def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
 def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     """#346 M2 잔여: 부분 본문 규칙 2·3과 Critic §1 범위 문단의 판정 **방향** 문장 철자 핀.
 
-    위 v5 핀은 절단 안내 문장을 묻고 이 문장들은 안 묻는다. 이 핀 없이는 그 문장만 뒤집는
-    변이 여섯(규칙 2를 「absent … proves」로, 규칙 3의 「Otherwise decide」를 「Otherwise
-    defer」로, 「a specific unresolved fact」를 「any …」로 등)이 관련 6개 파일을 초록으로
-    통과했다(#346 조사·수정 단계 실행). 철자만 묻는다 — 이 철자를 남긴 채 반대 문장을 덧붙이는
-    변이(예: 규칙 3 끝에 「a truncated body always requires `need_evidence`」)는 못 잡고, 모델이
-    그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts §4 규칙 5).
+    위 v5 핀은 절단 안내 문장만 묻는다 — 규칙 3의 「Otherwise decide」를 「Otherwise defer」로
+    바꾸는 한 단어 변이도 그 핀들로는 안 잡힌다. 여기서는 규칙 2·3과 Critic §1 범위 문단을
+    각각 **연속 구 하나**로 묶어 전제절(「requires an unshown fact …」)·갈래·문장 순서까지 묻는다.
+    철자만 묻는다: 연속 구 **밖에** 반대 문장을 덧붙이는 변이(예: 규칙 3 뒤에 「a truncated
+    body always requires …」)와 구를 통째로 파일의 다른 자리로 옮기는 변이는 못 잡고, 규칙 1은
+    안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
+    §4 규칙 5).
     """
     prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
-    common = (  # 규칙 2 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
-        "What a partial body does not show is unknown, not absent",
-        "does not prove it is absent from the full evidence",
+    common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
+        "What a partial body does not show is unknown, not absent: a missing guard, caller, "
+        "connection, or result does not prove it is absent from the full evidence.",
     )
     per_role = {
-        "auditor": (  # 규칙 3 — auditor/v5/prefix.md:116-118
-            "use the issued missing-evidence ID; use `reachability_unknown` for a missing "
-            "reachability fact",
-            "Otherwise decide; truncation alone is not a reason to defer",
+        "auditor": (  # 규칙 3 전체(전제절·ID 갈래·Otherwise) — auditor/v5/prefix.md:116-118
+            "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
+            "establish it, use the issued missing-evidence ID; use `reachability_unknown` for a "
+            "missing reachability fact or path connection. Otherwise decide; truncation alone is "
+            "not a reason to defer",
         ),
-        "critic": (  # 규칙 3 — critic/v5/prefix.md:72-75 · §1 범위 문단 :96-99
-            "return `need_evidence` naming that fact",
-            "Otherwise apply the verdict rules below; truncation alone is not a reason",
-            "CLAIM and PATH identify the claim to review, not independent support for it",
-            "alone does not establish a missing decisive fact",
-            "if a specific unresolved fact could change the verdict, use `need_evidence`",
+        "critic": (  # 규칙 3 전체 — critic/v5/prefix.md:72-75 · §1 범위 문단 전체 :96-99
+            "If the verdict requires an unshown fact and no other supplied evidence content "
+            "establishes it, return `need_evidence` naming that fact. CLAIM and PATH identify the "
+            "claim to review, not independent support for it. Otherwise apply the verdict rules "
+            "below; truncation alone is not a reason for `need_evidence`",
+            "Apply these conditions to the decisive facts required for this review, not every "
+            "conceivable guard or caller. Truncation or a merely hypothetical hidden guard alone "
+            "does not establish a missing decisive fact. Positive support must still come from "
+            "retained evidence content; if a specific unresolved fact could change the verdict, "
+            "use `need_evidence`",
         ),
     }
     for text in (*common, *per_role[role]):
@@ -1073,14 +1079,15 @@ def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
     v4에서 상속된 무한정 문구 「the path or a possible rebuttal cannot be decided」는 잘린
     본문에서 숨은 guard가 늘 「possible」하므로 §1·§3과 규칙 3(「truncation alone is not a
     reason」)의 반대로 읽힌다. 출처: critic/v5/prefix.md 「The three outcomes are distinct」 목록.
-    철자 핀이다 — 옛 문구가 돌아오거나 한정이 빠지면 빨개질 뿐, 이 철자를 남긴 채 무한정 조건을
-    다른 문장으로 덧붙이는 변이는 못 잡고, 모델이 어느 쪽을 따르는지는 안 쟀다.
+    철자 핀이다 — 줄 전체(꼬리 「because required material is absent」까지)를 묻는다. 옛 문구가
+    돌아오거나 한정·꼬리가 바뀌면 빨개지고, 이 줄을 남긴 채 무한정 조건을 다른 문장으로
+    덧붙이는 변이는 못 잡는다. 모델이 어느 쪽을 따르는지는 안 쟀다.
     """
     prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "the path or a possible rebuttal cannot be decided" not in normalized
     summary = "need_evidence: the path, or a specific rebuttal that could change the verdict,"
-    assert f"{summary} cannot be decided" in normalized
+    assert f"{summary} cannot be decided because required material is absent;" in normalized
 
 
 @pytest.mark.parametrize(
