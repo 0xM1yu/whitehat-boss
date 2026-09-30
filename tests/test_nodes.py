@@ -1017,6 +1017,41 @@ def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
         assert "does not automatically retrieve missing material and retry" in normalized
 
 
+@pytest.mark.parametrize("role", ["auditor", "critic"])
+def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
+    """#346 M2 잔여: 부분 본문 규칙 2·3과 Critic §1 범위 문단의 판정 **방향** 문장 철자 핀.
+
+    위 v5 핀은 절단 안내 문장을 묻고 이 문장들은 안 묻는다. 이 핀 없이는 그 문장만 뒤집는
+    변이 여섯(규칙 2를 「absent … proves」로, 규칙 3의 「Otherwise decide」를 「Otherwise
+    defer」로, 「a specific unresolved fact」를 「any …」로 등)이 관련 6개 파일을 초록으로
+    통과했다(#346 조사·수정 단계 실행). 철자만 묻는다 — 이 철자를 남긴 채 반대 문장을 덧붙이는
+    변이(예: 규칙 3 끝에 「a truncated body always requires `need_evidence`」)는 못 잡고, 모델이
+    그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts §4 규칙 5).
+    """
+    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    common = (  # 규칙 2 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
+        "What a partial body does not show is unknown, not absent",
+        "does not prove it is absent from the full evidence",
+    )
+    per_role = {
+        "auditor": (  # 규칙 3 — auditor/v5/prefix.md:116-118
+            "use the issued missing-evidence ID; use `reachability_unknown` for a missing "
+            "reachability fact",
+            "Otherwise decide; truncation alone is not a reason to defer",
+        ),
+        "critic": (  # 규칙 3 — critic/v5/prefix.md:72-75 · §1 범위 문단 :96-99
+            "return `need_evidence` naming that fact",
+            "Otherwise apply the verdict rules below; truncation alone is not a reason",
+            "CLAIM and PATH identify the claim to review, not independent support for it",
+            "alone does not establish a missing decisive fact",
+            "if a specific unresolved fact could change the verdict, use `need_evidence`",
+        ),
+    }
+    for text in (*common, *per_role[role]):
+        assert text in normalized, text
+
+
 def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> None:
     """#346 sumin0218 M1: 기존 보류 규칙에 판정을 좌우하는 누락 조건이 붙어 있다.
 
