@@ -1205,7 +1205,7 @@ def test_describe_evidence_appends_body_when_present() -> None:
 
 
 def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
-    """dev_fake critic은 v1이라 payload가 있어도 본문을 안 싣는다 (배선은 v3 경로에만)."""
+    """dev_fake critic은 v1이라 payload가 있어도 본문을 안 싣는다 (content-aware 버전만 싣는다)."""
     ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
     finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
@@ -1233,14 +1233,15 @@ def test_critic_includes_evidence_body_when_version_is_content_aware(
     assert "heap-buffer-overflow" in prompt.body  # 본문이 EVIDENCE·FACTS에 닿는다
 
 
-def test_critic_v4_wiring_includes_evidence_body(ctx: RunContext) -> None:
-    """#328 2차 HIGH: 실제 v4 선택이 payload 본문을 EVIDENCE·FACTS에 싣는다."""
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> None:
+    """실제 버전 선택이 payload 본문을 EVIDENCE·FACTS에 싣는다."""
     key = ctx.config.model_key_for(Role.CRITIC.value)
     models = {
         **ctx.config.models,
-        "fake_critic_v4": ctx.config.models[key].transition(prompt_template_version="v4"),
+        "fake_critic_content": ctx.config.models[key].transition(prompt_template_version=version),
     }
-    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_v4"}
+    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_content"}
     ctx.config = ctx.config.transition(
         models=models,
         profile=ctx.config.profile.transition(roles=roles),
@@ -1256,12 +1257,12 @@ def test_critic_v4_wiring_includes_evidence_body(ctx: RunContext) -> None:
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_and_v4() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_and_v5() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert {"v3", "v4"} <= critic._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4", "v5"} <= critic._CONTENT_AWARE_VERSIONS
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -1272,11 +1273,11 @@ def test_critic_v3_prompt_is_content_conditional() -> None:
     assert "carries a `body`" in prefix
 
 
-# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328) ------------------------
+# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328 · v5 절단 계약) --------
 
 
 def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
-    """dev_fake auditor는 v1이라 payload가 있어도 본문을 안 싣는다 (배선은 v3·v4 경로에만)."""
+    """dev_fake auditor는 v1이라 payload가 있어도 본문을 안 싣는다 (content-aware 버전만)."""
     ctx.read_payload = lambda _ref: "SANITIZER heap-buffer-overflow at parse_header"
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
 
@@ -1300,22 +1301,22 @@ def test_auditor_includes_evidence_body_when_version_is_content_aware(
     assert "heap-buffer-overflow" in prompt.body  # 본문이 FACTS에 닿는다
 
 
-def test_auditor_content_aware_versions_pin_v3_and_v4() -> None:
+def test_auditor_content_aware_versions_pin_v3_v4_and_v5() -> None:
     """critic 쪽 #247 리뷰 HIGH-1과 같은 이유 — 위 테스트는 monkeypatch로 게이트를 켜므로
     **실제 값**을 안 문다. `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히
     metadata만 받는데 그걸 잡는 것은 이 단언뿐이다(#328 리뷰 MEDIUM-1 — v4 prefix가 evidence
     content를 전제로 쓰였다). **critic의 상수를 import하지 않는다** — 본문을 읽도록 쓰였는지는
     역할별 프롬프트의 성질이다.
     """
-    assert {"v3", "v4"} <= auditor._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4", "v5"} <= auditor._CONTENT_AWARE_VERSIONS
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
-@pytest.mark.parametrize("version", ["v3", "v4"])
+@pytest.mark.parametrize("version", ["v3", "v4", "v5"])
 def test_auditor_content_aware_version_renders_slice_source_and_evidence_body_through_the_node(
     ctx: RunContext, version: str
 ) -> None:
-    """registry가 auditor에 v3·v4를 고르면 **노드를 거친** 렌더가 body를 남는 토큰 없이 채운다 —
+    """registry가 auditor에 v3·v4·v5를 고르면 **노드를 거친** 렌더가 body를 채운다 —
     슬라이스 렌더가 `SOURCE`로, payload 본문이 FACTS `evidence[].body`로 간다.
 
     위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → 렌더**를 한 호출로
@@ -1346,12 +1347,133 @@ def test_auditor_content_aware_version_renders_slice_source_and_evidence_body_th
     assert any("heap-buffer-overflow" in body for body in bodies)
 
 
-def test_critic_v4_prompt_is_content_conditional() -> None:
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_critic_prompt_is_content_conditional(version: str) -> None:
     """#328 2차 HIGH: v4가 본문을 받으면서 metadata-only라고 단언하지 않는다."""
-    prefix = (PROMPTS_DIR / "critic" / "v4" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     assert "current wiring is metadata-only" not in prefix
     assert "does not receive `evidence_summaries`" not in prefix
     assert "contain no body text" in prefix
+
+
+@pytest.mark.parametrize("role", ["auditor", "critic"])
+def test_v5_evidence_completeness_wording(role: str) -> None:
+    """#346 M1/M2: v5를 v4 텍스트로 되돌리면 실패하는 철자 핀이지 모델 행동 검증은 아니다.
+
+    출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
+    변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 활성화 전 별도 측정한다.
+    """
+    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    assert "factual summary" not in normalized
+    for text in (
+        "not a generated summary",
+        "`truncated` is false",
+        "line containing only `...`",
+        r"`\n...\n`",
+        "stop mid-line",
+        "not adjacent",
+        "without that marker",
+        "may also occur in the original log",
+        "not a clean result",
+        "truncation alone is not a reason",
+    ):
+        assert text in normalized
+    if role == "critic":
+        assert "`[truncated]`" in prefix
+        assert "supporting retained text in `rationale`" in normalized
+        assert "For a non-empty body with `truncated: true`" in normalized
+        assert "Empty bodies have no snippet or suffix" in normalized
+        assert "Set rebuttal_axis=[] and use non-empty evidence_refs" in normalized
+
+
+@pytest.mark.parametrize("role", ["auditor", "critic"])
+def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
+    """러너·노드의 별도 호출 경계를 명시하는 문구 핀; 실제 모델 행동 검증은 아니다."""
+    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    if role == "auditor":
+        assert "does not receive Scout's `analysis_summary`" in normalized
+        assert "does not receive the slice criterion" in normalized
+        assert "no Scout-style retrieval loop" in normalized
+        assert "A reproduction plan is not an execution result" in normalized
+    else:
+        assert "separate review call" in normalized
+        assert "one record, not independent corroboration" in normalized
+        assert "does not automatically retrieve missing material and retry" in normalized
+
+
+@pytest.mark.parametrize("role", ["auditor", "critic"])
+def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
+    """#346 M2 잔여: 부분 본문 규칙 2·3과 Critic §1 범위 문단의 판정 **방향** 문장 철자 핀.
+
+    위 v5 핀은 절단 안내 문장만 묻는다 — 규칙 3의 「Otherwise decide」를 「Otherwise defer」로
+    바꾸는 한 단어 변이도 그 핀들로는 안 잡힌다. 여기서는 규칙 2·3과 Critic §1 범위 문단을
+    각각 **연속 구 하나**로 묶어 전제절(「requires an unshown fact …」)·갈래·문장 순서까지 묻는다.
+    철자만 묻는다: 연속 구 **밖에** 반대 문장을 덧붙이는 변이(예: 규칙 3 뒤에 「a truncated
+    body always requires …」)와 구를 통째로 파일의 다른 자리로 옮기는 변이는 못 잡고, 규칙 1은
+    안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
+    §4 규칙 5).
+    """
+    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
+        "What a partial body does not show is unknown, not absent: a missing guard, caller, "
+        "connection, or result does not prove it is absent from the full evidence.",
+    )
+    per_role = {
+        "auditor": (  # 규칙 3 전체(전제절·ID 갈래·Otherwise) — auditor/v5/prefix.md:116-118
+            "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
+            "establish it, use the issued missing-evidence ID; use `reachability_unknown` for a "
+            "missing reachability fact or path connection. Otherwise decide; truncation alone is "
+            "not a reason to defer",
+        ),
+        "critic": (  # 규칙 3 전체 — critic/v5/prefix.md:72-75 · §1 범위 문단 전체 :96-99
+            "If the verdict requires an unshown fact and no other supplied evidence content "
+            "establishes it, return `need_evidence` naming that fact. CLAIM and PATH identify the "
+            "claim to review, not independent support for it. Otherwise apply the verdict rules "
+            "below; truncation alone is not a reason for `need_evidence`",
+            "Apply these conditions to the decisive facts required for this review, not every "
+            "conceivable guard or caller. Truncation or a merely hypothetical hidden guard alone "
+            "does not establish a missing decisive fact. Positive support must still come from "
+            "retained evidence content; if a specific unresolved fact could change the verdict, "
+            "use `need_evidence`",
+        ),
+    }
+    for text in (*common, *per_role[role]):
+        assert text in normalized, text
+
+
+def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> None:
+    """#346 sumin0218 M1: 기존 보류 규칙에 판정을 좌우하는 누락 조건이 붙어 있다.
+
+    출처: critic/v5/prefix.md Review procedure §1·§3. 이 핀은 이 문구의 회귀를 잡을 뿐
+    모든 의미 반전이나 실제 모델의 규칙 우선순위 준수를 검증하지 않는다.
+    """
+    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    assert "cannot be checked from supplied content and the verdict depends on" in normalized
+    condition = "unresolved fact that could change the verdict and required material is absent"
+    assert condition in normalized
+    assert "Mere truncation or a hypothetical unseen guard is not enough" in normalized
+    assert "need_evidence is required when a rebuttal is plausible" not in normalized
+
+
+def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
+    """#346 sumin0218 M1 잔여: 「세 결과」 요약도 보류를 판정을 좌우하는 반박으로 한정한다.
+
+    v4에서 상속된 무한정 문구 「the path or a possible rebuttal cannot be decided」는 잘린
+    본문에서 숨은 guard가 늘 「possible」하므로 §1·§3과 규칙 3(「truncation alone is not a
+    reason」)의 반대로 읽힌다. 출처: critic/v5/prefix.md 「The three outcomes are distinct」 목록.
+    철자 핀이다 — 줄 전체(꼬리 「because required material is absent」까지)를 묻는다. 옛 문구가
+    돌아오거나 한정·꼬리가 바뀌면 빨개지고, 이 줄을 남긴 채 무한정 조건을 다른 문장으로
+    덧붙이는 변이는 못 잡는다. 모델이 어느 쪽을 따르는지는 안 쟀다.
+    """
+    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    normalized = " ".join(prefix.split())
+    assert "the path or a possible rebuttal cannot be decided" not in normalized
+    summary = "need_evidence: the path, or a specific rebuttal that could change the verdict,"
+    assert f"{summary} cannot be decided because required material is absent;" in normalized
 
 
 @pytest.mark.parametrize(
@@ -1365,23 +1487,24 @@ def test_critic_v4_prompt_is_content_conditional() -> None:
                 "capsule_sections": "sections",
                 "source": "source",
             },
-            id="auditor-v4",
+            id="auditor",
         ),
         pytest.param(
             Role.CRITIC,
             {"claim": "claim", "path": "path", "evidence": "evidence"},
-            id="critic-v4",
+            id="critic",
         ),
     ],
 )
-def test_v4_fact_blocks_follow_the_fake_parser_contract(
-    role: Role, fields: dict[str, str]
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_fact_blocks_follow_the_fake_parser_contract(
+    role: Role, fields: dict[str, str], version: str
 ) -> None:
     """#328 2차 MEDIUM-2: 렌더된 마지막 json 펜스를 Fake 경로가 실제로 읽는다."""
-    facts = build_facts(run_id="run_prompt_v4", ids={})
-    rendered = load_prompt(role, "v4").render(facts=facts, **fields)
+    facts = build_facts(run_id="run_prompt_contract", ids={})
+    rendered = load_prompt(role, version).render(facts=facts, **fields)
 
-    assert _parse_context(rendered.body).run_id == "run_prompt_v4"
+    assert _parse_context(rendered.body).run_id == "run_prompt_contract"
 
 
 def test_unreadable_critic_verdict_is_held_and_recorded(ctx: RunContext) -> None:
