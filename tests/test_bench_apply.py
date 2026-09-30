@@ -501,7 +501,10 @@ def test_doctor_says_nothing_about_the_device_when_none_is_given() -> None:
     """라벨이 없으면 비교할 대상이 없다. 없는 비교로 경고하면 헛경고가 된다."""
     checks = doctor_lines(device=None)
 
-    assert not [line for line in checks if "장비" in line]
+    # 교대 프로필의 「--device가 없으면 장비 파일을 못 고른다」 WARN은 다른 검사다
+    # (`cli._check_serving` — tests/test_serving.py). `harness_pool`이 2026-09-29부터 교대를
+    # 선언해 그 줄이 여기에도 나온다.
+    assert not [line for line in checks if "장비" in line and "장비 파일" not in line]
 
 
 def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -> None:

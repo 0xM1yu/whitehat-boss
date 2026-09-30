@@ -29,6 +29,11 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
+| 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
+
+「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
+`artifact_id`·초기 `state`·`missing_evidence`)뿐이다. 하네스가 덮는 `produced_by`·
+`scout_member`·`slice_id`는 이 이벤트 없이 덮이므로 그 셋의 부재는 「안 쟀다」다.
 
 「스키마 파싱 실패율」 산식: 분자 `Σ(attempts−1 if ok else attempts) −
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
@@ -270,6 +275,33 @@ class EventKind(StrEnum):
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
+    # 모델이 쓴 발급값(ID·`run_id`·`artifact_id`·초기 `state`·`missing_evidence`)이 하네스
+    # 발급값과 **달라서 덮었다** (이슈 #279). 내는 곳은 `RunContext.stamp_issued` 하나다 —
+    # Scout·Auditor 출력 1건당 최대 1행이고 **이벤트 부재 = 모델이 발급값을 그대로 썼다**
+    # (`critic_skipped`와 같은 읽기).
+    #
+    # `fields`가 달랐던 필드 이름(쉼표로 이음)이고 `written.<필드>`가 모델이 쓴 원래 값이다 —
+    # 덮은 뒤에는 그 값이 저장소에도 `transition`에도 없어서, 「모델이 사실 블록을 안 따랐다」는
+    # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
+    # 같은 키).
+    ISSUED_OVERRIDE = "issued_override"
+    # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
+    # `RunContext.record_model_swap`이다.
+    #
+    # **교대 한 번당 1건이다** — 교대를 선언한 역할이 있는 단계에 처음 들어갈 때 하나, run 끝
+    # 내림 하나(`models`가 빈 문자열, `stage`가 없다). **성공과 `ModelSwapError` 실패에 낸다** —
+    # 실패면 `ok=false`를 예외보다 먼저 낸다. 그래야 run이 멈춘 자리가 trace 끝에 남는다. 실
+    # 어댑터는 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. 계약 밖 예외(어댑터가 아닌 구현)와
+    # 인터럽트는 이 이벤트 없이 올라간다 — run 끝 내림의 계약 밖 예외는 run 경고만 남는다.
+    #
+    # **이 이벤트가 없으면 「교대하지 않았다」이다**(교대를 선언하지 않은 프로필은 0건이다) — 위의
+    # 계약 밖 예외·인터럽트가 없었다면.
+    # 「교대가 다 성공했다」로 읽지 않는다.
+    #
+    # `wall_ms`는 하네스가 잰 것(교대 명령 + 준비 확인)이고, `report.*`는 교대 명령이 보고한
+    # 것이다(서버별 `report.server.<key>.<field>` — util·창·기동 초 등). 둘을 섞지 않는다 — 명령도
+    # `ok`·`wall_ms`를 보고하므로 접두사 없이 펴면 하네스의 값과 이름이 겹친다.
+    MODEL_SWAP = "model_swap"
 
 
 class TraceEvent(HarnessModel):
