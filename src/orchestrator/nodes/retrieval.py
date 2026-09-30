@@ -18,10 +18,11 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, Route, RoutingRequest
 from src.orchestrator.stages import Stage
 from src.schemas.candidate import Candidate
-from src.schemas.capsule import ContextCapsule
+from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
+from src.tokens import estimate_tokens
 
 # 풀 공유 캡슐 예산 마진 (#194). 캡슐은 첫 멤버(qwen) 토크나이저로 예산이 정해지는데 계열이 다른
 # 멤버는 같은 텍스트를 최대 ~11% 더 센다(2026-09-13 ATOM 실측 — 그때 로스터의 mistral
@@ -31,6 +32,33 @@ from src.schemas.finding import MissingEvidence
 # 모두 qwen 계열이라 그 실측의 조건(계열이 다른 자리)이 지금은 없다 — 마진은 계열이 다른 모델이 풀에
 # 다시 들어오는 날을 위해 그대로 둔다.
 _POOL_CAPSULE_MARGIN = 0.90
+
+# CyberGym 과제 설명을 담는 캡슐 섹션의 kind (PoV 배선). `known_facts`를 재쓰지 않는
+# 이유는 그 섹션이 두 Retriever에서 「고정 64토큰 자리표시자」로 하드코딩돼 있어(§0) 가변
+# 길이 설명을 넣으면 회계가 조용히 틀리기 때문이다(council 판정). 이 섹션은 body에서 실측한다.
+VULN_DESCRIPTION_KIND = "vuln_description"
+
+
+def _vuln_description_section(text: str, budget: int) -> CapsuleSection | None:
+    """과제 설명을 담는 캡슐 섹션. 남은 예산 안에 드는 줄까지만 담고 `tokens`를 본문에서
+    실측한다(고정 자리표시자가 아니라 실측이라 §0을 안 어긴다). 한 줄도 못 담으면 `None`.
+
+    빈 줄은 버린다 — `body`는 `NonEmptyStr` 목록이고, 빈 줄로 자리를 채우면 매니페스트가
+    본문을 과장한다.
+    """
+    kept: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        cost = estimate_tokens(line)
+        if used + cost > budget:
+            break
+        kept.append(line)
+        used += cost
+    if not kept:
+        return None
+    return CapsuleSection(kind=VULN_DESCRIPTION_KIND, tokens=used, items=len(kept), body=kept)
 
 
 def run(
@@ -66,6 +94,17 @@ def run(
             slice_id=slice_id,
         )
         capsule = ctx.retriever.search(query, level)
+        # 과제 설명이 있으면 캡슐에 vuln_description 섹션으로 싣는다(PoV 배선). Retriever를
+        # 안 건드리고 노드에서 붙여 구현(fake·hybrid)에 무관하게 한 자리에서 한다 — 설명은 run
+        # 단위 사실이라 target별 Retriever가 알 필요가 없다. 남은 예산 안에서만 담는다.
+        if ctx.vuln_description:
+            section = _vuln_description_section(
+                ctx.vuln_description, capsule.budget_tokens - capsule.used_tokens
+            )
+            if section is not None:
+                capsule = capsule.transition(
+                    sections=[*(s.model_dump() for s in capsule.sections), section.model_dump()]
+                )
         ctx.store.put(capsule)
     return capsule
 
