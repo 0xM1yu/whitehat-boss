@@ -8,8 +8,11 @@
 
 1. 하네스 개발자는 Fake와 컨테이너 ToolRunner에 `gdb`를 요청해 같은 `CRASH` 종류의
    Evidence를 받아야 한다.
-2. 판정 코드는 빌드 실패, 정상 실행, 대상 크래시, gdb 자체 기동 실패를 구분하고 대상의
-   원 종료 코드를 보존해야 한다.
+2. 판정 코드는 빌드 실패, 정상 실행, 대상 크래시(신호), 대상 기동 실패(gdb·컨테이너 포함)를
+   구분하고, `Evidence.exit_code`에는 gdb 프로세스의 종료 코드를 그대로 남긴다 — 대상이
+   스스로 끝났으면 그 종료 코드와 같고, 신호로 멈춘 뒤 gdb가 죽이면 x86-64 Docker(gdb
+   12.1·15.1)에서 255, ATOM Podman(aarch64·gdb 12.1) 기록은 1이다(원인 미실측). 대상이 실제로
+   떴는지는 종료 코드가 아니라 gdb가 stdout에 남긴 대상 수명주기 줄로 가린다.
 3. 이미지 빌더는 런타임이 시작된 뒤가 아니라 이미지 빌드 중에 비대화 gdb 배치 경로가
    실행 가능한지 알아야 한다.
 4. 운영자는 ptrace 권한을 추측으로 넓히지 않고, 실측된 런타임과 미실측 런타임을 구분해서
@@ -49,6 +52,23 @@
 - `python -m pytest -q` → **2064 passed, 2 skipped**.
 - `python -m ruff check .` → **All checks passed!**
 
+### ⏵ 2026-09-30 — HIGH-1 수정 (gdb 대상 수명주기 판정)
+
+적대적 리뷰 HIGH-1: gdb는 마지막 명령이 gdb 자신이라 종료 코드로는 대상이 떴는지 못 가른다
+(안 뜬 대상도 exit 1·255, `return 127;` 대상은 127). 종료 코드만 보던 `judge()`의 gdb 갈래가
+안 뜬 대상을 `ok=True, kind=CRASH`로 읽어 게이트가 E4로 받았다.
+
+- RED: `e7f282f` — `tests/test_gdb_lifecycle_judgement.py`(33개, 녹음된 gdb 12.1·15.1 출력).
+  종료 코드만 보는 head에서 **11 failed, 22 passed**.
+- GREEN: `d64a2b1` — `judge()`가 gdb가 stdout에 남긴 대상 수명주기 줄(`_GDB_TARGET_LIFECYCLE`)로
+  가른다. 안 뜬 대상은 `ok=False`, `exit_code`는 gdb 프로세스의 값 그대로. 같은 파일 **33 passed**.
+  지어낸 stdout으로 얕게 고정하던 gdb judge 테스트 둘은 삭제(새 파일이 녹음으로 덮는다),
+  Dockerfile 핀의 공허한 첫 단언과 `gdb.batch` `run` 무력화 생존(보류 리뷰 4)은 새 파일이 막는다.
+- 변이 확인: 앵커판(noeol) 2 · 「exit 1이면 실패」 7 · stderr 음성 표지 5 · 리뷰의 양성 표지
+  (SIGKILL 누락) 2 · apt gdb 삭제·`COPY` 삭제·`run` 주석·백트레이스 줄 삭제 각 1이 새 테스트로 죽는다.
+- 병합·전체: `origin/main` 병합 뒤 기준선 2285 passed·46 skipped, 수정 뒤 `python -m pytest -q`
+  → **2316 passed, 46 skipped**(+33 신규 −2 삭제), `ruff check .` 통과.
+
 ## 테스트 명세
 
 | # | 보증하는 것 | 테스트 또는 명령 | 종류 | 결과 |
@@ -58,12 +78,14 @@
 | 3 | gdb 계획은 디버그 심볼 컴파일 뒤 `--nx -batch --return-child-result -x` 실행을 낸다 | `tests/test_container_tools.py::test_gdb_plan_compiles_then_runs_a_noninteractive_debugger` | 단위 | PASS |
 | 4 | C와 C++를 한 gdb 링크에 섞으면 명시적으로 거부한다 | `tests/test_container_tools.py::test_gdb_refuses_mixed_languages_instead_of_linking_half_a_program` | 단위 | PASS |
 | 5 | 빌드 단계에서 끊기면 `ok=False`이며 실행으로 세지 않는다 | `tests/test_container_tools.py::test_gdb_build_failure_never_counts_as_a_debug_session` | 단위 | PASS |
-| 6 | 정상 실행은 `ok=True`, exit 0을 보존한다 | `tests/test_container_tools.py::test_gdb_clean_target_is_a_successful_debug_session` | 단위 | PASS |
-| 7 | 대상 크래시는 도구 실패가 아니며 non-zero를 보존한다 | `tests/test_container_tools.py::test_gdb_target_crash_is_a_signal_not_a_tool_failure` | 단위 | PASS |
-| 8 | exit 125·126·127은 대상 신호가 아니라 gdb 기동 실패다 | `tests/test_container_tools.py::test_gdb_exec_failure_is_not_a_target_crash` | 단위 | PASS |
+| 6 | 대상이 떴으면(정상 종료·자기 종료 코드·신호) `ok=True`이고 종료 코드를 보존한다 | `tests/test_gdb_lifecycle_judgement.py::test_a_target_that_started_is_ok_whatever_exit_code_gdb_returns` | 단위 | PASS |
+| 7 | 대상이 한 번도 안 떴으면(실행 권한 없음·파일 없음·ptrace 거부·스크립트 못 읽음) `ok=False`다 | `tests/test_gdb_lifecycle_judgement.py::test_a_target_that_never_started_is_not_a_crash_evidence` | 단위 | PASS |
+| 8 | 같은 종료 코드 255가 크래시와 gdb 스크립트 실패로 갈린다 — gdb가 stdout에 무엇을 찍었는지로만 가른다 | `tests/test_gdb_lifecycle_judgement.py::test_exit_255_is_a_crash_or_a_failure_only_by_what_gdb_printed` | 단위 | PASS |
 | 9 | v3 Dockerfile이 gdb를 설치하고 기본 배치 스크립트를 빌드 중 실행한다 | `tests/test_container_tools.py::test_the_tool_image_installs_and_smokes_gdb_batch_mode` | 정적 통합 | PASS |
 | 10 | 실제 v3 이미지가 capability 없이 정상·SIGSEGV C 표본을 실행한다 | `tests/test_container_tools.py::test_real_gdb_runs_clean_and_crashing_targets_without_ptrace_capability` | 실컨테이너 통합 | PASS |
 | 11 | Fake·컨테이너 양 경로와 저장소 문서 규약에 회귀가 없다 | `python -m pytest -q` | 전체 회귀 | PASS |
+| 12 | Dockerfile이 apt 목록에 gdb를, 주석 아닌 줄에 `COPY gdb.batch`를 둔다(공허한 문자열 단언 대체) | `tests/test_gdb_lifecycle_judgement.py::test_dockerfile_installs_gdb_in_the_apt_list_and_bakes_the_script` | 정적 통합 | PASS |
+| 13 | `gdb.batch`가 `run` 뒤에 백트레이스를 낸다(스크립트 내용 핀) | `tests/test_gdb_lifecycle_judgement.py::test_gdb_batch_script_runs_the_target_and_then_prints_backtraces` | 정적 통합 | PASS |
 
 ## 커버리지와 남은 공백
 
@@ -86,10 +108,13 @@
 
 - RED: `c25d5eb` — 의도한 미구현 때문에 15개 실패.
 - GREEN: `5bdfbfa` — 같은 표적 모음 144개 통과.
-- 최종: 전체 2064개 통과, Ruff 통과, 전체 커버리지 95%, Docker v3 빌드와 실 gdb 통합
-  테스트 통과.
+- 2026-09-28 최종: 전체 2064개 통과, Ruff 통과, 전체 커버리지 95%, Docker v3 빌드와 실 gdb
+  통합 테스트 통과.
+- ⏵ 2026-09-30 HIGH-1 RED: `e7f282f` — gdb 대상 수명주기 판정 33개 중 11개 실패(종료 코드만 보는 head).
+- ⏵ 2026-09-30 HIGH-1 GREEN: `d64a2b1` — stdout 수명주기 줄 판정으로 33개 통과. `origin/main`
+  병합 뒤 전체 2316개 통과·46 skip, Ruff 통과.
 
-스쿼시 머지를 한다면 위 RED/GREEN/최종 네 줄을 PR 본문 또는 스쿼시 커밋 본문에 보존한다.
+스쿼시 머지를 한다면 위 RED/GREEN/최종 줄들을 PR 본문 또는 스쿼시 커밋 본문에 보존한다.
 
 ## 살아 있는 참조 전수
 
@@ -107,3 +132,26 @@
 - 실행/컴파일 계약 축: 넓은 `git grep` 후보 **36개**를 대조했고, 느슨한 손 훑기가 추가로
   찾은 미커버 stale 참조는 **0개**였다. D18·D80의 `SIGNAL_TOOLS`가 `asan`·`poc`만 드는
   곳은 `validate.tool_for()`가 아직 gdb를 선택하지 않는 현재 계약이라 보존했다.
+
+### ⏵ 2026-09-30 — 위 두 축이 안 센 명제 축 (#327 HIGH-1)
+
+위 두 축은 **이미지 태그**와 **도구 열거/컴파일 계약**만 셌고, 「종료 코드로 대상이 떴는지
+안다」라는 **명제**를 문형으로 세지 않았다. 그 「0개」는 그래서 반쪽이었다 — 그 명제가 gdb에서
+거짓이라는 것이 HIGH-1이고, 그것을 서술한 자리들이 미커버였다.
+
+- **명제 P1**: 「`_RUNTIME_TOOLS` 판정에서 마지막 종료 코드가 125·126·127이 아니면 대상이
+  떴다」가 **gdb에도** 참이라고 서술한다. gdb에서 거짓(안 뜬 대상도 exit 1·255, `return 127;`이면 127).
+- **명제 P2**: 「gdb 경로의 `Evidence.exit_code`는 대상의 **원** 종료 코드다」. 거짓 — 신호로
+  멈춘 대상에는 원 종료 코드가 없고 gdb 프로세스의 값이 남는다.
+
+문형: (i) 직접 단언(「여기까지 오면 떴다」·「뜨기만 하면」), (ii) 열거형(`_EXEC_FAILED`·
+125·126·127), (iii) 도구 묶음(`asan·gdb·poc`·`_RUNTIME_TOOLS`), (iv) 결과 서술(「네 갈래」·
+「기동 실패」·「실행류 공통 규약」·「실행까지 성공」), (v) P2형(「원 종료 코드」·「종료 코드를 보존/그대로 남긴다」).
+
+- 명제 축: 위 문형의 정규식이 gdb·exit·종료 코드 문맥에서 낸 후보 **46줄**을 손으로 분류했다 —
+  gdb 갈래를 갈라 적어 고친 곳, `asan`·`poc`/clang-tidy/semgrep로 이미 한정된 곳(참), 날짜 붙은
+  과거 스냅샷(D92 §결정 직전 계약·D80 ②)으로 갈렸고, **gdb에 P1·P2를 그대로 단언한 미정정 자리는
+  0**이다. 손 훑기가 검출기 밖에서 더 찾은 것도 **0(델타 0)**. 정정한 곳: 코드는
+  `container_tools.py`의 모듈 docstring·`_EXEC_FAILED`·`_RUNTIME_TOOLS` 주석·`judge()` 갈래와
+  docstring, 문서는 `architecture.md`·`STATUS.md`·`D80`·`D92`·이 파일·`tools/README.md`·
+  `tests/test_adapters.py` docstring이다.
