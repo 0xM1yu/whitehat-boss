@@ -1882,6 +1882,9 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-09-29 — 같은 날 Auditor가 v4가 됐다. 같은 계산으로 +4,923~13,396토큰(계산값 — prefix
 # +12,251자 · body 틀 +92자 · 근거 본문 4,000자 = 16,343자). v4 입력 토큰은 미실측이다
 # (`config/models.yaml`의 `qwen3.8-27b` — v3는 스모크가 2호출로 쟀다, 그 항목의 ⏵).
+# ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
+# v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
+# 보수적일 수 있다(같은 항목의 ⏵).
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
