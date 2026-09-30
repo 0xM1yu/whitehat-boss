@@ -301,6 +301,21 @@ def test_pov_generates_a_poc_at_the_validate_stage_for_dev_fake(tmp_path: Path) 
     assert all(e["data"]["poc_bytes"] > 0 for e in gen), "pov가 빈 PoC를 냈다"
 
 
+def test_vuln_description_reaches_the_scout_prompt(tmp_path: Path) -> None:
+    """과제 설명이 RunSpec → RunContext → retrieval → 캡슐 → Scout 프롬프트까지 닿는다
+    (PoV 배선 — D2: 새 vuln_description 섹션). 이 스레드 중 한 곳이라도 끊기면 마커가
+    프롬프트에서 사라진다 — read_payload 배선 검사와 같은 형이다."""
+    marker = "VULN-DESC-MARKER-parse_header-heap-overflow"
+    _, trace_path = _run(tmp_path, vuln_description=f"{marker}: len > 64 overflows buf")
+
+    prompts = trace_path.parent / "prompts"
+    scout_files = sorted(prompts.glob("*_scout*.md"))
+    assert scout_files, "scout 프롬프트가 한 건도 안 남았다"
+    assert any(marker in f.read_text(encoding="utf-8") for f in scout_files), (
+        "vuln_description가 Scout 프롬프트에 안 실렸다 — spec→ctx→retrieval→capsule 스레드가 끊겼다"
+    )
+
+
 def _poolify(mode: str | None):  # noqa: ANN202
     """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
 

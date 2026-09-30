@@ -451,6 +451,9 @@ class RunSpec:
     # 슬라이서 산출물(`slices.json`). 주면 슬라이스 1개가 타깃 1개다(ADR 0012 결정 1) — 하네스
     # run 밖에서 미리 돈 것을 파일로 받는다. `None`이면 파일·심볼 타깃(지금 경로).
     slices_path: Path | None = None
+    # CyberGym 과제 설명(description.txt). 주면 캡슐에 `vuln_description` 섹션으로 실린다
+    # (PoV 배선). config가 아니라 과제에서 오므로 여기 있다 — `slices_path`와 같은 성격이다.
+    vuln_description: str | None = None
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
@@ -759,6 +762,8 @@ def run_pipeline(
         resolve_requests=deps.resolve_requests,
         # 단계 경계 교대(ADR 0012 Phase 6.5) — `resolve_requests`와 같은 경계다.
         swap_to=deps.swap_to,
+        # CyberGym 과제 설명(PoV 배선). `retrieval.run`이 캡슐에 실어 Scout·Auditor·pov가 본다.
+        vuln_description=spec.vuln_description,
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
@@ -1077,7 +1082,7 @@ def _analyze(
     swap = ctx.config.swap
     # 교대는 pov가 **실제 교대 대상**일 때만 — swap을 선언하고 pov를 swappable에 올린 프로필
     # (harness_pool)에서다. pov:fake이거나 pov를 swappable에 안 올린 프로필에선 8단계에 띄울
-    # 서버가 없어 교대하지 않는다 — 그러지 않으면 앞 단계 서버를 공연히 내리는 헛교대가 stage 8에 낀다.
+    # 서버가 없어 교대하지 않는다 — 아니면 앞 단계 서버를 공연히 내리는 헛교대가 stage 8에 낀다.
     if validated and swap is not None and Role.POV.value in swap.swappable:
         _swap_for(ctx, Stage.VALIDATE)
     for finding in validated:
