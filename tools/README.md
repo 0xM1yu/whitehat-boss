@@ -5,7 +5,7 @@
 
 | 디렉터리 | 내용 |
 | --- | --- |
-| `harness-tools/` | 2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·인덱서). 아래 참조 |
+| `harness-tools/` | 1·2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·gdb·인덱서). 아래 참조 |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
 
@@ -34,8 +34,8 @@
 이 이미지 안에서 도구를 돌린다. 이미지가 없으면 `dev_docker`/`dev_singularity` 프로필로
 실행할 수 없다.
 
-담긴 것: clang / clang++ (ASAN·UBSAN 런타임 포함), clang-tidy, semgrep, make, cmake,
-그리고 **이미지에 구워 넣은 semgrep 룰셋**.
+담긴 것: clang / clang++ (ASAN·UBSAN 런타임 포함), clang-tidy, gdb, semgrep, make, cmake,
+tree-sitter 인덱서, 그리고 **이미지에 구워 넣은 semgrep 룰셋**.
 
 ### 룰셋을 왜 굽는가
 
@@ -59,21 +59,21 @@ digest면 같은 도구·같은 룰로 돈 것이다.
 ### 로컬 빌드 (Docker)
 
 ```bash
-docker build -t harness-tools:v2 tools/harness-tools/
+docker build -t harness-tools:v3 tools/harness-tools/
 ```
 
-**v1이 있는 장비에서 v2를 만들 때는 룰셋 커밋을 v1과 맞춘다** — `SEMGREP_RULES_COMMIT`의 기본값이
-브랜치(`develop`)라 그냥 빌드하면 인덱서만 바꾸려던 이미지에서 정적 신호까지 움직인다. v1 이미지는
+**v2가 있는 장비에서 v3를 만들 때는 룰셋 커밋을 v2와 맞춘다** — `SEMGREP_RULES_COMMIT`의 기본값이
+브랜치(`develop`)라 그냥 빌드하면 gdb만 더하려던 이미지에서 정적 신호까지 움직인다. v1·v2 이미지는
 지우지 않는다(지난 run 매니페스트의 `tool_images`가 그 digest를 적었다).
 
 ```bash
-docker build -t harness-tools:v2 --build-arg SEMGREP_RULES_COMMIT="$(docker run --rm harness-tools:v1 cat /opt/semgrep-rules/COMMIT)" tools/harness-tools/
+docker build -t harness-tools:v3 --build-arg SEMGREP_RULES_COMMIT="$(docker run --rm harness-tools:v2 cat /opt/semgrep-rules/COMMIT)" tools/harness-tools/
 ```
 
 digest 확인:
 
 ```bash
-docker image inspect harness-tools:v2 --format '{{index .RepoDigests 0}}|{{.Id}}'
+docker image inspect harness-tools:v3 --format '{{index .RepoDigests 0}}|{{.Id}}'
 ```
 
 **`RepoDigests`는 push된 적 없는 로컬 빌드 이미지에서 비어 있다.** 그 경우 `.Id`가 쓰인다 —
@@ -84,7 +84,7 @@ docker image inspect harness-tools:v2 --format '{{index .RepoDigests 0}}|{{.Id}}
 룰셋 커밋을 확인하려면:
 
 ```bash
-docker run --rm harness-tools:v2 cat /opt/semgrep-rules/COMMIT
+docker run --rm harness-tools:v3 cat /opt/semgrep-rules/COMMIT
 ```
 
 ### ATOM 빌드·실행
@@ -108,7 +108,7 @@ ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularit
 # 둘 중 어느 쪽으로 빌드해도 된다. 다만 이미지 저장소가 갈려 있어 digest가 서로 다르다
 # (2026-08 같은 harness-tools:v1에 podman RepoDigest sha256:3a63ba2e… / docker sha256:b5d7048b… —
 #  experiments/README.md 확정 #6). 실행할 런타임 쪽에 빌드해 둔다. 룰셋 커밋은 위 절처럼 맞춘다.
-docker build -t harness-tools:v2 tools/harness-tools/
+docker build -t harness-tools:v3 tools/harness-tools/
 
 # 실서빙 프로필은 `docker`를 선언하고 ATOM에 docker가 있다 — 플래그가 필요 없다 (2026-08-28)
 # `--slices`는 런타임과 무관하게 필요하다 — Scout v3가 슬라이스 입력이라 없으면 시작 전에 거부한다
@@ -152,28 +152,28 @@ buildx가 만든 tar(manifest list + attestation manifest 포함)를 그대로 �
 
 ```bash
 export SINGULARITY_CACHEDIR=/data/<account>/.cache/singularity
-srun -p <partition> -w <node> singularity build /data/<account>/sif/harness-tools_v2.sif docker://<레지스트리>/harness-tools:v2
+srun -p <partition> -w <node> singularity build /data/<account>/sif/harness-tools_v3.sif docker://<레지스트리>/harness-tools:v3
 ```
 
 레지스트리를 못 쓰는 경우 (로컬에서 tar로 내보내 옮긴다):
 
 ```bash
-docker save harness-tools:v2 -o harness-tools_v2.tar
+docker save harness-tools:v3 -o harness-tools_v3.tar
 ```
 
 ```bash
-scp harness-tools_v2.tar <계정>@slurm:/data/<account>/
+scp harness-tools_v3.tar <계정>@slurm:/data/<account>/
 ```
 
 ```bash
-srun -p <partition> -w <node> --mem=8G singularity build /data/<account>/sif/harness-tools_v2.sif docker-archive:///data/<account>/harness-tools_v2.tar
+srun -p <partition> -w <node> --mem=8G singularity build /data/<account>/sif/harness-tools_v3.sif docker-archive:///data/<account>/harness-tools_v3.tar
 ```
 
 `--mem=8G`는 변환이 레이어를 푸는 동안 쓰는 메모리다. 실행 자체에는 그만큼 필요 없다 —
 도구를 돌릴 때의 상한은 `srun --cpus-per-task=2 --mem=4G`로 줬다(아래 "런타임이 강제하지
 못하는 항목").
 
-SIF 경로 규칙은 `harness-tools:v2` → `{sif_dir}/harness-tools_v2.sif`이고, `sif_dir`은
+SIF 경로 규칙은 `harness-tools:v3` → `{sif_dir}/harness-tools_v3.sif`이고, `sif_dir`은
 환경변수 `HARNESS_SIF_DIR`, 없으면 `{artifacts_root}/sif`다.
 
 ```bash
@@ -194,6 +194,14 @@ export HARNESS_SIF_DIR=/data/<account>/sif
 강제되지 않는 항목은 `Evidence.error`에 남기지 않는다 — 실행은 성공했고, 자원 상한이 안
 걸린 것은 실행 실패가 아니다. 목록은 `src/adapters/container_tools.py`의 `UNENFORCED`가
 들고 있다. Singularity로 돌릴 때 상한이 필요하면 `srun`에 붙인다.
+
+gdb의 자식 실행형 배치 경로는 2026-09-28 Docker와 ATOM rootless Podman 4.9.3에서
+`SYS_PTRACE` capability 없이 정상 종료·SIGSEGV 백트레이스를 둘 다 냈다. Podman은 권한
+없음/추가 두 조건에서 정상·크래시를 각각 실행한 **4회 실측**이고 결과가 같았다.
+Singularity/Apptainer만 접속 경로를 확보하지 못해 **0회/미실측**이며, 권한 필요 여부를
+확정하지 않는다([D92](../docs/open-questions/D/D92.md)). attach 모드는 이 결과의 범위가 아니다.
+Docker ptrace 측정 이미지의 gdb는 15.1(`uaf-note-verify:latest`)이고, v3 이미지(gdb 12.1)를
+2026-09-30 재측정해도 SIGSEGV 대상의 gdb 종료 코드는 255로 같았다(자세한 값은 [D92](../docs/open-questions/D/D92.md)).
 
 ### 반대로, 끌 수 없는 항목
 
@@ -216,11 +224,11 @@ semgrep이 `$HOME/.semgrep`에 쓰려다 죽은 것이 루트 쓰기 금지 때�
 
 | 경로 | 마운트 | 용도 |
 | --- | --- | --- |
-| `/src` | 분석 대상 루트, **읽기 전용** | semgrep·clang-tidy·clang이 읽는다 |
+| `/src` | 분석 대상 루트, **읽기 전용** | semgrep·clang-tidy·clang·gdb가 읽는다 |
 | `/work` | `{artifacts_root}/{run_id}/scratch/{tool}`, 쓰기 가능 | 컴파일 산출물. `--read-only`가 걸린 루트에서 clang이 `.o`와 실행 파일을 둘 곳이 필요하다 |
 
-`asan`은 컨테이너 **두 번**을 쓴다(컴파일 → 실행). 산출물이 `/work`에 남아야 두 번째
-컨테이너가 그 바이너리를 실행할 수 있다.
+`asan`과 `gdb`는 각각 컨테이너 **두 번**을 쓴다(컴파일 → 실행/디버그). 산출물이 `/work`에
+남아야 두 번째 컨테이너가 그 바이너리를 실행할 수 있다.
 
 **쓰기가 필요한 환경변수는 전부 `/work`를 가리킨다.** `--read-only`에서는 `/tmp`도 `$HOME`도
 쓸 수 없다.
@@ -236,7 +244,8 @@ semgrep이 `$HOME/.semgrep`에 쓰려다 죽은 것이 루트 쓰기 금지 때�
 
 **빌드 시점 연막 검사로는 이 결함을 잡을 수 없다** — 빌드 FS는 쓰기 가능하다. 회귀 그물은
 `tests/test_container_tools.py::test_real_container_splits_vulnerable_from_benign`이고, 이
-테스트는 이미지가 있을 때만 돈다.
+테스트는 이미지가 있을 때만 돈다. gdb의 정상·SIGSEGV 실컨테이너 경로는
+`test_real_gdb_runs_clean_and_crashing_targets_without_ptrace_capability`가 같은 조건으로 검증한다.
 
 ### semgrep 판정
 
@@ -300,8 +309,9 @@ tree-sitter가 그 파일을 표시하는데, zlib에서는 43개 중 39개(91%)
 
 ### 컴파일 방언
 
-clang을 쓰는 모든 도구(`index` / `build` / `clang-tidy` / `asan`)가 `-std=gnu17`을 공유한다
-(`container_tools._STD_ARG`). 같은 파일이 한 도구에서 통과하고 다른 도구에서 오류가 나면 그
+컴파일하는 모든 clang 계열 도구(`build` / `clang-tidy` / `asan` / `gdb`)가 언어별 방언을
+공유한다. C는 `-std=gnu17`, C++는 `-std=gnu++17`이며 값의 정본은
+`container_tools._STD_ARGS`다. 같은 파일이 한 도구에서 통과하고 다른 도구에서 오류가 나면 그
 차이가 코드의 성질인지 우리 플래그의 산물인지 구분할 수 없다. 기본값에 맡기지 않는 이유는
 이미지의 clang을 올리면 기본 방언이 움직이기 때문이다(clang 18에서 gnu17→gnu23).
 실제 저장소는 프로젝트마다 방언이 다르고 `compile_commands.json`이 있으면 그쪽을 따라야
