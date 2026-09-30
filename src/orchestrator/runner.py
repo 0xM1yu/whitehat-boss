@@ -1073,18 +1073,10 @@ def _analyze(
         _stop_if_a_caller_saw_nothing({_caller(Stage.CRITIC, Role.CRITIC)})
     if last < Stage.VALIDATE:
         return
-    # PoV는 프로필이 pov 좌석을 선언할 때만 8단계에서 **추가로** 돈다(PoV 배선 — 추가형).
-    # `validate.run`(유일한 결정론 E4 게이트)은 그대로 두고, pov는 나란히 PoC를 만들어 기록한다.
-    # **`served_models()`가 아니라 `profile.roles`로 본다** — fake pov(dev_*)도 좌석이라 라우팅이
-    # 돌아야 dev_fake로 검증된다. served면 fake가 빠져 dev_*에서 pov가 영영 안 불린다.
-    pov_declared = Role.POV.value in ctx.config.profile.roles
+    # `validate.run`(유일한 결정론 E4 게이트)을 **먼저 전부** 돌린다. pov는 그 뒤에 추가로 돈다
+    # (PoV 배선 — 추가형). 둘을 finding마다 번갈아 돌리면 pov 실패(재발생 갈래)가 뒤 finding의
+    # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
     validated = state.in_state(FindingState.VALIDATED)
-    swap = ctx.config.swap
-    # 교대는 pov가 **실제 교대 대상**일 때만 — swap을 선언하고 pov를 swappable에 올린 프로필
-    # (harness_pool)에서다. pov:fake이거나 pov를 swappable에 안 올린 프로필에선 8단계에 띄울
-    # 서버가 없어 교대하지 않는다 — 아니면 앞 단계 서버를 공연히 내리는 헛교대가 stage 8에 낀다.
-    if validated and swap is not None and Role.POV.value in swap.swappable:
-        _swap_for(ctx, Stage.VALIDATE)
     for finding in validated:
         after, _ = validate.run(
             ctx,
@@ -1095,8 +1087,19 @@ def _analyze(
             decisions=state.decisions.get(finding.finding_id, ()),
         )
         state.update(after)
-        if pov_declared:
-            _run_pov(ctx, state, after)
+    # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
+    # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
+    if not (validated and Role.POV.value in ctx.config.profile.roles):
+        return
+    swap = ctx.config.swap
+    # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
+    # 자리다.** pov:fake·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면 swappable로 한 번
+    # 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라 여기서 막는다.
+    if swap is not None and Role.POV.value in swap.swappable:
+        _swap_for(ctx, Stage.VALIDATE)
+    # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
+    for finding in validated:
+        _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
 
 
 def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
@@ -1107,10 +1110,13 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `state.finding_capsules`에서 finding_id로 연다 — pov 노드 시그니처는 안 바꾼다.
 
     **미스·모델 실패는 finding을 죽이지 않는다.** 캡슐이 없거나 모델이 실패하면 `pov_skipped`로
-    남기고 넘어간다 — pov가 파이프라인을 깨서 finding이 사유 없이 증발하는 것을 막는다
-    (CLAUDE.md §2.5의 incident). 크기가 아닌 게이트웨이 사건은 이 finding이 아니라 run의 사실이라
-    올려 보낸다(critic 루프와 같은 `_is_droppable` 판정). 바이트를 파일로 쓰거나 asan/poc로 실행해
-    게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
+    남기고 넘어간다 — 추가형이라 finding의 상태는 `validate.run`이 이미 정했고 pov가 그것을
+    어지럽히면 안 된다(#296이 critic 루프에서 막은 「단계가 finding을 조용히 삼킨다」와 같은 결).
+    크기가 아닌 게이트웨이 사건(5xx·상태 없음)은 이 finding이 아니라 run의 사실이라 올려 보낸다
+    (critic 루프와 **같은 `_is_droppable` 판정**). ⚠ 다만 critic의 run-정지 규칙
+    (`_rejects_every_request`·`_stop_if_a_caller_saw_nothing`, #296)은 **쓰지 않는다** — pov는
+    추가형이라 체계적 실패가 run을 멈추지 않고 finding마다 `pov_skipped`로 남는다. 바이트를 파일로
+    쓰거나 asan/poc로 실행해 게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -2107,9 +2113,11 @@ _PHASE_B_STEPS = _TRIAGE_STEPS[_SCOUT_SETTLE_INDEX:]
 # 있다)가 그 좌석의 첫 호출에서 빨개진다. 역할 자체는 각 스텝이 따로 들고 있다(`_step_auditor`의
 # `Role.AUDITOR` 등) — 둘이 어긋나는 것을 잡는 것이 그 성질 테스트다.
 #
-# ⚠ **8단계 pov 줄이 있어도 pov를 선언 안 한 프로필은 아무 서버도 안 띄운다** — `_swap_for`가
-# `swap.swappable`로 한 번 더 거른다(pov가 목록에 없으면 wanted에서 빠진다). `_analyze`는 pov
-# 좌석이 있을 때만 `_swap_for(VALIDATE)`를 부른다. 둘이 겹으로 막아 회귀를 없앤다.
+# ⚠ **8단계 pov 줄이 있어도 pov를 안 올린 프로필에선 이 단계 교대가 안 난다** — 막는 자리는
+# `_analyze`다: 거기서 `_swap_for(VALIDATE)`를 pov가 `swap.swappable`에 있을 때만 부른다.
+# (`_swap_for`는 목록 밖 역할로 불리면 앞 서버를 내리는 빈 교대를 내므로, 안 부르는 것이 가드다.)
+# 이 표의 pov 줄은 「8단계가 부르는 역할은 pov다」를 뜻한다 — 빼면 pov 교대가 서버 없이
+# 첫 호출에서 빨개진다(성질 테스트).
 _ROLES_CALLED: dict[Stage, Callable[[RunContext], tuple[Role, ...]]] = {
     Stage.SCOUT: _scout_roles,
     Stage.AUDITOR: lambda _ctx: (Role.AUDITOR,),

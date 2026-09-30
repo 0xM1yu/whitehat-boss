@@ -281,10 +281,14 @@ class EventKind(StrEnum):
     # 파일로 쓰거나 실행·게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
     POV_GENERATED = "pov_generated"
     # PoV를 건너뛴 기록. `reason`이 `capsule_missing`(finding에 캡슐이 없음) 또는 모델 실패
-    # (`schema_parse_failed`·`gateway`)다. 추가형이라 상태는 `validate.run`이 이미 정했으므로
-    # pov 실패는 finding을 죽이지 않고 여기 남기고 넘어간다(CLAUDE.md — finding이 사유 없이 증발하는
-    # 것을 막는다).
+    # (`schema_parse_failed`·`gateway`)다. **추가형이라 finding의 상태는 `validate.run`이 이미
+    # 정했으므로** pov 실패는 finding을 죽이지 않고 여기 남긴다 — pov가 파이프라인의 finding
+    # 상태를 어지럽히지 않는다는 계약이 이 이벤트로 관측된다.
     POV_SKIPPED = "pov_skipped"
+    # 과제 설명이 캡슐 예산에 다 못 들어가 잘렸거나(kept < total) 한 줄도 못 들어간(kept 0) 기록.
+    # `retrieval.run`이 낸다 — 설명은 예산을 미리 떼어 담지만(코드 자리를 굶기지 않게 최대 절반)
+    # 그 상한을 넘는 긴 설명은 잘린다. **조용히 빠지지 않게** 남긴다(§0) — `kept`·`total`은 줄 수다.
+    VULN_DESCRIPTION_TRUNCATED = "vuln_description_truncated"
     # 모델이 쓴 발급값(ID·`run_id`·`artifact_id`·초기 `state`·`missing_evidence`)이 하네스
     # 발급값과 **달라서 덮었다** (이슈 #279). 내는 곳은 `RunContext.stamp_issued` 하나다 —
     # Scout·Auditor 출력 1건당 최대 1행이고 **이벤트 부재 = 모델이 발급값을 그대로 썼다**
