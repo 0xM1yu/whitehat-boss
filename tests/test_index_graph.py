@@ -1045,3 +1045,15 @@ def test_a_misshapen_document_is_refused_whole(broken: dict, tmp_path: Path):
     assert graph.symbols_for("parser.c") is None
     assert graph.table("macros") is None
 
+
+def test_neighbor_files_joins_callers_and_callee_definitions(tmp_path: Path) -> None:
+    """D93 (#336): 호출자 파일 + 본문 안 호출의 피호출자 정의 파일. 대상 파일 자신은 뺀다.
+
+    `parse_header`(parser.c)를 main.c의 `main`이 부르고, 본문 안에서 `helper`(parser.c — 자기
+    파일이라 빠짐)와 `memcpy`(정의 없음 — 파일 없음)를 부른다.
+    """
+    assert _graph(tmp_path).neighbor_files(_PARSE_HEADER) == ["main.c"]
+
+
+def test_neighbor_files_is_none_without_a_graph(tmp_path: Path) -> None:
+    assert _graph(tmp_path, None).neighbor_files(_PARSE_HEADER) is None

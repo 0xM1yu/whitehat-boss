@@ -6,7 +6,8 @@
 **`FakeRetriever`와 `HybridRetriever`가 이 모듈을 함께 쓴다.** 두 구현이 같은 index.json
 에서 다른 섹션을 내면 `dev_fake`와 `dev_docker`의 결과를 비교할 수 없다 —
 `rules/harness-c.yaml` 첫 주석이 정적 룰셋에 대해 편 논법과 같다. 그래서 로딩·필터·
-토큰 계산이 전부 여기 한 곳에 있고, 두 retriever는 `names_for()`와 `fit_names()`만 부른다.
+토큰 계산이 전부 여기 한 곳에 있고, 두 retriever는 `names_for()`와 `fit_names()`를 부른다
+(Hybrid는 후보 풀 순서에 `neighbor_files()`도 부른다 — #336).
 
 ## "없다"와 "0건"을 섞지 않는다
 
@@ -326,6 +327,34 @@ class GraphIndex:
             raise ValueError(f"조회 표가 아니다: {name}")
         self._load()
         return None if self._tables is None else self._tables[name]
+
+    def neighbor_files(self, target: Location) -> list[str] | None:
+        """대상의 호출 그래프 이웃이 정의된 파일들. `None`은 **그래프 자체가 없다**는 뜻이다.
+
+        hybrid 검색이 후보 풀을 대상 근처부터 채우는 데 쓴다(#336). 두 갈래를 합친다:
+
+        - callers -> 대상 심볼을 부르는 호출 지점의 파일(간선의 `file`은 호출자가 정의된 파일)
+        - callees -> 대상 본문 안의 호출 지점이 부르는 이름이 정의된 파일
+
+        대상 파일 자신은 뺀다(검색 쪽에서 따로 맨 앞에 둔다). 정렬해서 돌려준다(결정론).
+        ⚠ 이름만으로 잇는다 — 같은 이름의 `static` 함수가 여러 파일에 있으면 그 파일이 다
+        이웃이 된다(`_rules` docstring의 같은 한계). 후보 풀의 순서만 바꾸는 용도라 넓게 잡아도
+        되지만, 이웃이 풀을 넘치게 많으면 같은 폴더 층이 굶는다 — 실 저장소 빈도는 안 잼.
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        defined_in: dict[str, set[str]] = {}
+        for file, symbols in self._defined.items():
+            for name, _, _ in symbols:
+                defined_in.setdefault(name, set()).add(file)
+        files: set[str] = set()
+        for _, callee, file, line in self._calls:
+            if target.symbol and callee == target.symbol:
+                files.add(file)
+            if self._in_body(file, line, target):
+                files |= defined_in.get(callee, set())
+        files.discard(target.file)
+        return sorted(files)
 
     # --- 본문 판정 -------------------------------------------------------
     #
