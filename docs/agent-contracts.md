@@ -176,7 +176,7 @@ agent:
 `PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 gen-script
 (Option B, 코드열람·Python 스크립팅) 확장·PoC 바이트 materialize+E4 게이트·외부 oracle 검증**이고
 서빙+도구 되는 호스트가 잡힌 뒤다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
-[ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
+[ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
 어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
