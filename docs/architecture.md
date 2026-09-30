@@ -261,5 +261,5 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
 - CyberGym PoV 전 루프 — 모델-주도 툴 루프(코드열람·Python·ASan/디버거)와 외부 oracle 차분 검증은
   MVP 밖이다. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` 단발 · `PovSpec`→`assemble_poc`)는 들어왔지만
-  러너 8단계 라우팅·서빙 배선은 후속(서빙+도구 호스트 뒤)이다(STATUS.md 「PoV(PoC) 생성」). 목표
-  벤치마크는 CyberGym Level 1(@danielcho02 지시)이고, 정식 ADR/Phase 프레이밍은 팀 기록 대기다(ADR 0012 결정 5).
+  러너 8단계 라우팅·서빙 배선은 후속(서빙+도구 호스트 뒤)이다(STATUS.md 「PoV(PoC) 생성」). **검증
+  벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30) — 남은 것은 실측·서빙 호스트뿐이다.
