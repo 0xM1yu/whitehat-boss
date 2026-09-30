@@ -521,6 +521,9 @@ NEVER_STARTED = (
 THREAD_SIGNAL_STOPS = (
     "thread-crash", "thread-joined-then-main-crash", "thread-joined-then-abort",
     "thread-name-quote", "thread-name-empty", "thread-name-badutf8",
+    "thread-name-cr-mid", "thread-name-cr-tail", "thread-name-cr-only", "thread-name-cr-head",
+    "thread-name-crlf", "thread-name-cr-x15", "thread-name-15-cr-last", "thread-name-main-cr",
+    "thread-name-separators", "thread-name-15", "thread-id-13", "thread-crash-after-output",
 )
 # 녹음이 없는 조합 — 이 장비에서 만들 수 없었다(GDB_15 머리 주석). 이 밖의 빈자리는 오류다.
 _NOT_RECORDED = frozenset({("15.1", "ptrace-denied")})
@@ -604,18 +607,34 @@ def test_a_threaded_target_stopped_by_a_signal_is_reported_per_thread(
     version: str, name: str
 ) -> None:
     """스레드를 한 번이라도 만든 대상이 신호로 멈추면 gdb는 `Program received signal`이 아니라
-    `Thread N "이름" received signal`을 찍는다 — 스레드가 끝난 뒤 main이 죽어도 그렇다. 이름은
-    따옴표 안에 날것으로 찍힌다: 따옴표가 든 이름(`"a"b"`)·빈 이름(`""`)·깨진 UTF-8(디코드 뒤
-    U+FFFD)도 녹음에 있다. 대상은 떴으므로 `ok=True`이고 종료 코드는 gdb의 값 그대로다.
+    `Thread N "이름" received signal`을 찍는다 — 스레드가 끝난 뒤 main이 죽어도 그렇다. 번호는 두
+    자리일 수 있고(`Thread 13`), 이름은 스레드 comm(최대 15바이트)이 따옴표 안에 날것으로 찍힌다:
+    따옴표·빈 이름·깨진 UTF-8(디코드 뒤 U+FFFD)·탭·VT·FF·FS·GS·RS·U+0085·U+2028·U+2029, 그리고
+    CR — `_execute`의 text 모드 캡처가 이름 안의 CR·CRLF를 LF로 바꾸므로 판정이 받는 이름에는
+    줄바꿈이 들 수 있다. 대상이 먼저 stdout을 길게 찍었으면 정지 줄은 그 뒤에 온다. 모두 대상은
+    떴으므로 `ok=True`이고 종료 코드는 gdb의 값 그대로다.
 
-    첫 두 단언은 녹음이 정말 스레드 형태인지 본다 — 다시 녹음하다 그 형태를 잃으면 이 검사가
-    무는 것도 사라진다.
+    첫 세 단언은 녹음이 정말 스레드 형태인지 본다(이름 내용에는 기대지 않는다) — 다시 녹음하다
+    그 형태를 잃으면 이 검사가 무는 것도 사라진다.
     """
     record = RECORDED[version][name]
 
-    assert re.search(r'^Thread \d+ ".*" received signal ', record.stdout, re.MULTILINE)
+    assert re.search(r'^Thread \d+ "', record.stdout, re.MULTILINE)
+    assert '" received signal ' in record.stdout
     assert "Program received signal" not in record.stdout
     assert _judge_recorded(record) == (True, record.exit_code, None)
+
+
+def test_a_carriage_return_in_a_thread_name_reaches_judge_as_a_newline() -> None:
+    """gdb는 이름 안의 CR을 그대로 찍지만(원시 바이트 `"a\\rb"`) `_execute`의 text 모드 캡처가 CR을
+    LF로 바꾼다 — 판정이 받는 정지 줄은 이름 가운데서 줄이 바뀐다. 그래도 대상은 떴다: 이름
+    자리는 줄바꿈을 넘어서도 받아야 한다.
+    """
+    for recorded in RECORDED.values():
+        record = recorded["thread-name-cr-mid"]
+
+        assert 'Thread 2 "a\nb" received signal SIGSEGV' in record.stdout
+        assert _judge_recorded(record) == (True, record.exit_code, None)
 
 
 def test_only_stdout_counts_even_when_stderr_carries_a_lifecycle_line() -> None:
