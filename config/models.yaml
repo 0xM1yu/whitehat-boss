@@ -57,7 +57,9 @@ models:
   # `fake`와 같은 FakeModelClient로 뜬다 — 바뀌는 것은 `load_prompt`가 고르는 버전뿐이다.
   # ⏵ 2026-09-24 — 「v2 전용」·「새 로스터는 v2」·「풀 프로필 커밋은 별도 PR」은 낡았다. 풀 프롬프트는 v2·v3 둘이고
   # 지금 로스터의 Scout 풀은 v3다(PROJECT-CONTEXT.md §1). 풀 프로필 `harness_pool`·`_hybrid`는 커밋됐다 — 실모델
-  # 키라 GPU가 필요하다. GPU 없이 풀을 도는 커밋된 프로필이 이 키를 안 쓰는 것은 그대로다.
+  # 키라 GPU가 필요하다.
+  # ⏵ 2026-09-30 — 「커밋된 프로필은 이 키를 안 쓴다」도 낡았다. dev 5개 프로필이 pov 좌석을 `fake_v2`로
+  # 돌린다(pov 프롬프트가 v2 = PovAction 툴 루프라, `fake`(v1)로는 프롬프트가 안 맞는다). `config/profiles.yaml`.
   fake_v2:
     endpoint: "fake://deterministic"
     context_limit: 32768
@@ -651,10 +653,10 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 스키마(`src/schemas/pov.py`)는 PoC 8 MiB ·
-  # `hex` 필드 16 Mi자까지 받는다. 답 몫은 Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라
-  # 사고가 예산을 다 쓰면 큰 스펙은 거기서 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다.
-  # 값은 실측 뒤 조정.
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`이고, `gen`이 싣는
+  # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
+  # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
+  # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
   feyospace-v1-small:
     endpoint: "http://127.0.0.1:8006/v1"
     context_limit: 262144
@@ -676,7 +678,9 @@ models:
       min_p: 0.0
       presence_penalty: 0.0
     thinking_token_budget: 28672
-    prompt_template_version: "v1"
+    # v2 = PoV 툴 루프 프롬프트(PovAction, gen/inspect/submit). 조민규 전달 2026-09-30 · sumin 리뷰 대상
+    # (승인 원천은 저장소에 없다). 단발 v1은 루프로 대체돼 제거됐다(`prompts/pov/v2/`, `nodes/pov.py`).
+    prompt_template_version: "v2"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
