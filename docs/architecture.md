@@ -259,3 +259,9 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - LLM 기반 리포트 생성 에이전트 (템플릿 + 규칙으로 처리)
 - LLM 기반 dedupe 에이전트
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
+- CyberGym PoV — 외부 oracle 차분 검증과 실서빙 실측은 MVP 밖이다(서빙+도구 되는 호스트가 잡힌
+  뒤). PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` · `PovSpec`→`assemble_poc`)·러너 8단계 라우팅
+  (추가형)·feyospace 서빙 배선(§1 pov 좌석)은 들어왔다. 모델-주도 툴 루프(코드열람·Python·
+  ASan/디버거)의 착지 상태와 남은 일은 [agent-contracts.md](agent-contracts.md) §2.5가 든다.
+  **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
+  [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다).

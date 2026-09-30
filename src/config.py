@@ -256,15 +256,18 @@ class ModelEntry(HarnessModel):
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
     #   모델은 여전히 비어 있다.
     # ⏵ 2026-09-29 — `request_timeout_s`는 Scout·Critic 실서빙 키 셋(`seccoderx-8b`·`qwen3-14b`·
-    #   `gpt-oss-20b`)도 선언한다(#261 — 계산값). `sampling`·`thinking_token_budget`은 여전히
-    #   Auditor뿐이고, `chat_template_kwargs`는 어느 모델도 안 쓴다.
+    #   `gpt-oss-20b`)도 선언한다(#261 — 계산값). `sampling`·`thinking_token_budget`은 그때
+    #   Auditor뿐이었고, `chat_template_kwargs`는 어느 모델도 안 쓴다.
+    # ⏵ 2026-09-30 — `feyospace-v1-small`(8단계 pov 좌석)도 `reasoning_effort`·`sampling`·
+    #   `thinking_token_budget`·`request_timeout_s` 넷을 Auditor 값 그대로 선언한다
+    #   (계획값 · 미실측 — `config/models.yaml`의 그 항목).
     # - `sampling` — 프로필 공통 `Sampling`(temperature·top_p)을 **이 모델에서 덮고** top_k 등을
     #   더한다. 좌석마다 모델 카드 권장이 갈리기 때문이다(Qwen 계열 「DO NOT use greedy」).
     # - `chat_template_kwargs` — 템플릿 인자(`enable_thinking` 등). 서버 기본 kwargs로 끄지 않고
     #   요청마다 명시한다.
     # - `thinking_token_budget` — 사고 토큰 상한. vLLM 0.27.1에서 V1 러너 모델(GDN hybrid — 지금
-    #   로스터에서는 Auditor `qwen3.8-27b`, 전에는 `qwen3.6-35b-a3b`)만 받고 dense Qwen3(V2)·
-    #   gpt-oss는 거절한다 — 그 모델에 적으면 400이다.
+    #   로스터에서는 Auditor `qwen3.8-27b`와 PoV `feyospace-v1-small`, 전에는 `qwen3.6-35b-a3b`)만
+    #   받고 dense Qwen3(V2)·gpt-oss는 거절한다 — 그 모델에 적으면 400이다.
     # - `request_timeout_s` — **요청 본문이 아니다.** 어댑터의 벽시계 상한(`_TIMEOUT_S` 대체,
     #   #261). 그래서 `request_params()`에 안 들어간다.
     sampling: RequestSampling | None = None
