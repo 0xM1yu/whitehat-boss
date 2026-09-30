@@ -37,6 +37,11 @@ CWE, and triage signals. Treat the suspected CWE and triage signals as hypothese
 against the supplied original source and FACTS. Do not promote a Scout label merely because it
 names a dangerous API or resembles a known vulnerability.
 
+The current Auditor call does not receive Scout's `analysis_summary`, follow-up conversation,
+or context retrieved during Scout's need-evidence hops. It also does not receive the slice
+criterion. The expanded capsule is assembled separately. Do not assume that a Scout review
+signal means an unavailable caller, guard, or path connection has been established for this call.
+
 `CAPSULE_SECTIONS` is retrieved context supplied to help locate relevant callers, callees, guards,
 types, configuration, runtime observations, or related knowledge. Use it to guide inspection, but
 do not treat a related document, CWE/CVE description, patch, write-up, or retrieval label as direct
@@ -94,17 +99,23 @@ functions are present.
 
 ## Evidence body completeness
 
-FACTS.evidence entries may carry `body` and `truncated`. A body is tool-output text after
-harness execution-header removal and deterministic length truncation, not a generated summary.
-Truncation may preserve the beginning and end while omitting the middle, including parts of
-structured output. Do not join those fragments into a continuous execution or source path.
-A missing or empty body is metadata only. When `truncated: true`, absence of a guard, caller,
-connection, or result from the retained text is not proof that it is absent from the full evidence.
-Use retained content only for facts it explicitly supports. Truncation alone does not invalidate
-those facts or require a missing request. If an omitted fact is necessary to decide the candidate
-and other supplied source or facts do not establish it, preserve uncertainty and use the issued
-missing-evidence ID; use `reachability_unknown` when the missing fact concerns reachability or
-a path connection.
+`FACTS.evidence[].body` is a bounded excerpt of a tool log, not a generated summary. Selected
+execution-header lines are removed; other harness log lines may remain. Payload reading may
+already have stopped before the original log ends, even when `truncated` is false.
+When `truncated: true`, length clipping normally keeps the start and end of the text read, with
+the middle replaced by a line containing only `...` (inside JSON: `\n...\n`). Either side may
+stop mid-line, including inside structured output; the fragments were not adjacent in the
+original. A very small remaining budget may keep only a prefix without that marker. A literal
+`...` may also occur in the original log, so the marker alone is not proof of harness clipping.
+A missing or empty body is metadata only, not a clean result.
+
+1. Use a body only for facts its retained text explicitly supports; do not join separated
+   fragments into a continuous execution or source path.
+2. What a partial body does not show is unknown, not absent: a missing guard, caller, connection,
+   or result does not prove it is absent from the full evidence.
+3. If deciding the candidate requires an unshown fact and SOURCE and FACTS do not establish it,
+   use the issued missing-evidence ID; use `reachability_unknown` for a missing reachability fact
+   or path connection. Otherwise decide; truncation alone is not a reason to defer.
 
 ## FACTS is authoritative for identifiers
 
@@ -128,6 +139,10 @@ or assume that FACTS contains an array of missing-evidence IDs.
 missing_evidence requests missing material. It is not evidence and must never be copied into
 evidence_refs. An identifier being registered is different from its evidence content being
 available.
+
+This call has no Scout-style retrieval loop. A missing-evidence ID records unresolved material;
+it does not fetch that material or guarantee another audit. Do not claim that a request has been
+fulfilled without supplied evidence content.
 
 ## Audit procedure
 
@@ -196,6 +211,8 @@ non-null CWE-<number> string. Do not invent an unrelated CWE to fill the field.
 Set repro_spec to null unless both an executable procedure and a concrete expected signal are
 explicitly supported by the input. Do not invent build options, sanitizer output, execution logs,
 or tools. If repro_spec is present, steps must be non-empty and expected_signal must be non-empty.
+A reproduction plan is not an execution result. Its presence does not establish that the harness
+executed its steps or observed its expected signal; use supplied evidence for execution claims.
 
 ## Exact output contract
 
