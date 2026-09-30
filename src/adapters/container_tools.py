@@ -40,20 +40,27 @@ Singularity 3.7.3은 `cpu_limit`·`memory_mb`를 강제하지 못한다(HPC에�
 생기면 그때 거절해야 한다(`container_argv` 주석). `UNENFORCED`에 넣지 않은 것은 그쪽이
 "강제하지 **못하는** 항목"이고 이것은 "**끌 수 없는** 항목"이라 뜻이 반대이기 때문이다.
 
-## asan·poc는 실행까지 성공해야 ok=True다
+## asan·gdb·poc는 실행까지 성공해야 ok=True다
 
 Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다. 컴파일 성공을
 실행으로 세면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.** 그래서 `ok=False`로
 내리는 갈래가 셋이다 — 명령이 하나도 안 돈 경우(`not steps`), 빌드에서 끊긴 경우
-(`len(steps) < total`), **띄우지도 못한 경우**(`_EXEC_FAILED` = 125·126·127).
+(`len(steps) < total`), **대상을 띄우지도 못한 경우**. 마지막 것을 알아내는 방법이 도구마다
+다르다.
 
-**그 뒤로는 종료 코드를 보지 않는다.** 프로그램이 뜨기만 하면 크래시(non-zero)든 깨끗한
-종료(exit 0)든 `ok=True`이고, 그것이 `judge()` docstring의 *"돌았는데 아무것도 못 찾음:
-`ok=True, exit_code=0`"*이다. **즉 `ok=True`가 보증하는 것은 「실행됐다」까지이지
-「크래시했다」가 아니다.** 게이트는 `ok`와 `kind`만 보므로(`gate.evaluate()`의 `usable`과
-`p4`) 그 차이가 E4에 그대로 실린다 — 산출물을 `expected_signal`과 대조하는 코드는
-**없다**(이슈 #232). exit 0을 `ok=False`로 내릴지는 승격 동작이 바뀌는 판단이라 이 파일이
-혼자 정하지 않는다.
+**asan·poc**는 마지막 명령이 대상 바이너리라 종료 코드 125·126·127(`_EXEC_FAILED`)이 곧
+「띄우지 못함」이고, 그 뒤로는 종료 코드를 보지 않는다 — 뜨기만 하면 크래시(non-zero)든
+깨끗한 종료(exit 0)든 `ok=True`다. **gdb**는 마지막 명령이 **gdb 자신**이라 종료 코드로는
+대상이 떴는지 알 수 없다(대상이 안 떠도 1·255, 대상이 `return 127;`이면 127 — 2026-09-30
+실측, gdb 12.1·15.1). 그래서 gdb가 **stdout**에 남기는 대상 수명주기 줄이 있을 때만 떴다고
+본다. 오류(`Error in sourced command file`·`During startup program exited with code N`)는
+stderr다.
+
+그것이 `judge()` docstring의 *"돌았는데 아무것도 못 찾음: `ok=True, exit_code=0`"*이다.
+**즉 `ok=True`가 보증하는 것은 「실행됐다」까지이지 「크래시했다」가 아니다.** 게이트는 `ok`와
+`kind`만 보므로(`gate.evaluate()`의 `usable`과 `p4`) 그 차이가 E4에 그대로 실린다 — 산출물을
+`expected_signal`과 대조하는 코드는 **없다**(이슈 #232). exit 0을 `ok=False`로 내릴지는 승격
+동작이 바뀌는 판단이라 이 파일이 혼자 정하지 않는다.
 
 지금 픽스처에는 `main`이 없어 링크되지 않으므로 **컨테이너 경로에서 E4는 여전히 도달
 불가**다 — PoV 노드(8단계)는 PoC **바이트**를 내 기록할 뿐 재현 명세가 부르는 `./poc`로 쓰지
@@ -95,6 +102,7 @@ Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다.
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -115,7 +123,7 @@ from src.schemas.run import CompileFlags
 # 않으므로(engineering-guide.md §3) 값을 복제하고 tests/test_container_tools.py가 대조한다.
 # v2부터 인덱서가 index-v2(조회 표)를 낸다 — v1 이미지는 지우지 않는다(지난 run 매니페스트가
 # 그 digest를 적었다).
-DEFAULT_IMAGE = "harness-tools:v2"
+DEFAULT_IMAGE = "harness-tools:v3"
 
 # 컨테이너 안 경로. 분석 대상은 항상 읽기 전용이고, 쓰기는 scratch 한 곳에서만 일어난다.
 MOUNT = "/src"
@@ -130,6 +138,9 @@ SEMGREP_CONFIGS = ("/opt/semgrep-rules/c", "/opt/semgrep-rules/harness")
 # `index_output_path()` 하나다 — `adapters/index_graph.py`가 읽는다(이슈 #63).
 _INDEXER = "/opt/indexer.py"
 INDEX_FILE = "index.json"
+
+# 이미지에 구워 넣은 비대화형 gdb 명령 파일. pwndbg 같은 UI 확장을 기본 경로에 싣지 않는다.
+_GDB_SCRIPT = "/opt/gdb.batch"
 
 # scratch 하위 디렉터리 이름은 도구 이름이다(`_execute`가 `tool`로 만든다).
 # `nodes/index.INDEX_TOOL`과 같은 값이어야 하지만 어댑터는 오케스트레이터를 import 하지
@@ -155,7 +166,7 @@ UNENFORCED: dict[str, tuple[str, ...]] = {
 #
 # **아래 `_INDEX_SUFFIXES`와 일부러 갈라져 있다. 합치면 build가 깨진다.**
 # `.inc`는 `#include`로 펼쳐지는 함수 본문 조각이라 **단독 컴파일이 되지 않는다.**
-# clang 계열(build·clang-tidy·asan)은 `target.c`만 주면 전처리가 `.inc`를 끌어오므로
+# clang 계열(build·clang-tidy·asan·gdb)은 `target.c`만 주면 전처리가 `.inc`를 끌어오므로
 # 직접 줄 이유가 없고, 직접 주면 컴파일이 실패해 `ok=False`가 된다 —
 # **일어나지 않은 실패가 신호로 기록된다.**
 _COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
@@ -226,10 +237,30 @@ _COMPILE_ERROR_MARKER = "clang-diagnostic-error"
 _SEMGREP_OK = (0, 1)
 
 # 컨테이너가 명령을 띄우지도 못했을 때 런타임이 쓰는 코드. 크래시(=신호)와 구분해야 한다.
+# 실행류에서는 마지막 명령이 대상인 asan·poc만 쓰고(그 밖에는 clang-tidy가 쓴다), **gdb에는
+# 쓰지 않는다** — gdb는 대상의 종료 코드가 같은 숫자 공간에 실려(`--return-child-result`)
+# 판별자가 못 된다.
 _EXEC_FAILED = (125, 126, 127)
 
-# 실행 흔적을 만드는 도구. 마지막 명령이 "실제로 뜬 프로그램"이다.
-_RUNTIME_TOOLS = frozenset({"asan", "poc"})
+# 실행 흔적을 만드는 도구. asan·poc는 마지막 명령이 "실제로 뜬 프로그램"이고, gdb는 마지막
+# 명령이 gdb 자신이다(`judge()`의 gdb 갈래가 stdout으로 대상 기동을 가른다).
+_RUNTIME_TOOLS = frozenset({"asan", "gdb", "poc"})
+
+# gdb가 **stdout**에 남기는 「대상이 실제로 떴다」는 보고. 오류(`Error in sourced command file`·
+# `During startup program exited with code N`)는 stderr다. 줄 머리 앵커(^)를 걸지 않는다 — 대상이
+# 개행 없이 쓰면 `done[Inferior 1 …]`처럼 줄 중간에 붙는다. 종료 코드는 8진수로 찍힌다
+# (`exited with code 052` = 42) — 이 숫자를 exit code로 읽지 않는다.
+# 신호 정지는 대상이 스레드를 한 번이라도 만들었으면 `Thread N "이름" received signal`로 찍힌다
+# (join 뒤 main이 죽어도 — 2026-10-01 실측, 12.1·15.1. `terminated with`는 그래도 `Program`이었다).
+# 이름(스레드 comm, 최대 15바이트)은 따옴표 안에 날것으로 찍혀 따옴표·제어 문자를 품을 수 있고,
+# 이름 안의 CR은 `_execute`의 text 모드 캡처가 LF로 바꾼다 — 그래서 줄바꿈까지 포함한 아무 글자로
+# 받되 64자로 묶는다. 묶지 않으면 대상이 찍은 긴 줄에서 입력 길이의 제곱으로 느려진다. 스레드
+# 번호는 정수만 봤다(`1.2` 꼴은 인페리어가 여럿일 때이고 이 배치에서는 안 생긴다).
+_GDB_TARGET_LIFECYCLE = re.compile(
+    r"\[Inferior \d+ \(process \d+\) exited (?:normally|with code [0-7]+)\]"
+    r"|Program (?:received|terminated with) signal \S+"
+    r'|Thread [\d.]+(?: "[\s\S]{0,64}")? received signal \S+'
+)
 
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
 _TIMEOUT_EXIT = 124
@@ -265,7 +296,7 @@ class Step:
 
 
 def sif_path(sif_dir: Path, image: str) -> Path:
-    """`harness-tools:v2` → `{sif_dir}/harness-tools_v2.sif`."""
+    """`harness-tools:v3` → `{sif_dir}/harness-tools_v3.sif`."""
     return Path(sif_dir) / f"{image.replace('/', '_').replace(':', '_')}.sif"
 
 
@@ -409,6 +440,35 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
             ),
             Command([binary], cwd=SCRATCH),
         ]
+    if tool == "gdb":
+        _require_sources(tool, compile_sources)
+        # gdb도 실행 파일 하나를 링크한다. 언어별로 나눠 같은 `-o`를 두 번 쓰면 마지막
+        # 언어만 남은 바이너리를 디버깅하게 되므로, asan과 같은 이유로 혼합 대상을 거절한다.
+        groups = _by_language(compile_sources)
+        if len(groups) > 1:
+            raise ValueError(f"{tool}: C와 C++이 섞인 대상은 링크 규칙이 없다 (#75)")
+        language, sources_ = groups[0]
+        # 경로를 입력에서 받지 않는다 — `judge()`의 판정이 이 고정에 기댄다. gdb는 실행 파일
+        # 경로를 stdout에 에코하는 경우가 있어(대상에 인라인 스크립트가 있을 때의 auto-load 안내),
+        # 경로가 수명주기 줄 모양(스레드 정지 줄 꼴 포함)이면 안 뜬 대상이 떴다고 읽힌다(2026-10-01
+        # 두 검토의 가정 실측).
+        binary = f"{SCRATCH}/gdb.bin"
+        return [
+            Command(
+                [
+                    "clang", "-g", "-O0", "-fno-omit-frame-pointer",
+                    _STD_ARGS[language], *_include_args(cwd), "-o", binary, *sources_,
+                ],
+                cwd=SCRATCH,
+            ),
+            Command(
+                [
+                    "gdb", "--nx", "-batch", "--return-child-result",
+                    "-x", _GDB_SCRIPT, "--", binary,
+                ],
+                cwd=SCRATCH,
+            ),
+        ]
     if tool == "poc":
         # PoC 실행 파일을 만드는 주체가 아직 없다(STATUS.md §5 PoV). 없는 것을 성공으로
         # 세지 않는다 — 그러면 E4가 실행되지 않은 프로그램 위에서 성립한다.
@@ -494,14 +554,17 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     이 관례가 깨지면 `with_signal()`이 benign 표본을 거르지 못하고 Evidence Gate E1이
     모든 Finding에서 참이 된다.
 
-    **`exit_code`는 프로세스가 반환한 값을 그대로 남긴다.** 합성하면 기록에 작은 거짓이
+    **`exit_code`는 그 명령이 반환한 값을 그대로 남긴다.** 합성하면 기록에 작은 거짓이
     들어가고, 합성할 필요도 없다 — 거르는 쪽이 `ok`를 먼저 보므로 **도구 자신이 죽은 것**은
-    `ok=False`에서 걸린다.
+    `ok=False`에서 걸린다. asan·poc는 마지막 명령이 대상이라 그 값이 대상의 것이지만, gdb는
+    마지막 명령이 gdb 프로세스라 대상이 스스로 끝났을 때만 대상의 값과 같다
+    (`--return-child-result`).
 
     ⚠ **「크래시」를 한 문단 안에서 두 뜻으로 쓰지 않는다.** 아래 `_RUNTIME_TOOLS` 갈래가
-    말하는 크래시는 **대상 프로그램**의 것이고 그쪽은 `ok=True`(신호)다. 그리고 그 갈래는
-    `with_signal()`이 보지 않는다 — 유일한 프로덕션 호출부(`runner.py`)가 `signals.run()`의
-    산출물만 받고 `SIGNAL_TOOLS`는 `semgrep`·`clang-tidy`·`build` 셋이다.
+    말하는 크래시는 **대상 프로그램**의 것이고 그쪽은 `ok=True`(신호)다 — gdb 갈래도 같다
+    (stdout의 수명주기 줄로 대상이 떴는지 먼저 가른다). 그리고 그 갈래는 `with_signal()`이
+    보지 않는다 — 유일한 프로덕션 호출부(`runner.py`)가 `signals.run()`의 산출물만 받고
+    `SIGNAL_TOOLS`는 `semgrep`·`clang-tidy`·`build` 셋이다.
     """
     if not steps:
         return False, 127, f"{tool}: 실행된 명령이 없다"
@@ -510,15 +573,23 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     if tool in _RUNTIME_TOOLS:
         if len(steps) < total:
             return False, code, f"{tool}: 빌드 단계에서 끊겨 프로그램이 실행되지 않았다"
+        if tool == "gdb":
+            # 마지막 명령이 gdb 자신이다 — 종료 코드는 대상이 떴는지 못 알린다(안 떠도
+            # 1·255, 대상이 `return 127;`이면 127 — 2026-09-30 실측, gdb 12.1·15.1).
+            # gdb가 stdout에 남긴 대상 수명주기 줄로 판정한다.
+            if _GDB_TARGET_LIFECYCLE.search(last.stdout) is None:
+                return False, code, f"gdb: 대상을 띄우지 못했다 (exit={code}) — 로그의 stderr 참조"
+            return True, code, None
+        # asan·poc: 마지막 명령이 대상 바이너리다.
         if code in _EXEC_FAILED:
             return False, code, f"{tool}: 실행 파일을 띄우지 못했다 (exit={code})"
-        # 여기까지 오면 프로그램이 실제로 떴다. 크래시(non-zero)는 실패가 아니라 신호다.
+        # 여기까지 오면 마지막 명령(대상)이 실제로 떴다. 크래시(non-zero)는 실패가 아니라 신호다.
         return True, code, None
     if tool == "semgrep":
         return judge_semgrep(last)
     if tool == "clang-tidy":
-        # **명령을 띄우지도 못한 것은 신호가 아니다.** `_RUNTIME_TOOLS`가 위에서 하는 판정과
-        # 같은 것이고, 그 상수의 주석이 이미 "크래시(=신호)와 구분해야 한다"고 적어 뒀다.
+        # **명령을 띄우지도 못한 것은 신호가 아니다.** asan·poc가 위에서 하는 `_EXEC_FAILED`
+        # 판정과 같은 것이고, 그 상수의 주석이 이미 "크래시(=신호)와 구분해야 한다"고 적어 뒀다.
         # 여기에 없던 동안 **컨테이너 기동 실패가 정적 신호로 집계됐다** — 2026-08-28
         # `run_20260828_0001`에서 keyring 쿼터로 docker가 컨테이너를 못 띄워 도구 13건이
         # 전부 exit 125였는데, semgrep·build는 `ok=False`로 떨어진 반면 clang-tidy만
@@ -1018,7 +1089,7 @@ def _include_args(cwd: str) -> list[str]:
     관측된 20건을 전부 덮는다 — `zlib.h`·`zutil.h`는 대상 루트에 있고, 로컬 헤더는
     artifact 디렉터리에 있다.
 
-    **세 도구(build·clang-tidy·asan)가 같은 값을 받아야 한다.** `_STD_ARGS` 주석이 방언에
+    **네 도구(build·clang-tidy·asan·gdb)가 같은 값을 받아야 한다.** `_STD_ARGS` 주석이 방언에
     대해 적어 둔 이유가 그대로 걸린다 — 갈리면 같은 파일에 대한 두 진단이 어긋나고, 그
     차이가 코드의 성질인지 우리 플래그의 산물인지 구분할 수 없다.
 
