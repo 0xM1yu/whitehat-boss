@@ -600,8 +600,9 @@ def test_retrieval_injects_the_vuln_description_when_set(ctx: RunContext) -> Non
 
 
 def test_vuln_description_section_fits_the_budget(ctx: RunContext) -> None:
-    """설명 섹션은 예산 안에 드는 줄까지만 담고 tokens를 실측으로 채운다 — 경계에서 **정확히**
-    몇 줄이 드는지 고정한다(고정 자리표시자가 아니라 실측이라 §0을 안 어긴다)."""
+    """설명 섹션은 예산 안에 드는 줄까지만 담고 tokens를 본문에서 계산해 채운다 — 경계에서
+    **정확히** 몇 줄이 드는지 고정한다(고정 자리표시자가 아니라 본문에서 센 값이다 — 이 검사가
+    도는 기본 카운터는 `len//4` 근사다)."""
     lines = [f"line {i} of the vulnerability description text here" for i in range(10)]
     text = "\n".join(lines)
     costs = [estimate_tokens(line) for line in lines]
