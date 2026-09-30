@@ -769,6 +769,14 @@ def run(args: argparse.Namespace) -> int:
         except SliceInputError as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             return 2
+    # 과제 설명(description.txt)을 읽어 캡슐에 실을 준비를 한다(PoV 배선). 주고서 없는
+    # 파일이면 조용히 넘어가지 않고 멈춘다 — 슬라이스 파일과 같은 판단이다.
+    description = None
+    if args.description_file is not None:
+        if not args.description_file.is_file():
+            print(f"[ERROR] --description-file 없음: {args.description_file}", file=sys.stderr)
+            return 2
+        description = args.description_file.read_text(encoding="utf-8", errors="replace")
     started_at = datetime.now(UTC)
     spec = RunSpec(
         condition=DEFAULT_CONDITION if args.condition is None else args.condition,
@@ -778,6 +786,7 @@ def run(args: argparse.Namespace) -> int:
         kb_snapshot=args.kb_snapshot,
         device=args.device,
         slices_path=args.slices,
+        vuln_description=description,
         started_at=started_at,
     )
     # **모델을 한 번도 안 부르는 run은 막지 않는다.** 게이트의 근거가 "비용을 쓰기 전에"라
@@ -1052,6 +1061,13 @@ def build_parser() -> argparse.ArgumentParser:
         "(ADR 0012 결정 1). 못 믿는 파일이거나 --target과 어긋나면(drift) run 디렉터리를"
         " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice — v3 Scout)를"
         " 부르는 run은 이것 없이 거부한다(exit 2)",
+    )
+    run_cmd.add_argument(
+        "--description-file",
+        type=Path,
+        default=None,
+        help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
+        "Scout·Auditor·PoV가 본다(PoV 배선). 저장소 아카이브는 task_loader로 따로 푼다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
