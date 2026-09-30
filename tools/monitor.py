@@ -2,7 +2,8 @@
 
 `heartbeat.json`(살아있음)·`trace.jsonl`(진행·에러)·`run_manifest.json`(완주)을 읽어
 `{alive, stuck, error_storm, budget_exhausted, incomplete}`를 도출한다. **run에 붙지 않고
-파일만 본다.** 죽이지 않는다 — 가시화·경보만 한다(kill은 `_TIMEOUT_S`·차단기 소관).
+파일만 본다.** 죽이지 않는다 — 가시화·경보만 한다. kill은 요청 타임아웃(모델이 선언한
+`request_timeout_s`, 선언이 없으면 `_TIMEOUT_S`)과 차단기 소관이다.
 
 **임계값은 추측 상수가 아니라 코드 상수에서 온다(§0).**
 
