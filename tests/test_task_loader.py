@@ -5,6 +5,7 @@
 """
 
 import io
+import os
 import tarfile
 from pathlib import Path
 
@@ -99,6 +100,55 @@ def test_safe_extract_rejects_too_many_members(
         task_loader.safe_extract(tar, tmp_path / "out")
 
 
+def _link_member(name: str, target: str, kind: bytes) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name=name)
+    info.type = kind
+    info.linkname = target
+    return info
+
+
+def _fifo_member() -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name="pipe")
+    info.type = tarfile.FIFOTYPE
+    return info
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        pytest.param(lambda: _link_member("h", "../outside.txt", tarfile.LNKTYPE), id="hardlink"),
+        pytest.param(lambda: _link_member("s", "../../etc/passwd", tarfile.SYMTYPE), id="symlink"),
+        pytest.param(_fifo_member, id="fifo"),
+    ],
+)
+def test_safe_extract_rejects_links_and_special_members_by_its_own_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member
+) -> None:
+    """dest 밖을 가리키는 하드·심볼릭 링크(상대경로)와 특수 파일(FIFO)도 거부하고 만들지 않는다
+    — 위 검사 밖의 갈래다.
+
+    **인터프리터의 기본 추출 필터를 `fully_trusted`로 되돌려 놓고** 본다. 3.14부터 인자 없는
+    기본이 `data`라, 로더의 명시 `filter="data"`를 지워도 위 검사들은 3.14에서 전부 초록이다
+    (3.11~3.13의 기본은 `fully_trusted`다 — tarfile 문서). 이 검사는 로더 **자신의** 인자가 유일한
+    방어일 때도 거부하는지를 어느 판에서든 본다. 필터 이름이 아니라 결과(예외 종류 · 멤버
+    미생성)를 단언한다. 하드 링크가 가리킬 dest 밖 파일은 실제로 둔다(없으면 링크가 안 생긴다).
+    ⚠ 인터프리터 필터 자체의 우회 결함은 이 검사가 못 본다 — 로더가 필터를 거는지까지만 본다.
+    """
+    monkeypatch.setattr(
+        tarfile.TarFile, "extraction_filter", staticmethod(tarfile.fully_trusted_filter)
+    )
+    (tmp_path / "outside.txt").write_text("outside\n", encoding="utf-8")
+    info = member()
+    archive = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        t.addfile(info)
+
+    with pytest.raises(task_loader.UnsafeArchiveError):
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+    assert not os.path.lexists(tmp_path / "out" / info.name), "거부한 멤버가 dest에 생겼다"
+
+
 def test_read_description_returns_text_or_none(tmp_path: Path) -> None:
     task = tmp_path / "task"
     task.mkdir()
@@ -131,4 +181,70 @@ def test_load_task_requires_the_repo_archive(tmp_path: Path) -> None:
     (task / task_loader.DESCRIPTION_FILENAME).write_text("x\n", encoding="utf-8")
 
     with pytest.raises(FileNotFoundError):
+        task_loader.load_task(task, tmp_path / "work")
+
+
+class _LegacyTarfile:
+    """CPython 3.11.0~3.11.3의 `tarfile` **모양**을 흉내 내는 대역(PEP 706 이전) — 시뮬레이션이다.
+
+    실제 3.11.0~3.11.3 인터프리터로 돌린 것이 아니다 — 로컬·CI는 그 패치를 안 돈다(CI의
+    `python-version: "3.11"`은 최신 3.11.x로 풀린다). 로더가 만지는 이름만 옛 모양으로 바꾼다:
+    `data_filter`·`FilterError` 등이 없고 `TarFile.extract()`가 `filter=`를 `TypeError`로 거부한다
+    (docs.python.org/3.11/library/tarfile.html: *Changed in version 3.11.4: Added the filter
+    parameter*). 두 오류 문구는 PR #343 리뷰 M-1이 로컬 3.11.0에서 본 문구에 맞췄다.
+    """
+
+    _ABSENT = frozenset({"data_filter", "tar_filter", "fully_trusted_filter", "FilterError"})
+
+    def open(self, *args: object, **kwargs: object):  # noqa: A003, ANN201 - 모듈 API 이름
+        tar = tarfile.open(*args, **kwargs)
+        real_extract = tar.extract
+
+        def extract(member, path="", set_attrs=True, *, numeric_owner=False, **rest):  # noqa: ANN001, ANN202
+            if rest:
+                raise TypeError(
+                    f"TarFile.extract() got an unexpected keyword argument '{next(iter(rest))}'"
+                )
+            return real_extract(member, path, set_attrs, numeric_owner=numeric_owner)
+
+        tar.extract = extract
+        return tar
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        if name in self._ABSENT:
+            raise AttributeError(f"module 'tarfile' has no attribute '{name}'")
+        return getattr(tarfile, name)
+
+
+def test_safe_extract_refuses_an_interpreter_without_extraction_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """추출 필터가 없는 인터프리터(3.11.0~3.11.3 — `_LegacyTarfile` 시뮬레이션)에서는 **풀기
+    전에** 이유를 대며 거부한다.
+
+    그 거부가 없으면 첫 멤버에서 `TypeError`로 죽고, 그 예외가 올라가며 `except
+    tarfile.FilterError`의 식이 평가돼 `AttributeError`로 **바뀐다** — 원인이 가려지고, 크기·개수
+    상한이 던지는 `UnsafeArchiveError`까지 같은 이유로 가려진다(PR #343 리뷰 M-1). 필터 없이 푸는
+    폴백은 만들지 않는다(대상은 못 믿는 소스다) — dest도 만들지 않는 것으로 「풀기 전」을 고정한다.
+    """
+    archive = tmp_path / "repo-vul.tar.gz"
+    _make_tar(archive, {"a.c": b"int a;\n"})
+    monkeypatch.setattr(task_loader, "tarfile", _LegacyTarfile())
+
+    with pytest.raises(RuntimeError, match=r"3\.11\.4"):
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+    assert not (tmp_path / "out").exists(), "거부했는데 dest를 만들었다"
+
+
+def test_load_task_refuses_an_interpreter_without_extraction_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`load_task`도 같은 거부를 감싸지 않고 그대로 올린다 — 과제 입구에서 원인이 보인다."""
+    task = tmp_path / "task"
+    task.mkdir()
+    _make_tar(task / task_loader.REPO_ARCHIVE_NAME, {"a.c": b"int a;\n"})
+    monkeypatch.setattr(task_loader, "tarfile", _LegacyTarfile())
+
+    with pytest.raises(RuntimeError, match=r"3\.11\.4"):
         task_loader.load_task(task, tmp_path / "work")

@@ -4,10 +4,18 @@ Level 1 과제는 `repo-vul.tar.gz`(취약 저장소) + `description.txt`(취약
 `README.md` + `submit.sh`로 온다. 이 모듈은 그중 저장소를 **안전하게** 풀어
 `preprocess.run`이 받을 `source_root`를 만들고, 설명 텍스트를 읽어 돌려준다.
 
-**대상은 신뢰 못 하는 소스다.** tar 해제는 stdlib의 `data` 필터(PEP 706, 3.11.4+ · 이 저장소는
-3.14)로 경로 이탈(zip-slip)과 dest 밖을 가리키는(절대·외부) 링크·장치/특수 파일을 막고, 절대경로
+**대상은 신뢰 못 하는 소스다.** tar 해제는 stdlib의 `data` 필터(PEP 706 — 3.11.4에서 들어왔다)로
+경로 이탈(zip-slip)과 dest 밖을 가리키는(절대·외부) 링크·장치/특수 파일을 막고, 절대경로
 멤버는 dest 안으로 눌러 담는다 — 손으로 링크·`..`를 훑는 것보다 정확하다. 그 위에 **크기·개수
 상한**을 더해 디스크 폭탄을 막는다(`data` 필터는 해제 크기를 안 묶는다 — 작은 gz가 거대하게 풀린다).
+
+**Python 하한은 3.11.4다**(`pyproject.toml`의 `requires-python`). 그 선언은 설치 도구(pip)가
+설치할 때 읽는 메타데이터라 체크아웃에서 도는 하네스(`python -m pytest`·`python -m src.cli`)를
+막지 못한다 — 그래서 그 아래 인터프리터(`filter=`가 없다)에서는 `safe_extract`가 풀기 **전에**
+`RuntimeError`로 거부한다. 필터 없이 푸는 폴백은 없다.
+⚠ 하한은 API가 생긴 판이지 필터에 결함이 없는 판이 아니다 — `data` 필터 자체의 링크 우회가
+패치로 고쳐져 왔다(3.11 변경 기록: 3.11.13의 gh-135034 · 2026-09-30 조회 때 미출시 절의
+gh-157190). 신뢰 못 하는 과제는 최신 패치 인터프리터로 푼다.
 """
 
 import tarfile
@@ -39,6 +47,12 @@ def safe_extract(tar_path: Path, dest: Path) -> Path:
     ⚠ 상한을 넘겨 중단하면 그 앞 멤버들은 dest에 남는다 — 호출자는 새 `work_dir`을 쓴다
     (`load_task`가 그렇게 부른다). 같은 dest를 재사용하는 호출자는 남은 부분 파일을 물려받는다.
     """
+    # 추출 필터가 없는 인터프리터(3.11.4 전)에서는 풀기 **전에**(dest도 만들기 전에) 멈춘다 —
+    # 모듈 docstring. 가용성은 버전이 아니라 `data_filter` 유무로 본다(tarfile 문서가 권하는 판별).
+    if not hasattr(tarfile, "data_filter"):
+        raise RuntimeError(
+            "safe_extract는 tarfile 추출 필터(PEP 706)가 필요하다 — Python 3.11.4 이상에서만 돈다"
+        )
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     total = 0
