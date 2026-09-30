@@ -594,3 +594,169 @@ def test_hybrid_without_retrieval_roles_fails_at_config_load(tmp_path: Path) -> 
 
     with pytest.raises((ConfigError, ValueError), match="reranker"):
         load_config("dev_hybrid", config_dir=config_dir)
+
+
+# --- D93 (#336): 후보 풀은 대상 근처부터 --------------------------------------------------
+#
+# 예전 `_collect`는 경로 정렬 순서의 앞 `max_chunks`개였다. 알파벳 앞쪽 폴더(`0early/`)가
+# 상한을 다 먹어 대상 근처 조각이 풀에 못 들었다(2026-09-29 vast 실측: qemu·suricata에서 0).
+
+_POOL_INDEX = {
+    "version": "index-v1",
+    "files": ["net/target.c", "lib/callee.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "handle", "file": "net/target.c", "line_start": 1, "line_end": 3},
+        {"name": "helper", "file": "lib/callee.c", "line_start": 1, "line_end": 2},
+    ],
+    "calls": [{"caller": "handle", "callee": "helper", "file": "net/target.c", "line": 2}],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+
+
+def _pool_repo(root: Path) -> Path:
+    def write(rel: str, lines: int) -> None:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stem = rel.replace("/", "_").replace(".", "_")
+        path.write_text("\n".join(f"int {stem}_{i};" for i in range(lines)), encoding="utf-8")
+
+    write("0early/a.c", 10)          # 경로 정렬로는 맨 앞 — 예전 풀을 먹던 자리
+    write("0early/b.c", 10)
+    write("net/target.c", 80)        # 1–40줄 조각은 본문과 겹쳐 빠지고 41–80줄이 같은 파일 조각
+    write("lib/callee.c", 10)        # 대상이 부르는 helper의 정의 파일 — 그래프 이웃
+    write("net/sibling.c", 10)       # 같은 폴더
+    write("zz/tool.py", 10)          # C 대상에는 안 섞인다
+    return root
+
+
+def _pool_graph(tmp_path: Path) -> GraphIndex:
+    path = index_output_path(tmp_path / "artifacts", RUN_ID)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_POOL_INDEX), encoding="utf-8")
+    return GraphIndex(path)
+
+
+def _pool_query() -> Query:
+    target = Location(file="net/target.c", symbol="handle", line_start=1, line_end=3)
+    return Query(run_id=RUN_ID, target=target, keywords=[], budget_tokens=4096)
+
+
+def test_the_collect_pool_fills_from_the_target_neighbourhood_first(tmp_path: Path) -> None:
+    """같은 파일 → 그래프 이웃 → 같은 폴더 → 나머지. 상한 3이면 알파벳 앞 폴더는 못 든다."""
+    root = _pool_repo(tmp_path / "repo")
+    retriever, _, _ = _retriever(root, graph=_pool_graph(tmp_path), max_chunks=3)
+
+    picked = retriever._collect(_pool_query())
+
+    assert [(c.file, c.line_start) for c in picked] == [
+        ("net/target.c", 41),
+        ("lib/callee.c", 1),
+        ("net/sibling.c", 1),
+    ]
+
+
+def test_the_collect_pool_keeps_the_rest_in_path_order_and_drops_other_languages(
+    tmp_path: Path,
+) -> None:
+    """상한이 넉넉하면 나머지 층은 경로 순서 그대로이고, C 대상에 `.py` 조각은 없다."""
+    root = _pool_repo(tmp_path / "repo")
+    retriever, _, _ = _retriever(root, graph=_pool_graph(tmp_path), max_chunks=100)
+
+    files = [c.file for c in retriever._collect(_pool_query())]
+
+    assert files == ["net/target.c", "lib/callee.c", "net/sibling.c", "0early/a.c", "0early/b.c"]
+
+
+def test_the_collect_pool_still_prefers_the_same_file_and_folder_without_a_graph(
+    tmp_path: Path,
+) -> None:
+    """인덱스가 없으면 그래프 층만 빈다 — 같은 파일·폴더 우선은 그대로다."""
+    root = _pool_repo(tmp_path / "repo")
+    retriever, _, _ = _retriever(root, max_chunks=2)
+
+    picked = retriever._collect(_pool_query())
+
+    assert [c.file for c in picked] == ["net/target.c", "net/sibling.c"]
+
+
+def _write_lines(root: Path, rel: str, lines: int) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stem = rel.replace("/", "_").replace(".", "_")
+    path.write_text("\n".join(f"int {stem}_{i};" for i in range(lines)), encoding="utf-8")
+
+
+def test_a_huge_target_file_does_not_starve_the_neighbourhood(tmp_path: Path) -> None:
+    """같은 파일은 대상 줄 가까운 순이고, 상한의 절반만 먼저 — 나머지 층이 굶지 않는다."""
+    root = tmp_path / "repo"
+    _write_lines(root, "0early/a.c", 10)
+    _write_lines(root, "net/big.c", 400)       # 40줄 조각 10개 — 201줄 조각은 본문과 겹쳐 빠짐
+    _write_lines(root, "net/sibling.c", 10)
+    retriever, _, _ = _retriever(root, max_chunks=4)
+    target = Location(file="net/big.c", symbol="handle", line_start=201, line_end=203)
+
+    query = Query(run_id=RUN_ID, target=target, keywords=[], budget_tokens=4096)
+
+    picked = retriever._collect(query)
+
+    assert [(c.file, c.line_start) for c in picked] == [
+        ("net/big.c", 161),
+        ("net/big.c", 241),
+        ("net/sibling.c", 1),
+        ("0early/a.c", 1),
+    ]
+
+
+def test_a_cpp_target_keeps_headers_and_drops_other_languages(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _write_lines(root, "net/target.cpp", 80)
+    _write_lines(root, "inc/api.hh", 10)
+    _write_lines(root, "inc/old.h", 10)
+    _write_lines(root, "zz/tool.py", 10)
+    retriever, _, _ = _retriever(root, max_chunks=100)
+    target = Location(file="net/target.cpp", symbol="handle", line_start=1, line_end=3)
+
+    files = {c.file for c in retriever._collect(
+        Query(run_id=RUN_ID, target=target, keywords=[], budget_tokens=4096))}
+
+    assert files == {"net/target.cpp", "inc/api.hh", "inc/old.h"}
+
+
+def test_a_folder_prefix_is_not_the_same_folder(tmp_path: Path) -> None:
+    """`net2/`·`net/sub/`는 `net/`과 같은 폴더가 아니다 — 경로 순서의 나머지 층이다."""
+    root = _pool_repo(tmp_path / "repo")
+    _write_lines(root, "net2/x.c", 10)
+    _write_lines(root, "net/sub/y.c", 10)
+    retriever, _, _ = _retriever(root, max_chunks=100)
+
+    files = [c.file for c in retriever._collect(_pool_query())]
+
+    assert files == [
+        "net/target.c", "net/sibling.c", "0early/a.c", "0early/b.c", "lib/callee.c",
+        "net/sub/y.c", "net2/x.c",
+    ]
+
+
+def test_a_call_outside_the_target_body_is_not_a_neighbour(tmp_path: Path) -> None:
+    """피호출자 갈래는 대상 **본문 안** 호출만 — 같은 파일 다른 함수의 호출은 안 친다."""
+    index = {
+        **_POOL_INDEX,
+        "files": ["net/target.c", "lib/callee.c", "lib/far.c"],
+        "symbols": [
+            *_POOL_INDEX["symbols"],
+            {"name": "other", "file": "net/target.c", "line_start": 10, "line_end": 12},
+            {"name": "far", "file": "lib/far.c", "line_start": 1, "line_end": 2},
+        ],
+        "calls": [
+            *_POOL_INDEX["calls"],
+            {"caller": "other", "callee": "far", "file": "net/target.c", "line": 11},
+        ],
+    }
+    path = index_output_path(tmp_path / "artifacts", RUN_ID)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(index), encoding="utf-8")
+
+    assert GraphIndex(path).neighbor_files(_pool_query().target) == ["lib/callee.c"]

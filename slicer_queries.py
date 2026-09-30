@@ -1,6 +1,8 @@
 """Joern queries for the offline slicer; no harness imports or generated model queries.
 
-Each request is one Scala block: candidate locals never survive in the REPL.
+Each builder returns one self-contained Scala block: candidate locals never survive in the
+REPL. The per-candidate builders (flows, context, backward) are also the source that
+`slicer_library` compiles once per session into functions; the run sends calls to those.
 Most stages return their JSON as base64 in the block's result, since println can go to
 server logs. The candidate-enumeration stages (`FILE_TRANSPORT_STAGES`) instead write the
 payload to a file and return only its byte count -- their payload can outgrow what the REPL
@@ -135,14 +137,57 @@ def joined_literal(value: str, size: int = JVM_STRING_LIMIT // 4) -> str:
     return "List(" + ", ".join(literal(part) for part in parts) + ").mkString"
 
 
-def envelope(stage: str, body: str) -> str:
+# Phase timing for the per-candidate stages (slicer performance investigation). `mark(k)` adds
+# the time since the previous mark to phase k, so marks sit only BETWEEN strict statements
+# (built with `.l`/`.toList`) -- a lazy traversal forced later would land in the wrong phase.
+# `within(k)` is inclusive (overlaps the marks) and is named `*_inclusive` for that reason.
+# The client unwraps `value` and writes the rest to the progress log only (`Slicer.query`):
+# timings differ run to run, so they must never reach the checkpoint or `slices`.
+TIMING = """
+val __timings = scala.collection.mutable.LinkedHashMap.empty[String, Long]
+val __counts = scala.collection.mutable.LinkedHashMap.empty[String, Long]
+val __start = System.nanoTime
+var __last = __start
+def mark(k: String): Unit = {
+  val now = System.nanoTime
+  __timings(k) = __timings.getOrElse(k, 0L) + (now - __last)
+  __last = now
+}
+def count(k: String, n: Long = 1): Unit = __counts(k) = __counts.getOrElse(k, 0L) + n
+def within[A](k: String)(f: => A): A = {
+  val s = System.nanoTime
+  val r = f
+  __timings(k) = __timings.getOrElse(k, 0L) + (System.nanoTime - s)
+  r
+}
+"""
+TIMED_RESULT = (
+    "ujson.Obj(\"value\" -> result, "
+    "\"timings_ms\" -> ujson.Obj.from(__timings.map { case (k, v) => k -> ujson.Num(v / 1e6) }), "
+    "\"counts\" -> ujson.Obj.from(__counts.map { case (k, v) => k -> ujson.Num(v.toDouble) }), "
+    "\"body_ms\" -> ujson.Num((System.nanoTime - __start) / 1e6))"
+)
+TIMED_KEYS = frozenset({"value", "timings_ms", "counts", "body_ms"})
+
+
+def statements(body: str, *, timed: bool = False) -> str:
+    """The envelope's Scala statements up to `result`; slicer_library reuses them verbatim."""
     return (
-        "{ import io.shiftleft.semanticcpg.language._; "
+        "import io.shiftleft.semanticcpg.language._; "
         "import io.joern.dataflowengineoss.language._; "
         "import io.shiftleft.codepropertygraph.generated.nodes; "
-        f"val result = {{ {body} }}; "
-        f'"__SLICER_{stage}__" + java.util.Base64.getEncoder.encodeToString('
-        "ujson.write(result).getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "
+        + (TIMING if timed else "")
+        + f"val result = {{ {body} }}; "
+    )
+
+
+def envelope(stage: str, body: str, *, timed: bool = False) -> str:
+    return (
+        "{ "
+        + statements(body, timed=timed)
+        + f'"__SLICER_{stage}__" + java.util.Base64.getEncoder.encodeToString('
+        + f"ujson.write({TIMED_RESULT if timed else 'result'})"
+        + ".getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "
         '"__END_SLICER__" }'
     )
 
@@ -311,6 +356,9 @@ CASE_A_CALL_LIMIT = 1
 # A repo past the cap gets bounded coverage, not a failed slice. NOTE: `.take` keeps the first N
 # in CPG traversal order, which is not a documented/stable order, so a capped run's coverage is
 # an *unspecified* first-N subset (see known_limitations / measurement_notes, and D77 §4.5).
+# Since D90 (#318) `api` is sorted write-context-first before its `.take`, so the kept set is
+# "hot methods first", but within each layer (hot, then the rest) the cut is still that
+# unspecified traversal order. `readers` is not sorted.
 # The stdout-overrun above is the pre-#250 mechanism; #250 moved the payload to a file, so the
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at
@@ -332,10 +380,27 @@ def candidates_a_query() -> str:
         "case_a",
         LOCATION
         + f"""
+      // D90 (#318): write-context-first ordering before the flat cap. Methods that WRITE memory
+      // ("hot": call a WRITER/EXEC sink, OR assign into an index/field/deref target -- the same
+      // write-context as case_b's indexWrites/derefWrites) are kept ahead of the rest. Plain
+      // field reads are excluded -- too common to discriminate. This is a REORDER, not a
+      // starvation fix in general: same cap, same count. If |hot ∩ api| <= CAP every hot method
+      // survives the cap; if it exceeds CAP the cut falls inside the hot layer, again in CPG
+      // traversal order, and every non-hot method is dropped. hotIds is computed once (Set), so
+      // the sort key is an O(1) lookup. Only Long ids are materialized (no node lists), so the
+      // uncapped `.l` here costs time, not the memory the case_b MCAP guards; a call whose
+      // enclosing method is null (malformed/partial CPG) is skipped, as in case_b's budget().
+      val hotIds = (cpg.call.name("({WRITERS}|{EXEC_SINKS})")
+        .filter(c => Option(c.method).isDefined).method.id.l ++
+        cpg.call.nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall
+          .name("<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
+          .nonEmpty).filter(c => Option(c.method).isDefined).method.id.l).toSet
       val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
         .filter(m =>
           cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
-        .filter(_.parameter.size > 0).take({CASE_A_CANDIDATE_CAP}).l
+        .filter(_.parameter.size > 0).l
+        .sortBy(m => if (hotIds.contains(m.id)) 0 else 1)
+        .take({CASE_A_CANDIDATE_CAP})
       val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty)
         .take({CASE_A_CANDIDATE_CAP}).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
@@ -445,14 +510,21 @@ def candidates_b_query(limits: dict[str, int] | None = None) -> str:
     return file_envelope("case_b", body)
 
 
-def method_selector(scopes: list[dict]) -> str:
-    predicates = [
-        f"(m.filename == {literal(s['file'])} && "
-        f"m.fullName == {literal(s['full_name'])} && "
-        f"m.lineNumber.getOrElse(-1) == {s['line']})"
-        for s in scopes
-    ]
-    return "cpg.method.internal.filter(m => " + " || ".join(predicates) + ").l"
+def method_selector(scopes: list[dict] | str) -> str:
+    """Select the candidate's methods. A str instead names a Scala `List[(file, fullName, line)]`
+    value (slicer_library's parameter), so both forms share the one predicate below."""
+
+    def match(file: str, full_name: str, line: object) -> str:
+        return (f"(m.filename == {file} && m.fullName == {full_name} && "
+                f"m.lineNumber.getOrElse(-1) == {line})")
+
+    if isinstance(scopes, str):
+        predicate = f"{scopes}.exists {{ case (f, fn, l) => {match('f', 'fn', 'l')} }}"
+    else:
+        predicate = " || ".join(
+            match(literal(s["file"]), literal(s["full_name"]), s["line"]) for s in scopes
+        )
+    return f"cpg.method.internal.filter(m => {predicate}).l"
 
 
 def flows_query(
@@ -469,8 +541,10 @@ def flows_query(
         + f"""
       val methods = {method_selector(scopes)}
       require(methods.nonEmpty, "Candidate method disappeared")
+      mark("methods")
       val srcs = methods.sortBy(m => (m.filename, m.lineNumber.getOrElse(-1), m.fullName))
         .flatMap(_.parameter.l.sortBy(p => (p.index, p.code, p.typeFullName)))
+      mark("sources")
       def nodeKey(n: nodes.AstNode): String = ujson.write(ujson.Arr(
         n.location.filename, n.lineNumber.getOrElse(-1), n.columnNumber.getOrElse(-1), n.code))
       // Recall-preserving hybrid (#252 review HIGH-2/3). Inside the candidate methods EVERY
@@ -483,6 +557,7 @@ def flows_query(
       // flows uses flat `.take(cap)` here, candidates_b uses per-method round-robin budget() (#311)
       // -- do not "sync" that away (test_flows_and_case_b_share pins only the shared name/filter).
       val localSinks = methods.flatMap(m => m.ast.isCall.argument.l)
+      mark("local_sinks")
       val writerSinks = cpg.call.name("({WRITERS})").take({CASE_B_WRITER_CAP}).l
       val execSinks = cpg.call.name("({EXEC_SINKS})").take({CASE_B_EXEC_CAP}).l
       val indexWrites = cpg.call.nameExact("<operator>.indirectIndexAccess")
@@ -500,14 +575,18 @@ def flows_query(
       val sinksCapped = globalArgs.size > {FLOWS_SINK_CAP}
       val globalKept = globalArgs.sortBy(n => (
         nodeKey(n), n.argumentIndex, n.method.fullName)).take({FLOWS_SINK_CAP})
+      mark("global_sinks")
       val sinks = (localSinks ++ globalKept)
         .filter(n => Option(n.method).nonEmpty).distinct
         .sortBy(n => (nodeKey(n), n.argumentIndex, n.method.fullName))
+      mark("sink_sort")
       // Each invocation builds an engine. Batch by enclosing method instead of
       // rebuilding it for every argument; the cap stops subsequent method batches.
       val batches = sinks.groupBy(_.method).toList.sortBy {{ case (m, _) =>
         (m.filename, m.lineNumber.getOrElse(-1), m.fullName)
       }}.map(_._2)
+      count("batches", batches.size)
+      mark("batches")
       // distinctBy path (#252 review): the broadened local sink set can yield several flows
       // with an identical location sequence (same evidence); deduping by serialized path both
       // removes the redundant flow and makes the order deterministic (a sort tie between two
@@ -516,6 +595,7 @@ def flows_query(
         batch.iterator.reachableByFlows(srcs)(flowContext).toList
           .distinctBy(p => ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))
           .sortBy(p => ujson.write(ujson.Arr.from(p.elements.map(nodeKey))))){limit}.toList
+      mark("dataflow")
       val kept = {retained}
       // Canonical line set (#252 review): the dense local sink set makes reachableByFlows
       // return path variants whose element ORDER differs across fresh CPGs, so the raw
@@ -523,10 +603,12 @@ def flows_query(
       // a deduped, sorted set -- same points, reproducible bytes. (Slice points already matched.)
       val keptLines = kept.flatMap(_.elements).distinctBy(n => nodeKey(n))
         .sortBy(n => nodeKey(n)).map(loc)
+      mark("lines")
       ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
         "sinks_capped" -> sinksCapped, "sinks_kept" -> sinks.size,
         "lines" -> ujson.Arr.from(keptLines))
     """,
+        timed=True,
     )
 
 
@@ -540,22 +622,40 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
       val points = ujson.read({encoded}).arr.map(p => (p(0).str, p(1).num.toInt)).toSet
       def filename(n: nodes.AstNode): String = n.location.filename.replace('\\\\', '/')
         .stripPrefix({literal(repo.rstrip("/") + "/")}).stripPrefix("./")
-      val relevantMethods = cpg.method.internal.filter(m => points.exists {{ case (f, line) =>
-        filename(m) == f && m.lineNumber.exists(_ <= line) &&
-          m.lineNumberEnd.forall(_ >= line)
+      // A method is relevant when some point of its file lies in [lineNumber, lineNumberEnd].
+      // Points are grouped by file once and each method's filename is built once; the smallest
+      // point line >= the method's start decides (no start -> out, no end -> open-ended).
+      val pointLines: Map[String, Array[Int]] = points.groupBy(_._1).map {{ case (f, ps) =>
+        f -> ps.toArray.map(_._2).sorted }}
+      val relevantMethods = cpg.method.internal.filter(m => m.lineNumber.exists {{ lineStart =>
+        val start: Int = lineStart
+        pointLines.get(filename(m)).exists {{ lines =>
+          val found = java.util.Arrays.binarySearch(lines, start)
+          val first = if (found >= 0) found else -found - 1
+          first < lines.length && m.lineNumberEnd.forall(_ >= lines(first))
+        }}
       }}).l
+      mark("relevant_methods")
       val all = relevantMethods.flatMap(_.ast.l).filter(sourceNode).distinct
+      mark("method_ast")
       val selected = scala.collection.mutable.Set.empty[nodes.AstNode]
       selected ++= all.filter(n => points.contains((filename(n),
         n.lineNumber.getOrElse(-1))))
+      mark("initial_select")
       var changed = true
       while (changed) {{
         val before = selected.size
+        count("iterations")
         val parents = selected.toList.flatMap(ancestors)
-        val methods = (selected.toList ++ parents).collect {{ case m: nodes.Method => m }}
-        val controls = parents.collect {{ case c: nodes.ControlStructure => c }}
+        // `parents` repeats a method/control once per selected descendant, and each copy below
+        // walks its whole AST again (zlib sample: 58% of context time). The walks only add to
+        // the `selected` set, so distinct changes the cost, not the result.
+        val methods = (selected.toList ++ parents).collect {{ case m: nodes.Method => m }}.distinct
+        val controls = parents.collect {{ case c: nodes.ControlStructure => c }}.distinct
         selected ++= parents
+        mark("ancestors")
         selected ++= controls.flatMap(_.condition.ast.l)
+        mark("conditions")
         // Labels/jumps are siblings in the AST, not ancestors of data-flow nodes.
         // Retain their guards on the next fixed-point pass as well.
         selected ++= controls.flatMap(_.ast.l).filter(n =>
@@ -564,12 +664,15 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
               Set("BREAK", "CONTINUE", "GOTO").contains(c.controlStructureType)
             case _ => false
           }}))
+        mark("control_jumps")
         selected ++= methods.flatMap(_.ast.l).filter(n =>
           n.isInstanceOf[nodes.JumpTarget] || (n match {{
             case c: nodes.ControlStructure => c.controlStructureType == "GOTO"
             case _ => false
           }}))
+        mark("method_jumps")
         selected ++= methods.flatMap(_.ast.isReturn.l)
+        mark("returns")
         val ids = selected.toList.flatMap {{
           case i: nodes.Identifier => List(i)
           // Only expressions we actually need may contribute descendants. A type
@@ -584,13 +687,16 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
         }}
         selected ++= declarations
         val declarationIds = declarations.map(_.id).toSet
+        mark("declarations")
         // 퍼지 파싱(특히 C++)이 인자 없는 assignment 노드를 남기면 `a.target`(= argument(1))이
         // 빈 iterator에서 next로 죽는다(#219 후속, sample_40 context 단계 NoSuchElement).
         // target이 실재하는 assignment만 본다 — 인자 없는 노드는 선언을 참조할 수도 없다.
         selected ++= cpg.assignment.filter(a => a.argument.argumentIndex(1).nonEmpty &&
           a.target.ast.isIdentifier.refsTo.exists(d => declarationIds.contains(d.id))).l
+        mark("assignments")
         changed = selected.size != before
       }}
       ujson.Arr.from(selected.toList.map(loc))
     """,
+        timed=True,
     )

@@ -33,9 +33,9 @@ ROLE = Role.CRITIC
 OUTPUT_SCHEMA = DecisionDraft
 
 # 근거 본문을 FACTS·EVIDENCE에 싣는 것은 그 본문을 **읽도록 쓰인 프롬프트 버전**에만 한다.
-# v3만 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
+# v3·v4만 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4"})
 
 # 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와
 # 같은 꼴로 읽히도록 맞춘다 — 절단 사유는 어느 상한이 걸렸는지를 이름으로 말해야 한다.
@@ -113,8 +113,8 @@ def _ask_model(
 ) -> Decision:
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
-    # content-aware 버전(v3)일 때만 payload 본문을 읽어 싣는다. 그 외 버전은 본문 없이
-    # 종전과 동일(#237 HIGH-1: 배선은 v3 경로에만, v1은 바이트 동일).
+    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽어 싣는다.
+    # 그 외 버전은 본문 없이 종전과 동일(#237 HIGH-1 — v1은 바이트 동일).
     bodies = (
         evidence_summaries(evidences, ctx.read_payload)
         if version in _CONTENT_AWARE_VERSIONS
