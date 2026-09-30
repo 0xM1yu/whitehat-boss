@@ -251,13 +251,14 @@ _RUNTIME_TOOLS = frozenset({"asan", "gdb", "poc"})
 # (`exited with code 052` = 42) — 이 숫자를 exit code로 읽지 않는다.
 # 신호 정지는 대상이 스레드를 한 번이라도 만들었으면 `Thread N "이름" received signal`로 찍힌다
 # (join 뒤 main이 죽어도 — 2026-10-01 실측, 12.1·15.1. `terminated with`는 그래도 `Program`이었다).
-# 이름(스레드 comm)은 따옴표 안에 날것으로 찍혀 따옴표를 품을 수 있으므로 줄 안의 아무 글자로
-# 받되 64자로 묶는다 — 묶지 않으면 대상이 찍은 긴 줄에서 입력 길이의 제곱으로 느려진다. 스레드
+# 이름(스레드 comm, 최대 15바이트)은 따옴표 안에 날것으로 찍혀 따옴표·제어 문자를 품을 수 있고,
+# 이름 안의 CR은 `_execute`의 text 모드 캡처가 LF로 바꾼다 — 그래서 줄바꿈까지 포함한 아무 글자로
+# 받되 64자로 묶는다. 묶지 않으면 대상이 찍은 긴 줄에서 입력 길이의 제곱으로 느려진다. 스레드
 # 번호는 정수만 봤다(`1.2` 꼴은 인페리어가 여럿일 때이고 이 배치에서는 안 생긴다).
 _GDB_TARGET_LIFECYCLE = re.compile(
     r"\[Inferior \d+ \(process \d+\) exited (?:normally|with code [0-7]+)\]"
     r"|Program (?:received|terminated with) signal \S+"
-    r'|Thread [\d.]+(?: "[^\n]{0,64}")? received signal \S+'
+    r'|Thread [\d.]+(?: "[\s\S]{0,64}")? received signal \S+'
 )
 
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
