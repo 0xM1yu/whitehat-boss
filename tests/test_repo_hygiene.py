@@ -30,10 +30,12 @@ Windows에서 파이썬이 텍스트 모드로 파일을 쓰면(`Path.write_text
 
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
+from packaging.specifiers import SpecifierSet
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -462,3 +464,43 @@ def test_the_workspace_ignore_rule_names_itself_in_its_own_comment() -> None:
         f"  그 블록이 든 패턴: {patterns}\n"
         "무엇이 거기 쌓이는지와 왜 추적하지 않는지를 이 규칙 자신의 주석에 적는다."
     )
+
+
+def test_the_declared_python_floor_covers_the_tarfile_filter_api() -> None:
+    """선언된 Python 하한이 `task_loader`가 부르는 `tarfile` 추출 필터 API(`filter="data"`)가
+    처음 생긴 패치(3.11.4)와 같다 — `pyproject.toml`의 `requires-python`과 `docs/portability.md`
+    §1 표의 「Python X+」 둘 다.
+
+    명세의 **표기**가 아니라 **뜻**을 묻는다: `packaging`의 `SpecifierSet`으로 「3.11.3(필터 API가
+    없는 마지막 3.11)은 배제하고 3.11.4는 포함하는가」만 본다 — `~=3.11.4`·`==3.11.4`·`>3.11.3`·
+    `>=3.10,>=3.11.4`처럼 같은 뜻의 다른 표기는 초록이다. 하한이 3.11.4보다 낮으면 로더가 첫
+    멤버에서 `TypeError`로 죽는 판(3.11.0~3.11.3)을 지원으로 선언하게 되는데, CI의 `python-version:
+    "3.11"`은 최신 3.11.x로 풀려 그 판을 안 돌므로 선언이 낡아도 CI가 못 본다.
+
+    ⚠ 「3.11.4 포함」은 선언이 문서(`task_loader` docstring·이 표)의 3.11.4와 **같은 수**를 말하게
+    묶는 몫이다 — 하한을 올리기로 하면(예: 3.11.13) 그 둘과 이 검사를 같이 고친다.
+    ⚠ 하한 아래 인터프리터에서 로더가 명확히 거부하는지는 `tests/test_task_loader.py`가 본다 —
+    하네스는 체크아웃에서 돌아서(`python -m pytest`·`python -m src.cli`) `requires-python`이 실행을
+    막지 못한다(설치 도구가 설치할 때만 읽는다). 표 쪽은 행의 **철자**(`| Python X+ |`)를 읽는다 —
+    행 모양을 바꾸면 「못 읽었다」로 빨개진다. 어느 쪽이든 그 판의 필터가 안전한지는 안 묻는다.
+    """
+    declared = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["requires-python"]
+    table = (REPO_ROOT / "docs" / "portability.md").read_text(encoding="utf-8")
+    row = re.search(r"^\|\s*Python\s+(\d+(?:\.\d+)*)\+\s*\|", table, re.MULTILINE)
+    assert row, "`docs/portability.md` §1 표에서 「| Python X+ |」 행을 못 읽었다"
+
+    for where, spec in (
+        ("pyproject.toml의 requires-python", declared),
+        ("docs/portability.md의 「Python X+」", f">={row.group(1)}"),
+    ):
+        allowed = SpecifierSet(spec)
+        assert "3.11.3" not in allowed, (
+            f"{where}({spec!r})가 3.11.3을 허용한다 — `task_loader`의 "
+            "`tar.extract(..., filter=\"data\")`는 3.11.4에서 들어온 API다(PEP 706)."
+        )
+        assert "3.11.4" in allowed, (
+            f"{where}({spec!r})가 3.11.4를 배제한다 — 하한을 올렸으면 `task_loader` docstring·"
+            "`docs/portability.md`·이 검사를 같이 고친다."
+        )
