@@ -623,9 +623,8 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
       def filename(n: nodes.AstNode): String = n.location.filename.replace('\\\\', '/')
         .stripPrefix({literal(repo.rstrip("/") + "/")}).stripPrefix("./")
       // A method is relevant when some point of its file lies in [lineNumber, lineNumberEnd].
-      // Checking every method against every point (and rebuilding filename per pair) was most of
-      // the context time. Same predicate: group points by file once, compute each method's
-      // filename once, and test only the smallest point line >= its start.
+      // Points are grouped by file once and each method's filename is built once; the smallest
+      // point line >= the method's start decides (no start -> out, no end -> open-ended).
       val pointLines: Map[String, Array[Int]] = points.groupBy(_._1).map {{ case (f, ps) =>
         f -> ps.toArray.map(_._2).sorted }}
       val relevantMethods = cpg.method.internal.filter(m => m.lineNumber.exists {{ lineStart =>
