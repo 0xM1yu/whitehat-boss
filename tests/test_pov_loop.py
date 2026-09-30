@@ -301,6 +301,47 @@ def test_pov_loop_repeat_detection_ignores_rationale(ctx: RunContext) -> None:  
     assert reason is PovStopReason.REPEAT_SPEC
 
 
+def _gen_literal_same_bytes(rationale: str) -> PovAction:
+    """`_gen(count=8)`과 **같은 8바이트**(b"AAAAAAAA")를 `literal` hex로 만드는 gen — 세그먼트
+    종류가 repeat이 아니라 literal이라 spec JSON은 다르지만 조립 바이트는 같다."""
+    return PovAction(
+        action="gen",
+        spec=PovSpec(
+            segments=[PovSegment(kind="literal", hex="41" * 8)],
+            rationale=rationale,
+        ),
+        rationale=rationale,
+    )
+
+
+def test_pov_loop_repeat_detection_catches_a_different_encoding(ctx: RunContext) -> None:  # noqa: F811
+    """직전 gen과 **다른 인코딩**(repeat → literal)이라도 조립 **바이트**가 같으면 REPEAT_SPEC이다.
+
+    `_gen(count=8)`은 repeat 세그먼트로, `_gen_literal_same_bytes`는 literal hex로 같은 8바이트
+    (b"AAAAAAAA")를 만든다 — spec JSON은 다르다(kind·필드가 다름). 반복 판정을 spec 표현(세그먼트
+    kind 등)으로 하면 이 둘을 못 잡지만, 조립 바이트로 하면 잡는다. `_run_pov_hops` docstring이
+    약속한 「다른 인코딩·같은 바이트도 잡는다」를 이 케이스가 처음 실제로 문다
+    (`test_pov_loop_repeat_detection_ignores_rationale`은 같은 kind·다른 rationale만 봤다).
+
+    한계: literal↔repeat 두 kind만 본다(int 세그먼트·여러 세그먼트 조합은 안 본다). Fake 도구·
+    dev_fake 경로만 돈다 — 트레이스 필드 전수가 아니다. 세 번째 액션 `submit`은 판정이 바이트가
+    아니라 spec으로 새면 hop1에서 안 걸리고 hop2에서 그 submit으로 SUBMITTED가 되게 해, 변이가
+    `_ScriptedModel`의 마지막-액션 반복에 가려 REPEAT_SPEC로 되살아나지 않게 못 박는다."""
+    scripted = _scripted(
+        ctx,
+        [_gen(count=8), _gen_literal_same_bytes("literal wording"),
+         PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    poc, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    # hop1(literal)이 hop0(repeat)과 같은 바이트라 여기서 선다
+    assert reason is PovStopReason.REPEAT_SPEC
+    assert poc == b"AAAAAAAA"  # hop0(repeat)의 PoC가 최종 후보로 남는다
+
+
 def test_pov_loop_runs_inspect_then_submit(ctx: RunContext) -> None:  # noqa: F811
     """inspect 홉이 도구를 돌리고 submit으로 끝난다. gen이 없으면 최종 PoC가 없어 POV_SKIPPED다."""
     scripted = _scripted(
@@ -364,6 +405,54 @@ def test_pov_loop_reraises_a_server_side_gateway_error(ctx: RunContext) -> None:
 
     with pytest.raises(ModelGatewayError):
         runner._run_pov_hops(scripted, state, finding, capsule)
+
+
+def test_pov_hop_join_key_matches_between_model_call_and_pov_hop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """`PovHop.hop`(→ `ctx.call_model(hop=...)` → `model_call.data['hop']`)과 `POV_HOP.data['hop']`
+    (러너 `_run_pov_hops`의 로컬 `hop` 변수)은 **같은 홉의 조인 키**라고 문서가 약속한다
+    (`PovHop`·`_call_hop` docstring — `model_call`의 (subject_id, role, hop)이 조인 키). 두 값이
+    각자 다른 변수(`prev.hop + 1` vs 로컬 `while` 카운터)에서 나오므로 어긋나도 루프 동작 자체는
+    안 깨진다 — 그래서 이 계약은 hop별로 두 이벤트의 `hop`을 직접 대조해야만 잡힌다."""
+    scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    pov_hops = [h.data["hop"] for h in _hops(scripted)]
+    model_calls = [
+        e.data["hop"]
+        for e in scripted.trace.events
+        if e.kind is EventKind.MODEL_CALL and e.data.get("role") == Role.POV.value
+    ]
+    assert pov_hops == [0, 1]
+    assert model_calls == pov_hops, (
+        f"model_call.hop={model_calls} != pov_hop.hop={pov_hops} — 같은 홉을 가리켜야 한다"
+    )
+
+
+def test_pov_hop_event_tool_ok_reflects_a_failing_tool_directly(ctx: RunContext) -> None:  # noqa: F811
+    """`POV_HOP` 트레이스 이벤트 자신의 `tool_ok`가 실패한 도구 결과를 **그 필드에서 직접** 반영해야
+    한다 — 모델에게 보내는 관측 문구(`ok=False` in body)가 맞는 것과는 별개다. 그 문구는
+    `_pov_observation`이 같은 `evidence`에서 독립적으로 다시 만들므로, `_emit_pov_hop`이 자기
+    `data['tool_ok']`를 하드코딩해도 문구 쪽 검사는 못 잡는다."""
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    state.workdirs[finding.finding_id] = "no_such_target_dir"
+
+    runner._run_pov_hops(ctx, state, finding, capsule)
+
+    hop0 = _hops(ctx)[0]
+    assert hop0.data["action"] == "gen"
+    # gen 홉은 `poc` 도구를 돌린다 — `POV_HOP.tool`이 그 도구를 **직접** 실어야 한다. gen의
+    # `tool="poc"`를 `"build"`로 바꾸는 변이(M16)가 여기서 죽는다: 이 스위트의 두 workdir(정상
+    # 트리아지·없는 디렉터리)에서는 poc·build가 같은 부울로 귀결돼 `tool_ok`만으론 못 가른다.
+    assert hop0.data["tool"] == "poc"
+    assert hop0.data["tool_ok"] is False, (
+        f"실패한 도구 호출인데 POV_HOP.tool_ok={hop0.data['tool_ok']!r}다"
+    )
 
 
 def test_pov_classify_exception_follows_the_additive_droppable_contract() -> None:
