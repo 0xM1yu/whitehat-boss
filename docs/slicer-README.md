@@ -122,6 +122,7 @@ v1과 분석 의미 및 필드가 다르므로 `slice_version`은 `slice-v2`다.
 | `run_signature` | 원본 파일 bytes SHA-256 목록·절대경로·배포 코드 해시·설정·Joern 버전·계약 버전의 해시 |
 | `candidate_manifest` | 모든 후보의 ID·case·entry·정확한 selector·선정 이유·인자·anchor를 후보 키로 조회 |
 | `slices` | 완료한 후보를 클러스터링한 결과. 실패한 미완성 후보는 넣지 않음. ⚠ **`partial`과 `[]`의 조합은 두 가지를 담는다** — (가) CPG는 만들어졌고 슬라이스가 0건, (나) CPG 준비 중 StackOverflowError 로 **CPG 자체가 없다**. `status` 문자열만으로는 안 갈린다. **가르는 것은 `joern_engine_config`다** — (나)는 `null`이다(후보 카운터도 `null`). 비교표에 넣을지 정하는 쪽은 `status != "failed"` 가 아니라 그것을 본다 |
+| `shard` | `--shard I/N` 조각일 때만 `{index, count}`. 있으면 전체 결과가 아니다 — 아래 「한 repo를 샤드로 나누기」 |
 | `attempts` | 체크포인트 사용 시 시도별 시작·종료·오류·카운터·서버 정보. 강제 종료 시 ended는 null |
 | `measurement_notes`, `diagnostics`, `known_limitations` | 미측정 사유·관측 로그 및 실패 단계·알려진 한계 |
 
@@ -183,18 +184,32 @@ python slicer.py --repo /work/repo --out /work/results/exported.json \
 
 ### 한 repo를 샤드로 나누기
 
-후보별 질의(flows·backward·context)는 CPG를 읽기만 한다 → 후보를 여러 Joern 서버에 나눠도
-후보 하나의 계산은 같다. 한 repo 안의 후보는 원래 순차라 벽시계 시간이 후보 수에 비례한다.
-⚠ 샤드마다 CPG를 새로 만들므로 **잘린(truncated) 후보는** 샤딩 없는 재실행끼리처럼 흔들릴 수 있다
-([2026-09-15 보고서](experiments/harness/2026-09-15-joern-slicer-v2-atom.md) §4.5 — 절단된 Case A는 CPG를 다시 만들면 같은 경로를 고르지 않는다). 2026-09-29 vast 실측(평가셋 main sample_38 ·
-후보 1,980): 8샤드 병합 ↔ 샤딩 없음 -> 안 잘린 후보 1,965개 전부 동일, 다른 15개는 전부 truncated.
+한 repo 안의 후보는 원래 순차라 벽시계 시간이 후보 수에 비례한다. 후보별 질의(flows·backward·context)는
+CPG를 읽기만 한다 → 여러 Joern 서버에 나눌 수 있다.
 
-- `--shard I/N` → 후보 목록의 위치 p 중 `p % N == I`만 자른다. 체크포인트 필수
+⚠ **샤드 결과가 샤딩 없는 run과 같다는 보장은 없다.** 샤드마다 CPG를 새로 만들고, Joern 데이터플로는
+같은 입력에도 다른 경로를 고를 수 있다 — 샤딩 없는 재실행끼리도 마찬가지다.
+- 잘린 Case A → [2026-09-15 보고서](experiments/harness/2026-09-15-joern-slicer-v2-atom.md) §4.5
+  (절단된 Case A는 CPG를 다시 만들면 같은 경로를 고르지 않는다, Joern 4.0.605 · 재실행 2회)
+- 안 잘린 Case A도 흔들린 예 → 2026-09-30 vast · 평가셋 main sample_33의 `TestKDFa`가 같은 코드
+  두 번 실행끼리 flows 155 ↔ 139줄(#345 본문)
+- 관측 → 2026-09-29 vast · Joern 4.0.636 · 평가셋 main sample_38 한 표본 · 후보 1,980: 8샤드 병합 ↔
+  샤딩 없음 -> 안 잘린 1,965 동일, 다른 15는 전부 truncated. run ID 없음 · 원자료 저장소 밖
+
+- `--shard I/N` → 후보 목록의 0부터 센 위치 p 중 `p % N == I`만 자른다(N ≥ 2). 체크포인트 필수
 - 샤드마다 전용 Joern 서버·자기 체크포인트. CPG는 샤드마다 새로 만든다
-- 샤드 자신의 `slices.json`은 일부라 `partial`(종료 코드 2)이고 `shard` 필드를 단다
+- 샤드 자신의 `slices.json`은 일부라 `partial`(종료 코드 2)이고 `shard` 필드(`{index, count}`)를 단다.
+  하네스 `run --slices`는 `shard` 필드가 있는 파일을 거부한다
 - `tools/merge_slicer_shards.py`가 체크포인트를 합친다 → 실행 계약·EngineConfig·후보 manifest가
-  샤드끼리 다르면 거부(다른 CPG를 자른 것)
-- 합친 체크포인트의 `--export-only`가 결과다. 클러스터링은 여기서 한 번
+  샤드끼리 다르면 거부(다른 CPG를 자른 것). 완료 안 된 후보가 있으면 종료 코드 2
+- 합친 체크포인트의 `--export-only`가 결과다. 클러스터링은 여기서 한 번. 샤드가 빠졌거나 중간에
+  죽었으면 export가 `partial` + 「unfinished candidates」
+- 병합 top-level은 첫 샤드의 발견 단계 기록을 쓰고 오류 목록만 모든 샤드의 합집합이다.
+  슬라이싱 중 top-level `diagnostics`(예: flows 싱크 cap 도달)는 병합 export에 안 남는다 —
+  각 슬라이스의 `analysis.sinks_capped`에는 남는다
+- 샤드 실행부터 export까지 `slicer*.py`가 같아야 한다 — 코드 해시가 실행 계약이라 중간에 코드가
+  바뀌면 `Checkpoint mismatch: run_contract`
+- 샤드 수는 CPU·메모리로 정한다. 2026-09-29 8샤드 CPU 최대 약 47코어(30초 표본) · 메모리 미측정
 
 ```bash
 # 샤드 i = 0..N-1, 각자 다른 서버. 분석 인자는 전부 같게

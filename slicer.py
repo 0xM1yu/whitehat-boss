@@ -818,10 +818,10 @@ def positive_seconds(value: str) -> float:
 
 
 def shard_value(value: str) -> tuple[int, int]:
-    """`I/N`: slice only the candidates at positions p with p % N == I (0 <= I < N)."""
-    match = re.fullmatch(r"(\d+)/(\d+)", value)
-    if not match or not 0 <= int(match[1]) < int(match[2]):
-        raise argparse.ArgumentTypeError("must be I/N with 0 <= I < N")
+    """`I/N`: slice the candidates at 0-based positions p with p % N == I (0 <= I < N, N >= 2)."""
+    match = re.fullmatch(r"([0-9]+)/([0-9]+)", value)
+    if not match or not 0 <= int(match[1]) < int(match[2]) or int(match[2]) < 2:
+        raise argparse.ArgumentTypeError("must be I/N with 0 <= I < N and N >= 2")
     return int(match[1]), int(match[2])
 
 
@@ -852,9 +852,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--threshold", type=threshold_value, default=0.95)
     result.add_argument("--max-flows-per-candidate", type=positive_int, default=None)
     result.add_argument("--query-timeout-seconds", type=positive_seconds, default=None)
-    # Candidate slicing is read-only per candidate, so N processes on N Joern servers can split
-    # one repo's candidates. Each shard checkpoints its share; tools/merge_slicer_shards.py joins
-    # the checkpoints (refusing shards whose candidate lists differ) and --export-only clusters.
+    # Per-candidate queries only read the CPG, so N processes on N Joern servers can split one
+    # repo's candidates. Each shard builds its own CPG, so a shard's result equals an unsharded
+    # run's only as far as Joern itself is deterministic (docs/slicer-README.md). Each shard
+    # checkpoints its share; tools/merge_slicer_shards.py joins the checkpoints (refusing shards
+    # of a different run) and --export-only clusters.
     result.add_argument(
         "--shard",
         type=shard_value,
