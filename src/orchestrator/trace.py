@@ -275,6 +275,16 @@ class EventKind(StrEnum):
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
+    # 8단계 PoV가 Finding에서 PoC를 만들어 낸 기록 (PoV 배선 — 추가형 라우팅). 내는 곳은
+    # `runner._run_pov`다 — 프로필이 pov 좌석을 선언한 run에서 VALIDATED Finding당 최대 1건이다.
+    # `poc_bytes`가 조립된 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다. 바이트를
+    # 파일로 쓰거나 실행·게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
+    POV_GENERATED = "pov_generated"
+    # PoV를 건너뛴 기록. `reason`이 `capsule_missing`(finding에 캡슐이 없음) 또는 모델 실패
+    # (`schema_parse_failed`·`gateway`)다. 추가형이라 상태는 `validate.run`이 이미 정했으므로
+    # pov 실패는 finding을 죽이지 않고 여기 남기고 넘어간다(CLAUDE.md — finding이 사유 없이 증발하는
+    # 것을 막는다).
+    POV_SKIPPED = "pov_skipped"
     # 모델이 쓴 발급값(ID·`run_id`·`artifact_id`·초기 `state`·`missing_evidence`)이 하네스
     # 발급값과 **달라서 덮었다** (이슈 #279). 내는 곳은 `RunContext.stamp_issued` 하나다 —
     # Scout·Auditor 출력 1건당 최대 1행이고 **이벤트 부재 = 모델이 발급값을 그대로 썼다**

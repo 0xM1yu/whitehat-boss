@@ -483,6 +483,44 @@ def test_pov_reads_the_source_override(ctx: RunContext) -> None:
     assert marker in ctx.models.last_for(Role.POV).body
 
 
+def test_run_pov_generates_and_records_the_poc_byte_size(ctx: RunContext) -> None:
+    """러너 8단계 라우팅(추가형 — PoV 배선): capsule이 있으면 pov를 돌려 PoC를 만들고
+    `pov_generated` 이벤트에 바이트 크기·sha256을 남긴다. 바이트 자체를 파일로 쓰거나 실행하는
+    것은 호스트가 필요한 후속(Phase 5)이라 여기서는 산출·기록까지가 계약이다."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+    state = runner._Accumulator()
+    state.update(finding)
+    state.finding_capsules[finding.finding_id] = capsule
+
+    runner._run_pov(ctx, state, finding)
+
+    gen = [e for e in ctx.trace.events if e.kind is EventKind.POV_GENERATED]
+    assert gen, "capsule이 있는데 pov_generated가 안 났다 — 러너가 pov를 안 불렀다"
+    assert gen[-1].data["poc_bytes"] > 0
+    assert gen[-1].data["poc_sha256"]
+    assert not any(e.kind is EventKind.POV_SKIPPED for e in ctx.trace.events)
+
+
+def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> None:
+    """capsule 미스면 pov는 **건너뛰고 기록만** 한다 — 예외를 내거나 finding을 죽이지 않는다.
+
+    추가형이라 finding의 실제 상태는 `validate.run`이 이미 정했다(D1). pov 미스가 파이프라인을
+    깨면 CLAUDE.md incident의 'finding이 사유 없이 증발'이 재현된다 — 그래서 미스는
+    `pov_skipped` 이벤트로 남기고 조용히 넘어간다."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+    state = runner._Accumulator()
+    state.update(finding)
+    # 일부러 finding_capsules에 안 넣는다 — 미스를 만든다.
+
+    runner._run_pov(ctx, state, finding)  # 예외 없이 돌아와야 한다
+
+    skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
+    assert skipped and skipped[-1].data["reason"] == "capsule_missing"
+    assert not any(e.kind is EventKind.POV_GENERATED for e in ctx.trace.events)
+
+
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
 
 
