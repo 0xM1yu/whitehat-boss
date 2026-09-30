@@ -36,13 +36,17 @@ _POOL_CAPSULE_MARGIN = 0.90
 
 # CyberGym 과제 설명을 담는 캡슐 섹션의 kind (PoV 배선). `known_facts`를 재쓰지 않는
 # 이유는 그 섹션이 두 Retriever에서 「고정 64토큰 자리표시자」로 하드코딩돼 있어(§0) 가변
-# 길이 설명을 넣으면 회계가 조용히 틀리기 때문이다(council 판정). 이 섹션은 body에서 실측한다.
+# 길이 설명을 넣으면 회계가 조용히 틀리기 때문이다(council 판정). 이 섹션의 토큰은 body에서
+# 계산한다(켜진 카운터 기준 — 기본은 `len//4` 근사이고, 실 토크나이저 카운터가 켜진 프로필에서만
+# 실측이다).
 VULN_DESCRIPTION_KIND = "vuln_description"
 
 
 def _vuln_description_section(text: str, budget: int) -> CapsuleSection | None:
     """과제 설명을 담는 캡슐 섹션. 남은 예산 안에 드는 줄까지만 담고 `tokens`를 본문에서
-    실측한다(고정 자리표시자가 아니라 실측이라 §0을 안 어긴다). 한 줄도 못 담으면 `None`.
+    계산한다(켜진 카운터 기준 — 기본은 `len//4` 근사이고, 실 토크나이저 카운터가 켜진
+    프로필에서만 실측이다). 고정 자리표시자가 아니라 본문에서 센 값이라 매니페스트가 내용과 안
+    갈라진다. 한 줄도 못 담으면 `None`.
 
     빈 줄은 버린다 — `body`는 `NonEmptyStr` 목록이고, 빈 줄로 자리를 채우면 매니페스트가
     본문을 과장한다.
@@ -89,7 +93,8 @@ def run(
             budget = int(budget * _POOL_CAPSULE_MARGIN)
         # 과제 설명을 담을 자리를 **미리** 뗀다(PoV 배선). Retriever가 예산을 다 쓰기 전에
         # 자리를 받아야 큰 타깃에서도 설명이 확실히 실린다 — 뒤에 붙이면 남은 예산이 0이라
-        # 조용히 빠진다. 코드 자리를 굶기지 않게 최대 절반까지만 뗀다(계획 상한). 실측 토큰이다.
+        # 조용히 빠진다. 코드 자리를 굶기지 않게 최대 절반까지만 뗀다(계획 상한). 뗀 양은 켜진
+        # 카운터로 본문에서 계산한 토큰이다(기본은 `len//4` 근사 — 실측이 아니다).
         desc_section = (
             _vuln_description_section(ctx.vuln_description, budget // 2)
             if ctx.vuln_description
