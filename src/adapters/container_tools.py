@@ -449,7 +449,8 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         language, sources_ = groups[0]
         # 경로를 입력에서 받지 않는다 — `judge()`의 판정이 이 고정에 기댄다. gdb는 실행 파일
         # 경로를 stdout에 에코하는 경우가 있어(대상에 인라인 스크립트가 있을 때의 auto-load 안내),
-        # 경로가 수명주기 줄 모양이면 안 뜬 대상이 떴다고 읽힌다(2026-10-01 검토의 가정 실측).
+        # 경로가 수명주기 줄 모양(스레드 정지 줄 꼴 포함)이면 안 뜬 대상이 떴다고 읽힌다(2026-10-01
+        # 두 검토의 가정 실측).
         binary = f"{SCRATCH}/gdb.bin"
         return [
             Command(
