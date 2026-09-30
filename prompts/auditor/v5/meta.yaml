@@ -1,0 +1,5 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
+role: auditor
+version: v5
+output_schema: Finding
+description: Qwen3.8 대응 원본 소스·Context Capsule 기반 감사. 절단된 evidence 본문의 누락을 부재로 단정하지 않고 source-to-sink 경로를 검증한다
