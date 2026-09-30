@@ -649,7 +649,7 @@ def test_a_target_bigger_than_the_budget_cannot_starve_the_vuln_description(
     """예산을 **꽉 채우는** 타깃에서도 설명 섹션이 실린다. Retriever가 예산을 다 쓰기 **전에**
     설명 자리를 미리 떼어야(`retrieval.run`의 `budget - reserve`) 이 검사가 선다 — 안 떼면
     Retriever가 예산을 채운 뒤 설명이 얹혀 `ContextCapsule`의 예산 검증기(`used > budget`)가
-    죽고, 남은 예산으로 뒤에 붙이던 옛 구현(`f58e244`)에서는 설명 섹션이 조용히 빠진다.
+    죽고, 선예약 없이 남은 예산으로 뒤에 붙이던 예전 구현에서는 설명 섹션이 조용히 빠진다.
 
     떼는 양은 설명이 **쓴 만큼**이다 — 코드 자리(`target_function`)는 예산에서 설명 토큰만 뺀
     나머지를 **정확히** 받는다. 설명이 있다고 절반을 통째로 떼거나 몇 토큰 더 떼면(과예약) 코드
