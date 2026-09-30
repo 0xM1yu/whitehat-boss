@@ -244,13 +244,19 @@ _EXEC_FAILED = (125, 126, 127)
 # 명령이 gdb 자신이다(`judge()`의 gdb 갈래가 stdout으로 대상 기동을 가른다).
 _RUNTIME_TOOLS = frozenset({"asan", "gdb", "poc"})
 
-# gdb가 **stdout**에 남기는 「대상이 실제로 떴다」는 보고 세 형태. 오류(`Error in sourced
-# command file`·`During startup program exited with code N`)는 stderr다. 줄 머리 앵커(^)를
-# 걸지 않는다 — 대상이 개행 없이 쓰면 `done[Inferior 1 …]`처럼 줄 중간에 붙는다. 종료 코드는
-# 8진수로 찍힌다(`exited with code 052` = 42) — 이 숫자를 exit code로 읽지 않는다.
+# gdb가 **stdout**에 남기는 「대상이 실제로 떴다」는 보고. 오류(`Error in sourced command file`·
+# `During startup program exited with code N`)는 stderr다. 줄 머리 앵커(^)를 걸지 않는다 — 대상이
+# 개행 없이 쓰면 `done[Inferior 1 …]`처럼 줄 중간에 붙는다. 종료 코드는 8진수로 찍힌다
+# (`exited with code 052` = 42) — 이 숫자를 exit code로 읽지 않는다.
+# 신호 정지는 대상이 스레드를 한 번이라도 만들었으면 `Thread N "이름" received signal`로 찍힌다
+# (join 뒤 main이 죽어도 — 2026-10-01 실측, 12.1·15.1. `terminated with`는 그래도 `Program`이었다).
+# 이름(스레드 comm)은 따옴표 안에 날것으로 찍혀 따옴표를 품을 수 있으므로 줄 안의 아무 글자로
+# 받되 64자로 묶는다 — 묶지 않으면 대상이 찍은 긴 줄에서 입력 길이의 제곱으로 느려진다. 스레드
+# 번호는 정수만 봤다(`1.2` 꼴은 인페리어가 여럿일 때이고 이 배치에서는 안 생긴다).
 _GDB_TARGET_LIFECYCLE = re.compile(
     r"\[Inferior \d+ \(process \d+\) exited (?:normally|with code [0-7]+)\]"
     r"|Program (?:received|terminated with) signal \S+"
+    r'|Thread [\d.]+(?: "[^\n]{0,64}")? received signal \S+'
 )
 
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
