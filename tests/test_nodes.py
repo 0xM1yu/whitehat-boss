@@ -546,36 +546,43 @@ def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> 
 def test_run_pov_records_a_skip_on_a_schema_parse_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """모델이 스키마를 못 맞추면 pov_skipped(schema_parse_failed) — finding은 안 죽는다."""
+    """모델이 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
+
+    루프가 hop 호출 예외를 흡수한다(`_pov_classify_exception`) — 홉을 여는 `pov.open_hop`을
+    스텁해 hop0에서 실패시킨다."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "run", _raise(SchemaParseError("bad pov json")))
+    monkeypatch.setattr(runner.pov, "open_hop", _raise(SchemaParseError("bad pov json")))
 
     runner._run_pov(ctx, state, finding)
 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
-    assert skipped and skipped[-1].data["reason"] == "schema_parse_failed"
+    assert skipped and skipped[-1].data["reason"] == "parse_failed"
 
 
 def test_run_pov_records_a_skip_on_a_droppable_gateway_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """크기·체계적 거절(droppable)은 pov_skipped(gateway) — 이 finding에 대한 사실이다."""
+    """버릴 수 있는 게이트웨이(droppable 422)는 pov_skipped(gateway_error) — 이 finding의 사실."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "run", _raise(ModelGatewayError("systematic", status=422)))
+    monkeypatch.setattr(
+        runner.pov, "open_hop", _raise(ModelGatewayError("systematic", status=422))
+    )
 
     runner._run_pov(ctx, state, finding)
 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
-    assert skipped and skipped[-1].data["reason"] == "gateway"
+    assert skipped and skipped[-1].data["reason"] == "gateway_error"
 
 
 def test_run_pov_reraises_a_non_droppable_gateway_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """서버 쪽 사건(status 없음·5xx)은 run의 사실이라 올려 보낸다 — 조용히 삼키지 않는다
-    (critic 루프와 같은 _is_droppable 판정)."""
+    (critic 루프와 같은 _is_droppable 판정). 루프가 흡수하지 않고 그대로 올린다."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "run", _raise(ModelGatewayError("server down", status=None)))
+    monkeypatch.setattr(
+        runner.pov, "open_hop", _raise(ModelGatewayError("server down", status=None))
+    )
 
     with pytest.raises(ModelGatewayError):
         runner._run_pov(ctx, state, finding)
