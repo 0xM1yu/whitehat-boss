@@ -514,6 +514,29 @@ def test_the_unselected_claim_reader_sees_every_spelling_the_repo_actually_uses(
     assert stale == expected
 
 
+@pytest.mark.parametrize(
+    ("role", "version", "expected"),
+    [
+        # prompts/critic/v4/meta.yaml:1 — 첫째·셋째 철자를 한 줄에 함께 든다.
+        ("critic", "v4", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # prompts/critic/v3/meta.yaml:1
+        ("critic", "v3", {"아직 미활성"}),
+        # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
+        ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — 정본 Auditor가 고르는 판이다(「배선됨」).
+        ("auditor", "v4", set()),
+    ],
+)
+def test_the_known_metas_match_exactly_these_claim_spellings(
+    role: str, version: str, expected: set[str]
+) -> None:
+    """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
+    한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
+    critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
+    않는다(#341 R2). ⚠ 이 네 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
+    assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
+
+
 def test_every_prompted_role_is_a_real_role() -> None:
     """`Role(role)`이 `PROMPTED_ROLES`의 모든 값에 대해 성립한다.
 
