@@ -285,6 +285,22 @@ def test_pipeline_promotes_one_target_and_filters_the_other(tmp_path: Path) -> N
     assert any(f.state is FindingState.PROVEN for f in result.findings)
 
 
+def test_pov_generates_a_poc_at_the_validate_stage_for_dev_fake(tmp_path: Path) -> None:
+    """dev_fake는 `pov: fake`를 선언하므로 러너가 8단계(VALIDATE)에서 pov를 **추가로** 부른다
+    (PoV 배선 — 추가형). `validate.run`은 그대로 돌고(유일한 결정론 E4 게이트), pov는 나란히
+    PoC를 만들어 `pov_generated`로 바이트 크기를 기록한다. 실행·게이트는 호스트 후속(Phase 5).
+
+    이 검사가 「pov가 죽은 코드가 아니다」를 실증한다 — 러너 라우팅을 끊으면 8단계 pov_generated가
+    0건이 되어 빨개진다."""
+    _, trace_path = _run(tmp_path)
+
+    gen = _of(_events(trace_path), "pov_generated", stage=int(Stage.VALIDATE))
+    assert gen, (
+        "dev_fake가 pov를 선언하는데 8단계에서 pov_generated가 0건 — 러너가 pov를 라우팅하지 않는다"
+    )
+    assert all(e["data"]["poc_bytes"] > 0 for e in gen), "pov가 빈 PoC를 냈다"
+
+
 def _poolify(mode: str | None):  # noqa: ANN202
     """`dev_fake`를 Scout 풀로 바꾸는 `configure` 훅 (in-test 전용).
 
@@ -1585,7 +1601,8 @@ def test_role_and_stage_are_present_for_per_role_aggregation(tmp_path: Path) -> 
     _, trace_path = _run(tmp_path)
     calls = _of(_events(trace_path), "model_call")
 
-    assert {e["data"]["role"] for e in calls} == {"scout", "auditor", "critic"}
+    # pov도 8단계에서 모델을 부른다(PoV 배선 — 추가형). dev_fake가 pov:fake를 선언하므로 포함된다.
+    assert {e["data"]["role"] for e in calls} == {"scout", "auditor", "critic", "pov"}
     assert all(e["stage"] is not None and e["data"]["model"] for e in calls)
 
 

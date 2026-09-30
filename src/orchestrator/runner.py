@@ -83,6 +83,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import hashlib
 import json
 import re
 import subprocess
@@ -115,6 +116,7 @@ from src.orchestrator.nodes import (
     critic,
     gate_node,
     index,
+    pov,
     preprocess,
     report,
     retrieval,
@@ -677,6 +679,10 @@ class _Accumulator:
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
     workdirs: dict[str, str] = field(default_factory=dict)
+    # 8단계 PoV가 쓸 캡슐 — finding_id로 연다(PoV 배선 — b-1). Auditor가 Finding을 만든
+    # capsule을 그대로 물려 준다(러너가 캡슐을 넘기고 pov 노드 시그니처는 안 바뀐다). 미스면
+    # `_run_pov`가 pov를 건너뛰고 기록만 한다 — 추가형이라 상태는 validate.run이 이미 정했다.
+    finding_capsules: dict[str, ContextCapsule] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
     # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
@@ -1062,7 +1068,19 @@ def _analyze(
         _stop_if_a_caller_saw_nothing({_caller(Stage.CRITIC, Role.CRITIC)})
     if last < Stage.VALIDATE:
         return
-    for finding in state.in_state(FindingState.VALIDATED):
+    # PoV는 프로필이 pov 좌석을 선언할 때만 8단계에서 **추가로** 돈다(PoV 배선 — 추가형).
+    # `validate.run`(유일한 결정론 E4 게이트)은 그대로 두고, pov는 나란히 PoC를 만들어 기록한다.
+    # **`served_models()`가 아니라 `profile.roles`로 본다** — fake pov(dev_*)도 좌석이라 라우팅이
+    # 돌아야 dev_fake로 검증된다. served면 fake가 빠져 dev_*에서 pov가 영영 안 불린다.
+    pov_declared = Role.POV.value in ctx.config.profile.roles
+    validated = state.in_state(FindingState.VALIDATED)
+    swap = ctx.config.swap
+    # 교대는 pov가 **실제 교대 대상**일 때만 — swap을 선언하고 pov를 swappable에 올린 프로필
+    # (harness_pool)에서다. pov:fake이거나 pov를 swappable에 안 올린 프로필에선 8단계에 띄울
+    # 서버가 없어 교대하지 않는다 — 그러지 않으면 앞 단계 서버를 공연히 내리는 헛교대가 stage 8에 낀다.
+    if validated and swap is not None and Role.POV.value in swap.swappable:
+        _swap_for(ctx, Stage.VALIDATE)
+    for finding in validated:
         after, _ = validate.run(
             ctx,
             finding=finding,
@@ -1072,6 +1090,62 @@ def _analyze(
             decisions=state.decisions.get(finding.finding_id, ()),
         )
         state.update(after)
+        if pov_declared:
+            _run_pov(ctx, state, after)
+
+
+def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
+    """8단계 PoV — Finding에서 PoC를 만들어 기록한다 (PoV 배선 — 추가형·b-1).
+
+    `validate.run`과 **나란히** 도는 추가 경로다. finding의 상태는 이미 `validate.run`이 정했으므로
+    여기서는 상태를 바꾸지 않고 PoC 바이트를 산출·기록만 한다. 캡슐은 Auditor가 물려 준
+    `state.finding_capsules`에서 finding_id로 연다 — pov 노드 시그니처는 안 바꾼다.
+
+    **미스·모델 실패는 finding을 죽이지 않는다.** 캡슐이 없거나 모델이 실패하면 `pov_skipped`로
+    남기고 넘어간다 — pov가 파이프라인을 깨서 finding이 사유 없이 증발하는 것을 막는다
+    (CLAUDE.md §2.5의 incident). 크기가 아닌 게이트웨이 사건은 이 finding이 아니라 run의 사실이라
+    올려 보낸다(critic 루프와 같은 `_is_droppable` 판정). 바이트를 파일로 쓰거나 asan/poc로 실행해
+    게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
+    """
+    capsule = state.finding_capsules.get(finding.finding_id)
+    if capsule is None:
+        ctx.trace.emit(
+            EventKind.POV_SKIPPED,
+            stage=Stage.VALIDATE,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+            reason="capsule_missing",
+        )
+        return
+    try:
+        _, poc = pov.run(ctx, finding=finding, capsule=capsule)
+    except SchemaParseError as exc:
+        _emit_pov_skipped(ctx, finding, "schema_parse_failed", exc)
+        return
+    except ModelGatewayError as exc:
+        if not _is_droppable(exc):
+            raise
+        _emit_pov_skipped(ctx, finding, "gateway", exc)
+        return
+    ctx.trace.emit(
+        EventKind.POV_GENERATED,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        poc_bytes=len(poc),
+        poc_sha256=hashlib.sha256(poc).hexdigest(),
+    )
+
+
+def _emit_pov_skipped(ctx: RunContext, finding: Finding, reason: str, exc: Exception) -> None:
+    ctx.trace.emit(
+        EventKind.POV_SKIPPED,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        reason=reason,
+        error_detail=error_detail(exc),
+    )
 
 
 def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static: bool) -> int:
@@ -1807,6 +1881,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     state.evidences[finding.finding_id] = evidences
     state.missings[finding.finding_id] = tuple(missings)
     state.workdirs[finding.finding_id] = artifact.path
+    # 8단계 PoV가 이 Finding의 PoC를 만들 때 쓸 캡슐을 물려 준다(PoV 배선 — b-1).
+    state.finding_capsules[finding.finding_id] = expanded
     return True
 
 
@@ -2017,17 +2093,23 @@ _PHASE_A_STEPS = _TRIAGE_STEPS[:_SCOUT_SETTLE_INDEX]
 _PHASE_B_STEPS = _TRIAGE_STEPS[_SCOUT_SETTLE_INDEX:]
 
 # 단계 → 그 단계에서 **모델을 부르는 역할** (ADR 0012 Phase 6.5 — 단계 단위 교대가 읽는다).
-# 4·5단계는 위 표의 단계이고 7단계는 `_analyze`의 Critic이다. 여기 없는 단계는 모델을 안 부른다
+# 4·5단계는 위 표의 단계이고 7단계는 `_analyze`의 Critic이다. 8단계(VALIDATE)는 프로필이 pov
+# 좌석을 선언할 때만 pov 모델을 부른다(PoV 배선 — 추가형). 여기 없는 단계는 모델을 안 부른다
 # — 3단계 검색의 embedding·reranker는 `SwapPolicy`가 교대에서 거절한다(ADR 0012 결정 3 뒤).
 #
 # **교대 코드는 `Stage`로 갈라 쓰지 않고 이 표만 읽는다.** 모델을 부르는 좌석이 생기면 여기 한
 # 줄이다. 줄을 빼먹으면 `tests/test_stage_swap.py`의 성질 테스트(모든 호출 시점에 그 모델이 떠
 # 있다)가 그 좌석의 첫 호출에서 빨개진다. 역할 자체는 각 스텝이 따로 들고 있다(`_step_auditor`의
 # `Role.AUDITOR` 등) — 둘이 어긋나는 것을 잡는 것이 그 성질 테스트다.
+#
+# ⚠ **8단계 pov 줄이 있어도 pov를 선언 안 한 프로필은 아무 서버도 안 띄운다** — `_swap_for`가
+# `swap.swappable`로 한 번 더 거른다(pov가 목록에 없으면 wanted에서 빠진다). `_analyze`는 pov
+# 좌석이 있을 때만 `_swap_for(VALIDATE)`를 부른다. 둘이 겹으로 막아 회귀를 없앤다.
 _ROLES_CALLED: dict[Stage, Callable[[RunContext], tuple[Role, ...]]] = {
     Stage.SCOUT: _scout_roles,
     Stage.AUDITOR: lambda _ctx: (Role.AUDITOR,),
     Stage.CRITIC: lambda _ctx: (Role.CRITIC,),
+    Stage.VALIDATE: lambda _ctx: (Role.POV,),
 }
 
 
