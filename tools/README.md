@@ -200,6 +200,8 @@ gdb의 자식 실행형 배치 경로는 2026-09-28 Docker와 ATOM rootless Podm
 없음/추가 두 조건에서 정상·크래시를 각각 실행한 **4회 실측**이고 결과가 같았다.
 Singularity/Apptainer만 접속 경로를 확보하지 못해 **0회/미실측**이며, 권한 필요 여부를
 확정하지 않는다([D92](../docs/open-questions/D/D92.md)). attach 모드는 이 결과의 범위가 아니다.
+Docker ptrace 측정 이미지의 gdb는 15.1(`uaf-note-verify:latest`)이고, v3 이미지(gdb 12.1)를
+2026-09-30 재측정해도 SIGSEGV 대상의 gdb 종료 코드는 255로 같았다(자세한 값은 [D92](../docs/open-questions/D/D92.md)).
 
 ### 반대로, 끌 수 없는 항목
 
