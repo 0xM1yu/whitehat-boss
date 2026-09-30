@@ -1,4 +1,4 @@
-"""PoV 툴 루프(Phase 3, Option C)의 계약 — 루프 제어 스키마 `PovAction`부터.
+"""PoV 툴 루프(Option C)의 계약 — 루프 제어 스키마 `PovAction`부터.
 
 council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매 홉 `PovAction` 하나를
 낸다. `gen`은 **기존 `PovSpec`을 실어** 순수 `assemble_poc`가 인프로세스로 바이트를 만든다
