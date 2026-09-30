@@ -132,3 +132,69 @@ def test_load_task_requires_the_repo_archive(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         task_loader.load_task(task, tmp_path / "work")
+
+
+class _LegacyTarfile:
+    """CPython 3.11.0~3.11.3의 `tarfile` **모양**을 흉내 내는 대역(PEP 706 이전) — 시뮬레이션이다.
+
+    실제 3.11.0~3.11.3 인터프리터로 돌린 것이 아니다 — 로컬·CI는 그 패치를 안 돈다(CI의
+    `python-version: "3.11"`은 최신 3.11.x로 풀린다). 로더가 만지는 이름만 옛 모양으로 바꾼다:
+    `data_filter`·`FilterError` 등이 없고 `TarFile.extract()`가 `filter=`를 `TypeError`로 거부한다
+    (docs.python.org/3.11/library/tarfile.html: *Changed in version 3.11.4: Added the filter
+    parameter*). 두 오류 문구는 PR #343 리뷰 M-1이 로컬 3.11.0에서 본 문구에 맞췄다.
+    """
+
+    _ABSENT = frozenset({"data_filter", "tar_filter", "fully_trusted_filter", "FilterError"})
+
+    def open(self, *args: object, **kwargs: object):  # noqa: A003, ANN201 - 모듈 API 이름
+        tar = tarfile.open(*args, **kwargs)
+        real_extract = tar.extract
+
+        def extract(member, path="", set_attrs=True, *, numeric_owner=False, **rest):  # noqa: ANN001, ANN202
+            if rest:
+                raise TypeError(
+                    f"TarFile.extract() got an unexpected keyword argument '{next(iter(rest))}'"
+                )
+            return real_extract(member, path, set_attrs, numeric_owner=numeric_owner)
+
+        tar.extract = extract
+        return tar
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        if name in self._ABSENT:
+            raise AttributeError(f"module 'tarfile' has no attribute '{name}'")
+        return getattr(tarfile, name)
+
+
+def test_safe_extract_refuses_an_interpreter_without_extraction_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """추출 필터가 없는 인터프리터(3.11.0~3.11.3 — `_LegacyTarfile` 시뮬레이션)에서는 **풀기
+    전에** 이유를 대며 거부한다.
+
+    그 거부가 없으면 첫 멤버에서 `TypeError`로 죽고, 그 예외가 올라가며 `except
+    tarfile.FilterError`의 식이 평가돼 `AttributeError`로 **바뀐다** — 원인이 가려지고, 크기·개수
+    상한이 던지는 `UnsafeArchiveError`까지 같은 이유로 가려진다(PR #343 리뷰 M-1). 필터 없이 푸는
+    폴백은 만들지 않는다(대상은 못 믿는 소스다) — dest도 만들지 않는 것으로 「풀기 전」을 고정한다.
+    """
+    archive = tmp_path / "repo-vul.tar.gz"
+    _make_tar(archive, {"a.c": b"int a;\n"})
+    monkeypatch.setattr(task_loader, "tarfile", _LegacyTarfile())
+
+    with pytest.raises(RuntimeError, match=r"3\.11\.4"):
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+    assert not (tmp_path / "out").exists(), "거부했는데 dest를 만들었다"
+
+
+def test_load_task_refuses_an_interpreter_without_extraction_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`load_task`도 같은 거부를 감싸지 않고 그대로 올린다 — 과제 입구에서 원인이 보인다."""
+    task = tmp_path / "task"
+    task.mkdir()
+    _make_tar(task / task_loader.REPO_ARCHIVE_NAME, {"a.c": b"int a;\n"})
+    monkeypatch.setattr(task_loader, "tarfile", _LegacyTarfile())
+
+    with pytest.raises(RuntimeError, match=r"3\.11\.4"):
+        task_loader.load_task(task, tmp_path / "work")
