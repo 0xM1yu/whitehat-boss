@@ -242,6 +242,10 @@ thresholds:
   #   없다」가 그 자리다.
   output_max_by_role:
     auditor: 32768
+    # PoV — 사고를 켠 8단계 모델(feyospace, Auditor와 같은 베이스)이라 같은 32,768을 준다.
+    # `thinking_token_budget`(28,672 < 32,768, `config/models.yaml`)이 사고를 묶어 답 자리를 남긴다.
+    # 전역 4,096으로 두면 사고가 답을 밀어내 스키마가 깨진다(Auditor가 그 판을 7/7 냈다). 계획값·미실측.
+    pov: 32768
 
   # 캡슐 레벨별 토큰 상한 (knowledge-base.md §4). 키는 CapsuleLevel 열거형 값과 같다.
   capsule_budget_tokens:

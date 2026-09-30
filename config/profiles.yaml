@@ -174,10 +174,10 @@ profiles:
     #   `production`이 아니라 `served_models()`다, 2026-09-02 실측). `--slices`도 요구한다 — 이쪽은
     #   실서빙 여부와 무관하게 Scout 세 자리의 v3 프롬프트가 슬라이스 입력(meta `input: slice`)이라서다
     #   (`cli.run` — ADR 0012 결정 1). `production: false`가 실제로
-    #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. Scout·Auditor 세 키
-    #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`)의 `checksum`이 0이라 이 프로필로 돈 run은
-    #   비교표에서 제외된다(CLAUDE.md §0).
-    description: "로스터 canonical 배선(§1 정본: Scout 풀 seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
+    #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 서빙 네 키
+    #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
+    #   돈 run은 비교표에서 제외된다(CLAUDE.md §0).
+    description: "로스터 canonical 배선(§1 정본: Scout 풀 seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + PoV feyospace + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
     production: false
     roles:
       scout_memory: qwen3-14b
