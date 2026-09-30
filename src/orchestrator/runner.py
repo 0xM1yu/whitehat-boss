@@ -1154,8 +1154,9 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관해 MAX_HOP까지 헛돈다. E4 게이트 전이·oracle 제출도 후속이고, 여기서는 홉 이벤트
-    (`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)만 남긴다. `max_hops`는 NE 루프와
+    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이·oracle 제출도 후속이고,
+    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)만 남긴다.
+    `max_hops`는 NE 루프와
     같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
     """
     max_hops = ctx.config.thresholds.max_hops

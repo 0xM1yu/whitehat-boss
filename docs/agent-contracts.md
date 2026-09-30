@@ -173,9 +173,10 @@ agent:
 ### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
-`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 gen-script
-(Option B, 코드열람·Python 스크립팅) 확장·PoC 바이트 materialize+E4 게이트·외부 oracle 검증**이고
-서빙+도구 되는 호스트가 잡힌 뒤다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(조민규, 2026-09-30 —
+`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트
+materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
+신뢰면·리뷰. `src/schemas/pov.py` docstring). **검증 벤치마크는 CyberGym Level 1로 결정됐다**(조민규, 2026-09-30 —
 [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
 어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
 
@@ -190,9 +191,12 @@ agent:
   `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
-  (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·모델 실패는 finding을
-  죽이지 않고 `pov_skipped`로 남긴다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해 `pov.run_tool`)
-  — `gdb`는 아직 화이트리스트 밖(PR #327), 코드열람·Python 스크립팅 확장(Option B)은 후속.
+  (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
+  게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
+  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해
+  `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다).
+  ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
+  — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면

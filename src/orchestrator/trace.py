@@ -276,9 +276,10 @@ class EventKind(StrEnum):
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
-    # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`·`action`(gen/inspect/submit)이
-    # 조인 키고, gen/inspect 홉은 도구 결과(`tool`·`tool_ok`·`exit_code`·`evidence_kind`)를,
-    # 종단 홉은 `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
+    # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
+    # (subject_id, role, hop) 사슬 — `context.py`). gen/inspect 홉은 `action`과 도구 결과
+    # (`tool`·`tool_ok`·`exit_code`·`evidence_kind`)를, 실패 홉은 `error`·`schema_ok`를, 종단 홉은
+    # `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **8단계에 들어온**(진입 시

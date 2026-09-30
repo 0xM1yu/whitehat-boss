@@ -1,4 +1,4 @@
-"""PoV 역할의 출력 — PoC 바이트 구성 스펙.
+"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`, 그 `gen`이 싣는 PoC 바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신
 **어떻게 바이트를 조립할지**를 스펙으로 내고, 순수 함수 `orchestrator.poc_assembly.assemble_poc`가
@@ -105,7 +105,7 @@ class PovSegment(HarnessModel):
 
 
 class PovSpec(HarnessModel):
-    """PoV 역할이 내는 PoC 구성 스펙. `assemble_poc`가 바이트로 조립한다.
+    """`gen` 액션이 싣는 PoC 구성 스펙. `assemble_poc`가 바이트로 조립한다.
 
     `segments`는 **선언 순서대로** 이어 붙는다. `rationale`은 왜 이 입력이 취약 경로를
     친다고 보는지의 한 줄 근거 — 사람 검수·trace용이고 바이트에는 안 들어간다.
@@ -152,8 +152,8 @@ class PovAction(HarnessModel):
     - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.
       **모델이 쓴 코드를 실행하지 않는다** — 조립은 결정론 순수 함수(fork B-iii). raw 임의
       바이트가 필요하면 `spec`의 `literal` 세그먼트에 통째로 넣는다.
-    - `inspect`: `tool`(asan/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사). `gdb`는 도구
-      화이트리스트에 아직 없어 뺐다 — 에이전트 gdb 도구가 배선되면(PR #327) 다시 넣는다.
+    - `inspect`: `tool`(asan/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사). `gdb`는 이 PR의
+      PoV 도구 화이트리스트엔 없다 — 에이전트 gdb 도구를 배선하는 PR #327이 다시 넣는다.
     - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
@@ -165,7 +165,7 @@ class PovAction(HarnessModel):
 
     action: Literal["gen", "inspect", "submit"]
     spec: PovSpec | None = None
-    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 아직 없어 뺐다(PR #327).
+    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 이 PR의 화이트리스트에 없다(PR #327).
     # `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
     tool: Literal["asan", "build", "poc"] | None = None
     rationale: NonEmptyStr
