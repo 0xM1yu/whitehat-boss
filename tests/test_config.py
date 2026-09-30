@@ -445,8 +445,17 @@ def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) ->
 
 # meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
 # **저장소 실물에서 온 것만 적는다**(양성 핀 — 출처는 같은 자리):
-#   `미배선(disk-only)` — prompts/critic/v4/meta.yaml:1
-_UNSELECTED_CLAIM_SPELLINGS = ("미배선(disk-only)",)
+_UNSELECTED_CLAIM_SPELLINGS = (
+    "미배선(disk-only)",  # prompts/critic/v4/meta.yaml:1
+    "아직 미활성",  # prompts/critic/v3/meta.yaml:1
+    "어느 registry 엔트리도 이 버전을 고르지 않는다",  # prompts/auditor/v3/meta.yaml:5-6
+)
+
+
+def _meta_text(role: str, version: str) -> str:
+    """meta.yaml 본문 — 주석 줄바꿈을 접는다(구절이 `# ` 줄바꿈으로 갈리는 실물이 있다)."""
+    raw = (PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8")
+    return " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
 
 
 def _prompts_whose_meta_claims_unselected(config: HarnessConfig) -> list[str]:
@@ -456,19 +465,18 @@ def _prompts_whose_meta_claims_unselected(config: HarnessConfig) -> list[str]:
         for role in PROMPTED_ROLES
         if role in config.profile.roles
         for version in [config.model_for(role).prompt_template_version]
-        if any(
-            spelling in (PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8")
-            for spelling in _UNSELECTED_CLAIM_SPELLINGS
-        )
+        if any(spelling in _meta_text(role, version) for spelling in _UNSELECTED_CLAIM_SPELLINGS)
     ]
 
 
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> None:
-    """`meta.yaml` 머리 주석의 「미배선(disk-only)」은 **어느 registry 엔트리도 이 판을
+    """`meta.yaml` 머리 주석의 「안 고른다」(미배선·미활성 등)는 **어느 registry 엔트리도 이 판을
     안 고른다**는 현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다
     (CLAUDE.md §2.3) — 이 검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다.
-    ⚠ 철자 pin이다 — 정확한 `미배선(disk-only)`만 문다. 표현을 바꿔 쓰면 못 잡는다."""
+    ⚠ 철자 pin이다 — `_UNSELECTED_CLAIM_SPELLINGS`의 세 철자(저장소 실물: critic/v4·critic/v3·
+    auditor/v3 meta)만 문다. 다른 표현으로 쓰면 못 잡는다 — Critic `gpt-oss-20b`를 v1→v3로 바꾼
+    변이에서 철자를 늘리기 전에는 전체 스위트가 초록이었다(#341 리뷰 L-1)."""
     assert _prompts_whose_meta_claims_unselected(load_config(profile)) == []
 
 
