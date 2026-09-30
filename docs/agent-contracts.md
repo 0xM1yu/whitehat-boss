@@ -136,7 +136,7 @@ agent:
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
-  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
+  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
   **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
@@ -166,6 +166,13 @@ agent:
 - **ID·`produced_by`는 모델 스키마(`DecisionDraft`)에서 빼고 하네스가 주입한다** — 모델에 provenance를 맡기면 `produced_by.model`이 실제 모델이 아닌 `"ChatGPT"` 등으로 오염된다(실측).
 - 반박 체크리스트: guard 존재 여부 / reachability(호출 가능 경로) / aliasing / lifetime / 컴파일 타임 조건·플래그 / 입력 도달성 제약
 - 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. 근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다.
+
+**본문 누락에 대한 보류는 자동 재요청이 아니다.** Auditor의 비어 있지 않은 `missing_evidence`는
+blocking `MissingEvidence`로 남아 `gate.evaluate`의 `unblocked`를 거짓으로 만들고 E3 승격을 막는다.
+Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)에서 `QUEUED`로 간다. 현재 오케스트레이터에는
+`DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
+따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
+정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
