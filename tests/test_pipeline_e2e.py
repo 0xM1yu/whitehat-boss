@@ -301,19 +301,63 @@ def test_pov_generates_a_poc_at_the_validate_stage_for_dev_fake(tmp_path: Path) 
     assert all(e["data"]["poc_bytes"] > 0 for e in gen), "pov가 빈 PoC를 냈다"
 
 
-def test_vuln_description_reaches_the_scout_prompt(tmp_path: Path) -> None:
-    """과제 설명이 RunSpec → RunContext → retrieval → 캡슐 → Scout 프롬프트까지 닿는다
-    (PoV 배선 — D2: 새 vuln_description 섹션). 이 스레드 중 한 곳이라도 끊기면 마커가
-    프롬프트에서 사라진다 — read_payload 배선 검사와 같은 형이다."""
+def test_vuln_description_reaches_scout_auditor_and_pov_prompts(tmp_path: Path) -> None:
+    """과제 설명이 RunSpec → RunContext → retrieval → 캡슐 → 프롬프트까지 닿는다(PoV 배선 —
+    새 vuln_description 섹션). Scout는 LIGHT 캡슐로, Auditor는 EXPANDED로, PoV는 그
+    EXPANDED(finding_capsules)로 본다 — 한 레벨이라도 주입이 빠지면 그 역할 프롬프트에서 마커가
+    사라진다(EXPANDED 주입을 지우면 auditor·pov가 빨개진다)."""
     marker = "VULN-DESC-MARKER-parse_header-heap-overflow"
     _, trace_path = _run(tmp_path, vuln_description=f"{marker}: len > 64 overflows buf")
 
     prompts = trace_path.parent / "prompts"
-    scout_files = sorted(prompts.glob("*_scout*.md"))
-    assert scout_files, "scout 프롬프트가 한 건도 안 남았다"
-    assert any(marker in f.read_text(encoding="utf-8") for f in scout_files), (
-        "vuln_description가 Scout 프롬프트에 안 실렸다 — spec→ctx→retrieval→capsule 스레드가 끊겼다"
-    )
+    for role in ("scout", "auditor", "pov"):
+        files = sorted(prompts.glob(f"*_{role}*.md"))
+        assert files, f"{role} 프롬프트가 한 건도 안 남았다"
+        assert any(marker in f.read_text(encoding="utf-8") for f in files), (
+            f"vuln_description가 {role} 프롬프트에 안 실렸다 — 그 레벨의 캡슐 주입/스레드가 끊겼다"
+        )
+
+
+def test_run_reads_the_description_file_into_the_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run --description-file`이 파일 내용을 RunSpec.vuln_description에 넣는다 — `cli.py`의
+    `vuln_description=` 줄을 지우면 빨개진다(그 줄이 유일한 CLI→spec 배선이다)."""
+    desc = tmp_path / "description.txt"
+    desc.write_text("HEAP OVERFLOW MARKER cli-desc-thread", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--target", str(TARGET), "--seed", "1",
+            "--condition", "B3prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1",
+            "--artifacts-root", str(tmp_path / "arts"), "--description-file", str(desc),
+        ])
+
+    assert captured["spec"].vuln_description == "HEAP OVERFLOW MARKER cli-desc-thread"
+
+
+def test_run_rejects_a_missing_description_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """없는 `--description-file`은 조용히 넘어가지 않고 exit 2로 멈춘다(슬라이스와 같은 판단)."""
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET), "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--description-file", str(tmp_path / "nope.txt"),
+    ])
+
+    assert rc == 2
+    assert "description-file" in capsys.readouterr().err
 
 
 def _poolify(mode: str | None):  # noqa: ANN202

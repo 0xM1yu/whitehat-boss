@@ -1066,8 +1066,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--description-file",
         type=Path,
         default=None,
-        help="CyberGym 과제 description.txt. 주면 캡슐에 vuln_description 섹션으로 실려 "
-        "Scout·Auditor·PoV가 본다(PoV 배선). task_loader로 과제를 풀어 얻는다",
+        help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
+        "Scout·Auditor·PoV가 본다(PoV 배선). 저장소 아카이브는 task_loader로 따로 푼다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")

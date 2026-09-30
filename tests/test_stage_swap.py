@@ -172,6 +172,10 @@ def test_pov_swaps_in_at_the_validate_stage_when_declared_swappable(tmp_path: Pa
     assert rig.swaps == [(SCOUT,), (AUDITOR,), (CRITIC,), (pov_key,), ()], (
         "pov가 swappable인데 8단계 교대가 안 났다 — 러너가 _swap_for(VALIDATE)를 안 부른다"
     )
+    # 교대가 **호출보다 먼저** 나야 한다 — 교대를 pov 루프 뒤로 옮기면 swaps 순서는 같아도
+    # pov가 Critic 서버 위에서 불려 miss가 난다(순서를 세지 않는 검사는 그 회귀를 놓친다).
+    assert ("pov", pov_key) in rig.calls, "pov 모델이 안 불렸다"
+    assert rig.misses == [], f"pov를 서버가 안 뜬 채 불렀다(교대가 호출 뒤였다): {rig.misses}"
 
 
 def test_resident_roles_stay_up_and_shared_or_fake_keys_are_swapped_once_or_not_at_all(
