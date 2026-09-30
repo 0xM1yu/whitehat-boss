@@ -482,15 +482,17 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
     안 고른다**는 현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다
     (CLAUDE.md §2.3) — 이 검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다.
     ⚠ 철자 pin이다 — `_UNSELECTED_CLAIM_SPELLINGS`의 세 철자(저장소 실물: critic/v4·critic/v3·
-    auditor/v3 meta)만 문다. 다른 표현으로 쓰면 못 잡는다 — Critic `gpt-oss-20b`를 v1→v3로 바꾼
-    변이에서 철자를 늘리기 전에는 전체 스위트가 초록이었다(#341 리뷰 L-1)."""
+    auditor/v3 meta)만 문다. 다른 표현으로 쓰면 못 잡는다. 저장소 config만 돌리므로 어느
+    프로필도 안 고르는 판의 철자는 여기서 시험되지 않는다 — 판독기가 철자를 읽는지는 아래
+    검사들이 고정한다(#341 L-1)."""
     assert _prompts_whose_meta_claims_unselected(load_config(profile)) == []
 
 
 @pytest.mark.parametrize(
     ("role", "model_key", "version", "expected"),
     [
-        # 통제 — 정확한 철자. prompts/critic/v4/meta.yaml:1 「미배선(disk-only)」.
+        # 통제 — prompts/critic/v4/meta.yaml:1. 첫째·셋째 철자를 함께 들어 여기서는 철자를
+        # 못 가른다 — 철자별로는 `test_the_known_metas_…`가 본다.
         ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
         # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
         ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
@@ -501,13 +503,13 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         ("auditor", "qwen3.8-27b", "v4", []),
     ],
 )
-def test_the_unselected_claim_reader_sees_every_spelling_the_repo_actually_uses(
+def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     tmp_path: Path, role: str, model_key: str, version: str, expected: list[str]
 ) -> None:
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
-    읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌려 초록이라, 판독기가 못
-    읽는 철자는 거기서 영영 안 드러난다 — Critic `gpt-oss-20b`를 v1→v3로 바꾼 변이에서
-    전체 스위트가 초록이었다(#341 리뷰 L-1)."""
+    읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
+    고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
+    meta 넷만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
