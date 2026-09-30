@@ -453,8 +453,11 @@ _UNSELECTED_CLAIM_SPELLINGS = (
 
 
 def _fold(raw: str) -> str:
-    """meta.yaml 본문의 주석 줄바꿈을 접는다(구절이 `# ` 줄바꿈으로 갈리는 실물이 있다)."""
-    return " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
+    """meta.yaml 본문을 한 문자열로 접는다 — 주석 줄바꿈·공백 런은 한 칸으로, 굵게(`**`)와
+    백틱은 뺀다. 구절이 주석 줄바꿈으로 갈리는 실물(auditor/v3 meta)이 있고, meta 머리 주석은
+    굵게·백틱을 쓰는 문체다(critic/v3 meta)."""
+    folded = " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
+    return " ".join(folded.replace("**", "").replace("`", "").split())
 
 
 def _meta_text(role: str, version: str) -> str:
@@ -550,6 +553,7 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
         "# **미배선**(disk-only): 이 판은 registry가 안 고른다.\n",  # 첫째 · 굵게
         "# 어느 registry 엔트리도 이 버전을 `고르지 않는다`.\n",  # 셋째 · 백틱
     ],
+    ids=["blank-comment-line", "double-space", "bold", "bold-disk-only", "backtick"],
 )
 def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
     """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
