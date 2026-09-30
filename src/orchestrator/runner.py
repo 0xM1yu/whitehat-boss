@@ -125,6 +125,7 @@ from src.orchestrator.nodes import (
     validate,
 )
 from src.orchestrator.nodes.report import Report
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
@@ -140,6 +141,7 @@ from src.schemas.enums import (
     EvidenceKind,
     FindingState,
     NeStopReason,
+    PovStopReason,
     ReasonCode,
     Role,
     ScoutSignal,
@@ -1157,6 +1159,177 @@ def _emit_pov_skipped(ctx: RunContext, finding: Finding, reason: str, exc: Excep
         reason=reason,
         error_detail=error_detail(exc),
     )
+
+
+def _run_pov_hops(
+    ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
+) -> tuple[bytes | None, PovStopReason]:
+    """8단계 PoV 툴 루프 (Phase 3, Option C) — 모델이 매 홉 `PovAction`을 내고 도구를 돌린다.
+
+    `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
+    바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 대상에서 실행해 Evidence를
+    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/gdb/build)를 돌린다. `submit`은
+    루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
+
+    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전과 같은 spec →
+    REPEAT_SPEC 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가 실패하면 흡수 여부를
+    `_pov_classify_exception`이 가른다(단발 `_run_pov`의 추가형 계약 그대로 — 서버 쪽 사건은
+    올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다.
+
+    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** E4 게이트 전이·oracle 제출은 후속(Phase 5·6)
+    이고, 여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`/`POV_SKIPPED`)만 남긴다.
+    `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    """
+    max_hops = ctx.config.thresholds.max_hops
+    workdir = state.workdirs.get(finding.finding_id, ".")
+    with ctx.stage(Stage.VALIDATE):
+        last_poc: bytes | None = None
+        previous_spec: str | None = None
+        followup = ""
+        prev: pov.PovHop | None = None
+        hop = 0
+        while True:
+            started = ctx.monotonic_ms()
+            try:
+                if prev is None:
+                    current = pov.open_hop(ctx, finding=finding, capsule=capsule)
+                else:
+                    current = pov.continue_hop(
+                        ctx, finding=finding, prev=prev, followup=followup
+                    )
+            except (ModelGatewayError, SchemaParseError) as exc:
+                # `BudgetExhausted`는 안 잡는다 — 단발 `_run_pov`과 같이 올려 보낸다(run의 사실).
+                reason = _pov_classify_exception(exc)
+                if reason is None:
+                    raise
+                latency_s = (ctx.monotonic_ms() - started) / 1000.0
+                _emit_pov_hop(
+                    ctx, finding, hop=hop, stop_reason=reason.value, failed=(exc, latency_s)
+                )
+                return _pov_finish(ctx, finding, reason, last_poc)
+            action = current.action
+            if action.action == "submit":
+                _emit_pov_hop(
+                    ctx, finding, hop=hop, action="submit",
+                    stop_reason=PovStopReason.SUBMITTED.value,
+                )
+                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)
+            if action.action == "gen":
+                spec_json = action.spec.model_dump_json()
+                if previous_spec is not None and spec_json == previous_spec:
+                    _emit_pov_hop(
+                        ctx, finding, hop=hop, action="gen",
+                        stop_reason=PovStopReason.REPEAT_SPEC.value,
+                    )
+                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)
+                previous_spec = spec_json
+                last_poc = assemble_poc(action.spec)
+                evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
+            else:  # inspect — 새 PoC 없이 현 후보를 진단
+                evidence = pov.run_tool(
+                    ctx, finding=finding, tool=action.tool, workdir=workdir
+                )
+            if hop >= max_hops:
+                _emit_pov_hop(
+                    ctx, finding, hop=hop, action=action.action, evidence=evidence,
+                    stop_reason=PovStopReason.MAX_HOP.value,
+                )
+                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)
+            _emit_pov_hop(ctx, finding, hop=hop, action=action.action, evidence=evidence)
+            followup = _pov_observation(action.action, evidence)
+            prev = current
+            hop += 1
+
+
+def _pov_observation(action: str, evidence: Evidence) -> str:
+    """도구 결과를 다음 홉 user 턴으로 보낼 짧은 관측 텍스트(비지 않아야 한다 — `Prompt.body`)."""
+    detail = f" error={evidence.error}" if evidence.error else ""
+    return (
+        f"tool={evidence.source} action={action} ok={evidence.ok} "
+        f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
+    )
+
+
+def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
+    """PoV 홉 호출 예외를 흡수 여부로 가른다 — 단발 `_run_pov`의 추가형 계약 그대로.
+
+    per-finding 실패(스키마 파싱·버릴 수 있는 게이트웨이)는 흡수해 이 finding만 건너뛰고,
+    서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
+    run의 사실이라 `run_pipeline`이 멈춘다(#296과 같은 판정). 크기 거절만 CONTEXT_OVERFLOW로
+    따로 센다(폭주 차단). `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
+    """
+    if isinstance(exc, SchemaParseError):
+        return PovStopReason.PARSE_FAILED
+    if isinstance(exc, ModelGatewayError):
+        if not _is_droppable(exc):
+            return None
+        if _is_size_rejection(exc):
+            return PovStopReason.CONTEXT_OVERFLOW
+        return PovStopReason.GATEWAY_ERROR
+    return None
+
+
+def _emit_pov_hop(
+    ctx: RunContext,
+    finding: Finding,
+    *,
+    hop: int,
+    action: str | None = None,
+    evidence: Evidence | None = None,
+    stop_reason: str | None = None,
+    failed: tuple[Exception, float] | None = None,
+) -> None:
+    """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다)."""
+    data: dict[str, TraceValue] = {"hop": hop}
+    if action is not None:
+        data["action"] = action
+    if evidence is not None:
+        data["tool"] = evidence.source
+        data["tool_ok"] = evidence.ok
+        data["exit_code"] = evidence.exit_code
+        data["evidence_kind"] = evidence.kind.value
+    if stop_reason is not None:
+        data["stop_reason"] = stop_reason
+    if failed is not None:
+        exc, latency_s = failed
+        data["schema_ok"] = not isinstance(exc, SchemaParseError)
+        data["latency_s"] = latency_s
+        data["error"] = type(exc).__name__
+        data["error_detail"] = error_detail(exc)
+    ctx.trace.emit(
+        EventKind.POV_HOP,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        **data,
+    )
+
+
+def _pov_finish(
+    ctx: RunContext, finding: Finding, reason: PovStopReason, poc: bytes | None
+) -> tuple[bytes | None, PovStopReason]:
+    """루프 종단 이벤트 — PoC가 있으면 `POV_GENERATED`, 없으면 `POV_SKIPPED`. 단발 `_run_pov`와
+    같은 종단 짝이라 기존 지표 소비자(제거율·PoC 크기)가 루프에서도 같은 이벤트를 본다."""
+    if poc is not None:
+        ctx.trace.emit(
+            EventKind.POV_GENERATED,
+            stage=Stage.VALIDATE,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+            poc_bytes=len(poc),
+            poc_sha256=hashlib.sha256(poc).hexdigest(),
+            stop_reason=reason.value,
+        )
+    else:
+        ctx.trace.emit(
+            EventKind.POV_SKIPPED,
+            stage=Stage.VALIDATE,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+            reason=reason.value,
+        )
+    return poc, reason
 
 
 def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static: bool) -> int:
