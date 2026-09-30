@@ -133,3 +133,55 @@ class PovSpec(HarnessModel):
                 f"PoC 총 바이트 {total}가 상한 {_MAX_POC_BYTES}를 넘는다 — 스펙을 줄인다"
             )
         return self
+
+
+# 액션별로 그 액션이 쓰는 필드. `_check_action`이 다른 액션의 필드가 섞였는지 본다
+# (`_FIELDS_BY_KIND`와 같은 규율 — `extra="forbid"`는 없는 필드 이름만 막지, 선언된 필드를
+# 엉뚱한 액션에 채운 것은 못 잡는다).
+_FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
+    "gen": ("spec",),
+    "inspect": ("tool",),
+    "submit": (),
+}
+
+
+class PovAction(HarnessModel):
+    """PoV 툴 루프가 매 홉 내는 제어 액션 (Phase 3, Option C — council+사용자 2026-09-30).
+
+    `action`이 어느 필드를 쓰는지 정한다:
+    - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.
+      **모델이 쓴 코드를 실행하지 않는다** — 조립은 결정론 순수 함수(fork B-iii). raw 임의
+      바이트가 필요하면 `spec`의 `literal` 세그먼트에 통째로 넣는다.
+    - `inspect`: `tool`(asan/gdb/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사).
+    - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
+
+    ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
+    포맷은 이 스펙으로 도달 못 한다 — 그때 `spec` 자리에 generator-script 대안을 더한다(별도
+    신뢰면·리뷰). 지금은 열지 않는다(임의 코드 실행 회피).
+
+    `PovSegment._check_kind`와 같은 규율으로, 그 액션이 쓰지 않는 필드가 실리면 거절한다.
+    """
+
+    action: Literal["gen", "inspect", "submit"]
+    spec: PovSpec | None = None
+    tool: Literal["asan", "gdb", "build", "poc"] | None = None
+    rationale: NonEmptyStr
+
+    @model_validator(mode="after")
+    def _check_action(self) -> "PovAction":
+        required = {"gen": "spec", "inspect": "tool"}.get(self.action)
+        if required is not None and getattr(self, required) is None:
+            raise ValueError(f"{self.action} 액션은 {required}가 필요하다")
+        allowed = set(_FIELDS_BY_ACTION[self.action])
+        stray = sorted(
+            name
+            for fields in _FIELDS_BY_ACTION.values()
+            for name in fields
+            if name not in allowed and getattr(self, name) is not None
+        )
+        if stray:
+            raise ValueError(
+                f"{self.action} 액션에 다른 액션의 필드가 섞였다: {stray} — "
+                f"{self.action}가 쓰는 필드는 {list(_FIELDS_BY_ACTION[self.action])}뿐이다"
+            )
+        return self
