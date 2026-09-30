@@ -1095,8 +1095,8 @@ def _analyze(
         return
     swap = ctx.config.swap
     # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
-    # 자리다.** pov:fake·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면 swappable로 한 번
-    # 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라 여기서 막는다.
+    # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
+    # swappable로 한 번 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라 막는다.
     if swap is not None and Role.POV.value in swap.swappable:
         _swap_for(ctx, Stage.VALIDATE)
     # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
@@ -1134,24 +1134,27 @@ def _run_pov_hops(
     """8단계 PoV 툴 루프 (Phase 3, Option C) — 모델이 매 홉 `PovAction`을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
-    바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 대상에서 실행해 Evidence를
-    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/gdb/build)를 돌린다. `submit`은
+    바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
+    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/poc)를 돌린다. `submit`은
     루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
 
-    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전과 같은 spec →
-    REPEAT_SPEC 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가 실패하면 흡수 여부를
-    `_pov_classify_exception`이 가른다(단발 `_run_pov`의 추가형 계약 그대로 — 서버 쪽 사건은
-    올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다.
+    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
+    **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
+    피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가
+    실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
+    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다.
 
-    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** E4 게이트 전이·oracle 제출은 후속(Phase 5·6)
-    이고, 여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`/`POV_SKIPPED`)만 남긴다.
-    `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
+    되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
+    파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
+    spec과 무관해 MAX_HOP까지 헛돈다. E4 게이트 전이·oracle 제출도 후속이고, 여기서는 홉 이벤트
+    (`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)만 남긴다. `max_hops`는 NE 루프와
+    같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
     """
     max_hops = ctx.config.thresholds.max_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
     with ctx.stage(Stage.VALIDATE):
         last_poc: bytes | None = None
-        previous_spec: str | None = None
         followup = ""
         prev: pov.PovHop | None = None
         hop = 0
@@ -1165,7 +1168,7 @@ def _run_pov_hops(
                         ctx, finding=finding, prev=prev, followup=followup
                     )
             except (ModelGatewayError, SchemaParseError) as exc:
-                # `BudgetExhausted`는 안 잡는다 — 단발 `_run_pov`과 같이 올려 보낸다(run의 사실).
+                # `BudgetExhausted`는 안 잡는다 — 추가형 계약대로 올려 보낸다(run의 사실).
                 reason = _pov_classify_exception(exc)
                 if reason is None:
                     raise
@@ -1182,15 +1185,16 @@ def _run_pov_hops(
                 )
                 return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)
             if action.action == "gen":
-                spec_json = action.spec.model_dump_json()
-                if previous_spec is not None and spec_json == previous_spec:
+                # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
+                # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
+                poc = assemble_poc(action.spec)
+                if last_poc is not None and poc == last_poc:
                     _emit_pov_hop(
                         ctx, finding, hop=hop, action="gen",
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                     )
                     return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)
-                previous_spec = spec_json
-                last_poc = assemble_poc(action.spec)
+                last_poc = poc
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
                 evidence = pov.run_tool(
@@ -1218,13 +1222,17 @@ def _pov_observation(action: str, evidence: Evidence) -> str:
 
 
 def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
-    """PoV 홉 호출 예외를 흡수 여부로 가른다 — 단발 `_run_pov`의 추가형 계약 그대로.
+    """PoV 홉 호출 예외를 흡수 여부로 가른다 — pov 추가형 계약(옛 `_run_pov` 단발판이 쓰던
+    `_is_droppable` 판정 그대로).
 
     per-finding 실패(스키마 파싱·버릴 수 있는 게이트웨이)는 흡수해 이 finding만 건너뛰고,
     서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
-    run의 사실이라 `run_pipeline`이 멈춘다(#296과 같은 판정). 크기 거절만 CONTEXT_OVERFLOW로
-    따로 센다(폭주 차단). `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
-    """
+    run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
+    `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
+
+    ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
+    run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
+    건너뛴다 — 체계적 pov 실패가 파이프라인을 멈추면 안 된다는 계약(옛 `_run_pov` docstring)."""
     if isinstance(exc, SchemaParseError):
         return PovStopReason.PARSE_FAILED
     if isinstance(exc, ModelGatewayError):
@@ -1276,9 +1284,13 @@ def _emit_pov_hop(
 def _pov_finish(
     ctx: RunContext, finding: Finding, reason: PovStopReason, poc: bytes | None
 ) -> tuple[bytes | None, PovStopReason]:
-    """루프 종단 이벤트 — PoC가 있으면 `POV_GENERATED`, 없으면 `POV_SKIPPED`. 단발 `_run_pov`와
-    같은 종단 짝이라 기존 지표 소비자(제거율·PoC 크기)가 루프에서도 같은 이벤트를 본다."""
-    if poc is not None:
+    """루프 종단 이벤트. `POV_GENERATED`는 **모델이 submit해 최종 PoC가 나온 경우만** 낸다 —
+    나머지(max_hop·repeat·흡수된 예외·gen 없는 submit)는 `POV_SKIPPED`다. 부분 PoC(중간 gen까지는
+    했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`로 남긴다.
+
+    ⚠ 예전에는 PoC가 있기만 하면 GENERATED라 max_hop·parse_failed도 「생성됨」으로 과대 집계됐다
+    (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다."""
+    if reason is PovStopReason.SUBMITTED and poc is not None:
         ctx.trace.emit(
             EventKind.POV_GENERATED,
             stage=Stage.VALIDATE,
@@ -1286,16 +1298,19 @@ def _pov_finish(
             subject_id=finding.finding_id,
             poc_bytes=len(poc),
             poc_sha256=hashlib.sha256(poc).hexdigest(),
-            stop_reason=reason.value,
         )
-    else:
-        ctx.trace.emit(
-            EventKind.POV_SKIPPED,
-            stage=Stage.VALIDATE,
-            subject_kind="finding",
-            subject_id=finding.finding_id,
-            reason=reason.value,
-        )
+        return poc, reason
+    data: dict[str, TraceValue] = {"reason": reason.value}
+    if poc is not None:
+        data["poc_bytes"] = len(poc)
+        data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
+    ctx.trace.emit(
+        EventKind.POV_SKIPPED,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        **data,
+    )
     return poc, reason
 
 

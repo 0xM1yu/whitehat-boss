@@ -346,8 +346,8 @@ def _build_pov(
 ) -> PovSpec:
     """Fake PoV 구성 스펙 — 흔한 오버플로 모양(64바이트 패딩 + 4바이트 정수). dev_fake 전용.
 
-    `assemble_poc`가 결정론적으로 바이트를 만드므로 dev_fake run이 재현 가능하다. 단발 PoV
-    노드(`pov.run`)와 툴 루프의 gen 액션(`_build_pov_action`)이 둘 다 이 스펙을 쓴다.
+    `assemble_poc`가 결정론적으로 바이트를 만드므로 dev_fake run이 재현 가능하다. 툴 루프의 gen
+    액션(`_build_pov_action`)이 이 스펙을 실어 낸다.
     """
     return PovSpec(
         segments=[
@@ -379,12 +379,13 @@ def _build_pov_action(
     )
 
 
+# `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
+# 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 _BUILDERS = {
     Candidate: _build_candidate,
     ScoutResponse: _build_scout_response,
     Finding: _build_finding,
     Decision: _build_decision,
     DecisionDraft: _build_decision_draft,
-    PovSpec: _build_pov,
     PovAction: _build_pov_action,
 }
