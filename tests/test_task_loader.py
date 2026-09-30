@@ -191,7 +191,9 @@ class _LegacyTarfile:
     `python-version: "3.11"`은 최신 3.11.x로 풀린다). 로더가 만지는 이름만 옛 모양으로 바꾼다:
     `data_filter`·`FilterError` 등이 없고 `TarFile.extract()`가 `filter=`를 `TypeError`로 거부한다
     (docs.python.org/3.11/library/tarfile.html: *Changed in version 3.11.4: Added the filter
-    parameter*). 두 오류 문구는 PR #343 리뷰 M-1이 로컬 3.11.0에서 본 문구에 맞췄다.
+    parameter*). 두 오류 문구는 3.11.0 인터프리터가 내는 문구와 같게 맞췄다.
+    ⚠ `tarfile.TarFile`은 지금 인터프리터의 것 그대로다 — 실제 3.11.0~3.11.3에는 없는
+    `TarFile.extraction_filter`로 판별하는 (실제로는 유효한) 가드는 이 대역에서 거짓 빨강이다.
     """
 
     _ABSENT = frozenset({"data_filter", "tar_filter", "fully_trusted_filter", "FilterError"})
@@ -240,7 +242,8 @@ def test_safe_extract_refuses_an_interpreter_without_extraction_filters(
 def test_load_task_refuses_an_interpreter_without_extraction_filters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`load_task`도 같은 거부를 감싸지 않고 그대로 올린다 — 과제 입구에서 원인이 보인다."""
+    """`load_task`도 같은 거부를 감싸지 않고 그대로 올린다 — 과제 입구에서 원인이 보이고,
+    `work_dir`도 만들지 않는다(풀기 전 거부)."""
     task = tmp_path / "task"
     task.mkdir()
     _make_tar(task / task_loader.REPO_ARCHIVE_NAME, {"a.c": b"int a;\n"})
@@ -248,3 +251,5 @@ def test_load_task_refuses_an_interpreter_without_extraction_filters(
 
     with pytest.raises(RuntimeError, match=r"3\.11\.4"):
         task_loader.load_task(task, tmp_path / "work")
+
+    assert not (tmp_path / "work").exists(), "거부했는데 work_dir을 만들었다"
