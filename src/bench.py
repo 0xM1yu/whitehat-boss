@@ -108,8 +108,8 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     # `Role.SINGLE`만 추가하고 여기를 비워 두면 `bench_report._role_report()`의
     # `ROLE_SPEC[role_enum]`이 `KeyError`가 된다 — 고치려던 크래시가 자리만 옮긴다.
     Role.SINGLE: (Finding, CapsuleLevel.EXPANDED),
-    # PoV — 모델은 PovSpec(구성 스펙)을 낸다(council 2026-09-30). ⚠ 실bench로 이 역할을
-    # 세우려면 `_render`에 pov 토큰(FINDING·TARGET·SOURCE) 분기를 더해야 한다(P7, 현재 미배선).
+    # PoV — 모델은 PovSpec(구성 스펙)을 낸다(council 2026-09-30). `_render`에 pov 분기가 있다
+    # (FINDING·TARGET·SOURCE·FACTS). 실측은 서빙 호스트 확보 뒤(checksum·benchmark 0).
     Role.POV: (PovSpec, CapsuleLevel.EXPANDED),
 }
 
@@ -149,6 +149,13 @@ def _filler(chars: int, variant: int) -> str:
     return head + _FILLER * (want // len(_FILLER) + 1)
 
 
+# PoV bench 프롬프트에 실을 Finding 요약 근사 — `nodes/pov.py._describe_finding` 모양.
+_POV_FINDING = (
+    "find_0001 · CWE: CWE-787 · 검증 없는 memcpy\n"
+    "근거(rca): parse_header에서 len 미검증\n경로 단계 수: 2"
+)
+
+
 def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
     """실제 렌더 경로. 자리표시자 누락은 `render()`가 잡는다."""
     if role is Role.CRITIC:
@@ -161,6 +168,22 @@ def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
             claim="검증 없는 memcpy (CWE-787)",
             path="parse_header -> memcpy",
             evidence=filler,
+        )
+    if role is Role.POV:
+        # PoV body는 FINDING·TARGET·SOURCE·FACTS를 받는다(캡슐 섹션이 아니라 Auditor의 Finding).
+        # `nodes/pov.py._ask_model`의 필드 모양으로 근사한다 — bench엔 실캡슐이 없어 FACTS의
+        # capsule_sections가 빠진다(그만큼 낙관 · 서빙 실측이 선행).
+        pov_facts = build_facts(
+            run_id=_BENCH_RUN_ID,
+            ids={"finding_id": "find_0001"},
+            target=_TARGET,
+            source=filler,
+        )
+        return template.render(
+            facts=pov_facts,
+            finding=_POV_FINDING,
+            target=_TARGET.file,
+            source=filler,
         )
     facts = build_facts(
         run_id=_BENCH_RUN_ID,

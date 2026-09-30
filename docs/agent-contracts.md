@@ -170,6 +170,30 @@ agent:
 - 모델 호출은 등급 경계가 애매한 경우(E1↔E2)로 한정한다. **v1에서는 그것도 열지 않았다** — `gate_node.py`가 "애매한 경우에도 모델을 부르지 않는다"이고 E1↔E2 경계는 `gate_ambiguous`로 기록만 하고 E1으로 확정된다. 판정 경로에 모델이 끼면 결정론이 깨져 제거율이 조건마다 달라지기 때문이다.
 - 출력: 상태 전이 + 사유 코드. 사유 코드는 열거형으로 고정한다(자유 텍스트 금지).
 
+### 2.5 PoV (PoC 생성) — 러너 배선(툴 루프 전)
+
+러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형). **남은 것은 모델-주도 툴
+루프·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
+[ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
+어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
+
+- 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 **PoC 입력의 구성 스펙**을 만든다.
+- 입력: `Finding` + 대상 원문(source).
+- 출력: **`PovSpec`** — 바이트를 직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
+  스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
+  깎을 수 있다는 **추정**을 피한다(base64는 안 쟀다 · 인접 실측은 enum 강제 verdict라는 다른 현상 —
+  `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
+  `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
+  스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
+- 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 단발로 부른다(추가형 — PoV 배선). 새 단계
+  번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·모델 실패는 finding을 죽이지 않고 `pov_skipped`로 남긴다.
+  도구는 아직 없다(모델-주도 툴 루프는 후속).
+- 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
+  베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovSpec`가 든다. 전역 4,096이면
+  사고가 답을 밀어내 스키마가 깨진다(Auditor가 그 판을 7/7 냈다). 값은 실측 뒤 조정.
+- 모델: `feyospace-v1-small` — §1 8단계 pov 좌석으로 `harness_pool`·`_hybrid`에 배선됐다. checksum·
+  benchmark 미실측(서빙+도구 되는 호스트 확보 뒤 실측).
+
 ## 3. 데이터 스키마
 
 에이전트 간에는 아래 구조체만 오간다. 전체 conversation은 전달하지 않는다. 아래 값은 모두 합성 예시다.
