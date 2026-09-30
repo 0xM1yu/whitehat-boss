@@ -1077,11 +1077,12 @@ def _analyze(
     # (PoV 배선 — 추가형). 둘을 finding마다 번갈아 돌리면 pov 실패(재발생 갈래)가 뒤 finding의
     # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
     # **pov의 대상도 이 목록이다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.** 재현
-    # 명세의 `./poc`를 만들 주체가 PoV이고(STATUS.md §5 — E4를 막는 것은 실행 환경이 아니라 PoC
-    # 생성 · `adapters/container_tools.py` 모듈 docstring — 컨테이너 경로의 E4는 PoV 전에는 도달
-    # 불가), 그 앞의 `validate.run`이 재현 실패로 내린 것이 pov가 돌 이유를 지우지 않는다.
-    # `validate.run` **뒤** 상태로 거르면 그 강등이 pov의 입장 조건이 되는 순환이고 PoV 시도가
-    # 준다 — 바꾸려면 사람이 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
+    # 명세가 부르는 `./poc`는 PoV가 낸 PoC 바이트를 파일로 써야 생기는데(STATUS.md §5 — E4를
+    # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 내 기록할 뿐 `./poc`로 쓰지
+    # 않는다(파일화는 호스트가 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
+    # `validate.run`이 재현 실패로 내린 것이 pov가 돌 이유를 지우지 않는다. `validate.run` **뒤**
+    # 상태로 거르면 그 강등이 pov의 입장 조건이 되는 순환이고 PoV 시도가 준다 — 바꾸려면 사람이
+    # 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
     validated = state.in_state(FindingState.VALIDATED)
     for finding in validated:
         after, _ = validate.run(
