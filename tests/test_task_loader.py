@@ -1,7 +1,8 @@
 """CyberGym Level 1 과제 로더 테스트 (PoV 배선 — Phase 4).
 
 과제(`repo-vul.tar.gz` + `description.txt`)를 하네스 입력으로 안전하게 적재한다.
-대상은 **신뢰 못 하는 소스**라 tar 해제는 경로 이탈·링크·절대경로를 거부한다.
+대상은 **신뢰 못 하는 소스**라 tar 해제는 경로 이탈·dest 밖 링크·특수 파일을 거부하고, 절대경로
+멤버는 거부하지 않고 dest 안으로 눌러 담는다(`task_loader` 모듈 docstring과 같은 서술).
 """
 
 import io
@@ -191,7 +192,9 @@ class _LegacyTarfile:
     `python-version: "3.11"`은 최신 3.11.x로 풀린다). 로더가 만지는 이름만 옛 모양으로 바꾼다:
     `data_filter`·`FilterError` 등이 없고 `TarFile.extract()`가 `filter=`를 `TypeError`로 거부한다
     (docs.python.org/3.11/library/tarfile.html: *Changed in version 3.11.4: Added the filter
-    parameter*). 두 오류 문구는 PR #343 리뷰 M-1이 로컬 3.11.0에서 본 문구에 맞췄다.
+    parameter*). 두 오류 문구는 3.11.0 인터프리터가 내는 문구와 같게 맞췄다.
+    ⚠ `tarfile.TarFile`은 지금 인터프리터의 것 그대로다 — 실제 3.11.0~3.11.3에는 없는
+    `TarFile.extraction_filter`로 판별하는 (실제로는 유효한) 가드는 이 대역에서 거짓 빨강이다.
     """
 
     _ABSENT = frozenset({"data_filter", "tar_filter", "fully_trusted_filter", "FilterError"})
@@ -224,8 +227,8 @@ def test_safe_extract_refuses_an_interpreter_without_extraction_filters(
 
     그 거부가 없으면 첫 멤버에서 `TypeError`로 죽고, 그 예외가 올라가며 `except
     tarfile.FilterError`의 식이 평가돼 `AttributeError`로 **바뀐다** — 원인이 가려지고, 크기·개수
-    상한이 던지는 `UnsafeArchiveError`까지 같은 이유로 가려진다(PR #343 리뷰 M-1). 필터 없이 푸는
-    폴백은 만들지 않는다(대상은 못 믿는 소스다) — dest도 만들지 않는 것으로 「풀기 전」을 고정한다.
+    상한이 던지는 `UnsafeArchiveError`까지 같은 이유로 가려진다. 필터 없이 푸는 폴백은 만들지
+    않는다(대상은 못 믿는 소스다) — dest도 만들지 않는 것으로 「풀기 전」을 고정한다.
     """
     archive = tmp_path / "repo-vul.tar.gz"
     _make_tar(archive, {"a.c": b"int a;\n"})
@@ -240,7 +243,8 @@ def test_safe_extract_refuses_an_interpreter_without_extraction_filters(
 def test_load_task_refuses_an_interpreter_without_extraction_filters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`load_task`도 같은 거부를 감싸지 않고 그대로 올린다 — 과제 입구에서 원인이 보인다."""
+    """`load_task`도 같은 거부를 감싸지 않고 그대로 올린다 — 과제 입구에서 원인이 보이고,
+    `work_dir`도 만들지 않는다(풀기 전 거부)."""
     task = tmp_path / "task"
     task.mkdir()
     _make_tar(task / task_loader.REPO_ARCHIVE_NAME, {"a.c": b"int a;\n"})
@@ -248,3 +252,5 @@ def test_load_task_refuses_an_interpreter_without_extraction_filters(
 
     with pytest.raises(RuntimeError, match=r"3\.11\.4"):
         task_loader.load_task(task, tmp_path / "work")
+
+    assert not (tmp_path / "work").exists(), "거부했는데 work_dir을 만들었다"
