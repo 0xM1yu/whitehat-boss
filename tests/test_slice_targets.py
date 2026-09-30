@@ -44,9 +44,10 @@ _UTIL = split_source((TARGET / "util.c").read_bytes())
 _SOURCES = {"parser.c": _PARSER, "util.c": _UTIL}
 
 
-def test_auditor_v4_source_limits_match_the_runner_contract() -> None:
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     """#328 2차 MEDIUM-3: 모델용 계약의 수치가 러너 상수와 조용히 갈리지 않는다."""
-    prefix = (PROMPTS_DIR / "auditor" / "v4" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 
     assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
     assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix

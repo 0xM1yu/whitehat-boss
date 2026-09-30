@@ -154,7 +154,7 @@ def _reconstruct(
 ) -> Reconstructed:
     """`nodes/critic._ask_model`의 **metadata-only 조립**(v1)으로 프롬프트를 되만든다.
 
-    content-aware 버전(v3)은 `evidence_summaries`로 근거 본문을 더 실으므로 이 되만듦과
+    content-aware 버전은 `evidence_summaries`로 근거 본문을 더 실으므로 이 되만듦과
     달라진다 — 이 프로브는 본문 없는 조립의 토큰 예산을 재는 자리다.
 
     `decision_id`를 하네스가 발급한 값이 아니라 자리표시자로 채운다 — 그 run은 Critic을
