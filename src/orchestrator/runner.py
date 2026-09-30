@@ -1112,7 +1112,7 @@ def _analyze(
 
 
 def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
-    """8단계 PoV — Finding에서 PoC를 만드는 모델-주도 툴 루프를 돌린다 (Phase 3, 추가형·b-1).
+    """8단계 PoV — Finding에서 PoC를 만드는 모델-주도 툴 루프를 돌린다 (추가형·b-1).
 
     `validate.run`과 **나란히** 도는 추가 경로다. finding의 상태는 이미 `validate.run`이 정했으므로
     여기서는 상태를 바꾸지 않는다. 캡슐은 Auditor가 물려 준 `state.finding_capsules`에서 연다.
@@ -1120,7 +1120,7 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **캡슐 미스는 finding을 죽이지 않는다** — `pov_skipped`로 남기고 넘어간다(추가형이라 상태는
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
-    올려 보냄)는 루프가 낸다. 바이트 파일화·E4 게이트·oracle 제출은 호스트 후속(Phase 5·6)이다.
+    올려 보냄)는 루프가 낸다. 바이트 파일화·E4 게이트·oracle 제출은 호스트 후속이다.
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1138,7 +1138,7 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Phase 3, Option C) — 모델이 매 홉 `PovAction`을 내고 도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
