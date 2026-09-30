@@ -1853,7 +1853,46 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
 # (GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목). 우리 장비
 # 미실측이고, 아래 검사가 「타임아웃이 출력 상한보다 먼저 끊지 않는다」를 재는 기준으로만
 # 쓴다 — 대역 상한 계산값 4.9보다 느린 쪽이다.
+# PoV 좌석(`feyospace-v1-small`)은 **자기 속도를 안 쟀다** — Auditor와 같은 베이스·같은 파라미터
+# 수라 이 값을 **빌려** 쓴다. 그래서 PoV 쪽 검사가 뜻하는 것은 「PoV 타임아웃이 실측으로 맞다」가
+# 아니라 「Auditor와 같은 관계가 선다」까지다.
 _AUDITOR_DECODE_TOK_S = 4.5
+
+
+def _assert_thinking_seat_holds_together(role: str) -> None:
+    """사고 켠 좌석 하나의 「사고가 끝날 자리 + 시계」 관계 — Auditor·PoV가 같이 쓴다.
+
+    무는 것은 **관계**다: ① `xhigh` ② 사고 상한 < 출력 상한 ③ 타임아웃 ≥ 출력 상한 ÷ 속도
+    ④ 요청 payload가 그 값들을 싣는다. 속도는 `_AUDITOR_DECODE_TOK_S` 하나라 좌석마다 다른
+    속도를 못 넣는다(위 주석).
+    """
+    config = load_config("harness_pool")
+    entry = config.model_for(role)
+    cap = config.thresholds.output_max_for(role)
+
+    assert entry.reasoning_effort == "xhigh", (
+        f"{role} — 사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
+    )
+    assert entry.thinking_token_budget is not None, (
+        f"{role} — 사고 상한 선언이 없다 — 사고가 출력 상한 {cap}까지 가서 답 몫이 없을 수 있다"
+    )
+    assert entry.thinking_token_budget < cap, (
+        f"{role} — 사고 상한이 출력 상한 {cap} 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 "
+        "</think>를 넣고 답을 쓴다"
+    )
+    assert entry.request_timeout_s is not None, (
+        f"{role} — 어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
+    )
+    assert entry.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
+        f"{role} — 타임아웃이 출력 상한 {cap}보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 "
+        "멈춘다(#261)"
+    )
+
+    client = _model_client(config.profile.roles[role], config, role=role)
+    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert payload["reasoning_effort"] == config.reasoning_efforts()[role] == "xhigh"
+    assert payload["thinking_token_budget"] == entry.thinking_token_budget
+    assert payload["max_tokens"] == cap
 
 
 def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> None:
@@ -1866,26 +1905,25 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     연속 셋이면 run이 선다(#261) ③ 사고 상한이 출력 상한과 같으면 답 몫이 없다. 그래서 **값이 아니라
     관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
     """
-    config = load_config("harness_pool")
-    auditor = config.model_for("auditor")
-    cap = config.thresholds.output_max_for("auditor")
+    _assert_thinking_seat_holds_together("auditor")
 
-    assert auditor.reasoning_effort == "xhigh", (
-        "사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
-    )
-    assert auditor.thinking_token_budget is not None and auditor.thinking_token_budget < cap, (
-        "사고 상한이 출력 상한 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 </think>를 넣고 답을 쓴다"
-    )
-    assert auditor.request_timeout_s is not None, "어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
-    assert auditor.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
-        "타임아웃이 출력 상한보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 멈춘다(#261)"
-    )
 
-    client = _model_client(config.profile.roles["auditor"], config, role="auditor")
-    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
-    assert payload["reasoning_effort"] == config.reasoning_efforts()["auditor"] == "xhigh"
-    assert payload["thinking_token_budget"] == auditor.thinking_token_budget
-    assert payload["max_tokens"] == cap
+def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> None:
+    """8단계 PoV 좌석(`feyospace-v1-small`)도 Auditor와 **같은 관계**를 지킨다.
+
+    그 좌석은 Auditor와 같은 베이스·chat_template이라 손잡이 넷(`reasoning_effort` ·
+    `sampling` · `thinking_token_budget` · `request_timeout_s`)과 출력 상한
+    (`output_max_by_role.pov`)을 물려받았다(`config/models.yaml`의 그 항목 — 계획값·미실측).
+    물려받은 값이 서로 어긋나면 실서빙 때 사고가 답을 밀어내 본문이 비거나 잘려 스키마가 깨지고
+    0 PoC로 완주한다 — Auditor가 4,096으로 그 실패를 7/7 냈다. 상한 선언이 빠지면 전역 4,096으로
+    돌고, 사고 상한이 출력 상한을 넘으면 답 몫이 없으며, 타임아웃이 짧으면 상한 전에 시계가
+    호출을 끊는다.
+
+    ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 Auditor의 외부 보고
+    (`_AUDITOR_DECODE_TOK_S`)를 빌린 값이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다. 그리고
+    하한 하나만 문다: 값이 경계 바로 위여도 초록이고, 여유 배수·프리필은 안 본다.
+    """
+    _assert_thinking_seat_holds_together("pov")
 
 
 # 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 2026-09-24 ATOM `run_20260924_0001`
@@ -1917,7 +1955,10 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
 
     Auditor는 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가
     이미 잠갔으므로 여기서 다시 보지 않는다. `_MEASURED_DECODE_TOK_S`에 없는 모델은
-    선언 여부만 본다.
+    선언 여부만 본다 — **PoV(`feyospace-v1-small`)가 그렇다**: 속도를 안 쟀으니 여기 못 넣고,
+    관계(타임아웃 ≥ 출력 상한 ÷ 속도)는
+    `test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together`가 Auditor의 외부 보고
+    속도를 빌려 문다. 이 검사가 PoV에 하는 것은 선언 존재까지다.
 
     ⚠ 무는 것은 **순차 요청의 속도**다. `gpt-oss-20b`는 ≈95 s라 300 s로도 이 관계가 서서,
     그 값을 300으로 내려도 초록이다. 단계 안 동시 요청이 들어오면 스트림당 속도가 떨어지는데

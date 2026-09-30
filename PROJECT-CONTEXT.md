@@ -85,7 +85,7 @@ memory 프롬프트 개선(스키마 재조정 가능)은 실험팀이 변경을
 | 4단계 · memory·injection | `qwen3-14b` | bf16 | 28.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 위와 같다 |
 | 5단계 · Auditor | `qwen3.8-27b`(dense 27.8B · GDN hybrid · VLM) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값, HF safetensors 크기 합) | **사고를 켰다**(2026-09-26) — `reasoning_effort: xhigh` · 사고 상한 28,672 · 출력 상한 32,768. 우리 장비에서 사고 켠 판을 띄운 적은 없다 | 등급이 있다 — `xhigh`(기본)·`medium`·`low`(`high`는 템플릿이 예외를 낸다). reasoning parser(`qwen3`)를 걸어야 사고가 살고 `thinking_token_budget`도 받는다(hybrid라 V1 러너 — vLLM 0.27.1 소스 판독, 미실측) |
 | 7단계 · Critic | `gpt-oss-20b` | MXFP4(원래 형식) | 14.65 GiB | `reasoning_effort: high` | 등급 low·medium·high가 harmony system message에 실제로 들어간다. 길이 예산은 못 쓴다 |
-| 8단계 · PoV | `feyospace-v1-small`(Qwen3.8-27B 사이버 post-train · Auditor와 같은 베이스) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값 · Auditor와 같은 체크포인트 크기) | **사고를 켰다** — `reasoning_effort: xhigh` · 사고 상한 28,672 · 출력 상한 32,768(Auditor 손잡이 물려받음) · 우리 장비 미실측 | Auditor와 같다 — `xhigh`(기본)·`medium`·`low` · parser(`qwen3`) 걸어야 사고가 살고 `thinking_token_budget`을 받는다(hybrid V1 러너) |
+| 8단계 · PoV | `feyospace-v1-small`(Qwen3.8-27B 사이버 post-train · Auditor와 같은 베이스) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값 — 파라미터 BF16 27,781,427,952 × 2 B ÷ 2³⁰ = 51.747 GiB. 12개 파일의 크기 합은 안 쟀다 — Auditor 행의 51.75는 그쪽 18개 파일 합이다) | **사고를 켰다** — `reasoning_effort: xhigh` · 사고 상한 28,672 · 출력 상한 32,768(Auditor 손잡이 물려받음) · 우리 장비 미실측 | Auditor와 같다 — `xhigh`(기본)·`medium`·`low` · parser(`qwen3`) 걸어야 사고가 살고 `thinking_token_budget`을 받는다(hybrid V1 러너) |
 
 ⚠ 「추론 손잡이」 칸은 vLLM `v0.27.1` 태그의 소스에서 읽은 것이다(줄 번호는 2026-09-24에 그 태그와 다시 대조했다 ·
 parser 이름 `qwen3`·`deepseek_r1`은 둘 다 `vllm/reasoning/__init__.py`에 등록돼 있다) — `vllm/v1/engine/input_processor.py:111-125`(V2 러너나
