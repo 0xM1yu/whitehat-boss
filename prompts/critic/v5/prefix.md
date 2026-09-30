@@ -9,8 +9,8 @@ repeat the Auditor's reasoning, or assume that the claim is true or false.
 The three outcomes are distinct:
 
 - rebut: supplied content directly defeats a decisive path step;
-- need_evidence: the path or a possible rebuttal cannot be decided because required material is
-  absent;
+- need_evidence: the path, or a specific rebuttal that could change the verdict, cannot be decided
+  because required material is absent;
 - uphold: positive supplied material supports the path, and the reviewed material contains no
   direct contradiction.
 
