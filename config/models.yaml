@@ -672,7 +672,9 @@ models:
       min_p: 0.0
       presence_penalty: 0.0
     thinking_token_budget: 28672
-    prompt_template_version: "v1"
+    # v2 = Phase 3 PoV 툴 루프 프롬프트(PovAction, gen/inspect/submit). sumin 리뷰·승인(조민규
+    # 전달 2026-09-30). 단발 v1은 루프로 대체돼 제거됐다(`prompts/pov/v2/`, `nodes/pov.py`).
+    prompt_template_version: "v2"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
