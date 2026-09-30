@@ -7,6 +7,7 @@
 """
 
 import dataclasses
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -20,7 +21,13 @@ from src.adapters.factory import build_deps
 from src.adapters.fake_model import _parse_context
 from src.adapters.fake_retriever import read_symbol_source
 from src.config import load_config
-from src.interfaces.model_client import ChatTurn, ModelResult, Usage
+from src.interfaces.model_client import (
+    ChatTurn,
+    ModelGatewayError,
+    ModelResult,
+    SchemaParseError,
+    Usage,
+)
 from src.orchestrator import prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
@@ -64,6 +71,7 @@ from src.schemas.enums import ScoutSignal
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
+from src.tokens import estimate_tokens
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -481,6 +489,135 @@ def test_pov_reads_the_source_override(ctx: RunContext) -> None:
     pov.run(ctx, finding=finding, capsule=capsule, source=lambda: marker)
 
     assert marker in ctx.models.last_for(Role.POV).body
+
+
+def _raise(exc: Exception):  # noqa: ANN202
+    """`pov.run`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
+
+    def _fn(*_args: object, **_kwargs: object) -> object:
+        raise exc
+
+    return _fn
+
+
+def _pov_state(ctx: RunContext) -> tuple[runner._Accumulator, Finding]:
+    """pov 라우팅 단위 테스트용 (finding + 그 캡슐을 담은 state)."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+    state = runner._Accumulator()
+    state.update(finding)
+    state.finding_capsules[finding.finding_id] = capsule
+    return state, finding
+
+
+def test_run_pov_generates_and_records_the_poc_byte_size(ctx: RunContext) -> None:
+    """러너 8단계 라우팅(추가형 — PoV 배선): capsule이 있으면 pov를 돌려 PoC를 만들고
+    `pov_generated`에 **실제** 바이트 크기·sha256을 남긴다 — 기대값을 조립 결과에서 뽑는다
+    (truthy·하드코딩 검사는 회귀를 못 잡는다)."""
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    _, expected = pov.run(ctx, finding=finding, capsule=capsule)  # 결정론 fake → 같은 PoC
+
+    runner._run_pov(ctx, state, finding)
+
+    gen = [e for e in ctx.trace.events if e.kind is EventKind.POV_GENERATED]
+    assert gen, "capsule이 있는데 pov_generated가 안 났다 — 러너가 pov를 안 불렀다"
+    assert gen[-1].data["poc_bytes"] == len(expected)
+    assert gen[-1].data["poc_sha256"] == hashlib.sha256(expected).hexdigest()
+    assert not any(e.kind is EventKind.POV_SKIPPED for e in ctx.trace.events)
+
+
+def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> None:
+    """capsule 미스면 pov는 **건너뛰고 기록만** 한다 — 예외를 내거나 finding을 죽이지 않는다.
+    추가형이라 finding의 상태는 `validate.run`이 이미 정했고(#296이 막은 「단계가 finding을
+    조용히 삼킨다」와 같은 결), 미스는 `pov_skipped`로 남긴다."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+    state = runner._Accumulator()
+    state.update(finding)  # finding_capsules에는 일부러 안 넣는다 — 미스.
+
+    runner._run_pov(ctx, state, finding)  # 예외 없이 돌아와야 한다
+
+    skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
+    assert skipped and skipped[-1].data["reason"] == "capsule_missing"
+    assert not any(e.kind is EventKind.POV_GENERATED for e in ctx.trace.events)
+
+
+def test_run_pov_records_a_skip_on_a_schema_parse_error(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모델이 스키마를 못 맞추면 pov_skipped(schema_parse_failed) — finding은 안 죽는다."""
+    state, finding = _pov_state(ctx)
+    monkeypatch.setattr(runner.pov, "run", _raise(SchemaParseError("bad pov json")))
+
+    runner._run_pov(ctx, state, finding)
+
+    skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
+    assert skipped and skipped[-1].data["reason"] == "schema_parse_failed"
+
+
+def test_run_pov_records_a_skip_on_a_droppable_gateway_error(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """크기·체계적 거절(droppable)은 pov_skipped(gateway) — 이 finding에 대한 사실이다."""
+    state, finding = _pov_state(ctx)
+    monkeypatch.setattr(runner.pov, "run", _raise(ModelGatewayError("systematic", status=422)))
+
+    runner._run_pov(ctx, state, finding)
+
+    skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
+    assert skipped and skipped[-1].data["reason"] == "gateway"
+
+
+def test_run_pov_reraises_a_non_droppable_gateway_error(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """서버 쪽 사건(status 없음·5xx)은 run의 사실이라 올려 보낸다 — 조용히 삼키지 않는다
+    (critic 루프와 같은 _is_droppable 판정)."""
+    state, finding = _pov_state(ctx)
+    monkeypatch.setattr(runner.pov, "run", _raise(ModelGatewayError("server down", status=None)))
+
+    with pytest.raises(ModelGatewayError):
+        runner._run_pov(ctx, state, finding)
+
+
+# --- CyberGym 과제 설명 → 캡슐 섹션 (PoV 배선) ----------------------------------
+
+
+def test_retrieval_injects_the_vuln_description_when_set(ctx: RunContext) -> None:
+    """ctx.vuln_description가 있으면 캡슐에 vuln_description 섹션이 실린다(PoV 배선 — Scout
+    설명기반 트리아지 입력). 기본(None)이면 섹션이 없다 — 지어내지 않는다."""
+    plain = retrieval.run(ctx, target=VULN_TARGET, level=CapsuleLevel.LIGHT)
+    assert not any(s.kind == retrieval.VULN_DESCRIPTION_KIND for s in plain.sections)
+
+    ctx.vuln_description = "Heap overflow in parse_header when len exceeds 64."
+    withdesc = retrieval.run(ctx, target=BENIGN_TARGET, level=CapsuleLevel.LIGHT)
+
+    section = next(s for s in withdesc.sections if s.kind == retrieval.VULN_DESCRIPTION_KIND)
+    assert section.body and "parse_header" in " ".join(section.body)
+    assert section.items == len(section.body)
+    assert withdesc.used_tokens <= withdesc.budget_tokens  # 예산 안에 든다
+
+
+def test_vuln_description_section_fits_the_budget(ctx: RunContext) -> None:
+    """설명 섹션은 예산 안에 드는 줄까지만 담고 tokens를 실측으로 채운다 — 경계에서 **정확히**
+    몇 줄이 드는지 고정한다(고정 자리표시자가 아니라 실측이라 §0을 안 어긴다)."""
+    lines = [f"line {i} of the vulnerability description text here" for i in range(10)]
+    text = "\n".join(lines)
+    costs = [estimate_tokens(line) for line in lines]
+
+    # 정확히 3줄 값을 예산으로 주면 3줄만 담는다(`used + cost > budget`라 등호는 통과 — 경계).
+    exactly_three = retrieval._vuln_description_section(text, sum(costs[:3]))
+    assert exactly_three is not None
+    assert exactly_three.items == 3
+    assert exactly_three.tokens == sum(costs[:3])
+    assert exactly_three.tokens == sum(estimate_tokens(line) for line in exactly_three.body)
+
+    # 첫 줄보다 작은 예산이면 한 줄도 못 담아 None(빈 자리표시자를 짓지 않는다).
+    assert retrieval._vuln_description_section(text, costs[0] - 1) is None
+
+    full = retrieval._vuln_description_section(text, 100_000)
+    assert full is not None and full.items == len(lines)
 
 
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
