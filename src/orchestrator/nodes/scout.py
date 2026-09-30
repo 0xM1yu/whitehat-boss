@@ -139,8 +139,9 @@ def run(
     `role`은 Scout 자리를 고른다 — 풀 없는 단일 `scout`(기본)이거나 풀 멤버
     (`scout_memory`·`scout_boundary`·`scout_injection`). **어느 쪽이든 단계는 4단계
     (`Stage.SCOUT`)이고 임계값·전이 경로는 같다** — 바뀌는 것은 어느 프롬프트·모델을
-    부르는가뿐이다. `Candidate.scout_member` stamp는 노드가 아니라 `RunContext.call_model`이
-    이 `role`에서 만든다(ADR 0010 §3, `candidate.py` 필드 주석).
+    부르는가뿐이다. `Candidate.scout_member` stamp는 이 `role`에서 만든다 — v1·v2는
+    `RunContext.call_model`이, v3는 `_call_hop`이 찍는다(ADR 0010 §3, `candidate.py` 필드 주석).
+    발급 ID·`run_id`·`artifact_id`·초기 `state`는 `_call_hop`이 `RunContext.stamp_issued`로 덮는다.
 
     `slice`는 슬라이스 타깃이면 그 슬라이스다(ADR 0012 결정 1) — `SOURCE`가 그 렌더가 되고
     FACTS에 `slice_criterion`이 붙는다(`_ask_model`). `None`이면 지금처럼 심볼 본문이다.
@@ -214,6 +215,9 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
     hop_response = _call_hop(
         ctx,
         candidate_id=session.candidate_id,
+        # hop0이 이미 발급값으로 덮은 값이다 — 사실 블록은 hop0 본문(`history[0]`)에 한 번 실리고
+        # 되묻기 홉은 그것을 다시 싣지 않으므로, 이 세션의 발급 `artifact_id`는 이것뿐이다.
+        artifact_id=session.candidate.artifact_id,
         role=session.role,
         prompt=prompt,
         schema=ScoutResponse,
@@ -299,6 +303,7 @@ def _call_hop(
     ctx: RunContext,
     *,
     candidate_id: str,
+    artifact_id: str,
     role: Role,
     prompt: Prompt,
     schema: type[Candidate] | type[ScoutResponse],
@@ -333,6 +338,21 @@ def _call_hop(
         # 그 타입에 필드가 있어 §3의 stamp 경로가 성립한다.
         candidate = value
         summary = None
+    # **발급값은 하네스가 도장 찍는다**(이슈 #279) — v1·v2·v3, hop0·hop k가 전부 여기를 지난다.
+    # 논거·방식은 `RunContext.stamp_issued` docstring. `finish()`가 이 후보를 `create()`하므로
+    # 초기 `state`가 C-1(`candidate`)이 아니면 거기서 `IllegalTransition`이 났다.
+    candidate = ctx.stamp_issued(
+        candidate,
+        {
+            "candidate_id": candidate_id,
+            "run_id": ctx.run_id,
+            "artifact_id": artifact_id,
+            "state": FindingState.CANDIDATE,
+        },
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate_id,
+    )
     return _HopResponse(
         candidate=candidate,
         summary=summary,
@@ -387,6 +407,7 @@ def _ask_model(
         return _call_hop(
             ctx,
             candidate_id=candidate_id,
+            artifact_id=artifact.artifact_id,
             role=role,
             prompt=prompt,
             schema=schema,

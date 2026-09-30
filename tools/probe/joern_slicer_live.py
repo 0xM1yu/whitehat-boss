@@ -13,16 +13,45 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# Child mode: run slicer.py with the per-request builders behind slicer_library's interface.
+INLINE_CHILD = "--inline-library-child"
+
+
+class InlineLibrary:
+    """The self-contained per-request queries the session library is generated from. A run
+    through this must give the same slices as a run through the library (#322 review HIGH):
+    the unit tests only prove the generated text, not what Joern computes with it."""
+
+    def __init__(self, repo, max_flows, limits, max_depth, max_nodes, max_call_depth):
+        import slicer_queries
+
+        self.queries = slicer_queries
+        self.repo, self.max_flows, self.limits = repo, max_flows, limits
+        self.backward_limits = {"max_depth": max_depth, "max_nodes": max_nodes,
+                                "max_call_depth": max_call_depth}
+        self.definition = slicer_queries.envelope("library", "ujson.Bool(true)")
+
+    def flows(self, scopes):
+        return self.queries.flows_query(scopes, self.max_flows, self.limits)
+
+    def context(self, points):
+        return self.queries.context_query(points, self.repo)
+
+    def backward(self, candidate):
+        from slicer_backward import backward_b_query
+
+        return backward_b_query(candidate, **self.backward_limits)
 
 
 def dump(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def execute(args, source: Path, name: str, extra: list[str]) -> dict:
+def execute(args, source: Path, name: str, extra: list[str], inline: bool = False) -> dict:
     output = args.out_dir / f"{name}.json"
+    entry = [str(Path(__file__).resolve()), INLINE_CHILD] if inline else [str(ROOT / "slicer.py")]
     command = [
-        sys.executable, str(ROOT / "slicer.py"), "--repo", str(source),
+        sys.executable, *entry, "--repo", str(source),
         "--out", str(output), "--joern-endpoint", args.endpoint,
         "--query-timeout-seconds", str(args.timeout), *extra,
     ]
@@ -94,15 +123,28 @@ def main() -> None:
     second = execute(args, source, "full-2", [])
     validate_full(second)
     assert first["slices"] == second["slices"], "Fresh CPGs produced different slices"
+    # Fresh CPGs agree (above), so a difference here is the session library's alone.
+    inline = execute(args, source, "inline-1", [], inline=True)
+    validate_full(inline)
+    assert inline["slices"] == first["slices"], "Session library and per-request queries differ"
     capped = execute(args, source, "cap-1", ["--max-flows-per-candidate", "1"])
     assert capped["status"] == "partial" and capped["counters"]["flows_truncated"] > 0
     assert any(item["truncated"] for item in capped["slices"])
     dump(args.out_dir / "checks.json", {"status": "passed", "checks": [
         "source context and initializers", "wrapper argument and declaration identity",
-        "fresh CPG repeat determinism", "observed flow cap and exit status",
+        "fresh CPG repeat determinism", "session library matches per-request queries",
+        "observed flow cap and exit status",
     ]})
     print(f"Live checks passed: {args.out_dir}")
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == [INLINE_CHILD]:
+        sys.argv.pop(1)
+        sys.path.insert(0, str(ROOT))
+        import slicer
+        import slicer_pipeline
+
+        slicer_pipeline.Library = InlineLibrary
+        raise SystemExit(slicer.main())
     main()
