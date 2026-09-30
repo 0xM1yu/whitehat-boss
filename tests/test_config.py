@@ -443,23 +443,67 @@ def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) ->
     assert version in auditor_node._CONTENT_AWARE_VERSIONS
 
 
+# meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
+# **저장소 실물에서 온 것만 적는다**(양성 핀 — 출처는 같은 자리):
+#   `미배선(disk-only)` — prompts/critic/v4/meta.yaml:1
+_UNSELECTED_CLAIM_SPELLINGS = ("미배선(disk-only)",)
+
+
+def _prompts_whose_meta_claims_unselected(config: HarnessConfig) -> list[str]:
+    """`config`의 각 역할이 고른 판 중 meta.yaml이 「안 고른다」고 적은 것 — `role/version` 목록."""
+    return [
+        f"{role}/{version}"
+        for role in PROMPTED_ROLES
+        if role in config.profile.roles
+        for version in [config.model_for(role).prompt_template_version]
+        if any(
+            spelling in (PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8")
+            for spelling in _UNSELECTED_CLAIM_SPELLINGS
+        )
+    ]
+
+
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> None:
     """`meta.yaml` 머리 주석의 「미배선(disk-only)」은 **어느 registry 엔트리도 이 판을
     안 고른다**는 현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다
     (CLAUDE.md §2.3) — 이 검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다.
     ⚠ 철자 pin이다 — 정확한 `미배선(disk-only)`만 문다. 표현을 바꿔 쓰면 못 잡는다."""
-    config = load_config(profile)
+    assert _prompts_whose_meta_claims_unselected(load_config(profile)) == []
 
-    stale = [
-        f"{role}/{version}"
-        for role in PROMPTED_ROLES
-        if role in config.profile.roles
-        for version in [config.model_for(role).prompt_template_version]
-        if "미배선(disk-only)"
-        in (PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8")
-    ]
-    assert stale == []
+
+@pytest.mark.parametrize(
+    ("role", "model_key", "version", "expected"),
+    [
+        # 통제 — 정확한 철자. prompts/critic/v4/meta.yaml:1 「미배선(disk-only)」.
+        ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
+        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
+        ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
+        # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
+        # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
+        ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
+        # 음성 통제 — auditor/v4 meta는 「배선됨」이다. 고르면 안 걸려야 한다.
+        ("auditor", "qwen3.8-27b", "v4", []),
+    ],
+)
+def test_the_unselected_claim_reader_sees_every_spelling_the_repo_actually_uses(
+    tmp_path: Path, role: str, model_key: str, version: str, expected: list[str]
+) -> None:
+    """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
+    읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌려 초록이라, 판독기가 못
+    읽는 철자는 거기서 영영 안 드러난다 — Critic `gpt-oss-20b`를 v1→v3로 바꾼 변이에서
+    전체 스위트가 초록이었다(#341 리뷰 L-1)."""
+    roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
+    _copy_config(
+        tmp_path,
+        profile_patch={"roles": roles},
+        model_patch={model_key: {"prompt_template_version": version}},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.model_for(role).prompt_template_version == version  # 변이가 실제로 들어갔다
+    stale = [s for s in _prompts_whose_meta_claims_unselected(config) if s.startswith(f"{role}/")]
+    assert stale == expected
 
 
 def test_every_prompted_role_is_a_real_role() -> None:
