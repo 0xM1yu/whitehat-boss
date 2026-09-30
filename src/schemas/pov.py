@@ -152,7 +152,8 @@ class PovAction(HarnessModel):
     - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.
       **모델이 쓴 코드를 실행하지 않는다** — 조립은 결정론 순수 함수(fork B-iii). raw 임의
       바이트가 필요하면 `spec`의 `literal` 세그먼트에 통째로 넣는다.
-    - `inspect`: `tool`(asan/gdb/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사).
+    - `inspect`: `tool`(asan/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사). `gdb`는 도구
+      화이트리스트에 아직 없어 뺐다 — 에이전트 gdb 도구가 배선되면(PR #327) 다시 넣는다.
     - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
@@ -164,7 +165,9 @@ class PovAction(HarnessModel):
 
     action: Literal["gen", "inspect", "submit"]
     spec: PovSpec | None = None
-    tool: Literal["asan", "gdb", "build", "poc"] | None = None
+    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 아직 없어 뺐다(PR #327).
+    # `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
+    tool: Literal["asan", "build", "poc"] | None = None
     rationale: NonEmptyStr
 
     @model_validator(mode="after")

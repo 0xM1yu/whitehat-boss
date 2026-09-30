@@ -280,15 +280,15 @@ class EventKind(StrEnum):
     # 조인 키고, gen/inspect 홉은 도구 결과(`tool`·`tool_ok`·`exit_code`·`evidence_kind`)를,
     # 종단 홉은 `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
     POV_HOP = "pov_hop"
-    # 8단계 PoV가 Finding에서 PoC를 만들어 낸 기록 (PoV 배선 — 추가형 라우팅). 내는 곳은
-    # `runner._run_pov`(단발)와 `_run_pov_hops`(루프)다 — 프로필이 pov 좌석을 선언한 run에서
-    # VALIDATED Finding당 최대 1건이다. `poc_bytes`가 조립된 PoC 바이트 길이, `poc_sha256`이 그
-    # 내용 해시(재현성 대조용)다. 바이트를 파일로 쓰거나 게이트에 거는 건 호스트 후속이다.
+    # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
+    # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 VALIDATED Finding당 최대
+    # 1건이다. `poc_bytes`가 최종 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다.
+    # submit이 아닌 종단(max_hop·repeat·흡수된 예외·gen 없는 submit)은 여기가 아니라 POV_SKIPPED다.
     POV_GENERATED = "pov_generated"
-    # PoV를 건너뛴 기록. `reason`이 `capsule_missing`(finding에 캡슐이 없음) 또는 모델 실패
-    # (`schema_parse_failed`·`gateway`)다. **추가형이라 finding의 상태는 `validate.run`이 이미
-    # 정했으므로** pov 실패는 finding을 죽이지 않고 여기 남긴다 — pov가 파이프라인의 finding
-    # 상태를 어지럽히지 않는다는 계약이 이 이벤트로 관측된다.
+    # PoV가 최종 PoC 없이 끝난 기록. `reason`이 `capsule_missing`(캡슐 없음)이거나 정지 사유
+    # (`PovStopReason`: `parse_failed`·`gateway_error`·`context_overflow`·`repeat_spec`·`max_hop`·
+    # gen 없는 `submitted`)다. 부분 PoC가 있으면 `poc_bytes`·`poc_sha256`도 싣는다. **추가형이라
+    # finding 상태는 `validate.run`이 이미 정했으므로** pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
     # 과제 설명이 캡슐 예산에 다 못 들어가 잘렸거나(kept < total) 한 줄도 못 들어간(kept 0) 기록.
     # `retrieval.run`이 낸다 — 설명은 예산을 미리 떼어 담지만(코드 자리를 굶기지 않게 최대 절반)

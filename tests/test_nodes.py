@@ -472,7 +472,9 @@ def test_pov_open_hop_puts_the_finding_in_the_prompt(ctx: RunContext) -> None:
 
     hop = pov.open_hop(ctx, finding=finding, capsule=capsule)
 
-    assert hop.action.action in ("gen", "inspect", "submit")
+    # hop0은 사실 블록을 실은 첫 호출이다 — history에 (user, assistant) 두 턴이 쌓인다.
+    assert hop.hop == 0
+    assert [t.speaker for t in hop.history] == ["user", "assistant"]
     # 단순 「불렸나」가 아니라 **그 Finding이 프롬프트에 닿았나**를 본다(auditor 테스트와 같은 형).
     prompt = ctx.models.last_for(Role.POV)
     assert finding.finding_id in prompt.body
@@ -491,7 +493,7 @@ def test_pov_open_hop_reads_the_source_override(ctx: RunContext) -> None:
 
 
 def _raise(exc: Exception):  # noqa: ANN202
-    """`pov.run`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
+    """`pov.open_hop`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
 
     def _fn(*_args: object, **_kwargs: object) -> object:
         raise exc
