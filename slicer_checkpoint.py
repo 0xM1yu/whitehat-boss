@@ -155,9 +155,18 @@ SHARD_SHARED_KEYS = ("checkpoint_version", "run_contract", "engine_config", "can
 
 
 def merge_shards(out: Path, shards: list[Path]) -> dict:
-    """Union shard checkpoints (`--shard I/N`) into a new checkpoint for --export-only."""
+    """Union shard checkpoints (`--shard I/N`) into a new checkpoint for --export-only.
+
+    The per-process `baseline` (discovery result + errors) is taken from the first shard, but its
+    `errors` become the union over every shard's baseline, so a CPG-level warning seen by one
+    shard survives into the export regardless of argument order. Nothing is written unless the
+    whole merge succeeds.
+    """
     if out.exists():
         raise ValueError(f"Merged checkpoint exists: {out}")
+    resolved = [path.resolve() for path in shards]
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("The same shard checkpoint is given twice")
     stores = []
     try:
         for path in shards:
@@ -167,29 +176,30 @@ def merge_shards(out: Path, shards: list[Path]) -> dict:
             expected = canonical(first.get(key))
             for path, store in zip(shards[1:], stores[1:], strict=True):
                 if canonical(store.get(key)) != expected:
-                    raise ValueError(f"Shard mismatch on {key}: {path}")
-        if first.get("baseline") is None:
-            raise ValueError("First shard has no completed candidate discovery")
+                    raise ValueError(f"Shard mismatch on {key}: {shards[0]} vs {path}")
+        baselines = [store.get("baseline") for store in stores]
+        for path, baseline in zip(shards, baselines, strict=True):
+            if baseline is None:
+                raise ValueError(f"Shard has no completed candidate discovery: {path}")
+        baseline = dict(baselines[0])
+        baseline["errors"] = list(dict.fromkeys(e for b in baselines for e in b["errors"]))
         stages: dict[str, tuple[str, str]] = {}
         for path, store in zip(shards, stores, strict=True):
             for key, payload, sha in store.conn.execute("SELECT * FROM stages"):
                 if key in stages and stages[key][1] != sha:
                     raise ValueError(f"Candidate {key} differs between shards (again in {path})")
                 stages[key] = (payload, sha)
-        with Checkpoint(out) as merged, merged.conn:
-            merged.conn.executemany(
-                "INSERT INTO metadata VALUES (?,?) ON CONFLICT(key) DO NOTHING",
-                first.conn.execute("SELECT key, value FROM metadata").fetchall(),
-            )
-            merged.conn.executemany(
-                "INSERT INTO stages VALUES (?,?,?)",
-                [(key, payload, sha) for key, (payload, sha) in sorted(stages.items())],
-            )
-            for store in stores:
-                merged.conn.executemany(
-                    "INSERT INTO attempts(started,ended,payload) VALUES (?,?,?)",
-                    store.conn.execute("SELECT started, ended, payload FROM attempts ORDER BY id"),
-                )
+        metadata = [
+            (key, canonical(baseline) if key == "baseline" else value)
+            for key, value in first.conn.execute("SELECT key, value FROM metadata")
+        ]
+        try:
+            _write_merged(out, metadata, stages, stores)
+        except BaseException:
+            for leftover in (out, Path(str(out) + ".lock"), Path(str(out) + "-wal"),
+                             Path(str(out) + "-shm")):
+                leftover.unlink(missing_ok=True)
+            raise
         keys = {c["candidate_key"] for c in first.get("candidates")}
         complete = sum(
             1 for key, (payload, _) in stages.items()
@@ -199,3 +209,19 @@ def merge_shards(out: Path, shards: list[Path]) -> dict:
     finally:
         for store in stores:
             store.close()
+
+
+def _write_merged(out: Path, metadata: list, stages: dict, stores: list) -> None:
+    with Checkpoint(out) as merged, merged.conn:
+        merged.conn.executemany(
+            "INSERT INTO metadata VALUES (?,?) ON CONFLICT(key) DO NOTHING", metadata
+        )
+        merged.conn.executemany(
+            "INSERT INTO stages VALUES (?,?,?)",
+            [(key, payload, sha) for key, (payload, sha) in sorted(stages.items())],
+        )
+        for store in stores:
+            merged.conn.executemany(
+                "INSERT INTO attempts(started,ended,payload) VALUES (?,?,?)",
+                store.conn.execute("SELECT started, ended, payload FROM attempts ORDER BY id"),
+            )
