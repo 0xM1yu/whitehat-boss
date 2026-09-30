@@ -559,9 +559,9 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
 )
 def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
     """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
-    굵게·백틱을 쓰는 문체다(prompts/critic/v3/meta.yaml:4·7). 다섯 형은 저장소에 아직 없어
-    검토 변이 B8·B9·B17·B18·B19에서 가져왔다 — 접기가 이것들을 못 넘으면 같은 주장을 그
-    문체로 적었을 때 판독기가 못 본다(#341 R5)."""
+    굵게·백틱을 쓰는 문체다(prompts/critic/v3/meta.yaml:4·7). 다섯 형은 검토 변이
+    B8·B9·B17·B18·B19에서 가져왔다(실물 meta의 형이 아니다) — 접기가 이것들을 못 넘으면 같은
+    주장을 그 문체로 적었을 때 판독기가 못 본다(#341 R5)."""
     assert any(spelling in _fold(raw) for spelling in _UNSELECTED_CLAIM_SPELLINGS), _fold(raw)
 
 
