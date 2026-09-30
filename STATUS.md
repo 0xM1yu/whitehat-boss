@@ -174,7 +174,9 @@ E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴�
 
 gdb는 2026-09-28 독립 `ContainerToolRunner` 실행에서 정상 종료·SIGSEGV 백트레이스를 모두
 냈다. 다만 `validate.tool_for()`는 아직 gdb를 선택하지 않으므로 **파이프라인의 실도구 E4
-도달을 보인 것은 아니다.** 그 실행 규칙은 도구 배선 후 후속 범위다.
+도달을 보인 것은 아니다.** 그 실행 규칙은 도구 배선 후 후속 범위다. ⏵ 2026-09-30 — gdb가
+대상을 띄웠는지는 종료 코드가 아니라 gdb가 stdout에 남긴 대상 수명주기 줄로 가른다(안 뜬
+대상은 `ok=False` — `tests/test_gdb_lifecycle_judgement.py`).
 
 지금 픽스처(`tests/fixtures/target/parser.c`)에는 `main`이 없어 링크되지 않고, `./poc`를
 만드는 주체도 없다. 즉 **E4를 막고 있는 것은 실행 환경이 아니라 PoC 생성**이다(아래 PoV 항목).
