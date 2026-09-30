@@ -112,6 +112,12 @@ def load_slices(path: Path) -> SliceSet:
         raise SliceInputError(
             f"{path}: 슬라이스 판 {version!r}는 읽지 않는다 — {SUPPORTED_SLICE_VERSION}만 받는다"
         )
+    if document.get("shard") is not None:
+        # `slicer.py --shard I/N`의 조각은 후보의 1/N만 든다 — 넘기면 나머지를 조용히 떨군다.
+        raise SliceInputError(
+            f"{path}: 샤드 조각({document['shard']})이다 — tools/merge_slicer_shards.py로 합친 "
+            "체크포인트의 --export-only 결과를 넘겨라"
+        )
     status = document.get("status")
     if status not in ("ok", "partial"):
         raise SliceInputError(f"{path}: 슬라이서 status가 {status!r}다 — 쓸 슬라이스가 없다")
