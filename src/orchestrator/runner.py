@@ -1105,20 +1105,15 @@ def _analyze(
 
 
 def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
-    """8단계 PoV — Finding에서 PoC를 만들어 기록한다 (PoV 배선 — 추가형·b-1).
+    """8단계 PoV — Finding에서 PoC를 만드는 모델-주도 툴 루프를 돌린다 (Phase 3, 추가형·b-1).
 
     `validate.run`과 **나란히** 도는 추가 경로다. finding의 상태는 이미 `validate.run`이 정했으므로
-    여기서는 상태를 바꾸지 않고 PoC 바이트를 산출·기록만 한다. 캡슐은 Auditor가 물려 준
-    `state.finding_capsules`에서 finding_id로 연다 — pov 노드 시그니처는 안 바꾼다.
+    여기서는 상태를 바꾸지 않는다. 캡슐은 Auditor가 물려 준 `state.finding_capsules`에서 연다.
 
-    **미스·모델 실패는 finding을 죽이지 않는다.** 캡슐이 없거나 모델이 실패하면 `pov_skipped`로
-    남기고 넘어간다 — 추가형이라 finding의 상태는 `validate.run`이 이미 정했고 pov가 그것을
-    어지럽히면 안 된다(#296이 critic 루프에서 막은 「단계가 finding을 조용히 삼킨다」와 같은 결).
-    크기가 아닌 게이트웨이 사건(5xx·상태 없음)은 이 finding이 아니라 run의 사실이라 올려 보낸다
-    (critic 루프와 **같은 `_is_droppable` 판정**). ⚠ 다만 critic의 run-정지 규칙
-    (`_rejects_every_request`·`_stop_if_a_caller_saw_nothing`, #296)은 **쓰지 않는다** — pov는
-    추가형이라 체계적 실패가 run을 멈추지 않고 finding마다 `pov_skipped`로 남는다. 바이트를 파일로
-    쓰거나 asan/poc로 실행해 게이트에 거는 것은 호스트가 필요한 후속(Phase 5)이라 여기엔 없다.
+    **캡슐 미스는 finding을 죽이지 않는다** — `pov_skipped`로 남기고 넘어간다(추가형이라 상태는
+    `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
+    gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
+    올려 보냄)는 루프가 낸다. 바이트 파일화·E4 게이트·oracle 제출은 호스트 후속(Phase 5·6)이다.
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1130,35 +1125,7 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
             reason="capsule_missing",
         )
         return
-    try:
-        _, poc = pov.run(ctx, finding=finding, capsule=capsule)
-    except SchemaParseError as exc:
-        _emit_pov_skipped(ctx, finding, "schema_parse_failed", exc)
-        return
-    except ModelGatewayError as exc:
-        if not _is_droppable(exc):
-            raise
-        _emit_pov_skipped(ctx, finding, "gateway", exc)
-        return
-    ctx.trace.emit(
-        EventKind.POV_GENERATED,
-        stage=Stage.VALIDATE,
-        subject_kind="finding",
-        subject_id=finding.finding_id,
-        poc_bytes=len(poc),
-        poc_sha256=hashlib.sha256(poc).hexdigest(),
-    )
-
-
-def _emit_pov_skipped(ctx: RunContext, finding: Finding, reason: str, exc: Exception) -> None:
-    ctx.trace.emit(
-        EventKind.POV_SKIPPED,
-        stage=Stage.VALIDATE,
-        subject_kind="finding",
-        subject_id=finding.finding_id,
-        reason=reason,
-        error_detail=error_detail(exc),
-    )
+    _run_pov_hops(ctx, state, finding, capsule)
 
 
 def _run_pov_hops(
