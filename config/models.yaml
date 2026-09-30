@@ -611,7 +611,7 @@ models:
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
 
-  # ── 8단계 PoV 모델 — 사용자(@danielcho02) 선정. **등재만이고 배선 전이다** ────────────────
+  # ── 8단계 PoV 모델 — 사용자(@danielcho02) 선정. **`harness_pool`·`_hybrid`에 배선됨(8단계 pov 좌석)** ──
   # CyberGym Level 1(PoV 생성)용. Feyospace-v1-small — Qwen/Qwen3.8-27B를 사이버 에이전트
   # 연구용으로 post-train한 28B다(HF 카드 · `base_model` 태그 Qwen/Qwen3.8-27B). 그래서 아키텍처·
   # 크기·창·추론 템플릿이 지금 Auditor(`qwen3.8-27b`)와 같다 — `family`는 베이스 가중치 제작사
@@ -636,21 +636,20 @@ models:
   #   않았다(ATOM 종료 · 서빙+도구 되는 호스트 미확보). 그전에 돈 run은 비교표 제외(CLAUDE.md §0).
   #   `tools/model_checksum.py`가 스냅샷을 받은 뒤 checksum을, `bench --apply`가 benchmark를 채운다.
   #
-  # ## 배선은 아직 — 이 항목은 등재만이다 (프로필 roles에 없다)
-  # PoV 노드(`nodes/pov.py`)는 단발로 붙었지만 **러너 8단계 라우팅에 아직 안 들어갔다**(호스트 필요).
-  # 그래서 이 키를 **어느 프로필의 roles에도 넣지 않는다** — 넣으면 `load_config`가 pov를 swap
-  # 목록(resident/swappable)에 요구하고 `check_serving`이 장비 파일 서버 행을 요구한다. 게다가
-  # resident로 두면 러너가 부르지도 않는 서버를 콜드 기동한다(SwapPolicy docstring의 「선 것처럼
-  # 보이는 정책」). PROJECT-CONTEXT §1 자리·`harness_pool` 배선·`config/serving/*.yaml`
-  # 서버 행·요청 손잡이(reasoning_effort·sampling·thinking_token_budget·request_timeout_s)는 러너가
-  # pov를 라우팅하고 서빙 호스트가 잡힌 뒤 실측과 함께 채운다. 등재만으로도 model-serving.md 포트 표
-  # (8006)와 PROJECT-CONTEXT 「로스터에 없지만 registry에 남는 것」 표가 이 키를 들어야 한다(doc 검사).
+  # ## 배선됨 — `harness_pool`·`harness_pool_hybrid`의 8단계 pov 좌석
+  # PoV 노드(`nodes/pov.py`)가 러너 8단계(Stage.VALIDATE) 라우팅에 들어갔다(추가형 — validate.run 뒤).
+  # 이 키를 두 canonical 프로필 roles에 넣었고 `harness_pool.swap.swappable`에 pov를 올렸다 —
+  # `load_config`의 swap 검사와 `check_serving`의 장비 파일 행 요구를 그래서 채웠다(`config/serving/*.yaml`에
+  # feyospace 행). resident가 아니라 swappable이라 8단계에 들어갈 때만 콜드 기동한다. PROJECT-CONTEXT
+  # §1 로스터·model-serving.md 포트 표(8006)가 이 키를 든다.
+  # ⚠ **실장비 종단은 미실측이다** — checksum·benchmark 0(위), 서빙+도구 되는 호스트 확보 뒤 실측한다.
   #
-  # ## 추론(사고) — 배선 때 켠다(지금은 요청 손잡이 미선언)
+  # ## 추론(사고) — 요청 손잡이는 request_timeout_s만 선언
   # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
   # 사고 · hybrid라 V1 러너로 `thinking_token_budget`을 받는다 · `--reasoning-parser qwen3`가 없으면
-  # 사고가 죽는다(`qwen3.8-27b` 항목의 같은 문단). PoV 출력은 작은 구성 스펙(PovSpec)이라 Auditor만큼
-  # 큰 출력 예산이 필요한지는 실측 전이다 — 그래서 지금은 손잡이를 안 적는다(안 적으면 payload에 안 실린다).
+  # 사고가 죽는다(`qwen3.8-27b` 항목의 같은 문단, 장비 파일 extra_args). PoV 출력은 작은 구성 스펙
+  # (PovSpec)이지만 사고가 기본(xhigh)이라 켜지므로, 서빙 역할 필수인 `request_timeout_s`(아래)만
+  # 선언하고 reasoning_effort·sampling·thinking_token_budget은 기본값으로 둔다 — 실측 뒤 조정한다.
   feyospace-v1-small:
     endpoint: "http://127.0.0.1:8006/v1"
     context_limit: 262144
@@ -661,6 +660,10 @@ models:
     family: "qwen"
     prompt_template_version: "v1"
     fallback: null
+    # **request_timeout_s — 계획값, 미실측**: Auditor(`qwen3.8-27b`)와 같은 모델·같은 사고(기본 xhigh)라
+    # 그 값(7,500 s)을 그대로 쓴다 — PoV 출력(PovSpec)은 작지만 사고 토큰이 시간을 지배한다. 서빙 역할은
+    # 이 손잡이를 선언해야 하고(`test_served_..._request_timeout`), call 타임아웃 상한과 함께 7,500이 최대다.
+    request_timeout_s: 7500
     benchmark:
       measured_at: null
       measured_on: null

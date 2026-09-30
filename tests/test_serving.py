@@ -31,7 +31,7 @@ from src.orchestrator.runner import DEFAULT_CONDITION, Dependencies, RunSpec
 
 POOL = "harness_pool"
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
-SWAPPED = ("scout_memory", "scout_boundary", "scout_injection", "auditor", "critic")
+SWAPPED = ("scout_memory", "scout_boundary", "scout_injection", "auditor", "critic", "pov")
 
 
 def _with_swap(base: HarnessConfig, swappable: tuple[str, ...]) -> HarnessConfig:
