@@ -296,10 +296,10 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
 > | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
-> | **8006** | `feyospace-v1-small` ← 미배선 (8단계 PoV로 선정·등재만 — 프로필 배선은 서빙 호스트 확보 뒤) |
+> | **8006** | `feyospace-v1-small` ← `harness_pool`·`_hybrid`(pov — 8단계 · 서빙 호스트 미확보라 실측 전) |
 >
 > **번호가 곧 띄우는 순서다 (2026-09-24).** 교대가 canonical run에서 모델을 올리는 순서(Scout 풀 → Auditor →
-> Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에 뒀다. 그 전에는 로스터를 바꿀 때마다
+> Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에, 8단계 PoV(`feyospace-v1-small`)를 그 뒤 8006에 뒀다. 그 전에는 로스터를 바꿀 때마다
 > 빈 번호에 끼워 넣어 8009 → 8010 → 8008 → 8006 순서로 떴다. `tests/test_config.py`의
 > `test_served_ports_count_up_from_8000_in_launch_order`가 이 순서를, `tests/test_docs_format.py`의
 > `test_the_model_serving_port_table_matches_the_registry`가 이 표와 registry의 일치를 고정한다.

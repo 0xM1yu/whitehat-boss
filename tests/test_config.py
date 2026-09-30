@@ -1330,7 +1330,7 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
     assert execution.swap is not None
     assert execution.swap.resident == ()
     assert set(execution.swap.swappable) == {
-        "scout_memory", "scout_boundary", "scout_injection", "auditor", "critic"
+        "scout_memory", "scout_boundary", "scout_injection", "auditor", "critic", "pov"
     }
 
 
@@ -1591,8 +1591,8 @@ def test_an_empty_resident_list_is_still_accepted() -> None:
     assert entry.execution.swap.swappable == ("scout",)
 
 
-# 풀 프로필에서 모델을 부르는 실서빙 역할 다섯 — `harness_pool`의 `served_models()`.
-_POOL_SERVED = [*SCOUT_POOL_ROLES, "auditor", "critic"]
+# 풀 프로필에서 모델을 부르는 실서빙 역할 여섯 — `harness_pool`의 `served_models()`.
+_POOL_SERVED = [*SCOUT_POOL_ROLES, "auditor", "critic", "pov"]
 
 
 def _swap_execution(swappable: list[str]) -> dict[str, object]:
@@ -1694,7 +1694,7 @@ FIRST_PORT = 8000
 
 
 def _launch_stages(config: HarnessConfig) -> list[set[str]]:
-    """교대가 모델을 띄우는 단계 묶음 — Scout 풀(4) → Auditor(5) → Critic(7) → 검색(hybrid 전용).
+    """교대가 모델을 띄우는 단계 묶음 — Scout(4) → Auditor(5) → Critic(7) → 검색(hybrid) → PoV(8).
 
     러너가 단계마다 교대를 부르는 순서와 같다. **한 묶음 안의 모델은 함께 뜬다** — Scout 풀의 두
     모델은 한 장비에 공존해 같은 단계에 떠 있으므로 그 사이에는 띄우는 순서가 없다(2026-09-25
@@ -1705,7 +1705,7 @@ def _launch_stages(config: HarnessConfig) -> list[set[str]]:
     roles = config.profile.roles
     stages: list[set[str]] = []
     seen: set[str] = set()
-    for group in (SCOUT_POOL_ROLES, ("auditor",), ("critic",), RETRIEVAL_ROLES):
+    for group in (SCOUT_POOL_ROLES, ("auditor",), ("critic",), RETRIEVAL_ROLES, ("pov",)):
         keys = {roles[role] for role in group if role in roles} - seen
         if keys:
             stages.append(keys)

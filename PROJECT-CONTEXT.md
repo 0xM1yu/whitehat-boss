@@ -37,6 +37,7 @@
 | 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `qwen3-14b` | ✅ |
 | 5단계 · Auditor | `qwen3.8-27b` (`reasoning_effort: xhigh`) | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
+| 8단계 · `pov` | `feyospace-v1-small` | ✅ |
 
 ⚠ **scout_memory·injection은 같은 키 `qwen3-14b` 한 벌이다**(2026-09-25부터 — 그 전에는
 memory·boundary가 `seccoderx-8b` 한 벌이었다) — 프롬프트가 역할 폴더로 갈린다(`scout_memory/v3`=옛
@@ -97,15 +98,15 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
 | `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. `test_pipeline_e2e`가 in-test로 조립한다 |
-| `feyospace-v1-small` | 8단계 PoV 모델로 선정(조민규 · 목표 벤치마크 CyberGym Level 1). registry 등재·포트(8006)만이고 **아직 프로필 roles에 없다** — 아래 2026-09-24 규칙의 예외(선정됐으나 미배선). PoV 노드가 러너 8단계 라우팅에 들어가고 서빙 호스트가 잡히면 §1 자리로 승격하고, 철회되면 이 행을 지운다. checksum·benchmark 미실측 · license 미선언(원저자 확인 필요) |
 
 > ~~**registry 키는 지우지 않는다.**~~ ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
 > 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유였고, 그래서 되돌리기가 쌌다.
 >
 > **2026-09-24 개정(조민규) — 확정 로스터와 인프라(`fake`·`fake_v2`) 밖의 키·프로필은 지운다.** 로스터가
 > 확정됐고, 안 쓰는 키·프로필은 서빙·GPU 배선에 혼선만 만든다.
-> **예외(2026-09-30) — 선정됐으나 아직 배선 전인 키는 등재해 둔다**(`feyospace-v1-small`). 「안 쓰는」이
-> 아니라 「배선 전」이라 사유가 다르다 — 배선되면 §1로 올리고, 철회되면 위 표의 그 행을 지운다.
+> **2026-09-30 — `feyospace-v1-small`은 §1로 배선·승격됐다**(8단계 pov 좌석 · `harness_pool`·`_hybrid`).
+> 선정됐으나 아직 배선 전인 키가 다시 생기면 이 표에 「배선 전」으로 등재해 두고(「안 쓰는」과 사유가
+> 다르다), 배선되면 §1로 올린다.
 > 되돌리기는 git 이력으로 한다(항목·checksum manifest·프로필이 한 커밋에 있다). 그날 지운 것 —
 > 키 9: `qwen3-4b` · `qwen3-8b`(+`-v2`) · `qwen3-coder-30b-a3b`(+`-v2`) · `devstral-small-2-24b`(+`-v2`) ·
 > `deepseek-r1-distill-qwen-32b` · `qwen3-reranker-0.6b` / 프로필 4: `single_gpu_12g` · `local_balanced` ·

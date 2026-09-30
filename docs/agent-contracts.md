@@ -184,12 +184,13 @@ agent:
   `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
   `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
-- 실행: `Stage.VALIDATE` 아래 **단발**이다 — 새 단계 번호를 만들지 않는다(`Stage`는 0~9 고정). 도구는
-  아직 없다(모델-주도 툴 루프는 후속).
+- 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 단발로 부른다(추가형 — PoV 배선). 새 단계
+  번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·모델 실패는 finding을 죽이지 않고 `pov_skipped`로 남긴다.
+  도구는 아직 없다(모델-주도 툴 루프는 후속).
 - 출력 상한: 역할별 `output_max_by_role`에 pov를 선언하지 않아 전역값을 그대로 쓴다 — `PovSpec`는 작은
   구조라 Auditor만큼 큰 예산이 필요한지는 실측 전이다.
-- 모델: `feyospace-v1-small` 선정(등재만·미배선 — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) 「로스터에
-  없지만 registry에 남는 것」).
+- 모델: `feyospace-v1-small` — §1 8단계 pov 좌석으로 `harness_pool`·`_hybrid`에 배선됐다. checksum·
+  benchmark 미실측(서빙+도구 되는 호스트 확보 뒤 실측).
 
 ## 3. 데이터 스키마
 

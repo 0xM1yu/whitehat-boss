@@ -247,17 +247,18 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
   `mem_gb_ctx8k`의 유일한 소스가 그 값이므로 §3 체크리스트 2번은 다른 소스가 정해질
   때까지 답이 나오지 않는다.
 
-### 🟡 PoV(PoC) 생성 — 스캐폴드 착지, 배선 전
+### 🟡 PoV(PoC) 생성 — 러너 배선·과제 로더 착지, 실서빙 전
 
-**현재:** 선택지 B가 들어왔다 — `Role.POV` + `prompts/pov/v1/` + `nodes/pov.py`가 스캐폴드로 붙었다.
-모델은 PoC 바이트를 직접 내지 않고 **구성 스펙(`PovSpec`)**을 내며, 순수·결정론 함수 `assemble_poc`가
-바이트로 조립한다(council 2026-09-30, fork B-iii). 노드는 `Stage.VALIDATE` 아래 **단발**로 돌고 fake
-경로로 완주한다. PoV 모델은 **`feyospace-v1-small`로 선정(조민규)·registry 등재**했다 — 미실측·미배선
-([PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) 「로스터에 없지만 registry에 남는 것」).
+**현재:** `Role.POV` + `prompts/pov/v1/` + `nodes/pov.py`(구성 스펙 `PovSpec` → 순수·결정론 `assemble_poc`
+→ 바이트, council 2026-09-30 fork B-iii)에 더해, 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히**
+pov를 부른다(추가형 — 캡슐 미스·모델 실패는 finding을 안 죽이고 `pov_skipped`로 남긴다). CyberGym Level 1
+과제 로더(`task_loader` — repo-vul.tar.gz 안전 해제 + description.txt)와 설명 주입(캡슐 `vuln_description`
+섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(조민규 선정)는 §1 8단계 pov 좌석으로
+`harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
-**남은 것(서빙+도구 되는 호스트 필요):** 러너 8단계 라우팅에 pov 태우기 · 모델-주도 툴 루프
-(코드열람·Python 스크립팅·ASan/디버거) · `poc` 실행파일 생성/실행 · 외부 CyberGym oracle 차분 검증 ·
-feyospace 서빙 배선(프로필 자리·`config/serving/*.yaml` 서버 행·요청 손잡이)과 실측.
+**남은 것(서빙+도구 되는 호스트 필요):** 모델-주도 툴 루프(코드열람·Python 스크립팅·ASan/디버거) ·
+`poc` 실행파일 생성/실행 + E4 게이트 · 외부 CyberGym oracle 차분 검증 · feyospace 실서빙 실측
+(checksum·benchmark·홉수).
 
 **선택지:**
 | 방향 | 내용 |
