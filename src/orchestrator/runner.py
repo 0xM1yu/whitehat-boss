@@ -435,8 +435,9 @@ class Dependencies(Protocol):
     # 단계 경계 모델 교대 (ADR 0012 Phase 6.5 — 콜드 재기동). `keys`만 떠 있게 하고 교대 명령의
     # 보고를 스칼라 dict로 돌려준다(`model_swap` 이벤트의 `report.*`). `keys`가 비면 전부 내린다.
     # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다 — **러너는 단계 진입 교대에서 이 계약을
-    # 믿는다.** 그 밖의 예외는 정지 갈래가 못 잡아 매니페스트 없이 `run_pipeline` 밖으로 샌다
-    # (`models`의 계약 밖 예외와 같은 대우다). 계약은 구현이 지킨다 — 실 구현
+    # 믿는다.** 그 밖의 예외는 최후 방어선이 **사유 `unforeseen_failure`로** 받는다 — 매니페스트는
+    # 남지만 「교대가 실패했다」가 기록에서 사라진다(⏵ 2026-10-02 정정: 전 판은 *"매니페스트 없이
+    # `run_pipeline` 밖으로 샌다"*라 적었다). 계약은 구현이 지킨다 — 실 구현
     # `src/adapters/model_swap.py`가 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. run 끝
     # 내림만은 `finally`라 무엇이든 경고로 줄인다(`run_pipeline`). `None`이면 교대가 없는 run이다 —
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
@@ -810,6 +811,8 @@ def run_pipeline(
     last, stop_reason = spec.stop_at()
     state = _Accumulator()
     stopped_after = None if stop_reason is None else last
+    # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(아래 두 자리).
+    unforeseen: Exception | None = None
     # heartbeat: 러너가 살아 있는지를 밖에서 읽게 한다(이슈 #208 ②). `PromptLog`와 같은
     # 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일 때만 켠다. 모델 호출이 멈춰도 이
     # 스레드는 틱해 "죽음↔느림"을 가른다.
@@ -859,6 +862,26 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
+    except Exception as exc:
+        # 🔴 **최후 방어선 (S0) — 범위는 `_analyze`다.** 위 다섯은 **예상한** 형이고, 이 갈래는
+        # **`_analyze`에서 난 예상 밖 형 전부**다.
+        # ⚠ **후처리는 안 덮는다.** 이 `try`가 감싸는 것은 `_analyze` 하나이고, 아래 GPU 경고·
+        # 게이트 재등급·`report.run`·`finish_run`은 **try 밖**이라 거기서 난 예외는 **지금도
+        # `write_manifest` 앞을 뚫는다**(적대적 리뷰 2026-10-02이 네 자리 전부에 주입해 확인).
+        # 범위를 넓히는 것은 별 작업이다 — 아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다.
+        # 그런 예외가 하나라도 나면 `write_manifest`(아래) 앞을 뚫고 나가 **산출물이 통째로
+        # 사라졌다** — 위 `ModelGatewayError` 갈래의 주석이 적어 둔 zlib 사고가 정확히 그것이고,
+        # 그 갈래는 **그 형에만** 방어선을 세웠다.
+        #
+        # 🔴 **삼키지 않는다 — 적고, 매니페스트를 쓰고, 다시 던진다.**
+        # 삼키면 두 가지가 깨진다: ① 호출자(`cli.execute`)가 run을 성공으로 읽는다
+        # ② `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 — 그쪽은
+        # **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. 최후 방어선의 뜻은 "삼킨다"가
+        # 아니라 "**증거를 남기고** 올려 보낸다"다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.UNFORESEEN_FAILURE
+        warnings.append(f"예상 밖 예외로 중단했다: {type(exc).__name__}: {exc}")
+        unforeseen = exc
     finally:
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
         # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
@@ -1001,6 +1024,15 @@ def run_pipeline(
     )
     if run_dir is not None and not spec.dry_run:
         write_manifest(run_dir, finished)
+    if unforeseen is not None:
+        # 🔴 **여기서 다시 던진다** — **매니페스트를 쓴 뒤**다. 위 `except Exception`이 잡아 둔
+        # 예상 밖 예외이고, 삼키면 run이 성공으로 보인다(그 갈래의 주석이 근거).
+        #
+        # ⚠ **`report.md`는 안 남는다.** `report.run`은 여기서 렌더만 하고, 파일로 쓰는 것은
+        # `cli.run`이 `execute` **반환 뒤**에 한다 — 여기서 던지면 그 자리에 도달하지 않는다.
+        # 프로세스는 exit 1이고 남는 것은 매니페스트·trace·`state.db`다(적대적 리뷰 2026-10-02
+        # 실측). 리포트까지 남기려면 쓰기를 `run_pipeline` 안으로 옮기는 별 작업이 필요하다.
+        raise unforeseen
     return RunResult(
         record=finished,
         report=rendered,
