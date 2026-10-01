@@ -13,7 +13,7 @@
 받으며 어댑터 조립은 `src/adapters/factory.py`가 한다(engineering-guide.md §3).
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
 
@@ -135,6 +135,21 @@ class RunContext:
     # 처리하며 그 사실을 `target_plan.fallback_artifacts`에 남긴다.
     symbols_for: Callable[[str], list[Location] | None] = field(
         default=lambda _file: None
+    )
+    # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
+    # 함수 본문을 붙이는 데 쓴다. `symbols_for`와 같은 성격 — 미배선 기본값 `None`("그래프 없음")은
+    # 붙일 것이 없다는 뜻이고 `SOURCE`는 옛 모양 그대로다.
+    callees_of: Callable[[Location], list[Location] | None] = field(
+        default=lambda _target: None
+    )
+    # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 미배선 `None`이면 호출자 창을 안 붙인다.
+    call_sites_of: Callable[[Location], list[Location] | None] = field(
+        default=lambda _target: None
+    )
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
+    # 정의를 안 붙인다 — `callees_of`와 같은 성격.
+    definitions_of: Callable[[Iterable[str], str], list[Location] | None] = field(
+        default=lambda _names, _file: None
     )
     # 역할 → 그 역할 모델의 실 토크나이저 카운터 (#96 (b)). `None`이면 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다. `symbols_for`와 같은 성격 — 어댑터가 만들고

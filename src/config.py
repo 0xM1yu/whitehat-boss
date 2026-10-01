@@ -553,6 +553,18 @@ class CapsuleBudgets(HarnessModel):
     focused: int = Field(gt=0)
 
 
+# Auditor `SOURCE`를 결정 1-b(「슬라이스가 걸친 함수의 원본 전부 · 15,000자」) 밖으로 넓히는 값들
+# (#349). 전부 기본 0이고 0이면 `flatten()`에 키도 안 생긴다(옛 manifest 모양). 하나라도 켜면
+# Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다(`cli`).
+AUDITOR_SOURCE_OPTIONS = (
+    "auditor_callee_hops",
+    "auditor_definitions",
+    "auditor_source_tokens",
+    "auditor_entry_trim",
+    "auditor_caller_lines",
+)
+
+
 class Thresholds(HarnessModel):
     """정책 임계값. 노드가 직접 비교하지 않고 RoutingPolicy가 읽는다."""
 
@@ -598,6 +610,43 @@ class Thresholds(HarnessModel):
     # 않아 이 값을 실을 경로 자체가 없다(`prompt_versions()`의 "거짓 정보" 판단).
     output_max_by_role: dict[str, int] = Field(default_factory=dict)
     capsule_budget_tokens: CapsuleBudgets
+    # Auditor `SOURCE`에 피호출 함수 본문을 붙이는 단계 수(#349 (a)). 0이면 붙이지 않는다 —
+    # ADR 0012 결정 1-b(「슬라이스가 걸친 함수의 원본 전부」) 그대로다. 1이면 실린 함수의 본문 안
+    # 호출이 부르는 함수의 본문을 뒤에 붙인다(`runner._auditor_source`). 결정 1-b를 넓히는 값이라
+    # 기본은 끈다. 2 이상은 아직 없다.
+    # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
+    # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
+    # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
+    # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 넷도 같다.
+    auditor_callee_hops: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
+    # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_definitions: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE` 상한을 토큰으로(#349 (c)). 0이면 지금처럼 글자 상한
+    # (`runner._AUDITOR_SOURCE_CHARS` 15,000)이다. 양수면 Auditor 모델 토크나이저(없으면 글자
+    # 근사)로 센 토큰이 이 값을 넘지 않게 함수·정의·피호출 본문·호출자 창을 넣는다. entry 함수는
+    # 여전히 상한 밖이다
+    # (아래 `auditor_entry_trim`이 0일 때).
+    # **값은 아직 안 정했다** — 저장소 전체 실측에서 효과가 더 늘지 않는 가장 작은 값을 고른다
+    # (#349). 2026-10-01 s500 handoff Auditor `SOURCE` 81,748건을 Qwen3.8-27B 토크나이저로 센 글자/
+    # 토큰 비는 중앙값 3.04(p10 2.53 · p90 3.70) — 15,000자 ≈ 4,900토큰은 그 중앙값으로 나눈
+    # **계산값**이다. 측정은 로컬·run ID 없음(원자료 저장소 밖 `measure_results/s500/`).
+    auditor_source_tokens: int = Field(default=0, ge=0)
+    # entry 함수가 위 상한을 넘으면 줄이는가(#349). 0이면 지금처럼 entry 함수는 상한 밖이다(통째로
+    # 실림 — s500 handoff `SOURCE` 하나의 최대가 155,280토큰, 위와 같은 로컬 측정). 1이면 함수
+    # 머리·닫는 줄·entry 줄과 슬라이스 줄 앞뒤만 남기고 뺀 구간을 표시한다(`runner._trim_entry`).
+    # 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_entry_trim: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`에 entry 함수를 부르는 호출 지점 앞뒤 몇 줄을 붙이는가(#349 (b)). 0이면 안
+    # 붙인다(결정 1-b 그대로). 호출자 쪽 검사(인자 길이·NULL 확인)를 겨냥한다. 창은 호출자 함수
+    # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
+    # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_caller_lines: int = Field(default=0, ge=0)
+
+    def auditor_source_options_on(self) -> tuple[str, ...]:
+        """켜진 Auditor `SOURCE` 옵션(#349) — 결정 1-b를 넓히는 값들. 프롬프트가 그 입력을
+        서술하는지는 `cli`가 meta의 `source_options`와 맞춘다(#351 리뷰 MEDIUM-2)."""
+        return tuple(key for key in AUDITOR_SOURCE_OPTIONS if getattr(self, key))
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -657,6 +706,10 @@ class Thresholds(HarnessModel):
         dumped = self.model_dump()
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
+        # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
+        for key in AUDITOR_SOURCE_OPTIONS:
+            if not dumped[key]:
+                dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
         for level, tokens in nested.items():
             flat[f"capsule_budget_tokens.{level}"] = float(tokens)

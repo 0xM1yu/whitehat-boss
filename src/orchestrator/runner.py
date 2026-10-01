@@ -87,7 +87,7 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -150,7 +150,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
-from src.tokens import using_counter
+from src.tokens import estimate_tokens, using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
 # `RunRecord.kb_snapshot`은 재현성 필수 항목이다(engineering-guide.md §5).
@@ -406,6 +406,12 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
+    # 함수 위치 → 그 본문이 부르는 함수의 정의 위치(#349). `symbols_for`와 같은 경계다.
+    callees_of: Callable[[Location], list[Location] | None]
+    # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 같은 경계다.
+    call_sites_of: Callable[[Location], list[Location] | None]
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
+    definitions_of: Callable[[Iterable[str], str], list[Location] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
@@ -754,6 +760,9 @@ def run_pipeline(
         read_slice=deps.read_slice,
         read_payload=read_payload,
         symbols_for=deps.symbols_for,
+        callees_of=deps.callees_of,
+        call_sites_of=deps.call_sites_of,
+        definitions_of=deps.definitions_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
@@ -2138,6 +2147,37 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
+# 피호출 함수 본문 하나의 글자 상한(#349 (a) — `auditor_callee_hops`가 1일 때만 쓰인다). 짧은
+# 검증·길이 계산·래퍼 함수를 겨냥한다 — 큰 함수 하나가 `_AUDITOR_SOURCE_CHARS`를 다 먹어 다른
+# 피호출 함수가 못 들어가는 것을 막는다. **정한 값이지 잰 값이 아니다** — s500 재측정에서 본다.
+_AUDITOR_CALLEE_CHARS = 4_000
+# ⚠ 이 상한과 아래 `_AUDITOR_DEFINITION_CHARS`는 `auditor_source_tokens`가 양수여도 **글자**다 —
+# 하나가 너무 큰지를 거르는 값이고, 전체 상한만 토큰으로 센다.
+
+# 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
+# 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
+_AUDITOR_DEFINITION_CHARS = 2_000
+# entry 함수를 줄일 때(#349 — `auditor_entry_trim`이 1이고 entry 함수가 상한을 넘을 때만) 슬라이스
+# 줄·entry 줄 앞뒤로 남기는 줄 수. 함수 머리(여는 `{`까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안)와
+# 닫는 줄은 늘 남긴다. **정한 값이지 잰 값이 아니다.**
+_AUDITOR_ENTRY_CONTEXT_LINES = 20
+_AUDITOR_ENTRY_HEAD_LINES = 10
+# 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`_IDENT`)는 이 표시의 낱말을 안 본다.
+_OMITTED = "/* ... {} lines omitted ... */"
+_OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
+# 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)) — 이미 실린 범위와 겹쳐 건너뛴
+# 지점은 안 센다. 널리 불리는 함수면 호출 지점이 수백이라 상한이 찬 뒤에도 지점마다 파일을 읽고
+# `callers_dropped`가 지점 수가 된다(#351 리뷰). 순서는 `call_sites_of`가 정한다(같은 파일 →
+# 같은 디렉터리 → 나머지). **정한 값이지 잰 값이 아니다.**
+_AUDITOR_CALLER_SITES = 8
+# 실린 원문에서 이름을 뽑는 데 쓴다 — 파싱이 아니라 토큰 근사다. 키워드는 정의 조회에서 뺀다.
+_IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+_C_KEYWORDS = frozenset(
+    "auto break case char const continue default do double else enum extern float for goto if "
+    "inline int long register restrict return short signed sizeof static struct switch typedef "
+    "union unsigned void volatile while bool true false NULL".split()
+)
+
 
 def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
     """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
@@ -2159,6 +2199,21 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     않으므로 **보이게만 한다** — `anchor_chars`가 entry 함수 혼자의 크기다(#289 리뷰 LOW-2).
     `chars`만으로는 함수가 둘 이상일 때 entry 혼자 때문인지 합 때문인지 안 갈린다. entry 함수에도
     상한을 둘지는 이 이벤트가 실서빙에서 내는 값을 보고 정한다.
+    ⏵ `auditor_entry_trim`이 1이면 entry 함수가 상한을 넘을 때 줄인다(`_trim_entry`) — 그때
+    `entry_omitted_lines`가 뺀 줄 수를 들고, `anchor_chars`는 줄이기 전 크기 그대로다.
+
+    **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
+    안 호출이 부르는 함수의 본문(`ctx.callees_of`)을 붙인다. entry 함수의 피호출 함수가 먼저,
+    그다음 실린 순서대로다. 이미 실린 범위와 겹치는 것·`_AUDITOR_CALLEE_CHARS`를 넘는 것은
+    싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
+    0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
+
+    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
+    함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
+    붙인다. 이미 실린 범위와 겹치는 지점은 건너뛰고(호출자가 슬라이스에 걸쳐 이미 실렸거나 피호출
+    함수로 실린 경우 · 같은 호출자 안의 이웃 호출), 겹치지 않는 지점을 앞에서부터
+    `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
+    `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
@@ -2168,8 +2223,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
     spanned: dict[Location, None] = {}
     uncovered = 0
+    in_anchor = [ref.entry.line_start] if ref.entry.file == anchor.file else []
     for file, line in ref.lines:
         if file == anchor.file and _spans(anchor, line):
+            in_anchor.append(line)
             continue
         symbol = _narrowest_symbol(symbols[file], line)
         if symbol is None:
@@ -2177,29 +2234,192 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         else:
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
-    blocks = [_block(anchor, anchor_text)]
-    size, dropped = len(blocks[0]), 0
+    # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
+    # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
+    # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
+    token_cap = ctx.config.thresholds.auditor_source_tokens
+    model_counter = ctx.counter_for_role(Role.AUDITOR.value) if token_cap else None
+    measure = (model_counter or estimate_tokens) if token_cap else len
+    cap = token_cap or _AUDITOR_SOURCE_CHARS
+    anchor_chars = len(anchor_text)
+    anchor_end = (anchor.line_start or 1) + anchor_text.count("\n")
+    trim_entry = ctx.config.thresholds.auditor_entry_trim
+    # 「상한을 넘었다」와 「줄였다」를 가른다 — 슬라이스 줄이 함수 전체에 퍼지면 넘어도 뺄
+    # 줄이 0이다.
+    over_cap = bool(trim_entry) and measure(anchor_text) > cap
+    omitted = 0
+    if over_cap:
+        anchor_text, omitted = _trim_entry(anchor, anchor_text, in_anchor)
+    blocks = [_block(anchor, anchor_text, end=anchor_end)]
+    # 정의 조회가 읽는 원문 — 배너(`파일:줄`)와 뺀 구간 표시의 낱말은 코드가 아니다(#351 리뷰).
+    texts = [_OMITTED_LINE.sub("", anchor_text)]
+    size, dropped = measure(blocks[0]), 0
+    carried = [anchor]
+    # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
+    seen = [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
-        block = _block(symbol, ctx.read_source(symbol))
-        if size + 1 + len(block) > _AUDITOR_SOURCE_CHARS:
+        seen.append(symbol)
+        text = ctx.read_source(symbol)
+        block = _block(symbol, text)
+        if size + 1 + measure(block) > cap:
             dropped += 1
             continue
         blocks.append(block)
-        size += 1 + len(block)
-    source = "\n".join(blocks) if len(blocks) > 1 else anchor_text
+        texts.append(text)
+        carried.append(symbol)
+        size += 1 + measure(block)
+    with_definitions = ctx.config.thresholds.auditor_definitions
+    definitions = definitions_dropped = 0
+    if with_definitions:
+        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
+        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다.
+        used = {name for text in texts for name in _IDENT.findall(text)} - _C_KEYWORDS
+        for definition in ctx.definitions_of(used, anchor.file) or []:
+            if any(_overlaps(definition, other) for other in seen):
+                continue
+            seen.append(definition)
+            block = _block(definition, ctx.read_source(definition))
+            if (
+                len(block) > _AUDITOR_DEFINITION_CHARS
+                or size + 1 + measure(block) > cap
+            ):
+                definitions_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            definitions += 1
+    hops = ctx.config.thresholds.auditor_callee_hops
+    callees = callees_dropped = 0
+    if hops:
+        for owner in list(carried):
+            for callee in ctx.callees_of(owner) or []:
+                if any(_overlaps(callee, other) for other in seen):
+                    continue
+                seen.append(callee)
+                block = _block(callee, ctx.read_source(callee))
+                if (
+                    len(block) > _AUDITOR_CALLEE_CHARS
+                    or size + 1 + measure(block) > cap
+                ):
+                    callees_dropped += 1
+                    continue
+                blocks.append(block)
+                size += 1 + measure(block)
+                callees += 1
+    # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
+    # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
+    # (#351 자체 검토).
+    caller_lines = ctx.config.thresholds.auditor_caller_lines
+    callers = callers_dropped = call_sites = 0
+    if caller_lines and anchor.symbol:
+        sites = ctx.call_sites_of(anchor) or []
+        call_sites = len(sites)
+        tried = 0
+        for site in sites:
+            if tried == _AUDITOR_CALLER_SITES:
+                break
+            window = _caller_window(ctx, site, caller_lines)
+            # 이미 실린 범위와 겹치는 지점(같은 호출자 안의 이웃 호출 · 슬라이스가 지난 호출자)은
+            # 읽지도 세지도 않고, 읽는 지점 수 상한도 안 먹는다 — 다른 호출자가 굶지 않게.
+            if any(_overlaps(window, other) for other in seen):
+                continue
+            tried += 1
+            seen.append(window)
+            block = _block(window, ctx.read_source(window))
+            if size + 1 + measure(block) > cap:
+                callers_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            callers += 1
+    # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
+    source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
         stage=Stage.AUDITOR,
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks),
+        functions=len(blocks) - definitions - callers,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
-        anchor_chars=len(anchor_text),
+        anchor_chars=anchor_chars,
+        **({"entry_omitted_lines": omitted, "entry_over_cap": over_cap} if trim_entry else {}),
+        **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
+        **(
+            {"callers": callers, "callers_dropped": callers_dropped, "call_sites": call_sites}
+            if caller_lines
+            else {}
+        ),
+        **(
+            {"definitions": definitions, "definitions_dropped": definitions_dropped}
+            if with_definitions
+            else {}
+        ),
+        **(
+            {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
+            if token_cap
+            else {}
+        ),
     )
     return source
+
+
+def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:
+    """호출 지점 앞뒤 `lines`줄 — 그 줄을 품는 가장 좁은 심볼(호출자 함수)이 있으면 그 범위로
+    자른다. 호출자 머리를 넘어 앞 함수까지 싣지 않게 하려는 것이다."""
+    line = site.line_start or 1
+    start, end = line - lines, line + lines
+    enclosing = _narrowest_symbol(ctx.symbols_for(site.file) or [], line)
+    if enclosing is not None and enclosing.line_start is not None:
+        start = max(start, enclosing.line_start)
+        end = min(end, enclosing.line_end or end)
+    return Location(file=site.file, symbol=site.symbol, line_start=max(1, start), line_end=end)
+
+
+def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tuple[str, int]:
+    """상한을 넘는 entry 함수를 줄인다(#349 — `auditor_entry_trim`). 남기는 줄은 함수 머리(여는
+    `{`가 나오는 줄까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안) · 닫는 줄 · `keep_lines`(entry 줄과
+    이 함수 안 슬라이스 줄) 앞뒤 `_AUDITOR_ENTRY_CONTEXT_LINES`줄이다. 뺀 구간마다
+    `/* ... N lines omitted ... */` 한 줄을 남긴다 — 줄 번호는 배너 범위와 이 표시로 되짚는다
+    (줄였으면 함수가 하나여도 배너를 단다 — `_auditor_source`).
+    돌려주는 것은 줄인 원문과 뺀 줄 수다. 줄여도 상한을 넘을 수 있다 — 더 줄이지 않는다.
+    """
+    lines = text.split("\n")
+    start = anchor.line_start or 1
+    head = next(
+        (i for i, line in enumerate(lines[:_AUDITOR_ENTRY_HEAD_LINES]) if "{" in line), 0
+    )
+    keep = set(range(head + 1)) | {len(lines) - 1}
+    for line in keep_lines:
+        if line is not None:
+            at = line - start
+            keep |= set(
+                range(at - _AUDITOR_ENTRY_CONTEXT_LINES, at + _AUDITOR_ENTRY_CONTEXT_LINES + 1)
+            )
+    out: list[str] = []
+    omitted = gap = 0
+    for i, line in enumerate(lines):
+        if i in keep:
+            if gap:
+                out.append(_OMITTED.format(gap))
+                omitted, gap = omitted + gap, 0
+            out.append(line)
+        else:
+            gap += 1
+    return "\n".join(out), omitted
+
+
+def _overlaps(a: Location, b: Location) -> bool:
+    """두 위치의 줄 범위가 같은 파일에서 겹치는가. 범위가 없으면(파일 전체) 같은 파일이면 겹친다."""
+    if a.file != b.file:
+        return False
+    if a.line_start is None or b.line_start is None:
+        return True
+    return a.line_start <= (b.line_end or b.line_start) and b.line_start <= (
+        a.line_end or a.line_start
+    )
 
 
 def _narrowest_symbol(symbols: list[Location], line: int) -> Location | None:
@@ -2216,11 +2436,12 @@ def _spans(location: Location, line: int) -> bool:
     return start is not None and start <= line <= (location.line_end or start)
 
 
-def _block(location: Location, text: str) -> str:
+def _block(location: Location, text: str, end: int | None = None) -> str:
     """`SOURCE`에 함수가 둘 이상일 때 그 하나 — 슬라이스 렌더와 같은 꼴의 배너 + 원문. 끝 줄은
-    읽힌 줄로 센다 — 창은 파일 끝을 넘을 수 있고 읽기가 자른다."""
+    읽힌 줄로 센다 — 창은 파일 끝을 넘을 수 있고 읽기가 자른다. 줄인 entry 함수(`_trim_entry`)는
+    줄이기 전 끝 줄을 `end`로 받는다."""
     start = location.line_start or 1
-    end = start + text.count("\n")
+    end = end or start + text.count("\n")
     return f"/* ===== {location.file}:{start}-{end} ===== */\n{text}"
 
 
