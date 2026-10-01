@@ -220,8 +220,9 @@ class EventKind(StrEnum):
     # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
     CRITIC_FAILED = "critic_failed"
     # 슬라이스 타깃의 Auditor `SOURCE`를 무엇으로 채웠나 — 5단계 호출 1건당 1행(결정 1-b = 넓은
-    # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(문자 수
-    # 상한에 걸려 뺀 함수 수)·`uncovered_lines`(어느 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
+    # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(상한 —
+    # 글자, `auditor_source_tokens`가 양수면 토큰 — 에 걸려 뺀 함수 수)·`uncovered_lines`(어느
+    # 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
     # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
     # `subject_id`는 후보다. `auditor_callee_hops`가 1이면(#349 (a)) `callees`(붙인 피호출 함수 수 —
     # `functions`에도 들어간다)·`callees_dropped`(피호출 함수 상한·전체 상한에 걸려 안 붙인 수)가

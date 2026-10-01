@@ -2165,10 +2165,10 @@ _AUDITOR_ENTRY_HEAD_LINES = 10
 # 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`_IDENT`)는 이 표시의 낱말을 안 본다.
 _OMITTED = "/* ... {} lines omitted ... */"
 _OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
-# 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)). 널리 불리는 함수면 호출 지점이
-# 수백이라 상한이 찬 뒤에도 지점마다 파일을 읽고 `callers_dropped`가 지점 수가 된다(#351 리뷰).
-# 순서는 `call_sites_of`가 정한다(같은 파일 → 같은 디렉터리 → 나머지). **정한 값이지 잰 값이
-# 아니다.**
+# 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)) — 이미 실린 범위와 겹쳐 건너뛴
+# 지점은 안 센다. 널리 불리는 함수면 호출 지점이 수백이라 상한이 찬 뒤에도 지점마다 파일을 읽고
+# `callers_dropped`가 지점 수가 된다(#351 리뷰). 순서는 `call_sites_of`가 정한다(같은 파일 →
+# 같은 디렉터리 → 나머지). **정한 값이지 잰 값이 아니다.**
 _AUDITOR_CALLER_SITES = 8
 # 실린 원문에서 이름을 뽑는 데 쓴다 — 파싱이 아니라 토큰 근사다. 키워드는 정의 조회에서 뺀다.
 _IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
@@ -2208,11 +2208,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
     0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
 
-    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 정의 뒤·피호출 함수 앞에, entry
-    함수를 부르는 호출 지점(`ctx.call_sites_of`) 중 앞 `_AUDITOR_CALLER_SITES`개의 앞뒤 N줄을
-    호출자 함수 범위 안으로 잘라 붙인다. 찾은 지점 수는 `call_sites`가 든다.
-    이미 실린 범위와 겹치면 안 붙인다(호출자가 슬라이스에 걸쳐 이미 실린 경우 포함). 창은 함수가
-    아니라 `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
+    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
+    함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
+    붙인다. 이미 실린 범위와 겹치는 지점은 건너뛰고(호출자가 슬라이스에 걸쳐 이미 실렸거나 피호출
+    함수로 실린 경우 · 같은 호출자 안의 이웃 호출), 겹치지 않는 지점을 앞에서부터
+    `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
+    `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
@@ -2287,23 +2288,6 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             definitions += 1
-    caller_lines = ctx.config.thresholds.auditor_caller_lines
-    callers = callers_dropped = call_sites = 0
-    if caller_lines and anchor.symbol:
-        sites = ctx.call_sites_of(anchor) or []
-        call_sites = len(sites)
-        for site in sites[:_AUDITOR_CALLER_SITES]:
-            window = _caller_window(ctx, site, caller_lines)
-            if any(_overlaps(window, other) for other in seen):
-                continue
-            seen.append(window)
-            block = _block(window, ctx.read_source(window))
-            if size + 1 + measure(block) > cap:
-                callers_dropped += 1
-                continue
-            blocks.append(block)
-            size += 1 + measure(block)
-            callers += 1
     hops = ctx.config.thresholds.auditor_callee_hops
     callees = callees_dropped = 0
     if hops:
@@ -2322,6 +2306,32 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 blocks.append(block)
                 size += 1 + measure(block)
                 callees += 1
+    # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
+    # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
+    # (#351 자체 검토).
+    caller_lines = ctx.config.thresholds.auditor_caller_lines
+    callers = callers_dropped = call_sites = 0
+    if caller_lines and anchor.symbol:
+        sites = ctx.call_sites_of(anchor) or []
+        call_sites = len(sites)
+        tried = 0
+        for site in sites:
+            if tried == _AUDITOR_CALLER_SITES:
+                break
+            window = _caller_window(ctx, site, caller_lines)
+            # 이미 실린 범위와 겹치는 지점(같은 호출자 안의 이웃 호출 · 슬라이스가 지난 호출자)은
+            # 읽지도 세지도 않고, 읽는 지점 수 상한도 안 먹는다 — 다른 호출자가 굶지 않게.
+            if any(_overlaps(window, other) for other in seen):
+                continue
+            tried += 1
+            seen.append(window)
+            block = _block(window, ctx.read_source(window))
+            if size + 1 + measure(block) > cap:
+                callers_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            callers += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
