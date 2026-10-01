@@ -12,6 +12,7 @@ import pytest
 from test_slicer import candidate, make_slice, payloads, response, run_cli
 
 import slicer
+import slicer_pipeline
 import slicer_queries as queries
 from slicer_candidates import collect
 from slicer_checkpoint import Checkpoint, merge_shards
@@ -800,3 +801,78 @@ def test_a_shard_on_a_checkpoint_without_discovery_fails(monkeypatch, repo, tmp_
     assert code != 0
     assert "--prepare-only" in result["error"]
     assert not {"case_a", "case_b", "flows"} & set(transport.stages)
+
+
+def _claim_shard(monkeypatch, repo, tmp_path, data, index, count, claims):  # noqa: ANN001, ANN202
+    folder = tmp_path / f"claim{index}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "state.db", run_cli(
+        monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+        "--shard", f"{index}/{count}", "--claim-db", str(claims),
+    )
+
+
+def test_a_claim_queue_lets_an_idle_shard_take_every_open_candidate(monkeypatch, repo, tmp_path):
+    """#369: with a shared queue the work is not split by position. Run one after the other,
+    the first shard takes all three candidates and the second finds none left -- under p % N
+    each would have sliced its own share. Merged, the result equals one unsharded run."""
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates())
+    claims = tmp_path / "claims.db"
+    first, (_, r0, t0) = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 0, 2, claims)
+    second, (_, r1, t1) = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2,
+                                       claims)
+    with Checkpoint(first, resume=True) as store:
+        assert len(list(store.conn.execute("SELECT candidate_key FROM stages"))) == 3
+    with Checkpoint(second, resume=True) as store:
+        assert list(store.conn.execute("SELECT candidate_key FROM stages")) == []
+    assert "flows" not in t1.stages and "backward" not in t1.stages
+    assert "claimed from the shared queue" in r0["error"]
+    merged = tmp_path / "merged.db"
+    assert merge_shards(merged, [first, second]) == {"shards": 2, "candidates": 3, "complete": 3}
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert exported["slices"] == single["slices"]
+
+
+def test_a_shard_resumes_its_own_claims(monkeypatch, repo, tmp_path):
+    """A shard re-run with --resume may take again what it claimed itself (its own unfinished
+    work); a claim held by another shard stays theirs."""
+    from slicer_claims import ClaimQueue
+
+    claims = tmp_path / "claims.db"
+    mine, other = ClaimQueue(claims, "0/2"), ClaimQueue(claims, "1/2")
+    assert mine.claim("k1") and mine.claim("k1")
+    assert not other.claim("k1") and other.claim("k2")
+    mine.close()
+    other.close()
+
+
+def test_a_poisoned_shard_stops_claiming_and_leaves_the_rest(monkeypatch, repo, tmp_path):
+    """After a poison streak a queue shard stops taking candidates (its server is unusable)
+    instead of claiming and degrading all of them; a healthy shard then slices the rest."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    claims = tmp_path / "claims.db"
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    _, (_, poisoned, _) = _claim_shard(monkeypatch, repo, tmp_path, bad, 0, 2, claims)
+    streak = slicer_pipeline.POISON_STOP_STREAK
+    assert poisoned["counters"]["candidates_failed"] == streak
+    healthy_db, (_, healthy, _) = _claim_shard(
+        monkeypatch, repo, tmp_path, payloads(case_a=cands, flow_count=2), 1, 2, claims
+    )
+    with Checkpoint(healthy_db, resume=True) as store:
+        done = len(list(store.conn.execute("SELECT candidate_key FROM stages")))
+    assert done == len(cands) - streak
+
+
+def test_a_claim_queue_needs_a_shard(repo, tmp_path):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--checkpoint", str(tmp_path / "state.db"),
+                     "--claim-db", str(tmp_path / "claims.db")])
