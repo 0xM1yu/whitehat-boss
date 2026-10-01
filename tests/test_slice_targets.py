@@ -986,3 +986,83 @@ def test_a_callee_already_carried_by_the_slice_is_not_appended_twice(tmp_path: P
     assert facts["source"].count(_banner("parser.c", 19, 26)) == 1
     (event,) = _source_events(trace_path)
     assert (event["functions"], event["callees"]) == (2, 0)
+
+
+# #349 (f): `parse_header`(19–26)가 `struct header`(12–15)를 쓴다. index-v2여야 정의 표가 있다.
+_FIXTURE_INDEX_V2 = {
+    **{k: v for k, v in _FIXTURE_INDEX.items() if k != "calls"},
+    "version": "index-v2",
+    "calls": {
+        "parse_header": [
+            {"file": "parser.c", "line": 30, "caller": "recv_request", "args": ["packet + 2"]}
+        ],
+        "memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf"]}],
+    },
+    "functions": {
+        s["name"]: [{"file": s["file"], "line_start": s["line_start"],
+                     "line_end": s["line_end"], "params": []}]
+        for s in _FIXTURE_INDEX["symbols"]
+    },
+    "macros": {},
+    "types": {"header": [{"file": "parser.c", "line_start": 12, "line_end": 15, "kind": "struct"}]},
+    "file_vars": {},
+    "fields": {},
+    "locals": {},
+    "assigns": {},
+    "field_assigns": {},
+}
+
+
+def _definitions(value: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_definitions=value)
+        )
+
+    return configure
+
+
+def test_definitions_off_keeps_the_decision_1b_source(tmp_path: Path) -> None:
+    """기본(0)이면 정의를 안 붙이고 이벤트에 `definitions` 필드도 없다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(_FIXTURE_INDEX_V2))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert _banner("parser.c", 12, 15) not in facts["source"]
+    (event,) = _source_events(trace_path)
+    assert "definitions" not in event
+
+
+def test_definitions_append_the_struct_the_carried_code_uses(tmp_path: Path) -> None:
+    """1이면 실린 원문이 쓰는 `struct header`의 정의 줄을 함수들 뒤에 붙인다(#349 (f)).
+    정의는 `functions`에 안 세고 `definitions`로 센다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(_FIXTURE_INDEX_V2),
+        configure=_definitions(1),
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"].endswith("\n".join([_banner("parser.c", 12, 15), *_PARSER[11:15]]))
+    (event,) = _source_events(trace_path)
+    assert (event["functions"], event["definitions"], event["definitions_dropped"]) == (2, 1, 0)
+
+
+def test_a_definition_over_its_own_cap_is_not_appended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정의 하나의 상한(`_AUDITOR_DEFINITION_CHARS`)을 넘으면 안 붙이고 센다."""
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_DEFINITION_CHARS", 1, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(_FIXTURE_INDEX_V2),
+        configure=_definitions(1),
+    )
+
+    (event,) = _source_events(trace_path)
+    assert (event["definitions"], event["definitions_dropped"]) == (0, 1)
