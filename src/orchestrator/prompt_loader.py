@@ -70,9 +70,12 @@ FACTS_TOKEN = "FACTS"
 # `build_facts()`가 만드는 키. S1이 굳힌 계약이며 어댑터의 `FakeContext`와 같은 집합이다
 # (`extra="forbid"`이므로 여기서 키를 하나 더 넣으면 Fake가 로드 시점에 실패한다).
 #
-# **`slice_criterion`만 opt-in이다** — 슬라이스 타깃의 Scout 프롬프트에만 실린다(ADR 0012 결정 1,
-# v3 prefix의 「Slice criterion」 절). 나머지 여덟은 늘 실린다. 슬라이스 없는 프롬프트는 이 키가
-# 생기기 전과 글자가 같다 — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
+# **opt-in은 둘이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다):
+#   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
+#     「Slice criterion」 절).
+#   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
+# 나머지 여덟은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
+# 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
     "ids",

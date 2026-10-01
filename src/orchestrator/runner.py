@@ -1126,6 +1126,15 @@ def _analyze(
         _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
 
 
+# PoV 관측에 싣는 도구 출력 꼬리 길이. **잰 값이 아니라 설계 상수다** — ASan 요약(`SUMMARY:` 줄과
+# 그 위 스택 몇 프레임)이 들어가는 폭이고, 글자 상한은 토큰을 묶지 않는다(실측 비 1.22~3.32,
+# `runner.py`의 토큰 환산 주석 참조). 목적은 폭주 차단이다.
+_POV_OBSERVATION_TAIL_CHARS = 2000
+
+# `RunContext.read_payload`와 같은 모양 — evidence payload 참조를 원문으로 바꾼다. `None`은
+# "로그가 없다"는 정상 상태다(`dev_fake`).
+ReadPayload = Callable[[str], str | None]
+
 # libFuzzer 하네스의 진입점 이름. CyberGym의 arvo·oss-fuzz 대상이 공통으로 쓰는 **표준 이름
 # 하나**다 — 변주를 미리 넣지 않는다(실측으로 못 찾는 과제가 나오면 그때 센다).
 _FUZZ_ENTRYPOINT_NAME = "LLVMFuzzerTestOneInput"
@@ -1152,8 +1161,14 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
 
     **못 찾아도 dict를 돌려준다** — `found=False` + `reason`. 키를 빼면 "안 찾았다"와 "찾았는데
-    없다"가 구별되지 않는다(CLAUDE.md §0). `reason`은 세 경우를 가른다: resolver 자체가 없음 ·
-    조회했는데 없음 · 상한에 잘림.
+    없다"가 구별되지 않는다(CLAUDE.md §0). `reason`이 가르는 것은 다섯이다: resolver 훅 자체가
+    없음(프로덕션에서는 안 닿는다 — factory가 항상 꽂는다) · `None` 반환(부분 구현) ·
+    **인덱스가 없거나 v1**(빈 `Resolution` — `unfilled`조차 빈 것이 그 서명) · 함수 표에 이름이
+    없음 · 상한에 잘림 · 위치는 있는데 원문을 못 읽음.
+
+    ⚠ **`source`는 `ctx.read_source`로 직접 읽는다.** `resolution.followup_text`를 실으면 NE 루프의
+    후속 턴 포장(머리·gutter·*"ScoutResponse JSON을 내라"*)이 FACTS에 들어간다 — 아래 그 자리의
+    주석이 근거다(적대적 리뷰 2026-10-02 H-1).
     """
     missing: dict[str, object] = {
         "found": False,
@@ -1197,21 +1212,52 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
             missing["reason"] = (
                 f"진입점을 찾았으나 {_FUZZ_ENTRYPOINT_CHARS}자 상한에 통째로 잘렸다"
             )
+        elif not (resolution.blocks or resolution.unfilled or resolution.truncated):
+            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 아무 사유도 없이
+            # 통째로 빈 `Resolution`을 돌려준다 — `unfilled`조차 비는 것이 그 서명이다. 이것을
+            # "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지 이름인지 안 갈린다**
+            # (§0). 훅은 factory가 **항상** 꽂으므로(`src/adapters/factory.py`) 위의
+            # `resolve_requests is None` 갈래는 프로덕션에서 안 닿는다 — 여기가 그 자리다.
+            missing["reason"] = "인덱스가 없거나 v1이다(함수 표 없음) — 조회가 아무 사유도 못 냈다"
         else:
             missing["reason"] = (
                 f"인덱스의 함수 표에 {_FUZZ_ENTRYPOINT_NAME}가 없다 — "
                 "이 과제의 하네스 진입점 이름이 다를 수 있다"
             )
         return missing
+    # 🔴 **`resolution.followup_text`를 싣지 않는다.** 그것은 함수 본문이 아니라 NE 루프의 **후속
+    # 턴 전체**다(`render_followup`) — `## Retrieved context (hop 1)` 머리와 줄번호 gutter, 그리고
+    # 꼬리에 *"output one complete ScoutResponse JSON"*이 붙는다. FACTS는 body.md가 *"참조 가능한
+    # 사실 전부"*라 선언하는 블록이라, 거기에 **다른 역할의 지시**가 실리면 PoV가 그것을 사실로
+    # 읽는다(적대적 리뷰 2026-10-02 H-1). 그래서 위치만 받고 **원문은 직접 읽는다.**
+    lines = sorted(block.lines)
+    lo, hi = lines[0], lines[-1]
+    source = ctx.read_source(Location(file=block.file, line_start=lo, line_end=hi))
+    if not source:
+        # 위치는 있는데 원문을 못 읽었다 — 인덱스와 디스크가 어긋난 것이고, 빈 `source`를
+        # `found=True`로 내보내면 "찾았다"가 거짓이 된다.
+        missing["file"] = block.file
+        missing["lines"] = [lo, hi]
+        missing["reason"] = f"{block.file}:{lo}-{hi}를 인덱스가 가리키는데 원문을 못 읽었다"
+        return missing
+    # 🔴 **직접 읽으므로 상한을 직접 건다.** resolver의 `max_chars`는 그쪽이 렌더할 때만 걸리고
+    # `read_source`에는 안 걸린다 — 안 자르면 거대한 하네스 함수 하나가 프롬프트를 혼자 키운다.
+    # **앞부분을 남긴다**: 진입점의 머리(인자·최소 길이 검사·첫 파서 호출)가 PoV가 쓸 것이고
+    # 꼬리는 정리 코드다. 자른 사실은 `reason`에 남긴다(조용히 자르지 않는다 — §0).
+    reason = ""
+    if len(source) > _FUZZ_ENTRYPOINT_CHARS:
+        reason = (
+            f"원문 {len(source)}자를 앞 {_FUZZ_ENTRYPOINT_CHARS}자로 잘랐다 — 뒤가 빠졌다"
+        )
+        source = source[:_FUZZ_ENTRYPOINT_CHARS]
     return {
         "found": True,
         "name": block.name,
         "file": block.file,
-        "lines": list(block.lines),
-        # resolver가 렌더한 RETRIEVED 블록 전문이다 — 본문만 따로 주는 필드가
-        # `RetrievedBlock`에 없다(`schemas/need_evidence.py:36-42`).
-        "source": resolution.followup_text,
-        "reason": "",
+        # resolver가 준 줄은 **블록이 걸친 줄 집합**이라 범위로 줄인다 — 모델이 쓸 것은 범위다.
+        "lines": [lo, hi],
+        "source": source,
+        "reason": reason,
     }
 
 
@@ -1270,7 +1316,7 @@ def _run_pov_hops(
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
-    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/poc)를 돌린다. `submit`은
+    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/gdb/poc)를 돌린다. `submit`은
     루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
 
     **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
@@ -1294,18 +1340,27 @@ def _run_pov_hops(
         followup = ""
         prev: pov.PovHop | None = None
         hop = 0
+        # 퍼즈 진입점 조회 결과 — hop0에서 채우고 **hop0 이벤트에만** 싣는다. 루프 밖에서 먼저
+        # 묶는 이유는 조회가 던져도 `except` 갈래가 이 이름을 안전하게 읽어야 해서다.
+        fuzz: dict[str, object] | None = None
         while True:
             started = ctx.monotonic_ms()
             try:
                 if prev is None:
                     # `source`는 Auditor가 본 것과 **같은 문자열**이다(`_Once`) — 없으면(슬라이스
                     # 타깃이 아니면) 노드가 캡슐 대상을 직접 읽는 예전 갈래로 간다.
+                    entrypoint = _fuzz_entrypoint(ctx, capsule.target.file)
+                    # 🔴 **조회 결과를 홉 이벤트에 싣는다**(아래 `fuzz=`). 안 남기면 「진입점 탐색
+                    # 성공률」이 영영 미실측이고, 성공 0이 나왔을 때 모델 탓인지 조회 탓인지 못
+                    # 가른다(§0). **새 EventKind를 만들지 않는다** — 홉 수를 세는 검사들이
+                    # `POV_HOP` 개수를 단언하므로 이벤트를 더하면 그것이 깨진다.
+                    fuzz = entrypoint
                     current = pov.open_hop(
                         ctx,
                         finding=finding,
                         capsule=capsule,
                         source=state.finding_sources.get(finding.finding_id),
-                        fuzz_entrypoint=_fuzz_entrypoint(ctx, capsule.target.file),
+                        fuzz_entrypoint=entrypoint,
                     )
                 else:
                     current = pov.continue_hop(
@@ -1318,7 +1373,8 @@ def _run_pov_hops(
                     raise
                 latency_s = (ctx.monotonic_ms() - started) / 1000.0
                 _emit_pov_hop(
-                    ctx, finding, hop=hop, stop_reason=reason.value, failed=(exc, latency_s)
+                    ctx, finding, hop=hop, stop_reason=reason.value,
+                    failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
                 )
                 return _pov_finish(ctx, finding, reason, last_poc)
             action = current.action
@@ -1326,6 +1382,7 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
+                    fuzz=fuzz if hop == 0 else None,
                 )
                 return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)
             if action.action == "gen":
@@ -1336,6 +1393,7 @@ def _run_pov_hops(
                     _emit_pov_hop(
                         ctx, finding, hop=hop, action="gen",
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
+                        fuzz=fuzz if hop == 0 else None,
                     )
                     return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)
                 last_poc = poc
@@ -1348,21 +1406,50 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=evidence,
                     stop_reason=PovStopReason.MAX_HOP.value,
+                    fuzz=fuzz if hop == 0 else None,
                 )
                 return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)
-            _emit_pov_hop(ctx, finding, hop=hop, action=action.action, evidence=evidence)
-            followup = _pov_observation(action.action, evidence)
+            _emit_pov_hop(
+                ctx, finding, hop=hop, action=action.action, evidence=evidence,
+                fuzz=fuzz if hop == 0 else None,
+            )
+            followup = _pov_observation(
+                action.action, evidence, read_payload=ctx.read_payload
+            )
             prev = current
             hop += 1
 
 
-def _pov_observation(action: str, evidence: Evidence) -> str:
-    """도구 결과를 다음 홉 user 턴으로 보낼 짧은 관측 텍스트(비지 않아야 한다 — `Prompt.body`)."""
+def _pov_observation(action: str, evidence: Evidence, *, read_payload: ReadPayload) -> str:
+    """도구 결과를 다음 홉 user 턴으로 보낼 관측 텍스트(비지 않아야 한다 — `Prompt.body`).
+
+    ⏵ **2026-10-02 — 도구 출력 꼬리를 싣는다.** 전 판은 스칼라 여섯(`tool`·`action`·`ok`·`exit`·
+    `kind`·`error`)만 줬다. 그러면 PoV는 **왜 그렇게 됐는지를 모른다** — ASan이 어떤 위반을 어느
+    오프셋에서 잡았는지, gdb가 대상을 띄웠는지가 전부 payload 로그에만 있고 관측에는 없었다.
+    프롬프트는 *"관측을 읽고 실패 이유를 판단한 뒤 고쳐라"*라 지시하는데 **읽을 것이 없었다.**
+
+    꼬리를 쓰는 이유: ASan 보고서는 **끝**에 요약(`SUMMARY: AddressSanitizer: …`)이 오고 gdb도
+    수명주기 줄이 뒤에 온다. 앞을 자르면 컴파일 잡음만 남는다.
+
+    ⚠ **`read_payload`가 `None`을 주는 것은 정상 상태다**(`dev_fake`는 로그 파일을 안 쓴다 —
+    `context.read_payload` 주석). 그때는 전 판과 **바이트가 같은** 한 줄이다.
+    🔴 **참조 PoC(`/tmp/poc`) 바이트가 이 경로로 프롬프트에 들어가면 run이 무효다.** 여기 실리는
+    것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
+    (`container_tools`)이 지킨다.
+    """
     detail = f" error={evidence.error}" if evidence.error else ""
-    return (
+    head = (
         f"tool={evidence.source} action={action} ok={evidence.ok} "
         f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
     )
+    # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
+    # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
+    body = read_payload(evidence.payload_ref)
+    if not body:
+        return head
+    tail = body[-_POV_OBSERVATION_TAIL_CHARS :]
+    cut = "" if len(body) == len(tail) else f"(앞 {len(body) - len(tail)}자 생략)\n"
+    return f"{head}\n--- {evidence.source} 출력 꼬리 ---\n{cut}{tail}"
 
 
 def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
@@ -1397,10 +1484,20 @@ def _emit_pov_hop(
     evidence: Evidence | None = None,
     stop_reason: str | None = None,
     failed: tuple[Exception, float] | None = None,
+    fuzz: Mapping[str, object] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
-    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다)."""
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다).
+
+    `fuzz`는 **hop0에만** 준다 — 퍼즈 진입점 조회의 결과다(`_fuzz_entrypoint`). 그것을 여기 싣는
+    이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
+    이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
+    """
     data: dict[str, TraceValue] = {"hop": hop}
+    if fuzz is not None:
+        data["fuzz_found"] = bool(fuzz["found"])
+        data["fuzz_file"] = str(fuzz["file"])
+        data["fuzz_reason"] = str(fuzz["reason"])
     if action is not None:
         data["action"] = action
     if evidence is not None:
