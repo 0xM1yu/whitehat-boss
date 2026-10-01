@@ -1057,3 +1057,49 @@ def test_neighbor_files_joins_callers_and_callee_definitions(tmp_path: Path) -> 
 
 def test_neighbor_files_is_none_without_a_graph(tmp_path: Path) -> None:
     assert _graph(tmp_path, None).neighbor_files(_PARSE_HEADER) is None
+
+
+_CALLEE_INDEX = {
+    "version": "index-v1",
+    "files": ["a.c", "b.c", "c.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "entry", "file": "a.c", "line_start": 1, "line_end": 10},
+        {"name": "helper", "file": "a.c", "line_start": 12, "line_end": 15},
+        {"name": "helper", "file": "b.c", "line_start": 1, "line_end": 3},
+        {"name": "only_b", "file": "b.c", "line_start": 5, "line_end": 8},
+        {"name": "twice", "file": "b.c", "line_start": 10, "line_end": 12},
+        {"name": "twice", "file": "c.c", "line_start": 1, "line_end": 3},
+        {"name": "outside", "file": "c.c", "line_start": 5, "line_end": 6},
+    ],
+    "calls": [
+        {"caller": "entry", "callee": "only_b", "file": "a.c", "line": 3},
+        {"caller": "entry", "callee": "helper", "file": "a.c", "line": 5},
+        {"caller": "entry", "callee": "twice", "file": "a.c", "line": 6},
+        {"caller": "entry", "callee": "entry", "file": "a.c", "line": 7},
+        {"caller": "entry", "callee": "memcpy", "file": "a.c", "line": 8},
+        {"caller": "helper", "callee": "outside", "file": "a.c", "line": 13},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+
+
+def test_callees_of_resolves_calls_in_the_body_to_definitions(tmp_path: Path) -> None:
+    """#349 (a): 본문 안 호출 → 정의. 같은 파일 정의가 이기고(helper → a.c), 다른 파일은 정의가
+    하나뿐일 때만(only_b), 여럿이면 싣지 않는다(twice). 재귀·정의 없는 이름(memcpy)·본문 밖 호출
+    (helper 안의 outside)은 빠진다. 순서는 본문 안 첫 호출 줄 순이다."""
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+
+    found = _graph(tmp_path, _CALLEE_INDEX).callees_of(target)
+
+    assert found == [
+        Location(file="b.c", symbol="only_b", line_start=5, line_end=8),
+        Location(file="a.c", symbol="helper", line_start=12, line_end=15),
+    ]
+
+
+def test_callees_of_is_none_without_a_graph(tmp_path: Path) -> None:
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+    assert _graph(tmp_path, None).callees_of(target) is None
