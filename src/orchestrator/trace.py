@@ -228,6 +228,8 @@ class EventKind(StrEnum):
     # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. `auditor_definitions`가
     # 1이면 `definitions`·`definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 —
     # `functions`에는 안 든다)가 같은 방식으로 더 실린다.
+    # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
+    # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다. 그래서 `chars`가 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry

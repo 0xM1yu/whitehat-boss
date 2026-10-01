@@ -150,7 +150,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
-from src.tokens import using_counter
+from src.tokens import estimate_tokens, using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
 # `RunRecord.kb_snapshot`은 재현성 필수 항목이다(engineering-guide.md §5).
@@ -2206,16 +2206,23 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
     blocks = [_block(anchor, anchor_text)]
-    size, dropped = len(blocks[0]), 0
+    # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
+    # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
+    # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
+    token_cap = ctx.config.thresholds.auditor_source_tokens
+    model_counter = ctx.counter_for_role(Role.AUDITOR.value) if token_cap else None
+    measure = (model_counter or estimate_tokens) if token_cap else len
+    cap = token_cap or _AUDITOR_SOURCE_CHARS
+    size, dropped = measure(blocks[0]), 0
     carried = [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
         block = _block(symbol, ctx.read_source(symbol))
-        if size + 1 + len(block) > _AUDITOR_SOURCE_CHARS:
+        if size + 1 + measure(block) > cap:
             dropped += 1
             continue
         blocks.append(block)
         carried.append(symbol)
-        size += 1 + len(block)
+        size += 1 + measure(block)
     seen = list(carried)
     with_definitions = ctx.config.thresholds.auditor_definitions
     definitions = definitions_dropped = 0
@@ -2230,12 +2237,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             block = _block(definition, ctx.read_source(definition))
             if (
                 len(block) > _AUDITOR_DEFINITION_CHARS
-                or size + 1 + len(block) > _AUDITOR_SOURCE_CHARS
+                or size + 1 + measure(block) > cap
             ):
                 definitions_dropped += 1
                 continue
             blocks.append(block)
-            size += 1 + len(block)
+            size += 1 + measure(block)
             definitions += 1
     hops = ctx.config.thresholds.auditor_callee_hops
     callees = callees_dropped = 0
@@ -2248,12 +2255,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 block = _block(callee, ctx.read_source(callee))
                 if (
                     len(block) > _AUDITOR_CALLEE_CHARS
-                    or size + 1 + len(block) > _AUDITOR_SOURCE_CHARS
+                    or size + 1 + measure(block) > cap
                 ):
                     callees_dropped += 1
                     continue
                 blocks.append(block)
-                size += 1 + len(block)
+                size += 1 + measure(block)
                 callees += 1
     source = "\n".join(blocks) if len(blocks) > 1 else anchor_text
     ctx.trace.emit(
@@ -2271,6 +2278,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         **(
             {"definitions": definitions, "definitions_dropped": definitions_dropped}
             if with_definitions
+            else {}
+        ),
+        **(
+            {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
+            if token_cap
             else {}
         ),
     )

@@ -609,6 +609,13 @@ class Thresholds(HarnessModel):
     # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
     # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
     auditor_definitions: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE` 상한을 토큰으로(#349 (c)). 0이면 지금처럼 글자 상한
+    # (`runner._AUDITOR_SOURCE_CHARS` 15,000)이다. 양수면 Auditor 모델 토크나이저(없으면 글자
+    # 근사)로 센 토큰이 이 값을 넘지 않게 함수·정의를 넣는다. entry 함수는 여전히 상한 밖이다.
+    # **값은 아직 안 정했다** — 저장소 전체 실측에서 효과가 더 늘지 않는 가장 작은 값을 고른다
+    # (#349). 2026-10-01 s500 handoff 코드의 글자/토큰 비는 중앙값 3.04(Qwen3.8-27B 토크나이저)
+    # — 15,000자 ≈ 4,900토큰.
+    auditor_source_tokens: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -669,7 +676,7 @@ class Thresholds(HarnessModel):
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
         # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
-        for key in ("auditor_callee_hops", "auditor_definitions"):
+        for key in ("auditor_callee_hops", "auditor_definitions", "auditor_source_tokens"):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
