@@ -10,7 +10,7 @@
 구체 어댑터 모듈을 import하지 않는다(orchestrator 규약, tests/test_policy.py).
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from src.interfaces.model_client import ChatTurn, Prompt
@@ -38,6 +38,7 @@ def _render_prompt(
     finding: Finding,
     capsule: ContextCapsule,
     source: Callable[[], str] | None,
+    fuzz_entrypoint: Mapping[str, object] | None = None,
 ) -> Prompt:
     """hop0 프롬프트를 렌더한다 — 사실 블록(FACTS)이 여기 실린다.
 
@@ -54,6 +55,9 @@ def _render_prompt(
             target=capsule.target,
             capsule=capsule,
             source=text,
+            # 러너가 만들어 넘긴다 — 노드는 `ctx.resolve_requests`를 쓰지 않는다
+            # (`context.py:171-173`). 못 찾은 경우에도 사유가 든 dict가 온다.
+            fuzz_entrypoint=fuzz_entrypoint,
         ),
         finding=_describe_finding(finding),
         target=describe_target(capsule.target),
@@ -84,9 +88,26 @@ def open_hop(
     finding: Finding,
     capsule: ContextCapsule,
     source: Callable[[], str] | None = None,
+    fuzz_entrypoint: Mapping[str, object] | None = None,
 ) -> PovHop:
-    """hop0 — 사실 블록이 실린 첫 프롬프트로 `PovAction`을 받는다."""
-    prompt = _render_prompt(ctx, finding=finding, capsule=capsule, source=source)
+    """hop0 — 사실 블록이 실린 첫 프롬프트로 `PovAction`을 받는다.
+
+    `source`는 `SOURCE` 블록에 실을 원문을 주는 콜러블이다. ⏵ **2026-10-02까지 러너가 이걸 안
+    넘겼다** — 그래서 PoV는 `None` 갈래로 `ctx.read_source(capsule.target)`, 즉 **entry 함수
+    하나**만 봤다. 지금은 러너가 Auditor가 본 것과 **같은 문자열**을 넘긴다
+    (`runner._Once` · `state.finding_sources`). 넘기지 않는 경우(슬라이스 타깃이 아닐 때)는 두
+    문자열이 같으므로 예전 갈래가 그대로 맞다.
+
+    `fuzz_entrypoint`는 **PoV만 받는 사실**이다 — libFuzzer 하네스의 진입점과 그 본문이고,
+    「바이트가 어디로 들어가는가」의 답이다. 러너가 만든다(`runner._fuzz_entrypoint`).
+    """
+    prompt = _render_prompt(
+        ctx,
+        finding=finding,
+        capsule=capsule,
+        source=source,
+        fuzz_entrypoint=fuzz_entrypoint,
+    )
     return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=0)
 
 
@@ -156,9 +177,33 @@ def run_tool(ctx: RunContext, *, finding: Finding, tool: str, workdir: str) -> E
 
 
 def _describe_finding(finding: Finding) -> str:
-    """PoV 프롬프트에 실을 Finding 요약. 경로 단계별 심볼은 후속 프롬프트 버전에서 넓힌다."""
-    return (
-        f"{finding.finding_id} · CWE: {finding.cwe} · {finding.title}\n"
-        f"근거(rca): {finding.rca_draft}\n"
-        f"경로 단계 수: {len(finding.path)}"
+    """PoV 프롬프트에 실을 Finding 요약.
+
+    ⏵ **2026-10-02 — 넓혔다**(사용자 지적). 전 판은 `len(finding.path)`만 실어 **경로 단계의 심볼과
+    주석을 버렸다** — 프롬프트가 *"경로 단계로 흐름을 확인하라"*고 지시하는데 **단계 개수만** 줬다
+    (`prompts/pov/*/prefix.md`의 도달 절차 3). source→sink의 함수 이름이 없으면 PoV는 `SOURCE`에서
+    어느 함수가 앞단 파서이고 어느 것이 sink인지 못 가른다. `trigger_status`·`repro_spec` 유무도
+    같은 이유로 싣는다 — Auditor가 재현 근거를 이미 찾았는지가 다음 액션을 가른다.
+
+    ⚠ **`repro_spec`의 본문은 안 싣고 유무만 싣는다.** 그 안의 `cmd`·`input_ref`가 참조 PoC를
+    가리킬 수 있고, 그 바이트가 프롬프트에 들어가면 run이 무효다. 본문을 실을지는 그 필드가
+    실서빙에서 무엇으로 채워지는지 본 뒤에 정한다(미실측).
+    """
+    steps = "\n".join(
+        f"  {i}. {step.symbol}" + (f" — {step.note}" if step.note else "")
+        for i, step in enumerate(finding.path, start=1)
     )
+    lines = [
+        f"{finding.finding_id} · CWE: {finding.cwe} · {finding.title}",
+        f"근거(rca): {finding.rca_draft}",
+        f"경로 단계 수: {len(finding.path)}",
+    ]
+    if steps:
+        lines.append(f"경로(source→sink):\n{steps}")
+    if finding.trigger_status is not None:
+        lines.append(f"촉발 상태(trigger_status): {finding.trigger_status}")
+    # 유무만 — 위 docstring의 누출 가드.
+    lines.append(
+        "재현 근거(repro_spec): " + ("있다" if finding.repro_spec is not None else "없다")
+    )
+    return "\n".join(lines)
