@@ -493,6 +493,8 @@ class Slicer(SlicingStages):
         self.prepare_only = False
         self.cpg_out: Path | None = None
         self.cpg_file: Path | None = None
+        # The checkpoint's `prepared` record a `cpg_file` was verified against (check_prepared).
+        self.prepared: dict | None = None
         self.shard: tuple[int, int] | None = None
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
@@ -879,8 +881,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--max-flows-per-candidate", type=positive_int, default=None)
     result.add_argument("--query-timeout-seconds", type=positive_seconds, default=None)
     # Per-candidate queries only read the CPG, so N processes on N Joern servers can split one
-    # repo's candidates. Each shard builds its own CPG, so a shard's result equals an unsharded
-    # run's only as far as Joern itself is deterministic (docs/slicer-README.md). Each shard
+    # repo's candidates. Each shard builds its own CPG -- unless it loads one saved graph with
+    # --cpg (#368) -- so a shard's result equals an unsharded run's only as far as Joern itself
+    # is deterministic (docs/slicer-README.md). Each shard
     # checkpoints its share; tools/merge_slicer_shards.py joins the checkpoints (refusing shards
     # of a different run) and --export-only clusters.
     result.add_argument(
@@ -976,9 +979,20 @@ def main(argv: list[str] | None = None) -> int:
         # The shard must start from the prepared checkpoint: its discovery is what makes every
         # shard slice the same candidate list, and the run contract checks it is the same repo.
         cli.error("--cpg needs --checkpoint (a copy of the --prepare-only checkpoint) and --resume")
-    outputs = [p.resolve() for p in (args.out, args.checkpoint, args.progress) if p]
+    if args.prepare_only and args.checkpoint.exists():
+        # A failed prepare is redone from scratch, not resumed (--resume is refused above).
+        cli.error("--prepare-only needs a new --checkpoint; it exists")
+    if args.cpg_out and args.cpg_out.exists():
+        # Running shards may be reading it; a re-prepare must not replace it under them.
+        cli.error("--cpg-out exists; give a new path (shards may be reading the old CPG)")
+    if args.cpg and not args.cpg.is_file():
+        cli.error(f"--cpg is not a file: {args.cpg}")
+    outputs = [
+        p.resolve() for p in (args.out, args.checkpoint, args.progress, args.cpg_out, args.cpg)
+        if p
+    ]
     if len(outputs) != len(set(outputs)):
-        cli.error("Output, checkpoint and progress paths must be distinct")
+        cli.error("Output, checkpoint, progress and CPG paths must be distinct")
     if args.export_dir:
         # export_sources() os.replace()s everything under this directory. Run state left
         # there is replaced by an export artifact -- an open checkpoint becomes JSON and
@@ -986,7 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
         # basenames keeps the guard true when the exporter gains a file.
         reserved = args.export_dir.resolve()
         if any(path == reserved or reserved in path.parents for path in outputs):
-            cli.error("Output, checkpoint and progress paths must stay out of --export-dir")
+            cli.error("Output, checkpoint, progress and CPG paths must stay out of --export-dir")
         if args.export_dir.exists() and not args.export_dir.is_dir():
             # export_sources() only mkdirs on its first write, so a regular file here
             # surfaces after the run: --out already holds a correct result and main()

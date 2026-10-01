@@ -325,15 +325,16 @@ def import_cpg_query(cpg: str, project: str) -> str:
 
 
 def save_cpg_query(out: str) -> str:
-    """Persist the active project's graph (overlays included) and copy it to `out` (#368)."""
+    """Persist the active project's graph (overlays included) and copy it to `out` (#368).
+    No REPLACE_EXISTING: an existing `out` may be the graph running shards are reading, so the
+    copy fails (FileAlreadyExistsException) rather than overwrite it."""
     return envelope(
         "save_cpg",
         f"""
       save
       val source = workspace.getActiveProject.get.path.resolve("cpg.bin")
       val target = java.nio.file.Path.of({literal(out)})
-      java.nio.file.Files.copy(source, target,
-        java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+      java.nio.file.Files.copy(source, target)
       ujson.Obj("saved" -> true, "bytes" -> java.nio.file.Files.size(target))
     """,
     )
