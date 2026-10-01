@@ -1629,7 +1629,6 @@ def test_session_library_cuts_the_body_at_the_envelopes_own_seams(monkeypatch):
     assert slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition == expected
 
 
-
 def test_a_script_run_isolates_a_poisoned_candidate(monkeypatch, repo, tmp_path):
     """#363: the #219 isolation, run the way the docs run the slicer -- `python slicer.py`
     (here `runpy` with run_name `__main__`, the same module execution). The script's QueryError
