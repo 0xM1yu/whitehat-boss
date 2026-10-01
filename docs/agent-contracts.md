@@ -129,19 +129,22 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code`).
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
+  `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
-  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
+  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
   **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
   선택지 (a)로 남는다.
   ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
+  ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
+  `body`를 이름으로 부르지 않는다(「registered evidence content」) — 그 본문을 쓰는지는 역시 미측정이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
   `missing_evidence`는 비어 있지 않으면 발급 `missing_id` 하나로 정규화한다 — 모델이 어떤 ID를 썼든 「확인 불가」
@@ -164,11 +167,52 @@ agent:
 - 반박 체크리스트: guard 존재 여부 / reachability(호출 가능 경로) / aliasing / lifetime / 컴파일 타임 조건·플래그 / 입력 도달성 제약
 - 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. 근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다.
 
+**본문 누락에 대한 보류는 자동 재요청이 아니다.** Auditor의 비어 있지 않은 `missing_evidence`는
+blocking `MissingEvidence`로 남아 `gate.evaluate`의 `unblocked`를 거짓으로 만들고 E3 승격을 막는다.
+Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)에서 `QUEUED`로 간다. 현재 오케스트레이터에는
+`DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
+따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
+정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
+
 ### 2.4 Evidence Judge (Evidence Gate)
 
 - 기본은 **결정론적 규칙**이다. [architecture.md](architecture.md) §4의 **성립 조건 표**가 구현 명세다 — 같은 절의 승격 표는 게이트가 아니라 노드·정책의 명세이고, 두 표를 하나로 읽으면 6·7단계 순서가 거꾸로로 보인다.
 - 모델 호출은 등급 경계가 애매한 경우(E1↔E2)로 한정한다. **v1에서는 그것도 열지 않았다** — `gate_node.py`가 "애매한 경우에도 모델을 부르지 않는다"이고 E1↔E2 경계는 `gate_ambiguous`로 기록만 하고 E1으로 확정된다. 판정 경로에 모델이 끼면 결정론이 깨져 제거율이 조건마다 달라지기 때문이다.
 - 출력: 상태 전이 + 사유 코드. 사유 코드는 열거형으로 고정한다(자유 텍스트 금지).
+
+### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
+
+러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
+`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트
+materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
+신뢰면·리뷰. `src/schemas/pov.py` docstring). **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
+[ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
+어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
+
+- 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
+  만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
+- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임).
+- 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
+  직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
+  스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
+  깎을 수 있다는 **추정**을 피한다(base64는 안 쟀다 · 인접 실측은 enum 강제 verdict라는 다른 현상 —
+  `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
+  `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
+  스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
+- 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
+  (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
+  게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
+  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해
+  `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다).
+  ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
+  — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+- 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
+  베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
+  `PovSpec`)이 든다. 전역 4,096이면
+  사고가 답을 밀어내 스키마가 깨진다(Auditor가 그 판을 7/7 냈다). 값은 실측 뒤 조정.
+- 모델: `feyospace-v1-small` — §1 8단계 pov 좌석으로 `harness_pool`·`_hybrid`에 배선됐다. checksum·
+  benchmark 미실측(서빙+도구 되는 호스트 확보 뒤 실측).
 
 ## 3. 데이터 스키마
 
@@ -253,7 +297,7 @@ agent:
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v3"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v4"}
 }
 ```
 
@@ -282,7 +326,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > `52d9e82`(15:30)가 `prompts/auditor/v2`를 들이며 `trigger_status` 다섯 값(`no_signal` 포함)을 정의했다.
 > `prompts/auditor/v3`(#237, 2026-09-22)도 같다. 그래도 registry가 v1만 골라 run에서는 `null`이었다 —
 > **2026-09-29부터 registry의 Auditor(`qwen3.8-27b`)가 v3를 고른다.** 그 판으로 돈 run은 아직 없어
-> 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시도 그날 v3 계약에 맞췄다.
+> 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시는 그날 v3 계약에 맞췄고, 같은 날 v4로 올리며 `prompt_version`만 v4로 고쳤다.
+> ⏵ 2026-09-29 — 같은 날 registry의 Auditor가 v4를 고른다. v4도 `trigger_status` 다섯 값을 묻는다
+> (`prompts/auditor/v4/prefix.md`). v4로 돈 run은 아직 없다. ⚠ 위 v3 서술(run 없음)은
+> 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
+> 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
+> 그대로 미측정이다.
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
@@ -337,7 +386,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v3", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v4", "critic": "v1"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -434,6 +483,9 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 같은 변경). 이 규칙대로 **그 뒤 run의 Auditor 출력은 그 전 run과 직접 비교하지 않는다** — run의
 > `prompt_versions.auditor`가 가른다. ⚠ 규칙 5(고정 표본 회귀 측정 뒤 반영)와 [evaluation.md](evaluation.md) §2.3
 > 규칙 4(재측정)는 이 변경 전에 돌지 않았다 — 측정 없이 켰다. Critic은 v1 그대로다.
+>
+> ⏵ **2026-09-29 — 같은 날 Auditor가 v3 → v4로 다시 바뀌었다**(#328 머지 뒤). 규칙은 같다 — v4 뒤 run은
+> 그 전 run과 직접 비교하지 않고, 규칙 5·재측정은 이번에도 돌지 않았다. Critic은 여전히 v1이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

@@ -447,6 +447,26 @@ def test_tool_failure_becomes_evidence_not_exception(target_root: Path) -> None:
     assert evidence.error
 
 
+def test_fake_gdb_uses_crash_evidence_and_requires_a_source(target_root: Path) -> None:
+    """dev_fake에서도 gdb가 정책 밖 도구로 거절되지 않고 실행류 계약을 따른다.
+
+    Fake의 `ok=True`는 대상 소스가 있다는 뜻이지(D80) 컨테이너 `judge()`의 stdout
+    수명주기 판정이 아니다.
+    """
+    runner = _runner(target_root)
+
+    debugged = runner.run("gdb", _args("parser.c"), SANDBOX)
+    missing = runner.run("gdb", _args("없는디렉터리"), SANDBOX)
+
+    assert debugged.ok
+    assert debugged.kind is EvidenceKind.CRASH
+    assert debugged.source == "gdb"
+    assert debugged.exit_code == 1
+    assert not missing.ok
+    assert missing.kind is EvidenceKind.CRASH
+    assert missing.error == "재현 대상 소스가 없다"
+
+
 def test_tool_outside_policy_is_recorded_as_failure(target_root: Path) -> None:
     evidence = _runner(target_root).run("curl", _args(), SANDBOX)
     assert not evidence.ok

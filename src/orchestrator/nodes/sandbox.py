@@ -12,7 +12,7 @@
 from src.interfaces.tool_runner import SandboxSpec
 
 DEFAULT_SANDBOX = SandboxSpec(
-    image="harness-tools:v2",
+    image="harness-tools:v3",
     network=False,
     read_only=True,
     cpu_limit=1.0,
