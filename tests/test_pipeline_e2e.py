@@ -17,6 +17,7 @@ import json
 import re
 import socket
 import subprocess
+import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -358,6 +359,136 @@ def test_run_rejects_a_missing_description_file(
 
     assert rc == 2
     assert "description-file" in capsys.readouterr().err
+
+
+def _level1_task(root: Path, *, description: str = "DESC MARKER task-dir") -> Path:
+    """CyberGym Level 1 과제 번들 하나 — `repo-vul.tar.gz` + `description.txt` **둘뿐**이다.
+
+    2026-10-02 실측: HuggingFace `tasks.json`의 `task_difficulty.level1`이 정확히 그 둘을 든다
+    (원천 디렉터리에는 `patch.diff`·`repo-fix.tar.gz`·`error.txt`도 있지만 **정답 재료라 level 1에
+    들어가지 않는다**). 그래서 픽스처도 둘만 만든다 — 더 만들면 실제보다 관대한 입력이 된다.
+    """
+    task = root / "task"
+    task.mkdir(parents=True)
+    (task / "description.txt").write_text(description, encoding="utf-8")
+    src = root / "stage" / "src-vul"
+    src.mkdir(parents=True)
+    (src / "mod_00.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    with tarfile.open(task / "repo-vul.tar.gz", "w:gz") as tf:
+        tf.add(src, arcname="src-vul")
+    return task
+
+
+def test_run_takes_a_level1_task_bundle_as_its_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 `run --task-dir`가 과제 번들을 풀어 **target과 description을 둘 다** 채운다 (#356).
+
+    2026-10-02까지 `task_loader.load_task`의 **프로덕션 호출처가 0건**이었다 — CLI는
+    `--description-file`로 설명만 받고 아카이브는 사람이 손으로 풀어야 했다. 그래서 과제 1건을
+    돌리는 경로가 손 절차에 걸려 있었고, 그 절차는 run 기록에 안 남는다.
+
+    `cli.py`의 `--task-dir` 분기를 지우면 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        ])
+
+    spec = captured["spec"]
+    assert spec.vuln_description == "DESC MARKER task-dir"
+    # 해제된 트리가 target이다 — 사람이 `--target`을 따로 줄 필요가 없다.
+    assert spec.target == tmp_path / "w"
+    assert (tmp_path / "w" / "src-vul" / "mod_00.c").is_file()
+
+
+def test_run_refuses_a_task_work_dir_that_already_has_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 **작업 디렉터리를 재사용하지 않는다** — 비어 있지 않으면 exit 2다.
+
+    `task_loader.safe_extract`는 상한 초과로 중단해도 **앞 멤버를 dest에 남긴다**(그 함수의 경고
+    주석). 남은 트리 위에 또 풀면 두 과제가 섞이고, 섞인 트리로 돈 run은 무엇을 봤는지 모른다.
+    run 디렉터리를 만들기 전에 거부해야 한다 — `--slices`와 같은 판단이다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "leftover.c").write_text("stale", encoding="utf-8")
+    arts = tmp_path / "arts"
+
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1", "--artifacts-root", str(arts),
+        "--task-dir", str(task), "--task-work-dir", str(work),
+    ])
+
+    assert rc == 2
+    assert "task-work-dir" in capsys.readouterr().err
+    # run 디렉터리를 만들기 전에 멈췄다.
+    assert not arts.exists() or not list(arts.iterdir())
+
+
+def test_run_refuses_a_task_dir_without_the_archive(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """아카이브가 없는 과제는 exit 2다 — `FileNotFoundError`가 추적으로 새 나가지 않는다."""
+    task = tmp_path / "empty"
+    task.mkdir()
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+    ])
+
+    assert rc == 2
+    assert "[ERROR]" in capsys.readouterr().err
+
+
+def test_run_refuses_both_task_dir_and_description_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """설명의 출처가 둘이면 exit 2다 — 어느 것이 캡슐에 실렸는지 기록으로 못 가른다."""
+    task = _level1_task(tmp_path)
+    desc = tmp_path / "other.txt"
+    desc.write_text("other", encoding="utf-8")
+
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        "--description-file", str(desc),
+    ])
+
+    assert rc == 2
+    assert "--description-file" in capsys.readouterr().err
+
+
+def test_run_still_requires_a_source_when_neither_flag_is_given(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--target`도 `--task-dir`도 없으면 exit 2다 — `--target`을 선택으로 바꾼 대가를 여기서 문다.
+
+    argparse의 `required=True`를 뗐으므로 그 검사를 `run()`이 들어야 한다. 안 들면 `None`이
+    `RunSpec`까지 흘러간다."""
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+    ])
+
+    assert rc == 2
+    assert "--target" in capsys.readouterr().err
 
 
 def _poolify(mode: str | None):  # noqa: ANN202
