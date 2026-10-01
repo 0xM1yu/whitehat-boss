@@ -447,15 +447,34 @@ def test_case_a_query_carries_the_payload_through_a_file_not_the_repl():
     assert '"__SLICER_case_a__"' in query and '"__END_SLICER__"' in query
 
 
+def _scala_code(segment: str) -> str:
+    """The segment without `//` comment lines -- a guard quoted only in a comment must not pin."""
+    return "\n".join(
+        line for line in segment.splitlines() if not line.lstrip().startswith("//")
+    )
+
 
 def test_case_a_drops_empty_named_methods_from_both_lists():
     """#347: one empty-named method row voids the run (`valid_candidate` rejects it, the payload
-    check fails, 0 slices). Spelling pin on both lists -- the Scala is not executed here."""
-    q = queries.candidates_a_query()
-    api = q[q.index("val api ="): q.index("val readers =")]
-    readers = q[q.index("val readers ="): q.index("ujson.Arr.from((api ++ readers)")]
-    assert 'filterNot(m => m.name.isEmpty || m.name.startsWith("<"))' in api
-    assert ".filter(_.name.nonEmpty)" in readers
+    check fails, 0 slices). The guards are pinned on the `val` lines themselves, in code (not
+    comments), and the payload is pinned to be exactly `(api ++ readers).distinct` so nothing
+    re-adds unfiltered methods. ⚠ Spelling pin (CLAUDE.md §2.5): it fails when this spelling is
+    reverted or moved off the `val` line, it does not prove the filter runs -- the Scala is not
+    executed here, and the semantically-equal rewrites fail it falsely."""
+    code = _scala_code(queries.candidates_a_query())
+    lines = [line.strip() for line in code.splitlines()]
+    assert (
+        'val api = cpg.method.internal.filterNot(m => m.name.isEmpty || m.name.startsWith("<"))'
+        in lines
+    )
+    assert "val readers = cpg.method.internal.filter(_.name.nonEmpty)" in lines
+    readers = lines.index("val readers = cpg.method.internal.filter(_.name.nonEmpty)")
+    assert lines[readers + 1] == '.filter(_.call.name("({READERS})").nonEmpty)'.replace(
+        "{READERS}", queries.READERS
+    )
+    assert code.count("ujson.Arr.from(") == 1
+    assert "ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(" in code
+
 
 def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
     """case_b has the same overrun risk as case_a and must use the same file transport.
@@ -1204,7 +1223,7 @@ def test_case_a_query_bounds_are_pinned():
     assert ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)" in aseg  # hot first, before cap
     # "hot" = writes memory (WRITER/EXEC call OR assignment into index/field/deref). Pin both
     # halves and their method-null guards, and that hotIds is not post-filtered away.
-    hseg = q[q.index("val hotIds =") : q.index("val api =")]
+    hseg = _scala_code(q[q.index("val hotIds =") : q.index("val api =")])
     assert f'cpg.call.name("({queries.WRITERS}|{queries.EXEC_SINKS})")' in hseg
     assert 'nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall' in hseg
     assert hseg.count(".filter(c => Option(c.method).isDefined).method.id.l") == 2
