@@ -66,6 +66,7 @@ from src.orchestrator.runner import (
     run_pipeline,
 )
 from src.orchestrator.stages import MAX_STAGE, Stage
+from src.orchestrator.task_loader import UnsafeArchiveError, load_task
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -793,6 +794,59 @@ def run(args: argparse.Namespace) -> int:
     if malformed is not None:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
+    # CyberGym 과제 번들을 그대로 받는다(#356). **`--slices` 렌더보다 앞이다** — 그쪽이
+    # `args.target`을 쓰고, `--task-dir`를 주면 target이 **여기서 정해진다**.
+    #
+    # 2026-10-02까지 `task_loader.load_task`의 프로덕션 호출처가 **0건**이었다. 과제를 손으로
+    # 풀어 `--target`·`--description-file`을 따로 주는 절차였고, **손 절차는 run 기록에 안 남는다**
+    # — 어느 아카이브를 어디에 풀었는지가 `RunRecord`에 없으면 그 run은 재현되지 않는다.
+    task_description: str | None = None
+    if args.task_dir is not None:
+        if args.description_file is not None:
+            # 설명의 출처가 둘이면 캡슐에 실린 것이 어느 쪽인지 기록으로 못 가른다.
+            print(
+                "[ERROR] --task-dir와 --description-file을 같이 주지 않는다 — "
+                "과제 번들의 description.txt가 설명이다",
+                file=sys.stderr,
+            )
+            return 2
+        if args.target is not None:
+            print(
+                "[ERROR] --task-dir와 --target을 같이 주지 않는다 — 해제된 트리가 target이다",
+                file=sys.stderr,
+            )
+            return 2
+        if args.task_work_dir is None:
+            # 기본값을 **안 만든다.** 과제 트리를 어디에 푸는지는 run 기록의 일부이고, 암묵 기본값을
+            # 두면 사람마다 다른 자리에 풀려 재현이 깨진다(§0 — 지어내지 않는다).
+            print(
+                "[ERROR] --task-dir를 주면 --task-work-dir도 줘야 한다 — 해제 자리가 run 기록이다",
+                file=sys.stderr,
+            )
+            return 2
+        work = args.task_work_dir
+        # **작업 디렉터리를 재사용하지 않는다.** `safe_extract`는 상한 초과로 중단해도 앞 멤버를
+        # dest에 남기므로(그 함수의 경고 주석), 남은 트리 위에 또 풀면 두 과제가 섞인다. 섞인
+        # 트리로 돈 run은 무엇을 봤는지 모른다 — 비우는 것은 **사람이** 한다(지우지 않는다).
+        if work.exists() and any(work.iterdir()):
+            print(
+                f"[ERROR] --task-work-dir가 비어 있지 않다: {work} — "
+                "해제 트리가 섞이지 않게 빈 디렉터리를 준다",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            source_root, task_description = load_task(args.task_dir, work)
+        except (FileNotFoundError, UnsafeArchiveError, RuntimeError, OSError) as exc:
+            # `RuntimeError`는 `data_filter` 없는 인터프리터, `OSError`는 NTFS 경로 제약
+            # (260자·`:`)이다. 어느 쪽이든 트레이스백이 아니라 한 줄로 멈춘다.
+            print(f"[ERROR] 과제를 풀 수 없다: {exc}", file=sys.stderr)
+            return 2
+        args.target = source_root
+    if args.target is None:
+        # argparse의 `required=True`를 뗀 대가를 여기서 문다 — 안 들면 `None`이 `RunSpec`까지 간다.
+        print("[ERROR] --target 또는 --task-dir 하나는 필요하다", file=sys.stderr)
+        return 2
     # 슬라이스 파일도 같은 자리에서 본다 — `build_deps`가 다시 읽지만 그때는 이미 run 디렉터리와
     # 번호가 나간 뒤다. **렌더까지 본다** — 형식이 맞아도 대상 파일이 슬라이서가 본 것과 다르면
     # (drift) gutter가 다른 파일의 줄을 가리킨다. ponytail: 적재·렌더를 두 번 한다(JSON 하나와
@@ -805,7 +859,7 @@ def run(args: argparse.Namespace) -> int:
             return 2
     # 과제 설명(description.txt)을 읽어 캡슐에 실을 준비를 한다(PoV 배선). 주고서 없는
     # 파일이면 조용히 넘어가지 않고 멈춘다 — 슬라이스 파일과 같은 판단이다.
-    description = None
+    description = task_description
     if args.description_file is not None:
         if not args.description_file.is_file():
             print(f"[ERROR] --description-file 없음: {args.description_file}", file=sys.stderr)
@@ -1091,7 +1145,24 @@ def build_parser() -> argparse.ArgumentParser:
     est.add_argument("--target", type=Path, required=True)
 
     run_cmd = subs.add_parser("run", parents=[common, device])
-    run_cmd.add_argument("--target", type=Path, required=True)
+    # **`required=True`가 아니다** — `--task-dir`가 target을 정할 수 있다(#356). 둘 다 없으면
+    # `run()`이 exit 2로 막는다(그 검사가 argparse 자리를 대신한다). `estimate`는 그대로 필수다.
+    run_cmd.add_argument("--target", type=Path, default=None)
+    run_cmd.add_argument(
+        "--task-dir",
+        type=Path,
+        default=None,
+        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt). 주면 아카이브를 "
+        "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
+        "--target·--description-file과 같이 주지 않는다(exit 2)",
+    )
+    run_cmd.add_argument(
+        "--task-work-dir",
+        type=Path,
+        default=None,
+        help="--task-dir의 아카이브를 풀 빈 디렉터리. 비어 있지 않으면 거부한다(exit 2) — "
+        "해제가 중단되면 앞 멤버가 남아 두 과제가 섞인다",
+    )
     # **기본값을 argparse에 두지 않는다.** 값은 `run()`이 `DEFAULT_CONDITION`으로 채우되,
     # `None`이 여기까지 살아 와야 "안 줬다"와 "기본값과 같은 라벨을 의도해서 줬다"가
     # 구별된다 — `runner.missing_run_labels`가 그 구분 위에 서 있다.
