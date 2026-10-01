@@ -415,45 +415,101 @@ def test_run_takes_a_level1_task_bundle_as_its_source(
     assert (tmp_path / "w" / "src-vul" / "mod_00.c").is_file()
 
 
+def _task_run_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture, extra: list[str], *, needle: str
+) -> None:
+    """`--task-dir` run 하나가 **exit 2이고 빈 run 디렉터리를 안 남기는지** 본다.
+
+    거부 갈래마다 같은 두 불변식을 봐야 한다 — 전 판은 그것을 **한 갈래에서만** 봐서 나머지가
+    run 디렉터리를 만들어도 초록이었다(적대적 리뷰 2026-10-02 M-3)."""
+    arts = tmp_path / "arts"
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1", "--artifacts-root", str(arts), *extra,
+    ])
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert needle in err, err
+    assert not arts.exists() or not list(arts.iterdir()), "빈 run 디렉터리를 남겼다"
+
+
 def test_run_refuses_a_task_work_dir_that_already_has_files(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """🔴 **작업 디렉터리를 재사용하지 않는다** — 비어 있지 않으면 exit 2다.
 
     `task_loader.safe_extract`는 상한 초과로 중단해도 **앞 멤버를 dest에 남긴다**(그 함수의 경고
-    주석). 남은 트리 위에 또 풀면 두 과제가 섞이고, 섞인 트리로 돈 run은 무엇을 봤는지 모른다.
-    run 디렉터리를 만들기 전에 거부해야 한다 — `--slices`와 같은 판단이다."""
+    주석). 남은 트리 위에 또 풀면 두 과제가 섞이고, 섞인 트리로 돈 run은 무엇을 봤는지 모른다."""
     task = _level1_task(tmp_path)
     work = tmp_path / "w"
     work.mkdir()
     (work / "leftover.c").write_text("stale", encoding="utf-8")
-    arts = tmp_path / "arts"
 
-    rc = cli.main([
-        "run", "--profile", "dev_fake", "--seed", "1", "--artifacts-root", str(arts),
-        "--task-dir", str(task), "--task-work-dir", str(work),
-    ])
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="task-work-dir",
+    )
 
-    assert rc == 2
-    assert "task-work-dir" in capsys.readouterr().err
-    # run 디렉터리를 만들기 전에 멈췄다.
-    assert not arts.exists() or not list(arts.iterdir())
+
+def test_run_accepts_a_task_work_dir_that_exists_but_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이미 있지만 **빈** 디렉터리는 받는다 — `mkdir`로 미리 만들어 둔 경우가 정상이다.
+
+    「비어 있지 않으면 거부」를 「있으면 거부」로 좁히는 변이가 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    work.mkdir()
+
+    class _Stop(RuntimeError):
+        pass
+
+    monkeypatch.setattr(cli, "execute", lambda *a, **k: (_ for _ in ()).throw(_Stop()))
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(work),
+        ])
+
+    assert (work / "src-vul" / "mod_00.c").is_file()
 
 
 def test_run_refuses_a_task_dir_without_the_archive(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """아카이브가 없는 과제는 exit 2다 — `FileNotFoundError`가 추적으로 새 나가지 않는다."""
+    """아카이브가 없는 과제는 exit 2다 — 생 예외가 추적으로 새 나가지 않는다."""
     task = tmp_path / "empty"
     task.mkdir()
-    rc = cli.main([
-        "run", "--profile", "dev_fake", "--seed", "1",
-        "--artifacts-root", str(tmp_path / "arts"),
-        "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
-    ])
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w")],
+        needle="repo-vul.tar.gz",
+    )
 
-    assert rc == 2
-    assert "[ERROR]" in capsys.readouterr().err
+
+def test_run_refuses_a_corrupt_archive_with_exit_2_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 **gzip이 아닌 아카이브도 exit 2다.**
+
+    이것은 실제로 밟는 함정이다 — HuggingFace의 LFS 파일을 `curl -L` 없이 받으면 **텍스트 포인터
+    파일**이 떨어지고, 그것을 풀면 `tarfile.ReadError`가 난다. 전 판은 `FilterError`만 감싸서 그
+    예외가 호출자까지 새 트레이스백으로 나왔다(적대적 리뷰 M-2)."""
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "description.txt").write_text("d", encoding="utf-8")
+    # LFS 포인터의 실제 모양.
+    (task / "repo-vul.tar.gz").write_text(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:0123\nsize 4\n", encoding="utf-8"
+    )
+
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w")],
+        needle="풀 수 없다",
+    )
 
 
 def test_run_refuses_both_task_dir_and_description_file(
@@ -463,16 +519,93 @@ def test_run_refuses_both_task_dir_and_description_file(
     task = _level1_task(tmp_path)
     desc = tmp_path / "other.txt"
     desc.write_text("other", encoding="utf-8")
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--description-file", str(desc)],
+        needle="--description-file",
+    )
 
-    rc = cli.main([
-        "run", "--profile", "dev_fake", "--seed", "1",
-        "--artifacts-root", str(tmp_path / "arts"),
-        "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
-        "--description-file", str(desc),
-    ])
 
-    assert rc == 2
-    assert "--description-file" in capsys.readouterr().err
+def test_run_refuses_both_task_dir_and_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--task-dir`와 `--target`을 같이 주면 exit 2다 — 어느 트리를 본 run인지 모르게 된다."""
+    task = _level1_task(tmp_path)
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--target", str(TARGET)],
+        needle="--target",
+    )
+
+
+def test_run_refuses_both_task_dir_and_slices(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 `--task-dir`와 `--slices`는 **같이 쓸 수 없다.**
+
+    슬라이스는 슬라이서가 **이미 풀린 트리**를 보고 만든 것이고 `--task-dir`는 그 트리를 **지금**
+    만든다. 게다가 작업 디렉터리는 비어 있어야 하므로 슬라이서가 본 트리와 같을 수 없다 — 조용히
+    받으면 gutter가 다른 파일의 줄을 가리킨다."""
+    task = _level1_task(tmp_path)
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--slices", str(tmp_path / "slices.json")],
+        needle="--slices",
+    )
+
+
+def test_run_refuses_a_task_work_dir_without_a_task_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--task-work-dir`만 주면 exit 2다 — 조용히 무시하면 사람은 과제가 풀린 줄 안다."""
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--target", str(TARGET), "--task-work-dir", str(tmp_path / "w")],
+        needle="--task-work-dir",
+    )
+
+
+def test_run_refuses_a_task_dir_without_a_task_work_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--task-dir`만 주면 exit 2다 — 해제 자리를 암묵 기본값으로 지어내지 않는다."""
+    task = _level1_task(tmp_path)
+    _task_run_is_refused(
+        tmp_path, capsys, ["--task-dir", str(task)], needle="--task-work-dir",
+    )
+
+
+def test_run_warns_when_the_task_has_no_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """설명이 없으면 **경고하고 계속 간다** — Level 0 과제에는 설명이 없는 것이 정상이다.
+
+    막으면 정상 입력을 거부하고, 조용히 넘어가면 "설명을 줬는데 안 실렸다"와 구별되지 않는다."""
+    task = _level1_task(tmp_path)
+    (task / "description.txt").unlink()
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        ])
+
+    assert captured["spec"].vuln_description is None
+    assert "description.txt" in capsys.readouterr().err
 
 
 def test_run_still_requires_a_source_when_neither_flag_is_given(
