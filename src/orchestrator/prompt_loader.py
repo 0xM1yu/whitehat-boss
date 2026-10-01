@@ -23,6 +23,14 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 정의한다. 로더는 값을 닫기만 하고, `slice` 프롬프트를 `--slices` 없이 부르는 run을 막는 것은
 `cli.run`이다. **모르는 값은 기본값으로 읽지 않는다** — 오타 하나가 그 가드를 조용히 끈다.
 
+## meta의 `source_options` — 그 프롬프트가 서술하는 Auditor `SOURCE` 옵션
+
+`config.AUDITOR_SOURCE_OPTIONS` 중 그 프롬프트의 입력 서술이 다루는 키의 목록이다(없으면 빈
+목록 — 결정 1-b의 SOURCE만 서술한다). 옵션을 켜면 SOURCE 모양이 바뀌는데(피호출 본문·정의·
+호출자 창이 뒤에 붙고, 상한이 토큰이 되고, entry 함수가 줄어든다) 프롬프트가 옛 모양을 말하면
+모델이 받는 서술이 거짓이 된다. 켜진 옵션이 이 목록에 없으면 `cli`가 run을 막는다(#351 리뷰
+MEDIUM-2). **모르는 키는 거절한다** — 오타 하나가 그 가드를 조용히 끈다(`input`과 같은 판단).
+
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ID는 노드가 미리 발급해 여기 실어
@@ -44,6 +52,7 @@ from pathlib import Path
 
 import yaml
 
+from src.config import AUDITOR_SOURCE_OPTIONS
 from src.interfaces.model_client import Prompt
 from src.schemas.capsule import ContextCapsule
 from src.schemas.common import Location
@@ -96,6 +105,8 @@ class PromptTemplate:
     output_schema: str
     # `INPUT_KINDS` 중 하나. meta에 키가 없으면 `source`다.
     input: str
+    # 이 프롬프트가 서술하는 Auditor `SOURCE` 옵션(모듈 docstring 「meta의 `source_options`」).
+    source_options: tuple[str, ...] = ()
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -153,6 +164,15 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
             f"{list(INPUT_KINDS)} 중 하나다"
         )
 
+    source_options = meta.get("source_options", [])
+    if not isinstance(source_options, list) or not set(source_options) <= set(
+        AUDITOR_SOURCE_OPTIONS
+    ):
+        raise PromptError(
+            f"{directory}/meta.yaml의 source_options {source_options!r}에 모르는 값이 있다 — "
+            f"{list(AUDITOR_SOURCE_OPTIONS)} 중에서 고른다"
+        )
+
     return PromptTemplate(
         role=role,
         version=version,
@@ -160,6 +180,7 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
         body=body,
         output_schema=output_schema,
         input=input_kind,
+        source_options=tuple(source_options),
     )
 
 

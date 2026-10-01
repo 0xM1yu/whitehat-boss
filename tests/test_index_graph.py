@@ -1057,3 +1057,199 @@ def test_neighbor_files_joins_callers_and_callee_definitions(tmp_path: Path) -> 
 
 def test_neighbor_files_is_none_without_a_graph(tmp_path: Path) -> None:
     assert _graph(tmp_path, None).neighbor_files(_PARSE_HEADER) is None
+
+
+_CALLEE_INDEX = {
+    "version": "index-v1",
+    "files": ["a.c", "b.c", "c.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "entry", "file": "a.c", "line_start": 1, "line_end": 10},
+        {"name": "helper", "file": "a.c", "line_start": 12, "line_end": 15},
+        {"name": "helper", "file": "b.c", "line_start": 1, "line_end": 3},
+        {"name": "only_b", "file": "b.c", "line_start": 5, "line_end": 8},
+        {"name": "twice", "file": "b.c", "line_start": 10, "line_end": 12},
+        {"name": "twice", "file": "c.c", "line_start": 1, "line_end": 3},
+        {"name": "outside", "file": "c.c", "line_start": 5, "line_end": 6},
+    ],
+    "calls": [
+        {"caller": "entry", "callee": "only_b", "file": "a.c", "line": 3},
+        {"caller": "entry", "callee": "helper", "file": "a.c", "line": 5},
+        {"caller": "entry", "callee": "twice", "file": "a.c", "line": 6},
+        {"caller": "entry", "callee": "entry", "file": "a.c", "line": 7},
+        {"caller": "entry", "callee": "memcpy", "file": "a.c", "line": 8},
+        {"caller": "helper", "callee": "outside", "file": "a.c", "line": 13},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+
+
+def test_callees_of_resolves_calls_in_the_body_to_definitions(tmp_path: Path) -> None:
+    """#349 (a): 본문 안 호출 → 정의. 같은 파일 정의가 이기고(helper → a.c), 다른 파일은 정의가
+    하나뿐일 때만(only_b), 여럿이면 싣지 않는다(twice). 재귀·정의 없는 이름(memcpy)·본문 밖 호출
+    (helper 안의 outside)은 빠진다. 순서는 본문 안 첫 호출 줄 순이다."""
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+
+    found = _graph(tmp_path, _CALLEE_INDEX).callees_of(target)
+
+    assert found == [
+        Location(file="b.c", symbol="only_b", line_start=5, line_end=8),
+        Location(file="a.c", symbol="helper", line_start=12, line_end=15),
+    ]
+
+
+def test_callees_of_is_none_without_a_graph(tmp_path: Path) -> None:
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+    assert _graph(tmp_path, None).callees_of(target) is None
+
+
+def test_definitions_of_finds_macros_types_and_file_vars(tmp_path: Path) -> None:
+    """#349 (f): 이름 → 정의 위치. 같은 파일 우선, 다른 파일은 하나뿐일 때만, 모르는 이름은 빠진다.
+    순서는 (파일, 시작 줄)이다."""
+    found = _graph(tmp_path, _INDEX_V2).definitions_of(
+        ["header", "HDR_LEN", "g_hdr", "nope"], "parser.c"
+    )
+
+    assert found == [
+        Location(file="main.c", symbol="g_hdr", line_start=3, line_end=3),
+        Location(file="parser.c", symbol="HDR_LEN", line_start=1, line_end=1),
+        Location(file="parser.c", symbol="header", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_skips_an_ambiguous_name_and_prefers_the_near_file(tmp_path: Path) -> None:
+    twice = {
+        **_INDEX_V2,
+        "macros": {
+            "HDR_LEN": [
+                {"file": "a.h", "line_start": 1, "line_end": 1},
+                {"file": "b.h", "line_start": 1, "line_end": 1},
+            ],
+            "MAX": [
+                {"file": "parser.c", "line_start": 5, "line_end": 5},
+                {"file": "main.c", "line_start": 7, "line_end": 7},
+            ],
+        },
+    }
+
+    found = _graph(tmp_path, twice).definitions_of(["HDR_LEN", "MAX"], "parser.c")
+
+    assert found == [Location(file="parser.c", symbol="MAX", line_start=5, line_end=5)]
+
+
+def test_definitions_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    assert _graph(tmp_path).definitions_of(["header"], "parser.c") is None
+
+
+def test_call_sites_of_finds_calls_into_the_target(tmp_path: Path) -> None:
+    """#349 (b): 대상 함수를 부르는 호출 지점. 다른 파일의 호출은 대상 이름의 정의가 하나뿐일
+    때만(only_b ← a.c:3), 여럿이면 같은 파일 호출만(helper ← a.c:5 — b.c에도 helper가 있다),
+    같은 이름이 여러 파일이면 다른 파일 호출은 빠진다(twice ← a.c:6). 재귀(entry ← a.c:7)는
+    본문 안이라 빠진다."""
+    graph = _graph(tmp_path, _CALLEE_INDEX)
+
+    def sites(file: str, name: str, start: int, end: int) -> list[Location] | None:
+        return graph.call_sites_of(Location(file=file, symbol=name, line_start=start, line_end=end))
+
+    assert sites("b.c", "only_b", 5, 8) == [
+        Location(file="a.c", symbol="entry", line_start=3, line_end=3)
+    ]
+    assert sites("a.c", "helper", 12, 15) == [
+        Location(file="a.c", symbol="entry", line_start=5, line_end=5)
+    ]
+    assert sites("b.c", "helper", 1, 3) == []
+    assert sites("c.c", "twice", 1, 3) == []
+    assert sites("a.c", "entry", 1, 10) == []
+
+
+def test_call_sites_of_is_none_without_a_graph(tmp_path: Path) -> None:
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+    assert _graph(tmp_path, None).call_sites_of(target) is None
+
+
+
+def test_call_sites_of_orders_same_file_then_same_directory_then_the_rest(
+    tmp_path: Path,
+) -> None:
+    """읽는 쪽이 앞 몇 개만 쓰므로 가까운 호출자가 먼저다(#351 리뷰 — 경로 알파벳순이던 것)."""
+    doc = {
+        "version": "index-v1",
+        "files": ["lib/x.c", "lib/y.c", "a/b.c", "z.c"],
+        "skipped": [],
+        "symbols": [{"name": "t", "file": "lib/x.c", "line_start": 1, "line_end": 3}],
+        "calls": [
+            {"caller": "m", "callee": "t", "file": "a/b.c", "line": 4},
+            {"caller": "m", "callee": "t", "file": "z.c", "line": 2},
+            {"caller": "m", "callee": "t", "file": "lib/y.c", "line": 9},
+            {"caller": "m", "callee": "t", "file": "lib/x.c", "line": 20},
+        ],
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+    target = Location(file="lib/x.c", symbol="t", line_start=1, line_end=3)
+
+    found = _graph(tmp_path, doc).call_sites_of(target)
+
+    assert [loc.file for loc in found] == ["lib/x.c", "lib/y.c", "a/b.c", "z.c"]
+
+
+def test_callees_of_orders_by_the_first_call_even_when_rows_come_later(tmp_path: Path) -> None:
+    """같은 callee의 호출이 여럿이면 가장 이른 줄로 정렬한다 — 행 순서가 아니다(`min` 분기)."""
+    doc = {
+        **_CALLEE_INDEX,
+        "calls": [
+            {"caller": "entry", "callee": "only_b", "file": "a.c", "line": 8},
+            {"caller": "entry", "callee": "helper", "file": "a.c", "line": 5},
+            {"caller": "entry", "callee": "only_b", "file": "a.c", "line": 2},
+        ],
+    }
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+
+    found = _graph(tmp_path, doc).callees_of(target)
+
+    assert [loc.symbol for loc in found] == ["only_b", "helper"]
+
+
+def test_definitions_of_takes_the_first_table_that_has_the_name(tmp_path: Path) -> None:
+    """같은 이름이 매크로와 타입 둘 다에 있으면 `DEFINITION_TABLES` 순서(매크로 먼저)로 정한다."""
+    doc = {
+        **_INDEX_V2,
+        "macros": {"BOTH": [{"file": "parser.c", "line_start": 1, "line_end": 1}]},
+        "types": {
+            "BOTH": [{"file": "parser.c", "line_start": 7, "line_end": 9, "kind": "struct"}]
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["BOTH"], "parser.c")
+
+    assert found == [Location(file="parser.c", symbol="BOTH", line_start=1, line_end=1)]
+
+
+
+def test_call_sites_of_counts_definitions_not_files(tmp_path: Path) -> None:
+    """정의가 한 파일 안에 둘(`#if` 양쪽 가지)이어도 둘이다 — 다른 파일의 호출은 어느 정의로
+    가는지 모르므로 안 싣는다. 같은 파일 호출은 싣는다(#351 자체 검토 LOW-2: 파일 수로 세던 것)."""
+    doc = {
+        "version": "index-v1",
+        "files": ["a.c", "b.c"],
+        "skipped": [],
+        "symbols": [
+            {"name": "foo", "file": "a.c", "line_start": 1, "line_end": 3},
+            {"name": "foo", "file": "a.c", "line_start": 6, "line_end": 8},
+        ],
+        "calls": [
+            {"caller": "m", "callee": "foo", "file": "b.c", "line": 4},
+            {"caller": "n", "callee": "foo", "file": "a.c", "line": 20},
+        ],
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+    target = Location(file="a.c", symbol="foo", line_start=1, line_end=3)
+
+    found = _graph(tmp_path, doc).call_sites_of(target)
+
+    assert [loc.file for loc in found] == ["a.c"]

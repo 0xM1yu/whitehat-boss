@@ -176,6 +176,7 @@ def doctor(
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
+    checks.extend(_check_source_options(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
     return checks
@@ -432,6 +433,35 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
             )
         )
     return checks
+
+
+def _undescribed_source_options(config: HarnessConfig) -> list[str]:
+    """켜진 Auditor `SOURCE` 옵션 중 Auditor 프롬프트 meta의 `source_options`가 안 든 것
+    (#351 리뷰 MEDIUM-2). 프로필에 Auditor가 없으면 `[]`다. 프롬프트를 못 읽으면 `PromptError`."""
+    on = config.thresholds.auditor_source_options_on()
+    if not on or Role.AUDITOR.value not in config.profile.roles:
+        return []
+    version = config.model_for(Role.AUDITOR.value).prompt_template_version
+    described = load_prompt(Role.AUDITOR, version).source_options
+    return [f"{key}(auditor/{version})" for key in on if key not in described]
+
+
+def _check_source_options(config: HarnessConfig) -> list[Check]:
+    """켜진 Auditor `SOURCE` 옵션을 프롬프트가 서술하지 않으면 ERROR — `--slices` 경고와 달리
+    설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) doctor가 막는다."""
+    try:
+        missing = _undescribed_source_options(config)
+    except PromptError:
+        return []  # 로드 실패는 `_check_prompts`가 이미 ERROR로 댄다
+    if not missing:
+        return []
+    return [
+        Check(
+            Severity.ERROR,
+            f"Auditor SOURCE 옵션 {', '.join(missing)}을 프롬프트가 서술하지 않는다 — meta의 "
+            "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
+        )
+    ]
 
 
 def _check_thresholds() -> Check:
@@ -831,6 +861,22 @@ def run(args: argparse.Namespace) -> int:
                 f"[ERROR] 슬라이스 입력 프롬프트({', '.join(slice_input)})를 부르는 run이라 "
                 "--slices 없이는 시작하지 않는다 — 슬라이스가 없으면 그 SOURCE가 계약과 "
                 "어긋난다 (ADR 0012 결정 1)",
+                file=sys.stderr,
+            )
+            return 2
+    # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
+    # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
+    # 말한다 — 어긋나도 오류 없이 돈다. Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
+    if spec.stop_at()[0] >= Stage.AUDITOR:
+        try:
+            undescribed = _undescribed_source_options(config)
+        except PromptError as exc:
+            print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
+            return 2
+        if undescribed:
+            print(
+                f"[ERROR] Auditor SOURCE 옵션 {', '.join(undescribed)}을 프롬프트가 서술하지 "
+                "않는다 — meta의 source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
                 file=sys.stderr,
             )
             return 2

@@ -68,7 +68,8 @@ trace의 `graph_index` 이벤트가 된다.
 """
 
 import json
-from collections.abc import Callable, Mapping
+import posixpath
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -105,6 +106,9 @@ V2_TABLES = (
     "field_assigns",
     "calls",
 )
+# Auditor `SOURCE`가 정의 줄을 붙이는 표(#349 (f) — `definitions_of`). 이 순서로 보고 처음
+# 걸린 표에서 정한다.
+DEFINITION_TABLES = ("macros", "types", "file_vars")
 
 # 이름 → 기록 목록 모양인 표의 기록마다 있어야 하는 키. `locals`·`assigns`는
 # 파일 → 함수 → 이름 → [줄]이라 따로 본다(`_v2_tables`).
@@ -322,6 +326,8 @@ class GraphIndex:
 
         **읽기 전용이다.** 표는 run 동안 모든 조회가 공유한다 — 고치면 다음 조회가 오염된다.
         **캡슐로 가지 않는다** — 이 메서드를 부르는 것은 resolver뿐이다(`GRAPH_SECTION_KINDS` 주석).
+        표의 정의 **위치**는 `definitions_of`도 읽는다 — Auditor `SOURCE`가 정의 줄을 원문으로 싣는
+        것이지(#349 (f)) 표가 캡슐 섹션이 되는 것은 아니다.
         """
         if name not in V2_TABLES:
             raise ValueError(f"조회 표가 아니다: {name}")
@@ -355,6 +361,124 @@ class GraphIndex:
                 files |= defined_in.get(callee, set())
         files.discard(target.file)
         return sorted(files)
+
+    def definitions_of(self, names: Iterable[str], near_file: str) -> list[Location] | None:
+        """이름들 중 매크로·타입(struct/union/enum/typedef)·파일 스코프 변수인 것의 **정의 위치**.
+
+        `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1). Auditor `SOURCE`가 실린 코드가 쓰는
+        `#define`·구조체 정의를 붙이는 데 쓴다(#349 (f)) — 버퍼 크기·필드 배치를 모르면 경계 판단을
+        못 한다. 정의를 고르는 규칙은 `callees_of`와 같다:
+
+        - `near_file`에 정의가 있으면 그것, 없으면 저장소 전체에서 **하나뿐일 때만**
+        - 여럿이면(`#if` 양쪽 가지 · 같은 이름 여러 파일) 싣지 않는다 — 이름만으로 못 가른다
+        - 표는 `DEFINITION_TABLES` 순서로 보고 처음 걸린 표에서 정한다
+
+        순서는 (파일, 시작 줄)이다(결정론).
+        """
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        found: list[Location] = []
+        for name in sorted(set(names)):
+            for table in DEFINITION_TABLES:
+                rows = self._tables[table].get(name)
+                if not rows:
+                    continue
+                here = [row for row in rows if row["file"] == near_file]
+                candidates = here or list(rows)
+                if len(candidates) == 1:
+                    row = candidates[0]
+                    found.append(
+                        Location(
+                            file=row["file"],
+                            symbol=name,
+                            line_start=row["line_start"],
+                            line_end=row["line_end"],
+                        )
+                    )
+                break
+        return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
+
+    def callees_of(self, target: Location) -> list[Location] | None:
+        """대상 본문 안의 호출이 부르는 함수의 **정의 위치**. `None`은 그래프 자체가 없다는 뜻이다.
+
+        Auditor 입력이 슬라이스가 지나간 함수만 싣고 그 함수들이 부르는 함수의 본문은 안 싣던
+        자리를 채운다(#349 (a)). 호출 지점이 대상 본문
+        (`_in_body`) 안인 간선의 callee 이름을 정의로 푼다:
+
+        - 대상 파일에 그 이름의 정의가 있으면 그것(같은 파일 `static`이 이긴다)
+        - 없으면 저장소 전체에서 정의가 **하나뿐일 때만** 그것 — 여럿이면 이름만으로는 어느
+          정의인지 모르므로(`_rules` docstring의 한계) 싣지 않는다
+
+        대상 자신(재귀)은 뺀다. 순서는 본문 안 첫 호출 줄 순이다(결정론 — 같은 줄이면 이름 순).
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        defined: dict[str, list[tuple[str, int, int]]] = {}
+        for file, symbols in self._defined.items():
+            for name, start, end in symbols:
+                defined.setdefault(name, []).append((file, start, end))
+        first_call: dict[str, int] = {}
+        for _, callee, file, line in self._calls:
+            if self._in_body(file, line, target) and callee not in first_call:
+                first_call[callee] = line
+            elif self._in_body(file, line, target):
+                first_call[callee] = min(first_call[callee], line)
+        found: list[Location] = []
+        for callee in sorted(first_call, key=lambda name: (first_call[name], name)):
+            if callee == target.symbol:
+                continue
+            here = [d for d in defined.get(callee, []) if d[0] == target.file]
+            candidates = here or defined.get(callee, [])
+            if len(candidates) != 1:
+                continue
+            file, start, end = candidates[0]
+            found.append(Location(file=file, symbol=callee, line_start=start, line_end=end))
+        return found
+
+    def call_sites_of(self, target: Location) -> list[Location] | None:
+        """대상 함수를 부르는 **호출 지점**(줄 하나 — `symbol`은 호출자 이름). `None`은 그래프가
+        없다는 뜻이다.
+
+        Auditor 입력이 호출자 쪽 검사(인자 길이·NULL 확인)를 못 보던 자리를 채운다(#349 (b)).
+        `callees_of`와 같은 이름 규칙의 반대 방향이다:
+
+        - 대상 파일 안의 호출은 늘 싣는다(같은 파일 정의가 이긴다)
+        - 다른 파일의 호출은 대상 이름의 정의가 저장소 전체에서 **하나뿐일 때만** — 여럿이면
+          그 호출이 어느 정의로 가는지 이름만으로 모른다
+        - 대상 본문 안의 호출(재귀)은 뺀다 — 원문에 이미 있다
+
+        순서는 대상 파일 → 대상과 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄)이다(결정론 —
+        읽는 쪽이 앞 몇 개만 쓰므로 가까운 호출자가 먼저 온다 · #351 리뷰). 심볼 없는 대상은 `[]`다.
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        if not target.symbol:
+            return []
+        # 파일 수가 아니라 **정의 수**다 — `callees_of`·`definitions_of`와 같은 규칙(한 파일
+        # 안 `#if` 양쪽 가지도 둘이다).
+        homes = [
+            (file, start)
+            for file, symbols in self._defined.items()
+            for name, start, _ in symbols
+            if name == target.symbol
+        ]
+        sites = {
+            Location(file=file, symbol=caller, line_start=line, line_end=line)
+            for caller, callee, file, line in self._calls
+            if callee == target.symbol
+            and not self._in_body(file, line, target)
+            and (file == target.file or len(homes) == 1)
+        }
+        here = posixpath.dirname(target.file)
+        return sorted(
+            sites,
+            key=lambda loc: (
+                loc.file != target.file,
+                posixpath.dirname(loc.file) != here,
+                loc.file,
+                loc.line_start or 0,
+            ),
+        )
 
     # --- 본문 판정 -------------------------------------------------------
     #
