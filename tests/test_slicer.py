@@ -1627,3 +1627,38 @@ def test_session_library_cuts_the_body_at_the_envelopes_own_seams(monkeypatch):
     monkeypatch.setattr(queries, "envelope", reframed)
     monkeypatch.setattr(slicer_backward, "envelope", reframed)
     assert slicer_library.Library("/work/repo", 3, {}, 30, 5000, 4).definition == expected
+
+
+def test_a_script_run_isolates_a_poisoned_candidate(monkeypatch, repo, tmp_path):
+    """#363: the #219 isolation, run the way the docs run the slicer -- `python slicer.py`
+    (here `runpy` with run_name `__main__`, the same module execution). The script's QueryError
+    must be the class slicer_pipeline catches. Before the fix the pipeline caught the QueryError
+    of a second `slicer` module, so the poisoned middle candidate ended the whole run:
+    candidates_failed 0 and the third candidate never sliced."""
+    import runpy
+    import sys
+    import urllib.request
+
+    data = payloads(case_a=[candidate("a", 1), candidate("m", 2), candidate("z", 3)], flow_count=2)
+    calls = []
+
+    def flows(query):
+        calls.append(query)
+        if len(calls) == 2:
+            return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+        return response(
+            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+        )
+
+    data["flows"] = flows
+    # the script binds `urlopen` at exec time (`from urllib.request import urlopen`)
+    monkeypatch.setattr(urllib.request, "urlopen", MockTransport(data))
+    output = tmp_path / "slices.json"
+    monkeypatch.setattr(sys, "argv", ["slicer.py", "--repo", str(repo), "--out", str(output)])
+    with pytest.raises(SystemExit):
+        runpy.run_path(slicer.__file__, run_name="__main__")
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["counters"]["candidates_failed"] == 1
+    assert result["counters"]["candidates_not_processed"] == 0
+    assert result["counters"]["candidates_degraded"] == 1
+    assert len(calls) == 3

@@ -9,7 +9,8 @@ Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다
 [slicer_backward.py](../slicer_backward.py), [slicer_candidates.py](../slicer_candidates.py),
 [slicer_source.py](../slicer_source.py), [slicer_pipeline.py](../slicer_pipeline.py),
 [slicer_checkpoint.py](../slicer_checkpoint.py), [slicer_export.py](../slicer_export.py),
-[slicer_library.py](../slicer_library.py)를 함께 배포한다.
+[slicer_library.py](../slicer_library.py), [slicer_compile.py](../slicer_compile.py),
+[slicer_errors.py](../slicer_errors.py)를 함께 배포한다.
 후보별 질의(flows·context·backward)의 로직은 inventory 뒤에 **서버 세션당 한 번** 함수로 정의하고,
 후보마다 그 함수 호출만 보낸다 — 질의마다 Scala 전체를 다시 컴파일하던 비용을 없앤다. 세션에 남는 것은
 함수뿐이고 후보 데이터는 호출 안에만 있다. 서버를 새로 띄우면 다음 run이 다시 정의한다.
@@ -203,7 +204,8 @@ CPG를 읽기만 한다 → 여러 Joern 서버에 나눌 수 있다.
 - `tools/merge_slicer_shards.py`가 체크포인트를 합친다 → 실행 계약·EngineConfig·후보 manifest가
   샤드끼리 다르면 거부(다른 CPG를 자른 것). 완료 안 된 후보가 있으면 종료 코드 2
 - 합친 체크포인트의 `--export-only`가 결과다. 클러스터링은 여기서 한 번. 샤드가 빠졌거나 중간에
-  죽었으면 export가 `partial` + 「unfinished candidates」
+  죽었으면 export가 `partial` + 「unfinished candidates」 — 그 후보는 샤딩 없는 run과 같이 anchor-only
+  degraded 슬라이스로 나온다(`candidates_degraded`, #364). `--resume`은 여전히 그 후보를 다시 시도한다
 - 병합 top-level은 첫 샤드의 발견 단계 기록을 쓰고 오류 목록만 모든 샤드의 합집합이다.
   슬라이싱 중 top-level `diagnostics`(예: flows 싱크 cap 도달)는 병합 export에 안 남는다 —
   각 슬라이스의 `analysis.sinks_capped`에는 남는다
