@@ -1066,3 +1066,67 @@ def test_a_definition_over_its_own_cap_is_not_appended(
 
     (event,) = _source_events(trace_path)
     assert (event["definitions"], event["definitions_dropped"]) == (0, 1)
+
+
+def _source_tokens(value: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_source_tokens=value)
+        )
+
+    return configure
+
+
+def test_a_token_cap_without_a_tokenizer_counts_with_the_estimate(tmp_path: Path) -> None:
+    """#349 (c): 토큰 상한이면 dev_fake(토크나이저 없음)는 글자 근사로 세고 그 사실을 남긴다.
+    상한 1토큰이면 entry 함수만 남는다(entry는 상한 밖)."""
+    from src.tokens import estimate_tokens
+
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(), configure=_source_tokens(1)
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    (event,) = _source_events(trace_path)
+    assert (event["dropped"], event["token_counter"]) == (1, "estimate")
+    assert event["tokens"] == estimate_tokens(facts["source"])
+
+
+def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
+    """실 토크나이저가 주입되면(`counter_for_role("auditor")`) 그것으로 센다 — 여기선 단어 수.
+    entry 함수(4줄)와 `parse_header`(8줄)의 단어 수 합에 상한을 딱 맞추면 둘 다 들어가고,
+    하나 모자라면 `parse_header`가 빠진다."""
+    import types
+
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    words = lambda text: len(text.split())  # noqa: E731
+    entry = Location(file="parser.c", symbol="recv_request", line_start=28, line_end=31)
+    header = Location(file="parser.c", symbol="parse_header", line_start=19, line_end=26)
+    texts = {28: "\n".join(_PARSER[27:31]), 19: "\n".join(_PARSER[18:26])}
+    both = words(runner._block(entry, texts[28])) + 1 + words(runner._block(header, texts[19]))
+
+    def source_for(cap: int) -> tuple[str, dict]:
+        events: list[dict] = []
+        ctx = types.SimpleNamespace(
+            symbols_for=lambda _file: [entry, header],
+            read_source=lambda loc: texts[loc.line_start],
+            callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
+            counter_for_role=lambda role: words if role == "auditor" else None,
+            config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+                auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap)),
+            trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+        )
+        ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
+                       lines=(("parser.c", 24), ("parser.c", 28), ("parser.c", 30)),
+                       degraded=False)
+        return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+    _, event = source_for(both)
+    assert (event["functions"], event["dropped"], event["token_counter"]) == (2, 0, "model")
+    _, event = source_for(both - 1)
+    assert (event["functions"], event["dropped"]) == (1, 1)
