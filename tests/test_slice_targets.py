@@ -201,7 +201,9 @@ def test_run_spec_keeps_the_slices_path() -> None:
 
 
 def test_a_drifted_slice_stops_the_run_before_any_model_call(tmp_path: Path) -> None:
-    """렌더는 run 전에 **전부** 한다. 러너는 렌더 오류를 안 잡으므로, 슬라이스마다 그때그때
+    """렌더는 run 전에 **전부** 한다(⏵ 2026-10-02 — *"러너는 렌더 오류를 안 잡으므로"*는 낡았다:
+    최후 방어선이 생겨 **매니페스트는 남는다**. 태운 호출이 안 돌아오는 것이 이유다).
+    슬라이스마다 그때그때
     렌더하면 앞 슬라이스(`_CASE_B` — 정적 신호 줄이라 먼저 돈다)의 모델 호출을 태운 뒤 산출물
     없이 죽는다."""
     drifted = _slice("slice_0005", "A", ("parser.c", 19, "parse_header"), "parse_header", {19})

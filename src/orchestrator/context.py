@@ -416,8 +416,11 @@ class RunContext:
         그 필드를 요구하니 구조화 출력이 채운다. 안 베끼면 두 갈래로 샌다:
 
         - `state` — 스키마가 받는 값(`triaged`·`queued` 등)이라 파싱은 통과하고, `create()`의
-          생성 행 조회에서 `IllegalTransition`이 난다. 그 예외를 잡는 곳이 없어 run이
-          매니페스트 없이 끝난다.
+          생성 행 조회에서 `IllegalTransition`이 난다. 그 예외를 **이름으로 잡는 곳이 없어** run이
+          거기서 끝난다.
+          ⏵ 2026-10-02 정정: 전 판은 *"매니페스트 없이 끝난다"*였다. 러너의 최후 방어선이
+          **매니페스트는 남긴다**(사유 `unforeseen_failure`, `report.md`는 없다) — 그래도 run은
+          실패이고 이 가드가 필요한 이유는 그대로다(이슈 #296 인접 — 모델이 쓴 `state`·ID 대조).
         - ID·`run_id` — 저장소 `put()`이 `(kind, obj_id)` upsert라 남의 ID면 **예외 없이** 그
           행을 덮는다. `transition`의 `subject_id`도 모델 값을 따라간다.
 
