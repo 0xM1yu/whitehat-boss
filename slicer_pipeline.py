@@ -261,6 +261,9 @@ class SlicingStages:
                 self.increment("candidates_degraded")
             else:
                 self.increment("candidates_unmapped")
+            # Count it as processed, as the unsharded degrade_only branch does: it is in the
+            # output now, so candidates_not_processed (the completion metric) must not list it.
+            self.processed += 1
         if unfinished:
             self.errors.append(
                 f"Export-only: checkpoint contains unfinished candidates ({unfinished}); "
