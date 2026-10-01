@@ -220,14 +220,27 @@ class EventKind(StrEnum):
     # "critic이 왜 못 돌았는가"를 보려고 다시 `state.db`를 열어야 한다.
     CRITIC_FAILED = "critic_failed"
     # 슬라이스 타깃의 Auditor `SOURCE`를 무엇으로 채웠나 — 5단계 호출 1건당 1행(결정 1-b = 넓은
-    # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(문자 수
-    # 상한에 걸려 뺀 함수 수)·`uncovered_lines`(어느 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
+    # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(상한 —
+    # 글자, `auditor_source_tokens`가 양수면 토큰 — 에 걸려 뺀 함수 수)·`uncovered_lines`(어느
+    # 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
     # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
-    # `subject_id`는 후보다.
+    # `subject_id`는 후보다. `auditor_callee_hops`가 1이면(#349 (a)) `callees`(붙인 피호출 함수 수 —
+    # `functions`에도 들어간다)·`callees_dropped`(피호출 함수 상한·전체 상한에 걸려 안 붙인 수)가
+    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. `auditor_definitions`가
+    # 1이면 `definitions`·`definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 —
+    # `functions`에는 안 든다)가 같은 방식으로 더 실린다.
+    # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
+    # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
+    # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
+    # `entry_omitted_lines`(줄이며 뺀 줄 수 — 넘었어도 슬라이스 줄이 함수 전체에 퍼지면 0)가 더
+    # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
+    # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
+    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
-    # 커도 늘 들어간다. 그래서 `chars`가 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry
-    # 혼자 때문인지 합 때문인지 `chars`만으로는 안 갈린다(#289 리뷰 LOW-2).
+    # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
+    # 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry 혼자 때문인지 합 때문인지
+    # `chars`만으로는 안 갈린다(#289 리뷰 LOW-2).
     #
     # **캡슐이 이것을 못 센다.** EXPANDED 캡슐의 `target_function`은 entry 함수만 세고 그것도
     # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다

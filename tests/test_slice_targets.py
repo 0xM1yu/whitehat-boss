@@ -912,3 +912,562 @@ def test_a_failed_twin_slice_counts_as_unanalysed_even_when_its_twin_succeeds(
 
     assert [c.slice_id for c in result.candidates] == ["slice_0003"]
     assert result.report.unanalyzed_targets == 1
+
+
+# #349 (a): entry 함수 `recv_request`(28–31)가 30줄에서 `parse_header`(19–26)를 부른다. 슬라이스는
+# entry 함수 안에만 있다(28·30) — 결정 1-b 규칙으로는 `parse_header` 본문이 안 붙는다.
+_CALLS_ONLY = ("slice_0005", "A", ("parser.c", 28, "recv_request"), "recv_request", {28, 30})
+
+
+def _hops(value: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_callee_hops=value)
+        )
+
+    return configure
+
+
+def test_callee_hops_off_keeps_the_decision_1b_source(tmp_path: Path) -> None:
+    """기본(0)이면 피호출 함수 본문을 안 붙이고 이벤트도 옛 모양이다 — ADR 0012 결정 1-b 그대로."""
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    (event,) = _source_events(trace_path)
+    assert "callees" not in event and "callees_dropped" not in event
+
+
+def test_callee_hops_append_the_body_of_a_function_the_carried_code_calls(tmp_path: Path) -> None:
+    """1이면 실린 함수의 본문 안 호출이 부르는 함수 본문을 entry 함수 뒤에 붙인다(#349 (a)).
+
+    슬라이스 줄이 `parse_header` 안에 하나도 없어도 붙는다 — 그것이 결정 1-b와 갈리는 자리다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_hops(1))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(
+        [_banner("parser.c", 28, 31), *_PARSER[27:31], _banner("parser.c", 19, 26), *_PARSER[18:26]]
+    )
+    (event,) = _source_events(trace_path)
+    assert (event["functions"], event["callees"], event["callees_dropped"]) == (2, 1, 0)
+
+
+def test_a_callee_over_its_own_cap_is_not_appended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """피호출 함수 하나의 상한(`_AUDITOR_CALLEE_CHARS`)을 넘으면 안 붙이고
+    `callees_dropped`로 센다."""
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_CALLEE_CHARS", 1, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_hops(1))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    (event,) = _source_events(trace_path)
+    assert (event["callees"], event["callees_dropped"]) == (0, 1)
+
+
+def test_a_callee_already_carried_by_the_slice_is_not_appended_twice(tmp_path: Path) -> None:
+    """슬라이스가 이미 `parse_header`를 지나면(24) 결정 1-b 규칙이 싣고, 피호출 단계는
+    다시 안 싣는다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_hops(1))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"].count(_banner("parser.c", 19, 26)) == 1
+    (event,) = _source_events(trace_path)
+    assert (event["functions"], event["callees"]) == (2, 0)
+
+
+# #349 (f): `parse_header`(19–26)가 `struct header`(12–15)를 쓴다. index-v2여야 정의 표가 있다.
+_FIXTURE_INDEX_V2 = {
+    **{k: v for k, v in _FIXTURE_INDEX.items() if k != "calls"},
+    "version": "index-v2",
+    "calls": {
+        "parse_header": [
+            {"file": "parser.c", "line": 30, "caller": "recv_request", "args": ["packet + 2"]}
+        ],
+        "memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf"]}],
+    },
+    "functions": {
+        s["name"]: [{"file": s["file"], "line_start": s["line_start"],
+                     "line_end": s["line_end"], "params": []}]
+        for s in _FIXTURE_INDEX["symbols"]
+    },
+    "macros": {},
+    "types": {"header": [{"file": "parser.c", "line_start": 12, "line_end": 15, "kind": "struct"}]},
+    "file_vars": {},
+    "fields": {},
+    "locals": {},
+    "assigns": {},
+    "field_assigns": {},
+}
+
+
+def _definitions(value: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_definitions=value)
+        )
+
+    return configure
+
+
+def test_definitions_off_keeps_the_decision_1b_source(tmp_path: Path) -> None:
+    """기본(0)이면 정의를 안 붙이고 이벤트에 `definitions` 필드도 없다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(_FIXTURE_INDEX_V2))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert _banner("parser.c", 12, 15) not in facts["source"]
+    (event,) = _source_events(trace_path)
+    assert "definitions" not in event
+
+
+def test_definitions_append_the_struct_the_carried_code_uses(tmp_path: Path) -> None:
+    """1이면 실린 원문이 쓰는 `struct header`의 정의 줄을 함수들 뒤에 붙인다(#349 (f)).
+    정의는 `functions`에 안 세고 `definitions`로 센다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(_FIXTURE_INDEX_V2),
+        configure=_definitions(1),
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"].endswith("\n".join([_banner("parser.c", 12, 15), *_PARSER[11:15]]))
+    (event,) = _source_events(trace_path)
+    assert (event["functions"], event["definitions"], event["definitions_dropped"]) == (2, 1, 0)
+
+
+def test_a_definition_over_its_own_cap_is_not_appended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정의 하나의 상한(`_AUDITOR_DEFINITION_CHARS`)을 넘으면 안 붙이고 센다."""
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_DEFINITION_CHARS", 1, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(_FIXTURE_INDEX_V2),
+        configure=_definitions(1),
+    )
+
+    (event,) = _source_events(trace_path)
+    assert (event["definitions"], event["definitions_dropped"]) == (0, 1)
+
+
+def _source_tokens(value: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_source_tokens=value)
+        )
+
+    return configure
+
+
+def test_a_token_cap_without_a_tokenizer_counts_with_the_estimate(tmp_path: Path) -> None:
+    """#349 (c): 토큰 상한이면 dev_fake(토크나이저 없음)는 글자 근사로 세고 그 사실을 남긴다.
+    상한 1토큰이면 entry 함수만 남는다(entry는 상한 밖)."""
+    from src.tokens import estimate_tokens
+
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(), configure=_source_tokens(1)
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    (event,) = _source_events(trace_path)
+    assert (event["dropped"], event["token_counter"]) == (1, "estimate")
+    assert event["tokens"] == estimate_tokens(facts["source"])
+
+
+def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
+    """실 토크나이저가 주입되면(`counter_for_role("auditor")`) 그것으로 센다 — 여기선 단어 수.
+    entry 함수(4줄)와 `parse_header`(8줄)의 단어 수 합에 상한을 딱 맞추면 둘 다 들어가고,
+    하나 모자라면 `parse_header`가 빠진다."""
+    import types
+
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    words = lambda text: len(text.split())  # noqa: E731
+    entry = Location(file="parser.c", symbol="recv_request", line_start=28, line_end=31)
+    header = Location(file="parser.c", symbol="parse_header", line_start=19, line_end=26)
+    texts = {28: "\n".join(_PARSER[27:31]), 19: "\n".join(_PARSER[18:26])}
+    both = words(runner._block(entry, texts[28])) + 1 + words(runner._block(header, texts[19]))
+
+    def source_for(cap: int) -> tuple[str, dict]:
+        events: list[dict] = []
+        ctx = types.SimpleNamespace(
+            symbols_for=lambda _file: [entry, header],
+            read_source=lambda loc: texts[loc.line_start],
+            callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
+            counter_for_role=lambda role: words if role == "auditor" else None,
+            config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+                auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
+                auditor_entry_trim=0, auditor_caller_lines=0)),
+            trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+        )
+        ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
+                       lines=(("parser.c", 24), ("parser.c", 28), ("parser.c", 30)),
+                       degraded=False)
+        return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+    _, event = source_for(both)
+    assert (event["functions"], event["dropped"], event["token_counter"]) == (2, 0, "model")
+    _, event = source_for(both - 1)
+    assert (event["functions"], event["dropped"]) == (1, 1)
+
+
+def _trim_source(
+    trim: int, cap: int, helper: bool = False, at: tuple[int, ...] = (100,)
+) -> tuple[str, dict]:
+    """#349 entry 함수 줄이기: 200줄 entry 함수(머리 2줄 · 몸통 · 닫는 줄), 슬라이스 줄 100 하나.
+    상한은 단어 수(모델 카운터 자리)로 센다."""
+    import types
+
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    body = ["int big(int n)", "{"] + [f"    step({i});" for i in range(3, 200)] + ["}"]
+    entry = Location(file="big.c", symbol="big", line_start=1, line_end=200)
+    small = Location(file="big.c", symbol="small", line_start=201, line_end=203)
+    texts = {1: "\n".join(body), 201: "int small(void)\n{ return 0; }\n"}
+    events: list[dict] = []
+    ctx = types.SimpleNamespace(
+        symbols_for=lambda _file: [entry, small],
+        read_source=lambda loc: texts[loc.line_start],
+        callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
+        counter_for_role=lambda role: (lambda text: len(text.split())),
+        config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+            auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
+            auditor_entry_trim=trim, auditor_caller_lines=0)),
+        trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+    )
+    ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
+                   entry=Location(file="big.c", line_start=100),
+                   lines=tuple(("big.c", n) for n in at) + ((("big.c", 202),) if helper else ()),
+                   degraded=False)
+    return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+
+def test_entry_trim_off_keeps_an_entry_function_over_the_cap_whole() -> None:
+    """기본(0)이면 entry 함수는 상한 밖 — 200줄 그대로이고 이벤트에 `entry_omitted_lines`가 없다."""
+    source, event = _trim_source(0, 10)
+    assert source.count("\n") == 199
+    assert "entry_omitted_lines" not in event
+
+
+def test_entry_trim_keeps_the_head_the_slice_neighbourhood_and_the_closing_brace() -> None:
+    """켜고 상한을 넘으면 머리(`{`까지 2줄) · 100번 줄 앞뒤 20줄 · 닫는 줄만 남고 뺀 구간마다
+    표시가 한 줄씩 남는다. 함수가 하나여도 배너(줄이기 전 범위)를 단다 — 원래 줄 번호를
+    되짚을 곳이 그것뿐이다(#351 리뷰)."""
+    from src.orchestrator import runner
+
+    source, event = _trim_source(1, 10)
+    banner, *lines = source.split("\n")
+    assert banner == "/* ===== big.c:1-200 ===== */"
+    assert event["entry_over_cap"] is True
+    w = runner._AUDITOR_ENTRY_CONTEXT_LINES
+    kept = 2 + (2 * w + 1) + 1
+    assert lines[:2] == ["int big(int n)", "{"]
+    assert lines[-1] == "}"
+    assert "    step(100);" in lines
+    assert f"    step({100 - w});" in lines and f"    step({100 - w - 1});" not in lines
+    assert f"    step({100 + w});" in lines and f"    step({100 + w + 1});" not in lines
+    assert lines[2] == f"/* ... {100 - w - 3} lines omitted ... */"
+    assert event["entry_omitted_lines"] == 200 - kept
+    assert len(lines) == kept + 2
+    assert event["anchor_chars"] > len(source)
+
+
+def test_entry_trim_leaves_an_entry_function_under_the_cap_alone() -> None:
+    """켜도 상한 안이면 줄이지 않는다 — `entry_omitted_lines`는 0."""
+    source, event = _trim_source(1, 10_000)
+    assert source.count("\n") == 199
+    assert (event["entry_omitted_lines"], event["entry_over_cap"]) == (0, False)
+
+
+def test_an_entry_over_the_cap_with_nothing_to_cut_says_so() -> None:
+    """슬라이스 줄이 함수 전체에 퍼져 뺄 줄이 없으면 `entry_omitted_lines` 0이어도
+    `entry_over_cap`이 참이다 — 「안 넘었다」와 갈린다(#351 리뷰). 배너도 안 붙는다(안 줄였다)."""
+    source, event = _trim_source(1, 10, at=tuple(range(10, 200, 30)))
+    assert (event["entry_omitted_lines"], event["entry_over_cap"]) == (0, True)
+    assert source.startswith("int big(int n)\n")
+
+
+def test_a_trimmed_entry_keeps_its_original_line_range_in_the_banner() -> None:
+    """줄인 entry 함수 뒤에 함수가 붙으면 배너는 줄이기 전 범위(1-200)다 — 줄인 줄 수로 세면
+    1-46이 되어 뒤 함수와 줄 번호가 어긋난다. 줄여서 남은 자리에 `small`이 들어간다."""
+    source, event = _trim_source(1, 150, helper=True)
+    assert source.startswith("/* ===== big.c:1-200 ===== */\n")
+    assert "/* ===== big.c:201-203 ===== */" in source
+    assert (event["functions"], event["dropped"], event["entry_omitted_lines"]) == (2, 0, 156)
+
+
+def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):  # noqa: ANN202
+    """#349 (b) 호출자 창: `copy`(30-34)를 `handle`(1-25)의 20번 줄이 부른다. 단어 수로 센다."""
+    import types
+
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    file = [f"line{i}" for i in range(1, 41)]
+    entry = Location(file="x.c", symbol="copy", line_start=30, line_end=34)
+    handle = Location(file="x.c", symbol="handle", line_start=1, line_end=25)
+
+    def read(loc: Location) -> str:
+        return "\n".join(file[(loc.line_start or 1) - 1 : loc.line_end])
+
+    events: list[dict] = []
+    ctx = types.SimpleNamespace(
+        symbols_for=lambda _file: [handle, entry],
+        read_source=read,
+        callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
+        call_sites_of=lambda loc: (
+            [Location(file="x.c", symbol="handle", line_start=20, line_end=20)]
+            if loc == entry else []
+        ),
+        counter_for_role=lambda role: (lambda text: len(text.split())),
+        config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+            auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
+            auditor_entry_trim=0, auditor_caller_lines=lines)),
+        trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+    )
+    slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
+    ref = SliceRef(slice_id="slice_c", location=entry, given_end="source", entry=entry,
+                   lines=slice_lines, degraded=False)
+    return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+
+def test_caller_lines_off_adds_no_caller_window() -> None:
+    """기본(0)이면 호출자 창이 없고 이벤트에 `callers`가 없다 — 결정 1-b 그대로."""
+    source, event = _caller_source(0)
+    assert source == "\n".join(f"line{i}" for i in range(30, 35))
+    assert "callers" not in event
+
+
+def test_a_caller_window_is_clipped_to_the_caller_function() -> None:
+    """호출 지점(20) 앞뒤 8줄 = 12-28인데 호출자 `handle`이 25에서 끝나 12-25로 자른다. 창은
+    `functions`에 안 든다."""
+    source, event = _caller_source(8)
+    assert "/* ===== x.c:12-25 ===== */\nline12\n" in source
+    assert "line26" not in source and "line11" not in source
+    assert (event["functions"], event["callers"], event["callers_dropped"]) == (1, 1, 0)
+
+
+def test_a_caller_already_carried_by_the_slice_gets_no_window() -> None:
+    """슬라이스가 `handle`을 지나면 그 함수 전체가 이미 실려 창을 붙이지 않는다."""
+    source, event = _caller_source(8, carried_caller=True)
+    assert source.count("/* ===== x.c:") == 2
+    assert (event["functions"], event["callers"], event["callers_dropped"]) == (2, 0, 0)
+
+
+def test_a_caller_window_over_the_cap_is_dropped() -> None:
+    """창이 상한에 안 들면 빼고 `callers_dropped`가 센다."""
+    _, event = _caller_source(8, cap=20)
+    assert (event["callers"], event["callers_dropped"]) == (0, 1)
+
+
+
+def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa: ANN202
+    """`_auditor_source`를 직접 부르는 최소 ctx(#351 리뷰). 파일은 줄 목록, 상한은 단어 수(모델
+    카운터 자리)다. `callees`·`sites`는 심볼 이름 → 위치 목록, `definitions`는 (이름들, 파일) →
+    목록 함수. `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다."""
+    import types
+
+    thresholds = {
+        "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
+        "auditor_entry_trim": 0, "auditor_caller_lines": 0,
+    }
+    thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
+    reads: list[Location] = []
+    names: list[set] = []
+
+    def read(loc: Location) -> str:
+        reads.append(loc)
+        lines = files[loc.file]
+        return "\n".join(lines[(loc.line_start or 1) - 1 : loc.line_end or len(lines)])
+
+    def definitions(found, file):  # noqa: ANN001, ANN202
+        names.append(set(found))
+        return opts.get("definitions", lambda _n, _f: [])(found, file)
+
+    events: list[dict] = []
+    ctx = types.SimpleNamespace(
+        symbols_for=lambda file: [s for s in symbols if s.file == file],
+        read_source=read,
+        callees_of=lambda loc: opts.get("callees", {}).get(loc.symbol, []),
+        definitions_of=definitions,
+        call_sites_of=lambda loc: opts.get("sites", {}).get(loc.symbol, []),
+        counter_for_role=lambda role: (lambda text: len(text.split())),
+        config=types.SimpleNamespace(thresholds=types.SimpleNamespace(**thresholds)),
+        trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+    )
+    return ctx, events, reads, names
+
+
+def _unit_run(ctx, events, entry: Location, lines):  # noqa: ANN001, ANN202
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    ref = SliceRef(slice_id="s", location=entry, given_end="source", entry=entry,
+                   lines=tuple(lines), degraded=False)
+    return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+
+_U_FILE = {"u.c": [f"w{i} x{i}" for i in range(1, 61)]}
+_U_F = Location(file="u.c", symbol="f", line_start=1, line_end=3)
+_U_H = Location(file="u.c", symbol="h", line_start=10, line_end=12)
+_U_G = Location(file="u.c", symbol="g", line_start=20, line_end=29)
+_U_K = Location(file="u.c", symbol="k", line_start=40, line_end=41)
+
+
+def test_a_token_cap_also_bounds_the_callee_and_definition_steps() -> None:
+    """토큰 상한은 함수 루프만이 아니라 피호출·정의 단계도 묶는다(#351 리뷰 — 그 둘을 글자
+    상한으로 되돌려도 통과하던 변이). `g`(10줄 = 20단어+배너)는 글자로는 한참 작지만 토큰
+    상한 20에 안 든다."""
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, _U_G], auditor_source_tokens=20, auditor_callee_hops=1,
+        auditor_definitions=1, callees={"f": [_U_G]}, definitions=lambda _n, _f: [_U_G],
+    )
+    _, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert (event["definitions"], event["definitions_dropped"]) == (0, 1)
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, _U_G], auditor_source_tokens=20, auditor_callee_hops=1,
+        callees={"f": [_U_G]},
+    )
+    _, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert (event["callees"], event["callees_dropped"]) == (0, 1)
+
+
+def test_callees_of_every_carried_function_are_added_not_only_the_entry() -> None:
+    """entry가 아닌 실린 함수(`h` — 슬라이스가 지난다)의 피호출 함수도 붙는다(docstring 「그다음
+    실린 순서대로」 — `carried[:1]` 변이가 살던 자리)."""
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, _U_H, _U_K], auditor_callee_hops=1, callees={"h": [_U_K]}
+    )
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2), ("u.c", 11)])
+    assert "/* ===== u.c:40-41 ===== */" in source
+    assert event["callees"] == 1
+
+
+def test_a_callee_two_carried_functions_share_is_added_once() -> None:
+    """`f`와 `h`가 둘 다 `k`를 부르면 `k`는 한 번만 붙는다(`seen` 기억)."""
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, _U_H, _U_K], auditor_callee_hops=1, callees={"f": [_U_K], "h": [_U_K]}
+    )
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2), ("u.c", 11)])
+    assert source.count("/* ===== u.c:40-41 ===== */") == 1
+    assert (event["callees"], event["callees_dropped"]) == (1, 0)
+
+
+def test_a_function_the_cap_dropped_is_not_counted_again_as_a_callee() -> None:
+    """총 상한에 걸려 뺀 함수(`g`)를 entry가 부르면 피호출 단계가 다시 세지 않는다 — 이벤트가
+    `dropped:1, callees_dropped:1`로 같은 함수를 두 번 세던 것(#351 리뷰 LOW)."""
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, _U_G], auditor_source_tokens=20, auditor_callee_hops=1,
+        callees={"f": [_U_G]},
+    )
+    _, event = _unit_run(ctx, events, _U_F, [("u.c", 2), ("u.c", 25)])
+    assert (event["dropped"], event["callees_dropped"]) == (1, 0)
+
+
+def test_definition_lookup_reads_code_not_banners_or_omission_marks() -> None:
+    """정의 조회에 배너(`u.c` → `u`·`c`)와 뺀 구간 표시(`lines`·`omitted`)의 낱말이 안 간다
+    (#351 리뷰 LOW — 코드가 안 쓰는 이름의 매크로가 붙던 것)."""
+    files = {"u.c": ["int f(void)", "{"] + [f"    w{i};" for i in range(3, 80)] + ["}"]}
+    entry = Location(file="u.c", symbol="f", line_start=1, line_end=80)
+    ctx, events, _, names = _unit(
+        files, [entry, _U_H], auditor_definitions=1, auditor_entry_trim=1,
+        auditor_source_tokens=30,
+    )
+    source, _ = _unit_run(ctx, events, entry, [("u.c", 40)])
+    assert "lines omitted" in source and "/* ===== u.c:" in source
+    (used,) = names
+    assert not used & {"u", "c", "lines", "omitted"}
+    assert "w40" in used
+
+
+def test_no_caller_window_without_an_entry_symbol() -> None:
+    """entry를 품는 심볼을 몰라 창이 anchor면(`symbol` 없음) 호출자를 찾지 않는다 — 이름 없는
+    대상의 호출 지점은 뜻이 없다(`anchor.symbol` 가드 변이가 살던 자리)."""
+    window = Location(file="u.c", line_start=1, line_end=3)
+    site = Location(file="u.c", symbol="h", line_start=11, line_end=11)
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_H], auditor_caller_lines=1, sites={None: [site]}
+    )
+    _, event = _unit_run(ctx, events, window, [("u.c", 2)])
+    assert (event["callers"], event["call_sites"]) == (0, 0)
+
+
+def test_caller_windows_read_only_the_first_sites() -> None:
+    """호출 지점이 많아도 앞 `_AUDITOR_CALLER_SITES`개만 읽는다 — 상한이 찬 뒤에도 지점마다
+    파일을 읽고 `callers_dropped`가 지점 수가 되던 것(#351 리뷰). 찾은 수는 `call_sites`."""
+    from src.orchestrator import runner
+
+    files = {"u.c": [f"w{i}" for i in range(1, 401)]}
+    entry = Location(file="u.c", symbol="f", line_start=1, line_end=3)
+    sites = [Location(file="u.c", symbol=f"c{i}", line_start=10 * i, line_end=10 * i)
+             for i in range(1, 31)]
+    ctx, events, reads, _ = _unit(files, [entry], auditor_caller_lines=1, sites={"f": sites})
+    _, event = _unit_run(ctx, events, entry, [("u.c", 2)])
+    limit = runner._AUDITOR_CALLER_SITES
+    assert len(reads) == 1 + limit
+    assert event["call_sites"] == 30
+    assert event["callers"] + event["callers_dropped"] == limit
+
+
+def test_overlaps_treats_a_location_without_lines_as_the_whole_file() -> None:
+    from src.orchestrator.runner import _overlaps
+
+    whole = Location(file="u.c")
+    assert _overlaps(whole, Location(file="u.c", line_start=5, line_end=6))
+    assert not _overlaps(whole, Location(file="v.c", line_start=5, line_end=6))
+
+
+
+def test_overlapping_call_sites_do_not_use_up_the_read_limit() -> None:
+    """같은 호출자 안의 이웃 호출·이미 실린 호출자와 겹치는 지점은 읽는 지점 수 상한을 안 먹는다
+    — `h`가 `f`를 8번 불러도 다른 호출자 `k`(55번 줄)의 창이 붙는다(#351 자체 검토 MEDIUM-1:
+    자르기가 겹침 검사보다 먼저라 `k`가 영영 안 닿던 것)."""
+    entry = Location(file="u.c", symbol="f", line_start=40, line_end=42)
+    h = Location(file="u.c", symbol="h", line_start=1, line_end=30)
+    k = Location(file="u.c", symbol="k", line_start=50, line_end=60)
+    sites = [Location(file="u.c", symbol="h", line_start=n, line_end=n) for n in range(2, 17, 2)]
+    sites.append(Location(file="u.c", symbol="k", line_start=55, line_end=55))
+    for slice_lines in ([("u.c", 41)], [("u.c", 41), ("u.c", 3)]):
+        ctx, events, _, _ = _unit(
+            _U_FILE, [entry, h, k], auditor_caller_lines=2, sites={"f": sites}
+        )
+        source, event = _unit_run(ctx, events, entry, slice_lines)
+        assert "/* ===== u.c:53-57 ===== */" in source
+        assert event["call_sites"] == 9
+
+
+def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
+    """피호출 함수 `h`가 entry를 되부르면 `h` 본문이 통째로 실리고 그 안의 호출자 창은 겹쳐
+    빠진다 — 창이 먼저면 본문 대신 조각만 남고 `callees`에도 안 셌다(#351 자체 검토 LOW-1)."""
+    h = Location(file="u.c", symbol="h", line_start=10, line_end=30)
+    site = Location(file="u.c", symbol="h", line_start=20, line_end=20)
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, h], auditor_callee_hops=1, auditor_caller_lines=2,
+        callees={"f": [h]}, sites={"f": [site]},
+    )
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert "/* ===== u.c:10-30 ===== */" in source
+    assert (event["callees"], event["callers"]) == (1, 0)
