@@ -1,0 +1,4 @@
+role: pov
+version: v3
+output_schema: PovAction
+description: v2 + gdb + 진입점. 매 홉 PovAction(gen/inspect/submit)을 내고 gen은 PovSpec을 실어 조립·검증한 관측을 되먹인다. v2와 다른 셋 — ① inspect 도구가 asan/build/poc에서 asan/build/gdb/poc 넷으로(이슈 #360 · 사용자 결정 2026-10-02 · PR #327이 TOOL_KINDS에 gdb를 넣음) ② FACTS.fuzz_entrypoint 절 신설(libFuzzer 진입점의 최소 길이 검사·첫 파서 호출·입력 쪼개기 규약을 읽게 한다 — 바이트가 어디로 들어가는지가 취약 경로 도달의 출발점이다) ③ FINDING의 경로 심볼을 쓰게 함. CyberGym Level 1 최적화(작게 시작·매직 먼저·관측 반영·같은 spec 반복 금지)는 v2 그대로

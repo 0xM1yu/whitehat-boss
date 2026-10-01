@@ -2,8 +2,9 @@
 
 council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매 홉 `PovAction` 하나를
 낸다. `gen`은 **기존 `PovSpec`을 실어** 순수 `assemble_poc`가 인프로세스로 바이트를 만든다
-(새 gen 샌드박스 도구 없음). `inspect`는 진단 도구(asan/build/poc)를 돌리고, `submit`은 루프를
+(새 gen 샌드박스 도구 없음). `inspect`는 진단 도구(asan/build/gdb/poc)를 돌리고, `submit`은 루프를
 끝낸다. raw 임의 바이트는 `PovSpec`의 `literal` 세그먼트가 이미 덮는다.
+⏵ 2026-10-02 — `gdb`가 화이트리스트에 들어왔다(이슈 #360 · PR #327 `5cf5c20`).
 
 아래는 스키마 validator + 루프(`_run_pov_hops`)의 계약을 함께 본다.
 
@@ -13,6 +14,7 @@ council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매
 """
 
 import dataclasses
+import json
 from typing import get_args
 
 import pytest
@@ -161,8 +163,13 @@ def _scripted(ctx: RunContext, actions: list[object]) -> RunContext:  # noqa: F8
 def test_every_pov_tool_is_a_real_tool() -> None:
     """`PovAction.tool` Literal의 모든 값은 ToolRunner 화이트리스트(`TOOL_KINDS`) 안이어야 한다.
 
-    없는 도구를 광고하면(예: 예전의 `gdb`) inspect가 tool_policy로 죽고 홉을 버린다 — 이 검사가
-    그 회귀를 잡는다(적대적 리뷰 2026-09-30, gdb 있을 때 빨개졌을 것)."""
+    없는 도구를 광고하면 inspect가 tool_policy로 죽고 홉을 버린다 — 이 검사가 그 회귀를 잡는다
+    (적대적 리뷰 2026-09-30).
+
+    ⏵ **2026-10-02 — 이 docstring이 들던 예가 뒤집혔다.** 전 판은 *"예: 예전의 `gdb`"*라 적었는데
+    PR #327(`5cf5c20`, 2026-10-01)이 `gdb`를 `TOOL_KINDS`에 넣어 **더는 반례가 아니다**. 이 검사가
+    무는 것은 **철자가 아니라 포함 관계**이고, 지금 반례가 될 것은 `TOOL_KINDS`에 없는 **새 이름**
+    (`valgrind`·`strace` 등)을 Literal에 넣는 변이다."""
     tools: set[str] = set()
     for arg in get_args(PovAction.model_fields["tool"].annotation):
         tools |= set(get_args(arg))  # Literal[...]의 값들; NoneType은 get_args가 빈 튜플
@@ -564,6 +571,215 @@ def test_pov_loop_inspect_runs_the_tool_the_model_chose_not_a_default(
     hop0 = _hops(scripted)[0]
     assert hop0.data["action"] == "inspect"
     assert hop0.data["tool"] == "build"  # asan 고정 변이면 여기서 죽는다
+
+
+def test_pov_hop0_carries_the_same_source_the_auditor_saw(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 러너가 **Auditor가 본 `SOURCE`를 PoV에 넘긴다**(사용자 지적 2026-10-02).
+
+    `runner._run_pov_hops`에서 `open_hop(source=…)`을 빼는 변이가 여기서 죽는다 — 빼면 노드가
+    `ctx.read_source(capsule.target)`(= **entry 함수 하나**)로 떨어지고 센티넬이 사라진다.
+
+    **왜 이 핀이 필요한가.** `open_hop`은 2026-10-02 전에도 `source=`를 받았다(`nodes/pov.py:86`,
+    기본값 `None`) — **러너가 안 넘겼을 뿐이고 그걸 무는 검사가 없었다.** 그래서 「파라미터가
+    있다」가 「값이 흐른다」를 보장하지 않았다. 이 검사는 **흐르는지**를 본다.
+
+    PoV가 넓은 소스를 봐야 하는 이유: CyberGym Level 1의 지배적 실패는 "취약 경로 미도달"이고 그걸
+    가르는 것은 앞단 파서의 포맷 조건이다 — 그 파서가 entry 함수 밖에 있으면 PoV는 매직·헤더를
+    영영 못 본다."""
+    sentinel = "SENTINEL_WIDE_SOURCE_FROM_AUDITOR"
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    # ⚠ `_pov_state`는 **원래 ctx**로 돈다 — scripted 모델은 PoV 홉만 대신한다(앞 단계가 PovAction을
+    # 받으면 죽는다).
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    calls = 0
+
+    def _wide() -> str:
+        nonlocal calls
+        calls += 1
+        return f"/* {sentinel} */\nint parse_header(void) {{ return 0; }}\n"
+
+    state.finding_sources[finding.finding_id] = runner._Once(_wide)
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    assert sentinel in prompt.body, "hop0 SOURCE에 Auditor가 본 원문이 없다"
+    # `_Once`라 한 번만 부른다 — 두 번 부르면 `auditor_source` 이벤트·인덱스 조회가 중복된다.
+    assert calls == 1
+
+
+def _resolution(*, name: str = "LLVMFuzzerTestOneInput", body: str = "") -> object:
+    """resolver 출력 하나 — 진입점 조회의 성공/실패를 흉내낸다."""
+    from src.schemas.need_evidence import Resolution, RetrievedBlock
+
+    if not name:
+        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
+    return Resolution(
+        followup_text=body,
+        blocks=(
+            RetrievedBlock(name=name, label="function", file="src/fuzz.c", lines=(10, 11, 12)),
+        ),
+        unfilled=(),
+        already=(),
+        truncated=(),
+    )
+
+
+def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 FACTS가 **퍼즈 진입점**(`LLVMFuzzerTestOneInput`)을 싣는다.
+
+    CyberGym Level 1은 libFuzzer 하네스에 먹일 바이트를 만드는 과제다 — **바이트가 어디로
+    들어가는지**(진입점의 `data`/`size`를 무엇이 파싱하는지)를 모르면 PoV는 앞단 포맷을 맞출 수
+    없고, 문헌이 꼽는 지배적 실패가 바로 그 "취약 경로 미도달"이다. 2026-10-02 실측으로
+    `LLVMFuzzerTestOneInput`은 `src/`·`prompts/` 전체에 **0건**이었다.
+
+    조회는 **이미 있는 resolver**(`ctx.resolve_requests`)를 쓴다 — 새 훅·새 어댑터 배선 없이
+    이름으로 함수 본문을 찾는 수단이 그것뿐이다(`definitions_of`는 macros·types·file_vars만 본다,
+    `src/adapters/index_graph.py:111`)."""
+    body = "int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) { return parse(data); }"
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = dataclasses.replace(
+        scripted, resolve_requests=lambda _q: _resolution(body=body)
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert entry["found"] is True
+    assert entry["name"] == "LLVMFuzzerTestOneInput"
+    assert entry["file"] == "src/fuzz.c"
+    assert body in entry["source"]
+
+
+def test_pov_facts_record_why_the_fuzz_entrypoint_is_missing(ctx: RunContext) -> None:  # noqa: F811
+    """진입점을 못 찾으면 **빈 값 + 사유**다 — 키를 조용히 빼지 않는다(CLAUDE.md §0).
+
+    키가 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다. `0`·빈 값은 **미실측
+    표시**이고 사유가 같이 있어야 한다."""
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = dataclasses.replace(scripted, resolve_requests=lambda _q: _resolution(name=""))
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert entry["found"] is False
+    assert entry["source"] == ""
+    assert entry["reason"], "못 찾은 사유가 비어 있다 — §0 위반"
+
+
+def test_pov_facts_say_so_when_there_is_no_resolver_at_all(ctx: RunContext) -> None:  # noqa: F811
+    """resolver 자체가 없는 run(인덱스 v1·미로드)도 **사유가 다르다**.
+
+    `ctx.resolve_requests is None`은 "조회할 수단이 없었다"이고 빈 `Resolution`은 "조회했는데
+    없었다"다. 둘을 같은 사유로 적으면 나중에 무엇을 고쳐야 하는지 못 가른다."""
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = dataclasses.replace(scripted, resolve_requests=None)
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert entry["found"] is False
+    assert "resolver" in entry["reason"]
+
+
+def test_other_roles_facts_do_not_gain_the_fuzz_entrypoint_key() -> None:
+    """🔴 `fuzz_entrypoint`는 **PoV만** 싣는다 — 다른 역할의 프롬프트는 한 바이트도 안 바뀐다.
+
+    `build_facts`를 인자 없이 부르면 키가 **없어야** 한다(`slice_criterion`과 같은 opt-in 규율,
+    `prompt_loader.py:345`). 무조건 싣는 변이가 여기서 죽는다 — 그러면 Scout·Auditor·Critic
+    프롬프트가 같이 바뀌어 **이전 run과 직접 비교할 수 없게 된다**(`docs/evaluation.md:69`)."""
+    from src.orchestrator.prompt_loader import build_facts
+
+    facts = build_facts(run_id="r", ids={})
+
+    assert "fuzz_entrypoint" not in facts
+
+
+def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
+    """`runner._Once`는 감싼 콜러블을 한 번만 부르고 같은 문자열을 돌려준다.
+
+    🔴 **이 검사가 무는 것은 `_Once` 클래스의 성질뿐이고, `_step_auditor`가 실제로 그것으로
+    감싸는지는 안 문다**(2026-10-02 실측 — `_step_auditor`를 구동하는 테스트가 저장소에 **0건**이고,
+    슬라이스 타깃 `_Target` + 인덱스를 세우는 픽스처가 없다). `_step_auditor`의
+    `_Once(partial(...))`를 맨 `partial(...)`로 되돌리면 **이 스위트는 초록인 채로** Auditor와 PoV가
+    `_auditor_source`를 각각 불러 `auditor_source` trace 이벤트가 둘이 되고, 장부에서 Auditor 호출
+    하나가 둘로 보인다(CLAUDE.md §0). 그 자리의 핀은 **미작성**이다 — 슬라이스 타깃 e2e 픽스처가
+    서면 그때 박는다(`_workspace/plans-cybergym/S6c.md` ⑤)."""
+    calls = 0
+
+    def _inner() -> str:
+        nonlocal calls
+        calls += 1
+        return f"text-{calls}"
+
+    once = runner._Once(_inner)
+
+    assert once() == "text-1"
+    assert once() == "text-1"  # 두 번째도 같은 문자열
+    assert calls == 1
+
+
+def test_pov_finding_block_carries_the_path_symbols_not_just_the_count(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """FINDING 블록이 **경로 단계의 심볼**을 싣는다 — 개수만 싣던 변이가 여기서 죽는다.
+
+    프롬프트는 *"경로 단계로 source에서 sink까지의 흐름을 확인하라"*고 지시하는데
+    (`prompts/pov/*/prefix.md` 도달 절차 3) 전 판은 `len(finding.path)`만 줬다. 이름이 없으면
+    `SOURCE`의 어느 함수가 앞단 파서이고 어느 것이 sink인지 PoV가 못 가른다."""
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)  # ⚠ 앞 단계는 원래 ctx로 — 위 검사의 같은 이유
+    capsule = state.finding_capsules[finding.finding_id]
+    assert finding.path, "픽스처 finding에 경로 단계가 없으면 이 검사가 동어반복이다"
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    for step in finding.path:
+        assert step.symbol in prompt.body, f"경로 심볼 {step.symbol!r}이 FINDING 블록에 없다"
+    # `repro_spec`은 **유무만** — 본문이 실리면 참조 PoC 누출 경로가 열린다.
+    assert "재현 근거(repro_spec):" in prompt.body
+
+
+def test_pov_loop_can_inspect_with_gdb(ctx: RunContext) -> None:  # noqa: F811
+    """PoV가 **gdb로 현 후보를 들여다볼 수 있다**(이슈 #360 · 사용자 결정 2026-10-02).
+
+    `gdb`를 `PovAction.tool` Literal에서 빼는 변이가 여기서 죽는다 — `_scripted`가 `PovAction`을
+    **구성하는 순간** ValidationError가 나므로 홉이 하나도 안 돈다. 위
+    `test_every_pov_tool_is_a_real_tool`은 **포함 관계**(Literal ⊆ TOOL_KINDS)만 보므로 Literal이
+    좁아지는 쪽은 잡지 못한다 — 그 방향을 이 검사가 막는다.
+
+    ⚠ 이 검사가 무는 것은 **루프가 모델이 고른 gdb를 그대로 돌린다**는 것까지다. 실컨테이너에서
+    gdb가 대상을 띄웠는지 가르는 것은 `judge()`의 stdout 갈래이고
+    (`src/adapters/container_tools.py:576-581`) 그쪽은 dev_fake가 재현하지 않는다."""
+    scripted = _scripted(
+        ctx,
+        [PovAction(action="inspect", tool="gdb", rationale="크래시 지점을 본다"),
+         PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    hop0 = _hops(scripted)[0]
+    assert hop0.data["action"] == "inspect"
+    assert hop0.data["tool"] == "gdb"
+    # `TOOL_KINDS`가 gdb를 CRASH로 분류하므로 Evidence kind가 그것이어야 한다(#327).
+    assert hop0.data["evidence_kind"] == TOOL_KINDS["gdb"].value
 
 
 def test_pov_hop_join_key_matches_across_more_than_two_hops(

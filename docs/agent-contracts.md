@@ -207,7 +207,11 @@ materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호�
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
   (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해
-  `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다).
+  `pov.run_tool`) **+ `gdb`** — ⏵ 2026-10-02에 들어왔다. PR #327이 `5cf5c20`(2026-10-01)로 머지되며
+  `TOOL_KINDS`에 `"gdb"`가 생겼고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 전부 있다
+  (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). **PoV가 「경로에 닿았나」를 가를
+  수단이 gdb뿐이라** 화이트리스트에 넣었다(이슈 #360 · 사용자 결정). 프롬프트도 같은 판에서
+  넓혔다 — `prompts/pov/v3`(배선은 별 PR).
   ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
   — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은

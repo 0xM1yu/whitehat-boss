@@ -152,8 +152,13 @@ class PovAction(HarnessModel):
     - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.
       **모델이 쓴 코드를 실행하지 않는다** — 조립은 결정론 순수 함수(fork B-iii). raw 임의
       바이트가 필요하면 `spec`의 `literal` 세그먼트에 통째로 넣는다.
-    - `inspect`: `tool`(asan/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사). `gdb`는 이 PR의
-      PoV 도구 화이트리스트엔 없다 — 에이전트 gdb 도구를 배선하는 PR #327이 다시 넣는다.
+    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사).
+      ⏵ **2026-10-02 — `gdb`가 들어왔다.** 에이전트 gdb 도구를 배선한 PR #327이 `5cf5c20`
+      (2026-10-01)로 머지되며 `TOOL_KINDS`에 `"gdb": EvidenceKind.CRASH`가 생겼고
+      (`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 전부 있다
+      (`src/adapters/container_tools.py:443-466` 빌드·실행 · `:247` `_RUNTIME_TOOLS` ·
+      `:576-581` `judge()`의 stdout 수명주기 판정). **PoV가 크래시 지점을 눈으로 볼 수단이
+      이것뿐이라** 화이트리스트에 넣는다(이슈 #360 · 사용자 결정 2026-10-02).
     - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
@@ -165,9 +170,11 @@ class PovAction(HarnessModel):
 
     action: Literal["gen", "inspect", "submit"]
     spec: PovSpec | None = None
-    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 이 PR의 화이트리스트에 없다(PR #327).
-    # `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
-    tool: Literal["asan", "build", "poc"] | None = None
+    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)로
+    # 그 안에 들어왔다. `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
+    # ⚠ **이 목록을 넓히면 프롬프트도 같이 넓힌다** — 스키마가 허용해도 프롬프트가 광고하지 않으면
+    # 모델은 그 도구를 영영 안 쓴다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄).
+    tool: Literal["asan", "build", "gdb", "poc"] | None = None
     rationale: NonEmptyStr
 
     @model_validator(mode="after")
