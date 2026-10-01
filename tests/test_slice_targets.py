@@ -1119,7 +1119,8 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-                auditor_entry_trim=0, auditor_caller_lines=0)),
+                auditor_entry_trim=0, auditor_caller_lines=0,
+                auditor_function_order=0, auditor_uncovered_window=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1155,7 +1156,8 @@ def _trim_source(
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=trim, auditor_caller_lines=0)),
+            auditor_entry_trim=trim, auditor_caller_lines=0,
+            auditor_function_order=0, auditor_uncovered_window=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1245,7 +1247,8 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=0, auditor_caller_lines=lines)),
+            auditor_entry_trim=0, auditor_caller_lines=lines,
+            auditor_function_order=0, auditor_uncovered_window=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
@@ -1293,6 +1296,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
     thresholds = {
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
         "auditor_entry_trim": 0, "auditor_caller_lines": 0,
+        "auditor_function_order": 0, "auditor_uncovered_window": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
@@ -1471,3 +1475,66 @@ def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
     source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
     assert "/* ===== u.c:10-30 ===== */" in source
     assert (event["callees"], event["callers"]) == (1, 0)
+
+
+
+def test_relevance_order_loads_the_most_crossed_function_first() -> None:
+    """`auditor_function_order` 1: 상한이 하나만 남기면 슬라이스 줄이 더 많이 지나간 `g`(4줄)가
+    앞 줄의 `h`(1줄)를 이긴다. 0(지금)이면 (파일, 줄) 순이라 `h`가 들어가고 `g`가 빠진다."""
+    lines = [("u.c", 2), ("u.c", 11), ("u.c", 21), ("u.c", 22), ("u.c", 23), ("u.c", 24)]
+    for order, kept, gone in ((0, "u.c:10-12", "u.c:20-29"), (1, "u.c:20-29", "u.c:10-12")):
+        ctx, events, _, _ = _unit(
+            _U_FILE, [_U_F, _U_H, _U_G], auditor_source_tokens=40, auditor_function_order=order
+        )
+        source, event = _unit_run(ctx, events, _U_F, lines)
+        assert f"/* ===== {kept} ===== */" in source
+        assert f"/* ===== {gone} ===== */" not in source
+        assert (event["functions"], event["dropped"]) == (2, 1)
+
+
+def test_uncovered_slice_lines_are_loaded_as_windows() -> None:
+    """`auditor_uncovered_window` N: 어느 심볼에도 안 드는 슬라이스 줄(45·46·58)을 앞뒤 N줄 창으로
+    싣는다. 닿는 줄은 한 창으로 합치고, 창은 `functions`가 아니라 `uncovered_windows`로 센다.
+    0(지금)이면 세기만 하고 안 싣는다."""
+    lines = [("u.c", 2), ("u.c", 45), ("u.c", 46), ("u.c", 58)]
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F], auditor_uncovered_window=2)
+    source, event = _unit_run(ctx, events, _U_F, lines)
+    assert "/* ===== u.c:43-48 ===== */" in source
+    assert "/* ===== u.c:56-60 ===== */" in source
+    assert (event["functions"], event["uncovered_lines"], event["uncovered_windows"]) == (1, 3, 2)
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F])
+    source, event = _unit_run(ctx, events, _U_F, lines)
+    assert "u.c:43" not in source and "uncovered_windows" not in event
+
+
+def test_a_window_that_overlaps_a_carried_function_is_not_loaded_twice() -> None:
+    """인덱스 밖 줄의 창이 이미 실린 함수와 겹치면 안 싣는다(같은 줄이 두 블록에 안 실림)."""
+    lines = [("u.c", 2), ("u.c", 11), ("u.c", 13)]  # 13은 h(10-12) 밖, 창 11-15는 h와 겹침
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_H], auditor_uncovered_window=2)
+    source, event = _unit_run(ctx, events, _U_F, lines)
+    assert "/* ===== u.c:10-12 ===== */" in source and "u.c:11-15" not in source
+    assert (event["uncovered_windows"], event["uncovered_windows_dropped"]) == (0, 0)
+
+
+def test_windows_join_relevance_order_when_both_are_on() -> None:
+    """둘 다 켜면 창도 같은 중요도로 섞인다 -- 슬라이스 줄 3개를 품은 창이 1줄짜리 함수보다 먼저."""
+    lines = [("u.c", 2), ("u.c", 11), ("u.c", 45), ("u.c", 46), ("u.c", 47)]
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, _U_H], auditor_source_tokens=30, auditor_function_order=1,
+        auditor_uncovered_window=1,
+    )
+    source, event = _unit_run(ctx, events, _U_F, lines)
+    assert "/* ===== u.c:44-48 ===== */" in source
+    assert "/* ===== u.c:10-12 ===== */" not in source
+    assert (event["uncovered_windows"], event["dropped"]) == (1, 1)
+
+
+def test_a_window_over_the_cap_is_counted_as_a_dropped_window() -> None:
+    """상한에 안 드는 창은 `uncovered_windows_dropped`로 센다 -- 함수 탈락(`dropped`)과
+    섞지 않는다."""
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F], auditor_source_tokens=20, auditor_uncovered_window=2
+    )
+    _, event = _unit_run(ctx, events, _U_F, [("u.c", 2), ("u.c", 45), ("u.c", 46)])
+    assert (event["uncovered_windows"], event["uncovered_windows_dropped"], event["dropped"]) == (
+        0, 1, 0)
