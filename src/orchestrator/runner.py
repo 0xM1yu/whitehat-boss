@@ -402,6 +402,8 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
+    # 함수 위치 → 그 본문이 부르는 함수의 정의 위치(#349). `symbols_for`와 같은 경계다.
+    callees_of: Callable[[Location], list[Location] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
@@ -743,6 +745,7 @@ def run_pipeline(
         read_slice=deps.read_slice,
         read_payload=read_payload,
         symbols_for=deps.symbols_for,
+        callees_of=deps.callees_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
@@ -1882,6 +1885,11 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
+# 피호출 함수 본문 하나의 글자 상한(#349 (a) — `auditor_callee_hops`가 1일 때만 쓰인다). 짧은
+# 검증·길이 계산·래퍼 함수를 겨냥한다 — 큰 함수 하나가 `_AUDITOR_SOURCE_CHARS`를 다 먹어 다른
+# 피호출 함수가 못 들어가는 것을 막는다. **정한 값이지 잰 값이 아니다** — s500 재측정에서 본다.
+_AUDITOR_CALLEE_CHARS = 4_000
+
 
 def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
     """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
@@ -1904,6 +1912,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `chars`만으로는 함수가 둘 이상일 때 entry 혼자 때문인지 합 때문인지 안 갈린다. entry 함수에도
     상한을 둘지는 이 이벤트가 실서빙에서 내는 값을 보고 정한다.
 
+    **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
+    안 호출이 부르는 함수의 본문(`ctx.callees_of`)을 붙인다. entry 함수의 피호출 함수가 먼저,
+    그다음 실린 순서대로다. 이미 실린 범위와 겹치는 것·`_AUDITOR_CALLEE_CHARS`를 넘는 것은
+    싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
+    0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
@@ -1923,13 +1937,34 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     anchor_text = ctx.read_source(anchor)
     blocks = [_block(anchor, anchor_text)]
     size, dropped = len(blocks[0]), 0
+    carried = [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
         block = _block(symbol, ctx.read_source(symbol))
         if size + 1 + len(block) > _AUDITOR_SOURCE_CHARS:
             dropped += 1
             continue
         blocks.append(block)
+        carried.append(symbol)
         size += 1 + len(block)
+    hops = ctx.config.thresholds.auditor_callee_hops
+    callees = callees_dropped = 0
+    if hops:
+        seen = list(carried)
+        for owner in list(carried):
+            for callee in ctx.callees_of(owner) or []:
+                if any(_overlaps(callee, other) for other in seen):
+                    continue
+                seen.append(callee)
+                block = _block(callee, ctx.read_source(callee))
+                if (
+                    len(block) > _AUDITOR_CALLEE_CHARS
+                    or size + 1 + len(block) > _AUDITOR_SOURCE_CHARS
+                ):
+                    callees_dropped += 1
+                    continue
+                blocks.append(block)
+                size += 1 + len(block)
+                callees += 1
     source = "\n".join(blocks) if len(blocks) > 1 else anchor_text
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
@@ -1942,8 +1977,20 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=len(anchor_text),
+        **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
     )
     return source
+
+
+def _overlaps(a: Location, b: Location) -> bool:
+    """두 위치의 줄 범위가 같은 파일에서 겹치는가. 범위가 없으면(파일 전체) 같은 파일이면 겹친다."""
+    if a.file != b.file:
+        return False
+    if a.line_start is None or b.line_start is None:
+        return True
+    return a.line_start <= (b.line_end or b.line_start) and b.line_start <= (
+        a.line_end or a.line_start
+    )
 
 
 def _narrowest_symbol(symbols: list[Location], line: int) -> Location | None:

@@ -911,3 +911,77 @@ def test_a_failed_twin_slice_counts_as_unanalysed_even_when_its_twin_succeeds(
 
     assert [c.slice_id for c in result.candidates] == ["slice_0003"]
     assert result.report.unanalyzed_targets == 1
+
+
+# #349 (a): entry 함수 `recv_request`(28–31)가 30줄에서 `parse_header`(19–26)를 부른다. 슬라이스는
+# entry 함수 안에만 있다(28·30) — 결정 1-b 규칙으로는 `parse_header` 본문이 안 붙는다.
+_CALLS_ONLY = ("slice_0005", "A", ("parser.c", 28, "recv_request"), "recv_request", {28, 30})
+
+
+def _hops(value: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_callee_hops=value)
+        )
+
+    return configure
+
+
+def test_callee_hops_off_keeps_the_decision_1b_source(tmp_path: Path) -> None:
+    """기본(0)이면 피호출 함수 본문을 안 붙이고 이벤트도 옛 모양이다 — ADR 0012 결정 1-b 그대로."""
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    (event,) = _source_events(trace_path)
+    assert "callees" not in event and "callees_dropped" not in event
+
+
+def test_callee_hops_append_the_body_of_a_function_the_carried_code_calls(tmp_path: Path) -> None:
+    """1이면 실린 함수의 본문 안 호출이 부르는 함수 본문을 entry 함수 뒤에 붙인다(#349 (a)).
+
+    슬라이스 줄이 `parse_header` 안에 하나도 없어도 붙는다 — 그것이 결정 1-b와 갈리는 자리다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_hops(1))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(
+        [_banner("parser.c", 28, 31), *_PARSER[27:31], _banner("parser.c", 19, 26), *_PARSER[18:26]]
+    )
+    (event,) = _source_events(trace_path)
+    assert (event["functions"], event["callees"], event["callees_dropped"]) == (2, 1, 0)
+
+
+def test_a_callee_over_its_own_cap_is_not_appended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """피호출 함수 하나의 상한(`_AUDITOR_CALLEE_CHARS`)을 넘으면 안 붙이고
+    `callees_dropped`로 센다."""
+    from src.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_AUDITOR_CALLEE_CHARS", 1, raising=False)
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_hops(1))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"] == "\n".join(_PARSER[27:31])
+    (event,) = _source_events(trace_path)
+    assert (event["callees"], event["callees_dropped"]) == (0, 1)
+
+
+def test_a_callee_already_carried_by_the_slice_is_not_appended_twice(tmp_path: Path) -> None:
+    """슬라이스가 이미 `parse_header`를 지나면(24) 결정 1-b 규칙이 싣고, 피호출 단계는
+    다시 안 싣는다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_hops(1))
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"].count(_banner("parser.c", 19, 26)) == 1
+    (event,) = _source_events(trace_path)
+    assert (event["functions"], event["callees"]) == (2, 0)

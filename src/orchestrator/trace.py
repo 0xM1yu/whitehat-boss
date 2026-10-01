@@ -223,7 +223,9 @@ class EventKind(StrEnum):
     # (i), `runner._auditor_source`). `functions`(넣은 함수 수, entry 함수 포함)·`dropped`(문자 수
     # 상한에 걸려 뺀 함수 수)·`uncovered_lines`(어느 인덱스 함수에도 안 들어 못 본 슬라이스 줄 수)·
     # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
-    # `subject_id`는 후보다.
+    # `subject_id`는 후보다. `auditor_callee_hops`가 1이면(#349 (a)) `callees`(붙인 피호출 함수 수 —
+    # `functions`에도 들어간다)·`callees_dropped`(피호출 함수 상한·전체 상한에 걸려 안 붙인 수)가
+    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다. 그래서 `chars`가 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry
