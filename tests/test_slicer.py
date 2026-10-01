@@ -447,6 +447,16 @@ def test_case_a_query_carries_the_payload_through_a_file_not_the_repl():
     assert '"__SLICER_case_a__"' in query and '"__END_SLICER__"' in query
 
 
+
+def test_case_a_drops_empty_named_methods_from_both_lists():
+    """#347: one empty-named method row voids the run (`valid_candidate` rejects it, the payload
+    check fails, 0 slices). Spelling pin on both lists -- the Scala is not executed here."""
+    q = queries.candidates_a_query()
+    api = q[q.index("val api ="): q.index("val readers =")]
+    readers = q[q.index("val readers ="): q.index("ujson.Arr.from((api ++ readers)")]
+    assert 'filterNot(m => m.name.isEmpty || m.name.startsWith("<"))' in api
+    assert ".filter(_.name.nonEmpty)" in readers
+
 def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
     """case_b has the same overrun risk as case_a and must use the same file transport.
 

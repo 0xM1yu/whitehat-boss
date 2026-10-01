@@ -395,13 +395,17 @@ def candidates_a_query() -> str:
         cpg.call.nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall
           .name("<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
           .nonEmpty).filter(c => Option(c.method).isDefined).method.id.l).toSet
-      val api = cpg.method.internal.filterNot(_.name.startsWith("<"))
+      val api = cpg.method.internal.filterNot(m => m.name.isEmpty || m.name.startsWith("<"))
+        // An empty-named method (c2cpg parsing a header without build info, e.g. libexpat
+        // xmlrole.h -- full_name `<unresolvedNamespace>.`) passes a `<`-prefix filter, and ONE
+        // such row fails `valid_candidate` and voids the whole run (#347). Both lists drop them.
         .filter(m =>
           cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
         .filter(_.parameter.size > 0).l
         .sortBy(m => if (hotIds.contains(m.id)) 0 else 1)
         .take({CASE_A_CANDIDATE_CAP})
-      val readers = cpg.method.internal.filter(_.call.name("({READERS})").nonEmpty)
+      val readers = cpg.method.internal.filter(_.name.nonEmpty)
+        .filter(_.call.name("({READERS})").nonEmpty)
         .take({CASE_A_CANDIDATE_CAP}).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
