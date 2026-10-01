@@ -262,6 +262,8 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
         valid = isinstance(data, list) and all(valid_location(row) for row in data)
     elif stage == "import":
         valid = isinstance(data, dict) and data.get("imported") is True
+    elif stage == "save_cpg":
+        valid = isinstance(data, dict) and data.get("saved") is True
     elif stage in ("overlay", "library"):
         valid = data is True
     elif stage == "backward" and isinstance(data, dict):
@@ -485,6 +487,12 @@ class Slicer(SlicingStages):
         self.processed = 0
         self.checkpoint = None
         self.export_only = False
+        # #368: `--prepare-only` builds the CPG and discovers candidates once, then saves the graph
+        # to `cpg_out`; a shard given `cpg_file` (and a copy of that checkpoint) loads the graph
+        # instead of parsing the repo and reuses the discovery instead of re-running it.
+        self.prepare_only = False
+        self.cpg_out: Path | None = None
+        self.cpg_file: Path | None = None
         self.shard: tuple[int, int] | None = None
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
@@ -749,11 +757,12 @@ class Slicer(SlicingStages):
                 )
         try:
             # A unique project prevents reuse of a stale graph from an earlier batch.
+            project = "slicer_" + uuid.uuid4().hex
             payload, logs = self.query(
                 "import",
-                queries.import_query(
-                    self.repo.as_posix(), "slicer_" + uuid.uuid4().hex, compilation_database
-                ),
+                queries.import_cpg_query(self.cpg_file.as_posix(), project)
+                if self.cpg_file is not None
+                else queries.import_query(self.repo.as_posix(), project, compilation_database),
             )
             if not isinstance(payload, dict) or payload.get("imported") is not True:
                 raise ValueError("CPG import did not confirm completion")
@@ -852,6 +861,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--checkpoint", type=Path)
     result.add_argument("--resume", action="store_true")
     result.add_argument("--export-only", action="store_true")
+    # #368: build the CPG and discover candidates once, save the graph, slice nothing. The
+    # checkpoint it leaves is the seed every shard starts from (copy it, then --resume --cpg).
+    result.add_argument("--prepare-only", action="store_true")
+    result.add_argument("--cpg-out", type=Path, help="with --prepare-only: where to save the CPG")
+    result.add_argument(
+        "--cpg", type=Path, help="load this saved CPG instead of parsing --repo (needs --resume "
+        "on a copy of the --prepare-only checkpoint)",
+    )
     result.add_argument("--export-dir", type=Path)
     result.add_argument("--progress", type=Path)
     result.add_argument("--heartbeat-seconds", type=positive_seconds, default=30)
@@ -947,6 +964,18 @@ def main(argv: list[str] | None = None) -> int:
         # A shard's own slices.json is a fraction of the run; only the merged checkpoint's
         # --export-only is the result, so a shard without a checkpoint would be lost work.
         cli.error("--shard requires --checkpoint and cannot be combined with --export-only")
+    if args.prepare_only and (
+        not args.checkpoint or not args.cpg_out or args.resume or args.export_only or args.shard
+        or args.cpg
+    ):
+        cli.error("--prepare-only needs --checkpoint and --cpg-out, and no --resume, "
+                  "--export-only, --shard or --cpg")
+    if args.cpg_out and not args.prepare_only:
+        cli.error("--cpg-out only goes with --prepare-only")
+    if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
+        # The shard must start from the prepared checkpoint: its discovery is what makes every
+        # shard slice the same candidate list, and the run contract checks it is the same repo.
+        cli.error("--cpg needs --checkpoint (a copy of the --prepare-only checkpoint) and --resume")
     outputs = [p.resolve() for p in (args.out, args.checkpoint, args.progress) if p]
     if len(outputs) != len(set(outputs)):
         cli.error("Output, checkpoint and progress paths must be distinct")
@@ -1025,6 +1054,9 @@ def main(argv: list[str] | None = None) -> int:
     # Not in settings: the shard picks WHICH candidates run, not how, so every shard shares the
     # run contract and their checkpoints can be merged.
     job.shard = args.shard
+    job.prepare_only = args.prepare_only
+    job.cpg_out = args.cpg_out.resolve() if args.cpg_out else None
+    job.cpg_file = args.cpg.resolve() if args.cpg else None
     job.heartbeat_seconds = args.heartbeat_seconds
     attempt = None
     try:

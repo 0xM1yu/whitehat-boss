@@ -213,6 +213,23 @@ CPG를 읽기만 한다 → 여러 Joern 서버에 나눌 수 있다.
   바뀌면 `Checkpoint mismatch: run_contract`
 - 샤드 수는 CPU·메모리로 정한다. 2026-09-29 8샤드 CPU 최대 약 47코어(30초 표본) · 메모리 미측정
 
+⏵ #368 **준비 한 번** -> `--prepare-only --cpg-out <파일>`이 CPG 생성과 후보 발견을 한 번 하고 그래프를 저장한다(아무
+후보도 안 자름). 그 체크포인트를 샤드마다 복사해 `--resume --cpg <파일> --shard I/N`으로 돌리면 샤드는 저장소를 다시
+파싱하지 않고(`importCpg`) 후보 발견도 건너뛴다 -> 모든 샤드가 같은 그래프·같은 후보 목록을 본다. 분석 인자는 준비
+실행과 같게(실행 계약이 검사한다). 이 경로를 실 Joern으로 확인한 기록은 아직 없다 — `save`·`importCpg` 질의는 #368 참고
+
+```bash
+# 준비 한 번 (서버 하나)
+python slicer.py --repo /work/repo --out /work/prep/slices.json \
+  --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
+  --checkpoint /work/prep/state.db --prepare-only --cpg-out /work/prep/cpg.bin --max-flows-per-candidate 10
+# 샤드 i = 0..N-1: 체크포인트를 복사해 각자 다른 서버에서
+cp /work/prep/state.db /work/s0/state.db
+python slicer.py --repo /work/repo --out /work/s0/slices.json \
+  --joern-endpoint http://127.0.0.1:16243 --joern-version-command /opt/joern/joern \
+  --checkpoint /work/s0/state.db --resume --cpg /work/prep/cpg.bin --shard 0/4 --max-flows-per-candidate 10
+```
+
 ```bash
 # 샤드 i = 0..N-1, 각자 다른 서버. 분석 인자는 전부 같게
 python slicer.py --repo /work/repo --out /work/s0/slices.json \
