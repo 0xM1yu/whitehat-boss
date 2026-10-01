@@ -110,3 +110,23 @@ servers:
       VLLM_SYSTEM_START_DATE: "2026-09-29"
     probe: chat
     ready_timeout_s: 300
+
+  # --- 8단계 PoV — 단독 ---
+  feyospace-v1-small:
+    # Auditor(`qwen3.8-27b`)와 같은 모델·창이라 그 행 값을 따른다 — **계획값, vast 미실측**.
+    # 단독 단계라 Auditor와 같은 몫(0.90) · 창 262,144(check_serving 강제). 준비 상한 600 s = vast
+    # Auditor와 같다. `--reasoning-parser qwen3` 없으면 `thinking_token_budget`을 건 요청이 400
+    # (`qwen3.8-27b`와 같은 기제). 비전 타워는 로드되나 안 쓴다.
+    util: 0.90
+    max_num_seqs: 8
+    max_model_len: 262144
+    extra_args:
+      - --enforce-eager
+      - --enable-prompt-tokens-details
+      - --reasoning-parser
+      - qwen3
+      - --structured-outputs-config.backend
+      - xgrammar
+    env: *vllm_env
+    probe: chat
+    ready_timeout_s: 600

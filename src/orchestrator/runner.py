@@ -83,6 +83,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import hashlib
 import json
 import re
 import subprocess
@@ -115,6 +116,7 @@ from src.orchestrator.nodes import (
     critic,
     gate_node,
     index,
+    pov,
     preprocess,
     report,
     retrieval,
@@ -123,6 +125,7 @@ from src.orchestrator.nodes import (
     validate,
 )
 from src.orchestrator.nodes.report import Report
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
@@ -138,6 +141,7 @@ from src.schemas.enums import (
     EvidenceKind,
     FindingState,
     NeStopReason,
+    PovStopReason,
     ReasonCode,
     Role,
     ScoutSignal,
@@ -451,6 +455,9 @@ class RunSpec:
     # 슬라이서 산출물(`slices.json`). 주면 슬라이스 1개가 타깃 1개다(ADR 0012 결정 1) — 하네스
     # run 밖에서 미리 돈 것을 파일로 받는다. `None`이면 파일·심볼 타깃(지금 경로).
     slices_path: Path | None = None
+    # CyberGym 과제 설명(description.txt). 주면 캡슐에 `vuln_description` 섹션으로 실린다
+    # (PoV 배선). config가 아니라 과제에서 오므로 여기 있다 — `slices_path`와 같은 성격이다.
+    vuln_description: str | None = None
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
@@ -679,6 +686,10 @@ class _Accumulator:
     # 되어 asan이 실패한 run에서 등급이 7단계보다 낮게 기록된다.
     decisions: dict[str, tuple[Decision, ...]] = field(default_factory=dict)
     workdirs: dict[str, str] = field(default_factory=dict)
+    # 8단계 PoV가 쓸 캡슐 — finding_id로 연다(PoV 배선 — b-1). Auditor가 Finding을 만든
+    # capsule을 그대로 물려 준다(러너가 캡슐을 넘기고 pov 노드 시그니처는 안 바뀐다). 미스면
+    # `_run_pov`가 pov를 건너뛰고 기록만 한다 — 추가형이라 상태는 validate.run이 이미 정했다.
+    finding_capsules: dict[str, ContextCapsule] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
     # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
@@ -756,6 +767,8 @@ def run_pipeline(
         resolve_requests=deps.resolve_requests,
         # 단계 경계 교대(ADR 0012 Phase 6.5) — `resolve_requests`와 같은 경계다.
         swap_to=deps.swap_to,
+        # CyberGym 과제 설명(PoV 배선). `retrieval.run`이 캡슐에 실어 Scout·Auditor·pov가 본다.
+        vuln_description=spec.vuln_description,
     )
     if cache_hook is not None:
         cache_hook.bind(ctx)
@@ -1065,7 +1078,18 @@ def _analyze(
         _stop_if_a_caller_saw_nothing({_caller(Stage.CRITIC, Role.CRITIC)})
     if last < Stage.VALIDATE:
         return
-    for finding in state.in_state(FindingState.VALIDATED):
+    # `validate.run`(유일한 결정론 E4 게이트)을 **먼저 전부** 돌린다. pov는 그 뒤에 추가로 돈다
+    # (PoV 배선 — 추가형). 둘을 finding마다 번갈아 돌리면 pov 실패(재발생 갈래)가 뒤 finding의
+    # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
+    # **pov의 대상도 이 목록이다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.** 재현
+    # 명세가 부르는 `./poc`는 PoV가 낸 PoC 바이트를 파일로 써야 생기는데(STATUS.md §5 — E4를
+    # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 내 기록할 뿐 `./poc`로 쓰지
+    # 않는다(파일화는 호스트가 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
+    # `validate.run`이 재현 실패로 내린 것이 pov가 돌 이유를 지우지 않는다. `validate.run` **뒤**
+    # 상태로 거르면 그 강등이 pov의 입장 조건이 되는 순환이고 PoV 시도가 준다 — 바꾸려면 사람이
+    # 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
+    validated = state.in_state(FindingState.VALIDATED)
+    for finding in validated:
         after, _ = validate.run(
             ctx,
             finding=finding,
@@ -1075,6 +1099,230 @@ def _analyze(
             decisions=state.decisions.get(finding.finding_id, ()),
         )
         state.update(after)
+    # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
+    # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
+    if not (validated and Role.POV.value in ctx.config.profile.roles):
+        return
+    swap = ctx.config.swap
+    # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
+    # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
+    # swappable로 한 번 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라 막는다.
+    if swap is not None and Role.POV.value in swap.swappable:
+        _swap_for(ctx, Stage.VALIDATE)
+    # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
+    for finding in validated:
+        _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+
+
+def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
+    """8단계 PoV — Finding에서 PoC를 만드는 모델-주도 툴 루프를 돌린다 (추가형·b-1).
+
+    `validate.run`과 **나란히** 도는 추가 경로다. finding의 상태는 이미 `validate.run`이 정했으므로
+    여기서는 상태를 바꾸지 않는다. 캡슐은 Auditor가 물려 준 `state.finding_capsules`에서 연다.
+
+    **캡슐 미스는 finding을 죽이지 않는다** — `pov_skipped`로 남기고 넘어간다(추가형이라 상태는
+    `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
+    gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
+    올려 보냄)는 루프가 낸다. 바이트 파일화·E4 게이트·oracle 제출은 호스트 후속이다.
+    """
+    capsule = state.finding_capsules.get(finding.finding_id)
+    if capsule is None:
+        ctx.trace.emit(
+            EventKind.POV_SKIPPED,
+            stage=Stage.VALIDATE,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+            reason="capsule_missing",
+        )
+        return
+    _run_pov_hops(ctx, state, finding, capsule)
+
+
+def _run_pov_hops(
+    ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
+) -> tuple[bytes | None, PovStopReason]:
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`을 내고 도구를 돌린다.
+
+    `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
+    바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
+    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/poc)를 돌린다. `submit`은
+    루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
+
+    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
+    **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
+    피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가
+    실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
+    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다.
+
+    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
+    되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
+    파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
+    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이·oracle 제출도 후속이고,
+    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)만 남긴다.
+    `max_hops`는 NE 루프와
+    같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    """
+    max_hops = ctx.config.thresholds.max_hops
+    workdir = state.workdirs.get(finding.finding_id, ".")
+    with ctx.stage(Stage.VALIDATE):
+        last_poc: bytes | None = None
+        followup = ""
+        prev: pov.PovHop | None = None
+        hop = 0
+        while True:
+            started = ctx.monotonic_ms()
+            try:
+                if prev is None:
+                    current = pov.open_hop(ctx, finding=finding, capsule=capsule)
+                else:
+                    current = pov.continue_hop(
+                        ctx, finding=finding, prev=prev, followup=followup
+                    )
+            except (ModelGatewayError, SchemaParseError) as exc:
+                # `BudgetExhausted`는 안 잡는다 — 추가형 계약대로 올려 보낸다(run의 사실).
+                reason = _pov_classify_exception(exc)
+                if reason is None:
+                    raise
+                latency_s = (ctx.monotonic_ms() - started) / 1000.0
+                _emit_pov_hop(
+                    ctx, finding, hop=hop, stop_reason=reason.value, failed=(exc, latency_s)
+                )
+                return _pov_finish(ctx, finding, reason, last_poc)
+            action = current.action
+            if action.action == "submit":
+                _emit_pov_hop(
+                    ctx, finding, hop=hop, action="submit",
+                    stop_reason=PovStopReason.SUBMITTED.value,
+                )
+                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)
+            if action.action == "gen":
+                # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
+                # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
+                poc = assemble_poc(action.spec)
+                if last_poc is not None and poc == last_poc:
+                    _emit_pov_hop(
+                        ctx, finding, hop=hop, action="gen",
+                        stop_reason=PovStopReason.REPEAT_SPEC.value,
+                    )
+                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)
+                last_poc = poc
+                evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
+            else:  # inspect — 새 PoC 없이 현 후보를 진단
+                evidence = pov.run_tool(
+                    ctx, finding=finding, tool=action.tool, workdir=workdir
+                )
+            if hop >= max_hops:
+                _emit_pov_hop(
+                    ctx, finding, hop=hop, action=action.action, evidence=evidence,
+                    stop_reason=PovStopReason.MAX_HOP.value,
+                )
+                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)
+            _emit_pov_hop(ctx, finding, hop=hop, action=action.action, evidence=evidence)
+            followup = _pov_observation(action.action, evidence)
+            prev = current
+            hop += 1
+
+
+def _pov_observation(action: str, evidence: Evidence) -> str:
+    """도구 결과를 다음 홉 user 턴으로 보낼 짧은 관측 텍스트(비지 않아야 한다 — `Prompt.body`)."""
+    detail = f" error={evidence.error}" if evidence.error else ""
+    return (
+        f"tool={evidence.source} action={action} ok={evidence.ok} "
+        f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
+    )
+
+
+def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
+    """PoV 홉 호출 예외를 흡수 여부로 가른다 — pov 추가형 계약(옛 `_run_pov` 단발판이 쓰던
+    `_is_droppable` 판정 그대로).
+
+    per-finding 실패(스키마 파싱·버릴 수 있는 게이트웨이)는 흡수해 이 finding만 건너뛰고,
+    서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
+    run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
+    `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
+
+    ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
+    run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
+    건너뛴다 — 체계적 pov 실패가 파이프라인을 멈추면 안 된다는 계약(옛 `_run_pov` docstring)."""
+    if isinstance(exc, SchemaParseError):
+        return PovStopReason.PARSE_FAILED
+    if isinstance(exc, ModelGatewayError):
+        if not _is_droppable(exc):
+            return None
+        if _is_size_rejection(exc):
+            return PovStopReason.CONTEXT_OVERFLOW
+        return PovStopReason.GATEWAY_ERROR
+    return None
+
+
+def _emit_pov_hop(
+    ctx: RunContext,
+    finding: Finding,
+    *,
+    hop: int,
+    action: str | None = None,
+    evidence: Evidence | None = None,
+    stop_reason: str | None = None,
+    failed: tuple[Exception, float] | None = None,
+) -> None:
+    """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다)."""
+    data: dict[str, TraceValue] = {"hop": hop}
+    if action is not None:
+        data["action"] = action
+    if evidence is not None:
+        data["tool"] = evidence.source
+        data["tool_ok"] = evidence.ok
+        data["exit_code"] = evidence.exit_code
+        data["evidence_kind"] = evidence.kind.value
+    if stop_reason is not None:
+        data["stop_reason"] = stop_reason
+    if failed is not None:
+        exc, latency_s = failed
+        data["schema_ok"] = not isinstance(exc, SchemaParseError)
+        data["latency_s"] = latency_s
+        data["error"] = type(exc).__name__
+        data["error_detail"] = error_detail(exc)
+    ctx.trace.emit(
+        EventKind.POV_HOP,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        **data,
+    )
+
+
+def _pov_finish(
+    ctx: RunContext, finding: Finding, reason: PovStopReason, poc: bytes | None
+) -> tuple[bytes | None, PovStopReason]:
+    """루프 종단 이벤트. `POV_GENERATED`는 **모델이 submit해 최종 PoC가 나온 경우만** 낸다 —
+    나머지(max_hop·repeat·흡수된 예외·gen 없는 submit)는 `POV_SKIPPED`다. 부분 PoC(중간 gen까지는
+    했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`로 남긴다.
+
+    ⚠ 예전에는 PoC가 있기만 하면 GENERATED라 max_hop·parse_failed도 「생성됨」으로 과대 집계됐다
+    (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다."""
+    if reason is PovStopReason.SUBMITTED and poc is not None:
+        ctx.trace.emit(
+            EventKind.POV_GENERATED,
+            stage=Stage.VALIDATE,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+            poc_bytes=len(poc),
+            poc_sha256=hashlib.sha256(poc).hexdigest(),
+        )
+        return poc, reason
+    data: dict[str, TraceValue] = {"reason": reason.value}
+    if poc is not None:
+        data["poc_bytes"] = len(poc)
+        data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
+    ctx.trace.emit(
+        EventKind.POV_SKIPPED,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        **data,
+    )
+    return poc, reason
 
 
 def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static: bool) -> int:
@@ -1810,6 +2058,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     state.evidences[finding.finding_id] = evidences
     state.missings[finding.finding_id] = tuple(missings)
     state.workdirs[finding.finding_id] = artifact.path
+    # 8단계 PoV가 이 Finding의 PoC를 만들 때 쓸 캡슐을 물려 준다(PoV 배선 — b-1).
+    state.finding_capsules[finding.finding_id] = expanded
     return True
 
 
@@ -1882,6 +2132,12 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 서빙 창에 달렸다(`config/models.yaml`의 `qwen3.8-27b` 기동 조건). **v3의 입력 토큰은 안
 # 쟀다(미실측)** — 이 상한이 v3에서도 입력 몫에 든다는 실측은 없다. 첫 v3 run의 `input_tokens`
 # 최대가 그 답이다.
+# ⏵ 2026-09-29 — 같은 날 Auditor가 v4가 됐다. 같은 계산으로 +4,923~13,396토큰(계산값 — prefix
+# +12,251자 · body 틀 +92자 · 근거 본문 4,000자 = 16,343자). v4 입력 토큰은 미실측이다
+# (`config/models.yaml`의 `qwen3.8-27b` — v3는 스모크가 2호출로 쟀다, 그 항목의 ⏵).
+# ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
+# v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
+# 보수적일 수 있다(같은 항목의 ⏵).
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
@@ -2064,17 +2320,25 @@ _PHASE_A_STEPS = _TRIAGE_STEPS[:_SCOUT_SETTLE_INDEX]
 _PHASE_B_STEPS = _TRIAGE_STEPS[_SCOUT_SETTLE_INDEX:]
 
 # 단계 → 그 단계에서 **모델을 부르는 역할** (ADR 0012 Phase 6.5 — 단계 단위 교대가 읽는다).
-# 4·5단계는 위 표의 단계이고 7단계는 `_analyze`의 Critic이다. 여기 없는 단계는 모델을 안 부른다
+# 4·5단계는 위 표의 단계이고 7단계는 `_analyze`의 Critic이다. 8단계(VALIDATE)는 프로필이 pov
+# 좌석을 선언할 때만 pov 모델을 부른다(PoV 배선 — 추가형). 여기 없는 단계는 모델을 안 부른다
 # — 3단계 검색의 embedding·reranker는 `SwapPolicy`가 교대에서 거절한다(ADR 0012 결정 3 뒤).
 #
 # **교대 코드는 `Stage`로 갈라 쓰지 않고 이 표만 읽는다.** 모델을 부르는 좌석이 생기면 여기 한
 # 줄이다. 줄을 빼먹으면 `tests/test_stage_swap.py`의 성질 테스트(모든 호출 시점에 그 모델이 떠
 # 있다)가 그 좌석의 첫 호출에서 빨개진다. 역할 자체는 각 스텝이 따로 들고 있다(`_step_auditor`의
 # `Role.AUDITOR` 등) — 둘이 어긋나는 것을 잡는 것이 그 성질 테스트다.
+#
+# ⚠ **8단계 pov 줄이 있어도 pov를 안 올린 프로필에선 이 단계 교대가 안 난다** — 막는 자리는
+# `_analyze`다: 거기서 `_swap_for(VALIDATE)`를 pov가 `swap.swappable`에 있을 때만 부른다.
+# (`_swap_for`는 목록 밖 역할로 불리면 앞 서버를 내리는 빈 교대를 내므로, 안 부르는 것이 가드다.)
+# 이 표의 pov 줄은 「8단계가 부르는 역할은 pov다」를 뜻한다 — 빼면 pov 교대가 서버 없이
+# 첫 호출에서 빨개진다(성질 테스트).
 _ROLES_CALLED: dict[Stage, Callable[[RunContext], tuple[Role, ...]]] = {
     Stage.SCOUT: _scout_roles,
     Stage.AUDITOR: lambda _ctx: (Role.AUDITOR,),
     Stage.CRITIC: lambda _ctx: (Role.CRITIC,),
+    Stage.VALIDATE: lambda _ctx: (Role.POV,),
 }
 
 

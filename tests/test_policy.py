@@ -5,11 +5,13 @@ config에서 오므로 테스트에 숫자를 박지 않고 `config.thresholds`�
 `budgets.yaml`을 조정해도 이 테스트는 여전히 옳아야 한다.
 """
 
+import re
 from pathlib import Path
 
 import pytest
 
 from src.config import Thresholds, load_config
+from src.orchestrator import policy as policy_module
 from src.orchestrator.policy import (
     Action,
     DecisionPoint,
@@ -22,6 +24,7 @@ from src.orchestrator.stages import Stage
 from src.schemas import EvidenceGrade, FindingState, ReasonCode, Verdict
 
 ORCHESTRATOR_DIR = Path(__file__).resolve().parent.parent / "src" / "orchestrator"
+AGENT_CONTRACTS = Path(__file__).resolve().parent.parent / "docs" / "agent-contracts.md"
 
 
 @pytest.fixture
@@ -168,6 +171,13 @@ def test_critic_uphold_needs_repro_spec_to_advance(policy: FixedThresholdPolicy)
 
 
 def test_grounded_rebut_and_need_evidence_go_to_queue(policy: FixedThresholdPolicy) -> None:
+    """rebut·need_evidence는 `Route.QUEUE`로 `QUEUED`에 간다(`state_machine.py` F-6·F-7).
+
+    route·to_state·reason_code를 다 묻는다. 프로덕션에서 `Action.route`를 읽는 곳은 추적
+    기록(`context.py`)과 retrieval의 `EXPAND` 분기뿐이라 route만 틀리면 실행 경로가 안
+    바뀐다 — 그래서 여기서 직접 묻는다.
+    """
+
     def decide(verdict: Verdict) -> Action:
         return policy.decide(
             _request(
@@ -179,8 +189,13 @@ def test_grounded_rebut_and_need_evidence_go_to_queue(policy: FixedThresholdPoli
             )
         )
 
-    assert decide(Verdict.REBUT).reason_code is ReasonCode.CRITIC_REBUTTED
-    assert decide(Verdict.NEED_EVIDENCE).reason_code is ReasonCode.CRITIC_NEED_EVIDENCE
+    rebut = decide(Verdict.REBUT)
+    need_evidence = decide(Verdict.NEED_EVIDENCE)
+    assert rebut.reason_code is ReasonCode.CRITIC_REBUTTED
+    assert need_evidence.reason_code is ReasonCode.CRITIC_NEED_EVIDENCE
+    for action in (rebut, need_evidence):
+        assert action.route is Route.QUEUE
+        assert action.to_state is FindingState.QUEUED
 
 
 def test_tool_policy_violation_outranks_repro_result(policy: FixedThresholdPolicy) -> None:
@@ -273,3 +288,64 @@ def test_orchestrator_source_has_no_adapter_import() -> None:
     ]
 
     assert offenders == []
+
+
+def _policy_names(text: str) -> set[str]:
+    """문서가 `policy.<이름>`·`FixedThresholdPolicy.<이름>`으로 부르는 밑줄 이름(뒤 `()`는 뗀다)."""
+    names = set()
+    for token in re.findall(r"`([^`\n]+)`", text):
+        parts = token.removesuffix("()").split(".")
+        if parts[0] in {"policy", "FixedThresholdPolicy"} and parts[-1].startswith("_"):
+            names.add(parts[-1])
+    return names
+
+
+def _absent_from_policy(names: set[str]) -> list[str]:
+    """`policy.py`에 없는 이름 — 클래스 속성(처리기)도 모듈 속성(모듈 수준 함수·표)도 아닌 것."""
+    return sorted(
+        name
+        for name in names
+        if not hasattr(FixedThresholdPolicy, name) and not hasattr(policy_module, name)
+    )
+
+
+def test_agent_contracts_names_a_real_policy_handler() -> None:
+    """agent-contracts가 부르는 정책 처리기 이름은 `policy.py`에 실재한다(CLAUDE.md §2.1).
+
+    **사고 —** #346의 리뷰 반영 커밋(41924cc)이 없는 이름 `policy._critic`을 적었다(처리기는
+    `FixedThresholdPolicy._critic_verdict`). 어느 테스트도 그 이름을 안 봐서 CI가 초록이었다.
+    이름이 있는지만 본다. 문서가 말한 행선(`need_evidence` → `QUEUED`)은
+    `test_grounded_rebut_and_need_evidence_go_to_queue`가 route·to_state·reason_code로 묻는다.
+    안 보는 것: 백틱 밖의 이름, 다른 접두(`runner.` 등)·접두 대소문자, 밑줄 없는 이름, 줄바꿈으로
+    끊긴 백틱, 접두 없는 단독 이름(`_requeue`처럼), 다른 문서. 인자를 단 호출형
+    (`policy._x(request)`)과 인스턴스 속성은 실재해도 없는 이름으로 읽는다 — 오탐은 빨갛게
+    드러나므로 그 꼴을 문서에 쓸 때 고친다.
+    """
+    named = _policy_names(AGENT_CONTRACTS.read_text(encoding="utf-8"))
+
+    assert named, "문서가 정책 처리기를 부르는 곳이 없다 — 이 검사가 아무것도 안 본다"
+    missing = _absent_from_policy(named)
+    assert not missing, f"agent-contracts.md가 policy.py에 없는 이름을 부른다: {missing}"
+
+
+def test_the_policy_name_check_flags_the_incident_and_passes_real_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """위 검사의 오염 핀 — 양성은 실제 사고, 음성은 `policy.py`에 있는 이름의 표기다.
+
+    뒤 `()`를 떼지 않는 판은 호출형 표본을, 모듈 속성을 안 보는 판은 모듈 속성 표본을 없는
+    이름으로 읽는다. 철자 핀이라 여기 없는 표기(백틱 밖·다른 접두)는 안 묻는다.
+    """
+    # 양성 — docs/agent-contracts.md:169 (41924cc)
+    assert _absent_from_policy(_policy_names("`policy._critic`에서")) == ["_critic"]
+    # 합성 표본(저장소 표기가 아니다): 모듈 속성 인식만 시험하려고 `policy` 모듈에 이름을 잠깐
+    # 단다. 프로덕션 비공개 이름에 묶으면 그 이름을 바꾸기만 해도 이 핀이 빨개진다.
+    monkeypatch.setattr(policy_module, "_probe_module_attr", object(), raising=False)
+    for sample in (
+        "`policy._repro_result()`",  # docs/architecture.md:217
+        "`FixedThresholdPolicy._repro_result()`",  # docs/open-questions/D/D18.md:5
+        "`policy._scout_triage`",  # docs/agent-contracts.md:115
+        "`policy._probe_module_attr`",  # 합성 — 바로 위 monkeypatch
+    ):
+        assert _policy_names(sample), sample
+        assert _absent_from_policy(_policy_names(sample)) == [], sample

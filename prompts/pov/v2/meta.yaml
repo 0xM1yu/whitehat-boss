@@ -1,0 +1,4 @@
+role: pov
+version: v2
+output_schema: PovAction
+description: Auditor Finding에서 취약점을 재현하는 PoC를 만드는 8단계 PoV 툴 루프 프롬프트(Option C) — 매 홉 PovAction(gen/inspect/submit)을 내고 gen은 PovSpec을 실어 조립·검증한 관측을 되먹인다. CyberGym Level 1 최적화(취약 경로 도달 우선·작게 시작·매직 먼저·관측 반영·같은 spec 반복 금지)

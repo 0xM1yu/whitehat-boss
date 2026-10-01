@@ -44,6 +44,7 @@ from src.schemas.evidence import Evidence
 
 RUN_ID = "run_20260901_0001"
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
+GDB_TARGET = Path(__file__).resolve().parent / "fixtures" / "gdb"
 OBSERVED_AT = datetime(2026, 9, 1, tzinfo=UTC)
 
 SANDBOX = SandboxSpec(
@@ -261,7 +262,7 @@ def test_missing_sif_is_reported_with_its_path(tmp_path: Path, spy: _Spy) -> Non
 
     assert evidence.ok is False
     assert "SIF가 없다" in evidence.error
-    assert "harness-tools_v2.sif" in evidence.error
+    assert "harness-tools_v3.sif" in evidence.error
     assert spy.calls == []
 
 
@@ -365,7 +366,7 @@ def test_every_clang_tool_uses_the_same_dialect(source: str, expected: str) -> N
     dialects = set()
     # `index`는 목록에 없다 — tree-sitter 인덱서로 바뀌어 clang을 쓰지 않는다. 남겨 두면
     # "index도 이 방언을 쓴다"로 읽히는데 사실이 아니고, 파서는 방언 플래그를 받지 않는다.
-    for tool in ("build", "clang-tidy", "asan"):
+    for tool in ("build", "clang-tidy", "asan", "gdb"):
         for command in plan(tool, target=source, compile_sources=[source], cwd="/src"):
             dialects |= {value for value in command.argv if value.startswith("-std=")}
 
@@ -388,8 +389,8 @@ def test_every_clang_tool_gets_the_same_include_paths() -> None:
     파일을 고립시켜 컴파일해 `#include`가 아무 데서도 안 보였다.
     """
     per_tool = {}
-    for tool in ("build", "clang-tidy", "asan"):
-        # asan의 둘째 명령은 바이너리 실행이라 컴파일 인자가 없다 — 첫 명령만 본다.
+    for tool in ("build", "clang-tidy", "asan", "gdb"):
+        # asan·gdb의 둘째 명령은 바이너리 실행이라 컴파일 인자가 없다 — 첫 명령만 본다.
         argv = plan(
             tool,
             target="/src/contrib/blast/blast.c",
@@ -450,6 +451,32 @@ def test_asan_refuses_mixed_languages_instead_of_linking_half_a_program() -> Non
     """
     with pytest.raises(ValueError, match="링크 규칙이 없다"):
         plan("asan", target="/src", compile_sources=["/src/a.c", "/src/b.cpp"], cwd="/src")
+
+
+def test_gdb_refuses_mixed_languages_instead_of_linking_half_a_program() -> None:
+    """gdb도 실행 파일 하나를 링크하므로 언어별 두 명령으로 바이너리를 덮어쓰지 않는다."""
+    with pytest.raises(ValueError, match="링크 규칙이 없다"):
+        plan("gdb", target="/src", compile_sources=["/src/a.c", "/src/b.cpp"], cwd="/src")
+
+
+def test_gdb_plan_compiles_then_runs_a_noninteractive_debugger() -> None:
+    """기본 경로는 pwndbg가 아니라 재현 가능한 gdb 배치 스크립트를 실행한다."""
+    commands = plan("gdb", target="/src/a.c", compile_sources=["/src/a.c"], cwd="/src")
+
+    assert len(commands) == 2
+    compile_argv, debug_argv = commands[0].argv, commands[1].argv
+    assert compile_argv[:4] == ["clang", "-g", "-O0", "-fno-omit-frame-pointer"]
+    assert compile_argv[-3:] == ["-o", "/work/gdb.bin", "/src/a.c"]
+    assert debug_argv == [
+        "gdb",
+        "--nx",
+        "-batch",
+        "--return-child-result",
+        "-x",
+        "/opt/gdb.batch",
+        "--",
+        "/work/gdb.bin",
+    ]
 
 
 def test_a_header_only_artifact_is_still_rejected_before_any_process() -> None:
@@ -676,6 +703,20 @@ def test_asan_that_exits_clean_is_ok_true_because_ok_only_means_it_ran() -> None
     assert judge("asan", steps, 2) == (True, 0, None)
 
 
+def test_gdb_build_failure_never_counts_as_a_debug_session() -> None:
+    ok, code, error = judge("gdb", [Step(1, "", "undefined reference to `main'")], 2)
+
+    assert (ok, code) == (False, 1)
+    assert error is not None and "실행되지 않았다" in error
+
+
+def test_gdb_exec_failure_is_not_a_target_crash() -> None:
+    ok, code, error = judge("gdb", [Step(0, "", ""), Step(127, "", "")], 2)
+
+    assert (ok, code) == (False, 127)
+    assert error is not None and "띄우지 못했다" in error
+
+
 # --- 로그와 digest --------------------------------------------------------------
 
 
@@ -830,11 +871,21 @@ def test_indexer_receives_headers_but_clang_tools_do_not(tmp_path: Path, spy: _S
     assert "/src/api.c" in build_argv
 
 
-def test_the_default_image_is_the_one_that_bakes_index_v2() -> None:
-    """index-v2 인덱서는 `harness-tools:v2`에 구워졌다. v1 태그로 돌면 index-v1이 나오고 — 읽는
-    쪽은 받지만 — 조회 표가 `None`이 된다. `RunRecord.tool_images`는 이 태그의 digest를 적는다
-    (`images()`가 `self.image` 기본값 = 이 상수를 쓴다)."""
-    assert DEFAULT_IMAGE == "harness-tools:v2"
+def test_the_default_image_is_the_one_that_bakes_index_v2_and_gdb() -> None:
+    """v3는 index-v2에 gdb를 더한다. v2는 지난 run의 digest 때문에 별도 태그로 남긴다."""
+    assert DEFAULT_IMAGE == "harness-tools:v3"
+
+
+def test_the_tool_image_installs_and_smokes_gdb_batch_mode() -> None:
+    """패키지 누락은 8단계가 아니라 이미지 빌드에서 드러나야 한다."""
+    dockerfile = (
+        Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "gdb --nx -batch --return-child-result -x /opt/gdb.batch -- /tmp/gdb-smoke"
+        in dockerfile
+    )
 
 
 def test_the_adapter_compares_against_the_constant_not_a_literal() -> None:
@@ -924,7 +975,7 @@ def test_images_prefer_repo_digest_then_image_id(
 def _compile_commands(workdir: str) -> list[Command]:
     """그 workdir에서 clang을 실제로 부르는 명령만 고른다.
 
-    `asan`은 명령을 둘 내는데 둘째는 만들어진 바이너리를 **실행**하는 것이라 컴파일
+    `asan`·`gdb`는 명령을 둘 내는데 둘째는 만들어진 바이너리를 **실행**하는 것이라 컴파일
     인자가 없다. `-std=`가 있는 것만 남기면 세 도구의 컴파일 호출이 정확히 걸린다.
     """
     mixed = [f"{workdir}/a.c", f"{workdir}/b.cpp"]
@@ -933,6 +984,7 @@ def _compile_commands(workdir: str) -> list[Command]:
         *plan("clang-tidy", target=workdir, compile_sources=mixed, cwd=workdir),
         *plan("build", target=workdir, compile_sources=mixed, cwd=workdir),
         *plan("asan", target=workdir, compile_sources=c_only, cwd=workdir),
+        *plan("gdb", target=workdir, compile_sources=c_only, cwd=workdir),
     ]
     return [c for c in commands if any(arg.startswith("-std=") for arg in c.argv)]
 
@@ -1049,6 +1101,33 @@ def test_real_container_splits_vulnerable_from_benign(tmp_path: Path) -> None:
 
     assert ours["parser.c"], "하네스 룰셋이 취약 표본을 잡지 못했다"
     assert not ours["util.c"], f"하네스 룰셋이 benign 표본을 잡았다: {ours['util.c']}"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker가 없다")
+def test_real_gdb_runs_clean_and_crashing_targets_without_ptrace_capability(tmp_path: Path) -> None:
+    """Docker 실경로: 자식 실행형 gdb는 capability 추가 없이 정상/신호 종료를 기록한다."""
+    try:
+        probe = subprocess.run(
+            ["docker", "image", "inspect", DEFAULT_IMAGE],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pytest.skip("docker 데몬이 응답하지 않는다")
+    if probe.returncode:
+        pytest.skip(f"{DEFAULT_IMAGE} 이미지가 없다")
+
+    runner = _runner(tmp_path, root=GDB_TARGET)
+    clean = runner.run("gdb", ToolArgs(argv=["gdb", "normal.c"], workdir="normal.c"), SANDBOX)
+    crash = runner.run("gdb", ToolArgs(argv=["gdb", "crash.c"], workdir="crash.c"), SANDBOX)
+
+    assert clean.ok and clean.kind is EvidenceKind.CRASH and clean.exit_code == 0
+    assert crash.ok and crash.kind is EvidenceKind.CRASH and crash.exit_code != 0
+    clean_log = tmp_path / RUN_ID / "gdb" / f"{clean.evidence_id}.log"
+    crash_log = tmp_path / RUN_ID / "gdb" / f"{crash.evidence_id}.log"
+    assert "exited normally" in clean_log.read_text(encoding="utf-8")
+    assert "Program received signal SIGSEGV" in crash_log.read_text(encoding="utf-8")
 
 
 def _rules_in(artifacts_root: Path, evidence: Evidence) -> list[str]:
