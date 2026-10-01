@@ -3,9 +3,9 @@
     python tools/merge_slicer_shards.py merged.db shard0.db shard1.db ...
     python slicer.py --repo ... --out slices.json --checkpoint merged.db --export-only
 
-Refuses shards whose run contract, EngineConfig or candidate list differ. Prints how many
-candidates are complete and exits 2 when some are not (a shard is missing, crashed or still
-running) -- --export-only would then report them as unfinished.
+Refuses shards whose run contract, EngineConfig, candidate list or prepared CPG (#368)
+differ. Prints how many candidates are complete and exits 2 when some are not (a shard is
+missing, crashed or still running) -- --export-only would then report them as unfinished.
 """
 
 import json
