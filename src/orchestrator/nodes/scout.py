@@ -23,7 +23,8 @@ v3 프롬프트는 판정에 더해 `triage_need_evidence` 신호를 낼 수 있
 세션 하나를 다루고, 홉을 몇 번 돌지·언제 멈출지는 좌석 집계가 정한다(runner.py).
 """
 
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from src.interfaces.model_client import ChatTurn, Prompt, Usage
@@ -32,6 +33,7 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef, scout_member_of
 from src.schemas.capsule import ContextCapsule
@@ -39,6 +41,7 @@ from src.schemas.common import Location
 from src.schemas.enums import FindingState, ReasonCode, Role, ScoutSignal
 from src.schemas.evidence import Evidence
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse, signal_of
+from src.tokens import estimate_tokens
 
 ROLE = Role.SCOUT
 # 이 역할이 낼 수 있는 구조화 출력 스키마. **버전별로 갈린다** — v1·v2 프롬프트는
@@ -388,21 +391,27 @@ def _ask_model(
         source = ctx.read_source(capsule.target)
     else:
         source = ctx.read_slice(slice.slice_id)
-    prompt = template.render(
-        facts=build_facts(
-            run_id=ctx.run_id,
-            ids={"candidate_id": candidate_id},
-            artifact_id=artifact.artifact_id,
-            target=capsule.target,
-            capsule=capsule,
+
+    def render(source: str) -> Prompt:
+        return template.render(
+            facts=build_facts(
+                run_id=ctx.run_id,
+                ids={"candidate_id": candidate_id},
+                artifact_id=artifact.artifact_id,
+                target=capsule.target,
+                capsule=capsule,
+                source=source,
+                evidences=evidences,
+                slice_criterion=None if slice is None else _slice_criterion(slice),
+            ),
+            target=describe_target(capsule.target),
+            capsule_sections=describe_sections(capsule),
             source=source,
-            evidences=evidences,
-            slice_criterion=None if slice is None else _slice_criterion(slice),
-        ),
-        target=describe_target(capsule.target),
-        capsule_sections=describe_sections(capsule),
-        source=source,
-    )
+        )
+
+    prompt = render(source)
+    if slice is not None and ctx.config.thresholds.scout_slice_trim:
+        prompt = _fit_slice(ctx, role, slice, candidate_id, source, render, prompt)
     try:
         return _call_hop(
             ctx,
@@ -420,6 +429,116 @@ def _ask_model(
     except Exception:
         _queue_previous(ctx, previous, ReasonCode.SCHEMA_PARSE_FAILED)
         raise
+
+
+# 창에서 프롬프트 몫을 셀 때 남기는 여유 — chat template 토큰과 토크나이저가 없을 때(CI·dev)의
+# 근사 오차 몫. 러너 `_HOP_TOKEN_MARGIN`과 같은 값이다(같은 창을 같은 방식으로 센다).
+# 잰 값이 아니다.
+_SLICE_TOKEN_MARGIN = 512
+_BANNER = re.compile(r"^/\* ===== (.+) ===== \*/$")
+_GUTTER = re.compile(r"^(\d+)\| ")
+
+
+def _fit_slice(
+    ctx: RunContext,
+    role: Role,
+    ref: SliceRef,
+    candidate_id: str,
+    source: str,
+    render: Callable[[str], Prompt],
+    prompt: Prompt,
+) -> Prompt:
+    """슬라이스 렌더가 Scout 창에 안 들면 줄을 빼서 맞춘다(`scout_slice_trim`, #353 (b)).
+
+    몫 = 이 자리 모델의 `context_limit` − 이 역할의 `output_max` − 여유. 프롬프트 전체(prefix +
+    body — body에는 `SOURCE`와 `FACTS.source`로 렌더가 두 번 실린다)를 이 자리 모델 토크나이저로
+    센다(없으면 글자 근사). 넘으면 **given end(entry)에 가까운 줄부터** 남긴다 — entry 파일의 줄은
+    entry와의 줄 거리 순, 다른 파일의 줄은 그 뒤에 렌더 순이다. 남길 줄 수는 이분 탐색으로 고른다.
+
+    ⚠ **「데이터 의존 줄 우선」이 아니라 「entry에 가까운 줄 우선」이다.** slice-v2 `slices[]`는
+    줄만 들고 의존 간선을 안 든다 — 어느 줄이 entry 값에 닿는지는 여기서 모른다.
+
+    남긴 렌더는 같은 모양이다(배너 + `<원본 줄>| <코드>`). v3 prefix가 SOURCE를 「슬라이서가 줄을
+    골라 남겨 줄 번호가 건너뛴다」고 서술하므로 프롬프트 판을 안 바꾼다 — 뺀 줄은 그 건너뜀으로
+    보인다. 뺐다는 사실은 trace `scout_slice_trimmed`가 든다. 줄 하나로도 안 들면 그 줄 하나로
+    보내고 `fit=false`로 남긴다 — 서빙이 크기 거절하면 지금처럼 그 후보만 빠진다(`_drop`).
+    """
+    counter = ctx.counter_for_role(role.value)
+    measure = counter or estimate_tokens
+    model = ctx.config.models[ctx.config.model_key_for(role.value)]
+    budget = (
+        model.context_limit
+        - ctx.config.thresholds.output_max_for(role.value)
+        - _SLICE_TOKEN_MARGIN
+    )
+
+    def size(p: Prompt) -> int:
+        return measure(p.prefix) + measure(p.body)
+
+    before = size(prompt)
+    if before <= budget:
+        return prompt
+    rows = _parse_render(source)
+    order = sorted(
+        range(len(rows)),
+        key=lambda i: (
+            (0, abs(rows[i][1] - ref.entry.line_start), i)
+            if rows[i][0] == ref.entry.file and ref.entry.line_start
+            else (1, 0, i)
+        ),
+    )
+    low, high, best = 1, len(rows), None
+    while low <= high:
+        keep = (low + high) // 2
+        candidate = render(_rebuild(rows, sorted(order[:keep])))
+        if size(candidate) <= budget:
+            low, best = keep + 1, (keep, candidate)
+        else:
+            high = keep - 1
+    fit = best is not None
+    kept, trimmed = best if best else (min(1, len(rows)), render(_rebuild(rows, order[:1])))
+    ctx.trace.emit(
+        EventKind.SCOUT_SLICE_TRIMMED,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate_id,
+        slice_id=ref.slice_id,
+        role=role.value,
+        budget=budget,
+        tokens_before=before,
+        tokens_after=size(trimmed),
+        lines_before=len(rows),
+        lines_kept=kept,
+        fit=fit,
+        token_counter="model" if counter else "estimate",
+    )
+    return trimmed
+
+
+def _parse_render(source: str) -> list[tuple[str, int, str]]:
+    """렌더(`adapters.slices.render`) → (file, 원본 줄, 렌더된 한 줄)."""
+    rows: list[tuple[str, int, str]] = []
+    file = ""
+    for line in source.split("\n"):
+        banner = _BANNER.match(line)
+        if banner:
+            file = banner[1]
+            continue
+        gutter = _GUTTER.match(line)
+        rows.append((file, int(gutter[1]) if gutter else 0, line))
+    return rows
+
+
+def _rebuild(rows: list[tuple[str, int, str]], keep: Sequence[int]) -> str:
+    """남길 행만으로 렌더를 다시 짠다 — 파일마다 배너 하나, 원래 순서 그대로."""
+    out: list[str] = []
+    file = None
+    for i in sorted(keep):
+        if rows[i][0] != file:
+            file = rows[i][0]
+            out.append(f"/* ===== {file} ===== */")
+        out.append(rows[i][2])
+    return "\n".join(out)
 
 
 def _slice_criterion(ref: SliceRef) -> dict[str, object]:

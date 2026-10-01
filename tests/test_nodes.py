@@ -1806,6 +1806,109 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
     assert candidate.slice_id == "slice_0001"
 
 
+def _big_slice(ctx: RunContext, *, trim: int, context_limit: int | None = None) -> SliceRef:
+    """entry(parser.c:1000)를 가운데 둔 2,000줄 렌더 + 다른 파일 한 줄 — 글자 근사로 ~50k토큰이라
+    dev_fake 창 32,768을 넘는다. `scout_slice_trim`·창을 바꾼 config를 ctx에 끼운다."""
+    lines = [("parser.c", n) for n in range(1, 2001)] + [("util.c", 7)]
+    render = "\n".join(
+        ["/* ===== parser.c ===== */"]
+        + [f"{n}|     buf[{n}] = src[{n}] + {'x' * 80};" for n in range(1, 2001)]
+        + ["/* ===== util.c ===== */", "7|     return 0;"]
+    )
+    ctx.read_slice = {"slice_0001": render}.__getitem__
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    models = dict(ctx.config.models)
+    if context_limit is not None:
+        models[key] = models[key].model_copy(update={"context_limit": context_limit})
+    ctx.config = ctx.config.model_copy(
+        update={
+            "models": models,
+            "thresholds": ctx.config.thresholds.model_copy(update={"scout_slice_trim": trim}),
+        }
+    )
+    return SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=1000, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=1000, symbol="memcpy"),
+        lines=tuple(lines),
+    )
+
+
+def _scout_on(ctx: RunContext, ref: SliceRef) -> None:
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+    scout.run(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+
+def _gutter_lines(source: str) -> list[int]:
+    return [int(m) for m in re.findall(r"^(\d+)\| ", source, re.MULTILINE)]
+
+
+def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
+    ctx: RunContext,
+) -> None:
+    """#353 (b) — 렌더가 창을 넘으면 entry에 가까운 줄부터 남겨 창 안에 든다.
+
+    `SOURCE`와 `FACTS.source`가 같은 줄인 렌더이고, 남은 줄은 entry를 가운데 둔 연속 구간이다.
+    다른 파일(util.c)의 줄은 entry 파일보다 뒤 순위라 먼저 빠진다."""
+    ref = _big_slice(ctx, trim=1)
+
+    _scout_on(ctx, ref)
+
+    prompt = ctx.models.last_for(Role.SCOUT)
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    budget = event.data["budget"]
+    assert estimate_tokens(prompt.prefix) + estimate_tokens(prompt.body) <= budget
+    assert event.data["tokens_before"] > budget >= event.data["tokens_after"]
+    assert event.data["fit"] is True and event.data["token_counter"] == "estimate"
+    assert event.data["lines_before"] == 2001 > event.data["lines_kept"]
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
+    kept = _gutter_lines(facts["source"])
+    assert len(kept) == event.data["lines_kept"]
+    assert 1000 in kept and kept == list(range(kept[0], kept[-1] + 1))
+    assert abs((1000 - kept[0]) - (kept[-1] - 1000)) <= 1  # entry 양쪽으로 고르게
+    assert "util.c" not in facts["source"]
+    assert facts["source"].startswith("/* ===== parser.c ===== */\n")
+    assert facts["source"] in prompt.body.split("```json")[0]  # SOURCE도 같은 렌더
+
+
+def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
+    """기본(0)이면 지금처럼 통째로 — 넘어도 줄이지 않고 이벤트도 없다(크기 거절은 서빙 몫)."""
+    ref = _big_slice(ctx, trim=0)
+
+    _scout_on(ctx, ref)
+
+    assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+
+
+def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
+    """창이 넉넉하면 켜져 있어도 그대로 — 이벤트 부재 = 안 잘림."""
+    ref = _big_slice(ctx, trim=1, context_limit=400_000)
+
+    _scout_on(ctx, ref)
+
+    assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+
+
+def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(ctx: RunContext) -> None:
+    """프롬프트 고정분만으로 창을 넘으면 entry 한 줄로 보내고 `fit=false` — 크기 거절은 서빙 몫."""
+    output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    ref = _big_slice(ctx, trim=1, context_limit=output_max + 600)
+
+    _scout_on(ctx, ref)
+
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    assert event.data["fit"] is False and event.data["lines_kept"] == 1
+    body = ctx.models.last_for(Role.SCOUT).body
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+    assert _gutter_lines(facts["source"]) == [1000]
+
+
 def test_render_rejects_missing_and_unknown_placeholders() -> None:
     template = load_prompt(Role.SCOUT, "v1")
     facts = build_facts(run_id=RUN_ID, ids={"candidate_id": "cand_0001"})
