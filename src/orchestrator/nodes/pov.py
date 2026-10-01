@@ -159,7 +159,7 @@ def _call_hop(
 
 
 def run_tool(ctx: RunContext, *, finding: Finding, tool: str, workdir: str) -> Evidence:
-    """PoV 홉에서 도구를 돌린다 — gen이 만든 PoC를 대상에서 실행/진단(asan·poc·build).
+    """PoV 홉에서 도구를 돌린다 — gen이 만든 PoC를 대상에서 실행/진단(asan·build·gdb·poc).
 
     ⚠ **PoC 바이트를 파일로 쓰지 않는다.** fake 도구는 workdir의 대상 소스 존재만 보고
     ok를 낸다(`fake_tools._run_repro`) — dev_fake는 루프 배선(gen→도구→Evidence→되먹임)을
@@ -185,12 +185,17 @@ def _describe_finding(finding: Finding) -> str:
     어느 함수가 앞단 파서이고 어느 것이 sink인지 못 가른다. `trigger_status`·`repro_spec` 유무도
     같은 이유로 싣는다 — Auditor가 재현 근거를 이미 찾았는지가 다음 액션을 가른다.
 
-    ⚠ **`repro_spec`의 본문은 안 싣고 유무만 싣는다.** 그 안의 `cmd`·`input_ref`가 참조 PoC를
-    가리킬 수 있고, 그 바이트가 프롬프트에 들어가면 run이 무효다. 본문을 실을지는 그 필드가
-    실서빙에서 무엇으로 채워지는지 본 뒤에 정한다(미실측).
+    ⚠ **`repro_spec`의 본문은 안 싣고 유무만 싣는다.** 필드는 `steps`(샌드박스에서 돌릴 명령 줄)과
+    `expected_signal`이고(`src/schemas/finding.py`의 `ReproSpec`), `steps`는 **자유 문자열**이라
+    참조 PoC 경로(`/tmp/poc`)를 가리킬 수 있다 — 그 바이트가 프롬프트 경로로 들어가면 run이 무효다.
+    본문을 실을지는 그 필드가 실서빙에서 무엇으로 채워지는지 본 뒤에 정한다(미실측).
+    ⏵ 2026-10-02 정정: 전 판은 필드를 `cmd`·`input_ref`라 적었는데 **그런 필드는 없다**(§2.1 —
+    문서가 코드를 서술하면 그 코드를 열어 대조한다).
     """
     steps = "\n".join(
-        f"  {i}. {step.symbol}" + (f" — {step.note}" if step.note else "")
+        # `step.step`(source/propagate/sink)을 같이 싣는다 — 이름만으로는 **어느 것이 sink인지**
+        # 모르고, 프롬프트의 도달 절차 3이 요구하는 것이 그 구분이다.
+        f"  {i}. [{step.step}] {step.symbol}" + (f" — {step.note}" if step.note else "")
         for i, step in enumerate(finding.path, start=1)
     )
     lines = [

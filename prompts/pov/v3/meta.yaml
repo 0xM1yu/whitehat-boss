@@ -1,3 +1,5 @@
+# ⚠ **미배선(disk-only)** — `config/models.yaml`의 pov 키는 아직 `prompt_template_version: "v2"`다.
+# 배선은 별 PR이고 정본 변경이라 sumin 리뷰 뒤다(critic/v4·auditor/v5와 같은 관례).
 role: pov
 version: v3
 output_schema: PovAction
