@@ -172,6 +172,8 @@ class Deps:
     # 함수 본문을 붙이는 데 쓴다(`runner._auditor_source`). `symbols_for`와 같은 모양·같은 이유로
     # 콜러블이고, 기본값 `None`("그래프 없음")이 이 필드 없이 조립된 `Deps`의 옛 동작을 지킨다.
     callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
+    # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). `callees_of`와 같은 자리.
+    call_sites_of: Callable[[Location], list[Location] | None] = lambda _target: None
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None] = (
         lambda _names, _file: None
@@ -535,6 +537,7 @@ def build_deps(
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,
         callees_of=graph.callees_of,
+        call_sites_of=graph.call_sites_of,
         definitions_of=graph.definitions_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,

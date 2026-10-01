@@ -408,6 +408,8 @@ class Dependencies(Protocol):
     symbols_for: Callable[[str], list[Location] | None]
     # 함수 위치 → 그 본문이 부르는 함수의 정의 위치(#349). `symbols_for`와 같은 경계다.
     callees_of: Callable[[Location], list[Location] | None]
+    # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 같은 경계다.
+    call_sites_of: Callable[[Location], list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
@@ -759,6 +761,7 @@ def run_pipeline(
         read_payload=read_payload,
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
+        call_sites_of=deps.call_sites_of,
         definitions_of=deps.definitions_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
@@ -2195,6 +2198,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
     0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
 
+    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 정의 뒤·피호출 함수 앞에, entry
+    함수를 부르는 호출 지점(`ctx.call_sites_of`) 앞뒤 N줄을 호출자 함수 범위 안으로 잘라 붙인다.
+    이미 실린 범위와 겹치면 안 붙인다(호출자가 슬라이스에 걸쳐 이미 실린 경우 포함). 창은 함수가
+    아니라 `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
@@ -2259,6 +2267,21 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             definitions += 1
+    caller_lines = ctx.config.thresholds.auditor_caller_lines
+    callers = callers_dropped = 0
+    if caller_lines and anchor.symbol:
+        for site in ctx.call_sites_of(anchor) or []:
+            window = _caller_window(ctx, site, caller_lines)
+            if any(_overlaps(window, other) for other in seen):
+                continue
+            seen.append(window)
+            block = _block(window, ctx.read_source(window))
+            if size + 1 + measure(block) > cap:
+                callers_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            callers += 1
     hops = ctx.config.thresholds.auditor_callee_hops
     callees = callees_dropped = 0
     if hops:
@@ -2284,13 +2307,14 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions,
+        functions=len(blocks) - definitions - callers,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=anchor_chars,
         **({"entry_omitted_lines": omitted} if trim_entry else {}),
         **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
+        **({"callers": callers, "callers_dropped": callers_dropped} if caller_lines else {}),
         **(
             {"definitions": definitions, "definitions_dropped": definitions_dropped}
             if with_definitions
@@ -2303,6 +2327,18 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         ),
     )
     return source
+
+
+def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:
+    """호출 지점 앞뒤 `lines`줄 — 그 줄을 품는 가장 좁은 심볼(호출자 함수)이 있으면 그 범위로
+    자른다. 호출자 머리를 넘어 앞 함수까지 싣지 않게 하려는 것이다."""
+    line = site.line_start or 1
+    start, end = line - lines, line + lines
+    enclosing = _narrowest_symbol(ctx.symbols_for(site.file) or [], line)
+    if enclosing is not None and enclosing.line_start is not None:
+        start = max(start, enclosing.line_start)
+        end = min(end, enclosing.line_end or end)
+    return Location(file=site.file, symbol=site.symbol, line_start=max(1, start), line_end=end)
 
 
 def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tuple[str, int]:

@@ -1119,7 +1119,7 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-                auditor_entry_trim=0)),
+                auditor_entry_trim=0, auditor_caller_lines=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1153,7 +1153,7 @@ def _trim_source(trim: int, cap: int, helper: bool = False) -> tuple[str, dict]:
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=trim)),
+            auditor_entry_trim=trim, auditor_caller_lines=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1204,3 +1204,67 @@ def test_a_trimmed_entry_keeps_its_original_line_range_in_the_banner() -> None:
     assert source.startswith("/* ===== big.c:1-200 ===== */\n")
     assert "/* ===== big.c:201-203 ===== */" in source
     assert (event["functions"], event["dropped"], event["entry_omitted_lines"]) == (2, 0, 156)
+
+
+def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):  # noqa: ANN202
+    """#349 (b) 호출자 창: `copy`(30-34)를 `handle`(1-25)의 20번 줄이 부른다. 단어 수로 센다."""
+    import types
+
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    file = [f"line{i}" for i in range(1, 41)]
+    entry = Location(file="x.c", symbol="copy", line_start=30, line_end=34)
+    handle = Location(file="x.c", symbol="handle", line_start=1, line_end=25)
+
+    def read(loc: Location) -> str:
+        return "\n".join(file[(loc.line_start or 1) - 1 : loc.line_end])
+
+    events: list[dict] = []
+    ctx = types.SimpleNamespace(
+        symbols_for=lambda _file: [handle, entry],
+        read_source=read,
+        callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
+        call_sites_of=lambda loc: (
+            [Location(file="x.c", symbol="handle", line_start=20, line_end=20)]
+            if loc == entry else []
+        ),
+        counter_for_role=lambda role: (lambda text: len(text.split())),
+        config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+            auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
+            auditor_entry_trim=0, auditor_caller_lines=lines)),
+        trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+    )
+    slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
+    ref = SliceRef(slice_id="slice_c", location=entry, given_end="source", entry=entry,
+                   lines=slice_lines, degraded=False)
+    return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+
+def test_caller_lines_off_adds_no_caller_window() -> None:
+    """기본(0)이면 호출자 창이 없고 이벤트에 `callers`가 없다 — 결정 1-b 그대로."""
+    source, event = _caller_source(0)
+    assert source == "\n".join(f"line{i}" for i in range(30, 35))
+    assert "callers" not in event
+
+
+def test_a_caller_window_is_clipped_to_the_caller_function() -> None:
+    """호출 지점(20) 앞뒤 8줄 = 12-28인데 호출자 `handle`이 25에서 끝나 12-25로 자른다. 창은
+    `functions`에 안 든다."""
+    source, event = _caller_source(8)
+    assert "/* ===== x.c:12-25 ===== */\nline12\n" in source
+    assert "line26" not in source and "line11" not in source
+    assert (event["functions"], event["callers"], event["callers_dropped"]) == (1, 1, 0)
+
+
+def test_a_caller_already_carried_by_the_slice_gets_no_window() -> None:
+    """슬라이스가 `handle`을 지나면 그 함수 전체가 이미 실려 창을 붙이지 않는다."""
+    source, event = _caller_source(8, carried_caller=True)
+    assert source.count("/* ===== x.c:") == 2
+    assert (event["functions"], event["callers"], event["callers_dropped"]) == (2, 0, 0)
+
+
+def test_a_caller_window_over_the_cap_is_dropped() -> None:
+    """창이 상한에 안 들면 빼고 `callers_dropped`가 센다."""
+    _, event = _caller_source(8, cap=20)
+    assert (event["callers"], event["callers_dropped"]) == (0, 1)
