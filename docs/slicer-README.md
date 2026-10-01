@@ -231,7 +231,7 @@ CPG는 하나다.
 - ⚠ 클라이언트가 Joern과 같은 파일시스템에서 `--cpg-out`·`--cpg`를 읽어야 한다. 못 읽으면 준비 실행은
   `bytes`·`sha256`을 null로 두고(미측정) 샤드는 그 체크포인트를 거부
 - 샤드의 `counters.cpg_seconds`는 그 샤드의 `importCpg` 시간이다. 파싱 시간은 `prepared_cpg.cpg_seconds`
-- 실 Joern 관측 → vast · libmspack: 준비 25초, 2샤드 11분, 후보 1,326/1,326, 슬라이스 212(#371 본문).
+- 실 Joern 관측 → 2026-10-01 · vast · Joern 4.0.605 · libmspack: 준비 25초, 2샤드 11분, 후보 1,326/1,326, 슬라이스 212(#371 본문).
   run ID 없음 · 원자료 저장소 밖. 이 리뷰 반영(`prepared` 검증) 뒤로는 실 Joern으로 다시 돌린 기록 없음
 
 ```bash
