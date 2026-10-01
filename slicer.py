@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 
 import slicer_queries as queries
 from slicer_checkpoint import Checkpoint
+from slicer_claims import ClaimQueue
 from slicer_compile import generated_header_dirs, resolve_compilation_database
 from slicer_errors import QueryError  # re-exported: callers and tests use slicer.QueryError
 from slicer_export import export_sources
@@ -491,6 +492,8 @@ class Slicer(SlicingStages):
         # to `cpg_out`; a shard given `cpg_file` (and a copy of that checkpoint) loads the graph
         # instead of parsing the repo and reuses the discovery instead of re-running it.
         self.prepare_only = False
+        # #369: shared claim queue (slicer_claims.ClaimQueue) instead of the fixed p % N split.
+        self.claims = None
         self.cpg_out: Path | None = None
         self.cpg_file: Path | None = None
         self.shard: tuple[int, int] | None = None
@@ -863,6 +866,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--export-only", action="store_true")
     # #368: build the CPG and discover candidates once, save the graph, slice nothing. The
     # checkpoint it leaves is the seed every shard starts from (copy it, then --resume --cpg).
+    result.add_argument(
+        "--claim-db", type=Path, help="with --shard: take candidates from this shared queue "
+        "(SQLite, one file for all shards) instead of the fixed p %% N split",
+    )
     result.add_argument("--prepare-only", action="store_true")
     result.add_argument("--cpg-out", type=Path, help="with --prepare-only: where to save the CPG")
     result.add_argument(
@@ -970,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         cli.error("--prepare-only needs --checkpoint and --cpg-out, and no --resume, "
                   "--export-only, --shard or --cpg")
+    if args.claim_db and (not args.shard or not args.checkpoint):
+        cli.error("--claim-db needs --shard and --checkpoint")
     if args.cpg_out and not args.prepare_only:
         cli.error("--cpg-out only goes with --prepare-only")
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
@@ -1055,6 +1064,8 @@ def main(argv: list[str] | None = None) -> int:
     # run contract and their checkpoints can be merged.
     job.shard = args.shard
     job.prepare_only = args.prepare_only
+    if args.claim_db:
+        job.claims = ClaimQueue(args.claim_db, f"{args.shard[0]}/{args.shard[1]}")
     job.cpg_out = args.cpg_out.resolve() if args.cpg_out else None
     job.cpg_file = args.cpg.resolve() if args.cpg else None
     job.heartbeat_seconds = args.heartbeat_seconds
