@@ -1,0 +1,72 @@
+# PoV 프롬프트 도구 조사 — v2 툴 루프 프롬프트 근거 (2026-09-30)
+
+**목적.** Phase 3 PoV 툴 루프(Option C)의 프롬프트를 v1(단발) → v2(다중 홉)로 바꾸는 근거.
+"PoV 모델이 쓰는 도구가 무엇이고, 그것을 어떻게 가르칠까"를 (1) 우리 루프 코드에서 직접,
+(2) 외부 문헌(CyberGym·퍼징 LLM·에이전트 루프)에서 조사했다. **이 문서는 남이 주장한 것과
+우리 코드 사실을 나눠 적는다**(CLAUDE.md §0·§6 — research는 실측 아님).
+
+## 1. PoV 모델이 우리 루프에서 실제로 쥐는 도구 (우리 코드)
+
+`runner._run_pov_hops` + `nodes/pov` + `schemas/pov` 기준. 매 홉 모델은 `PovAction` 하나를 낸다:
+
+- **`gen`** — `spec`(`PovSpec`)을 싣는다. 순수 함수 `assemble_poc`(orchestrator)가 결정론적으로
+  바이트를 만들고, `pov.run_tool`이 `poc` 도구로 대상에서 실행해 Evidence를 낸다. **모델이 쓴
+  코드를 실행하지 않는다.** `PovSpec` 세그먼트는 `literal`(hex)·`repeat`(byte×count)·`int`
+  (value·size≤8·endian)뿐이다(≤8 MiB, ≤4096 세그먼트). **계산 크로스필드(길이-of·체크섬-of)가
+  없다.**
+- **`inspect`** — 새 PoC 없이 `tool ∈ {asan, gdb, build, poc}`로 현 후보를 진단.
+- **`submit`** — 루프 종료. 마지막 gen의 PoC가 final.
+
+관측 되먹임(`_pov_observation`): `tool=… action=… ok=… exit=… kind=…`(+error). 정지 사유
+(`PovStopReason`): submitted·repeat_spec·max_hop·parse_failed·context_overflow·gateway_error.
+
+**dev_fake 한계(코드 사실):** fake 도구는 workdir 대상 소스 존재만 보고 ok를 낸다
+(`fake_tools._run_repro`) — PoC 바이트를 안 읽는다. `gdb`는 `TOOL_KINDS`에 없어 dev_fake에서
+inspect(gdb)는 실패한다(실 컨테이너엔 gdb 있음). 바이트 materialize·실크래시 판정은 호스트 후속.
+
+⏵ **2026-10-02 — 위 `gdb` 문장은 낡았다.** PR #327이 `5cf5c20`(2026-10-01 03:29 KST)로 머지되며
+`TOOL_KINDS`에 `"gdb": EvidenceKind.CRASH`가 들어갔다(`src/adapters/fake_tools.py:30`) — 이 문서를
+쓴 **다음 날**이다. dev_fake에서도 `inspect(gdb)`가 선다. 다만 `PovAction.tool`의 Literal에는
+아직 `gdb`가 **없다**(`src/schemas/pov.py:170`) — 넣을지는 이슈 #360의 결정이다.
+
+## 2. 외부 문헌 (남이 주장한 것 — 인용)
+
+- **CyberGym 과업·채점.** 1,507 인스턴스/188 프로젝트. "patch 전 빌드에서 새니타이저 크래시 ∧
+  patch 후 빌드에서 크래시 없음"이면 성공. 제출물은 raw 바이트 PoC(수 바이트~1 MB+).
+  [arXiv 2506.02548](https://arxiv.org/abs/2506.02548) · [repo](https://github.com/sunblaze-ucb/cybergym)
+- **지배적 실패는 "취약 경로 미도달"** — 크래시 로직이 틀려서가 아니다. PoC가 ~100바이트를
+  넘으면 성공률이 급락(그 구간 ~10%). [arXiv 2506.02548 HTML](https://arxiv.org/html/2506.02548)
+  · 확장판 CyberGym-E2E는 프롬프트에서 "작게 시작(10–50 bytes)·매직/헤더 먼저"를 명시
+  [arXiv 2606.04460](https://arxiv.org/html/2606.04460) *(단일 출처·최신, 잠정)*.
+- **Python 생성 스크립트 > raw/hex 직접 출력.** LLM은 비텍스트(바이너리) 직접 생성이 약하다 —
+  체크섬·길이를 코드로 계산해 바이트를 뽑는 스크립트가 정공법. [G2FUZZ, USENIX Sec'25,
+  arXiv 2501.19282](https://arxiv.org/abs/2501.19282) · [OSS-Fuzz-Gen](https://github.com/google/oss-fuzz-gen)
+  · [verse.systems](https://verse.systems/blog/post/2024-03-09-using-llms-to-generate-fuzz-generators/)
+- **ReAct/Reflexion 루프 규율.** 한 턴 한 액션, 관측을 읽고 실패 이유를 한 줄로 말한 뒤 다음
+  액션, 같은 실패 액션 반복 금지. [ReAct arXiv 2210.03629](https://arxiv.org/pdf/2210.03629) ·
+  [Reflexion arXiv 2303.11366](https://arxiv.org/abs/2303.11366) ·
+  [Anthropic, Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)
+- **인터랙티브 진단 도구(디버거/ASan)가 취약점 탐색을 유의하게 돕는다.**
+  [EnIGMA arXiv 2409.16165](https://arxiv.org/pdf/2409.16165)
+
+## 3. v1→v2로 무엇을 바꿨나 (조사 → 결정)
+
+| 조사 결과 | v2 프롬프트 반영 |
+| --- | --- |
+| 미도달이 최난관 | "가장 어려운 건 크래시 로직이 아니라 취약 경로 도달" 절 신설 |
+| 작게 시작·매직 먼저 | 도달 절차 1·2로 명시(최소 유효 입력→헤더/매직 `literal`) |
+| 관측 반영·실패 이유 한 줄 | "gen 다음 턴엔 직전 관측을 먼저 판단하고 스펙 고침" |
+| 같은 액션 반복 금지 | "직전과 똑같은 spec 금지 — 가설을 바꿔라"(루프도 repeat_spec으로 끊음) |
+| 한 턴 한 액션(JSON) | "최종 답은 PovAction JSON 하나" |
+| 인터랙티브 진단 | inspect(asan/gdb/build/poc) 설명 |
+
+**gen-script는 안 넣었다.** 문헌이 1순위로 꼽지만(Option B) 임의 코드 실행이라는 새 신뢰면이다 —
+council이 정한 승격 seam 그대로 둔다. **승격 트리거:** 체크섬/해시 게이트 포맷에서 도달률 0.
+v2는 그 한계를 프롬프트 `rationale`로 드러내게만 한다("스펙으로 못 쓰는 계산값은 한계를 적어라").
+
+## 4. 열린 실측(호스트 필요, Phase 7)
+
+- v2 프롬프트의 실모델 성능(feyospace) — checksum·benchmark 0(미실측).
+- PoC 길이 분포와 도달률 — CyberGym는 >100B에서 급락. 우리 PovSpec 표현력이 그 구간에서
+  버티는지.
+- gen-script 승격이 실제로 필요한지(체크섬 포맷 도달 0 여부).
