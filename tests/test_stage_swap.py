@@ -18,7 +18,9 @@ from src.config import ConfigError, ExecutionPolicy, HarnessConfig, SwapPolicy, 
 from src.interfaces.model_client import ModelGatewayError, ModelSwapError
 from src.orchestrator import runner
 from src.orchestrator.runner import RunSpec, run_pipeline
-from src.orchestrator.trace import TraceWriter
+from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind, TraceWriter
+from src.schemas.enums import ReasonCode
 
 RUN_ID = "run_20260929_0001"
 STARTED_AT = datetime(2026, 9, 29, tzinfo=UTC)
@@ -340,6 +342,74 @@ def test_a_failed_teardown_still_writes_the_manifest_of_a_finished_run(
     )
 
 
+def test_an_unforeseen_exception_still_leaves_the_manifest_and_then_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 **최후 방어선 (S0)** — 예상 밖 예외가 나도 매니페스트가 남고, **그 뒤 예외가 올라간다**.
+
+    `run_pipeline`은 다섯 형(`BudgetExhausted`·`ModelSwapError`·`ModelGatewayError`·
+    `_TooManyDrops`·`SchemaParseError`)에만 방어선을 세웠다. 그 밖 형이 하나라도 나면
+    `write_manifest` 앞을 뚫고 나가 **산출물이 통째로 사라졌다** — `ModelGatewayError` 갈래의
+    주석이 적어 둔 zlib 사고가 그것이다.
+
+    **두 단언이 함께여야 한다.** 매니페스트만 보면 「삼켜도 통과」이고, 예외만 보면 「전 판도
+    통과」다. 삼키는 변이는 `pytest.raises`에서 죽고, 방어선을 빼는 변이는 매니페스트에서 죽는다.
+
+    사유는 **새 `UNFORESEEN_FAILURE`**다 — 기존 사유로 적으면 거짓 진단이 장부에 남는다
+    (`MODEL_GATEWAY_UNAVAILABLE`이면 보는 사람이 서버 로그를 뒤진다)."""
+
+    # 🔴 **`RuntimeError`를 쓰지 않는다.** 이 파일의 다른 검사들이 `_Boom(RuntimeError)`를 쓰는데,
+    # 그러면 방어선을 `except RuntimeError`로 **좁히는 변이가 살아남는다**(적대적 리뷰 2026-10-02이
+    # 그 변이를 통과시켰다). `KeyError`는 `RuntimeError`와 무관한 가지라 그 변이를 죽인다.
+    class _Boom(KeyError):
+        pass
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise _Boom("예상 밖")
+
+    monkeypatch.setattr(runner.critic, "run", explode)
+    config = _config()
+    deps = build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+    )  # fmt: skip
+    rig = _Rig(config, deps.models)
+    deps = dataclasses.replace(deps, models=rig, swap_to=rig.swap_to)
+    run_dir = tmp_path / "artifacts" / RUN_ID
+    # `_run`을 안 쓴다 — 예외가 올라가므로 그 헬퍼의 반환(trace 이벤트)을 못 받는다. writer를
+    # 직접 들고 있어야 **사유**를 볼 수 있다.
+    trace = TraceWriter(RUN_ID)
+
+    with pytest.raises(_Boom):
+        run_pipeline(
+            RunSpec(condition="B3prime@pipeline", target=TARGET, started_at=STARTED_AT),
+            config=config,
+            deps=deps,
+            read_source=lambda _loc: "int main(void) { return 0; }\n",
+            trace=trace,
+            run_dir=run_dir,
+        )
+
+    manifest = run_dir / "run_manifest.json"
+    assert manifest.exists(), "예상 밖 예외가 write_manifest 앞을 뚫었다"
+    record = json.loads(manifest.read_text(encoding="utf-8"))
+    # 🔴 **값을 단언한다** — `is not None`만 보면 `stopped_after=0`·`9`로 바꾸는 변이가 살아남는다
+    # (적대적 리뷰가 그 둘을 통과시켰다).
+    # ⚠ **7(CRITIC)이 아니라 6(GATE)이다**(실측). `critic.run`은 `ctx.stage(Stage.CRITIC)`에
+    # **진입하기 전에** 불리므로 예외가 날 때 `ctx.current_stage`는 아직 앞 단계다. 「터뜨린
+    # 단계」와 「기록되는 단계」가 **다르다** — 그 차이를 7로 적으면 거짓이 장부에 남는다.
+    assert record["stopped_after"] == int(Stage.GATE), record["stopped_after"]
+    # 🔴 사유는 **`RunRecord`가 아니라 TRANSITION 이벤트**에 남는다 — `RunRecord`에 `reason`
+    # 필드가 **없다**(`schemas/run.py`는 `stopped_after`만 든다). `finish_run`이 R-2 전이로 적는다.
+    # **등식으로 본다** — `in`으로 보면 다른 사유가 섞여도 통과한다.
+    reasons = [
+        event.data.get("reason")
+        for event in trace.events
+        if event.kind is EventKind.TRANSITION and event.subject_kind == "run"
+    ]
+    assert reasons == [ReasonCode.UNFORESEEN_FAILURE.value], reasons
+
+
 def _swaps_at_heartbeat_stop(
     monkeypatch: pytest.MonkeyPatch, rig: _Rig
 ) -> list[list[tuple[str, ...]]]:
@@ -402,6 +472,11 @@ def test_an_interrupt_in_the_run_still_tears_down_then_stops_the_heartbeat(
 
     assert rig.swaps == [()], "인터럽트가 지나간 run이 run 끝 내림을 안 불렀다"
     assert swaps_at_stop == [[()]], "heartbeat가 내림 뒤에 한 번 멈추지 않았다"
+    # 🔴 **인터럽트는 최후 방어선이 잡지 않는다.** 방어선을 `except BaseException`으로 넓히는 변이가
+    # 여기서 죽는다 — 넓히면 Ctrl-C 뒤에도 `report.run`을 돌리고 매니페스트를 쓴다(적대적 리뷰
+    # 2026-10-02이 그 변이를 33/33 초록으로 통과시켰다). 사람이 멈춘 run은 **끝난 run이 아니다**
+    # (ADR 0009 · `cli._terminate_as_exit` docstring).
+    assert not (tmp_path / "artifacts" / RUN_ID / "run_manifest.json").exists()
 
 
 @_INTERRUPTS

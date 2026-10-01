@@ -424,8 +424,11 @@ def build_deps(
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
     `slices_path`를 믿을 수 없으면 여기서 `SliceInputError`로 멈춘다 — 모델을 부르기 전이다.
-    **렌더(drift 검사)까지 여기서 전부 한다** — 러너는 그 예외를 안 잡으므로 run 도중에
-    렌더하면 앞 슬라이스의 모델 호출을 태운 뒤 산출물 없이 죽는다(`slices` 모듈 docstring).
+    **렌더(drift 검사)까지 여기서 전부 한다** — run 도중에 렌더하면 앞 슬라이스의 **모델 호출을
+    태운 뒤** 죽는다(`slices` 모듈 docstring).
+    ⏵ 2026-10-02 정정: *"러너는 그 예외를 안 잡으므로 … 산출물 없이"*는 낡았다. 최후 방어선이
+    생겨 **매니페스트는 남는다**(사유 `unforeseen_failure`, `report.md`는 없다). 태운 호출이
+    안 돌아오는 것이 이 설계의 이유다.
 
     `device`는 교대 프로필의 장비 파일(`config/serving/<device>.yaml`)을 고른다. 파일이 없거나
     registry와 어긋나면 `ConfigError`로 멈춘다 — 역시 모델을 부르기 전이다.

@@ -431,6 +431,16 @@ class ReasonCode(StrEnum):
     NEW_EVIDENCE_REQUEUE = "new_evidence_requeue"
     # 재평가 횟수 상한(config의 requeue_max) 초과. 폐기하지 않고 queued를 유지한다.
     REQUEUE_LIMIT_REACHED = "requeue_limit_reached"
+    # 🔴 **예상 밖 예외로 멈춘 run** (최후 방어선 — `runner.run_pipeline`의 맨 `except Exception`).
+    # ⚠ **범위는 `_analyze`(1~8단계)다** — 그 뒤 후처리(GPU 경고·게이트 재등급·리포트 렌더·
+    # `finish_run`)에서 난 예외는 이 사유를 못 받고 매니페스트도 안 남는다.
+    # 위 다섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
+    # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`)는 **예상한** 형이고 이것은 그 밖 전부다.
+    # 기존 27개 중 맞는 것이 **없어서** 새로 만들었다 — `MODEL_GATEWAY_UNAVAILABLE`로 적으면
+    # 「서버가 죽었다」는 거짓 진단이 장부에 남고, 그 run을 보는 사람이 서버 로그를 뒤진다.
+    # ⚠ 이 사유가 붙은 run은 **예외가 올라간 run이다** — 러너가 매니페스트를 쓴 뒤 다시 던지므로
+    # 산출물은 남지만 run은 실패다. 「조용히 넘어간 run」과 섞지 않는다.
+    UNFORESEEN_FAILURE = "unforeseen_failure"
     # 제보 (disclosure-policy.md) — 자동 전이 없음, 사람 승인으로만
     HUMAN_VERIFIED = "human_verified"
 

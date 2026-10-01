@@ -12,6 +12,7 @@ model-serving.md §6: 도메인 로직은 `ModelClient` 인터페이스에만 �
 "모델별 구조화 출력 실패율"(evaluation.md §5.1)이 영원히 0이 된다.
 """
 
+import http.client
 import json
 import time
 import urllib.error
@@ -361,7 +362,40 @@ class OpenAICompatModelClient:
             # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는
             # 이것을 "서버가 죽었다"로 읽고 즉시 멈춘다.
             raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}", detail=f"{exc}") from exc
-        return data["choices"][0]["message"]["content"], _usage_from(data.get("usage", {}))
+        except (OSError, http.client.HTTPException, UnicodeDecodeError) as exc:
+            # ⏵ **2026-10-02 — 끊긴 연결이 여기까지 새고 있었다.** 위 셋만 잡던 동안 아래가
+            # **생 예외로** 러너를 뚫고 나갔다:
+            #   - `http.client.IncompleteRead`·`BadStatusLine` — `HTTPException`은 **`OSError`가
+            #     아니다**(3.14.5에서 `issubclass`로 확인). 그래서 한 번도 안 잡혔다.
+            #     **[추정 — 실서빙 관측 0건]** 서버가 응답 중간에 죽으면 이 모양일 것이다.
+            #   - `ConnectionResetError`·`BrokenPipeError` 등 생 `OSError` — `URLError`로 감싸지지
+            #     않고 올라오는 경로가 있다.
+            #   - `UnicodeDecodeError` — 응답 바이트가 UTF-8이 아니면 `.decode`가 던진다
+            #     (`ValueError`의 하위지만 `JSONDecodeError`와 **형제**라 그 절에 안 걸린다).
+            # 🔴 **순서가 계약이다.** `HTTPError` ⊂ `URLError` ⊂ `OSError`이고 `TimeoutError`도
+            # `OSError`의 하위라, 이 절이 **맨 뒤**여야 위 셋이 각자의 사유를 유지한다 — 올리면
+            # 400도 여기로 와서 서버가 말해 준 사유가 사라진다(그 사고가 zlib에서 실제로 났다).
+            # 형 이름을 문구에 싣는다 — `error_detail`은 형을 안 적어서 로그만 보면 무엇이
+            # 끊겼는지 모른다.
+            raise ModelGatewayError(
+                f"{self.endpoint} 호출 실패: {type(exc).__name__}: {exc}",
+                detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
+        try:
+            content = data["choices"][0]["message"]["content"]
+            # `_usage_from`도 **같은 try 안이다**(적대적 리뷰 2026-10-02 실측): `usage: null`이면
+            # `AttributeError`, `completion_tokens: null`이면 `TypeError`, `"abc"`면 `ValueError`가
+            # 샜다. 모양이 깨진 응답은 content든 usage든 **한 사건**이다.
+            usage = _usage_from(data.get("usage", {}))
+        except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
+            # 응답이 200인데 **모양이 다르다**(`choices`가 비었거나 키가 없다). 전 판은 이 인덱싱이
+            # try 밖이라 `KeyError`가 그대로 새 나갔고, 러너는 그것을 게이트웨이 사건으로 못 읽어
+            # `write_manifest` 앞을 뚫었다. 상태 코드는 없다 — 전송은 됐고 **계약이 깨진** 것이다.
+            raise ModelGatewayError(
+                f"{self.endpoint} 응답 모양이 계약과 다르다: {type(exc).__name__}: {exc}",
+                detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
+        return content, usage
 
 
 def _error_detail(exc: urllib.error.HTTPError) -> str:
