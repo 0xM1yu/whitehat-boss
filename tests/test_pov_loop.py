@@ -25,6 +25,7 @@ from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaPa
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
 from src.orchestrator.trace import EventKind
+from src.schemas.common import Location
 from src.schemas.enums import PovStopReason, Role
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 
@@ -609,17 +610,20 @@ def test_pov_hop0_carries_the_same_source_the_auditor_saw(ctx: RunContext) -> No
     assert calls == 1
 
 
-def _resolution(*, name: str = "LLVMFuzzerTestOneInput", body: str = "") -> object:
-    """resolver 출력 하나 — 진입점 조회의 성공/실패를 흉내낸다."""
+def _resolution(*, name: str = "LLVMFuzzerTestOneInput", file: str = "") -> object:
+    """resolver 출력 하나 — 진입점 조회의 성공/실패를 흉내낸다.
+
+    ⚠ **`followup_text`에 본문을 넣지 않는다.** 러너는 그것을 **안 쓴다**(쓰면 NE 후속 턴 포장이
+    FACTS에 실린다 — 적대적 리뷰 2026-10-02 H-1). 러너가 쓰는 것은 `blocks[].file`·`lines`이고
+    원문은 `ctx.read_source`로 직접 읽는다. 그래서 이 스텁도 **위치만** 준다."""
     from src.schemas.need_evidence import Resolution, RetrievedBlock
 
     if not name:
+        # 통째로 빈 `Resolution` = 인덱스가 없거나 v1이다(`unfilled`조차 빈 것이 그 서명).
         return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
     return Resolution(
-        followup_text=body,
-        blocks=(
-            RetrievedBlock(name=name, label="function", file="src/fuzz.c", lines=(10, 11, 12)),
-        ),
+        followup_text="",
+        blocks=(RetrievedBlock(name=name, label="function", file=file, lines=(1, 2)),),
         unfilled=(),
         already=(),
         truncated=(),
@@ -634,16 +638,16 @@ def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: 
     없고, 문헌이 꼽는 지배적 실패가 바로 그 "취약 경로 미도달"이다. 2026-10-02 실측으로
     `LLVMFuzzerTestOneInput`은 `src/`·`prompts/` 전체에 **0건**이었다.
 
-    조회는 **이미 있는 resolver**(`ctx.resolve_requests`)를 쓴다 — 새 훅·새 어댑터 배선 없이
-    이름으로 함수 본문을 찾는 수단이 그것뿐이다(`definitions_of`는 macros·types·file_vars만 본다,
-    `src/adapters/index_graph.py:111`)."""
-    body = "int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) { return parse(data); }"
+    조회는 **이미 있는 resolver**(`ctx.resolve_requests`)로 **위치만** 받고, 원문은
+    `ctx.read_source`가 읽는다 — 새 훅·새 어댑터 배선 없이 이름으로 함수를 찾는 수단이 resolver
+    뿐이다(`definitions_of`는 macros·types·file_vars만 본다, `src/adapters/index_graph.py:111`)."""
     scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
-    scripted = dataclasses.replace(
-        scripted, resolve_requests=lambda _q: _resolution(body=body)
-    )
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
+    # 실제로 **읽을 수 있는** 파일을 가리켜야 한다 — 못 읽으면 `found=False`가 맞는 동작이다.
+    scripted = dataclasses.replace(
+        scripted, resolve_requests=lambda _q: _resolution(file=capsule.target.file)
+    )
 
     runner._run_pov_hops(scripted, state, finding, capsule)
 
@@ -652,8 +656,70 @@ def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: 
     entry = facts["fuzz_entrypoint"]
     assert entry["found"] is True
     assert entry["name"] == "LLVMFuzzerTestOneInput"
-    assert entry["file"] == "src/fuzz.c"
-    assert body in entry["source"]
+    assert entry["file"] == capsule.target.file
+    assert entry["lines"] == [1, 2]
+    # 원문이 **디스크에서** 왔다 — resolver의 `followup_text`가 아니다(그건 빈 문자열로 줬다).
+    # `prompt.body`로 비교하지 않는다: FACTS는 JSON으로 인코딩돼 줄바꿈이 이스케이프된다.
+    assert entry["source"].strip(), "원문이 비었다 — read_source 경로가 끊겼다"
+    expected = ctx.read_source(Location(file=capsule.target.file, line_start=1, line_end=2))
+    assert entry["source"] == expected, "source가 read_source의 그 범위와 다르다"
+
+
+def test_pov_facts_carry_the_entrypoint_body_not_the_ne_followup_wrapper(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 FACTS에 **NE 루프의 후속 턴 포장**이 실리면 안 된다 (적대적 리뷰 2026-10-02 H-1).
+
+    첫 판은 `resolution.followup_text`를 `source`에 실었다. 그것은 함수 본문이 아니라
+    `render_followup`이 만든 **다음 턴 전체**다 — `## Retrieved context (hop 1)` 머리, 줄번호
+    gutter, 그리고 꼬리에 *"output one complete ScoutResponse JSON"*. `body.md`가 FACTS를 *"참조
+    가능한 사실 전부"*라 선언하므로, 거기 실린 **다른 역할의 지시**를 PoV가 사실로 읽는다.
+
+    앞의 두 검사는 `_resolution` 스텁이 `followup_text=<본문>`을 **지어내서** 이 결함을 못 잡았다.
+    여기서는 `Resolution`을 **진짜 모양으로**(포장이 든 `followup_text` + 위치 블록) 주고, FACTS에
+    **포장이 아니라 원문 줄**이 실리는지 본다."""
+    from src.schemas.need_evidence import Resolution, RetrievedBlock
+
+    wrapper = (
+        "## Retrieved context (hop 1)\n"
+        "In your previous turn you asked for context.\n"
+        "  10 | int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {\n"
+        "Judge the same candidate again and output one complete ScoutResponse JSON.\n"
+    )
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    target = capsule.target
+
+    def _resolve(_query):  # noqa: ANN001, ANN202
+        return Resolution(
+            followup_text=wrapper,
+            blocks=(
+                RetrievedBlock(
+                    name="LLVMFuzzerTestOneInput",
+                    label="function",
+                    file=target.file,
+                    lines=(1, 2),
+                ),
+            ),
+            unfilled=(),
+            already=(),
+            truncated=(),
+        )
+
+    scripted = dataclasses.replace(scripted, resolve_requests=_resolve)
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert "ScoutResponse" not in prompt.body, "NE 후속 턴의 지시가 PoV 프롬프트에 실렸다"
+    assert "Retrieved context" not in entry["source"], "NE 후속 턴 머리가 source에 실렸다"
+    # 위치는 범위로 줄여 싣는다 — 블록이 걸친 줄 집합이 아니라 lo..hi다.
+    assert entry["lines"] == [1, 2]
+    # 원문은 `ctx.read_source`가 읽은 대상 파일의 그 범위다(빈 문자열이면 found=False).
+    assert entry["found"] is (entry["source"] != "")
 
 
 def test_pov_facts_record_why_the_fuzz_entrypoint_is_missing(ctx: RunContext) -> None:  # noqa: F811
@@ -708,16 +774,81 @@ def test_other_roles_facts_do_not_gain_the_fuzz_entrypoint_key() -> None:
     assert "fuzz_entrypoint" not in facts
 
 
+def _asan_evidence() -> object:
+    """`_pov_observation`에 넘길 Evidence 하나.
+
+    `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`src/schemas/evidence.py:35`) —
+    「참조가 없다」는 상태는 스키마가 허용하지 않는다. 없는 것은 **로그**이고,
+    그것은 `read_payload`가 `None`으로 답한다.
+    """
+    from datetime import UTC, datetime
+
+    from src.schemas.enums import EvidenceKind
+    from src.schemas.evidence import Evidence
+
+    return Evidence(
+        evidence_id="ev_0001",
+        run_id="run_20260101_0001",
+        artifact_id="art_0001",
+        kind=EvidenceKind.SANITIZER,
+        source="asan",
+        ok=True,
+        exit_code=1,
+        payload_ref="log/asan.txt",
+        digest="sha256:" + "0" * 64,
+        observed_at=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+
+
+def test_pov_observation_carries_the_tool_output_tail() -> None:
+    """🔴 관측이 **도구 출력 꼬리**를 싣는다 — 스칼라 여섯만 주던 판에서 넓혔다(S6c ③-5).
+
+    프롬프트는 *"관측을 읽고 실패 이유를 판단한 뒤 스펙을 고쳐라"*라 지시하는데, ASan이 어떤 위반을
+    어느 오프셋에서 잡았는지가 전부 payload 로그에만 있어 **읽을 것이 없었다.**
+
+    **꼬리**인 이유: ASan은 끝에 `SUMMARY:` 요약이 오고 gdb도 수명주기 줄이 뒤에 온다. 앞을 자르면
+    컴파일 잡음만 남는다 — 앞을 싣는 변이가 여기서 죽는다."""
+    report = "x" * 5000 + "\nSUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018\n"
+
+    text = runner._pov_observation(
+        "gen", _asan_evidence(), read_payload=lambda _ref: report
+    )
+
+    assert "tool=asan action=gen ok=True" in text
+    assert "SUMMARY: AddressSanitizer: heap-buffer-overflow" in text, "꼬리가 안 실렸다"
+    assert "앞 " in text and "자 생략" in text, "자른 사실을 안 적었다"
+    assert len(text) < 3000, "상한을 안 걸었다 — 폭주 차단이 목적이다"
+
+
+def test_pov_observation_is_one_line_when_there_is_no_log() -> None:
+    """로그가 없으면 **전 판과 바이트가 같은 한 줄**이다.
+
+    `read_payload`가 `None`을 주는 것은 정상 상태다(`dev_fake`는 로그 파일을 안 쓴다 —
+    `context.read_payload` 주석). 그때 빈 꼬리 머리(`--- asan 출력 꼬리 ---`)를 붙이면 「로그가
+    없다」와 「로그가 비었다」가 같아 보인다. 빈 문자열도 같게 다룬다."""
+    no_log = runner._pov_observation(
+        "inspect", _asan_evidence(), read_payload=lambda _ref: None
+    )
+    empty_log = runner._pov_observation(
+        "inspect", _asan_evidence(), read_payload=lambda _ref: ""
+    )
+
+    assert "\n" not in no_log
+    assert no_log == empty_log
+    assert "꼬리" not in no_log
+
+
 def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     """`runner._Once`는 감싼 콜러블을 한 번만 부르고 같은 문자열을 돌려준다.
 
-    🔴 **이 검사가 무는 것은 `_Once` 클래스의 성질뿐이고, `_step_auditor`가 실제로 그것으로
-    감싸는지는 안 문다**(2026-10-02 실측 — `_step_auditor`를 구동하는 테스트가 저장소에 **0건**이고,
-    슬라이스 타깃 `_Target` + 인덱스를 세우는 픽스처가 없다). `_step_auditor`의
-    `_Once(partial(...))`를 맨 `partial(...)`로 되돌리면 **이 스위트는 초록인 채로** Auditor와 PoV가
-    `_auditor_source`를 각각 불러 `auditor_source` trace 이벤트가 둘이 되고, 장부에서 Auditor 호출
-    하나가 둘로 보인다(CLAUDE.md §0). 그 자리의 핀은 **미작성**이다 — 슬라이스 타깃 e2e 픽스처가
-    서면 그때 박는다(`_workspace/plans-cybergym/S6c.md` ⑤)."""
+    이 검사는 `_Once` **클래스의 성질**을 문다. `_step_auditor`가 실제로 그것으로 감싸는지는
+    **`tests/test_slice_targets.py`가 문다** — `_Once`를 통과 함수로 바꾸면 거기서 **15건이
+    빨개진다**(`auditor_source` 이벤트가 둘이 되는 것을 보는 검사들, 예: `:476`).
+
+    ⏵ **정정 2026-10-02**: 이 docstring의 전 판은 *"`_step_auditor`를 구동하는 테스트가 0건이라 그
+    자리는 미핀이다"*라 적었다. **틀렸다** — 적대적 리뷰가 인프로세스 변이로 그 15건을 빨갛게
+    만들어 보였다. 「미핀」이라 적은 쪽이 거짓이었고, 핀은 이미 있었다(CLAUDE.md §0 — 센 것과 안 센
+    것을 섞지 않는다. 안 세고 「없다」고 적은 것이 그 위반이다)."""
     calls = 0
 
     def _inner() -> str:
