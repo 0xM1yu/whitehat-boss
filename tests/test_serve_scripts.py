@@ -75,8 +75,13 @@ def test_the_constant_pattern_reads_the_real_script() -> None:
     assert _CONST.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
 
 
-# 교대 순서 — 4 Scout → 5 Auditor → 7 Critic(ADR 0009 「2026-09-29 제안」 절 3).
-_STAGE_ROLES = (("scout_memory", "scout_boundary", "scout_injection"), ("auditor",), ("critic",))
+# 교대 순서 — 4 Scout → 5 Auditor → 7 Critic → 8 PoV(ADR 0009 「2026-09-29 제안」 절 3 · PoV 배선).
+_STAGE_ROLES = (
+    ("scout_memory", "scout_boundary", "scout_injection"),
+    ("auditor",),
+    ("critic",),
+    ("pov",),
+)
 
 
 @pytest.mark.parametrize("device", DEVICES)

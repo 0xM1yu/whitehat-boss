@@ -1,0 +1,11 @@
+# ToolRunner의 기본 gdb 경로는 비대화형이다. UI 확장(pwndbg)은 별도 이미지 옵션의 일이다.
+set pagination off
+set confirm off
+set print thread-events off
+
+# Docker 실측에서 SYS_PTRACE 유무와 관계없이 ASLR 비활성화 시도가 거부됐다. 실패 경고를
+# 재현 로그에 섞지 않고 현재 ASLR을 유지한다. 주소 고정은 이 스크립트가 보증하지 않는다.
+set disable-randomization off
+
+run
+thread apply all backtrace full
