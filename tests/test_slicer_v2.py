@@ -6,6 +6,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -839,17 +840,29 @@ def test_a_claim_queue_lets_an_idle_shard_take_every_open_candidate(monkeypatch,
     assert exported["slices"] == single["slices"]
 
 
-def test_a_shard_resumes_its_own_claims(monkeypatch, repo, tmp_path):
-    """A shard re-run with --resume may take again what it claimed itself (its own unfinished
-    work); a claim held by another shard stays theirs."""
-    from slicer_claims import ClaimQueue
+def _failing(data):  # noqa: ANN001, ANN202
+    """Every flows/backward query fails without poisoning: claimed, degraded, never saved."""
+    failed = {"success": False, "stdout": "", "stderr": "boom"}
+    return {**data, "flows": failed, "backward": failed}
 
+
+def test_a_shard_resumes_its_own_claims(monkeypatch, repo, tmp_path):
+    """A shard whose candidates all failed keeps them claimed: another shard (other I/N) takes
+    none of them, and `--resume` of the same I/N slices them all."""
     claims = tmp_path / "claims.db"
-    mine, other = ClaimQueue(claims, "0/2"), ClaimQueue(claims, "1/2")
-    assert mine.claim("k1") and mine.claim("k1")
-    assert not other.claim("k1") and other.claim("k2")
-    mine.close()
-    other.close()
+    mine, (_, failed, _) = _claim_shard(
+        monkeypatch, repo, tmp_path, _failing(three_candidates()), 0, 2, claims
+    )
+    assert failed["counters"]["candidates_failed"] == 3
+    other, (_, _, t1) = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2,
+                                     claims)
+    assert "flows" not in t1.stages and "backward" not in t1.stages
+    code, resumed, _ = run_cli(
+        monkeypatch, repo, mine.parent, three_candidates(), "--checkpoint", str(mine), "--resume",
+        "--shard", "0/2", "--claim-db", str(claims),
+    )
+    assert code == 2 and resumed["counters"]["candidates_failed"] == 0
+    assert merge_shards(tmp_path / "merged.db", [mine, other])["complete"] == 3
 
 
 def test_a_poisoned_shard_stops_claiming_and_leaves_the_rest(monkeypatch, repo, tmp_path):
@@ -876,3 +889,247 @@ def test_a_claim_queue_needs_a_shard(repo, tmp_path):
         slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
                      "--checkpoint", str(tmp_path / "state.db"),
                      "--claim-db", str(tmp_path / "claims.db")])
+
+
+def test_a_poison_streak_message_says_what_happens_to_the_rest(monkeypatch, repo, tmp_path):
+    """Claim mode stops claiming (the rest stay queued); without it the rest get degraded."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    _, (_, queued, _) = _claim_shard(monkeypatch, repo, tmp_path, bad, 0, 2,
+                                     tmp_path / "claims.db")
+    assert "this shard stops claiming candidates" in queued["error"]
+    assert "remaining candidates get degraded" not in queued["error"]
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, fixed, _ = run_cli(monkeypatch, repo, plain, bad, "--checkpoint", str(plain / "s.db"),
+                          "--shard", "0/2")
+    assert "remaining candidates get degraded" in fixed["error"]
+    assert "stops claiming" not in fixed["error"]
+
+
+def _flows_by_outcome(outcomes):  # noqa: ANN001, ANN202
+    """flows reply per call: P poisoned, F failed (not poisoned), S success."""
+    calls = []
+
+    def flows(query):  # noqa: ANN001, ANN202
+        calls.append(query)
+        kind = outcomes[len(calls) - 1]
+        if kind == "P":
+            return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+        if kind == "F":
+            return {"success": False, "stdout": "", "stderr": "boom"}
+        return response(
+            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+        )
+
+    return flows
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "failed"), [("PPSPPS", 4), ("PPFPPS", 5)], ids=["success", "plain-failure"]
+)
+def test_a_poison_streak_restarts_after_a_non_poisoned_candidate(
+    monkeypatch, repo, tmp_path, outcomes, failed
+):
+    """Only CONSECUTIVE poison stops: a success or an unpoisoned failure resets the count, so
+    P P S P P (or P P F P P) never reaches the streak of 3 and every candidate hits the server."""
+    assert slicer_pipeline.POISON_STOP_STREAK == 3
+    cands = [candidate("c" + str(i), i + 1) for i in range(len(outcomes))]
+    data = payloads(case_a=cands, flow_count=2)
+    data["flows"] = _flows_by_outcome(outcomes)
+    _, result, transport = run_cli(monkeypatch, repo, tmp_path, data)
+    assert transport.stages.count("flows") == len(outcomes)
+    assert result["counters"]["candidates_failed"] == failed
+    assert "consecutive poisoned candidates" not in result["error"]
+
+
+def test_claims_are_keyed_by_the_candidate_key(monkeypatch, repo, tmp_path):
+    from slicer_claims import read_claims
+
+    claims = tmp_path / "claims.db"
+    state, _ = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2, claims)
+    with Checkpoint(state, resume=True) as store:
+        keys = {c["candidate_key"] for c in store.get("candidates")}
+    assert set(read_claims(claims)) == keys
+    assert {owner for owner, _ in read_claims(claims).values()} == {"1/2"}
+
+
+def test_the_claim_db_runs_in_wal_mode(tmp_path):
+    from slicer_claims import ClaimQueue
+
+    queue = ClaimQueue(tmp_path / "claims.db", 0, 2)
+    try:
+        assert queue.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        queue.close()
+
+
+def test_a_filesystem_without_wal_is_refused_loudly(monkeypatch, tmp_path):
+    """SQLite returns the old mode instead of raising; that must not pass as a working queue."""
+    from slicer_claims import ClaimQueue
+
+    monkeypatch.setattr(ClaimQueue, "_bootstrap", staticmethod(lambda conn, count: "delete"))
+    with pytest.raises(ValueError, match="host-local filesystem"):
+        ClaimQueue(tmp_path / "claims.db", 0, 2, timeout=0.05)
+
+
+def _hold_write_lock(path):  # noqa: ANN001, ANN202
+    other = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
+    other.execute("BEGIN IMMEDIATE")
+    return other
+
+
+def test_a_claim_waits_out_another_shards_write_lock(tmp_path):
+    """The busy timeout: a claim during another shard's brief INSERT waits, it does not fail."""
+    import threading
+
+    from slicer_claims import ClaimQueue
+
+    queue = ClaimQueue(tmp_path / "claims.db", 0, 2)
+    other = _hold_write_lock(tmp_path / "claims.db")
+    release = threading.Timer(0.3, lambda: other.execute("COMMIT"))
+    release.start()
+    try:
+        assert queue.claim("k1")
+    finally:
+        release.join()
+        other.close()
+        queue.close()
+
+
+def test_a_lock_past_the_timeout_raises_instead_of_skipping_the_candidate(tmp_path):
+    """Only a taken key means "not mine"; a lock error read as one would drop the candidate."""
+    from slicer_claims import ClaimQueue
+
+    queue = ClaimQueue(tmp_path / "claims.db", 0, 2, timeout=0.1)
+    other = _hold_write_lock(tmp_path / "claims.db")
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            queue.claim("k1")
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+    assert queue.claim("k1")
+    queue.close()
+
+
+CLAIM_WORKER = """
+import json, os, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from slicer_claims import ClaimQueue
+db, index, count, go = Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+Path(go + ".ready" + str(index)).touch()
+while not os.path.exists(go):
+    time.sleep(0.001)
+queue = ClaimQueue(db, index, count)
+print(json.dumps([k for k in ("k" + str(n) for n in range(40)) if queue.claim(k)]))
+queue.close()
+"""
+
+
+def _open_at_once(folder, count):  # noqa: ANN001, ANN202
+    """`count` processes open one fresh claim db together and claim k0..k39; their outputs."""
+    root = str(Path(slicer.__file__).parent)
+    folder.mkdir()
+    go = str(folder / "go")
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", CLAIM_WORKER, root, str(folder / "claims.db"), str(i),
+             str(count), go],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        for i in range(count)
+    ]
+    try:
+        for i in range(count):
+            ready = Path(go + ".ready" + str(i))
+            for _ in range(3000):
+                if ready.exists():
+                    break
+                time.sleep(0.01)
+        Path(go).touch()
+        outputs = [proc.communicate(timeout=60) for proc in procs]
+        return [(proc.returncode, *out) for proc, out in zip(procs, outputs, strict=True)]
+    finally:
+        for proc in procs:
+            proc.kill()
+
+
+def test_many_shards_open_a_fresh_claim_db_at_once(tmp_path):
+    """#372 review: N processes creating the file together got `database is locked` from the
+    WAL switch (no busy timeout there). All must open, and every key goes to exactly one.
+    With the retry removed, 5 of 10 rounds of 12 processes lost at least one process (2026-10-02,
+    local Windows, ad-hoc script outside the repo), so five rounds make the race show."""
+    for round_ in range(5):
+        outputs = _open_at_once(tmp_path / str(round_), 12)
+        assert [err for code, _, err in outputs if code] == []
+        taken = [key for _, out, _ in outputs for key in json.loads(out)]
+        assert sorted(taken) == sorted("k" + str(n) for n in range(40))
+
+
+def test_a_claim_db_from_another_run_is_refused(monkeypatch, repo, tmp_path):
+    """#372 review: a leftover claim file made every shard of the next run find all candidates
+    taken -- merge 0/N complete, no word about the file. A different shard count fails on open,
+    a different candidate list before any candidate is sliced."""
+    claims = tmp_path / "claims.db"
+    _claim_shard(monkeypatch, repo, tmp_path / "old", three_candidates(), 0, 2, claims)
+    code, other_count, transport = _claim_shard(
+        monkeypatch, repo, tmp_path / "count", three_candidates(), 0, 3, claims
+    )[1]
+    assert code == 1 and "2 shards, not 3" in other_count["error"]
+    assert transport.stages == []
+    changed = payloads(case_a=[candidate("fresh", 7)], flow_count=1)
+    _, (_, other_run, transport) = _claim_shard(
+        monkeypatch, repo, tmp_path / "run", changed, 0, 2, claims
+    )
+    assert "started by another run" in other_run["error"]
+    assert "flows" not in transport.stages
+
+
+def test_a_claim_db_gets_its_parent_and_a_bad_one_is_a_result_error(monkeypatch, repo, tmp_path):
+    nested = tmp_path / "a" / "b" / "claims.db"
+    code, _, _ = _claim_shard(monkeypatch, repo, tmp_path / "ok", three_candidates(), 0, 2,
+                              nested)[1]
+    assert code == 2 and nested.is_file()
+    folder = tmp_path / "dir"
+    code, result, _ = _claim_shard(monkeypatch, repo, folder, three_candidates(), 0, 2,
+                                   tmp_path)[1]
+    assert code == 1 and result["error"]
+
+
+def test_the_claim_db_is_not_another_output(repo, tmp_path):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--checkpoint", str(tmp_path / "state.db"), "--shard", "0/2",
+                     "--claim-db", str(tmp_path / "state.db")])
+
+
+def test_the_merge_tool_names_the_claim_owner_of_each_incomplete_candidate(
+    monkeypatch, repo, tmp_path, capsys
+):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "merge_tool", Path(slicer.__file__).parent / "tools" / "merge_slicer_shards.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    claims = tmp_path / "claims.db"
+    mine, _ = _claim_shard(monkeypatch, repo, tmp_path, _failing(three_candidates()), 0, 2,
+                           claims)
+    other, _ = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2, claims)
+    with Checkpoint(mine, resume=True) as store:
+        keys = [c["candidate_key"] for c in store.get("candidates")]
+    capsys.readouterr()
+    assert tool.main(["x", "--claim-db", str(claims), str(tmp_path / "m.db"), str(mine),
+                      str(other)]) == 2
+    err = capsys.readouterr().err
+    assert "incomplete: 3" in err
+    for key in keys:
+        assert f"{key}  claimed by 0/2" in err
+    assert tool.main(["x", str(tmp_path / "plain.db"), str(mine), str(other)]) == 2
+    err = capsys.readouterr().err
+    assert all(f"  {key}\n" in err for key in keys)
