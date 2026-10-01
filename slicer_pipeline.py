@@ -328,6 +328,10 @@ class SlicingStages:
                 # unprocessed) -- switch to emitting anchor-only degraded slices without querying
                 # the server, so no captured candidate is lost from slices.json.
                 degrade_only = False
+                if self.claims is not None and not self.prepare_only:
+                    # A leftover claim file from another run would make every shard find all
+                    # candidates taken and slice nothing; refuse it instead (#372 review).
+                    self.claims.bind(self.result["run_signature"], self.candidates)
                 for position, candidate in enumerate(
                     [] if self.prepare_only else self.candidates
                 ):
@@ -383,11 +387,18 @@ class SlicingStages:
                         if exc.poisoned:
                             consecutive_poison += 1
                             if consecutive_poison >= POISON_STOP_STREAK:
+                                remaining = (
+                                    # Claim mode: the loop breaks, nothing more is claimed.
+                                    "this shard stops claiming candidates; the rest stay in the "
+                                    "shared queue for the other shards"
+                                    if self.claims is not None
+                                    else "remaining candidates get degraded (anchor-only) "
+                                    "slices without querying the server"
+                                )
                                 self.errors.append(
                                     f"{consecutive_poison} consecutive poisoned candidates; "
-                                    "remaining candidates get degraded (anchor-only) slices "
-                                    "without querying the server. Restart the dedicated server "
-                                    "and --resume to re-attempt full slices"
+                                    f"{remaining}. Restart the dedicated server and --resume "
+                                    "to re-attempt full slices"
                                 )
                                 degrade_only = True
                         else:
