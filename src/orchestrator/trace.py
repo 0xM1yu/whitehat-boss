@@ -230,10 +230,13 @@ class EventKind(StrEnum):
     # `functions`에는 안 든다)가 같은 방식으로 더 실린다.
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
+    # `auditor_entry_trim`이 1이면 `entry_omitted_lines`(상한을 넘는 entry 함수를 줄이며 뺀 줄 수 —
+    # 안 넘으면 0)가 더 실린다. `anchor_chars`는 줄이기 전 크기다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
-    # 커도 늘 들어간다. 그래서 `chars`가 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry
-    # 혼자 때문인지 합 때문인지 `chars`만으로는 안 갈린다(#289 리뷰 LOW-2).
+    # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
+    # 상한을 넘을 수 있는데, 함수가 둘 이상이면 그것이 entry 혼자 때문인지 합 때문인지
+    # `chars`만으로는 안 갈린다(#289 리뷰 LOW-2).
     #
     # **캡슐이 이것을 못 센다.** EXPANDED 캡슐의 `target_function`은 entry 함수만 세고 그것도
     # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다
