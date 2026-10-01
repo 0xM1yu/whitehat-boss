@@ -1438,3 +1438,36 @@ def test_overlaps_treats_a_location_without_lines_as_the_whole_file() -> None:
     whole = Location(file="u.c")
     assert _overlaps(whole, Location(file="u.c", line_start=5, line_end=6))
     assert not _overlaps(whole, Location(file="v.c", line_start=5, line_end=6))
+
+
+
+def test_overlapping_call_sites_do_not_use_up_the_read_limit() -> None:
+    """같은 호출자 안의 이웃 호출·이미 실린 호출자와 겹치는 지점은 읽는 지점 수 상한을 안 먹는다
+    — `h`가 `f`를 8번 불러도 다른 호출자 `k`(55번 줄)의 창이 붙는다(#351 자체 검토 MEDIUM-1:
+    자르기가 겹침 검사보다 먼저라 `k`가 영영 안 닿던 것)."""
+    entry = Location(file="u.c", symbol="f", line_start=40, line_end=42)
+    h = Location(file="u.c", symbol="h", line_start=1, line_end=30)
+    k = Location(file="u.c", symbol="k", line_start=50, line_end=60)
+    sites = [Location(file="u.c", symbol="h", line_start=n, line_end=n) for n in range(2, 17, 2)]
+    sites.append(Location(file="u.c", symbol="k", line_start=55, line_end=55))
+    for slice_lines in ([("u.c", 41)], [("u.c", 41), ("u.c", 3)]):
+        ctx, events, _, _ = _unit(
+            _U_FILE, [entry, h, k], auditor_caller_lines=2, sites={"f": sites}
+        )
+        source, event = _unit_run(ctx, events, entry, slice_lines)
+        assert "/* ===== u.c:53-57 ===== */" in source
+        assert event["call_sites"] == 9
+
+
+def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
+    """피호출 함수 `h`가 entry를 되부르면 `h` 본문이 통째로 실리고 그 안의 호출자 창은 겹쳐
+    빠진다 — 창이 먼저면 본문 대신 조각만 남고 `callees`에도 안 셌다(#351 자체 검토 LOW-1)."""
+    h = Location(file="u.c", symbol="h", line_start=10, line_end=30)
+    site = Location(file="u.c", symbol="h", line_start=20, line_end=20)
+    ctx, events, _, _ = _unit(
+        _U_FILE, [_U_F, h], auditor_callee_hops=1, auditor_caller_lines=2,
+        callees={"f": [h]}, sites={"f": [site]},
+    )
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert "/* ===== u.c:10-30 ===== */" in source
+    assert (event["callees"], event["callers"]) == (1, 0)

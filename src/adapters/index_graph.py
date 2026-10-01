@@ -454,12 +454,14 @@ class GraphIndex:
             return None
         if not target.symbol:
             return []
-        homes = {
-            file
+        # 파일 수가 아니라 **정의 수**다 — `callees_of`·`definitions_of`와 같은 규칙(한 파일
+        # 안 `#if` 양쪽 가지도 둘이다).
+        homes = [
+            (file, start)
             for file, symbols in self._defined.items()
-            for name, _, _ in symbols
+            for name, start, _ in symbols
             if name == target.symbol
-        }
+        ]
         sites = {
             Location(file=file, symbol=caller, line_start=line, line_end=line)
             for caller, callee, file, line in self._calls
