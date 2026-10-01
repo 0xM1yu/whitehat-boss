@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 
 import slicer_queries as queries
 from slicer_checkpoint import Checkpoint
+from slicer_claims import ClaimQueue
 from slicer_compile import generated_header_dirs, resolve_compilation_database
 from slicer_errors import QueryError  # re-exported: callers and tests use slicer.QueryError
 from slicer_export import export_sources
@@ -491,6 +492,8 @@ class Slicer(SlicingStages):
         # to `cpg_out`; a shard given `cpg_file` (and a copy of that checkpoint) loads the graph
         # instead of parsing the repo and reuses the discovery instead of re-running it.
         self.prepare_only = False
+        # #369: shared claim queue (slicer_claims.ClaimQueue) instead of the fixed p % N split.
+        self.claims = None
         self.cpg_out: Path | None = None
         self.cpg_file: Path | None = None
         # The checkpoint's `prepared` record a `cpg_file` was verified against (check_prepared).
@@ -838,7 +841,8 @@ def positive_seconds(value: str) -> float:
 
 
 def shard_value(value: str) -> tuple[int, int]:
-    """`I/N`: slice the candidates at 0-based positions p with p % N == I (0 <= I < N, N >= 2)."""
+    """`I/N` (0 <= I < N, N >= 2): slice the 0-based positions p with p % N == I, or, with
+    --claim-db, be owner I/N of the shared queue."""
     match = re.fullmatch(r"([0-9]+)/([0-9]+)", value)
     if not match or not 0 <= int(match[1]) < int(match[2]) or int(match[2]) < 2:
         raise argparse.ArgumentTypeError("must be I/N with 0 <= I < N and N >= 2")
@@ -889,7 +893,16 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--shard",
         type=shard_value,
-        help="I/N: slice candidates at positions p %% N == I; needs --checkpoint",
+        help="I/N: slice candidates at positions p %% N == I (with --claim-db: whatever the "
+        "shared queue hands out); needs --checkpoint",
+    )
+    # #369: N shards pull from one queue instead of a fixed share. Fresh file per run, on a
+    # host-local filesystem; a shard that died is recovered by --resume with the same I/N.
+    result.add_argument(
+        "--claim-db", type=Path, help="with --shard and --checkpoint: take candidates from this "
+        "shared queue (SQLite, one fresh file per run for all shards, host-local filesystem) "
+        "instead of the fixed p %% N split; a died shard's claims come back only by --resume "
+        "with the same I/N",
     )
     for option in ("--max-call-depth", "--max-args-to-allow", "--max-output-args-expansion"):
         result.add_argument(
@@ -973,6 +986,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         cli.error("--prepare-only needs --checkpoint and --cpg-out, and no --resume, "
                   "--export-only, --shard or --cpg")
+    if args.claim_db and (not args.shard or not args.checkpoint):
+        cli.error("--claim-db needs --shard and --checkpoint")
     if args.cpg_out and not args.prepare_only:
         cli.error("--cpg-out only goes with --prepare-only")
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
@@ -988,11 +1003,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.cpg and not args.cpg.is_file():
         cli.error(f"--cpg is not a file: {args.cpg}")
     outputs = [
-        p.resolve() for p in (args.out, args.checkpoint, args.progress, args.cpg_out, args.cpg)
+        p.resolve()
+        for p in (args.out, args.checkpoint, args.progress, args.cpg_out, args.cpg, args.claim_db)
         if p
     ]
     if len(outputs) != len(set(outputs)):
-        cli.error("Output, checkpoint, progress and CPG paths must be distinct")
+        cli.error("Output, checkpoint, progress, CPG and claim-db paths must be distinct")
     if args.export_dir:
         # export_sources() os.replace()s everything under this directory. Run state left
         # there is replaced by an export artifact -- an open checkpoint becomes JSON and
@@ -1082,6 +1098,10 @@ def main(argv: list[str] | None = None) -> int:
             job.progress = args.progress.open("a", encoding="utf-8", newline="\n")
         if args.checkpoint:
             job.checkpoint = Checkpoint(args.checkpoint, resume=args.resume or args.export_only)
+        if args.claim_db:
+            # Inside the try: a missing parent is created, and a stale/foreign file or a mount
+            # without WAL becomes a clean result error instead of a traceback.
+            job.claims = ClaimQueue(args.claim_db, *args.shard)
         if args.export_only:
             contract = job.checkpoint.get("run_contract")
             version = contract["joern_version"] if contract else None
@@ -1135,6 +1155,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if job.checkpoint:
             job.checkpoint.close()
+        if job.claims is not None:
+            job.claims.close()
         if job.progress:
             job.progress.close()
 
