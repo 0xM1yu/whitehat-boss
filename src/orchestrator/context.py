@@ -136,6 +136,12 @@ class RunContext:
     symbols_for: Callable[[str], list[Location] | None] = field(
         default=lambda _file: None
     )
+    # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
+    # 함수 본문을 붙이는 데 쓴다. `symbols_for`와 같은 성격 — 미배선 기본값 `None`("그래프 없음")은
+    # 붙일 것이 없다는 뜻이고 `SOURCE`는 옛 모양 그대로다.
+    callees_of: Callable[[Location], list[Location] | None] = field(
+        default=lambda _target: None
+    )
     # 역할 → 그 역할 모델의 실 토크나이저 카운터 (#96 (b)). `None`이면 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다. `symbols_for`와 같은 성격 — 어댑터가 만들고
     # factory가 주입하며, 러너가 역할 캡슐 조립 직전에

@@ -356,6 +356,43 @@ class GraphIndex:
         files.discard(target.file)
         return sorted(files)
 
+    def callees_of(self, target: Location) -> list[Location] | None:
+        """대상 본문 안의 호출이 부르는 함수의 **정의 위치**. `None`은 그래프 자체가 없다는 뜻이다.
+
+        Auditor 입력이 슬라이스가 지나간 함수만 싣고 그 함수들이 부르는 함수의 본문은 안 싣던
+        자리를 채운다(#349 (a)). 호출 지점이 대상 본문
+        (`_in_body`) 안인 간선의 callee 이름을 정의로 푼다:
+
+        - 대상 파일에 그 이름의 정의가 있으면 그것(같은 파일 `static`이 이긴다)
+        - 없으면 저장소 전체에서 정의가 **하나뿐일 때만** 그것 — 여럿이면 이름만으로는 어느
+          정의인지 모르므로(`_rules` docstring의 한계) 싣지 않는다
+
+        대상 자신(재귀)은 뺀다. 순서는 본문 안 첫 호출 줄 순이다(결정론 — 같은 줄이면 이름 순).
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        defined: dict[str, list[tuple[str, int, int]]] = {}
+        for file, symbols in self._defined.items():
+            for name, start, end in symbols:
+                defined.setdefault(name, []).append((file, start, end))
+        first_call: dict[str, int] = {}
+        for _, callee, file, line in self._calls:
+            if self._in_body(file, line, target) and callee not in first_call:
+                first_call[callee] = line
+            elif self._in_body(file, line, target):
+                first_call[callee] = min(first_call[callee], line)
+        found: list[Location] = []
+        for callee in sorted(first_call, key=lambda name: (first_call[name], name)):
+            if callee == target.symbol:
+                continue
+            here = [d for d in defined.get(callee, []) if d[0] == target.file]
+            candidates = here or defined.get(callee, [])
+            if len(candidates) != 1:
+                continue
+            file, start, end = candidates[0]
+            found.append(Location(file=file, symbol=callee, line_start=start, line_end=end))
+        return found
+
     # --- 본문 판정 -------------------------------------------------------
     #
     # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**

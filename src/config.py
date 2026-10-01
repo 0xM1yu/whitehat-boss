@@ -594,6 +594,14 @@ class Thresholds(HarnessModel):
     # 않아 이 값을 실을 경로 자체가 없다(`prompt_versions()`의 "거짓 정보" 판단).
     output_max_by_role: dict[str, int] = Field(default_factory=dict)
     capsule_budget_tokens: CapsuleBudgets
+    # Auditor `SOURCE`에 피호출 함수 본문을 붙이는 단계 수(#349 (a)). 0이면 붙이지 않는다 —
+    # ADR 0012 결정 1-b(「슬라이스가 걸친 함수의 원본 전부」) 그대로다. 1이면 실린 함수의 본문 안
+    # 호출이 부르는 함수의 본문을 뒤에 붙인다(`runner._auditor_source`). 결정 1-b를 넓히는 값이라
+    # 기본은 끈다. 2 이상은 아직 없다.
+    # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
+    # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
+    # 프롬프트 판을 같이 올려야 한다.
+    auditor_callee_hops: int = Field(default=0, ge=0, le=1)
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -653,6 +661,9 @@ class Thresholds(HarnessModel):
         dumped = self.model_dump()
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
+        # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
+        if not dumped["auditor_callee_hops"]:
+            dumped.pop("auditor_callee_hops")
         flat = {key: float(value) for key, value in dumped.items()}
         for level, tokens in nested.items():
             flat[f"capsule_budget_tokens.{level}"] = float(tokens)

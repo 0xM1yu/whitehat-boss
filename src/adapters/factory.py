@@ -168,6 +168,10 @@ class Deps:
     # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
+    # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
+    # 함수 본문을 붙이는 데 쓴다(`runner._auditor_source`). `symbols_for`와 같은 모양·같은 이유로
+    # 콜러블이고, 기본값 `None`("그래프 없음")이 이 필드 없이 조립된 `Deps`의 옛 동작을 지킨다.
+    callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
     # `--slices`로 준 슬라이스 → 타깃(ADR 0012 결정 1). `None`이면 슬라이스 없이 도는 run이고
     # 러너는 지금처럼 파일·심볼 타깃을 만든다. 빈 튜플("슬라이스 0개")과 섞지 않는다.
     slice_refs: tuple[SliceRef, ...] | None = None
@@ -526,6 +530,7 @@ def build_deps(
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
         symbols_for=graph.symbols_for,
+        callees_of=graph.callees_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
         # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의
