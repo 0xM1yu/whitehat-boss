@@ -2215,14 +2215,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
+    **싣는 순서·인덱스 밖 줄(#349 후속)** — `auditor_function_order`가 1이면 걸친 함수를 (파일, 줄)
+    대신 그 안을 지나는 슬라이스 줄이 많은 것부터 싣는다. `auditor_uncovered_window`가 N이면 어느
+    심볼에도 안 드는 슬라이스 줄을 앞뒤 N줄 창으로 묶어(`_uncovered_windows`) 함수와 같은 줄에서
+    싣는다 -- 순서 옵션이 켜져 있으면 창도 같은 중요도로 섞이고, 아니면 함수 뒤다. 창은 함수가
+    아니라 `functions`에 안 들고 `uncovered_windows`·`uncovered_windows_dropped`가 센다.
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
     """
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
-    spanned: dict[Location, None] = {}
+    # 심볼 → 그 안을 지나는 슬라이스 줄 수(`auditor_function_order`의 중요도)
+    spanned: dict[Location, int] = {}
     uncovered = 0
+    uncovered_at: list[tuple[str, int]] = []
     in_anchor = [ref.entry.line_start] if ref.entry.file == anchor.file else []
     for file, line in ref.lines:
         if file == anchor.file and _spans(anchor, line):
@@ -2231,8 +2239,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         symbol = _narrowest_symbol(symbols[file], line)
         if symbol is None:
             uncovered += 1
+            uncovered_at.append((file, line))
         else:
-            spanned[symbol] = None
+            spanned[symbol] = spanned.get(symbol, 0) + 1
     anchor_text = ctx.read_source(anchor)
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
@@ -2257,17 +2266,37 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
-    for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
+    window_lines = ctx.config.thresholds.auditor_uncovered_window
+    windows = _uncovered_windows(uncovered_at, window_lines) if window_lines else {}
+    by_relevance = ctx.config.thresholds.auditor_function_order
+    candidates = [(loc, n, False) for loc, n in spanned.items()]
+    candidates += [(loc, n, True) for loc, n in windows.items()]
+    if by_relevance:
+        # 상한이 찰 때 슬라이스 줄이 많이 지나간 것부터(#349 후속 — s500 저장소 전체 실측에서 함수
+        # 100~350개를 걸친 슬라이스가 (파일, 줄) 순으로 GT 함수를 밀어냈다). 같으면 (파일, 줄).
+        candidates.sort(key=lambda c: (-c[1], c[0].file, c[0].line_start or 0))
+    else:
+        candidates.sort(key=lambda c: (c[2], c[0].file, c[0].line_start or 0))
+    windows_added = windows_dropped = 0
+    for symbol, _, is_window in candidates:
+        if is_window and any(_overlaps(symbol, other) for other in seen):
+            continue
         seen.append(symbol)
         text = ctx.read_source(symbol)
         block = _block(symbol, text)
         if size + 1 + measure(block) > cap:
-            dropped += 1
+            if is_window:
+                windows_dropped += 1
+            else:
+                dropped += 1
             continue
         blocks.append(block)
         texts.append(text)
-        carried.append(symbol)
         size += 1 + measure(block)
+        if is_window:
+            windows_added += 1
+        else:
+            carried.append(symbol)
     with_definitions = ctx.config.thresholds.auditor_definitions
     definitions = definitions_dropped = 0
     if with_definitions:
@@ -2340,13 +2369,18 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks) - definitions - callers - windows_added,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=anchor_chars,
         **({"entry_omitted_lines": omitted, "entry_over_cap": over_cap} if trim_entry else {}),
         **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
+        **(
+            {"uncovered_windows": windows_added, "uncovered_windows_dropped": windows_dropped}
+            if window_lines
+            else {}
+        ),
         **(
             {"callers": callers, "callers_dropped": callers_dropped, "call_sites": call_sites}
             if caller_lines
@@ -2364,6 +2398,33 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         ),
     )
     return source
+
+
+def _uncovered_windows(lines: list[tuple[str, int]], pad: int) -> dict[Location, int]:
+    """어느 인덱스 심볼에도 안 드는 슬라이스 줄을 앞뒤 `pad`줄 창으로 묶는다(#349 후속). 같은
+    파일에서 창이 닿거나 겹치면 하나로 합친다. 값은 그 창이 품은 슬라이스 줄 수다(중요도
+    순서에 쓴다).
+
+    인덱서(tree-sitter)가 함수로 못 잡는 줄 -> 파싱 오류 파일(전처리 지시문), 매크로가 만드는 함수
+    (`KHASH_INIT`), C로 읽힌 C++ 헤더(s500 저장소 전체 실측, libucl·gifsicle). 그 줄은 지금까지
+    세기만 하고 안 실었다(`uncovered_lines`). 창 끝은 파일 끝을 넘을 수 있다 -- 읽기가 자른다.
+    """
+    out: dict[Location, int] = {}
+    by_file: dict[str, list[int]] = {}
+    for file, line in lines:
+        by_file.setdefault(file, []).append(line)
+    for file in sorted(by_file):
+        start = end = count = None
+        for line in sorted(set(by_file[file])):
+            if start is not None and line - pad <= end + 1:
+                end, count = line + pad, count + 1
+                continue
+            if start is not None:
+                out[Location(file=file, line_start=start, line_end=end)] = count
+            start, end, count = max(1, line - pad), line + pad, 1
+        if start is not None:
+            out[Location(file=file, line_start=start, line_end=end)] = count
+    return out
 
 
 def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:

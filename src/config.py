@@ -562,6 +562,8 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_source_tokens",
     "auditor_entry_trim",
     "auditor_caller_lines",
+    "auditor_function_order",
+    "auditor_uncovered_window",
 )
 
 
@@ -642,6 +644,15 @@ class Thresholds(HarnessModel):
     # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
     # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
+    # 상한이 찰 때 슬라이스가 걸친 함수를 무슨 순서로 싣는가(#349 후속). 0이면 지금처럼 (파일, 줄)
+    # 순이다. 1이면 그 안을 지나는 슬라이스 줄이 많은 함수부터 -- s500 저장소 전체 실측에서 함수
+    # 100~350개를 걸친 슬라이스가 (파일, 줄) 순으로 GT 함수를 밀어냈다. 위 ⚠와 같은 프롬프트 판
+    # 문제.
+    auditor_function_order: int = Field(default=0, ge=0, le=1)
+    # 어느 인덱스 심볼에도 안 드는 슬라이스 줄을 앞뒤 몇 줄 창으로 싣는가(#349 후속). 0이면 지금처럼
+    # 세기만 한다(`uncovered_lines`). 인덱서가 못 잡는 함수(파싱 오류·매크로가 만드는 함수·C로 읽힌
+    # C++ 헤더)의 줄을 겨냥한다(`runner._uncovered_windows`). **값은 안 정했다.** 위 ⚠와 같은 문제.
+    auditor_uncovered_window: int = Field(default=0, ge=0)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
         """켜진 Auditor `SOURCE` 옵션(#349) — 결정 1-b를 넓히는 값들. 프롬프트가 그 입력을

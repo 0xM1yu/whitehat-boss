@@ -235,7 +235,9 @@ class EventKind(StrEnum):
     # `entry_omitted_lines`(줄이며 뺀 줄 수 — 넘었어도 슬라이스 줄이 함수 전체에 퍼지면 0)가 더
     # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
     # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
-    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
+    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다. `auditor_uncovered_window`가 양수면
+    # `uncovered_windows`·`uncovered_windows_dropped`(인덱스 밖 슬라이스 줄을 묶은 창 중 붙인·상한에
+    # 못 붙인 수 — `functions`에는 안 든다)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
