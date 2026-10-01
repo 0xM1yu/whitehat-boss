@@ -3891,3 +3891,71 @@ def test_a_timeout_with_no_generation_still_stops_the_run(
         _, trace_path = _run(tmp_path, name=name, before=_with_index())
 
         assert _run_transition(trace_path)["data"]["reason"] == "model_gateway_unavailable", name
+
+
+
+def _with_definitions_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cli`가 읽는 설정에서 `auditor_definitions`만 켠다(#351 리뷰 MEDIUM-2)."""
+    real = cli.load_config
+
+    def load(profile: str, **kwargs: object):  # noqa: ANN202
+        config = real(profile, **kwargs)
+        return config.transition(
+            thresholds=config.thresholds.transition(auditor_definitions=1)
+        )
+
+    monkeypatch.setattr(cli, "load_config", load)
+
+
+def test_a_run_with_an_undescribed_auditor_source_option_refuses_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """켜진 Auditor SOURCE 옵션을 프롬프트 meta가 안 들면 run이 서지 않는다 — 프롬프트는 옛
+    SOURCE를 서술하는데 오류 없이 도는 것을 막는다(#351 리뷰 MEDIUM-2)."""
+
+    def _boom(*_: object, **__: object) -> None:
+        raise AssertionError("가드를 지나 실행에 들어왔다")
+
+    monkeypatch.setattr(cli, "execute", _boom)
+    _with_definitions_on(monkeypatch)
+    code = cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET), "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+    ])
+
+    err = capsys.readouterr().err
+    assert code == 2
+    assert [line for line in _errors(err) if "auditor_definitions" in line]
+    assert not (tmp_path / "arts").exists() or not list((tmp_path / "arts").iterdir())
+
+
+def test_a_run_that_stops_before_the_auditor_is_not_held_by_the_source_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auditor에 안 닿는 run(`--stop-after` 4)은 막지 않는다 — 어긋날 프롬프트를 안 부른다."""
+
+    class _Started(RuntimeError):
+        pass
+
+    def _boom(*_: object, **__: object) -> None:
+        raise _Started
+
+    monkeypatch.setattr(cli, "execute", _boom)
+    _with_definitions_on(monkeypatch)
+    with pytest.raises(_Started):
+        cli.main([
+            "run", "--profile", "dev_fake", "--target", str(TARGET), "--seed", "1",
+            "--stop-after", "4", "--artifacts-root", str(tmp_path / "arts"),
+        ])
+
+
+def test_doctor_errors_on_an_undescribed_auditor_source_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """doctor는 같은 어긋남을 ERROR로 댄다 — thresholds는 프로필 공통이라 설정 자체의 문제다.
+    옵션이 꺼진 기본 설정에는 그 줄이 없다."""
+    assert "source_options" not in _doctor_text("dev_fake", tmp_path)
+    _with_definitions_on(monkeypatch)
+    text = _doctor_text("dev_fake", tmp_path)
+    lines = [line for line in text.splitlines() if "source_options" in line]
+    assert lines and all(line.startswith("[ERROR") for line in lines)

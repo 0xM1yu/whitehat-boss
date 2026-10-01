@@ -135,6 +135,9 @@ agent:
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
+  ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
+  entry 줄이기). 전부 기본 꺼짐이라 위 서술 그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
+  `cli` run·doctor가 선다
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤

@@ -68,6 +68,7 @@ trace의 `graph_index` 이벤트가 된다.
 """
 
 import json
+import posixpath
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -446,7 +447,8 @@ class GraphIndex:
           그 호출이 어느 정의로 가는지 이름만으로 모른다
         - 대상 본문 안의 호출(재귀)은 뺀다 — 원문에 이미 있다
 
-        순서는 대상 파일이 먼저, 그다음 (파일, 줄)이다(결정론). 심볼 없는 대상은 `[]`다.
+        순서는 대상 파일 → 대상과 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄)이다(결정론 —
+        읽는 쪽이 앞 몇 개만 쓰므로 가까운 호출자가 먼저 온다 · #351 리뷰). 심볼 없는 대상은 `[]`다.
         """
         if self._load().status != STATUS_LOADED:
             return None
@@ -465,8 +467,15 @@ class GraphIndex:
             and not self._in_body(file, line, target)
             and (file == target.file or len(homes) == 1)
         }
+        here = posixpath.dirname(target.file)
         return sorted(
-            sites, key=lambda loc: (loc.file != target.file, loc.file, loc.line_start or 0)
+            sites,
+            key=lambda loc: (
+                loc.file != target.file,
+                posixpath.dirname(loc.file) != here,
+                loc.file,
+                loc.line_start or 0,
+            ),
         )
 
     # --- 본문 판정 -------------------------------------------------------

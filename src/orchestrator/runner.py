@@ -2151,6 +2151,8 @@ _AUDITOR_SOURCE_CHARS = 15_000
 # 검증·길이 계산·래퍼 함수를 겨냥한다 — 큰 함수 하나가 `_AUDITOR_SOURCE_CHARS`를 다 먹어 다른
 # 피호출 함수가 못 들어가는 것을 막는다. **정한 값이지 잰 값이 아니다** — s500 재측정에서 본다.
 _AUDITOR_CALLEE_CHARS = 4_000
+# ⚠ 이 상한과 아래 `_AUDITOR_DEFINITION_CHARS`는 `auditor_source_tokens`가 양수여도 **글자**다 —
+# 하나가 너무 큰지를 거르는 값이고, 전체 상한만 토큰으로 센다.
 
 # 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
 # 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
@@ -2160,6 +2162,14 @@ _AUDITOR_DEFINITION_CHARS = 2_000
 # 닫는 줄은 늘 남긴다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_ENTRY_CONTEXT_LINES = 20
 _AUDITOR_ENTRY_HEAD_LINES = 10
+# 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`_IDENT`)는 이 표시의 낱말을 안 본다.
+_OMITTED = "/* ... {} lines omitted ... */"
+_OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
+# 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)). 널리 불리는 함수면 호출 지점이
+# 수백이라 상한이 찬 뒤에도 지점마다 파일을 읽고 `callers_dropped`가 지점 수가 된다(#351 리뷰).
+# 순서는 `call_sites_of`가 정한다(같은 파일 → 같은 디렉터리 → 나머지). **정한 값이지 잰 값이
+# 아니다.**
+_AUDITOR_CALLER_SITES = 8
 # 실린 원문에서 이름을 뽑는 데 쓴다 — 파싱이 아니라 토큰 근사다. 키워드는 정의 조회에서 뺀다.
 _IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _C_KEYWORDS = frozenset(
@@ -2199,7 +2209,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
 
     **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 정의 뒤·피호출 함수 앞에, entry
-    함수를 부르는 호출 지점(`ctx.call_sites_of`) 앞뒤 N줄을 호출자 함수 범위 안으로 잘라 붙인다.
+    함수를 부르는 호출 지점(`ctx.call_sites_of`) 중 앞 `_AUDITOR_CALLER_SITES`개의 앞뒤 N줄을
+    호출자 함수 범위 안으로 잘라 붙인다. 찾은 지점 수는 `call_sites`가 든다.
     이미 실린 범위와 겹치면 안 붙인다(호출자가 슬라이스에 걸쳐 이미 실린 경우 포함). 창은 함수가
     아니라 `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
@@ -2232,27 +2243,36 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     anchor_chars = len(anchor_text)
     anchor_end = (anchor.line_start or 1) + anchor_text.count("\n")
     trim_entry = ctx.config.thresholds.auditor_entry_trim
+    # 「상한을 넘었다」와 「줄였다」를 가른다 — 슬라이스 줄이 함수 전체에 퍼지면 넘어도 뺄
+    # 줄이 0이다.
+    over_cap = bool(trim_entry) and measure(anchor_text) > cap
     omitted = 0
-    if trim_entry and measure(anchor_text) > cap:
+    if over_cap:
         anchor_text, omitted = _trim_entry(anchor, anchor_text, in_anchor)
     blocks = [_block(anchor, anchor_text, end=anchor_end)]
+    # 정의 조회가 읽는 원문 — 배너(`파일:줄`)와 뺀 구간 표시의 낱말은 코드가 아니다(#351 리뷰).
+    texts = [_OMITTED_LINE.sub("", anchor_text)]
     size, dropped = measure(blocks[0]), 0
     carried = [anchor]
+    # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
+    seen = [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
-        block = _block(symbol, ctx.read_source(symbol))
+        seen.append(symbol)
+        text = ctx.read_source(symbol)
+        block = _block(symbol, text)
         if size + 1 + measure(block) > cap:
             dropped += 1
             continue
         blocks.append(block)
+        texts.append(text)
         carried.append(symbol)
         size += 1 + measure(block)
-    seen = list(carried)
     with_definitions = ctx.config.thresholds.auditor_definitions
     definitions = definitions_dropped = 0
     if with_definitions:
         # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
         # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다.
-        used = {name for block in blocks for name in _IDENT.findall(block)} - _C_KEYWORDS
+        used = {name for text in texts for name in _IDENT.findall(text)} - _C_KEYWORDS
         for definition in ctx.definitions_of(used, anchor.file) or []:
             if any(_overlaps(definition, other) for other in seen):
                 continue
@@ -2268,9 +2288,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             size += 1 + measure(block)
             definitions += 1
     caller_lines = ctx.config.thresholds.auditor_caller_lines
-    callers = callers_dropped = 0
+    callers = callers_dropped = call_sites = 0
     if caller_lines and anchor.symbol:
-        for site in ctx.call_sites_of(anchor) or []:
+        sites = ctx.call_sites_of(anchor) or []
+        call_sites = len(sites)
+        for site in sites[:_AUDITOR_CALLER_SITES]:
             window = _caller_window(ctx, site, caller_lines)
             if any(_overlaps(window, other) for other in seen):
                 continue
@@ -2300,7 +2322,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 blocks.append(block)
                 size += 1 + measure(block)
                 callees += 1
-    source = "\n".join(blocks) if len(blocks) > 1 else anchor_text
+    # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
+    source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
         stage=Stage.AUDITOR,
@@ -2312,9 +2335,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=anchor_chars,
-        **({"entry_omitted_lines": omitted} if trim_entry else {}),
+        **({"entry_omitted_lines": omitted, "entry_over_cap": over_cap} if trim_entry else {}),
         **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
-        **({"callers": callers, "callers_dropped": callers_dropped} if caller_lines else {}),
+        **(
+            {"callers": callers, "callers_dropped": callers_dropped, "call_sites": call_sites}
+            if caller_lines
+            else {}
+        ),
         **(
             {"definitions": definitions, "definitions_dropped": definitions_dropped}
             if with_definitions
@@ -2345,7 +2372,8 @@ def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tu
     """상한을 넘는 entry 함수를 줄인다(#349 — `auditor_entry_trim`). 남기는 줄은 함수 머리(여는
     `{`가 나오는 줄까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안) · 닫는 줄 · `keep_lines`(entry 줄과
     이 함수 안 슬라이스 줄) 앞뒤 `_AUDITOR_ENTRY_CONTEXT_LINES`줄이다. 뺀 구간마다
-    `/* ... N lines omitted ... */` 한 줄을 남긴다 — 줄 번호는 배너 범위와 이 표시로 되짚는다.
+    `/* ... N lines omitted ... */` 한 줄을 남긴다 — 줄 번호는 배너 범위와 이 표시로 되짚는다
+    (줄였으면 함수가 하나여도 배너를 단다 — `_auditor_source`).
     돌려주는 것은 줄인 원문과 뺀 줄 수다. 줄여도 상한을 넘을 수 있다 — 더 줄이지 않는다.
     """
     lines = text.split("\n")
@@ -2365,7 +2393,7 @@ def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tu
     for i, line in enumerate(lines):
         if i in keep:
             if gap:
-                out.append(f"/* ... {gap} lines omitted ... */")
+                out.append(_OMITTED.format(gap))
                 omitted, gap = omitted + gap, 0
             out.append(line)
         else:
