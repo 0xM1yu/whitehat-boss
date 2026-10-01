@@ -13,7 +13,7 @@
 
 | 요구 | 없으면 | 하네스의 대응 |
 | --- | --- | --- |
-| Python 3.11+ | 아무것도 안 된다 | — |
+| Python 3.11.4+ | 아무것도 안 된다 | — |
 | OpenAI 호환 엔드포인트 (실서빙 프로필만) | `fake://` 프로필은 그대로 돈다 | 스킴이 어댑터를 고른다. `models.yaml`의 `endpoint` |
 | 컨테이너 런타임 (도구 프로필만) | `tool_runner: fake` 프로필은 그대로 돈다 | `doctor`가 PATH를 보고 WARN. `--tool-runner`로 갈아끼운다 |
 | GPU | 실서빙·도구 프로필만 필요 | `dev_fake`·`dev_hybrid`는 GPU 없이 0~9단계를 완주한다 |

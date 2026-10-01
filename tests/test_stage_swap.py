@@ -34,16 +34,20 @@ def _config(
 ) -> HarnessConfig:
     """`dev_fake`의 세 프롬프트 역할을 실서빙 모양의 키로 돌리고 교대를 선언한 config.
 
-    키는 `fake` 항목을 엔드포인트만 바꿔 복제한다 — 프롬프트 버전이 `dev_fake`와 같아야
-    Fake 클라이언트가 같은 답을 낸다.
+    키는 Fake 항목을 엔드포인트만 바꿔 복제한다 — 프롬프트 버전이 `dev_fake`와 같아야
+    Fake 클라이언트가 같은 답을 낸다. pov는 `dev_fake`가 `fake_v2`(v2 프롬프트)로 돌리므로
+    (툴 루프, prompts/pov/v2) pov 좌석만 `fake_v2`를 복제하고 나머지는 `fake`(v1)를 복제한다.
     """
     base = load_config("dev_fake")
     keys = keys or {"scout": SCOUT, "auditor": AUDITOR, "critic": CRITIC}
-    fake = base.models["fake"]
+    fake, fake_v2 = base.models["fake"], base.models["fake_v2"]
+    pov_key = keys.get("pov")
     served = {
-        key: fake.transition(endpoint=f"http://127.0.0.1:9/{key}")
+        key: (fake_v2 if key == pov_key else fake).transition(
+            endpoint=f"http://127.0.0.1:9/{key}"
+        )
         for key in set(keys.values())
-        if key != "fake"
+        if key not in ("fake", "fake_v2")
     }
     execution = ExecutionPolicy(
         mode="per_stage",
@@ -153,6 +157,29 @@ def test_swaps_follow_the_stages_that_call_models_and_end_with_a_teardown(
         (None, "", True),
     ]
     assert swaps[0]["report.models"] == SCOUT, "교대 명령의 보고가 report.* 로 실리지 않는다"
+
+
+def test_pov_swaps_in_at_the_validate_stage_when_declared_swappable(tmp_path: Path) -> None:
+    """pov를 swappable에 올린 프로필은 8단계(VALIDATE)에서 pov 모델로 교대한다 — Critic(7단계)
+    서버를 내리고 pov 서버를 띄운다((c) harness_pool의 8단계 슬롯 · PoV 배선 — 추가형).
+
+    pov를 swappable에 **안** 올린 위 검사(`test_swaps_follow_...`)는 8단계 교대가 0건이다 —
+    그 대조가 이 교대가 pov 선언에서만 나온다는 것을 보인다."""
+    pov_key = "served-pov"
+    config = _config(
+        swappable=("scout", "auditor", "critic", "pov"),
+        keys={"scout": SCOUT, "auditor": AUDITOR, "critic": CRITIC, "pov": pov_key},
+    )
+
+    _, _, rig = _run(tmp_path, config)
+
+    assert rig.swaps == [(SCOUT,), (AUDITOR,), (CRITIC,), (pov_key,), ()], (
+        "pov가 swappable인데 8단계 교대가 안 났다 — 러너가 _swap_for(VALIDATE)를 안 부른다"
+    )
+    # 교대가 **호출보다 먼저** 나야 한다 — 교대를 pov 루프 뒤로 옮기면 swaps 순서는 같아도
+    # pov가 Critic 서버 위에서 불려 miss가 난다(순서를 세지 않는 검사는 그 회귀를 놓친다).
+    assert ("pov", pov_key) in rig.calls, "pov 모델이 안 불렸다"
+    assert rig.misses == [], f"pov를 서버가 안 뜬 채 불렀다(교대가 호출 뒤였다): {rig.misses}"
 
 
 def test_resident_roles_stay_up_and_shared_or_fake_keys_are_swapped_once_or_not_at_all(
@@ -535,12 +562,17 @@ def test_every_model_call_finds_its_model_up(
 
 
 def test_the_role_declaration_names_every_stage_that_calls_a_model() -> None:
-    """선언 표가 3~6단계 표의 모델 단계(4·5)와 7단계를 든다 — 교대 코드가 `Stage`로 가르지 않고
-    이 표 하나만 읽는다."""
+    """선언 표가 4·5단계와 7단계, 그리고 pov를 부르는 8단계(VALIDATE)를 든다 — 교대 코드가
+    `Stage`로 가르지 않고 이 표 하나만 읽는다.
+
+    **8단계는 프로필이 pov 좌석을 선언할 때만 모델을 부른다**(추가형 라우팅 — ADR 0012 결정
+    아래 PoV 배선). 선언하지 않는 프로필에서는 러너가 `_run_pov`를 호출하지 않고, 설령
+    `_swap_for(VALIDATE)`가 불려도 `swap.swappable`에 pov가 없어 아무 서버도 안 띄운다."""
     assert set(runner._ROLES_CALLED) == {
         runner.Stage.SCOUT,
         runner.Stage.AUDITOR,
         runner.Stage.CRITIC,
+        runner.Stage.VALIDATE,
     }
 
 

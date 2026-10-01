@@ -601,7 +601,7 @@ def _refuse_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
 
     이 검사들이 보는 것은 라벨 게이트이지 서버가 아니다.
 
-    `harness_pool`은 실서빙 역할이 다섯이라 스텁이 없으면 역할마다 연결을 기다려 검사 하나에
+    `harness_pool`은 실서빙 역할이 여섯이라 스텁이 없으면 역할마다 연결을 기다려 검사 하나에
     10초가 넘게 걸렸다(2026-09-24 실측 — 옛 `single_gpu_12g`는 역할이 하나였다).
     """
     monkeypatch.setattr(bench, "fetch", lambda *a, **k: (None, "stub: 연결 거부"))

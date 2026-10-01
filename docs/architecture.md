@@ -103,7 +103,8 @@ graph LR
 > 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
 > (ATOM 스모크 전).)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
->   `prompts/auditor/v3/body.md`의 `representation: original source code`). 슬라이스 타깃이면 슬라이스가 걸친
+>   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
+>   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
 >   안에서 함수째 붙는다(`runner._auditor_source` — 파일 전체는 상한 없이 실려 막았다). 상한이 뺀 함수와 어느
@@ -226,10 +227,11 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > → [open-questions.md](open-questions.md) D18(닫힘)
 
 > ⚠ **위에서 「재현이 성공한(`ok=True`)」이라 부른 것은 「크래시했다」가 아니라 「도구가
-> 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`poc`)를 `ok=False`로
+> 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`gdb`·`poc`)를 `ok=False`로
 > 내리는 갈래는 셋이다 — 명령이 하나도 안 돈 경우, 빌드에서 끊긴 경우(`len(steps) < total`),
-> 띄우지도 못한 경우(`_EXEC_FAILED` = 125·126·127). **exit 0은 그 셋에 없다** — 깨끗이 끝난
-> 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 대상을 띄우지도 못한 경우(asan·poc는 종료 코드 `_EXEC_FAILED` = 125·126·127로, gdb는 stdout에
+> 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
+> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적는다. 그리고 `gate.evaluate()`의 `p4`는
 > `usable`(=`ev.ok`)과 `kind`만 보므로 `exit_code`가 판정에 들어가지 않는다.
 >
@@ -259,3 +261,9 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - LLM 기반 리포트 생성 에이전트 (템플릿 + 규칙으로 처리)
 - LLM 기반 dedupe 에이전트
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
+- CyberGym PoV — 외부 oracle 차분 검증과 실서빙 실측은 MVP 밖이다(서빙+도구 되는 호스트가 잡힌
+  뒤). PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` · `PovSpec`→`assemble_poc`)·러너 8단계 라우팅
+  (추가형)·feyospace 서빙 배선(§1 pov 좌석)은 들어왔다. 모델-주도 툴 루프(코드열람·Python·
+  ASan/디버거)의 착지 상태와 남은 일은 [agent-contracts.md](agent-contracts.md) §2.5가 든다.
+  **검증 벤치마크는 CyberGym Level 1로 결정됐다**(조민규, 2026-09-30 —
+  [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다).
