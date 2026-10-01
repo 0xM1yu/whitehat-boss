@@ -643,3 +643,58 @@ def test_the_harness_refuses_a_shard_fragment(monkeypatch, repo, tmp_path):
     run_shards(monkeypatch, repo, tmp_path, three_candidates(), 2)
     with pytest.raises(SliceInputError, match="샤드 조각"):
         load_slices(tmp_path / "shard0" / "slices.json")
+
+
+def test_a_file_symlink_is_skipped_not_fatal(monkeypatch, repo, tmp_path):
+    """#362: a file symlink is refused at read time (O_NOFOLLOW -> ELOOP). It used to count as a
+    failed read and `Cannot checkpoint incomplete source reads` voided the run (libmspack,
+    accel-ppp). Now it is skipped and counted like a directory symlink and the run goes on."""
+    linked = repo / "linked.c"
+    linked.write_text("int x;\n", encoding="utf-8")
+    is_link = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == linked or is_link(path))
+    real_read = slicer._read_no_follow
+
+    def refuse_links(path):  # what O_NOFOLLOW does to a real symlink
+        if path == linked:
+            raise OSError(40, "Too many levels of symbolic links")
+        return real_read(path)
+
+    monkeypatch.setattr(slicer, "_read_no_follow", refuse_links)
+    data = payloads(case_a=[candidate()], flow_count=2)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data, *checkpoint_options(tmp_path))
+    assert result["counters"]["files_symlink_skipped"] == 1
+    assert result["counters"]["files_read_failed"] == 0
+    assert "incomplete source reads" not in (result.get("error") or "")
+    assert "File symlink not read: linked.c" in result["error"]
+    assert result["slices"]
+
+
+def test_export_gives_unfinished_candidates_the_degraded_slice(monkeypatch, repo, tmp_path):
+    """#364: a merged export with a shard missing keeps every candidate. The missing shard's
+    candidate comes out as the anchor-only degraded slice an unsharded run would give it after a
+    poison streak, instead of vanishing. Still partial, still reported as unfinished."""
+    databases = run_shards(monkeypatch, repo, tmp_path, three_candidates(), 3)
+    merged = tmp_path / "merged.db"
+    merge_shards(merged, databases[:2])
+    with Checkpoint(merged, resume=True) as store:
+        candidates = store.get("candidates")
+    missing = candidates[2]
+    export = tmp_path / "export"
+    export.mkdir()
+    code, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert code == 2 and exported["status"] == "partial"
+    assert "unfinished candidates (1)" in exported["error"]
+    assert exported["counters"]["candidates_degraded"] == 1
+    # exported = processed: the completion metric must match an unsharded degraded run (#365)
+    assert exported["counters"]["candidates_not_processed"] == 0
+    keys = {k for s in exported["slices"] for k in s["members"]}
+    assert keys == {c["candidate_key"] for c in candidates}
+    entry = missing["entry"]
+    assert any(
+        {"file": entry["file"], "line": entry["line"]} in s["lines"]
+        for s in exported["slices"]
+        if missing["candidate_key"] in s["members"]
+    )
