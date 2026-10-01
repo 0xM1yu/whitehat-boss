@@ -613,7 +613,7 @@ class Slicer(SlicingStages):
                     dirs.remove(name)
                     self.increment("directories_skipped")
                     self.errors.append(
-                        f"Directory symlink not traversed: {path.relative_to(self.repo)}"
+                        f"Directory symlink not traversed: {path.relative_to(self.repo).as_posix()}"
                     )
             for name in sorted(files):
                 path = Path(directory) / name
@@ -625,7 +625,9 @@ class Slicer(SlicingStages):
                 # policy (never follow links in the audited repo) is unchanged, the run survives.
                 if path.is_symlink():
                     self.increment("files_symlink_skipped")
-                    self.errors.append(f"File symlink not read: {path.relative_to(self.repo)}")
+                    self.errors.append(
+                        f"File symlink not read: {path.relative_to(self.repo).as_posix()}"
+                    )
                     continue
                 paths.append(path)
         self.measure("files_seen", len(paths))

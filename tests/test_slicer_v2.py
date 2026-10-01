@@ -645,7 +645,6 @@ def test_the_harness_refuses_a_shard_fragment(monkeypatch, repo, tmp_path):
         load_slices(tmp_path / "shard0" / "slices.json")
 
 
-
 def test_a_file_symlink_is_skipped_not_fatal(monkeypatch, repo, tmp_path):
     """#362: a file symlink is refused at read time (O_NOFOLLOW -> ELOOP). It used to count as a
     failed read and `Cannot checkpoint incomplete source reads` voided the run (libmspack,
@@ -689,6 +688,8 @@ def test_export_gives_unfinished_candidates_the_degraded_slice(monkeypatch, repo
     assert code == 2 and exported["status"] == "partial"
     assert "unfinished candidates (1)" in exported["error"]
     assert exported["counters"]["candidates_degraded"] == 1
+    # exported = processed: the completion metric must match an unsharded degraded run (#365)
+    assert exported["counters"]["candidates_not_processed"] == 0
     keys = {k for s in exported["slices"] for k in s["members"]}
     assert keys == {c["candidate_key"] for c in candidates}
     entry = missing["entry"]
