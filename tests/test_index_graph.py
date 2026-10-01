@@ -1167,3 +1167,62 @@ def test_call_sites_of_finds_calls_into_the_target(tmp_path: Path) -> None:
 def test_call_sites_of_is_none_without_a_graph(tmp_path: Path) -> None:
     target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
     assert _graph(tmp_path, None).call_sites_of(target) is None
+
+
+
+def test_call_sites_of_orders_same_file_then_same_directory_then_the_rest(
+    tmp_path: Path,
+) -> None:
+    """읽는 쪽이 앞 몇 개만 쓰므로 가까운 호출자가 먼저다(#351 리뷰 — 경로 알파벳순이던 것)."""
+    doc = {
+        "version": "index-v1",
+        "files": ["lib/x.c", "lib/y.c", "a/b.c", "z.c"],
+        "skipped": [],
+        "symbols": [{"name": "t", "file": "lib/x.c", "line_start": 1, "line_end": 3}],
+        "calls": [
+            {"caller": "m", "callee": "t", "file": "a/b.c", "line": 4},
+            {"caller": "m", "callee": "t", "file": "z.c", "line": 2},
+            {"caller": "m", "callee": "t", "file": "lib/y.c", "line": 9},
+            {"caller": "m", "callee": "t", "file": "lib/x.c", "line": 20},
+        ],
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+    target = Location(file="lib/x.c", symbol="t", line_start=1, line_end=3)
+
+    found = _graph(tmp_path, doc).call_sites_of(target)
+
+    assert [loc.file for loc in found] == ["lib/x.c", "lib/y.c", "a/b.c", "z.c"]
+
+
+def test_callees_of_orders_by_the_first_call_even_when_rows_come_later(tmp_path: Path) -> None:
+    """같은 callee의 호출이 여럿이면 가장 이른 줄로 정렬한다 — 행 순서가 아니다(`min` 분기)."""
+    doc = {
+        **_CALLEE_INDEX,
+        "calls": [
+            {"caller": "entry", "callee": "only_b", "file": "a.c", "line": 8},
+            {"caller": "entry", "callee": "helper", "file": "a.c", "line": 5},
+            {"caller": "entry", "callee": "only_b", "file": "a.c", "line": 2},
+        ],
+    }
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+
+    found = _graph(tmp_path, doc).callees_of(target)
+
+    assert [loc.symbol for loc in found] == ["only_b", "helper"]
+
+
+def test_definitions_of_takes_the_first_table_that_has_the_name(tmp_path: Path) -> None:
+    """같은 이름이 매크로와 타입 둘 다에 있으면 `DEFINITION_TABLES` 순서(매크로 먼저)로 정한다."""
+    doc = {
+        **_INDEX_V2,
+        "macros": {"BOTH": [{"file": "parser.c", "line_start": 1, "line_end": 1}]},
+        "types": {
+            "BOTH": [{"file": "parser.c", "line_start": 7, "line_end": 9, "kind": "struct"}]
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["BOTH"], "parser.c")
+
+    assert found == [Location(file="parser.c", symbol="BOTH", line_start=1, line_end=1)]
