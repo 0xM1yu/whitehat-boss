@@ -3,12 +3,12 @@
     python tools/merge_slicer_shards.py [--claim-db claims.db] merged.db shard0.db shard1.db ...
     python slicer.py --repo ... --out slices.json --checkpoint merged.db --export-only
 
-Refuses shards whose run contract, EngineConfig or candidate list differ. Prints how many
-candidates are complete and exits 2 when some are not (a shard is missing, crashed or still
-running) -- --export-only would then report them as unfinished. Each incomplete candidate key is
-listed on stderr; with --claim-db (the shards' shared queue) also the shard that claimed it and
-when. Such a candidate is re-sliced only by `--resume` of that same I/N shard (no other shard
-takes a claimed candidate), then merge again.
+Refuses shards whose run contract, EngineConfig, candidate list or prepared CPG (#368)
+differ. Prints how many candidates are complete and exits 2 when some are not (a shard is
+missing, crashed or still running) -- --export-only would then report them as unfinished. Each
+incomplete candidate key is listed on stderr; with --claim-db (the shards' shared queue) also the
+shard that claimed it and when. Such a candidate is re-sliced only by `--resume` of that same I/N
+shard (no other shard takes a claimed candidate), then merge again.
 """
 
 import json

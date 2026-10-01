@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
-from test_slicer import candidate, make_slice, payloads, response, run_cli
+from test_slicer import MockTransport, candidate, make_slice, payloads, response, run_cli
 
 import slicer
 import slicer_pipeline
@@ -702,12 +702,21 @@ def test_export_gives_unfinished_candidates_the_degraded_slice(monkeypatch, repo
     )
 
 
-def _prepare(monkeypatch, repo, tmp_path, data):  # noqa: ANN001, ANN202
-    """#368: one `--prepare-only` run -> (checkpoint, saved CPG path, result, transport)."""
+def _saving(cpg: Path, content: bytes = b"saved-graph"):  # noqa: ANN202
+    """Stand-in for Joern's `save` + copy: writes the graph the query names, reports its size."""
+    def save(query):  # noqa: ANN001, ANN202
+        assert cpg.resolve().as_posix() in query
+        cpg.write_bytes(content)
+        return response("save_cpg", {"saved": True, "bytes": len(content)})
+    return save
+
+
+def _prepare(monkeypatch, repo, tmp_path, data, *, save=None):  # noqa: ANN001, ANN202
+    """#368: one `--prepare-only` run -> (checkpoint, saved CPG path, code, result, transport)."""
     folder = tmp_path / "prep"
     folder.mkdir(parents=True)
-    data["save_cpg"] = response("save_cpg", {"saved": True, "bytes": 123})
     cpg = folder / "cpg.bin"
+    data["save_cpg"] = _saving(cpg) if save is None else save
     code, result, transport = run_cli(
         monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
         "--prepare-only", "--cpg-out", str(cpg),
@@ -715,71 +724,159 @@ def _prepare(monkeypatch, repo, tmp_path, data):  # noqa: ANN001, ANN202
     return folder / "state.db", cpg, code, result, transport
 
 
+def _seed(state: Path, folder: Path) -> Path:
+    """Copy the prepared checkpoint as one shard's starting state."""
+    import shutil
+
+    folder.mkdir(parents=True)
+    shutil.copy(state, folder / "state.db")
+    return folder / "state.db"
+
+
+def _shard_on(monkeypatch, repo, folder, cpg, *extra):  # noqa: ANN001, ANN202
+    """A shard on the prepared graph; case_a/case_b are absent, so a rediscovery would fail."""
+    data = three_candidates()
+    del data["case_a"], data["case_b"]
+    return run_cli(
+        monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+        "--resume", "--cpg", str(cpg), *extra,
+    )
+
+
 def test_prepare_only_discovers_once_and_saves_the_graph(monkeypatch, repo, tmp_path):
-    """#368: the prepare run parses and discovers, saves the CPG, and slices nothing."""
+    """#368: the prepare run parses and discovers, saves the CPG, and slices nothing. The
+    `prepared` record (size+SHA-256 the client read back) is written only after the save."""
     state, cpg, code, result, transport = _prepare(monkeypatch, repo, tmp_path, three_candidates())
     assert code == 2 and result["status"] == "partial"
+    assert result["prepare_only"] is True
     assert "Prepare-only" in result["error"]
     assert {"import", "case_a", "case_b", "save_cpg"} <= set(transport.stages)
     assert not {"flows", "backward", "context"} & set(transport.stages)
-    assert result["prepared_cpg"] == {"path": cpg.resolve().as_posix(), "bytes": 123}
-    save = [q for q in (json.loads(r.data)["query"] for r, _ in transport.requests)
-            if '"__SLICER_save_cpg__"' in q]
-    assert len(save) == 1 and cpg.resolve().as_posix() in save[0]
+    content = cpg.read_bytes()
+    expected = {
+        "path": cpg.resolve().as_posix(),
+        "server_bytes": len(content),
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "cpg_seconds": result["counters"]["cpg_seconds"],
+    }
+    assert result["prepared_cpg"] == expected
     with Checkpoint(state, resume=True) as store:
         assert len(store.get("candidates")) == 3
         assert store.get("baseline") is not None
+        assert "prepare_only" not in store.get("baseline")["result"]
+        assert store.get("prepared") == expected
         assert not list(store.conn.execute("SELECT candidate_key FROM stages"))
+
+
+def test_the_harness_refuses_a_prepare_only_result(monkeypatch, repo, tmp_path):
+    """#371 review: the prepare output is `partial` + `slices: []` + no `shard` -- without the
+    marker the loader read it as a finished run with zero slices."""
+    from src.adapters.slices import SliceInputError, load_slices
+
+    _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    with pytest.raises(SliceInputError, match="--prepare-only"):
+        load_slices(tmp_path / "prep" / "slices.json")
+
+
+@pytest.mark.parametrize("name", ['quote"d', "back\\slash", "unié"])
+def test_cpg_paths_reach_scala_as_one_exact_literal(name):
+    """A path goes through `literal`, not pasted between quotes: a `"` or `\\` in it must not
+    end the Scala string early or change the path Joern writes/reads."""
+    path = f"/work/prep/{name}/cpg.bin"
+    for query in (queries.save_cpg_query(path), queries.import_cpg_query(path, "p")):
+        assert path in [json.loads(s) for s in SCALA_STRING.findall(query)]
 
 
 def test_shards_on_a_prepared_graph_skip_parsing_and_discovery(monkeypatch, repo, tmp_path):
     """#368: a shard on a copy of the prepared checkpoint loads the saved CPG (importCpg, not
     importCode) and never re-runs discovery -- case_a/case_b are absent from its mock, so a
     rerun would fail. Merged and exported, the shards give exactly the one-run slices."""
-    import shutil
-
     whole = tmp_path / "whole"
     whole.mkdir()
     _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates())
     state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
     databases = []
     for index in range(2):
-        folder = tmp_path / f"seeded{index}"
-        folder.mkdir()
-        shutil.copy(state, folder / "state.db")
-        databases.append(folder / "state.db")
-        data = three_candidates()
-        del data["case_a"], data["case_b"]
-        code, result, transport = run_cli(
-            monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
-            "--resume", "--cpg", str(cpg), "--shard", f"{index}/2",
+        databases.append(_seed(state, tmp_path / f"seeded{index}"))
+        code, result, transport = _shard_on(
+            monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2"
         )
         assert code == 2 and result["shard"] == {"index": index, "count": 2}
+        assert "prepare_only" not in result
         assert not {"case_a", "case_b"} & set(transport.stages)
         imports = [q for q in (json.loads(r.data)["query"] for r, _ in transport.requests)
                    if '"__SLICER_import__"' in q]
         assert len(imports) == 1 and "importCpg(" in imports[0] and "importCode" not in imports[0]
     merged = tmp_path / "merged.db"
     assert merge_shards(merged, databases) == {"shards": 2, "candidates": 3, "complete": 3}
+    with Checkpoint(merged, resume=True) as store:
+        # #371 review: every seed carries the prepare's attempt -- it is one attempt, not two.
+        assert len(store.attempts()) == 3
     export = tmp_path / "export"
     export.mkdir()
     _, exported, _ = run_cli(
         monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
     )
     assert exported["status"] == "ok"
+    assert "prepare_only" not in exported
     assert exported["slices"] == single["slices"]
 
 
-@pytest.mark.parametrize("extra", [
-    ["--prepare-only"],                                       # no --cpg-out
-    ["--prepare-only", "--cpg-out", "x.bin", "--shard", "0/2"],
-    ["--cpg-out", "x.bin"],                                   # without --prepare-only
-    ["--cpg", "x.bin"],                                       # without --resume
+def test_a_shard_keeps_its_own_cpg_time_and_server(monkeypatch, repo, tmp_path):
+    """#371 review: the discovery (counters, errors) is the prepare's, but `server` and
+    `cpg_seconds` are this shard's own measurements -- the prepare's parse time must not be
+    reported as the shard's. Sentinels in the seed tell the two apart."""
+    state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    seeded = _seed(state, tmp_path / "seeded")
+    with Checkpoint(seeded, resume=True) as store:
+        baseline = store.get("baseline")
+        baseline["result"]["counters"]["cpg_seconds"] = 12345.0
+        baseline["result"]["counters"]["candidates_case_a"] = 777
+        baseline["result"]["server"] = {"sentinel": "prepare"}
+        baseline["errors"].append("sentinel prepare warning")
+        store.set("baseline", baseline)
+    _, result, _ = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert result["counters"]["candidates_case_a"] == 777
+    assert "sentinel prepare warning" in result["error"]
+    assert result["server"] != {"sentinel": "prepare"}
+    assert result["counters"]["cpg_seconds"] != 12345.0
+    assert result["prepared_cpg"]["sha256"] == hashlib.sha256(cpg.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(("extra", "message"), [
+    (["--prepare-only", "{ck}"], "--prepare-only needs"),                     # no --cpg-out
+    (["--prepare-only", "--cpg-out", "{out}"], "--prepare-only needs"),       # no --checkpoint
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--shard", "0/2"], "--prepare-only needs"),
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--resume"], "--prepare-only needs"),
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--export-only"], "--prepare-only needs"),
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--cpg", "{cpg}"], "--prepare-only needs"),
+    (["--cpg-out", "{out}", "{ck}"], "--cpg-out only goes"),
+    (["--cpg", "{cpg}", "{ck}"], "--cpg needs"),                              # without --resume
+    (["--cpg", "{cpg}", "{ck}", "--resume", "--export-only"], "--cpg needs"),
+    (["--cpg", "{out}", "{ck}", "--resume"], "--cpg is not a file"),
+    (["--prepare-only", "--cpg-out", "{out}", "--checkpoint", "{cpg}"], "needs a new --checkpoint"),
+    (["--prepare-only", "--cpg-out", "{cpg}", "{ck}"], "--cpg-out exists"),
+    (["--prepare-only", "--cpg-out", "{state}", "{ck}"], "must be distinct"),
+    (["--cpg", "{cpg}", "--checkpoint", "{cpg}", "--resume"], "must be distinct"),
 ])
-def test_prepared_graph_options_are_refused_when_inconsistent(repo, tmp_path, extra):
+def test_prepared_graph_options_are_refused_when_inconsistent(
+    monkeypatch, repo, tmp_path, capsys, extra, message
+):
+    """Each combination is refused by its own check (the message), before any Joern request."""
+    cpg = tmp_path / "existing.bin"
+    cpg.write_bytes(b"graph")
+    state = tmp_path / "state.db"
+    names = {"{out}": str(tmp_path / "new.bin"), "{cpg}": str(cpg), "{state}": str(state)}
+    argv = []
+    for item in extra:
+        argv += ["--checkpoint", str(state)] if item == "{ck}" else [names.get(item, item)]
+    transport = MockTransport({})
+    monkeypatch.setattr(slicer, "urlopen", transport)
     with pytest.raises(SystemExit):
-        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
-                     "--checkpoint", str(tmp_path / "state.db"), *extra])
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), *argv])
+    assert message in capsys.readouterr().err
+    assert transport.stages == [] and not state.exists()
 
 
 def test_a_shard_on_a_checkpoint_without_discovery_fails(monkeypatch, repo, tmp_path):
@@ -790,18 +887,76 @@ def test_a_shard_on_a_checkpoint_without_discovery_fails(monkeypatch, repo, tmp_
     data["case_a"] = response("case_a", [], success=False)
     state, cpg, _, prepared, _ = _prepare(monkeypatch, repo, tmp_path, data)
     assert "Prepare-only" not in (prepared.get("error") or "")
-    seeded = tmp_path / "seeded"
-    seeded.mkdir()
-    import shutil
-
-    shutil.copy(state, seeded / "state.db")
-    code, result, transport = run_cli(
-        monkeypatch, repo, seeded, three_candidates(), "--checkpoint", str(seeded / "state.db"),
-        "--resume", "--cpg", str(cpg),
-    )
+    assert not cpg.exists()
+    cpg.write_bytes(b"some graph")
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
     assert code != 0
     assert "--prepare-only" in result["error"]
-    assert not {"case_a", "case_b", "flows"} & set(transport.stages)
+    assert transport.stages == []
+
+
+def test_a_seed_whose_save_failed_is_refused(monkeypatch, repo, tmp_path):
+    """#371 review: discovery is committed before `save_cpg`, so a prepare whose save failed
+    leaves baseline+candidates. Without the `prepared` record a shard accepted that seed."""
+    state, cpg, code, prepared, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(),
+        save=response("save_cpg", {}, success=False),
+    )
+    assert code != 0 and "Prepare-only" not in prepared["error"]
+    with Checkpoint(state, resume=True) as store:
+        assert store.get("candidates") is not None and store.get("prepared") is None
+    cpg.write_bytes(b"a graph from somewhere else")
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "'prepared' record" in result["error"]
+    assert transport.stages == []
+
+
+def test_a_cpg_that_is_not_the_prepared_one_is_refused(monkeypatch, repo, tmp_path):
+    """#371 review: same path, other bytes (rewritten, or another prepare's) -> refused before
+    any Joern request instead of slicing a graph the candidate list was not discovered on."""
+    state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    cpg.write_bytes(cpg.read_bytes() + b"!")
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "is not the CPG the prepare run saved" in result["error"]
+    assert transport.stages == []
+
+
+def test_an_unhashed_prepared_cpg_is_said_and_refused(monkeypatch, repo, tmp_path):
+    """The client could not read what Joern saved (another host): the prepare says so and leaves
+    bytes/sha256 null (unmeasured, not guessed), and a shard refuses what it cannot verify."""
+    def remote(query):  # noqa: ANN001, ANN202
+        return response("save_cpg", {"saved": True, "bytes": 99})
+
+    state, cpg, _, prepared, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(), save=remote
+    )
+    assert prepared["prepared_cpg"]["sha256"] is None
+    assert prepared["prepared_cpg"]["bytes"] is None
+    assert prepared["prepared_cpg"]["server_bytes"] == 99
+    assert "prepared_cpg" in prepared["measurement_notes"]
+    assert "not readable from this client" in prepared["error"]
+    cpg.write_bytes(b"x" * 99)
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "no SHA-256" in result["error"]
+    assert transport.stages == []
+
+
+def test_shards_of_two_different_prepares_do_not_merge(monkeypatch, repo, tmp_path):
+    """Same repo, same candidate list, but two prepared graphs: their stages were sliced on
+    different CPGs, so merging them is refused like any other cross-run merge."""
+    databases = []
+    for index in range(2):
+        state, cpg, _, _, _ = _prepare(
+            monkeypatch, repo, tmp_path / f"run{index}", three_candidates()
+        )
+        databases.append(_seed(state, tmp_path / f"seeded{index}"))
+        _shard_on(monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2")
+    with pytest.raises(ValueError, match="Shard mismatch on prepared"):
+        merge_shards(tmp_path / "merged.db", databases)
 
 
 def _claim_shard(monkeypatch, repo, tmp_path, data, index, count, claims):  # noqa: ANN001, ANN202
