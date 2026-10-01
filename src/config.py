@@ -611,11 +611,16 @@ class Thresholds(HarnessModel):
     auditor_definitions: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE` 상한을 토큰으로(#349 (c)). 0이면 지금처럼 글자 상한
     # (`runner._AUDITOR_SOURCE_CHARS` 15,000)이다. 양수면 Auditor 모델 토크나이저(없으면 글자
-    # 근사)로 센 토큰이 이 값을 넘지 않게 함수·정의를 넣는다. entry 함수는 여전히 상한 밖이다.
+    # 근사)로 센 토큰이 이 값을 넘지 않게 함수·정의를 넣는다. entry 함수는 여전히 상한 밖이다
+    # (아래 `auditor_entry_trim`이 0일 때).
     # **값은 아직 안 정했다** — 저장소 전체 실측에서 효과가 더 늘지 않는 가장 작은 값을 고른다
     # (#349). 2026-10-01 s500 handoff 코드의 글자/토큰 비는 중앙값 3.04(Qwen3.8-27B 토크나이저)
     # — 15,000자 ≈ 4,900토큰.
     auditor_source_tokens: int = Field(default=0, ge=0)
+    # entry 함수가 위 상한을 넘으면 줄이는가(#349). 0이면 지금처럼 entry 함수는 상한 밖이다(통째로
+    # 실림 — s500 handoff에서 최대 입력 155,280토큰). 1이면 함수 머리·닫는 줄·entry 줄과 슬라이스
+    # 줄 앞뒤만 남기고 뺀 구간을 표시한다(`runner._trim_entry`). 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_entry_trim: int = Field(default=0, ge=0, le=1)
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -676,7 +681,12 @@ class Thresholds(HarnessModel):
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
         # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
-        for key in ("auditor_callee_hops", "auditor_definitions", "auditor_source_tokens"):
+        for key in (
+            "auditor_callee_hops",
+            "auditor_definitions",
+            "auditor_source_tokens",
+            "auditor_entry_trim",
+        ):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}

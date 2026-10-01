@@ -1118,7 +1118,8 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
-                auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap)),
+                auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
+                auditor_entry_trim=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1130,3 +1131,76 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
     assert (event["functions"], event["dropped"], event["token_counter"]) == (2, 0, "model")
     _, event = source_for(both - 1)
     assert (event["functions"], event["dropped"]) == (1, 1)
+
+
+def _trim_source(trim: int, cap: int, helper: bool = False) -> tuple[str, dict]:
+    """#349 entry 함수 줄이기: 200줄 entry 함수(머리 2줄 · 몸통 · 닫는 줄), 슬라이스 줄 100 하나.
+    상한은 단어 수(모델 카운터 자리)로 센다."""
+    import types
+
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+
+    body = ["int big(int n)", "{"] + [f"    step({i});" for i in range(3, 200)] + ["}"]
+    entry = Location(file="big.c", symbol="big", line_start=1, line_end=200)
+    small = Location(file="big.c", symbol="small", line_start=201, line_end=203)
+    texts = {1: "\n".join(body), 201: "int small(void)\n{ return 0; }\n"}
+    events: list[dict] = []
+    ctx = types.SimpleNamespace(
+        symbols_for=lambda _file: [entry, small],
+        read_source=lambda loc: texts[loc.line_start],
+        callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
+        counter_for_role=lambda role: (lambda text: len(text.split())),
+        config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+            auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
+            auditor_entry_trim=trim)),
+        trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
+    )
+    ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
+                   entry=Location(file="big.c", line_start=100),
+                   lines=(("big.c", 100),) + ((("big.c", 202),) if helper else ()),
+                   degraded=False)
+    return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+
+def test_entry_trim_off_keeps_an_entry_function_over_the_cap_whole() -> None:
+    """기본(0)이면 entry 함수는 상한 밖 — 200줄 그대로이고 이벤트에 `entry_omitted_lines`가 없다."""
+    source, event = _trim_source(0, 10)
+    assert source.count("\n") == 199
+    assert "entry_omitted_lines" not in event
+
+
+def test_entry_trim_keeps_the_head_the_slice_neighbourhood_and_the_closing_brace() -> None:
+    """켜고 상한을 넘으면 머리(`{`까지 2줄) · 100번 줄 앞뒤 20줄 · 닫는 줄만 남고 뺀 구간마다
+    표시가 한 줄씩 남는다."""
+    from src.orchestrator import runner
+
+    source, event = _trim_source(1, 10)
+    lines = source.split("\n")
+    w = runner._AUDITOR_ENTRY_CONTEXT_LINES
+    kept = 2 + (2 * w + 1) + 1
+    assert lines[:2] == ["int big(int n)", "{"]
+    assert lines[-1] == "}"
+    assert "    step(100);" in lines
+    assert f"    step({100 - w});" in lines and f"    step({100 - w - 1});" not in lines
+    assert f"    step({100 + w});" in lines and f"    step({100 + w + 1});" not in lines
+    assert lines[2] == f"/* ... {100 - w - 3} lines omitted ... */"
+    assert event["entry_omitted_lines"] == 200 - kept
+    assert len(lines) == kept + 2
+    assert event["anchor_chars"] > len(source)
+
+
+def test_entry_trim_leaves_an_entry_function_under_the_cap_alone() -> None:
+    """켜도 상한 안이면 줄이지 않는다 — `entry_omitted_lines`는 0."""
+    source, event = _trim_source(1, 10_000)
+    assert source.count("\n") == 199
+    assert event["entry_omitted_lines"] == 0
+
+
+def test_a_trimmed_entry_keeps_its_original_line_range_in_the_banner() -> None:
+    """줄인 entry 함수 뒤에 함수가 붙으면 배너는 줄이기 전 범위(1-200)다 — 줄인 줄 수로 세면
+    1-46이 되어 뒤 함수와 줄 번호가 어긋난다. 줄여서 남은 자리에 `small`이 들어간다."""
+    source, event = _trim_source(1, 150, helper=True)
+    assert source.startswith("/* ===== big.c:1-200 ===== */\n")
+    assert "/* ===== big.c:201-203 ===== */" in source
+    assert (event["functions"], event["dropped"], event["entry_omitted_lines"]) == (2, 0, 156)

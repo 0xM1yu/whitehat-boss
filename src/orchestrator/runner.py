@@ -2152,6 +2152,11 @@ _AUDITOR_CALLEE_CHARS = 4_000
 # 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
 # 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_DEFINITION_CHARS = 2_000
+# entry 함수를 줄일 때(#349 — `auditor_entry_trim`이 1이고 entry 함수가 상한을 넘을 때만) 슬라이스
+# 줄·entry 줄 앞뒤로 남기는 줄 수. 함수 머리(여는 `{`까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안)와
+# 닫는 줄은 늘 남긴다. **정한 값이지 잰 값이 아니다.**
+_AUDITOR_ENTRY_CONTEXT_LINES = 20
+_AUDITOR_ENTRY_HEAD_LINES = 10
 # 실린 원문에서 이름을 뽑는 데 쓴다 — 파싱이 아니라 토큰 근사다. 키워드는 정의 조회에서 뺀다.
 _IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _C_KEYWORDS = frozenset(
@@ -2181,6 +2186,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     않으므로 **보이게만 한다** — `anchor_chars`가 entry 함수 혼자의 크기다(#289 리뷰 LOW-2).
     `chars`만으로는 함수가 둘 이상일 때 entry 혼자 때문인지 합 때문인지 안 갈린다. entry 함수에도
     상한을 둘지는 이 이벤트가 실서빙에서 내는 값을 보고 정한다.
+    ⏵ `auditor_entry_trim`이 1이면 entry 함수가 상한을 넘을 때 줄인다(`_trim_entry`) — 그때
+    `entry_omitted_lines`가 뺀 줄 수를 들고, `anchor_chars`는 줄이기 전 크기 그대로다.
 
     **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
     안 호출이 부르는 함수의 본문(`ctx.callees_of`)을 붙인다. entry 함수의 피호출 함수가 먼저,
@@ -2196,8 +2203,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
     spanned: dict[Location, None] = {}
     uncovered = 0
+    in_anchor = [ref.entry.line_start] if ref.entry.file == anchor.file else []
     for file, line in ref.lines:
         if file == anchor.file and _spans(anchor, line):
+            in_anchor.append(line)
             continue
         symbol = _narrowest_symbol(symbols[file], line)
         if symbol is None:
@@ -2205,7 +2214,6 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         else:
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
-    blocks = [_block(anchor, anchor_text)]
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
     # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
@@ -2213,6 +2221,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     model_counter = ctx.counter_for_role(Role.AUDITOR.value) if token_cap else None
     measure = (model_counter or estimate_tokens) if token_cap else len
     cap = token_cap or _AUDITOR_SOURCE_CHARS
+    anchor_chars = len(anchor_text)
+    anchor_end = (anchor.line_start or 1) + anchor_text.count("\n")
+    trim_entry = ctx.config.thresholds.auditor_entry_trim
+    omitted = 0
+    if trim_entry and measure(anchor_text) > cap:
+        anchor_text, omitted = _trim_entry(anchor, anchor_text, in_anchor)
+    blocks = [_block(anchor, anchor_text, end=anchor_end)]
     size, dropped = measure(blocks[0]), 0
     carried = [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
@@ -2273,7 +2288,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
-        anchor_chars=len(anchor_text),
+        anchor_chars=anchor_chars,
+        **({"entry_omitted_lines": omitted} if trim_entry else {}),
         **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
         **(
             {"definitions": definitions, "definitions_dropped": definitions_dropped}
@@ -2287,6 +2303,38 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         ),
     )
     return source
+
+
+def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tuple[str, int]:
+    """상한을 넘는 entry 함수를 줄인다(#349 — `auditor_entry_trim`). 남기는 줄은 함수 머리(여는
+    `{`가 나오는 줄까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안) · 닫는 줄 · `keep_lines`(entry 줄과
+    이 함수 안 슬라이스 줄) 앞뒤 `_AUDITOR_ENTRY_CONTEXT_LINES`줄이다. 뺀 구간마다
+    `/* ... N lines omitted ... */` 한 줄을 남긴다 — 줄 번호는 배너 범위와 이 표시로 되짚는다.
+    돌려주는 것은 줄인 원문과 뺀 줄 수다. 줄여도 상한을 넘을 수 있다 — 더 줄이지 않는다.
+    """
+    lines = text.split("\n")
+    start = anchor.line_start or 1
+    head = next(
+        (i for i, line in enumerate(lines[:_AUDITOR_ENTRY_HEAD_LINES]) if "{" in line), 0
+    )
+    keep = set(range(head + 1)) | {len(lines) - 1}
+    for line in keep_lines:
+        if line is not None:
+            at = line - start
+            keep |= set(
+                range(at - _AUDITOR_ENTRY_CONTEXT_LINES, at + _AUDITOR_ENTRY_CONTEXT_LINES + 1)
+            )
+    out: list[str] = []
+    omitted = gap = 0
+    for i, line in enumerate(lines):
+        if i in keep:
+            if gap:
+                out.append(f"/* ... {gap} lines omitted ... */")
+                omitted, gap = omitted + gap, 0
+            out.append(line)
+        else:
+            gap += 1
+    return "\n".join(out), omitted
 
 
 def _overlaps(a: Location, b: Location) -> bool:
@@ -2314,11 +2362,12 @@ def _spans(location: Location, line: int) -> bool:
     return start is not None and start <= line <= (location.line_end or start)
 
 
-def _block(location: Location, text: str) -> str:
+def _block(location: Location, text: str, end: int | None = None) -> str:
     """`SOURCE`에 함수가 둘 이상일 때 그 하나 — 슬라이스 렌더와 같은 꼴의 배너 + 원문. 끝 줄은
-    읽힌 줄로 센다 — 창은 파일 끝을 넘을 수 있고 읽기가 자른다."""
+    읽힌 줄로 센다 — 창은 파일 끝을 넘을 수 있고 읽기가 자른다. 줄인 entry 함수(`_trim_entry`)는
+    줄이기 전 끝 줄을 `end`로 받는다."""
     start = location.line_start or 1
-    end = start + text.count("\n")
+    end = end or start + text.count("\n")
     return f"/* ===== {location.file}:{start}-{end} ===== */\n{text}"
 
 
