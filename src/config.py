@@ -621,6 +621,11 @@ class Thresholds(HarnessModel):
     # 실림 — s500 handoff에서 최대 입력 155,280토큰). 1이면 함수 머리·닫는 줄·entry 줄과 슬라이스
     # 줄 앞뒤만 남기고 뺀 구간을 표시한다(`runner._trim_entry`). 위 ⚠와 같은 프롬프트 판 문제.
     auditor_entry_trim: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`에 entry 함수를 부르는 호출 지점 앞뒤 몇 줄을 붙이는가(#349 (b)). 0이면 안
+    # 붙인다(결정 1-b 그대로). 호출자 쪽 검사(인자 길이·NULL 확인)를 겨냥한다. 창은 호출자 함수
+    # 범위 안으로 자르고 정의 뒤·피호출 함수 앞에 붙는다(`runner._caller_window`). **값은 안
+    # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_caller_lines: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -686,6 +691,7 @@ class Thresholds(HarnessModel):
             "auditor_definitions",
             "auditor_source_tokens",
             "auditor_entry_trim",
+            "auditor_caller_lines",
         ):
             if not dumped[key]:
                 dumped.pop(key)

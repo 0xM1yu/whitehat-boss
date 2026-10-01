@@ -434,6 +434,41 @@ class GraphIndex:
             found.append(Location(file=file, symbol=callee, line_start=start, line_end=end))
         return found
 
+    def call_sites_of(self, target: Location) -> list[Location] | None:
+        """대상 함수를 부르는 **호출 지점**(줄 하나 — `symbol`은 호출자 이름). `None`은 그래프가
+        없다는 뜻이다.
+
+        Auditor 입력이 호출자 쪽 검사(인자 길이·NULL 확인)를 못 보던 자리를 채운다(#349 (b)).
+        `callees_of`와 같은 이름 규칙의 반대 방향이다:
+
+        - 대상 파일 안의 호출은 늘 싣는다(같은 파일 정의가 이긴다)
+        - 다른 파일의 호출은 대상 이름의 정의가 저장소 전체에서 **하나뿐일 때만** — 여럿이면
+          그 호출이 어느 정의로 가는지 이름만으로 모른다
+        - 대상 본문 안의 호출(재귀)은 뺀다 — 원문에 이미 있다
+
+        순서는 대상 파일이 먼저, 그다음 (파일, 줄)이다(결정론). 심볼 없는 대상은 `[]`다.
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        if not target.symbol:
+            return []
+        homes = {
+            file
+            for file, symbols in self._defined.items()
+            for name, _, _ in symbols
+            if name == target.symbol
+        }
+        sites = {
+            Location(file=file, symbol=caller, line_start=line, line_end=line)
+            for caller, callee, file, line in self._calls
+            if callee == target.symbol
+            and not self._in_body(file, line, target)
+            and (file == target.file or len(homes) == 1)
+        }
+        return sorted(
+            sites, key=lambda loc: (loc.file != target.file, loc.file, loc.line_start or 0)
+        )
+
     # --- 본문 판정 -------------------------------------------------------
     #
     # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**

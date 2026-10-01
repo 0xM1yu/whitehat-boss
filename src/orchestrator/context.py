@@ -142,6 +142,10 @@ class RunContext:
     callees_of: Callable[[Location], list[Location] | None] = field(
         default=lambda _target: None
     )
+    # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 미배선 `None`이면 호출자 창을 안 붙인다.
+    call_sites_of: Callable[[Location], list[Location] | None] = field(
+        default=lambda _target: None
+    )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None] = field(
