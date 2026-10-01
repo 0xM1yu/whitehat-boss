@@ -25,6 +25,7 @@ from src.orchestrator.runner import _AUDITOR_SOURCE_CHARS, _AUDITOR_WINDOW_LINES
 from src.schemas.common import Location
 from src.schemas.enums import Role
 from src.tokens import estimate_tokens
+from tests.conftest import ALL_PROFILES
 from tests.test_pipeline_e2e import (
     _FIXTURE_INDEX,
     CONDITION,
@@ -52,6 +53,37 @@ def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
     assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
     assert "`(file, start line)` order" in prefix
+
+
+def test_auditor_v4_t1_states_the_adopted_source_contract() -> None:
+    """v4_t1(#349 채택 조합)의 입력 서술이 러너 상수·옵션과 갈리지 않는다 -- 창 줄 수 · 정의/피호출
+    하나의 글자 상한 · (파일, 시작 줄) 순 · 20,000토큰 상한, 그리고 meta가 그 세 옵션을 선언한다."""
+    from src.orchestrator.runner import _AUDITOR_CALLEE_CHARS, _AUDITOR_DEFINITION_CHARS
+
+    prefix = (PROMPTS_DIR / "auditor" / "v4_t1" / "prefix.md").read_text(encoding="utf-8")
+    assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
+    assert "`(file, start line)` order" in prefix
+    assert "20,000-token cap" in prefix and "15,000-character" not in prefix
+    assert f"at most {_AUDITOR_DEFINITION_CHARS:,} characters" in prefix
+    assert f"over {_AUDITOR_CALLEE_CHARS:,} characters is skipped" in prefix
+    assert set(load_prompt(Role.AUDITOR, "v4_t1").source_options) == {
+        "auditor_source_tokens", "auditor_definitions", "auditor_callee_hops"}
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_a_profile_on_auditor_v4_t1_sets_the_token_cap_the_prompt_states(profile: str) -> None:
+    """v4_t1은 「20,000-token cap」을 모델에 말한다 -> 그 판을 고르는 프로필은 그 값을 켠다.
+    지금은 아무 프로필도 안 고른다(미배선) -- 켜는 PR이 값을 다르게 두면 여기서 걸린다."""
+    from src.config import load_config
+
+    config = load_config(profile)
+    if "auditor" not in config.profile.roles:
+        return
+    if config.model_for("auditor").prompt_template_version != "v4_t1":
+        return
+    thresholds = config.thresholds
+    assert thresholds.auditor_source_tokens == 20_000
+    assert (thresholds.auditor_definitions, thresholds.auditor_callee_hops) == (1, 1)
 
 
 def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: set) -> dict:
