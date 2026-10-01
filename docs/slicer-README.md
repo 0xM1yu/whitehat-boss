@@ -10,7 +10,7 @@ Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다
 [slicer_source.py](../slicer_source.py), [slicer_pipeline.py](../slicer_pipeline.py),
 [slicer_checkpoint.py](../slicer_checkpoint.py), [slicer_export.py](../slicer_export.py),
 [slicer_library.py](../slicer_library.py), [slicer_compile.py](../slicer_compile.py),
-[slicer_errors.py](../slicer_errors.py)를 함께 배포한다.
+[slicer_errors.py](../slicer_errors.py), [slicer_claims.py](../slicer_claims.py)를 함께 배포한다.
 후보별 질의(flows·context·backward)의 로직은 inventory 뒤에 **서버 세션당 한 번** 함수로 정의하고,
 후보마다 그 함수 호출만 보낸다 — 질의마다 Scala 전체를 다시 컴파일하던 비용을 없앤다. 세션에 남는 것은
 함수뿐이고 후보 데이터는 호출 안에만 있다. 서버를 새로 띄우면 다음 run이 다시 정의한다.
@@ -200,7 +200,7 @@ CPG는 하나다.
 - 관측 → 2026-09-29 vast · Joern 4.0.636 · 평가셋 main sample_38 한 표본 · 후보 1,980: 8샤드 병합 ↔
   샤딩 없음 -> 1,965 동일(잘린 후보 포함), 다른 15는 전부 잘린 후보라 안 잘린 후보 중 다른 것 0. run ID 없음 · 원자료 저장소 밖
 
-- `--shard I/N` → 후보 목록의 0부터 센 위치 p 중 `p % N == I`만 자른다(N ≥ 2). 체크포인트 필수
+- `--shard I/N` → 후보 목록의 0부터 센 위치 p 중 `p % N == I`만 자른다(N ≥ 2, `--claim-db`면 아래 공유 대기열). 체크포인트 필수
 - 샤드마다 전용 Joern 서버·자기 체크포인트. CPG는 `--cpg`가 없으면 샤드마다 새로 만들고, 있으면 준비 실행이
   저장한 하나를 읽는다(아래 #368)
 - 샤드 자신의 `slices.json`은 일부라 `partial`(종료 코드 2)이고 `shard` 필드(`{index, count}`)를 단다.
@@ -217,6 +217,30 @@ CPG는 하나다.
 - 샤드 실행부터 export까지 `slicer*.py`가 같아야 한다 — 코드 해시가 실행 계약이라 중간에 코드가
   바뀌면 `Checkpoint mismatch: run_contract`
 - 샤드 수는 CPU·메모리로 정한다. 2026-09-29 8샤드 CPU 최대 약 47코어(30초 표본) · 메모리 미측정
+
+⏵ #369 **공유 대기열** -> `--claim-db <파일>`(모든 샤드가 같은 SQLite 파일)을 주면 샤드가 `p % N` 대신 아직 아무도
+안 가져간 후보를 하나씩 가져가 자른다 -> 느린 후보가 한 샤드에 몰려도 나머지 샤드가 남은 후보를 처리한다.
+포이즌 3연속인 샤드는 더 가져가지 않고 멈춘다(남은 후보는 다른 샤드 몫). 병합은 그대로
+
+- `--shard I/N`·`--checkpoint` 필수. `I/N`은 몫이 아니라 선점 주인 이름이다
+- run마다 **새 파일**. 파일이 처음 생길 때 N을, 첫 샤드가 실행 서명·후보 목록 digest를 적는다 -> 다른 run이 남긴
+  파일은 N이 다르면 열 때, 서명·후보가 다르면 자르기 전에 거부(남은 파일이 모든 후보를 「이미 가져감」으로 만드는 것을 막음)
+- 호스트 로컬 파일시스템에 둔다. WAL이라 프로세스끼리 공유 메모리가 필요하고 네트워크·9p 마운트에선 깨진다.
+  WAL로 못 바꾸면 결과 오류로 멈춘다
+- 샤드 종료 코드 2는 정상이다(샤드 결과는 일부라 `partial`)
+- 가져가고 죽은 샤드의 후보는 **같은 `I/N`의 `--resume`으로만** 돌아온다. 다른 번호의 샤드는 가져가지 않는다.
+  임대 만료가 없다(살아서 느린 주인과 죽은 주인을 하트비트 없이 못 가르고, 둘이 같은 후보를 자르면 병합이 어긋남).
+  안 살리면 export에서 degraded. `tools/merge_slicer_shards.py --claim-db <파일> ...`이 미완료 후보 키와 선점한
+  샤드·시각을 stderr에 찍는다
+
+```bash
+# 샤드 i = 0..N-1, 모두 같은 claims.db (run마다 새 파일)
+python slicer.py --repo /work/repo --out /work/s0/slices.json \
+  --joern-endpoint http://127.0.0.1:16243 --joern-version-command /opt/joern/joern \
+  --checkpoint /work/s0/state.db --shard 0/4 --claim-db /work/claims.db
+# 병합: 미완료가 있으면 키와 주인을 찍고 종료 코드 2 -> 그 샤드를 --resume
+python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /work/s*/state.db
+```
 
 ⏵ #368 **준비 한 번** -> `--prepare-only --cpg-out <파일>`이 CPG 생성과 후보 발견을 한 번 하고 그래프를 저장한다(아무
 후보도 안 자름). 그 체크포인트를 샤드마다 복사해 `--resume --cpg <파일> --shard I/N`으로 돌리면 샤드는 저장소를 다시
