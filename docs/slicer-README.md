@@ -214,11 +214,28 @@ CPG를 읽기만 한다 → 여러 Joern 서버에 나눌 수 있다.
 - 샤드 수는 CPU·메모리로 정한다. 2026-09-29 8샤드 CPU 최대 약 47코어(30초 표본) · 메모리 미측정
 
 ⏵ #370 **한 번에 돌리기** -> `tools/slice_sharded.py --repo … --out … --work-dir … --joern … -- <분석 인자>`가 준비(#368)·서버 N개
-기동·샤드(#369 공유 대기열)·병합·export를 한 번에 한다. 샤드 수는 `--shards auto`(기본) = min(코어 ÷ `--cores-per-shard`,
-메모리 ÷ `--memory-per-shard-gb`, 후보 ÷ `--min-candidates-per-shard`, `--max-shards`). 코어는 cgroup `cpu.max`
-할당량(컨테이너의 `nproc`은 호스트 코어를 셀 수 있다), 메모리는 MemAvailable. ⚠ 샤드당 코어·메모리 기본값(4코어 · 24GB)은
-정한 값이지 잰 값이 아니다. 모든 샤드가 준비 체크포인트에서 시작하므로 `--wall-seconds`로 끊긴 샤드가 있어도 병합이
-거부되지 않는다(끊긴 후보는 degraded)
+동시 기동·샤드(#369 공유 대기열)·병합·export를 한 번에 한다. POSIX 전용(killpg)
+
+- `--` 뒤 인자 -> 준비·모든 샤드에 그대로. export는 안 받는다(병합 체크포인트의 실행 계약에서 설정을 읽음).
+  도구가 직접 다는 플래그(`--joern-endpoint`·`--checkpoint`·`--shard`·`--claim-db`·`--export-dir` 등, 약어·`=` 꼴 포함)는 거부
+- 샤드 수 `--shards auto`(기본) = min(코어 ÷ `--cores-per-shard`, 메모리 ÷ `--memory-per-shard-gb`, 후보 ÷
+  `--min-candidates-per-shard`, `--max-shards`), 최소 1. 어느 항이 정했는지 summary.json `decided_by`·`--dry-run`에 남는다
+- 코어 -> CPU affinity와 cgroup 할당량(v2 `cpu.max`, v1 `cpu.cfs_quota_us`) 중 작은 쪽. `/proc/self/cgroup`의 자기 cgroup과
+  조상까지 본다(컨테이너의 `nproc`은 호스트 코어를 셀 수 있다)
+- 메모리 -> MemAvailable과 cgroup 한도(v2 `memory.max`, v1 `memory.limit_in_bytes`) 중 작은 쪽. cgroup 파일을 하나도
+  못 읽으면 summary.json `memory.warning`과 stderr에 경고
+- ⚠ 기본값은 전부 정한 값이지 잰 값이 아니다 -> `--cores-per-shard 4` · `--heap 20g` · `--memory-per-shard-gb` = heap + 4GB(JVM
+  힙 밖 + slicer 프로세스 몫) · `--min-candidates-per-shard 20` · `--max-shards 32`. 위 단일 서버 예시의 `-Xmx16g`도 예시값
+- ⚠ `auto`가 적은 고정 샤드보다 빠르다는 근거 없음. 비교는 하나뿐 -> #373 PR 본문의 30샤드 621초 ↔ 2샤드 664초. 같은 장비에서
+  다른 8샤드 작업이 동시에 돌던 중이라 차이 43초(계산값)를 샤드 수 탓으로 못 돌린다
+- `--wall-seconds` -> 샤드 서버가 다 뜬 뒤부터 잰다. 모든 샤드가 준비 체크포인트에서 시작하므로 끊긴 샤드가 있어도 병합이
+  거부되지 않는다(끊긴 후보는 degraded). 생략하면 제한 없음
+- 시작 전 포트가 비었는지 확인(남은 서버에 샤드가 붙는 것 방지). 서버가 뜨기 전에 죽으면 바로 실패하고 `joern.log` 경로를 낸다
+- 종료 코드 -> 0 모든 후보 완료 · 3 `--out`은 썼지만 미완료 후보 있음(degraded, summary.json `merge`·`dead_shards`·
+  `wall_stopped_shards`) · 1 실패(준비·서버·병합·export 실패, 또는 모든 샤드 죽음) · 2 사용법 오류 · 128+시그널
+- 샤드 종료 2는 정상(샤드 결과는 항상 partial). 1이나 시그널 종료는 `dead_shards`. 완료 여부는 병합 카운터(`complete`/`candidates`)로 본다
+- SIGTERM·SIGHUP -> 샤드·서버를 멈추고 summary.json을 쓴다. 실패 경로도 전부 summary.json을 쓴다. ⚠ 이 도구에 SIGKILL이면
+  서버·샤드(각자 세션)가 남는다
 
 ⏵ #369 **공유 대기열** -> `--claim-db <파일>`(모든 샤드가 같은 SQLite 파일)을 주면 샤드가 `p % N` 대신 아직 아무도
 안 가져간 후보를 하나씩 가져가 자른다 -> 느린 후보가 한 샤드에 몰려도 나머지 샤드가 남은 후보를 처리한다. 자기가
