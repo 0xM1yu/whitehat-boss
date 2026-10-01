@@ -2135,3 +2135,50 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
         assert entry.request_timeout_s >= cap / tok_s, (
             f"{model_key}({role}) — 타임아웃이 출력 상한보다 먼저 끊는다(#261)"
         )
+
+
+
+def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
+    """#349 옵션은 0이면 `flatten()`에 키가 없다(옛 manifest 모양) — 켜면 생긴다. 키를 늘
+    넣어도 통과하던 변이(#351 리뷰)."""
+    from src.config import AUDITOR_SOURCE_OPTIONS
+
+    thresholds = load_config("dev_fake").thresholds
+    assert not set(AUDITOR_SOURCE_OPTIONS) & thresholds.flatten().keys()
+    assert thresholds.auditor_source_options_on() == ()
+    on = thresholds.transition(**{key: 1 for key in AUDITOR_SOURCE_OPTIONS})
+    assert set(AUDITOR_SOURCE_OPTIONS) <= on.flatten().keys()
+    assert on.auditor_source_options_on() == AUDITOR_SOURCE_OPTIONS
+
+
+@pytest.mark.parametrize(
+    "key", ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim"]
+)
+def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
+    with pytest.raises(ValidationError):
+        load_config("dev_fake").thresholds.transition(**{key: 2})
+
+
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_the_current_auditor_prompts_describe_no_source_option(version: str) -> None:
+    """v4·v5는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 리뷰 MEDIUM-2)."""
+    assert load_prompt(Role.AUDITOR, version).source_options == ()
+
+
+def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:
+    """meta의 `source_options`는 아는 키만 — 오타는 가드를 조용히 끄므로 거절한다."""
+    root = tmp_path / "prompts"
+    shutil.copytree(PROMPTS_DIR / "auditor" / "v5", root / "auditor" / "v5")
+    meta = root / "auditor" / "v5" / "meta.yaml"
+    base = meta.read_text(encoding="utf-8")
+
+    meta.write_text(base + "source_options: [auditor_definitions]\n", encoding="utf-8")
+    assert load_prompt(Role.AUDITOR, "v5", root=root).source_options == ("auditor_definitions",)
+
+    other = tmp_path / "prompts_typo"  # `load_prompt`는 (역할, 판, root)로 캐시한다
+    shutil.copytree(PROMPTS_DIR / "auditor" / "v5", other / "auditor" / "v5")
+    (other / "auditor" / "v5" / "meta.yaml").write_text(
+        base + "source_options: [auditor_definition]\n", encoding="utf-8"
+    )
+    with pytest.raises(PromptError, match="source_options"):
+        load_prompt(Role.AUDITOR, "v5", root=other)

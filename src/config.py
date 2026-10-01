@@ -553,6 +553,18 @@ class CapsuleBudgets(HarnessModel):
     focused: int = Field(gt=0)
 
 
+# Auditor `SOURCE`를 결정 1-b(「슬라이스가 걸친 함수의 원본 전부 · 15,000자」) 밖으로 넓히는 값들
+# (#349). 전부 기본 0이고 0이면 `flatten()`에 키도 안 생긴다(옛 manifest 모양). 하나라도 켜면
+# Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다(`cli`).
+AUDITOR_SOURCE_OPTIONS = (
+    "auditor_callee_hops",
+    "auditor_definitions",
+    "auditor_source_tokens",
+    "auditor_entry_trim",
+    "auditor_caller_lines",
+)
+
+
 class Thresholds(HarnessModel):
     """정책 임계값. 노드가 직접 비교하지 않고 RoutingPolicy가 읽는다."""
 
@@ -604,7 +616,8 @@ class Thresholds(HarnessModel):
     # 기본은 끈다. 2 이상은 아직 없다.
     # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
-    # 프롬프트 판을 같이 올려야 한다.
+    # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
+    # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 넷도 같다.
     auditor_callee_hops: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
     # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
@@ -626,6 +639,11 @@ class Thresholds(HarnessModel):
     # 범위 안으로 자르고 정의 뒤·피호출 함수 앞에 붙는다(`runner._caller_window`). **값은 안
     # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
+
+    def auditor_source_options_on(self) -> tuple[str, ...]:
+        """켜진 Auditor `SOURCE` 옵션(#349) — 결정 1-b를 넓히는 값들. 프롬프트가 그 입력을
+        서술하는지는 `cli`가 meta의 `source_options`와 맞춘다(#351 리뷰 MEDIUM-2)."""
+        return tuple(key for key in AUDITOR_SOURCE_OPTIONS if getattr(self, key))
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -686,13 +704,7 @@ class Thresholds(HarnessModel):
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
         # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
-        for key in (
-            "auditor_callee_hops",
-            "auditor_definitions",
-            "auditor_source_tokens",
-            "auditor_entry_trim",
-            "auditor_caller_lines",
-        ):
+        for key in AUDITOR_SOURCE_OPTIONS:
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
