@@ -16,6 +16,7 @@ import json
 import shutil
 import signal
 import sys
+import tarfile
 import tempfile
 import threading
 from collections.abc import Iterator, Sequence
@@ -66,7 +67,13 @@ from src.orchestrator.runner import (
     run_pipeline,
 )
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.task_loader import UnsafeArchiveError, load_task
+from src.orchestrator.task_loader import (
+    DESCRIPTION_FILENAME,
+    REPO_ARCHIVE_NAME,
+    UnsafeArchiveError,
+    read_description,
+    safe_extract,
+)
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -794,13 +801,20 @@ def run(args: argparse.Namespace) -> int:
     if malformed is not None:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
-    # CyberGym 과제 번들을 그대로 받는다(#356). **`--slices` 렌더보다 앞이다** — 그쪽이
-    # `args.target`을 쓰고, `--task-dir`를 주면 target이 **여기서 정해진다**.
-    #
-    # 2026-10-02까지 `task_loader.load_task`의 프로덕션 호출처가 **0건**이었다. 과제를 손으로
-    # 풀어 `--target`·`--description-file`을 따로 주는 절차였고, **손 절차는 run 기록에 안 남는다**
-    # — 어느 아카이브를 어디에 풀었는지가 `RunRecord`에 없으면 그 run은 재현되지 않는다.
+    # CyberGym 과제 번들을 그대로 받는다(#356). 2026-10-02까지 `task_loader.load_task`의 프로덕션
+    # 호출처가 **0건**이었다 — 과제를 손으로 풀어 `--target`·`--description-file`을 따로 주는
+    # 절차였다.
     task_description: str | None = None
+    #
+    # ⚠ **여기서는 검증만 하고 해제는 `_claim_run_dir` 직전에 한다.** 처음 판은 여기서 바로
+    # 풀었는데, 그 뒤의 게이트(`--slices` 렌더·실서빙 라벨·교대)가 exit 2를 내면 **작업 디렉터리에
+    # 트리가 남아** 오타를 고친 재시도가 "비어 있지 않다"로 거부됐다(적대적 리뷰 2026-10-02 M-1).
+    # 쓰기를 **되돌릴 수 없는 지점 바로 앞**으로 미루면 그 함정이 사라진다.
+    #
+    # ⚠ **`--task-work-dir`를 요구하는 참인 이유는 「기록」이 아니라 「섞임 방지」다.** 처음 판은
+    # *"해제 자리가 run 기록이다"*라 적었는데 **거짓이다** — `RunRecord`·`RunSpec`에 과제 경로·
+    # 아카이브 해시 필드가 **없다**(적대적 리뷰 M-1 HIGH-1). 출처를 진짜로 남기는 것은 S12d의
+    # 대응표(`repo_archive_sha256`·`description_sha256`) 몫이고 **아직 없다.**
     if args.task_dir is not None:
         if args.description_file is not None:
             # 설명의 출처가 둘이면 캡슐에 실린 것이 어느 쪽인지 기록으로 못 가른다.
@@ -816,33 +830,59 @@ def run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        if args.task_work_dir is None:
-            # 기본값을 **안 만든다.** 과제 트리를 어디에 푸는지는 run 기록의 일부이고, 암묵 기본값을
-            # 두면 사람마다 다른 자리에 풀려 재현이 깨진다(§0 — 지어내지 않는다).
+        if args.slices is not None:
+            # 🔴 **둘은 같이 쓸 수 없다.** 슬라이스는 슬라이서가 **이미 풀린 트리**를 보고 만든
+            # 것이고, `--task-dir`는 그 트리를 **지금 만든다**. 게다가 작업 디렉터리는 비어
+            # 있어야 하므로 슬라이서가 본 트리와 같을 수 없다 — `--slices`를 쓰려면 먼저 풀고
+            # 슬라이싱한 뒤 `--target`으로 준다.
             print(
-                "[ERROR] --task-dir를 주면 --task-work-dir도 줘야 한다 — 해제 자리가 run 기록이다",
+                "[ERROR] --task-dir와 --slices를 같이 주지 않는다 — 슬라이스는 이미 풀린 "
+                "트리에서 나온 것이다. 먼저 풀어 슬라이싱한 뒤 --target으로 준다",
                 file=sys.stderr,
             )
             return 2
-        work = args.task_work_dir
+        if args.task_work_dir is None:
+            print(
+                "[ERROR] --task-dir를 주면 --task-work-dir도 줘야 한다 — 해제 트리가 섞이지 "
+                "않게 빈 디렉터리를 명시한다",
+                file=sys.stderr,
+            )
+            return 2
         # **작업 디렉터리를 재사용하지 않는다.** `safe_extract`는 상한 초과로 중단해도 앞 멤버를
         # dest에 남기므로(그 함수의 경고 주석), 남은 트리 위에 또 풀면 두 과제가 섞인다. 섞인
         # 트리로 돈 run은 무엇을 봤는지 모른다 — 비우는 것은 **사람이** 한다(지우지 않는다).
-        if work.exists() and any(work.iterdir()):
+        if args.task_work_dir.exists() and any(args.task_work_dir.iterdir()):
             print(
-                f"[ERROR] --task-work-dir가 비어 있지 않다: {work} — "
+                f"[ERROR] --task-work-dir가 비어 있지 않다: {args.task_work_dir} — "
                 "해제 트리가 섞이지 않게 빈 디렉터리를 준다",
                 file=sys.stderr,
             )
             return 2
-        try:
-            source_root, task_description = load_task(args.task_dir, work)
-        except (FileNotFoundError, UnsafeArchiveError, RuntimeError, OSError) as exc:
-            # `RuntimeError`는 `data_filter` 없는 인터프리터, `OSError`는 NTFS 경로 제약
-            # (260자·`:`)이다. 어느 쪽이든 트레이스백이 아니라 한 줄로 멈춘다.
-            print(f"[ERROR] 과제를 풀 수 없다: {exc}", file=sys.stderr)
+        if not (args.task_dir / REPO_ARCHIVE_NAME).is_file():
+            # 해제 전에 본다 — 아카이브가 없으면 `load_task`가 어차피 죽고, 그 전에 다른 게이트에
+            # 시간을 쓸 이유가 없다.
+            print(
+                f"[ERROR] 과제에 {REPO_ARCHIVE_NAME}가 없다: {args.task_dir}", file=sys.stderr
+            )
             return 2
-        args.target = source_root
+        # 해제 트리가 target이다 — **경로는 지금 알 수 있다**(풀기 전에도).
+        args.target = args.task_work_dir
+        # 설명은 **지금** 읽는다 — 작은 텍스트 파일이고 해제와 무관하다(`RunSpec`을 만들 때 필요한데
+        # 그 시점이 해제보다 앞이다). `load_task`를 통째로 부르지 않고 그 두 조각
+        # (`read_description`·`safe_extract`)을 **따로** 쓰는 이유가 이 시점 차이다.
+        task_description = read_description(args.task_dir)
+        if not task_description:
+            # Level 0 과제에는 설명이 없는 것이 정상이다 — 막지 않고 알린다. 조용히 넘어가면
+            # "설명을 줬는데 안 실렸다"와 구별되지 않는다.
+            print(
+                f"[WARN ] 과제에 {DESCRIPTION_FILENAME}가 없거나 비어 있다 — "
+                "캡슐에 vuln_description 섹션이 실리지 않는다",
+                file=sys.stderr,
+            )
+    elif args.task_work_dir is not None:
+        # 조용히 무시하면 사람은 과제가 풀린 줄 안다.
+        print("[ERROR] --task-work-dir는 --task-dir와 함께만 쓴다", file=sys.stderr)
+        return 2
     if args.target is None:
         # argparse의 `required=True`를 뗀 대가를 여기서 문다 — 안 들면 `None`이 `RunSpec`까지 간다.
         print("[ERROR] --target 또는 --task-dir 하나는 필요하다", file=sys.stderr)
@@ -947,6 +987,18 @@ def run(args: argparse.Namespace) -> int:
         )
         if problem is not None:
             print(f"[ERROR] {problem}", file=sys.stderr)
+            return 2
+    # 🔴 **과제 아카이브는 여기서 푼다** — 모든 게이트 **뒤**, 되돌릴 수 없는 첫
+    # 쓰기(`_claim_run_dir`) **앞**이다. 앞에서 풀면 뒤의 게이트가 exit 2를 낼 때 작업 디렉터리에
+    # 트리가 남아, 오타를 고친 재시도가 "비어 있지 않다"로 거부된다(적대적 리뷰 2026-10-02 M-1).
+    if args.task_dir is not None:
+        try:
+            safe_extract(args.task_dir / REPO_ARCHIVE_NAME, args.task_work_dir)
+        except (UnsafeArchiveError, RuntimeError, OSError, tarfile.TarError, EOFError) as exc:
+            # `RuntimeError` = `data_filter` 없는 인터프리터 · `OSError` = NTFS 경로 제약(260자·
+            # 콜론)과 디렉터리 자리에 파일이 있는 경우 · `TarError`/`EOFError` = 손상·비-gzip(LFS
+            # 포인터를 그대로 받은 경우). 어느 쪽이든 트레이스백이 아니라 한 줄로 멈춘다.
+            print(f"[ERROR] 과제를 풀 수 없다: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
@@ -1188,7 +1240,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
-        "Scout·Auditor·PoV가 본다(PoV 배선). 저장소 아카이브는 task_loader로 따로 푼다",
+        "Scout·Auditor·PoV가 본다(PoV 배선). 번들을 통째로 주려면 --task-dir를 쓴다 "
+        "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) — 둘을 같이 주지 않는다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
