@@ -38,6 +38,7 @@ from src.config import (
 )
 from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
+from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import RunSpec, _new_record
@@ -57,6 +58,7 @@ ZERO_DIGEST = PLACEHOLDER_DIGEST
 NODE_OUTPUT_SCHEMAS = {
     Role.AUDITOR: auditor_node.OUTPUT_SCHEMA,
     Role.CRITIC: critic_node.OUTPUT_SCHEMA,
+    Role.POV: pov_node.OUTPUT_SCHEMA,
 }
 
 # scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
@@ -424,12 +426,145 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v3(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 근거 본문 배선과 함께
-    `v3`를 고른다(#256 항목 4). 되돌리면(registry를 `v1`로) 이 핀이 빨개진다 — 오염 확인 ②."""
+def test_the_canonical_auditor_selects_prompt_v4(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v4`를 고른다(#328 머지 뒤
+    재배선 — 2026-09-29 v1→v3(#256 항목 4)의 다음 판). 되돌리면 이 핀이 빨개진다."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v3"
+    assert config.model_for("auditor").prompt_template_version == "v4"
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) -> None:
+    """위 핀은 철자다. 막으려는 성질은 **registry가 고른 Auditor 판이 근거 본문을 받는다**이다 —
+    `_CONTENT_AWARE_VERSIONS`에 없는 판을 고르면 FACTS에 id·kind·ok만 실려 툴 로그 본문이 조용히
+    빠진다(#328 리뷰 MEDIUM-1). 판을 바꾸면서 그 집합을 안 고치면 여기서 빨개진다."""
+    config = load_config(profile)
+
+    version = config.model_for("auditor").prompt_template_version
+    assert version in auditor_node._CONTENT_AWARE_VERSIONS
+
+
+# meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
+# **저장소 실물에서 온 것만 적는다**(양성 핀 — 출처는 같은 자리):
+_UNSELECTED_CLAIM_SPELLINGS = (
+    "미배선(disk-only)",  # prompts/critic/v4/meta.yaml:1
+    "아직 미활성",  # prompts/critic/v3/meta.yaml:1
+    "어느 registry 엔트리도 이 버전을 고르지 않는다",  # prompts/auditor/v3/meta.yaml:5-6
+)
+
+
+def _fold(raw: str) -> str:
+    """meta.yaml 본문을 한 문자열로 접는다 — 주석 줄바꿈·공백 런은 한 칸으로, 굵게(`**`)와
+    백틱은 뺀다. 구절이 주석 줄바꿈으로 갈리는 실물(auditor/v3 meta)이 있고, meta 머리 주석은
+    굵게·백틱을 쓰는 문체다(critic/v3 meta)."""
+    folded = " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
+    return " ".join(folded.replace("**", "").replace("`", "").split())
+
+
+def _meta_text(role: str, version: str) -> str:
+    """meta.yaml 본문을 `_fold`로 접은 것."""
+    return _fold((PROMPTS_DIR / role / version / "meta.yaml").read_text(encoding="utf-8"))
+
+
+def _prompts_whose_meta_claims_unselected(config: HarnessConfig) -> list[str]:
+    """`config`의 각 역할이 고른 판 중 meta.yaml이 「안 고른다」고 적은 것 — `role/version` 목록."""
+    return [
+        f"{role}/{version}"
+        for role in PROMPTED_ROLES
+        if role in config.profile.roles
+        for version in [config.model_for(role).prompt_template_version]
+        if any(spelling in _meta_text(role, version) for spelling in _UNSELECTED_CLAIM_SPELLINGS)
+    ]
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> None:
+    """`meta.yaml` 머리 주석의 「안 고른다」(미배선·미활성 등)는 **어느 registry 엔트리도 이 판을
+    안 고른다**는 현재형 단언이다. 판을 배선하면서 그 줄을 안 고치면 산문이 거짓이 된다
+    (CLAUDE.md §2.3) — 이 검사가 그 쪽을 잡는다. 반대 방향(안 고르는데 「배선됨」)은 잡지 않는다.
+    ⚠ 철자 pin이다 — `_UNSELECTED_CLAIM_SPELLINGS`의 세 철자(저장소 실물: critic/v4·critic/v3·
+    auditor/v3 meta)만 문다. 다른 표현으로 쓰면 못 잡는다. 저장소 config만 돌리므로 어느
+    프로필도 안 고르는 판의 철자는 여기서 시험되지 않는다 — 판독기가 철자를 읽는지는 아래
+    검사들이 고정한다(#341 L-1)."""
+    assert _prompts_whose_meta_claims_unselected(load_config(profile)) == []
+
+
+@pytest.mark.parametrize(
+    ("role", "model_key", "version", "expected"),
+    [
+        # 통제 — prompts/critic/v4/meta.yaml:1. 첫째·셋째 철자를 함께 들어 여기서는 철자를
+        # 못 가른다 — 철자별로는 `test_the_known_metas_…`가 본다.
+        ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
+        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
+        ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
+        # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
+        # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
+        ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
+        # 음성 통제 — auditor/v4 meta는 「배선됨」이다. 고르면 안 걸려야 한다.
+        ("auditor", "qwen3.8-27b", "v4", []),
+    ],
+)
+def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
+    tmp_path: Path, role: str, model_key: str, version: str, expected: list[str]
+) -> None:
+    """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
+    읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
+    고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
+    meta 넷만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
+    _copy_config(
+        tmp_path,
+        profile_patch={"roles": roles},
+        model_patch={model_key: {"prompt_template_version": version}},
+    )
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.model_for(role).prompt_template_version == version  # 변이가 실제로 들어갔다
+    stale = [s for s in _prompts_whose_meta_claims_unselected(config) if s.startswith(f"{role}/")]
+    assert stale == expected
+
+
+@pytest.mark.parametrize(
+    ("role", "version", "expected"),
+    [
+        # prompts/critic/v4/meta.yaml:1 — 첫째·셋째 철자를 한 줄에 함께 든다.
+        ("critic", "v4", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # prompts/critic/v3/meta.yaml:1
+        ("critic", "v3", {"아직 미활성"}),
+        # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
+        ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — 정본 Auditor가 고르는 판이다(「배선됨」).
+        ("auditor", "v4", set()),
+    ],
+)
+def test_the_known_metas_match_exactly_these_claim_spellings(
+    role: str, version: str, expected: set[str]
+) -> None:
+    """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
+    한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
+    critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
+    않는다(#341 R2). ⚠ 이 네 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
+    assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "# 어느 registry 엔트리도 이 버전을\n#\n# 고르지 않는다.\n",  # 셋째 철자 · 빈 주석 줄
+        "# 어느 registry  엔트리도 이 버전을 고르지 않는다.\n",  # 셋째 · 공백 2칸
+        "# 어느 registry 엔트리도 **이 버전을 고르지 않는다**.\n",  # 셋째 · 굵게
+        "# **미배선**(disk-only): 이 판은 registry가 안 고른다.\n",  # 첫째 · 굵게
+        "# 어느 registry 엔트리도 이 버전을 `고르지 않는다`.\n",  # 셋째 · 백틱
+    ],
+    ids=["blank-comment-line", "double-space", "bold", "bold-disk-only", "backtick"],
+)
+def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
+    """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
+    굵게·백틱을 쓰는 문체다(prompts/critic/v3/meta.yaml:4·7). 다섯 형은 검토 변이
+    B8·B9·B17·B18·B19에서 가져왔다(실물 meta의 형이 아니다) — 접기가 이것들을 못 넘으면 같은
+    주장을 그 문체로 적었을 때 판독기가 못 본다(#341 R5)."""
+    assert any(spelling in _fold(raw) for spelling in _UNSELECTED_CLAIM_SPELLINGS), _fold(raw)
 
 
 def test_every_prompted_role_is_a_real_role() -> None:
@@ -1310,7 +1445,7 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
 
     **교대는 2026-09-29에 `harness_pool`이 선언했다** — 교대 명령(`tools/serve/swap.sh`)과
     장비 파일(`config/serving/`)이 같이 왔다(ADR 0009 「2026-09-29 제안」 절). 교대하는 역할은
-    모델을 부르는 다섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에
+    모델을 부르는 여섯 전부이고 상주는 없다 — 단계마다 그 단계 모델만 떠 있어야 한 장비에
     들어간다.
     `settle_timeout_s`는 계산값이다(그 주석 — 미실측).
     나머지 프로필은 기본(`per_candidate`)을 그대로 쓴다 — 지금까지의 run과 같다.
@@ -1328,7 +1463,7 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
     assert execution.swap is not None
     assert execution.swap.resident == ()
     assert set(execution.swap.swappable) == {
-        "scout_memory", "scout_boundary", "scout_injection", "auditor", "critic"
+        "scout_memory", "scout_boundary", "scout_injection", "auditor", "critic", "pov"
     }
 
 
@@ -1589,8 +1724,8 @@ def test_an_empty_resident_list_is_still_accepted() -> None:
     assert entry.execution.swap.swappable == ("scout",)
 
 
-# 풀 프로필에서 모델을 부르는 실서빙 역할 다섯 — `harness_pool`의 `served_models()`.
-_POOL_SERVED = [*SCOUT_POOL_ROLES, "auditor", "critic"]
+# 풀 프로필에서 모델을 부르는 실서빙 역할 여섯 — `harness_pool`의 `served_models()`.
+_POOL_SERVED = [*SCOUT_POOL_ROLES, "auditor", "critic", "pov"]
 
 
 def _swap_execution(swappable: list[str]) -> dict[str, object]:
@@ -1631,7 +1766,7 @@ def test_a_swap_that_leaves_out_a_served_role_is_rejected(
 
 
 def test_a_swap_that_lists_every_served_role_loads(tmp_path: Path) -> None:
-    """위 거부의 짝 — 다섯을 다 적으면 로드된다. 거부만 보면 교대 선언을 통째로 거부하는 구현도
+    """위 거부의 짝 — 여섯을 다 적으면 로드된다. 거부만 보면 교대 선언을 통째로 거부하는 구현도
     지난다(`test_a_complete_swap_declaration_on_per_stage_is_accepted`와 같은 이유)."""
     patch = {"execution": _swap_execution(_POOL_SERVED)}
     _copy_config(tmp_path, profile="harness_pool", profile_patch=patch)
@@ -1692,7 +1827,7 @@ FIRST_PORT = 8000
 
 
 def _launch_stages(config: HarnessConfig) -> list[set[str]]:
-    """교대가 모델을 띄우는 단계 묶음 — Scout 풀(4) → Auditor(5) → Critic(7) → 검색(hybrid 전용).
+    """교대가 모델을 띄우는 단계 묶음 — Scout(4) → Auditor(5) → Critic(7) → 검색(hybrid) → PoV(8).
 
     러너가 단계마다 교대를 부르는 순서와 같다. **한 묶음 안의 모델은 함께 뜬다** — Scout 풀의 두
     모델은 한 장비에 공존해 같은 단계에 떠 있으므로 그 사이에는 띄우는 순서가 없다(2026-09-25
@@ -1703,7 +1838,7 @@ def _launch_stages(config: HarnessConfig) -> list[set[str]]:
     roles = config.profile.roles
     stages: list[set[str]] = []
     seen: set[str] = set()
-    for group in (SCOUT_POOL_ROLES, ("auditor",), ("critic",), RETRIEVAL_ROLES):
+    for group in (SCOUT_POOL_ROLES, ("auditor",), ("critic",), RETRIEVAL_ROLES, ("pov",)):
         keys = {roles[role] for role in group if role in roles} - seen
         if keys:
             stages.append(keys)
@@ -1851,7 +1986,59 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
 # (GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목). 우리 장비
 # 미실측이고, 아래 검사가 「타임아웃이 출력 상한보다 먼저 끊지 않는다」를 재는 기준으로만
 # 쓴다 — 대역 상한 계산값 4.9보다 느린 쪽이다.
+# PoV 좌석(`feyospace-v1-small`)은 **자기 속도를 안 쟀다** — Auditor와 같은 베이스·같은 파라미터
+# 수라 이 값을 **빌려** 쓴다. 그래서 PoV 쪽 검사가 뜻하는 것은 「PoV 타임아웃이 실측으로 맞다」가
+# 아니라 「Auditor와 같은 관계가 선다」까지다.
 _AUDITOR_DECODE_TOK_S = 4.5
+
+
+def _assert_thinking_seat_holds_together(role: str) -> None:
+    """사고 켠 좌석 하나의 「사고가 끝날 자리 + 시계」 관계 — Auditor·PoV가 같이 쓴다.
+
+    무는 것은 **관계**다: ① `xhigh` ② 템플릿 인자가 사고를 끄지 않는다(`enable_thinking`이
+    `false`가 아니다) ③ 사고 상한 < 출력 상한이고, 답 몫(출력 상한 − 사고 상한)이 전역 출력
+    상한 이상이다 — `config/budgets.yaml`의 「사고 상한 28,672가 답 몫 4,096(위 전역 상한)을
+    남긴다」 ④ 타임아웃 ≥ 출력 상한 ÷ 속도 ⑤ 요청 payload가 그 값들을 싣는다. 속도는
+    `_AUDITOR_DECODE_TOK_S` 하나라 좌석마다 다른 속도를 못 넣는다(위 주석).
+
+    안 묻는 것: `sampling`(값이다) · `chat_template_kwargs`의 `enable_thinking: false` 밖의
+    키 · 답 몫이 **충분한지**(PoV라면 `PovSpec` 실제 길이 — 실측 전이다). ③·④는 하한만
+    문다 — 경계 바로 위 값도 초록이다.
+    """
+    config = load_config("harness_pool")
+    entry = config.model_for(role)
+    cap = config.thresholds.output_max_for(role)
+
+    assert entry.reasoning_effort == "xhigh", (
+        f"{role} — 사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
+    )
+    assert (entry.chat_template_kwargs or {}).get("enable_thinking") is not False, (
+        f"{role} — 템플릿 인자 enable_thinking: false가 사고를 끈다 — 사고 좌석의 전제와 모순이다"
+    )
+    assert entry.thinking_token_budget is not None, (
+        f"{role} — 사고 상한 선언이 없다 — 사고가 출력 상한 {cap}까지 가서 답 몫이 없을 수 있다"
+    )
+    assert entry.thinking_token_budget < cap, (
+        f"{role} — 사고 상한이 출력 상한 {cap} 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 "
+        "</think>를 넣고 답을 쓴다"
+    )
+    assert cap - entry.thinking_token_budget >= config.thresholds.output_max, (
+        f"{role} — 답 몫(출력 상한 − 사고 상한)이 전역 출력 상한 "
+        f"{config.thresholds.output_max}보다 작다 — 사고가 예산을 다 쓰면 답이 그보다 짧게 잘린다"
+    )
+    assert entry.request_timeout_s is not None, (
+        f"{role} — 어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
+    )
+    assert entry.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
+        f"{role} — 타임아웃이 출력 상한 {cap}보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 "
+        "멈춘다(#261)"
+    )
+
+    client = _model_client(config.profile.roles[role], config, role=role)
+    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
+    assert payload["reasoning_effort"] == config.reasoning_efforts()[role] == "xhigh"
+    assert payload["thinking_token_budget"] == entry.thinking_token_budget
+    assert payload["max_tokens"] == cap
 
 
 def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> None:
@@ -1864,26 +2051,27 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     연속 셋이면 run이 선다(#261) ③ 사고 상한이 출력 상한과 같으면 답 몫이 없다. 그래서 **값이 아니라
     관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
     """
-    config = load_config("harness_pool")
-    auditor = config.model_for("auditor")
-    cap = config.thresholds.output_max_for("auditor")
+    _assert_thinking_seat_holds_together("auditor")
 
-    assert auditor.reasoning_effort == "xhigh", (
-        "사고를 켜는 가장 높은 등급이다(템플릿: xhigh·medium·low)"
-    )
-    assert auditor.thinking_token_budget is not None and auditor.thinking_token_budget < cap, (
-        "사고 상한이 출력 상한 안에 답 몫을 남겨야 한다 — 닿으면 vLLM이 </think>를 넣고 답을 쓴다"
-    )
-    assert auditor.request_timeout_s is not None, "어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
-    assert auditor.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
-        "타임아웃이 출력 상한보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 멈춘다(#261)"
-    )
 
-    client = _model_client(config.profile.roles["auditor"], config, role="auditor")
-    payload = client._request_payload("prefix", "body", RunRecord)  # noqa: SLF001
-    assert payload["reasoning_effort"] == config.reasoning_efforts()["auditor"] == "xhigh"
-    assert payload["thinking_token_budget"] == auditor.thinking_token_budget
-    assert payload["max_tokens"] == cap
+def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> None:
+    """8단계 PoV 좌석(`feyospace-v1-small`)도 Auditor와 **같은 관계**를 지킨다.
+
+    그 좌석은 Auditor와 같은 베이스·chat_template이라 손잡이 넷(`reasoning_effort` ·
+    `sampling` · `thinking_token_budget` · `request_timeout_s`)과 출력 상한
+    (`output_max_by_role.pov`)을 물려받았다(`config/models.yaml`의 그 항목 — 계획값·미실측).
+    물려받은 값이 서로 어긋나면 실서빙 때 사고가 답을 밀어내 본문이 비거나 잘려 스키마가 깨지고
+    0 PoC로 완주한다 — Auditor가 4,096으로 그 실패를 7/7 냈다. 상한 선언이 빠지면 전역 4,096으로
+    돌고, 사고 상한이 출력 상한을 넘으면 답 몫이 없으며, 타임아웃이 짧으면 상한 전에 시계가
+    호출을 끊는다.
+
+    ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 Auditor의 외부 보고
+    (`_AUDITOR_DECODE_TOK_S`)를 빌린 값이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다.
+    타임아웃과 답 몫은 하한만 문다: 값이 경계 바로 위여도 초록이고, 여유 배수·프리필은 안
+    본다. 답 몫이 `PovSpec`에 **충분한지**는 실측 전이라 안 묻는다. `sampling`은 값이라
+    안 묻고, `chat_template_kwargs`는 사고를 끄는 `enable_thinking: false` 하나만 문다.
+    """
+    _assert_thinking_seat_holds_together("pov")
 
 
 # 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 2026-09-24 ATOM `run_20260924_0001`
@@ -1915,7 +2103,10 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
 
     Auditor는 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가
     이미 잠갔으므로 여기서 다시 보지 않는다. `_MEASURED_DECODE_TOK_S`에 없는 모델은
-    선언 여부만 본다.
+    선언 여부만 본다 — **PoV(`feyospace-v1-small`)가 그렇다**: 속도를 안 쟀으니 여기 못 넣고,
+    관계(타임아웃 ≥ 출력 상한 ÷ 속도)는
+    `test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together`가 Auditor의 외부 보고
+    속도를 빌려 문다. 이 검사가 PoV에 하는 것은 선언 존재까지다.
 
     ⚠ 무는 것은 **순차 요청의 속도**다. `gpt-oss-20b`는 ≈95 s라 300 s로도 이 관계가 서서,
     그 값을 300으로 내려도 초록이다. 단계 안 동시 요청이 들어오면 스트림당 속도가 떨어지는데

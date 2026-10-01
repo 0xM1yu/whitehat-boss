@@ -31,7 +31,7 @@ from src.orchestrator.runner import DEFAULT_CONDITION, Dependencies, RunSpec
 
 POOL = "harness_pool"
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
-SWAPPED = ("scout_memory", "scout_boundary", "scout_injection", "auditor", "critic")
+SWAPPED = ("scout_memory", "scout_boundary", "scout_injection", "auditor", "critic", "pov")
 
 
 def _with_swap(base: HarnessConfig, swappable: tuple[str, ...]) -> HarnessConfig:
@@ -256,6 +256,38 @@ def test_the_committed_device_file_serves_every_model_the_canonical_pool_swaps(
     assert config.swap is not None
     check_serving(config, serving)
     assert serving.command == ("bash", "tools/serve/swap.sh")
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_every_thinking_seat_is_launched_with_a_reasoning_parser(device: str) -> None:
+    """사고 상한(`thinking_token_budget`)을 선언한 서빙 좌석은 reasoning parser와 함께 뜬다.
+
+    선언(registry)과 기동 인자(장비 파일)의 **관계**다. parser 없이 뜬 서버에 사고 상한을
+    건 요청은 400이다(장비 파일의 그 행 주석). `config/models.yaml`의 추론 문단은 parser가
+    없으면 사고도 죽는다고 적는다. Scout·Auditor·Critic 경로는 크기가 아닌 400에서 run을
+    멈추지만(#296), pov는 추가형이라 `runner._run_pov`가 finding마다 `pov_skipped`로 남기고
+    run은 PoC 0건으로 끝난다. `check_serving`은 행과 창만 보고 이 인자는 안 본다.
+
+    ⚠ 무는 것은 **철자와 존재**다 — `--reasoning-parser`(또는 `--reasoning-parser=…`)가
+    인자에 있는지만 본다. 값(`qwen3`)이 그 모델의 템플릿과 맞는지는 안 묻는다.
+    """
+    config = load_config(POOL)
+    serving = load_serving(device)
+    thinking = sorted(
+        key
+        for key in config.served_models().values()
+        if config.models[key].thinking_token_budget is not None
+    )
+    assert thinking, "사고 상한을 선언한 서빙 좌석이 없다 — 이 검사가 아무것도 안 본다"
+    for key in thinking:
+        args = serving.servers[key].extra_args
+        has_parser = any(
+            arg == "--reasoning-parser" or arg.startswith("--reasoning-parser=") for arg in args
+        )
+        assert has_parser, (
+            f"{device}: {key}는 사고 상한을 선언했는데 서버 행에 "
+            "--reasoning-parser가 없다 — 그 요청은 400이다"
+        )
 
 
 # --- CLI: 교대 프로필은 장비 파일 없이 모델에 닿지 않는다 -----------------------------

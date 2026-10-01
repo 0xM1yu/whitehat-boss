@@ -83,6 +83,10 @@ class Role(StrEnum):
     #
     # `tests/test_config.py`가 `PROMPTED_ROLES ⊆ Role`을 강제한다.
     SINGLE = "single"
+    # 8단계 PoV — Auditor Finding에서 PoC를 만드는 모델-주도 툴 루프(매 홉 `PovAction`).
+    # SINGLE 주석의 함정이 그대로다: `config.PROMPTED_ROLES`·`bench.ROLE_SPEC`에 함께 넣지
+    # 않으면 harness check·bench가 죽고, `prompts/pov/`도 같은 커밋에 있어야 test_config가 산다.
+    POV = "pov"
 
 
 class EvidenceKind(StrEnum):
@@ -307,6 +311,28 @@ class NeStopReason(StrEnum):
     PEER_REVIEW = "peer_review"
     CONTEXT_OVERFLOW = "context_overflow"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    GATEWAY_ERROR = "gateway_error"
+
+
+class PovStopReason(StrEnum):
+    """PoV 툴 루프(Option C)가 서는 사유. `NeStopReason`을 미러한 모델-주도 루프다.
+
+    루프 제어 셋 — `SUBMITTED`(모델이 submit) · `REPEAT_SPEC`(직전 gen과 같은 PoC 바이트 재생성) ·
+    `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
+    계약대로) — `PARSE_FAILED`(스키마 파싱 실패) · `CONTEXT_OVERFLOW`
+    (크기 거절) · `GATEWAY_ERROR`(버릴 수 있는 게이트웨이). **서버 쪽 사건(status 없음·5xx)과
+    예산 소진은 흡수하지 않고 올려 보낸다** — run의 사실이라 여기 값이 없다(`NeStopReason`이
+    `BUDGET_EXHAUSTED`를 흡수한 것과 다른 점: pov는 추가형이라 run-정지 사건을 안 삼킨다).
+
+    이 값을 내는 것은 `runner._run_pov_hops`이고, 홉 이벤트(`POV_HOP`)의 `stop_reason`으로
+    남는다(`NeStopReason` ↔ `SCOUT_HOP`과 같은 짝).
+    """
+
+    SUBMITTED = "submitted"
+    REPEAT_SPEC = "repeat_spec"
+    MAX_HOP = "max_hop"
+    PARSE_FAILED = "parse_failed"
+    CONTEXT_OVERFLOW = "context_overflow"
     GATEWAY_ERROR = "gateway_error"
 
 

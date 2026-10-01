@@ -55,6 +55,7 @@ from src.schemas.common import Location
 from src.schemas.decision import DecisionDraft
 from src.schemas.enums import CapsuleLevel, Role
 from src.schemas.finding import Finding
+from src.schemas.pov import PovAction
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 길이 맞춤용 근사다(cli·어댑터와 같은 상수).
 CHARS_PER_TOKEN = 4
@@ -107,6 +108,10 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     # `Role.SINGLE`만 추가하고 여기를 비워 두면 `bench_report._role_report()`의
     # `ROLE_SPEC[role_enum]`이 `KeyError`가 된다 — 고치려던 크래시가 자리만 옮긴다.
     Role.SINGLE: (Finding, CapsuleLevel.EXPANDED),
+    # PoV — 모델은 매 홉 `PovAction`(gen/inspect/submit)을 낸다(PoV 툴 루프, prompts/pov/v2).
+    # `gen`이 실은 `PovSpec`은 순수 조립기가 바이트로 만든다. `_render`에 pov 분기가 있다
+    # (FINDING·TARGET·SOURCE·FACTS). 실측은 서빙 호스트 확보 뒤(checksum·benchmark 0).
+    Role.POV: (PovAction, CapsuleLevel.EXPANDED),
 }
 
 MEASUREMENT_ORDER = ("startup", "structured_output", "prefix_cache", "throughput", "memory")
@@ -145,6 +150,13 @@ def _filler(chars: int, variant: int) -> str:
     return head + _FILLER * (want // len(_FILLER) + 1)
 
 
+# PoV bench 프롬프트에 실을 Finding 요약 근사 — `nodes/pov.py._describe_finding` 모양.
+_POV_FINDING = (
+    "find_0001 · CWE: CWE-787 · 검증 없는 memcpy\n"
+    "근거(rca): parse_header에서 len 미검증\n경로 단계 수: 2"
+)
+
+
 def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
     """실제 렌더 경로. 자리표시자 누락은 `render()`가 잡는다."""
     if role is Role.CRITIC:
@@ -157,6 +169,22 @@ def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
             claim="검증 없는 memcpy (CWE-787)",
             path="parse_header -> memcpy",
             evidence=filler,
+        )
+    if role is Role.POV:
+        # PoV body는 FINDING·TARGET·SOURCE·FACTS를 받는다(캡슐 섹션이 아니라 Auditor의 Finding).
+        # `nodes/pov.py._render_prompt`의 필드 모양으로 근사한다 — bench엔 실캡슐이 없어 FACTS의
+        # capsule_sections가 빠진다(그만큼 낙관 · 서빙 실측이 선행).
+        pov_facts = build_facts(
+            run_id=_BENCH_RUN_ID,
+            ids={"finding_id": "find_0001"},
+            target=_TARGET,
+            source=filler,
+        )
+        return template.render(
+            facts=pov_facts,
+            finding=_POV_FINDING,
+            target=_TARGET.file,
+            source=filler,
         )
     facts = build_facts(
         run_id=_BENCH_RUN_ID,
