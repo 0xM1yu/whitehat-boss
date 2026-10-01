@@ -67,20 +67,20 @@ For a slice-backed run, the supplied original-source context follows this contra
   complete original function body in `(file, start line)` order. The entry-covered lines are not
   used to add a duplicate function.
 - After always including the anchor block, the runner appends a function only when the resulting
-  accumulated source stays within the 20,000-token cap, counted with the Auditor model's own
-  tokenizer. A function that would exceed that cap is omitted as a whole. The anchor is always
-  included even when it alone exceeds the cap. Lines that no indexed symbol contains may also be
-  absent.
+  accumulated source stays within the 20,000-token cap, counted in Auditor-model tokens
+  (approximated when that tokenizer is unavailable). A function that would exceed that cap is
+  omitted as a whole. The anchor is always included even when it alone exceeds the cap. Lines
+  that no indexed symbol contains may also be absent.
 - After those functions, the runner appends the definitions that the carried code uses: macro
   definitions, `struct`/`union`/`enum`/`typedef` definitions, and file-scope variables. A
   definition is added only when the index identifies exactly one candidate for the name (a
-  definition in the anchor's own file wins), only when it is at most 2,000 characters, and only
-  while the total stays within the same 20,000-token cap.
+  definition in the anchor's own file wins), only when its block, counting its banner line, is
+  at most 2,000 characters, and only while the total stays within the same 20,000-token cap.
 - Then it appends the bodies of functions called from the carried functions, one call level deep
   (callees of the anchor first, then callees of the other carried functions in order). A callee is
   resolved the same way (same file first, otherwise only a unique definition), recursion and
-  already-carried ranges are skipped, a callee body over 4,000 characters is skipped, and the
-  same 20,000-token cap applies.
+  already-carried ranges are skipped, a callee block, counting its banner line, over 4,000
+  characters is skipped, and the same 20,000-token cap applies.
 - Appended definitions and callee bodies are supporting context, not code the slice passed
   through. They do not by themselves establish a source-to-sink path; use them to check sizes,
   field layouts, guards, and what a called function does.
@@ -98,9 +98,9 @@ does not mean every relevant function, definition, or callee fits within it.
 `FACTS.capsule_sections` contain retrieved capsule sections. Use those sections to locate callers,
 guards, types, configuration, or related symbols, but keep them separate from the original source
 in `SOURCE`/`FACTS.source`. A cap, omitted function, omitted definition, omitted callee, or
-uncovered line means that material is unavailable, not safe, unreachable, or absent. If the missing material is necessary to decide a
-source-to-sink or caller connection, use `reachability_unknown` and the pre-issued
-missing-evidence ID when the contract permits it.
+uncovered line means that material is unavailable, not safe, unreachable, or absent. If the
+missing material is necessary to decide a source-to-sink or caller connection, use
+`reachability_unknown` and the pre-issued missing-evidence ID when the contract permits it.
 
 Inspect the wider supplied `SOURCE` before deciding whether the candidate is connected, guarded,
 or reachable. Do not expand the analysis to unrelated vulnerabilities merely because additional
