@@ -331,7 +331,14 @@ class SlicingStages:
                 for position, candidate in enumerate(
                     [] if self.prepare_only else self.candidates
                 ):
-                    if self.shard and position % self.shard[1] != self.shard[0]:
+                    if self.claims is not None:
+                        # Shared queue (#369): a shard whose server is poisoned stops taking work
+                        # so the healthy shards slice the rest, instead of degrading all of it.
+                        if degrade_only:
+                            break
+                        if not self.claims.claim(candidate["candidate_key"]):
+                            continue
+                    elif self.shard and position % self.shard[1] != self.shard[0]:
                         continue
                     if degrade_only:
                         # A prior run may have already completed this candidate's full slice (a
@@ -405,10 +412,14 @@ class SlicingStages:
             # After the checkpoint baseline, so a merged --export-only does not inherit it.
             index, count = self.shard
             self.result["shard"] = {"index": index, "count": count}
+            taken = (
+                "only the candidates it claimed from the shared queue"
+                if self.claims is not None
+                else f"only candidates at positions p % {count} == {index}"
+            )
             self.errors.append(
-                f"Shard {index}/{count}: only candidates at positions p % {count} == {index} "
-                "were sliced; merge the shard checkpoints (tools/merge_slicer_shards.py) and "
-                "run --export-only for the full result"
+                f"Shard {index}/{count}: {taken} were sliced; merge the shard checkpoints "
+                "(tools/merge_slicer_shards.py) and run --export-only for the full result"
             )
         if self.cpg_ready:
             truncated = [c for c in self.completed if c["truncated"]]
