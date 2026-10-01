@@ -270,6 +270,28 @@ class SlicingStages:
                 "exported as degraded anchor-only slices"
             )
 
+    def restore_discovery(self) -> None:
+        """Take the candidate list and discovery result a `--prepare-only` run left (#368)."""
+        baseline = self.checkpoint.get("baseline") if self.checkpoint else None
+        candidates = self.checkpoint.get("candidates") if self.checkpoint else None
+        if baseline is None or candidates is None:
+            raise ValueError("--cpg needs a checkpoint copied from a --prepare-only run")
+        # Keep this run's own CPG timing/server facts; the counters are the discovery's.
+        server = self.result.get("server")
+        self.result.update(baseline["result"])
+        self.result["server"] = server
+        self.errors.extend(e for e in baseline["errors"] if e not in self.errors)
+        self.candidates = candidates
+
+    def save_cpg(self) -> None:
+        """Save the graph for the shards and slice nothing (#368 `--prepare-only`)."""
+        data, _ = self.query("save_cpg", queries.save_cpg_query(self.cpg_out.as_posix()))
+        self.result["prepared_cpg"] = {"path": self.cpg_out.as_posix(), "bytes": data.get("bytes")}
+        self.errors.append(
+            "Prepare-only: CPG saved and candidates discovered, none sliced; copy the "
+            "checkpoint per shard and run each with --resume --cpg <saved CPG> --shard I/N"
+        )
+
     def run(self) -> dict:
         started = time.perf_counter()
         try:
@@ -283,12 +305,19 @@ class SlicingStages:
                 self.define_library()
                 if self.checkpoint:
                     self.checkpoint.bind("engine_config", self.result["joern_engine_config"])
-                self.collect_candidates()
-                if self.checkpoint:
-                    self.checkpoint.set(
-                        "baseline",
-                        {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
-                    )
+                if self.cpg_file is not None:
+                    # A shard on a prepared CPG reuses the prepared discovery (#368): same
+                    # candidate list for every shard, and no case_a/case_b queries per shard.
+                    self.restore_discovery()
+                else:
+                    self.collect_candidates()
+                    if self.checkpoint:
+                        self.checkpoint.set(
+                            "baseline",
+                            {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
+                        )
+                if self.prepare_only:
+                    self.save_cpg()
                 # QueryError comes from slicer_errors, not `from slicer import` -- under
                 # `python slicer.py` that import loaded a second slicer module whose QueryError
                 # never matched what slicer.py raised, so this isolation never ran (#363).
@@ -299,7 +328,9 @@ class SlicingStages:
                 # unprocessed) -- switch to emitting anchor-only degraded slices without querying
                 # the server, so no captured candidate is lost from slices.json.
                 degrade_only = False
-                for position, candidate in enumerate(self.candidates):
+                for position, candidate in enumerate(
+                    [] if self.prepare_only else self.candidates
+                ):
                     if self.shard and position % self.shard[1] != self.shard[0]:
                         continue
                     if degrade_only:

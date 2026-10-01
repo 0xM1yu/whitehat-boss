@@ -698,3 +698,105 @@ def test_export_gives_unfinished_candidates_the_degraded_slice(monkeypatch, repo
         for s in exported["slices"]
         if missing["candidate_key"] in s["members"]
     )
+
+
+def _prepare(monkeypatch, repo, tmp_path, data):  # noqa: ANN001, ANN202
+    """#368: one `--prepare-only` run -> (checkpoint, saved CPG path, result, transport)."""
+    folder = tmp_path / "prep"
+    folder.mkdir(parents=True)
+    data["save_cpg"] = response("save_cpg", {"saved": True, "bytes": 123})
+    cpg = folder / "cpg.bin"
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+        "--prepare-only", "--cpg-out", str(cpg),
+    )
+    return folder / "state.db", cpg, code, result, transport
+
+
+def test_prepare_only_discovers_once_and_saves_the_graph(monkeypatch, repo, tmp_path):
+    """#368: the prepare run parses and discovers, saves the CPG, and slices nothing."""
+    state, cpg, code, result, transport = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    assert code == 2 and result["status"] == "partial"
+    assert "Prepare-only" in result["error"]
+    assert {"import", "case_a", "case_b", "save_cpg"} <= set(transport.stages)
+    assert not {"flows", "backward", "context"} & set(transport.stages)
+    assert result["prepared_cpg"] == {"path": cpg.resolve().as_posix(), "bytes": 123}
+    save = [q for q in (json.loads(r.data)["query"] for r, _ in transport.requests)
+            if '"__SLICER_save_cpg__"' in q]
+    assert len(save) == 1 and cpg.resolve().as_posix() in save[0]
+    with Checkpoint(state, resume=True) as store:
+        assert len(store.get("candidates")) == 3
+        assert store.get("baseline") is not None
+        assert not list(store.conn.execute("SELECT candidate_key FROM stages"))
+
+
+def test_shards_on_a_prepared_graph_skip_parsing_and_discovery(monkeypatch, repo, tmp_path):
+    """#368: a shard on a copy of the prepared checkpoint loads the saved CPG (importCpg, not
+    importCode) and never re-runs discovery -- case_a/case_b are absent from its mock, so a
+    rerun would fail. Merged and exported, the shards give exactly the one-run slices."""
+    import shutil
+
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates())
+    state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    databases = []
+    for index in range(2):
+        folder = tmp_path / f"seeded{index}"
+        folder.mkdir()
+        shutil.copy(state, folder / "state.db")
+        databases.append(folder / "state.db")
+        data = three_candidates()
+        del data["case_a"], data["case_b"]
+        code, result, transport = run_cli(
+            monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+            "--resume", "--cpg", str(cpg), "--shard", f"{index}/2",
+        )
+        assert code == 2 and result["shard"] == {"index": index, "count": 2}
+        assert not {"case_a", "case_b"} & set(transport.stages)
+        imports = [q for q in (json.loads(r.data)["query"] for r, _ in transport.requests)
+                   if '"__SLICER_import__"' in q]
+        assert len(imports) == 1 and "importCpg(" in imports[0] and "importCode" not in imports[0]
+    merged = tmp_path / "merged.db"
+    assert merge_shards(merged, databases) == {"shards": 2, "candidates": 3, "complete": 3}
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert exported["status"] == "ok"
+    assert exported["slices"] == single["slices"]
+
+
+@pytest.mark.parametrize("extra", [
+    ["--prepare-only"],                                       # no --cpg-out
+    ["--prepare-only", "--cpg-out", "x.bin", "--shard", "0/2"],
+    ["--cpg-out", "x.bin"],                                   # without --prepare-only
+    ["--cpg", "x.bin"],                                       # without --resume
+])
+def test_prepared_graph_options_are_refused_when_inconsistent(repo, tmp_path, extra):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--checkpoint", str(tmp_path / "state.db"), *extra])
+
+
+def test_a_shard_on_a_checkpoint_without_discovery_fails(monkeypatch, repo, tmp_path):
+    """--cpg on a checkpoint whose prepare run died before discovery (case_a failed) has no
+    candidate list to reuse -> the shard says so and slices nothing, it does not run its own
+    discovery behind the prepared graph's back."""
+    data = three_candidates()
+    data["case_a"] = response("case_a", [], success=False)
+    state, cpg, _, prepared, _ = _prepare(monkeypatch, repo, tmp_path, data)
+    assert "Prepare-only" not in (prepared.get("error") or "")
+    seeded = tmp_path / "seeded"
+    seeded.mkdir()
+    import shutil
+
+    shutil.copy(state, seeded / "state.db")
+    code, result, transport = run_cli(
+        monkeypatch, repo, seeded, three_candidates(), "--checkpoint", str(seeded / "state.db"),
+        "--resume", "--cpg", str(cpg),
+    )
+    assert code != 0
+    assert "--prepare-only" in result["error"]
+    assert not {"case_a", "case_b", "flows"} & set(transport.stages)
