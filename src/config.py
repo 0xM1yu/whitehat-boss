@@ -624,19 +624,22 @@ class Thresholds(HarnessModel):
     auditor_definitions: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE` 상한을 토큰으로(#349 (c)). 0이면 지금처럼 글자 상한
     # (`runner._AUDITOR_SOURCE_CHARS` 15,000)이다. 양수면 Auditor 모델 토크나이저(없으면 글자
-    # 근사)로 센 토큰이 이 값을 넘지 않게 함수·정의를 넣는다. entry 함수는 여전히 상한 밖이다
+    # 근사)로 센 토큰이 이 값을 넘지 않게 함수·정의·피호출 본문·호출자 창을 넣는다. entry 함수는
+    # 여전히 상한 밖이다
     # (아래 `auditor_entry_trim`이 0일 때).
     # **값은 아직 안 정했다** — 저장소 전체 실측에서 효과가 더 늘지 않는 가장 작은 값을 고른다
-    # (#349). 2026-10-01 s500 handoff 코드의 글자/토큰 비는 중앙값 3.04(Qwen3.8-27B 토크나이저)
-    # — 15,000자 ≈ 4,900토큰.
+    # (#349). 2026-10-01 s500 handoff Auditor `SOURCE` 81,748건을 Qwen3.8-27B 토크나이저로 센 글자/
+    # 토큰 비는 중앙값 3.04(p10 2.53 · p90 3.70) — 15,000자 ≈ 4,900토큰은 그 중앙값으로 나눈
+    # **계산값**이다. 측정은 로컬·run ID 없음(원자료 저장소 밖 `measure_results/s500/`).
     auditor_source_tokens: int = Field(default=0, ge=0)
     # entry 함수가 위 상한을 넘으면 줄이는가(#349). 0이면 지금처럼 entry 함수는 상한 밖이다(통째로
-    # 실림 — s500 handoff에서 최대 입력 155,280토큰). 1이면 함수 머리·닫는 줄·entry 줄과 슬라이스
-    # 줄 앞뒤만 남기고 뺀 구간을 표시한다(`runner._trim_entry`). 위 ⚠와 같은 프롬프트 판 문제.
+    # 실림 — s500 handoff `SOURCE` 하나의 최대가 155,280토큰, 위와 같은 로컬 측정). 1이면 함수
+    # 머리·닫는 줄·entry 줄과 슬라이스 줄 앞뒤만 남기고 뺀 구간을 표시한다(`runner._trim_entry`).
+    # 위 ⚠와 같은 프롬프트 판 문제.
     auditor_entry_trim: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 entry 함수를 부르는 호출 지점 앞뒤 몇 줄을 붙이는가(#349 (b)). 0이면 안
     # 붙인다(결정 1-b 그대로). 호출자 쪽 검사(인자 길이·NULL 확인)를 겨냥한다. 창은 호출자 함수
-    # 범위 안으로 자르고 정의 뒤·피호출 함수 앞에 붙는다(`runner._caller_window`). **값은 안
+    # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
     # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
 

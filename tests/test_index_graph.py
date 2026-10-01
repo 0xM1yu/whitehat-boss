@@ -1226,3 +1226,30 @@ def test_definitions_of_takes_the_first_table_that_has_the_name(tmp_path: Path) 
     found = _graph(tmp_path, doc).definitions_of(["BOTH"], "parser.c")
 
     assert found == [Location(file="parser.c", symbol="BOTH", line_start=1, line_end=1)]
+
+
+
+def test_call_sites_of_counts_definitions_not_files(tmp_path: Path) -> None:
+    """정의가 한 파일 안에 둘(`#if` 양쪽 가지)이어도 둘이다 — 다른 파일의 호출은 어느 정의로
+    가는지 모르므로 안 싣는다. 같은 파일 호출은 싣는다(#351 자체 검토 LOW-2: 파일 수로 세던 것)."""
+    doc = {
+        "version": "index-v1",
+        "files": ["a.c", "b.c"],
+        "skipped": [],
+        "symbols": [
+            {"name": "foo", "file": "a.c", "line_start": 1, "line_end": 3},
+            {"name": "foo", "file": "a.c", "line_start": 6, "line_end": 8},
+        ],
+        "calls": [
+            {"caller": "m", "callee": "foo", "file": "b.c", "line": 4},
+            {"caller": "n", "callee": "foo", "file": "a.c", "line": 20},
+        ],
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+    target = Location(file="a.c", symbol="foo", line_start=1, line_end=3)
+
+    found = _graph(tmp_path, doc).call_sites_of(target)
+
+    assert [loc.file for loc in found] == ["a.c"]
