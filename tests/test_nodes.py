@@ -1308,7 +1308,7 @@ def test_auditor_content_aware_versions_pin_v3_v4_and_v5() -> None:
     content를 전제로 쓰였다). **critic의 상수를 import하지 않는다** — 본문을 읽도록 쓰였는지는
     역할별 프롬프트의 성질이다.
     """
-    assert {"v3", "v4", "v5"} <= auditor._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4", "v4_t1", "v5"} <= auditor._CONTENT_AWARE_VERSIONS
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
