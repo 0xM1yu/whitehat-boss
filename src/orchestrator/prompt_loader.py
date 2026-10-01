@@ -83,6 +83,10 @@ FACT_KEYS = (
     "evidence",
     "callers",
     "slice_criterion",
+    # 퍼즈 진입점(`LLVMFuzzerTestOneInput`)과 그 본문. **PoV만 싣는다** — `slice_criterion`과 같은
+    # opt-in이라 인자를 안 주는 역할의 프롬프트는 바이트가 그대로다(`docs/evaluation.md:69` —
+    # 프롬프트가 바뀌면 이전 결과와 직접 비교하지 않는다).
+    "fuzz_entrypoint",
 )
 
 
@@ -293,6 +297,7 @@ def build_facts(
     callers: Iterable[str] = (),
     evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
     slice_criterion: Mapping[str, object] | None = None,
+    fuzz_entrypoint: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
@@ -304,6 +309,11 @@ def build_facts(
 
     `slice_criterion`은 준 경우에만 키가 생긴다(`FACT_KEYS` 주석) — `None`을 `null`로 싣지
     않는다. 실으면 슬라이스 없는 프롬프트까지 글자가 바뀐다.
+
+    `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
+    `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
+    (CLAUDE.md §0 — 안 잰 값은 0으로 두고 사유를 남긴다). 그 dict를 만드는 곳은
+    `runner._fuzz_entrypoint`다.
     """
     return {
         "run_id": run_id,
@@ -343,6 +353,7 @@ def build_facts(
         ],
         "callers": list(callers),
         **({"slice_criterion": dict(slice_criterion)} if slice_criterion is not None else {}),
+        **({"fuzz_entrypoint": dict(fuzz_entrypoint)} if fuzz_entrypoint is not None else {}),
     }
 
 
