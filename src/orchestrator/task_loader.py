@@ -71,6 +71,13 @@ def safe_extract(tar_path: Path, dest: Path) -> Path:
                 tar.extract(member, dest, filter="data")
     except tarfile.FilterError as exc:
         raise UnsafeArchiveError(f"안전하지 않은 아카이브 멤버: {exc}") from exc
+    except (tarfile.TarError, EOFError) as exc:
+        # ⏵ 2026-10-02 — 넓혔다(적대적 리뷰 M-2). `FilterError`만 잡던 동안 **아카이브가 아예 못
+        # 읽히는 경우**가 호출자까지 생 예외로 샜다: `tarfile.ReadError`(비-gzip — HuggingFace
+        # **LFS 포인터**를 `curl -L` 없이 받으면 정확히 이 모양이다) · `EOFError`(중간에 끊긴 gz).
+        # 둘 다 "이 과제를 못 쓴다"라는 **한 사건**이고 호출자가 그것만 알면 되므로 같이 감싼다.
+        # `FilterError`는 `TarError`의 하위지만 **위에 두어** 사유 문구를 가른다(안전 위반 ≠ 손상).
+        raise UnsafeArchiveError(f"아카이브를 읽을 수 없다({type(exc).__name__}): {exc}") from exc
     return dest
 
 
