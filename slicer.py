@@ -29,6 +29,7 @@ from urllib.request import Request, urlopen
 import slicer_queries as queries
 from slicer_checkpoint import Checkpoint
 from slicer_compile import generated_header_dirs, resolve_compilation_database
+from slicer_errors import QueryError  # re-exported: callers and tests use slicer.QueryError
 from slicer_export import export_sources
 from slicer_pipeline import SlicingStages
 from slicer_source import (
@@ -185,6 +186,7 @@ COUNTERS = (
     "candidates_degraded",
     "engine_flows_truncated",
     "directories_skipped",
+    "files_symlink_skipped",
     "flow_sinks_without_method",
     "backward_truncated",
     "candidates_reused",
@@ -219,13 +221,6 @@ COMPILE_AWARE_LIMITATIONS = [
     "this path does not parse inactive branches; such code can be dropped (verified by full "
     "slicing, not by CI)",
 ]
-
-
-class QueryError(Exception):
-    def __init__(self, message: str, logs: str = "", *, poisoned: bool = False):
-        super().__init__(message)
-        self.logs = logs
-        self.poisoned = poisoned
 
 
 def valid_location(value: object) -> bool:
@@ -515,6 +510,7 @@ class Slicer(SlicingStages):
             "candidates_degraded",
             "files_read_failed",
             "directories_skipped",
+            "files_symlink_skipped",
             "candidates_reused",
             "candidate_stages_reused",
         ):
@@ -621,8 +617,17 @@ class Slicer(SlicingStages):
                     )
             for name in sorted(files):
                 path = Path(directory) / name
-                if path.suffix.lower() in SOURCE_SUFFIXES:
-                    paths.append(path)
+                if path.suffix.lower() not in SOURCE_SUFFIXES:
+                    continue
+                # A file symlink is refused at read time (O_NOFOLLOW, below), and one refused read
+                # used to void the whole run through prepare_checkpoint's count check (#362 --
+                # libmspack, accel-ppp). Skip and count it like a directory symlink instead: the
+                # policy (never follow links in the audited repo) is unchanged, the run survives.
+                if path.is_symlink():
+                    self.increment("files_symlink_skipped")
+                    self.errors.append(f"File symlink not read: {path.relative_to(self.repo)}")
+                    continue
+                paths.append(path)
         self.measure("files_seen", len(paths))
         for path in sorted(paths):
             name = path.relative_to(self.repo).as_posix()
