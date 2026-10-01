@@ -1141,3 +1141,29 @@ def test_definitions_of_skips_an_ambiguous_name_and_prefers_the_near_file(tmp_pa
 
 def test_definitions_of_is_none_without_v2_tables(tmp_path: Path) -> None:
     assert _graph(tmp_path).definitions_of(["header"], "parser.c") is None
+
+
+def test_call_sites_of_finds_calls_into_the_target(tmp_path: Path) -> None:
+    """#349 (b): 대상 함수를 부르는 호출 지점. 다른 파일의 호출은 대상 이름의 정의가 하나뿐일
+    때만(only_b ← a.c:3), 여럿이면 같은 파일 호출만(helper ← a.c:5 — b.c에도 helper가 있다),
+    같은 이름이 여러 파일이면 다른 파일 호출은 빠진다(twice ← a.c:6). 재귀(entry ← a.c:7)는
+    본문 안이라 빠진다."""
+    graph = _graph(tmp_path, _CALLEE_INDEX)
+
+    def sites(file: str, name: str, start: int, end: int) -> list[Location] | None:
+        return graph.call_sites_of(Location(file=file, symbol=name, line_start=start, line_end=end))
+
+    assert sites("b.c", "only_b", 5, 8) == [
+        Location(file="a.c", symbol="entry", line_start=3, line_end=3)
+    ]
+    assert sites("a.c", "helper", 12, 15) == [
+        Location(file="a.c", symbol="entry", line_start=5, line_end=5)
+    ]
+    assert sites("b.c", "helper", 1, 3) == []
+    assert sites("c.c", "twice", 1, 3) == []
+    assert sites("a.c", "entry", 1, 10) == []
+
+
+def test_call_sites_of_is_none_without_a_graph(tmp_path: Path) -> None:
+    target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
+    assert _graph(tmp_path, None).call_sites_of(target) is None
