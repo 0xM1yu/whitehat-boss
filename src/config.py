@@ -606,6 +606,9 @@ class Thresholds(HarnessModel):
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다.
     auditor_callee_hops: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
+    # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_definitions: int = Field(default=0, ge=0, le=1)
 
     @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
@@ -666,8 +669,9 @@ class Thresholds(HarnessModel):
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
         # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
-        if not dumped["auditor_callee_hops"]:
-            dumped.pop("auditor_callee_hops")
+        for key in ("auditor_callee_hops", "auditor_definitions"):
+            if not dumped[key]:
+                dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
         for level, tokens in nested.items():
             flat[f"capsule_budget_tokens.{level}"] = float(tokens)

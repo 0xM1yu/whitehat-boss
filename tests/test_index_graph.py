@@ -1103,3 +1103,41 @@ def test_callees_of_resolves_calls_in_the_body_to_definitions(tmp_path: Path) ->
 def test_callees_of_is_none_without_a_graph(tmp_path: Path) -> None:
     target = Location(file="a.c", symbol="entry", line_start=1, line_end=10)
     assert _graph(tmp_path, None).callees_of(target) is None
+
+
+def test_definitions_of_finds_macros_types_and_file_vars(tmp_path: Path) -> None:
+    """#349 (f): 이름 → 정의 위치. 같은 파일 우선, 다른 파일은 하나뿐일 때만, 모르는 이름은 빠진다.
+    순서는 (파일, 시작 줄)이다."""
+    found = _graph(tmp_path, _INDEX_V2).definitions_of(
+        ["header", "HDR_LEN", "g_hdr", "nope"], "parser.c"
+    )
+
+    assert found == [
+        Location(file="main.c", symbol="g_hdr", line_start=3, line_end=3),
+        Location(file="parser.c", symbol="HDR_LEN", line_start=1, line_end=1),
+        Location(file="parser.c", symbol="header", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_skips_an_ambiguous_name_and_prefers_the_near_file(tmp_path: Path) -> None:
+    twice = {
+        **_INDEX_V2,
+        "macros": {
+            "HDR_LEN": [
+                {"file": "a.h", "line_start": 1, "line_end": 1},
+                {"file": "b.h", "line_start": 1, "line_end": 1},
+            ],
+            "MAX": [
+                {"file": "parser.c", "line_start": 5, "line_end": 5},
+                {"file": "main.c", "line_start": 7, "line_end": 7},
+            ],
+        },
+    }
+
+    found = _graph(tmp_path, twice).definitions_of(["HDR_LEN", "MAX"], "parser.c")
+
+    assert found == [Location(file="parser.c", symbol="MAX", line_start=5, line_end=5)]
+
+
+def test_definitions_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    assert _graph(tmp_path).definitions_of(["header"], "parser.c") is None

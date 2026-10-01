@@ -87,7 +87,7 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -408,6 +408,8 @@ class Dependencies(Protocol):
     symbols_for: Callable[[str], list[Location] | None]
     # 함수 위치 → 그 본문이 부르는 함수의 정의 위치(#349). `symbols_for`와 같은 경계다.
     callees_of: Callable[[Location], list[Location] | None]
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
+    definitions_of: Callable[[Iterable[str], str], list[Location] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
@@ -757,6 +759,7 @@ def run_pipeline(
         read_payload=read_payload,
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
+        definitions_of=deps.definitions_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
@@ -2146,6 +2149,17 @@ _AUDITOR_SOURCE_CHARS = 15_000
 # 피호출 함수가 못 들어가는 것을 막는다. **정한 값이지 잰 값이 아니다** — s500 재측정에서 본다.
 _AUDITOR_CALLEE_CHARS = 4_000
 
+# 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
+# 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
+_AUDITOR_DEFINITION_CHARS = 2_000
+# 실린 원문에서 이름을 뽑는 데 쓴다 — 파싱이 아니라 토큰 근사다. 키워드는 정의 조회에서 뺀다.
+_IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+_C_KEYWORDS = frozenset(
+    "auto break case char const continue default do double else enum extern float for goto if "
+    "inline int long register restrict return short signed sizeof static struct switch typedef "
+    "union unsigned void volatile while bool true false NULL".split()
+)
+
 
 def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
     """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
@@ -2202,10 +2216,30 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         blocks.append(block)
         carried.append(symbol)
         size += 1 + len(block)
+    seen = list(carried)
+    with_definitions = ctx.config.thresholds.auditor_definitions
+    definitions = definitions_dropped = 0
+    if with_definitions:
+        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
+        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다.
+        used = {name for block in blocks for name in _IDENT.findall(block)} - _C_KEYWORDS
+        for definition in ctx.definitions_of(used, anchor.file) or []:
+            if any(_overlaps(definition, other) for other in seen):
+                continue
+            seen.append(definition)
+            block = _block(definition, ctx.read_source(definition))
+            if (
+                len(block) > _AUDITOR_DEFINITION_CHARS
+                or size + 1 + len(block) > _AUDITOR_SOURCE_CHARS
+            ):
+                definitions_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + len(block)
+            definitions += 1
     hops = ctx.config.thresholds.auditor_callee_hops
     callees = callees_dropped = 0
     if hops:
-        seen = list(carried)
         for owner in list(carried):
             for callee in ctx.callees_of(owner) or []:
                 if any(_overlaps(callee, other) for other in seen):
@@ -2228,12 +2262,17 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks),
+        functions=len(blocks) - definitions,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=len(anchor_text),
         **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
+        **(
+            {"definitions": definitions, "definitions_dropped": definitions_dropped}
+            if with_definitions
+            else {}
+        ),
     )
     return source
 
