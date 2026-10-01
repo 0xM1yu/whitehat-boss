@@ -213,6 +213,13 @@ CPG를 읽기만 한다 → 여러 Joern 서버에 나눌 수 있다.
   바뀌면 `Checkpoint mismatch: run_contract`
 - 샤드 수는 CPU·메모리로 정한다. 2026-09-29 8샤드 CPU 최대 약 47코어(30초 표본) · 메모리 미측정
 
+⏵ #370 **한 번에 돌리기** -> `tools/slice_sharded.py --repo … --out … --work-dir … --joern … -- <분석 인자>`가 준비(#368)·서버 N개
+기동·샤드(#369 공유 대기열)·병합·export를 한 번에 한다. 샤드 수는 `--shards auto`(기본) = min(코어 ÷ `--cores-per-shard`,
+메모리 ÷ `--memory-per-shard-gb`, 후보 ÷ `--min-candidates-per-shard`, `--max-shards`). 코어는 cgroup `cpu.max`
+할당량(컨테이너의 `nproc`은 호스트 코어를 셀 수 있다), 메모리는 MemAvailable. ⚠ 샤드당 코어·메모리 기본값(4코어 · 24GB)은
+정한 값이지 잰 값이 아니다. 모든 샤드가 준비 체크포인트에서 시작하므로 `--wall-seconds`로 끊긴 샤드가 있어도 병합이
+거부되지 않는다(끊긴 후보는 degraded)
+
 ⏵ #369 **공유 대기열** -> `--claim-db <파일>`(모든 샤드가 같은 SQLite 파일)을 주면 샤드가 `p % N` 대신 아직 아무도
 안 가져간 후보를 하나씩 가져가 자른다 -> 느린 후보가 한 샤드에 몰려도 나머지 샤드가 남은 후보를 처리한다. 자기가
 가져간 후보는 `--resume`에서 다시 이어 받고, 가져가고 죽은 샤드의 후보는 미완료로 남아 export에서 degraded가 된다.
