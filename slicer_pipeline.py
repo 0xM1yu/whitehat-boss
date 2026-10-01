@@ -6,6 +6,7 @@ import time
 import slicer_queries as queries
 from slicer_candidates import collect
 from slicer_checkpoint import digest
+from slicer_errors import QueryError
 from slicer_library import Library
 from slicer_source import assemble, cluster, normalize_points, recover_points
 
@@ -239,6 +240,7 @@ class SlicingStages:
         self.cpg_ready = True
         self.measure("cpg_seconds", 0)
         self.result["measurement_notes"]["cpg_seconds"] = "Export-only: no CPG request executed"
+        unfinished = 0
         for candidate in self.candidates:
             state = self.restore_stage(candidate)
             if state["phase"] == "complete":
@@ -246,8 +248,24 @@ class SlicingStages:
                 if state["item"]:
                     self.completed.append(state["item"])
                 self.increment("candidates_reused")
-        if self.processed < len(self.candidates):
-            self.errors.append("Export-only: checkpoint contains unfinished candidates")
+                continue
+            # Not complete: a shard that hit a poison streak or was stopped, or a merge with a
+            # shard missing. An unsharded run gives such a candidate the anchor-only degraded
+            # slice (#307) -- it never reaches the checkpoint, so export used to DROP it and a
+            # sharded run lost candidates an unsharded one keeps (#364). Emit the same slice here;
+            # it needs only the candidate and the sources, no server. --resume still re-attempts
+            # (nothing is saved).
+            unfinished += 1
+            if self.points([candidate["entry"]]):
+                self.completed.append(self.degraded_slice(candidate))
+                self.increment("candidates_degraded")
+            else:
+                self.increment("candidates_unmapped")
+        if unfinished:
+            self.errors.append(
+                f"Export-only: checkpoint contains unfinished candidates ({unfinished}); "
+                "exported as degraded anchor-only slices"
+            )
 
     def run(self) -> dict:
         started = time.perf_counter()
@@ -268,8 +286,9 @@ class SlicingStages:
                         "baseline",
                         {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
                     )
-                from slicer import QueryError  # deferred: slicer imports this module
-
+                # QueryError comes from slicer_errors, not `from slicer import` -- under
+                # `python slicer.py` that import loaded a second slicer module whose QueryError
+                # never matched what slicer.py raised, so this isolation never ran (#363).
                 consecutive_poison = 0
                 # After a poison streak the server is likely unusable, but the remaining
                 # candidates were already captured (that capture is the recall unit). Rather than
