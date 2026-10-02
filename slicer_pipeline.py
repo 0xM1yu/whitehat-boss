@@ -62,16 +62,26 @@ class SlicingStages:
         if self.priority_files is not None:
             # Before bind(): the checkpoint (and so --prepare-only's shards and the claim queue)
             # keeps this order, and resuming with a different list is a contract mismatch.
-            self.candidates, first = prioritize(self.candidates, self.priority_files)
-            seen = {c["entry"]["file"] for c in self.candidates} | {
-                a["file"] for c in self.candidates for a in c["anchors"]
-            }
+            self.candidates, first, matched = prioritize(self.candidates, self.priority_files)
             self.result["priority"] = {
                 "files": len(self.priority_files),
-                "files_with_candidates": len(self.priority_files & seen),
+                "files_with_candidates": len(matched),
                 "first_tier_candidates": first,
                 "candidates": len(self.candidates),
             }
+            # A list that matches nothing is not an error (the run is still complete), but a
+            # misspelled list must not read as applied.
+            unmatched = len(self.priority_files) - len(matched)
+            if not matched:
+                self.result["measurement_notes"]["priority_files"] = (
+                    f"the list ({len(self.priority_files)} files) matched no candidate's entry or "
+                    "anchor file; candidates keep the default order"
+                )
+            elif unmatched:
+                self.result["measurement_notes"]["priority_files"] = (
+                    f"{unmatched} of {len(self.priority_files)} listed files matched no "
+                    "candidate's entry or anchor file"
+                )
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
         if self.checkpoint:
             self.checkpoint.bind("candidates", self.candidates)

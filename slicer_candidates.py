@@ -58,18 +58,22 @@ def collect(rows_by_case: dict, repo) -> list[dict]:
     return ordered
 
 
-def prioritize(candidates: list[dict], files: set[str]) -> tuple[list[dict], int]:
+def prioritize(
+    candidates: list[dict], files: set[str]
+) -> tuple[list[dict], int, set[str]]:
     """Candidates whose entry or any anchor is in `files` first (#377 option (b)).
 
-    Stable: each tier keeps collect()'s order, and ids stay as collect() numbered them, so a
-    candidate's slice does not depend on the list -- only when it is sliced does. That matters
-    only when the run is cut short (a wall budget): what was not reached exports degraded.
-    Returns the reordered list and the size of the first tier.
+    Stable: each tier keeps collect()'s order, and ids stay as collect() numbered them. The list
+    changes only when a candidate is sliced: the candidate set is the same, and a candidate that
+    gets a full slice gets the same slice. Which candidates end up degraded can differ -- those
+    not reached when the run is cut short (a wall budget, a kill), and those after a poison streak
+    (slicer_pipeline POISON_STOP_STREAK degrades the rest, or a claim-mode shard stops claiming).
+    Returns the reordered list, the size of the first tier, and the listed files some candidate
+    has as its entry or an anchor.
     """
-
-    def first(c: dict) -> bool:
-        return c["entry"]["file"] in files or any(a["file"] in files for a in c["anchors"])
-
-    head = [c for c in candidates if first(c)]
-    tail = [c for c in candidates if not first(c)]
-    return head + tail, len(head)
+    head, tail, matched = [], [], set()
+    for c in candidates:
+        hits = files & ({c["entry"]["file"]} | {a["file"] for a in c["anchors"]})
+        matched |= hits
+        (head if hits else tail).append(c)
+    return head + tail, len(head), matched
