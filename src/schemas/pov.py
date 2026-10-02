@@ -174,6 +174,10 @@ class PovAction(HarnessModel):
     # 그 안에 들어왔다. `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
     # ⚠ **이 목록을 넓히면 프롬프트도 같이 넓힌다** — 스키마가 허용해도 프롬프트가 광고하지 않으면
     # 모델은 그 도구를 영영 안 쓴다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄).
+    # ⚠ **그리고 이 Literal은 스키마 차원이라 프롬프트 버전 게이트(`nodes.pov._WIDE_INPUT_VERSIONS`)
+    # 밖이다** — v2에도 `gdb`가 들어간다. v2 prefix가 그것을 안 광고하므로 실제로 고르지는
+    # 않지만(위 한계), 이 Literal 자체로 v2 입력이 바뀌는 것은 막지 못한다(적대적 리뷰
+    # 2026-10-02 MEDIUM-4가 든 한계).
     tool: Literal["asan", "build", "gdb", "poc"] | None = None
     rationale: NonEmptyStr
 

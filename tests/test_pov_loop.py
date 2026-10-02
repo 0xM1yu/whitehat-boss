@@ -167,6 +167,26 @@ def _scripted(ctx: RunContext, actions: list[object]) -> RunContext:  # noqa: F8
     return dataclasses.replace(ctx, models=_ScriptedModel(actions))
 
 
+def _with_pov_version(ctx: RunContext, version: str) -> RunContext:  # noqa: F811
+    """pov 좌석의 `prompt_template_version`만 바꾼 `ctx` — `test_nodes.py`의
+    `test_critic_wiring_includes_evidence_body`와 같은 패턴.
+
+    넓은 입력(`nodes.pov._WIDE_INPUT_VERSIONS`)은 v2가 아니면 안 실리므로, 그것을 직접 보는
+    검사는 ctx를 v3로 옮겨야 한다 — 기본 `dev_fake` 프로필의 pov 좌석은 v2다."""
+    key = ctx.config.model_key_for(Role.POV.value)
+    models = {
+        **ctx.config.models,
+        "fake_pov_wide": ctx.config.models[key].transition(prompt_template_version=version),
+    }
+    roles = {**ctx.config.profile.roles, Role.POV.value: "fake_pov_wide"}
+    return dataclasses.replace(
+        ctx,
+        config=ctx.config.transition(
+            models=models, profile=ctx.config.profile.transition(roles=roles)
+        ),
+    )
+
+
 def test_every_pov_tool_is_a_real_tool() -> None:
     """`PovAction.tool` Literal의 모든 값은 ToolRunner 화이트리스트(`TOOL_KINDS`) 안이어야 한다.
 
@@ -592,9 +612,12 @@ def test_pov_hop0_carries_the_same_source_the_auditor_saw(ctx: RunContext) -> No
 
     PoV가 넓은 소스를 봐야 하는 이유: CyberGym Level 1의 지배적 실패는 "취약 경로 미도달"이고 그걸
     가르는 것은 앞단 파서의 포맷 조건이다 — 그 파서가 entry 함수 밖에 있으면 PoV는 매직·헤더를
-    영영 못 본다."""
+    영영 못 본다.
+
+    ⚠ **v3로 돈다** — 기본 `dev_fake`의 pov 좌석은 v2이고, v2는 `state.finding_sources`를 안
+    본다(적대적 리뷰 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다)."""
     sentinel = "SENTINEL_WIDE_SOURCE_FROM_AUDITOR"
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
     # ⚠ `_pov_state`는 **원래 ctx**로 돈다 — scripted 모델은 PoV 홉만 대신한다(앞 단계가 PovAction을
     # 받으면 죽는다).
     state, finding = _pov_state(ctx)
@@ -647,7 +670,7 @@ def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: 
     조회는 **이미 있는 resolver**(`ctx.resolve_requests`)로 **위치만** 받고, 원문은
     `ctx.read_source`가 읽는다 — 새 훅·새 어댑터 배선 없이 이름으로 함수를 찾는 수단이 resolver
     뿐이다(`definitions_of`는 macros·types·file_vars만 본다, `src/adapters/index_graph.py:111`)."""
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     # 실제로 **읽을 수 있는** 파일을 가리켜야 한다 — 못 읽으면 `found=False`가 맞는 동작이다.
@@ -692,7 +715,7 @@ def test_pov_facts_carry_the_entrypoint_body_not_the_ne_followup_wrapper(
         "  10 | int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {\n"
         "Judge the same candidate again and output one complete ScoutResponse JSON.\n"
     )
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     target = capsule.target
@@ -733,7 +756,7 @@ def test_pov_facts_record_why_the_fuzz_entrypoint_is_missing(ctx: RunContext) ->
 
     키가 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다. `0`·빈 값은 **미실측
     표시**이고 사유가 같이 있어야 한다."""
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
     scripted = dataclasses.replace(scripted, resolve_requests=lambda _q: _resolution(name=""))
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -799,7 +822,7 @@ def test_pov_facts_say_so_when_there_is_no_resolver_at_all(ctx: RunContext) -> N
 
     `ctx.resolve_requests is None`은 "조회할 수단이 없었다"이고 빈 `Resolution`은 "조회했는데
     없었다"다. 둘을 같은 사유로 적으면 나중에 무엇을 고쳐야 하는지 못 가른다."""
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
     scripted = dataclasses.replace(scripted, resolve_requests=None)
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -824,6 +847,37 @@ def test_other_roles_facts_do_not_gain_the_fuzz_entrypoint_key() -> None:
     facts = build_facts(run_id="r", ids={})
 
     assert "fuzz_entrypoint" not in facts
+
+
+def test_pov_v2_render_is_byte_identical_to_main_before_this_pr(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 적대적 리뷰 2026-10-02 MEDIUM-4 — 배선된 pov v2는 **이 PR 전(main `d85ea62`)과 바이트가
+    같아야 한다**(`docs/evaluation.md` §2.3-4, v2로 돈 run이 비교 대상 0건이라도 다음 v2 run까지
+    조용히 입력을 바꿀 이유는 없다). 넓은 입력은 `_WIDE_INPUT_VERSIONS`(지금은 v3)에서만 켠다.
+
+    `state.finding_sources`에 센티넬을 채워도, `_fuzz_entrypoint`가 뭘 찾아도, `finding.path`가
+    비어 있지 않아도 — v2 렌더(FINDING·SOURCE·FACTS)는 **이 PR의 입력을 하나도 안 받는다.**
+    FACTS에 `fuzz_entrypoint` 키 자체가 없는 것도 같이 본다(opt-in — 키가 있으면 그것만으로도
+    main과 바이트가 달라진다)."""
+    sentinel = "SENTINEL_SHOULD_NEVER_REACH_V2"
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])  # 기본은 v2
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    assert finding.path, "픽스처 전제 — 경로 단계가 있어야 '안 실린다'는 것이 의미가 있다"
+    state.finding_sources[finding.finding_id] = runner._Once(lambda: sentinel)
+    scripted = dataclasses.replace(
+        scripted, resolve_requests=lambda _q: _resolution(file=capsule.target.file)
+    )
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    assert sentinel not in prompt.body, "v2가 state.finding_sources의 넓은 SOURCE를 받았다"
+    # 심볼 문자열 자체는 title·rca에도 우연히 나타날 수 있다(픽스처가 `safe_copy`를 쓴다) —
+    # wide 전용 **구조**(경로 목록 헤더)로 가른다.
+    assert "경로(source→sink):" not in prompt.body, "v2 FINDING에 경로 목록이 생겼다"
+    assert "재현 근거(repro_spec)" not in prompt.body, "v2 FINDING에 repro_spec 유무 줄이 생겼다"
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    assert "fuzz_entrypoint" not in facts, "v2 FACTS에 fuzz_entrypoint 키가 생겼다"
 
 
 def _asan_evidence() -> object:
@@ -977,7 +1031,7 @@ def test_pov_finding_block_carries_the_path_symbols_not_just_the_count(
     프롬프트는 *"경로 단계로 source에서 sink까지의 흐름을 확인하라"*고 지시하는데
     (`prompts/pov/*/prefix.md` 도달 절차 3) 전 판은 `len(finding.path)`만 줬다. 이름이 없으면
     `SOURCE`의 어느 함수가 앞단 파서이고 어느 것이 sink인지 PoV가 못 가른다."""
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
     state, finding = _pov_state(ctx)  # ⚠ 앞 단계는 원래 ctx로 — 위 검사의 같은 이유
     capsule = state.finding_capsules[finding.finding_id]
     assert finding.path, "픽스처 finding에 경로 단계가 없으면 이 검사가 동어반복이다"
