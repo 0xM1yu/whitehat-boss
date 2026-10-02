@@ -1046,6 +1046,28 @@ def test_pov_observation_is_one_line_when_there_is_no_log() -> None:
     assert "꼬리" not in no_log
 
 
+def test_pov_observation_strips_the_harness_header_line_before_the_tail() -> None:
+    """🔴 적대적 리뷰 2026-10-02 LOW(재현) — 짧은 로그는 꼬리 전체가 하네스 머리줄을 그대로
+    담아 호스트 절대경로를 프롬프트로 새게 한다.
+
+    `container_tools.ContainerToolRunner._execute`가 도구 출력 앞에 `# node argv: …`·
+    `# runtime: …`·`$ docker run … -v <호스트 경로>:/src:ro` 같은 머리줄을 쓴다
+    (`prompt_loader._HARNESS_HEADER_LINE`의 모듈 주석). `evidence_summaries`(Auditor·Critic의
+    근거 본문)는 이미 그 정규식으로 절단 **전에** 뺀다 — `_pov_observation`은 그 장치를 재사용하지
+    않고 날것 꼬리를 그대로 잘라 보냈다."""
+    log = (
+        "# node argv: ['poc']\n"
+        "# runtime: docker\n"
+        "$ docker run --rm -v /home/user/harness/workdir:/src:ro poc-image\n"
+        "SUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018\n"
+    )
+
+    text = runner._pov_observation("inspect", _asan_evidence(), read_payload=lambda _ref: log)
+
+    assert "/home/user/harness/workdir" not in text, "호스트 절대경로가 꼬리로 샜다"
+    assert "SUMMARY: AddressSanitizer" in text, "머리줄을 빼면서 실제 도구 출력까지 지웠다"
+
+
 def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     """`runner._Once`는 감싼 콜러블을 한 번만 부르고 같은 문자열을 돌려준다.
 
