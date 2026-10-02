@@ -91,6 +91,16 @@ class Report:
     # 몇 건이 어떤 사유로 그랬는지가 안 보이면 "루프가 잘 돌았다"와 "매번 흡수하며 버텼다"가
     # 리포트에서 안 갈린다. `deferred`·`dropped`와 같은 자리다 — 러너가 센 값을 그대로 받는다.
     ne_absorbed: dict[str, int] = field(default_factory=dict)
+    # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358). 러너의
+    # `_Accumulator.pov_results`를 그대로 받는다(`ne_absorbed`와 같은 자리).
+    #
+    # **수가 아니라 이 맵을 받는다.** 시도 수는 `len(...)`, 사유별 수는 `Counter(...values())`라
+    # 「시도 수 == 사유별 합」이 **구조적으로** 참이다 — 수 둘을 받으면 그 둘이 어긋난 run을
+    # 리포트가 그대로 찍을 수 있고, 그러면 사람이 읽는 산출물에서 분모가 섞인다
+    # (`critic_deferred`를 `deferred`와 나눈 것과 같은 판단).
+    #
+    # 비면 줄을 안 낸다 — pov 좌석이 없는 프로필의 run에서 0건 줄이 나오면 장식이다.
+    pov_results: dict[str, str] = field(default_factory=dict)
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
@@ -136,6 +146,17 @@ class Report:
             )
             lines += [
                 f"need_evidence 홉 예외 흡수: {parts} (그 좌석은 직전 홉 판정으로 finish했다)",
+                "",
+            ]
+        if self.pov_results:
+            # 사유별로 적는다 — 위 `ne_absorbed`와 같은 판단. 한 수로 묶으면 "상한에서 헛돌았다"와
+            # "스키마를 못 맞췄다"가 안 갈리고, 그러면 PoC가 0건인 run에서 **왜** 0인지가 사람이
+            # 읽는 산출물에 없다. 시도 수와 사유별 수를 **같은 맵에서** 뽑으므로 둘이 어긋나지
+            # 않는다(위 필드 주석).
+            stops = Counter(self.pov_results.values())
+            parts = " · ".join(f"{reason} {count}건" for reason, count in sorted(stops.items()))
+            lines += [
+                f"PoV 정지 사유 (시도 {len(self.pov_results)}건): {parts}",
                 "",
             ]
         if self.critic_deferred:
@@ -210,11 +231,12 @@ def run(
     grades: dict[str, str] | None = None,
     files: dict[str, str | None] | None = None,
     ne_absorbed: dict[str, int] | None = None,
+    pov_results: dict[str, str] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
-    `deferred`·`dropped`·`critic_deferred`·`ne_absorbed`는 러너가 센 값을 그대로 받는다 —
-    노드가 다시 세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로
+    `deferred`·`dropped`·`critic_deferred`·`ne_absorbed`·`pov_results`는 러너가 센 값을 그대로
+    받는다 — 노드가 다시 세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로
     받는다: 노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도
     같다 — 등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시
     매기지 않는다. `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어
@@ -234,6 +256,7 @@ def run(
         critic_top_n=critic_top_n,
         grades=dict(grades),
         ne_absorbed=dict(ne_absorbed) if ne_absorbed else {},
+        pov_results=dict(pov_results) if pov_results else {},
     )
 
 
