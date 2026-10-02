@@ -1328,7 +1328,7 @@ def _pov_finish(
 ) -> tuple[bytes | None, PovStopReason, str | None, str | None]:
     """루프 종단 이벤트. `POV_GENERATED`는 **모델이 submit해 최종 PoC가 나온 경우만** 낸다 —
     나머지(max_hop·repeat·흡수된 예외·gen 없는 submit)는 `POV_SKIPPED`다. 부분 PoC(중간 gen까지는
-    했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`로 남긴다.
+    했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`과 사이드카 키로 남긴다.
 
     ⚠ 예전에는 PoC가 있기만 하면 GENERATED라 max_hop·parse_failed도 「생성됨」으로 과대 집계됐다
     (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다.
