@@ -1068,6 +1068,22 @@ def test_pov_observation_strips_the_harness_header_line_before_the_tail() -> Non
     assert "SUMMARY: AddressSanitizer" in text, "머리줄을 빼면서 실제 도구 출력까지 지웠다"
 
 
+def test_pov_observation_stays_one_line_under_v2() -> None:
+    """🔴 적대적 리뷰 2026-10-02 LOW(재현) — `prompts/pov/v2/prefix.md:7`은 여전히
+    "하네스가 그것을 실행하고 **관측(observation)** 한 줄을" 돌려준다고 서술한다(`v3`도 같은
+    줄을 그대로 물려받았다 — LOW 항목). `_pov_observation`의 꼬리는 이 PR이 새로 만든
+    입력이라 v2에는 안 실려야 한다 — `wide=False`가 그 경계다(`_run_pov_hops`가 설정된 pov
+    버전을 보고 정한다, MEDIUM-4와 같은 결정)."""
+    report = "x" * 5000 + "\nSUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018\n"
+
+    text = runner._pov_observation(
+        "gen", _asan_evidence(), read_payload=lambda _ref: report, wide=False
+    )
+
+    assert "\n" not in text, "v2 관측이 한 줄을 넘었다"
+    assert "SUMMARY" not in text, "v2 관측에 도구 로그 꼬리가 실렸다"
+
+
 def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     """`runner._Once`는 감싼 콜러블을 한 번만 부르고 같은 문자열을 돌려준다.
 
@@ -1219,6 +1235,18 @@ def test_v3_prefix_does_not_claim_gdb_sees_the_models_poc_bytes() -> None:
         "gdb 절이 「경로에 닿았나」를 단정하면서 PoC 바이트가 아직 gdb 입력으로 안 들어간다는 "
         "한계를 안 적었다 — 지금 코드에서 거짓 전제를 모델에게 준다"
     )
+
+
+def test_v3_prefix_no_longer_claims_the_observation_is_one_line() -> None:
+    """🔴 적대적 리뷰 2026-10-02 LOW(재현) — v3 prefix(`:7`)가 "관측(observation) 한 줄"이라
+    서술하는데, 이 PR이 관측을 **꼬리 달린 여러 줄**로 바꿨다(`runner._pov_observation`,
+    `wide=True`일 때). v2는 `wide=False`로 계속 한 줄이라 그쪽 prefix(`prompts/pov/v2/prefix.md`)
+    문구는 그대로 맞다 — v3만 고친다."""
+    v3_prefix = (PROMPTS_DIR / "pov" / "v3" / "prefix.md").read_text(encoding="utf-8")
+    v2_prefix = (PROMPTS_DIR / "pov" / "v2" / "prefix.md").read_text(encoding="utf-8")
+
+    assert "관측(observation)** 한 줄" not in v3_prefix, "v3가 아직 '한 줄'이라 단정한다"
+    assert "관측(observation)** 한 줄" in v2_prefix, "v2 문구가 바뀌면 안 된다 — main과 바이트 동일"
 
 
 def test_pov_hop_join_key_matches_across_more_than_two_hops(
