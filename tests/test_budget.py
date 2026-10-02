@@ -167,7 +167,9 @@ def test_a_real_serving_profile_cannot_borrow_the_fake_budget(tmp_path: Path) ->
     """실서빙 프로필이 `dev_fake` 예산을 가리키면 로드가 실패한다 — 이름 하나 잘못 적는 실수다.
 
     `dev_fake`의 0은 「Fake는 GPU를 안 쓴다」는 뜻으로 거기 있다. 그 예산을 실서빙 프로필이 쓰면
-    같은 0이 「한도 없음」이 된다. 에러가 0인 키를 **전부** 말해야 고칠 자리가 보인다.
+    같은 0이 「한도 없음」이 된다. 에러가 0인 키를 **전부** 말해야 고칠 자리가 보인다 — 키 이름은
+    에러의 안내 문장에도 나오므로 개별 이름이 아니라 **0인 키 목록**을 본다(키 하나만 거르는 가드가
+    이 검사를 지나가던 것을 변이로 확인했다).
     """
     config_dir = _config_dir_with_budget(
         tmp_path, profile="harness_pool", budget="dev_fake", limits={}
@@ -176,8 +178,7 @@ def test_a_real_serving_profile_cannot_borrow_the_fake_budget(tmp_path: Path) ->
     with pytest.raises(ConfigError) as raised:
         load_config("harness_pool", config_dir=config_dir)
 
-    assert "gpu_seconds" in str(raised.value)
-    assert "tool_seconds" in str(raised.value)
+    assert "['gpu_seconds', 'tool_seconds']" in str(raised.value)
 
 
 def test_a_one_second_limit_on_a_real_profile_loads_and_still_stops_the_run(
