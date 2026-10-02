@@ -64,18 +64,31 @@ F-15는 사람이 승인해야만 일어난다. 파이프라인이 자동으로 
 | # | 트리거 | 결과 | reason_code |
 | --- | --- | --- | --- |
 | R-1 | 9단계 완주 | `finished_at` 채움 | — |
-| R-2 | 9단계 전 종료 | `finished_at` + `stopped_after=N` | 아래 셋 중 하나 |
+| R-2 | 9단계 전 종료 | `finished_at` + `stopped_after=N` | 아래 중 하나 |
 
-R-2의 사유는 `finish_run()`이 정하지 않고 **호출자가 넘긴다.** 세 경로가 있다.
+R-2의 사유는 `finish_run()`이 정하지 않고 **호출자가 넘긴다.** ⏵ **2026-10-02 — 표가 낡아서
+고쳤다**(전 판은 *"세 경로"*라 적었는데 그동안 다섯이 늘었다. 그 줄은 2026-08-11 이후 안 고쳤고
+**CI가 이 표를 강제하지 않는다** — `run_pipeline`의 except 사슬이 정본이다).
 
 | 사유 | 트리거 |
 | --- | --- |
 | `budget_exhausted` | `BudgetExhausted`가 올라옴 (architecture.md §5) |
 | `user_stop_requested` | 사용자가 `--stop-after N`으로 자름 |
 | `dry_run` | `--dry-run`이 3단계에서 자름 (`DRY_RUN_LAST_STAGE`) |
+| `model_swap_failed` | `ModelSwapError` — 다음 단계 서버를 **띄우지 못했다** |
+| `model_gateway_unavailable` | `ModelGatewayError` — 후보 하나의 답이 아닌 것(아래 문단) |
+| `consecutive_target_failures` | `_TooManyDrops` — 서버는 답하는데 후보가 계속 죽는다 |
+| `schema_parse_failed` | `SchemaParseError`가 가드 없는 경로에서 올라옴 |
+| `unforeseen_failure` | **그 밖 전부** — `_analyze`의 예상 밖 예외(최후 방어선이 다시 던진다) |
 
-셋을 하나로 묶지 않는 이유는 evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기
-때문이다. 묶으면 예산을 0.03%만 쓴 run이 "예산 초과로 중단됨"으로 읽힌다. 뒤의 둘도
+`model_gateway_unavailable`은 「서버가 죽었다」보다 넓다. `ModelGatewayError` 중 **후보 하나의 답이
+아닌 것 전부**(`runner._is_droppable`이 거짓인 것)다 — 상태 코드 없음(연결 끊김·타임아웃·비-JSON·
+비-UTF-8·모양이 다른 200)·5xx·`400·413·422` 밖의 4xx(401·404·429 등). 이들을 **같은 사유 코드로**
+적고, 무엇이었는지는 trace의 `model_call.error_detail`이 가른다.
+
+앞의 셋(`budget_exhausted`·`user_stop_requested`·`dry_run`)을 하나로 묶지 않는 이유는
+evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기 때문이다. 묶으면 예산을 0.03%만 쓴 run이
+"예산 초과로 중단됨"으로 읽힌다. 그 셋 중 뒤의 둘도
 따로 두는데, `--dry-run --stop-after 5`처럼 동시에 올 수 있어 사유가 하나면 어느 쪽이
 상한을 결정했는지가 사라지기 때문이다 — 판정은 `RunSpec.stop_at()`이 한다.
 

@@ -126,7 +126,9 @@ from src.orchestrator.nodes import (
 )
 from src.orchestrator.nodes.report import Report
 from src.orchestrator.poc_assembly import assemble_poc
+from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
+from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
@@ -150,6 +152,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
+from src.schemas.scout_response import RequestedContext
 from src.tokens import estimate_tokens, using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
@@ -263,9 +266,10 @@ _CONTEXT_OVERFLOW = "maximum context length"
 # `_drop`이 가른다. 422는 크기가 아니라 체계적 신호로 센다. vLLM 0.27.1은 요청 모양 거절도 422가
 # 아니라 400으로 준다(#296).
 #
-# 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
-# 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다. **예외는 서버가 생성 중이던
-# 타임아웃 하나다**(`ModelGatewayError.generating`, #261) — 판정은 `_is_droppable`에 있다.
+# 그 밖(상태 없음 = 연결 실패·타임아웃·계약 밖 200, 5xx = 서버 오류, 이 셋 밖의 4xx = 401·404·
+# 429 등)은 후보 하나의 답이 아니라 잡지 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며
+# 돈다. **예외는 서버가 생성 중이던 타임아웃 하나다**(`ModelGatewayError.generating`, #261) —
+# 판정은 `_is_droppable`에 있다.
 _DROPPABLE_STATUS = frozenset({400, 413, 422})
 
 # 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다 등)이면
@@ -299,15 +303,17 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     **함수로 뺀 이유가 그것이다** — 두 곳이 각자 `status not in _DROPPABLE_STATUS`를 적으면
     한쪽만 고쳐질 때 같은 오류가 자리에 따라 다르게 처리된다.
 
-    `status`가 없으면(연결 실패·타임아웃·비-JSON 응답) 서버 쪽 사건이라 버릴 수 없다.
+    `status`가 없으면(연결 실패·타임아웃·비-JSON·비-UTF-8·모양이 다른 200) 서버 쪽 사건이라
+    버릴 수 없다. 5xx와 `_DROPPABLE_STATUS` 밖의 4xx(401·404·429 등)도 같다 — 상태로는 「요청 하나에
+    대한 답」인지 가를 수 없다.
     **예외 하나 — 타임아웃인데 서버가 그동안 토큰을 냈다**(`generating is True`, 어댑터가
     `/metrics`로 잰다). 느린 것이지 죽은 것이 아니다(#261). 연속 폐기 상한은 그대로 센다 —
     느린 후보가 셋 연달아면 run이 선다.
 
     ⚠ **버릴 수 있다고 계속 가는 것은 아니다(#296).** 크기가 아닌 400도 여기서 참이지만
     `_drop`·`_drop_finding`이 첫 건에서 run을 멈춘다. 여기서 거짓으로 돌려 올려 보내면
-    `run_pipeline`이 「게이트웨이가 응답하지 않는다」(`MODEL_GATEWAY_UNAVAILABLE`)로 적는다 —
-    서버는 살아 있고 요청을 거절했으므로 그 사유는 틀린다.
+    `run_pipeline`이 `MODEL_GATEWAY_UNAVAILABLE`로 적는다 — 서버는 살아 있고 요청을 거절했으므로
+    그 사유는 틀린다. (401·404·429도 같은 사유로 가고 같은 이유로 부정확하다 — 바꾸지 않았다.)
     """
     if exc.generating is True:
         return True
@@ -435,8 +441,9 @@ class Dependencies(Protocol):
     # 단계 경계 모델 교대 (ADR 0012 Phase 6.5 — 콜드 재기동). `keys`만 떠 있게 하고 교대 명령의
     # 보고를 스칼라 dict로 돌려준다(`model_swap` 이벤트의 `report.*`). `keys`가 비면 전부 내린다.
     # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다 — **러너는 단계 진입 교대에서 이 계약을
-    # 믿는다.** 그 밖의 예외는 정지 갈래가 못 잡아 매니페스트 없이 `run_pipeline` 밖으로 샌다
-    # (`models`의 계약 밖 예외와 같은 대우다). 계약은 구현이 지킨다 — 실 구현
+    # 믿는다.** 그 밖의 예외는 최후 방어선이 **사유 `unforeseen_failure`로** 받는다 — 매니페스트는
+    # 남지만 「교대가 실패했다」가 기록에서 사라진다(⏵ 2026-10-02 정정: 전 판은 *"매니페스트 없이
+    # `run_pipeline` 밖으로 샌다"*라 적었다). 계약은 구현이 지킨다 — 실 구현
     # `src/adapters/model_swap.py`가 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. run 끝
     # 내림만은 `finally`라 무엇이든 경고로 줄인다(`run_pipeline`). `None`이면 교대가 없는 run이다 —
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
@@ -694,6 +701,11 @@ class _Accumulator:
     # capsule을 그대로 물려 준다(러너가 캡슐을 넘기고 pov 노드 시그니처는 안 바뀐다). 미스면
     # `_run_pov`가 pov를 건너뛰고 기록만 한다 — 추가형이라 상태는 validate.run이 이미 정했다.
     finding_capsules: dict[str, ContextCapsule] = field(default_factory=dict)
+    # 8단계 PoV가 쓸 `SOURCE` — **Auditor가 본 것과 같은 문자열**이다(사용자 지적 2026-10-02).
+    # `_Once`라 PoV가 꺼내 써도 `_auditor_source`가 다시 돌지 않는다(= `auditor_source` 이벤트도
+    # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 슬라이스 타깃이 아닌 finding은 키가 없고, 그때는
+    # PoV가 예전처럼 캡슐 대상을 직접 읽는다 — 그 둘이 같은 문자열이다(`_step_auditor` 주석).
+    finding_sources: dict[str, "_Once"] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
     # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
@@ -768,6 +780,9 @@ def run_pipeline(
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
         prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        # PoC 사이드카(#355) — **위 `prompts`와 같은 가드다.** 조건을 따로 만들면 프롬프트는
+        # 있는데 PoC는 없는 run이 생기고 그 차이의 이유가 어디에도 안 남는다.
+        pocs=PocLog(run_dir) if run_dir is not None and not spec.dry_run else None,
         # need_evidence resolver hook (ADR 0012 결정 2) — `symbols_for`·`counter_for_role`과
         # 같은 경계다. `None`이면 이 run에 resolver가 없다.
         resolve_requests=deps.resolve_requests,
@@ -810,6 +825,8 @@ def run_pipeline(
     last, stop_reason = spec.stop_at()
     state = _Accumulator()
     stopped_after = None if stop_reason is None else last
+    # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(`finally` 바로 뒤).
+    unforeseen: Exception | None = None
     # heartbeat: 러너가 살아 있는지를 밖에서 읽게 한다(이슈 #208 ②). `PromptLog`와 같은
     # 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일 때만 켠다. 모델 호출이 멈춰도 이
     # 스레드는 틱해 "죽음↔느림"을 가른다.
@@ -843,7 +860,10 @@ def run_pipeline(
         # 안 남았고, zlib 때 `state.db`를 직접 열어야 했던 이유가 그것이다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.MODEL_GATEWAY_UNAVAILABLE
-        warnings.append(f"게이트웨이가 응답하지 않아 중단했다: {error_detail(exc)}")
+        # 상태 없음(끊김·타임아웃·계약 밖 200)·5xx·`_DROPPABLE_STATUS` 밖 4xx가 모두 여기로 온다 —
+        # 경고는 원인을 단언하지 않는다(「응답하지 않아」는 계약 밖 200에 거짓이다) — 원인은
+        # detail이다.
+        warnings.append(f"게이트웨이 실패로 중단했다: {error_detail(exc)}")
     except _TooManyDrops as exc:
         # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
         stopped_after = int(ctx.current_stage)
@@ -859,6 +879,23 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
+    except Exception as exc:
+        # 🔴 **최후 방어선 (S0) — 범위는 `_analyze`다.** 위 다섯은 **예상한** 형이고, 이 갈래는
+        # **`_analyze`에서 난 예상 밖 형 전부**다. 그런 예외가 하나라도 나면 `write_manifest`(아래)
+        # 앞을 뚫고 나가 **산출물이 통째로 사라졌다** — 위 `ModelGatewayError` 갈래의 주석이 적어 둔
+        # zlib 사고가 정확히 그것이고, 그 갈래는 **그 형에만** 방어선을 세웠다.
+        # ⚠ **`_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트 재등급·`report.run`)에서
+        # 처음 나는 예외는 안 덮는다** — 이 `try`가 감싸는 것은 `_analyze` 하나다. 범위를 넓히는
+        # 것은 별 작업이다(아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다).
+        #
+        # 🔴 **삼키지 않는다 — 적고, 매니페스트를 쓰고, 다시 던진다.**
+        # 삼키면 두 가지가 깨진다: ① 호출자(`cli.execute`)가 run을 성공으로 읽는다
+        # ② `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 — 그쪽은
+        # **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. 최후 방어선의 뜻은 "삼킨다"가
+        # 아니라 "**증거를 남기고** 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.UNFORESEEN_FAILURE
+        unforeseen = exc
     finally:
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
         # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
@@ -884,6 +921,36 @@ def run_pipeline(
             # 있는데 멈춤)으로 본다 — 죽음과 갈린다.
             if heartbeat is not None:
                 heartbeat.stop()
+
+    if unforeseen is not None:
+        # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
+        # HIGH 1).
+        # 후처리의 `gate.evaluate` 재등급은 `_analyze`의 6단계 게이트와 **같은 순수 함수**라 그
+        # 결함이 거기서 **또 난다** — 2차 예외가 `write_manifest` 앞을 뚫고 원 스택을 덮었다. 렌더는
+        # 던지는 순간 쓸 곳(`cli.run`)에 못 가 어차피 안 쓰이고, `report.run`이 남기는 9단계 진입은
+        # 거기 간 적 없는 run을 간 것으로 읽히게 한다.
+        # 매니페스트마저 못 쓰면(디스크·권한) 그 예외는 `add_note`로 **원 예외에 붙이고** 원 예외를
+        # 던진다. ⚠ 아래 정상 경로의 `finish_run`·`write_manifest`와 같은 호출이다 — 인자를 바꾸면
+        # 두 곳을 같이 고친다.
+        #
+        # ⚠ **`report.md`는 안 남는다.** 리포트를 파일로 쓰는 것은 `cli.run`이 `execute` **반환
+        # 뒤**에 한다 — 여기서 던지면 그 자리에 도달하지 않는다. 프로세스는 exit 1이고 남는 것은
+        # 매니페스트·trace·`state.db`다(적대적 리뷰 2026-10-02 실측). 리포트까지 남기려면 쓰기를
+        # `run_pipeline` 안으로 옮기는 별 작업이 필요하다.
+        try:
+            crashed = state_machine.finish_run(
+                record,
+                finished_at=max(now(), started_at),
+                stopped_after=stopped_after,
+                reason=stop_reason,
+                store=ctx.store,
+                trace=trace,
+            )
+            if run_dir is not None and not spec.dry_run:
+                write_manifest(run_dir, crashed)
+        except Exception as exc:
+            unforeseen.add_note(f"매니페스트를 남기지 못했다: {type(exc).__name__}: {exc}")
+        raise unforeseen
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -1089,8 +1156,9 @@ def _analyze(
     # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
     # **pov의 대상도 이 목록이다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.** 재현
     # 명세가 부르는 `./poc`는 PoV가 낸 PoC 바이트를 파일로 써야 생기는데(STATUS.md §5 — E4를
-    # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 내 기록할 뿐 `./poc`로 쓰지
-    # 않는다(파일화는 호스트가 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
+    # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 trace와 run 산출물 사이드카
+    # (`pov_poc/`, #355)에 남길 뿐 `./poc`로 쓰지 않는다(그 `./poc` materialize는 호스트가
+    # 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
     # `validate.run`이 재현 실패로 내린 것이 pov가 돌 이유를 지우지 않는다. `validate.run` **뒤**
     # 상태로 거르면 그 강등이 pov의 입장 조건이 되는 순환이고 PoV 시도가 준다 — 바꾸려면 사람이
     # 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
@@ -1120,6 +1188,220 @@ def _analyze(
         _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
 
 
+# PoV 관측에 싣는 도구 출력 꼬리 길이. **잰 값이 아니라 설계 상수다** — ASan 요약(`SUMMARY:` 줄과
+# 그 위 스택 몇 프레임)이 들어가는 폭이고, 글자 상한은 토큰을 묶지 않는다(실측 비 1.22~3.32,
+# `runner.py`의 토큰 환산 주석 참조). 목적은 폭주 차단이다.
+_POV_OBSERVATION_TAIL_CHARS = 2000
+
+# `RunContext.read_payload`와 같은 모양 — evidence payload 참조를 원문으로 바꾼다. `None`은
+# "로그가 없다"는 정상 상태다(`dev_fake`).
+ReadPayload = Callable[[str], str | None]
+
+# libFuzzer 하네스의 진입점 이름. CyberGym의 arvo·oss-fuzz 대상이 공통으로 쓰는 **표준 이름
+# 하나**다 — 변주를 미리 넣지 않는다(실측으로 못 찾는 과제가 나오면 그때 센다).
+_FUZZ_ENTRYPOINT_NAME = "LLVMFuzzerTestOneInput"
+
+# 진입점 조회가 PoV 프롬프트에 실을 수 있는 글자 상한. **잰 값이 아니라 설계 상수다** —
+# 진입점 함수 하나를 덮는 폭이고, 글자 상한은 토큰을 묶지 않는다(메모리 — 실측 비 1.22~3.32).
+# 목적은 폭주 차단이다.
+_FUZZ_ENTRYPOINT_CHARS = 4000
+
+# resolver 조회(`ctx.resolve_requests`)에 넘기는 `max_chars`. **원문 상한과 다른 상수다** —
+# resolver의 `_fit_budget`은 헤더·배너·줄번호 gutter까지 더한 **렌더 길이**를 이 값과 비교한다
+# (`symbol_resolver.render_fragment`). `_FUZZ_ENTRYPOINT_CHARS`를 그대로 넘기면 원문이 그 상한
+# 밑이어도 gutter overhead 때문에 렌더가 넘쳐 블록이 통째로 `truncated`에 빠지고, 그러면
+# `_fuzz_entrypoint`가 `ctx.read_source`를 아예 안 불러 아래 `len(source) >
+# _FUZZ_ENTRYPOINT_CHARS` 자르기가 죽은 코드가 된다(적대적 리뷰 2026-10-02 MEDIUM-1). resolver는
+# **위치만** 쓰고(아래 `_fuzz_entrypoint`가 `ctx.read_source`로 원문을 직접 읽는다), 글자 상한은
+# 그 원문에 한 번만 건다 — 그래서 여기는 넉넉하게 잡는다.
+_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS = 1_000_000
+
+
+def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
+    """PoV 프롬프트에 실을 **퍼즈 진입점**(`LLVMFuzzerTestOneInput`)과 그 본문.
+
+    CyberGym Level 1은 libFuzzer 하네스에 먹일 raw 바이트를 만드는 과업이고, **바이트가 어느
+    함수의 어느 인자로 들어가는지**가 앞단 포맷 조건을 읽는 출발점이다. 문헌이 꼽는 지배적
+    실패는 크래시 로직이 아니라 "취약 경로 미도달"이다(CyberGym 논문 arXiv 2506.02548 — **남이
+    주장한 것**이고 우리 실측이 아니다). 그 사실이 없으면 PoV는 매직·헤더를 추측으로 맞춘다.
+    2026-10-02 실측으로 `LLVMFuzzerTestOneInput`은 `src/`·`prompts/` 전체에 **0건**이었다.
+
+    **조회는 기존 resolver를 재사용한다**(`ctx.resolve_requests`). 이름으로 함수 본문을 찾는
+    수단이 그것뿐이다 — `symbols_for`는 (파일 → 심볼)이고 `definitions_of`는 `macros`·`types`·
+    `file_vars`만 본다(`src/adapters/index_graph.py:111`). 그래서 새 훅·새 어댑터 배선이 0이다.
+    resolver는 `table("functions")`가 없으면 빈 `Resolution`을 돌려주므로(`need_evidence` 모듈)
+    인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
+
+    **못 찾아도 dict를 돌려준다** — `found=False` + `reason`. 키를 빼면 "안 찾았다"와 "찾았는데
+    없다"가 구별되지 않는다(CLAUDE.md §0). `reason`이 가르는 것은 여섯이다(⏵ 2026-10-02 정정 —
+    전 판은 "다섯"이라 적고 아래 여섯을 나열했다): resolver 훅 자체가 없음(프로덕션에서는 안
+    닿는다 — factory가 항상 꽂는다) · `None` 반환(부분 구현) · **인덱스가 없거나 v1**(빈
+    `Resolution` — `unfilled`조차 빈 것이 그 서명) · 함수 표에 이름이 없음 · 상한에 잘림 · 위치는
+    있는데 원문을 못 읽음.
+
+    ⚠ **`source`는 `ctx.read_source`로 직접 읽는다.** `resolution.followup_text`를 실으면 NE 루프의
+    후속 턴 포장(머리·gutter·*"ScoutResponse JSON을 내라"*)이 FACTS에 들어간다 — 아래 그 자리의
+    주석이 근거다(적대적 리뷰 2026-10-02 H-1).
+    """
+    missing: dict[str, object] = {
+        "found": False,
+        "name": _FUZZ_ENTRYPOINT_NAME,
+        "file": "",
+        "lines": [],
+        "source": "",
+        "reason": "",
+    }
+    if ctx.resolve_requests is None:
+        # ⏵ 2026-10-02 정정(적대적 리뷰 LOW): 전 판은 이 사유에 "인덱스 v1 또는 미로드"를 적어
+        # 아래(:1232 부근) **다른 갈래**의 사유와 겹쳤다. 이 갈래는 **훅 자체가 안 꽂힌** 경우고
+        # (factory가 프로덕션에서는 항상 꽂으므로 실서빙에서는 안 닿는다 — 위 docstring), 인덱스
+        # 판이 v1인지는 훅이 꽂힌 **다음에** `resolve()` 안에서 갈린다(:1232의 빈 `Resolution`).
+        # 고칠 자리가 다르니 사유도 다르다.
+        missing["reason"] = "이 run에 resolve_requests 훅 자체가 안 꽂혔다 — 조회 수단이 없었다"
+        return missing
+    query = ResolveQuery(
+        requests=(
+            RequestedContext(
+                kind="function",
+                target=_FUZZ_ENTRYPOINT_NAME,
+                purpose="PoC 바이트가 들어가는 진입점과 앞단 파서를 읽는다",
+                request_code="pov_fuzz_entrypoint",
+            ),
+        ),
+        hop=1,
+        target_file=target_file,
+        # 슬라이스가 이미 보여준 줄을 모르는 자리다 — 비워 두면 resolver가 `already`로 빼지 않고
+        # 블록을 채운다. PoV의 `SOURCE`와 겹칠 수 있지만, 겹침을 숨기는 것보다 **진입점이 확실히
+        # 실리는 쪽**이 낫다(겹침은 모델이 읽고 무시할 수 있으나 부재는 못 메운다).
+        visible={},
+        # resolver 자체의 budget 컷이 아니라 `read_source` 뒤 자르기 하나로 상한을 건다 —
+        # 위 `_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS` 주석.
+        max_chars=_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS,
+    )
+    try:
+        resolution = ctx.resolve_requests(query)
+    except (OSError, ValueError) as exc:
+        # ⏵ 2026-10-02 추가(적대적 리뷰 LOW) — **이 조회는 보조 정보지 pov의 필수 전제가
+        # 아니다.** `safe_join`의 `PathEscape`(`ValueError` 하위형, `src/paths.py`)처럼 "조용히
+        # 안 넘기고 실패시킨다"로 설계된 예외가 인덱스 쪽 문제(손상된 경로 등)로 올라오면, 이
+        # 함수 **밖**에는 이것을 잡는 except가 없다(`_run_pov_hops`의 `except (ModelGatewayError,
+        # SchemaParseError)`는 이 타입들을 안 본다) — 그러면 진입점 탐색 하나가 run 전체를
+        # 멈춘다. 체계적 pov 실패는 run을 못 멈춘다는 원칙(§ 이 함수 docstring)에 맞춰 여기서
+        # 삼키고 "못 찾았다"로 내려간다.
+        missing["reason"] = f"진입점 조회가 예외로 실패했다: {type(exc).__name__}: {exc}"
+        return missing
+    if resolution is None:
+        # 훅이 꽂혀 있는데 `None`을 돌려주는 배선(스텁·부분 구현)이 실재한다 — 2026-10-02에
+        # `test_run_pipeline_wires_resolve_requests_from_deps`가 그 경로로 터졌다. 타입은
+        # `Resolution`을 약속하지만 경계에서 믿지 않는다.
+        missing["reason"] = "resolver가 Resolution 대신 None을 돌려줬다 — 배선이 부분 구현이다"
+        return missing
+    block = next((b for b in resolution.blocks if b.name == _FUZZ_ENTRYPOINT_NAME), None)
+    if block is None:
+        if _FUZZ_ENTRYPOINT_NAME in resolution.truncated:
+            # resolver의 budget 컷(`_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS`)은 넉넉해 이 갈래는
+            # 함수 하나가 그만큼 거대할 때만 닿는다 — 아래 `len(source) > _FUZZ_ENTRYPOINT_CHARS`
+            # 자르기(원문 상한)와는 다른 상한이다(적대적 리뷰 2026-10-02 MEDIUM-1).
+            missing["reason"] = (
+                f"진입점을 찾았으나 resolver 조회 상한"
+                f"({_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS:,}자, 렌더 기준)에 통째로 잘렸다"
+            )
+        elif not (resolution.blocks or resolution.unfilled or resolution.truncated):
+            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 아무 사유도 없이
+            # 통째로 빈 `Resolution`을 돌려준다 — `unfilled`조차 비는 것이 그 서명이다. 이것을
+            # "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지 이름인지 안 갈린다**
+            # (§0). 훅은 factory가 **항상** 꽂으므로(`src/adapters/factory.py`) 위의
+            # `resolve_requests is None` 갈래는 프로덕션에서 안 닿는다 — 여기가 그 자리다.
+            missing["reason"] = "인덱스가 없거나 v1이다(함수 표 없음) — 조회가 아무 사유도 못 냈다"
+        else:
+            # ⏵ 2026-10-02 정정(적대적 리뷰 LOW): 전 판은 여기서 늘 "함수 표에 없다"고 적었는데
+            # `resolution.unfilled`가 비지 않은 사유는 그것 하나가 아니다 —
+            # `symbol_resolver._unfilled_lookup_reason`은 "인덱스에는 있는데 파일을 못 읽어
+            # 여기까지 왔을 때"도 같은 자리로 보낸다(그 함수 docstring). 추측하지 않고
+            # resolver가 **실제로 낸** 사유(`Unfilled.text`)를 그대로 싣는다.
+            unfilled = next(
+                (u for u in resolution.unfilled if u.target == _FUZZ_ENTRYPOINT_NAME), None
+            )
+            missing["reason"] = (
+                f"진입점 조회가 실패했다 — {unfilled.text}"
+                if unfilled is not None
+                else (
+                    f"인덱스의 함수 표에 {_FUZZ_ENTRYPOINT_NAME}가 없다 — "
+                    "이 과제의 하네스 진입점 이름이 다를 수 있다"
+                )
+            )
+        return missing
+    # 🔴 **`resolution.followup_text`를 싣지 않는다.** 그것은 함수 본문이 아니라 NE 루프의 **후속
+    # 턴 전체**다(`render_followup`) — `## Retrieved context (hop 1)` 머리와 줄번호 gutter, 그리고
+    # 꼬리에 *"output one complete ScoutResponse JSON"*이 붙는다. FACTS는 body.md가 *"참조 가능한
+    # 사실 전부"*라 선언하는 블록이라, 거기에 **다른 역할의 지시**가 실리면 PoV가 그것을 사실로
+    # 읽는다(적대적 리뷰 2026-10-02 H-1). 그래서 위치만 받고 **원문은 직접 읽는다.**
+    lines = sorted(block.lines)
+    lo, hi = lines[0], lines[-1]
+    try:
+        source = ctx.read_source(Location(file=block.file, line_start=lo, line_end=hi))
+    except (OSError, ValueError) as exc:
+        # 위 `ctx.resolve_requests` 호출의 같은 가드 — 인덱스가 가리키는 파일이 대상 루트 밖이면
+        # `read_source`(`safe_join`)가 `PathEscape`(`ValueError`)로 실패시킨다. 보조 조회 하나가
+        # run 전체를 멈추면 안 된다.
+        missing["file"] = block.file
+        missing["lines"] = [lo, hi]
+        missing["reason"] = (
+            f"{block.file}:{lo}-{hi} 읽기가 예외로 실패했다: {type(exc).__name__}: {exc}"
+        )
+        return missing
+    if not source:
+        # 위치는 있는데 원문을 못 읽었다 — 인덱스와 디스크가 어긋난 것이고, 빈 `source`를
+        # `found=True`로 내보내면 "찾았다"가 거짓이 된다.
+        missing["file"] = block.file
+        missing["lines"] = [lo, hi]
+        missing["reason"] = f"{block.file}:{lo}-{hi}를 인덱스가 가리키는데 원문을 못 읽었다"
+        return missing
+    # 🔴 **직접 읽으므로 상한을 직접 건다.** resolver의 `max_chars`는 그쪽이 렌더할 때만 걸리고
+    # `read_source`에는 안 걸린다 — 안 자르면 거대한 하네스 함수 하나가 프롬프트를 혼자 키운다.
+    # **앞부분을 남긴다**: 진입점의 머리(인자·최소 길이 검사·첫 파서 호출)가 PoV가 쓸 것이고
+    # 꼬리는 정리 코드다. 자른 사실은 `reason`에 남긴다(조용히 자르지 않는다 — §0).
+    reason = ""
+    if len(source) > _FUZZ_ENTRYPOINT_CHARS:
+        reason = (
+            f"원문 {len(source)}자를 앞 {_FUZZ_ENTRYPOINT_CHARS}자로 잘랐다 — 뒤가 빠졌다"
+        )
+        source = source[:_FUZZ_ENTRYPOINT_CHARS]
+    return {
+        "found": True,
+        "name": block.name,
+        "file": block.file,
+        # resolver가 준 줄은 **블록이 걸친 줄 집합**이라 범위로 줄인다 — 모델이 쓸 것은 범위다.
+        "lines": [lo, hi],
+        "source": source,
+        "reason": reason,
+    }
+
+
+class _Once:
+    """콜러블을 한 번만 부르고 그 결과를 들고 있는다 — 두 역할이 **같은 문자열**을 봐야 할 때.
+
+    `_step_auditor`가 `_auditor_source`를 이걸로 감싸 Auditor에게 주고, 같은 객체를
+    `state.finding_sources`에 넣어 8단계 PoV가 다시 꺼내 쓴다. 다시 부르면 안 되는 이유가 둘이다:
+    ① `_auditor_source`가 `auditor_source` trace 이벤트를 **낸다** — 두 번 내면 장부에 같은 Auditor
+    호출이 둘로 보인다(§0 — 센 것과 안 센 것을 섞지 않는다). ② 인덱스 조회(`symbols_for`·
+    `callees_of`·`call_sites_of`)를 다시 돌려 공짜가 아니다.
+
+    ⚠ **`partial`로는 안 된다** — 콜러블이기만 하면 노드가 매 호출마다 다시 돈다.
+    """
+
+    __slots__ = ("_call", "_text")
+
+    def __init__(self, call: Callable[[], str]) -> None:
+        self._call = call
+        self._text: str | None = None
+
+    def __call__(self) -> str:
+        if self._text is None:
+            self._text = self._call()
+        return self._text
+
+
 def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     """8단계 PoV — Finding에서 PoC를 만드는 모델-주도 툴 루프를 돌린다 (추가형·b-1).
 
@@ -1129,7 +1411,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **캡슐 미스는 finding을 죽이지 않는다** — `pov_skipped`로 남기고 넘어간다(추가형이라 상태는
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
-    올려 보냄)는 루프가 낸다. 바이트 파일화·E4 게이트·oracle 제출은 호스트 후속이다.
+    올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
+    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트·oracle
+    제출은 호스트 후속이다.
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1151,22 +1435,29 @@ def _run_pov_hops(
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
-    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/poc)를 돌린다. `submit`은
+    **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/gdb/poc)를 돌린다. `submit`은
     루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
 
     **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
     **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
     피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
-    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다.
+    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
+    호출부 20여 곳이 쥐고 있다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
     spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이·oracle 제출도 후속이고,
-    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)만 남긴다.
-    `max_hops`는 NE 루프와
-    같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고,
+    종단에서 **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
+    그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
+    종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
+    `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+
+    `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
+    그대로다 — 아래 `[:2]`가 그것을 뗀다. 다음 슬라이스가 반환을 넓힐 때 디렉터리를 글로브하지
+    않고 그대로 올릴 수 있다.
     """
     max_hops = ctx.config.thresholds.max_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
@@ -1175,11 +1466,45 @@ def _run_pov_hops(
         followup = ""
         prev: pov.PovHop | None = None
         hop = 0
+        # 퍼즈 진입점 조회 결과 — hop0에서 채우고 **hop0 이벤트에만** 싣는다. 루프 밖에서 먼저
+        # 묶는 이유는 조회가 던져도 `except` 갈래가 이 이름을 안전하게 읽어야 해서다.
+        fuzz: dict[str, object] | None = None
+        # 루프 내내 안 바뀐다(설정값) — 홉마다 다시 읽지 않는다. hop0의 `source=` 결정과
+        # 매 홉의 관측 꼬리(`_pov_observation`) 둘 다 이것을 본다(적대적 리뷰 2026-10-02
+        # MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도 이 PR의 새 입력이다).
+        pov_wide = (
+            ctx.config.model_for(Role.POV.value).prompt_template_version
+            in pov._WIDE_INPUT_VERSIONS
+        )
         while True:
             started = ctx.monotonic_ms()
             try:
                 if prev is None:
-                    current = pov.open_hop(ctx, finding=finding, capsule=capsule)
+                    # `source`는 Auditor가 본 것과 **같은 문자열**이다(`_Once`) — 없으면(슬라이스
+                    # 타깃이 아니면) 노드가 캡슐 대상을 직접 읽는 예전 갈래로 간다.
+                    entrypoint = _fuzz_entrypoint(ctx, capsule.target.file)
+                    # 🔴 **조회 결과를 홉 이벤트에 싣는다**(아래 `fuzz=`). 안 남기면 「진입점 탐색
+                    # 성공률」이 영영 미실측이고, 성공 0이 나왔을 때 모델 탓인지 조회 탓인지 못
+                    # 가른다(§0). **새 EventKind를 만들지 않는다** — 홉 수를 세는 검사들이
+                    # `POV_HOP` 개수를 단언하므로 이벤트를 더하면 그것이 깨진다. 이 측정은
+                    # **버전과 무관하게** 늘 한다 — v2가 배선되더라도 진입점 탐색 성공률은
+                    # 관측해 둔다(모델에게 실제로 실리는지와는 다른 질문이다).
+                    fuzz = entrypoint
+                    # ⚠ **v2는 `state.finding_sources`를 안 본다** — Auditor의 넓은 SOURCE를
+                    # 모델 프롬프트에 실으려면(§ `_run_pov_hops` 윗줄) 배선된 pov 버전이
+                    # `pov._WIDE_INPUT_VERSIONS`에 있어야 한다. 아니면 `source=None`을 넘겨
+                    # `nodes.pov._render_prompt`가 예전 entry-only 갈래로 가게 한다(적대적 리뷰
+                    # 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다).
+                    wide_source = (
+                        state.finding_sources.get(finding.finding_id) if pov_wide else None
+                    )
+                    current = pov.open_hop(
+                        ctx,
+                        finding=finding,
+                        capsule=capsule,
+                        source=wide_source,
+                        fuzz_entrypoint=entrypoint,
+                    )
                 else:
                     current = pov.continue_hop(
                         ctx, finding=finding, prev=prev, followup=followup
@@ -1191,27 +1516,31 @@ def _run_pov_hops(
                     raise
                 latency_s = (ctx.monotonic_ms() - started) / 1000.0
                 _emit_pov_hop(
-                    ctx, finding, hop=hop, stop_reason=reason.value, failed=(exc, latency_s)
+                    ctx, finding, hop=hop, stop_reason=reason.value,
+                    failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish(ctx, finding, reason, last_poc)
+                return _pov_finish(ctx, finding, reason, last_poc)[:2]
             action = current.action
             if action.action == "submit":
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
+                    fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)
+                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)[:2]
+            hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
             if action.action == "gen":
                 # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
                 # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
-                poc = assemble_poc(action.spec)
-                if last_poc is not None and poc == last_poc:
+                hop_poc = assemble_poc(action.spec)
+                if last_poc is not None and hop_poc == last_poc:
                     _emit_pov_hop(
-                        ctx, finding, hop=hop, action="gen",
+                        ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
+                        fuzz=fuzz if hop == 0 else None,
                     )
-                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)
-                last_poc = poc
+                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)[:2]
+                last_poc = hop_poc
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
                 evidence = pov.run_tool(
@@ -1219,23 +1548,65 @@ def _run_pov_hops(
                 )
             if hop >= max_hops:
                 _emit_pov_hop(
-                    ctx, finding, hop=hop, action=action.action, evidence=evidence,
+                    ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value,
+                    fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)
-            _emit_pov_hop(ctx, finding, hop=hop, action=action.action, evidence=evidence)
-            followup = _pov_observation(action.action, evidence)
+                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)[:2]
+            _emit_pov_hop(
+                ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
+                fuzz=fuzz if hop == 0 else None,
+            )
+            followup = _pov_observation(
+                action.action, evidence, read_payload=ctx.read_payload, wide=pov_wide
+            )
             prev = current
             hop += 1
 
 
-def _pov_observation(action: str, evidence: Evidence) -> str:
-    """도구 결과를 다음 홉 user 턴으로 보낼 짧은 관측 텍스트(비지 않아야 한다 — `Prompt.body`)."""
+def _pov_observation(
+    action: str, evidence: Evidence, *, read_payload: ReadPayload, wide: bool = True
+) -> str:
+    """도구 결과를 다음 홉 user 턴으로 보낼 관측 텍스트(비지 않아야 한다 — `Prompt.body`).
+
+    ⏵ **2026-10-02 — 도구 출력 꼬리를 싣는다.** 전 판은 스칼라 여섯(`tool`·`action`·`ok`·`exit`·
+    `kind`·`error`)만 줬다. 그러면 PoV는 **왜 그렇게 됐는지를 모른다** — ASan이 어떤 위반을 어느
+    오프셋에서 잡았는지, gdb가 대상을 띄웠는지가 전부 payload 로그에만 있고 관측에는 없었다.
+    프롬프트는 *"관측을 읽고 실패 이유를 판단한 뒤 고쳐라"*라 지시하는데 **읽을 것이 없었다.**
+
+    꼬리를 쓰는 이유: ASan 보고서는 **끝**에 요약(`SUMMARY: AddressSanitizer: …`)이 오고 gdb도
+    수명주기 줄이 뒤에 온다. 앞을 자르면 컴파일 잡음만 남는다.
+
+    ⚠ **`read_payload`가 `None`을 주는 것은 정상 상태다**(`dev_fake`는 로그 파일을 안 쓴다 —
+    `context.read_payload` 주석). 그때는 전 판과 **바이트가 같은** 한 줄이다.
+    🔴 **참조 PoC(`/tmp/poc`) 바이트가 이 경로로 프롬프트에 들어가면 run이 무효다.** 여기 실리는
+    것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
+    (`container_tools`)이 지킨다.
+
+    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **꼬리를 안 싣는다** — v2
+    prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
+    같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
+    """
     detail = f" error={evidence.error}" if evidence.error else ""
-    return (
+    head = (
         f"tool={evidence.source} action={action} ok={evidence.ok} "
         f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
     )
+    if not wide:
+        return head
+    # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
+    # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
+    body = read_payload(evidence.payload_ref)
+    if not body:
+        return head
+    # ⏵ 2026-10-02 추가(적대적 리뷰 LOW) — **자르기 전에** 하네스 머리줄을 뺀다.
+    # `evidence_summaries`(Auditor·Critic 근거 본문)가 이미 하는 것과 같은 장치를 재사용한다 —
+    # `# node argv: …`·`# runtime: …`·`$ docker run … -v <호스트 절대경로>:/src:ro` 같은 줄이
+    # 짧은 로그에서는 꼬리 전체를 차지해 호스트 경로가 그대로 프롬프트에 실렸다.
+    body = _HARNESS_HEADER_LINE.sub("", body)
+    tail = body[-_POV_OBSERVATION_TAIL_CHARS :]
+    cut = "" if len(body) == len(tail) else f"(앞 {len(body) - len(tail)}자 생략)\n"
+    return f"{head}\n--- {evidence.source} 출력 꼬리 ---\n{cut}{tail}"
 
 
 def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
@@ -1268,12 +1639,29 @@ def _emit_pov_hop(
     hop: int,
     action: str | None = None,
     evidence: Evidence | None = None,
+    poc: bytes | None = None,
     stop_reason: str | None = None,
     failed: tuple[Exception, float] | None = None,
+    fuzz: Mapping[str, object] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
-    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다)."""
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다).
+
+    `poc`는 **그 홉의 gen이 조립한 PoC**다 — 있으면 맨 hex sha256을 `poc_sha256`으로 싣는다(종단
+    이벤트의 `poc_sha256`과 같은 형식이라 바로 대조된다). 종단을 건너뛰는 중단 경로(예산 소진·서버
+    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이지만 **이 이벤트가 나간 뒤에 끊긴 경우뿐이다**
+    — 그 홉 자신의 도구 호출에서 끊기면(토큰 예산 소진이 그 경로다) 이벤트도 해시도 없다(`poc_log`
+    모듈 docstring의 「한계」).
+
+    `fuzz`는 **hop0에만** 준다 — 퍼즈 진입점 조회의 결과다(`_fuzz_entrypoint`). 그것을 여기 싣는
+    이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
+    이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
+    """
     data: dict[str, TraceValue] = {"hop": hop}
+    if fuzz is not None:
+        data["fuzz_found"] = bool(fuzz["found"])
+        data["fuzz_file"] = str(fuzz["file"])
+        data["fuzz_reason"] = str(fuzz["reason"])
     if action is not None:
         data["action"] = action
     if evidence is not None:
@@ -1281,6 +1669,8 @@ def _emit_pov_hop(
         data["tool_ok"] = evidence.ok
         data["exit_code"] = evidence.exit_code
         data["evidence_kind"] = evidence.kind.value
+    if poc is not None:
+        data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:
         data["stop_reason"] = stop_reason
     if failed is not None:
@@ -1300,13 +1690,44 @@ def _emit_pov_hop(
 
 def _pov_finish(
     ctx: RunContext, finding: Finding, reason: PovStopReason, poc: bytes | None
-) -> tuple[bytes | None, PovStopReason]:
+) -> tuple[bytes | None, PovStopReason, str | None, str | None]:
     """루프 종단 이벤트. `POV_GENERATED`는 **모델이 submit해 최종 PoC가 나온 경우만** 낸다 —
     나머지(max_hop·repeat·흡수된 예외·gen 없는 submit)는 `POV_SKIPPED`다. 부분 PoC(중간 gen까지는
-    했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`로 남긴다.
+    했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`과 사이드카 키로 남긴다.
 
     ⚠ 예전에는 PoC가 있기만 하면 GENERATED라 max_hop·parse_failed도 「생성됨」으로 과대 집계됐다
-    (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다."""
+    (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다.
+
+    **바이트가 있으면 사이드카 파일로 남기고** 그 참조·digest를 이 이벤트에 싣는다(`poc_ref`·
+    `poc_digest`, #355) — submit 못 한 부분 PoC도 남긴다(회수가 목적이라 종단 사유로 가르지 않는다).
+    **쓰기가 실패하면(`OSError`) 흡수한다** — PoV는 추가형이고 사이드카는 부가 산출물이라 run을
+    죽이지 않는다. 이벤트가 `poc_ref` 대신 `poc_write_error`·`poc_write_error_detail`을 싣고 종단
+    사유·종류는 그대로다. `ctx.pocs`가 `None`이면(단위 테스트·`--dry-run`) 이 키들이 **아예 없다**.
+    **Evidence를 달지 않는다**는 것과 digest 형식이 아래 `poc_sha256`과 다른 이유는 `poc_log` 모듈
+    docstring에 있다.
+
+    반환은 `(poc, reason, ref, digest)`다 — `ref`·`digest`는 방금 쓴 사이드카의 것이고 안 썼으면
+    (배선 없음·바이트 없음·쓰기 실패) `None`이다. 다음 슬라이스가 디렉터리를 글로브하지 않고
+    쓰게 낸다."""
+    ref: str | None = None
+    digest: str | None = None
+    sidecar: dict[str, TraceValue] = {}
+    if poc is not None and ctx.pocs is not None:
+        try:
+            ref, digest = ctx.pocs.write(poc)
+        except OSError as exc:
+            sidecar = {
+                "poc_write_error": type(exc).__name__,
+                # `str(exc)`가 아니라 `strerror`다 — 앞의 것은 파일의 절대경로를 싣고 trace는
+                # 경로를 안 싣는다(재현성 비교 단위).
+                # ⚠ `strerror`는 사람이 읽는 부가 문구이지 안정 키가 아니다 — OS 로케일을 따르고
+                # (이 장비 한국어 Windows에서 `mkdir`·`os.replace`는 한국어, `open`은 영어
+                # `File exists` — 2026-10-02 실측) 합성 예외에는 `None`이라 빈 문자열이다.
+                # 기계가 읽는 키는 `poc_write_error`다.
+                "poc_write_error_detail": exc.strerror or "",
+            }
+        else:
+            sidecar = {"poc_ref": ref, "poc_digest": digest}
     if reason is PovStopReason.SUBMITTED and poc is not None:
         ctx.trace.emit(
             EventKind.POV_GENERATED,
@@ -1315,12 +1736,14 @@ def _pov_finish(
             subject_id=finding.finding_id,
             poc_bytes=len(poc),
             poc_sha256=hashlib.sha256(poc).hexdigest(),
+            **sidecar,
         )
-        return poc, reason
+        return poc, reason, ref, digest
     data: dict[str, TraceValue] = {"reason": reason.value}
     if poc is not None:
         data["poc_bytes"] = len(poc)
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
+        data.update(sidecar)
     ctx.trace.emit(
         EventKind.POV_SKIPPED,
         stage=Stage.VALIDATE,
@@ -1328,7 +1751,7 @@ def _pov_finish(
         subject_id=finding.finding_id,
         **data,
     )
-    return poc, reason
+    return poc, reason, ref, digest
 
 
 def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static: bool) -> int:
@@ -2058,15 +2481,19 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     anchor, ref = _auditor_target(ctx, item.target), item.target.slice
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=anchor, level=CapsuleLevel.EXPANDED)
+    # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring). `_Once`로 감싸는 이유는
+    # **8단계 PoV가 같은 문자열을 다시 쓰기 때문**이다(아래 `state.finding_sources`).
+    source = (
+        None
+        if ref is None
+        else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
+    )
     finding, missings = auditor.run(
         ctx,
         candidate=candidate,
         capsule=expanded,
         evidences=evidences,
-        # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring).
-        source=None
-        if ref is None
-        else partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id),
+        source=source,
     )
     item.finding, item.missings = finding, tuple(missings)
     state.update(finding)
@@ -2075,6 +2502,16 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     state.workdirs[finding.finding_id] = artifact.path
     # 8단계 PoV가 이 Finding의 PoC를 만들 때 쓸 캡슐을 물려 준다(PoV 배선 — b-1).
     state.finding_capsules[finding.finding_id] = expanded
+    # 🔴 **그리고 Auditor가 본 `SOURCE`를 그대로 물려 준다**(사용자 지적 2026-10-02).
+    # 안 물려 주던 동안 PoV는 `ctx.read_source(capsule.target)`으로 **entry 함수 하나**만 봤다
+    # (`nodes/pov._render_prompt`의 `source is None` 갈래) — Auditor는 결정 1-b = 넓은 (i)로
+    # 슬라이스가 걸친 함수 전부를 보는데 **바이트를 써야 하는 쪽이 그보다 좁게 봤다.** CyberGym
+    # Level 1의 지배적 실패가 "취약 경로 미도달"이고 그것을 가르는 것이 앞단 파서의 포맷 조건이라,
+    # 포맷을 담은 함수가 entry 밖에 있으면 PoV가 영영 못 봤다.
+    # 슬라이스 타깃이 아니면(`ref is None`) 안 싣는다 — 그때는 Auditor도 캡슐 대상을 그대로 읽어
+    # PoV의 기존 갈래와 같은 문자열이다.
+    if source is not None:
+        state.finding_sources[finding.finding_id] = source
     return True
 
 
@@ -2759,7 +3196,7 @@ def _triage_by_candidate(
     | --- | --- | --- |
     | 후보 하나가 컨텍스트를 넘겼다 | 413, 또는 400 + 컨텍스트 초과 문구 | 그 후보만 버린다 |
     | 요청 모양·서버 설정이 틀렸다 | 그 밖의 400 | 첫 건에서 멈춘다(#296) |
-    | 서버가 죽었다 | `status`가 없거나 5xx | 즉시 멈춘다 |
+    | 서버 쪽 사건 | `status`가 없거나 5xx, 400·413·422 밖의 4xx | 즉시 멈춘다 |
     | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
 
     **연속 폐기를 하나의 카운터로 센다.** 게이트웨이와 스키마를 따로 세면 둘이 번갈아
