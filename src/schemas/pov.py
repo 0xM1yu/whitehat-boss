@@ -145,20 +145,24 @@ _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
 }
 
 
+# ⚠ **이 클래스의 docstring은 `response_format.json_schema.schema.description`으로 모델 요청
+# payload에 그대로 실린다**(v2 포함 — `src/adapters/openai_compat.py`). 그래서 docstring 본문에는
+# 커밋 SHA·PR·이슈 번호·소스 파일 경로 같은 저장소 내부 참조를 넣지 않는다 — 그런 이력은 이 클래스
+# **밖의** `#` 주석에 둔다(`tests/test_pov_loop.py::
+# test_pov_action_description_in_the_request_has_no_repo_internal_references`가 지킨다).
+#
+# gdb 이력: `TOOL_KINDS`에 `"gdb"`가 들어온 것은 PR #327(`5cf5c20`, 2026-10-01) ·
+# `PovAction.tool`에 넣은 근거는 이슈 #360(사용자 결정) · gdb 사용 **규칙**을 프롬프트에 안 두는
+# 이유는 D92(`docs/open-questions/D/D92.md` — ASAN 실행 경로 수리·검증(#326)이 선행 조건).
 class PovAction(HarnessModel):
-    """PoV 툴 루프가 매 홉 내는 제어 액션 (Option C — council+사용자 2026-09-30).
+    """PoV 툴 루프가 매 홉 내는 제어 액션.
 
     `action`이 어느 필드를 쓰는지 정한다:
-    - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.
-      **모델이 쓴 코드를 실행하지 않는다** — 조립은 결정론 순수 함수(fork B-iii). raw 임의
-      바이트가 필요하면 `spec`의 `literal` 세그먼트에 통째로 넣는다.
-    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사).
-      ⏵ **2026-10-02 — `gdb`가 들어왔다.** 에이전트 gdb 도구를 배선한 PR #327이 `5cf5c20`
-      (2026-10-01)로 머지되며 `TOOL_KINDS`에 `"gdb": EvidenceKind.CRASH`가 생겼고
-      (`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 전부 있다
-      (`src/adapters/container_tools.py:443-466` 빌드·실행 · `:247` `_RUNTIME_TOOLS` ·
-      `:576-581` `judge()`의 stdout 수명주기 판정). **PoV가 크래시 지점을 눈으로 볼 수단이
-      이것뿐이라** 화이트리스트에 넣는다(이슈 #360 · 사용자 결정 2026-10-02).
+    - `gen`: `spec`(PovSpec)을 실어 순수 함수가 인프로세스로 바이트를 만든다. **모델이 쓴 코드를
+      실행하지 않는다** — 조립은 결정론 순수 함수. raw 임의 바이트가 필요하면 `spec`의 `literal`
+      세그먼트에 통째로 넣는다.
+    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다(새 PoC 없이 대상을 조사). 넷 모두
+      대상 소스를 빌드·실행할 뿐이고, `gen`이 만든 PoC 바이트를 입력으로 받지 않는다.
     - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
