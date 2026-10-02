@@ -40,7 +40,14 @@ from src.schemas.pov import PovAction, PovSegment, PovSpec
 
 # `ctx`는 dev_fake로 배선된 픽스처, `_pov_state`는 finding+캡슐을 담은 state 헬퍼다
 # (test_ne_loop이 test_pipeline_e2e에서 헬퍼를 끌어 쓰는 것과 같은 방식).
-from tests.test_nodes import BENIGN_TARGET, _pov_state, _root_of, _triage, ctx  # noqa: F401
+from tests.test_nodes import (  # noqa: F401
+    BENIGN_TARGET,
+    _pov_state,
+    _raise,
+    _root_of,
+    _triage,
+    ctx,
+)
 
 
 def _spec() -> PovSpec:
@@ -1730,3 +1737,124 @@ def test_v3_finding_block_carries_trigger_status_repro_presence_and_step_labels(
     assert not leaked, "repro_spec 본문이 샜다"
     for number, step in enumerate(finding.path, start=1):
         assert f"{number}. [{step.step.value}] {step.symbol}" in with_spec, "단계 라벨이 없다"
+
+
+# --- 「조용한 0」 계수기 — 어느 출구로 끝나도 사유가 하나 남는다 (#357·#358) ----------------
+
+
+def _exit_submitted(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    actions = [_gen(count=8), PovAction(action="submit", rationale="done")]
+    state, finding = _pov_state(ctx)
+    return _scripted(ctx, actions), state, finding
+
+
+def _exit_repeat_spec(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    state, finding = _pov_state(ctx)
+    return _scripted(ctx, [_gen(count=8), _gen(count=8)]), state, finding
+
+
+def _exit_max_hop(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    state, finding = _pov_state(ctx)
+    scripted = _scripted(ctx, [_gen(count=8)])
+    # state를 먼저 만든 뒤 내린다 — auditor가 max_hops=0으로 돌지 않게.
+    scripted.config = scripted.config.transition(
+        thresholds=scripted.config.thresholds.transition(max_hops=0)
+    )
+    return scripted, state, finding
+
+
+def _exit_parse_failed(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    state, finding = _pov_state(ctx)
+    monkeypatch.setattr(pov_node, "open_hop", _raise(SchemaParseError("bad pov json")))
+    return ctx, state, finding
+
+
+def _exit_context_overflow(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    state, finding = _pov_state(ctx)
+    monkeypatch.setattr(
+        pov_node, "open_hop", _raise(ModelGatewayError("too big", status=413))
+    )
+    return ctx, state, finding
+
+
+def _exit_gateway_error(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    state, finding = _pov_state(ctx)
+    monkeypatch.setattr(
+        pov_node, "open_hop", _raise(ModelGatewayError("droppable", status=422))
+    )
+    return ctx, state, finding
+
+
+def _exit_capsule_missing(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    state, finding = _pov_state(ctx)
+    state.finding_capsules.clear()  # 캡슐 미스 — `_run_pov`가 루프에 못 들어간다
+    return ctx, state, finding
+
+
+# 7사유 **완전분할** — `PovStopReason` 여섯 + enum 밖 `"capsule_missing"`. 이 표가 사유 어휘의
+# 분할성을 무는 자리다: 멤버를 더하면 아래 집합 단언이 빨개진다.
+_POV_EXITS = (
+    (PovStopReason.SUBMITTED.value, _exit_submitted),
+    (PovStopReason.REPEAT_SPEC.value, _exit_repeat_spec),
+    (PovStopReason.MAX_HOP.value, _exit_max_hop),
+    (PovStopReason.PARSE_FAILED.value, _exit_parse_failed),
+    (PovStopReason.CONTEXT_OVERFLOW.value, _exit_context_overflow),
+    (PovStopReason.GATEWAY_ERROR.value, _exit_gateway_error),
+    ("capsule_missing", _exit_capsule_missing),
+)
+
+
+def test_the_pov_exit_table_covers_every_stop_reason() -> None:
+    """위 표가 `PovStopReason` 전량 + 캡슐 미스를 덮는다 — 사유를 더하고 표를 안 늘리면 여기서
+    빨개진다. 안 그러면 아래 표 테스트가 「덮었다」를 주장하면서 새 사유를 빠뜨린다."""
+    reasons = {reason for reason, _ in _POV_EXITS}
+    assert reasons == {r.value for r in PovStopReason} | {"capsule_missing"}
+    assert len(_POV_EXITS) == len(reasons), "표에 같은 사유가 두 번 있다"
+
+
+@pytest.mark.parametrize(("expected", "setup"), _POV_EXITS, ids=[r for r, _ in _POV_EXITS])
+def test_every_pov_exit_records_exactly_one_result(
+    ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    expected: str,
+    setup,  # noqa: ANN001
+) -> None:
+    """`_run_pov`가 **어느 출구로 끝나도** `state.pov_results`에 그 finding의 사유를 정확히 하나
+    남긴다 (#357·#358) — 캡슐 미스 갈래 포함.
+
+    이것이 계수기 설계의 요점이다: 시도 수는 `len(pov_results)`, 사유별 수는
+    `Counter(pov_results.values())`라 **「시도 수 == 사유별 합」이 구조적으로 참**이다. 시도 수와
+    사유별 수를 따로 들면 한 출구가 둘 중 하나만 올려 두 수가 어긋날 자리가 생긴다 — 실제로 조용히
+    0이 되는 갈래가 캡슐 미스였다(루프에 못 들어가므로 루프 쪽 계수기로는 안 보인다).
+    """
+    pov_ctx, state, finding = setup(ctx, monkeypatch)
+
+    runner._run_pov(pov_ctx, state, finding)
+
+    assert state.pov_results == {finding.finding_id: expected}
+
+
+def test_the_pov_loop_return_shapes_and_signatures_stay_put(ctx: RunContext) -> None:  # noqa: F811
+    """`_run_pov_hops`의 2-튜플 · `_pov_finish`의 4-튜플 · `_run_pov`의 (이름·인자·`None` 반환)을
+    못 박는다 — 계수기를 다는 이 PR이 반환을 넓혀 호출부를 깨뜨리지 않았음을 재는 자리다.
+
+    호출부 수십 곳과 `tests/test_nodes.py`의 `_run_pov` monkeypatch 스파이가 이 모양을 쥐고 있다.
+    한계: 길이와 인자 이름을 재지 타입 주석을 재지 않는다."""
+    import inspect
+
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
+
+    hops = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert isinstance(hops, tuple) and len(hops) == 2
+    poc, reason = hops
+    assert isinstance(poc, bytes) and isinstance(reason, PovStopReason)
+    finished = runner._pov_finish(scripted, finding, reason, poc)
+    assert isinstance(finished, tuple) and len(finished) == 4
+    assert list(inspect.signature(runner._pov_finish).parameters) == [
+        "ctx", "finding", "reason", "poc",
+    ]
+    assert list(inspect.signature(runner._run_pov).parameters) == ["ctx", "state", "finding"]
+    assert runner._run_pov(scripted, state, finding) is None

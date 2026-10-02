@@ -1856,6 +1856,40 @@ def test_render_marks_ungraded_finding_as_unknown_not_e0(ctx: RunContext) -> Non
     assert "등급 분포" not in rendered  # 아는 등급이 0건이면 분포 줄 자체가 없다
 
 
+def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> None:
+    """리포트가 PoV 정지 사유를 **사유별 수**로 싣는다 (#357·#358) — 한 수로 묶으면 "상한에서
+    헛돌았다"와 "스키마를 못 맞췄다"가 안 갈린다(`ne_absorbed`와 같은 판단).
+
+    **시도 수는 사유별 합과 구조적으로 같다** — 리포트도 `pov_results`(finding_id → 사유) **하나**를
+    받아 거기서 둘을 뽑으므로 두 수가 어긋날 자리가 없다. 수를 따로 받으면 그 자리가 생긴다.
+    """
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    rendered = report.run(
+        ctx,
+        findings=[finding],
+        pov_results={
+            "find_0001": "max_hop",
+            "find_0002": "max_hop",
+            "find_0003": "parse_failed",
+        },
+    ).render()
+
+    assert "PoV 정지 사유 (시도 3건)" in rendered
+    assert "max_hop 2건" in rendered
+    assert "parse_failed 1건" in rendered
+
+
+def test_render_says_nothing_about_pov_when_pov_did_not_run(ctx: RunContext) -> None:
+    """pov가 안 돈 run(좌석 없는 프로필)에는 그 줄이 없다 — 0건일 때 줄이 나오면 장식이다
+    (`ne_absorbed`·`deferred`가 비면 줄을 안 내는 것과 같은 자리)."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    rendered = report.run(ctx, findings=[finding]).render()  # pov_results 안 넘김
+
+    assert "PoV 정지 사유" not in rendered
+
+
 # --- 프롬프트 계약 ----------------------------------------------------------
 
 
