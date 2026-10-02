@@ -659,6 +659,10 @@ def test_a_200_with_the_wrong_shape_becomes_a_gateway_error(
 
     assert caught.value.status is None
     assert "계약과 다르다" in str(caught.value)
+    # 🔴 **`detail`에도 있어야 한다** — trace의 `model_call.error_detail`과 러너 경고가 읽는 것은
+    # `detail`이고(`error_detail`), 문구(`str(exc)`)는 거기 안 간다. 없으면 상태 코드 없는 실패
+    # 셋(끊김·타임아웃·계약 위반)을 가르는 단서가 `KeyError: 'choices'` 같은 형 이름뿐이다.
+    assert "계약과 다르다" in caught.value.detail
 
 
 def test_the_new_catch_all_does_not_swallow_an_http_status(
