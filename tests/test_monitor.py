@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from src.orchestrator.runner import _REASON_GATEWAY, _REASON_OVER_MAX, _REASON_SCHEMA
+from src.schemas.enums import ReasonCode
 from tools import monitor
 
 NOW = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
@@ -196,6 +197,34 @@ def test_budget_exhausted_from_run_transition_reason() -> None:
     assert _derive(heartbeat=_hb(2), events=events)["budget_exhausted"] is True
 
 
+def test_crashed_from_the_run_transition_reason() -> None:
+    """🔴 최후 방어선(S0)이 남긴 run 종료 사유 `unforeseen_failure`가 `crashed`다.
+
+    그 run은 **매니페스트를 남긴다** — `has_manifest`만 보면 정상 종료와 같아, 예전에는 매니페스트가
+    없어 DEAD(exit 3)로 잡히던 크래시가 조용히 완료로 읽힌다(적대적 리뷰 2026-10-02 MEDIUM 3)."""
+    events = [_ev("transition", age_s=1, seq=9, reason="unforeseen_failure", subject="run")]
+    assert _derive(heartbeat=_hb(2), events=events)["crashed"] is True
+
+
+def test_a_policy_stop_is_not_a_crash() -> None:
+    """예산·차단기·게이트웨이·사용자 정지는 **예상한** 중단이다 — `crashed`가 아니다(N1과 같은 축)."""
+    for reason in (
+        "budget_exhausted",
+        "consecutive_target_failures",
+        "model_gateway_unavailable",
+        "model_swap_failed",
+        "schema_parse_failed",
+        "user_stop_requested",
+    ):
+        events = [_ev("transition", age_s=1, seq=9, reason=reason, subject="run")]
+        assert _derive(heartbeat=_hb(2), events=events)["crashed"] is False, reason
+
+
+def test_the_crash_reason_is_the_one_the_runner_writes() -> None:
+    """폴러의 사유 상수가 러너의 `ReasonCode`와 갈라지면 크래시가 조용히 안 잡힌다."""
+    assert monitor._CRASH_REASON == ReasonCode.UNFORESEEN_FAILURE.value
+
+
 def test_budget_exhausted_from_live_budget_event() -> None:
     """run 도중 budget.py가 내는 BUDGET(event=exhausted)도 잡는다 — 사후 전이만이 아니다(L7)."""
     e = {
@@ -263,6 +292,23 @@ def test_main_returns_0_on_a_stopped_run_even_with_stale_heartbeat(tmp_path: Pat
     (rd / "trace.jsonl").write_text("", encoding="utf-8")
 
     assert monitor.main([str(rd)]) == 0  # DEAD(3)가 아니다
+
+
+def test_main_returns_3_on_a_crashed_run_even_though_it_left_a_manifest(tmp_path: Path) -> None:
+    """S0 이후 터진 run도 매니페스트를 남긴다 — 그래도 **정상 종료(0)가 아니다**. 예전에는 매니페스트가
+    없어 heartbeat stale → DEAD(3)였고, 지금은 사유 `unforeseen_failure`가 그 자리를 잇는다."""
+    rd = tmp_path / "run_crashed"
+    rd.mkdir()
+    now = datetime.now(UTC)
+    (rd / "run_manifest.json").write_text(
+        json.dumps({"finished_at": now.isoformat(), "stopped_after": 6, "thresholds": {}}),
+        encoding="utf-8",
+    )
+    event = {"seq": 1, "ts": now.isoformat(), "kind": "transition", "subject_kind": "run",
+             "data": {"reason": "unforeseen_failure"}}
+    (rd / "trace.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    assert monitor.main([str(rd)]) == 3
 
 
 def test_main_exits_2_when_run_dir_is_missing(tmp_path: Path) -> None:
