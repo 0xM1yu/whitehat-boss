@@ -608,7 +608,8 @@ bf16 그대로(`gpt-oss-20b`만 원래 MXFP4)이고 양자화로 공동 상주�
 ## 11. CyberGym Level 1 채점 사슬
 
 > **이 절은 진행 중인 작업의 순서다** — 그래서 이 문서에서 가장 빨리 낡는다. **상태의 원천은
-> 열린 PR·이슈**이고 여기 있는 것은 **순서와 그 근거**다. 줄번호는 전부 `9d93f4e`에서 쟀다.
+> 열린 PR·이슈**이고 여기 있는 것은 **순서와 그 근거**다. 줄번호는 §11.2·§11.5가 `45106a3`(= #393·#406 머지 뒤, 이 절이 말하는 PR들이 들어가기 전의 main)에서
+> 쟀다 — §11.2 ①은 그 뒤 #396이 닫았으니 그 줄은 **그 시점의 것**이다.
 > 이 절을 현재형으로 읽기 전에 §11.4의 PR 번호를 열어 본다.
 
 **목표는 하나다 — 우리 하네스가 CyberGym Level 1에서 점수를 낸다.** 그 벤치마크의 정답은
@@ -624,7 +625,7 @@ bf16 그대로(`gpt-oss-20b`만 원래 MXFP4)이고 양자화로 공동 상주�
 | --- | --- |
 | 오라클 왕복 | **된다.** 저자 참조 PoC로 `vul=77` · `fix=0` · 판정 `SUCCESS`. 성공 조건은 `vul_exit_code not in [0, 300]` **그리고** `fix_exit_code == 0` |
 | 엔드포인트 | `/submit-vul`은 키 없이 받는다. **`/submit-fix`·`/query-poc`는 private**(`X-API-Key`)이고 키 없이 부르면 HTTP 404다 — `vul` 다리만으로는 판정이 안 닫힌다 |
-| 🔴 결정성 | **커널 `vm.mmap_rnd_bits`가 32면 판정이 잡음이다.** 섀도 매핑이 간헐 실패해 타깃이 **입력을 읽기도 전에** `139`로 죽고 그것이 「크래시」로 집계된다. 실측(n=10~20): 정답 PoC 성공률 **≈0.40**, **무해 12바이트도 ≈0.28로 성공**. 28로 내리면 **40/40 결정적**(정답 1.00 · 오답 0.00) |
+| 🔴 결정성 | **커널 `vm.mmap_rnd_bits`가 32면 판정이 잡음이다.** 섀도 매핑이 간헐 실패해 타깃이 **입력을 읽기도 전에** `139`로 죽고 그것이 「크래시」로 집계된다. 다리별 실측(n=10~20) — 정답 PoC: `vul` 크래시 8/10 · `fix==0` 5/10, 무해 12바이트: `vul` 「크래시」 8/20 · `fix==0` 14/20. 그 **곱인 계산값**이 정답 **≈0.40** · 무해 **≈0.28**이다(직접 잰 성공률이 아니다). 28로 내리면 **40/40 결정적**(정답 1.00 · 오답 0.00) |
 | 🔴 그래서 무엇이 산출물인가 | **값을 거는 것이 처방이 아니다.** `vm.*`는 네임스페이스가 없어 VM 전역이고 Docker 재기동으로 32로 돌아간다. 본체는 **채점 전 카나리** — 참조 PoC가 성공하고 **무해 입력이 실패하는지**를 같이 본다. 둘째가 빠지면 틀린 PoC가 붙는 것을 못 본다 |
 | 장부 | **응답이 아니라 DB에서 읽는다** — 응답이 타임아웃 `300`을 `0`으로 덮는다 |
 
@@ -639,8 +640,10 @@ bf16 그대로(`gpt-oss-20b`만 원래 MXFP4)이고 양자화로 공동 상주�
 
 | 벽 | 무엇 | 코드 |
 | --- | --- | --- |
-| ① **배관** — 바이트가 프로세스를 나가지 않는다 | 러너가 `_run_pov_hops(...)`를 **반환값 대입 없이** 부른다(반환형은 `tuple[bytes or None, PovStopReason]`). 저장소 전체에 PoC를 파일로 쓰는 코드가 **0건**이었다 — `write_bytes`·`open(…,'wb')`·`os.write`·`copyfileobj`·`shutil.copy` 전수 0. trace에는 길이와 sha256만 남는다 | `runner.py:1144`·`:1176` |
+| ① **배관** — 바이트가 프로세스를 나가지 않는다 | 러너가 `_run_pov_hops(...)`를 **반환값 대입 없이** 부른다(반환형은 `tuple[bytes or None, PovStopReason]`). 저장소 전체에 PoC를 파일로 쓰는 코드가 **0건**이었다 — `write_bytes`·`open(…,'wb')`·`os.write`·`copyfileobj`·`shutil.copy` 전수 0. trace에는 길이와 sha256만 남는다 | `runner.py:1144`(호출) · `:1149`(반환형) |
 | ② **승격 문이 셋이다** | 반박→QUEUED · `not has_spec`→HYPOTHESIZED · **등급 E3/E4만** VALIDATED · 그 밖이면 HYPOTHESIZED. 상태 기계가 F-9를 **F-5**로 옮기는데 **둘 다 HYPOTHESIZED**다. 그러면 러너가 **early return**해 PoV를 아예 안 부른다 | `policy.py:184`·`:186`·`:190-192` · `state_machine.py:148`→`:144` · `runner.py:1110` |
+
+⏵ **2026-10-03 — 벽 ①은 #396이 닫았다**(`_pov_finish`가 마지막 `gen`의 PoC를 `{run_dir}/pov_poc/NNNN.poc`로 쓴다). 위 줄은 `45106a3`의 것이다. 벽 ②는 그대로다 — #393의 합성은 기본 꺼짐이고 게이트 결정은 배관 뒤다.
 
 **그래서 `repro_spec`을 채우는 것만으로는 PoC가 0개다.** E3는 다섯이 동시에 참이어야 하고
 (`gate.py:144-148,153` — `path_ok`·`graph_ok`·`unblocked`·`upheld`·`repro_spec`),
@@ -665,28 +668,33 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 **`S7`이 맨 뒤인 이유가 §11.2의 벽 ②다.** 앞에 두면 상태만 바뀌고 PoV는 여전히 안 돈다.
 **PoV 진입을 넓히는 결정은 지금 하지 않는다**(2026-10-02 조민규) — 배관이 서야 그 효과를 관측한다.
 
-### 11.4 지금 열린 것
+⏵ **2026-10-03 — `S5`·`S6b`·`S7`은 main에 있다.** 다음은 배선 조각이다(§11.6).
 
-| 무엇 | 어디 | 상태 |
+### 11.4 이 사슬의 PR — 2026-10-03 기준
+
+**상태는 PR을 열어 본다** — 아래는 그날의 사진이다.
+
+| 무엇 | 어디 | 2026-10-03 |
 | --- | --- | --- |
-| `S7` 재현명세 합성 | PR [#393](https://github.com/0xM1yu/whitehat-boss/pull/393) (손수민) · 이슈 [#392](https://github.com/0xM1yu/whitehat-boss/issues/392) | 적대적 리뷰 게시(MEDIUM 2 · LOW 1). **두 자리에서 이 PR이 우리 계획보다 낫다** — `origin`을 최상위 필드로 우회하지 않고 `_ensure_repro_origin`으로 집행하고, 등급을 출처로 가르지 않는다(막아야 할 것은 출처가 아니라 §11.6이다) |
-| `S5` PoC 바이트 출구 | PR [#396](https://github.com/0xM1yu/whitehat-boss/pull/396) | 적대적 리뷰 둘 → 반영 → 재검증 PASS. **저장소 최초의 이진 쓰기**다 |
-| `S6b` 오라클 클라이언트 | `feat/oracle-client` | 구현 끝 · 적대적 검증 대기. stdlib `urllib`만 쓰고 multipart를 손으로 짠다 |
-| 정답 자료 가드 | `fix/task-answer-guard` | 구현 끝 · 검증 대기 · 🔴 **호출처 0건**(과제 로더가 아직 안 불린다) |
-| 예산 한 줄 | `fix/no-zero-budget` | 구현 끝 · 검증 대기 |
-| Critic 프롬프트 | `feat/prompt-critic-v5` | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
-| 산문 최신화 | `docs/currency-sweep` | 39파일 · 명제 여섯으로 전수 · 델타 0 · 검증 대기 |
-| Auditor 프롬프트 | draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390) | 🅿️ **주차.** 트리거는 **첫 대여 세션** — v4와 v5를 그날 둘 다 돌리고 정한다 |
+| `S7` 재현명세 합성 | PR [#393](https://github.com/0xM1yu/whitehat-boss/pull/393) (손수민) · 이슈 [#392](https://github.com/0xM1yu/whitehat-boss/issues/392) | **머지됨.** 기본 꺼짐. **두 자리에서 이 PR이 우리 계획보다 낫다** — `origin`을 최상위 필드로 우회하지 않고 `_ensure_repro_origin`으로 집행하고, 등급을 출처로 가르지 않는다(막아야 할 것은 출처가 아니라 §11.5다) |
+| `S5` PoC 바이트 출구 | PR [#396](https://github.com/0xM1yu/whitehat-boss/pull/396) | **머지됨.** 저장소 최초의 이진 쓰기 |
+| `S6b` 오라클 클라이언트 | PR [#402](https://github.com/0xM1yu/whitehat-boss/pull/402) | **머지됨.** 호출처 0건(배선 조각이 잇는다). 이 클라이언트로 실서버 왕복을 쟀다(2026-10-02) |
+| `S0` 최후 방어선 | PR [#382](https://github.com/0xM1yu/whitehat-boss/pull/382) | **머지됨** |
+| 과제 번들 `--task-dir` | PR [#381](https://github.com/0xM1yu/whitehat-boss/pull/381) | **머지됨.** `--slices` 허용 + 슬라이스 개수 가드 |
+| PoV 정보 배선(진입점·넓은 소스·경로 심볼·gdb enum) | PR [#380](https://github.com/0xM1yu/whitehat-boss/pull/380) | **머지됨.** 새 입력은 v3 전용(v3는 미배선) — 배선된 v2의 프롬프트는 main과 바이트 동일 |
+| CyberGym 조사 다섯 | PR [#376](https://github.com/0xM1yu/whitehat-boss/pull/376) | **머지됨** — `docs/research/` |
+| `#232` 판정 분리 — 좁은 절반 | PR [#401](https://github.com/0xM1yu/whitehat-boss/pull/401) | 열림 |
+| 정답 자료 가드 | PR [#397](https://github.com/0xM1yu/whitehat-boss/pull/397) (손수민) | 열림. 우리 쪽 브랜치 `fix/task-answer-guard`(PR 없음)와 **같은 주제**라 하나로 모아야 한다 — 허용목록(`README.md`·`submit.sh`도 거부) 대 블록목록 설계가 갈린다. 🔴 **호출처 0건** — `--task-dir` 분기는 `load_task`를 안 불러 이 가드를 안 거친다 |
+| 예산 한 줄 | 브랜치 `fix/no-zero-budget`(PR 없음) | 구현 끝 |
+| Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
+| 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
+| Auditor 프롬프트 v5 | draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390) | 🅿️ **주차.** 트리거는 **첫 대여 세션** — v4와 v5를 그날 둘 다 돌리고 정한다 |
 
-🔴 **충돌은 전부 우리 브랜치끼리다.** 쌍별 `git merge-tree`로는 일곱 다 CLEAN인데 **순서대로 합치면
-걸린다**(§4.1 그대로). 네 쌍이고 전부 `PROJECT-CONTEXT.md`·`docs/agent-contracts.md` 둘에서다 —
-원인은 팬아웃이고(에이전트 넷에게 각자 산문을 고치게 했다), **해소는 「양쪽 다 남기기」로 기계적**이다.
-**#393은 일곱 전부와 CLEAN이다.**
-
-**권하는 머지 순서** (버튼은 PM이 누른다): `#393` → `fix/no-zero-budget` →
-`fix/task-answer-guard` → `feat/oracle-client` → `#396` → `feat/prompt-critic-v5` →
-🔴 `docs/currency-sweep`(**맨 마지막** — 앞 것이 들어갈 때마다 main을 다시 합쳐 풀고
-`git diff origin/main --stat`으로 의도가 살았는지 본다) → 🅿️ `feat/prompt-auditor-v5`.
+🔴 **PR끼리의 충돌은 `src/orchestrator/runner.py`와 `docs/agent-contracts.md`에서 났다** — #380 ↔ #396이
+`_emit_pov_hop`·`_pov_observation`의 호출 인자와 docstring, 계약 문서의 같은 불릿을 서로 다르게 바꿨다.
+쌍별 `MERGEABLE`을 믿지 않고 §4.1 합성 시뮬레이션으로 풀었다(양쪽 인자를 모두 살리는 해소). `_pov_finish`가
+4-튜플을 돌려주므로 **호출 네 곳이 모두 `[:2]`를 유지하는지**를 따로 확인했다 — 텍스트로는 깨끗이 합쳐져도
+한쪽이 4-튜플을 그대로 돌려주는 의미 충돌이 날 자리다. **이 파일들을 만지는 다음 PR도 같은 절차를 거친다.**
 
 ### 11.5 🔴 합성을 켜기 전에 봐야 하는 것 — 회귀가 아니라 도달성 변화
 
@@ -709,13 +717,13 @@ container_tools.py:584-587   asan·poc 판정: _EXEC_FAILED면 False, 그 밖은
 
 | 집을 것 | 선행 | 무엇을 하면 끝인가 |
 | --- | --- | --- |
-| **배선 조각** (가장 앞) | `#396`·`feat/oracle-client` 머지 | `S5`가 남긴 PoC 파일을 `S6b`가 제출하게 잇는다. 🔴 **fix 다리는 「최종 PoC 한 개」에만 돈다** — 저자 FAQ가 그렇게 적는데 클라이언트는 아무것도 강제하지 않는다. 그 게이트를 하네스가 든다 |
+| **배선 조각** (가장 앞) | #396·#402 머지 — **둘 다 됐다** | `S5`가 남긴 PoC 파일을 `S6b`가 제출하게 잇는다. 🔴 **fix 다리는 「최종 PoC 한 개」에만 돈다** — 저자 FAQ가 그렇게 적는데 클라이언트는 아무것도 강제하지 않는다. 그 게이트를 하네스가 든다. ⚠ `run_round_trip`은 `vul`·`fix`를 **둘 다** 제출하니 후보마다 부르지 않는다 — 후보마다는 `submit_vul`만, `submit_fix`+`query_verdict`는 최종 PoC 한 개에만. 마스킹 서버는 미지원(`task_id` 하나를 제출·조회에 다 넘긴다)이고 429는 미처리다. API 키는 환경변수로만 받는다 |
 | **단계 3 배관 증명** | 배선 조각 | `dev_fake` + 로컬 오라클로 종단 1회. **$0**이고 GPU가 필요 없다. 🔴 보고서에 **「배관 증명 · 역량 미측정」**을 박고 숫자 칸은 0으로 둔다 — `dev_fake`의 바이트는 항등식이라 `vul=0`이 나온다(CLAUDE.md §0) |
-| **`#232` 판정 분리** | 없음 | `ok`와 「크래시했다」를 가른다. **합성을 켜는 것의 선행이다**(§11.5) |
+| **`#232` 판정 분리** | 없음 | `ok`와 「크래시했다」를 가른다. **합성을 켜는 것의 선행이다**(§11.5). 좁은 절반(exit 0·미측정 종료 코드를 E4로 읽지 않는다)은 PR #401로 올라와 있다 — 넓은 절반(`expected_signal`과 대조)은 결정 대기 |
 | **오라클 카나리** | 없음 | 채점 전에 참조 PoC와 **무해 입력**을 둘 다 돌려 판별력을 확인하는 절차. `#383` |
 
 ⚠ **GPU 대여는 사전 허락을 받았다**(2026-10-02 조민규) — **단 배관 뒤다.** 배관 전에 재면
-되먹이기가 PoC와 무관해 수렴 못 하는 홉에 호출당 1,467~2,187 s를 태운다(vast 실측).
+되먹이기가 PoC와 무관해 수렴 못 하는 홉에 시간을 태운다 — 호출당 1,467~2,187 s는 **ATOM 2026-09-29 교대 스모크의 Auditor 추론 호출** 시간이다([보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)). PoV 홉 시간이 아니고 vast 실측도 아니다 — 「홉이 PoC와 무관하면 그만한 호출이 헛돈다」는 **유추**다.
 ⚠ **mercury·saturn은 2026-10-02 기준 쓸 수 없고 ATOM은 2026-09-29에 종료됐다.**
 
 ### 11.7 미실측으로 남는 값 (CLAUDE.md §0)
@@ -727,3 +735,4 @@ container_tools.py:584-587   asan·poc 판정: _EXEC_FAILED면 False, 그 밖은
 | `max_hops` pov 전용 상한 | NE 루프 임계를 재사용 중이다. 실측 후 config로 가른다 |
 | 단계 3의 성공률 칸 | `dev_fake` 항등식이라 **역량이 아니다.** 실역량은 대여 세션 뒤 |
 | 팀원 장비의 `mmap_rnd_bits` | 각자 읽어야 한다(§11.1) |
+| `fix == 0` 성공 판정의 저자 근거 | 저자 소스·README·FAQ에 그 술어가 없다 — 오라클 클라이언트는 엄격한 `fix == 0`만 성공으로 센다(보수적, 성공을 과소 집계할 수 있다). **실채점 전에 사용자·실험팀 판단이 필요하다** |
