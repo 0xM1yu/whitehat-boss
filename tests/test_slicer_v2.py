@@ -16,7 +16,7 @@ import slicer
 import slicer_pipeline
 import slicer_queries as queries
 from slicer_candidates import collect
-from slicer_checkpoint import Checkpoint, merge_shards
+from slicer_checkpoint import Checkpoint, digest, merge_shards
 from slicer_export import export_sources
 from slicer_source import cluster, recover_lines
 
@@ -1331,11 +1331,11 @@ def test_prioritize_moves_listed_files_first_and_keeps_order_and_ids(repo):
             candidate("z", 3), in_file(candidate("w", 4), "b.c")]
     ordered = collect({"A": rows}, repo)
     assert [c["entry"]["file"] for c in ordered] == ["a.c", "b.c", "b.c", "main.c"]
-    moved, first = prioritize(ordered, {"main.c", "b.c"})
-    assert first == 3
+    moved, first, matched = prioritize(ordered, {"main.c", "b.c", "gone.c"})
+    assert first == 3 and matched == {"main.c", "b.c"}
     # each tier keeps collect()'s relative order; ids are collect()'s, not the new positions
     assert [c["id"] for c in moved] == [ordered[i]["id"] for i in (1, 2, 3, 0)]
-    assert prioritize(ordered, set()) == (ordered, 0)
+    assert prioritize(ordered, set()) == (ordered, 0, set())
 
 
 def test_an_anchor_in_a_listed_file_is_enough(repo):
@@ -1346,9 +1346,9 @@ def test_an_anchor_in_a_listed_file_is_enough(repo):
     # q (a.c:5) sorts after row (a.c:1); only row has an anchor in main.c
     ordered = collect({"A": [in_file(candidate("q", 5), "a.c"), row]}, repo)
     assert [c["entry"]["symbol"] for c in ordered] == ["entry", "q"]
-    moved, first = prioritize(ordered, {"main.c"})
-    assert first == 1 and moved == ordered
-    moved, first = prioritize(ordered[::-1], {"main.c"})
+    moved, first, matched = prioritize(ordered, {"main.c"})
+    assert first == 1 and moved == ordered and matched == {"main.c"}
+    moved, first, _ = prioritize(ordered[::-1], {"main.c"})
     assert first == 1 and [c["entry"]["symbol"] for c in moved] == ["entry", "q"]
 
 
@@ -1364,7 +1364,8 @@ def test_priority_files_reorder_the_bound_candidates(monkeypatch, two_file_repo,
     assert result["priority"] == {
         "files": 1, "files_with_candidates": 1, "first_tier_candidates": 1, "candidates": 2,
     }
-    assert result["settings"]["priority_files"]["count"] == 1
+    assert result["settings"]["priority_files"] == {"count": 1, "sha256": digest(["main.c"])}
+    assert "priority_files" not in result["measurement_notes"]
     with Checkpoint(database, resume=True) as store:
         files = [c["entry"]["file"] for c in store.get("candidates")]
     assert files == ["main.c", "a.c"]
@@ -1382,16 +1383,24 @@ def test_without_priority_files_nothing_changes(monkeypatch, two_file_repo, tmp_
 
 
 def test_the_slices_do_not_depend_on_the_list(monkeypatch, two_file_repo, tmp_path):
-    """Order only: run to the end, the same slices come out with or without a list."""
+    """A complete run with no failed candidate: the same slices with or without a list.
+
+    Only that case. A run cut short, or one where a poison streak degrades the rest
+    (POISON_STOP_STREAK), can degrade different candidates depending on the order.
+    """
     listing = tmp_path / "priority.txt"
     listing.write_text("main.c\n", encoding="utf-8")
     outputs = []
     for name, extra in (("plain", ()), ("listed", ("--priority-files", str(listing)))):
         folder = tmp_path / name
         folder.mkdir()
-        _, result, _ = run_cli(monkeypatch, two_file_repo, folder, two_file_payloads(), *extra)
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(), *extra
+        )
+        assert code == 0, result.get("error")
+        assert result["counters"]["candidates_degraded"] == 0
         outputs.append(result["slices"])
-    assert outputs[0] == outputs[1]
+    assert outputs[0] and outputs[0] == outputs[1]
 
 
 def test_shards_with_different_lists_are_not_merged(monkeypatch, two_file_repo, tmp_path):
@@ -1402,11 +1411,94 @@ def test_shards_with_different_lists_are_not_merged(monkeypatch, two_file_repo, 
         listing = folder / "priority.txt"
         listing.write_text(listed, encoding="utf-8")
         databases.append(folder / "state.db")
-        run_cli(monkeypatch, two_file_repo, folder, two_file_payloads(),
-                "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
-                "--priority-files", str(listing))
-    with pytest.raises(ValueError, match="Shard mismatch"):
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
+            "--priority-files", str(listing),
+        )
+        # as run_shards: a shard's own output is a fraction of the run
+        assert code == 2 and result["status"] == "partial", result.get("error")
+    contracts = []
+    for database in databases:
+        with Checkpoint(database, resume=True) as store:
+            contracts.append(store.get("run_contract")["settings"]["priority_files"])
+    assert contracts == [
+        {"count": 1, "sha256": digest(["main.c"])}, {"count": 1, "sha256": digest(["a.c"])},
+    ]
+    # run_contract is compared before candidates (SHARD_SHARED_KEYS), so the settings entry is
+    # what refuses this merge, not the reordered candidate list.
+    with pytest.raises(ValueError, match="Shard mismatch on run_contract"):
         merge_shards(tmp_path / "merged.db", databases)
+
+
+def test_resuming_with_another_list_is_a_contract_mismatch(monkeypatch, two_file_repo, tmp_path):
+    database = tmp_path / "state.db"
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    code, _, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0
+    listing.write_text("a.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--resume", "--priority-files", str(listing),
+    )
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+
+
+def test_the_list_is_read_as_collect_spells_files(two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    absolute = (two_file_repo / "main.c").resolve()
+    # BOM first: plain utf-8 kept it on line 1, so that path never matched
+    listing.write_bytes(
+        "\ufeffa.c\n".encode()
+        + f"{absolute}\n  ./sub//x.c  \nsub\\y.c\n# skipped\nz.c # kept\n".encode()
+    )
+    assert slicer.read_priority_files(listing, two_file_repo) == {
+        "a.c", "main.c", "sub/x.c", "sub/y.c", "z.c # kept",
+    }
+
+
+def test_a_bom_and_an_absolute_path_still_reorder(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    absolute = (two_file_repo / "main.c").resolve()
+    listing.write_bytes(f"\ufeff{absolute}\n".encode())
+    database = tmp_path / "state.db"
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["first_tier_candidates"] == 1
+    with Checkpoint(database, resume=True) as store:
+        assert [c["entry"]["file"] for c in store.get("candidates")] == ["main.c", "a.c"]
+
+
+def test_a_list_that_matches_nothing_is_noted_not_failed(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("nope.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["files_with_candidates"] == 0
+    note = result["measurement_notes"]["priority_files"]
+    assert "matched no candidate" in note and "default order" in note
+
+
+def test_listed_files_without_candidates_are_counted(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\nnope.c\ngone.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["files_with_candidates"] == 1
+    assert result["measurement_notes"]["priority_files"].startswith("2 of 3 listed files")
 
 
 def test_priority_files_are_refused_with_export_only_or_unreadable(repo, tmp_path):

@@ -27,7 +27,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import slicer_queries as queries
-from slicer_checkpoint import Checkpoint
+from slicer_checkpoint import Checkpoint, digest
 from slicer_claims import ClaimQueue
 from slicer_compile import generated_header_dirs, resolve_compilation_database
 from slicer_errors import QueryError  # re-exported: callers and tests use slicer.QueryError
@@ -877,12 +877,14 @@ def parser() -> argparse.ArgumentParser:
         "--cpg", type=Path, help="load this saved CPG instead of parsing --repo (needs --resume "
         "on a copy of the --prepare-only checkpoint)",
     )
-    # #377 (b): order only. Every candidate is still discovered and sliced; a wall budget that
-    # stops the run early (tools/slice_sharded.py --wall-seconds) leaves the unreached ones
-    # degraded, so this list decides which those are.
+    # #377 (b): order only. The same candidates are discovered, and a candidate that gets a full
+    # slice gets the same one. Which candidates end up degraded is order-dependent: those not
+    # reached when the run is cut short (tools/slice_sharded.py --wall-seconds, a kill), and
+    # those after a poison streak (POISON_STOP_STREAK in slicer_pipeline).
     result.add_argument(
-        "--priority-files", type=Path, help="file of repo-relative paths, one per line (blank and "
-        "# lines skipped): candidates whose entry or an anchor is in one are sliced first",
+        "--priority-files", type=Path, help="file of paths (repo-relative or absolute under "
+        "--repo), one per line; blank lines and lines starting with # are skipped, no inline "
+        "comments: candidates whose entry or an anchor is in one are sliced first",
     )
     result.add_argument("--export-dir", type=Path)
     result.add_argument("--progress", type=Path)
@@ -959,6 +961,25 @@ def read_version(command: Path | None, timeout: float | None) -> tuple[str | Non
     return version, note
 
 
+def read_priority_files(path: Path, repo: Path) -> set[str]:
+    """The --priority-files list, spelled as collect() spells candidate files (#377 (b)).
+
+    A line is one path; blank lines and lines starting with `#` are skipped. There are no inline
+    comments: `#` is legal in a file name, so `a.c  # note` is the path `a.c  # note`. Each path
+    goes through relative_file() as collect() sends entry/anchor files, so an absolute path under
+    --repo, `./a.c`, `x//y.c` and backslashes match. utf-8-sig: a BOM must not stick to line 1.
+    """
+    # collect() maps against the resolved repo (load_sources); the unresolved spelling is tried
+    # too so a path written under a symlinked --repo still maps. The fallback is collect()'s.
+    roots = (repo.resolve(), repo.absolute())
+    names = set()
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        value = line.strip()
+        if value and not value.startswith("#"):
+            names.add(relative_file(value, roots[0]) or relative_file(value, roots[1]) or value)
+    return names
+
+
 def write_result(path: Path, result: dict) -> None:
     """Publish only a complete artifact; failed writes must not destroy an earlier run."""
     encoded = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode(
@@ -1005,14 +1026,9 @@ def main(argv: list[str] | None = None) -> int:
     priority = None
     if args.priority_files:
         try:
-            text = args.priority_files.read_text(encoding="utf-8")
+            priority = read_priority_files(args.priority_files, args.repo)
         except (OSError, UnicodeError) as exc:
             cli.error(f"--priority-files unreadable: {exc}")
-        priority = {
-            line.strip().replace("\\", "/").removeprefix("./")
-            for line in text.splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        }
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
         # The shard must start from the prepared checkpoint: its discovery is what makes every
         # shard slice the same candidate list, and the run contract checks it is the same repo.
@@ -1096,10 +1112,7 @@ def main(argv: list[str] | None = None) -> int:
         # The order is bound into the checkpoint, so it is part of the contract: shards or a
         # resume with another list are refused instead of slicing a differently ordered run.
         "priority_files": (
-            {
-                "count": len(priority),
-                "sha256": hashlib.sha256("\n".join(sorted(priority)).encode("utf-8")).hexdigest(),
-            }
+            {"count": len(priority), "sha256": digest(sorted(priority))}
             if priority is not None
             else None
         ),
