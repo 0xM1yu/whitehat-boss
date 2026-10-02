@@ -26,10 +26,10 @@
 
 | # | 항목 | 상태 | 본문 |
 | --- | --- | --- | --- |
-| R1 | ATOM(sm_121) × vLLM 커널 호환성 · 로컬 TCP 차단 | 부분 | [본문](open-questions/R/R1.md) |
+| R1 | ATOM(sm_121) × vLLM 커널 호환성 · 로컬 TCP 차단 (⏵ 2026-09-29 ATOM 종료 — D81) | 부분 | [본문](open-questions/R/R1.md) |
 | R2 | ~~Critic(Devstral Small 2, dense 24B) NVFP4 양자화 시 반박 정확도 저하 가능성~~ → 로스터 변경으로 대상 소멸 | 닫힘 | [본문](open-questions/R/R2.md) |
 | R3 | 평가 데이터 누출 자동 검증 스크립트 부재 | 부분 | [본문](open-questions/R/R3.md) |
-| R4 | 단일 노드 대역폭 병목의 실제 한계 미파악 | 열림 | [본문](open-questions/R/R4.md) |
+| R4 | 단일 노드 대역폭 병목의 실제 한계 미파악 (⏵ 2026-09-29 ATOM 종료 — ConnectX-7 2대 확장 소멸 · D81) | 열림 | [본문](open-questions/R/R4.md) |
 | R5 | Zero-day 제보 워크플로의 강제 수단 미정 | 열림 | [본문](open-questions/R/R5.md) |
 | R6 | prefix cache 효과를 장부에 잡지 못한다 (`cached_tokens`가 항상 0) | 열림 | [본문](open-questions/R/R6.md) |
 | R7 | `gc`가 지운 run_id를 같은 날 새 run이 재사용한다 | 보류 | [본문](open-questions/R/R7.md) |

@@ -262,7 +262,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - Kubernetes·분산 워커·외부 vector DB
 - LLM 기반 리포트 생성 에이전트 (템플릿 + 규칙으로 처리)
 - LLM 기반 dedupe 에이전트
-- 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
+- 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토 (⏵ 2026-09-29 — ATOM 사용이 끝나 ConnectX-7 2대 구성은 사라졌다. [D81](open-questions/D/D81.md))
 - CyberGym PoV — 외부 oracle 차분 검증과 실서빙 실측은 MVP 밖이다(서빙+도구 되는 호스트가 잡힌
   뒤). PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` · `PovSpec`→`assemble_poc`)·러너 8단계 라우팅
   (추가형)·feyospace 서빙 배선(§1 pov 좌석)은 들어왔다. 모델-주도 툴 루프(코드열람·Python·

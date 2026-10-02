@@ -153,7 +153,7 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 | Primary Auditor | Qwen3-Coder-30B-A3B-Instruct | 30.5B(3.3B active) MoE, 256K context, repository-scale 분석에 최적화, 선별 후보에만 호출 |
 | Independent Critic | Devstral Small 2 24B | Primary와 다른 모델 계열, codebase 탐색·tool-use 지원, 상위 후보만 검증하여 비용 최적화 |
 
-현재 가용 장비는 GIGABYTE AI TOP ATOM(NVIDIA GB10, 통합 메모리 128GB *(공식 할당 80 GiB — 34→64(2026-08-25 PL 공식)→80으로 2026-08-31 확장, cgroup `memory.max`=85,899,345,920=80 GiB 실측 확인. docs/model-serving.md §1)*, 대역폭 273GB/s) 1대이며, 용량은 넉넉하지만 대역폭이 좁아 **대형 모델의 긴 응답을 기다리는 용도보다 여러 요청을 동시 처리하는 멀티 에이전트 구성에 유리**하다. Auditor·Critic은 NVFP4 양자화를 기본값으로 검토하고 8K/16K/32K context 기준으로 실측한다. 2대 연결(ConnectX-7) 확장은 단일 노드 benchmark에서 병목이 확인된 뒤 검토한다.
+2026-08 당시 가용 장비는 GIGABYTE AI TOP ATOM(NVIDIA GB10, 통합 메모리 128GB *(공식 할당 80 GiB — 34→64(2026-08-25 PL 공식)→80으로 2026-08-31 확장, cgroup `memory.max`=85,899,345,920=80 GiB 실측 확인. docs/model-serving.md §1)*, 대역폭 273GB/s) 1대이며, 용량은 넉넉하지만 대역폭이 좁아 **대형 모델의 긴 응답을 기다리는 용도보다 여러 요청을 동시 처리하는 멀티 에이전트 구성에 유리**하다. Auditor·Critic은 NVFP4 양자화를 기본값으로 검토하고 8K/16K/32K context 기준으로 실측한다. 2대 연결(ConnectX-7) 확장은 단일 노드 benchmark에서 병목이 확인된 뒤 검토한다. *(⏵ 2026-09-29 — ATOM 사용이 끝났다([D81](open-questions/D/D81.md)). 지금 서빙은 임대 vast.ai(RTX PRO 6000 Blackwell Server Edition · sm_120 · 전용 VRAM 97,887 MiB — `config/serving/vastai.yaml`)라 위 장비·대역폭·ConnectX-7 서술은 걸리지 않는다.)*
 
 ### 4.6 Cost-Effective 및 토큰 효율 전략
 
@@ -211,9 +211,9 @@ Trace/Metrics → (Orchestrator, Model Gateway)
 
 ## 6. 리스크 및 오픈 이슈
 
-- **하드웨어 검증 이력 부재**: AI TOP ATOM(Blackwell sm_121)에서 vLLM의 GB10 전용 실행 지원은 2026년 6월부터 시작되었고 NVFP4 KV cache·speculative decoding 등은 커뮤니티 fork 수준에 머무는 경우가 있어, 배포 전 이 장비에서 vLLM 버전·커널 호환성을 직접 검증해야 한다. (담당자 추후 협의)
+- **하드웨어 검증 이력 부재**: AI TOP ATOM(Blackwell sm_121)에서 vLLM의 GB10 전용 실행 지원은 2026년 6월부터 시작되었고 NVFP4 KV cache·speculative decoding 등은 커뮤니티 fork 수준에 머무는 경우가 있어, 배포 전 이 장비에서 vLLM 버전·커널 호환성을 직접 검증해야 한다. (담당자 추후 협의) *(⏵ 2026-09-29 — ATOM 사용이 끝났다. 이 항목의 상태 원천은 [R1](open-questions/R/R1.md)(부분)이고, 장비가 바뀌어 질문이 새 장비(vast.ai · sm_120)에서 다시 선다 — [D81](open-questions/D/D81.md) ④. 위는 2026-08 v1.0 기록이다.)*
 - **Critic 모델의 양자화 품질 저하 가능성** *(2026-09-09 — 전제가 사라졌다. 이 항목의 상태 원천은 [R2](open-questions/R/R2.md)이고, 새 Critic의 미검증 항목은 [R8](open-questions/R/R8.md)이 든다. 아래는 그 시점의 기록이다.)*: Devstral Small 2는 dense 모델이라 대역폭 병목의 영향을 크게 받는다. NVFP4 적용 시 critic 특유의 반박 정확도가 떨어지는지 별도 검증이 필요하다. (담당자 추후 협의)
-- **단일 노드 확장 한계**: 2대 연결(ConnectX-7) 확장은 benchmark로 병목이 확인되기 전까지 보류한다. 단일 노드 성능 한계 파악이 그 판단의 전제다. (담당자 추후 협의)
+- **단일 노드 확장 한계**: 2대 연결(ConnectX-7) 확장은 benchmark로 병목이 확인되기 전까지 보류한다. 단일 노드 성능 한계 파악이 그 판단의 전제다. (담당자 추후 협의) *(⏵ 2026-09-29 — ATOM 사용이 끝나 ConnectX-7 2대 연결은 선택지에서 사라졌다. 확장 질문은 vast 박스를 몇 개 빌리느냐로 바뀌었다 — [D81](open-questions/D/D81.md) 선택지 (b).)*
 - **평가 데이터 누출 검증 부담**: KB와 평가셋 분리, CVE ID Masking, Patch Leakage 방지를 코드 리뷰만으로 보장하기 어려우므로 자동 검증 스크립트가 필요하다. (담당자 추후 협의)
 - **Zero-day 제보 프로세스**: 최소 2인 검증 및 AI 생성물 그대로 제출 금지 원칙을 실제 워크플로에 어떻게 강제할지(체크리스트, 승인 절차)는 아직 정의되지 않았다.
 

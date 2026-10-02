@@ -6,6 +6,8 @@
 
 > ⏵ **2026-09-24** — `qwen3-4b` 키와 `config/checksums/qwen3-4b.txt`는 로스터 밖 정리로 지웠다. 이 문서가 드는
 > registry 값·checksum 파일 경로는 그날의 기록이다(원문은 git 이력).
+>
+> ⏵ **2026-09-29 — ATOM 사용이 끝났다**([D81](../open-questions/D/D81.md)). 아래 「다음」 절의 `--device atom` 명령 · 「재측정할 때」 · 「이제 막는 것이 없다」는 그날 이전의 계획이다 — ATOM에서는 더 못 한다. 이 ADR이 못박은 사실(`qwen3-4b`가 sm_121에서 `VLLM_USE_DEEP_GEMM=0` 없이 안 뜬다)은 2026-08-17 ATOM 실측의 기록이다.
 
 ## 배경
 

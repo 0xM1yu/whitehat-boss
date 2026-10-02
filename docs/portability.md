@@ -69,6 +69,8 @@
 | `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서는 **이제 필요 없다**(2026-08-21 이후 docker 존재). 그전에는 `--tool-runner podman`이었고, 그 사례가 [decisions/0005](decisions/0005-tool-runner-override.md)의 근거다 |
 | `dev_singularity` | `singularity` | Slurm | 없음 |
 
+⏵ **2026-09-29 — 위 표의 「주 장비」 칸 `ATOM`은 과거 기록이다.** ATOM 사용이 끝났고([D81](open-questions/D/D81.md)) 지금 서빙 장비(임대 vast.ai)의 컨테이너에는 docker·podman이 없다(`config/serving/vastai.yaml` 머리 주석) — `docker` 선언은 그 컨테이너에서 서지 않는다. 도구 단계를 어디서 돌릴지는 정해지지 않았다.
+
 ✅ **조건 비교용 실서빙 프로필이 전부 `docker`다(2026-08-28).** 2026-08-17~08-28
 사이에는 `local_balanced`·`b1_single`만 `podman`이라 이 표에 두 값이 섞여 있었고,
 `tool_images` digest가 런타임 사이에서 비교되지 않으므로(§5 #4) **두 무리를 같은 비교표에
@@ -78,7 +80,7 @@
 **⚠ 되돌릴 당시의 동기는 지금 문서에 없다.** 그때 `docker`로 맞춘 직접적인 이유는 팀 2×2
 실험 프로필 넷과 런타임을 일치시키는 것이었고(ADR 0005 마지막 절이 그 시점 기록으로
 남아 있다), **그 넷은 2026-09-01에 트랙째 폐기됐고 2026-09-04에 저장소에서 걷어냈다.** 결론(`docker`로 통일)은 그대로
-유효하지만 — ATOM에 docker가 있고 주 실서빙 장비가 ATOM이다 — 근거를 ADR에서 읽을 때
+유효하지만 — ATOM에 docker가 있고 주 실서빙 장비가 ATOM이다(⏵ 2026-09-29 — ATOM 사용이 끝났다, 위 노트) — 근거를 ADR에서 읽을 때
 그 넷이 저장소에 없다는 것을 알고 읽어야 한다.
 
 **런타임별로 프로필을 복제하지 않는다.** 조건 축(B1/B3')에 장비 축이 섞이고, 조건이 늘
@@ -112,8 +114,8 @@
 고른다.
 
 ```bash
-python -m src.cli run    --profile harness_pool --target <경로> --slices <slices.json> --device atom --condition B3prime@pipeline
-python -m src.cli bench  --profile harness_pool --apply --device atom
+python -m src.cli run    --profile harness_pool --target <경로> --slices <slices.json> --device vastai --condition B3prime@pipeline
+python -m src.cli bench  --profile harness_pool --apply --device vastai
 python -m src.cli doctor --profile harness_pool --device slurm
 ```
 
@@ -215,6 +217,8 @@ for f in glob.glob('/srv/tenants/user/.cache/huggingface/hub/**/*.safetensors', 
 (같은 보고서 §6). **기동 사이마다 돌린다** — 모델을 읽을 때마다 캐시가 다시 찬다.
 ⏵ 2026-09-29 — 교대 명령(`tools/serve/swap.sh`)이 통합메모리 장비(`nvidia-smi` 메모리 `[N/A]`)에서
 기동마다 이 절차를 돈다. 전용 VRAM 장비에서는 캐시가 VRAM과 안 다퉈 떼지 않는다.
+
+⏵ **2026-09-29 — ATOM 사용이 끝났다**(위 §6 첫 줄). 아래 운영 규약은 ATOM(통합메모리)에 한정된 과거 규약이다 — vast의 컨테이너 메모리 상한은 안 쟀으므로(`config/serving/vastai.yaml`) 이 규약이 vast에 그대로 서는지는 모른다.
 
 **`atom` — Auditor(util 0.80)가 떠 있는 동안 Joern(슬라이서)을 돌리지 않는다.** 로딩·배선 조사
 (2026-09-24, 저장소 밖) ③36의 규칙이고, 저장소 안의 근거는 2026-09-28 정상 표본 스모크다

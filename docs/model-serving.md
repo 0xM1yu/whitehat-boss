@@ -1,6 +1,11 @@
 # 모델 서빙과 Model Registry
 
-## 1. 하드웨어: GIGABYTE AI TOP ATOM (NVIDIA GB10)
+## 1. 하드웨어: GIGABYTE AI TOP ATOM (NVIDIA GB10) — 2026-09-29 사용 종료
+
+> ⏵ **2026-09-29 — ATOM 사용이 끝났다**(팀 통보 · [D81](open-questions/D/D81.md) · PR #340). 이 절은 그 장비의 **과거 관측 기록**이다 — 지금 서빙은
+> 임대한 vast.ai 인스턴스(RTX PRO 6000 Blackwell Server Edition · sm_120 · 전용 VRAM 97,887 MiB —
+> `config/serving/vastai.yaml`)이고, 어느 박스로 고정할지는 D81이 열어 둔다. 아래 메모리·대역폭·cgroup·ConnectX-7
+> 서술은 ATOM의 것이다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -35,11 +40,11 @@
 
 Critic이 다른 계열이어야 하는 이유: 같은 모델의 self-consistency는 같은 실패를 반복한다. 교차 검증의 가치는 오류 상관관계가 낮을 때만 나온다. **이 요구는 어느 모델이 앉든 남는다** — [ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §4가 auditor와 critic의 `family`(가중치 출처 조직)를 `load_config`가 검사하도록 정했다. **2026-09-09에 그것이 코드가 됐다** — `src/config.py`의 `_check_family_split`이 `load_config`에서 그 두 자리를 대조하고, **registry의 모든 항목이 `family`를 적는다**(§5). **개수는 여기서 세지 않는다** — 등재가 늘 때마다 조용히 낡는다([CLAUDE.md](../CLAUDE.md) §7). 세려면 `config/models.yaml`에서 센다. 그리고 [research/README.md](research/README.md)가 이 전제를 겨누는 남의 실측을 모아 뒀다 — 제작사를 다양화하면 오류 상관이 낮아진다는 보장이 그 데이터에는 없다.
 
-실제 메모리 점유는 양자화·KV cache·context 길이·동시 요청 수에 크게 좌우된다. **모델을 확정하기 전에 이 장비에서 8K/16K/32K context 기준으로 직접 측정한다.**
+실제 메모리 점유는 양자화·KV cache·context 길이·동시 요청 수에 크게 좌우된다. **모델을 확정하기 전에 이 장비에서 8K/16K/32K context 기준으로 직접 측정한다.** (⏵ 2026-09-29 — 「이 장비」는 ATOM이었고 그 사용이 끝났다([D81](open-questions/D/D81.md)). 같은 규칙이 지금 장비(임대 vast.ai)에 걸린다.)
 
 ## 3. 배포 전 필수 검증 (블로킹)
 
-AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레시피 공식 지원은 2026년 6월부터이고, NVFP4 KV cache·speculative decoding 같은 최적화는 커뮤니티 fork 수준에 머무는 경우가 있다. **이 장비에서 직접 검증하기 전까지 어떤 성능 수치도 계획에 반영하지 않는다.**
+AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레시피 공식 지원은 2026년 6월부터이고, NVFP4 KV cache·speculative decoding 같은 최적화는 커뮤니티 fork 수준에 머무는 경우가 있다. **이 장비에서 직접 검증하기 전까지 어떤 성능 수치도 계획에 반영하지 않는다.** ⏵ **2026-09-29 — ATOM 사용이 끝났다**([D81](open-questions/D/D81.md)). 같은 규칙이 지금 장비(RTX PRO 6000 Blackwell · sm_120)에 걸린다 — 그 장비에서 잰 것은 Auditor 기동 하나다(`config/serving/vastai.yaml` 머리 주석).
 
 **양자화 커널은 이 체크리스트의 1번보다 앞에 있다.** 2026-08-17 ATOM 실측: `qwen3-4b`(fp8)가
 `VLLM_USE_DEEP_GEMM=0` 없이는 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`).
@@ -193,7 +198,7 @@ profiles:
 `benchmark` 항목이 비어 있는(`0`) 모델은 프로덕션 프로필에 넣지 않는다.
 
 **registry의 `benchmark`는 `measured_on` 장비 기준이다.** 두 장비가 모두 지원 대상이므로
-([portability.md](portability.md)) 같은 필드에 다른 하드웨어의 값이 들어갈 수 있고, 그 사실이
+([portability.md](portability.md)) 같은 필드에 다른 하드웨어의 값이 들어갈 수 있고(⏵ 2026-09-29 — 「두 장비」는 ATOM과 Slurm였다. 지금 라벨은 `atom`(과거)·`vastai`·`slurm`다 — [D81](open-questions/D/D81.md)), 그 사실이
 남지 않으면 다음 사람이 이 수치로 다른 장비를 예측한다. **다른 장비의 수치를 덮어쓰기
 전에 그 사실을 인지해야 한다** — `bench --apply`는 막지 않고 기록만 하며(ADR 0005의
 "금지가 아니라 기록"과 같은 논법), 현재 장비와 `measured_on`이 다르면 `doctor`가
@@ -342,7 +347,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 ### 교대 명령과 장비 파일 (2026-09-29)
 
 `harness_pool`은 단계 경계에서 서버를 끄고 켠다(콜드 재기동 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md)
-「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다. ⏵ 2026-09-29 — ATOM에서 한 번 돌았다([스모크 보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md) — 교대 네 번 전부 `ok=true`, 슬라이스 1개·n=1·비교표 밖). vast는 미실측이다.
+「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다(⏵ 2026-10-02: 같은 날 ATOM 사용이 끝났다 — [D81](open-questions/D/D81.md)). ⏵ 2026-09-29 — ATOM에서 한 번 돌았다([스모크 보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md) — 교대 네 번 전부 `ok=true`, 슬라이스 1개·n=1·비교표 밖). vast는 미실측이다.
 
 - **교대 명령** — `tools/serve/swap.sh`, 장비 무관. 하네스가 단계마다 `bash tools/serve/swap.sh <키…>`를
   부르고 run 끝에 인자 없이 부른다. 계약(인자 · 환경 · 종료코드 · stdout 마지막 줄 JSON 보고 · 서버 로그)은
@@ -390,5 +395,5 @@ Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-str
 ## 7. 확장 정책
 
 1. **모델 추가는 역할별 benchmark에서 실제 이득이 확인될 때만** 허용한다. 에이전트를 무작정 늘리지 않고 repository shard와 candidate queue만 병렬화한다.
-2. 2대 연결(ConnectX-7)은 단일 노드 benchmark에서 병목이 확인된 뒤에 검토한다. 확장이 열리면 Primary Auditor를 더 큰 코드 모델로 교체하거나 Critic을 별도 노드로 분리하는 경로가 생긴다.
-3. 단일 노드 성능 한계는 확장(2대 연결)을 검토하기 전에 파악한다 — 그 판단의 전제다.
+2. 2대 연결(ConnectX-7)은 단일 노드 benchmark에서 병목이 확인된 뒤에 검토한다. 확장이 열리면 Primary Auditor를 더 큰 코드 모델로 교체하거나 Critic을 별도 노드로 분리하는 경로가 생긴다. (⏵ 2026-09-29 — ATOM 사용이 끝나 이 경로는 사라졌다. 확장은 vast 박스를 더 빌리는 쪽이다 — [D81](open-questions/D/D81.md) 선택지 (b).)
+3. 단일 노드 성능 한계는 확장(2대 연결)을 검토하기 전에 파악한다 — 그 판단의 전제다. (⏵ 2026-09-29 — 위 2와 같다: ATOM 종료로 2대 연결 확장은 사라졌다.)

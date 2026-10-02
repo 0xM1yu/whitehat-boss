@@ -4,6 +4,8 @@
 - 일자: 2026-08-15
 - 관련: [portability.md](../portability.md), [evaluation.md](../evaluation.md) §2.3·§6, [model-serving.md](../model-serving.md) §3·§5, [decisions/0005](0005-tool-runner-override.md), [STATUS.md](../../STATUS.md) §10
 
+> ⏵ **2026-09-29 — ATOM 사용이 끝났다**([D81](../open-questions/D/D81.md)). 아래 「ATOM이 주 장비이고」와 「후속」의 ATOM 확인(하네스를 서버와 같은 노드에서 돌리는지 · 계정이 공용이라 포트가 갈리는지)은 그날 이전의 서술·계획이다. 장비를 기록한다는 결정 자체(`--device` 라벨 · `Benchmark.measured_on`)는 장비가 바뀌어도 서고, 지금 장비 파일이 있는 라벨은 `atom`(과거)과 `vastai`다.
+
 ## 배경
 
 지금까지 실서빙 검증은 Slurm에서만 했고, ATOM 접근이 열렸다. **한쪽으로 이관하는 것이
