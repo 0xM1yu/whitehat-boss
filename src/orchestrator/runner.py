@@ -127,6 +127,7 @@ from src.orchestrator.nodes import (
 from src.orchestrator.nodes.report import Report
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.policy import FixedThresholdPolicy
+from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
@@ -1515,6 +1516,11 @@ def _pov_observation(action: str, evidence: Evidence, *, read_payload: ReadPaylo
     body = read_payload(evidence.payload_ref)
     if not body:
         return head
+    # ⏵ 2026-10-02 추가(적대적 리뷰 LOW) — **자르기 전에** 하네스 머리줄을 뺀다.
+    # `evidence_summaries`(Auditor·Critic 근거 본문)가 이미 하는 것과 같은 장치를 재사용한다 —
+    # `# node argv: …`·`# runtime: …`·`$ docker run … -v <호스트 절대경로>:/src:ro` 같은 줄이
+    # 짧은 로그에서는 꼬리 전체를 차지해 호스트 경로가 그대로 프롬프트에 실렸다.
+    body = _HARNESS_HEADER_LINE.sub("", body)
     tail = body[-_POV_OBSERVATION_TAIL_CHARS :]
     cut = "" if len(body) == len(tail) else f"(앞 {len(body) - len(tail)}자 생략)\n"
     return f"{head}\n--- {evidence.source} 출력 꼬리 ---\n{cut}{tail}"
