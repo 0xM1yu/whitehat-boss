@@ -144,7 +144,14 @@ def make_grader(
 
     돌려주는 호출기를 **여러 번 부르면 왕복도 여러 번**이고 사이드카는 **마지막 것만**
     남는다(같은 경로를 덮는다). 이 조각의 전제는 run당 지정 하나·왕복 하나다.
+
+    🔴 **빈 키는 여기서 거절한다** — 왕복을 돌려 `oracle_error`로 보고하지 않는다. 둘이
+    걸린다: ① 빈 키로 돌면 private 끝점이 404라 **설정 실수가 오라클 오류로 둔갑한다**
+    ② 아래 가림이 `str.replace("", …)`가 되어 사유 문장의 **글자 사이마다** 문구를
+    끼운다(실측: `'bad request'` → `'<redacted>b<redacted>a…'`).
     """
+    if not api_key.strip():
+        raise ValueError("api_key가 비었다 — 오라클 private 끝점은 키 없이 돌지 않는다")
 
     def grade(poc: bytes) -> dict[str, Scalar]:
         try:
