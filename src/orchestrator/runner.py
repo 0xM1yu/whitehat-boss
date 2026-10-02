@@ -724,8 +724,12 @@ class _Accumulator:
     # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
     critic_failed: int = 0
     # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
-    # 어휘는 **7사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖
-    # `_POV_CAPSULE_MISSING`(캡슐 미스는 루프에 못 들어가 enum 값을 못 받는다).
+    # 어휘는 **9사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 셋.
+    #   `_POV_CAPSULE_MISSING`      캡슐 미스 — 루프에 못 들어가 enum 값을 못 받는다
+    #   `_POV_SUBMITTED_WITHOUT_POC` submit했는데 바이트가 없다(gen 없는 submit · 빈 바이트열)
+    #   `_POV_SUBMITTED_UNPERSISTED` submit했고 바이트도 있는데 사이드카 쓰기가 실패했다
+    # 🔴 뒤의 둘은 **`submitted`를 쪼갠 것**이다 — 안 쪼개면 그 둘이 「최종 PoC 있음」으로 섞여
+    # 장부가 거짓이 된다. 셋 다 실제로 그렇게 샜고 적대적 리뷰가 각각 재현했다.
     #
     # **시도 수와 사유별 수를 따로 들지 않는다.** 시도 수는 `len(...)`, 사유별 수는
     # `Counter(...values())`라 「시도 수 == 사유별 합」이 **구조적으로** 참이다. 두 필드로
@@ -1426,6 +1430,10 @@ class _Once:
 # 정지 사유이고 이것은 그 앞에서 갈리기 때문이다. 한 이름으로 두는 것은 `POV_SKIPPED` 이벤트의
 # `reason`과 `_Accumulator.pov_results`의 값이 **같은 철자**라야 사유별 집계를 trace와 대조할
 # 수 있어서다 — 리터럴을 두 자리에 적으면 한쪽만 고치는 변이를 막는 것이 사람뿐이다.
+# 🔴 **그 대조가 아래 둘에는 성립하지 않는다.** `submitted_without_poc`·`submitted_unpersisted`는
+# trace에 없는 철자다 — `_pov_finish`가 그 갈래에도 `reason=submitted`를 낸다. 즉 계수기 어휘
+# 아홉 중 **일곱만** trace와 철자가 같다. 경고문이 그 사실을 적어 두는 이유가 이것이고,
+# 철자 자체는 `test_the_counter_vocabulary_spellings_are_pinned`가 리터럴로 묶는다.
 _POV_CAPSULE_MISSING = "capsule_missing"
 
 # 루프가 `SUBMITTED`로 끝났는데 **최종 PoC가 없는** 갈래. 모델이 gen 없이 hop0에서 바로
@@ -1436,41 +1444,100 @@ _POV_CAPSULE_MISSING = "capsule_missing"
 _POV_SUBMITTED_WITHOUT_POC = "submitted_without_poc"
 
 
-def _pov_result(reason: PovStopReason, poc: bytes | None) -> str:
-    """계수기에 적을 사유 — `SUBMITTED`만 PoC 유무로 갈린다.
+# 루프가 `SUBMITTED`로 끝나고 PoC도 있었는데 **사이드카로 남지 못한** 갈래. `_pov_finish`가
+# `ctx.pocs.write`의 `OSError`를 삼켜 이벤트에 `poc_write_error`만 싣고 `ref`를 `None`으로 낸다
+# (디스크 꽉 찼을 때·읽기 전용 run 디렉터리·Windows 260자 초과). 🔴 그때 바이트는 메모리에만
+# 있다가 사라지고 trace에는 sha256만 남는다 — **회수 불가다.**
+# 🔴 이것을 `submitted`로 세면 장부가 「최종 PoC 있음」이라 적는데 **파일이 없다.** 적대적 리뷰가
+# `pov_poc`를 일반 파일로 막아 재현했다(`pov_generated` 2건 전부 `poc_write_error`인데 리포트는
+# `submitted 2건`, 경고 0건). 사유로 가르는 이유가 그것이다.
+_POV_SUBMITTED_UNPERSISTED = "submitted_unpersisted"
+
+
+def _pov_result(
+    reason: PovStopReason, poc: bytes | None, ref: str | None, *, persisting: bool
+) -> str:
+    """계수기에 적을 사유 — `SUBMITTED`만 **PoC 유무와 회수 가능성**으로 갈린다.
 
     나머지 사유는 PoC가 중간까지 나왔어도 **최종**이 아니다(`_pov_finish`가 `POV_GENERATED`를
-    `SUBMITTED and poc is not None`에서만 낸다). 그래서 사유를 그대로 쓴다.
+    `SUBMITTED`이고 PoC가 있을 때만 낸다). 그래서 사유를 그대로 쓴다.
+
+    `persisting`은 **이 run이 사이드카를 쓰는 배선인가**다(`ctx.pocs is not None`). 단위
+    테스트처럼 배선이 없는 run은 `ref`가 `None`인 것이 정상이라 미회수로 세지 않는다 —
+    그것까지 세면 「안 쓰는 run」과 「쓰려다 실패한 run」이 한 사유로 뭉친다.
+
+    ⚠ 빈 바이트열(`b""`)은 **PoC 없음**으로 본다. `PovSpec`의 `repeat.count`가 `ge=0`이라
+    `count=0` 하나면 스키마를 통과해 `assemble_poc`가 `b""`를 낸다(적대적 리뷰 P1-C) —
+    `poc is None`만 보면 그 run이 「최종 PoC 있음」으로 센다.
     """
-    if reason is PovStopReason.SUBMITTED and poc is None:
+    if reason is not PovStopReason.SUBMITTED:
+        return reason.value
+    if not poc:
         return _POV_SUBMITTED_WITHOUT_POC
+    if persisting and ref is None:
+        return _POV_SUBMITTED_UNPERSISTED
     return reason.value
 
 
+def _pov_finish_and_record(
+    ctx: RunContext,
+    state: _Accumulator,
+    finding: Finding,
+    reason: PovStopReason,
+    poc: bytes | None,
+) -> tuple[bytes | None, PovStopReason]:
+    """루프 종단 + 계수기 기록. 반환은 `_run_pov_hops`가 쥔 **2-튜플 그대로**다.
+
+    🔴 **기록이 여기 있는 이유**: 회수 가능성을 가르려면 `_pov_finish`의 3번째 반환값 `ref`가
+    필요한데, `_run_pov_hops`가 네 출구에서 `[:2]`로 그것을 **떼어 버린다**. 두 함수의 반환형은
+    테스트가 쥐고 있어 못 바꾼다(`_run_pov_hops` 2-튜플 · `_pov_finish` 4-튜플). 그래서 떼기
+    직전에 여기서 적는다 — `_run_pov`가 호출 **뒤에** 적던 판은 `ref`를 볼 수 없어
+    **쓰기 실패를 「최종 PoC 있음」으로 셌다**(적대적 리뷰 P1-A, 재현됨).
+    """
+    poc_out, reason_out, ref, _digest = _pov_finish(ctx, finding, reason, poc)
+    state.pov_results[finding.finding_id] = _pov_result(
+        reason_out, poc_out, ref, persisting=ctx.pocs is not None
+    )
+    return poc_out, reason_out
+
+
 def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
-    """PoV가 **submit에 닿은 Finding을 0건** 냈을 때의 run 경고. 아니면 `None` (이슈 #357·#358).
+    """PoV가 **회수 가능한 최종 PoC를 0건** 냈을 때의 run 경고. 아니면 `None` (이슈 #357·#358).
 
     사유별 수를 **같은 문장에** 싣는다 — "0이다"만 적으면 **왜** 0인지가 여전히 trace에만 있고,
     그러면 이 경고가 막으려는 것의 절반만 성립한다.
 
-    **「최종 PoC 0건」을 정확히 말한다.** `submitted`는 `POV_GENERATED` 이벤트와 1:1이다 —
-    gen 없이 바로 submit한 갈래를 `_pov_result`가 `submitted_without_poc`로 갈라 두기 때문이다.
-    ⚠ 그 분리가 없던 판에서는 **미탐이 하나 있었다**: 사유가 `submitted`인데 PoC가 없는 run이
-    경고 없이 완주했다. 필드를 둘로 늘리지 않고 **사유 어휘를 하나 늘려** 닫았다 — 그래서
-    「시도 수 == 사유별 합」이 그대로 구조적으로 참이다(`_Accumulator.pov_results` 주석).
+    **말하는 명제는 「`run_dir`에서 꺼낼 수 있는 최종 PoC가 0건」이다.** `submitted`로 세는
+    조건이 셋 다 참일 때뿐이라 그렇다 — `SUBMITTED`로 끝났고, 바이트가 비지 않았고,
+    사이드카가 실제로 **써졌다**(`_pov_result`). 어긋나는 셋은 각자 사유를 받는다:
+    `submitted_without_poc`(gen 없이 submit) · `submitted_unpersisted`(쓰기 실패) ·
+    나머지는 정지 사유 그대로.
 
-    ⚠ **여전히 말하지 않는 것**: 재-raise로 끝난 출구(서버 쪽 사건·`BudgetExhausted`)는
-    `_run_pov`가 기록 줄에 못 닿아 계수기에 안 남는다. 그 run은 거기서 멈추고 그 사실을
-    run 수준의 다른 경고가 든다 — 즉 이 경고의 명제는 **8사유 출구에 한정**이다.
+    ⚠ **전에 두 번 과장했다.** ① 사유만 세던 판은 gen 없는 submit을 `submitted`로 적어
+    **미탐**이 났다. ② 그것을 닫은 판은 *"「최종 PoC 0건」을 정확히 말한다"*고 적었는데
+    **쓰기 실패 갈래에서 거짓**이었다(적대적 리뷰가 `pov_poc`를 막아 재현했다). 둘 다 필드를
+    늘리지 않고 **사유 어휘로** 닫았다 — 「시도 수 == 사유별 합」이 그대로 구조적으로 참이다.
+
+    ⚠ **여전히 말하지 않는 것 둘.**
+    ① 재-raise로 끝난 출구(서버 쪽 사건·`BudgetExhausted`)는 기록 줄에 못 닿아 계수기에 안
+    남는다 — 그 run은 거기서 멈추고 run 수준의 다른 경고가 그 사실을 든다.
+    ② **PoC가 「터지는가」는 아무것도 안 말한다.** 여기서 센 것은 바이트의 존재와 회수
+    가능성뿐이다. 그 판정은 오라클이 낸다(범위 밖).
     """
+    # ⚠ 빈 맵은 「8단계에 안 닿았다」다 — 좌석 없는 프로필이 아니다. 커밋된 프로필 일곱이
+    # 전부 pov 좌석을 든다(적대적 리뷰 P1-B가 `load_config`로 셌다). 지금 빈 맵이 뜻하는 것은
+    # 「8단계 앞에서 멈췄다」와 「VALIDATED가 0건이라 `_run_pov`가 안 불렸다」 둘이고, 후자는
+    # 여기서 **구분되지 않는다**. 「좌석이 있는데 대상이 0건」을 따로 말하려면 필드가 하나 더
+    # 필요하다(범위 밖 — 이 경고의 명제는 「PoV를 시도한 run」에 한정이다).
     if not results:
-        return None  # pov가 안 돌았다(좌석 없는 프로필) — 부족이 아니다
+        return None
     stops = Counter(results.values())
     if stops[PovStopReason.SUBMITTED.value] == 0:
         parts = " · ".join(f"{reason} {count}건" for reason, count in sorted(stops.items()))
         return (
-            f"PoV 시도 {len(results)}건이 전부 submit에 못 닿았다(최종 PoC 0건): {parts}. "
-            f"홉과 사유는 trace의 pov_hop·pov_skipped에 있다"
+            f"PoV 시도 {len(results)}건에서 회수 가능한 최종 PoC가 0건이다: {parts}. "
+            f"홉은 trace의 pov_hop·pov_skipped에 있다(⚠ trace의 `reason`은 "
+            f"`submitted`까지만 갈라 이 어휘와 철자가 다르다)"
         )
     return None
 
@@ -1505,8 +1572,7 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
             reason=_POV_CAPSULE_MISSING,
         )
         return
-    poc, reason = _run_pov_hops(ctx, state, finding, capsule)
-    state.pov_results[finding.finding_id] = _pov_result(reason, poc)
+    _run_pov_hops(ctx, state, finding, capsule)
 
 
 def _run_pov_hops(
@@ -1600,7 +1666,7 @@ def _run_pov_hops(
                     ctx, finding, hop=hop, stop_reason=reason.value,
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish(ctx, finding, reason, last_poc)[:2]
+                return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
             action = current.action
             if action.action == "submit":
                 _emit_pov_hop(
@@ -1608,7 +1674,9 @@ def _run_pov_hops(
                     stop_reason=PovStopReason.SUBMITTED.value,
                     fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)[:2]
+                return _pov_finish_and_record(
+                    ctx, state, finding, PovStopReason.SUBMITTED, last_poc
+                )
             hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
             if action.action == "gen":
                 # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
@@ -1620,7 +1688,9 @@ def _run_pov_hops(
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                         fuzz=fuzz if hop == 0 else None,
                     )
-                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)[:2]
+                    return _pov_finish_and_record(
+                        ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
+                    )
                 last_poc = hop_poc
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
@@ -1633,7 +1703,7 @@ def _run_pov_hops(
                     stop_reason=PovStopReason.MAX_HOP.value,
                     fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)[:2]
+                return _pov_finish_and_record(ctx, state, finding, PovStopReason.MAX_HOP, last_poc)
             _emit_pov_hop(
                 ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                 fuzz=fuzz if hop == 0 else None,
