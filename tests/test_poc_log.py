@@ -285,6 +285,32 @@ def test_an_existing_temp_path_is_refused_and_left_alone(tmp_path: Path) -> None
     assert _listing(log.directory) == ["0001.poc.tmp"]
 
 
+def test_a_failed_attempt_still_takes_its_number_so_a_leftover_temp_file_never_blocks_the_next_write(
+    tmp_path: Path,
+) -> None:
+    """**실패한 시도도 번호를 먹는다** — 그 번호의 임시 파일이 남아도 다음 쓰기가 막히지 않는다
+    (`PocLog` docstring이 적은 성질이다). 번호를 **성공 뒤에만** 올리면 다음 쓰기가 같은 임시 자리
+    (`0001.poc.tmp`)를 다시 노려 `FileExistsError`를 되풀이하고, 그 run의 이후 PoC는 전부 못 남는다.
+
+    위 검사는 첫 쓰기의 거절만 본다 — 그 **다음** 쓰기는 안 본다. 첫 시도 때문에 번호 하나가
+    비는 것(`0001.poc` 없음)은 의도다. 남의 임시 파일은 둘째 쓰기 뒤에도 그대로여야 한다.
+    """
+    log = PocLog(tmp_path)
+    log.directory.mkdir(parents=True)
+    leftover = log.directory / "0001.poc.tmp"
+    leftover.write_bytes(b"left behind")
+
+    with pytest.raises(FileExistsError):
+        log.write(b"first")
+
+    ref, _ = log.write(b"second")
+
+    assert ref == "pov_poc/0002.poc"
+    assert (tmp_path / ref).read_bytes() == b"second"
+    assert leftover.read_bytes() == b"left behind"
+    assert _listing(log.directory) == ["0001.poc.tmp", "0002.poc"]
+
+
 def test_a_symlink_at_the_temp_path_is_not_followed(tmp_path: Path) -> None:
     """임시 경로의 심링크를 **따라가 대상 파일을 덮지 않는다** — 살아 있는 링크도 끊어진 링크도.
 
@@ -665,6 +691,41 @@ def test_an_interrupt_during_the_write_leaves_no_temp_file(
 
     monkeypatch.undo()
     assert _listing(log.directory) == []
+
+
+@pytest.mark.parametrize("cause", ["ctrl_c", "readback_mismatch"])
+def test_a_failing_cleanup_never_masks_the_exception_that_caused_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cause: str
+) -> None:
+    """정리(`unlink`)가 `OSError`로 실패해도 호출자가 보는 것은 **쓰기를 깬 원래 예외**다.
+
+    정리의 흡수(`contextlib.suppress(OSError)`)를 빼면 정리의 `PermissionError`가 원래 예외를
+    **대체**한다. Ctrl-C(`KeyboardInterrupt`)가 `OSError`로 바뀌면 `_pov_finish`의 `except OSError`가
+    그것을 쓰기 실패로 흡수해 중단이 삼켜진다 — 위 검사는 정리가 **성공하는** 경우만 봐서 이 흡수를
+    못 물었다. 정리가 실제로 시도됐는지(`attempts`)도 본다: 시도가 없으면 이 검사는 아무것도 안 본다.
+    """
+    real = Path.read_bytes
+    attempts: list[str] = []
+
+    def interrupted(self: Path) -> bytes:
+        raise KeyboardInterrupt
+
+    def mismatched(self: Path) -> bytes:
+        return real(self) + b"!"
+
+    def refused(self: Path, missing_ok: bool = False) -> None:
+        attempts.append(self.name)
+        raise PermissionError("cleanup refused")
+
+    expected = KeyboardInterrupt if cause == "ctrl_c" else PocWriteError
+    monkeypatch.setattr(Path, "read_bytes", interrupted if cause == "ctrl_c" else mismatched)
+    monkeypatch.setattr(Path, "unlink", refused)
+
+    with pytest.raises(expected):
+        PocLog(tmp_path).write(b"poc")
+
+    monkeypatch.undo()
+    assert attempts == ["0001.poc.tmp"], f"정리가 시도되지 않았다: {attempts}"
 
 
 # --- 중단 경로 — 파일이 없는 것을 받아들이되 흔적은 남긴다 --------------------------------
