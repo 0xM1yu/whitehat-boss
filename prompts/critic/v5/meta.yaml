@@ -1,5 +1,9 @@
-# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다. Critic 노드는 이
-# 버전을 content-aware로 취급하므로, 활성화하면 bounded evidence body를 함께 싣는다.
+# ⏵ 2026-10-02 — 배선됨. `config/models.yaml`의 `gpt-oss-20b.prompt_template_version`이 v5를
+# 고르고(`harness_pool`·`_hybrid`의 critic), `nodes/critic.py`의 `_CONTENT_AWARE_VERSIONS`가 이
+# 버전에서 bounded evidence body를 EVIDENCE·FACTS에 싣는다. 이 판으로 돈 run은 저장소에 아직 0건이다.
+# Critic은 이 판에서도 대상 원문을 안 받는다 — prefix가 FACTS의 `source`·`capsule_sections`·`callers`를
+# default-empty로 서술하고 body에 `{{SOURCE}}` 자리가 없다. 노드가 그 서술대로 보내는지는
+# `tests/test_nodes.py`의 `test_critic_node_sends_the_input_its_prefix_describes`가 묶는다.
 role: critic
 version: v5
 output_schema: DecisionDraft

@@ -316,7 +316,8 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
     **사고 —** `nodes/critic.py`가 `schema=DecisionDraft`로 바뀐 뒤에도 `prompts/critic/v1`
     규칙 4가 *"`ids.decision_id`를 그대로 쓴다"*였고 출력표에 `decision_id`·`run_id`·
     `finding_id`가 남아 있었다. `DecisionDraft`에는 그 셋이 없다. v1은 `config/profiles.yaml`의
-    **전 프로필**이 고르는 살아 있는 프롬프트다.
+    **전 프로필**이 고르는 살아 있는 프롬프트다(⏵ 2026-10-02 — critic은 `harness_pool`·`_hybrid`가
+    v5로 올려, 지금 critic v1을 고르는 것은 `dev_*`의 `fake`뿐이다).
 
     요청하는 곳이 **둘**이라 둘 다 본다 — 파이프라인 노드와 `bench.ROLE_SPEC`(bench는
     같은 프롬프트 파일을 렌더해 구조화 출력을 잰다). 노드가 없는 역할(`single`)은
@@ -445,6 +446,28 @@ def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) ->
     assert version in auditor_node._CONTENT_AWARE_VERSIONS
 
 
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_critic_selects_prompt_v5(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 critic(`gpt-oss-20b`)이 `v5`를 고른다(2026-10-02, v1에서
+    올렸다). dev 프로필의 critic은 `fake`(v1)라 이 핀 밖이다. 되돌리면 이 핀이 빨개진다."""
+    config = load_config(profile)
+
+    assert config.model_for("critic").prompt_template_version == "v5"
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_critic_version_receives_evidence_bodies(profile: str) -> None:
+    """위 핀은 철자다. 막으려는 성질은 **registry가 고른 Critic 판이 근거 본문을 받는다**이다 —
+    `critic._CONTENT_AWARE_VERSIONS`에 없는 판을 고르면 EVIDENCE·FACTS에 id·kind·ok만 실려 툴 로그
+    본문이 조용히 빠지고, v5 prefix는 본문 없는 입력을 전부 `need_evidence`로 보내라 하니 판정이
+    구조적으로 보류로 쏠리게 시킨다(#237 HIGH-1과 같은 상태 — 모델의 준수는 미측정). 판을 바꾸면서
+    그 집합을 안 고치면 여기서 빨개진다 — Auditor 쪽 바로 위 검사와 같은 성질이다."""
+    config = load_config(profile)
+
+    version = config.model_for("critic").prompt_template_version
+    assert version in critic_node._CONTENT_AWARE_VERSIONS
+
+
 # meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
 # **저장소 실물에서 온 것만 적는다**(양성 핀 — 출처는 같은 자리):
 _UNSELECTED_CLAIM_SPELLINGS = (
@@ -496,7 +519,7 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 통제 — prompts/critic/v4/meta.yaml:1. 첫째·셋째 철자를 함께 들어 여기서는 철자를
         # 못 가른다 — 철자별로는 `test_the_known_metas_…`가 본다.
         ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
-        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
+        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v5)」.
         ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.

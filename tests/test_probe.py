@@ -587,8 +587,9 @@ def test_the_reconstructed_critic_prompt_carries_no_capsule_and_no_source() -> N
     """Critic 프롬프트에 캡슐도 대상 원문도 안 실린다 — 이 프로브의 전제다.
 
     `nodes/critic._ask_model`이 `build_facts`에 `capsule=`·`source=`를 안 넘기기 때문이고,
-    그래서 이 경로의 프롬프트는 합성 프로브의 21,021 토큰과 **다른 축**이다. 배선이 바뀌어
-    캡슐이 실리는 날 이 검사가 빨개져서 프로브 docstring의 그 문단을 함께 고치게 만든다.
+    그래서 이 경로의 프롬프트는 합성 프로브의 21,021 토큰과 **다른 축**이다. ⚠ 이 검사는 노드가
+    아니라 **프로브의 재구성**(`_reconstruct`)을 문다 — 노드의 배선이 바뀌어도 빨개지지 않는다. 노드
+    쪽은 `tests/test_nodes.py`의 `test_critic_node_sends_the_input_its_prefix_describes`가 문다.
     """
     from src.orchestrator.prompt_loader import load_prompt
     from src.schemas.enums import EvidenceKind

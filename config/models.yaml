@@ -183,10 +183,17 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
-    # v1로 둔다. critic/v3 prefix는 metadata-only 런타임에서 항상 need_evidence를 내므로,
-    # 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). **그
-    # 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — v3로 flip하는 것은
-    # validated·proven이 실제로 나오는지 확인하는 후속의 몫이다. 미참조 버전은 정상이다(v2도).
+    # **프롬프트 v5.** ⏵ 2026-10-02 — 그 전에는 v1을 뒀다: critic/v3 prefix는 metadata-only 런타임에서 항상
+    # need_evidence를 내서 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1).
+    # **그 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — 노드의 `_CONTENT_AWARE_VERSIONS`가
+    # v5를 들고, 근거 1건당 800자 · 합 4,000자로 절단한 본문이 EVIDENCE·FACTS에 실린다(`evidence_summaries`).
+    # ⚠ **본문이 없는 근거는 need_evidence로 보내도록 시킨다** — v5 prefix가 ID·metadata만이면 그렇게 내라 하고 정책은
+    # 그것을 QUEUED로 보낸다(`FixedThresholdPolicy._critic_verdict`). 모델이 그 지시를 따르는지, 켠 뒤 validated·proven이
+    # 실제로 나오는지는 안 쟀다(저장소에 v5로 돈 run 0건 · `docs/agent-contracts.md` §2.3).
+    # ⚠ **Critic은 v5에서도 대상 원문을 안 받는다** — FACTS의 `source`는 빈 문자열이고 v5 prefix가 스스로 그렇게
+    # 적는다(`tests/test_nodes.py`의 `test_critic_node_sends_the_input_its_prefix_describes`가 노드와 묶는다). 원문을
+    # 싣는 것은 노드 한 줄이 아니라 프롬프트 계약을 바꾸는 일이다.
+    # 미참조 버전은 정상이다(v2~v4도).
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
@@ -196,11 +203,14 @@ models:
     # `max_tokens 4096`에서 93 s로 적고(§3.3 해석 ③ — 표 행은 없다) 하네스 설정 재현 16콜의 최대를 71.8 s로 적는다
     # (§3.4). 한 호출이 16,384토큰에 382 s였으니(§3.3) ≈42.9 tok/s이고 4,096은 ≈95 s다(계산값). 셋 다 세 서버가
     # 함께 떠 있던 경합 아래 값이고(그 보고서 메타) 출력 상한도 8,192가 아니라, 위 12 tok/s 가정과 직접 비교하지 않는다.
+    # ⏵ 2026-10-02 — 위 측정은 전부 v1 프롬프트의 것이다(서버가 센 `prompt_tokens` 646~654 — `config/budgets.yaml`).
+    # v5 입력은 prefix만 916 → 10,630자(`load_prompt`가 읽은 `prefix.md`의 글자 수)라 prefill 몫이 는다 — 그 시간과
+    # v5에서의 출력 길이는 안 쟀다. 값(900 s)은 안 바꿨다.
     # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
     request_timeout_s: 900
-    prompt_template_version: "v1"
+    prompt_template_version: "v5"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에

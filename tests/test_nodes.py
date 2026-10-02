@@ -1257,6 +1257,45 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_critic_node_sends_the_input_its_prefix_describes(ctx: RunContext, version: str) -> None:
+    """v4·v5 prefix는 Critic 호출의 FACTS `artifact_id`·`target`·`capsule_sections`·`source`·
+    `callers`를 「default-empty or null values」로 서술하고, 두 판의 body에는 `{{SOURCE}}`
+    자리가 없다. **노드가 그 서술대로 보낸다**를 노드를 거쳐 문다 — 프로브 재구성(`test_probe`)이
+    아니라 `critic.run`의 렌더다.
+
+    Critic에 원문을 싣는 변경이 노드(`build_facts(source=…)`)만 고치면 prefix가 모델에게 자기 입력을
+    거짓으로 말하게 되고, 이 검사가 빨개진다 — 그때는 프롬프트 계약(새 판)을 같이 바꾼다. ⚠ 철자
+    pin이다: prefix의 그 구절을 다른 표현으로 고치면 마지막 단언이 먼저 깨진다(구절이 없어서) —
+    그때는 이 핀을 새 구절에 맞춘다. 성질(「서술과 입력이 같다」)은 못 묻는다.
+    """
+    key = ctx.config.model_key_for(Role.CRITIC.value)
+    models = {
+        **ctx.config.models,
+        "fake_critic_content": ctx.config.models[key].transition(prompt_template_version=version),
+    }
+    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_content"}
+    ctx.config = ctx.config.transition(
+        models=models,
+        profile=ctx.config.profile.transition(roles=roles),
+    )
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    prompt = ctx.models.last_for(Role.CRITIC)
+    facts = json.loads(re.findall(r"```json\s*\n(.*?)\n```", prompt.body, re.DOTALL)[-1])
+    assert facts["source"] == ""
+    assert facts["capsule_sections"] == []
+    assert facts["callers"] == []
+    assert facts["artifact_id"] == ""
+    assert facts["target"] is None
+    assert "{{SOURCE}}" not in load_prompt(Role.CRITIC, version).body
+    assert "default-empty or null values" in prompt.prefix
+
+
 def test_critic_content_aware_versions_pin_v3_v4_and_v5() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
@@ -1361,7 +1400,8 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
     """#346 M1/M2: v5를 v4 텍스트로 되돌리면 실패하는 철자 핀이지 모델 행동 검증은 아니다.
 
     출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
-    변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 활성화 전 별도 측정한다.
+    변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 별도 측정이 필요하다 — critic v5는
+    그 측정 없이 2026-10-02에 켰다(`config/models.yaml`).
     """
     prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
