@@ -609,8 +609,10 @@ def test_a_broken_connection_becomes_a_gateway_error_not_a_raw_exception(
 
     전 판의 `_post`는 `HTTPError`·`TimeoutError`·`(URLError, JSONDecodeError)` **셋만** 잡았다.
     `http.client.HTTPException`은 `OSError`가 아니라 어느 절에도 안 걸리고, 생 `OSError`도 그랬다.
-    그러면 러너가 그것을 게이트웨이 사건으로 못 읽어 `write_manifest` 앞을 뚫는다 — 산출물이
-    하나도 안 남는다(zlib 때 `state.db`를 직접 열어야 했던 이유가 그것이다).
+    그러면 러너가 그것을 게이트웨이 사건으로 못 읽는다 — `complete()`가 `ModelGatewayError`에만
+    붙이는 회계(`usage`·`gpu_ms`)를 건너뛰고, 사유가 `unforeseen_failure`로 적힌다(최후 방어선이
+    매니페스트는 남긴다 — 그 전에는 산출물이 하나도 안 남았다, zlib 때 `state.db`를 직접 열어야
+    했던 이유다).
 
     **형 이름이 문구에 있어야 한다** — `error_detail`은 형을 안 적어서 로그만 보면 무엇이
     끊겼는지 모른다."""

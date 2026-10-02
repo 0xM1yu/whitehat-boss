@@ -242,11 +242,10 @@ def test_run_spec_keeps_the_slices_path() -> None:
 
 
 def test_a_drifted_slice_stops_the_run_before_any_model_call(tmp_path: Path) -> None:
-    """렌더는 run 전에 **전부** 한다(⏵ 2026-10-02 — *"러너는 렌더 오류를 안 잡으므로"*는 낡았다:
-    최후 방어선이 생겨 **매니페스트는 남는다**. 태운 호출이 안 돌아오는 것이 이유다).
-    슬라이스마다 그때그때
-    렌더하면 앞 슬라이스(`_CASE_B` — 정적 신호 줄이라 먼저 돈다)의 모델 호출을 태운 뒤 산출물
-    없이 죽는다."""
+    """렌더는 run 전에 **전부** 한다. 슬라이스마다 그때그때 렌더하면 앞 슬라이스(`_CASE_B` —
+    정적 신호 줄이라 먼저 돈다)의 모델 호출을 태운 뒤 죽는다.
+    ⏵ 2026-10-02: 전 판은 *"… 태운 뒤 산출물 없이 죽는다"*였다. 러너의 최후 방어선이 생겨
+    **매니페스트는 남는다** — 그래도 태운 호출은 안 돌아온다. 그것이 이유다."""
     drifted = _slice("slice_0005", "A", ("parser.c", 19, "parse_header"), "parse_header", {19})
     drifted["code"] = "/* ===== parser.c ===== */\nvoid parse_header(void)"
     path = _slices_file(tmp_path, [_slice(*_CASE_B), drifted])
