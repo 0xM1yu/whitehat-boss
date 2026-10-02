@@ -164,12 +164,14 @@ def test_real_sqlite_commit_and_os_lock_survive_process_death(tmp_path):
     program = """
 import os, sys
 from pathlib import Path
+sys.path.insert(0, sys.argv[2])
 from slicer_checkpoint import Checkpoint
 store = Checkpoint(Path(sys.argv[1]), resume=True)
 store.conn.execute('DELETE FROM stages')
 os._exit(19)
 """
-    child = subprocess.run([sys.executable, "-c", program, str(path)], check=False)
+    slicer_dir = str(Path(slicer.__file__).parent)
+    child = subprocess.run([sys.executable, "-c", program, str(path), slicer_dir], check=False)
     assert child.returncode == 19
     with Checkpoint(path, resume=True) as store:
         assert store.load("first")["data"] == "committed"
@@ -593,7 +595,7 @@ def test_the_merge_tool_exits_nonzero_when_candidates_are_missing(monkeypatch, r
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "merge_tool", Path(slicer.__file__).parent / "tools" / "merge_slicer_shards.py"
+        "merge_tool", Path(slicer.__file__).parent.parent / "merge_slicer_shards.py"
     )
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
@@ -1268,7 +1270,7 @@ def test_the_merge_tool_names_the_claim_owner_of_each_incomplete_candidate(
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "merge_tool", Path(slicer.__file__).parent / "tools" / "merge_slicer_shards.py"
+        "merge_tool", Path(slicer.__file__).parent.parent / "merge_slicer_shards.py"
     )
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)

@@ -5,12 +5,14 @@ Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다
 
 ## 배포 파일과 실행
 
-[slicer.py](../slicer.py), [slicer_queries.py](../slicer_queries.py),
-[slicer_backward.py](../slicer_backward.py), [slicer_candidates.py](../slicer_candidates.py),
-[slicer_source.py](../slicer_source.py), [slicer_pipeline.py](../slicer_pipeline.py),
-[slicer_checkpoint.py](../slicer_checkpoint.py), [slicer_export.py](../slicer_export.py),
-[slicer_library.py](../slicer_library.py), [slicer_compile.py](../slicer_compile.py),
-[slicer_errors.py](../slicer_errors.py), [slicer_claims.py](../slicer_claims.py)를 함께 배포한다.
+[slicer.py](../tools/slicer/slicer.py), [slicer_queries.py](../tools/slicer/slicer_queries.py),
+[slicer_backward.py](../tools/slicer/slicer_backward.py), [slicer_candidates.py](../tools/slicer/slicer_candidates.py),
+[slicer_source.py](../tools/slicer/slicer_source.py), [slicer_pipeline.py](../tools/slicer/slicer_pipeline.py),
+[slicer_checkpoint.py](../tools/slicer/slicer_checkpoint.py), [slicer_export.py](../tools/slicer/slicer_export.py),
+[slicer_library.py](../tools/slicer/slicer_library.py), [slicer_compile.py](../tools/slicer/slicer_compile.py),
+[slicer_errors.py](../tools/slicer/slicer_errors.py), [slicer_claims.py](../tools/slicer/slicer_claims.py)를 함께 배포한다 — `tools/slicer/` 디렉터리째다. 서로를 이름으로 import(`import slicer_queries`)하고 실행 파일의
+디렉터리가 import 경로 첫 칸이라서다. `tools/merge_slicer_shards.py`는 `tools/slicer/`를 자기 옆에서 찾고
+`tools/slice_sharded.py`는 저장소 레이아웃 그대로를 전제한다.
 후보별 질의(flows·context·backward)의 로직은 inventory 뒤에 **서버 세션당 한 번** 함수로 정의하고,
 후보마다 그 함수 호출만 보낸다 — 질의마다 Scala 전체를 다시 컴파일하던 비용을 없앤다. 세션에 남는 것은
 함수뿐이고 후보 데이터는 호출 안에만 있다. 서버를 새로 띄우면 다음 run이 다시 정의한다.
@@ -22,7 +24,7 @@ Python과 Joern의 `--repo`는 같은 절대경로의 같은 소스를 가리켜
 
 ```bash
 ./joern-cli/joern -J-Xss64m -J-Xmx16g --server --server-host 127.0.0.1 --server-port 16242
-python slicer.py --repo /work/repo --out /work/results/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json \
   --joern-endpoint http://127.0.0.1:16242 \
   --joern-version-command /opt/joern/joern \
   --checkpoint /work/results/state.db --progress /work/results/progress.jsonl \
@@ -175,14 +177,14 @@ Joern 버전·overlay·EngineConfig·후보 manifest가 다르면 거부한다. 
 
 ```bash
 # 같은 분석 인자에 --resume을 추가한다. 실패한 전용 Joern 서버는 먼저 재기동한다.
-python slicer.py --repo /work/repo --out /work/results/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json \
   --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
   --checkpoint /work/results/state.db --resume --max-flows-per-candidate 10 \
   --backward-depth 30 --backward-nodes 5000 --query-timeout-seconds 600 \
   --candidate-timeout-seconds 1200
 
 # 분석 설정은 기록에서 읽는다. Joern 요청 없이 완료한 후보만 재조립한다.
-python slicer.py --repo /work/repo --out /work/results/exported.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/exported.json \
   --checkpoint /work/results/state.db --export-only --export-dir /work/results/export
 ```
 
@@ -261,7 +263,7 @@ CPG는 하나다.
 
 ```bash
 # 샤드 i = 0..N-1, 모두 같은 claims.db (run마다 새 파일)
-python slicer.py --repo /work/repo --out /work/s0/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/s0/slices.json \
   --joern-endpoint http://127.0.0.1:16243 --joern-version-command /opt/joern/joern \
   --checkpoint /work/s0/state.db --shard 0/4 --claim-db /work/claims.db
 # 병합: 미완료가 있으면 키와 주인을 찍고 종료 코드 2 -> 그 샤드를 --resume
@@ -325,24 +327,24 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 
 ```bash
 # 준비 한 번 (서버 하나). --out은 준비 기록이지 슬라이스가 아니다
-python slicer.py --repo /work/repo --out /work/prep/prepare.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/prep/prepare.json \
   --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
   --checkpoint /work/prep/state.db --prepare-only --cpg-out /work/prep/cpg.bin --max-flows-per-candidate 10
 # 샤드 i = 0..N-1: 체크포인트를 복사해 각자 다른 서버에서
 cp /work/prep/state.db /work/s0/state.db
-python slicer.py --repo /work/repo --out /work/s0/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/s0/slices.json \
   --joern-endpoint http://127.0.0.1:16243 --joern-version-command /opt/joern/joern \
   --checkpoint /work/s0/state.db --resume --cpg /work/prep/cpg.bin --shard 0/4 --max-flows-per-candidate 10
 ```
 
 ```bash
 # 샤드 i = 0..N-1, 각자 다른 서버. 분석 인자는 전부 같게
-python slicer.py --repo /work/repo --out /work/s0/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/s0/slices.json \
   --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
   --checkpoint /work/s0/state.db --shard 0/4 --max-flows-per-candidate 10
 python tools/merge_slicer_shards.py /work/merged.db /work/s0/state.db /work/s1/state.db \
   /work/s2/state.db /work/s3/state.db
-python slicer.py --repo /work/repo --out /work/results/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json \
   --checkpoint /work/merged.db --export-only
 ```
 
