@@ -570,6 +570,36 @@ def test_requests_use_the_authors_routes_key_header_json_body_and_timeouts(
     assert [c.timeout for c in oracle_server.calls[-3:]] == [7, 7, 7]
 
 
+def test_the_api_key_is_not_carried_to_wherever_a_redirect_leads(
+    oracle_server: _FakeOracle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 `urllib`은 302를 따라갈 때 `Request.headers`를 새 요청으로 옮기고 `unredirected_hdrs`는
+    옮기지 않는다 — `add_header`로 단 `X-API-Key`는 다른 호스트로 실려 간다(2026-10-02, 가짜 로컬
+    서버 둘로 측정). 헤더 철자가 아니라 이 성질을 건다: 클라이언트가 만든 **그 요청**을 stdlib의
+    실제 `HTTPRedirectHandler.redirect_request`에 통과시켜 새 요청에 키가 없는지 본다. 원래 요청에는
+    키가 그대로 실린다(서버가 키를 받아야 하므로).
+    """
+    sent: list[urllib.request.Request] = []
+
+    def spy(request, timeout=None):  # noqa: ANN001, ANN202
+        sent.append(request)
+        return oracle_server(request, timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", spy)
+    _round_trip()
+
+    keyed = [r for r in sent if r.get_header("X-api-key") is not None]
+    assert [urllib.parse.urlsplit(r.full_url).path for r in keyed] == ["/submit-fix", "/query-poc"]
+    for request in keyed:
+        assert request.get_header("X-api-key") == _API_KEY  # 원래 서버로는 간다
+        followed = urllib.request.HTTPRedirectHandler().redirect_request(
+            request, None, 302, "Found", {}, "http://other.example:9/leak"
+        )
+        assert followed is not None
+        assert not followed.has_header("X-api-key")
+        assert _API_KEY not in dict(followed.header_items()).values()
+
+
 # --- 6. 판정은 query 경로에서 — submit 응답이 아니라 ---------------------------
 def test_verdict_comes_from_the_query_route_not_the_submit_response(
     oracle_server: _FakeOracle,
