@@ -35,6 +35,7 @@ from src.interfaces.tool_runner import SandboxSpec, ToolArgs, ToolRunner
 from src.orchestrator import gate, state_machine
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.gate import GateResult
+from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import Action, RoutingPolicy, RoutingRequest
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import GATE_STAGES, Stage
@@ -167,6 +168,11 @@ class RunContext:
     # 호출 경로(단위 테스트, `--dry-run`)에서 빈 참조를 남기면 "안 썼다"와 "쓸 곳이
     # 없었다"가 구별되지 않는다.
     prompts: PromptLog | None = None
+    # PoV 루프의 **마지막 `gen` PoC**를 run 산출물에 파일로 남기는 곳 (#355) — 루프당 최대 한
+    # 파일이다(`poc_log` 모듈 docstring). **`prompts`와 같은 자리이고 같은 이유다** — run_dir을
+    # 러너만 알게 두려고 쓰기 객체를 받는다. `None`이면 아무것도 쓰지 않고 trace 이벤트도
+    # 그대로다(사이드카 키를 **아예** 안 늘린다).
+    pocs: PocLog | None = None
     # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 이 run에 resolver가 없다
     # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 노드는
     # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
