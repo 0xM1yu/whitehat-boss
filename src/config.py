@@ -649,6 +649,10 @@ class Thresholds(HarnessModel):
     # 기본은 끈다.
     # ⚠ E4(`proven`)는 이 값과 무관하게 실행 로그를 요구한다(`ReproOrigin` 주석). 모델이 낸 명세는
     # 이 값과 무관하게 `origin=model`로 덮인다.
+    # ⚠ **켜면 #232(D80)가 잠복에서 도달 가능으로 바뀐다** (#393 리뷰 MEDIUM-1) — 전엔 8단계에
+    # 아무것도 안 올라와 #232가 닿을 수 없었다. 합성이 Finding을 validated로 올려 8단계가 도구를
+    # 돌리는데, `gate`의 `p4`는 `ok=True`만 보고 크래시(non-zero)와 exit 0을 안 가른다 -> 크래시
+    # 0건으로 proven이 날 수 있다. 켜기 전에 #232를 먼저 본다.
     synthesize_repro_spec: int = Field(default=0, ge=0, le=1)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
