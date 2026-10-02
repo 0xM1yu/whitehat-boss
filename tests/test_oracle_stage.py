@@ -106,6 +106,29 @@ def test_shuffling_the_input_does_not_change_the_designation() -> None:
     assert chosen is not None and chosen.finding_id == "F-2"
 
 
+def test_two_candidates_sharing_a_finding_id_still_pick_the_same_one() -> None:
+    """🔴 같은 `finding_id`가 둘이어도 입력 순서가 결과를 바꾸지 않는다.
+
+    ⚠ **이 구멍은 위 섞기 검사가 못 잡았다.** 그쪽은 `finding_id`가 **다 다른** 입력만
+    섞었고, 동률 해소축이 하나뿐이면 `min`은 **순회 순서가 먼저인 것**을 돌려준다 —
+    같은 id 둘에서 바이트가 갈렸다(실측: 2가지 결과). 축을 하나만 넓혀 「전수 돌렸다」고
+    한 것이고, CLAUDE.md §2.5가 적은 모양 그대로다.
+
+    한 run에서 같은 id가 두 번 들어오지는 **않는다**(러너가 `findings` dict를 돌고 키가
+    `finding_id`다). 그래도 막는 이유: 이 함수의 입력은 `Iterable`이고 그 성질을 **구조가
+    강제하지 않는다** — 러너 쪽 계수기도 같은 자리에서 「구조가 막는 것이 아니다」라고
+    적어 뒀다.
+    """
+    duplicated = [
+        PovResult("F-1", _SUBMITTED, b"AAA"),
+        PovResult("F-1", _SUBMITTED, b"BBB"),
+    ]
+
+    designations = {designate(order) for order in permutations(duplicated)}
+
+    assert len(designations) == 1
+
+
 def test_a_submit_without_retrievable_bytes_is_not_a_candidate() -> None:
     """🔴 `submitted_without_poc`·`submitted_unpersisted`만 있으면 **`None`**이다.
 

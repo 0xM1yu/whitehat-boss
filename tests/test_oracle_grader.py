@@ -259,6 +259,34 @@ def test_an_oracle_error_does_not_leak_the_key_either(
     assert _SENTINEL_KEY.encode("utf-8") not in _every_artifact_byte(tmp_path)
 
 
+def test_a_server_that_echoes_the_key_back_does_not_get_it_written_down(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """🔴 오류 **본문이 키를 되비쳐도** 사이드카에 굳지 않는다.
+
+    저자 서버의 알려진 본문은 전부 FastAPI `{"detail": …}`이고 헤더를 안 싣는다. 막는
+    것은 앞에 선 프록시·게이트웨이의 오류 페이지가 요청 헤더를 그대로 되비치는 경우다 —
+    그 한 줄이 사이드카에 들어가면 키가 산출물에 **파일로** 남는다.
+
+    ⚠ **되비침을 실제로 잰 적은 없다 — 이것은 구성한 조건이고 방어다.** 그래도 검사로
+    두는 이유: 사이드카에 서버 문자열을 그대로 적는 결정이 이 모듈에 있고, 그 결정의
+    대가를 산문이 아니라 단언이 들어야 한다.
+    """
+
+    def echoing(request: object, timeout: float | None = None) -> None:
+        raise oracle_tests._http_error(400, f"bad request: X-API-Key: {_SENTINEL_KEY}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", echoing)
+
+    result = _grade(tmp_path, api_key=_SENTINEL_KEY)
+
+    assert result["outcome"] == OUTCOME_ERROR
+    assert result["error_status"] == 400
+    assert _SENTINEL_KEY.encode("utf-8") not in _every_artifact_byte(tmp_path)
+    # 사유 자체는 남아야 한다 — 키만 가리고 서버가 말해 준 것을 버리지 않는다.
+    assert b"bad request" in _sidecar(tmp_path).read_bytes()
+
+
 # --- ⑥ 휘발 값은 반환 dict에 없다 ------------------------------------------------------
 _VOLATILE = ("agent_id", "poc_id", "poc_hash", "created_at", "updated_at")
 
