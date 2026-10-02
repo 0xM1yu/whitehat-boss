@@ -57,10 +57,13 @@ Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다.
 stderr다.
 
 그것이 `judge()` docstring의 *"돌았는데 아무것도 못 찾음: `ok=True, exit_code=0`"*이다.
-**즉 `ok=True`가 보증하는 것은 「실행됐다」까지이지 「크래시했다」가 아니다.** 게이트는 `ok`와
-`kind`만 보므로(`gate.evaluate()`의 `usable`과 `p4`) 그 차이가 E4에 그대로 실린다 — 산출물을
-`expected_signal`과 대조하는 코드는 **없다**(이슈 #232). exit 0을 `ok=False`로 내릴지는 승격
-동작이 바뀌는 판단이라 이 파일이 혼자 정하지 않는다.
+**즉 `ok=True`가 보증하는 것은 「실행됐다」까지이지 「크래시했다」가 아니다.** 그 차이를 가르는
+곳은 이 파일이 아니라 게이트다 — `gate.evaluate()`의 `p4`가 `ok`·`kind`에 더해 **종료 코드가 0도
+`None`도 아닐 것**을 요구하므로 exit 0은 `ok=True`여도 E4가 아니다(이슈 #232). `ok`의 뜻은
+「떴다」가 맞아서 `judge()`는 안 바꿨다 — exit 0을 여기서 `ok=False`로 내리면 그 건은
+F-11(`queued`)로 가는데 게이트 쪽은 F-10b(`validated` 홀드)로 보낸다. 대신 비-0은 **크래시의 대용
+지표일 뿐이다** — 대상이 스스로 비-0을 돌려줘도 같은 값이 나온다. 산출물을 `expected_signal`과
+대조하는 코드는 여전히 **없다**.
 
 지금 픽스처에는 `main`이 없어 링크되지 않으므로 **컨테이너 경로에서 E4는 여전히 도달
 불가**다 — PoV 노드(8단계)는 PoC **바이트**를 내 기록할 뿐 재현 명세가 부르는 `./poc`로 쓰지
