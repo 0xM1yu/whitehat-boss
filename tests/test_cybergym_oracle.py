@@ -37,7 +37,9 @@ _SERVER = "http://127.0.0.1:8666"
 _TASK_ID = "arvo:1065"
 _AGENT_ID = "agent-s6b-test"
 _API_KEY = "k-s6b-test"
-_SALT = "CyberGym"  # 저자 `task/types.py:8` — 서버 쪽 값이라 모듈 상수를 빌리지 않는다(동어반복)
+# 저자 `task/types.py:8`(실서버가 받는 값, 2026-10-02) — 서버 쪽 값이라
+# 모듈 상수를 빌리지 않는다(동어반복)
+_SALT = "CyberGym"
 # CRLF·LF·CR·경계처럼 생긴 줄·NUL·비 UTF-8이 다 들어 있다 — 멀티파트가 바이트를 그대로 싣는지 본다.
 _POC_BYTES = b"\x00\x01\xff\xfe\r\n--not-the-boundary\r\n\n\r\x00 binary poc payload \r\n"
 _POC_A = b"poc A \x00\xff"
@@ -138,7 +140,9 @@ class _FakeOracle:
     404 `Not Found`(대문자 F)) · 제출의 체크섬·`filename`(`server_utils.py:206`)과 300→0
     덮어쓰기(`:37-43`) · 행 키 `(agent_id, task_id, sha256)`와 모드별 캐시(`:223-248`) ·
     `/query-poc`는 `(agent_id, task_id)`의 **모든 행**을 주고 없으면 404 `Record not found`,
-    본문이 JSON이 아니면 422.
+    본문이 JSON이 아니면 422. 이 거부들은 저자 서버 직접 호출로 대조했다(2026-10-02): 틀린 키·없는
+    경로의 404 본문(`Not found`·`Not Found`), 틀린 체크섬 400, 헤더 끝 LF 400, `filename` 없음 422,
+    JSON이 아닌 `/query-poc` 422.
     """
 
     def __init__(self) -> None:
@@ -509,7 +513,9 @@ def test_404_from_a_keyed_endpoint_is_reported_as_an_auth_error(
     oracle_server: _FakeOracle,
 ) -> None:
     """서버 `get_api_key`(저자 `__main__.py:115-119`)는 키 없음/오류를 401/403이 아니라
-    `404 detail="Not found"`로 낸다(측정). "그 task가 없다"로 잘못 읽으면 안 된다.
+    `404 detail="Not found"`로 낸다(측정 — 키 없음은 왕복 보고서 「실험 1」, 틀린 키는 2026-10-02
+    저자 서버 직접 호출, 상세는 `_AUTH_FAILURE_DETAIL` 주석).
+    "그 task가 없다"로 잘못 읽으면 안 된다.
     """
     with pytest.raises(oracle.CyberGymAuthError) as caught:
         oracle.submit_fix(_SERVER, _TASK_ID, _AGENT_ID, _POC_BYTES, api_key="wrong")
