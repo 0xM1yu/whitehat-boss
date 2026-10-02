@@ -14,6 +14,7 @@ council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매
 """
 
 import dataclasses
+import hashlib
 import json
 from functools import partial
 from typing import get_args
@@ -969,35 +970,118 @@ def test_other_roles_facts_do_not_gain_the_fuzz_entrypoint_key() -> None:
     assert "fuzz_entrypoint" not in facts
 
 
-def test_pov_v2_render_is_byte_identical_to_main_before_this_pr(ctx: RunContext) -> None:  # noqa: F811
-    """🔴 적대적 리뷰 2026-10-02 MEDIUM-4 — 배선된 pov v2는 **이 PR 전(main `d85ea62`)과 바이트가
-    같아야 한다**(`docs/evaluation.md` §2.3-4, v2로 돈 run이 비교 대상 0건이라도 다음 v2 run까지
-    조용히 입력을 바꿀 이유는 없다). 넓은 입력은 `_WIDE_INPUT_VERSIONS`(지금은 v3)에서만 켠다.
+# 이 PR 전(main `d85ea62`) v2 프롬프트 파일의 sha256(개행은 LF로 정규화). v2 파일은 이 PR이 안
+# 건드렸다 — `git diff d85ea62 -- prompts/pov/v2`가 비어 있고, 아래 값이 main blob의 해시와 같다.
+_V2_PROMPT_SHA256 = {
+    "prefix.md": "addd1adf2dd8cf565e8c39727cb3f79e691fdf2eb14e284e29a95ca877789673",
+    "body.md": "fe9f6ed36fa6cb87f4ac80f514ab68745b0088a131b0826df713aa6ca27b70d2",
+    "meta.yaml": "64f7a2814e18a9686ebb4a5d612c88401a1757dfec462ae4b9c748e886241975",
+}
 
-    `state.finding_sources`에 센티넬을 채워도, `_fuzz_entrypoint`가 뭘 찾아도, `finding.path`가
-    비어 있지 않아도 — v2 렌더(FINDING·SOURCE·FACTS)는 **이 PR의 입력을 하나도 안 받는다.**
-    FACTS에 `fuzz_entrypoint` 키 자체가 없는 것도 같이 본다(opt-in — 키가 있으면 그것만으로도
-    main과 바이트가 달라진다)."""
-    sentinel = "SENTINEL_SHOULD_NEVER_REACH_V2"
-    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])  # 기본은 v2
-    state, finding = _pov_state(ctx)
-    capsule = state.finding_capsules[finding.finding_id]
-    assert finding.path, "픽스처 전제 — 경로 단계가 있어야 '안 실린다'는 것이 의미가 있다"
-    state.finding_sources[finding.finding_id] = runner._Once(lambda: sentinel)
-    scripted = dataclasses.replace(
-        scripted, resolve_requests=lambda _q: _resolution(file=capsule.target.file)
+
+def _pre_pr_finding_block(finding) -> str:  # noqa: ANN001
+    """main `d85ea62`의 `nodes.pov._describe_finding`를 그대로 옮긴 것(경로는 개수만)."""
+    return (
+        f"{finding.finding_id} · CWE: {finding.cwe} · {finding.title}\n"
+        f"근거(rca): {finding.rca_draft}\n"
+        f"경로 단계 수: {len(finding.path)}"
     )
 
-    runner._run_pov_hops(scripted, state, finding, capsule)
 
+def _render_v2_hop0(ctx, *, new_inputs: bool):  # noqa: ANN001, ANN202, F811
+    """pov v2(기본 `dev_fake`)로 hop0을 렌더한다. `new_inputs`면 이 PR의 입력을 **전부** 채운다 —
+    `state.finding_sources`·resolver가 찾은 진입점·`trigger_status`·`repro_spec`."""
+    from src.schemas.finding import ReproSpec
+
+    scripted = _scripted(ctx, [PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    if new_inputs:
+        finding = finding.model_copy(
+            update={
+                "trigger_status": "triggered_by_input",
+                "repro_spec": ReproSpec(steps=["run /tmp/poc"], expected_signal="ASAN overflow"),
+            }
+        )
+        state.finding_sources[finding.finding_id] = runner._Once(lambda: "SENTINEL_WIDE_SOURCE")
+        scripted = dataclasses.replace(
+            scripted, resolve_requests=lambda _q: _resolution(file=capsule.target.file)
+        )
+    else:
+        finding = finding.model_copy(update={"trigger_status": None, "repro_spec": None})
+        scripted = dataclasses.replace(scripted, resolve_requests=None)
+    runner._run_pov_hops(scripted, state, finding, capsule)
     _, prompt = scripted.models.prompts[0]
-    assert sentinel not in prompt.body, "v2가 state.finding_sources의 넓은 SOURCE를 받았다"
-    # 심볼 문자열 자체는 title·rca에도 우연히 나타날 수 있다(픽스처가 `safe_copy`를 쓴다) —
-    # wide 전용 **구조**(경로 목록 헤더)로 가른다.
-    assert "경로(source→sink):" not in prompt.body, "v2 FINDING에 경로 목록이 생겼다"
-    assert "재현 근거(repro_spec)" not in prompt.body, "v2 FINDING에 repro_spec 유무 줄이 생겼다"
-    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
-    assert "fuzz_entrypoint" not in facts, "v2 FACTS에 fuzz_entrypoint 키가 생겼다"
+    return finding, prompt
+
+
+def test_pov_v2_prompt_ignores_the_pr_inputs_and_keeps_the_pre_pr_finding_format(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 적대적 리뷰 2026-10-02 MEDIUM-4 — 배선된 pov v2의 hop0 프롬프트가
+    **이 PR의 입력에 의존하지 않는다**(`docs/evaluation.md` §2.3-4).
+    이 검사가 실제로 무는 것은 넷이다:
+
+    ① v2 FINDING 블록이 main `d85ea62`의 옛 모양과 **글자째** 같다(`_pre_pr_finding_block`).
+    ② 이 PR의 입력을 전부 채운 렌더와 하나도 안 채운 렌더가 **prefix·body 모두 같다**
+       (SOURCE·FACTS·FINDING 어디로도 새지 않는다).
+    ③ FACTS 키 집합이 opt-in 둘(`slice_criterion`·`fuzz_entrypoint`)을 뺀 `FACT_KEYS`와 같다.
+    ④ v2 프롬프트 파일(prefix·body·meta)의 해시가 main blob과 같다 — 파일이 안 바뀌었다.
+
+    ⚠ **「main과 바이트가 같다」의 전부는 아니다.** v2 요청에는 이 검사가 못 보는 차이가 둘 더
+    있다 — `PovAction` 스키마(docstring이 `response_format`의 `description`으로 실리고 `tool`
+    enum에 `gdb`가 있다)와 hop0 `POV_HOP` trace의 `fuzz_*` 필드(모델 입력이 아니다). 옛 렌더 전체를
+    저장해 둔 골든이 아니라 위 넷의 합이다."""
+    from src.orchestrator.prompt_loader import FACT_KEYS, PROMPTS_DIR
+
+    finding_a, prompt_a = _render_v2_hop0(ctx, new_inputs=True)
+    finding_b, prompt_b = _render_v2_hop0(ctx, new_inputs=False)
+
+    assert finding_a.path, "픽스처 전제 — 경로 단계가 있어야 옛 모양과 새 모양이 갈린다"
+    block = _pre_pr_finding_block(finding_a)
+    assert f"## 취약점 (Auditor 확정)\n\n{block}\n\n## 대상" in prompt_a.body, (
+        "v2 FINDING 블록이 main의 옛 모양이 아니다"
+    )
+    # 두 렌더는 같은 ctx에서 연달아 돌아 finding id만 다르다(`find_0001`↔`find_0002`).
+    # 그것만 지운다.
+    body_a = prompt_a.body.replace(finding_a.finding_id, "<ID>")
+    body_b = prompt_b.body.replace(finding_b.finding_id, "<ID>")
+    assert body_a == body_b, "v2 body가 이 PR의 입력에 따라 달라졌다"
+    assert prompt_a.prefix == prompt_b.prefix
+    facts = json.loads(prompt_a.body.split("```json")[1].split("```")[0])
+    assert set(facts) == set(FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint"}
+    for name, digest in _V2_PROMPT_SHA256.items():
+        text = (PROMPTS_DIR / "pov" / "v2" / name).read_text(encoding="utf-8")
+        assert hashlib.sha256(text.encode()).hexdigest() == digest, f"v2/{name}이 바뀌었다"
+
+
+def test_pov_v2_observation_does_not_gain_the_log_tail_through_the_loop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 통합 수준에서 v2 관측이 **한 줄**이다 — `_pov_observation(wide=...)`를 직접 부르는 검사는
+    `_run_pov_hops`가 `wide=pov_wide` 대신 `True`를 넘기는 변이를 못 본다(독립 검토가 이 변이의
+    생존을 보였다). v3는 같은 로그의 꼬리가 다음 홉 user 턴에 실린다."""
+    log = "LOG_TAIL_SENTINEL: heap-buffer-overflow\n"
+
+    def bodies(version: str | None) -> list[str]:
+        base = ctx if version is None else _with_pov_version(ctx, version)
+        scripted = _scripted(
+            base,
+            [PovAction(action="inspect", tool="asan", rationale="look"),
+             PovAction(action="submit", rationale="done")],
+        )
+        scripted = dataclasses.replace(scripted, read_payload=lambda _ref: log)
+        state, finding = _pov_state(ctx)
+        runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+        return [p.body for _, p in scripted.models.prompts]
+
+    v2 = bodies(None)  # 기본 dev_fake의 pov 좌석은 v2다
+    v3 = bodies("v3")
+
+    assert len(v2) == len(v3) == 2
+    assert "LOG_TAIL_SENTINEL" not in v2[1], "v2 관측에 도구 로그 꼬리가 실렸다"
+    assert "\n" not in v2[1], "v2 관측이 한 줄이 아니다"
+    assert "LOG_TAIL_SENTINEL" in v3[1], "v3 관측에 꼬리가 안 실렸다"
 
 
 def _asan_evidence() -> object:
@@ -1348,3 +1432,168 @@ def test_pov_stop_reason_and_event_kind_spellings_are_pinned() -> None:
     assert PovStopReason.REPEAT_SPEC.value == "repeat_spec"
     assert PovStopReason.SUBMITTED.value == "submitted"
     assert EventKind.POV_HOP.value == "pov_hop"
+
+
+# --- 독립 검토 2026-10-02 — 변이 주입으로 생존이 확인된 자리를 무는 성질 단언 ------------
+#
+# 아래 검사는 전부 `src` 모듈을 **직접 변이**(소스 줄 제거·값 치환)해 빨개지는 것을 보고 썼다.
+# 오염은 테스트 모듈 사본이 아니라 `runner`·`pov` 소스 자체에 건다.
+
+
+def _wired_entrypoint_ctx(ctx, raw: str):  # noqa: ANN001, ANN202, F811
+    """`raw`를 `fuzz.c`로 쓰고 **진짜 `resolve()`**를 꽂은 ctx — 원문·상한 상호작용을 본다."""
+    (_root_of(ctx) / "fuzz.c").write_text(raw + "\n", encoding="utf-8")
+    n_lines = raw.count("\n") + 1
+
+    def table(name: str):  # noqa: ANN001, ANN202
+        if name != "functions":
+            return None
+        return {
+            "LLVMFuzzerTestOneInput": ({"file": "fuzz.c", "line_start": 1, "line_end": n_lines},)
+        }
+
+    def read_lines(relative: str):  # noqa: ANN001, ANN202
+        return split_source((_root_of(ctx) / relative).read_bytes())
+
+    return dataclasses.replace(
+        ctx, resolve_requests=partial(resolve, table=table, read_lines=read_lines)
+    )
+
+
+def test_fuzz_entrypoint_keeps_the_head_and_says_so_when_the_source_exceeds_the_cap(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 `source[:_FUZZ_ENTRYPOINT_CHARS]` 자르기를 지우는 변이가 살아 있었다 —
+    MEDIUM-1 수정으로 이 자르기가 **유일한 글자 상한**이 됐다(resolver는 위치만 쓴다).
+    상한을 넘는 원문은 **앞부분**이 남고(진입점의 머리 — 최소 길이 검사·첫 파서 호출),
+    잘린 사실이 `reason`에 남는다(§0 — 조용히 자르지 않는다)."""
+    raw = "\n".join(f"  stmt_{i:03d}(buf, len); /* {'x' * 30} */" for i in range(120))
+    assert len(raw) > runner._FUZZ_ENTRYPOINT_CHARS, "픽스처 전제 — 원문이 상한을 넘어야 한다"
+
+    result = runner._fuzz_entrypoint(_wired_entrypoint_ctx(ctx, raw), "fuzz.c")
+
+    assert result["found"] is True
+    assert len(str(result["source"])) == runner._FUZZ_ENTRYPOINT_CHARS
+    assert result["source"] == raw[: runner._FUZZ_ENTRYPOINT_CHARS], "앞부분이 아니다"
+    assert str(len(raw)) in str(result["reason"]), "원문 길이를 사유에 안 남겼다"
+    assert "잘랐" in str(result["reason"])
+
+
+def test_fuzz_entrypoint_is_not_found_when_the_indexed_source_reads_empty(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 위치는 있는데 원문이 비면 `found=True`가 거짓이다 — 이를 통과시키는 변이가 살아 있었다."""
+    wired = dataclasses.replace(ctx, resolve_requests=lambda _q: _resolution(file="util.c"))
+    wired = dataclasses.replace(wired, read_source=lambda _loc: "")
+
+    result = runner._fuzz_entrypoint(wired, "util.c")
+
+    assert result["found"] is False
+    assert result["source"] == ""
+    assert (result["file"], result["lines"]) == ("util.c", [1, 2])
+    assert "원문을 못 읽었다" in str(result["reason"])
+
+
+def test_fuzz_entrypoint_reasons_are_pairwise_distinct_by_cause(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 「여섯으로 가른다」(`_fuzz_entrypoint` docstring)가 **실제로** 갈리는지 — 인덱스 없음과
+    이름 없음을 합치거나 `truncated` 갈래를 지우는 변이가 살아 있었다. 고칠 자리가 인덱스인지
+    이름인지
+    상한인지가 사유로 갈려야 한다(§0). 갈래마다 **고유한 표지**를 단언한다."""
+    from src.schemas.enums import UnfilledReason
+    from src.schemas.need_evidence import Resolution, Unfilled
+
+    def resolution(**kw):  # noqa: ANN003, ANN202
+        base = {"followup_text": "", "blocks": (), "unfilled": (), "already": (), "truncated": ()}
+        return Resolution(**(base | kw))
+
+    other = Unfilled(
+        kind="function", target="SomethingElse", reason=UnfilledReason.NOT_FOUND, text="x"
+    )
+    same = Unfilled(
+        kind="function", target="LLVMFuzzerTestOneInput",
+        reason=UnfilledReason.NOT_FOUND, text="Not resolved: SAME_TARGET",
+    )
+    cases = {
+        "no_index": (resolution(), "인덱스가 없거나 v1"),
+        "name_missing": (resolution(unfilled=(other,)), "함수 표에 LLVMFuzzerTestOneInput가 없다"),
+        "truncated": (
+            resolution(truncated=("LLVMFuzzerTestOneInput",)), "resolver 조회 상한"
+        ),
+        "resolver_said": (resolution(unfilled=(same,)), "진입점 조회가 실패했다 — Not resolved"),
+    }
+    reasons = {}
+    for name, (res, marker) in cases.items():
+        wired = dataclasses.replace(ctx, resolve_requests=lambda _q, r=res: r)
+        result = runner._fuzz_entrypoint(wired, "util.c")
+        assert result["found"] is False, name
+        assert marker in str(result["reason"]), f"{name}: {result['reason']!r}"
+        reasons[name] = result["reason"]
+    assert len(set(reasons.values())) == len(cases), f"사유가 합쳐졌다: {reasons}"
+
+
+def test_pov_hop0_event_records_the_entrypoint_lookup_and_only_hop0_does(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 `POV_HOP`의 `fuzz_found`·`fuzz_file`·`fuzz_reason` 기록을 지우는 변이가 살아 있었다 —
+    「진입점 탐색 성공률이 이제 `fuzz_found`로 잰다」는 주장을 무는 검사가 없었다.
+    성공·실패 **둘 다**
+    값으로 본다(항상 True를 쓰는 변이를 막는다). hop0에만 실린다."""
+
+    def hop_events(resolver):  # noqa: ANN001, ANN202
+        before = len(_hops(ctx))  # 같은 ctx·trace를 두 번 쓴다 — 이번 실행의 이벤트만 센다
+        scripted = _scripted(
+            ctx,
+            [PovAction(action="inspect", tool="build", rationale="look"),
+             PovAction(action="submit", rationale="done")],
+        )
+        scripted = dataclasses.replace(scripted, resolve_requests=resolver)
+        state, finding = _pov_state(ctx)
+        capsule = state.finding_capsules[finding.finding_id]
+        runner._run_pov_hops(scripted, state, finding, capsule)
+        return capsule, [e.data for e in _hops(scripted)[before:]]
+
+    capsule, found = hop_events(lambda _q: _resolution(file="util.c"))
+    _, missing = hop_events(lambda _q: _resolution(name=""))
+
+    assert found[0]["fuzz_found"] is True and found[0]["fuzz_file"] == "util.c"
+    assert found[0]["fuzz_reason"] == ""
+    assert missing[0]["fuzz_found"] is False and missing[0]["fuzz_file"] == ""
+    assert missing[0]["fuzz_reason"], "못 찾은 사유가 trace에 없다"
+    assert all("fuzz_found" not in data for data in found[1:] + missing[1:]), "hop0 밖에도 실렸다"
+
+
+def test_v3_finding_block_carries_trigger_status_repro_presence_and_step_labels(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 `trigger_status` 줄·`repro_spec` 유무 줄·`[source/sink]` 단계 라벨을 지우거나
+    항상 「없다」로 쓰는 변이가 살아 있었다. v3로 렌더해 **그 값이 프롬프트에 닿는지** 본다
+    (노드 직접 호출이 아니라 러너 경유). `repro_spec`은 **유무만**이다 — 본문(`steps`)이 새면
+    참조 PoC 누출 경로가 열린다."""
+    from src.schemas.finding import ReproSpec
+
+    def finding_block(**update):  # noqa: ANN003, ANN202
+        scripted = _scripted(
+            _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+        )
+        state, finding = _pov_state(ctx)
+        finding = finding.model_copy(update=update)
+        runner._run_pov_hops(
+            scripted, state, finding, state.finding_capsules[finding.finding_id]
+        )
+        body = scripted.models.prompts[0][1].body
+        return finding, body.split("## 취약점 (Auditor 확정)")[1].split("## 대상")[0]
+
+    secret = ReproSpec(steps=["SECRET_STEP /tmp/poc"], expected_signal="SECRET_SIGNAL overflow")
+    finding, with_spec = finding_block(trigger_status="TRIGGER_SENTINEL", repro_spec=secret)
+    _, without = finding_block(trigger_status=None, repro_spec=None)
+
+    assert "촉발 상태(trigger_status): TRIGGER_SENTINEL" in with_spec
+    assert "재현 근거(repro_spec): 있다" in with_spec
+    assert "재현 근거(repro_spec): 없다" in without
+    assert "trigger_status" not in without, "trigger_status가 None인데 줄이 실렸다"
+    leaked = "SECRET_STEP" in with_spec or "SECRET_SIGNAL" in with_spec
+    assert not leaked, "repro_spec 본문이 샜다"
+    for number, step in enumerate(finding.path, start=1):
+        assert f"{number}. [{step.step.value}] {step.symbol}" in with_spec, "단계 라벨이 없다"
