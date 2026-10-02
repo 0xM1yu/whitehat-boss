@@ -1294,7 +1294,9 @@ def _emit_pov_hop(
 
     `poc`는 **그 홉의 gen이 조립한 PoC**다 — 있으면 맨 hex sha256을 `poc_sha256`으로 싣는다(종단
     이벤트의 `poc_sha256`과 같은 형식이라 바로 대조된다). 종단을 건너뛰는 중단 경로(예산 소진·서버
-    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이다 — 못 잡는 경로는 `poc_log` 모듈 docstring.
+    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이지만 **이 이벤트가 나간 뒤에 끊긴 경우뿐이다**
+    — 그 홉 자신의 도구 호출에서 끊기면(토큰 예산 소진이 그 경로다) 이벤트도 해시도 없다(`poc_log`
+    모듈 docstring의 「한계」).
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if action is not None:
@@ -1355,6 +1357,10 @@ def _pov_finish(
                 "poc_write_error": type(exc).__name__,
                 # `str(exc)`가 아니라 `strerror`다 — 앞의 것은 파일의 절대경로를 싣고 trace는
                 # 경로를 안 싣는다(재현성 비교 단위).
+                # ⚠ `strerror`는 사람이 읽는 부가 문구이지 안정 키가 아니다 — OS 로케일을 따르고
+                # (이 장비 한국어 Windows에서 `mkdir`·`os.replace`는 한국어, `open`은 영어
+                # `File exists` — 2026-10-02 실측) 합성 예외에는 `None`이라 빈 문자열이다.
+                # 기계가 읽는 키는 `poc_write_error`다.
                 "poc_write_error_detail": exc.strerror or "",
             }
         else:
