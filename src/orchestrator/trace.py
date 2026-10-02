@@ -253,9 +253,15 @@ class EventKind(StrEnum):
     # `scout._fit_slice`).
     # 줄을 뺀 Scout 호출 1건당 1행이고 **이벤트 부재 = 안 뺐다**(옵션이 꺼졌거나 들었다).
     # `slice_id`·`role`(자리)·`budget`(몫 = 창 − 출력 상한 − 여유)·`tokens_before`·`tokens_after`
-    # (프롬프트 전체)·`lines_before`·`lines_kept`(렌더 줄 수)·`fit`(줄 하나로도 안 들면 false)·
-    # `token_counter`(`model` = 그 자리 토크나이저 · `estimate` = 글자 근사)를 싣는다.
-    # `subject_id`는 후보다.
+    # (프롬프트 전체 — `model`이면 그 자리 토크나이저, `estimate`면 하한비 3.28)·`lines_before`·
+    # `lines_kept`(**코드 줄 수** — 배너 줄은 안 센다. 렌더 줄 수가 아니다: 렌더는 파일마다 배너
+    # 한 줄이 더 붙는다)·`fit`(줄 하나로도 안 들면 false)·`entry_kept`(entry 줄이 남았나 — 렌더
+    # 형식이 어긋나 entry가 조용히 빠지면 false, #375 L-1)·`token_counter`(`model` = 그 자리
+    # 토크나이저 · `estimate` = 글자 하한비 근사 3.28)를 싣는다. `subject_id`는 후보다.
+    #
+    # ⚠ **모델은 하네스가 뺐다는 것을 모른다**(#375 M-1). v3 prefix는 빠진 줄을 「슬라이서가
+    # 뺐다」고 서술하는데 하네스가 뺀 줄은 슬라이서가 **남긴** 줄이다. 이 이벤트가 사후에 그 사실을
+    # 남기는 유일한 자리다 — 프롬프트엔 트림 표식이 없다(가드는 #351 선례, 이 PR 밖).
     SCOUT_SLICE_TRIMMED = "scout_slice_trimmed"
     # 이 run이 **어느 토큰 카운터로 셌는가** (#96 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
