@@ -88,7 +88,7 @@
 기각한 대안이다).
 
 지금은 endpoint가 갈리지 않는다. 서버와 클라이언트를 같은 노드에서 돌리므로 어느 장비에서든
-`127.0.0.1`이다. 그래서 `config/`는 한 벌이고 장비별 오버레이가 없다. 이 전제가 깨지면
+`127.0.0.1`이다. 그래서 `config/`는 한 벌이고 장비별 오버레이가 없다(⏵ 2026-09-29 — `config/serving/<device>.yaml`이 들어와 장비별 파일이 하나 생겼다: 서버 기동 조건만 들고 endpoint·registry는 안 가른다 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안」 절). 이 전제가 깨지면
 (원격에서 붙거나, 공용 계정이라 포트가 사용자별로 갈리거나) 다시 판단한다 —
 [decisions/0006](decisions/0006-record-the-device-a-run-happened-on.md)의 "후속" 참조.
 

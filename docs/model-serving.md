@@ -266,7 +266,7 @@ python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \
 `source`는 그 스냅샷이 어디서 왔는지다(`hf://org/repo@rev` 또는 `file:///경로`). 후보가
 전부 커뮤니티·서드파티 산출물이라(2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의
 모델이 리포지터리마다 다르다**(⏵ 2026-09-24 — 가중치를 bf16 원본 그대로 쓰기로 해(@danielcho02) 지금 로스터에서 서드파티
-산출물은 `seccoderx-8b`(`hf://SecCoderX/…`) 하나이고 나머지는 제작사 리포다 — `config/models.yaml`의 `source`. 리비전을
+산출물은 `seccoderx-8b`(`hf://SecCoderX/…`)와 `feyospace-v1-small`(`hf://feyospace/…` — 2026-09-30 8단계 pov 좌석) 둘이고 나머지는 제작사 리포다 — `config/models.yaml`의 `source`. 리비전을
 적어야 하는 이유는 그대로다) — checksum이 안 맞을 때 이 필드가 없으면 어느 리포의 어느
 리비전이었는지 답할 수 없다. 형식은 강제하지 않는다(ADR 0006이 `--device` 라벨 집합을
 열어 둔 것과 같은 판단).

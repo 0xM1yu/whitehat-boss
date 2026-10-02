@@ -139,7 +139,7 @@ agent:
   entry 줄이기). 전부 기본 꺼짐이라 위 서술 그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
   `cli` run·doctor가 선다
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
-  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
+  `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v4_t1`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
   **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
@@ -207,7 +207,7 @@ materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호�
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
   (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해
-  `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다).
+  `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다 — ⏵ 2026-10-02: #327은 2026-10-01에 머지됐고 PoV 화이트리스트에는 지금도 `gdb`가 없다).
   ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
   — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다. (⏵ 2026-10-02 — 「호스트 후속」만이 아니다: 하네스가 바이트를 버린다 — 아래 「채점 경로의 벽」.)
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
