@@ -1216,7 +1216,18 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
         # 위 `_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS` 주석.
         max_chars=_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS,
     )
-    resolution = ctx.resolve_requests(query)
+    try:
+        resolution = ctx.resolve_requests(query)
+    except (OSError, ValueError) as exc:
+        # ⏵ 2026-10-02 추가(적대적 리뷰 LOW) — **이 조회는 보조 정보지 pov의 필수 전제가
+        # 아니다.** `safe_join`의 `PathEscape`(`ValueError` 하위형, `src/paths.py`)처럼 "조용히
+        # 안 넘기고 실패시킨다"로 설계된 예외가 인덱스 쪽 문제(손상된 경로 등)로 올라오면, 이
+        # 함수 **밖**에는 이것을 잡는 except가 없다(`_run_pov_hops`의 `except (ModelGatewayError,
+        # SchemaParseError)`는 이 타입들을 안 본다) — 그러면 진입점 탐색 하나가 run 전체를
+        # 멈춘다. 체계적 pov 실패는 run을 못 멈춘다는 원칙(§ 이 함수 docstring)에 맞춰 여기서
+        # 삼키고 "못 찾았다"로 내려간다.
+        missing["reason"] = f"진입점 조회가 예외로 실패했다: {type(exc).__name__}: {exc}"
+        return missing
     if resolution is None:
         # 훅이 꽂혀 있는데 `None`을 돌려주는 배선(스텁·부분 구현)이 실재한다 — 2026-10-02에
         # `test_run_pipeline_wires_resolve_requests_from_deps`가 그 경로로 터졌다. 타입은
@@ -1265,7 +1276,18 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     # 읽는다(적대적 리뷰 2026-10-02 H-1). 그래서 위치만 받고 **원문은 직접 읽는다.**
     lines = sorted(block.lines)
     lo, hi = lines[0], lines[-1]
-    source = ctx.read_source(Location(file=block.file, line_start=lo, line_end=hi))
+    try:
+        source = ctx.read_source(Location(file=block.file, line_start=lo, line_end=hi))
+    except (OSError, ValueError) as exc:
+        # 위 `ctx.resolve_requests` 호출의 같은 가드 — 인덱스가 가리키는 파일이 대상 루트 밖이면
+        # `read_source`(`safe_join`)가 `PathEscape`(`ValueError`)로 실패시킨다. 보조 조회 하나가
+        # run 전체를 멈추면 안 된다.
+        missing["file"] = block.file
+        missing["lines"] = [lo, hi]
+        missing["reason"] = (
+            f"{block.file}:{lo}-{hi} 읽기가 예외로 실패했다: {type(exc).__name__}: {exc}"
+        )
+        return missing
     if not source:
         # 위치는 있는데 원문을 못 읽었다 — 인덱스와 디스크가 어긋난 것이고, 빈 `source`를
         # `found=True`로 내보내면 "찾았다"가 거짓이 된다.
