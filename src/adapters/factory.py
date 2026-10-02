@@ -184,7 +184,8 @@ class Deps:
     # `RunRecord.slicer`가 될 슬라이서 산출 요약. `slice_refs`와 같이 `None`이다.
     slicer: dict[str, str | int | None] | None = None
     # 슬라이스 id → 렌더(gutter·배너). `build_deps`가 run 전에 **전부** 렌더해 둔 dict의 조회다 —
-    # drift가 첫 모델 호출 전에 `SliceInputError`로 나야 해서다(러너는 그 예외를 안 잡는다).
+    # drift가 첫 모델 호출 전에 `SliceInputError`로 나야 해서다(run 도중에 나면 앞 슬라이스의 호출을
+    # 이미 태운 뒤다).
     # Scout `SOURCE`와 Retriever의 `target_function`이 이 한 조회에서 나온다 — `read_source`가
     # Retriever와 같은 함수여야 하는 것과 같은 이유다.
     read_slice: Callable[[str], str] = _no_slices
@@ -424,8 +425,11 @@ def build_deps(
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
     `slices_path`를 믿을 수 없으면 여기서 `SliceInputError`로 멈춘다 — 모델을 부르기 전이다.
-    **렌더(drift 검사)까지 여기서 전부 한다** — 러너는 그 예외를 안 잡으므로 run 도중에
-    렌더하면 앞 슬라이스의 모델 호출을 태운 뒤 산출물 없이 죽는다(`slices` 모듈 docstring).
+    **렌더(drift 검사)까지 여기서 전부 한다** — run 도중에 렌더하면 앞 슬라이스의 **모델 호출을
+    태운 뒤** 죽는다(`slices` 모듈 docstring).
+    ⏵ 2026-10-02 정정: *"러너는 그 예외를 안 잡으므로 … 산출물 없이"*는 낡았다. 최후 방어선이
+    생겨 **매니페스트는 남는다**(사유 `unforeseen_failure`, `report.md`는 없다). 태운 호출이
+    안 돌아오는 것이 이 설계의 이유다.
 
     `device`는 교대 프로필의 장비 파일(`config/serving/<device>.yaml`)을 고른다. 파일이 없거나
     registry와 어긋나면 `ConfigError`로 멈춘다 — 역시 모델을 부르기 전이다.
