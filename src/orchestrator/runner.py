@@ -811,7 +811,7 @@ def run_pipeline(
     last, stop_reason = spec.stop_at()
     state = _Accumulator()
     stopped_after = None if stop_reason is None else last
-    # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(아래 두 자리).
+    # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(`finally` 바로 뒤).
     unforeseen: Exception | None = None
     # heartbeat: 러너가 살아 있는지를 밖에서 읽게 한다(이슈 #208 ②). `PromptLog`와 같은
     # 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일 때만 켠다. 모델 호출이 멈춰도 이
@@ -864,23 +864,20 @@ def run_pipeline(
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
     except Exception as exc:
         # 🔴 **최후 방어선 (S0) — 범위는 `_analyze`다.** 위 다섯은 **예상한** 형이고, 이 갈래는
-        # **`_analyze`에서 난 예상 밖 형 전부**다.
-        # ⚠ **후처리는 안 덮는다.** 이 `try`가 감싸는 것은 `_analyze` 하나이고, 아래 GPU 경고·
-        # 게이트 재등급·`report.run`·`finish_run`은 **try 밖**이라 거기서 난 예외는 **지금도
-        # `write_manifest` 앞을 뚫는다**(적대적 리뷰 2026-10-02이 네 자리 전부에 주입해 확인).
-        # 범위를 넓히는 것은 별 작업이다 — 아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다.
-        # 그런 예외가 하나라도 나면 `write_manifest`(아래) 앞을 뚫고 나가 **산출물이 통째로
-        # 사라졌다** — 위 `ModelGatewayError` 갈래의 주석이 적어 둔 zlib 사고가 정확히 그것이고,
-        # 그 갈래는 **그 형에만** 방어선을 세웠다.
+        # **`_analyze`에서 난 예상 밖 형 전부**다. 그런 예외가 하나라도 나면 `write_manifest`(아래)
+        # 앞을 뚫고 나가 **산출물이 통째로 사라졌다** — 위 `ModelGatewayError` 갈래의 주석이 적어 둔
+        # zlib 사고가 정확히 그것이고, 그 갈래는 **그 형에만** 방어선을 세웠다.
+        # ⚠ **`_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트 재등급·`report.run`)에서 처음 나는
+        # 예외는 안 덮는다** — 이 `try`가 감싸는 것은 `_analyze` 하나다. 범위를 넓히는 것은 별 작업이다
+        # (아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다).
         #
         # 🔴 **삼키지 않는다 — 적고, 매니페스트를 쓰고, 다시 던진다.**
         # 삼키면 두 가지가 깨진다: ① 호출자(`cli.execute`)가 run을 성공으로 읽는다
         # ② `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 — 그쪽은
         # **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. 최후 방어선의 뜻은 "삼킨다"가
-        # 아니라 "**증거를 남기고** 올려 보낸다"다.
+        # 아니라 "**증거를 남기고** 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.UNFORESEEN_FAILURE
-        warnings.append(f"예상 밖 예외로 중단했다: {type(exc).__name__}: {exc}")
         unforeseen = exc
     finally:
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
@@ -907,6 +904,35 @@ def run_pipeline(
             # 있는데 멈춤)으로 본다 — 죽음과 갈린다.
             if heartbeat is not None:
                 heartbeat.stop()
+
+    if unforeseen is not None:
+        # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02 HIGH 1).
+        # 후처리의 `gate.evaluate` 재등급은 `_analyze`의 6단계 게이트와 **같은 순수 함수**라 그
+        # 결함이 거기서 **또 난다** — 2차 예외가 `write_manifest` 앞을 뚫고 원 스택을 덮었다. 렌더는
+        # 던지는 순간 쓸 곳(`cli.run`)에 못 가 어차피 안 쓰이고, `report.run`이 남기는 9단계 진입은
+        # 거기 간 적 없는 run을 간 것으로 읽히게 한다.
+        # 매니페스트마저 못 쓰면(디스크·권한) 그 예외는 `add_note`로 **원 예외에 붙이고** 원 예외를
+        # 던진다. ⚠ 아래 정상 경로의 `finish_run`·`write_manifest`와 같은 호출이다 — 인자를 바꾸면
+        # 두 곳을 같이 고친다.
+        #
+        # ⚠ **`report.md`는 안 남는다.** 리포트를 파일로 쓰는 것은 `cli.run`이 `execute` **반환
+        # 뒤**에 한다 — 여기서 던지면 그 자리에 도달하지 않는다. 프로세스는 exit 1이고 남는 것은
+        # 매니페스트·trace·`state.db`다(적대적 리뷰 2026-10-02 실측). 리포트까지 남기려면 쓰기를
+        # `run_pipeline` 안으로 옮기는 별 작업이 필요하다.
+        try:
+            crashed = state_machine.finish_run(
+                record,
+                finished_at=max(now(), started_at),
+                stopped_after=stopped_after,
+                reason=stop_reason,
+                store=ctx.store,
+                trace=trace,
+            )
+            if run_dir is not None and not spec.dry_run:
+                write_manifest(run_dir, crashed)
+        except Exception as exc:
+            unforeseen.add_note(f"매니페스트를 남기지 못했다: {type(exc).__name__}: {exc}")
+        raise unforeseen
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -1024,15 +1050,6 @@ def run_pipeline(
     )
     if run_dir is not None and not spec.dry_run:
         write_manifest(run_dir, finished)
-    if unforeseen is not None:
-        # 🔴 **여기서 다시 던진다** — **매니페스트를 쓴 뒤**다. 위 `except Exception`이 잡아 둔
-        # 예상 밖 예외이고, 삼키면 run이 성공으로 보인다(그 갈래의 주석이 근거).
-        #
-        # ⚠ **`report.md`는 안 남는다.** `report.run`은 여기서 렌더만 하고, 파일로 쓰는 것은
-        # `cli.run`이 `execute` **반환 뒤**에 한다 — 여기서 던지면 그 자리에 도달하지 않는다.
-        # 프로세스는 exit 1이고 남는 것은 매니페스트·trace·`state.db`다(적대적 리뷰 2026-10-02
-        # 실측). 리포트까지 남기려면 쓰기를 `run_pipeline` 안으로 옮기는 별 작업이 필요하다.
-        raise unforeseen
     return RunResult(
         record=finished,
         report=rendered,
