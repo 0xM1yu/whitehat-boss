@@ -32,7 +32,7 @@
 > ③ **「ADR 0012의 Phase 7에 CyberGym이 없다」** → `docs/decisions/0012-harness-canon-v2.md:196`이 `5990dff`(2026-09-30 14:32 KST)부터 「검증 벤치마크 = CyberGym Level 1」을 적는다(조민규 결정 2026-09-30 — 원천 링크는 저장소에 없다고 그 줄이 스스로 적는다).
 > ④ **「PR #327(gdb) — 이 브랜치」** → `5cf5c20`(2026-10-01 03:29 KST)으로 main에 머지됐다.
 > ⑤ **「모델이 도구를 반복 호출하는 루프는 없다 · 모델은 도구를 직접 못 부른다」** → **PoV에 한해** 낡았다 — 매 홉 PoV 모델이 `PovAction`(`gen`·`inspect`·`submit`)을 내고 러너가 실행해 관측을 되먹인다(`_run_pov_hops`).
-> tool-calling API가 아니라 `PovAction` JSON 스키마 출력이다(`prompts/pov/v2/meta.yaml`의 `output_schema`). `PovAction.tool`은 `asan`·`build`·`poc`이고 `gdb`는 아직 아니다(`src/schemas/pov.py:170` — 열린 PR #380이 더한다). Scout·Auditor·Critic은 서술 그대로다.
+> tool-calling API가 아니라 `PovAction` JSON 스키마 출력이다(`prompts/pov/v2/meta.yaml`의 `output_schema`). `PovAction.tool`은 `d85ea62` 기준 `asan`·`build`·`poc`이었고, **#380 머지(`a696f85`, 2026-10-03)로 `gdb`가 더해졌다**(`src/schemas/pov.py:185`) — 단 배선된 v2 프롬프트는 gdb를 안내하지 않는다. Scout·Auditor·Critic은 서술 그대로다.
 > ⑥ **「Level 1 설명이 입력으로 Scout와 정합 · 설명 기반 트리아지」**(§2 표 입력 행·§3.3·§6) → 쓴 시점에 근거가 없었다 — `d9023d9`에서 `vuln_description`은 `src/`에 0건이었다. 설명이 캡슐 `vuln_description` 섹션으로 Scout·Auditor·pov에 가는 것은 `f58e244`(2026-09-30 13:10 KST)부터다(`src/orchestrator/nodes/retrieval.py`, `STATUS.md` §PoV).
 > **지금도 슬라이싱(후보 선정)은 설명을 안 쓴다**(`slicer*.py`에 설명 입력이 없고 `runner._auditor_source`도 안 본다 — 2026-10-02 `git grep`). 간극은 이슈 [#377](https://github.com/0xM1yu/whitehat-boss/issues/377)이 추적한다. 「설명이 위치를 좁힌다」의 원천 쪽 근거 — 논문 논문 §3.3의 위치 정보 필터(정밀도 96%)와 Table 3의 입도 다양성(설명 24~158단어) — 은 [pov-design 맨 위 둘째 노트](2026-09-29-cybergym-pov-design.md)에 양쪽 다 있다.
 > 이 노트가 다루는 것은 위 줄들뿐이다 — 나머지 `[코드]` 서술(예: `validate.tool_for()`의 도구 선택은 `d85ea62`에서도 asan·poc 둘뿐이다)은 이 PR에서 다시 열지 않았다.
