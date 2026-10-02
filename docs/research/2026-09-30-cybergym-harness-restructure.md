@@ -21,9 +21,9 @@
 ③ 선행 도구 한 곳(Google Naptime 4-도구 아키텍처)만 오늘 새로 열었다 — 어제 파일이 `[미확인]`으로 남긴 자리다(§5.1).
 **열람한 어느 페이지에서도 에이전트를 겨냥한 지시문은 발견되지 않았다.**
 
-> ⏵ **2026-10-02 — 이 문서의 `[코드]` 서술은 `d9023d9`(2026-09-29 02:18 KST) 트리 기준이다. 그 뒤 main이 움직여 아래 다섯 묶음은 낡았다**(PR #376 리뷰 반영, 원문은 지우지 않았다).
+> ⏵ **2026-10-02 — 이 문서의 `[코드]` 서술은 `d9023d9`(2026-09-29 02:18 KST) 트리 기준이다. 그 뒤 main이 움직여 아래 여섯 묶음은 낡았다**(PR #376 리뷰 반영, 원문은 지우지 않았다).
 > **그 트리에서는 참이었다** — 2026-10-02에 `d9023d9`를 다시 셌다: `src/schemas/enums.py`의 `POV` 0줄 · `pov`가 든 추적 파일 0건 · `src/`의 `cybergym` 0줄 · ADR 0012의 `CyberGym` 0줄.
-> 아래는 **`d85ea62`(2026-10-02) main에서 직접 센 값**이고, 해당 줄 끝에 「⏵ 위 시점 노트 ①~⑤」를 달았다:
+> 아래는 **`d85ea62`(2026-10-02) main에서 직접 센 값**이고, 해당 줄 끝에 「⏵ 위 시점 노트 ①~⑥」를 달았다:
 > ① **「PoV 코드 0줄 · `Role`에 `POV` 없음 · `prompts/pov/`·`nodes/pov.py` 없음」** → `Role.POV`는 `f1dfde6`(2026-09-30 03:32 KST, `src/schemas/enums.py:89`)부터 있다.
 > 다중 홉 툴 루프(`runner._run_pov_hops`, `85249d3`)와 `prompts/pov/v2/`(`a36d008`)는 2026-09-30 22:04 KST에 들어왔다. `git ls-files | grep -i pov`는 6건이다(`prompts/pov/v2/` 셋 · `src/orchestrator/nodes/pov.py` · `src/schemas/pov.py` · `tests/test_pov_loop.py`).
 > 「`poc` 갈래를 만드는 주체가 없다」는 **부분만 낡았다** — `PovAction`→`assemble_poc`이 PoC 바이트를 만들지만 그 바이트가 도구 입력으로 아직 안 들어간다(`STATUS.md` §PoV 「남은 것」 · `container_tools.py`의 그 주석은 `:473`으로 옮겨 그대로 있다).
@@ -33,6 +33,8 @@
 > ④ **「PR #327(gdb) — 이 브랜치」** → `5cf5c20`(2026-10-01 03:29 KST)으로 main에 머지됐다.
 > ⑤ **「모델이 도구를 반복 호출하는 루프는 없다 · 모델은 도구를 직접 못 부른다」** → **PoV에 한해** 낡았다 — 매 홉 PoV 모델이 `PovAction`(`gen`·`inspect`·`submit`)을 내고 러너가 실행해 관측을 되먹인다(`_run_pov_hops`).
 > tool-calling API가 아니라 `PovAction` JSON 스키마 출력이다(`prompts/pov/v2/meta.yaml`의 `output_schema`). `PovAction.tool`은 `asan`·`build`·`poc`이고 `gdb`는 아직 아니다(`src/schemas/pov.py:170` — 열린 PR #380이 더한다). Scout·Auditor·Critic은 서술 그대로다.
+> ⑥ **「Level 1 설명이 입력으로 Scout와 정합 · 설명 기반 트리아지」**(§2 표 입력 행·§3.3·§6) → 쓴 시점에 근거가 없었다 — `d9023d9`에서 `vuln_description`은 `src/`에 0건이었다. 설명이 캡슐 `vuln_description` 섹션으로 Scout·Auditor·pov에 가는 것은 `f58e244`(2026-09-30 13:10 KST)부터다(`src/orchestrator/nodes/retrieval.py`, `STATUS.md` §PoV).
+> **지금도 슬라이싱(후보 선정)은 설명을 안 쓴다**(`slicer*.py`에 설명 입력이 없고 `runner._auditor_source`도 안 본다 — 2026-10-02 `git grep`). 간극은 이슈 [#377](https://github.com/0xM1yu/whitehat-boss/issues/377)이 추적한다. 「설명이 위치를 좁힌다」의 원천 쪽 근거 — 논문 Table 3의 설명 중앙값 24단어·최대 158단어 — 는 [pov-design 맨 위 둘째 노트](2026-09-29-cybergym-pov-design.md)에 있다.
 > 이 노트가 다루는 것은 위 줄들뿐이다 — 나머지 `[코드]` 서술(예: `validate.tool_for()`의 도구 선택은 `d85ea62`에서도 asan·poc 둘뿐이다)은 이 PR에서 다시 열지 않았다.
 
 ---
@@ -110,7 +112,7 @@
 | 최종 판정 = 차분(외부 채점) | 내부 게이트 E4(대조 없음, #232) | **oracle을 정본 판정, 내부 E4는 필터**(§3.1) |
 | 종료 = 에이전트가 최종 후보 1개 지정 | run 종료는 예산/단계 소진 | **"최종 후보 지정" 종료 단계 신설**(§4.2) |
 | 실행 격리 = network=none·10초·20건/분 | `SandboxSpec` network=none·timeout(같은 성질) | 홉 간 간격·제출 예산 관리만 추가 |
-| 입력 = 설명 + 패치 전 소스(Level 1) | Scout 입력이 슬라이스+설명 — 정합 | 과제 로더(tar → Artifact) 신설 |
+| 입력 = 설명 + 패치 전 소스(Level 1) | Scout 입력이 슬라이스+설명 — 정합 | 과제 로더(tar → Artifact) 신설 ⏵ 근거 없음 — 위 시점 노트 ⑥ |
 | 장부 = `SUBMISSION.md` 스키마(역할별 토큰4 등) | `COUNTED_ROLES=(scout,auditor)`만 | **PoV 토큰 카운터 추가**(§4.1) |
 
 > ⏵ **위 시점 노트 ①②⑤ — 이 표의 「우리 현재」 열은 `d9023d9` 기준이다.** `d85ea62`에서 PoV 역할(`Role.POV`)·과제 로더(`task_loader.py`, `f58e244`)·「최종 후보 지정」 종료(`PovAction.submit` — 마지막 `gen`의 PoC가 final)는 들어왔다.
@@ -141,7 +143,7 @@
 
 ### 3.3 과제 로더 (신설, 0단계 확장) ⏵ 낡음 — 위 시점 노트 ②(`task_loader.py`가 `f58e244`부터 있다)
 
-CyberGym Level 1 과제 = `repo-vul.tar.gz` + `description.txt` + `README.md` + `submit.sh`. 0단계 `preprocess`가 tar를 풀어 `Artifact`(SOURCE)로 만들고 description을 캡슐에 싣는다 — **Scout 입력과 이미 정합**([pov-design §1.8](2026-09-29-cybergym-pov-design.md), 설명 기반 트리아지).
+CyberGym Level 1 과제 = `repo-vul.tar.gz` + `description.txt` + `README.md` + `submit.sh`. 0단계 `preprocess`가 tar를 풀어 `Artifact`(SOURCE)로 만들고 description을 캡슐에 싣는다 — **Scout 입력과 이미 정합**([pov-design §1.8](2026-09-29-cybergym-pov-design.md), 설명 기반 트리아지). ⏵ 근거 없음 — 위 시점 노트 ⑥
 
 ---
 
@@ -239,7 +241,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 
 **전제: "지금은 정적 분석만으로 취약점을 찾지만, PoV엔 동적 분석이 필수다."**
 
-- **맞는 절반**: 우리 트리아지(Scout·Auditor)는 정적이다(슬라이스+설명). 그리고 **최종 검증은 반드시 실행**이다 — CyberGym oracle이 PoC를 실제로 돌려 크래시를 본다(§3). "PoC가 진짜 터지는가"는 정적으로 못 닫는다.
+- **맞는 절반**: 우리 트리아지(Scout·Auditor)는 정적이다(슬라이스+설명). 그리고 **최종 검증은 반드시 실행**이다 — CyberGym oracle이 PoC를 실제로 돌려 크래시를 본다(§3). "PoC가 진짜 터지는가"는 정적으로 못 닫는다. ⏵ 「설명」 입력은 쓴 시점엔 근거 없음(`f58e244`부터) — 위 시점 노트 ⑥
 - **어긋나는 쪽(존재 증명)** `[제3자/출처주장]`: **정적만으로 상위에 간 사례가 있다**([leaderboard §3](2026-09-29-cybergym-leaderboard-harnesses.md)) — 단 **cybergym.io 기본 화면(model-focused) 한정**이다 —
   - XekRung #1(모델트랙 88.9%)은 *"No fuzzing frameworks ... No ... dynamic debugging environments are provided"* — 동적 없이 기본 화면 최상위.
   - XDxAI #19는 *"infer the bug mechanism and construct a candidate raw PoC input"* — 정적 추론→PoC.
