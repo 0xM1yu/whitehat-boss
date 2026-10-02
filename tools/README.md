@@ -8,7 +8,7 @@
 | `harness-tools/` | 1·2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·gdb·인덱서). 아래 참조 |
 | `slicer/` | 오프라인 Joern 슬라이서 모듈들 — 하네스가 파일(`slices.json`)로 받는 입력을 만든다. 하네스는 import하지 않는다. 사용법은 [slicer-README.md](../docs/slicer-README.md) |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
-| `oracle_canary.py` | **채점 전 게이트.** 이 장비가 **입력과 무관한 크래시**(`139`)를 내는지 네 조합 × N회로 잰다 — 참조 PoC와 무해 입력을 `-vul`·`-fix`에 돌려 기대표와 대조하고, 어긋나면 exit≠0. 근거는 [2026-10-02 왕복 보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md) · 이슈 #383 |
+| `oracle_canary.py` | **채점 전 게이트.** 이 장비가 **입력과 무관한 크래시**(`139`)를 내는지 네 조합 × N회로 잰다 — 참조 PoC와 무해 입력을 `-vul`·`-fix`에 돌려 기대표와 대조하고, 어긋나면 exit≠0. 🔴 **실 Docker로는 아직 0회 돌았다** — argv가 보고서 §13 재현 절차의 *모양*이고 저자 `run_container` 자체가 아니다. 근거는 [2026-10-02 왕복 보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md) · 이슈 #383 |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
 
 ### `probe/` 안의 것들
