@@ -16,6 +16,20 @@
 **핵심 대목은 이쪽에서 파일을 다시 열어 대조했다**(§2.1 규칙 — 남의 요약으로 쓰지 않는다).
 **열람한 어느 페이지에서도 에이전트를 겨냥한 지시문은 발견되지 않았다.**
 
+> ⏵ **2026-10-02 — 이 문서의 `[코드]` 서술은 `b52f847`(2026-09-29 00:00 KST, `origin/main`) 트리 기준이다. 그 뒤 main이 움직여 아래 여섯 묶음은 낡았다**(PR #376 리뷰 반영, 원문은 지우지 않았다).
+> **그 트리에서는 참이었다** — 2026-10-02에 `b52f847`을 다시 셌다: `src/schemas/enums.py`의 `POV` 0줄 · `pov`가 든 추적 파일 0건 · `src/`의 `cybergym` 0줄 · ADR 0012의 `CyberGym` 0줄 · `config/models.yaml:468`의 Auditor `prompt_template_version: "v1"`.
+> 아래는 **`d85ea62`(2026-10-02) main에서 직접 센 값**이고, 해당 줄 끝에 「⏵ 위 시점 노트 ①~⑥」를 달았다:
+> ① **「PoV 코드 0줄 · `Role`에 `POV` 없음 · `prompts/pov/`·`nodes/pov.py` 없음 · 선택지 A/B/C 전부 미착수」**(§4.3·§6.2·§9.A 3) → `Role.POV`는 `f1dfde6`(2026-09-30 03:32 KST, `src/schemas/enums.py:89`)부터 있다.
+> 다중 홉 툴 루프(`runner._run_pov_hops`, `85249d3`)와 `prompts/pov/v2/`(`a36d008`)는 2026-09-30 22:04 KST에 들어왔고 `git ls-files | grep -i pov`는 6건이다(`prompts/pov/v2/` 셋 · `src/orchestrator/nodes/pov.py` · `src/schemas/pov.py` · `tests/test_pov_loop.py`).
+> `STATUS.md` §PoV는 지금 B를 「루프 착지(호스트 전)」로 적는다. `container_tools.py`의 「PoC 실행 파일을 만드는 주체가 아직 없다」 주석은 `:473`으로 옮겨 그대로 있고, 그 뜻(PoC 바이트가 도구 입력으로 아직 안 들어간다)은 `STATUS.md` 「남은 것」이 같게 적는다 — **부분만 낡았다.**
+> ② **「`git grep -in cybergym -- src/` 0건」**(§6.1) → 8개 파일 10줄이다(`src/cli.py`·`config.py`·`orchestrator/context.py`·`orchestrator/nodes/retrieval.py`·`orchestrator/runner.py`·`orchestrator/task_loader.py`·`schemas/enums.py`·`schemas/pov.py`). 최초는 `de47057`(2026-09-30 04:19 KST)이다.
+> ③ **「Phase 7의 정본에 CyberGym은 없다 · 「Phase 7 = CyberGym」은 아직 저장소 정본이 아니다 · 벤치마크 선택은 실험팀 소관」**(§6.1·§9.A 1·§9.B) → `docs/decisions/0012-harness-canon-v2.md:196`이 `5990dff`(2026-09-30 14:32 KST)부터 「검증 벤치마크 = CyberGym Level 1」을 적는다(조민규 결정 2026-09-30 — 원천 링크는 저장소에 없다고 그 줄이 스스로 적는다). 같은 줄이 벤치마크 **설계**(데이터셋·정답지·조건)는 그대로 실험팀 몫이라 적는다.
+> ④ **「PR #327(gdb) 미머지」**(§4.4) → `5cf5c20`(2026-10-01 03:29 KST)으로 main에 머지됐다.
+> ⑤ **「미커밋 조사 문서」**(§6.1의 `2026-09-29-cybergym-pov-design.md`) → 그 문서는 PR #376이 처음 저장소에 올린다(`0583ddd`, 2026-10-02 01:47 KST) — 그 PR이 머지되기 전에는 여전히 main에 없다.
+> ⑥ **「Auditor 프롬프트가 v1(`config/models.yaml:468`)이고 v4 PR #328이 열려 있다」**(§4.1 ①) → PR #328은 2026-09-29T12:52:38Z(21:52 KST)에 머지됐고 `6e005ef`(2026-09-29 22:54 KST, 제목 「rewire the canonical auditor from prompt v3 to v4」)가 정본 Auditor를 v4로 배선했다.
+> 지금 `config/models.yaml`의 `qwen3.8-27b` 항목은 `:403`부터이고 `prompt_template_version`은 `:546`의 `v4`다. 이 문서의 `config/models.yaml:` 줄 인용은 전부 `b52f847` 기준이라 줄 번호가 옮겨 갔다.
+> 이 노트가 다루는 것은 위 줄들뿐이다 — 나머지 `[코드]` 서술은 이 PR에서 다시 열지 않았다.
+
 ---
 
 ## 0. 결론 여덟 — 그리고 각각이 무엇을 막는가
@@ -218,7 +232,7 @@ caller/callee/전역변수를 그냥 이어붙이면(naive concatenation) 강한
 
 | 전제 | 2026-09-24 ADR 서술 | **2026-09-29 실제** |
 | --- | --- | --- |
-| ① **학습 입력 = 서빙 입력 형식** | 없다 | **흔들린다.** Auditor 프롬프트가 **v1**이다(`config/models.yaml:468` `prompt_template_version: "v1"`). v2·v3는 디스크에 있으나 미배선이고(`prompts/auditor/v3/meta.yaml` 머리: *"미배선(disk-only)"*), **v4 PR #328이 열려 있다** |
+| ① **학습 입력 = 서빙 입력 형식** | 없다 | **흔들린다.** Auditor 프롬프트가 **v1**이다(`config/models.yaml:468` `prompt_template_version: "v1"`). v2·v3는 디스크에 있으나 미배선이고(`prompts/auditor/v3/meta.yaml` 머리: *"미배선(disk-only)"*), **v4 PR #328이 열려 있다** ⏵ 낡음 — 위 시점 노트 ⑥ |
 | ② **모델 원문 기록** | 없다 | **반쪽 충족.** `ModelResult.raw_text`가 생겼고(`src/interfaces/model_client.py`) 어댑터가 채운다(`openai_compat.py:262`). **그러나 그 필드 주석이 스스로 적는다 — *"사고 토큰은 담지 않는다 — 그 자리는 Phase 8이다."*** `finish_reason`·`reasoning`도 그대로 없다. **[D84](../open-questions/D/D84.md) 열림** |
 | ③ **내보내기** | 없다 | **그대로 없다.** CLI 서브커맨드는 다섯이다 — `doctor`·`estimate`·`run`·`bench`·`gc`(`src/cli.py:919-957`) |
 
@@ -249,15 +263,15 @@ resolver는 신청서 48건 중 **40건(83%)**에 원본 블록을 돌려줬으�
 **hop0 need_evidence는 84좌석 중 5건(6%)**뿐이고 강제 되묻기로 들어간 10좌석 중 **판정이 바뀐 것은 1건**(그마저 GT와 반대 방향)이었다.
 정상 표본에서는 **need_evidence 0/24**다.
 
-### 4.3 PoV — 코드가 0줄이다
+### 4.3 PoV — 코드가 0줄이다 ⏵ 낡음 — 위 시점 노트 ①
 
-- `Role` 열거형에 **POV가 없다**(`src/schemas/enums.py` — SCOUT·SCOUT_MEMORY·SCOUT_BOUNDARY·SCOUT_INJECTION·AUDITOR·CRITIC·JUDGE 일곱).
-- `prompts/pov/`·`src/orchestrator/nodes/pov.py` **디렉터리 자체가 없다**. `git ls-files | grep -i pov` **0건**.
-- `container_tools.py:440` 주석이 그대로 적는다 — *"PoC 실행 파일을 만드는 주체가 아직 없다."*
+- `Role` 열거형에 **POV가 없다**(`src/schemas/enums.py` — SCOUT·SCOUT_MEMORY·SCOUT_BOUNDARY·SCOUT_INJECTION·AUDITOR·CRITIC·JUDGE 일곱). ⏵ 낡음 — 위 시점 노트 ①
+- `prompts/pov/`·`src/orchestrator/nodes/pov.py` **디렉터리 자체가 없다**. `git ls-files | grep -i pov` **0건**. ⏵ 낡음 — 위 시점 노트 ①
+- `container_tools.py:440` 주석이 그대로 적는다 — *"PoC 실행 파일을 만드는 주체가 아직 없다."* ⏵ 부분만 낡음(주석은 `:473`에 그대로) — 위 시점 노트 ①
 - **실컨테이너 ASAN E4 도달이 저장소에 0건**이다([D92](../open-questions/D/D92.md)).
-- STATUS.md §PoV가 선택지 A(정답 PoC 재생)·B(`Role.POV` + `prompts/pov/v1/` + `nodes/pov.py` 추가)·C(퍼징) 셋을 들고 **전부 미착수**다.
+- STATUS.md §PoV가 선택지 A(정답 PoC 재생)·B(`Role.POV` + `prompts/pov/v1/` + `nodes/pov.py` 추가)·C(퍼징) 셋을 들고 **전부 미착수**다. ⏵ 낡음 — 위 시점 노트 ①
 
-### 4.4 gdb — 어댑터는 붙었고 파이프라인은 아직이다 (PR #327, 미머지)
+### 4.4 gdb — 어댑터는 붙었고 파이프라인은 아직이다 (PR #327, 미머지) ⏵ 낡음 — 위 시점 노트 ④
 
 - ToolRunner 지원 도구가 **일곱**이 됐다 — `semgrep`·`clang-tidy`·`build`·`asan`·**`gdb`**·`poc`·`index`.
   실행류(`_RUNTIME_TOOLS`)가 `{"asan", "gdb", "poc"}`로 늘었다.
@@ -315,20 +329,20 @@ resolver는 신청서 48건 중 **40건(83%)**에 원본 블록을 돌려줬으�
 
 ## 6. 벤치마크 — CyberGym이 재는 것과 우리가 재려는 것
 
-### 6.1 Phase 7의 현재 정본에 CyberGym은 없다 `[코드]`
+### 6.1 Phase 7의 현재 정본에 CyberGym은 없다 `[코드]` ⏵ 낡음 — 위 시점 노트 ③
 
 **Phase 번호의 유일한 정의처는 [ADR 0012](../decisions/0012-harness-canon-v2.md)의 목록이고, Phase 7은 한 줄이다:**
 
 > *"Phase 7 — 평가 어댑터·채점기·배치 실행."*
 
-`git grep "Phase 7"` 결과 **그 한 줄이 전부**다. `STATUS.md`·`docs/prd.md`·`docs/evaluation.md`에는 「Phase」라는 단어 자체가 **0건**이다.
+`git grep "Phase 7"` 결과 **그 한 줄이 전부**다. `STATUS.md`·`docs/prd.md`·`docs/evaluation.md`에는 「Phase」라는 단어 자체가 **0건**이다. ⏵ 그 줄은 지금도 한 줄이나 「CyberGym 없음」은 낡음 — 위 시점 노트 ③
 CyberGym은 `docs/prd.md:11`(비용 보고 규칙 변경, 배경 설명)과 `docs/evaluation.md:163`(로컬 서빙 비용 산정) **두 곳뿐**이고 둘 다 참가 계획이 아니다.
-`git grep -in cybergym -- src/` **0건**, `src/`에 평가·채점 모듈 **0건**
+`git grep -in cybergym -- src/` **0건**, `src/`에 평가·채점 모듈 **0건** ⏵ 낡음 — 위 시점 노트 ②
 (`eval/leakage/`가 있으나 그것은 §6.3의 누출 검사이지 채점기가 아니다).
 
-> **즉 「Phase 7 = CyberGym」은 아직 저장소 정본이 아니다.** 그 논의는 미커밋 조사 문서
+> **즉 「Phase 7 = CyberGym」은 아직 저장소 정본이 아니다.** 그 논의는 미커밋 조사 문서 ⏵ 낡음 — 위 시점 노트 ③⑤
 > [2026-09-29-cybergym-pov-design.md](2026-09-29-cybergym-pov-design.md)에만 있고,
-> **그 문서 자신이 Level 1 vs E2E를 팀 쟁점으로 남긴다**(§1.8).
+> **그 문서 자신이 Level 1 vs E2E를 팀 쟁점으로 남긴다**(§1.8). ⏵ 낡음 — 위 시점 노트 ③
 
 ### 6.2 CyberGym은 PoV 생성 벤치마크다 — 탐지가 아니다 `[출처주장]`
 
@@ -343,7 +357,7 @@ Recall@known · Precision(`proven`+`validated` 중 **사람 검토**로 확인�
 AI-Human 일치도 · 단계별 후보 제거율 · 스키마 파싱 실패율. **pass@k는 우리 지표 정의에 없다.**
 
 > **그래서 CyberGym으로는 Auditor 파인튜닝의 효과를 직접 못 잰다.** CyberGym이 채점하는 것은 「PoC가 크래시를 냈나」이고,
-> Auditor가 내는 것은 Finding JSON이다. 둘을 잇는 것은 **PoV 역할**인데 그 코드가 0줄이다(§4.3).
+> Auditor가 내는 것은 Finding JSON이다. 둘을 잇는 것은 **PoV 역할**인데 그 코드가 0줄이다(§4.3). ⏵ 낡음 — 위 시점 노트 ①
 > 그리고 CyberGym 성공률은 **PoV의 기여와 탐지의 기여를 못 가른다** — 교락이다.
 
 ⚠ **그리고 우리 `proven`이 「크래시 재현」을 뜻하지 않는다**(`docs/evaluation.md:114-122`) —
@@ -424,9 +438,9 @@ PrimeVul은 F1 대신 **VD-Score**(FPR을 임계 이하로 고정한 뒤 FNR 측
 
 ### 9.A 직접 반영할 사실 (전부 `[코드]` 또는 출처 확정)
 
-1. **Phase 7의 정본 문장에 CyberGym이 없다**(§6.1). 넣으려면 ADR을 고치는 일이고 그 결정권은 팀이다.
+1. **Phase 7의 정본 문장에 CyberGym이 없다**(§6.1). 넣으려면 ADR을 고치는 일이고 그 결정권은 팀이다. ⏵ 낡음 — 위 시점 노트 ③
 2. **CyberGym 채점기 ≠ 탐지 채점기**(§6.2). Phase 7이 「평가 어댑터·채점기」라면 **둘이 필요하다** — 지금 `src/`에 어느 쪽도 없다.
-3. **PoV 역할은 코드 0줄**(§4.3). CyberGym 채점기를 지어도 **먹일 것이 없다**. 선택지 A/B/C가 STATUS.md에 있고 전부 미착수다.
+3. **PoV 역할은 코드 0줄**(§4.3). CyberGym 채점기를 지어도 **먹일 것이 없다**. 선택지 A/B/C가 STATUS.md에 있고 전부 미착수다. ⏵ 낡음 — 위 시점 노트 ①
 4. **우리 `proven`은 크래시 재현을 뜻하지 않는다**(§6.2, [D80](../open-questions/D/D80.md) 열림). CyberGym 판정과 같은 말로 쓰면 안 된다.
 5. **누출 검사 7개 중 2개만 구현**(§6.3). 파인튜닝이 들어오면 **가중치 오염**이라는 새 행이 생기고 hash 검사로는 안 잡힌다.
 6. **Auditor 입력 상한 15,000자는 실측으로 지켜졌다**(147호출 · 초과 0 · 여유 5,043토큰, §4.2). 학습 데이터도 같은 상한을 써야 ①전제가 산다.
@@ -442,7 +456,7 @@ PrimeVul은 F1 대신 **VD-Score**(FPR을 임계 이하로 고정한 뒤 FNR 측
 | **RL** | DPO/ORPO(계획 현재) ↔ **GRPO + fine-grained reward** | §2.2 — 같은 논문이 GRPO 우위. 단 인프라가 다르다 |
 | **입력 생성 경로** | (A) 전체 run ↔ (B) Scout 생략 | §5.3 — 규모 3자릿수 ↔ ①전제 |
 | **학습 대상 역할** | Auditor(계획 현재) ↔ **PoV** ↔ scout_memory | §1 — 레퍼런스가 지지하는 것은 PoV. 그리고 PROJECT-CONTEXT §1이 **scout_memory 자리에 파인튜닝 Qwen3-14B를 쓸 계획**이라 적는다 |
-| **벤치마크** | CyberGym Level 1 ↔ E2E ↔ 탐지 벤치(PrimeVul 등) ↔ **둘 다** | §6 — ADR 0012 결정 5상 실험팀 소관 |
+| **벤치마크** | CyberGym Level 1 ↔ E2E ↔ 탐지 벤치(PrimeVul 등) ↔ **둘 다** | §6 — ADR 0012 결정 5상 실험팀 소관 ⏵ 선택은 낡음(ADR 0012:196) — 위 시점 노트 ③ |
 
 ### 9.C 이 조사가 제안하는 선행 (만드는 것은 이 조사가 아니다)
 
