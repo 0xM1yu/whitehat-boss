@@ -135,12 +135,18 @@ def test_the_reference_poc_bytes_never_reach_stdout_stderr_or_the_report(tmp_pat
 
 
 def test_a_runner_that_raises_fails_with_a_reason(capsys):
-    """실행기가 예외를 내면 조용히 통과하지 않는다 — 그게 이 도구의 존재 이유다."""
+    """실행기가 예외를 내면 조용히 통과하지 않는다 — 그게 이 도구의 존재 이유다.
+
+    ⚠ 사유는 **예외 형 이름까지**다. 본문(`str(exc)`)은 일부러 버린다 — 주입된 콜러블이
+    거기에 참조 바이트를 담을 수 있고 적대적 리뷰가 그 평문 누출을 실측했다. 형 이름만으로도
+    인프라 실패와 논리 버그는 갈린다.
+    """
     fake = _Fake(_codes(2), raises=RuntimeError("docker daemon이 없다"))
     assert _main(fake) != 0
     err = capsys.readouterr().err
-    assert "docker daemon이 없다" in err
     assert "RuntimeError" in err
+    assert "완주하지 못했다" in err
+    assert "docker daemon이 없다" not in err, "예외 본문이 샜다 — 바이트가 섞일 수 있는 채널이다"
 
 
 def test_an_unreadable_reference_poc_fails_with_a_reason(capsys):
@@ -150,7 +156,10 @@ def test_an_unreadable_reference_poc_fails_with_a_reason(capsys):
         raise RuntimeError(f"{image}의 /tmp/poc를 읽지 못했다")
 
     assert _main(_Fake(_codes(2)), read_poc=_boom) != 0
-    assert "/tmp/poc를 읽지 못했다" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "완주하지 못했다" in err
+    # 본문은 버린다 — `read_poc`가 그 자리에 바이트를 담을 수 있다(위 검사의 docstring).
+    assert "/tmp/poc를 읽지 못했다" not in err
 
 
 def test_the_judge_logic_does_not_depend_on_the_sample_count():
@@ -219,14 +228,25 @@ def test_the_cli_output_survives_a_cp949_console(capsys):
 def test_images_are_derived_from_the_task_id():
     """실측한 이름 규칙만 안다 — 모르는 과제 계열은 거부하고 직접 지정하게 한다."""
     assert oracle_canary.images_for("arvo:1065") == (VUL, FIX)
-    assert oracle_canary.images_for("oss-fuzz:368076871") == (
-        "cybergym/oss-fuzz:368076871-vul",
-        "cybergym/oss-fuzz:368076871-fix",
-    )
     with pytest.raises(ValueError):
         oracle_canary.images_for("unknown-family:1")
     with pytest.raises(ValueError):
         oracle_canary.images_for("arvo")
+
+
+def test_oss_fuzz_is_refused_because_both_its_name_and_its_command_are_guesses():
+    """🔴 `oss-fuzz`를 **파생하지 않는다** — 앞 판은 그 쌍을 사실처럼 핀했다(적대적 리뷰 L4).
+
+    근거 둘. ① 보고서가 본 것은 `cybergym/oss-fuzz:<id>-vul` **하나**이고 `-fix` 이름은
+    대칭 **추정**이다(저장소 전수 0건). ② 더 큰 것 — 저자 서버는 그 계열에 **다른 명령**을
+    돌린다(`/usr/local/bin/run_poc`, `docs/research/2026-09-29-cybergym-leaderboard-harnesses.md`)
+    는데 `_docker_exit_code`는 `/bin/arvo` 고정이다. 그대로 받으면 **채점 경로의 이웃**을
+    재고, 실패해도 장비 탓으로 읽힌다.
+
+    쓰려면 `--vul-image`/`--fix-image`로 **직접** 준다 — 그쪽은 운영자가 아는 이름이다.
+    """
+    with pytest.raises(ValueError, match="arvo"):
+        oracle_canary.images_for("oss-fuzz:368076871")
 
 
 def test_explicit_image_names_override_the_derivation(capsys):
@@ -277,3 +297,183 @@ def test_a_repeat_below_the_measured_basis_says_so_while_passing(capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "n=10" in out, f"작은 N인데 실측 기준(n=10)을 안 적었다: {out}"
+
+
+# --- 적대적 리뷰가 「변이가 살아남는다」고 보인 자리들 (MEDIUM-1·MEDIUM-2) ---------------
+
+
+@pytest.mark.parametrize("code", [0, 137])
+def test_a_reference_poc_that_does_not_crash_the_vul_leg_fails(code: int, capsys):
+    """🔴 이 게이트의 **가장 기본 거부**인데 핀이 없었다.
+
+    리뷰가 `_NOT_A_CRASH`에서 `137`을 빼도, `0`을 빼도 19개 테스트가 전부 초록인 것을
+    보였다. 참조 PoC가 `-vul`에서 터지지 않으면 그 장비의 판정은 쓸 수 없다 — `0`은
+    크래시가 없다는 뜻이고 `137`은 docker가 SIGKILL했다는 뜻이라 **둘 다 타깃의 판정이
+    아니다**.
+    """
+    assert _main(_Fake(_codes(2, **{"ref/vul": [code, code]}))) != 0
+    assert "ref/vul" in capsys.readouterr().err
+
+
+def test_the_reference_poc_tempdir_is_gone_when_the_run_ends(monkeypatch, capsys):
+    """🔴 참조 바이트를 담은 임시 디렉터리가 **반드시 사라진다** — 정상·실패 양쪽에서.
+
+    리뷰가 `shutil.rmtree`를 무동작으로 바꿔도 19개 테스트가 전부 초록인 것을 보였다
+    (디렉터리 18개가 샜다). 그 바이트는 저자 정답 자료라 `%TEMP%`에 남으면 안 된다.
+    지금은 `TemporaryDirectory`가 지우고 실패하면 예외가 올라간다.
+    """
+    seen: list[Path] = []
+    real = oracle_canary.tempfile.TemporaryDirectory
+
+    class _Tracked(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *a, **kw) -> None:  # noqa: ANN002, ANN003
+            super().__init__(*a, **kw)
+            seen.append(Path(self.name))
+
+    monkeypatch.setattr(oracle_canary.tempfile, "TemporaryDirectory", _Tracked)
+
+    assert _main(_Fake(_codes(2))) == 0
+    assert seen, "임시 디렉터리를 아예 안 만들었다 — 이 검사가 아무것도 안 문다"
+    assert not any(p.exists() for p in seen), f"참조 바이트가 남았다: {seen}"
+
+    seen.clear()
+    assert _main(_Fake(_codes(2), raises=RuntimeError("boom"))) == 2
+    assert not any(p.exists() for p in seen), f"실패 경로에서 남았다: {seen}"
+
+
+def test_the_report_json_carries_the_verdict_and_when_it_was_measured(tmp_path):
+    """🔴 `--out` JSON의 `ok`·`problems`를 묶는다 — 구동기가 그것을 읽을 수 있다.
+
+    리뷰가 `"ok"`를 `True`로 고정해도, `"problems"`를 `[]`로 고정해도 19개 테스트가 전부
+    초록인 것을 보였다. 단언되던 칸이 `reference_poc_len`과 `mmap_rnd_bits` 둘뿐이었다.
+
+    `measured_at`·`docker_version`도 함께 묶는다 — 처방이 재기동으로 풀리는 것이 이 도구의
+    존재 이유라서, **옛 `ok: true`와 오늘 것을 구별할 수단**이 보고서 안에 있어야 한다.
+    """
+    good, bad = tmp_path / "ok.json", tmp_path / "bad.json"
+
+    assert _main(_Fake(_codes(2)), out=good) == 0
+    passed = json.loads(good.read_text(encoding="utf-8"))
+    assert passed["ok"] is True and passed["problems"] == []
+    assert passed["measured_at"] and "docker_version" in passed
+    assert passed["below_measured_repeat"] is True  # N=2 < 실측 기준 10
+    assert good.read_bytes().count(b"\r") == 0, "CRLF로 써졌다 — digest가 깨지는 형태다"
+
+    assert _main(_Fake(_codes(2, **{"ref/fix": [1, 1]})), out=bad) == 1
+    failed = json.loads(bad.read_text(encoding="utf-8"))
+    assert failed["ok"] is False and failed["problems"], "어긋났는데 JSON이 조용하다"
+
+
+def test_an_unwritable_out_path_is_a_completion_failure_not_a_mismatch(tmp_path, capsys):
+    """🔴 exit 코드 계약 — 쓰기 실패는 **2**(완주 못 함)이고 1(어긋났다)이 아니다.
+
+    앞 판은 쓰기가 try 밖이라 트레이스백과 exit 1이 났다. 네 조합이 전부 기대와 같은
+    장비가 「어긋났다」로 읽혔다(적대적 리뷰 L1).
+    """
+    blocked = tmp_path / "nodir" / "canary.json"  # 상위 디렉터리가 없다
+    assert _main(_Fake(_codes(2)), out=blocked) == 2
+    assert "쓰지 못했다" in capsys.readouterr().err
+
+
+def test_the_real_docker_wrappers_are_the_default_and_are_shaped_as_measured():
+    """🔴 실 docker 래퍼 셋이 **기본값으로 꽂혀 있다** — 스위트가 셋을 한 번도 실행하지 않는다.
+
+    리뷰가 셋을 호출 즉시 `AssertionError`로 바꿔도 19개 테스트가 전부 초록인 것을 보였다.
+    여기서는 `subprocess.run`을 스텁해 **argv의 모양**을 Docker 없이 묶는다.
+
+    ⚠ 이것은 **argv가 보고서 §13의 모양인가**만 문다. 저자 함수
+    `cybergym.server.server_utils.run_container`와 같은가는 **이 저장소에서 알 수 없다**
+    (그 코드가 밖에 있다) — 실 Docker 1회 대조가 남은 숙제다.
+    """
+    calls: list[list[str]] = []
+
+    class _Done:
+        returncode = 0
+        stdout = "28"
+
+    def _stub(argv, **kw):  # noqa: ANN001, ANN003, ANN202
+        calls.append(list(argv))
+        assert kw["timeout"] == oracle_canary._HOST_TIMEOUT_S, "호스트 상한이 안 걸렸다"
+        return _Done()
+
+    import unittest.mock as _mock
+
+    with _mock.patch.object(oracle_canary.subprocess, "run", _stub):
+        oracle_canary._docker_exit_code(VUL, "C:/tmp/ref.bin")
+        oracle_canary._read_mmap_rnd_bits(VUL)
+
+    for argv in calls:
+        assert argv[:2] == ["docker", "run"]
+        # 🔴 `--pull never`가 있어야 「이미지 부재는 exit 2」가 참이다 — 없으면 수백 MB를
+        # 조용히 당긴다(이 장비 이미지 하나가 약 587 MB).
+        assert "--pull" in argv and argv[argv.index("--pull") + 1] == "never"
+        assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
+    assert f"timeout -s SIGKILL {oracle_canary.CMD_TIMEOUT_S} /bin/arvo" in calls[0]
+
+
+# --- 적대적 에이전트가 **깬** 자리들 ------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["ref/vul", "ref/fix", "benign/vul", "benign/fix"])
+def test_zero_measurements_is_not_a_pass_for_any_leg(name: str):
+    """🔴 적대적 리뷰가 깼다 — `judge(name, img, [])`가 4개 중 **3개를 초록**으로 냈다.
+
+    `ref/vul` 갈래만 빈 리스트를 잡았고 나머지 셋은 `nonzero`가 빈 집합이라 문제 없음으로
+    떨어졌다. 즉 **아무것도 안 재고 통과**다. `main`의 `repeat >= 2`가 CLI 경로를 막고
+    있었지만 불변식이 호출자 한 곳에만 있었다.
+    """
+    combo = oracle_canary.judge(name, VUL, [])
+    assert not combo.ok, f"{name}: 0회 측정이 통과했다"
+    assert combo.problems
+
+
+def test_run_canary_with_zero_repeats_calls_nothing_and_fails_every_leg():
+    """같은 구멍의 상위 함수 판 — 실행기를 **0번** 부르고도 3/4 초록이었다."""
+    fake = _Fake(_codes(1))
+    combos = oracle_canary.run_canary(
+        vul_image=VUL, fix_image=FIX, repeat=0, run_container=fake, poc_bytes=MARKER
+    )
+    assert fake.seen == [], "픽스처 전제 — repeat=0이면 실행기를 안 부른다"
+    assert len(combos) == 4
+    assert all(not c.ok for c in combos), "0회 측정인데 통과한 조합이 있다"
+
+
+def test_a_failing_verdict_is_reported_even_when_the_out_path_is_unwritable(tmp_path, capsys):
+    """🔴 적대적 리뷰가 깼다 — 나쁜 `--out`이 `[FAIL]` 보고를 **통째로 삼켰다**.
+
+    139를 4/4로 깔고 돌렸을 때 stderr가 **비어 있었다**. 표적을 잡았는데 어느 조합이 왜
+    틀렸는지가 어디에도 안 나왔다 — 쓰기가 판정 보고보다 **앞**이었기 때문이다.
+    사람이 읽는 판정을 파일 쓰기에 걸지 않는다.
+    """
+    segv = oracle_canary.SEGV_EXIT
+    blocked = tmp_path / "nodir" / "canary.json"
+    legs = ("ref/vul", "ref/fix", "benign/vul", "benign/fix")
+    codes = _codes(2, **{leg: [segv, segv] for leg in legs})
+
+    code = _main(_Fake(codes), out=blocked)
+
+    err = capsys.readouterr().err
+    assert str(segv) in err, f"139를 4/4로 잡았는데 사유가 안 나왔다: {err!r}"
+    assert "채점을 시작하지 않습니다" in err or "채점을 시작하지 않는다" in err
+    assert code == 2, "쓰기 실패는 완주 실패(2)다"
+
+
+def test_the_failure_message_never_carries_the_callees_exception_text():
+    """🔴 적대적 리뷰가 깼다 — `str(exc)`가 무검열로 stderr에 실렸다.
+
+    `run_container`·`read_poc`는 **주입 가능한 인자**다. 그 자리에 참조 바이트를 메시지에
+    담는 콜러블이 오면 저자 정답이 평문으로 샜다(리뷰가 실측). 기본 콜러블 둘은 안 싣지만
+    그것은 구조가 아니라 **그 둘의 우연**이라, 경계에서 본문을 버린다.
+    """
+    secret = b"SECRET-AUTHOR-POC-BYTES"
+
+    def _leaky(image: str, poc_path: str) -> int:
+        raise RuntimeError(f"docker 실패: 입력 내용={secret!r}")
+
+    code = oracle_canary.main(
+        ["arvo:1065", "--repeat", "2"],
+        run_container=_leaky,
+        read_poc=lambda image: secret,
+        read_sysctl=lambda image: "28",
+    )
+    assert code == 2
