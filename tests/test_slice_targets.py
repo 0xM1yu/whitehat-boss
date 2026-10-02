@@ -25,6 +25,7 @@ from src.orchestrator.runner import _AUDITOR_SOURCE_CHARS, _AUDITOR_WINDOW_LINES
 from src.schemas.common import Location
 from src.schemas.enums import Role
 from src.tokens import estimate_tokens
+from tests.conftest import ALL_PROFILES
 from tests.test_pipeline_e2e import (
     _FIXTURE_INDEX,
     CONDITION,
@@ -52,6 +53,46 @@ def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
     assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
     assert "`(file, start line)` order" in prefix
+
+
+def test_auditor_v4_t1_states_the_adopted_source_contract() -> None:
+    """v4_t1(#349 채택 조합)의 입력 서술이 러너 상수·옵션과 갈리지 않는다 -- 창 줄 수 · 정의/피호출
+    하나의 글자 상한 · (파일, 시작 줄) 순 · 20,000토큰 상한, 그리고 meta가 그 세 옵션을 선언한다."""
+    from src.orchestrator.runner import _AUDITOR_CALLEE_CHARS, _AUDITOR_DEFINITION_CHARS
+
+    prefix = (PROMPTS_DIR / "auditor" / "v4_t1" / "prefix.md").read_text(encoding="utf-8")
+    assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
+    assert "`(file, start line)` order" in prefix
+    assert "20,000-token cap" in prefix and "15,000-character" not in prefix
+    # 하나의 상한은 배너 줄을 포함한 블록 길이다(`runner._auditor_source`의 `len(block)`) -- 본문만
+    # 세는 것처럼 쓰면 본문 3,999자 + 배너가 빠지는 것을 모델이 모른다(#374 리뷰).
+    flat = " ".join(prefix.split())
+    assert (
+        f"its block, counting its banner line, is at most {_AUDITOR_DEFINITION_CHARS:,} characters"
+        in flat
+    )
+    assert (
+        f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
+        " is skipped" in flat
+    )
+    assert set(load_prompt(Role.AUDITOR, "v4_t1").source_options) == {
+        "auditor_source_tokens", "auditor_definitions", "auditor_callee_hops"}
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_a_profile_on_auditor_v4_t1_sets_the_token_cap_the_prompt_states(profile: str) -> None:
+    """v4_t1은 「20,000-token cap」을 모델에 말한다 -> 그 판을 고르는 프로필은 그 값을 켠다.
+    지금은 아무 프로필도 안 고른다(미배선) -- 켜는 PR이 값을 다르게 두면 여기서 걸린다."""
+    from src.config import load_config
+
+    config = load_config(profile)
+    if "auditor" not in config.profile.roles:
+        return
+    if config.model_for("auditor").prompt_template_version != "v4_t1":
+        return
+    thresholds = config.thresholds
+    assert thresholds.auditor_source_tokens == 20_000
+    assert (thresholds.auditor_definitions, thresholds.auditor_callee_hops) == (1, 1)
 
 
 def _slice(sid: str, case: str, entry: tuple[str, int, str], scope: str, lines: set) -> dict:
@@ -1356,6 +1397,52 @@ def test_a_token_cap_also_bounds_the_callee_and_definition_steps() -> None:
     _, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
     assert (event["callees"], event["callees_dropped"]) == (0, 1)
 
+
+
+@pytest.mark.parametrize("step", ["callee", "definition"])
+def test_a_single_block_cap_counts_the_banner_and_admits_a_block_exactly_at_it(
+    monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """피호출·정의 하나의 글자 상한은 **배너 줄을 포함한** 블록 길이에 걸고, 딱 그 길이면 싣는다
+    (v4_t1 prefix 「counting its banner line」 · 「over N」/「at most N」 -- #374 리뷰). 상한을
+    블록 길이로 두면 실리고(`>`를 `>=`로 바꾸면 죽음), 본문 길이로 두면 배너 때문에 빠진다(본문만
+    세게 바꾸면 죽음)."""
+    from src.orchestrator import runner
+
+    constant = "_AUDITOR_CALLEE_CHARS" if step == "callee" else "_AUDITOR_DEFINITION_CHARS"
+    body = "\n".join(_U_FILE["u.c"][_U_K.line_start - 1 : _U_K.line_end])
+    block = runner._block(_U_K, body)
+    opts = (
+        {"auditor_callee_hops": 1, "callees": {"f": [_U_K]}}
+        if step == "callee"
+        else {"auditor_definitions": 1, "definitions": lambda _n, _f: [_U_K]}
+    )
+    for cap, carried in ((len(block), 1), (len(body), 0)):
+        monkeypatch.setattr(runner, constant, cap)
+        ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_K], **opts)
+        _, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+        key = "callees" if step == "callee" else "definitions"
+        assert (event[key], event[f"{key}_dropped"]) == (carried, 1 - carried), cap
+
+
+def test_definitions_are_looked_up_against_the_anchor_file() -> None:
+    """정의 조회는 anchor 파일을 넘긴다 -- 인덱스가 「anchor 파일의 정의가 이김」을 고를 수 있게
+    (v4_t1 prefix 「a definition in the anchor's own file wins」 -- #374 리뷰: 넘기는 파일을 `""`로
+    바꿔도 통과하던 변이). 조회는 그 파일일 때 같은 파일 정의를, 아니면 다른 파일 정의를 낸다."""
+    files = {**_U_FILE, "v.c": ["#define K 9", "x"]}
+    own = Location(file="u.c", symbol="K", line_start=40, line_end=41)
+    other = Location(file="v.c", symbol="K", line_start=1, line_end=1)
+    asked: list[str] = []
+
+    def lookup(_names, file):  # noqa: ANN001, ANN202
+        asked.append(file)
+        return [own] if file == _U_F.file else [other]
+
+    ctx, events, _, _ = _unit(files, [_U_F], auditor_definitions=1, definitions=lookup)
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert asked == ["u.c"]
+    assert "/* ===== u.c:40-41 ===== */" in source and "v.c" not in source
+    assert event["definitions"] == 1
 
 def test_callees_of_every_carried_function_are_added_not_only_the_entry() -> None:
     """entry가 아닌 실린 함수(`h` — 슬라이스가 지난다)의 피호출 함수도 붙는다(docstring 「그다음
