@@ -1,9 +1,15 @@
 """run 산출물을 밖에서 읽어 상태·플래그를 내는 stdlib 폴러 (이슈 #208 ③④).
 
 `heartbeat.json`(살아있음)·`trace.jsonl`(진행·에러)·`run_manifest.json`(완주)을 읽어
-`{alive, stuck, error_storm, budget_exhausted, incomplete}`를 도출한다. **run에 붙지 않고
-파일만 본다.** 죽이지 않는다 — 가시화·경보만 한다. kill은 요청 타임아웃(모델이 선언한
+`{alive, stuck, error_storm, budget_exhausted, crashed, incomplete}`를 도출한다. **run에 붙지
+않고 파일만 본다.** 죽이지 않는다 — 가시화·경보만 한다. kill은 요청 타임아웃(모델이 선언한
 `request_timeout_s`, 선언이 없으면 `_TIMEOUT_S`)과 차단기 소관이다.
+
+**종료 코드:** 0 — 산출물(매니페스트)이 나와 폴링을 끝냈다(예산·차단기로 **예상한** 중단 포함) ·
+2 — run_dir을 못 읽는다 · 3 — **비정상 종료**: DEAD(매니페스트 없이 heartbeat가 낡았다) 또는
+CRASHED(러너의 최후 방어선이 잡은 예상 밖 예외 — 매니페스트는 남는다).
+⚠ `--once`는 비대칭이다 — CRASHED면 3을 내지만 DEAD면 0이다(DEAD 판정은 폴 루프 안이라 `--once`가
+그 앞에서 끝난다. 기존 동작이고 바꾸지 않았다).
 
 **임계값은 추측 상수가 아니라 코드 상수에서 온다(§0).**
 
@@ -46,6 +52,9 @@ _FAILURE_REASONS = frozenset({"gateway_error", "schema_parse_failed"})
 _PROGRESS_KINDS = frozenset({"target_planned", "gate_eval", "transition"})
 # 차단기가 실제로 터진 사후 신호 (runner가 run 종료 전이에 남기는 사유).
 _BREAKER_REASON = "consecutive_target_failures"
+# 러너의 최후 방어선이 run 종료 전이에 남기는 사유(`ReasonCode.UNFORESEEN_FAILURE` — test_monitor가
+# 대조해 고정한다). 그 run은 **매니페스트를 남기므로** `has_manifest`만 보면 정상 종료와 같다.
+_CRASH_REASON = "unforeseen_failure"
 # run 도중 예산이 걸린 라이브 신호 (budget.py의 EventKind.BUDGET event 값).
 _BUDGET_EVENTS = frozenset({"exhausted", "blocked"})
 
@@ -160,6 +169,15 @@ def _completion(manifest: dict | None, events: list[dict]) -> tuple[bool, bool]:
     return incomplete, budget
 
 
+def _crashed(events: list[dict]) -> bool:
+    """예상 밖 예외로 멈춘 run인가 — 종료 전이의 사유로 사후 확정한다(`_error_storm`의 차단기 갈래와
+    같은 방식). 매니페스트가 없어도(쓰기가 실패해도) 전이는 trace에 먼저 남는다."""
+    return any(
+        e.get("subject_kind") == "run" and (e.get("data") or {}).get("reason") == _CRASH_REASON
+        for e in events
+    )
+
+
 def derive_status(
     *,
     heartbeat: dict | None,
@@ -190,6 +208,7 @@ def derive_status(
         "stuck": stuck,
         "error_storm": _error_storm(events, error_storm_k),
         "budget_exhausted": budget,
+        "crashed": _crashed(events),
         "incomplete": incomplete,
         # 산출물이 나왔는가 = 폴링을 끝내도 되는가. `incomplete`(비교표용 is_complete 정의)와
         # 다른 질문이다 — 중단된 run도 매니페스트를 남기므로 여기서 끝나야 한다(#212 리뷰 N1).
@@ -236,6 +255,7 @@ def format_report(run_dir: Path, status: dict) -> str:
         f"event_age={status['event_age_s']}s | "
         f"stuck={_flag(status, 'stuck', '!')} storm={_flag(status, 'error_storm', '!')} "
         f"budget={_flag(status, 'budget_exhausted', '!')} "
+        f"crashed={_flag(status, 'crashed', '!')} "
         f"incomplete={_flag(status, 'incomplete', 'O')}"
     )
 
@@ -308,6 +328,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{format_report(args.run_dir, status)}  [T {basis}]", flush=True)
         if args.status_file:
             _write_status_atomic(args.run_dir / "status.json", status)
+        # 러너의 최후 방어선이 잡은 run은 매니페스트를 남기지만 **정상 종료가 아니다** — 아래
+        # `has_manifest` 종료보다 먼저 가른다(그렇지 않으면 예전에 DEAD로 잡히던 크래시가 exit 0이
+        # 된다).
+        if status["crashed"]:
+            print(
+                f"[{args.run_dir.name}] CRASHED - 예상 밖 예외로 멈췄다({_CRASH_REASON}). "
+                "매니페스트·trace는 남았다.",
+                file=sys.stderr,
+            )
+            return 3
         # 산출물(매니페스트)이 나오면 끝난 것 — 중단된 run도 매니페스트를 남기므로 여기서
         # 끝나야 한다(#212 리뷰 N1). `incomplete`(is_complete 정의)로 끝내면 예산 소진·차단기
         # 트립 등 stopped_after가 찬 run이 영영 안 끝나고 아래 DEAD로 오판됐다.

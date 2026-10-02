@@ -29,7 +29,7 @@ from typing import TextIO, get_args
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
-from src.adapters.slices import SliceInputError, load_slices, render_slices
+from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
 from src.bench import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CONTEXTS,
@@ -66,6 +66,13 @@ from src.orchestrator.runner import (
     run_pipeline,
 )
 from src.orchestrator.stages import MAX_STAGE, Stage
+from src.orchestrator.task_loader import (
+    DESCRIPTION_FILENAME,
+    REPO_ARCHIVE_NAME,
+    UnsafeArchiveError,
+    read_description,
+    safe_extract,
+)
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -285,6 +292,33 @@ def _check_device(config: HarnessConfig, device: str | None) -> list[Check]:
             )
         )
     return checks
+
+
+# 개수 가드 에러가 이름을 대는 안 맞은 슬라이스의 최대 수 — 나머지는 개수로만 센다.
+_UNMATCHED_SLICES_SHOWN = 5
+
+
+def _unmatched_slices_error(
+    slice_set: SliceSet, rendered: dict[str, str], work_dir: Path
+) -> str | None:
+    """`render_slices`가 **건너뛴** 슬라이스가 있으면 그 사유, 없으면 `None`.
+
+    `render_slices`는 entry 파일이 트리에 없는 슬라이스를 오류 없이 뺀다 — 러너가 그것을
+    `unmatched_slices`로 셀 뿐이라 경로 기준이 어긋난 `slices.json`은 `후보 0건 / 완주`로 끝난다.
+    `--task-dir`는 해제 트리가 번들 **최상위**라 슬라이서를 그 안의 `src-vul/`에서 돌린
+    슬라이스(접두어 없음)가 그 모양이 된다(`--target`은 사람이 루트를 골라 안 난다)."""
+    unmatched = [item.id for item in slice_set.slices if item.id not in rendered]
+    if not unmatched:
+        return None
+    shown = ", ".join(unmatched[:_UNMATCHED_SLICES_SHOWN])
+    if len(unmatched) > _UNMATCHED_SLICES_SHOWN:
+        shown += f" 외 {len(unmatched) - _UNMATCHED_SLICES_SHOWN}건"
+    return (
+        f"슬라이스 {len(slice_set.slices)}건 중 {len(unmatched)}건이 풀린 트리에 없다({shown}) — "
+        "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 한다. "
+        "슬라이서를 그 디렉터리 안에서 돌리지 않았는지, 다른 과제의 slices.json이 아닌지 본다 — "
+        f"해제 트리가 {work_dir}에 남았다. 비우고 다시 한다"
+    )
 
 
 def _serving_error(config: HarnessConfig, device: str, config_dir: Path) -> str | None:
@@ -815,19 +849,114 @@ def run(args: argparse.Namespace) -> int:
     if malformed is not None:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
+    # CyberGym 과제 번들을 그대로 받는다(#356). 2026-10-02까지 `task_loader`의 `load_task`·
+    # `safe_extract`·`read_description`은 프로덕션 호출처가 **0건**이었다 — 과제를 손으로 풀어
+    # `--target`·`--description-file`을 따로 주는 절차였다. 이 분기는 `safe_extract`와
+    # `read_description`을 **따로** 부른다(이유는 아래 — 설명은 해제보다 먼저 읽는다).
+    # ⚠ 그래서 둘을 묶은 `load_task`의 프로덕션 호출처는 **지금도 0건**이다 — `load_task`에만 거는
+    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다.
+    task_description: str | None = None
+    #
+    # ⚠ **여기서는 검증만 하고 해제는 `_claim_run_dir` 직전에 한다.** 처음 판은 여기서 바로
+    # 풀었는데, 그 뒤의 게이트(실서빙 라벨·슬라이스 가드·교대)가 exit 2를 내면 **작업 디렉터리에
+    # 트리가 남아** 오타를 고친 재시도가 "비어 있지 않다"로 거부됐다(적대적 리뷰 2026-10-02 M-1).
+    # 쓰기를 **되돌릴 수 없는 지점 바로 앞**으로 미루면 그 함정이 사라진다. `--slices`의 두 검사
+    # (drift · 안 맞는 슬라이스 개수)만은 풀린 트리가 있어야 돌아 해제 **뒤**에 있고, 거기서
+    # 멈추면 트리가 남는다(에러가 그 사실을 말한다).
+    #
+    # ⚠ **`--task-work-dir`를 요구하는 참인 이유는 「기록」이 아니라 「섞임 방지」다.** 처음 판은
+    # *"해제 자리가 run 기록이다"*라 적었는데 **거짓이다** — `RunRecord`·`RunSpec`에 과제 경로·
+    # 아카이브 해시 필드가 **없다**(적대적 리뷰 M-1 HIGH-1). 출처를 진짜로 남기는 것은 S12d의
+    # 대응표(`repo_archive_sha256`·`description_sha256`) 몫이고 **아직 없다.**
+    if args.task_dir is not None:
+        if args.description_file is not None:
+            # 설명의 출처가 둘이면 캡슐에 실린 것이 어느 쪽인지 기록으로 못 가른다.
+            print(
+                "[ERROR] --task-dir와 --description-file을 같이 주지 않는다 — "
+                "과제 번들의 description.txt가 설명이다",
+                file=sys.stderr,
+            )
+            return 2
+        if args.target is not None:
+            print(
+                "[ERROR] --task-dir와 --target을 같이 주지 않는다 — 해제된 트리가 target이다",
+                file=sys.stderr,
+            )
+            return 2
+        if args.task_work_dir is None:
+            print(
+                "[ERROR] --task-dir를 주면 --task-work-dir도 줘야 한다 — 해제 트리가 섞이지 "
+                "않게 빈 디렉터리를 명시한다",
+                file=sys.stderr,
+            )
+            return 2
+        # **작업 디렉터리를 재사용하지 않는다.** `safe_extract`는 상한 초과로 중단해도 앞 멤버를
+        # dest에 남기므로(그 함수의 경고 주석), 남은 트리 위에 또 풀면 두 과제가 섞인다. 섞인
+        # 트리로 돈 run은 무엇을 봤는지 모른다 — 비우는 것은 **사람이** 한다(지우지 않는다).
+        if args.task_work_dir.exists():
+            if not args.task_work_dir.is_dir():
+                # `iterdir()`는 디렉터리가 아닌 것에 `NotADirectoryError`를 던진다.
+                print(
+                    f"[ERROR] --task-work-dir가 디렉터리가 아니다: {args.task_work_dir}",
+                    file=sys.stderr,
+                )
+                return 2
+            if any(args.task_work_dir.iterdir()):
+                print(
+                    f"[ERROR] --task-work-dir가 비어 있지 않다: {args.task_work_dir} — "
+                    "해제 트리가 섞이지 않게 빈 디렉터리를 준다",
+                    file=sys.stderr,
+                )
+                return 2
+        if not (args.task_dir / REPO_ARCHIVE_NAME).is_file():
+            # 해제 전에 본다 — 아카이브가 없으면 풀 것이 없고, `safe_extract`에 맡기면
+            # `dest.mkdir`이 먼저 돌아 빈 작업 디렉터리만 남는다. 그 전에 다른 게이트에 시간을
+            # 쓸 이유도 없다.
+            print(
+                f"[ERROR] 과제에 {REPO_ARCHIVE_NAME}가 없다: {args.task_dir}", file=sys.stderr
+            )
+            return 2
+        # 해제 트리가 target이다 — **경로는 지금 알 수 있다**(풀기 전에도).
+        args.target = args.task_work_dir
+        # 설명은 **지금** 읽는다 — 작은 텍스트 파일이고 해제와 무관하다(`RunSpec`을 만들 때 필요한데
+        # 그 시점이 해제보다 앞이다). `load_task`를 통째로 부르지 않고 그 두 조각
+        # (`read_description`·`safe_extract`)을 **따로** 쓰는 이유가 이 시점 차이다.
+        task_description = read_description(args.task_dir)
+        if not task_description:
+            # Level 0 과제에는 설명이 없는 것이 정상이다 — 막지 않고 알린다. 조용히 넘어가면
+            # "설명을 줬는데 안 실렸다"와 구별되지 않는다.
+            print(
+                f"[WARN ] 과제에 {DESCRIPTION_FILENAME}가 없거나 비어 있다 — "
+                "캡슐에 vuln_description 섹션이 실리지 않는다",
+                file=sys.stderr,
+            )
+    elif args.task_work_dir is not None:
+        # 조용히 무시하면 사람은 과제가 풀린 줄 안다.
+        print("[ERROR] --task-work-dir는 --task-dir와 함께만 쓴다", file=sys.stderr)
+        return 2
+    if args.target is None:
+        # argparse의 `required=True`를 뗀 대가를 여기서 문다 — 안 들면 `None`이 `RunSpec`까지 간다.
+        print("[ERROR] --target 또는 --task-dir 하나는 필요하다", file=sys.stderr)
+        return 2
     # 슬라이스 파일도 같은 자리에서 본다 — `build_deps`가 다시 읽지만 그때는 이미 run 디렉터리와
     # 번호가 나간 뒤다. **렌더까지 본다** — 형식이 맞아도 대상 파일이 슬라이서가 본 것과 다르면
     # (drift) gutter가 다른 파일의 줄을 가리킨다. ponytail: 적재·렌더를 두 번 한다(JSON 하나와
     # 슬라이스가 걸친 파일들이라 싸다). 커지면 결과를 `build_deps`로 넘긴다.
+    slice_set = None
     if args.slices is not None:
         try:
-            render_slices(load_slices(args.slices), args.target)
+            slice_set = load_slices(args.slices)
+            # `--task-dir`는 트리가 **아직 없다** — 렌더는 풀린 뒤(아래)에 한다. 지금 하면 entry
+            # 파일이 없는 슬라이스가 전부 조용히 빠져(`render_slices` docstring) 아무것도 안 본 채
+            # 통과한다.
+            if args.task_dir is None:
+                render_slices(slice_set, args.target)
         except SliceInputError as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             return 2
     # 과제 설명(description.txt)을 읽어 캡슐에 실을 준비를 한다(PoV 배선). 주고서 없는
     # 파일이면 조용히 넘어가지 않고 멈춘다 — 슬라이스 파일과 같은 판단이다.
-    description = None
+    description = task_description
     if args.description_file is not None:
         if not args.description_file.is_file():
             print(f"[ERROR] --description-file 없음: {args.description_file}", file=sys.stderr)
@@ -916,6 +1045,53 @@ def run(args: argparse.Namespace) -> int:
         if problem is not None:
             print(f"[ERROR] {problem}", file=sys.stderr)
             return 2
+    # 🔴 **과제 아카이브는 여기서 푼다** — 모든 게이트 **뒤**, 되돌릴 수 없는 첫
+    # 쓰기(`_claim_run_dir`) **앞**이다. 앞에서 풀면 뒤의 게이트가 exit 2를 낼 때 작업 디렉터리에
+    # 트리가 남아, 오타를 고친 재시도가 "비어 있지 않다"로 거부된다(적대적 리뷰 2026-10-02 M-1).
+    if args.task_dir is not None:
+        try:
+            safe_extract(args.task_dir / REPO_ARCHIVE_NAME, args.task_work_dir)
+        except (UnsafeArchiveError, RuntimeError, OSError) as exc:
+            # `UnsafeArchiveError` = 안전 위반·상한 초과, 그리고 **못 읽는 아카이브**(비-gzip — LFS
+            # 포인터를 그대로 받은 경우 — 와 끊긴 gz; `safe_extract`가 `TarError`·`EOFError`를 이
+            # 예외로 감싼다) · `RuntimeError` = `data_filter` 없는 인터프리터 · `OSError` = NTFS
+            # 경로 제약(260자·콜론)과 디렉터리 자리에 파일이 있는 경우. 어느 쪽이든 트레이스백이
+            # 아니라 **한 줄**로 멈춘다(`tarfile`의 줄바꿈 든 사유는 접는다). 해제가 중간에 멈췄으면
+            # 앞 멤버가 남아 같은 인자로 다시 돌면 「비어 있지 않다」로 거부되므로 비우라고 말한다.
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())
+            print(
+                f"[ERROR] 과제를 풀 수 없다: {detail} — 작업 디렉터리({args.task_work_dir})에 "
+                "앞 멤버가 남았을 수 있다. 비우고 다시 한다",
+                file=sys.stderr,
+            )
+            return 2
+        if slice_set is not None:
+            # 🔴 **`--task-dir`와 `--slices`를 같이 받는 안전은 이 두 검사에 선다 — 그리고 둘이
+            # 전부는 아니다.** 슬라이스는 슬라이서가 어딘가에서 푼 트리를 보고 만든 것이고 여기서
+            # 푼 트리는 **다른 디렉터리**다 — 같을 필요는 없다.
+            #  · `render_slices`는 슬라이스가 가리키는 **경로가 있는데 줄 내용이 다른** 것(drift)을
+            #    `SliceInputError`로 막는다 — 하네스 사본과 글자 단위로 대조한다.
+            #  · **경로가 아예 없는** 슬라이스(번들 최상위 접두어 `src-vul/` 불일치 · 다른 과제의
+            #    slices.json)는 `render_slices`가 오류 없이 **건너뛴다** — 그래서 렌더된 수가
+            #    입력 수와 다르면 여기서 멈춘다(`_unmatched_slices_error`).
+            #  · **못 잡는 것:** 경로와 줄 내용이 우연히 다 맞는 다른 과제의 슬라이스. 이 번들의
+            #    것이라는 보증은 없다 — 슬라이스 파일 쪽에 과제 해시가 없다.
+            # ⚠ 기존 `--target`+`--slices` 경로도 entry 파일이 없는 슬라이스를 조용히 건너뛴다
+            # (`unmatched_slices`로만 센다) — 사람이 루트를 골라 주는 경로라 이 분기만 막고 그쪽은
+            # 바꾸지 않았다.
+            try:
+                rendered = render_slices(slice_set, args.task_work_dir)
+            except SliceInputError as exc:
+                print(
+                    f"[ERROR] {exc} — 해제 트리가 {args.task_work_dir}에 남았다. "
+                    "다른 슬라이스로 다시 하려면 그 디렉터리를 비우고 시작한다",
+                    file=sys.stderr,
+                )
+                return 2
+            unmatched = _unmatched_slices_error(slice_set, rendered, args.task_work_dir)
+            if unmatched is not None:
+                print(f"[ERROR] {unmatched}", file=sys.stderr)
+                return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
@@ -1113,7 +1289,27 @@ def build_parser() -> argparse.ArgumentParser:
     est.add_argument("--target", type=Path, required=True)
 
     run_cmd = subs.add_parser("run", parents=[common, device])
-    run_cmd.add_argument("--target", type=Path, required=True)
+    # **`required=True`가 아니다** — `--task-dir`가 target을 정할 수 있다(#356). 둘 다 없으면
+    # `run()`이 exit 2로 막는다(그 검사가 argparse 자리를 대신한다). `estimate`는 그대로 필수다.
+    run_cmd.add_argument("--target", type=Path, default=None)
+    run_cmd.add_argument(
+        "--task-dir",
+        type=Path,
+        default=None,
+        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt). 주면 아카이브를 "
+        "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
+        "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
+        "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
+        "풀린 트리와 줄 내용이 다르거나(drift) 트리에 없는 슬라이스가 하나라도 있으면 exit 2다 "
+        "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
+    )
+    run_cmd.add_argument(
+        "--task-work-dir",
+        type=Path,
+        default=None,
+        help="--task-dir의 아카이브를 풀 빈 디렉터리. 비어 있지 않으면 거부한다(exit 2) — "
+        "해제가 중단되면 앞 멤버가 남아 두 과제가 섞인다",
+    )
     # **기본값을 argparse에 두지 않는다.** 값은 `run()`이 `DEFAULT_CONDITION`으로 채우되,
     # `None`이 여기까지 살아 와야 "안 줬다"와 "기본값과 같은 라벨을 의도해서 줬다"가
     # 구별된다 — `runner.missing_run_labels`가 그 구분 위에 서 있다.
@@ -1139,7 +1335,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
-        "Scout·Auditor·PoV가 본다(PoV 배선). 저장소 아카이브는 task_loader로 따로 푼다",
+        "Scout·Auditor·PoV가 본다(PoV 배선). 번들을 통째로 주려면 --task-dir를 쓴다 "
+        "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) — 둘을 같이 주지 않는다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")

@@ -254,9 +254,11 @@ def test_an_unexpected_error_inside_the_swap_is_a_swap_error(
     tmp_path: Path, error: BaseException, expected: type[BaseException]
 ) -> None:
     """교대 콜러블의 실패는 `ModelSwapError` 하나다 — 러너가 그것만 「교대 실패로 run 정지」로
-    읽는다. 그 밖의 예외가 새면 단계 진입 교대는 매니페스트 없이 run을 끝내고, run 끝 내림은
-    원래 결과를 덮는다. 인터럽트(`BaseException`)는 감싸지 않는다 — 사람이 멈춘 것을 교대
-    실패로 적으면 사유가 틀린다."""
+    읽는다. 그 밖의 예외가 새면 사유가 **「예상 밖」으로** 적혀 「교대가 실패했다」가 기록에서
+    사라지고, run 끝 내림은 원래 결과를 덮는다. 인터럽트(`BaseException`)는 감싸지 않는다 —
+    사람이 멈춘 것을 교대 실패로 적으면 사유가 틀린다.
+    ⏵ 2026-10-02 정정: 전 판은 *"매니페스트 없이 run을 끝내고"*라 적었다. 러너에 최후 방어선이
+    생겨 **매니페스트는 남는다** — 틀린 사유가 남는 것이 지금의 대가다."""
 
     def probe(_endpoint: str, _key: str) -> dict[str, object]:
         raise error

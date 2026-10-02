@@ -233,4 +233,10 @@ def _post(url: str, payload: dict, api_key: str) -> dict:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
             return json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        # ⚠ **범위: `openai_compat`의 끊긴 연결 방어(`IncompleteRead`·생 `OSError`·비-UTF-8)는
+        # 이 어댑터에 없다.** 그런 예외와 응답 인덱싱 오류는 `RetrievalGatewayError`가 아니라
+        # 생으로 샌다. 러너가 이 예외를 이름으로 잡는 곳이 없어 어차피 `unforeseen_failure`로
+        # 적히고(매니페스트는 최후 방어선이 남긴다) 사유가 같으니, 고쳐도 기록은 안 달라진다.
+        # canonical `harness_pool`은 `retriever: fake`라 이 어댑터를 안 쓴다 — 실서버 검색은
+        # `harness_pool_hybrid`만 부른다.
         raise RetrievalGatewayError(f"{url} 호출 실패: {exc}") from exc
