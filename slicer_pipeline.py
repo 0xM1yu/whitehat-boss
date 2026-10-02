@@ -337,9 +337,14 @@ class SlicingStages:
         it: a shard (`check_prepared`) accepts only a seed that has it."""
         data, _ = self.query("save_cpg", queries.save_cpg_query(self.cpg_out.as_posix()))
         identity = file_identity(self.cpg_out)
+        server_bytes = data.get("bytes")
+        if isinstance(server_bytes, str) and server_bytes.isascii() and server_bytes.isdigit():
+            # #400: Files.size is a Scala Long and ujson writes a Long as a JSON string
+            # ("4646430"), so the int read back never equalled it and every real prepare failed.
+            server_bytes = int(server_bytes)
         prepared = {
             "path": self.cpg_out.as_posix(),
-            "server_bytes": data.get("bytes"),
+            "server_bytes": server_bytes,
             "bytes": identity["bytes"] if identity else None,
             "sha256": identity["sha256"] if identity else None,
             "cpg_seconds": self.result["counters"]["cpg_seconds"],
@@ -354,10 +359,10 @@ class SlicingStages:
                 f"Prepare-only: {self.cpg_out.as_posix()} is not readable from this client; "
                 "shards cannot verify it and --cpg will refuse this checkpoint"
             )
-        elif identity["bytes"] != data.get("bytes"):
+        elif identity["bytes"] != server_bytes:
             raise ValueError(
-                f"Joern saved {data.get('bytes')} bytes but this client reads {identity['bytes']} "
-                f"at {self.cpg_out.as_posix()}; it is not the same file"
+                f"Joern saved {data.get('bytes')!r} bytes but this client reads "
+                f"{identity['bytes']} at {self.cpg_out.as_posix()}; it is not the same file"
             )
         if self.checkpoint:
             self.checkpoint.bind("prepared", prepared)
