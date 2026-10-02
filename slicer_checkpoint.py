@@ -150,8 +150,11 @@ class Checkpoint:
 
 # Keys every shard must agree on; a mismatch means the shards sliced different runs (another
 # CPG, candidate list or engine), so their stages cannot be unioned. "baseline" is per-process
-# (cpg_seconds etc. differ), so it is taken from the first shard, not compared.
-SHARD_SHARED_KEYS = ("checkpoint_version", "run_contract", "engine_config", "candidates")
+# (cpg_seconds etc. differ), so it is taken from the first shard, not compared. "prepared" (#368)
+# is the saved CPG shards on --cpg verified; shards of two different prepares do not merge.
+SHARD_SHARED_KEYS = (
+    "checkpoint_version", "run_contract", "engine_config", "candidates", "prepared",
+)
 
 
 def merge_shards(out: Path, shards: list[Path]) -> dict:
@@ -220,8 +223,15 @@ def _write_merged(out: Path, metadata: list, stages: dict, stores: list) -> None
             "INSERT INTO stages VALUES (?,?,?)",
             [(key, payload, sha) for key, (payload, sha) in sorted(stages.items())],
         )
-        for store in stores:
-            merged.conn.executemany(
-                "INSERT INTO attempts(started,ended,payload) VALUES (?,?,?)",
-                store.conn.execute("SELECT started, ended, payload FROM attempts ORDER BY id"),
+        # Shards seeded from one --prepare-only checkpoint (#368) each carry that prepare's
+        # attempt row; an identical row is that one attempt, so it is written once.
+        rows = dict.fromkeys(
+            row
+            for store in stores
+            for row in store.conn.execute(
+                "SELECT started, ended, payload FROM attempts ORDER BY id"
             )
+        )
+        merged.conn.executemany(
+            "INSERT INTO attempts(started,ended,payload) VALUES (?,?,?)", list(rows)
+        )

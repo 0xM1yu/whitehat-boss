@@ -63,6 +63,7 @@ from src.schemas import (
     Location,
     ProducedBy,
     ReasonCode,
+    ReproOrigin,
     ReproSpec,
     Role,
     Verdict,
@@ -461,6 +462,65 @@ def test_auditor_creates_finding_and_materializes_missing_evidence(ctx: RunConte
         e for e in ctx.trace.events if e.kind is EventKind.TRANSITION and e.data["rule"] == "F-1"
     )
     assert created.data["reason"] == ReasonCode.AUDITOR_HYPOTHESIZED.value
+
+
+def _set_synthesize(ctx: RunContext, value: int) -> None:
+    thresholds = ctx.config.thresholds.transition(synthesize_repro_spec=value)
+    ctx.config = ctx.config.transition(thresholds=thresholds)
+
+
+def test_synthesize_off_leaves_an_empty_repro_spec(ctx: RunContext) -> None:
+    """#S7 기본(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈추던 종전 동작. 합성 이벤트 없음."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    assert finding.repro_spec is None
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.REPRO_SPEC_SYNTHESIZED]
+
+
+def test_synthesize_fills_a_harness_repro_spec(ctx: RunContext) -> None:
+    """#S7 켜짐(1): 비워 낸 명세를 후보 위치로 합성한다 — `origin=harness`, 신호에 crash 낱말,
+    8단계가 도구를 역선택할 수 있게. 합성 이벤트가 그 finding을 가리킨다."""
+    _set_synthesize(ctx, 1)
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    assert finding.repro_spec is not None
+    assert finding.repro_spec.origin is ReproOrigin.HARNESS
+    assert "crash" in finding.repro_spec.expected_signal
+    assert validate.tool_for(finding.repro_spec.expected_signal) is not None
+    assert BENIGN_TARGET.symbol in finding.repro_spec.expected_signal
+    event = next(e for e in ctx.trace.events if e.kind is EventKind.REPRO_SPEC_SYNTHESIZED)
+    assert event.subject_id == finding.finding_id
+    assert event.data["steps"] == len(finding.repro_spec.steps)
+
+
+def test_a_model_claimed_harness_origin_is_stamped_back_to_model(ctx: RunContext) -> None:
+    """스키마가 `origin`을 노출하므로 모델이 `harness`를 참칭할 수 있다 — 하네스가 `model`로
+    덮는다(발급값 도장 #279와 같은 결). 합성이 꺼져 있어도 덮는다."""
+    claimed = Finding(
+        finding_id="find_0001",
+        run_id=RUN_ID,
+        candidate_id="cand_0001",
+        title="t",
+        cwe="CWE-787",
+        state=FindingState.HYPOTHESIZED,
+        confidence=0.6,
+        path=[],
+        evidence_refs=[],
+        produced_by=ProducedBy(role=Role.AUDITOR, model="fake", prompt_version="v1"),
+        repro_spec=ReproSpec(
+            steps=["./x"], expected_signal="sanitizer crash", origin=ReproOrigin.HARNESS
+        ),
+    )
+    candidate, _, _ = _triage(ctx, BENIGN_TARGET)
+
+    stamped = auditor._ensure_repro_origin(ctx, claimed, candidate, finding_id="find_0001")
+
+    assert stamped.repro_spec.origin is ReproOrigin.MODEL
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.REPRO_SPEC_SYNTHESIZED]
 
 
 def test_pov_open_hop_puts_the_finding_in_the_prompt(ctx: RunContext) -> None:
@@ -1308,7 +1368,7 @@ def test_auditor_content_aware_versions_pin_v3_v4_and_v5() -> None:
     content를 전제로 쓰였다). **critic의 상수를 import하지 않는다** — 본문을 읽도록 쓰였는지는
     역할별 프롬프트의 성질이다.
     """
-    assert {"v3", "v4", "v5"} <= auditor._CONTENT_AWARE_VERSIONS
+    assert {"v3", "v4", "v4_t1", "v5"} <= auditor._CONTENT_AWARE_VERSIONS
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 

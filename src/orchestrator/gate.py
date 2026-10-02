@@ -59,7 +59,7 @@ from pydantic import Field
 
 from src.schemas.common import HarnessModel, Location
 from src.schemas.decision import Decision
-from src.schemas.enums import EvidenceGrade, EvidenceKind, PathStepKind, Verdict
+from src.schemas.enums import EvidenceGrade, EvidenceKind, PathStepKind, ReproOrigin, Verdict
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 
@@ -159,6 +159,10 @@ def evaluate(
         "unblocked": unblocked,
         "upheld": upheld,
         "has_repro_spec": finding.repro_spec is not None,
+        # 명세가 하네스 합성인가 (#S7). **등급을 가르지 않는다** — `_DESCENDING`에 안 들어간다.
+        # `gate_eval` trace에 실려 「validated인데 합성 명세로 올라왔다」를 비교표가 가르게 한다.
+        "repro_is_harness": finding.repro_spec is not None
+        and finding.repro_spec.origin is ReproOrigin.HARNESS,
     }
     grade = next((value for value, key in _DESCENDING if predicates[key]), EvidenceGrade.E0)
     ambiguous = (
