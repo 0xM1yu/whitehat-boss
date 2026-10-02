@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from slicer_source import assemble
 from src import cli, console
 from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps, describe_wiring
@@ -555,6 +556,128 @@ def test_run_refuses_both_task_dir_and_slices(
          "--slices", str(tmp_path / "slices.json")],
         needle="--slices",
     )
+
+
+_TASK_SOURCE = "src-vul/mod_00.c"
+
+
+def _task_slices(root: Path, *, text: str = "int main(void) { return 0; }") -> Path:
+    """`_level1_task`가 풀어 놓는 `src-vul/mod_00.c` 한 줄을 가리키는 `slices.json`.
+
+    `code`는 슬라이서 자신의 `assemble`로 만든다 — 렌더러의 줄 규칙이 슬라이서와 같다는 것을 지어낸
+    문자열이 아니라 슬라이서 함수로 맞추려는 것이다(`tests/test_slices.py`와 같은 근거 ·
+    CLAUDE.md §2.5 「핀 샘플은 저장소에서 온다」). `text`를 다르게 주면 슬라이서가 **다른 내용**을
+    봤다는 뜻이라 drift 슬라이스가 된다."""
+    points = {(_TASK_SOURCE, 1)}
+    path = root / "slices.json"
+    path.write_text(
+        json.dumps({
+            "slice_version": "slice-v2",
+            "status": "ok",
+            "joern_engine_config": {"maxCallDepth": 2},
+            "slices": [{
+                "id": "slice_0001",
+                "candidate_key": "key_0001",
+                "case": "A",
+                "entry": {"file": _TASK_SOURCE, "line": 1, "symbol": "main"},
+                "members": ["key_0001"],
+                "absorbed": [],
+                "lines": [{"file": f, "line": n} for f, n in sorted(points)],
+                "code": assemble(points, {_TASK_SOURCE: [text]}),
+            }],
+            "candidate_manifest": {"key_0001": {"scopes": []}},
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_run_takes_slices_made_from_the_same_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 `--task-dir`와 `--slices`는 **같이 쓴다** — 같은 번들에서 나온 슬라이스면 받는다.
+
+    전 판은 둘을 거부했다(*"슬라이스는 이미 풀린 트리에서 나온 것이고 작업 디렉터리는 비어 있어야
+    하므로 슬라이서가 본 트리와 같을 수 없다"*). 그런데 `render`는 **같은 디렉터리**를 요구하지
+    않는다 — 하네스 사본이 슬라이서가 본 것과 **글자 단위로** 같은지(drift)를 본다. 같은 아카이브를
+    푼 트리는 어디서 풀었든 같다. 거부의 대가는 실모델 프로필(Scout 셋이 슬라이스 입력)에서
+    `--task-dir`로는 Scout까지 가는 run을 **시작할 수 없다**는 것이었다(적대적 리뷰 HIGH-1)."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path)
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+            "--slices", str(slices),
+        ])
+
+    assert captured["spec"].slices_path == slices
+    assert captured["spec"].target == tmp_path / "w"
+    assert (tmp_path / "w" / _TASK_SOURCE).is_file()
+
+
+def test_run_refuses_slices_that_drifted_from_the_unpacked_tree(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 슬라이서가 **다른 내용**을 봤으면 exit 2다 — 위 테스트가 거부를 풀어도 되는 근거다.
+
+    `--task-dir`와 `--slices`를 같이 받는 안전은 drift 검사가 **풀린 트리에** 도는 데 선다. 트리는
+    `_claim_run_dir` 직전에야 풀리므로 그 전에 `render_slices`를 부르면 트리가 없어 슬라이스가
+    **전부 조용히 빠진다**(`render_slices`는 entry 파일이 없는 슬라이스를 렌더하지 않는다) —
+    검사가 돌았는데 아무것도 안 본 것이다. 풀린 뒤에 돌아야 한다."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path, text="int main(void) { return 1; }")  # 슬라이서가 본 것 ≠ 번들
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--slices", str(slices)],
+        needle="drift",
+    )
+
+
+def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 실모델 프로필(Scout 셋이 슬라이스 입력 v3)에서 `--task-dir`로 Scout까지 가는 run을
+    **시작할 수 있다** — `_claim_run_dir`에 닿는 것으로 본다.
+
+    적대적 리뷰 HIGH-1의 재현을 뒤집은 것이다: 전 판은 같은 인자에서 `--slices` 없이는 슬라이스
+    가드가, 주면 `--task-dir` 게이트가 막아 **어느 쪽으로도 못 시작했다**(에러 문구도 서로를 가리켰다).
+    `execute`가 아니라 `_claim_run_dir`에서 세운다 — 그 뒤는 실서빙 엔드포인트가 필요하다."""
+    _refuse_sockets(monkeypatch)
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path)
+
+    class _Stop(RuntimeError):
+        """모든 게이트를 지나 run_dir 확보까지 왔다는 표시."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "harness_pool", "--seed", "1",
+            "--condition", "B1prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+            "--slices", str(slices),
+        ])
+
+    assert not _errors(capsys.readouterr().err), "라벨·슬라이스를 다 줬는데 거부됐다"
+    assert (tmp_path / "w" / _TASK_SOURCE).is_file()
 
 
 def test_run_refuses_a_task_work_dir_without_a_task_dir(
