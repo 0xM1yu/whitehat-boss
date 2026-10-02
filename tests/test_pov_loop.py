@@ -17,6 +17,7 @@ import dataclasses
 import hashlib
 import json
 from functools import partial
+from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -28,6 +29,7 @@ from src.adapters.symbol_resolver import resolve
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
+from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
 from src.orchestrator.prompt_loader import PROMPTS_DIR
 from src.orchestrator.trace import EventKind
@@ -1317,28 +1319,158 @@ def test_pov_loop_can_inspect_with_gdb(ctx: RunContext) -> None:  # noqa: F811
     assert hop0.data["evidence_kind"] == TOOL_KINDS["gdb"].value
 
 
-def test_v3_prefix_does_not_claim_gdb_sees_the_models_poc_bytes() -> None:
-    """🔴 적대적 리뷰 2026-10-02 MEDIUM-3(코드 판독) — `prompts/pov/v3/prefix.md`가 gdb를
-    「경로에 닿았나를 가르는 수단」이라 **무조건** 서술하는데, 지금 코드에서는 거짓이다.
+def _v3_prefix() -> str:
+    return (PROMPTS_DIR / "pov" / "v3" / "prefix.md").read_text(encoding="utf-8")
 
-    `nodes.pov.run_tool`이 `ToolArgs(argv=[tool], workdir=workdir)`만 넘긴다 — PoC 바이트가
-    gdb 실행에 **안 들어간다**(`docs/agent-contracts.md`도 바로 다음 줄에서 같은 한계를 적는다).
-    그래서 gdb는 지금은 "당신이 방금 만든 그 입력으로 어디까지 갔는가"에 답을 못 한다 — 입력
-    없이 대상을 띄우는 것과 같다. v3는 아직 미배선(disk-only, `meta.yaml`)이라 지금 run에는
-    안 닿지만, 배선되는 순간(#354 이후) 모델에게 거짓 전제를 주게 된다 — 지금 고친다.
 
-    이 검사는 **철자가 아니라 성질**을 문다: gdb 절이 「경로에 닿았나」 주장을 하려면 그 옆에
-    PoC가 아직 안 들어간다는 한계(또는 조건)가 같이 있어야 한다."""
-    prefix = (PROMPTS_DIR / "pov" / "v3" / "prefix.md").read_text(encoding="utf-8")
-    gdb_bullet_start = prefix.index("`gdb` — ")
-    gdb_bullet_end = prefix.index("`build` — ")
-    gdb_bullet = prefix[gdb_bullet_start:gdb_bullet_end]
+def _paragraphs(text: str) -> list[str]:
+    return [p for p in text.split("\n\n") if p.strip()]
 
-    assert "경로에 닿았나" in gdb_bullet, "픽스처 전제 — 이 절이 그 주장을 담고 있어야 한다"
-    assert "안 들어간다" in gdb_bullet or "들어가지 않는다" in gdb_bullet, (
-        "gdb 절이 「경로에 닿았나」를 단정하면서 PoC 바이트가 아직 gdb 입력으로 안 들어간다는 "
-        "한계를 안 적었다 — 지금 코드에서 거짓 전제를 모델에게 준다"
+
+def test_no_pov_tool_receives_the_poc_bytes_today(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 **서술을 사실에 묶는 경보기다.** v3 prefix·`docs/agent-contracts.md`·`PovAction`
+    docstring이 「지금 도구는 PoC 바이트를 입력으로 받지 않는다」고 쓴다 — 그 사실을 **코드로**
+    잰다: 러너를 돌려 `gen`(→`poc`)과 `inspect`(asan·gdb·build)가 `ToolRunner`에 넘긴 요청 전부를
+    기록하고, 어느 요청의 argv·workdir·env에도 PoC 바이트가 없고 argv가 `[tool]` 하나뿐임을 본다.
+
+    이 검사가 빨개지면 PoC가 도구 입력으로 들어간 것이다 — 그때는 위 세 곳의 한계 서술을 **같이**
+    고친다(독립 검토가 `poc`·`asan`도 PoC와 무관한데 문구가 gdb에서 그쪽으로 모델을 돌린다고
+    짚었다). 한계: 이 PR 시점의 `ToolArgs`(argv·workdir·env) 세 필드만 본다."""
+    recorded: list[tuple[str, object]] = []
+    real = ctx.tools
+
+    class Recorder:
+        def run(self, tool, args, sandbox):  # noqa: ANN001, ANN202
+            recorded.append((tool, args))
+            return real.run(tool, args, sandbox)
+
+        def __getattr__(self, name):  # noqa: ANN001, ANN202
+            return getattr(real, name)
+
+    scripted = _scripted(
+        ctx,
+        [_gen(),  # PoC 바이트 0x41 x 8 — `poc`가 돈다
+         PovAction(action="inspect", tool="asan", rationale="a"),
+         PovAction(action="inspect", tool="gdb", rationale="g"),
+         PovAction(action="inspect", tool="build", rationale="b"),
+         PovAction(action="submit", rationale="done")],
     )
+    scripted = dataclasses.replace(scripted, tools=Recorder())
+    state, finding = _pov_state(ctx)
+    before = len(recorded)  # `_pov_state`가 앞 단계 도구를 이미 돌렸을 수 있다
+
+    runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+
+    pov_calls = recorded[before:]
+    assert [tool for tool, _ in pov_calls] == ["poc", "asan", "gdb", "build"]
+    for tool, args in pov_calls:
+        assert args.argv == [tool], f"{tool}: argv가 [tool] 하나가 아니다 — {args.argv}"
+        assert not args.env, f"{tool}: env가 채워졌다"
+        assert "AAAAAAAA" not in " ".join([*args.argv, args.workdir, *args.env.values()])
+
+
+def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
+    """v3 prefix의 한계 문단이 **도구 넷 모두**를 이름으로 들고 「PoC가 안 들어간다」를 적는다.
+
+    독립 검토 지적: 전 판은 gdb만 한계를 달고 `poc`는 「현 후보를 그대로 돌린다」,
+    `asan`은 「터졌는데 원인이 모호할 때」로 적어
+    모델을 gdb에서 그쪽으로 돌렸다. 둘 다 PoC와 무관하다
+    (`test_no_pov_tool_receives_the_poc_bytes_today`가 코드로 잰다).
+
+    ⚠ **문자열 핀이다** — 뜻을 뒤집되 철자를 남긴 문장에는 초록이다. 지키는 것은 「한계 문단이
+    사라지거나 도구 하나를 빼먹지 않는다」뿐이고, 문장이 참인지는 위 코드 경보기가 따로 본다."""
+    paragraph = next(p for p in _paragraphs(_v3_prefix()) if "지금 하네스의 한계" in p)
+
+    for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
+        assert tool in paragraph, f"한계 문단이 {tool}을 안 든다"
+    assert "PoC" in paragraph
+    assert "들어가지 않는다" in paragraph or "안 들어간다" in paragraph
+
+
+def test_v3_prefix_does_not_say_the_tools_run_the_candidate() -> None:
+    """독립 검토 지적의 거짓 서술이 다시 들어오지 않는다 — 도구가 PoC(「후보」)를 돌리거나
+    검증한다는 문형. 한계: **철자 핀**이다(같은 뜻의 다른 문형은 못 막는다)."""
+    prefix = _v3_prefix()
+
+    banned = (
+        "현 후보를 그대로", "현재 후보를 진단", "도구로 대상을 검증해", "「경로에 닿았나」를 가르",
+    )
+    for phrase in banned:
+        assert phrase not in prefix, f"거짓 서술이 남았다: {phrase!r}"
+
+
+def test_v3_prefix_has_no_gdb_usage_rule() -> None:
+    """🔴 D92(`docs/open-questions/D/D92.md`): *"프롬프트에 gdb 사용 규칙을 넣는 일에는 ASAN
+    수리·실행 검증이 선행한다"*(#326 열림). v3 prefix는 gdb를 **도구 목록의 사실**로만 쓰고 언제
+    쓰라는 지시를 안 둔다. ⚠ 코드 배선(`PovAction.tool` enum)은 이 선행 조건이 아니다(D92 본문).
+
+    **철자 핀이다** — 지시의 모든 문형을 막지 못한다. 막는 것은 독립 검토가 짚은 문형들(
+    `inspect(gdb)` 처방, 「gdb로 확인한 뒤」, 「가르는 수단」)이다."""
+    prefix = _v3_prefix()
+
+    for phrase in ("inspect(gdb)", "gdb로", "가르는 수단", "가르는 데 쓸"):
+        assert phrase not in prefix, f"gdb 사용 규칙이 남았다: {phrase!r}"
+
+
+def test_v3_prefix_reads_reason_whether_or_not_found() -> None:
+    """`found=true`여도 원문이 4,000자에서 잘렸으면 알림이 `reason`에만 있다 —
+    prefix가 `found=false`일 때만 `reason`을 읽으라 했던 것을 맞춘다. 한계: 철자 핀."""
+    paragraph = next(p for p in _paragraphs(_v3_prefix()) if "`reason`" in p)
+
+    assert "`found`와 무관" in paragraph
+
+
+def test_v3_prefix_does_not_overstate_the_fuzz_entrypoint() -> None:
+    """독립 검토: prefix가 「이 대상은 libFuzzer 하네스다 — 바이트는 그 진입점 인자로 **그대로**
+    들어간다」고 **단정**했다. resolver가 후보 여럿 중 하나를 고른 `found=true`일 수 있고(oss-fuzz·
+    arvo에 퍼저가 여럿인 프로젝트가 흔하다) 후보 수는 FACTS에 없다(스키마 확장 필요 — 접었다).
+    §0: 모르는 것을 아는 것처럼 쓰지 않는다. 한계: 철자 핀."""
+    prefix = _v3_prefix()
+
+    assert "이 대상은 **libFuzzer 하네스**다" not in prefix, "단정이 남았다"
+    assert "후보 중 하나를 고른" in prefix, "resolver가 하나를 고른 것이라는 고지가 없다"
+
+
+def test_contract_doc_states_the_tool_limit_and_the_ambiguous_entrypoint() -> None:
+    """`docs/agent-contracts.md`의 PoV 절이 ① 도구 넷 모두 PoC를 입력으로 받지 않는다
+    ② 진입점이 후보 중 하나일 수 있다 — 를 적는다. 한계: 철자 핀."""
+    text = (Path(__file__).resolve().parent.parent / "docs" / "agent-contracts.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "도구 넷 모두" in text
+    assert "후보 중 하나를 고른" in text
+    assert "gdb뿐이라" not in text, "PoC 없이는 gdb가 경로 도달을 못 가른다 — 근거 서술이 낡았다"
+
+
+def test_v3_meta_lists_every_difference_from_v2() -> None:
+    """`meta.yaml`의 「v2와 다른 셋」이 관측 꼬리와 막혔을 때 절을 빼먹었다 — 개수·목록을 맞춘다.
+    한계: 철자 핀."""
+    text = (PROMPTS_DIR / "pov" / "v3" / "meta.yaml").read_text(encoding="utf-8")
+
+    assert "조립·검증한 관측" not in text, "도구가 PoC를 검증한다는 낡은 서술"
+    assert "관측 꼬리" in text and "막혔을 때" in text
+
+
+def test_pov_action_description_in_the_request_has_no_repo_internal_references() -> None:
+    """`PovAction`의 docstring은 `response_format.json_schema.schema.description`으로 **모든 pov
+    요청에 실린다**(v2 포함 — `openai_compat`). 커밋 SHA·PR 번호·소스 줄 번호 같은 저장소 내부
+    참조와 gdb 사용 근거 서술이 모델 입력에 들어가면 안 된다(D92). 그런 이력은 `#` 주석에 둔다."""
+    description = PovAction.model_json_schema().get("description", "")
+
+    for fragment in ("5cf5c20", "#327", "#360", "container_tools", "fake_tools", "눈으로 볼 수단"):
+        assert fragment not in description, f"요청 payload에 내부 참조가 실린다: {fragment!r}"
+
+
+def test_every_pov_prompt_version_but_v2_gets_the_wide_inputs() -> None:
+    """`_WIDE_INPUT_VERSIONS`에 안 넣은 새 판(v4…)은 **조용히 좁아진다** — 입력이 v2로 돌아가는데
+    아무 검사도 안 빨갛다. v2(옛 입력으로 동결)를 뺀 `prompts/pov/*` 판은 전부 이 집합에
+    들어야 한다.
+    새 판이 일부러 좁은 입력을 원하면 이 검사를 고쳐 그 사실을 적는다."""
+    versions = {d.name for d in (PROMPTS_DIR / "pov").iterdir() if d.is_dir()}
+
+    assert versions - {"v2"} <= pov_node._WIDE_INPUT_VERSIONS
+    assert "v2" not in pov_node._WIDE_INPUT_VERSIONS
 
 
 def test_v3_prefix_no_longer_claims_the_observation_is_one_line() -> None:
