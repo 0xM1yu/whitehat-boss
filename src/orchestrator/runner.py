@@ -1093,8 +1093,9 @@ def _analyze(
     # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
     # **pov의 대상도 이 목록이다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.** 재현
     # 명세가 부르는 `./poc`는 PoV가 낸 PoC 바이트를 파일로 써야 생기는데(STATUS.md §5 — E4를
-    # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 내 기록할 뿐 `./poc`로 쓰지
-    # 않는다(파일화는 호스트가 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
+    # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 trace와 run 산출물 사이드카
+    # (`pov_poc/`, #355)에 남길 뿐 `./poc`로 쓰지 않는다(그 `./poc` materialize는 호스트가
+    # 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
     # `validate.run`이 재현 실패로 내린 것이 pov가 돌 이유를 지우지 않는다. `validate.run` **뒤**
     # 상태로 거르면 그 강등이 pov의 입장 조건이 되는 순환이고 PoV 시도가 준다 — 바꾸려면 사람이
     # 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
@@ -1133,7 +1134,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **캡슐 미스는 finding을 죽이지 않는다** — `pov_skipped`로 남기고 넘어간다(추가형이라 상태는
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
-    올려 보냄)는 루프가 낸다. 바이트 파일화·E4 게이트·oracle 제출은 호스트 후속이다.
+    올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
+    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트·oracle
+    제출은 호스트 후속이다.
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1162,15 +1165,22 @@ def _run_pov_hops(
     **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
     피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
-    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다.
+    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
+    호출부 20여 곳이 쥐고 있다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
     spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이·oracle 제출도 후속이고,
-    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)만 남긴다.
-    `max_hops`는 NE 루프와
-    같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고,
+    종단에서 **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
+    그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
+    종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
+    `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+
+    `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
+    그대로다 — 아래 `[:2]`가 그것을 뗀다. 다음 슬라이스가 반환을 넓힐 때 디렉터리를 글로브하지
+    않고 그대로 올릴 수 있다.
     """
     max_hops = ctx.config.thresholds.max_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
@@ -1197,25 +1207,26 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, stop_reason=reason.value, failed=(exc, latency_s)
                 )
-                return _pov_finish(ctx, finding, reason, last_poc)
+                return _pov_finish(ctx, finding, reason, last_poc)[:2]
             action = current.action
             if action.action == "submit":
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
                 )
-                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)
+                return _pov_finish(ctx, finding, PovStopReason.SUBMITTED, last_poc)[:2]
+            hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
             if action.action == "gen":
                 # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
                 # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
-                poc = assemble_poc(action.spec)
-                if last_poc is not None and poc == last_poc:
+                hop_poc = assemble_poc(action.spec)
+                if last_poc is not None and hop_poc == last_poc:
                     _emit_pov_hop(
-                        ctx, finding, hop=hop, action="gen",
+                        ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                     )
-                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)
-                last_poc = poc
+                    return _pov_finish(ctx, finding, PovStopReason.REPEAT_SPEC, last_poc)[:2]
+                last_poc = hop_poc
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
                 evidence = pov.run_tool(
@@ -1223,11 +1234,13 @@ def _run_pov_hops(
                 )
             if hop >= max_hops:
                 _emit_pov_hop(
-                    ctx, finding, hop=hop, action=action.action, evidence=evidence,
+                    ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value,
                 )
-                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)
-            _emit_pov_hop(ctx, finding, hop=hop, action=action.action, evidence=evidence)
+                return _pov_finish(ctx, finding, PovStopReason.MAX_HOP, last_poc)[:2]
+            _emit_pov_hop(
+                ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc
+            )
             followup = _pov_observation(action.action, evidence)
             prev = current
             hop += 1
@@ -1272,11 +1285,17 @@ def _emit_pov_hop(
     hop: int,
     action: str | None = None,
     evidence: Evidence | None = None,
+    poc: bytes | None = None,
     stop_reason: str | None = None,
     failed: tuple[Exception, float] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
-    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다)."""
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다).
+
+    `poc`는 **그 홉의 gen이 조립한 PoC**다 — 있으면 맨 hex sha256을 `poc_sha256`으로 싣는다(종단
+    이벤트의 `poc_sha256`과 같은 형식이라 바로 대조된다). 종단을 건너뛰는 중단 경로(예산 소진·서버
+    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이다 — 못 잡는 경로는 `poc_log` 모듈 docstring.
+    """
     data: dict[str, TraceValue] = {"hop": hop}
     if action is not None:
         data["action"] = action
@@ -1285,6 +1304,8 @@ def _emit_pov_hop(
         data["tool_ok"] = evidence.ok
         data["exit_code"] = evidence.exit_code
         data["evidence_kind"] = evidence.kind.value
+    if poc is not None:
+        data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:
         data["stop_reason"] = stop_reason
     if failed is not None:
@@ -1304,7 +1325,7 @@ def _emit_pov_hop(
 
 def _pov_finish(
     ctx: RunContext, finding: Finding, reason: PovStopReason, poc: bytes | None
-) -> tuple[bytes | None, PovStopReason]:
+) -> tuple[bytes | None, PovStopReason, str | None, str | None]:
     """루프 종단 이벤트. `POV_GENERATED`는 **모델이 submit해 최종 PoC가 나온 경우만** 낸다 —
     나머지(max_hop·repeat·흡수된 예외·gen 없는 submit)는 `POV_SKIPPED`다. 부분 PoC(중간 gen까지는
     했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`로 남긴다.
@@ -1312,14 +1333,32 @@ def _pov_finish(
     ⚠ 예전에는 PoC가 있기만 하면 GENERATED라 max_hop·parse_failed도 「생성됨」으로 과대 집계됐다
     (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다.
 
-    바이트가 있으면 **사이드카 파일로 남기고 그 참조·digest를 이 이벤트에 싣는다**(#355) —
-    submit 못 한 부분 PoC도 남긴다(회수가 목적이라 종단 사유로 가르지 않는다). **Evidence를
-    달지 않는다**는 것과 digest 형식이 아래 `poc_sha256`과 다른 이유는 `poc_log` 모듈 docstring에
-    있다. `ctx.pocs`가 `None`이면(단위 테스트·`--dry-run`) 키를 늘리지 않는다."""
+    **바이트가 있으면 사이드카 파일로 남기고** 그 참조·digest를 이 이벤트에 싣는다(`poc_ref`·
+    `poc_digest`, #355) — submit 못 한 부분 PoC도 남긴다(회수가 목적이라 종단 사유로 가르지 않는다).
+    **쓰기가 실패하면(`OSError`) 흡수한다** — PoV는 추가형이고 사이드카는 부가 산출물이라 run을
+    죽이지 않는다. 이벤트가 `poc_ref` 대신 `poc_write_error`·`poc_write_error_detail`을 싣고 종단
+    사유·종류는 그대로다. `ctx.pocs`가 `None`이면(단위 테스트·`--dry-run`) 이 키들이 **아예 없다**.
+    **Evidence를 달지 않는다**는 것과 digest 형식이 아래 `poc_sha256`과 다른 이유는 `poc_log` 모듈
+    docstring에 있다.
+
+    반환은 `(poc, reason, ref, digest)`다 — `ref`·`digest`는 방금 쓴 사이드카의 것이고 안 썼으면
+    (배선 없음·바이트 없음·쓰기 실패) `None`이다. 다음 슬라이스가 디렉터리를 글로브하지 않고
+    쓰게 낸다."""
+    ref: str | None = None
+    digest: str | None = None
     sidecar: dict[str, TraceValue] = {}
     if poc is not None and ctx.pocs is not None:
-        ref, digest = ctx.pocs.write(poc)
-        sidecar = {"poc_ref": ref, "poc_digest": digest}
+        try:
+            ref, digest = ctx.pocs.write(poc)
+        except OSError as exc:
+            sidecar = {
+                "poc_write_error": type(exc).__name__,
+                # `str(exc)`가 아니라 `strerror`다 — 앞의 것은 파일의 절대경로를 싣고 trace는
+                # 경로를 안 싣는다(재현성 비교 단위).
+                "poc_write_error_detail": exc.strerror or "",
+            }
+        else:
+            sidecar = {"poc_ref": ref, "poc_digest": digest}
     if reason is PovStopReason.SUBMITTED and poc is not None:
         ctx.trace.emit(
             EventKind.POV_GENERATED,
@@ -1330,7 +1369,7 @@ def _pov_finish(
             poc_sha256=hashlib.sha256(poc).hexdigest(),
             **sidecar,
         )
-        return poc, reason
+        return poc, reason, ref, digest
     data: dict[str, TraceValue] = {"reason": reason.value}
     if poc is not None:
         data["poc_bytes"] = len(poc)
@@ -1343,7 +1382,7 @@ def _pov_finish(
         subject_id=finding.finding_id,
         **data,
     )
-    return poc, reason
+    return poc, reason, ref, digest
 
 
 def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static: bool) -> int:
