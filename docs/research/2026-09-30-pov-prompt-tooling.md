@@ -31,8 +31,9 @@ inspect(gdb)는 실패한다(실 컨테이너엔 gdb 있음). 바이트 material
 (`src/schemas/pov.py:170`)라 `tool="gdb"`는 **스키마에서 거절**되고, v2 프롬프트(`prompts/pov/v2/prefix.md:13-14`)도
 `asan`·`build`·`poc`만 안내한다. `gdb`는 `96a80fe`(2026-09-30 22:04 KST)에서 그 Literal에서 빠졌다.
 그러므로 **dev_fake에서도 `inspect(gdb)`는 서지 않는다**(막는 곳이 `TOOL_KINDS`가 아니라 `PovAction` 스키마다) — 결론은 그대로 참이고 이유만 바뀌었다.
-③ **열린 PR #380**(`feat/pov-information-wiring`)이 그 Literal에 `gdb`를 더한다(이슈 #360의 결정) —
-**#380이 머지되면 ②는 낡는다.** 이 노트는 `d85ea62` 기준이고, 두 PR 중 어느 쪽이 먼저 머지돼도 이 날짜·커밋 단서가 읽는 사람에게 기준을 준다.
+③ PR #380(`feat/pov-information-wiring`)이 그 Literal에 `gdb`를 더했다(이슈 #360의 결정) — **아래 ⏵ 2026-10-03이 그 뒤의 사실이다.** ②는 `d85ea62` 기준 서술이다.
+
+⏵ **2026-10-03 (`a696f85` 기준 main) — #380이 머지돼 ②는 낡았다.** `PovAction.tool`의 Literal은 이제 `"asan", "build", "gdb", "poc"`다(`src/schemas/pov.py:185`) — 스키마는 `inspect(gdb)`를 받는다. **그러나 모델은 gdb를 쓰라고 안내받지 못한다**: 배선된 v2 프롬프트는 여전히 `asan`·`build`·`poc`만 안내하고(`prompts/pov/v2/prefix.md` — gdb 언급 0), v3(`prompts/pov/v3`)는 미배선이다. 또 `run_tool`은 모든 도구에 `argv=[tool]`만 넘겨 **어떤 도구도 PoC 바이트를 입력으로 받지 않는다**(#354) — gdb만의 한계가 아니다. D92는 프롬프트에 gdb 사용 규칙을 넣는 일에 ASAN 수리·실행 검증(#326)을 선행시킨다. 이슈 #360은 그래서 열려 있다.
 
 ## 2. 외부 문헌 (남이 주장한 것 — 인용)
 
