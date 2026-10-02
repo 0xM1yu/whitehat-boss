@@ -331,3 +331,47 @@ def test_load_task_refuses_an_unrelated_extra_file(tmp_path: Path) -> None:
         task_loader.load_task(task, tmp_path / "work")
 
     assert "notes-from-a-colleague.md" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    ("extras", "empty_dirs", "offenders"),
+    [
+        pytest.param(("poc",), (), ("poc",), id="reference-poc"),
+        pytest.param(("binaries/magic_fuzzer.fix",), (), ("binaries",), id="nested-directory"),
+        pytest.param((), ("stray-empty-dir",), ("stray-empty-dir",), id="empty-directory"),
+        pytest.param((".DS_Store",), (), (".DS_Store",), id="dotfile-os-litter"),
+        pytest.param((".gitkeep",), (), (".gitkeep",), id="dotfile-gitkeep"),
+        pytest.param(
+            ("README.md", "submit.sh"), (), ("README.md", "submit.sh"), id="generator-extras"
+        ),
+        pytest.param(
+            ("patch.diff", "error.txt", "repo-fix.tar.gz"),
+            (),
+            ("patch.diff", "error.txt", "repo-fix.tar.gz"),
+            id="all-three-answer-files-together",
+        ),
+    ],
+)
+def test_load_task_refuses_every_entry_outside_the_allowlist_whatever_its_kind(
+    tmp_path: Path,
+    extras: tuple[str, ...],
+    empty_dirs: tuple[str, ...],
+    offenders: tuple[str, ...],
+) -> None:
+    """허용된 두 이름이 아니면 **종류를 가리지 않고** 거부하고, 걸린 이름을 **전부** 든다.
+
+    경계를 우연에 두지 않으려고 한 줄씩 못박는다 — 참조 PoC(`poc`)와 중첩 디렉터리(`binaries/`)는
+    저자 생성기 `ARVO_FILES`가 **선언한** 이름이다(실측한 두 과제 목록에는 없었다 — 그래도 허용
+    목록 밖이라 거부된다, 허용 목록을 고른 이유) · 빈 디렉터리 · 점 파일(`.DS_Store`·`.gitkeep`
+    포함 — 예외를 두면 숨기기 좋은 자리가 생긴다) · 생성기가 쓰는 `README.md`·`submit.sh`.
+    메시지는 허용 이름도 적는다 — 무엇이 되는지 모르면 못 고친다.
+    """
+    task = _task_dir(tmp_path, extras=extras, empty_dirs=empty_dirs)
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.load_task(task, tmp_path / "work")
+
+    message = str(refused.value)
+    assert all(name in message for name in offenders)
+    assert task_loader.DESCRIPTION_FILENAME in message
+    assert task_loader.REPO_ARCHIVE_NAME in message
