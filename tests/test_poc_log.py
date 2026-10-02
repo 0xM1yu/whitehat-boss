@@ -27,6 +27,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -327,7 +328,8 @@ def test_the_suffix_is_one_the_preprocessor_never_analyzes(
 ) -> None:
     """확장자가 `_KIND_BY_SUFFIX`에 있으면(예전 `.bin` → BINARY) 이전 run의 PoC가 **다음 run의
     분석 대상**이 된다 — 대상 트리 안에 `artifacts/`가 있으면(`--target`이 저장소 루트일 때) 그
-    바이트가 Scout 프롬프트까지 간다. 이 저장소에서 run을 무효로 만드는 규칙이다.
+    바이트가 Scout 프롬프트까지 간다(dev_fake로 실측: 후보가 되고 `prompts/…_scout.md`에 실렸다).
+    한 run의 답이 다음 run의 입력이 되는 오염이다.
 
     분류 함수만이 아니라 **실제 스캔**(`preprocess.run`의 `rglob`)과 `_ANALYZABLE`까지 본다.
     """
@@ -342,6 +344,29 @@ def test_the_suffix_is_one_the_preprocessor_never_analyzes(
     (found,) = [a for a in artifacts if a.path.endswith(SUFFIX)]
     assert found.kind is ArtifactKind.UNKNOWN
     assert found.kind not in runner._ANALYZABLE
+
+
+def test_a_previous_runs_poc_inside_the_target_tree_never_reaches_a_prompt(
+    tmp_path: Path,
+) -> None:
+    """위 검사의 **결과 쪽** — 파이프라인을 실제로 돌려 이전 run의 사이드카가 다음 run의 후보도
+    프롬프트도 되지 않는지 본다. 확장자만 `.bin`으로 되돌려도 이 검사가 빨개진다(실측: 후보가 되고
+    그 바이트가 `prompts/…_scout.md`에 실린다).
+    """
+    marker = "STALE-POC-MARKER-7f3a9c"
+    target = tmp_path / "target"
+    shutil.copytree(TARGET, target)
+    decoy = target / "artifacts" / "run_20260101_0001" / DIR_NAME / f"0001{SUFFIX}"
+    decoy.parent.mkdir(parents=True)
+    decoy.write_bytes(marker.encode() + bytes([0x0A]))
+
+    result, trace_path = _run(tmp_path, target=target)
+
+    assert [c.location.file for c in result.candidates if DIR_NAME in c.location.file] == []
+    prompts = sorted((trace_path.parent / "prompts").glob("*.md"))
+    assert prompts, "프롬프트 기록이 없으면 이 검사가 아무것도 보지 않는다"
+    leaked = [p.name for p in prompts if marker in p.read_text(encoding="utf-8", errors="replace")]
+    assert leaked == [], f"이전 run의 PoC가 프롬프트에 실렸다: {leaked}"
 
 
 # --- 루프 종단 — 모든 갈래가 마지막 gen의 PoC를 남긴다 ---------------------------------
