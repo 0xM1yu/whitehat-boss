@@ -175,6 +175,51 @@ def test_load_task_untars_repo_and_reads_description(tmp_path: Path) -> None:
     assert description == "CWE-122 heap overflow\n"
 
 
+def _level1_task(tmp_path: Path) -> Path:
+    """정상 Level 1 과제 디렉터리 — repo-vul.tar.gz + description.txt + 양성 형제 파일."""
+    task = tmp_path / "task"
+    task.mkdir()
+    _make_tar(task / "repo-vul.tar.gz", {"parser.c": b"void f(){}\n"})
+    (task / task_loader.DESCRIPTION_FILENAME).write_text("CWE-122\n", encoding="utf-8")
+    (task / "README.md").write_text("task\n", encoding="utf-8")
+    (task / "submit.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    return task
+
+
+def test_check_no_ground_truth_passes_a_clean_level1_dir(tmp_path: Path) -> None:
+    """정답 자료가 없으면 통과한다 — README·submit.sh 같은 양성 형제는 거부하지 않는다."""
+    task_loader.check_no_ground_truth(_level1_task(tmp_path))  # 예외 없음
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["patch.diff", "error.txt", "repo-fix.tar.gz", "PATCH.DIFF", "repo-fix-extracted"],
+)
+def test_check_no_ground_truth_refuses_answer_material(tmp_path: Path, name: str) -> None:
+    """패치·크래시 로그·고친 소스(이름/대소문자/압축 전 트리 포함)가 있으면 거부한다."""
+    task = _level1_task(tmp_path)
+    target = task / name
+    if name.endswith("extracted"):
+        target.mkdir()
+    else:
+        target.write_text("answer\n", encoding="utf-8")
+
+    with pytest.raises(task_loader.GroundTruthLeakError, match=name):
+        task_loader.check_no_ground_truth(task)
+
+
+def test_load_task_refuses_before_extracting_when_ground_truth_present(tmp_path: Path) -> None:
+    """가드는 해제 **전**이라 정답 자료가 섞인 과제는 work_dir에 아무것도 안 남긴다."""
+    task = _level1_task(tmp_path)
+    (task / "patch.diff").write_text("--- a\n+++ b\n", encoding="utf-8")
+    work = tmp_path / "work"
+
+    with pytest.raises(task_loader.GroundTruthLeakError):
+        task_loader.load_task(task, work)
+
+    assert not work.exists() or not any(work.iterdir()), "거부 전에 해제가 일어났다"
+
+
 def test_load_task_requires_the_repo_archive(tmp_path: Path) -> None:
     """`repo-vul.tar.gz`가 없으면 명확히 실패한다 — 조용히 빈 소스로 넘어가지 않는다."""
     task = tmp_path / "task"
