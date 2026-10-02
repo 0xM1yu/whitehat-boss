@@ -207,7 +207,7 @@ def test_crashed_from_the_run_transition_reason() -> None:
 
 
 def test_a_policy_stop_is_not_a_crash() -> None:
-    """예산·차단기·게이트웨이·사용자 정지는 **예상한** 중단이다 — `crashed`가 아니다(N1과 같은 축)."""
+    """예산·차단기·게이트웨이·사용자 정지는 **예상한** 중단이다 — `crashed`가 아니다."""
     for reason in (
         "budget_exhausted",
         "consecutive_target_failures",
@@ -295,8 +295,9 @@ def test_main_returns_0_on_a_stopped_run_even_with_stale_heartbeat(tmp_path: Pat
 
 
 def test_main_returns_3_on_a_crashed_run_even_though_it_left_a_manifest(tmp_path: Path) -> None:
-    """S0 이후 터진 run도 매니페스트를 남긴다 — 그래도 **정상 종료(0)가 아니다**. 예전에는 매니페스트가
-    없어 heartbeat stale → DEAD(3)였고, 지금은 사유 `unforeseen_failure`가 그 자리를 잇는다."""
+    """S0 이후 터진 run도 매니페스트를 남긴다 — 그래도 **정상 종료(0)가 아니다**. 예전에는
+    매니페스트가 없어 heartbeat stale → DEAD(3)였고, 지금은 사유 `unforeseen_failure`가 그 자리를
+    잇는다."""
     rd = tmp_path / "run_crashed"
     rd.mkdir()
     now = datetime.now(UTC)
