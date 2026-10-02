@@ -254,3 +254,80 @@ def test_load_task_refuses_an_interpreter_without_extraction_filters(
         task_loader.load_task(task, tmp_path / "work")
 
     assert not (tmp_path / "work").exists(), "거부했는데 work_dir을 만들었다"
+
+
+# --- 과제 디렉터리 허용 목록 -------------------------------------------------------------------
+#
+# 저자 데이터셋의 과제 한 건은 **다섯 파일**이다 — HF `sunblaze-ucb/cybergym`의
+# `data/<종류>/<id>/` 목록 실측(2026-10-02, `arvo:1065`·`oss-fuzz:368076871` **두 과제만** 쟀다):
+# 허용된 둘 + 정답 자료 셋(`repo-fix.tar.gz`·`patch.diff`·`error.txt`). `data/<종류>/<id>/*`로
+# 받으면 다섯이 다 떨어지고, 그 디렉터리로 도는 run은 무효다. **정답 자료의 실물은 이 파일에
+# 없다** — 가드는 이름만 보므로 아래 내용은 전부 무해한 자리표시자다.
+
+_PLACEHOLDER = b"placeholder, not real task material\n"
+
+
+def _task_dir(
+    tmp_path: Path, *, extras: tuple[str, ...] = (), empty_dirs: tuple[str, ...] = ()
+) -> Path:
+    """허용된 두 파일(`repo-vul.tar.gz`·`description.txt`)에 `extras`(상대 경로 — 하위 디렉터리는
+    같이 만든다)와 `empty_dirs`를 얹은 과제 디렉터리를 만든다."""
+    task = tmp_path / "task"
+    task.mkdir()
+    _make_tar(task / task_loader.REPO_ARCHIVE_NAME, {"parser.c": b"void f(){}\n"})
+    (task / task_loader.DESCRIPTION_FILENAME).write_text(
+        "CWE-122 heap overflow\n", encoding="utf-8"
+    )
+    for relative in extras:
+        target = task / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(_PLACEHOLDER)
+    for name in empty_dirs:
+        (task / name).mkdir()
+    return task
+
+
+def test_load_task_accepts_a_directory_of_exactly_the_two_expected_files(tmp_path: Path) -> None:
+    """가드가 정상 과제를 막지 않는다 — 허용된 두 파일뿐인 디렉터리는 그대로 적재된다."""
+    task = _task_dir(tmp_path)
+
+    source_root, description = task_loader.load_task(task, tmp_path / "work")
+
+    assert (source_root / "parser.c").exists()
+    assert description == "CWE-122 heap overflow\n"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("patch.diff", id="fix-diff"),
+        pytest.param("repo-fix.tar.gz", id="patched-source-tarball"),
+        pytest.param("error.txt", id="crash-log"),
+    ],
+)
+def test_load_task_refuses_dataset_answer_material_and_names_it(tmp_path: Path, name: str) -> None:
+    """저자 데이터셋이 과제 옆에 두는 정답 자료 셋(수정 diff · 패치된 소스 tarball · 크래시 로그)이
+    디렉터리에 있으면 거부하고, 메시지가 그 파일명을 든다 — 무엇을 지울지 알려야 고친다.
+
+    **풀기 전에** 막는다 — `work_dir`이 안 생긴다. 거부한 과제가 run 디렉터리에 뭔가를 남기면
+    「거부했는데 시작됐다」가 된다.
+    """
+    task = _task_dir(tmp_path, extras=(name,))
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.load_task(task, tmp_path / "work")
+
+    assert name in str(refused.value)
+    assert not (tmp_path / "work").exists(), "거부했는데 work_dir을 만들었다 — 풀기 전에 막는다"
+
+
+def test_load_task_refuses_an_unrelated_extra_file(tmp_path: Path) -> None:
+    """허용 목록이지 차단 목록이 아니다 — 정답 자료 이름 셋을 몰라도 **모르는 파일은 거부한다.**
+
+    이 단언이 가드를 「이름 셋짜리 차단 목록」으로 되돌리는 변경을 빨갛게 한다."""
+    task = _task_dir(tmp_path, extras=("notes-from-a-colleague.md",))
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.load_task(task, tmp_path / "work")
+
+    assert "notes-from-a-colleague.md" in str(refused.value)
