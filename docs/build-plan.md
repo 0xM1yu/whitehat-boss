@@ -270,7 +270,7 @@ config에 넣지 않는다.**~~ (⏵ 2026-09-24 — 이 문단 끝의 노트) �
 semgrep은 첫 히트 위치를 싣고 clang-tidy는 그대로 `None`이다. 그래도 등급은 안 바뀐다: `p1 = static_ok or
 location_ok`이고 위치가 붙는 것이 STATIC Evidence뿐이라 `static_ok`가 이미 참이다(`src/orchestrator/gate.py`).
 그 위치의 쓰임은 target 순서다(#249). #248 뒤로 커밋된 실측 run 기록은 없다(`docs/experiments/`의 마지막
-보고서가 2026-09-22).
+보고서가 2026-09-22). ⏵ 2026-10-02 — 낡았다: 그 뒤 보고서가 있다(2026-09-24~09-29 — [색인](experiments/README.md)). 그 run들이 semgrep 위치 경로를 탔는지는 안 가렸다.
 
 **7 · Critic (모델 자리 ⑦).** Auditor와 **다른 계열**. 같은 계열이면 같은 실수를 승인한다 —
 크기보다 *다르게 틀리는 것*이 중요하다. 고도화는 GRPO이고 보상이 8단계에서 결정론적으로

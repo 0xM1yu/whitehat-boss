@@ -86,7 +86,7 @@ reasoning parser 없이 띄우면 구조화 출력 문법이 첫 토큰부터 �
 **사고 길이** 쪽이다. 하네스는
 `chat_template_kwargs`를 안 보낸다 — 모델별 기동 조건과 사고를 끄는 서버 인자는 `config/models.yaml`의 그 항목이,
 사고를 켜는 배선 방식(Auditor parser `qwen3` + `thinking_token_budget`)은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5
-「모델 배선」 행이 든다 — 아직 배선되지 않았다. ⏵ **2026-09-26 — Auditor가 `qwen3.8-27b`로 바뀌며 사고를 켰다** — registry가 `reasoning_effort: xhigh`와 사고 상한을 보내고, 기동 조건에 `--reasoning-parser qwen3`가 들어갔다(`config/models.yaml`의 그 항목 — 계획값). 우리 장비에서 사고 켠 Auditor를 띄운 실측은 0건이다.
+「모델 배선」 행이 든다 — 아직 배선되지 않았다. ⏵ **2026-09-26 — Auditor가 `qwen3.8-27b`로 바뀌며 사고를 켰다** — registry가 `reasoning_effort: xhigh`와 사고 상한을 보내고, 기동 조건에 `--reasoning-parser qwen3`가 들어갔다(`config/models.yaml`의 그 항목 — 계획값). 우리 장비에서 사고 켠 Auditor를 띄운 실측은 0건이다. (⏵ 2026-10-02 — 낡았다: parser `qwen3`로 ATOM에서 두 번(2026-09-28·29)·vast에서 한 번(2026-09-29) 띄웠다 — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 Auditor 행.)
 
 **측정 순서가 결과를 바꾼다.** structured output을 먼저 돌리면 그 시점에 prefix cache가
 데워지므로, 적중률은 `/metrics` 카운터의 **구간 delta**로 잰다. 실제 순서는 출력의

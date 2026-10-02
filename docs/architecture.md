@@ -101,7 +101,7 @@ graph LR
 > `EventKind.SCOUT_HOP`이 난다. **한계** — 홉당 글자 상한(`_HOP_CHARS_MAX` 15,000자, 남은 토큰 × 3.28)의
 > 여유 `_HOP_TOKEN_MARGIN`(512)은 설계값이고 미실측이다. RETRIEVED 코드 블록만의 글자/토큰 비는 안
 > 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
-> (ATOM 스모크 전).)
+> (ATOM 스모크 전 — ⏵ 2026-10-02: 그 스모크가 2026-09-27에 돌았다([보고서](experiments/harness/2026-09-27-ne-loop-smoke-atom.md) — 설계 그대로 돈 run(A)에서는 루프가 한 번도 안 돌았고(33좌석 중 hop0 need_evidence 2 — 둘 다 동료 확인으로 건너뜀) 되묻기를 강제한 조건(C)에서만 돌았다(추가 호출 11건 전부 성공) · 비교표 밖).)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
 >   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
 >   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
