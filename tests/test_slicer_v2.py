@@ -1363,6 +1363,7 @@ def test_priority_files_reorder_the_bound_candidates(monkeypatch, two_file_repo,
     assert code == 0, result.get("error")
     assert result["priority"] == {
         "files": 1, "files_with_candidates": 1, "first_tier_candidates": 1, "candidates": 2,
+        "matched_files": ["main.c"], "unmatched_files": [],
     }
     assert result["settings"]["priority_files"] == {"count": 1, "sha256": digest(["main.c"])}
     assert "priority_files" not in result["measurement_notes"]
@@ -1510,3 +1511,217 @@ def test_priority_files_are_refused_with_export_only_or_unreadable(repo, tmp_pat
                      "--priority-files", str(listing)])
     with pytest.raises(SystemExit):
         slicer.main([*base, "--priority-files", str(tmp_path / "missing.txt")])
+
+
+def flows_file_order(transport):
+    """The repo file of each flows query, in the order they were sent to the server.
+
+    The flows call carries the candidate's scope list -- `List(("a.c", "entry", 1))` -- so the
+    first tuple element is the candidate's file. This reads the actual EXECUTION order, not the
+    order the checkpoint was bound in (HIGH-1: a mutation that reorders the loop but keeps the
+    binding leaves the checkpoint looking applied while the queries run in a different order)."""
+    order = []
+    for request, _ in transport.requests:
+        query = json.loads(request.data)["query"]
+        if '"__SLICER_flows__"' in query:
+            order.append(re.search(r'List\(\("([^"]*)"', query)[1])
+    return order
+
+
+def test_priority_files_change_the_query_execution_order(monkeypatch, two_file_repo, tmp_path):
+    """HIGH-1: the list must change the order queries are actually SENT, not just the binding.
+
+    Kills the mutation that reorders the loop by candidate id (`sorted(self.candidates, key=id)`):
+    that leaves the checkpoint in priority order (so the bound-order test still passes) while the
+    server sees id order -- here main.c would still be queried after a.c."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, _, without = run_cli(monkeypatch, two_file_repo, plain, two_file_payloads())
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    _, _, with_list = run_cli(
+        monkeypatch, two_file_repo, listed, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert flows_file_order(without) == ["a.c", "main.c"]
+    assert flows_file_order(with_list) == ["main.c", "a.c"]
+
+
+def six_candidates_two_files():
+    """3 candidates in a.c, 3 in main.c; a.c's flows poison, main.c's succeed."""
+    data = two_file_payloads()
+    a = [in_file(candidate("a" + str(i), i + 1), "a.c") for i in range(3)]
+    m = [candidate("m" + str(i), i + 1) for i in range(3)]
+    data["case_a"] = response("case_a", a + m)
+
+    def flows(query):
+        if '"a.c"' in query:  # the scope list names a.c -> this candidate is in a.c
+            return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+        return response(
+            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+        )
+
+    data["flows"] = flows
+    return data
+
+
+def test_a_poison_streak_degrades_a_different_set_with_a_list(monkeypatch, two_file_repo, tmp_path):
+    """HIGH-1: WHICH candidates end up full vs degraded changes with the list, under a cap.
+
+    a.c's three flows poison; after POISON_STOP_STREAK the rest are degraded without a query.
+    Without a list a.c is processed first, so the streak degrades everything (no full slice). With
+    `--priority-files main.c`, main.c is sliced first (full) and only a.c degrades. The FULL set
+    differs by list presence -- the mutation that loops in id order (always a.c first) leaves both
+    runs fully degraded, so this fails under it."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, without, _ = run_cli(monkeypatch, two_file_repo, plain, six_candidates_two_files())
+    assert without["slices"] and all(s.get("degraded") for s in without["slices"])
+    assert without["counters"]["candidates_degraded"] == 6
+
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    _, with_list, _ = run_cli(
+        monkeypatch, two_file_repo, listed, six_candidates_two_files(),
+        "--priority-files", str(listing),
+    )
+    full = {s["entry"]["file"] for s in with_list["slices"] if not s.get("degraded")}
+    degraded = {s["entry"]["file"] for s in with_list["slices"] if s.get("degraded")}
+    assert full == {"main.c"} and degraded == {"a.c"}
+    assert with_list["counters"]["candidates_degraded"] == 3
+
+
+def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_file_repo, tmp_path):
+    """HIGH-1: the list survives a shard -> merge -> export round trip.
+
+    Two p%%N shards with the SAME list, merged and exported, give exactly the single prioritized
+    run's slices, and the exported candidate_manifest keeps the priority insertion order."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(
+        monkeypatch, two_file_repo, whole, two_file_payloads(), "--priority-files", str(listing)
+    )
+    databases = []
+    for index in range(2):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        databases.append(folder / "state.db")
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
+            "--priority-files", str(listing),
+        )
+        assert code == 2 and result["status"] == "partial", result.get("error")
+    merged = tmp_path / "merged.db"
+    merge_shards(merged, databases)
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, transport = run_cli(
+        monkeypatch, two_file_repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert transport.stages == []
+    assert exported["slices"] == single["slices"]
+    assert list(exported["candidate_manifest"]) == list(single["candidate_manifest"])
+
+
+def test_matching_is_exact_not_substring_or_basename(repo):
+    """M-2: exact match only. Kills the substring, reverse-substring and basename mutations.
+
+    The fixtures elsewhere have no name-colliding pairs, so a loose match never shows. Here `a.c`
+    must NOT match `data.c` (substring) or `sub/a.c` (basename), and `data.c` must NOT match a
+    candidate whose file is `a.c` (reverse substring)."""
+    from slicer_candidates import prioritize
+
+    rows = [in_file(candidate("x", 1), "data.c"), in_file(candidate("y", 2), "sub/a.c")]
+    ordered = collect({"A": rows}, repo)
+    assert {c["entry"]["file"] for c in ordered} == {"data.c", "sub/a.c"}
+    # a.c is a substring of data.c and the basename of sub/a.c -- neither may match
+    assert prioritize(ordered, {"a.c"}) == (ordered, 0, set())
+    # reverse substring: a.c (candidate) is a substring of the listed data.c
+    only_a = collect({"A": [in_file(candidate("z", 1), "a.c")]}, repo)
+    assert prioritize(only_a, {"data.c"}) == (only_a, 0, set())
+    # the exact spellings still match
+    moved, first, matched = prioritize(ordered, {"data.c", "sub/a.c"})
+    assert first == 2 and matched == {"data.c", "sub/a.c"} and len(moved) == 2
+
+
+def test_the_priority_digest_ignores_list_order(monkeypatch, two_file_repo, tmp_path):
+    """M-8: the sha256 is of the SORTED list, so line order cannot change it.
+
+    The contract tests used 1-file lists, where `list(set)` and `sorted(set)` coincide, so a
+    mutation hashing the unsorted list survived and `settings.priority_files.sha256` differed
+    across PYTHONHASHSEED -- shards then rejected merge/resume nondeterministically. A 3+-file
+    unsorted list pins it to `digest(sorted(...))`, and two line orders must agree."""
+    names = ["z.c", "a.c", "main.c", "m.c"]
+    first = tmp_path / "first"
+    first.mkdir()
+    listing = first / "priority.txt"
+    listing.write_text("\n".join(names) + "\n", encoding="utf-8")
+    _, result, _ = run_cli(
+        monkeypatch, two_file_repo, first, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert result["settings"]["priority_files"] == {"count": 4, "sha256": digest(sorted(names))}
+    second = tmp_path / "second"
+    second.mkdir()
+    reordered = second / "priority.txt"
+    reordered.write_text("\n".join(reversed(names)) + "\n", encoding="utf-8")
+    _, other, _ = run_cli(
+        monkeypatch, two_file_repo, second, two_file_payloads(), "--priority-files", str(reordered)
+    )
+    assert other["settings"]["priority_files"] == result["settings"]["priority_files"]
+
+
+def test_a_zero_match_list_warns_on_stderr_and_records_the_names(
+    monkeypatch, two_file_repo, tmp_path, capsys
+):
+    """M-3: a list that matches nothing must not read as applied -- it warns and keeps the names."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("nope.c\nalso-missing.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert code == 0, result.get("error")
+    err = capsys.readouterr().err
+    assert "--priority-files" in err and "matched no candidate" in err
+    assert result["priority"]["files_with_candidates"] == 0
+    assert result["priority"]["matched_files"] == []
+    assert result["priority"]["unmatched_files"] == ["also-missing.c", "nope.c"]
+
+
+def test_a_partial_match_records_the_matched_and_unmatched_names(
+    monkeypatch, two_file_repo, tmp_path
+):
+    """M-3/M-6: the audit trail names what matched and what did not, not just counts."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\nnope.c\ngone.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["matched_files"] == ["main.c"]
+    assert result["priority"]["unmatched_files"] == ["gone.c", "nope.c"]
+
+
+def test_a_dropped_priority_list_on_resume_names_the_field(monkeypatch, two_file_repo, tmp_path):
+    """L-11: forgetting --priority-files on a manual shard resume mismatches on run_contract; the
+    message must name settings.priority_files so the fix (re-pass the list) is clear, not 'start a
+    new checkpoint'."""
+    database = tmp_path / "state.db"
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    code, _, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0
+    _, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--resume",
+    )
+    assert "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.priority_files" in result["error"]
