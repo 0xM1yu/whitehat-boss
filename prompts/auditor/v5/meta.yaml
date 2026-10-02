@@ -1,4 +1,6 @@
-# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
+# ⏵ 2026-10-02 — 배선됨. `config/models.yaml`의 `qwen3.8-27b.prompt_template_version`이
+# v5를 고르고, `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`가 이 버전에서 근거 본문을
+# FACTS에 싣는다. 이 판으로 돈 run은 아직 0건이다(`docs/experiments/` grep, 2026-10-02).
 role: auditor
 version: v5
 output_schema: Finding
