@@ -32,7 +32,7 @@ from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
-from src.orchestrator import runner, trace
+from src.orchestrator import runner, task_loader, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
@@ -483,11 +483,16 @@ def test_run_refuses_a_task_dir_without_the_archive(
     """아카이브가 없는 과제는 exit 2다 — 생 예외가 추적으로 새 나가지 않는다."""
     task = tmp_path / "empty"
     task.mkdir()
+    work = tmp_path / "w"
     _task_run_is_refused(
         tmp_path, capsys,
-        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w")],
-        needle="repo-vul.tar.gz",
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle=f"{task_loader.REPO_ARCHIVE_NAME}가 없다",
     )
+    # 사전 검사가 해제 **앞**이라 작업 디렉터리를 만들지도 않는다 — 그 검사를 지우면
+    # `safe_extract`가 `mkdir`을 먼저 하고 `FileNotFoundError`(문구에 아카이브 이름이 든다)로
+    # 죽어 위 needle은 다른 문구로 바뀌고, 빈 디렉터리가 남는다(#381 리뷰 LOW).
+    assert not work.exists(), "아카이브가 없는데 작업 디렉터리를 만들었다"
 
 
 def test_run_refuses_a_corrupt_archive_with_exit_2_not_a_traceback(
@@ -511,6 +516,100 @@ def test_run_refuses_a_corrupt_archive_with_exit_2_not_a_traceback(
         ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w")],
         needle="풀 수 없다",
     )
+
+
+def test_run_refuses_a_task_work_dir_that_is_a_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 `--task-work-dir`가 이미 있는 **파일**이면 exit 2다 — `NotADirectoryError` 트레이스백이
+    아니다(#381 리뷰 LOW). 「비어 있지 않은가」를 `iterdir()`로 보는 검사가 디렉터리가 아닌 것에는
+    예외를 던진다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    work.write_text("not a directory", encoding="utf-8")
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="디렉터리가 아니다",
+    )
+
+
+def test_run_refuses_a_task_work_dir_that_holds_only_a_subdirectory(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 하위 **디렉터리만** 남은 작업 디렉터리도 비어 있지 않은 것이다 — 해제가 중단되면 앞 멤버가
+    파일이 아니라 디렉터리(`src-vul/`)로 남을 수 있다. 「파일만 센다」로 좁히는 변이가 여기서
+    죽는다(#381 리뷰 LOW)."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    (work / "src-vul").mkdir(parents=True)
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="비어 있지 않다",
+    )
+
+
+def test_run_refuses_a_task_work_dir_it_cannot_create(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 작업 디렉터리를 **만들 수 없으면**(부모 자리에 파일이 있다) exit 2다 — `OSError`가
+    트레이스백으로 새지 않는다. CLI의 `except`에서 `OSError`를 빼는 변이가 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the parent directory should be", encoding="utf-8")
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(blocker / "w")],
+        needle="풀 수 없다",
+    )
+
+
+def test_run_refuses_an_interpreter_without_extraction_filters_with_exit_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 추출 필터가 없는 인터프리터(3.11.4 전)에서도 exit 2다 — `RuntimeError`가 새지 않고
+    **풀기 전이라** 작업 디렉터리를 만들지 않는다. CLI의 `except`에서 `RuntimeError`를 빼는 변이가
+    여기서 죽는다. 공유 객체(`tarfile` 모듈)에 건다 — 테스트 모듈의 사본을 바꾸면 안 먹는다."""
+    monkeypatch.delattr(task_loader.tarfile, "data_filter")
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="3.11.4",
+    )
+    assert not work.exists(), "풀기 전에 거부해야 하는데 작업 디렉터리가 생겼다"
+
+
+@pytest.mark.parametrize("failure", ["corrupt-archive", "drifted-slices"])
+def test_a_refusal_after_the_unpack_tells_the_operator_to_empty_the_work_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture, failure: str
+) -> None:
+    """🔴 **해제 뒤에 멈추면** 작업 디렉터리에 앞 멤버·트리가 남을 수 있고 같은 인자로 다시 돌면
+    「비어 있지 않다」로 거부된다 — 그 길을 막은 뒤에 에러가 **비우라고 말해 준다**(#381 리뷰 LOW).
+    비우는 것은 사람이 한다(지우지 않는다). 해제가 상한·손상으로 중단되는 경우와 해제 뒤 drift
+    검사가 거부하는 경우, 둘 다 같은 말을 한다."""
+    if failure == "corrupt-archive":
+        task = tmp_path / "task"
+        task.mkdir()
+        lfs_pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:0123\nsize 4\n"
+        (task / "repo-vul.tar.gz").write_text(lfs_pointer, encoding="utf-8")
+        extra: list[str] = []
+    else:
+        task = _level1_task(tmp_path)
+        extra = ["--slices", str(_task_slices(tmp_path, text="int main(void) { return 1; }"))]
+    work = tmp_path / "w"
+
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task), "--task-work-dir", str(work), *extra,
+    ])
+
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert "비우" in " ".join(_errors(err)), err
 
 
 def test_run_refuses_both_task_dir_and_description_file(
