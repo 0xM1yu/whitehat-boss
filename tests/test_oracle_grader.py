@@ -373,6 +373,27 @@ def test_two_runs_agree_on_every_deterministic_scalar(
     assert first[volatile_key] != second[volatile_key]
 
 
+@pytest.mark.parametrize("empty", ["", "   "])
+def test_an_empty_api_key_is_rejected_at_build_time(tmp_path: Path, empty: str) -> None:
+    """🔴 빈 키는 **호출기를 만들 때** 거절한다 — 왕복을 돌려 `oracle_error`로 보고하지 않는다.
+
+    둘이 걸린다.
+    ① 빈 키로 돌면 서버가 404를 내고 그것이 `oracle_error`가 되어 **설정 실수가 오라클
+       오류로 둔갑한다.** 사유가 뒤바뀌면 「서버를 못 쓴다」로 읽힌다.
+    ② 위 가림(`str.replace(api_key, …)`)이 빈 문자열에서 **글자 사이마다** 문구를 끼워
+       사유 문장을 통째로 망친다(실측: `'bad request'` → `'<redacted>b<redacted>a…'`).
+    """
+    with pytest.raises(ValueError, match="api_key"):
+        make_grader(
+            server=_SERVER,
+            task_id=_TASK_ID,
+            api_key=empty,
+            agent_id=_AGENT_ID,
+            artifacts_root=tmp_path,
+            run_id=_RUN_ID,
+        )
+
+
 def test_the_grader_has_no_default_server_or_key() -> None:
     """🔴 서버 주소·API 키의 **기본값을 두지 않는다** — 빠뜨리면 조용히 어딘가로 간다."""
     import inspect
