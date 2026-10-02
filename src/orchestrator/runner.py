@@ -1399,6 +1399,13 @@ def _run_pov_hops(
         # 퍼즈 진입점 조회 결과 — hop0에서 채우고 **hop0 이벤트에만** 싣는다. 루프 밖에서 먼저
         # 묶는 이유는 조회가 던져도 `except` 갈래가 이 이름을 안전하게 읽어야 해서다.
         fuzz: dict[str, object] | None = None
+        # 루프 내내 안 바뀐다(설정값) — 홉마다 다시 읽지 않는다. hop0의 `source=` 결정과
+        # 매 홉의 관측 꼬리(`_pov_observation`) 둘 다 이것을 본다(적대적 리뷰 2026-10-02
+        # MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도 이 PR의 새 입력이다).
+        pov_wide = (
+            ctx.config.model_for(Role.POV.value).prompt_template_version
+            in pov._WIDE_INPUT_VERSIONS
+        )
         while True:
             started = ctx.monotonic_ms()
             try:
@@ -1418,12 +1425,7 @@ def _run_pov_hops(
                     # `pov._WIDE_INPUT_VERSIONS`에 있어야 한다. 아니면 `source=None`을 넘겨
                     # `nodes.pov._render_prompt`가 예전 entry-only 갈래로 가게 한다(적대적 리뷰
                     # 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다).
-                    pov_version = ctx.config.model_for(Role.POV.value).prompt_template_version
-                    wide_source = (
-                        state.finding_sources.get(finding.finding_id)
-                        if pov_version in pov._WIDE_INPUT_VERSIONS
-                        else None
-                    )
+                    wide_source = state.finding_sources.get(finding.finding_id) if pov_wide else None
                     current = pov.open_hop(
                         ctx,
                         finding=finding,
@@ -1483,13 +1485,15 @@ def _run_pov_hops(
                 fuzz=fuzz if hop == 0 else None,
             )
             followup = _pov_observation(
-                action.action, evidence, read_payload=ctx.read_payload
+                action.action, evidence, read_payload=ctx.read_payload, wide=pov_wide
             )
             prev = current
             hop += 1
 
 
-def _pov_observation(action: str, evidence: Evidence, *, read_payload: ReadPayload) -> str:
+def _pov_observation(
+    action: str, evidence: Evidence, *, read_payload: ReadPayload, wide: bool = True
+) -> str:
     """도구 결과를 다음 홉 user 턴으로 보낼 관측 텍스트(비지 않아야 한다 — `Prompt.body`).
 
     ⏵ **2026-10-02 — 도구 출력 꼬리를 싣는다.** 전 판은 스칼라 여섯(`tool`·`action`·`ok`·`exit`·
@@ -1505,12 +1509,18 @@ def _pov_observation(action: str, evidence: Evidence, *, read_payload: ReadPaylo
     🔴 **참조 PoC(`/tmp/poc`) 바이트가 이 경로로 프롬프트에 들어가면 run이 무효다.** 여기 실리는
     것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
     (`container_tools`)이 지킨다.
+
+    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **꼬리를 안 싣는다** — v2
+    prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
+    같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
     """
     detail = f" error={evidence.error}" if evidence.error else ""
     head = (
         f"tool={evidence.source} action={action} ok={evidence.ok} "
         f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
     )
+    if not wide:
+        return head
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
     body = read_payload(evidence.payload_ref)
