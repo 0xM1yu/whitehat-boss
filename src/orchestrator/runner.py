@@ -728,13 +728,22 @@ class _Accumulator:
     #   `_POV_CAPSULE_MISSING`      캡슐 미스 — 루프에 못 들어가 enum 값을 못 받는다
     #   `_POV_SUBMITTED_WITHOUT_POC` submit했는데 바이트가 없다(gen 없는 submit · 빈 바이트열)
     #   `_POV_SUBMITTED_UNPERSISTED` submit했고 바이트도 있는데 사이드카 쓰기가 실패했다
-    # 🔴 뒤의 둘은 **`submitted`를 쪼갠 것**이다 — 안 쪼개면 그 둘이 「최종 PoC 있음」으로 섞여
-    # 장부가 거짓이 된다. 셋 다 실제로 그렇게 샜고 적대적 리뷰가 각각 재현했다.
+    #   `_POV_ABORTED`               흡수되지 않은 예외로 루프가 끊겼다(`_run_pov`의 `finally`)
+    # 🔴 `submitted*` 둘은 **`submitted`를 쪼갠 것**이다 — 안 쪼개면 그 둘이 「최종 PoC 있음」으로
+    # 섞여 장부가 거짓이 된다. 넷 다 실제로 그렇게 샜고 적대적 리뷰가 각각 재현했다.
     #
     # **시도 수와 사유별 수를 따로 들지 않는다.** 시도 수는 `len(...)`, 사유별 수는
-    # `Counter(...values())`라 「시도 수 == 사유별 합」이 **구조적으로** 참이다. 두 필드로
-    # 두면 한 출구가 둘 중 하나만 올려 어긋날 자리가 생기고, 그 자리가 정확히 조용히
-    # 0이 되던 갈래였다(캡슐 미스 — 루프 쪽 계수기로는 안 보인다).
+    # `Counter(...values())`다.
+    # 🔴 **「시도 수 == 사유별 합」을 보장이라고 쓰지 마라 — 그것은 모든 dict의 항진명제다**
+    # (`len(d) == sum(Counter(d.values()).values())`). 적대적 리뷰가 그 과장을 짚었다. 한 필드가
+    # 사는 이유는 그 등식이 아니라 **갱신 자리가 하나**라는 것이다 — 두 필드로 두면 한 출구가
+    # 둘 중 하나만 올려 어긋날 자리가 생긴다.
+    # **실제로 재는 성질은 「출구마다 항목이 정확히 하나」**이고 그것을 지키는 것은 등식이 아니라
+    # `_POV_EXITS` 표 테스트와 `_run_pov`의 `finally`다.
+    #
+    # ⚠ 그래도 안 세는 것: 같은 `finding_id`로 `_run_pov`를 두 번 부르면 뒤가 앞을 덮어
+    # 「시도 2 · 항목 1」이 된다. 지금 `_analyze`는 `findings` dict(키=finding_id)를 돌아 한 run에
+    # 같은 id가 두 번 안 들어가지만, **구조가 막는 것이 아니다**(적대적 리뷰가 직접 불러 보였다).
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
@@ -1453,6 +1462,14 @@ _POV_SUBMITTED_WITHOUT_POC = "submitted_without_poc"
 # `submitted 2건`, 경고 0건). 사유로 가르는 이유가 그것이다.
 _POV_SUBMITTED_UNPERSISTED = "submitted_unpersisted"
 
+# 루프가 **흡수되지 않은 예외로 끊긴** 갈래. `_run_pov`의 `finally`가 아무도 사유를 안 적었을
+# 때만 넣는다. 🔴 이것이 없으면 그 finding이 계수기에서 **사라져**, 「좌석이 없어 안 돌았다」와
+# 「돌다가 터졌다」가 둘 다 빈 맵으로 보인다 — 적대적 리뷰가 설정 오타(`PromptError`)와 잠긴
+# `state.db`(`sqlite3.OperationalError`)로 재현했다. run은 거기서 멈추므로 이 사유가 든 run은
+# 보통 완주하지 않는다. 그래도 적는 이유는 S0 방어선이 매니페스트를 남길 때 **pov 쪽 사실도
+# 같이 남게** 하려는 것이다.
+_POV_ABORTED = "aborted"
+
 
 def _pov_result(
     reason: PovStopReason, poc: bytes | None, ref: str | None, *, persisting: bool
@@ -1466,13 +1483,18 @@ def _pov_result(
     테스트처럼 배선이 없는 run은 `ref`가 `None`인 것이 정상이라 미회수로 세지 않는다 —
     그것까지 세면 「안 쓰는 run」과 「쓰려다 실패한 run」이 한 사유로 뭉친다.
 
-    ⚠ 빈 바이트열(`b""`)은 **PoC 없음**으로 본다. `PovSpec`의 `repeat.count`가 `ge=0`이라
-    `count=0` 하나면 스키마를 통과해 `assemble_poc`가 `b""`를 낸다(적대적 리뷰 P1-C) —
-    `poc is None`만 보면 그 run이 「최종 PoC 있음」으로 센다.
+    🔴 **빈 바이트열(`b""`)은 PoC 「있음」이다 — `poc is None`으로 가르고 `not poc`로 가르지
+    않는다.** `repeat count=0`이면 `assemble_poc`가 `b""`를 내는데, 이 저장소의 입장은
+    *"0바이트 PoC도 **파일이다** … libFuzzer 입력으로는 **유효한 답**"*이고
+    (`tests/test_poc_log.py:181-186`) `_pov_finish`도 그것을 **쓴다**(`:528-535`가 핀). 그
+    두 docstring이 **참값 검사(`if poc:`)가 변이로 살아남았던 자리**라고 적는다.
+    ⚠ 적대적 리뷰 셋 중 둘이 `b""`를 결함으로 올렸고 나는 한 번 `not poc`로 고쳤다 — 그
+    파일을 **열어 본** 리뷰만 반례가 아니라고 판정했다(CLAUDE.md §2.1). 여기를 참값 검사로
+    바꾸면 사이드카에는 파일이 있는데 계수기는 「없음」이라 적어 **둘이 어긋난다**.
     """
     if reason is not PovStopReason.SUBMITTED:
         return reason.value
-    if not poc:
+    if poc is None:
         return _POV_SUBMITTED_WITHOUT_POC
     if persisting and ref is None:
         return _POV_SUBMITTED_UNPERSISTED
@@ -1572,7 +1594,17 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
             reason=_POV_CAPSULE_MISSING,
         )
         return
-    _run_pov_hops(ctx, state, finding, capsule)
+    # 🔴 `finally`로 **빈칸을 메운다.** `_run_pov_hops`의 `except`는
+    # `(ModelGatewayError, SchemaParseError)`뿐이고, 그 밖의 형이 올라가면
+    # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다. 적대적 리뷰가 설정만으로 닿는 둘을
+    # 재현했다 — pov 좌석 `prompt_template_version` 오타의 `PromptError`(`run()`은
+    # `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
+    # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
+    # `setdefault`라 정상 출구가 적은 사유를 덮지 않는다 — 아무도 안 적었을 때만 들어간다.
+    try:
+        _run_pov_hops(ctx, state, finding, capsule)
+    finally:
+        state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
 
 
 def _run_pov_hops(
