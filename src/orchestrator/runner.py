@@ -1369,13 +1369,26 @@ def _run_pov_hops(
                     # 🔴 **조회 결과를 홉 이벤트에 싣는다**(아래 `fuzz=`). 안 남기면 「진입점 탐색
                     # 성공률」이 영영 미실측이고, 성공 0이 나왔을 때 모델 탓인지 조회 탓인지 못
                     # 가른다(§0). **새 EventKind를 만들지 않는다** — 홉 수를 세는 검사들이
-                    # `POV_HOP` 개수를 단언하므로 이벤트를 더하면 그것이 깨진다.
+                    # `POV_HOP` 개수를 단언하므로 이벤트를 더하면 그것이 깨진다. 이 측정은
+                    # **버전과 무관하게** 늘 한다 — v2가 배선되더라도 진입점 탐색 성공률은
+                    # 관측해 둔다(모델에게 실제로 실리는지와는 다른 질문이다).
                     fuzz = entrypoint
+                    # ⚠ **v2는 `state.finding_sources`를 안 본다** — Auditor의 넓은 SOURCE를
+                    # 모델 프롬프트에 실으려면(§ `_run_pov_hops` 윗줄) 배선된 pov 버전이
+                    # `pov._WIDE_INPUT_VERSIONS`에 있어야 한다. 아니면 `source=None`을 넘겨
+                    # `nodes.pov._render_prompt`가 예전 entry-only 갈래로 가게 한다(적대적 리뷰
+                    # 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다).
+                    pov_version = ctx.config.model_for(Role.POV.value).prompt_template_version
+                    wide_source = (
+                        state.finding_sources.get(finding.finding_id)
+                        if pov_version in pov._WIDE_INPUT_VERSIONS
+                        else None
+                    )
                     current = pov.open_hop(
                         ctx,
                         finding=finding,
                         capsule=capsule,
-                        source=state.finding_sources.get(finding.finding_id),
+                        source=wide_source,
                         fuzz_entrypoint=entrypoint,
                     )
                 else:

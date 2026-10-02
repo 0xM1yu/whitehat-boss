@@ -31,6 +31,17 @@ ROLE = Role.POV
 # 요청하고, bench·계약 검사(`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)도 같은 값을 본다 — 한 역할 한 스키마.
 OUTPUT_SCHEMA = PovAction
 
+# 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
+# ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
+# 않는다). `config/models.yaml`의 pov 좌석은 아직 v2라 **배선된 입력은 그대로다** — v2는
+# 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4, 프롬프트가 바뀌면
+# 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도 없지만, 다음에
+# 돌 v2 run까지 조용히 입력을 바꿀 이유는 없다). v3가 그 입력을 받는 판이다(배선은 별 PR).
+# ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
+# (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
+# 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
+_WIDE_INPUT_VERSIONS = frozenset({"v3"})
+
 
 def _render_prompt(
     ctx: RunContext,
@@ -44,8 +55,17 @@ def _render_prompt(
 
     `open_hop`이 부른다. 후속 홉은 이걸 다시 렌더하지 않고 prefix·version만 재사용한다
     (`continue_hop` — 사실은 hop0 본문에 한 번만 실린다).
+
+    ⚠ **`source`는 버전과 무관하게 받은 그대로 쓴다** — 이 파라미터는 이 PR 전부터 있던 공개
+    계약이고(`test_pov_open_hop_reads_the_source_override`, main `d85ea62`), 직접 호출하는 쪽이
+    뭘 넣든 그대로 존중한다. **버전에 따라 달라지는 것은 러너가 이 자리에 "무엇을 넣는가"다** —
+    8단계 루프(`runner._run_pov_hops`)는 `_WIDE_INPUT_VERSIONS`가 아니면 `state.finding_sources`를
+    조회하지 않고 `None`을 넘긴다(적대적 리뷰 2026-10-02 MEDIUM-4). `fuzz_entrypoint`는 이 PR이
+    새로 만든 파라미터라 공개 계약이 없으므로 여기서 직접 게이트한다.
     """
     version = ctx.config.model_for(ROLE.value).prompt_template_version
+    wide = version in _WIDE_INPUT_VERSIONS
+    effective_fuzz = fuzz_entrypoint if wide else None
     template = load_prompt(ROLE, version)
     text = ctx.read_source(capsule.target) if source is None else source()
     return template.render(
@@ -56,10 +76,11 @@ def _render_prompt(
             capsule=capsule,
             source=text,
             # 러너가 만들어 넘긴다 — 노드는 `ctx.resolve_requests`를 쓰지 않는다
-            # (`context.py:171-173`). 못 찾은 경우에도 사유가 든 dict가 온다.
-            fuzz_entrypoint=fuzz_entrypoint,
+            # (`context.py:171-173`). 못 찾은 경우에도 사유가 든 dict가 온다. `wide`가 아니면
+            # `None`이라 `build_facts`가 키 자체를 안 만든다(opt-in, `prompt_loader.FACT_KEYS`).
+            fuzz_entrypoint=effective_fuzz,
         ),
-        finding=_describe_finding(finding),
+        finding=_describe_finding(finding, wide=wide),
         target=describe_target(capsule.target),
         source=text,
     )
@@ -94,12 +115,15 @@ def open_hop(
 
     `source`는 `SOURCE` 블록에 실을 원문을 주는 콜러블이다. ⏵ **2026-10-02까지 러너가 이걸 안
     넘겼다** — 그래서 PoV는 `None` 갈래로 `ctx.read_source(capsule.target)`, 즉 **entry 함수
-    하나**만 봤다. 지금은 러너가 Auditor가 본 것과 **같은 문자열**을 넘긴다
-    (`runner._Once` · `state.finding_sources`). 넘기지 않는 경우(슬라이스 타깃이 아닐 때)는 두
-    문자열이 같으므로 예전 갈래가 그대로 맞다.
+    하나**만 봤다. `_WIDE_INPUT_VERSIONS`인 판에서는 러너가 Auditor가 본 것과 **같은 문자열**을
+    넘긴다(`runner._Once` · `state.finding_sources`) — 그 판단은 **러너가** 한다(이 함수는 받은
+    `source`를 버전과 무관하게 그대로 쓴다, `_render_prompt` 주석). 슬라이스 타깃이 아니면 두
+    문자열이 같으므로 `None`이어도 예전 갈래가 그대로 맞다.
 
     `fuzz_entrypoint`는 **PoV만 받는 사실**이다 — libFuzzer 하네스의 진입점과 그 본문이고,
-    「바이트가 어디로 들어가는가」의 답이다. 러너가 만든다(`runner._fuzz_entrypoint`).
+    「바이트가 어디로 들어가는가」의 답이다. 러너가 만든다(`runner._fuzz_entrypoint`). 이것은
+    `_WIDE_INPUT_VERSIONS`가 아니면 `_render_prompt`가 무시한다 — 이 파라미터는 이 PR이 새로
+    만든 것이라 `source`와 달리 지킬 기존 계약이 없다(적대적 리뷰 2026-10-02 MEDIUM-4).
     """
     prompt = _render_prompt(
         ctx,
@@ -176,7 +200,7 @@ def run_tool(ctx: RunContext, *, finding: Finding, tool: str, workdir: str) -> E
     )
 
 
-def _describe_finding(finding: Finding) -> str:
+def _describe_finding(finding: Finding, *, wide: bool = True) -> str:
     """PoV 프롬프트에 실을 Finding 요약.
 
     ⏵ **2026-10-02 — 넓혔다**(사용자 지적). 전 판은 `len(finding.path)`만 실어 **경로 단계의 심볼과
@@ -191,7 +215,16 @@ def _describe_finding(finding: Finding) -> str:
     본문을 실을지는 그 필드가 실서빙에서 무엇으로 채워지는지 본 뒤에 정한다(미실측).
     ⏵ 2026-10-02 정정: 전 판은 필드를 `cmd`·`input_ref`라 적었는데 **그런 필드는 없다**(§2.1 —
     문서가 코드를 서술하면 그 코드를 열어 대조한다).
+
+    `wide=False`(`_WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **옛 모양 그대로**다 —
+    `len(finding.path)`만 싣는다(`_render_prompt`가 결정한다, 적대적 리뷰 2026-10-02 MEDIUM-4).
     """
+    if not wide:
+        return (
+            f"{finding.finding_id} · CWE: {finding.cwe} · {finding.title}\n"
+            f"근거(rca): {finding.rca_draft}\n"
+            f"경로 단계 수: {len(finding.path)}"
+        )
     steps = "\n".join(
         # `step.step`(source/propagate/sink)을 같이 싣는다 — 이름만으로는 **어느 것이 sink인지**
         # 모르고, 프롬프트의 도달 절차 3이 요구하는 것이 그 구분이다.
