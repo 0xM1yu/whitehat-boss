@@ -3389,6 +3389,56 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     assert "잘린 Finding" not in result.report.render()
 
 
+def _max_hops_zero(config):  # noqa: ANN001, ANN202
+    """`max_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
+    (`test_pov_loop_with_max_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
+    최종 PoC 0건 run을 **monkeypatch 없이 설정 축으로** 만드는 자리다."""
+    return config.transition(thresholds=config.thresholds.transition(max_hops=0))
+
+
+def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
+    tmp_path: Path,
+) -> None:
+    """PoV가 최종 PoC를 0건 냈으면 **왜 0인지**가 run 경고와 리포트에 있다 (#357·#358).
+
+    `deferred`·`critic_failed`를 같은 자리에 올린 논거 그대로다(바로 위 검사들) — trace에만 남기면
+    사용자가 run 결과로 읽는 것에는 안 보인다. 여기서는 한 겹 더 나쁘다: pov는 **추가형이라 상태를
+    안 바꾸므로** Finding이 멀쩡히 찍힌 채 PoC만 조용히 0이 된다.
+
+    ⚠ 경고가 무는 것은 **사유**다 — 「submit에 닿은 Finding이 0건」까지만 말할 수 있고
+    「PoC 바이트가 0건」은 아니다(계수기가 사유만 들고, gen 없는 submit은 사유가 `submitted`인데
+    PoC가 없다). 그 한계는 `runner._pov_shortfall_warning` docstring이 든다.
+    """
+    result, trace_path = _run(
+        tmp_path, name="pov_zero", before=_with_index(), configure=_max_hops_zero
+    )
+
+    events = _events(trace_path)
+    assert not _of(events, "pov_generated"), "픽스처 전제 — 최종 PoC가 0건이어야 한다"
+    skipped = _of(events, "pov_skipped")
+    assert skipped, "픽스처 전제 — pov가 돌았고 전부 섰다"
+    assert any("최종 PoC 0건" in warning for warning in result.warnings)
+    # **사유별 수가 경고 문장 안에 있다.** "0이다"만 적으면 왜 0인지가 여전히 trace에만 있고,
+    # 그러면 이 검사가 막으려는 명제(「왜 0인지가 기록에 있다」)의 절반만 성립한다.
+    assert any(f"max_hop {len(skipped)}건" in warning for warning in result.warnings)
+    assert "PoV 정지 사유" in result.report.render()
+
+
+def test_a_full_run_says_nothing_about_a_pov_shortfall(tmp_path: Path) -> None:
+    """PoV가 submit에 닿은 run에는 그 경고가 **없다** — 0건일 때도 줄이 나오면 그 문장이 신호가
+    아니라 장식이 된다(`test_a_full_run_says_nothing_about_deferral`과 같은 틀).
+
+    ⚠ 리포트의 「PoV 정지 사유」 줄은 **정상 run에도 난다**(`submitted N건`) — 그쪽은 시도가 있으면
+    적는 집계이고(`ne_absorbed`와 같은 자리), 경고는 부족을 알리는 문장이라 발화 조건이 다르다.
+    그래서 여기서 단언하는 것은 경고의 부재이고 리포트 줄의 부재가 아니다.
+    """
+    result, trace_path = _run(tmp_path, name="pov_full", before=_with_index())
+
+    assert _of(_events(trace_path), "pov_generated"), "픽스처 전제 — dev_fake는 PoC를 낸다"
+    assert not any("최종 PoC 0건" in warning for warning in result.warnings)
+    assert "submitted" in result.report.render()
+
+
 def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path: Path) -> None:
     """7단계 절단도 `candidate_max`와 같은 대우를 받는다 (D26 (b)).
 
