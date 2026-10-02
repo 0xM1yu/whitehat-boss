@@ -74,6 +74,10 @@ agent:
 > 1,200 · 1,800 s를 선언한다(`config/models.yaml` · 계산값 — 미실측). 4,096을 다 쓰는 ≈308 · ≈506 s가 그 안에
 > 들어서, 순차 요청이면 두 좌석에서도 상한이 먼저 온다.
 >
+> ⏵ **2026-10-02 — 위 2026-09-12 실측(`prompt_tokens` 646~654 · 「전역 4,096이 이미 충분하다」)은 v1 프롬프트의
+> 것이다.** 실서빙 Critic이 v5가 되며 prefix만 916 → 10,630자다 — v5 입력 토큰과 v5에서의 출력 길이는 안
+> 쟀다. 캡슐도 원문도 안 실리는 것은 그대로다(입력 몫 계산은 `config/budgets.yaml`의 `output_max` 주석).
+>
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
 > 단계로 되돌려 capsule 축소"를 수행하는 코드가 없다. 더구나 **캡슐 예산은 프롬프트 크기의
@@ -161,7 +165,7 @@ agent:
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다** — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)까지 싣는다 — #237/#247). ⏵ **2026-10-02 — 그 본문 싣기가 켜졌다**: `harness_pool`·`_hybrid`의 critic `gpt-oss-20b`가 content-aware 판 `v5`를 고른다(`dev_*`의 critic `fake`는 `v1` 그대로). ⚠ 켜기 전에 그 확인 run(#237 HIGH-1)은 안 돌았다 — 옛 서술(2026-09-24: 꺼져 있고 7 프로필의 critic이 전부 `v1`)은 그 전의 상태다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v5 · 근거 본문」). **대상 원문은 이 판에서도 안 받는다** — v5 prefix가 FACTS의 `source`·`capsule_sections`·`callers`를 default-empty로 서술하고 `{{SOURCE}}` 자리가 없다.
 - 출력: `Decision`
 - **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
 - **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
@@ -174,8 +178,11 @@ agent:
 blocking `MissingEvidence`로 남아 `gate.evaluate`의 `unblocked`를 거짓으로 만들고 E3 승격을 막는다.
 Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)에서 `QUEUED`로 간다. 현재 오케스트레이터에는
 `DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
-따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
-정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
+따라서 이번 run에서 보류는 종착이 될 수 있다. 이 문단에는 「v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
+정하고 고정 표본 회귀를 측정한다」는 전제가 있었다. ⏵ **2026-10-02 — v5가 그 둘 없이 `harness_pool`·`_hybrid`의 critic에
+배선됐다**(위 입력 항목 · 아래 §4의 같은 날 항목) — 보충 정책도 고정 표본 회귀도 저장소에 기록이 없다. v5 prefix는
+근거 전체에 본문이 하나도 없으면 `need_evidence`를 내라고 시키고 정책은 그것을 `QUEUED`로 보낸다 — **모델이 그 지시를
+따르는지는 v5 run이 0건이라 미측정이다.** 이 문단은 현행 경로의 제한이지 재요청 구현이 아니다.
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
@@ -366,14 +373,17 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "run_id": "run_20260901_0001",
   "finding_id": "find_0007",
   "verdict": "uphold",
-  "rebuttal_axis": ["guard", "reachability"],
-  "rationale": "상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
-  "evidence_refs": ["ev_graph_0012"],
-  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v1"}
+  "rebuttal_axis": [],
+  "rationale": "ev_san_0031 본문의 ASAN 스택이 parse_header의 memcpy 경로를 보이고, 그 경로를 반박하는 내용은 없다",
+  "evidence_refs": ["ev_san_0031"],
+  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v5"}
 }
 ```
 
 `verdict` 열거형: `uphold` | `rebut` | `need_evidence`
+
+> ⏵ 2026-10-02 — 위 예시는 v5 계약에 맞췄다: `prompt_version`을 v5로 고쳤고, `uphold`는 `rebuttal_axis`가 `[]`이며
+> 위 Finding의 근거(`ev_san_0031`) 본문만 인용한다 — Critic은 대상 원문을 안 받으므로 원문을 확인했다고 쓰지 않는다.
 
 ### RunRecord (재현성)
 
@@ -389,7 +399,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v4", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v4", "critic": "v5"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -481,6 +491,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > [2026-09-04 실서빙 run](experiments/harness/2026-09-04-pipeline-zlib-serving-atom.md)은
 > **7단계에서 죽었고 그 보고서 자신이 "비교표에 못 들어간다"고 적는다.** 확인 방법은
 > `git grep -n "prompt_version" -- docs/` + 각 보고서의 조건·프로필 절이다.
+>
+> ⏵ **2026-10-02 — 위 「확인되지 않았다」는 2026-09-29 스모크 전의 서술이다.**
+> [2026-09-29 단계 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가 실서빙 `gpt-oss-20b`를
+> `critic/v1`로 2건 돌렸다(그 보고서 표의 입력 797 · 825토큰, 둘 다 rebut → `queued` — 정답 대조가 없어 판정으로
+> 읽지 않는다). ⚠ 위 「확인 방법」의 `git grep "prompt_version"`은 이 보고서를 못 찾는다 — 그 보고서는 그 키 없이 표의
+> 「모델 · 프롬프트」 열과 조건 절에 v1을 적는다.
 
 > ⏵ **2026-09-29 — Auditor가 v1 → v3로 바뀌었다**(`harness_pool`·`_hybrid`의 `qwen3.8-27b`, 근거 본문 배선과
 > 같은 변경). 이 규칙대로 **그 뒤 run의 Auditor 출력은 그 전 run과 직접 비교하지 않는다** — run의
@@ -489,6 +505,11 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 >
 > ⏵ **2026-09-29 — 같은 날 Auditor가 v3 → v4로 다시 바뀌었다**(#328 머지 뒤). 규칙은 같다 — v4 뒤 run은
 > 그 전 run과 직접 비교하지 않고, 규칙 5·재측정은 이번에도 돌지 않았다. Critic은 여전히 v1이다.
+>
+> ⏵ **2026-10-02 — Critic이 v1 → v5로 바뀌었다**(`harness_pool`·`_hybrid`의 `gpt-oss-20b` — 근거 본문 배선은 #247이
+> 이미 넣었다). 이 규칙대로 **그 뒤 run의 Critic 출력은 그 전 run과 직접 비교하지 않는다** — run의
+> `prompt_versions.critic`이 가른다. ⚠ 규칙 5와 [evaluation.md](evaluation.md) §2.3 규칙 4(재측정)는 이 변경 전에
+> 돌지 않았다 — 측정 없이 켰다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

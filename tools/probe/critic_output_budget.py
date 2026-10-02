@@ -38,6 +38,13 @@ E2 미만은 7단계에 못 간다.
 「하드 천장 11,747」(= 32,768 − 21,021)도 같이 재유도 대상이고, **이 스크립트의 1단계가 그
 답을 낸다**(모델 호출 0회).
 
+⏵ 2026-10-02 — 위 「작다」·「셋뿐」은 **v1 조립의 서술이다.** registry의 Critic이
+v5(content-aware)가 되며(`config/models.yaml`) 이 프로브가 기본으로 읽는 판이 v5인데
+`_reconstruct`는 여전히 근거 본문 없는 조립이라, 이제 이 값은 노드가 실제로 보내는
+프롬프트의 **하한**이다(노드는 content-aware 판에서 `evidence_bodies`를 넷째 인자로
+싣는다 — #247). v5는 prefix만 10,630자라 「작다」도 v1에만 맞는다. 어느 판으로 쟀는지는
+산출물의 `prompt_version`이 말한다.
+
 ## 왜 팔이 하나인가 — 반사실 팔을 안 만든다
 
 `evidence_refs`가 전부 비었으므로 재구성한 120건은 `title`과 경로 길이만 다르다. 꼬리가
@@ -152,7 +159,8 @@ class Reconstructed:
 def _reconstruct(
     finding: Finding, evidences: list[Evidence], *, template: PromptTemplate, run_id: str
 ) -> Reconstructed:
-    """`nodes/critic._ask_model`의 **metadata-only 조립**(v1)으로 프롬프트를 되만든다.
+    """`nodes/critic._ask_model`의 **metadata-only 조립**으로 프롬프트를 되만든다 — 본문 없는
+    v1식 조립이고 템플릿 판은 registry가 고른다(모듈 docstring의 ⏵ 2026-10-02).
 
     content-aware 버전은 `evidence_summaries`로 근거 본문을 더 실으므로 이 되만듦과
     달라진다 — 이 프로브는 본문 없는 조립의 토큰 예산을 재는 자리다.
