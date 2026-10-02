@@ -1,8 +1,9 @@
 """CyberGym Level 1 과제 로더 (PoV 배선 — Phase 4).
 
 Level 1 과제는 `repo-vul.tar.gz`(취약 저장소) + `description.txt`(취약점 설명) +
-`README.md` + `submit.sh`로 온다. 이 모듈은 그중 저장소를 **안전하게** 풀어
-`preprocess.run`이 받을 `source_root`를 만들고, 설명 텍스트를 읽어 돌려준다.
+`README.md` + `submit.sh`로 온다. 이 모듈은 그중 저장소를 **안전하게** 푸는 `safe_extract`와
+설명 텍스트를 읽는 `read_description`을 든다. 프로덕션은 `run --task-dir`(`src/cli.py`)이 그 둘을
+**따로** 부르고, 둘을 묶은 `load_task`는 호출처가 테스트뿐이다.
 
 **대상은 신뢰 못 하는 소스다.** tar 해제는 stdlib의 `data` 필터(PEP 706 — 3.11.4에서 들어왔다)로
 경로 이탈(zip-slip)과 dest 밖을 가리키는(절대·외부) 링크·장치/특수 파일을 막고, 절대경로
@@ -41,11 +42,14 @@ def safe_extract(tar_path: Path, dest: Path) -> Path:
     멤버를 **하나씩** 풀며 누적 크기·개수를 센다 — 상한을 넘기는 멤버는 풀기 **전에** 멈춰
     디스크 폭탄이 자리를 다 먹기 전에 끊는다(한 번에 `extractall`하면 그 검사 지점이 없다).
     각 멤버는 stdlib `data` 필터가 판정한다 — 경로 이탈·dest 밖 링크·특수 파일을
-    `tarfile.FilterError`로 막고, 절대경로는 dest 안으로 눌러 담는다. 두 사건을 다
-    `UnsafeArchiveError`로 감싸 호출자가 「안전하지 않은 과제」를 한 사건으로 다루게 한다.
+    `tarfile.FilterError`로 막고, 절대경로는 dest 안으로 눌러 담는다. 이 두 사건과 **못 읽는
+    아카이브**(비-gzip·끊긴 gz — `tarfile.TarError`·`EOFError`)를 다 `UnsafeArchiveError`로 감싸
+    호출자가 「이 과제를 못 쓴다」를 한 사건으로 다루게 한다(사유는 문구로 가른다).
 
-    ⚠ 상한을 넘겨 중단하면 그 앞 멤버들은 dest에 남는다 — 호출자는 새 `work_dir`을 쓴다
-    (`load_task`가 그렇게 부른다). 같은 dest를 재사용하는 호출자는 남은 부분 파일을 물려받는다.
+    ⚠ 상한을 넘기거나 중간에서 읽기가 죽어 중단하면 그 앞 멤버들은 dest에 남는다 — 호출자는
+    **비어 있는** `work_dir`을 쓴다(`run --task-dir`이 비어 있는지 보고 거부한다 — `src/cli.py`.
+    `load_task`는 보지 않고 받은 `work_dir`을 그대로 쓴다). 같은 dest를 재사용하는 호출자는 남은
+    부분 파일을 물려받는다.
     """
     # 추출 필터가 없는 인터프리터(3.11.4 전)에서는 풀기 **전에**(dest도 만들기 전에) 멈춘다 —
     # 모듈 docstring. 가용성은 버전이 아니라 `data_filter` 유무로 본다(tarfile 문서가 권하는 판별).
@@ -97,9 +101,13 @@ def load_task(task_dir: Path, work_dir: Path) -> tuple[Path, str | None]:
     """Level 1 과제 디렉터리를 `(source_root, description)`으로 편다.
 
     `repo-vul.tar.gz`를 `work_dir` 아래로 안전 해제한 것이 `source_root`이고, 이를
-    `preprocess.run(source_root=...)`에 그대로 넘긴다. `description`은 캡슐의
+    `preprocess.run(source_root=...)`에 넘기면 된다. `description`은 캡슐의
     `vuln_description` 섹션이 된다(PoV 배선). 저장소 아카이브가 없으면 조용히
     빈 소스로 넘어가지 않고 `FileNotFoundError`로 멈춘다.
+
+    ⚠ **프로덕션 경로(`run --task-dir`)는 이 함수를 거치지 않고** `safe_extract`·
+    `read_description`을 따로 부른다(설명을 해제보다 먼저 읽어야 해서다 — `src/cli.py`). 여기에만
+    거는 검사는 그 경로를 못 막는다.
     """
     task_dir = Path(task_dir)
     archive = task_dir / REPO_ARCHIVE_NAME

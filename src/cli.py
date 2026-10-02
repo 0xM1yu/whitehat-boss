@@ -1237,7 +1237,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt). 주면 아카이브를 "
         "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
-        "--target·--description-file과 같이 주지 않는다(exit 2)",
+        "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
+        "풀린 트리와 글자 단위로 대조해 다르면(drift) exit 2이고 그때 트리는 작업 디렉터리에 "
+        "남는다",
     )
     run_cmd.add_argument(
         "--task-work-dir",
