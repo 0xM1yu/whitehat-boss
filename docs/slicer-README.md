@@ -233,7 +233,7 @@ CPG는 하나다.
   힙 밖 + slicer 프로세스 몫) · `--min-candidates-per-shard 20` · `--max-shards 32`. 위 단일 서버 예시의 `-Xmx16g`도 예시값
 - ⚠ `auto`가 적은 고정 샤드보다 빠르다는 근거 없음. 비교는 하나뿐 -> #373 PR 본문의 30샤드 621초 ↔ 2샤드 664초. 같은 장비에서
   다른 8샤드 작업이 동시에 돌던 중이라 차이 43초(계산값)를 샤드 수 탓으로 못 돌린다
-- `--wall-seconds`와 함께 쓰면 끊겼을 때 어느 후보가 degraded가 될지를 `--priority-files`(아래)가 정한다
+- `--wall-seconds`로 끊기면 순서상 못 닿은 후보가 degraded -> 그 순서를 `--priority-files`(아래)로 바꿀 수 있다
 - `--wall-seconds` -> 샤드 서버가 다 뜬 뒤부터 잰다. 모든 샤드가 준비 체크포인트에서 시작하므로 끊긴 샤드가 있어도 병합이
   거부되지 않는다(끊긴 후보는 degraded). 생략하면 제한 없음
 - 시작 전 포트가 비었는지 확인(남은 서버에 샤드가 붙는 것 방지). 서버가 뜨기 전에 죽으면 바로 실패하고 `joern.log` 경로를 낸다
@@ -267,13 +267,23 @@ python slicer.py --repo /work/repo --out /work/s0/slices.json \
 python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /work/s*/state.db
 ```
 
-⏵ #377 (b) **우선 파일** -> `--priority-files <파일>`(저장소 기준 상대 경로 한 줄에 하나, 빈 줄·`#` 줄 무시)을 주면
-엔트리나 앵커 하나라도 그 파일에 있는 후보를 먼저 자른다. 순서만 바꾼다
-- 후보 발견·슬라이스 내용은 그대로. 층 안에서는 원래 순서, 후보 ID(`slice_NNNN`)도 원래 번호 -> 끝까지 돌면 목록이 있든 없든 같은 슬라이스
-- 바뀌는 것은 끊겼을 때(`--wall-seconds`·kill) 어느 후보가 degraded로 남는가뿐
-- 순서가 체크포인트에 묶인다 -> 목록의 개수·sha256이 `settings.priority_files`(실행 계약). 목록이 다른 샤드는 병합 거부,
-  다른 목록으로 `--resume`도 거부. `--prepare-only`에 주면 준비 체크포인트를 받은 샤드가 그 순서를 따른다(`slice_sharded.py`는 `--` 뒤 인자로 둘 다에 넘김)
-- 결과 `priority` -> 목록 파일 수 · 후보가 있는 파일 수 · 1층 후보 수 · 전체 후보 수
+⏵ #377 (b) **우선 파일** -> `--priority-files <파일>`을 주면 엔트리나 앵커 하나라도 그 파일에 있는 후보를 먼저 자른다.
+순서만 바꾼다
+- 목록 형식 -> 한 줄에 경로 하나. 저장소 기준 상대 경로 또는 `--repo` 아래 절대 경로. 후보 파일과 같은 정규화
+  (`relative_file`) -> `./a.c`·`x//y.c`·역슬래시도 맞는다. UTF-8(BOM 허용). 빈 줄·`#`로 시작하는 줄 무시. 줄 끝 주석은
+  없다(`#`도 파일 이름에 올 수 있음 -> `a.c # 메모`는 그 전체가 경로)
+- 그대로인 것 -> 후보 집합. 층 안에서는 원래 순서, 후보 ID(`slice_NNNN`)도 원래 번호. 온전히 잘린 후보는 목록이 있든
+  없든 같은 슬라이스
+- 바뀔 수 있는 것 -> 어느 후보가 degraded로 남는가. 끊겼을 때(`--wall-seconds`·kill) 못 닿은 후보, 그리고 끝까지 돌아도
+  poison 연속(`POISON_STOP_STREAK`) 뒤 후보(단일·`--shard`는 나머지를 degraded로, `--claim-db` 샤드는 그 샤드가 청구를 멈춤).
+  둘 다 순서를 따르므로 실패 없이 끝까지 돈 run에서만 목록 유무와 무관하게 같은 슬라이스
+- 순서가 체크포인트에 묶인다 -> 목록의 개수·sha256(정렬 목록의 `slicer_checkpoint.digest`)이 `settings.priority_files`(실행
+  계약). 목록이 다른 샤드는 병합 거부(`Shard mismatch on run_contract`), 다른 목록으로 `--resume`도 거부. `--prepare-only`에
+  주면 준비 체크포인트를 받은 샤드가 그 순서를 따른다(`slice_sharded.py`는 `--` 뒤 인자로 둘 다에 넘김)
+- ⚠ 샤드를 손으로 `--resume --cpg <파일> --shard I/N`으로 돌릴 때도 준비 때와 같은 `--priority-files`를 다시 준다. 빠뜨리거나
+  다르면 실행 계약이 달라 `Checkpoint mismatch: run_contract`로 거부
+- 결과 `priority` -> 목록 파일 수 · 후보가 있는 파일 수 · 1층 후보 수 · 전체 후보 수. 목록의 어느 파일도 후보와 안 맞으면
+  `measurement_notes.priority_files`에 「기본 순서 그대로」, 일부만 안 맞으면 안 맞은 파일 수(run은 실패시키지 않음)
 - `--export-only`와 같이 주면 거부(순서는 이미 체크포인트에 있음)
 - ⚠ 목록이 틀리면 정답 후보가 뒤로 밀린다 -> 2026-10-02 vast lwan 한 표본에서 첫 GT 슬라이스 171 -> 297초, 느린 장비에서는 900초 예산에 GT 슬라이스 4 -> 1(#377 · run ID 없음 · 원자료 저장소 밖)
 
