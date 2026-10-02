@@ -41,10 +41,18 @@ trace는 같은 입력의 두 run이 `ts`·`wall_ms`만 빼고 바이트 동일�
 - `poc_hash` — 서버가 센 값(우리가 센 digest는 지정 단계가 든다)
 - `created_at`·`updated_at` — 서버 시각
 
-🔴 **그 규칙이 `verdict_digest` 한 칸에서는 자기 자신과 부딪힌다.** 사이드카가 그 휘발
-값들을 **담고** 있으므로 그 파일의 digest도 run마다 다르다. 지금은 사실로 적고 핀으로
-고정해 둔다(`tests/test_oracle_grader.py`의 두-run 검사) — 접을 쪽(trace에서 digest를
-빼거나, 사이드카를 결정론·휘발 둘로 쪼개거나)은 **다음 조각의 결정이다.**
+🔴 **그래서 사이드카의 digest를 돌려주지 않는다.** 휘발 값을 사이드카로 옮기는 것과 그
+사이드카의 digest를 trace에 싣는 것은 **같이 성립할 수 없다** — 서버 uuid를 담은 파일의
+digest는 run마다 다르다. 둘 중 하나를 접어야 하고, 접은 것은 digest다.
+
+- 조인은 `verdict_ref`가 준다(읽는 쪽이 경로로 연다 — 글로브하지 않는다).
+- 개찬 증거가 필요하면 **읽는 쪽이 그때 센다.** 그 시점에 파일이 손에 있다.
+- 🔴 `trace.VOLATILE_FIELDS`를 넓히는 길은 **고르지 않았다** — 어댑터 한 칸 때문에 저장소
+  전역 불변식(두 run의 trace가 `ts`·`wall_ms`만 빼고 바이트 동일)을 약하게 만든다.
+
+⚠ 적대적 검증이 이 모순을 짚어서 접었다. 앞 판은 `verdict_digest`를 돌려주고 두-run
+검사에서 **그 칸만 다르다**를 단언했다 — 사실이었지만, 그 사실이 재현성 규칙과 부딪히는
+것을 「다음 조각의 결정」으로 미루면 그사이에 장부가 그 칸을 읽는다.
 
 ## 삼키는 것은 하나뿐이다
 
@@ -159,7 +167,7 @@ def make_grader(
         except CyberGymOracleError as exc:
             # 🔴 `detail`은 서버가 준 문자열이다 — 길이도 내용도 우리 것이 아니라
             # trace에 안 싣는다. 사이드카에만 남기고 `error_status`만 스칼라로 낸다.
-            digest = _write_sidecar(
+            _write_sidecar(
                 artifacts_root,
                 run_id,
                 {
@@ -178,11 +186,10 @@ def make_grader(
                 "outcome": OUTCOME_ERROR,
                 "error_status": exc.status,
                 "verdict_ref": SIDECAR_REF,
-                "verdict_digest": digest,
             }
 
         outcome = _outcome(verdict)
-        digest = _write_sidecar(
+        _write_sidecar(
             artifacts_root,
             run_id,
             {"outcome": outcome, "success": verdict.success, **asdict(verdict)},
@@ -195,7 +202,6 @@ def make_grader(
             # 「판정이 없다」다. 가르는 것은 `outcome`이다.
             "success": verdict.success,
             "verdict_ref": SIDECAR_REF,
-            "verdict_digest": digest,
         }
 
     return grade

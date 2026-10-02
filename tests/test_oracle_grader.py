@@ -330,8 +330,13 @@ def test_the_sidecar_digest_matches_the_file_bytes_without_crlf(
     raw = path.read_bytes()
 
     assert result["verdict_ref"] == SIDECAR_REF
-    assert result["verdict_digest"] == sha256_digest(raw)
     assert raw.count(b"\r") == 0
+    # 🔴 digest는 **반환 dict에 없다** — 사이드카가 휘발 값(서버 uuid)을 담으므로 그 파일의
+    # digest는 run마다 달라서 trace 재현성 규칙과 양립하지 않는다(모듈 docstring). 조인은
+    # `verdict_ref`가 주고, 개찬 증거가 필요하면 **읽는 쪽이 그때 센다** — 그 길이 열려
+    # 있다는 것만 여기서 확인한다.
+    assert "verdict_digest" not in result, "휘발 digest가 결정론 dict로 새어 나왔다"
+    assert sha256_digest(raw).startswith("sha256:")
 
 
 def test_the_sidecar_ref_is_relative_to_the_run_dir(served: _FakeOracle, tmp_path: Path) -> None:
@@ -350,14 +355,14 @@ def test_the_sidecar_ref_is_relative_to_the_run_dir(served: _FakeOracle, tmp_pat
 def test_two_runs_agree_on_every_deterministic_scalar(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """같은 입력의 두 run은 `verdict_digest` **하나만 빼고** 같은 dict를 낸다.
+    """같은 입력의 두 run은 **완전히 같은 dict**를 낸다 — 예외 칸이 없다.
 
-    🔴 그 하나가 왜 빠지는지를 단언으로 적는다: 사이드카가 휘발 값(`poc_id` =
-    서버가 뽑는 uuid)을 **담고** 있으므로 그 파일의 digest도 run마다 다르다. 휘발 값을
-    사이드카로 옮긴 것과 그 사이드카의 digest를 trace에 싣는 것이 **같이는 성립하지
-    않는다** — 지금은 사실로 적어 두고 어느 쪽을 접을지는 다음 조각의 결정이다.
+    🔴 앞 판은 `verdict_digest` 하나만 다르다를 단언했다. 사실이었지만 그 칸이 **trace
+    재현성 규칙과 양립하지 않았다**(두 run의 trace는 `ts`·`wall_ms`만 빼고 바이트 동일).
+    적대적 검증이 그 모순을 짚어서 그 칸을 뺐다 — 사이드카가 서버 uuid를 담으니 그 파일의
+    digest는 결정론일 수 없고, 조인은 `verdict_ref`가 준다.
 
-    이 단언이 빨개지면 누군가 그 칸을 결정론으로 만든 것이다. 그때 이 docstring을 고친다.
+    이 단언이 빨개지면 누군가 휘발 값을 결정론 dict에 다시 넣은 것이다.
     """
     first_root, second_root = tmp_path / "a", tmp_path / "b"
 
@@ -366,11 +371,7 @@ def test_two_runs_agree_on_every_deterministic_scalar(
     _serve(_FakeOracle(), monkeypatch)
     second = _grade(second_root)
 
-    volatile_key = "verdict_digest"
-    assert {k: v for k, v in first.items() if k != volatile_key} == {
-        k: v for k, v in second.items() if k != volatile_key
-    }
-    assert first[volatile_key] != second[volatile_key]
+    assert first == second, "두 run의 결정론 dict가 갈렸다"
 
 
 @pytest.mark.parametrize("empty", ["", "   "])
