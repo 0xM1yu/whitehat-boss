@@ -145,15 +145,24 @@ _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
 }
 
 
+# ⚠ **이 클래스의 docstring은 `response_format.json_schema.schema.description`으로 모델 요청
+# payload에 그대로 실린다**(v2 포함 — `src/adapters/openai_compat.py`). 그래서 docstring 본문에는
+# 커밋 SHA·PR·이슈 번호·소스 파일 경로 같은 저장소 내부 참조를 넣지 않는다 — 그런 이력은 이 클래스
+# **밖의** `#` 주석에 둔다(`tests/test_pov_loop.py::
+# test_pov_action_description_in_the_request_has_no_repo_internal_references`가 지킨다).
+#
+# gdb 이력: `TOOL_KINDS`에 `"gdb"`가 들어온 것은 PR #327(`5cf5c20`, 2026-10-01) ·
+# `PovAction.tool`에 넣은 근거는 이슈 #360(사용자 결정) · gdb 사용 **규칙**을 프롬프트에 안 두는
+# 이유는 이슈 #325(gdb ToolRunner 결정) — ASAN 실행 경로 수리·검증(#326)이 선행 조건.
 class PovAction(HarnessModel):
-    """PoV 툴 루프가 매 홉 내는 제어 액션 (Option C — council+사용자 2026-09-30).
+    """PoV 툴 루프가 매 홉 내는 제어 액션.
 
     `action`이 어느 필드를 쓰는지 정한다:
-    - `gen`: `spec`(PovSpec)을 실어 순수 `assemble_poc`가 인프로세스로 바이트를 만든다.
-      **모델이 쓴 코드를 실행하지 않는다** — 조립은 결정론 순수 함수(fork B-iii). raw 임의
-      바이트가 필요하면 `spec`의 `literal` 세그먼트에 통째로 넣는다.
-    - `inspect`: `tool`(asan/build/poc) 진단을 돌린다(새 PoC 없이 현 후보를 조사). `gdb`는 이 PR의
-      PoV 도구 화이트리스트엔 없다 — 에이전트 gdb 도구를 배선하는 PR #327이 다시 넣는다.
+    - `gen`: `spec`(PovSpec)을 실어 순수 함수가 인프로세스로 바이트를 만든다. **모델이 쓴 코드를
+      실행하지 않는다** — 조립은 결정론 순수 함수. raw 임의 바이트가 필요하면 `spec`의 `literal`
+      세그먼트에 통째로 넣는다.
+    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다(새 PoC 없이 대상을 조사). 넷 모두
+      대상 소스를 빌드·실행할 뿐이고, `gen`이 만든 PoC 바이트를 입력으로 받지 않는다.
     - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
@@ -165,9 +174,15 @@ class PovAction(HarnessModel):
 
     action: Literal["gen", "inspect", "submit"]
     spec: PovSpec | None = None
-    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 이 PR의 화이트리스트에 없다(PR #327).
-    # `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
-    tool: Literal["asan", "build", "poc"] | None = None
+    # 도구는 `TOOL_KINDS` 화이트리스트 안이어야 한다 — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)로
+    # 그 안에 들어왔다. `tests/test_pov_loop.py`의 계약 검사가 이 Literal ⊆ TOOL_KINDS를 강제한다.
+    # ⚠ **이 목록을 넓히면 프롬프트도 같이 넓힌다** — 스키마가 허용해도 프롬프트가 광고하지 않으면
+    # 모델은 그 도구를 영영 안 쓴다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄).
+    # ⚠ **그리고 이 Literal은 스키마 차원이라 프롬프트 버전 게이트(`nodes.pov._WIDE_INPUT_VERSIONS`)
+    # 밖이다** — v2에도 `gdb`가 들어간다. v2 prefix가 그것을 안 광고하므로 실제로 고르지는
+    # 않지만(위 한계), 이 Literal 자체로 v2 입력이 바뀌는 것은 막지 못한다(적대적 리뷰
+    # 2026-10-02 MEDIUM-4가 든 한계).
+    tool: Literal["asan", "build", "gdb", "poc"] | None = None
     rationale: NonEmptyStr
 
     @model_validator(mode="after")
