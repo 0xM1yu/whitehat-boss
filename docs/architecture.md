@@ -269,3 +269,4 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
   ASan/디버거)의 착지 상태와 남은 일은 [agent-contracts.md](agent-contracts.md) §2.5가 든다.
   **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다).
+  ⏵ **2026-10-02 — 위 「서빙+도구 되는 호스트가 잡힌 뒤」는 막힘의 일부일 뿐이다**: PoC 바이트가 프로세스를 나가지 않고(`_run_pov`가 `_run_pov_hops`의 반환값을 버린다) 실모델에서는 PoV 단계가 불리지 않는다(이슈 [#386](https://github.com/0xM1yu/whitehat-boss/issues/386)). 오라클은 외부 서비스가 아니라 로컬 Docker로 띄우는 저자 서버다 — 근거·한계는 [agent-contracts.md](agent-contracts.md) §2.5 「채점 경로의 벽」.

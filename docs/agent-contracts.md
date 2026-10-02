@@ -186,8 +186,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 ### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
-`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트
-materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. ~~**남은 것은 PoC 바이트
+materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다~~ → ⏵ **2026-10-02 — 막힘이 「호스트가 잡힌 뒤」 하나가 아니다**(아래 「채점 경로의 벽」). (표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
 신뢰면·리뷰. `src/schemas/pov.py` docstring). **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
 [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
@@ -209,13 +209,14 @@ materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호�
   (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해
   `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다).
   ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
-  — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+  — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다. (⏵ 2026-10-02 — 「호스트 후속」만이 아니다: 하네스가 바이트를 버린다 — 아래 「채점 경로의 벽」.)
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
   사고가 답을 밀어내 스키마가 깨진다(Auditor가 그 판을 7/7 냈다). 값은 실측 뒤 조정.
 - 모델: `feyospace-v1-small` — §1 8단계 pov 좌석으로 `harness_pool`·`_hybrid`에 배선됐다. checksum·
-  benchmark 미실측(서빙+도구 되는 호스트 확보 뒤 실측).
+  benchmark 미실측(서빙+도구 되는 호스트 확보 뒤 실측). (⏵ 2026-10-02 — 서빙 호스트는 2026-09-29부터 임대 vast다. 도구 단계를 어디서 돌릴지는 미정이고, 실모델 run에서 8단계 PoV가 불리려면 아래 벽 (2)도 풀려야 한다.)
+- **채점 경로의 벽 — 2026-10-02 실측**(CyberGym Level 1). **벽이 둘이고 서로 독립이다.** (1) **바이트가 프로세스를 나가지 않는다** — `runner._run_pov`가 `_run_pov_hops`의 반환값(`tuple[bytes | None, PovStopReason]`)을 받지 않고, PoC를 파일로 쓰는 코드가 저장소에 0건이다(`src`·`tools`·`eval`의 `write_bytes`·`open(…, 'wb')` 전수). `dev_fake`는 바이트를 만들지만 오라클에 갈 길이 없다. (2) **실모델에서는 PoV 단계가 불리지 않는다** — PoV는 `validated` finding만 받고(`runner.py`), 거기로 가는 승격 문이 셋(`policy._critic_verdict` — 반박이면 `queued` · `repro_spec`이 없으면 `hypothesized` · 등급 E3·E4만 `validated`)인데 지금 어느 것도 셋째를 열지 못한다. 2026-09-29 교대 스모크의 Auditor 출력 둘은 E1이었고 Critic이 둘 다 반박해 첫째 문에서 끝났다(n=2, 비교표 밖). 근거 [#386](https://github.com/0xM1yu/whitehat-boss/issues/386). **그래서 지금 이 하네스는 CyberGym에 제출할 PoC를 한 건도 내지 못한다** — 코드 경로상 그렇다는 것이고 점수를 잰 것이 아니다. 오라클 쪽은 **외부 서비스가 아니라 로컬 Docker로 띄우는 저자 서버**이고 서빙 호스트와 따로 돌릴 수 있다(왕복 실측은 서빙 호스트가 아니라 Windows 11 + Docker Desktop에서 했다) — 2026-10-02 왕복 실측에서 저자 참조 PoC가 `vul` exit 77 · `fix` exit 0으로 성공 조건을 채웠다(과제 `arvo:1065` 하나 · 모델 호출 0건 · `run_id` 없음 · 비교표 밖 — `docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md`; 이 파일이 main에 들어오기 전에는 이슈 본문이 같은 수치를 든다). 다만 호스트 커널의 `vm.mmap_rnd_bits`가 32이면 판정이 비결정적이고([#383](https://github.com/0xM1yu/whitehat-boss/issues/383)), 서버 응답이 타임아웃 `300`을 `0`으로 덮으며([#384](https://github.com/0xM1yu/whitehat-boss/issues/384) — 소스 대조만, 실측 0건), 판정이 `(agent_id, task_id, sha256)`로 캐시돼 재제출로 못 고치고([#385](https://github.com/0xM1yu/whitehat-boss/issues/385)), Windows에서는 Evidence digest가 파일 바이트와 어긋난다([#387](https://github.com/0xM1yu/whitehat-boss/issues/387)).
 
 ## 3. 데이터 스키마
 
