@@ -663,6 +663,62 @@ def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
     assert (tmp_path / "w" / _TASK_SOURCE).is_file()
 
 
+@pytest.mark.parametrize(
+    ("with_labels", "with_slices", "needle"),
+    [
+        pytest.param(False, True, "실서빙", id="serving-label-gate"),
+        pytest.param(True, False, "슬라이스 입력", id="slice-input-guard"),
+    ],
+)
+def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    with_labels: bool,
+    with_slices: bool,
+    needle: str,
+) -> None:
+    """🔴 **뒤의 게이트가 거부하면 작업 디렉터리에 트리가 남지 않는다** — 오타를 고친 재시도가 산다.
+
+    해제는 모든 게이트 **뒤**, `_claim_run_dir` **앞**이다. 앞에서 풀면 게이트가 exit 2를 낸 뒤에도
+    트리가 남아 같은 인자로 다시 돌면 「비어 있지 않다」로 거부된다(적대적 리뷰 2026-10-02 M-1 ·
+    #381 리뷰 MEDIUM-1 — 그 수정에 핀이 없어 해제를 옛 위치로 되돌려도 초록이었다). 그래서
+    **거부 직후의 작업 디렉터리**와 **고친 인자로의 재시도**를 둘 다 본다.
+
+    게이트는 둘을 따로 건다 — 실서빙 라벨 게이트(`--device`·`--condition` 없음)와 슬라이스 입력
+    가드(`--slices` 없음). 옛 위치는 둘 다의 **앞**이다."""
+    _refuse_sockets(monkeypatch)
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path)
+    work = tmp_path / "w"
+    base = [
+        "run", "--profile", "harness_pool", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task), "--task-work-dir", str(work),
+    ]
+    labels = ["--condition", "B1prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1"]
+    first = base + (labels if with_labels else [])
+    first += ["--slices", str(slices)] if with_slices else []
+
+    rc = cli.main(first)
+
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert needle in " ".join(_errors(err)), err
+    assert not work.exists() or not any(work.iterdir()), "게이트가 거부했는데 트리가 풀렸다"
+
+    class _Stop(RuntimeError):
+        """고친 인자로 모든 게이트를 지나 run_dir 확보까지 왔다는 표시."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main(base + labels + ["--slices", str(slices)])
+    assert (work / _TASK_SOURCE).is_file()
+
+
 def test_run_refuses_a_task_work_dir_without_a_task_dir(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
