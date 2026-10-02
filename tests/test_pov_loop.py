@@ -27,6 +27,7 @@ from src.adapters.symbol_resolver import resolve
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
+from src.orchestrator.prompt_loader import PROMPTS_DIR
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
@@ -1016,6 +1017,30 @@ def test_pov_loop_can_inspect_with_gdb(ctx: RunContext) -> None:  # noqa: F811
     assert hop0.data["tool"] == "gdb"
     # `TOOL_KINDS`가 gdb를 CRASH로 분류하므로 Evidence kind가 그것이어야 한다(#327).
     assert hop0.data["evidence_kind"] == TOOL_KINDS["gdb"].value
+
+
+def test_v3_prefix_does_not_claim_gdb_sees_the_models_poc_bytes() -> None:
+    """🔴 적대적 리뷰 2026-10-02 MEDIUM-3(코드 판독) — `prompts/pov/v3/prefix.md`가 gdb를
+    「경로에 닿았나를 가르는 수단」이라 **무조건** 서술하는데, 지금 코드에서는 거짓이다.
+
+    `nodes.pov.run_tool`이 `ToolArgs(argv=[tool], workdir=workdir)`만 넘긴다 — PoC 바이트가
+    gdb 실행에 **안 들어간다**(`docs/agent-contracts.md`도 바로 다음 줄에서 같은 한계를 적는다).
+    그래서 gdb는 지금은 "당신이 방금 만든 그 입력으로 어디까지 갔는가"에 답을 못 한다 — 입력
+    없이 대상을 띄우는 것과 같다. v3는 아직 미배선(disk-only, `meta.yaml`)이라 지금 run에는
+    안 닿지만, 배선되는 순간(#354 이후) 모델에게 거짓 전제를 주게 된다 — 지금 고친다.
+
+    이 검사는 **철자가 아니라 성질**을 문다: gdb 절이 「경로에 닿았나」 주장을 하려면 그 옆에
+    PoC가 아직 안 들어간다는 한계(또는 조건)가 같이 있어야 한다."""
+    prefix = (PROMPTS_DIR / "pov" / "v3" / "prefix.md").read_text(encoding="utf-8")
+    gdb_bullet_start = prefix.index("`gdb` — ")
+    gdb_bullet_end = prefix.index("`build` — ")
+    gdb_bullet = prefix[gdb_bullet_start:gdb_bullet_end]
+
+    assert "경로에 닿았나" in gdb_bullet, "픽스처 전제 — 이 절이 그 주장을 담고 있어야 한다"
+    assert "안 들어간다" in gdb_bullet or "들어가지 않는다" in gdb_bullet, (
+        "gdb 절이 「경로에 닿았나」를 단정하면서 PoC 바이트가 아직 gdb 입력으로 안 들어간다는 "
+        "한계를 안 적었다 — 지금 코드에서 거짓 전제를 모델에게 준다"
+    )
 
 
 def test_pov_hop_join_key_matches_across_more_than_two_hops(
