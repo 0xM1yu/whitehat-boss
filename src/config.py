@@ -713,7 +713,11 @@ class Thresholds(HarnessModel):
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
         # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
-        for key in AUDITOR_SOURCE_OPTIONS:
+        # `scout_slice_trim`도 같다(#375 M-3): 기본 꺼짐 run의 `RunRecord.thresholds`에 `0.0`이
+        # 생기면 이 필드 이전의 manifest와 모양이 갈리는데 그 차이가 뜻하는 것이 없다.
+        # `scout_slice_trim`은 Auditor SOURCE 옵션이 아니라(프롬프트 `source_options` 대상이
+        # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다.
+        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim"):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}

@@ -177,6 +177,7 @@ def doctor(
     checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
+    checks.extend(_check_scout_slice_trim(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
     return checks
@@ -460,6 +461,27 @@ def _check_source_options(config: HarnessConfig) -> list[Check]:
             Severity.ERROR,
             f"Auditor SOURCE 옵션 {', '.join(missing)}을 프롬프트가 서술하지 않는다 — meta의 "
             "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
+        )
+    ]
+
+
+def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
+    """`scout_slice_trim`이 켜지면 WARN — 모델은 **하네스가** 줄을 뺀 것을 모른다(#375 M-1).
+
+    v3 prefix는 빠진 줄을 「슬라이서가 뺐다」고 서술하는데, 하네스가 뺀 줄은 슬라이서가 **남긴**
+    줄이다. 잘린 구간의 방어 코드를 모델이 「슬라이서가 안 닿는다고 본 것」으로 오독할 수 있다.
+    ERROR가 아닌 것은 `--slices` 경고와 같은 판단이다(막지 않고 기록한다 — 트림은 opt-in이고
+    thresholds는 모든 프로필 공통이라 ERROR면 멀쩡한 프로필 doctor가 exit 1이 된다). 가드의 정본은
+    하네스 트림을 서술하는 프롬프트 판에만 이 좌석을 돌리는 것(#351 `source_options` 선례)이다.
+    """
+    if not config.thresholds.scout_slice_trim:
+        return []
+    return [
+        Check(
+            Severity.WARN,
+            "scout_slice_trim이 켜져 있다 — 창을 넘는 슬라이스는 하네스가 줄을 뺀다. 모델은 그것을 "
+            "슬라이서가 뺀 것으로 읽는다(프롬프트에 하네스 트림 표식이 없다, #375 M-1). trace "
+            "scout_slice_trimmed가 사후에 남긴다",
         )
     ]
 
