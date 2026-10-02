@@ -7,6 +7,7 @@
 
 import io
 import os
+import random
 import tarfile
 from pathlib import Path
 
@@ -148,6 +149,56 @@ def test_safe_extract_rejects_links_and_special_members_by_its_own_filter(
         task_loader.safe_extract(archive, tmp_path / "out")
 
     assert not os.path.lexists(tmp_path / "out" / info.name), "거부한 멤버가 dest에 생겼다"
+
+
+def _truncated_gz(path: Path) -> None:
+    """중간에서 끊긴 gz — 다운로드가 끊겼을 때의 모양이다. 해제는 앞 멤버를 풀고 나서 죽는다."""
+    rnd = random.Random(1)
+    _make_tar(path, {f"f{i}.c": rnd.randbytes(60_000) for i in range(3)})
+    path.write_bytes(path.read_bytes()[: path.stat().st_size * 6 // 10])
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        # HuggingFace LFS 포인터를 `curl -L` 없이 받으면 정확히 이 모양이다(`tarfile.ReadError`).
+        pytest.param(
+            lambda p: p.write_text("version https://git-lfs.github.com/spec/v1\n", "utf-8"),
+            id="not-gzip",
+        ),
+        pytest.param(lambda p: p.write_bytes(b""), id="empty"),
+        pytest.param(_truncated_gz, id="truncated"),
+    ],
+)
+def test_safe_extract_names_an_unreadable_archive_as_unreadable(tmp_path: Path, make) -> None:
+    """🔴 못 읽는 아카이브(비-gzip·빈 파일·끊긴 gz)는 `tarfile.ReadError`·`EOFError`가 **새지 않고**
+    `UnsafeArchiveError`로 올라온다 — 호출자가 「이 과제를 못 쓴다」를 한 사건으로 다룬다.
+
+    `except (tarfile.TarError, EOFError)`를 지우면 호출자(CLI)의 이중 방어가 가려 주던 구멍이 여기서
+    드러난다(#381 리뷰 LOW — 단위 테스트가 0이었다). 예외 클래스 이름은 단언하지 않는다 — 끊긴
+    gz는 인터프리터 판에 따라 `EOFError`이거나 `ReadError`다."""
+    archive = tmp_path / "repo-vul.tar.gz"
+    make(archive)
+
+    with pytest.raises(task_loader.UnsafeArchiveError, match="읽을 수 없다"):
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+
+def test_safe_extract_names_an_unsafe_member_as_unsafe_not_as_unreadable(tmp_path: Path) -> None:
+    """안전 위반(`FilterError`)과 손상은 **다른 사유**다 — 문구가 갈린다.
+
+    `FilterError`는 `TarError`의 하위라 `except` 순서를 바꾸면 안전 위반이 「읽을 수 없다」로
+    읽힌다. 호출자가 `UnsafeArchiveError`만 잡아도 사유를 못 가르게 되는 변이가 여기서 죽는다."""
+    archive = tmp_path / "evil.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        info = tarfile.TarInfo(name="../escape.txt")
+        info.size = 3
+        t.addfile(info, io.BytesIO(b"pwn"))
+
+    with pytest.raises(task_loader.UnsafeArchiveError, match="안전하지 않은") as excinfo:
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+    assert "읽을 수 없다" not in str(excinfo.value)
 
 
 def test_read_description_returns_text_or_none(tmp_path: Path) -> None:
