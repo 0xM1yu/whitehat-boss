@@ -769,6 +769,41 @@ def test_an_unreadable_error_body_does_not_lose_the_status(
 
 
 
+@pytest.mark.parametrize("status", [400, 503], ids=["http_400", "http_503"])
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        # chunked 본문이 중간에 끊기면 `IncompleteRead`다 — `HTTPException`이라 `OSError`가 아니다.
+        http.client.IncompleteRead(b"partial"),
+        ConnectionResetError(104, "Connection reset by peer"),
+    ],
+    ids=["incomplete_read", "connection_reset"],
+)
+def test_an_error_body_cut_while_reading_still_becomes_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, read_error: Exception
+) -> None:
+    """🔴 **본문을 읽다 끊긴 4xx/5xx도 `ModelGatewayError`다 — 상태는 유지된다** (S0).
+
+    상태 줄을 받은 뒤 본문이 끊기는 것은 프록시 뒤 서버가 죽는 모양이다(vast의 chunked 응답).
+    `_error_detail`이 못 읽은 본문에서 예외를 올리면 상태까지 잃고, 그 예외가 `_post`를 빠져나가
+    `complete()`의 회계(`usage`·`gpu_ms`)를 건너뛴다. **성질만 단언한다** — 어떤 예외형이 어느
+    절에 걸리는지가 아니라, 무엇이 끊겨도 상태가 남은 채 게이트웨이 사건으로 올라오는지를 본다."""
+    _no_metrics(monkeypatch)
+    _raise_http(monkeypatch, _http_error(status, b""))
+
+    def cut(*_args: object) -> bytes:
+        raise read_error
+
+    monkeypatch.setattr(urllib.error.HTTPError, "read", cut, raising=False)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status == status
+    assert "읽지 못했다" in caught.value.detail
+    assert caught.value.gpu_ms is not None, "예외가 `complete()`의 회계를 건너뛰었다"
+
+
 def test_the_output_cap_is_actually_sent_and_comes_from_the_caller() -> None:
     """`max_tokens`가 payload에 실린다.
 
