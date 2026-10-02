@@ -26,6 +26,11 @@ budgets:
     # 이 값의 목적은 폭주 차단 하나이고, 정상 run이 걸리지 않도록 넉넉히 둔다.
     tool_seconds: 1800
 
+  # **0이 든 예산은 Fake 전용 프로필(`dev_*`)만 쓴다.** 상한 0은 「검사하지 않는다」
+  # (`BudgetLedger._overrun`)라 실모델을 서빙하는 프로필이 0이 든 예산을 쓰면 임대 GPU가 한도 없이
+  # 돈다 — `load_config`가 그 프로필을 거부한다(`_check_real_serving_limits_are_positive`). `tool_seconds`는
+  # 안 적어도 0이다. 아직 안 잰 상한이면 0이 아니라 직접 고른 잠정 상한을 적는다(위 `default`의
+  # `tool_seconds`가 그 모양이다 — 잠정치라고 밝히고 목적은 폭주 차단 하나로 둔다).
   dev_fake:
     # Fake 어댑터는 GPU를 쓰지 않는다. 예산 소진 경로(stopped_after)를 테스트에서
     # 태울 수 있도록 일부러 작게 잡는다.
