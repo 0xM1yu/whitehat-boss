@@ -220,6 +220,13 @@ def test_load_task_refuses_before_extracting_when_ground_truth_present(tmp_path:
     assert not work.exists() or not any(work.iterdir()), "거부 전에 해제가 일어났다"
 
 
+def test_load_task_missing_dir_keeps_the_clean_message(tmp_path: Path) -> None:
+    """가드가 존재 확인 뒤라, 없는 과제 경로는 OS 예외가 아니라 기존 FileNotFoundError 문구를
+    받는다 (#397 리뷰 MEDIUM-1 — 가드의 iterdir()가 먼저 터지지 않는다)."""
+    with pytest.raises(FileNotFoundError, match=task_loader.REPO_ARCHIVE_NAME):
+        task_loader.load_task(tmp_path / "does_not_exist", tmp_path / "work")
+
+
 def test_load_task_requires_the_repo_archive(tmp_path: Path) -> None:
     """`repo-vul.tar.gz`가 없으면 명확히 실패한다 — 조용히 빈 소스로 넘어가지 않는다."""
     task = tmp_path / "task"
