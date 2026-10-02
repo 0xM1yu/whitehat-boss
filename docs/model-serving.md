@@ -301,7 +301,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
 > | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
-> | **8006** | `feyospace-v1-small` ← `harness_pool`·`_hybrid`(pov — 8단계 · 서빙 호스트 미확보라 실측 전) |
+> | **8006** | `feyospace-v1-small` ← `harness_pool`·`_hybrid`(pov — 8단계 · 서빙 호스트 미확보라 실측 전(⏵ 2026-10-02 — 서빙 호스트 자체는 2026-09-29부터 임대 vast다. 못 잡힌 것은 서빙과 도구를 함께 돌릴 호스트이고, 이 키는 vast에서도 안 쟀다 — `config/serving/vastai.yaml`. 실모델 run에서 8단계가 불리는 것이 먼저다 — [agent-contracts.md](agent-contracts.md) §2.5 「채점 경로의 벽」)) |
 >
 > **번호가 곧 띄우는 순서다 (2026-09-24).** 교대가 canonical run에서 모델을 올리는 순서(Scout 풀 → Auditor →
 > Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에, 8단계 PoV(`feyospace-v1-small`)를 그 뒤 8006에 뒀다. 그 전에는 로스터를 바꿀 때마다
