@@ -449,8 +449,9 @@ class ReasonCode(StrEnum):
     # 재평가 횟수 상한(config의 requeue_max) 초과. 폐기하지 않고 queued를 유지한다.
     REQUEUE_LIMIT_REACHED = "requeue_limit_reached"
     # 🔴 **예상 밖 예외로 멈춘 run** (최후 방어선 — `runner.run_pipeline`의 맨 `except Exception`).
-    # ⚠ **범위는 `_analyze`(1~8단계)다** — 그 뒤 후처리(GPU 경고·게이트 재등급·리포트 렌더·
-    # `finish_run`)에서 난 예외는 이 사유를 못 받고 매니페스트도 안 남는다.
+    # ⚠ **범위는 `_analyze`(1~8단계)다** — `_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트
+    # 재등급·리포트 렌더·`finish_run`)에서 **처음** 나는 예외는 이 사유를 못 받고 매니페스트도 안
+    # 남는다. `_analyze`에서 난 뒤에는 후처리를 건너뛰므로 2차 예외가 원 예외를 덮지 않는다.
     # 위 다섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
     # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`)는 **예상한** 형이고 이것은 그 밖 전부다.
     # 기존 27개 중 맞는 것이 **없어서** 새로 만들었다 — `MODEL_GATEWAY_UNAVAILABLE`로 적으면
