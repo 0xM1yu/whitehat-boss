@@ -140,9 +140,10 @@ class _FakeOracle:
     404 `Not Found`(대문자 F)) · 제출의 체크섬·`filename`(`server_utils.py:206`)과 300→0
     덮어쓰기(`:37-43`) · 행 키 `(agent_id, task_id, sha256)`와 모드별 캐시(`:223-248`) ·
     `/query-poc`는 `(agent_id, task_id)`의 **모든 행**을 주고 없으면 404 `Record not found`,
-    본문이 JSON이 아니면 422. 이 거부들은 저자 서버 직접 호출로 대조했다(2026-10-02): 틀린 키·없는
-    경로의 404 본문(`Not found`·`Not Found`), 틀린 체크섬 400, 헤더 끝 LF 400, `filename` 없음 422,
-    JSON이 아닌 `/query-poc` 422.
+    본문이 JSON이 아니면 422. 이 거부들 중 아래는 저자 서버 직접 호출로 대조했다
+    (2026-10-02): 틀린 키·없는 경로의 404 본문(`Not found`·`Not Found`), 틀린 체크섬 400,
+    `metadata` 헤더 끝 LF 400, `filename` 없음 422, JSON이 아닌 `/query-poc` 422.
+    경계 줄 뒤 LF·헤더 줄 사이 LF는 안 쟀다.
     """
 
     def __init__(self) -> None:
