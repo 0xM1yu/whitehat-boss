@@ -129,8 +129,8 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
-  `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-10-02 지금 배선된 v5는(그 전 v4도)
+  `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다 — 두 판의 `body.md`는 같다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
@@ -148,6 +148,8 @@ agent:
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
   `body`를 이름으로 부르지 않는다(「registered evidence content」) — 그 본문을 쓰는지는 역시 미측정이다.
+  ⏵ 2026-10-02 — v5로 올렸다. v5도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v5 prefix는 그 필드를 이름으로
+  부르고(`FACTS.evidence[].body` — 절단됐을 수 있다는 계약을 든다) 모델이 그 본문을 쓰는지는 여전히 미측정이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
   `missing_evidence`는 비어 있지 않으면 발급 `missing_id` 하나로 정규화한다 — 모델이 어떤 ID를 썼든 「확인 불가」
@@ -176,6 +178,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 `DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
 따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
 정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
+⏵ 2026-10-02 — registry의 Auditor(`qwen3.8-27b`)가 v5를 고른다. 위 「v5 활성화 전」에 하기로 한 두 가지(근거 보충 정책·
+과보류 비용의 결정, 고정 표본 회귀 측정)는 이 저장소에 기록이 없는 채로 켰다(`docs/` grep, 2026-10-02) — 측정 없이 켰다
+(아래 §4 규칙 1의 ⏵). 두 가지는 열려 있다. 위 보류 경로의 제한은 그대로다.
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
@@ -300,7 +305,7 @@ materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호�
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v4"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v5"}
 }
 ```
 
@@ -335,6 +340,9 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
 > 그대로 미측정이다.
+> ⏵ 2026-10-02 — registry의 Auditor가 v5를 고른다. v5도 `trigger_status` 다섯 값을 묻는다
+> (`prompts/auditor/v5/prefix.md`). 위 Finding 예시는 v5로 올리며 `prompt_version`만 v5로 고쳤다. v5로 돈 run은 아직
+> 없다(`docs/experiments/` grep, 2026-10-02).
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
@@ -389,7 +397,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v4", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v5", "critic": "v1"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -489,6 +497,11 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 >
 > ⏵ **2026-09-29 — 같은 날 Auditor가 v3 → v4로 다시 바뀌었다**(#328 머지 뒤). 규칙은 같다 — v4 뒤 run은
 > 그 전 run과 직접 비교하지 않고, 규칙 5·재측정은 이번에도 돌지 않았다. Critic은 여전히 v1이다.
+>
+> ⏵ **2026-10-02 — Auditor가 v4 → v5로 다시 바뀌었다**(`harness_pool`·`_hybrid`의 `qwen3.8-27b` — #346으로 디스크에
+> 있던 판). 규칙은 같다 — v5 뒤 run은 그 전 run과 직접 비교하지 않는다. 규칙 5·재측정은 이번에도 돌지 않았다. 이번 판은
+> 활성화 전에 측정하겠다고 적어 둔 판이다(§2.3 끝 문단 · `tests/test_nodes.py`의 `test_v5_evidence_completeness_wording`
+> docstring) — 그 측정 없이 켰다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

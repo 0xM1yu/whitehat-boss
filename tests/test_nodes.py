@@ -1362,6 +1362,7 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
 
     출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
     변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 활성화 전 별도 측정한다.
+    ⏵ 2026-10-02 — Auditor v5는 그 측정 없이 켜졌다(`docs/agent-contracts.md` §4 규칙 1의 ⏵).
     """
     prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
