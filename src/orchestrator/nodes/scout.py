@@ -23,8 +23,10 @@ v3 프롬프트는 판정에 더해 `triage_need_evidence` 신호를 낼 수 있
 세션 하나를 다루고, 홉을 몇 번 돌지·언제 멈출지는 좌석 집계가 정한다(runner.py).
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+import math
+import re
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 
 from src.interfaces.model_client import ChatTurn, Prompt, Usage
 from src.orchestrator.budget import BudgetExhausted
@@ -32,6 +34,7 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef, scout_member_of
 from src.schemas.capsule import ContextCapsule
@@ -108,6 +111,10 @@ class ScoutSession:
     prefix: str
     prompt_version: str
     history: tuple[ChatTurn, ...]
+    # hop0에서 슬라이스가 트림됐으면 모델이 본 (file, line) 집합(#375 M-2). 되묻기 홉은 SOURCE를
+    # 다시 안 싣고 hop0 본문을 재사용하므로 이 집합은 hop0에서 고정돼 세션마다 그대로 이어진다.
+    # `None`은 안 잘렸다(또는 슬라이스 없음) — resolver가 `SliceRef.lines` 전체를 `visible`로 쓴다.
+    shown_lines: tuple[tuple[str, int], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,8 @@ class _HopResponse:
     body: str
     prefix: str
     prompt_version: str
+    # 트림됐으면 **모델에 간 (file, line) 집합**, 아니면 `None`(#375 M-2 — resolver `visible`).
+    shown_lines: tuple[tuple[str, int], ...] | None = None
 
 
 def run(
@@ -197,6 +206,7 @@ def open_session(
         hop=0,
         hop_response=hop_response,
         history=(),
+        shown_lines=hop_response.shown_lines,
     )
 
 
@@ -231,6 +241,8 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
         hop=hop,
         hop_response=hop_response,
         history=session.history,
+        # 되묻기 홉은 SOURCE를 다시 안 싣는다 — hop0에서 고정된 집합을 그대로 이어 간다(#375 M-2).
+        shown_lines=session.shown_lines,
     )
 
 
@@ -272,6 +284,7 @@ def _session_from_hop(
     hop: int,
     hop_response: _HopResponse,
     history: tuple[ChatTurn, ...],
+    shown_lines: tuple[tuple[str, int], ...] | None,
 ) -> ScoutSession:
     requested = (
         tuple(hop_response.summary.requested_context) if hop_response.summary is not None else ()
@@ -296,6 +309,7 @@ def _session_from_hop(
         prefix=hop_response.prefix,
         prompt_version=hop_response.prompt_version,
         history=new_history,
+        shown_lines=shown_lines,
     )
 
 
@@ -388,23 +402,30 @@ def _ask_model(
         source = ctx.read_source(capsule.target)
     else:
         source = ctx.read_slice(slice.slice_id)
-    prompt = template.render(
-        facts=build_facts(
-            run_id=ctx.run_id,
-            ids={"candidate_id": candidate_id},
-            artifact_id=artifact.artifact_id,
-            target=capsule.target,
-            capsule=capsule,
+
+    def render(source: str) -> Prompt:
+        return template.render(
+            facts=build_facts(
+                run_id=ctx.run_id,
+                ids={"candidate_id": candidate_id},
+                artifact_id=artifact.artifact_id,
+                target=capsule.target,
+                capsule=capsule,
+                source=source,
+                evidences=evidences,
+                slice_criterion=None if slice is None else _slice_criterion(slice),
+            ),
+            target=describe_target(capsule.target),
+            capsule_sections=describe_sections(capsule),
             source=source,
-            evidences=evidences,
-            slice_criterion=None if slice is None else _slice_criterion(slice),
-        ),
-        target=describe_target(capsule.target),
-        capsule_sections=describe_sections(capsule),
-        source=source,
-    )
+        )
+
+    prompt = render(source)
+    shown_lines: tuple[tuple[str, int], ...] | None = None
+    if slice is not None and ctx.config.thresholds.scout_slice_trim:
+        prompt, shown_lines = _fit_slice(ctx, role, slice, candidate_id, source, render, prompt)
     try:
-        return _call_hop(
+        hop_response = _call_hop(
             ctx,
             candidate_id=candidate_id,
             artifact_id=artifact.artifact_id,
@@ -420,6 +441,173 @@ def _ask_model(
     except Exception:
         _queue_previous(ctx, previous, ReasonCode.SCHEMA_PARSE_FAILED)
         raise
+    # 잘렸으면 모델이 본 줄 집합을 세션에 싣는다 — resolver의 `visible`이 된다(#375 M-2).
+    return hop_response if shown_lines is None else replace(hop_response, shown_lines=shown_lines)
+
+
+# 창에서 프롬프트 몫을 셀 때 남기는 여유. **잰 값이 아니다** — 러너 `_HOP_TOKEN_MARGIN`도 자신을
+# *"설계값·미실측"*이라 적는다(`runner.py`). 값은 그 러너 상수와 같은 512지만 **셈 방식은 다르다**:
+# 러너는 서버가 센 직전 홉 `usage`에서 이 몫을 빼고(실측 기반), 이 자리는 클라이언트 추정 토큰에서
+# 뺀다. 그래서 「같은 방식」이라고 말하지 않는다 — 512가 추정 오차를 덮는다는 근거는 없고
+# (#375 HIGH-1), 추정 과소는 아래 `_SLICE_FALLBACK_CHARS_PER_TOKEN`이 하한비로 막는다.
+_SLICE_TOKEN_MARGIN = 512
+# 토크나이저가 없을 때(approx — `dev_*`·CI·HF 캐시 미스)의 글자/토큰 비. 기본 카운터 `len//4`(4.0)는
+# 실서빙보다 1.8배 과소라(CLAUDE.md §5) 추정이 창을 넘겨도 `fit=true`로 남고 서버가 400/413으로
+# 거절한다(#375 HIGH-1 — #353이 고치려던 바로 그 실패). Scout 좌석 실측 하한 3.28
+# (`docs/experiments/harness/2026-09-26-slice-smoke-atom.md`, 러너도 `_HOP_CHARS_PER_TOKEN`으로 이
+# 하한을 쓴다)로 세면 실비 r≥3.28인 한 과대평가라 트림 뒤 토큰이 창을 안 넘는다. 실 토크나이저가
+# 있으면(`counter`) 이 상수는 안 쓴다 — 그 자리 모델 토크나이저가 센다.
+_SLICE_FALLBACK_CHARS_PER_TOKEN = 3.28
+_BANNER = re.compile(r"^/\* ===== (.+) ===== \*/$")
+_GUTTER = re.compile(r"^(\d+)\| ")
+
+
+def _fallback_tokens(text: str) -> int:
+    """토크나이저가 없을 때의 **보수적** 추정 — 하한비 3.28로 나눠 과소추정을 막는다(#375 HIGH-1).
+
+    `estimate_tokens`(len//4)가 아니라 이것을 쓴다 — 트림은 추정 토큰을 창에 맞추므로 추정이
+    과소면 실토큰이 넘친다. 바닥 1은 `estimate_tokens`와 같은 사유(본문 있는데 비용 0을 막음).
+    """
+    return max(1, math.ceil(len(text) / _SLICE_FALLBACK_CHARS_PER_TOKEN))
+
+
+def _provenance_rank(ref: SliceRef) -> dict[tuple[str, int], int]:
+    """(file, line) → 출처 순위. 작을수록 먼저 남긴다 — `candidate_anchor`(0) → `data_dependency`(1)
+    → `context`(2). provenance에 없는 줄은 그 뒤(3)다.
+
+    slice-v2 `line_provenance`를 어댑터가 `SliceRef.provenance`로 실어 온다(#375 HIGH-2). 비어
+    있으면(옛 슬라이스·degraded 빈 범주) 전부 3으로 떨어져 거리순만 남는다.
+    """
+    rank: dict[tuple[str, int], int] = {}
+    for tier, key in enumerate(("candidate_anchor", "data_dependency", "context")):
+        for pair in ref.provenance.get(key, ()):
+            rank.setdefault((pair[0], pair[1]), tier)
+    return rank
+
+
+def _fit_slice(
+    ctx: RunContext,
+    role: Role,
+    ref: SliceRef,
+    candidate_id: str,
+    source: str,
+    render: Callable[[str], Prompt],
+    prompt: Prompt,
+) -> tuple[Prompt, tuple[tuple[str, int], ...] | None]:
+    """슬라이스 렌더가 Scout 창에 안 들면 줄을 빼서 맞춘다(`scout_slice_trim`, #353 (b)).
+
+    돌려주는 둘: 맞춘 프롬프트와, **모델에 실제로 간 (file, line) 집합**(안 잘렸으면 `None`).
+    뒤엣것을 러너의 need_evidence resolver가 `visible`로 써서 "이미 SOURCE에 있다"를 **모델이
+    본 줄**로만 판단한다(#375 M-2) — 아니면 자르기 전 `SliceRef.lines` 전체로 답해 안 보인 줄을
+    중복으로 본다.
+
+    몫 = 이 자리 모델의 `context_limit` − 이 역할의 `output_max` − 여유. 프롬프트 전체(prefix +
+    body — body에는 `SOURCE`와 `FACTS.source`로 렌더가 두 번 실린다)를 이 자리 모델 토크나이저로
+    센다. **토크나이저가 없으면 글자 하한비 3.28로 보수적으로 센다**(`_fallback_tokens`) —
+    `len//4`로 세면 실서빙보다 과소라 트림 뒤에도 서버 창을 넘는다(#375 HIGH-1).
+
+    남길 순서는 줄 출처(`line_provenance`)다 — `candidate_anchor`를 먼저, 다음 `data_dependency`,
+    마지막 `context`. **각 단계 안에서는 entry와의 줄 거리순**이고 **파일 우선순위는 두지 않는다**:
+    교차 파일 줄을 먼저 버리지 않는다. v3 prefix가 *"the entry point ... is often in one file and
+    the operation that breaks is in another"*(`prompts/scout_boundary/v3/prefix.md`)라 적으므로,
+    entry 파일을 통째로 앞세우면 깨질 줄을 먼저 버린다. 남길 줄 수는 이분 탐색으로 고른다(최대로).
+
+    ⚠ provenance가 비면(옛 슬라이스) 전부 같은 순위라 거리순으로만 떨어진다 — 그래도 파일 우선순위는
+    없다. #353 (b) 원문의 *"entry 주변·데이터 의존 줄 우선"*이 이것이다.
+
+    남긴 렌더는 같은 모양이다(배너 + `<원본 줄>| <코드>`). v3 prefix가 SOURCE를 「슬라이서가 줄을
+    골라 남겨 줄 번호가 건너뛴다」고 서술하므로 프롬프트 판을 안 바꾼다 — 뺀 줄은 그 건너뜀으로
+    보인다. 뺐다는 사실은 trace `scout_slice_trimmed`가 든다. 줄 하나로도 안 들면 그 줄 하나로
+    보내고 `fit=false`로 남긴다 — 서빙이 크기 거절하면 지금처럼 그 후보만 빠진다(`_drop`).
+
+    ⚠ **알려진 틈(#375 M-1):** 모델은 **하네스가** 줄을 뺀 것을 모른다 — v3 prefix는 빠진 줄을
+    「슬라이서가 뺐다」고 서술한다. 하네스가 뺀 줄은 슬라이서가 **남긴** 줄이라, 잘린 구간의 방어
+    코드를 모델이 「슬라이서가 안 닿는다고 본 것」으로 오독할 수 있다. 메우려면 하네스 트림을
+    서술하는 프롬프트 판에만 이 좌석을 돌리는 가드(#351의 `source_options` + doctor 선례)가
+    필요하다 — 이 PR 밖이다. 지금은 trace `scout_slice_trimmed`가 남기고 doctor가 WARN을 단다.
+    """
+    counter = ctx.counter_for_role(role.value)
+    measure = counter or _fallback_tokens
+    model = ctx.config.models[ctx.config.model_key_for(role.value)]
+    budget = (
+        model.context_limit
+        - ctx.config.thresholds.output_max_for(role.value)
+        - _SLICE_TOKEN_MARGIN
+    )
+
+    def size(p: Prompt) -> int:
+        return measure(p.prefix) + measure(p.body)
+
+    before = size(prompt)
+    if before <= budget:
+        return prompt, None
+    rows = _parse_render(source)
+    rank = _provenance_rank(ref)
+    entry_line = ref.entry.line_start or 0
+    order = sorted(
+        range(len(rows)),
+        key=lambda i: (
+            rank.get((rows[i][0], rows[i][1]), 3),
+            abs(rows[i][1] - entry_line) if entry_line else 0,
+            i,
+        ),
+    )
+    low, high, best = 1, len(rows), None
+    while low <= high:
+        keep = (low + high) // 2
+        candidate = render(_rebuild(rows, sorted(order[:keep])))
+        if size(candidate) <= budget:
+            low, best = keep + 1, (keep, candidate)
+        else:
+            high = keep - 1
+    fit = best is not None
+    kept, trimmed = best if best else (min(1, len(rows)), render(_rebuild(rows, order[:1])))
+    kept_idx = sorted(order[:kept])
+    shown = tuple((rows[i][0], rows[i][1]) for i in kept_idx)
+    entry_kept = (ref.entry.file, entry_line) in shown if entry_line else False
+    ctx.trace.emit(
+        EventKind.SCOUT_SLICE_TRIMMED,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate_id,
+        slice_id=ref.slice_id,
+        role=role.value,
+        budget=budget,
+        tokens_before=before,
+        tokens_after=size(trimmed),
+        lines_before=len(rows),
+        lines_kept=kept,
+        fit=fit,
+        entry_kept=entry_kept,
+        token_counter="model" if counter else "estimate",
+    )
+    return trimmed, shown
+
+
+def _parse_render(source: str) -> list[tuple[str, int, str]]:
+    """렌더(`adapters.slices.render`) → (file, 원본 줄, 렌더된 한 줄)."""
+    rows: list[tuple[str, int, str]] = []
+    file = ""
+    for line in source.split("\n"):
+        banner = _BANNER.match(line)
+        if banner:
+            file = banner[1]
+            continue
+        gutter = _GUTTER.match(line)
+        rows.append((file, int(gutter[1]) if gutter else 0, line))
+    return rows
+
+
+def _rebuild(rows: list[tuple[str, int, str]], keep: Sequence[int]) -> str:
+    """남길 행만으로 렌더를 다시 짠다 — 파일마다 배너 하나, 원래 순서 그대로."""
+    out: list[str] = []
+    file = None
+    for i in sorted(keep):
+        if rows[i][0] != file:
+            file = rows[i][0]
+            out.append(f"/* ===== {file} ===== */")
+        out.append(rows[i][2])
+    return "\n".join(out)
 
 
 def _slice_criterion(ref: SliceRef) -> dict[str, object]:
