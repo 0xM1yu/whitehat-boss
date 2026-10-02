@@ -391,10 +391,11 @@ class OpenAICompatModelClient:
             # 응답이 200인데 **모양이 다르다**(`choices`가 비었거나 키가 없다). 전 판은 이 인덱싱이
             # try 밖이라 `KeyError`가 그대로 새 나갔고, 러너는 그것을 게이트웨이 사건으로 못 읽어
             # `write_manifest` 앞을 뚫었다. 상태 코드는 없다 — 전송은 됐고 **계약이 깨진** 것이다.
-            raise ModelGatewayError(
-                f"{self.endpoint} 응답 모양이 계약과 다르다: {type(exc).__name__}: {exc}",
-                detail=f"{type(exc).__name__}: {exc}",
-            ) from exc
+            # ⚠ 러너는 상태 코드가 없으면 이것도 `model_gateway_unavailable`로 적는다(끊김·
+            # 타임아웃과 같은 사유 코드). **`detail`에 문구를 싣는 이유가 그것이다** — 둘을 가르는
+            # 것은 trace의 `model_call.error_detail`뿐이고 그것은 `detail`을 읽는다.
+            reason = f"응답 모양이 계약과 다르다: {type(exc).__name__}: {exc}"
+            raise ModelGatewayError(f"{self.endpoint} {reason}", detail=reason) from exc
         return content, usage
 
 

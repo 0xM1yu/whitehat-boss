@@ -76,13 +76,17 @@ R-2의 사유는 `finish_run()`이 정하지 않고 **호출자가 넘긴다.** 
 | `user_stop_requested` | 사용자가 `--stop-after N`으로 자름 |
 | `dry_run` | `--dry-run`이 3단계에서 자름 (`DRY_RUN_LAST_STAGE`) |
 | `model_swap_failed` | `ModelSwapError` — 다음 단계 서버를 **띄우지 못했다** |
-| `model_gateway_unavailable` | `ModelGatewayError` — 떠 있던 서버가 **죽었다** |
+| `model_gateway_unavailable` | `ModelGatewayError` — 상태 코드 없음(**계약 밖 200** 포함)·5xx |
 | `consecutive_target_failures` | `_TooManyDrops` — 서버는 답하는데 후보가 계속 죽는다 |
 | `schema_parse_failed` | `SchemaParseError`가 가드 없는 경로에서 올라옴 |
 | `unforeseen_failure` | **그 밖 전부** — `_analyze`의 예상 밖 예외(최후 방어선이 다시 던진다) |
 
-셋을 하나로 묶지 않는 이유는 evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기
-때문이다. 묶으면 예산을 0.03%만 쓴 run이 "예산 초과로 중단됨"으로 읽힌다. 뒤의 둘도
+`model_gateway_unavailable`은 「서버가 죽었다」와 「응답이 계약 밖이다」(비-JSON·비-UTF-8·모양이
+다른 200)를 **같은 사유 코드로** 적는다 — 둘을 가르는 것은 trace의 `model_call.error_detail`이다.
+
+앞의 셋(`budget_exhausted`·`user_stop_requested`·`dry_run`)을 하나로 묶지 않는 이유는
+evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기 때문이다. 묶으면 예산을 0.03%만 쓴 run이
+"예산 초과로 중단됨"으로 읽힌다. 그 셋 중 뒤의 둘도
 따로 두는데, `--dry-run --stop-after 5`처럼 동시에 올 수 있어 사유가 하나면 어느 쪽이
 상한을 결정했는지가 사라지기 때문이다 — 판정은 `RunSpec.stop_at()`이 한다.
 
