@@ -771,6 +771,51 @@ def test_pov_facts_record_why_the_fuzz_entrypoint_is_missing(ctx: RunContext) ->
     assert entry["reason"], "못 찾은 사유가 비어 있다 — §0 위반"
 
 
+def test_pov_facts_surface_the_resolvers_own_unfilled_reason(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 적대적 리뷰 2026-10-02 LOW(재현) — 함수가 **인덱스 표에는 있는데 파일을 못 읽어서**
+    못 찾은 경우도, 전 판은 "인덱스의 함수 표에 없다"는 **틀린** 사유를 적었다.
+
+    `resolve()`의 `_unfilled_lookup_reason` docstring이 스스로 적듯("인덱스에는 있는데 파일을
+    못 읽어 여기까지 왔을 때"), `resolution.unfilled`가 비지 않은 경우는 "표에 이름이 없다"
+    하나가 아니다 — closest_name·not_found·libc·outside_repo 어느 것도 될 수 있다. 이 검사는
+    resolver가 실제로 낸 `Unfilled.text`가 그대로 사유에 실리는지 본다(추측으로 하나를 고르지
+    않는다)."""
+    from src.schemas.enums import UnfilledReason
+    from src.schemas.need_evidence import Resolution, Unfilled
+
+    distinguishing_text = "Not resolved: function:LLVMFuzzerTestOneInput (closest: LLVMFuzzerInitialize)"
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = dataclasses.replace(
+        scripted,
+        resolve_requests=lambda _q: Resolution(
+            followup_text="",
+            blocks=(),
+            unfilled=(
+                Unfilled(
+                    kind="function",
+                    target="LLVMFuzzerTestOneInput",
+                    reason=UnfilledReason.CLOSEST_NAME,
+                    text=distinguishing_text,
+                ),
+            ),
+            already=(),
+            truncated=(),
+        ),
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert entry["found"] is False
+    assert distinguishing_text in entry["reason"], (
+        f"resolver의 실제 사유가 안 실리고 뭉뚱그린 사유만 왔다: {entry['reason']!r}"
+    )
+
+
 def test_fuzz_entrypoint_is_not_dropped_by_the_resolvers_own_render_overhead(
     ctx: RunContext,  # noqa: F811
 ) -> None:
@@ -833,7 +878,7 @@ def test_pov_facts_say_so_when_there_is_no_resolver_at_all(ctx: RunContext) -> N
     facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
     entry = facts["fuzz_entrypoint"]
     assert entry["found"] is False
-    assert "resolver" in entry["reason"]
+    assert "resolve_requests" in entry["reason"]  # ⏵ 2026-10-02 LOW 정정 후 문구(runner.py)
 
 
 def test_other_roles_facts_do_not_gain_the_fuzz_entrypoint_key() -> None:
