@@ -1748,6 +1748,13 @@ def _exit_submitted(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: 
     return _scripted(ctx, actions), state, finding
 
 
+def _exit_submitted_without_poc(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    """gen 없이 hop0에서 바로 submit — 사유는 SUBMITTED인데 **최종 PoC가 없다.**"""
+    state, finding = _pov_state(ctx)
+    actions = [PovAction(action="submit", rationale="gen 없이 바로 submit")]
+    return _scripted(ctx, actions), state, finding
+
+
 def _exit_repeat_spec(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
     state, finding = _pov_state(ctx)
     return _scripted(ctx, [_gen(count=8), _gen(count=8)]), state, finding
@@ -1791,10 +1798,12 @@ def _exit_capsule_missing(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # 
     return ctx, state, finding
 
 
-# 7사유 **완전분할** — `PovStopReason` 여섯 + enum 밖 `"capsule_missing"`. 이 표가 사유 어휘의
-# 분할성을 무는 자리다: 멤버를 더하면 아래 집합 단언이 빨개진다.
+# 8사유 **완전분할** — `PovStopReason` 여섯 + enum 밖 둘(`capsule_missing`·
+# `submitted_without_poc`). 이 표가 사유 어휘의 분할성을 무는 자리다: 멤버를 더하면 아래
+# 집합 단언이 빨개진다.
 _POV_EXITS = (
     (PovStopReason.SUBMITTED.value, _exit_submitted),
+    (runner._POV_SUBMITTED_WITHOUT_POC, _exit_submitted_without_poc),
     (PovStopReason.REPEAT_SPEC.value, _exit_repeat_spec),
     (PovStopReason.MAX_HOP.value, _exit_max_hop),
     (PovStopReason.PARSE_FAILED.value, _exit_parse_failed),
@@ -1805,11 +1814,41 @@ _POV_EXITS = (
 
 
 def test_the_pov_exit_table_covers_every_stop_reason() -> None:
-    """위 표가 `PovStopReason` 전량 + 캡슐 미스를 덮는다 — 사유를 더하고 표를 안 늘리면 여기서
-    빨개진다. 안 그러면 아래 표 테스트가 「덮었다」를 주장하면서 새 사유를 빠뜨린다."""
+    """위 표가 `PovStopReason` 전량 + enum 밖 둘을 덮는다 — 사유를 더하고 표를 안 늘리면 여기서
+    빨개진다. 안 그러면 아래 표 테스트가 「덮었다」를 주장하면서 새 사유를 빠뜨린다.
+
+    🔴 enum 밖이 **둘**인 이유가 다르다. `capsule_missing`은 루프 **앞**에서 갈리고,
+    `submitted_without_poc`는 루프가 `SUBMITTED`로 끝났는데 **최종 PoC가 없는** 갈래다
+    (gen 없이 바로 submit). 둘을 사유로 가르지 않으면 「최종 PoC 0건」을 계수기만 보고
+    말할 수 없다 — `submitted`가 PoC 있는 것과 없는 것을 같이 덮기 때문이다.
+    """
     reasons = {reason for reason, _ in _POV_EXITS}
-    assert reasons == {r.value for r in PovStopReason} | {"capsule_missing"}
+    assert reasons == {r.value for r in PovStopReason} | {
+        "capsule_missing",
+        runner._POV_SUBMITTED_WITHOUT_POC,
+    }
     assert len(_POV_EXITS) == len(reasons), "표에 같은 사유가 두 번 있다"
+
+
+def test_a_gen_less_submit_does_not_pass_as_a_final_poc() -> None:
+    """🔴 미탐을 닫는 자리 — 사유가 `submitted`인데 PoC가 없던 갈래다.
+
+    `_pov_finish`는 `POV_GENERATED`를 **`SUBMITTED`이고 PoC가 있을 때만** 낸다. 사유만 세면
+    gen 없는 submit이 `submitted`로 적혀 「최종 PoC가 있다」로 읽히고, 그 run은 PoC가
+    0건인데 경고가 안 났다. 이제 `submitted`는 `POV_GENERATED`와 **1:1**이다.
+    """
+    assert runner._pov_result(PovStopReason.SUBMITTED, b"poc") == "submitted"
+    assert (
+        runner._pov_result(PovStopReason.SUBMITTED, None) == runner._POV_SUBMITTED_WITHOUT_POC
+    )
+    # 나머지 사유는 PoC가 있어도 최종이 아니다 — 사유를 그대로 쓴다.
+    assert runner._pov_result(PovStopReason.MAX_HOP, b"partial") == "max_hop"
+
+    # 그 run에는 경고가 난다 — 이것이 전에 안 났다.
+    warning = runner._pov_shortfall_warning({"F-1": runner._POV_SUBMITTED_WITHOUT_POC})
+    assert warning is not None and "최종 PoC 0건" in warning
+    # PoC가 실제로 있으면 안 난다.
+    assert runner._pov_shortfall_warning({"F-1": "submitted"}) is None
 
 
 @pytest.mark.parametrize(("expected", "setup"), _POV_EXITS, ids=[r for r, _ in _POV_EXITS])
