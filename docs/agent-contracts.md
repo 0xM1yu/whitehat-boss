@@ -213,8 +213,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
-  게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — `pov_hop`(gen)의 `poc_sha256`이 잃은
-  PoC를 특정한다(그 한계는 `src/orchestrator/poc_log.py` docstring이 든다).
+  게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — 잃은 PoC의 해시가 trace에 남는 것은
+  **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
+  이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
+  경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면

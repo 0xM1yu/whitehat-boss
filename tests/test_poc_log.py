@@ -285,7 +285,7 @@ def test_an_existing_temp_path_is_refused_and_left_alone(tmp_path: Path) -> None
     assert _listing(log.directory) == ["0001.poc.tmp"]
 
 
-def test_a_failed_attempt_still_takes_its_number_so_a_leftover_temp_file_never_blocks_the_next_write(
+def test_a_failed_attempt_takes_its_number_so_a_leftover_temp_file_never_blocks_the_next_write(
     tmp_path: Path,
 ) -> None:
     """**실패한 시도도 번호를 먹는다** — 그 번호의 임시 파일이 남아도 다음 쓰기가 막히지 않는다
@@ -700,9 +700,10 @@ def test_a_failing_cleanup_never_masks_the_exception_that_caused_it(
     """정리(`unlink`)가 `OSError`로 실패해도 호출자가 보는 것은 **쓰기를 깬 원래 예외**다.
 
     정리의 흡수(`contextlib.suppress(OSError)`)를 빼면 정리의 `PermissionError`가 원래 예외를
-    **대체**한다. Ctrl-C(`KeyboardInterrupt`)가 `OSError`로 바뀌면 `_pov_finish`의 `except OSError`가
-    그것을 쓰기 실패로 흡수해 중단이 삼켜진다 — 위 검사는 정리가 **성공하는** 경우만 봐서 이 흡수를
-    못 물었다. 정리가 실제로 시도됐는지(`attempts`)도 본다: 시도가 없으면 이 검사는 아무것도 안 본다.
+    **대체**한다. Ctrl-C(`KeyboardInterrupt`)가 `OSError`로 바뀌면 `_pov_finish`의
+    `except OSError`가 그것을 쓰기 실패로 흡수해 중단이 삼켜진다 — 위 검사는 정리가 **성공하는**
+    경우만 봐서 이 흡수를 못 물었다. 정리가 실제로 시도됐는지(`attempts`)도 본다: 시도가 없으면
+    이 검사는 아무것도 안 본다.
     """
     real = Path.read_bytes
     attempts: list[str] = []
@@ -728,7 +729,7 @@ def test_a_failing_cleanup_never_masks_the_exception_that_caused_it(
     assert attempts == ["0001.poc.tmp"], f"정리가 시도되지 않았다: {attempts}"
 
 
-# --- 중단 경로 — 파일이 없는 것을 받아들이되 흔적은 남긴다 --------------------------------
+# --- 중단 경로 — 파일은 없고, 해시 흔적은 홉 이벤트가 나간 뒤에 끊긴 경우에만 남는다 ------
 
 
 def test_gen_hop_events_carry_the_poc_sha256_and_other_hops_do_not(

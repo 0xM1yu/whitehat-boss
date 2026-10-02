@@ -50,6 +50,13 @@ digest는 그 파일에 대해 항상 참인데 번역된 바이트가 「의도
 `tools/monitor`의 관용구) — 읽는 쪽이 반쯤 쓰인 PoC를 못 본다. `fsync`는 하지 않는다: 전원
 차단 내구성은 보장하지 않는다(`trace`의 flush와 같은 선, #208).
 
+**하드 크래시(`SIGKILL`·전원 차단)는 정리가 못 덮는다** — `except BaseException` 정리는
+파이썬이 예외를 올릴 수 있을 때만 돈다. `open`과 `os.replace` 사이에서 죽으면 `NNNN.poc.tmp`가
+남는다. 오늘은 무해하다: run_dir은 run마다 새로 잡히고(`cli._claim_run_dir`가 `exist_ok=False`로
+선점) `src`에 resume이 없어 그 디렉터리를 다시 쓰는 `PocLog`가 없다. **resume이 생기면**
+`_seq`가 0에서 다시 시작해 남은 `.tmp`와 앞선 `.poc`(`os.replace`가 최종 이름을 덮는다)에
+부딪힌다 — 그때 번호 부여를 같이 고친다.
+
 **임시 경로는 새로 만든다(`x` = `O_CREAT|O_EXCL`).** 이미 있는 것은 심링크여도 따라가지 않고
 `FileExistsError`다 — WSL Ubuntu(Python 3.12.3)에서 살아 있는 링크·끊어진 링크 둘 다 거절하고 대상이
 안 만들어지는 것을 실측했다. `O_NOFOLLOW`는 안 건다: 말단 하나만 막는데 `O_EXCL`이 이미 그것을
