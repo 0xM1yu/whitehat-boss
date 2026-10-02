@@ -185,11 +185,17 @@ def _call_hop(
 def run_tool(ctx: RunContext, *, finding: Finding, tool: str, workdir: str) -> Evidence:
     """PoV 홉에서 도구를 돌린다 — gen이 만든 PoC를 대상에서 실행/진단(asan·build·gdb·poc).
 
-    ⚠ **PoC 바이트를 파일로 쓰지 않는다.** fake 도구는 workdir의 대상 소스 존재만 보고
-    ok를 낸다(`fake_tools._run_repro`) — dev_fake는 루프 배선(gen→도구→Evidence→되먹임)을
-    고정하는 자리다. 조립된 바이트는 `_run_pov_hops`의 반환값·`POV_GENERATED`(bytes·sha256)로
-    남는다. 컨테이너 경로(호스트)에서 PoC를 마운트 파일로 넘길 때 바이트를 materialize한다
-    (`validate._call`이 `[tool, *steps]`를 넘기는 자리와 같은 계약).
+    ⚠ **PoC 바이트를 도구 입력으로 쓰지 않는다**(`ToolArgs`는 도구 이름과 workdir만 싣는다).
+    fake 도구는 workdir의 대상 소스 존재만 보고 ok를 낸다(`fake_tools._run_repro`) — dev_fake는
+    루프 배선(gen→도구→Evidence→되먹임)을 고정하는 자리다. 이 함수가 쓰는 파일은 없다 —
+    조립된 바이트는 루프가 종단(`_pov_finish`)에 닿으면 `_run_pov_hops`의 반환값과 종단
+    이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서 러너가 마지막 gen의 PoC를 run 산출물
+    사이드카(`pov_poc/`, #355)로 쓴다. ⚠ 루프가 종단에 닿기 전에 끊기면 바이트는 안 남는다
+    (#394). 특히 예산이 이 도구 호출 자신에서 소진되면(`ctx.call_tool`의 `ensure`) 그 홉의
+    gen 이벤트가 나가기 전이라 해시도 안 남는다 — 앞 홉이 이미 낸 gen 이벤트의 `poc_sha256`만
+    남는 경로와 구별한다(`docs/agent-contracts.md`). 컨테이너 경로(호스트)에서 PoC를
+    **마운트 파일로 도구에 넘길** 때 바이트를 materialize한다(`validate._call`이
+    `[tool, *steps]`를 넘기는 자리와 같은 계약).
     """
     return ctx.call_tool(
         tool=tool,
