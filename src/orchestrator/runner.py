@@ -847,7 +847,10 @@ def run_pipeline(
         # 안 남았고, zlib 때 `state.db`를 직접 열어야 했던 이유가 그것이다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.MODEL_GATEWAY_UNAVAILABLE
-        warnings.append(f"게이트웨이가 응답하지 않아 중단했다: {error_detail(exc)}")
+        # 상태 없음(끊김·타임아웃·계약 밖 200)·5xx·`_DROPPABLE_STATUS` 밖 4xx가 모두 여기로 온다 —
+        # 경고는 원인을 단언하지 않는다(「응답하지 않아」는 계약 밖 200에 거짓이다) — 원인은
+        # detail이다.
+        warnings.append(f"게이트웨이 실패로 중단했다: {error_detail(exc)}")
     except _TooManyDrops as exc:
         # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
         stopped_after = int(ctx.current_stage)

@@ -504,8 +504,9 @@ def test_a_failed_manifest_write_after_an_unforeseen_exception_keeps_the_origina
 def test_a_gateway_stop_warning_does_not_name_a_cause_the_status_cannot_prove(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int | None
 ) -> None:
-    """상태 없음(계약 밖 200 포함)·404 같은 4xx·5xx는 **같은 사유 코드**(`model_gateway_unavailable`)로
-    가고, 러너 경고는 그중 어느 하나를 **원인으로 단언하지 않는다** — 원인은 `detail`이 말한다.
+    """상태 없음(계약 밖 200 포함)·404 같은 4xx·5xx는 **같은 사유 코드**
+    (`model_gateway_unavailable`)로 가고, 러너 경고는 그중 어느 하나를 **원인으로 단언하지
+    않는다** — 원인은 `detail`이 말한다.
 
     「게이트웨이가 응답하지 않아」는 모양이 다른 200·비-UTF-8 응답에는 글자 그대로 거짓이다
     (독립 검토 2026-10-02 — 서버는 응답했고 그 응답이 계약 밖이었다)."""
