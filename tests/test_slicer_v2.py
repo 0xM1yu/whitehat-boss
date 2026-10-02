@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
-from test_slicer import MockTransport, candidate, make_slice, payloads, response, run_cli
+from test_slicer import MockTransport, candidate, make_slice, payloads, report, response, run_cli
 
 import slicer
 import slicer_pipeline
@@ -1288,3 +1288,133 @@ def test_the_merge_tool_names_the_claim_owner_of_each_incomplete_candidate(
     assert tool.main(["x", str(tmp_path / "plain.db"), str(mine), str(other)]) == 2
     err = capsys.readouterr().err
     assert all(f"  {key}\n" in err for key in keys)
+
+
+# #377 (b) -- --priority-files: order only, bound into the checkpoint.
+
+
+def in_file(item, name):
+    """candidate() moved to another file, same line/symbol."""
+    moved = json.loads(json.dumps(item))
+    moved["file"] = name
+    moved["scope"]["file"] = name
+    moved["anchors"] = [{**a, "file": name} for a in moved["anchors"]]
+    return moved
+
+
+@pytest.fixture(name="two_file_repo")
+def two_file_repo_fixture(repo):
+    (repo / "a.c").write_text((repo / "main.c").read_text(encoding="utf-8"), encoding="utf-8")
+    return repo
+
+
+def two_file_payloads():
+    # a.c sorts before main.c, so without a list a.c's candidate comes first.
+    data = payloads(case_a=[in_file(candidate(), "a.c"), candidate("other", 3)], flow_count=1)
+    data["import"] = response(
+        "import", {"imported": True}, logs=report([("a.c", "yes", "yes"), ("main.c", "yes", "yes")])
+    )
+    data["inventory"] = response("inventory", {
+        "files": ["a.c", "main.c"], "methods_internal": 2, "calls": 2, "calls_unresolved": 0,
+        "unknown_nodes": 0, "flow_sinks_without_method": 0, "overlays": ["ossdataflow"],
+        "engine_config": {
+            "maxCallDepth": 4, "maxArgsToAllow": 1000, "maxOutputArgsExpansion": 1000,
+        },
+    })
+    return data
+
+
+def test_prioritize_moves_listed_files_first_and_keeps_order_and_ids(repo):
+    from slicer_candidates import prioritize
+
+    rows = [in_file(candidate("x", 1), "a.c"), in_file(candidate("y", 2), "b.c"),
+            candidate("z", 3), in_file(candidate("w", 4), "b.c")]
+    ordered = collect({"A": rows}, repo)
+    assert [c["entry"]["file"] for c in ordered] == ["a.c", "b.c", "b.c", "main.c"]
+    moved, first = prioritize(ordered, {"main.c", "b.c"})
+    assert first == 3
+    # each tier keeps collect()'s relative order; ids are collect()'s, not the new positions
+    assert [c["id"] for c in moved] == [ordered[i]["id"] for i in (1, 2, 3, 0)]
+    assert prioritize(ordered, set()) == (ordered, 0)
+
+
+def test_an_anchor_in_a_listed_file_is_enough(repo):
+    from slicer_candidates import prioritize
+
+    row = in_file(candidate(), "a.c")
+    row["anchors"].append({"file": "main.c", "line": 5})
+    # q (a.c:5) sorts after row (a.c:1); only row has an anchor in main.c
+    ordered = collect({"A": [in_file(candidate("q", 5), "a.c"), row]}, repo)
+    assert [c["entry"]["symbol"] for c in ordered] == ["entry", "q"]
+    moved, first = prioritize(ordered, {"main.c"})
+    assert first == 1 and moved == ordered
+    moved, first = prioritize(ordered[::-1], {"main.c"})
+    assert first == 1 and [c["entry"]["symbol"] for c in moved] == ["entry", "q"]
+
+
+def test_priority_files_reorder_the_bound_candidates(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# hint\n\n./main.c\n", encoding="utf-8")
+    database = tmp_path / "state.db"
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"] == {
+        "files": 1, "files_with_candidates": 1, "first_tier_candidates": 1, "candidates": 2,
+    }
+    assert result["settings"]["priority_files"]["count"] == 1
+    with Checkpoint(database, resume=True) as store:
+        files = [c["entry"]["file"] for c in store.get("candidates")]
+    assert files == ["main.c", "a.c"]
+
+
+def test_without_priority_files_nothing_changes(monkeypatch, two_file_repo, tmp_path):
+    database = tmp_path / "state.db"
+    _, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--checkpoint", str(database)
+    )
+    assert "priority" not in result and result["settings"]["priority_files"] is None
+    with Checkpoint(database, resume=True) as store:
+        files = [c["entry"]["file"] for c in store.get("candidates")]
+    assert files == ["a.c", "main.c"]
+
+
+def test_the_slices_do_not_depend_on_the_list(monkeypatch, two_file_repo, tmp_path):
+    """Order only: run to the end, the same slices come out with or without a list."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    outputs = []
+    for name, extra in (("plain", ()), ("listed", ("--priority-files", str(listing)))):
+        folder = tmp_path / name
+        folder.mkdir()
+        _, result, _ = run_cli(monkeypatch, two_file_repo, folder, two_file_payloads(), *extra)
+        outputs.append(result["slices"])
+    assert outputs[0] == outputs[1]
+
+
+def test_shards_with_different_lists_are_not_merged(monkeypatch, two_file_repo, tmp_path):
+    databases = []
+    for index, listed in enumerate(("main.c\n", "a.c\n")):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        listing = folder / "priority.txt"
+        listing.write_text(listed, encoding="utf-8")
+        databases.append(folder / "state.db")
+        run_cli(monkeypatch, two_file_repo, folder, two_file_payloads(),
+                "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
+                "--priority-files", str(listing))
+    with pytest.raises(ValueError, match="Shard mismatch"):
+        merge_shards(tmp_path / "merged.db", databases)
+
+
+def test_priority_files_are_refused_with_export_only_or_unreadable(repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    base = ["--repo", str(repo), "--out", str(tmp_path / "s.json")]
+    with pytest.raises(SystemExit):
+        slicer.main([*base, "--checkpoint", str(tmp_path / "state.db"), "--export-only",
+                     "--priority-files", str(listing)])
+    with pytest.raises(SystemExit):
+        slicer.main([*base, "--priority-files", str(tmp_path / "missing.txt")])

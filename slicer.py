@@ -499,6 +499,8 @@ class Slicer(SlicingStages):
         # The checkpoint's `prepared` record a `cpg_file` was verified against (check_prepared).
         self.prepared: dict | None = None
         self.shard: tuple[int, int] | None = None
+        # #377 (b): repo-relative files whose candidates are sliced first (--priority-files).
+        self.priority_files: set[str] | None = None
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
         # Joern can read); compiled_files is the set the database compiles, filled in by
@@ -875,6 +877,13 @@ def parser() -> argparse.ArgumentParser:
         "--cpg", type=Path, help="load this saved CPG instead of parsing --repo (needs --resume "
         "on a copy of the --prepare-only checkpoint)",
     )
+    # #377 (b): order only. Every candidate is still discovered and sliced; a wall budget that
+    # stops the run early (tools/slice_sharded.py --wall-seconds) leaves the unreached ones
+    # degraded, so this list decides which those are.
+    result.add_argument(
+        "--priority-files", type=Path, help="file of repo-relative paths, one per line (blank and "
+        "# lines skipped): candidates whose entry or an anchor is in one are sliced first",
+    )
     result.add_argument("--export-dir", type=Path)
     result.add_argument("--progress", type=Path)
     result.add_argument("--heartbeat-seconds", type=positive_seconds, default=30)
@@ -990,6 +999,20 @@ def main(argv: list[str] | None = None) -> int:
         cli.error("--claim-db needs --shard and --checkpoint")
     if args.cpg_out and not args.prepare_only:
         cli.error("--cpg-out only goes with --prepare-only")
+    if args.priority_files and args.export_only:
+        # Export reads the order the checkpoint was bound with; a list here would change nothing.
+        cli.error("--priority-files has no effect with --export-only")
+    priority = None
+    if args.priority_files:
+        try:
+            text = args.priority_files.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            cli.error(f"--priority-files unreadable: {exc}")
+        priority = {
+            line.strip().replace("\\", "/").removeprefix("./")
+            for line in text.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
         # The shard must start from the prepared checkpoint: its discovery is what makes every
         # shard slice the same candidate list, and the run contract checks it is the same repo.
@@ -1070,7 +1093,18 @@ def main(argv: list[str] | None = None) -> int:
         "generated_header_dirs": (
             generated_header_dirs(args.compile_commands) if args.compile_commands else None
         ),
+        # The order is bound into the checkpoint, so it is part of the contract: shards or a
+        # resume with another list are refused instead of slicing a differently ordered run.
+        "priority_files": (
+            {
+                "count": len(priority),
+                "sha256": hashlib.sha256("\n".join(sorted(priority)).encode("utf-8")).hexdigest(),
+            }
+            if priority is not None
+            else None
+        ),
     }
+    job.priority_files = priority
     job.result["settings"] = job.settings
     # The normalized database lands in payload_dir, which is already on the filesystem Joern
     # shares for file-transport payloads.

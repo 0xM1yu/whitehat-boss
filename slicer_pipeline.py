@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import slicer_queries as queries
-from slicer_candidates import collect
+from slicer_candidates import collect, prioritize
 from slicer_checkpoint import digest
 from slicer_errors import QueryError
 from slicer_library import Library
@@ -59,6 +59,19 @@ class SlicingStages:
                 "methods first, then traversal order within each layer; slicer_queries)"
             )
         self.candidates = collect(rows, self.repo)
+        if self.priority_files is not None:
+            # Before bind(): the checkpoint (and so --prepare-only's shards and the claim queue)
+            # keeps this order, and resuming with a different list is a contract mismatch.
+            self.candidates, first = prioritize(self.candidates, self.priority_files)
+            seen = {c["entry"]["file"] for c in self.candidates} | {
+                a["file"] for c in self.candidates for a in c["anchors"]
+            }
+            self.result["priority"] = {
+                "files": len(self.priority_files),
+                "files_with_candidates": len(self.priority_files & seen),
+                "first_tier_candidates": first,
+                "candidates": len(self.candidates),
+            }
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
         if self.checkpoint:
             self.checkpoint.bind("candidates", self.candidates)
