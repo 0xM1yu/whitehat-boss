@@ -31,7 +31,7 @@ CPG 없이 끝난 `partial`은 run 시작 전에 이유를 대고 멈춘다.
 import codecs
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.paths import PathEscape, safe_join
@@ -85,6 +85,10 @@ class Slice:
     # 없다. 슬라이서가 `slices.json`에 이 marker를 남기는데, 러너가 안 실으면 consumer가 절단
     # 슬라이스를 full로 오인한다(@danielcho02 #307 리뷰). 기본 False라 정상 슬라이스는 영향 없다.
     degraded: bool = False
+    # 줄별 출처 — slice-v2 `line_provenance`(`data_dependency`·`candidate_anchor`·`context` → 각
+    # (file, line) 목록). Scout 창 트림이 어느 줄을 먼저 버릴지 정하는 데 쓴다(#375 HIGH-2 —
+    # 전엔 하네스가 이 키를 안 읽었다). 없으면 빈 dict다(옛 슬라이스·degraded 범주 공백).
+    provenance: dict[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
 
     @property
     def given_end(self) -> str:
@@ -172,6 +176,21 @@ def _manifest(raw: object) -> dict:
     return dict(raw)
 
 
+def _provenance(raw: object) -> dict[str, tuple[tuple[str, int], ...]]:
+    """slice-v2 `line_provenance`(범주 → `[[file, line], ...]`)를 읽는다. 없거나 `null`이면 `{}`다
+    (옛 슬라이스). slice-v2가 내는 세 범주 밖 키는 **버린다** — Scout 트림(#375)이 아는 셋만
+    쓴다."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise TypeError(f"line_provenance: 객체가 아니다 — {type(raw).__name__}")
+    out: dict[str, tuple[tuple[str, int], ...]] = {}
+    for key in ("data_dependency", "candidate_anchor", "context"):
+        points = raw.get(key) or []
+        out[key] = tuple((str(p[0]), int(p[1])) for p in points)
+    return out
+
+
 def _slice(item: dict) -> Slice:
     case = item["case"]
     if case not in _GIVEN_END:
@@ -190,6 +209,7 @@ def _slice(item: dict) -> Slice:
         lines=tuple((str(p["file"]), int(p["line"])) for p in item["lines"]),
         code=code,
         degraded=bool(item.get("degraded", False)),
+        provenance=_provenance(item.get("line_provenance")),
     )
 
 
@@ -223,6 +243,8 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 entry=entry,
                 lines=item.lines,
                 degraded=item.degraded,
+                # 줄별 출처 — Scout 트림이 anchor > dependency > context 순으로 버린다(#375 HIGH-2).
+                provenance=item.provenance,
             )
         )
     return tuple(refs)
