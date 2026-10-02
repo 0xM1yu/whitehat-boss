@@ -1171,10 +1171,11 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
 
     **못 찾아도 dict를 돌려준다** — `found=False` + `reason`. 키를 빼면 "안 찾았다"와 "찾았는데
-    없다"가 구별되지 않는다(CLAUDE.md §0). `reason`이 가르는 것은 다섯이다: resolver 훅 자체가
-    없음(프로덕션에서는 안 닿는다 — factory가 항상 꽂는다) · `None` 반환(부분 구현) ·
-    **인덱스가 없거나 v1**(빈 `Resolution` — `unfilled`조차 빈 것이 그 서명) · 함수 표에 이름이
-    없음 · 상한에 잘림 · 위치는 있는데 원문을 못 읽음.
+    없다"가 구별되지 않는다(CLAUDE.md §0). `reason`이 가르는 것은 여섯이다(⏵ 2026-10-02 정정 —
+    전 판은 "다섯"이라 적고 아래 여섯을 나열했다): resolver 훅 자체가 없음(프로덕션에서는 안
+    닿는다 — factory가 항상 꽂는다) · `None` 반환(부분 구현) · **인덱스가 없거나 v1**(빈
+    `Resolution` — `unfilled`조차 빈 것이 그 서명) · 함수 표에 이름이 없음 · 상한에 잘림 · 위치는
+    있는데 원문을 못 읽음.
 
     ⚠ **`source`는 `ctx.read_source`로 직접 읽는다.** `resolution.followup_text`를 실으면 NE 루프의
     후속 턴 포장(머리·gutter·*"ScoutResponse JSON을 내라"*)이 FACTS에 들어간다 — 아래 그 자리의
@@ -1189,8 +1190,12 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
         "reason": "",
     }
     if ctx.resolve_requests is None:
-        # 인덱스가 v1이거나 미로드인 run. 고칠 자리가 **인덱스**라 사유를 그렇게 적는다.
-        missing["reason"] = "이 run에 resolver가 없다(인덱스 v1 또는 미로드) — 조회 수단이 없었다"
+        # ⏵ 2026-10-02 정정(적대적 리뷰 LOW): 전 판은 이 사유에 "인덱스 v1 또는 미로드"를 적어
+        # 아래(:1232 부근) **다른 갈래**의 사유와 겹쳤다. 이 갈래는 **훅 자체가 안 꽂힌** 경우고
+        # (factory가 프로덕션에서는 항상 꽂으므로 실서빙에서는 안 닿는다 — 위 docstring), 인덱스
+        # 판이 v1인지는 훅이 꽂힌 **다음에** `resolve()` 안에서 갈린다(:1232의 빈 `Resolution`).
+        # 고칠 자리가 다르니 사유도 다르다.
+        missing["reason"] = "이 run에 resolve_requests 훅 자체가 안 꽂혔다 — 조회 수단이 없었다"
         return missing
     query = ResolveQuery(
         requests=(
@@ -1236,9 +1241,21 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
             # `resolve_requests is None` 갈래는 프로덕션에서 안 닿는다 — 여기가 그 자리다.
             missing["reason"] = "인덱스가 없거나 v1이다(함수 표 없음) — 조회가 아무 사유도 못 냈다"
         else:
+            # ⏵ 2026-10-02 정정(적대적 리뷰 LOW): 전 판은 여기서 늘 "함수 표에 없다"고 적었는데
+            # `resolution.unfilled`가 비지 않은 사유는 그것 하나가 아니다 —
+            # `symbol_resolver._unfilled_lookup_reason`은 "인덱스에는 있는데 파일을 못 읽어
+            # 여기까지 왔을 때"도 같은 자리로 보낸다(그 함수 docstring). 추측하지 않고
+            # resolver가 **실제로 낸** 사유(`Unfilled.text`)를 그대로 싣는다.
+            unfilled = next(
+                (u for u in resolution.unfilled if u.target == _FUZZ_ENTRYPOINT_NAME), None
+            )
             missing["reason"] = (
-                f"인덱스의 함수 표에 {_FUZZ_ENTRYPOINT_NAME}가 없다 — "
-                "이 과제의 하네스 진입점 이름이 다를 수 있다"
+                f"진입점 조회가 실패했다 — {unfilled.text}"
+                if unfilled is not None
+                else (
+                    f"인덱스의 함수 표에 {_FUZZ_ENTRYPOINT_NAME}가 없다 — "
+                    "이 과제의 하네스 진입점 이름이 다를 수 있다"
+                )
             )
         return missing
     # 🔴 **`resolution.followup_text`를 싣지 않는다.** 그것은 함수 본문이 아니라 NE 루프의 **후속
