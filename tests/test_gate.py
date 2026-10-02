@@ -21,6 +21,7 @@ from src.schemas import (
     PathStep,
     PathStepKind,
     ProducedBy,
+    ReproOrigin,
     ReproSpec,
     Role,
     Verdict,
@@ -181,6 +182,47 @@ def test_upheld_with_repro_spec_is_e3() -> None:
     result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
 
     assert result.grade is EvidenceGrade.E3
+
+
+def test_a_harness_synthesized_repro_spec_still_reaches_e3() -> None:
+    """#S7: 하네스가 합성한 명세도 E3(`validated`)까지 올라간다 — 등급은 출처로 안 갈린다.
+    게이트는 `repro_is_harness`로만 그 사실을 trace에 남긴다."""
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH, repro=True)
+    finding = finding.model_copy(
+        update={"repro_spec": finding.repro_spec.model_copy(update={"origin": ReproOrigin.HARNESS})}
+    )
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
+
+    assert result.grade is EvidenceGrade.E3
+    assert result.predicates["repro_is_harness"] is True
+
+
+def test_a_model_repro_spec_is_not_flagged_harness() -> None:
+    """모델이 낸 명세(기본 `origin=model`)는 `repro_is_harness`가 거짓이고 등급은 그대로 E3다."""
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH, repro=True)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.UPHOLD, grounded=True)])
+
+    assert result.grade is EvidenceGrade.E3
+    assert result.predicates["repro_is_harness"] is False
+
+
+def test_no_repro_spec_is_not_flagged_harness() -> None:
+    """명세가 없으면 `repro_is_harness`는 거짓이다(참칭 방지 — None을 harness로 읽지 않는다)."""
+    finding = _finding(refs=["ev_static"], path=FULL_PATH, repro=False)
+
+    result = gate.evaluate(finding, [_evidence("ev_static", EvidenceKind.STATIC)])
+
+    assert result.predicates["repro_is_harness"] is False
 
 
 def test_upheld_without_repro_spec_stays_e2() -> None:
