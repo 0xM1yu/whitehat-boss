@@ -29,7 +29,7 @@ from typing import TextIO, get_args
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
-from src.adapters.slices import SliceInputError, load_slices, render_slices
+from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
 from src.bench import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CONTEXTS,
@@ -291,6 +291,33 @@ def _check_device(config: HarnessConfig, device: str | None) -> list[Check]:
             )
         )
     return checks
+
+
+# 개수 가드 에러가 이름을 대는 안 맞은 슬라이스의 최대 수 — 나머지는 개수로만 센다.
+_UNMATCHED_SLICES_SHOWN = 5
+
+
+def _unmatched_slices_error(
+    slice_set: SliceSet, rendered: dict[str, str], work_dir: Path
+) -> str | None:
+    """`render_slices`가 **건너뛴** 슬라이스가 있으면 그 사유, 없으면 `None`.
+
+    `render_slices`는 entry 파일이 트리에 없는 슬라이스를 오류 없이 뺀다 — 러너가 그것을
+    `unmatched_slices`로 셀 뿐이라 경로 기준이 어긋난 `slices.json`은 `후보 0건 / 완주`로 끝난다.
+    `--task-dir`는 해제 트리가 번들 **최상위**라 슬라이서를 그 안의 `src-vul/`에서 돌린
+    슬라이스(접두어 없음)가 그 모양이 된다(`--target`은 사람이 루트를 골라 안 난다)."""
+    unmatched = [item.id for item in slice_set.slices if item.id not in rendered]
+    if not unmatched:
+        return None
+    shown = ", ".join(unmatched[:_UNMATCHED_SLICES_SHOWN])
+    if len(unmatched) > _UNMATCHED_SLICES_SHOWN:
+        shown += f" 외 {len(unmatched) - _UNMATCHED_SLICES_SHOWN}건"
+    return (
+        f"슬라이스 {len(slice_set.slices)}건 중 {len(unmatched)}건이 풀린 트리에 없다({shown}) — "
+        "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 한다. "
+        "슬라이서를 그 디렉터리 안에서 돌리지 않았는지, 다른 과제의 slices.json이 아닌지 본다 — "
+        f"해제 트리가 {work_dir}에 남았다. 비우고 다시 한다"
+    )
 
 
 def _serving_error(config: HarnessConfig, device: str, config_dir: Path) -> str | None:
@@ -1017,19 +1044,31 @@ def run(args: argparse.Namespace) -> int:
             )
             return 2
         if slice_set is not None:
-            # 🔴 **`--task-dir`와 `--slices`를 같이 받는 안전은 이 검사에 선다.** 슬라이스는
-            # 슬라이서가 어딘가에서 푼 트리를 보고 만든 것이고 여기서 푼 트리는 **다른
-            # 디렉터리**다 — 같을 필요는 없다. `render`는 하네스 사본이 슬라이서가 본 것과
-            # **글자 단위로** 같은지만 보므로(drift), 같은 아카이브를 푼 트리면 어디서 풀었든
-            # 통과하고 아니면 여기서 멈춘다.
+            # 🔴 **`--task-dir`와 `--slices`를 같이 받는 안전은 이 두 검사에 선다 — 그리고 둘이
+            # 전부는 아니다.** 슬라이스는 슬라이서가 어딘가에서 푼 트리를 보고 만든 것이고 여기서
+            # 푼 트리는 **다른 디렉터리**다 — 같을 필요는 없다.
+            #  · `render_slices`는 슬라이스가 가리키는 **경로가 있는데 줄 내용이 다른** 것(drift)을
+            #    `SliceInputError`로 막는다 — 하네스 사본과 글자 단위로 대조한다.
+            #  · **경로가 아예 없는** 슬라이스(번들 최상위 접두어 `src-vul/` 불일치 · 다른 과제의
+            #    slices.json)는 `render_slices`가 오류 없이 **건너뛴다** — 그래서 렌더된 수가
+            #    입력 수와 다르면 여기서 멈춘다(`_unmatched_slices_error`).
+            #  · **못 잡는 것:** 경로와 줄 내용이 우연히 다 맞는 다른 과제의 슬라이스. 이 번들의
+            #    것이라는 보증은 없다 — 슬라이스 파일 쪽에 과제 해시가 없다.
+            # ⚠ 기존 `--target`+`--slices` 경로도 entry 파일이 없는 슬라이스를 조용히 건너뛴다
+            # (`unmatched_slices`로만 센다) — 사람이 루트를 골라 주는 경로라 이 분기만 막고 그쪽은
+            # 바꾸지 않았다.
             try:
-                render_slices(slice_set, args.task_work_dir)
+                rendered = render_slices(slice_set, args.task_work_dir)
             except SliceInputError as exc:
                 print(
                     f"[ERROR] {exc} — 해제 트리가 {args.task_work_dir}에 남았다. "
                     "다른 슬라이스로 다시 하려면 그 디렉터리를 비우고 시작한다",
                     file=sys.stderr,
                 )
+                return 2
+            unmatched = _unmatched_slices_error(slice_set, rendered, args.task_work_dir)
+            if unmatched is not None:
+                print(f"[ERROR] {unmatched}", file=sys.stderr)
                 return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
