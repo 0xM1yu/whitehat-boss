@@ -147,7 +147,7 @@ trace에 반드시 남길 것:
 
 - 모든 build/sanitizer/fuzz/PoC 실행은 Docker sandbox 안에서만 한다.
 - 기본값: 네트워크 차단, 읽기 전용 마운트, CPU·메모리·시간 상한.
-- 대상 코드는 **공개 소스코드와 직접 구축한 로컬 환경**으로 한정한다. 외부 시스템에 대한 실행은 금지한다([disclosure-policy.md](disclosure-policy.md)).
+- 대상 코드는 **공개 소스코드와 직접 구축한 로컬 환경**으로 한정한다. 외부 시스템에 대한 실행은 금지한다([disclosure-policy.md](disclosure-policy.md)). (⏵ 2026-09-29 — 「직접 구축한 로컬 환경」은 서빙이 임대 vast.ai로 옮긴 뒤 문자 그대로는 사실이 아니다 — disclosure-policy.md §1 원칙 3의 같은 문구 참조.)
 
 ## 8. 개발 규칙
 

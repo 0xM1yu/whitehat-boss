@@ -384,7 +384,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
 
-- vLLM: 온프레미스 inference server, OpenAI-compatible API 제공
+- vLLM: ~~온프레미스~~ 직접 운용하는 inference server, OpenAI-compatible API 제공 (⏵ 2026-09-29 — 서버는 임대 vast.ai 인스턴스에서 돈다. 온프레미스가 아니다 — [D81](open-questions/D/D81.md))
 - LiteLLM: 역할별 routing·retry·fallback, spend/budget 관리
 - 도메인 로직은 `ModelClient` 인터페이스에만 의존한다([engineering-guide.md](engineering-guide.md)).
 - **서버 stdout은 `tee`로 파일에 받는다.** 규약과 사유는
