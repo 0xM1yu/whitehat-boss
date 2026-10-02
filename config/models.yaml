@@ -543,7 +543,12 @@ models:
     # 근거 본문을 받는다(#328 리뷰 MEDIUM-1). v3로 돈 run은 스모크 1건뿐이었다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md` — Auditor 2호출, 입력 3,782·3,766토큰,
     # 슬라이스 719자, 비교표 밖). 이 변경 뒤 run부터 Auditor
     # v4 — 이전 판 run과 직접 비교하지 않는다(같은 규칙 1).
-    prompt_template_version: "v4"
+    # ⏵ 2026-10-02 — v4에서 v5로 올렸다(#346). v5도 `_CONTENT_AWARE_VERSIONS`에 들어 근거 본문을
+    # 받는다. `body.md`는 v4와 같고 prefix가 다르다(+2,229자 — `load_prompt`가 연 `len`의 차, 계산값).
+    # v4로 돈 run은 0건이다(`docs/experiments/` grep, 2026-10-02). 이 변경 뒤 run부터 Auditor v5 —
+    # 이전 판 run과 직접 비교하지 않는다(같은 규칙 1). 측정 없이 올렸다(`docs/agent-contracts.md`
+    # §2.3·§4 규칙 5).
+    prompt_template_version: "v5"
     fallback: null
     benchmark:
       measured_at: null
