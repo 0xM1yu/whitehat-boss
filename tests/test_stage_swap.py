@@ -500,6 +500,33 @@ def test_a_failed_manifest_write_after_an_unforeseen_exception_keeps_the_origina
     assert any("No space left on device" in note for note in notes), notes
 
 
+@pytest.mark.parametrize("status", [None, 404, 503], ids=["no_status", "http_404", "http_503"])
+def test_a_gateway_stop_warning_does_not_name_a_cause_the_status_cannot_prove(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int | None
+) -> None:
+    """상태 없음(계약 밖 200 포함)·404 같은 4xx·5xx는 **같은 사유 코드**(`model_gateway_unavailable`)로
+    가고, 러너 경고는 그중 어느 하나를 **원인으로 단언하지 않는다** — 원인은 `detail`이 말한다.
+
+    「게이트웨이가 응답하지 않아」는 모양이 다른 200·비-UTF-8 응답에는 글자 그대로 거짓이다
+    (독립 검토 2026-10-02 — 서버는 응답했고 그 응답이 계약 밖이었다)."""
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise ModelGatewayError("게이트웨이 실패", status=status, detail="DETAIL-MARK")
+
+    monkeypatch.setattr(runner.critic, "run", explode)
+
+    result, events, _ = _run(tmp_path, _config())
+
+    reasons = [
+        event["reason"]
+        for event in events
+        if event["kind"] == "transition" and event.get("subject_kind") == "run"
+    ]
+    assert reasons == [ReasonCode.MODEL_GATEWAY_UNAVAILABLE.value], reasons
+    assert any("DETAIL-MARK" in warning for warning in result.warnings)
+    assert not any("응답하지 않" in warning for warning in result.warnings), result.warnings
+
+
 def _swaps_at_heartbeat_stop(
     monkeypatch: pytest.MonkeyPatch, rig: _Rig
 ) -> list[list[tuple[str, ...]]]:
