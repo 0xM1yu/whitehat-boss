@@ -27,7 +27,7 @@ from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
-from src.orchestrator import runner
+from src.orchestrator import poc_log, runner
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
@@ -1755,6 +1755,31 @@ def _exit_submitted_without_poc(ctx: RunContext, monkeypatch: pytest.MonkeyPatch
     return _scripted(ctx, actions), state, finding
 
 
+class _UnwritablePocLog(poc_log.PocLog):
+    """`write`가 늘 `OSError`를 내는 `PocLog`.
+
+    실물 실패 모양(디스크 꽉 찼을 때·`pov_poc` 자리가 파일·경로 260자 초과)은
+    `tests/test_poc_log.py`가 이미 문다. 여기서 재는 것은 **계수기가 그 실패에 어떻게
+    반응하는가**이므로 실패를 만드는 쪽은 가장 싼 것으로 둔다 — 임시 디렉터리를 남기지
+    않는 쪽이기도 하다.
+    """
+
+    def write(self, poc: bytes) -> tuple[str, str]:
+        raise OSError(17, "File exists")
+
+
+def _exit_submitted_unpersisted(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    """submit했고 바이트도 있는데 **사이드카 쓰기가 실패한다** (적대적 리뷰 P1-A).
+
+    `_pov_finish`가 그 `OSError`를 삼키고 `ref`를 `None`으로 낸다. 그 run은 PoC 바이트를
+    **회수할 수 없다** — 메모리에만 있다가 사라지고 trace에는 sha256만 남는다.
+    """
+    state, finding = _pov_state(ctx)
+    scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
+    scripted.pocs = _UnwritablePocLog(Path("쓰이지 않는다"))
+    return scripted, state, finding
+
+
 def _exit_repeat_spec(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
     state, finding = _pov_state(ctx)
     return _scripted(ctx, [_gen(count=8), _gen(count=8)]), state, finding
@@ -1804,6 +1829,7 @@ def _exit_capsule_missing(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # 
 _POV_EXITS = (
     (PovStopReason.SUBMITTED.value, _exit_submitted),
     (runner._POV_SUBMITTED_WITHOUT_POC, _exit_submitted_without_poc),
+    (runner._POV_SUBMITTED_UNPERSISTED, _exit_submitted_unpersisted),
     (PovStopReason.REPEAT_SPEC.value, _exit_repeat_spec),
     (PovStopReason.MAX_HOP.value, _exit_max_hop),
     (PovStopReason.PARSE_FAILED.value, _exit_parse_failed),
@@ -1826,6 +1852,7 @@ def test_the_pov_exit_table_covers_every_stop_reason() -> None:
     assert reasons == {r.value for r in PovStopReason} | {
         "capsule_missing",
         runner._POV_SUBMITTED_WITHOUT_POC,
+        runner._POV_SUBMITTED_UNPERSISTED,
     }
     assert len(_POV_EXITS) == len(reasons), "표에 같은 사유가 두 번 있다"
 
@@ -1837,18 +1864,49 @@ def test_a_gen_less_submit_does_not_pass_as_a_final_poc() -> None:
     gen 없는 submit이 `submitted`로 적혀 「최종 PoC가 있다」로 읽히고, 그 run은 PoC가
     0건인데 경고가 안 났다. 이제 `submitted`는 `POV_GENERATED`와 **1:1**이다.
     """
-    assert runner._pov_result(PovStopReason.SUBMITTED, b"poc") == "submitted"
-    assert (
-        runner._pov_result(PovStopReason.SUBMITTED, None) == runner._POV_SUBMITTED_WITHOUT_POC
-    )
+    sub = PovStopReason.SUBMITTED
+    assert runner._pov_result(sub, b"poc", "pov_poc/0001.poc", persisting=True) == "submitted"
+    assert runner._pov_result(sub, None, None, persisting=True) == runner._POV_SUBMITTED_WITHOUT_POC
+    # 🔴 빈 바이트열도 PoC 없음이다 — `repeat count=0` 하나로 스키마를 통과한다(리뷰 L7).
+    assert runner._pov_result(sub, b"", None, persisting=True) == runner._POV_SUBMITTED_WITHOUT_POC
+    # 🔴 바이트는 있는데 사이드카가 안 써졌다 = 회수 불가(리뷰 P1-A).
+    unpersisted = runner._pov_result(sub, b"poc", None, persisting=True)
+    assert unpersisted == runner._POV_SUBMITTED_UNPERSISTED
+    # 배선이 없는 run(단위 테스트)은 `ref`가 없는 것이 정상이라 미회수로 세지 않는다.
+    assert runner._pov_result(sub, b"poc", None, persisting=False) == "submitted"
     # 나머지 사유는 PoC가 있어도 최종이 아니다 — 사유를 그대로 쓴다.
-    assert runner._pov_result(PovStopReason.MAX_HOP, b"partial") == "max_hop"
+    assert runner._pov_result(PovStopReason.MAX_HOP, b"partial", None, persisting=True) == "max_hop"
 
-    # 그 run에는 경고가 난다 — 이것이 전에 안 났다.
-    warning = runner._pov_shortfall_warning({"F-1": runner._POV_SUBMITTED_WITHOUT_POC})
-    assert warning is not None and "최종 PoC 0건" in warning
-    # PoC가 실제로 있으면 안 난다.
+    # 세 갈래 전부 경고가 난다 — 앞의 둘은 전에 안 났다.
+    for reason in (
+        runner._POV_SUBMITTED_WITHOUT_POC,
+        runner._POV_SUBMITTED_UNPERSISTED,
+        PovStopReason.MAX_HOP.value,
+    ):
+        warning = runner._pov_shortfall_warning({"F-1": reason})
+        assert warning is not None and "최종 PoC가 0건" in warning, reason
+    # 회수 가능한 PoC가 있으면 안 난다.
     assert runner._pov_shortfall_warning({"F-1": "submitted"}) is None
+
+
+def test_the_counter_vocabulary_spellings_are_pinned() -> None:
+    """🔴 enum 밖 사유 셋의 **철자**를 리터럴로 묶는다.
+
+    적대적 리뷰가 `_POV_SUBMITTED_WITHOUT_POC`를 `zzz_renamed`로 바꿔도 세 테스트 파일이
+    전부 초록인 것을 보였다 — 표와 집합 단언이 **상수를 그대로 참조**해서다. 그러면 철자가
+    조용히 바뀌고, 장부(S12b)와 trace 대조가 그 철자에 걸려 있다.
+
+    ⚠ 이 핀은 **철자**를 물지 성질을 물지 않는다(CLAUDE.md §2.5 끝). 철자를 바꿀 이유가
+    생기면 여기와 장부 쪽을 **같이** 고친다.
+    """
+    assert runner._POV_CAPSULE_MISSING == "capsule_missing"
+    assert runner._POV_SUBMITTED_WITHOUT_POC == "submitted_without_poc"
+    assert runner._POV_SUBMITTED_UNPERSISTED == "submitted_unpersisted"
+
+    # 🔴 trace의 `reason`은 `submitted`까지만 가른다 — 계수기 어휘와 **철자가 다르다**.
+    # 경고문이 그 사실을 적는 근거가 이것이다(안 적으면 trace에서 찾을 수 없다).
+    assert runner._POV_SUBMITTED_WITHOUT_POC not in {r.value for r in PovStopReason}
+    assert runner._POV_SUBMITTED_UNPERSISTED not in {r.value for r in PovStopReason}
 
 
 @pytest.mark.parametrize(("expected", "setup"), _POV_EXITS, ids=[r for r, _ in _POV_EXITS])

@@ -3405,9 +3405,10 @@ def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
     사용자가 run 결과로 읽는 것에는 안 보인다. 여기서는 한 겹 더 나쁘다: pov는 **추가형이라 상태를
     안 바꾸므로** Finding이 멀쩡히 찍힌 채 PoC만 조용히 0이 된다.
 
-    ⚠ 경고가 무는 것은 **사유**다 — 「submit에 닿은 Finding이 0건」까지만 말할 수 있고
-    「PoC 바이트가 0건」은 아니다(계수기가 사유만 들고, gen 없는 submit은 사유가 `submitted`인데
-    PoC가 없다). 그 한계는 `runner._pov_shortfall_warning` docstring이 든다.
+    ⚠ 경고가 무는 것은 **「`run_dir`에서 꺼낼 수 있는 최종 PoC가 0건」**이다. 사유 어휘가
+    `submitted`를 셋으로 쪼개서 그렇다 — PoC 없는 submit과 쓰기 실패가 각자 사유를 받는다
+    (`runner._pov_result`). **「그 PoC가 터지는가」는 말하지 않는다** — 그 판정은 오라클이
+    낸다. 범위는 `runner._pov_shortfall_warning` docstring이 든다.
     """
     result, trace_path = _run(
         tmp_path, name="pov_zero", before=_with_index(), configure=_max_hops_zero
@@ -3417,7 +3418,7 @@ def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
     assert not _of(events, "pov_generated"), "픽스처 전제 — 최종 PoC가 0건이어야 한다"
     skipped = _of(events, "pov_skipped")
     assert skipped, "픽스처 전제 — pov가 돌았고 전부 섰다"
-    assert any("최종 PoC 0건" in warning for warning in result.warnings)
+    assert any("회수 가능한 최종 PoC가 0건" in warning for warning in result.warnings)
     # **사유별 수가 경고 문장 안에 있다.** "0이다"만 적으면 왜 0인지가 여전히 trace에만 있고,
     # 그러면 이 검사가 막으려는 명제(「왜 0인지가 기록에 있다」)의 절반만 성립한다.
     assert any(f"max_hop {len(skipped)}건" in warning for warning in result.warnings)
@@ -3435,8 +3436,8 @@ def test_a_full_run_says_nothing_about_a_pov_shortfall(tmp_path: Path) -> None:
     result, trace_path = _run(tmp_path, name="pov_full", before=_with_index())
 
     assert _of(_events(trace_path), "pov_generated"), "픽스처 전제 — dev_fake는 PoC를 낸다"
-    assert not any("최종 PoC 0건" in warning for warning in result.warnings)
-    assert "submitted" in result.report.render()
+    assert not any("회수 가능한 최종 PoC가 0건" in warning for warning in result.warnings)
+    assert "PoV 정지 사유 (시도 2건): submitted 2건" in result.report.render()
 
 
 def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path: Path) -> None:
