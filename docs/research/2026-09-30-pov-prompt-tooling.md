@@ -14,7 +14,7 @@
   코드를 실행하지 않는다.** `PovSpec` 세그먼트는 `literal`(hex)·`repeat`(byte×count)·`int`
   (value·size≤8·endian)뿐이다(≤8 MiB, ≤4096 세그먼트). **계산 크로스필드(길이-of·체크섬-of)가
   없다.**
-- **`inspect`** — 새 PoC 없이 `tool ∈ {asan, gdb, build, poc}`로 현 후보를 진단.
+- **`inspect`** — 새 PoC 없이 `tool ∈ {asan, gdb, build, poc}`로 현 후보를 진단. ⏵ **낡음** — `d85ea62`(2026-10-02) 기준 `PovAction.tool`은 `asan`·`build`·`poc` 셋이다(아래 ⏵ 노트).
 - **`submit`** — 루프 종료. 마지막 gen의 PoC가 final.
 
 관측 되먹임(`_pov_observation`): `tool=… action=… ok=… exit=… kind=…`(+error). 정지 사유
@@ -24,10 +24,15 @@
 (`fake_tools._run_repro`) — PoC 바이트를 안 읽는다. `gdb`는 `TOOL_KINDS`에 없어 dev_fake에서
 inspect(gdb)는 실패한다(실 컨테이너엔 gdb 있음). 바이트 materialize·실크래시 판정은 호스트 후속.
 
-⏵ **2026-10-02 — 위 `gdb` 문장은 낡았다.** PR #327이 `5cf5c20`(2026-10-01 03:29 KST)로 머지되며
-`TOOL_KINDS`에 `"gdb": EvidenceKind.CRASH`가 들어갔다(`src/adapters/fake_tools.py:30`) — 이 문서를
-쓴 **다음 날**이다. dev_fake에서도 `inspect(gdb)`가 선다. 다만 `PovAction.tool`의 Literal에는
-아직 `gdb`가 **없다**(`src/schemas/pov.py:170`) — 넣을지는 이슈 #360의 결정이다.
+⏵ **2026-10-02 (`d85ea62` 기준 main) — 위 `gdb` 문장은 이유가 바뀌었고, `tool ∈ {asan, gdb, build, poc}`는 틀렸다.**
+① PR #327이 `5cf5c20`(2026-10-01 03:29 KST)로 머지되며 `TOOL_KINDS`에 `"gdb": EvidenceKind.CRASH`가 들어갔다
+(`src/adapters/fake_tools.py:30`) — 이 문서를 쓴 **다음 날**이다. 그래서 「`TOOL_KINDS`에 없어서」라는 이유는 낡았다.
+② 그러나 **PoV 루프가 낼 수 있는 `inspect.tool`은 지금도 셋이다** — `PovAction.tool: Literal["asan", "build", "poc"]`
+(`src/schemas/pov.py:170`)라 `tool="gdb"`는 **스키마에서 거절**되고, v2 프롬프트(`prompts/pov/v2/prefix.md:13-14`)도
+`asan`·`build`·`poc`만 안내한다. `gdb`는 `96a80fe`(2026-09-30 22:04 KST)에서 그 Literal에서 빠졌다.
+그러므로 **dev_fake에서도 `inspect(gdb)`는 서지 않는다**(막는 곳이 `TOOL_KINDS`가 아니라 `PovAction` 스키마다) — 결론은 그대로 참이고 이유만 바뀌었다.
+③ **열린 PR #380**(`feat/pov-information-wiring`)이 그 Literal에 `gdb`를 더한다(이슈 #360의 결정) —
+**#380이 머지되면 ②는 낡는다.** 이 노트는 `d85ea62` 기준이고, 두 PR 중 어느 쪽이 먼저 머지돼도 이 날짜·커밋 단서가 읽는 사람에게 기준을 준다.
 
 ## 2. 외부 문헌 (남이 주장한 것 — 인용)
 
@@ -64,7 +69,7 @@ inspect(gdb)는 실패한다(실 컨테이너엔 gdb 있음). 바이트 material
 | 관측 반영·실패 이유 한 줄 | "gen 다음 턴엔 직전 관측을 먼저 판단하고 스펙 고침" |
 | 같은 액션 반복 금지 | "직전과 똑같은 spec 금지 — 가설을 바꿔라"(루프도 repeat_spec으로 끊음) |
 | 한 턴 한 액션(JSON) | "최종 답은 PovAction JSON 하나" |
-| 인터랙티브 진단 | inspect(asan/gdb/build/poc) 설명 |
+| 인터랙티브 진단 | inspect(asan/gdb/build/poc) 설명 — ⏵ **낡음**: `d85ea62` 기준 v2 프롬프트는 `asan`·`build`·`poc` 셋만 설명한다(`prompts/pov/v2/prefix.md:13-14`, §1의 ⏵ 노트) |
 
 **gen-script는 안 넣었다.** 문헌이 1순위로 꼽지만(Option B) 임의 코드 실행이라는 새 신뢰면이다 —
 council이 정한 승격 seam 그대로 둔다. **승격 트리거:** 체크섬/해시 게이트 포맷에서 도달률 0.
