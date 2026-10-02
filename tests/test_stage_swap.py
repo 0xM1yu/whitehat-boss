@@ -414,7 +414,7 @@ class _Defect(KeyError):
     """`_analyze`에서 난 예상 밖 예외 — `RuntimeError` 계열이 아니라 방어선 좁힘 변이를 죽인다."""
 
 
-def _run_bare(tmp_path: Path, trace: TraceWriter) -> Path:
+def _run_bare(tmp_path: Path, trace: TraceWriter, **spec_fields: object) -> Path:
     """`run_pipeline`을 한 번 돌린다 — 예외는 그대로 올라간다. 돌려주는 것은 run 디렉터리다."""
     config = _config()
     deps = build_deps(
@@ -425,7 +425,9 @@ def _run_bare(tmp_path: Path, trace: TraceWriter) -> Path:
     deps = dataclasses.replace(deps, models=rig, swap_to=rig.swap_to)
     run_dir = tmp_path / "artifacts" / RUN_ID
     run_pipeline(
-        RunSpec(condition="B3prime@pipeline", target=TARGET, started_at=STARTED_AT),
+        RunSpec(
+            condition="B3prime@pipeline", target=TARGET, started_at=STARTED_AT, **spec_fields
+        ),
         config=config,
         deps=deps,
         read_source=lambda _loc: "int main(void) { return 0; }\n",
@@ -472,6 +474,25 @@ def test_a_defect_shared_with_the_post_processing_does_not_replace_the_original_
         if event.kind is EventKind.TRANSITION and event.subject_kind == "run"
     ]
     assert reasons == [ReasonCode.UNFORESEEN_FAILURE.value], reasons
+
+
+def test_a_dry_run_writes_no_manifest_even_when_the_last_line_of_defense_catches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--dry-run`은 산출물을 안 남기는 실행 모드다 — 방어선이 예외를 잡아도 마찬가지다.
+
+    방어선 가지의 `not spec.dry_run` 가드를 빼는 변이가 살아남았다(독립 검토 2026-10-02).
+    예외는 올라가고(삼키지 않는다), 매니페스트는 안 생긴다."""
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise _Defect("예상 밖")
+
+    monkeypatch.setattr(runner.index, "run", explode)
+
+    with pytest.raises(_Defect):
+        _run_bare(tmp_path, TraceWriter(RUN_ID), dry_run=True)
+
+    assert not (tmp_path / "artifacts" / RUN_ID / "run_manifest.json").exists()
 
 
 def test_a_failed_manifest_write_after_an_unforeseen_exception_keeps_the_original(
