@@ -1428,6 +1428,24 @@ class _Once:
 # 수 있어서다 — 리터럴을 두 자리에 적으면 한쪽만 고치는 변이를 막는 것이 사람뿐이다.
 _POV_CAPSULE_MISSING = "capsule_missing"
 
+# 루프가 `SUBMITTED`로 끝났는데 **최종 PoC가 없는** 갈래. 모델이 gen 없이 hop0에서 바로
+# submit하면 이렇게 된다 — `_pov_finish`는 그때 `POV_GENERATED`가 아니라 `POV_SKIPPED`를 낸다.
+# 🔴 사유를 갈라 두는 이유: 안 가르면 `submitted`가 **PoC 있는 것과 없는 것을 같이 덮어서**
+# 계수기만 보고 「최종 PoC 0건」을 말할 수 없다. 그 run은 PoC가 0건인데 경고가 안 났다(미탐).
+# 가른 뒤로 `submitted`는 `POV_GENERATED` 이벤트와 **1:1**이다.
+_POV_SUBMITTED_WITHOUT_POC = "submitted_without_poc"
+
+
+def _pov_result(reason: PovStopReason, poc: bytes | None) -> str:
+    """계수기에 적을 사유 — `SUBMITTED`만 PoC 유무로 갈린다.
+
+    나머지 사유는 PoC가 중간까지 나왔어도 **최종**이 아니다(`_pov_finish`가 `POV_GENERATED`를
+    `SUBMITTED and poc is not None`에서만 낸다). 그래서 사유를 그대로 쓴다.
+    """
+    if reason is PovStopReason.SUBMITTED and poc is None:
+        return _POV_SUBMITTED_WITHOUT_POC
+    return reason.value
+
 
 def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     """PoV가 **submit에 닿은 Finding을 0건** 냈을 때의 run 경고. 아니면 `None` (이슈 #357·#358).
@@ -1435,14 +1453,15 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     사유별 수를 **같은 문장에** 싣는다 — "0이다"만 적으면 **왜** 0인지가 여전히 trace에만 있고,
     그러면 이 경고가 막으려는 것의 절반만 성립한다.
 
-    ⚠ **「submit에 닿은 Finding이 0건」까지만 말한다 — 「PoC 바이트가 하나도 없다」가 아니다.**
-    계수기가 드는 것은 정지 **사유**이고, 사유가 `submitted`인데 PoC가 없는 경로가 하나 있다:
-    모델이 gen 없이 hop0에서 바로 submit하면 `_pov_finish`가 `POV_GENERATED`가 아니라
-    `POV_SKIPPED`를 낸다(그 함수 docstring의 「gen 없는 submit」). 그 run은 여기서 경고가 안 나고
-    리포트의 사유 줄에 `submitted`로 적힌다 — **미탐이고 거짓 경고는 아니다**(`submitted`가 아닌
-    사유만 모인 run에는 최종 PoC가 없다. `_pov_finish`가 `POV_GENERATED`를 그 사유에서만 낸다).
-    바이트로 세려면 필드가 둘이 되고 그러면 「시도 수 == 사유별 합」이 깨진다
-    (`_Accumulator.pov_results` 주석).
+    **「최종 PoC 0건」을 정확히 말한다.** `submitted`는 `POV_GENERATED` 이벤트와 1:1이다 —
+    gen 없이 바로 submit한 갈래를 `_pov_result`가 `submitted_without_poc`로 갈라 두기 때문이다.
+    ⚠ 그 분리가 없던 판에서는 **미탐이 하나 있었다**: 사유가 `submitted`인데 PoC가 없는 run이
+    경고 없이 완주했다. 필드를 둘로 늘리지 않고 **사유 어휘를 하나 늘려** 닫았다 — 그래서
+    「시도 수 == 사유별 합」이 그대로 구조적으로 참이다(`_Accumulator.pov_results` 주석).
+
+    ⚠ **여전히 말하지 않는 것**: 재-raise로 끝난 출구(서버 쪽 사건·`BudgetExhausted`)는
+    `_run_pov`가 기록 줄에 못 닿아 계수기에 안 남는다. 그 run은 거기서 멈추고 그 사실을
+    run 수준의 다른 경고가 든다 — 즉 이 경고의 명제는 **8사유 출구에 한정**이다.
     """
     if not results:
         return None  # pov가 안 돌았다(좌석 없는 프로필) — 부족이 아니다
@@ -1486,8 +1505,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
             reason=_POV_CAPSULE_MISSING,
         )
         return
-    _, reason = _run_pov_hops(ctx, state, finding, capsule)
-    state.pov_results[finding.finding_id] = reason.value
+    poc, reason = _run_pov_hops(ctx, state, finding, capsule)
+    state.pov_results[finding.finding_id] = _pov_result(reason, poc)
 
 
 def _run_pov_hops(
