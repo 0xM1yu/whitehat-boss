@@ -22,6 +22,34 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _mismatch_hint(previous: object, value: object) -> str:
+    """Name the differing fields so e.g. a dropped/changed --priority-files is obvious (L-11).
+
+    A manual shard that forgets --priority-files (or gives a different one) mismatches on
+    `run_contract`; the bare key left the user to guess, and the README is clear that starting a
+    new checkpoint is NOT the fix there -- re-passing the same list is. Recurse one level into
+    `settings` so `settings.priority_files` is named by itself."""
+    if not (isinstance(previous, dict) and isinstance(value, dict)):
+        return ""
+    differ = []
+    for field in sorted(set(previous) | set(value)):
+        if previous.get(field) == value.get(field):
+            continue
+        if field == "settings" and isinstance(previous.get(field), dict) and isinstance(
+            value.get(field), dict
+        ):
+            sub = previous[field]
+            other = value[field]
+            differ += [
+                f"settings.{name}"
+                for name in sorted(set(sub) | set(other))
+                if sub.get(name) != other.get(name)
+            ]
+        else:
+            differ.append(field)
+    return f" (differs in: {', '.join(differ)})" if differ else ""
+
+
 class Checkpoint:
     """A process lock spans queries; a SQLite transaction only spans a stage commit.
 
@@ -89,7 +117,8 @@ class Checkpoint:
         if previous is None:
             self.set(key, value)
         elif canonical(previous) != canonical(value):
-            raise ValueError(f"Checkpoint mismatch: {key}; start a new checkpoint")
+            raise ValueError(f"Checkpoint mismatch: {key}{_mismatch_hint(previous, value)}; "
+                             "start a new checkpoint")
 
     def load(self, key: str) -> dict | None:
         row = self.conn.execute(
@@ -150,8 +179,11 @@ class Checkpoint:
 
 # Keys every shard must agree on; a mismatch means the shards sliced different runs (another
 # CPG, candidate list or engine), so their stages cannot be unioned. "baseline" is per-process
-# (cpg_seconds etc. differ), so it is taken from the first shard, not compared.
-SHARD_SHARED_KEYS = ("checkpoint_version", "run_contract", "engine_config", "candidates")
+# (cpg_seconds etc. differ), so it is taken from the first shard, not compared. "prepared" (#368)
+# is the saved CPG shards on --cpg verified; shards of two different prepares do not merge.
+SHARD_SHARED_KEYS = (
+    "checkpoint_version", "run_contract", "engine_config", "candidates", "prepared",
+)
 
 
 def merge_shards(out: Path, shards: list[Path]) -> dict:
@@ -220,8 +252,15 @@ def _write_merged(out: Path, metadata: list, stages: dict, stores: list) -> None
             "INSERT INTO stages VALUES (?,?,?)",
             [(key, payload, sha) for key, (payload, sha) in sorted(stages.items())],
         )
-        for store in stores:
-            merged.conn.executemany(
-                "INSERT INTO attempts(started,ended,payload) VALUES (?,?,?)",
-                store.conn.execute("SELECT started, ended, payload FROM attempts ORDER BY id"),
+        # Shards seeded from one --prepare-only checkpoint (#368) each carry that prepare's
+        # attempt row; an identical row is that one attempt, so it is written once.
+        rows = dict.fromkeys(
+            row
+            for store in stores
+            for row in store.conn.execute(
+                "SELECT started, ended, payload FROM attempts ORDER BY id"
             )
+        )
+        merged.conn.executemany(
+            "INSERT INTO attempts(started,ended,payload) VALUES (?,?,?)", list(rows)
+        )

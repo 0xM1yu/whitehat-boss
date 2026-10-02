@@ -321,6 +321,13 @@ class EventKind(StrEnum):
     # gen 없는 `submitted`)다. 부분 PoC가 있으면 `poc_bytes`·`poc_sha256`도 싣는다. **추가형이라
     # finding 상태는 `validate.run`이 이미 정했으므로** pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
+    # 하네스가 `repro_spec`을 합성한 기록 (#S7 — `synthesize_repro_spec`이 켜졌고 모델이 명세를
+    # 비워 냈을 때 `auditor._ensure_repro_origin`이 낸다). `subject_id`는 finding이고
+    # `expected_signal`(합성 신호)·`steps`(단계 수)를 싣는다. **이벤트 부재 = 합성 안 함**(꺼졌거나
+    # 모델이 명세를 냈다). 모델 명세가 `origin=harness`를 참칭해 하네스가 `model`로 덮은 경우는
+    # 발급값 도장과 같아 `issued_override`가 아니라 여기도 아니다 — 그 경로는 `origin` 필드로만
+    # 드러난다.
+    REPRO_SPEC_SYNTHESIZED = "repro_spec_synthesized"
     # 과제 설명이 캡슐 예산에 다 못 들어가 잘렸거나(kept < total) 한 줄도 못 들어간(kept 0) 기록.
     # `retrieval.run`이 낸다 — 설명은 예산을 미리 떼어 담지만(코드 자리를 굶기지 않게 최대 절반)
     # 그 상한을 넘는 긴 설명은 잘린다. **조용히 빠지지 않게** 남긴다(§0) — `kept`·`total`은 줄 수다.

@@ -122,6 +122,13 @@ def load_slices(path: Path) -> SliceSet:
             f"{path}: 샤드 조각({document['shard']})이다 — tools/merge_slicer_shards.py로 합친 "
             "체크포인트의 --export-only 결과를 넘겨라"
         )
+    if document.get("prepare_only"):
+        # `slicer.py --prepare-only`은 CPG 저장·후보 발견만 하고 아무것도 안 자른다(#368) —
+        # `partial`·`slices: []`라 넘기면 슬라이스 0건 run으로 읽힌다.
+        raise SliceInputError(
+            f"{path}: --prepare-only 준비 결과다 — 슬라이스가 없다. 샤드(--cpg)를 돌려 합친 "
+            "체크포인트의 --export-only 결과를 넘겨라"
+        )
     status = document.get("status")
     if status not in ("ok", "partial"):
         raise SliceInputError(f"{path}: 슬라이서 status가 {status!r}다 — 쓸 슬라이스가 없다")
