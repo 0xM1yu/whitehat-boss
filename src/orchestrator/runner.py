@@ -87,6 +87,7 @@ import hashlib
 import json
 import re
 import subprocess
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -722,6 +723,17 @@ class _Accumulator:
     # 나누는 이유는 그 필드를 `deferred`·`dropped`와 나눈 이유와 같다 — 이쪽은 "안 올라갔다"
     # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
     critic_failed: int = 0
+    # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
+    # 어휘는 **7사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖
+    # `_POV_CAPSULE_MISSING`(캡슐 미스는 루프에 못 들어가 enum 값을 못 받는다).
+    #
+    # **시도 수와 사유별 수를 따로 들지 않는다.** 시도 수는 `len(...)`, 사유별 수는
+    # `Counter(...values())`라 「시도 수 == 사유별 합」이 **구조적으로** 참이다. 두 필드로
+    # 두면 한 출구가 둘 중 하나만 올려 어긋날 자리가 생기고, 그 자리가 정확히 조용히
+    # 0이 되던 갈래였다(캡슐 미스 — 루프 쪽 계수기로는 안 보인다).
+    #
+    # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
+    pov_results: dict[str, str] = field(default_factory=dict)
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -1002,6 +1014,13 @@ def run_pipeline(
             f"Finding {state.critic_failed}건이 7단계 critic 호출 실패로 판정을 못 받았다. "
             f"사유는 trace의 critic_failed에 있다"
         )
+    # **8단계 PoV의 「조용한 0」도 같은 자리에 올린다 (이슈 #357·#358).** 위 경고들의 논거가
+    # 그대로인데 여기서는 한 겹 더 나쁘다 — pov는 추가형이라 상태를 안 바꾸므로 Finding이
+    # 멀쩡히 찍힌 채 **최종 PoC만 0이 되고**, 그 사유가 trace에만 있으면 run 결과를 읽는 쪽에서
+    # "PoV를 돌렸다"와 "PoV가 전부 섰다"가 같은 얼굴을 한다.
+    pov_shortfall = _pov_shortfall_warning(state.pov_results)
+    if pov_shortfall is not None:
+        warnings.append(pov_shortfall)
 
     findings = list(state.findings.values())
     # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
@@ -1057,6 +1076,7 @@ def run_pipeline(
         files=files,
         grades=grades,
         ne_absorbed=state.ne_absorbed,
+        pov_results=state.pov_results,
     )
     finished = state_machine.finish_run(
         record,
@@ -1402,6 +1422,40 @@ class _Once:
         return self._text
 
 
+# 캡슐 미스로 pov가 루프에 **못 들어간** 사유. `PovStopReason` 밖인 이유는 그 enum이 루프의
+# 정지 사유이고 이것은 그 앞에서 갈리기 때문이다. 한 이름으로 두는 것은 `POV_SKIPPED` 이벤트의
+# `reason`과 `_Accumulator.pov_results`의 값이 **같은 철자**라야 사유별 집계를 trace와 대조할
+# 수 있어서다 — 리터럴을 두 자리에 적으면 한쪽만 고치는 변이를 막는 것이 사람뿐이다.
+_POV_CAPSULE_MISSING = "capsule_missing"
+
+
+def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
+    """PoV가 **submit에 닿은 Finding을 0건** 냈을 때의 run 경고. 아니면 `None` (이슈 #357·#358).
+
+    사유별 수를 **같은 문장에** 싣는다 — "0이다"만 적으면 **왜** 0인지가 여전히 trace에만 있고,
+    그러면 이 경고가 막으려는 것의 절반만 성립한다.
+
+    ⚠ **「submit에 닿은 Finding이 0건」까지만 말한다 — 「PoC 바이트가 하나도 없다」가 아니다.**
+    계수기가 드는 것은 정지 **사유**이고, 사유가 `submitted`인데 PoC가 없는 경로가 하나 있다:
+    모델이 gen 없이 hop0에서 바로 submit하면 `_pov_finish`가 `POV_GENERATED`가 아니라
+    `POV_SKIPPED`를 낸다(그 함수 docstring의 「gen 없는 submit」). 그 run은 여기서 경고가 안 나고
+    리포트의 사유 줄에 `submitted`로 적힌다 — **미탐이고 거짓 경고는 아니다**(`submitted`가 아닌
+    사유만 모인 run에는 최종 PoC가 없다. `_pov_finish`가 `POV_GENERATED`를 그 사유에서만 낸다).
+    바이트로 세려면 필드가 둘이 되고 그러면 「시도 수 == 사유별 합」이 깨진다
+    (`_Accumulator.pov_results` 주석).
+    """
+    if not results:
+        return None  # pov가 안 돌았다(좌석 없는 프로필) — 부족이 아니다
+    stops = Counter(results.values())
+    if stops[PovStopReason.SUBMITTED.value] == 0:
+        parts = " · ".join(f"{reason} {count}건" for reason, count in sorted(stops.items()))
+        return (
+            f"PoV 시도 {len(results)}건이 전부 submit에 못 닿았다(최종 PoC 0건): {parts}. "
+            f"홉과 사유는 trace의 pov_hop·pov_skipped에 있다"
+        )
+    return None
+
+
 def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     """8단계 PoV — Finding에서 PoC를 만드는 모델-주도 툴 루프를 돌린다 (추가형·b-1).
 
@@ -1414,18 +1468,26 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
     (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트·oracle
     제출은 호스트 후속이다.
+
+    **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
+    캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
+    추가형이라 상태를 안 바꾸므로 Finding이 멀쩡히 찍힌 채 산출만 조용히 0이 됐다.
+    ⚠ 예외가 올라가는 경로(서버 쪽 사건·`BudgetExhausted`)는 사유를 안 남긴다 — run이 거기서
+    멈추고 그 사실은 run 수준 경고가 든다(`run_pipeline`).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
+        state.pov_results[finding.finding_id] = _POV_CAPSULE_MISSING
         ctx.trace.emit(
             EventKind.POV_SKIPPED,
             stage=Stage.VALIDATE,
             subject_kind="finding",
             subject_id=finding.finding_id,
-            reason="capsule_missing",
+            reason=_POV_CAPSULE_MISSING,
         )
         return
-    _run_pov_hops(ctx, state, finding, capsule)
+    _, reason = _run_pov_hops(ctx, state, finding, capsule)
+    state.pov_results[finding.finding_id] = reason.value
 
 
 def _run_pov_hops(
