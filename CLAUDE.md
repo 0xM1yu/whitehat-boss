@@ -300,7 +300,7 @@ python -m pytest -q
 | 역할별 실행 계약 · 프롬프트 규약 | `docs/agent-contracts.md` |
 | 인터페이스 · 재현성 필수 기록 · 개발 규칙 | `docs/engineering-guide.md` |
 | 지표 정의 · 조건 간 비교 규칙 | `docs/evaluation.md` |
-| 모델 레지스트리 · ATOM 하드웨어 | `docs/model-serving.md` |
+| 모델 레지스트리 · ATOM 하드웨어(2026-09-29 사용 종료 — 과거 기록) | `docs/model-serving.md` |
 | 장비별 제약 · 실패 사례 | `docs/portability.md` |
 | **미해결 결함 — 작업 추적** | **GitHub Issues** |
 | 미해결 결함 — 본문·선택지 | [docs/open-questions.md](docs/open-questions.md) 와 그 아래 번호별 파일 |

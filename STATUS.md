@@ -4,6 +4,8 @@
 > 원천은 Notion 팀 워크스페이스다. 이 파일은 옮기지 않고 보관한다 — 절마다 든 날짜의 기록으로 읽고,
 > 아래 「갱신 규칙」도 그날까지의 규칙이다. **현재 상태의 정본은 [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)·
 > [docs/architecture.md](docs/architecture.md)·D·R 본문이다**([CLAUDE.md](CLAUDE.md) §6).
+>
+> ⏵ **2026-09-29 — ATOM 사용이 끝났다**([D81](docs/open-questions/D/D81.md)). 이 파일의 ATOM 서술은 전부 그 전의 기록이다 — 지금 서빙은 임대 vast.ai다.
 
 > 대상: `src/` 전체 · 기준일: **절마다 다르다.** 각 절이 자기 날짜를 들고, 이 문서 전체가
 > 한 날짜 기준이라는 표기는 쓰지 않는다.
@@ -281,6 +283,8 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 
 ⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
 최종 PoC 바이트까지이고, 실제 크래시 재현·oracle 판정은 후속(서빙+도구 호스트 배선)이다.
+
+⏵ **2026-10-02 — 위 「후속(서빙+도구 호스트 배선)」은 막힘의 일부일 뿐이다.** 바이트가 프로세스를 나가지 않고(`runner._run_pov`가 `_run_pov_hops`의 반환값을 버린다) 실모델에서는 PoV 단계가 불리지 않는다 — [#386](https://github.com/0xM1yu/whitehat-boss/issues/386). 오라클은 외부가 아니라 로컬 Docker로 띄우는 저자 서버이고 판정이 호스트 커널 설정에 달렸다 — #383·#384·#385·#387. 상세·근거는 [docs/agent-contracts.md](docs/agent-contracts.md) §2.5 「채점 경로의 벽」.
 
 ### 🟡 진짜 정적분석 (2단계)
 

@@ -1,13 +1,14 @@
 # 개발 도구
 
 저장소 유지보수용 일회성 스크립트를 둔다. 파이프라인이 실행 중에 의존하는 코드는
-`src/`에, 평가에 쓰는 코드는 `eval/`에 둔다 — 여기 있는 것은 CI와 사람만 부른다.
+`src/`에, 평가에 쓰는 코드는 `eval/`에 둔다 — 여기 있는 것은 CI와 사람만 부른다(⏵ 2026-09-29 — `serve/`는 예외다: 교대 어댑터가 run 중에 `swap.sh`를 부른다).
 
 | 디렉터리 | 내용 |
 | --- | --- |
 | `harness-tools/` | 1·2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·gdb·인덱서). 아래 참조 |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
+| `serve/` | 서버 교대 명령 `swap.sh`와 감시자 `guard.sh` — 장비 무관. **`src/adapters/model_swap.py`가 run 중에 부른다**([model-serving.md](../docs/model-serving.md) §6) |
 
 ### `probe/` 안의 것들
 
@@ -88,6 +89,8 @@ docker run --rm harness-tools:v3 cat /opt/semgrep-rules/COMMIT
 ```
 
 ### ATOM 빌드·실행
+
+> ⏵ **2026-09-29 — ATOM 사용이 끝났다**([D81](../docs/open-questions/D/D81.md)). 이 절은 그 장비에서의 빌드·실행 절차(과거 기록)다 — 지금 서빙은 임대 vast.ai이고 그 컨테이너에는 docker·podman이 없다(`config/serving/vastai.yaml` 머리 주석). 도구 단계를 어디서 돌릴지는 정해지지 않았다.
 
 ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularity는 없다**
 (2026-08-21 확인, 2026-08-28 `ssh atom 'which podman; which docker'` 재확인 —

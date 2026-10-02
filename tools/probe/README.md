@@ -80,6 +80,8 @@ tools/probe/slurm.sh --node <node> --out /data/<계정>/probe
 
 ### ATOM
 
+> ⏵ **2026-09-29 — ATOM 사용이 끝났다**([D81](../../docs/open-questions/D/D81.md)). 아래 명령은 그 장비의 절차(과거 기록)다 — vast용 장비 래퍼는 아직 없다(장비 래퍼는 `atom.sh`·`slurm.sh` 둘뿐이다).
+
 ```bash
 tmux new -s probe
 tools/probe/atom.sh --port 8001 --out ~/probe
