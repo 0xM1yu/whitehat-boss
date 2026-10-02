@@ -55,7 +55,13 @@ def check_no_ground_truth(task_dir: Path) -> None:
     **최상위만 본다** — 정답 자료는 CyberGym 데이터셋 폴더의 형제 파일이고(`repo-vul.tar.gz`
     옆의 `patch.diff`·`error.txt`·`repo-fix.tar.gz`), 취약 저장소 **안**은 정상 입력이라 안 본다.
     `load_task`가 해제 전에 부른다 — 한 번 풀리면 인덱서·슬라이서가 그 트리를 본다. 이름 비교는
-    대소문자를 구분하지 않는다(파일시스템차를 타지 않게)."""
+    대소문자를 구분하지 않는다(파일시스템차를 타지 않게).
+
+    ⚠ **아는 정답 자료를 막는 차단 목록이다 — 「Level 1 입력 외 전부」를 막는 허용 목록이 아니다**
+    (#397 리뷰 MEDIUM-2). 저자 생성기 `gen_task`의 네 파일(`repo-vul.tar.gz`·`description.txt`·
+    `README.md`·`submit.sh`)은 의도적으로 통과한다. 그래서 이름이 다른 정답 자료(`crash.txt` 등)·
+    하위 디렉터리 안의 정답 자료(`extra/patch.diff`)는 못 잡는다 — 목록 근거는 2026-10-02에 과제
+    2건(arvo:1065·oss-fuzz:368076871)만 실측한 값이고, 1,507건 전체의 이름 분포는 미측정이다."""
     offenders = sorted(
         entry.name
         for entry in Path(task_dir).iterdir()
@@ -133,10 +139,12 @@ def load_task(task_dir: Path, work_dir: Path) -> tuple[Path, str | None]:
     빈 소스로 넘어가지 않고 `FileNotFoundError`로 멈춘다.
     """
     task_dir = Path(task_dir)
-    # 정답 자료 가드 — 해제 전에 본다(풀리면 인덱서·슬라이서가 그 트리를 본다).
-    check_no_ground_truth(task_dir)
     archive = task_dir / REPO_ARCHIVE_NAME
     if not archive.is_file():
         raise FileNotFoundError(f"과제에 {REPO_ARCHIVE_NAME}가 없다: {task_dir}")
+    # 정답 자료 가드 — 존재 확인 **뒤**다(없는 경로·파일 경로가 받던 위의 `FileNotFoundError`
+    # 문구를 OS 예외로 바꾸지 않게, #397 리뷰 MEDIUM-1) · 해제 **앞**이다(풀리면 인덱서·슬라이서가
+    # 그 트리를 본다).
+    check_no_ground_truth(task_dir)
     source_root = safe_extract(archive, Path(work_dir))
     return source_root, read_description(task_dir)
