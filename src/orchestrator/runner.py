@@ -126,6 +126,7 @@ from src.orchestrator.nodes import (
 )
 from src.orchestrator.nodes.report import Report
 from src.orchestrator.poc_assembly import assemble_poc
+from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import MAX_STAGE, Stage
@@ -768,6 +769,9 @@ def run_pipeline(
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
         prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        # PoC 사이드카(#355) — **위 `prompts`와 같은 가드다.** 조건을 따로 만들면 프롬프트는
+        # 있는데 PoC는 없는 run이 생기고 그 차이의 이유가 어디에도 안 남는다.
+        pocs=PocLog(run_dir) if run_dir is not None and not spec.dry_run else None,
         # need_evidence resolver hook (ADR 0012 결정 2) — `symbols_for`·`counter_for_role`과
         # 같은 경계다. `None`이면 이 run에 resolver가 없다.
         resolve_requests=deps.resolve_requests,
@@ -1306,7 +1310,16 @@ def _pov_finish(
     했으나 submit 못 함)는 SKIPPED에 `poc_bytes`/`poc_sha256`로 남긴다.
 
     ⚠ 예전에는 PoC가 있기만 하면 GENERATED라 max_hop·parse_failed도 「생성됨」으로 과대 집계됐다
-    (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다."""
+    (적대적 리뷰 2026-09-30). CyberGym 최종 답은 submit된 PoC 하나뿐이라 그것만 GENERATED다.
+
+    바이트가 있으면 **사이드카 파일로 남기고 그 참조·digest를 이 이벤트에 싣는다**(#355) —
+    submit 못 한 부분 PoC도 남긴다(회수가 목적이라 종단 사유로 가르지 않는다). **Evidence를
+    달지 않는다**는 것과 digest 형식이 아래 `poc_sha256`과 다른 이유는 `poc_log` 모듈 docstring에
+    있다. `ctx.pocs`가 `None`이면(단위 테스트·`--dry-run`) 키를 늘리지 않는다."""
+    sidecar: dict[str, TraceValue] = {}
+    if poc is not None and ctx.pocs is not None:
+        ref, digest = ctx.pocs.write(poc)
+        sidecar = {"poc_ref": ref, "poc_digest": digest}
     if reason is PovStopReason.SUBMITTED and poc is not None:
         ctx.trace.emit(
             EventKind.POV_GENERATED,
@@ -1315,12 +1328,14 @@ def _pov_finish(
             subject_id=finding.finding_id,
             poc_bytes=len(poc),
             poc_sha256=hashlib.sha256(poc).hexdigest(),
+            **sidecar,
         )
         return poc, reason
     data: dict[str, TraceValue] = {"reason": reason.value}
     if poc is not None:
         data["poc_bytes"] = len(poc)
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
+        data.update(sidecar)
     ctx.trace.emit(
         EventKind.POV_SKIPPED,
         stage=Stage.VALIDATE,
