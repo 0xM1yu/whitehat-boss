@@ -153,8 +153,9 @@ class Finding(HarnessModel):
         architecture.md §4: E3(`validated`)의 조건은 "E2의 조건 전부 + Critic 반박 실패 + 재현
         명세 존재"이고, **경로(source→sink)는 그 E2의 조건**이다 — §4 상태 흐름이 E2를 지난
         뒤에야 E3로 오므로 `validated`에 이른 Finding은 그 경로를 들고 있어야 한다(그래서 아래가
-        `path`도 요구한다). E4(`proven`)는 재현 로그를 요구한다. 근거 0건짜리 `validated`는 이
-        시스템의 전제(Evidence 중심 판정)를 정면으로 뒤집으므로 만들어질 수 없어야 한다.
+        `path`도 요구한다). E4(`proven`)는 재현 로그를 요구한다(종료 코드가 0도 미측정도 아닌
+        런타임 Evidence — #232). 근거 0건짜리 `validated`는 이 시스템의 전제(Evidence 중심 판정)를
+        정면으로 뒤집으므로 만들어질 수 없어야 한다.
         `hypothesized`/`queued` 초안 단계에는 요구하지 않는다.
 
         **게이트가 이 전제를 강제한다** — `gate.py`의 `p3`가 `p2`(경로 양 끝·그래프 근거·

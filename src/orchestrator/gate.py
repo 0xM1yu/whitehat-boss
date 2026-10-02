@@ -23,7 +23,7 @@
 | E1 | `any(e.kind == STATIC)` **or** `any(e.location.overlaps(cand.location))` |
 | E2 | `{SOURCE, SINK} ⊆ path.steps` **and** `any(e.kind == GRAPH)` **and** `not any(m.blocking)` |
 | E3 | `p2` **and** `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` |
-| E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN})` |
+| E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN} and e.exit_code not in {None, 0})` |
 
 - 등급 = `E4 if p4 else E3 if p3 else E2 if p2 else E1 if p1 else E0` (단조 하강)
 - **E3는 E2를 포함한다 (이슈 #154).** 단조 하강은 「위에서부터 처음 참인 것」이지 포함이
@@ -40,10 +40,17 @@
   이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
   (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").
 - `need_evidence`는 반박 실패가 **아니다** — 정규화 대상도 아니다.
-- 게이트는 `ok`만 본다. ⚠ **`expected_signal`을 산출물과 대조하는 코드는 없다** — 8단계
-  노드가 그 문자열로 하는 일은 `tool_for()`가 **도구 이름**을 고르는 것뿐이고, `Evidence.ok`는
+- 게이트가 Evidence에서 읽는 것은 `ok`·`kind`·`location`, 그리고 **런타임 종류의 `exit_code`**
+  (E4 — 0도 `None`도 아니어야 한다)다. ⚠ **`expected_signal`을 산출물과 대조하는 코드는 없다** —
+  8단계 노드가 그 문자열로 하는 일은 `tool_for()`가 **도구 이름**을 고르는 것뿐이고, `Evidence.ok`는
   어댑터가 낸다 — 컨테이너는 `judge()`, Fake는 `_run_repro()`가 **대상 존재**로 낸다.
   그래서 `p4`가 참이어도 「기대한 신호가 관측됐다」는 아니다(#232).
+- **E4의 종료 코드 조건은 크래시의 대용 지표이고 그 이상이 아니다 (#232).** exit 0과 미측정
+  (`None`)을 크래시로 세지 않는다 — 거기까지다. 비-0은 asan·poc에서 **대상 바이너리**의 값이라
+  대상이 스스로 비-0을 돌려줘도 같고, gdb에서는 **gdb 프로세스**의 값이다(대상이 스스로 끝났을
+  때만 대상의 값 — `--return-child-result`). 「크래시했다」를 표현하는 필드는 `Evidence`에 없다.
+  gdb를 8단계에 배선하기 전에 정상 종료인지 신호 정지인지를 `judge()` 밖으로 따로 내야 한다 —
+  지금은 8단계가 gdb를 고르지 않는다(`validate.tool_for()`).
 - **ambiguous(E1↔E2)**: `p1 and not p2 and (a and (not b or not c))`.
   경로는 이어졌는데 그래프 근거나 blocking 해소 중 하나가 빈 경우다.
   이때 `gate_ambiguous`를 기록하고 **E1으로 확정한다. 모델을 호출하지 않는다.**
@@ -63,8 +70,15 @@ from src.schemas.enums import EvidenceGrade, EvidenceKind, PathStepKind, Verdict
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 
-# 실행 흔적이 남는 Evidence 종류. E4의 조건이다.
+# 실행 흔적이 남는 Evidence 종류. E4의 조건 **하나**다 — 나머지는 `ok`(`usable`)와 아래 종료 코드다.
 _RUNTIME_KINDS = frozenset({EvidenceKind.SANITIZER, EvidenceKind.CRASH, EvidenceKind.POC_RUN})
+
+# 크래시의 흔적이 **못 되는** 종료 코드: `0`은 깨끗한 종료, `None`은 **안 쟀다**다(#232).
+# ⚠ `exit_code != 0`으로 쓰지 않는다 — `None != 0`이 참이라 미측정이 크래시로 읽힌다. 안 잰 것을
+# 관측으로 읽지 않는 것이 이 저장소의 되돌릴 수 없는 규칙이다(CLAUDE.md §0). `with_signal()`이
+# STATIC에 쓰는 것과 같은 관례(종료 코드가 비-0이면 도구가 무언가를 보고했다)를 런타임 종류에
+# 옮긴 것이다.
+_NO_CRASH_EXIT = (None, 0)
 
 # E2가 요구하는 경로 양 끝.
 _REQUIRED_PATH_STEPS = frozenset({PathStepKind.SOURCE, PathStepKind.SINK})
@@ -151,7 +165,9 @@ def evaluate(
         "p1": static_ok or location_ok,
         "p2": p2,
         "p3": p2 and upheld and finding.repro_spec is not None,
-        "p4": any(ev.kind in _RUNTIME_KINDS for ev in usable),
+        "p4": any(
+            ev.kind in _RUNTIME_KINDS and ev.exit_code not in _NO_CRASH_EXIT for ev in usable
+        ),
         "static_ok": static_ok,
         "location_ok": location_ok,
         "path_ok": path_ok,
