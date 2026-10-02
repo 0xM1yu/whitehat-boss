@@ -665,6 +665,57 @@ def test_a_200_with_the_wrong_shape_becomes_a_gateway_error(
     assert "계약과 다르다" in caught.value.detail
 
 
+_GOOD_CHOICES = '"choices": [{"message": {"content": "{}"}}]'
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        "null",
+        '{"completion_tokens": null}',
+        '{"completion_tokens": "abc"}',
+        '{"completion_tokens": -1}',
+    ],
+    ids=["usage_null", "tokens_null", "tokens_not_a_number", "tokens_negative"],
+)
+def test_a_200_with_a_broken_usage_becomes_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch, usage: str
+) -> None:
+    """🔴 `choices`는 멀쩡한데 **`usage`가 깨진** 200도 게이트웨이 사건이다 (적대적 리뷰
+    2026-10-02).
+
+    위 모양 검사는 전부 content 인덱싱에서 끝나 이 경로를 안 탄다 — `_usage_from`을 try 밖으로 빼도,
+    except 튜플에서 `AttributeError`·`ValueError`를 빼도 초록이었다. 각 입력이 **서로 다른 예외**를
+    낸다: `usage: null`은 `AttributeError`, `null`·`"abc"` 토큰은 `TypeError`·`ValueError`,
+    음수는 `Usage` 검증의 `ValidationError`(⊂ `ValueError`)다."""
+    _no_metrics(monkeypatch)
+    _respond(monkeypatch, f'{{{_GOOD_CHOICES}, "usage": {usage}}}'.encode())
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "계약과 다르다" in caught.value.detail
+
+
+def test_a_cut_connection_on_the_metrics_probe_does_not_escape_the_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_post`의 `before = generation_tokens(...)`는 **try 밖**이다 — 거기서 새면 예외 사슬이
+    못 덮는다.
+
+    `/metrics`와 채팅이 **둘 다** `IncompleteRead`를 던지는 서버다(`_no_metrics`로 고립시키지
+    않는다).
+    `generation_tokens`가 `HTTPException`을 삼키지 못하면 채팅에 닿기도 전에 생 예외가 나간다."""
+    _raise_http(monkeypatch, http.client.IncompleteRead(b"partial"))
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "IncompleteRead" in caught.value.detail
+
+
 def test_the_new_catch_all_does_not_swallow_an_http_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
