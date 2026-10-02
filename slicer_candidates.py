@@ -63,13 +63,16 @@ def prioritize(
 ) -> tuple[list[dict], int, set[str]]:
     """Candidates whose entry or any anchor is in `files` first (#377 option (b)).
 
-    Stable: each tier keeps collect()'s order, and ids stay as collect() numbered them. The list
-    changes only when a candidate is sliced: the candidate set is the same, and a candidate that
-    gets a full slice gets the same slice. Which candidates end up degraded can differ -- those
+    Order only. Stable: each tier keeps collect()'s order, and ids stay as collect() numbered
+    them. The candidate set is unchanged, and a candidate that gets a full slice gets the same
+    slice whether or not it was listed. Only which candidates end up DEGRADED can differ -- those
     not reached when the run is cut short (a wall budget, a kill), and those after a poison streak
     (slicer_pipeline POISON_STOP_STREAK degrades the rest, or a claim-mode shard stops claiming).
-    Returns the reordered list, the size of the first tier, and the listed files some candidate
-    has as its entry or an anchor.
+
+    Matching is EXACT on the normalized file string -- not substring, basename or glob. `files`
+    holds what read_priority_files() produced, spelled as collect() spells candidate entry/anchor
+    files. Returns the reordered list, the size of the first tier, and the subset of `files` that
+    some candidate has as its entry or an anchor.
     """
     head, tail, matched = [], [], set()
     for c in candidates:
