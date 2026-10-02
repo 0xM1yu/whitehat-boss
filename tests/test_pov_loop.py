@@ -27,6 +27,7 @@ from src.adapters.symbol_resolver import resolve
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
+from src.orchestrator.nodes import preprocess
 from src.orchestrator.prompt_loader import PROMPTS_DIR
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
@@ -37,7 +38,6 @@ from src.schemas.pov import PovAction, PovSegment, PovSpec
 # `ctx`는 dev_fake로 배선된 픽스처, `_pov_state`는 finding+캡슐을 담은 state 헬퍼다
 # (test_ne_loop이 test_pipeline_e2e에서 헬퍼를 끌어 쓰는 것과 같은 방식).
 from tests.test_nodes import BENIGN_TARGET, _pov_state, _root_of, _triage, ctx  # noqa: F401
-from src.orchestrator.nodes import preprocess
 
 
 def _spec() -> PovSpec:
@@ -617,7 +617,9 @@ def test_pov_hop0_carries_the_same_source_the_auditor_saw(ctx: RunContext) -> No
     ⚠ **v3로 돈다** — 기본 `dev_fake`의 pov 좌석은 v2이고, v2는 `state.finding_sources`를 안
     본다(적대적 리뷰 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다)."""
     sentinel = "SENTINEL_WIDE_SOURCE_FROM_AUDITOR"
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     # ⚠ `_pov_state`는 **원래 ctx**로 돈다 — scripted 모델은 PoV 홉만 대신한다(앞 단계가 PovAction을
     # 받으면 죽는다).
     state, finding = _pov_state(ctx)
@@ -670,7 +672,9 @@ def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: 
     조회는 **이미 있는 resolver**(`ctx.resolve_requests`)로 **위치만** 받고, 원문은
     `ctx.read_source`가 읽는다 — 새 훅·새 어댑터 배선 없이 이름으로 함수를 찾는 수단이 resolver
     뿐이다(`definitions_of`는 macros·types·file_vars만 본다, `src/adapters/index_graph.py:111`)."""
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     # 실제로 **읽을 수 있는** 파일을 가리켜야 한다 — 못 읽으면 `found=False`가 맞는 동작이다.
@@ -715,7 +719,9 @@ def test_pov_facts_carry_the_entrypoint_body_not_the_ne_followup_wrapper(
         "  10 | int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {\n"
         "Judge the same candidate again and output one complete ScoutResponse JSON.\n"
     )
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     target = capsule.target
@@ -756,7 +762,9 @@ def test_pov_facts_record_why_the_fuzz_entrypoint_is_missing(ctx: RunContext) ->
 
     키가 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다. `0`·빈 값은 **미실측
     표시**이고 사유가 같이 있어야 한다."""
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     scripted = dataclasses.replace(scripted, resolve_requests=lambda _q: _resolution(name=""))
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -783,8 +791,12 @@ def test_pov_facts_surface_the_resolvers_own_unfilled_reason(ctx: RunContext) ->
     from src.schemas.enums import UnfilledReason
     from src.schemas.need_evidence import Resolution, Unfilled
 
-    distinguishing_text = "Not resolved: function:LLVMFuzzerTestOneInput (closest: LLVMFuzzerInitialize)"
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    distinguishing_text = (
+        "Not resolved: function:LLVMFuzzerTestOneInput (closest: LLVMFuzzerInitialize)"
+    )
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     scripted = dataclasses.replace(
         scripted,
         resolve_requests=lambda _q: Resolution(
@@ -867,7 +879,9 @@ def test_pov_facts_say_so_when_there_is_no_resolver_at_all(ctx: RunContext) -> N
 
     `ctx.resolve_requests is None`은 "조회할 수단이 없었다"이고 빈 `Resolution`은 "조회했는데
     없었다"다. 둘을 같은 사유로 적으면 나중에 무엇을 고쳐야 하는지 못 가른다."""
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     scripted = dataclasses.replace(scripted, resolve_requests=None)
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -892,7 +906,9 @@ def test_a_broken_resolve_requests_does_not_kill_the_whole_pov_loop(
     def _raise(_query):  # noqa: ANN001, ANN202
         raise ValueError("path escapes target root")
 
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     scripted = dataclasses.replace(scripted, resolve_requests=_raise)
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -912,7 +928,9 @@ def test_a_broken_read_source_for_the_entrypoint_does_not_kill_the_whole_pov_loo
     """🔴 같은 가드, `ctx.read_source` 쪽 — 인덱스가 가리키는 파일이 대상 루트 밖이면
     `read_symbol_source`의 `safe_join`이 `PathEscape`로 실패시킨다(위 검사와 같은 원리, 다른
     호출부)."""
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     scripted = dataclasses.replace(
@@ -1171,7 +1189,9 @@ def test_pov_finding_block_carries_the_path_symbols_not_just_the_count(
     프롬프트는 *"경로 단계로 source에서 sink까지의 흐름을 확인하라"*고 지시하는데
     (`prompts/pov/*/prefix.md` 도달 절차 3) 전 판은 `len(finding.path)`만 줬다. 이름이 없으면
     `SOURCE`의 어느 함수가 앞단 파서이고 어느 것이 sink인지 PoV가 못 가른다."""
-    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
     state, finding = _pov_state(ctx)  # ⚠ 앞 단계는 원래 ctx로 — 위 검사의 같은 이유
     capsule = state.finding_capsules[finding.finding_id]
     assert finding.path, "픽스처 finding에 경로 단계가 없으면 이 검사가 동어반복이다"

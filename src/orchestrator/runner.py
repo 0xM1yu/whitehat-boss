@@ -1425,7 +1425,9 @@ def _run_pov_hops(
                     # `pov._WIDE_INPUT_VERSIONS`에 있어야 한다. 아니면 `source=None`을 넘겨
                     # `nodes.pov._render_prompt`가 예전 entry-only 갈래로 가게 한다(적대적 리뷰
                     # 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다).
-                    wide_source = state.finding_sources.get(finding.finding_id) if pov_wide else None
+                    wide_source = (
+                        state.finding_sources.get(finding.finding_id) if pov_wide else None
+                    )
                     current = pov.open_hop(
                         ctx,
                         finding=finding,
