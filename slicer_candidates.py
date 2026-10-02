@@ -56,3 +56,20 @@ def collect(rows_by_case: dict, repo) -> list[dict]:
         for field in ("anchors", "trigger_arguments", "sink_arguments", "reasons"):
             item[field] = sorted({canonical(p): p for p in item[field]}.values(), key=canonical)
     return ordered
+
+
+def prioritize(candidates: list[dict], files: set[str]) -> tuple[list[dict], int]:
+    """Candidates whose entry or any anchor is in `files` first (#377 option (b)).
+
+    Stable: each tier keeps collect()'s order, and ids stay as collect() numbered them, so a
+    candidate's slice does not depend on the list -- only when it is sliced does. That matters
+    only when the run is cut short (a wall budget): what was not reached exports degraded.
+    Returns the reordered list and the size of the first tier.
+    """
+
+    def first(c: dict) -> bool:
+        return c["entry"]["file"] in files or any(a["file"] in files for a in c["anchors"])
+
+    head = [c for c in candidates if first(c)]
+    tail = [c for c in candidates if not first(c)]
+    return head + tail, len(head)
