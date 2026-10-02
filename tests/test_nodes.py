@@ -28,6 +28,7 @@ from src.interfaces.model_client import (
     SchemaParseError,
     Usage,
 )
+from src.interfaces.tool_runner import SandboxSpec, ToolArgs, ToolRunner
 from src.orchestrator import prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
@@ -1678,6 +1679,54 @@ def test_successful_repro_attaches_evidence_and_proves(ctx: RunContext) -> None:
     assert after.state is FindingState.PROVEN
     assert {ev.evidence_id for ev in evidences} <= set(after.evidence_refs)
     assert any(ev.kind is EvidenceKind.SANITIZER for ev in evidences)
+
+
+class _CleanExitTools:
+    """`dev_fake`가 낸 런타임 Evidence의 종료 코드만 0으로 바꾼다.
+
+    컨테이너 러너가 낼 수 있는 모양 — 도구가 떴고(`ok=True`) 크래시 없이 끝났다 — 을 호스트 없이
+    만든다. Fake는 그 값을 상수 `1`로 채우므로(`fake_tools._run_repro`) 이 래퍼 없이는 노드
+    경로에서 그 갈래를 못 탄다. **컨테이너 러너를 거친 실측이 아니다.**
+    """
+
+    def __init__(self, inner: ToolRunner) -> None:
+        self._inner = inner
+
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence:
+        evidence = self._inner.run(tool, args, sandbox)
+        if evidence.kind in (EvidenceKind.SANITIZER, EvidenceKind.POC_RUN):
+            return evidence.model_copy(update={"exit_code": 0})
+        return evidence
+
+
+def test_a_clean_exit_holds_the_finding_at_validated_instead_of_proving_or_queueing(
+    ctx: RunContext,
+) -> None:
+    """exit 0으로 끝난 재현은 `proven`도 `queued`도 아니다 — F-10b로 `validated`에 홀드한다 (#232).
+
+    `proven`이 아닌 것은 크래시 0건이 재현 완료로 기록되는 것을 막는 것이고, `queued`(F-11,
+    `repro_failed`)가 아닌 것은 이 변경이 「도구 검증 제거율」의 분자를 키우지 않는다는 것이다 —
+    제거율 분자는 `repro_failed`다(`trace.py`). 그래서 이 건은 분모에만 든다
+    (`evidence_below_proven`). evaluation.md §5.1이 그 사실을 문장으로 적는다.
+    """
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+    clean = dataclasses.replace(ctx, tools=_CleanExitTools(ctx.tools))
+
+    after, evidences = validate.run(clean, finding=finding, workdir="parser.c")
+
+    assert any(
+        ev.kind is EvidenceKind.SANITIZER and ev.ok and ev.exit_code == 0 for ev in evidences
+    ), "픽스처 전제 — 도구는 떴고 깨끗이 끝났다"
+    assert after.state is FindingState.VALIDATED
+    transition = next(e for e in clean.trace.events if e.kind is EventKind.TRANSITION)
+    assert transition.data["rule"] == "F-10b"
+    assert transition.data["reason"] == ReasonCode.EVIDENCE_BELOW_PROVEN.value
+    graded = [
+        e
+        for e in clean.trace.events
+        if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.VALIDATE)
+    ]
+    assert [e.data["p4"] for e in graded] == [False]
 
 
 def test_validate_evaluates_the_gate_before_deciding(ctx: RunContext) -> None:
