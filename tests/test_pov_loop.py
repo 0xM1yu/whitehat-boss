@@ -881,6 +881,63 @@ def test_pov_facts_say_so_when_there_is_no_resolver_at_all(ctx: RunContext) -> N
     assert "resolve_requests" in entry["reason"]  # ⏵ 2026-10-02 LOW 정정 후 문구(runner.py)
 
 
+def test_a_broken_resolve_requests_does_not_kill_the_whole_pov_loop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 적대적 리뷰 2026-10-02 LOW(재현) — `ctx.resolve_requests`가 `PathEscape`(`ValueError`
+    하위형)를 던지면, `_run_pov_hops`의 `except (ModelGatewayError, SchemaParseError)`는 그
+    타입을 안 보므로 밖으로 뚫고 나가 **run 전체를 멈춘다.** 진입점 조회는 보조 정보지 pov의
+    필수 전제가 아니므로, 체계적 pov 실패가 run을 못 멈추게 하는 원칙에 맞게 여기서 삼킨다."""
+
+    def _raise(_query):  # noqa: ANN001, ANN202
+        raise ValueError("path escapes target root")
+
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    scripted = dataclasses.replace(scripted, resolve_requests=_raise)
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    runner._run_pov_hops(scripted, state, finding, capsule)  # 던지지 않아야 한다
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert entry["found"] is False
+    assert "path escapes target root" in entry["reason"]
+
+
+def test_a_broken_read_source_for_the_entrypoint_does_not_kill_the_whole_pov_loop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 같은 가드, `ctx.read_source` 쪽 — 인덱스가 가리키는 파일이 대상 루트 밖이면
+    `read_symbol_source`의 `safe_join`이 `PathEscape`로 실패시킨다(위 검사와 같은 원리, 다른
+    호출부)."""
+    scripted = _scripted(_with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")])
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    scripted = dataclasses.replace(
+        scripted, resolve_requests=lambda _q: _resolution(file=capsule.target.file)
+    )
+    original_read_source = scripted.read_source
+
+    def _raise_for_the_entrypoint_block(loc: Location) -> str:
+        # `_resolution()`이 고정으로 주는 블록 줄(1-2)만 실패시킨다 — 캡슐 대상(다른 줄 범위)의
+        # 읽기는 그대로 둬서 이 검사가 "진입점 조회만" 깨는지 본다.
+        if (loc.line_start, loc.line_end) == (1, 2):
+            raise ValueError("path escapes target root")
+        return original_read_source(loc)
+
+    scripted = dataclasses.replace(scripted, read_source=_raise_for_the_entrypoint_block)
+
+    runner._run_pov_hops(scripted, state, finding, capsule)  # 던지지 않아야 한다
+
+    _, prompt = scripted.models.prompts[0]
+    facts = json.loads(prompt.body.split("```json")[1].split("```")[0])
+    entry = facts["fuzz_entrypoint"]
+    assert entry["found"] is False
+    assert "path escapes target root" in entry["reason"]
+
+
 def test_other_roles_facts_do_not_gain_the_fuzz_entrypoint_key() -> None:
     """🔴 `fuzz_entrypoint`는 **PoV만** 싣는다 — 다른 역할의 프롬프트는 한 바이트도 안 바뀐다.
 
