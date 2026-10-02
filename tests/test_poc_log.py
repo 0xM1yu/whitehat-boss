@@ -135,10 +135,40 @@ def test_budget_exhaustion_leaves_no_poc_directory(
 
 
 def test_dry_run_leaves_no_poc_artifacts(tmp_path: Path) -> None:
-    """`write_manifest`·`PromptLog`와 같은 가드다 — 매니페스트 없는 run에 PoC만 남지 않는다."""
+    """`write_manifest`·`PromptLog`와 같은 가드다 — 매니페스트 없는 run에 PoC만 남지 않는다.
+
+    ⚠ **이 검사는 가드 줄을 물지 않는다.** dry-run은 `DRY_RUN_LAST_STAGE`(=RETRIEVAL)에서
+    서므로 8단계 pov에 애초에 못 간다 — 가드를 지워도 디렉터리는 안 생긴다(오염으로 확인:
+    가드를 통째로 지운 전수 실행이 그대로 초록이었다). 여기서 고정하는 것은 **관측 가능한
+    명제**(dry-run 산출물에 PoC가 없다)이고, 가드 줄은 아래 검사가 문다.
+    """
     run_dir, _ = _run(tmp_path, dry_run=True)
 
     assert not (run_dir / DIR_NAME).exists()
+
+
+def test_the_sidecar_is_wired_only_for_a_real_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """주입 가드(`run_dir` 있음 + dry-run 아님)를 **생성 여부로** 문다.
+
+    디렉터리 부재만 보는 위 검사로는 가드가 사라져도 빨개지지 않는다. 양방향으로 센다 —
+    dry-run은 0개, 실제 run은 1개. 한쪽만 보면 "아무 때도 안 만든다"가 통과한다.
+    """
+    built: list[Path] = []
+    real = runner.PocLog
+
+    def spy(run_dir: Path) -> PocLog:
+        built.append(run_dir)
+        return real(run_dir)
+
+    monkeypatch.setattr(runner, "PocLog", spy)
+
+    _run(tmp_path / "dry", dry_run=True)
+    assert built == [], f"dry-run이 사이드카를 만들었다: {built}"
+
+    _run(tmp_path / "live")
+    assert len(built) == 1, f"실제 run이 사이드카를 안 만들었다: {built}"
 
 
 def test_pipeline_writes_the_poc_sidecar_for_dev_fake(tmp_path: Path) -> None:
