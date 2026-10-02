@@ -206,14 +206,22 @@ materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호�
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
-  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`(`inspect`/`gen`을 통해
-  `pov.run_tool`) **+ `gdb`** — ⏵ 2026-10-02에 들어왔다. PR #327이 `5cf5c20`(2026-10-01)로 머지되며
-  `TOOL_KINDS`에 `"gdb"`가 생겼고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 전부 있다
-  (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). **PoV가 「경로에 닿았나」를 가를
-  수단이 gdb뿐이라** 화이트리스트에 넣었다(이슈 #360 · 사용자 결정). 프롬프트도 같은 판에서
-  넓혔다 — `prompts/pov/v3`(배선은 별 PR).
-  ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
-  — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`·`gdb`
+  (`inspect`/`gen`을 통해 `pov.run_tool`) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
+  `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
+  (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
+  이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
+  (배선은 별 PR). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
+  **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
+  아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3 prefix에는 "언제 쓰라"는 지시를
+  두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
+  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만
+  넘긴다) — `poc`·`asan`도 gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와
+  무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+  ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
+  같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
+  _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
+  접었다(2026-10-02 결정, 아래 한계로 남긴다).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면

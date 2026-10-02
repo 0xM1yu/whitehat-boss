@@ -1384,7 +1384,8 @@ def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
     for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
         assert tool in paragraph, f"한계 문단이 {tool}을 안 든다"
     assert "PoC" in paragraph
-    assert "들어가지 않는다" in paragraph or "안 들어간다" in paragraph
+    no_input = ("받지 않는다", "들어가지 않는다", "안 들어간다")
+    assert any(phrase in paragraph for phrase in no_input)
 
 
 def test_v3_prefix_does_not_say_the_tools_run_the_candidate() -> None:
