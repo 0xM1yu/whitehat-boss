@@ -197,24 +197,31 @@ def test_an_empty_poc_is_still_written(tmp_path: Path) -> None:
     assert digest == sha256_digest(b"")
 
 
-def test_the_temp_file_is_opened_exclusively_and_in_binary_mode(
+def test_the_poc_is_written_to_a_temp_name_opened_exclusively_and_in_binary_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """쓰기용으로 여는 모드가 정확히 `xb`다 — **배타(`x`)이고 이진(`b`)**.
+    """쓰기용으로 여는 것이 **임시 이름**이고 모드가 정확히 `xb`다 — **배타(`x`)이고 이진(`b`)**.
 
-    개행 번역은 Windows에서만 일어난다. 그래서 위 바이트 표는 CI(Linux)에서 텍스트 모드 쓰기를
-    못 잡는다 — `latin-1` 텍스트 쓰기는 거기서 바이트를 안 바꾼다(등가 변이). 이 검사가 **모드
-    자체**를 고정해 그 구멍을 플랫폼과 무관하게 닫는다. `io.open`도 같이 가로채므로 `Path.open`으로
-    바꿔도 이 검사는 그대로다(읽기 모드는 거른다).
+    - **이진**: 개행 번역은 Windows에서만 일어난다. 그래서 위 바이트 표는 CI(Linux)에서 텍스트 모드
+      쓰기를 못 잡는다 — `latin-1` 텍스트 쓰기는 거기서 바이트를 안 바꾼다(등가 변이). 이 검사가
+      **모드 자체**를 고정해 그 구멍을 플랫폼과 무관하게 닫는다.
+    - **임시 이름**: 쓰는 동안 디렉터리에 보이는 것은 `0001.poc.tmp`뿐이다 — 최종 이름 `0001.poc`는
+      `os.replace`로만 나타난다. 최종 이름에 바로 쓰면(원자성 상실) 읽는 쪽이 반쯤 쓰인 PoC를 본다.
+      쓰다가 죽는 것을 흉내 내지 않고도 **공개 시점**을 직접 문다.
+
+    `io.open`도 같이 가로채므로 `Path.open`으로 바꿔도 이 검사는 그대로다(읽기 모드는 거른다).
     """
     modes: list[str] = []
+    visible: list[list[str]] = []
     real_builtin, real_io = builtins.open, io.open
 
     def spy(real):  # noqa: ANN001, ANN202
         def opened(file, mode="r", *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            handle = real(file, mode, *args, **kwargs)
             if str(file).endswith(".tmp") and set(mode) & set("wxa+"):
                 modes.append(mode)
-            return real(file, mode, *args, **kwargs)
+                visible.append(sorted(os.listdir(Path(file).parent)))
+            return handle
 
         return opened
 
@@ -225,6 +232,7 @@ def test_the_temp_file_is_opened_exclusively_and_in_binary_mode(
 
     monkeypatch.undo()
     assert modes == ["xb"], f"임시 파일을 연 쓰기 모드: {modes}"
+    assert visible == [["0001.poc.tmp"]], f"쓰는 동안 보인 이름: {visible}"
 
 
 # --- PocLog 단독 — 쓰기의 안전 ------------------------------------------------------
