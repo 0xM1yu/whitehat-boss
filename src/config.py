@@ -642,6 +642,12 @@ class Thresholds(HarnessModel):
     # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
     # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
+    # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
+    # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
+    # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
+    # trace `scout_slice_trimmed`가 남는다. 프롬프트 판은 안 바꾼다(Scout v3 prefix가 SOURCE를
+    # 줄이 빠진 슬라이스로 서술한다). 기본은 끈다 — 켜면 같은 슬라이스 집합의 Scout 입력이 달라진다.
+    scout_slice_trim: int = Field(default=0, ge=0, le=1)
     # Auditor가 `repro_spec`을 비워 내면 하네스가 합성하는가 (#S7). 0이면 종전 — 비면 그대로
     # 비어 F-9(`repro_spec_missing`)로 `hypothesized`에 멈추고 8단계가 안 돈다. 1이면
     # `auditor._ensure_repro_origin`이 후보 위치로 명세를 합성해(`origin=harness`) E3(`validated`)
@@ -719,7 +725,11 @@ class Thresholds(HarnessModel):
         nested = dumped.pop("capsule_budget_tokens")
         by_role = dumped.pop("output_max_by_role")
         # 기본(0)이면 키를 안 만든다 — 위 「선언이 없으면 키를 안 만든다」와 같은 판단이다.
-        for key in AUDITOR_SOURCE_OPTIONS:
+        # `scout_slice_trim`도 같다(#375 M-3): 기본 꺼짐 run의 `RunRecord.thresholds`에 `0.0`이
+        # 생기면 이 필드 이전의 manifest와 모양이 갈리는데 그 차이가 뜻하는 것이 없다.
+        # `scout_slice_trim`은 Auditor SOURCE 옵션이 아니라(프롬프트 `source_options` 대상이
+        # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다.
+        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim"):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
