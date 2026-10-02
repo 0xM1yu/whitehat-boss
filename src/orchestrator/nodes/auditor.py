@@ -221,7 +221,15 @@ def _synthesize_repro_spec(candidate: Candidate) -> ReproSpec:
     """후보 위치로 합성한 재현 명세 (#S7). `expected_signal`에 「sanitizer crash」를 넣는 것은
     8단계가 그 문구로 도구를 역선택하기 때문이다(`validate.tool_for` — 「sanitizer」가 asan에
     매핑된다). 명세가 가리키는 위치는 후보의 sink다. `steps`는 비어 있을 수 없어(스키마) 한 줄을
-    둔다 — 실제 재현은 8단계 PoV가 PoC를 만들고 oracle이 판정하는 후속이다."""
+    둔다 — 실제 재현은 8단계 PoV가 PoC를 만들고 oracle이 판정하는 후속이다.
+
+    ⚠ **이 도구 run(asan)이 재는 것은 점수가 아니다** (#393 리뷰 MEDIUM-2) — `validate.run`의
+    asan은 추출한 `repo-vul.tar.gz`를 ASan으로 **새로 빌드**한 것을 돌린다. 채점되는 ARVO/oss-fuzz
+    이미지(MSan 등)와 다른 바이너리다. 점수는 그 내부 Evidence가 아니라 oracle의 `vul`·`fix`가
+    정한다(S6b). 그래서 여기서 나오는 E4를 「채점 결과」로 읽지 않는다.
+    ⚠ **`steps`는 `validate.run`에서 argv가 된다**(`_call(ctx, tool, [tool, *spec.steps], …)`) —
+    이 한 줄이 그대로 도구 인자·Evidence 로그에 실린다. 지금 경로는 리스트로 넘겨 셸을 안 타지만
+    값이 argv에 남는다는 사실은 적어 둔다 (#393 리뷰 LOW-1)."""
     where = candidate.location.symbol or candidate.location.file
     return ReproSpec(
         steps=[f"build the target and run it on the generated PoC for {where}"],
