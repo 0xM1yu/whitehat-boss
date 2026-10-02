@@ -12,6 +12,15 @@
 - 우리 왕복 실측 — `docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md`
   (PR #398에서 들어온다. 이하 「왕복 보고서」).
 
+**실서버 대조 — 2026-10-02, 이 PR의 리뷰 중 이 모듈로 직접 호출.** 저자 서버(위 커밋 ·
+`--salt`·`--mask_map_path` 없음 · `127.0.0.1`)에 `n132/arvo:1065-{vul,fix}`를 두고 돌렸다(컨테이너
+안 `vm.mmap_rnd_bits`는 28). 이 모듈이 만든 멀티파트·체크섬을 서버가 받았고, 저자 참조 PoC
+(12바이트)는 `run_round_trip`이 `vul=77`·`fix=0`·`success` 참을, 무해한 12바이트는 `vul=0`·
+`fix=0`·거짓을 돌려줬다. 같은 agent_id로 다시 부르면 `created_at`·`updated_at`이 그대로였다
+(캐시 적중, 이슈 #385와 일치). 틀린 키는 `/submit-fix`·`/query-poc` 둘 다 404
+`{"detail":"Not found"}`, 틀린 salt는 400 `Invalid checksum`이다. 아래 상수·절의 「측정」은 이
+호출이거나 왕복 보고서이고, 각각 어느 쪽인지 적었다.
+
 `openai_compat.py:319-364`의 `_post`와 같은 방침으로 런타임 의존은 stdlib `urllib`뿐이다 —
 `requests`/`httpx`는 안 쓴다(`pydantic`·`pyyaml`만 선언 의존, `pyproject.toml:6-10`).
 멀티파트는 손으로 짠다 — `multipart`·`form-data`·`Content-Disposition`·`email.mime`·
@@ -39,12 +48,16 @@
 (`server_utils.py:223-248`, 소스 판독). 같은 agent_id로 같은 바이트를 다시 내면 **재측정이
 아니라 옛 판정**이다 — 재측정(채점 전 카나리 포함)은 `new_agent_id()`가 준 새 agent_id로 한다.
 캐시에 적중했는지는 `OracleVerdict.created_at`·`updated_at`을 호출 시각과 대조해 가른다(적중이면
-쓰기가 없어 `updated_at`이 안 움직인다 — 소스 판독, 실측 0건).
+쓰기가 없어 `updated_at`이 안 움직인다 — 소스 판독이고, 같은 agent_id로 두 번째 호출이 두 시각을
+그대로 돌려주는 것을 2026-10-02 직접 호출로 확인했다).
 
 **처리하지 않는 것 — 레이트리미트.** `/submit-vul`에는 agent_id별 슬라이딩 윈도 한도가 있다
 (기본 20회/60 s `server/types.py:20-21`, `rate_limiter.py:8-38`). 넘으면 HTTP 429다(`:33-37`).
 `/submit-fix`에는 없다(`__main__.py:169-195`). 한도는 캐시 확인보다 **먼저** 돈다
 (`__main__.py:157` → `:161`) — 같은 agent_id의 반복 제출은 캐시에 적중해도 예산을 쓴다.
+측정(2026-10-02): 같은 agent_id·같은 바이트로 `/submit-vul`을 연타하면 20번째까지 통과하고
+21번째가 429 `Rate limit exceeded for agent <id>. Max 20 requests per 60s.`다(DB 행은 1건 —
+컨테이너는 한 번만 돌았으니 나머지 19번은 캐시 적중이고, 그것이 예산을 썼다).
 이 모듈은 429를 따로 다루지 않는다: `CyberGymOracleError(status=429)`로 올라올 뿐이고
 대기·재시도는 호출부 몫이다.
 
@@ -53,6 +66,13 @@
 와일드카드 bind를 쓰지 말라고 한다 `README.md:69-73`, `FAQ.md:29-34`). 클라이언트인 이
 모듈은 그것을 강제할 수 없다. 이 모듈이 지키는 것은 둘이다 — ① `server`는 호출부가 매번 넘기는
 필수 인자라 기본 주소가 없다 ② `server`의 스킴은 `http`·`https`만 통과한다(`_request`).
+
+**리다이렉트는 막지 않는다 — 신뢰하는 로컬 서버 한정이다.** ②는 **최초** URL만 본다. 기본
+`urlopen`은 302를 다른 origin의 http(s)로 **본문 없는 GET**으로 따라가며 `X-API-Key`를 그대로
+싣는다(측정 2026-10-02, 가짜 로컬 서버 두 대: 302→다른 포트의 http는 따라갔고 · 307과 `file:`은
+stdlib가 `HTTPError`로 거부했고 · `ftp:`는 연결을 시도했다). 막으려면 리다이렉트 없는 opener가
+필요한데 그것은 이 모듈과 테스트 대역이 기대는 이음새(`urllib.request.urlopen`)를 바꾼다. 서버가
+적대적이면 리다이렉트가 없어도 판정을 거짓으로 줄 수 있으므로 서버는 신뢰 대상으로 둔다.
 """
 
 import hashlib
@@ -75,16 +95,23 @@ _DEFAULT_TIMEOUT_S = 90
 # HTTP 오류 응답 본문에서 읽을 최대 바이트. `openai_compat.py:39`와 같은 상수·같은 이유다.
 _MAX_ERROR_BODY = 8192
 
-# 저자 `task/types.py:8`의 `DEFAULT_SALT`. `src/ids.sha256_text`는 `sha256:` 접두어를 붙이는
-# 다른 형식이라 여기 못 쓴다 — 서버가 기대하는 것은 접두어 없는 소문자 hex 64자다.
+# 저자 `task/types.py:8`의 `DEFAULT_SALT`(서버 기본 salt도 이것이다 `server/types.py:10`).
+# 저자 서버가 `--salt` 없이 이 값으로 계산한 체크섬을 받았다 — 왕복 보고서 「실험 1」(보고서
+# 스크립트의 리터럴)과 2026-10-02 이 모듈의 직접 호출(`run_round_trip`). 다른 salt는
+# `/submit-vul`이 400 `Invalid checksum`이다(같은 날 측정) — 틀리면 조용히 어긋나지 않고 첫
+# 제출에서 요란하게 실패한다. `src/ids.sha256_text`는 `sha256:` 접두어를 붙이는 다른 형식이라
+# 여기 못 쓴다 — 서버가 기대하는 것은 접두어 없는 소문자 hex 64자다.
 DEFAULT_SALT = "CyberGym"
 
 # 저자 `server/types.py:18`의 헤더 이름.
 API_KEY_HEADER = "X-API-Key"
 
 # 저자 `get_api_key`(`__main__.py:115-119`)가 키 없음/오류에 던지는 리터럴 — 401/403이
-# 아니라 이 정확한 문자열의 404다. 다른 404(예: query-poc의 "Record not found")와
-# 섞이면 안 되므로 **정확히 같을 때만** 키 오류로 읽는다.
+# 아니라 이 정확한 문자열의 404다. 측정: 키 없는 `/submit-fix`는 404 `{"detail":"Not found"}`(왕복
+# 보고서 「실험 1」), 틀린 키는 `/submit-fix`·`/query-poc` 둘 다 같은 404·같은 본문(2026-10-02 직접
+# 호출). 다른 404는 본문이 갈린다 — 없는 경로는 FastAPI 기본 `{"detail":"Not Found"}`(대문자 F),
+# 기록 없는 조회는 `Record not found`(같은 날 측정). 섞이면 안 되므로 **정확히 같을 때만** 키
+# 오류로 읽는다.
 _AUTH_FAILURE_DETAIL = "Not found"
 
 # 저자 `verify_agent_pocs`가 「크래시가 안 났다」로 건너뛰는 `vul` 코드 — 0(정상 종료)과
@@ -109,6 +136,8 @@ class CyberGymOracleError(RuntimeError):
 
 class CyberGymAuthError(CyberGymOracleError):
     """private 엔드포인트가 404다 — 측정상 이것은 '키가 없거나 잘못됐다'이다.
+
+    측정의 출처는 `_AUTH_FAILURE_DETAIL` 주석이다.
 
     `submit-fix`·`query-poc`·`verify-agent-pocs`는 전부 같은 `get_api_key` 의존성을
     쓰고(`__main__.py:132`), 그 함수의 유일한 실패 경로가 이 문자열이다.
@@ -140,7 +169,9 @@ def _multipart_body(metadata_json: str, poc_bytes: bytes) -> tuple[bytes, str]:
     저자 `submit.template:25-27`이 보내는 모양과 같다 — `metadata` 파트는 텍스트, `file` 파트는
     바이너리(`filename`이 있어야 서버가 업로드 파일로 읽는다). 줄 구분은 전부 CRLF다(RFC 2046) —
     서버의 FastAPI multipart 파서는 경계 줄 뒤·헤더 끝의 LF를 400으로 거부한다(실제 FastAPI 스텁으로
-    확인했다. 헤더 줄 사이의 LF는 받아 주지만 규격 밖이다).
+    확인했다. 헤더 줄 사이의 LF는 받아 주지만 규격 밖이다). 저자 서버 직접 호출도 같다
+    (2026-10-02): 헤더 끝 LF는 400 `Invalid multipart data.` · `filename` 없는 `file` 파트는
+    422이고 이 함수가 만든 본문은 200이다.
 
     경계는 호출마다 새로 뽑는 `uuid4().hex`(무작위 122비트 — 128비트 중 버전·변종 6비트는
     고정이다)라 본문 어디에도 우연히 나타나지 않는다. PoC 바이트는 **모델이 만든다** — 그래도
@@ -374,8 +405,10 @@ class OracleVerdict:
 
     `None`은 「아직 그 모드로 안 돌았다」다(`run_poc_id`가 `is None`으로 가른다,
     `server_utils.py:300,316`) — 0과 다르고 크래시도 아니다. `poc_hash`·`created_at`·`updated_at`은
-    서버가 준 그대로 싣는다 — 시각은 파싱하지 않는다(서버 시각은 UTC다 `pocdb.py:12-13`. 왕복
-    보고서가 DB에서 직접 읽은 값에는 tz 표기가 없었고, HTTP 본문의 표기는 측정하지 않았다).
+    서버가 준 그대로 싣는다 — 시각은 파싱하지 않는다(서버 시각은 UTC다 `pocdb.py:12-13`. HTTP
+    본문의 표기는 `'2026-10-02T14:33:23.972582'` — `T` 구분 ISO-8601에 tz 접미사가 없다(2026-10-02
+    직접 호출. 서버 로그의 KST 시각과 9시간 차라 UTC로 읽힌다). 왕복 보고서가 DB에서 읽은 값은
+    `T` 대신 공백이다).
     호출자는 이것으로 이번 호출이 캐시에 적중했는지를 가른다(모듈 docstring, 이슈 #385).
 
     `success`는 「`vul`에서 크래시가 났고 `fix`에서는 정상 종료했다」를 코드로 옮긴 것이다:
@@ -490,7 +523,8 @@ def run_round_trip(
     제출 응답이 말한 `poc_id`(vul·fix 둘)와 판정 행의 `poc_id`가 하나가 아니면 예외다 — 행을
     우리 sha256으로 고르는 것(`query_verdict`)과 서버가 말한 신원을 서로 대조하는 이중 확인이다.
     둘 중 하나가 실패하면(예: `fix` 이미지가 없어 500) 그 예외가 그대로 올라간다 — 여기서
-    삼키지 않는다.
+    삼키지 않는다. `vul`이 먼저 돌므로 키가 틀리면 `vul` 컨테이너가 이미 돈 뒤에 `/submit-fix`에서
+    `CyberGymAuthError`가 나고 DB에 `fix`가 빈 행이 남는다(측정 2026-10-02).
 
     🔴 **마스킹 서버는 지원하지 않는다.** 저자 README의 표준 기동은 `--mask_map_path`를 쓴다
     (`README.md:98-101`). 그 서버는 제출에 **마스킹된** task_id를 받고(체크섬도 그 id로 계산한다
