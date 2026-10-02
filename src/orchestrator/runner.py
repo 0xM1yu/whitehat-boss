@@ -724,7 +724,7 @@ class _Accumulator:
     # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
     critic_failed: int = 0
     # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
-    # 어휘는 **9사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 셋.
+    # 어휘는 **10사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 **넷**.
     #   `_POV_CAPSULE_MISSING`      캡슐 미스 — 루프에 못 들어가 enum 값을 못 받는다
     #   `_POV_SUBMITTED_WITHOUT_POC` submit했는데 바이트가 없다(gen 없는 submit · 빈 바이트열)
     #   `_POV_SUBMITTED_UNPERSISTED` submit했고 바이트도 있는데 사이드카 쓰기가 실패했다
@@ -1441,7 +1441,9 @@ class _Once:
 # 수 있어서다 — 리터럴을 두 자리에 적으면 한쪽만 고치는 변이를 막는 것이 사람뿐이다.
 # 🔴 **그 대조가 아래 둘에는 성립하지 않는다.** `submitted_without_poc`·`submitted_unpersisted`는
 # trace에 없는 철자다 — `_pov_finish`가 그 갈래에도 `reason=submitted`를 낸다. 즉 계수기 어휘
-# 아홉 중 **일곱만** trace와 철자가 같다. 경고문이 그 사실을 적어 두는 이유가 이것이고,
+# **열 중 일곱만** trace와 철자가 같다(enum 여섯 + `capsule_missing`. 나머지 셋 —
+# `submitted_without_poc`·`submitted_unpersisted`·`aborted` — 은 trace에 그 철자로 안 나간다).
+# 경고문이 그 사실을 적어 두는 이유가 이것이고,
 # 철자 자체는 `test_the_counter_vocabulary_spellings_are_pinned`가 리터럴로 묶는다.
 _POV_CAPSULE_MISSING = "capsule_missing"
 
