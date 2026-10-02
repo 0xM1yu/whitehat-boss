@@ -856,18 +856,19 @@ def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
 
 
 @pytest.mark.parametrize(
-    ("with_labels", "with_slices", "needle"),
+    ("defect", "needle"),
     [
-        pytest.param(False, True, "실서빙", id="serving-label-gate"),
-        pytest.param(True, False, "슬라이스 입력", id="slice-input-guard"),
+        pytest.param("no-labels", "실서빙", id="serving-label-gate"),
+        pytest.param("no-slices", "슬라이스 입력", id="slice-input-guard"),
+        pytest.param("undescribed-option", "Auditor SOURCE 옵션", id="auditor-source-options-gate"),
+        pytest.param("unknown-device", "장비 파일", id="swap-serving-file-gate"),
     ],
 )
 def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
-    with_labels: bool,
-    with_slices: bool,
+    defect: str,
     needle: str,
 ) -> None:
     """🔴 **뒤의 게이트가 거부하면 작업 디렉터리에 트리가 남지 않는다** — 오타를 고친 재시도가 산다.
@@ -877,11 +878,15 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
     #381 리뷰 MEDIUM-1 — 그 수정에 핀이 없어 해제를 옛 위치로 되돌려도 초록이었다). 그래서
     **거부 직후의 작업 디렉터리**와 **고친 인자로의 재시도**를 둘 다 본다.
 
-    게이트는 둘을 따로 건다 — 실서빙 라벨 게이트(`--device`·`--condition` 없음)와 슬라이스 입력
-    가드(`--slices` 없음). 옛 위치는 둘 다의 **앞**이다."""
+    해제 앞에 서는 게이트 **넷을 각각** 건다 — 실서빙 라벨 게이트(`--device`·`--condition` 없음) ·
+    슬라이스 입력 가드(`--slices` 없음) · Auditor SOURCE 옵션 meta 게이트 · 교대 프로필의 장비
+    파일 게이트(없는 `--device`). 처음 판은 앞 둘만 걸어 해제를 뒤 둘의 **앞**으로 옮겨도 초록이었다
+    (#381 독립 검토 LOW). Auditor 게이트는 실제 검출기(`_undescribed_source_options`)를 **갈아끼워**
+    세운다 — 저장소 설정에는 서술 안 된 옵션이 켜진 프로필이 없고, 이 테스트가 보는 것은 검출이
+    아니라 게이트가 **서는 자리**다."""
     _refuse_sockets(monkeypatch)
     task = _level1_task(tmp_path)
-    slices = _task_slices(tmp_path)
+    slices = ["--slices", str(_task_slices(tmp_path))]
     work = tmp_path / "w"
     base = [
         "run", "--profile", "harness_pool", "--seed", "1",
@@ -889,8 +894,18 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
         "--task-dir", str(task), "--task-work-dir", str(work),
     ]
     labels = ["--condition", "B1prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1"]
-    first = base + (labels if with_labels else [])
-    first += ["--slices", str(slices)] if with_slices else []
+    good = base + labels + slices
+    first = {
+        "no-labels": base + slices,
+        "no-slices": base + labels,
+        "undescribed-option": good,
+        "unknown-device": base + [*labels[:3], "no-such-device", *labels[4:]] + slices,
+    }[defect]
+    real_detector = cli._undescribed_source_options
+    if defect == "undescribed-option":
+        monkeypatch.setattr(
+            cli, "_undescribed_source_options", lambda config: ["bogus(auditor/v4)"]
+        )
 
     rc = cli.main(first)
 
@@ -905,9 +920,10 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
     def _boom(*_: object, **__: object) -> tuple[str, Path]:
         raise _Stop
 
+    monkeypatch.setattr(cli, "_undescribed_source_options", real_detector)
     monkeypatch.setattr(cli, "_claim_run_dir", _boom)
     with pytest.raises(_Stop):
-        cli.main(base + labels + ["--slices", str(slices)])
+        cli.main(good)
     assert (work / _TASK_SOURCE).is_file()
 
 
