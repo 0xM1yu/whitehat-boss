@@ -5,7 +5,7 @@
 **여기 있는 것은 실측이 아니다** — 우리 장비 실측은 [experiments/](../experiments/README.md)에 있다.
 
 **이 조사가 결정을 내리지 않는다**(CLAUDE.md §3). 특히 **어느 벤치마크로 참가할지(CyberGym Level 1 vs E2E vs 탐지벤치, 그리고 채택 자체)는
-실험팀 소관**이고 원천은 팀 Notion이다([ADR 0012](../decisions/0012-harness-canon-v2.md) 결정 5). ⏵ **「벤치마크 선택」은 낡음 — 위 시점 노트 ③**(검증 벤치마크 = CyberGym Level 1은 `5990dff`부터 ADR 0012:196이 정했다. 벤치마크 **설계**는 그 줄도 실험팀 몫으로 둔다). 이 문서가 다루는 것은 **하네스를 짓는 쪽의 구조 변경** —
+실험팀 소관**이고 원천은 팀 Notion이다([ADR 0012](../decisions/0012-harness-canon-v2.md) 결정 5). ⏵ **「벤치마크 선택」은 낡음 — 아래 시점 노트 ③**(검증 벤치마크 = CyberGym Level 1은 `5990dff`부터 ADR 0012:196이 정했다. 벤치마크 **설계**는 그 줄도 실험팀 몫으로 둔다). 이 문서가 다루는 것은 **하네스를 짓는 쪽의 구조 변경** —
 "만약 벤치마크가 CyberGym이 된다면 코드가 무엇을 어떻게 바꿔야 하나"이고, 그것은 이 저장소의 일이다(CLAUDE.md 머리 박스).
 **모든 값(홉 수·도구 목록 확정·모델)과 채택 여부는 실측(D)·sumin 리뷰·팀 판단으로 정한다.** 구조 서술은 전부 **제안**이다.
 
@@ -16,7 +16,7 @@
 | --- | --- |
 | [2026-09-29-cybergym-pov-design.md](2026-09-29-cybergym-pov-design.md) | CyberGym 제출 프로토콜(저자 코드 대조) · 홉 루프 종료 조건 · triage↔synthesis 선례 · Gate 단순화 근거 · feyospace 후보 §6 |
 | [2026-09-29-cybergym-leaderboard-harnesses.md](2026-09-29-cybergym-leaderboard-harnesses.md) | 리더보드 엔트리의 하네스·도구·퍼저 사용(Q2·Q3) — EnIGMA 툴셋·정적/동적(기본 화면 한정) |
-| [2026-09-29-auditor-finetuning-and-benchmark.md](2026-09-29-auditor-finetuning-and-benchmark.md) | Phase 7 정본에 CyberGym이 없음 · CyberGym은 탐지가 아니라 PoV 채점 · gdb/ASan 선례 §4.4 ⏵ 낡음 — 위 시점 노트 ③ |
+| [2026-09-29-auditor-finetuning-and-benchmark.md](2026-09-29-auditor-finetuning-and-benchmark.md) | Phase 7 정본에 CyberGym이 없음 · CyberGym은 탐지가 아니라 PoV 채점 · gdb/ASan 선례 §4.4 ⏵ 낡음 — 아래 시점 노트 ③ |
 
 ③ 선행 도구 한 곳(Google Naptime 4-도구 아키텍처)만 오늘 새로 열었다 — 어제 파일이 `[미확인]`으로 남긴 자리다(§5.1).
 **열람한 어느 페이지에서도 에이전트를 겨냥한 지시문은 발견되지 않았다.**
@@ -44,7 +44,7 @@
 1. **현재 도구 실행은 "오케스트레이터가 고르는 1회성"이다** — 모델은 JSON만 내고, 어느 도구를 돌릴지는 **노드**가 `repro_spec.expected_signal`에서 역으로 고른다(`validate.tool_for`). **모델이 도구를 반복 호출하는 루프는 없다.** PoV에 도구를 쥐어주는 것은 **새 실행 패턴**(모델-주도 다중 턴 툴 루프)을 하나 만드는 일이다(§1.2·§4.2). ⏵ PoV에 한해 낡음 — 위 시점 노트 ⑤
 2. **PoV는 코드 0줄이다** `[코드]` — `Role`에 `POV`가 없고, `prompts/pov/`·`nodes/pov.py`가 없다. `container_tools.plan()`의 `poc` 갈래는 `{SCRATCH}/poc`를 실행하지만 **그 파일을 만드는 주체가 없다**(§4.1). ⏵ 낡음 — 위 시점 노트 ①
 3. **Validation 교체는 "두 층"이다.** 현행 8단계는 **내부 재현 판정**(E4 = SANITIZER/CRASH/POC_RUN Evidence)이고, CyberGym은 **외부 oracle**(패치 전 크래시 ∧ 패치 후 무크래시)이다. 둘은 다른 것이고 **공존**할 수 있다 — 내부 E4는 비용 필터로, 최종 판정은 oracle로(§3).
-4. **선행 연구의 도구는 수렴한다** — Naptime 4개(Code Browser·Python·Debugger[ASan]·Reporter), EnIGMA(`debug_*`·`decompile`·`disassemble`·`search_file`, raw gdb 차단). **핵심 축은 "코드 열람 + 입력 생성 스크립트 + ASan/디버거 + 제출"**이고, 우리는 그중 셋의 재료를 이미 가졌다(index·gdb·asan). 빠진 것은 **입력 생성 스크립트(Python) 실행**과 **그 넷을 도는 루프**다(§5).
+4. **선행 연구의 도구는 수렴한다** — Naptime 4개(Code Browser·Python·Debugger[ASan]·Reporter), EnIGMA(`debug_*`·`decompile`·`disassemble`·`search_file`, raw gdb 차단). **핵심 축은 "코드 열람 + 입력 생성 스크립트 + ASan/디버거 + 제출"**이고, 우리는 그중 셋의 재료를 이미 가졌다(index·gdb·asan). 빠진 것은 **입력 생성 스크립트(Python) 실행**과 **그 넷을 도는 루프**다(§5). ⏵ 「루프가 없다」는 부분만 낡음 — 위 시점 노트 ⑤(PoV 툴 루프 `_run_pov_hops`는 `85249d3`부터 있으나 그 도구는 `asan`·`build`·`poc`뿐이다 — 코드 열람·gdb·Python 스크립팅을 한 루프에서 도는 것은 `d85ea62`에도 없다)
 5. **"동적이 PoV에 필수"라는 전제는 이 근거로 가부를 못 가른다** `[제3자/출처주장]` — 학술 AEG·Naptime·AIxCC는 동적을 쓴다. CyberGym에는 **정적만으로 상위에 간 존재 증명**이 있다(모델트랙 1위 XekRung 88.9%가 퍼저 명시 배제, XDxAI 정적→PoC). 그러나 이는 cybergym.io **기본 화면(model-focused) 한정**이다 — 90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨이다([leaderboard 조사 ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md), 2026-10-02 원문 데이터 재계산). 동적 `-vul` 이미지는 **선택**이다(FAQ Q5). 정확한 서술은 "**최종 검증은 항상 실행(oracle)이고, 정적만으로도 상위에 간 사례가 있으나 상위권 다수는 동적 라벨을 단다 — 필수 여부는 이 근거로 못 가른다**"이다(§6).
 
 ---
@@ -75,7 +75,7 @@
 
 > **여기서 나오는 결론**: PoV에 "도구를 쥐어준다"는 것은 이 1회성 모델 위에 **모델-주도 다중 턴 툴 루프**를 새로 얹는다는 뜻이다. 그 패턴이 지금 저장소에 **정확히 대응하는 것은 없다**(§1.3). ⏵ 낡음 — 위 시점 노트 ①⑤
 
-### 1.3 저장소에 있는 유일한 "다중 턴 루프" — Scout need_evidence 홉 (툴 루프가 아니다)
+### 1.3 저장소에 있는 유일한 "다중 턴 루프" — Scout need_evidence 홉 (툴 루프가 아니다) ⏵ 「유일한」은 낡음 — 위 시점 노트 ⑤(`85249d3` 이후 `runner._run_pov_hops`가 둘째 다중 턴 루프다)
 
 `runner._run_ne_hops`(hop1..`max_hops`, ADR 0012 결정 2)가 반복 루프이긴 하다. 그러나:
 
@@ -83,7 +83,7 @@
 - 정지 조건 여섯(`NeStopReason`): 신호가 NE 아님·빈 요청·직전 반복·아무것도 못 채움·max_hop·파싱 실패.
 - **Auditor에는 이 루프조차 없다**([auditor-finetuning §4.2](2026-09-29-auditor-finetuning-and-benchmark.md)) — need_evidence 홉은 Scout 전용이다.
 
-> **재사용 가능한 뼈대**: `_run_ne_hops`의 **홉 상한·정지 사유·홉 이벤트(`SCOUT_HOP`) 기록·예외 흡수 표**는 PoV 툴 루프가 그대로 본뜰 형태다. 바꾸는 것은 "resolver가 원본을 채운다"를 "ToolRunner가 도구를 실행해 관측을 채운다"로 바꾸는 것이다. **패턴은 있고, 되묻는 대상만 다르다.**
+> **재사용 가능한 뼈대**: `_run_ne_hops`의 **홉 상한·정지 사유·홉 이벤트(`SCOUT_HOP`) 기록·예외 흡수 표**는 PoV 툴 루프가 그대로 본뜰 형태다. 바꾸는 것은 "resolver가 원본을 채운다"를 "ToolRunner가 도구를 실행해 관측을 채운다"로 바꾸는 것이다. **패턴은 있고, 되묻는 대상만 다르다.** ⏵ 이행됨 — 위 시점 노트 ⑤(`_run_pov_hops`의 docstring이 `_run_ne_hops`를 미러한다고 적는다, `d85ea62`)
 
 ### 1.4 Evidence Gate와 `proven`이 서는 자리 (`src/orchestrator/gate.py`)
 
@@ -110,7 +110,7 @@
 | 제출 = `bash submit.sh` → `POST /submit-vul` multipart | 제출 어댑터 없음. `git grep cybergym -- src/` 0건 | **제출 어댑터 신설**(§3.2) ⏵ 「cybergym 0건」은 낡음 — 위 시점 노트 ② |
 | 살아 있는 신호 = 패치 전 exit_code + stdout(sanitizer) | 8단계가 내부에서 asan/poc 실행 → Evidence | **외부 신호를 Evidence로 흡수**(§3) |
 | 최종 판정 = 차분(외부 채점) | 내부 게이트 E4(대조 없음, #232) | **oracle을 정본 판정, 내부 E4는 필터**(§3.1) |
-| 종료 = 에이전트가 최종 후보 1개 지정 | run 종료는 예산/단계 소진 | **"최종 후보 지정" 종료 단계 신설**(§4.2) |
+| 종료 = 에이전트가 최종 후보 1개 지정 | run 종료는 예산/단계 소진 | **"최종 후보 지정" 종료 단계 신설**(§4.2) ⏵ 낡음 — 위 시점 노트 ①(`PovAction.submit`이 그 종료다 — 마지막 `gen`의 PoC가 final) |
 | 실행 격리 = network=none·10초·20건/분 | `SandboxSpec` network=none·timeout(같은 성질) | 홉 간 간격·제출 예산 관리만 추가 |
 | 입력 = 설명 + 패치 전 소스(Level 1) | Scout 입력이 슬라이스+설명 — 정합 | 과제 로더(tar → Artifact) 신설 ⏵ 근거 없음 — 위 시점 노트 ⑥ |
 | 장부 = `SUBMISSION.md` 스키마(역할별 토큰4 등) | `COUNTED_ROLES=(scout,auditor)`만 | **PoV 토큰 카운터 추가**(§4.1) |
@@ -165,16 +165,20 @@ STATUS.md가 이미 셋을 든다: **A**(정답 PoC 재생) · **B**(`Role.POV`+
 | `prompts/pov/v1/` | `meta.yaml`+`prefix.md`+`output_schema` | 프롬프트 로더 ⏵ 낡음 — 위 시점 노트 ①(지금 `prompts/pov/v2/`) |
 | `src/orchestrator/nodes/pov.py` | 노드 본체(툴 루프 §4.2) | 신설 ⏵ 낡음 — 위 시점 노트 ①(`f1dfde6` 이후 있다) |
 
+> ⏵ **위 시점 노트 ① — 이 표는 제안이었고 `d85ea62`에서 대부분 들어왔다**(직접 확인): `Role.POV`(`src/schemas/enums.py:89`) · `PROMPTED_ROLES`의 `"pov"`(`src/config.py:71`) · `bench.ROLE_SPEC`의 `Role.POV: (PovAction, EXPANDED)`(`src/bench.py`) ·
+> 프로필의 `pov:` 좌석(`config/profiles.yaml` — 실서빙 프로필은 `feyospace-v1-small`, `config/models.yaml:676`) · `prompts/pov/v2/` · `nodes/pov.py`.
+> **`COUNTED_ROLES`만 아직 안 들어왔다** — `src/tokens.py:73`이 여전히 `("scout", "auditor")`다(위 ⚠가 지금도 참이다).
+
 > ⚠ **enum 주석의 함정 그대로**: `PROMPTED_ROLES`와 `bench.ROLE_SPEC`에 **함께** 넣지 않으면 `Role("pov")` 등록만으로 harness check·bench가 죽는다. `SINGLE` 등록이 밟은 것과 같다.
 
 ### 4.2 PoV 노드의 새 실행 패턴 — 모델-주도 다중 턴 툴 루프
 
-이것이 저장소에 **없는 것**이다(§1.2). 형태 제안(값은 실측):
+이것이 저장소에 **없는 것**이다(§1.2). 형태 제안(값은 실측): ⏵ PoV에 한해 낡음 — 위 시점 노트 ⑤(`_run_pov_hops`, `85249d3` — 2026-09-30 22:04 KST)
 
 ```
 입력: Finding(위치·경로·rca) + 원본 소스 + 과제 설명   ← Auditor 산출을 받는다(triage↔synthesis 분리)
 루프(hop 1..N):
-  1) PoV 모델이 도구 호출 or PoC 후보를 낸다  (tool-calling 필요 — §7)
+  1) PoV 모델이 도구 호출 or PoC 후보를 낸다  (tool-calling 필요 — §7) ⏵ 낡음 — 위 시점 노트 ⑤(JSON 액션 출력이지 tool-calling이 아니다)
   2) ToolRunner가 실행 → 관측(Evidence)을 다음 홉에 싣는다   ← _run_ne_hops를 본뜬다(§1.3)
   3) 정지: 내부 크래시 관측 / max_hop / 반복 / 예산
 종료: 최종 후보 1개 지정 → oracle 제출(§3.2)   ← final-submission 필수(pov-design §1.3)
@@ -220,7 +224,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 | **Claude Code 계열**(GLM·XDxAI) | 기본 read/shell/edit + `submit.sh`, 웹 도구 끔 | [leaderboard §2](2026-09-29-cybergym-leaderboard-harnesses.md) `[출처주장/code]` |
 | **XekRung #1**(모델트랙 88.9%, 같은 Alibaba 사이트의 `Velldepth Agent` 85.3%와 별개) | "fixed general-purpose tool framework"(목록 비공개), 퍼저 명시 배제 | [leaderboard §2·§3.4](2026-09-29-cybergym-leaderboard-harnesses.md) `[출처주장]` |
 
-> **수렴점**: 거의 모두 (a) **코드 열람**, (b) **셸/스크립팅(입력 생성)**, (c) **디버거/실행(ASan)**, (d) **제출**을 준다. 커버리지 퍼징을 돌린 확인 사례는 없다(§6).
+> **수렴점**: 거의 모두 (a) **코드 열람**, (b) **셸/스크립팅(입력 생성)**, (c) **디버거/실행(ASan)**, (d) **제출**을 준다. 커버리지 퍼징을 돌린 확인 사례는 열어 본 범위에서 없다(§6 — `dynamic` 라벨 18행은 안 열었다).
 
 ### 5.3 그래서 우리가 PoV에 줄 도구 (제안, 값·확정은 팀·실측)
 
@@ -228,12 +232,12 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 | --- | --- | --- |
 | 코드 열람 | ✅ 있음 | index/symbol resolver를 PoV 툴로 노출만 |
 | ASan 빌드+실행 | ✅ 있음 | `asan` 도구 재사용 |
-| 디버거 | ✅ 재료(PR #327) | `gdb` 배치. PoV가 첫 소비자(§4.3) |
+| 디버거 | ✅ 재료(PR #327) | `gdb` 배치. PoV가 첫 소비자(§4.3) ⏵ 낡음 — 위 시점 노트 ⑤(`d85ea62`의 PoV 루프는 gdb를 못 부른다 — `PovAction.tool`에 없다) |
 | 입력 생성 스크립트(Python) | ❌ 없음 | **1순위 신규.** PoC 바이트를 손으로 구성/변이 |
 | 제출(oracle) | ❌ 없음 | network=True라 ToolRunner 밖 별도 클라이언트(§3.2) |
 | 퍼징 | ⏸ 후순위(선택지 C) | 열어 본 엔트리에서 퍼징 사례 없음(§6), 비용 큼 |
 
-**빠진 두 개가 요점이다** — 우리는 정적 도구(index·semgrep·clang-tidy)와 실행 판정 도구(asan·gdb)를 이미 가졌지만, **PoC 바이트를 만드는 스크립팅**과 **그 도구들을 도는 루프**가 없다. 그 둘이 §4.2와 이 표의 신규 두 줄이다.
+**빠진 두 개가 요점이다** — 우리는 정적 도구(index·semgrep·clang-tidy)와 실행 판정 도구(asan·gdb)를 이미 가졌지만, **PoC 바이트를 만드는 스크립팅**과 **그 도구들을 도는 루프**가 없다. 그 둘이 §4.2와 이 표의 신규 두 줄이다. ⏵ 「루프가 없다」는 부분만 낡음 — 위 시점 노트 ⑤(스크립팅이 없다는 부분은 `d85ea62`에서도 참이다)
 
 ---
 
@@ -257,7 +261,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 
 모델 카드·성능·라이선스·provenance는 [pov-design §6](2026-09-29-cybergym-pov-design.md)이 어제 정리했다(독립 측정 0, 63%는 {모델+"Claude Code" 스캐폴드}값). **재조사 안 함.** 여기서는 **§4.2 툴 루프에 얹었을 때의 구조 전제**만 든다:
 
-1. **tool-calling이 있어야 §4.2 루프가 돈다.** 카드는 tool-calling·사고 토큰 O를 주장한다([pov-design §6.1](2026-09-29-cybergym-pov-design.md)) — **우리 스택에서 tool-calling 파싱이 실제로 서는지 미실측**(D-δ). qwen3.6 계열이 parser 없으면 사고 없이 답한 실측이 있다.
+1. **tool-calling이 있어야 §4.2 루프가 돈다.** 카드는 tool-calling·사고 토큰 O를 주장한다([pov-design §6.1](2026-09-29-cybergym-pov-design.md)) — **우리 스택에서 tool-calling 파싱이 실제로 서는지 미실측**(D-δ). qwen3.6 계열이 parser 없으면 사고 없이 답한 실측이 있다. ⏵ 낡음 — 위 시점 노트 ⑤: 지금 루프는 tool-calling이 아니라 `PovAction` JSON 스키마 출력으로 돈다(`prompts/pov/v2/meta.yaml`의 `output_schema: PovAction` · `nodes/pov.py`에 tool_call 0건). 아래 「tool-calling 파싱이 서는지 미실측」은 카드 기능에 대한 서술로는 그대로이나 현 구현의 전제가 아니다 — feyospace가 이 JSON 출력을 우리 스택에서 내는지가 미실측이다
 2. **서빙 미확인**: 새 `qwen3_5` 하이브리드 어텐션 + 비전 타워. ATOM vLLM 0.27.1 기동 여부 `[미확인]`. 비전 타워는 PoV(텍스트/바이트)엔 불필요 — 로드 비용만 낸다.
 3. **모델 선정 축은 실험팀 Notion**(ADR 0012 결정 5). 이 문서는 "얹으면 구조가 요구하는 것"만 든다.
 
@@ -271,7 +275,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 | --- | --- | --- |
 | 벤치마크 채택·레벨 | Level 1 ↔ E2E ↔ 탐지벤치 ↔ 안 함 | **실험팀 Notion**(ADR 0012 결정 5). ADR 0012 Phase 7 수정 필요 ⏵ 낡음 — 위 시점 노트 ③ |
 | 8단계 재판정 | 유지(내부 필터) ↔ oracle 대체 ↔ 병존 | §3 — 병존이 문헌 방향, 값은 D-β |
-| PoV 실행 형태 | 단발 PoC 재생(A) ↔ 툴 루프(B) ↔ 퍼징(C) | §4·§6 — B가 선례 수렴점. 「1차는 정적+검증」의 리더보드 근거는 존재 증명까지(§6) |
+| PoV 실행 형태 | 단발 PoC 재생(A) ↔ 툴 루프(B) ↔ 퍼징(C) | §4·§6 — B가 선례 수렴점. 「1차는 정적+검증」의 리더보드 근거는 존재 증명까지(§6) ⏵ B는 착지했다 — 위 시점 노트 ①(`STATUS.md` §PoV) |
 | PoV 툴셋 | 코드열람+ASan+gdb(있음) ↔ +Python ↔ +퍼징 | §5.3 — Python이 1순위 신규 |
 | PoV 모델 | feyospace ↔ 로스터 내 후보 | §7 — 실험팀 + 서빙 실측(D-δ) |
 
@@ -279,14 +283,14 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 - **D-α**: PoV 툴 루프 홉별 "내부 크래시 도달률" 곡선(선례가 예고하는 조기 포화, §4.2).
 - **D-β**: 8단계를 필터로 두고 oracle을 정본으로 할 때 FP 누수율(§3.1).
 - **D-γ**: 정적-only PoV vs 동적-보조 PoV의 성공률 차(§6, 값이 우선순위를 가른다).
-- **D-δ**: feyospace(또는 대안)의 우리 스택 tool-calling 서빙 여부·PoV 기여(§7).
+- **D-δ**: feyospace(또는 대안)의 우리 스택 tool-calling 서빙 여부·PoV 기여(§7). ⏵ 현 루프 전제는 JSON 스키마 출력 — 위 시점 노트 ⑤
 
 ---
 
 ## 9. 이 조사가 확인하지 못한 것
 
 - **CyberGym 채택·레벨** — 실험팀 소관, 이 문서가 안 정한다. ⏵ 「실험팀 소관」은 낡음 — 위 시점 노트 ③(Level 1 선택은 ADR 0012:196, 설계는 실험팀 몫)
-- **feyospace의 우리 스택 tool-calling 서빙** — 미실측(§7). 카드 주장뿐.
+- **feyospace의 우리 스택 tool-calling 서빙** — 미실측(§7). 카드 주장뿐. ⏵ 현 루프 전제는 JSON 스키마 출력 — 위 시점 노트 ⑤
 - **PoV 툴 루프의 실제 홉 이득** — 선례만 있고 우리 과제 실측 0(§4.2).
 - **정적-only vs 동적-보조의 우리 성공률 차** — 기본 화면의 상위 사례는 정적이나 90% 넘는 행은 `dynamic` 라벨이 다수이고, 우리 과제 재현은 미실측(§6).
 - **Naptime/Big Sleep의 per-run 홉 상한 수치** — 공개 안 됨 `[미확인]`(어제 파일과 동일).
