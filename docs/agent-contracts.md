@@ -186,8 +186,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 ### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
-`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트
-materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트를
+도구 입력(`./poc`)으로 materialize하는 것+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
 신뢰면·리뷰. `src/schemas/pov.py` docstring). **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
 [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
@@ -210,6 +210,11 @@ materialize+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호�
   `pov.run_tool`) — `gdb`는 이 PR의 PoV 도구 화이트리스트에 없다(PR #327이 에이전트 gdb를 들인다).
   ⚠ **PoC 바이트는 아직 도구 입력으로 안 들어간다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만 넘긴다)
   — 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와 무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+- 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
+  한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
+  `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
+  게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — `pov_hop`(gen)의 `poc_sha256`이 잃은
+  PoC를 특정한다(그 한계는 `src/orchestrator/poc_log.py` docstring이 든다).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면

@@ -10,7 +10,7 @@
 조립한 PoC가 하나도 없는 루프(gen 없는 submit·hop0 실패)는 파일도 `poc_ref`도 없다. submit 못 한
 부분 PoC(max_hop·repeat·흡수된 홉 실패)도 남긴다 — 회수가 목적이라 종단 사유로 가르지 않는다.
 
-## 왜 필요한가 — 「되살릴 방법이 없었다」가 아니라 「번거롭거나, 어떤 경우엔 없었다」
+## 왜 필요한가 — 되살리기가 번거롭거나, 어떤 경우엔 불가능했다
 
 루프는 조립한 바이트를 반복 판정에 쓰고 trace에는 길이와 sha256만 남겼다. 조립이 결정론이라
 **spec이 남아 있으면 같은 바이트를 다시 만들 수 있다.** SUBMITTED 루프의 마지막 `gen` spec은 다음
@@ -67,8 +67,9 @@ digest는 그 파일에 대해 항상 참인데 번역된 바이트가 「의도
 **디렉터리가 `poc/`이면** `ContainerToolRunner._write`가 `poc` 도구의 로그를 쓰는 슬롯
 (`TOOL_KINDS`의 멤버)과 한 디렉터리가 되고 `make_payload_reader`는 접미사를 안 걸러 읽는다.
 **확장자가 `.bin`이면** `preprocess._KIND_BY_SUFFIX`가 BINARY로 분류해 `_ANALYZABLE`에 든다 —
-`--target`이 저장소 루트라 `artifacts/`가 대상 트리 안에 있으면 **이전 run의 PoC 바이트가 다음
-run의 Scout 프롬프트에 들어가며** 이 저장소는 그런 run을 무효로 본다(리뷰어가 재현했다). 둘 다
+`--target`이 저장소 루트라 `artifacts/`가 대상 트리 안에 있으면 **이전 run의 PoC가 다음 run의 분석
+대상이 되어 그 바이트가 Scout 프롬프트에 실린다**(dev_fake 실측: 후보가 되고 `prompts/…_scout.md`에
+들어간다 — `.poc`는 후보도 안 된다). 한 run의 답이 다음 run의 입력이 되는 오염이다. 둘 다
 `tests/test_poc_log.py`가 고정한다.
 
 **파일명은 순번뿐이다.** `PromptLog`와 같은 모양이다. `finding_id`를 안 쓰는 이유로 예전에 적은
