@@ -264,9 +264,10 @@ _CONTEXT_OVERFLOW = "maximum context length"
 # `_drop`이 가른다. 422는 크기가 아니라 체계적 신호로 센다. vLLM 0.27.1은 요청 모양 거절도 422가
 # 아니라 400으로 준다(#296).
 #
-# 그 밖(상태 없음 = 연결 실패·타임아웃, 5xx = 서버 오류)은 서버 쪽 사건이라 잡지
-# 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며 돈다. **예외는 서버가 생성 중이던
-# 타임아웃 하나다**(`ModelGatewayError.generating`, #261) — 판정은 `_is_droppable`에 있다.
+# 그 밖(상태 없음 = 연결 실패·타임아웃·계약 밖 200, 5xx = 서버 오류, 이 셋 밖의 4xx = 401·404·
+# 429 등)은 후보 하나의 답이 아니라 잡지 않는다. 잡으면 남은 target 수백 개를 전부 실패시키며
+# 돈다. **예외는 서버가 생성 중이던 타임아웃 하나다**(`ModelGatewayError.generating`, #261) —
+# 판정은 `_is_droppable`에 있다.
 _DROPPABLE_STATUS = frozenset({400, 413, 422})
 
 # 연속 폐기 상한. 체계적 고장(모델이 스키마를 전혀 못 맞춘다 등)이면
@@ -300,15 +301,17 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     **함수로 뺀 이유가 그것이다** — 두 곳이 각자 `status not in _DROPPABLE_STATUS`를 적으면
     한쪽만 고쳐질 때 같은 오류가 자리에 따라 다르게 처리된다.
 
-    `status`가 없으면(연결 실패·타임아웃·비-JSON 응답) 서버 쪽 사건이라 버릴 수 없다.
+    `status`가 없으면(연결 실패·타임아웃·비-JSON·비-UTF-8·모양이 다른 200) 서버 쪽 사건이라
+    버릴 수 없다. 5xx와 `_DROPPABLE_STATUS` 밖의 4xx(401·404·429 등)도 같다 — 상태로는 「요청 하나에
+    대한 답」인지 가를 수 없다.
     **예외 하나 — 타임아웃인데 서버가 그동안 토큰을 냈다**(`generating is True`, 어댑터가
     `/metrics`로 잰다). 느린 것이지 죽은 것이 아니다(#261). 연속 폐기 상한은 그대로 센다 —
     느린 후보가 셋 연달아면 run이 선다.
 
     ⚠ **버릴 수 있다고 계속 가는 것은 아니다(#296).** 크기가 아닌 400도 여기서 참이지만
     `_drop`·`_drop_finding`이 첫 건에서 run을 멈춘다. 여기서 거짓으로 돌려 올려 보내면
-    `run_pipeline`이 「게이트웨이가 응답하지 않는다」(`MODEL_GATEWAY_UNAVAILABLE`)로 적는다 —
-    서버는 살아 있고 요청을 거절했으므로 그 사유는 틀린다.
+    `run_pipeline`이 `MODEL_GATEWAY_UNAVAILABLE`로 적는다 — 서버는 살아 있고 요청을 거절했으므로
+    그 사유는 틀린다. (401·404·429도 같은 사유로 가고 같은 이유로 부정확하다 — 바꾸지 않았다.)
     """
     if exc.generating is True:
         return True
@@ -436,8 +439,9 @@ class Dependencies(Protocol):
     # 단계 경계 모델 교대 (ADR 0012 Phase 6.5 — 콜드 재기동). `keys`만 떠 있게 하고 교대 명령의
     # 보고를 스칼라 dict로 돌려준다(`model_swap` 이벤트의 `report.*`). `keys`가 비면 전부 내린다.
     # 실패는 `ModelSwapError`(`ModelGatewayError` 하위형)다 — **러너는 단계 진입 교대에서 이 계약을
-    # 믿는다.** 그 밖의 예외는 정지 갈래가 못 잡아 매니페스트 없이 `run_pipeline` 밖으로 샌다
-    # (`models`의 계약 밖 예외와 같은 대우다). 계약은 구현이 지킨다 — 실 구현
+    # 믿는다.** 그 밖의 예외는 최후 방어선이 **사유 `unforeseen_failure`로** 받는다 — 매니페스트는
+    # 남지만 「교대가 실패했다」가 기록에서 사라진다(⏵ 2026-10-02 정정: 전 판은 *"매니페스트 없이
+    # `run_pipeline` 밖으로 샌다"*라 적었다). 계약은 구현이 지킨다 — 실 구현
     # `src/adapters/model_swap.py`가 예상 밖 `Exception`을 `ModelSwapError`로 감싼다. run 끝
     # 내림만은 `finally`라 무엇이든 경고로 줄인다(`run_pipeline`). `None`이면 교대가 없는 run이다 —
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
@@ -814,6 +818,8 @@ def run_pipeline(
     last, stop_reason = spec.stop_at()
     state = _Accumulator()
     stopped_after = None if stop_reason is None else last
+    # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(`finally` 바로 뒤).
+    unforeseen: Exception | None = None
     # heartbeat: 러너가 살아 있는지를 밖에서 읽게 한다(이슈 #208 ②). `PromptLog`와 같은
     # 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일 때만 켠다. 모델 호출이 멈춰도 이
     # 스레드는 틱해 "죽음↔느림"을 가른다.
@@ -847,7 +853,10 @@ def run_pipeline(
         # 안 남았고, zlib 때 `state.db`를 직접 열어야 했던 이유가 그것이다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.MODEL_GATEWAY_UNAVAILABLE
-        warnings.append(f"게이트웨이가 응답하지 않아 중단했다: {error_detail(exc)}")
+        # 상태 없음(끊김·타임아웃·계약 밖 200)·5xx·`_DROPPABLE_STATUS` 밖 4xx가 모두 여기로 온다 —
+        # 경고는 원인을 단언하지 않는다(「응답하지 않아」는 계약 밖 200에 거짓이다) — 원인은
+        # detail이다.
+        warnings.append(f"게이트웨이 실패로 중단했다: {error_detail(exc)}")
     except _TooManyDrops as exc:
         # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
         stopped_after = int(ctx.current_stage)
@@ -863,6 +872,23 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
+    except Exception as exc:
+        # 🔴 **최후 방어선 (S0) — 범위는 `_analyze`다.** 위 다섯은 **예상한** 형이고, 이 갈래는
+        # **`_analyze`에서 난 예상 밖 형 전부**다. 그런 예외가 하나라도 나면 `write_manifest`(아래)
+        # 앞을 뚫고 나가 **산출물이 통째로 사라졌다** — 위 `ModelGatewayError` 갈래의 주석이 적어 둔
+        # zlib 사고가 정확히 그것이고, 그 갈래는 **그 형에만** 방어선을 세웠다.
+        # ⚠ **`_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트 재등급·`report.run`)에서
+        # 처음 나는 예외는 안 덮는다** — 이 `try`가 감싸는 것은 `_analyze` 하나다. 범위를 넓히는
+        # 것은 별 작업이다(아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다).
+        #
+        # 🔴 **삼키지 않는다 — 적고, 매니페스트를 쓰고, 다시 던진다.**
+        # 삼키면 두 가지가 깨진다: ① 호출자(`cli.execute`)가 run을 성공으로 읽는다
+        # ② `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 — 그쪽은
+        # **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. 최후 방어선의 뜻은 "삼킨다"가
+        # 아니라 "**증거를 남기고** 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
+        stopped_after = int(ctx.current_stage)
+        stop_reason = ReasonCode.UNFORESEEN_FAILURE
+        unforeseen = exc
     finally:
         # **run 끝 내림 — 성공·실패 모두**(ADR 0012 Phase 6.5). 멈춘 run이 서버를 붙들고 남으면
         # 다음 run이 못 뜬다. 교대가 실패한 run도 내린다 — 명령이 일부만 띄우고 죽었을 수 있다.
@@ -888,6 +914,36 @@ def run_pipeline(
             # 있는데 멈춤)으로 본다 — 죽음과 갈린다.
             if heartbeat is not None:
                 heartbeat.stop()
+
+    if unforeseen is not None:
+        # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
+        # HIGH 1).
+        # 후처리의 `gate.evaluate` 재등급은 `_analyze`의 6단계 게이트와 **같은 순수 함수**라 그
+        # 결함이 거기서 **또 난다** — 2차 예외가 `write_manifest` 앞을 뚫고 원 스택을 덮었다. 렌더는
+        # 던지는 순간 쓸 곳(`cli.run`)에 못 가 어차피 안 쓰이고, `report.run`이 남기는 9단계 진입은
+        # 거기 간 적 없는 run을 간 것으로 읽히게 한다.
+        # 매니페스트마저 못 쓰면(디스크·권한) 그 예외는 `add_note`로 **원 예외에 붙이고** 원 예외를
+        # 던진다. ⚠ 아래 정상 경로의 `finish_run`·`write_manifest`와 같은 호출이다 — 인자를 바꾸면
+        # 두 곳을 같이 고친다.
+        #
+        # ⚠ **`report.md`는 안 남는다.** 리포트를 파일로 쓰는 것은 `cli.run`이 `execute` **반환
+        # 뒤**에 한다 — 여기서 던지면 그 자리에 도달하지 않는다. 프로세스는 exit 1이고 남는 것은
+        # 매니페스트·trace·`state.db`다(적대적 리뷰 2026-10-02 실측). 리포트까지 남기려면 쓰기를
+        # `run_pipeline` 안으로 옮기는 별 작업이 필요하다.
+        try:
+            crashed = state_machine.finish_run(
+                record,
+                finished_at=max(now(), started_at),
+                stopped_after=stopped_after,
+                reason=stop_reason,
+                store=ctx.store,
+                trace=trace,
+            )
+            if run_dir is not None and not spec.dry_run:
+                write_manifest(run_dir, crashed)
+        except Exception as exc:
+            unforeseen.add_note(f"매니페스트를 남기지 못했다: {type(exc).__name__}: {exc}")
+        raise unforeseen
 
     # **GPU 회계 판정은 여기서 한다.** `_new_record`는 파이프라인 시작 전에 불리므로 그
     # 시점에는 모델 호출이 하나도 없다. 실서빙 역할과 교집합해서 Fake 역할이 섞이지 않게
@@ -2819,7 +2875,7 @@ def _triage_by_candidate(
     | --- | --- | --- |
     | 후보 하나가 컨텍스트를 넘겼다 | 413, 또는 400 + 컨텍스트 초과 문구 | 그 후보만 버린다 |
     | 요청 모양·서버 설정이 틀렸다 | 그 밖의 400 | 첫 건에서 멈춘다(#296) |
-    | 서버가 죽었다 | `status`가 없거나 5xx | 즉시 멈춘다 |
+    | 서버 쪽 사건 | `status`가 없거나 5xx, 400·413·422 밖의 4xx | 즉시 멈춘다 |
     | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
 
     **연속 폐기를 하나의 카운터로 센다.** 게이트웨이와 스키마를 따로 세면 둘이 번갈아
