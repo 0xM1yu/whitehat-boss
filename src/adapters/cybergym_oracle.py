@@ -283,10 +283,12 @@ def _post(
     timeout: float,
     parse: Callable[[Any], _T],
 ) -> _T:
-    headers = {"Content-Type": content_type}
+    request = _request(url, body, {"Content-Type": content_type})
     if api_key is not None:
-        headers[API_KEY_HEADER] = api_key
-    request = _request(url, body, headers)
+        # `add_header`가 아니다 — 그것으로 단 헤더는 302를 따라갈 때 새 요청으로 옮겨져
+        # 다른 호스트로 실려 간다. `unredirected`는 원래 서버로만 간다(`header_items()`에는
+        # 그대로 보인다).
+        request.add_unredirected_header(API_KEY_HEADER, api_key)
     return _send(request, timeout=timeout, keyed=api_key is not None, parse=parse)
 
 
