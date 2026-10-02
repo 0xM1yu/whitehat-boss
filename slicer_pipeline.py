@@ -1,7 +1,9 @@
 """Candidate-stage transitions, reusable checkpoints and result accounting."""
 
 import copy
+import hashlib
 import time
+from pathlib import Path
 
 import slicer_queries as queries
 from slicer_candidates import collect
@@ -22,6 +24,18 @@ STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 # always exceeds the 600s deadline), resume re-burns the timeout on it every time, and a
 # streak of >= POISON_STOP_STREAK such candidates never advances past them (documented limit).
 POISON_STOP_STREAK = 3
+
+
+def file_identity(path: Path) -> dict | None:
+    """Size and SHA-256 of a file as this client reads it; None when it cannot read it."""
+    try:
+        sha = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1 << 20), b""):
+                sha.update(block)
+        return {"bytes": path.stat().st_size, "sha256": sha.hexdigest()}
+    except OSError:
+        return None
 
 
 class SlicingStages:
@@ -270,11 +284,95 @@ class SlicingStages:
                 "exported as degraded anchor-only slices"
             )
 
+    def check_prepared(self) -> None:
+        """Before any Joern request: `--cpg` must be the graph the prepare run saved (#368).
+
+        The prepare run writes `prepared` only after `save_cpg` succeeded, so a seed from a
+        prepare that died while saving has none. The size+SHA-256 bind the file to that run: a
+        different or rewritten CPG under the same path is refused instead of sliced."""
+        prepared = self.checkpoint.get("prepared") if self.checkpoint else None
+        if prepared is None:
+            raise ValueError(
+                "--cpg needs a copy of a checkpoint whose --prepare-only run saved the CPG; this "
+                "one has no 'prepared' record (that run failed before or while saving). Rerun "
+                "--prepare-only with a new --checkpoint and --cpg-out"
+            )
+        if prepared["sha256"] is None:
+            raise ValueError(
+                "The prepare run could not read the CPG it saved, so it has no SHA-256 to verify "
+                f"--cpg against ({prepared['path']}); rerun --prepare-only where the client can "
+                "read --cpg-out"
+            )
+        found = file_identity(self.cpg_file)
+        expected = {"bytes": prepared["bytes"], "sha256": prepared["sha256"]}
+        if found != expected:
+            raise ValueError(
+                f"--cpg {self.cpg_file.as_posix()} is not the CPG the prepare run saved: "
+                f"expected {expected}, found {found}"
+            )
+        self.prepared = prepared
+
+    def restore_discovery(self) -> None:
+        """Take the candidate list and discovery result a `--prepare-only` run left (#368)."""
+        baseline = self.checkpoint.get("baseline") if self.checkpoint else None
+        candidates = self.checkpoint.get("candidates") if self.checkpoint else None
+        if baseline is None or candidates is None:
+            raise ValueError("--cpg needs a checkpoint copied from a --prepare-only run")
+        # The discovery counters, manifest and parse report are the prepare run's. The server and
+        # cpg_seconds are this process's own measurements (here: the importCpg time), so they are
+        # kept; the prepare's CPG time stays under prepared_cpg.cpg_seconds.
+        server = self.result.get("server")
+        cpg_seconds = self.result["counters"]["cpg_seconds"]
+        self.result.update(baseline["result"])
+        self.result["server"] = server
+        self.measure("cpg_seconds", cpg_seconds)
+        self.result["prepared_cpg"] = self.prepared
+        self.errors.extend(e for e in baseline["errors"] if e not in self.errors)
+        self.candidates = candidates
+
+    def save_cpg(self) -> None:
+        """Save the graph for the shards and slice nothing (#368 `--prepare-only`).
+
+        `prepared` goes into the checkpoint last, after the copy succeeded and the client hashed
+        it: a shard (`check_prepared`) accepts only a seed that has it."""
+        data, _ = self.query("save_cpg", queries.save_cpg_query(self.cpg_out.as_posix()))
+        identity = file_identity(self.cpg_out)
+        prepared = {
+            "path": self.cpg_out.as_posix(),
+            "server_bytes": data.get("bytes"),
+            "bytes": identity["bytes"] if identity else None,
+            "sha256": identity["sha256"] if identity else None,
+            "cpg_seconds": self.result["counters"]["cpg_seconds"],
+        }
+        self.result["prepared_cpg"] = prepared
+        if identity is None:
+            self.result["measurement_notes"]["prepared_cpg"] = (
+                "the saved CPG is not readable from this client, so bytes/sha256 are unmeasured "
+                "and --cpg will refuse this checkpoint"
+            )
+            self.errors.append(
+                f"Prepare-only: {self.cpg_out.as_posix()} is not readable from this client; "
+                "shards cannot verify it and --cpg will refuse this checkpoint"
+            )
+        elif identity["bytes"] != data.get("bytes"):
+            raise ValueError(
+                f"Joern saved {data.get('bytes')} bytes but this client reads {identity['bytes']} "
+                f"at {self.cpg_out.as_posix()}; it is not the same file"
+            )
+        if self.checkpoint:
+            self.checkpoint.bind("prepared", prepared)
+        self.errors.append(
+            "Prepare-only: CPG saved and candidates discovered, none sliced; copy the "
+            "checkpoint per shard and run each with --resume --cpg <saved CPG> --shard I/N"
+        )
+
     def run(self) -> dict:
         started = time.perf_counter()
         try:
             self.load_sources()
             self.prepare_checkpoint()
+            if self.cpg_file is not None:
+                self.check_prepared()
             if self.export_only:
                 self.restore_export()
             else:
@@ -283,12 +381,19 @@ class SlicingStages:
                 self.define_library()
                 if self.checkpoint:
                     self.checkpoint.bind("engine_config", self.result["joern_engine_config"])
-                self.collect_candidates()
-                if self.checkpoint:
-                    self.checkpoint.set(
-                        "baseline",
-                        {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
-                    )
+                if self.cpg_file is not None:
+                    # A shard on a prepared CPG reuses the prepared discovery (#368): same
+                    # candidate list for every shard, and no case_a/case_b queries per shard.
+                    self.restore_discovery()
+                else:
+                    self.collect_candidates()
+                    if self.checkpoint:
+                        self.checkpoint.set(
+                            "baseline",
+                            {"result": copy.deepcopy(self.result), "errors": self.errors.copy()},
+                        )
+                if self.prepare_only:
+                    self.save_cpg()
                 # QueryError comes from slicer_errors, not `from slicer import` -- under
                 # `python slicer.py` that import loaded a second slicer module whose QueryError
                 # never matched what slicer.py raised, so this isolation never ran (#363).
@@ -299,8 +404,21 @@ class SlicingStages:
                 # unprocessed) -- switch to emitting anchor-only degraded slices without querying
                 # the server, so no captured candidate is lost from slices.json.
                 degrade_only = False
-                for position, candidate in enumerate(self.candidates):
-                    if self.shard and position % self.shard[1] != self.shard[0]:
+                if self.claims is not None and not self.prepare_only:
+                    # A leftover claim file from another run would make every shard find all
+                    # candidates taken and slice nothing; refuse it instead (#372 review).
+                    self.claims.bind(self.result["run_signature"], self.candidates)
+                for position, candidate in enumerate(
+                    [] if self.prepare_only else self.candidates
+                ):
+                    if self.claims is not None:
+                        # Shared queue (#369): a shard whose server is poisoned stops taking work
+                        # so the healthy shards slice the rest, instead of degrading all of it.
+                        if degrade_only:
+                            break
+                        if not self.claims.claim(candidate["candidate_key"]):
+                            continue
+                    elif self.shard and position % self.shard[1] != self.shard[0]:
                         continue
                     if degrade_only:
                         # A prior run may have already completed this candidate's full slice (a
@@ -345,11 +463,18 @@ class SlicingStages:
                         if exc.poisoned:
                             consecutive_poison += 1
                             if consecutive_poison >= POISON_STOP_STREAK:
+                                remaining = (
+                                    # Claim mode: the loop breaks, nothing more is claimed.
+                                    "this shard stops claiming candidates; the rest stay in the "
+                                    "shared queue for the other shards"
+                                    if self.claims is not None
+                                    else "remaining candidates get degraded (anchor-only) "
+                                    "slices without querying the server"
+                                )
                                 self.errors.append(
                                     f"{consecutive_poison} consecutive poisoned candidates; "
-                                    "remaining candidates get degraded (anchor-only) slices "
-                                    "without querying the server. Restart the dedicated server "
-                                    "and --resume to re-attempt full slices"
+                                    f"{remaining}. Restart the dedicated server and --resume "
+                                    "to re-attempt full slices"
                                 )
                                 degrade_only = True
                         else:
@@ -370,14 +495,22 @@ class SlicingStages:
         return self.result
 
     def finish(self, started: float) -> None:
+        if self.prepare_only:
+            # After the checkpoint baseline, so neither a shard nor a merged export inherits it.
+            # The loader (src/adapters/slices.py) refuses this file: it holds no slices.
+            self.result["prepare_only"] = True
         if self.shard:
             # After the checkpoint baseline, so a merged --export-only does not inherit it.
             index, count = self.shard
             self.result["shard"] = {"index": index, "count": count}
+            taken = (
+                "only the candidates it claimed from the shared queue"
+                if self.claims is not None
+                else f"only candidates at positions p % {count} == {index}"
+            )
             self.errors.append(
-                f"Shard {index}/{count}: only candidates at positions p % {count} == {index} "
-                "were sliced; merge the shard checkpoints (tools/merge_slicer_shards.py) and "
-                "run --export-only for the full result"
+                f"Shard {index}/{count}: {taken} were sliced; merge the shard checkpoints "
+                "(tools/merge_slicer_shards.py) and run --export-only for the full result"
             )
         if self.cpg_ready:
             truncated = [c for c in self.completed if c["truncated"]]
