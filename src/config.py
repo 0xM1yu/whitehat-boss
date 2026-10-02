@@ -642,6 +642,18 @@ class Thresholds(HarnessModel):
     # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
     # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
+    # Auditor가 `repro_spec`을 비워 내면 하네스가 합성하는가 (#S7). 0이면 종전 — 비면 그대로
+    # 비어 F-9(`repro_spec_missing`)로 `hypothesized`에 멈추고 8단계가 안 돈다. 1이면
+    # `auditor._ensure_repro_origin`이 후보 위치로 명세를 합성해(`origin=harness`) E3(`validated`)
+    # 까지 올려 8단계가 돈다. CyberGym Level 1처럼 과제가 재현법을 안 주는 run을 위한 것이라
+    # 기본은 끈다.
+    # ⚠ E4(`proven`)는 이 값과 무관하게 실행 로그를 요구한다(`ReproOrigin` 주석). 모델이 낸 명세는
+    # 이 값과 무관하게 `origin=model`로 덮인다.
+    # ⚠ **켜면 #232(D80)가 잠복에서 도달 가능으로 바뀐다** (#393 리뷰 MEDIUM-1) — 전엔 8단계에
+    # 아무것도 안 올라와 #232가 닿을 수 없었다. 합성이 Finding을 validated로 올려 8단계가 도구를
+    # 돌리는데, `gate`의 `p4`는 `ok=True`만 보고 크래시(non-zero)와 exit 0을 안 가른다 -> 크래시
+    # 0건으로 proven이 날 수 있다. 켜기 전에 #232를 먼저 본다.
+    synthesize_repro_spec: int = Field(default=0, ge=0, le=1)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
         """켜진 Auditor `SOURCE` 옵션(#349) — 결정 1-b를 넓히는 값들. 프롬프트가 그 입력을
