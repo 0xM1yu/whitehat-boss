@@ -76,13 +76,15 @@ R-2의 사유는 `finish_run()`이 정하지 않고 **호출자가 넘긴다.** 
 | `user_stop_requested` | 사용자가 `--stop-after N`으로 자름 |
 | `dry_run` | `--dry-run`이 3단계에서 자름 (`DRY_RUN_LAST_STAGE`) |
 | `model_swap_failed` | `ModelSwapError` — 다음 단계 서버를 **띄우지 못했다** |
-| `model_gateway_unavailable` | `ModelGatewayError` — 상태 코드 없음(**계약 밖 200** 포함)·5xx |
+| `model_gateway_unavailable` | `ModelGatewayError` — 후보 하나의 답이 아닌 것(아래 문단) |
 | `consecutive_target_failures` | `_TooManyDrops` — 서버는 답하는데 후보가 계속 죽는다 |
 | `schema_parse_failed` | `SchemaParseError`가 가드 없는 경로에서 올라옴 |
 | `unforeseen_failure` | **그 밖 전부** — `_analyze`의 예상 밖 예외(최후 방어선이 다시 던진다) |
 
-`model_gateway_unavailable`은 「서버가 죽었다」와 「응답이 계약 밖이다」(비-JSON·비-UTF-8·모양이
-다른 200)를 **같은 사유 코드로** 적는다 — 둘을 가르는 것은 trace의 `model_call.error_detail`이다.
+`model_gateway_unavailable`은 「서버가 죽었다」보다 넓다. `ModelGatewayError` 중 **후보 하나의 답이
+아닌 것 전부**(`runner._is_droppable`이 거짓인 것)다 — 상태 코드 없음(연결 끊김·타임아웃·비-JSON·
+비-UTF-8·모양이 다른 200)·5xx·`400·413·422` 밖의 4xx(401·404·429 등). 이들을 **같은 사유 코드로**
+적고, 무엇이었는지는 trace의 `model_call.error_detail`이 가른다.
 
 앞의 셋(`budget_exhausted`·`user_stop_requested`·`dry_run`)을 하나로 묶지 않는 이유는
 evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기 때문이다. 묶으면 예산을 0.03%만 쓴 run이
