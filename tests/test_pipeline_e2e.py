@@ -418,8 +418,8 @@ def test_run_takes_a_level1_task_bundle_as_its_source(
 
 def _task_run_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture, extra: list[str], *, needle: str
-) -> None:
-    """`--task-dir` run 하나가 **exit 2이고 빈 run 디렉터리를 안 남기는지** 본다.
+) -> str:
+    """`--task-dir` run 하나가 **exit 2이고 빈 run 디렉터리를 안 남기는지** 본다. stderr를 돌려준다.
 
     거부 갈래마다 같은 두 불변식을 봐야 한다 — 전 판은 그것을 **한 갈래에서만** 봐서 나머지가
     run 디렉터리를 만들어도 초록이었다(적대적 리뷰 2026-10-02 M-3)."""
@@ -431,6 +431,7 @@ def _task_run_is_refused(
     assert rc == 2, err
     assert needle in err, err
     assert not arts.exists() or not list(arts.iterdir()), "빈 run 디렉터리를 남겼다"
+    return err
 
 
 def test_run_refuses_a_task_work_dir_that_already_has_files(
@@ -641,33 +642,47 @@ def test_run_refuses_both_task_dir_and_target(
 
 
 _TASK_SOURCE = "src-vul/mod_00.c"
+# 개수 가드 에러가 들고 있어야 하는 경로 기준 문장.
+_SLICE_PATH_RULE = (
+    "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 한다"
+)
 
 
-def _task_slices(root: Path, *, text: str = "int main(void) { return 0; }") -> Path:
-    """`_level1_task`가 풀어 놓는 `src-vul/mod_00.c` 한 줄을 가리키는 `slices.json`.
+def _task_slices(
+    root: Path,
+    *,
+    text: str = "int main(void) { return 0; }",
+    files: tuple[str, ...] = (_TASK_SOURCE,),
+) -> Path:
+    """`files`마다 그 파일 1번 줄을 가리키는 슬라이스 하나씩을 든 `slices.json`. 기본은
+    `_level1_task`가 풀어 놓는 `src-vul/mod_00.c` 하나다(슬라이스 id는 `slice_0001`부터).
 
     `code`는 슬라이서 자신의 `assemble`로 만든다 — 렌더러의 줄 규칙이 슬라이서와 같다는 것을 지어낸
     문자열이 아니라 슬라이서 함수로 맞추려는 것이다(`tests/test_slices.py`와 같은 근거 ·
     CLAUDE.md §2.5 「핀 샘플은 저장소에서 온다」). `text`를 다르게 주면 슬라이서가 **다른 내용**을
-    봤다는 뜻이라 drift 슬라이스가 된다."""
-    points = {(_TASK_SOURCE, 1)}
+    봤다는 뜻이라 drift 슬라이스가 된다. `files`에 번들 최상위 접두어(`src-vul/`)가 없는 경로나 다른
+    과제의 경로를 주면 풀린 트리에 없는 슬라이스가 된다."""
+    items = []
+    for number, file in enumerate(files, start=1):
+        points = {(file, 1)}
+        items.append({
+            "id": f"slice_{number:04d}",
+            "candidate_key": f"key_{number:04d}",
+            "case": "A",
+            "entry": {"file": file, "line": 1, "symbol": "main"},
+            "members": [f"key_{number:04d}"],
+            "absorbed": [],
+            "lines": [{"file": f, "line": n} for f, n in sorted(points)],
+            "code": assemble(points, {file: [text]}),
+        })
     path = root / "slices.json"
     path.write_text(
         json.dumps({
             "slice_version": "slice-v2",
             "status": "ok",
             "joern_engine_config": {"maxCallDepth": 2},
-            "slices": [{
-                "id": "slice_0001",
-                "candidate_key": "key_0001",
-                "case": "A",
-                "entry": {"file": _TASK_SOURCE, "line": 1, "symbol": "main"},
-                "members": ["key_0001"],
-                "absorbed": [],
-                "lines": [{"file": f, "line": n} for f, n in sorted(points)],
-                "code": assemble(points, {_TASK_SOURCE: [text]}),
-            }],
-            "candidate_manifest": {"key_0001": {"scopes": []}},
+            "slices": items,
+            "candidate_manifest": {item["candidate_key"]: {"scopes": []} for item in items},
         }),
         encoding="utf-8",
     )
@@ -727,6 +742,80 @@ def test_run_refuses_slices_that_drifted_from_the_unpacked_tree(
          "--slices", str(slices)],
         needle="drift",
     )
+
+
+@pytest.mark.parametrize(
+    ("files", "matched", "unmatched_ids"),
+    [
+        # 슬라이서를 번들 최상위 `src-vul/`**에서** 돌려 경로에 그 접두어가 없다 — 가장 자연스러운
+        # 슬라이싱 루트이고, 풀린 트리(`--task-work-dir` 기준)에서는 전부 없는 파일이다.
+        pytest.param(("mod_00.c",), 0, ["slice_0001"], id="all-missing-the-bundle-prefix"),
+        # 다른 과제의 slices.json — 경로가 아예 다르다.
+        pytest.param(("other/file.c",), 0, ["slice_0001"], id="foreign-task"),
+        # 일부만 안 맞는다 — 0건이 아니어서 「통째로 비었다」만 보는 검사를 통과한다.
+        pytest.param((_TASK_SOURCE, "mod_00.c"), 1, ["slice_0002"], id="partly-missing"),
+    ],
+)
+def test_run_refuses_slices_the_unpacked_tree_does_not_contain(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    files: tuple[str, ...],
+    matched: int,
+    unmatched_ids: list[str],
+) -> None:
+    """🔴 **렌더된 슬라이스 수가 입력 슬라이스 수와 다르면 exit 2다** — 침묵 0건 run을 막는다.
+
+    `render_slices`는 entry 파일이 트리에 없는 슬라이스를 **조용히 건너뛴다**(drift가 아니라
+    「없음」이라 오류가 아니다). `--task-dir`는 해제 트리가 번들 **최상위**(`src-vul/`의 부모)라
+    슬라이서를 `src-vul/`에서 돌린 자연스러운 슬라이스는 전부 걸러지고, run은 `후보 0건 / 완주 /
+    rc 0`으로 끝난다 — 아무것도 안 봤는데 정상으로 보이는 0이다(CLAUDE.md §0). 2026-10-03
+    `dev_fake`로 재현했다(trace에 `unmatched_slices:1, planned:0`뿐, stderr 경고 없음).
+    기존 `--target` 경로는 사람이 `--target <w>/src-vul`로 루트를 골라 이 문제가 안 난다.
+
+    에러는 몇 건 중 몇 건이 안 맞았는지, **어느** 슬라이스인지, 경로 기준이 무엇인지를 말한다."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path, files=files)
+
+    err = _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--slices", str(slices)],
+        needle=_SLICE_PATH_RULE,
+    )
+
+    total = len(files)
+    assert f"{total}건 중 {total - matched}건" in err, err
+    for slice_id in unmatched_ids:
+        assert slice_id in err, err
+    for slice_id in {f"slice_{n:04d}" for n in range(1, total + 1)} - set(unmatched_ids):
+        assert slice_id not in err, f"맞은 슬라이스 {slice_id}를 안 맞았다고 말한다"
+
+
+def test_run_accepts_an_empty_slice_set_with_a_task_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """슬라이스 **0건**짜리 `slices.json`은 받는다 — 슬라이서가 후보를 못 찾은 정상 산출물이다.
+
+    개수 가드는 「입력 수 ≠ 렌더 수」이지 「렌더 수가 0」이 아니다 — 0 = 0은 어긋남이 아니다.
+    「렌더가 비면 거부」로 좁히는 변이가 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path, files=())
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+            "--slices", str(slices),
+        ])
 
 
 def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
