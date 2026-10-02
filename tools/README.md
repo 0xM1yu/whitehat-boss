@@ -6,6 +6,7 @@
 | 디렉터리 | 내용 |
 | --- | --- |
 | `harness-tools/` | 1·2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·gdb·인덱서). 아래 참조 |
+| `slicer/` | 오프라인 Joern 슬라이서 모듈들 — 하네스가 파일(`slices.json`)로 받는 입력을 만든다. 하네스는 import하지 않는다. 사용법은 [slicer-README.md](../docs/slicer-README.md) |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
 
