@@ -15,7 +15,7 @@
 | 원천 | 무엇을 든다 |
 | --- | --- |
 | [2026-09-29-cybergym-pov-design.md](2026-09-29-cybergym-pov-design.md) | CyberGym 제출 프로토콜(저자 코드 대조) · 홉 루프 종료 조건 · triage↔synthesis 선례 · Gate 단순화 근거 · feyospace 후보 §6 |
-| [2026-09-29-cybergym-leaderboard-harnesses.md](2026-09-29-cybergym-leaderboard-harnesses.md) | 리더보드 엔트리의 하네스·도구·퍼저 사용(Q2·Q3) — EnIGMA 툴셋·정적/동적 분포 |
+| [2026-09-29-cybergym-leaderboard-harnesses.md](2026-09-29-cybergym-leaderboard-harnesses.md) | 리더보드 엔트리의 하네스·도구·퍼저 사용(Q2·Q3) — EnIGMA 툴셋·정적/동적(기본 화면 한정) |
 | [2026-09-29-auditor-finetuning-and-benchmark.md](2026-09-29-auditor-finetuning-and-benchmark.md) | Phase 7 정본에 CyberGym이 없음 · CyberGym은 탐지가 아니라 PoV 채점 · gdb/ASan 선례 §4.4 |
 
 ③ 선행 도구 한 곳(Google Naptime 4-도구 아키텍처)만 오늘 새로 열었다 — 어제 파일이 `[미확인]`으로 남긴 자리다(§5.1).
@@ -29,7 +29,7 @@
 2. **PoV는 코드 0줄이다** `[코드]` — `Role`에 `POV`가 없고, `prompts/pov/`·`nodes/pov.py`가 없다. `container_tools.plan()`의 `poc` 갈래는 `{SCRATCH}/poc`를 실행하지만 **그 파일을 만드는 주체가 없다**(§4.1).
 3. **Validation 교체는 "두 층"이다.** 현행 8단계는 **내부 재현 판정**(E4 = SANITIZER/CRASH/POC_RUN Evidence)이고, CyberGym은 **외부 oracle**(패치 전 크래시 ∧ 패치 후 무크래시)이다. 둘은 다른 것이고 **공존**할 수 있다 — 내부 E4는 비용 필터로, 최종 판정은 oracle로(§3).
 4. **선행 연구의 도구는 수렴한다** — Naptime 4개(Code Browser·Python·Debugger[ASan]·Reporter), EnIGMA(`debug_*`·`decompile`·`disassemble`·`search_file`, raw gdb 차단). **핵심 축은 "코드 열람 + 입력 생성 스크립트 + ASan/디버거 + 제출"**이고, 우리는 그중 셋의 재료를 이미 가졌다(index·gdb·asan). 빠진 것은 **입력 생성 스크립트(Python) 실행**과 **그 넷을 도는 루프**다(§5).
-5. **"동적이 PoV에 필수"라는 전제는 절반만 맞다** `[제3자/출처주장]` — 학술 AEG·Naptime·AIxCC는 동적을 쓰지만, **CyberGym 리더보드 지배적 풀이는 정적**이다(VellDepth 88.9%가 퍼저 명시 배제, XDxAI 정적→PoC). 동적 `-vul` 이미지는 **선택**이다. 정확한 서술은 "**최종 검증은 항상 실행(oracle)이지만, PoC를 만드는 과정은 정적이 지배적이고 동적은 강력하나 필수는 아니다**"이다(§6).
+5. **"동적이 PoV에 필수"라는 전제는 이 근거로 가부를 못 가른다** `[제3자/출처주장]` — 학술 AEG·Naptime·AIxCC는 동적을 쓴다. CyberGym에는 **정적만으로 상위에 간 존재 증명**이 있다(모델트랙 1위 XekRung 88.9%가 퍼저 명시 배제, XDxAI 정적→PoC). 그러나 이는 cybergym.io **기본 화면(model-focused) 한정**이다 — 90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨이다([leaderboard 조사 ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md), 2026-10-02 원문 데이터 재계산). 동적 `-vul` 이미지는 **선택**이다(FAQ Q5). 정확한 서술은 "**최종 검증은 항상 실행(oracle)이고, 정적만으로도 상위에 간 사례가 있으나 상위권 다수는 동적 라벨을 단다 — 필수 여부는 이 근거로 못 가른다**"이다(§6).
 
 ---
 
@@ -199,7 +199,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 | **EnIGMA** (CyberGym 베이스라인) | `debug_start`·`debug_exec`(gdb 래퍼) · `decompile` · `disassemble` · `search_file` · `submit`. raw gdb·vim 차단 | [leaderboard §2.1](2026-09-29-cybergym-leaderboard-harnesses.md) `[code]` |
 | **OpenHands** (주 베이스라인) | bash + 파일편집 + Python을 한 액션에(CodeAct) | [leaderboard §2.1](2026-09-29-cybergym-leaderboard-harnesses.md) `[출처주장]` |
 | **Claude Code 계열**(GLM·XDxAI) | 기본 read/shell/edit + `submit.sh`, 웹 도구 끔 | [leaderboard §2](2026-09-29-cybergym-leaderboard-harnesses.md) `[출처주장/code]` |
-| **VellDepth #1** | "fixed general-purpose tool framework"(목록 비공개), 퍼저 명시 배제 | [leaderboard §2·§3.4](2026-09-29-cybergym-leaderboard-harnesses.md) `[출처주장]` |
+| **XekRung #1**(모델트랙 88.9%, 같은 Alibaba 사이트의 `Velldepth Agent` 85.3%와 별개) | "fixed general-purpose tool framework"(목록 비공개), 퍼저 명시 배제 | [leaderboard §2·§3.4](2026-09-29-cybergym-leaderboard-harnesses.md) `[출처주장]` |
 
 > **수렴점**: 거의 모두 (a) **코드 열람**, (b) **셸/스크립팅(입력 생성)**, (c) **디버거/실행(ASan)**, (d) **제출**을 준다. 커버리지 퍼징을 돌린 확인 사례는 없다(§6).
 
@@ -212,7 +212,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 | 디버거 | ✅ 재료(PR #327) | `gdb` 배치. PoV가 첫 소비자(§4.3) |
 | 입력 생성 스크립트(Python) | ❌ 없음 | **1순위 신규.** PoC 바이트를 손으로 구성/변이 |
 | 제출(oracle) | ❌ 없음 | network=True라 ToolRunner 밖 별도 클라이언트(§3.2) |
-| 퍼징 | ⏸ 후순위(선택지 C) | 지배적 풀이가 아님(§6), 비용 큼 |
+| 퍼징 | ⏸ 후순위(선택지 C) | 열어 본 엔트리에서 퍼징 사례 없음(§6), 비용 큼 |
 
 **빠진 두 개가 요점이다** — 우리는 정적 도구(index·semgrep·clang-tidy)와 실행 판정 도구(asan·gdb)를 이미 가졌지만, **PoC 바이트를 만드는 스크립팅**과 **그 도구들을 도는 루프**가 없다. 그 둘이 §4.2와 이 표의 신규 두 줄이다.
 
@@ -223,13 +223,14 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 **전제: "지금은 정적 분석만으로 취약점을 찾지만, PoV엔 동적 분석이 필수다."**
 
 - **맞는 절반**: 우리 트리아지(Scout·Auditor)는 정적이다(슬라이스+설명). 그리고 **최종 검증은 반드시 실행**이다 — CyberGym oracle이 PoC를 실제로 돌려 크래시를 본다(§3). "PoC가 진짜 터지는가"는 정적으로 못 닫는다.
-- **어긋나는 절반** `[제3자/출처주장]`: **CyberGym 리더보드의 PoC 생성 과정은 정적이 지배적이다**([leaderboard §3](2026-09-29-cybergym-leaderboard-harnesses.md)) —
-  - VellDepth #1(88.9%)은 *"No fuzzing frameworks ... No ... dynamic debugging environments are provided"* — 동적 없이 최상위.
+- **어긋나는 쪽(존재 증명)** `[제3자/출처주장]`: **정적만으로 상위에 간 사례가 있다**([leaderboard §3](2026-09-29-cybergym-leaderboard-harnesses.md)) — 단 **cybergym.io 기본 화면(model-focused) 한정**이다 —
+  - XekRung #1(모델트랙 88.9%)은 *"No fuzzing frameworks ... No ... dynamic debugging environments are provided"* — 동적 없이 기본 화면 최상위.
   - XDxAI #19는 *"infer the bug mechanism and construct a candidate raw PoC input"* — 정적 추론→PoC.
   - 번들 퍼저는 퍼징 캠페인이 아니라 **입력 1개를 1회 실행**하는 채점 진입점이다. 동적 `-vul` 이미지는 **선택**(FAQ Q5).
-- **동적을 쓴 계열**은 학술 AEG·Naptime·AIxCC다 — 디버거+ASan로 런타임 상태를 본다. **강력하지만 필수는 아니고**, 알려진 함정은 **디버거 출력의 컨텍스트 오염**(Theori 60KB 잘림, [auditor-finetuning §4.4](2026-09-29-auditor-finetuning-and-benchmark.md)).
+- **전체 분포는 반대쪽이다** `[제3자 호스팅, 자기신고]`(2026-10-02 원문 데이터 재계산 — [leaderboard ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md)): level1 76행 중 **90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨**, agent-focused 27행 중 17행이 `dynamic`이다. 논문 본문도 에이전트가 코드베이스 지침대로 실행 파일을 빌드해 동적 테스트를 하는 사례를 관찰했다고 적는다 `[출처주장, arXiv 2506.02548v3 「Qualitative Analysis of Agent Behaviors」]`.
+- **동적을 쓴 계열**은 학술 AEG·Naptime·AIxCC와 위 `dynamic` 라벨 엔트리다 — 디버거+ASan로 런타임 상태를 본다. 알려진 함정은 **디버거 출력의 컨텍스트 오염**(Theori 60KB 잘림, [auditor-finetuning §4.4](2026-09-29-auditor-finetuning-and-benchmark.md)).
 
-> **정확한 서술**: "동적이 필수"가 아니라 — **① 최종 판정은 항상 실행(oracle)이고, ② PoC 생성은 정적이 지배적이며 동적(ASan/gdb/Python)은 강력한 보조다.** 우리 gdb/asan 재료는 ②의 동적 보조를 열지만, **1차 목표를 "정적 분석 + PoC 작성 + oracle 검증"으로 좁혀도 리더보드 근거가 있다**([leaderboard §5.2](2026-09-29-cybergym-leaderboard-harnesses.md)). 동적 툴 루프는 그 위에 얹는 2차다. **이 우선순위의 값은 실측(D-γ)·팀.**
+> **정확한 서술**: "동적이 필수"도 "동적은 필수 아님"도 이 근거로 못 세운다 — **① 최종 판정은 항상 실행(oracle)이고, ② PoC 생성은 정적만으로 상위에 간 존재 증명이 있으나(기본 화면 한정) 90% 넘는 행은 `dynamic` 라벨이 다수다.** 우리 gdb/asan 재료는 동적 보조를 열고, "정적 분석 + PoC 작성 + oracle 검증"으로 1차 목표를 좁히는 것은 **존재 증명 수준의 근거**다([leaderboard §5.2](2026-09-29-cybergym-leaderboard-harnesses.md)). 동적 툴 루프는 그 위에 얹는 2차로 둘 수 있으나 **이 우선순위의 값은 실측(D-γ)·팀.**
 
 ---
 
@@ -251,7 +252,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 | --- | --- | --- |
 | 벤치마크 채택·레벨 | Level 1 ↔ E2E ↔ 탐지벤치 ↔ 안 함 | **실험팀 Notion**(ADR 0012 결정 5). ADR 0012 Phase 7 수정 필요 |
 | 8단계 재판정 | 유지(내부 필터) ↔ oracle 대체 ↔ 병존 | §3 — 병존이 문헌 방향, 값은 D-β |
-| PoV 실행 형태 | 단발 PoC 재생(A) ↔ 툴 루프(B) ↔ 퍼징(C) | §4·§6 — B가 선례 수렴점, 1차는 정적+검증 |
+| PoV 실행 형태 | 단발 PoC 재생(A) ↔ 툴 루프(B) ↔ 퍼징(C) | §4·§6 — B가 선례 수렴점. 「1차는 정적+검증」의 리더보드 근거는 존재 증명까지(§6) |
 | PoV 툴셋 | 코드열람+ASan+gdb(있음) ↔ +Python ↔ +퍼징 | §5.3 — Python이 1순위 신규 |
 | PoV 모델 | feyospace ↔ 로스터 내 후보 | §7 — 실험팀 + 서빙 실측(D-δ) |
 
@@ -268,6 +269,6 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
 - **CyberGym 채택·레벨** — 실험팀 소관, 이 문서가 안 정한다.
 - **feyospace의 우리 스택 tool-calling 서빙** — 미실측(§7). 카드 주장뿐.
 - **PoV 툴 루프의 실제 홉 이득** — 선례만 있고 우리 과제 실측 0(§4.2).
-- **정적-only vs 동적-보조의 우리 성공률 차** — 리더보드는 정적 지배적이나 우리 과제 재현은 미실측(§6).
+- **정적-only vs 동적-보조의 우리 성공률 차** — 기본 화면의 상위 사례는 정적이나 90% 넘는 행은 `dynamic` 라벨이 다수이고, 우리 과제 재현은 미실측(§6).
 - **Naptime/Big Sleep의 per-run 홉 상한 수치** — 공개 안 됨 `[미확인]`(어제 파일과 동일).
 - **열람한 어느 페이지에서도 에이전트를 겨냥한 지시문(prompt injection)은 발견되지 않았다.**

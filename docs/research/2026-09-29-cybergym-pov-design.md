@@ -325,7 +325,7 @@ Ash Ganda(2026) *"A gate that cannot go RED is decoration ... a green one spends
 ### 6.2 성능 주장과 그 출처 — 전부 벤더 자기신고
 
 - **논문**(벤더): arXiv **2609.08418** *"Feyospace-v1: How the Cyber Mercury Seven Trained Frontier Cyber Models"*, Vera Praxis Lab. 주장: *"improve over their starting models by an average of 23.76% on the full CyberGym"*, *"Feyospace-s1 achieves a verified success rate of 63.24% and ranks 10th on the official CyberGym leaderboard"*(2026-09-01 스냅샷) `[출처주장]`.
-- **CyberGym 리더보드**(제3자 **호스팅**이나 **자기신고** — *"Results are evaluated and submitted by individual teams"*): 2026-09-29 조회 시 **Feyospace-v1 Model + "Claude Code" 하네스 = 63.0% (17위)**, Feyospace-v0 = 51.2% `[제3자 호스팅, 자기신고]`.
+- **CyberGym 리더보드**(제3자 **호스팅**이나 **자기신고** — *"Results are evaluated and submitted by individual teams"*): 2026-09-29 조회 시 **Feyospace-v1 Model + "Claude Code" 하네스 = 63.0% (17위 — 기본 화면 순위, [leaderboard 조사 ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md))**, Feyospace-v0 = 51.2% `[제3자 호스팅, 자기신고]`.
   ⚠ 논문 "10위/63.24%"(9-01) → 실보드 "17위/63.0%"(9-29)로 **드리프트**(상위에 GLM-5.3 84.5%·GPT-5.5-Cyber 85.6%·Gemini 3.8 Flash Cyber 86.3%가 들어옴).
 - **독립 제3자 측정 = 없다(`0`).** singularitymoments·alphaXiv 등은 **논문 수치를 재진술**할 뿐 재실행이 아니다. Frontier Evals·Berkeley RDI 관측소에는 **미등재**.
 
