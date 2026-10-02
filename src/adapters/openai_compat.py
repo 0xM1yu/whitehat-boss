@@ -408,7 +408,10 @@ def _error_detail(exc: urllib.error.HTTPError) -> str:
     """
     try:
         body = exc.read(_MAX_ERROR_BODY).decode("utf-8", errors="replace").strip()
-    except (OSError, ValueError) as read_error:
+    except (OSError, ValueError, http.client.HTTPException) as read_error:
+        # `HTTPException`(chunked 본문이 끊기는 `IncompleteRead`)은 `OSError`가 아니다 — 프록시
+        # 뒤 서버가 상태 줄 뒤에 죽으면 이 모양이고, 안 잡으면 상태까지 잃은 생 예외가 `_post`를
+        # 빠져나간다.
         return f"(응답 본문을 읽지 못했다: {type(read_error).__name__})"
     return truncate_detail(body)
 
