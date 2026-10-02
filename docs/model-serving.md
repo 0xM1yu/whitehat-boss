@@ -56,6 +56,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 
 - [ ] vLLM 버전 × 드라이버/CUDA × GPU 아키텍처 커널 호환성 (기동 성공 여부) → `roles.*.startup.ok`
 - [ ] 역할별 모델 로드 성공 및 실제 통합메모리 점유 측정 → `roles.*.memory.mem_gb_ctx8k` (+ `nvidia_smi_mb_peak`)
+  (⏵ 2026-09-29 — 「통합메모리」는 ATOM 기준이다. 지금 장비(임대 vast.ai)는 전용 VRAM이라 메모리 판정이 다르다 — §6의 장비 표.)
 - [ ] context 8K / 16K / 32K에서 KV cache 점유와 처리량 → `roles.*.memory.by_context.*.kv_cache_usage_perc_peak` (`vllm:kv_cache_usage_perc`)
 - [ ] 단일 스트림 tok/s vs 배치(8/16/32 동시 요청) 합산 tok/s → `roles.*.throughput.tok_s_single` / `.by_concurrency.*`
 - [ ] automatic prefix caching 동작 확인 및 적중률 → `roles.*.prefix_cache.verdict` / `.metrics_delta` (장부가 비어도 `prompt_tokens_cached_delta`가 토큰 수를 준다 — 구간 합계라 BudgetLedger에는 넣지 않는다)

@@ -23,6 +23,11 @@
 > 현재 상태의 자리로 가리키던 두 곳(이 머리 · §10) — 둘 다 정본(PROJECT-CONTEXT.md §5 · D·R 본문)으로 돌렸다.
 > 같은 날 `STATUS.md` 머리에 보관 표시를 달았기 때문이다(결정 5가 드는 보관 대상 셋의 하나).
 >
+> ⚠ **2026-09-29 — ATOM 사용이 끝났다**(서빙은 임대 vast.ai로 옮겼다 — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §4의
+> 장비 행 · [portability.md](portability.md) §6). 이 문서의 「ATOM」은 **그 장비 기준의 계획·계산**이다 — 메모리 80 GiB ·
+> 방어선 ≈72 GiB · 「ATOM 먼저」 순서가 그렇고, 새 장비의 값이 아니다. 새 장비의 값은 `config/serving/<device>.yaml`이 든다.
+> 그 값을 현재형으로 쓰던 자리에는 ⏵ 노트를 달았고, 못 찾은 자리는 이 문단이 덮는다.
+>
 > ⚠ **이 문서는 모델을 현재형으로 이름 대지 않는다**(PROJECT-CONTEXT.md §3). 아래에 남는 모델
 > 이름은 **지난 실측·지난 판단의 기록**이다.
 >
@@ -40,7 +45,7 @@
 | # | 원문 | 실제 | 근거 |
 | --- | --- | --- | --- |
 | 1 | 파인튜닝 단계를 D 계열 번호로 부른다 | 그 번호들은 이 저장소에서 벤치마크 라벨 통합·Scout 임계값·Capsule 확장 상한이다. **번호가 실재해 CI가 통과한다.** `FT1`·`FT2`·`FT3`으로 바꿨다 | [open-questions.md](open-questions.md) §2 |
-| 2 | ATOM 96 GiB · 방어선 90 | **80 GiB · 방어선 ≈72**(`max`의 0.9). 96 GiB는 저장소 어디에도 없다. 피크 결론은 72에서도 성립한다 | [model-serving.md](model-serving.md) §1 |
+| 2 | ATOM 96 GiB · 방어선 90 | **80 GiB · 방어선 ≈72**(`max`의 0.9). 96 GiB는 저장소 어디에도 없다. 피크 결론은 72에서도 성립한다 (⏵ 2026-09-29 — 80 GiB·≈72는 사용이 끝난 ATOM의 값이다 — 위 머리 노트) | [model-serving.md](model-serving.md) §1 |
 | 3 | ⚠ 검색을 켜는 것이 "가장 싼 개선"이고 Scout 통과율로 잰다 | **hybrid는 LIGHT에서 검색하지 않는다.** `related`는 EXPANDED·FOCUSED에만 있어 **Scout가 받는 캡슐은 fake와 같다.** 바뀌는 것은 Auditor·Critic 캡슐뿐이다 | `src/adapters/hybrid_retriever.py` 레벨별 섹션 구성 |
 | 4 | ⚠ 리스크 1번 "배칭 전제가 무너진다"(실측이 아닌 것) | 그 수치는 `measured_at`·`measured_on`이 붙은 **실측**이다. **2026-09-02 재측정으로 "32까지 밀 수 있는가"는 답이 나왔다 — 밀린다**(네 판 × 네 수준 실패 0건). 그리고 캐시를 끈 4판이 **배칭 이득 1.81배·동시성 16 포화**를 냈다. 캐시 ON 세 판의 1.18~2.42배는 prefix cache 적중률의 함수였다([#128](https://github.com/0xM1yu/whitehat-boss/issues/128)). **「8이 최적(73.40)」은 캐시 온도가 만든 값이다** | [experiments/README.md](experiments/README.md) 확정 #10 |
 | 5 | ⚠ 자기일관성 다수결은 `prompts/single/v2`에서 폐기한 방식 | **정반대다.** `single/v2`가 다수결을 **채택**했고, 어느 프로필도 `single`을 선언하지 않아 실행 자체가 불가다 | [D30](open-questions/D/D30.md) |
@@ -341,7 +346,8 @@ ADR 0012 결정 6이 폐기한다** — 부족한 맥락은 4단계 need_evidenc
 - 데이터 생성은 **반드시 실제 스키마 모델로 직렬화**한다. 손으로 쓰면 키 순서가 추론 때와
   갈린다 — 이득이 확인된 것은 아니고, **틀리면 나중에 원인을 못 가린다**는 이유로
   지킨다(§1 정정 14).
-- 학습 장소는 **ATOM이 아니다.** aarch64 세금과, 메모리를 서빙이 쓴다는 두 이유다.
+- 학습 장소는 **ATOM이 아니다.** aarch64 세금과, 메모리를 서빙이 쓴다는 두 이유다. (⏵ 2026-09-29 — 두 이유 모두 ATOM에 관한 것이었고
+  그 사용이 끝났다([portability.md](portability.md) §6). 새 장비에서 학습할 수 있는지는 이 문서가 정하지 않았다.)
 
 **학습하지 않는 것**: Auditor의 판정 · 리즈닝 트레이스 증류 · 출력 스키마 준수(구조화 출력이
 문법 수준에서 이미 강제한다) · Evidence Gate(결정론이 자산이다).
