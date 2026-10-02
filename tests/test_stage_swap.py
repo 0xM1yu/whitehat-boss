@@ -410,6 +410,96 @@ def test_an_unforeseen_exception_still_leaves_the_manifest_and_then_propagates(
     assert reasons == [ReasonCode.UNFORESEEN_FAILURE.value], reasons
 
 
+class _Defect(KeyError):
+    """`_analyze`에서 난 예상 밖 예외 — `RuntimeError` 계열이 아니라 방어선 좁힘 변이를 죽인다."""
+
+
+def _run_bare(tmp_path: Path, trace: TraceWriter) -> Path:
+    """`run_pipeline`을 한 번 돌린다 — 예외는 그대로 올라간다. 돌려주는 것은 run 디렉터리다."""
+    config = _config()
+    deps = build_deps(
+        load_config("dev_fake"), run_id=RUN_ID, source_root=TARGET,
+        artifacts_root=tmp_path / "artifacts",
+    )  # fmt: skip
+    rig = _Rig(config, deps.models)
+    deps = dataclasses.replace(deps, models=rig, swap_to=rig.swap_to)
+    run_dir = tmp_path / "artifacts" / RUN_ID
+    run_pipeline(
+        RunSpec(condition="B3prime@pipeline", target=TARGET, started_at=STARTED_AT),
+        config=config,
+        deps=deps,
+        read_source=lambda _loc: "int main(void) { return 0; }\n",
+        trace=trace,
+        run_dir=run_dir,
+    )
+    return run_dir
+
+
+def test_a_defect_shared_with_the_post_processing_does_not_replace_the_original_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 **후처리의 2차 예외가 원 예외를 덮지 않는다** (적대적 리뷰 2026-10-02 HIGH 1).
+
+    `gate.evaluate`는 `_analyze`(6단계 게이트)와 후처리(`grades`)가 **같이 쓰는 순수 함수**라
+    그 결정적 결함은 두 자리에서 연달아 난다. 1차는 방어선이 잡고, 후처리를 그대로 타면 2차가
+    `write_manifest` 앞을 뚫어 **매니페스트도 원 스택도 사라진다**. 또 후처리의 `report.run`이
+    터진 run의 REPORT 단계 진입을 trace에 남긴다 — 9단계에 간 적이 없는 run이다."""
+    raised: list[_Defect] = []
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raised.append(_Defect("게이트 결함"))
+        raise raised[-1]
+
+    monkeypatch.setattr(runner.gate, "evaluate", explode)
+    trace = TraceWriter(RUN_ID)
+
+    with pytest.raises(_Defect) as caught:
+        _run_bare(tmp_path, trace)
+
+    assert raised, "게이트 결함이 주입되지 않았다 — 이 검사는 아무것도 안 물었다"
+    assert caught.value is raised[0], "후처리의 2차 예외가 원 예외를 덮었다"
+    manifest = tmp_path / "artifacts" / RUN_ID / "run_manifest.json"
+    assert manifest.exists(), "후처리의 2차 예외가 write_manifest 앞을 뚫었다"
+    entered = [
+        int(event.stage)
+        for event in trace.events
+        if event.kind is EventKind.STAGE_START and event.stage is not None
+    ]
+    assert int(Stage.REPORT) not in entered, "터진 run이 REPORT 단계에 들어간 것으로 기록됐다"
+    reasons = [
+        event.data.get("reason")
+        for event in trace.events
+        if event.kind is EventKind.TRANSITION and event.subject_kind == "run"
+    ]
+    assert reasons == [ReasonCode.UNFORESEEN_FAILURE.value], reasons
+
+
+def test_a_failed_manifest_write_after_an_unforeseen_exception_keeps_the_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """매니페스트를 못 써도(디스크·권한) **원 예외가 올라가고** 쓰기 실패는 `add_note`로 붙는다.
+
+    쓰기 실패가 원 예외를 덮으면 run이 왜 터졌는지가 스택에서 사라진다 — 이 PR이 막으려던
+    바로 그 모양이다."""
+    original = _Defect("원 예외")
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise original
+
+    def disk_full(*_args: object, **_kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(runner.critic, "run", explode)
+    monkeypatch.setattr(runner, "write_manifest", disk_full)
+
+    with pytest.raises(_Defect) as caught:
+        _run_bare(tmp_path, TraceWriter(RUN_ID))
+
+    assert caught.value is original, "매니페스트 쓰기 실패가 원 예외를 덮었다"
+    notes = getattr(caught.value, "__notes__", [])
+    assert any("No space left on device" in note for note in notes), notes
+
+
 def _swaps_at_heartbeat_stop(
     monkeypatch: pytest.MonkeyPatch, rig: _Rig
 ) -> list[list[tuple[str, ...]]]:
