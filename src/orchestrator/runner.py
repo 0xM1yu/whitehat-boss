@@ -1144,6 +1144,16 @@ _FUZZ_ENTRYPOINT_NAME = "LLVMFuzzerTestOneInput"
 # 목적은 폭주 차단이다.
 _FUZZ_ENTRYPOINT_CHARS = 4000
 
+# resolver 조회(`ctx.resolve_requests`)에 넘기는 `max_chars`. **원문 상한과 다른 상수다** —
+# resolver의 `_fit_budget`은 헤더·배너·줄번호 gutter까지 더한 **렌더 길이**를 이 값과 비교한다
+# (`symbol_resolver.render_fragment`). `_FUZZ_ENTRYPOINT_CHARS`를 그대로 넘기면 원문이 그 상한
+# 밑이어도 gutter overhead 때문에 렌더가 넘쳐 블록이 통째로 `truncated`에 빠지고, 그러면
+# `_fuzz_entrypoint`가 `ctx.read_source`를 아예 안 불러 아래 `len(source) >
+# _FUZZ_ENTRYPOINT_CHARS` 자르기가 죽은 코드가 된다(적대적 리뷰 2026-10-02 MEDIUM-1). resolver는
+# **위치만** 쓰고(아래 `_fuzz_entrypoint`가 `ctx.read_source`로 원문을 직접 읽는다), 글자 상한은
+# 그 원문에 한 번만 건다 — 그래서 여기는 넉넉하게 잡는다.
+_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS = 1_000_000
+
 
 def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     """PoV 프롬프트에 실을 **퍼즈 진입점**(`LLVMFuzzerTestOneInput`)과 그 본문.
@@ -1197,7 +1207,9 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
         # 블록을 채운다. PoV의 `SOURCE`와 겹칠 수 있지만, 겹침을 숨기는 것보다 **진입점이 확실히
         # 실리는 쪽**이 낫다(겹침은 모델이 읽고 무시할 수 있으나 부재는 못 메운다).
         visible={},
-        max_chars=_FUZZ_ENTRYPOINT_CHARS,
+        # resolver 자체의 budget 컷이 아니라 `read_source` 뒤 자르기 하나로 상한을 건다 —
+        # 위 `_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS` 주석.
+        max_chars=_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS,
     )
     resolution = ctx.resolve_requests(query)
     if resolution is None:
@@ -1209,8 +1221,12 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     block = next((b for b in resolution.blocks if b.name == _FUZZ_ENTRYPOINT_NAME), None)
     if block is None:
         if _FUZZ_ENTRYPOINT_NAME in resolution.truncated:
+            # resolver의 budget 컷(`_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS`)은 넉넉해 이 갈래는
+            # 함수 하나가 그만큼 거대할 때만 닿는다 — 아래 `len(source) > _FUZZ_ENTRYPOINT_CHARS`
+            # 자르기(원문 상한)와는 다른 상한이다(적대적 리뷰 2026-10-02 MEDIUM-1).
             missing["reason"] = (
-                f"진입점을 찾았으나 {_FUZZ_ENTRYPOINT_CHARS}자 상한에 통째로 잘렸다"
+                f"진입점을 찾았으나 resolver 조회 상한"
+                f"({_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS:,}자, 렌더 기준)에 통째로 잘렸다"
             )
         elif not (resolution.blocks or resolution.unfilled or resolution.truncated):
             # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 아무 사유도 없이
