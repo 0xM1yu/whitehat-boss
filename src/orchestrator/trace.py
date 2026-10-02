@@ -20,6 +20,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
+| Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
@@ -248,6 +249,20 @@ class EventKind(StrEnum):
     #
     # **슬라이스 없는 run은 0건이다** — 그 run의 Auditor는 캡슐 대상 하나를 그대로 읽는다.
     AUDITOR_SOURCE = "auditor_source"
+    # Scout 슬라이스 렌더가 창에 안 들어 줄을 뺐다(`scout_slice_trim`, #353 (b) —
+    # `scout._fit_slice`).
+    # 줄을 뺀 Scout 호출 1건당 1행이고 **이벤트 부재 = 안 뺐다**(옵션이 꺼졌거나 들었다).
+    # `slice_id`·`role`(자리)·`budget`(몫 = 창 − 출력 상한 − 여유)·`tokens_before`·`tokens_after`
+    # (프롬프트 전체 — `model`이면 그 자리 토크나이저, `estimate`면 하한비 3.28)·`lines_before`·
+    # `lines_kept`(**코드 줄 수** — 배너 줄은 안 센다. 렌더 줄 수가 아니다: 렌더는 파일마다 배너
+    # 한 줄이 더 붙는다)·`fit`(줄 하나로도 안 들면 false)·`entry_kept`(entry 줄이 남았나 — 렌더
+    # 형식이 어긋나 entry가 조용히 빠지면 false, #375 L-1)·`token_counter`(`model` = 그 자리
+    # 토크나이저 · `estimate` = 글자 하한비 근사 3.28)를 싣는다. `subject_id`는 후보다.
+    #
+    # ⚠ **모델은 하네스가 뺐다는 것을 모른다**(#375 M-1). v3 prefix는 빠진 줄을 「슬라이서가
+    # 뺐다」고 서술하는데 하네스가 뺀 줄은 슬라이서가 **남긴** 줄이다. 이 이벤트가 사후에 그 사실을
+    # 남기는 유일한 자리다 — 프롬프트엔 트림 표식이 없다(가드는 #351 선례, 이 PR 밖).
+    SCOUT_SLICE_TRIMMED = "scout_slice_trimmed"
     # 이 run이 **어느 토큰 카운터로 셌는가** (#96 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
     #
@@ -293,18 +308,29 @@ class EventKind(StrEnum):
     # (subject_id, role, hop) 사슬 — `context.py`). gen/inspect 홉은 `action`과 도구 결과
     # (`tool`·`tool_ok`·`exit_code`·`evidence_kind`)를, 실패 홉은 `error`·`schema_ok`를, 종단 홉은
     # `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
+    # **gen 홉은 그 홉이 조립한 PoC의 `poc_sha256`도 싣는다**(맨 hex — 종단 이벤트의 `poc_sha256`과
+    # 같은 형식이라 바로 대조된다). 종단 이벤트를 건너뛰는 중단 경로(예산 소진·서버 쪽 게이트웨이
+    # 오류)에서 잃은 PoC를 특정하는 흔적이다 — 그 홉 자신의 도구 호출에서 끊기면 이벤트가 나가기
+    # 전이라 없다(`poc_log` 모듈 docstring의 「한계」).
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **8단계에 들어온**(진입 시
     # `VALIDATED`인) Finding당 최대 1건이다. `validate.run`이 그중 하나를 `QUEUED`로 내려도(재현
     # 실패·도구 정책 위반) pov는 돈다 — 대상 목록이 `validate.run` **전에** 잡히는 추가형이다.
     # `poc_bytes`가 최종 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다.
+    # **`poc_ref`가 그 PoC를 담은 사이드카 파일**(run_dir 상대 — `pov_poc/NNNN.poc`, #355)이고
+    # `poc_digest`가 **그 파일**의 `sha256:` 접두 digest다(`poc_sha256`은 접두 없는 맨 hex라 형식이
+    # 다르다 — `poc_log` 모듈 docstring). 사이드카를 못 쓴 run은 둘 대신 `poc_write_error`·
+    # `poc_write_error_detail`을 싣고(종단 사유·종류는 그대로), `ctx.pocs`가 없는 run(단위 테스트·
+    # `--dry-run`)에는 **키 넷 모두 없다**.
     # submit이 아닌 종단(max_hop·repeat·흡수된 예외·gen 없는 submit)은 여기가 아니라 POV_SKIPPED다.
     POV_GENERATED = "pov_generated"
     # PoV가 최종 PoC 없이 끝난 기록. `reason`이 `capsule_missing`(캡슐 없음)이거나 정지 사유
     # (`PovStopReason`: `parse_failed`·`gateway_error`·`context_overflow`·`repeat_spec`·`max_hop`·
-    # gen 없는 `submitted`)다. 부분 PoC가 있으면 `poc_bytes`·`poc_sha256`도 싣는다. **추가형이라
-    # finding 상태는 `validate.run`이 이미 정했으므로** pov 실패는 finding을 안 죽이고 여기 남긴다.
+    # gen 없는 `submitted`)다. 부분 PoC가 있으면 `poc_bytes`·`poc_sha256`과 함께 POV_GENERATED와
+    # **같은 사이드카 키**(`poc_ref`·`poc_digest` 또는 `poc_write_error*`)도 싣는다 — 종단 사유로
+    # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
+    # pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
     # 하네스가 `repro_spec`을 합성한 기록 (#S7 — `synthesize_repro_spec`이 켜졌고 모델이 명세를
     # 비워 냈을 때 `auditor._ensure_repro_origin`이 낸다). `subject_id`는 finding이고

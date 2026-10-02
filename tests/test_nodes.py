@@ -1830,7 +1830,9 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     assert facts["run_id"] == RUN_ID
     # `slice_criterion`은 슬라이스 타깃에만 붙는다(opt-in) — 슬라이스 없는 프롬프트는 그 키가
     # 생기기 전과 글자가 같아야 한다. 이 호출은 슬라이스 타깃이 아니다.
-    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"slice_criterion"}
+    # `fuzz_entrypoint`도 opt-in이고 **PoV만** 준다(2026-10-02) — Scout은 슬라이스 타깃이어도
+    # 안 받는다. 등식을 유지하는 것이 핵심이다: 무조건 싣는 변이가 여기서 죽는다.
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint"}
 
 
 def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) -> None:
@@ -1856,7 +1858,9 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
 
     body = ctx.models.last_for(Role.SCOUT).body
     facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
-    assert set(facts) == set(prompt_loader.FACT_KEYS)
+    # 슬라이스 타깃이라 `slice_criterion`은 붙지만 `fuzz_entrypoint`는 **PoV 전용**이라 안 붙는다
+    # (2026-10-02). 등식이라 어느 쪽으로 새도 죽는다.
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"fuzz_entrypoint"}
     assert facts["source"] == render
     assert facts["slice_criterion"] == {
         "given_end": "sink",
@@ -1864,6 +1868,339 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
         "degraded": False,
     }
     assert candidate.slice_id == "slice_0001"
+
+
+def _big_slice(ctx: RunContext, *, trim: int, context_limit: int | None = None) -> SliceRef:
+    """entry(parser.c:1000)를 가운데 둔 2,000줄 렌더 + 다른 파일 한 줄 — 글자 근사로 ~50k토큰이라
+    dev_fake 창 32,768을 넘는다. `scout_slice_trim`·창을 바꾼 config를 ctx에 끼운다."""
+    lines = [("parser.c", n) for n in range(1, 2001)] + [("util.c", 7)]
+    render = "\n".join(
+        ["/* ===== parser.c ===== */"]
+        + [f"{n}|     buf[{n}] = src[{n}] + {'x' * 80};" for n in range(1, 2001)]
+        + ["/* ===== util.c ===== */", "7|     return 0;"]
+    )
+    ctx.read_slice = {"slice_0001": render}.__getitem__
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    models = dict(ctx.config.models)
+    if context_limit is not None:
+        models[key] = models[key].model_copy(update={"context_limit": context_limit})
+    ctx.config = ctx.config.model_copy(
+        update={
+            "models": models,
+            "thresholds": ctx.config.thresholds.model_copy(update={"scout_slice_trim": trim}),
+        }
+    )
+    return SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=1000, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=1000, symbol="memcpy"),
+        lines=tuple(lines),
+    )
+
+
+def _scout_on(ctx: RunContext, ref: SliceRef) -> None:
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+    scout.run(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+
+def _gutter_lines(source: str) -> list[int]:
+    return [int(m) for m in re.findall(r"^(\d+)\| ", source, re.MULTILINE)]
+
+
+def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
+    ctx: RunContext,
+) -> None:
+    """#353 (b) — 렌더가 창을 넘으면 entry에 가까운 줄부터 남겨 창 안에 든다.
+
+    provenance가 없는 슬라이스라 전부 같은 순위 → entry와의 줄 거리순만 남는다. 파일 우선순위는
+    없다(#375 HIGH-2): util.c:7은 거리 993이라 창(entry 양쪽 수백 줄) 밖이라서 빠진다 — 다른
+    파일이라서가 아니다. 토크나이저가 없으면 **하한비 3.28**로 보수적으로 센다(#375 HIGH-1)."""
+    ref = _big_slice(ctx, trim=1)
+
+    _scout_on(ctx, ref)
+
+    prompt = ctx.models.last_for(Role.SCOUT)
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    budget = event.data["budget"]
+    assert estimate_tokens(prompt.prefix) + estimate_tokens(prompt.body) <= budget
+    assert event.data["tokens_before"] > budget >= event.data["tokens_after"]
+    assert event.data["fit"] is True and event.data["token_counter"] == "estimate"
+    # HIGH-1: 추정 경로는 len//4(4.0)가 아니라 하한비 3.28로 센다 → 같은 프롬프트를 4.0으로 센
+    # 값보다 크다(과대추정 = 보수적). 4.0으로 되돌리면 이 부등식이 깨진다.
+    estimate_now = estimate_tokens(prompt.prefix) + estimate_tokens(prompt.body)
+    assert estimate_now < event.data["tokens_after"]
+    assert event.data["lines_before"] == 2001 > event.data["lines_kept"]
+    assert event.data["lines_kept"] > 300  # 이분 탐색 상한이 300줄로 캡되면 깨진다(#375 M-4)
+    assert event.data["entry_kept"] is True  # entry(1000)가 남았다(#375 L-1)
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
+    kept = _gutter_lines(facts["source"])
+    assert len(kept) == event.data["lines_kept"]
+    assert 1000 in kept and kept == list(range(kept[0], kept[-1] + 1))
+    assert abs((1000 - kept[0]) - (kept[-1] - 1000)) <= 1  # entry 양쪽으로 고르게
+    assert "util.c" not in facts["source"]  # 거리 993이라 창 밖(파일 우선순위 때문이 아니다)
+    assert facts["source"].startswith("/* ===== parser.c ===== */\n")
+    assert facts["source"] in prompt.body.split("```json")[0]  # SOURCE도 같은 렌더
+
+
+def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
+    """기본(0)이면 지금처럼 통째로 — 넘어도 줄이지 않고 이벤트도 없다(크기 거절은 서빙 몫)."""
+    ref = _big_slice(ctx, trim=0)
+
+    _scout_on(ctx, ref)
+
+    assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+
+
+def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
+    """창이 넉넉하면 켜져 있어도 그대로 — 이벤트 부재 = 안 잘림."""
+    ref = _big_slice(ctx, trim=1, context_limit=400_000)
+
+    _scout_on(ctx, ref)
+
+    assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+
+
+def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(ctx: RunContext) -> None:
+    """프롬프트 고정분만으로 창을 넘으면 entry 한 줄로 보내고 `fit=false` — 크기 거절은 서빙 몫."""
+    output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    ref = _big_slice(ctx, trim=1, context_limit=output_max + 600)
+
+    _scout_on(ctx, ref)
+
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    assert event.data["fit"] is False and event.data["lines_kept"] == 1
+    body = ctx.models.last_for(Role.SCOUT).body
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+    assert _gutter_lines(facts["source"]) == [1000]
+
+
+_MARK = "QZX"  # 코드 줄에 한 번씩만 넣는 표식 — 주입 카운터가 센다(프롬프트·배너·캡슐엔 없다)
+
+
+def _counter_slice(
+    ctx: RunContext,
+    *,
+    parser_lines: list[int],
+    util_lines: list[int],
+    provenance: dict[str, tuple[tuple[str, int], ...]],
+    entry_line: int,
+    keep_k: int,
+) -> SliceRef:
+    """표식 카운터를 주입해 프롬프트 크기 = 2 × (렌더 코드 줄 수)로 **정확히** 통제한다.
+
+    각 코드 줄에 `QZX`가 하나이고 SOURCE·FACTS.source 두 곳에 실리므로 카운터는 줄당 2를 센다.
+    창을 `output_max + 512 + 2*keep_k`로 맞춰 몫(budget)을 정확히 `2*keep_k` 토큰으로 만든다.
+    """
+    parts = ["/* ===== parser.c ===== */"]
+    lines: list[tuple[str, int]] = []
+    for n in parser_lines:
+        parts.append(f"{n}|     v_{n} = {_MARK}_{n};")
+        lines.append(("parser.c", n))
+    if util_lines:
+        parts.append("/* ===== util.c ===== */")
+        for n in util_lines:
+            parts.append(f"{n}|     w_{n} = {_MARK}_{n};")
+            lines.append(("util.c", n))
+    ctx.read_slice = {"slice_0001": "\n".join(parts)}.__getitem__
+    out_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    models = dict(ctx.config.models)
+    models[key] = models[key].model_copy(update={"context_limit": out_max + 512 + 2 * keep_k})
+    ctx.config = ctx.config.model_copy(
+        update={
+            "models": models,
+            "thresholds": ctx.config.thresholds.model_copy(update={"scout_slice_trim": 1}),
+        }
+    )
+    ctx.counter_for_role = lambda _role: (lambda s: s.count(_MARK))
+    return SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=entry_line, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=entry_line, symbol="memcpy"),
+        lines=tuple(lines),
+        provenance=provenance,
+    )
+
+
+# K=5 핀: candidate_anchor(entry 100 · 교차 파일 util 500) → data_dependency → context 순.
+_PROV_K5 = {
+    "candidate_anchor": (("parser.c", 100), ("util.c", 500)),
+    "data_dependency": (("parser.c", 99), ("parser.c", 101), ("parser.c", 98), ("parser.c", 102)),
+    "context": (
+        ("parser.c", 97),
+        ("parser.c", 103),
+        ("parser.c", 96),
+        ("parser.c", 104),
+        ("parser.c", 95),
+        ("parser.c", 105),
+    ),
+}
+
+
+def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: RunContext) -> None:
+    """#375 HIGH-2/M-4 — anchor > dependency > context 순으로 남기고, 몫은 정확히 식대로다.
+
+    주입 카운터로 몫을 2*K=10 토큰에 고정한다. 남는 다섯은 우선순위 상위 다섯:
+    entry(100)·교차 파일 anchor(util 500)·dependency(99,101,98). **교차 파일 anchor가 거리 400인데도
+    같은 파일 context(97 거리 3)보다 먼저 남는다** → 파일 우선순위가 없다는 증거(M12)."""
+    ref = _counter_slice(
+        ctx,
+        parser_lines=list(range(95, 106)),
+        util_lines=[500],
+        provenance=_PROV_K5,
+        entry_line=100,
+        keep_k=5,
+    )
+
+    _scout_on(ctx, ref)
+
+    prompt = ctx.models.last_for(Role.SCOUT)
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    out_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    assert event.data["budget"] == ctx.config.models[key].context_limit - out_max - 512 == 10
+    assert event.data["tokens_before"] == 24  # 2 × 12 코드 줄
+    assert event.data["tokens_after"] == 10  # 2 × 5, 몫과 같다(최대성)
+    assert event.data["lines_kept"] == 5
+    assert event.data["token_counter"] == "model"  # 주입 카운터를 썼다(M13)
+    assert event.data["entry_kept"] is True
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
+    assert set(_gutter_lines(facts["source"])) == {98, 99, 100, 101, 500}
+    assert "util.c" in facts["source"]  # 교차 파일 anchor가 남았다 — 먼저 안 버려진다
+    assert 97 not in _gutter_lines(facts["source"])  # 가까운 context보다 먼 anchor가 우선
+
+
+def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> None:
+    """#375 M-4 — 같은 순위·같은 거리면 렌더 순서(앞 줄)를 남긴다. 반대로 깨면 101이 남는다.
+
+    99·101 둘 다 entry 100에서 거리 1, provenance 없음(같은 순위). 몫 2*1=2라 하나만 남는다."""
+    ref = _counter_slice(
+        ctx, parser_lines=[99, 101], util_lines=[], provenance={}, entry_line=100, keep_k=1
+    )
+
+    _scout_on(ctx, ref)
+
+    prompt = ctx.models.last_for(Role.SCOUT)
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    assert event.data["lines_kept"] == 1 and event.data["fit"] is True
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
+    assert _gutter_lines(facts["source"]) == [99]  # 앞 줄(작은 i)을 남긴다
+
+
+def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> None:
+    """#375 M-4 — 전체 크기가 몫과 **같으면** 자르지 않는다(`<=`). `<`로 바꾸면 자른다."""
+    ref = _counter_slice(
+        ctx, parser_lines=[10, 11], util_lines=[], provenance={}, entry_line=10, keep_k=2
+    )
+
+    _scout_on(ctx, ref)
+
+    # before = 2*2 = 4 = budget(2*2) → 그대로. 이벤트가 없어야 한다.
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
+
+
+def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
+    """#375 M-2 — 잘린 좌석의 세션은 **모델이 본 줄**만 싣고, resolver `visible`이 그것을 쓴다.
+
+    자르기 전 `SliceRef.lines` 전체를 쓰면 모델이 못 본 줄을 "이미 SOURCE에 있다"로 답해 버린다."""
+    ref = _counter_slice(
+        ctx,
+        parser_lines=list(range(95, 106)),
+        util_lines=[500],
+        provenance=_PROV_K5,
+        entry_line=100,
+        keep_k=5,
+    )
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+
+    session = scout.open_session(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+    assert session.shown_lines is not None
+    assert set(session.shown_lines) == {
+        ("parser.c", 98),
+        ("parser.c", 99),
+        ("parser.c", 100),
+        ("parser.c", 101),
+        ("util.c", 500),
+    }
+    visible = runner._ne_visible(ref, session.shown_lines)
+    assert visible == {"parser.c": frozenset({98, 99, 100, 101}), "util.c": frozenset({500})}
+    # 자르기 전 전체는 더 넓다 — 바로 그 차이가 M-2가 막는 오답 범위다.
+    assert runner._ne_visible(ref, None)["parser.c"] == frozenset(range(95, 106))
+
+
+def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: RunContext) -> None:
+    """#375 M-4 — 손 f-string이 아니라 `adapters.slices.render()` 출력으로 라운드트립한다.
+
+    듬성한 줄(5·8·20)이라 `_parse_render`가 건너뛴 번호를 그대로 들어야 한다."""
+    from src.adapters import slices as slices_adapter
+
+    body = "\n".join(f"line_{i} = {_MARK}_{i};" for i in range(1, 21))
+    content = {"parser.c": body.encode("utf-8")}
+    picked = [("parser.c", 5), ("parser.c", 8), ("parser.c", 20)]
+    picked_lines = [f"line_{n} = {_MARK}_{n};" for _, n in picked]
+    code = "\n".join(["/* ===== parser.c ===== */"] + picked_lines)
+    item = slices_adapter.Slice(
+        id="slice_0001",
+        candidate_key="k",
+        case="A",
+        entry={"file": "parser.c", "line": 5, "symbol": "parse_header"},
+        members=("k",),
+        lines=tuple(picked),
+        code=code,
+    )
+    rendered = slices_adapter.render(item, lambda f: content[f])
+    assert rendered == "\n".join(
+        ["/* ===== parser.c ===== */"] + [f"{n}| line_{n} = {_MARK}_{n};" for _, n in picked]
+    )
+    ctx.read_slice = {"slice_0001": rendered}.__getitem__
+    out_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    models = dict(ctx.config.models)
+    models[key] = models[key].model_copy(update={"context_limit": out_max + 512 + 4})  # 몫 4 = 2줄
+    ctx.config = ctx.config.model_copy(
+        update={
+            "models": models,
+            "thresholds": ctx.config.thresholds.model_copy(update={"scout_slice_trim": 1}),
+        }
+    )
+    ctx.counter_for_role = lambda _role: (lambda s: s.count(_MARK))
+    ref = SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="source",
+        entry=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        lines=tuple(picked),
+    )
+
+    _scout_on(ctx, ref)
+
+    prompt = ctx.models.last_for(Role.SCOUT)
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
+    assert event.data["lines_kept"] == 2  # 몫 4 / 2부 = 2줄
+    facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", prompt.body, re.DOTALL)[-1])
+    kept = _gutter_lines(facts["source"])
+    assert kept == [5, 8]  # entry 5에 가까운 둘, 듬성한 번호 보존
+
+
+def test_scout_slice_trim_defaults_off_and_is_absent_from_flatten() -> None:
+    """#375 M-3/M-4 — 기본값 0이고, 0이면 `flatten()`에 키가 없다(#349/#351 선례)."""
+    thresholds = load_config("dev_fake").thresholds
+    assert thresholds.scout_slice_trim == 0  # 기본값 1로 바꾸면 깨진다(M16)
+    assert "scout_slice_trim" not in thresholds.flatten()
+    on = thresholds.model_copy(update={"scout_slice_trim": 1})
+    assert on.flatten()["scout_slice_trim"] == 1.0  # 켜면 기록에 실린다
 
 
 def test_render_rejects_missing_and_unknown_placeholders() -> None:
