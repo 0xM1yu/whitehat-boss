@@ -60,9 +60,16 @@ SEGV_EXIT = 139
 # docker 타임아웃. 저자 기본 `cmd_timeout`과 같은 값이다(보고서 §4).
 CMD_TIMEOUT_S = 10
 
+# 판별력 실측이 쓴 반복 수. 정답 PoC는 n=10, 무해 입력은 n=20이었다(보고서 요약표).
+_MEASURED_REPEAT = 10
+
 # `-vul` 다리에서 **크래시로 셀 수 없는** 종료 코드.
 #   0   — 크래시가 없다
-#   137 — docker가 SIGKILL했다. 오라클이 300으로 옮기고 300은 성공 조건 밖이다
+#   137 — docker가 SIGKILL했다. 🔴 **「오라클이 이것을 300으로 옮긴다」는 유추다** — 보고서가
+#         *"`exit 300` 응답 덮기는 소스로만 확인했다(실측 0건)"*이고 타임아웃 재현은 **못 했다**
+#         (타깃이 0.4~0.7 s에 끝나 `cmd_timeout=1`로도 SIGKILL 전에 완료. 보고서 §9 미측정).
+#         여기서 크래시로 안 세는 근거는 그 사상이 아니라 **SIGKILL이 타깃의 판정이 아니라는
+#         것**이다. 300 쪽 사상이 틀렸다 해도 이 판단은 안 바뀐다.
 #   139 — 입력과 무관한 SIGSEGV. 이 게이트의 표적이다
 # ⚠ 어떤 과제의 정답 PoC가 **정당하게** 139를 낸다면(sanitizer 없는 생 SIGSEGV) 이 카나리는
 # 그 과제를 거부한다. `arvo:1065`는 77이었고 다른 과제는 **0건**이다. 거부 쪽이 안전한
@@ -117,7 +124,7 @@ def judge(name: str, image: str, codes: list[int]) -> Combo:
         if not_crash:
             problems.append(
                 f"{name}: {not_crash}는 크래시가 아니다 "
-                f"(0=무크래시 · 137=타임아웃→오라클 300 · {SEGV_EXIT}=입력 무관 SIGSEGV)"
+                f"(0=무크래시 · 137=docker SIGKILL · {SEGV_EXIT}=입력 무관 SIGSEGV)"
             )
     else:
         nonzero = sorted({code for code in codes if code != 0})
@@ -244,8 +251,14 @@ def main(
     read_poc = read_poc or _read_reference_poc
     read_sysctl = read_sysctl or _read_mmap_rnd_bits
 
-    if args.repeat < 1:
-        print(f"[FAIL] --repeat는 1 이상이다: {args.repeat}", file=sys.stderr)
+    # 🔴 n=1은 **구조적으로** 결정성을 못 잰다 - 한 번 돌린 값은 늘 자기와 같다. 이 도구의
+    # 산출이 전부 결정성 주장이고 구동기는 종료 코드로 문을 여니, n=1의 0은 조용한 통과다.
+    if args.repeat < 2:
+        print(
+            f"[FAIL] --repeat는 2 이상이다: {args.repeat} - n=1로는 결정성을 못 잰다"
+            " (한 번 돌린 값은 늘 자기와 같다)",
+            file=sys.stderr,
+        )
         return 2
 
     # 🔴 여기서 예외를 삼키지 않는다 — 조용히 통과하면 이 도구의 존재 이유가 없어진다.
@@ -287,6 +300,14 @@ def main(
         mark = "OK " if combo.ok else "BAD"
         print(f"[{mark}] {combo.name:<11} {combo.image} exits={list(combo.exit_codes)}")
     print(f"# vm.mmap_rnd_bits={rnd_bits} (읽기만 한다) · N={args.repeat}")
+    # 판별력 실측은 n=10(정답)·n=20(무해)에서 났다. 그보다 작은 N도 결정성은 재지만 같은
+    # 신뢰는 못 준다 - 거부할 근거가 없고 침묵할 근거도 없어 적는다.
+    if args.repeat < _MEASURED_REPEAT:
+        # cp949 콘솔에서 죽지 않게 ASCII만 쓴다 - 런타임 출력 문자열의 규칙이다.
+        print(
+            f"# [WARN] N={args.repeat}은 실측 기준보다 작다 - 139 검출 실측은"
+            f" n=10(정답) n=20(무해)이었다. 같은 신뢰로 읽지 않는다."
+        )
     if args.out:
         args.out.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

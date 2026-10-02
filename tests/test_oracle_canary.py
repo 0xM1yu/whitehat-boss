@@ -153,12 +153,17 @@ def test_an_unreadable_reference_poc_fails_with_a_reason(capsys):
     assert "/tmp/poc를 읽지 못했다" in capsys.readouterr().err
 
 
-def test_repeat_one_keeps_the_same_verdict(capsys):
-    """N=1에서도 판정 논리는 같다 — 표본 하나라도 139면 거부한다."""
-    assert _main(_Fake(_codes(1)), repeat=1) == 0
-    injected = _codes(1, **{"benign/fix": [oracle_canary.SEGV_EXIT]})
-    assert _main(_Fake(injected), repeat=1) != 0
-    assert "benign/fix" in capsys.readouterr().err
+def test_the_judge_logic_does_not_depend_on_the_sample_count():
+    """판정 논리는 N과 무관하다 — 표본 하나라도 139면 거부한다.
+
+    ⚠ `main()`은 n=1을 **거부한다**(결정성을 못 재서다 — 아래 전용 검사). 그래서 이 성질은
+    CLI가 아니라 순수 함수 `judge`에 직접 건다. 둘을 섞으면 「n=1이 돈다」로 읽힌다.
+    """
+    assert oracle_canary.judge("ref/vul", VUL, [77]).ok
+    assert not oracle_canary.judge("benign/fix", FIX, [oracle_canary.SEGV_EXIT]).ok
+    assert not oracle_canary.judge("ref/vul", VUL, [oracle_canary.SEGV_EXIT]).ok
+    # 같은 코드 하나짜리 목록은 갈리지 않는다 — 그래서 n=1은 결정성의 증거가 못 된다.
+    assert oracle_canary.judge("ref/vul", VUL, [77]).problems == ()
 
 
 def test_the_sysctl_value_rides_in_the_report_without_gating_it(tmp_path, capsys):
@@ -189,13 +194,22 @@ def test_the_cli_output_survives_a_cp949_console(capsys):
         oracle_canary.main(["arvo:1065", "--help"])
     _encodable(capsys.readouterr().out, "--help")
 
-    assert _main(_Fake(_codes(1)), repeat=1) == 0
+    assert _main(_Fake(_codes(2)), repeat=2) == 0
     ok = capsys.readouterr()
     _encodable(ok.out + ok.err, "성공 경로")
 
-    assert _main(_Fake(_codes(1, **{"ref/fix": [1]})), repeat=1) != 0
+    assert _main(_Fake(_codes(2, **{"ref/fix": [1, 1]})), repeat=2) != 0
     bad = capsys.readouterr()
     _encodable(bad.out + bad.err, "판정 실패 경로")
+
+    # n<2 거부 경로와 작은 N 경고 줄도 실행 경로다 — 둘 다 cp949를 통과해야 한다.
+    assert _main(_Fake(_codes(1)), repeat=1) == 2
+    refused = capsys.readouterr()
+    _encodable(refused.out + refused.err, "n=1 거부 경로")
+
+    assert _main(_Fake(_codes(2)), repeat=2) == 0
+    small = capsys.readouterr()
+    _encodable(small.out + small.err, "작은 N 경고 경로")
 
     assert _main(_Fake(_codes(1), raises=RuntimeError("boom"))) != 0
     crashed = capsys.readouterr()
@@ -217,12 +231,49 @@ def test_images_are_derived_from_the_task_id():
 
 def test_explicit_image_names_override_the_derivation(capsys):
     """이름 규칙이 안 통하는 과제도 돌 수 있어야 한다."""
-    fake = _Fake(_codes(1))
+    fake = _Fake(_codes(2))
     code = oracle_canary.main(
-        ["whatever", "--repeat", "1", "--vul-image", VUL, "--fix-image", FIX],
+        ["whatever", "--repeat", "2", "--vul-image", VUL, "--fix-image", FIX],
         run_container=fake,
         read_poc=lambda image: MARKER,
         read_sysctl=lambda image: "28",
     )
     assert code == 0
     assert VUL in capsys.readouterr().out
+
+
+def test_one_repeat_is_refused_because_it_cannot_measure_determinism(capsys):
+    """🔴 `--repeat 1`은 **구조적으로** 결정성을 못 잰다 — 한 번 돌린 값은 늘 자기와 같다.
+
+    그런데 이 도구의 산출은 전부 결정성 주장이고, 캠페인 구동기는 **종료 코드**로 문을
+    연다. n=1이 0을 내면 `vm.mmap_rnd_bits`가 32인 장비에서도 초록이 나고 그 장비의
+    판정이 장부에 올라간다 - 실측된 `139` 비율(20~50%)에서 n=1은 그것을 절반 넘게
+    놓친다. **조용한 통과는 이 도구의 존재 이유와 정면으로 충돌한다.**
+    """
+    code = oracle_canary.main(
+        ["arvo:1065", "--repeat", "1"],
+        run_container=_Fake(_codes(1)),
+        read_poc=lambda image: MARKER,
+        read_sysctl=lambda image: "28",
+    )
+
+    assert code == 2, "n=1이 통과했다 - 결정성을 안 재고 문을 열어 줬다"
+    assert "결정성" in capsys.readouterr().err
+
+
+def test_a_repeat_below_the_measured_basis_says_so_while_passing(capsys):
+    """2 <= n < 10은 통과시키되 **무엇에 기대 재는지**를 적는다.
+
+    판별력 실측은 n=10(정답)·n=20(무해)에서 났다. 그보다 작은 N은 같은 결론을 같은
+    신뢰로 못 낸다 - 거부할 근거는 없고(결정성은 재진다) 침묵할 근거도 없다.
+    """
+    code = oracle_canary.main(
+        ["arvo:1065", "--repeat", "2"],
+        run_container=_Fake(_codes(2)),
+        read_poc=lambda image: MARKER,
+        read_sysctl=lambda image: "28",
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "n=10" in out, f"작은 N인데 실측 기준(n=10)을 안 적었다: {out}"
