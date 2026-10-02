@@ -830,17 +830,6 @@ def run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        if args.slices is not None:
-            # 🔴 **둘은 같이 쓸 수 없다.** 슬라이스는 슬라이서가 **이미 풀린 트리**를 보고 만든
-            # 것이고, `--task-dir`는 그 트리를 **지금 만든다**. 게다가 작업 디렉터리는 비어
-            # 있어야 하므로 슬라이서가 본 트리와 같을 수 없다 — `--slices`를 쓰려면 먼저 풀고
-            # 슬라이싱한 뒤 `--target`으로 준다.
-            print(
-                "[ERROR] --task-dir와 --slices를 같이 주지 않는다 — 슬라이스는 이미 풀린 "
-                "트리에서 나온 것이다. 먼저 풀어 슬라이싱한 뒤 --target으로 준다",
-                file=sys.stderr,
-            )
-            return 2
         if args.task_work_dir is None:
             print(
                 "[ERROR] --task-dir를 주면 --task-work-dir도 줘야 한다 — 해제 트리가 섞이지 "
@@ -891,9 +880,15 @@ def run(args: argparse.Namespace) -> int:
     # 번호가 나간 뒤다. **렌더까지 본다** — 형식이 맞아도 대상 파일이 슬라이서가 본 것과 다르면
     # (drift) gutter가 다른 파일의 줄을 가리킨다. ponytail: 적재·렌더를 두 번 한다(JSON 하나와
     # 슬라이스가 걸친 파일들이라 싸다). 커지면 결과를 `build_deps`로 넘긴다.
+    slice_set = None
     if args.slices is not None:
         try:
-            render_slices(load_slices(args.slices), args.target)
+            slice_set = load_slices(args.slices)
+            # `--task-dir`는 트리가 **아직 없다** — 렌더는 풀린 뒤(아래)에 한다. 지금 하면 entry
+            # 파일이 없는 슬라이스가 전부 조용히 빠져(`render_slices` docstring) 아무것도 안 본 채
+            # 통과한다.
+            if args.task_dir is None:
+                render_slices(slice_set, args.target)
         except SliceInputError as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             return 2
@@ -1000,6 +995,17 @@ def run(args: argparse.Namespace) -> int:
             # 포인터를 그대로 받은 경우). 어느 쪽이든 트레이스백이 아니라 한 줄로 멈춘다.
             print(f"[ERROR] 과제를 풀 수 없다: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 2
+        if slice_set is not None:
+            # 🔴 **`--task-dir`와 `--slices`를 같이 받는 안전은 이 검사에 선다.** 슬라이스는
+            # 슬라이서가 어딘가에서 푼 트리를 보고 만든 것이고 여기서 푼 트리는 **다른
+            # 디렉터리**다 — 같을 필요는 없다. `render`는 하네스 사본이 슬라이서가 본 것과
+            # **글자 단위로** 같은지만 보므로(drift), 같은 아카이브를 푼 트리면 어디서 풀었든
+            # 통과하고 아니면 여기서 멈춘다.
+            try:
+                render_slices(slice_set, args.task_work_dir)
+            except SliceInputError as exc:
+                print(f"[ERROR] {exc}", file=sys.stderr)
+                return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
