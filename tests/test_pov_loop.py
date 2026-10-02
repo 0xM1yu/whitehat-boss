@@ -15,23 +15,28 @@ council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매
 
 import dataclasses
 import json
+from functools import partial
 from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
 from src.adapters.fake_tools import TOOL_KINDS
+from src.adapters.slices import split_source
+from src.adapters.symbol_resolver import resolve
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
 from src.orchestrator.trace import EventKind
+from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 from src.schemas.enums import PovStopReason, Role
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 
 # `ctx`는 dev_fake로 배선된 픽스처, `_pov_state`는 finding+캡슐을 담은 state 헬퍼다
 # (test_ne_loop이 test_pipeline_e2e에서 헬퍼를 끌어 쓰는 것과 같은 방식).
-from tests.test_nodes import _pov_state, ctx  # noqa: F401
+from tests.test_nodes import BENIGN_TARGET, _pov_state, _root_of, _triage, ctx  # noqa: F401
+from src.orchestrator.nodes import preprocess
 
 
 def _spec() -> PovSpec:
@@ -742,6 +747,52 @@ def test_pov_facts_record_why_the_fuzz_entrypoint_is_missing(ctx: RunContext) ->
     assert entry["reason"], "못 찾은 사유가 비어 있다 — §0 위반"
 
 
+def test_fuzz_entrypoint_is_not_dropped_by_the_resolvers_own_render_overhead(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 적대적 리뷰 2026-10-02 MEDIUM-1(재현) — resolver의 렌더 비용이 **원문보다 먼저** 상한에
+    걸려 `_fuzz_entrypoint`의 「앞부분을 남긴다」 자르기가 죽은 코드였다.
+
+    `resolve()`의 `_fit_budget`은 **헤더·배너·줄번호 gutter까지 더한 렌더 길이**를 `max_chars`와
+    비교한다(`render_fragment`). 그래서 **원문이 4,000자 미만**이어도 줄 수가 많으면(gutter
+    overhead) 렌더가 4,000을 넘어 블록이 통째로 `truncated`에 빠진다 — `_fuzz_entrypoint`는 그러면
+    `block is None`에서 멈추고 `ctx.read_source`를 **아예 안 부른다.** 즉 `len(source) >
+    _FUZZ_ENTRYPOINT_CHARS` 자르기(`:1248`)는 `block`이 **잡혔을 때만** 돌고, 블록이 잡혔다는
+    것은 렌더 비용이 이미 상한 밑이라는 뜻이라 원문은 반드시 그보다 **더** 작다 — 그 자리는
+    산수로 못 닿는 죽은 코드다.
+
+    이 픽스처는 원문 100줄 · 3,899자(4,000 미만)인데 렌더(헤더+배너+gutter)는 4,590자다.
+    고치기 전에는 resolver 호출에 `max_chars=4000`을 그대로 넘겨 블록이 드롭된다
+    (`found=False` + "잘렸다"). 고친 뒤에는 resolver에는 위치만 받을 수 있게 넉넉한 상한을 주고,
+    실제 글자 상한은 `ctx.read_source` 뒤 자르기 하나로만 건다."""
+    line = "    processByte(buf[i], &state, flag);"
+    body = [line] * 100
+    raw = "\n".join(body)
+    assert len(raw) < 4000, "픽스처 전제 — 원문은 상한 밑이어야 한다"
+    (_root_of(ctx) / "fuzz.c").write_text(raw + "\n", encoding="utf-8")
+
+    def table(name: str):  # noqa: ANN001, ANN202
+        if name != "functions":
+            return None
+        return {"LLVMFuzzerTestOneInput": ({"file": "fuzz.c", "line_start": 1, "line_end": 100},)}
+
+    def read_lines(relative: str):  # noqa: ANN001, ANN202
+        return split_source((_root_of(ctx) / relative).read_bytes())
+
+    wired = dataclasses.replace(
+        ctx, resolve_requests=partial(resolve, table=table, read_lines=read_lines)
+    )
+
+    result = runner._fuzz_entrypoint(wired, "fuzz.c")
+
+    assert result["found"] is True, (
+        f"resolver의 렌더 비용이 원문 상한보다 먼저 걸렸다 — reason={result['reason']!r}"
+    )
+    assert result["reason"] == "", "원문이 상한 밑인데 잘린 사유가 남았다"
+    assert "processByte" in str(result["source"])
+    assert result["lines"] == [1, 100]
+
+
 def test_pov_facts_say_so_when_there_is_no_resolver_at_all(ctx: RunContext) -> None:  # noqa: F811
     """resolver 자체가 없는 run(인덱스 v1·미로드)도 **사유가 다르다**.
 
@@ -848,7 +899,13 @@ def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     ⏵ **정정 2026-10-02**: 이 docstring의 전 판은 *"`_step_auditor`를 구동하는 테스트가 0건이라 그
     자리는 미핀이다"*라 적었다. **틀렸다** — 적대적 리뷰가 인프로세스 변이로 그 15건을 빨갛게
     만들어 보였다. 「미핀」이라 적은 쪽이 거짓이었고, 핀은 이미 있었다(CLAUDE.md §0 — 센 것과 안 센
-    것을 섞지 않는다. 안 세고 「없다」고 적은 것이 그 위반이다)."""
+    것을 섞지 않는다. 안 세고 「없다」고 적은 것이 그 위반이다).
+
+    ⚠ **그 15건이 묻는 것은 "두 번 안 부르는가"뿐이다.** `_Once`를 통째로 걷어 **그 줄 자체**
+    (`state.finding_sources[finding.finding_id] = source`)를 지워도 이 15건은 하나도 안
+    빨개진다 — `_Once`가 없으면 그 줄도 같이 사라지는 변이라 구별이 안 된다. "**키가 생기는가**"는
+    `test_step_auditor_wires_state_finding_sources_for_a_slice_target`가 문다(적대적 리뷰
+    2026-10-02 MEDIUM-5 재현 — 605 passed로 그 공백을 직접 확인했다)."""
     calls = 0
 
     def _inner() -> str:
@@ -861,6 +918,54 @@ def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     assert once() == "text-1"
     assert once() == "text-1"  # 두 번째도 같은 문자열
     assert calls == 1
+
+
+def test_step_auditor_wires_state_finding_sources_for_a_slice_target(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 적대적 리뷰 2026-10-02 MEDIUM-5(재현) — `_step_auditor`의
+    `state.finding_sources[finding.finding_id] = source` 줄을 통째로 지워도 이 PR의 기존 검사는
+    하나도 안 빨개진다(605 passed, 이 파일 기준 — 직접 돌려 확인했다).
+
+    이유: PoV 쪽 검사(`test_pov_hop0_carries_the_same_source_the_auditor_saw` 등)는 전부
+    `_pov_state`로 **손으로** 캡슐·finding을 만들고 `state.finding_sources[...]`도 손으로
+    채운다 — `_step_auditor` **자신이** 그 줄을 쓰는지는 안 본다. `test_slice_targets.py`의 15건은
+    `_Once` 감싸기(두 번 안 부르는지)만 묻지, 애초에 **키가 생기는지**는 안 묻는다.
+
+    이 검사는 `_step_auditor`를 손이 아니라 **실제 경로**(`_InFlight`·`_Target(slice=...)`)로
+    직접 돌려 `state.finding_sources`에 그 finding의 키가 생기는지, 그리고 그 값이
+    `_auditor_target`·`_auditor_source`를 **같은 인자로** 다시 부른 것과 같은 문자열인지 본다."""
+    candidate, _capsule, evidences = _triage(ctx, BENIGN_TARGET)
+    artifacts = preprocess.run(ctx, source_root=_root_of(ctx))
+    artifact = next(a for a in artifacts if a.path == BENIGN_TARGET.file)
+    ref = SliceRef(
+        slice_id="slice_test",
+        location=BENIGN_TARGET,
+        given_end="source",
+        entry=BENIGN_TARGET,
+        lines=((BENIGN_TARGET.file, BENIGN_TARGET.line_start),),
+    )
+    target = runner._Target(
+        artifact=artifact,
+        location=BENIGN_TARGET,
+        evidences=evidences,
+        signal_rank=2,
+        slice=ref,
+    )
+    item = runner._InFlight(target=target, reached=runner._Reached(), candidate=candidate)
+    state = runner._Accumulator()
+
+    runner._step_auditor(ctx, item, state)
+
+    finding = item.finding
+    assert finding is not None
+    assert finding.finding_id in state.finding_sources, (
+        "state.finding_sources가 안 채워졌다 — _step_auditor의 배선이 끊겼다 "
+        "(8단계 PoV가 entry 함수 하나로 되돌아간다)"
+    )
+    anchor = runner._auditor_target(ctx, target)
+    expected = runner._auditor_source(ctx, ref, anchor, candidate.candidate_id)
+    assert state.finding_sources[finding.finding_id]() == expected
 
 
 def test_pov_finding_block_carries_the_path_symbols_not_just_the_count(
