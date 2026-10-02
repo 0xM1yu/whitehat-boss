@@ -520,6 +520,8 @@ def test_a_zero_byte_poc_is_filed_when_the_model_submits_it(
     assert data["poc_bytes"] == 0
     assert (run_dir / data["poc_ref"]).stat().st_size == 0
     assert data["poc_digest"] == sha256_digest(b"")
+    # gen 홉 이벤트도 빈 PoC의 해시를 싣는다 — 참값 검사(`if poc:`)면 이 홉만 키가 빠진다.
+    assert _hops(scripted)[0].data["poc_sha256"] == hashlib.sha256(b"").hexdigest()
 
 
 # --- 배선이 없을 때 — 키를 늘리지 않는다 ------------------------------------------------
@@ -626,6 +628,43 @@ def test_pov_finish_hands_back_the_ref_and_digest_it_wrote(
     _block_the_directory(blocked)
     failed = runner._pov_finish(_wired(ctx, blocked), finding, PovStopReason.MAX_HOP, poc)
     assert failed == (poc, PovStopReason.MAX_HOP, None, None)
+
+
+def test_only_oserror_is_absorbed_a_bug_in_the_writer_still_surfaces(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """흡수하는 것은 **`OSError`뿐**이다. 디스크가 못 쓴 것은 부가 산출물의 실패이지만 코드 결함
+    (`TypeError`·`RuntimeError` …)을 삼키면 사이드카 버그가 「PoC가 안 남는 run」으로 조용히 바뀐다
+    — `except Exception`으로 넓힌 변이가 살아남지 않게 한다."""
+
+    class Broken:
+        def write(self, poc: bytes) -> tuple[str, str]:
+            raise RuntimeError("bug in the writer")
+
+    _, finding = _pov_state(ctx)
+    broken = dataclasses.replace(ctx, pocs=Broken())
+
+    with pytest.raises(RuntimeError, match="bug in the writer"):
+        runner._pov_finish(broken, finding, PovStopReason.SUBMITTED, b"A")
+
+
+def test_an_interrupt_during_the_write_leaves_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정리는 `except BaseException`이다 — Ctrl-C(`KeyboardInterrupt`)도 임시 파일을 남기지 않는다.
+    `Exception`으로 좁히면 중단된 run의 `pov_poc/`에 `0001.poc.tmp`가 고아로 남는다."""
+
+    def interrupted(self: Path) -> bytes:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "read_bytes", interrupted)
+    log = PocLog(tmp_path)
+
+    with pytest.raises(KeyboardInterrupt):
+        log.write(b"poc")
+
+    monkeypatch.undo()
+    assert _listing(log.directory) == []
 
 
 # --- 중단 경로 — 파일이 없는 것을 받아들이되 흔적은 남긴다 --------------------------------
