@@ -311,6 +311,35 @@ def import_query(repo: str, project: str, compilation_database: str | None = Non
     )
 
 
+def import_cpg_query(cpg: str, project: str) -> str:
+    """Load a CPG saved by a `--prepare-only` run instead of parsing the repo again (#368).
+    Same stage and payload as `import_query`, so the rest of the run cannot tell them apart."""
+    return envelope(
+        "import",
+        f"""
+      val imported = importCpg({literal(cpg)}, {literal(project)})
+      require(imported.exists(_.metaData.nonEmpty), "Loaded CPG has no metadata")
+      ujson.Obj("imported" -> true)
+    """,
+    )
+
+
+def save_cpg_query(out: str) -> str:
+    """Persist the active project's graph (overlays included) and copy it to `out` (#368).
+    No REPLACE_EXISTING: an existing `out` may be the graph running shards are reading, so the
+    copy fails (FileAlreadyExistsException) rather than overwrite it."""
+    return envelope(
+        "save_cpg",
+        f"""
+      save
+      val source = workspace.getActiveProject.get.path.resolve("cpg.bin")
+      val target = java.nio.file.Path.of({literal(out)})
+      java.nio.file.Files.copy(source, target)
+      ujson.Obj("saved" -> true, "bytes" -> java.nio.file.Files.size(target))
+    """,
+    )
+
+
 def inventory_query(limits: dict[str, int] | None = None) -> str:
     return envelope(
         "inventory",

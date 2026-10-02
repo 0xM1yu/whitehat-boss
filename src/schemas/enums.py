@@ -256,6 +256,23 @@ class EvidenceGrade(StrEnum):
     E4 = "E4"
 
 
+class ReproOrigin(StrEnum):
+    """`ReproSpec`를 누가 만들었나 (#S7 — 재현 명세 합성).
+
+    `model` — Auditor 모델이 낸 명세. 지금까지의 유일한 경우다.
+    `harness` — 하네스가 합성한 명세. CyberGym Level 1처럼 과제가 재현 방법을 안 줘서
+    모델이 `repro_spec`을 비워 내면, 그 Finding은 E3(`validated`)에 못 올라 8단계(PoC
+    생성)가 아예 안 돈다(F-9 `repro_spec_missing`). 하네스가 아는 것(후보 위치·sink)으로
+    명세를 채워 **8단계가 돌게** 한다. ⚠ **E4(`proven`)는 이 출처와 무관하게 여전히 실행
+    로그(runtime Evidence, 게이트 `p4`)를 요구한다** — 합성 명세만으로는 아무것도 실행되지
+    않았으므로 proven이 되지 않는다. 그래서 「validated인데 합성 명세로 올라왔다」를 비교표가
+    가를 수 있게 이 값을 Finding이 싣고 게이트가 trace에 남긴다.
+    """
+
+    MODEL = "model"
+    HARNESS = "harness"
+
+
 class FindingState(StrEnum):
     """후보/Finding 상태 (architecture.md §4 상태 머신).
 
