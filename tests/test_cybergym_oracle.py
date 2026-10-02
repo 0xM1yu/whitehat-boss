@@ -2,8 +2,7 @@
 
 전부 `urlopen`을 갈아 끼운다(`tests/test_openai_compat.py:509-528`과 같은 선례) — 실서버·
 docker 없이 돈다. 계약 근거는 저자 소스 고정
-`sunblaze-ucb/cybergym@c6fe2027d39471375920b92cf1025e23a99ffda5`
-(`_workspace/plans-cybergym/S6b.md` ③).
+`sunblaze-ucb/cybergym@c6fe2027d39471375920b92cf1025e23a99ffda5`.
 """
 
 import hashlib

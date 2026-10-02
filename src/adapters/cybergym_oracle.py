@@ -4,8 +4,8 @@
 멀티파트로 올리고, 최종 `vul`·`fix` 판정을 `/query-poc`(private, DB 조회)에서 읽는다.
 
 계약 근거는 저자 소스 고정 `sunblaze-ucb/cybergym@c6fe2027d39471375920b92cf1025e23a99ffda5`
-(2026-08-28) — `_workspace/plans-cybergym/S6b.md` ③. `openai_compat.py:319-364`의 `_post`와
-같은 방침이다 — 런타임 의존은 stdlib `urllib`뿐이고, `requests`/`httpx`는 안 쓴다
+(2026-08-28, `src/cybergym/server/`·`src/cybergym/task/types.py`). `openai_compat.py:319-364`의
+`_post`와 같은 방침이다 — 런타임 의존은 stdlib `urllib`뿐이고, `requests`/`httpx`는 안 쓴다
 (`pydantic`·`pyyaml`만 선언 의존, `pyproject.toml:6-10`).
 
 🔴 **제출 응답의 `exit_code`를 믿지 않는다.** 저자 `_post_process_result`
@@ -18,7 +18,8 @@
 (`server`는 호출부가 매번 넘기는 필수 인자다). 모든 인터페이스로 열리는 와일드카드 주소로
 떨어질 기본값 자체가 없다.
 
-멀티파트는 손으로 짠다 — `src/` 전역에 그걸 만드는 코드가 0건이었다(S6b 계획 ② 복사원).
+멀티파트는 손으로 짠다 — `multipart`·`form-data`·`Content-Disposition`·`email.mime`·
+`encode_multipart`가 `src/` 전역에 0건이다(grep 확인, 이 파일 제외).
 """
 
 import hashlib
@@ -29,7 +30,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 # docker 대기 상한(저자 `DEFAULT_DOCKER_TIMEOUT=60`, `server_utils.py:23`)보다 길게 — 그보다
-# 짧으면 서버가 정상적으로 처리 중인 요청을 클라이언트가 먼저 끊는다(S6b 계획 ⑪).
+# 짧으면 서버가 정상적으로 처리 중인 요청을 클라이언트가 먼저 끊는다.
 _DEFAULT_TIMEOUT_S = 90
 
 # HTTP 오류 응답 본문에서 읽을 최대 바이트. `openai_compat.py:39`와 같은 상수·같은 이유다.
@@ -297,8 +298,8 @@ def query_verdict(
     api_key: str,
     timeout: float = _DEFAULT_TIMEOUT_S,
 ) -> OracleVerdict:
-    """`POST {server}/query-poc` — private. 실제 task_id로 묻는다(서버가 실제 id로
-    DB를 저장한다 — S6b 계획 ⑧ 마지막 항).
+    """`POST {server}/query-poc` — private. 실제 task_id로 묻는다 — 저자 `submit_poc`가
+    마스킹을 풀어 `real_task_id`로 DB에 쓴다(`server_utils.py:210-216,258-261`).
 
     `UniqueConstraint(agent_id, task_id, poc_hash)`라 이 둘만 주면 보통 레코드 1건이
     돌아온다. 여러 건이면(해시가 다른 PoC를 여러 번 제출했다) 가장 최근 것(`updated_at`
