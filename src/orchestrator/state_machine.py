@@ -41,7 +41,7 @@
 | F-7 | Critic `need_evidence` | 7 | `hypothesized` | `queued` | `critic_need_evidence` |
 | F-8 | Gate E3 (E2 + 반박 실패 + 명세) | 7 | `hypothesized` | `validated` | `critic_upheld` |
 | F-9 | 반박 실패, `repro_spec` 부재 | 7 | `hypothesized` | `hypothesized` | `repro_spec_missing` |
-| F-10 | Gate E4 (재현 로그 `ok=True`) | 8 | `validated` | `proven` | `repro_confirmed` |
+| F-10 | Gate E4 (`ok=True` · 종료 코드 비-0) | 8 | `validated` | `proven` | `repro_confirmed` |
 | F-10b | 재현 성공, E4 미만 (무전이) | 8 | `validated` | `validated` | `evidence_below_proven` |
 | F-11 | 재현 실패 | 8 | `validated` | `queued` | `repro_failed` |
 | F-12 | tool_policy 위반 | 8 | `validated` | `queued` | `tool_policy_violation` |
