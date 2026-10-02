@@ -120,7 +120,7 @@ def test_poller_reports_dead_on_a_crashed_real_run(
 def test_poller_reports_crashed_on_a_real_run_that_the_last_line_of_defense_caught(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """🔴 예상 밖 예외로 터진 **진짜 run**은 매니페스트를 남기고(S0), 폴러는 그것을 CRASHED로 읽는다.
+    """🔴 예상 밖 예외로 터진 **진짜 run**은 매니페스트를 남기고(S0), 폴러는 CRASHED로 읽는다.
 
     `has_manifest`로만 끝내면 exit 0 — 터진 run이 정상 종료로 보이고 사유는 아무 플래그에도 안
     뜬다(적대적 리뷰 2026-10-02 MEDIUM 3). 위 DEAD 갈래와 같은 이유로 sleep을 막는다."""
