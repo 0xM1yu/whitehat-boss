@@ -4,6 +4,11 @@ Level 1 과제는 `repo-vul.tar.gz`(취약 저장소) + `description.txt`(취약
 `README.md` + `submit.sh`로 온다. 이 모듈은 그중 저장소를 **안전하게** 풀어
 `preprocess.run`이 받을 `source_root`를 만들고, 설명 텍스트를 읽어 돌려준다.
 
+**해제 전에 정답 자료를 거른다**(`check_no_ground_truth`). 데이터셋 원본 폴더는 고친 소스·
+패치·크래시 로그를 `repo-vul.tar.gz` 옆에 담는데, Level 1은 그것을 안 준다 — 그게 해제·인덱싱
+경로에 닿으면 모델이 정답을 보고 run이 무효가 된다(evaluation.md §4). 누출 스캐너
+(`eval/leakage`)는 프롬프트·run 산출물만 보고 과제 입력 폴더는 안 보므로, 받는 이 자리에서 막는다.
+
 **대상은 신뢰 못 하는 소스다.** tar 해제는 stdlib의 `data` 필터(PEP 706 — 3.11.4에서 들어왔다)로
 경로 이탈(zip-slip)과 dest 밖을 가리키는(절대·외부) 링크·장치/특수 파일을 막고, 절대경로
 멤버는 dest 안으로 눌러 담는다 — 손으로 링크·`..`를 훑는 것보다 정확하다. 그 위에 **크기·개수
@@ -24,10 +29,43 @@ from pathlib import Path
 DESCRIPTION_FILENAME = "description.txt"
 REPO_ARCHIVE_NAME = "repo-vul.tar.gz"
 
+# Level 1이 주지 않는 정답 자료. 과제 디렉터리에 이 중 하나라도 있으면 run을 거부한다
+# (`check_no_ground_truth`). Level 1 입력은 취약 저장소 + 설명뿐인데, 데이터셋 원본 폴더는
+# 고친 소스(`repo-fix.tar.gz`)·패치(`patch.diff`)·크래시 로그(`error.txt`)를 같이 담는다. 그것이
+# 해제·인덱싱 경로에 닿으면 모델이 정답을 보고, 그 run의 결과는 무효다(evaluation.md §4). 누출
+# 스캐너(`eval/leakage`)는 프롬프트·run 산출물만 봐서 **과제 입력 폴더는 안 본다** — 그래서 입력을
+# 받는 이 자리에서 막는다. `repo-fix`로 시작하는 이름(압축 전 트리 포함)도 막는다.
+_GROUND_TRUTH_NAMES = frozenset({"patch.diff", "error.txt"})
+_GROUND_TRUTH_PREFIX = "repo-fix"
+
 # 안전 상한 — 실측이 아니라 신뢰 못 하는 입력의 자원 상한이다(PovSpec 8 MiB 상한과 같은 성격).
 # `data` 필터는 해제 크기를 안 묶으므로, 작은 gz가 GB로 풀려 디스크를 채우는 것을 여기서 막는다.
 _MAX_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_MEMBERS = 100_000
+
+
+class GroundTruthLeakError(Exception):
+    """과제 디렉터리에 Level 1이 주지 않는 정답 자료(패치·크래시 로그·고친 소스)가 있다. 그것이
+    모델에 닿으면 run이 무효라(evaluation.md §4), 해제·인덱싱 **전에** 멈춘다."""
+
+
+def check_no_ground_truth(task_dir: Path) -> None:
+    """과제 디렉터리 최상위에 정답 자료가 섞여 있으면 `GroundTruthLeakError`로 거부한다.
+
+    **최상위만 본다** — 정답 자료는 CyberGym 데이터셋 폴더의 형제 파일이고(`repo-vul.tar.gz`
+    옆의 `patch.diff`·`error.txt`·`repo-fix.tar.gz`), 취약 저장소 **안**은 정상 입력이라 안 본다.
+    `load_task`가 해제 전에 부른다 — 한 번 풀리면 인덱서·슬라이서가 그 트리를 본다. 이름 비교는
+    대소문자를 구분하지 않는다(파일시스템차를 타지 않게)."""
+    offenders = sorted(
+        entry.name
+        for entry in Path(task_dir).iterdir()
+        if entry.name.lower() in _GROUND_TRUTH_NAMES
+        or entry.name.lower().startswith(_GROUND_TRUTH_PREFIX)
+    )
+    if offenders:
+        raise GroundTruthLeakError(
+            f"과제에 정답 자료가 있다(Level 1은 주지 않는다): {', '.join(offenders)} — {task_dir}"
+        )
 
 
 class UnsafeArchiveError(Exception):
@@ -95,6 +133,8 @@ def load_task(task_dir: Path, work_dir: Path) -> tuple[Path, str | None]:
     빈 소스로 넘어가지 않고 `FileNotFoundError`로 멈춘다.
     """
     task_dir = Path(task_dir)
+    # 정답 자료 가드 — 해제 전에 본다(풀리면 인덱서·슬라이서가 그 트리를 본다).
+    check_no_ground_truth(task_dir)
     archive = task_dir / REPO_ARCHIVE_NAME
     if not archive.is_file():
         raise FileNotFoundError(f"과제에 {REPO_ARCHIVE_NAME}가 없다: {task_dir}")
