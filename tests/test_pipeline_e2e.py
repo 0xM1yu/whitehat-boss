@@ -541,23 +541,6 @@ def test_run_refuses_both_task_dir_and_target(
     )
 
 
-def test_run_refuses_both_task_dir_and_slices(
-    tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
-    """🔴 `--task-dir`와 `--slices`는 **같이 쓸 수 없다.**
-
-    슬라이스는 슬라이서가 **이미 풀린 트리**를 보고 만든 것이고 `--task-dir`는 그 트리를 **지금**
-    만든다. 게다가 작업 디렉터리는 비어 있어야 하므로 슬라이서가 본 트리와 같을 수 없다 — 조용히
-    받으면 gutter가 다른 파일의 줄을 가리킨다."""
-    task = _level1_task(tmp_path)
-    _task_run_is_refused(
-        tmp_path, capsys,
-        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
-         "--slices", str(tmp_path / "slices.json")],
-        needle="--slices",
-    )
-
-
 _TASK_SOURCE = "src-vul/mod_00.c"
 
 
@@ -654,7 +637,7 @@ def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
     **시작할 수 있다** — `_claim_run_dir`에 닿는 것으로 본다.
 
     적대적 리뷰 HIGH-1의 재현을 뒤집은 것이다: 전 판은 같은 인자에서 `--slices` 없이는 슬라이스
-    가드가, 주면 `--task-dir` 게이트가 막아 **어느 쪽으로도 못 시작했다**(에러 문구도 서로를 가리켰다).
+    가드가, 주면 `--task-dir` 게이트가 막아 **어느 쪽으로도 못 시작했다**(문구도 서로를 가리켰다).
     `execute`가 아니라 `_claim_run_dir`에서 세운다 — 그 뒤는 실서빙 엔드포인트가 필요하다."""
     _refuse_sockets(monkeypatch)
     task = _level1_task(tmp_path)
