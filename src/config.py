@@ -992,6 +992,36 @@ def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
         )
 
 
+def _check_real_serving_limits_are_positive(config: HarnessConfig) -> None:
+    """실모델을 서빙하는 프로필은 예산 상한 넷이 전부 양수여야 한다.
+
+    `BudgetLedger._overrun`은 상한 0을 **검사하지 않는다** — `dev_fake`의 `gpu_seconds: 0`이
+    「Fake는 GPU를 안 쓴다」는 뜻이라서다. 같은 0이 실서빙 프로필의 예산에 적히면 「한도 없음」이
+    되어 임대 GPU가 시간 단위 과금 그대로 한도 없이 돈다. 이 저장소에서 `0`은 보통 「안 쟀다」이고
+    (CLAUDE.md §0) `tool_seconds`는 안 적으면 0이다(`Budget`) — 실수로 0이 들어올 길이 둘이다.
+
+    **실서빙 판정은 `served_models()`다.** 프로필의 `production`이 아니다(`harness_pool`이
+    `production: false`인 채 실서빙이다). Fake 전용 프로필은 그대로 0을 쓴다. 이 검사가 원장이
+    아니라 로드에 있는 것은 원장이 자기 모델이 실서빙인지 모르기 때문이다.
+
+    **숫자를 정하지 않는다.** 아직 안 잰 상한이면 0이 아니라 직접 고른 잠정 상한을 적고 잠정치라고
+    표시한다(`budgets.default.tool_seconds`가 그 모양이다). 막는 것은 0뿐이고 작은 값은 안 막는다.
+    """
+    served = config.served_models()
+    if not served:
+        return
+    # `Budget`의 필드는 전부 상한이다 — 키를 여기 다시 적지 않으면 상한이 늘 때 이 검사가 안 샌다.
+    zero = sorted(item for item, limit in config.budget.model_dump().items() if limit == 0)
+    if zero:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}은 실모델 {sorted(served)}을 서빙하는데 예산 "
+            f"{config.profile.budget!r}의 {zero}가 0이다 — 상한 0은 「검사하지 않는다」"
+            "(`BudgetLedger`)라 임대 GPU가 한도 없이 돈다. 실서빙 프로필은 상한 넷을 전부 양수로 "
+            "적는다(`tool_seconds`는 안 적으면 0이다). 0을 쓸 수 있는 것은 GPU를 안 쓰는 Fake "
+            "전용 프로필뿐이다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -1034,6 +1064,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         seed=seed,
     )
     _check_swap_lists_every_served_role(config)
+    _check_real_serving_limits_are_positive(config)
     return config
 
 

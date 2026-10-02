@@ -1217,6 +1217,11 @@ def _copy_config(
     `thresholds_patch`도 같은 규칙이다 — 주면 budgets.yaml이 왕복을 거친다. `output_max`
     처럼 **저장소에는 아직 선언이 없는 값**을 세울 때 쓴다. 저장소 값을 바꿔 재는 검사는
     "값이 실측으로 정해진다"는 이 파일 모듈 docstring의 전제를 깨므로 하지 않는다.
+
+    **프로필의 예산은 `default`로 둔다.** 패치로 만든 프로필은 실서빙 역할을 쓸 수 있고(이 파일의
+    합성 프로필 대부분이 그렇다), 실서빙 프로필은 상한 0을 못 쓴다 — `dev_fake` 예산을 그대로 두면
+    로드가 `_check_real_serving_limits_are_positive`에서 죽는다. 예산은 이 검사들의 축이 아니다.
+    `profile_patch`가 `budget`을 주면 그것이 이긴다.
     """
     budgets_text = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
     if thresholds_patch is None:
@@ -1238,7 +1243,7 @@ def _copy_config(
             yaml.safe_dump(raw_models, allow_unicode=True), encoding="utf-8"
         )
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
-    raw["profiles"][profile].update(profile_patch)
+    raw["profiles"][profile].update({"budget": "default", **profile_patch})
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
 
 
