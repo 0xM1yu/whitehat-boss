@@ -6,15 +6,17 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
-from test_slicer import candidate, make_slice, payloads, response, run_cli
+from test_slicer import MockTransport, candidate, make_slice, payloads, report, response, run_cli
 
 import slicer
+import slicer_pipeline
 import slicer_queries as queries
 from slicer_candidates import collect
-from slicer_checkpoint import Checkpoint, merge_shards
+from slicer_checkpoint import Checkpoint, digest, merge_shards
 from slicer_export import export_sources
 from slicer_source import cluster, recover_lines
 
@@ -698,3 +700,1028 @@ def test_export_gives_unfinished_candidates_the_degraded_slice(monkeypatch, repo
         for s in exported["slices"]
         if missing["candidate_key"] in s["members"]
     )
+
+
+def _saving(cpg: Path, content: bytes = b"saved-graph"):  # noqa: ANN202
+    """Stand-in for Joern's `save` + copy: writes the graph the query names, reports its size."""
+    def save(query):  # noqa: ANN001, ANN202
+        assert cpg.resolve().as_posix() in query
+        cpg.write_bytes(content)
+        return response("save_cpg", {"saved": True, "bytes": len(content)})
+    return save
+
+
+def _prepare(monkeypatch, repo, tmp_path, data, *, save=None):  # noqa: ANN001, ANN202
+    """#368: one `--prepare-only` run -> (checkpoint, saved CPG path, code, result, transport)."""
+    folder = tmp_path / "prep"
+    folder.mkdir(parents=True)
+    cpg = folder / "cpg.bin"
+    data["save_cpg"] = _saving(cpg) if save is None else save
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+        "--prepare-only", "--cpg-out", str(cpg),
+    )
+    return folder / "state.db", cpg, code, result, transport
+
+
+def _seed(state: Path, folder: Path) -> Path:
+    """Copy the prepared checkpoint as one shard's starting state."""
+    import shutil
+
+    folder.mkdir(parents=True)
+    shutil.copy(state, folder / "state.db")
+    return folder / "state.db"
+
+
+def _shard_on(monkeypatch, repo, folder, cpg, *extra):  # noqa: ANN001, ANN202
+    """A shard on the prepared graph; case_a/case_b are absent, so a rediscovery would fail."""
+    data = three_candidates()
+    del data["case_a"], data["case_b"]
+    return run_cli(
+        monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+        "--resume", "--cpg", str(cpg), *extra,
+    )
+
+
+def test_prepare_only_discovers_once_and_saves_the_graph(monkeypatch, repo, tmp_path):
+    """#368: the prepare run parses and discovers, saves the CPG, and slices nothing. The
+    `prepared` record (size+SHA-256 the client read back) is written only after the save."""
+    state, cpg, code, result, transport = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    assert code == 2 and result["status"] == "partial"
+    assert result["prepare_only"] is True
+    assert "Prepare-only" in result["error"]
+    assert {"import", "case_a", "case_b", "save_cpg"} <= set(transport.stages)
+    assert not {"flows", "backward", "context"} & set(transport.stages)
+    content = cpg.read_bytes()
+    expected = {
+        "path": cpg.resolve().as_posix(),
+        "server_bytes": len(content),
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "cpg_seconds": result["counters"]["cpg_seconds"],
+    }
+    assert result["prepared_cpg"] == expected
+    with Checkpoint(state, resume=True) as store:
+        assert len(store.get("candidates")) == 3
+        assert store.get("baseline") is not None
+        assert "prepare_only" not in store.get("baseline")["result"]
+        assert store.get("prepared") == expected
+        assert not list(store.conn.execute("SELECT candidate_key FROM stages"))
+
+
+def test_the_harness_refuses_a_prepare_only_result(monkeypatch, repo, tmp_path):
+    """#371 review: the prepare output is `partial` + `slices: []` + no `shard` -- without the
+    marker the loader read it as a finished run with zero slices."""
+    from src.adapters.slices import SliceInputError, load_slices
+
+    _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    with pytest.raises(SliceInputError, match="--prepare-only"):
+        load_slices(tmp_path / "prep" / "slices.json")
+
+
+@pytest.mark.parametrize("name", ['quote"d', "back\\slash", "unié"])
+def test_cpg_paths_reach_scala_as_one_exact_literal(name):
+    """A path goes through `literal`, not pasted between quotes: a `"` or `\\` in it must not
+    end the Scala string early or change the path Joern writes/reads."""
+    path = f"/work/prep/{name}/cpg.bin"
+    for query in (queries.save_cpg_query(path), queries.import_cpg_query(path, "p")):
+        assert path in [json.loads(s) for s in SCALA_STRING.findall(query)]
+
+
+def test_shards_on_a_prepared_graph_skip_parsing_and_discovery(monkeypatch, repo, tmp_path):
+    """#368: a shard on a copy of the prepared checkpoint loads the saved CPG (importCpg, not
+    importCode) and never re-runs discovery -- case_a/case_b are absent from its mock, so a
+    rerun would fail. Merged and exported, the shards give exactly the one-run slices."""
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates())
+    state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    databases = []
+    for index in range(2):
+        databases.append(_seed(state, tmp_path / f"seeded{index}"))
+        code, result, transport = _shard_on(
+            monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2"
+        )
+        assert code == 2 and result["shard"] == {"index": index, "count": 2}
+        assert "prepare_only" not in result
+        assert not {"case_a", "case_b"} & set(transport.stages)
+        imports = [q for q in (json.loads(r.data)["query"] for r, _ in transport.requests)
+                   if '"__SLICER_import__"' in q]
+        assert len(imports) == 1 and "importCpg(" in imports[0] and "importCode" not in imports[0]
+    merged = tmp_path / "merged.db"
+    assert merge_shards(merged, databases) == {"shards": 2, "candidates": 3, "complete": 3}
+    with Checkpoint(merged, resume=True) as store:
+        # #371 review: every seed carries the prepare's attempt -- it is one attempt, not two.
+        assert len(store.attempts()) == 3
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert exported["status"] == "ok"
+    assert "prepare_only" not in exported
+    assert exported["slices"] == single["slices"]
+
+
+def test_a_shard_keeps_its_own_cpg_time_and_server(monkeypatch, repo, tmp_path):
+    """#371 review: the discovery (counters, errors) is the prepare's, but `server` and
+    `cpg_seconds` are this shard's own measurements -- the prepare's parse time must not be
+    reported as the shard's. Sentinels in the seed tell the two apart."""
+    state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    seeded = _seed(state, tmp_path / "seeded")
+    with Checkpoint(seeded, resume=True) as store:
+        baseline = store.get("baseline")
+        baseline["result"]["counters"]["cpg_seconds"] = 12345.0
+        baseline["result"]["counters"]["candidates_case_a"] = 777
+        baseline["result"]["server"] = {"sentinel": "prepare"}
+        baseline["errors"].append("sentinel prepare warning")
+        store.set("baseline", baseline)
+    _, result, _ = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert result["counters"]["candidates_case_a"] == 777
+    assert "sentinel prepare warning" in result["error"]
+    assert result["server"] != {"sentinel": "prepare"}
+    assert result["counters"]["cpg_seconds"] != 12345.0
+    assert result["prepared_cpg"]["sha256"] == hashlib.sha256(cpg.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(("extra", "message"), [
+    (["--prepare-only", "{ck}"], "--prepare-only needs"),                     # no --cpg-out
+    (["--prepare-only", "--cpg-out", "{out}"], "--prepare-only needs"),       # no --checkpoint
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--shard", "0/2"], "--prepare-only needs"),
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--resume"], "--prepare-only needs"),
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--export-only"], "--prepare-only needs"),
+    (["--prepare-only", "--cpg-out", "{out}", "{ck}", "--cpg", "{cpg}"], "--prepare-only needs"),
+    (["--cpg-out", "{out}", "{ck}"], "--cpg-out only goes"),
+    (["--cpg", "{cpg}", "{ck}"], "--cpg needs"),                              # without --resume
+    (["--cpg", "{cpg}", "{ck}", "--resume", "--export-only"], "--cpg needs"),
+    (["--cpg", "{out}", "{ck}", "--resume"], "--cpg is not a file"),
+    (["--prepare-only", "--cpg-out", "{out}", "--checkpoint", "{cpg}"], "needs a new --checkpoint"),
+    (["--prepare-only", "--cpg-out", "{cpg}", "{ck}"], "--cpg-out exists"),
+    (["--prepare-only", "--cpg-out", "{state}", "{ck}"], "must be distinct"),
+    (["--cpg", "{cpg}", "--checkpoint", "{cpg}", "--resume"], "must be distinct"),
+])
+def test_prepared_graph_options_are_refused_when_inconsistent(
+    monkeypatch, repo, tmp_path, capsys, extra, message
+):
+    """Each combination is refused by its own check (the message), before any Joern request."""
+    cpg = tmp_path / "existing.bin"
+    cpg.write_bytes(b"graph")
+    state = tmp_path / "state.db"
+    names = {"{out}": str(tmp_path / "new.bin"), "{cpg}": str(cpg), "{state}": str(state)}
+    argv = []
+    for item in extra:
+        argv += ["--checkpoint", str(state)] if item == "{ck}" else [names.get(item, item)]
+    transport = MockTransport({})
+    monkeypatch.setattr(slicer, "urlopen", transport)
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), *argv])
+    assert message in capsys.readouterr().err
+    assert transport.stages == [] and not state.exists()
+
+
+def test_a_shard_on_a_checkpoint_without_discovery_fails(monkeypatch, repo, tmp_path):
+    """--cpg on a checkpoint whose prepare run died before discovery (case_a failed) has no
+    candidate list to reuse -> the shard says so and slices nothing, it does not run its own
+    discovery behind the prepared graph's back."""
+    data = three_candidates()
+    data["case_a"] = response("case_a", [], success=False)
+    state, cpg, _, prepared, _ = _prepare(monkeypatch, repo, tmp_path, data)
+    assert "Prepare-only" not in (prepared.get("error") or "")
+    assert not cpg.exists()
+    cpg.write_bytes(b"some graph")
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0
+    assert "--prepare-only" in result["error"]
+    assert transport.stages == []
+
+
+def test_a_seed_whose_save_failed_is_refused(monkeypatch, repo, tmp_path):
+    """#371 review: discovery is committed before `save_cpg`, so a prepare whose save failed
+    leaves baseline+candidates. Without the `prepared` record a shard accepted that seed."""
+    state, cpg, code, prepared, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(),
+        save=response("save_cpg", {}, success=False),
+    )
+    assert code != 0 and "Prepare-only" not in prepared["error"]
+    with Checkpoint(state, resume=True) as store:
+        assert store.get("candidates") is not None and store.get("prepared") is None
+    cpg.write_bytes(b"a graph from somewhere else")
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "'prepared' record" in result["error"]
+    assert transport.stages == []
+
+
+def test_a_cpg_that_is_not_the_prepared_one_is_refused(monkeypatch, repo, tmp_path):
+    """#371 review: same path, other bytes (rewritten, or another prepare's) -> refused before
+    any Joern request instead of slicing a graph the candidate list was not discovered on."""
+    state, cpg, _, _, _ = _prepare(monkeypatch, repo, tmp_path, three_candidates())
+    cpg.write_bytes(cpg.read_bytes() + b"!")
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "is not the CPG the prepare run saved" in result["error"]
+    assert transport.stages == []
+
+
+def test_an_unhashed_prepared_cpg_is_said_and_refused(monkeypatch, repo, tmp_path):
+    """The client could not read what Joern saved (another host): the prepare says so and leaves
+    bytes/sha256 null (unmeasured, not guessed), and a shard refuses what it cannot verify."""
+    def remote(query):  # noqa: ANN001, ANN202
+        return response("save_cpg", {"saved": True, "bytes": 99})
+
+    state, cpg, _, prepared, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(), save=remote
+    )
+    assert prepared["prepared_cpg"]["sha256"] is None
+    assert prepared["prepared_cpg"]["bytes"] is None
+    assert prepared["prepared_cpg"]["server_bytes"] == 99
+    assert "prepared_cpg" in prepared["measurement_notes"]
+    assert "not readable from this client" in prepared["error"]
+    cpg.write_bytes(b"x" * 99)
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "no SHA-256" in result["error"]
+    assert transport.stages == []
+
+
+def test_shards_of_two_different_prepares_do_not_merge(monkeypatch, repo, tmp_path):
+    """Same repo, same candidate list, but two prepared graphs: their stages were sliced on
+    different CPGs, so merging them is refused like any other cross-run merge."""
+    databases = []
+    for index in range(2):
+        state, cpg, _, _, _ = _prepare(
+            monkeypatch, repo, tmp_path / f"run{index}", three_candidates()
+        )
+        databases.append(_seed(state, tmp_path / f"seeded{index}"))
+        _shard_on(monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2")
+    with pytest.raises(ValueError, match="Shard mismatch on prepared"):
+        merge_shards(tmp_path / "merged.db", databases)
+
+
+def _claim_shard(monkeypatch, repo, tmp_path, data, index, count, claims):  # noqa: ANN001, ANN202
+    folder = tmp_path / f"claim{index}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "state.db", run_cli(
+        monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
+        "--shard", f"{index}/{count}", "--claim-db", str(claims),
+    )
+
+
+def test_a_claim_queue_lets_an_idle_shard_take_every_open_candidate(monkeypatch, repo, tmp_path):
+    """#369: with a shared queue the work is not split by position. Run one after the other,
+    the first shard takes all three candidates and the second finds none left -- under p % N
+    each would have sliced its own share. Merged, the result equals one unsharded run."""
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates())
+    claims = tmp_path / "claims.db"
+    first, (_, r0, t0) = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 0, 2, claims)
+    second, (_, r1, t1) = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2,
+                                       claims)
+    with Checkpoint(first, resume=True) as store:
+        assert len(list(store.conn.execute("SELECT candidate_key FROM stages"))) == 3
+    with Checkpoint(second, resume=True) as store:
+        assert list(store.conn.execute("SELECT candidate_key FROM stages")) == []
+    assert "flows" not in t1.stages and "backward" not in t1.stages
+    assert "claimed from the shared queue" in r0["error"]
+    merged = tmp_path / "merged.db"
+    assert merge_shards(merged, [first, second]) == {"shards": 2, "candidates": 3, "complete": 3}
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert exported["slices"] == single["slices"]
+
+
+def _failing(data):  # noqa: ANN001, ANN202
+    """Every flows/backward query fails without poisoning: claimed, degraded, never saved."""
+    failed = {"success": False, "stdout": "", "stderr": "boom"}
+    return {**data, "flows": failed, "backward": failed}
+
+
+def test_a_shard_resumes_its_own_claims(monkeypatch, repo, tmp_path):
+    """A shard whose candidates all failed keeps them claimed: another shard (other I/N) takes
+    none of them, and `--resume` of the same I/N slices them all."""
+    claims = tmp_path / "claims.db"
+    mine, (_, failed, _) = _claim_shard(
+        monkeypatch, repo, tmp_path, _failing(three_candidates()), 0, 2, claims
+    )
+    assert failed["counters"]["candidates_failed"] == 3
+    other, (_, _, t1) = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2,
+                                     claims)
+    assert "flows" not in t1.stages and "backward" not in t1.stages
+    code, resumed, _ = run_cli(
+        monkeypatch, repo, mine.parent, three_candidates(), "--checkpoint", str(mine), "--resume",
+        "--shard", "0/2", "--claim-db", str(claims),
+    )
+    assert code == 2 and resumed["counters"]["candidates_failed"] == 0
+    assert merge_shards(tmp_path / "merged.db", [mine, other])["complete"] == 3
+
+
+def test_a_poisoned_shard_stops_claiming_and_leaves_the_rest(monkeypatch, repo, tmp_path):
+    """After a poison streak a queue shard stops taking candidates (its server is unusable)
+    instead of claiming and degrading all of them; a healthy shard then slices the rest."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    claims = tmp_path / "claims.db"
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    _, (_, poisoned, _) = _claim_shard(monkeypatch, repo, tmp_path, bad, 0, 2, claims)
+    streak = slicer_pipeline.POISON_STOP_STREAK
+    assert poisoned["counters"]["candidates_failed"] == streak
+    healthy_db, (_, healthy, _) = _claim_shard(
+        monkeypatch, repo, tmp_path, payloads(case_a=cands, flow_count=2), 1, 2, claims
+    )
+    with Checkpoint(healthy_db, resume=True) as store:
+        done = len(list(store.conn.execute("SELECT candidate_key FROM stages")))
+    assert done == len(cands) - streak
+
+
+def test_a_claim_queue_needs_a_shard(repo, tmp_path):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--checkpoint", str(tmp_path / "state.db"),
+                     "--claim-db", str(tmp_path / "claims.db")])
+
+
+def test_a_poison_streak_message_says_what_happens_to_the_rest(monkeypatch, repo, tmp_path):
+    """Claim mode stops claiming (the rest stay queued); without it the rest get degraded."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    _, (_, queued, _) = _claim_shard(monkeypatch, repo, tmp_path, bad, 0, 2,
+                                     tmp_path / "claims.db")
+    assert "this shard stops claiming candidates" in queued["error"]
+    assert "remaining candidates get degraded" not in queued["error"]
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, fixed, _ = run_cli(monkeypatch, repo, plain, bad, "--checkpoint", str(plain / "s.db"),
+                          "--shard", "0/2")
+    assert "remaining candidates get degraded" in fixed["error"]
+    assert "stops claiming" not in fixed["error"]
+
+
+def _flows_by_outcome(outcomes):  # noqa: ANN001, ANN202
+    """flows reply per call: P poisoned, F failed (not poisoned), S success."""
+    calls = []
+
+    def flows(query):  # noqa: ANN001, ANN202
+        calls.append(query)
+        kind = outcomes[len(calls) - 1]
+        if kind == "P":
+            return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+        if kind == "F":
+            return {"success": False, "stdout": "", "stderr": "boom"}
+        return response(
+            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+        )
+
+    return flows
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "failed"), [("PPSPPS", 4), ("PPFPPS", 5)], ids=["success", "plain-failure"]
+)
+def test_a_poison_streak_restarts_after_a_non_poisoned_candidate(
+    monkeypatch, repo, tmp_path, outcomes, failed
+):
+    """Only CONSECUTIVE poison stops: a success or an unpoisoned failure resets the count, so
+    P P S P P (or P P F P P) never reaches the streak of 3 and every candidate hits the server."""
+    assert slicer_pipeline.POISON_STOP_STREAK == 3
+    cands = [candidate("c" + str(i), i + 1) for i in range(len(outcomes))]
+    data = payloads(case_a=cands, flow_count=2)
+    data["flows"] = _flows_by_outcome(outcomes)
+    _, result, transport = run_cli(monkeypatch, repo, tmp_path, data)
+    assert transport.stages.count("flows") == len(outcomes)
+    assert result["counters"]["candidates_failed"] == failed
+    assert "consecutive poisoned candidates" not in result["error"]
+
+
+def test_claims_are_keyed_by_the_candidate_key(monkeypatch, repo, tmp_path):
+    from slicer_claims import read_claims
+
+    claims = tmp_path / "claims.db"
+    state, _ = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2, claims)
+    with Checkpoint(state, resume=True) as store:
+        keys = {c["candidate_key"] for c in store.get("candidates")}
+    assert set(read_claims(claims)) == keys
+    assert {owner for owner, _ in read_claims(claims).values()} == {"1/2"}
+
+
+def test_the_claim_db_runs_in_wal_mode(tmp_path):
+    from slicer_claims import ClaimQueue
+
+    queue = ClaimQueue(tmp_path / "claims.db", 0, 2)
+    try:
+        assert queue.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        queue.close()
+
+
+def test_a_filesystem_without_wal_is_refused_loudly(monkeypatch, tmp_path):
+    """SQLite returns the old mode instead of raising; that must not pass as a working queue."""
+    from slicer_claims import ClaimQueue
+
+    monkeypatch.setattr(ClaimQueue, "_bootstrap", staticmethod(lambda conn, count: "delete"))
+    with pytest.raises(ValueError, match="host-local filesystem"):
+        ClaimQueue(tmp_path / "claims.db", 0, 2, timeout=0.05)
+
+
+def _hold_write_lock(path):  # noqa: ANN001, ANN202
+    other = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
+    other.execute("BEGIN IMMEDIATE")
+    return other
+
+
+def test_a_claim_waits_out_another_shards_write_lock(tmp_path):
+    """The busy timeout: a claim during another shard's brief INSERT waits, it does not fail."""
+    import threading
+
+    from slicer_claims import ClaimQueue
+
+    queue = ClaimQueue(tmp_path / "claims.db", 0, 2)
+    other = _hold_write_lock(tmp_path / "claims.db")
+    release = threading.Timer(0.3, lambda: other.execute("COMMIT"))
+    release.start()
+    try:
+        assert queue.claim("k1")
+    finally:
+        release.join()
+        other.close()
+        queue.close()
+
+
+def test_a_lock_past_the_timeout_raises_instead_of_skipping_the_candidate(tmp_path):
+    """Only a taken key means "not mine"; a lock error read as one would drop the candidate."""
+    from slicer_claims import ClaimQueue
+
+    queue = ClaimQueue(tmp_path / "claims.db", 0, 2, timeout=0.1)
+    other = _hold_write_lock(tmp_path / "claims.db")
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            queue.claim("k1")
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+    assert queue.claim("k1")
+    queue.close()
+
+
+CLAIM_WORKER = """
+import json, os, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from slicer_claims import ClaimQueue
+db, index, count, go = Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+Path(go + ".ready" + str(index)).touch()
+while not os.path.exists(go):
+    time.sleep(0.001)
+queue = ClaimQueue(db, index, count)
+print(json.dumps([k for k in ("k" + str(n) for n in range(40)) if queue.claim(k)]))
+queue.close()
+"""
+
+
+def _open_at_once(folder, count):  # noqa: ANN001, ANN202
+    """`count` processes open one fresh claim db together and claim k0..k39; their outputs."""
+    root = str(Path(slicer.__file__).parent)
+    folder.mkdir()
+    go = str(folder / "go")
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", CLAIM_WORKER, root, str(folder / "claims.db"), str(i),
+             str(count), go],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        for i in range(count)
+    ]
+    try:
+        for i in range(count):
+            ready = Path(go + ".ready" + str(i))
+            for _ in range(3000):
+                if ready.exists():
+                    break
+                time.sleep(0.01)
+        Path(go).touch()
+        outputs = [proc.communicate(timeout=60) for proc in procs]
+        return [(proc.returncode, *out) for proc, out in zip(procs, outputs, strict=True)]
+    finally:
+        for proc in procs:
+            proc.kill()
+
+
+def test_many_shards_open_a_fresh_claim_db_at_once(tmp_path):
+    """#372 review: N processes creating the file together got `database is locked` from the
+    WAL switch (no busy timeout there). All must open, and every key goes to exactly one.
+    With the retry removed, 5 of 10 rounds of 12 processes lost at least one process (2026-10-02,
+    local Windows, ad-hoc script outside the repo), so five rounds make the race show."""
+    for round_ in range(5):
+        outputs = _open_at_once(tmp_path / str(round_), 12)
+        assert [err for code, _, err in outputs if code] == []
+        taken = [key for _, out, _ in outputs for key in json.loads(out)]
+        assert sorted(taken) == sorted("k" + str(n) for n in range(40))
+
+
+def test_a_claim_db_from_another_run_is_refused(monkeypatch, repo, tmp_path):
+    """#372 review: a leftover claim file made every shard of the next run find all candidates
+    taken -- merge 0/N complete, no word about the file. A different shard count fails on open,
+    a different candidate list before any candidate is sliced."""
+    claims = tmp_path / "claims.db"
+    _claim_shard(monkeypatch, repo, tmp_path / "old", three_candidates(), 0, 2, claims)
+    code, other_count, transport = _claim_shard(
+        monkeypatch, repo, tmp_path / "count", three_candidates(), 0, 3, claims
+    )[1]
+    assert code == 1 and "2 shards, not 3" in other_count["error"]
+    assert transport.stages == []
+    changed = payloads(case_a=[candidate("fresh", 7)], flow_count=1)
+    _, (_, other_run, transport) = _claim_shard(
+        monkeypatch, repo, tmp_path / "run", changed, 0, 2, claims
+    )
+    assert "started by another run" in other_run["error"]
+    assert "flows" not in transport.stages
+
+
+def test_a_claim_db_gets_its_parent_and_a_bad_one_is_a_result_error(monkeypatch, repo, tmp_path):
+    nested = tmp_path / "a" / "b" / "claims.db"
+    code, _, _ = _claim_shard(monkeypatch, repo, tmp_path / "ok", three_candidates(), 0, 2,
+                              nested)[1]
+    assert code == 2 and nested.is_file()
+    folder = tmp_path / "dir"
+    code, result, _ = _claim_shard(monkeypatch, repo, folder, three_candidates(), 0, 2,
+                                   tmp_path)[1]
+    assert code == 1 and result["error"]
+
+
+def test_the_claim_db_is_not_another_output(repo, tmp_path):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--checkpoint", str(tmp_path / "state.db"), "--shard", "0/2",
+                     "--claim-db", str(tmp_path / "state.db")])
+
+
+def test_the_merge_tool_names_the_claim_owner_of_each_incomplete_candidate(
+    monkeypatch, repo, tmp_path, capsys
+):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "merge_tool", Path(slicer.__file__).parent / "tools" / "merge_slicer_shards.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    claims = tmp_path / "claims.db"
+    mine, _ = _claim_shard(monkeypatch, repo, tmp_path, _failing(three_candidates()), 0, 2,
+                           claims)
+    other, _ = _claim_shard(monkeypatch, repo, tmp_path, three_candidates(), 1, 2, claims)
+    with Checkpoint(mine, resume=True) as store:
+        keys = [c["candidate_key"] for c in store.get("candidates")]
+    capsys.readouterr()
+    assert tool.main(["x", "--claim-db", str(claims), str(tmp_path / "m.db"), str(mine),
+                      str(other)]) == 2
+    err = capsys.readouterr().err
+    assert "incomplete: 3" in err
+    for key in keys:
+        assert f"{key}  claimed by 0/2" in err
+    assert tool.main(["x", str(tmp_path / "plain.db"), str(mine), str(other)]) == 2
+    err = capsys.readouterr().err
+    assert all(f"  {key}\n" in err for key in keys)
+
+
+# #377 (b) -- --priority-files: order only, bound into the checkpoint.
+
+
+def in_file(item, name):
+    """candidate() moved to another file, same line/symbol."""
+    moved = json.loads(json.dumps(item))
+    moved["file"] = name
+    moved["scope"]["file"] = name
+    moved["anchors"] = [{**a, "file": name} for a in moved["anchors"]]
+    return moved
+
+
+@pytest.fixture(name="two_file_repo")
+def two_file_repo_fixture(repo):
+    (repo / "a.c").write_text((repo / "main.c").read_text(encoding="utf-8"), encoding="utf-8")
+    return repo
+
+
+def two_file_payloads():
+    # a.c sorts before main.c, so without a list a.c's candidate comes first.
+    data = payloads(case_a=[in_file(candidate(), "a.c"), candidate("other", 3)], flow_count=1)
+    data["import"] = response(
+        "import", {"imported": True}, logs=report([("a.c", "yes", "yes"), ("main.c", "yes", "yes")])
+    )
+    data["inventory"] = response("inventory", {
+        "files": ["a.c", "main.c"], "methods_internal": 2, "calls": 2, "calls_unresolved": 0,
+        "unknown_nodes": 0, "flow_sinks_without_method": 0, "overlays": ["ossdataflow"],
+        "engine_config": {
+            "maxCallDepth": 4, "maxArgsToAllow": 1000, "maxOutputArgsExpansion": 1000,
+        },
+    })
+    return data
+
+
+def test_prioritize_moves_listed_files_first_and_keeps_order_and_ids(repo):
+    from slicer_candidates import prioritize
+
+    rows = [in_file(candidate("x", 1), "a.c"), in_file(candidate("y", 2), "b.c"),
+            candidate("z", 3), in_file(candidate("w", 4), "b.c")]
+    ordered = collect({"A": rows}, repo)
+    assert [c["entry"]["file"] for c in ordered] == ["a.c", "b.c", "b.c", "main.c"]
+    moved, first, matched = prioritize(ordered, {"main.c", "b.c", "gone.c"})
+    assert first == 3 and matched == {"main.c", "b.c"}
+    # each tier keeps collect()'s relative order; ids are collect()'s, not the new positions
+    assert [c["id"] for c in moved] == [ordered[i]["id"] for i in (1, 2, 3, 0)]
+    assert prioritize(ordered, set()) == (ordered, 0, set())
+
+
+def test_an_anchor_in_a_listed_file_is_enough(repo):
+    from slicer_candidates import prioritize
+
+    row = in_file(candidate(), "a.c")
+    row["anchors"].append({"file": "main.c", "line": 5})
+    # q (a.c:5) sorts after row (a.c:1); only row has an anchor in main.c
+    ordered = collect({"A": [in_file(candidate("q", 5), "a.c"), row]}, repo)
+    assert [c["entry"]["symbol"] for c in ordered] == ["entry", "q"]
+    moved, first, matched = prioritize(ordered, {"main.c"})
+    assert first == 1 and moved == ordered and matched == {"main.c"}
+    moved, first, _ = prioritize(ordered[::-1], {"main.c"})
+    assert first == 1 and [c["entry"]["symbol"] for c in moved] == ["entry", "q"]
+
+
+def test_priority_files_reorder_the_bound_candidates(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# hint\n\n./main.c\n", encoding="utf-8")
+    database = tmp_path / "state.db"
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"] == {
+        "files": 1, "files_with_candidates": 1, "first_tier_candidates": 1, "candidates": 2,
+        "matched_files": ["main.c"], "unmatched_files": [],
+    }
+    assert result["settings"]["priority_files"] == {"count": 1, "sha256": digest(["main.c"])}
+    assert "priority_files" not in result["measurement_notes"]
+    with Checkpoint(database, resume=True) as store:
+        files = [c["entry"]["file"] for c in store.get("candidates")]
+    assert files == ["main.c", "a.c"]
+
+
+def test_without_priority_files_nothing_changes(monkeypatch, two_file_repo, tmp_path):
+    database = tmp_path / "state.db"
+    _, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--checkpoint", str(database)
+    )
+    assert "priority" not in result and result["settings"]["priority_files"] is None
+    with Checkpoint(database, resume=True) as store:
+        files = [c["entry"]["file"] for c in store.get("candidates")]
+    assert files == ["a.c", "main.c"]
+
+
+def test_the_slices_do_not_depend_on_the_list(monkeypatch, two_file_repo, tmp_path):
+    """A complete run with no failed candidate: the same slices with or without a list.
+
+    Only that case. A run cut short, or one where a poison streak degrades the rest
+    (POISON_STOP_STREAK), can degrade different candidates depending on the order.
+    """
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    outputs = []
+    for name, extra in (("plain", ()), ("listed", ("--priority-files", str(listing)))):
+        folder = tmp_path / name
+        folder.mkdir()
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(), *extra
+        )
+        assert code == 0, result.get("error")
+        assert result["counters"]["candidates_degraded"] == 0
+        outputs.append(result["slices"])
+    assert outputs[0] and outputs[0] == outputs[1]
+
+
+def test_shards_with_different_lists_are_not_merged(monkeypatch, two_file_repo, tmp_path):
+    databases = []
+    for index, listed in enumerate(("main.c\n", "a.c\n")):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        listing = folder / "priority.txt"
+        listing.write_text(listed, encoding="utf-8")
+        databases.append(folder / "state.db")
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
+            "--priority-files", str(listing),
+        )
+        # as run_shards: a shard's own output is a fraction of the run
+        assert code == 2 and result["status"] == "partial", result.get("error")
+    contracts = []
+    for database in databases:
+        with Checkpoint(database, resume=True) as store:
+            contracts.append(store.get("run_contract")["settings"]["priority_files"])
+    assert contracts == [
+        {"count": 1, "sha256": digest(["main.c"])}, {"count": 1, "sha256": digest(["a.c"])},
+    ]
+    # run_contract is compared before candidates (SHARD_SHARED_KEYS), so the settings entry is
+    # what refuses this merge, not the reordered candidate list.
+    with pytest.raises(ValueError, match="Shard mismatch on run_contract"):
+        merge_shards(tmp_path / "merged.db", databases)
+
+
+def test_resuming_with_another_list_is_a_contract_mismatch(monkeypatch, two_file_repo, tmp_path):
+    database = tmp_path / "state.db"
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    code, _, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0
+    listing.write_text("a.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--resume", "--priority-files", str(listing),
+    )
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+
+
+def test_the_list_is_read_as_collect_spells_files(two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    absolute = (two_file_repo / "main.c").resolve()
+    # BOM first: plain utf-8 kept it on line 1, so that path never matched
+    listing.write_bytes(
+        "\ufeffa.c\n".encode()
+        + f"{absolute}\n  ./sub//x.c  \nsub\\y.c\n# skipped\nz.c # kept\n".encode()
+    )
+    assert slicer.read_priority_files(listing, two_file_repo) == {
+        "a.c", "main.c", "sub/x.c", "sub/y.c", "z.c # kept",
+    }
+
+
+def test_a_bom_and_an_absolute_path_still_reorder(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    absolute = (two_file_repo / "main.c").resolve()
+    listing.write_bytes(f"\ufeff{absolute}\n".encode())
+    database = tmp_path / "state.db"
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["first_tier_candidates"] == 1
+    with Checkpoint(database, resume=True) as store:
+        assert [c["entry"]["file"] for c in store.get("candidates")] == ["main.c", "a.c"]
+
+
+def test_a_list_that_matches_nothing_is_noted_not_failed(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("nope.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["files_with_candidates"] == 0
+    note = result["measurement_notes"]["priority_files"]
+    assert "matched no candidate" in note and "default order" in note
+
+
+def test_listed_files_without_candidates_are_counted(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\nnope.c\ngone.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["files_with_candidates"] == 1
+    assert result["measurement_notes"]["priority_files"].startswith("2 of 3 listed files")
+
+
+def test_priority_files_are_refused_with_export_only_or_unreadable(repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    base = ["--repo", str(repo), "--out", str(tmp_path / "s.json")]
+    with pytest.raises(SystemExit):
+        slicer.main([*base, "--checkpoint", str(tmp_path / "state.db"), "--export-only",
+                     "--priority-files", str(listing)])
+    with pytest.raises(SystemExit):
+        slicer.main([*base, "--priority-files", str(tmp_path / "missing.txt")])
+
+
+def flows_file_order(transport):
+    """The repo file of each flows query, in the order they were sent to the server.
+
+    The flows call carries the candidate's scope list -- `List(("a.c", "entry", 1))` -- so the
+    first tuple element is the candidate's file. This reads the actual EXECUTION order, not the
+    order the checkpoint was bound in (HIGH-1: a mutation that reorders the loop but keeps the
+    binding leaves the checkpoint looking applied while the queries run in a different order)."""
+    order = []
+    for request, _ in transport.requests:
+        query = json.loads(request.data)["query"]
+        if '"__SLICER_flows__"' in query:
+            order.append(re.search(r'List\(\("([^"]*)"', query)[1])
+    return order
+
+
+def test_priority_files_change_the_query_execution_order(monkeypatch, two_file_repo, tmp_path):
+    """HIGH-1: the list must change the order queries are actually SENT, not just the binding.
+
+    Kills the mutation that reorders the loop by candidate id (`sorted(self.candidates, key=id)`):
+    that leaves the checkpoint in priority order (so the bound-order test still passes) while the
+    server sees id order -- here main.c would still be queried after a.c."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, _, without = run_cli(monkeypatch, two_file_repo, plain, two_file_payloads())
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    _, _, with_list = run_cli(
+        monkeypatch, two_file_repo, listed, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert flows_file_order(without) == ["a.c", "main.c"]
+    assert flows_file_order(with_list) == ["main.c", "a.c"]
+
+
+def six_candidates_two_files():
+    """3 candidates in a.c, 3 in main.c; a.c's flows poison, main.c's succeed."""
+    data = two_file_payloads()
+    a = [in_file(candidate("a" + str(i), i + 1), "a.c") for i in range(3)]
+    m = [candidate("m" + str(i), i + 1) for i in range(3)]
+    data["case_a"] = response("case_a", a + m)
+
+    def flows(query):
+        if '"a.c"' in query:  # the scope list names a.c -> this candidate is in a.c
+            return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
+        return response(
+            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+        )
+
+    data["flows"] = flows
+    return data
+
+
+def test_a_poison_streak_degrades_a_different_set_with_a_list(monkeypatch, two_file_repo, tmp_path):
+    """HIGH-1: WHICH candidates end up full vs degraded changes with the list, under a cap.
+
+    a.c's three flows poison; after POISON_STOP_STREAK the rest are degraded without a query.
+    Without a list a.c is processed first, so the streak degrades everything (no full slice). With
+    `--priority-files main.c`, main.c is sliced first (full) and only a.c degrades. The FULL set
+    differs by list presence -- the mutation that loops in id order (always a.c first) leaves both
+    runs fully degraded, so this fails under it."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, without, _ = run_cli(monkeypatch, two_file_repo, plain, six_candidates_two_files())
+    assert without["slices"] and all(s.get("degraded") for s in without["slices"])
+    assert without["counters"]["candidates_degraded"] == 6
+
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    _, with_list, _ = run_cli(
+        monkeypatch, two_file_repo, listed, six_candidates_two_files(),
+        "--priority-files", str(listing),
+    )
+    full = {s["entry"]["file"] for s in with_list["slices"] if not s.get("degraded")}
+    degraded = {s["entry"]["file"] for s in with_list["slices"] if s.get("degraded")}
+    assert full == {"main.c"} and degraded == {"a.c"}
+    assert with_list["counters"]["candidates_degraded"] == 3
+
+
+def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_file_repo, tmp_path):
+    """HIGH-1: the list survives a shard -> merge -> export round trip.
+
+    Two p%%N shards with the SAME list, merged and exported, give exactly the single prioritized
+    run's slices, and the exported candidate_manifest keeps the priority insertion order."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(
+        monkeypatch, two_file_repo, whole, two_file_payloads(), "--priority-files", str(listing)
+    )
+    databases = []
+    for index in range(2):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        databases.append(folder / "state.db")
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
+            "--priority-files", str(listing),
+        )
+        assert code == 2 and result["status"] == "partial", result.get("error")
+    merged = tmp_path / "merged.db"
+    merge_shards(merged, databases)
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, transport = run_cli(
+        monkeypatch, two_file_repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert transport.stages == []
+    assert exported["slices"] == single["slices"]
+    assert list(exported["candidate_manifest"]) == list(single["candidate_manifest"])
+
+
+def test_matching_is_exact_not_substring_or_basename(repo):
+    """M-2: exact match only. Kills the substring, reverse-substring and basename mutations.
+
+    The fixtures elsewhere have no name-colliding pairs, so a loose match never shows. Here `a.c`
+    must NOT match `data.c` (substring) or `sub/a.c` (basename), and `data.c` must NOT match a
+    candidate whose file is `a.c` (reverse substring)."""
+    from slicer_candidates import prioritize
+
+    rows = [in_file(candidate("x", 1), "data.c"), in_file(candidate("y", 2), "sub/a.c")]
+    ordered = collect({"A": rows}, repo)
+    assert {c["entry"]["file"] for c in ordered} == {"data.c", "sub/a.c"}
+    # a.c is a substring of data.c and the basename of sub/a.c -- neither may match
+    assert prioritize(ordered, {"a.c"}) == (ordered, 0, set())
+    # reverse substring: a.c (candidate) is a substring of the listed data.c
+    only_a = collect({"A": [in_file(candidate("z", 1), "a.c")]}, repo)
+    assert prioritize(only_a, {"data.c"}) == (only_a, 0, set())
+    # the exact spellings still match
+    moved, first, matched = prioritize(ordered, {"data.c", "sub/a.c"})
+    assert first == 2 and matched == {"data.c", "sub/a.c"} and len(moved) == 2
+
+
+def test_the_priority_digest_ignores_list_order(monkeypatch, two_file_repo, tmp_path):
+    """M-8: the sha256 is of the SORTED list, so line order cannot change it.
+
+    The contract tests used 1-file lists, where `list(set)` and `sorted(set)` coincide, so a
+    mutation hashing the unsorted list survived and `settings.priority_files.sha256` differed
+    across PYTHONHASHSEED -- shards then rejected merge/resume nondeterministically. A 3+-file
+    unsorted list pins it to `digest(sorted(...))`, and two line orders must agree."""
+    names = ["z.c", "a.c", "main.c", "m.c"]
+    first = tmp_path / "first"
+    first.mkdir()
+    listing = first / "priority.txt"
+    listing.write_text("\n".join(names) + "\n", encoding="utf-8")
+    _, result, _ = run_cli(
+        monkeypatch, two_file_repo, first, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert result["settings"]["priority_files"] == {"count": 4, "sha256": digest(sorted(names))}
+    second = tmp_path / "second"
+    second.mkdir()
+    reordered = second / "priority.txt"
+    reordered.write_text("\n".join(reversed(names)) + "\n", encoding="utf-8")
+    _, other, _ = run_cli(
+        monkeypatch, two_file_repo, second, two_file_payloads(), "--priority-files", str(reordered)
+    )
+    assert other["settings"]["priority_files"] == result["settings"]["priority_files"]
+
+
+def test_a_zero_match_list_warns_on_stderr_and_records_the_names(
+    monkeypatch, two_file_repo, tmp_path, capsys
+):
+    """M-3: a list that matches nothing must not read as applied -- it warns and keeps the names."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("nope.c\nalso-missing.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert code == 0, result.get("error")
+    err = capsys.readouterr().err
+    assert "--priority-files" in err and "matched no candidate" in err
+    assert result["priority"]["files_with_candidates"] == 0
+    assert result["priority"]["matched_files"] == []
+    assert result["priority"]["unmatched_files"] == ["also-missing.c", "nope.c"]
+
+
+def test_a_partial_match_records_the_matched_and_unmatched_names(
+    monkeypatch, two_file_repo, tmp_path
+):
+    """M-3/M-6: the audit trail names what matched and what did not, not just counts."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\nnope.c\ngone.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["matched_files"] == ["main.c"]
+    assert result["priority"]["unmatched_files"] == ["gone.c", "nope.c"]
+
+
+def test_a_dropped_priority_list_on_resume_names_the_field(monkeypatch, two_file_repo, tmp_path):
+    """L-11: forgetting --priority-files on a manual shard resume mismatches on run_contract; the
+    message must name settings.priority_files so the fix (re-pass the list) is clear, not 'start a
+    new checkpoint'."""
+    database = tmp_path / "state.db"
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    code, _, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing),
+    )
+    assert code == 0
+    _, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--resume",
+    )
+    assert "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.priority_files" in result["error"]

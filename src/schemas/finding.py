@@ -11,7 +11,7 @@ from src.schemas.common import (
     NonEmptyStr,
     ProducedBy,
 )
-from src.schemas.enums import FindingState, PathStepKind
+from src.schemas.enums import FindingState, PathStepKind, ReproOrigin
 
 # Finding이 가질 수 있는 상태 (architecture.md §4). Candidate 쪽 값(candidate/triaged)은
 # Auditor가 Finding을 만드는 시점에 이미 지나갔으므로 제외한다.
@@ -64,6 +64,12 @@ class ReproSpec(HarnessModel):
     steps: list[NonEmptyStr] = Field(min_length=1)
     # 무엇이 관측되면 재현 성공인가. 예: "ASAN heap-buffer-overflow at parse_header".
     expected_signal: NonEmptyStr
+    # 이 명세를 누가 만들었나 (#S7). 기본은 `model` — 모델이 낸 명세의 값이다. 스키마에 드러나
+    # 모델이 `harness`를 쓸 수도 있으나 하네스가 저장 전에 덮는다(`auditor._ensure_repro_origin`,
+    # 발급값 도장 #279와 같은 결). `harness`는 하네스가 합성한 명세이고, 뜻은 `ReproOrigin` 주석이
+    # 든다. **등급 판정(`gate.evaluate`)은 이 값으로 갈리지 않는다** — E3은 명세 존재만,
+    # E4는 실행 로그를 본다. 게이트는 이 값을 `gate_eval` trace에만 싣는다.
+    origin: ReproOrigin = ReproOrigin.MODEL
 
 
 class Finding(HarnessModel):
