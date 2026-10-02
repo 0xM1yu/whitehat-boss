@@ -433,14 +433,19 @@ class ReasonCode(StrEnum):
     SCHEMA_PARSE_FAILED = "schema_parse_failed"
     # run 중단 (W2). 후보 하나가 실패한 것은 `target_skipped`로 남고 run은 계속 간다 —
     # 아래 둘은 **더 갈 이유가 없어서 러너가 멈춘 경우**다. 하나로 묶지 않는 이유는
-    # 대응이 다르기 때문이다: 앞은 서버를 살려야 하고, 뒤는 서버가 살아 있는데 후보가
+    # 대응이 다르기 때문이다: 앞은 서버·연결 쪽을 봐야 하고, 뒤는 서버가 살아 있는데 후보가
     # 계속 죽는 것이라 프롬프트·예산·스키마를 봐야 한다.
+    # ⚠ **앞(`MODEL_GATEWAY_UNAVAILABLE`)은 「서버가 죽었다」보다 넓다** — 후보 하나의 답이 아닌
+    # `ModelGatewayError` 전부다(`runner._is_droppable`이 거짓인 것): 상태 없음(끊김·타임아웃·
+    # 계약 밖 200)·5xx·`400·413·422` 밖의 4xx(401·404·429 등). 가르는 것은 trace의
+    # `model_call.error_detail`이다.
     MODEL_GATEWAY_UNAVAILABLE = "model_gateway_unavailable"
     CONSECUTIVE_TARGET_FAILURES = "consecutive_target_failures"
     # 단계 경계 교대(ADR 0012 Phase 6.5)가 다음 단계 모델을 못 띄웠다 — 교대 명령 실패·마감
     # 초과·준비 확인의 창 불일치(`ModelSwapError`). 위 `MODEL_GATEWAY_UNAVAILABLE`과 가르는 것은
-    # 대응이 다르기 때문이다: 그쪽은 떠 있던 서버가 죽은 것이라 서버를 살리고, 이쪽은 띄우지를
-    # 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를 본다.
+    # 대응이 다르기 때문이다: 그쪽은 떠 있던 서버와의 통신이 어긋난 것이라 서버·연결을 보고,
+    # 이쪽은 띄우지를 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를
+    # 본다.
     MODEL_SWAP_FAILED = "model_swap_failed"
     TOOL_POLICY_VIOLATION = "tool_policy_violation"
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"

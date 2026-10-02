@@ -360,7 +360,7 @@ class OpenAICompatModelClient:
             ) from exc
         except (urllib.error.URLError, json.JSONDecodeError) as exc:
             # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는
-            # 이것을 "서버가 죽었다"로 읽고 즉시 멈춘다.
+            # 이것을 서버 쪽 사건(`model_gateway_unavailable`)으로 읽고 즉시 멈춘다.
             raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}", detail=f"{exc}") from exc
         except (OSError, http.client.HTTPException, UnicodeDecodeError) as exc:
             # ⏵ **2026-10-02 — 끊긴 연결이 여기까지 새고 있었다.** 위 셋만 잡던 동안 아래가
