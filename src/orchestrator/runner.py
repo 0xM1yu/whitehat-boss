@@ -2095,16 +2095,24 @@ _HOP_TOKEN_MARGIN = 512
 _HOP_CHARS_PER_TOKEN = 3.28
 
 
-def _ne_visible(slice_ref: SliceRef | None) -> dict[str, frozenset[int]]:
-    """`ResolveQuery.visible` — 슬라이스가 이미 보여준 줄을 파일별로 묶는다.
+def _ne_visible(
+    slice_ref: SliceRef | None, shown: tuple[tuple[str, int], ...] | None = None
+) -> dict[str, frozenset[int]]:
+    """`ResolveQuery.visible` — **모델이 실제로 본** 줄을 파일별로 묶는다.
 
     슬라이스가 없는 target(`--slices` 없이 돈 run)은 `{}`다 — resolver가 "이미 SOURCE에
     있다"를 가를 근거가 없다는 뜻이지, 빈 파일 목록이 아니다.
+
+    `shown`은 Scout 창 트림(`scout._fit_slice`, `scout_slice_trim`)이 실제로 보낸 (file, line)
+    집합이다(세션의 `shown_lines`). 트림이 돌았으면 `SliceRef.lines` 전체가 아니라 이 집합을 써야
+    한다 — 안 그러면 **모델이 못 본 줄**을 resolver가 "이미 SOURCE에 있다"로 답해 중복으로
+    버린다(#375 M-2). `None`이면 안 잘렸다는 뜻이라 `SliceRef.lines` 전체를 쓴다.
     """
     if slice_ref is None:
         return {}
+    pairs = slice_ref.lines if shown is None else shown
     grouped: dict[str, set[int]] = {}
-    for file, line in slice_ref.lines:
+    for file, line in pairs:
         grouped.setdefault(file, set()).add(line)
     return {file: frozenset(lines) for file, lines in grouped.items()}
 
@@ -2242,7 +2250,8 @@ def _run_ne_hops(
     max_hops = ctx.config.thresholds.max_hops
     previous_keys: frozenset[tuple[str, str]] | None = None
     target_file = item.target.location.file
-    visible = _ne_visible(item.target.slice)
+    # 트림이 돌았으면 모델이 본 줄만 — `SliceRef.lines` 전체가 아니다(#375 M-2).
+    visible = _ne_visible(item.target.slice, session.shown_lines)
     while True:
         requests = session.requested_context
         if session.signal is not ScoutSignal.NEED_EVIDENCE:
