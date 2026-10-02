@@ -692,13 +692,16 @@ def _task_slices(
 def test_run_takes_slices_made_from_the_same_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """🔴 `--task-dir`와 `--slices`는 **같이 쓴다** — 같은 번들에서 나온 슬라이스면 받는다.
+    """🔴 `--task-dir`와 `--slices`는 **같이 쓴다** — 경로가 작업 디렉터리 기준이고 줄 내용이
+    풀린 트리와 같은 슬라이스면 받는다.
 
     전 판은 둘을 거부했다(*"슬라이스는 이미 풀린 트리에서 나온 것이고 작업 디렉터리는 비어 있어야
     하므로 슬라이서가 본 트리와 같을 수 없다"*). 그런데 `render`는 **같은 디렉터리**를 요구하지
     않는다 — 하네스 사본이 슬라이서가 본 것과 **글자 단위로** 같은지(drift)를 본다. 같은 아카이브를
     푼 트리는 어디서 풀었든 같다. 거부의 대가는 실모델 프로필(Scout 셋이 슬라이스 입력)에서
-    `--task-dir`로는 Scout까지 가는 run을 **시작할 수 없다**는 것이었다(적대적 리뷰 HIGH-1)."""
+    `--task-dir`로는 Scout까지 가는 run을 **시작할 수 없다**는 것이었다(적대적 리뷰 HIGH-1).
+    ⚠ 받는 조건이 **「이 번들의 슬라이스다」가 아니다** — 경로·줄 내용이 우연히 다 맞는 다른 과제의
+    슬라이스는 이 경로로도 들어온다(개수 가드는 경로가 없는 것만 막는다)."""
     task = _level1_task(tmp_path)
     slices = _task_slices(tmp_path)
     captured: dict[str, object] = {}
@@ -728,12 +731,13 @@ def test_run_takes_slices_made_from_the_same_bundle(
 def test_run_refuses_slices_that_drifted_from_the_unpacked_tree(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """🔴 슬라이서가 **다른 내용**을 봤으면 exit 2다 — 위 테스트가 거부를 풀어도 되는 근거다.
+    """🔴 같은 경로인데 슬라이서가 **다른 줄 내용**을 봤으면(drift) exit 2다.
 
-    `--task-dir`와 `--slices`를 같이 받는 안전은 drift 검사가 **풀린 트리에** 도는 데 선다. 트리는
+    이 검사가 닫는 것은 **경로는 맞고 내용이 다른** 슬라이스뿐이다 — 경로 자체가 트리에 없는
+    슬라이스는 `render_slices`가 오류 없이 건너뛰므로 이 테스트가 아니라 바로 위 개수 가드
+    (`..._does_not_contain`)가 문다. drift 검사는 **풀린 트리에** 돌아야 한다: 트리는
     `_claim_run_dir` 직전에야 풀리므로 그 전에 `render_slices`를 부르면 트리가 없어 슬라이스가
-    **전부 조용히 빠진다**(`render_slices`는 entry 파일이 없는 슬라이스를 렌더하지 않는다) —
-    검사가 돌았는데 아무것도 안 본 것이다. 풀린 뒤에 돌아야 한다."""
+    **전부 조용히 빠진다** — 검사가 돌았는데 아무것도 안 본 것이다."""
     task = _level1_task(tmp_path)
     slices = _task_slices(tmp_path, text="int main(void) { return 1; }")  # 슬라이서가 본 것 ≠ 번들
     _task_run_is_refused(
