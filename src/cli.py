@@ -16,7 +16,6 @@ import json
 import shutil
 import signal
 import sys
-import tarfile
 import tempfile
 import threading
 from collections.abc import Iterator, Sequence
@@ -801,15 +800,20 @@ def run(args: argparse.Namespace) -> int:
     if malformed is not None:
         print(f"[ERROR] {malformed}", file=sys.stderr)
         return 2
-    # CyberGym 과제 번들을 그대로 받는다(#356). 2026-10-02까지 `task_loader.load_task`의 프로덕션
-    # 호출처가 **0건**이었다 — 과제를 손으로 풀어 `--target`·`--description-file`을 따로 주는
-    # 절차였다.
+    # CyberGym 과제 번들을 그대로 받는다(#356). 2026-10-02까지 `task_loader`의 `load_task`·
+    # `safe_extract`·`read_description`은 프로덕션 호출처가 **0건**이었다 — 과제를 손으로 풀어
+    # `--target`·`--description-file`을 따로 주는 절차였다. 이 분기는 `safe_extract`와
+    # `read_description`을 **따로** 부른다(이유는 아래 — 설명은 해제보다 먼저 읽는다).
+    # ⚠ 그래서 둘을 묶은 `load_task`의 프로덕션 호출처는 **지금도 0건**이다 — `load_task`에만 거는
+    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다.
     task_description: str | None = None
     #
     # ⚠ **여기서는 검증만 하고 해제는 `_claim_run_dir` 직전에 한다.** 처음 판은 여기서 바로
-    # 풀었는데, 그 뒤의 게이트(`--slices` 렌더·실서빙 라벨·교대)가 exit 2를 내면 **작업 디렉터리에
+    # 풀었는데, 그 뒤의 게이트(실서빙 라벨·슬라이스 가드·교대)가 exit 2를 내면 **작업 디렉터리에
     # 트리가 남아** 오타를 고친 재시도가 "비어 있지 않다"로 거부됐다(적대적 리뷰 2026-10-02 M-1).
-    # 쓰기를 **되돌릴 수 없는 지점 바로 앞**으로 미루면 그 함정이 사라진다.
+    # 쓰기를 **되돌릴 수 없는 지점 바로 앞**으로 미루면 그 함정이 사라진다. `--slices`의 drift
+    # 검사만은 풀린 트리가 있어야 돌아 해제 **뒤**에 있고, 거기서 멈추면 트리가 남는다(에러가 그
+    # 사실을 말한다).
     #
     # ⚠ **`--task-work-dir`를 요구하는 참인 이유는 「기록」이 아니라 「섞임 방지」다.** 처음 판은
     # *"해제 자리가 run 기록이다"*라 적었는데 **거짓이다** — `RunRecord`·`RunSpec`에 과제 경로·
@@ -840,16 +844,25 @@ def run(args: argparse.Namespace) -> int:
         # **작업 디렉터리를 재사용하지 않는다.** `safe_extract`는 상한 초과로 중단해도 앞 멤버를
         # dest에 남기므로(그 함수의 경고 주석), 남은 트리 위에 또 풀면 두 과제가 섞인다. 섞인
         # 트리로 돈 run은 무엇을 봤는지 모른다 — 비우는 것은 **사람이** 한다(지우지 않는다).
-        if args.task_work_dir.exists() and any(args.task_work_dir.iterdir()):
-            print(
-                f"[ERROR] --task-work-dir가 비어 있지 않다: {args.task_work_dir} — "
-                "해제 트리가 섞이지 않게 빈 디렉터리를 준다",
-                file=sys.stderr,
-            )
-            return 2
+        if args.task_work_dir.exists():
+            if not args.task_work_dir.is_dir():
+                # `iterdir()`는 디렉터리가 아닌 것에 `NotADirectoryError`를 던진다.
+                print(
+                    f"[ERROR] --task-work-dir가 디렉터리가 아니다: {args.task_work_dir}",
+                    file=sys.stderr,
+                )
+                return 2
+            if any(args.task_work_dir.iterdir()):
+                print(
+                    f"[ERROR] --task-work-dir가 비어 있지 않다: {args.task_work_dir} — "
+                    "해제 트리가 섞이지 않게 빈 디렉터리를 준다",
+                    file=sys.stderr,
+                )
+                return 2
         if not (args.task_dir / REPO_ARCHIVE_NAME).is_file():
-            # 해제 전에 본다 — 아카이브가 없으면 `load_task`가 어차피 죽고, 그 전에 다른 게이트에
-            # 시간을 쓸 이유가 없다.
+            # 해제 전에 본다 — 아카이브가 없으면 풀 것이 없고, `safe_extract`에 맡기면
+            # `dest.mkdir`이 먼저 돌아 빈 작업 디렉터리만 남는다. 그 전에 다른 게이트에 시간을
+            # 쓸 이유도 없다.
             print(
                 f"[ERROR] 과제에 {REPO_ARCHIVE_NAME}가 없다: {args.task_dir}", file=sys.stderr
             )
@@ -989,11 +1002,19 @@ def run(args: argparse.Namespace) -> int:
     if args.task_dir is not None:
         try:
             safe_extract(args.task_dir / REPO_ARCHIVE_NAME, args.task_work_dir)
-        except (UnsafeArchiveError, RuntimeError, OSError, tarfile.TarError, EOFError) as exc:
-            # `RuntimeError` = `data_filter` 없는 인터프리터 · `OSError` = NTFS 경로 제약(260자·
-            # 콜론)과 디렉터리 자리에 파일이 있는 경우 · `TarError`/`EOFError` = 손상·비-gzip(LFS
-            # 포인터를 그대로 받은 경우). 어느 쪽이든 트레이스백이 아니라 한 줄로 멈춘다.
-            print(f"[ERROR] 과제를 풀 수 없다: {type(exc).__name__}: {exc}", file=sys.stderr)
+        except (UnsafeArchiveError, RuntimeError, OSError) as exc:
+            # `UnsafeArchiveError` = 안전 위반·상한 초과, 그리고 **못 읽는 아카이브**(비-gzip — LFS
+            # 포인터를 그대로 받은 경우 — 와 끊긴 gz; `safe_extract`가 `TarError`·`EOFError`를 이
+            # 예외로 감싼다) · `RuntimeError` = `data_filter` 없는 인터프리터 · `OSError` = NTFS
+            # 경로 제약(260자·콜론)과 디렉터리 자리에 파일이 있는 경우. 어느 쪽이든 트레이스백이
+            # 아니라 **한 줄**로 멈춘다(`tarfile`의 줄바꿈 든 사유는 접는다). 해제가 중간에 멈췄으면
+            # 앞 멤버가 남아 같은 인자로 다시 돌면 「비어 있지 않다」로 거부되므로 비우라고 말한다.
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())
+            print(
+                f"[ERROR] 과제를 풀 수 없다: {detail} — 작업 디렉터리({args.task_work_dir})에 "
+                "앞 멤버가 남았을 수 있다. 비우고 다시 한다",
+                file=sys.stderr,
+            )
             return 2
         if slice_set is not None:
             # 🔴 **`--task-dir`와 `--slices`를 같이 받는 안전은 이 검사에 선다.** 슬라이스는
@@ -1004,7 +1025,11 @@ def run(args: argparse.Namespace) -> int:
             try:
                 render_slices(slice_set, args.task_work_dir)
             except SliceInputError as exc:
-                print(f"[ERROR] {exc}", file=sys.stderr)
+                print(
+                    f"[ERROR] {exc} — 해제 트리가 {args.task_work_dir}에 남았다. "
+                    "다른 슬라이스로 다시 하려면 그 디렉터리를 비우고 시작한다",
+                    file=sys.stderr,
+                )
                 return 2
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
