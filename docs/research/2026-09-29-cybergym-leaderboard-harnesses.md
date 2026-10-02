@@ -10,9 +10,9 @@ Q1(PoC 없이 분석만으로 평가)은 [PoV 설계 조사](2026-09-29-cybergym
 **핵심 대목(퍼저 실행 경로)은 CyberGym 저장소 코드를 직접 열어 대조했다**(§2.1 규칙). **열람한 어느 페이지에서도 에이전트를 겨냥한 지시문은 발견되지 않았다** — 3갈래 전부 동일 보고.
 
 > ⏵ **2026-10-02 — 이 문서의 리더보드 서술은 cybergym.io 기본 화면 한정이다**(PR #376 리뷰 반영, 원문 데이터를 직접 받아 다시 셌다).
-> 쓰던 날(2026-09-29) 연 화면은 `Type: Model-focused`에 `Include: dynamic`·`test-time mem.`이 **둘 다 해제된** 기본 상태였다 — 페이지 인라인 설정이
+> 쓰던 날(2026-09-29) 연 화면은 `Type: Model-focused`에 `Include: dynamic`·`test-time mem.`이 **둘 다 해제된** 기본 상태였다 `[추정]` — 2026-09-29의 화면은 다시 못 열었고(Wayback 미확인), 오늘 기본 화면이 이 문서의 44행·순위와 일치하는 것을 근거로 한 추정이다. 페이지 인라인 설정이
 > `default: "model"`·`defaultFor: (st) => st.focus === "model" ? [] : [...]`다(`https://www.cybergym.io/cybergym/`). 아래 「44행」과 §1 표의 순위가 그 화면이다.
-> **2026-10-02에 `https://www.cybergym.io/assets/data/cybergym.json`을 받아 센 값** `[제3자 호스팅, 자기신고]`:
+> **2026-10-02에 `https://www.cybergym.io/assets/data/cybergym.json`을 받아 센 값** `[계산]`(입력 = 제3자 호스팅이나 자기신고 데이터 `[자기신고]`):
 > level1 **76행**(페이지의 `trials === 1` 필터를 통과하는 것 72) = model-focused 49 + agent-focused 27.
 > 기본 화면을 재현하면 **44행**이고 §1 표의 #1·#17·#19·#25·#31~44와 일치한다 — 이 화면의 최고점은 88.9%(XekRung Agent)이고 90%를 넘는 행이 없다.
 > **90%를 넘는(`score_10 > 0.90`, 페이지가 「Leading systems」 카드로 따로 올리는 기준) 행은 17개이고 전부 agent-focused이며, 그중 13개가

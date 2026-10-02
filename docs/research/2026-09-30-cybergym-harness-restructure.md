@@ -45,7 +45,7 @@
 2. **PoV는 코드 0줄이다** `[코드]` — `Role`에 `POV`가 없고, `prompts/pov/`·`nodes/pov.py`가 없다. `container_tools.plan()`의 `poc` 갈래는 `{SCRATCH}/poc`를 실행하지만 **그 파일을 만드는 주체가 없다**(§4.1). ⏵ 낡음 — 위 시점 노트 ①
 3. **Validation 교체는 "두 층"이다.** 현행 8단계는 **내부 재현 판정**(E4 = SANITIZER/CRASH/POC_RUN Evidence)이고, CyberGym은 **외부 oracle**(패치 전 크래시 ∧ 패치 후 무크래시)이다. 둘은 다른 것이고 **공존**할 수 있다 — 내부 E4는 비용 필터로, 최종 판정은 oracle로(§3).
 4. **선행 연구의 도구는 수렴한다** — Naptime 4개(Code Browser·Python·Debugger[ASan]·Reporter), EnIGMA(`debug_*`·`decompile`·`disassemble`·`search_file`, raw gdb 차단). **핵심 축은 "코드 열람 + 입력 생성 스크립트 + ASan/디버거 + 제출"**이고, 우리는 그중 셋의 재료를 이미 가졌다(index·gdb·asan). 빠진 것은 **입력 생성 스크립트(Python) 실행**과 **그 넷을 도는 루프**다(§5). ⏵ 「루프가 없다」는 부분만 낡음 — 위 시점 노트 ⑤(PoV 툴 루프 `_run_pov_hops`는 `85249d3`부터 있으나 그 도구는 `asan`·`build`·`poc`뿐이다 — 코드 열람·gdb·Python 스크립팅을 한 루프에서 도는 것은 `d85ea62`에도 없다)
-5. **"동적이 PoV에 필수"라는 전제는 이 근거로 가부를 못 가른다** `[제3자/출처주장]` — 학술 AEG·Naptime·AIxCC는 동적을 쓴다. CyberGym에는 **정적만으로 상위에 간 존재 증명**이 있다(모델트랙 1위 XekRung 88.9%가 퍼저 명시 배제, XDxAI 정적→PoC). 그러나 이는 cybergym.io **기본 화면(model-focused) 한정**이다 — 90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨이다([leaderboard 조사 ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md), 2026-10-02 원문 데이터 재계산). 동적 `-vul` 이미지는 **선택**이다(FAQ Q5). 정확한 서술은 "**최종 검증은 항상 실행(oracle)이고, 정적만으로도 상위에 간 사례가 있으나 상위권 다수는 동적 라벨을 단다 — 필수 여부는 이 근거로 못 가른다**"이다(§6).
+5. **"동적이 PoV에 필수"라는 전제는 이 근거로 가부를 못 가른다** `[제3자/출처주장]` — 학술 AEG·Naptime·AIxCC는 동적을 쓴다. CyberGym에는 **정적만으로 상위에 간 존재 증명**이 있다(모델트랙 1위 XekRung 88.9%가 퍼저 명시 배제, XDxAI 정적→PoC). 그러나 이는 cybergym.io **기본 화면(model-focused) 한정**이다 — 90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨이다([leaderboard 조사 ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md), 2026-10-02 원문 데이터 재계산). 동적 `-vul` 이미지는 **선택**이다(FAQ Q5). (76·72·44·17·13행은 모두 위 `[계산]`이다.) 정확한 서술은 "**최종 검증은 항상 실행(oracle)이고, 정적만으로도 상위에 간 사례가 있으나 상위권 다수는 동적 라벨을 단다 — 필수 여부는 이 근거로 못 가른다**"이다(§6).
 
 ---
 
@@ -250,7 +250,7 @@ Naptime 원문 원칙 둘이 우리 설계에 직접 걸린다:
   - XekRung #1(모델트랙 88.9%)은 *"No fuzzing frameworks ... No ... dynamic debugging environments are provided"* — 동적 없이 기본 화면 최상위.
   - XDxAI #19는 *"infer the bug mechanism and construct a candidate raw PoC input"* — 정적 추론→PoC.
   - 번들 퍼저는 퍼징 캠페인이 아니라 **입력 1개를 1회 실행**하는 채점 진입점이다. 동적 `-vul` 이미지는 **선택**(FAQ Q5).
-- **전체 분포는 반대쪽이다** `[제3자 호스팅, 자기신고]`(2026-10-02 원문 데이터 재계산 — [leaderboard ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md)): level1 76행 중 **90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨**, agent-focused 27행 중 17행이 `dynamic`이다. 논문 본문도 에이전트가 코드베이스 지침대로 실행 파일을 빌드해 동적 테스트를 하는 사례를 관찰했다고 적는다 `[출처주장, arXiv 2506.02548v3 「Qualitative Analysis of Agent Behaviors」]`.
+- **전체 분포는 반대쪽이다** `[계산]`(입력 = 자기신고 데이터, 2026-10-02 원문 데이터 재계산 — [leaderboard ⏵ 상자](2026-09-29-cybergym-leaderboard-harnesses.md)): level1 76행 중 **90%를 넘는 17행은 전부 agent-focused이고 13행이 `dynamic` 라벨**, agent-focused 27행 중 17행이 `dynamic`이다. 논문 본문도 에이전트가 코드베이스 지침대로 실행 파일을 빌드해 동적 테스트를 하는 사례를 관찰했다고 적는다 `[출처주장, arXiv 2506.02548v3 「Qualitative Analysis of Agent Behaviors」]`.
 - **동적을 쓴 계열**은 학술 AEG·Naptime·AIxCC와 위 `dynamic` 라벨 엔트리다 — 디버거+ASan로 런타임 상태를 본다. 알려진 함정은 **디버거 출력의 컨텍스트 오염**(Theori 60KB 잘림, [auditor-finetuning §4.4](2026-09-29-auditor-finetuning-and-benchmark.md)).
 
 > **정확한 서술**: "동적이 필수"도 "동적은 필수 아님"도 이 근거로 못 세운다 — **① 최종 판정은 항상 실행(oracle)이고, ② PoC 생성은 정적만으로 상위에 간 존재 증명이 있으나(기본 화면 한정) 90% 넘는 행은 `dynamic` 라벨이 다수다.** 우리 gdb/asan 재료는 동적 보조를 열고, "정적 분석 + PoC 작성 + oracle 검증"으로 1차 목표를 좁히는 것은 **존재 증명 수준의 근거**다([leaderboard §5.2](2026-09-29-cybergym-leaderboard-harnesses.md)). 동적 툴 루프는 그 위에 얹는 2차로 둘 수 있으나 **이 우선순위의 값은 실측(D-γ)·팀.**
