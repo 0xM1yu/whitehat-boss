@@ -311,16 +311,24 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 
 ⏵ **케이스 순서** -> `--case-order {ab,ba}`(기본 `ab`)는 후보를 자르는 순서의 첫 열쇠를 정한다. 후보 정렬 키의 첫 칸이 case라서(`slicer_candidates.collect`)
 `ab`(지금까지의 순서)는 **Case A 전부 → Case B 전부**, `ba`는 **Case B 전부 → Case A 전부**다. 각 case 안의 순서(파일·줄·심볼·selector)는 그대로다.
-**처리 순서만 바꾼다. 끊기면 어느 후보가 degraded로 남는지가 바뀐다 -> 끊긴 표본에서 `ab` run과 `ba` run은 비교하지 않는다**(「우선 파일」과 같은 이유)
-- 왜 있나 -> `ab`에서는 모든 Case A가 모든 Case B보다 먼저 돈다. `--wall-seconds`가 Case A를 자르다 다 쓰이면 Case B는 하나도 못 닿고 degraded(앵커만)로 남는다.
+**후보 집합은 그대로고 처리 순서가 바뀐다. 그 순서로 ID를 새로 매기므로 ID·`slices[]` 순서·`absorbed`·export 파일 이름이 같이 바뀐다(아래 「바뀌는 것」).
+끊기거나(`slice_sharded.py --wall-seconds`·kill) poison 연속(`POISON_STOP_STREAK`)이 나면 어느 후보가 degraded로 남는지도 순서에 따라 달라진다 -> 그런 표본에서 `ab` run과 `ba` run은 비교하지 않는다**(「우선 파일」과 같은 이유)
+- 왜 있나 -> `ab`에서는 모든 Case A가 모든 Case B보다 먼저 돈다. `slice_sharded.py`의 `--wall-seconds`가 Case A를 자르다 다 쓰이면 Case B는 하나도 못 닿고 degraded(앵커만)로 남는다.
   `ba`는 그 반대다. **`ba`가 정답 관련 슬라이스를 얼마나 더 온전히 자르는지는 미측정이다 -> 그래서 기본값은 `ab`다**(기본값 변경은 측정 뒤의 별도 변경)
-- 그대로인 것 -> 후보 집합과 수 · `candidate_key`(순서와 무관한 해시) · 온전히 잘린 후보의 슬라이스
+- 그대로인 것 -> 후보 집합과 수 · `candidate_key`(순서와 무관한 해시) · 온전히 잘린 후보의 슬라이스(클러스터링 전의 줄·코드·분석)
+- ⚠ 클러스터링 뒤의 슬라이스까지 같은 것은 **후보가 10,000개 미만일 때뿐이다** -> `cluster()`는 크기가 같은 슬라이스를 ID **문자열**로 가르고
+  (`slicer_source.py`의 정렬 키와 마지막 `sorted`) `slice_10000`은 `slice_9999`보다 앞에 정렬된다. 9,999번까지는 문자열 순서가 숫자 순서라 `ab`·`ba`가 같은 묶음·같은 대표를 낸다(번호만 다르다).
+  10,000개 이상이면 **같은 후보 둘이 순서에 따라 다른 대표로 묶일 수 있다** -> 줄 집합이 같은 후보 X·Y를 `cluster()`에 직접 넣어 확인: X·Y가 9,999·10,000번이면 대표는 Y, 10,000·10,001번이면 대표는 X.
+  `slices[]`도 번호 순이 아니라 ID 문자열 순이다. **이론이 아니다** -> FT 실행 아카이브(`ft_level1_vuln_slices_20261002.zip`의 샘플별 `summary.json`)에서 후보 수가 적힌 샘플 283개 중 91개가 10,000개 이상이다
+  (최대 61,944 · 예 `hs-b9c6358375fb9ae6`(hhvm) 12,874 · 2026-10-03 로컬 집계 · run ID 없음 · 원자료 저장소 밖). 동률을 가르는 방식 자체는 바꾸지 않았다 — 기존 출력이 달라진다
 - 바뀌는 것 -> 처리 순서 · 체크포인트의 `candidates` 순서 · **후보 ID `slice_NNNN`**: 정렬 **뒤에** 발급하므로 `ba`면 Case B가 앞 번호를 받는다.
-  같은 후보가 `ab` run과 `ba` run에서 다른 ID를 가진다 -> 두 run을 맞댈 때는 `id`가 아니라 `candidate_key`로 잇는다. 출력 `slices[]`는 ID 순이라 `ba`면 B 슬라이스가 앞에 온다
+  ID를 담은 것이 전부 따라 바뀐다 -> 출력 `slices[]`의 순서(ID 순이라 `ba`면 B 슬라이스가 앞에 온다) · `absorbed`의 ID · export 파일 이름(`raw/`·`numbered/`의 `<case><번호>_…`) · `candidate_manifest`와 `MANIFEST.json`의 `id`.
+  같은 후보가 `ab` run과 `ba` run에서 다른 ID를 가지므로 두 run을 맞댈 때는 `id`가 아니라 `candidate_key`로 잇는다
 - `--priority-files`와 같이 주면 -> `prioritize()`는 층 안에서 `collect()` 순서를 지키므로 **우선 파일의 B → 우선 파일의 A → 나머지 B → 나머지 A**(`ab`면 A·B가 서로 바뀐 순서)
 - 순서가 체크포인트에 묶인다 -> `settings.case_order`(항상 기록, 기본 `ab`)가 실행 계약이다. 다른 값으로 `--resume`하거나 플래그를 빠뜨리면
   `Checkpoint mismatch: run_contract (differs in: settings.case_order)`로 거부, 값이 다른 샤드 체크포인트는 병합 거부(`Shard mismatch on run_contract`)
-  -> 해법은 새 체크포인트가 아니라 **같은 값을 다시 주는 것**이다. ⚠ **이 변경 전에 만든 체크포인트는 `--resume`할 수 없다** — `settings`에 `case_order`가 없고 코드 해시도 다르다
+  -> 해법은 새 체크포인트가 아니라 **같은 값을 다시 주는 것**이다. ⚠ 이 플래그와 별개로 `slicer*.py`가 한 줄이라도 바뀌면 코드 해시(`code_hashes`)가 달라져, 그 전에 만든 체크포인트는
+  `--resume`도 `--export-only`도 `Checkpoint mismatch: run_contract (differs in: code_hashes)`로 거부된다(위 「한 repo를 샤드로 나누기」의 「`slicer*.py`가 같아야 한다」) -> 그 코드로 되돌리거나 새 체크포인트로 처음부터 간다
 - 샤드 -> 손으로 돌릴 때는 준비 실행(`--prepare-only`)과 모든 샤드(`--resume --cpg … --shard I/N`)에 같은 값을 준다. `--export-only`는 병합 체크포인트의 실행 계약에서 읽으므로 안 줘도 된다.
   `slice_sharded.py`는 `--` 뒤 인자를 준비·모든 샤드에 그대로 넘기고 export에는 안 넘기므로 `-- --case-order ba`만 붙이면 된다
 
