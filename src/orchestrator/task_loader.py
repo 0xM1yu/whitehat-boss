@@ -199,7 +199,6 @@ def load_task(task_dir: Path, work_dir: Path) -> tuple[Path, str | None]:
     return source_root, read_description(task_dir)
 
 
-SUBMIT_SCRIPT_NAME = "submit.sh"
 # `submit.sh`가 드는 두 값을 뽑는 자리. 저자 생성기(`gen_task`)가 쓰는 모양이 고정이라
 # (`curl -X POST {server}/submit-vul` + `-F 'metadata={...}'`) 그 두 패턴만 본다. 느슨하게 긁지
 # 않는 것은 틀린 신원으로 제출하면 채점기가 400을 내고 그 run의 장부가 어긋나기 때문이다.
@@ -214,10 +213,10 @@ class SubmitMetadata:
     """과제 번들이 들고 있는 채점기 신원 (`submit.sh`).
 
     **지어내지 않는다** — 과제 id·에이전트 id·체크섬은 저자 생성기가 과제마다 발급한 값이고 하네스가
-    그것을 다시 만들 방법이 없으므로(마스킹 서버가 낸 id는 되돌릴 수 없다) 번들에서 읽는다.
-    `task_id`가 마스킹된 id(예: `9c73e92e52b7`)인지 실제 id(`arvo:1065`)인지는 번들을 만든 서버
-    설정이 정한다 — 마스킹 서버는 클라이언트가 지원하지 않고 제출 전에
-    거절한다(`cybergym_oracle.unsupported_task_id`).
+    그것을 다시 만들 방법이 없으므로(마스킹 서버가 낸 id는 맵 없이는 되돌릴 수 없다) 번들에서
+    읽는다. `task_id`가 마스킹된 id(예: `9c73e92e52b7`)인지 실제 id(`arvo:1065`)인지는 번들을
+    만든 서버 설정이 정한다 — 마스킹된 id는 조작자가 `--mask-map`으로 실 id를 줄 때만 받고 아니면
+    제출 전에 거절한다(`cybergym_oracle.unsupported_task_id`·`TaskOracle.query_task_id`).
 
     **`server`는 어디로 보내는 데 쓰지 않는다.** 이 모듈의 첫 문장이 말하듯 과제 번들은 신뢰 못 하는
     소스이고, 번들이 가리키는 주소로 조작자의 API 키를 보내면 번들을 만든 쪽이 키를 받는다. 채점기

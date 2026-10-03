@@ -3,7 +3,9 @@
 러너(`_run_pov`·`_finalize_oracle`)를 `dev_fake` 문맥에서 직접 돌려 **후보 N개가 vul 제출 N건이 되고
 fix 다리는 후보가 0개면 0번 · 1개면 정확히 한 번 · 2개 이상이면 0번 도는지**(셋 다 건다),
 지정·실패·부재가 서로 다른 기록이 되는지, 판정이 trace의 재현성 기준을 안 깨는지를 본다. CLI 조립
-가드·파서·`submit.sh` 신원은 `tests/test_oracle_cli.py`가 본다.
+가드·파서·`submit.sh` 신원은 `tests/test_oracle_cli.py`가 본다. 끝의 두 절은 마스킹 서버 몫이다 -
+제출은 masked id, 조회는 실 id(`TaskOracle.query_task_id`)로 가는지와 그 실 id를 `--mask-map`에서
+만드는 `cli._oracle_for`의 이음(여기만 `_oracle_for`를 직접 부른다 - `cli.run`은 안 돈다).
 
 ⚠ **후보가 둘 이상일 때 고르는 규칙은 정해지지 않았다**(`runner._designate_final`) - 이 파일에는
 어느 후보를 고르는 것이 맞는지를 단언하는 검사가 없다. 후보가 둘 이상이면 **아무것도 지정하지
@@ -14,16 +16,18 @@ fix 다리는 후보가 0개면 0번 · 1개면 정확히 한 번 · 2개 이상
 CLI 전체를 돌려 본다 — 여기서 `ctx.oracle`을 직접 꽂는 검사는 그 배선을 못 지킨다.
 """
 
+import argparse
 import hashlib
 from pathlib import Path
 
 import pytest
 
+from src import cli
 from src.orchestrator import runner
 from src.orchestrator.oracle_log import OracleLedger, OracleLog
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import PovStopReason
-from tests.oracle_fakes import TASK_ID, FakeOracle
+from tests.oracle_fakes import TASK_ID, FakeOracle, submit_script
 from tests.test_nodes import _pov_state, ctx  # noqa: F401
 from tests.test_pov_loop import _gen, _scripted
 
@@ -537,3 +541,274 @@ def test_the_runner_leaves_a_sidecar_that_survives_a_run_cut_short_before_the_fi
     assert record["final"] is None
     summary = state.oracle_ledger.summary()
     assert summary is not None and summary["final"] == "not_reached"
+
+
+# --- 마스킹 서버 - 제출은 masked id, 조회는 실 id (`TaskOracle.query_task_id`) ----------------
+# 마스킹 서버는 제출을 masked task_id로 받지만 DB에는 실 id를 적고 `/query-poc`는 마스크를
+# 풀지 않는다(저자 소스 판독이고 실측하지 않았다, `cybergym_oracle.TaskOracle`). 어댑터의 서버
+# 호출을 task_id만 적는 스텁으로 바꿔 **어느 호출이 어느 id로 갔는지**를 호출 순서째 본다.
+
+_MASKED_ID = "9c73e92e52b7"  # `unsupported_task_id` docstring이 드는 마스킹 id 표본이다
+
+
+def _record_server_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """어댑터 모듈의 서버 호출 넷을 `(호출 이름, 받은 task_id)`를 적는 스텁으로 바꾼다."""
+    from src.adapters import cybergym_oracle as oc
+
+    calls: list[tuple[str, str]] = []
+
+    def submit(name: str):  # noqa: ANN202
+        def stub(server: str, task_id: str, *a: object, **k: object) -> object:
+            calls.append((name, task_id))
+            return oc.SubmitResult(task_id=task_id, response_exit_code=0, output="", poc_id="p1")
+
+        return stub
+
+    def peek(server: str, task_id: str, *a: object, **k: object) -> None:
+        calls.append(("peek_verdict", task_id))
+
+    def query(server: str, task_id: str, *a: object, **k: object) -> object:
+        calls.append(("query_verdict", task_id))
+        return oc.OracleVerdict(
+            task_id=task_id,
+            agent_id="a",
+            poc_id="p1",
+            poc_hash="h",
+            vul_exit_code=0,
+            fix_exit_code=0,
+            created_at=None,
+            updated_at=None,
+        )
+
+    monkeypatch.setattr(oc, "submit_vul", submit("submit_vul"))
+    monkeypatch.setattr(oc, "submit_fix", submit("submit_fix"))
+    monkeypatch.setattr(oc, "peek_verdict", peek)
+    monkeypatch.setattr(oc, "query_verdict", query)
+    return calls
+
+
+def test_task_oracle_uses_query_task_id_for_the_db_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """마스킹 서버에선 제출은 masked, 조회는 unmask된 id로 가야 한다 — DB가 unmask로 저장한다.
+    조회는 둘이다: 제출 전 장부 읽기(`peek_verdict`)와 판정 조회(`query_verdict`) 모두
+    `/query-poc`라 실 id로 간다 - 장부 읽기가 masked id로 가면(소스 판독) 기록이 없는 것으로
+    읽혀 캐시 적중이 「아님」으로 적힌다. 제출 두 다리는 masked id 그대로다."""
+    from src.adapters import cybergym_oracle as oc
+
+    calls = _record_server_calls(monkeypatch)
+    oracle = oc.TaskOracle(
+        server="http://x",
+        task_id=_MASKED_ID,
+        agent_id="a",
+        api_key="k",
+        query_task_id=TASK_ID,
+    )
+
+    sent = oracle.submit_vul(b"xx")
+    oracle.finalize(b"xx", sent)
+
+    assert calls == [
+        ("peek_verdict", TASK_ID),
+        ("submit_vul", _MASKED_ID),
+        ("peek_verdict", TASK_ID),
+        ("submit_fix", _MASKED_ID),
+        ("query_verdict", TASK_ID),
+    ], "제출은 masked id, 조회는 실 id여야 한다(마스킹 서버 - 소스 판독이고 실측하지 않았다)"
+
+
+def test_task_oracle_falls_back_to_submit_task_id_when_no_query_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`query_task_id`가 None이면 마스크 없이 띄운 서버다 — 모든 호출에 같은 id를 쓴다."""
+    from src.adapters import cybergym_oracle as oc
+
+    calls = _record_server_calls(monkeypatch)
+    oracle = oc.TaskOracle(server="s", task_id=TASK_ID, agent_id="a", api_key="k")
+
+    oracle.finalize(b"x", oracle.submit_vul(b"x"))
+
+    assert [name for name, _ in calls] == [
+        "peek_verdict",
+        "submit_vul",
+        "peek_verdict",
+        "submit_fix",
+        "query_verdict",
+    ]
+    assert {task_id for _, task_id in calls} == {TASK_ID}
+
+
+def test_a_masked_task_id_is_accepted_only_with_a_query_task_id() -> None:
+    """마스킹된 id는 조회에 쓸 실 id가 같이 올 때만 받는다 - 없으면 제출은 가도 판정 행을 못 읽는다.
+    실 id가 오면 쓸 수 있는 구성이라 마스킹된 id를 통째로 거절하면 그 구성을 막는다. 빈 문자열은
+    실 id가 아니다(`_query_task`가 `task_id`로 되돌린다). 문구는 메커니즘(제출 masked · DB 실 id ·
+    `/query-poc`는 마스크를 안 푼다)이 소스 판독이라는 것만 말하고 실서버의 응답은 단언하지
+    않는다."""
+    from src.adapters import cybergym_oracle as oc
+
+    fields = {"server": "http://x", "task_id": _MASKED_ID, "agent_id": "a", "api_key": "k"}
+    accepted = oc.TaskOracle(**fields, query_task_id=TASK_ID)
+    assert (accepted.task_id, accepted.query_task_id) == (_MASKED_ID, TASK_ID)
+
+    for missing in (None, ""):
+        with pytest.raises(ValueError, match="지원하는 모양이 아니다") as caught:
+            oc.TaskOracle(**fields, query_task_id=missing)
+        message = str(caught.value)
+        assert "query_task_id" in message and "/query-poc" in message
+        assert "실측하지 않았다" in message
+        assert "404" not in message
+        message.encode("cp949")  # 콘솔에 찍힐 수 있는 문장이다
+
+
+# --- CLI `--mask-map` -> `query_task_id` ------------------------------------------------------
+
+_SERVER = "http://127.0.0.1:8666"
+
+
+def _bundle(tmp_path: Path, task_id: str) -> Path:
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "submit.sh").write_text(
+        submit_script(server=_SERVER, task_id=task_id), encoding="utf-8"
+    )
+    return task
+
+
+def _write_mask_map(tmp_path: Path, content: object) -> Path:
+    """저자 `mask_map.json`의 모양 `{실 id: masked id}`로 쓴다. 문자열·바이트는 그대로 쓴다."""
+    import json
+
+    path = tmp_path / "mask_map.json"
+    if isinstance(content, bytes):
+        path.write_bytes(content)
+    else:
+        text = content if isinstance(content, str) else json.dumps(content)
+        path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _args(task: Path, mask_map: Path | None) -> argparse.Namespace:
+    return argparse.Namespace(
+        oracle_submit=True, oracle_server=_SERVER, task_dir=task, mask_map=mask_map
+    )
+
+
+def test_the_parser_carries_both_oracle_flags_and_the_mask_map_has_no_default() -> None:
+    """`--oracle-server`(조작자가 정한 주소)와 `--mask-map`(실 id를 주는 파일)이 둘 다 있다."""
+    parse = cli.build_parser().parse_args
+    base = ["run", "--profile", "dev_fake", "--target", "t"]
+
+    off = parse(base)
+    on = parse([*base, "--oracle-submit", "--oracle-server", _SERVER, "--mask-map", "m.json"])
+
+    assert off.oracle_server is None and off.mask_map is None
+    assert on.oracle_server == _SERVER and on.mask_map == Path("m.json")
+
+
+def test_mask_map_unmasks_the_task_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--mask-map`이 있으면 CLI가 TaskOracle에 unmask된 query_task_id를 넘긴다. 마스킹된 id의
+    번들이 거절되지 않고 만들어진다 - 모양 검사(`cli`)도 가드(`TaskOracle`)도 실 id가 오면
+    받는다."""
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    args = _args(_bundle(tmp_path, _MASKED_ID), _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
+
+    oracle = cli._oracle_for(args)
+
+    assert oracle is not cli._ORACLE_ERROR and oracle is not None
+    assert oracle.task_id == _MASKED_ID
+    assert oracle.query_task_id == TASK_ID
+
+
+def test_mask_map_missing_entry_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """맵에 번들의 masked id가 없으면 멈춘다 - 실 id를 지어내지 않는다."""
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    mask_map = _write_mask_map(tmp_path, {"arvo:9999": "deadbeef0000"})
+
+    result = cli._oracle_for(_args(_bundle(tmp_path, _MASKED_ID), mask_map))
+
+    err = capsys.readouterr().err
+    assert result is cli._ORACLE_ERROR
+    assert "[ERROR]" in err and "--mask-map" in err and _MASKED_ID in err
+    err.encode("cp949")  # 콘솔에 찍히는 문장이다
+
+
+@pytest.mark.parametrize(
+    ("content", "needle"),
+    [
+        (None, "못 읽었다"),
+        ("{not json", "못 읽었다"),
+        (b"\xff\xfe{}", "못 읽었다"),
+        ("[]", "JSON 객체가 아니다"),
+        ("null", "JSON 객체가 아니다"),
+    ],
+    ids=["missing-file", "not-json", "not-utf8", "json-list", "json-null"],
+)
+def test_an_unusable_mask_map_is_an_error_not_a_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    content: str | bytes | None,
+    needle: str,
+) -> None:
+    """못 읽는 파일(없음·깨진 JSON·UTF-8 아님)과 읽혔지만 `{실 id: masked id}` 객체가 아닌 JSON은
+    다른 입력 오류와 같이 `[ERROR]` 한 줄로 멈춘다 - 예외 꼬리표(traceback)가 아니다."""
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    path = tmp_path / "absent.json" if content is None else _write_mask_map(tmp_path, content)
+
+    result = cli._oracle_for(_args(_bundle(tmp_path, _MASKED_ID), path))
+
+    err = capsys.readouterr().err
+    assert result is cli._ORACLE_ERROR
+    assert "[ERROR]" in err and "--mask-map" in err and needle in err
+    err.encode("cp949")  # 콘솔에 찍히는 문장이다
+
+
+def test_mask_map_without_oracle_submit_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--oracle-server`와 같다 - 받아 놓고 아무 데도 안 쓰는 플래그는 「이 맵으로 조회한다」는
+    인상만 준다. 제출을 안 켠 run에 맵을 주면 조용히 무시하지 않고 멈춘다."""
+    args = argparse.Namespace(
+        oracle_submit=False, oracle_server=None, task_dir=None, mask_map=tmp_path / "m.json"
+    )
+
+    result = cli._oracle_for(args)
+
+    err = capsys.readouterr().err
+    assert result is cli._ORACLE_ERROR
+    assert "[ERROR]" in err and "--mask-map" in err and "--oracle-submit" in err
+    err.encode("cp949")  # 콘솔에 찍히는 문장이다
+
+
+def test_no_mask_map_leaves_query_task_id_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--mask-map`을 안 주면 마스크 없이 띄운 서버라는 뜻 — `query_task_id`가 `None`이다. 번들은
+    실 id를 든다(마스크 없는 서버가 그렇게 쓴다) - 마스킹된 id의 번들은 맵이 없으면 거절이라 다음
+    검사가 건다."""
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+
+    oracle = cli._oracle_for(_args(_bundle(tmp_path, TASK_ID), None))
+
+    assert oracle is not cli._ORACLE_ERROR and oracle is not None
+    assert oracle.task_id == TASK_ID and oracle.query_task_id is None
+
+
+def test_a_masked_task_id_without_a_mask_map_is_refused_before_anything_is_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """바로 위와 한 쌍이다 - 마스킹된 id에 실 id가 없으면 거절한다(제출은 가도 판정 행을 못 읽는다는
+    것은 소스 판독이다). 문구가 말하는 것은 `--mask-map`을 같이 주라는 것이고 실서버에서 무슨 일이
+    나는지는 단언하지 않는다. 오라클 객체는 만들어지지 않는다."""
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    built: list[object] = []
+    monkeypatch.setattr(cli, "TaskOracle", lambda **kwargs: built.append(kwargs))
+
+    result = cli._oracle_for(_args(_bundle(tmp_path, _MASKED_ID), None))
+
+    err = capsys.readouterr().err
+    assert result is cli._ORACLE_ERROR
+    assert _MASKED_ID in err and "--mask-map" in err and "아무것도 제출하지 않았다" in err
+    assert "404" not in err
+    err.encode("cp949")  # 콘솔에 찍히는 문장이다
+    assert built == []
