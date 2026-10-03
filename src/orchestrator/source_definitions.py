@@ -180,13 +180,32 @@ def slice_line_names(read_source: ReadSource, lines: Iterable[tuple[str, int]]) 
 
 
 def slice_line_fields(read_source: ReadSource, lines: Iterable[tuple[str, int]]) -> set[str]:
-    """슬라이스가 지나는 줄에 **필드로** 나온 이름(`p->len`·`s.buf`의 `len`·`buf`) — 쓰기 지점 창이
-    그 필드를 어디서 채우는지 찾는 데 쓴다(C5(a)). 읽는 규칙은 `slice_line_names`와 같다."""
+    """슬라이스가 지나는 줄에 **필드로** 나온 이름(`p->len`·`s.buf`의 `len`·`buf`) — 집합 판이다.
+    읽는 규칙은 `slice_line_names`와 같다. 쓰기 지점 창(C5(a))은 순서가 필요해 `slice_line_refs`를
+    쓴다(PR #468 리뷰 MEDIUM-3)."""
     return {
         match.group(1)
         for code in _slice_line_code(read_source, lines)
         for match in _FIELD_ACCESS.finditer(code)
     }
+
+
+def slice_line_refs(
+    read_source: ReadSource, lines: Iterable[tuple[str, int]]
+) -> list[tuple[str, bool]]:
+    """슬라이스 줄에 나온 이름과 필드를 **처음 나온 순서로** — `(이름, 필드인가)`. 쓰기 지점 창의
+    우선순위다(C5(a)): 알파벳 순이면 앞쪽 이름이 창을 먼저 먹고 길이 필드가 굶는다(PR #468 리뷰
+    MEDIUM-3). 이름 쪽은 `slice_line_names`, 필드 쪽은 `slice_line_fields`와 같은 집합이다(같은
+    읽기 규칙 · 파일은 처음 나온 순, 파일 안은 줄 순). 같은 낱말이 이름으로도 필드로도 나오면 둘 다
+    든다."""
+    found: dict[tuple[str, bool], None] = {}
+    for code in _slice_line_code(read_source, lines):
+        fields = _field_starts(code)
+        for match in _IDENT.finditer(code):
+            is_field = match.start() in fields
+            if is_field or match.group() not in _C_KEYWORDS:
+                found.setdefault((match.group(), is_field), None)
+    return list(found)
 
 
 def _slice_line_code(read_source: ReadSource, lines: Iterable[tuple[str, int]]) -> list[str]:

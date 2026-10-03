@@ -14,6 +14,7 @@ from src.orchestrator.source_definitions import (
     macro_alias_target,
     slice_line_fields,
     slice_line_names,
+    slice_line_refs,
     slice_names_first,
 )
 from src.schemas.common import Location
@@ -400,3 +401,21 @@ def test_slice_line_fields_names_only_fields_on_the_slice_lines() -> None:
         return chr(10).join(lines[(loc.line_start or 1) - 1 : loc.line_end])
 
     assert slice_line_fields(read, [("x.c", 1), ("x.c", 2)]) == {"len", "size"}
+
+
+def test_slice_line_refs_keep_first_appearance_order_for_names_and_fields() -> None:
+    """쓰기 지점 창의 우선순위(PR #468 리뷰 MEDIUM-3) — 이름과 필드를 슬라이스 줄에 처음 나온 순서로
+    섞어 낸다. 키워드·다른 줄·주석 속 낱말은 안 든다. 같은 낱말이 이름으로도 필드로도 나오면 둘 다
+    든다(`len = p->len`). 집합으로는 `slice_line_names`·`slice_line_fields`와 같다."""
+    lines = ["zbuf = p->len; /* abuf */", "skip = q->other;", "if (len > p->len) return abuf;"]
+
+    def read(loc: Location) -> str:
+        return chr(10).join(lines[(loc.line_start or 1) - 1 : loc.line_end])
+
+    picked = [("x.c", 3), ("x.c", 1)]
+    refs = slice_line_refs(read, picked)
+    assert refs == [
+        ("zbuf", False), ("p", False), ("len", True), ("len", False), ("abuf", False)
+    ]
+    assert {name for name, field in refs if not field} == slice_line_names(read, picked)
+    assert {name for name, field in refs if field} == slice_line_fields(read, picked)

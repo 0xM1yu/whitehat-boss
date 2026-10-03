@@ -117,7 +117,8 @@ V3_TABLES = ("writes", "fn_bindings", "field_calls")
 DEFINITION_TABLES = ("macros", "types", "file_vars")
 
 # 정의 조회가 「저장소에서 하나뿐」 판정에서 제품 경로 뒤로 미루는 디렉터리 이름
-# (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`). 두 갈래다: 테스트·예제·
+# (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`·`functions_named`·
+# `fn_pointer_targets`·`indirect_calls_of`). 두 갈래다: 테스트·예제·
 # 문서·번들 라이브러리가 쓰는 흔한 이름(퍼징은 `_FUZZ_PREFIXES` 접두도), 그리고 **다른 플랫폼·빌드
 # 시스템 몫의 사본**(`xcode/`·`windows/`…) — 리눅스 빌드를 대상으로 본다는 전제라 거기 있는 정의는
 # 효력 있는 정의가 아니라고 본다. 뒤 갈래를 넣은 근거는 로컬 측정 1건이다: libzip 계열 저장소
@@ -739,7 +740,9 @@ class GraphIndex:
         }
         return _near_first(sites, near_file)
 
-    def fn_pointer_targets(self, field: str, near_file: str) -> list[Location] | None:
+    def fn_pointer_targets(
+        self, field: str, near_file: str, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """함수 포인터 필드 `field`에 묶인 함수들의 **정의 위치**(#304 · 간접 호출 해석).
 
         `fn_bindings`(`o->alloc = my_alloc` · `.free_ctx = sshpam_free_ctx`)에서 함수 이름을 모으고,
@@ -754,17 +757,30 @@ class GraphIndex:
         ⚠ 이름 하나에 바인딩이 여럿이면 **전부** 후보다 — 어느 것이 그 호출 시점의 값인지는
         구문만으로 모른다. 위치 초기화(`{ my_init, my_free }`)는 인덱서가 안 싣는다. 순서는
         (파일, 시작 줄)이다.
+
+        `demote_nonproduct`는 `callees_of`와 같다 — 켜면 제품 경로 바인딩이 있을 때 비제품
+        경로 바인딩(`tests/`의 `o->alloc = fake_alloc`)을 빼고, 함수 이름 → 정의의 「하나뿐」도
+        제품 경로가 먼저 정한다(`_product_first` — 강등이지 삭제가 아니다). `near_file`이
+        비제품이면 강등하지 않는다.
         """
         tables = self._v3()
         if tables is None:
             return None
+        demote = demote_nonproduct and not is_nonproduct_path(near_file)
         unique = len(tables["fields"].get(field, ())) == 1
+        rows = [
+            row
+            for row in tables["fn_bindings"].get(field, ())
+            if row["file"] == near_file or unique
+        ]
+        if demote:
+            rows = _product_first(rows, itemgetter("file"))
         found: set[Location] = set()
-        for row in tables["fn_bindings"].get(field, ()):
-            if row["file"] != near_file and not unique:
-                continue
-            definitions = tables["functions"].get(row["fn"], ())
-            candidates = [d for d in definitions if d["file"] == row["file"]] or list(definitions)
+        for row in rows:
+            definitions = list(tables["functions"].get(row["fn"], ()))
+            candidates = [d for d in definitions if d["file"] == row["file"]] or (
+                _product_first(definitions, itemgetter("file")) if demote else definitions
+            )
             if len(candidates) != 1:
                 continue
             d = candidates[0]
@@ -778,13 +794,19 @@ class GraphIndex:
             )
         return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
 
-    def indirect_callees_of(self, target: Location) -> list[Location] | None:
-        """대상 본문 안의 필드 경유 호출(`vv->varint_get64s(…)`)이 갈 수 있는 함수의 **정의 위치**.
+    def indirect_calls_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[tuple[str, list[Location]]] | None:
+        """대상 본문 안의 필드 경유 호출(`vv->varint_get64s(…)`)마다 **(필드, 갈 수 있는 함수의 정의
+        위치)**.
 
         `callees_of`가 못 푸는 간접 호출(#304)을 `field_calls` →
         `fn_pointer_targets(필드, target.file)`로 잇는다. 본문 판정은 `callees_of`와 같은
         `_in_body`이고 대상 자신은 뺀다. 순서는 본문 안 첫 호출 줄 순(같은 줄이면 필드 이름 순),
-        그 안에서 `fn_pointer_targets`의 순서다. 같은 정의는 한 번만 낸다.
+        필드 안은 `fn_pointer_targets`의 순서다. 후보가 없는 필드는 안 낸다. 필드별로 묶는
+        것은 「어느 것인지 모른다」가 필드 하나 단위의 문제라서다 — 러너가 후보 수 상한을 필드마다
+        건다. 두 필드가 같은 함수에 묶이면 둘 다에 든다. `demote_nonproduct`는
+        `fn_pointer_targets`로 넘긴다.
         """
         tables = self._v3()
         if tables is None:
@@ -794,12 +816,30 @@ class GraphIndex:
             for row in rows:
                 if self._in_body(row["file"], row["line"], target):
                     first_call[field] = min(first_call.get(field, row["line"]), row["line"])
-        found: list[Location] = []
+        found: list[tuple[str, list[Location]]] = []
         for field in sorted(first_call, key=lambda name: (first_call[name], name)):
-            for loc in self.fn_pointer_targets(field, target.file) or ():
-                is_self = loc.symbol == target.symbol and loc.file == target.file
-                if loc not in found and not is_self:
-                    found.append(loc)
+            targets = [
+                loc
+                for loc in self.fn_pointer_targets(
+                    field, target.file, demote_nonproduct=demote_nonproduct
+                )
+                or ()
+                if not (loc.symbol == target.symbol and loc.file == target.file)
+            ]
+            if targets:
+                found.append((field, targets))
+        return found
+
+    def indirect_callees_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
+        """`indirect_calls_of`를 펼친 것 — 필드 순서대로 후보를 잇고 같은 정의는 한 번만 낸다."""
+        grouped = self.indirect_calls_of(target, demote_nonproduct=demote_nonproduct)
+        if grouped is None:
+            return None
+        found: list[Location] = []
+        for _, targets in grouped:
+            found.extend(loc for loc in targets if loc not in found)
         return found
 
     def _v3(self) -> Mapping[str, Mapping[str, Any]] | None:
