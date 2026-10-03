@@ -1262,7 +1262,8 @@ def run(args: argparse.Namespace) -> int:
             )
             return 2
     # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
-    # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
+    # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5·v6(⏵ 2026-10-03 서빙 판)는
+    # 「(file, start line) 순 · 15,000자」를
     # 말한다 — 어긋나도 오류 없이 돈다. Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
