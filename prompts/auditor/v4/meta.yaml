@@ -1,6 +1,9 @@
 # ⏵ 2026-09-29 — 배선됨. `config/models.yaml`의 `qwen3.8-27b.prompt_template_version`이
 # v4를 고르고, `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`가 이 버전에서 근거 본문을
 # FACTS에 싣는다(#328 리뷰 MEDIUM-1). 이 판으로 돈 run은 아직 0건이다.
+# ⏵ 2026-10-03 — `qwen3.8-27b`를 v6로 올려 지금은 어느 registry 엔트리도 이 버전을 고르지
+# 않는다(#418·#421, 사용자 결정 — v5는 건너뛰었다). `_CONTENT_AWARE_VERSIONS`에는 그대로
+# 남는다. 이 판으로 돈 run은 끝까지 0건이었다.
 role: auditor
 version: v4
 output_schema: Finding

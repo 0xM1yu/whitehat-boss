@@ -45,9 +45,14 @@ _UTIL = split_source((TARGET / "util.c").read_bytes())
 _SOURCES = {"parser.c": _PARSER, "util.c": _UTIL}
 
 
-@pytest.mark.parametrize("version", ["v4", "v5"])
+@pytest.mark.parametrize("version", ["v4", "v5", "v6"])
 def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
-    """#328 2차 MEDIUM-3: 모델용 계약의 수치가 러너 상수와 조용히 갈리지 않는다."""
+    """#328 2차 MEDIUM-3: 모델용 계약의 수치가 러너 상수와 조용히 갈리지 않는다.
+
+    ⚠ 이 목록은 **판을 센다** — 올리면서 안 늘리면 서빙 판이 빠진다(2026-10-03 v6가 그랬다).
+    판 목록 없이 **서빙 판**을 묻는 것은 `test_config.py`의
+    `test_the_canonical_auditor_prompt_states_the_runner_source_contract`다.
+    """
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 
     assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
