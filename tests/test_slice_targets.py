@@ -1361,7 +1361,10 @@ def test_a_caller_window_over_the_cap_is_dropped() -> None:
 def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa: ANN202
     """`_auditor_source`를 직접 부르는 최소 ctx(#351 리뷰). 파일은 줄 목록, 상한은 단어 수(모델
     카운터 자리)다. `callees`·`sites`는 심볼 이름 → 위치 목록, `definitions`는 (이름들, 파일) →
-    목록 함수. `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다."""
+    목록 함수, `locals`는 (파일, 함수 이름) → 그 함수의 지역·파라미터 이름 집합이다(없으면 `None` —
+    「v2 표 없음」). `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다.
+    `ctx.lookup_kwargs`는 조회가 불린 순서대로 `(조회 이름, 받은 키워드)`를 든다 — 위생이 켜졌는지
+    (`demote_nonproduct`)와 `locals_of`가 불렸는지를 본다."""
     import types
 
     thresholds = {
@@ -1371,23 +1374,39 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
     names: list[set] = []
+    lookup_kwargs: list[tuple[str, dict]] = []
 
     def read(loc: Location) -> str:
         reads.append(loc)
         lines = files[loc.file]
         return "\n".join(lines[(loc.line_start or 1) - 1 : loc.line_end or len(lines)])
 
-    def definitions(found, file):  # noqa: ANN001, ANN202
+    def definitions(found, file, **kw):  # noqa: ANN001, ANN003, ANN202
         names.append(set(found))
+        lookup_kwargs.append(("definitions_of", kw))
         return opts.get("definitions", lambda _n, _f: [])(found, file)
+
+    def callees(loc, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("callees_of", kw))
+        return opts.get("callees", {}).get(loc.symbol, [])
+
+    def sites(loc, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("call_sites_of", kw))
+        return opts.get("sites", {}).get(loc.symbol, [])
+
+    def locals_of(file, func):  # noqa: ANN001, ANN202
+        lookup_kwargs.append(("locals_of", {}))
+        return opts.get("locals", {}).get((file, func))
 
     events: list[dict] = []
     ctx = types.SimpleNamespace(
         symbols_for=lambda file: [s for s in symbols if s.file == file],
         read_source=read,
-        callees_of=lambda loc: opts.get("callees", {}).get(loc.symbol, []),
+        callees_of=callees,
         definitions_of=definitions,
-        call_sites_of=lambda loc: opts.get("sites", {}).get(loc.symbol, []),
+        call_sites_of=sites,
+        locals_of=locals_of,
+        lookup_kwargs=lookup_kwargs,
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(**thresholds)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
@@ -1521,6 +1540,167 @@ def test_definition_lookup_reads_code_not_banners_or_omission_marks() -> None:
     (used,) = names
     assert not used & {"u", "c", "lines", "omitted"}
     assert "w40" in used
+
+
+def test_definition_lookup_skips_the_carried_functions_locals_params_and_fields() -> None:
+    """정의 조회에 넘어가는 이름에서 실린 함수 **자신의** 지역·파라미터와 필드 전용 이름이 빠진다 --
+    그 이름은 다른 파일의 매크로·타입·파일 변수와 철자가 같아도 그것을 가리키지 않는다(`za`·
+    `->len`이 남의 파일 정의를 끌어오던 오염). 전역 `GLOBAL`·다른 함수가 부르는 이름은 남는다."""
+    files = {
+        "u.c": [
+            "int f(int n)",
+            "{",
+            "    int za = p->len + n;",
+            "    return GLOBAL + za;",
+            "}",
+        ]
+    }
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+    ctx, events, _, names = _unit(
+        files, [f], auditor_definitions=1, locals={("u.c", "f"): {"n", "za"}}
+    )
+
+    _unit_run(ctx, events, f, [("u.c", 3)])
+
+    (used,) = names
+    assert used == {"f", "p", "GLOBAL"}
+
+
+def test_definition_lookup_ignores_words_in_comments_and_string_literals() -> None:
+    """정의 조회에 넘어가는 이름에서 주석·문자열 속 낱말(`FOO_MAX`·`BUF_SIZE`·`HIDDEN`)이 빠진다 --
+    같은 철자의 매크로가 다른 파일에 하나뿐이면 끌려오던 오염. 주석에도 나오지만 **코드에도** 나온
+    `LIMIT`은 남는다."""
+    files = {
+        "u.c": [
+            "int f(int n)",
+            "{",
+            "    /* clamp to FOO_MAX and LIMIT first */",
+            '    log("see BUF_SIZE");',
+            "    if (n > LIMIT) return 0;",
+            "    return 1; // HIDDEN",
+            "}",
+        ]
+    }
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=7)
+    ctx, events, _, names = _unit(
+        files, [f], auditor_definitions=1, locals={("u.c", "f"): {"n"}}
+    )
+
+    _unit_run(ctx, events, f, [("u.c", 5)])
+
+    (used,) = names
+    assert used == {"f", "log", "LIMIT"}
+
+
+def test_default_off_never_strips_anything_for_the_definition_lookup() -> None:
+    """`auditor_definitions`가 0이면 정의 조회 자체가 안 돈다 -- 주석 거름도 이름 거름도
+    `locals_of`도 안 불린다(`SOURCE`는 원문 그대로 실리고 이벤트에 `definitions` 키도 없다)."""
+    files = {"u.c": ["int f(void)", "{", "    /* LIMIT */", "    return 0;", "}"]}
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+    ctx, events, _, names = _unit(files, [f])
+
+    source, event = _unit_run(ctx, events, f, [("u.c", 4)])
+
+    assert source == "\n".join(files["u.c"])
+    assert names == [] and "definitions" not in event
+    assert ctx.lookup_kwargs == []
+
+
+# 슬라이스 줄(4)에는 `BBB`만 있고 `AAA`는 같은 함수의 슬라이스 밖 줄(3)에만 있다. 정의는 (파일, 줄)
+# 순으로 `AAA`가 먼저 온다 — 슬라이스 줄에 나온 `BBB`가 앞서야 한다.
+_H_FILE = {
+    "u.c": [
+        "int f(void)",
+        "{",
+        "    use(AAA, BBB);",
+        "    use(BBB);",
+        "}",
+        *[f"filler{i}" for i in range(6, 20)],
+        "#define AAA 1",
+        "#define BBB 2",
+    ]
+}
+_H_F = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+_H_AAA = Location(file="u.c", symbol="AAA", line_start=20, line_end=20)
+_H_BBB = Location(file="u.c", symbol="BBB", line_start=21, line_end=21)
+
+
+def test_definitions_named_on_the_slice_lines_are_appended_first() -> None:
+    """슬라이스 줄에 나온 이름의 정의가 먼저 붙는다(상한이 차면 뒤가 먼저 빠진다)."""
+    ctx, events, _, _ = _unit(
+        _H_FILE, [_H_F], auditor_definitions=1, definitions=lambda _n, _f: [_H_AAA, _H_BBB]
+    )
+
+    source, event = _unit_run(ctx, events, _H_F, [("u.c", 4)])
+
+    assert source.index("#define BBB 2") < source.index("#define AAA 1")
+    assert event["definitions"] == 2
+
+
+def test_the_cap_keeps_the_definition_named_on_the_slice() -> None:
+    """정의 하나만 들어갈 상한이면 슬라이스 줄에 나온 `BBB`가 남고 `AAA`가 빠진다 -- 순서를 안
+    바꾸면 (파일, 줄) 순으로 `AAA`가 먼저 들어가 슬라이스와 무관한 정의가 자리를 먹는다."""
+    from src.orchestrator import runner
+
+    words = lambda text: len(text.split())  # noqa: E731
+    anchor_block = runner._block(_H_F, "\n".join(_H_FILE["u.c"][0:5]))
+    cap = words(anchor_block) + 1 + words(runner._block(_H_BBB, "#define BBB 2"))
+    ctx, events, _, _ = _unit(
+        _H_FILE, [_H_F], auditor_definitions=1, auditor_source_tokens=cap,
+        definitions=lambda _n, _f: [_H_AAA, _H_BBB],
+    )
+
+    source, event = _unit_run(ctx, events, _H_F, [("u.c", 4)])
+
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 1)
+    assert "#define BBB 2" in source and "#define AAA 1" not in source
+
+
+def test_the_definition_hygiene_is_asked_for_only_with_definitions_on() -> None:
+    """`auditor_definitions`가 1이면 정의·피호출·호출자 조회가 `demote_nonproduct=True`로 불리고
+    `locals_of`도 불린다. 0이면(피호출·호출자만 켠 run) 옛 호출 그대로다 -- 키워드가 없고
+    `locals_of`가 안 불린다(측정이 있는 옵션 조합의 출력이 안 바뀐다)."""
+    site = Location(file="u.c", symbol="h", line_start=11, line_end=11)
+    common = {
+        "auditor_callee_hops": 1, "auditor_caller_lines": 1,
+        "callees": {"f": [_U_K]}, "sites": {"f": [site]},
+    }
+
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_H, _U_K], auditor_definitions=1, **common)
+    _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert dict(ctx.lookup_kwargs) == {
+        "definitions_of": {"demote_nonproduct": True},
+        "callees_of": {"demote_nonproduct": True},
+        "call_sites_of": {"demote_nonproduct": True},
+        "locals_of": {},
+    }
+
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_H, _U_K], **common)
+    _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert dict(ctx.lookup_kwargs) == {"callees_of": {}, "call_sites_of": {}}
+
+
+def test_a_parameter_named_like_a_foreign_macro_does_not_pull_it(tmp_path: Path) -> None:
+    """`parse_header(const char *src, int len)`의 `len`은 파라미터다 -- 다른 파일(`util.c`)에
+    `len`이라는 매크로가 **하나뿐**이어도 그것을 가리키지 않는다. 파이프라인 전체(index →
+    `GraphIndex.locals_of` → factory → deps → ctx)를 태운다: `locals_of` 배선이 끊기면 이 테스트가
+    먼저 안다. `struct header` 정의(태그 사용)는 그대로 붙는다."""
+    index = {
+        **_FIXTURE_INDEX_V2,
+        "macros": {"len": [{"file": "util.c", "line_start": 12, "line_end": 12}]},
+        "locals": {"parser.c": {"parse_header": {"src": [19], "len": [19], "buf": [21]}}},
+    }
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(index), configure=_definitions(1)
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert _banner("util.c", 12, 12) not in facts["source"]
+    assert _banner("parser.c", 12, 15) in facts["source"]
+    (event,) = _source_events(trace_path)
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)
 
 
 def test_no_caller_window_without_an_entry_symbol() -> None:
