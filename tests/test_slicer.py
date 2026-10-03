@@ -491,6 +491,19 @@ def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
     assert "case_b" in queries.FILE_TRANSPORT_STAGES  # the client keys transport on this
 
 
+def test_inventory_uses_file_transport():
+    """#404: inventory carries every CPG file name; inline, a large repo's list overran the REPL
+    and came back empty (2026-10-02 vast, wazuh and hdf5 prepares failed in inventory).
+    Reverting `file_envelope("inventory")` to `envelope("inventory")` turns this red."""
+    query = queries.inventory_query()
+
+    assert queries.OUT_PATH_TOKEN in query
+    assert "Files.write" in query
+    assert "Base64" not in query
+    assert '"__SLICER_inventory__"' in query and '"__END_SLICER__"' in query
+    assert "inventory" in queries.FILE_TRANSPORT_STAGES
+
+
 def test_decode_response_reads_the_payload_from_the_file(tmp_path):
     payload = [candidate("entry", 1)]
     raw = json.dumps(payload).encode("utf-8")
