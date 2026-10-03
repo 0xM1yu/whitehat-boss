@@ -42,6 +42,9 @@ from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import (
+    _AUDITOR_CALLEE_CHARS,
+    _AUDITOR_CALLER_SITES,
+    _AUDITOR_DEFINITION_CHARS,
     _AUDITOR_SOURCE_CHARS,
     _AUDITOR_WINDOW_LINES,
     RunSpec,
@@ -471,14 +474,36 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     여기서 고르는 것은 `prompt_template_version`이라 v7로 올려도 같이 돈다. 묻는 것은 철자다 —
     모델이 그 계약을 따르는지는 고정 표본 회귀의 몫이다(agent-contracts §4 규칙 5).
     """
-    version = load_config(profile).model_for("auditor").prompt_template_version
+    config = load_config(profile)
+    version = config.model_for("auditor").prompt_template_version
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
     flat = " ".join(prefix.split())
+    thresholds = config.thresholds
 
     # 러너 상수 ↔ 계약 수치(`runner._auditor_target`·`_auditor_source`).
     assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
-    assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
     assert "`(file, start line)` order" in prefix
+    # 상한 -> 토큰 상한이 켜져 있으면 그 값, 아니면 글자 상한. 다른 쪽 철자가 남으면 모델이
+    # 두 상한을 같이 읽는다(2026-10-03 옵션 넷을 켜며 v6 서술을 맞춤 · #349).
+    if thresholds.auditor_source_tokens:
+        assert f"{thresholds.auditor_source_tokens:,}-token cap" in prefix
+        assert f"{_AUDITOR_SOURCE_CHARS:,}-character" not in prefix
+    else:
+        assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
+    # 켜진 옵션마다 그 블록의 철자 -- 상한은 배너 줄을 포함한 블록 길이다(`len(block)`, #374 리뷰).
+    if thresholds.auditor_definitions:
+        assert (
+            f"its block, counting its banner line, is at most {_AUDITOR_DEFINITION_CHARS:,} "
+            "characters" in flat
+        )
+    if thresholds.auditor_callee_hops:
+        assert (
+            f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
+            " is skipped" in flat
+        )
+    if thresholds.auditor_caller_lines:
+        assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
+        assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
     # 규칙 3의 판정 **방향** — 「Otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
     assert (
         "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
@@ -2214,7 +2239,10 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
     넣어도 통과하던 변이(#351 리뷰)."""
     from src.config import AUDITOR_SOURCE_OPTIONS
 
-    thresholds = load_config("dev_fake").thresholds
+    # 2026-10-03부터 `budgets.yaml`이 넷을 켠다 -> 끈 상태를 만들어 옛 모양을 본다.
+    thresholds = load_config("dev_fake").thresholds.transition(
+        **{key: 0 for key in AUDITOR_SOURCE_OPTIONS}
+    )
     assert not set(AUDITOR_SOURCE_OPTIONS) & thresholds.flatten().keys()
     assert thresholds.auditor_source_options_on() == ()
     on = thresholds.transition(**{key: 1 for key in AUDITOR_SOURCE_OPTIONS})
@@ -2230,10 +2258,20 @@ def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
         load_config("dev_fake").thresholds.transition(**{key: 2})
 
 
-@pytest.mark.parametrize("version", ["v4", "v5", "v6"])
-def test_the_current_auditor_prompts_describe_no_source_option(version: str) -> None:
-    """v4·v5·v6는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 MEDIUM-2)."""
+@pytest.mark.parametrize("version", ["v4", "v5"])
+def test_the_older_auditor_prompts_describe_no_source_option(version: str) -> None:
+    """v4·v5는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 MEDIUM-2)."""
     assert load_prompt(Role.AUDITOR, version).source_options == ()
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(profile: str) -> None:
+    """서빙 판이 선언한 옵션 == `budgets.yaml`이 켠 옵션. `cli`는 켰는데 선언 안 한 쪽만 막으므로
+    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 v6에 넷을 켬 · #349)."""
+    config = load_config(profile)
+    version = config.model_for("auditor").prompt_template_version
+    described = set(load_prompt(Role.AUDITOR, version).source_options)
+    assert described == set(config.thresholds.auditor_source_options_on())
 
 
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:

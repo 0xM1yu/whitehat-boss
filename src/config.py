@@ -554,8 +554,11 @@ class CapsuleBudgets(HarnessModel):
 
 
 # Auditor `SOURCE`를 결정 1-b(「슬라이스가 걸친 함수의 원본 전부 · 15,000자」) 밖으로 넓히는 값들
-# (#349). 전부 기본 0이고 0이면 `flatten()`에 키도 안 생긴다(옛 manifest 모양). 하나라도 켜면
+# (#349). 필드 기본은 0이고 0이면 `flatten()`에 키도 안 생긴다(옛 manifest 모양). 하나라도 켜면
 # Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다(`cli`).
+# ⏵ 2026-10-03 — `config/budgets.yaml`이 entry 줄이기를 뺀 넷을 켠다(20,000토큰 상한 · 정의 ·
+# 피호출 본문 1단 · 호출자 창 10줄 · 사용자 결정). 서빙 판 v6가 그 넷을 서술하고 선언한다.
+# 필드 기본 0은 그 파일이 키를 안 적을 때의 값이다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -613,8 +616,10 @@ class Thresholds(HarnessModel):
     # Auditor `SOURCE`에 피호출 함수 본문을 붙이는 단계 수(#349 (a)). 0이면 붙이지 않는다 —
     # ADR 0012 결정 1-b(「슬라이스가 걸친 함수의 원본 전부」) 그대로다. 1이면 실린 함수의 본문 안
     # 호출이 부르는 함수의 본문을 뒤에 붙인다(`runner._auditor_source`). 결정 1-b를 넓히는 값이라
-    # 기본은 끈다. 2 이상은 아직 없다.
-    # ⚠ 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
+    # 필드 기본은 끈다(⏵ 2026-10-03 `budgets.yaml`이 1로 켠다 — 위 `AUDITOR_SOURCE_OPTIONS` 주석).
+    # 2 이상은 아직 없다.
+    # ⚠ (⏵ 2026-10-03 — 아래는 서빙 판이 옵션을 서술하지 않던 때의 경고다. 지금 v6는 넷을 서술한다.)
+    # 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
     # — 그전에는 v4 · 판은 `config/models.yaml`이 고른다 — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면

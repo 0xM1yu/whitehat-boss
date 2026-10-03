@@ -481,9 +481,16 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
 
 def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     """켜진 Auditor `SOURCE` 옵션 중 Auditor 프롬프트 meta의 `source_options`가 안 든 것
-    (#351 리뷰 MEDIUM-2). 프로필에 Auditor가 없으면 `[]`다. 프롬프트를 못 읽으면 `PromptError`."""
+    (#351 리뷰 MEDIUM-2). 프로필에 Auditor가 없으면 `[]`다. 프롬프트를 못 읽으면 `PromptError`.
+
+    **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
+    서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
+    프롬프트(v6)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이 여기서 막혀 GPU 없는 스모크가
+    죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과 같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
     if not on or Role.AUDITOR.value not in config.profile.roles:
+        return []
+    if config.model_for(Role.AUDITOR.value).is_fake:
         return []
     version = config.model_for(Role.AUDITOR.value).prompt_template_version
     described = load_prompt(Role.AUDITOR, version).source_options
@@ -1262,9 +1269,9 @@ def run(args: argparse.Namespace) -> int:
             )
             return 2
     # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
-    # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5·v6(⏵ 2026-10-03 서빙 판)는
-    # 「(file, start line) 순 · 15,000자」를
-    # 말한다 — 어긋나도 오류 없이 돈다. Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
+    # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
+    # 말한다 — 어긋나도 오류 없이 돈다(⏵ 2026-10-03 서빙 판 v6는 옵션 넷을 서술하고 선언한다).
+    # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
             undescribed = _undescribed_source_options(config)

@@ -150,7 +150,7 @@ Phase 3, 심볼 인덱스 v2는 Phase 4, need_evidence 루프는 Phase 5의 몫�
 `run --slices <slices.json>`이면 슬라이스 1개가 타깃 1개이고(`runner._plan_slice_targets`), Scout의 `SOURCE`는
 슬라이스 렌더(줄번호 gutter · 파일 배너), FACTS에 `slice_criterion`이 붙고, LIGHT 캡슐의 캐시 키에 slice id와
 슬라이서 `run_signature`가 든다.
-Auditor는 슬라이스가 걸친 함수들의 원본을 본다 — entry를 감싸는 함수(품는 함수를 모르면 entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(결정 1-b = 넓은 (i), 2026-09-25 팀 합의). **`--slices` 없이 도는 run은 위 문장
+Auditor는 슬라이스가 걸친 함수들의 원본을 본다 — entry를 감싸는 함수(품는 함수를 모르면 entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(결정 1-b = 넓은 (i), 2026-09-25 팀 합의). ⏵ 2026-10-03 — 그 결정을 넓혔다: 상한은 20,000토큰이고 함수 뒤에 정의 · 피호출 본문 1단 · 호출자 창 10줄이 붙는다(`config/budgets.yaml`의 #349 옵션 넷 · 서빙 판 v6가 서술 · 사용자 결정 — [ADR 0012](docs/decisions/0012-harness-canon-v2.md) 결정 1-b의 같은 날 노트). **`--slices` 없이 도는 run은 위 문장
 그대로다** — 후보는 `symbols_for()`의 심볼이고 Scout는 심볼 본문을 받는다. 슬라이스 없이 v3 Scout를 부르는
 run의 시작 전 거부(결정 1)와 need_evidence 루프(Phase 5)는 이 세 PR에 없다.)
 (⏵ 2026-09-26 — need_evidence 루프가 배선됐다(별도 변경, Phase 5): `src/orchestrator/runner.py`의
