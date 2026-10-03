@@ -476,6 +476,34 @@ def test_case_a_drops_empty_named_methods_from_both_lists():
     assert "ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(" in code
 
 
+CASE_A_BODY_FILTER = ".filter(_.astChildren.isBlock.astChildren.nonEmpty)"
+
+
+def test_case_a_takes_only_methods_with_a_body():
+    """A prototype (header declaration, forward declaration) and an empty definition `{}` are
+    internal METHODs whose body block holds no statement; none can yield a slice, and in the
+    capped repos they spent cap slots. The 10-repo C2 measurement (`slicer_c2/C2-report.md` 6b)
+    found 18% of Case A candidates body-less (3,906 of 21,478) and counted the body block's
+    children with `m.astChildren.isBlock.astChildren.size`; this is that predicate as a filter.
+
+    ⚠ Spelling pin (CLAUDE.md §2.5): it fails when the filter is dropped or moved off the lines
+    pinned here, it does not prove the Scala keeps only methods with a body -- the Scala is not
+    executed here. The live counts are in the PR, not in CI."""
+    code = _scala_code(queries.candidates_a_query())
+    lines = [line.strip() for line in code.splitlines()]
+    # api: straight after the name guard, so the cheap AST test runs before the per-method
+    # `cpg.call.nameExact` scan it saves (a body-less method costs no call search)
+    api = lines.index(
+        'val api = cpg.method.internal.filterNot(m => m.name.isEmpty || m.name.startsWith("<"))'
+    )
+    assert lines[api + 1] == CASE_A_BODY_FILTER
+    # readers: a method that calls a reader has a body, so this is a no-op by construction -- the
+    # line is there so "Case A never takes a body-less method" holds on both lists, not only api
+    readers = lines.index("val readers = cpg.method.internal.filter(_.name.nonEmpty)")
+    assert lines[readers + 2] == CASE_A_BODY_FILTER
+    assert code.count(CASE_A_BODY_FILTER) == 2
+
+
 def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
     """case_b has the same overrun risk as case_a and must use the same file transport.
 

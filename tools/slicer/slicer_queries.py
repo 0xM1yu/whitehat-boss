@@ -432,7 +432,14 @@ def candidates_a_query() -> str:
       // xmlrole.h -- full_name `<unresolvedNamespace>.`) passes a `<`-prefix filter, and ONE
       // such row fails `valid_candidate` and voids the whole run (#347). Both lists drop them,
       // silently -- the drop is listed in LIMITATIONS, not counted.
+      // A method whose body block holds no statement -- a prototype (a header or forward
+      // declaration reaches the CPG as an internal METHOD) or a definition with an empty body --
+      // cannot yield a flow, yet it took a cap slot: 3,906 of 21,478 Case A candidates (18%) on
+      // the 10 repos of the C2 measurement (2026-10-04, Joern 4.0.605; report outside the repo).
+      // Both lists skip it; for readers that is a no-op (a method that calls a reader has a
+      // body), kept so the rule is one sentence: Case A never takes a method without a body.
       val api = cpg.method.internal.filterNot(m => m.name.isEmpty || m.name.startsWith("<"))
+        .filter(_.astChildren.isBlock.astChildren.nonEmpty)
         .filter(m =>
           cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
         .filter(_.parameter.size > 0).l
@@ -440,6 +447,7 @@ def candidates_a_query() -> str:
         .take({CASE_A_CANDIDATE_CAP})
       val readers = cpg.method.internal.filter(_.name.nonEmpty)
         .filter(_.call.name("({READERS})").nonEmpty)
+        .filter(_.astChildren.isBlock.astChildren.nonEmpty)
         .take({CASE_A_CANDIDATE_CAP}).l
       ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(
         "symbol" -> m.name, "file" -> m.filename, "line" -> m.lineNumber.getOrElse(-1),
