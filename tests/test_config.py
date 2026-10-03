@@ -1324,6 +1324,11 @@ def _copy_config(
     `thresholds_patch`도 같은 규칙이다 — 주면 budgets.yaml이 왕복을 거친다. `output_max`
     처럼 **저장소에는 아직 선언이 없는 값**을 세울 때 쓴다. 저장소 값을 바꿔 재는 검사는
     "값이 실측으로 정해진다"는 이 파일 모듈 docstring의 전제를 깨므로 하지 않는다.
+
+    **프로필의 예산은 `default`로 둔다.** 패치로 만든 프로필은 실서빙 역할을 쓸 수 있고(이 파일의
+    합성 프로필 대부분이 그렇다), 실서빙 프로필은 상한 0을 못 쓴다 — `dev_fake` 예산을 그대로 두면
+    로드가 `_check_real_serving_limits_are_positive`에서 죽는다. 예산은 이 검사들의 축이 아니다.
+    `profile_patch`가 `budget`을 주면 그것이 이긴다.
     """
     budgets_text = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
     if thresholds_patch is None:
@@ -1345,7 +1350,7 @@ def _copy_config(
             yaml.safe_dump(raw_models, allow_unicode=True), encoding="utf-8"
         )
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
-    raw["profiles"][profile].update(profile_patch)
+    raw["profiles"][profile].update({"budget": "default", **profile_patch})
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
 
 
@@ -2089,14 +2094,31 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
         load_config("dev_fake", config_dir=tmp_path)
 
 
-# 사고 켠 Auditor의 디코드 속도(tok/s) — Qwen3.8-27B bf16 단일 스트림의 **외부 보고**
-# (GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목). 우리 장비
-# 미실측이고, 아래 검사가 「타임아웃이 출력 상한보다 먼저 끊지 않는다」를 재는 기준으로만
-# 쓴다 — 대역 상한 계산값 4.9보다 느린 쪽이다.
-# PoV 좌석(`feyospace-v1-small`)은 **자기 속도를 안 쟀다** — Auditor와 같은 베이스·같은 파라미터
-# 수라 이 값을 **빌려** 쓴다. 그래서 PoV 쪽 검사가 뜻하는 것은 「PoV 타임아웃이 실측으로 맞다」가
-# 아니라 「Auditor와 같은 관계가 선다」까지다.
-_AUDITOR_DECODE_TOK_S = 4.5
+# 사고 켠 좌석의 디코드 속도(tok/s) — **좌석마다 따로 둔다.** 하나로 묶으면 한 좌석의 실측이
+# 다른 좌석의 하한(④ 타임아웃 >= 출력 상한 / 속도)까지 같이 움직인다.
+# 2026-10-03 쪼갰다 — 그때까지 둘이 외부 보고 4.5 하나를 공유했다.
+#
+# **Auditor — vast 실측 16.2.** 2026-09-29 · `config/serving/vastai.yaml`의 `qwen3.8-27b`
+# (util 0.90 · `--max-model-len 262144` · KV 29.84 GiB = 483,182토큰 · 정상 상태 생성).
+# 운영 장비가 vast다(ATOM은 2026-09-29 사용 종료). 아래 검사가 그 파일과 수를 대조한다.
+# ⚠ **긴 입력에서 안 쟀다.** 그 관측은 요청 하나(n=1)의 정상 상태이고, 5단계 도구 루프는 홉마다
+#   관측을 history로 되먹여 **입력이 단조 증가**한다 — 홉 후반 속도는 0(미실측)이다(이슈 #432).
+# ⚠ **그래서 이 하한이 서는 범위를 수로 적는다 — 손익분기 8.74 tok/s**(= 출력 상한 65,536 /
+#   타임아웃 7,500 s, 계산값). 실제 디코드가 그 아래로 떨어지면 상한이 아니라 **시계가** 호출을
+#   멈추고, 이 검사는 초록인 채로 그것을 못 잡는다. vast 실측 16.2 대비 여유는 1.85배(계산값).
+# ⚠ **ATOM 실측은 4.27이었다** — 외부 보고 4.5보다 느렸다(2026-09-29 교대 스모크
+#   `docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md`). 장비가 달라 vast 값과 같은
+#   축에 놓지 않는다(evaluation.md §2.3 규칙 5 · D81). 그 장비로 돌아가면 이 상수도 돌아간다.
+_AUDITOR_DECODE_TOK_S = 16.2
+
+# **PoV(`feyospace-v1-small`) — 자기 속도를 안 쟀다.** Auditor와 같은 베이스·같은 파라미터 수지만
+# 그것은 **추론이지 측정이 아니다.** 그래서 실측을 빌리지 않고 저장소에서 가장 느린 값(외부 보고
+# 4.5 · GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목)을 보수값으로 둔다.
+# 그래서 PoV 쪽 검사가 뜻하는 것은 「PoV 타임아웃이 실측으로 맞다」가 아니라 **「같은 관계가
+# 보수적으로 선다」**까지다. 그 좌석 속도를 재면 이 값을 그 실측으로 바꾼다(이슈 #432).
+_POV_DECODE_TOK_S = 4.5
+
+_DECODE_TOK_S_BY_SEAT = {"auditor": _AUDITOR_DECODE_TOK_S, "pov": _POV_DECODE_TOK_S}
 
 
 def _assert_thinking_seat_holds_together(role: str) -> None:
@@ -2104,9 +2126,9 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
 
     무는 것은 **관계**다: ① `xhigh` ② 템플릿 인자가 사고를 끄지 않는다(`enable_thinking`이
     `false`가 아니다) ③ 사고 상한 < 출력 상한이고, 답 몫(출력 상한 − 사고 상한)이 전역 출력
-    상한 이상이다 — `config/budgets.yaml`의 「사고 상한 28,672가 답 몫 4,096(위 전역 상한)을
-    남긴다」 ④ 타임아웃 ≥ 출력 상한 ÷ 속도 ⑤ 요청 payload가 그 값들을 싣는다. 속도는
-    `_AUDITOR_DECODE_TOK_S` 하나라 좌석마다 다른 속도를 못 넣는다(위 주석).
+    상한 이상이다 — `config/budgets.yaml`의 「사고 상한이 답 몫(위 전역 상한)을 남긴다」
+    ④ 타임아웃 ≥ 출력 상한 ÷ 속도 ⑤ 요청 payload가 그 값들을 싣는다. 속도는 **좌석별**
+    (`_DECODE_TOK_S_BY_SEAT[role]`)이다 — 2026-10-03까지는 상수 하나를 공유했다(위 주석).
 
     안 묻는 것: `sampling`(값이다) · `chat_template_kwargs`의 `enable_thinking: false` 밖의
     키 · 답 몫이 **충분한지**(PoV라면 `PovSpec` 실제 길이 — 실측 전이다). ③·④는 하한만
@@ -2136,7 +2158,7 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
     assert entry.request_timeout_s is not None, (
         f"{role} — 어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
     )
-    assert entry.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
+    assert entry.request_timeout_s >= cap / _DECODE_TOK_S_BY_SEAT[role], (
         f"{role} — 타임아웃이 출력 상한 {cap}보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 "
         "멈춘다(#261)"
     )
@@ -2172,13 +2194,47 @@ def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> 
     돌고, 사고 상한이 출력 상한을 넘으면 답 몫이 없으며, 타임아웃이 짧으면 상한 전에 시계가
     호출을 끊는다.
 
-    ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 Auditor의 외부 보고
-    (`_AUDITOR_DECODE_TOK_S`)를 빌린 값이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다.
+    ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 보수값(`_POV_DECODE_TOK_S` = 외부
+    보고 4.5)이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다. Auditor 쪽은 2026-10-03에 vast
+    실측 16.2로 갈라져 나갔고 이 좌석은 따라가지 않았다(그 상수 주석).
     타임아웃과 답 몫은 하한만 문다: 값이 경계 바로 위여도 초록이고, 여유 배수·프리필은 안
     본다. 답 몫이 `PovSpec`에 **충분한지**는 실측 전이라 안 묻는다. `sampling`은 값이라
     안 묻고, `chat_template_kwargs`는 사고를 끄는 `enable_thinking: false` 하나만 문다.
     """
     _assert_thinking_seat_holds_together("pov")
+
+
+def test_each_thinking_seat_takes_its_decode_speed_from_its_own_device() -> None:
+    """속도 상수는 좌석마다 따로 있고, 쓰는 값은 저장소에 실재하는 관측과 같다.
+
+    위 검사 둘이 무는 ④(타임아웃 >= 출력 상한 / 속도)가 **상수 하나를 공유하면** 한 좌석의
+    실측이 다른 좌석의 하한을 같이 움직인다. Auditor는 운영 장비(vast) 실측이 있고 PoV
+    (`feyospace-v1-small`)는 자기 속도를 안 쟀으므로, 묶어 두면 PoV 검사가 **측정 없이**
+    느슨해진다.
+
+    무는 것 셋. (1) 좌석별 상수가 갈려 있다 (2) 미실측 좌석(PoV)이 실측 좌석보다 느린
+    보수값을 쓴다 (3) Auditor 상수가 장비 파일(`config/serving/vastai.yaml`)이 적은 실측과
+    **같은 수**다 — 상수만 올려 ④를 통과시키는 길을 막는다. PoV 쪽은 대조할 실측이 없어
+    (2)까지만 문다.
+
+    안 묻는 것: 그 실측이 **맞는지**(장비 파일이 원천이다) · 긴 입력에서의 속도(미실측 —
+    위 상수 주석의 손익분기) · 좌석이 둘보다 늘어나는 경우(늘면 이 검사를 같이 넓힌다).
+    """
+    assert set(_DECODE_TOK_S_BY_SEAT) == {"auditor", "pov"}, (
+        "사고 켠 좌석이 늘거나 줄었다 — 위 상수와 이 검사를 같이 넓힌다"
+    )
+    assert _DECODE_TOK_S_BY_SEAT["auditor"] != _DECODE_TOK_S_BY_SEAT["pov"], (
+        "두 좌석이 상수 하나를 공유한다 — 한쪽 실측이 다른 쪽 하한을 같이 움직인다"
+    )
+    assert _DECODE_TOK_S_BY_SEAT["pov"] < _DECODE_TOK_S_BY_SEAT["auditor"], (
+        "PoV는 자기 속도를 안 쟀다 — 실측이 있는 좌석보다 느린 보수값이어야 한다"
+    )
+
+    served = (CONFIG_DIR / "serving" / "vastai.yaml").read_text("utf-8")
+    assert f"{_DECODE_TOK_S_BY_SEAT['auditor']} tok/s" in served, (
+        f"Auditor 속도 상수 {_DECODE_TOK_S_BY_SEAT['auditor']}가 장비 파일의 실측과 다르다 — "
+        "상수만 올리면 「타임아웃 >= 출력 상한 / 속도」가 측정 없이 통과한다"
+    )
 
 
 # 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 2026-09-24 ATOM `run_20260924_0001`

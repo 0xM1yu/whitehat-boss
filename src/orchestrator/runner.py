@@ -2884,6 +2884,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     슬라이스 타깃이면 캡슐의 대상이 후보 위치(entry)가 아니라 **entry를 감싸는 함수**다
     (`_auditor_target`). `SOURCE`는 그 함수에 슬라이스가 걸친 다른 함수들을 이어 붙인 것이다
     (`_auditor_source`). 후보의 위치는 그대로 entry다.
+
+    도구 루프(이슈 #419)가 Finding 없이 서면(`AuditorHopLimit`) **그 후보만 `False`로 멈춘다**(아래
+    `except`) — Finding이 없으니 6단계 게이트로 갈 것이 없고, 후보는 노드가 이미 `queued`로 내렸다.
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
@@ -2900,13 +2903,29 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
-    finding, missings = auditor.run(
-        ctx,
-        candidate=candidate,
-        capsule=expanded,
-        evidences=evidences,
-        source=source,
-    )
+    try:
+        finding, missings = auditor.run(
+            ctx,
+            candidate=candidate,
+            capsule=expanded,
+            evidences=evidences,
+            source=source,
+            # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
+            # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
+            workdir=artifact.path,
+        )
+    except auditor.AuditorHopLimit:
+        # **도구 루프가 Finding 없이 섰다**(같은 요청 반복 · 조사만으로 상한 소진 — 이슈 #419). 둘
+        # 다 모델이 낸 **정상적인 답**이라 한 후보의 정지일 뿐이다 — 노드가 이미 후보를 `queued`로
+        # 내렸고 (`_queue_candidate`) 정지 사유는 trace `auditor_hop.stop_reason`이 든다. 여기서 안
+        # 받으면 `run_pipeline`의 최후 방어선이 `UNFORESEEN_FAILURE`로 run 전체를 멈춘다: 100후보
+        # run에서 첫 반복 요청 하나가 나머지 99후보를 감사도 못 하게 지운다.
+        # `ModelGatewayError`·`SchemaParseError`처럼 `_drop`으로 세지 않는다 — 그 카운터는 **체계적
+        # 고장**을 재는 값이고 이 정지는 모델 호출의 실패가 아니다. 다만 `False`는 이 후보가
+        # Finding을 못 냈다는 뜻이라 다음 단계(6 게이트)로 안 간다. 모든 후보가 이렇게 서면 5단계는
+        # 「응답은 했는데 아무도 못 끝냈다」이고 run은 멈추지 않는다 — 그 비율은 `auditor_hop`의
+        # `stop_reason`이 센다.
+        return False
     item.finding, item.missings = finding, tuple(missings)
     state.update(finding)
     state.evidences[finding.finding_id] = evidences
@@ -3010,7 +3029,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 24,336/5,043 ≈ 4.83을 넘어야 하고, 근거 본문 4,000자는 **상한이라 0일 수도 있어** 그때 문턱이
 # 20,336/5,043 ≈ 4.03으로 내려간다. **영어 텍스트의 비를 4 아래로 묶은 실측이 없다**(가진 것은
 # v3 스모크의 「2.29 이상」 하나다) — 그래서 이것은 **추정이고 상한 증명이 아니다.**
-# 창이 `context_limit` 262,144면 입력 몫 229,376이라 상한 35,385(= 15,437 + 19,948)도 안쪽이고,
+# 창이 `context_limit` 262,144면 입력 몫 196,608이라 상한 35,385(= 15,437 + 19,948)도 안쪽이고,
+# ⏵ 2026-10-03 — 그 입력 몫은 출력 상한 인상(32,768 → 65,536) 뒤의 값이다. 그 전은 229,376이었다.
 # 53,248은 그 전 계획값이라 지금 경로가 아니다.
 # ⏵ 2026-10-04 — **v7이 됐다**(v6 + SOURCE 옵션 넷의 서술, #349). prefix가 v6보다 +2,050자 더
 # 길고(23,448자) SOURCE 상한이 토큰이 됐다 — 그 계산은 `config/models.yaml`의 `qwen3.8-27b` 항목이
