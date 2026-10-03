@@ -28,6 +28,7 @@ from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import poc_log, runner
+from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
@@ -1785,9 +1786,10 @@ def _exit_aborted(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: AN
 
     `_run_pov_hops`의 `except`는 `(ModelGatewayError, SchemaParseError)`뿐이다. 리뷰는 설정
     오타가 내는 `PromptError`와 잠긴 `state.db`가 내는 `sqlite3.OperationalError` 둘로
-    재현했다 — 둘 다 `_run_pov`의 docstring이 들던 두 형(서버 쪽 사건·`BudgetExhausted`)이
-    **아니다**. 여기서는 형을 하나 골라 같은 성질을 재는데, 무는 명제는 「어떤 형이든
-    흡수 안 되면 사유가 남는다」다.
+    재현했다. **이 표의 한 행은 형을 하나(`RuntimeError`)만 골라** 「사유가 정확히 하나 남는다」를
+    잰다 — 「어떤 형이든」은 이 행이 못 문다(`finally`를 그 형만 잡는 `except`로 좁히는 변이가
+    살아남는다). 그 성질은 아래 `test_an_exception_of_any_type_leaves_exactly_one_aborted_reason`이
+    형을 바꿔 가며 문다.
     """
     state, finding = _pov_state(ctx)
     scripted = _scripted(ctx, [_gen(count=8)])
@@ -1842,9 +1844,9 @@ def _exit_capsule_missing(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # 
     return ctx, state, finding
 
 
-# 8사유 **완전분할** — `PovStopReason` 여섯 + enum 밖 둘(`capsule_missing`·
-# `submitted_without_poc`). 이 표가 사유 어휘의 분할성을 무는 자리다: 멤버를 더하면 아래
-# 집합 단언이 빨개진다.
+# 10사유 **완전분할** — `PovStopReason` 여섯 + enum 밖 넷(`capsule_missing`·
+# `submitted_without_poc`·`submitted_unpersisted`·`aborted`). 이 표가 사유 어휘의 분할성을
+# 무는 자리다: 멤버를 더하면 아래 집합 단언이 빨개진다.
 _POV_EXITS = (
     (PovStopReason.SUBMITTED.value, _exit_submitted),
     (runner._POV_SUBMITTED_WITHOUT_POC, _exit_submitted_without_poc),
@@ -1860,13 +1862,15 @@ _POV_EXITS = (
 
 
 def test_the_pov_exit_table_covers_every_stop_reason() -> None:
-    """위 표가 `PovStopReason` 전량 + enum 밖 둘을 덮는다 — 사유를 더하고 표를 안 늘리면 여기서
+    """위 표가 `PovStopReason` 전량 + enum 밖 넷을 덮는다 — 사유를 더하고 표를 안 늘리면 여기서
     빨개진다. 안 그러면 아래 표 테스트가 「덮었다」를 주장하면서 새 사유를 빠뜨린다.
 
-    🔴 enum 밖이 **둘**인 이유가 다르다. `capsule_missing`은 루프 **앞**에서 갈리고,
-    `submitted_without_poc`는 루프가 `SUBMITTED`로 끝났는데 **최종 PoC가 없는** 갈래다
-    (gen 없이 바로 submit). 둘을 사유로 가르지 않으면 「최종 PoC 0건」을 계수기만 보고
-    말할 수 없다 — `submitted`가 PoC 있는 것과 없는 것을 같이 덮기 때문이다.
+    🔴 enum 밖 **넷**은 enum 밖인 이유가 각자 다르다. `capsule_missing`은 루프 **앞**에서 갈리고,
+    `aborted`는 루프가 **예외로 끊겨** 정지 사유를 못 받은 갈래다. 나머지 둘은 루프가
+    `SUBMITTED`로 끝난 것을 쪼갠 것이다 — `submitted_without_poc`는 **최종 PoC가 없는**
+    갈래(gen 없이 submit), `submitted_unpersisted`는 PoC는 있는데 **사이드카가 안 써진** 갈래다.
+    쪼개지 않으면 「최종 PoC 0건」을 계수기만 보고 말할 수 없다 — `submitted`가 PoC 있는 것과
+    없는 것, 회수되는 것과 안 되는 것을 같이 덮기 때문이다.
     """
     reasons = {reason for reason, _ in _POV_EXITS}
     assert reasons == {r.value for r in PovStopReason} | {
@@ -1883,7 +1887,8 @@ def test_a_gen_less_submit_does_not_pass_as_a_final_poc() -> None:
 
     `_pov_finish`는 `POV_GENERATED`를 **`SUBMITTED`이고 PoC가 있을 때만** 낸다. 사유만 세면
     gen 없는 submit이 `submitted`로 적혀 「최종 PoC가 있다」로 읽히고, 그 run은 PoC가
-    0건인데 경고가 안 났다. 이제 `submitted`는 `POV_GENERATED`와 **1:1**이다.
+    0건인데 경고가 안 났다. 이제 `POV_GENERATED`가 난 submit은 `submitted`와
+    `submitted_unpersisted`로 갈리고(사이드카가 써졌는가), 안 난 submit은 `submitted_without_poc`다.
     """
     sub = PovStopReason.SUBMITTED
     assert runner._pov_result(sub, b"poc", "pov_poc/0001.poc", persisting=True) == "submitted"
@@ -1912,15 +1917,87 @@ def test_a_gen_less_submit_does_not_pass_as_a_final_poc() -> None:
     assert runner._pov_shortfall_warning({"F-1": "submitted"}) is None
 
 
+def test_a_run_with_one_recoverable_poc_raises_no_shortfall_warning() -> None:
+    """한 건이라도 회수 가능한 최종 PoC(`submitted`)가 있으면 경고가 **없다** — 경고의 명제는
+    「회수 가능한 최종 PoC가 0건」이지 「전건이 submit하지 못했다」가 아니다.
+
+    입력은 **섞인 맵**(일부는 PoC를 냈고 일부는 못 냈다)이다. 위 검사는 맵마다 사유를 하나만 넣어
+    「전건 `submitted`」와 「전건 `submitted` 아님」만 가르므로, 발화 조건을 `== 0`에서
+    `< len(results)`(하나라도 `submitted`가 아니면 경고)로 바꾸는 변이가 살아남았다.
+    """
+    mixed = {
+        "F-1": PovStopReason.SUBMITTED.value,
+        "F-2": PovStopReason.MAX_HOP.value,
+        "F-3": runner._POV_SUBMITTED_WITHOUT_POC,
+    }
+
+    assert runner._pov_shortfall_warning(mixed) is None
+
+
+def test_the_warning_reports_the_attempt_count_not_the_number_of_distinct_reasons() -> None:
+    """경고문의 「PoV 시도 N건」은 **시도 수**(맵의 항목 수)다 — 서로 다른 사유의 수가 아니다.
+
+    같은 사유가 여러 건이어야 둘이 갈린다: 아래 맵은 시도 넷에 사유 둘이다. `len(results)`를
+    `len(stops)`(사유 수)로 바꾸는 변이는 「시도 2건」이라 적는다.
+    """
+    results = {
+        "F-1": PovStopReason.MAX_HOP.value,
+        "F-2": PovStopReason.MAX_HOP.value,
+        "F-3": PovStopReason.MAX_HOP.value,
+        "F-4": PovStopReason.PARSE_FAILED.value,
+    }
+
+    warning = runner._pov_shortfall_warning(results)
+
+    assert warning is not None
+    assert "PoV 시도 4건에서" in warning
+    assert "max_hop 3건 · parse_failed 1건" in warning
+
+
+def test_a_run_that_never_attempted_pov_gets_no_shortfall_warning() -> None:
+    """빈 맵(`_run_pov`가 한 번도 사유를 못 적었다)에는 경고가 **없다** — PoV를 시도 안 한 run이다.
+
+    가드가 없으면 PoV에 안 닿은 모든 run이
+    「PoV 시도 0건에서 회수 가능한 최종 PoC가 0건이다: .」를 단다 — 안 잰 것을 잰 0으로
+    적는 것이다(CLAUDE.md §0).
+    """
+    assert runner._pov_shortfall_warning({}) is None
+
+
+def test_a_zero_byte_poc_whose_sidecar_write_failed_is_unpersisted_not_submitted(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """바이트가 0개인 PoC도 **쓰기가 실패하면** 회수 불가다 — `submitted`가 아니라
+    `submitted_unpersisted`다.
+
+    「빈 바이트열은 PoC 있음」(`test_a_gen_less_submit_does_not_pass_as_a_final_poc`)과 「쓰기
+    실패는 미회수」가 겹치는 자리다. `_pov_result`의 미회수 조건에 `and poc`(참값 검사)를
+    붙이면 이 경우가 `submitted`로 새는데 파일은 없다.
+    `count=0`인 `repeat`가 0바이트 PoC를 낸다(`tests/test_poc_log.py`의
+    `test_an_empty_poc_is_still_written`).
+    """
+    state, finding = _pov_state(ctx)
+    scripted = _scripted(ctx, [_gen(count=0), PovAction(action="submit", rationale="done")])
+    scripted.pocs = _UnwritablePocLog(Path("쓰이지 않는다"))
+
+    runner._run_pov(scripted, state, finding)
+
+    assert state.pov_results == {finding.finding_id: runner._POV_SUBMITTED_UNPERSISTED}
+    sub = PovStopReason.SUBMITTED
+    assert runner._pov_result(sub, b"", None, persisting=True) == runner._POV_SUBMITTED_UNPERSISTED
+
+
 def test_the_counter_vocabulary_spellings_are_pinned() -> None:
-    """🔴 enum 밖 사유 셋의 **철자**를 리터럴로 묶는다.
+    """🔴 enum 밖 사유 넷의 **철자**를 리터럴로 묶는다.
 
     적대적 리뷰가 `_POV_SUBMITTED_WITHOUT_POC`를 `zzz_renamed`로 바꿔도 세 테스트 파일이
     전부 초록인 것을 보였다 — 표와 집합 단언이 **상수를 그대로 참조**해서다. 그러면 철자가
-    조용히 바뀌고, 장부(S12b)와 trace 대조가 그 철자에 걸려 있다.
+    조용히 바뀐다. 그 철자는 경고문과 리포트 줄이 그대로 사람에게 찍고, `capsule_missing`은
+    `POV_SKIPPED`의 `reason`과 철자가 같아야 사유별 집계를 trace와 대조할 수 있다
+    (`runner._POV_CAPSULE_MISSING` 주석).
 
     ⚠ 이 핀은 **철자**를 물지 성질을 물지 않는다(CLAUDE.md §2.5 끝). 철자를 바꿀 이유가
-    생기면 여기와 장부 쪽을 **같이** 고친다.
+    생기면 여기와, 그 철자를 읽는 쪽(경고문·리포트 줄·집계)을 **같이** 고친다.
     """
     assert runner._POV_CAPSULE_MISSING == "capsule_missing"
     assert runner._POV_SUBMITTED_WITHOUT_POC == "submitted_without_poc"
@@ -1950,18 +2027,59 @@ def test_every_pov_exit_records_exactly_one_result(
 
     실제로 조용히 0이 됐던 갈래 둘: 캡슐 미스(루프에 못 들어간다)와 흡수 안 된 예외
     (`_run_pov_hops`의 `except`가 두 형만 잡는다).
+
+    ⚠ `aborted` 행은 형을 하나(`RuntimeError`)만 던진다 — 「어떤 형이든」은
+    `test_an_exception_of_any_type_leaves_exactly_one_aborted_reason`이 문다.
     """
     pov_ctx, state, finding = setup(ctx, monkeypatch)
 
     # ⚠ `aborted` 출구는 **예외가 올라가는 것이 그 출구의 정의**다 — `finally`가 사유를 적은
-    # 뒤 run이 멈춘다. 다른 여덟은 정상 반환이라 여기서 예외가 나면 그 자체로 실패다.
+    # 뒤 run이 멈춘다. 다른 아홉은 정상 반환이라 여기서 예외가 나면 그 자체로 실패다.
     if expected == runner._POV_ABORTED:
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(RuntimeError):
             runner._run_pov(pov_ctx, state, finding)
     else:
         runner._run_pov(pov_ctx, state, finding)
 
     assert state.pov_results == {finding.finding_id: expected}
+
+
+@pytest.mark.parametrize(
+    "make_exception",
+    [
+        pytest.param(lambda: BudgetExhausted(4, "input_tokens", 100, 100), id="BudgetExhausted"),
+        pytest.param(
+            lambda: ModelGatewayError("server down", status=None),
+            id="ModelGatewayError-status-None",
+        ),
+        pytest.param(lambda: RuntimeError("흡수되지 않는 예외"), id="RuntimeError"),
+        pytest.param(KeyboardInterrupt, id="KeyboardInterrupt-is-not-an-Exception"),
+    ],
+)
+def test_an_exception_of_any_type_leaves_exactly_one_aborted_reason(
+    ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    make_exception,  # noqa: ANN001
+) -> None:
+    """어떤 예외든 루프를 뚫고 올라가면 `_run_pov`의 `finally`가 사유 `aborted`를 **정확히 하나**
+    남긴다.
+
+    위 표의 `aborted` 행은 `RuntimeError` 하나만 던져 **형(철자)**을 물지 성질을 못 문다.
+    `finally`를 `except RuntimeError`로 좁혀도 그 행은 초록이다(CLAUDE.md §2.5). 그래서
+    형을 바꿔 가며 던진다: `BudgetExhausted`(`Exception`이지만 `RuntimeError`가 아니다) ·
+    `ModelGatewayError(status=None)`(루프의 `except`가 잡았다가 다시 올린다) · `RuntimeError`(안
+    잡힌다) · `KeyboardInterrupt`(**`Exception`이 아니다** — `except Exception`으로 좁히는 변이가
+    여기서 죽는다).
+    """
+    state, finding = _pov_state(ctx)
+    scripted = _scripted(ctx, [_gen(count=8)])
+    exception = make_exception()
+    monkeypatch.setattr(pov_node, "open_hop", _raise(exception))
+
+    with pytest.raises(type(exception)):
+        runner._run_pov(scripted, state, finding)
+
+    assert state.pov_results == {finding.finding_id: runner._POV_ABORTED}
 
 
 def test_the_pov_loop_return_shapes_and_signatures_stay_put(ctx: RunContext) -> None:  # noqa: F811
