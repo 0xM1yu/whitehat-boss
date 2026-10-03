@@ -10,6 +10,7 @@ REPL renders as a single string value (issues #219 and #404, see `file_envelope`
 """
 
 import json
+from collections.abc import Collection
 
 READERS = (
     "fread|read|pread|readv|recv|recvfrom|recvmsg|fgets|fgetc|getc|getchar|"
@@ -408,7 +409,35 @@ CASE_A_CALL_LIMIT = 1
 CASE_A_CANDIDATE_CAP = 4000
 
 
-def candidates_a_query() -> str:
+def candidates_a_query(priority_files: Collection[str] | None = None, repo: str = "") -> str:
+    """Case A discovery. `priority_files` is `--priority-case-a`: repo-relative files whose methods
+    rank ahead of the rest before CASE_A_CANDIDATE_CAP and skip CASE_A_CALL_LIMIT. None or empty
+    gives the default text, byte for byte. `repo` is the root `context_query` also strips from
+    CPG file names, so a name c2cpg wrote absolute still matches the repo-relative list."""
+    # The three places the flag touches. By default each stays what it always was, so the text
+    # without a list is the text before the flag existed (tests/test_slicer.py pins the line diff).
+    definitions, rank = "", "if (hotIds.contains(m.id)) 0 else 1"
+    admit = (
+        f"cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size "
+        f"<= {CASE_A_CALL_LIMIT})"
+    )
+    if priority_files:
+        if not repo:
+            raise ValueError("priority_files needs the repo root to normalize CPG file names")
+        # Joined at run time like context_query's points: a long list (every file of a big repo)
+        # must not become one oversized string constant.
+        listed = joined_literal("\n".join(sorted(set(priority_files))))
+        prefix = literal(repo.rstrip("/") + "/")
+        definitions = f"""
+      // --priority-case-a: a method defined in a listed file -- an exact match on the
+      // repo-relative name, as prioritize() matches candidates -- is ranked ahead of the "hot"
+      // layer before the cap and is exempt from the call-count limit below. It still needs a
+      // body and a parameter. The list is a sorted set so the text does not depend on set order.
+      val prioFiles = {listed}.split({literal(chr(10))}).toSet
+      def isPrio(m: nodes.Method): Boolean = prioFiles.contains(
+        m.filename.replace('\\\\', '/').stripPrefix({prefix}).stripPrefix("./"))"""
+        admit = "isPrio(m) || " + admit
+        rank = "if (isPrio(m)) 0 else if (hotIds.contains(m.id)) 1 else 2"
     return file_envelope(
         "case_a",
         LOCATION
@@ -427,7 +456,7 @@ def candidates_a_query() -> str:
         .filter(c => Option(c.method).isDefined).method.id.l ++
         cpg.call.nameExact("<operator>.assignment").filter(_.argument.argumentIndex(1).isCall
           .name("<operator>.(indirectIndexAccess|indirectFieldAccess|fieldAccess|indirection)")
-          .nonEmpty).filter(c => Option(c.method).isDefined).method.id.l).toSet
+          .nonEmpty).filter(c => Option(c.method).isDefined).method.id.l).toSet{definitions}
       // An empty-named method (c2cpg parsing a header without build info, e.g. libexpat
       // xmlrole.h -- full_name `<unresolvedNamespace>.`) passes a `<`-prefix filter, and ONE
       // such row fails `valid_candidate` and voids the whole run (#347). Both lists drop them,
@@ -441,9 +470,9 @@ def candidates_a_query() -> str:
       val api = cpg.method.internal.filterNot(m => m.name.isEmpty || m.name.startsWith("<"))
         .filter(_.astChildren.isBlock.astChildren.nonEmpty)
         .filter(m =>
-          cpg.call.nameExact(m.name).take({CASE_A_CALL_LIMIT} + 1).size <= {CASE_A_CALL_LIMIT})
+          {admit}
         .filter(_.parameter.size > 0).l
-        .sortBy(m => if (hotIds.contains(m.id)) 0 else 1)
+        .sortBy(m => {rank})
         .take({CASE_A_CANDIDATE_CAP})
       val readers = cpg.method.internal.filter(_.name.nonEmpty)
         .filter(_.call.name("({READERS})").nonEmpty)

@@ -280,6 +280,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 
 ⏵ #377 (b) **우선 파일** -> `--priority-files <파일>`을 주면 엔트리나 앵커 하나라도 그 파일에 있는 후보를 먼저 자른다.
 **처리 순서만 바꾼다. 끊기면 어느 후보가 전체 슬라이스인지가 바뀐다 -> 끊긴 표본에서 켠/끈 run은 비교하지 않는다**
+(예외 하나 -> `--priority-case-a`는 후보 **집합**을 바꾼다. 아래 ⏵)
 - 목록 형식 -> 한 줄에 경로 하나. 저장소 기준 상대 경로 또는 `--repo` 아래 절대 경로. 후보 파일과 같은 정규화
   (`relative_file`) -> `./a.c`·`x//y.c`·역슬래시도 맞는다. UTF-8(BOM 허용). 빈 줄·`#`로 시작하는 줄 무시. 줄 끝 주석은
   없다(`#`도 파일 이름에 올 수 있음 -> `a.c # 메모`는 그 전체가 경로)
@@ -288,7 +289,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 - 목록의 출처 -> **과제 설명(Level 1 입력)에서만 만든다.** `patch.diff`·`error.txt`·수정본 저장소에서 파일 목록을 뽑으면
   **정답 누출**이고 그 run은 무효다([evaluation.md §4](evaluation.md)). `eval/leakage`는 프롬프트·run 산출물만 보므로 이
   입력 통로는 **스캔하지 않는다** -> 사람이 지킨다. 도구 자체는 어떤 목록이든 받는다(검증 안 함)
-- 그대로인 것 -> 후보 집합. 층 안에서는 원래 순서, 후보 ID(`slice_NNNN`)도 원래 번호. 온전히 잘린 후보는 목록이 있든
+- 그대로인 것 -> 후보 집합(`--priority-case-a`가 꺼진 동안). 층 안에서는 원래 순서, 후보 ID(`slice_NNNN`)도 원래 번호. 온전히 잘린 후보는 목록이 있든
   없든 같은 슬라이스
 - 바뀔 수 있는 것 -> 어느 후보가 degraded로 남는가. 끊겼을 때(`--wall-seconds`·kill) 못 닿은 후보, 그리고 끝까지 돌아도
   poison 연속(`POISON_STOP_STREAK`) 뒤 후보(단일·`--shard`는 나머지를 degraded로, `--claim-db` 샤드는 그 샤드가 청구를 멈춤).
@@ -313,9 +314,35 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 - `--export-only`와 같이 주면 거부(순서는 이미 체크포인트에 있음)
 - ⚠ **발견 단계 상한이 우선 정렬보다 앞이다** -> `CASE_A_CANDIDATE_CAP`(`slicer_queries.py`)의 `.take`는 `collect()`·
   `prioritize()` **전에** Joern 안에서 자른다. 캡에 닿은 저장소에서는 목록 파일의 후보가 **아예 없을 수** 있고, 그러면 결과가
-  오타와 **구별되지 않는다**(둘 다 `unmatched_files`에만 뜬다)
+  오타와 **구별되지 않는다**(둘 다 `unmatched_files`에만 뜬다). Case A의 이 한계는 `--priority-case-a`(아래 ⏵)가 푼다 — 그 옵션은
+  캡 앞에서 목록 파일의 메서드를 먼저 뽑는다. Case B의 `CASE_B_*_CAP`은 그대로다
 - ⚠ 목록이 틀리면 정답 후보가 뒤로 밀린다 -> lwan 한 표본에서 첫 GT 슬라이스 171 -> 297초, 느린 장비에서는 900초 예산에
   GT 슬라이스 4 -> 1(**미머지 PR #378의 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
+
+⏵ **`--priority-case-a`**(`--priority-files`와 같이만 · 기본 꺼짐) -> 우선 파일 목록이 Case A **발견**도 이끈다. 위 목록이
+처리 순서만 바꾸는 것과 달리 **어느 후보가 있는가**가 바뀐다
+- 하는 일 -> 목록의 파일에 정의된 메서드를 (가) `CASE_A_CANDIDATE_CAP` 앞에서 다른 것보다 먼저 뽑고(`api` 정렬이 목록 파일 ->
+  write-context(hot) -> 나머지, 층 안은 CPG 순회 순서) (나) `CASE_A_CALL_LIMIT` 검사를 면제한다. 매개변수가 있고 본문이 있어야
+  한다는 것은 그대로다(위 「본문이 있는 함수만 후보다」). `readers`와 Case B는 안 바뀐다
+- 맞추는 규칙 -> 메서드의 파일 이름을 `context_query`와 같이(역슬래시를 `/`로, `--repo` 접두와 `./` 제거) 정규화해 목록(`read_priority_files`가
+  정규화한 이름)과 **정확히 같은 문자열**일 때만. `prioritize()`와 같은 규칙이라 두 곳이 같은 파일을 가리킨다. 목록은 JVM 문자열 상수
+  한계(65,535바이트)를 피하려고 조각내 실행 시간에 이어 붙인다(`joined_literal`)
+- 꺼짐이면(기본) 발견 질의가 **바이트 동일**하다. 목록 없이 주면 거부한다(`--priority-case-a needs --priority-files`)
+- 실행 계약이다 -> `settings.priority_case_a`. 샤드·재개가 같은 값을 안 주면 `Checkpoint mismatch: run_contract (differs in:
+  settings.priority_case_a)`. `--cpg` 샤드는 준비 실행의 발견을 그대로 쓰므로 거기서는 효과가 없지만, 계약 때문에 `--priority-files`처럼
+  같은 값을 다시 준다
+- 캡 노트 -> 켠 run이 캡에 닿으면 `measurement_notes.candidates_case_a`가 「priority-file methods first, then write-context methods」로 말한다
+- 목록의 출처 규칙(위 「목록의 출처」)이 그대로다 -> 이 옵션은 목록이 **후보 집합**을 바꾸므로 정답에서 뽑은 목록이면 정답이 후보에 샌다
+- 근거 -> C2 보고서(2026-10-04 · vast `slicer-dev` · Joern 4.0.605 · 10표본 · 저장소 밖 `slicer_c2/C2-report.md` §6) **재생** — 질의를 새로
+  실행한 것이 아니라 같은 CPG의 메서드별 덤프(재생 모델이 실제 후보와 10 CPG 전부 일치)에 규칙을 대입했다. 본문 필터와 같이 켜면 정답
+  함수 안에 후보가 있는 표본이 1/10 -> 4/10이고 후보 합계는 -1,564(-2.3%)다. 늘어난 셋은 정답 함수가 호출 2회라 호출 횟수 필터에
+  걸려 있던 것 둘(passenger·optee)과, 캡 순위 4143이 캡 4000에 걸려 있던 것 하나(hmail — 이쪽은 본문 필터만으로도 3786으로 들어온다)다.
+  목록은 과제 설명의 BM25로 만든 FT run의 10개 파일이고 정답은 박스에 올리지 않았다. **후보가 정답 함수 안에 있는 것은 필요조건이지
+  충분조건이 아니다** — 슬라이스도 Auditor도 안 돌렸다
+- 한계 -> 목록 파일의 메서드가 캡(4,000)보다 많으면 캡은 그 층 안에서 순회 순서로 자른다. 목록 밖 파일의 함수는 못 살린다 -> C2에서
+  목록 30위 밖의 openh264 `MapColToList0`(호출 4회)이 그대로 남았다. 본문 필터 없이 이 옵션만 쓰면 후보가 +217(+0.3%) 는다(재생,
+  같은 출처) — 이 저장소에서는 본문 필터가 항상 켜져 있어 그 조합은 없다. 목록이 틀리면 정답 후보가 아니라 엉뚱한 파일의 함수가
+  후보로 들어온다
 
 ⏵ #368 **준비 한 번** -> `--prepare-only --cpg-out <파일>`이 CPG 생성과 후보 발견을 한 번 하고 그래프를 저장한다(아무
 후보도 안 자름). 그 체크포인트를 샤드마다 복사해 `--resume --cpg <파일> --shard I/N`으로 돌리면 샤드는 저장소를 다시
