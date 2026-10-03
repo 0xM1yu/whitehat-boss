@@ -72,6 +72,7 @@ import posixpath
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
+from operator import itemgetter
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -118,6 +119,37 @@ DEFINITION_TABLES = ("macros", "types", "file_vars")
 _ALLOCATOR = re.compile(
     r"(?:malloc|calloc|realloc|zalloc|alloca|strn?dup|memdup)(?:z|\d+|_?array)?$", re.IGNORECASE
 )
+
+# 정의 조회가 「저장소에서 하나뿐」 판정에서 제품 경로 뒤로 미루는 디렉터리 이름
+# (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`). 두 갈래다: 테스트·예제·
+# 문서·번들 라이브러리가 쓰는 흔한 이름(`fuzz*`는 접두), 그리고 **다른 플랫폼·빌드 시스템 몫의
+# 사본**(`xcode/`·`windows/`…) — 리눅스 빌드를 대상으로 본다는 전제라 거기 있는 정의는 효력 있는
+# 정의가 아니라고 본다. 뒤 갈래를 넣은 근거는 로컬 측정 1건이다: libzip 계열 저장소 하나에서 비제품
+# 경로의 정의가 제품 함수로 586건 들어왔고 그중 527건이 `xcode/`, 51건이 `regress/`였다(run ID
+# 없음). **목록은 정한 값이지 잰 값이 아니다.**
+_NONPRODUCT_DIRS = frozenset(
+    {
+        "test", "tests", "testing", "regress", "example", "examples", "sample", "samples",
+        "demo", "demos", "contrib", "doc", "docs", "third_party", "third-party", "thirdparty",
+        "vendor", "xcode", "windows", "win32", "win64", "msvc",
+    }
+)
+
+
+def is_nonproduct_path(path: str) -> bool:
+    """`path`의 디렉터리 성분(파일 이름은 안 본다 — `lib/test_util.c`는 제품이다)에 비제품 이름이
+    있는가. 대소문자를 접는다."""
+    return any(
+        part in _NONPRODUCT_DIRS or part.startswith("fuzz") for part in path.lower().split("/")[:-1]
+    )
+
+
+def _product_first(items: list, file_of: Callable[[Any], str]) -> list:
+    """제품 경로 항목이 있으면 그것만, 없으면 전부. 비제품 정의는 **제품 정의가 없을 때만** 후보로
+    남는다 — 강등이지 삭제가 아니다."""
+    product = [item for item in items if not is_nonproduct_path(file_of(item))]
+    return product or list(items)
+
 
 # 이름 → 기록 목록 모양인 표의 기록마다 있어야 하는 키. `locals`·`assigns`는
 # 파일 → 함수 → 이름 → [줄]이라 따로 본다(`_v2_tables`).
@@ -373,7 +405,25 @@ class GraphIndex:
         files.discard(target.file)
         return sorted(files)
 
-    def definitions_of(self, names: Iterable[str], near_file: str) -> list[Location] | None:
+    def locals_of(self, file: str, func: str) -> frozenset[str] | None:
+        """`file`의 함수 `func` 안에서 선언된 이름 — 지역 변수와 **파라미터**(`locals` 표).
+
+        `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1·깨짐). 표에 없는 함수·파일은 **빈 집합**이다 —
+        「없다」와 「0건」을 가르는 `definitions_of`와 같은 구별이다. Auditor `SOURCE`의 정의 조회가
+        함수 본문의 이름 중 지역·파라미터를 빼는 데 쓴다 — 그 이름은 다른 파일의 매크로·타입·파일
+        변수와 철자가 같아도 그것을 가리키지 않는다.
+
+        표의 키는 **함수 이름**이다(`#if` 양쪽 가지의 같은 이름 함수는 한 항목으로 합쳐진다).
+        ⚠ 이름만 본다 — `struct buffer *buffer`의 태그 `buffer`는 변수 `buffer`와 이름공간이 달라서
+        지역이어도 정의를 가리킬 수 있다. 가르는 일은 읽는 쪽이 한다(`source_definitions`).
+        """
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        return frozenset(self._tables["locals"].get(file, {}).get(func, ()))
+
+    def definitions_of(
+        self, names: Iterable[str], near_file: str, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """이름들 중 매크로·타입(struct/union/enum/typedef)·파일 스코프 변수인 것의 **정의 위치**.
 
         `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1). Auditor `SOURCE`가 실린 코드가 쓰는
@@ -385,9 +435,17 @@ class GraphIndex:
         - 표는 `DEFINITION_TABLES` 순서로 보고 처음 걸린 표에서 정한다
 
         순서는 (파일, 시작 줄)이다(결정론).
+
+        `demote_nonproduct`(기본 꺼짐 — Auditor `SOURCE`만 켠다)면 「저장소에서 하나뿐」 판정에서
+        비제품 경로(`is_nonproduct_path` — `tests/`·`examples/`·`third_party/` 등)의 정의가 한 단계
+        낮다: 제품 경로 정의가 있으면 그것들만 경쟁하고(`DUP`이 `lib/`와 `tests/`에 있으면 `lib/`의
+        것으로 정해진다), 제품 정의가 없으면 비제품 정의도 그대로 쓴다 — **삭제가 아니다.** 순서도
+        제품 정의가 먼저다(읽는 쪽이 상한까지만 싣는다). `near_file`이 비제품이면 강등하지 않는다 —
+        그 코드가 쓰는 정의는 형제 비제품 경로에 있는 것이 정상이다.
         """
         if self._load().status != STATUS_LOADED or self._tables is None:
             return None
+        demote = demote_nonproduct and not is_nonproduct_path(near_file)
         found: list[Location] = []
         for name in sorted(set(names)):
             for table in DEFINITION_TABLES:
@@ -395,7 +453,9 @@ class GraphIndex:
                 if not rows:
                     continue
                 here = [row for row in rows if row["file"] == near_file]
-                candidates = here or list(rows)
+                candidates = here or (
+                    _product_first(rows, itemgetter("file")) if demote else list(rows)
+                )
                 if len(candidates) == 1:
                     row = candidates[0]
                     found.append(
@@ -407,9 +467,19 @@ class GraphIndex:
                         )
                     )
                 break
-        return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
+        return sorted(
+            found,
+            key=lambda loc: (
+                demote and is_nonproduct_path(loc.file),
+                loc.file,
+                loc.line_start or 0,
+                loc.symbol or "",
+            ),
+        )
 
-    def callees_of(self, target: Location) -> list[Location] | None:
+    def callees_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """대상 본문 안의 호출이 부르는 함수의 **정의 위치**. `None`은 그래프 자체가 없다는 뜻이다.
 
         Auditor 입력이 슬라이스가 지나간 함수만 싣고 그 함수들이 부르는 함수의 본문은 안 싣던
@@ -421,9 +491,14 @@ class GraphIndex:
           정의인지 모르므로(`_rules` docstring의 한계) 싣지 않는다
 
         대상 자신(재귀)은 뺀다. 순서는 본문 안 첫 호출 줄 순이다(결정론 — 같은 줄이면 이름 순).
+
+        `demote_nonproduct`는 `definitions_of`와 같다 — 켜면 제품 경로 정의가 비제품 정의보다 앞서
+        「하나뿐」을 정하고(제품 정의가 없으면 비제품 정의도 쓴다), 제품 정의의 callee가 먼저 온다.
+        대상 파일이 비제품이면 강등하지 않는다.
         """
         if self._load().status != STATUS_LOADED:
             return None
+        demote = demote_nonproduct and not is_nonproduct_path(target.file)
         defined: dict[str, list[tuple[str, int, int]]] = {}
         for file, symbols in self._defined.items():
             for name, start, end in symbols:
@@ -439,14 +514,22 @@ class GraphIndex:
             if callee == target.symbol:
                 continue
             here = [d for d in defined.get(callee, []) if d[0] == target.file]
-            candidates = here or defined.get(callee, [])
+            candidates = here or (
+                _product_first(defined.get(callee, []), itemgetter(0))
+                if demote
+                else defined.get(callee, [])
+            )
             if len(candidates) != 1:
                 continue
             file, start, end = candidates[0]
             found.append(Location(file=file, symbol=callee, line_start=start, line_end=end))
+        if demote:
+            found.sort(key=lambda loc: is_nonproduct_path(loc.file))  # 안정 정렬 — 호출 줄 순 유지
         return found
 
-    def call_sites_of(self, target: Location) -> list[Location] | None:
+    def call_sites_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """대상 함수를 부르는 **호출 지점**(줄 하나 — `symbol`은 호출자 이름). `None`은 그래프가
         없다는 뜻이다.
 
@@ -460,11 +543,19 @@ class GraphIndex:
 
         순서는 대상 파일 → 대상과 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄)이다(결정론 —
         읽는 쪽이 앞 몇 개만 쓰므로 가까운 호출자가 먼저 온다 · #351 리뷰). 심볼 없는 대상은 `[]`다.
+
+        `demote_nonproduct`는 `definitions_of`와 같다 — 켜면 「정의가 하나뿐」을 **제품 경로
+        정의만** 세고(비제품 정의는 경쟁자가 아니다), 비제품 경로의 호출 지점은 맨 뒤로 민다. 다만
+        **같은 이름의 비제품 정의가 어딘가 있으면 비제품 호출 전체를 안 싣는다** — 모의 구현을
+        부르는 이웃 호출(`tests/mock/user.c` → `tests/mock/dup.c`)은 어느 정의로 가는지 이름만으로
+        모르고, 그 정의를 가진 파일 자신의 호출도 같다. 제품 호출은 그대로다. 대상 파일이 비제품이면
+        강등하지 않는다.
         """
         if self._load().status != STATUS_LOADED:
             return None
         if not target.symbol:
             return []
+        demote = demote_nonproduct and not is_nonproduct_path(target.file)
         # 파일 수가 아니라 **정의 수**다 — `callees_of`·`definitions_of`와 같은 규칙(한 파일
         # 안 `#if` 양쪽 가지도 둘이다).
         homes = [
@@ -473,17 +564,27 @@ class GraphIndex:
             for name, start, _ in symbols
             if name == target.symbol
         ]
+        rivals = _product_first(homes, itemgetter(0)) if demote else homes
+        # 강등을 켜면 경쟁자가 제품 정의 하나뿐이어도 **같은 이름의 비제품 정의가 따로 있을 수
+        # 있다**(`copied` — 모의 구현·예제 사본). 그러면 비제품 호출은 어느 정의로 가는지 모른다
+        # (`tests/mock/user.c`가 `tests/mock/dup.c`를 부른다) — 이름만으로 못 가르니 안 싣는다.
+        # 그 정의를 가진 파일 자신의 호출도 여기 든다. 제품 호출은 영향이 없다.
+        copied = demote and len(homes) > len(rivals)
         sites = {
             Location(file=file, symbol=caller, line_start=line, line_end=line)
             for caller, callee, file, line in self._calls
             if callee == target.symbol
             and not self._in_body(file, line, target)
-            and (file == target.file or len(homes) == 1)
+            and (
+                file == target.file
+                or (len(rivals) == 1 and not (copied and is_nonproduct_path(file)))
+            )
         }
         here = posixpath.dirname(target.file)
         return sorted(
             sites,
             key=lambda loc: (
+                demote and is_nonproduct_path(loc.file),
                 loc.file != target.file,
                 posixpath.dirname(loc.file) != here,
                 loc.file,
