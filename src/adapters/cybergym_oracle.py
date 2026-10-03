@@ -89,8 +89,11 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 from uuid import uuid4
+
+from src.interfaces.oracle import OracleOutcome
 
 _T = TypeVar("_T")
 
@@ -560,3 +563,67 @@ def run_round_trip(
             detail="poc_id mismatch",
         )
     return verdict
+
+
+@dataclass(frozen=True)
+class TaskOracle:
+    """한 과제에 묶인 `Oracle` 구현 (`src/interfaces/oracle.py`의 Protocol).
+
+    러너는 바이트만 준다 — 서버 주소·과제 신원·키는 run을 조립할 때 여기 묶인다(`src/cli.py`가
+    과제 번들의 `submit.sh`에서 읽은 값으로 만든다, #386). 신원을 지어내지 않는 이유는
+    `task_loader.SubmitMetadata`가 든다.
+
+    `submit`은 `run_round_trip` 하나를 부른다 — vul 제출 → fix 제출 → DB 판정 조회. 그 반환을
+    러너가 읽을 `OracleOutcome`으로 줄이고, `success` 술어는 **다시 계산하지 않는다**(두 벌로
+    두면 갈린다 — `OracleVerdict.success`를 그대로 쓴다).
+
+    `cached`는 판정 행의 `updated_at`이 이 호출 **전**이면 참이다(채점기가 이번 바이트를 다시
+    돌리지 않고 캐시 행을 준 것 — 이슈 #385). 시각을 못 읽으면 `None`(못 가렸다)이고 0이나
+    거짓으로 적지 않는다(CLAUDE.md 「되돌릴 수 없는 규칙 하나」).
+    """
+
+    server: str
+    task_id: str
+    agent_id: str
+    api_key: str
+    salt: str = DEFAULT_SALT
+    timeout: float = _DEFAULT_TIMEOUT_S
+
+    def submit(self, poc: bytes) -> OracleOutcome:
+        started = datetime.now(UTC).replace(tzinfo=None)
+        verdict = run_round_trip(
+            self.server,
+            self.task_id,
+            self.agent_id,
+            poc,
+            api_key=self.api_key,
+            salt=self.salt,
+            timeout=self.timeout,
+        )
+        return OracleOutcome(
+            task_id=verdict.task_id,
+            poc_id=verdict.poc_id,
+            poc_hash=verdict.poc_hash,
+            poc_length=len(poc),
+            vul_exit_code=verdict.vul_exit_code,
+            fix_exit_code=verdict.fix_exit_code,
+            success=verdict.success,
+            cached=_was_cached(verdict.updated_at, started),
+        )
+
+
+def _was_cached(updated_at: str | None, started: datetime) -> bool | None:
+    """판정 행이 이 호출 전에 이미 쓰여 있었나 (#385). 시각을 못 읽으면 `None`.
+
+    서버 시각은 UTC이고 tz 접미사가 없다(모듈 docstring) — `T` 구분과 공백 구분을 다 받는다.
+    """
+    if not updated_at:
+        return None
+    try:
+        stamp = datetime.fromisoformat(updated_at.strip().replace(" ", "T"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is not None:
+        stamp = stamp.astimezone(UTC).replace(tzinfo=None)
+    return stamp < started
+

@@ -58,6 +58,7 @@ from src.config import (
 )
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import EmbeddingClient, RerankerClient
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -217,6 +218,10 @@ class Deps:
     # `model_swap.swap_runner`로 만든다. 기본 `None`("교대 없음")이 이 필드 없이 조립된 `Deps`의
     # 옛 동작이다 — `resolve_requests`와 같은 자리.
     swap_to: SwapTo | None = None
+    # 채점기(oracle) 클라이언트 (#386). `build_deps`는 꽂지 않는다 — 과제 신원(서버·task_id·
+    # agent_id)은 과제 번들에서 오고 그것을 아는 것은 CLI다(`cli._oracle_for`). 기본 `None`이
+    # 「제출 안 함」이고 그것이 이 필드 없이 조립된 `Deps`의 옛 동작이다.
+    oracle: Oracle | None = None
 
 
 @dataclass(frozen=True)
@@ -421,6 +426,7 @@ def build_deps(
     on_index: IndexHook | None = None,
     slices_path: Path | None = None,
     device: str | None = None,
+    oracle: Oracle | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
@@ -523,6 +529,8 @@ def build_deps(
         return fields
 
     return Deps(
+        # 채점기(#386) — factory가 만들지 않고 받는다. 과제 번들의 신원을 아는 것은 CLI다.
+        oracle=oracle,
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
         tools=tools,
