@@ -1,5 +1,9 @@
-# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
+# 정본 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고른다(2026-10-03 · 프롬프트 #418 ·
+# 배선 #421). v5에서 출발했고 `## Evidence body completeness` 절과 `evidence_refs: only …` 줄이
+# v5와 바이트 동일이라 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`에 든다.
+# ⚠ **v5의 상위집합이 아니다** — v5의 범위 제약 둘(`Do not invent unrelated issues` · `Do not
+# expand the analysis to unrelated vulnerabilities …`)을 **삭제**한 것이 이 판의 핵이다.
 role: auditor
 version: v6
 output_schema: Finding
-description: Auditor가 Scout의 의견에 끌려가는 것을 방지하고 지칭을 'You'로 통일한 버전입니다.
+description: Scout 가설과 무관하게 SOURCE를 먼저 독립 검토하는 판 — v5의 「후보만 분석하라」를 삭제하고, 입력·라이브러리 호출 실패만으로 생기는 결함을 triggerable에서 빼는 trigger rule(예외 셋)을 두고, CWE를 증명한 근본 원인에서 고르게 하고, 심각도 기준이 아님을 명시하고, 지칭을 'You'로 통일했다
