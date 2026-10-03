@@ -11,7 +11,13 @@ from slicer_candidates import collect, prioritize
 from slicer_checkpoint import digest
 from slicer_errors import QueryError
 from slicer_library import Library
-from slicer_source import assemble, cluster, normalize_points, recover_points
+from slicer_source import (
+    assemble,
+    cluster,
+    normalize_points,
+    recover_points,
+    source_sink,
+)
 
 STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 
@@ -206,6 +212,9 @@ class SlicingStages:
                 if candidate["case"] == "A"
                 else {"flow_count": "Backward dependency graph; paths were not enumerated"}
             ),
+            "source_sink": source_sink(
+                candidate["case"], entry, payload, self.sources, self.repo
+            ),
             "line_provenance": {
                 "data_dependency": state["dependency_points"],
                 "candidate_anchor": state["anchor_points"],
@@ -265,6 +274,7 @@ class SlicingStages:
                 "degraded": "flow/backward query failed or was skipped (poison streak); "
                 "anchor-only slice, no dataflow context -- --resume re-attempts a full slice"
             },
+            "source_sink": source_sink(candidate["case"], entry, None, self.sources, self.repo),
             "line_provenance": {"data_dependency": [], "candidate_anchor": points, "context": []},
         }
 
