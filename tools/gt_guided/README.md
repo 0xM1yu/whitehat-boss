@@ -21,7 +21,7 @@
 | `gt_slice.py` | 장비 | 슬라이서 + GT 후보 필터 |
 | `build_auditor.py` | 장비 | 표본 하나의 슬라이스 -> Auditor 입력 JSONL |
 | `gt_worker.py` | 장비 | 작업자 W개, 각자 Joern 서버 하나. `inbox/`에서 작업을 하나씩 가져가 받기 -> 인덱스 -> `gt_slice` -> `build_auditor` -> `out/<id>/` |
-| `coord.py` | 사용자 PC | 장비마다 `inbox/`를 작업자 수 x 2 이상 유지(큰 저장소 먼저) · 100개마다 `Downloads/ft_gt_auditor_batchNNN.tgz`로 받기(sha256 확인) · 멈춘 작업 재배정 · 다 받으면 vast 인스턴스 삭제 |
+| `coord.py` | 사용자 PC | 장비마다 `inbox/`를 작업자 수 x 2 이상 유지(큰 저장소 먼저) · 끝난 표본을 받아(sha256 확인) 표본 단위로 19MB 이하가 되게 묶어 `Downloads/ft_gt_auditor_batchNNN.tar` + 디스코드 웹훅 첨부(넘치는 표본은 다음 묶음, 혼자 19MB 넘는 표본은 조각내 전송) · 멈춘 작업 재배정 · 다 받으면 vast 인스턴스 삭제 |
 
 ## 장비 배치
 
