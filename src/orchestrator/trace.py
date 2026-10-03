@@ -332,6 +332,19 @@ class EventKind(StrEnum):
     # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
     # pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
+    # PoV가 낸 최종 PoC를 채점기(oracle)에 내보내고 받은 판정 (#386). **제출 1건당 1행**이고
+    # **이벤트 부재 = 제출 안 함**(오라클 미배선이거나 최종 PoC가 없었다 — 그 경우는 POV_SKIPPED다).
+    # `subject_id`는 finding이고 `task_id`·`poc_id`·`poc_sha256`·`poc_bytes`·`vul_exit_code`·
+    # `fix_exit_code`·`success`·`cached`를 싣는다.
+    # ⚠ **`vul_exit_code`·`fix_exit_code`의 `None`은 「그 모드로 안 돌았다」다** — 0도 크래시도
+    # 아니다(CLAUDE.md §0). `fix`가 `None`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 아예
+    # 안 돌린 경우다. `cached`가 참이면 그 판정은 이번 바이트를 다시 돌린 결과가 아니다(#385).
+    # ⚠ **이것은 하네스 내부 등급이 아니다** — Evidence를 만들지 않고 게이트가 안 읽는다(#232).
+    ORACLE_VERDICT = "oracle_verdict"
+    # 채점기 제출이 예외로 끝난 기록 (#386). 추가형이라 run을 멈추지 않는다 — 「제출했는데 판정을
+    # 못 읽었다」가 조용히 「미제출」과 같아지지 않게 사유를 남긴다. `error`·`error_detail`을
+    # 싣는다.
+    ORACLE_FAILED = "oracle_failed"
     # 하네스가 `repro_spec`을 합성한 기록 (#S7 — `synthesize_repro_spec`이 켜졌고 모델이 명세를
     # 비워 냈을 때 `auditor._ensure_repro_origin`이 낸다). `subject_id`는 finding이고
     # `expected_signal`(합성 신호)·`steps`(단계 수)를 싣는다. **이벤트 부재 = 합성 안 함**(꺼졌거나

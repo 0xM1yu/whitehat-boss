@@ -13,6 +13,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import signal
 import sys
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import TextIO, get_args
 
 from src.adapters.container_tools import make_payload_reader
+from src.adapters.cybergym_oracle import TaskOracle
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
@@ -50,6 +52,7 @@ from src.config import (
 )
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
+from src.interfaces.oracle import Oracle
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
     BLOCKING_WHEN_SERVING,
@@ -69,8 +72,10 @@ from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.task_loader import (
     DESCRIPTION_FILENAME,
     REPO_ARCHIVE_NAME,
+    SUBMIT_SCRIPT_NAME,
     UnsafeArchiveError,
     read_description,
+    read_submit_metadata,
     safe_extract,
 )
 from src.orchestrator.trace import TraceWriter
@@ -544,6 +549,52 @@ def _check_state_path(config: HarnessConfig, artifacts_root: Path) -> Check:
 # --- 공통 배선 ---------------------------------------------------------------
 
 
+# `_oracle_for`가 「사람에게 알리고 멈춰라」를 돌려주는 표식. `None`은 「제출 안 함」(정상)이라
+# 그것과 섞으면 설정 오류가 조용히 미제출로 떨어진다.
+# 채점기 private 경로(submit-fix·query-poc)에 쓰는 키의 환경변수 이름. 저자 서버의 기본 키가
+# 공개 placeholder라(어댑터 docstring) 저장소에 박지 않고 환경에서 받는다.
+_ORACLE_KEY_ENV = "CYBERGYM_API_KEY"
+
+_ORACLE_ERROR = object()
+
+
+def _oracle_for(args: argparse.Namespace) -> Oracle | None | object:
+    """`--oracle-submit`이면 과제 번들에서 채점기를 조립한다 (#386). 아니면 `None`.
+
+    신원(서버·과제 id·에이전트 id)은 번들의 `submit.sh`에서만 읽는다 — 지어내지 않는다
+    (`task_loader.read_submit_metadata`). 키는 환경변수에서 받는다. 어느 하나가 없으면
+    `_ORACLE_ERROR`를 돌려 호출자가 exit 2로 멈추게 한다 — 제출하려 한 run이 조용히 미제출로
+    끝나면 「0건 제출」이 설정 오류와 구별되지 않는다(§0).
+    """
+    if not getattr(args, "oracle_submit", False):
+        return None
+    if args.task_dir is None:
+        print("[ERROR] --oracle-submit은 --task-dir와 함께만 쓴다", file=sys.stderr)
+        return _ORACLE_ERROR
+    metadata = read_submit_metadata(args.task_dir)
+    if metadata is None:
+        print(
+            f"[ERROR] 과제에서 채점기 신원을 못 읽었다 — {args.task_dir}/{SUBMIT_SCRIPT_NAME}의 "
+            "서버 주소와 metadata(task_id·agent_id)가 필요하다",
+            file=sys.stderr,
+        )
+        return _ORACLE_ERROR
+    api_key = os.environ.get(_ORACLE_KEY_ENV, "")
+    if not api_key:
+        print(
+            f"[ERROR] {_ORACLE_KEY_ENV}가 비어 있다 — 채점기의 private 경로"
+            "(submit-fix·query-poc)에 필요하다",
+            file=sys.stderr,
+        )
+        return _ORACLE_ERROR
+    return TaskOracle(
+        server=metadata.server,
+        task_id=metadata.task_id,
+        agent_id=metadata.agent_id,
+        api_key=api_key,
+    )
+
+
 def execute(
     config: HarnessConfig,
     spec: RunSpec,
@@ -551,6 +602,7 @@ def execute(
     run_id: str,
     run_dir: Path,
     trace_stream: TextIO | None = None,
+    oracle: Oracle | None = None,
 ) -> tuple[RunResult, Deps]:
     """factory가 만든 어댑터를 러너에 넘긴다. 이 접합부가 이 파일의 존재 이유다.
 
@@ -580,6 +632,9 @@ def execute(
         slices_path=spec.slices_path,
         # 교대 프로필의 장비 파일을 고른다(ADR 0012 Phase 6.5). 없으면 교대 콜러블을 안 만든다.
         device=spec.device,
+        # 채점기(#386). `None`이면 최종 PoC를 제출하지 않는다 — 과제 번들을 아는 것은 `run()`이라
+        # factory가 만들지 않고 받는다.
+        oracle=oracle,
     )
     result = run_pipeline(
         spec,
@@ -1045,6 +1100,12 @@ def run(args: argparse.Namespace) -> int:
         if problem is not None:
             print(f"[ERROR] {problem}", file=sys.stderr)
             return 2
+    # 채점기 설정은 **해제 앞**에서 본다 (#386) — 순수 검사(파일·환경변수 읽기)이고, 뒤에 두면
+    # 설정 오류가 작업 디렉터리를 더럽혀 오타를 고친 재시도가 「비어 있지 않다」로 거부된다
+    # (#397 리뷰 MEDIUM-1과 같은 배치 이유).
+    oracle = _oracle_for(args)
+    if oracle is _ORACLE_ERROR:
+        return 2
     # 🔴 **과제 아카이브는 여기서 푼다** — 모든 게이트 **뒤**, 되돌릴 수 없는 첫
     # 쓰기(`_claim_run_dir`) **앞**이다. 앞에서 풀면 뒤의 게이트가 exit 2를 낼 때 작업 디렉터리에
     # 트리가 남아, 오타를 고친 재시도가 "비어 있지 않다"로 거부된다(적대적 리뷰 2026-10-02 M-1).
@@ -1095,7 +1156,14 @@ def run(args: argparse.Namespace) -> int:
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
-        result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
+        result, _ = execute(
+            config,
+            spec,
+            run_id=run_id,
+            run_dir=run_dir,
+            trace_stream=stream,
+            oracle=oracle,
+        )
     report_path = write_report(run_dir, result, args.format)
 
     print(f"run_id: {result.record.run_id}")
@@ -1302,6 +1370,14 @@ def build_parser() -> argparse.ArgumentParser:
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
         "풀린 트리와 줄 내용이 다르거나(drift) 트리에 없는 슬라이스가 하나라도 있으면 exit 2다 "
         "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
+    )
+    run_cmd.add_argument(
+        "--oracle-submit",
+        action="store_true",
+        help="8단계가 낸 최종 PoC를 과제 번들의 채점기(oracle)에 제출해 판정을 기록한다(#386). "
+        "--task-dir와 함께만 쓴다 — 서버·과제 id·에이전트 id를 그 번들의 submit.sh에서 읽는다. "
+        "키는 환경변수 CYBERGYM_API_KEY. 판정은 trace oracle_verdict로만 남고 내부 등급(E4)을 "
+        "올리지 않는다",
     )
     run_cmd.add_argument(
         "--task-work-dir",
