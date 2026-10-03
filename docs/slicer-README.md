@@ -154,9 +154,11 @@ context는 구조와 선언을 합친 보충 범주이며 개별 이유를 더 �
 | `pairs` | 경로별 source -> sink 쌍 | 비움 (경로 미열거) |
 
 - 각 위치는 `{file, line, kind}`이고 `lines`와 같은 상대경로다. 원문에 없는 위치는 버리고 `unmapped`에 센다.
-- 절단된 A는 보존한 경로의 끝점만 든다. 절단된 B의 경계는 멈춘 곳까지다(`truncated`).
+- 절단된 A는 보존한 경로의 끝점만 든다.
+- 절단된 B: 상한(`backward_depth`·`backward_states`)에서 버린 노드는 `sources`에 없다. 그 부모도 `dependency_root`가 안 된다. `call_depth`로 멈춘 호출에도 그 사유가 안 붙는다. 절단은 `truncated`·`analysis.truncation_reasons`로만 보인다.
+- A의 `endpoints`는 선택 필드다. 조회가 `Try`로 계산 -> 실패하면 `endpoints` 대신 `endpoints_error`(원문은 `analysis`에 남음). 이때 `basis: endpoints_unavailable`·전부 비움 = 미기록. `flow_endpoints`의 빈 목록(0쌍 기록)과 다르다. 슬라이스 자체는 degraded가 아니다.
 - degraded 슬라이스: A는 `basis: none`·전부 비움, B는 `basis: candidate_only`·sink만 든다.
-- 클러스터는 구성원의 합집합이다. 구성원끼리 `basis`가 다르면 `mixed`다.
+- 클러스터는 구성원의 합집합이다. 구성원끼리 `basis`가 다르면 `mixed`다(구성원별 원천은 `member_analysis`).
 
 | 계측 | Case A | Case B |
 | --- | --- | --- |
