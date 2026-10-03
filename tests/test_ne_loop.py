@@ -889,12 +889,13 @@ def test_ne_hop1_uses_the_real_resolver_against_the_real_indexer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
     """루프가 스크립트한 resolve 훅이 아니라 **실 resolver**(`symbol_resolver.resolve` + 실
-    인덱서 index-v2 표)와 Fake history로 끝까지 돈다.
+    인덱서의 index-v2 표 — v3도 그 표는 같다)와 Fake history로 끝까지 돈다.
 
     `_SEAT`가 hop0에 명세 hop 1 예의 요청(`variable:Buf`·`function:strdup`)을 내고, hop1에서
     review를 낸다. hop1 프롬프트 로그에 실 resolver가 만든 RETRIEVED 조각과 UNFILLED 줄이
     그대로 실려야 한다 — `assignment in the same function` 조각은 없다(실 인덱서의 `assigns`
-    표가 원소 대입을 안 올린다, `tests/test_symbol_resolver.py` 모듈 docstring의 발견과 같다).
+    표가 원소 대입을 안 올리고 resolver가 v3 `writes` 표를 안 읽는다,
+    `tests/test_symbol_resolver.py` 모듈 docstring의 발견과 같다).
     """
     calls = _script_ne_client(
         monkeypatch,

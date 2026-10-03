@@ -447,7 +447,7 @@ def test_index_no_longer_shells_out_to_clang() -> None:
 
 
 def test_version_is_stamped_so_readers_can_reject_unknown_formats() -> None:
-    assert indexer.INDEX_VERSION == "index-v2"
+    assert indexer.INDEX_VERSION == "index-v3"
 
 
 def test_the_reader_knows_the_version_this_script_writes() -> None:
@@ -753,3 +753,185 @@ def test_the_reader_builds_the_graph_from_this_scripts_v2_output(
         "memcpy parser.c:11",
     ]
     assert graph.summary.calls == 4
+
+
+# --- index-v3 (#304): 쓰기 지점 · 함수 포인터 바인딩 · 필드 경유 호출 ----------------------
+#
+# 노드 모양은 실파싱으로 확인했다(호스트 · tree-sitter 0.26.0 · tree-sitter-c 0.24.2 · Python 3.11,
+# 2026-10-03). 추측했으면 틀렸을 것: `*p`와 `&p`가 같은 `pointer_expression`이고 `operator`로만
+# 갈린다 · 괄호 식에는 필드가 없다 · 지정자 `.a.b`는 `designator` 필드가 둘이다 · `[0] = f`도
+# `initializer_pair`다(`subscript_designator`).
+
+
+def test_writes_table_records_element_deref_and_init_writes(tables: dict) -> None:
+    """v2 픽스처(`_TABLES_C`)가 이미 든 원소 대입(28행 `buf[0] = 1`)·역참조 대입(29행 `*text = 0`)이
+    `writes`에 든다. 함수 안 선언 초기화(21행 `i = 0` · 23행 `b = 0`)도 `init`으로 든다 — `locals`는
+    그 줄이 쓰기인지 모른다. 초기값 없는 `j`·`buf`, 증감(30행 `i++`)은 안 든다. `assigns`는 그대로다
+    (`test_assigns_table_records_only_assignments_to_a_plain_name`)."""
+    row = {"file": "t.c", "func": "doit", "op": "=", "base": "name"}
+
+    assert tables["writes"] == {
+        "i": [{**row, "line": 21, "lhs": "i", "rhs": "0", "form": "init"}],
+        "b": [{**row, "line": 23, "lhs": "*b", "rhs": "0", "form": "init"}],
+        "buf": [{**row, "line": 28, "lhs": "buf[0]", "rhs": "1", "form": "element"}],
+        "text": [{**row, "line": 29, "lhs": "*text", "rhs": "0", "form": "deref"}],
+    }
+
+
+# 줄 번호가 단언에 들어가므로 한 줄도 옮기지 않는다. 오른쪽 숫자가 줄 번호다.
+_WRITES_C = (
+    "void fill(char *p, struct s *vv, int n, int i, int j) {\n"  # 1
+    "    char *q = malloc(n);\n"                                 # 2
+    "    p = malloc(n);\n"                                       # 3
+    "    *(p + 1) = 2;\n"                                        # 4
+    "    ((char *)p)[2] = 5;\n"                                  # 5
+    "    q[i][j] += 6;\n"                                        # 6
+    "    vv->buf[i] = 3;\n"                                      # 7
+    "    *vv->ptr = 4;\n"                                        # 8
+    "    vv->payload_packet_len = n;\n"                          # 9
+    "    if (p[i] == 0) { q[0]++; }\n"                           # 10
+    "    /* p[9] = 1; */\n"                                      # 11
+    '    puts("q[3] = 2");\n'                                    # 12
+    "    *get() = 1;\n"                                          # 13
+    "}\n"                                                        # 14
+)
+
+
+def test_writes_table_finds_the_base_through_arithmetic_casts_and_fields(tmp_path: Path) -> None:
+    """기저는 괄호·캐스트·포인터 산술의 왼쪽·중첩 첨자를 벗겨 찾는다. 필드에서 멈추고 `base`가
+    `field`다(`vv->buf[i]`의 키는 `buf`). 복합 대입은 연산자를 든다.
+
+    음성: 이름 대입(3행)은 `assigns`에만 · 필드 대입(9행)은 `field_assigns`에만 든다. 비교 `==`·
+    증감 `++`(10행), 주석(11행)·문자열(12행) 안의 대입 꼴은 대입식이 아니다. 기저가 이름이 아닌
+    역참조(13행 `*get()`)는 이름을 지어내지 않는다."""
+    (tmp_path / "w.c").write_text(_WRITES_C, encoding="utf-8")
+    index = _index(tmp_path, "w.c")
+    row = {"file": "w.c", "func": "fill"}
+
+    assert index["writes"] == {
+        "q": [
+            {**row, "line": 2, "lhs": "*q", "rhs": "malloc(n)", "op": "=", "form": "init",
+             "base": "name"},
+            {**row, "line": 6, "lhs": "q[i][j]", "rhs": "6", "op": "+=", "form": "element",
+             "base": "name"},
+        ],
+        "p": [
+            {**row, "line": 4, "lhs": "*(p + 1)", "rhs": "2", "op": "=", "form": "deref",
+             "base": "name"},
+            {**row, "line": 5, "lhs": "((char *)p)[2]", "rhs": "5", "op": "=", "form": "element",
+             "base": "name"},
+        ],
+        "buf": [
+            {**row, "line": 7, "lhs": "vv->buf[i]", "rhs": "3", "op": "=", "form": "element",
+             "base": "field"},
+        ],
+        "ptr": [
+            {**row, "line": 8, "lhs": "*vv->ptr", "rhs": "4", "op": "=", "form": "deref",
+             "base": "field"},
+        ],
+    }
+    assert index["assigns"] == {"w.c": {"fill": {"p": [3]}}}
+    assert list(index["field_assigns"]) == ["payload_packet_len"]
+
+
+# 줄 번호가 단언에 들어가므로 한 줄도 옮기지 않는다. 함수 정의는 `impl.c`에 따로 있다 — 바인딩
+# 필터가 파일 하나가 아니라 **저장소 전체**의 `functions`를 보는지를 같이 본다.
+_OPS_C = (
+    "struct ops { void (*free_ctx)(void *); int (*alloc)(int);"
+    " int n; void (*ext)(void *); };\n"            # 1
+    "static const struct ops dev = {\n"            # 2
+    "    .free_ctx = sshpam_free_ctx,\n"           # 3
+    "    .alloc = &my_alloc,\n"                    # 4
+    "    .n = 3,\n"                                # 5
+    "    .ext = free,\n"                           # 6
+    "};\n"                                         # 7
+    "struct outer o2 = { .in = { .cb = inner_cb }, [0] = my_alloc };\n"  # 8
+    "void setup(struct ops *o, int n) {\n"         # 9
+    "    o->alloc = my_alloc;\n"                   # 10
+    "    o->free_ctx = &sshpam_free_ctx;\n"        # 11
+    "    o->n = n;\n"                              # 12
+    "    o->alloc = make_alloc(1);\n"              # 13
+    "    o->ext += my_alloc;\n"                    # 14
+    "    o->varint_get64s(n, 2);\n"                # 15
+    "    dev.free_ctx(o);\n"                       # 16
+    "    (*o->alloc)(n);\n"                        # 17
+    "    helper(n);\n"                             # 18
+    "}\n"                                          # 19
+)
+_IMPL_C = (
+    "void sshpam_free_ctx(void *c) {}\n"
+    "int my_alloc(int n) { return n; }\n"
+    "void inner_cb(void) {}\n"
+    "int make_alloc(int k) { return k; }\n"
+    "void helper(int n) {}\n"
+)
+
+
+@pytest.fixture
+def ops(tmp_path: Path) -> dict:
+    (tmp_path / "ops.c").write_text(_OPS_C, encoding="utf-8")
+    (tmp_path / "impl.c").write_text(_IMPL_C, encoding="utf-8")
+    return _index(tmp_path, "impl.c", "ops.c")
+
+
+def test_fn_bindings_table_records_designated_and_assigned_function_names(ops: dict) -> None:
+    """함수 포인터 필드에 함수 이름을 묶는 두 꼴: 지정 초기화(3·4행, 중첩 8행)와 필드 대입(10·11행).
+    `&f`도 `f`다. 파일 스코프 초기화의 `func`는 `None`이다.
+
+    음성: 값이 함수가 아닌 것(5행 `3` · 12행 파라미터 `n`), 대상 트리에 정의가 없는 이름(6행
+    `free`), 호출 결과(13행 `make_alloc(1)` — 정의는 있지만 이름 하나가 아니다), 첨자 지정자(8행
+    `[0] = my_alloc`), `=`가 아닌 대입(14행 `+=`)."""
+    ops_row = {"file": "ops.c"}
+
+    assert ops["fn_bindings"] == {
+        "free_ctx": [
+            {**ops_row, "line": 3, "func": None, "fn": "sshpam_free_ctx", "form": "designated"},
+            {**ops_row, "line": 11, "func": "setup", "fn": "sshpam_free_ctx", "form": "assign"},
+        ],
+        "alloc": [
+            {**ops_row, "line": 4, "func": None, "fn": "my_alloc", "form": "designated"},
+            {**ops_row, "line": 10, "func": "setup", "fn": "my_alloc", "form": "assign"},
+        ],
+        "cb": [{**ops_row, "line": 8, "func": None, "fn": "inner_cb", "form": "designated"}],
+    }
+
+
+def test_field_calls_table_names_the_field_of_each_indirect_call(ops: dict) -> None:
+    """함수 자리가 필드인 호출(`->`·`.`·`(*o->f)`)을 필드 이름으로 싣는다. 직접 호출(18행
+    `helper`)은 `calls`에만 든다. **`unresolved_calls`는 그대로 센다** — 필드 호출 셋이 여전히
+    「대상을 구문만으로 특정 못 한 호출」이다."""
+    site = {"file": "ops.c", "caller": "setup"}
+
+    assert ops["field_calls"] == {
+        "varint_get64s": [{**site, "line": 15, "args": ["n", "2"], "expr": "o->varint_get64s"}],
+        "free_ctx": [{**site, "line": 16, "args": ["o"], "expr": "dev.free_ctx"}],
+        "alloc": [{**site, "line": 17, "args": ["n"], "expr": "(*o->alloc)"}],
+    }
+    assert ops["unresolved_calls"] == 3
+    assert "helper" in ops["calls"]
+
+
+def test_the_reader_resolves_indirect_calls_from_this_scripts_v3_output(
+    tmp_path: Path,
+) -> None:
+    """**경계를 건너는 대조(v3).** 이 스크립트가 쓴 index-v3를 읽는 쪽이 받아 `setup` 본문의 필드
+    경유 호출을 정의로 푼다. `free_ctx`·`alloc`은 각각 struct `ops` 하나만 선언하므로 바인딩이
+    다른 줄에 있어도 잇는다. `varint_get64s`는 바인딩이 없다. 기대값은 `_IMPL_C`에서 손으로 셌다
+    (`sshpam_free_ctx` 1행 · `my_alloc` 2행)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "ops.c").write_text(_OPS_C, encoding="utf-8")
+    (src / "impl.c").write_text(_IMPL_C, encoding="utf-8")
+    out = tmp_path / "out" / INDEX_FILE
+    argv = ["--out", str(out), "--root", str(src), str(src / "ops.c"), str(src / "impl.c")]
+    assert indexer.main(argv) == 0
+    graph = index_graph.GraphIndex(out)
+    setup = Location(file="ops.c", symbol="setup", line_start=9, line_end=19)
+
+    assert graph.indirect_callees_of(setup) == [
+        Location(file="impl.c", symbol="sshpam_free_ctx", line_start=1, line_end=1),
+        Location(file="impl.c", symbol="my_alloc", line_start=2, line_end=2),
+    ]
+    assert graph.field_writes_of("n", "impl.c") == [
+        Location(file="ops.c", symbol="setup", line_start=12, line_end=12)
+    ]
