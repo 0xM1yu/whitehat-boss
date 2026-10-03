@@ -409,8 +409,10 @@ Joern 재파싱 후 결과 동등성은 별도 실측으로 확인한다.
 누락은 유지된다. fuzzy parsing·매크로·동적 호출이 빠진 그래프를 완전한 그래프로 만들지는 않는다.
 
 근거: [Joern data flow 단계](https://docs.joern.io/cpgql/data-flow-steps/),
-[4.0.605 경로 API 구현](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala),
-[4.0.605 backward slicer](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/slicing/DataFlowSlicing.scala).
+[4.0.646 경로 API 구현](https://github.com/joernio/joern/blob/v4.0.646/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala),
+[4.0.646 backward slicer](https://github.com/joernio/joern/blob/v4.0.646/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/slicing/DataFlowSlicing.scala).
+두 파일은 v4.0.605와 v4.0.646에서 공백과 지역 변수 이름만 다르다 — 2026-10-03 두 태그의 파일을 내려받아
+`diff -w`로 대조했다(소스를 읽었을 뿐 실행은 아니다).
 
 전용 Joern 서버에 대한 선택 실행 검증은 다음과 같다. C/C++ 입력은 분석만 하며 실행하지 않는다.
 출력 디렉터리는 매번 새 경로여야 한다. 코드·입력 해시, 실제 CLI 결과와 종료 코드, Case B 원문,
@@ -432,3 +434,57 @@ ATOM Joern 4.0.605에서 실행한 결과와 범위는 **보고서 셋에 나뉘
 
 HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
 [frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.
+
+### Joern 4.0.646 확인 (2026-10-03)
+
+슬라이서(코드 `64bd566`)를 Joern 4.0.605에서 4.0.646으로 올려도 되는지 본 기록이다. ⚠ **실측은 전부 단일 run이다** — run ID 없음 ·
+원자료 저장소 밖(`slicer_j/`·`slicer_e3/`). 실행한 경로(준비 · flows · context · backward · 샤드 병합 · export · flow 상한 · 작은 입력의
+`--compile-commands`)에서 4.0.646이 깨지는 곳은 못 찾았고, 4.0.605와 **달라지는 곳**은 아래 「달라진 것」 셋이다.
+
+| 같은 장비 · 표본 · 호출 (vast slicer-s04, ndpi `95bf287c`, `slice_sharded.py` 8샤드 heap 10g, wall 900초, `ab` 순서) | 4.0.605 | 4.0.646 |
+| --- | ---: | ---: |
+| `joern_version` 기록 | `4.0.605` | `4.0.646` |
+| 준비 초 · 전체 초 | 113 · 1,474 | 118 · 1,494 |
+| 후보 (Case A / B) | 2,374 / 7,668 | 2,374 / 7,668 |
+| 후보 manifest 10,042건(키·내용·순서) | 기준 | 전부 같음 |
+| 내부 메서드 · 호출 · 미해결 호출 · CPG 파일 · 누락 파일 | 4,696 · 25,741 · 0 · 412 · 63 | 전부 같음 |
+| `unknown_nodes` | 656 | 654 |
+| 완료 후보 · degraded 후보 | 74 · 9,909 | 75 · 9,908 |
+| flows 질의 합(n=75) · context 질의 합(n=164) | 4,113.7 s · 316.7 s | 4,070.9 s · 312.7 s |
+| 질의 오류 · `QueryError` · 중단 질의 | 0 · 0 · 0 | 0 · 0 · 0 |
+
+- **완료 후보 · flows.** 공통 74건 중 후보별 flows 기록(경로 수·절단·sink 수·줄)이 같은 것이 70건이고 다른 4건은 전부 flows 상한에 잘린
+  후보다. 안 잘린 28건은 전부 같다. 같은 4.0.605 둘(이 `ab` ↔ 데이터팀 FT run, 코드·heap·장비가 달라 완전한 반복은 아니다)도 3건이 다르고
+  역시 전부 잘린 후보다 — 위 「한 repo를 샤드로 나누기」의 *절단된 Case A는 CPG를 다시 만들면 같은 경로를 고르지 않는다*와 같은 결이다.
+  646에만 완료인 1건은 859초에 끝나 900초 벽 안에 든 차이다.
+- **backward.** `ab`는 900초 안에 Case A만 처리해 backward 질의가 0번이다. 그래서 Case B 먼저(`--case-order ba`, `feat/slicer-case-order`의 `4eb0594` =
+  `64bd566` + 순서 옵션)로 같은 장비·표본을 한 번 더 돌렸다 — 605는 wall 1,800초(2,971건 완료), 646은 wall 900초(1,942건 완료)이고 Joern 경로와 wall 외의
+  호출은 같다. **둘 다 완료한 1,942건의 backward 기록(node·state·dependency 수, 절단·사유, 분석 줄, 경계)이 전부 같다**(절단 1,126 · 안 잘림
+  816). backward 질의당 0.285초(646, n=1,950) ↔ 0.293초(605를 900초에서 자름, n=1,920) — 합 ÷ 질의 수, 계산값. 이 run의 샤드 서버 로그에
+  `Broken pipe` 1건이 있다 — wall로 클라이언트를 끊은 순간의 것이고 질의 오류는 0이다.
+- **최종 줄.** 같은 후보 묶음 중 줄 집합이 다른 클러스터는 `ab` 5/68, `ba` 16/83이다(605끼리 `ab` ↔ FT는 1/68). `ba` 16개는 전부 4.0.646이
+  줄을 **더한** 경우(빠진 줄 0)이고 더해진 16줄은 `x--`를 담은 줄 13개와 그것을 감싼 `if`·`}` 3개다(ndpi 소스를 열어 확인). `ab` 5개 중 4개도
+  같고 하나는 flows가 고른 호출 줄만 다르다.
+- **실서버 검증 · E3.** `tools/probe/joern_slicer_live.py`는 4.0.646 전용 서버(vast slicer-dev, heap 16g)에서 다섯 검사가 통과했고 같은 입력을
+  4.0.605 서버에 돌린 slices(16 · 16 · 16 · 15개)·후보 8개·카운터와 일치한다(이 입력에는 아래 1·2가 없다). E3(vast slicer-dev, curl · libxml2 ·
+  vim 평문 import)는 메서드·호출·피호출 해석·파일 집합이 같고 달라진 파일은 curl `lib/sha256.c` 하나다 — 파싱 문제 17 → 0, AST 노드 1,117 →
+  1,248, 메서드 6개 그대로. 캐시된 83 저장소에 프론트엔드만 돌린 비교(그래프 아님)는 파일 통째 차이 0건, 28 저장소에서 파싱 문제가
+  4.0.646에서 더 적고(더 많은 곳 0) 합계 501,527 → 495,945.
+
+**달라진 것** — 두 태그의 소스를 대조해(`diff -w`) 찾았고, 1·2는 작은 C 입력(버전당 3회)과 ndpi로 실행해 확인했다.
+
+1. **`cpg.assignment`가 후위 감소(`x--`)를 포함한다**(실행 확인). 4.0.605의 연산자 목록은 `postIncrement`가 둘이고 `postDecrement`가
+   없었다(`semanticcpg` `operatorextension/package.scala`). context 질의(`slicer_queries.py`의 `cpg.assignment` 단계)는 선택된 선언을 대상으로 한
+   대입을 줄에 보태므로 4.0.646에서는 `i--;` 꼴 줄이 `context`로 더 붙는다. 슬라이스가 조금 커지고(위 16줄) 클러스터의 대표 후보가 바뀔 수 있다.
+2. **함수 안 주소→역참조 DDG 간선이 생겼다**(실행 확인). `dataflowengineoss`의 `addAddressDerefEdges`가 `p = &x;` 뒤의 `*p`에 `x`로부터의 간선을
+   더한다(지역 변수·매개변수만, `p`당 주소 피연산자 하나일 때만). `*p`가 sink 인자인 입력에서 Case B backward의 `dependency_count`·`node_count`·
+   `state_count`가 3씩 늘고(11·8·8 → 14·11·11) 줄 집합은 그대로이며, Case A는 경로가 늘어 flow 상한에 걸린다(절단 `False` → `True`,
+   `flows_truncated` 4 → 5). ndpi 완료 후보 1,942건의 backward에는 영향이 안 보였다.
+3. **c2cpg**(소스를 읽었다). MSVC 정수형 `__int8`~`__int64`를 기본 매크로로 정의한다(E3의 `sha256.c`). CDT 호출의 `StackOverflowError`를 잡아 파일을
+   잃지 않고 `ANY`로 낮춘다. 로그 문구가 `Failed to generate a CPG for: 'x'`에서 `Failed to process ‘x’`로 바뀌었다 — `parse_report`의
+   `cpg_failures_observed` 정규식과 `QUOTED_PATH`의 같은 반쪽이 새 문구에 안 맞는다(`Failed to parse 'x'`는 그대로). 그 로그가 HTTP 응답에 안 실려
+   두 버전 모두 `parse_report` 행 0건·관측 실패 0건이라 지금은 달라지는 것이 없다.
+
+⚠ **측정하지 않은 것.** `ab`·`ba`가 wall 안에 못 닿은 후보, 큰 표본의 `--compile-commands`(작은 C 입력 셋 — 컴파일 DB 없음·`-D` 없음·`-DFEATURE_X` —
+에서만 605와 같음을 봤다), C++ 표본의 슬라이스(E3는 프론트엔드까지만), `files_parse_failed`(두 버전 모두 `null`). Joern 버전은 실행 계약에 들어 있어
+(`slicer_pipeline.py`의 `prepare_checkpoint`) 4.0.605로 만든 체크포인트·샤드는 4.0.646 서버로 `--resume`·병합이 안 된다 — 코드를 읽었을 뿐이다.
