@@ -1636,6 +1636,20 @@ def test_resuming_without_the_priority_case_a_flag_is_a_contract_mismatch(
     assert "settings.priority_case_a" in result["error"]
 
 
+def test_resuming_without_the_import_include_root_flag_is_a_contract_mismatch(
+    monkeypatch, repo, tmp_path
+):
+    """The include root changes the graph c2cpg builds, so the run contract carries it: a resume
+    (or a shard) that forgets it is refused, and the message names the setting."""
+    options = checkpoint_options(tmp_path)
+    data = payloads(case_a=[candidate()])
+    code, _, _ = run_cli(monkeypatch, repo, tmp_path, data, *options, "--import-include-root")
+    assert code == 0
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data, *options, "--resume")
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.import_include_root" in result["error"]
+
+
 def test_the_case_a_cap_note_follows_the_order_the_run_used(monkeypatch, two_file_repo, tmp_path):
     """The note says how the cut was ordered: with the flag on the listed files came first, and
     with it off the note keeps the words it always had."""

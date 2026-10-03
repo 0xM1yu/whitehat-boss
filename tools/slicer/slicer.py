@@ -506,6 +506,8 @@ class Slicer(SlicingStages):
         # --priority-case-a: that list also steers WHICH Case A methods exist (candidates_a_query),
         # not only the order. Needs priority_files; main() refuses the flag without a list.
         self.priority_case_a = False
+        # --import-include-root: build_cpg gives c2cpg the repo root as a header include path.
+        self.import_include_root = False
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
         # Joern can read); compiled_files is the set the database compiles, filled in by
@@ -774,7 +776,9 @@ class Slicer(SlicingStages):
                 "import",
                 queries.import_cpg_query(self.cpg_file.as_posix(), project)
                 if self.cpg_file is not None
-                else queries.import_query(self.repo.as_posix(), project, compilation_database),
+                else queries.import_query(
+                    self.repo.as_posix(), project, compilation_database, self.import_include_root
+                ),
             )
             if not isinstance(payload, dict) or payload.get("imported") is not True:
                 raise ValueError("CPG import did not confirm completion")
@@ -870,6 +874,15 @@ def parser() -> argparse.ArgumentParser:
     # Optional compile_commands.json. When given, c2cpg builds a compile-aware graph from the
     # compiled units only; when absent, every source file is imported (unchanged behaviour).
     result.add_argument("--compile-commands", type=Path)
+    # c2cpg `--include <--repo>`: project headers reached through `<...>` or from another directory
+    # resolve instead of being skipped. It changes the graph (more METHODs), so it is part of the
+    # run contract (settings.import_include_root). Not with --compile-commands (not measured).
+    result.add_argument(
+        "--import-include-root", action="store_true", help="give c2cpg --repo itself as a header "
+        "include path (`--include <repo>`) so code behind header-config guards and header-only "
+        "C++ libraries enter the CPG. Changes the CPG and so the candidates; cannot be combined "
+        "with --compile-commands",
+    )
     result.add_argument("--joern-endpoint", default="http://localhost:16240")
     result.add_argument("--checkpoint", type=Path)
     result.add_argument("--resume", action="store_true")
@@ -1039,6 +1052,9 @@ def main(argv: list[str] | None = None) -> int:
         cli.error("--priority-files has no effect with --export-only")
     if args.priority_case_a and not args.priority_files:
         cli.error("--priority-case-a needs --priority-files")
+    if args.import_include_root and args.compile_commands:
+        # The database carries each file's real include paths, and the pair was not measured.
+        cli.error("--import-include-root cannot be combined with --compile-commands")
     priority = None
     if args.priority_files:
         try:
@@ -1135,9 +1151,13 @@ def main(argv: list[str] | None = None) -> int:
         # Also contract: with a list it changes which Case A candidates exist (ranked-first and
         # exempt from the call limit), so a shard or a resume without it is refused.
         "priority_case_a": args.priority_case_a,
+        # Steers the CPG itself (c2cpg's include paths), like compile_commands above, so it is
+        # contract: a shard or a resume built from a differently imported graph is refused.
+        "import_include_root": args.import_include_root,
     }
     job.priority_files = priority
     job.priority_case_a = args.priority_case_a
+    job.import_include_root = args.import_include_root
     job.result["settings"] = job.settings
     # The normalized database lands in payload_dir, which is already on the filesystem Joern
     # shares for file-transport payloads.
