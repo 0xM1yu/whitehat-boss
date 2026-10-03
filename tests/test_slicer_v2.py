@@ -1648,13 +1648,15 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
     run's slices, and the merged checkpoint's `candidates` keep the priority order. The exported
     candidate_manifest does not (#434): export reads it back from the checkpoint baseline, which
     Checkpoint.set stores key-sorted (canonical, sort_keys=True), so it is in candidate_key order.
-    Only a run that discovered the candidates itself (the single run) keeps the priority order."""
+    A candidate_manifest is in the priority order only when its run discovered the candidates
+    itself, as the single run did (with a checkpoint), and --export-dir writes it in that order."""
     listing = tmp_path / "priority.txt"
     listing.write_text("main.c\n", encoding="utf-8")
     whole = tmp_path / "whole"
     whole.mkdir()
     _, single, _ = run_cli(
         monkeypatch, two_file_repo, whole, three_candidates_two_files(),
+        "--checkpoint", str(whole / "state.db"), "--export-dir", str(whole / "exported"),
         "--priority-files", str(listing),
     )
     databases = []
@@ -1679,13 +1681,49 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
     assert exported["slices"] == single["slices"]
     with Checkpoint(merged, resume=True) as store:
         bound = store.get("candidates")
-    assert [c["entry"]["file"] for c in bound] == ["main.c", "main.c", "a.c"]
+    # listed file first, collect()'s order in each tier -- not read back from the code under test
+    entries = [(c["entry"]["file"], c["entry"]["line"]) for c in bound]
+    assert entries == [("main.c", 3), ("main.c", 4), ("a.c", 1)]
     priority = [c["candidate_key"] for c in bound]
     by_id = [c["candidate_key"] for c in sorted(bound, key=lambda c: c["id"])]
     # The fixture must keep the three orders apart, or a key-sorted manifest passes as a kept one.
-    assert len({tuple(priority), tuple(by_id), tuple(sorted(priority))}) == 3
+    assert len({tuple(priority), tuple(by_id), tuple(sorted(priority))}) == 3, "re-pick `third`"
     assert list(single["candidate_manifest"]) == priority
+    written = (whole / "exported" / "candidate-manifest.json").read_text(encoding="utf-8")
+    assert list(json.loads(written)) == priority
     assert list(exported["candidate_manifest"]) == sorted(priority)
+
+
+def test_a_cpg_run_reads_the_manifest_back_in_key_order(monkeypatch, two_file_repo, tmp_path):
+    """#434: a --cpg run takes the prepare run's discovery (restore_discovery), so its own
+    candidate_manifest comes back key-sorted as an export's does. The gate is --cpg alone: this
+    run passes no --shard, as `slice_sharded.py --shards 1` does. `candidates` keep the priority."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    prep = tmp_path / "prep"
+    prep.mkdir()
+    cpg = prep / "cpg.bin"
+    data = three_candidates_two_files()
+    data["save_cpg"] = _saving(cpg)
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, prep, data, "--checkpoint", str(prep / "state.db"),
+        "--prepare-only", "--cpg-out", str(cpg), "--priority-files", str(listing),
+    )
+    assert code == 2 and result["prepare_only"] is True, result.get("error")
+    seeded = _seed(prep / "state.db", tmp_path / "run")
+    data = three_candidates_two_files()
+    del data["case_a"], data["case_b"]  # a rediscovery would fail
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, seeded.parent, data, "--checkpoint", str(seeded),
+        "--resume", "--cpg", str(cpg), "--priority-files", str(listing),
+    )
+    assert code == 0, result.get("error")
+    with Checkpoint(seeded, resume=True) as store:
+        bound = store.get("candidates")
+    assert [c["entry"]["file"] for c in bound] == ["main.c", "main.c", "a.c"]
+    priority = [c["candidate_key"] for c in bound]
+    assert priority != sorted(priority)
+    assert list(result["candidate_manifest"]) == sorted(priority)
 
 
 def test_matching_is_exact_not_substring_or_basename(repo):
