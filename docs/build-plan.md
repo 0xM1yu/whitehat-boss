@@ -703,7 +703,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | 예산 한 줄 | 브랜치 `fix/no-zero-budget`(PR 없음) | 구현 끝 |
 | Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
 | 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
-| Auditor 프롬프트 v5 | draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390) | 🅿️ **주차.** 트리거는 **첫 대여 세션** — v4와 v5를 그날 둘 다 돌리고 정한다 |
+| Auditor 프롬프트 v5 | ~~draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390)~~ | ⏵ 2026-10-03 **닫혔다.** ~~주차 · 트리거는 첫 대여 세션 — v4와 v5를 그날 둘 다 돌리고 정한다~~ — **v5를 건너뛰고 v6를 배선했다**(프롬프트 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418) · 배선 [#421](https://github.com/0xM1yu/whitehat-boss/pull/421) · 사용자 결정). v4·v5 둘 다 어느 registry 엔트리도 안 고르므로 그 비교는 없어졌다 |
 
 🔴 **PR끼리의 충돌은 `src/orchestrator/runner.py`와 `docs/agent-contracts.md`에서 났다** — #380 ↔ #396이
 `_emit_pov_hop`·`_pov_observation`의 호출 인자와 docstring, 계약 문서의 같은 불릿을 서로 다르게 바꿨다.
