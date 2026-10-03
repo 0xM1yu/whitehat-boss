@@ -484,6 +484,26 @@ def test_stop_without_a_grace_kills_at_once(stub_server, tmp_path):
 
 
 @needs_proc
+def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server):
+    """For a few hundred ms after SIGKILL a JVM is a zombie leader whose threads still hold the
+    listening socket (dev box, 2026-10-03: the port kept accepting for 0.15-0.57 s after the kill,
+    up to 0.56 s after stop() had returned). A new server's wait_servers would take that for
+    itself, so stop() must not return before the last thread has gone."""
+    process = stub_server("zombie-leader")
+    port = int(process.args[-1])
+    deadline = time.time() + 20
+    while not tool.port_in_use(port):
+        assert time.time() < deadline, "the stub server never listened"
+        time.sleep(0.05)
+    stat = Path(f"/proc/{process.pid}/stat").read_text()
+    assert stat.rpartition(")")[2].split()[0] == "Z"       # the leader is gone, a thread is not
+    assert tool._live_members(process.pid) == [process.pid]
+    assert tool.stop(process, grace=0) == []
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), 1)
+
+
+@needs_proc
 def test_stop_reports_what_it_could_not_kill(monkeypatch):
     """After SIGKILL and a bounded wait a group that is still there is reported, not hidden."""
     monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.2)
@@ -539,7 +559,8 @@ def test_progress_tail_returns_only_complete_new_lines(tmp_path):
     ("boom", False), (None, False), (7, False),
 ])
 def test_what_counts_as_a_deadline_hit(error, hit):
-    assert tool.is_deadline_error(error) is hit
+    failed = {"event": "candidate_failed", "candidate_key": "k", "error": error}
+    assert (tool.deadline_keys([failed]) == ["k"]) is hit
 
 
 def test_deadline_keys_pick_the_failed_candidates_only():
@@ -655,7 +676,7 @@ def test_restarts_are_bounded_per_shard(stubbed, monkeypatch):
                "--wall-seconds", "4")
     assert code == tool.EXIT_INCOMPLETE
     restart = run.summary()["restart"]
-    assert restart["per_shard"] == [1, 1] and restart["limit_hit"] == [0, 1]
+    assert restart["per_shard"] == [1, 1] and sorted(restart["limit_hit"]) == [0, 1]
     assert [len(argvs(run, index)) for index in (0, 1)] == [2, 2]
 
 
