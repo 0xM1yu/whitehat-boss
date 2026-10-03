@@ -646,14 +646,26 @@ def flows_query(
       // traced from (a `srcs` member), the last element the sink argument it reached. Recorded
       // so a slice can be compared with a GT source/sink without re-deriving it from `lines`.
       // Pairs of kept flows only -- a truncated run's endpoints are those of the kept prefix.
-      val keptEndpoints = kept.filter(_.elements.nonEmpty)
-        .map(p => (p.elements.head, p.elements.last))
-        .distinctBy {{ case (s, t) => (nodeKey(s), nodeKey(t)) }}
-        .sortBy {{ case (s, t) => (nodeKey(s), nodeKey(t)) }}
-        .map {{ case (s, t) => ujson.Obj("source" -> loc(s), "sink" -> loc(t)) }}
-      ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
+      // Optional extra (#433 review): computed inside Try so a runtime failure here leaves the
+      // flows result intact -- the payload then carries `endpoints_error` instead of
+      // `endpoints` and the slice records its source/sink as unavailable, not as zero.
+      // Try catches NonFatal at RUN time only; a compile error still fails the whole query.
+      val keptEndpoints = scala.util.Try {{
+        kept.filter(_.elements.nonEmpty)
+          .map(p => (p.elements.head, p.elements.last))
+          .distinctBy {{ case (s, t) => (nodeKey(s), nodeKey(t)) }}
+          .sortBy {{ case (s, t) => (nodeKey(s), nodeKey(t)) }}
+          .map {{ case (s, t) => ujson.Obj("source" -> loc(s), "sink" -> loc(t)) }}
+      }}
+      val flowsResult = ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
         "sinks_capped" -> sinksCapped, "sinks_kept" -> sinks.size,
-        "lines" -> ujson.Arr.from(keptLines), "endpoints" -> ujson.Arr.from(keptEndpoints))
+        "lines" -> ujson.Arr.from(keptLines))
+      keptEndpoints match {{
+        case scala.util.Success(pairs) => flowsResult.value("endpoints") = ujson.Arr.from(pairs)
+        case scala.util.Failure(err) =>
+          flowsResult.value("endpoints_error") = ujson.Str(String.valueOf(err))
+      }}
+      flowsResult
     """,
         timed=True,
     )

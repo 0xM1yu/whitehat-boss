@@ -1869,21 +1869,73 @@ def test_a_cluster_keeps_every_members_sources_and_sinks():
     assert ends["basis"] == "flow_endpoints"
 
 
+_PAIR = {"source": {"file": "main.c", "line": 1}, "sink": {"file": "main.c", "line": 5}}
+
+
 @pytest.mark.parametrize(
-    "endpoints",
+    "extra",
     [
-        None,
-        [{"source": {"file": "main.c", "line": 1}}],
-        [{"source": {"file": "main.c", "line": 1}, "sink": {"file": "main.c", "line": 5}}] * 2,
+        {"endpoints": None},
+        {"endpoints": [{"source": {"file": "main.c", "line": 1}}]},
+        {"endpoints": [_PAIR] * 2},
+        {"endpoints_error": 7},
+        {"endpoints": [_PAIR], "endpoints_error": "boom"},
     ],
-    ids=["missing", "no-sink", "more-than-flows"],
+    ids=["null", "no-sink", "more-than-flows", "error-not-str", "both"],
 )
-def test_a_flows_payload_with_bad_endpoints_is_refused(endpoints):
+def test_a_flows_payload_with_bad_endpoints_is_refused(extra):
     data = {"flow_count": 1, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
-    if endpoints is not None:
-        data["endpoints"] = endpoints
+    data.update(extra)
     with pytest.raises(slicer.QueryError):
         slicer.validate_payload("flows", data, "")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"endpoints_error": "java.util.NoSuchElementException: head of empty list"}],
+    ids=["absent", "errored"],
+)
+def test_a_flows_payload_without_endpoints_is_accepted(extra):
+    """#433 review: `endpoints` is optional, so its failure cannot fail the flows result."""
+    data = {"flow_count": 1, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+    data.update(extra)
+    slicer.validate_payload("flows", data, "")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"endpoints_error": "java.util.NoSuchElementException: head of empty list"}],
+    ids=["absent", "errored"],
+)
+def test_without_endpoints_case_a_is_a_full_slice_with_unavailable_source_sink(
+    monkeypatch, repo, tmp_path, extra
+):
+    """No endpoints -> not recorded (`endpoints_unavailable`), not zero pairs; not degraded."""
+    data = payloads(case_a=[candidate()], flow_count=1)
+    flows, _ = slicer.decode_response(data["flows"], "flows")
+    del flows["endpoints"]
+    flows.update(extra)
+    data["flows"] = response("flows", flows)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    item = result["slices"][0]
+    assert "degraded" not in item["measurement_notes"]
+    assert item["flow_count"] == 1 and item["lines"]
+    assert item["source_sink"] == {
+        "basis": "endpoints_unavailable",
+        "sources": [],
+        "sinks": [],
+        "pairs": [],
+        "unmapped": 0,
+    }
+    for key, value in extra.items():
+        assert item["analysis"][key] == value
+
+
+def test_recorded_zero_endpoints_is_not_unavailable(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    entry = {"file": "main.c", "line": 1}
+    assert source_sink("A", entry, {"endpoints": []}, sources, repo)["basis"] == "flow_endpoints"
+    assert source_sink("A", entry, {}, sources, repo)["basis"] == "endpoints_unavailable"
 
 
 def test_a_backward_boundary_without_a_location_is_refused():
@@ -1902,6 +1954,19 @@ def test_a_backward_boundary_without_a_location_is_refused():
 
 
 def test_the_flows_query_emits_the_head_and_last_of_each_kept_flow():
+    """Pins the Scala SPELLING only -- no Joern here, so neither compilation nor runtime
+    behaviour of `keptEndpoints` is tested. What it does check: the pair is head/last, it is
+    computed inside a Try, and the success/failure branches write the two keys the validator
+    knows, with the block's value being the result object (not the match's Unit)."""
     query = queries.flows_query([{"file": "main.c", "full_name": "entry", "line": 1}], 10)
     assert "(p.elements.head, p.elements.last)" in query
-    assert '"endpoints" -> ujson.Arr.from(keptEndpoints)' in query
+    body = query[query.index("val keptEndpoints") :]
+    assert body.startswith("val keptEndpoints = scala.util.Try {")
+    assert 'case scala.util.Success(pairs) => flowsResult.value("endpoints") =' in body
+    assert 'flowsResult.value("endpoints_error") = ujson.Str(' in body
+    # the endpoints are no longer a field of the literal result object
+    assert '"endpoints" ->' not in body
+    # last statement of the result block is the object itself
+    assert re.search(r"\}\s*flowsResult\s*\}; ", body)
+    block = body[: body.rindex("flowsResult")]
+    assert block.count("{") == block.count("}")

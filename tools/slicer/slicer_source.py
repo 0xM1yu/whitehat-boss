@@ -86,8 +86,11 @@ def source_sink(case: str, entry: dict, payload: dict | None, sources: dict, rep
     boundary reason (`entry_parameter`, `external_or_unresolved_call`, `dependency_root`).
     These are what the slicer treated as source/sink, not a judgement that they are the
     vulnerable pair. `payload` None = no analysis (degraded slice): Case B still knows its
-    sink, Case A knows neither. Points outside the restored sources are dropped and counted in
-    `unmapped`, as `lines` drops them.
+    sink, Case A knows neither. A Case A payload WITHOUT `endpoints` (the query's Try failed
+    -> `endpoints_error`, kept in `analysis`; or a payload from before the field existed) is
+    `endpoints_unavailable`: not recorded, which is not the same as `flow_endpoints` with zero
+    pairs. Points outside the restored sources are dropped and counted in `unmapped`, as
+    `lines` drops them.
     """
     found_sources, sinks, pairs, unmapped = [], [], [], 0
 
@@ -100,7 +103,12 @@ def source_sink(case: str, entry: dict, payload: dict | None, sources: dict, rep
         return {**point, "kind": kind}
 
     if case == "A":
-        basis = "none" if payload is None else "flow_endpoints"
+        if payload is None:
+            basis = "none"
+        elif "endpoints" in payload:
+            basis = "flow_endpoints"
+        else:
+            basis = "endpoints_unavailable"
         for pair in (payload or {}).get("endpoints", []):
             source, sink = keep(pair["source"], "parameter"), keep(pair["sink"], "flow_end")
             found_sources += [source] if source else []
