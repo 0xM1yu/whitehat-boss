@@ -21,13 +21,14 @@ from collections.abc import Sequence
 from pydantic import BaseModel, Field
 
 from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, Usage
+from src.schemas.auditor import AuditorAction
 from src.schemas.candidate import Candidate
 from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import EvidenceKind, FindingState, PathStepKind, Role, Verdict
 from src.schemas.finding import Finding, PathStep, ReproSpec
 from src.schemas.pov import PovAction, PovSegment, PovSpec
-from src.schemas.scout_response import AnalysisSummary, ScoutResponse
+from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 비용 지표 경로를 태우기 위한 근사다.
 _CHARS_PER_TOKEN = 4
@@ -151,8 +152,9 @@ class FakeModelClient:
         produced_by = ProducedBy(
             role=role, model=self.model_name, prompt_version=prompt.prompt_version
         )
-        # `history`도 넘긴다 — PoV 툴 루프의 fake는 홉(=history 길이)마다 다른 액션을 낸다
-        # (`_build_pov_action`). 다른 빌더는 홉을 안 보지만 dict 디스패치라 시그니처가 하나다.
+        # `history`도 넘긴다 — PoV·Auditor 툴 루프의 fake는 홉(=history 길이)마다 다른 액션을 낸다
+        # (`_build_pov_action`·`_build_auditor_action`). 다른 빌더는 홉을 안 보지만 dict
+        # 디스패치라 시그니처가 하나다.
         value = builder(context, produced_by, history)
         return ModelResult(
             value=value,
@@ -384,8 +386,62 @@ def _build_pov_action(
     )
 
 
+def _build_auditor_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> AuditorAction:
+    """Auditor 툴 루프의 fake 액션 (#419). 홉을 `history` 길이로 가른다.
+
+    hop0(history 빔)은 `lookup` — 대상 함수를 부르는 쪽(없으면 대상 자신)의 본문을 이름으로
+    묻는다. hop1은 `probe` — 읽기 전용 도구(`semgrep`)부터 한 번 돌린다. `spec`은 싣지 않는다:
+    지금 도구는 입력을 받지 않아 `spec`은 기록일 뿐이고, 바이트 materialize(#386 ①)가 서기
+    전에 fake가 그 길을 태울 이유가 없다. hop≥2는 `answer` — `_build_finding`이 최종 Finding을
+    채우고 루프가 끝난다.
+
+    홉을 `history`로 가르는 자리는 `_build_pov_action`과 같다 — 홉 번호가 따로 안 넘어온다.
+    다만 거기는 「비었나」만 보지만 여기는 **홉 번호**가 필요하다: 매 홉이 user 턴(그 홉 본문)과
+    assistant 턴(그 홉 응답) **둘**을 쌓으므로(`nodes/pov.py`·`nodes/scout.py`의 `new_history`)
+    길이는 0·2·4가 되고 홉은 `len // 2`다. `len == 1`로 가르면 어느 홉도 안 맞는다.
+    결정론이라 dev_fake run이 재현 가능하다.
+
+    실제 모델은 관측을 보고 lookup/probe/answer를 스스로 고르고 몇 번이고 되풀이한다 — fake는
+    그 루프 배선(lookup→조회→probe→도구→answer)이 한 번씩 도는지만 고정한다.
+
+    ⚠ `answer`가 `_build_finding`을 재사용하므로 그 함수의 전제가 여기도 걸린다 — FACTS 블록이
+    발급한 `finding_id`·`candidate_id`(·정적 신호가 없으면 `missing_id`)를 `ids`에서 읽는다.
+    사실 블록은 hop0 user 턴(`history[0]`)에서 읽으므로(`FakeModelClient.complete`) 루프가
+    그 턴을 끝까지 `history` 맨 앞에 보존해야 한다.
+    """
+    hop = len(history) // 2
+    if hop == 0:
+        target = context.target
+        name = context.callers[0] if context.callers else (target.symbol if target else None)
+        return AuditorAction(
+            action="lookup",
+            requests=[
+                RequestedContext(
+                    kind="function",
+                    target=name or "",
+                    purpose="fake: 대상으로 들어오는 경로를 읽는다",
+                    request_code="fake_auditor_lookup",
+                )
+            ],
+            rationale="fake: 근거를 이름으로 조회한다",
+        )
+    if hop == 1:
+        return AuditorAction(
+            action="probe", tool="semgrep", rationale="fake: 읽기 전용 도구로 확인한다"
+        )
+    return AuditorAction(
+        action="answer",
+        finding=_build_finding(context, produced_by, history),
+        rationale="fake: 관측을 받았으니 감사를 끝낸다",
+    )
+
+
 # `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
+# `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
+# fake의 `probe`는 `spec`을 아예 싣지 않는다(`_build_auditor_action`).
 _BUILDERS = {
     Candidate: _build_candidate,
     ScoutResponse: _build_scout_response,
@@ -393,4 +449,5 @@ _BUILDERS = {
     Decision: _build_decision,
     DecisionDraft: _build_decision_draft,
     PovAction: _build_pov_action,
+    AuditorAction: _build_auditor_action,
 }
