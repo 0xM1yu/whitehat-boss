@@ -496,6 +496,111 @@ def test_run_refuses_a_task_dir_without_the_archive(
     assert not work.exists(), "아카이브가 없는데 작업 디렉터리를 만들었다"
 
 
+# 정답 자료 가드(`task_loader.check_task_dir`)가 **프로덕션 경로에 닿는지** 보는 테스트들. 가드는
+# 처음에 `load_task`에만 걸렸고 그 함수의 프로덕션 호출처는 0건이다 — `run --task-dir`은
+# `read_description`과 `safe_extract`를 따로 부른다. 그래서 `tests/test_task_loader.py`의 단위
+# 테스트가 전부 초록이어도 CLI는 정답 자료가 섞인 번들을 그대로 돌렸다(2026-10-03 실측: exit 0 ·
+# 해제 트리와 run 디렉터리가 남았다). 내용물은 전부 무해한 자리표시자다 — 가드는 이름만 본다.
+_PLACEHOLDER_TEXT = "placeholder, not real task material\n"
+
+
+def test_run_refuses_a_task_dir_holding_answer_key_files_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 정답 자료가 섞인 번들은 **시작하기 전에** 거부한다 — exit 2 · `[ERROR]` · 쓴 것 0.
+
+    번들 폴더를 `data/<종류>/<id>/*`로 통째로 받으면 과제 둘 옆에 정답 자료 셋(수정 diff · 크래시
+    로그 · 패치된 저장소)이 떨어진다 — 저자 데이터셋의 실제 모양이다. 그 디렉터리로 도는 run은
+    무효다. 가드가 `load_task`에만 걸려 있던 판에서는 이 run이 **exit 0으로 끝까지 돌았다**(작업
+    디렉터리를 풀고 run 디렉터리를 남기고). 작업 디렉터리·run 디렉터리 둘 다 안 만들었는지 본다 —
+    쓰고 나서 거부하면 「거부했는데 시작됐다」다."""
+    task = _level1_task(tmp_path)
+    answer_key = ("patch.diff", "error.txt", "repo-fix.tar.gz")
+    for name in answer_key:
+        (task / name).write_text(_PLACEHOLDER_TEXT, encoding="utf-8")
+    work = tmp_path / "w"
+
+    err = _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="patch.diff",
+    )
+
+    refusal = " ".join(_errors(err))
+    assert refusal, f"[ERROR] 줄이 없다: {err}"
+    assert all(name in refusal for name in answer_key), refusal
+    # 운영자 콘솔(cp949)에 그대로 찍히는 줄이다 — `—`·`⚠` 같은 글자가 하나라도 있으면 stdout이
+    # 죽는다. 경로는 개발자 환경의 것이라 뺀다(사용자 이름의 글자가 cp949 밖일 수 있다).
+    refusal.replace(repr(str(task)), "<task-dir>").encode("cp949")
+    assert _PLACEHOLDER_TEXT.strip() not in err, "거부 문구가 파일 내용을 되풀이했다"
+    assert not work.exists(), "정답 자료가 섞인 번들인데 해제 디렉터리를 만들었다"
+
+
+def test_run_refuses_when_the_task_dir_cannot_be_listed_instead_of_passing_unchecked(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 가드가 **목록을 못 읽어** 검사를 못 하면 통과가 아니라 거부다 — exit 2이고 트레이스백이
+    아니다.
+
+    디렉터리를 못 읽는 경우(권한)는 `OSError`다. CLI의 그 `except`를 빼면 트레이스백이 나오고,
+    예외를 삼키고 계속하게 고치면 **검사 안 한 번들이 돈다**. 권한을 깎는 것은 Windows에서 안 되므로
+    가드를 `PermissionError`를 던지는 대역으로 바꾼다 — 공유 객체(`cli` 모듈 속성)에 건다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+
+    def deny(path: Path) -> None:
+        raise PermissionError(13, "denied (simulated)", str(path))
+
+    monkeypatch.setattr(cli, "check_task_dir", deny)
+
+    err = _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="검사를 못 했다",
+    )
+
+    assert _errors(err), err
+    assert not work.exists(), "검사를 못 했는데 해제 디렉터리를 만들었다"
+
+
+def test_run_accepts_the_authors_generator_output_with_readme_and_submit_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 저자 생성기의 산출 네 파일(Level 1 둘 + `README.md`·`submit.sh`)은 거부하지 않는다.
+
+    `submit.sh`는 채점기 신원(서버 · `task_id` · `agent_id`)의 **유일한 출처**다. 생성기를 마스크
+    맵으로 돌렸으면 `task_id`는 마스킹된 값이라 하네스가 다시 만들 수 없고,
+    `--oracle-submit`(#408)의 `read_submit_metadata`가 이 파일을 `--task-dir` 디렉터리에서 읽는다.
+    허용 목록이 둘뿐이면 채점할 수 있는 번들이 전부 이 가드에 걸려 `--oracle-submit`이 영영 못 돈다
+    — 두 PR이 서로 다른 곳에 있어 CI가 못 잡는 결함이다. 허용 목록을 다시 둘로 좁히는 변경이 여기서
+    죽는다. 내용은 자리표시자다(실제 `submit.sh`의 서버 주소·id·체크섬은 이 저장소 어디에도 두지
+    않는다)."""
+    task = _level1_task(tmp_path)
+    (task / "README.md").write_text(_PLACEHOLDER_TEXT, encoding="utf-8")
+    (task / "submit.sh").write_text("# placeholder, not a real submit script\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        ])
+
+    # `execute`까지 왔다 = 가드가 막지 않았고 아카이브가 풀렸다.
+    assert captured["spec"].target == tmp_path / "w"
+    assert (tmp_path / "w" / "src-vul" / "mod_00.c").is_file()
+
+
 def test_run_refuses_a_corrupt_archive_with_exit_2_not_a_traceback(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

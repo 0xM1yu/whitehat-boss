@@ -69,7 +69,9 @@ from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.task_loader import (
     DESCRIPTION_FILENAME,
     REPO_ARCHIVE_NAME,
+    UnexpectedTaskFilesError,
     UnsafeArchiveError,
+    check_task_dir,
     read_description,
     safe_extract,
 )
@@ -854,7 +856,8 @@ def run(args: argparse.Namespace) -> int:
     # `--target`·`--description-file`을 따로 주는 절차였다. 이 분기는 `safe_extract`와
     # `read_description`을 **따로** 부른다(이유는 아래 — 설명은 해제보다 먼저 읽는다).
     # ⚠ 그래서 둘을 묶은 `load_task`의 프로덕션 호출처는 **지금도 0건**이다 — `load_task`에만 거는
-    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다.
+    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다 — 정답 자료 가드
+    # (`check_task_dir`)가 그렇게 걸려 있다(아래 아카이브 확인 바로 뒤).
     task_description: str | None = None
     #
     # ⚠ **여기서는 검증만 하고 해제는 `_claim_run_dir` 직전에 한다.** 처음 판은 여기서 바로
@@ -914,6 +917,27 @@ def run(args: argparse.Namespace) -> int:
             # 쓸 이유도 없다.
             print(
                 f"[ERROR] 과제에 {REPO_ARCHIVE_NAME}가 없다: {args.task_dir}", file=sys.stderr
+            )
+            return 2
+        # 🔴 **정답 자료 가드는 이 분기에도 따로 건다**(위 ⚠ — 이 분기는 `load_task`를 안 거친다).
+        # 아카이브 확인 **뒤**, 설명을 읽거나 무엇을 쓰기 **앞**이다 — 허용 목록(`TASK_FILES`) 밖
+        # 항목이 하나라도 있으면(`patch.diff`·`error.txt`·`repo-fix.tar.gz` 같은 정답 자료가 번들
+        # 옆에 떨어진 경우) 시작하지 않고 작업 디렉터리도 run 디렉터리도 만들지 않는다. **여기서
+        # 직접 잡는다** — 아래 `safe_extract`의 `except`는 이 호출을 감싸지 않고, 그쪽 문구(「앞
+        # 멤버가 남았을 수 있다」)는 아직 아무것도 안 풀었는데 틀리다. `OSError`(목록을 못 읽음 —
+        # 권한)도 같이 막는다: 검사를 못 했으면 통과가 아니라 거부다. ⚠ `--target`을 직접 주는
+        # 경로는 이 검사 밖이다 — 임의의 소스 트리를 받는 경로라 `patch.diff` 같은 이름이 정상
+        # 파일일 수 있다(손으로 푼 번들의 정답 자료는 그쪽에서 못 막는다).
+        try:
+            check_task_dir(args.task_dir)
+        except UnexpectedTaskFilesError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())
+            print(
+                f"[ERROR] 과제 디렉터리를 읽을 수 없어 정답 자료 검사를 못 했다: {detail}",
+                file=sys.stderr,
             )
             return 2
         # 해제 트리가 target이다 — **경로는 지금 알 수 있다**(풀기 전에도).
@@ -1296,7 +1320,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-dir",
         type=Path,
         default=None,
-        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt). 주면 아카이브를 "
+        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt. 저자 생성기가 더하는 "
+        "README.md·submit.sh도 받는다). 그 밖의 항목이 하나라도 있으면(정답 자료 patch.diff·"
+        "error.txt·repo-fix.tar.gz 포함) 풀기 전에 거부한다(exit 2). 주면 아카이브를 "
         "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
         "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "

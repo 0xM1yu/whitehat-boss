@@ -684,7 +684,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | PoV 정보 배선(진입점·넓은 소스·경로 심볼·gdb enum) | PR [#380](https://github.com/0xM1yu/whitehat-boss/pull/380) | **머지됨.** 새 입력은 v3 전용(v3는 미배선) — 배선된 v2의 프롬프트는 main과 바이트 동일 |
 | CyberGym 조사 다섯 | PR [#376](https://github.com/0xM1yu/whitehat-boss/pull/376) | **머지됨** — `docs/research/` |
 | `#232` 판정 분리 — 좁은 절반 | PR [#401](https://github.com/0xM1yu/whitehat-boss/pull/401) | 열림 |
-| 정답 자료 가드 | PR [#397](https://github.com/0xM1yu/whitehat-boss/pull/397) (@sumin0218) | 열림. 우리 쪽 브랜치 `fix/task-answer-guard`(PR 없음)와 **같은 주제**라 하나로 모아야 한다 — 허용목록(`README.md`·`submit.sh`도 거부) 대 블록목록 설계가 갈린다. 🔴 **호출처 0건** — `--task-dir` 분기는 `load_task`를 안 불러 이 가드를 안 거친다 |
+| 정답 자료 가드 | 브랜치 `fix/task-answer-guard` → PR 올림 | ⏵ 2026-10-03 **허용목록으로 정했다**(@danielcho02) — 블록목록 PR [#397](https://github.com/0xM1yu/whitehat-boss/pull/397)(@sumin0218)을 이것으로 대체한다. 허용 이름은 **넷**(`repo-vul.tar.gz`·`description.txt`·`README.md`·`submit.sh` = 저자 생성기 Level 1 산출). 🔴 둘뿐이던 판은 `--oracle-submit`(#408)이 신원을 읽는 `submit.sh`를 거부해 **채점 가능한 번들을 전부 막았다** — 두 PR이 서로 다른 곳이라 CI가 못 잡는 결함이다. 그리고 `--task-dir` 분기에 **배선했다**(`check_task_dir` — 아카이브 확인 뒤·쓰기 앞). 그전에는 `load_task`에만 걸려 호출처가 0건이었고 오염 번들이 **exit 0으로 완주했다**(배선 전 실측) |
 | 예산 한 줄 | 브랜치 `fix/no-zero-budget`(PR 없음) | 구현 끝 |
 | Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
 | 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
