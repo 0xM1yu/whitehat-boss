@@ -22,6 +22,34 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _mismatch_hint(previous: object, value: object) -> str:
+    """Name the differing fields so e.g. a dropped/changed --priority-files is obvious (L-11).
+
+    A manual shard that forgets --priority-files (or gives a different one) mismatches on
+    `run_contract`; the bare key left the user to guess, and the README is clear that starting a
+    new checkpoint is NOT the fix there -- re-passing the same list is. Recurse one level into
+    `settings` so `settings.priority_files` is named by itself."""
+    if not (isinstance(previous, dict) and isinstance(value, dict)):
+        return ""
+    differ = []
+    for field in sorted(set(previous) | set(value)):
+        if previous.get(field) == value.get(field):
+            continue
+        if field == "settings" and isinstance(previous.get(field), dict) and isinstance(
+            value.get(field), dict
+        ):
+            sub = previous[field]
+            other = value[field]
+            differ += [
+                f"settings.{name}"
+                for name in sorted(set(sub) | set(other))
+                if sub.get(name) != other.get(name)
+            ]
+        else:
+            differ.append(field)
+    return f" (differs in: {', '.join(differ)})" if differ else ""
+
+
 class Checkpoint:
     """A process lock spans queries; a SQLite transaction only spans a stage commit.
 
@@ -89,7 +117,8 @@ class Checkpoint:
         if previous is None:
             self.set(key, value)
         elif canonical(previous) != canonical(value):
-            raise ValueError(f"Checkpoint mismatch: {key}; start a new checkpoint")
+            raise ValueError(f"Checkpoint mismatch: {key}{_mismatch_hint(previous, value)}; "
+                             "start a new checkpoint")
 
     def load(self, key: str) -> dict | None:
         row = self.conn.execute(

@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters.openai_compat import _TIMEOUT_S
+from src.orchestrator import runner
 from src.orchestrator.runner import _MAX_CONSECUTIVE_DROPS
 from tests.test_pipeline_e2e import _run
 from tools import monitor
@@ -114,3 +115,35 @@ def test_poller_reports_dead_on_a_crashed_real_run(
     monkeypatch.setattr(monitor.time, "sleep", _no_sleep)
 
     assert monitor.main([str(run_dir)]) == 3  # 첫 폴에서 DEAD 경보 후 종료
+
+
+def test_poller_reports_crashed_on_a_real_run_that_the_last_line_of_defense_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """🔴 예상 밖 예외로 터진 **진짜 run**은 매니페스트를 남기고(S0), 폴러는 CRASHED로 읽는다.
+
+    `has_manifest`로만 끝내면 exit 0 — 터진 run이 정상 종료로 보이고 사유는 아무 플래그에도 안
+    뜬다(적대적 리뷰 2026-10-02 MEDIUM 3). 위 DEAD 갈래와 같은 이유로 sleep을 막는다."""
+
+    class _Defect(KeyError):
+        pass
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise _Defect("예상 밖")
+
+    monkeypatch.setattr(runner.critic, "run", explode)
+    with pytest.raises(_Defect):
+        _real_run(tmp_path)
+    run_dir = tmp_path / "run" / "run_20260901_0001"
+    assert (run_dir / "run_manifest.json").exists(), "최후 방어선이 매니페스트를 안 남겼다"
+
+    def _no_sleep(seconds: float) -> None:
+        pytest.fail(f"CRASHED 갈래를 안 타고 폴 루프로 빠졌다 (sleep {seconds}s)")
+
+    monkeypatch.setattr(monitor.time, "sleep", _no_sleep)
+    capsys.readouterr()  # 앞선 출력을 비운다
+
+    assert monitor.main([str(run_dir)]) == 3
+    captured = capsys.readouterr()
+    assert "crashed=!" in captured.out
+    assert "unforeseen_failure" in captured.err
