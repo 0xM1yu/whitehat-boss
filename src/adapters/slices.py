@@ -74,7 +74,8 @@ def split_source(raw: bytes) -> list[str]:
 
 @dataclass(frozen=True)
 class Slice:
-    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석 세부(`analysis` 등)는 버린다."""
+    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·경계만 싣고
+    줄 목록·카운터 같은 나머지 세부는 버린다."""
 
     id: str
     candidate_key: str
@@ -93,6 +94,12 @@ class Slice:
     # (file, line) 목록). Scout 창 트림이 어느 줄을 먼저 버릴지 정하는 데 쓴다(#375 HIGH-2 —
     # 전엔 하네스가 이 키를 안 읽었다). 없으면 빈 dict다(옛 슬라이스·degraded 범주 공백).
     provenance: dict[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
+    # 슬라이서의 분석 사실 — `SliceRef`가 같은 이름으로 들고 가고 뜻은 거기 적었다. 없으면 옛
+    # 슬라이스다.
+    analysis_kind: str = ""
+    truncated: bool = False
+    truncation_reasons: tuple[str, ...] = ()
+    boundaries: tuple[tuple[str, str, int], ...] = ()
 
     @property
     def given_end(self) -> str:
@@ -202,6 +209,34 @@ def _provenance(raw: object) -> dict[str, tuple[tuple[str, int], ...]]:
     return out
 
 
+def _object(raw: object, name: str) -> dict:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise TypeError(f"{name}: 객체가 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _analysis_facts(item: dict) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...]]:
+    """`analysis`의 절단 사유(`truncation_reasons`)와 역추적이 멈춘 자리(`boundaries`).
+
+    클러스터링이 합친 슬라이스의 `analysis`는 **대표 후보의 것**이고 구성원별 분석은
+    `member_analysis`에 있다(대표 자신도 든다 — `slicer_source.cluster`). 최상위 `truncated`가
+    구성원의 OR이라 사유·경계도 구성원 전부에서 모은다. 키가 없으면(옛 슬라이스 · 사유 목록을
+    안 내는 Case A) 빈 튜플이다. 사유는 정렬하고 경계는 처음 나온 순서로 중복을 뺀다.
+    """
+    members = _object(item.get("member_analysis"), "member_analysis")
+    reasons: dict[str, None] = {}
+    boundaries: dict[tuple[str, str, int], None] = {}
+    for raw in list(members.values()) or [item.get("analysis")]:
+        analysis = _object(raw, "analysis")
+        reasons.update(dict.fromkeys(str(r) for r in analysis.get("truncation_reasons") or ()))
+        for boundary in analysis.get("boundaries") or ():
+            where = boundary["location"]
+            boundaries[(str(boundary["reason"]), str(where["file"]), int(where["line"]))] = None
+    return tuple(sorted(reasons)), tuple(boundaries)
+
+
 def _slice(item: dict) -> Slice:
     case = item["case"]
     if case not in _GIVEN_END:
@@ -211,6 +246,7 @@ def _slice(item: dict) -> Slice:
     code = item["code"]
     if not isinstance(code, str):
         raise TypeError("code")
+    truncation_reasons, boundaries = _analysis_facts(item)
     return Slice(
         id=str(item["id"]),
         candidate_key=str(item["candidate_key"]),
@@ -221,6 +257,10 @@ def _slice(item: dict) -> Slice:
         code=code,
         degraded=bool(item.get("degraded", False)),
         provenance=_provenance(item.get("line_provenance")),
+        analysis_kind=str(item.get("analysis_kind") or ""),
+        truncated=bool(item.get("truncated", False)),
+        truncation_reasons=truncation_reasons,
+        boundaries=boundaries,
     )
 
 
@@ -256,6 +296,10 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 degraded=item.degraded,
                 # 줄별 출처 — Scout 트림이 anchor > dependency > context 순으로 버린다(#375 HIGH-2).
                 provenance=item.provenance,
+                analysis_kind=item.analysis_kind,
+                truncated=item.truncated,
+                truncation_reasons=item.truncation_reasons,
+                boundaries=item.boundaries,
             )
         )
     return tuple(refs)
