@@ -184,6 +184,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 `DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
 따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
 정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
+⏵ **2026-10-03 — 위 「v5」는 Auditor에서 v6로 건너뛰어 켜졌다**(#418·#421 · v5는 건너뛰었다). v6 prefix가 v5의
+부분 본문 규칙 2·3(`prompts/auditor/v5/prefix.md:114-118`)을 공백 정규화 뒤 그대로 든다(`prompts/auditor/v6/prefix.md:91-92`) —
+규칙 3의 `truncation alone is not a reason to defer`가 이미 서빙에 있다. **그런데 위 둘(근거 보충 정책·과보류 비용 · 고정 표본 회귀)을
+켜기 전에 했다는 기록이 없다** — 정책은 `git grep` 「근거 보충」·「과보류」·「보류 비용」에 이 문단뿐이었고(2026-10-03, 이 노트 전 — 테스트 docstring 한 줄은 정책이 아니다), 규칙 5·재측정은
+이번에도 돌지 않았다(§4의 ⏵ 2026-10-03). v6로 돈 run도 `docs/experiments/`에 0건이다(grep, 2026-10-03 — 커밋된 보고서만 센 것).
+**Critic은 여전히 `v1`이다** — Critic v5(`prompts/critic/v5/`)는 안 켜졌으니 위 문장은 Critic 쪽에서는 그대로 전이다.
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
