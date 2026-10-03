@@ -166,18 +166,36 @@ def slice_line_names(read_source: ReadSource, lines: Iterable[tuple[str, int]]) 
     범위 전체에서 먼저 지운 뒤(줄바꿈이 남아 줄이 안 어긋난다) 슬라이스 줄만 고른다. 1보다 작은 줄
     번호와 읽은 범위를 벗어난 줄은 건너뛴다 — 순서를 정하는 어림이라 죽을 이유가 없다.
     """
+    names: set[str] = set()
+    for code in _slice_line_code(read_source, lines):
+        names |= _names(code)
+    return names
+
+
+def slice_line_fields(read_source: ReadSource, lines: Iterable[tuple[str, int]]) -> set[str]:
+    """슬라이스가 지나는 줄에 **필드로** 나온 이름(`p->len`·`s.buf`의 `len`·`buf`) — 쓰기 지점 창이
+    그 필드를 어디서 채우는지 찾는 데 쓴다(C5(a)). 읽는 규칙은 `slice_line_names`와 같다."""
+    return {
+        match.group(1)
+        for code in _slice_line_code(read_source, lines)
+        for match in _FIELD_ACCESS.finditer(code)
+    }
+
+
+def _slice_line_code(read_source: ReadSource, lines: Iterable[tuple[str, int]]) -> list[str]:
+    """파일마다 슬라이스 줄만 골라 `code_only`를 거친 원문 — `slice_line_names`의 읽기 규칙."""
     by_file: dict[str, set[int]] = {}
     for file, line in lines:
         if line >= 1:
             by_file.setdefault(file, set()).add(line)
-    names: set[str] = set()
+    picked_per_file: list[str] = []
     for file, wanted in by_file.items():
         first = min(wanted)
         text = read_source(Location(file=file, line_start=first, line_end=max(wanted)))
         rows = code_only(text).split("\n")
         picked = [rows[n - first] for n in sorted(wanted) if n - first < len(rows)]
-        names |= _names("\n".join(picked))
-    return names
+        picked_per_file.append("\n".join(picked))
+    return picked_per_file
 
 
 def slice_names_first(

@@ -376,6 +376,12 @@ thresholds:
   # 이름의 정의·함수를 2번까지 더 찾는다. 근거는 팀 검수 83표본 중 18건이 「래퍼까지만 붙고 실제 구현이
   # 없다」였다는 것(로컬 · run ID 없음 · 이슈 #451 본문). 켠 효과는 미실측
   auditor_callee_wrappers: 1
+  # 간접 피호출 · 쓰기 지점 창(C6 · C5(a) · #304 · 2026-10-04 · 사용자 결정). index-v3 표(`fn_bindings` ·
+  # `writes` · `field_assigns`)를 쓴다 -> 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  # 근거는 팀 검수 83표본의 「함수 포인터가 안 풀림」(21건)·「버퍼 할당 크기·길이 필드 쓰기 지점
+  # 없음」(C5, 64건 태그) 관측이다(로컬 · run ID 없음). 쓰기 지점 6곳은 정한 값이고 켠 효과는 미실측
+  auditor_indirect_callees: 1
+  auditor_write_sites: 6
 
 # 모델 게이트웨이 요청 파라미터. 조건 간 비교에서 고정해야 하므로 RunRecord에 남는다
 # (engineering-guide.md §5).
