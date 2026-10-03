@@ -704,12 +704,17 @@ def test_export_gives_unfinished_candidates_the_degraded_slice(monkeypatch, repo
     )
 
 
-def _saving(cpg: Path, content: bytes = b"saved-graph"):  # noqa: ANN202
-    """Stand-in for Joern's `save` + copy: writes the graph the query names, reports its size."""
+def _saving(cpg: Path, content: bytes = b"saved-graph", *, size=None):  # noqa: ANN202
+    """Stand-in for Joern's `save` + copy: writes the graph the query names, reports its size.
+
+    Real Joern reports the size as a JSON *string*: `Files.size` is a Scala Long and ujson writes
+    a Long as a string -- 2026-10-02 vast, Joern 4.0.605, ReadStat prepare: `"server_bytes":
+    "4646430"` (#400). The default here is that real form; `size` overrides it."""
     def save(query):  # noqa: ANN001, ANN202
         assert cpg.resolve().as_posix() in query
         cpg.write_bytes(content)
-        return response("save_cpg", {"saved": True, "bytes": len(content)})
+        reported = str(len(content)) if size is None else size
+        return response("save_cpg", {"saved": True, "bytes": reported})
     return save
 
 
@@ -1290,6 +1295,32 @@ def test_the_merge_tool_names_the_claim_owner_of_each_incomplete_candidate(
     assert tool.main(["x", str(tmp_path / "plain.db"), str(mine), str(other)]) == 2
     err = capsys.readouterr().err
     assert all(f"  {key}\n" in err for key in keys)
+
+
+@pytest.mark.parametrize("size", [None, "int"])
+def test_prepare_accepts_the_size_as_joern_writes_it(monkeypatch, repo, tmp_path, size):
+    """#400: a string size (what real Joern sends) and an int size both pass and are recorded as
+    an int; before the fix the string form failed every real prepare."""
+    folder = tmp_path / "x"
+    folder.mkdir()
+    cpg_holder = folder / "prep" / "cpg.bin"
+    save = _saving(cpg_holder, size=None if size is None else len(b"saved-graph"))
+    state, cpg, code, result, _ = _prepare(monkeypatch, repo, folder, three_candidates(), save=save)
+    assert code == 2 and result["prepared_cpg"]["server_bytes"] == len(b"saved-graph")
+    with Checkpoint(state, resume=True) as store:
+        assert store.get("prepared")["server_bytes"] == len(b"saved-graph")
+
+
+@pytest.mark.parametrize("size", ["999", "12abc", "", "-11"])
+def test_prepare_still_refuses_a_size_that_is_not_the_file(monkeypatch, repo, tmp_path, size):
+    """Only a plain digit string is read as a number; anything else stays a mismatch."""
+    folder = tmp_path / "x"
+    folder.mkdir()
+    save = _saving(folder / "prep" / "cpg.bin", size=size)
+    state, _, code, result, _ = _prepare(monkeypatch, repo, folder, three_candidates(), save=save)
+    assert code != 0 and "it is not the same file" in str(result.get("error"))
+    with Checkpoint(state, resume=True) as store:
+        assert store.get("prepared") is None
 
 
 # #377 (b) -- --priority-files: order only, bound into the checkpoint.
