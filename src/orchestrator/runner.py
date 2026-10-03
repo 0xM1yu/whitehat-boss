@@ -109,7 +109,7 @@ from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
-from src.orchestrator import gate, oracle_log, state_machine
+from src.orchestrator import gate, oracle_log, source_gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.heartbeat import Heartbeat
@@ -3187,6 +3187,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
+
+    **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
+    이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
     """
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
     spanned: dict[Location, None] = {}
@@ -3464,6 +3467,19 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap
+            else {}
+        ),
+        **(
+            {
+                "gate_reasons": ",".join(
+                    source_gate.reasons(
+                        ref, anchor, uncovered_lines=uncovered, functions_dropped=dropped,
+                        callees_dropped=callees_dropped, callers_dropped=callers_dropped,
+                        definitions_dropped=definitions_dropped,
+                    )
+                )
+            }
+            if ctx.config.thresholds.auditor_source_gate
             else {}
         ),
     )

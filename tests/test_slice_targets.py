@@ -1194,6 +1194,7 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+                auditor_source_gate=0,
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
                 auditor_entry_trim=0, auditor_caller_lines=0, auditor_callee_wrappers=0,
                 auditor_indirect_callees=0, auditor_write_sites=0)),
@@ -1231,6 +1232,7 @@ def _trim_source(
         callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+            auditor_source_gate=0,
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
             auditor_entry_trim=trim, auditor_caller_lines=0, auditor_callee_wrappers=0,
                 auditor_indirect_callees=0, auditor_write_sites=0)),
@@ -1322,6 +1324,7 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         ),
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
+            auditor_source_gate=0,
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
             auditor_entry_trim=0, auditor_caller_lines=lines, auditor_callee_wrappers=0,
                 auditor_indirect_callees=0, auditor_write_sites=0)),
@@ -1374,6 +1377,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
     import types
 
     thresholds = {
+        "auditor_source_gate": 0,
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
         "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_callee_wrappers": 0,
         "auditor_indirect_callees": 0, "auditor_write_sites": 0,
