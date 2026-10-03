@@ -551,6 +551,38 @@ class GraphIndex:
             found.sort(key=lambda loc: is_nonproduct_path(loc.file))  # 안정 정렬 — 호출 줄 순 유지
         return found
 
+    def functions_named(
+        self, names: Iterable[str], near_file: str, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
+        """이름들 중 **함수**인 것의 정의 위치. `None`은 그래프가 없다는 뜻이다.
+
+        매크로가 이름만 바꿔 부르는 함수
+        (`#define FT_FRAME_EXTRACT(...) FT_Stream_ExtractFrame(...)`)를 찾는 데 쓴다 -- 매크로 본문
+        안의 호출은 인덱스 호출 표에 없어 `callees_of`로는 안 닿는다(#349 후속, C4). 고르는 규칙은
+        `callees_of`와 같다: `near_file`에 정의가 있으면 그것, 없으면 저장소 전체에서 **하나뿐일
+        때만**(`demote_nonproduct`면 제품 경로가 먼저 「하나뿐」을 정한다). 순서는 이름 순이다.
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        demote = demote_nonproduct and not is_nonproduct_path(near_file)
+        wanted = set(names)
+        defined: dict[str, list[tuple[str, int, int]]] = {}
+        for file, symbols in self._defined.items():
+            for name, start, end in symbols:
+                if name in wanted:
+                    defined.setdefault(name, []).append((file, start, end))
+        found: list[Location] = []
+        for name in sorted(defined):
+            here = [d for d in defined[name] if d[0] == near_file]
+            candidates = here or (
+                _product_first(defined[name], itemgetter(0)) if demote else defined[name]
+            )
+            if len(candidates) != 1:
+                continue
+            file, start, end = candidates[0]
+            found.append(Location(file=file, symbol=name, line_start=start, line_end=end))
+        return found
+
     def call_sites_of(
         self, target: Location, *, demote_nonproduct: bool = False
     ) -> list[Location] | None:

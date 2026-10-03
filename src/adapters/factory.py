@@ -179,6 +179,9 @@ class Deps:
     callees_of: Callable[..., list[Location] | None] = lambda _target, **_kw: None
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). `callees_of`와 같은 자리.
     call_sites_of: Callable[..., list[Location] | None] = lambda _target, **_kw: None
+    # (이름들, 가까운 파일) → 함수 정의 위치. 매크로가 이름만 바꿔 부르는 함수를 찾는다
+    # (C4 — 래퍼·별칭 따라가기, `runner._auditor_source`). `callees_of`와 같은 자리.
+    functions_named: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
     definitions_of: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름(`locals` 표). 정의 조회가 본문 이름에서
@@ -556,6 +559,7 @@ def build_deps(
         symbols_for=graph.symbols_for,
         callees_of=graph.callees_of,
         call_sites_of=graph.call_sites_of,
+        functions_named=graph.functions_named,
         definitions_of=graph.definitions_of,
         locals_of=graph.locals_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
