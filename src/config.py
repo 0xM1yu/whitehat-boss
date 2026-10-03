@@ -620,8 +620,8 @@ class Thresholds(HarnessModel):
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
     # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 옵션도 같다.
     auditor_callee_hops: int = Field(default=0, ge=0, le=1)
-    # Auditor `SOURCE`에 앵커 함수가 부르는 매크로·얇은 전달 함수의 **닫힘**을 붙이는가 —
-    # `xmalloc(n)` → `safe_alloc` → 실제 구현처럼 껍데기 뒤의 첫 실제 본문과 사슬, 불투명 매크로의
+    # Auditor `SOURCE`에 앵커 함수가 부르는 **매크로**의 닫힘을 붙이는가 — 이름만 바꾸거나 인자를
+    # 넘기는 매크로가 가는 첫 함수 본문과 사슬(`xmalloc(n)` → `safe_alloc`), 불투명 매크로의
     # `#define` 원문(`orchestrator/source_closure`). 0이면 안 붙인다(결정 1-b 그대로, 이벤트 모양도
     # 그대로). 1이면 피호출 함수 뒤·호출자 창 앞에 같은 총 상한 안에서 붙고 못 붙인 단위는
     # `auditor_source` 이벤트가 목록으로 든다. 인덱스가 v2여야 일한다 — 없으면 이벤트의

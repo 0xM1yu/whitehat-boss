@@ -399,44 +399,42 @@ class GraphIndex:
         return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
 
     def callables_of(self, names: Iterable[str], near_file: str) -> dict[str, CallableDef] | None:
-        """이름 → 그 이름이 가리키는 **매크로 또는 함수**의 정의(종류 · 위치 · 파라미터 이름).
+        """이름 → 그 이름이 가리키는 **매크로 또는 함수**의 정의(종류 · 위치).
 
-        `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1 — 파라미터가 v2 `functions` 표에만 있다).
-        Auditor `SOURCE`의 닫힘이 앵커가 부르는 이름을 정의까지 따라가는 데 쓴다(`auditor_closure`).
-        규칙은 `definitions_of`·`callees_of`와 같다:
+        `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1). Auditor `SOURCE`의 닫힘이 앵커가 부르는
+        매크로를 정의까지 따라가는 데 쓴다(`auditor_closure`). 종류는 셋이다:
 
-        - **매크로가 함수를 가린다** — 전처리가 먼저라 같은 이름이 둘 다면 매크로다. `macros` 표를
-          먼저 보고 이름이 거기 있으면 모호해도 함수로 내려가지 않는다
-        - `near_file`에 정의가 있으면 그것, 없으면 저장소 전체에서 **하나뿐일 때만** — 여럿이면
-          (`#if` 양쪽 가지 · 같은 이름 여러 파일) 이름만으로 못 가리므로 **고르지 않고 `ambiguous`로
-          표시한다**(위치는 맨 앞 후보 하나 — 고른 것이 아니다). 「정의가 없다」와 섞지 않으려는
-          것이다
+        - `macro` · `function` — 정의가 **하나뿐**이다. 한 표 안에서는 `near_file`에 있으면 그것,
+          없으면 저장소 전체에서 하나뿐일 때만(`definitions_of`·`callees_of`와 같은 규칙)
+        - `ambiguous` — **고르지 않았다.** 같은 이름이 한 표 안에 여럿이거나(`#if` 양쪽 가지 · 같은
+          이름 여러 파일) **매크로이면서 함수**이기도 하다. 인덱스는 include 관계도 `#if`·`#undef`도
+          몰라 어느 정의가 그 호출에서 유효한지 못 가린다 — 「매크로가 함수를 가린다」고 단정하면
+          zlib의 `Z_PREFIX` 이름 바꾸기(기본 빌드에선 꺼져 있다)나 `#undef` 뒤의 함수를 거짓 사슬로
+          접는다. 위치는 맨 앞 후보 하나일 뿐 정의가 아니다
 
-        매크로의 파라미터는 `()`다 — 인덱스가 정의 원문을 안 싣고 파라미터도 안 적는다(원문은
-        하네스가 파일에서 읽는다). 인덱스에 없는 이름(libc)은 결과에 없다.
+        정의 본문·매크로 파라미터는 인덱스가 안 싣는다(원문은 하네스가 파일에서 읽는다). 이름이 두
+        표 어디에도 없으면(libc) 결과에 없다 — 「결과에 없다」는 매크로·함수 표에 없다는 뜻이지 그
+        이름이 변수·타입으로도 없다는 뜻이 아니다.
         """
         if self._load().status != STATUS_LOADED or self._tables is None:
             return None
         found: dict[str, CallableDef] = {}
         for name in sorted(set(names)):
-            for kind, table in (("macro", "macros"), ("function", "functions")):
-                rows = self._tables[table].get(name)
-                if not rows:
-                    continue
-                here = [row for row in rows if row["file"] == near_file]
-                candidates = here or list(rows)
-                row = candidates[0]
-                where = Location(
-                    file=row["file"],
-                    symbol=name,
-                    line_start=row["line_start"],
-                    line_end=row["line_end"],
-                )
-                if len(candidates) > 1:
-                    found[name] = ("ambiguous", where, ())
-                else:
-                    found[name] = (kind, where, tuple(row["params"]) if kind == "function" else ())
-                break
+            macros = self._tables["macros"].get(name) or ()
+            functions = self._tables["functions"].get(name) or ()
+            rows = macros or functions
+            if not rows:
+                continue
+            candidates = [row for row in rows if row["file"] == near_file] or list(rows)
+            row = candidates[0]
+            where = Location(
+                file=row["file"],
+                symbol=name,
+                line_start=row["line_start"],
+                line_end=row["line_end"],
+            )
+            alone = len(candidates) == 1 and not (macros and functions)
+            found[name] = (("macro" if macros else "function") if alone else "ambiguous", where)
         return found
 
     def callees_of(self, target: Location) -> list[Location] | None:

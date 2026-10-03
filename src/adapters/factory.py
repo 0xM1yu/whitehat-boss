@@ -175,8 +175,8 @@ class Deps:
     callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). `callees_of`와 같은 자리.
     call_sites_of: Callable[[Location], list[Location] | None] = lambda _target: None
-    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치 · 파라미터 이름).
-    # Auditor `SOURCE`의 닫힘(`auditor_closure`)이 쓴다. `callees_of`와 같은 자리.
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치). Auditor `SOURCE`의
+    # 닫힘(`auditor_closure`)이 쓴다. `callees_of`와 같은 자리.
     callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = (
         lambda _names, _file: None
     )

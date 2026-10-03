@@ -136,8 +136,9 @@ agent:
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
   ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션들(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
-  entry 줄이기, 그리고 매크로·전달 함수의 닫힘 `auditor_closure` — 앵커가 부르는 매크로·얇은 전달 함수가 가는 첫 실제
-  본문과 사슬을 `/* CLOSURE: … */` 블록으로 붙인다. 블록 모양은 `src/orchestrator/source_closure.py` docstring이 든다).
+  entry 줄이기, 그리고 매크로의 닫힘 `auditor_closure` — 앵커가 부르는 매크로가 가는 첫 함수 본문과 사슬, 불투명
+  매크로의 `#define` 원문을 `/* CLOSURE (…): … */` 블록으로 붙인다. 블록 모양은 `src/orchestrator/source_closure.py`
+  docstring이 든다).
   전부 기본 꺼짐이라 위 서술 그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
   `cli` run·doctor가 선다
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
