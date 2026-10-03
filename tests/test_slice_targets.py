@@ -1877,3 +1877,75 @@ def test_a_flood_of_same_named_writes_is_capped_per_name_and_listed_in_the_event
     assert source.count("| writes ->len [ambiguous]") == 4
     assert (event["stores"], event["stores_dropped"]) == (4, 6)
     assert json.loads(event["stores_dropped_rows"]) == [f"t.c:{n} len" for n in range(5, 11)]
+
+
+def _stores_trim_source(trim: int):  # noqa: ANN202
+    """200줄 entry 함수 `big`(100줄이 sink 호출 `memcpy(d, s, p->len)`)에서 `len` 필드의 쓰기가 같은
+    함수 안 세 곳(50 · 99 · 150줄)에 있다. `auditor_entry_trim`이 1이고 상한(단어 120)을 넘으면
+    머리(1-2줄) · 100줄 앞뒤 20줄(80-120) · 닫는 줄(200)만 남는다 — 99줄은 남고 50·150줄은
+    빠진다."""
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+    from src.schemas.stores import StoreSite
+
+    lines = ["int big(int n)", "{"] + [f"    step({i});" for i in range(3, 200)] + ["}"]
+    lines[49], lines[98], lines[149] = "    p->len = 7;", "    p->len = 3;", "    p->len = 9;"
+    lines[99] = "    memcpy(d, s, p->len);"
+    big = Location(file="big.c", symbol="big", line_start=1, line_end=200)
+    writes = [
+        StoreSite(file="big.c", line=n, func="big", name="len", field=True, lhs="p->len")
+        for n in (50, 99, 150)
+    ]
+
+    def stores_of(target):  # noqa: ANN001, ANN202
+        return writes if (target.name, target.field) == ("len", True) else []
+
+    ctx, events, _, _ = _unit(
+        {"big.c": lines}, [big], auditor_entry_trim=trim, auditor_stores=1,
+        auditor_source_tokens=120, stores_of=stores_of,
+    )
+    ref = SliceRef(
+        slice_id="s", location=big, given_end="sink",
+        entry=Location(file="big.c", symbol="memcpy", line_start=100),
+        lines=(("big.c", 100),), degraded=False,
+    )
+    return runner._auditor_source(ctx, ref, big, "cand"), events[-1]
+
+
+def test_stores_treats_only_the_lines_that_remain_after_an_entry_trim_as_visible() -> None:
+    """`auditor_entry_trim`이 뺀 줄의 쓰기는 `SOURCE`에 **안 보인다** — 「이미 보인다」로 세어
+    빠지면 그 쓰기가 어디에도 없다. 남은 토막 안의 99줄만 건너뛰고(`stores_in_source` 1) 뺀
+    50·150줄은 행이다."""
+    source, event = _stores_trim_source(1)
+
+    assert event["entry_omitted_lines"] > 0 and event["entry_over_cap"] is True
+    assert "    p->len = 3;" in source  # 99줄은 남아 있다
+    assert "    p->len = 7;" not in source and "    p->len = 9;" not in source
+    assert source.count("| writes ->len") == 2
+    assert "big.c:50 | p->len = 7; | writes ->len" in source
+    assert "big.c:150 | p->len = 9; | writes ->len" in source
+    assert (event["stores"], event["stores_in_source"], event["stores_dropped"]) == (2, 1, 0)
+
+
+def test_stores_without_an_entry_trim_sees_the_whole_function_as_visible() -> None:
+    """줄이지 않으면 함수 전체가 실린다 — 세 쓰기가 다 이미 보여 행이 없고 `stores_in_source`가
+    셋이다."""
+    source, event = _stores_trim_source(0)
+
+    assert "STORES" not in source and "    p->len = 7;" in source
+    assert (event["stores"], event["stores_in_source"]) == (0, 3)
+
+
+def test_trim_entry_reports_the_remaining_lines_as_merged_ranges() -> None:
+    """남은 줄은 **이어진 구간**으로 돌려준다 — 머리(1-2) · 슬라이스 줄 앞뒤(80-120) · 닫는 줄(200).
+    줄마다 구간 하나씩이면 같은 줄을 덮어도 `STORES`가 훑을 구간이 41개로 는다."""
+    from src.orchestrator import runner
+
+    lines = ["int big(int n)", "{"] + [f"    step({i});" for i in range(3, 200)] + ["}"]
+    big = Location(file="big.c", symbol="big", line_start=1, line_end=200)
+
+    text, omitted, visible = runner._trim_entry(big, "\n".join(lines), [100, 100])
+
+    assert [(v.line_start, v.line_end) for v in visible] == [(1, 2), (80, 120), (200, 200)]
+    assert omitted == 200 - (2 + 41 + 1) and text.count("lines omitted") == 2
+    assert {(v.file, v.symbol) for v in visible} == {("big.c", "big")}

@@ -1440,6 +1440,106 @@ def test_stores_of_marks_a_field_of_an_anonymous_struct_and_a_struct_declared_tw
     assert [s.ambiguous for s in _stores(tmp_path / "t", "w", field=True, doc=twice)] == [True]
 
 
+def _field_doc(declared: list[tuple[str, str]], writes: list[tuple[str, int]], name: str = "pos"):
+    """`name` 필드의 인덱스 — `declared`는 (구조체 이름, 선언 파일), `writes`는 (쓰기 파일, 줄)."""
+    return {
+        **_STORES_INDEX,
+        "fields": {
+            name: [
+                {"type": kind, "file": file, "line_start": 1, "line_end": 1}
+                for kind, file in declared
+            ]
+        },
+        "field_assigns": {
+            name: [
+                {"file": file, "line": line, "func": "f", "lhs": f"x->{name}", "rhs": "0",
+                 "op": "="}
+                for file, line in writes
+            ]
+        },
+    }
+
+
+def test_stores_of_flags_a_single_indexed_struct_that_lives_in_a_far_directory(
+    tmp_path: Path,
+) -> None:
+    """libzip `lib/zip_algorithm_zstd.c`의 `ctx->in.pos` — 진짜 구조체는 인덱스 밖 헤더(`zstd.h`)에
+    있고 인덱스에 든 `pos`는 **관계없는** ossfuzz의 구조체 하나뿐이다. 선언이 하나여도 그 파일이
+    찾는 줄(lib/)과 같은 디렉터리가 아니면 같은 필드라고 못 한다 — 쓰기가 어디에 있든 전부
+    모호하다."""
+    doc = _field_doc(
+        [("cursor", "ossfuzz/fuzz.c")],
+        [("lib/zip_algorithm_zstd.c", 246), ("ossfuzz/fuzz.c", 4)],
+    )
+
+    found = _stores(tmp_path, "pos", field=True, file="lib/zip_algorithm_zstd.c", doc=doc)
+
+    assert [(s.file, s.ambiguous) for s in found] == [
+        ("lib/zip_algorithm_zstd.c", True),
+        ("ossfuzz/fuzz.c", True),
+    ]
+
+
+def test_stores_of_does_not_flag_a_single_struct_declared_next_to_both_use_and_write(
+    tmp_path: Path,
+) -> None:
+    """구조체가 `lib/zipint.h` 하나이고 찾는 줄(`lib/zip_close.c`)과 쓰기(`lib/zip_open.c`)가 같은
+    디렉터리면 모호하다고 안 한다 — 같은 파일이어도 마찬가지다(같은 파일은 같은 디렉터리다)."""
+    doc = _field_doc(
+        [("zip", "lib/zipint.h")], [("lib/zip_open.c", 3), ("lib/zip_close.c", 9)], name="flags"
+    )
+
+    found = _stores(tmp_path, "flags", field=True, file="lib/zip_close.c", doc=doc)
+
+    assert [(s.file, s.ambiguous) for s in found] == [
+        ("lib/zip_close.c", False),
+        ("lib/zip_open.c", False),
+    ]
+
+
+def test_stores_of_flags_a_single_struct_declared_near_only_the_write_or_only_the_use(
+    tmp_path: Path,
+) -> None:
+    """「둘 다 볼 수 있다」는 **둘 다**다 — 헤더가 쓰기 쪽 디렉터리에만(또는 찾는 줄 쪽에만) 있으면
+    다른 쪽은 그 구조체를 본다는 보장이 없다. 같은 선언·같은 쓰기 줄이어도 찾는 줄이 어디냐로
+    갈린다."""
+    doc = _field_doc([("zip", "lib/zipint.h")], [("lib/zip_open.c", 3), ("src/other.c", 8)])
+
+    from_lib = _stores(tmp_path, "pos", field=True, file="lib/zip_close.c", doc=doc)
+    from_src = _stores(tmp_path / "s", "pos", field=True, file="src/use.c", doc=doc)
+
+    assert [(s.file, s.ambiguous) for s in from_lib] == [
+        ("lib/zip_open.c", False),  # 선언·쓰기·찾는 줄이 모두 lib/
+        ("src/other.c", True),  # 쓰기가 src/라 헤더를 본다는 보장이 없다
+    ]
+    assert [(s.file, s.ambiguous) for s in from_src] == [
+        ("lib/zip_open.c", True),  # 찾는 줄(src/)이 헤더(lib/)를 본다는 보장이 없다
+        ("src/other.c", True),
+    ]
+
+
+def test_stores_of_marks_nonproduct_writes_only_when_the_use_is_in_product_code(
+    tmp_path: Path,
+) -> None:
+    """`is_nonproduct_path`(디렉터리 성분만 본다 — `lib/test_util.c`는 제품이다)로 비제품 쓰기를
+    가른다. 찾는 줄이 제품 경로일 때만 단다 — 찾는 줄이 `examples/` 안이면 정의 조회의 강등과 같이
+    안 민다."""
+    writes = [
+        ("examples/zran.c", 110), ("fuzz/fuzz_x.c", 3), ("regress/r.c", 4),
+        ("lib/test_util.c", 5), ("inflate.c", 164),
+    ]
+    doc = _field_doc([("state", "inflate.c")], writes, name="len")
+
+    product_use = _stores(tmp_path, "len", field=True, file="deflate.c", doc=doc)
+    example_use = _stores(tmp_path / "e", "len", field=True, file="examples/zran.c", doc=doc)
+
+    assert {s.file: s.nonproduct for s in product_use} == {
+        "examples/zran.c": True, "fuzz/fuzz_x.c": True, "regress/r.c": True,
+        "lib/test_util.c": False, "inflate.c": False,
+    }
+    assert not any(s.nonproduct for s in example_use)
+
+
 def test_stores_of_returns_every_write_of_a_flood_and_marks_each_of_them(tmp_path: Path) -> None:
     """흔한 필드 이름(`size`) — 구조체 셋이 선언하고 쓰기가 열 곳이다. 인덱스는 **다 돌려주되 하나도
     모호하지 않다고 하지 않는다**(자르는 것은 쓰는 쪽 몫이다 — `source_stores`의 이름별 상한)."""

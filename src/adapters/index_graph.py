@@ -599,15 +599,21 @@ class GraphIndex:
 
         - **필드**(`target.field`) — `field_assigns[이름]`. 그 행에는 객체의 구조체 타입이 없다
           (열은 file·line·func·lhs·rhs·op) — (구조체, 필드)로 못 짚고 **이름으로만** 잇는다.
-          이름이 곧 키가 되는 것은 `fields`에서 그 필드를 선언한 구조체가 (타입, 파일) 하나로
-          정해질 때뿐이다. 그 밖(여러 구조체가 선언 · 인덱스 밖 헤더의 구조체 · 익명 구조체)은
-          **전부 모호하다** — 흔한 필드 이름(`len`·`next`)의 쓰기 수십 곳이 같은 필드라고 못 한다.
+          모호하지 않다고 하는 것은 **둘 다** 맞을 때뿐이다: ① `fields`에서 그 필드를 선언한
+          구조체가 (타입, 파일) 하나 ② 그 파일이 쓰기 파일과 찾는 줄의 파일 **둘 다와 같은
+          디렉터리**(같은 파일 포함) — include 정보가 인덱스에 없어 「둘 다 볼 수 있다」를 이것으로
+          근사한다. 그 밖(선언 0건 · 여럿 · 익명 · 다른 디렉터리)은 모호하다. ⚠ 맞아도 증명이
+          아니다: 진짜 구조체가 인덱스 밖 헤더(`zstd.h`)에 있는데 같은 디렉터리의 다른 구조체가
+          우연히 같은 필드 이름을 가지면 가려내지 못한다.
         - **변수** — 파일 스코프 선언이 있는 이름(`file_vars`)만 다룬다. 찾는 줄을 품는 함수의
           지역·파라미터면 `[]`다(그 쓰기는 같은 함수 안이라 이미 보인다). 쓰기는 `assigns`에서
           **지역이 가리지 않는** 함수의 것이고, 찾는 줄과 **다른 파일**의 쓰기는 모호하다 — 같은
           이름의 `static` 변수를 이름만으로 잇지 않는다(인덱스는 저장 클래스를 안 든다).
         - 쓰기 줄에 **같은 함수의** 할당기 호출(`_ALLOCATOR`)이 있으면 호출 이름과 인자(크기 식)를
-          붙인다 — 줄 단위 판정이라 `x = f(malloc(n))`처럼 안에 낀 호출도 붙는다.
+          붙인다 — **줄 단위** 판정이라 `x = f(malloc(n))`처럼 안에 낀 호출도 붙는다. 우변이 그
+          호출인지는 읽는 쪽이 원문 줄로 가린다(`source_stores`).
+        - 쓰기가 비제품 경로(`is_nonproduct_path`)에 있고 찾는 줄은 제품 경로면 `nonproduct`를
+          단다 — 읽는 쪽이 제품 쓰기를 앞세운다(정의 조회의 `demote_nonproduct`와 같은 규칙).
 
         구문만 본 결과다: `buf[i] = x`·`*p = x`·`i++`·지정 초기화·함수에 `&x`를 넘겨 쓰는 경우는
         쓰기로 안 센다(인덱서 docstring의 놓치는 것). 순서는 (파일, 줄, 이름)이다(결정론).
@@ -618,9 +624,13 @@ class GraphIndex:
         assigned, allocators = self._stores_index()
         if target.field:
             declared = {(row["type"], row["file"]) for row in tables["fields"].get(target.name, ())}
-            named = len(declared) == 1 and next(iter(declared))[0] is not None
+            home = next(iter(declared))[1] if len(declared) == 1 else None
+            if home is not None and next(iter(declared))[0] is None:
+                home = None  # 익명 구조체 — 이름이 없어 같은 구조체라고 못 한다
+            near_use = home is not None and _same_dir(home, target.file)
             rows = [
-                (row["file"], row["line"], row["func"], row["lhs"], row["op"], not named)
+                (row["file"], row["line"], row["func"], row["lhs"], row["op"],
+                 not (near_use and _same_dir(home, row["file"])))
                 for row in tables["field_assigns"].get(target.name, ())
             ]
         else:
@@ -633,6 +643,7 @@ class GraphIndex:
                 for file, func, line in assigned.get(target.name, ())
             ]
         sites = []
+        use_is_product = not is_nonproduct_path(target.file)
         for file, line, func, lhs, op, ambiguous in rows:
             call = next((c for c in allocators.get((file, line), ()) if c[0] == func), None)
             sites.append(
@@ -640,6 +651,7 @@ class GraphIndex:
                     file=file, line=line, func=func, name=target.name, field=target.field,
                     lhs=lhs, op=op, alloc=call[1] if call else None,
                     alloc_args=call[2] if call else (), ambiguous=ambiguous,
+                    nonproduct=use_is_product and is_nonproduct_path(file),
                 )
             )
         return sorted(sites, key=lambda site: (site.file, site.line, site.name))
@@ -926,6 +938,12 @@ def _v2_tables(document: dict) -> dict[str, Mapping[str, Any]]:
                             raise TypeError(f"index-v2의 {name}는 줄 번호 목록이다")
         tables[name] = _freeze(table)
     return tables
+
+
+def _same_dir(a: str, b: str) -> bool:
+    """두 파일이 같은 디렉터리인가(같은 파일은 같은 디렉터리다). include 정보가 인덱스에 없어
+    「서로 볼 수 있다」(`stores_of`의 필드 판정)를 이것으로 근사한다."""
+    return posixpath.dirname(a) == posixpath.dirname(b)
 
 
 def _is_line(value: Any) -> bool:

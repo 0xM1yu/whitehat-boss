@@ -1,16 +1,18 @@
 """Auditor `SOURCE`의 `STORES` 블록 (`src/orchestrator/source_stores.py`, 옵션 `auditor_stores`).
 
-검수자가 가장 자주 물은 것은 「이 길이·버퍼·필드는 **어디서** 정해지나」였다. 그 답(쓰기 지점)은
-인덱스(`field_assigns`·`assigns`·`calls`)에 이미 있는데 Auditor `SOURCE`가 안 썼다. 이 파일은 그
-조각 중 **순수한 쪽**을 고정한다 — 어느 이름을 찾고(슬라이스 줄에서), 찾은 행을 어떻게 고르고 (같은
-파일 먼저 · 모호 표시 · 상한) 어떻게 적는가(`file:line | 원문 줄 | 술어`). 인덱스 쪽(`stores_of`)은
-`tests/test_index_graph.py`가, 러너에 붙는 자리는 `tests/test_slice_targets.py`가 든다.
+검수에서 「이 길이·버퍼·필드는 **어디서** 정해지나」를 묻는 행이 있었다(근거와 크기는 모듈
+docstring). 그 답(쓰기 지점)은 인덱스(`field_assigns`·`assigns`·`calls`)에 이미 있는데 Auditor
+`SOURCE`가 안 썼다. 이 파일은 그 조각 중 **순수한 쪽**을 고정한다 — 어느 이름을 찾고(슬라이스
+줄에서), 찾은 행을 어떻게 고르고(같은 파일 먼저 · 제품 경로 먼저 · 모호 표시 · 상한) 어떻게
+적는가(`file:line | 원문 줄 | 술어`). 인덱스 쪽(`stores_of`)은 `tests/test_index_graph.py`가, 러너에
+붙는 자리는 `tests/test_slice_targets.py`가 든다.
 
-마지막 두 테스트는 **진짜 인덱서**가 쓴 index-v2를 `GraphIndex`로 읽어 이 모듈에 넣는다 — 표의 열을
+아래쪽 테스트는 **진짜 인덱서**가 쓴 index-v2를 `GraphIndex`로 읽어 이 모듈에 넣는다 — 표의 열을
 추측하지 않았다는 대조다(`tests/test_indexer.py`의 같은 이름 경계 테스트와 같은 생각이다).
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -123,9 +125,24 @@ def _run(
     return stores, asked
 
 
+_MORE = re.compile(r"/\* \.\.\. \+(\d+) more rows not shown \.\.\. \*/")
+
+
 def _rows(stores) -> list[str]:  # noqa: ANN001
+    """헤더와 끝의 `+N more` 줄을 뺀 데이터 행."""
     assert stores.text.startswith(HEADER + "\n"), stores.text
-    return stores.text.split("\n")[1:]
+    return [line for line in stores.text.split("\n")[1:] if not _MORE.fullmatch(line)]
+
+
+def _paths(stores) -> list[str]:  # noqa: ANN001
+    """데이터 행의 `file:line` 앞머리."""
+    return [row.split(" | ")[0] for row in _rows(stores)]
+
+
+def _more_line(stores) -> str | None:  # noqa: ANN001
+    """블록 끝의 `+N more rows not shown` 줄(없으면 `None`)."""
+    last = stores.text.split("\n")[-1] if stores.text else ""
+    return last if _MORE.fullmatch(last) else None
 
 
 def test_a_field_write_becomes_a_row_with_its_source_line_and_a_predicate() -> None:
@@ -273,6 +290,7 @@ def test_a_flood_of_same_named_writes_across_structs_is_capped_and_listed() -> N
     fields = stores.trace_fields()
     assert (fields["stores"], fields["stores_dropped"]) == (4, 6)
     assert json.loads(str(fields["stores_dropped_rows"])) == list(stores.dropped)
+    assert _more_line(stores) == source_stores._more(6)
 
 
 def test_the_same_name_seen_in_two_files_shares_one_cap() -> None:
@@ -469,13 +487,20 @@ def test_rows_the_block_cap_cuts_are_dropped_and_listed_in_the_trace_fields(
     """블록의 글자 상한. 못 실은 행은 개수가 아니라 `file:line 이름` 목록으로 trace에 남는다 —
     「0건」과 「잘렸다」가 갈린다."""
     monkeypatch.setattr(source_stores, "_PER_NAME", 50)
-    # 헤더 + 줄바꿈 + 첫 행(39자)만 들어가는 폭 — 둘째 행부터는 어느 것도 안 든다(61·47·35자).
-    monkeypatch.setattr(source_stores, "_STORES_CHARS", len(HEADER) + 45)
+    # 헤더 + 첫 행(39자) + 끝의 `+N more` 줄 자리만 들어가는 폭 — 둘째 행부터는 어느 것도 안 든다
+    # (61·47·35자). 못 실은 행이 생기면 그 줄이 붙으므로 자리를 미리 뺀다.
+    first = "a.c:12 | c->len = n * 2; | writes ->len"
+    monkeypatch.setattr(
+        source_stores, "_STORES_CHARS", len("\n".join([HEADER, first, source_stores._more(4)]))
+    )
     sites = [_site("a.c", n, func="grow", lhs="c->len") for n in (12, 13, 14, 16)]
 
     stores, _ = _run({("len", True): sites})
 
     assert stores.rows == 1
+    assert _rows(stores) == [first]
+    assert _more_line(stores) == source_stores._more(3)
+    assert len(stores.text) <= source_stores._STORES_CHARS
     assert stores.dropped == ("a.c:13 len", "a.c:14 len", "a.c:16 len")
     fields = stores.trace_fields()
     assert fields["stores"] == 1 and fields["stores_dropped"] == 3
@@ -556,6 +581,142 @@ def test_the_entry_line_is_scanned_even_when_the_slice_lists_no_lines() -> None:
 
     assert {t.name for t in asked} >= {"buf", "len", "src", "n"}
     assert stores.text == "" and stores.trace_fields()["stores_dropped_rows"] == "[]"
+
+
+# zlib에서 잰 모양 — 찾는 줄(deflate.c)의 필드 `len`에 같은 이름의 쓰기가 제품 파일(inflate.c)과
+# 예제(examples/zran.c) 둘에 있는데, 경로 순으로는 예제가 앞선다.
+_PRODUCT_FILES = {**_FILES, "examples/zran.c": ["z"] * 120, "inflate.c": ["i"] * 170}
+
+
+def _example_and_product(**kw) -> list[StoreSite]:  # noqa: ANN003
+    return [
+        _site("examples/zran.c", 110, func="main", lhs="s->len", nonproduct=True, **kw),
+        _site("inflate.c", 164, func="inflate", lhs="s->len", **kw),
+    ]
+
+
+def test_product_rows_come_before_example_rows_even_when_the_example_sorts_first() -> None:
+    """경로 순으로는 `examples/zran.c`가 `inflate.c`보다 앞이다 — 그래도 제품 쓰기가 먼저다."""
+    stores, _ = _run({("len", True): _example_and_product()}, files=_PRODUCT_FILES)
+
+    assert _paths(stores) == ["inflate.c:164", "examples/zran.c:110"]
+
+
+def test_an_example_row_does_not_push_a_product_row_out_of_the_name_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """이름마다 행 수 상한이 있어(여기선 1) 앞선 행만 남는다 — 예제 행이 앞서면 제품 행이 잘린다.
+    제품 행이 남고 예제 행은 **목록**으로 간다."""
+    monkeypatch.setattr(source_stores, "_PER_NAME", 1)
+
+    stores, _ = _run({("len", True): _example_and_product()}, files=_PRODUCT_FILES)
+
+    assert [row.split(" | ")[0] for row in _rows(stores)] == ["inflate.c:164"]
+    assert stores.dropped == ("examples/zran.c:110 len",)
+
+
+def test_a_same_file_row_still_comes_before_a_product_row_of_another_file() -> None:
+    """같은 파일 먼저가 제품 경로 먼저보다 앞선다 — 비제품 쓰기(`nonproduct`)여도 찾는 줄과 같은
+    파일이면 다른 파일의 제품 쓰기보다 앞에 온다(찾는 줄이 비제품 파일이면 어댑터는 `nonproduct`를
+    안 달지만, 이 순서가 그것과 무관하게 서 있어야 한다)."""
+    use = ["    use(s->len);" if n == 100 else "z" for n in range(1, 121)]
+    files = {"examples/zran.c": use, "inflate.c": ["i"] * 170}
+    sites = [
+        _site("inflate.c", 164, func="inflate", lhs="s->len"),
+        _site("examples/zran.c", 110, func="main", lhs="s->len", nonproduct=True),
+    ]
+
+    stores, _ = _run(
+        {("len", True): sites}, [("examples/zran.c", 100)], files=files,
+        entry=("examples/zran.c", 100), carried=(),
+    )
+
+    assert _paths(stores) == ["examples/zran.c:110", "inflate.c:164"]
+
+
+def test_the_block_ends_with_a_more_line_only_when_rows_were_dropped() -> None:
+    """못 실은 행이 없으면 줄이 안 붙는다. 있으면(개수 상한이든 크기 상한이든) 끝에 한 줄 — 모델이
+    행 목록을 「전부」로 읽지 않게."""
+    one, _ = _run({("len", True): [_site("a.c", 12, func="grow", lhs="c->len")]})
+
+    assert _more_line(one) is None and len(_rows(one)) == 1
+
+
+def test_the_more_line_takes_its_room_from_the_budget_so_the_block_never_overflows() -> None:
+    """못 실은 행이 생기면 붙는 `+N more` 줄의 자리를 미리 뺀다 — 행 하나가 줄 없이는 딱 들어가도
+    줄까지 넣으면 넘치는 몫에서는 그 행이 못 실리고, 몫이 그 줄만큼 늘면 실린다."""
+    sites = [
+        _site("a.c", 12, func="grow", lhs="c->len"),
+        _site("a.c", 13, func="grow", lhs="c->len"),  # 첫 행보다 길다
+    ]
+    first = "a.c:12 | c->len = n * 2; | writes ->len"
+    with_more = len("\n".join([HEADER, first, source_stores._more(1)]))
+
+    tight, _ = _run({("len", True): sites}, room=with_more - 1)
+    exact, _ = _run({("len", True): sites}, room=with_more)
+
+    assert tight.text == "" and tight.rows == 0
+    assert _rows(exact) == [first] and _more_line(exact) == source_stores._more(1)
+    assert len(exact.text) == with_more
+
+
+def test_a_direct_allocation_is_called_one_but_a_call_nested_on_the_line_is_not() -> None:
+    """할당기 호출은 인덱스가 **줄 단위**로 이은 것이다 — 문장의 우변이 그 호출일 때만
+    `allocates`다. `x = f(malloc(n))`·삼항·캐스트가 낀 모양은 가른다: 캐스트는 직접, 나머지는 「같은
+    줄에 호출이 있다」고만 쓴다."""
+    lines = [
+        "    c->buf = (char *)malloc(n);",
+        "    c->buf = wrap(malloc(n));",
+        "    c->buf = ok ? malloc(n) : NULL;",
+        "    if (c->buf == malloc(n)) c->buf = NULL;",
+    ]
+    files = {**_FILES, "m.c": lines}
+    alloc = {"alloc": "malloc", "alloc_args": ("n",), "lhs": "c->buf"}
+    sites = [_site("m.c", n, "buf", func="f", **alloc) for n in (1, 2, 3, 4)]
+
+    stores, _ = _run({("buf", True): sites}, [("a.c", 25), ("a.c", 22)], files=files)
+
+    predicates = [row.rsplit(" | ", 1)[1] for row in _rows(stores)]
+    assert predicates == [
+        "allocates ->buf (malloc: n)",
+        "writes ->buf; same line calls malloc(n)",
+        "writes ->buf; same line calls malloc(n)",
+        "writes ->buf; same line calls malloc(n)",
+    ]
+
+
+def test_the_allocation_check_reads_the_whole_statement_not_the_cut_row_text() -> None:
+    """행의 원문 줄은 `_LINE_CHARS`에서 잘리지만 직접 대입 판정은 자르기 전 문장으로 한다 — 긴
+    캐스트 뒤의 `malloc(`도 직접 대입이다."""
+    cast = "u" * (source_stores._LINE_CHARS + 40)
+    files = {**_FILES, "m.c": [f"    p = ({cast} *)malloc(n);"]}
+    site = _site("m.c", 1, "p", func="f", field=False, alloc="malloc", alloc_args=("n",))
+
+    stores, _ = _run({("p", False): [site]}, [("a.c", 25), ("m.c", 1)], files=files)
+
+    (row,) = _rows(stores)
+    assert row.split(" | ")[1].endswith("...")
+    assert row.endswith("| allocates p (malloc: n)")
+
+
+def test_only_the_ranges_that_remain_in_the_source_count_as_visible() -> None:
+    """줄여서 토막만 남은 함수(`auditor_entry_trim`)는 남은 범위만 「이미 보인다」다 — 12줄은 남은
+    토막 안이라 건너뛰고, 17줄은 뺀 구간이라 행이 된다. 범위 둘을 같이 줘도 각각 판정한다."""
+    sites = {
+        ("len", True): [
+            _site("a.c", 12, func="grow", lhs="c->len"),
+            _site("a.c", 17, func="grow", lhs="c->h.len"),
+        ]
+    }
+    pieces = (
+        Location(file="a.c", line_start=10, line_end=13),
+        Location(file="a.c", line_start=40, line_end=45),
+    )
+
+    stores, _ = _run(sites, carried=pieces)
+
+    assert [row.split(" | ")[0] for row in _rows(stores)] == ["a.c:17"]
+    assert stores.in_source == 1
 
 
 # --- 진짜 인덱서 → GraphIndex → 이 모듈 -------------------------------------------------------
@@ -684,6 +845,7 @@ def test_the_real_index_caps_a_flood_of_same_named_field_writes(tmp_path: Path) 
     ]
     assert stores.dropped == ("g.c:5 len", "g.c:9 len", "h.c:4 len", "h.c:5 len", "h.c:6 len")
     assert stores.rows + len(stores.dropped) == 9 > 8
+    assert _more_line(stores) == source_stores._more(5)
 
 
 def test_the_real_index_marks_a_same_named_static_in_another_file_as_ambiguous(
@@ -701,3 +863,75 @@ def test_the_real_index_marks_a_same_named_static_in_another_file_as_ambiguous(
         "a.c:14 | g_buf = malloc( n + 1); | allocates g_buf (malloc: n + 1) [ambiguous]"
     ]
     assert stores.in_source == 1
+
+
+# libzip에서 본 모양(`zip_algorithm_zstd.c`의 `ctx->in.pos`) — 진짜 구조체(`ZSTD_inBuffer`)는 인덱스
+# 밖 헤더(`zstd.h`)에 있고, 인덱스에 든 `pos`는 **관계없는** ossfuzz의 구조체 하나뿐이다.
+_FUZZ_C = """\
+struct cursor { int pos; };
+void fuzz_advance(struct cursor *c)
+{
+    c->pos = 0;
+}
+"""
+_ZSTD_C = """\
+void reset(Ctx *ctx)
+{
+    ctx->in.pos = 0;
+}
+void process(Ctx *ctx, char *d, char *s)
+{
+    memcpy(d, s, ctx->in.pos);
+}
+"""
+# 같은 디렉터리 안에서 닫히는 모양 — 구조체는 lib/zipint.h 하나, 쓰기(zip_open.c)와 찾는
+# 줄(zip_close.c)이 같은 lib/에 있다.
+_ZIPINT_H = "struct zip { int flags; };\n"
+_ZIP_OPEN_C = "void set(struct zip *z)\n{\n    z->flags = 1;\n}\n"
+_ZIP_CLOSE_C = "int use(struct zip *z, char *d, char *s)\n{\n    memcpy(d, s, z->flags);\n}\n"
+
+
+def _write_tree(root: Path, files: dict[str, str]) -> None:
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+
+
+def test_the_real_index_flags_a_single_indexed_struct_that_is_far_from_the_use(
+    tmp_path: Path,
+) -> None:
+    """인덱스에서 `pos`를 선언한 구조체가 하나(ossfuzz/fuzz.c)뿐이어도 그것이 쓰기·찾는 줄과 **같은
+    디렉터리가 아니면**(include 정보가 인덱스에 없다) 같은 필드라고 못 한다 — 두 쓰기가 다
+    `[ambiguous]`다. 예전 규칙(선언이 하나면 모호하지 않다)은 둘 다 달지 않았다."""
+    tree = {"ossfuzz/fuzz.c": _FUZZ_C, "lib/zip_algorithm_zstd.c": _ZSTD_C}
+    _write_tree(tmp_path, tree)
+    process = Location(file="lib/zip_algorithm_zstd.c", symbol="process", line_start=5, line_end=8)
+
+    stores = _real_block(
+        tmp_path, [("lib/zip_algorithm_zstd.c", 7)], [process],
+        entry=("lib/zip_algorithm_zstd.c", 7), sources=tuple(tree),
+    )
+
+    assert _rows(stores) == [
+        "lib/zip_algorithm_zstd.c:3 | ctx->in.pos = 0; | writes .pos [ambiguous]",
+        "ossfuzz/fuzz.c:4 | c->pos = 0; | writes ->pos [ambiguous]",
+    ]
+
+
+def test_the_real_index_does_not_flag_a_single_struct_declared_next_to_both_use_and_write(
+    tmp_path: Path,
+) -> None:
+    """구조체가 lib/zipint.h 하나이고 쓰기(lib/zip_open.c)와 찾는 줄(lib/zip_close.c)이 같은 lib/에
+    있으면 모호하다고 안 한다 — 위 경우와 짝이다(디렉터리 판정이 모든 것을 다는 것도, 아무것도 안
+    다는 것도 아니다)."""
+    tree = {
+        "lib/zipint.h": _ZIPINT_H, "lib/zip_open.c": _ZIP_OPEN_C, "lib/zip_close.c": _ZIP_CLOSE_C
+    }
+    _write_tree(tmp_path, tree)
+    use = Location(file="lib/zip_close.c", symbol="use", line_start=1, line_end=4)
+
+    stores = _real_block(
+        tmp_path, [("lib/zip_close.c", 3)], [use], entry=("lib/zip_close.c", 3), sources=tuple(tree)
+    )
+
+    assert _rows(stores) == ["lib/zip_open.c:3 | z->flags = 1; | writes ->flags"]
