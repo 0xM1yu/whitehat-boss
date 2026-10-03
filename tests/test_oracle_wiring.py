@@ -261,6 +261,144 @@ def test_oracle_is_built_from_the_bundle_and_env_key(
     assert oracle.api_key == "secret-key"
 
 
+# --- query_task_id (마스킹 서버) ---
+
+
+def test_task_oracle_uses_query_task_id_for_the_db_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """마스킹 서버에선 제출은 masked, 조회는 unmask된 id로 가야 한다 — DB가 unmask로 저장한다."""
+    from src.adapters import cybergym_oracle as oc
+
+    calls: dict[str, str] = {}
+
+    def _submit_vul(server: str, task_id: str, *a: object, **k: object) -> object:
+        calls["submit_vul"] = task_id
+        return oc.SubmitResult(task_id=task_id, response_exit_code=0, output="", poc_id="p1")
+
+    def _submit_fix(server: str, task_id: str, *a: object, **k: object) -> object:
+        calls["submit_fix"] = task_id
+        return oc.SubmitResult(task_id=task_id, response_exit_code=0, output="", poc_id="p1")
+
+    def _query_verdict(server: str, task_id: str, *a: object, **k: object) -> object:
+        calls["query"] = task_id
+        return oc.OracleVerdict(
+            task_id=task_id,
+            agent_id="a",
+            poc_id="p1",
+            poc_hash="h",
+            vul_exit_code=0,
+            fix_exit_code=0,
+            created_at=None,
+            updated_at=None,
+        )
+
+    monkeypatch.setattr(oc, "submit_vul", _submit_vul)
+    monkeypatch.setattr(oc, "submit_fix", _submit_fix)
+    monkeypatch.setattr(oc, "query_verdict", _query_verdict)
+
+    oracle = oc.TaskOracle(
+        server="http://x",
+        task_id="9c73e92e52b7",
+        agent_id="a",
+        api_key="k",
+        query_task_id="arvo:1065",
+    )
+    oracle.submit(b"xx")
+
+    assert calls["submit_vul"] == "9c73e92e52b7"
+    assert calls["submit_fix"] == "9c73e92e52b7"
+    assert calls["query"] == "arvo:1065", "조회에 masked id를 썼다 — 마스킹 서버에서 404로 떨어진다"
+
+
+def test_task_oracle_falls_back_to_submit_task_id_when_no_query_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`query_task_id`가 None이면 마스크 없이 띄운 서버다 — 세 호출에 같은 id를 쓴다."""
+    from src.adapters import cybergym_oracle as oc
+
+    seen: list[str] = []
+    def _mk_submit(s: str, t: str, *a: object, **k: object) -> object:
+        seen.append(t)
+        return oc.SubmitResult(task_id=t, response_exit_code=0, output="", poc_id="p")
+
+    def _mk_query(s: str, t: str, *a: object, **k: object) -> object:
+        seen.append(t)
+        return oc.OracleVerdict(
+            task_id=t,
+            agent_id="a",
+            poc_id="p",
+            poc_hash="h",
+            vul_exit_code=0,
+            fix_exit_code=0,
+            created_at=None,
+            updated_at=None,
+        )
+
+    monkeypatch.setattr(oc, "submit_vul", _mk_submit)
+    monkeypatch.setattr(oc, "submit_fix", _mk_submit)
+    monkeypatch.setattr(oc, "query_verdict", _mk_query)
+
+    oc.TaskOracle(server="s", task_id="arvo:1065", agent_id="a", api_key="k").submit(b"x")
+
+    assert seen == ["arvo:1065", "arvo:1065", "arvo:1065"]
+
+
+# --- CLI mask-map ---
+
+
+def test_mask_map_unmasks_the_task_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--mask-map`이 있으면 CLI가 TaskOracle에 unmask된 query_task_id를 넘긴다."""
+    import json as _json
+
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "submit.sh").write_text(_SUBMIT, encoding="utf-8")
+    mask = tmp_path / "mask.json"
+    _json.dump({"arvo:1065": "9c73e92e52b7"}, mask.open("w", encoding="utf-8"))
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+
+    args = argparse.Namespace(oracle_submit=True, task_dir=task, mask_map=mask)
+    oracle = cli._oracle_for(args)
+
+    assert oracle is not cli._ORACLE_ERROR and oracle is not None
+    assert oracle.task_id == "9c73e92e52b7"
+    assert oracle.query_task_id == "arvo:1065"
+
+
+def test_mask_map_missing_entry_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json as _json
+
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "submit.sh").write_text(_SUBMIT, encoding="utf-8")
+    mask = tmp_path / "mask.json"
+    _json.dump({"arvo:9999": "deadbeef0000"}, mask.open("w", encoding="utf-8"))
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+
+    args = argparse.Namespace(oracle_submit=True, task_dir=task, mask_map=mask)
+
+    assert cli._oracle_for(args) is cli._ORACLE_ERROR
+
+
+def test_no_mask_map_leaves_query_task_id_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--mask-map`을 안 주면 마스크 없이 띄운 서버라는 뜻 — `query_task_id`가 `None`이다."""
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "submit.sh").write_text(_SUBMIT, encoding="utf-8")
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+
+    args = argparse.Namespace(oracle_submit=True, task_dir=task, mask_map=None)
+    oracle = cli._oracle_for(args)
+
+    assert oracle is not cli._ORACLE_ERROR and oracle is not None
+    assert oracle.query_task_id is None
+
+
 # --- 캐시 판별 (#385) ---
 
 
