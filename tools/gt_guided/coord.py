@@ -2,13 +2,20 @@
 
 - Keeps each box's inbox/ filled (>= 2 x its worker count) from one global job list, biggest
   repos first, so no box idles (dynamic: a fast box simply drains more).
-- Every loop, notes finished samples (out/<sid>/DONE). Whenever >= BATCH new ones are finished
-  across boxes, pulls them (per-box tar of just those dirs, sha256-checked), drops the pulled dirs
-  on the box, and writes Downloads/ft_gt_auditor_batchNNN.tgz.
+- Every loop, notes finished samples (out/<sid>/DONE) and, once PULL_MIN are waiting, pulls them
+  (per-box tar of just those dirs, sha256-checked), drops the pulled dirs on the box and stages one
+  <sid>.tgz per sample. Batches are packed by SIZE, not count: samples go into a batch while it
+  stays under PART_MB, the one that would overflow starts the next batch. A full batch becomes
+  Downloads/ft_gt_auditor_batchNNN.tar (one <sid>.tgz per sample inside) and goes to a Discord
+  webhook with the file attached; a lone sample over the limit is split by notify().
+  The webhook URL comes from DISCORD_WEBHOOK_URL or the first line of ~/.ft_gt_discord or
+  ~/Documents/.ft_gt_discord (written by the user, outside the repository) and is never logged.
+  A failed post is logged and never stops the run.
 - A job running longer than STALE_S, or on a box unreachable for UNREACH_S, goes back to the queue.
 - When every job is finished and pulled, destroys the boxes (only after the last pull verified).
 State: state.json next to this file (resumable).
 Usage: py -3.11 coord.py <jobs.json> <boxes.json>
+       py -3.11 coord.py --test-notify [file]   (one message, optional attachment, then exit)
   boxes.json = [{"id": 123, "host": "1.2.3.4", "port": 22, "workers": 16}, ...]
 """
 
@@ -20,14 +27,97 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
+
+# The team server's upload limit is 20 MB (user, 2026-10-03). A larger file goes up in PART_MB
+# pieces, one message each, with the command to join them in the first message.
+DISCORD_MAX_MB, PART_MB = 20, 19
+
+
+def _webhook() -> str | None:
+    url = os.environ.get("DISCORD_WEBHOOK_URL")
+    home = Path(os.path.expanduser("~"))
+    for f in (home / ".ft_gt_discord", home / "Documents" / ".ft_gt_discord"):
+        if not url and f.is_file():
+            words = f.read_text(encoding="utf-8").split()
+            url = words[0] if words else None
+    if url and url.startswith("https://") and "/api/webhooks/" in url:
+        return url
+    return None
+
+
+def _form(boundary: str, text: str, name: str | None, blob: bytes | None) -> bytes:
+    head = f'--{boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\n'
+    head += "Content-Type: application/json\r\n\r\n"
+    body = head.encode() + json.dumps({"content": text[:1900]}).encode() + b"\r\n"
+    if blob is not None:
+        part = f'--{boundary}\r\nContent-Disposition: form-data; name="files[0]"; '
+        part += f'filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n'
+        body += part.encode() + blob + b"\r\n"
+    return body + f"--{boundary}--\r\n".encode()
+
+
+def _post(url: str, text: str, name: str | None = None, blob: bytes | None = None) -> str:
+    boundary = uuid.uuid4().hex
+    data = _form(boundary, text, name, blob)
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "User-Agent": "ft-gt-coord",
+    }
+    for _ in range(5):
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=300):
+                return "ok"
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                time.sleep(float(exc.headers.get("Retry-After", "5")))
+                continue
+            return f"HTTP {exc.code}"
+        except OSError as exc:
+            return type(exc).__name__
+    return "rate limited"
+
+
+def notify(text: str, attachment: Path | None = None) -> str:
+    url = _webhook()
+    if url is None:
+        return "notify skipped (no Discord webhook URL)"
+    if attachment is None:
+        return f"notify {_post(url, text)}"
+    blob = attachment.read_bytes()
+    if len(blob) <= DISCORD_MAX_MB * 1048576:
+        return f"notify {_post(url, text, attachment.name, blob)} (with file)"
+    step = PART_MB * 1048576
+    pieces = [blob[i : i + step] for i in range(0, len(blob), step)]
+    names = [f"{attachment.name}.part{i + 1:02d}" for i in range(len(pieces))]
+    join = (
+        f"\n파일 {len(blob) // 1048576} MB → 조각 {len(pieces)}개. 받은 뒤 합치기:\n"
+        f"Windows `copy /b {'+'.join(names)} {attachment.name}`\n"
+        f"Linux·Mac `cat {attachment.name}.part* > {attachment.name}`"
+    )
+    results = [_post(url, text + join)]
+    for i, (name, piece) in enumerate(zip(names, pieces, strict=True), 1):
+        results.append(_post(url, f"{attachment.name} 조각 {i}/{len(pieces)}", name, piece))
+    bad = [r for r in results if r != "ok"]
+    return f"notify {len(pieces)} parts" + (f" — failed {bad}" if bad else " ok")
+
+
+if len(sys.argv) > 1 and sys.argv[1] == "--test-notify":
+    test_file = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+    print(notify("[FT GT] 테스트 — gt_guided coord.py 디스코드 알림 설정 확인", test_file))
+    raise SystemExit(0)
 
 HERE = Path(__file__).resolve().parent
 JOBS = json.load(open(sys.argv[1], encoding="utf-8"))
 BOXES = json.load(open(sys.argv[2], encoding="utf-8"))
 STATE = HERE / "state.json"
 DL = Path(os.path.expanduser("~")) / "Downloads"
-BATCH, STALE_S, UNREACH_S, LOOP_S = 100, 3 * 3600, 1800, 45
+STAGE = DL / "ft_gt_tmp"  # one <sid>.tgz per pulled sample, waiting to be packed into a batch
+PULL_MIN, STALE_S, UNREACH_S, LOOP_S = 20, 3 * 3600, 1800, 45
 SSH = [
     "ssh",
     "-o",
@@ -137,15 +227,68 @@ def pull(box, sids, dest_dir):
     return None
 
 
-def write_batch(parts):
+def stage(pulled_tgz):
+    """Split one pulled tar (several samples) into STAGE/<sid>.tgz, one per sample."""
+    with tempfile.TemporaryDirectory() as t, tarfile.open(pulled_tgz, "r:gz") as tf:
+        tf.extractall(t, filter="data")
+        for d in sorted(Path(t).iterdir()):
+            if d.is_dir():
+                with tarfile.open(STAGE / f"{d.name}.tgz", "w:gz") as out:
+                    out.add(d, arcname=d.name)
+    pulled_tgz.unlink()
+
+
+def sample_stats(tgzs):
+    n = gt = err = 0
+    for p in tgzs:
+        with tarfile.open(p, "r:gz") as tf:
+            for m in tf.getmembers():
+                if m.name.endswith("/build.json"):
+                    b = json.load(tf.extractfile(m))
+                    n += 1
+                    gt += (b.get("gt_in_source") or 0) > 0
+                    err += bool(b.get("error"))
+    return n, gt, err
+
+
+def flush(final: bool):
+    """Pack staged samples into batches no larger than PART_MB: add samples while they fit, the
+    one that would overflow starts the next batch. A batch is written only when it is full (the
+    next sample does not fit) or at the end; a lone sample over the limit goes out by itself and
+    notify() splits it."""
+    limit = PART_MB * 1048576
+    staged = sorted(STAGE.glob("*.tgz"))
+    group, size = [], 0
+    for p in staged:
+        s = p.stat().st_size + 1024  # tar header + padding
+        if group and size + s > limit:
+            write_batch(group)
+            group, size = [], 0
+        group.append(p)
+        size += s
+    if group and final:
+        write_batch(group)
+
+
+def write_batch(tgzs):
     st["batches"] += 1
-    out = DL / f"ft_gt_auditor_batch{st['batches']:03d}.tgz"
+    n, gt, err = sample_stats(tgzs)
+    out = DL / f"ft_gt_auditor_batch{st['batches']:03d}.tar"
     with tarfile.open(out, "w") as tf:
-        for p in parts:
+        for p in tgzs:
             tf.add(p, arcname=p.name)
-    for p in parts:
+    for p in tgzs:
         p.unlink()
-    log(f"batch {st['batches']:03d} -> {out} ({out.stat().st_size // 1048576} MB)")
+    st["sent"] = st.get("sent", 0) + n
+    mb = out.stat().st_size / 1048576
+    log(f"batch {st['batches']:03d} -> {out} ({mb:.1f} MB, {n} samples)")
+    note = notify(
+        f"**[FT GT] batch {st['batches']:03d}** — 표본 {n}개 ({mb:.1f} MB) · "
+        f"Auditor 입력에 GT 보임 {gt}개 · 오류 {err}개 · 누적 {st['sent']:,} / {len(JOBS):,}",
+        out,
+    )
+    log(f"batch {st['batches']:03d}: {note}")
+    save()
 
 
 log(f"start: jobs {len(JOBS)} boxes {len(BOXES)} pending {len(st['pending'])}")
@@ -193,33 +336,31 @@ while True:
                     st["assigned"][s] = {"box": key, "t": now}
             else:
                 st["pending"] = take + st["pending"]
-    unpulled = [s for s in st["finished"] if s not in st["pulled"]]
     all_done = not st["pending"] and not st["assigned"]
-    if len(unpulled) >= BATCH or (all_done and unpulled):
-        parts, ok = [], True
-        tmpdir = DL / "ft_gt_tmp"
-        tmpdir.mkdir(exist_ok=True)
+    pulled_set = set(st["pulled"])
+    unpulled = [s for s in st["finished"] if s not in pulled_set]
+    if len(unpulled) >= PULL_MIN or (all_done and unpulled):
+        STAGE.mkdir(exist_ok=True)
         for box in BOXES:
             mine = [s for s in unpulled if st["finished"][s] == str(box["id"])]
             for i in range(0, len(mine), 200):
-                got = pull(box, mine[i : i + 200], tmpdir)
+                got = pull(box, mine[i : i + 200], STAGE)
                 if got is None:
-                    ok = False
-                    log(f"pull failed on box {box['id']}")
-                else:
-                    parts.append(got)
-                    st["pulled"] += mine[i : i + 200]
-        if parts:
-            write_batch(parts)
-        save()
-    total = len(JOBS)
+                    log(f"pull failed on box {box['id']} -> retry next loop")
+                    continue
+                stage(got)
+                st["pulled"] += mine[i : i + 200]
+                save()
+    everything_pulled = all_done and len(st["pulled"]) == len(st["finished"])
+    if STAGE.exists():
+        flush(final=everything_pulled)
     log(
         f"pending {len(st['pending'])} assigned {len(st['assigned'])} "
-        f"finished {len(st['finished'])}/{total} "
-        f"pulled {len(st['pulled'])} batches {st['batches']}"
+        f"finished {len(st['finished'])}/{len(JOBS)} "
+        f"pulled {len(st['pulled'])} sent {st.get('sent', 0)} batches {st['batches']}"
     )
     save()
-    if all_done and len(st["pulled"]) == len(st["finished"]):
+    if everything_pulled and not (STAGE.exists() and any(STAGE.glob("*.tgz"))):
         log("all finished and pulled -> destroying boxes")
         for box in BOXES:
             r = subprocess.run(
