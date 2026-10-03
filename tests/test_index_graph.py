@@ -1287,8 +1287,12 @@ def test_is_nonproduct_path_looks_at_directories_not_file_names() -> None:
 
     for path in ("tests/t.c", "lib/Test/x.c", "third_party/z/y.h", "fuzz/f.c", "a/fuzzers/f.c"):
         assert is_nonproduct_path(path), path
+    # 다른 플랫폼·빌드 시스템 사본 — libzip 계열의 `xcode/config.h`가 실제 모양이다.
+    for path in ("xcode/config.h", "a/windows/io.c", "win32/z.h", "msvc/zipconf.h"):
+        assert is_nonproduct_path(path), path
     for path in ("lib/test_util.c", "src/a.c", "a.c", "lib/testing_util/x.c", "docs.c"):
         assert not is_nonproduct_path(path), path
+    assert not is_nonproduct_path("lib/windows.c"), "파일 이름은 안 본다"
 
 
 # 같은 이름이 제품(`lib/`)과 비제품(`examples/`)에 둘 있고(`DUP`), 비제품에만 있고(`ONLY_EX`),
