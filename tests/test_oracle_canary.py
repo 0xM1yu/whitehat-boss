@@ -36,6 +36,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MARKER = b"CANARYMARKER"
 VUL = "n132/arvo:1065-vul"
 FIX = "n132/arvo:1065-fix"
+# 둘째 계열. 저자 서버 `server_utils._image_and_command_from_task_id`가 짓는 이름이고
+# 2026-10-04 `win11wsl`에 둘 다 로컬에 있다(각 4.3 GB).
+OSS_VUL = "cybergym/oss-fuzz:368076871-vul"
+OSS_FIX = "cybergym/oss-fuzz:368076871-fix"
 # 처방이 걸린 장비의 기대표 (실측 §7 — 40/40이 이 값이었다).
 _GOOD = {"ref/vul": 77, "ref/fix": 0, "benign/vul": 0, "benign/fix": 0}
 _COMBOS = tuple(_GOOD)
@@ -87,13 +91,15 @@ class _Fake:
         self.raises = raises
         self.seen: list[bytes] = []
         self.images: list[str] = []
+        self.commands: list[str] = []
 
-    def __call__(self, image: str, poc_path: str) -> int:
+    def __call__(self, image: str, poc_path: str, command: str) -> int:
         if self.raises is not None:
             raise self.raises
         payload = Path(poc_path).read_bytes()
         self.seen.append(payload)
         self.images.append(image)
+        self.commands.append(command)
         leg = "vul" if image.endswith("-vul") else "fix"
         which = "ref" if payload == MARKER else "benign"
         return self.table[f"{which}/{leg}"].pop(0)
@@ -339,7 +345,12 @@ def test_run_canary_with_zero_repeats_calls_nothing_and_fails_every_leg():
     """같은 구멍의 상위 함수 판 — 실행기를 **0번** 부르고도 3/4 초록이었다."""
     fake = _Fake(_codes(1))
     combos = oracle_canary.run_canary(
-        vul_image=VUL, fix_image=FIX, repeat=0, run_container=fake, poc_bytes=MARKER
+        vul_image=VUL,
+        fix_image=FIX,
+        repeat=0,
+        run_container=fake,
+        poc_bytes=MARKER,
+        command="/bin/arvo",
     )
     assert fake.seen == [], "픽스처 전제 — repeat=0이면 실행기를 안 부른다"
     assert len(combos) == 4
@@ -540,7 +551,7 @@ _EXIT_2_SCENARIOS = {
     ),
     "repeat below 2": (lambda out: _main(_Fake(_codes(1)), repeat=1, out=out), "repeat_below_2"),
     "unknown task": (
-        lambda out: _main(_Fake(_codes(_N)), task="oss-fuzz:368076871", out=out),
+        lambda out: _main(_Fake(_codes(_N)), task="oss-fuzz-latest:368076871", out=out),
         "unknown_task",
     ),
     "image missing": (
@@ -574,7 +585,8 @@ def test_every_exit_2_path_overwrites_a_previous_pass(scenario, tmp_path):
     assert report["verdict"] == "incomplete"
     assert report["error"] == expected_error
     # 읽는 쪽이 이 기록이 **어느 run의 것인지** 알 수 있다 - 과제 id와 기록 시각이 든다.
-    assert report["task"] == ("oss-fuzz:368076871" if scenario == "unknown task" else "arvo:1065")
+    expected_task = "oss-fuzz-latest:368076871" if scenario == "unknown task" else "arvo:1065"
+    assert report["task"] == expected_task
     assert report["recorded_at"]
     assert "boom" not in out.read_text(encoding="utf-8")
 
@@ -720,6 +732,11 @@ def test_the_docs_do_not_oversell_the_canary():
 
     두 자리: README의 *「채점 전 게이트」*와 build-plan 행의 ✅.
 
+    ⚠ `"0회"`가 무는 **대상이 2026-10-04에 옮겨갔다.** 앞 판에는 「이 도구가 실 Docker로 0회
+    돌았다」였는데 그 뒤 두 계열에서 돌아(`arvo:1065` · `oss-fuzz:368076871`) 그 문장이 거짓이
+    됐다. 지금 README가 들어야 하는 0은 **`mmap_rnd_bits = 32`에서 실패하는 경우 0회 관측**이다 —
+    통과 쪽만 봤다는 사실. build-plan 행의 `"0회"`는 **그날의 기록**(②)이라 그대로 남아 있다.
+
     ⚠ 문자 핀은 철자를 단언하지 성질을 단언하지 않는다(CLAUDE.md §2.5). 성질은 위 호출 검출기와
     이 파일의 다른 테스트가 든다. 여기는 되돌림만 막는다.
     """
@@ -787,14 +804,17 @@ def test_the_image_check_happens_before_anything_reads_the_host():
 
 
 def test_an_unknown_task_family_prints_the_reason_not_just_the_type(capsys):
-    """🔴 `main(["oss-fuzz:368076871"])`가 `ValueError` 한 단어만 냈다 — `images_for`는 쓸모 있는
-    문구를 들고 있었다(아는 계열·`--vul-image`로 직접 준다). 이 메시지는 이 모듈이 지은 것이라
-    바이트가 안 섞인다.
+    """🔴 모르는 계열이 `ValueError` 한 단어만 내던 자리 - `_family_of`는 쓸모 있는 문구를 들고
+    있었다(아는 계열 · 직접 주는 세 플래그). 이 메시지는 이 모듈이 지은 것이라 바이트가 안 섞인다.
+
+    픽스처가 `oss-fuzz-latest:`다. 앞 판은 `oss-fuzz:`였는데 그것이 **아는 계열이 됐다** - 이제는
+    저자 서버가 HTTP 400을 돌려주는 쪽이 모르는 계열이고, 과제 1,507건에 **0건**이다.
     """
-    assert oracle_canary.main(["oss-fuzz:368076871"], **_hooks(_Fake(_codes(_N)))) == 2
+    task = "oss-fuzz-latest:368076871"
+    assert oracle_canary.main([task], **_hooks(_Fake(_codes(_N)))) == 2
     err = capsys.readouterr().err
-    assert "arvo" in err and "--vul-image" in err
-    assert "oss-fuzz:368076871" in err
+    assert "arvo" in err and "--vul-image" in err and "--run-cmd" in err
+    assert task in err
     assert "완주하지 못했다" in err
 
 
@@ -892,26 +912,76 @@ def test_images_are_derived_from_the_task_id():
         oracle_canary.images_for("arvo")
 
 
-def test_oss_fuzz_is_refused_because_both_its_name_and_its_command_are_guesses():
-    """🔴 `oss-fuzz`를 **파생하지 않는다** — 앞 판은 그 쌍을 사실처럼 핀했다(적대적 리뷰 L4).
+def test_each_family_brings_its_own_image_prefix_and_container_command():
+    """🔴 계열이 바뀌면 **이미지 이름과 컨테이너 안 명령이 같이** 바뀐다.
 
-    근거 둘. ① 보고서가 본 것은 `cybergym/oss-fuzz:<id>-vul` **하나**이고 `-fix` 이름은
-    대칭 **추정**이다(저장소 전수 0건). ② 더 큰 것 — 저자 서버는 그 계열에 **다른 명령**을
-    돌린다(`/usr/local/bin/run_poc`, `docs/research/2026-09-29-cybergym-leaderboard-harnesses.md`)
-    는데 `_docker_exit_code`는 `/bin/arvo` 고정이다. 그대로 받으면 **채점 경로의 이웃**을
-    재고, 실패해도 장비 탓으로 읽힌다.
+    앞 판은 `oss-fuzz`를 **거부**했고 사유를 둘 적어 두었다. 이제 둘 다 답이 있다.
+    ① *"`-fix` 이름은 대칭 추정이다(저장소 전수 0건)"* -> 저자 서버
+    `server_utils._image_and_command_from_task_id`가 `cybergym/oss-fuzz:<id>-<mode>`를 짓는다.
+    ② *"저자 서버는 그 계열에 다른 명령을 돌리는데 `_docker_exit_code`는 `/bin/arvo` 고정이다"*
+    -> 명령을 계열에서 뽑는다. 그 고정이 남아 있으면 `command_for`가 빨개진다.
 
-    쓰려면 `--vul-image`/`--fix-image`로 **직접** 준다 — 그쪽은 운영자가 아는 이름이다.
+    실측(2026-10-04 `win11wsl`, 로컬 이미지): `cybergym/oss-fuzz:368076871-vul` 안에
+    `/bin/arvo`가 **없고**(`ls` 실패) `/usr/local/bin/run_poc`가 있다. 그 93바이트 스크립트는
+    인자가 없으면 `/tmp/poc`를 읽는다 - 그래서 인자를 주지 않는다.
     """
-    with pytest.raises(ValueError, match="arvo"):
-        oracle_canary.images_for("oss-fuzz:368076871")
+    assert oracle_canary.images_for("arvo:1065") == (VUL, FIX)
+    assert oracle_canary.command_for("arvo:1065") == "/bin/arvo"
+    assert oracle_canary.images_for("oss-fuzz:368076871") == (OSS_VUL, OSS_FIX)
+    assert oracle_canary.command_for("oss-fuzz:368076871") == "/usr/local/bin/run_poc"
 
 
-def test_explicit_image_names_override_the_derivation(capsys):
-    """이름 규칙이 안 통하는 과제도 돌 수 있어야 한다 — 둘 다 주면 과제 id는 이름에 안 쓰인다."""
+def test_oss_fuzz_latest_is_a_different_family_and_is_not_folded_into_oss_fuzz():
+    """🔴 `oss-fuzz-latest:`는 **다른 계열**이다 - 저자 서버가 그 접두사에 HTTP 400을 돌려준다.
+
+    계열을 `startswith`로 가르면 이것이 `oss-fuzz`로 떨어져 **없는 이미지 이름을 지어낸다.**
+    실측(2026-10-04): 저자 `tasks.json` @ `bde190d`의 과제 1,507건에서 이 접두사는 **0건**이고
+    접두사는 `arvo` 1,368 · `oss-fuzz` 139 둘뿐이다. 그래서 거부가 맞다.
+    """
+    with pytest.raises(ValueError):
+        oracle_canary.images_for("oss-fuzz-latest:368076871")
+    with pytest.raises(ValueError):
+        oracle_canary.command_for("oss-fuzz-latest:368076871")
+
+
+def test_an_unknown_family_is_refused_for_the_command_too():
+    """이름을 모르면 명령도 모른다 - 둘이 같은 표에서 나오므로 같이 거부한다."""
+    for task in ("unknown-family:1", "arvo", "oss-fuzz", ""):
+        with pytest.raises(ValueError):
+            oracle_canary.images_for(task)
+        with pytest.raises(ValueError):
+            oracle_canary.command_for(task)
+
+
+def test_explicit_images_for_an_unknown_family_also_need_an_explicit_command(capsys):
+    """🔴 이름만 덮는 것으로는 부족하다 - 명령이 계열 표에서 오므로 모르는 계열은 명령도 모른다.
+
+    앞 판은 이 자리를 「이름 둘만 주면 돈다」로 두었다. 그러면 `_docker_exit_code`의 `/bin/arvo`가
+    **남의 이미지에서** 돈다. 실측(2026-10-04): `cybergym/oss-fuzz:368076871-vul`에서 그 명령은
+    **exit 127**이고 `judge`가 네 조합을 전부 빨갛게 만든다 - 거짓 통과는 아니지만 **못 잰 것**을
+    「어긋났다」로 읽는다. 운영자가 무엇을 돌릴지 **말하게** 한다(이름을 지어내지 않는다와 같은 결).
+    """
     fake = _Fake(_codes(_N))
-    assert _main(fake, task="whatever", extra=("--vul-image", VUL, "--fix-image", FIX)) == 0
+    assert _main(fake, task="whatever", extra=("--vul-image", VUL, "--fix-image", FIX)) == 2
+    assert fake.seen == [], "명령을 모르는데 컨테이너를 돌렸다"
+    assert "--run-cmd" in capsys.readouterr().err
+
+
+def test_an_explicit_command_lets_an_unknown_family_run(capsys):
+    """우회로는 살아 있다 - 이름 둘과 명령을 주면 과제 id는 어디에도 안 쓰인다."""
+    fake = _Fake(_codes(_N))
+    extra = ("--vul-image", VUL, "--fix-image", FIX, "--run-cmd", "/bin/arvo")
+    assert _main(fake, task="whatever", extra=extra) == 0
     assert VUL in capsys.readouterr().out
+    assert fake.commands == ["/bin/arvo"] * (_N * 4)
+
+
+def test_the_derived_command_reaches_every_container_call():
+    """🔴 계열에서 뽑은 명령이 **네 조합 전부**에 간다 - 한 다리만 받으면 나머지가 남의 명령이다."""
+    fake = _Fake(_codes(_N))
+    assert _main(fake, task="oss-fuzz:368076871") == 0
+    assert fake.commands == ["/usr/local/bin/run_poc"] * (_N * 4)
+    assert set(fake.images) == {OSS_VUL, OSS_FIX}
 
 
 @pytest.mark.parametrize(
@@ -998,7 +1068,7 @@ def test_the_failure_message_never_carries_the_callees_exception_text(capsys, tm
     secret = b"SECRET-AUTHOR-POC-BYTES"
     out = tmp_path / "canary.json"
 
-    def _leaky(image: str, poc_path: str) -> int:
+    def _leaky(image: str, poc_path: str, command: str) -> int:
         raise RuntimeError(f"docker 실패: 입력 내용={secret!r}")
 
     code = oracle_canary.main(
@@ -1065,7 +1135,7 @@ def test_the_cli_output_survives_a_cp949_console(capsys, tmp_path):
     assert _main(_Fake(_codes(_N)), image_exists=lambda image: False) == 2
     _check("이미지 부재 경로")
 
-    assert oracle_canary.main(["oss-fuzz:368076871"], **_hooks(_Fake(_codes(_N)))) == 2
+    assert oracle_canary.main(["oss-fuzz-latest:368076871"], **_hooks(_Fake(_codes(_N)))) == 2
     _check("모르는 과제 경로")
 
     assert _main(_Fake(_codes(_N)), out=tmp_path / "nodir" / "canary.json") == 2
@@ -1239,8 +1309,9 @@ def test_the_container_gets_exactly_the_reference_poc_and_the_twelve_byte_benign
 # --- 실 docker 래퍼 다섯 — `subprocess.run`을 스텁해 argv의 모양과 종료 코드 처리를 묶는다 -----
 #
 # ⚠ 이것은 **argv가 보고서 §13의 모양인가**만 문다. 저자 함수 `cybergym.server.server_utils.
-# run_container`와 같은가, 진짜 `docker`가 이 모양을 받는가는 **이 저장소에서 알 수 없다**(그 코드가
-# 밖에 있고 이 도구는 실제 Docker로 0회 돌았다). 실 Docker 1회 대조가 남은 숙제다.
+# run_container`와 같은가는 **이 저장소에서 알 수 없다**(그 코드가 밖에 있다). 진짜 `docker`가 이
+# 모양을 받는지는 **재 봤다** - 2026-10-03 `arvo:1065`에서 이 도구의 실 Docker 첫 실행이
+# 통과했다(40/40 · `139` 0건 · 배관 보고서 §3).
 
 
 def _assert_docker_run_head(argv: list[str]) -> None:
@@ -1268,7 +1339,7 @@ def test_the_container_run_wrapper_is_shaped_as_measured_and_returns_the_exit_co
     stub = _RunStub(returncode=77)
     monkeypatch.setattr(oracle_canary.subprocess, "run", stub)
 
-    code = oracle_canary._docker_exit_code(VUL, "C:/tmp/ref.bin")
+    code = oracle_canary._docker_exit_code(VUL, "C:/tmp/ref.bin", "/bin/arvo")
 
     assert code == 77, "크래시 종료 코드가 예외로 바뀌었다(`check=True`)"
     ((argv, kwargs),) = stub.calls
@@ -1280,6 +1351,32 @@ def test_the_container_run_wrapper_is_shaped_as_measured_and_returns_the_exit_co
     assert argv[-3:] == ["/bin/bash", "-c", "timeout -s SIGKILL 10 /bin/arvo"]
     assert kwargs["timeout"] == oracle_canary._HOST_TIMEOUT_S, "호스트 상한이 안 걸렸다"
     assert kwargs["capture_output"] is True and not kwargs.get("check")
+
+
+def test_the_container_command_comes_from_the_caller_not_from_a_literal(monkeypatch):
+    """🔴 위 검사만으로는 `/bin/arvo` 고정이 **살아남는다** - 그 검사가 arvo를 넘기기 때문이다.
+
+    다른 계열의 명령을 넘겨 argv 꼬리가 그 값이 되는지 본다. 실측(2026-10-04): oss-fuzz 이미지에
+    `/bin/arvo`는 없다(exit 127).
+    """
+    stub = _RunStub(returncode=0)
+    monkeypatch.setattr(oracle_canary.subprocess, "run", stub)
+
+    oracle_canary._docker_exit_code(OSS_VUL, "C:/tmp/ref.bin", "/usr/local/bin/run_poc")
+
+    ((argv, _),) = stub.calls
+    assert argv[-1] == "timeout -s SIGKILL 10 /usr/local/bin/run_poc"
+    assert "arvo" not in argv[-1], "명령이 아직 arvo에 고정돼 있다"
+    assert argv[argv.index("-v") + 2] == OSS_VUL
+
+
+def test_the_report_records_which_command_produced_these_exit_codes(tmp_path):
+    """🔴 종료 코드만 남기면 **무엇을 돌려서 나온 코드인지** 알 수 없다 - 계열이 둘이 된 뒤로는
+    같은 과제 id에서도 명령이 갈린다(`--run-cmd`). 보고서가 그것을 든다(CLAUDE.md §0).
+    """
+    out = tmp_path / "canary.json"
+    assert _main(_Fake(_codes(_N)), out=out, task="oss-fuzz:368076871") == 0
+    assert _report(out)["container_command"] == "/usr/local/bin/run_poc"
 
 
 def test_the_reference_poc_reader_returns_exactly_the_bytes_and_guards_failures(monkeypatch):
