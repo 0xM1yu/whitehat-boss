@@ -248,6 +248,11 @@ class EventKind(StrEnum):
     # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다
     # (`retrieval_truncated`가 막는 것과 같은 오독이다).
     #
+    # `auditor_source_gate`가 1이면 `gate_reasons`(`source_gate.reasons` — 사유 코드를 쉼표로 이은
+    # 문자열: 슬라이서가 낸 절단·경계, 앵커가 창인가, `definitions_dropped`·`callees_dropped`에서
+    # 낸다)가 더 실린다. **빈 문자열은 「알려진 사유 없음」이고 필드가 없는 것은 「게이트
+    # 꺼짐」이다.** 관측 전용이라 Auditor 입력은 안 바뀐다.
+    #
     # **슬라이스 없는 run은 0건이다** — 그 run의 Auditor는 캡슐 대상 하나를 그대로 읽는다.
     AUDITOR_SOURCE = "auditor_source"
     # Scout 슬라이스 렌더가 창에 안 들어 줄을 뺐다(`scout_slice_trim`, #353 (b) —
