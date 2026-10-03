@@ -51,6 +51,8 @@ thresholds:
   # ⏵ 2026-09-30 — 8단계 PoV 툴 루프(`_run_pov_hops`)도 이 상한을 재사용한다(pov 전용 상한은
   # 실측 후 가른다). pov는 finding당 최대 1+max_hops 홉을 돈다. ⚠ **0이면 pov는 hop0(gen) 뒤 곧장
   # MAX_HOP이라 submit이 없다 — `pov_generated` 0**(NE 루프를 끄는 값이 PoV 산출도 끈다).
+  # ⏵ 2026-10-03 — **Auditor 도구 루프는 전용 상한 `thresholds.auditor_tool_hops`를 쓴다. 이 값이
+  # 아니다** — 여기를 올리면 Scout 되묻기·`cli estimate`의 `scout_calls`까지 같이 움직인다(이슈 #419).
   max_hops: 3
 
   # queued 후보의 재평가 횟수 상한. 새 Evidence가 들어올 때마다 무한히 재평가하면
@@ -245,6 +247,20 @@ thresholds:
   #   없다」가 그 자리다.
   # ⏵ 2026-10-01 — 2026-09-30의 PoV 배선(ead862a)으로 위 「Auditor만」은 낡았다.
   #   PoV(feyospace, 8단계)도 같은 32,768을 받는다(아래 `pov`).
+  #
+  # ⏵ **2026-10-03 — Auditor를 65,536으로 올리는 안은 접었다**(Auditor 도구 루프, 이슈 #419). 동기는 루프가
+  #   매 홉 관측을 되먹여 세션이 길어지는데 사고 상한 28,672가 32,768에서 남기는 답 몫이 4,096뿐이라는
+  #   것이었다. 접은 이유는 둘이다.
+  #   - **`tests/test_config.py`의 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가
+  #     「요청 타임아웃 ≥ 출력 상한 ÷ 4.5 tok/s」를 문다.** 65,536이면 ≈14,564 s(계산값)인데 그 좌석의
+  #     `request_timeout_s`는 7,500 s(`config/models.yaml`)라 전량에서 그 테스트가 빨개졌다(2026-10-03 실행).
+  #     4.5는 외부 보고(GB10)다. vast 실측 생성 16.2 tok/s(`config/serving/vastai.yaml`)로 보면 7,500 s가
+  #     121,500토큰(계산값)이라 65,536이 안에 들지만 **어느 속도가 이 좌석의 속도인지는 첫 run이 판정한다** —
+  #     그 전에는 잠긴 관계(4.5)를 따른다.
+  #   - **값 자체가 계획값이었고 이 상한으로 돈 run이 0건이다.**
+  #   다시 올릴 때는 셋을 같이 움직인다: 이 값 · 그 좌석의 `request_timeout_s`(≥ 상한 ÷ 4.5) ·
+  #   `docs/agent-contracts.md` 예시 블록의 `output_max`(`tests/test_docs_format.py`가 대조). 사고 상한
+  #   `thinking_token_budget`을 같이 올릴지는 `config/models.yaml` 쪽이 정한다.
   output_max_by_role:
     auditor: 32768
     # PoV — 사고를 켠 8단계 모델(feyospace, Auditor와 같은 베이스)이라 같은 32,768을 준다.
