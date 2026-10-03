@@ -1877,7 +1877,7 @@ def test_shards_with_different_case_orders_are_not_merged(monkeypatch, repo, tmp
 def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypatch, repo, tmp_path):
     """tools/slice_sharded.py hands the same arguments to the prepare run and to every shard and
     none to the export, which reads the run contract. Two shards that carried the flag, merged and
-    exported WITHOUT it, give exactly the single `ba` run's slices and its candidate order."""
+    exported WITHOUT it, give exactly the single `ba` run's slices and candidates, ids included."""
     whole = tmp_path / "whole"
     whole.mkdir()
     _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates(), "--case-order", "ba")
@@ -1902,8 +1902,11 @@ def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypat
     )
     assert exported["settings"]["case_order"] == "ba"
     assert exported["slices"] == single["slices"]
-    assert [c["case"] for c in exported["candidate_manifest"].values()] == ["B", "A", "A"]
-    assert list(exported["candidate_manifest"]) == list(single["candidate_manifest"])
+    # The manifest dict comes back from the checkpoint key-sorted (canonical JSON), so only its
+    # content is compared; the order a run sliced in is the checkpoint's `candidates` list.
+    assert exported["candidate_manifest"] == single["candidate_manifest"]
+    with Checkpoint(merged, resume=True) as store:
+        assert [c["case"] for c in store.get("candidates")] == ["B", "A", "A"]
 
 
 def test_a_shard_that_forgot_the_case_order_is_refused(monkeypatch, repo, tmp_path):
