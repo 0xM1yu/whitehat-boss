@@ -1166,7 +1166,7 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-                auditor_entry_trim=0, auditor_caller_lines=0)),
+                auditor_entry_trim=0, auditor_caller_lines=0, auditor_closure=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1202,7 +1202,7 @@ def _trim_source(
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=trim, auditor_caller_lines=0)),
+            auditor_entry_trim=trim, auditor_caller_lines=0, auditor_closure=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1292,7 +1292,7 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=0, auditor_caller_lines=lines)),
+            auditor_entry_trim=0, auditor_caller_lines=lines, auditor_closure=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
@@ -1339,7 +1339,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
 
     thresholds = {
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
-        "auditor_entry_trim": 0, "auditor_caller_lines": 0,
+        "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_closure": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []

@@ -109,7 +109,7 @@ from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
-from src.orchestrator import gate, oracle_log, state_machine
+from src.orchestrator import gate, oracle_log, source_closure, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.heartbeat import Heartbeat
@@ -137,7 +137,7 @@ from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
-from src.schemas.common import PLACEHOLDER_DIGEST, Location
+from src.schemas.common import PLACEHOLDER_DIGEST, CallableDef, Location
 from src.schemas.decision import Decision
 from src.schemas.enums import (
     ArtifactKind,
@@ -418,6 +418,8 @@ class Dependencies(Protocol):
     callees_of: Callable[[Location], list[Location] | None]
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 같은 경계다.
     call_sites_of: Callable[[Location], list[Location] | None]
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(`auditor_closure`). 같은 경계다.
+    callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
@@ -808,6 +810,7 @@ def run_pipeline(
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
+        callables_of=deps.callables_of,
         definitions_of=deps.definitions_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
@@ -3073,6 +3076,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
+    **닫힘(옵션 `auditor_closure`)** — 1이면 피호출 함수 뒤·호출자 창 앞에, entry 함수가 부르는
+    매크로·얇은 전달 함수가 가는 첫 실제 본문과 그 사슬을 붙인다(`source_closure` — 블록 모양은
+    그 모듈 docstring). 같은 총 상한을 받고 못 붙인 단위는 `closure_dropped_units`가 목록으로 든다.
+    `functions`에 안 든다. 0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다.
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
@@ -3164,6 +3172,24 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 blocks.append(block)
                 size += 1 + measure(block)
                 callees += 1
+    # 닫힘은 피호출 함수 뒤·호출자 창 앞이다 — 껍데기 뒤의 첫 실제 본문은 호출부보다 요청이 많고
+    # (83샘플 검수의 미해결 사유 중 피호출 본문·계약 80% · 호출부·할당 51% — 키워드 규칙이라 겹친다,
+    # [로컬실측] 계획 §1 #8), 같은 총 상한에서 먼저 몫을 받는다.
+    closed = None
+    if ctx.config.thresholds.auditor_closure:
+        closed = source_closure.build_closure(
+            anchor,
+            texts[0],
+            callables_of=ctx.callables_of,
+            read=ctx.read_source,
+            block=_block,
+            blocks=blocks,
+            measure=measure,
+            room=cap - size,
+        )
+        blocks.extend(closed.blocks)
+        seen.extend(closed.carried)
+        size += closed.size
     # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
     # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
     # (#351 자체 검토).
@@ -3198,7 +3224,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks)
+        - definitions
+        - callers
+        - (len(closed.blocks) if closed is not None else 0),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3215,6 +3244,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             if with_definitions
             else {}
         ),
+        **(closed.event() if closed is not None else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap

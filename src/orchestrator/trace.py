@@ -237,7 +237,12 @@ class EventKind(StrEnum):
     # `entry_omitted_lines`(줄이며 뺀 줄 수 — 넘었어도 슬라이스 줄이 함수 전체에 퍼지면 0)가 더
     # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
     # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
-    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
+    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다. `auditor_closure`가 1이면 `closure`(붙인
+    # 닫힘 단위 수 — `functions`에는 안 든다)·`closure_dropped`(상한에 못 붙인 단위 수)·
+    # `closure_dropped_units`(그 단위의 사슬·사유·글자 수를 담은 JSON 문자열 — 앞 50개, 개수는 앞
+    # 필드가 센다)·`closure_ambiguous`(정의가 여럿이라 못 따라간 호출 이름 수 — 단위 0이 「닫을 것이
+    # 없다」가 아닐 수 있다)·`closure_lookup`(`index` = 인덱스를 봤다 · `none` = v2 인덱스가 없어 못
+    # 봤다 — 「0건」과 「못 봤다」를 가른다)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가

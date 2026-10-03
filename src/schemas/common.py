@@ -127,6 +127,14 @@ class Location(HarnessModel):
         return a_start <= b_end and b_start <= a_end
 
 
+# 이름 하나가 가리키는 호출 대상의 정의 — (종류 "macro"|"function"|"ambiguous", 정의 위치, 파라미터
+# 이름). 인덱스 조회(`GraphIndex.callables_of`)가 내고 Auditor `SOURCE`의 닫힘
+# (`orchestrator/source_closure`)이 읽는다 — 어댑터와 오케스트레이터가 둘 다 import 할 수 있는
+# 층에 두려고 여기 있다. 파라미터는 함수만 채우고 매크로는 `()`다(정의 원문에서 읽는다).
+# `ambiguous`는 정의가 여럿이라 고르지 않았다는 표시다 — 그 위치는 후보 하나일 뿐 정의가 아니다.
+CallableDef = tuple[str, Location, tuple[str, ...]]
+
+
 class ProducedBy(HarnessModel):
     """어떤 역할·모델·프롬프트 버전이 만든 산출물인지.
 

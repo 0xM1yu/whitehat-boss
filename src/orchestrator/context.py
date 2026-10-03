@@ -42,7 +42,7 @@ from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.candidate import scout_member_of
-from src.schemas.common import Location, ProducedBy
+from src.schemas.common import CallableDef, Location, ProducedBy
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
 from src.schemas.evidence import Evidence
@@ -147,6 +147,12 @@ class RunContext:
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 미배선 `None`이면 호출자 창을 안 붙인다.
     call_sites_of: Callable[[Location], list[Location] | None] = field(
         default=lambda _target: None
+    )
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치 · 파라미터 이름) —
+    # Auditor `SOURCE`의 닫힘(`auditor_closure`)이 쓴다. 미배선 `None`이면 닫힘이 일할 수 없고
+    # 이벤트가 그것을 밝힌다(`closure_lookup`).
+    callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = field(
+        default=lambda _names, _file: None
     )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.

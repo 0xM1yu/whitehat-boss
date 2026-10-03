@@ -558,6 +558,7 @@ class CapsuleBudgets(HarnessModel):
 # Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다(`cli`).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
+    "auditor_closure",
     "auditor_definitions",
     "auditor_source_tokens",
     "auditor_entry_trim",
@@ -617,8 +618,16 @@ class Thresholds(HarnessModel):
     # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
-    # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 넷도 같다.
+    # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 옵션도 같다.
     auditor_callee_hops: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`에 앵커 함수가 부르는 매크로·얇은 전달 함수의 **닫힘**을 붙이는가 —
+    # `xmalloc(n)` → `safe_alloc` → 실제 구현처럼 껍데기 뒤의 첫 실제 본문과 사슬, 불투명 매크로의
+    # `#define` 원문(`orchestrator/source_closure`). 0이면 안 붙인다(결정 1-b 그대로, 이벤트 모양도
+    # 그대로). 1이면 피호출 함수 뒤·호출자 창 앞에 같은 총 상한 안에서 붙고 못 붙인 단위는
+    # `auditor_source` 이벤트가 목록으로 든다. 인덱스가 v2여야 일한다 — 없으면 이벤트의
+    # `closure_lookup`이 `none`이다. 위 ⚠와 같은 프롬프트 판 문제: 블록 모양을 서술하는 판의 meta가
+    # 이 키를 들기 전에는 `cli`가 막는다.
+    auditor_closure: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
     # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
     auditor_definitions: int = Field(default=0, ge=0, le=1)

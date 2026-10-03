@@ -109,7 +109,7 @@ graph LR
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
 >   안에서 함수째 붙는다(`runner._auditor_source` — 파일 전체는 상한 없이 실려 막았다). 상한이 뺀 함수와 어느
->   함수에도 안 든 줄은 trace `auditor_source`가 센다. ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯
+>   함수에도 안 든 줄은 trace `auditor_source`가 센다. ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션들
 >   (`config.AUDITOR_SOURCE_OPTIONS`)은 전부 기본 꺼짐. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
 >   run이 선다
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
