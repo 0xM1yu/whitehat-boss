@@ -2223,11 +2223,37 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
 
 
 @pytest.mark.parametrize(
-    "key", ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim"]
+    "key", ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim", "auditor_stores"]
 )
 def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
     with pytest.raises(ValidationError):
         load_config("dev_fake").thresholds.transition(**{key: 2})
+
+
+def test_the_prompt_gate_flags_auditor_stores_until_a_prompt_describes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`auditor_stores`를 켜면 프롬프트 meta의 `source_options`가 그 키를 들 때까지 `cli`의
+    run·doctor가 막는다(`_undescribed_source_options`) — 기본 꺼짐 + 프롬프트 판 게이트의 한 짝이다.
+    현재 프롬프트 판에 기대지 않게 `load_prompt`를 갈아끼운다(판이 그 키를 서술하게 돼도 이 테스트는
+    그대로다)."""
+    import types
+
+    from src import cli
+
+    base = load_config("dev_fake")
+    on = base.transition(thresholds=base.thresholds.transition(auditor_stores=1))
+    version = on.model_for(Role.AUDITOR.value).prompt_template_version
+
+    def described(*options: str):  # noqa: ANN202
+        return lambda _role, _version: types.SimpleNamespace(source_options=options)
+
+    monkeypatch.setattr(cli, "load_prompt", described())
+    assert cli._undescribed_source_options(base) == []
+    assert cli._undescribed_source_options(on) == [f"auditor_stores(auditor/{version})"]
+
+    monkeypatch.setattr(cli, "load_prompt", described("auditor_stores"))
+    assert cli._undescribed_source_options(on) == []
 
 
 @pytest.mark.parametrize("version", ["v4", "v5", "v6"])

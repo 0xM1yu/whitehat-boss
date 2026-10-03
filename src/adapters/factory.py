@@ -68,6 +68,7 @@ from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CompileFlags, ModelSampling
+from src.schemas.stores import StoreSite, StoreTarget
 from src.tokens import COUNTED_ROLES
 
 
@@ -179,6 +180,8 @@ class Deps:
     definitions_of: Callable[[Iterable[str], str], list[Location] | None] = (
         lambda _names, _file: None
     )
+    # 이름(필드·변수) → 그 쓰기 지점(`auditor_stores`). `callees_of`와 같은 자리.
+    stores_of: Callable[[StoreTarget], list[StoreSite] | None] = lambda _target: None
     # `--slices`로 준 슬라이스 → 타깃(ADR 0012 결정 1). `None`이면 슬라이스 없이 도는 run이고
     # 러너는 지금처럼 파일·심볼 타깃을 만든다. 빈 튜플("슬라이스 0개")과 섞지 않는다.
     slice_refs: tuple[SliceRef, ...] | None = None
@@ -552,6 +555,7 @@ def build_deps(
         callees_of=graph.callees_of,
         call_sites_of=graph.call_sites_of,
         definitions_of=graph.definitions_of,
+        stores_of=graph.stores_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
         # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의

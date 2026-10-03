@@ -135,9 +135,14 @@ agent:
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
-  ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
-  entry 줄이기). 전부 기본 꺼짐이라 위 서술 그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
-  `cli` run·doctor가 선다
+  ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
+  entry 줄이기·쓰기 지점). 전부 기본 꺼짐이라 위 서술 그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
+  `cli` run·doctor가 선다. `auditor_stores`는 정의 뒤·피호출 본문 앞에 `STORES` 블록 하나를 붙인다 — 슬라이스 줄의
+  필드·전역이 실린 함수 **밖**에서 쓰이는 곳(`file:line | 원문 줄 | 술어`, `orchestrator/source_stores.py`). 인덱스
+  표(`field_assigns`·`assigns`·`calls`)만 본 구문 결과라 **행이 없다는 것이 쓰기가 없다는 증거는 아니다**.
+  `field_assigns` 행에는 객체의 구조체 타입이 없어(열은 file·line·func·lhs·rhs·op) 필드 쓰기는 이름으로만 이어진다 —
+  그 필드를 선언한 구조체가 인덱스에서 하나로 안 정해지면 행에 `[ambiguous]`가 붙고, 이름마다 4행까지(같은 파일 먼저)만
+  싣고 못 실은 행은 trace에 목록으로 남는다
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
