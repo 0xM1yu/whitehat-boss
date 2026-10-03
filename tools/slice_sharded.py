@@ -32,9 +32,10 @@ Exit: 0 = every candidate complete; 3 = `--out` written but some candidates inco
 see summary.json `merge`, `dead_shards`, `wall_stopped_shards`); 1 = failed (prepare, a server,
 merge or export failed, or every shard died); 2 = usage error; 128 + signal when stopped by
 SIGTERM/SIGHUP -- shards and servers are stopped and summary.json is written on every path.
-A server is stopped as a whole process group: SIGTERM, up to STOP_GRACE_SECONDS for the group to
-empty, SIGKILL, a check -- pids still alive after that are in summary.json `unstopped_pids`
-(`joern` is an sh that runs the JVM as a child, and a JVM busy with a query ignores SIGTERM).
+Servers are stopped as whole process groups, all at once: SIGTERM, up to STOP_GRACE_SECONDS for the
+groups to empty (one pass over /proc per tick for all of them), SIGKILL, a check -- pids still alive
+after that are in summary.json `unstopped_pids`. (`joern` is an sh that runs the JVM as a child,
+and a JVM busy with a query ignores SIGTERM.)
 ⚠ SIGKILL of this tool cannot be caught: its servers and shards (own sessions) keep running.
 POSIX only (process groups via killpg, start_new_session).
 
@@ -58,7 +59,6 @@ import socket
 import sqlite3
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -67,16 +67,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SLICER = ROOT / "tools" / "slicer" / "slicer.py"
 MERGE = ROOT / "tools" / "merge_slicer_shards.py"
 SERVER_START_SECONDS = 300  # set value: a Joern server that is not listening by then failed
-# stop(): SIGTERM, wait for the whole process group, SIGKILL. Measured once (dev box, 2026-10-03,
-# heap 2g): an idle Joern server left on SIGTERM in 0.5-0.7 s (3 runs), one with a query running
-# had not after 30 s. The two waits are set values.
+# Stopping servers (stop_all): SIGTERM, wait for the whole process groups, then SIGKILL. Measured
+# once (dev box, 2026-10-03, heap 2g): a Joern server with no query running left on SIGTERM in
+# 0.5-0.7 s (3 runs; a `ps` check that skipped zombies, so a lower bound), one with a query running
+# had not left after 30 s. The two waits are set values.
 STOP_GRACE_SECONDS = 10
 KILL_VERIFY_SECONDS = 10  # how long a SIGKILLed group may take to vanish
+STOP_POLL_SECONDS = 0.1
 POLL_SECONDS = 5
 JVM_OVERHEAD_GB = 4  # set value, not measured: non-heap JVM + slicer process per shard
 DEFAULT_MAX_RESTARTS = 5  # set value, not measured: --max-restarts-per-shard
-# A restart took 16 s from the kill to the shard's next query on a small graph (libxml2, 8.7 MB CPG,
-# dev box, 2026-10-03, one run); a bigger one imports longer. Less wall left: none (a set value).
+# A restart took 16 s to the shard's next query on a small graph (libxml2, 8.7 MB CPG, dev box,
+# 2026-10-03, one run); a bigger one imports longer. Less wall left: none (a set value).
 RESTART_MIN_WALL_SECONDS = 60
 # progress `candidate_failed` `error`s for a query the client gave up on while the server goes on
 # with it (JoernClient.query: its deadline message, or the socket timeout that can fire first).
@@ -318,18 +320,21 @@ def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
             time.sleep(0.5)
 
 
-def _live_members(group: int) -> list[int]:
-    """Pids of the live processes in a process group. An unreaped zombie is not live (`killpg(group,
-    0)` counts it) unless other threads of it are still exiting: they hold its sockets -- a killed
-    server's port kept accepting for up to 0.57 s after SIGKILL (dev, 2026-10-03, 3 runs).
-    Without /proc `killpg` is all there is, and the leader's pid names the group."""
+def _live_groups(groups: set[int]) -> dict[int, list[int]]:
+    """The live pids of each of these process groups, from ONE pass over /proc however many groups
+    there are (a group with none is left out). An unreaped zombie is not live (`killpg(group, 0)`
+    counts it) unless other threads of it are still exiting: they hold its sockets -- a killed
+    server's port kept accepting for up to 0.57 s after SIGKILL (dev, 2026-10-03, 3 runs). Without
+    /proc `killpg` is all there is, and the leader's pid names the group."""
+    found: dict[int, list[int]] = {}
     if not Path("/proc/self/stat").exists():
-        try:
-            os.killpg(group, 0)
-        except ProcessLookupError:
-            return []
-        return [group]
-    members = []
+        for group in groups:
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                continue
+            found[group] = [group]
+        return found
     for entry in Path("/proc").iterdir():
         pid = _digits(entry.name)
         text = _read(entry / "stat") if pid is not None else None
@@ -337,10 +342,10 @@ def _live_members(group: int) -> list[int]:
             continue
         # "pid (comm) state ppid pgrp ..." -- comm can hold spaces and parentheses
         fields = text.rpartition(")")[2].split()
-        if len(fields) > 2 and _digits(fields[2]) == group and (
-                fields[0] not in ("Z", "X", "x") or _threads_left(entry)):
-            members.append(pid)
-    return members
+        group = _digits(fields[2]) if len(fields) > 2 else None
+        if group in groups and (fields[0] not in ("Z", "X", "x") or _threads_left(entry)):
+            found.setdefault(group, []).append(pid)
+    return found
 
 
 def _threads_left(process_dir: Path) -> bool:
@@ -351,57 +356,67 @@ def _threads_left(process_dir: Path) -> bool:
 
 
 def _signal_group(group: int, sig: int) -> None:
-    with contextlib.suppress(OSError):  # gone already: _live_members says whether any is left
+    try:
         os.killpg(group, sig)
+    except OSError:  # gone already -- _live_groups is what says whether anything is left
+        pass
 
 
-def _wait_gone(process: subprocess.Popen, group: int, seconds: float) -> bool:
-    """Until the process group has no live member (reaping the launcher on the way); False when
-    `seconds` ran out first."""
+def _wait_gone(groups: dict[int, subprocess.Popen], seconds: float) -> dict[int, list[int]]:
+    """Until none of these process groups has a live member (reaping the launchers on the way);
+    what is still alive when `seconds` ran out. One /proc pass per tick for all of them: a thread
+    per process that each rescanned /proc took 12.5-31.1 s to stop 8-32 servers among 1,000-3,000
+    processes, 10 s of it the grace (WSL2, 2026-10-04, one run each)."""
     deadline = time.time() + seconds
-    while True:
-        process.poll()
-        if not _live_members(group):
-            return True
-        if time.time() >= deadline:
-            return False
-        time.sleep(0.1)
+    while groups:
+        for process in groups.values():
+            process.poll()
+        alive = _live_groups(set(groups))
+        if not alive or time.time() >= deadline:
+            return alive
+        groups = {group: groups[group] for group in alive}
+        time.sleep(STOP_POLL_SECONDS)
+    return {}
 
 
-def stop(process: subprocess.Popen, grace: float | None = None) -> list[int]:
-    """End the process and everything else in its process group; returns the pids that outlived
-    SIGKILL. `joern` is an `sh` that runs the JVM as a child, and a JVM with a query running never
-    finishes its shutdown hook (it queues behind the query; eight outlived a run on 2026-10-03), so
-    the launcher dying says nothing: SIGTERM to the group, `grace` seconds (default
-    STOP_GRACE_SECONDS) for it to empty, SIGKILL, a check. `grace=0` skips SIGTERM."""
-    if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the child
-        try:
-            process.terminate()
-            process.wait(30)
-        except Exception:  # noqa: BLE001
-            process.kill()
+def _terminate(processes: list[subprocess.Popen], grace: float | None = None) -> list[int]:
+    """End every process and everything else in its process group, all at once; returns the pids
+    that outlived SIGKILL. `joern` is an `sh` that runs the JVM as a child, and a JVM with a query
+    running never finishes its shutdown hook (it queues behind the query; eight outlived a run on
+    2026-10-03), so the launcher dying says nothing: SIGTERM to every group, `grace` seconds
+    (default STOP_GRACE_SECONDS) for them to empty, SIGKILL for what is left, a check. `grace=0`
+    skips SIGTERM. The time does not grow with their number."""
+    if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the children
+        for process in processes:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        for process in processes:
+            try:
+                process.wait(30)
+            except subprocess.TimeoutExpired:
+                process.kill()
         return []
-    group = process.pid  # `launch` starts every process in its own session: the leader's pid
+    groups = {process.pid: process for process in processes}  # `launch`: each leads its own session
     grace = STOP_GRACE_SECONDS if grace is None else grace
+    left = set(groups)
     if grace > 0:
-        _signal_group(group, signal.SIGTERM)
-        if _wait_gone(process, group, grace):
-            return []
-    _signal_group(group, signal.SIGKILL)
-    return [] if _wait_gone(process, group, KILL_VERIFY_SECONDS) else _live_members(group)
+        for group in groups:
+            _signal_group(group, signal.SIGTERM)
+        left = set(_wait_gone(groups, grace))
+    for group in left:
+        _signal_group(group, signal.SIGKILL)
+    alive = _wait_gone({group: groups[group] for group in left}, KILL_VERIFY_SECONDS)
+    return [pid for pids in alive.values() for pid in pids]
 
 
 def stop_all(processes: list[subprocess.Popen], tracked: list | None = None,
              summary: dict | None = None, grace: float | None = None) -> list[int]:
-    """Stop in parallel (each stop can wait); drop them from `tracked`. The pids that outlived
-    SIGKILL are warned about on stderr, put in `summary["unstopped_pids"]` and returned."""
-    survivors: list[int] = []
-    threads = [threading.Thread(target=lambda p=p: survivors.extend(stop(p, grace)))
-               for p in processes]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    """Stop all of them and their process groups at once (see _terminate); drop them from
+    `tracked`. The pids that outlived SIGKILL are warned about on stderr, put in
+    `summary["unstopped_pids"]` and returned."""
+    survivors = _terminate(processes, grace)
     if tracked is not None:
         for process in processes:
             if process in tracked:
@@ -461,14 +476,10 @@ class ProgressTail:
 
 
 class DeadlineRestarts:
-    """--restart-on-deadline. A query that hit the slicer's client deadline goes on running in the
-    Joern server (its REPL takes one query at a time, none is cancelled when the client gives up),
-    so every later query of that shard waits behind it too (libxml2, 2026-10-03: 3 in a row).
-    `poll` reads what the progress logs gained; a shard with a deadline hit has its slicer and
-    server killed and is started again: a new server, the same `I/N` with `--resume --cpg`, and
-    `--skip-candidates` naming the timed-out candidates (`--resume` alone slices the first of them
-    again: its claim comes back to the same `I/N`). They stay unsaved in the checkpoint: degraded
-    in the output as without the flag, and a plain `--resume` slices them."""
+    """--restart-on-deadline (see the module docstring). `poll` reads what the shards' progress logs
+    gained; a shard with a deadline hit has its slicer and server killed and is started again, with
+    `--skip-candidates` naming the timed-out candidates: `--resume` alone would slice the first of
+    them again (its claim comes back to the same `I/N`) and spend the deadline once more."""
 
     def __init__(self, args: argparse.Namespace, work: Path, ports: list[int],
                  command: Callable[[int, Path], list[str]], tracked: list, summary: dict,
@@ -606,8 +617,7 @@ def parser() -> argparse.ArgumentParser:
                         "(omitted: no limit)")
     result.add_argument("--restart-on-deadline", action="store_true",
                         help="restart a shard whose query hit the slicer's client deadline "
-                        "(--query-timeout-seconds after --): its server is still computing that "
-                        "query and every later one waits behind it (see the module docstring)")
+                        "(see the module docstring)")
     result.add_argument("--max-restarts-per-shard", type=_positive_int,
                         default=DEFAULT_MAX_RESTARTS,
                         help="with --restart-on-deadline (default %(default)s, a set value)")
