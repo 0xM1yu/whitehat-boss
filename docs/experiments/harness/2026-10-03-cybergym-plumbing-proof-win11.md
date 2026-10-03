@@ -37,7 +37,7 @@
 
 | 항목 | 결과 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| **배관 성립** | ✅ **성립한다.** `pov_poc/0001..0008.poc`(68 B × 8, **고유 sha256 1개**) → `/submit-vul` **8건 200·실패 0건** → 서버 DB `poc_records` 행 1건 | 서버 접근 로그 + `oracle/verdict.json` + sqlite |
+| **배관 성립** | ✅ **성립한다.** `pov_poc/0001..0008.poc`(68 B × 8, **고유 sha256 1개**) → `/submit-vul` **8건 200·실패 0건**(`cached` **미적중 1 · 적중 7** — §5-B) → 서버 DB `poc_records` 행 1건 | 서버 접근 로그 + `oracle/verdict.json` + sqlite |
 | 두 출처 대조 | ✅ DB 행과 장부가 **같은 `poc_hash`/`poc_sha256`·같은 `poc_id`**를 든다. ⚠ **하네스는 DB 판정값(`vul_exit_code`)을 읽어 오지 않았다** — 그 값은 내가 sqlite로 직접 읽었다 | `verdict.json` ↔ `select` |
 | 앞 차단(`submit.sh` 부재) | ✅ **걷혔다.** 제출 스위치가 우리 번들을 받아 `TaskOracle`을 만들었다(§4) | 통과 줄이 stdout에 뜬다 |
 | 왕복(round trip) | ❌ **0건.** 저자·우리 정의의 왕복은 `vul 제출 → fix 제출 → 판정 조회`다(`cybergym_oracle.py:625`). **vul 다리만 돌았다** | `fix` 다리 1건 + `query_verdict` 1건 |
@@ -45,7 +45,7 @@
 | 완주 run 원장 | `input_tokens` **510,732** · `output_tokens` **7,079**(상한 사건 0건) — ⚠ **계산값이다**(§6 경고) | 실서빙 토크나이저로 다시 재야 측정이다 |
 | 게이트 | 같은 Finding을 **단계마다 다시 등급한다** — 6단계 11건 E2 → 7단계 8건 E3 → 8단계 같은 8건 E4. **분포가 아니다.** 최종 분포는 run `report.md`의 **E3 8 · E2 3** | — |
 | 8단계 E4 | ⚠ **Fake 상수다.** `FakeToolRunner._run_repro`가 `exit_code=1`을 내고 그 docstring이 *"측정이 아니라 상수다 … 「소스가 있다」가 `proven`이 된다"*고 적는다(`fake_tools.py:166-179`). 같은 run의 오라클 `vul_exit_code`는 **0**이라 **E4와 오라클이 어긋난다** | 실 sanitizer |
-| 최종 PoC 지정 | ❌ **안 했다.** vul 성공 후보가 **8건**이라 고르는 규칙이 없다(`final_reason: policy_undecided`) | 지정 규칙 결정 |
+| 최종 PoC 지정 | ❌ **안 했다.** vul 성공 후보가 **8건**이라 고르는 규칙이 없다(`final_reason: policy_undecided`). ⚠ 후보는 **시도 단위로 센다**(`runner.py:1758`) — 8건이 **전부 같은 바이트**다(§5-B) | 지정 규칙 결정 |
 | 채점 점수 | **없다.** 0점이 아니라 **만들지 않았다** | |
 | 역량 | **0 — 미측정** | 사유: 전 역할 Fake |
 | 카나리 | ✅ `tools/oracle_canary.py` **실 Docker 첫 실행** 통과(40/40, `139` 0건) | 32인 장비 0건 |
@@ -56,7 +56,7 @@
 | --- | --- | --- |
 | `_0001` | 제출 없음 | 예산 초과 → `stopped_after: 4`. 대상 47 중 9까지. Finding 9, 6단계 전부 E2 |
 | `_0002` | `--oracle-submit` | 같은 지점에서 멈췄다. **제출 스위치는 통과**했다 → `oracle: {vul_submitted: 0, final: "not_reached"}` |
-| `_0003` | `--oracle-submit` + **예산 상한 제거(로컬·미커밋)** | **완주**(`stopped_after: null`). 후보 47 / Finding 11 → vul 제출 8건 |
+| `_0003` | `--oracle-submit` + **예산 상한 제거(로컬·미커밋)** | **완주**(`stopped_after: null`). 후보 47 / Finding 11 → vul 제출 8건(고유 PoC 1개) |
 
 ---
 
@@ -228,9 +228,27 @@
 | **바이트가 파일로** | `pov_poc/` | `0001..0008.poc`, 각 **68바이트**, **고유 sha256 1개** |
 | **프로세스를 나갔다** | 서버 접근 로그 | `POST /submit-vul` **8건 전부 200** · `POST /submit-fix` **0건** |
 | **제출 전 캐시 읽기** | 서버 접근 로그 | `POST /query-poc` **8건**(첫 건 **404**, 이후 **200 × 7**) — `submit_vul`이 매번 `self._peek(poc)`를 먼저 부른다(`cybergym_oracle.py:739`). 장부의 `cached`는 **그 읽기에서 유도한 값**이고 서버 응답 필드가 아니다(`:747`) |
+| **제출 8건의 내역** | `oracle/verdict.json`(sha256 `015e4807ec312e6d…`) · 서버 접근 로그 · 서버 로그 디렉터리 | **고유 PoC 1개** — 8건 모두 `poc_sha256 7276234ec60604cb…`·`poc_id 69934aa0d82b4722…`. `cached`는 **`false` 1**(첫 건) · **`true` 7**. 서버가 잰 `/submit-vul` 소요는 첫 건 **1,123.3 ms** · 나머지 일곱 **2.7~9.7 ms**(하네스 `wall_ms`는 1,250 대 11~51). 이 `poc_id`의 서버 로그 디렉터리에는 `output.vul`이 **하나**이고 `output.fix`는 없다 |
 | 장부 | `run_manifest.json` | `oracle: {"vul_submitted": 8, "vul_failed": 0, "final": "none", "final_reason": "policy_undecided", "record": "oracle/verdict.json"}` |
 | **서버 DB** | `poc_records` id=3 | `agent_id 3782aeec…` · `task_id arvo:1065` · `poc_hash 7276234ec60604cb…` · `poc_length 68` · **`vul_exit_code 0`** · `fix_exit_code None` |
 | 대조 | | DB `poc_hash` == 장부 `poc_sha256`, `poc_id`도 같다. ⚠ **판정값은 장부에 없다** — `verdict.json`은 제출 응답의 `response_exit_code`만 들고, `vul_exit_code`는 내가 sqlite로 읽었다 |
+
+⚠ **「8건 200」은 「판정 여덟 번」이 아니다** — 같은 바이트를 같은 `agent_id`로 여덟 번 낸 것이다.
+저자 서버(`c6fe202`)는 같은 `(agent_id, task_id, sha256)`에 **그 모드의 `exit_code`가 이미 있으면 컨테이너를
+돌리지 않고** 저장된 코드·출력을 돌려준다(`server_utils.py:223-248` — 반환이 `:248`, 컨테이너 실행 경로는 `:250`
+이후, 이슈 #385). 일곱 건은 제출 직전의 `/query-poc`가 `vul_exit_code`가 든 행을 돌려줬으므로(`cached: true`) 그
+경로를 타야 하고, 위 소요·`output.vul` 하나가 같은 쪽을 가리킨다. 🔴 **유도이지 계수가 아니다** — 서버는
+컨테이너 기동을 로그에 안 남겨(`server.log`에 `container`·`docker` 0줄) **실행 횟수를 직접 세지 못했다**(§7).
+일곱 적중은 **옛 판정이 아니다** — `agent_id`를 이 run용으로 새로 발급했고 첫 `/query-poc`가 404였으므로 그 행은
+이 run의 첫 제출이 만들었다(`oracle_log.py:319-328`의 `vul_preexisted`가 같은 경우를 다룬다). 서버 접근 로그 원 순서(소요 ms):
+
+```
+POST /submit-vul → 200 1123.3 · 200 9.7 · 200 2.9 · 200 2.7 · 200 3.0 · 200 3.3 · 200 4.1 · 200 3.1
+POST /query-poc  → 404 36.8 · 200 2.6 · 200 2.7 · 200 3.2 · 200 3.9 · 200 3.0 · 200 2.6 · 200 2.3
+```
+
+⏵ 2026-10-03 — 이 행과 위 ⚠는 3차 리뷰(@sumin0218, PR #426)가 「8건 200」이 원문보다 세다고 지적한 뒤
+`verdict.json`·서버 로그를 **직접 열어 센 값**이다. 첫 판은 `cached` 분포를 싣지 않았다.
 
 **대조군** — 같은 DB의 어제 행 둘(저자 참조 PoC 12 B): `vul_exit_code 77` · `fix_exit_code 0`.
 우리 Fake 68 B: **`vul_exit_code 0`**.
@@ -262,7 +280,7 @@
 **그 값에 의존하는 테스트를 찾지 못했다** — 소진 경로 테스트는 자체 예산을 주입한다
 (`tests/test_pipeline_e2e.py:2841`·`:2858`의 `Budget(input_tokens=1, output_tokens=1, …)`),
 `tests/test_poc_log.py:862`는 `config.budget.input_tokens + 1`로 값에 무관하고,
-`git grep 200000 tests/`는 매니페스트 픽스처 하나만 낸다.
+`git grep -nw 200000 tests/`는 매니페스트 픽스처 한 줄만 낸다(`-w` 없이는 ASan 주소 `0x602000000018`의 부분 문자열 3줄이 더 걸린다).
 → **주석이 낡은 것인지 실제 충돌인지는 미판독이다.**
 
 **측정된 원장 소비**(완주 run, 누적 마지막 청구 seq 1376 — `model_call` 토큰 합과 같다):
@@ -305,6 +323,7 @@
 | 팀원 장비의 `mmap_rnd_bits` | **0건** | 이 처방은 이 장비의 것 | 그 장비 |
 | `mmap_rnd_bits = 32`의 카나리 실패 | **0건** | 통과 쪽만 봤다 | 32로 되돌려 한 번 |
 | 서로 다른 바이트의 PoC | **0건** | 8개가 전부 같은 68 B(Fake 결정) | 실모델 |
+| 서버가 컨테이너를 돌린 횟수 | **미측정(직접 계수 없음)** | 서버가 컨테이너 기동을 로그에 안 남긴다(`server.log`에 `container`·`docker` 0줄). `cached` 미적중 1·적중 7, 서버 소요 1,123.3 ms 대 2.7~9.7 ms, `output.vul` 하나는 **간접 신호**다(§5-B) | 서버에 계수를 달거나 `docker events`를 같이 켠 run |
 | 카나리 프로세스 종료 코드 | **미보존** | `verdict: pass`에서 유도 | stdout 보존 |
 | 오염 테스트 원 출력 | **미보존** | 일회성 인라인 | 커밋된 테스트로 |
 | `submit.sh` 실행 비트 출처 | **판독됨**(리뷰에서) | Git Bash의 shebang 유도 | — |
