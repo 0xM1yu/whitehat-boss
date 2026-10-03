@@ -269,6 +269,28 @@ def test_code_only_keeps_the_line_count_and_separates_tokens() -> None:
     assert code_only('s = "a"; // tail\nt') == "s =  ;  \nt"
 
 
+def test_a_digit_separator_does_not_open_a_char_literal() -> None:
+    """C23·C++14 자릿수 구분자(`1'000`·`0xFF'FF`·`0b1010'0101`)의 `'`는 문자 리터럴이 아니다 --
+    문자 리터럴로 읽으면 다음 `'`까지 코드를 삼킨다(PR #444 리뷰 재현: `KEEP`·`c`가 사라지고 `x`가
+    이름이 됐다). 수 자체는 지우지 않는다."""
+    text = "int n = 1'000; KEEP; char c='x'; m = 0xFF'FF + 0b1010'0101; MORE;"
+
+    used = _names_of(text)
+
+    assert {"n", "KEEP", "c", "m", "MORE"} <= used
+    assert "x" not in used, "뒤의 진짜 문자 리터럴은 그대로 리터럴이다"
+    assert code_only("n = 1'000;") == "n = 1'000;"
+
+
+def test_a_digit_ending_a_name_is_not_a_number() -> None:
+    """이름 끝 숫자 뒤의 `'`는 문자 리터럴을 연다 -- C23 `u8'x'`의 `8`은 수가 아니라 접두
+    `u8`의 일부다. 인코딩 접두 `L'x'`·쉼표 뒤 `'Q'`도 그대로 문자 리터럴이다."""
+    used = _names_of("a = u8'Z'; b = L'Y'; f(1,'Q'); keep(A);")
+
+    assert {"a", "b", "f", "keep", "A"} <= used
+    assert not used & {"Z", "Y", "Q"}
+
+
 # --- slice_names_first: 슬라이스 줄에 나온 이름의 정의가 먼저 ---------------------------------
 
 
