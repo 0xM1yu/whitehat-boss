@@ -242,10 +242,13 @@ class EventKind(StrEnum):
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
     # `entry_omitted_lines`(줄이며 뺀 줄 수 — 넘었어도 슬라이스 줄이 함수 전체에 퍼지면 0)가 더
     # 실린다. `anchor_chars`는 줄이기 전 크기다. 피호출 단계가 켜졌고 `auditor_indirect_callees`가
-    # 1이면 `indirect_callees`(`callees` 중 필드 경유 호출 후보로 붙인 수)·`indirect_skipped`(후보가
-    # 너무 많아 건너뛴 실린 함수 수)가, `auditor_write_sites`가 양수면 `write_windows`·
-    # `write_windows_dropped`(붙인·상한에 못 붙인 쓰기 지점 창 수 — `functions`에는 안 든다)·
-    # `write_sites_found`(찾은 쓰기 지점 수)가 더 실린다(#304). `auditor_caller_lines`가 양수면
+    # 1이면 `indirect_callees`(`callees` 중 필드 경유 호출 후보로 붙인 수)·`indirect_skipped`(아직
+    # 안 실린 후보가 너무 많아 건너뛴 필드 경유 호출 수 — 필드 하나가 하나)가,
+    # `auditor_write_sites`가 양수면 `write_windows`·`write_windows_dropped`(붙인·상한에 못 붙인
+    # 쓰기 지점 창 수 — `functions`에는 안 든다)·`write_sites_found`(창을 붙일 후보 쓰기 지점 수
+    # — 같은 줄은 한 번,
+    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)가 더 실린다(#304).
+    # `auditor_caller_lines`가 양수면
     # `callers`·`callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·
     # `call_sites`(찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
     #

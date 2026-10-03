@@ -1894,6 +1894,85 @@ def test_indirect_callees_of_follows_field_calls_in_the_body(tmp_path: Path):
     ]
 
 
+def test_writes_of_does_not_split_functions_inside_the_near_file(tmp_path: Path):
+    """**계약 핀** — near 파일 안에서는 함수를 안 가른다(docstring ⚠). `buf`는 `parse_header`의
+    지역인데(`locals` 10행) 그 함수의 쓰기(12·14행)가 그대로 나온다 -> 파일 변수 `buf`를 찾는
+    호출자는 행의 `symbol`로 그 함수의 지역인지 직접 걸러야 한다(`runner._write_sites` · PR #468
+    리뷰 HIGH-1). 이 계약이 바뀌면(조회가 거르게 되면) 러너의 거르기는 중복이 될 뿐 틀리지
+    않는다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.locals_of("parser.c", "parse_header") == frozenset({"src", "buf"})
+    assert [site.symbol for site in graph.writes_of("buf", "parser.c") or []] == [
+        "parse_header",
+        "parse_header",
+    ]
+
+
+def test_indirect_calls_of_groups_candidates_by_field(tmp_path: Path):
+    """러너가 후보 수 상한을 **필드마다** 건다(PR #468 리뷰 MEDIUM-2) -> 필드별로 묶어 낸다. 풀리는
+    필드만 나온다(`alloc`·`unbound`는 후보 0이라 빠진다). 펼친 것이 `indirect_callees_of`다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+    my_free = Location(file="ops.c", symbol="my_free", line_start=1, line_end=4)
+
+    assert graph.indirect_calls_of(_PARSE_HEADER) == [("free_ctx", [my_free])]
+    assert graph.indirect_callees_of(_PARSE_HEADER) == [my_free]
+
+
+_DEMOTE_MAIN = Location(file="src/main.c", symbol="main", line_start=1, line_end=10)
+_DEMOTE_V3 = {
+    **_INDEX_V3,
+    "functions": {
+        **_INDEX_V3["functions"],
+        "real_cb": [{"file": "src/impl.c", "line_start": 1, "line_end": 5, "params": []}],
+        "fake_cb": [{"file": "tests/t.c", "line_start": 1, "line_end": 3, "params": []}],
+        "twin": [
+            {"file": "src/twin.c", "line_start": 1, "line_end": 2, "params": []},
+            {"file": "tests/twin.c", "line_start": 1, "line_end": 2, "params": []},
+        ],
+    },
+    "fields": {
+        **_INDEX_V3["fields"],
+        "cb": [{"type": "ops", **_V3_FIELD}],
+        "tw": [{"type": "ops", **_V3_FIELD}],
+    },
+    "fn_bindings": {
+        **_INDEX_V3["fn_bindings"],
+        # 제품 바인딩 하나 + 테스트 하네스의 가짜 바인딩 하나.
+        "cb": [
+            {"file": "src/impl.c", "line": 9, "func": None, "fn": "real_cb", "form": "designated"},
+            {"file": "tests/t.c", "line": 7, "func": "setup", "fn": "fake_cb", "form": "assign"},
+        ],
+        # 바인딩 파일에 정의가 없고 정의가 제품·비제품 둘이다.
+        "tw": [{"file": "src/use.c", "line": 3, "func": None, "fn": "twin", "form": "designated"}],
+    },
+    "field_calls": {
+        **_INDEX_V3["field_calls"],
+        "cb": [{"file": "src/main.c", "line": 5, "caller": "main", "args": [], "expr": "o->cb"}],
+    },
+}
+
+
+def test_fn_pointer_targets_demotes_nonproduct_bindings_and_definitions(tmp_path: Path):
+    """`demote_nonproduct`(#444와 같은 규칙 — PR #468 리뷰 MEDIUM-2). 켜면 제품 바인딩이 있을 때
+    `tests/` 바인딩(`fake_cb`)을 빼고, 함수 정의의 「하나뿐」도 제품 경로가 먼저 정한다(`twin`).
+    끄면 옛 결과 그대로다. 조회 기준 파일이 비제품이면 강등하지 않는다."""
+    graph = _graph(tmp_path, _DEMOTE_V3)
+    real = Location(file="src/impl.c", symbol="real_cb", line_start=1, line_end=5)
+    fake = Location(file="tests/t.c", symbol="fake_cb", line_start=1, line_end=3)
+    twin = Location(file="src/twin.c", symbol="twin", line_start=1, line_end=2)
+
+    assert graph.fn_pointer_targets("cb", "src/main.c") == [real, fake]
+    assert graph.fn_pointer_targets("cb", "src/main.c", demote_nonproduct=True) == [real]
+    assert graph.fn_pointer_targets("tw", "src/main.c") == []
+    assert graph.fn_pointer_targets("tw", "src/main.c", demote_nonproduct=True) == [twin]
+    assert graph.fn_pointer_targets("cb", "tests/x.c", demote_nonproduct=True) == [real, fake]
+    # 간접 피호출 조회가 그 키워드를 넘긴다.
+    assert graph.indirect_calls_of(_DEMOTE_MAIN) == [("cb", [real, fake])]
+    assert graph.indirect_calls_of(_DEMOTE_MAIN, demote_nonproduct=True) == [("cb", [real])]
+    assert graph.indirect_callees_of(_DEMOTE_MAIN, demote_nonproduct=True) == [real]
+
+
 @pytest.mark.parametrize(
     "broken",
     [

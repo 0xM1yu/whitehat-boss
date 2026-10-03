@@ -14,8 +14,11 @@
 # `auditor_write_sites`(쓰기 지점 창, C5(a))의 서술을 더했다(prefix 23,950 -> 25,045자, +1,095자 · #304 ·
 # index-v3 표). 판 번호는 그대로다
 # -> v7로 돈 run이 0건이다.
+# ⏵ 2026-10-04 — PR #468 리뷰 반영(간접 피호출 상한을 필드마다 · 호출자 창을 쓰기 지점 창 앞으로 · 쓰기
+# 지점 순서는 슬라이스 줄에 처음 나온 순서 · 다른 함수의 같은 이름 지역 쓰기 제외 · 겹치는 창 자르기)으로
+# 서술을 고쳤다(prefix 25,045 -> 25,467자, +422자 · v6 대비 +4,069자). 같은 이유로 판 번호는 그대로다.
 role: auditor
 version: v7
 output_schema: Finding
-description: v6에 Auditor SOURCE 옵션 넷(20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄)과 래퍼·별칭 너머(2026-10-04)의 입력 서술을 더한 판 — 나머지 지시(독립 검토 · trigger rule · CWE 고르기 · 심각도 기준 아님)는 v6와 같다
+description: v6에 Auditor SOURCE 옵션 넷(20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄)과 래퍼·별칭 너머 · 간접 피호출 · 쓰기 지점 창(2026-10-04)의 입력 서술을 더한 판 — 나머지 지시(독립 검토 · trigger rule · CWE 고르기 · 심각도 기준 아님)는 v6와 같다
 source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites]

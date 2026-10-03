@@ -656,10 +656,11 @@ class Thresholds(HarnessModel):
     auditor_entry_trim: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 entry 함수를 부르는 호출 지점 앞뒤 몇 줄을 붙이는가(#349 (b)). 0이면 안
     # 붙인다(결정 1-b 그대로). 호출자 쪽 검사(인자 길이·NULL 확인)를 겨냥한다. 창은 호출자 함수
-    # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
-    # 정했다** — 저장소 전체 실측에서 고른다. ⏵ 2026-10-03 — `config/budgets.yaml`이 10으로 정했다.
-    # 근거는 저장소 전체 실측이 아니라 로컬 소표본이다(harness_final_v1 vuln 41개를 GT 함수 중심으로
-    # 조립한 5줄 대비 비교 · run ID 없음 — 그 파일의 주석). 위 ⚠와 같은 프롬프트 판 문제.
+    # 범위 안으로 자르고 정의·피호출 함수 다음(쓰기 지점 창 앞)에 붙는다(`runner._caller_window`).
+    # **값은 안 정했다** — 저장소 전체 실측에서 고른다. ⏵ 2026-10-03 — `config/budgets.yaml`이
+    # 10으로 정했다. 근거는 저장소 전체 실측이 아니라 로컬 소표본이다(harness_final_v1 vuln
+    # 41개를 GT 함수 중심으로 조립한 5줄 대비 비교 · run ID 없음 — 그 파일의 주석). 위 ⚠와 같은
+    # 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
     # Auditor `SOURCE`가 래퍼·이름만 바꾸는 매크로 너머까지 따라가는가(C4 — 이슈 #451). 0이면
     # 안 따라간다 — 피호출 본문은 1단에서 멈추고 정의는 실린 이름의 것만 붙는다(이 값이 생기기
@@ -672,9 +673,11 @@ class Thresholds(HarnessModel):
     # (팀 검수 83표본의 래퍼 예). 위 ⚠와 같은 프롬프트 판 문제 — v7이 서술한다.
     auditor_callee_wrappers: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`가 필드 경유 호출(`sys->alloc(…)`)이 갈 수 있는 함수 본문을 붙이는가(C6 —
-    # #304). 1이면 피호출 단계(`auditor_callee_hops`)에서 실린 함수마다 index-v3 `fn_bindings`로 푼
-    # 후보(`indirect_callees_of`)를 붙인다 — 후보가 `runner._AUDITOR_INDIRECT_MAX`개를 넘는 함수는
-    # 어느 것인지 몰라 통째로 건너뛴다. 피호출 단계에 얹히는 값이라 그것이 꺼져 있으면 효과가 없다.
+    # #304). 1이면 피호출 단계(`auditor_callee_hops`)에서 실린 함수의 필드 경유 호출마다 index-v3
+    # `fn_bindings`로 푼 후보(`indirect_calls_of`)를 붙인다 — 아직 안 실린 후보가
+    # `runner._AUDITOR_INDIRECT_MAX`개를 넘는 필드는 어느 것인지 몰라 그 필드만 건너뛴다(PR #468
+    # 리뷰 MEDIUM-2 — 상한은 필드마다). 비제품 경로 강등은 피호출 조회와 같다
+    # (`auditor_definitions`를 켠 run). 피호출 단계에 얹히는 값이라 그것이 꺼져 있으면 효과가 없다.
     # v3 표가 없는 인덱스(이미지 재빌드 전)면 아무것도 안 붙는다. 필드 기본은 끈다 —
     # `budgets.yaml`이 1로 켠다(2026-10-04). 위 ⚠와 같은 프롬프트 판 문제 — v7이 서술한다.
     auditor_indirect_callees: int = Field(default=0, ge=0, le=1)
@@ -682,7 +685,9 @@ class Thresholds(HarnessModel):
     # 나온 이름 중 실린 함수의 지역·파라미터가 아닌 것(파일 변수 등)과 필드 이름마다 index-v3로
     # 쓰는 지점(`writes_of`·`field_writes_of`)을 찾아, 이미 실린 범위 밖의 지점 앞뒤
     # `runner._AUDITOR_WRITE_LINES`줄을 그 함수 범위 안으로 잘라 N곳까지 붙인다(호출자 창과 같은
-    # 창). 버퍼·길이 필드가 어디서 정해지는지(`->len = …`·`buf = malloc(n)`)를 겨냥한다. 필드 기본은
+    # 창 · 호출자 창 뒤). 쓰는 함수의 같은 이름 지역에 쓰는 지점은 뺀다. 순서는 이름·필드가 슬라이스
+    # 줄에 처음 나온 순서이고 함수가 다른 지점이 먼저다(`runner._write_sites`). 버퍼·길이 필드가
+    # 어디서 정해지는지(`->len = …`·`buf = malloc(n)`)를 겨냥한다. 필드 기본은
     # 0(끔) — `budgets.yaml`이 켠다. v3 표가 없으면 아무것도 안 붙는다. 위 ⚠와 같은 프롬프트 판
     # 문제 — v7이 서술한다.
     auditor_write_sites: int = Field(default=0, ge=0)

@@ -43,11 +43,13 @@ from tests.test_pipeline_e2e import (
 
 @pytest.fixture(autouse=True)
 def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
-    """이 파일의 `_run`은 Auditor SOURCE 옵션 다섯을 **끈** 설정에서 돈다(결정 1-b 모양).
+    """이 파일의 `_run`은 Auditor SOURCE 옵션(`AUDITOR_SOURCE_OPTIONS` — 지금 여덟)을 **전부 끈**
+    설정에서 돈다(결정 1-b 모양).
 
-    2026-10-03부터 `budgets.yaml`이 넷을 켠다(#349) -> 그대로 두면 1-b 규칙을 재는 검사마다 호출자
-    창·정의가 끼어 기대값이 흔들리고, 옵션 하나를 켜는 검사는 다른 셋이 같이 켜진 채로 돈다.
-    옵션을 재는 검사는 `configure`로 그 하나만 켠다. 기본 설정(넷 켬) 그대로의 모양은
+    2026-10-03부터 `budgets.yaml`이 그중 일곱을 켠다(entry 줄이기만 꺼짐 · #349 · ⏵ 2026-10-04 래퍼
+    너머 · 간접 피호출 · 쓰기 지점 창) -> 그대로 두면 1-b 규칙을 재는 검사마다 호출자 창·정의가 끼어
+    기대값이 흔들리고, 옵션 하나를 켜는 검사는 다른 것이 같이 켜진 채로 돈다.
+    옵션을 재는 검사는 `configure`로 그 하나만 켠다. 기본 설정(일곱 켬) 그대로의 모양은
     `test_default_*` 검사가 따로 본다 -> 그 이름은 이 픽스처를 건너뛴다.
     """
     if request.node.name.startswith("test_default_"):
@@ -1365,7 +1367,8 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
     """`_auditor_source`를 직접 부르는 최소 ctx(#351 리뷰). 파일은 줄 목록, 상한은 단어 수(모델
     카운터 자리)다. `callees`·`sites`는 심볼 이름 → 위치 목록, `definitions`는 (이름들, 파일) →
     목록 함수, `locals`는 (파일, 함수 이름) → 그 함수의 지역·파라미터 이름 집합이다(없으면 `None` —
-    「v2 표 없음」). `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다.
+    「v2 표 없음」). `indirect`는 심볼 이름 → `[(필드, 후보 위치 목록)]`이다(`indirect_calls_of`).
+    `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다.
     `ctx.lookup_kwargs`는 조회가 불린 순서대로 `(조회 이름, 받은 키워드)`를 든다 — 위생이 켜졌는지
     (`demote_nonproduct`)와 `locals_of`가 불렸는지를 본다."""
     import types
@@ -1402,6 +1405,10 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         lookup_kwargs.append(("locals_of", {}))
         return opts.get("locals", {}).get((file, func))
 
+    def indirect(loc, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("indirect_calls_of", kw))
+        return opts.get("indirect", {}).get(loc.symbol, [])
+
     def functions_named(wanted, _file, **kw):  # noqa: ANN001, ANN003, ANN202
         lookup_kwargs.append(("functions_named", kw))
         return [loc for name in sorted(wanted) for loc in opts.get("functions", {}).get(name, [])]
@@ -1415,7 +1422,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         call_sites_of=sites,
         locals_of=locals_of,
         functions_named=functions_named,
-        indirect_callees_of=lambda loc: opts.get("indirect", {}).get(loc.symbol, []),
+        indirect_calls_of=indirect,
         writes_of=lambda name, _file: opts.get("writes", {}).get(name, []),
         field_writes_of=lambda name, _file: opts.get("field_writes", {}).get(name, []),
         lookup_kwargs=lookup_kwargs,
@@ -2029,39 +2036,71 @@ _I_C = Location(file="i.c", symbol="impl_c", line_start=70, line_end=80)
 _I_D = Location(file="i.c", symbol="impl_d", line_start=90, line_end=100)
 
 
-def _indirect(targets: list, **opts):  # noqa: ANN202
+def _indirect(groups: list, symbols: tuple = (), lines: tuple = (("i.c", 2),), **opts):  # noqa: ANN202
     ctx, events, _, _ = _unit(
-        _I_FILE, [_I_F], auditor_callee_hops=1, auditor_indirect_callees=1,
-        indirect={"f": targets}, **opts,
+        _I_FILE, [_I_F, *symbols], auditor_callee_hops=1, auditor_indirect_callees=1,
+        indirect={"f": groups}, **opts,
     )
-    return _unit_run(ctx, events, _I_F, [("i.c", 2)])
+    source, event = _unit_run(ctx, events, _I_F, list(lines))
+    return source, event, ctx
 
 
 def test_a_field_call_brings_the_functions_bound_to_that_field() -> None:
     """`sys->alloc(n)`의 후보(`fn_bindings`로 푼 `impl_a`)가 피호출처럼 붙는다."""
-    source, event = _indirect([_I_A])
+    source, event, _ = _indirect([("alloc", [_I_A])])
     assert "/* ===== i.c:30-40 ===== */" in source
     assert (event["callees"], event["indirect_callees"], event["indirect_skipped"]) == (1, 1, 0)
 
 
-def test_too_many_field_call_candidates_are_skipped_whole() -> None:
-    """후보가 `_AUDITOR_INDIRECT_MAX`(3)개를 넘으면 어느 것인지 몰라 그 함수의 간접 피호출은 하나도
-    안 붙는다 — 셋이면 붙고 넷이면 안 붙는다."""
+def test_too_many_field_call_candidates_skip_only_that_field() -> None:
+    """후보가 `_AUDITOR_INDIRECT_MAX`(3)개를 넘는 **필드**는 어느 것인지 몰라 그 필드의 후보만 안
+    붙는다 — 셋이면 붙고 넷이면 안 붙는다. 상한은 필드마다다(PR #468 리뷰 MEDIUM-2): `s->read`
+    (후보 1)와 `s->write`(후보 3)를 같이 부르면 합이 4여도 둘 다 붙는다(함수 단위 합이던 때는 둘 다
+    버려졌다). 넷인 필드 옆의 다른 필드는 그대로 붙는다."""
     from src.orchestrator.runner import _AUDITOR_INDIRECT_MAX
 
     assert _AUDITOR_INDIRECT_MAX == 3
-    _, event = _indirect([_I_A, _I_B, _I_C])
+    _, event, _ = _indirect([("alloc", [_I_A, _I_B, _I_C])])
     assert (event["indirect_callees"], event["indirect_skipped"]) == (3, 0)
-    source, event = _indirect([_I_A, _I_B, _I_C, _I_D])
+    source, event, _ = _indirect([("alloc", [_I_A, _I_B, _I_C, _I_D])])
     assert "i.c:30-40" not in source
     assert (event["indirect_callees"], event["indirect_skipped"]) == (0, 1)
+    _, event, _ = _indirect([("read", [_I_A]), ("write", [_I_B, _I_C, _I_D])])
+    assert (event["indirect_callees"], event["indirect_skipped"]) == (4, 0)
+    impl_e = Location(file="i.c", symbol="impl_e", line_start=105, line_end=110)
+    source, event, _ = _indirect([("read", [_I_A]), ("write", [_I_B, _I_C, _I_D, impl_e])])
+    assert "/* ===== i.c:30-40 ===== */" in source and "i.c:50-60" not in source
+    assert (event["indirect_callees"], event["indirect_skipped"]) == (1, 1)
+
+
+def test_already_carried_candidates_do_not_count_toward_the_field_cap() -> None:
+    """이미 실린 후보는 상한에 안 센다 — 슬라이스가 `impl_a`를 지나 이미 실렸으면 후보 넷 중 새로
+    붙일 것은 셋이라 붙는다(PR #468 리뷰 MEDIUM-2)."""
+    source, event, _ = _indirect(
+        [("alloc", [_I_A, _I_B, _I_C, _I_D])], symbols=(_I_A,), lines=(("i.c", 2), ("i.c", 31))
+    )
+    assert source.count("/* ===== i.c:30-40 ===== */") == 1
+    assert "/* ===== i.c:90-100 ===== */" in source
+    assert (event["indirect_callees"], event["indirect_skipped"]) == (3, 0)
+
+
+def test_indirect_lookup_gets_the_nonproduct_demotion_with_definitions_on() -> None:
+    """간접 피호출 조회도 정의·피호출·호출자 조회와 같이 `auditor_definitions`를 켠 run에서
+    `demote_nonproduct=True`로 불린다(#444 · PR #468 리뷰 MEDIUM-2). 끄면 키워드가 없다."""
+    _, _, ctx = _indirect([("alloc", [_I_A])], auditor_definitions=1)
+    assert ("indirect_calls_of", {"demote_nonproduct": True}) in ctx.lookup_kwargs
+    _, _, ctx = _indirect([("alloc", [_I_A])])
+    assert ("indirect_calls_of", {}) in ctx.lookup_kwargs
 
 
 def test_indirect_callees_off_adds_nothing_and_no_keys() -> None:
-    ctx, events, _, _ = _unit(_I_FILE, [_I_F], auditor_callee_hops=1, indirect={"f": [_I_A]})
+    ctx, events, _, _ = _unit(
+        _I_FILE, [_I_F], auditor_callee_hops=1, indirect={"f": [("alloc", [_I_A])]}
+    )
     source, event = _unit_run(ctx, events, _I_F, [("i.c", 2)])
     assert "i.c:30-40" not in source
     assert "indirect_callees" not in event
+    assert all(name != "indirect_calls_of" for name, _ in ctx.lookup_kwargs)
 
 
 _WS_FILE = {
@@ -2120,3 +2159,149 @@ def test_write_sites_off_adds_no_window_and_no_keys() -> None:
     source, event = _write_sites(0)
     assert "w.c:40-42" not in source
     assert "write_windows" not in event
+
+
+def test_a_write_to_a_same_named_local_in_another_function_is_not_attached() -> None:
+    """파일 변수 `buf`를 찾을 때 다른 함수 `g`의 **지역** `buf`에 쓴 줄은 안 붙는다(PR #468 리뷰
+    HIGH-1). `writes_of`의 실제 계약대로 가짜 조회가 near 파일 안의 두 지점을 다 낸다 — 파일
+    변수에 쓴 `init`(41)과 `g`의 지역 선언 초기화(31). 걸러야 하는 것은 러너다(`locals_of`로 쓰는
+    함수의 지역인지 본다). 테스트 `test_writes_of_does_not_split_functions_inside_the_near_file`이
+    그 계약을 문다."""
+    files = {
+        "b.c": [
+            "int f(const char *src, int n) {",  # 1
+            "  memcpy(buf, src, n);",  # 2 — 슬라이스 줄: 파일 변수 buf
+            "}",  # 3
+            *[f"filler{i}" for i in range(4, 30)],  # 4-29
+            "void g(void) {",  # 30
+            "  char *buf = malloc(8);",  # 31 — g의 지역 buf
+            "  use(buf);",  # 32
+            "}",  # 33
+            *[f"filler{i}" for i in range(34, 40)],  # 34-39
+            "void init(void) {",  # 40
+            "  buf = malloc(64);",  # 41 — 파일 변수 buf
+            "}",  # 42
+        ]
+    }
+    f = Location(file="b.c", symbol="f", line_start=1, line_end=3)
+    g = Location(file="b.c", symbol="g", line_start=30, line_end=33)
+    init = Location(file="b.c", symbol="init", line_start=40, line_end=42)
+    ctx, events, _, _ = _unit(
+        files, [f, g, init], auditor_write_sites=6,
+        writes={"buf": [
+            Location(file="b.c", symbol="g", line_start=31, line_end=31),
+            Location(file="b.c", symbol="init", line_start=41, line_end=41),
+        ]},
+        locals={("b.c", "f"): frozenset({"src", "n"}), ("b.c", "g"): frozenset({"buf"})},
+    )
+    source, event = _unit_run(ctx, events, f, [("b.c", 2)])
+    assert "malloc(8)" not in source
+    assert "/* ===== b.c:40-42 ===== */" in source and "  buf = malloc(64);" in source
+    assert (event["write_windows"], event["write_sites_found"]) == (1, 1)
+
+
+_M1_FILE = {
+    "m.c": [
+        "int f(struct pkt *p) {",  # 1
+        "  memcpy(dst, p->payload, p->len);",  # 2 — 슬라이스 줄
+        "}",  # 3
+        *[f"filler{i}" for i in range(4, 10)],  # 4-9
+        "void setup(struct pkt *p, int k) {",  # 10
+        *[f"  step{i};" for i in range(11, 18)],  # 11-17
+        "  p->len = k - 2;",  # 18 — 필드 쓰기(호출자 창 밖)
+        "  check(p);",  # 19
+        "  if (p->len > 64) return;",  # 20
+        "  step21;",  # 21
+        "  p->len = k;",  # 22 — 필드 쓰기(호출자 창 안)
+        *[f"  step{i};" for i in range(23, 30)],  # 23-29
+        "  f(p);",  # 30 — entry 호출
+        *[f"  tail{i};" for i in range(31, 40)],  # 31-39
+        "}",  # 40
+    ]
+}
+_M1_F = Location(file="m.c", symbol="f", line_start=1, line_end=3)
+_M1_SETUP = Location(file="m.c", symbol="setup", line_start=10, line_end=40)
+
+
+def _m1(field_lines: list[int]):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _M1_FILE, [_M1_F, _M1_SETUP], auditor_caller_lines=10, auditor_write_sites=6,
+        sites={"f": [Location(file="m.c", symbol="setup", line_start=30, line_end=30)]},
+        field_writes={"len": [
+            Location(file="m.c", symbol="setup", line_start=n, line_end=n) for n in field_lines
+        ]},
+    )
+    return _unit_run(ctx, events, _M1_F, [("m.c", 2)])
+
+
+def test_a_write_window_does_not_push_out_the_caller_window() -> None:
+    """**핀(PR #468 리뷰 MEDIUM-1)** — `setup`이 22행에서 `p->len`을 쓰고 30행에서 entry를 부른다.
+    이 PR 전부터 실리던 호출자 창 20-40이 그대로 실린다(쓰기 창 19-25가 먼저 자리를 잡던 때는
+    호출자 창이 겹쳐 통째로 빠져 26-40의 호출 직전 검사가 사라졌다). 22행은 호출자 창 안이라 쓰기
+    창은 따로 안 붙는다."""
+    source, event = _m1([22])
+    assert "/* ===== m.c:20-40 ===== */" in source and "  f(p);" in source
+    assert (event["callers"], event["write_windows"]) == (1, 0)
+
+
+def test_a_write_window_overlapping_carried_code_is_cut_to_the_free_part() -> None:
+    """쓰는 줄(18)이 실린 범위 밖이고 창(15-21)만 호출자 창(20-40)과 겹치면 겹치는 쪽을 깎은
+    15-19가 붙는다 — 쓰는 줄은 보이고 같은 줄이 두 블록에 안 실린다."""
+    source, event = _m1([18])
+    assert "/* ===== m.c:20-40 ===== */" in source
+    assert "/* ===== m.c:15-19 ===== */" in source and "  p->len = k - 2;" in source
+    assert (event["callers"], event["write_windows"]) == (1, 1)
+
+
+_ORDER_FILE = {
+    "o.c": [
+        "int f(struct pkt *p) {",  # 1
+        "  copy(zbuf, p->len, abuf);",  # 2 — 처음 나온 순서: copy · zbuf · p · len(필드) · abuf
+        "}",  # 3
+        *[f"filler{i}" for i in range(4, 80)],  # 4-79
+    ]
+}
+_O_F = Location(file="o.c", symbol="f", line_start=1, line_end=3)
+_O_INIT = Location(file="o.c", symbol="init", line_start=10, line_end=30)
+_O_SETUP = Location(file="o.c", symbol="setup", line_start=40, line_end=50)
+_O_OTHER = Location(file="o.c", symbol="other", line_start=60, line_end=70)
+
+
+def _ordered(limit: int, writes: dict):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _ORDER_FILE, [_O_F, _O_INIT, _O_SETUP, _O_OTHER], auditor_write_sites=limit,
+        writes=writes,
+        field_writes={"len": [Location(file="o.c", symbol="setup", line_start=45, line_end=45)]},
+    )
+    return _unit_run(ctx, events, _O_F, [("o.c", 2)])
+
+
+def _site(symbol: str, line: int) -> Location:
+    return Location(file="o.c", symbol=symbol, line_start=line, line_end=line)
+
+
+def test_write_sites_follow_slice_order_not_the_alphabet() -> None:
+    """**PR #468 리뷰 MEDIUM-3** — 이름·필드는 슬라이스 줄에 처음 나온 순서로 창을 받는다. 상한 2면
+    `zbuf`(init)와 필드 `len`(setup)이 붙고 줄 끝의 `abuf`(other)는 빠진다. 알파벳 순이던 때는
+    `abuf`가 먼저 먹고 필드는 이름이 다 끝난 뒤라 굶었다."""
+    source, event = _ordered(2, {"zbuf": [_site("init", 12)], "abuf": [_site("other", 65)]})
+    assert "/* ===== o.c:10-15 ===== */" in source  # zbuf — init 12 앞뒤 3줄을 init 머리에서 자름
+    assert "/* ===== o.c:42-48 ===== */" in source  # len — setup 45
+    assert "o.c:62-68" not in source
+    assert (event["write_windows"], event["write_sites_found"]) == (2, 3)
+
+
+def test_write_sites_prefer_a_different_function_before_a_second_site() -> None:
+    """함수가 다른 지점이 먼저다 — `zbuf`를 `init`이 두 번(12·25) 써도 상한 2면 둘째 자리는
+    `setup`의 `len` 쓰기가 받는다."""
+    source, event = _ordered(2, {"zbuf": [_site("init", 12), _site("init", 25)]})
+    assert "/* ===== o.c:10-15 ===== */" in source
+    assert "/* ===== o.c:42-48 ===== */" in source
+    assert "o.c:22-28" not in source
+    assert event["write_windows"] == 2
+
+
+def test_write_sites_found_counts_a_line_once() -> None:
+    """한 줄이 두 이름을 쓰면 지점 하나·창 하나다(PR #468 리뷰 LOW-1)."""
+    _, event = _ordered(6, {"zbuf": [_site("init", 12)], "abuf": [_site("init", 12)]})
+    assert (event["write_windows"], event["write_sites_found"]) == (2, 2)
