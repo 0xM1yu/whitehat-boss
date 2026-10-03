@@ -132,6 +132,7 @@ from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
 from src.orchestrator.prompt_log import PromptLog
+from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
@@ -3073,6 +3074,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
+    **GUARDS(`auditor_guards`)** — 1이고 sink를 아는 슬라이스(Case B)면 entry 함수 **바로 뒤에**
+    `source_guards`가 훑은 sink 앞 가드 블록을 붙인다. entry 함수 몫이라 상한에 밀려 빠지지
+    않고, 대신 그 크기를 **먼저** 세어 뒤에 붙는 함수가 그만큼 덜 든다. 줄이기
+    (`auditor_entry_trim`) **전**의 원문을 훑는다 — 잘려 안 보이는 검사도 행으로 남는다. 함수가
+    아니라 `functions`에 안 들고, `guards`·`guards_dropped`가 따로 센다. 0이면 이 단계가
+    없다(Case A도 없다).
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
@@ -3092,6 +3100,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         else:
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
+    guards_on = ctx.config.thresholds.auditor_guards
+    guard_scan = scan_guards(ref, anchor, anchor_text) if guards_on else None
+    guard_blocks = [guard_scan.block] if guard_scan else []
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
     # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
@@ -3112,6 +3123,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 정의 조회가 읽는 원문 — 배너(`파일:줄`)와 뺀 구간 표시의 낱말은 코드가 아니다(#351 리뷰).
     texts = [_OMITTED_LINE.sub("", anchor_text)]
     size, dropped = measure(blocks[0]), 0
+    # GUARDS는 entry 함수 몫이라 상한에 안 밀리지만 크기는 먼저 센다 — 뒤에 붙는 함수가 그만큼
+    # 덜 든다.
+    size += sum(1 + measure(block) for block in guard_blocks)
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
@@ -3191,6 +3205,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             size += 1 + measure(block)
             callers += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
+    # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다.
+    blocks[1:1] = guard_blocks
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
@@ -3198,7 +3214,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks) - definitions - callers - len(guard_blocks),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3213,6 +3229,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         **(
             {"definitions": definitions, "definitions_dropped": definitions_dropped}
             if with_definitions
+            else {}
+        ),
+        **(
+            {"guards": guard_scan.shown, "guards_dropped": guard_scan.dropped_listing}
+            if guard_scan
             else {}
         ),
         **(

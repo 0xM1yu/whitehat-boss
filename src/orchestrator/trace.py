@@ -238,6 +238,11 @@ class EventKind(StrEnum):
     # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
     # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
     # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
+    # `auditor_guards`가 1이고 sink를 아는 슬라이스(Case B)면 `guards`(실은 GUARDS 행 수 — 0이면
+    # 「훑은 결과 없음」 한 줄을 실었다)·`guards_dropped`(행 상한에 걸려 뺀 행 — `파일:줄 | 조건`을
+    # 줄바꿈으로 이은 문자열, 50행까지 싣고 넘치면 끝에 `... +N more`, 안 뺐으면 빈 문자열)가 더
+    # 실린다. GUARDS는 함수가 아니라 `functions`에 안 든다. **필드 부재 = 안 훑었다**(꺼졌거나
+    # Case A) — `guards: 0`은 훑었는데 없었다는 뜻이다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
