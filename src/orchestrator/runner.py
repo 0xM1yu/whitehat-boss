@@ -3227,8 +3227,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             {
                 "gate_reasons": ",".join(
                     source_gate.reasons(
-                        ref, anchor,
-                        definitions_dropped=definitions_dropped, callees_dropped=callees_dropped,
+                        ref, anchor, uncovered_lines=uncovered, functions_dropped=dropped,
+                        callees_dropped=callees_dropped, definitions_dropped=definitions_dropped,
                     )
                 )
             }
