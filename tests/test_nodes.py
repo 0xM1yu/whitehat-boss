@@ -1334,7 +1334,7 @@ def test_critic_v3_prompt_is_content_conditional() -> None:
     assert "carries a `body`" in prefix
 
 
-# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328 · v5 절단 계약 · v6 #418·#421) --------
+# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328 · v5 절단 계약 · v6 #418·#421 · v7 #349) -
 
 
 def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
@@ -1376,15 +1376,17 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     **서빙 판이 이 집합에 드는가**는 판을 세지 않는 별 핀이 묻는다 — `test_config.py`의
     `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
-    assert auditor._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v4_t1", "v5", "v6"})
+    assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7"}
+    )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
-@pytest.mark.parametrize("version", ["v3", "v4", "v5", "v6"])
+@pytest.mark.parametrize("version", ["v3", "v4", "v5", "v6", "v7"])
 def test_auditor_content_aware_version_renders_slice_source_and_evidence_body_through_the_node(
     ctx: RunContext, version: str
 ) -> None:
-    """registry가 auditor에 v3·v4·v5·v6를 고르면 **노드를 거친** 렌더가 body를 채운다 —
+    """registry가 auditor에 v3·v4·v5·v6·v7을 고르면 **노드를 거친** 렌더가 body를 채운다 —
     슬라이스 렌더가 `SOURCE`로, payload 본문이 FACTS `evidence[].body`로 간다.
 
     위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → 렌더**를 한 호출로
