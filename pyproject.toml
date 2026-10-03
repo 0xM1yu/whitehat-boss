@@ -19,10 +19,13 @@ include = ["src*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# first-party roots: tools/slicer holds the flat slicer modules, so isort files them with the repo's own
+src = [".", "src", "tools/slicer"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+# tools/slicer: the slicer modules import each other flat and run as scripts from their directory
+pythonpath = [".", "tools/slicer"]

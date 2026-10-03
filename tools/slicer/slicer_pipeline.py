@@ -2,11 +2,12 @@
 
 import copy
 import hashlib
+import sys
 import time
 from pathlib import Path
 
 import slicer_queries as queries
-from slicer_candidates import collect
+from slicer_candidates import collect, prioritize
 from slicer_checkpoint import digest
 from slicer_errors import QueryError
 from slicer_library import Library
@@ -24,6 +25,11 @@ STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 # always exceeds the 600s deadline), resume re-burns the timeout on it every time, and a
 # streak of >= POISON_STOP_STREAK such candidates never advances past them (documented limit).
 POISON_STOP_STREAK = 3
+
+# --priority-files audit (review M-3/M-6): the matched/unmatched names are recorded in the
+# result so a reader can tell, after the fact, exactly what the list resolved to -- not just a
+# count. Capped so a huge list cannot bloat the result; the counts next to them stay exact.
+PRIORITY_AUDIT_CAP = 50
 
 
 def file_identity(path: Path) -> dict | None:
@@ -59,6 +65,39 @@ class SlicingStages:
                 "methods first, then traversal order within each layer; slicer_queries)"
             )
         self.candidates = collect(rows, self.repo)
+        if self.priority_files is not None:
+            # Before bind(): the checkpoint (and so --prepare-only's shards and the claim queue)
+            # keeps this order, and resuming with a different list is a contract mismatch.
+            self.candidates, first, matched = prioritize(self.candidates, self.priority_files)
+            unmatched_names = sorted(self.priority_files - matched)
+            self.result["priority"] = {
+                "files": len(self.priority_files),
+                "files_with_candidates": len(matched),
+                "first_tier_candidates": first,
+                "candidates": len(self.candidates),
+                # Audit trail (review M-3/M-6): the normalized names this list resolved to, so a
+                # reader can tell a real match from a silent typo. Counts above stay exact.
+                "matched_files": sorted(matched)[:PRIORITY_AUDIT_CAP],
+                "unmatched_files": unmatched_names[:PRIORITY_AUDIT_CAP],
+            }
+            # A list that matches nothing is not an error (the run is still complete), but a
+            # misspelled list must not read as applied -- warn on stderr and note it.
+            unmatched = len(unmatched_names)
+            if not matched:
+                print(
+                    f"--priority-files: the list ({len(self.priority_files)} files) matched no "
+                    "candidate's entry or anchor file; candidates keep the default order",
+                    file=sys.stderr,
+                )
+                self.result["measurement_notes"]["priority_files"] = (
+                    f"the list ({len(self.priority_files)} files) matched no candidate's entry or "
+                    "anchor file; candidates keep the default order"
+                )
+            elif unmatched:
+                self.result["measurement_notes"]["priority_files"] = (
+                    f"{unmatched} of {len(self.priority_files)} listed files matched no "
+                    "candidate's entry or anchor file"
+                )
         self.result["candidate_manifest"] = {c["candidate_key"]: c for c in self.candidates}
         if self.checkpoint:
             self.checkpoint.bind("candidates", self.candidates)

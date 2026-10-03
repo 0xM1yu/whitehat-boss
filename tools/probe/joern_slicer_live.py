@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SLICER_DIR = ROOT / "tools" / "slicer"
 # Child mode: run slicer.py with the per-request builders behind slicer_library's interface.
 INLINE_CHILD = "--inline-library-child"
 
@@ -49,7 +50,8 @@ def dump(path: Path, value: object) -> None:
 
 def execute(args, source: Path, name: str, extra: list[str], inline: bool = False) -> dict:
     output = args.out_dir / f"{name}.json"
-    entry = [str(Path(__file__).resolve()), INLINE_CHILD] if inline else [str(ROOT / "slicer.py")]
+    script = str(SLICER_DIR / "slicer.py")
+    entry = [str(Path(__file__).resolve()), INLINE_CHILD] if inline else [script]
     command = [
         sys.executable, *entry, "--repo", str(source),
         "--out", str(output), "--joern-endpoint", args.endpoint,
@@ -83,7 +85,7 @@ def validate_full(result: dict) -> None:
 
 def validate_candidates(args) -> None:
     # The last CLI run leaves its fresh CPG selected. No other client may use it.
-    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(SLICER_DIR))
     from slicer import JoernClient
     from slicer_queries import candidates_b_query
 
@@ -111,7 +113,7 @@ def main() -> None:
     source = args.out_dir / "source"
     shutil.copytree(ROOT / "tests/fixtures/target", source)
     shutil.copytree(ROOT / "tests/fixtures/slicer_live", source, dirs_exist_ok=True)
-    inputs = [ROOT / name for name in ("slicer.py", "slicer_queries.py", "slicer_source.py")]
+    inputs = [SLICER_DIR / name for name in ("slicer.py", "slicer_queries.py", "slicer_source.py")]
     inputs += [Path(__file__), *sorted(source.iterdir())]
     dump(args.out_dir / "manifest.json", {
         "python": sys.version,
@@ -141,7 +143,7 @@ def main() -> None:
 if __name__ == "__main__":
     if sys.argv[1:2] == [INLINE_CHILD]:
         sys.argv.pop(1)
-        sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(SLICER_DIR))
         import slicer
         import slicer_pipeline
 

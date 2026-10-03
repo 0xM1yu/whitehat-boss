@@ -167,8 +167,10 @@ class FakeToolRunner:
         """재현 실행. Fake에는 실행할 바이너리가 없으므로 대상 존재로 대체한다.
 
         ⚠ **`expected_signal`을 산출물과 대조하는 코드는 없다** — 8단계 노드가 그 문자열로
-        하는 일은 도구 이름을 고르는 것뿐이다(`validate.tool_for()`). 게이트는 `ok`만 보므로
-        여기서 내는 `ok=True`가 그대로 E4가 된다 — **「소스가 있다」가 `proven`이 된다**(#232).
+        하는 일은 도구 이름을 고르는 것뿐이다(`validate.tool_for()`). 게이트는 런타임 Evidence의
+        종료 코드가 0도 `None`도 아닐 것을 요구하는데(#232) **여기서 내는 `exit_code=1`은 측정이
+        아니라 상수다** — 그래서 `ok=True`가 그대로 E4가 된다.
+        **「소스가 있다」가 `proven`이 된다.**
         """
         if not sources(workdir):
             return self.make_evidence(
