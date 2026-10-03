@@ -47,6 +47,7 @@ from src.orchestrator.prompt_loader import build_facts, load_prompt
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel, Role
 from src.schemas.finding import MissingEvidence
+from src.schemas.stores import StoreTarget
 from src.tokens import estimate_tokens
 
 RUN_ID = "run_test_0001"
@@ -1253,3 +1254,335 @@ def test_call_sites_of_counts_definitions_not_files(tmp_path: Path) -> None:
     found = _graph(tmp_path, doc).call_sites_of(target)
 
     assert [loc.file for loc in found] == ["a.c"]
+
+
+# --- stores_of: Auditor `STORES` 블록의 쓰기 지점 ------------------------------------------------
+#
+# 표의 열은 **진짜 인덱서가 쓴 값**에서 옮겼다(`tests/test_source_stores.py`가 같은 원문을 인덱서로
+# 직접 돌려 대조한다). 다만 `copy`의 지역 `g_len`에 대한 대입(`assigns` 24줄)은 이 표에서 더했다 —
+# 지역이 같은 이름의 전역을 가리는 자리를 고정하려는 것이다. 원문의 행 번호:
+#
+#   a.c  4  struct ctx { char *buf; size_t len; struct hdr { int len; } h; };
+#   a.c  5  struct other { int len; };
+#   a.c  7  static char *g_buf;       8  static size_t g_len = 0;
+#   a.c 10-18 grow   12 c->len = n * 2;    13 c->buf = (char *)malloc(c->len + 1);
+#                    14 g_buf = malloc(<줄바꿈> n + 1);    16 g_len += n;    17 c->h.len = 4;
+#   a.c 20-27 copy   22 char *local = malloc(n);  23 size_t g_len = 3;  24 g_len = 0; local = NULL;
+#                    25 memcpy(c->buf + c->len, src, n);
+#   b.c  2  static size_t g_len;      3  extern char *g_buf;
+#   b.c 4-9 other_fn 6 o->len = 5;    7  g_len = 7;    8  g_buf = calloc(1, 16);
+_STORES_INDEX = {
+    **_INDEX_V2,
+    "files": ["a.c", "b.c"],
+    "symbols": [
+        {"name": "grow", "file": "a.c", "line_start": 10, "line_end": 18},
+        {"name": "copy", "file": "a.c", "line_start": 20, "line_end": 27},
+        {"name": "other_fn", "file": "b.c", "line_start": 4, "line_end": 9},
+    ],
+    "calls": {
+        "calloc": [{"file": "b.c", "line": 8, "caller": "other_fn", "args": ["1", "16"]}],
+        "malloc": [
+            {"file": "a.c", "line": 13, "caller": "grow", "args": ["c->len + 1"]},
+            {"file": "a.c", "line": 14, "caller": "grow", "args": ["n + 1"]},
+            {"file": "a.c", "line": 22, "caller": "copy", "args": ["n"]},
+        ],
+        "memcpy": [
+            {"file": "a.c", "line": 25, "caller": "copy", "args": ["c->buf + c->len", "src", "n"]}
+        ],
+    },
+    "functions": {
+        "grow": [{"file": "a.c", "line_start": 10, "line_end": 18, "params": ["c", "n"]}],
+        "copy": [{"file": "a.c", "line_start": 20, "line_end": 27, "params": ["c", "src", "n"]}],
+        "other_fn": [{"file": "b.c", "line_start": 4, "line_end": 9, "params": ["o"]}],
+    },
+    "file_vars": {
+        "g_buf": [
+            {"file": "a.c", "line_start": 7, "line_end": 7},
+            {"file": "b.c", "line_start": 3, "line_end": 3},
+        ],
+        "g_len": [
+            {"file": "a.c", "line_start": 8, "line_end": 8},
+            {"file": "b.c", "line_start": 2, "line_end": 2},
+        ],
+    },
+    "fields": {
+        "buf": [{"type": "ctx", "file": "a.c", "line_start": 4, "line_end": 4}],
+        "len": [
+            {"type": "ctx", "file": "a.c", "line_start": 4, "line_end": 4},
+            {"type": "hdr", "file": "a.c", "line_start": 4, "line_end": 4},
+            {"type": "other", "file": "a.c", "line_start": 5, "line_end": 5},
+        ],
+    },
+    "locals": {
+        "a.c": {
+            "grow": {"c": [10], "n": [10]},
+            "copy": {"c": [20], "g_len": [23], "local": [22], "n": [20], "src": [20]},
+        },
+        "b.c": {"other_fn": {"o": [4]}},
+    },
+    "assigns": {
+        "a.c": {
+            "copy": {"g_len": [24], "local": [24]},
+            "grow": {"g_buf": [14], "g_len": [16]},
+        },
+        "b.c": {"other_fn": {"g_buf": [8], "g_len": [7]}},
+    },
+    "field_assigns": {
+        "buf": [
+            {"file": "a.c", "line": 13, "func": "grow", "lhs": "c->buf",
+             "rhs": "(char *)malloc(c->len + 1)", "op": "="}
+        ],
+        "len": [
+            {"file": "b.c", "line": 6, "func": "other_fn", "lhs": "o->len", "rhs": "5", "op": "="},
+            {"file": "a.c", "line": 17, "func": "grow", "lhs": "c->h.len", "rhs": "4", "op": "="},
+            {"file": "a.c", "line": 12, "func": "grow", "lhs": "c->len", "rhs": "n * 2", "op": "="},
+        ],
+    },
+}
+
+
+def _stores(
+    tmp_path: Path,
+    name: str,
+    *,
+    field: bool = False,
+    file: str = "a.c",
+    line: int = 25,
+    lhs: str | None = None,
+    doc: object = _STORES_INDEX,
+):  # noqa: ANN202
+    return _graph(tmp_path, doc).stores_of(
+        StoreTarget(name=name, field=field, file=file, line=line, lhs=lhs)
+    )
+
+
+def test_stores_of_finds_the_writes_of_a_field_by_its_name(tmp_path: Path) -> None:
+    """`field_assigns`의 필드 이름 키 — 파일·줄·함수·좌변 철자·연산자. 순서는 (파일, 줄)이다(표의 행
+    순서와 무관 — 여기선 b.c가 표 앞에 있다)."""
+    found = _stores(tmp_path, "len", field=True, lhs="c->len")
+
+    assert [(s.file, s.line, s.func, s.lhs, s.op, s.field) for s in found] == [
+        ("a.c", 12, "grow", "c->len", "=", True),
+        ("a.c", 17, "grow", "c->h.len", "=", True),
+        ("b.c", 6, "other_fn", "o->len", "=", True),
+    ]
+    assert {s.name for s in found} == {"len"}
+
+
+def test_stores_of_has_no_struct_type_to_key_a_field_write_by() -> None:
+    """`field_assigns` 행에는 객체의 구조체 타입이 없다 — (구조체, 필드)로 짚을 열이 없으니 쓰기는
+    이름으로만 이을 수 있다. 이 가정이 깨지면(인덱서가 타입 열을 더하면) 아래 모호 판정을 다시
+    본다."""
+    from src.adapters.index_graph import _RECORD_KEYS
+
+    assert _RECORD_KEYS["field_assigns"] == ("file", "line", "func", "lhs", "rhs", "op")
+
+
+def test_stores_of_marks_every_write_of_a_field_name_several_structs_declare(
+    tmp_path: Path,
+) -> None:
+    """`len`은 ctx·hdr·other 셋이 선언한다 — 이름만으로는 어느 구조체의 쓰기인지 모른다. 찾는 줄과
+    좌변 철자가 같은 쓰기(`c->len`)도 이름 키의 한 행일 뿐이라 **전부** 모호하다."""
+    found = _stores(tmp_path, "len", field=True, lhs="c->len")
+
+    assert [(s.line, s.ambiguous) for s in found] == [(12, True), (17, True), (6, True)]
+
+
+def test_stores_of_does_not_mark_a_field_only_one_struct_declares(tmp_path: Path) -> None:
+    """`buf`는 인덱스에서 ctx 하나(타입·파일 하나)만 선언한다 — 이름이 곧 (구조체, 필드) 키라 철자가
+    달라도(`other->buf`를 찾는 줄) 모호하다고 안 한다."""
+    (found,) = _stores(tmp_path, "buf", field=True, lhs="other->buf")
+
+    assert (found.line, found.ambiguous) == (13, False)
+
+
+def test_stores_of_marks_a_field_no_indexed_struct_declares(tmp_path: Path) -> None:
+    """선언한 구조체가 인덱스에 없는 필드(시스템 헤더·C++ 클래스의 것)는 이름이 유일한 키다 —
+    모호하다."""
+    doc = {
+        **_STORES_INDEX,
+        "field_assigns": {
+            "st_size": [
+                {"file": "b.c", "line": 6, "func": "other_fn", "lhs": "sb.st_size", "rhs": "0",
+                 "op": "="}
+            ]
+        },
+    }
+
+    (found,) = _stores(tmp_path, "st_size", field=True, doc=doc)
+
+    assert found.ambiguous is True
+
+
+def test_stores_of_marks_a_field_of_an_anonymous_struct_and_a_struct_declared_twice(
+    tmp_path: Path,
+) -> None:
+    """선언이 하나여도 타입이 없거나(익명 구조체 — `type: null`), 같은 구조체 이름이 두 파일에 따로
+    정의돼 있으면(파일 지역 구조체가 흔하다) 이름이 키가 못 된다."""
+    write = {"file": "a.c", "line": 12, "func": "grow", "lhs": "c->w", "rhs": "1", "op": "="}
+    anonymous = {
+        **_STORES_INDEX,
+        "fields": {"w": [{"type": None, "file": "a.c", "line_start": 4, "line_end": 4}]},
+        "field_assigns": {"w": [write]},
+    }
+    twice = {
+        **_STORES_INDEX,
+        "fields": {
+            "w": [
+                {"type": "node", "file": "a.c", "line_start": 4, "line_end": 4},
+                {"type": "node", "file": "b.c", "line_start": 4, "line_end": 4},
+            ]
+        },
+        "field_assigns": {"w": [write]},
+    }
+
+    assert [s.ambiguous for s in _stores(tmp_path, "w", field=True, doc=anonymous)] == [True]
+    assert [s.ambiguous for s in _stores(tmp_path / "t", "w", field=True, doc=twice)] == [True]
+
+
+def test_stores_of_returns_every_write_of_a_flood_and_marks_each_of_them(tmp_path: Path) -> None:
+    """흔한 필드 이름(`size`) — 구조체 셋이 선언하고 쓰기가 열 곳이다. 인덱스는 **다 돌려주되 하나도
+    모호하지 않다고 하지 않는다**(자르는 것은 쓰는 쪽 몫이다 — `source_stores`의 이름별 상한)."""
+    writes = {
+        "a.c": ("p", [30, 31, 32]),
+        "b.c": ("q", [10, 11, 12, 13]),
+        "c.c": ("r", [5, 6, 7]),
+    }
+    doc = {
+        **_STORES_INDEX,
+        "fields": {
+            "size": [
+                {"type": kind, "file": file, "line_start": 1, "line_end": 1}
+                for kind, file in (("ctx", "a.c"), ("conn", "b.c"), ("node", "c.c"))
+            ]
+        },
+        "field_assigns": {
+            "size": [
+                {"file": file, "line": line, "func": "f", "lhs": f"{obj}->size", "rhs": "1",
+                 "op": "="}
+                for file, (obj, lines) in writes.items()
+                for line in lines
+            ]
+        },
+    }
+
+    found = _stores(tmp_path, "size", field=True, file="a.c", lhs="p->size", doc=doc)
+
+    assert len(found) == 10 > 8
+    assert all(s.ambiguous for s in found)
+    assert [(s.file, s.line) for s in found] == sorted((s.file, s.line) for s in found)
+
+
+def test_stores_of_finds_the_assignments_of_a_file_scope_variable(tmp_path: Path) -> None:
+    """`assigns` — 이름 → (파일, 함수, 줄). `copy`의 24줄 `g_len = 0`은 그 함수의 **지역** `g_len`
+    (`locals` 23줄)이 가리므로 전역에 대한 쓰기가 아니다."""
+    found = _stores(tmp_path, "g_len", file="b.c", line=7)
+
+    assert [(s.file, s.line, s.func, s.field) for s in found] == [
+        ("a.c", 16, "grow", False),
+        ("b.c", 7, "other_fn", False),
+    ]
+
+
+def test_stores_of_marks_a_same_named_variable_in_another_file_as_ambiguous(
+    tmp_path: Path,
+) -> None:
+    """`g_len`은 a.c·b.c 둘 다에 파일 전역이 있다(`static`일 수 있다 — 인덱스는 저장 클래스를 안
+    든다). **찾는 줄과 같은 파일**의 쓰기만 그 변수라고 말할 수 있고, 다른 파일의 쓰기는 이름만으로
+    같은 변수라고 못 한다 — 싣되 모호하다."""
+    found = _stores(tmp_path, "g_len", file="b.c", line=7)
+
+    assert [(s.file, s.ambiguous) for s in found] == [("a.c", True), ("b.c", False)]
+
+
+def test_stores_of_does_not_resolve_a_static_across_files_by_name_alone(tmp_path: Path) -> None:
+    """같은 질문을 a.c쪽에서 하면 뒤집힌다 — 다른 파일(b.c)의 쓰기가 모호하다."""
+    found = _stores(tmp_path, "g_len", file="a.c", line=8)
+
+    assert [(s.file, s.ambiguous) for s in found] == [("a.c", False), ("b.c", True)]
+
+
+def test_stores_of_skips_a_name_that_is_local_where_it_is_used(tmp_path: Path) -> None:
+    """찾는 줄(a.c:25 — `copy` 안)에서 파라미터(`n`)와 전역을 가리는 지역(`g_len`)은 쓰기 지점을
+    찾을 대상이 아니다 — 그 쓰기들은 같은 함수 안이고 이미 보인다. `[]`다(`None`이 아니다)."""
+    assert _stores(tmp_path, "n", line=25) == []
+    assert _stores(tmp_path, "g_len", line=26) == []
+
+
+def test_stores_of_skips_a_name_the_index_does_not_know_as_a_variable(tmp_path: Path) -> None:
+    """파일 스코프 선언이 없는 이름(매크로·enum 상수·시스템 헤더의 것)은 변수로 못 다룬다 —
+    어딘가에서 대입되고 있어도(`optind = 0`) 그 이름이 어느 변수인지 인덱스는 모른다."""
+    doc = {
+        **_STORES_INDEX,
+        "assigns": {"b.c": {"other_fn": {"optind": [9], "g_len": [7]}}},
+    }
+
+    assert _stores(tmp_path, "NULL") == []
+    assert _stores(tmp_path, "return") == []
+    assert _stores(tmp_path, "optind", file="b.c", line=8, doc=doc) == []
+    assert [s.line for s in _stores(tmp_path, "g_len", file="b.c", line=8, doc=doc)] == [7]
+
+
+def test_stores_of_without_an_enclosing_function_does_not_check_locals(tmp_path: Path) -> None:
+    """찾는 줄이 어느 함수에도 안 들면(파일 스코프 줄) 지역 판정을 건너뛴다 — 8줄은 전역 선언."""
+    found = _stores(tmp_path, "g_len", line=8)
+
+    assert [(s.file, s.line) for s in found] == [("a.c", 16), ("b.c", 7)]
+
+
+def test_stores_of_attaches_the_allocator_call_on_the_same_line(tmp_path: Path) -> None:
+    """쓰기 줄에 같은 함수의 할당기 호출이 있으면 크기 식(`calls`의 `args`)과 함께 붙는다 — 필드
+    쓰기 (13줄 `c->buf = malloc(c->len + 1)`)와 변수 대입(줄바꿈된 14줄 `g_buf = malloc(<줄바꿈> n +
+    1)`, `calls`가 호출 시작 줄 14로 센다) 둘 다. 할당기가 아닌 호출(`memcpy`)은 안 붙는다."""
+    (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf")
+    assert (buf.alloc, buf.alloc_args) == ("malloc", ("c->len + 1",))
+
+    found = _stores(tmp_path, "g_buf", file="b.c", line=8)
+    by_line = {(s.file, s.line): s for s in found}
+    assert by_line[("a.c", 14)].alloc_args == ("n + 1",)
+    assert (by_line[("b.c", 8)].alloc, by_line[("b.c", 8)].alloc_args) == ("calloc", ("1", "16"))
+
+    plain = _stores(tmp_path, "len", field=True, lhs="c->len")
+    assert {s.alloc for s in plain} == {None}
+
+
+def test_stores_of_ignores_an_allocator_call_that_another_function_made_on_that_line(
+    tmp_path: Path,
+) -> None:
+    """같은 줄이어도 **호출한 함수가 쓰기와 같아야** 붙는다 — 표가 파일·줄만으로 맞지 않게 한다."""
+    doc = {
+        **_STORES_INDEX,
+        "calls": {
+            **_STORES_INDEX["calls"],
+            "malloc": [{"file": "a.c", "line": 13, "caller": "elsewhere", "args": ["9"]}],
+        },
+    }
+
+    (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf", doc=doc)
+
+    assert buf.alloc is None
+
+
+def test_stores_of_knows_xmalloc_style_allocator_names(tmp_path: Path) -> None:
+    """`malloc`뿐 아니라 접두·접미가 붙은 할당기(`xmalloc`·`av_mallocz`·`g_strdup`·`reallocarray`)도
+    표의 `calls` 키 이름으로 찾는다 — `malloc_usable_size`처럼 할당기가 아닌 이름은 아니다."""
+    site = {"file": "a.c", "line": 13, "caller": "grow", "args": ["8"]}
+    names = ("xmalloc", "av_mallocz", "g_strdup", "reallocarray", "OPENSSL_malloc", "g_malloc0")
+    for name in names:
+        doc = {**_STORES_INDEX, "calls": {name: [site]}}
+        (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf", doc=doc)
+        assert (buf.alloc, buf.alloc_args) == (name, ("8",)), name
+
+    doc = {**_STORES_INDEX, "calls": {"malloc_usable_size": [site]}}
+    (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf", doc=doc)
+    assert buf.alloc is None
+
+
+def test_stores_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    """index-v1(표 없음)이거나 인덱스가 없으면 `None` — 「쓰기가 없다」(`[]`)와 갈린다."""
+    assert _stores(tmp_path, "len", field=True, doc=_INDEX_V1) is None
+    assert _stores(tmp_path / "none", "len", field=True, doc=None) is None
+
+
+def test_stores_of_is_empty_for_a_field_nobody_writes(tmp_path: Path) -> None:
+    assert _stores(tmp_path, "never_written", field=True) == []
