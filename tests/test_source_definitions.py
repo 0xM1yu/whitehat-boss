@@ -11,6 +11,7 @@ from src.orchestrator.source_definitions import (
     bare_names,
     code_only,
     definition_names,
+    macro_alias_target,
     slice_line_names,
     slice_names_first,
 )
@@ -351,3 +352,40 @@ def test_nothing_is_read_when_there_is_nothing_to_order() -> None:
     assert slice_names_first([], read, [("u.c", 2)]) == []
     assert slice_names_first([only], read, [("u.c", 2)]) == [only]
     assert reads == []
+
+
+# --- macro_alias_target: 이름만 바꿔 넘기는 매크로의 대상 (C4) -----------------------------------
+# 양성 핀은 팀 검수 83표본이 든 래퍼·별칭 예(tcpdump `ND_TCHECK` → `ND_TCHECK2` · freetype
+# `FT_FRAME_EXTRACT` → `FT_Stream_ExtractFrame` · gpac `gf_strdup` → `gf_mem_strdup`)의 모양이다.
+
+
+def test_a_rename_macro_names_its_target() -> None:
+    assert macro_alias_target("#define ND_TCHECK(p) ND_TCHECK2(p, sizeof(*(p)))") == "ND_TCHECK2"
+    assert macro_alias_target("#define gf_strdup gf_mem_strdup") == "gf_mem_strdup"
+    assert (
+        macro_alias_target(
+            "#define FT_FRAME_EXTRACT( size, label ) "
+            "FT_Stream_ExtractFrame( stream, size, (FT_Byte**)&label )"
+        )
+        == "FT_Stream_ExtractFrame"
+    )
+
+
+def test_a_continued_line_and_a_comment_before_the_target_are_skipped() -> None:
+    """줄 잇기(백슬래시 줄바꿈)와 대치 목록 앞 주석은 건너뛰고 첫 식별자를 본다."""
+    continued = "#  define A " + chr(92) + chr(10) + "    B(1)"
+    assert macro_alias_target(continued) == "B"
+    assert macro_alias_target("#define A /* old */ B(x)") == "B"
+
+
+def test_an_expression_or_constant_macro_is_not_an_alias() -> None:
+    """식·상수·문장 매크로는 별칭이 아니다 — 대치 목록이 식별자로 시작하지 않거나, 그 식별자가
+    자기 이름·파라미터·C 키워드다."""
+    assert macro_alias_target("#define MAX(a, b) ((a) > (b) ? (a) : (b))") is None
+    assert macro_alias_target("#define X do { f(); } while (0)") is None
+    assert macro_alias_target("#define N 64") is None
+    assert macro_alias_target('#define S "abc"') is None
+    assert macro_alias_target("#define ID(x) x") is None
+    assert macro_alias_target("#define SZ(x) sizeof(x)") is None
+    assert macro_alias_target("#define R R") is None
+    assert macro_alias_target("int f(void);") is None
