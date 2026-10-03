@@ -35,9 +35,10 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 ⚠ **`null`은 「안 돌았다」·「못 가렸다」다 — 0도 거짓도 아니다**(CLAUDE.md §0). `fix_exit_code`가
 `null`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 안 돌린 경우다. `final.status`가 `none`인 것
 (지정된 후보가 없었다)과 `failed`인 것(지정했는데 판정을 못 읽었다)은 다른 사건이다 —
-「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 셋이다:
-`no_poc`·`all_vul_submissions_failed`(지정할 후보가 없다) · `policy_undecided`(후보가 **둘 이상**
-인데 고르는 규칙이 정해지지 않았다 — 지정하지 않는다, `runner._designate_final`). 어느 쪽이든
+「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 넷이다:
+`no_poc`·`all_vul_submissions_failed`(지정할 후보가 없다) · `grade_tie`(후보가 **둘 이상**인데 내부
+근거 등급의 최댓값이 **동점이라** 안 가려졌다) · `grade_unknown`(후보 중에 등급을 모르는 것이 있다).
+뒤 둘은 **규칙이 없어서가 아니라 규칙이 거부한 것이다**(`runner._designate_final`). 어느 쪽이든
 `fix` 다리와 판정은 안 돈다.
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
@@ -77,15 +78,20 @@ STATUS_FAILED = "failed"
 STATUS_NONE = "none"
 STATUS_NOT_REACHED = "not_reached"
 
-# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 셋째는 후보가 **둘 이상**인데
-# 고르는 규칙이 정해지지 않아서다(`runner._designate_final`).
+# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 뒤 둘은 후보가 **둘 이상**인데
+# **규칙이 돌았는데 하나를 못 가려서**다(`runner._designate_final`). 「규칙이 없다」가 아니다 —
+# 규칙은 2026-10-03에 정해졌고(내부 근거 등급 최댓값 · 동점이면 거부) 그 규칙이 거부한 것이다.
 REASON_NO_POC = "no_poc"
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
-REASON_POLICY_UNDECIDED = "policy_undecided"
+REASON_GRADE_TIE = "grade_tie"
+REASON_GRADE_UNKNOWN = "grade_unknown"
 
-# `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. 후보가 하나뿐이라 고를 것이 없었다. 위치
-# (처음·마지막)나 점수로 고른 것이 아니다.
+# `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로도 채점기 점수로도
+# 고르지 않는다**(조사 문서 1.3절). 둘뿐이다: 후보가 하나뿐이라 고를 것이 없었거나
+# (`sole_candidate`), 내부 근거 등급의 최댓값을 든 후보가 **하나뿐이라** 그것을 골랐다
+# (`top_grade`).
 DESIGNATION_SOLE_CANDIDATE = "sole_candidate"
+DESIGNATION_TOP_GRADE = "top_grade"
 
 
 def clip_error(exc: BaseException) -> str:
@@ -229,8 +235,8 @@ class OracleLedger:
             "vul_submitted": self.submitted,
             "vul_failed": self.failed,
             "final": STATUS_NOT_REACHED if self.final is None else self.final.status,
-            # `none`의 사유 — 후보가 여럿이라 지정 못 한 run(`policy_undecided`)과 후보가 없던 run을
-            # 매니페스트에서도 가른다.
+            # `none`의 사유 — 후보가 여럿인데 등급이 못 가른 run(`grade_tie`·`grade_unknown`)과
+            # 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
         }
@@ -301,12 +307,17 @@ def _none_warning(final: FinalAttempt, submitted: int) -> str:
     콘솔에 찍히므로 cp949로 인코딩할 수 있는 글자만 쓴다.
     """
     tail = "이 run은 채점 점수가 없다"
-    if final.reason == REASON_POLICY_UNDECIDED:
+    if final.reason == REASON_GRADE_TIE:
         return (
-            f"vul 제출이 성공한 후보가 {submitted}건이라 최종 PoC를 지정하지 않았다 - 후보가 둘 "
-            "이상일 때 고르는 규칙이 정해지지 않았다(조사 문서 1.3절은 마지막·처음·best-of로 "
-            "고르지 말라고 하고, 모델에게 묻는 방식은 별도 조각이다). fix 다리와 판정 조회를 "
-            f"돌리지 않았다 - {tail}"
+            f"vul 제출이 성공한 후보가 {submitted}건인데 내부 근거 등급의 최댓값이 동점이라 최종 "
+            "PoC를 지정하지 않았다 - 등급으로 하나를 못 가렸고 위치(처음·마지막)나 채점기 점수로 "
+            f"고르는 것은 금지다(조사 문서 1.3절). fix 다리와 판정 조회를 돌리지 않았다 - {tail}"
+        )
+    if final.reason == REASON_GRADE_UNKNOWN:
+        return (
+            f"vul 제출이 성공한 후보가 {submitted}건인데 그중 내부 근거 등급을 모르는 것이 있어 "
+            "최종 PoC를 지정하지 않았다 - 등급 없이 고르면 없는 근거로 고르는 것이다. fix 다리와 "
+            f"판정 조회를 돌리지 않았다 - {tail}"
         )
     cause = (
         "vul 제출이 전부 실패해"
