@@ -1296,6 +1296,21 @@ def test_is_nonproduct_path_looks_at_directories_not_file_names() -> None:
     assert not is_nonproduct_path("lib/windows.c"), "파일 이름은 안 본다"
 
 
+def test_is_nonproduct_path_matches_fuzz_dirs_by_name_not_by_bare_prefix() -> None:
+    """퍼징 디렉터리는 이름(`fuzz`·`fuzzer(s)`·`fuzzing`·`oss-fuzz`)과 구분자 붙은 접두
+    (`fuzz_`·`fuzz-`)로 본다. 맨 `fuzz` 접두는 `src/fuzzy/`(퍼지 매칭 — 제품)까지 먹었다(PR #444
+    리뷰). `unittest(s)`·`testsuite`는 FT Level 1 270표본 잡음 경로 집계에 나온 이름이다."""
+    from src.adapters.index_graph import is_nonproduct_path
+
+    for path in (
+        "fuzz/f.c", "a/fuzzer/f.c", "a/fuzzing/f.c", "oss-fuzz/build.c", "fuzz_targets/t.c",
+        "a/fuzz-corpus/t.c", "a/unittest/u.c", "unittests/u.c", "testsuite/s.c",
+    ):
+        assert is_nonproduct_path(path), path
+    for path in ("src/fuzzy/match.c", "lib/fuzzyfind/x.c", "ios/port.c", "android/jni.c"):
+        assert not is_nonproduct_path(path), path
+
+
 # 같은 이름이 제품(`lib/`)과 비제품(`examples/`)에 둘 있고(`DUP`), 비제품에만 있고(`ONLY_EX`),
 # 제품에만 있다(`ONLY_LIB`). `examples/`는 사전순으로 `lib/`보다 앞이라 기본 순서와 강등 순서가
 # 갈린다.
@@ -1356,6 +1371,70 @@ def test_definitions_of_does_not_demote_when_the_anchor_itself_is_nonproduct(
         "ONLY_EX",
         "ONLY_LIB",
     ]
+
+
+# 표를 가로지른 강등(PR #444 리뷰 MEDIUM). 두 모양 다 FT Level 1 270표본 관측에서 왔다 —
+# ImageMagick `MagickWand/tests/script-token-test.c:67`의 `#define RelinquishMagickMemory(p)
+# (free(p),NULL)`이 `MagickCore`의 제품 함수 `RelinquishMagickMemory`를 덮었다. 강등이 표 하나
+# 안에서만 걸리면 제품 쪽이 함수(정의 표 밖)거나 다른 표에 있을 때 경쟁에 못 든다.
+_ACROSS_TABLES = {
+    **_INDEX_V2,
+    "symbols": [
+        *_INDEX_V2["symbols"],
+        {
+            "name": "RelinquishMagickMemory",
+            "file": "MagickCore/memory.c",
+            "line_start": 10,
+            "line_end": 20,
+        },
+    ],
+    "macros": {
+        **_INDEX_V2["macros"],
+        "RelinquishMagickMemory": [
+            {"file": "MagickWand/tests/x.c", "line_start": 67, "line_end": 67}
+        ],
+        "node": [{"file": "tests/t.h", "line_start": 1, "line_end": 1}],
+        "ONLY_TEST": [{"file": "tests/t.h", "line_start": 2, "line_end": 2}],
+    },
+    "types": {
+        **_INDEX_V2["types"],
+        "node": [{"file": "lib/t.h", "line_start": 4, "line_end": 6, "kind": "typedef"}],
+    },
+}
+
+
+def test_definitions_of_demotes_across_tables_and_against_product_functions(
+    tmp_path: Path,
+) -> None:
+    """제품 정의가 **어느 표에든** 또는 제품 함수로 있으면 비제품 행은 세 표 모두에서 후보가
+    아니다 — 제품 typedef `node`(types)가 비제품 매크로 `node`(macros)를 이기고, 제품 쪽이 함수뿐인
+    `RelinquishMagickMemory`는 테스트 매크로가 안 붙는다(함수 본문은 `callees_of` 몫). 제품 정의가
+    없는 `ONLY_TEST`는 그대로 실린다 — 삭제가 아니다."""
+    graph = _graph(tmp_path, _ACROSS_TABLES)
+    names = ["RelinquishMagickMemory", "node", "ONLY_TEST"]
+
+    found = graph.definitions_of(names, "MagickCore/blob.c", demote_nonproduct=True)
+
+    assert found == [
+        Location(file="lib/t.h", symbol="node", line_start=4, line_end=6),
+        Location(file="tests/t.h", symbol="ONLY_TEST", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_keeps_the_table_order_when_demotion_is_off(tmp_path: Path) -> None:
+    """키워드가 꺼지면(그리고 앵커가 비제품이면) 옛 동작 그대로다 — 행이 있는 첫 표에서 정하므로
+    테스트 매크로 둘이 나온다. 꺼진 run의 바이트 동일이 여기 걸린다."""
+    graph = _graph(tmp_path, _ACROSS_TABLES)
+    names = ["RelinquishMagickMemory", "node", "ONLY_TEST"]
+    old = [
+        Location(file="MagickWand/tests/x.c", symbol="RelinquishMagickMemory", line_start=67,
+                 line_end=67),
+        Location(file="tests/t.h", symbol="node", line_start=1, line_end=1),
+        Location(file="tests/t.h", symbol="ONLY_TEST", line_start=2, line_end=2),
+    ]
+
+    assert graph.definitions_of(names, "MagickCore/blob.c") == old
+    assert graph.definitions_of(names, "tests/blob.c", demote_nonproduct=True) == old
 
 
 # `entry`(lib/a.c)가 2줄에서 `only_test`(tests/에만 있다)를, 3줄에서 `dup`(lib/b.c와 tests/t.c
