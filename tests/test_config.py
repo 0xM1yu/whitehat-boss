@@ -457,7 +457,7 @@ _UNSELECTED_CLAIM_SPELLINGS = (
 def _fold(raw: str) -> str:
     """meta.yaml 본문을 한 문자열로 접는다 — 주석 줄바꿈·공백 런은 한 칸으로, 굵게(`**`)와
     백틱은 뺀다. 구절이 주석 줄바꿈으로 갈리는 실물(auditor/v3 meta)이 있고, meta 머리 주석은
-    굵게·백틱을 쓰는 문체다(critic/v3 meta)."""
+    굵게·백틱을 쓰는 문체다(critic/v1 meta:1이 한 줄에 둘 다 든다)."""
     folded = " ".join(line.lstrip("# ").strip() for line in raw.splitlines())
     return " ".join(folded.replace("**", "").replace("`", "").split())
 
@@ -561,7 +561,10 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
 )
 def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
     """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
-    굵게·백틱을 쓰는 문체다(prompts/critic/v3/meta.yaml:4·7). 다섯 형은 검토 변이
+    굵게·백틱을 쓰는 문체다 — 굵게는 `prompts/critic/v3/meta.yaml:4`, 백틱은
+    `prompts/critic/v1/meta.yaml:1`(그 한 줄이 굵게와 백틱을 같이 든다). ⚠ 전에는 백틱 증인으로
+    critic/v3의 `:7`을 들었는데 그 줄이 거짓 이력 블록이라 지워졌다 — 지금 critic/v3 머리에는
+    백틱이 0개다. 다섯 형은 검토 변이
     B8·B9·B17·B18·B19에서 가져왔다(실물 meta의 형이 아니다) — 접기가 이것들을 못 넘으면 같은
     주장을 그 문체로 적었을 때 판독기가 못 본다(#341 R5)."""
     assert any(spelling in _fold(raw) for spelling in _UNSELECTED_CLAIM_SPELLINGS), _fold(raw)

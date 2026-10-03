@@ -31,11 +31,12 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.scout import describe_sections, describe_target
 from src.orchestrator.prompt_loader import build_facts, evidence_summaries, load_prompt
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.candidate import Candidate
 from src.schemas.capsule import ContextCapsule
-from src.schemas.enums import FindingState, ReasonCode, Role
+from src.schemas.enums import FindingState, ReasonCode, ReproOrigin, Role
 from src.schemas.evidence import Evidence
-from src.schemas.finding import Finding, MissingEvidence
+from src.schemas.finding import Finding, MissingEvidence, ReproSpec
 
 ROLE = Role.AUDITOR
 # 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조).
@@ -95,6 +96,10 @@ def run(
             evidences=evidences,
             source=source,
         )
+        # **재현 명세의 출처를 하네스가 정한다** (#S7). 모델이 낸 명세는 `origin=model`로 덮고
+        # (모델이 `harness`를 참칭 못 함), 비워 냈고 `synthesize_repro_spec`이 켜졌으면 후보 위치로
+        # 합성한다. 발급값 도장(#279)과 같은 결이고, `stamp_issued`가 이 아래에서 전체를 재검증한다.
+        finding = _ensure_repro_origin(ctx, finding, candidate, finding_id=ids["finding_id"])
         # **발급값은 하네스가 도장 찍는다**(이슈 #279) — 논거·방식은 `RunContext.stamp_issued`.
         # 초기 `state`가 F-1(`hypothesized`)이 아니면 `create()`가 `IllegalTransition`을 냈고,
         # 남의 `finding_id`면 그 행을 예외 없이 덮었다. `missing_evidence`는 **비어 있지 않으면 발급
@@ -174,6 +179,63 @@ def _ask_model(
         _queue_candidate(ctx, candidate, ReasonCode.SCHEMA_PARSE_FAILED)
         raise
     return result.value
+
+
+def _ensure_repro_origin(
+    ctx: RunContext, finding: Finding, candidate: Candidate, *, finding_id: str
+) -> Finding:
+    """재현 명세의 `origin`을 하네스가 확정한다 (#S7).
+
+    - 모델이 명세를 냈으면 `origin=model`로 덮는다 — 스키마가 `origin`을 노출하므로 모델이
+      `harness`를 쓸 수 있는데, 그 출처는 하네스만 찍는다(발급값 도장 #279와 같은 결).
+    - 명세를 비워 냈고 `synthesize_repro_spec`이 켜졌으면 후보 위치로 합성한다(`origin=harness`).
+      Level 1처럼 과제가 재현법을 안 주면 비어 F-9로 멈추던 Finding이 E3까지 올라가 8단계가 돈다.
+    - 꺼졌으면 비운 채로 둔다 — 종전(F-9) 그대로다.
+
+    반환은 `repro_spec`만 바꾼 새 Finding이다. `model_copy`가 `Finding`의 검증기를 우회하지만
+    (그 docstring), 바로 아래 `stamp_issued`가 `model_validate`로 전체를 재검증하므로 최종값은
+    검증된다. 지금 state는 `hypothesized`라 `repro_spec` 존재가 검증기에 걸리지 않는다.
+    """
+    spec = finding.repro_spec
+    if spec is not None:
+        if spec.origin is ReproOrigin.MODEL:
+            return finding
+        return finding.model_copy(
+            update={"repro_spec": spec.model_copy(update={"origin": ReproOrigin.MODEL})}
+        )
+    if not ctx.config.thresholds.synthesize_repro_spec:
+        return finding
+    synthesized = _synthesize_repro_spec(candidate)
+    ctx.trace.emit(
+        EventKind.REPRO_SPEC_SYNTHESIZED,
+        stage=Stage.AUDITOR,
+        subject_kind="finding",
+        subject_id=finding_id,
+        expected_signal=synthesized.expected_signal,
+        steps=len(synthesized.steps),
+    )
+    return finding.model_copy(update={"repro_spec": synthesized})
+
+
+def _synthesize_repro_spec(candidate: Candidate) -> ReproSpec:
+    """후보 위치로 합성한 재현 명세 (#S7). `expected_signal`에 「sanitizer crash」를 넣는 것은
+    8단계가 그 문구로 도구를 역선택하기 때문이다(`validate.tool_for` — 「sanitizer」가 asan에
+    매핑된다). 명세가 가리키는 위치는 후보의 sink다. `steps`는 비어 있을 수 없어(스키마) 한 줄을
+    둔다 — 실제 재현은 8단계 PoV가 PoC를 만들고 oracle이 판정하는 후속이다.
+
+    ⚠ **이 도구 run(asan)이 재는 것은 점수가 아니다** (#393 리뷰 MEDIUM-2) — `validate.run`의
+    asan은 추출한 `repo-vul.tar.gz`를 ASan으로 **새로 빌드**한 것을 돌린다. 채점되는 ARVO/oss-fuzz
+    이미지(MSan 등)와 다른 바이너리다. 점수는 그 내부 Evidence가 아니라 oracle의 `vul`·`fix`가
+    정한다(S6b). 그래서 여기서 나오는 E4를 「채점 결과」로 읽지 않는다.
+    ⚠ **`steps`는 `validate.run`에서 argv가 된다**(`_call(ctx, tool, [tool, *spec.steps], …)`) —
+    이 한 줄이 그대로 도구 인자·Evidence 로그에 실린다. 지금 경로는 리스트로 넘겨 셸을 안 타지만
+    값이 argv에 남는다는 사실은 적어 둔다 (#393 리뷰 LOW-1)."""
+    where = candidate.location.symbol or candidate.location.file
+    return ReproSpec(
+        steps=[f"build the target and run it on the generated PoC for {where}"],
+        expected_signal=f"sanitizer crash at {where}",
+        origin=ReproOrigin.HARNESS,
+    )
 
 
 def caller_names(capsule: ContextCapsule) -> tuple[str, ...]:

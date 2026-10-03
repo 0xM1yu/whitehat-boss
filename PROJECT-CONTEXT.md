@@ -210,7 +210,7 @@ Notion 워크스페이스로 두고 기록을 이 저장소로 들이지 않는�
 하나와 `container_tools`의 도구 이름, 그리고 산출물 경로. 고칠 자리가 `config/models.yaml`이
 아니라 그쪽이고, **그래서 로스터를 바꾸는 넷과는 여전히 무관하다.**
 ⚠ **2026-09-24 — 「컨테이너 도구 하나」는 지금 사실이 아니다.** 슬라이서는 하네스 밖에서 손으로 도는
-오프라인 스크립트(루트 `slicer.py` + Joern 서버)이고 `container_tools`에 그 이름이 없다 — `src/`·
+오프라인 스크립트(`slicer.py` + Joern 서버 — ⏵ 2026-10-03 루트에서 `tools/slicer/`로 옮겼다)이고 `container_tools`에 그 이름이 없다 — `src/`·
 `config/`에 슬라이서를 부르거나 `slices.json`을 읽는 코드가 0건이다. [ADR 0012](docs/decisions/0012-harness-canon-v2.md)
 결정 1은 컨테이너 도구가 아니라 하네스 밖에서 미리 돈 `slices.json`을 파일로 받는 쪽이다 — 하네스는
 슬라이서를 import하지 않는다(구현은 Phase 3). 로스터의 넷과 무관하다는 결론은 그대로다.
