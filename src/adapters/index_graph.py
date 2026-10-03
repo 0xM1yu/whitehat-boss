@@ -69,6 +69,7 @@ trace의 `graph_index` 이벤트가 된다.
 
 import json
 import posixpath
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -78,6 +79,7 @@ from typing import Any
 from src.graph_entry import render_entry
 from src.schemas.capsule import CapsuleSection
 from src.schemas.common import Location
+from src.schemas.stores import StoreSite, StoreTarget
 from src.tokens import estimate_tokens
 
 # 슬라이스의 줄 집합 — (file, line). 슬라이스 타깃 캡슐의 「본문」이다(`GraphIndex.names_for`).
@@ -109,6 +111,13 @@ V2_TABLES = (
 # Auditor `SOURCE`가 정의 줄을 붙이는 표(#349 (f) — `definitions_of`). 이 순서로 보고 처음
 # 걸린 표에서 정한다.
 DEFINITION_TABLES = ("macros", "types", "file_vars")
+
+# 할당기 호출의 이름(`stores_of`) — `calls` 표의 callee 키로 찾는다. 접두·접미가 붙은 이름
+# (`xmalloc`·`av_mallocz`·`g_malloc0`·`reallocarray`·`g_strdup`)까지 잡고 `malloc_usable_size`처럼
+# 할당기가 아닌 이름은 안 잡는다. 정한 규칙이지 어느 저장소에서 센 값이 아니다.
+_ALLOCATOR = re.compile(
+    r"(?:malloc|calloc|realloc|zalloc|alloca|strn?dup|memdup)(?:z|\d+|_?array)?$", re.IGNORECASE
+)
 
 # 이름 → 기록 목록 모양인 표의 기록마다 있어야 하는 키. `locals`·`assigns`는
 # 파일 → 함수 → 이름 → [줄]이라 따로 본다(`_v2_tables`).
@@ -205,6 +214,8 @@ class GraphIndex:
         self._calls: list[tuple[str, str, str, int]] = []
         # index-v2 조회 표(읽기 전용). v1이거나 못 읽었으면 `None`이다(`table()`).
         self._tables: dict[str, Mapping[str, Any]] | None = None
+        # `stores_of`가 처음 부를 때 한 번 만드는 색인 둘(`_stores_index`).
+        self._stores: tuple[dict, dict] | None = None
 
     # --- 조회 -----------------------------------------------------------
 
@@ -479,6 +490,92 @@ class GraphIndex:
                 loc.line_start or 0,
             ),
         )
+
+    def stores_of(self, target: StoreTarget) -> list[StoreSite] | None:
+        """이름이 **쓰이는 곳** — Auditor `SOURCE`의 `STORES` 블록이 「이 길이·버퍼·필드는 어디서
+        정해지나」에 답하는 재료. `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1) — 「쓰기가 없다」
+        (`[]`)와 섞지 않는다.
+
+        - **필드**(`target.field`) — `field_assigns[이름]`. 그 행에는 객체의 구조체 타입이 없다
+          (열은 file·line·func·lhs·rhs·op) — (구조체, 필드)로 못 짚고 **이름으로만** 잇는다.
+          이름이 곧 키가 되는 것은 `fields`에서 그 필드를 선언한 구조체가 (타입, 파일) 하나로
+          정해질 때뿐이다. 그 밖(여러 구조체가 선언 · 인덱스 밖 헤더의 구조체 · 익명 구조체)은
+          **전부 모호하다** — 흔한 필드 이름(`len`·`next`)의 쓰기 수십 곳이 같은 필드라고 못 한다.
+        - **변수** — 파일 스코프 선언이 있는 이름(`file_vars`)만 다룬다. 찾는 줄을 품는 함수의
+          지역·파라미터면 `[]`다(그 쓰기는 같은 함수 안이라 이미 보인다). 쓰기는 `assigns`에서
+          **지역이 가리지 않는** 함수의 것이고, 찾는 줄과 **다른 파일**의 쓰기는 모호하다 — 같은
+          이름의 `static` 변수를 이름만으로 잇지 않는다(인덱스는 저장 클래스를 안 든다).
+        - 쓰기 줄에 **같은 함수의** 할당기 호출(`_ALLOCATOR`)이 있으면 호출 이름과 인자(크기 식)를
+          붙인다 — 줄 단위 판정이라 `x = f(malloc(n))`처럼 안에 낀 호출도 붙는다.
+
+        구문만 본 결과다: `buf[i] = x`·`*p = x`·`i++`·지정 초기화·함수에 `&x`를 넘겨 쓰는 경우는
+        쓰기로 안 센다(인덱서 docstring의 놓치는 것). 순서는 (파일, 줄, 이름)이다(결정론).
+        """
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        tables = self._tables
+        assigned, allocators = self._stores_index()
+        if target.field:
+            declared = {(row["type"], row["file"]) for row in tables["fields"].get(target.name, ())}
+            named = len(declared) == 1 and next(iter(declared))[0] is not None
+            rows = [
+                (row["file"], row["line"], row["func"], row["lhs"], row["op"], not named)
+                for row in tables["field_assigns"].get(target.name, ())
+            ]
+        else:
+            here = self._function_at(target.file, target.line)
+            local = tables["locals"].get(target.file, {}).get(here, {})
+            if target.name not in tables["file_vars"] or target.name in local:
+                return []
+            rows = [
+                (file, line, func, "", "=", file != target.file)
+                for file, func, line in assigned.get(target.name, ())
+            ]
+        sites = []
+        for file, line, func, lhs, op, ambiguous in rows:
+            call = next((c for c in allocators.get((file, line), ()) if c[0] == func), None)
+            sites.append(
+                StoreSite(
+                    file=file, line=line, func=func, name=target.name, field=target.field,
+                    lhs=lhs, op=op, alloc=call[1] if call else None,
+                    alloc_args=call[2] if call else (), ambiguous=ambiguous,
+                )
+            )
+        return sorted(sites, key=lambda site: (site.file, site.line, site.name))
+
+    def _function_at(self, file: str, line: int) -> str | None:
+        """그 줄을 품는 함수의 이름. 어느 정의에도 안 들면 `None`. 인덱서는 정의 안으로 안 내려가
+        한 파일 안의 심볼 범위가 겹치지 않는다 — 좁은 것을 고르는 규칙이 필요 없다."""
+        return next(
+            (name for name, start, end in self._defined.get(file, []) if start <= line <= end), None
+        )
+
+    def _stores_index(self) -> tuple[dict, dict]:
+        """`stores_of`가 쓰는 색인 둘 — 표가 run 동안 안 바뀌므로 처음 부를 때 한 번 만든다.
+
+        - 이름 → [(파일, 함수, 줄)] — `assigns`에서 **그 함수의 지역·파라미터가 가린 이름은 뺀다**
+          (`locals`). 가린 대입은 전역에 대한 쓰기가 아니다.
+        - (파일, 줄) → [(호출한 함수, 할당기 이름, 인자)] — `calls`의 callee 중 `_ALLOCATOR`인 것.
+        """
+        if self._stores is None:
+            assert self._tables is not None  # `stores_of`가 v2 표를 확인한 뒤에만 부른다
+            local = self._tables["locals"]
+            assigned: dict[str, list[tuple[str, str, int]]] = {}
+            for file, functions in self._tables["assigns"].items():
+                for func, names in functions.items():
+                    shadowed = local.get(file, {}).get(func, {})
+                    for name, lines in names.items():
+                        if name not in shadowed:
+                            assigned.setdefault(name, []).extend((file, func, ln) for ln in lines)
+            allocators: dict[tuple[str, int], list[tuple[str, str, tuple[str, ...]]]] = {}
+            for callee, sites in self._tables["calls"].items():
+                if _ALLOCATOR.search(callee):
+                    for site in sites:
+                        allocators.setdefault((site["file"], site["line"]), []).append(
+                            (site["caller"], callee, tuple(site["args"]))
+                        )
+            self._stores = (assigned, allocators)
+        return self._stores
 
     # --- 본문 판정 -------------------------------------------------------
     #
