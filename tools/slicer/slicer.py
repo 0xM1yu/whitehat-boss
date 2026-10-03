@@ -278,6 +278,12 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
             and isinstance(data.get("lines"), list)
             and all(valid_location(p) for p in data["lines"])
             and isinstance(data.get("boundaries"), list)
+            and all(
+                isinstance(b, dict)
+                and isinstance(b.get("reason"), str)
+                and valid_location(b.get("location"))
+                for b in data["boundaries"]
+            )
             and isinstance(data.get("truncation_reasons"), list)
             and all(isinstance(r, str) for r in data["truncation_reasons"])
         )
@@ -289,6 +295,27 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
             and isinstance(data.get("lines"), list)
             and all(valid_location(row) for row in data["lines"])
             and (data["flow_count"] > 0 or not data["lines"])
+            # `endpoints` is optional (#433 review): the query computes it inside a Try, so a
+            # failure there must not turn the whole flows result into a QueryError. Present ->
+            # well-formed; absent -> the slice records source/sink as unavailable. The query
+            # emits exactly one of `endpoints` / `endpoints_error`, never both.
+            and (
+                "endpoints" not in data
+                or (
+                    isinstance(data["endpoints"], list)
+                    and len(data["endpoints"]) <= data["flow_count"]
+                    and all(
+                        isinstance(pair, dict)
+                        and valid_location(pair.get("source"))
+                        and valid_location(pair.get("sink"))
+                        for pair in data["endpoints"]
+                    )
+                )
+            )
+            and (
+                "endpoints_error" not in data
+                or (isinstance(data["endpoints_error"], str) and "endpoints" not in data)
+            )
         )
     elif stage == "inventory" and isinstance(data, dict):
         engine = data.get("engine_config")
