@@ -42,11 +42,15 @@ from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import (
+    _AUDITOR_ALIAS_ROUNDS,
     _AUDITOR_CALLEE_CHARS,
     _AUDITOR_CALLER_SITES,
     _AUDITOR_DEFINITION_CHARS,
     _AUDITOR_SOURCE_CHARS,
     _AUDITOR_WINDOW_LINES,
+    _AUDITOR_WRAPPER_CALLS,
+    _AUDITOR_WRAPPER_DEPTH,
+    _AUDITOR_WRAPPER_LINES,
     RunSpec,
     _new_record,
 )
@@ -496,11 +500,19 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
             f"its block, counting its banner line, is at most {_AUDITOR_DEFINITION_CHARS:,} "
             "characters" in flat
         )
+        assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
     if thresholds.auditor_callee_hops:
         assert (
             f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
             " is skipped" in flat
         )
+        # 래퍼 너머(C4) — 「one or two」가 `_AUDITOR_WRAPPER_CALLS`의 철자다.
+        assert _AUDITOR_WRAPPER_CALLS == 2
+        assert (
+            f"a short wrapper (at most {_AUDITOR_WRAPPER_LINES} lines, calling one or two "
+            "functions the index can resolve)" in flat
+        )
+        assert f"up to {_AUDITOR_WRAPPER_DEPTH} further levels" in flat
     if thresholds.auditor_caller_lines:
         assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
         assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat

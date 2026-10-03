@@ -228,9 +228,12 @@ class EventKind(StrEnum):
     # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
     # `subject_id`는 후보다. `auditor_callee_hops`가 1이면(#349 (a)) `callees`(붙인 피호출 함수 수 —
     # `functions`에도 들어간다)·`callees_dropped`(피호출 함수 상한·전체 상한에 걸려 안 붙인 수)가
-    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. `auditor_definitions`가
-    # 1이면 `definitions`·`definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 —
-    # `functions`에는 안 든다)가 같은 방식으로 더 실린다.
+    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. 같은 조건에서
+    # `wrapper_callees`(`callees` 중 래퍼 너머로 붙인 수)·`alias_callees`(매크로 별칭이 부르는
+    # 함수로 붙인 수)도 실린다(C4). `auditor_definitions`가 1이면 `definitions`·
+    # `definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 — `functions`에는 안
+    # 든다)와 `alias_definitions`
+    # (`definitions` 중 별칭 라운드로 붙인 수)가 같은 방식으로 더 실린다.
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
