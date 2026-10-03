@@ -1,0 +1,119 @@
+# vast.ai 원격 장비 파일 — 하네스는 로컬, 서빙만 vast (ADR 0009 「2026-09-29 제안」 절 6의 2026-10-03 노트).
+#
+# `run --device vastai-remote`가 고른다. `vastai.yaml`과 다른 것은 `command` 한 줄뿐이다 — `servers`는 그 파일을
+# 그대로 옮겼고 `tests/test_remote_swap.py`가 두 파일의 `servers`가 같은지를 잠근다. 값의 근거(실측·계획값)는
+# `vastai.yaml` 머리 주석이 든다.
+#
+# ## 운영 조건
+# - 교대: 로컬 `tools/serve/swap-remote.sh`가 ssh로 원격의 `tools/serve/swap.sh`를 부른다. 감시자·pid·메모리
+#   판정은 원격에서 돈다 -> 원격에 감시자(`tools/serve/guard.sh`)를 먼저 띄운다.
+# - 원격 사본: `tools/serve/vast-bootstrap.sh`가 로컬 HEAD를 원격 루트에 풀고 `.harness-commit`을 쓴다. 커밋이
+#   다르면 교대가 2로 멈춘다.
+# - 엔드포인트: registry 그대로 `127.0.0.1` -> 로컬 포트를 원격 같은 포트로 잇는 터널을 run 전에 띄운다
+#   (`tools/serve/vast-tunnel.sh`). 준비 2차 확인(`/v1/models`)과 모델 호출이 그 터널을 지난다.
+# - 하네스는 WSL·Linux 안에서 돈다. Windows 네이티브 파이썬이면 교대 명령에 환경변수가 안 넘어간다
+#   (`swap-remote.sh` 머리 주석).
+# - 도구 단계(Docker)·채점 서버는 로컬이다.
+#
+# ⚠ 이 경로로 끝까지 돈 run은 아직 없다(2026-10-03). 래퍼의 인자·환경·따옴표·종료 코드 전달은 가짜 ssh로만
+#   확인했다(`tests/test_remote_swap.py`).
+
+command: [bash, tools/serve/swap-remote.sh]
+
+servers:
+  # --- 4단계 Scout 쌍 — 같이 뜬다(한 번에 하나씩 기동). util 합 0.90 = Auditor가 뜬 값 ---
+  # KV는 계산값이다: util × 95.01 − 가중치+non-torch(2026-09-24 ATOM 실측) − 활성 3.76 GiB(vast Auditor 실측 —
+  # 더 큰 모델의 값이라 상한으로 뺐다) ÷ 토큰당 KV. 두 번째 기동은 첫 서버가 잡고 남은 자리에서 자기 몫을 잡는다.
+  seccoderx-8b:
+    # 0.35 × 95.01 = 33.25 − 16.05 − 3.76 ≈ 13.4 GiB → 144 KiB/토큰이면 ≈98k 토큰 = 창의 2.4배.
+    # 준비 상한 400 s = ATOM 132 s × 3(참고 — vast 미실측, 첫 기동은 16.4 GB 다운로드가 더 붙는다).
+    util: 0.35
+    max_num_seqs: 8
+    max_model_len: 40960
+    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
+    env: &vllm_env
+      VLLM_USE_DEEP_GEMM: "0"
+      VLLM_USE_FLASHINFER_SAMPLER: "0"
+      VLLM_HOST_IP: "127.0.0.1"
+      NCCL_SOCKET_IFNAME: lo
+      GLOO_SOCKET_IFNAME: lo
+    probe: chat
+    ready_timeout_s: 400
+
+  qwen3-14b:
+    # 0.55 × 95.01 = 52.26 − 28.27 − 3.76 ≈ 20.2 GiB → 160 KiB/토큰이면 ≈133k 토큰 = 창의 3.2배. memory·injection
+    # 두 역할이 이 한 서버를 써서 쌍 중 큰 몫을 준다. 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
+    util: 0.55
+    max_num_seqs: 8
+    max_model_len: 40960
+    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
+    env: *vllm_env
+    probe: chat
+    ready_timeout_s: 550
+
+  # --- 5단계 Auditor — 단독 ---
+  qwen3.8-27b:
+    # **실측(2026-09-29)** — util 0.90 · `--max-model-len 262144` · 아래 parser·xgrammar·eager · 공통 환경 ·
+    # `--revision`으로 떴다. 기동부터 서버 준비까지 4분 04초(다운로드 55.6 GB ≈45 s 포함) · 가중치 읽기 9.13 s ·
+    # 모델 로딩 51.1 GiB / 54.8 s · init engine 93.41 s · KV 29.84 GiB = 483,182 토큰(262,144 동시 1.84건) ·
+    # `/v1/models` max_model_len 262144 · 정상 상태 생성 16.2 tok/s.
+    # ⚠ 그 기동에 없던 인자 둘은 계획값이다 — `--max-num-seqs 8`(그 기동은 vLLM 기본값으로 떴다. 하네스는 단계 안
+    #   요청을 한 번에 하나 보낸다) · `--enable-prompt-tokens-details`(응답 usage에 필드를 더할 뿐이다).
+    # 준비 상한 600 s ≈ (244 s − 다운로드 44.8 s) × 3 — 캐시된 뒤의 기동을 기준으로 했다(계산값).
+    util: 0.90
+    max_num_seqs: 8
+    max_model_len: 262144
+    extra_args:
+      - --enforce-eager
+      - --enable-prompt-tokens-details
+      - --reasoning-parser
+      - qwen3
+      - --structured-outputs-config.backend
+      - xgrammar
+    env: *vllm_env
+    probe: chat
+    ready_timeout_s: 600
+
+  # --- 7단계 Critic — 단독 ---
+  gpt-oss-20b:
+    # 단독 단계라 Auditor와 같은 몫을 준다(그 값으로 뜬 것은 Auditor뿐이다). 0.90 × 95.01 = 85.5 − 14.65
+    # (가중치+non-torch, 2026-09-21 ATOM) − 3.76 ≈ 67 GiB → 27.1 KiB/토큰(같은 보고서 역산)이면 창의 20배다.
+    # 백엔드 TRITON_ATTN · xgrammar는 registry 「기동 조건」과 ATOM 기동 그대로다. `VLLM_SYSTEM_START_DATE`는
+    # Harmony 시스템 메시지의 날짜를 고정한다(0.27.1 `envs.py`). Harmony 어휘는 인터넷에서 받는다고 보고
+    # `TIKTOKEN_ENCODINGS_BASE`를 안 준다[추론 — 모든 요청이 500이면 그 어휘 경로가 원인이다(registry 주석)].
+    # 준비 상한 300 s = ATOM 100 s(09-21 보고서 §3.1 콜드 기동) × 3(참고 — vast 미실측).
+    util: 0.90
+    max_num_seqs: 8
+    max_model_len: 131072
+    extra_args:
+      - --enforce-eager
+      - --enable-prompt-tokens-details
+      - --attention-config.backend
+      - TRITON_ATTN
+      - --structured-outputs-config.backend
+      - xgrammar
+    env:
+      <<: *vllm_env
+      VLLM_SYSTEM_START_DATE: "2026-09-29"
+    probe: chat
+    ready_timeout_s: 300
+
+  # --- 8단계 PoV — 단독 ---
+  feyospace-v1-small:
+    # Auditor(`qwen3.8-27b`)와 같은 모델·창이라 그 행 값을 따른다 — **계획값, vast 미실측**.
+    # 단독 단계라 Auditor와 같은 몫(0.90) · 창 262,144(check_serving 강제). 준비 상한 600 s = vast
+    # Auditor와 같다. `--reasoning-parser qwen3` 없으면 `thinking_token_budget`을 건 요청이 400
+    # (`qwen3.8-27b`와 같은 기제). 비전 타워는 로드되나 안 쓴다.
+    util: 0.90
+    max_num_seqs: 8
+    max_model_len: 262144
+    extra_args:
+      - --enforce-eager
+      - --enable-prompt-tokens-details
+      - --reasoning-parser
+      - qwen3
+      - --structured-outputs-config.backend
+      - xgrammar
+    env: *vllm_env
+    probe: chat
+    ready_timeout_s: 600
