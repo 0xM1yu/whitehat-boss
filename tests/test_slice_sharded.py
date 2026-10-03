@@ -363,7 +363,9 @@ def test_an_interrupt_stops_shards_and_servers_and_writes_the_summary(stubbed, m
 
         @staticmethod
         def sleep(seconds: float) -> None:
-            if sum("--resume" in p.args for p in launched if isinstance(p.args, list)) == 2:
+            # Only the main loop's sleep: the threads that stop the servers sleep here too.
+            running = sum("--resume" in p.args for p in launched if isinstance(p.args, list))
+            if threading.current_thread() is threading.main_thread() and running == 2:
                 raise KeyboardInterrupt
             real_sleep(seconds)
 
@@ -390,3 +392,119 @@ def test_sigterm_stops_shards_and_servers(stubbed, monkeypatch):
     assert stopped.value.code == 128 + signal.SIGTERM
     assert all(p.poll() is not None for p in launched)
     assert run.summary()["exit"] == 128 + signal.SIGTERM
+
+
+# -- stopping a server: the JVM, not only its launcher -----------------------------------------
+
+needs_proc = pytest.mark.skipif(not Path("/proc/self/stat").exists(),
+                                reason="process groups and /proc are Linux")
+
+
+def alive(pid: int) -> bool:
+    """Running -- a zombie nobody reaped yet is dead."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return stat[stat.rindex(")") + 2] not in "ZX"
+
+
+def wait_for(path: Path, seconds: float = 20) -> str:
+    deadline = time.time() + seconds
+    while not path.exists() or not path.read_text():
+        assert time.time() < deadline, f"{path} never appeared"
+        time.sleep(0.05)
+    return path.read_text()
+
+
+@pytest.fixture
+def stub_server(tmp_path, monkeypatch):
+    """start(kind) -> the launcher Popen of a stub server (STUB_SERVER=kind) running in tmp_path."""
+    started = []
+
+    def start(kind: str) -> object:
+        monkeypatch.setenv("STUB_SERVER", kind)
+        process = tool.launch([sys.executable, str(STUB), "--serve", str(free_base(1))], None, [],
+                              cwd=tmp_path)
+        started.append(process)
+        return process
+
+    yield start
+    for process in started:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        process.wait()
+
+
+@needs_proc
+def test_stop_ends_a_jvm_that_outlives_its_launcher(stub_server, tmp_path, monkeypatch):
+    """`joern` is an sh with the JVM as its child. SIGTERM ends the sh at once; the JVM's shutdown
+    hook queues behind a running query and never finishes (2026-10-03: eight JVMs outlived a run).
+    stop() returns only when the JVM is gone."""
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 1)
+    process = stub_server("deaf")
+    jvm = int(wait_for(tmp_path / "jvm.pid"))
+    assert tool.stop(process) == []
+    assert not alive(jvm) and process.poll() is not None
+
+
+@needs_proc
+def test_stop_kills_a_jvm_whose_launcher_is_already_reaped(stub_server, tmp_path, monkeypatch):
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 1)
+    process = stub_server("deaf")
+    jvm = int(wait_for(tmp_path / "jvm.pid"))
+    process.terminate()
+    process.wait()
+    assert alive(jvm)                                   # the launcher is gone, the JVM is not
+    assert tool.stop(process) == []
+    assert not alive(jvm)
+
+
+@needs_proc
+def test_stop_sends_sigterm_first_and_waits_for_a_clean_exit(stub_server, tmp_path):
+    process = stub_server("graceful")
+    wait_for(tmp_path / "ready")
+    started = time.time()
+    assert tool.stop(process) == []
+    assert (tmp_path / "term.marker").exists()          # the shutdown ran to its end, no SIGKILL
+    assert time.time() - started < 10
+
+
+@needs_proc
+def test_stop_without_a_grace_kills_at_once(stub_server, tmp_path):
+    """A server whose query was abandoned past its deadline is not worth a SIGTERM."""
+    process = stub_server("graceful")
+    wait_for(tmp_path / "ready")
+    assert tool.stop(process, grace=0) == []
+    assert not (tmp_path / "term.marker").exists()
+
+
+@needs_proc
+def test_stop_reports_what_it_could_not_kill(monkeypatch):
+    """After SIGKILL and a bounded wait a group that is still there is reported, not hidden."""
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr(tool, "KILL_VERIFY_SECONDS", 0.2)
+    monkeypatch.setattr(tool, "_live_members", lambda group: [4242])
+    sent = []
+    monkeypatch.setattr(tool.os, "killpg", lambda group, sig: sent.append(sig))
+    process = tool.launch([sys.executable, "-c", "pass"], None, [])
+    assert tool.stop(process) == [4242]
+    assert sent == [signal.SIGTERM, signal.SIGKILL]
+    assert tool.stop_all([process]) == [4242]
+
+
+@needs_proc
+def test_the_wall_stop_leaves_no_jvm_behind(stubbed, monkeypatch):
+    """main() end to end: every server -- prepare's and the shards' -- is gone when it returns,
+    though none of them leaves on SIGTERM."""
+    run, _ = stubbed
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 1)
+    monkeypatch.setenv("STUB_SERVER", "deaf")
+    monkeypatch.setenv("STUB_SHARD", "hang")
+    assert run("--shards", "2", "--wall-seconds", "1") == tool.EXIT_INCOMPLETE
+    jvms = [int(p.read_text()) for p in run.work.glob("*/jvm.pid")]
+    assert len(jvms) == 3                                # prepare + two shards
+    assert not any(alive(pid) for pid in jvms)
+    assert "unstopped_pids" not in run.summary()
