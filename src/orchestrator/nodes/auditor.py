@@ -52,8 +52,18 @@ OUTPUT_SCHEMA = Finding
 # 때문이다(#328 리뷰 MEDIUM-1 — 빠져 있으면 v3→v4 전환이 툴 로그 본문을 조용히 떨군다).
 # v4_t1은 v4의 입력 서술만 바꾼 판이라(#349) v4와 같이 본문을 싣는다.
 # v5는 body·truncated를 명시하고 절단된 근거의 완전성을 판단하므로 본문 배선을 유지한다.
+# v6가 드는 근거는 **그 두 구절이 v5와 바이트 동일**이라는 것이다 —
+# `prompts/auditor/v6/prefix.md`의 `## Evidence body completeness` 절
+# (`FACTS.evidence[].body`가 생성 요약이 아니라 툴 로그의 유계 발췌라고 적는다)과
+# `evidence_refs: only FACTS.evidence[*].evidence_id` 줄이 그것이다.
+# ⚠ **「v5 + 추가」로 읽지 않는다** — v6는 v5의 범위 제약 둘(`Do not invent unrelated issues` ·
+# `Do not expand the analysis to unrelated vulnerabilities …`)을 **삭제**했다(#418 본문 1행).
+# 그 삭제는 이 집합과 무관하다 — 본문 전제를 지우지 않았기 때문이고, 근거는 위 두 구절뿐이다.
+# ⚠ **빠져 있으면 v4→v6 전환이 툴 로그 본문을
+# 조용히 떨군다**(#328 리뷰 MEDIUM-1과 같은 결) — `test_config.py`의
+# `test_the_canonical_auditor_version_receives_evidence_bodies`가 그것을 문다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5", "v6"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
