@@ -47,6 +47,7 @@ from src.orchestrator.prompt_loader import build_facts, load_prompt
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel, Role
 from src.schemas.finding import MissingEvidence
+from src.schemas.stores import StoreTarget
 from src.tokens import estimate_tokens
 
 RUN_ID = "run_test_0001"
@@ -1253,3 +1254,685 @@ def test_call_sites_of_counts_definitions_not_files(tmp_path: Path) -> None:
     found = _graph(tmp_path, doc).call_sites_of(target)
 
     assert [loc.file for loc in found] == ["a.c"]
+
+
+# --- stores_of: Auditor `STORES` 블록의 쓰기 지점 ------------------------------------------------
+#
+# 표의 열은 **진짜 인덱서가 쓴 값**에서 옮겼다(`tests/test_source_stores.py`가 같은 원문을 인덱서로
+# 직접 돌려 대조한다). 다만 `copy`의 지역 `g_len`에 대한 대입(`assigns` 24줄)은 이 표에서 더했다 —
+# 지역이 같은 이름의 전역을 가리는 자리를 고정하려는 것이다. 원문의 행 번호:
+#
+#   a.c  4  struct ctx { char *buf; size_t len; struct hdr { int len; } h; };
+#   a.c  5  struct other { int len; };
+#   a.c  7  static char *g_buf;       8  static size_t g_len = 0;
+#   a.c 10-18 grow   12 c->len = n * 2;    13 c->buf = (char *)malloc(c->len + 1);
+#                    14 g_buf = malloc(<줄바꿈> n + 1);    16 g_len += n;    17 c->h.len = 4;
+#   a.c 20-27 copy   22 char *local = malloc(n);  23 size_t g_len = 3;  24 g_len = 0; local = NULL;
+#                    25 memcpy(c->buf + c->len, src, n);
+#   b.c  2  static size_t g_len;      3  extern char *g_buf;
+#   b.c 4-9 other_fn 6 o->len = 5;    7  g_len = 7;    8  g_buf = calloc(1, 16);
+_STORES_INDEX = {
+    **_INDEX_V2,
+    "files": ["a.c", "b.c"],
+    "symbols": [
+        {"name": "grow", "file": "a.c", "line_start": 10, "line_end": 18},
+        {"name": "copy", "file": "a.c", "line_start": 20, "line_end": 27},
+        {"name": "other_fn", "file": "b.c", "line_start": 4, "line_end": 9},
+    ],
+    "calls": {
+        "calloc": [{"file": "b.c", "line": 8, "caller": "other_fn", "args": ["1", "16"]}],
+        "malloc": [
+            {"file": "a.c", "line": 13, "caller": "grow", "args": ["c->len + 1"]},
+            {"file": "a.c", "line": 14, "caller": "grow", "args": ["n + 1"]},
+            {"file": "a.c", "line": 22, "caller": "copy", "args": ["n"]},
+        ],
+        "memcpy": [
+            {"file": "a.c", "line": 25, "caller": "copy", "args": ["c->buf + c->len", "src", "n"]}
+        ],
+    },
+    "functions": {
+        "grow": [{"file": "a.c", "line_start": 10, "line_end": 18, "params": ["c", "n"]}],
+        "copy": [{"file": "a.c", "line_start": 20, "line_end": 27, "params": ["c", "src", "n"]}],
+        "other_fn": [{"file": "b.c", "line_start": 4, "line_end": 9, "params": ["o"]}],
+    },
+    "file_vars": {
+        "g_buf": [
+            {"file": "a.c", "line_start": 7, "line_end": 7},
+            {"file": "b.c", "line_start": 3, "line_end": 3},
+        ],
+        "g_len": [
+            {"file": "a.c", "line_start": 8, "line_end": 8},
+            {"file": "b.c", "line_start": 2, "line_end": 2},
+        ],
+    },
+    "fields": {
+        "buf": [{"type": "ctx", "file": "a.c", "line_start": 4, "line_end": 4}],
+        "len": [
+            {"type": "ctx", "file": "a.c", "line_start": 4, "line_end": 4},
+            {"type": "hdr", "file": "a.c", "line_start": 4, "line_end": 4},
+            {"type": "other", "file": "a.c", "line_start": 5, "line_end": 5},
+        ],
+    },
+    "locals": {
+        "a.c": {
+            "grow": {"c": [10], "n": [10]},
+            "copy": {"c": [20], "g_len": [23], "local": [22], "n": [20], "src": [20]},
+        },
+        "b.c": {"other_fn": {"o": [4]}},
+    },
+    "assigns": {
+        "a.c": {
+            "copy": {"g_len": [24], "local": [24]},
+            "grow": {"g_buf": [14], "g_len": [16]},
+        },
+        "b.c": {"other_fn": {"g_buf": [8], "g_len": [7]}},
+    },
+    "field_assigns": {
+        "buf": [
+            {"file": "a.c", "line": 13, "func": "grow", "lhs": "c->buf",
+             "rhs": "(char *)malloc(c->len + 1)", "op": "="}
+        ],
+        "len": [
+            {"file": "b.c", "line": 6, "func": "other_fn", "lhs": "o->len", "rhs": "5", "op": "="},
+            {"file": "a.c", "line": 17, "func": "grow", "lhs": "c->h.len", "rhs": "4", "op": "="},
+            {"file": "a.c", "line": 12, "func": "grow", "lhs": "c->len", "rhs": "n * 2", "op": "="},
+        ],
+    },
+}
+
+
+def _stores(
+    tmp_path: Path,
+    name: str,
+    *,
+    field: bool = False,
+    file: str = "a.c",
+    line: int = 25,
+    lhs: str | None = None,
+    doc: object = _STORES_INDEX,
+):  # noqa: ANN202
+    return _graph(tmp_path, doc).stores_of(
+        StoreTarget(name=name, field=field, file=file, line=line, lhs=lhs)
+    )
+
+
+def test_stores_of_finds_the_writes_of_a_field_by_its_name(tmp_path: Path) -> None:
+    """`field_assigns`의 필드 이름 키 — 파일·줄·함수·좌변 철자·연산자. 순서는 (파일, 줄)이다(표의 행
+    순서와 무관 — 여기선 b.c가 표 앞에 있다)."""
+    found = _stores(tmp_path, "len", field=True, lhs="c->len")
+
+    assert [(s.file, s.line, s.func, s.lhs, s.op, s.field) for s in found] == [
+        ("a.c", 12, "grow", "c->len", "=", True),
+        ("a.c", 17, "grow", "c->h.len", "=", True),
+        ("b.c", 6, "other_fn", "o->len", "=", True),
+    ]
+    assert {s.name for s in found} == {"len"}
+
+
+def test_stores_of_has_no_struct_type_to_key_a_field_write_by() -> None:
+    """`field_assigns` 행에는 객체의 구조체 타입이 없다 — (구조체, 필드)로 짚을 열이 없으니 쓰기는
+    이름으로만 이을 수 있다. 이 가정이 깨지면(인덱서가 타입 열을 더하면) 아래 모호 판정을 다시
+    본다."""
+    from src.adapters.index_graph import _RECORD_KEYS
+
+    assert _RECORD_KEYS["field_assigns"] == ("file", "line", "func", "lhs", "rhs", "op")
+
+
+def test_stores_of_marks_every_write_of_a_field_name_several_structs_declare(
+    tmp_path: Path,
+) -> None:
+    """`len`은 ctx·hdr·other 셋이 선언한다 — 이름만으로는 어느 구조체의 쓰기인지 모른다. 찾는 줄과
+    좌변 철자가 같은 쓰기(`c->len`)도 이름 키의 한 행일 뿐이라 **전부** 모호하다."""
+    found = _stores(tmp_path, "len", field=True, lhs="c->len")
+
+    assert [(s.line, s.ambiguous) for s in found] == [(12, True), (17, True), (6, True)]
+
+
+def test_stores_of_does_not_mark_a_field_only_one_struct_declares(tmp_path: Path) -> None:
+    """`buf`는 인덱스에서 ctx 하나(타입·파일 하나)만 선언한다 — 이름이 곧 (구조체, 필드) 키라 철자가
+    달라도(`other->buf`를 찾는 줄) 모호하다고 안 한다."""
+    (found,) = _stores(tmp_path, "buf", field=True, lhs="other->buf")
+
+    assert (found.line, found.ambiguous) == (13, False)
+
+
+def test_stores_of_marks_a_field_no_indexed_struct_declares(tmp_path: Path) -> None:
+    """선언한 구조체가 인덱스에 없는 필드(시스템 헤더·C++ 클래스의 것)는 이름이 유일한 키다 —
+    모호하다."""
+    doc = {
+        **_STORES_INDEX,
+        "field_assigns": {
+            "st_size": [
+                {"file": "b.c", "line": 6, "func": "other_fn", "lhs": "sb.st_size", "rhs": "0",
+                 "op": "="}
+            ]
+        },
+    }
+
+    (found,) = _stores(tmp_path, "st_size", field=True, doc=doc)
+
+    assert found.ambiguous is True
+
+
+def test_stores_of_marks_a_field_of_an_anonymous_struct_and_a_struct_declared_twice(
+    tmp_path: Path,
+) -> None:
+    """선언이 하나여도 타입이 없거나(익명 구조체 — `type: null`), 같은 구조체 이름이 두 파일에 따로
+    정의돼 있으면(파일 지역 구조체가 흔하다) 이름이 키가 못 된다."""
+    write = {"file": "a.c", "line": 12, "func": "grow", "lhs": "c->w", "rhs": "1", "op": "="}
+    anonymous = {
+        **_STORES_INDEX,
+        "fields": {"w": [{"type": None, "file": "a.c", "line_start": 4, "line_end": 4}]},
+        "field_assigns": {"w": [write]},
+    }
+    twice = {
+        **_STORES_INDEX,
+        "fields": {
+            "w": [
+                {"type": "node", "file": "a.c", "line_start": 4, "line_end": 4},
+                {"type": "node", "file": "b.c", "line_start": 4, "line_end": 4},
+            ]
+        },
+        "field_assigns": {"w": [write]},
+    }
+
+    assert [s.ambiguous for s in _stores(tmp_path, "w", field=True, doc=anonymous)] == [True]
+    assert [s.ambiguous for s in _stores(tmp_path / "t", "w", field=True, doc=twice)] == [True]
+
+
+def _field_doc(declared: list[tuple[str, str]], writes: list[tuple[str, int]], name: str = "pos"):
+    """`name` 필드의 인덱스 — `declared`는 (구조체 이름, 선언 파일), `writes`는 (쓰기 파일, 줄)."""
+    return {
+        **_STORES_INDEX,
+        "fields": {
+            name: [
+                {"type": kind, "file": file, "line_start": 1, "line_end": 1}
+                for kind, file in declared
+            ]
+        },
+        "field_assigns": {
+            name: [
+                {"file": file, "line": line, "func": "f", "lhs": f"x->{name}", "rhs": "0",
+                 "op": "="}
+                for file, line in writes
+            ]
+        },
+    }
+
+
+def test_stores_of_flags_a_single_indexed_struct_that_lives_in_a_far_directory(
+    tmp_path: Path,
+) -> None:
+    """libzip `lib/zip_algorithm_zstd.c`의 `ctx->in.pos` — 진짜 구조체는 인덱스 밖 헤더(`zstd.h`)에
+    있고 인덱스에 든 `pos`는 **관계없는** ossfuzz의 구조체 하나뿐이다. 선언이 하나여도 그 파일이
+    찾는 줄(lib/)과 같은 디렉터리가 아니면 같은 필드라고 못 한다 — 쓰기가 어디에 있든 전부
+    모호하다."""
+    doc = _field_doc(
+        [("cursor", "ossfuzz/fuzz.c")],
+        [("lib/zip_algorithm_zstd.c", 246), ("ossfuzz/fuzz.c", 4)],
+    )
+
+    found = _stores(tmp_path, "pos", field=True, file="lib/zip_algorithm_zstd.c", doc=doc)
+
+    assert [(s.file, s.ambiguous) for s in found] == [
+        ("lib/zip_algorithm_zstd.c", True),
+        ("ossfuzz/fuzz.c", True),
+    ]
+
+
+def test_stores_of_does_not_flag_a_single_struct_declared_next_to_both_use_and_write(
+    tmp_path: Path,
+) -> None:
+    """구조체가 `lib/zipint.h` 하나이고 찾는 줄(`lib/zip_close.c`)과 쓰기(`lib/zip_open.c`)가 같은
+    디렉터리면 모호하다고 안 한다 — 같은 파일이어도 마찬가지다(같은 파일은 같은 디렉터리다)."""
+    doc = _field_doc(
+        [("zip", "lib/zipint.h")], [("lib/zip_open.c", 3), ("lib/zip_close.c", 9)], name="flags"
+    )
+
+    found = _stores(tmp_path, "flags", field=True, file="lib/zip_close.c", doc=doc)
+
+    assert [(s.file, s.ambiguous) for s in found] == [
+        ("lib/zip_close.c", False),
+        ("lib/zip_open.c", False),
+    ]
+
+
+def test_stores_of_flags_a_single_struct_declared_near_only_the_write_or_only_the_use(
+    tmp_path: Path,
+) -> None:
+    """「둘 다 볼 수 있다」는 **둘 다**다 — 헤더가 쓰기 쪽 디렉터리에만(또는 찾는 줄 쪽에만) 있으면
+    다른 쪽은 그 구조체를 본다는 보장이 없다. 같은 선언·같은 쓰기 줄이어도 찾는 줄이 어디냐로
+    갈린다."""
+    doc = _field_doc([("zip", "lib/zipint.h")], [("lib/zip_open.c", 3), ("src/other.c", 8)])
+
+    from_lib = _stores(tmp_path, "pos", field=True, file="lib/zip_close.c", doc=doc)
+    from_src = _stores(tmp_path / "s", "pos", field=True, file="src/use.c", doc=doc)
+
+    assert [(s.file, s.ambiguous) for s in from_lib] == [
+        ("lib/zip_open.c", False),  # 선언·쓰기·찾는 줄이 모두 lib/
+        ("src/other.c", True),  # 쓰기가 src/라 헤더를 본다는 보장이 없다
+    ]
+    assert [(s.file, s.ambiguous) for s in from_src] == [
+        ("lib/zip_open.c", True),  # 찾는 줄(src/)이 헤더(lib/)를 본다는 보장이 없다
+        ("src/other.c", True),
+    ]
+
+
+def test_stores_of_marks_nonproduct_writes_only_when_the_use_is_in_product_code(
+    tmp_path: Path,
+) -> None:
+    """`is_nonproduct_path`(디렉터리 성분만 본다 — `lib/test_util.c`는 제품이다)로 비제품 쓰기를
+    가른다. 찾는 줄이 제품 경로일 때만 단다 — 찾는 줄이 `examples/` 안이면 정의 조회의 강등과 같이
+    안 민다."""
+    writes = [
+        ("examples/zran.c", 110), ("fuzz/fuzz_x.c", 3), ("regress/r.c", 4),
+        ("lib/test_util.c", 5), ("inflate.c", 164),
+    ]
+    doc = _field_doc([("state", "inflate.c")], writes, name="len")
+
+    product_use = _stores(tmp_path, "len", field=True, file="deflate.c", doc=doc)
+    example_use = _stores(tmp_path / "e", "len", field=True, file="examples/zran.c", doc=doc)
+
+    assert {s.file: s.nonproduct for s in product_use} == {
+        "examples/zran.c": True, "fuzz/fuzz_x.c": True, "regress/r.c": True,
+        "lib/test_util.c": False, "inflate.c": False,
+    }
+    assert not any(s.nonproduct for s in example_use)
+
+
+def test_stores_of_returns_every_write_of_a_flood_and_marks_each_of_them(tmp_path: Path) -> None:
+    """흔한 필드 이름(`size`) — 구조체 셋이 선언하고 쓰기가 열 곳이다. 인덱스는 **다 돌려주되 하나도
+    모호하지 않다고 하지 않는다**(자르는 것은 쓰는 쪽 몫이다 — `source_stores`의 이름별 상한)."""
+    writes = {
+        "a.c": ("p", [30, 31, 32]),
+        "b.c": ("q", [10, 11, 12, 13]),
+        "c.c": ("r", [5, 6, 7]),
+    }
+    doc = {
+        **_STORES_INDEX,
+        "fields": {
+            "size": [
+                {"type": kind, "file": file, "line_start": 1, "line_end": 1}
+                for kind, file in (("ctx", "a.c"), ("conn", "b.c"), ("node", "c.c"))
+            ]
+        },
+        "field_assigns": {
+            "size": [
+                {"file": file, "line": line, "func": "f", "lhs": f"{obj}->size", "rhs": "1",
+                 "op": "="}
+                for file, (obj, lines) in writes.items()
+                for line in lines
+            ]
+        },
+    }
+
+    found = _stores(tmp_path, "size", field=True, file="a.c", lhs="p->size", doc=doc)
+
+    assert len(found) == 10 > 8
+    assert all(s.ambiguous for s in found)
+    assert [(s.file, s.line) for s in found] == sorted((s.file, s.line) for s in found)
+
+
+def test_stores_of_finds_the_assignments_of_a_file_scope_variable(tmp_path: Path) -> None:
+    """`assigns` — 이름 → (파일, 함수, 줄). `copy`의 24줄 `g_len = 0`은 그 함수의 **지역** `g_len`
+    (`locals` 23줄)이 가리므로 전역에 대한 쓰기가 아니다."""
+    found = _stores(tmp_path, "g_len", file="b.c", line=7)
+
+    assert [(s.file, s.line, s.func, s.field) for s in found] == [
+        ("a.c", 16, "grow", False),
+        ("b.c", 7, "other_fn", False),
+    ]
+
+
+def test_stores_of_marks_a_same_named_variable_in_another_file_as_ambiguous(
+    tmp_path: Path,
+) -> None:
+    """`g_len`은 a.c·b.c 둘 다에 파일 전역이 있다(`static`일 수 있다 — 인덱스는 저장 클래스를 안
+    든다). **찾는 줄과 같은 파일**의 쓰기만 그 변수라고 말할 수 있고, 다른 파일의 쓰기는 이름만으로
+    같은 변수라고 못 한다 — 싣되 모호하다."""
+    found = _stores(tmp_path, "g_len", file="b.c", line=7)
+
+    assert [(s.file, s.ambiguous) for s in found] == [("a.c", True), ("b.c", False)]
+
+
+def test_stores_of_does_not_resolve_a_static_across_files_by_name_alone(tmp_path: Path) -> None:
+    """같은 질문을 a.c쪽에서 하면 뒤집힌다 — 다른 파일(b.c)의 쓰기가 모호하다."""
+    found = _stores(tmp_path, "g_len", file="a.c", line=8)
+
+    assert [(s.file, s.ambiguous) for s in found] == [("a.c", False), ("b.c", True)]
+
+
+def test_stores_of_skips_a_name_that_is_local_where_it_is_used(tmp_path: Path) -> None:
+    """찾는 줄(a.c:25 — `copy` 안)에서 파라미터(`n`)와 전역을 가리는 지역(`g_len`)은 쓰기 지점을
+    찾을 대상이 아니다 — 그 쓰기들은 같은 함수 안이고 이미 보인다. `[]`다(`None`이 아니다)."""
+    assert _stores(tmp_path, "n", line=25) == []
+    assert _stores(tmp_path, "g_len", line=26) == []
+
+
+def test_stores_of_skips_a_name_the_index_does_not_know_as_a_variable(tmp_path: Path) -> None:
+    """파일 스코프 선언이 없는 이름(매크로·enum 상수·시스템 헤더의 것)은 변수로 못 다룬다 —
+    어딘가에서 대입되고 있어도(`optind = 0`) 그 이름이 어느 변수인지 인덱스는 모른다."""
+    doc = {
+        **_STORES_INDEX,
+        "assigns": {"b.c": {"other_fn": {"optind": [9], "g_len": [7]}}},
+    }
+
+    assert _stores(tmp_path, "NULL") == []
+    assert _stores(tmp_path, "return") == []
+    assert _stores(tmp_path, "optind", file="b.c", line=8, doc=doc) == []
+    assert [s.line for s in _stores(tmp_path, "g_len", file="b.c", line=8, doc=doc)] == [7]
+
+
+def test_stores_of_without_an_enclosing_function_does_not_check_locals(tmp_path: Path) -> None:
+    """찾는 줄이 어느 함수에도 안 들면(파일 스코프 줄) 지역 판정을 건너뛴다 — 8줄은 전역 선언."""
+    found = _stores(tmp_path, "g_len", line=8)
+
+    assert [(s.file, s.line) for s in found] == [("a.c", 16), ("b.c", 7)]
+
+
+def test_stores_of_attaches_the_allocator_call_on_the_same_line(tmp_path: Path) -> None:
+    """쓰기 줄에 같은 함수의 할당기 호출이 있으면 크기 식(`calls`의 `args`)과 함께 붙는다 — 필드
+    쓰기 (13줄 `c->buf = malloc(c->len + 1)`)와 변수 대입(줄바꿈된 14줄 `g_buf = malloc(<줄바꿈> n +
+    1)`, `calls`가 호출 시작 줄 14로 센다) 둘 다. 할당기가 아닌 호출(`memcpy`)은 안 붙는다."""
+    (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf")
+    assert (buf.alloc, buf.alloc_args) == ("malloc", ("c->len + 1",))
+
+    found = _stores(tmp_path, "g_buf", file="b.c", line=8)
+    by_line = {(s.file, s.line): s for s in found}
+    assert by_line[("a.c", 14)].alloc_args == ("n + 1",)
+    assert (by_line[("b.c", 8)].alloc, by_line[("b.c", 8)].alloc_args) == ("calloc", ("1", "16"))
+
+    plain = _stores(tmp_path, "len", field=True, lhs="c->len")
+    assert {s.alloc for s in plain} == {None}
+
+
+def test_stores_of_ignores_an_allocator_call_that_another_function_made_on_that_line(
+    tmp_path: Path,
+) -> None:
+    """같은 줄이어도 **호출한 함수가 쓰기와 같아야** 붙는다 — 표가 파일·줄만으로 맞지 않게 한다."""
+    doc = {
+        **_STORES_INDEX,
+        "calls": {
+            **_STORES_INDEX["calls"],
+            "malloc": [{"file": "a.c", "line": 13, "caller": "elsewhere", "args": ["9"]}],
+        },
+    }
+
+    (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf", doc=doc)
+
+    assert buf.alloc is None
+
+
+def test_stores_of_knows_xmalloc_style_allocator_names(tmp_path: Path) -> None:
+    """`malloc`뿐 아니라 접두·접미가 붙은 할당기(`xmalloc`·`av_mallocz`·`g_strdup`·`reallocarray`)도
+    표의 `calls` 키 이름으로 찾는다 — `malloc_usable_size`처럼 할당기가 아닌 이름은 아니다."""
+    site = {"file": "a.c", "line": 13, "caller": "grow", "args": ["8"]}
+    names = ("xmalloc", "av_mallocz", "g_strdup", "reallocarray", "OPENSSL_malloc", "g_malloc0")
+    for name in names:
+        doc = {**_STORES_INDEX, "calls": {name: [site]}}
+        (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf", doc=doc)
+        assert (buf.alloc, buf.alloc_args) == (name, ("8",)), name
+
+    doc = {**_STORES_INDEX, "calls": {"malloc_usable_size": [site]}}
+    (buf,) = _stores(tmp_path, "buf", field=True, lhs="c->buf", doc=doc)
+    assert buf.alloc is None
+
+
+def test_stores_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    """index-v1(표 없음)이거나 인덱스가 없으면 `None` — 「쓰기가 없다」(`[]`)와 갈린다."""
+    assert _stores(tmp_path, "len", field=True, doc=_INDEX_V1) is None
+    assert _stores(tmp_path / "none", "len", field=True, doc=None) is None
+
+
+def test_stores_of_is_empty_for_a_field_nobody_writes(tmp_path: Path) -> None:
+    assert _stores(tmp_path, "never_written", field=True) == []
+
+
+# --- Auditor `SOURCE` 정의 조회 위생: `locals_of` · 비제품 경로 강등 -------------------------
+#
+# 정의 조회(`definitions_of`·`callees_of`·`call_sites_of`)는 「저장소에서 하나뿐일 때만」 싣는다.
+# 비제품 경로(`tests/`·`examples/` 등)에 같은 이름이 있으면 그 판정이 막힌다 — 강등은 그 정의를
+# **제품 정의 뒤로 미루는 것**이지 지우는 것이 아니다. 기본(꺼짐)은 옛 동작이고, 켜는 곳은
+# `runner._auditor_source` 하나다.
+
+
+def test_locals_of_gives_the_locals_and_params_of_one_function(tmp_path: Path) -> None:
+    """`locals` 표는 파라미터를 포함한다(`indexer.py` 표). 함수 하나의 이름 집합이고, 그 파일의 다른
+    함수 · 모르는 파일은 빈 집합이다 — `None`이 아니다(그쪽은 「v2 표가 없다」)."""
+    graph = _graph(tmp_path, _INDEX_V2)
+
+    assert graph.locals_of("parser.c", "parse_header") == frozenset({"src", "buf"})
+    assert graph.locals_of("parser.c", "helper") == frozenset()
+    assert graph.locals_of("nope.c", "parse_header") == frozenset()
+
+
+def test_locals_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    """인덱스 없음 · v1 · 깨짐이면 `None`이다 — `definitions_of`와 같은 「없다」·「0건」 구별."""
+    assert _graph(tmp_path / "v1").locals_of("parser.c", "parse_header") is None
+    assert _graph(tmp_path / "none", document=None).locals_of("parser.c", "parse_header") is None
+    assert _graph(tmp_path / "bad", "{ not json").locals_of("parser.c", "parse_header") is None
+
+
+def test_is_nonproduct_path_looks_at_directories_not_file_names() -> None:
+    """디렉터리 성분만 본다 — `tests/t.c`는 비제품이고 `lib/test_util.c`는 아니다. 대소문자는
+    접는다."""
+    from src.adapters.index_graph import is_nonproduct_path
+
+    for path in ("tests/t.c", "lib/Test/x.c", "third_party/z/y.h", "fuzz/f.c", "a/fuzzers/f.c"):
+        assert is_nonproduct_path(path), path
+    # 다른 플랫폼·빌드 시스템 사본 — libzip 계열의 `xcode/config.h`가 실제 모양이다.
+    for path in ("xcode/config.h", "a/windows/io.c", "win32/z.h", "msvc/zipconf.h"):
+        assert is_nonproduct_path(path), path
+    for path in ("lib/test_util.c", "src/a.c", "a.c", "lib/testing_util/x.c", "docs.c"):
+        assert not is_nonproduct_path(path), path
+    assert not is_nonproduct_path("lib/windows.c"), "파일 이름은 안 본다"
+
+
+# 같은 이름이 제품(`lib/`)과 비제품(`examples/`)에 둘 있고(`DUP`), 비제품에만 있고(`ONLY_EX`),
+# 제품에만 있다(`ONLY_LIB`). `examples/`는 사전순으로 `lib/`보다 앞이라 기본 순서와 강등 순서가
+# 갈린다.
+_MACROS_ACROSS_DIRS = {
+    "macros": {
+        "DUP": [
+            {"file": "lib/a.h", "line_start": 1, "line_end": 1},
+            {"file": "examples/e.h", "line_start": 1, "line_end": 1},
+        ],
+        "ONLY_EX": [{"file": "examples/e.h", "line_start": 2, "line_end": 2}],
+        "ONLY_LIB": [{"file": "lib/b.h", "line_start": 3, "line_end": 3}],
+    }
+}
+
+
+def test_definitions_of_demotes_nonproduct_rows_when_asked(tmp_path: Path) -> None:
+    """켜면 제품 정의가 비제품 정의보다 앞서 정한다 — `DUP`은 제품 정의가 하나라 그것으로 정해진다
+    (꺼진 쪽은 둘이라 건너뛴다). **삭제가 아니다**: 제품 정의가 없는 `ONLY_EX`도 실리고 순서만 제품
+    정의 뒤로 밀린다(상한이 차면 뒤가 먼저 빠진다)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+
+    found = graph.definitions_of(
+        ["DUP", "ONLY_EX", "ONLY_LIB"], "lib/x.c", demote_nonproduct=True
+    )
+
+    assert found == [
+        Location(file="lib/a.h", symbol="DUP", line_start=1, line_end=1),
+        Location(file="lib/b.h", symbol="ONLY_LIB", line_start=3, line_end=3),
+        Location(file="examples/e.h", symbol="ONLY_EX", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """키워드가 없으면 옛 동작 그대로다 — 제품·비제품이 같은 후보라 `DUP`은 건너뛰고, 순서는 (파일,
+    시작 줄)이다(`examples/`가 `lib/`보다 앞선다). NE resolver 등 다른 호출이 이 기본을 기댄다."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+
+    found = graph.definitions_of(["DUP", "ONLY_EX", "ONLY_LIB"], "lib/x.c")
+
+    assert [(loc.file, loc.symbol) for loc in found] == [
+        ("examples/e.h", "ONLY_EX"),
+        ("lib/b.h", "ONLY_LIB"),
+    ]
+
+
+def test_definitions_of_does_not_demote_when_the_anchor_itself_is_nonproduct(
+    tmp_path: Path,
+) -> None:
+    """앵커가 `examples/` 안이면 강등하지 않는다 — 그 코드가 쓰는 정의는 형제 비제품 경로에 있는 게
+    정상이다. 켜도 꺼진 것과 같은 결과다(`DUP` 건너뜀 · (파일, 줄) 순)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+    names = ["DUP", "ONLY_EX", "ONLY_LIB"]
+
+    assert graph.definitions_of(names, "examples/x.c", demote_nonproduct=True) == (
+        graph.definitions_of(names, "examples/x.c")
+    )
+    assert [loc.symbol for loc in graph.definitions_of(names, "examples/x.c")] == [
+        "ONLY_EX",
+        "ONLY_LIB",
+    ]
+
+
+# `entry`(lib/a.c)가 2줄에서 `only_test`(tests/에만 있다)를, 3줄에서 `dup`(lib/b.c와 tests/t.c
+# 둘)을 부른다. `only_test`(tests/t.c)도 `dup`을 부르는데 그 파일이 `dup`을 자기가 정의한다.
+# `t_entry`(tests/u.c)는 `dup`을 정의하지 않는 비제품 파일에서 `dup`을 부른다.
+_CALLS_ACROSS_DIRS = {
+    "version": "index-v1",
+    "files": ["lib/a.c", "lib/b.c", "tests/t.c", "tests/u.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "entry", "file": "lib/a.c", "line_start": 1, "line_end": 10},
+        {"name": "dup", "file": "lib/b.c", "line_start": 1, "line_end": 3},
+        {"name": "dup", "file": "tests/t.c", "line_start": 1, "line_end": 3},
+        {"name": "only_test", "file": "tests/t.c", "line_start": 5, "line_end": 7},
+        {"name": "t_entry", "file": "tests/u.c", "line_start": 1, "line_end": 10},
+    ],
+    "calls": [
+        {"caller": "entry", "callee": "only_test", "file": "lib/a.c", "line": 2},
+        {"caller": "entry", "callee": "dup", "file": "lib/a.c", "line": 3},
+        {"caller": "only_test", "callee": "dup", "file": "tests/t.c", "line": 6},
+        {"caller": "t_entry", "callee": "dup", "file": "tests/u.c", "line": 2},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+_ENTRY = Location(file="lib/a.c", symbol="entry", line_start=1, line_end=10)
+
+
+def test_callees_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`이 제품 정의(lib/b.c) 하나로 정해지고, 제품 정의가 없는 `only_test`는 **남되** 뒤로
+    밀린다 — 첫 호출 줄 순(2·3줄)이면 `only_test`가 앞이다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    found = graph.callees_of(_ENTRY, demote_nonproduct=True)
+
+    assert [(loc.file, loc.symbol) for loc in found] == [
+        ("lib/b.c", "dup"),
+        ("tests/t.c", "only_test"),
+    ]
+
+
+def test_callees_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """기본은 옛 동작이다 — `dup`은 정의가 둘이라 건너뛰고 `only_test`만 남는다. 앵커가 비제품이면
+    켜도 같다(`t_entry`는 `tests/u.c` 안이고 `dup` 정의는 다른 파일 둘이라 건너뛴다)."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    assert [loc.symbol for loc in graph.callees_of(_ENTRY)] == ["only_test"]
+    t_entry = Location(file="tests/u.c", symbol="t_entry", line_start=1, line_end=10)
+    assert graph.callees_of(t_entry) == []
+    assert graph.callees_of(t_entry, demote_nonproduct=True) == []
+
+
+def test_call_sites_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`의 제품 정의가 하나(lib/b.c)라 다른 파일의 호출이 실린다(꺼진 쪽은 정의가 둘이라
+    다른 파일 호출을 안 싣는다). 단 `dup`의 **비제품 정의가 따로 있어**(tests/t.c) 비제품 호출 --
+    그 정의를 가진 파일의 호출(`only_test`)과 어느 `dup`으로 가는지 모르는 `t_entry`(tests/u.c)
+    -- 은 안 싣는다. 제품 호출 `entry`만 남는다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+    dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
+
+    found = graph.call_sites_of(dup, demote_nonproduct=True)
+
+    assert found == [Location(file="lib/a.c", symbol="entry", line_start=3, line_end=3)]
+
+
+def test_call_sites_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """기본은 옛 동작이다 — 정의가 둘이면 다른 파일의 호출은 하나도 안 싣는다. 앵커가 비제품이어도
+    켠 것이 꺼진 것과 같다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+    dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
+    mock = Location(file="tests/t.c", symbol="dup", line_start=1, line_end=3)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(mock, demote_nonproduct=True) == graph.call_sites_of(mock)
+
+
+def _call_sites_doc(symbols: list[dict], calls: list[dict]) -> dict:
+    files = sorted({row["file"] for row in [*symbols, *calls]})
+    return {
+        "version": "index-v1",
+        "files": files,
+        "skipped": [],
+        "symbols": symbols,
+        "calls": calls,
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+
+
+def _def(name: str, file: str) -> dict:
+    return {"name": name, "file": file, "line_start": 1, "line_end": 5}
+
+
+def _call(caller: str, file: str) -> dict:
+    return {"caller": caller, "callee": "dup", "file": file, "line": 2}
+
+
+def test_call_sites_of_puts_nonproduct_sites_last_even_when_they_sort_first(
+    tmp_path: Path,
+) -> None:
+    """`examples/`는 사전순으로 `lib/`보다 **앞**이라 (파일, 줄) 순서만 보면 비제품 호출이 먼저다 --
+    강등 키가 그것을 뒤로 민다. 위 픽스처(`lib/` < `tests/`)는 키를 지워도 같은 순서라 그 키를 못
+    물었다."""
+    doc = _call_sites_doc(
+        [_def("dup", "src/dup.c"), _def("use", "lib/use.c"), _def("ex", "examples/ex.c")],
+        [_call("use", "lib/use.c"), _call("ex", "examples/ex.c")],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="src/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert [loc.file for loc in graph.call_sites_of(dup)] == ["examples/ex.c", "lib/use.c"]
+    assert [loc.file for loc in graph.call_sites_of(dup, demote_nonproduct=True)] == [
+        "lib/use.c",
+        "examples/ex.c",
+    ]
+
+
+def test_call_sites_of_skips_nonproduct_callers_when_a_nonproduct_copy_exists(
+    tmp_path: Path,
+) -> None:
+    """`lib/dup.c`(대상) · `tests/mock/dup.c`(모의 구현) · `tests/mock/user.c`(모의 구현을 부르는
+    이웃). 강등을 켜면 제품 정의가 하나라 다른 파일 호출이 실리는데(꺼진 쪽은 정의가 둘이라
+    `[]`), **비제품 정의가 따로 있으면 비제품 호출은 어느 `dup`으로 가는지 모른다** -- 이웃
+    (`tests/mock/`)이든 다른 디렉터리(`tests/other/`)든 안 싣는다. 제품 호출(`lib/use.c`)만
+    남는다."""
+    doc = _call_sites_doc(
+        [
+            _def("dup", "lib/dup.c"),
+            _def("use", "lib/use.c"),
+            _def("dup", "tests/mock/dup.c"),
+            _def("mock_user", "tests/mock/user.c"),
+            _def("other_user", "tests/other/user.c"),
+        ],
+        [
+            _call("use", "lib/use.c"),
+            _call("mock_user", "tests/mock/user.c"),
+            _call("other_user", "tests/other/user.c"),
+        ],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="lib/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(dup, demote_nonproduct=True) == [
+        Location(file="lib/use.c", symbol="use", line_start=2, line_end=2)
+    ]

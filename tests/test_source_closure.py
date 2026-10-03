@@ -959,13 +959,17 @@ def test_callables_of_is_none_without_v2_tables(tmp_path: Path) -> None:
 
 _THRESHOLDS = {
     "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
-    "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_closure": 0,
+    "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_stores": 0,
+    "auditor_closure": 0,
 }
 _UNIT_START = r"\n(?=/\* CLOSURE \()"  # SOURCE에서 닫힘 단위가 시작하는 자리
 
 
-def _auditor_source(tmp_path: Path, files: dict[str, str], anchor: str, **opts):  # noqa: ANN202
+def _auditor_source(  # noqa: ANN202
+    tmp_path: Path, files: dict[str, str], anchor: str, extra_lines=(), **opts  # noqa: ANN001
+):
     """`_auditor_source`를 직접 부르는 최소 ctx — 실제 `GraphIndex`와 원문 읽기를 쓴다.
+    슬라이스는 앵커의 둘째 줄이고 `extra_lines`((파일, 줄))가 더 걸친 줄이다.
     (소스, 이벤트, 읽은 위치들)을 돌려준다."""
     root, _, graph = _repo(tmp_path, files)
     here = _symbol(graph, files, anchor)
@@ -981,14 +985,16 @@ def _auditor_source(tmp_path: Path, files: dict[str, str], anchor: str, **opts):
         read_source=read,
         callees_of=opts.pop("callees_of", graph.callees_of),
         definitions_of=graph.definitions_of,
+        locals_of=graph.locals_of,
         call_sites_of=graph.call_sites_of,
+        stores_of=graph.stores_of,
         callables_of=opts.pop("callables_of", graph.callables_of),
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=SimpleNamespace(thresholds=SimpleNamespace(**{**_THRESHOLDS, **opts})),
         trace=SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="s", location=here, given_end="source", entry=here,
-                   lines=((here.file, here.line_start + 1),), degraded=False)
+                   lines=((here.file, here.line_start + 1), *extra_lines), degraded=False)
     return runner._auditor_source(ctx, ref, here, "cand"), events[-1], reads
 
 
@@ -1167,6 +1173,70 @@ def test_a_callee_body_already_carried_is_labelled_not_repeated(tmp_path: Path) 
 
     assert f"{HEADER}xmalloc[macro] -> safe_alloc (body above) */" in source
     assert source.count("static inline void *safe_alloc(size_t n)") == 1
+
+
+# 쓰기 지점(`auditor_stores`)과 닫힘이 같이 일하는 저장소 — `handle`이 앵커이고 `helper`는
+# 슬라이스가 걸친 둘째 함수다. `len` 필드의 쓰기는 앵커 밖(`init`)에 있고, `xmalloc`은 헤더의
+# 함수로 접힌다.
+_BOTH_H = (
+    "#define xmalloc safe_alloc\n"
+    "static inline void *safe_alloc(size_t n)\n{\n    return n;\n}\n"
+)
+_BOTH_C = """#include "wrap.h"
+#define MAXLEN 64
+struct ctx { char *buf; size_t len; };
+
+int handle(struct ctx *c, const char *src, size_t n)
+{
+    char *p = xmalloc(MAXLEN);
+    memcpy(c->buf + c->len, src, n);
+    return 0;
+}
+
+void init(struct ctx *c)
+{
+    c->len = 16;
+}
+
+static int helper(int x)
+{
+    return x;
+}
+
+int caller(struct ctx *c)
+{
+    return handle(c, "x", 1);
+}
+"""
+_BOTH = {"wrap.h": _BOTH_H, "main.c": _BOTH_C}
+
+
+@pytest.mark.parametrize(
+    "more",
+    [{}, {"auditor_definitions": 1, "auditor_caller_lines": 1}],
+    ids=["stores+closure", "with-definitions-and-caller-windows"],
+)
+def test_functions_counts_only_functions_when_the_stores_block_and_the_closure_are_both_on(
+    tmp_path: Path, more: dict[str, int]
+) -> None:
+    """`functions`는 **함수가 아닌 블록을 전부 뺀** 수다 — 정의·`STORES`·호출자 창·닫힘 단위.
+    쓰기 지점 옵션은 이 식에 `- stored`를, 닫힘 옵션은 `- (닫힘 단위 수)`를 따로 더했다. 병합이
+    한쪽 식만 고르면 다른 쪽 블록이 조용히 함수로 센다 — 옵션을 하나씩 켠 테스트는 둘 다 초록이다.
+    함수는 앵커 `handle`과 슬라이스가 걸친 `helper` 둘이다."""
+    rows = _BOTH_C.splitlines()
+    memcpy = next(n for n, row in enumerate(rows, 1) if "memcpy(" in row)
+    helper = next(n for n, row in enumerate(rows, 1) if row.startswith("static int helper")) + 2
+
+    source, event, _ = _auditor_source(
+        tmp_path, _BOTH, "handle", extra_lines=(("main.c", memcpy), ("main.c", helper)),
+        auditor_stores=1, auditor_closure=1, **more,
+    )
+
+    # 전제: 두 블록이 실제로 실렸다 — 안 실렸으면 이 테스트는 아무것도 못 핀다
+    assert "writes ->len" in source
+    assert f"{HEADER}xmalloc[macro] -> safe_alloc */" in source
+    assert (event["stores"], event["closure"]) == (1, 1)
+    assert event["functions"] == 2
 
 
 # --- 파이프라인 전체: 공장 → Deps → RunContext → 노드 --------------------------------------------
