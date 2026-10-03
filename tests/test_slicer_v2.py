@@ -718,7 +718,7 @@ def _saving(cpg: Path, content: bytes = b"saved-graph", *, size=None):  # noqa: 
     return save
 
 
-def _prepare(monkeypatch, repo, tmp_path, data, *, save=None):  # noqa: ANN001, ANN202
+def _prepare(monkeypatch, repo, tmp_path, data, *, save=None, extra=()):  # noqa: ANN001, ANN202
     """#368: one `--prepare-only` run -> (checkpoint, saved CPG path, code, result, transport)."""
     folder = tmp_path / "prep"
     folder.mkdir(parents=True)
@@ -726,7 +726,7 @@ def _prepare(monkeypatch, repo, tmp_path, data, *, save=None):  # noqa: ANN001, 
     data["save_cpg"] = _saving(cpg) if save is None else save
     code, result, transport = run_cli(
         monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
-        "--prepare-only", "--cpg-out", str(cpg),
+        "--prepare-only", "--cpg-out", str(cpg), *extra,
     )
     return folder / "state.db", cpg, code, result, transport
 
@@ -1758,3 +1758,160 @@ def test_a_dropped_priority_list_on_resume_names_the_field(monkeypatch, two_file
     )
     assert "Checkpoint mismatch: run_contract" in result["error"]
     assert "settings.priority_files" in result["error"]
+
+
+# T1 -- --case-order: which case is sliced first. Order only, bound into the checkpoint.
+
+
+def test_collect_puts_case_b_first_when_asked(repo):
+    """The case is the first sort key: `ab` (the default) is every A then every B, `ba` the reverse.
+
+    The files are laid out so a sort by file alone (a.c, b.c, y.c, z.c) would be a third order, and
+    inside a case nothing moves. ids are numbered after the sort, so `ba` gives B the low numbers;
+    the candidate set and every candidate_key stay the same."""
+    rows = {
+        "A": [in_file(candidate("a1", 1), "a.c"), in_file(candidate("a2", 1), "z.c")],
+        "B": [in_file(candidate("b1", 1), "b.c"), in_file(candidate("b2", 1), "y.c")],
+    }
+    default = collect(rows, repo)
+    assert [(c["case"], c["entry"]["file"]) for c in default] == [
+        ("A", "a.c"), ("A", "z.c"), ("B", "b.c"), ("B", "y.c"),
+    ]
+    assert collect(rows, repo, "ab") == default
+    first_b = collect(rows, repo, "ba")
+    assert [(c["case"], c["entry"]["file"]) for c in first_b] == [
+        ("B", "b.c"), ("B", "y.c"), ("A", "a.c"), ("A", "z.c"),
+    ]
+    assert [c["id"] for c in first_b] == ["slice_0001", "slice_0002", "slice_0003", "slice_0004"]
+    keys = {c["entry"]["symbol"]: c["candidate_key"] for c in default}
+    assert {c["entry"]["symbol"]: c["candidate_key"] for c in first_b} == keys
+
+
+def test_prioritize_keeps_b_before_a_inside_each_tier(repo):
+    """prioritize() is stable inside its two tiers, so under `ba` the order becomes priority-B,
+    priority-A, rest-B, rest-A -- and under `ab` the same with A before B."""
+    from slicer_candidates import prioritize
+
+    rows = {
+        "A": [in_file(candidate("a_hot", 1), "hot.c"), in_file(candidate("a_cold", 1), "cold.c")],
+        "B": [in_file(candidate("b_hot", 1), "hot.c"), in_file(candidate("b_cold", 1), "cold.c")],
+    }
+    for order, expected in (
+        ("ba", ["b_hot", "a_hot", "b_cold", "a_cold"]),
+        ("ab", ["a_hot", "b_hot", "a_cold", "b_cold"]),
+    ):
+        moved, first, matched = prioritize(collect(rows, repo, order), {"hot.c"})
+        assert first == 2 and matched == {"hot.c"}
+        assert [c["entry"]["symbol"] for c in moved] == expected, order
+
+
+def test_the_default_case_order_is_ab_and_is_recorded(monkeypatch, repo, tmp_path):
+    database = tmp_path / "state.db"
+    data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data, "--checkpoint", str(database))
+    assert code == 0, result.get("error")
+    assert result["settings"]["case_order"] == "ab"
+    with Checkpoint(database, resume=True) as store:
+        assert [c["case"] for c in store.get("candidates")] == ["A", "B"]
+
+
+def test_case_order_changes_the_query_execution_order(monkeypatch, repo, tmp_path):
+    """The flag must change the order queries are SENT, not only the bound list (the trap
+    --priority-files already had): the first per-candidate query is flows under `ab`, backward
+    under `ba`."""
+    def per_candidate(transport):
+        return [stage for stage in transport.stages if stage in ("flows", "backward")]
+
+    sent = {}
+    for name, extra in (("plain", ()), ("ba", ("--case-order", "ba"))):
+        folder = tmp_path / name
+        folder.mkdir()
+        data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+        _, _, sent[name] = run_cli(monkeypatch, repo, folder, data, *extra)
+    assert per_candidate(sent["plain"]) == ["flows", "backward"]
+    assert per_candidate(sent["ba"]) == ["backward", "flows"]
+
+
+def test_case_order_is_part_of_the_run_contract(monkeypatch, repo, tmp_path):
+    """The order is bound into the checkpoint's candidates, so it is part of the contract: the
+    same order resumes, another one -- or leaving the flag out -- is refused by name."""
+    options = ["--checkpoint", str(tmp_path / "state.db")]
+
+    def data():
+        return payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data(), *options, "--case-order", "ba")
+    assert code == 0, result.get("error")
+    assert result["settings"]["case_order"] == "ba"
+    assert [s["case"] for s in result["slices"]] == ["B", "A"]  # slices[] is in id order
+    with Checkpoint(tmp_path / "state.db", resume=True) as store:
+        assert store.get("run_contract")["settings"]["case_order"] == "ba"
+        assert [c["case"] for c in store.get("candidates")] == ["B", "A"]
+    code, resumed, _ = run_cli(
+        monkeypatch, repo, tmp_path, data(), *options, "--resume", "--case-order", "ba"
+    )
+    assert code == 0, resumed.get("error")
+    for another in ((), ("--case-order", "ab")):  # no flag = the default `ab`
+        code, refused, _ = run_cli(
+            monkeypatch, repo, tmp_path, data(), *options, "--resume", *another
+        )
+        assert code != 0 and "Checkpoint mismatch: run_contract" in refused["error"], another
+        assert "settings.case_order" in refused["error"], another
+
+
+def test_shards_with_different_case_orders_are_not_merged(monkeypatch, repo, tmp_path):
+    databases = []
+    for index, extra in enumerate((("--case-order", "ba"), ())):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        databases.append(folder / "state.db")
+        code, result, _ = run_cli(
+            monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(databases[-1]),
+            "--shard", f"{index}/2", *extra,
+        )
+        assert code == 2 and result["status"] == "partial", result.get("error")
+    with pytest.raises(ValueError, match="Shard mismatch on run_contract"):
+        merge_shards(tmp_path / "merged.db", databases)
+
+
+def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypatch, repo, tmp_path):
+    """tools/slice_sharded.py hands the same arguments to the prepare run and to every shard and
+    none to the export, which reads the run contract. Two shards that carried the flag, merged and
+    exported WITHOUT it, give exactly the single `ba` run's slices and its candidate order."""
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates(), "--case-order", "ba")
+    state, cpg, code, _, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ba")
+    )
+    assert code == 2
+    databases = []
+    for index in range(2):
+        databases.append(_seed(state, tmp_path / f"seeded{index}"))
+        code, result, _ = _shard_on(
+            monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2",
+            "--case-order", "ba",
+        )
+        assert code == 2 and result["shard"] == {"index": index, "count": 2}, result.get("error")
+    merged = tmp_path / "merged.db"
+    merge_shards(merged, databases)
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert exported["settings"]["case_order"] == "ba"
+    assert exported["slices"] == single["slices"]
+    assert [c["case"] for c in exported["candidate_manifest"].values()] == ["B", "A", "A"]
+    assert list(exported["candidate_manifest"]) == list(single["candidate_manifest"])
+
+
+def test_a_shard_that_forgot_the_case_order_is_refused(monkeypatch, repo, tmp_path):
+    state, cpg, _, _, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ba")
+    )
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.case_order" in result["error"]
+    assert transport.stages == []  # refused before any Joern request
