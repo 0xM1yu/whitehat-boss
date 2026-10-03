@@ -137,11 +137,28 @@ v1과 분석 의미 및 필드가 다르므로 `slice_version`은 `slice-v2`다.
 호출도 column과 AST 경로로 구분한다. 재개는 같은 절대경로의 원본을 요구한다.
 
 각 slice는 `case`, `entry`, `candidate_key`, `members`, `absorbed`, `lines`, `code`,
-`flow_count`, `truncated`, `analysis_kind`, `analysis`, `line_provenance`를 가진다.
+`flow_count`, `truncated`, `analysis_kind`, `analysis`, `source_sink`, `line_provenance`를 가진다.
 `members`는 모든 구성 후보 키, `absorbed`는 흡수된 표시 ID다. `analysis`는 대표 후보의
 원시 분석이고 합쳐졌다면 `member_analysis`에 구성원별 분석을 보존한다.
 `line_provenance`는 `data_dependency`, `candidate_anchor`, `context`를 구분한다.
 context는 구조와 선언을 합친 보충 범주이며 개별 이유를 더 세분해 측정하지 않는다.
+
+`source_sink`는 슬라이서가 source·sink로 둔 위치다(#429, GT source/sink 대조용).
+취약 쌍이라는 판정이 아니라 분석의 시작·끝 지점이다.
+
+| | Case A | Case B |
+| --- | --- | --- |
+| `basis` | `flow_endpoints` | `backward_boundaries` |
+| `sources` | 보존 경로의 머리 = 후보 함수 파라미터 (`kind: parameter`) | 역추적이 멈춘 경계 (`kind` = 경계 사유) |
+| `sinks` | 보존 경로의 끝 = sink 인자 (`kind: flow_end`) | 후보 호출 자체 = `entry` (`kind: candidate_call`) |
+| `pairs` | 경로별 source -> sink 쌍 | 비움 (경로 미열거) |
+
+- 각 위치는 `{file, line, kind}`이고 `lines`와 같은 상대경로다. 원문에 없는 위치는 버리고 `unmapped`에 센다.
+- 절단된 A는 보존한 경로의 끝점만 든다.
+- 절단된 B: 상한(`backward_depth`·`backward_states`)에서 버린 노드는 `sources`에 없다. 그 부모도 `dependency_root`가 안 된다. `call_depth`로 멈춘 호출에도 그 사유가 안 붙는다. 절단은 `truncated`·`analysis.truncation_reasons`로만 보인다.
+- A의 `endpoints`는 선택 필드다. 조회가 `Try`로 계산 -> 실패하면 `endpoints` 대신 `endpoints_error`(원문은 `analysis`에 남음). 이때 `basis: endpoints_unavailable`·전부 비움 = 미기록. `flow_endpoints`의 빈 목록(0쌍 기록)과 다르다. 슬라이스 자체는 degraded가 아니다.
+- degraded 슬라이스: A는 `basis: none`·전부 비움, B는 `basis: candidate_only`·sink만 든다.
+- 클러스터는 구성원의 합집합이다. 구성원끼리 `basis`가 다르면 `mixed`다(구성원별 원천은 `member_analysis`).
 
 | 계측 | Case A | Case B |
 | --- | --- | --- |
