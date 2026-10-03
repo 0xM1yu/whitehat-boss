@@ -2145,6 +2145,39 @@ def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> 
     _assert_thinking_seat_holds_together("pov")
 
 
+def test_each_thinking_seat_takes_its_decode_speed_from_its_own_device() -> None:
+    """속도 상수는 좌석마다 따로 있고, 쓰는 값은 저장소에 실재하는 관측과 같다.
+
+    위 검사 둘이 무는 ④(타임아웃 >= 출력 상한 / 속도)가 **상수 하나를 공유하면** 한 좌석의
+    실측이 다른 좌석의 하한을 같이 움직인다. Auditor는 운영 장비(vast) 실측이 있고 PoV
+    (`feyospace-v1-small`)는 자기 속도를 안 쟀으므로, 묶어 두면 PoV 검사가 **측정 없이**
+    느슨해진다.
+
+    무는 것 셋. (1) 좌석별 상수가 갈려 있다 (2) 미실측 좌석(PoV)이 실측 좌석보다 느린
+    보수값을 쓴다 (3) Auditor 상수가 장비 파일(`config/serving/vastai.yaml`)이 적은 실측과
+    **같은 수**다 — 상수만 올려 ④를 통과시키는 길을 막는다. PoV 쪽은 대조할 실측이 없어
+    (2)까지만 문다.
+
+    안 묻는 것: 그 실측이 **맞는지**(장비 파일이 원천이다) · 긴 입력에서의 속도(미실측 —
+    위 상수 주석의 손익분기) · 좌석이 둘보다 늘어나는 경우(늘면 이 검사를 같이 넓힌다).
+    """
+    assert set(_DECODE_TOK_S_BY_SEAT) == {"auditor", "pov"}, (
+        "사고 켠 좌석이 늘거나 줄었다 — 위 상수와 이 검사를 같이 넓힌다"
+    )
+    assert _DECODE_TOK_S_BY_SEAT["auditor"] != _DECODE_TOK_S_BY_SEAT["pov"], (
+        "두 좌석이 상수 하나를 공유한다 — 한쪽 실측이 다른 쪽 하한을 같이 움직인다"
+    )
+    assert _DECODE_TOK_S_BY_SEAT["pov"] < _DECODE_TOK_S_BY_SEAT["auditor"], (
+        "PoV는 자기 속도를 안 쟀다 — 실측이 있는 좌석보다 느린 보수값이어야 한다"
+    )
+
+    served = (CONFIG_DIR / "serving" / "vastai.yaml").read_text("utf-8")
+    assert f"{_DECODE_TOK_S_BY_SEAT['auditor']} tok/s" in served, (
+        f"Auditor 속도 상수 {_DECODE_TOK_S_BY_SEAT['auditor']}가 장비 파일의 실측과 다르다 — "
+        "상수만 올리면 「타임아웃 >= 출력 상한 / 속도」가 측정 없이 통과한다"
+    )
+
+
 # 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 2026-09-24 ATOM `run_20260924_0001`
 # (`docs/experiments/harness/2026-09-24-roster-smoke-atom.md` §1·§2 · 이슈 #261 본문도 같은 수),
 # vLLM 서버 로그 `Avg generation throughput`의 `Running: 1 reqs` 10초
