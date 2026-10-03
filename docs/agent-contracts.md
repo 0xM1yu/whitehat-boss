@@ -151,6 +151,11 @@ agent:
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
   `body`를 이름으로 부르지 않는다(「registered evidence content」) — 그 본문을 쓰는지는 역시 미측정이다.
+  ⏵ **2026-10-03 — v6로 올렸다**(#418·#421). v6도 그 집합에 든다. **여기서 달라진다 — v6 prefix는
+  `body`를 이름으로 부른다**: `## Evidence body completeness` 절이 `FACTS.evidence[].body`를 「툴 로그의
+  유계 발췌이고 생성 요약이 아니다」로 적고 절단 표시까지 서술한다(`prompts/auditor/v6/prefix.md`의 그 절).
+  **그래도 모델이 그 본문을 쓰는지는 여전히 미측정이다** — 이름을 부르는 것과 쓰는 것은 다르고, v6로 돈
+  run이 이 저장소에 0건이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
   `missing_evidence`는 비어 있지 않으면 발급 `missing_id` 하나로 정규화한다 — 모델이 어떤 ID를 썼든 「확인 불가」
@@ -374,7 +379,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > **2026-09-29부터 registry의 Auditor(`qwen3.8-27b`)가 v3를 고른다.** 그 판으로 돈 run은 아직 없어
 > 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시는 그날 v3 계약에 맞췄고, 같은 날 v4로 올리며 `prompt_version`만 v4로 고쳤다.
 > ⏵ 2026-09-29 — 같은 날 registry의 Auditor가 v4를 고른다. v4도 `trigger_status` 다섯 값을 묻는다
-> (`prompts/auditor/v4/prefix.md`). v4로 돈 run은 아직 없다. ⚠ 위 v3 서술(run 없음)은
+> (`prompts/auditor/v4/prefix.md`). v4로 돈 run은 아직 없다. ⏵ **2026-10-03 — v6를 고른다**(#418·#421 ·
+> v5는 건너뛰었다). **위 Finding 예시의 `prompt_version`도 v6다** — 그 값은 이제
+> `test_doc_examples.py`가 registry와 대조한다. v6도 `trigger_status` 다섯 값을 묻는다
+> (`prompts/auditor/v6/prefix.md`의 「Set trigger_status to exactly one of」). **v4로 돈 run은 끝까지
+> 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
+> gitignore라 커밋된 보고서만 센 것이다). ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
 > 그대로 미측정이다.
@@ -532,6 +542,14 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 >
 > ⏵ **2026-09-29 — 같은 날 Auditor가 v3 → v4로 다시 바뀌었다**(#328 머지 뒤). 규칙은 같다 — v4 뒤 run은
 > 그 전 run과 직접 비교하지 않고, 규칙 5·재측정은 이번에도 돌지 않았다. Critic은 여전히 v1이다.
+>
+> ⏵ **2026-10-03 — Auditor가 v4 → v6로 바뀌었다**(프롬프트 #418 · 배선 #421 · 사용자 결정 · **v5는
+> 건너뛰었다**). 규칙 1이 또 걸린다 — v6 뒤 run은 그 전 run과 직접 비교하지 않는다. **잃는 측정은
+> 없다**: v4로 돈 run이 끝까지 0건이었다. 규칙 5·재측정은 **이번에도 돌지 않았다.** ⚠ 이 판은
+> 앞의 둘과 성격이 다르다 — v6는 v5의 범위 제약 둘을 **삭제**해 Scout 가설과 무관한 독립 판정으로
+> 돌렸고, #418이 든 수는 Recall 0.637→0.966 · **Precision 0.939→0.821**이다(원천은 그 PR 본문의
+> 비교표 — 실험팀 프롬프트 A/B이고 이 저장소의 run 기록이 아니다, [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 5).
+> Critic은 여전히 v1이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

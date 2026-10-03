@@ -172,3 +172,20 @@ def test_run_record_example_prompt_versions_match_the_profile_it_names() -> None
 
     actual = {role: config.model_for(role).prompt_template_version for role in declared}
     assert declared == actual
+
+
+def test_finding_example_produced_by_matches_the_registry() -> None:
+    """Finding 예시의 `produced_by`(모델 키·프롬프트 판)도 registry와 같다.
+
+    위 `RunRecord` 핀과 같은 이유다 — 이 값도 손으로 고치는 값이라 v4→v6(#418·#421)에서
+    따라오지 않았다. `produced_by`는 하네스가 파싱 뒤 **덮어쓰는** 자리라(`context.py`의
+    `ProducedBy`) 예시가 틀리면 읽는 쪽이 「무엇으로 덮이는가」를 틀리게 배운다.
+
+    `RunRecord` 예시가 `harness_pool`을 들므로 그것을 기준으로 본다 — 두 예시가 같은 프로필을
+    서술한다는 것이 이 문서의 전제다(§2 Auditor 절이 그 registry 엔트리를 든다).
+    """
+    finding = json.loads(_body("agent-contracts.md", "Finding", 0))
+    profile = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))["profile"]
+    entry = load_config(profile).model_for(finding["produced_by"]["role"])
+
+    assert finding["produced_by"]["prompt_version"] == entry.prompt_template_version
