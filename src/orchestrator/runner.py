@@ -3064,12 +3064,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
 
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
     실린 함수가 쓰는 매크로·타입·파일 변수의 정의(`ctx.definitions_of`)를 붙인다. 정의 하나가
-    `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 함수마다
-    **그 함수의** 지역·파라미터와 필드 전용 이름을 뺀 것이고(`source_definitions.definition_names`),
-    슬라이스 줄에 나온 이름의 정의가 먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 —
-    정의·피호출·호출자 조회가 모두 비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을
-    정한다(`demote_nonproduct`). 붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면
-    이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다.
+    `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 코드
+    자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드 전용
+    이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
+    먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
+    비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을 정한다(`demote_nonproduct`).
+    붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면 이 단계가 없고 `SOURCE`·
+    이벤트는 옛 모양 그대로다.
 
     **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
     안 호출이 부르는 함수의 본문(`ctx.callees_of`)을 붙인다. entry 함수의 피호출 함수가 먼저,
