@@ -152,6 +152,17 @@ _MAIN = {"wrap.h": _WRAP_H, "main.c": _MAIN_C}
         ("#define LOG(m) log_at(__FILE__, __LINE__, m)", ("forward", "log_at")),
         # 소문자 전역은 상수가 아니다
         ("#define lower(x) lower_impl(x, g_flag)", ("opaque", None)),
+        # `return`을 든 매크로는 **호출자**를 끝낸다 — 호출 하나로 접으면 그 제어 흐름이 사라진다
+        ("#define FAIL_WITH(x) return real(x)", ("opaque", None)),
+        ("#define FAIL_WITH(x) return real(x);", ("opaque", None)),
+        # 호출 결과에 씌운 형변환은 값을 바꾼다(좁히기·부호) — `(void)`만 값을 안 바꾼다
+        ("#define A(x) (int)B(x)", ("opaque", None)),
+        ("#define A(x) (char *)B(x)", ("opaque", None)),
+        ("#define A(x) (void)B(x)", ("forward", "B")),
+        # 이름 있는 가변 인자(`x...`)는 `__VA_ARGS__`가 아니라 `x`다
+        ("#define A(x...) B(x)", ("forward", "B")),
+        # 줄 이음이 먼저다 — `//` 주석 끝의 `\`는 다음 줄을 주석으로 삼킨다
+        ("#define A(x) B(x) // c \\\n   + 1", ("forward", "B")),
         ("#define STR(x) #x", ("opaque", None)),
         ("#define EMPTY(x)", ("opaque", None)),
         ("#define LIMIT 64", ("opaque", None)),
@@ -264,6 +275,9 @@ def test_a_call_to_a_plain_function_adds_nothing(tmp_path: Path) -> None:
         "static int w(int n)\n{\n    return -real(n);\n}",
         # 파라미터가 아닌 식별자를 넘긴다(전역)
         "static int w(int n)\n{\n    return real(g_limit);\n}",
+        # 호출 결과를 좁힌다 — 값이 바뀐다
+        "static int w(char *p)\n{\n    return (char)real(p);\n}",
+        "static int w(char *p)\n{\n    return (unsigned short)real(p);\n}",
     ],
 )
 def test_a_wrapper_with_a_check_a_computation_or_a_second_call_is_not_folded(
@@ -317,7 +331,7 @@ def test_a_wrapper_may_cast_and_pass_constants(tmp_path: Path) -> None:
     files = {"a.c": "int real(char *p, int a, int b, const char *s)\n"
                     "{\n    if (p)\n        return a;\n    return b;\n}\n"
                     "static int w(char *p, int n)\n{\n"
-                    '    return (int)real(p, (int)n, 0, "x");\n}\n'
+                    '    return real(p, (int)n, 0, "x");\n}\n'
                     "int f(char *s)\n{\n    return w(s, 1);\n}\n"}
 
     closure, _, _ = _close(tmp_path, files, "f")
@@ -379,6 +393,71 @@ def test_an_ambiguous_end_is_marked_and_an_ambiguous_start_is_counted(tmp_path: 
         "/* CLOSURE: VIA[macro] -> PLAT (ambiguous: several definitions in the repo index) */"
     ]
     assert closure.event()["closure_ambiguous"] == 1  # 호출 이름 `PLAT` 자체
+
+
+def test_a_cast_on_a_forwarded_argument_is_shown_not_hidden(tmp_path: Path) -> None:
+    """파라미터에 씌운 형변환은 값을 좁히거나 부호를 바꾼다(`size_t` → `unsigned short`) — 접되
+    사슬 줄이 그 형변환을 그대로 보인다. 겉으로 같은 `w -> alloc`이면 잘림이 사라진다. 바깥 괄호만
+    다른 인자(`(n)`)는 그대로 넘기는 것이다."""
+    files = {
+        "a.h": "#define NEWBUF(n) alloc((unsigned char)(n))\n#define PLAIN(n) alloc2((n))\n",
+        "a.c": '#include "a.h"\n'
+               "void *alloc(unsigned short n) { if (n == 0) return 0; return malloc(n); }\n"
+               "void *alloc2(size_t n) { if (n == 0) return 0; return malloc(n); }\n"
+               "static void *w(size_t n) { return alloc((unsigned short)n); }\n"
+               "void *f(size_t len)\n{\n    PLAIN(len);\n    NEWBUF(len);\n    return w(len);\n}\n",
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _labels(closure) == [
+        "/* CLOSURE: PLAIN[macro] -> alloc2 */",
+        "/* CLOSURE: NEWBUF[macro] -> alloc((unsigned char)(n)) */",
+        "/* CLOSURE: w -> alloc((unsigned short)n) (body above) */",
+    ]
+
+
+def test_a_member_call_across_a_newline_is_not_a_chain_start(tmp_path: Path) -> None:
+    """`p->`와 이름 사이에 줄바꿈이 끼어도(긴 체인) 멤버 호출이다 — 같은 이름의 전달 함수가 있어도
+    닫힘을 안 낸다."""
+    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
+                    "static int w(int n) { return real(n); }\n"
+                    "int f(struct ops *p, int n)\n{\n"
+                    "    p->\n        w(1);\n    p .\n    w(2);\n    return n;\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert closure.blocks == ()
+
+
+def test_a_call_inside_a_spliced_line_comment_is_not_a_chain_start(tmp_path: Path) -> None:
+    """`//` 주석 끝의 `\\`는 다음 줄을 주석으로 삼킨다 — 줄 이음이 주석 벗기기보다 먼저다. 그 줄의
+    `w(1)`은 호출이 아니다."""
+    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
+                    "static int w(int n) { return real(n); }\n"
+                    "int f(int n)\n{\n    // note \\\n    w(1);\n    return n;\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert closure.blocks == ()
+
+
+def test_a_huge_nested_argument_is_not_a_forwarder_and_costs_nothing(tmp_path: Path) -> None:
+    """한 문장이 `FORWARD_MAX_CHARS`를 넘으면 전달이 아니다 — 괄호가 수천 겹인 생성 코드가 제곱 시간
+    (4,000겹에 1.7초 — 리뷰 프로브)을 먹지 않는다."""
+    from src.orchestrator.source_closure import FORWARD_MAX_CHARS
+
+    nest = "(" * 5_000 + "x" + ")" * 5_000
+    assert source_closure._forward(f"g({nest})", ("x",)) is None
+    assert len(f"g({nest})") > FORWARD_MAX_CHARS
+    assert source_closure._forward("g(x)", ("x",)) == ("g", ["x"])
+
+
+def test_a_named_variadic_macro_forwards_its_own_parameter_name() -> None:
+    """`A(x...)`의 가변 인자 이름은 `x`다 — `__VA_ARGS__`가 아니므로 `B(x)`는 그대로 넘기는 것이다
+    (인자 표시가 붙지 않는다). 이름 없는 `...`는 `__VA_ARGS__`다."""
+    assert source_closure._classify("#define A(x...) B(x)") == ("forward", "B", "")
+    assert source_closure._classify("#define A(f, ...) B(f, __VA_ARGS__)") == ("forward", "B", "")
 
 
 def test_a_wrapper_may_pass_an_uppercase_constant_but_not_a_lowercase_global(

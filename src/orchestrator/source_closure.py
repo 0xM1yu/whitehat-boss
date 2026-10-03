@@ -2,9 +2,10 @@
 따라간다(옵션 `auditor_closure`, 기본 꺼짐 — 슬라이서 개선 계획 WP-S2).
 
 **왜 있나.** 83샘플 검수([로컬실측] run ID 없음 — 계획 §1 #8)에서 검수자가 가장 자주 요청한 정보가
-피호출 함수의 본문·계약이다(미해결 사유 209건 중 66행 — 키워드 규칙이라 겹친다). 앵커가
-`xmalloc(n)`·`png_free(p)` 같은 매크로나 한 줄 전달 함수를 부르면 SOURCE에는 그 껍데기만 있다.
-`auditor_callee_hops`도 껍데기 본문을 한 단계 붙일 뿐이라 경계·NULL 계약이 든 진짜 구현에 안 닿는다.
+피호출 함수의 본문·계약이다(미해결 209건을 키워드 규칙으로 가르면 83행 중 66행(80%)이 그것을 든다 —
+규칙이라 한 건이 여러 갈래에 겹친다). 앵커가 `xmalloc(n)`·`png_free(p)` 같은 매크로나 한 줄 전달
+함수를 부르면 SOURCE에는 그 껍데기만 있다. `auditor_callee_hops`도 껍데기 본문을 한 단계 붙일 뿐이라
+경계·NULL 계약이 든 진짜 구현에 안 닿는다.
 
 **값은 어디서 나오나** [로컬실측: E4 — 83샘플의 정답 sink 함수 82개, 저장소 밖
 `slicer_e4/PREVALENCE.md`, run ID 없음. 이 코드를 돌린 것이 아니라 인덱스로 센 「보일 것이 있는가」
@@ -20,7 +21,7 @@
    - 단일 호출 전달 `#define A(x) B(x, 1)` — 본문이 호출 하나이고 인자가 파라미터·형변환·상수
      (숫자·문자열·`NULL`·`__LINE__` 같은 대문자 식별자)뿐
    - 불투명 — 그 밖 전부
-2. 이름이 **함수**면 「전달자」인지 본다. 본문이 `[return] [(형변환)] g(인자…);` **한 문장**이고
+2. 이름이 **함수**면 「전달자」인지 본다. 본문이 `[return] [(void)] g(인자…);` **한 문장**이고
    인자가 위와 같은 파라미터·상수인 짧은 함수(`WRAPPER_MAX_LINES`줄 이하)다.
 3. rename·전달 단계는 비용 0으로 접고 다음 이름으로 넘어간다 — 깊이 `FOLD_DEPTH`까지, 방문
    집합으로 순환을 끊는다. **첫 실제 본문에서 멈춘다.** 전달자마다 다음 단계가 하나뿐이라 0-1 BFS는
@@ -29,7 +30,9 @@
    쓰는 매크로의 정의도 `MACRO_CHAIN_DEPTH`단까지 싣는다.
 
 **접지 않는 것.** `if`·`?:`·`&&`가 든 본문(NULL 검사·오류 반환)과 `abort`·`exit`류 호출은 접지
-않는다 — 그것이 Auditor가 필요한 계약이다. 접히지 않은 함수가 사슬의 끝(「실제 본문」)이 되어
+않는다 — 그것이 Auditor가 필요한 계약이다. 호출 **결과**에 씌운 형변환(`(char)g(x)`)도 값을 좁히거나
+부호를 바꾸므로 접지 않고(`(void)`만 예외), `return`을 든 **매크로**는 호출자를 끝내므로 접지
+않는다(불투명이라 `#define` 원문이 실린다). 접히지 않은 함수가 사슬의 끝(「실제 본문」)이 되어
 통째로 실린다.
 
 ## 블록 모양 (프롬프트 범례가 인용하는 곳)
@@ -43,8 +46,10 @@ void *raw_alloc(size_t n) { ... }
 ```
 
 - `a -> b -> c` — a가 인자를 b로, b가 c로 **넘길 뿐**이다(각 단계가 위 기준의 전달자). 마지막이
-  첫 실제 본문이다. 자기 파라미터를 같은 순서로 그대로 넘기지 않으면(상수를 얹거나 순서를 바꾸거나
-  뺀다) 받는 쪽 이름 뒤에 그 인자가 붙는다 — `NEW[macro] -> alloc_n((size_t)(n), 1)`.
+  첫 실제 본문이다. 자기 파라미터를 같은 순서로 **그대로** 넘기지 않으면(상수를 얹거나 순서를
+  바꾸거나 뺀다, 형변환을 씌운다) 받는 쪽 이름 뒤에 그 인자가 붙는다 —
+  `NEW[macro] -> alloc_n((size_t)(n), 1)`, `w -> alloc((unsigned short)n)`. 형변환은 값을 좁히거나
+  부호를 바꾸므로 접되 숨기지 않는다.
 - `x[macro]` — 매크로다. 끝이 매크로면 그 `#define` 원문(줄 이음 포함)과 본문이 쓰는 매크로의
   정의가 아래에 붙는다.
 - `(body above)`·`(definition above)` — 그 원문은 이 블록보다 앞의 SOURCE에 이미 있다.
@@ -58,8 +63,10 @@ void *raw_alloc(size_t n) { ... }
 ⚠ **구문만 본다.** 전처리도 타입 해석도 안 하고 정규식과 괄호 세기로 읽는다. 정의가 `#if` 안에
 하나뿐이면 인덱스는 그것을 모른다 — 활성 여부는 이 블록이 말하지 않는다. 이름 바꾸기가 인덱스에 없는
 이름으로 끝나면(`#define close _close` 같은 플랫폼·접두사 매크로 — E4가 본 대표 사례) 「정의
-없음」으로 끝난다. 함수 포인터와 `p->f(…)` 호출은 따라가지 않는다. 「접힌 단계가 검사를 안 한다」는
-위 엄격한 모양을 만족한다는 뜻이지 의미를 증명한 것이 아니다.
+없음」으로 끝난다. 자기 이름으로 전달하는 매크로(`#define foo(x) foo(x)` — 실제로는 같은 이름의
+함수를 부른다)는 순환으로 끊고 그 함수 본문은 싣지 않는다. 함수 포인터와 `p->f(…)` 호출은 따라가지
+않는다. 「접힌 단계가 검사를 안 한다」는 위 엄격한 모양을 만족한다는 뜻이지 의미를 증명한 것이
+아니다.
 
 예산은 SOURCE의 총 상한을 그대로 쓴다 — 단위 하나(글 전체)가 안 들면 빠지고, 사유와 함께 이벤트가
 목록으로 든다(`Closure.event`). 순수 모듈이다: 어댑터를 import 하지 않고 조회·읽기·배너 형식·셈법을
@@ -81,6 +88,10 @@ MACRO_CHAIN_DEPTH = 4
 # 이 줄 수를 넘는 함수는 전달자로 안 본다 — 읽지도 않는다(큰 함수를 읽는 비용을 안 낸다). 한 문장
 # 전달자는 주석을 끼워도 몇 줄이다. **정한 값이지 잰 값이 아니다.**
 WRAPPER_MAX_LINES = 10
+# 전달 한 문장의 글자 상한 — 넘으면 전달로 안 본다. 전달은 짧고, 괄호가 수천 겹인 생성 코드가
+# 괄호 짝 찾기의 제곱 시간(4,000겹에 1.7초 — 리뷰 프로브)을 먹는 것을 막는다. 정한 값이지 잰 값이
+# 아니다.
+FORWARD_MAX_CHARS = 1_000
 # 사슬 줄에 보이는 넘기는 인자의 글자 상한 — 넘으면 잘라 `...`을 붙인다. 정한 값이지 잰 값이 아니다.
 ARGS_CHARS = 60
 # 단위 하나 안의 블록 하나의 글자 상한 — 러너의 피호출(`_AUDITOR_CALLEE_CHARS`)·정의
@@ -110,7 +121,10 @@ _LEXEME = re.compile(r'"(?:\\.|[^"\\\n])*"' r"|'(?:\\.|[^'\\\n])*'" r"|/\*.*?\*/
 _CALL = re.compile(r"(?<![\w.])(?<!->)([A-Za-z_]\w*)\s*\(")
 _IDENT = re.compile(r"[A-Za-z_]\w*")
 _DEFINE = re.compile(r"\s*#\s*define\s+([A-Za-z_]\w*)(\([^)]*\))?\s*(.*)", re.S)
-_CALL_HEAD = re.compile(r"(?:return\b\s*)?(?:\(\s*[A-Za-z_][\w\s\*]*\)\s*)*([A-Za-z_]\w*)\s*\(")
+# 호출 머리 — 호출 결과에 씌울 수 있는 것은 `(void)`뿐이다. 다른 형변환(`(char)`·
+# `(unsigned short)`)은 값을 좁히거나 부호를 바꾸므로 그 함수는 전달자가 아니다.
+# 본문이 그대로 실린다.
+_CALL_HEAD = re.compile(r"(?:\(\s*void\s*\)\s*)?([A-Za-z_]\w*)\s*\(")
 _CAST = re.compile(r"\(\s*([A-Za-z_][\w\s\*]*)\)\s*(?=\S)")
 # 상수: 숫자 · 문자열·문자 리터럴 · `true`/`false` · 대문자 식별자(`NULL`·`__LINE__`·`FLAG_X`).
 _LITERAL = re.compile(
@@ -120,6 +134,11 @@ _BANNER = re.compile(r"/\* ===== (.+):(\d+)-(\d+) ===== \*/")
 
 
 # --- 원문 읽기 도우미: 주석·따옴표·괄호 ---------------------------------------------------------
+
+
+def _splice(text: str) -> str:
+    """줄 이음(`\\` + 줄바꿈)을 잇는다 — 주석을 벗기기 **전에** 해야 한다(C의 번역 단계 순서)."""
+    return re.sub(r"\\\r?\n", "", text)
 
 
 def _without_comments(text: str) -> str:
@@ -205,26 +224,41 @@ def _core(arg: str, params: Collection[str]) -> str:
         return arg
 
 
+def _bare(arg: str) -> str:
+    """인자에서 바깥 괄호만 벗긴 것 — `(n)`은 `n`이지만 `(unsigned short)n`은 아니다(형변환은 값을
+    바꾼다)."""
+    arg = arg.strip()
+    while arg.startswith("(") and _match_paren(arg, 0) == len(arg) - 1:
+        arg = arg[1:-1].strip()
+    return arg
+
+
 def _is_forwarded(arg: str, params: Collection[str]) -> bool:
     """인자가 파라미터이거나 그 형변환·괄호이거나 상수인가. 계산·필드 접근·소문자 전역은 아니다 —
-    그것은 전달이 아니라 값을 만드는 것이라 접으면 안 된다."""
+    그것은 전달이 아니라 값을 만드는 것이라 접으면 안 된다. 형변환은 접되 `_args_suffix`가
+    보인다."""
     core = _core(arg, params)
     return core in params or _LITERAL.fullmatch(core) is not None
 
 
 def _args_suffix(args: list[str], params: tuple[str, ...]) -> str:
-    """전달이 자기 파라미터를 같은 순서로 그대로 넘기는 것이 아니면(상수를 얹거나 순서를 바꾸거나
-    뺀다) 그 인자 — 접으면서 값이 사라지는 것을 막는다. 그대로 넘기면 빈 문자열이다."""
-    if [_core(arg, params) for arg in args] == list(params):
+    """전달이 자기 파라미터를 같은 순서로 **그대로** 넘기는 것이 아니면(상수를 얹거나 순서를
+    바꾸거나 뺀다, 형변환을 씌운다) 그 인자 — 접으면서 값이 바뀌거나 사라지는 것을 막는다. 그대로
+    넘기면(바깥 괄호만 달라도) 빈 문자열이다."""
+    if [_bare(arg) for arg in args] == list(params):
         return ""
     shown = ", ".join(" ".join(arg.split()) for arg in args)
     return f"({shown if len(shown) <= ARGS_CHARS else shown[: ARGS_CHARS - 3] + '...'})"
 
 
 def _forward(statement: str, params: tuple[str, ...]) -> tuple[str, list[str]] | None:
-    """`statement`가 `[return] [(형변환)] 이름(인자…);` **한 문장**이고 인자가 전부 파라미터·상수면
-    (이름, 인자들), 아니면 `None`. 호출 뒤에 무엇이든 더 붙으면(`?:`·`&&`·`, x`) 전달이 아니다."""
+    """`statement`가 `[(void)] 이름(인자…);` **한 문장**이고 인자가 전부 파라미터·상수면 (이름,
+    인자들), 아니면 `None`. 호출 뒤에 무엇이든 더 붙으면(`?:`·`&&`·`, x`) 전달이 아니다. `return`은
+    여기서 안 받는다 — 함수 본문은 `_function_forward`가 떼고, **매크로의 `return`은 호출자를
+    끝내므로** 전달이 아니다."""
     text = statement.strip()
+    if len(text) > FORWARD_MAX_CHARS:
+        return None
     head = _CALL_HEAD.match(text)
     if head is None or head[1] in _NOT_A_CALL or head[1] in _NORETURN:
         return None
@@ -247,14 +281,18 @@ def _function_forward(
     begin, end = clean.find("{"), clean.rfind("}")
     if begin < 0 or end < begin:
         return None
-    forward = _forward(clean[begin + 1 : end], params)
+    body = clean[begin + 1 : end].strip()
+    if re.match(r"return\b", body):
+        body = body[len("return") :]
+    forward = _forward(body, params)
     return None if forward is None else (forward[0], _args_suffix(forward[1], params))
 
 
 def _parse_define(text: str) -> tuple[str, tuple[str, ...] | None, str] | None:
-    """`#define` 원문 → (이름, 파라미터 | 객체형이면 `None`, 본문). 주석·줄 이음·공백을 접은 뒤
-    읽는다. 가변 인자(`...`)는 `__VA_ARGS__`가 파라미터로 든다."""
-    flat = " ".join(re.sub(r"\\\r?\n", " ", _without_comments(text)).split())
+    """`#define` 원문 → (이름, 파라미터 | 객체형이면 `None`, 본문). 줄 이음을 먼저 잇고(`//` 주석
+    끝의 `\\`는 다음 줄을 주석으로 삼킨다 — C의 번역 단계 순서다) 주석·공백을 접은 뒤 읽는다. 이름
+    없는 가변 인자(`...`)는 `__VA_ARGS__`가 파라미터로 들고, 이름 있는 것(`x...`)은 그 이름이다."""
+    flat = " ".join(_without_comments(_splice(text)).split())
     match = _DEFINE.fullmatch(flat)
     if match is None:
         return None
@@ -264,9 +302,9 @@ def _parse_define(text: str) -> tuple[str, tuple[str, ...] | None, str] | None:
     params: list[str] = []
     for part in raw[1:-1].split(","):
         word = part.strip().removesuffix("...").strip()
-        if part.strip().endswith("..."):
+        if part.strip() == "...":
             params.append("__VA_ARGS__")
-        if _IDENT.fullmatch(word):
+        elif _IDENT.fullmatch(word):
             params.append(word)
     return name, tuple(params), body
 
@@ -421,9 +459,11 @@ class Closure:
 # 이미 싣고, 지역 변수·필드가 매크로 이름을 가리는 문제(locals 위생)가 값 자리에는 있다 — 잰 뒤에
 # 붙인다.
 def _call_names(text: str, skip: str | None) -> list[str]:
-    """앵커 본문이 부르는 이름 — 처음 나온 순서, 중복 없이. 주석·문자열 안과 `p->f(`·`p.f(`(멤버)는
-    호출이 아니다. 키워드(`if (`)는 인덱스에 없으니 조회가 거른다."""
-    names = dict.fromkeys(_CALL.findall(_code_only(text)))
+    """앵커 본문이 부르는 이름 — 처음 나온 순서, 중복 없이. 주석·문자열 안과 `p->f(`·`p.f(`(멤버 —
+    `->`·`.` 뒤에 줄바꿈이 끼어도)는 호출이 아니다. 키워드(`if (`)는 인덱스에 없으니 조회가
+    거른다."""
+    code = re.sub(r"(->|\.)\s+", r"\1", _code_only(_splice(text)))
+    names = dict.fromkeys(_CALL.findall(code))
     return [name for name in names if name != skip]
 
 
