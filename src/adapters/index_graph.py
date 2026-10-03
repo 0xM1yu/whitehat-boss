@@ -118,25 +118,33 @@ DEFINITION_TABLES = ("macros", "types", "file_vars")
 
 # 정의 조회가 「저장소에서 하나뿐」 판정에서 제품 경로 뒤로 미루는 디렉터리 이름
 # (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`). 두 갈래다: 테스트·예제·
-# 문서·번들 라이브러리가 쓰는 흔한 이름(`fuzz*`는 접두), 그리고 **다른 플랫폼·빌드 시스템 몫의
-# 사본**(`xcode/`·`windows/`…) — 리눅스 빌드를 대상으로 본다는 전제라 거기 있는 정의는 효력 있는
-# 정의가 아니라고 본다. 뒤 갈래를 넣은 근거는 로컬 측정 1건이다: libzip 계열 저장소 하나에서 비제품
-# 경로의 정의가 제품 함수로 586건 들어왔고 그중 527건이 `xcode/`, 51건이 `regress/`였다(run ID
-# 없음). **목록은 정한 값이지 잰 값이 아니다.**
+# 문서·번들 라이브러리가 쓰는 흔한 이름(퍼징은 `_FUZZ_PREFIXES` 접두도), 그리고 **다른 플랫폼·빌드
+# 시스템 몫의 사본**(`xcode/`·`windows/`…) — 리눅스 빌드를 대상으로 본다는 전제라 거기 있는 정의는
+# 효력 있는 정의가 아니라고 본다. 뒤 갈래를 넣은 근거는 로컬 측정 1건이다: libzip 계열 저장소
+# 하나에서 비제품 경로의 정의가 제품 함수로 586건 들어왔고 그중 527건이 `xcode/`, 51건이
+# `regress/`였다(run ID 없음). `unittest(s)`·`testsuite`는 FT Level 1 Auditor 입력
+# 270표본(2026-10-03 로컬, run ID 없음)의 잡음 경로 집계에 나온 이름이다. 같은 집계의
+# `ios`·`android`는 넣지 않았다 — 제품 포팅 계층일 수 있다. **목록은 정한 값이지 잰 값이 아니다.**
 _NONPRODUCT_DIRS = frozenset(
     {
-        "test", "tests", "testing", "regress", "example", "examples", "sample", "samples",
-        "demo", "demos", "contrib", "doc", "docs", "third_party", "third-party", "thirdparty",
-        "vendor", "xcode", "windows", "win32", "win64", "msvc",
+        "test", "tests", "testing", "unittest", "unittests", "testsuite", "regress",
+        "example", "examples", "sample", "samples", "demo", "demos", "contrib", "doc", "docs",
+        "third_party", "third-party", "thirdparty", "vendor",
+        "fuzz", "fuzzer", "fuzzers", "fuzzing", "oss-fuzz",
+        "xcode", "windows", "win32", "win64", "msvc",
     }
 )
+# 퍼징 하네스 디렉터리의 접두(`fuzz_targets/`·`fuzz-corpus/`). 맨 `fuzz` 접두는 `src/fuzzy/`(제품
+# 퍼지 매칭)까지 먹어서 구분자까지 본다.
+_FUZZ_PREFIXES = ("fuzz_", "fuzz-")
 
 
 def is_nonproduct_path(path: str) -> bool:
     """`path`의 디렉터리 성분(파일 이름은 안 본다 — `lib/test_util.c`는 제품이다)에 비제품 이름이
     있는가. 대소문자를 접는다."""
     return any(
-        part in _NONPRODUCT_DIRS or part.startswith("fuzz") for part in path.lower().split("/")[:-1]
+        part in _NONPRODUCT_DIRS or part.startswith(_FUZZ_PREFIXES)
+        for part in path.lower().split("/")[:-1]
     )
 
 
@@ -435,24 +443,32 @@ class GraphIndex:
 
         `demote_nonproduct`(기본 꺼짐 — Auditor `SOURCE`만 켠다)면 「저장소에서 하나뿐」 판정에서
         비제품 경로(`is_nonproduct_path` — `tests/`·`examples/`·`third_party/` 등)의 정의가 한 단계
-        낮다: 제품 경로 정의가 있으면 그것들만 경쟁하고(`DUP`이 `lib/`와 `tests/`에 있으면 `lib/`의
-        것으로 정해진다), 제품 정의가 없으면 비제품 정의도 그대로 쓴다 — **삭제가 아니다.** 순서도
-        제품 정의가 먼저다(읽는 쪽이 상한까지만 싣는다). `near_file`이 비제품이면 강등하지 않는다 —
-        그 코드가 쓰는 정의는 형제 비제품 경로에 있는 것이 정상이다.
+        낮다. **표를 가로질러 본다**: 그 이름의 제품 정의가 세 표 어디에든, 또는 제품 **함수**
+        (`_defined`)로 있으면 비제품 행은 세 표 모두에서 후보가 아니다. 그다음 남은 행으로 위 규칙
+        (표 순서 · 하나뿐)을 그대로 돈다 —
+        - `DUP`이 `lib/`와 `tests/`의 매크로면 `lib/`의 것으로 정해진다
+        - 제품 typedef `node`와 비제품 매크로 `node`면 매크로 표를 건너뛰고 typedef가 나온다
+        - 제품 쪽이 **함수뿐**이면(`tests/`의 `#define F(p) …`가 제품 함수 `F`를 덮는 꼴) 그 이름은
+          싣지 않는다 — 함수 본문은 `callees_of`의 몫이다
+        제품 정의가 하나도 없으면 비제품 정의도 그대로 쓴다 — **삭제가 아니다.** 순서도 제품 정의가
+        먼저다(읽는 쪽이 상한까지만 싣는다). `near_file`이 비제품이면 강등하지 않는다 — 그 코드가
+        쓰는 정의는 형제 비제품 경로에 있는 것이 정상이다.
         """
         if self._load().status != STATUS_LOADED or self._tables is None:
             return None
         demote = demote_nonproduct and not is_nonproduct_path(near_file)
+        wanted = sorted(set(names))
+        product_names = self._product_definition_names(wanted) if demote else frozenset()
         found: list[Location] = []
-        for name in sorted(set(names)):
+        for name in wanted:
             for table in DEFINITION_TABLES:
                 rows = self._tables[table].get(name)
+                if rows and name in product_names:
+                    rows = [row for row in rows if not is_nonproduct_path(row["file"])]
                 if not rows:
                     continue
                 here = [row for row in rows if row["file"] == near_file]
-                candidates = here or (
-                    _product_first(rows, itemgetter("file")) if demote else list(rows)
-                )
+                candidates = here or list(rows)
                 if len(candidates) == 1:
                     row = candidates[0]
                     found.append(
@@ -473,6 +489,25 @@ class GraphIndex:
                 loc.symbol or "",
             ),
         )
+
+    def _product_definition_names(self, names: list[str]) -> frozenset[str]:
+        """`names` 중 제품 경로에 정의가 하나라도 있는 이름 — 세 정의 표와 함수(`_defined`)를 함께
+        본다. `definitions_of`의 표를 가로지른 강등이 쓴다(v2 표가 실려 있을 때만 부른다)."""
+        assert self._tables is not None
+        wanted = set(names)
+        product = {
+            name
+            for name in wanted
+            for table in DEFINITION_TABLES
+            if any(
+                not is_nonproduct_path(row["file"]) for row in self._tables[table].get(name, ())
+            )
+        }
+        for file, symbols in self._defined.items():
+            if is_nonproduct_path(file):
+                continue
+            product.update(name for name, _, _ in symbols if name in wanted)
+        return frozenset(product)
 
     def callees_of(
         self, target: Location, *, demote_nonproduct: bool = False
