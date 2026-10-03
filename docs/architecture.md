@@ -40,7 +40,8 @@ graph LR
 > **순수 함수(술어)**이고 6·7·8단계에서 각각 호출된다(`stages.GATE_STAGES`). 그림의 칸은 그중
 > **게이트 등급만으로 전이가 갈라지는 자리**인 6단계다(`policy._gate_grade`의 `basis`가 `grade`
 > 하나다) — 7단계 재판정은 Critic 노드 안에서 돌아 그 노드의 전이 신호에 실리고, 8단계 재판정도
-> 2026-09-20부터 같은 모양으로 그 단계의 전이 신호에 실린다(F-10 / F-10b — 후자는 아직 안 탄다).
+> 2026-09-20부터 같은 모양으로 그 단계의 전이 신호에 실린다(F-10 / F-10b — 후자는 도구가 떴지만 종료
+> 코드가 0인 재현이 간다, 2026-10-02부터 · 이슈 #232).
 > 등급이 언제 성립하고
 > 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
 
@@ -56,7 +57,7 @@ graph LR
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(슬라이스 타깃이면 걸친 함수들 — 아래 ⚠ ADR 0012 결정 1-b) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
-| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 그 갈래는 아직 안 탄다, §4) |
+| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 도구가 떴지만 종료 코드가 0인 재현이 그 갈래다, §4) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
@@ -187,7 +188,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
 | E2 | source→sink 경로가 call graph로 확인되고 guard 부재가 코드로 확인 | 6 |
 | E3 | **E2의 조건 전부** + Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
-| E4 | sanitizer/crash/PoC 재현 로그 존재 — **「실행됐다」까지만 보증한다**(D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
+| E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **「실행됐고 비-0으로 끝났다」까지만 보증한다**(크래시의 대용 지표다 — D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
 
 > **E3가 E2를 포함하는 것은 2026-09-23 제안이다**(@danielcho02 결정, @sumin0218 리뷰는 이 변경의 PR에서 → 2026-09-24 #251로 머지(`c301342`)했고 그 PR에
 > @sumin0218(`sumin0218`)의 리뷰 기록은 없다 — 리뷰는 작성자 `danielcho02`의 COMMENTED 1건뿐, `gh pr view 251`
@@ -221,11 +222,17 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > `proven`(F-10), E4 미만이면 무전이로 `validated`에 홀드한다(F-10b, 사유 `evidence_below_proven`).
 > 그전에는 `ok`·`tool_allowed` 둘만 읽어 게이트가 E3인 Finding도 `ok=True`면 `proven`이 됐다.
 >
-> ⚠ **그 F-10b 분기는 오늘 노드 경로에서 발화하지 않는다 — 방어 가드다.** `nodes/validate.run()`이
-> 내는 `ok=True`는 "produced Evidence가 전부 `ok`"라는 뜻이고, 그러면 그 SANITIZER/POC_RUN
-> Evidence가 `gate.evaluate()`의 `usable`에 들어 `p4`가 참이 되므로 **등급은 반드시 E4**다.
-> 즉 이 줄이 서술하는 것은 **구조**(등급을 읽는다)이지 오늘의 관측이 아니다. 실측과 그
-> 불변식이 깨지는 조건은 [D18 본문](open-questions/D/D18.md) 마지막 절에 있다.
+> ⚠ **그 F-10b 분기는 2026-10-02 전에는 노드 경로에서 발화하지 않았다 — 방어 가드였다.**
+> `nodes/validate.run()`이 내는 `ok=True`는 "produced Evidence가 전부 `ok`"라는 뜻이고, 그러면 그
+> SANITIZER/POC_RUN Evidence가 `gate.evaluate()`의 `usable`에 들어 `p4`가 참이 되므로 등급이
+> 반드시 E4였다. **그 불변식은 이슈 #232의 수정으로 깨졌다** — `p4`가 런타임 Evidence의 `exit_code`가
+> 0도 `None`도 아닐 것을 요구하므로, 도구가 떴지만(`ok=True`) 종료 코드가 0인 재현은 E3에 남아
+> **F-10b로 간다**(`proven`도 `queued`도 아니다 — 아래 ⚠). 그 갈래는 테스트가 문다 —
+> `tests/test_nodes.py`의 `test_a_clean_exit_holds_the_finding_at_validated_instead_of_proving_or_queueing`인데
+> `dev_fake`가 낸 Evidence의 종료 코드만 0으로 바꾼 **합성**이다. **실 run에서 이 분기를 확인한 적은
+> 없다**(미실측 — 사유: asan이 exit 0으로 끝난 run이 없다. 대상이 빌드돼야 하는데 지금 픽스처에는
+> `main`이 없다). `dev_fake`로는 못 탄다 — Fake가 종료 코드를 상수 `1`로 채운다. 옛 불변식의
+> 실측은 [D18 본문](open-questions/D/D18.md) 마지막 절에 있다.
 > → [open-questions.md](open-questions.md) D18(닫힘)
 
 > ⚠ **위에서 「재현이 성공한(`ok=True`)」이라 부른 것은 「크래시했다」가 아니라 「도구가
@@ -234,13 +241,18 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 대상을 띄우지도 못한 경우(asan·poc는 종료 코드 `_EXEC_FAILED` = 125·126·127로, gdb는 stdout에
 > 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
 > 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
-> 없으므로 대상 존재로 대체한다"*고 스스로 적는다. 그리고 `gate.evaluate()`의 `p4`는
-> `usable`(=`ev.ok`)과 `kind`만 보므로 `exit_code`가 판정에 들어가지 않는다.
+> 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
+> E4가 아니다 — **2026-10-02부터 `gate.evaluate()`의 `p4`는 `usable`(=`ev.ok`)·`kind`에 더해 런타임
+> Evidence의 `exit_code`가 0도 `None`도 아닐 것을 요구한다**(이슈 #232). 깨끗한 종료(0)와 미측정(`None`)은
+> E4가 아니다. 그전에는 `exit_code`가 판정에 안 들어가 exit 0도 `proven`이 됐다.
 >
-> **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드가 없다** — 살아 있는 사용처는
-> `validate.tool_for()`가 신호 문자열에서 **도구 이름**을 고르는 것 하나다. 이 문서의 「재현
-> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐다」까지만 보증한다.**
-> 무엇을 고칠지는 아직 안 정했다.
+> **그것이 크래시 판정은 아니다.** 비-0은 크래시의 **대용 지표**일 뿐이다 — asan·poc는 대상 바이너리의
+> 값이라 대상이 스스로 비-0을 돌려줘도 같고, gdb는 gdb 프로세스의 값이라 정상 종료인데 비-0인 건이
+> 있다(수치와 출처는 [D80 본문](open-questions/D/D80.md) 마지막 절). 「크래시했다」를 표현하는 필드는
+> `Evidence`에 없다. **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드도 없다** — 살아 있는
+> 사용처는 `validate.tool_for()`가 신호 문자열에서 **도구 이름**을 고르는 것 하나다. 이 문서의 「재현
+> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐고 비-0으로 끝났다」까지만 보증한다.**
+> 나머지는 아직 안 정했다 — 위 문은 열린 결함의 선택지 (a)~(d) 어느 것도 아닌 다른 길이고 절반이다.
 > → [open-questions.md](open-questions.md) D80(열림)
 
 구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)

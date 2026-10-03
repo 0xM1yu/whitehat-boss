@@ -8,6 +8,7 @@
 `--apply`·CLI·오버라이드 계약은 `tests/test_bench_apply.py`에 있다(800줄 상한, §8.1).
 """
 
+import http.client
 import json
 import re
 import threading
@@ -283,6 +284,25 @@ def test_missing_metrics_is_not_the_same_as_no_cache_hit(
     )
 
     assert result["verdict"] == "metrics_unavailable"
+
+
+def test_a_cut_metrics_response_is_a_failed_measurement_not_an_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`http.client.HTTPException`은 `OSError`가 아니다 — 응답 중간에 끊기면(`IncompleteRead`)
+    그대로 새 나간다. 이 함수들의 계약은 「못 재면 `None`/오류 문자열」이고 측정 실패는 사건이
+    아니다(호출처가 `openai_compat._post`의 try **밖**이라 새면 러너까지 간다 — 적대적 리뷰
+    2026-10-02)."""
+
+    def cut(url, timeout=None):  # noqa: ANN001, ANN202, ARG001
+        raise http.client.IncompleteRead(b"# HELP", 100)
+
+    monkeypatch.setattr(urllib.request, "urlopen", cut)
+
+    assert bench_metrics.generation_tokens("http://127.0.0.1:9/v1") is None
+    text, error = bench_metrics.fetch("http://127.0.0.1:9/metrics")
+    assert text is None
+    assert error is not None and "IncompleteRead" in error
 
 
 # --- A: 기동 실패 ------------------------------------------------------------

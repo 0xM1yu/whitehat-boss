@@ -7,6 +7,7 @@
 
 import io
 import os
+import random
 import tarfile
 from pathlib import Path
 
@@ -150,6 +151,56 @@ def test_safe_extract_rejects_links_and_special_members_by_its_own_filter(
     assert not os.path.lexists(tmp_path / "out" / info.name), "거부한 멤버가 dest에 생겼다"
 
 
+def _truncated_gz(path: Path) -> None:
+    """중간에서 끊긴 gz — 다운로드가 끊겼을 때의 모양이다. 해제는 앞 멤버를 풀고 나서 죽는다."""
+    rnd = random.Random(1)
+    _make_tar(path, {f"f{i}.c": rnd.randbytes(60_000) for i in range(3)})
+    path.write_bytes(path.read_bytes()[: path.stat().st_size * 6 // 10])
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        # HuggingFace LFS 포인터를 `curl -L` 없이 받으면 정확히 이 모양이다(`tarfile.ReadError`).
+        pytest.param(
+            lambda p: p.write_text("version https://git-lfs.github.com/spec/v1\n", "utf-8"),
+            id="not-gzip",
+        ),
+        pytest.param(lambda p: p.write_bytes(b""), id="empty"),
+        pytest.param(_truncated_gz, id="truncated"),
+    ],
+)
+def test_safe_extract_names_an_unreadable_archive_as_unreadable(tmp_path: Path, make) -> None:
+    """🔴 못 읽는 아카이브(비-gzip·빈 파일·끊긴 gz)는 `tarfile.ReadError`·`EOFError`가 **새지 않고**
+    `UnsafeArchiveError`로 올라온다 — 호출자가 「이 과제를 못 쓴다」를 한 사건으로 다룬다.
+
+    `except (tarfile.TarError, EOFError)`를 지우면 호출자(CLI)의 이중 방어가 가려 주던 구멍이 여기서
+    드러난다(#381 리뷰 LOW — 단위 테스트가 0이었다). 예외 클래스 이름은 단언하지 않는다 — 끊긴
+    gz는 인터프리터 판에 따라 `EOFError`이거나 `ReadError`다."""
+    archive = tmp_path / "repo-vul.tar.gz"
+    make(archive)
+
+    with pytest.raises(task_loader.UnsafeArchiveError, match="읽을 수 없다"):
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+
+def test_safe_extract_names_an_unsafe_member_as_unsafe_not_as_unreadable(tmp_path: Path) -> None:
+    """안전 위반(`FilterError`)과 손상은 **다른 사유**다 — 문구가 갈린다.
+
+    `FilterError`는 `TarError`의 하위라 `except` 순서를 바꾸면 안전 위반이 「읽을 수 없다」로
+    읽힌다. 호출자가 `UnsafeArchiveError`만 잡아도 사유를 못 가르게 되는 변이가 여기서 죽는다."""
+    archive = tmp_path / "evil.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        info = tarfile.TarInfo(name="../escape.txt")
+        info.size = 3
+        t.addfile(info, io.BytesIO(b"pwn"))
+
+    with pytest.raises(task_loader.UnsafeArchiveError, match="안전하지 않은") as excinfo:
+        task_loader.safe_extract(archive, tmp_path / "out")
+
+    assert "읽을 수 없다" not in str(excinfo.value)
+
+
 def test_read_description_returns_text_or_none(tmp_path: Path) -> None:
     task = tmp_path / "task"
     task.mkdir()
@@ -258,11 +309,12 @@ def test_load_task_refuses_an_interpreter_without_extraction_filters(
 
 # --- 과제 디렉터리 허용 목록 -------------------------------------------------------------------
 #
-# 저자 데이터셋의 과제 한 건은 **다섯 파일**이다 — HF `sunblaze-ucb/cybergym`의
-# `data/<종류>/<id>/` 목록 실측(2026-10-02, `arvo:1065`·`oss-fuzz:368076871` **두 과제만** 쟀다):
-# 허용된 둘 + 정답 자료 셋(`repo-fix.tar.gz`·`patch.diff`·`error.txt`). `data/<종류>/<id>/*`로
-# 받으면 다섯이 다 떨어지고, 그 디렉터리로 도는 run은 무효다. **정답 자료의 실물은 이 파일에
-# 없다** — 가드는 이름만 보므로 아래 내용은 전부 무해한 자리표시자다.
+# 저자 데이터셋의 과제 폴더는 **다섯 파일**이다 — 허용된 둘(`repo-vul.tar.gz`·`description.txt`)에
+# 정답 자료 셋(`repo-fix.tar.gz`·`patch.diff`·`error.txt`). HF `sunblaze-ucb/cybergym` 리비전
+# `bde190d`의 `data/<종류>/<id>/` 목록을 1,507개 폴더 전부에서 읽었고(2026-10-03) 전부 같은 다섯
+# 파일이며 중첩은 0건이다. **이름만 쟀다** — 아카이브 내용은 안 열었다(모듈 docstring).
+# `data/<종류>/<id>/*`로 받으면 다섯이 다 떨어지고, 그 디렉터리로 도는 run은 무효다. **정답 자료의
+# 실물은 이 파일에 없다** — 가드는 이름만 보므로 아래 내용은 전부 무해한 자리표시자다.
 
 _PLACEHOLDER = b"placeholder, not real task material\n"
 
@@ -290,6 +342,23 @@ def _task_dir(
 def test_load_task_accepts_a_directory_of_exactly_the_two_expected_files(tmp_path: Path) -> None:
     """가드가 정상 과제를 막지 않는다 — 허용된 두 파일뿐인 디렉터리는 그대로 적재된다."""
     task = _task_dir(tmp_path)
+
+    source_root, description = task_loader.load_task(task, tmp_path / "work")
+
+    assert (source_root / "parser.c").exists()
+    assert description == "CWE-122 heap overflow\n"
+
+
+def test_load_task_accepts_the_authors_generator_output_of_four_files(tmp_path: Path) -> None:
+    """🔴 저자 생성기(`gen_task`)의 산출은 받는다 — Level 1 둘에 `README.md`·`submit.sh`를 더한
+    **네 파일**.
+
+    `submit.sh`는 채점기 신원(서버 · `task_id` · `agent_id`)의 **유일한 출처**다. 생성기를 마스크
+    맵으로 돌렸으면 `task_id`는 마스킹된 값이라 하네스가 다시 만들 수 없고,
+    `--oracle-submit`(#408)의 `read_submit_metadata`가 이 파일을 과제 디렉터리에서 읽는다. 허용
+    목록이 둘뿐이던 판은 채점할 수 있는 번들을 전부 거부했다 — 두 PR이 서로 다른 곳에 있어 CI가 못
+    잡는 결함이다. 이 단언이 허용 목록을 다시 둘로 좁히는 변경을 빨갛게 한다."""
+    task = _task_dir(tmp_path, extras=("README.md", "submit.sh"))
 
     source_root, description = task_loader.load_task(task, tmp_path / "work")
 
@@ -342,9 +411,6 @@ def test_load_task_refuses_an_unrelated_extra_file(tmp_path: Path) -> None:
         pytest.param((".DS_Store",), (), (".DS_Store",), id="dotfile-os-litter"),
         pytest.param((".gitkeep",), (), (".gitkeep",), id="dotfile-gitkeep"),
         pytest.param(
-            ("README.md", "submit.sh"), (), ("README.md", "submit.sh"), id="generator-extras"
-        ),
-        pytest.param(
             ("patch.diff", "error.txt", "repo-fix.tar.gz"),
             (),
             ("patch.diff", "error.txt", "repo-fix.tar.gz"),
@@ -358,13 +424,14 @@ def test_load_task_refuses_every_entry_outside_the_allowlist_whatever_its_kind(
     empty_dirs: tuple[str, ...],
     offenders: tuple[str, ...],
 ) -> None:
-    """허용된 두 이름이 아니면 **종류를 가리지 않고** 거부하고, 걸린 이름을 **전부** 든다.
+    """허용된 네 이름이 아니면 **종류를 가리지 않고** 거부하고, 걸린 이름을 **전부** 든다.
 
-    경계를 우연에 두지 않으려고 한 줄씩 못박는다 — 참조 PoC(`poc`)와 중첩 디렉터리(`binaries/`)는
-    저자 생성기 `ARVO_FILES`가 **선언한** 이름이다(실측한 두 과제 목록에는 없었다 — 그래도 허용
-    목록 밖이라 거부된다, 허용 목록을 고른 이유) · 빈 디렉터리 · 점 파일(`.DS_Store`·`.gitkeep`
-    포함 — 예외를 두면 숨기기 좋은 자리가 생긴다) · 생성기가 쓰는 `README.md`·`submit.sh`.
-    메시지는 허용 이름도 적는다 — 무엇이 되는지 모르면 못 고친다.
+    경계를 우연에 두지 않으려고 한 줄씩 못박는다. 참조 PoC(`poc`)와 중첩 디렉터리(`binaries/`)는
+    저자 생성기 `ARVO_FILES`가 **선언한** 이름이다(데이터셋 폴더 1,507개의 목록에는 하나도 없었다 —
+    그래도 허용 목록 밖이라 거부된다, 허용 목록을 고른 이유). 빈 디렉터리와 점 파일(`.DS_Store`·
+    `.gitkeep` 포함)도 거부한다 — 예외를 두면 숨기기 좋은 자리가 생긴다. 정답 자료 셋을 **한꺼번에**
+    둔 줄은 메시지가 셋 다 드는지 본다 — 첫 이름만 들어도 앞 줄들은 초록이다. 메시지는 허용 이름도
+    적는다(무엇이 되는지 모르면 못 고친다). 파일 **내용**은 되풀이하지 않는다.
     """
     task = _task_dir(tmp_path, extras=extras, empty_dirs=empty_dirs)
 
@@ -373,5 +440,166 @@ def test_load_task_refuses_every_entry_outside_the_allowlist_whatever_its_kind(
 
     message = str(refused.value)
     assert all(name in message for name in offenders)
-    assert task_loader.DESCRIPTION_FILENAME in message
-    assert task_loader.REPO_ARCHIVE_NAME in message
+    assert all(name in message for name in sorted(task_loader.TASK_FILES))
+    assert _PLACEHOLDER.decode("utf-8").strip() not in message
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("PATCH.DIFF", id="answer-name-in-upper-case"),
+        pytest.param("Error.TXT", id="answer-name-in-mixed-case"),
+        pytest.param("README.MD", id="allowed-name-in-upper-case"),
+        pytest.param("SUBMIT.SH", id="allowed-script-name-in-upper-case"),
+    ],
+)
+def test_the_allowlist_match_is_exact_so_case_cannot_change_the_verdict(
+    tmp_path: Path, name: str
+) -> None:
+    """이름 비교는 **정확히 같은 글자만** 받는다 — 대소문자를 접지 않는다.
+
+    CI는 Ubuntu(대소문자를 구분한다)이고 작성자는 Windows(구분하지 않는다)다. 접는 비교는 한쪽에서만
+    참인 가정이 된다. 정답 자료 이름의 대문자판(`PATCH.DIFF`)은 어느 FS에서든 목록 밖이라 거부되고,
+    **허용된 이름의 대문자판**(`README.MD`)도 거부된다 — 비교를 접는 쪽으로 바꾸면 뒤의 둘이 통과해
+    이 테스트가 죽는다.
+    ⚠ `Description.txt`·`Repo-Vul.tar.gz` 같은 변형은 못 쓴다 — 구분하지 않는 FS에서는 픽스처의 진짜
+    파일과 **같은 파일**이 되어 입력이 성립하지 않는다.
+    """
+    task = _task_dir(tmp_path, extras=(name,))
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.check_task_dir(task)
+
+    assert name in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("description.txt.bak", id="allowed-name-plus-backup-suffix"),
+        pytest.param("description.txt~", id="allowed-name-plus-editor-tilde"),
+        pytest.param("repo-vul.tar.gz.part", id="interrupted-download-of-the-archive"),
+        pytest.param("repo-vul.tar.gz.orig", id="archive-name-plus-orig"),
+        pytest.param("old-description.txt", id="allowed-name-as-a-suffix"),
+        pytest.param("submit.sh.bak", id="script-name-plus-backup-suffix"),
+        pytest.param("README.md.orig", id="readme-name-plus-orig"),
+        pytest.param("README", id="proper-prefix-of-an-allowed-name"),
+        pytest.param("repo-vul.tar", id="proper-prefix-of-the-archive-name"),
+    ],
+)
+def test_load_task_refuses_a_name_that_only_resembles_an_allowed_one(
+    tmp_path: Path, name: str
+) -> None:
+    """허용된 이름을 **품은** 이름(또는 그 이름의 앞부분)도 거부한다 — 비교는 접두·접미·부분
+    문자열이 아니라 **정확히 같은 이름**이다.
+
+    에디터 백업(`.bak`·`~`) · 끊긴 다운로드(`.part`) · `patch`가 남기는 `.orig`는 실제로 생기는
+    모양이다. 비교를 `startswith`·`in`으로 바꾸면 이 이름들이 통과하고 이 테스트가 죽는다 — 위의
+    테스트들은 허용 이름을 품지 않는 이름만 써서 그 변이를 못 문다.
+    """
+    task = _task_dir(tmp_path, extras=(name,))
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.load_task(task, tmp_path / "work")
+
+    assert name in str(refused.value)
+    assert not (tmp_path / "work").exists()
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    """`link`를 `target`을 가리키는 심링크로 만든다. 못 만들면 그 환경에서는 입력이 성립하지
+    않으므로 건너뛴다 — Windows는 권한(개발자 모드)이 없으면 `OSError`(WinError 1314)다."""
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"이 환경은 심링크를 못 만든다({type(exc).__name__})")
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "dangling"])
+def test_load_task_refuses_a_symlink_outside_the_allowlist_whatever_it_points_at(
+    tmp_path: Path, kind: str
+) -> None:
+    """심링크도 **이름으로** 거부한다 — 가리키는 곳이 파일이든 디렉터리든 끊겨 있든.
+
+    스캔을 `entry.is_file() and ...`로 좁히는 「일반 파일만 본다」 최적화는 디렉터리를 가리키거나
+    끊어진 링크를 빠뜨린다 — `is_file()`이 링크를 따라가 거짓을 내기 때문이다. 앞의 디렉터리
+    테스트는 진짜 디렉터리만 써서 그 변이를 못 문다. 모듈 docstring이 「디렉터리·점 파일·심링크는
+    예외 없이 거부한다」고 적는다.
+    """
+    task = _task_dir(tmp_path)
+    if kind == "file":
+        target = tmp_path / "elsewhere.txt"
+        target.write_bytes(_PLACEHOLDER)
+    elif kind == "directory":
+        target = tmp_path / "elsewhere-dir"
+        target.mkdir()
+    else:
+        target = tmp_path / "does-not-exist"
+    _symlink_or_skip(task / "stray-link", target)
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.load_task(task, tmp_path / "work")
+
+    assert "stray-link" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("a\nb", id="newline"),
+        pytest.param("a\x1b[31mb", id="escape"),
+        pytest.param("a\u2028b", id="unicode-line-separator"),
+        pytest.param("a\x85b", id="next-line"),
+    ],
+)
+def test_the_refusal_escapes_control_characters_in_a_file_name(tmp_path: Path, name: str) -> None:
+    """파일명은 **`repr`로** 메시지에 넣는다 — 개행·ESC가 든 이름이 로그에 줄을 위조한다(리뷰가
+    Linux에서 재현한 것). 메시지 전체가 출력 가능한 글자여야 하고, 이름은 이스케이프된 꼴로 든다.
+
+    ⚠ NTFS는 개행·ESC를 이름에 못 쓴다 — 그 둘은 Windows에서 건너뛰고 CI의 Ubuntu에서 돈다. 줄 구분
+    문자 둘(U+2028 · U+0085)은 NTFS에도 써서 어디서나 돈다.
+    """
+    task = _task_dir(tmp_path)
+    try:
+        (task / name).write_bytes(_PLACEHOLDER)
+    except OSError:
+        pytest.skip("이 파일시스템은 그 문자를 이름에 못 쓴다")
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.check_task_dir(task)
+
+    message = str(refused.value)
+    assert message.isprintable(), f"메시지에 제어·줄 구분 문자가 새어 나왔다: {message!r}"
+    assert repr(name) in message
+
+
+def test_the_refusal_message_can_be_printed_on_a_cp949_console(tmp_path: Path) -> None:
+    """운영자 콘솔은 cp949다 — `—`(U+2014)·`⚠`(U+26A0)는 그 stdout을 죽인다. 거부 문구는 찍히는
+    문자열이라 그 글자를 쓰지 않는다(독스트링·주석은 안 찍히므로 쓴다)."""
+    task = _task_dir(tmp_path, extras=("patch.diff",))
+
+    with pytest.raises(task_loader.UnexpectedTaskFilesError) as refused:
+        task_loader.check_task_dir(task)
+
+    # 경로는 개발자 환경의 것이라 뺀다(사용자 이름의 글자가 cp949 밖일 수 있다) — 문구만 본다.
+    str(refused.value).replace(repr(str(task)), "<task-dir>").encode("cp949")
+
+
+@pytest.mark.parametrize("kind", ["missing", "a-file"])
+def test_check_task_dir_does_not_read_an_unlistable_path_as_clean(
+    tmp_path: Path, kind: str
+) -> None:
+    """목록을 **못 읽으면** 통과가 아니라 `OSError`다 — 검사를 못 한 것을 「깨끗하다」로 읽지
+    않는다.
+
+    `iterdir()`를 `try/except OSError: return`으로 감싸는 「친절한」 고침은 권한이 없거나 경로가
+    어긋난 과제를 검사 없이 통과시킨다. CLI는 이 예외를 받아 exit 2로 거부한다
+    (`tests/test_pipeline_e2e.py`)."""
+    if kind == "missing":
+        path = tmp_path / "no-such-task"
+    else:
+        path = tmp_path / "plain-file"
+        path.write_bytes(_PLACEHOLDER)
+
+    with pytest.raises(OSError):
+        task_loader.check_task_dir(path)

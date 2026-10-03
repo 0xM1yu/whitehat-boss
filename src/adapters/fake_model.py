@@ -110,6 +110,11 @@ class FakeContext(HarnessModel):
     # 슬라이스 타깃의 v3 `slice_criterion`(`prompt_loader.FACT_KEYS`의 opt-in 키). Fake는 판정에
     # 안 쓰지만 사실 블록을 파싱할 때 거부하면 안 되므로 받는다(`FakeEvidenceRef.body`와 같은 처리).
     slice_criterion: dict[str, object] | None = None
+    # PoV의 퍼즈 진입점(`prompt_loader.FACT_KEYS`의 opt-in 키 — `LLVMFuzzerTestOneInput`과 그 본문).
+    # `slice_criterion`과 같은 처리다: Fake는 판정에 안 쓰지만 **받지 않으면 `extra="forbid"`가
+    # 사실 블록 파싱을 죽인다**(`prompt_loader._validated_facts`가 "어댑터의 FakeContext와 함께
+    # 고친다"고 적는 자리 — 2026-10-02에 이것을 빠뜨려 **132 failed**가 났다).
+    fuzz_entrypoint: dict[str, object] | None = None
 
 
 class FakeModelError(RuntimeError):

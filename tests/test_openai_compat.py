@@ -8,6 +8,7 @@ HTTP를 띄우지 않고 `_post`만 갈아 끼운다. 여기서 재는 것은 �
 **여러 시도의 비용을 어떻게 합치는가**이고, 그것은 `complete()` 안에 있다.
 """
 
+import http.client
 import io
 import json
 import re
@@ -19,6 +20,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from src.adapters import openai_compat
 from src.adapters.openai_compat import RETRY_ERROR_MAX_CHARS, OpenAICompatModelClient
 from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
@@ -556,6 +558,184 @@ def test_the_status_code_separates_a_bad_request_from_a_dead_server(
     assert "Connection refused" in caught.value.detail
 
 
+def _no_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`generation_tokens`를 `None`으로 고정한다.
+
+    그 호출(`_post`의 `before = generation_tokens(...)`)은 **try 밖**이고 자기 예외만 삼킨다
+    (`bench_metrics`가 잡는 것은 `(URLError, TimeoutError, OSError, ValueError)`). `urlopen`을
+    통째로 바꿔 `IncompleteRead`를 던지면 **그 줄에서** 새 나가 `_post`의 사슬에 도달하지 못한다 —
+    검사가 의도한 자리를 못 무는 것이다. 그래서 고립시킨다."""
+    monkeypatch.setattr(openai_compat, "generation_tokens", lambda _endpoint: None)
+
+
+class _FakeResponse:
+    """`urlopen`의 컨텍스트 매니저 흉내 — `read()`가 주어진 바이트를 낸다."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _respond(monkeypatch: pytest.MonkeyPatch, body: bytes) -> None:
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda request, timeout=None: _FakeResponse(body)  # noqa: ARG005
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        # `HTTPException`은 **`OSError`가 아니다** — vLLM이 응답 중간에 죽으면 이 모양이다.
+        http.client.IncompleteRead(b"partial"),
+        http.client.BadStatusLine("garbage"),
+        # 생 `OSError` — `URLError`로 감싸지지 않고 올라오는 경로가 있다.
+        ConnectionResetError(104, "Connection reset by peer"),
+        BrokenPipeError(32, "Broken pipe"),
+    ],
+    ids=["incomplete_read", "bad_status_line", "connection_reset", "broken_pipe"],
+)
+def test_a_broken_connection_becomes_a_gateway_error_not_a_raw_exception(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """🔴 **끊긴 연결이 생 예외로 러너를 뚫고 나가지 않는다** (S0).
+
+    전 판의 `_post`는 `HTTPError`·`TimeoutError`·`(URLError, JSONDecodeError)` **셋만** 잡았다.
+    `http.client.HTTPException`은 `OSError`가 아니라 어느 절에도 안 걸리고, 생 `OSError`도 그랬다.
+    그러면 러너가 그것을 게이트웨이 사건으로 못 읽는다 — `complete()`가 `ModelGatewayError`에만
+    붙이는 회계(`usage`·`gpu_ms`)를 건너뛰고, 사유가 `unforeseen_failure`로 적힌다(최후 방어선이
+    매니페스트는 남긴다 — 그 전에는 산출물이 하나도 안 남았다, zlib 때 `state.db`를 직접 열어야
+    했던 이유다).
+
+    **형 이름이 문구에 있어야 한다** — `error_detail`은 형을 안 적어서 로그만 보면 무엇이
+    끊겼는지 모른다."""
+    _no_metrics(monkeypatch)
+    _raise_http(monkeypatch, error)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None, "전송 실패에는 상태 코드가 없다"
+    assert type(error).__name__ in caught.value.detail
+
+
+def test_a_non_utf8_response_becomes_a_gateway_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """응답 바이트가 UTF-8이 아니면 `.decode`가 `UnicodeDecodeError`를 던진다.
+
+    그것은 `ValueError`의 하위지만 `json.JSONDecodeError`와 **형제**라 그 절에 안 걸렸다."""
+    _no_metrics(monkeypatch)
+    _respond(monkeypatch, b"\xff\xfe not utf-8")
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "UnicodeDecodeError" in caught.value.detail
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b'{"choices": []}', b'{"choices": [{}]}', b'{"choices": "not a list"}', b"{}"],
+    ids=["empty_choices", "no_message", "choices_not_a_list", "no_choices"],
+)
+def test_a_200_with_the_wrong_shape_becomes_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    """🔴 200인데 **모양이 다른** 응답도 게이트웨이 사건이다.
+
+    전 판은 `data["choices"][0]["message"]["content"]` 인덱싱이 **try 밖**이라 `KeyError`·
+    `IndexError`·`TypeError`가 그대로 새 나갔다. 상태 코드는 없다 — 전송은 됐고 **계약이 깨진**
+    것이다."""
+    _no_metrics(monkeypatch)
+    _respond(monkeypatch, body)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "계약과 다르다" in str(caught.value)
+    # 🔴 **`detail`에도 있어야 한다** — trace의 `model_call.error_detail`과 러너 경고가 읽는 것은
+    # `detail`이고(`error_detail`), 문구(`str(exc)`)는 거기 안 간다. 없으면 상태 코드 없는 실패
+    # 셋(끊김·타임아웃·계약 위반)을 가르는 단서가 `KeyError: 'choices'` 같은 형 이름뿐이다.
+    assert "계약과 다르다" in caught.value.detail
+
+
+_GOOD_CHOICES = '"choices": [{"message": {"content": "{}"}}]'
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        "null",
+        '{"completion_tokens": null}',
+        '{"completion_tokens": "abc"}',
+        '{"completion_tokens": -1}',
+    ],
+    ids=["usage_null", "tokens_null", "tokens_not_a_number", "tokens_negative"],
+)
+def test_a_200_with_a_broken_usage_becomes_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch, usage: str
+) -> None:
+    """🔴 `choices`는 멀쩡한데 **`usage`가 깨진** 200도 게이트웨이 사건이다 (적대적 리뷰
+    2026-10-02).
+
+    위 모양 검사는 전부 content 인덱싱에서 끝나 이 경로를 안 탄다 — `_usage_from`을 try 밖으로 빼도,
+    except 튜플에서 `AttributeError`·`ValueError`를 빼도 초록이었다. 각 입력이 **서로 다른 예외**를
+    낸다: `usage: null`은 `AttributeError`, `null`·`"abc"` 토큰은 `TypeError`·`ValueError`,
+    음수는 `Usage` 검증의 `ValidationError`(⊂ `ValueError`)다."""
+    _no_metrics(monkeypatch)
+    _respond(monkeypatch, f'{{{_GOOD_CHOICES}, "usage": {usage}}}'.encode())
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "계약과 다르다" in caught.value.detail
+
+
+def test_a_cut_connection_on_the_metrics_probe_does_not_escape_the_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_post`의 `before = generation_tokens(...)`는 **try 밖**이다 — 거기서 새면 예외 사슬이
+    못 덮는다.
+
+    `/metrics`와 채팅이 **둘 다** `IncompleteRead`를 던지는 서버다(`_no_metrics`로 고립시키지
+    않는다).
+    `generation_tokens`가 `HTTPException`을 삼키지 못하면 채팅에 닿기도 전에 생 예외가 나간다."""
+    _raise_http(monkeypatch, http.client.IncompleteRead(b"partial"))
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert "IncompleteRead" in caught.value.detail
+
+
+def test_the_new_catch_all_does_not_swallow_an_http_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """🔴 **순서가 계약이다** — 새 `OSError` 절이 HTTP 사유를 먹지 않는다.
+
+    `HTTPError ⊂ URLError ⊂ OSError`라 새 절을 위로 올리면 400도 그리로 가고, 그러면 `exc.read()`를
+    부르는 자리가 없어 **서버가 말해 준 사유가 통째로 사라진다**(zlib에서 실제로 났다). 그 변이가
+    여기서 죽는다."""
+    _no_metrics(monkeypatch)
+    _raise_http(monkeypatch, _http_error(400, b"maximum context length is 4096 tokens"))
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status == 400, "상태 코드가 사라졌다 — 새 절이 위로 올라갔다"
+    assert "maximum context length" in caught.value.detail
+
+
 def test_a_long_error_body_is_cut_and_says_that_it_was_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -587,6 +767,41 @@ def test_an_unreadable_error_body_does_not_lose_the_status(
     assert caught.value.status == 413
     assert "읽지 못했다" in caught.value.detail
 
+
+
+@pytest.mark.parametrize("status", [400, 503], ids=["http_400", "http_503"])
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        # chunked 본문이 중간에 끊기면 `IncompleteRead`다 — `HTTPException`이라 `OSError`가 아니다.
+        http.client.IncompleteRead(b"partial"),
+        ConnectionResetError(104, "Connection reset by peer"),
+    ],
+    ids=["incomplete_read", "connection_reset"],
+)
+def test_an_error_body_cut_while_reading_still_becomes_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, read_error: Exception
+) -> None:
+    """🔴 **본문을 읽다 끊긴 4xx/5xx도 `ModelGatewayError`다 — 상태는 유지된다** (S0).
+
+    상태 줄을 받은 뒤 본문이 끊기는 것은 프록시 뒤 서버가 죽는 모양이다(vast의 chunked 응답).
+    `_error_detail`이 못 읽은 본문에서 예외를 올리면 상태까지 잃고, 그 예외가 `_post`를 빠져나가
+    `complete()`의 회계(`usage`·`gpu_ms`)를 건너뛴다. **성질만 단언한다** — 어떤 예외형이 어느
+    절에 걸리는지가 아니라, 무엇이 끊겨도 상태가 남은 채 게이트웨이 사건으로 올라오는지를 본다."""
+    _no_metrics(monkeypatch)
+    _raise_http(monkeypatch, _http_error(status, b""))
+
+    def cut(*_args: object) -> bytes:
+        raise read_error
+
+    monkeypatch.setattr(urllib.error.HTTPError, "read", cut, raising=False)
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status == status
+    assert "읽지 못했다" in caught.value.detail
+    assert caught.value.gpu_ms is not None, "예외가 `complete()`의 회계를 건너뛰었다"
 
 
 def test_the_output_cap_is_actually_sent_and_comes_from_the_caller() -> None:

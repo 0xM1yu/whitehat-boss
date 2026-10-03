@@ -659,8 +659,8 @@ def test_clang_tidy_promoted_warning_is_a_finding_not_a_broken_build() -> None:
 def test_asan_build_failure_never_reaches_e4() -> None:
     """**컴파일 성공을 실행으로 세지 않는다.**
 
-    E4(proven)의 조건이 SANITIZER/CRASH/POC_RUN Evidence의 `ok`다. 빌드 단계에서 끊긴
-    실행을 ok=True로 남기면 한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.
+    E4(proven)의 조건이 SANITIZER/CRASH/POC_RUN Evidence의 `ok`(와 비-0 종료 코드 — #232)다.
+    빌드 단계에서 끊긴 실행을 ok=True로 남기면 한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.
     """
     ok, _, error = judge("asan", [Step(1, "", "undefined reference to `main'")], 2)
 
@@ -690,9 +690,11 @@ def test_asan_that_exits_clean_is_ok_true_because_ok_only_means_it_ran() -> None
     한때 반대(*"크래시한 경우만 `ok=True`"*)를 적었는데 **무는 검사가 없었다** — 빌드 끊김·
     크래시·126/127 셋은 있었고 exit 0 갈래만 비어 있었다. 이 줄이 그것이다.
 
-    ⚠ **이 검사가 무는 것은 `judge()`의 반환 튜플 하나다.** 그 `ok=True`가 E4가 되는 것은
-    `gate.evaluate()`의 `p4`인데 **그쪽은 여기서 안 돈다** — `tests/test_gate.py`의
-    `test_runtime_evidence_is_e4` 소관이고, 둘을 잇는 end-to-end는 어느 검사도 안 든다.
+    ⚠ **이 검사가 무는 것은 `judge()`의 반환 튜플 하나다.** 그 `ok=True`가 E4가 되는지는
+    `gate.evaluate()`의 `p4`가 정하는데 **그쪽은 여기서 안 돈다** — exit 0이 E4가 안 되는 것은
+    `tests/test_gate.py`가 문다(`test_a_clean_exit_does_not_lift_e3_to_e4`). `judge()`가 내는
+    튜플을 그대로 게이트에 넣는 연결은 같은 파일의
+    `test_what_judge_returns_for_asan_decides_e4_through_the_gate`다.
 
     ⚠ **철자를 물지 성질을 물지 않는다.** 이 `return`을 뒤집으면 죽지만, 같은 판단(D80의
     선택지 (b))을 `ContainerToolRunner.run()`이나 `nodes/validate.py`에 넣으면 초록이다.
