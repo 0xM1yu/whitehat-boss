@@ -304,10 +304,10 @@ def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
 
 
 def _live_members(group: int) -> list[int]:
-    """Pids of the live processes in a process group. A zombie nobody has reaped is not live:
-    `killpg(group, 0)` still counts one, and a killed JVM whose parent is pid 1 stays a zombie
-    until pid 1 reaps it. Without /proc that call is all there is, and the leader's pid names the
-    group."""
+    """Pids of the live processes in a process group. An unreaped zombie is not live (`killpg(group,
+    0)` counts it) unless other threads of it are still exiting: they hold its sockets -- a killed
+    server's port kept accepting for up to 0.57 s after SIGKILL (dev, 2026-10-03, 3 runs).
+    Without /proc `killpg` is all there is, and the leader's pid names the group."""
     if not Path("/proc/self/stat").exists():
         try:
             os.killpg(group, 0)
@@ -322,9 +322,17 @@ def _live_members(group: int) -> list[int]:
             continue
         # "pid (comm) state ppid pgrp ..." -- comm can hold spaces and parentheses
         fields = text.rpartition(")")[2].split()
-        if len(fields) > 2 and _digits(fields[2]) == group and fields[0] not in ("Z", "X", "x"):
+        if len(fields) > 2 and _digits(fields[2]) == group and (
+                fields[0] not in ("Z", "X", "x") or _threads_left(entry)):
             members.append(pid)
     return members
+
+
+def _threads_left(process_dir: Path) -> bool:
+    try:
+        return len(os.listdir(process_dir / "task")) > 1  # the zombie leader itself is one
+    except OSError:
+        return False
 
 
 def _signal_group(group: int, sig: int) -> None:

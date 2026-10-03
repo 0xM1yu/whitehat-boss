@@ -482,6 +482,26 @@ def test_stop_without_a_grace_kills_at_once(stub_server, tmp_path):
 
 
 @needs_proc
+def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server):
+    """For a few hundred ms after SIGKILL a JVM is a zombie leader whose threads still hold the
+    listening socket (dev box, 2026-10-03: the port kept accepting for 0.15-0.57 s after the kill,
+    up to 0.56 s after stop() had returned). A new server's wait_servers would take that for
+    itself, so stop() must not return before the last thread has gone."""
+    process = stub_server("zombie-leader")
+    port = int(process.args[-1])
+    deadline = time.time() + 20
+    while not tool.port_in_use(port):
+        assert time.time() < deadline, "the stub server never listened"
+        time.sleep(0.05)
+    stat = Path(f"/proc/{process.pid}/stat").read_text()
+    assert stat.rpartition(")")[2].split()[0] == "Z"       # the leader is gone, a thread is not
+    assert tool._live_members(process.pid) == [process.pid]
+    assert tool.stop(process, grace=0) == []
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), 1)
+
+
+@needs_proc
 def test_stop_reports_what_it_could_not_kill(monkeypatch):
     """After SIGKILL and a bounded wait a group that is still there is reported, not hidden."""
     monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.2)
