@@ -12,6 +12,7 @@
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import shutil
@@ -19,6 +20,7 @@ import signal
 import sys
 import tempfile
 import threading
+import urllib.parse
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,7 +30,7 @@ from pathlib import Path
 from typing import TextIO, get_args
 
 from src.adapters.container_tools import make_payload_reader
-from src.adapters.cybergym_oracle import TaskOracle
+from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
@@ -73,7 +75,9 @@ from src.orchestrator.task_loader import (
     DESCRIPTION_FILENAME,
     REPO_ARCHIVE_NAME,
     SUBMIT_SCRIPT_NAME,
+    UnexpectedTaskFilesError,
     UnsafeArchiveError,
+    check_task_dir,
     read_description,
     read_submit_metadata,
     safe_extract,
@@ -549,46 +553,162 @@ def _check_state_path(config: HarnessConfig, artifacts_root: Path) -> Check:
 # --- 공통 배선 ---------------------------------------------------------------
 
 
-# `_oracle_for`가 「사람에게 알리고 멈춰라」를 돌려주는 표식. `None`은 「제출 안 함」(정상)이라
-# 그것과 섞으면 설정 오류가 조용히 미제출로 떨어진다.
-# 채점기 private 경로(submit-fix·query-poc)에 쓰는 키의 환경변수 이름. 저자 서버의 기본 키가
-# 공개 placeholder라(어댑터 docstring) 저장소에 박지 않고 환경에서 받는다.
+# 채점기 private 경로(submit-fix·query-poc)에 쓰는 키의 환경변수 이름. 저자 서버의 기본 키가 공개
+# placeholder라 저장소에 박지 않고 환경에서 받는다. 근거는 저자 서버가 아니라 이 저장소의 문서다 -
+# docs/research/2026-09-29-cybergym-pov-design.md의 「엔드포인트 가시성」 항(기본 키가 공개
+# placeholder이고 `CYBERGYM_API_KEY`로 덮는다)과 왕복 보고서 부록 5)의 주석(기본 키는
+# `server/types.py`). 어댑터(`cybergym_oracle.py`)에는 그 문장이 없다.
 _ORACLE_KEY_ENV = "CYBERGYM_API_KEY"
 
-_ORACLE_ERROR = object()
 
+class _OracleRefused:
+    """`_oracle_for`가 「사람에게 알리고 멈춰라」를 돌려주는 표식의 타입.
 
-def _oracle_for(args: argparse.Namespace) -> Oracle | None | object:
-    """`--oracle-submit`이면 과제 번들에서 채점기를 조립한다 (#386). 아니면 `None`.
-
-    신원(서버·과제 id·에이전트 id)은 번들의 `submit.sh`에서만 읽는다 — 지어내지 않는다
-    (`task_loader.read_submit_metadata`). 키는 환경변수에서 받는다. 어느 하나가 없으면
-    `_ORACLE_ERROR`를 돌려 호출자가 exit 2로 멈추게 한다 — 제출하려 한 run이 조용히 미제출로
-    끝나면 「0건 제출」이 설정 오류와 구별되지 않는다(§0).
+    `Oracle | None`(정상)과 `isinstance`로 갈린다 - 반환 표기가 `object`로 뭉개지지 않는다.
     """
+
+
+# 설정 오류의 표식. `None`은 「제출 안 함」(정상)이라 그것과 섞으면 설정 오류가 조용히 미제출로
+# 떨어진다.
+_ORACLE_ERROR = _OracleRefused()
+
+
+def _refuse_oracle(message: str) -> _OracleRefused:
+    """`[ERROR]`를 stderr에 찍고 `_ORACLE_ERROR`를 돌려준다 - 호출자가 exit 2로 멈춘다."""
+    print(f"[ERROR] {message}", file=sys.stderr)
+    return _ORACLE_ERROR
+
+
+def _oracle_server_problem(server: str) -> str | None:
+    """`--oracle-server` 값이 클라이언트가 보낼 수 있는 주소가 아니면 그 사유, 맞으면 `None`.
+
+    http/https 주소여야 하고(어댑터가 요청 때 같은 것을 보지만 run 디렉터리를 잡기 **전에** 막는다),
+    호스트가 있어야 하며, 와일드카드 주소(`0.0.0.0`·`::`)와 경로·인증 정보는 안 받는다 -
+    와일드카드는 서버가 bind할 때 쓰는 값이지 클라이언트가 접속할 주소가 아니다(저자도 서버를 그렇게
+    띄우지 말라고 한다, 어댑터 docstring).
+    """
+    try:
+        parts = urllib.parse.urlsplit(server)
+        port_ok = parts.port is None or parts.port > 0
+    except ValueError:
+        return "주소를 읽을 수 없다"
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return "http:// 또는 https://로 시작하는 주소여야 한다"
+    if not port_ok:
+        return "포트가 올바르지 않다"
+    try:
+        wildcard = ipaddress.ip_address(parts.hostname).is_unspecified
+    except ValueError:  # IP가 아닌 호스트 이름
+        wildcard = False
+    if wildcard:
+        return "와일드카드 주소는 접속할 주소가 아니다"
+    if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
+        return "서버 주소에는 경로·질의·인증 정보를 넣지 않는다(스킴://호스트:포트)"
+    return None
+
+
+def _origin(server: str) -> tuple[str, str]:
+    """주소의 (스킴, host:port) - 대소문자와 끝의 `/`를 무시하고 견주려는 키다."""
+    parts = urllib.parse.urlsplit(server)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
+def _oracle_unreachable_reason(spec: RunSpec, config: HarnessConfig) -> str | None:
+    """이 run이 채점기에 **아무것도 못 낸다**면 그 사유, 낼 수 있으면 `None`.
+
+    제출은 8단계 PoV가 만든 PoC에서 나온다. `--dry-run`·낮은 `--stop-after`는 8단계에 안 닿고, pov
+    좌석이 없는 프로필은 PoV가 안 돈다.
+    """
+    if spec.stop_at()[0] < Stage.VALIDATE:
+        return "이 run은 8단계에 닿지 않는다(--dry-run 또는 --stop-after가 8 미만)"
+    if Role.POV.value not in config.profile.roles:
+        return f"프로필 {config.profile_name}에 pov 좌석이 없어 PoV가 돌지 않는다"
+    return None
+
+
+def _oracle_for(
+    args: argparse.Namespace, *, unreachable: str | None = None
+) -> Oracle | None | _OracleRefused:
+    """`--oracle-submit`이면 채점기를 조립한다 (#386). 설정이 틀리면 `_ORACLE_ERROR`다.
+
+    안 켰으면 `None`(제출 안 함)이다. **서버 주소는 조작자가 정한다**(`--oracle-server`, 기본값
+    없음). 과제 번들은 신뢰 못 하는 소스이고(`task_loader`) 거기서 긁은 주소로 조작자의 API 키를
+    보내면 번들을 만든 쪽이 키를 받는다. 번들의 `submit.sh`에서 읽는 것은 과제 id·에이전트
+    id·체크섬이다(하네스가 다시 만들 수 없는 값이다). **번들이 적은 주소가 조작자의 주소와 다르면
+    거부한다** - 둘 중 하나를 조용히 고르지 않는다. 번들의 주소는 보내는 곳이 아니라 「이 번들이
+    다른 서버용이 아닌가」를 보는 견줌일 뿐이고, 거부는 조작자가 같은 주소를 주거나 번들을 다시
+    만들게 한다(`localhost`와 `127.0.0.1`은 다른 주소로 센다).
+
+    **제출 전에 거절하는 것** - 주소 모양, task_id 모양(마스킹 서버는 미지원,
+    `unsupported_task_id`), 번들의 체크섬이 클라이언트가 보내는 기본 salt로 계산한 값과 다른 것(다른
+    salt로 만든 번들은 서버가 400으로 거부한다), 키 부재. 어느 하나가 걸리면 컨테이너는커녕 요청도
+    안 나간다. 제출하려 한 run이 조용히 미제출로 끝나면 「0건 제출」이 설정 오류와 구별되지
+    않는다(§0).
+
+    `unreachable`은 이 run이 채점기에 **아무것도 못 내는 사유**(`_oracle_unreachable_reason`)다 -
+    있으면 경고만 하고 `None`을 돌려준다. 모델에 안 닿는 run은 막지 않는다는 이 파일의 원칙과 같다:
+    막으면 통과시키려고 값을 지어내게 되고, 제출할 게 없는 run에 키·번들 검사를 걸 근거가 없다.
+    """
+    server = getattr(args, "oracle_server", None)
     if not getattr(args, "oracle_submit", False):
+        if server is not None:
+            return _refuse_oracle("--oracle-server는 --oracle-submit와 함께만 쓴다")
+        return None
+    if unreachable is not None:
+        print(
+            f"[WARN ] --oracle-submit이지만 {unreachable} - 아무것도 제출하지 않는다",
+            file=sys.stderr,
+        )
         return None
     if args.task_dir is None:
-        print("[ERROR] --oracle-submit은 --task-dir와 함께만 쓴다", file=sys.stderr)
-        return _ORACLE_ERROR
+        return _refuse_oracle("--oracle-submit은 --task-dir와 함께만 쓴다")
+    if server is None:
+        return _refuse_oracle(
+            "--oracle-submit에는 --oracle-server가 필요하다 - 채점기 주소는 조작자가 정한다. "
+            "API 키가 가는 곳이라 과제 번들(submit.sh)이 가리키는 주소로는 보내지 않고, "
+            "기본 주소도 없다"
+        )
+    problem = _oracle_server_problem(server)
+    if problem is not None:
+        return _refuse_oracle(f"--oracle-server {server!r}: {problem}")
     metadata = read_submit_metadata(args.task_dir)
     if metadata is None:
-        print(
-            f"[ERROR] 과제에서 채점기 신원을 못 읽었다 — {args.task_dir}/{SUBMIT_SCRIPT_NAME}의 "
-            "서버 주소와 metadata(task_id·agent_id)가 필요하다",
-            file=sys.stderr,
+        return _refuse_oracle(
+            f"과제에서 채점기 신원을 못 읽었다 - {args.task_dir}/{SUBMIT_SCRIPT_NAME}에 "
+            "서버 주소와 metadata(task_id·agent_id·checksum, 모두 비어 있지 않은 문자열)가 필요하다"
         )
-        return _ORACLE_ERROR
+    problem = unsupported_task_id(metadata.task_id)
+    if problem is not None:
+        return _refuse_oracle(
+            f"과제 번들의 task_id를 지원하지 않는다: {problem}. 아무것도 제출하지 않았다"
+        )
+    if checksum(metadata.task_id, metadata.agent_id) != metadata.checksum:
+        return _refuse_oracle(
+            "과제 번들의 checksum이 기본 salt로 계산한 값과 다르다 - 이 클라이언트는 기본 salt만 "
+            "보낸다(다른 salt로 만든 번들은 서버가 400 Invalid checksum으로 거부한다). 아무것도 "
+            "제출하지 않았다"
+        )
+    if _origin(metadata.server) != _origin(server):
+        return _refuse_oracle(
+            f"과제 번들(submit.sh)의 서버 주소 {metadata.server!r}가 "
+            f"--oracle-server {server!r}와 다르다 - 같은 주소를 주거나 그 서버용으로 번들을 다시 "
+            "만든다. 번들의 주소로는 보내지 않는다"
+        )
     api_key = os.environ.get(_ORACLE_KEY_ENV, "")
     if not api_key:
-        print(
-            f"[ERROR] {_ORACLE_KEY_ENV}가 비어 있다 — 채점기의 private 경로"
-            "(submit-fix·query-poc)에 필요하다",
-            file=sys.stderr,
+        return _refuse_oracle(
+            f"{_ORACLE_KEY_ENV}가 비어 있다 - "
+            "채점기의 private 경로(submit-fix·query-poc)에 필요하다"
         )
-        return _ORACLE_ERROR
+    target = server.rstrip("/")
+    print(
+        f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
+        f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. 후보마다 vul 다리만 보낸다. "
+        "fix 다리와 판정 조회는 vul 제출이 성공한 후보가 하나뿐일 때만 그 하나에 보낸다 - "
+        "둘 이상이면 고르는 규칙이 정해지지 않아 보내지 않는다"
+    )
     return TaskOracle(
-        server=metadata.server,
+        server=target,
         task_id=metadata.task_id,
         agent_id=metadata.agent_id,
         api_key=api_key,
@@ -632,8 +752,8 @@ def execute(
         slices_path=spec.slices_path,
         # 교대 프로필의 장비 파일을 고른다(ADR 0012 Phase 6.5). 없으면 교대 콜러블을 안 만든다.
         device=spec.device,
-        # 채점기(#386). `None`이면 최종 PoC를 제출하지 않는다 — 과제 번들을 아는 것은 `run()`이라
-        # factory가 만들지 않고 받는다.
+        # 채점기(#386). `None`이면 PoC를 제출하지 않는다 — 서버 주소와 과제 번들을 아는 것은
+        # `run()`이라 factory가 만들지 않고 받는다.
         oracle=oracle,
     )
     result = run_pipeline(
@@ -909,7 +1029,8 @@ def run(args: argparse.Namespace) -> int:
     # `--target`·`--description-file`을 따로 주는 절차였다. 이 분기는 `safe_extract`와
     # `read_description`을 **따로** 부른다(이유는 아래 — 설명은 해제보다 먼저 읽는다).
     # ⚠ 그래서 둘을 묶은 `load_task`의 프로덕션 호출처는 **지금도 0건**이다 — `load_task`에만 거는
-    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다.
+    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다 — 정답 자료 가드
+    # (`check_task_dir`)가 그렇게 걸려 있다(아래 아카이브 확인 바로 뒤).
     task_description: str | None = None
     #
     # ⚠ **여기서는 검증만 하고 해제는 `_claim_run_dir` 직전에 한다.** 처음 판은 여기서 바로
@@ -969,6 +1090,27 @@ def run(args: argparse.Namespace) -> int:
             # 쓸 이유도 없다.
             print(
                 f"[ERROR] 과제에 {REPO_ARCHIVE_NAME}가 없다: {args.task_dir}", file=sys.stderr
+            )
+            return 2
+        # 🔴 **정답 자료 가드는 이 분기에도 따로 건다**(위 ⚠ — 이 분기는 `load_task`를 안 거친다).
+        # 아카이브 확인 **뒤**, 설명을 읽거나 무엇을 쓰기 **앞**이다 — 허용 목록(`TASK_FILES`) 밖
+        # 항목이 하나라도 있으면(`patch.diff`·`error.txt`·`repo-fix.tar.gz` 같은 정답 자료가 번들
+        # 옆에 떨어진 경우) 시작하지 않고 작업 디렉터리도 run 디렉터리도 만들지 않는다. **여기서
+        # 직접 잡는다** — 아래 `safe_extract`의 `except`는 이 호출을 감싸지 않고, 그쪽 문구(「앞
+        # 멤버가 남았을 수 있다」)는 아직 아무것도 안 풀었는데 틀리다. `OSError`(목록을 못 읽음 —
+        # 권한)도 같이 막는다: 검사를 못 했으면 통과가 아니라 거부다. ⚠ `--target`을 직접 주는
+        # 경로는 이 검사 밖이다 — 임의의 소스 트리를 받는 경로라 `patch.diff` 같은 이름이 정상
+        # 파일일 수 있다(손으로 푼 번들의 정답 자료는 그쪽에서 못 막는다).
+        try:
+            check_task_dir(args.task_dir)
+        except UnexpectedTaskFilesError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())
+            print(
+                f"[ERROR] 과제 디렉터리를 읽을 수 없어 정답 자료 검사를 못 했다: {detail}",
+                file=sys.stderr,
             )
             return 2
         # 해제 트리가 target이다 — **경로는 지금 알 수 있다**(풀기 전에도).
@@ -1102,9 +1244,11 @@ def run(args: argparse.Namespace) -> int:
             return 2
     # 채점기 설정은 **해제 앞**에서 본다 (#386) — 순수 검사(파일·환경변수 읽기)이고, 뒤에 두면
     # 설정 오류가 작업 디렉터리를 더럽혀 오타를 고친 재시도가 「비어 있지 않다」로 거부된다
-    # (#397 리뷰 MEDIUM-1과 같은 배치 이유).
-    oracle = _oracle_for(args)
-    if oracle is _ORACLE_ERROR:
+    # (#397 리뷰 MEDIUM-1과 같은 배치 이유). **8단계에 못 닿는 run은 이 검사를 건너뛴다** — 낼 PoC가
+    # 없는 run에 키·번들 검사를 걸 근거가 없고, 막으면 통과시키려고 값을 지어내게 된다(위
+    # `reaches_model` 가드와 같은 판단). 건너뛰는 사실은 경고로 알린다.
+    oracle = _oracle_for(args, unreachable=_oracle_unreachable_reason(spec, config))
+    if isinstance(oracle, _OracleRefused):
         return 2
     # 🔴 **과제 아카이브는 여기서 푼다** — 모든 게이트 **뒤**, 되돌릴 수 없는 첫
     # 쓰기(`_claim_run_dir`) **앞**이다. 앞에서 풀면 뒤의 게이트가 exit 2를 낼 때 작업 디렉터리에
@@ -1364,7 +1508,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-dir",
         type=Path,
         default=None,
-        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt). 주면 아카이브를 "
+        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt. 저자 생성기가 더하는 "
+        "README.md·submit.sh도 받는다). 그 밖의 항목이 하나라도 있으면(정답 자료 patch.diff·"
+        "error.txt·repo-fix.tar.gz 포함) 풀기 전에 거부한다(exit 2). 주면 아카이브를 "
         "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
         "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
@@ -1374,10 +1520,23 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--oracle-submit",
         action="store_true",
-        help="8단계가 낸 최종 PoC를 과제 번들의 채점기(oracle)에 제출해 판정을 기록한다(#386). "
-        "--task-dir와 함께만 쓴다 — 서버·과제 id·에이전트 id를 그 번들의 submit.sh에서 읽는다. "
-        "키는 환경변수 CYBERGYM_API_KEY. 판정은 trace oracle_verdict로만 남고 내부 등급(E4)을 "
-        "올리지 않는다",
+        help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
+        "fix 다리와 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 성공한 후보가 "
+        "하나뿐이면 그 하나에 돌고, 둘 이상이면 고르는 규칙이 아직 정해지지 않아 안 돈다"
+        "(oracle_final은 status none, reason policy_undecided). "
+        "--task-dir와 --oracle-server와 함께만 쓴다. 과제 id·에이전트 id는 번들의 submit.sh에서 "
+        "읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
+        "{run_dir}/oracle/verdict.json에 남고 내부 등급(E4)을 올리지 않는다. 8단계에 닿지 않는 run"
+        "(--dry-run, 8 미만의 --stop-after, pov 좌석이 없는 프로필)에서는 아무것도 제출하지 않고 "
+        "경고만 한다",
+    )
+    run_cmd.add_argument(
+        "--oracle-server",
+        default=None,
+        help="채점기 서버 주소(스킴://호스트:포트). 기본값이 없다 - --oracle-submit이면 필수다. "
+        "조작자가 정한다: API 키가 가는 곳이라 과제 번들(submit.sh)이 가리키는 주소로는 보내지 "
+        "않고, 번들의 주소와 다르면 거부한다(exit 2). 지원하는 과제 id는 마스킹을 안 한 서버의 "
+        "실제 id(예 arvo:1065)뿐이다",
     )
     run_cmd.add_argument(
         "--task-work-dir",

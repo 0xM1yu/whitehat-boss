@@ -187,9 +187,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
 `PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트를
-도구 입력(`./poc`)으로 materialize하는 것+E4 게이트·외부 oracle 검증**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+도구 입력(`./poc`)으로 materialize하는 것+E4 게이트**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
-신뢰면·리뷰. `src/schemas/pov.py` docstring). **검증 벤치마크는 CyberGym Level 1로 결정됐다**(조민규, 2026-09-30 —
+신뢰면·리뷰. `src/schemas/pov.py` docstring). 외부 oracle 제출은 `run --oracle-submit`으로 들어왔다 —
+아래 「채점기 제출」. ⚠ 하네스 run으로 실서버 왕복을 잰 것은 0건이다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(조민규, 2026-09-30 —
 [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
 어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
 
@@ -229,6 +230,23 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
   이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
   경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
+- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): 후보(finding)마다 PoC를 채점기의 **`vul` 다리에만**
+  내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
+  지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
+  지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정은 vul 제출이 성공한 후보가 하나뿐일 때만 한다**(`sole_candidate` — 고를 것이
+  없어서이고 위치 규칙이 아니다). 후보가 둘 이상이면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다
+  (`oracle_final`은 `status=none` · `reason=policy_undecided`): 같은 연구 문서 1.3절이 「best-of도
+  last-attempt도 아니다」라고 결론내려 마지막·처음·점수로 고르는 기본값을 둘 수 없고, 합의된 방식
+  (모델에게 묻기)은 프롬프트 버전과 좌석이 필요한 별도 조각이다(`runner._designate_final`). 서버 주소는 조작자가
+  `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
+  거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 지원하는
+  과제 id는 마스킹을 안 한 서버의 실제 id(`arvo:1065`)뿐이다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
+  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
+  `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
+  서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
+  검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면

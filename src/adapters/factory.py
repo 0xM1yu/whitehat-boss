@@ -218,9 +218,10 @@ class Deps:
     # `model_swap.swap_runner`로 만든다. 기본 `None`("교대 없음")이 이 필드 없이 조립된 `Deps`의
     # 옛 동작이다 — `resolve_requests`와 같은 자리.
     swap_to: SwapTo | None = None
-    # 채점기(oracle) 클라이언트 (#386). `build_deps`는 꽂지 않는다 — 과제 신원(서버·task_id·
-    # agent_id)은 과제 번들에서 오고 그것을 아는 것은 CLI다(`cli._oracle_for`). 기본 `None`이
-    # 「제출 안 함」이고 그것이 이 필드 없이 조립된 `Deps`의 옛 동작이다.
+    # 채점기(oracle) 클라이언트 (#386). `build_deps`는 **만들지 않고 받아서 싣는다** — 서버 주소는
+    # 조작자(`--oracle-server`)가, 과제 id는 과제 번들이 정하고 그것을 아는 것은 CLI다
+    # (`cli._oracle_for`). 기본 `None`이 「제출 안 함」이고 그것이 이 필드 없이 조립된 `Deps`의 옛
+    # 동작이다.
     oracle: Oracle | None = None
 
 
@@ -529,7 +530,7 @@ def build_deps(
         return fields
 
     return Deps(
-        # 채점기(#386) — factory가 만들지 않고 받는다. 과제 번들의 신원을 아는 것은 CLI다.
+        # 채점기(#386) — factory가 만들지 않고 받는다. 서버 주소와 과제 신원을 아는 것은 CLI다.
         oracle=oracle,
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
