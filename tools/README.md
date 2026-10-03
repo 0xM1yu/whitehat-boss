@@ -64,6 +64,10 @@ digest면 같은 도구·같은 룰로 돈 것이다.
 docker build -t harness-tools:v3 tools/harness-tools/
 ```
 
+**#304(index-v3) 전에 빌드한 v3 이미지는 다시 빌드한다** — 인덱서가 이미지에 구워지므로 낡은 이미지는
+index-v2를 내고, `index_graph`의 v3 조회(`writes_of`·`fn_pointer_targets` 등)가 `None`이 된다.
+태그는 그대로라 run끼리는 `tool_images` digest로 가른다(Dockerfile 머리 주석). sif도 같다.
+
 **v2가 있는 장비에서 v3를 만들 때는 룰셋 커밋을 v2와 맞춘다** — `SEMGREP_RULES_COMMIT`의 기본값이
 브랜치(`develop`)라 그냥 빌드하면 gdb만 더하려던 이미지에서 정적 신호까지 움직인다. v1·v2 이미지는
 지우지 않는다(지난 run 매니페스트의 `tool_images`가 그 digest를 적었다).
