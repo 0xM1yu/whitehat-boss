@@ -89,7 +89,7 @@ A missing or empty body is metadata only, not a clean result.
 
 1. Use a body only for facts its retained text explicitly supports; do not join separated fragments into a continuous execution or source path.
 2. What a partial body does not show is unknown, not absent: a missing guard, caller, connection, or result does not prove it is absent from the full evidence.
-3. If deciding the candidate requires an unshown fact and SOURCE and FACTS do not establish it,use the issued missing-evidence ID; use `reachability_unknown` for a missing reachability fact or path connection. Otherwise decide; truncation alone is not a reason to defer.
+3. If deciding the candidate requires an unshown fact and SOURCE and FACTS do not establish it, use the issued missing-evidence ID; use `reachability_unknown` for a missing reachability fact or path connection. Otherwise decide; truncation alone is not a reason to defer.
 
 ## FACTS is authoritative for identifiers
 
