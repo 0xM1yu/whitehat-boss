@@ -541,11 +541,15 @@ def test_priority_case_a_ranks_the_listed_files_first_and_exempts_them_from_the_
     # the list: sorted (so the text does not depend on set order), rebuilt at run time, and an
     # exact set -- `prioritize()` matches the normalized file string exactly, not a suffix
     assert 'val prioFiles = List("a.c\\nb.c").mkString.split("\\n").toSet' in lines
-    # c2cpg may name a file absolute or `./`-led: strip the repo prefix the way context_query does
-    assert (
+    # c2cpg may name a file absolute or `./`-led: strip the repo prefix the way context_query does.
+    # The two lines are pinned as ONE definition -- `prioFiles.contains(<the normalized name>)` and
+    # nothing else -- so a looser test (suffix, basename) next to the exact one is not a survivor
+    # (a mutant that added `|| prioFiles.exists(p => m.filename.endsWith(p))` passed the first pin).
+    define = lines.index("def isPrio(m: nodes.Method): Boolean = prioFiles.contains(")
+    assert lines[define + 1] == (
         "m.filename.replace('\\\\', '/').stripPrefix(\"/work/repo/\").stripPrefix(\"./\"))"
-        in lines
     )
+    assert lines[define + 2].startswith("val api = ")  # nothing continues the definition
     # admission: the priority test comes first so a listed method never pays the call search
     first = lines.index(".filter(m =>")
     assert lines[first + 1] == (
