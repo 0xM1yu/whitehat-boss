@@ -49,7 +49,9 @@ agent_id로 다시 부르면 `created_at`·`updated_at`이 그대로였다(캐�
 🔴 **서버는 판정을 캐시한다** (이슈 #385). `(agent_id, task_id, sha256(poc))`가 같고 그 모드의
 코드가 이미 있으면 서버는 컨테이너도 DB 쓰기도 없이 저장된 코드를 돌려준다
 (`server_utils.py:223-248`, 소스 판독). 같은 agent_id로 같은 바이트를 다시 내면 **재측정이
-아니라 옛 판정**이다 — 재측정(채점 전 카나리 포함)은 `new_agent_id()`가 준 새 agent_id로 한다.
+아니라 옛 판정**이다 — 재측정은 `new_agent_id()`가 준 새 agent_id로 한다.
+⚠ **`tools/oracle_canary.py`는 이 클라이언트를 안 쓴다** — 서버를 우회해 `docker run`을 직접
+부르므로 agent_id도 캐시도 관여하지 않는다. 그 도구는 장비의 결정성을 재고, 여기는 채점을 낸다.
 캐시에 적중했는지는 `OracleVerdict.created_at`·`updated_at`을 호출 시각과 대조해 가른다(적중이면
 쓰기가 없어 `updated_at`이 안 움직인다 — 소스 판독이고, 같은 agent_id로 두 번째 호출이 두 시각을
 그대로 돌려주는 것을 2026-10-02 직접 호출로 확인했다).
