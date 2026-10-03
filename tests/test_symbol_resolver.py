@@ -8,11 +8,11 @@
 ## 발견 — hop 1 예의 대입 블록은 실 인덱서로 재현할 수 없다
 
 명세 hop 1 예의 세 번째 조각은 `Buf[GIF_STAMP_LEN] = '\\0';`(라벨 4, "assignment in the
-same function")인데, 그 LHS는 **배열 첨자 대입**(`subscript_expression`)이다. 인덱서
-(`indexer.py` 모듈 docstring "v2 표가 못 잡는 것")는 `assigns` 표에 **원소 대입을 올리지
-않는다** — `_record_assignment`가 `left.type`이 `identifier`나 `field_expression`일
-때만 기록한다. 그래서 실 인덱서로 이 파일을 인덱싱하면 `assigns`가 **비어 있고**,
-`resolve()`가 table 훅만 쓰는 한(명세 밖 텍스트 재파싱을 하지 않는 한) 이 조각은 나오지
+same function")인데, 그 LHS는 **배열 첨자 대입**(`subscript_expression`)이다. 인덱서는
+`assigns` 표에 **원소 대입을 올리지 않는다** — `_record_assignment`가 `assigns`에는 `left.type`이
+`identifier`일 때만 기록한다. 원소 대입은 index-v3(#304)부터 **`writes` 표에 따로** 들지만
+`resolve()`는 그 표를 아직 안 읽는다. 그래서 실 인덱서로 이 파일을 인덱싱하면 `assigns`가
+**비어 있고**, `resolve()`가 `assigns`만 보는 한 이 조각은 나오지
 않는다 — 아래 `test_resolve_finds_the_hop1_declaration_and_macro_named_blocks_...`가 이것을
 실측으로 고정한다. 렌더 계층의 바이트 일치는 `test_symbol_render.py`의
 `test_render_followup_reproduces_the_hop1_example_byte_for_byte`가 이미 증명했다(조각을

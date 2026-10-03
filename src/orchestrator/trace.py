@@ -231,16 +231,26 @@ class EventKind(StrEnum):
     # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
     # `subject_id`는 후보다. `auditor_callee_hops`가 1이면(#349 (a)) `callees`(붙인 피호출 함수 수 —
     # `functions`에도 들어간다)·`callees_dropped`(피호출 함수 상한·전체 상한에 걸려 안 붙인 수)가
-    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. `auditor_definitions`가
-    # 1이면 `definitions`·`definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 —
-    # `functions`에는 안 든다)가 같은 방식으로 더 실린다.
+    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. 같은 조건에서
+    # `wrapper_callees`(`callees` 중 래퍼 너머로 붙인 수)·`alias_callees`(매크로 별칭이 부르는
+    # 함수로 붙인 수)도 실린다(C4). `auditor_definitions`가 1이면 `definitions`·
+    # `definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 — `functions`에는 안
+    # 든다)와 `alias_definitions`
+    # (`definitions` 중 별칭 라운드로 붙인 수)가 같은 방식으로 더 실린다.
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
     # `entry_omitted_lines`(줄이며 뺀 줄 수 — 넘었어도 슬라이스 줄이 함수 전체에 퍼지면 0)가 더
-    # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
-    # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
-    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
+    # 실린다. `anchor_chars`는 줄이기 전 크기다. 피호출 단계가 켜졌고 `auditor_indirect_callees`가
+    # 1이면 `indirect_callees`(`callees` 중 필드 경유 호출 후보로 붙인 수)·`indirect_skipped`(아직
+    # 안 실린 후보가 너무 많아 건너뛴 필드 경유 호출 수 — 필드 하나가 하나)가,
+    # `auditor_write_sites`가 양수면 `write_windows`·`write_windows_dropped`(붙인·상한에 못 붙인
+    # 쓰기 지점 창 수 — `functions`에는 안 든다)·`write_sites_found`(창을 붙일 후보 쓰기 지점 수
+    # — 같은 줄은 한 번,
+    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)가 더 실린다(#304).
+    # `auditor_caller_lines`가 양수면
+    # `callers`·`callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·
+    # `call_sites`(찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
@@ -250,6 +260,14 @@ class EventKind(StrEnum):
     # **캡슐이 이것을 못 센다.** EXPANDED 캡슐의 `target_function`은 entry 함수만 세고 그것도
     # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다
     # (`retrieval_truncated`가 막는 것과 같은 오독이다).
+    #
+    # `auditor_source_gate`가 1이면 `gate_reasons`(`source_gate.reasons` — 사유 코드를 쉼표로 이은
+    # 문자열: 슬라이서가 낸 분석 사실의 유무(`ANALYSIS_UNKNOWN`)·절단·경계·싱크 cap, 앵커가
+    # 창인가, `uncovered_lines`·`dropped`·`callees_dropped`·`callers_dropped`·
+    # `definitions_dropped`에서 낸다)가 더 실린다. **빈 문자열은 「나열한 검사가 하나도 안
+    # 걸렸다」이고 필드가 없는 것은 「게이트 꺼짐」이다** — 「SOURCE가 완전하다」는 뜻이 아니다
+    # (정의·피호출·호출자 창을 안 켠 run은 그 검사가 안 돈다). 분석 사실이 없는 옛 슬라이스는 빈
+    # 문자열이 아니라 `ANALYSIS_UNKNOWN`이다. 관측 전용이라 Auditor 입력은 안 바뀐다.
     #
     # **슬라이스 없는 run은 0건이다** — 그 run의 Auditor는 캡슐 대상 하나를 그대로 읽는다.
     AUDITOR_SOURCE = "auditor_source"
