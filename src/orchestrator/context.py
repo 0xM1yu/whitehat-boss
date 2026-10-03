@@ -42,13 +42,14 @@ from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import EventKind, StageSpan, TraceValue, TraceWriter
 from src.schemas.candidate import scout_member_of
-from src.schemas.common import Location, ProducedBy
+from src.schemas.common import CallableDef, Location, ProducedBy
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import RunRecord
+from src.schemas.stores import StoreSite, StoreTarget
 
 # 도구 실행은 토큰을 쓰지 않는다. 매번 만들지 않도록 상수로 둔다.
 _NO_TOKENS = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
@@ -138,19 +139,39 @@ class RunContext:
     symbols_for: Callable[[str], list[Location] | None] = field(
         default=lambda _file: None
     )
+    # 아래 셋(`callees_of`·`call_sites_of`·`definitions_of`)은 **`demote_nonproduct` 키워드**를
+    # 받는다(기본 꺼짐 — `GraphIndex.definitions_of` docstring). 러너가 `auditor_definitions`를 켠
+    # run에서만 켠다.
+    #
     # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
     # 함수 본문을 붙이는 데 쓴다. `symbols_for`와 같은 성격 — 미배선 기본값 `None`("그래프 없음")은
     # 붙일 것이 없다는 뜻이고 `SOURCE`는 옛 모양 그대로다.
-    callees_of: Callable[[Location], list[Location] | None] = field(
-        default=lambda _target: None
+    callees_of: Callable[..., list[Location] | None] = field(
+        default=lambda _target, **_kw: None
     )
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 미배선 `None`이면 호출자 창을 안 붙인다.
-    call_sites_of: Callable[[Location], list[Location] | None] = field(
-        default=lambda _target: None
+    call_sites_of: Callable[..., list[Location] | None] = field(
+        default=lambda _target, **_kw: None
     )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.
-    definitions_of: Callable[[Iterable[str], str], list[Location] | None] = field(
+    definitions_of: Callable[..., list[Location] | None] = field(
+        default=lambda _names, _file, **_kw: None
+    )
+    # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 이것을 뺀다
+    # (`runner._auditor_source`). 미배선 `None`("v2 표 없음")은 뺄 것이 없다는 뜻이다.
+    locals_of: Callable[[str, str], frozenset[str] | None] = field(
+        default=lambda _file, _func: None
+    )
+    # 이름(필드·변수) → 그 쓰기 지점(`auditor_stores`). 미배선 `None`이면 `STORES` 블록이 없다 —
+    # `definitions_of`와 같은 성격.
+    stores_of: Callable[[StoreTarget], list[StoreSite] | None] = field(
+        default=lambda _target: None
+    )
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치) — Auditor
+    # `SOURCE`의 닫힘(`auditor_closure`)이 쓴다. 미배선 `None`이면 닫힘이 일할 수 없고 이벤트가
+    # 그것을 밝힌다(`closure_lookup`). 위 셋의 `demote_nonproduct`는 받지 않는다.
+    callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = field(
         default=lambda _names, _file: None
     )
     # 역할 → 그 역할 모델의 실 토크나이저 카운터 (#96 (b)). `None`이면 기본 카운터
@@ -175,8 +196,10 @@ class RunContext:
     # 그대로다(사이드카 키를 **아예** 안 늘린다).
     pocs: PocLog | None = None
     # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 이 run에 resolver가 없다
-    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 노드는
-    # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
+    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 부르는 곳은
+    # 둘이다 — Scout 좌석 집계 루프(러너, #95)와 **Auditor 도구 루프의 `lookup`**
+    # (`nodes/auditor._lookup`, 이슈 #419 — 훅만 받고 어댑터는 import하지 않는다). `None`이면
+    # 후자는 정지하지 않고 「조회가 없다」는 관측을 모델에게 준다.
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
     # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 후보마다 `vul`

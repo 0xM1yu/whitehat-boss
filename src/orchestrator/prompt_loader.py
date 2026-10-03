@@ -27,10 +27,23 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 
 `config.AUDITOR_SOURCE_OPTIONS` 중 그 프롬프트의 입력 서술이 다루는 키의 목록이다(없으면 빈
 목록 — 결정 1-b의 SOURCE만 서술한다). 옵션을 켜면 SOURCE 모양이 바뀌는데(피호출 본문·정의·
-호출자 창이 뒤에 붙고, entry 함수 뒤에 sink 앞 가드 목록이 붙고, 상한이 토큰이 되고, entry
-함수가 줄어든다) 프롬프트가 옛 모양을 말하면
-모델이 받는 서술이 거짓이 된다. 켜진 옵션이 이 목록에 없으면 `cli`가 run을 막는다(#351 리뷰
+닫힘 블록·호출자 창이 뒤에 붙고, entry 함수 뒤에 sink 앞 가드 목록이 붙고, 상한이 토큰이 되고,
+entry 함수가 줄어든다) 프롬프트가 옛 모양을 말하면 모델이 받는 서술이 거짓이 된다. 켜진 옵션이
+이 목록에 없으면 `cli`가 run을 막는다(#351 리뷰
 MEDIUM-2). **모르는 키는 거절한다** — 오타 하나가 그 가드를 조용히 끈다(`input`과 같은 판단).
+
+## meta의 `tools` — 그 프롬프트 판이 모델에게 광고하는 도구
+
+`PROMPT_TOOL_NAMES` 중 그 프롬프트의 prefix가 「쓸 수 있는 도구」로 서술하는 이름의 목록이다
+(없으면 빈 목록 — 도구를 안 쓰는 한 방 프롬프트). **스키마가 허용해도 프롬프트가 광고하지
+않으면 모델은 그 도구를 영영 안 쓴다** — PR #327이 `gdb`를 `TOOL_KINDS`에 넣었는데 pov v2
+prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그 줄을 다시 쓸 때까지 모델이
+`gdb`를 부를 길이 없었다(`prompts/pov/v3/meta.yaml`의 「v2와 다른 다섯」 ①).
+
+**버전 이름으로 분기하지 않는 이유.** 노드마다 있는 `_CONTENT_AWARE_VERSIONS`가 이름 목록이라
+판이 하나 늘 때마다 그 집합을 고쳐야 하고, 잊으면 새 판에서 그 기능이 조용히 꺼진다. 선언이
+프롬프트 쪽에 있으면 v6→v7→v8이 코드 변경 없이 돈다. **모르는 이름은 거절한다** —
+`input`·`source_options`와 같은 판단이고, 오타 하나가 그 가드를 조용히 끈다.
 
 ## body의 마지막 ```json 펜스
 
@@ -101,6 +114,22 @@ class PromptError(Exception):
 # meta.yaml의 `input`이 가질 수 있는 값(모듈 docstring 「meta의 `input`」).
 INPUT_KINDS = ("source", "slice")
 
+# meta.yaml의 `tools`가 가질 수 있는 값(모듈 docstring 「meta의 `tools`」).
+# **`adapters/fake_tools.TOOL_KINDS`의 키와 같은 집합을 여기 복제한다** — 그쪽은 어댑터라
+# import 할 수 없다(engineering-guide.md §3 · CI의
+# `test_orchestrator_source_has_no_adapter_import`).
+# `nodes/auditor.CALLERS_SECTION` ↔ `index_graph.GRAPH_SECTION_KINDS`와 같은 이중화다.
+# 갈리면 조용히 어긋난다 — 저쪽에만 있는 도구는 프롬프트가 광고할 길이 없고(위 docstring의
+# pov v2 ↔ gdb), 여기에만 있는 이름은 로더가 통과시킨 뒤 실행 시점에 `tool_policy 밖 도구`로
+# 떨어진다. 그래서 두 값의 대조는 테스트가 든다 — `tests/test_auditor_loop.py`의
+# `test_prompt_tool_names_mirror_the_tool_whitelist`가 `TOOL_KINDS`와, 스키마
+# Literal(`AuditorAction.tool`) 은 `TOOL_KINDS`에서 `index`를 뺀 집합과 대조한다.
+# ⚠ **로더는 이 집합 전체를 통과시키지만 Auditor 좌석이 받는 것은 `index`를 뺀 여섯이다** —
+# `schemas/auditor.AUDITOR_TOOLS`. 그 어긋남(`tools: [index]`로 켜면 광고하는 도구를 문법이
+# 거절한다)은 로더가 아니라 `nodes/auditor.loop_problem`(cli run·doctor와 노드)이 막는다 — 로더는
+# 역할을 모른다.
+PROMPT_TOOL_NAMES = ("semgrep", "clang-tidy", "build", "asan", "gdb", "poc", "index")
+
 
 @dataclass(frozen=True)
 class PromptTemplate:
@@ -115,6 +144,9 @@ class PromptTemplate:
     input: str
     # 이 프롬프트가 서술하는 Auditor `SOURCE` 옵션(모듈 docstring 「meta의 `source_options`」).
     source_options: tuple[str, ...] = ()
+    # 이 프롬프트 판이 모델에게 광고하는 도구(모듈 docstring 「meta의 `tools`」).
+    # `PROMPT_TOOL_NAMES`의 부분집합이고, 비면 도구를 안 쓰는 판이다.
+    tools: tuple[str, ...] = ()
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -181,6 +213,13 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
             f"{list(AUDITOR_SOURCE_OPTIONS)} 중에서 고른다"
         )
 
+    tools = meta.get("tools", [])
+    if not isinstance(tools, list) or not all(t in PROMPT_TOOL_NAMES for t in tools):
+        raise PromptError(
+            f"{directory}/meta.yaml의 tools {tools!r}에 모르는 값이 있다 — "
+            f"{list(PROMPT_TOOL_NAMES)} 중에서 고른다"
+        )
+
     return PromptTemplate(
         role=role,
         version=version,
@@ -189,6 +228,7 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
         output_schema=output_schema,
         input=input_kind,
         source_options=tuple(source_options),
+        tools=tuple(tools),
     )
 
 
