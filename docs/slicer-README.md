@@ -311,9 +311,11 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 
 ⏵ **케이스 순서** -> `--case-order {ab,ba}`(기본 `ab`)는 후보를 자르는 순서의 첫 열쇠를 정한다. 후보 정렬 키의 첫 칸이 case라서(`slicer_candidates.collect`)
 `ab`(지금까지의 순서)는 **Case A 전부 → Case B 전부**, `ba`는 **Case B 전부 → Case A 전부**다. 각 case 안의 순서(파일·줄·심볼·selector)는 그대로다.
+⚠ `--priority-files`를 같이 주면 이 순서는 **층마다** 성립한다 -> 우선 파일 층 안에서 A → B, 그다음 나머지 층 안에서 A → B(`ab` 기준 · 아래 「`--priority-files`와 같이 주면」).
 **후보 집합은 그대로고 처리 순서가 바뀐다. 그 순서로 ID를 새로 매기므로 ID·`slices[]` 순서·`absorbed`·export 파일 이름이 같이 바뀐다(아래 「바뀌는 것」).
 끊기거나(`slice_sharded.py --wall-seconds`·kill) poison 연속(`POISON_STOP_STREAK`)이 나면 어느 후보가 degraded로 남는지도 순서에 따라 달라진다 -> 그런 표본에서 `ab` run과 `ba` run은 비교하지 않는다**(「우선 파일」과 같은 이유)
-- 왜 있나 -> `ab`에서는 모든 Case A가 모든 Case B보다 먼저 돈다. `slice_sharded.py`의 `--wall-seconds`가 Case A를 자르다 다 쓰이면 Case B는 하나도 못 닿고 degraded(앵커만)로 남는다.
+- 왜 있나 -> `ab`에서는 모든 Case A가 모든 Case B보다 먼저 돈다(`--priority-files`가 없을 때). `slice_sharded.py`의 `--wall-seconds`가 Case A를 자르다 다 쓰이면 Case B는 하나도 못 닿고 degraded(앵커만)로 남는다.
+  `--priority-files`가 있으면 우선 파일 층의 B는 나머지 층의 A보다 먼저 돌므로 그 B는 닿을 수 있다 -> 못 닿는 것은 정렬 순서상 예산이 끊긴 지점 뒤의 후보다.
   `ba`는 그 반대다. **`ba`가 정답 관련 슬라이스를 얼마나 더 온전히 자르는지는 미측정이다 -> 그래서 기본값은 `ab`다**(기본값 변경은 측정 뒤의 별도 변경)
 - 그대로인 것 -> 후보 집합과 수 · `candidate_key`(순서와 무관한 해시) · 온전히 잘린 후보의 슬라이스(클러스터링 전의 줄·코드·분석)
 - ⚠ 클러스터링 뒤의 슬라이스까지 같은 것은 **후보가 10,000개 미만일 때뿐이다** -> `cluster()`는 크기가 같은 슬라이스를 ID **문자열**로 가르고
