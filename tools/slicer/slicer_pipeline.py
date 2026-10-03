@@ -231,7 +231,7 @@ class SlicingStages:
             if old == points:
                 return
 
-    def degraded_slice(self, candidate: dict) -> dict:
+    def degraded_slice(self, candidate: dict, why: str = "poison streak") -> dict:
         """Server-free fallback for a candidate whose flow/backward query failed or was skipped
         after a poison streak. The candidate was already captured (that capture is the recall
         unit -- source/sink is labelled), so keep it in the output with its own coordinates and
@@ -262,7 +262,7 @@ class SlicingStages:
             "analysis_kind": "degraded_anchor_only",
             "analysis": {"lines": [], "flow_count": 0, "truncated": False, "degraded": True},
             "measurement_notes": {
-                "degraded": "flow/backward query failed or was skipped (poison streak); "
+                "degraded": f"flow/backward query failed or was skipped ({why}); "
                 "anchor-only slice, no dataflow context -- --resume re-attempts a full slice"
             },
             "line_provenance": {"data_dependency": [], "candidate_anchor": points, "context": []},
@@ -448,6 +448,7 @@ class SlicingStages:
                 # unprocessed) -- switch to emitting anchor-only degraded slices without querying
                 # the server, so no captured candidate is lost from slices.json.
                 degrade_only = False
+                skipped = 0
                 if self.claims is not None and not self.prepare_only:
                     # A leftover claim file from another run would make every shard find all
                     # candidates taken and slice nothing; refuse it instead (#372 review).
@@ -464,7 +465,10 @@ class SlicingStages:
                             continue
                     elif self.shard and position % self.shard[1] != self.shard[0]:
                         continue
-                    if degrade_only:
+                    # --skip-candidates names candidates this process must not query (a restarted
+                    # shard whose earlier incarnation hit the query deadline on them): the same
+                    # server-free degrade as after a poison streak, for those candidates only.
+                    if degrade_only or candidate["candidate_key"] in self.skip_keys:
                         # A prior run may have already completed this candidate's full slice (a
                         # "complete" checkpoint). That reuse needs NO server, so restore it rather
                         # than degrading a slice we already have -- degrading it would drop the full
@@ -480,9 +484,18 @@ class SlicingStages:
                             self.increment("candidates_unmapped")
                             self.processed += 1
                             continue
-                        self.completed.append(self.degraded_slice(candidate))
+                        self.completed.append(
+                            self.degraded_slice(
+                                candidate, "poison streak" if degrade_only else "--skip-candidates"
+                            )
+                        )
                         self.increment("candidates_degraded")
                         self.processed += 1
+                        if not degrade_only:
+                            skipped += 1
+                            self.event(
+                                "candidate_skipped", candidate_key=candidate["candidate_key"]
+                            )
                         continue
                     try:
                         item = self.slice_candidate(candidate)
@@ -528,6 +541,12 @@ class SlicingStages:
                     self.processed += 1
                     if item is not None:
                         self.completed.append(item)
+                if skipped:
+                    # The degraded slices must not read as a complete (`ok`) result.
+                    self.errors.append(
+                        f"--skip-candidates: {skipped} candidate{'s' if skipped != 1 else ''} "
+                        "not sliced (anchor-only degraded slices); --resume slices them"
+                    )
         except Exception as exc:
             self.errors.append(f"{type(exc).__name__}: {exc}")
         except KeyboardInterrupt:
