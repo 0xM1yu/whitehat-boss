@@ -178,7 +178,10 @@ def test_a_real_serving_profile_cannot_borrow_the_fake_budget(tmp_path: Path) ->
     with pytest.raises(ConfigError) as raised:
         load_config("harness_pool", config_dir=config_dir)
 
-    assert "['gpu_seconds', 'tool_seconds']" in str(raised.value)
+    # ⏵ `dev_fake`의 토큰 둘도 0(= 상한 없음)으로 내려가 **넷이 전부** 0이다. 목록을 그대로
+    # 단언한다 — 키 하나만 거르는 가드가 이 검사를 지나가던 것을 변이로 확인했으므로
+    # 「개별 이름이 아니라 목록을 본다」는 성질은 그대로 유지한다.
+    assert "['gpu_seconds', 'input_tokens', 'output_tokens', 'tool_seconds']" in str(raised.value)
 
 
 def test_a_one_second_limit_on_a_real_profile_loads_and_still_stops_the_run(
