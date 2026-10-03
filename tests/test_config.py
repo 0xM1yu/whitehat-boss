@@ -426,12 +426,16 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v4(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v4`를 고른다(#328 머지 뒤
-    재배선 — 2026-09-29 v1→v3(#256 항목 4)의 다음 판). 되돌리면 이 핀이 빨개진다."""
+def test_the_canonical_auditor_selects_prompt_v6(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v6`를 고른다. 되돌리면 이
+    핀이 빨개진다.
+
+    판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03, #418).
+    v5는 건너뛴다 — v5 배선 PR(#390)이 대여 세션 측정까지 주차돼 있었고, v6가 v5에서 출발해
+    개선만 얹었으므로(`2bb374d`) v5를 거칠 이유가 없다(사용자 결정 2026-10-03)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v4"
+    assert config.model_for("auditor").prompt_template_version == "v6"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
