@@ -30,6 +30,7 @@ from src.schemas.enums import (
     FindingState,
     PathStepKind,
     ReasonCode,
+    ReproOrigin,
     Role,
     Verdict,
 )
@@ -78,6 +79,7 @@ __all__ = [
     "PovSpec",
     "ProducedBy",
     "ReasonCode",
+    "ReproOrigin",
     "ReproSpec",
     "Role",
     "RunRecord",
