@@ -19,7 +19,7 @@ tree-sitter는 **구문만** 본다. 전처리도 타입 해석도 하지 않는
 
 | 놓치는 것 | 왜 |
 | --- | --- |
-| 함수 포인터 호출 `(*fp)(x)` | 대상이 실행 시점에 정해진다 — `unresolved_calls`로 **센다** |
+| 함수 포인터 호출 `(*fp)(x)` | 실행 시점에 정해진다 — `unresolved_calls`로 **센다**(v3 아래) |
 | 매크로로 감싼 호출 | 전처리를 하지 않는다 |
 | 같은 이름의 `static` 함수 | 파일 스코프를 구분하지 않는다 |
 | 낯선 선언자 형태의 이름 | 문법마다 다르다 — `unresolved_symbols`로 **센다** |
@@ -64,13 +64,43 @@ v1 필드(`symbols`·`files`·`skipped`·`unresolved_*`·`parse_errors`)는 그�
 다음 줄 0열이다(`_last_line`) · `parenthesized_declarator`에는 `declarator` 필드가 없다 ·
 프로토타입도 `declaration`이다(`_declared_name`).
 
-v2 표가 못 잡는 것 — 구문만 보기 때문이다:
+## index-v3 — 쓰기 지점과 함수 포인터 바인딩 (#304)
+
+v2 표는 **한 글자도 안 바뀐다**(`assigns`는 여전히 이름 대입만이다). 표 셋을 더했을 뿐인데
+버전을 올린 것은 읽는 쪽이 「이 표가 없다」(v2 산출물)와 「표는 있는데 0건」을 가르기 위해서다 —
+`index_graph.table()`이 v2 문서에서 새 표를 `None`으로 낸다.
+
+| 표 | 모양 |
+| --- | --- |
+| `writes` | 기저 이름 → [{file, line, func, lhs, rhs, op, form, base}] |
+| `fn_bindings` | 필드 → [{file, line, func, fn, form}] — 함수 포인터 필드에 묶인 함수 이름 |
+| `field_calls` | 필드 → [{file, line, caller, args, expr}] — `x->f(...)` 꼴 간접 호출 지점 |
+
+- **`writes`의 `form`** — `element`(`buf[i] = x`) · `deref`(`*p = x`) · `init`(함수 안 선언
+  초기화 `char *q = malloc(n)` — `locals`는 선언 줄만 들고 초기값 유무를 모른다). 이름 대입
+  (`p = malloc(n)`)은 `assigns`에 있으므로 여기 다시 싣지 않는다.
+- **`writes`의 `base`** — 기저가 이름이면 `name`, 필드면 `field`(`vv->buf[i] = x`의 키는 `buf`).
+  둘을 한 키에 섞으므로 읽는 쪽이 가른다. 기저는 첨자·역참조·증감·괄호·캐스트·`+`/`-`의 왼쪽을
+  벗겨 찾는다 — `*(p + 1) = 2`·`*p++ = c`는 `p`다(`+`의 왼쪽이 수 상수면 오른쪽 — `*(1 + p)`).
+  못 찾으면(`*f() = x`) 싣지 않는다.
+- **`fn_bindings`의 `form`** — `assign`(`o->alloc = my_alloc;` · `&my_alloc`) · `designated`
+  (`.free_ctx = sshpam_free_ctx`). 값의 캐스트·괄호는 벗긴다(`(cb_t)my_alloc`).
+  **`fn`이 `functions` 표에 정의로 있는 이름일 때만** 싣는다 — `o->len = n;`이 바인딩으로
+  오인되지 않게. 그래서 대상 트리 밖에 정의된 함수(`.free = free`)는 안 든다.
+  `func`는 파일 스코프 초기화면 `null`이다.
+- **`field_calls`** — 호출식의 함수 자리가 필드(`vv->f`·`s.f`·`(*vv->f)`)인 호출. v1 이래
+  `unresolved_calls`가 세던 것의 일부를 이름째 남긴다 — **그 수는 그대로 센다.**
+
+v2·v3 표가 못 잡는 것 — 구문만 보기 때문이다:
 
 | 놓치는 것 | 왜 |
 | --- | --- |
 | 매크로가 선언하는 변수(`DECLARE_BITMAP(bits, 64);`) | 전처리를 하지 않아 호출식으로 파싱된다 |
-| 원소·역참조 대입(`buf[i] = x`)·증감(`i++`) | 그 이름에 대입한 것이 아니다 |
-| 지정 초기화(`.read = my_read`) | 대입식이 아니다 — `field_assigns`에 안 든다 |
+| 증감(`i++`·`buf[i]++`) | 대입식이 아니다 — 어느 표에도 안 든다(`*p++ = x`는 대입식이라 든다) |
+| 삼항으로 고르는 바인딩(`o->f = c ? a : b`) | 값이 이름 하나가 아니다 — `fn_bindings`에 안 든다 |
+| 위치 초기화(`{ my_init, my_free }`) | 필드 순서를 타입 정의에서 찾아야 한다 |
+| 함수 포인터 변수·배열 호출(`fp(x)`) | 필드가 아니다 — `calls`에 `fp`로 들고 정의가 없다 |
+| 같은 이름 필드의 주인 | 필드 이름만 키다 — 읽는 쪽이 `fields` 하나뿐일 때만 저장소 전체로 잇는다 |
 | enum 상수 | `types`에는 enum 정의만 든다 |
 | C++ 구성(class·namespace·template) | C 문법 노드만 본다 — class 필드는 안 든다 |
 | 대상 트리 밖 헤더(`generated_headers` 등) | 인덱서는 대상 트리 안만 받는다 |
@@ -94,7 +124,7 @@ from pathlib import Path
 # 거기 없는 값이면 그쪽이 `unsupported_version`으로 **거절한다** — 그래프 섹션이 통째로 사라지는데
 # 그 모양은 "인덱서가 안 돌았다"와 같아서 캡슐만 봐서는 구별되지 않는다. 형식이 바뀌면
 # 올리고, 두 값이 갈리지 않도록 `tests/test_indexer.py`가 대조한다.
-INDEX_VERSION = "index-v2"
+INDEX_VERSION = "index-v3"
 
 # 확장자 → tree-sitter 문법 모듈 이름. **`container_tools._INDEX_SUFFIXES`가 보내는
 # 확장자를 전부 담아야 한다**(그쪽이 이 스크립트에 넘길 파일을 고른다). 여기가 더 넓은
@@ -155,8 +185,21 @@ _TYPE_SPECIFIERS = {
 
 _MACROS = frozenset({"preproc_def", "preproc_function_def"})
 
-# 이름 → 기록 목록 모양의 v2 표. `locals`·`assigns`는 파일 → 함수 → 이름 모양이라 따로 다룬다.
-_NAMED_TABLES = ("functions", "macros", "types", "file_vars", "fields", "field_assigns")
+# 이름 → 기록 목록 모양의 v2·v3 표. `locals`·`assigns`는 파일 → 함수 → 이름 모양이라 따로 다룬다.
+_NAMED_TABLES = (
+    "functions",
+    "macros",
+    "types",
+    "file_vars",
+    "fields",
+    "field_assigns",
+    "writes",
+    "fn_bindings",
+    "field_calls",
+)
+
+# 원소·역참조 좌변의 바깥 겹 → `writes`의 `form`(index-v3, #304).
+_WRITE_FORMS = {"subscript_expression": "element", "pointer_expression": "deref"}
 
 
 def _parser_for(suffix: str):
@@ -350,7 +393,17 @@ def _lookup_tables(root, relative: str) -> dict:
       그 밖에는 이름이 `None`이고 범위가 그 지정자다.
     """
     tables: dict = {
-        name: {} for name in ("macros", "types", "fields", "file_vars", "field_assigns")
+        name: {}
+        for name in (
+            "macros",
+            "types",
+            "fields",
+            "file_vars",
+            "field_assigns",
+            "writes",
+            "fn_bindings",
+            "field_calls",
+        )
     }
     scoped: dict = {"locals": {}, "assigns": {}}
     stack = [(root, None, None)]
@@ -399,8 +452,13 @@ def _lookup_tables(root, relative: str) -> dict:
                     _add(tables["file_vars"], _text(found[0]), _span(node, relative))
                 elif func:
                     _add_line(scoped["locals"], func, _text(found[0]), found[0])
+                    _record_init(declarator, found[0], func, relative, tables["writes"])
         elif kind == "assignment_expression" and func:
-            _record_assignment(node, func, relative, tables["field_assigns"], scoped["assigns"])
+            _record_assignment(node, func, relative, tables, scoped["assigns"])
+        elif kind == "initializer_pair" and func != "":
+            _record_designated(node, func, relative, tables["fn_bindings"])
+        elif kind == "call_expression" and func:
+            _record_field_call(node, func, relative, tables["field_calls"])
         stack.extend((child, func, owner) for child in reversed(node.children))
     return {**tables, **scoped}
 
@@ -421,10 +479,11 @@ def _lends_owner(specifier) -> bool:
     return parent.type == "field_declaration" and not parent.children_by_field_name("declarator")
 
 
-def _record_assignment(node, func: str, relative: str, field_assigns: dict, assigns: dict) -> None:
-    """좌변이 이름이면 `assigns`, 필드면 `field_assigns`. 원소·역참조 대입은 어느 쪽도 아니다.
+def _record_assignment(node, func: str, relative: str, tables: dict, assigns: dict) -> None:
+    """좌변이 이름이면 `assigns`, 필드면 `field_assigns`, 원소·역참조면 `writes`(index-v3, #304).
 
     연산자를 든다 — `b->x -= i`를 `lhs`·`rhs`만으로 적으면 「x에 i를 넣었다」로 읽힌다.
+    필드에 `=`로 함수 이름을 넣으면 `fn_bindings`에도 든다(`_bound_function`).
     """
     left = node.child_by_field_name("left")
     if left is None:
@@ -432,21 +491,195 @@ def _record_assignment(node, func: str, relative: str, field_assigns: dict, assi
     if left.type == "identifier":
         _add_line(assigns, func, _text(left), node)
         return
-    field = left.child_by_field_name("field") if left.type == "field_expression" else None
     right = node.child_by_field_name("right")
     operator = node.child_by_field_name("operator")
-    if field is None or right is None or operator is None:
+    if right is None or operator is None:
+        return
+    record = {
+        "file": relative,
+        "line": node.start_point[0] + 1,
+        "func": func,
+        "lhs": _squash(left),
+        "rhs": _squash(right),
+        "op": _text(operator),
+    }
+    if left.type in _WRITE_FORMS:
+        base = _write_base(left)
+        if base is not None:
+            _add(
+                tables["writes"],
+                _text(base),
+                {
+                    **record,
+                    "form": _WRITE_FORMS[left.type],
+                    "base": "field" if base.type == "field_identifier" else "name",
+                },
+            )
+        return
+    field = left.child_by_field_name("field") if left.type == "field_expression" else None
+    if field is None:
+        return
+    _add(tables["field_assigns"], _text(field), record)
+    bound = _bound_function(right)
+    if bound is not None and record["op"] == "=":
+        _add(
+            tables["fn_bindings"],
+            _text(field),
+            {
+                **{key: record[key] for key in ("file", "line", "func")},
+                "fn": bound,
+                "form": "assign",
+            },
+        )
+
+
+def _is_deref(node) -> bool:
+    """`pointer_expression`이 역참조(`*`)인가 — 주소 연산(`&`)도 같은 노드다(실측)."""
+    operator = node.child_by_field_name("operator")
+    return operator is not None and operator.type == "*"
+
+
+def _write_base(node):
+    """원소·역참조 좌변의 기저 이름 노드(`identifier`·필드의 `field_identifier`). 없으면 `None`.
+
+    벗기는 겹(실파싱 — tree-sitter-c 0.24.2): 첨자(`buf[i][j]`)·역참조(`**pp`)·증감
+    (`*p++`·`*--p` — `update_expression`)은 `argument` 필드, 캐스트(`((char *)p)[2]`)는
+    `value` 필드, 괄호는 필드가 없어 첫 이름 있는 자식, 포인터 산술(`*(p + 1)`)은 `+`·`-`의
+    왼쪽 — 단 `+`의 왼쪽이 수 상수면 오른쪽이다(`*(1 + p)`). 타입을 안 보므로 `*(i + p)`는 `i`로
+    적는다. 필드에서 멈춘다 — `vv->buf[i]`의 기저는 필드 `buf`다. 그 밖(`*f() = x` · `&x`)은
+    이름을 지어내지 않는다.
+    """
+    while node is not None:
+        kind = node.type
+        if kind == "identifier":
+            return node
+        if kind == "field_expression":
+            return node.child_by_field_name("field")
+        if kind in ("subscript_expression", "update_expression") or (
+            kind == "pointer_expression" and _is_deref(node)
+        ):
+            node = node.child_by_field_name("argument")
+        elif kind == "parenthesized_expression":
+            node = node.named_children[0] if node.named_children else None
+        elif kind == "cast_expression":
+            node = node.child_by_field_name("value")
+        elif kind == "binary_expression" and _operator_is(node, ("+", "-")):
+            left = node.child_by_field_name("left")
+            if left is not None and left.type == "number_literal" and _operator_is(node, ("+",)):
+                node = node.child_by_field_name("right")
+            else:
+                node = left
+        else:
+            return None
+    return None
+
+
+def _operator_is(node, operators: tuple[str, ...]) -> bool:
+    operator = node.child_by_field_name("operator")
+    return operator is not None and operator.type in operators
+
+
+def _bound_function(value) -> str | None:
+    """대입·초기화 값이 함수 이름 하나(`f`·`&f`)면 그 이름. 함수인지는 `build_index`가 본다.
+
+    캐스트(`(cb_t)f`)·괄호(`(f)`)는 벗긴다 — 시그니처가 다른 콜백을 캐스트해 묶는 꼴이 흔하다.
+    삼항(`c ? f : g`)·호출 결과는 이름 하나가 아니라 안 싣는다.
+    """
+    while value is not None:
+        if value.type == "cast_expression":
+            value = value.child_by_field_name("value")
+        elif value.type == "parenthesized_expression":
+            value = value.named_children[0] if value.named_children else None
+        elif value.type == "pointer_expression" and not _is_deref(value):
+            value = value.child_by_field_name("argument")
+        else:
+            break
+    return _text(value) if value is not None and value.type == "identifier" else None
+
+
+def _record_init(declarator, name, func: str, relative: str, writes: dict) -> None:
+    """함수 안 선언 초기화(`char *q = malloc(n);`)를 `writes`에 `init`으로 싣는다.
+
+    `locals`는 선언 줄만 든다 — 할당 지점이 선언문에 붙어 있으면 그 줄이 쓰기인지 표만 봐서는
+    모른다. 초기값 없는 선언자(`int j;`)는 안 싣는다.
+    """
+    if declarator.type != "init_declarator":
+        return
+    value = declarator.child_by_field_name("value")
+    if value is None:
         return
     _add(
-        field_assigns,
+        writes,
+        _text(name),
+        {
+            "file": relative,
+            "line": declarator.start_point[0] + 1,
+            "func": func,
+            "lhs": _squash(declarator.child_by_field_name("declarator")),
+            "rhs": _squash(value),
+            "op": "=",
+            "form": "init",
+            "base": "name",
+        },
+    )
+
+
+def _record_designated(node, func: str | None, relative: str, fn_bindings: dict) -> None:
+    """지정 초기화 `.free_ctx = sshpam_free_ctx`의 값이 함수 이름이면 `fn_bindings`에 싣는다.
+
+    지정자가 여럿(`.a.b = f`)이면 마지막 필드다. 첨자 지정자(`[0] = f`)는 필드가 아니라 안 싣는다.
+    중첩 목록(`.in = { .cb = f }`)은 스택이 안쪽 `initializer_pair`를 따로 만난다.
+    """
+    designators = node.children_by_field_name("designator")
+    value = node.child_by_field_name("value")
+    if not designators or value is None or designators[-1].type != "field_designator":
+        return
+    field = next(
+        (child for child in designators[-1].named_children if child.type == "field_identifier"),
+        None,
+    )
+    bound = _bound_function(value)
+    if field is None or bound is None:
+        return
+    _add(
+        fn_bindings,
         _text(field),
         {
             "file": relative,
             "line": node.start_point[0] + 1,
             "func": func,
-            "lhs": _squash(left),
-            "rhs": _squash(right),
-            "op": _text(operator),
+            "fn": bound,
+            "form": "designated",
+        },
+    )
+
+
+def _record_field_call(node, func: str, relative: str, field_calls: dict) -> None:
+    """함수 자리가 필드인 호출(`vv->f(…)`·`s.f(…)`·`(*vv->f)(…)`)을 필드 이름으로 싣는다.
+
+    `_walk_calls`는 이 호출을 `unresolved_calls`로 센다 — 그 수는 그대로 두고 이름만 더 남긴다.
+    """
+    expr = node.child_by_field_name("function")
+    target = expr
+    while target is not None and target.type in ("parenthesized_expression", "pointer_expression"):
+        if target.type == "pointer_expression":
+            target = target.child_by_field_name("argument") if _is_deref(target) else None
+        else:
+            target = target.named_children[0] if target.named_children else None
+    if target is None or target.type != "field_expression":
+        return
+    field = target.child_by_field_name("field")
+    if field is None:
+        return
+    _add(
+        field_calls,
+        _text(field),
+        {
+            "file": relative,
+            "line": node.start_point[0] + 1,
+            "caller": func,
+            "args": _args(node),
+            "expr": _squash(expr),
         },
     )
 
@@ -561,6 +794,13 @@ def build_index(paths: list[Path], root: Path) -> dict:
         if result["has_parse_error"]:
             parse_errors.append(relative)
         indexed.append(relative)
+
+    # 함수 이름이 아닌 값(`o->len = n`)은 바인딩이 아니다 — 정의가 저장소에 있는 이름만 남긴다.
+    named["fn_bindings"] = {
+        field: kept
+        for field, records in named["fn_bindings"].items()
+        if (kept := [record for record in records if record["fn"] in named["functions"]])
+    }
 
     return {
         "version": INDEX_VERSION,

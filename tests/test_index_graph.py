@@ -32,6 +32,7 @@ from src.adapters.index_graph import (
     STATUS_UNSUPPORTED,
     SUPPORTED_INDEX_VERSIONS,
     V2_TABLES,
+    V3_TABLES,
     GraphIndex,
     IndexSummary,
     fit_names,
@@ -874,8 +875,8 @@ def _v1_v2(tmp_path: Path) -> tuple[GraphIndex, GraphIndex]:
 
 
 def test_the_reader_still_accepts_index_v1():
-    """v1 문서는 계속 읽힌다 — 이미지가 v1인 run의 산출물이 남아 있다."""
-    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2"}
+    """v1·v2 문서는 계속 읽힌다 — 그 이미지로 돈 run의 산출물이 남아 있다."""
+    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2", "index-v3"}
 
 
 def test_v2_calls_give_the_same_graph_edges_as_the_v1_list(tmp_path: Path):
@@ -1605,3 +1606,374 @@ def test_functions_named_demotes_nonproduct_definitions_when_asked(tmp_path: Pat
     assert graph.functions_named({"dup"}, "lib/a.c") == []
     found = graph.functions_named({"dup"}, "lib/a.c", demote_nonproduct=True)
     assert [loc.file for loc in found] == ["lib/b.c"]
+
+# --- index-v3 (#304): 쓰기 지점 · 함수 포인터 바인딩 · 필드 경유 호출 ----------------------
+#
+# v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한다. 아래 문서는 손으로 적었다 — 줄 번호는 이 문서
+# 안에서만 뜻이 있다(원문 파일이 없다). 해석 규칙(같은 파일 먼저 · 하나뿐일 때만)이 갈리는
+# 자리마다 반대쪽 행을 하나씩 둔다.
+_V3_FIELD = {"file": "ops.h", "line_start": 1, "line_end": 6}
+_INDEX_V3 = {
+    **_INDEX_V2,
+    "version": "index-v3",
+    "functions": {
+        **_INDEX_V2["functions"],
+        "my_free": [{"file": "ops.c", "line_start": 1, "line_end": 4, "params": ["c"]}],
+        "my_alloc": [{"file": "ops.c", "line_start": 6, "line_end": 9, "params": ["n"]}],
+        "dup": [
+            {"file": "x.c", "line_start": 1, "line_end": 2, "params": []},
+            {"file": "y.c", "line_start": 1, "line_end": 2, "params": []},
+        ],
+    },
+    "fields": {
+        **_INDEX_V2["fields"],
+        "free_ctx": [{"type": "ops", **_V3_FIELD}],
+        # 같은 이름 필드가 두 struct에 있다 — 다른 파일의 바인딩·쓰기를 잇지 않는다.
+        "alloc": [
+            {"type": "ops", **_V3_FIELD},
+            {"type": "mem", "file": "mem.h", "line_start": 1, "line_end": 3},
+        ],
+    },
+    "assigns": {
+        "parser.c": {"parse_header": {"n": [11], "buf": [14]}},
+        "main.c": {"main": {"buf": [7]}},
+    },
+    "field_assigns": {
+        **_INDEX_V2["field_assigns"],
+        "alloc": [
+            {
+                "file": "mem.c",
+                "line": 30,
+                "func": "init",
+                "lhs": "m->alloc",
+                "rhs": "my_alloc",
+                "op": "=",
+            }
+        ],
+    },
+    "writes": {
+        "buf": [
+            {
+                "file": "parser.c",
+                "line": 12,
+                "func": "parse_header",
+                "lhs": "buf[i]",
+                "rhs": "c",
+                "op": "=",
+                "form": "element",
+                "base": "name",
+            },
+            # 필드 `buf`에 쓴 것 — 이름 `buf`의 쓰기가 아니다.
+            {
+                "file": "parser.c",
+                "line": 16,
+                "func": "parse_header",
+                "lhs": "h->buf[0]",
+                "rhs": "0",
+                "op": "=",
+                "form": "element",
+                "base": "field",
+            },
+        ],
+        "g_hdr": [
+            {
+                "file": "main.c",
+                "line": 8,
+                "func": "main",
+                "lhs": "*g_hdr",
+                "rhs": "0",
+                "op": "=",
+                "form": "deref",
+                "base": "name",
+            }
+        ],
+    },
+    "fn_bindings": {
+        "free_ctx": [
+            {"file": "ops.c", "line": 20, "func": None, "fn": "my_free", "form": "designated"}
+        ],
+        "alloc": [
+            {"file": "ops.c", "line": 21, "func": None, "fn": "my_alloc", "form": "designated"},
+            {"file": "main.c", "line": 9, "func": "main", "fn": "my_alloc", "form": "assign"},
+        ],
+        # 필드 선언이 인덱스에 없다 — 같은 파일 바인딩만 잇는다. `dup`은 두 파일에 정의가 있다.
+        "dup_cb": [{"file": "x.c", "line": 5, "func": None, "fn": "dup", "form": "designated"}],
+    },
+    "field_calls": {
+        "alloc": [
+            {
+                "file": "parser.c",
+                "line": 17,
+                "caller": "parse_header",
+                "args": ["n"],
+                "expr": "sys->alloc",
+            }
+        ],
+        "free_ctx": [
+            {
+                "file": "parser.c",
+                "line": 19,
+                "caller": "parse_header",
+                "args": ["c"],
+                "expr": "dev.free_ctx",
+            }
+        ],
+        "unbound": [
+            {
+                "file": "parser.c",
+                "line": 18,
+                "caller": "parse_header",
+                "args": [],
+                "expr": "o->unbound",
+            }
+        ],
+        # 본문(9~22) 밖의 호출 — 대상의 간접 callee가 아니다.
+        "outside": [
+            {"file": "main.c", "line": 10, "caller": "main", "args": [], "expr": "o->outside"}
+        ],
+    },
+}
+
+
+def test_v3_tables_are_missing_not_empty_on_older_documents(tmp_path: Path):
+    """v2·v1 문서·인덱스 없음에서 v3 표와 v3 조회는 `None`이다 — 「0건」(`{}`·`[]`)이 아니다.
+
+    #304 전에 빌드한 이미지(index-v2를 낸다)의 산출물은 그대로 읽혀야 한다: v2 그래프는 멀쩡하고
+    새 조회만 「없다」를 낸다. 새 표를 필수로 걸었으면 v2 문서가 통째로 거절돼 그래프 섹션까지
+    사라진다.
+    """
+    graphs = {
+        "v2": _graph(tmp_path / "v2", _INDEX_V2),
+        "v1": _graph(tmp_path / "v1"),
+        "none": _graph(tmp_path / "none", None),
+    }
+    assert graphs["v2"].summary.status == STATUS_LOADED
+    assert graphs["v2"].names_for("callers", _PARSE_HEADER) == [_CALLER_ENTRY]
+    for label, graph in graphs.items():
+        for name in V3_TABLES:
+            assert graph.table(name) is None, (label, name)
+        assert graph.writes_of("buf", "parser.c") is None, label
+        assert graph.field_writes_of("len", "parser.c") is None, label
+        assert graph.fn_pointer_targets("free_ctx", "parser.c") is None, label
+        assert graph.indirect_callees_of(_PARSE_HEADER) is None, label
+
+
+def test_every_v3_table_is_reachable_and_v2_tables_are_unchanged(tmp_path: Path):
+    """v3 문서에서 `V2_TABLES`·`V3_TABLES`가 전부 조회된다. v2 표는 v2 문서와 같은 것이 나온다 —
+    v3가 기존 표의 모양을 안 바꿨다는 것을 읽는 쪽에서 박는다(`calls` 간선·캡슐도 같다)."""
+    v3 = _graph(tmp_path / "v3", _INDEX_V3)
+    v2 = _graph(tmp_path / "v2", _INDEX_V2)
+
+    assert all(v3.table(name) for name in V2_TABLES + V3_TABLES)
+    for name in ("macros", "types", "file_vars", "locals", "calls"):
+        assert v3.table(name) == v2.table(name), name
+    assert v3.names_for("callers", _PARSE_HEADER) == v2.names_for("callers", _PARSE_HEADER)
+    assert v3.summary == v2.summary
+
+
+def test_writes_of_merges_name_assigns_and_element_writes_in_the_near_file(tmp_path: Path):
+    """이름 `buf`에 쓰는 지점: `assigns`(14행)와 `writes`의 이름 기저 원소 대입(12행). 같은 이름
+    **필드**에 쓴 것(`h->buf[0]`, 16행)은 아니다. 다른 파일(main.c 7행)의 지역 `buf`도 아니다."""
+    found = _graph(tmp_path, _INDEX_V3).writes_of("buf", "parser.c")
+
+    assert found == [
+        Location(file="parser.c", symbol="parse_header", line_start=12, line_end=12),
+        Location(file="parser.c", symbol="parse_header", line_start=14, line_end=14),
+    ]
+
+
+def test_writes_of_crosses_files_only_for_a_unique_file_scope_variable(tmp_path: Path):
+    """near 파일에 쓰기가 없으면 — 파일 스코프 변수가 하나뿐일 때(`g_hdr`)만 저장소 전체를 본다.
+    지역 이름(`buf`)은 다른 파일의 같은 이름을 잇지 않는다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.writes_of("g_hdr", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=8, line_end=8)
+    ]
+    assert graph.writes_of("buf", "other.c") == []
+
+
+def test_writes_of_counts_a_global_once_across_its_header_extern(tmp_path: Path):
+    """헤더의 `extern` 선언과 `.c`의 정의는 전역 하나다 — 「하나뿐」은 헤더 밖 선언만 센다(#464
+    리뷰: 전에는 둘로 세 흔한 전역이 다른 파일로 한 번도 안 이어졌다). 그때도 다른 파일 함수의
+    **같은 이름 지역**(`other.c`의 `g_hdr`, `locals`에 있다)에 쓴 것은 그 전역이 아니라 뺀다.
+
+    음성: `.c` 두 곳에 선언이 있으면(파일마다 `static`) 여전히 잇지 않는다."""
+    local_write = {
+        "file": "other.c",
+        "line": 4,
+        "func": "shadow",
+        "lhs": "g_hdr[0]",
+        "rhs": "0",
+        "op": "=",
+        "form": "element",
+        "base": "name",
+    }
+    document = {
+        **_INDEX_V3,
+        "file_vars": {
+            "g_hdr": [
+                {"file": "main.c", "line_start": 3, "line_end": 3},
+                {"file": "hdr.h", "line_start": 2, "line_end": 2},
+            ]
+        },
+        "locals": {**_INDEX_V3["locals"], "other.c": {"shadow": {"g_hdr": [3]}}},
+        "writes": {
+            **_INDEX_V3["writes"],
+            "g_hdr": [*_INDEX_V3["writes"]["g_hdr"], local_write],
+        },
+    }
+    graph = _graph(tmp_path, document)
+
+    assert graph.writes_of("g_hdr", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=8, line_end=8)
+    ]
+
+    two_statics = {
+        **document,
+        "file_vars": {
+            "g_hdr": [
+                {"file": "main.c", "line_start": 3, "line_end": 3},
+                {"file": "util.c", "line_start": 1, "line_end": 1},
+            ]
+        },
+    }
+    assert _graph(tmp_path / "statics", two_statics).writes_of("g_hdr", "parser.c") == []
+
+
+def test_field_writes_of_crosses_files_only_for_a_field_declared_once(tmp_path: Path):
+    """`len`은 struct 하나(`header`)만 선언한다 — 다른 파일의 대입(main.c 13행)도 그 필드다.
+    `alloc`은 두 struct가 선언한다 — mem.c의 대입은 mem.c에서 볼 때만 싣는다. 필드 기저 원소
+    쓰기(`h->buf[0]`)도 필드 쓰기다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.field_writes_of("len", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=13, line_end=13)
+    ]
+    assert graph.field_writes_of("alloc", "parser.c") == []
+    assert graph.field_writes_of("alloc", "mem.c") == [
+        Location(file="mem.c", symbol="init", line_start=30, line_end=30)
+    ]
+    assert graph.field_writes_of("buf", "other.c") == []  # `buf` 필드 선언이 인덱스에 없다
+    assert graph.field_writes_of("buf", "parser.c") == [
+        Location(file="parser.c", symbol="parse_header", line_start=16, line_end=16)
+    ]
+
+
+def test_fn_pointer_targets_resolves_bindings_to_definitions(tmp_path: Path):
+    """바인딩 → 함수 정의. 필드가 하나뿐이면(`free_ctx`) 다른 파일의 지정 초기화도 잇는다. 같은
+    이름 필드가 여럿이면(`alloc`) near 파일의 바인딩만 — main.c에서 보면 `my_alloc`, parser.c에서
+    보면 없다. 함수 정의가 여럿이면(`dup`) 바인딩이 있는 파일의 정의가 이긴다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+    my_alloc = Location(file="ops.c", symbol="my_alloc", line_start=6, line_end=9)
+
+    assert graph.fn_pointer_targets("free_ctx", "parser.c") == [
+        Location(file="ops.c", symbol="my_free", line_start=1, line_end=4)
+    ]
+    assert graph.fn_pointer_targets("alloc", "parser.c") == []
+    assert graph.fn_pointer_targets("alloc", "main.c") == [my_alloc]
+    assert graph.fn_pointer_targets("alloc", "ops.c") == [my_alloc]
+    assert graph.fn_pointer_targets("dup_cb", "x.c") == [
+        Location(file="x.c", symbol="dup", line_start=1, line_end=2)
+    ]
+    assert graph.fn_pointer_targets("dup_cb", "z.c") == []
+    assert graph.fn_pointer_targets("nope", "parser.c") == []
+
+
+def test_indirect_callees_of_follows_field_calls_in_the_body(tmp_path: Path):
+    """본문(parser.c 9~22) 안 필드 경유 호출 셋 중 풀리는 것은 `dev.free_ctx`(19행)뿐이다 —
+    `sys->alloc`(17행)은 필드가 모호하고 parser.c에 바인딩이 없으며, `o->unbound`(18행)는 바인딩이
+    없다. 본문 밖(main.c 10행)의 호출은 안 본다. 기존 `callees_of`는 이 호출을 모른다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.indirect_callees_of(_PARSE_HEADER) == [
+        Location(file="ops.c", symbol="my_free", line_start=1, line_end=4)
+    ]
+    assert graph.callees_of(_PARSE_HEADER) == [
+        Location(file="parser.c", symbol="helper", line_start=3, line_end=6)
+    ]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param(
+            {key: value for key, value in _INDEX_V3.items() if key != "writes"},
+            id="v3-table-missing",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "fn_bindings": {
+                    "free_ctx": [{"file": "ops.c", "line": 20, "func": None, "fn": "my_free"}]
+                },
+            },
+            id="v3-row-missing-a-key",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_calls": {
+                    "alloc": [
+                        {
+                            "file": "parser.c",
+                            "line": "17",
+                            "caller": "parse_header",
+                            "args": [],
+                            "expr": "sys->alloc",
+                        }
+                    ]
+                },
+            },
+            id="v3-line-is-a-string",
+        ),
+        # #464 리뷰 — 아래 넷은 전에는 `loaded`로 읽히고 조회 도중에 죽거나(줄 0 → `Location`
+        # `ValidationError`, 매핑 `func` → unhashable `TypeError`) 조용히 0건이 됐다(모르는 `base`).
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "line": 0}]},
+            },
+            id="v3-line-zero",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "func": {"f": 1}}]},
+            },
+            id="v3-func-is-a-mapping",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "base": "weird"}]},
+            },
+            id="v3-unknown-base",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_calls": {
+                    "alloc": [{**_INDEX_V3["field_calls"]["alloc"][0], "args": "n"}]
+                },
+            },
+            id="v3-args-not-a-list",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_assigns": {
+                    "alloc": [{**_INDEX_V3["field_assigns"]["alloc"][0], "func": ["init"]}]
+                },
+            },
+            id="v3-field-assigns-func-not-a-name",
+        ),
+    ],
+)
+def test_a_misshapen_v3_document_is_refused_whole(broken: dict, tmp_path: Path):
+    """v3라고 적고 v3 표가 모자라면 v2처럼 읽지 않고 통째로 거절한다 — 버전이 곧 계약이다."""
+    graph = _graph(tmp_path, broken)
+
+    assert graph.summary.status == STATUS_MALFORMED
+    assert graph.table("writes") is None
+    assert graph.names_for("callers", _PARSE_HEADER) is None
