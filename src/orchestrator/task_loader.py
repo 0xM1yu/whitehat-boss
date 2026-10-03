@@ -47,7 +47,10 @@ Level 1 과제는 데이터셋 기준으로 `repo-vul.tar.gz`(취약 저장소) 
 gh-157190). 신뢰 못 하는 과제는 최신 패치 인터프리터로 푼다.
 """
 
+import json
+import re
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path
 
 DESCRIPTION_FILENAME = "description.txt"
@@ -194,3 +197,65 @@ def load_task(task_dir: Path, work_dir: Path) -> tuple[Path, str | None]:
     check_task_dir(task_dir)
     source_root = safe_extract(archive, Path(work_dir))
     return source_root, read_description(task_dir)
+
+
+# `submit.sh`가 드는 두 값을 뽑는 자리. 저자 생성기(`gen_task`)가 쓰는 모양이 고정이라
+# (`curl -X POST {server}/submit-vul` + `-F 'metadata={...}'`) 그 두 패턴만 본다. 느슨하게 긁지
+# 않는 것은 틀린 신원으로 제출하면 채점기가 400을 내고 그 run의 장부가 어긋나기 때문이다.
+_SUBMIT_URL = re.compile(r"(https?://[^\s/]+)/submit-vul")
+_SUBMIT_METADATA = re.compile(r"metadata=(\{.*?\})", re.DOTALL)
+# 이 셋은 비어 있지 않은 문자열이어야 한다 — 숫자·`null`·빈 문자열은 신원이 아니다.
+_METADATA_FIELDS = ("task_id", "agent_id", "checksum")
+
+
+@dataclass(frozen=True)
+class SubmitMetadata:
+    """과제 번들이 들고 있는 채점기 신원 (`submit.sh`).
+
+    **지어내지 않는다** — 과제 id·에이전트 id·체크섬은 저자 생성기가 과제마다 발급한 값이고 하네스가
+    그것을 다시 만들 방법이 없으므로(마스킹 서버가 낸 id는 맵 없이는 되돌릴 수 없다) 번들에서
+    읽는다. `task_id`가 마스킹된 id(예: `9c73e92e52b7`)인지 실제 id(`arvo:1065`)인지는 번들을
+    만든 서버 설정이 정한다 — 마스킹된 id는 조작자가 `--mask-map`으로 실 id를 줄 때만 받고 아니면
+    제출 전에 거절한다(`cybergym_oracle.unsupported_task_id`·`TaskOracle.query_task_id`).
+
+    **`server`는 어디로 보내는 데 쓰지 않는다.** 이 모듈의 첫 문장이 말하듯 과제 번들은 신뢰 못 하는
+    소스이고, 번들이 가리키는 주소로 조작자의 API 키를 보내면 번들을 만든 쪽이 키를 받는다. 채점기
+    주소는 조작자가 `--oracle-server`로 주고 이 값은 그것과 견주는 데만 쓴다(`cli._oracle_for`).
+
+    `checksum`은 번들이 적은 값이다 — 클라이언트는 자기 salt로 다시 계산해
+    제출하므로(`cybergym_oracle`), 번들이 다른 salt로 만들어졌는지를 제출 전에 가르는 데 쓴다.
+    """
+
+    server: str
+    task_id: str
+    agent_id: str
+    checksum: str
+
+
+def read_submit_metadata(task_dir: Path) -> SubmitMetadata | None:
+    """`submit.sh`에서 채점기 신원을 읽는다. 파일이 없거나 패턴·값 형이 안 맞으면 `None`.
+
+    `None`은 「이 번들로는 제출할 수 없다」이고 호출자가 그 사실을 사람에게 알린다 — 지어낸 신원
+    으로 제출하지 않는다(§0). 값 형도 본다: `task_id`·`agent_id`·`checksum`이 비어 있지 않은
+    문자열이 아니면(숫자·`null`·객체·빈 문자열) 읽은 것이 아니다.
+    """
+    path = Path(task_dir) / SUBMIT_SCRIPT_NAME
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")
+    url, metadata = _SUBMIT_URL.search(text), _SUBMIT_METADATA.search(text)
+    if url is None or metadata is None:
+        return None
+    try:
+        parsed = json.loads(metadata.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    values = [parsed.get(name) for name in _METADATA_FIELDS]
+    if not all(isinstance(value, str) and value for value in values):
+        return None
+    task_id, agent_id, checksum = values
+    return SubmitMetadata(
+        server=url.group(1), task_id=task_id, agent_id=agent_id, checksum=checksum
+    )

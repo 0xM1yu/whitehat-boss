@@ -269,8 +269,10 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 ⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트가 아직 도구 입력으로 안 들어가
 (`run_tool`이 도구 argv·workdir만 넘긴다) 관측이 PoC와 무관하다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
 
-**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · 외부 CyberGym oracle
-차분 검증 · feyospace 실서빙 실측(checksum·benchmark·홉수). `PovSpec` 표현력 절벽(계산 크로스필드)이
+**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · feyospace 실서빙
+실측(checksum·benchmark·홉수). 외부 CyberGym oracle 제출은 `run --oracle-submit`(기본 꺼짐)으로 들어왔다 —
+대역으로만 검증했고 하네스 run으로 실서버 왕복을 잰 것은 0건이다. `fix` 다리·판정은 vul 제출이 성공한
+후보가 하나일 때만 돈다 — 둘 이상이면 고르는 규칙이 정해지지 않아 안 돈다. `PovSpec` 표현력 절벽(계산 크로스필드)이
 실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
 
 **선택지:**
@@ -281,7 +283,8 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 | C | 퍼징으로 크래시 발견 (비용 큼, 후순위) |
 
 ⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
-최종 PoC 바이트까지이고, 실제 크래시 재현·oracle 판정은 후속(서빙+도구 호스트 배선)이다.
+최종 PoC 바이트까지이고(그 PoC를 채점기에 내보내 판정을 기록하는 길은 `--oracle-submit`으로 들어왔다 —
+실서버 왕복 0건), 실제 크래시 재현은 후속(서빙+도구 호스트 배선)이다.
 
 ### 🟡 진짜 정적분석 (2단계)
 
