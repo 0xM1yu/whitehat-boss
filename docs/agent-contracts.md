@@ -14,7 +14,7 @@ agent:
     - index.callees
   token_budget:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
-    output_max: 32768        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
+    output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
   output_schema: Finding     # 아래 §3
 ```
@@ -51,6 +51,12 @@ agent:
 > `output_max_by_role.auditor`가 32,768이 됐다 — 전역 4,096은 그대로다. 값은 실측이 아니라 사고를 켜서
 > 들어갔다(근거·한계는 `config/budgets.yaml`의 그 주석). 위 예시 블록이 그 값을 들고,
 > `tests/test_docs_format.py`가 블록의 `role:`과 짝으로 대조한다.
+> ⏵ **2026-10-03 — 그 값이 65,536이 됐다**(조민규 승인 · 위 예시 블록도 같이 움직였다). 올린 조건은 잠긴 관계
+> 「타임아웃 ≥ 출력 상한 ÷ 속도」의 **속도 근거가 외부 보고 4.5에서 운영 장비(vast) 실측 16.2 tok/s로 바뀐 것**
+> 이다(`config/serving/vastai.yaml`). 동기는 5단계 도구 루프이고, 사고 상한도 28,672 → 57,344로 같이 올랐다
+> (`config/models.yaml`). ⚠ **이득이 아니라 보험이다** — 그 좌석 관측 출력 최대는 9.4k토큰(옛 사고 상한의 33%,
+> 계산값)이고 32,768에서 잘린 관측은 0건이다. 근거·한계·손익분기(8.74 tok/s)는 `config/budgets.yaml`의 그 ⏵에 있다.
+> **PoV 좌석은 32,768 그대로다** — 자기 속도를 안 쟀다.
 >
 > **2026-09-12 — 값을 안 정하기로 했고 그것이 실측의 결론이다.** 실제 Critic 프롬프트로
 > 재니 `prompt_tokens`가 **646~654**이고(캡슐도 원문도 안 실린다) `gpt-oss-20b`의 출력은
