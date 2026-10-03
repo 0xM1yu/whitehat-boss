@@ -2270,7 +2270,7 @@ def test_trace_actually_carries_the_volatile_fields(tmp_path: Path) -> None:
 # `tests/test_oracle_wiring.py`는 `ctx.oracle`을 직접 꽂아 러너 함수를 보므로 그 배선이 끊겨도
 # 초록이다. 후보 수가 갈림길이다(후보 N개 ≠ 최종 1개를 가르는 것이 이 PR의 차단 결함이다):
 # 기본 타깃은 8단계에 **후보가 하나** 오고(그 하나가 최종이다), `_with_index()`로 심볼 타깃을
-# 만들면 **후보가 둘** 온다(고르는 규칙이 없어 지정하지 않는다).
+# 만들면 **후보가 둘** 온다(이 문맥에선 등급이 같아 동점이라 지정하지 않는다).
 
 
 def _oracle_events(events: list[dict]) -> list[dict]:
@@ -2296,13 +2296,13 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
     assert oracle.final_calls == [], "후보가 둘인데 fix 다리가 돌았다"
     (final,) = _of(events, "oracle_final")
     assert final["subject_id"] is None
-    assert (final["data"]["status"], final["data"]["reason"]) == ("none", "policy_undecided")
+    assert (final["data"]["status"], final["data"]["reason"]) == ("none", "grade_tie")
     assert final["data"]["designation"] is None
     assert result.record.oracle == {
         "vul_submitted": 2, "vul_failed": 0, "final": "none",
-        "final_reason": "policy_undecided", "record": "oracle/verdict.json",
+        "final_reason": "grade_tie", "record": "oracle/verdict.json",
     }  # fmt: skip
-    assert any("고르는 규칙이 정해지지 않았다" in w for w in result.warnings)
+    assert any("최댓값이 동점이라" in w for w in result.warnings)
     assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
 
 
@@ -2472,8 +2472,9 @@ def test_the_real_client_never_runs_the_fix_container_when_there_are_several_can
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **0번**이다 -
-    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고 고르는 규칙은 없다. 같은 바이트의 둘째
-    제출은 이 run이 만든 행의 캐시라 컨테이너가 안 돈다 - 그것을 옛 판정이라 경고하지 않는다."""
+    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고, 이 문맥에선 두 후보의 등급이 같아
+    동점으로 거부된다. 같은 바이트의 둘째 제출은 이 run이 만든 행의 캐시라 컨테이너가 안 돈다 -
+    그것을 옛 판정이라 경고하지 않는다."""
     server = _http_server(monkeypatch)
 
     result, trace_path = _run(tmp_path, before=_with_index(), oracle=_task_oracle())
@@ -2483,7 +2484,7 @@ def test_the_real_client_never_runs_the_fix_container_when_there_are_several_can
     assert server.containers == 1  # vul 한 번뿐 (둘째 vul은 이 run의 캐시)
     sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
     assert [c["cached"] for c in sidecar["candidates"]] == [False, True]
-    assert (sidecar["final"]["status"], sidecar["final"]["reason"]) == ("none", "policy_undecided")
+    assert (sidecar["final"]["status"], sidecar["final"]["reason"]) == ("none", "grade_tie")
     assert not any("캐시" in warning for warning in result.warnings)
 
 

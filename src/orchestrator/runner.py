@@ -142,6 +142,7 @@ from src.schemas.decision import Decision
 from src.schemas.enums import (
     ArtifactKind,
     CapsuleLevel,
+    EvidenceGrade,
     EvidenceKind,
     FindingState,
     NeStopReason,
@@ -1093,16 +1094,7 @@ def run_pipeline(
     # 실제로 나고, `test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools`가 그것을
     # 단언한다(2026-08-21). 못 넘는 것은 **컨테이너 러너에 가짜 `repro_spec`이 갈 때**이고
     # 그것은 빌드가 끊겨서다 — 「Fake auditor」와 「Fake 도구 러너」는 다른 축이다.
-    grades = {
-        f.finding_id: gate.evaluate(
-            f,
-            gate.evidences_for(f, state.evidences.get(f.finding_id, ())),
-            state.decisions.get(f.finding_id, ()),
-            state.missings.get(f.finding_id, ()),
-            candidate_location=by_cand.get(f.candidate_id),
-        ).grade.value
-        for f in findings
-    }
+    grades = {fid: grade.value for fid, grade in _grades_by_finding(state).items()}
     # 「모든 자리가 실패해 분석되지 않은 대상 수」(#193 ①). 팬아웃된 대상 중 후보를 하나도
     # 못 낸 것 — 형제 멤버가 같은 대상을 보므로 `dropped`(시도)로는 못 세던 값이다.
     analyzed_targets = {_target_key(c.location, c.slice_id) for c in state.candidates}
@@ -1635,7 +1627,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
     `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
     다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 하나일 때만 지정한다, `_designate_final`). 부분 PoC
+    돈다(`_finalize_oracle` — 후보가 여럿이면 내부 근거 등급으로 가른다, `_designate_final`).
+    부분 PoC
     (`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는 나가지
     않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
     (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
@@ -1731,25 +1724,61 @@ def _submit_vul_to_oracle(
         state.oracle_ledger.add_attempt(attempt)
 
 
+def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
+    """Finding별 내부 근거 등급. **순수 함수** — `gate_eval`을 재발행하지 않는다.
+
+    **두 자리가 같은 값을 봐야 해서 함수로 뽑았다.** 최종 PoC 지정(`_designate_final`)이 리포트보다
+    **먼저** 돈다 — 8단계 끝의 `_finalize_oracle`이고 리포트는 그 뒤다. 그래서 한 자리에서 계산해
+    넘길 수 없고, 둘이 이것을 부른다. 등급이 두 자리에서 갈리면 리포트가 보여주는 등급과 지정의
+    근거가 달라진다.
+
+    `ctx.evaluate_gate`가 아니라 `gate.evaluate`를 쓰는 이유는 그쪽이 `gate_eval`을 재발행해 제거율
+    분모를 이중 계상하기 때문이다. `evidences_for`로 이 Finding이 참조하는 근거만 거르는 이유는
+    6·7·8단계 게이트가 전부 그렇게 하기 때문이고, 안 거르면 artifact 단위 근거 묶음의 다른 Finding
+    근거로 등급이 오른다.
+    """
+    by_cand = {c.candidate_id: c.location for c in state.candidates}
+    return {
+        f.finding_id: gate.evaluate(
+            f,
+            gate.evidences_for(f, state.evidences.get(f.finding_id, ())),
+            state.decisions.get(f.finding_id, ()),
+            state.missings.get(f.finding_id, ()),
+            candidate_location=by_cand.get(f.candidate_id),
+        ).grade
+        for f in state.findings.values()
+    }
+
+
 def _designate_final(
     ledger: oracle_log.OracleLedger,
-) -> tuple[oracle_log.VulAttempt | None, str | None]:
+    grades: Mapping[str, EvidenceGrade],
+) -> tuple[oracle_log.VulAttempt | None, str, str | None]:
     """run당 한 번, `vul` 제출이 성공한 후보 중에서 최종 PoC를 지정한다 (#386).
 
-    돌려주는 것은 `(지정한 시도, None)`이거나 `(None, 지정 못 한 사유)`다. **셋으로 갈린다:**
+    돌려주는 것은 `(지정한 시도, 지정 근거, None)`이거나 `(None, "", 지정 못 한 사유)`다.
+    **넷으로 갈린다:**
 
     - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed` — 낼 PoC가 없던
       것과 낸 것이 다 실패한 것은 다른 사건이다, §0). `fix` 다리와 판정 조회는 0번이다.
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
       것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
-    - **후보가 둘 이상이다** → **지정하지 않는다**(`policy_undecided`). `fix` 다리와 판정
-      조회는 0번이다. 벤치마크는 에이전트가 최종 답을 정확히 하나 명시적으로 고르라고
-      요구하고, 조사 문서 1.3절(docs/research/2026-09-29-cybergym-pov-design.md)은 거기서
-      「best-of도 last-attempt도 아니다」라는 결론을 낸다 — 마지막·처음·점수로 고르는 기본값을
-      둘 수 없다. 합의된 방식은 모델에게 묻는 것이고 그것은 프롬프트 버전과 좌석이 필요한
-      별도 조각이다. 그 전에는 하나를 고르지 않고 이유를 남긴다 — 판정이 없는 편이 금지된
-      규칙으로 낸 판정보다 낫다(CLAUDE.md §0).
+    - **후보가 둘 이상이고 내부 근거 등급의 최댓값을 든 것이 하나다** → 그것이 최종이다
+      (`top_grade`). 2026-10-03에 동결된 규칙이다.
+    - **후보가 둘 이상인데 최댓값이 동점이거나(`grade_tie`) 등급을 모르는 후보가 있다**
+      (`grade_unknown`) → **지정하지 않는다.** `fix` 다리와 판정 조회는 0번이다.
+
+    🔴 **이 함수는 채점기가 돌려준 값을 읽지 않는다.** 후보의 `submission`에는 `response_exit_code`
+    같은 오라클 판정 값이 실려 **지정 시점에 손에 있는데도** 그렇다 — 그것으로 고르면 저자가 금지한
+    best-of가 된다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 읽는 것은
+    `attempt.ok`(제출이 성공했나 — 후보 자격이고 판정이 아니다)와 **하네스 내부 등급**뿐이다.
+    `test_designation_does_not_read_oracle_fields`가 그것을 문다 — 그 테스트는 필드 접근이 전부
+    터지는 `submission`을 넣는다.
+
+    ⚠ **동점에서 자리로 가르지 않는다.** 최댓값을 든 후보가 둘 이상이면 거부한다 — 「등급이 같으면
+    먼저 온 것」은 위치 규칙이고 그것이 금지다. 같은 `finding_id`에서 PoC가 둘 나온 경우도 등급이
+    같아 거부에 걸린다. 판정이 없는 편이 금지된 규칙으로 낸 판정보다 낫다(CLAUDE.md §0).
 
     「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
     — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
@@ -1757,10 +1786,22 @@ def _designate_final(
     """
     candidates = [attempt for attempt in ledger.attempts if attempt.ok]
     if not candidates:
-        return None, ledger.none_reason()
+        return None, "", ledger.none_reason()
     if len(candidates) == 1:
-        return candidates[0], None
-    return None, oracle_log.REASON_POLICY_UNDECIDED
+        return candidates[0], oracle_log.DESIGNATION_SOLE_CANDIDATE, None
+    # 등급을 모르는 후보가 하나라도 있으면 거부한다 — 모르는 값을 E0로 깔면 **없는 근거로** 나머지를
+    # 고르게 된다(CLAUDE.md §0: 안 잰 값은 0이 아니라 미실측 표시다).
+    if any(attempt.finding_id not in grades for attempt in candidates):
+        return None, "", oracle_log.REASON_GRADE_UNKNOWN
+    rank = {
+        attempt.finding_id: gate.GRADE_ORDER.index(grades[attempt.finding_id])
+        for attempt in candidates
+    }
+    best = max(rank.values())
+    leaders = [attempt for attempt in candidates if rank[attempt.finding_id] == best]
+    if len(leaders) > 1:
+        return None, "", oracle_log.REASON_GRADE_TIE
+    return leaders[0], oracle_log.DESIGNATION_TOP_GRADE, None
 
 
 def _score(
@@ -1796,10 +1837,10 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     `_designate_final`이 최종 PoC를 지정하면 그 하나에만 `fix` 다리와 판정 조회를 돌린다. 점수는
     후보 N건의 any-of가 아니라 이 호출 하나다 — 그래서 `oracle_final`이 run당 1건이고
     `oracle_submitted`는 판정 값을 안 든다(`trace.py`). **지정된 후보가 없는 사건**
-    (`no_poc`·`all_vul_submissions_failed`·`policy_undecided`)은 `status=none`이고, 지정했는데
-    `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가 없다」가 「최종
-    PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 지정하지 않는다** — 고르는 규칙이
-    정해지지 않았다(`_designate_final`).
+    (`no_poc`·`all_vul_submissions_failed`·`grade_tie`·`grade_unknown`)은 `status=none`이고,
+    지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
+    없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 내부 근거 등급의 최댓값으로
+    고르고 동점이면 지정하지 않는다**(`_designate_final`).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
     계약). 이 단계는 8단계가 **끝까지 돌았을 때만** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
@@ -1809,11 +1850,11 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
         return
     ledger = state.oracle_ledger
     with ctx.stage(Stage.VALIDATE):
-        picked, reason = _designate_final(ledger)
+        picked, designation, reason = _designate_final(ledger, _grades_by_finding(state))
         if picked is None:
             final = oracle_log.FinalAttempt(status=oracle_log.STATUS_NONE, reason=reason)
         else:
-            final = _score(ctx, ctx.oracle, picked, oracle_log.DESIGNATION_SOLE_CANDIDATE)
+            final = _score(ctx, ctx.oracle, picked, designation)
         ledger.set_final(final)
         ctx.trace.emit(
             EventKind.ORACLE_FINAL,
