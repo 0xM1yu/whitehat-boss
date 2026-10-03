@@ -88,7 +88,7 @@ import json
 import re
 import subprocess
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -414,12 +414,17 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
+    # 아래 셋(`callees_of`·`call_sites_of`·`definitions_of`)은 `demote_nonproduct` 키워드를 받는다
+    # (기본 꺼짐 — `auditor_definitions`를 켠 run에서만 러너가 켠다).
+    #
     # 함수 위치 → 그 본문이 부르는 함수의 정의 위치(#349). `symbols_for`와 같은 경계다.
-    callees_of: Callable[[Location], list[Location] | None]
+    callees_of: Callable[..., list[Location] | None]
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 같은 경계다.
-    call_sites_of: Callable[[Location], list[Location] | None]
+    call_sites_of: Callable[..., list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
-    definitions_of: Callable[[Iterable[str], str], list[Location] | None]
+    definitions_of: Callable[..., list[Location] | None]
+    # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
+    locals_of: Callable[[str, str], frozenset[str] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
@@ -809,6 +814,7 @@ def run_pipeline(
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
         definitions_of=deps.definitions_of,
+        locals_of=deps.locals_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
