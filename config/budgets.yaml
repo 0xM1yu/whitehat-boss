@@ -358,8 +358,8 @@ thresholds:
     expanded: 18000
     focused: 8000
 
-  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 v6가 이 넷을 서술하고 meta의
-  # `source_options`로 선언한다 -> 하나라도 끄면 v6의 서술이 거짓이 된다(`cli`는 켠 쪽만 검사).
+  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 v7(v6 + 이 넷의 서술)이 이 넷을 서술하고 meta의
+  # `source_options`로 선언한다 -> 하나라도 끄면 v7의 서술이 거짓이 된다(`cli`는 켠 쪽만 검사).
   # 고른 근거는 둘 다 로컬 소표본이다(run ID 없음 · 원자료 저장소 밖):
   # - 20,000토큰 + 정의 + 피호출 -> 2026-10-01 s500 실패 표본 9개(GT 보는 슬라이스 35)에서 정의 누락
   #   97.9 -> 69.4% · 피호출 누락 56.3 -> 47.2% · 입력 토큰 중앙값 347 -> 1,106(`measure_results/
