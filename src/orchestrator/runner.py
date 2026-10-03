@@ -132,7 +132,11 @@ from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
 from src.orchestrator.prompt_log import PromptLog
-from src.orchestrator.source_definitions import definition_names, slice_names_first
+from src.orchestrator.source_definitions import (
+    definition_names,
+    macro_alias_target,
+    slice_names_first,
+)
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
@@ -422,6 +426,8 @@ class Dependencies(Protocol):
     callees_of: Callable[..., list[Location] | None]
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 같은 경계다.
     call_sites_of: Callable[..., list[Location] | None]
+    # (이름들, 가까운 파일) → 함수 정의 위치 — 매크로 별칭이 부르는 함수(C4). 같은 경계다.
+    functions_named: Callable[..., list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[..., list[Location] | None]
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
@@ -814,6 +820,7 @@ def run_pipeline(
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
+        functions_named=deps.functions_named,
         definitions_of=deps.definitions_of,
         locals_of=deps.locals_of,
         counter_for_role=deps.counter_for_role,
@@ -3049,6 +3056,22 @@ _OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
 # `callers_dropped`가 지점 수가 된다(#351 리뷰). 순서는 `call_sites_of`가 정한다(같은 파일 →
 # 같은 디렉터리 → 나머지). **정한 값이지 잰 값이 아니다.**
 _AUDITOR_CALLER_SITES = 8
+# 래퍼 너머(C4). 붙인 피호출 함수가 이 줄 수 이하이고 그 본문이 정의를 아는 함수를 1~
+# `_AUDITOR_WRAPPER_CALLS`개만 부르면 래퍼로 보고 그 함수들을 붙인다 — `gf_strdup` → `gf_mem_strdup`
+# 같은 껍데기 뒤의 실제 구현. 래퍼 너머는 `_AUDITOR_WRAPPER_DEPTH`단까지다. 매크로 별칭(`ND_TCHECK`
+# → `ND_TCHECK2`)은 `_AUDITOR_ALIAS_ROUNDS`번까지 다시 찾는다. **셋 다 정한 값이지 잰 값이 아니다**
+# — 근거는 팀 검수 83표본의 래퍼 예(1~2단 · 이름만 바꿔 넘기는 짧은 함수)다.
+_AUDITOR_WRAPPER_LINES = 10
+_AUDITOR_WRAPPER_CALLS = 2
+_AUDITOR_WRAPPER_DEPTH = 2
+_AUDITOR_ALIAS_ROUNDS = 2
+
+
+def _is_short(location: Location) -> bool:
+    """래퍼 판정의 길이 조건 — 범위를 모르면 래퍼로 안 본다."""
+    if location.line_start is None or location.line_end is None:
+        return False
+    return location.line_end - location.line_start + 1 <= _AUDITOR_WRAPPER_LINES
 
 
 def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
@@ -3089,7 +3112,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     안 호출이 부르는 함수의 본문(`ctx.callees_of`)을 붙인다. entry 함수의 피호출 함수가 먼저,
     그다음 실린 순서대로다. 이미 실린 범위와 겹치는 것·`_AUDITOR_CALLEE_CHARS`를 넘는 것은
     싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
-    0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
+    0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b). 붙인 피호출 함수가 짧은
+    래퍼면 그 너머 함수를, 실은 매크로가 이름만 바꿔 넘기면 그 대상 정의·함수를 더 붙인다(C4 —
+    `_AUDITOR_WRAPPER_*`·`_AUDITOR_ALIAS_ROUNDS` 주석).
 
     **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
     함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
@@ -3157,7 +3182,28 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 호출자 조회도 같은 규칙(비제품 경로 강등)으로 「하나뿐」을 정한다. 끈 run은 옛 호출 그대로라
     # 측정이 있는 옵션 조합(피호출만·호출자 창만)의 출력이 안 바뀐다.
     hygiene = {"demote_nonproduct": True} if with_definitions else {}
-    definitions = definitions_dropped = 0
+    definitions = definitions_dropped = alias_definitions = 0
+    # 실은 매크로가 다른 이름 하나로 바꿔 넘기면 그 이름(C4 — `macro_alias_target`). 아래 별칭
+    # 라운드가 그 이름의 정의를, 피호출 단계가 그 이름의 함수 본문을 찾는다.
+    aliases: set[str] = set()
+
+    def carry_definition(definition: Location) -> bool:
+        nonlocal size, definitions, definitions_dropped
+        if any(_overlaps(definition, other) for other in seen):
+            return False
+        seen.append(definition)
+        text = ctx.read_source(definition)
+        block = _block(definition, text)
+        if len(block) > _AUDITOR_DEFINITION_CHARS or size + 1 + measure(block) > cap:
+            definitions_dropped += 1
+            return False
+        blocks.append(block)
+        size += 1 + measure(block)
+        definitions += 1
+        if (target := macro_alias_target(text)) is not None:
+            aliases.add(target)
+        return True
+
     if with_definitions:
         # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
         # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그 함수의
@@ -3165,37 +3211,64 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         used = definition_names(bodies, ctx.locals_of)
         found = ctx.definitions_of(used, anchor.file, **hygiene) or []
         for definition in slice_names_first(found, ctx.read_source, ref.lines):
-            if any(_overlaps(definition, other) for other in seen):
-                continue
-            seen.append(definition)
-            block = _block(definition, ctx.read_source(definition))
-            if (
-                len(block) > _AUDITOR_DEFINITION_CHARS
-                or size + 1 + measure(block) > cap
-            ):
-                definitions_dropped += 1
-                continue
+            carry_definition(definition)
+        # 별칭 라운드(C4) — `ND_TCHECK` → `ND_TCHECK2`처럼 실은 매크로가 이름만 바꿔 넘기면 그
+        # 대상의 정의를 한 번 더 찾는다. 대상이 다시 별칭이면 `_AUDITOR_ALIAS_ROUNDS`까지 간다.
+        # 이미 조회한 이름은 다시 안 찾는다.
+        asked = set(used)
+        for _ in range(_AUDITOR_ALIAS_ROUNDS):
+            wanted, asked = aliases - asked, asked | aliases
+            if not wanted:
+                break
+            for definition in ctx.definitions_of(wanted, anchor.file, **hygiene) or []:
+                if carry_definition(definition):
+                    alias_definitions += 1
+    hops = ctx.config.thresholds.auditor_callee_hops
+    callees = callees_dropped = wrapper_callees = alias_callees = 0
+    if hops:
+        # 피호출 함수 1단(#349 (a)) + 래퍼 너머(C4). 붙인 피호출 함수가 짧고
+        # (`_AUDITOR_WRAPPER_LINES`줄 이하) 그 본문이 정의를 아는 함수를
+        # 1~`_AUDITOR_WRAPPER_CALLS`개만 부르면 래퍼로 보고 그 함수들을 바로 뒤에 붙인다 —
+        # `gf_strdup` → `gf_mem_strdup`처럼 래퍼만 실리고 실제 구현이 빠지던 자리다. 래퍼 너머는
+        # `_AUDITOR_WRAPPER_DEPTH`단까지다. 래퍼가 아닌 함수는 1단에서 멈춘다.
+        def carry_callee(callee: Location) -> bool:
+            nonlocal size, callees, callees_dropped
+            if any(_overlaps(callee, other) for other in seen):
+                return False
+            seen.append(callee)
+            block = _block(callee, ctx.read_source(callee))
+            if len(block) > _AUDITOR_CALLEE_CHARS or size + 1 + measure(block) > cap:
+                callees_dropped += 1
+                return False
             blocks.append(block)
             size += 1 + measure(block)
-            definitions += 1
-    hops = ctx.config.thresholds.auditor_callee_hops
-    callees = callees_dropped = 0
-    if hops:
+            callees += 1
+            return True
+
+        def through_wrapper(callee: Location, depth: int) -> None:
+            nonlocal wrapper_callees
+            if depth > _AUDITOR_WRAPPER_DEPTH or not _is_short(callee):
+                return
+            inner = ctx.callees_of(callee, **hygiene) or []
+            if not 1 <= len(inner) <= _AUDITOR_WRAPPER_CALLS:
+                return
+            for target in inner:
+                if carry_callee(target):
+                    wrapper_callees += 1
+                    through_wrapper(target, depth + 1)
+
         for owner in list(carried):
             for callee in ctx.callees_of(owner, **hygiene) or []:
-                if any(_overlaps(callee, other) for other in seen):
-                    continue
-                seen.append(callee)
-                block = _block(callee, ctx.read_source(callee))
-                if (
-                    len(block) > _AUDITOR_CALLEE_CHARS
-                    or size + 1 + measure(block) > cap
-                ):
-                    callees_dropped += 1
-                    continue
-                blocks.append(block)
-                size += 1 + measure(block)
-                callees += 1
+                if carry_callee(callee):
+                    through_wrapper(callee, 1)
+        # 별칭 매크로가 부르는 함수(`#define FT_FRAME_EXTRACT(...) FT_Stream_ExtractFrame(...)`).
+        # 매크로 본문 안의 호출은 인덱스 호출 표에 없어 위 `callees_of`로는 안 닿는다 -> 이름으로
+        # 찾는다.
+        if aliases:
+            for function in ctx.functions_named(sorted(aliases), anchor.file, **hygiene) or []:
+                if carry_callee(function):
+                    alias_callees += 1
+                    through_wrapper(function, 1)
     # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
     # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
     # (#351 자체 검토).
@@ -3236,14 +3309,27 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         chars=len(source),
         anchor_chars=anchor_chars,
         **({"entry_omitted_lines": omitted, "entry_over_cap": over_cap} if trim_entry else {}),
-        **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
+        **(
+            {
+                "callees": callees,
+                "callees_dropped": callees_dropped,
+                "wrapper_callees": wrapper_callees,
+                "alias_callees": alias_callees,
+            }
+            if hops
+            else {}
+        ),
         **(
             {"callers": callers, "callers_dropped": callers_dropped, "call_sites": call_sites}
             if caller_lines
             else {}
         ),
         **(
-            {"definitions": definitions, "definitions_dropped": definitions_dropped}
+            {
+                "definitions": definitions,
+                "definitions_dropped": definitions_dropped,
+                "alias_definitions": alias_definitions,
+            }
             if with_definitions
             else {}
         ),

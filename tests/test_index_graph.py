@@ -1503,3 +1503,26 @@ def test_call_sites_of_skips_nonproduct_callers_when_a_nonproduct_copy_exists(
     assert graph.call_sites_of(dup, demote_nonproduct=True) == [
         Location(file="lib/use.c", symbol="use", line_start=2, line_end=2)
     ]
+
+
+def test_functions_named_resolves_names_to_function_definitions(tmp_path: Path) -> None:
+    """C4: 매크로 별칭이 부르는 함수 이름 → 정의. `callees_of`와 같은 규칙 — 가까운 파일 정의가
+    이기고, 다른 파일은 하나뿐일 때만, 여럿이면 빠진다. 모르는 이름은 빠지고 순서는 이름 순이다."""
+    graph = _graph(tmp_path, _CALLEE_INDEX)
+
+    found = graph.functions_named({"only_b", "helper", "twice", "memcpy"}, "a.c")
+
+    assert found == [
+        Location(file="a.c", symbol="helper", line_start=12, line_end=15),
+        Location(file="b.c", symbol="only_b", line_start=5, line_end=8),
+    ]
+    assert _graph(tmp_path / "none", None).functions_named({"helper"}, "a.c") is None
+
+
+def test_functions_named_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`이 제품 정의 하나로 정해진다 — 꺼진 쪽은 정의가 둘이라 빠진다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    assert graph.functions_named({"dup"}, "lib/a.c") == []
+    found = graph.functions_named({"dup"}, "lib/a.c", demote_nonproduct=True)
+    assert [loc.file for loc in found] == ["lib/b.c"]
