@@ -670,6 +670,18 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 
 ⏵ **2026-10-03 — `S5`·`S6b`·`S7`은 main에 있다.** 다음은 배선 조각이다(§11.6).
 
+⏵ **2026-10-03 저녁 — 배선 조각도 머지됐고(#408) 「단계 3 배관 증명」을 돌렸다. 배관은 성립한다**
+— `pov_poc` 68바이트 8개가 `/submit-vul`에 **8건 제출 성공**하고 서버 DB 판정 행과 장부
+`oracle/verdict.json`이 **같은 `poc_sha256`·`poc_id`**를 든다
+([보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)).
+번들에 없던 `submit.sh`는 **저자 틀에 네 값을 치환해 조작자 쪽에서 만들었다.**
+🔴 **그 자리에서 다른 벽이 드러났다 — `dev_fake`의 `input_tokens 200,000`을 실제 번들에서
+204,963이 넘겨 Critic이 0회 돌고 `upheld`만 거짓이 되어 승격이 0건이었다**(상한을 로컬에서
+제거하자 완주하고 `critic` 8회·`pov` 16회가 돌아 E4까지 올랐다). 그래서 **「게이트 결정」 칸의
+전제가 바뀐다** — 막던 것은 승격 규칙이 아니라 **개발 프로필이 완주하지 못한다는 사실**이었다.
+상한 값은 사람이 정한다(보고서 §6: Fake 장부값은 상한 근거가 못 된다) — 이슈
+[#424](https://github.com/0xM1yu/whitehat-boss/issues/424)에 선택지 셋으로 올렸다.
+
 ### 11.4 이 사슬의 PR — 2026-10-03 기준
 
 **상태는 PR을 열어 본다** — 아래는 그날의 사진이다.
@@ -679,7 +691,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | `S7` 재현명세 합성 | PR [#393](https://github.com/0xM1yu/whitehat-boss/pull/393) (손수민) · 이슈 [#392](https://github.com/0xM1yu/whitehat-boss/issues/392) | **머지됨.** 기본 꺼짐. **두 자리에서 이 PR이 우리 계획보다 낫다** — `origin`을 최상위 필드로 우회하지 않고 `_ensure_repro_origin`으로 집행하고, 등급을 출처로 가르지 않는다(막아야 할 것은 출처가 아니라 §11.5다) |
 | `S5` PoC 바이트 출구 | PR [#396](https://github.com/0xM1yu/whitehat-boss/pull/396) | **머지됨.** 저장소 최초의 이진 쓰기 |
 | `S6b` 오라클 클라이언트 | PR [#402](https://github.com/0xM1yu/whitehat-boss/pull/402) | **머지됨.** 호출처는 배선 조각([#408](https://github.com/0xM1yu/whitehat-boss/pull/408))이 잇기 전까지 0건이다. 이 클라이언트로 실서버 왕복을 쟀다(2026-10-02) |
-| 배선 조각 | PR [#408](https://github.com/0xM1yu/whitehat-boss/pull/408) (손수민) | **열림.** `run --oracle-submit`(기본 꺼짐): 후보마다 `vul`만, `fix`·판정 조회는 후보가 하나일 때만 그 하나에(any-of 아님) — 둘 이상이면 고르는 규칙이 미정이라 지정하지 않는다(모델에게 묻는 방식은 별도 조각). 판정 값은 `oracle/verdict.json`. 대역으로만 검증 — 하네스 run으로 실서버 왕복 0건 |
+| 배선 조각 | PR [#408](https://github.com/0xM1yu/whitehat-boss/pull/408) (손수민) | **열림.** `run --oracle-submit`(기본 꺼짐): 후보마다 `vul`만, `fix`·판정 조회는 후보가 하나일 때만 그 하나에(any-of 아님) — 둘 이상이면 고르는 규칙이 미정이라 지정하지 않는다(모델에게 묻는 방식은 별도 조각). 판정 값은 `oracle/verdict.json`. 대역으로만 검증 — 하네스 run으로 실서버 왕복 0건 <br>⏵ **2026-10-03 저녁 — 머지됐고(`1fa2182`) 실서버 왕복도 쟀다.** 「왕복 0건」은 이제 **1건**이다(`run_20261003_0003`, vul 8건) — 위 「열림」과 「0건」은 그날 아침의 사진이다 |
 | `S0` 최후 방어선 | PR [#382](https://github.com/0xM1yu/whitehat-boss/pull/382) | **머지됨** |
 | 과제 번들 `--task-dir` | PR [#381](https://github.com/0xM1yu/whitehat-boss/pull/381) | **머지됨.** `--slices` 허용 + 슬라이스 개수 가드 |
 | PoV 정보 배선(진입점·넓은 소스·경로 심볼·gdb enum) | PR [#380](https://github.com/0xM1yu/whitehat-boss/pull/380) | **머지됨.** 새 입력은 v3 전용(v3는 미배선) — 배선된 v2의 프롬프트는 main과 바이트 동일 |
@@ -689,7 +701,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | 예산 한 줄 | 브랜치 `fix/no-zero-budget`(PR 없음) | 구현 끝 |
 | Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
 | 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
-| Auditor 프롬프트 v5 | draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390) | 🅿️ **주차.** 트리거는 **첫 대여 세션** — v4와 v5를 그날 둘 다 돌리고 정한다 |
+| Auditor 프롬프트 v5 | draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390) | 🅿️ **주차.** 트리거는 **첫 대여 세션** — v4와 v5를 그날 둘 다 돌리고 정한다 <br>⏵ **2026-10-03 저녁 — 이 PR은 `CLOSED`다**(머지 아님). v5를 건너뛰고 v6으로 갔다 — 열린 PR은 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418)(프롬프트)·[#421](https://github.com/0xM1yu/whitehat-boss/pull/421)(배선) |
 
 🔴 **PR끼리의 충돌은 `src/orchestrator/runner.py`와 `docs/agent-contracts.md`에서 났다** — #380 ↔ #396이
 `_emit_pov_hop`·`_pov_observation`의 호출 인자와 docstring, 계약 문서의 같은 불릿을 서로 다르게 바꿨다.
