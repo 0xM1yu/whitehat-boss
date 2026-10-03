@@ -1397,6 +1397,10 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         lookup_kwargs.append(("locals_of", {}))
         return opts.get("locals", {}).get((file, func))
 
+    def functions_named(wanted, _file, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("functions_named", kw))
+        return [loc for name in sorted(wanted) for loc in opts.get("functions", {}).get(name, [])]
+
     events: list[dict] = []
     ctx = types.SimpleNamespace(
         symbols_for=lambda file: [s for s in symbols if s.file == file],
@@ -1405,6 +1409,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         definitions_of=definitions,
         call_sites_of=sites,
         locals_of=locals_of,
+        functions_named=functions_named,
         lookup_kwargs=lookup_kwargs,
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(**thresholds)),
@@ -1783,3 +1788,127 @@ def test_default_budgets_carry_definitions_callees_and_caller_windows(tmp_path: 
     (event,) = _source_events(trace_path)
     for key in ("callees", "callers", "call_sites", "definitions", "tokens"):
         assert key in event, key
+
+
+# --- 래퍼·별칭 너머(C4) -----------------------------------------------------------------------
+# 팀 검수 83표본 중 18건이 「래퍼까지만 붙고 실제 구현이 없다」였다(`gf_strdup` → `gf_mem_strdup` ·
+# `ND_TCHECK` → `ND_TCHECK2`). 붙인 피호출 함수가 짧고 정의를 아는 함수를 한둘만 부르면 래퍼로 보고
+# 그 함수를 붙인다. 짧다 = `_AUDITOR_WRAPPER_LINES`줄 이하.
+_W_FILE = {"w.c": [f"w{i} x{i}" for i in range(1, 121)]}
+_W_F = Location(file="w.c", symbol="f", line_start=1, line_end=3)
+_W_WRAP = Location(file="w.c", symbol="wrap", line_start=10, line_end=12)
+_W_WRAP2 = Location(file="w.c", symbol="wrap2", line_start=14, line_end=16)
+_W_WRAP3 = Location(file="w.c", symbol="wrap3", line_start=18, line_end=20)
+_W_IMPL = Location(file="w.c", symbol="impl", line_start=30, line_end=45)
+_W_LONG = Location(file="w.c", symbol="long_fn", line_start=50, line_end=70)
+_W_A = Location(file="w.c", symbol="a", line_start=80, line_end=82)
+_W_B = Location(file="w.c", symbol="b", line_start=84, line_end=86)
+_W_C = Location(file="w.c", symbol="c", line_start=88, line_end=90)
+
+
+def _wrapped(callees: dict, **opts):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _W_FILE, [_W_F, _W_WRAP, _W_IMPL, _W_LONG], auditor_callee_hops=1, callees=callees, **opts
+    )
+    return _unit_run(ctx, events, _W_F, [("w.c", 2)])
+
+
+def test_a_wrapper_callee_brings_the_function_it_forwards_to() -> None:
+    """`f` → `wrap`(3줄, `impl` 하나만 부름) → `impl`이 붙는다. 1단만이던 옛 동작이면 `impl`이
+    빠진다."""
+    source, event = _wrapped({"f": [_W_WRAP], "wrap": [_W_IMPL]})
+    assert "/* ===== w.c:30-45 ===== */" in source
+    assert (event["callees"], event["wrapper_callees"]) == (2, 1)
+
+
+def test_a_long_callee_is_not_a_wrapper() -> None:
+    """`long_fn`(21줄)은 래퍼가 아니다 -> 그 피호출 `impl`은 안 붙는다(1단에서 멈춤)."""
+    from src.orchestrator.runner import _AUDITOR_WRAPPER_LINES
+
+    assert _W_LONG.line_end - _W_LONG.line_start + 1 > _AUDITOR_WRAPPER_LINES
+    source, event = _wrapped({"f": [_W_LONG], "long_fn": [_W_IMPL]})
+    assert "w.c:30-45" not in source
+    assert (event["callees"], event["wrapper_callees"]) == (1, 0)
+
+
+def test_a_short_callee_that_calls_many_functions_is_not_a_wrapper() -> None:
+    """짧아도 정의를 아는 함수를 셋 부르면 래퍼가 아니다(`_AUDITOR_WRAPPER_CALLS` = 2)."""
+    from src.orchestrator.runner import _AUDITOR_WRAPPER_CALLS
+
+    assert _AUDITOR_WRAPPER_CALLS == 2
+    _, event = _wrapped({"f": [_W_WRAP], "wrap": [_W_A, _W_B, _W_C]})
+    assert (event["callees"], event["wrapper_callees"]) == (1, 0)
+    _, event = _wrapped({"f": [_W_WRAP], "wrap": [_W_A, _W_B]})
+    assert (event["callees"], event["wrapper_callees"]) == (3, 2)
+
+
+def test_wrappers_are_followed_only_to_the_depth_limit() -> None:
+    """`wrap` → `wrap2` → `wrap3` → `impl` — 래퍼 너머는 `_AUDITOR_WRAPPER_DEPTH`(2)단까지라
+    `wrap2`·`wrap3`까지 붙고 `impl`은 안 붙는다."""
+    from src.orchestrator.runner import _AUDITOR_WRAPPER_DEPTH
+
+    assert _AUDITOR_WRAPPER_DEPTH == 2
+    source, event = _wrapped(
+        {"f": [_W_WRAP], "wrap": [_W_WRAP2], "wrap2": [_W_WRAP3], "wrap3": [_W_IMPL]}
+    )
+    assert "w.c:14-16" in source and "w.c:18-20" in source
+    assert "w.c:30-45" not in source
+    assert (event["callees"], event["wrapper_callees"]) == (3, 2)
+
+
+def test_callee_hops_off_follows_no_wrapper() -> None:
+    """피호출 단계가 꺼지면 래퍼도 안 따라간다 — 이벤트에 키도 없다."""
+    ctx, events, _, _ = _unit(_W_FILE, [_W_F], callees={"f": [_W_WRAP], "wrap": [_W_IMPL]})
+    source, event = _unit_run(ctx, events, _W_F, [("w.c", 2)])
+    assert "w.c:10-12" not in source
+    assert "wrapper_callees" not in event
+
+
+_M_FILE = {
+    "w.c": _W_FILE["w.c"],
+    "m.h": [
+        "#define M(x) M2(x, 1)",
+        "#define M2(x, n) impl(x, n)",
+        "#define K 64",
+    ],
+}
+_M_M = Location(file="m.h", symbol="M", line_start=1, line_end=1)
+_M_M2 = Location(file="m.h", symbol="M2", line_start=2, line_end=2)
+_M_K = Location(file="m.h", symbol="K", line_start=3, line_end=3)
+
+
+def _aliased(**opts):  # noqa: ANN202
+    def definitions(names, _file):  # noqa: ANN001, ANN202
+        # 첫 조회(실린 `f`의 이름)는 `M`·`K`를 낸다 — 본문이 그 둘을 쓴다고 본다. 별칭 라운드는
+        # 넘어온 이름 그대로 찾는다.
+        return [_M_M2] if "M2" in names else [_M_M, _M_K]
+
+    ctx, events, _, names = _unit(
+        _M_FILE,
+        [_W_F, _W_IMPL],
+        auditor_definitions=1,
+        definitions=definitions,
+        functions={"impl": [_W_IMPL]},
+        **opts,
+    )
+    source, event = _unit_run(ctx, events, _W_F, [("w.c", 2)])
+    return source, event, names
+
+
+def test_a_rename_macro_brings_the_macro_it_forwards_to() -> None:
+    """실린 `M`이 `M2`로 이름만 바꿔 넘기면 `M2`의 정의를 한 번 더 찾는다(`ND_TCHECK` →
+    `ND_TCHECK2`). 상수 매크로 `K`는 별칭이 아니라 다시 안 찾는다."""
+    source, event, names = _aliased()
+    assert "/* ===== m.h:2-2 ===== */" in source
+    assert event["alias_definitions"] == 1
+    # 별칭 라운드는 둘(`_AUDITOR_ALIAS_ROUNDS`) — `M` → `M2`, 그 `M2` → `impl`. `K`는 안 찾는다.
+    assert names[1:] == [{"M2"}, {"impl"}]
+
+
+def test_a_rename_macro_brings_the_function_it_forwards_to() -> None:
+    """`M2`가 `impl`을 부르면 피호출 단계가 그 함수 본문을 이름으로 찾아 붙인다 — 매크로 본문 안의
+    호출은 인덱스 호출 표에 없어 `callees_of`로는 안 닿는다(`FT_FRAME_EXTRACT` →
+    `FT_Stream_ExtractFrame`)."""
+    source, event, _ = _aliased(auditor_callee_hops=1)
+    assert "/* ===== w.c:30-45 ===== */" in source
+    assert event["alias_callees"] == 1
