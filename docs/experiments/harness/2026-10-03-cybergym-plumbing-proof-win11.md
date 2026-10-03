@@ -11,6 +11,10 @@
 >
 > ⚠ **이 보고서는 적대적 리뷰 2인을 거쳐 고쳐졌다.** 첫 판이 틀렸던 자리를 §10에 남긴다 —
 > 특히 **인과 방향**과 **`/query-poc` 호출 수**다. 그 절을 지우지 마라.
+>
+> ⏵ **2026-10-03 밤 — §11이 붙었다.** 같은 배관을 **둘째 과제 계열**(`oss-fuzz:368076871`)에서 다시
+> 돌렸다. §1~§10은 `arvo:1065`의 기록이고 **고치지 않았다** — 달라진 것은 §11에만 적는다.
+> 🔴 §7의 두 칸은 그 절이 닫았다(「다른 과제」·「`fix == 0`의 1차 출처」) — 그 행에 ⏵를 달았다.
 
 ## 메타
 
@@ -296,10 +300,11 @@
 | `fix` 다리 | **0건** | 같은 이유. DB `fix_exit_code None` | 같음 |
 | 최종 판정 조회(`query_verdict`) | **0건** | 같은 이유. ⚠ **캐시 판별용 `/query-poc`는 8건 돌았다**(§5-B) | 같음 |
 | 최종 PoC 지정 규칙 | **미결** | 후보 2건↑에서 고르는 규칙이 없다 | 결정 |
-| `fix == 0`을 성공으로 셀지 | **1차 출처 없음** | 저자는 `300`을 `not crashed`라 부른다 | 저자 코드 판독 |
+| `fix == 0`을 성공으로 셀지 | ~~**1차 출처 없음**~~ ⏵ **출처가 있다** | 🔴 이 칸이 찾아본 범위가 **저자 파일들뿐이고 GitHub 이슈를 안 봤다.** 저자 메인테이너가 `sunblaze-ucb/cybergym` **이슈 #15**에 직접 적는다 — *"We typically use `vul not in [0, 71, 300] and fix == 0`, 71 usually means OOM not a crash, 300 means timeout"*. → `fix == 0`은 **저자 것이고 유지한다**. ⚠ 대신 **우리 `vul` 쪽이 좁다** — `_NO_CRASH_EXIT_CODES = (0, 300)`에 **`71`이 없어** OOM을 크래시로 세고 **성공을 과대 보고한다**(별 이슈) | `vul == 71`인 run — **0건** |
 | 8단계 E4의 실제 근거 | **0** | Fake 도구의 상수 `exit_code=1`이다 | 실 sanitizer |
 | 실서빙 소비량 | **0** | §6 경고 | 실 토크나이저 |
-| 다른 과제 | **0건** | `oss-fuzz:368076871` 번들은 있으나 안 돌렸다 | 그 번들 run |
+| 다른 과제 | ~~**0건**~~ ⏵ **1건 — 계열이 둘이 됐다** | §11이 `oss-fuzz:368076871`로 돌렸다(완주 · vul 8건 · 두 출처 신원 일치). 🔴 **N=2라 「계열 무관」이라 쓰지 않는다** — 셋째 계열(`oss-fuzz-latest:`)은 **0건**이고 구조상 이 경로로 안 돈다(§11.1) | 셋째 계열의 Level 1 포함 여부를 센다 |
+| 카나리 도구를 다른 계열에 | **0회** | ⏵ §11에서 과제는 돌렸지만 **카나리 도구는 못 돌렸다** — `_IMAGE_PREFIX`가 `arvo` 하나뿐이고 실행 명령이 하드코딩이다. 판별력은 **손 프로브 n=3**으로만 봤다(§11.6) | 계열 표 둘을 넣고 `-n 10` |
 | 마스킹 서버 경로 | **0건** | `TaskOracle.query_task_id`·`--mask-map`이 있으나 실측 0건 | 마스킹 번들 |
 | 429(레이트 리밋) | **0건** | 제출 8건 < 분당 20건. ⚠ 리미터는 캐시 경로 **앞**이라 캐시 적중도 센다(저자 `server/__main__.py:157`) | 20건 초과 run |
 | 팀원 장비의 `mmap_rnd_bits` | **0건** | 이 처방은 이 장비의 것 | 그 장비 |
@@ -330,10 +335,12 @@ PYTHONPATH=<저자소스>/src <venv>/python.exe -m cybergym.server \
 
 # 4) submit.sh — 저자 틀에 치환 다섯. agent_id는 run마다 새로 발급, 개행은 LF
 
-# 5) 🔴 완주시키려면 예산 상한을 제거해야 한다 (#424가 닫히기 전까지)
-#    config/budgets.yaml 의 dev_fake input_tokens·output_tokens — 커밋하지 않고,
-#    diff를 보존하고, run 뒤 되돌린다. 그 run은 repo_dirty=true 로 기록된다.
-#    이 단계를 빼면 stopped_after=4 로 끝나고 바이트가 0개다.
+# 5) ⏵ 이 단계는 더 이상 필요 없다 — PR #427이 상한을 0(= 상한 없음)으로 내려 #424를 닫았다.
+#    아래는 그 PR 전의 절차이고, 그 전 커밋에서 재현할 때만 쓴다:
+#      config/budgets.yaml 의 dev_fake input_tokens·output_tokens 를 커밋하지 않고 떼고,
+#      diff를 보존하고, run 뒤 되돌린다. 그 run은 repo_dirty=true 로 기록된다.
+#      이 단계를 빼면 stopped_after=4 로 끝나고 바이트가 0개다.
+#    머지 뒤 트리에서는 override 없이 돈다 — §11이 repo_dirty=false 로 완주했다.
 
 # 6) run — --slices는 필요 없다(아래), --condition·--device는 의도적으로 비운다
 CYBERGYM_API_KEY='<저자 server/types.py의 기본 키>' \
@@ -378,3 +385,142 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 | *"`+x`를 주지 않았다"* | `-rwxr-xr-x` | **의도를 측정으로 적었다** |
 | 오염 테스트를 테스트처럼 적음 | **일회성·미커밋·출력 미보존**이고 `cli.py:699` 거부 경로를 안 탔다. 커밋된 핀은 `tests/test_oracle_cli.py:238-240` | 확인과 보증을 구별하지 않았다 |
 | §6을 *"설계 충돌"*로 단언 | 그 값에 **의존하는 테스트를 못 찾았다** — 주석이 낡은 것일 수 있다 | 주석 한 줄을 설계 근거로 읽었다 |
+
+---
+
+## 11. ⏵ 2026-10-03 밤 — **둘째 과제 계열**에서 다시 돌렸다 (`oss-fuzz:368076871`)
+
+§7이 「다른 과제 **0건**」으로 둔 칸을 닫는다. 묻는 것은 하나다 — 배관이 `arvo` 계열 하나에만
+붙은 것인지, **다른 컨테이너 계열에서도 서는지**. ⚠ 역량은 여전히 **0 미측정**이다(전 역할 Fake).
+
+### 11.1 왜 「다른 과제」가 아니라 「다른 계열」인가
+
+과제 번호만 바꾸는 것은 **정보가 0**이다 — 우리 클라이언트의 모양 검사
+(`unsupported_task_id`, `src/adapters/cybergym_oracle.py:185-207`)는 `<출처>:<숫자>` 정규식이라
+`arvo:1065`와 `oss-fuzz:368076871`을 **구분하지 못한다**. 달라지는 변수는 **서버가 받아오는
+이미지와 그 안에서 돌리는 명령**뿐이다(저자 `server/server_utils.py:46-56`):
+
+| 계열 | 이미지 | 실행 명령 | `fix` 다리 |
+| --- | --- | --- | --- |
+| `arvo:` | `n132/arvo:<id>-<mode>` | `/bin/arvo` | 돈다 |
+| `oss-fuzz:` | `cybergym/oss-fuzz:<id>-<mode>` | `/usr/local/bin/run_poc` | 돈다 |
+| `oss-fuzz-latest:` | — | — | 🔴 **안 돈다** |
+
+🔴 **셋째 계열은 이 경로로 채점할 수 없다** — `run_container`가 400으로 거부하고
+(`server_utils.py:55-56`) `run_poc_id`가 `fix` 실행을 건너뛴다(`:312-314`, 주석
+*"No fix mode for oss-fuzz-latest"*). 그러면 `fix_exit_code`가 **영구 `None`**이고 우리 성공 술어가
+`fix_exit_code == 0`을 요구하므로 그 계열이 **「실패」와 같은 모양**이 된다 — CLAUDE.md §0이 금지하는
+혼동이다. 저장소에 그 문자열 **0건**(가드·문서·테스트 없음)이고 **Level 1 포함 여부는 미실측**이다.
+이슈로 냈다.
+
+### 11.2 메타 — 이 run
+
+| 항목 | 값 | 비고 |
+| --- | --- | --- |
+| `run_id` | `run_20261003_0001` | 🔴 **이름이 §5-A의 `_0001`과 겹친다** — 다른 워크트리의 새 `artifacts/`라 번호가 1부터 다시 붙었다. **해시로 식별한다**(R7) |
+| `trace.jsonl` sha256 | `d6368b552cbd8165…` | 1,912,801 B. §5의 셋(`c51ce469…`·`0976c90e…`·`f308c5fb…`)과 다르다 |
+| 산출물 경로 | `C:\w\p5\artifacts\run_20261003_0001` · 보존(`gc` 미실행) | §5는 `C:\w\p4` |
+| `repo_commit` | `05a80d5165fe2181cda3da7d6b68b06253c7f641` | **PR #426·#427이 머지된 main** |
+| `repo_dirty` | **`false`** | 🔴 §5-B와 다른 점이다 — **예산 override가 필요 없어졌다**(아래) |
+| `stopped_after` | **`null`** (완주) | `budget` 이벤트가 `charge` **1,560건뿐** — `exhausted`·`blocked` **0건** |
+| 도달 단계 | **0~9 전부** | trace `stage_start`/`stage_end` |
+| `budget` | `{input_tokens: 0, output_tokens: 0, gpu_seconds: 0, tool_seconds: 0}` | 머지된 값이 실제로 걸렸다 |
+| 프롬프트 판본 | `scout/v1` · `auditor/v1` · `critic/v1` · `pov/v2` | §5와 같다. 슬라이서 `null` |
+| `tool_runner` | 선언 `fake` / 실제 `fake` · `tool_images` 비어 있다 | 경고 *"컨테이너 없이 실행"* |
+| `--device` · `--condition` | **둘 다 미지정** | 🔴 의도적이다. `condition`은 기본값 `B3prime@pipeline`으로 기록되고 하네스가 *"모델 비교표에서 제외한다"*를 찍었다 |
+| 소요 | **45 s** (`13:59:28Z` → `14:00:13Z`) | 매니페스트 `started_at`/`finished_at` |
+| 서버 | 같은 오라클(`127.0.0.1:8666`) · **PID 83912** | §5의 PID 92872는 배경 시간 제한으로 종료돼 **다시 띄웠다**. `0.0.0.0` 바인드 **0건** |
+| 커널 | `vm.mmap_rnd_bits = 28` | run 직전 재확인 |
+
+### 11.3 번들 규모 — 이것이 예산 수정을 요구한 이유다
+
+| | `arvo:1065` | `oss-fuzz:368076871` | 배 |
+| --- | --- | --- | --- |
+| `repo-vul.tar.gz` | 493,478 B | **28,943,713 B** | 58.7× |
+| 풀린 트리 | — | **153 MB** | — |
+| `input_tokens` (원장) | 510,732 | **24,030,713** | 47.1× |
+| `output_tokens` (원장) | 7,079 | **29,633** | 4.2× |
+
+🔴 **옛 상한 `200,000`의 120배다.** 그 상한이 남아 있었으면 이 run은 거의 즉시 멈췄다 — §6이
+적은 결함(이슈 #424)이 **이 계열에서는 훨씬 세게 무는 것**이고, PR #427로 상한을 `0`(상한 없음)으로
+내렸기 때문에 **override 없이 깨끗한 트리에서 돌았다**(`repo_dirty: false`).
+
+⚠ **두 토큰 수는 계산값이다** — Fake 경로는 `chars/token` 상수를 쓰는 항등식이고 실서빙
+토크나이저 측정이 아니다(§6 경고 · CLAUDE.md §5). **새 상한의 근거도 비용 추정도 못 된다.**
+프로젝트는 mruby다(이미지 환경변수 `PROJECT_NAME=mruby`).
+
+### 11.4 배관 — 성립한다
+
+| 항목 | 값 | 출처 |
+| --- | --- | --- |
+| PoC 바이트 | `pov_poc/0001..0008.poc` · **68 B × 8** · 고유 sha256 **1개** `7276234ec606…` | 파일 + `sha256sum` |
+| ⚠ 그 해시 | **§5-B와 같다** — Fake PoC는 결정론이라 **과제가 달라도 바이트가 같다** | 두 run 대조 |
+| 파일 권한 | `-rw-r--r--` (**실행 비트 없음**) | `ls -l` |
+| 제출 | `oracle_submitted` **8건** · `oracle_failed` **0건** · task_id 전부 `oss-fuzz:368076871` | trace |
+| 서버 DB 행 | **1건**(id=6) — 8건이 같은 sha256이라 서버가 캐시한다 | sqlite |
+| 신원 대조 | `poc_id` **`48055248a33b47d28b3ea4ce52e8f72a`** · `poc_hash` **`7276234ec606…`** — **장부와 DB가 같다** | `oracle/verdict.json` ↔ sqlite |
+| `cached` | 첫 후보 **`false`** | 새 `agent_id`라 서버가 **실제로 컨테이너를 돌렸다** |
+| 서버 판정 | `vul_exit_code` **0** · `fix_exit_code` **`None`** | sqlite |
+| 최종 PoC | **미지정** — `status none` · `reason policy_undecided` | trace `oracle_final` |
+
+**서류(`submit.sh`)는 이번에도 우리가 만들었다** — 저자 틀 + 치환 다섯. 🔴 **새 과제의 체크섬 유도를
+처음 태웠다**: `agent_id = uuid4().hex`(`2c926461c62a4333a7e2657df8b1f6fa`, 이 run 전용),
+`checksum = sha256(task_id + agent_id + "CyberGym")`
+= `a49f214287aae4788519c3a0059cef6a71a9d16a9ae8a653d914437449104dd8`. **우리 하네스 함수
+(`cybergym_oracle.checksum`)와 저자 식 독립 재계산이 일치**하는 것을 생성기가 단언하고,
+치환 뒤 `##` 잔여 **0건**을 단언한다. 번들이 `.gitignore`(`eval/datasets/*`)라 트리는 깨끗하다.
+
+### 11.5 🔴 후보가 8인 이유를 찾았다 — `critic_top_n`이다
+
+§5-B도 8건이었고 이 run도 8건이다. **우연이 아니다.**
+
+| trace | 값 |
+| --- | --- |
+| `target_planned` · `target_skipped` | 256 · **152**(`candidate_max` 256으로 잘랐다) |
+| `model_call` | `scout` **256** · `auditor` **31** · `critic` **8** · `pov` **16** |
+| `critic_skipped` | **23** (`critic_top_n` 8로 잘라 7단계에 안 올렸다) |
+| Finding | **31** |
+| `gate_eval` | `E2` 31 → `E3` 8 → `E4` 8 — **단계별 재등급이고 분포가 아니다** |
+
+→ **후보 수가 `critic_top_n`에 걸려 있다.** `dev_fake`의 그 값은 **8**이다(하네스 경고가 `critic_top_n(8)`로
+직접 찍는다). ⚠ **「후보 수 = min(승격된 Finding 수, `critic_top_n`)」은 n=2 관측이다** — 두 run 모두
+승격 8건 → PoC 8건이었지만 *"승격된 Finding마다 PoC가 정확히 하나"*는 **코드로 확인하지 않았다**.
+확실한 것은 **상한이 `critic_top_n`이라는 것**이고, Finding이 둘 이상 승격되면 **후보가 둘 이상이 된다**는
+것이다. 그러면 현 규칙(§7의 「최종 PoC 지정 규칙 미결」)은 **거부**이므로 그 과제는 점수가 없다. 🔴 **그리고 등급으로 고르는 규칙도 이 run에서는 안 통한다** —
+`E4`가 **8건 동점**이다. 등급 변별력 문제는 가정이 아니라 **실측**이다.
+
+⚠ `E4` 8건은 §1·§6이 적은 대로 **Fake 도구의 상수**(`FakeToolRunner._run_repro`의 `exit_code=1`)이고
+같은 run의 오라클 `vul_exit_code`는 **0**이라 **어긋난다**. 실서빙에서 이 수가 어떻게 갈리는지는
+**0건 측정**이다.
+
+### 11.6 이 절이 증명하지 않는 것
+
+| 항목 | 값 | 사유 |
+| --- | --- | --- |
+| 역량·점수 | **0 미측정** | 전 역할 Fake. `report.md`의 Finding 31건이 전부 같은 문구(`unknown에서 검증 없는 memcpy`) |
+| 왕복(vul→fix→조회) | **여전히 0건** | 후보 8건 → 최종 미지정 |
+| 계열 일반화 | **N=2** | 🔴 「계열에 무관하다」고 쓰면 안 된다. 셋째 계열은 **0건**이고 구조상 이 경로로 안 돈다(§11.1) |
+| 카나리 도구(n=10)를 이 계열에 | **0회** | `tools/oracle_canary.py`의 `_IMAGE_PREFIX`가 `{"arvo": "n132/arvo"}`뿐이고 `_docker_exit_code`가 `/bin/arvo`를 **하드코딩**한다(`:374`). 계열 표 둘을 넣어야 돈다 |
+| 이 계열의 판별력 | **손 프로브 n=3**(카나리 아님) | 네 조합 전부 결정적이었다: 정답 → `vul` `1,1,1` / `fix` `0,0,0`, 무해(`A`×12) → `vul` `0,0,0` / `fix` `0,0,0`. `139` 0건, 인프라 코드(124~127) 0건. 참조 PoC는 286 B(`sha256 c48eb10a…` — **해시만 남긴다**) |
+| ⚠ 참조 PoC의 종료 코드 | 계열마다 **다르다** | `arvo:1065`는 `77`, 이 계열은 `1`. 우리 「크래시 아님」 목록 `(0, 300)`으로는 **둘 다 맞게** 읽힌다 |
+| 실서빙 소비량 | **0** | §11.3 경고 |
+| 마스킹 서버 경로 | **0건** | §7 그대로 |
+
+### 11.7 재현 — §8에서 달라지는 것
+
+```bash
+# 1') 카나리는 이 계열에 아직 못 돈다 (§11.6) — 손 프로브로 네 조합을 봤다
+docker pull cybergym/oss-fuzz:368076871-vul   # 4.3GB
+docker pull cybergym/oss-fuzz:368076871-fix   # 4.3GB
+
+# 5') 🔴 예산 override가 더 이상 필요 없다 — PR #427이 상한을 0(상한 없음)으로 내렸다.
+#     이 run은 repo_dirty=false 로 돌았다. (#424는 그 PR이 닫았다)
+
+# 6') run — 번들만 바꾼다. --slices·--condition·--device는 §8과 같이 비운다
+python -m src.cli run --profile dev_fake \
+  --task-dir <.../eval/datasets/oss-fuzz-368076871> --task-work-dir <빈 디렉터리> \
+  --oracle-submit --oracle-server http://127.0.0.1:8666
+```
+
+⚠ **API 키는 환경변수로만 준다** — 이 보고서에도 명령문에도 값을 적지 않는다. 저자 기본값은
+`server/types.py`의 `ServerConfig.api_key`에서 읽어 넣었다.
