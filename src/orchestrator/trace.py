@@ -29,6 +29,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
+| 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 
@@ -332,6 +333,47 @@ class EventKind(StrEnum):
     # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
     # pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
+    # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **후보(finding)마다
+    # 1행**이고 `fix` 다리는 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`task_id`·
+    # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).
+    #
+    # ⚠ **판정 값이 없다.** 종료 코드·`success`·`poc_id`·`cached`는 서버가 돌려준 값이라 trace가
+    # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
+    # 갈려서 trace의 재현성 기준(아래)을 깬다(분류는 `oracle_log` 모듈 docstring). 그래서 이
+    # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
+    # `oracle_final` 하나다.**
+    ORACLE_SUBMITTED = "oracle_submitted"
+    # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 다리의 후보 하나가 실패했다(`leg`). 추가형이라
+    # run을 멈추지 않는다. `poc_sha256`·`poc_bytes`·`error`(예외 클래스 이름)를 싣는다.
+    # `error_detail`(URL·OS 로케일 문구)은 사이드카에만 있다. 최종 단계의 실패는 이 이벤트가 아니라
+    # `oracle_final`의 `status=failed`다.
+    ORACLE_FAILED = "oracle_failed"
+    # **이 run의 채점 결과 — 채점기가 배선되고 8단계가 끝까지 돈 run에 정확히 1건이다.** 지정한
+    # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
+    # 대응한다.
+    #
+    # **최종 PoC는 후보(`vul` 제출이 성공한 PoC)가 하나뿐일 때만 지정한다**(`designation` =
+    # `sole_candidate` — 고를 것이 없어 지정한 것이고 위치·점수로 고른 것이 아니다). 후보가 둘
+    # 이상이면 지정하지 않는다(`status=none` · `reason=policy_undecided`) — 고르는 규칙이 정해지지
+    # 않았다(`runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이 아니다.
+    #
+    # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
+    # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
+    # `reason`이 `no_poc`·`all_vul_submissions_failed`(후보가 없다) · `policy_undecided`(후보가 둘
+    # 이상이다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와 「최종 PoC가 실패했다」를 섞지
+    # 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다). 그 PoC의 `poc_sha256`·
+    # `poc_bytes`, `scored`일 때 `task_id`, 사이드카의 고정 경로 `record_ref`를 싣는다.
+    # `scored`일 때의 `task_id`는 판정 행(`/query-poc`)이 든 값(`OracleOutcome.task_id`)이라, 마스킹
+    # 서버(`TaskOracle.query_task_id`)에서는 마스킹된 id가 아니라 **실 id가 trace와 사이드카에 실릴
+    # 수 있다** — 코드 판독에서 나온 추론이고 마스킹 서버로 확인하지 않았다.
+    #
+    # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
+    # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
+    # `oracle.final`이 `not_reached`다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도 남기지 않는다:
+    # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
+    # PoC로 컨테이너를 돌렸을 수 있다.
+    # ⚠ **이것은 하네스 내부 등급이 아니다** — Evidence를 만들지 않고 게이트가 안 읽는다(#232).
+    ORACLE_FINAL = "oracle_final"
     # 하네스가 `repro_spec`을 합성한 기록 (#S7 — `synthesize_repro_spec`이 켜졌고 모델이 명세를
     # 비워 냈을 때 `auditor._ensure_repro_origin`이 낸다). `subject_id`는 finding이고
     # `expected_signal`(합성 신호)·`steps`(단계 수)를 싣는다. **이벤트 부재 = 합성 안 함**(꺼졌거나

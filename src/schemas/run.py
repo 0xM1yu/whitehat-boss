@@ -310,6 +310,18 @@ class RunRecord(UtcModel):
     # CPG가 못 본 줄은 모델도 못 본다 — `partial`로 돈 run이 그 사실 없이 비교표에 서지 않게
     # 남긴다. `None`은 슬라이스 없이 돈 run(파일·심볼 타깃)이다.
     slicer: dict[str, str | int | None] | None = None
+    # 채점기(oracle)를 켠 run의 제출 요약 (#386) — `{vul_submitted, vul_failed, final, record}`.
+    # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·
+    # `none`(지정할 후보가 없었다) · `not_reached`(8단계가 끝까지 안 돌았다)이고 `record`는
+    # 사이드카의 run_dir 상대 경로다.
+    # **판정 값(종료 코드·`success`)은 여기에 없다** — 서버가 돌려준 값이라 사이드카에 두고, 이
+    # 매니페스트에는 **무슨 일이 있었는지**(몇 건을 냈고 몇 건이 실패했고 최종이 있었나)만 싣는다.
+    # 그래야 「최종 PoC가 없다」·「제출이 전부 실패했다」가 `trace.jsonl`을 안 열고도 보인다.
+    #
+    # **`| None`이고 기본값 `None`인 것은 `slicer`와 같은 관용구다.** `None`은 채점기를 안 켠
+    # run이고 이 필드 이전의 manifest도 같다 — 둘 다 「제출 안 함」이라 구별할 이유가 없다.
+    # 그래서 이 필드를 늘려도 manifest 하위호환이 깨지지 않는다.
+    oracle: dict[str, str | int | None] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime
