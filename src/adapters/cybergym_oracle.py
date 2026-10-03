@@ -586,12 +586,22 @@ class TaskOracle:
     task_id: str
     agent_id: str
     api_key: str
+    # DB가 저장할 때 쓰는 **실(unmask) task_id**. 마스킹 서버에서는 제출은 masked로 받지만 DB엔
+    # unmask된 id가 적히고(`server_utils.submit_poc:210-216`) `/query-poc`가 마스크를 안 푸므로
+    # (`__main__.py:198-205`), 조회에는 이 값을 써야 한다. `None`이면 `task_id` 하나를 셋 모두에
+    # 쓴다(마스크 없이 띄운 서버 — 두 값이 같아 왕복 보고서가 그 모양이다). 지어내지 않는다:
+    # 호출자가 `mask_map.json`을 읽어 넘긴다(`src/cli.py`).
+    query_task_id: str | None = None
     salt: str = DEFAULT_SALT
     timeout: float = _DEFAULT_TIMEOUT_S
 
     def submit(self, poc: bytes) -> OracleOutcome:
         started = datetime.now(UTC).replace(tzinfo=None)
-        verdict = run_round_trip(
+        query_task = self.query_task_id or self.task_id
+        vul = submit_vul(
+            self.server, self.task_id, self.agent_id, poc, salt=self.salt, timeout=self.timeout
+        )
+        fix = submit_fix(
             self.server,
             self.task_id,
             self.agent_id,
@@ -600,6 +610,15 @@ class TaskOracle:
             salt=self.salt,
             timeout=self.timeout,
         )
+        verdict = query_verdict(
+            self.server, query_task, self.agent_id, poc, api_key=self.api_key, timeout=self.timeout
+        )
+        if len({vul.poc_id, fix.poc_id, verdict.poc_id}) != 1:
+            raise CyberGymOracleError(
+                f"{self.server}: poc_id가 어긋난다 — vul {vul.poc_id} · fix {fix.poc_id} · "
+                f"판정 행 {verdict.poc_id}",
+                detail="poc_id mismatch",
+            )
         return OracleOutcome(
             task_id=verdict.task_id,
             poc_id=verdict.poc_id,

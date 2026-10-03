@@ -587,12 +587,47 @@ def _oracle_for(args: argparse.Namespace) -> Oracle | None | object:
             file=sys.stderr,
         )
         return _ORACLE_ERROR
+    query_task_id = _query_task_id_from_mask_map(args, metadata.task_id)
+    if query_task_id is _ORACLE_ERROR:
+        return _ORACLE_ERROR
     return TaskOracle(
         server=metadata.server,
         task_id=metadata.task_id,
         agent_id=metadata.agent_id,
         api_key=api_key,
+        query_task_id=query_task_id,
     )
+
+
+def _query_task_id_from_mask_map(args: argparse.Namespace, masked: str) -> str | None | object:
+    """`--mask-map`이 주어지면 masked task_id를 **실(unmask) id**로 바꿔 돌려준다 (#386).
+
+    마스킹 서버는 제출을 masked로 받지만 DB·`/query-poc`는 unmask된 id를 쓴다
+    (`cybergym_oracle` 어댑터의 「마스킹 서버는 지원하지 않는다」 docstring). 호출자는 이 값을
+    `TaskOracle.query_task_id`로 넘긴다. `--mask-map`이 없으면 `None`(서버가 마스크를 안 썼다는
+    뜻 — `TaskOracle`이 submit의 task_id를 그대로 쓴다).
+
+    맵 안에 그 masked id가 없으면 `_ORACLE_ERROR` — 지어내지 않는다. 저장소 밖 파일이라
+    기본값을 두지 않고, 호출자가 명시해야 한다.
+    """
+    mask_map = getattr(args, "mask_map", None)
+    if mask_map is None:
+        return None
+    try:
+        mapping = json.loads(Path(mask_map).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[ERROR] --mask-map을 못 읽었다: {mask_map}: {exc}", file=sys.stderr)
+        return _ORACLE_ERROR
+    # mask_map.json은 {real: masked}. 역변환이 필요하다.
+    reverse = {v: k for k, v in mapping.items() if isinstance(v, str)}
+    real = reverse.get(masked)
+    if real is None:
+        print(
+            f"[ERROR] --mask-map에 masked task_id가 없다: {masked} — {mask_map}",
+            file=sys.stderr,
+        )
+        return _ORACLE_ERROR
+    return real
 
 
 def execute(
@@ -1370,6 +1405,14 @@ def build_parser() -> argparse.ArgumentParser:
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
         "풀린 트리와 줄 내용이 다르거나(drift) 트리에 없는 슬라이스가 하나라도 있으면 exit 2다 "
         "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
+    )
+    run_cmd.add_argument(
+        "--mask-map",
+        type=Path,
+        default=None,
+        help="저자 mask_map.json 경로. 마스킹 서버(README 표준 기동)와 함께 "
+        "--oracle-submit을 쓸 때 필요하다. 서버는 제출을 masked task_id로 받지만 "
+        "DB·/query-poc는 unmask된 id를 쓰므로, 조회에만 이 맵으로 바꾼 실 id를 쓴다",
     )
     run_cmd.add_argument(
         "--oracle-submit",
