@@ -99,7 +99,8 @@ class Report:
     # 리포트가 그대로 찍을 수 있고, 그러면 사람이 읽는 산출물에서 분모가 섞인다
     # (`critic_deferred`를 `deferred`와 나눈 것과 같은 판단).
     #
-    # 비면 줄을 안 낸다 — pov 좌석이 없는 프로필의 run에서 0건 줄이 나오면 장식이다.
+    # 비면 줄을 안 낸다 — 빈 맵은 PoV가 시도되지 않았다는 뜻이다(8단계 앞에서 멈췄거나, 8단계에 든
+    # VALIDATED가 0건이거나, 프로필에 pov 좌석이 없다). 그 run에 0건 줄이 나오면 장식이다.
     pov_results: dict[str, str] = field(default_factory=dict)
 
     def _grade_of(self, finding: Finding) -> str | None:
