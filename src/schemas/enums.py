@@ -256,6 +256,23 @@ class EvidenceGrade(StrEnum):
     E4 = "E4"
 
 
+class ReproOrigin(StrEnum):
+    """`ReproSpec`를 누가 만들었나 (#S7 — 재현 명세 합성).
+
+    `model` — Auditor 모델이 낸 명세. 지금까지의 유일한 경우다.
+    `harness` — 하네스가 합성한 명세. CyberGym Level 1처럼 과제가 재현 방법을 안 줘서
+    모델이 `repro_spec`을 비워 내면, 그 Finding은 E3(`validated`)에 못 올라 8단계(PoC
+    생성)가 아예 안 돈다(F-9 `repro_spec_missing`). 하네스가 아는 것(후보 위치·sink)으로
+    명세를 채워 **8단계가 돌게** 한다. ⚠ **E4(`proven`)는 이 출처와 무관하게 여전히 실행
+    로그(runtime Evidence, 게이트 `p4`)를 요구한다** — 합성 명세만으로는 아무것도 실행되지
+    않았으므로 proven이 되지 않는다. 그래서 「validated인데 합성 명세로 올라왔다」를 비교표가
+    가를 수 있게 이 값을 Finding이 싣고 게이트가 trace에 남긴다.
+    """
+
+    MODEL = "model"
+    HARNESS = "harness"
+
+
 class FindingState(StrEnum):
     """후보/Finding 상태 (architecture.md §4 상태 머신).
 
@@ -416,14 +433,19 @@ class ReasonCode(StrEnum):
     SCHEMA_PARSE_FAILED = "schema_parse_failed"
     # run 중단 (W2). 후보 하나가 실패한 것은 `target_skipped`로 남고 run은 계속 간다 —
     # 아래 둘은 **더 갈 이유가 없어서 러너가 멈춘 경우**다. 하나로 묶지 않는 이유는
-    # 대응이 다르기 때문이다: 앞은 서버를 살려야 하고, 뒤는 서버가 살아 있는데 후보가
+    # 대응이 다르기 때문이다: 앞은 서버·연결 쪽을 봐야 하고, 뒤는 서버가 살아 있는데 후보가
     # 계속 죽는 것이라 프롬프트·예산·스키마를 봐야 한다.
+    # ⚠ **앞(`MODEL_GATEWAY_UNAVAILABLE`)은 「서버가 죽었다」보다 넓다** — 후보 하나의 답이 아닌
+    # `ModelGatewayError` 전부다(`runner._is_droppable`이 거짓인 것): 상태 없음(끊김·타임아웃·
+    # 계약 밖 200)·5xx·`400·413·422` 밖의 4xx(401·404·429 등). 가르는 것은 trace의
+    # `model_call.error_detail`이다.
     MODEL_GATEWAY_UNAVAILABLE = "model_gateway_unavailable"
     CONSECUTIVE_TARGET_FAILURES = "consecutive_target_failures"
     # 단계 경계 교대(ADR 0012 Phase 6.5)가 다음 단계 모델을 못 띄웠다 — 교대 명령 실패·마감
     # 초과·준비 확인의 창 불일치(`ModelSwapError`). 위 `MODEL_GATEWAY_UNAVAILABLE`과 가르는 것은
-    # 대응이 다르기 때문이다: 그쪽은 떠 있던 서버가 죽은 것이라 서버를 살리고, 이쪽은 띄우지를
-    # 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를 본다.
+    # 대응이 다르기 때문이다: 그쪽은 떠 있던 서버와의 통신이 어긋난 것이라 서버·연결을 보고,
+    # 이쪽은 띄우지를 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를
+    # 본다.
     MODEL_SWAP_FAILED = "model_swap_failed"
     TOOL_POLICY_VIOLATION = "tool_policy_violation"
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"
@@ -431,6 +453,17 @@ class ReasonCode(StrEnum):
     NEW_EVIDENCE_REQUEUE = "new_evidence_requeue"
     # 재평가 횟수 상한(config의 requeue_max) 초과. 폐기하지 않고 queued를 유지한다.
     REQUEUE_LIMIT_REACHED = "requeue_limit_reached"
+    # 🔴 **예상 밖 예외로 멈춘 run** (최후 방어선 — `runner.run_pipeline`의 맨 `except Exception`).
+    # ⚠ **범위는 `_analyze`(1~8단계)다** — `_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트
+    # 재등급·리포트 렌더·`finish_run`)에서 **처음** 나는 예외는 이 사유를 못 받고 매니페스트도 안
+    # 남는다. `_analyze`에서 난 뒤에는 후처리를 건너뛰므로 2차 예외가 원 예외를 덮지 않는다.
+    # 위 다섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
+    # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`)는 **예상한** 형이고 이것은 그 밖 전부다.
+    # 기존 27개 중 맞는 것이 **없어서** 새로 만들었다 — `MODEL_GATEWAY_UNAVAILABLE`로 적으면
+    # 「서버가 죽었다」는 거짓 진단이 장부에 남고, 그 run을 보는 사람이 서버 로그를 뒤진다.
+    # ⚠ 이 사유가 붙은 run은 **예외가 올라간 run이다** — 러너가 매니페스트를 쓴 뒤 다시 던지므로
+    # 산출물은 남지만 run은 실패다. 「조용히 넘어간 run」과 섞지 않는다.
+    UNFORESEEN_FAILURE = "unforeseen_failure"
     # 제보 (disclosure-policy.md) — 자동 전이 없음, 사람 승인으로만
     HUMAN_VERIFIED = "human_verified"
 
