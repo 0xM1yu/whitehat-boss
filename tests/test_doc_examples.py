@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
+from src.config import load_config
 from src.schemas import (
     Artifact,
     Candidate,
@@ -148,3 +149,27 @@ def test_run_record_example_uses_full_length_digests() -> None:
     )
 
     assert all(len(digest) == len("sha256:") + 64 for digest in record.model_checksums.values())
+
+
+def test_run_record_example_prompt_versions_match_the_profile_it_names() -> None:
+    """예시의 `prompt_versions`가 예시가 **스스로 적은 `profile`**의 실제 registry 값과 같다.
+
+    위 검사들은 스키마와 자리만 본다 — 값이 낡는 것은 못 잡는다. 이 예시는 계약 문서가 드는
+    유일한 완성형 `RunRecord`라 읽는 쪽이 「이 자리에 무엇이 들어가나」를 여기서 배운다.
+
+    **사고 —** 2026-09-29 Auditor가 v3→v4가 됐을 때는 이 줄이 따라왔는데, 2026-10-03 v4→v6
+    (#418·#421)에는 **안 따라왔다.** 손으로 고치는 값이라 CI가 영영 초록이었다. 여기서
+    묶으면 다음 판 올림에서 빨개진다 — 고치는 쪽이 예시도 같이 고치게 된다.
+    """
+    raw = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))
+    config = load_config(raw["profile"])
+
+    declared = raw["prompt_versions"]
+    actual = {
+        role: config.model_for(role).prompt_template_version
+        for role in declared
+        if role in config.profile.roles
+    }
+
+    assert actual, f"예시의 `profile`({raw['profile']})에 예시가 든 역할이 하나도 없다"
+    assert {role: declared[role] for role in actual} == actual
