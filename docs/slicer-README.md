@@ -293,11 +293,11 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   **미측정**). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
   (열린 PR #378의 선택지 (b) — 미머지라 이 저장소에는 그 결함 본문이 아직 없다)
 - 우선 순서를 읽을 곳 -> 체크포인트의 `candidates` 목록(병합 체크포인트도 그대로)과, 후보 발견을 **스스로 한** run
-  (`--export-only`도 `--cpg` 샤드도 아닌 run)의 `candidate_manifest` 삽입 순서. ⚠ **발견 기록을 체크포인트에서 되읽은 결과의
+  (`--export-only`도 `--cpg`도 아닌 run)의 `candidate_manifest` 삽입 순서. ⚠ **발견 기록을 체크포인트에서 되읽은 결과의
   `candidate_manifest`에는 없다** -> `--export-only`(따라서 병합 뒤 export로 내는 모든 샤딩 run, `slice_sharded.py` 포함)와
-  `--cpg` 샤드. 체크포인트가 그 기록(`baseline`)을 키 정렬로 저장하므로(`slicer_checkpoint.canonical`의 `sort_keys=True`)
-  되읽은 manifest는 **`candidate_key`(SHA-256 hex) 순**이고 우선 순서와도 ID 순서와도 무관하다. `--export-dir`의
-  `candidate-manifest.json`도 결과와 같은 순서다(#434)
+  `--cpg`를 준 run(`--shard` 유무 무관). 체크포인트가 그 기록(`baseline`)을 키 정렬로 저장하므로
+  (`slicer_checkpoint.canonical`의 `sort_keys=True`) 되읽은 manifest는 **`candidate_key`(SHA-256 hex) 순**이고 우선 순서와도
+  ID 순서와도 무관하다. `--export-dir`의 `candidate-manifest.json`도 결과와 같은 순서다(#434)
 - 순서가 체크포인트에 묶인다 -> 목록의 개수·sha256(**정렬한** 목록의 `slicer_checkpoint.digest` -> 목록 줄 순서와 무관)이
   `settings.priority_files`(실행 계약). 목록이 다른 샤드는 병합 거부(`Shard mismatch on run_contract`), 다른 목록으로
   `--resume`도 거부. `--prepare-only`에 주면 준비 체크포인트를 받은 샤드가 그 순서를 따른다(`slice_sharded.py`는 `--` 뒤
