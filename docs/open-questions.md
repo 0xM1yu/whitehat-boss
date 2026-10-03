@@ -146,7 +146,7 @@
 | D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
 | D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
 | D94 | **Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다 — 남은 미포착 7개의 원인** ((a) 보류 · hot 우위 held-out 미재현 · level-3 확인 대기) | 열림 | [본문](open-questions/D/D94.md) |
-| D95 | **Auditor 입력이 슬라이스가 지나간 함수만 붙여 판단에 필요한 옆 함수(피호출 본문·호출자 검사)가 빠진다** | 열림 | [본문](open-questions/D/D95.md) |
+| D95 | **Auditor 입력이 슬라이스가 지나간 함수만 붙여 판단에 필요한 옆 함수(피호출 본문·호출자 검사)가 빠진다** | 부분 | [본문](open-questions/D/D95.md) |
 | D96 | **슬라이스 일부가 Scout 입력 몫보다 커서 Scout가 받을 수 없다 (Case B 역추적 꼬리)** | 열림 | [본문](open-questions/D/D96.md) |
 | D97 | **벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다 (시간·상한 아래 recall)** | 열림 | [본문](open-questions/D/D97.md) |
 | D98 | **Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계(PoC 생성)가 아예 안 돈다** | 열림 | [본문](open-questions/D/D98.md) |
