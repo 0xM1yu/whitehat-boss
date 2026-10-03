@@ -262,8 +262,9 @@ class EventKind(StrEnum):
     # 빈 문자열 — 이다(블록에도 `... +N more rows omitted`가 든다). `guards_skipped`는 안 훑은
     # 사유다: `case_a`(sink를 하네스가 모른다) · `window`(품는 함수를 모르는 창 앵커 — 다른
     # 함수의 조건이 든다) · `formfeed`(`splitlines()`만 끊는 글자가 함수 앞·안에 있어 원문 줄이
-    # 어긋날 수 있다) · `no_sink`(sink 줄이 원문 밖이거나 sink에서 이름을 못 뽑았다). GUARDS는
-    # 함수가 아니라 `functions`에 안 든다.
+    # 어긋날 수 있다) · `bare_cr`(원본 바이트에 `\n`을 안 단 `\r`이 함수 앞·안에 있다 — 텍스트
+    # 읽기가 `\r`을 `\n`으로 접어 인덱서와 줄 번호가 어긋난다) · `no_sink`(sink 줄이 원문 밖이거나
+    # sink에서 이름을 못 뽑았다). GUARDS는 함수가 아니라 `functions`에 안 든다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가

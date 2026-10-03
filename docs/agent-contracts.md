@@ -160,7 +160,9 @@ agent:
   trace에는 목록으로 남는다. 행이 0일 때 사유는 trace `stores_lookup`이 가른다 — `index`(물었고 쓰기가 없다는 답) ·
   `none`(v2 표가 없어 못 봤다) · `no_targets`(슬라이스 줄에 물을 이름이 없다). 할당기는 **줄 단위**로 이은 것이라
   **그 쓰기의** 우변이 그 호출일 때만 `allocates`라 쓴다(같은 줄의 다른 문장 호출은 아니다).
-  가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등, #259)에는 안 붙고 사유를 trace `guards_skipped`가 든다.
+  가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등 #259 · `\n`을 안 단 `\r`)에는 안 붙고 사유를 trace
+  `guards_skipped`가 든다. 행이 12를 넘으면 조건이 인자 이름을 **직접** 말하는 행이 먼저 남고, 대입 한 걸음으로만
+  이어진 별칭 행은 뒤이며 `[alias: m←n]`(좌변←우변)이 붙는다.
   ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
   `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의

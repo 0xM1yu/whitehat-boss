@@ -130,6 +130,12 @@ class RunContext:
     # 로그 파일을 안 쓴다)가 실제로 있고, 그때는 근거 본문 없이 metadata만으로 진행한다.
     # 배선은 factory/cli가 artifacts_root로 만든 리더를 넣는다.
     read_payload: Callable[[str], str | None] = field(default=lambda _ref: None)
+    # 파일(대상 루트 기준 상대경로) → **원본 바이트**. `read_source`는 텍스트 모드로 읽어 `\r`·
+    # `\r\n`을 `\n`으로 접으므로 `\r\r\n`·옛 Mac 줄바꿈은 거기서 안 보이고, 인덱서(`\n`만 센다)와
+    # 줄 번호가 어긋난다 — 그 어긋남을 보는 쪽(`auditor_guards`의 줄 정렬 검사)이 쓴다.
+    # `read_payload`와 같은 성격이다: 미배선 기본값은 `None`("못 읽음")을 돌려주는 리더이고 그
+    # 검사는 텍스트로만 한다. 배선은 cli가 대상 루트로 만든 리더를 넣는다.
+    read_raw: Callable[[str], bytes | None] = field(default=lambda _file: None)
     # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만든다(W2).
     #
     # `read_source`와 달리 **미배선 기본값이 예외가 아니라 `None`("인덱스 없음")이다.**

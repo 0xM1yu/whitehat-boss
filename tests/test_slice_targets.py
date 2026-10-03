@@ -1863,6 +1863,23 @@ def test_the_stores_block_counts_against_the_source_cap_and_its_rows_are_listed(
     assert event["tokens"] <= anchor_words + 3
 
 
+def test_the_stores_block_gets_exactly_the_room_left_after_its_joining_newline() -> None:
+    """블록 하나는 앞 블록과의 이음 줄바꿈 1을 더해 센다(`room=cap - size - 1`). 딱 맞는 상한에서는
+    들고 한 단어 모자라면 통째로 빠진다 — 그 `- 1`을 빼면 모자란 상한에서도 들어가 `SOURCE`가
+    상한을 넘는다(변이로 확인). 위 테스트의 `+ 3`은 이 경계를 못 문다. 못 실은 행이 없어도 블록 끝
+    `+N more` 줄의 자리를 미리 빼 둔다(`stores_block`)."""
+    from src.orchestrator import source_stores
+
+    source, event, _ = _stores_source(auditor_stores=1, auditor_source_tokens=10_000)
+    assert event["stores"] == 1
+    exact = len(source.split()) + len(source_stores._more(1).split()) + 1
+
+    fits = _stores_source(auditor_stores=1, auditor_source_tokens=exact)[1]
+    short = _stores_source(auditor_stores=1, auditor_source_tokens=exact - 1)[1]
+
+    assert (fits["stores"], short["stores"], short["stores_dropped"]) == (1, 0, 1)
+
+
 def test_a_flood_of_same_named_writes_is_capped_per_name_and_listed_in_the_event() -> None:
     """같은 이름의 필드 쓰기가 열 곳(8행 초과, 인덱스가 전부 모호하다고 표시)이다 — 블록에는
     이름마다 넷만 실리고 못 실은 여섯은 이벤트에 `file:line 이름` 목록으로 남는다."""

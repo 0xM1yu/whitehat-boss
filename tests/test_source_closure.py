@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from slicer_source import assemble
-from src.adapters.fake_retriever import read_symbol_source
+from src.adapters.fake_retriever import read_raw_source, read_symbol_source
 from src.adapters.index_graph import GraphIndex
 from src.adapters.slices import SliceRef, split_source
 from src.orchestrator import runner, source_closure
@@ -1010,6 +1010,7 @@ def _auditor_source(  # noqa: ANN202
     ctx = SimpleNamespace(
         symbols_for=graph.symbols_for,
         read_source=read,
+        read_raw=lambda file: read_raw_source(root, file),
         callees_of=opts.pop("callees_of", graph.callees_of),
         definitions_of=graph.definitions_of,
         locals_of=graph.locals_of,

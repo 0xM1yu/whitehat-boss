@@ -224,6 +224,67 @@ def test_the_dropped_listing_is_itself_capped_and_says_how_many_more() -> None:
     assert listing[-1] == "... +5 more"
 
 
+def test_twelve_rows_fit_and_a_thirteenth_is_omitted_with_a_marker() -> None:
+    """상한을 **숫자로** 핀한다 — 위 테스트들은 `_MAX_ROWS`로 계산해서 12를 11이나 13으로 바꿔도
+    초록이다(변이로 확인)."""
+    thirteen = _func(*(f"if (n > {i}) bad();" for i in range(1, 14)), "memcpy(dst, src, n);")
+    scan = _scan(thirteen, "memcpy(")
+    assert (len(scan.rows), len(scan.dropped)) == (12, 1)
+    assert scan.block.split("\n")[-1] == "... +1 more rows omitted"
+    twelve = _func(*(f"if (n > {i}) bad();" for i in range(1, 13)), "memcpy(dst, src, n);")
+    scan = _scan(twelve, "memcpy(")
+    assert (len(scan.rows), scan.dropped) == (12, ())
+    assert "omitted" not in scan.block
+
+
+def test_alias_only_rows_never_push_a_direct_name_row_out_of_the_cap() -> None:
+    """`m = n + 1;`로 sink 인자 `n`에 이어진 별칭 `m`의 조건이 12행 상한을 채우면 인자 `n` 자신의
+    가드가 말없이 밀려 빠졌다(독립 검토: 69개 sink에서 직접 이름 행 174개 — 로컬 · run ID 없음).
+    직접 이름 행이 먼저이고 별칭으로만 이어진 행은 그 뒤다 — 뺀 것은 별칭 행뿐이다."""
+    src = _func(
+        "m = n + 1;", "if (n > 1000) return -1;", *(["if (m == k) return -k;"] * 13),
+        "memcpy(dst, src, n);",
+    )
+    scan = _scan(src, "memcpy(")
+    assert (len(scan.rows), len(scan.dropped)) == (12, 2)
+    assert _row(src, "if (n > 1000)", "if (n > 1000) [exit: return -1]") in scan.rows
+    assert all("[alias: m←n]" in row for row in scan.dropped)
+    # 보여 줄 때는 소스 순서다 — 직접 이름 행이 별칭 행 앞에 온다
+    assert _rows_text(scan)[0] == "if (n > 1000) [exit: return -1]"
+
+
+def test_a_plain_direct_row_outranks_an_alias_row_that_exits() -> None:
+    """조기 탈출 표시가 별칭 행을 직접 이름 행 앞으로 올리지 않는다 — 순서는 직접 이름 행(탈출 ·
+    sink를 품은 행 먼저) → 별칭 행이다."""
+    src = _func(
+        "m = n + 1;", "if (n > 1000) bad();", *(["if (m == k) return -k;"] * 12),
+        "memcpy(dst, src, n);",
+    )
+    scan = _scan(src, "memcpy(")
+    assert _row(src, "if (n > 1000)", "if (n > 1000)") in scan.rows
+    assert len(scan.rows) == 12 and len(scan.dropped) == 1
+
+
+@pytest.mark.parametrize(
+    ("assign", "guard", "tag"),
+    [
+        ("m = n + 1;", "if (m > 9) return -1;", "[alias: m←n]"),  # 인자에서 나온 이름
+        ("n = len - off;", "if (len > 9) return -1;", "[alias: n←len]"),  # 인자를 계산한 이름
+    ],
+)
+def test_an_alias_row_says_which_assignment_linked_it_and_a_direct_row_has_no_tag(
+    assign: str, guard: str, tag: str
+) -> None:
+    """별칭으로만 이어진 행에는 어느 대입으로 이어졌는지(`좌변←우변`) 적는다 — 모델이 그 조건을
+    인자 자신의 검사로 읽지 않게. 인자 이름을 직접 말하는 행에는 안 붙는다."""
+    src = _func(assign, guard, "if (n > 100) return -2;", "memcpy(dst, src, n);")
+    condition = guard.removesuffix(" return -1;")
+    assert _scan(src, "memcpy(").rows == (
+        _row(src, guard, f"{condition} [exit: return -1] {tag}"),
+        _row(src, "if (n > 100)", "if (n > 100) [exit: return -2]"),
+    )
+
+
 def test_comments_and_string_literals_are_not_conditions() -> None:
     src = _func(
         "// if (n > 3) return -1;",
@@ -233,6 +294,22 @@ def test_comments_and_string_literals_are_not_conditions() -> None:
         "memcpy(dst, src, n);",
     )
     assert _scan(src, "memcpy(").block == NONE_FOUND
+
+
+def test_a_digit_separator_does_not_open_a_char_literal() -> None:
+    """C23·C++14 자릿수 구분자 `1'000`의 `'`가 같은 줄의 다음 `'`까지 문자 리터럴을 열어 그 사이의
+    `n`을 지웠다 — `if (1'000 < n && n < 2'000) return -1;`이 「조건 없음」이 됐다. 수는 먹고
+    그대로 둔다. 진짜 문자 리터럴(`'n'`) 속의 글자는 여전히 이름이 아니다."""
+    src = _func("if (1'000 < n && n < 2'000) return -1;", "memcpy(dst, src, n);")
+    assert _scan(src, "memcpy(").rows == (
+        _row(src, "if (1'000", "if (1'000 < n && n < 2'000) [exit: return -1]"),
+    )
+    hexed = _func("if (n > 0xFF'FF) return -1;", "memcpy(dst, src, n);")
+    assert _scan(hexed, "memcpy(").rows == (
+        _row(hexed, "if (n > 0xFF'FF)", "if (n > 0xFF'FF) [exit: return -1]"),
+    )
+    chars = _func("if (c == 'n' || d == 'n') return -1;", "memcpy(dst, src, n);")
+    assert _scan(chars, "memcpy(").block == NONE_FOUND
 
 
 def test_a_comment_inside_a_condition_does_not_swallow_the_rest_of_it() -> None:
@@ -311,6 +388,20 @@ def test_a_long_function_full_of_assignment_ternaries_scans_in_linear_time() -> 
     started = time.perf_counter()
     assert _scan(src, "memcpy(").block == NONE_FOUND
     assert time.perf_counter() - started < 5.0
+
+
+def test_a_very_long_dotted_line_before_the_sink_is_scanned_in_bounded_time() -> None:
+    """한 줄이 수만 글자인 점 사슬(생성 코드·압축)이면 대입 정규식이 시작 위치마다 끝까지 되훑어
+    제곱 시간이 들었다(6만 마디 279초 — 독립 검토 · 로컬 · run ID 없음). 줄마다 앞
+    `_SCAN_CHARS`글자만 훑는다(`source_stores`와 같은 방식이다) — 5만 글자 줄은 정해진 몫에서
+    끝난다. 긴 줄 **앞**의 대입은 그대로 찾는다."""
+    chain = "a" + ".b" * 25_000
+    src = _func("m = n + 1;", f"{chain};", "memcpy(dst, src, n);")
+    started = time.perf_counter()
+    scan = _scan(src, "memcpy(")
+    elapsed = time.perf_counter() - started
+    assert scan.rows == () and "m" in scan.names  # 긴 줄 앞의 `m = n + 1;`은 그대로 이어진다
+    assert elapsed < 5.0  # 제곱이면 수십 초~수 분 — 고친 쪽은 0.1초 안팎이다
 
 
 def test_a_loop_that_closes_after_the_sink_is_not_a_guard() -> None:
@@ -541,6 +632,66 @@ def test_a_break_after_the_function_or_a_plain_file_does_not_stop_the_scan(char:
     assert scan.skipped is None and scan.shown == 1
 
 
+def _cr_file(head: bytes, body_break: bytes = b"\n") -> tuple[bytes, Location, int]:
+    """`head`(앞 함수 — 줄 끝은 호출자가 정한다) 뒤에 `_FN`을 `body_break`로 이은 파일의 원본
+    바이트와, 인덱서가 세는 줄(`\\n`만)로 잡은 앵커·sink 줄."""
+    raw = head + body_break.join(line.encode() for line in _FN) + body_break
+    lines = [line.rstrip(b"\r") for line in raw.split(b"\n")]
+    start = next(i for i, line in enumerate(lines) if line.startswith(b"int f(")) + 1
+    end = next(i for i, line in enumerate(lines) if i >= start and line == b"}") + 1
+    sink = lines.index(b"    memcpy(dst, src, n);") + 1
+    return raw, Location(file=FILE, symbol="f", line_start=start, line_end=end), sink
+
+
+def _folded(raw: bytes) -> str:
+    """`Path.read_text`(= `ctx.read_source`의 파일 통째 읽기)가 하는 그대로 — `\\r\\n`·`\\r`을
+    `\\n`으로 접는다."""
+    return raw.decode().replace("\r\n", "\n").replace("\r", "\n")
+
+
+@pytest.mark.parametrize(
+    ("head", "body_break"),
+    [
+        (b"int g(void)\r\r\n{\r\r\n}\r\r\n", b"\n"),  # 앞 함수의 `\r\r\n` — 접으면 줄 둘
+        (b"int g(void)\r{\r}\r\n", b"\n"),  # 앞 함수에 옛 Mac 줄바꿈(`\n`을 안 단 `\r`)이 섞였다
+        (b"int g(void)\n{\n}\n", b"\r\r\n"),  # 함수 안
+    ],
+)
+def test_a_cr_without_its_lf_before_or_inside_the_function_is_skipped(
+    head: bytes, body_break: bytes
+) -> None:
+    """`read_source`는 파일을 텍스트로 읽어 `\\r`을 `\\n`으로 접는다 — `\\r\\r\\n`은 접으면 줄
+    둘인데 인덱서(`\\n`만 센다)는 하나로 센다. 접힌 원문에는 그 `\\r`이 없어 폼피드 검사를 그냥
+    지나가므로 원본 바이트를 본다(`bare_cr`). 접힌 원문만 보고는 못 잡는다는 것도 같이 핀한다."""
+    raw, anchor, sink = _cr_file(head, body_break)
+    text = "\n".join(_FN)
+    folded = _raw(_folded(raw))
+    assert scan_guards(_ref(sink), anchor, text, folded).skipped is None  # 접힌 글만 보면 놓친다
+    scan = scan_guards(_ref(sink), anchor, text, folded, lambda _file: raw)
+    assert (scan.skipped, scan.block) == ("bare_cr", "")
+    assert scan.event_fields() == {"guards_skipped": "bare_cr"}
+
+
+def test_plain_crlf_a_cr_after_the_function_and_an_unreadable_raw_do_not_stop_the_scan() -> None:
+    """CRLF는 접어도 줄 수가 그대로다. 함수 **뒤**의 `\\r\\r\\n`은 상관없다(폼피드와 같은 규칙).
+    원본 바이트를 못 읽으면(`None`) 텍스트 검사만 한다 — 「못 봤다」가 건너뜀 사유는 아니다."""
+    raw, anchor, sink = _cr_file(b"int g(void)\r\n{\r\n}\r\n", b"\r\n")
+    scan = scan_guards(
+        _ref(sink), anchor, "\n".join(_FN), _raw(_folded(raw)), lambda _file: raw
+    )
+    assert scan.skipped is None and scan.shown == 1
+    raw, anchor, sink = _cr_file(b"int g(void)\n{\n}\n")
+    after = raw + b"int h(void) { return 0; }\r\r\n"
+    scan = scan_guards(
+        _ref(sink), anchor, "\n".join(_FN), _raw(_folded(after)), lambda _file: after
+    )
+    assert scan.skipped is None and scan.shown == 1
+    scan = scan_guards(
+        _ref(sink), anchor, "\n".join(_FN), _raw(_folded(raw)), lambda _file: None
+    )
+    assert scan.skipped is None and scan.shown == 1
+
+
 def test_a_function_named_on_its_second_line_or_closed_with_a_comment_is_scanned() -> None:
     """GNU 꼴(`static int` 다음 줄에 이름)과 `} /* … */`로 닫는 함수도 훑는다."""
     src = _src("""
@@ -557,9 +708,17 @@ def test_a_function_named_on_its_second_line_or_closed_with_a_comment_is_scanned
 # --- `_auditor_source`에 붙는 자리 --------------------------------------------------------
 
 
-def _ctx(files: dict[str, list[str]], symbols: list[Location], *, counter=None, **options):  # noqa: ANN001, ANN202
+def _ctx(  # noqa: ANN202
+    files: dict[str, list[str]],
+    symbols: list[Location],
+    *,
+    counter=None,  # noqa: ANN001
+    read_raw=lambda _file: None,  # noqa: ANN001
+    **options,  # noqa: ANN003
+):
     """`_auditor_source`를 직접 부르는 최소 ctx. 임계값은 **실제 `Thresholds`**다 — 옵션 이름이
-    config와 러너 사이에서 어긋나면 조용히 꺼지지 않고 여기서 터진다."""
+    config와 러너 사이에서 어긋나면 조용히 꺼지지 않고 여기서 터진다. `read_raw`는 원본 바이트
+    읽기의 대역이다(기본은 못 읽는 쪽)."""
     events: list[dict] = []
 
     def read(loc: Location) -> str:
@@ -572,6 +731,7 @@ def _ctx(files: dict[str, list[str]], symbols: list[Location], *, counter=None, 
         callees_of=lambda _loc: [],
         definitions_of=lambda _names, _file: [],
         call_sites_of=lambda _loc: [],
+        read_raw=read_raw,
         counter_for_role=lambda _role: counter,
         config=types.SimpleNamespace(
             thresholds=load_config("dev_fake").thresholds.transition(**options)
@@ -636,6 +796,17 @@ def test_guards_on_a_window_anchor_adds_no_block_and_says_why_in_the_event() -> 
     assert guard_keys == {"guards_skipped": "window"}
 
 
+def test_guards_on_a_file_with_a_bare_cr_adds_no_block_and_says_why_in_the_event() -> None:
+    """원본 바이트(`ctx.read_raw`)에 `\\n`을 안 단 `\\r`이 있으면 줄이 어긋날 수 있다 — 블록을 안
+    붙이고 사유(`bare_cr`)를 trace에 남긴다. `read_raw`가 `ctx`에서 `scan_guards`까지 닿는지의
+    검사다."""
+    raw = b"int g(void)\r\r\n{\r\r\n}\r\r\n" + _BASIC.encode()
+    ctx, events = _ctx(_FILES, [_ANCHOR], auditor_guards=1, read_raw=lambda _file: raw)
+    assert runner._auditor_source(ctx, _ref(_SINK), _ANCHOR, "cand") == _BASIC
+    guard_keys = {key: value for key, value in events[-1].items() if key.startswith("guards")}
+    assert guard_keys == {"guards_skipped": "bare_cr"}
+
+
 def test_the_guard_block_counts_against_the_cap_before_the_other_functions() -> None:
     """GUARDS는 entry 함수 몫이라 상한에 안 밀린다 — 대신 그 크기를 먼저 세어, 뒤에 붙는 함수가
     그만큼 덜 든다. 켜기 전에 딱 맞던 함수가 켜면 빠진다."""
@@ -654,6 +825,28 @@ def test_the_guard_block_counts_against_the_cap_before_the_other_functions() -> 
         )
         runner._auditor_source(ctx, ref, _ANCHOR, "cand")
         assert events[-1]["dropped"] == dropped, guards
+
+
+def test_the_guard_block_is_counted_with_its_joining_newline() -> None:
+    """`size`는 블록마다 이음 줄바꿈 1을 더해 센다 — 가드 블록도 같다. 딱 맞는 상한에서는 뒤 함수가
+    들고 한 단어 모자라면 빠진다. 그 1을 빼면(`measure(block)`만 더하면) 모자란 상한에서도 들어가
+    합이 상한을 넘는다(변이로 확인). 위 테스트는 켜기 전의 몫만 비교해 이 1을 못 문다."""
+    words = lambda text: len(text.split())  # noqa: E731 — 단어 수 카운터
+    anchor_block = runner._block(_ANCHOR, _BASIC, end=FIRST + 12)
+    other_block = runner._block(_OTHER, "void other(void)\n{}")
+    ref = _ref(_SINK, lines=((FILE, _SINK), (FILE, 41)))
+    guard = scan_guards(ref, _ANCHOR, _BASIC, _raw(_BASIC)).block
+    exact = words(anchor_block) + 1 + words(guard) + 1 + words(other_block)
+    for cap, dropped in ((exact, 0), (exact - 1, 1)):
+        ctx, events = _ctx(
+            _FILES_WITH_OTHER,
+            [_ANCHOR, _OTHER],
+            counter=words,
+            auditor_source_tokens=cap,
+            auditor_guards=1,
+        )
+        runner._auditor_source(ctx, ref, _ANCHOR, "cand")
+        assert events[-1]["dropped"] == dropped, cap
 
 
 def test_guards_are_scanned_in_the_entry_function_before_it_is_trimmed() -> None:
@@ -979,9 +1172,14 @@ def _rows_text(scan) -> list[str]:  # noqa: ANN001
 
 def test_a_clamp_through_a_sink_argument_alias_is_found_in_the_gd_getbuf_shape() -> None:
     """gd_io_dp.c:290 — sink 인자는 `rlen`이고 가드는 `remain`·`len`을 본다. `rlen = len;`·
-    `rlen = remain;`이 그 둘을 인자의 이름으로 만든다(인자를 계산한 이름)."""
+    `rlen = remain;`이 그 둘을 인자의 이름으로 만든다(인자를 계산한 이름). 별칭으로만 이어진 행이라
+    어느 대입이 이었는지가 붙는다(`remain←dp`는 소스에서 처음 나온 대입
+    `remain = dp->… - dp->pos`다)."""
     scan = _scan(_GD_GETBUF, "memcpy(buf")
-    assert _rows_text(scan) == ["if (remain >= len)", "if (remain <= 0) [exit: return 0]"]
+    assert _rows_text(scan) == [
+        "if (remain >= len) [alias: rlen←len, remain←dp]",
+        "if (remain <= 0) [exit: return 0] [alias: remain←dp]",
+    ]
     assert {"len", "remain", "rlen"} <= set(scan.names)
 
 
@@ -991,10 +1189,10 @@ def test_a_capacity_check_on_a_value_derived_from_an_argument_is_found_in_the_xm
     (인자에서 나온 이름)."""
     scan = _scan(_XML_ESCAPE, "memcpy(out, repl")
     rows = _rows_text(scan)
-    assert "if (totalSize > size - used)" in rows
+    assert "if (totalSize > size - used) [alias: totalSize←replSize, used←out]" in rows
     assert any(
         row.startswith("if ((size > (SIZE_MAX - 1) / 2) || (totalSize")
-        and row.endswith("[exit: return(NULL)]")
+        and row.endswith("[exit: return(NULL)] [alias: totalSize←replSize]")
         for row in rows
     )
     assert not scan.block.startswith("GUARDS: no condition")
@@ -1007,22 +1205,23 @@ def test_the_table_size_checks_are_found_in_the_freetype_cpal_shape(name: str) -
     FT_NEXT_ULONG(p);`가 이어 준다."""
     scan = _scan(_FT_CPAL, "type_offset  = FT_NEXT_ULONG(p)", name=name)
     rows = _rows_text(scan)
-    assert "if (colors_offset >= table_size) [exit: goto InvalidTable]" in rows
-    assert "if (FT_FRAME_EXTRACT(table_size, table)) [exit: goto NoCpal]" in rows
-    assert "if (cpal->version == 1)" in rows  # sink를 품은 조건이다
+    offset = "if (colors_offset >= table_size) [exit: goto InvalidTable] [alias: colors_offset←p]"
+    assert offset in rows
+    assert "if (FT_FRAME_EXTRACT(table_size, table)) [exit: goto NoCpal] [alias: p←table]" in rows
+    assert "if (cpal->version == 1) [alias: cpal←p, version←p]" in rows  # sink를 품은 조건이다
 
 
 def test_a_name_used_to_compute_a_sink_argument_counts() -> None:
     src = _func("n = len - off;", "if (len > cap)", "    return -1;", "memcpy(dst, src, n);")
     assert _scan(src, "memcpy(").rows == (
-        _row(src, "if (len > cap)", "if (len > cap) [exit: return -1]"),
+        _row(src, "if (len > cap)", "if (len > cap) [exit: return -1] [alias: n←len]"),
     )
 
 
 def test_a_name_assigned_from_a_sink_argument_counts() -> None:
     src = _func("limit = n * 2;", "if (limit > cap)", "    return -1;", "memcpy(dst, src, n);")
     assert _scan(src, "memcpy(").rows == (
-        _row(src, "if (limit > cap)", "if (limit > cap) [exit: return -1]"),
+        _row(src, "if (limit > cap)", "if (limit > cap) [exit: return -1] [alias: limit←n]"),
     )
 
 
@@ -1034,8 +1233,9 @@ def test_compound_assignments_and_declarations_with_initializers_alias_too(
     assign: str, guarded: str
 ) -> None:
     src = _func(assign, f"if ({guarded} > cap)", "    return;", "memcpy(dst, src, n);")
+    condition = f"if ({guarded} > cap)"
     assert _scan(src, "memcpy(").rows == (
-        _row(src, f"if ({guarded} > cap)", f"if ({guarded} > cap) [exit: return]"),
+        _row(src, condition, f"{condition} [exit: return] [alias: n←{guarded}]"),
     )
 
 
@@ -1054,8 +1254,9 @@ def test_a_member_target_links_through_its_root_but_an_index_does_not() -> None:
         "    return;",
         "memcpy(dst, face->buf, n);",
     )
+    guard = "if (table_size > cap)"
     assert _scan(member, "memcpy(").rows == (
-        _row(member, "if (table_size > cap)", "if (table_size > cap) [exit: return]"),
+        _row(member, guard, f"{guard} [exit: return] [alias: face←table_size]"),
     )
     # `table[n] = value;`에서 `n`은 첨자일 뿐 — `value`가 `n`의 출처인 것은 아니다
     indexed = _func("table[n] = value;", "if (value > cap)", "    return;", "memcpy(dst, src, n);")

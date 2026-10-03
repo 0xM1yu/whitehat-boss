@@ -217,6 +217,33 @@ def test_run_pipeline_wires_resolve_requests_from_deps(
     )
 
 
+def test_run_pipeline_hands_the_raw_source_reader_to_the_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cli.execute` → `run_pipeline` → `RunContext`까지 `read_raw`가 **실제로** 닿고 대상 파일의
+    원본 바이트를 돌려준다. GUARDS의 줄 정렬 검사(`bare_cr`)는 `read_source`가 접기 전의 `\\r`을
+    봐야 하므로 이 배선이 있어야 한다 — 단위 검사(`test_source_guards`)는 `ctx.read_raw`를 직접
+    꽂아 이 배선이 끊겨도 초록이다. `src/cli.py`의 `read_raw=` 줄이나 `run_pipeline`의
+    `RunContext(...)` 안 `read_raw=` 줄을 지우면 기본값(`lambda _file: None`)으로 떨어져
+    빨개진다."""
+    from src.orchestrator import context as context_mod
+
+    captured: dict[str, object] = {}
+    original_init = context_mod.RunContext.__init__
+
+    def spy_init(self: object, *args: object, **kwargs: object) -> None:
+        captured["read_raw"] = kwargs.get("read_raw")
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(context_mod.RunContext, "__init__", spy_init)
+
+    _run(tmp_path)
+
+    reader = captured.get("read_raw")
+    assert callable(reader), f"RunContext가 read_raw를 못 받았다: {reader!r}"
+    assert reader("parser.c") == (TARGET / "parser.c").read_bytes()
+
+
 def _canonical(trace_path: Path) -> bytes:
     """재현성 비교 표현: `ts`·`wall_ms`만 제거한 JSONL."""
     lines = []

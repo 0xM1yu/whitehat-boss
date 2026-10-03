@@ -784,6 +784,7 @@ def run_pipeline(
     deps: Dependencies,
     read_source: Callable[[Location], str],
     read_payload: Callable[[str], str | None] = lambda _ref: None,
+    read_raw: Callable[[str], bytes | None] = lambda _file: None,
     trace: TraceWriter,
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
@@ -818,6 +819,7 @@ def run_pipeline(
         read_source=read_source,
         read_slice=deps.read_slice,
         read_payload=read_payload,
+        read_raw=read_raw,
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
@@ -3169,7 +3171,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
     guards_on = ctx.config.thresholds.auditor_guards
-    guard_scan = scan_guards(ref, anchor, anchor_text, ctx.read_source) if guards_on else None
+    guard_scan = (
+        scan_guards(ref, anchor, anchor_text, ctx.read_source, ctx.read_raw) if guards_on else None
+    )
     guard_blocks = [guard_scan.block] if guard_scan and guard_scan.block else []
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사

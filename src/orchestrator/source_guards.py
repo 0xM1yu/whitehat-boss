@@ -27,7 +27,13 @@ sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드
 (나) 식 안에 인자 이름이 있으면 `x`(인자에서 **나온** 이름: `limit = n * 2`의 `limit`)가 이름이
 된다. 한 걸음뿐이다(두 걸음 너머 `b = a; a = n`의 `b`는 안 이어진다). 대입은 `=`·`+=` 같은
 복합 대입·초기화가 있는 선언·`for`의 초기식이고, `x`는 뒤따르는 `.f`·`->f`까지 센다(`[i]` 첨자는
-출처가 아니라 뺀다).
+출처가 아니라 뺀다). 한 줄이 `_SCAN_CHARS`를 넘으면 그 줄은 앞쪽에서만 대입을 찾는다(압축·생성
+코드의 긴 점 사슬에서 대입 정규식이 제곱 시간이 든다).
+
+**별칭으로만 이어진 행에는 `[alias: m←n]`이 붙는다** — 조건이 인자 이름을 직접 말하지 않고 대입
+한 걸음으로 이어진 이름(`m = n + 1`의 `m`)만 말한 행이다. `좌변←우변`이 그 이름을 이은 대입이고(소스
+에서 처음 나온 것, 이름 순으로 `_ALIAS_SHOWN`개까지) 모델이 그 조건을 인자 자신의 검사로 읽지 않게
+한다. 인자 이름을 직접 말하는 행에는 안 붙는다.
 
 ## 한계
 
@@ -35,12 +41,16 @@ sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드
 - **창 앵커에는 블록을 안 붙인다**(`guards_skipped=window`) — 품는 함수를 모르면 앵커가 entry
   앞뒤 고정 창이고, 그 창에는 **다른 함수**의 조건이 든다(독립 검토: 조건 행이 든 창 블록의
   33%에 남의 행이 있었다).
-- **원문 줄이 어긋날 수 있는 파일은 안 훑는다**(`guards_skipped=formfeed`) — `read_source`는
-  `splitlines()`로 줄을 세서 폼피드·수직탭·`\\x1c`~`\\x1e`·`\\x85`·U+2028·U+2029에서도 끊지만
-  슬라이서·인덱서는 줄바꿈만 센다(#259). 그런 글자가 함수 앞·안에 있으면 원문이 그만큼 위로
-  밀려 sink 줄이 다른 줄이다(독립 검토: 폼피드 하나로 훑은 114건 중 30건이 틀렸고 7건은 「없음」이
-  됐다). 정렬 검사로는 못 걸러서 파일 **원문**(`read_source`가 줄 범위 없이 주는 것)에서 함수 끝
-  줄까지를 본다. 함수 뒤의 글자는 상관없다.
+- **원문 줄이 어긋날 수 있는 파일은 안 훑는다**(`guards_skipped=formfeed`·`bare_cr`) —
+  `read_source`는 `splitlines()`로 줄을 세서 폼피드·수직탭·`\\x1c`~`\\x1e`·`\\x85`·U+2028·
+  U+2029에서도 끊지만 슬라이서·인덱서는 줄바꿈만 센다(#259). 그런 글자가 함수 앞·안에 있으면
+  원문이 그만큼 위로 밀려 sink 줄이 다른 줄이다(독립 검토: 폼피드 하나로 훑은 114건 중 30건이
+  틀렸고 7건은 「없음」이 됐다). 정렬 검사로는 못 걸러서 파일 **원문**(`read_source`가 줄 범위
+  없이 주는 것)에서 함수 끝 줄까지를 본다. 함수 뒤의 글자는 상관없다. `bare_cr`는 같은 어긋남의
+  다른 갈래다 — `read_source`가 파일을 텍스트로 읽으며 `\\r`을 `\\n`으로 접어 `\\r\\r\\n`이 줄 둘이
+  되는데 인덱서는 `\\n`만 센다. 접힌 원문에는 그 `\\r`이 없어서 **원본 바이트**
+  (`RunContext.read_raw`)에서 `\\n`을 안 단 `\\r`을 찾는다. 원본을 못 읽으면(미배선·`None`) 이
+  검사는 못 한다.
 - 전처리를 안 한다 — `#if`의 두 가지가 다 보이고(조건식은 안 본다), 매크로 안의 가드는 이름이
   assert 계열(`assert`·`CHECK`·`WARN_ON` 등)일 때만 센다. `MIN(n, cap)` 같은 클램프 매크로·
   `switch`/`case`·`if constexpr`는 모른다.
@@ -56,17 +66,19 @@ sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드
 
 ## 행이 많을 때
 
-`_MAX_ROWS`를 넘으면 **조기 탈출 행과 sink를 품은 조건을 먼저**, 그다음 sink에 가까운 순으로
-남기고 보여 줄 때는 소스 순서다(독립 검토: 상한을 넘는 블록의 71%에서 조기 탈출·sink를 품은 행이
-말없이 빠졌다). 뺀 행이 있으면 블록 끝에 `... +N more rows omitted`를 적고 — 그 줄도 블록의 일부라
-`runner`의 예산 계산에 들어간다 — 뺀 행은 trace `guards_dropped`가 든다.
+`_MAX_ROWS`를 넘으면 **직접 이름 행**(조건이 sink 인자 이름을 직접 말하는 행)을 먼저 남긴다 — 그
+안에서 조기 탈출 행과 sink를 품은 조건이 먼저, 그다음 sink에 가까운 순이다. 별칭으로만 이어진 행은
+그 뒤다. 보여 줄 때는 소스 순서다(독립 검토: 상한을 넘는 블록의 71%에서 조기 탈출·sink를 품은
+행이 말없이 빠졌다 · 별칭 조건이 상한을 채워 69개 sink에서 직접 이름 행 174개를 밀어냈다 —
+로컬 · run ID 없음). 뺀 행이 있으면 블록 끝에 `... +N more rows omitted`를 적고 — 그 줄도
+블록의 일부라 `runner`의 예산 계산에 들어간다 — 뺀 행은 trace `guards_dropped`가 든다.
 
 ## 어디에 붙나
 
 `runner._auditor_source`가 entry 함수 바로 뒤에 붙인다. **Case B만**이다 — 슬라이스의 `entry`가
 sink 호출 줄이고 `entry.symbol`이 그 호출 이름이다(`slice_refs`). Case A(진입점에서 앞으로
 자른 것)의 entry는 함수 자신이라 sink를 하네스가 모른다. 안 붙인 사유(`case_a`·`window`·
-`formfeed`·`no_sink`)는 trace `auditor_source`의 `guards_skipped`가 든다.
+`formfeed`·`bare_cr`·`no_sink`)는 trace `auditor_source`의 `guards_skipped`가 든다.
 
 ⚠ **PoV도 이 블록을 받는다.** 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로
 물려 주고(`runner._step_auditor`) 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판에서 그것을 그대로
@@ -99,17 +111,29 @@ _MAX_DROPPED_LISTED = 50
 _MAX_NAMES_SHOWN = 10
 _ROW_CHARS = 160
 _EXIT_CHARS = 40
+# 별칭 행의 `[alias: …]`에 적는 대입 수(조건 하나가 별칭 이름을 여럿 말해도 이만큼만) · 별칭 대입을
+# 찾으려고 훑는 한 줄의 글자 수(압축·생성 코드의 한 줄이 대입 정규식을 제곱 시간으로 돌리지 않게
+# `source_stores`처럼 줄마다 앞쪽만 본다). 둘 다 정한 값이다.
+_ALIAS_SHOWN = 3
+_SCAN_CHARS = 2_000
 
 # 주석·전처리 줄·(literals면) 문자열·문자 리터럴을 같은 길이의 공백으로 지운다 — 줄바꿈은 남겨
 # offset과 줄 번호가 원문과 같다. 전처리 줄이 먼저다(`#error don't`의 아포스트로피가 문자
-# 리터럴을 열지 않게).
+# 리터럴을 열지 않게). **수 리터럴(`num`)이 맨 앞 갈래다** — 한 덩어리로 먹고 지우지 않는다: C23·
+# C++14 자릿수 구분자 `1'000`·`0xFF'FF`의 `'`가 문자 리터럴을 열면 같은 줄의 다음 `'`까지(그 사이의
+# 이름까지) 지운다. 수 모양은 `source_definitions._NOT_CODE`의 `num`과 같다(이름 끝 숫자 `u8'x'`의
+# `8`은 수의 시작이 아니다).
 _DIRECTIVE = re.compile(r"^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", re.MULTILINE)
 _LITERAL_OR_COMMENT = re.compile(
-    r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.DOTALL
+    r"(?P<num>(?<![A-Za-z0-9_])[0-9](?:'(?=[A-Za-z0-9_])|[A-Za-z0-9_.])*)"
+    r"|//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'",
+    re.DOTALL,
 )
 _NON_NEWLINE = re.compile(r"[^\n]")
 # `str.splitlines()`는 줄바꿈 말고도 이 글자들에서 끊는다 — 슬라이서·인덱서는 줄바꿈만 센다(#259).
 _SPLITLINES_ONLY = re.compile("[\v\f\x1c\x1d\x1e\x85" + chr(0x2028) + chr(0x2029) + "]")
+# `\n`을 안 단 `\r`(`\r\n`의 짝이 아닌 CR) — 원본 바이트에서 찾는다(`_lines_may_drift`).
+_BARE_CR = re.compile(rb"\r(?!\n)")
 
 _IDENT = re.compile(r"\b[A-Za-z_]\w*")
 _CALL_AHEAD = re.compile(r"\s*\(")
@@ -145,7 +169,8 @@ _NOT_DATA = frozenset(
 class GuardScan:
     """훑은 결과. `rows`는 SOURCE에 싣는 행, `dropped`는 행 상한에 걸려 뺀 행(둘 다
     `파일:줄 | 조건`, 소스 순서), `names`는 맞춰 본 이름 전부(인자 이름 + 대입 한 걸음)다.
-    `skipped`가 있으면 훑지 않은 것이다 — 사유는 `case_a`·`window`·`formfeed`·`no_sink`."""
+    `skipped`가 있으면 훑지 않은 것이다 — 사유는 `case_a`·`window`·`formfeed`·`bare_cr`·
+    `no_sink`."""
 
     rows: tuple[str, ...] = ()
     dropped: tuple[str, ...] = ()
@@ -207,15 +232,22 @@ class _Found(NamedTuple):
 
 class _Row(NamedTuple):
     at: int  # 구성이 시작하는 offset — 행을 소스 순서로 세우고 sink와의 거리를 잰다
-    text: str  # `파일:줄 | 조건 [exit: …]`
+    text: str  # `파일:줄 | 조건 [exit: …] [alias: …]`
     first: bool  # 조기 탈출 행이거나 sink를 품은 조건이다 — 상한이 차면 먼저 남긴다
+    direct: bool  # 조건이 sink 인자 이름을 직접 말한다 — 별칭으로만 이어진 행이면 거짓이다
 
 
 def scan_guards(
-    ref: SliceRef, anchor: Location, text: str, read_source: Callable[[Location], str]
+    ref: SliceRef,
+    anchor: Location,
+    text: str,
+    read_source: Callable[[Location], str],
+    read_raw: Callable[[str], bytes | None] = lambda _file: None,
 ) -> GuardScan:
     """슬라이스 타깃의 entry 함수 원문 `text`에서 sink 앞의 가드를 훑는다. 훑지 않으면 `skipped`에
-    사유가 든 빈 결과다 — 옵션이 켜진 run은 안 훑은 후보도 사유를 trace에 남긴다."""
+    사유가 든 빈 결과다 — 옵션이 켜진 run은 안 훑은 후보도 사유를 trace에 남긴다. `read_raw`는
+    파일의 원본 바이트다(`RunContext.read_raw` — `None`이면 못 읽은 것이고 그 검사는 텍스트로만
+    한다)."""
     # ponytail: Case A(`given_end == "source"`)는 entry가 진입점 함수 자신이라 sink를 하네스가
     # 모른다 — 건너뛴다. 슬라이서가 슬라이스에 `source_sink`(source·sink로 본 위치 — 슬라이서 쪽
     # 별도 변경)를 싣고 로더가 그것을 `SliceRef`까지 나르면, 여기서 그 sink 위치를 `sink_line`으로
@@ -229,8 +261,9 @@ def scan_guards(
     line = ref.entry.line_start
     if line is None:
         return GuardScan(skipped="no_sink")
-    if _lines_may_drift(read_source, anchor):
-        return GuardScan(skipped="formfeed")
+    drift = _lines_may_drift(read_source, read_raw, anchor)
+    if drift is not None:
+        return GuardScan(skipped=drift)
     scan = scan_function(
         text,
         file=anchor.file,
@@ -241,14 +274,39 @@ def scan_guards(
     return scan if scan is not None else GuardScan(skipped="no_sink")
 
 
-def _lines_may_drift(read_source: Callable[[Location], str], anchor: Location) -> bool:
-    """파일 원문에서 함수 끝 줄까지 `splitlines()`만 끊는 글자가 있는가(#259). 줄 범위가 없는
-    위치는 파일 전체 원문이라 `read_source`가 그 글자를 안 지운 채 준다 — 함수 원문은 이미
-    `splitlines()`로 잘려 그 글자가 없다."""
-    raw = read_source(Location(file=anchor.file))
+def _lines_may_drift(
+    read_source: Callable[[Location], str],
+    read_raw: Callable[[str], bytes | None],
+    anchor: Location,
+) -> str | None:
+    """원문 줄이 인덱서가 센 줄과 어긋날 수 있는 사유(`formfeed` · `bare_cr`), 없으면 `None`. 함수
+    끝 줄까지만 본다.
+
+    - `formfeed`: 파일 원문에 `splitlines()`만 끊는 글자가 있다(#259). 줄 범위가 없는 위치는 파일
+      전체 원문이라 `read_source`가 그 글자를 안 지운 채 준다 — 함수 원문은 이미 `splitlines()`로
+      잘려 그 글자가 없다.
+    - `bare_cr`: **원본 바이트**에 `\\n`을 안 단 `\\r`이 있다(`\\r\\r\\n` · 옛 Mac 줄바꿈).
+      `read_source`는 파일을 텍스트로 읽어 `\\r`을 `\\n`으로 접으므로 접힌 원문에는 그 글자가
+      없다 — `\\r\\r\\n`은 줄 둘이 되는데 인덱서는 `\\n`만 세 줄 하나다. 그래서 `read_raw`로
+      바이트를 따로 본다."""
+    text = read_source(Location(file=anchor.file))
     upto = anchor.line_end
-    prefix = raw if upto is None else "\n".join(raw.split("\n", upto)[:upto])
-    return _SPLITLINES_ONLY.search(prefix) is not None
+    prefix = text if upto is None else "\n".join(text.split("\n", upto)[:upto])
+    if _SPLITLINES_ONLY.search(prefix) is not None:
+        return "formfeed"
+    raw = read_raw(anchor.file)
+    if raw is not None and _BARE_CR.search(_through_line(raw, upto)) is not None:
+        return "bare_cr"
+    return None
+
+
+def _through_line(raw: bytes, upto: int | None) -> bytes:
+    """원본 바이트에서 `upto`째 줄까지 — 그 줄 끝의 `\\n`을 포함한다(안 그러면 CRLF의 마지막
+    `\\r`이 `\\n` 없이 남아 짝 없는 CR로 읽힌다). 줄 범위가 없거나 파일이 그보다 짧으면 전부다."""
+    if upto is None:
+        return raw
+    parts = raw.split(b"\n", upto)
+    return b"\n".join(parts[:upto]) + b"\n" if len(parts) > upto else raw
 
 
 def scan_function(
@@ -266,23 +324,28 @@ def scan_function(
         return None
     masked, code = _blank(text, literals=True), _blank(text, literals=False)
     stop = starts[index + 1] - 1 if index + 1 < len(starts) else len(text)
-    names, cutoff = _sink(masked, starts[index], stop, sink_name)
-    if not names:
+    direct, cutoff = _sink(masked, starts[index], stop, sink_name)
+    if not direct:
         return None
-    names |= _aliases(masked, cutoff, names)
+    links = _aliases(masked, cutoff, direct)
+    names = direct | links.keys()
     rows: list[_Row] = []
     for found in _found(code, masked):
         if found.at >= cutoff or found.lo <= cutoff < found.hi:
             continue
-        if not _names(masked[found.names_from : found.hi]) & names:
+        seen = _names(masked[found.names_from : found.hi])
+        if not seen & names:
             continue
         body = _body(masked, found.body) if found.body >= 0 else None
         exit_ = _exit_in(code, masked, *body) if body and found.is_if else None
         encloses = body is not None and body[0] <= cutoff < body[1]
         line = first_line + bisect.bisect_right(starts, found.at) - 1
         tail = f" [exit: {exit_}]" if exit_ else ""
+        is_direct = bool(seen & direct)
+        if not is_direct:
+            tail += _alias_tag(seen, links)
         row = f"{file}:{line} | {_clip(found.text, _ROW_CHARS)}{tail}"
-        rows.append(_Row(found.at, row, exit_ is not None or encloses))
+        rows.append(_Row(found.at, row, exit_ is not None or encloses, is_direct))
     shown, dropped = _pick(rows, cutoff)
     return GuardScan(
         rows=tuple(row.text for row in shown),
@@ -291,12 +354,24 @@ def scan_function(
     )
 
 
+def _alias_tag(seen: set[str], links: dict[str, str]) -> str:
+    """조건이 말한 별칭 이름들을 이은 대입(`좌변←우변`)을 적은 표시 — 별칭으로만 이어진 행에 붙는다.
+    이름 순이고 `_ALIAS_SHOWN`개까지다."""
+    linked = [links[name] for name in sorted(seen & links.keys())]
+    more = ", ..." if len(linked) > _ALIAS_SHOWN else ""
+    return f" [alias: {', '.join(linked[:_ALIAS_SHOWN])}{more}]"
+
+
 def _pick(rows: list[_Row], cutoff: int) -> tuple[list[_Row], list[_Row]]:
-    """상한을 넘으면 조기 탈출 행과 sink를 품은 조건을 먼저, 그다음 sink에 가까운 순으로 남긴다.
-    돌려주는 둘은 다 소스 순서다."""
+    """상한을 넘으면 **직접 이름 행**을 먼저 남기고(그 안에서 조기 탈출 행과 sink를 품은 조건이
+    먼저, 그다음 sink에 가까운 순), 별칭으로만 이어진 행은 그 뒤다 — 별칭 조건이 상한을 채워
+    인자 자신의 가드를 밀어내지 않게. 돌려주는 둘은 다 소스 순서다."""
     if len(rows) <= _MAX_ROWS:
         return rows, []
-    ranked = sorted(range(len(rows)), key=lambda i: (not rows[i].first, cutoff - rows[i].at))
+    ranked = sorted(
+        range(len(rows)),
+        key=lambda i: (not rows[i].direct, not rows[i].first, cutoff - rows[i].at),
+    )
     kept = set(ranked[:_MAX_ROWS])
     shown = [row for i, row in enumerate(rows) if i in kept]
     dropped = [row for i, row in enumerate(rows) if i not in kept]
@@ -312,6 +387,10 @@ def _blank(text: str, *, literals: bool) -> str:
         return _NON_NEWLINE.sub(" ", match.group())
 
     def erase_literal_or_comment(match: re.Match[str]) -> str:
+        if match["num"]:
+            # 수는 지우지 않는다. 이름을 뽑는 쪽(`literals`)은 구분자 `'`만 `_`로 바꿔 `0xFF'FF`의
+            # `FF`가 이름으로 안 읽히게 한다 — 같은 길이다.
+            return match.group().replace("'", "_") if literals else match.group()
         return erase(match) if literals or match.group().startswith("/") else match.group()
 
     return _LITERAL_OR_COMMENT.sub(erase_literal_or_comment, _DIRECTIVE.sub(erase, text))
@@ -372,19 +451,34 @@ def _sink(masked: str, line_start: int, line_end: int, name: str | None) -> tupl
     return _names(masked[line_start:line_end]), first + 1
 
 
-def _aliases(masked: str, cutoff: int, names: set[str]) -> set[str]:
-    """sink 인자의 이름과 대입 **한 번**으로 이어진 이름. 앵커 함수 안 sink 앞(`cutoff` 앞)의
-    `x = <식>`에서 `x`가 인자 이름이면 식 안의 이름(인자를 계산한 이름)이, 식 안에 인자 이름이
-    있으면 `x`(인자에서 나온 이름)가 더해진다. 두 걸음 너머는 안 따라간다."""
-    extra: set[str] = set()
-    for match in _ASSIGN.finditer(masked, 0, cutoff):
+def _short_lines(text: str) -> str:
+    """`_SCAN_CHARS`를 넘는 줄은 그 뒤를 같은 길이의 공백으로 — offset은 그대로다. 대입 정규식은 긴
+    점 사슬(`a.b.c. … `)에서 시작 위치마다 끝까지 되훑어 제곱 시간이 든다."""
+    return "\n".join(
+        line if len(line) <= _SCAN_CHARS else line[:_SCAN_CHARS] + " " * (len(line) - _SCAN_CHARS)
+        for line in text.split("\n")
+    )
+
+
+def _aliases(masked: str, cutoff: int, names: set[str]) -> dict[str, str]:
+    """sink 인자의 이름과 대입 **한 번**으로 이어진 이름 → 그 이름을 이은 대입(`좌변←우변`, `m = n +
+    1`이면 `m←n`). 앵커 함수 안 sink 앞(`cutoff` 앞)의 `x = <식>`에서 `x`가 인자 이름이면 식 안의
+    이름(인자를 계산한 이름)이, 식 안에 인자 이름이 있으면 `x`(인자에서 나온 이름)가 별칭이다. 두
+    걸음 너머는 안 따라간다. 같은 이름을 잇는 대입이 여럿이면 소스에서 처음 나온 것이다.
+
+    **한 줄이 `_SCAN_CHARS`를 넘으면 그 줄은 앞쪽에서만 대입을 찾는다**(대입의 오른쪽 식은 줄 길이와
+    무관하게 끝까지 읽는다)."""
+    links: dict[str, str] = {}
+    for match in _ASSIGN.finditer(_short_lines(masked[:cutoff])):
         target = _names(_INDEX.sub(" ", match.group(1)))
         value = _names(masked[match.end() : _value_end(masked, match.end(), cutoff)])
-        if target & names:
-            extra |= value
-        if value & names:
-            extra |= target
-    return extra - names
+        for left in sorted(target & names):
+            for right in sorted(value - names):
+                links.setdefault(right, f"{left}←{right}")
+        for right in sorted(value & names):
+            for left in sorted(target - names):
+                links.setdefault(left, f"{left}←{right}")
+    return links
 
 
 def _value_end(masked: str, start: int, stop: int) -> int:
