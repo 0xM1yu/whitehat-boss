@@ -1,5 +1,5 @@
-"""Auditor `SOURCE`의 닫힘(`auditor_closure`) — 앵커 함수가 부르는 매크로·얇은 전달 함수를 실제
-구현까지 따라간다(`src/orchestrator/source_closure.py`, 계획 WP-S2).
+"""Auditor `SOURCE`의 닫힘(`auditor_closure`) — 앵커 함수가 부르는 매크로를 실제 구현까지
+따라간다(`src/orchestrator/source_closure.py`, 계획 WP-S2).
 
 저장소·인덱스는 **손으로 적지 않는다** — C 조각을 파일로 쓰고 실제 인덱서(`indexer.build_index`)와
 `GraphIndex`를 태운다. 줄 범위를 손으로 세면 인덱스가 실제로 내는 행과 갈라진 채 초록이 난다
@@ -9,6 +9,7 @@
 import importlib.util
 import json
 import re
+import time
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,9 +26,9 @@ from src.orchestrator.source_closure import (
     BODY_CHARS,
     DROPPED_LISTED,
     FOLD_DEPTH,
+    HEADER,
     MACRO_CHAIN_DEPTH,
     MACRO_CHARS,
-    WRAPPER_MAX_LINES,
     build_closure,
     classify_macro,
 )
@@ -76,16 +77,24 @@ def _close(tmp_path: Path, files: dict[str, str], anchor: str, **overrides):  # 
 
 
 def _labels(closure) -> list[str]:  # noqa: ANN001
-    """블록마다 첫 줄 — `/* CLOSURE: … */`."""
+    """블록마다 첫 줄 — `/* CLOSURE (…): … */`."""
     return [block.split("\n", 1)[0] for block in closure.blocks]
 
 
-# 한 저장소에 여러 갈래를 다 둔다: rename 매크로 → 전달 함수 → NULL 검사가 있는 실제 구현 /
-# 괄호 인자 전달 매크로 → 전달 함수 둘 → 외부(free) / 불투명 매크로 둘(하나는 다른 매크로를 쓴다).
+def _chains(closure) -> list[str]:  # noqa: ANN001
+    """블록마다 첫 줄에서 머리(`HEADER`)와 닫는 `*/`를 뺀 것 — 사슬과 끝 표시만 비교할 때 쓴다."""
+    return [label.removeprefix(HEADER).removesuffix(" */") for label in _labels(closure)]
+
+
+_NO_DEFINITION = "(no function or macro definition in the repo index)"
+_AMBIGUOUS = "(ambiguous: several definitions in the repo index)"
+
+# 한 저장소에 여러 갈래를 다 둔다: 이름만 바꾸는 매크로 → 헤더의 함수 / 인자를 넘기는 매크로 →
+# 저장소 밖(free) / 불투명 매크로 둘(하나는 다른 매크로를 쓴다).
 _WRAP_H = r"""#ifndef WRAP_H
 #define WRAP_H
 #define xmalloc safe_alloc
-#define xfree(p) safe_free((p))
+#define xfree(p) free((p))
 #define LOG_ERR(fmt, ...) do { log_msg(2, __FILE__, fmt, ##__VA_ARGS__); } while (0)
 #define CHECK_LEN(p, n) \
     if (!in_range((p), (n))) \
@@ -95,7 +104,6 @@ static inline void *safe_alloc(size_t n)
 {
     return raw_alloc(n);
 }
-static inline void safe_free(void *p) { raw_free(p); }
 #endif
 """
 _MAIN_C = r"""#include "wrap.h"
@@ -106,11 +114,6 @@ void *raw_alloc(size_t n)
     if (p == NULL)
         abort();
     return p;
-}
-
-void raw_free(void *p)
-{
-    free(p);
 }
 
 int use(const char *src, size_t len)
@@ -126,6 +129,32 @@ trunc:
 }
 """
 _MAIN = {"wrap.h": _WRAP_H, "main.c": _MAIN_C}
+_MAIN_ROWS = _MAIN_C.splitlines()
+_USE_START = next(n for n, row in enumerate(_MAIN_ROWS, 1) if row.startswith("int use("))
+_USE_END = len(_MAIN_ROWS)  # `use`가 파일의 마지막 함수다
+
+# 같은 이름이 매크로이자 함수인 세 모양 — (이름, 저장소). 첫째는 독립 리뷰가 zlib에서 재현한
+# 모양을 줄인 것이고 나머지 둘은 같은 결함이 나는 다른 모양을 적은 합성이다. 인덱스는 include
+# 관계도 `#if`·`#undef`도 몰라 어느 쪽이 그 호출에서 유효한지 못 가린다.
+_DUAL_NAMES = {
+    # zlib: `#ifdef Z_PREFIX`의 이름 바꾸기는 기본 빌드에서 꺼져 있고 함수는 deflate.c에 있다
+    "zlib-z-prefix": ("deflateEnd", {
+        "zconf.h": "#ifdef Z_PREFIX\n#  define deflateEnd z_deflateEnd\n#endif\n",
+        "deflate.c": '#include "zconf.h"\nint deflateEnd(z_streamp strm)\n{\n    return 0;\n}\n',
+        "main.c": '#include "zconf.h"\nint f(z_streamp s)\n{\n    return deflateEnd(s);\n}\n',
+    }),
+    # `#undef` 뒤에 같은 이름의 함수를 정의한다
+    "undef-then-function": ("F", {
+        "a.c": "#define F(x) other(x)\nint other(int x) { return x; }\n#undef F\n"
+               "static int F(int x) { return x + 1; }\nint f(int n)\n{\n    return F(n);\n}\n",
+    }),
+    # 이 파일이 include 하지 않는 헤더의 매크로가 파일 자신의 함수와 이름이 같다
+    "macro-from-a-header-never-included": ("helper", {
+        "unrelated.h": "#define helper(x) other(x)\n",
+        "a.c": "static int helper(int x) { return x; }\n"
+               "int f(int n)\n{\n    return helper(n);\n}\n",
+    }),
+}
 
 
 # --- 매크로 분류: 정의 원문으로 가른다 -----------------------------------------------------------
@@ -155,6 +184,13 @@ _MAIN = {"wrap.h": _WRAP_H, "main.c": _MAIN_C}
         # `return`을 든 매크로는 **호출자**를 끝낸다 — 호출 하나로 접으면 그 제어 흐름이 사라진다
         ("#define FAIL_WITH(x) return real(x)", ("opaque", None)),
         ("#define FAIL_WITH(x) return real(x);", ("opaque", None)),
+        # 돌아오지 않는 호출은 계약이다 — 접으면 조용히 넘기는 것으로 읽힌다
+        ("#define DIE(c) exit(c)", ("opaque", None)),
+        ("#define DIE() abort()", ("opaque", None)),
+        ("#define BAIL(c) longjmp(c, 1)", ("opaque", None)),
+        ("#define CHECK(x) assert(x)", ("opaque", None)),
+        # 키워드는 호출이 아니다
+        ("#define SZ(x) sizeof(x)", ("opaque", None)),
         # 호출 결과에 씌운 형변환은 값을 바꾼다(좁히기·부호) — `(void)`만 값을 안 바꾼다
         ("#define A(x) (int)B(x)", ("opaque", None)),
         ("#define A(x) (char *)B(x)", ("opaque", None)),
@@ -188,261 +224,14 @@ def test_a_continued_and_commented_macro_is_read_as_one_definition() -> None:
     assert classify_macro(forward) == ("forward", "g")
 
 
-# --- 전달 함수를 접고 첫 실제 본문에서 멈춘다 ---------------------------------------------------
+def test_a_named_variadic_macro_forwards_its_own_parameter_name() -> None:
+    """`A(x...)`의 가변 인자 이름은 `x`다 — `__VA_ARGS__`가 아니므로 `B(x)`는 그대로 넘기는 것이다
+    (인자 표시가 붙지 않는다). 이름 없는 `...`는 `__VA_ARGS__`다."""
+    assert source_closure._classify("#define A(x...) B(x)") == ("forward", "B", "")
+    assert source_closure._classify("#define A(f, ...) B(f, __VA_ARGS__)") == ("forward", "B", "")
 
 
-def test_a_rename_macro_and_a_forwarding_wrapper_fold_to_the_real_body(tmp_path: Path) -> None:
-    """`xmalloc`(rename 매크로) → `safe_alloc`(헤더의 한 문장 전달 함수) → `raw_alloc`(NULL을
-    검사하고 abort — 접지 않는다). 사슬 줄 하나와 `raw_alloc`의 본문만 싣는다 — 중간 두 단계는
-    안 싣는다."""
-    closure, graph, root = _close(tmp_path, _MAIN, "use")
-
-    raw_alloc = _symbol(graph, _MAIN, "raw_alloc")
-    first = closure.blocks[0]
-    assert first == (
-        "/* CLOSURE: xmalloc[macro] -> safe_alloc -> raw_alloc */\n"
-        + _block(raw_alloc, read_symbol_source(root, raw_alloc))
-    )
-    assert "abort();" in first and "return raw_alloc(n);" not in first
-
-
-def test_a_chain_that_ends_outside_the_repo_is_labelled_and_has_no_body(tmp_path: Path) -> None:
-    """`xfree(buf)` → `safe_free((p))` → `raw_free`(`free(p)` 한 문장) → `free`(저장소에 정의 없음).
-    끝의 본문은 없다 — 있었던 것처럼 쓰지 않고 그 사실을 적는다."""
-    closure, _, _ = _close(tmp_path, _MAIN, "use")
-
-    assert (
-        "/* CLOSURE: xfree[macro] -> safe_free -> raw_free -> free"
-        " (no definition in the repo index) */"
-    ) in _labels(closure)
-    chain = next(b for b in closure.blocks if b.startswith("/* CLOSURE: xfree"))
-    assert "\n" not in chain
-
-
-def test_an_opaque_macro_is_carried_verbatim_with_the_macros_its_body_uses(
-    tmp_path: Path,
-) -> None:
-    """불투명 매크로는 호출 대상이 없다 — 전개가 구현이다. `CHECK_LEN`은 `goto trunc`을 숨긴 문장
-    매크로이고 그 본문이 `in_range` 매크로를 쓴다 → 둘 다 원문 그대로(줄 이음 포함) 싣는다."""
-    closure, graph, root = _close(tmp_path, _MAIN, "use")
-
-    check = next(b for b in closure.blocks if b.startswith("/* CLOSURE: CHECK_LEN"))
-    assert check.split("\n", 1)[0] == "/* CLOSURE: CHECK_LEN[macro] */"
-    continued = "#define CHECK_LEN(p, n) \\\n    if (!in_range((p), (n))) \\\n        goto trunc"
-    assert continued in check
-    assert "#define in_range(p, n) (((const u_char *)(p) + (n)) <= end)" in check
-    log = next(b for b in closure.blocks if b.startswith("/* CLOSURE: LOG_ERR"))
-    assert "##__VA_ARGS__" in log
-
-
-def test_units_follow_the_order_of_the_calls_in_the_anchor(tmp_path: Path) -> None:
-    """단위는 앵커 본문에서 그 이름이 처음 나온 순서다 — 이름 순이 아니다."""
-    closure, _, _ = _close(tmp_path, _MAIN, "use")
-
-    heads = [label.split(" ")[2] for label in _labels(closure)]
-    assert heads == ["xmalloc[macro]", "CHECK_LEN[macro]", "LOG_ERR[macro]", "xfree[macro]"]
-
-
-def test_a_call_to_a_plain_function_adds_nothing(tmp_path: Path) -> None:
-    """접을 단계가 없으면(`raw_alloc` 같은 실제 함수를 바로 부름) 닫힘이 보탤 것이 없다 — 피호출
-    본문은 `auditor_callee_hops`의 일이다. 저장소에 없는 이름(`memcpy`)도 단위를 안 만든다."""
-    files = {"a.c": "int real(int n)\n{\n    if (n < 0)\n        return -1;\n    return n;\n}\n"
-             "int f(int n)\n{\n    memcpy(0, 0, n);\n    return real(n);\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert closure.blocks == ()
-
-
-@pytest.mark.parametrize(
-    "wrapper",
-    [
-        # NULL 검사 — 계약이다
-        "static int w(char *p)\n{\n    if (p == NULL)\n        return -1;\n    return real(p);\n}",
-        # 오류 반환이 낀 삼항
-        "static int w(char *p)\n{\n    return real(p) ? 0 : -1;\n}",
-        # 단락 평가로 검사를 한다
-        "static int w(char *p)\n{\n    return p && real(p);\n}",
-        # 계산한 인자
-        "static int w(int n)\n{\n    return real(n + 1);\n}",
-        # 필드를 꺼내 넘긴다
-        "static int w(struct s *q)\n{\n    return real(q->len);\n}",
-        # 호출 둘
-        "static int w(int n)\n{\n    log_it(n);\n    return real(n);\n}",
-        # 지역 변수를 거친다
-        "static int w(int n)\n{\n    int r = real(n);\n    return r;\n}",
-        # 반환값을 바꾼다
-        "static int w(int n)\n{\n    return -real(n);\n}",
-        # 파라미터가 아닌 식별자를 넘긴다(전역)
-        "static int w(int n)\n{\n    return real(g_limit);\n}",
-        # 호출 결과를 좁힌다 — 값이 바뀐다
-        "static int w(char *p)\n{\n    return (char)real(p);\n}",
-        "static int w(char *p)\n{\n    return (unsigned short)real(p);\n}",
-    ],
-)
-def test_a_wrapper_with_a_check_a_computation_or_a_second_call_is_not_folded(
-    tmp_path: Path, wrapper: str
-) -> None:
-    """접는 것은 **엄격한 한 문장 전달자**뿐이다 — NULL 검사·오류 반환·계산한 인자는 Auditor가
-    필요한 계약이다. 접히지 않은 `w`는 사슬의 끝이 되고(접은 단계가 0) 닫힘은 아무것도 싣지
-    않는다."""
-    files = {"a.c": f"int real(char *p) {{ return 1; }}\n{wrapper}\nint f(int n)\n{{\n"
-                    "    return w(0);\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert closure.blocks == ()
-
-
-def test_a_wrapper_over_a_non_folding_one_ends_the_chain_at_that_one(tmp_path: Path) -> None:
-    """`outer`는 접히고(한 문장 전달) `inner`는 NULL 검사 때문에 안 접힌다 → 사슬은 `outer`에서
-    `inner`로 가 멈추고 `inner`의 본문(검사를 담은)을 싣는다 — 검사 뒤의 구현(`real`)까지 가지
-    않는다."""
-    files = {"a.c": "int real(char *p) { return 1; }\n"
-                    "static int inner(char *p)\n{\n    if (p == NULL)\n        return -1;\n"
-                    "    return real(p);\n}\n"
-                    "static int outer(char *p) { return inner(p); }\n"
-                    "int f(char *s)\n{\n    return outer(s);\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    (block,) = closure.blocks
-    assert block.startswith("/* CLOSURE: outer -> inner */\n")
-    assert "if (p == NULL)" in block and "int real" not in block
-
-
-@pytest.mark.parametrize("noreturn", ["abort", "exit", "longjmp"])
-def test_a_wrapper_that_never_returns_is_not_folded(tmp_path: Path, noreturn: str) -> None:
-    """`die(c)`는 한 문장이고 인자도 파라미터지만 `abort`·`exit`·`longjmp` 호출은 계약이다 — 접지
-    않는다. 그 앞의 전달 함수(`bail`)는 접혀 `bail -> die`가 되고 `die` 본문이 실린다."""
-    files = {"a.c": f"static void die(int c) {{ {noreturn}(c); }}\n"
-                    "static void bail(int c) { die(c); }\n"
-                    "void f(int c)\n{\n    bail(c);\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    (block,) = closure.blocks
-    assert block.startswith("/* CLOSURE: bail -> die */\n")
-    assert f"{noreturn}(c);" in block
-
-
-def test_a_wrapper_may_cast_and_pass_constants(tmp_path: Path) -> None:
-    """한 문장 전달자의 인자는 파라미터·그 형변환·상수다 — `(int)` 같은 형변환과 숫자·문자열."""
-    files = {"a.c": "int real(char *p, int a, int b, const char *s)\n"
-                    "{\n    if (p)\n        return a;\n    return b;\n}\n"
-                    "static int w(char *p, int n)\n{\n"
-                    '    return real(p, (int)n, 0, "x");\n}\n'
-                    "int f(char *s)\n{\n    return w(s, 1);\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    (block,) = closure.blocks
-    # `0`·`"x"`가 얹혀 파라미터를 그대로 넘기는 것이 아니다 — 인자가 사슬 줄에 보인다
-    assert block.startswith('/* CLOSURE: w -> real(p, (int)n, 0, "x") */\n')
-
-
-def test_a_fold_that_adds_drops_or_reorders_arguments_shows_the_call(tmp_path: Path) -> None:
-    """접으면서 값이 사라지면 안 된다 — 전달이 자기 파라미터를 같은 순서로 그대로 넘기지 않으면
-    (상수를 얹거나 순서를 바꾸거나 뺀다) 받는 쪽 이름 뒤에 그 인자를 적는다. 그대로 넘기는 단계
-    (`alloc_n` → `real`)는 아무것도 안 붙인다."""
-    files = {
-        "a.h": "#define NEW(n) alloc_n((size_t)(n), 1)\n#define SWAP(a, b) pair(b, a)\n",
-        "a.c": '#include "a.h"\n'
-               "int real(int a, int b) { if (a) return b; return a; }\n"
-               "static int alloc_n(int n, int z) { return real(n, z); }\n"
-               "static int pair(int x, int y) { return real(x); }\n"
-               "int f(int n)\n{\n    NEW(n);\n    return SWAP(n, n);\n}\n",
-    }
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert _labels(closure) == [
-        "/* CLOSURE: NEW[macro] -> alloc_n((size_t)(n), 1) -> real */",
-        "/* CLOSURE: SWAP[macro] -> pair(b, a) -> real(x) (body above) */",
-    ]
-
-
-def test_a_chain_that_ends_outside_the_repo_still_shows_the_constants_it_passes(
-    tmp_path: Path,
-) -> None:
-    """`xcalloc(n)`은 `calloc(n, 1)`이다 — 끝이 저장소 밖(`calloc`)이어도 얹은 상수가 사슬 줄에
-    보인다. 본문이 없다는 사실도 그대로 적는다."""
-    files = {"a.c": "static void *xcalloc(size_t n) { return calloc(n, 1); }\n"
-                    "int f(size_t n)\n{\n    return xcalloc(n) != 0;\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert _labels(closure) == [
-        "/* CLOSURE: xcalloc -> calloc(n, 1) (no definition in the repo index) */"
-    ]
-
-
-def test_an_ambiguous_end_is_marked_and_an_ambiguous_start_is_counted(tmp_path: Path) -> None:
-    """정의가 여럿(`#if` 양쪽 가지)인 이름은 고르지 않는다. 사슬 **끝**이면 그렇다고 적고(「정의
-    없음」과 다르다), 호출 이름 **자체**가 모호하면 단위를 안 만들되 `closure_ambiguous`가 센다 —
-    단위 0이 「닫을 것이 없다」로 읽히지 않게."""
-    files = {
-        "a.h": "#ifdef WIN\n#define PLAT(x) plat_win(x)\n#else\n#define PLAT(x) plat_unix(x)\n"
-               "#endif\n#define VIA(x) PLAT(x)\n",
-        "a.c": '#include "a.h"\nint f(int n)\n{\n    VIA(n);\n    return PLAT(n);\n}\n',
-    }
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert _labels(closure) == [
-        "/* CLOSURE: VIA[macro] -> PLAT (ambiguous: several definitions in the repo index) */"
-    ]
-    assert closure.event()["closure_ambiguous"] == 1  # 호출 이름 `PLAT` 자체
-
-
-def test_a_cast_on_a_forwarded_argument_is_shown_not_hidden(tmp_path: Path) -> None:
-    """파라미터에 씌운 형변환은 값을 좁히거나 부호를 바꾼다(`size_t` → `unsigned short`) — 접되
-    사슬 줄이 그 형변환을 그대로 보인다. 겉으로 같은 `w -> alloc`이면 잘림이 사라진다. 바깥 괄호만
-    다른 인자(`(n)`)는 그대로 넘기는 것이다."""
-    files = {
-        "a.h": "#define NEWBUF(n) alloc((unsigned char)(n))\n#define PLAIN(n) alloc2((n))\n",
-        "a.c": '#include "a.h"\n'
-               "void *alloc(unsigned short n) { if (n == 0) return 0; return malloc(n); }\n"
-               "void *alloc2(size_t n) { if (n == 0) return 0; return malloc(n); }\n"
-               "static void *w(size_t n) { return alloc((unsigned short)n); }\n"
-               "void *f(size_t len)\n{\n    PLAIN(len);\n    NEWBUF(len);\n    return w(len);\n}\n",
-    }
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert _labels(closure) == [
-        "/* CLOSURE: PLAIN[macro] -> alloc2 */",
-        "/* CLOSURE: NEWBUF[macro] -> alloc((unsigned char)(n)) */",
-        "/* CLOSURE: w -> alloc((unsigned short)n) (body above) */",
-    ]
-
-
-def test_a_member_call_across_a_newline_is_not_a_chain_start(tmp_path: Path) -> None:
-    """`p->`와 이름 사이에 줄바꿈이 끼어도(긴 체인) 멤버 호출이다 — 같은 이름의 전달 함수가 있어도
-    닫힘을 안 낸다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w(int n) { return real(n); }\n"
-                    "int f(struct ops *p, int n)\n{\n"
-                    "    p->\n        w(1);\n    p .\n    w(2);\n    return n;\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert closure.blocks == ()
-
-
-def test_a_call_inside_a_spliced_line_comment_is_not_a_chain_start(tmp_path: Path) -> None:
-    """`//` 주석 끝의 `\\`는 다음 줄을 주석으로 삼킨다 — 줄 이음이 주석 벗기기보다 먼저다. 그 줄의
-    `w(1)`은 호출이 아니다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w(int n) { return real(n); }\n"
-                    "int f(int n)\n{\n    // note \\\n    w(1);\n    return n;\n}\n"}
-
-    closure, _, _ = _close(tmp_path, files, "f")
-
-    assert closure.blocks == ()
-
-
-def test_a_huge_nested_argument_is_not_a_forwarder_and_costs_nothing(tmp_path: Path) -> None:
+def test_a_huge_nested_argument_is_not_a_forwarder_and_costs_nothing() -> None:
     """한 문장이 `FORWARD_MAX_CHARS`를 넘으면 전달이 아니다 — 괄호가 수천 겹인 생성 코드가 제곱 시간
     (4,000겹에 1.7초 — 리뷰 프로브)을 먹지 않는다."""
     from src.orchestrator.source_closure import FORWARD_MAX_CHARS
@@ -453,25 +242,175 @@ def test_a_huge_nested_argument_is_not_a_forwarder_and_costs_nothing(tmp_path: P
     assert source_closure._forward("g(x)", ("x",)) == ("g", ["x"])
 
 
-def test_a_named_variadic_macro_forwards_its_own_parameter_name() -> None:
-    """`A(x...)`의 가변 인자 이름은 `x`다 — `__VA_ARGS__`가 아니므로 `B(x)`는 그대로 넘기는 것이다
-    (인자 표시가 붙지 않는다). 이름 없는 `...`는 `__VA_ARGS__`다."""
-    assert source_closure._classify("#define A(x...) B(x)") == ("forward", "B", "")
-    assert source_closure._classify("#define A(f, ...) B(f, __VA_ARGS__)") == ("forward", "B", "")
+# --- 사슬: 매크로는 접고 첫 함수에서 멈춘다 ------------------------------------------------------
 
 
-def test_a_wrapper_may_pass_an_uppercase_constant_but_not_a_lowercase_global(
+def test_a_rename_macro_folds_to_the_function_and_carries_that_functions_own_source(
     tmp_path: Path,
 ) -> None:
-    """대문자 식별자(`FLAG_ZERO`)는 상수다 — 접고 인자를 보인다. 소문자 전역은 접지 않는다."""
-    files = {"a.c": "int real(int n, int z) { if (z) return 0; return n; }\n"
-                    "static int w(int n) { return real(n, FLAG_ZERO); }\n"
-                    "static int v(int n) { return real(n, g_flag); }\n"
-                    "int f(int n)\n{\n    v(n);\n    return w(n);\n}\n"}
+    """`xmalloc`(rename 매크로) → `safe_alloc`(헤더의 함수). 사슬 줄 하나와 `safe_alloc`의 **자기
+    원문**(시그니처 포함)을 싣는다. 거기서 멈춘다 — `safe_alloc`이 부르는 `raw_alloc`까지 접지
+    않는다."""
+    closure, graph, root = _close(tmp_path, _MAIN, "use")
+
+    safe_alloc = _symbol(graph, _MAIN, "safe_alloc")
+    first = closure.blocks[0]
+    assert first == (
+        f"{HEADER}xmalloc[macro] -> safe_alloc */\n"
+        + _block(safe_alloc, read_symbol_source(root, safe_alloc))
+    )
+    assert "static inline void *safe_alloc(size_t n)" in first
+    assert "return raw_alloc(n);" in first and "abort();" not in first
+
+
+def test_a_function_end_is_carried_as_is_never_folded_through(tmp_path: Path) -> None:
+    """`W16(n)` → `w_u16(unsigned short n)`은 한 문장짜리 전달 함수지만 접지 않는다 — 접으면 사슬이
+    `-> raw_alloc`으로 보여 `unsigned short` 좁힘이 사라진다(독립 리뷰가 재현한 결함). 첫 함수에서
+    멈추고 그 함수 원문을 싣는다."""
+    files = {
+        "a.h": "#define W16(n) w_u16(n)\n",
+        "a.c": '#include "a.h"\n'
+               "void *raw_alloc(size_t n) { if (n == 0) return 0; return malloc(n); }\n"
+               "static void *w_u16(unsigned short n) { return raw_alloc(n); }\n"
+               "void *f(size_t len)\n{\n    return W16(len);\n}\n",
+    }
 
     closure, _, _ = _close(tmp_path, files, "f")
 
-    assert _labels(closure) == ["/* CLOSURE: w -> real(n, FLAG_ZERO) */"]
+    (block,) = closure.blocks
+    assert block.startswith(f"{HEADER}W16[macro] -> w_u16 */\n")
+    assert "static void *w_u16(unsigned short n)" in block
+    assert "-> raw_alloc" not in block and "size_t n) { if (n == 0)" not in block
+
+
+def test_a_chain_of_rename_and_forward_macros_folds_to_the_first_function(
+    tmp_path: Path,
+) -> None:
+    files = {
+        "a.h": "#define OUTER INNER\n#define INNER(x) impl(x)\n",
+        "a.c": '#include "a.h"\nint impl(int n) { if (n) return 1; return 0; }\n'
+               "int f(int n)\n{\n    return OUTER(n);\n}\n",
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == ["OUTER[macro] -> INNER[macro] -> impl"]
+    assert "int impl(int n) { if (n) return 1; return 0; }" in closure.blocks[0]
+
+
+def test_a_chain_that_ends_outside_the_repo_is_labelled_and_has_no_body(tmp_path: Path) -> None:
+    """`xfree(buf)` → `free((p))` — `free`은 저장소에 정의가 없다. 끝의 본문은 없다 — 있었던 것처럼
+    쓰지 않고 그 사실을 적는다."""
+    closure, _, _ = _close(tmp_path, _MAIN, "use")
+
+    assert f"{HEADER}xfree[macro] -> free {_NO_DEFINITION} */" in _labels(closure)
+    chain = next(b for b in closure.blocks if b.startswith(f"{HEADER}xfree"))
+    assert "\n" not in chain
+
+
+def test_a_chain_that_ends_outside_the_repo_still_shows_the_constants_it_passes(
+    tmp_path: Path,
+) -> None:
+    """`xcalloc(n)`은 `calloc(n, 1)`이다 — 끝이 저장소 밖(`calloc`)이어도 얹은 상수가 사슬 줄에
+    보인다. 본문이 없다는 사실도 그대로 적는다."""
+    files = {"a.h": "#define xcalloc(n) calloc(n, 1)\n",
+             "a.c": '#include "a.h"\nint f(size_t n)\n{\n    return xcalloc(n) != 0;\n}\n'}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == [f"xcalloc[macro] -> calloc(n, 1) {_NO_DEFINITION}"]
+
+
+def test_an_opaque_macro_is_carried_verbatim_with_the_macros_its_body_uses(
+    tmp_path: Path,
+) -> None:
+    """불투명 매크로는 호출 대상이 없다 — 전개가 구현이다. `CHECK_LEN`은 `goto trunc`을 숨긴 문장
+    매크로이고 그 본문이 `in_range` 매크로를 쓴다 → 둘 다 원문 그대로(줄 이음 포함) 싣는다."""
+    closure, _, _ = _close(tmp_path, _MAIN, "use")
+
+    check = next(b for b in closure.blocks if b.startswith(f"{HEADER}CHECK_LEN"))
+    assert check.split("\n", 1)[0] == f"{HEADER}CHECK_LEN[macro] */"
+    continued = "#define CHECK_LEN(p, n) \\\n    if (!in_range((p), (n))) \\\n        goto trunc"
+    assert continued in check
+    assert "#define in_range(p, n) (((const u_char *)(p) + (n)) <= end)" in check
+    log = next(b for b in closure.blocks if b.startswith(f"{HEADER}LOG_ERR"))
+    assert "##__VA_ARGS__" in log
+
+
+def test_units_follow_the_order_of_the_calls_in_the_anchor(tmp_path: Path) -> None:
+    """단위는 앵커 본문에서 그 이름이 처음 나온 순서다 — 이름 순이 아니다."""
+    closure, _, _ = _close(tmp_path, _MAIN, "use")
+
+    heads = [chain.split(" ")[0] for chain in _chains(closure)]
+    assert heads == ["xmalloc[macro]", "CHECK_LEN[macro]", "LOG_ERR[macro]", "xfree[macro]"]
+
+
+def test_a_call_to_a_plain_function_adds_nothing(tmp_path: Path) -> None:
+    """접을 단계가 없으면(`real` 같은 실제 함수를 바로 부름) 닫힘이 보탤 것이 없다 — 피호출 본문은
+    `auditor_callee_hops`의 일이다. 저장소에 없는 이름(`memcpy`)도 단위를 안 만든다."""
+    files = {"a.c": "int real(int n)\n{\n    if (n < 0)\n        return -1;\n    return n;\n}\n"
+             "int f(int n)\n{\n    memcpy(0, 0, n);\n    return real(n);\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert closure.blocks == ()
+
+
+def test_a_fold_that_adds_drops_or_reorders_arguments_shows_the_call(tmp_path: Path) -> None:
+    """접으면서 값이 사라지면 안 된다 — 전달이 자기 파라미터를 같은 순서로 그대로 넘기지 않으면
+    (상수를 얹거나 순서를 바꾸거나 뺀다) 받는 쪽 이름 뒤에 그 인자를 적는다. 그대로 넘기는 것
+    (`PASS` — 바깥 괄호만 다르다)은 아무것도 안 붙인다."""
+    files = {
+        "a.h": "#define NEW(n) alloc_n((size_t)(n), 1)\n#define SWAP(a, b) pair(b, a)\n"
+               "#define PASS(a, b) pair((a), (b))\n",
+        "a.c": '#include "a.h"\n'
+               "int alloc_n(int n, int z) { if (n) return z; return n; }\n"
+               "int pair(int x, int y) { if (x) return y; return x; }\n"
+               "int f(int n)\n{\n    NEW(n);\n    SWAP(n, n);\n    return PASS(n, n);\n}\n",
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == [
+        "NEW[macro] -> alloc_n((size_t)(n), 1)",
+        "SWAP[macro] -> pair(b, a)",
+        "PASS[macro] -> pair (body above)",
+    ]
+
+
+def test_a_cast_on_a_forwarded_argument_is_shown_not_hidden(tmp_path: Path) -> None:
+    """파라미터에 씌운 형변환은 값을 좁히거나 부호를 바꾼다(`size_t` → `unsigned char`) — 접되
+    사슬 줄이 그 형변환을 그대로 보인다. 겉으로 같은 `-> alloc`이면 잘림이 사라진다. 바깥 괄호만
+    다른 인자(`(n)`)는 그대로 넘기는 것이다."""
+    files = {
+        "a.h": "#define NEWBUF(n) alloc((unsigned char)(n))\n#define PLAIN(n) alloc2((n))\n",
+        "a.c": '#include "a.h"\n'
+               "void *alloc(unsigned short n) { if (n == 0) return 0; return malloc(n); }\n"
+               "void *alloc2(size_t n) { if (n == 0) return 0; return malloc(n); }\n"
+               "void *f(size_t len)\n{\n    PLAIN(len);\n    return NEWBUF(len);\n}\n",
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == [
+        "PLAIN[macro] -> alloc2",
+        "NEWBUF[macro] -> alloc((unsigned char)(n))",
+    ]
+
+
+def test_a_forwarded_uppercase_constant_is_shown_and_a_lowercase_global_is_opaque(
+    tmp_path: Path,
+) -> None:
+    """대문자 식별자(`FLAG_ZERO`)는 상수다 — 접고 인자를 보인다. 소문자 전역은 값을 만드는 것이라
+    접지 않는다 — 그 매크로는 불투명이라 `#define` 원문이 실린다."""
+    files = {"a.h": "#define W(n) real(n, FLAG_ZERO)\n#define V(n) real(n, g_flag)\n",
+             "a.c": '#include "a.h"\nint real(int n, int z) { if (z) return 0; return n; }\n'
+                    "int f(int n)\n{\n    V(n);\n    return W(n);\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == ["V[macro]", "W[macro] -> real(n, FLAG_ZERO)"]
+    assert "#define V(n) real(n, g_flag)" in closure.blocks[0]
 
 
 def test_a_long_argument_list_is_clipped_in_the_chain_line(tmp_path: Path) -> None:
@@ -485,62 +424,49 @@ def test_a_long_argument_list_is_clipped_in_the_chain_line(tmp_path: Path) -> No
     closure, _, _ = _close(tmp_path, files, "f")
 
     (label,) = _labels(closure)
-    assert label.startswith("/* CLOSURE: LG[macro] -> lg(m, ")
+    assert label.startswith(f"{HEADER}LG[macro] -> lg(m, ")
     assert label.endswith("...) */")
     assert long not in label
 
 
-def test_a_function_over_the_line_limit_is_not_even_read_as_a_wrapper(tmp_path: Path) -> None:
-    """본문이 `WRAPPER_MAX_LINES`줄을 넘으면 한 문장이어도(주석이 길어도) 전달자로 안 본다 —
-    읽지도 않는다(큰 함수를 읽는 비용을 안 낸다)."""
-    pad = "\n".join(f"    /* pad {i} */" for i in range(WRAPPER_MAX_LINES))
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    f"static int w(int n)\n{{\n{pad}\n    return real(n);\n}}\n"
-                    "int f(int n)\n{\n    return w(n);\n}\n"}
-    reads: list[Location] = []
-    root, _, graph = _repo(tmp_path, files)
-    here = _symbol(graph, files, "f")
-
-    def read(loc: Location) -> str:
-        reads.append(loc)
-        return read_symbol_source(root, loc)
-
-    text = read(here)
-    closure = build_closure(
-        here, text, callables_of=graph.callables_of, read=read, block=_block,
-        blocks=[_block(here, text)], measure=len, room=100_000,
-    )
-
-    assert closure.blocks == ()
-    assert [loc.symbol for loc in reads] == ["f"]
-
-
 def test_fold_depth_stops_the_chain_at_the_limit(tmp_path: Path) -> None:
-    """전달 함수가 `FOLD_DEPTH`를 넘게 이어지면 그 단계에서 멈춘다 — 막힌 함수가 사슬의 끝이 되어
-    본문이 실린다. 안전판이다 — 순환이 아니어도 끝없이 이어지는 것을 막는다."""
+    """전달 매크로가 `FOLD_DEPTH`를 넘게 이어지면 그 단계에서 멈춘다 — 막힌 매크로가 사슬의 끝이
+    되어 정의 원문이 실린다. 안전판이다 — 순환이 아니어도 끝없이 이어지는 것을 막는다."""
     n = FOLD_DEPTH + 3
-    body = "".join(f"static int w{i}(int n) {{ return w{i + 1}(n); }}\n" for i in range(n))
-    files = {"a.c": f"int w{n}(int n) {{ if (n) return 1; return 0; }}\n{body}"
-                    "int f(int n)\n{\n    return w0(n);\n}\n"}
+    defines = "".join(f"#define M{i}(x) M{i + 1}(x)\n" for i in range(n - 1))
+    files = {"a.h": f"{defines}#define M{n - 1}(x) impl(x)\n",
+             "a.c": '#include "a.h"\nint impl(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    return M0(n);\n}\n"}
 
     closure, _, _ = _close(tmp_path, files, "f")
 
     (block,) = closure.blocks
-    chain = " -> ".join(f"w{i}" for i in range(FOLD_DEPTH + 1))
-    assert block.startswith(f"/* CLOSURE: {chain} */\n")
-    assert f"w{FOLD_DEPTH + 1}(n)" in block  # 끝 함수(깊이 한도에 걸린 전달자)의 본문이다
+    chain = " -> ".join(f"M{i}[macro]" for i in range(FOLD_DEPTH + 1))
+    assert block.startswith(f"{HEADER}{chain} */\n")
+    assert f"#define M{FOLD_DEPTH}(x) M{FOLD_DEPTH + 1}(x)" in block  # 막힌 매크로의 원문이다
 
 
 def test_a_forwarding_cycle_is_cut_and_labelled(tmp_path: Path) -> None:
-    """`c1 -> c2 -> c1` — 방문 집합이 끊고 사슬 줄이 순환이라고 적는다. 끝없이 돌지 않는다."""
-    files = {"a.c": "static int c2(int n);\nstatic int c1(int n) { return c2(n); }\n"
-                    "static int c2(int n) { return c1(n); }\n"
-                    "int f(int n)\n{\n    return c1(n);\n}\n"}
+    """`C1 -> C2 -> C1` — 방문 집합이 끊고 사슬 줄이 순환이라고 적는다. 끝없이 돌지 않는다."""
+    files = {"a.h": "#define C1(n) C2(n)\n#define C2(n) C1(n)\n",
+             "a.c": '#include "a.h"\nint f(int n)\n{\n    return C1(n);\n}\n'}
 
     closure, _, _ = _close(tmp_path, files, "f")
 
-    assert _labels(closure) == ["/* CLOSURE: c1 -> c2 -> c1 (cycle) */"]
+    assert _chains(closure) == ["C1[macro] -> C2[macro] -> C1 (cycle)"]
     assert closure.blocks[0].count("\n") == 0
+
+
+def test_a_macro_that_forwards_to_its_own_name_is_a_cycle(tmp_path: Path) -> None:
+    """`#define foo(x) foo(x)`는 전처리가 한 번만 펼치므로 실제로는 같은 이름의 함수를 부른다 — 그
+    함수가 인덱스에 있으면 이름이 매크로이면서 함수라 시작부터 `ambiguous`다(위 테스트). 함수가
+    없으면 순환으로 끊는다."""
+    files = {"a.h": "#define foo(x) foo(x)\n",
+             "a.c": '#include "a.h"\nint f(int n)\n{\n    return foo(n);\n}\n'}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == ["foo[macro] -> foo (cycle)"]
 
 
 def test_macro_chain_depth_is_limited(tmp_path: Path) -> None:
@@ -572,14 +498,144 @@ def test_macros_that_use_each_other_are_carried_once_each(tmp_path: Path) -> Non
         assert block.count(f"#define {name}(x)") == 1, name
 
 
-def test_calls_in_comments_strings_and_members_are_not_chain_starts(tmp_path: Path) -> None:
-    """앵커 안의 `w(`가 주석·문자열 리터럴 안이거나 `p->w(`·`p.w(`(함수 포인터 멤버)면 호출이
-    아니다 — 저장소에 같은 이름의 전달 함수가 있어도 닫힘을 안 낸다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w(int n) { return real(n); }\n"
+# --- 이름을 못 가리는 곳: 고르지 않고 그렇다고 적는다 -----------------------------------------
+
+
+@pytest.mark.parametrize(("name", "files"), list(_DUAL_NAMES.values()), ids=list(_DUAL_NAMES))
+def test_a_call_name_that_is_both_a_macro_and_a_function_is_not_resolved_to_either(
+    tmp_path: Path, name: str, files: dict[str, str]
+) -> None:
+    """같은 이름이 매크로이자 함수면 인덱스는 어느 쪽이 그 호출에서 유효한지 못 가린다 — 「매크로가
+    가린다」고 단정하면 zlib `compress2_z`가 `deflateEnd[macro] -> z_deflateEnd (정의 없음)`을
+    찍었다(`deflateEnd`는 인덱스에 있는데도 — 독립 리뷰 보고: zlib 단위 318개 중 127개, 로컬·run ID
+    없음). 단위를 안 만들고 `closure_ambiguous`가 센다 — 단위 0이 「닫을 것이 없다」로 읽히지
+    않게."""
+    closure, graph, _ = _close(tmp_path, files, "f")
+
+    assert name in graph.callables_of([name], "a.c")  # 전제: 인덱스가 그 이름을 안다
+    assert closure.blocks == ()
+    assert closure.event()["closure_ambiguous"] == 1
+
+
+def test_an_ambiguous_end_is_marked_and_an_ambiguous_start_is_counted(tmp_path: Path) -> None:
+    """정의가 여럿(`#if` 양쪽 가지)인 이름은 고르지 않는다. 사슬 **끝**이면 그렇다고 적고(「정의
+    없음」과 다르다), 호출 이름 **자체**가 모호하면 단위를 안 만들되 `closure_ambiguous`가 센다 —
+    단위 0이 「닫을 것이 없다」로 읽히지 않게."""
+    files = {
+        "a.h": "#ifdef WIN\n#define PLAT(x) plat_win(x)\n#else\n#define PLAT(x) plat_unix(x)\n"
+               "#endif\n#define VIA(x) PLAT(x)\n",
+        "a.c": '#include "a.h"\nint f(int n)\n{\n    VIA(n);\n    return PLAT(n);\n}\n',
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == [f"VIA[macro] -> PLAT {_AMBIGUOUS}"]
+    assert closure.event()["closure_ambiguous"] == 1  # 호출 이름 `PLAT` 자체
+
+
+def test_an_end_that_is_both_a_macro_and_a_function_is_ambiguous_not_undefined(
+    tmp_path: Path,
+) -> None:
+    """사슬 **끝** 이름이 매크로이면서 함수일 때(zlib `VIA(s)` → `deflateEnd`)도 「정의 없음」이
+    아니라 `ambiguous`다 — 인덱스에 정의가 둘이나 있다."""
+    files = {
+        "a.h": "#ifdef Z_PREFIX\n#define deflateEnd z_deflateEnd\n#endif\n"
+               "#define VIA(s) deflateEnd(s)\n",
+        "d.c": "int deflateEnd(int s) { return s; }\n",
+        "a.c": '#include "a.h"\nint f(int n)\n{\n    return VIA(n);\n}\n',
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == [f"VIA[macro] -> deflateEnd {_AMBIGUOUS}"]
+    assert all("no function or macro definition" not in block for block in closure.blocks)
+
+
+def test_an_ambiguous_name_inside_an_opaque_macro_is_not_picked(tmp_path: Path) -> None:
+    """불투명 매크로 본문이 쓰는 이름이 매크로이면서 함수(`deflateEnd`)이면 어느 정의인지 못 가려
+    싣지 않는다 — 후보 하나를 골라 싣는 것도 고르는 것이다. 매크로 자기 원문은 그대로 실린다."""
+    files = {
+        "zconf.h": "#ifdef Z_PREFIX\n#define deflateEnd z_deflateEnd\n#endif\n"
+                   "#define END_TWICE(s) (deflateEnd(s), deflateEnd(s))\n",
+        "d.c": "int deflateEnd(int s) { return s; }\n",
+        "a.c": '#include "zconf.h"\nint f(int n)\n{\n    return END_TWICE(n);\n}\n',
+    }
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    (block,) = closure.blocks
+    assert "#define END_TWICE(s) (deflateEnd(s), deflateEnd(s))" in block
+    assert "z_deflateEnd" not in block
+
+
+def test_a_keyword_the_indexer_mistook_for_a_function_is_not_a_call_name(tmp_path: Path) -> None:
+    """인덱서는 매크로 뒤의 `if (…) {`를 이름이 `if`인 함수 정의로 읽는 산출물을 낸다(E4 §10 —
+    인덱스 함수의 0.25%인 1,240개 중 1,222개). 그 `if`가 둘 이상의 파일에 있으면 조회가
+    `ambiguous`로 답하고, 앵커의 `if (`를 호출로 읽으면 `closure_ambiguous`가 부푼다(독립 리뷰:
+    libzip에서 86%) — 키워드는 호출 이름에서 거른다."""
+    artifact = "FOO_BEGIN\nif (x) { y(); }\n"
+    anchor = "int f(int n)\n{\n    if (n) {\n        return 1;\n    }\n    return 0;\n}\n"
+    files = {"a.c": artifact, "b.c": artifact, "main.c": anchor}
+
+    closure, graph, _ = _close(tmp_path, files, "f")
+
+    # 전제: 실제 인덱서가 그 산출물을 낸다
+    assert graph.callables_of(["if"], "main.c")["if"][0] == "ambiguous"
+    assert closure.blocks == () and closure.event()["closure_ambiguous"] == 0
+
+
+@pytest.mark.parametrize("keyword", ["if", "while", "for", "switch", "return", "sizeof"])
+def test_a_keyword_followed_by_a_paren_is_never_a_call_name(keyword: str) -> None:
+    assert source_closure._call_names(f"{keyword} (a) {{ real(b); }}", None) == ["real"]
+
+
+# --- 앵커 본문에서 시작점을 뽑는 규칙 -----------------------------------------------------------
+
+
+def test_a_member_call_across_a_newline_is_not_a_chain_start(tmp_path: Path) -> None:
+    """`p->`와 이름 사이에 줄바꿈이 끼어도(긴 체인) 멤버 호출이다 — 같은 이름의 매크로가 있어도
+    닫힘을 안 낸다."""
+    files = {"a.h": "#define W(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
                     "int f(struct ops *p, int n)\n{\n"
-                    '    /* w(1) is not called */\n    // w(2)\n    puts("w(3)");\n'
-                    "    p->w(4);\n    p.w(5);\n    return n;\n}\n"}
+                    "    p->\n        W(1);\n    p .\n    W(2);\n    return n;\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert closure.blocks == ()
+
+
+def test_a_call_inside_a_spliced_line_comment_is_not_a_chain_start(tmp_path: Path) -> None:
+    """`//` 주석 끝의 `\\`는 다음 줄을 주석으로 삼킨다 — 줄 이음이 주석 벗기기보다 먼저다. 그 줄의
+    `W(1)`은 호출이 아니다."""
+    files = {"a.h": "#define W(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    // note \\\n    W(1);\n    return n;\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert closure.blocks == ()
+
+
+def test_calls_in_comments_strings_and_members_are_not_chain_starts(tmp_path: Path) -> None:
+    """앵커 안의 `W(`가 주석·문자열 리터럴 안이거나 `p->W(`·`p.W(`(함수 포인터 멤버)면 호출이
+    아니다 — 저장소에 같은 이름의 매크로가 있어도 닫힘을 안 낸다."""
+    files = {"a.h": "#define W(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(struct ops *p, int n)\n{\n"
+                    '    /* W(1) is not called */\n    // W(2)\n    puts("W(3)");\n'
+                    "    p->W(4);\n    p.W(5);\n    return n;\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert closure.blocks == ()
+
+
+def test_a_value_position_macro_is_not_a_chain_start(tmp_path: Path) -> None:
+    """`char buf[BUFSIZE]`의 `BUFSIZE`는 `(` 없이 쓴 식별자다 — 시작점이 아니다(`source_closure`의
+    ponytail 메모: 한 단계 정의는 `auditor_definitions`가 이미 싣는다)."""
+    files = {"a.h": "#define BUFSIZE LIMIT\n#define LIMIT 64\n",
+             "a.c": '#include "a.h"\nint f(int n)\n{\n    char buf[BUFSIZE];\n    return n;\n}\n'}
 
     closure, _, _ = _close(tmp_path, files, "f")
 
@@ -587,52 +643,86 @@ def test_calls_in_comments_strings_and_members_are_not_chain_starts(tmp_path: Pa
 
 
 def test_the_anchor_itself_is_not_a_chain_start(tmp_path: Path) -> None:
-    """앵커가 얇은 전달 함수여도 자기 이름(시그니처의 `name(`)에서 사슬을 시작하지 않는다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "int anchor(int n) { return real(n); }\n"}
+    """앵커 시그니처의 `name(`은 호출이 아니다 — 앵커와 같은 이름의 매크로가 있어도(그러면 그 이름이
+    매크로이면서 함수다) 모호한 호출로 세지 않는다."""
+    files = {"a.h": "#define anchor(n) impl(n)\n",
+             "a.c": '#include "a.h"\nint impl(int n) { return n; }\n'
+                    "int anchor(int n)\n{\n    return n + 1;\n}\n"}
 
     closure, _, _ = _close(tmp_path, files, "anchor")
 
-    assert closure.blocks == ()
+    assert closure.blocks == () and closure.event()["closure_ambiguous"] == 0
 
 
-def test_a_hop_resolves_names_against_the_file_it_was_found_in(tmp_path: Path) -> None:
-    """같은 이름의 `static` 함수가 두 파일에 있으면 전달자 `wrap`(b.c)이 부르는 `helper`는 `wrap`의
-    파일의 것이다 — 앵커 파일이 아니라 단계마다 그 단계가 있는 파일을 가까운 파일로 넘긴다."""
-    files = {"a.c": "static int helper(int n) { if (n) return 1; return 0; }\n",
-             "b.c": "static int helper(int n) { if (n > 5) return 2; return 3; }\n"
-                    "static int wrap(int n) { return helper(n); }\n"
-                    "int f(int n)\n{\n    return wrap(n);\n}\n"}
+def test_an_unterminated_comment_is_read_in_linear_time() -> None:
+    """닫히지 않은 `/*`가 여럿이면 시작마다 끝까지 되훑어 제곱 시간이 든다(독립 리뷰가 지적) —
+    닫히지 않은 `/*`는 끝까지가 주석이다. 그 뒤의 `W(1)`은 호출이 아니고 한 번에 끝까지 먹어
+    선형이다."""
+    text = "/* x " * 40_000 + " W(1);"
+
+    start = time.perf_counter()
+    names = source_closure._call_names(text, None)
+    elapsed = time.perf_counter() - start
+
+    assert names == []
+    assert elapsed < 2.0  # 선형은 수 ms다 — 제곱이면 수십 초
+
+
+# --- 조회 결과로 단위 만들기 -------------------------------------------------------------------
+
+
+def test_a_hop_resolves_names_where_the_macro_expands_not_where_it_is_defined(
+    tmp_path: Path,
+) -> None:
+    """매크로 본문의 이름은 매크로가 정의된 헤더가 아니라 **펼쳐지는 자리**에서 풀린다. `CALL()`
+    (a.h)이 부르는 `handler`가 파일마다 있어도 앵커(a.c)의 것이다 — 헤더를 가까운 파일로 삼으면
+    둘이라 모호해진다."""
+    files = {"a.h": "#define CALL() handler()\n",
+             "a.c": '#include "a.h"\nstatic int handler(void) { return 1; }\n'
+                    "int f(void)\n{\n    return CALL();\n}\n",
+             "b.c": "static int handler(void) { return 2; }\n"}
 
     closure, _, _ = _close(tmp_path, files, "f")
 
     (block,) = closure.blocks
-    assert block.startswith("/* CLOSURE: wrap -> helper */\n/* ===== b.c:1-1 ===== */\n")
-    assert "n > 5" in block
+    assert block.startswith(f"{HEADER}CALL[macro] -> handler */\n/* ===== a.c:2-2 ===== */\n")
+    assert "return 1;" in block and "return 2;" not in block
 
 
-def test_the_same_wrapper_called_twice_is_one_unit(tmp_path: Path) -> None:
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w(int n) { return real(n); }\n"
-                    "int f(int n)\n{\n    w(1);\n    return w(n);\n}\n"}
+def test_a_macro_an_opaque_macro_uses_is_also_resolved_where_it_expands(tmp_path: Path) -> None:
+    """불투명 매크로의 본문이 쓰는 매크로(`HELPER`)도 펼쳐지는 자리(앵커 파일)에서 풀린다 — 파일마다
+    다른 `HELPER`가 있어도 앵커 파일(a.c)의 것을 싣고, 헤더(a.h)를 기준 삼아 모호해지지 않는다."""
+    files = {"a.h": "#define OP(x) (HELPER(x) * 2)\n",
+             "a.c": '#include "a.h"\n#define HELPER(x) ((x) + 1)\n'
+                    "int f(int n)\n{\n    return OP(n);\n}\n",
+             "b.c": "#define HELPER(x) ((x) - 1)\n"}
 
     closure, _, _ = _close(tmp_path, files, "f")
 
-    assert _labels(closure) == ["/* CLOSURE: w -> real */"]
+    (block,) = closure.blocks
+    assert "#define OP(x) (HELPER(x) * 2)" in block
+    assert "#define HELPER(x) ((x) + 1)" in block and "((x) - 1)" not in block
 
 
-def test_two_wrappers_to_one_implementation_carry_it_once(tmp_path: Path) -> None:
+def test_the_same_macro_called_twice_is_one_unit(tmp_path: Path) -> None:
+    files = {"a.h": "#define W(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    W(1);\n    return W(n);\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == ["W[macro] -> real"]
+
+
+def test_two_macros_to_one_function_carry_it_once(tmp_path: Path) -> None:
     """둘째 단위는 사슬 줄만 싣고 본문은 **위**라고 적는다 — 같은 본문을 두 번 안 싣는다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w1(int n) { return real(n); }\n"
-                    "static int w2(int n) { return real(n); }\n"
-                    "int f(int n)\n{\n    w1(n);\n    return w2(n);\n}\n"}
+    files = {"a.h": "#define W1(n) real(n)\n#define W2(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    W1(n);\n    return W2(n);\n}\n"}
 
     closure, _, _ = _close(tmp_path, files, "f")
 
-    assert _labels(closure) == [
-        "/* CLOSURE: w1 -> real */", "/* CLOSURE: w2 -> real (body above) */"
-    ]
+    assert _chains(closure) == ["W1[macro] -> real", "W2[macro] -> real (body above)"]
     assert closure.blocks[1].count("\n") == 0
     assert sum(block.count("int real(int n)") for block in closure.blocks) == 1
 
@@ -640,9 +730,9 @@ def test_two_wrappers_to_one_implementation_carry_it_once(tmp_path: Path) -> Non
 def test_a_body_the_source_already_shows_is_not_carried_again(tmp_path: Path) -> None:
     """`blocks`(지금까지 SOURCE에 실린 것)에 그 본문이 이미 있으면 사슬 줄만 싣는다 — 배너의 줄
     범위로 안다. 실리지 **않은** 것을 위에 있다고 적지 않는 것이 요점이다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w(int n) { return real(n); }\n"
-                    "int f(int n)\n{\n    return w(n);\n}\n"}
+    files = {"a.h": "#define W(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    return W(n);\n}\n"}
     root, _, graph = _repo(tmp_path, files)
     here = _symbol(graph, files, "f")
     real = _symbol(graph, files, "real")
@@ -654,7 +744,7 @@ def test_a_body_the_source_already_shows_is_not_carried_again(tmp_path: Path) ->
         blocks=shown, measure=len, room=100_000,
     )
 
-    assert closure.blocks == ("/* CLOSURE: w -> real (body above) */",)
+    assert closure.blocks == (f"{HEADER}W[macro] -> real (body above) */",)
     assert closure.carried == ()
 
 
@@ -684,7 +774,10 @@ def test_an_opaque_macro_already_fully_carried_adds_no_unit_but_a_chain_to_it_do
     direct, folded = close("f"), close("g")
 
     assert direct.blocks == () and direct.dropped == ()
-    assert folded.blocks == ("/* CLOSURE: ALIAS[macro] -> ONE[macro] (definition above) */",)
+    assert folded.blocks == (f"{HEADER}ALIAS[macro] -> ONE[macro] (definition above) */",)
+
+
+# --- 예산 · 이벤트 · 조회 실패 -------------------------------------------------------------------
 
 
 def test_a_unit_over_the_room_is_dropped_and_listed(tmp_path: Path) -> None:
@@ -694,7 +787,7 @@ def test_a_unit_over_the_room_is_dropped_and_listed(tmp_path: Path) -> None:
     assert closure.blocks == () and closure.size == 0
     listed = json.loads(closure.event()["closure_dropped_units"])
     assert closure.event()["closure_dropped"] == len(listed) == 4
-    assert listed[0]["chain"] == "xmalloc[macro] -> safe_alloc -> raw_alloc"
+    assert listed[0]["chain"] == "xmalloc[macro] -> safe_alloc"
     assert {entry["reason"] for entry in listed} == {"cap"}
 
     full, _, _ = _close(tmp_path / "again", _MAIN, "use")
@@ -732,10 +825,7 @@ def test_a_block_over_its_own_cap_is_dropped_and_listed(
 
     closure, _, _ = _close(tmp_path, _MAIN, "use")
 
-    assert closure.blocks == (
-        "/* CLOSURE: xfree[macro] -> safe_free -> raw_free -> free"
-        " (no definition in the repo index) */",
-    )
+    assert closure.blocks == (f"{HEADER}xfree[macro] -> free {_NO_DEFINITION} */",)
     reasons = {e["chain"].split(" ")[0]: e["reason"] for e in closure.dropped}
     assert reasons == {"xmalloc[macro]": "block_cap", "CHECK_LEN[macro]": "block_cap",
                        "LOG_ERR[macro]": "block_cap"}
@@ -745,12 +835,11 @@ def test_the_event_lists_a_bounded_number_of_dropped_units_but_counts_all(
     tmp_path: Path,
 ) -> None:
     n = DROPPED_LISTED + 10
-    defs = "".join(
-        f"int impl{i}(int n) {{ if (n) return {i}; return 0; }}\n"
-        f"static int w{i}(int n) {{ return impl{i}(n); }}\n" for i in range(n)
-    )
-    calls = "".join(f"    w{i}(n);\n" for i in range(n))
-    files = {"a.c": f"{defs}int f(int n)\n{{\n{calls}    return 0;\n}}\n"}
+    macros = "".join(f"#define W{i}(n) impl{i}(n)\n" for i in range(n))
+    defs = "".join(f"int impl{i}(int n) {{ if (n) return {i}; return 0; }}\n" for i in range(n))
+    calls = "".join(f"    W{i}(n);\n" for i in range(n))
+    body = f'#include "a.h"\n{defs}int f(int n)\n{{\n{calls}    return 0;\n}}\n'
+    files = {"a.h": macros, "a.c": body}
 
     closure, _, _ = _close(tmp_path, files, "f", room=0)
 
@@ -778,50 +867,57 @@ def test_without_a_v2_index_the_closure_says_it_did_not_look(tmp_path: Path) -> 
 
 
 def test_an_unreadable_definition_is_not_presented_as_a_body(tmp_path: Path) -> None:
-    """인덱스는 가리키는데 원문이 비어 있으면(파일이 사라짐) 본문 없는 배너를 싣지 않는다 —
-    사슬은 저장소에 정의가 없는 것으로 끝난다."""
-    files = {"a.c": "int real(int n) { if (n) return 1; return 0; }\n"
-                    "static int w(int n) { return real(n); }\n"
-                    "int f(int n)\n{\n    return w(n);\n}\n"}
+    """인덱스는 가리키는데 원문이 비어 있으면(파일이 사라짐) 본문 없는 배너를 싣지 않는다 — 사슬
+    줄이 원문을 못 읽었다고 적는다. 「정의 없음」과 다르다(인덱스는 정의를 안다)."""
+    files = {"a.h": "#define W(n) real(n)\n#define M(n) ((n) + 1)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    M(n);\n    return W(n);\n}\n"}
     root, _, graph = _repo(tmp_path, files)
     here = _symbol(graph, files, "f")
     real = _symbol(graph, files, "real")
+    macro = graph.callables_of(["M"], "a.c")["M"][1]
     real_read = partial(read_symbol_source, root)
 
     def read(loc: Location) -> str:
-        return "" if loc == real else real_read(loc)
+        return "" if loc in (real, macro) else real_read(loc)
 
     closure = build_closure(
         here, read(here), callables_of=graph.callables_of, read=read, block=_block,
         blocks=[_block(here, read(here))], measure=len, room=100_000,
     )
 
-    assert _labels(closure) == ["/* CLOSURE: w -> real (no definition in the repo index) */"]
+    assert _chains(closure) == ["M (source unavailable)", "W[macro] -> real (source unavailable)"]
 
 
 # --- 인덱스 조회 `GraphIndex.callables_of` -----------------------------------------------------
 
 
-def test_callables_of_gives_macros_and_functions_with_their_parameters(tmp_path: Path) -> None:
-    """이름 → (종류, 정의 위치, 파라미터). 매크로의 파라미터는 원문에서 읽으므로 비어 있다."""
+def test_callables_of_gives_macros_and_functions_with_their_locations(tmp_path: Path) -> None:
+    """이름 → (종류, 정의 위치). 인덱스에 없는 이름(libc)은 결과에 없다."""
     _, _, graph = _repo(tmp_path, _MAIN)
 
-    found = graph.callables_of(["xmalloc", "safe_alloc", "raw_free", "memcpy"], "main.c")
+    found = graph.callables_of(["xmalloc", "safe_alloc", "raw_alloc", "memcpy"], "main.c")
 
-    assert set(found) == {"xmalloc", "safe_alloc", "raw_free"}  # memcpy는 인덱스에 없다
-    kind, where, params = found["safe_alloc"]
-    assert (kind, where.symbol, where.file, params) == ("function", "safe_alloc", "wrap.h", ("n",))
-    assert found["xmalloc"][0] == "macro" and found["xmalloc"][2] == ()
-    assert found["xmalloc"][1] == Location(file="wrap.h", symbol="xmalloc", line_start=3,
-                                           line_end=3)
+    assert set(found) == {"xmalloc", "safe_alloc", "raw_alloc"}  # memcpy는 인덱스에 없다
+    kind, where = found["safe_alloc"]
+    assert (kind, where.symbol, where.file) == ("function", "safe_alloc", "wrap.h")
+    assert found["xmalloc"] == (
+        "macro", Location(file="wrap.h", symbol="xmalloc", line_start=3, line_end=3)
+    )
 
 
-def test_a_macro_shadows_a_function_of_the_same_name(tmp_path: Path) -> None:
-    """전처리가 먼저라 같은 이름이 매크로이자 함수면 매크로다."""
-    files = {"a.c": "static int dup(int n) { return n; }\n#define dup(n) other(n)\n"}
-    _, _, graph = _repo(tmp_path, files)
+@pytest.mark.parametrize(("name", "files"), list(_DUAL_NAMES.values()), ids=list(_DUAL_NAMES))
+def test_callables_of_does_not_let_a_macro_shadow_a_function_of_the_same_name(
+    tmp_path: Path, name: str, files: dict[str, str]
+) -> None:
+    """같은 이름이 매크로이자 함수면 **고르지 않고** `ambiguous`다. 옛 판은 「전처리가 먼저라
+    매크로」라며 `macros` 표만 보고 멈췄고, 그래서 `Z_PREFIX`가 꺼진 zlib의 `deflateEnd`가 거짓
+    사슬이 됐다. 인덱스는 include 관계도 `#if`·`#undef`도 모른다 — 가까운 파일로도 못 가린다."""
+    _, document, graph = _repo(tmp_path, files)
+    assert name in document["macros"] and name in document["functions"]  # 전제: 둘 다 인덱스에 있다
 
-    assert graph.callables_of(["dup"], "a.c")["dup"][0] == "macro"
+    for file in files:
+        assert graph.callables_of([name], file)[name][0] == "ambiguous", file
 
 
 def test_callables_of_prefers_the_near_file_and_marks_an_ambiguous_name(tmp_path: Path) -> None:
@@ -865,6 +961,7 @@ _THRESHOLDS = {
     "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
     "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_closure": 0,
 }
+_UNIT_START = r"\n(?=/\* CLOSURE \()"  # SOURCE에서 닫힘 단위가 시작하는 자리
 
 
 def _auditor_source(tmp_path: Path, files: dict[str, str], anchor: str, **opts):  # noqa: ANN202
@@ -905,7 +1002,7 @@ def test_option_off_never_asks_for_a_closure_and_keeps_the_event_shape(tmp_path:
     source, event, _ = _auditor_source(tmp_path, _MAIN, "use", callables_of=boom)
 
     assert source == read_symbol_source(
-        tmp_path / "repo", Location(file="main.c", line_start=16, line_end=26)
+        tmp_path / "repo", Location(file="main.c", line_start=_USE_START, line_end=_USE_END)
     )
     assert set(event) == {"slice_id", "functions", "dropped", "uncovered_lines", "chars",
                           "anchor_chars", "subject_kind", "subject_id", "stage"}
@@ -916,17 +1013,32 @@ def test_option_on_appends_closure_blocks_and_reports_them(tmp_path: Path) -> No
     `closure_dropped_units`·`closure_lookup`이 실린다. `functions`에는 안 든다(함수가 아니다)."""
     source, event, _ = _auditor_source(tmp_path, _MAIN, "use", auditor_closure=1)
 
-    head, *_ = source.split("\n/* CLOSURE: ")
-    assert head.startswith("/* ===== main.c:16-26 ===== */\n")
-    assert re.findall(r"^/\* CLOSURE: (.*) \*/$", source, re.M) == [
-        "xmalloc[macro] -> safe_alloc -> raw_alloc",
+    head, *_ = source.split("\n/* CLOSURE ")
+    assert head.startswith(f"/* ===== main.c:{_USE_START}-{_USE_END} ===== */\n")
+    assert re.findall(r"^/\* CLOSURE \(syntactic; #if/#undef not evaluated\): (.*) \*/$",
+                      source, re.M) == [
+        "xmalloc[macro] -> safe_alloc",
         "CHECK_LEN[macro]",
         "LOG_ERR[macro]",
-        "xfree[macro] -> safe_free -> raw_free -> free (no definition in the repo index)",
+        f"xfree[macro] -> free {_NO_DEFINITION}",
     ]
     assert (event["functions"], event["closure"], event["closure_dropped"]) == (1, 4, 0)
     assert event["closure_dropped_units"] == "[]" and event["closure_lookup"] == "index"
     assert event["chars"] == len(source)
+
+
+def test_every_unit_opens_with_the_syntactic_only_caveat(tmp_path: Path) -> None:
+    """모델이 보는 첫 줄이 한계를 말한다 — 구문만 보고 `#if`·`#undef`를 평가하지 않는다. 프롬프트
+    범례가 오기 전에도(켜는 run이 프롬프트 v7 전엔 cli에서 막힌다) 블록 머리가 그것을 든다."""
+    closure, _, _ = _close(tmp_path, _MAIN, "use")
+
+    assert len(closure.blocks) == 4
+    for block in closure.blocks:
+        assert block.startswith("/* CLOSURE (syntactic; #if/#undef not evaluated): ")
+        assert block.split("\n", 1)[0].endswith(" */")
+    source, _, _ = _auditor_source(tmp_path / "run", _MAIN, "use", auditor_closure=1)
+    assert len(re.findall(r"^/\* CLOSURE ", source, re.M)) == 4
+    assert source.count("/* CLOSURE (syntactic; #if/#undef not evaluated): ") == 4
 
 
 def test_the_closure_shares_the_overall_cap(tmp_path: Path) -> None:
@@ -935,7 +1047,7 @@ def test_the_closure_shares_the_overall_cap(tmp_path: Path) -> None:
     실린다(러너 쪽 몫 계산이 하나라도 틀리면 여기서 걸린다). 상한은 모델 카운터(단어 수)로
     센다."""
     full, event, _ = _auditor_source(tmp_path / "full", _MAIN, "use", auditor_closure=1)
-    anchor, first, *_ = re.split(r"\n(?=/\* CLOSURE: )", full)
+    anchor, first, *_ = re.split(_UNIT_START, full)
     cap = len(anchor.split()) + 1 + len(first.split())
 
     carried, fits, _ = _auditor_source(
@@ -948,14 +1060,14 @@ def test_the_closure_shares_the_overall_cap(tmp_path: Path) -> None:
     assert event["closure"] == 4
     assert (fits["closure"], fits["closure_dropped"]) == (1, 3)
     assert carried.endswith(first)
-    assert "/* CLOSURE: xmalloc" not in short_of and short["closure_dropped"] >= 1
+    assert "xmalloc[macro]" not in short_of and short["closure_dropped"] >= 1
 
 
 def _direct(files: dict[str, str]) -> dict[str, str]:
-    """앵커가 `raw_alloc`을 **직접도** 부르는 변형 — 피호출 창(`auditor_callee_hops`)이 그 본문을
-    후보로 삼는다(`xmalloc` 사슬이 닿는 구현과 같은 함수다)."""
+    """앵커가 `safe_alloc`을 **직접도** 부르는 변형 — 피호출 창(`auditor_callee_hops`)이 그 본문을
+    후보로 삼는다(`xmalloc` 사슬이 닿는 함수와 같다)."""
     return {**files, "main.c": files["main.c"].replace(
-        "    memcpy(buf, src, len);", "    memcpy(buf, src, len);\n    raw_alloc(1);"
+        "    memcpy(buf, src, len);", "    memcpy(buf, src, len);\n    safe_alloc(1);"
     )}
 
 
@@ -971,8 +1083,8 @@ def test_the_closure_comes_before_the_caller_windows_and_after_the_callees(
     )
 
     positions = [source.index(mark) for mark in
-                 ("/* ===== main.c:16-", "/* ===== main.c:3-9", "/* CLOSURE: xmalloc",
-                  "/* ===== caller.c:")]
+                 (f"/* ===== main.c:{_USE_START}-", "/* ===== wrap.h:10-13 =====",
+                  f"{HEADER}xmalloc", "/* ===== caller.c:")]
     assert positions == sorted(positions)
 
 
@@ -981,7 +1093,7 @@ def test_the_closure_counts_against_the_budget_the_caller_windows_get(tmp_path: 
     더하면 창이 상한을 넘어 실린다. 상한을 앵커 + 닫힘 네 단위에 딱 맞춘다(창은 못 든다)."""
     files = {**_MAIN, "caller.c": 'void up(void)\n{\n    use("x", 1);\n}\n'}
     full, _, _ = _auditor_source(tmp_path / "full", files, "use", auditor_closure=1)
-    anchor, *units = re.split(r"\n(?=/\* CLOSURE: )", full)
+    anchor, *units = re.split(_UNIT_START, full)
     cap = len(anchor.split()) + sum(1 + len(unit.split()) for unit in units)
 
     _, event, _ = _auditor_source(
@@ -994,12 +1106,12 @@ def test_the_closure_counts_against_the_budget_the_caller_windows_get(tmp_path: 
 
 
 def test_a_caller_window_over_a_body_the_closure_carried_is_skipped(tmp_path: Path) -> None:
-    """닫힘이 실은 `raw_alloc` 본문 안에 앵커(`use`)의 호출 지점이 있으면(상호 재귀) 그 호출자 창은
+    """닫힘이 실은 `safe_alloc` 본문 안에 앵커(`use`)의 호출 지점이 있으면(상호 재귀) 그 호출자 창은
     이미 실린 범위와 겹쳐 빠진다 — 러너가 닫힘이 실은 위치를 `seen`에 안 더하면 같은 줄이 한 번 더
     실린다."""
-    files = {**_MAIN}
-    files["main.c"] = _MAIN_C.replace("    void *p = malloc(n);",
-                                      "    void *p = malloc(n);\n    use(0, 0);")
+    files = {**_MAIN, "wrap.h": _WRAP_H.replace(
+        "    return raw_alloc(n);", "    use(0, 0);\n    return raw_alloc(n);"
+    )}
 
     source, event, _ = _auditor_source(
         tmp_path, files, "use", auditor_closure=1, auditor_caller_lines=1
@@ -1017,9 +1129,12 @@ def test_a_macro_the_definitions_option_already_carried_is_not_repeated(tmp_path
         tmp_path, _MAIN, "use", auditor_closure=1, auditor_definitions=1
     )
 
-    assert "/* CLOSURE: LOG_ERR" not in source
+    in_range = next(n for n, row in enumerate(_WRAP_H.splitlines(), 1)
+                    if row.startswith("#define in_range"))
+    assert "/* CLOSURE (syntactic; #if/#undef not evaluated): LOG_ERR" not in source
     assert (
-        "/* CLOSURE: CHECK_LEN[macro] (definition above) */\n/* ===== wrap.h:9-9 ===== */"
+        f"{HEADER}CHECK_LEN[macro] (definition above) */\n"
+        f"/* ===== wrap.h:{in_range}-{in_range} ===== */"
     ) in source
     assert source.count("#define LOG_ERR") == 1 and source.count("#define CHECK_LEN") == 1
     assert source.count("#define in_range") == 1
@@ -1029,7 +1144,7 @@ def test_a_macro_the_definitions_option_already_carried_is_not_repeated(tmp_path
 def test_a_callee_body_the_cap_dropped_is_not_reported_as_shown_above(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """피호출 단계가 상한(`_AUDITOR_CALLEE_CHARS`)에 걸려 **뺀** `raw_alloc`을 닫힘이 「위에
+    """피호출 단계가 상한(`_AUDITOR_CALLEE_CHARS`)에 걸려 **뺀** `safe_alloc`을 닫힘이 「위에
     있다」고 적으면 거짓이다(러너의 `seen`은 뺀 것도 담는다 — 그래서 SOURCE의 배너로 판다).
     닫힘이 그 본문을 싣는다."""
     monkeypatch.setattr(runner, "_AUDITOR_CALLEE_CHARS", 1)
@@ -1040,18 +1155,18 @@ def test_a_callee_body_the_cap_dropped_is_not_reported_as_shown_above(
 
     assert event["callees_dropped"] >= 1
     assert "(body above)" not in source
-    assert source.count("void *raw_alloc(size_t n)") == 1
+    assert source.count("static inline void *safe_alloc(size_t n)") == 1
 
 
 def test_a_callee_body_already_carried_is_labelled_not_repeated(tmp_path: Path) -> None:
-    """피호출 단계가 `raw_alloc`을 이미 실었으면(entry가 직접 부름) 닫힘은 사슬 줄만 싣고 위에
+    """피호출 단계가 `safe_alloc`을 이미 실었으면(entry가 직접 부름) 닫힘은 사슬 줄만 싣고 위에
     있다고 적는다."""
     source, _, _ = _auditor_source(
         tmp_path, _direct(_MAIN), "use", auditor_closure=1, auditor_callee_hops=1
     )
 
-    assert "/* CLOSURE: xmalloc[macro] -> safe_alloc -> raw_alloc (body above) */" in source
-    assert source.count("void *raw_alloc(size_t n)") == 1
+    assert f"{HEADER}xmalloc[macro] -> safe_alloc (body above) */" in source
+    assert source.count("static inline void *safe_alloc(size_t n)") == 1
 
 
 # --- 파이프라인 전체: 공장 → Deps → RunContext → 노드 --------------------------------------------
@@ -1066,10 +1181,8 @@ def _closure_run(tmp_path: Path, **overrides):  # noqa: ANN202
     `RunContext`에 안 꽂으면 단위 대역은 초록이어도 여기서 빨개진다."""
     repo, document, _ = _repo(tmp_path / "pipeline", _MAIN)
     lines = {name: split_source(text.encode("utf-8")) for name, text in _MAIN.items()}
-    rows = _MAIN_C.splitlines()
-    head = next(n for n, row in enumerate(rows, 1) if row.startswith("int use("))
-    sink = next(n for n, row in enumerate(rows, 1) if "memcpy(" in row)
-    points = {("main.c", head), ("main.c", sink)}
+    sink = next(n for n, row in enumerate(_MAIN_ROWS, 1) if "memcpy(" in row)
+    points = {("main.c", _USE_START), ("main.c", sink)}
     sliced = {
         "id": "slice_0200", "candidate_key": "key_slice_0200", "case": "B",
         "entry": {"file": "main.c", "line": sink, "symbol": "memcpy"},
@@ -1085,8 +1198,8 @@ def test_the_closure_reaches_the_auditor_prompt_through_the_real_wiring(tmp_path
     _, trace_path = _closure_run(tmp_path, configure=_closure_on)
 
     ((_, facts),) = _prompts(trace_path, "auditor")
-    assert "/* CLOSURE: xmalloc[macro] -> safe_alloc -> raw_alloc */" in facts["source"]
-    assert "abort();" in facts["source"]
+    assert f"{HEADER}xmalloc[macro] -> safe_alloc */" in facts["source"]
+    assert "return raw_alloc(n);" in facts["source"]  # 닫힘이 실은 `safe_alloc`의 원문
     (event,) = _source_events(trace_path)
     assert event["closure"] == 4 and event["closure_lookup"] == "index"
 
@@ -1148,4 +1261,4 @@ def test_the_banner_a_block_starts_with_is_the_one_the_closure_reads_back() -> N
     assert source_closure.shown_ranges([_block(where, "a\nb\nc")]) == [
         Location(file="dir/a.c", line_start=7, line_end=9)
     ]
-    assert source_closure.shown_ranges(["no banner here", "/* CLOSURE: a -> b */"]) == []
+    assert source_closure.shown_ranges(["no banner here", f"{HEADER}a -> b */"]) == []

@@ -148,9 +148,9 @@ class RunContext:
     call_sites_of: Callable[[Location], list[Location] | None] = field(
         default=lambda _target: None
     )
-    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치 · 파라미터 이름) —
-    # Auditor `SOURCE`의 닫힘(`auditor_closure`)이 쓴다. 미배선 `None`이면 닫힘이 일할 수 없고
-    # 이벤트가 그것을 밝힌다(`closure_lookup`).
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치) — Auditor
+    # `SOURCE`의 닫힘(`auditor_closure`)이 쓴다. 미배선 `None`이면 닫힘이 일할 수 없고 이벤트가
+    # 그것을 밝힌다(`closure_lookup`).
     callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = field(
         default=lambda _names, _file: None
     )

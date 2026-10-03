@@ -3077,9 +3077,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
     **닫힘(옵션 `auditor_closure`)** — 1이면 피호출 함수 뒤·호출자 창 앞에, entry 함수가 부르는
-    매크로·얇은 전달 함수가 가는 첫 실제 본문과 그 사슬을 붙인다(`source_closure` — 블록 모양은
-    그 모듈 docstring). 같은 총 상한을 받고 못 붙인 단위는 `closure_dropped_units`가 목록으로 든다.
-    `functions`에 안 든다. 0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다.
+    매크로가 가는 첫 함수 본문과 그 사슬, 불투명 매크로의 `#define` 원문을 붙인다(`source_closure`
+    — 블록 모양은 그 모듈 docstring). 같은 총 상한을 받고 못 붙인 단위는 `closure_dropped_units`가
+    목록으로 든다. `functions`에 안 든다. 0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
