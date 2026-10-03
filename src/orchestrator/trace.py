@@ -245,7 +245,10 @@ class EventKind(StrEnum):
     # `stores_dropped`(못 실은 행 수)·`stores_dropped_rows`(그 행의 `file:line 이름` JSON 배열
     # 문자열 — 앞 50개 뒤에 `+N more`)·`stores_in_source`(`SOURCE`에 이미 보이는 줄이라 건너뛴 행
     # 수 — 줄어든 entry 함수는 남은 토막만)·`stores_targets_skipped`(질의 상한을 넘어 인덱스에 안
-    # 물은 이름 수)가 더 실린다. `auditor_closure`가 1이면 `closure`(붙인
+    # 물은 이름 수)·`stores_lookup`(`index` = 인덱스에 물었다 · `none` = v2 표가 없어 못 봤다 ·
+    # `no_targets` = 슬라이스 줄에 물을 이름이 없다 — `stores`가 0일 때 「쓰기가 없다」와 「못
+    # 봤다」를 가른다)가 더 실린다.
+    # `auditor_closure`가 1이면 `closure`(붙인
     # 닫힘 단위 수 — `functions`에는 안 든다)·`closure_dropped`(상한에 못 붙인 단위 수)·
     # `closure_dropped_units`(그 단위의 사슬·사유·글자 수를 담은 JSON 문자열 — 앞 50개, 개수는 앞
     # 필드가 센다)·`closure_ambiguous`(정의를 못 가려 안 따라간 호출 이름 수 — 매크로이면서

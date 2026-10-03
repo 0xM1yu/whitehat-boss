@@ -37,6 +37,9 @@
 - 못 실은 행이 있으면 블록 끝에 `+N more rows not shown` 한 줄이 붙는다(모델이 「이게 전부」로 읽지
   않게 — 그 줄 자리는 미리 남겨 둔다). 못 실은 행은 trace에도 개수가 아니라 `file:line 이름`
   **목록**으로 남는다(`Stores.trace_fields`).
+- 행이 0일 때 사유는 trace `stores_lookup`이 가른다 — `index`(물었고 쓰기가 없다는 답이 왔다) ·
+  `none`(v2 표가 없어 **못 봤다** — v1·인덱스 없음) · `no_targets`(슬라이스 줄에 물을 이름이 없다).
+  「0건」과 「못 봤다」를 섞지 않는다(`closure_lookup`과 같은 계약).
 
 ## 한계 (구문만 본다 · 이름으로 잇는다)
 
@@ -48,8 +51,9 @@
 줄의 파일 **둘 다와 같은 디렉터리**(include 정보가 인덱스에 없어 「둘 다 볼 수 있다」를 이것으로
 근사한다)일 때. 그 밖은 `ambiguous`다. ⚠ 달리지 않았어도 증명이 아니다 — 진짜 구조체가 인덱스 밖
 헤더에 있고 같은 디렉터리의 다른 구조체가 같은 필드 이름을 가지면 못 가린다. 여기서는 이름마다
-`_PER_NAME`행으로 자른다. 할당기 호출은 **줄 단위**로 이어진 것이라(`x = f(malloc(n))`도 같은 줄)
-원문 줄의 우변이 그 호출일 때만 `allocates`라 쓰고 아니면 「같은 줄에 호출이 있다」고만 쓴다.
+`_PER_NAME`행으로 자른다. 할당기 호출은 **줄 단위**로 이어진 것이라(`x = f(malloc(n))`도 같은 줄 ·
+`a->len = n; a->buf = malloc(n);`의 `len`도 같은 줄) **그 쓰기의** 우변이 그 호출일 때만
+`allocates`라 쓰고 아니면 「같은 줄에 호출이 있다」고만 쓴다.
 ponytail: 멀티라인 문장은 괄호가 안 닫힐 때 **다음 한 줄**만 잇는다. 인덱서가 쓰기 좌변 객체의
 타입과 include를 행에 실으면(열 추가 = 인덱스 판 올림) 모호 표시가 대부분 걷힌다.
 """
@@ -68,7 +72,7 @@ from src.schemas.stores import StoreSite, StoreTarget
 # 아님 · `[ambiguous]` = 같은 구조체·변수의 것이라고 확인하지 못함)를 블록 안에서 말한다.
 HEADER = (
     "/* ===== STORES (index name matches, direct assignments only, not exhaustive; "
-    "[ambiguous] = owner not confirmed) ===== */"
+    "[ambiguous] = owner not confirmed; an unmarked row is not proof of the same owner) ===== */"
 )
 
 # 블록 하나의 글자 상한 — 정의 하나(`runner._AUDITOR_DEFINITION_CHARS`)와 같은 크기다. **정한 값이지
@@ -91,8 +95,15 @@ _SCAN_CHARS = 2_000
 # 전부다.
 _DROPPED_LISTED = 50
 
-# 한 줄에서 코드가 아닌 것 — 문자열·문자 리터럴·주석. 여기 든 `a->b`는 필드 접근이 아니다.
-_NOISE = re.compile(r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|/\*.*?\*/|//.*")
+# 한 줄에서 코드가 아닌 것 — 문자열·문자 리터럴·주석. 여기 든 `a->b`는 필드 접근이 아니다. **수
+# 리터럴도** 지운다 — 수가 먼저 한 덩어리로 먹혀야 C23·C++14 자릿수 구분자 `1'000`·`0xFF'FF`의 `'`가
+# 문자 리터럴을 못 연다(열면 같은 줄의 다음 `'`까지, 그 사이의 쓰기까지 삼킨다). 수 모양은
+# `source_definitions._NOT_CODE`의 `num`과 같다(이름 끝 숫자 `u8'x'`의 `8`은 수가 아니다). 지우므로
+# 수의 꼬리(`0xFF'FF`의 `FF`)도 변수 이름으로 안 읽힌다.
+_NOISE = re.compile(
+    r"(?<![A-Za-z0-9_])[0-9](?:'(?=[A-Za-z0-9_])|[A-Za-z0-9_.])*"
+    r"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|/\*.*?\*/|//.*"
+)
 # `a->b.c`에서 객체 사슬(`a->b.`)과 **마지막** 필드(`c`). 중간 필드(`b`)는 따로 안 센다.
 _CHAIN = re.compile(r"((?:[A-Za-z_]\w*\s*(?:->|\.)\s*)+)([A-Za-z_]\w*)")
 # 맨 식별자 — 숫자 리터럴의 꼬리(`0x1F`의 `x1F`)와 필드(`.len`·`->len`)는 뺀다.
@@ -111,6 +122,10 @@ class Stores:
     in_source: int
     # `_TARGETS`를 넘어 인덱스에 묻지 않은 이름 수.
     skipped_targets: int
+    # 인덱스를 **봤는가** — `index`(물었고 답이 왔다 · 행이 0이면 쓰기가 없다는 답이다) · `none`(v2
+    # 표가 없어 못 봤다 — `stores_of`가 `None`) · `no_targets`(슬라이스 줄에 물을 이름이 없었다).
+    # `rows`가 0일 때 이 셋이 갈려야 한다(`closure_lookup`과 같은 계약).
+    lookup: str = "index"
 
     def trace_fields(self) -> dict[str, str | int]:
         """`auditor_source` 이벤트에 얹는 필드 — **옵션이 켜졌을 때만** 낸다(꺼진 run의 이벤트는
@@ -127,6 +142,7 @@ class Stores:
             "stores_dropped_rows": json.dumps(listed, ensure_ascii=False),
             "stores_in_source": self.in_source,
             "stores_targets_skipped": self.skipped_targets,
+            "stores_lookup": self.lookup,
         }
 
 
@@ -157,6 +173,7 @@ def stores_block(
         return cache[file]
 
     targets, skipped = _targets(ref, lines_of)
+    lookup = "index" if targets else "no_targets"
     shown: list[StoreSite] = []
     dropped: list[str] = []
     in_source = 0
@@ -165,6 +182,7 @@ def stores_block(
     for target in targets:
         sites = stores_of(target)
         if sites is None:
+            lookup = "none"
             break  # 인덱스가 없다 — 이름마다 물을 이유가 없다
         name = (target.field, target.name)
         for site in sorted(sites, key=lambda s: _rank(s, target)):
@@ -192,7 +210,7 @@ def stores_block(
     text = ""
     if rows:
         text = "\n".join([HEADER, *rows, *([_more(len(dropped))] if dropped else [])])
-    return Stores(text, len(rows), tuple(dropped), in_source, skipped)
+    return Stores(text, len(rows), tuple(dropped), in_source, skipped, lookup)
 
 
 def _more(count: int) -> str:
@@ -305,13 +323,17 @@ def _row(site: StoreSite, lines_of: Callable[[str], list[str]]) -> str | None:
     return f"{site.file}:{site.line} | {text} | {predicate}"
 
 
+# 멤버 연산자 둘레의 공백 — `c -> buf`를 `c->buf`로 접어 좌변 철자(`StoreSite.lhs`)와 맞춘다.
+_MEMBER_GAP = re.compile(r"\s*(->|\.)\s*")
+
+
 def _predicate(site: StoreSite, text: str) -> str:
     """한 줄 술어 — `writes ->len` · `assigns g_len` · `allocates ->buf (malloc: c->len + 1)`.
     이름만으로 이은 행은 `[ambiguous]`가 붙는다. `text`는 그 행의 문장(공백을 접은 원문)이다.
 
-    할당기는 인덱스가 **줄 단위**로 이은 것이다 — 문장의 우변이 그 호출일 때(`= (cast) malloc(`)만
-    `allocates`라 쓰고, 아니면(`x = f(malloc(n))` · 삼항 · 다른 문장) 「같은 줄에 호출이 있다」고만
-    쓴다."""
+    할당기는 인덱스가 **줄 단위**로 이은 것이다 — **이 쓰기의** 우변이 그 호출일 때(`= (cast)
+    malloc(`)만 `allocates`라 쓰고, 아니면(`x = f(malloc(n))` · 삼항 · 같은 줄의 다른 문장) 「같은
+    줄에 호출이 있다」고만 쓴다."""
     what = site.name
     if site.field:
         what = ("." if re.search(r"\.\s*\w+\s*$", site.lhs) else "->") + site.name
@@ -321,11 +343,27 @@ def _predicate(site: StoreSite, text: str) -> str:
     body = verb
     if site.alloc:
         args = ", ".join(site.alloc_args)
-        call = re.escape(site.alloc)
-        direct = re.search(r"(?<![=!<>])=\s*(?:\([^()]*\)\s*)*" + call + r"\s*\(", text)
         body = (
             f"allocates {what} ({site.alloc}: {args})"
-            if direct
+            if _assigns_the_call(site, text)
             else f"{verb}; same line calls {site.alloc}({args})"
         )
     return body + (" [ambiguous]" if site.ambiguous else "")
+
+
+def _assigns_the_call(site: StoreSite, text: str) -> bool:
+    """이 쓰기의 **우변이** 그 할당기 호출인가 — `<좌변> = (cast) malloc(`. 같은 줄의 다른 문장
+    (`a->len = n; a->buf = malloc(n);`의 `len`)은 아니다: 인덱서가 줄 단위로 이어 호출이 두 쓰기에
+    다 붙지만 호출을 받는 것은 `buf`뿐이다. 좌변은 필드면 인덱스가 준 철자(`site.lhs` — 같은 줄에서
+    두 객체가 같은 필드를 쓰면 `a->buf = NULL; b->buf = malloc(n);`을 이것이 가른다, 비었으면 `->`·
+    `.` 뒤 이름만), 변수면 앞이 `.`·`->`가 아닌 이름이다."""
+    boundary = r"(?<![\w.])(?<!->)"
+    if site.field and site.lhs:
+        left = boundary + re.escape("".join(site.lhs.split()))
+    elif site.field:
+        left = r"(?:->|\.)" + re.escape(site.name)
+    else:
+        left = boundary + re.escape(site.name)
+    assign = r"\s*[-+*/%&|^]?(?<![=!<>])=\s*(?:\([^()]*\)\s*)*"
+    call = re.escape(site.alloc or "") + r"\s*\("
+    return re.search(left + assign + call, _MEMBER_GAP.sub(r"\1", text)) is not None
