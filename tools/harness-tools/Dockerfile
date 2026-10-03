@@ -2,6 +2,11 @@
 #
 # v3 = v2의 index-v2에 비대화형 gdb를 더한다. v1·v2 이미지는 지우지 않는다 — 지난 run
 # 매니페스트의 `tool_images`가 그 digest를 적었다.
+# ⏵ 2026-10-04 — #304부터 이 트리로 빌드한 이미지의 인덱서는 **index-v3**를 낸다(태그는 그대로
+# v3). 그 전에 빌드한 `harness-tools:v3`(sif 포함)는 index-v2를 내고, 그러면 v3 조회
+# (`writes_of`·`fn_pointer_targets` 등)가 `None`이다 — **다시 빌드해야 한다.** 같은 태그에 두
+# 내용이 있는 셈이라 run끼리는 `tool_images` digest로 가른다. 태그를 올릴지는 아직 정하지
+# 않았다(#464 리뷰). 아래 인덱서 연막 검사가 버전과 v3 표를 보므로 낡은 사본을 구우면 빌드가 죽는다.
 #
 # **태그를 latest로 두지 않는다.** 이 이미지의 digest가 `RunRecord.tool_images`에 박히므로
 # 버전이 고정돼야 두 run의 비교가 성립한다(evaluation.md §6).
@@ -83,11 +88,14 @@ RUN printf 'int main(void){return 0;}\n' > /tmp/smoke.c \
 # 심볼과 호출이 **실제로 잡히는지**까지 본다. import만 확인하면 문법 모듈이 바뀌어
 # 아무것도 못 뽑게 돼도 통과한다. index-v2의 `calls`는 callee → 호출 지점이라 간선 수는
 # 값 목록의 길이 합이다(키 수가 아니다). 조회 표도 하나(`macros`) 실제로 차는지 본다.
-RUN printf '#define N 1\nvoid a(void){}\nvoid b(void){ a(); }\n' > /tmp/idx.c \
+# 버전과 v3 표(`writes` — 원소 대입 `x[0] = 1`)도 본다. 이미지에 구운 indexer.py가 낡은
+# 사본이면 v3 조회가 조용히 `None`이 되기 때문이다(#464 리뷰).
+RUN printf '#define N 1\nvoid a(void){}\nvoid b(void){ char x[2]; x[0] = 1; a(); }\n' > /tmp/idx.c \
  && python3 /opt/indexer.py --out /tmp/idx.json --root /tmp /tmp/idx.c \
  && python3 -c "import json,sys; d=json.load(open('/tmp/idx.json')); \
 e=sum(map(len, d['calls'].values())); \
-sys.exit(0 if len(d['symbols'])==2 and e==1 and 'N' in d['macros'] else 1)" \
+sys.exit(0 if len(d['symbols'])==2 and e==1 and 'N' in d['macros'] \
+and d['version']=='index-v3' and 'x' in d['writes'] else 1)" \
  && rm -f /tmp/idx.c /tmp/idx.json
 
 # `.inc` 연막 검사. 실측 샘플은 `target.c`가 `#include` 한 줄이고 코드가 전부 `.inc`에
