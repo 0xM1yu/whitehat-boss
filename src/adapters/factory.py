@@ -68,6 +68,7 @@ from src.schemas.candidate import SliceRef
 from src.schemas.common import CallableDef, Location
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CompileFlags, ModelSampling
+from src.schemas.stores import StoreSite, StoreTarget
 from src.tokens import COUNTED_ROLES
 
 
@@ -169,19 +170,27 @@ class Deps:
     # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
+    # 아래 셋(`callees_of`·`call_sites_of`·`definitions_of`)은 **`demote_nonproduct` 키워드**를
+    # 받는다(기본 꺼짐 — `GraphIndex.definitions_of` docstring). 러너가 `auditor_definitions`를 켠
+    # run에서만 켠다.
+    #
     # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
     # 함수 본문을 붙이는 데 쓴다(`runner._auditor_source`). `symbols_for`와 같은 모양·같은 이유로
     # 콜러블이고, 기본값 `None`("그래프 없음")이 이 필드 없이 조립된 `Deps`의 옛 동작을 지킨다.
-    callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
+    callees_of: Callable[..., list[Location] | None] = lambda _target, **_kw: None
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). `callees_of`와 같은 자리.
-    call_sites_of: Callable[[Location], list[Location] | None] = lambda _target: None
-    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치). Auditor `SOURCE`의
-    # 닫힘(`auditor_closure`)이 쓴다. `callees_of`와 같은 자리.
-    callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = (
-        lambda _names, _file: None
-    )
+    call_sites_of: Callable[..., list[Location] | None] = lambda _target, **_kw: None
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
-    definitions_of: Callable[[Iterable[str], str], list[Location] | None] = (
+    definitions_of: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
+    # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름(`locals` 표). 정의 조회가 본문 이름에서
+    # 이것을 뺀다(`runner._auditor_source`). 기본값 `None`("v2 표 없음")은 뺄 것이 없다는 뜻이다.
+    locals_of: Callable[[str, str], frozenset[str] | None] = lambda _file, _func: None
+    # 이름(필드·변수) → 그 쓰기 지점(`auditor_stores`). `callees_of`와 같은 자리.
+    stores_of: Callable[[StoreTarget], list[StoreSite] | None] = lambda _target: None
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치). Auditor `SOURCE`의
+    # 닫힘(`auditor_closure`)이 쓴다. `callees_of`와 같은 자리지만 위 셋의 `demote_nonproduct`는
+    # 받지 않는다 — 닫힘은 그 위생을 안 쓴다.
+    callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = (
         lambda _names, _file: None
     )
     # `--slices`로 준 슬라이스 → 타깃(ADR 0012 결정 1). `None`이면 슬라이스 없이 도는 run이고
@@ -558,6 +567,8 @@ def build_deps(
         call_sites_of=graph.call_sites_of,
         callables_of=graph.callables_of,
         definitions_of=graph.definitions_of,
+        locals_of=graph.locals_of,
+        stores_of=graph.stores_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
         # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의
