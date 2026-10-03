@@ -27,6 +27,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import slicer_queries as queries
+from slicer_candidates import CASE_RANK
 from slicer_checkpoint import Checkpoint, digest
 from slicer_claims import ClaimQueue
 from slicer_compile import generated_header_dirs, resolve_compilation_database
@@ -886,6 +887,14 @@ def parser() -> argparse.ArgumentParser:
         "--repo), one per line; blank lines and lines starting with # are skipped, no inline "
         "comments: candidates whose entry or an anchor is in one are sliced first",
     )
+    # Which case is sliced first -- order only, like --priority-files: the same candidates, and a
+    # candidate that gets a full slice gets the same one. Bound into the run contract (settings).
+    result.add_argument(
+        "--case-order", choices=sorted(CASE_RANK), default="ab", help="ab: every Case A candidate "
+        "is sliced before every Case B (default); ba: every Case B before every Case A. A run cut "
+        "short (--wall-seconds, a kill) leaves the candidates it did not reach degraded, so this "
+        "decides which case that is. Shards and --resume must pass the same value",
+    )
     result.add_argument("--export-dir", type=Path)
     result.add_argument("--progress", type=Path)
     result.add_argument("--heartbeat-seconds", type=positive_seconds, default=30)
@@ -1116,6 +1125,9 @@ def main(argv: list[str] | None = None) -> int:
             if priority is not None
             else None
         ),
+        # Same reason: collect() numbers and orders the candidates by it, and that order is bound
+        # into the checkpoint, so a shard or a resume with another order is refused.
+        "case_order": args.case_order,
     }
     job.priority_files = priority
     job.result["settings"] = job.settings

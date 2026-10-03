@@ -64,7 +64,7 @@ class SlicingStages:
                 "truncated to an unspecified first-N in CPG traversal order (api: write-context "
                 "methods first, then traversal order within each layer; slicer_queries)"
             )
-        self.candidates = collect(rows, self.repo)
+        self.candidates = collect(rows, self.repo, self.settings.get("case_order", "ab"))
         if self.priority_files is not None:
             # Before bind(): the checkpoint (and so --prepare-only's shards and the claim queue)
             # keeps this order, and resuming with a different list is a contract mismatch.
