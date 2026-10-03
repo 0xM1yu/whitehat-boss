@@ -631,6 +631,31 @@ def test_calls_in_comments_strings_and_members_are_not_chain_starts(tmp_path: Pa
     assert closure.blocks == ()
 
 
+def test_a_digit_separator_does_not_open_a_char_literal(tmp_path: Path) -> None:
+    """C23·C++14 자릿수 구분자(`1'000` · `0xFF'FF`)의 `'`는 문자 리터럴이 아니다 — 열면 같은 줄의
+    다음 `'`까지 삼켜 그 사이의 매크로 호출(`W(k)`)이 사라진다(「없는 호출」이 되어 닫힘이 안 선다).
+    진짜 문자 리터럴 속의 호출은 여전히 호출이 아니다."""
+    names = source_closure._call_names
+    assert names("int k = 1'000; W(k); char c = 'x'; V(c);", None) == ["W", "V"]
+    assert names("m = 0xFF'FF; W(m); c = 'y';", None) == ["W"]
+    assert names("c = 'W(1)'; n = 1'000'000; V(n);", None) == ["V"]
+    files = {"a.h": "#define W(n) real(n)\n",
+             "a.c": '#include "a.h"\nint real(int n) { if (n) return 1; return 0; }\n'
+                    "int f(int n)\n{\n    int k = 1'000; W(k); char c = 'x';\n    return n;\n}\n"}
+
+    closure, _, _ = _close(tmp_path, files, "f")
+
+    assert _chains(closure) == ["W[macro] -> real"]
+
+
+def test_a_define_body_with_a_digit_separator_is_still_read_as_one_definition() -> None:
+    """`_without_comments`도 같은 렉서다 — 수를 지우지도 문자 리터럴로 읽지도 않는다. 본문 뒤의
+    주석은 벗겨지고 수는 그대로 남는다."""
+    assert source_closure._parse_define("#define LIMIT(x) f(x, 1'000) // c's cap") == (
+        "LIMIT", ("x",), "f(x, 1'000)"
+    )
+
+
 def test_a_value_position_macro_is_not_a_chain_start(tmp_path: Path) -> None:
     """`char buf[BUFSIZE]`의 `BUFSIZE`는 `(` 없이 쓴 식별자다 — 시작점이 아니다(`source_closure`의
     ponytail 메모: 한 단계 정의는 `auditor_definitions`가 이미 싣는다)."""
