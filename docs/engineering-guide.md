@@ -41,7 +41,7 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 │   ├── bench_metrics.py   # vLLM /metrics 판독 — 이름·파싱·구간 delta
 │   ├── bench_report.py    # 체크리스트 판정 + models.yaml benchmark 반영
 │   └── cli.py             # 표준 CLI 진입점
-├── tools/                 # 정적분석·build·sanitizer·fuzz 래퍼 (Docker)
+├── tools/                 # 정적분석·build·sanitizer·fuzz 래퍼 (Docker) · slicer/ 오프라인 Joern 슬라이서
 ├── eval/
 │   ├── datasets/          # 평가셋 메타데이터 (원본은 별도 스토리지)
 │   ├── leakage/           # 누출 자동 검증 스크립트
