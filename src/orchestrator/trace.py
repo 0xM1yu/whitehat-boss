@@ -238,12 +238,16 @@ class EventKind(StrEnum):
     # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
     # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
     # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
-    # `auditor_guards`가 1이고 sink를 아는 슬라이스(Case B)면 `guards`(실은 GUARDS 행 수 — 0이면
-    # 「훑은 결과 없음」 한 줄을 실었다)·`guards_dropped`(행 상한에 걸려 뺀 행 — `파일:줄 | 조건`을
-    # 줄바꿈으로 이은 문자열, 50행까지 싣고 넘치면 끝에 `... +N more`, 안 뺐으면 빈 문자열)가 더
-    # 실린다. GUARDS는 함수가 아니라 `functions`에 안 든다. **필드 부재 = 안 훑었다**(꺼졌거나
-    # Case A거나 훑을 수 없었다 — sink에서 이름을 못 뽑았거나 원문이 슬라이서의 줄과 어긋났다) —
-    # `guards: 0`은 훑었는데 없었다는 뜻이다.
+    # `auditor_guards`가 1이면 `guards`·`guards_dropped`(훑었을 때) 아니면 `guards_skipped`(안
+    # 훑었을 때)가 더 실린다 — **옵션이 꺼졌을 때만 셋 다 없다.** `guards`는 실은 GUARDS 행
+    # 수(0이면 맞춰 본 이름을 적은 한 줄을 실었다)고 `guards_dropped`는 행 상한에 걸려 뺀 행 —
+    # `파일:줄 | 조건`을 줄바꿈으로 이은 문자열, 50행까지 싣고 넘치면 끝에 `... +N more`, 안 뺐으면
+    # 빈 문자열 — 이다(블록에도 `... +N more rows omitted`가 든다). `guards_skipped`는 안 훑은
+    # 사유다: `case_a`
+    # (sink를 하네스가 모른다) · `window`(품는 함수를 모르는 창 앵커 — 다른 함수의 조건이 든다) ·
+    # `formfeed`(`splitlines()`만 끊는 글자가 함수 앞·안에 있어 원문 줄이 어긋날 수 있다) ·
+    # `no_sink`(sink 줄이 원문 밖이거나 sink에서 이름을 못 뽑았다). GUARDS는 함수가 아니라
+    # `functions`에 안 든다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가

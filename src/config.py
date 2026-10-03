@@ -646,9 +646,12 @@ class Thresholds(HarnessModel):
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
     # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
     # dominate)` 블록을 붙인다(`source_guards`) — sink 호출의 인자 이름을 언급하는 if·while·for·
-    # 삼항·assert 계열 조건을 `파일:줄 | 조건`으로. 지배를 주장하지 않고, 하나도 없으면 「훑은 결과
-    # 없음」 한 줄이다. Case A는 sink를 몰라 안 붙인다. 행 상한·예산 계산은 `source_guards`·
-    # `runner._auditor_source`가 든다. 위 ⚠와 같은 프롬프트 판 문제.
+    # 삼항·assert 계열 조건을 `파일:줄 | 조건`으로(대입 한 걸음으로 이어진 이름 포함). 지배를
+    # 주장하지 않고, 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을 적은 한 줄이다.
+    # Case A·품는 함수를 모르는 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등, #259)은 안 붙이고
+    # 사유를 trace `guards_skipped`가 든다. 행 상한·예산 계산은 `source_guards`·
+    # `runner._auditor_source`가 든다. ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아
+    # 이 블록이 PoV 프롬프트에도 든다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_guards: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기

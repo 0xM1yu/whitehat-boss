@@ -111,7 +111,8 @@ graph LR
 >   안에서 함수째 붙는다(`runner._auditor_source` — 파일 전체는 상한 없이 실려 막았다). 상한이 뺀 함수와 어느
 >   함수에도 안 든 줄은 trace `auditor_source`가 센다. ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션들
 >   (`config.AUDITOR_SOURCE_OPTIONS` — sink 앞 구문상 가드 목록 `auditor_guards`를 포함한다)은 전부 기본 꺼짐. 켜면
->   Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다
+>   Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다. `auditor_guards`가 붙인 가드 블록은
+>   8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아 PoV 프롬프트에도 든다
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).
 

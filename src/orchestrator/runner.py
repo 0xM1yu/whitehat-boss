@@ -3076,10 +3076,14 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
 
     **GUARDS(`auditor_guards`)** — 1이고 sink를 아는 슬라이스(Case B)면 entry 함수 **바로 뒤에**
     `source_guards`가 훑은 sink 앞 가드 블록을 붙인다. entry 함수 몫이라 상한에 밀려 빠지지
-    않고, 대신 그 크기를 **먼저** 세어 뒤에 붙는 함수가 그만큼 덜 든다. 줄이기
-    (`auditor_entry_trim`) **전**의 원문을 훑는다 — 잘려 안 보이는 검사도 행으로 남는다. 함수가
-    아니라 `functions`에 안 들고, `guards`·`guards_dropped`가 따로 센다. 0이면 이 단계가
-    없다(Case A도 없다).
+    않고, 대신 그 크기를 **먼저** 세어 뒤에 붙는 함수가 그만큼 덜 든다(「+N more」 줄도 블록의
+    일부다). 줄이기(`auditor_entry_trim`) **전**의 원문을 훑는다 — 잘려 안 보이는 검사도 행으로
+    남는다. 함수가 아니라 `functions`에 안 들고, `guards`·`guards_dropped`가 따로 센다. **안 붙이는
+    경우**(Case A · 품는 함수를 모르는 창 앵커 · 줄이 어긋날 수 있는 파일 · sink를 못 찾음)는 사유를
+    `guards_skipped`가 든다. 0이면 이 단계가 없다.
+    ⚠ **PoV도 이 블록을 받는다** — 아래 `_step_auditor`가 이 SOURCE 문자열을
+    `state.finding_sources`로 물려 주고 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서
+    그대로 프롬프트에 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
@@ -3101,8 +3105,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
     guards_on = ctx.config.thresholds.auditor_guards
-    guard_scan = scan_guards(ref, anchor, anchor_text) if guards_on else None
-    guard_blocks = [guard_scan.block] if guard_scan else []
+    guard_scan = scan_guards(ref, anchor, anchor_text, ctx.read_source) if guards_on else None
+    guard_blocks = [guard_scan.block] if guard_scan and guard_scan.block else []
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
     # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
@@ -3231,11 +3235,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             if with_definitions
             else {}
         ),
-        **(
-            {"guards": guard_scan.shown, "guards_dropped": guard_scan.dropped_listing}
-            if guard_scan
-            else {}
-        ),
+        **(guard_scan.event_fields() if guard_scan else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap

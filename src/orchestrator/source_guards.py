@@ -10,45 +10,74 @@ sink 호출의 인자 이름을 언급하는 조건을 줄번호와 함께 모�
 ## 이것이 주장하는 것과 안 하는 것
 
 **지배(dominate)를 주장하지 않는다.** 구문 훑기라서 그 조건이 sink 경로 위에 있는지, 우회되는지,
-다른 가지의 것인지 모른다 — 머리줄이 `GUARDS (syntactic — may not dominate)`인 이유다. 가드가
-없을 때의 `GUARDS: none found before sink …`는 LLM의 단언이 아니라 **이 훑기의 결과**이고,
-아래 한계 안에서만 참이다.
+다른 가지의 것인지 모른다 — 머리줄이 `GUARDS (syntactic — may not dominate)`인 이유다.
 
-- 앵커 함수 **안**만 본다 — 호출자의 검증·피호출 함수 안의 검증은 안 본다. 품는 함수를 모르는
-  창 앵커면 「없음」의 범위를 `window`라고 적는다(함수 머리가 창 밖일 수 있다).
-- 원문이 슬라이서의 줄과 어긋나면 훑지 않는다(`_aligned`) — `read_source`는 `splitlines()`로
-  줄을 세서(#259) 함수 앞의 폼피드 같은 글자만큼 원문이 위로 밀리고, 그러면 sink 줄이 다른
-  줄이라 「없음」이 거짓이 된다. 함수 이름이 첫 두 줄에 없거나 마지막 줄이 `}`로 안 끝나면
-  어긋난 것이다. 함수 **안**의 폼피드도 마지막 줄이 빠져 같이 걸리지만 그 앞 줄이 우연히 `}`면
-  못 거르고, 창 앵커는 이 검사를 못 한다.
-- 이름으로만 잇는다 — sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드·`_t` 타입 제외)
-  중 하나를 조건이 언급하면 후보다. `n = h->len;`을 거쳐 `n`을 쓰는데 가드는 `h->len`을 보는
-  식의 **별칭·복사는 안 따라간다** — 한쪽이 별칭 이름이면 안 이어지고, 거꾸로 `len` 같은 흔한
-  필드 이름은 다른 객체의 조건과도 이어진다. 호출의 수신 객체(`v.push_back(x)`의 `v`)는 인자가
-  아니라 안 센다.
+**「없음」을 단언하지 않는다.** 하나도 못 찾으면 맞춰 본 이름을 줄에 적는다 — `GUARDS: no
+condition before the sink mentions <이름들> (syntactic scan of this function; …)`. 이름과 못 보는
+것(별칭 한 걸음 너머·클램프·switch)이 모델이 보는 줄에 있어야 한다. 독립 검토가 실제 GT sink 82개를
+훑어 보니 「없음」 12개 중 3개가 틀렸다(`gd_io_dp.c:290` — `rlen = len`/`rlen = remain` 클램프,
+`xmlIO.c:362` — `totalSize = unescapedSize + replSize` 용량 검사, `ttcpal.c:133` — `p = table`·
+`colors_offset = FT_NEXT_ULONG(p)`를 거친 `table_size` 검사). 맨 「none found」는 거짓이었다.
+
+## 어떻게 잇나 — 이름, 그리고 대입 한 걸음
+
+sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드·`_t` 타입 제외) 중 하나를 조건이
+언급하면 후보다. 거기에 **대입 한 걸음**을 더한다 — 앵커 함수 안 sink 앞의 `x = <식>`에서
+(가) `x`가 인자 이름이면 식 안의 이름(인자를 **계산한** 이름: `n = len - off`의 `len`·`off`),
+(나) 식 안에 인자 이름이 있으면 `x`(인자에서 **나온** 이름: `limit = n * 2`의 `limit`)가 이름이
+된다. 한 걸음뿐이다(두 걸음 너머 `b = a; a = n`의 `b`는 안 이어진다). 대입은 `=`·`+=` 같은
+복합 대입·초기화가 있는 선언·`for`의 초기식이고, `x`는 뒤따르는 `.f`·`->f`까지 센다(`[i]` 첨자는
+출처가 아니라 뺀다).
+
+## 한계
+
+- 앵커 함수 **안**만 본다 — 호출자의 검증·피호출 함수 안의 검증은 안 본다.
+- **창 앵커에는 블록을 안 붙인다**(`guards_skipped=window`) — 품는 함수를 모르면 앵커가 entry
+  앞뒤 고정 창이고, 그 창에는 **다른 함수**의 조건이 든다(독립 검토: 조건 행이 든 창 블록의
+  33%에 남의 행이 있었다).
+- **원문 줄이 어긋날 수 있는 파일은 안 훑는다**(`guards_skipped=formfeed`) — `read_source`는
+  `splitlines()`로 줄을 세서 폼피드·수직탭·`\\x1c`~`\\x1e`·`\\x85`·U+2028·U+2029에서도 끊지만
+  슬라이서·인덱서는 줄바꿈만 센다(#259). 그런 글자가 함수 앞·안에 있으면 원문이 그만큼 위로
+  밀려 sink 줄이 다른 줄이다(독립 검토: 폼피드 하나로 훑은 114건 중 30건이 틀렸고 7건은 「없음」이
+  됐다). 정렬 검사로는 못 걸러서 파일 **원문**(`read_source`가 줄 범위 없이 주는 것)에서 함수 끝
+  줄까지를 본다. 함수 뒤의 글자는 상관없다.
 - 전처리를 안 한다 — `#if`의 두 가지가 다 보이고(조건식은 안 본다), 매크로 안의 가드는 이름이
-  assert 계열(`assert`·`BUG_ON` 등)일 때만 센다. `MIN(n, cap)` 같은 클램프 매크로는 안 센다.
+  assert 계열(`assert`·`CHECK`·`WARN_ON` 등)일 때만 센다. `MIN(n, cap)` 같은 클램프 매크로·
+  `switch`/`case`·`if constexpr`는 모른다.
 - sink를 품은 조건식은 가드로 안 센다 — `if (n < cap && copy(…))`에서 `n < cap`은 sink 앞의
   단락 평가 피연산자지만 같은 조건식 안이라 훑지 않는다.
 - 탈출은 `if` 몸통의 **문장 머리**에 있을 때만 표시한다 — `else` 가지·더 안쪽 블록·안쪽 `if`/
   반복문의 몸통(`if (s) return`)·멤버 호출(`x.abort()`)의 탈출은 조건부이거나 이 가드의 것이
   아니라 표시하지 않는다(조건은 싣는다).
 - 연산자 sink(`a[i] = x` — 호출이 없다)는 줄 머리의 `if (…)`만 sink 앞으로 센다 —
-  `else if (…) a[i] = x;`·`{ if (…) … }` 한 줄은 놓친다.
-- C 문법의 훑기다 — 문자열·주석·전처리 줄을 지우고 괄호를 맞춘다. 원시 문자열(`R"(…)"`)·
-  `if constexpr`·`switch`/`case`는 모른다.
+  `else if (…) a[i] = x;`·`{ if (…) … }` 한 줄은 놓친다. 호출의 수신 객체(`v.push_back(x)`의
+  `v`)는 인자가 아니라 안 센다.
+- 원시 문자열(`R"(…)"`)은 모른다. 문자열·주석·전처리 줄을 지우고 괄호를 맞추는 훑기다.
+
+## 행이 많을 때
+
+`_MAX_ROWS`를 넘으면 **조기 탈출 행과 sink를 품은 조건을 먼저**, 그다음 sink에 가까운 순으로
+남기고 보여 줄 때는 소스 순서다(독립 검토: 상한을 넘는 블록의 71%에서 조기 탈출·sink를 품은 행이
+말없이 빠졌다). 뺀 행이 있으면 블록 끝에 `... +N more rows omitted`를 적고 — 그 줄도 블록의 일부라
+`runner`의 예산 계산에 들어간다 — 뺀 행은 trace `guards_dropped`가 든다.
 
 ## 어디에 붙나
 
 `runner._auditor_source`가 entry 함수 바로 뒤에 붙인다. **Case B만**이다 — 슬라이스의 `entry`가
 sink 호출 줄이고 `entry.symbol`이 그 호출 이름이다(`slice_refs`). Case A(진입점에서 앞으로
-자른 것)의 entry는 함수 자신이라 sink를 하네스가 모른다.
+자른 것)의 entry는 함수 자신이라 sink를 하네스가 모른다. 안 붙인 사유(`case_a`·`window`·
+`formfeed`·`no_sink`)는 trace `auditor_source`의 `guards_skipped`가 든다.
+
+⚠ **PoV도 이 블록을 받는다.** 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로
+물려 주고(`runner._step_auditor`) 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판에서 그것을 그대로
+프롬프트에 싣는다(지금 `v3`). 그래서 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
 """
 
 import bisect
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import NamedTuple
 
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
@@ -56,13 +85,18 @@ from src.schemas.common import Location
 # SOURCE에 붙는 블록의 머리줄 — 정확히 이 문자열이다(테스트가 핀한다). 「가드」라고만 쓰지 않고
 # 「구문상 · 지배 안 할 수 있음」까지 머리에 박는다 — 모델이 이 목록을 증명으로 읽지 않게.
 GUARDS_HEADER = "GUARDS (syntactic — may not dominate)"
-_NONE_FOUND = "GUARDS: none found before sink (syntactic scan of the anchor {scope})"
+# 하나도 못 찾았을 때 — 맞춰 본 이름과 못 보는 것을 같이 적는다(맨 「none found」는 거짓이었다).
+_NO_CONDITION = (
+    "GUARDS: no condition before the sink mentions {names} (syntactic scan of this function; "
+    "aliases beyond one assignment hop, MIN/MAX-style clamps and switch are not tracked)"
+)
+_MORE_ROWS = "... +{count} more rows omitted"
 
-# 싣는 행 수 · trace에 목록으로 남길 뺀 행 수 · 행 하나·탈출문 하나의 글자 수. **정한 값이지 잰
-# 값이 아니다** — 블록이 SOURCE의 한 줌에 머물게 하는 폭이다. 행이 넘치면 sink에 **가까운** 행을
-# 남긴다(가장 가까운 검사가 그 sink의 것일 가능성이 크다 — 이것도 가정이다).
+# 싣는 행 수 · trace에 목록으로 남길 뺀 행 수 · 「없음」 줄에 적는 이름 수 · 행 하나·탈출문 하나의
+# 글자 수. **정한 값이지 잰 값이 아니다** — 블록이 SOURCE의 한 줌에 머물게 하는 폭이다.
 _MAX_ROWS = 12
 _MAX_DROPPED_LISTED = 50
+_MAX_NAMES_SHOWN = 10
 _ROW_CHARS = 160
 _EXIT_CHARS = 40
 
@@ -74,6 +108,8 @@ _LITERAL_OR_COMMENT = re.compile(
     r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.DOTALL
 )
 _NON_NEWLINE = re.compile(r"[^\n]")
+# `str.splitlines()`는 줄바꿈 말고도 이 글자들에서 끊는다 — 슬라이서·인덱서는 줄바꿈만 센다(#259).
+_SPLITLINES_ONLY = re.compile("[\v\f\x1c\x1d\x1e\x85" + chr(0x2028) + chr(0x2029) + "]")
 
 _IDENT = re.compile(r"\b[A-Za-z_]\w*")
 _CALL_AHEAD = re.compile(r"\s*\(")
@@ -88,6 +124,12 @@ _ASSERT_LIKE = re.compile(
 _EXIT = re.compile(r"\b(?:return|goto|break|continue)\b|\b(?:abort|exit)\s*\(")
 _QUESTION = re.compile(r"\?")
 _LEADING = re.compile(r"\s*(?:return\b\s*)?")
+# 대입 — 왼쪽 값(식별자에 `.f`·`->f`·`[i]`가 이어진 것)과 `=`·`+=`·`<<=` 같은 연산자. `==`·
+# `!=`·`<=`·`>=`는 안 걸린다(`=` 뒤가 `=`이거나 앞 글자가 연산자 집합 밖이다).
+_ASSIGN = re.compile(
+    r"([A-Za-z_]\w*(?:\s*(?:->|\.)\s*[A-Za-z_]\w*|\s*\[[^\]\n]*\])*)\s*(?:<<|>>|[-+*/%&|^])?=(?!=)"
+)
+_INDEX = re.compile(r"\[[^\]\n]*\]")
 
 # 인자·조건에서 「이름」으로 안 세는 것 — C·C++ 키워드와 상수·캐스트 낱말. 함수 이름(뒤에 `(`)과
 # `_t`로 끝나는 타입도 따로 뺀다(`_names`).
@@ -102,12 +144,13 @@ _NOT_DATA = frozenset(
 @dataclass(frozen=True)
 class GuardScan:
     """훑은 결과. `rows`는 SOURCE에 싣는 행, `dropped`는 행 상한에 걸려 뺀 행(둘 다
-    `파일:줄 | 조건`, 소스 순서)이다. `scope`는 「없음」 문장이 가리키는 범위(`function`·
-    `window`)다."""
+    `파일:줄 | 조건`, 소스 순서), `names`는 맞춰 본 이름 전부(인자 이름 + 대입 한 걸음)다.
+    `skipped`가 있으면 훑지 않은 것이다 — 사유는 `case_a`·`window`·`formfeed`·`no_sink`."""
 
-    rows: tuple[str, ...]
-    dropped: tuple[str, ...]
-    scope: Literal["function", "window"]
+    rows: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
+    names: tuple[str, ...] = ()
+    skipped: str | None = None
 
     @property
     def shown(self) -> int:
@@ -115,11 +158,20 @@ class GuardScan:
 
     @property
     def block(self) -> str:
-        """SOURCE에 붙는 글자. 행이 없으면 「없음」 한 줄이다 — 훑은 결과이지 모델의 단언이
-        아니다."""
+        """SOURCE에 붙는 글자. 훑지 않았으면 빈 문자열이다. 행이 없으면 맞춰 본 이름을 적은 한
+        줄이다 — 「없음」이 아니라 훑은 결과이고 못 보는 것을 같이 말한다. 행을 뺐으면 끝에 개수를
+        적는다."""
+        if self.skipped is not None:
+            return ""
         if not self.rows:
-            return _NONE_FOUND.format(scope=self.scope)
-        return "\n".join((GUARDS_HEADER, *self.rows))
+            shown = self.names[:_MAX_NAMES_SHOWN]
+            more = len(self.names) - len(shown)
+            names = ", ".join(shown) + (f", ... +{more} more" if more else "")
+            return _NO_CONDITION.format(names=names)
+        lines = [GUARDS_HEADER, *self.rows]
+        if self.dropped:
+            lines.append(_MORE_ROWS.format(count=len(self.dropped)))
+        return "\n".join(lines)
 
     @property
     def dropped_listing(self) -> str:
@@ -128,6 +180,13 @@ class GuardScan:
         listed = self.dropped[:_MAX_DROPPED_LISTED]
         more = len(self.dropped) - len(listed)
         return "\n".join((*listed, f"... +{more} more") if more else listed)
+
+    def event_fields(self) -> dict[str, int | str]:
+        """trace `auditor_source`에 더할 필드 — 훑었으면 `guards`·`guards_dropped`, 안 훑었으면
+        `guards_skipped`(사유). 옵션이 꺼졌으면 이 객체 자체가 없어 필드도 없다."""
+        if self.skipped is not None:
+            return {"guards_skipped": self.skipped}
+        return {"guards": self.shown, "guards_dropped": self.dropped_listing}
 
 
 class _Found(NamedTuple):
@@ -138,54 +197,62 @@ class _Found(NamedTuple):
     hi: int
     # 행의 본문(조건 + 어떤 구성인지).
     text: str
-    # `if`면 조건을 닫는 `)` 다음 offset(몸통이 시작하는 곳), 아니면 -1.
+    # `if`·`while`·`for`면 조건을 닫는 `)` 다음 offset(몸통이 시작하는 곳), 아니면 -1.
     body: int
     # sink 이름과 맞춰 볼 글자의 [names_from, hi) — 보통 `lo`, 대입 삼항은 대입 왼쪽부터.
     names_from: int
+    # `if`면 몸통의 탈출을 본다(반복문의 `break`는 가드의 탈출이 아니다).
+    is_if: bool
 
 
-def scan_guards(ref: SliceRef, anchor: Location, text: str) -> GuardScan | None:
-    """슬라이스 타깃의 entry 함수 원문 `text`에서 sink 앞의 가드를 훑는다. 훑을 수 없으면 `None`."""
-    line = ref.entry.line_start
+class _Row(NamedTuple):
+    at: int  # 구성이 시작하는 offset — 행을 소스 순서로 세우고 sink와의 거리를 잰다
+    text: str  # `파일:줄 | 조건 [exit: …]`
+    first: bool  # 조기 탈출 행이거나 sink를 품은 조건이다 — 상한이 차면 먼저 남긴다
+
+
+def scan_guards(
+    ref: SliceRef, anchor: Location, text: str, read_source: Callable[[Location], str]
+) -> GuardScan:
+    """슬라이스 타깃의 entry 함수 원문 `text`에서 sink 앞의 가드를 훑는다. 훑지 않으면 `skipped`에
+    사유가 든 빈 결과다 — 옵션이 켜진 run은 안 훑은 후보도 사유를 trace에 남긴다."""
     # ponytail: Case A(`given_end == "source"`)는 entry가 진입점 함수 자신이라 sink를 하네스가
     # 모른다 — 건너뛴다. 슬라이서가 슬라이스에 `source_sink`(source·sink로 본 위치 — 슬라이서 쪽
     # 별도 변경)를 싣고 로더가 그것을 `SliceRef`까지 나르면, 여기서 그 sink 위치를 `sink_line`으로
     # `scan_function`을 부르면 된다.
-    if ref.given_end != "sink" or line is None:
-        return None
-    # 품는 함수를 아는 앵커는 원문이 그 함수와 맞는지 먼저 본다 — 어긋났으면 훑지 않는다.
-    if anchor.symbol and not _aligned(text, anchor.symbol):
-        return None
-    return scan_function(
+    if ref.given_end != "sink":
+        return GuardScan(skipped="case_a")
+    # `_auditor_target`은 품는 함수를 모르면 이름 없는 앞뒤 창을 준다 — 그 창에는 다른 함수의 조건이
+    # 든다.
+    if not anchor.symbol:
+        return GuardScan(skipped="window")
+    line = ref.entry.line_start
+    if line is None:
+        return GuardScan(skipped="no_sink")
+    if _lines_may_drift(read_source, anchor):
+        return GuardScan(skipped="formfeed")
+    scan = scan_function(
         text,
         file=anchor.file,
         first_line=anchor.line_start or 1,
         sink_line=line,
         sink_name=ref.entry.symbol,
-        # `_auditor_target`은 품는 함수를 모르면 이름 없는 앞뒤 창을 준다
-        scope="function" if anchor.symbol else "window",
     )
+    return scan if scan is not None else GuardScan(skipped="no_sink")
 
 
-def _aligned(text: str, symbol: str) -> bool:
-    """함수 원문이 슬라이서의 줄과 맞게 잘렸는가. `read_source`는 `splitlines()`로 줄을 세는데
-    슬라이서·인덱서는 줄바꿈만 세서(#259), 함수 앞에 폼피드 같은 글자가 k개 있으면 원문이 k줄 위로
-    밀린다 — 함수 이름이 첫 줄에서 밀리고 마지막 줄(`}`)이 빠진다. 그런 원문의 sink 줄은 다른
-    줄이라 「없음」이 거짓이고 행 번호도 k만큼 틀린다. 이름이 첫 두 줄에 없거나 마지막 줄이 `}`로
-    안 끝나면 어긋난 것이다(주석은 지우고 본다)."""
-    masked = _blank(text, literals=True)
-    head = masked.split("\n", 2)[:2]
-    return any(symbol in line for line in head) and masked.rstrip().endswith("}")
+def _lines_may_drift(read_source: Callable[[Location], str], anchor: Location) -> bool:
+    """파일 원문에서 함수 끝 줄까지 `splitlines()`만 끊는 글자가 있는가(#259). 줄 범위가 없는
+    위치는 파일 전체 원문이라 `read_source`가 그 글자를 안 지운 채 준다 — 함수 원문은 이미
+    `splitlines()`로 잘려 그 글자가 없다."""
+    raw = read_source(Location(file=anchor.file))
+    upto = anchor.line_end
+    prefix = raw if upto is None else "\n".join(raw.split("\n", upto)[:upto])
+    return _SPLITLINES_ONLY.search(prefix) is not None
 
 
 def scan_function(
-    text: str,
-    *,
-    file: str,
-    first_line: int,
-    sink_line: int,
-    sink_name: str | None,
-    scope: Literal["function", "window"] = "function",
+    text: str, *, file: str, first_line: int, sink_line: int, sink_name: str | None
 ) -> GuardScan | None:
     """`text`(파일의 `first_line`줄부터 이어진 원문)에서 `sink_line`의 sink **앞** 가드를 훑는다.
 
@@ -202,18 +269,38 @@ def scan_function(
     names, cutoff = _sink(masked, starts[index], stop, sink_name)
     if not names:
         return None
-    rows: list[str] = []
+    names |= _aliases(masked, cutoff, names)
+    rows: list[_Row] = []
     for found in _found(code, masked):
         if found.at >= cutoff or found.lo <= cutoff < found.hi:
             continue
         if not _names(masked[found.names_from : found.hi]) & names:
             continue
+        body = _body(masked, found.body) if found.body >= 0 else None
+        exit_ = _exit_in(code, masked, *body) if body and found.is_if else None
+        encloses = body is not None and body[0] <= cutoff < body[1]
         line = first_line + bisect.bisect_right(starts, found.at) - 1
-        tail = ""
-        if found.body >= 0 and (exit_ := _exit_after(code, masked, found.body)):
-            tail = f" [exit: {exit_}]"
-        rows.append(f"{file}:{line} | {_clip(found.text, _ROW_CHARS)}{tail}")
-    return GuardScan(rows=tuple(rows[-_MAX_ROWS:]), dropped=tuple(rows[:-_MAX_ROWS]), scope=scope)
+        tail = f" [exit: {exit_}]" if exit_ else ""
+        row = f"{file}:{line} | {_clip(found.text, _ROW_CHARS)}{tail}"
+        rows.append(_Row(found.at, row, exit_ is not None or encloses))
+    shown, dropped = _pick(rows, cutoff)
+    return GuardScan(
+        rows=tuple(row.text for row in shown),
+        dropped=tuple(row.text for row in dropped),
+        names=tuple(sorted(names)),
+    )
+
+
+def _pick(rows: list[_Row], cutoff: int) -> tuple[list[_Row], list[_Row]]:
+    """상한을 넘으면 조기 탈출 행과 sink를 품은 조건을 먼저, 그다음 sink에 가까운 순으로 남긴다.
+    돌려주는 둘은 다 소스 순서다."""
+    if len(rows) <= _MAX_ROWS:
+        return rows, []
+    ranked = sorted(range(len(rows)), key=lambda i: (not rows[i].first, cutoff - rows[i].at))
+    kept = set(ranked[:_MAX_ROWS])
+    shown = [row for i, row in enumerate(rows) if i in kept]
+    dropped = [row for i, row in enumerate(rows) if i not in kept]
+    return shown, dropped
 
 
 def _blank(text: str, *, literals: bool) -> str:
@@ -270,7 +357,8 @@ def _sink(masked: str, line_start: int, line_end: int, name: str | None) -> tupl
 
     sink가 이 줄의 호출이면 그 호출의 **인자**(여러 줄에 걸쳐도 닫는 괄호까지)의 이름이고 경계는
     호출 이름의 시작이다. 연산자 sink(`a[i] = x` — Joern 이름이 `<operator>…`)거나 줄에서 호출을
-    못 찾으면 그 줄의 이름 전부이고 경계는 줄의 첫 글자 바로 뒤다(줄 머리의 `if (…)`만 앞으로 센다).
+    못 찾으면(`STRCPY(…)`처럼 매크로가 감싼 sink) 그 줄의 이름 전부이고 경계는 줄의 첫 글자 바로
+    뒤다(줄 머리의 `if (…)`만 앞으로 센다).
     """
     if name and name.isidentifier():
         hits = list(re.compile(rf"\b{name}\s*\(").finditer(masked, line_start, line_end))
@@ -284,6 +372,37 @@ def _sink(masked: str, line_start: int, line_end: int, name: str | None) -> tupl
     return _names(masked[line_start:line_end]), first + 1
 
 
+def _aliases(masked: str, cutoff: int, names: set[str]) -> set[str]:
+    """sink 인자의 이름과 대입 **한 번**으로 이어진 이름. 앵커 함수 안 sink 앞(`cutoff` 앞)의
+    `x = <식>`에서 `x`가 인자 이름이면 식 안의 이름(인자를 계산한 이름)이, 식 안에 인자 이름이
+    있으면 `x`(인자에서 나온 이름)가 더해진다. 두 걸음 너머는 안 따라간다."""
+    extra: set[str] = set()
+    for match in _ASSIGN.finditer(masked, 0, cutoff):
+        target = _names(_INDEX.sub(" ", match.group(1)))
+        value = _names(masked[match.end() : _value_end(masked, match.end(), cutoff)])
+        if target & names:
+            extra |= value
+        if value & names:
+            extra |= target
+    return extra - names
+
+
+def _value_end(masked: str, start: int, stop: int) -> int:
+    """대입의 오른쪽 식이 끝나는 곳 — 괄호 밖 `;`·`,`, 짝 없는 닫는 괄호, 아니면 `stop`."""
+    depth = 0
+    for i in range(start, stop):
+        char = masked[i]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            if depth == 0:
+                return i
+            depth -= 1
+        elif char in ";," and depth == 0:
+            return i
+    return stop
+
+
 def _found(code: str, masked: str) -> list[_Found]:
     """원문에서 조건을 품는 구성(if·while·for · assert 계열 · 삼항)을 소스 순서로 모은다."""
     found: list[_Found] = []
@@ -292,14 +411,18 @@ def _found(code: str, masked: str) -> list[_Found]:
         close = _close_of(masked, opened)
         if close >= 0:
             text = f"{match.group(1)} ({_squash(code[opened + 1 : close])})"
-            body = close + 1 if match.group(1) == "if" else -1
-            found.append(_Found(match.start(), opened + 1, close, text, body, opened + 1))
+            found.append(
+                _Found(
+                    match.start(), opened + 1, close, text, close + 1, opened + 1,
+                    match.group(1) == "if",
+                )
+            )
     for match in _ASSERT_LIKE.finditer(masked):
         opened = match.end() - 1
         close = _close_of(masked, opened)
         if close >= 0:
             text = f"{match.group(1)}({_squash(code[opened + 1 : close])})"
-            found.append(_Found(match.start(), opened + 1, close, text, -1, opened + 1))
+            found.append(_Found(match.start(), opened + 1, close, text, -1, opened + 1, False))
     found.extend(_ternaries(code, masked))
     return sorted(found)
 
@@ -339,7 +462,7 @@ def _ternaries(code: str, masked: str) -> list[_Found]:
                 masked.rfind("}", names_from, i) + 1,
             )
         text = f"{_squash(code[lo : question.start()])} ? ... : ..."
-        found.append(_Found(lo, lo, question.start(), text, -1, names_from))
+        found.append(_Found(lo, lo, question.start(), text, -1, names_from, False))
     return found
 
 
@@ -357,20 +480,22 @@ def _ends_condition(masked: str, i: int) -> bool:
     return False
 
 
-def _exit_after(code: str, masked: str, start: int) -> str | None:
-    """`if (…)`(몸통이 `start`부터) 바로 뒤 몸통 — 블록 하나나 문장 하나 — 에 곧바로 든 조기
-    탈출문. 몸통의 **문장 머리**(`{`·`}`·`;`·`:` 다음)에 있는 것만 센다 — 더 안쪽 블록의 탈출도,
-    안쪽 `if`·반복문·`else`의 몸통(`if (s) return`)도, 멤버 호출(`x.abort()`)도 이 가드의 탈출이
-    아니다. 없으면 `None`."""
+def _body(masked: str, start: int) -> tuple[int, int]:
+    """조건 바로 뒤(`start`부터) 몸통의 안쪽 [lo, hi) — 블록 하나나 문장 하나(첫 `;`까지)."""
     i = start
     while i < len(masked) and masked[i].isspace():
         i += 1
     if i < len(masked) and masked[i] == "{":
         close = _close_of(masked, i)
-        lo, hi = i + 1, close if close >= 0 else len(masked)
-    else:
-        end = masked.find(";", i)
-        lo, hi = i, end if end >= 0 else len(masked)
+        return i + 1, close if close >= 0 else len(masked)
+    end = masked.find(";", i)
+    return i, end if end >= 0 else len(masked)
+
+
+def _exit_in(code: str, masked: str, lo: int, hi: int) -> str | None:
+    """`if` 몸통 [lo, hi)에 곧바로 든 조기 탈출문. 몸통의 **문장 머리**(`{`·`}`·`;`·`:` 다음)에
+    있는 것만 센다 — 더 안쪽 블록의 탈출도, 안쪽 `if`·반복문·`else`의 몸통(`if (s) return`)도,
+    멤버 호출(`x.abort()`)도 이 가드의 탈출이 아니다. 없으면 `None`."""
     # 몸통 안 중괄호 깊이 — 앞 탈출문에서 이어 세므로 몸통이 커도 한 번 훑는다.
     depth, at = 0, lo
     for match in _EXIT.finditer(masked, lo, hi):

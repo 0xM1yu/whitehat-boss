@@ -137,7 +137,10 @@ agent:
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
   ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션들(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
   entry 줄이기 · sink 앞 구문상 가드 목록(`auditor_guards` — Case B만, `source_guards`)). 전부 기본 꺼짐이라 위 서술
-  그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 `cli` run·doctor가 선다
+  그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 `cli` run·doctor가 선다.
+  가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등, #259)에는 안 붙고 사유를 trace `guards_skipped`가 든다.
+  ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
+  `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — 지금 `v3`·`v4`·`v5`)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
