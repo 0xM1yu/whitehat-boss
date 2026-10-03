@@ -39,8 +39,14 @@ _WINDOW = Location(file="a.c", line_start=1, line_end=60)  # 못 찾아 세운 �
 _ENTRY_PARAMETER = ("entry_parameter", "libavdevice/libavformat/libavformat/avio.h", 540)
 
 
+# 슬라이서가 끝마다 적는 `analysis_kind`(`slicer_pipeline.py`) — 이것이 있어야 분석 사실을 **본**
+# 슬라이스다. 없으면(옛 슬라이스) 게이트가 `ANALYSIS_UNKNOWN`을 낸다.
+_KIND = {"sink": "backward_ddg", "source": "parameter_paths"}
+
+
 def _ref(given_end: str = "sink", **fields) -> SliceRef:
     entry = Location(file="a.c", line_start=10, symbol="memcpy")
+    fields.setdefault("analysis_kind", _KIND[given_end])
     return SliceRef(
         slice_id="s1", location=Location(file="a.c", line_start=10, symbol="f"),
         given_end=given_end, entry=entry, lines=(("a.c", 10),), **fields,
@@ -54,6 +60,14 @@ def test_a_clean_full_slice_with_an_enclosing_function_has_no_reasons() -> None:
     """빈 목록은 「나열한 검사가 하나도 안 걸렸다」이다 — 「SOURCE가 완전하다」가 아니다(꺼 둔
     정의·피호출 단계는 검사 자체가 안 돈다)."""
     assert source_gate.reasons(_ref(), _FN) == []
+
+
+@pytest.mark.parametrize("given_end", ["sink", "source"])
+def test_a_slice_without_analysis_facts_is_unknown_not_clean(given_end: str) -> None:
+    """`analysis_kind`가 비었다 = 슬라이서가 분석 사실을 안 적었다(옛 `slices.json`). 그러면
+    `truncated=False`·경계 없음은 「안 잘렸다」가 아니라 「모른다」다 — 사유 없이 빈 목록을 내면
+    다 본 깨끗한 슬라이스(위 검사)와 같은 문자열이 되어 없음과 모름이 안 갈린다(CLAUDE.md §0)."""
+    assert source_gate.reasons(_ref(given_end, analysis_kind=""), _FN) == ["ANALYSIS_UNKNOWN"]
 
 
 def test_a_degraded_slice_is_flagged() -> None:
@@ -116,31 +130,35 @@ def test_a_sink_set_the_flow_query_capped_is_flagged() -> None:
         pytest.param({"uncovered_lines": 3}, ["SLICE_LINES_UNCOVERED"], id="uncovered"),
         pytest.param({"functions_dropped": 1}, ["SOURCE_DROPPED"], id="function"),
         pytest.param({"callees_dropped": 1}, ["CALLEE_DROPPED"], id="callee"),
+        pytest.param({"callers_dropped": 1}, ["CALLER_DROPPED"], id="caller"),
         pytest.param({"definitions_dropped": 2}, ["DEFINITION_DROPPED"], id="definition"),
     ],
 )
 def test_what_the_source_assembly_could_not_read_or_dropped_is_flagged(
     counts: dict, expected: list
 ) -> None:
-    """`_auditor_source`가 세는 넷 — 인덱스 함수에 안 든 슬라이스 줄(`uncovered_lines`) · 총 상한에
-    걸려 빠진 함수(`dropped`) · 피호출(`callees_dropped`) · 정의(`definitions_dropped`). 0이면
+    """`_auditor_source`가 세는 다섯 — 인덱스 함수에 안 든 슬라이스 줄(`uncovered_lines`) · 총
+    상한에 걸려 빠진 함수(`dropped`) · 피호출(`callees_dropped`) · 호출자 창(`callers_dropped` —
+    호출자가 있는데 입력에 없다) · 정의(`definitions_dropped`). 0이면
     사유가 없다(위 빈 목록 검사가 기본값 0으로 그것을 본다)."""
     assert source_gate.reasons(_ref(), _FN, **counts) == expected
 
 
 def test_the_reasons_come_in_one_stable_order() -> None:
-    """슬라이스(대체·절단·싱크 cap) → 대상(창) → `SOURCE` 조립(못 읽은 줄·빠진 함수·피호출) → CPG에
+    """슬라이스(분석 사실 없음·대체·절단·싱크 cap) → 대상(창) → `SOURCE` 조립(못 읽은 줄·빠진
+    함수·피호출·호출자 창) → CPG에
     호출 간선 없음 → 정의 순이다 — 같은 입력이면 같은 문자열이라 run끼리 이벤트를 대조할 수
     있다."""
     ref = _ref(
-        degraded=True, truncated=True, truncation_reasons=("backward_depth",),
+        analysis_kind="", degraded=True, truncated=True, truncation_reasons=("backward_depth",),
         sinks_capped=True, boundaries=(_ENTRY_PARAMETER,),
     )
 
     assert source_gate.reasons(
         ref, _WINDOW, uncovered_lines=1, functions_dropped=1, callees_dropped=1,
-        definitions_dropped=1,
+        callers_dropped=1, definitions_dropped=1,
     ) == [
+        "ANALYSIS_UNKNOWN",
         "SLICE_DEGRADED",
         "SLICE_TRUNCATED:backward_depth",
         "FLOW_SINKS_CAPPED",
@@ -148,6 +166,7 @@ def test_the_reasons_come_in_one_stable_order() -> None:
         "SLICE_LINES_UNCOVERED",
         "SOURCE_DROPPED",
         "CALLEE_DROPPED",
+        "CALLER_DROPPED",
         "NO_CALLER_IN_CPG",
         "DEFINITION_DROPPED",
     ]
@@ -159,7 +178,9 @@ def test_the_reasons_come_in_one_stable_order() -> None:
 def test_the_gate_is_off_by_default_and_stays_out_of_the_run_record_until_turned_on() -> None:
     """기본 0이고 0이면 `flatten()`에 키가 없다 — 기본 꺼짐 run의 `RunRecord.thresholds` 모양이
     예전 manifest와 같다(`scout_slice_trim` 선례). 관측 전용이라 프롬프트 meta `source_options`가
-    서술할 입력 옵션이 아니다 — `AUDITOR_SOURCE_OPTIONS`에 안 들고 켜도 `cli`가 안 막는다."""
+    서술할 입력 옵션이 아니다 — `AUDITOR_SOURCE_OPTIONS`에 안 들고 켜도 켜진 입력 옵션 집합이 안
+    바뀐다(`cli`가 안 막는다). 집합을 `()`로 박지 않고 게이트를 켜기 전 것과 비교한다 — 입력
+    옵션의 기본값(`config/budgets.yaml`)이 바뀌어도 이 성질은 그대로다."""
     thresholds = load_config("dev_fake").thresholds
     assert thresholds.auditor_source_gate == 0
     assert "auditor_source_gate" not in thresholds.flatten()
@@ -168,7 +189,7 @@ def test_the_gate_is_off_by_default_and_stays_out_of_the_run_record_until_turned
 
     assert on.flatten()["auditor_source_gate"] == 1.0
     assert "auditor_source_gate" not in AUDITOR_SOURCE_OPTIONS
-    assert on.auditor_source_options_on() == ()
+    assert on.auditor_source_options_on() == thresholds.auditor_source_options_on()
     with pytest.raises(ValidationError):
         thresholds.transition(auditor_source_gate=2)
 
@@ -179,7 +200,7 @@ def test_the_gate_is_off_by_default_and_stays_out_of_the_run_record_until_turned
 def _gate_event(gate: int, anchor: Location = _U_F, lines=(("u.c", 2),), **opts) -> dict:
     """`_auditor_source`를 직접 불러 마지막 `auditor_source` 이벤트를 돌려준다. `opts`는 슬라이스
     필드(`degraded`·`truncated`…)가 아니라 `_unit`의 임계·조회 대역이다."""
-    ref_fields = opts.pop("ref_fields", {})
+    ref_fields = {"analysis_kind": "backward_ddg", **opts.pop("ref_fields", {})}
     ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_G], auditor_source_gate=gate, **opts)
     ref = SliceRef(
         slice_id="s", location=anchor, given_end="sink", entry=anchor, lines=tuple(lines),
@@ -262,13 +283,19 @@ def test_with_the_gate_on_unread_lines_and_a_cap_dropped_function_are_reported(
             {"auditor_callee_hops": 1, "callees": {"f": [_U_G]}},
             "callees_dropped", "CALLEE_DROPPED", id="callee",
         ),
+        pytest.param(
+            {"auditor_caller_lines": 5,
+             "sites": {"f": [Location(file="u.c", symbol="g", line_start=25, line_end=25)]}},
+            "callers_dropped", "CALLER_DROPPED", id="caller",
+        ),
     ],
 )
 def test_with_the_gate_on_what_the_cap_dropped_is_reported(
     opts: dict, counter: str, expected: str
 ) -> None:
     """`g`(10줄 = 20단어 + 배너)는 토큰 상한 20에 안 든다 — 이벤트의 `*_dropped` 카운터가 1이 되는
-    그 경우를 게이트가 사유로 올린다(상한이 먹은 정의·피호출이 입력에서 빠졌다는 신호)."""
+    그 경우를 게이트가 사유로 올린다(상한이 먹은 정의·피호출·호출자 창이 입력에서 빠졌다는
+    신호). 호출자 창은 `g`의 25번 줄이 `f`를 부르는 지점 앞뒤 5줄을 `g`(20–29)로 자른 것이다."""
     event = _gate_event(1, auditor_source_tokens=20, **opts)
 
     assert event[counter] == 1
@@ -359,13 +386,14 @@ def test_an_old_slice_without_the_analysis_facts_only_gets_the_reasons_the_run_k
     tmp_path: Path,
 ) -> None:
     """옛 슬라이스(키가 없다)는 절단·경계 사유가 안 나온다 — 모르는 것을 사유로 만들지 않는다.
-    인덱스가 있으면 대상도 함수라 켠 run의 사유가 빈 문자열이다."""
+    대신 `ANALYSIS_UNKNOWN` 하나가 나온다 — 빈 문자열이면 절단·경계를 다 보고 안 걸린 슬라이스와
+    안 갈린다. 인덱스가 있으면 대상도 함수라 다른 사유는 없다."""
     path = _slices_file(tmp_path, [_cut_case_b(with_facts=False)])
 
     _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_gate(1))
 
     (event,) = _source_events(trace_path)
-    assert event["gate_reasons"] == ""
+    assert event["gate_reasons"] == "ANALYSIS_UNKNOWN"
 
 
 def test_the_gate_never_changes_what_the_auditor_reads_and_off_leaves_the_old_event(
