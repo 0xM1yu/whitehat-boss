@@ -278,7 +278,10 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
 - CyberGym PoV — 실서빙 실측과 외부 oracle 차분 검증의 실측은 MVP 밖이다(서빙+도구 되는 호스트가
   잡힌 뒤). oracle 제출 배선(`run --oracle-submit`, 기본 꺼짐)은 들어왔고 대역으로만 검증했다 — 하네스
-  run으로 실서버 왕복을 잰 것은 0건이다. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` ·
+  run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200,
+  `run_20261003_0003`); **왕복(vul→fix→조회)은 여전히 0건**이다. ⚠ 같은 run의 **8단계 E4는
+  Fake 도구의 상수**(`fake_tools.py:166-179`)이고 오라클 `vul_exit_code`는 0이라 **어긋난다** —
+  E4를 Fake로 관측했다고 읽지 마라. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` ·
   `PovSpec`→`assemble_poc`)·러너 8단계 라우팅(추가형)·feyospace 서빙 배선(§1 pov 좌석)도 들어왔다. 모델-주도 툴 루프(코드열람·Python·
   ASan/디버거)의 착지 상태와 남은 일은 [agent-contracts.md](agent-contracts.md) §2.5가 든다.
   **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
