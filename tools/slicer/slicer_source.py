@@ -57,6 +57,81 @@ def normalize_points(points: list[dict], sources: dict, repo: Path) -> tuple[set
     return result, invalid
 
 
+def _point(raw: object, sources: dict, repo: Path) -> dict | None:
+    mapped, _ = normalize_points([raw], sources, repo)
+    if not mapped:
+        return None
+    file, line = mapped.pop()
+    return {"file": file, "line": line}
+
+
+def _order(p: dict) -> tuple:
+    if "source" in p:
+        return (_order(p["source"]), _order(p["sink"]))
+    return (p["file"], p["line"], p["kind"])
+
+
+def _sorted(points: list[dict]) -> list[dict]:
+    """Deduplicated, in source order (file, line, kind)."""
+    return sorted({_order(p): p for p in points}.values(), key=_order)
+
+
+def source_sink(case: str, entry: dict, payload: dict | None, sources: dict, repo: Path) -> dict:
+    """Where this slice's analysis started and ended, for comparison with a GT source/sink.
+
+    Case A traces from the candidate method's parameters: each kept flow's head is a source
+    (`parameter`) and its last element the sink argument it reached (`flow_end`); `pairs` keeps
+    which source reached which sink. Case B starts AT the sink -- the candidate call (`entry`)
+    -- and walks back; the boundaries where that walk stopped are its sources, kind = the
+    boundary reason (`entry_parameter`, `external_or_unresolved_call`, `dependency_root`).
+    These are what the slicer treated as source/sink, not a judgement that they are the
+    vulnerable pair. `payload` None = no analysis (degraded slice): Case B still knows its
+    sink, Case A knows neither. Points outside the restored sources are dropped and counted in
+    `unmapped`, as `lines` drops them.
+    """
+    found_sources, sinks, pairs, unmapped = [], [], [], 0
+
+    def keep(raw: object, kind: str) -> dict | None:
+        nonlocal unmapped
+        point = _point(raw, sources, repo)
+        if point is None:
+            unmapped += 1
+            return None
+        return {**point, "kind": kind}
+
+    if case == "A":
+        basis = "none" if payload is None else "flow_endpoints"
+        for pair in (payload or {}).get("endpoints", []):
+            source, sink = keep(pair["source"], "parameter"), keep(pair["sink"], "flow_end")
+            found_sources += [source] if source else []
+            sinks += [sink] if sink else []
+            if source and sink:
+                pairs.append({"source": source, "sink": sink})
+    else:
+        basis = "candidate_only" if payload is None else "backward_boundaries"
+        sink = keep(entry, "candidate_call")
+        sinks += [sink] if sink else []
+        for boundary in (payload or {}).get("boundaries", []):
+            source = keep(boundary["location"], boundary["reason"])
+            found_sources += [source] if source else []
+    return {
+        "basis": basis,
+        "sources": _sorted(found_sources),
+        "sinks": _sorted(sinks),
+        "pairs": _sorted(pairs),
+        "unmapped": unmapped,
+    }
+
+
+def merge_source_sink(a: dict, b: dict) -> dict:
+    """Union for a cluster; the basis stays one word only when both members share it."""
+    return {
+        "basis": a["basis"] if a["basis"] == b["basis"] else "mixed",
+        **{k: _sorted(a[k] + b[k]) for k in ("sources", "sinks", "pairs")},
+        "unmapped": a["unmapped"] + b["unmapped"],
+    }
+
+
 def mask_non_code(text: str) -> str:
     """Keep offsets/newlines while hiding delimiters inside comments and C/C++ strings."""
     pattern = re.compile(
@@ -226,6 +301,8 @@ def cluster(slices: list[dict], threshold: float, sources: dict) -> list[dict]:
                     a["member_analysis"].update(
                         b.get("member_analysis", {b["candidate_key"]: b["analysis"]})
                     )
+                    if "source_sink" in a and "source_sink" in b:
+                        a["source_sink"] = merge_source_sink(a["source_sink"], b["source_sink"])
                     for reason, locations in b["line_provenance"].items():
                         a["line_provenance"][reason] = sorted(
                             {tuple(p) for p in a["line_provenance"][reason]}

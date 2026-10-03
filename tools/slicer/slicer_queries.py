@@ -642,9 +642,18 @@ def flows_query(
       val keptLines = kept.flatMap(_.elements).distinctBy(n => nodeKey(n))
         .sortBy(n => nodeKey(n)).map(loc)
       mark("lines")
+      // Where each kept flow starts and ends: the head is the candidate-method parameter it was
+      // traced from (a `srcs` member), the last element the sink argument it reached. Recorded
+      // so a slice can be compared with a GT source/sink without re-deriving it from `lines`.
+      // Pairs of kept flows only -- a truncated run's endpoints are those of the kept prefix.
+      val keptEndpoints = kept.filter(_.elements.nonEmpty)
+        .map(p => (p.elements.head, p.elements.last))
+        .distinctBy {{ case (s, t) => (nodeKey(s), nodeKey(t)) }}
+        .sortBy {{ case (s, t) => (nodeKey(s), nodeKey(t)) }}
+        .map {{ case (s, t) => ujson.Obj("source" -> loc(s), "sink" -> loc(t)) }}
       ujson.Obj("flow_count" -> kept.size, "truncated" -> {truncated},
         "sinks_capped" -> sinksCapped, "sinks_kept" -> sinks.size,
-        "lines" -> ujson.Arr.from(keptLines))
+        "lines" -> ujson.Arr.from(keptLines), "endpoints" -> ujson.Arr.from(keptEndpoints))
     """,
         timed=True,
     )
