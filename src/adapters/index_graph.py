@@ -89,10 +89,12 @@ SliceBody = frozenset[tuple[str, int]]
 # 그 스크립트는 이미지 안에서 살고 `src/`를 import 하지 않아 **형식이 양쪽에 따로
 # 존재한다**(`container_tools._INDEX_SUFFIXES` ↔ `indexer._GRAMMARS`와 같은 이중화).
 # 어긋나면 예외가 아니라 `unsupported_version`이 되고 그래프 섹션이 통째로 사라지므로,
-# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1도 계속 읽는다 — 이미지가
-# v1인 run의 산출물이 남아 있고, 캡슐 그래프는 두 형식에서 같은 간선을 낸다(`_call_edges`).
-SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2")
-_INDEX_V2 = "index-v2"
+# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1·v2도 계속 읽는다 — 그 이미지로
+# 돈 run의 산출물이 남아 있고, 캡슐 그래프는 세 형식에서 같은 간선을 낸다(`_call_edges`).
+# v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한 것이다(#304).
+SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2", "index-v3")
+_INDEX_V1 = "index-v1"
+_INDEX_V3 = "index-v3"
 
 # index-v2의 조회 표 — NE resolver(#63 후속)가 `GraphIndex.table()`로 읽는다. 모양은
 # `indexer.py` 모듈 docstring의 표다. **캡슐 섹션이 아니다**(`GRAPH_SECTION_KINDS` 주석).
@@ -107,6 +109,9 @@ V2_TABLES = (
     "field_assigns",
     "calls",
 )
+# index-v3가 더한 표(#304) — 쓰기 지점(`writes`)·함수 포인터 바인딩(`fn_bindings`)·필드 경유
+# 간접 호출(`field_calls`). v2 문서에서는 `table()`이 `None`을 낸다(「없다」 — 「0건」이 아니다).
+V3_TABLES = ("writes", "fn_bindings", "field_calls")
 # Auditor `SOURCE`가 정의 줄을 붙이는 표(#349 (f) — `definitions_of`). 이 순서로 보고 처음
 # 걸린 표에서 정한다.
 DEFINITION_TABLES = ("macros", "types", "file_vars")
@@ -160,6 +165,9 @@ _RECORD_KEYS = {
     "fields": ("type", "file", "line_start", "line_end"),
     "field_assigns": ("file", "line", "func", "lhs", "rhs", "op"),
     "calls": ("file", "line", "caller", "args"),
+    "writes": ("file", "line", "func", "lhs", "rhs", "op", "form", "base"),
+    "fn_bindings": ("file", "line", "func", "fn", "form"),
+    "field_calls": ("file", "line", "caller", "args", "expr"),
 }
 # 위 키 중 줄 번호 — 정수여야 한다(`_v2_tables`).
 _LINE_KEYS = frozenset({"line", "line_start", "line_end"})
@@ -356,7 +364,7 @@ class GraphIndex:
 
         | 반환 | 뜻 |
         | --- | --- |
-        | `None` | 인덱스 없음·버전 모름·깨짐, 또는 **index-v1**(표가 없는 형식) |
+        | `None` | 인덱스 없음·버전 모름·깨짐, **index-v1**(표가 없는 형식), v2의 `V3_TABLES` |
         | `{}` | v2인데 그 표가 0건 |
         | `{...}` | 표. 모양은 `indexer.py` 모듈 docstring의 표다 |
 
@@ -369,10 +377,10 @@ class GraphIndex:
         표의 정의 **위치**는 `definitions_of`도 읽는다 — Auditor `SOURCE`가 정의 줄을 원문으로 싣는
         것이지(#349 (f)) 표가 캡슐 섹션이 되는 것은 아니다.
         """
-        if name not in V2_TABLES:
+        if name not in V2_TABLES + V3_TABLES:
             raise ValueError(f"조회 표가 아니다: {name}")
         self._load()
-        return None if self._tables is None else self._tables[name]
+        return None if self._tables is None else self._tables.get(name)
 
     def neighbor_files(self, target: Location) -> list[str] | None:
         """대상의 호출 그래프 이웃이 정의된 파일들. `None`은 **그래프 자체가 없다**는 뜻이다.
@@ -648,6 +656,160 @@ class GraphIndex:
             ),
         )
 
+    # --- index-v3 조회 (#304) ---------------------------------------------
+    #
+    # 넷 다 **새 메서드**다 — 위의 `callees_of`·`call_sites_of`·`definitions_of`는 그대로다. 이름을
+    # 잇는 규칙은 그쪽과 같다: 같은 파일이 먼저, 다른 파일은 그 이름의 정의가 저장소 전체에서
+    # **하나뿐일 때만**. `None`은 v3 표가 없다는 뜻이다(인덱스 없음·v1·v2).
+
+    def writes_of(self, name: str, near_file: str) -> list[Location] | None:
+        """이름 `name`에 **쓰는 지점**(줄 하나 — `symbol`은 감싼 함수).
+
+        버퍼가 어디서 할당되고 어디서 채워지는지를 Auditor가 못 보던 자리(#304)를 채운다. 합치는
+        것: `assigns`(이름 대입 `p = malloc(n)` · 복합 대입)와 `writes`의 `base == "name"` 행(원소
+        `p[i] = x` · 역참조 `*p = x` · 선언 초기화 `char *p = malloc(n)`). 필드는
+        `field_writes_of`다.
+
+        - `near_file` 안의 쓰기가 있으면 그것만
+        - 없으면 `name`이 파일 스코프 변수로 **하나뿐일 때만**(`file_vars`) 저장소 전체 — 지역
+          이름은 파일마다 따로라 다른 파일의 같은 이름을 잇지 않는다. 「하나뿐」은 헤더 밖 선언이
+          있으면 그것만 센다 — 헤더의 `extern char *g;`와 `.c`의 정의가 둘로 세지면 흔한 전역이
+          한 번도 이어지지 않는다(#464 리뷰). 그때도 그 이름이 **지역·파라미터인 함수**(`locals`)의
+          행은 뺀다 — 다른 파일 함수의 같은 이름 지역은 그 전역이 아니다
+
+        ⚠ 파일 안에서는 함수를 가르지 않는다 — 같은 파일 다른 함수의 같은 지역 이름도 든다. 행의
+        `symbol`(감싼 함수)로 호출자가 거른다. 증감(`i++`)은 인덱서가 안 싣는다(`indexer.py` 표).
+        순서는 (파일, 줄)이다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        sites = {
+            (file, func, line)
+            for file, funcs in tables["assigns"].items()
+            for func, names in funcs.items()
+            for line in names.get(name, ())
+        }
+        sites |= {
+            (row["file"], row["func"], row["line"])
+            for row in tables["writes"].get(name, ())
+            if row["base"] == "name"
+        }
+        here = {site for site in sites if site[0] == near_file}
+        if not here and _single_global(tables["file_vars"].get(name, ())):
+            scoped = tables["locals"]
+            here = {
+                (file, func, line)
+                for file, func, line in sites
+                if name not in scoped.get(file, {}).get(func, {})
+            }
+        return sorted(
+            (
+                Location(file=file, symbol=func, line_start=line, line_end=line)
+                for file, func, line in here
+            ),
+            key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""),
+        )
+
+    def field_writes_of(self, field: str, near_file: str) -> list[Location] | None:
+        """필드 `field`에 **쓰는 지점**(줄 하나 — `symbol`은 감싼 함수).
+
+        `->payload_packet_len = …` 같은 길이 필드가 어디서 정해지는지(#304). `field_assigns`(필드
+        대입)와 `writes`의 `base == "field"` 행(`vv->buf[i] = x` · `*vv->ptr = x`)을 합친다.
+
+        - `near_file` 안의 쓰기는 늘 싣는다
+        - 다른 파일의 쓰기는 그 필드를 선언한 struct가 저장소 전체에서 **하나뿐일 때만**(`fields`) —
+          여럿이면 그 쓰기가 어느 struct의 필드인지 이름만으로 모른다(`call_sites_of`와 같은 규칙)
+
+        순서는 `near_file` → 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄)이다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        rows = list(tables["field_assigns"].get(field, ())) + [
+            row for row in tables["writes"].get(field, ()) if row["base"] == "field"
+        ]
+        unique = len(tables["fields"].get(field, ())) == 1
+        sites = {
+            Location(
+                file=row["file"], symbol=row["func"], line_start=row["line"], line_end=row["line"]
+            )
+            for row in rows
+            if row["file"] == near_file or unique
+        }
+        return _near_first(sites, near_file)
+
+    def fn_pointer_targets(self, field: str, near_file: str) -> list[Location] | None:
+        """함수 포인터 필드 `field`에 묶인 함수들의 **정의 위치**(#304 · 간접 호출 해석).
+
+        `fn_bindings`(`o->alloc = my_alloc` · `.free_ctx = sshpam_free_ctx`)에서 함수 이름을 모으고,
+        그 이름을 `functions` 표의 정의로 푼다.
+
+        - 바인딩은 `near_file` 것은 늘, 다른 파일 것은 필드를 선언한 struct가 **하나뿐일 때만** —
+          `alloc`처럼 흔한 필드 이름이 여러 struct에 있으면 다른 파일의 바인딩이 같은 필드인지
+          모른다
+        - 함수 이름 → 정의는 바인딩이 있는 파일의 정의가 먼저, 없으면 저장소 전체에서 하나뿐일 때만
+          (`callees_of`와 같은 규칙)
+
+        ⚠ 이름 하나에 바인딩이 여럿이면 **전부** 후보다 — 어느 것이 그 호출 시점의 값인지는
+        구문만으로 모른다. 위치 초기화(`{ my_init, my_free }`)는 인덱서가 안 싣는다. 순서는
+        (파일, 시작 줄)이다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        unique = len(tables["fields"].get(field, ())) == 1
+        found: set[Location] = set()
+        for row in tables["fn_bindings"].get(field, ()):
+            if row["file"] != near_file and not unique:
+                continue
+            definitions = tables["functions"].get(row["fn"], ())
+            candidates = [d for d in definitions if d["file"] == row["file"]] or list(definitions)
+            if len(candidates) != 1:
+                continue
+            d = candidates[0]
+            found.add(
+                Location(
+                    file=d["file"],
+                    symbol=row["fn"],
+                    line_start=d["line_start"],
+                    line_end=d["line_end"],
+                )
+            )
+        return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
+
+    def indirect_callees_of(self, target: Location) -> list[Location] | None:
+        """대상 본문 안의 필드 경유 호출(`vv->varint_get64s(…)`)이 갈 수 있는 함수의 **정의 위치**.
+
+        `callees_of`가 못 푸는 간접 호출(#304)을 `field_calls` →
+        `fn_pointer_targets(필드, target.file)`로 잇는다. 본문 판정은 `callees_of`와 같은
+        `_in_body`이고 대상 자신은 뺀다. 순서는 본문 안 첫 호출 줄 순(같은 줄이면 필드 이름 순),
+        그 안에서 `fn_pointer_targets`의 순서다. 같은 정의는 한 번만 낸다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        first_call: dict[str, int] = {}
+        for field, rows in tables["field_calls"].items():
+            for row in rows:
+                if self._in_body(row["file"], row["line"], target):
+                    first_call[field] = min(first_call.get(field, row["line"]), row["line"])
+        found: list[Location] = []
+        for field in sorted(first_call, key=lambda name: (first_call[name], name)):
+            for loc in self.fn_pointer_targets(field, target.file) or ():
+                is_self = loc.symbol == target.symbol and loc.file == target.file
+                if loc not in found and not is_self:
+                    found.append(loc)
+        return found
+
+    def _v3(self) -> Mapping[str, Mapping[str, Any]] | None:
+        """v3 표가 다 있으면 표 묶음, 아니면 `None`(인덱스 없음·깨짐·v1·v2)."""
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        if not all(name in self._tables for name in V3_TABLES):
+            return None
+        return self._tables
+
     # --- 본문 판정 -------------------------------------------------------
     #
     # 둘이 한 정의를 공유한다: **본문 = `read_symbol_source()`가 돌려주는 범위.**
@@ -747,7 +909,7 @@ class GraphIndex:
         try:
             defined = _defined_symbols(document["symbols"])
             calls = _call_edges(document["calls"], version)
-            tables = _v2_tables(document) if version == _INDEX_V2 else None
+            tables = _v2_tables(document, version) if version != _INDEX_V1 else None
             summary = IndexSummary(
                 status=STATUS_LOADED,
                 files=len(document["files"]),
@@ -853,12 +1015,12 @@ def _defined_symbols(symbols: list[dict]) -> dict[str, list[tuple[str, int, int]
 def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, int]]:
     """(caller, callee, 호출 지점 file, 호출 지점 line). **두 형식에서 같은 간선이다.**
 
-    index-v1의 `calls`는 간선 목록이고, index-v2는 같은 간선을 callee → 호출 지점(+ 인자)으로
+    index-v1의 `calls`는 간선 목록이고, index-v2·v3는 같은 간선을 callee → 호출 지점(+ 인자)으로
     묶었다. 캡슐 그래프 섹션은 이 튜플만 보므로 형식이 바뀌어도 한 글자도 안 바뀐다 —
     `tests/test_index_graph.py`의 v2 절이 박는다. 버전과 모양이 어긋나면(v1인데 묶음, v2인데
     목록) 여기서 예외가 나고 `_read`가 문서를 통째로 거절한다.
     """
-    if version != _INDEX_V2:
+    if version == _INDEX_V1:
         return [(c["caller"], c["callee"], c["file"], int(c["line"])) for c in calls]
     return [
         (site["caller"], callee, site["file"], int(site["line"]))
@@ -867,42 +1029,118 @@ def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, i
     ]
 
 
-def _v2_tables(document: dict) -> dict[str, Mapping[str, Any]]:
-    """v2 조회 표를 검사하고 읽기 전용으로 얼린다. 모양이 다르면 예외 — `_read`가 통째로 거절한다.
+def _v2_tables(document: dict, version: str) -> dict[str, Mapping[str, Any]]:
+    """v2 조회 표(v3면 `V3_TABLES`까지)를 검사하고 읽기 전용으로 얼린다. 모양이 다르면 예외 —
+    `_read`가 통째로 거절한다. v2 문서에는 `V3_TABLES`가 없고 결과에도 없다(`table()`이 `None`).
 
     기록의 필수 키와 **줄 번호의 형**까지 본다. 절반만 맞는 표를 받으면 resolver가 조회 도중에
     죽거나, 더 나쁘게는 빈 결과를 「못 찾았다」로 모델에게 전한다. 표는 값을 고치지 않고 내주므로
     (`_freeze`) `"12"`가 그대로 resolver까지 간다 — v1처럼 `int()`로 읽어 들이는 자리가 없다.
-    줄 번호 밖의 값 형(`file`·`params` 등)은 안 본다 — v1도 안 본다.
+    줄 번호 밖의 값 형(`file`·`params` 등)은 v2 표에서는 안 본다 — v1도 안 본다.
+
+    **v3 문서는 더 본다**(#464 리뷰). v3 조회(`writes_of` 등)는 행 값을 `Location`과 집합 원소로
+    바로 쓰므로, 줄 0이나 매핑 `func`가 통과하면 조회 도중 `ValidationError`·`TypeError`로 죽는다.
+    그래서 `V3_TABLES`는 값 형·허용 값을 다(`_V3_VALUES`), v3 조회가 함께 읽는 `field_assigns`는
+    `file`·`func`를 본다.
     """
     tables = {}
-    for name in V2_TABLES:
+    v3 = version == _INDEX_V3
+    for name in V2_TABLES + (V3_TABLES if v3 else ()):
         table = document[name]
         if not isinstance(table, dict):
-            raise TypeError(f"index-v2의 {name}는 매핑이다")
+            raise TypeError(f"{version}의 {name}는 매핑이다")
         if name in _RECORD_KEYS:
             keys = _RECORD_KEYS[name]
+            checks = _V3_VALUES.get(name, {}) if v3 else {}
             for records in table.values():
                 for record in records:
                     if not isinstance(record, dict) or not all(key in record for key in keys):
-                        raise KeyError(f"index-v2의 {name} 기록에는 {keys}가 있어야 한다")
+                        raise KeyError(f"{version}의 {name} 기록에는 {keys}가 있어야 한다")
                     if not all(_is_line(record[key]) for key in keys if key in _LINE_KEYS):
-                        raise TypeError(f"index-v2의 {name} 기록의 줄 번호는 정수다")
+                        raise TypeError(f"{version}의 {name} 기록의 줄 번호는 1 이상 정수다")
+                    if not all(check(record[key]) for key, check in checks.items()):
+                        raise TypeError(f"{version}의 {name} 기록의 값 형이 다르다")
         else:  # 파일 → 함수 → 이름 → [줄]
             for functions in table.values():
                 for names in functions.values():
                     for lines in names.values():
                         if not all(_is_line(line) for line in lines):
-                            raise TypeError(f"index-v2의 {name}는 줄 번호 목록이다")
+                            raise TypeError(f"{version}의 {name}는 줄 번호 목록이다")
         tables[name] = _freeze(table)
     return tables
 
 
+def _is_name(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _is_str(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+def _one_of(*allowed: str) -> Callable[[Any], bool]:
+    return lambda value: isinstance(value, str) and value in allowed
+
+
+# v3 문서에서 행 값마다 보는 형(`_v2_tables`). 허용 값은 `indexer.py`의 v3 절이 낸 것 그대로다.
+_V3_VALUES: dict[str, dict[str, Callable[[Any], bool]]] = {
+    "field_assigns": {"file": _is_name, "func": _is_name},
+    "writes": {
+        "file": _is_name,
+        "func": _is_name,
+        "lhs": _is_str,
+        "rhs": _is_str,
+        "op": _is_str,
+        "form": _one_of("element", "deref", "init"),
+        "base": _one_of("name", "field"),
+    },
+    "fn_bindings": {
+        "file": _is_name,
+        "func": lambda value: value is None or _is_name(value),
+        "fn": _is_name,
+        "form": _one_of("assign", "designated"),
+    },
+    "field_calls": {
+        "file": _is_name,
+        "caller": _is_name,
+        "args": lambda value: isinstance(value, list) and all(_is_str(arg) for arg in value),
+        "expr": _is_str,
+    },
+}
+
+
+# 헤더 확장자 — `writes_of`의 「파일 스코프 변수가 하나뿐」에서 `extern` 선언을 빼는 근사다(표에는
+# `extern` 여부가 없다). 헤더에만 선언이 있으면 그것을 센다.
+_HEADER_SUFFIXES = (".h", ".hh", ".hpp", ".hxx")
+
+
+def _single_global(rows: Iterable[Mapping[str, Any]]) -> bool:
+    """파일 스코프 변수 선언 행들이 전역 하나를 가리키는가 — 헤더 밖 선언이 있으면 그것만 센다."""
+    rows = list(rows)
+    outside = [row for row in rows if not str(row["file"]).endswith(_HEADER_SUFFIXES)]
+    return len(outside or rows) == 1
+
+
+def _near_first(sites: Iterable[Location], near_file: str) -> list[Location]:
+    """`near_file` → 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄) — `call_sites_of`와 같은 순서."""
+    here = posixpath.dirname(near_file)
+    return sorted(
+        sites,
+        key=lambda loc: (
+            loc.file != near_file,
+            posixpath.dirname(loc.file) != here,
+            loc.file,
+            loc.line_start or 0,
+            loc.symbol or "",
+        ),
+    )
+
+
 def _is_line(value: Any) -> bool:
-    """줄 번호인가 — JSON 정수.
+    """줄 번호인가 — 1 이상 JSON 정수(`Location`이 `ge=1`이다 — 0이 통과하면 조회 도중에 죽는다).
 
     `bool`은 `int`의 하위형이라 `isinstance`로 보면 `true`가 통과한다."""
-    return type(value) is int
+    return type(value) is int and value >= 1
 
 
 def _freeze(value: Any) -> Any:
