@@ -245,6 +245,12 @@ CPG는 하나다.
 - 샤드 종료 2는 정상(샤드 결과는 항상 partial). 1이나 시그널 종료는 `dead_shards`. 완료 여부는 병합 카운터(`complete`/`candidates`)로 본다
 - SIGTERM·SIGHUP -> 샤드·서버를 멈추고 summary.json을 쓴다. 실패 경로도 전부 summary.json을 쓴다. ⚠ 이 도구에 SIGKILL이면
   서버·샤드(각자 세션)가 남는다
+- 서버는 **프로세스 그룹째** 멈춘다 -> SIGTERM -> 그룹이 빌 때까지 최대 `STOP_GRACE_SECONDS`(10초, 정한 값) -> SIGKILL -> 그룹에 산
+  프로세스가 없는지 확인. SIGKILL 뒤에도 남은 pid는 stderr 경고와 summary.json `unstopped_pids`(없으면 키가 없다). `joern`은
+  JVM을 자식으로 띄우는 `sh`라서 런처만 기다리면 JVM이 남는다 -> 질의를 돌리는 JVM은 SIGTERM에 안 나간다(셧다운 훅
+  `EmbeddedRepl.shutdown`이 REPL에 명령을 실행하려다 진행 중인 질의 뒤에서 대기 — jstack). 2026-10-03 E1에서 서버 8개가 run보다
+  오래 남았다. 관측 -> dev 박스 2026-10-03 · 힙 2g · 서버 단독: 유휴 서버는 SIGTERM 0.5·0.5·0.7초에 그룹이 비었고(3회),
+  질의(`Thread.sleep(120000)`)를 돌리는 서버는 30초 뒤에도 JVM이 살아 있다가 SIGKILL 0.01초에 사라졌다(1회). 원자료 저장소 밖
 
 ⏵ #369 **공유 대기열** -> `--claim-db <파일>`(모든 샤드가 같은 SQLite 파일)을 주면 샤드가 `p % N` 대신 아직 아무도
 안 가져간 후보를 하나씩 가져가 자른다 -> 느린 후보가 한 샤드에 몰려도 나머지 샤드가 남은 후보를 처리한다.
