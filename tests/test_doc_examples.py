@@ -163,13 +163,12 @@ def test_run_record_example_prompt_versions_match_the_profile_it_names() -> None
     """
     raw = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))
     config = load_config(raw["profile"])
-
     declared = raw["prompt_versions"]
-    actual = {
-        role: config.model_for(role).prompt_template_version
-        for role in declared
-        if role in config.profile.roles
-    }
 
-    assert actual, f"예시의 `profile`({raw['profile']})에 예시가 든 역할이 하나도 없다"
-    assert {role: declared[role] for role in actual} == actual
+    # 거르지 않는다 — `if role in profile.roles`로 걸러 두면 프로필에서 사라진 역할 이름이
+    # 예시에 남아도 **조용히 건너뛰어** 초록이 된다. 없는 역할이면 여기서 터져야 한다.
+    missing = sorted(set(declared) - set(config.profile.roles))
+    assert not missing, f"예시가 `{raw['profile']}`에 없는 역할을 든다: {missing}"
+
+    actual = {role: config.model_for(role).prompt_template_version for role in declared}
+    assert declared == actual
