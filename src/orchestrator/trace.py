@@ -20,6 +20,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
+| Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage. **루프
+꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 실패하면 0건) — 꺼짐은 `model_call.schema`가
+`Finding`인지로 가른다 |
 | Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
@@ -304,6 +307,37 @@ class EventKind(StrEnum):
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
+    # 홉 하나의 Auditor(5단계) 도구 홉 루프 기록 (이슈 #419 — 모델-주도 루프). 내는 곳은
+    # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나. `hop`이 조인
+    # 키다(`model_call`의 (subject_id, role, hop) 사슬 — `context.py`). ⚠ **`subject_id`는
+    # 후보(candidate)다** — `probe`/`lookup` 홉에는 Finding이 아직 없다(Finding은 `answer`
+    # 홉에서만 나온다).
+    # 싣는 것:
+    # - 공통 — `hop` · `action`(lookup/probe/answer) · `input_tokens`·`output_tokens`.
+    #   **상한 값의 실측 근거가 여기서 나온다** — 홉당 usage를 안 실으면 홉 수를 몇으로 둘지가
+    #   추정이 된다. 값은 어댑터가 준 `usage`이고 서버가 usage를 안 주면 어댑터가 0을 채운다 —
+    #   `model_call`과 같은 한계라 이 이벤트만의 미측정 표시는 없다.
+    # - `lookup` — `requested`(모델이 낸 요청 수) · `ignored`(resolver 처리 상한 3을 넘어 안
+    #   돈 수 — 있을 때만) · `resolved`·`already`·`fixable_count` · `unfilled`(사유 쉼표 나열)
+    #   · `truncated`(이름 쉼표 나열). 뒤 둘은 `SCOUT_HOP`과 같은 이름·형식이다.
+    #   **`resolved=0`의 세 원인은 이 값들로 가른다** — 넷이 다 비면 인덱스 없음/v1(resolver의
+    #   서명), `unfilled`가 차면 이름을 못 찾음, `truncated`가 차면 크기 상한. 훅이 없거나
+    #   resolver가 `OSError`·`ValueError`로 실패한 홉에는 이 조회 결과 키가 **없다**(안 돌린
+    #   것을 0이라 적지 않는다) — 실패는 `lookup_error`(예외 클래스 이름)가 든다.
+    # - `probe` — `tool` · `tool_ok`·`exit_code`·`evidence_kind` · `evidence_id`(그
+    #   `tool_call` 이벤트로의 조인 키) · `spec`을 실었으면 `poc_sha256`·`poc_bytes`(**도구에는
+    #   안 간다** — 기록뿐이다).
+    # - `answer` — `cited_probe_evidence`(Finding이 `evidence_refs`로 인용한 `probe` Evidence
+    #   수). ⚠ 그 Evidence는 러너가 게이트에 넘기는 `state.evidences`에 **없어서** 인용해도
+    #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
+    #   게이트에 안 닿는 근거를 인용했다」는 사실이다.
+    # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
+    # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
+    # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
+    # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
+    # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
+    # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다.
+    AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
     # (subject_id, role, hop) 사슬 — `context.py`). gen/inspect 홉은 `action`과 도구 결과
