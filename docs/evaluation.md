@@ -112,13 +112,27 @@
 | 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 
 > ⚠ **`proven`은 「크래시가 재현됐다」가 아니다.** 그 상태를 여는 등급(E4)이 요구하는 것은
-> 런타임 Evidence의 `ok=True`인데, 그 `ok`가 뜻하는 것은 **도구가 실행됐다**는 것까지다 —
-> `container_tools.judge()`는 런타임 도구의 exit 0(=크래시 없음)도 `ok=True`로 올리고, Fake는
-> 실행 자체를 하지 않는다. 산출물을 `expected_signal`과 대조하는 코드는 없다.
+> 런타임 Evidence의 `ok=True`와 **0도 미측정도 아닌 `exit_code`**인데(2026-10-02부터 — 그전에는
+> `ok=True`뿐이었다), 그 `ok`가 뜻하는 것은 **도구가 실행됐다**는 것까지이고 비-0은 **크래시의
+> 대용 지표**일 뿐이다 — 대상이 스스로 비-0을 돌려줘도 같은 값이 나온다.
+> `container_tools.judge()`는 런타임 도구의 exit 0(=크래시 없음)도 `ok=True`로 올리되 게이트가 그
+> 건을 E4로 안 받고, Fake는 실행 자체를 하지 않고 종료 코드를 상수 `1`로 채운다. 산출물을
+> `expected_signal`과 대조하는 코드는 없다.
 >
 > 그래서 Precision의 **분모**(`proven` + `validated`)에서 `proven`이 세는 것은 「재현된
-> 건수」가 아니라 **「도구가 돈 건수」**다. 그 차이를 가르는 것은 같은 행의 **사람 검토**이고
-> 그쪽이 분자다. **§5.2의 `proven finding당 GPU-hour`도 `proven`이 분모다.**
+> 건수」가 아니라 **「도구가 돌았고 비-0으로 끝난 건수」**다. 그 차이를 가르는 것은 같은 행의
+> **사람 검토**이고 그쪽이 분자다. **§5.2의 `proven finding당 GPU-hour`도 `proven`이 분모다.**
+>
+> **2026-10-02에 `proven`의 정의가 좁아졌다(이슈 #232) — 그 날 앞뒤 run의 `proven`은 같은 값이
+> 아니다.** 도구가 떴고 exit 0으로 끝난 재현은 그전에는 `proven`(`repro_confirmed`)이었고 지금은
+> `validated`에 홀드된다(F-10b, `evidence_below_proven`). **`queued`(F-11, `repro_failed`)로 가는 것이
+> 아니다** — 그래서 「제거율 — Tool」(분자 `repro_failed`, 분모 `repro_failed ∪ repro_confirmed ∪
+> evidence_below_proven` — 산식 정본은 `trace.py`)의 분자에 안 들고, 분모 안에서 `repro_confirmed`에서
+> `evidence_below_proven`으로 옮겨 앉을 뿐이다. **그 값은 이 변경으로 올라가지 않는다 — 지표가 좋아진
+> 것이 아니다.** 줄어드는 것은 `proven` 건수이고, 그것을 분모로 쓰는 §5.2 `proven finding당
+> GPU-hour`는 그 날 앞뒤를 이어 읽지 않는다 — 가르는 값은 `RunRecord`의 하네스 commit이다(§6).
+> Precision의 분모는 `proven`과 `validated`의 합이라 이 이동만으로는 안 변한다. 컨테이너 run에서 이
+> 변경이 `proven`을 얼마나 줄였는지는 **미실측(0)**이다 — 사유: asan이 exit 0으로 끝난 run이 없다.
 > → [architecture.md](architecture.md) §4 · [open-questions.md](open-questions.md) D80(열림)
 
 ### 5.2 비용·효율

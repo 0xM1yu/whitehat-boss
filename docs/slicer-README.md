@@ -5,12 +5,14 @@ Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다
 
 ## 배포 파일과 실행
 
-[slicer.py](../slicer.py), [slicer_queries.py](../slicer_queries.py),
-[slicer_backward.py](../slicer_backward.py), [slicer_candidates.py](../slicer_candidates.py),
-[slicer_source.py](../slicer_source.py), [slicer_pipeline.py](../slicer_pipeline.py),
-[slicer_checkpoint.py](../slicer_checkpoint.py), [slicer_export.py](../slicer_export.py),
-[slicer_library.py](../slicer_library.py), [slicer_compile.py](../slicer_compile.py),
-[slicer_errors.py](../slicer_errors.py), [slicer_claims.py](../slicer_claims.py)를 함께 배포한다.
+[slicer.py](../tools/slicer/slicer.py), [slicer_queries.py](../tools/slicer/slicer_queries.py),
+[slicer_backward.py](../tools/slicer/slicer_backward.py), [slicer_candidates.py](../tools/slicer/slicer_candidates.py),
+[slicer_source.py](../tools/slicer/slicer_source.py), [slicer_pipeline.py](../tools/slicer/slicer_pipeline.py),
+[slicer_checkpoint.py](../tools/slicer/slicer_checkpoint.py), [slicer_export.py](../tools/slicer/slicer_export.py),
+[slicer_library.py](../tools/slicer/slicer_library.py), [slicer_compile.py](../tools/slicer/slicer_compile.py),
+[slicer_errors.py](../tools/slicer/slicer_errors.py), [slicer_claims.py](../tools/slicer/slicer_claims.py)를 함께 배포한다 — `tools/slicer/` 디렉터리째다. 서로를 이름으로 import(`import slicer_queries`)하고 실행 파일의
+디렉터리가 import 경로 첫 칸이라서다. `tools/merge_slicer_shards.py`는 `tools/slicer/`를 자기 옆에서 찾고
+`tools/slice_sharded.py`는 저장소 레이아웃 그대로를 전제한다.
 후보별 질의(flows·context·backward)의 로직은 inventory 뒤에 **서버 세션당 한 번** 함수로 정의하고,
 후보마다 그 함수 호출만 보낸다 — 질의마다 Scala 전체를 다시 컴파일하던 비용을 없앤다. 세션에 남는 것은
 함수뿐이고 후보 데이터는 호출 안에만 있다. 서버를 새로 띄우면 다음 run이 다시 정의한다.
@@ -22,7 +24,7 @@ Python과 Joern의 `--repo`는 같은 절대경로의 같은 소스를 가리켜
 
 ```bash
 ./joern-cli/joern -J-Xss64m -J-Xmx16g --server --server-host 127.0.0.1 --server-port 16242
-python slicer.py --repo /work/repo --out /work/results/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json \
   --joern-endpoint http://127.0.0.1:16242 \
   --joern-version-command /opt/joern/joern \
   --checkpoint /work/results/state.db --progress /work/results/progress.jsonl \
@@ -122,6 +124,7 @@ v1과 분석 의미 및 필드가 다르므로 `slice_version`은 `slice-v2`다.
 | `joern_version`, `joern_engine_config`, `server` | 실제 버전 명령, 엔진 설정, JVM 버전·프로세스·기동시각·heap 최대 바이트 |
 | `run_signature` | 원본 파일 bytes SHA-256 목록·절대경로·배포 코드 해시·설정·Joern 버전·계약 버전의 해시 |
 | `candidate_manifest` | 모든 후보의 ID·case·entry·정확한 selector·선정 이유·인자·anchor를 후보 키로 조회 |
+| `priority` | `--priority-files`를 줬을 때만. 목록 파일 수·후보가 있는 파일 수·1층 후보 수·전체 후보 수, 그리고 맞은/안 맞은 파일 이름(`matched_files`·`unmatched_files`, 각 최대 50개 — 사후 감사용). 아래 「우선 파일」 |
 | `slices` | 완료한 후보를 클러스터링한 결과. 실패한 미완성 후보는 넣지 않음. ⚠ **`partial`과 `[]`의 조합은 두 가지를 담는다** — (가) CPG는 만들어졌고 슬라이스가 0건, (나) CPG 준비 중 StackOverflowError 로 **CPG 자체가 없다**. `status` 문자열만으로는 안 갈린다. **가르는 것은 `joern_engine_config`다** — (나)는 `null`이다(후보 카운터도 `null`). 비교표에 넣을지 정하는 쪽은 `status != "failed"` 가 아니라 그것을 본다 |
 | `shard` | `--shard I/N` 조각일 때만 `{index, count}`. 있으면 전체 결과가 아니다 — 아래 「한 repo를 샤드로 나누기」 |
 | `prepare_only` | `--prepare-only` 결과일 때만 `true`. 슬라이스 없음 -> 하네스 `run --slices`가 거부 |
@@ -174,14 +177,14 @@ Joern 버전·overlay·EngineConfig·후보 manifest가 다르면 거부한다. 
 
 ```bash
 # 같은 분석 인자에 --resume을 추가한다. 실패한 전용 Joern 서버는 먼저 재기동한다.
-python slicer.py --repo /work/repo --out /work/results/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json \
   --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
   --checkpoint /work/results/state.db --resume --max-flows-per-candidate 10 \
   --backward-depth 30 --backward-nodes 5000 --query-timeout-seconds 600 \
   --candidate-timeout-seconds 1200
 
 # 분석 설정은 기록에서 읽는다. Joern 요청 없이 완료한 후보만 재조립한다.
-python slicer.py --repo /work/repo --out /work/results/exported.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/exported.json \
   --checkpoint /work/results/state.db --export-only --export-dir /work/results/export
 ```
 
@@ -233,6 +236,7 @@ CPG는 하나다.
   힙 밖 + slicer 프로세스 몫) · `--min-candidates-per-shard 20` · `--max-shards 32`. 위 단일 서버 예시의 `-Xmx16g`도 예시값
 - ⚠ `auto`가 적은 고정 샤드보다 빠르다는 근거 없음. 비교는 하나뿐 -> #373 PR 본문의 30샤드 621초 ↔ 2샤드 664초. 같은 장비에서
   다른 8샤드 작업이 동시에 돌던 중이라 차이 43초(계산값)를 샤드 수 탓으로 못 돌린다
+- `--wall-seconds`로 끊기면 순서상 못 닿은 후보가 degraded -> 그 순서를 `--priority-files`(아래)로 바꿀 수 있다
 - `--wall-seconds` -> 샤드 서버가 다 뜬 뒤부터 잰다. 모든 샤드가 준비 체크포인트에서 시작하므로 끊긴 샤드가 있어도 병합이
   거부되지 않는다(끊긴 후보는 degraded). 생략하면 제한 없음
 - 시작 전 포트가 비었는지 확인(남은 서버에 샤드가 붙는 것 방지). 서버가 뜨기 전에 죽으면 바로 실패하고 `joern.log` 경로를 낸다
@@ -259,12 +263,51 @@ CPG는 하나다.
 
 ```bash
 # 샤드 i = 0..N-1, 모두 같은 claims.db (run마다 새 파일)
-python slicer.py --repo /work/repo --out /work/s0/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/s0/slices.json \
   --joern-endpoint http://127.0.0.1:16243 --joern-version-command /opt/joern/joern \
   --checkpoint /work/s0/state.db --shard 0/4 --claim-db /work/claims.db
 # 병합: 미완료가 있으면 키와 주인을 찍고 종료 코드 2 -> 그 샤드를 --resume
 python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /work/s*/state.db
 ```
+
+⏵ #377 (b) **우선 파일** -> `--priority-files <파일>`을 주면 엔트리나 앵커 하나라도 그 파일에 있는 후보를 먼저 자른다.
+**처리 순서만 바꾼다. 끊기면 어느 후보가 전체 슬라이스인지가 바뀐다 -> 끊긴 표본에서 켠/끈 run은 비교하지 않는다**
+- 목록 형식 -> 한 줄에 경로 하나. 저장소 기준 상대 경로 또는 `--repo` 아래 절대 경로. 후보 파일과 같은 정규화
+  (`relative_file`) -> `./a.c`·`x//y.c`·역슬래시도 맞는다. UTF-8(BOM 허용). 빈 줄·`#`로 시작하는 줄 무시. 줄 끝 주석은
+  없다(`#`도 파일 이름에 올 수 있음 -> `a.c # 메모`는 그 전체가 경로)
+- 매칭 규칙 -> **정규화한 파일 문자열이 정확히 같아야** 한다. **대소문자를 구분**하고, 부분 문자열·basename·글롭·디렉터리·
+  `file:line`은 **안 맞는다** -> 맞는 것은 **파일 하나하나**뿐. 안 맞는 경로는 조용히 무시된다(아래 `priority` 감사 기록을 본다)
+- 목록의 출처 -> **과제 설명(Level 1 입력)에서만 만든다.** `patch.diff`·`error.txt`·수정본 저장소에서 파일 목록을 뽑으면
+  **정답 누출**이고 그 run은 무효다([evaluation.md §4](evaluation.md)). `eval/leakage`는 프롬프트·run 산출물만 보므로 이
+  입력 통로는 **스캔하지 않는다** -> 사람이 지킨다. 도구 자체는 어떤 목록이든 받는다(검증 안 함)
+- 그대로인 것 -> 후보 집합. 층 안에서는 원래 순서, 후보 ID(`slice_NNNN`)도 원래 번호. 온전히 잘린 후보는 목록이 있든
+  없든 같은 슬라이스
+- 바뀔 수 있는 것 -> 어느 후보가 degraded로 남는가. 끊겼을 때(`--wall-seconds`·kill) 못 닿은 후보, 그리고 끝까지 돌아도
+  poison 연속(`POISON_STOP_STREAK`) 뒤 후보(단일·`--shard`는 나머지를 degraded로, `--claim-db` 샤드는 그 샤드가 청구를 멈춤).
+  둘 다 순서를 따르므로 실패 없이 끝까지 돈 run에서만 목록 유무와 무관하게 같은 슬라이스. **상한이 걸린 표본(끊김·poison)에서
+  켠/끈 run을 비교하면 「차이 없음」이 아니라 「표본이 다름」이다** -> 비교하지 않는다
+- **하네스(Scout)까지는 안 간다** -> 출력 `slices[]`는 **후보 ID 순**이고 우선 순서를 담지 않는다(우선 순서는
+  `candidate_manifest`의 삽입 순서에만 남는다). 러너는 `(-signal_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
+  `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
+  안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
+  **미측정**). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
+  (열린 PR #378의 선택지 (b) — 미머지라 이 저장소에는 그 결함 본문이 아직 없다)
+- 순서가 체크포인트에 묶인다 -> 목록의 개수·sha256(**정렬한** 목록의 `slicer_checkpoint.digest` -> 목록 줄 순서와 무관)이
+  `settings.priority_files`(실행 계약). 목록이 다른 샤드는 병합 거부(`Shard mismatch on run_contract`), 다른 목록으로
+  `--resume`도 거부. `--prepare-only`에 주면 준비 체크포인트를 받은 샤드가 그 순서를 따른다(`slice_sharded.py`는 `--` 뒤
+  인자로 둘 다에 넘김)
+- ⚠ 샤드를 손으로 `--resume --cpg <파일> --shard I/N`으로 돌릴 때도 준비 때와 같은 `--priority-files`를 다시 준다. 빠뜨리거나
+  다르면 실행 계약이 달라 `Checkpoint mismatch: run_contract (differs in: settings.priority_files)`로 거부 -> 새 체크포인트가
+  아니라 **같은 목록을 다시 주는 것**이 해법이다
+- 결과 `priority` -> 목록 파일 수 · 후보가 있는 파일 수 · 1층 후보 수 · 전체 후보 수 · 맞은/안 맞은 파일 이름(`matched_files`·
+  `unmatched_files`, 각 최대 50개로 **사후 감사**용). 목록의 어느 파일도 후보와 안 맞으면 **stderr 한 줄** + `measurement_notes.
+  priority_files`에 「기본 순서 그대로」, 일부만 안 맞으면 안 맞은 파일 수(run은 실패시키지 않음)
+- `--export-only`와 같이 주면 거부(순서는 이미 체크포인트에 있음)
+- ⚠ **발견 단계 상한이 우선 정렬보다 앞이다** -> `CASE_A_CANDIDATE_CAP`(`slicer_queries.py`)의 `.take`는 `collect()`·
+  `prioritize()` **전에** Joern 안에서 자른다. 캡에 닿은 저장소에서는 목록 파일의 후보가 **아예 없을 수** 있고, 그러면 결과가
+  오타와 **구별되지 않는다**(둘 다 `unmatched_files`에만 뜬다)
+- ⚠ 목록이 틀리면 정답 후보가 뒤로 밀린다 -> lwan 한 표본에서 첫 GT 슬라이스 171 -> 297초, 느린 장비에서는 900초 예산에
+  GT 슬라이스 4 -> 1(**미머지 PR #378의 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
 
 ⏵ #368 **준비 한 번** -> `--prepare-only --cpg-out <파일>`이 CPG 생성과 후보 발견을 한 번 하고 그래프를 저장한다(아무
 후보도 안 자름). 그 체크포인트를 샤드마다 복사해 `--resume --cpg <파일> --shard I/N`으로 돌리면 샤드는 저장소를 다시
@@ -284,24 +327,24 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 
 ```bash
 # 준비 한 번 (서버 하나). --out은 준비 기록이지 슬라이스가 아니다
-python slicer.py --repo /work/repo --out /work/prep/prepare.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/prep/prepare.json \
   --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
   --checkpoint /work/prep/state.db --prepare-only --cpg-out /work/prep/cpg.bin --max-flows-per-candidate 10
 # 샤드 i = 0..N-1: 체크포인트를 복사해 각자 다른 서버에서
 cp /work/prep/state.db /work/s0/state.db
-python slicer.py --repo /work/repo --out /work/s0/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/s0/slices.json \
   --joern-endpoint http://127.0.0.1:16243 --joern-version-command /opt/joern/joern \
   --checkpoint /work/s0/state.db --resume --cpg /work/prep/cpg.bin --shard 0/4 --max-flows-per-candidate 10
 ```
 
 ```bash
 # 샤드 i = 0..N-1, 각자 다른 서버. 분석 인자는 전부 같게
-python slicer.py --repo /work/repo --out /work/s0/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/s0/slices.json \
   --joern-endpoint http://127.0.0.1:16242 --joern-version-command /opt/joern/joern \
   --checkpoint /work/s0/state.db --shard 0/4 --max-flows-per-candidate 10
 python tools/merge_slicer_shards.py /work/merged.db /work/s0/state.db /work/s1/state.db \
   /work/s2/state.db /work/s3/state.db
-python slicer.py --repo /work/repo --out /work/results/slices.json \
+python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json \
   --checkpoint /work/merged.db --export-only
 ```
 
