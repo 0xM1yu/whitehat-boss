@@ -77,7 +77,7 @@ from typing import Any
 
 from src.graph_entry import render_entry
 from src.schemas.capsule import CapsuleSection
-from src.schemas.common import Location
+from src.schemas.common import CallableDef, Location
 from src.tokens import estimate_tokens
 
 # 슬라이스의 줄 집합 — (file, line). 슬라이스 타깃 캡슐의 「본문」이다(`GraphIndex.names_for`).
@@ -397,6 +397,47 @@ class GraphIndex:
                     )
                 break
         return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
+
+    def callables_of(self, names: Iterable[str], near_file: str) -> dict[str, CallableDef] | None:
+        """이름 → 그 이름이 가리키는 **매크로 또는 함수**의 정의(종류 · 위치 · 파라미터 이름).
+
+        `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1 — 파라미터가 v2 `functions` 표에만 있다).
+        Auditor `SOURCE`의 닫힘이 앵커가 부르는 이름을 정의까지 따라가는 데 쓴다(`auditor_closure`).
+        규칙은 `definitions_of`·`callees_of`와 같다:
+
+        - **매크로가 함수를 가린다** — 전처리가 먼저라 같은 이름이 둘 다면 매크로다. `macros` 표를
+          먼저 보고 이름이 거기 있으면 모호해도 함수로 내려가지 않는다
+        - `near_file`에 정의가 있으면 그것, 없으면 저장소 전체에서 **하나뿐일 때만** — 여럿이면
+          (`#if` 양쪽 가지 · 같은 이름 여러 파일) 이름만으로 못 가리므로 **고르지 않고 `ambiguous`로
+          표시한다**(위치는 맨 앞 후보 하나 — 고른 것이 아니다). 「정의가 없다」와 섞지 않으려는
+          것이다
+
+        매크로의 파라미터는 `()`다 — 인덱스가 정의 원문을 안 싣고 파라미터도 안 적는다(원문은
+        하네스가 파일에서 읽는다). 인덱스에 없는 이름(libc)은 결과에 없다.
+        """
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        found: dict[str, CallableDef] = {}
+        for name in sorted(set(names)):
+            for kind, table in (("macro", "macros"), ("function", "functions")):
+                rows = self._tables[table].get(name)
+                if not rows:
+                    continue
+                here = [row for row in rows if row["file"] == near_file]
+                candidates = here or list(rows)
+                row = candidates[0]
+                where = Location(
+                    file=row["file"],
+                    symbol=name,
+                    line_start=row["line_start"],
+                    line_end=row["line_end"],
+                )
+                if len(candidates) > 1:
+                    found[name] = ("ambiguous", where, ())
+                else:
+                    found[name] = (kind, where, tuple(row["params"]) if kind == "function" else ())
+                break
+        return found
 
     def callees_of(self, target: Location) -> list[Location] | None:
         """대상 본문 안의 호출이 부르는 함수의 **정의 위치**. `None`은 그래프 자체가 없다는 뜻이다.

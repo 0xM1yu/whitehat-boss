@@ -65,7 +65,7 @@ from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.paths import safe_join
 from src.schemas.candidate import SliceRef
-from src.schemas.common import Location
+from src.schemas.common import CallableDef, Location
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CompileFlags, ModelSampling
 from src.tokens import COUNTED_ROLES
@@ -175,6 +175,11 @@ class Deps:
     callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). `callees_of`와 같은 자리.
     call_sites_of: Callable[[Location], list[Location] | None] = lambda _target: None
+    # (이름들, 가까운 파일) → 그 이름이 가리키는 매크로·함수의 정의(종류 · 위치 · 파라미터 이름).
+    # Auditor `SOURCE`의 닫힘(`auditor_closure`)이 쓴다. `callees_of`와 같은 자리.
+    callables_of: Callable[[Iterable[str], str], dict[str, CallableDef] | None] = (
+        lambda _names, _file: None
+    )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None] = (
         lambda _names, _file: None
@@ -551,6 +556,7 @@ def build_deps(
         symbols_for=graph.symbols_for,
         callees_of=graph.callees_of,
         call_sites_of=graph.call_sites_of,
+        callables_of=graph.callables_of,
         definitions_of=graph.definitions_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
