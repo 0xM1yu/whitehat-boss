@@ -9,6 +9,7 @@
 
 from src.orchestrator.source_definitions import (
     bare_names,
+    code_only,
     definition_names,
     slice_line_names,
     slice_names_first,
@@ -171,6 +172,102 @@ def test_a_typedef_named_like_a_local_is_a_known_limit() -> None:
     assert "node" not in used
 
 
+# --- 주석·문자열·문자 리터럴은 코드가 아니다 --------------------------------------------------
+#
+# E4(83표본의 GT sink 함수, 로컬·run ID 없음)가 정의 1,023건 중 15.0%(153건)를 「주석·문자열에만
+# 나온 낱말」로 센 것이 이 절의 출처다 -- 본문 원문을 그대로 토큰으로 쪼개서 생긴다.
+
+
+def _names_of(text: str) -> set[str]:
+    """지역 표 없이(`None`) 이름만 본다 -- 이 절은 지역이 아니라 **코드 자리**를 묻는다."""
+    return definition_names([(_loc("u.c", "f", 1, 9), text)], lambda _file, _func: None)
+
+
+def test_a_word_only_in_a_comment_is_not_a_name() -> None:
+    """`/* */`·`//` 안의 낱말은 같은 철자의 매크로·전역 정의를 끌어오지 않는다. 코드의 `run`은
+    남는다."""
+    text = "void f(void) {\n    /* clamp to FOO_MAX */\n    // see BAR_LIMIT\n    run();\n}"
+
+    used = _names_of(text)
+
+    assert "run" in used
+    assert not used & {"FOO_MAX", "BAR_LIMIT", "clamp", "see"}
+
+
+def test_a_word_only_in_a_string_or_char_literal_is_not_a_name() -> None:
+    text = 'void f(void) { log("BUF_SIZE exceeded"); c = \'Z\'; run(); }'
+
+    used = _names_of(text)
+
+    assert {"log", "c", "run"} <= used
+    assert not used & {"BUF_SIZE", "exceeded", "Z"}
+
+
+def test_a_word_in_code_and_in_a_comment_still_resolves() -> None:
+    """주석에도 나오지만 **코드에도** 나온 낱말은 그대로 찾는다 -- 주석을 지우는 것이지 낱말을
+    금지하는 것이 아니다."""
+    text = "void f(void) {\n    /* LIMIT is checked below */\n    if (n > LIMIT) bail();\n}"
+
+    assert "LIMIT" in _names_of(text)
+
+
+def test_a_word_in_code_and_in_a_string_still_resolves() -> None:
+    assert "LIMIT" in _names_of('void f(void) { log("LIMIT hit"); use(LIMIT); }')
+
+
+def test_escapes_and_quote_characters_do_not_end_a_literal_early() -> None:
+    r"""`\"`로 이스케이프한 따옴표 · `'\''` · `'"'`는 리터럴을 일찍 닫지 않는다 -- 닫히면 뒤의
+    낱말이 코드로 읽히거나(`HIDDEN_A`) 뒤 코드가 문자열로 먹힌다(`keep`·`VISIBLE`)."""
+    text = r"""void f(void) { puts("say \"HIDDEN_A\" now"); c = '\''; d = '"'; keep(VISIBLE); }"""
+
+    used = _names_of(text)
+
+    assert {"keep", "VISIBLE", "c", "d"} <= used
+    assert not used & {"HIDDEN_A", "say", "now"}
+
+
+def test_a_string_ending_in_an_escaped_backslash_closes() -> None:
+    r"""`"a\\"`는 백슬래시 하나를 담고 **닫힌다** -- 이스케이프를 `\"`로만 읽으면 뒤 줄을 먹는다."""
+    used = _names_of('void f(void) { p = "a\\\\"; keep(VISIBLE); }')
+
+    assert {"keep", "VISIBLE"} <= used
+
+
+def test_a_comment_marker_in_a_string_and_a_quote_in_a_comment_are_not_special() -> None:
+    """문자열 속 `//`(`"http://HOST_NAME"`)는 주석이 아니고 주석 속 따옴표(`it's`·`"trap`)는
+    리터럴을 열지 않는다 -- 왼쪽부터 한 번에 훑어 먼저 시작한 쪽이 이긴다."""
+    text = (
+        'void f(void) { u = "http://HOST_NAME"; keep(A); /* it\'s a "trap */ keep(B);\n'
+        "    // don't\n    keep(C); }"
+    )
+
+    used = _names_of(text)
+
+    assert {"keep", "A", "B", "C", "u"} <= used
+    assert not used & {"HOST_NAME", "it", "trap", "don"}
+
+
+def test_a_line_comment_continues_over_a_backslash_newline() -> None:
+    r"""줄 끝 `\`는 다음 줄을 잇는다 -- C에서 `// ... \`의 다음 줄도 같은 주석이다(`HIDDEN_C`). 잇는
+    `\`가 없으면 다음 줄은 코드다(`keep`)."""
+    text = "// note \\\n   HIDDEN_C();\nkeep(A);"
+
+    assert _names_of(text) == {"keep", "A"}
+
+
+def test_an_unterminated_block_comment_runs_to_the_end() -> None:
+    """읽은 범위가 주석 한가운데서 끝나도(`slice_line_names`) 열린 주석은 끝까지 주석이다."""
+    assert _names_of("keep(A); /* HIDDEN never closed") == {"keep", "A"}
+
+
+def test_code_only_keeps_the_line_count_and_separates_tokens() -> None:
+    """지운 자리는 공백 하나이고 안에 든 줄바꿈은 남는다 -- 줄 번호로 고르는 쪽
+    (`slice_line_names`)이 안 어긋나고, `a/*c*/b`가 `ab`로 붙지 않는다."""
+    assert code_only("a/*c*/b") == "a b"
+    assert code_only("x /* a\nb\nc */ y").count("\n") == 2
+    assert code_only('s = "a"; // tail\nt') == "s =  ;  \nt"
+
+
 # --- slice_names_first: 슬라이스 줄에 나온 이름의 정의가 먼저 ---------------------------------
 
 
@@ -196,6 +293,14 @@ def test_slice_line_names_come_from_the_slice_lines_only() -> None:
 
     assert names == {"line3", "tok3", "line7", "tok7"}
     assert reads == [Location(file="u.c", line_start=3, line_end=7)]
+
+
+def test_slice_line_names_skip_comments_and_keep_the_rows_aligned() -> None:
+    """슬라이스 줄 3은 두 줄짜리 블록 주석(2~3)의 **끝줄**이다 -- 그 낱말(`HIDDEN2`)은 이름이
+    아니고, 주석이 여러 줄이어도 4번 줄은 4번 줄이다(지운 자리가 줄바꿈을 남긴다)."""
+    read, _ = _reader({"u.c": ["x = A;", "/* HIDDEN", "   more HIDDEN2 */", "y = B;"]})
+
+    assert slice_line_names(read, [("u.c", 1), ("u.c", 3), ("u.c", 4)]) == {"x", "A", "y", "B"}
 
 
 def test_slice_line_names_skip_field_access_and_missing_lines() -> None:

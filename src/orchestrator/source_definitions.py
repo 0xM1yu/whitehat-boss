@@ -6,14 +6,17 @@
 예전에는 실린 함수 본문의 식별자 토큰을 **전부**(C 키워드만 빼고) `definitions_of`에 던졌다. 지역
 변수·파라미터·구조체 필드 이름이 다른 파일의 매크로·타입·파일 변수와 철자가 같으면, 그 이름의
 정의가 저장소에 **하나뿐**이라는 이유로 그 정의가 붙었다 — `za`가 다른 파일의 전역 `za`를,
-`->archive`가 다른 파일의 `struct archive`를 끌어오는 식이다. 글자 상한은 한정돼 있어서 그 정의가
-진짜 정의의 자리를 먹는다.
+`->archive`가 다른 파일의 `struct archive`를 끌어오는 식이다. 주석과 문자열 속 낱말도 똑같이
+토큰이 됐다. 글자 상한은 한정돼 있어서 그 정의가 진짜 정의의 자리를 먹는다.
 
-## 무엇을 거르는가 — 둘이고, 둘째에 예외가 셋 있다
+## 무엇을 거르는가 — 셋이고, 셋째에 예외가 셋 있다
 
-1. **필드 접근 자리**(`p->len`·`q.size`)에만 나온 이름 — 구조체 필드지 같은 철자의 매크로·전역이
+1. **주석·문자열·문자 리터럴 속 낱말**(`code_only`) — 코드가 아니다. `/* clamp to LIMIT */`나
+   `"BUF_SIZE exceeded"`의 낱말이 같은 철자의 매크로·전역 정의를 끌어왔다. 코드에도 나온 낱말은
+   그대로 찾는다 — 낱말을 막는 것이 아니라 **자리**를 본다.
+2. **필드 접근 자리**(`p->len`·`q.size`)에만 나온 이름 — 구조체 필드지 같은 철자의 매크로·전역이
    아니다. 점은 하나만 본다 — GNU `case LOW ... HIGH:`의 `...`는 필드 접근이 아니다.
-2. 실린 함수 **자신의** 지역·파라미터(`GraphIndex.locals_of`) — 함수마다 따로 뺀다. 합집합에서
+3. 실린 함수 **자신의** 지역·파라미터(`GraphIndex.locals_of`) — 함수마다 따로 뺀다. 합집합에서
    빼면 한 함수의 지역 때문에 다른 함수가 전역으로 쓰는 같은 이름이 사라진다.
    ⚠ **예외 셋 — 지역과 철자가 같아도 지역을 가리키지 않는 자리다**(`_outer_names`):
    - `struct X`·`union X`·`enum X`의 `X` — 태그는 변수와 이름공간이 달라서 `struct archive
@@ -27,8 +30,7 @@
 `GraphIndex.definitions_of(demote_nonproduct=True)`.
 
 ⚠ **이름 토큰 근사다.** 지역이 안쪽 블록에서만 선언돼도 함수 전체에서 뺀다(`locals` 표가 함수
-단위다). 주석·문자열 속 낱말도 토큰이 된다(예전과 같다). 못 거르는 둘은 `definition_names` 위의
-`ponytail:`에 적었다.
+단위다). 못 거르는 것은 `code_only`·`definition_names` 위의 `ponytail:`에 적었다.
 
 ## 어떤 순서로 싣는가
 
@@ -49,6 +51,20 @@ _C_KEYWORDS = frozenset(
     "inline int long register restrict return short signed sizeof static struct switch typedef "
     "union unsigned void volatile while bool true false NULL".split()
 )
+# 코드가 아닌 자리 — 줄 주석 · 블록 주석 · 문자열 · 문자 리터럴(이스케이프 포함). 왼쪽부터 한 번에
+# 훑는다: 먼저 시작한 쪽이 이기므로 문자열 속 `//`·`/*`와 주석 속 따옴표가 서로를 안 건드린다.
+# ponytail: C의 어휘 규칙만 본다. C++ 원시 문자열 `R"(...)"`은 안 본다(안의 따옴표가 짝을 깨면
+# 그 줄은 코드로 남는다) · 인코딩 접두 `L"…"`의 `L`과 `#include <a/b.h>`의 경로는 이름으로 남는다 ·
+# 읽은 범위가 블록 주석 한가운데서 시작하면(`slice_line_names` — 슬라이스 첫 줄 앞에서 열린
+# 주석) 그 속은 코드로 읽힌다. 순서를 정하는 어림이라 둔다 — 올리는 길은 읽는 범위를 슬라이스 첫
+# 줄이 아니라 그 줄을 품는 함수의 시작에 맞추는 것.
+_NOT_CODE = re.compile(
+    r"//(?:\\.|[^\n\\])*"  # 줄 주석 — 줄 끝 `\`는 다음 줄까지 잇는다
+    r"|/\*.*?(?:\*/|\Z)"  # 블록 주석 — 안 닫혔으면 끝까지
+    r'|"(?:\\.|[^"\\\n])*"'  # 문자열 리터럴
+    r"|'(?:\\.|[^'\\\n])*'",  # 문자 리터럴
+    re.DOTALL,
+)
 # 필드 접근 `->x`·`.x`의 `x`(group 1). 연산자와 이름 사이 공백(`p -> len`)은 받고 줄바꿈은
 # 안 받는다. 점은 **하나짜리만** 본다 — GNU `case LOW ... HIGH:`의 `...`는 필드 접근이 아니다.
 _FIELD_ACCESS = re.compile(r"(?:->|(?<!\.)\.(?!\.))[ \t]*([A-Za-z_][A-Za-z0-9_]*)")
@@ -62,26 +78,39 @@ LocalsOf = Callable[[str, str], frozenset[str] | None]
 ReadSource = Callable[[Location], str]
 
 
-def _field_starts(text: str) -> set[int]:
-    return {match.start(1) for match in _FIELD_ACCESS.finditer(text)}
+def code_only(text: str) -> str:
+    """주석·문자열·문자 리터럴을 공백 하나로 바꾼다. 안에 든 줄바꿈은 남긴다 — 줄 번호로 고르는 쪽
+    (`slice_line_names`)이 안 어긋나고, `a/*c*/b`가 `ab`로 붙지 않는다."""
+    return _NOT_CODE.sub(lambda m: " " + "\n" * m.group().count("\n"), text)
+
+
+def _field_starts(code: str) -> set[int]:
+    return {match.start(1) for match in _FIELD_ACCESS.finditer(code)}
+
+
+def _names(code: str) -> set[str]:
+    """`code_only`를 거친 원문에서 필드 접근이 **아닌 자리에** 나온 식별자 — C 키워드 제외."""
+    fields = _field_starts(code)
+    return {m.group() for m in _IDENT.finditer(code) if m.start() not in fields} - _C_KEYWORDS
 
 
 def bare_names(text: str) -> set[str]:
-    """`text`에서 필드 접근(`->x`·`.x`)이 **아닌 자리에** 한 번이라도 나온 식별자 — C 키워드 제외.
+    """`text`의 **코드 자리**에서 필드 접근(`->x`·`.x`)이 **아닌 곳에** 한 번이라도 나온 식별자 —
+    C 키워드 제외. 주석·문자열·문자 리터럴 속 낱말은 안 센다.
 
     필드로도 쓰인 이름(`len = p->len;`의 `len`)은 남는다 — 앞 `len`은 변수(또는 매크로) 자리다.
     """
-    fields = _field_starts(text)
-    return {m.group() for m in _IDENT.finditer(text) if m.start() not in fields} - _C_KEYWORDS
+    return _names(code_only(text))
 
 
-def _outer_names(text: str) -> set[str]:
+def _outer_names(code: str) -> set[str]:
     """지역과 철자가 같아도 **지역을 가리키지 않는** 자리의 이름 — 태그(`struct X`) · 호출(`x(`,
-    필드 호출 `p->x(`은 아니다) · 함수 안 `extern` 선언문의 이름(모듈 docstring)."""
-    fields = _field_starts(text)
-    called = {m.group(1) for m in _CALL.finditer(text) if m.start(1) not in fields}
-    declared = {name for statement in _EXTERN.findall(text) for name in _IDENT.findall(statement)}
-    return (set(_TAG.findall(text)) | called | declared) - _C_KEYWORDS
+    필드 호출 `p->x(`은 아니다) · 함수 안 `extern` 선언문의 이름(모듈 docstring). `code_only`를 거친
+    원문을 받는다."""
+    fields = _field_starts(code)
+    called = {m.group(1) for m in _CALL.finditer(code) if m.start(1) not in fields}
+    declared = {name for statement in _EXTERN.findall(code) for name in _IDENT.findall(statement)}
+    return (set(_TAG.findall(code)) | called | declared) - _C_KEYWORDS
 
 
 # ponytail: 못 거르는 둘. ① 지역과 **같은 이름의 typedef**(`node *node`의 앞 `node`는 타입이다) —
@@ -93,22 +122,24 @@ def _outer_names(text: str) -> set[str]:
 def definition_names(carried: Iterable[tuple[Location, str]], locals_of: LocalsOf) -> set[str]:
     """실린 함수들(위치, 원문)이 쓰는 이름 중 **정의를 찾을 만한 것** — 정의 조회에 넘길 집합.
 
-    함수마다 `bare_names`에서 그 함수의 지역·파라미터를 빼되(`locals_of` — `None`이면 뺄 것을
-    모른다) 지역을 가리키지 않는 자리의 이름(`_outer_names`)은 되돌려 놓는다. `symbol`이 없는 창
-    anchor는 어느 함수의 지역인지 몰라 필드 접근만 거른다.
+    함수마다 코드 자리의 이름(`code_only` → `_names`)에서 그 함수의 지역·파라미터를 빼되(`locals_of`
+    — `None`이면 뺄 것을 모른다) 지역을 가리키지 않는 자리의 이름(`_outer_names`)은 되돌려 놓는다.
+    `symbol`이 없는 창 anchor는 어느 함수의 지역인지 몰라 지역은 못 뺀다.
     """
     names: set[str] = set()
     for location, text in carried:
+        code = code_only(text)
         own = locals_of(location.file, location.symbol) if location.symbol else None
-        names |= bare_names(text) - ((own or frozenset()) - _outer_names(text))
+        names |= _names(code) - ((own or frozenset()) - _outer_names(code))
     return names
 
 
 def slice_line_names(read_source: ReadSource, lines: Iterable[tuple[str, int]]) -> set[str]:
     """슬라이스가 지나는 줄 `(file, line)`에 나온 이름 — `bare_names`와 같은 규칙.
 
-    파일마다 슬라이스 줄의 처음~끝을 **한 번에** 읽는다(`read_source` 하나). 1보다 작은 줄 번호와
-    읽은 범위를 벗어난 줄은 건너뛴다 — 순서를 정하는 어림이라 죽을 이유가 없다.
+    파일마다 슬라이스 줄의 처음~끝을 **한 번에** 읽는다(`read_source` 하나). 주석·문자열은 읽은
+    범위 전체에서 먼저 지운 뒤(줄바꿈이 남아 줄이 안 어긋난다) 슬라이스 줄만 고른다. 1보다 작은 줄
+    번호와 읽은 범위를 벗어난 줄은 건너뛴다 — 순서를 정하는 어림이라 죽을 이유가 없다.
     """
     by_file: dict[str, set[int]] = {}
     for file, line in lines:
@@ -117,9 +148,10 @@ def slice_line_names(read_source: ReadSource, lines: Iterable[tuple[str, int]]) 
     names: set[str] = set()
     for file, wanted in by_file.items():
         first = min(wanted)
-        rows = read_source(Location(file=file, line_start=first, line_end=max(wanted))).split("\n")
+        text = read_source(Location(file=file, line_start=first, line_end=max(wanted)))
+        rows = code_only(text).split("\n")
         picked = [rows[n - first] for n in sorted(wanted) if n - first < len(rows)]
-        names |= bare_names("\n".join(picked))
+        names |= _names("\n".join(picked))
     return names
 
 
