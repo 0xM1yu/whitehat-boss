@@ -1373,11 +1373,11 @@ def test_auditor_content_aware_versions_pin_v3_v4_and_v5() -> None:
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
-@pytest.mark.parametrize("version", ["v3", "v4", "v5"])
+@pytest.mark.parametrize("version", ["v3", "v4", "v5", "v6"])
 def test_auditor_content_aware_version_renders_slice_source_and_evidence_body_through_the_node(
     ctx: RunContext, version: str
 ) -> None:
-    """registry가 auditor에 v3·v4·v5를 고르면 **노드를 거친** 렌더가 body를 채운다 —
+    """registry가 auditor에 v3·v4·v5·v6를 고르면 **노드를 거친** 렌더가 body를 채운다 —
     슬라이스 렌더가 `SOURCE`로, payload 본문이 FACTS `evidence[].body`로 간다.
 
     위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → 렌더**를 한 호출로

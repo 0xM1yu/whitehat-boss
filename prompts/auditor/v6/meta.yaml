@@ -1,4 +1,5 @@
-# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
+# 정본 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고른다(2026-10-03, #418).
+# v5에서 출발해 개선만 얹은 판이라 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`에 든다.
 role: auditor
 version: v6
 output_schema: Finding
