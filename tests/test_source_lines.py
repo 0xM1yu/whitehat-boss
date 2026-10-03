@@ -44,7 +44,13 @@ def test_a_range_after_form_feeds_is_the_function_the_index_named(root: Path, re
 
 
 @pytest.mark.parametrize("read", [fake_read, hybrid_read], ids=["fake", "hybrid"])
-def test_crlf_files_still_read_without_carriage_returns(tmp_path: Path, read) -> None:
+def test_crlf_files_read_without_carriage_returns_end_to_end(tmp_path: Path, read) -> None:
+    r"""CRLF 파일이 전처럼 `\r` 없이 읽힌다 -> 읽는 경로 전체(`read_text` + `source_lines`)를 문다.
+
+    지금 이것을 지키는 것은 `read_text`(universal newline)이지 `source_lines`가 아니다 ->
+    `\r`이 헬퍼까지 안 와서 `removesuffix("\r")`를 지워도 초록이다. 헬퍼의 `\r` 처리는
+    `test_source_lines_breaks_only_at_newline`이 문다.
+    """
     (tmp_path / "crlf.c").write_bytes(SOURCE.replace("\n", "\r\n").encode("utf-8"))
     got = read(tmp_path, Location(file="crlf.c", symbol="third", line_start=11, line_end=14))
     assert got == THIRD

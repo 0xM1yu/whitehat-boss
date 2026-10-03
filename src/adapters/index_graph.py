@@ -753,5 +753,8 @@ def source_lines(text: str) -> list[str]:
     `str.splitlines()`는 폼피드(`\x0c`)·`\x1c`~`\x1e`·`\x85`·` `에서도 끊어 그 글자마다
     한 줄씩 밀린다 -> 폼피드가 많은 파일(ImageMagick 등)에서 함수 범위가 주석부터 시작하고
     끝이 잘렸다(#446). 슬라이서 좌표는 `slices.split_source`가 같은 이유로 따로 맞춘다(#259).
+
+    단독 CR 파일은 여전히 어긋난다 -> tree-sitter는 단독 `\r`에서 행을 안 넘기는데 호출자가
+    `read_text`(universal newline)로 읽어 CR을 `\n`으로 바꾼다. 맞추려면 `newline=""`로 읽어야 한다.
     """
     return [line.removesuffix("\r") for line in text.split("\n")]
