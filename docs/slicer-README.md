@@ -246,8 +246,9 @@ CPG는 하나다.
 - SIGTERM·SIGHUP -> 샤드·서버를 멈추고 summary.json을 쓴다. 실패 경로도 전부 summary.json을 쓴다. ⚠ 이 도구에 SIGKILL이면
   서버·샤드(각자 세션)가 남는다
 - 서버는 **프로세스 그룹째, 한꺼번에** 멈춘다 -> 모든 그룹에 SIGTERM -> 그룹이 다 빌 때까지 최대 `STOP_GRACE_SECONDS`(10초, 정한 값 — 그룹마다가 아니라 모두에게 한 번) ->
-  남은 그룹에 SIGKILL -> 산 프로세스가 없는지 확인(최대 `KILL_VERIFY_SECONDS` 10초, 정한 값). SIGKILL 뒤에도 남은 pid는 stderr 경고와 summary.json
-  `unstopped_pids`(없으면 키가 없다 — 준비 서버 · 벽시계로 멈춘 샤드 · 끝의 서버 · `main()`의 마지막 정리, 네 정지 지점 모두에서 테스트가 고정한다). `joern`은
+  남은 그룹에 SIGKILL -> 산 프로세스가 없는지 확인(최대 `KILL_VERIFY_SECONDS` 10초, 정한 값). `grace=0`이면 SIGTERM 없이 바로 SIGKILL이다 — `--restart-on-deadline`의
+  재시작이 쓴다(버려진 질의를 아직 계산하는 서버는 아래 관측처럼 SIGTERM에 안 나간다. SIGTERM이 안 갔다는 것을 테스트가 고정한다). SIGKILL 뒤에도 남은 pid는 stderr 경고와 summary.json
+  `unstopped_pids`(없으면 키가 없다 — 준비 서버 · 벽시계로 멈춘 샤드 · 끝의 서버 · `main()`의 마지막 정리, 그리고 `--restart-on-deadline`의 옛 슬라이서·서버와 안 뜬 새 서버(아래), 여섯 정지 지점 모두에서 테스트가 고정한다). `joern`은
   JVM을 자식으로 띄우는 `sh`라서 런처만 기다리면 JVM이 남는다 -> 질의를 돌리는 JVM은 SIGTERM에 안 나간다(셧다운 훅
   `EmbeddedRepl.shutdown`이 REPL에 명령을 실행하려다 진행 중인 질의 뒤에서 대기 — jstack). 2026-10-03 E1에서 서버 8개가 run보다 오래 남았다.
   관측 -> dev 박스 2026-10-03 · 실 Joern 4.0.605 · 힙 2g · 서버 단독 · **원본 로그는 못 남겼다**(박스가 지워졌다. 터미널 출력을 옮겨 적은 `sigterm_probe.out.txt` ·
@@ -296,7 +297,7 @@ CPG는 하나다.
 - 한도 -> `--max-restarts-per-shard`(기본 5, 정한 값): 한 샤드가 그만큼 다시 떴으면 그 뒤로는 그대로 둔다(걸려도 안 건드린다, summary.json
   `restart.limit_hit`에 샤드 번호). 그리고 `--wall-seconds`가 `RESTART_MIN_WALL_SECONDS`(60초, 정한 값)보다 적게 남았으면 다시 안 띄운다 — 작은 그래프에서 kill부터
   그 샤드의 다음 질의까지 ≈ 16초였다(아래). 새 서버가 안 뜨면(또는 옛 서버가 SIGKILL 뒤에도 남으면) 그 샤드는 죽은 채로 `dead_shards`에 들고 이유가
-  `restart.errors`에 남는다
+  `restart.errors`에 남는다(남은 pid는 어느 쪽이든 `unstopped_pids`에도 든다)
 - 재시작 비용 -> 관측 -> 같은 박스·날짜·libxml2(CPG 8.7MB)·힙 10g·1회: 새 서버가 듣기까지 5.74초 + 새 slicer 프로세스 시작에서 첫 질의까지
   10.15초(프로세스 시작·`joern --version`·체크포인트 열기를 합쳐 6.05초, 저장한 CPG의 `importCpg` 1.30초, 인벤토리 0.67초, 라이브러리 정의 1.91초) =
   약 15.9초(두 값의 합, 계산값). 여기에 kill이 끝나기를 기다리는 시간이 더해진다 -> 그 실험은 0.01초로 쟀지만 스레드가 남은 좀비 리더를 뺀 옛 기준이었고, 고친
