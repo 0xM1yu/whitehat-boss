@@ -80,12 +80,14 @@ v2 표는 **한 글자도 안 바뀐다**(`assigns`는 여전히 이름 대입�
   초기화 `char *q = malloc(n)` — `locals`는 선언 줄만 들고 초기값 유무를 모른다). 이름 대입
   (`p = malloc(n)`)은 `assigns`에 있으므로 여기 다시 싣지 않는다.
 - **`writes`의 `base`** — 기저가 이름이면 `name`, 필드면 `field`(`vv->buf[i] = x`의 키는 `buf`).
-  둘을 한 키에 섞으므로 읽는 쪽이 가른다. 기저는 첨자·역참조·괄호·캐스트·`+`/`-`의 왼쪽을 벗겨
-  찾는다 — `*(p + 1) = 2`는 `p`다. 못 찾으면(`*f() = x`) 싣지 않는다.
+  둘을 한 키에 섞으므로 읽는 쪽이 가른다. 기저는 첨자·역참조·증감·괄호·캐스트·`+`/`-`의 왼쪽을
+  벗겨 찾는다 — `*(p + 1) = 2`·`*p++ = c`는 `p`다(`+`의 왼쪽이 수 상수면 오른쪽 — `*(1 + p)`).
+  못 찾으면(`*f() = x`) 싣지 않는다.
 - **`fn_bindings`의 `form`** — `assign`(`o->alloc = my_alloc;` · `&my_alloc`) · `designated`
-  (`.free_ctx = sshpam_free_ctx`). **`fn`이 `functions` 표에 정의로 있는 이름일 때만** 싣는다 —
-  `o->len = n;`이 바인딩으로 오인되지 않게. 그래서 대상 트리 밖에 정의된 함수(`.free = free`)는
-  안 든다. `func`는 파일 스코프 초기화면 `null`이다.
+  (`.free_ctx = sshpam_free_ctx`). 값의 캐스트·괄호는 벗긴다(`(cb_t)my_alloc`).
+  **`fn`이 `functions` 표에 정의로 있는 이름일 때만** 싣는다 — `o->len = n;`이 바인딩으로
+  오인되지 않게. 그래서 대상 트리 밖에 정의된 함수(`.free = free`)는 안 든다.
+  `func`는 파일 스코프 초기화면 `null`이다.
 - **`field_calls`** — 호출식의 함수 자리가 필드(`vv->f`·`s.f`·`(*vv->f)`)인 호출. v1 이래
   `unresolved_calls`가 세던 것의 일부를 이름째 남긴다 — **그 수는 그대로 센다.**
 
@@ -94,7 +96,8 @@ v2·v3 표가 못 잡는 것 — 구문만 보기 때문이다:
 | 놓치는 것 | 왜 |
 | --- | --- |
 | 매크로가 선언하는 변수(`DECLARE_BITMAP(bits, 64);`) | 전처리를 하지 않아 호출식으로 파싱된다 |
-| 증감(`i++`·`buf[i]++`) | 대입식이 아니다 — `assigns`·`writes` 어디에도 안 든다 |
+| 증감(`i++`·`buf[i]++`) | 대입식이 아니다 — 어느 표에도 안 든다(`*p++ = x`는 대입식이라 든다) |
+| 삼항으로 고르는 바인딩(`o->f = c ? a : b`) | 값이 이름 하나가 아니다 — `fn_bindings`에 안 든다 |
 | 위치 초기화(`{ my_init, my_free }`) | 필드 순서를 타입 정의에서 찾아야 한다 |
 | 함수 포인터 변수·배열 호출(`fp(x)`) | 필드가 아니다 — `calls`에 `fp`로 들고 정의가 없다 |
 | 같은 이름 필드의 주인 | 필드 이름만 키다 — 읽는 쪽이 `fields` 하나뿐일 때만 저장소 전체로 잇는다 |
@@ -539,10 +542,12 @@ def _is_deref(node) -> bool:
 def _write_base(node):
     """원소·역참조 좌변의 기저 이름 노드(`identifier`·필드의 `field_identifier`). 없으면 `None`.
 
-    벗기는 겹(실파싱 — tree-sitter-c 0.24.2): 첨자(`buf[i][j]`)·역참조(`**pp`)는 `argument` 필드,
-    캐스트(`((char *)p)[2]`)는 `value` 필드, 괄호는 필드가 없어 첫 이름 있는 자식, 포인터 산술
-    (`*(p + 1)`)은 `+`·`-`의 왼쪽. 필드에서 멈춘다 — `vv->buf[i]`의 기저는 필드 `buf`다. 그 밖
-    (`*f() = x` · `&x`)은 이름을 지어내지 않는다.
+    벗기는 겹(실파싱 — tree-sitter-c 0.24.2): 첨자(`buf[i][j]`)·역참조(`**pp`)·증감
+    (`*p++`·`*--p` — `update_expression`)은 `argument` 필드, 캐스트(`((char *)p)[2]`)는
+    `value` 필드, 괄호는 필드가 없어 첫 이름 있는 자식, 포인터 산술(`*(p + 1)`)은 `+`·`-`의
+    왼쪽 — 단 `+`의 왼쪽이 수 상수면 오른쪽이다(`*(1 + p)`). 타입을 안 보므로 `*(i + p)`는 `i`로
+    적는다. 필드에서 멈춘다 — `vv->buf[i]`의 기저는 필드 `buf`다. 그 밖(`*f() = x` · `&x`)은
+    이름을 지어내지 않는다.
     """
     while node is not None:
         kind = node.type
@@ -550,14 +555,20 @@ def _write_base(node):
             return node
         if kind == "field_expression":
             return node.child_by_field_name("field")
-        if kind == "subscript_expression" or (kind == "pointer_expression" and _is_deref(node)):
+        if kind in ("subscript_expression", "update_expression") or (
+            kind == "pointer_expression" and _is_deref(node)
+        ):
             node = node.child_by_field_name("argument")
         elif kind == "parenthesized_expression":
             node = node.named_children[0] if node.named_children else None
         elif kind == "cast_expression":
             node = node.child_by_field_name("value")
         elif kind == "binary_expression" and _operator_is(node, ("+", "-")):
-            node = node.child_by_field_name("left")
+            left = node.child_by_field_name("left")
+            if left is not None and left.type == "number_literal" and _operator_is(node, ("+",)):
+                node = node.child_by_field_name("right")
+            else:
+                node = left
         else:
             return None
     return None
@@ -569,9 +580,20 @@ def _operator_is(node, operators: tuple[str, ...]) -> bool:
 
 
 def _bound_function(value) -> str | None:
-    """대입·초기화 값이 함수 이름 하나(`f`·`&f`)면 그 이름. 함수인지는 `build_index`가 본다."""
-    if value.type == "pointer_expression" and not _is_deref(value):
-        value = value.child_by_field_name("argument")
+    """대입·초기화 값이 함수 이름 하나(`f`·`&f`)면 그 이름. 함수인지는 `build_index`가 본다.
+
+    캐스트(`(cb_t)f`)·괄호(`(f)`)는 벗긴다 — 시그니처가 다른 콜백을 캐스트해 묶는 꼴이 흔하다.
+    삼항(`c ? f : g`)·호출 결과는 이름 하나가 아니라 안 싣는다.
+    """
+    while value is not None:
+        if value.type == "cast_expression":
+            value = value.child_by_field_name("value")
+        elif value.type == "parenthesized_expression":
+            value = value.named_children[0] if value.named_children else None
+        elif value.type == "pointer_expression" and not _is_deref(value):
+            value = value.child_by_field_name("argument")
+        else:
+            break
     return _text(value) if value is not None and value.type == "identifier" else None
 
 
