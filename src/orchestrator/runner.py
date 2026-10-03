@@ -3117,9 +3117,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
 
     **쓰기 지점(`auditor_stores`)** — 1이면 정의 뒤·피호출 함수 앞에, 슬라이스 줄의 필드·전역이 실린
-    함수 **밖**에서 쓰이는 곳을 `STORES` 블록 하나로 붙인다(`source_stores.stores_block`). 블록은
-    함수가 아니라 `functions`에 안 든다. 이벤트에 `stores*`가 더 실린다(못 실은 행의 목록 포함).
-    0이면 이 단계도 이벤트 필드도 없다.
+    함수 **밖**에서 쓰이는 곳을 `STORES` 블록 하나로 붙인다(`source_stores.stores_block`). 「밖」은
+    `SOURCE`에 실제로 보이는 줄의 밖이다 — `auditor_entry_trim`으로 줄어든 entry 함수는 남은 토막만
+    보인다(`anchor_visible`). 블록은 함수가 아니라 `functions`에 안 든다. 이벤트에 `stores*`가 더
+    실린다(못 실은 행의 목록 포함). 0이면 이 단계도 이벤트 필드도 없다.
 
     **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
     함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
@@ -3161,8 +3162,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 줄이 0이다.
     over_cap = bool(trim_entry) and measure(anchor_text) > cap
     omitted = 0
+    # entry 함수에서 `SOURCE`에 실제로 보이는 범위 — 줄였으면 남은 토막들이다(`STORES`가 쓴다).
+    anchor_visible = [anchor]
     if over_cap:
-        anchor_text, omitted = _trim_entry(anchor, anchor_text, in_anchor)
+        anchor_text, omitted, anchor_visible = _trim_entry(anchor, anchor_text, in_anchor)
     blocks = [_block(anchor, anchor_text, end=anchor_end)]
     # 정의 조회가 읽는 (위치, 원문) — 배너(`파일:줄`)와 뺀 구간 표시의 낱말은 코드가 아니다(#351
     # 리뷰). 위치를 같이 든다: 지역·파라미터는 함수마다 따로 빼야 해서다(`source_definitions`).
@@ -3213,8 +3216,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     stores = None
     if ctx.config.thresholds.auditor_stores:
         stores = stores_block(
-            ref, carried, read_source=ctx.read_source, stores_of=ctx.stores_of,
-            measure=measure, room=cap - size - 1,
+            ref, [*anchor_visible, *carried[1:]], read_source=ctx.read_source,
+            stores_of=ctx.stores_of, measure=measure, room=cap - size - 1,
         )
         if stores.text:
             blocks.append(stores.text)
@@ -3311,13 +3314,17 @@ def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:
     return Location(file=site.file, symbol=site.symbol, line_start=max(1, start), line_end=end)
 
 
-def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tuple[str, int]:
+def _trim_entry(
+    anchor: Location, text: str, keep_lines: list[int | None]
+) -> tuple[str, int, list[Location]]:
     """상한을 넘는 entry 함수를 줄인다(#349 — `auditor_entry_trim`). 남기는 줄은 함수 머리(여는
     `{`가 나오는 줄까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안) · 닫는 줄 · `keep_lines`(entry 줄과
     이 함수 안 슬라이스 줄) 앞뒤 `_AUDITOR_ENTRY_CONTEXT_LINES`줄이다. 뺀 구간마다
     `/* ... N lines omitted ... */` 한 줄을 남긴다 — 줄 번호는 배너 범위와 이 표시로 되짚는다
     (줄였으면 함수가 하나여도 배너를 단다 — `_auditor_source`).
-    돌려주는 것은 줄인 원문과 뺀 줄 수다. 줄여도 상한을 넘을 수 있다 — 더 줄이지 않는다.
+    돌려주는 것은 줄인 원문 · 뺀 줄 수 · **남은 줄의 연속 구간들**이다(`SOURCE`에 실제로 보이는
+    범위 — `STORES` 블록이 「이미 보인다」를 가리는 데 쓴다). 줄여도 상한을 넘을 수 있다 — 더
+    줄이지 않는다.
     """
     lines = text.split("\n")
     start = anchor.line_start or 1
@@ -3332,6 +3339,7 @@ def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tu
                 range(at - _AUDITOR_ENTRY_CONTEXT_LINES, at + _AUDITOR_ENTRY_CONTEXT_LINES + 1)
             )
     out: list[str] = []
+    spans: list[list[int]] = []
     omitted = gap = 0
     for i, line in enumerate(lines):
         if i in keep:
@@ -3339,9 +3347,17 @@ def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tu
                 out.append(_OMITTED.format(gap))
                 omitted, gap = omitted + gap, 0
             out.append(line)
+            if spans and spans[-1][1] == start + i - 1:
+                spans[-1][1] = start + i
+            else:
+                spans.append([start + i, start + i])
         else:
             gap += 1
-    return "\n".join(out), omitted
+    visible = [
+        Location(file=anchor.file, symbol=anchor.symbol, line_start=first, line_end=last)
+        for first, last in spans
+    ]
+    return "\n".join(out), omitted, visible
 
 
 def _overlaps(a: Location, b: Location) -> bool:

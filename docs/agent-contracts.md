@@ -144,11 +144,16 @@ agent:
   ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
   entry 줄이기·쓰기 지점). 전부 기본 꺼짐이라 위 서술 그대로. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
   `cli` run·doctor가 선다. `auditor_stores`는 정의 뒤·피호출 본문 앞에 `STORES` 블록 하나를 붙인다 — 슬라이스 줄의
-  필드·전역이 실린 함수 **밖**에서 쓰이는 곳(`file:line | 원문 줄 | 술어`, `orchestrator/source_stores.py`). 인덱스
+  필드·전역이 `SOURCE`에 **실제로 보이는 줄 밖**(`auditor_entry_trim`으로 줄어든 entry 함수는 남은 토막만 보이는
+  줄이다)에서 쓰이는 곳(`file:line | 원문 줄 | 술어`, `orchestrator/source_stores.py`). 인덱스
   표(`field_assigns`·`assigns`·`calls`)만 본 구문 결과라 **행이 없다는 것이 쓰기가 없다는 증거는 아니다**.
   `field_assigns` 행에는 객체의 구조체 타입이 없어(열은 file·line·func·lhs·rhs·op) 필드 쓰기는 이름으로만 이어진다 —
-  그 필드를 선언한 구조체가 인덱스에서 하나로 안 정해지면 행에 `[ambiguous]`가 붙고, 이름마다 4행까지(같은 파일 먼저)만
-  싣고 못 실은 행은 trace에 목록으로 남는다
+  행에 `[ambiguous]`가 **안** 붙는 조건은 둘이다: 그 필드를 선언한 구조체가 인덱스에서 하나이고, 그 파일이 쓰기
+  파일과 찾는 줄의 파일 둘 다와 같은 디렉터리일 때(include 정보가 인덱스에 없어 「둘 다 볼 수 있다」를 이것으로
+  근사한다). 그 밖은 `[ambiguous]`고, 안 붙었어도 증명은 아니다(진짜 구조체가 인덱스 밖 헤더에 있고 같은 디렉터리의
+  다른 구조체가 같은 필드 이름을 가지면 못 가린다). 순서는 같은 파일 → 제품 경로(예제·테스트·fuzz 쓰기는 뒤) →
+  모호하지 않은 것이고, 이름마다 4행까지만 싣는다. 못 실은 행이 있으면 블록 끝에 `+N more rows not shown` 줄이 붙고
+  trace에는 목록으로 남는다. 할당기는 **줄 단위**로 이은 것이라 문장의 우변이 그 호출일 때만 `allocates`라 쓴다
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —

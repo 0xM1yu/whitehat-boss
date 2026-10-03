@@ -1,13 +1,18 @@
 """Auditor `SOURCE`의 `STORES` 블록 — 슬라이스의 필드·전역이 **어디서 쓰이는지** (`auditor_stores`).
 
-검수에서 가장 자주 나온 요청이 「이 길이·버퍼·필드는 어디서 정해지나」(호출부·할당)였다. 답은
-인덱스에 이미 있다 — `field_assigns`(구조체 필드 쓰기)·`assigns`(변수 대입)·`calls`(할당기 호출과
-크기 식). 그런데 `SOURCE`는 슬라이스가 걸친 함수의 본문만 싣고 그 표를 안 썼다(NE resolver만
-썼다). 이 블록이 그 틈을 채운다(첫 줄은 `HEADER`):
+검수에서 「이 길이·버퍼·필드는 어디서 정해지나」(호출부·할당)를 묻는 행이 많았다 — 83샘플 검수의
+미해결 사유 209건을 키워드로 센 집계(데이터팀 CSV `sample_causes_round3.partial.csv`, 저장소 밖
+로컬 · run ID 없음 · 키워드가 겹쳐 합이 100%를 넘는다)에서 호출부·할당은 42행(51%)이고 피호출
+본문·계약(66행)과 범위·검증(57행) 다음이다. 가장 흔한 요청이라는 뜻은 아니다 — s500 1,199표본의
+사유 태그(로컬 집계 · run ID 없음)에서는 함수·매크로·타입·API 동작(C4) 1,008건이 버퍼 용량·입력
+범위·호출 전 검증(C5) 920건보다 많다. 답은 인덱스에 이미 있다 — `field_assigns`(구조체 필드
+쓰기)·`assigns`(변수 대입)·`calls`(할당기 호출과 크기 식). 그런데 `SOURCE`는 슬라이스가 걸친
+함수의 본문만 싣고 그 표를 안 썼다(NE resolver만 썼다). 이 블록이 그 틈을 채운다(첫 줄은 `HEADER`):
 
-    /* ===== STORES (index: direct assignments only, ...) ===== */
+    /* ===== STORES (index name matches, direct assignments only, ...) ===== */
     util.c:81 | ctx->len = n * 2; | writes ->len
     util.c:97 | buf = malloc(ctx->len + 1); | allocates buf (malloc: ctx->len + 1)
+    /* ... +3 more rows not shown ... */
 
 여기는 **순수 쪽**이다 — 인덱스 조회(`stores_of`)와 원문 읽기(`read_source`)를 콜러블로 받는다. 구체
 인덱스(`GraphIndex.stores_of`)는 러너가 몰라도 되게 어댑터에 있고, 둘 사이를 건너는 값은
@@ -22,22 +27,31 @@
 
 ## 무엇을 싣는가
 
-- 쓰기가 **이미 실린 함수 안**이면 안 싣는다(`carried`) — 정의·피호출 단계가 겹침을 거르는 것과
-  같다. 센다(`in_source`): 「못 찾았다」와 「이미 보인다」가 갈려야 한다.
-- 같은 파일의 쓰기 → 모호하지 않은 것 → 좌변 철자가 같은 것 → (파일, 줄). **이름마다**
+- 쓰기가 **SOURCE에 실제로 보이는 줄** 안이면 안 싣는다(`visible`) — 정의·피호출 단계가 겹침을
+  거르는 것과 같다. `auditor_entry_trim`으로 줄어든 entry 함수는 **남은 토막만** 보이는 줄이다.
+  센다(`in_source`): 「못 찾았다」와 「이미 보인다」가 갈려야 한다.
+- 순서: 같은 파일의 쓰기 → 제품 경로 쓰기(`StoreSite.nonproduct`가 아닌 것 — 예제·테스트·fuzz
+  쓰기는 뒤로 미룬다) → 모호하지 않은 것 → 좌변 철자가 같은 것 → (파일, 줄). **이름마다**
   `_PER_NAME`행까지(몇 파일에서 봐도 합이다), 블록은 `_STORES_CHARS`와 `SOURCE` 상한의 남은
   몫(`room`)까지 — **글자 상한이 토큰 상한을 묶어 주지 않는다**(`measure`가 그 단위).
-- 못 실은 행은 개수가 아니라 `file:line 이름` **목록**으로 trace에 남는다(`Stores.trace_fields`).
+- 못 실은 행이 있으면 블록 끝에 `+N more rows not shown` 한 줄이 붙는다(모델이 「이게 전부」로 읽지
+  않게 — 그 줄 자리는 미리 남겨 둔다). 못 실은 행은 trace에도 개수가 아니라 `file:line 이름`
+  **목록**으로 남는다(`Stores.trace_fields`).
 
-## 한계 (구문만 본다 · 필드는 이름으로만 잇는다)
+## 한계 (구문만 본다 · 이름으로 잇는다)
 
 `buf[i] = x`·`*p = x`·`i++`·지정 초기화·함수에 `&x`를 넘겨 쓰는 경우는 인덱스가 쓰기로 안 센다.
 그래서 **행이 없다는 것은 쓰기가 없다는 증거가 아니다.** 필드 쓰기 행(`field_assigns`)에는 객체의
-구조체 타입이 없어 (구조체, 필드)로 못 짚는다 — 이름 키라서 흔한 필드(`len`·`next`)는 쓰기가 수십
-곳이고 대부분 다른 구조체의 것이다. 선언한 구조체가 인덱스에서 하나로 정해지지 않으면 인덱스가
-그 행에 `ambiguous`를 달고, 여기서는 이름마다 `_PER_NAME`행으로 자른다. ponytail: 멀티라인
-문장은 괄호가 안 닫힐 때 **다음 한 줄**만 잇는다. 인덱서가 쓰기 좌변 객체의 타입을 행에 실으면
-(열 추가 = 인덱스 판 올림) 모호 표시가 대부분 걷힌다.
+구조체 타입이 없어 (구조체, 필드)로 못 짚는다 — 이름 키라서 흔한 필드(`len`·`next`)는 쓰기가
+수십 곳이고 대부분 다른 구조체의 것이다. 인덱스가 `ambiguous`를 **달지 않는** 필드 행의 조건은
+둘이다: 그 필드를 선언한 구조체가 인덱스에서 (타입, 파일) 하나이고, 그 파일이 쓰기 파일과 찾는
+줄의 파일 **둘 다와 같은 디렉터리**(include 정보가 인덱스에 없어 「둘 다 볼 수 있다」를 이것으로
+근사한다)일 때. 그 밖은 `ambiguous`다. ⚠ 달리지 않았어도 증명이 아니다 — 진짜 구조체가 인덱스 밖
+헤더에 있고 같은 디렉터리의 다른 구조체가 같은 필드 이름을 가지면 못 가린다. 여기서는 이름마다
+`_PER_NAME`행으로 자른다. 할당기 호출은 **줄 단위**로 이어진 것이라(`x = f(malloc(n))`도 같은 줄)
+원문 줄의 우변이 그 호출일 때만 `allocates`라 쓰고 아니면 「같은 줄에 호출이 있다」고만 쓴다.
+ponytail: 멀티라인 문장은 괄호가 안 닫힐 때 **다음 한 줄**만 잇는다. 인덱서가 쓰기 좌변 객체의
+타입과 include를 행에 실으면(열 추가 = 인덱스 판 올림) 모호 표시가 대부분 걷힌다.
 """
 
 import json
@@ -50,11 +64,11 @@ from src.schemas.common import Location
 from src.schemas.stores import StoreSite, StoreTarget
 
 # 블록의 첫 줄 — `SOURCE`의 다른 블록(`/* ===== 파일:줄 ===== */`)과 모양은 같고 이름이 다르다.
-# 프롬프트가 이 줄을 파일 범위 배너로 읽지 않게 하고, 행이 무엇인지(직접 대입만 · 전부 아님 ·
-# `[ambiguous]`)를 블록 안에서 말한다.
+# 프롬프트가 이 줄을 파일 범위 배너로 읽지 않게 하고, 행이 무엇인지(이름이 같은 직접 대입만 · 전부
+# 아님 · `[ambiguous]` = 같은 구조체·변수의 것이라고 확인하지 못함)를 블록 안에서 말한다.
 HEADER = (
-    "/* ===== STORES (index: direct assignments only, not exhaustive; "
-    "[ambiguous] = matched by name alone) ===== */"
+    "/* ===== STORES (index name matches, direct assignments only, not exhaustive; "
+    "[ambiguous] = owner not confirmed) ===== */"
 )
 
 # 블록 하나의 글자 상한 — 정의 하나(`runner._AUDITOR_DEFINITION_CHARS`)와 같은 크기다. **정한 값이지
@@ -118,7 +132,7 @@ class Stores:
 
 def stores_block(
     ref: SliceRef,
-    carried: Sequence[Location],
+    visible: Sequence[Location],
     *,
     read_source: Callable[[Location], str],
     stores_of: Callable[[StoreTarget], list[StoreSite] | None],
@@ -127,8 +141,9 @@ def stores_block(
 ) -> Stores:
     """슬라이스의 필드·변수가 쓰이는 곳을 `STORES` 블록으로.
 
-    `carried`는 **실제로 실린** 함수들(entry 함수 + 상한에 들어간 함수)이다 — 상한에 걸려 **빠진**
-    함수의 쓰기는 안 보이므로 행이 될 수 있다. `read_source`는 파일 통째로만 읽는다
+    `visible`은 SOURCE에 **실제로 보이는** 줄 범위들이다 — 실린 함수(entry 함수 + 상한에 들어간
+    함수)이고, `auditor_entry_trim`으로 줄어든 entry 함수는 남은 토막만이다. 상한에 걸려 **빠진**
+    함수나 줄여서 뺀 줄의 쓰기는 안 보이므로 행이 될 수 있다. `read_source`는 파일 통째로만 읽는다
     (`Location(file=…)`) — 줄 범위 읽기는 `splitlines` 번호가 인덱서(tree-sitter)의 줄 번호와
     어긋날 수 있다. `measure`·`room`은 `SOURCE` 상한의 단위(글자 또는 토큰)와 남은 몫이다 — 블록은
     `_STORES_CHARS` **그리고** `room` 안이어야 한다. 인덱스가 없으면(`stores_of`가 `None`) 블록도
@@ -157,7 +172,7 @@ def stores_block(
             if key in taken:
                 continue  # 다른 파일에서 본 같은 이름이 이미 낸 행
             taken.add(key)
-            if _covered(carried, site):
+            if _covered(visible, site):
                 in_source += 1
             elif kept.get(name, 0) == _PER_NAME:
                 dropped.append(_label(site))
@@ -167,20 +182,33 @@ def stores_block(
     rows: list[str] = []
     for site in shown:
         row = _row(site, lines_of)
-        if row is None or _too_big("\n".join([HEADER, *rows, row]), measure, room):
+        # 못 실은 행이 하나라도 있으면 끝에 `_more` 줄이 붙는다 — 그 자리를 미리 뺀다(상한 위로 못
+        # 나가게). 숫자는 지금까지 못 실은 행 + 아직 안 본 행을 다 센 상한값이라 줄이 안 짧다.
+        tail = _more(len(dropped) + len(shown))
+        if row is None or _too_big("\n".join([HEADER, *rows, row, tail]), measure, room):
             dropped.append(_label(site))
         else:
             rows.append(row)
-    text = "\n".join([HEADER, *rows]) if rows else ""
+    text = ""
+    if rows:
+        text = "\n".join([HEADER, *rows, *([_more(len(dropped))] if dropped else [])])
     return Stores(text, len(rows), tuple(dropped), in_source, skipped)
 
 
-def _rank(site: StoreSite, target: StoreTarget) -> tuple[bool, bool, bool, str, int]:
-    """이름을 본 파일의 쓰기가 먼저, 그다음 모호하지 않은 것, 그다음 좌변이 같은 철자인 것(공백
-    무시 — 같은 객체일 법하다는 약한 신호일 뿐 구조체가 같다는 증거는 아니다), 그다음 (파일, 줄)."""
+def _more(count: int) -> str:
+    """못 실은 행이 있다는 블록 끝 한 줄 — 모델이 「행이 이게 전부」로 읽지 않게 한다."""
+    return f"/* ... +{count} more rows not shown ... */"
+
+
+def _rank(site: StoreSite, target: StoreTarget) -> tuple[bool, bool, bool, bool, str, int]:
+    """이름을 본 파일의 쓰기가 먼저, 그다음 제품 경로(예제·테스트·fuzz 쓰기는 뒤 — 이름마다 행 수
+    상한이 있어 앞선 비제품 행이 제품 행을 밀어내지 않게), 그다음 모호하지 않은 것, 그다음 좌변이
+    같은 철자인 것(공백 무시 — 같은 객체일 법하다는 약한 신호일 뿐 구조체가 같다는 증거는 아니다),
+    그다음 (파일, 줄)."""
     spelled = target.lhs or ""  # `_names`가 이미 공백 없이 적는다
     return (
         site.file != target.file,
+        site.nonproduct,
         site.ambiguous,
         "".join(site.lhs.split()) != spelled,
         site.file,
@@ -197,15 +225,15 @@ def _label(site: StoreSite) -> str:
     return f"{site.file}:{site.line} {site.name}"
 
 
-def _covered(carried: Sequence[Location], site: StoreSite) -> bool:
-    """쓰기 줄이 이미 실린 함수(또는 창) 안인가. 줄 범위가 없으면 그 파일 전체다."""
+def _covered(visible: Sequence[Location], site: StoreSite) -> bool:
+    """쓰기 줄이 SOURCE에 이미 보이는 범위 안인가. 줄 범위가 없으면 그 파일 전체다."""
     return any(
         loc.file == site.file
         and (
             loc.line_start is None
             or loc.line_start <= site.line <= (loc.line_end or loc.line_start)
         )
-        for loc in carried
+        for loc in visible
     )
 
 
@@ -271,21 +299,33 @@ def _row(site: StoreSite, lines_of: Callable[[str], list[str]]) -> str | None:
         # 괄호가 안 닫힌 문장은 다음 한 줄(±1줄)까지만 잇는다
         text += " " + lines[site.line].strip()
     text = " ".join(text.split())
+    predicate = _predicate(site, text)  # 자르기 전 문장으로 — 잘린 `...`가 우변 판정을 안 흔들게
     if len(text) > _LINE_CHARS:
         text = text[: _LINE_CHARS - 3] + "..."
-    return f"{site.file}:{site.line} | {text} | {_predicate(site)}"
+    return f"{site.file}:{site.line} | {text} | {predicate}"
 
 
-def _predicate(site: StoreSite) -> str:
+def _predicate(site: StoreSite, text: str) -> str:
     """한 줄 술어 — `writes ->len` · `assigns g_len` · `allocates ->buf (malloc: c->len + 1)`.
-    이름만으로 이은 행은 `[ambiguous]`가 붙는다."""
+    이름만으로 이은 행은 `[ambiguous]`가 붙는다. `text`는 그 행의 문장(공백을 접은 원문)이다.
+
+    할당기는 인덱스가 **줄 단위**로 이은 것이다 — 문장의 우변이 그 호출일 때(`= (cast) malloc(`)만
+    `allocates`라 쓰고, 아니면(`x = f(malloc(n))` · 삼항 · 다른 문장) 「같은 줄에 호출이 있다」고만
+    쓴다."""
     what = site.name
     if site.field:
         what = ("." if re.search(r"\.\s*\w+\s*$", site.lhs) else "->") + site.name
+    verb = f"assigns {what}"
+    if site.field:
+        verb = f"writes {what}" + (f" ({site.op})" if site.op != "=" else "")
+    body = verb
     if site.alloc:
-        text = f"allocates {what} ({site.alloc}: {', '.join(site.alloc_args)})"
-    elif site.field:
-        text = f"writes {what}" + (f" ({site.op})" if site.op != "=" else "")
-    else:
-        text = f"assigns {what}"
-    return text + (" [ambiguous]" if site.ambiguous else "")
+        args = ", ".join(site.alloc_args)
+        call = re.escape(site.alloc)
+        direct = re.search(r"(?<![=!<>])=\s*(?:\([^()]*\)\s*)*" + call + r"\s*\(", text)
+        body = (
+            f"allocates {what} ({site.alloc}: {args})"
+            if direct
+            else f"{verb}; same line calls {site.alloc}({args})"
+        )
+    return body + (" [ambiguous]" if site.ambiguous else "")
