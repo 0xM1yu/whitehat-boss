@@ -478,11 +478,14 @@ def test_stop_sends_sigterm_first_and_waits_for_a_clean_exit(stub_server, tmp_pa
 
 
 @needs_proc
-def test_stop_all_without_a_grace_kills_at_once(stub_server, tmp_path):
+def test_stop_all_without_a_grace_kills_at_once(stub_server, tmp_path, monkeypatch):
     """A server whose query was abandoned past its deadline is not worth a SIGTERM (the restart)."""
     process = stub_server("graceful")
     wait_for(tmp_path / "ready")
+    sent, real = [], os.killpg
+    monkeypatch.setattr(tool.os, "killpg", lambda group, sig: sent.append(sig) or real(group, sig))
     assert tool.stop_all([process], grace=0) == []
+    assert sent == [signal.SIGKILL]                     # no SIGTERM first, however short the wait
     assert not (tmp_path / "term.marker").exists()
 
 
@@ -509,11 +512,19 @@ def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server)
 SURVIVOR = 10_000_000  # added to a group id: a pid no live process has, one per stopped process
 
 
-def immortal(monkeypatch) -> None:  # noqa: ANN001
-    """Every group looks alive to the stop's check: what no signal can end."""
+def immortal(monkeypatch, only=lambda group: True) -> None:  # noqa: ANN001
+    """The process groups `only` picks look alive to the stop's check, one pid each, whatever is
+    signalled: what no signal can end. The others are looked at for real."""
+    real = tool._live_groups
+
+    def look(groups):  # noqa: ANN001, ANN202
+        picked = {group for group in groups if only(group)}
+        found = real(groups - picked) if groups - picked else {}
+        return found | {group: [group + SURVIVOR] for group in picked}
+
     monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.2)
     monkeypatch.setattr(tool, "KILL_VERIFY_SECONDS", 0.2)
-    monkeypatch.setattr(tool, "_live_groups", lambda groups: {g: [g + SURVIVOR] for g in groups})
+    monkeypatch.setattr(tool, "_live_groups", look)
 
 
 @needs_proc
@@ -792,3 +803,49 @@ def test_a_failed_restart_leaves_that_shard_dead_and_says_why(stubbed, monkeypat
     assert "exited 3 before listening" in summary["restart"]["errors"][0]
     assert summary["dead_shard_logs"][0].endswith("slicer.log")
     assert all(p.poll() is not None for p in launched)
+
+
+@needs_posix
+def test_a_restart_kills_the_old_server_without_a_sigterm(stubbed, monkeypatch):
+    """The old server is busy with the abandoned query: a SIGTERM would only queue behind it (and
+    wait out the grace). The new server's stop at the end of the run does get one."""
+    run, _ = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline0")
+    monkeypatch.setenv("STUB_SERVER", "graceful")           # a SIGTERM leaves term.marker
+    assert run("--shards", "2", "--restart-on-deadline") == tool.EXIT_OK
+    assert run.summary()["restart"]["per_shard"] == [1, 0]
+    assert not (run.work / "shard0" / "term.marker").exists()
+    assert (run.work / "shard0" / "restart1" / "term.marker").exists()
+
+
+@needs_posix
+def test_a_restart_whose_old_processes_outlive_sigkill_starts_no_server(stubbed, monkeypatch):
+    """The restart's first stop site (shard 0's slicer and server, launched 4 and 2): the old
+    server may still hold the port, so no new one is started, the shard stays dead, and the
+    survivors reach restart.errors and summary.json `unstopped_pids`."""
+    run, launched = stubbed
+    immortal(monkeypatch)
+    monkeypatch.setenv("STUB_SHARD", "deadline0")
+    assert run("--shards", "2", "--restart-on-deadline") == tool.EXIT_INCOMPLETE
+    summary = run.summary()
+    restart = summary["restart"]
+    assert summary["dead_shards"] == [0] and restart["per_shard"] == [0, 0]
+    assert "outlived SIGKILL" in restart["errors"][0]
+    for old in (launched[2], launched[4]):
+        assert str(old.pid + SURVIVOR) in restart["errors"][0]
+        assert old.pid + SURVIVOR in summary["unstopped_pids"]
+    assert not (run.work / "shard0" / "restart1").exists()
+    assert len(argvs(run, 0)) == 1
+
+
+@needs_posix
+def test_unstopped_pids_name_the_servers_of_a_failed_restart(stubbed, monkeypatch):
+    """The restart's second stop site: the new server that never listened (launched 6) is stopped
+    again and what survives that reaches summary.json `unstopped_pids`."""
+    run, launched = stubbed
+    immortal(monkeypatch, only=lambda group: group in {p.pid for p in launched[6:]})
+    monkeypatch.setenv("STUB_SHARD", "deadline0")
+    monkeypatch.setenv("STUB_SERVER", "die-restart")
+    assert run("--shards", "2", "--restart-on-deadline") == tool.EXIT_INCOMPLETE
+    assert run.summary()["dead_shards"] == [0]
+    assert unstopped(run, launched, 6)
