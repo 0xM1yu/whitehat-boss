@@ -132,3 +132,19 @@ class SliceRef(HarnessModel):
     # Scout 트림(`scout._fit_slice`)의 버리는 순서를 정한다 — anchor > dependency > context.
     # 기본 `{}`는 provenance 없는 입력(옛 슬라이스·degraded 빈 범주)이고, 그럴 땐 거리순만 남는다.
     provenance: dict[str, tuple[tuple[str, int], ...]] = Field(default_factory=dict)
+    # 슬라이서의 분석 사실 — slice-v2 `analysis_kind`·`truncated`·`analysis.truncation_reasons`·
+    # `analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고 버렸다** — 그러면 하류가
+    # 「이 슬라이스는 잘렸다·위로 호출자를 못 찾았다」를 못 안다(`orchestrator/source_gate.py`가
+    # 읽는다). 기본값은 옛 슬라이스(키가 없다)의 것이라 `truncated=False`만으로는 「절단 아님」인지
+    # 「안 적었다」인지 안 갈린다 — `analysis_kind`가 빈 문자열이면 슬라이서가 분석 사실을 안 적은
+    # 슬라이스다.
+    analysis_kind: str = ""
+    truncated: bool = False
+    # Case A(`parameter_paths`)는 사유 목록을 안 내므로 `truncated=True`여도 비어 있다.
+    truncation_reasons: tuple[str, ...] = ()
+    # (reason, file, line) — Case B 역추적의 갈래가 끝난 자리. `entry_parameter`는 호출자 없는
+    # 함수의 파라미터이고 `dependency_root`·`external_or_unresolved_call`은 의존의 끝·본문 없는
+    # 호출이다.
+    # ⚠ `file`은 Joern 원경로라 `lines`·`entry`와 달리 저장소 상대로 정리돼 있지 않고, `line`은
+    # -1일 수 있다(Joern이 줄을 못 준 노드).
+    boundaries: tuple[tuple[str, str, int], ...] = ()
