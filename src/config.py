@@ -614,7 +614,8 @@ class Thresholds(HarnessModel):
     # ADR 0012 결정 1-b(「슬라이스가 걸친 함수의 원본 전부」) 그대로다. 1이면 실린 함수의 본문 안
     # 호출이 부르는 함수의 본문을 뒤에 붙인다(`runner._auditor_source`). 결정 1-b를 넓히는 값이라
     # 기본은 끈다. 2 이상은 아직 없다.
-    # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
+    # ⚠ 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
+    # — 그전에는 v4 · 판은 `config/models.yaml`이 고른다 — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
     # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 넷도 같다.
