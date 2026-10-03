@@ -4,12 +4,15 @@
 예산 차감 + trace를 한꺼번에 만든다"는 계약과, 소진 시 예외가 나온다는 것뿐이다.
 """
 
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+import yaml
 
 from src.adapters.memory_store import InMemoryStateStore
-from src.config import load_config
+from src.config import CONFIG_DIR, ConfigError, load_config
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelResult, Prompt, SchemaParseError, Usage
 from src.interfaces.retrieval import RetrievalResult
@@ -21,6 +24,7 @@ from src.orchestrator.trace import VOLATILE_FIELDS, EventKind, TraceWriter
 from src.schemas import Candidate, Decision, FindingState, Location, ProducedBy, Role, Verdict
 from src.schemas.finding import Finding
 from src.schemas.run import Budget
+from tests.conftest import ALL_PROFILES
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -96,6 +100,144 @@ def test_zero_limit_is_not_treated_as_exhausted() -> None:
     ledger = BudgetLedger(_budget(), TraceWriter(RUN_ID, clock=lambda: NOW))
 
     ledger.ensure(Stage.SCOUT)  # 예외 없음
+
+
+# --- 상한 0은 Fake의 뜻이고, 실서빙에서는 로드가 막는다 ----------------------------------------
+#
+# 위 테스트가 지키는 뜻 — 상한 0은 「검사하지 않는다」 — 은 Fake에게 맞다. 그런데 이 저장소에서
+# `0`은 보통 「안 쟀다」이고(CLAUDE.md §0), 같은 `0`이 **실서빙 프로필의 예산**에 적히면 임대 GPU가
+# 한도 없이 돈다. 원장은 자기 모델이 실서빙인지 모르므로(`BudgetLedger(budget, trace)`) 막는 자리는
+# `load_config`다. 실서빙 판정은 프로필의 `production`이 아니라 `served_models()`가 한다.
+
+_LIMITS = ("input_tokens", "output_tokens", "gpu_seconds", "tool_seconds")
+
+
+def _config_dir_with_budget(
+    dest: Path, *, profile: str, budget: str, limits: dict[str, int | None]
+) -> Path:
+    """저장소 config를 `dest`로 복사해 `profile`이 `budget` 예산을 쓰게 하고 상한을 덮는다.
+
+    값이 `None`이면 키를 **뺀다** — `tool_seconds`는 안 적으면 0이 되는 유일한 키다(`Budget`).
+    """
+    shutil.copy(CONFIG_DIR / "models.yaml", dest / "models.yaml")
+    raw_budgets = yaml.safe_load((CONFIG_DIR / "budgets.yaml").read_text("utf-8"))
+    block = raw_budgets["budgets"][budget]
+    for key, value in limits.items():
+        if value is None:
+            block.pop(key, None)
+        else:
+            block[key] = value
+    (dest / "budgets.yaml").write_text(yaml.safe_dump(raw_budgets, allow_unicode=True), "utf-8")
+    raw_profiles = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
+    raw_profiles["profiles"][profile]["budget"] = budget
+    (dest / "profiles.yaml").write_text(yaml.safe_dump(raw_profiles, allow_unicode=True), "utf-8")
+    return dest
+
+
+@pytest.mark.parametrize("item", _LIMITS)
+def test_a_real_serving_profile_refuses_a_zero_limit(tmp_path: Path, item: str) -> None:
+    """실모델을 서빙하는 프로필은 상한 넷 중 하나라도 0이면 **로드가** 실패한다.
+
+    네 키를 하나씩 0으로 만든다 — 한 키만 막는 구현(`gpu_seconds`만 본다든지)이 빠지면 나머지
+    셋이 빨개진다. 실패해야 하는 자리는 run 중이 아니라 로드다: 돈이 나가기 시작한 뒤에는 늦다.
+    """
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="harness_pool", budget="default", limits={item: 0}
+    )
+
+    with pytest.raises(ConfigError, match=item):
+        load_config("harness_pool", config_dir=config_dir)
+
+
+def test_a_real_serving_budget_that_omits_tool_seconds_is_refused(tmp_path: Path) -> None:
+    """`tool_seconds`를 **안 적은** 예산도 0이다 — 빈칸이 곧 한도 없음이 되는 유일한 키.
+
+    이 키가 선택값인 것은 옛 manifest 때문이다(`Budget.tool_seconds`). 실서빙 프로필의 예산을
+    새로 만들면서 이 줄을 빠뜨리는 것이 0을 직접 쓰는 것보다 있을 법한 실수다.
+    """
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="harness_pool", budget="default", limits={"tool_seconds": None}
+    )
+
+    with pytest.raises(ConfigError, match="tool_seconds"):
+        load_config("harness_pool", config_dir=config_dir)
+
+
+def test_a_real_serving_profile_cannot_borrow_the_fake_budget(tmp_path: Path) -> None:
+    """실서빙 프로필이 `dev_fake` 예산을 가리키면 로드가 실패한다 — 이름 하나 잘못 적는 실수다.
+
+    `dev_fake`의 0은 「Fake는 GPU를 안 쓴다」는 뜻으로 거기 있다. 그 예산을 실서빙 프로필이 쓰면
+    같은 0이 「한도 없음」이 된다. 에러가 0인 키를 **전부** 말해야 고칠 자리가 보인다 — 키 이름은
+    에러의 안내 문장에도 나오므로 개별 이름이 아니라 **0인 키 목록**을 본다(키 하나만 거르는 가드가
+    이 검사를 지나가던 것을 변이로 확인했다).
+    """
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="harness_pool", budget="dev_fake", limits={}
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        load_config("harness_pool", config_dir=config_dir)
+
+    assert "['gpu_seconds', 'tool_seconds']" in str(raised.value)
+
+
+def test_a_one_second_limit_on_a_real_profile_loads_and_still_stops_the_run(
+    tmp_path: Path,
+) -> None:
+    """막는 것은 0이지 작은 값이 아니다 — 양수 중 가장 작은 1이 그대로 로드되고 그대로 막는다.
+
+    가드가 숫자 하한을 몰래 들이지 않았다는 핀이기도 하다: 이 변경이 정하는 값은 없다.
+    """
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="harness_pool", budget="default", limits=dict.fromkeys(_LIMITS, 1)
+    )
+    config = load_config("harness_pool", config_dir=config_dir)
+    assert config.served_models(), "이 검사는 실서빙 프로필 위에서 돌아야 한다"
+    ledger = BudgetLedger(config.budget, TraceWriter(RUN_ID, clock=lambda: NOW))
+
+    ledger.charge(
+        Usage(input_tokens=0, output_tokens=0, cached_tokens=0), stage=Stage.SCOUT, gpu_ms=1000
+    )
+
+    with pytest.raises(BudgetExhausted) as raised:
+        ledger.ensure(Stage.AUDITOR)
+    assert raised.value.item == "gpu_seconds"
+
+
+def test_a_fake_only_profile_may_keep_zero_limits(tmp_path: Path) -> None:
+    """Fake 전용 프로필의 0은 그대로 로드된다 — 막는 범위가 실서빙에 한정된다는 핀.
+
+    값을 저장소 `dev_fake`에서 읽지 않고 직접 0으로 세운다 — 저장소 값이 바뀌어도 이 경계는
+    같아야 하기 때문이다.
+    """
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="dev_fake", budget="dev_fake", limits=dict.fromkeys(_LIMITS, 0)
+    )
+
+    config = load_config("dev_fake", config_dir=config_dir)
+
+    assert config.served_models() == {}
+    assert set(config.budget.model_dump().values()) == {0}
+
+
+def test_every_shipped_profile_that_serves_a_real_model_declares_four_positive_limits() -> None:
+    """저장소가 싣고 있는 실서빙 프로필은 예산 상한 넷이 전부 양수다 — 0이 들어오면 여기서 빨개진다.
+
+    위 가드가 실패시키는 것은 **그 프로필을 로드하는 테스트**인데, 가드가 약해지면 그 테스트도
+    같이 초록이 된다. 이 검사는 로드된 값을 직접 읽으므로 가드와 따로 선다.
+
+    비어 있는 훑기는 초록이다 — 실서빙 프로필이 하나도 안 보이면(`served_models()`의 뜻이 바뀌었든
+    프로필이 다 지워졌든) 아무것도 안 본 채 통과하지 않고 여기서 멈춘다.
+    """
+    configs = {profile: load_config(profile) for profile in ALL_PROFILES}
+    real = {name: config for name, config in configs.items() if config.served_models()}
+    assert real, "실서빙 프로필이 하나도 없다 — 이 훑기가 아무것도 보지 않았다"
+
+    zero_limits = {
+        name: sorted(item for item, limit in config.budget.model_dump().items() if limit == 0)
+        for name, config in real.items()
+    }
+    assert {name: items for name, items in zero_limits.items() if items} == {}
 
 
 def test_ensure_raises_after_limit_reached() -> None:
