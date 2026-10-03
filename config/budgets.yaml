@@ -358,7 +358,7 @@ thresholds:
     expanded: 18000
     focused: 8000
 
-  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 v7(v6 + 이 넷의 서술)이 이 넷을 서술하고 meta의
+  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 v7(v6 + 이 넷의 서술 · ⏵ 2026-10-04 맨 아래 래퍼 너머까지 다섯)이 이 넷을 서술하고 meta의
   # `source_options`로 선언한다 -> 하나라도 끄면 v7의 서술이 거짓이 된다(`cli`는 켠 쪽만 검사).
   # 고른 근거는 둘 다 로컬 소표본이다(run ID 없음 · 원자료 저장소 밖):
   # - 20,000토큰 + 정의 + 피호출 -> 2026-10-01 s500 실패 표본 9개(GT 보는 슬라이스 35)에서 정의 누락
@@ -371,6 +371,11 @@ thresholds:
   auditor_definitions: 1
   auditor_callee_hops: 1
   auditor_caller_lines: 10
+  # 래퍼·이름만 바꾸는 매크로 너머(C4 · 이슈 #451 · 2026-10-04). 위 피호출·정의 단계에 얹힌다 -> 짧은
+  # 래퍼(10줄 이하 · 정의를 아는 함수 1~2개 호출)면 그 너머 함수를 2단까지, 이름만 바꾸는 매크로면 그
+  # 이름의 정의·함수를 2번까지 더 찾는다. 근거는 팀 검수 83표본 중 18건이 「래퍼까지만 붙고 실제 구현이
+  # 없다」였다는 것(로컬 · run ID 없음 · 이슈 #451 본문). 켠 효과는 미실측
+  auditor_callee_wrappers: 1
 
 # 모델 게이트웨이 요청 파라미터. 조건 간 비교에서 고정해야 하므로 RunRecord에 남는다
 # (engineering-guide.md §5).

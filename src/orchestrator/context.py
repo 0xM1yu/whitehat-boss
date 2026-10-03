@@ -152,6 +152,11 @@ class RunContext:
     call_sites_of: Callable[..., list[Location] | None] = field(
         default=lambda _target, **_kw: None
     )
+    # (이름들, 가까운 파일) → 함수 정의 위치. 매크로 별칭이 부르는 함수를 찾는다(C4).
+    # 미배선 `None`이면 별칭 너머 함수를 안 붙인다.
+    functions_named: Callable[..., list[Location] | None] = field(
+        default=lambda _names, _file, **_kw: None
+    )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.
     definitions_of: Callable[..., list[Location] | None] = field(

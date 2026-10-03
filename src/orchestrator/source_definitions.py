@@ -77,6 +77,9 @@ _FIELD_ACCESS = re.compile(r"(?:->|(?<!\.)\.(?!\.))[ \t]*([A-Za-z_][A-Za-z0-9_]*
 _TAG = re.compile(r"\b(?:struct|union|enum)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(")
 _EXTERN = re.compile(r"\bextern\b([^;{}]*);")
+# `#define NAME` / `#define NAME(params)` 머리(group 1 이름 · group 2 파라미터 목록). 별칭 판정이
+# 쓴다(`macro_alias_target`).
+_DEFINE_HEAD = re.compile(r"\A\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)(\([^)]*\))?")
 
 LocalsOf = Callable[[str, str], frozenset[str] | None]
 ReadSource = Callable[[Location], str]
@@ -108,6 +111,28 @@ def bare_names(text: str) -> set[str]:
     필드로도 쓰인 이름(`len = p->len;`의 `len`)은 남는다 — 앞 `len`은 변수(또는 매크로) 자리다.
     """
     return _names(code_only(text))
+
+
+def macro_alias_target(text: str) -> str | None:
+    """매크로 정의 원문이 **다른 이름 하나로 바꿔 넘기는** 꼴이면 그 이름 — 아니면 `None`(C4).
+
+    대치 목록이 식별자로 시작하면(`#define ND_TCHECK(p) ND_TCHECK2(p, sizeof(*(p)))` ->
+    `ND_TCHECK2`, `#define gf_strdup gf_mem_strdup` -> `gf_mem_strdup`) 그 첫 식별자를 별칭 대상으로
+    본다. `do {`·`(`·숫자·문자열로 시작하는 매크로는 식만 담은 것이라 `None`이다. 자기 이름 ·
+    파라미터 · C 키워드면 `None`이다. 주석·문자열은 먼저 지우고 줄 잇기(`\` 줄바꿈)는 공백으로 본다.
+    """
+    head = _DEFINE_HEAD.match(text)
+    if head is None:
+        return None
+    replacement = code_only(text[head.end() :]).replace("\\\n", " ").strip()
+    first = _IDENT.match(replacement)
+    if first is None:
+        return None
+    params = set(_IDENT.findall(head.group(2) or ""))
+    name = first.group()
+    if name == head.group(1) or name in params or name in _C_KEYWORDS:
+        return None
+    return name
 
 
 def _outer_names(code: str) -> set[str]:
