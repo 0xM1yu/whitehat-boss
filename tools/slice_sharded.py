@@ -319,9 +319,10 @@ def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
 
 
 def _live_members(group: int) -> list[int]:
-    """Pids of the live processes in a process group; an unreaped zombie is not live (`killpg(group,
-    0)` counts it, and a killed JVM whose parent is pid 1 stays one until pid 1 reaps it). Without
-    /proc that call is all there is, and the leader's pid names the group."""
+    """Pids of the live processes in a process group. An unreaped zombie is not live (`killpg(group,
+    0)` counts it) unless other threads of it are still exiting: they hold its sockets -- a killed
+    server's port kept accepting for up to 0.57 s after SIGKILL (dev, 2026-10-03, 3 runs).
+    Without /proc `killpg` is all there is, and the leader's pid names the group."""
     if not Path("/proc/self/stat").exists():
         try:
             os.killpg(group, 0)
@@ -336,9 +337,17 @@ def _live_members(group: int) -> list[int]:
             continue
         # "pid (comm) state ppid pgrp ..." -- comm can hold spaces and parentheses
         fields = text.rpartition(")")[2].split()
-        if len(fields) > 2 and _digits(fields[2]) == group and fields[0] not in ("Z", "X", "x"):
+        if len(fields) > 2 and _digits(fields[2]) == group and (
+                fields[0] not in ("Z", "X", "x") or _threads_left(entry)):
             members.append(pid)
     return members
+
+
+def _threads_left(process_dir: Path) -> bool:
+    try:
+        return len(os.listdir(process_dir / "task")) > 1  # the zombie leader itself is one
+    except OSError:
+        return False
 
 
 def _signal_group(group: int, sig: int) -> None:
@@ -361,13 +370,10 @@ def _wait_gone(process: subprocess.Popen, group: int, seconds: float) -> bool:
 
 def stop(process: subprocess.Popen, grace: float | None = None) -> list[int]:
     """End the process and everything else in its process group; returns the pids that outlived
-    SIGKILL (empty: verified gone).
-
-    `joern` is an `sh` that runs the JVM as a child, so the launcher dying says nothing about the
-    JVM: SIGTERM ends the sh at once, and a JVM with a query still running never finishes its
-    shutdown hook (it queues behind the query) -- eight outlived a run on 2026-10-03. So: SIGTERM
-    to the group, `grace` seconds (default STOP_GRACE_SECONDS) for it to empty, SIGKILL, a check.
-    `grace=0` skips SIGTERM: a server whose query was abandoned has nothing to shut down."""
+    SIGKILL. `joern` is an `sh` that runs the JVM as a child, and a JVM with a query running never
+    finishes its shutdown hook (it queues behind the query; eight outlived a run on 2026-10-03), so
+    the launcher dying says nothing: SIGTERM to the group, `grace` seconds (default
+    STOP_GRACE_SECONDS) for it to empty, SIGKILL, a check. `grace=0` skips SIGTERM."""
     if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the child
         try:
             process.terminate()
@@ -425,15 +431,11 @@ def shard_command(repo: Path, folder: Path, port: int, joern: Path, cpg: Path, e
                           "--resume", "--cpg", str(cpg), *split, *leave)
 
 
-def is_deadline_error(error: object) -> bool:
-    return isinstance(error, str) and error.startswith(DEADLINE_ERRORS)
-
-
 def deadline_keys(events: list[dict]) -> list[str]:
     """Candidates whose query hit the deadline (`candidate_failed` names them for every stage)."""
     return [e["candidate_key"] for e in events
-            if e.get("event") == "candidate_failed" and is_deadline_error(e.get("error"))
-            and isinstance(e.get("candidate_key"), str)]
+            if e.get("event") == "candidate_failed" and isinstance(e.get("candidate_key"), str)
+            and str(e.get("error")).startswith(DEADLINE_ERRORS)]
 
 
 class ProgressTail:
@@ -453,22 +455,20 @@ class ProgressTail:
         self.offset += len(data)
         events = []
         for line in data.splitlines():
-            try:
+            with contextlib.suppress(ValueError):  # junk is not ours to complain about
                 events.append(json.loads(line))
-            except ValueError:
-                pass
         return [event for event in events if isinstance(event, dict)]
 
 
 class DeadlineRestarts:
     """--restart-on-deadline. A query that hit the slicer's client deadline goes on running in the
-    Joern server (its REPL takes one query at a time and does not cancel one when the client gives
-    up), so every later query of that shard waits behind it and times out too (libxml2, 2026-10-03:
-    3 candidates in a row). `poll` reads what the progress logs gained; a shard with a deadline hit
-    has its slicer and server killed and is started again: a new server, the same `I/N` with
-    `--resume --cpg`, `--skip-candidates` naming the timed-out candidates (`--resume` alone slices
-    the first of them again: its claim comes back to the same `I/N`). They stay unsaved in the
-    checkpoint: degraded in the output as without the flag, and a plain `--resume` slices them."""
+    Joern server (its REPL takes one query at a time, none is cancelled when the client gives up),
+    so every later query of that shard waits behind it too (libxml2, 2026-10-03: 3 in a row).
+    `poll` reads what the progress logs gained; a shard with a deadline hit has its slicer and
+    server killed and is started again: a new server, the same `I/N` with `--resume --cpg`, and
+    `--skip-candidates` naming the timed-out candidates (`--resume` alone slices the first of them
+    again: its claim comes back to the same `I/N`). They stay unsaved in the checkpoint: degraded
+    in the output as without the flag, and a plain `--resume` slices them."""
 
     def __init__(self, args: argparse.Namespace, work: Path, ports: list[int],
                  command: Callable[[int, Path], list[str]], tracked: list, summary: dict,

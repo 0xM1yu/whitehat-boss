@@ -2,20 +2,22 @@
 
 Not a Joern protocol fake: it fakes what tools/slice_sharded.py reads -- a listening port, the
 prepared checkpoint's candidate list, the CPG file, exit codes, the merge counters, --out.
-Behaviour by env: STUB_SERVER ok|die|die-restart|deaf|graceful, STUB_SERVER_DELAY seconds,
-STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang|deadline|deadline0, STUB_DEADLINES (default 1),
-STUB_CANDIDATES (default 40).
+Behaviour by env: STUB_SERVER ok|die|die-restart|deaf|graceful|zombie-leader, STUB_SERVER_DELAY
+seconds, STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang|deadline|deadline0, STUB_DEADLINES
+(default 1), STUB_CANDIDATES (default 40).
 
 `deaf` is Joern's shape: the launcher (this process) is an `sh` that runs the server as a child, and
 the server ignores SIGTERM like a JVM whose shutdown hook queues behind a running query -- SIGTERM
 ends the launcher and the server lives on. It writes its pid to `jvm.pid` in its cwd.
 `graceful` handles SIGTERM with a shutdown that takes a moment and leaves `term.marker` when done.
+`zombie-leader`: the main thread exits first, a thread keeps the listening socket.
 `die-restart` boots once and dies at boot in a `restartN` directory (a restarted server).
 `deadline` (every shard) / `deadline0` (shard 0): the shard writes the progress events a query that
 hit its deadline leaves, then blocks like a slicer waiting behind the abandoned query -- until it is
 killed -- unless its --skip-candidates list already holds STUB_DEADLINES keys: then it completes.
 """
 
+import ctypes
 import json
 import os
 import signal
@@ -23,6 +25,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -52,11 +55,22 @@ def listen_gracefully(port: int) -> int:
     return listen(port)
 
 
+def zombie_leader(port: int) -> int:
+    """A thread holds the listening socket while the main thread is already gone: /proc shows the
+    process as a zombie (state Z) with a live thread -- how a JVM looks in the milliseconds after
+    SIGKILL, until its last thread has exited and the kernel has closed its sockets."""
+    threading.Thread(target=listen, args=(port,)).start()
+    ctypes.CDLL(None).pthread_exit(None)
+    return 0
+
+
 def serve(port: int) -> int:
     mode = os.environ.get("STUB_SERVER")
     if mode == "die" or (mode == "die-restart" and Path.cwd().name.startswith("restart")):
         print("stub server: died at boot")
         return 3
+    if mode == "zombie-leader":
+        return zombie_leader(port)
     if mode == "deaf":
         return deaf_launcher(port)
     return listen_gracefully(port) if mode == "graceful" else listen(port)
