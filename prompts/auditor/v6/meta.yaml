@@ -3,6 +3,9 @@
 # v5와 바이트 동일이라 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`에 든다.
 # ⚠ **v5의 상위집합이 아니다** — v5의 범위 제약 둘(`Do not invent unrelated issues` · `Do not
 # expand the analysis to unrelated vulnerabilities …`)을 **삭제**한 것이 이 판의 핵이다.
+# ⏵ 2026-10-04 — `qwen3.8-27b`를 v7(v6 + Auditor SOURCE 옵션 넷의 서술, #349)로 올려 지금은 어느
+# registry 엔트리도 이 버전을 고르지 않는다. 이 판의 prefix·body는 #418이 A/B를 잰 문장 그대로다
+# (prefix 21,398자). `_CONTENT_AWARE_VERSIONS`에는 그대로 남는다.
 role: auditor
 version: v6
 output_schema: Finding

@@ -1,0 +1,14 @@
+# 정본 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고른다(2026-10-04 · #349 · PR #443).
+# v6 + SOURCE 서술. v6 prefix의 「Original-source input contract」만 `thresholds`의 Auditor SOURCE
+# 옵션 넷(20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄)에 맞춰 고치고 meta에
+# `source_options`를 선언했다 -> 나머지 지시·body는 v6와 바이트 동일(prefix +2,050자, 21,398 -> 23,448자).
+# 그래서 `## Evidence body completeness` 절과 `evidence_refs: only …` 줄도 v6·v5와 같아
+# `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`에 든다.
+# 판을 올린 이유 -> v6로 #418의 A/B 수(Recall 0.637 -> 0.966 · Precision 0.939 -> 0.821)를 쟀으므로
+# 같은 v6 라벨에 다른 문장을 두지 않는다(agent-contracts §4 규칙 1). 그 수는 v6의 것이고 v7로 돈 run은 0건이다.
+# 옵션을 끄면 이 서술이 거짓이 되고, 이 판이 `source_options`를 안 들면 `cli`가 run을 막는다(#351).
+role: auditor
+version: v7
+output_schema: Finding
+description: v6에 Auditor SOURCE 옵션 넷(20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄)의 입력 서술을 더한 판 — 나머지 지시(독립 검토 · trigger rule · CWE 고르기 · 심각도 기준 아님)는 v6와 같다
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines]
