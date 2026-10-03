@@ -132,6 +132,7 @@ from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
 from src.orchestrator.prompt_log import PromptLog
+from src.orchestrator.source_stores import stores_block
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
@@ -155,6 +156,7 @@ from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import CONDITION_PATTERN, CompileFlags, ModelSampling, RunRecord
 from src.schemas.scout_response import RequestedContext
+from src.schemas.stores import StoreSite, StoreTarget
 from src.tokens import estimate_tokens, using_counter
 
 # 실제 KB 스냅샷이 붙기 전까지 쓰는 태그. 이 값이 그대로 기록되면 경고를 남긴다 —
@@ -420,6 +422,8 @@ class Dependencies(Protocol):
     call_sites_of: Callable[[Location], list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None]
+    # 이름(필드·변수) → 그 쓰기 지점(`auditor_stores`). 같은 경계다.
+    stores_of: Callable[[StoreTarget], list[StoreSite] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
@@ -809,6 +813,7 @@ def run_pipeline(
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
         definitions_of=deps.definitions_of,
+        stores_of=deps.stores_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
@@ -3066,6 +3071,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
     0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
 
+    **쓰기 지점(`auditor_stores`)** — 1이면 정의 뒤·피호출 함수 앞에, 슬라이스 줄의 필드·전역이 실린
+    함수 **밖**에서 쓰이는 곳을 `STORES` 블록 하나로 붙인다(`source_stores.stores_block`). 블록은
+    함수가 아니라 `functions`에 안 든다. 이벤트에 `stores*`가 더 실린다(못 실은 행의 목록 포함).
+    0이면 이 단계도 이벤트 필드도 없다.
+
     **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
     함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
     붙인다. 이미 실린 범위와 겹치는 지점은 건너뛰고(호출자가 슬라이스에 걸쳐 이미 실렸거나 피호출
@@ -3146,6 +3156,18 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             definitions += 1
+    # 쓰기 지점은 정의처럼 작고 판단 가치가 커서 피호출 본문(큰 블록)보다 먼저 싣는다 — 뒤 블록이
+    # 이 몫을 먼저 먹지 않게. 남은 몫이 모자라면 블록은 통째로 빠지고 못 실은 행이 목록으로 남는다.
+    stores = None
+    if ctx.config.thresholds.auditor_stores:
+        stores = stores_block(
+            ref, carried, read_source=ctx.read_source, stores_of=ctx.stores_of,
+            measure=measure, room=cap - size - 1,
+        )
+        if stores.text:
+            blocks.append(stores.text)
+            size += 1 + measure(stores.text)
+    stored = 1 if stores is not None and stores.text else 0
     hops = ctx.config.thresholds.auditor_callee_hops
     callees = callees_dropped = 0
     if hops:
@@ -3198,7 +3220,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks) - definitions - callers - stored,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3215,6 +3237,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             if with_definitions
             else {}
         ),
+        **(stores.trace_fields() if stores is not None else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap

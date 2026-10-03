@@ -1166,7 +1166,7 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-                auditor_entry_trim=0, auditor_caller_lines=0)),
+                auditor_entry_trim=0, auditor_caller_lines=0, auditor_stores=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1202,7 +1202,7 @@ def _trim_source(
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=trim, auditor_caller_lines=0)),
+            auditor_entry_trim=trim, auditor_caller_lines=0, auditor_stores=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1292,7 +1292,7 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=0, auditor_caller_lines=lines)),
+            auditor_entry_trim=0, auditor_caller_lines=lines, auditor_stores=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
@@ -1339,7 +1339,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
 
     thresholds = {
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
-        "auditor_entry_trim": 0, "auditor_caller_lines": 0,
+        "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_stores": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
@@ -1361,6 +1361,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         callees_of=lambda loc: opts.get("callees", {}).get(loc.symbol, []),
         definitions_of=definitions,
         call_sites_of=lambda loc: opts.get("sites", {}).get(loc.symbol, []),
+        stores_of=opts.get("stores_of", lambda _target: None),
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(**thresholds)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
@@ -1564,3 +1565,135 @@ def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
     source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
     assert "/* ===== u.c:10-30 ===== */" in source
     assert (event["callees"], event["callers"]) == (1, 0)
+
+
+# --- `auditor_stores`: 쓰기 지점 블록(`source_stores`) ---------------------------------------
+
+_S_LINES = [
+    "int handle(struct ctx *c, const char *src, size_t n)",  # 1
+    "{",  # 2
+    "    memcpy(c->buf + c->len, src, n);",  # 3
+    "    return 0;",  # 4
+    "}",  # 5
+    "",  # 6
+    "void init(struct ctx *c)",  # 7
+    "{",  # 8
+    "    c->len = 16;",  # 9
+    "}",  # 10
+    "#define MAXLEN 64",  # 11
+    "static int helper(int x)",  # 12
+    "{ return x; }",  # 13
+]
+_S_FILE = {"s.c": _S_LINES}
+_S_HANDLE = Location(file="s.c", symbol="handle", line_start=1, line_end=5)
+_S_INIT = Location(file="s.c", symbol="init", line_start=7, line_end=10)
+_S_HELPER = Location(file="s.c", symbol="helper", line_start=12, line_end=13)
+_S_MACRO = Location(file="s.c", symbol="MAXLEN", line_start=11, line_end=11)
+_S_ANCHOR = "\n".join(_S_LINES[:5])
+
+
+def _stores_source(files=None, **opts):  # noqa: ANN001, ANN003, ANN202
+    """Case B 슬라이스(sink `memcpy` = 3줄)로 `_auditor_source`를 부른다. `len` 필드의 쓰기는
+    `init`(9줄)에 있다. `files`는 원문 파일 사전(기본 `_S_FILE`)이다."""
+    from src.adapters.slices import SliceRef
+    from src.orchestrator import runner
+    from src.schemas.stores import StoreSite
+
+    asked: list = []
+
+    def stores_of(target):  # noqa: ANN001, ANN202
+        asked.append(target)
+        if (target.name, target.field) == ("len", True):
+            return [StoreSite(file="s.c", line=9, func="init", name="len", field=True,
+                              lhs="c->len")]
+        return []
+
+    opts.setdefault("stores_of", stores_of)
+    ctx, events, _, _ = _unit(files or _S_FILE, [_S_HANDLE, _S_INIT, _S_HELPER], **opts)
+    sink = Location(file="s.c", symbol="memcpy", line_start=3)
+    ref = SliceRef(slice_id="s", location=_S_HANDLE, given_end="sink", entry=sink,
+                   lines=(("s.c", 3),), degraded=False)
+    return runner._auditor_source(ctx, ref, _S_HANDLE, "cand"), events[-1], asked
+
+
+def test_stores_off_changes_neither_the_source_nor_the_event_and_never_asks_the_index() -> None:
+    """기본(0) — 결정 1-b 그대로다: 함수 하나라 배너도 없고, 이벤트에 `stores*`도 없고, 인덱스에
+    묻지도 않는다(`stores_of`가 불리면 실패한다)."""
+    def never(_target):  # noqa: ANN001, ANN202
+        raise AssertionError("auditor_stores가 꺼졌는데 쓰기 지점을 물었다")
+
+    source, event, _ = _stores_source(stores_of=never)
+
+    assert source == _S_ANCHOR
+    assert not [key for key in event if key.startswith("stores")]
+    assert event["functions"] == 1
+
+
+def test_stores_on_appends_the_block_and_reports_it_apart_from_the_functions() -> None:
+    """켜면 함수들 뒤에 `STORES` 블록이 붙고(함수가 하나라도 배너가 붙는다 — 블록이 둘이라서),
+    이벤트에 `stores*`가 실린다. 블록은 함수가 아니라 `functions`에 안 센다."""
+    from src.orchestrator.source_stores import HEADER
+
+    source, event, asked = _stores_source(auditor_stores=1)
+
+    assert source == "\n".join(
+        ["/* ===== s.c:1-5 ===== */", _S_ANCHOR, HEADER, "s.c:9 | c->len = 16; | writes ->len"]
+    )
+    assert event["functions"] == 1
+    assert (event["stores"], event["stores_dropped"], event["stores_in_source"]) == (1, 0, 0)
+    assert event["stores_dropped_rows"] == "[]"
+    assert {(t.name, t.field) for t in asked} >= {("buf", True), ("len", True), ("src", False)}
+
+
+def test_the_stores_block_sits_after_definitions_and_before_the_callees() -> None:
+    """작고 판단 가치가 큰 쪽이 먼저다 — 정의 → 쓰기 지점 → 피호출 본문. 뒤에 붙는 큰 본문이 이 작은
+    블록의 몫을 먼저 먹지 않는다."""
+    source, event, _ = _stores_source(
+        auditor_stores=1, auditor_definitions=1, auditor_callee_hops=1,
+        definitions=lambda _names, _file: [_S_MACRO], callees={"handle": [_S_HELPER]},
+    )
+
+    positions = [
+        source.index(marker)
+        for marker in ("s.c:1-5", "s.c:11-11", "STORES", "s.c:12-13")
+    ]
+    assert positions == sorted(positions)
+    assert (event["functions"], event["definitions"], event["callees"]) == (2, 1, 1)
+
+
+def test_the_stores_block_counts_against_the_source_cap_and_its_rows_are_listed() -> None:
+    """블록이 남은 몫에 안 들면 **통째로** 빠지고, 못 실은 행은 목록으로 남는다. 단어 수로 센다."""
+    from src.orchestrator import runner
+
+    anchor_words = len(runner._block(_S_HANDLE, _S_ANCHOR).split())
+
+    source, event, _ = _stores_source(auditor_stores=1, auditor_source_tokens=anchor_words + 3)
+
+    assert "STORES" not in source
+    assert (event["stores"], event["stores_dropped"]) == (0, 1)
+    assert event["stores_dropped_rows"] == '["s.c:9 len"]'
+    assert event["tokens"] <= anchor_words + 3
+
+
+def test_a_flood_of_same_named_writes_is_capped_per_name_and_listed_in_the_event() -> None:
+    """같은 이름의 필드 쓰기가 열 곳(8행 초과, 인덱스가 전부 모호하다고 표시)이다 — 블록에는
+    이름마다 넷만 실리고 못 실은 여섯은 이벤트에 `file:line 이름` 목록으로 남는다."""
+    import json
+
+    from src.schemas.stores import StoreSite
+
+    files = {**_S_FILE, "t.c": [f"    t->len = {n};" for n in range(1, 11)]}
+    flood = [
+        StoreSite(file="t.c", line=n, func="f", name="len", field=True, lhs="t->len",
+                  ambiguous=True)
+        for n in range(1, 11)
+    ]
+
+    def stores_of(target):  # noqa: ANN001, ANN202
+        return flood if (target.name, target.field) == ("len", True) else []
+
+    source, event, _ = _stores_source(files, stores_of=stores_of, auditor_stores=1)
+
+    assert source.count("| writes ->len [ambiguous]") == 4
+    assert (event["stores"], event["stores_dropped"]) == (4, 6)
+    assert json.loads(event["stores_dropped_rows"]) == [f"t.c:{n} len" for n in range(5, 11)]

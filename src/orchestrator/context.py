@@ -49,6 +49,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 from src.schemas.need_evidence import Resolution, ResolveQuery
 from src.schemas.run import RunRecord
+from src.schemas.stores import StoreSite, StoreTarget
 
 # 도구 실행은 토큰을 쓰지 않는다. 매번 만들지 않도록 상수로 둔다.
 _NO_TOKENS = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
@@ -152,6 +153,11 @@ class RunContext:
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.
     definitions_of: Callable[[Iterable[str], str], list[Location] | None] = field(
         default=lambda _names, _file: None
+    )
+    # 이름(필드·변수) → 그 쓰기 지점(`auditor_stores`). 미배선 `None`이면 `STORES` 블록이 없다 —
+    # `definitions_of`와 같은 성격.
+    stores_of: Callable[[StoreTarget], list[StoreSite] | None] = field(
+        default=lambda _target: None
     )
     # 역할 → 그 역할 모델의 실 토크나이저 카운터 (#96 (b)). `None`이면 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다. `symbols_for`와 같은 성격 — 어댑터가 만들고

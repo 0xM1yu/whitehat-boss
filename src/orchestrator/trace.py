@@ -238,6 +238,10 @@ class EventKind(StrEnum):
     # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
     # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
     # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
+    # `auditor_stores`가 1이면 `stores`(`STORES` 블록에 실린 행 수 — 블록은 `functions`에 안 든다)·
+    # `stores_dropped`(못 실은 행 수)·`stores_dropped_rows`(그 행의 `file:line 이름` JSON 배열
+    # 문자열 — 앞 50개 뒤에 `+N more`)·`stores_in_source`(이미 실린 함수 안이라 건너뛴 행 수)·
+    # `stores_targets_skipped`(질의 상한을 넘어 인덱스에 안 물은 이름 수)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가

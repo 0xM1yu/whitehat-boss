@@ -562,6 +562,7 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_source_tokens",
     "auditor_entry_trim",
     "auditor_caller_lines",
+    "auditor_stores",
 )
 
 
@@ -617,7 +618,7 @@ class Thresholds(HarnessModel):
     # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
-    # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 넷도 같다.
+    # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 옵션도 같다.
     auditor_callee_hops: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
     # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
@@ -642,6 +643,13 @@ class Thresholds(HarnessModel):
     # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
     # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
+    # Auditor `SOURCE`에 슬라이스가 쓰는 필드·전역의 **쓰기 지점**을 붙이는가(`STORES` 블록). 0이면
+    # 안 붙인다(결정 1-b 그대로). 1이면 정의 뒤·피호출 함수 앞에 `file:line | 원문 줄 | 술어` 행을
+    # 싣는다(`runner._auditor_source` → `source_stores.stores_block`). 「이 길이·버퍼·필드는 어디서
+    # 정해지나」(호출부·할당)를 겨냥한다. 필드 쓰기는 객체 타입 없이 이름으로만 이어져 행에
+    # `[ambiguous]`가 붙을 수 있고 이름마다 4행까지다. 인덱스(index-v2)가 없으면 블록도 없다.
+    # 위 ⚠와 같은 프롬프트 판 문제.
+    auditor_stores: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
