@@ -7,7 +7,9 @@
 
 러너 쪽(후보마다 vul · 후보가 하나일 때만 지정해 fix)은 `tests/test_oracle_wiring.py`가, 플래그에서
 서버까지 이어지는 운영 배선 전체는 `tests/test_pipeline_e2e.py`가 돌려 본다 — 여기서는 `cli.run`을
-돌리지 않는다.
+돌리지 않는다. 마스킹 서버의 `--mask-map` → `TaskOracle.query_task_id`는
+`tests/test_oracle_wiring.py` 끝의 두 절이 본다 — 아래
+`test_a_masked_task_id_is_refused_before_any_submission`은 맵이 **없을 때**의 거절이다.
 """
 
 import argparse
@@ -214,9 +216,9 @@ def test_oracle_submit_without_metadata_is_an_error(tmp_path: Path, capsys, buil
 def test_a_masked_task_id_is_refused_before_any_submission(
     tmp_path: Path, capsys, built, key_env  # noqa: ANN001
 ) -> None:
-    """마스킹된 id(`9c73e92e52b7`)는 지원하지 않는다 - build-plan.md가 마스킹 서버를 미지원으로
-    적는다. 오라클 객체조차 만들어지지 않으므로 컨테이너는커녕 요청도 안 나간다. 문구는 문서가 적은
-    것과 코드가 거절한다는 것만 말하고 실서버에서 무슨 일이 나는지는 단언하지 않는다(그 실측은
+    """`--mask-map` 없이 마스킹된 id(`9c73e92e52b7`)는 지원하지 않는다 - 조회에 쓸 실 id가 없다.
+    오라클 객체조차 만들어지지 않으므로 컨테이너는커녕 요청도 안 나간다. 문구는 코드가 거절한다는
+    것과 `--mask-map`을 주라는 것만 말하고 실서버에서 무슨 일이 나는지는 단언하지 않는다(그 실측은
     0건이다)."""
     task = _bundle(tmp_path, task_id="9c73e92e52b7")
 
@@ -277,6 +279,7 @@ def test_the_oracle_is_built_from_the_operators_server_and_the_bundles_identity(
         "task_id": TASK_ID,
         "agent_id": _AGENT,
         "api_key": _KEY,
+        "query_task_id": None,  # `--mask-map`을 안 줬다 - 마스크 없이 띄운 서버
     }
 
 
@@ -384,7 +387,7 @@ def test_the_help_text_is_printable_on_a_cp949_console() -> None:
     )
     flags = {a.dest: a for a in run._actions}
 
-    for dest in ("oracle_submit", "oracle_server"):
+    for dest in ("oracle_submit", "oracle_server", "mask_map"):
         flags[dest].help.encode("cp949")
 
 

@@ -2608,7 +2608,8 @@ def test_cli_run_submits_the_final_poc_through_the_flag_to_the_server(
 def test_cli_run_refuses_a_masked_task_id_before_creating_a_run_or_submitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    """마스킹된 id의 번들은 컨테이너를 돌리기 전에 exit 2다 - 비용을 낸 뒤에야 알게 되지 않는다."""
+    """`--mask-map` 없이 마스킹된 id의 번들은 컨테이너를 돌리기 전에 exit 2다 - 비용을 낸 뒤에야
+    알게 되지 않는다."""
     server = _http_server(monkeypatch)
     monkeypatch.setenv(cli._ORACLE_KEY_ENV, _API_KEY)
     task = _oracle_task(tmp_path, task_id="9c73e92e52b7")

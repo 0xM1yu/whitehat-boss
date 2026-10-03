@@ -240,8 +240,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   last-attempt도 아니다」라고 결론내려 마지막·처음·점수로 고르는 기본값을 둘 수 없고, 합의된 방식
   (모델에게 묻기)은 프롬프트 버전과 좌석이 필요한 별도 조각이다(`runner._designate_final`). 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
-  거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 지원하는
-  과제 id는 마스킹을 안 한 서버의 실제 id(`arvo:1065`)뿐이다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
+  서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
+  `--mask-map`으로 줄 때만 받는다 — 제출은 번들의 마스킹된 id로, 판정 조회와 제출 전 캐시 판별은 맵이 준 실
+  id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). ⚠ 마스킹 서버
+  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
   `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면

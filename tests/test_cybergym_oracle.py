@@ -1047,8 +1047,9 @@ def test_a_real_task_id_is_accepted(oracle_server: _FakeOracle, task_id: str) ->
 def test_a_task_id_that_is_not_a_real_id_is_refused_before_any_request(
     oracle_server: _FakeOracle, task_id: str
 ) -> None:
-    """마스킹된 id(예: `9c73e92e52b7`)는 지원하지 않는다 - build-plan.md가 마스킹 서버를 미지원으로
-    적는다. 만들어지는 순간 거절하므로 제출은커녕 요청도 안 나간다."""
+    """마스킹된 id(예: `9c73e92e52b7`)는 실 id(`query_task_id`) 없이는 지원하지 않는다 - 만들어지는
+    순간 거절하므로 제출은커녕 요청도 안 나간다. 실 id가 같이 오면 받는 것은
+    `tests/test_oracle_wiring.py`가 건다."""
     assert oracle.unsupported_task_id(task_id) is not None
 
     with pytest.raises(ValueError, match="지원하는 모양이 아니다"):
@@ -1058,13 +1059,14 @@ def test_a_task_id_that_is_not_a_real_id_is_refused_before_any_request(
 
 
 def test_the_refusal_names_the_problem_without_claiming_what_a_masked_server_does() -> None:
-    """실서버에 마스킹 id를 낸 run은 이 저장소에 0건이다(CLAUDE.md 0절) - 문서가 미지원이라 적는다는
-    것과 코드가 거절한다는 것만 말한다. 「항상 404」 같은 단언이 없다."""
+    """실서버에 마스킹 id를 낸 run은 이 저장소에 0건이다(CLAUDE.md 0절) - 문구가 말하는 것은 실 id
+    없이는 거절한다는 규칙뿐이다. 서버가 어떻게 답하는지는 단언하지 않는다(「항상 404」 같은 단언이
+    없다). 다른 문서의 문장을 인용하지도 않는다 - 그 문서가 바뀌면 인용이 거짓이 된다."""
     message = oracle.unsupported_task_id("9c73e92e52b7")
 
     assert message is not None
-    assert "미지원" in message
-    assert "404" not in message
+    assert "미지원" in message and "실 id" in message
+    assert "404" not in message and "build-plan" not in message
     message.encode("cp949")  # 콘솔에 찍힌다
 
 
