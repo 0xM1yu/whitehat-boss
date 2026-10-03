@@ -4,9 +4,9 @@ Each builder returns one self-contained Scala block: candidate locals never surv
 REPL. The per-candidate builders (flows, context, backward) are also the source that
 `slicer_library` compiles once per session into functions; the run sends calls to those.
 Most stages return their JSON as base64 in the block's result, since println can go to
-server logs. The candidate-enumeration stages (`FILE_TRANSPORT_STAGES`) instead write the
-payload to a file and return only its byte count -- their payload can outgrow what the REPL
-renders as a single string value (issue #219, see `file_envelope`).
+server logs. The candidate-enumeration stages and inventory (`FILE_TRANSPORT_STAGES`) instead
+write the payload to a file and return only its byte count -- their payload can outgrow what the
+REPL renders as a single string value (issues #219 and #404, see `file_envelope`).
 """
 
 import json
@@ -200,16 +200,20 @@ OUT_PATH_TOKEN = "__SLICER_OUT_PATH__"
 # The client keys file transport on this, not on the token's presence in the query text --
 # a repo file or symbol literally named like the token would otherwise be a false positive.
 # Must list exactly the stages that call `file_envelope`.
-FILE_TRANSPORT_STAGES = frozenset({"case_a", "case_b"})
+# inventory too (#404): its `files` list is every source file in the CPG, which on a large repo
+# (2026-10-02 vast, wazuh · hdf5) overran the REPL the same way and came back empty, so the
+# whole prepare failed before any candidate was discovered.
+FILE_TRANSPORT_STAGES = frozenset({"case_a", "case_b", "inventory"})
 
 
 def file_envelope(stage: str, body: str) -> str:
     """Same as `envelope`, but the payload travels through a FILE, not the REPL return.
 
     The candidate-enumeration payload (case_a/case_b) can reach several thousand rows on
-    large repos. Returned inline as one base64 string, that value overruns what Joern's
-    REPL renders as a single result, which comes back empty -- the envelope markers are
-    present but the payload between them is gone, so the stage aborts with 0 slices
+    large repos, and so can inventory's file list (#404). Returned inline as one base64
+    string, that value overruns what Joern's REPL renders as a single result, which comes
+    back empty -- the envelope markers are present but the payload between them is gone,
+    so the stage aborts with 0 slices
     (issue #219; the per-set `.take` cap in #241 only halved it, since api+readers can
     still sum to ~2x the cap). Here Joern writes `ujson.write(result)` to `OUT_PATH_TOKEN`
     and the block returns only the byte count, so the REPL return stays tiny regardless of
@@ -341,7 +345,7 @@ def save_cpg_query(out: str) -> str:
 
 
 def inventory_query(limits: dict[str, int] | None = None) -> str:
-    return envelope(
+    return file_envelope(
         "inventory",
         engine_context(limits)
         + """
