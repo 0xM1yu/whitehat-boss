@@ -18,6 +18,7 @@ import re
 import socket
 import subprocess
 import tarfile
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,6 +27,7 @@ import pytest
 from slicer_source import assemble
 from src import cli, console
 from src.adapters.container_tools import index_output_path
+from src.adapters.cybergym_oracle import TaskOracle
 from src.adapters.factory import build_deps, describe_wiring
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.sqlite_store import SqliteStateStore
@@ -43,6 +45,8 @@ from src.schemas.finding import Finding
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from src.schemas.scout_response import ScoutResponse
 from tests.conftest import ALL_PROFILES, SERVED_SCOUT_KEY, served_scout_config
+from tests.oracle_fakes import FakeOracle, submit_script
+from tests.test_cybergym_oracle import _AGENT_ID, _API_KEY, _SERVER, _TASK_ID, _FakeOracle
 
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 STARTED_AT = datetime(2026, 9, 1, tzinfo=UTC)
@@ -54,6 +58,9 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
 
     `before`는 run_dir이 생긴 뒤 실행 전에 불린다 — index.json을 그 자리에 놓는 데 쓴다
     (W2). `candidate_max`는 (a′)의 절단 경로를 태우는 데 쓴다.
+
+    `oracle`은 채점기 대역이다 — `cli.execute`가 `build_deps`·`run_pipeline`으로 흘려 보내는 **운영
+    배선 그대로** 들어가므로(`ctx.oracle`을 직접 꽂지 않는다) 그 배선이 끊기면 대역이 불리지 않는다.
 
     `configure`는 **위 셋으로 표현할 수 없는 config 변경**을 받는다 — `config`를 받아
     바꾼 것을 돌려주는 함수다. `execution.mode` 같은 프로필 필드가 그렇다. 이 훅이
@@ -73,6 +80,7 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     if configure is not None:
         config = configure(config)
     before = overrides.pop("before", None)
+    oracle = overrides.pop("oracle", None)
     target = overrides.pop("target", TARGET)
     run_dir = tmp_path / name / "run_20260901_0001"
     run_dir.mkdir(parents=True)
@@ -82,7 +90,7 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     trace_path = run_dir / "trace.jsonl"
     with trace_path.open("w", encoding="utf-8") as stream:
         result, _ = cli.execute(
-            config, spec, run_id=run_dir.name, run_dir=run_dir, trace_stream=stream
+            config, spec, run_id=run_dir.name, run_dir=run_dir, trace_stream=stream, oracle=oracle
         )
     return result, trace_path
 
@@ -2254,6 +2262,427 @@ def test_trace_actually_carries_the_volatile_fields(tmp_path: Path) -> None:
     _, first = _run(tmp_path, "a")
 
     assert all("ts" in json.loads(line) for line in first.read_text("utf-8").splitlines())
+
+
+# --- 2b. 채점기(oracle) — 운영 배선을 끝까지 돌려 본다 (#386) ------------------------------------
+#
+# 아래는 `cli.execute` → `build_deps` → `run_pipeline` → `RunContext`를 **진짜로** 지난다 —
+# `tests/test_oracle_wiring.py`는 `ctx.oracle`을 직접 꽂아 러너 함수를 보므로 그 배선이 끊겨도
+# 초록이다. 후보 수가 갈림길이다(후보 N개 ≠ 최종 1개를 가르는 것이 이 PR의 차단 결함이다):
+# 기본 타깃은 8단계에 **후보가 하나** 오고(그 하나가 최종이다), `_with_index()`로 심볼 타깃을
+# 만들면 **후보가 둘** 온다(고르는 규칙이 없어 지정하지 않는다).
+
+
+def _oracle_events(events: list[dict]) -> list[dict]:
+    return [e for e in events if e["kind"].startswith("oracle")]
+
+
+def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
+    tmp_path: Path,
+) -> None:
+    """운영 배선을 지나 대역이 불린다. 후보 둘 모두 vul로 나가고(바이트는 run이 남긴 PoC
+    사이드카 `pov_poc/NNNN.poc`와 **내용으로** 견준다) 지정은 안 된다 - fix 다리·판정 조회는
+    0번이고 기록·경고·매니페스트가 그 이유를 말한다."""
+    oracle = FakeOracle()
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
+
+    events = _events(trace_path)
+    generated = _of(events, "pov_generated", stage=int(Stage.VALIDATE))
+    assert len(generated) == 2, "8단계에 finding이 둘 안 왔다 - 이 검사의 전제가 깨졌다"
+    sidecars = sorted((trace_path.parent / "pov_poc").glob("*.poc"))
+    assert [p.read_bytes() for p in sidecars] == oracle.vul_calls
+    assert len(_of(events, "oracle_submitted")) == 2
+    assert oracle.final_calls == [], "후보가 둘인데 fix 다리가 돌았다"
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] is None
+    assert (final["data"]["status"], final["data"]["reason"]) == ("none", "policy_undecided")
+    assert final["data"]["designation"] is None
+    assert result.record.oracle == {
+        "vul_submitted": 2, "vul_failed": 0, "final": "none",
+        "final_reason": "policy_undecided", "record": "oracle/verdict.json",
+    }  # fmt: skip
+    assert any("고르는 규칙이 정해지지 않았다" in w for w in result.warnings)
+    assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
+
+
+def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
+    tmp_path: Path,
+) -> None:
+    """후보가 하나뿐이면 그 하나가 최종이다(`sole_candidate` - 위치 규칙이 아니다). 운영 배선을 지나
+    fix 다리·판정 조회가 정확히 한 번 돈다. 바이트는 run이 남긴 PoC 사이드카와 **내용으로** 견준다.
+    """
+    oracle = FakeOracle()
+
+    result, trace_path = _run(tmp_path, oracle=oracle)
+
+    events = _events(trace_path)
+    (generated,) = _of(events, "pov_generated", stage=int(Stage.VALIDATE))
+    (sidecar,) = sorted((trace_path.parent / "pov_poc").glob("*.poc"))
+    assert oracle.vul_calls == [sidecar.read_bytes()]
+    assert oracle.final_calls == [(sidecar.read_bytes(), oracle.vul_results[0])]
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] == generated["subject_id"]
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "sole_candidate")
+    assert len(_of(events, "oracle_submitted")) == 1
+    assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
+
+
+def test_an_oracle_that_is_not_wired_leaves_no_trace_of_it(tmp_path: Path) -> None:
+    result, trace_path = _run(tmp_path, before=_with_index())
+
+    assert _oracle_events(_events(trace_path)) == []
+    assert not (trace_path.parent / "oracle").exists()
+    assert result.record.oracle is None
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["oracle"] is None
+    assert not any("채점기" in warning for warning in result.warnings)
+
+
+def test_two_runs_stay_byte_identical_when_the_oracle_returns_fresh_values(
+    tmp_path: Path,
+) -> None:
+    """재현성 기준(`trace.py`): 서버·장치가 정하는 값이 trace에 새면 같은 입력의 두 run이 갈린다. PR
+    #408 리뷰가 잰 것은 둘이다 - 95줄 중 1줄이 `poc_id`(uuid4)였고, 같은 서버에 다시 묻자 `cached`가
+    False에서 True로 다른 줄이 갈렸다. 같은 입력에서 `fix`가 0 5회·139 5회 나온 장치 의존도
+    있다(`docs/experiments/README.md`의 2026-10-02 행). 후보가 하나라 판정이 있는 최종 단계까지
+    돈다. 그래서 두 대역이 **휘발·환경 의존 값을 전부 다르게** 낸다 - 호출마다 새 `poc_id`, 두 번째
+    run은 캐시 적중, 종료 코드와 판정이 갈린다. 어느 것이든 trace에 들어가면 이 검사가 죽는다. 값은
+    사이드카에만 있고 두 사이드카는 **다르다**(그래서 이 비교가 공허하지 않다)."""
+    first_oracle = FakeOracle()
+    second_oracle = FakeOracle(
+        vul_cached=True, fix_cached=True, vul_exit_code=0, fix_exit_code=139, success=False
+    )
+
+    _, first = _run(tmp_path, "a", oracle=first_oracle)
+    _, second = _run(tmp_path, "b", oracle=second_oracle)
+
+    (final,) = _of(_events(first), "oracle_final")
+    assert final["data"]["status"] == "scored", "판정이 있는 최종 단계가 안 돌았다 - 공허하다"
+    assert _canonical(first) == _canonical(second)
+    assert first_oracle.vul_calls == second_oracle.vul_calls
+    sidecars = [
+        json.loads((path.parent / "oracle" / "verdict.json").read_text(encoding="utf-8"))
+        for path in (first, second)
+    ]
+    finals = [sidecar["final"] for sidecar in sidecars]
+    for field in ("poc_id", "vul_exit_code", "fix_exit_code", "success", "cached"):
+        assert finals[0][field] != finals[1][field], f"{field}: 두 사이드카가 같다 - 공허한 비교"
+    for path, sidecar in zip((first, second), sidecars, strict=True):
+        text = path.read_text(encoding="utf-8")
+        assert sidecar["final"]["poc_id"] not in text
+        assert all(c["poc_id"] not in text for c in sidecar["candidates"])
+
+
+def test_two_runs_stay_byte_identical_when_the_failures_read_differently(tmp_path: Path) -> None:
+    """실패 쪽 같은 성질. 오류 문구는 URL·포트·OS 로캘의 errno 문구를 든다(영어와 한국어 Windows가
+    다르다) - 같은 입력의 두 run이 문구만 달라도 trace는 같아야 한다. 문구는 사이드카에만 간다.
+    예외 **종류**는 trace에 남는 사실이라 같게 둔다(`OSError(errno, 문구)`는 errno에 따라 하위
+    클래스로 바뀌니 문구 한 인자로만 만든다)."""
+    english = OSError("[Errno 111] Connection refused: http://127.0.0.1:8666/submit-vul")
+    korean = OSError("[WinError 10061] 대상 컴퓨터에서 연결을 거부했습니다: localhost:9000")
+    first_oracle = FakeOracle(vul_errors={0: english})
+    second_oracle = FakeOracle(vul_errors={0: korean})
+
+    _, first = _run(tmp_path, "a", oracle=first_oracle)
+    _, second = _run(tmp_path, "b", oracle=second_oracle)
+
+    assert len(_of(_events(first), "oracle_failed")) == 1, "실패가 안 났다 - 이 검사가 공허하다"
+    assert _canonical(first) == _canonical(second)
+    details = [
+        [
+            row["error_detail"]
+            for row in json.loads((p.parent / "oracle" / "verdict.json").read_text("utf-8"))[
+                "candidates"
+            ]
+        ]
+        for p in (first, second)
+    ]
+    assert details[0] != details[1], "두 사이드카의 오류 문구가 같다 - 공허한 비교"
+
+
+def test_oracle_events_sit_inside_a_stage_8_interval_and_carry_wall_ms(tmp_path: Path) -> None:
+    """도커 왕복이 단계 시간 장부에서 빠지던 결함(이벤트가 8단계 `stage_end` 뒤에 났고 `wall_ms`가
+    없었다). 이벤트의 구간으로 단계를 가른다 -
+    `test_the_auditor_source_is_read_inside_the_auditor_stage`와 같은 방식."""
+    _, trace_path = _run(tmp_path, oracle=FakeOracle())
+
+    open_stage, seen = None, []
+    for event in _events(trace_path):
+        if event["kind"] == "stage_start":
+            open_stage = event["stage"]
+        elif event["kind"] == "stage_end":
+            open_stage = None
+        elif event["kind"].startswith("oracle"):
+            seen.append((event["kind"], open_stage, event["wall_ms"] is not None))
+    assert seen == [("oracle_submitted", 8, True), ("oracle_final", 8, True)]
+
+
+def test_submission_failures_are_visible_in_the_warnings_and_the_manifest(tmp_path: Path) -> None:
+    """제출이 전부 실패해도 run은 완주로 끝난다(추가형) - 그래서 `trace.jsonl`을 열기 전에는 성공한
+    run과 같은 얼굴이던 것을 경고와 매니페스트에 올린다."""
+    oracle = FakeOracle(vul_errors={0: OSError("down"), 1: OSError("down")})
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
+
+    assert result.record.is_complete
+    expected = {
+        "vul_submitted": 0, "vul_failed": 2, "final": "none",
+        "final_reason": "all_vul_submissions_failed", "record": "oracle/verdict.json",
+    }  # fmt: skip
+    assert result.record.oracle == expected
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["oracle"] == expected
+    assert any("vul 제출 2건이 예외로 실패했다" in w for w in result.warnings)
+    assert any("vul 제출이 전부 실패해" in w and "채점 점수가 없다" in w for w in result.warnings)
+    final = _of(_events(trace_path), "oracle_final")[0]["data"]
+    assert (final["status"], final["reason"]) == ("none", "all_vul_submissions_failed")
+    assert oracle.final_calls == []
+
+
+def test_a_run_cut_short_before_stage_8_ends_says_the_final_was_not_reached(
+    tmp_path: Path,
+) -> None:
+    """채점기를 켰는데 8단계에 못 닿으면(`--stop-after 7` 같은) 매니페스트가 `not_reached`다 -
+    「최종 PoC가 없었다」(`none`)와 다른 사건이다."""
+    oracle = FakeOracle()
+
+    result, trace_path = _run(tmp_path, stop_after=int(Stage.CRITIC), oracle=oracle)
+
+    assert oracle.vul_calls == [] and oracle.final_calls == []
+    assert result.record.oracle == {
+        "vul_submitted": 0, "vul_failed": 0, "final": "not_reached", "final_reason": None,
+        "record": None,
+    }  # fmt: skip
+    assert _oracle_events(_events(trace_path)) == []
+    assert any("8단계가 끝까지 돌지 않아" in warning for warning in result.warnings)
+
+
+def _http_server(monkeypatch: pytest.MonkeyPatch) -> _FakeOracle:
+    server = _FakeOracle()
+    monkeypatch.setattr(urllib.request, "urlopen", server)
+    return server
+
+
+def _task_oracle() -> TaskOracle:
+    return TaskOracle(server=_SERVER, task_id=_TASK_ID, agent_id=_AGENT_ID, api_key=_API_KEY)
+
+
+def test_the_real_client_never_runs_the_fix_container_when_there_are_several_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **0번**이다 -
+    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고 고르는 규칙은 없다. 같은 바이트의 둘째
+    제출은 이 run이 만든 행의 캐시라 컨테이너가 안 돈다 - 그것을 옛 판정이라 경고하지 않는다."""
+    server = _http_server(monkeypatch)
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=_task_oracle())
+
+    paths = [call.url.path for call in server.calls]
+    assert paths.count("/submit-vul") == 2 and paths.count("/submit-fix") == 0
+    assert server.containers == 1  # vul 한 번뿐 (둘째 vul은 이 run의 캐시)
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert [c["cached"] for c in sidecar["candidates"]] == [False, True]
+    assert (sidecar["final"]["status"], sidecar["final"]["reason"]) == ("none", "policy_undecided")
+    assert not any("캐시" in warning for warning in result.warnings)
+
+
+def test_the_real_client_runs_the_fix_container_exactly_once_for_the_sole_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """후보가 하나면 `/submit-vul` 하나에 `/submit-fix` 하나다 - 그 하나가 최종이다."""
+    server = _http_server(monkeypatch)
+
+    result, trace_path = _run(tmp_path, oracle=_task_oracle())
+
+    paths = [call.url.path for call in server.calls]
+    assert paths.count("/submit-vul") == 1 and paths.count("/submit-fix") == 1
+    assert server.containers == 2  # vul 한 번 + fix 한 번
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert [c["cached"] for c in sidecar["candidates"]] == [False]
+    assert sidecar["final"]["status"] == "scored" and sidecar["final"]["success"] is True
+    assert sidecar["final"]["designation"] == "sole_candidate"
+    assert sidecar["final"]["cached"] == {"vul": False, "fix": False}
+    assert (sidecar["final"]["vul_exit_code"], sidecar["final"]["fix_exit_code"]) == (77, 0)
+    assert not any("캐시" in warning for warning in result.warnings)
+
+
+def test_a_second_run_on_the_same_bundle_is_flagged_as_a_stale_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agent_id는 번들이 정한 값이라 같은 번들로 run을 반복하면 서버 캐시를 공유한다(이슈 #385).
+    `dev_fake`의 PoC는 결정론이라 둘째 run의 두 다리가 모두 옛 판정이다 - 컨테이너가 안 돌았다는
+    것을 기록과 경고가 말한다."""
+    server = _http_server(monkeypatch)
+    _run(tmp_path, "first", oracle=_task_oracle())
+    containers = server.containers
+
+    result, trace_path = _run(tmp_path, "second", oracle=_task_oracle())
+
+    assert server.containers == containers, "둘째 run은 컨테이너를 안 돌렸어야 한다"
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert sidecar["final"]["cached"] == {"vul": True, "fix": True}
+    stale = [w for w in result.warnings if "이전 판정의 캐시다" in w]
+    assert stale and "vul" in stale[0] and "fix" in stale[0]
+
+
+def test_the_api_key_never_reaches_a_run_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """키는 trace·매니페스트·사이드카·프롬프트·보고서 어디에도 안 남는다 - 실제 클라이언트가 실제
+    헤더로 키를 보낸 run의 산출물 전부를 바이트로 훑는다(서버가 헤더를 받았다는 것도 함께 본다)."""
+    server = _http_server(monkeypatch)
+    _, trace_path = _run(tmp_path, oracle=_task_oracle())
+
+    assert any(call.headers.get("x-api-key") == _API_KEY for call in server.calls)
+    scanned = [p for p in trace_path.parent.rglob("*") if p.is_file()]
+    assert scanned, "산출물이 없다 - 이 검사가 공허하다"
+    for path in scanned:
+        assert _API_KEY.encode() not in path.read_bytes(), path.name
+
+
+# --- `cli.main run --oracle-submit` — 플래그에서 서버까지 ---------------------------------------
+
+
+def _oracle_task(root: Path, **script: object) -> Path:
+    """과제 번들 + 그 번들이 서버 대역과 맞는 `submit.sh`.
+
+    소스는 `TARGET` 픽스처다 - `_level1_task`의 한 줄짜리 소스에서는 `dev_fake`가 8단계에 finding을
+    못 올려 낼 PoC가 없다.
+    """
+    task = root / "task"
+    task.mkdir(parents=True)
+    (task / "description.txt").write_text("DESC MARKER oracle", encoding="utf-8")
+    src = root / "stage" / "src-vul"
+    src.mkdir(parents=True)
+    for fixture in TARGET.iterdir():
+        if fixture.is_file():
+            (src / fixture.name).write_bytes(fixture.read_bytes())
+    with tarfile.open(task / "repo-vul.tar.gz", "w:gz") as tf:
+        tf.add(src, arcname="src-vul")
+    fields = {"server": _SERVER, "task_id": _TASK_ID, "agent_id": _AGENT_ID, **script}
+    (task / "submit.sh").write_text(submit_script(**fields), encoding="utf-8")
+    return task
+
+
+def _oracle_run(  # noqa: ANN202
+    tmp_path: Path, *extra: str, server: str | None = _SERVER, task: Path | None = None
+):
+    argv = [
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task or _oracle_task(tmp_path)),
+        "--task-work-dir", str(tmp_path / "w"),
+        "--oracle-submit", *extra,
+    ]  # fmt: skip
+    if server is not None:
+        argv += ["--oracle-server", server]
+    return cli.main(argv)
+
+
+def test_cli_run_submits_the_final_poc_through_the_flag_to_the_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """`cli.run`이 `_oracle_for`를 부르고 그 결과를 `execute`에 넘기고 `build_deps`가 `Deps`에 싣고
+    러너가 `ctx`에 심는 사슬 전부를 **실제 `TaskOracle`**로 지난다. 사슬의 어느
+    고리(`execute(oracle=)` · `build_deps(oracle=)` · `RunContext(oracle=)`)를 끊어도 서버가
+    아무것도 안 받아 이 검사가 죽는다."""
+    server = _http_server(monkeypatch)
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, _API_KEY)
+
+    rc = _oracle_run(tmp_path)
+
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    paths = [call.url.path for call in server.calls]
+    assert paths.count("/submit-fix") == 1 and paths.count("/submit-vul") >= 1
+    run_dir = next((tmp_path / "arts").iterdir())
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["oracle"]["final"] == "scored"
+    assert _SERVER in captured.out and _TASK_ID in captured.out  # 대상이 run 전에 찍힌다
+    assert "[ERROR]" not in captured.err
+    assert _API_KEY not in captured.out + captured.err
+    assert all(_API_KEY.encode() not in p.read_bytes() for p in run_dir.rglob("*") if p.is_file())
+
+
+def test_cli_run_refuses_a_masked_task_id_before_creating_a_run_or_submitting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """`--mask-map` 없이 마스킹된 id의 번들은 컨테이너를 돌리기 전에 exit 2다 - 비용을 낸 뒤에야
+    알게 되지 않는다."""
+    server = _http_server(monkeypatch)
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, _API_KEY)
+    task = _oracle_task(tmp_path, task_id="9c73e92e52b7")
+
+    rc = _oracle_run(tmp_path, task=task)
+
+    err = capsys.readouterr().err
+    assert rc == 2 and "[ERROR]" in err and "9c73e92e52b7" in err
+    assert server.calls == []
+    assert not (tmp_path / "arts").exists() or not list((tmp_path / "arts").iterdir())
+    assert not (tmp_path / "w").exists() or not any((tmp_path / "w").iterdir())
+
+
+def test_cli_run_refuses_a_bundle_that_names_another_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """키가 번들이 고른 호스트로 가는 길이 없다 - 주소가 다르면 요청 전에 멈춘다."""
+    server = _http_server(monkeypatch)
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, _API_KEY)
+    task = _oracle_task(tmp_path, server="http://evil.example:9")
+
+    rc = _oracle_run(tmp_path, task=task)
+
+    assert rc == 2 and "evil.example" in capsys.readouterr().err
+    assert server.calls == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--dry-run"], ["--stop-after", "7"], ["--stop-after", "0"]],
+    ids=["dry-run", "stop-after-7", "stop-after-0"],
+)
+def test_cli_run_that_cannot_reach_stage_8_warns_instead_of_demanding_a_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, extra: list[str]
+) -> None:
+    """키가 없고 서버 주소도 없는데 `--dry-run`·낮은 `--stop-after`면 **막지 않고** 경고한다 -
+    모델에 안 닿는 run은 막지 않는다는 이 파일의 원칙. 전엔 키 부재로 exit 2였고 제출은 어차피
+    0건이었다."""
+    server = _http_server(monkeypatch)
+    monkeypatch.delenv(cli._ORACLE_KEY_ENV, raising=False)
+
+    rc = _oracle_run(tmp_path, *extra, server=None)
+
+    err = capsys.readouterr().err
+    assert rc == 0, err
+    assert "[WARN ] --oracle-submit이지만" in err and "아무것도 제출하지 않는다" in err
+    assert "[ERROR]" not in err
+    assert server.calls == []
+    run_dir = next((tmp_path / "arts").iterdir())
+    assert "oracle" not in {p.name for p in run_dir.iterdir()}
+
+
+def test_cli_run_with_a_failing_server_completes_and_says_so_on_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """서버가 죽어 있어도 run은 완주하고(추가형) exit 0이다. 달라지는 것은 stderr의 경고와
+    매니페스트다 - 「완주 여부: 완주」만 보이고 채점기가 한 일이 0건이던 것이 이 결함이었다."""
+
+    def down(request, timeout=None):  # noqa: ANN001, ANN202, ARG001
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", down)
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, _API_KEY)
+
+    rc = _oracle_run(tmp_path)
+
+    captured = capsys.readouterr()
+    assert rc == 0 and "완주 여부: 완주" in captured.out
+    assert "[WARN ] 채점기 vul 제출 1건이 예외로 실패했다" in captured.err
+    assert "[WARN ] 채점기에 낼 최종 PoC를 지정하지 못했다" in captured.err
+    run_dir = next((tmp_path / "arts").iterdir())
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["oracle"]["vul_failed"] == 1 and manifest["oracle"]["final"] == "none"
 
 
 # --- 3. 지표 산출 가능성 ----------------------------------------------------

@@ -104,11 +104,12 @@ from src.interfaces.model_client import (
     SchemaParseError,
     error_detail,
 )
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
-from src.orchestrator import gate, state_machine
+from src.orchestrator import gate, oracle_log, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.heartbeat import Heartbeat
@@ -450,6 +451,8 @@ class Dependencies(Protocol):
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
     # 어댑터가 하고 러너는 이 콜러블만 받는다(`resolve_requests`와 같은 자리).
     swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None
+    # 채점기 (#386). `None`이면 이 run은 PoC를 제출하지 않는다 — `swap_to`와 같은 경계다.
+    oracle: Oracle | None
 
 
 @dataclass(frozen=True)
@@ -749,6 +752,10 @@ class _Accumulator:
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
+    # 채점기(oracle)의 후보별 vul 시도와 최종 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
+    # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
+    # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
+    oracle_ledger: oracle_log.OracleLedger = field(default_factory=oracle_log.OracleLedger)
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -815,6 +822,8 @@ def run_pipeline(
         resolve_requests=deps.resolve_requests,
         # 단계 경계 교대(ADR 0012 Phase 6.5) — `resolve_requests`와 같은 경계다.
         swap_to=deps.swap_to,
+        # 채점기(#386) — `swap_to`와 같은 경계다. `None`이면 제출하지 않는다.
+        oracle=deps.oracle,
         # CyberGym 과제 설명(PoV 배선). `retrieval.run`이 캡슐에 실어 Scout·Auditor·pov가 본다.
         vuln_description=spec.vuln_description,
     )
@@ -850,7 +859,14 @@ def run_pipeline(
     ctx.record_token_counter(dict(deps.counter_report))
 
     last, stop_reason = spec.stop_at()
-    state = _Accumulator()
+    state = _Accumulator(
+        oracle_ledger=oracle_log.OracleLedger(
+            wired=deps.oracle is not None,
+            # 사이드카는 `prompts`·`pocs`와 같은 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일
+            # 때만.
+            log=oracle_log.OracleLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        )
+    )
     stopped_after = None if stop_reason is None else last
     # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(`finally` 바로 뒤).
     unforeseen: Exception | None = None
@@ -949,6 +965,13 @@ def run_pipeline(
             if heartbeat is not None:
                 heartbeat.stop()
 
+    # 채점기를 켠 run의 제출 요약을 매니페스트에 싣는다(#386) — 아래 두 `finish_run` 호출(예상 밖
+    # 예외 경로와 정상 경로)이 같은 `record`를 쓰므로 여기서 한 번 바꾼다. 안 켠 run은 `None`이라
+    # 기록이 그대로다.
+    oracle_summary = state.oracle_ledger.summary()
+    if oracle_summary is not None:
+        record = record.transition(oracle=oracle_summary)
+
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
         # HIGH 1).
@@ -1036,6 +1059,10 @@ def run_pipeline(
     pov_shortfall = _pov_shortfall_warning(state.pov_results)
     if pov_shortfall is not None:
         warnings.append(pov_shortfall)
+    # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
+    # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
+    # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
+    warnings.extend(state.oracle_ledger.warnings())
 
     findings = list(state.findings.values())
     # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
@@ -1210,17 +1237,21 @@ def _analyze(
         state.update(after)
     # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
     # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
-    if not (validated and Role.POV.value in ctx.config.profile.roles):
-        return
-    swap = ctx.config.swap
-    # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
-    # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
-    # swappable로 한 번 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라 막는다.
-    if swap is not None and Role.POV.value in swap.swappable:
-        _swap_for(ctx, Stage.VALIDATE)
-    # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
-    for finding in validated:
-        _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+    if validated and Role.POV.value in ctx.config.profile.roles:
+        swap = ctx.config.swap
+        # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
+        # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
+        # swappable로 한 번 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라
+        # 막는다.
+        if swap is not None and Role.POV.value in swap.swappable:
+            _swap_for(ctx, Stage.VALIDATE)
+        # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
+        for finding in validated:
+            _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+    # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
+    # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
+    # `not_reached`로 남는다.
+    _finalize_oracle(ctx, state)
 
 
 # PoV 관측에 싣는 도구 출력 꼬리 길이. **잰 값이 아니라 설계 상수다** — ASan 요약(`SUMMARY:` 줄과
@@ -1590,8 +1621,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
     올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
-    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트·oracle
-    제출은 호스트 후속이다.
+    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트는
+    호스트 후속이다.
 
     **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
     캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
@@ -1600,6 +1631,14 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `run_pipeline`이 그 형을 받는지에 달렸다. `BudgetExhausted`·`ModelSwapError`·
     `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
     그 밖의 형은 run과 함께 보고서도 잃는다.
+
+    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
+    `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
+    다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
+    돈다(`_finalize_oracle` — 후보가 하나일 때만 지정한다, `_designate_final`). 부분 PoC
+    (`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는 나가지
+    않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
+    (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1619,10 +1658,179 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     # `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
     # `setdefault`라 정상 출구가 적은 사유를 덮지 않는다 — 아무도 안 적었을 때만 들어간다.
+    # 채점기 제출(#386)은 이 `try` 안이다: `_submit_vul_to_oracle`이 `Exception`을 스스로 흡수하므로
+    # `finally`가 루프가 이미 적은 사유(`submitted`)를 덮을 일이 없고, 올라가는 인터럽트가 있어도
+    # 사유는 남는다.
     try:
-        _run_pov_hops(ctx, state, finding, capsule)
+        poc, reason = _run_pov_hops(ctx, state, finding, capsule)
+        if reason is PovStopReason.SUBMITTED and poc is not None:
+            _submit_vul_to_oracle(ctx, state, finding, poc)
     finally:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
+
+
+def _submit_vul_to_oracle(
+    ctx: RunContext, state: _Accumulator, finding: Finding, poc: bytes
+) -> None:
+    """후보 하나의 PoC를 채점기의 `vul` 다리에 내보낸다 (#386). 채점기가 없으면 아무것도 안 한다.
+
+    **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
+    적는데 클라이언트는 그것을 강제하지 않는다 — 후보마다 `vul`·`fix`를 다 내면(`run_round_trip`)
+    비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 후보마다는 `vul`만 내고 최종은 `_finalize_oracle`이
+    지정한다.
+
+    **추가형이다** — finding 상태를 바꾸지 않고 Evidence도 만들지 않는다(채점은 저장소 밖 기준이고
+    내부 등급 E4는 실행 로그를 따로 요구한다, #232 · `interfaces/oracle.py`). 기록만 남긴다.
+
+    **예외를 흡수한다** — 채점기는 저장소 밖 서비스이고 그 사건이 run을 멈추면 앞 단계 산출물까지
+    잃는다(`_run_pov`의 추가형 계약 그대로). `Exception`만 흡수한다 — TERM·HUP(`SystemExit`)과
+    Ctrl-C는 올라간다. 다만 `oracle_failed`로 **사유를 남긴다** — 그래야 「제출했는데 실패했다」가
+    조용히 「미제출」(이벤트 부재)과 같아지지 않는다.
+
+    **도커 왕복을 단계 시간에 넣는다** — 이 호출은 `Stage.VALIDATE` 구간(`stage_start`~`stage_end`)
+    안에서 돌고 이벤트가 `wall_ms`를 단다. 구간 밖에서 내면 이 이벤트가 8단계 `stage_end` 뒤에 나가
+    왕복이 단계 시간 장부에서 빠진다. 값은 장부(`state.oracle_ledger`)와 사이드카에 쌓이고,
+    trace에는 결정론 필드만 간다(분류는 `oracle_log` 모듈 docstring).
+    """
+    if ctx.oracle is None:
+        return
+    with ctx.stage(Stage.VALIDATE):
+        started = ctx.monotonic_ms()
+        try:
+            submission = ctx.oracle.submit_vul(poc)
+        except Exception as exc:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
+            attempt = oracle_log.vul_failed(
+                finding.finding_id, poc, exc, max(0, ctx.monotonic_ms() - started)
+            )
+            ctx.trace.emit(
+                EventKind.ORACLE_FAILED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=attempt.wall_ms,
+                leg="vul",
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=attempt.poc_bytes,
+                error=attempt.error,
+            )
+        else:
+            attempt = oracle_log.vul_ok(
+                finding.finding_id, poc, submission, max(0, ctx.monotonic_ms() - started)
+            )
+            ctx.trace.emit(
+                EventKind.ORACLE_SUBMITTED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=attempt.wall_ms,
+                leg="vul",
+                task_id=submission.task_id,
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=attempt.poc_bytes,
+            )
+        state.oracle_ledger.add_attempt(attempt)
+
+
+def _designate_final(
+    ledger: oracle_log.OracleLedger,
+) -> tuple[oracle_log.VulAttempt | None, str | None]:
+    """run당 한 번, `vul` 제출이 성공한 후보 중에서 최종 PoC를 지정한다 (#386).
+
+    돌려주는 것은 `(지정한 시도, None)`이거나 `(None, 지정 못 한 사유)`다. **셋으로 갈린다:**
+
+    - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed` — 낼 PoC가 없던
+      것과 낸 것이 다 실패한 것은 다른 사건이다, §0). `fix` 다리와 판정 조회는 0번이다.
+    - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
+      고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
+      것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
+    - **후보가 둘 이상이다** → **지정하지 않는다**(`policy_undecided`). `fix` 다리와 판정
+      조회는 0번이다. 벤치마크는 에이전트가 최종 답을 정확히 하나 명시적으로 고르라고
+      요구하고, 조사 문서 1.3절(docs/research/2026-09-29-cybergym-pov-design.md)은 거기서
+      「best-of도 last-attempt도 아니다」라는 결론을 낸다 — 마지막·처음·점수로 고르는 기본값을
+      둘 수 없다. 합의된 방식은 모델에게 묻는 것이고 그것은 프롬프트 버전과 좌석이 필요한
+      별도 조각이다. 그 전에는 하나를 고르지 않고 이유를 남긴다 — 판정이 없는 편이 금지된
+      규칙으로 낸 판정보다 낫다(CLAUDE.md §0).
+
+    「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
+    — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
+    알린다).
+    """
+    candidates = [attempt for attempt in ledger.attempts if attempt.ok]
+    if not candidates:
+        return None, ledger.none_reason()
+    if len(candidates) == 1:
+        return candidates[0], None
+    return None, oracle_log.REASON_POLICY_UNDECIDED
+
+
+def _score(
+    ctx: RunContext, oracle: Oracle, picked: oracle_log.VulAttempt, designation: str
+) -> oracle_log.FinalAttempt:
+    """지정한 하나에 `fix` 다리와 판정 조회를 돌린다. 저장소 밖 서비스라 예외는 흡수하고 남긴다."""
+    # 지정되는 것은 vul 제출이 성공한 시도뿐이라 바이트와 제출 결과가 있다.
+    assert picked.poc is not None and picked.submission is not None
+    started = ctx.monotonic_ms()
+    try:
+        outcome = oracle.finalize(picked.poc, picked.submission)
+    except Exception as exc:  # 사유를 남기고 run은 계속한다.
+        return oracle_log.FinalAttempt(
+            status=oracle_log.STATUS_FAILED,
+            wall_ms=max(0, ctx.monotonic_ms() - started),
+            designation=designation,
+            attempt=picked,
+            error=type(exc).__name__,
+            error_detail=oracle_log.clip_error(exc),
+        )
+    return oracle_log.FinalAttempt(
+        status=oracle_log.STATUS_SCORED,
+        wall_ms=max(0, ctx.monotonic_ms() - started),
+        designation=designation,
+        attempt=picked,
+        outcome=outcome,
+    )
+
+
+def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
+    """채점기의 최종 단계 — **run당 한 번**, 후보 하나만 (#386). 채점기가 없으면 아무것도 안 한다.
+
+    `_designate_final`이 최종 PoC를 지정하면 그 하나에만 `fix` 다리와 판정 조회를 돌린다. 점수는
+    후보 N건의 any-of가 아니라 이 호출 하나다 — 그래서 `oracle_final`이 run당 1건이고
+    `oracle_submitted`는 판정 값을 안 든다(`trace.py`). **지정된 후보가 없는 사건**
+    (`no_poc`·`all_vul_submissions_failed`·`policy_undecided`)은 `status=none`이고, 지정했는데
+    `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가 없다」가 「최종
+    PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 지정하지 않는다** — 고르는 규칙이
+    정해지지 않았다(`_designate_final`).
+
+    **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
+    계약). 이 단계는 8단계가 **끝까지 돌았을 때만** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
+    불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
+    """
+    if ctx.oracle is None:
+        return
+    ledger = state.oracle_ledger
+    with ctx.stage(Stage.VALIDATE):
+        picked, reason = _designate_final(ledger)
+        if picked is None:
+            final = oracle_log.FinalAttempt(status=oracle_log.STATUS_NONE, reason=reason)
+        else:
+            final = _score(ctx, ctx.oracle, picked, oracle_log.DESIGNATION_SOLE_CANDIDATE)
+        ledger.set_final(final)
+        ctx.trace.emit(
+            EventKind.ORACLE_FINAL,
+            stage=Stage.VALIDATE,
+            subject_kind=None if picked is None else "finding",
+            subject_id=None if picked is None else picked.finding_id,
+            wall_ms=final.wall_ms,
+            # 키 집합은 `status`와 무관하게 같다 — 해당 없는 값은 `None`(안 정해졌다)이다.
+            status=final.status,
+            designation=final.designation,
+            reason=final.reason,
+            poc_sha256=None if picked is None else picked.poc_sha256,
+            poc_bytes=None if picked is None else picked.poc_bytes,
+            task_id=None if final.outcome is None else final.outcome.task_id,
+            error=final.error,
+            record_ref=ledger.record_ref,
+        )
 
 
 def _run_pov_hops(
@@ -1645,17 +1853,19 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이·oracle 제출도 후속이고,
-    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고,
-    종단에서 **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
+    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다(채점기 제출은
+    `_run_pov`가 이 루프의 반환값으로 한다, #386). 여기서는 홉 이벤트(`POV_HOP`)와 종단
+    이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
+    사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
     `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
     그대로다 — 네 출구는 `_pov_finish_and_record`를 불러 `ref`를 계수기 사유에 쓰고 2-튜플만
-    돌려받는다(`digest`는 그 함수가 버린다). 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를
-    그대로 올리면 되고 디렉터리를 글로브할 필요가 없다.
+    돌려받는다(`digest`는 그 함수가 버린다). 채점기 제출(`_run_pov`)은 이 반환의 바이트를 메모리에서
+    그대로 낸다. 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를 그대로 올리면 되고
+    디렉터리를 글로브할 필요가 없다.
     """
     max_hops = ctx.config.thresholds.max_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
@@ -1909,8 +2119,8 @@ def _pov_finish(
     docstring에 있다.
 
     반환은 `(poc, reason, ref, digest)`다 — `ref`·`digest`는 방금 쓴 사이드카의 것이고 안 썼으면
-    (배선 없음·바이트 없음·쓰기 실패) `None`이다. 다음 슬라이스가 디렉터리를 글로브하지 않고
-    쓰게 낸다."""
+    (배선 없음·바이트 없음·쓰기 실패) `None`이다. 읽는 곳은 아직 없다(`_run_pov_hops`가 `[:2]`로
+    뗀다) — 파일 참조가 필요해질 때 디렉터리를 글로브하지 않고 쓰게 내 둔다."""
     ref: str | None = None
     digest: str | None = None
     sidecar: dict[str, TraceValue] = {}

@@ -221,7 +221,8 @@ def _synthesize_repro_spec(candidate: Candidate) -> ReproSpec:
     """후보 위치로 합성한 재현 명세 (#S7). `expected_signal`에 「sanitizer crash」를 넣는 것은
     8단계가 그 문구로 도구를 역선택하기 때문이다(`validate.tool_for` — 「sanitizer」가 asan에
     매핑된다). 명세가 가리키는 위치는 후보의 sink다. `steps`는 비어 있을 수 없어(스키마) 한 줄을
-    둔다 — 실제 재현은 8단계 PoV가 PoC를 만들고 oracle이 판정하는 후속이다.
+    둔다 — 이 줄은 재현 절차가 아니다. 실제 재현은 8단계 PoV가 PoC를 만드는 것이고,
+    `--oracle-submit`이면 그 PoC를 채점기(oracle)가 판정한다(#386).
 
     ⚠ **이 도구 run(asan)이 재는 것은 점수가 아니다** (#393 리뷰 MEDIUM-2) — `validate.run`의
     asan은 추출한 `repo-vul.tar.gz`를 ASan으로 **새로 빌드**한 것을 돌린다. 채점되는 ARVO/oss-fuzz

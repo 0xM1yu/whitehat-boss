@@ -28,6 +28,7 @@ from src.interfaces.model_client import (
     Usage,
     error_detail,
 )
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -178,6 +179,11 @@ class RunContext:
     # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
+    # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 후보마다 `vul`
+    # 다리만, 최종으로 지정한 하나에만 `fix` 다리와 판정 조회를 낸다(`runner._finalize_oracle`).
+    # `None`이면 이 run은 제출하지 않는다(기본) — `resolve_requests`·`swap_to`와 같은 자리다.
+    # 구현은 어댑터에 있고 이 경계는 `src/interfaces/oracle.py`의 Protocol이 넘는다.
+    oracle: Oracle | None = None
     # 단계 경계 모델 교대 (ADR 0012 Phase 6.5). `Dependencies.swap_to`(runner.py)를 옮겨 온
     # 것이다 — `resolve_requests`와 같은 자리. `None`이면 이 run은 교대하지 않는다. 부르는 곳은
     # 러너의 `_swap_for`·run 끝 내림뿐이고 노드는 이것을 쓰지 않는다.
