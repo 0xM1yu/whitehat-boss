@@ -41,7 +41,12 @@ from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
-from src.orchestrator.runner import RunSpec, _new_record
+from src.orchestrator.runner import (
+    _AUDITOR_SOURCE_CHARS,
+    _AUDITOR_WINDOW_LINES,
+    RunSpec,
+    _new_record,
+)
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -426,12 +431,18 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v4(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v4`를 고른다(#328 머지 뒤
-    재배선 — 2026-09-29 v1→v3(#256 항목 4)의 다음 판). 되돌리면 이 핀이 빨개진다."""
+def test_the_canonical_auditor_selects_prompt_v6(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v6`를 고른다. 되돌리면 이
+    핀이 빨개진다.
+
+    판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
+    프롬프트 #418 · 배선 #421). v5는 건너뛴다 — v5 배선 PR(#390)이 대여 세션 측정까지
+    주차돼 있었고 v6가 v5에서 출발했다(`2bb374d`). **사용자 결정 2026-10-03이고 측정 결과가
+    아니다** — v6는 v5의 범위 제약 둘을 삭제했으므로 v5의 상위집합이 아니다(`config/models.yaml`의
+    그 항목이 삭제 목록과 #418이 든 수를 적는다)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v4"
+    assert config.model_for("auditor").prompt_template_version == "v6"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -443,6 +454,54 @@ def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) ->
 
     version = config.model_for("auditor").prompt_template_version
     assert version in auditor_node._CONTENT_AWARE_VERSIONS
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile: str) -> None:
+    """서빙 판의 입력 계약 철자가 러너 상수와 갈리지 않는다 — **판을 세지 않고 묻는다.**
+
+    `test_slice_targets.py`의 같은 검사와 `test_nodes.py`의 v5 문구 핀은 판 목록이나 경로의
+    `"v5"`로 대상을 고른다. 그 축은 **판을 올릴 때마다 목록을 같이 늘려야** 하고, 안 늘리면
+    검사가 사라진 것이 아니라 **안 서는 판만 지킨다**.
+
+    **사고 —** 2026-10-03 v4→v6 배선(#418·#421)에서 그것이 났다. 세 핀이 전부 `v4`·`v5`에 걸려 있어
+    **서빙 판 v6가 어느 판본 핀에도 안 걸렸고**, 그 사이 v6의 규칙 3 문장이 이미 갈려 있었다
+    (`establish it,use` — 공백 하나가 빠져 아래 연속 구가 안 맞았다). CI는 초록이었다.
+
+    여기서 고르는 것은 `prompt_template_version`이라 v7로 올려도 같이 돈다. 묻는 것은 철자다 —
+    모델이 그 계약을 따르는지는 고정 표본 회귀의 몫이다(agent-contracts §4 규칙 5).
+    """
+    version = load_config(profile).model_for("auditor").prompt_template_version
+    prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
+    flat = " ".join(prefix.split())
+
+    # 러너 상수 ↔ 계약 수치(`runner._auditor_target`·`_auditor_source`).
+    assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
+    assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
+    assert "`(file, start line)` order" in prefix
+    # 규칙 3의 판정 **방향** — 「Otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
+    assert (
+        "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
+        "establish it, use the issued missing-evidence ID; use `reachability_unknown` for a "
+        "missing reachability fact or path connection. Otherwise decide; truncation alone is "
+        "not a reason to defer" in flat
+    )
+    # 근거 본문·절단 계약 — **`_CONTENT_AWARE_VERSIONS` 자격의 근거가 이 문구들이다**(#328 리뷰
+    # MEDIUM-1). 뒤집히면 집합에 든 채로 그 전제가 거짓이 된다. 목록은 `test_nodes.py`의
+    # `test_v5_evidence_completeness_wording`과 같고, 그쪽은 경로에 v5를 하드코딩한다.
+    assert "factual summary" not in flat
+    for text in (
+        "not a generated summary",
+        "`truncated` is false",
+        "line containing only `...`",
+        r"`\n...\n`",
+        "stop mid-line",
+        "not adjacent",
+        "without that marker",
+        "may also occur in the original log",
+        "not a clean result",
+    ):
+        assert text in flat
 
 
 # meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
@@ -501,8 +560,14 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
-        # 음성 통제 — auditor/v4 meta는 「배선됨」이다. 고르면 안 걸려야 한다.
-        ("auditor", "qwen3.8-27b", "v4", []),
+        # 실물 형제 문형 — prompts/auditor/v4/meta.yaml:4-5 「… 어느 registry 엔트리도 이 버전을
+        # 고르지 / 않는다」. v3와 같이 구절이 주석 줄바꿈으로 갈린다(`:4` 끝이 「고르지」다).
+        # v6 배선(2026-10-03)으로 v4가 미선택이 되며 달았고, 그 전에는 이 행이 음성 통제였다.
+        ("auditor", "qwen3.8-27b", "v4", ["auditor/v4"]),
+        # 음성 통제 — prompts/auditor/v6/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
+        # 머리 주석 형식이고 v4도 2026-10-03까지 「배선됨」이었다) — 판독기가 그것을 「안 고른다」로
+        # 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v6", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -511,7 +576,7 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 넷만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    meta 다섯만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -534,8 +599,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("critic", "v3", {"아직 미활성"}),
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — 정본 Auditor가 고르는 판이다(「배선됨」).
-        ("auditor", "v4", set()),
+        # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,
+        # v3처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "v4", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v6/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
+        ("auditor", "v6", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -544,7 +612,7 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 네 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
+    않는다(#341 R2). ⚠ 이 다섯 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
 
@@ -2162,9 +2230,9 @@ def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
         load_config("dev_fake").thresholds.transition(**{key: 2})
 
 
-@pytest.mark.parametrize("version", ["v4", "v5"])
+@pytest.mark.parametrize("version", ["v4", "v5", "v6"])
 def test_the_current_auditor_prompts_describe_no_source_option(version: str) -> None:
-    """v4·v5는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 리뷰 MEDIUM-2)."""
+    """v4·v5·v6는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 MEDIUM-2)."""
     assert load_prompt(Role.AUDITOR, version).source_options == ()
 
 
