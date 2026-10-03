@@ -1301,7 +1301,8 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
 
     **조회는 기존 resolver를 재사용한다**(`ctx.resolve_requests`). 이름으로 함수 본문을 찾는
     수단이 그것뿐이다 — `symbols_for`는 (파일 → 심볼)이고 `definitions_of`는 `macros`·`types`·
-    `file_vars`만 본다(`src/adapters/index_graph.py:111`). 그래서 새 훅·새 어댑터 배선이 0이다.
+    `file_vars`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서 새 훅·새
+    어댑터 배선이 0이다.
     resolver는 `table("functions")`가 없으면 빈 `Resolution`을 돌려주므로(`need_evidence` 모듈)
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
 
@@ -3048,9 +3049,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
 
     상한(`_AUDITOR_SOURCE_CHARS`)은 함수 단위다 — 앞에서부터 들어가는 함수를 넣고 넘치는 것은
     뺀다(중간을 자르면 끊긴 함수를 본다). entry 함수는 상한보다 커도 넣는다. `anchor` 범위 안의 줄은
-    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·프로토타입·매크로)은 읽지 않고
-    센다. 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source` 이벤트가 든다 — EXPANDED 캡슐의
-    `target_function`은 entry 함수만 센다.
+    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·프로토타입·매크로)은 `SOURCE`에 안
+    싣고 센다 — 읽는 곳은 하나뿐이다: `auditor_definitions`가 1이면 정의 순서를 정하려고 슬라이스
+    줄의 이름만 읽는다(아래 「정의」). 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source`
+    이벤트가 든다 — EXPANDED 캡슐의 `target_function`은 entry 함수만 센다.
 
     ⚠ **상한은 entry 함수를 안 본다** — 뒤에 붙는 함수만 거른다. 감싸는 함수가 거대하면 `SOURCE`
     하나가 상한과 무관히 커지고, 서빙 입력 몫을 넘으면 400으로 거절된다. 이 함수가 그 경로를 막지

@@ -535,8 +535,10 @@ class GraphIndex:
 
         `demote_nonproduct`는 `definitions_of`와 같다 — 켜면 「정의가 하나뿐」을 **제품 경로
         정의만** 세고(비제품 정의는 경쟁자가 아니다), 비제품 경로의 호출 지점은 맨 뒤로 민다. 다만
-        **같은 이름을 자기가 정의하는 다른 파일의 호출은 안 싣는다** — 그 호출은 그 파일의 정의로
-        간다. 대상 파일이 비제품이면 강등하지 않는다.
+        **같은 이름의 비제품 정의가 어딘가 있으면 비제품 호출 전체를 안 싣는다** — 모의 구현을
+        부르는 이웃 호출(`tests/mock/user.c` → `tests/mock/dup.c`)은 어느 정의로 가는지 이름만으로
+        모르고, 그 정의를 가진 파일 자신의 호출도 같다. 제품 호출은 그대로다. 대상 파일이 비제품이면
+        강등하지 않는다.
         """
         if self._load().status != STATUS_LOADED:
             return None
@@ -552,13 +554,20 @@ class GraphIndex:
             if name == target.symbol
         ]
         rivals = _product_first(homes, itemgetter(0)) if demote else homes
-        own = {file for file, _ in homes if file != target.file} if demote else set()
+        # 강등을 켜면 경쟁자가 제품 정의 하나뿐이어도 **같은 이름의 비제품 정의가 따로 있을 수
+        # 있다**(`copied` — 모의 구현·예제 사본). 그러면 비제품 호출은 어느 정의로 가는지 모른다
+        # (`tests/mock/user.c`가 `tests/mock/dup.c`를 부른다) — 이름만으로 못 가르니 안 싣는다.
+        # 그 정의를 가진 파일 자신의 호출도 여기 든다. 제품 호출은 영향이 없다.
+        copied = demote and len(homes) > len(rivals)
         sites = {
             Location(file=file, symbol=caller, line_start=line, line_end=line)
             for caller, callee, file, line in self._calls
             if callee == target.symbol
             and not self._in_body(file, line, target)
-            and (file == target.file or (len(rivals) == 1 and file not in own))
+            and (
+                file == target.file
+                or (len(rivals) == 1 and not (copied and is_nonproduct_path(file)))
+            )
         }
         here = posixpath.dirname(target.file)
         return sorted(
