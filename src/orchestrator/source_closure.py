@@ -115,9 +115,13 @@ Measure = Callable[[str], int]
 
 # 문자열·문자 리터럴이 먼저라 그 안의 `//`·`/*`는 주석으로 안 읽힌다. 닫히지 않은 `/*`는 끝까지가
 # 주석이다 — 이 마지막 갈래가 없으면 `/*`가 여럿인데 `*/`가 없는 글에서 시작마다 끝까지 되훑어
-# 제곱 시간이 든다(한 번에 끝까지 먹어 선형이다).
+# 제곱 시간이 든다(한 번에 끝까지 먹어 선형이다). **수 리터럴(`num`)이 맨 앞이다** — 한 덩어리로
+# 먹고 **그대로 둔다**: C23·C++14 자릿수 구분자 `1'000`·`0xFF'FF`의 `'`가 문자 리터럴을 열면 같은
+# 줄의 다음 `'`까지(그 사이의 호출까지) 삼킨다. 수 모양은 `source_definitions._NOT_CODE`의 `num`과
+# 같다 — 이름 끝 숫자 `u8'x'`의 `8`은 수의 시작이 아니다.
 _LEXEME = re.compile(
-    r'"(?:\\.|[^"\\\n])*"' r"|'(?:\\.|[^'\\\n])*'" r"|/\*.*?\*/|/\*.*|//[^\n]*", re.S
+    r"(?P<num>(?<![A-Za-z0-9_])[0-9](?:'(?=[A-Za-z0-9_])|[A-Za-z0-9_.])*)"
+    r'|"(?:\\.|[^"\\\n])*"' r"|'(?:\\.|[^'\\\n])*'" r"|/\*.*?\*/|/\*.*|//[^\n]*", re.S
 )
 _CALL = re.compile(r"(?<![\w.])(?<!->)([A-Za-z_]\w*)\s*\(")
 _IDENT = re.compile(r"[A-Za-z_]\w*")
@@ -142,13 +146,17 @@ def _splice(text: str) -> str:
 
 
 def _without_comments(text: str) -> str:
-    """주석을 공백 하나로 바꾼다. 문자열·문자 리터럴 안의 `//`는 주석이 아니다."""
-    return _LEXEME.sub(lambda m: m[0] if m[0][0] in "\"'" else " ", text)
+    """주석을 공백 하나로 바꾼다. 문자열·문자 리터럴 안의 `//`는 주석이 아니고, 수 리터럴은
+    그대로 둔다."""
+    return _LEXEME.sub(lambda m: m[0] if m["num"] or m[0][0] in "\"'" else " ", text)
 
 
 def _code_only(text: str) -> str:
-    """주석을 공백으로, 문자열·문자 리터럴을 빈 따옴표로 — 안의 `foo(`가 호출로 안 걸리게."""
-    return _LEXEME.sub(lambda m: '""' if m[0][0] in "\"'" else " ", text)
+    """주석을 공백으로, 문자열·문자 리터럴을 빈 따옴표로 — 안의 `foo(`가 호출로 안 걸리게. 수는
+    그대로다."""
+    return _LEXEME.sub(
+        lambda m: m[0] if m["num"] else '""' if m[0][0] in "\"'" else " ", text
+    )
 
 
 def _skip_quoted(text: str, at: int) -> int:
