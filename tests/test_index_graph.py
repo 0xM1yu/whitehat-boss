@@ -1410,17 +1410,15 @@ def test_callees_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> 
 
 def test_call_sites_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
     """켜면 `dup`의 제품 정의가 하나(lib/b.c)라 다른 파일의 호출이 실린다(꺼진 쪽은 정의가 둘이라
-    다른 파일 호출을 안 싣는다). 비제품 호출 지점은 남되 뒤로 밀린다. 그리고 **`dup`을 자기가
-    정의하는 파일의 호출**(`only_test` — tests/t.c)은 그 파일의 `dup`을 부르는 것이라 안 싣는다."""
+    다른 파일 호출을 안 싣는다). 단 `dup`의 **비제품 정의가 따로 있어**(tests/t.c) 비제품 호출 --
+    그 정의를 가진 파일의 호출(`only_test`)과 어느 `dup`으로 가는지 모르는 `t_entry`(tests/u.c)
+    -- 은 안 싣는다. 제품 호출 `entry`만 남는다."""
     graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
     dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
 
     found = graph.call_sites_of(dup, demote_nonproduct=True)
 
-    assert found == [
-        Location(file="lib/a.c", symbol="entry", line_start=3, line_end=3),
-        Location(file="tests/u.c", symbol="t_entry", line_start=2, line_end=2),
-    ]
+    assert found == [Location(file="lib/a.c", symbol="entry", line_start=3, line_end=3)]
 
 
 def test_call_sites_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
@@ -1432,3 +1430,76 @@ def test_call_sites_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) 
 
     assert graph.call_sites_of(dup) == []
     assert graph.call_sites_of(mock, demote_nonproduct=True) == graph.call_sites_of(mock)
+
+
+def _call_sites_doc(symbols: list[dict], calls: list[dict]) -> dict:
+    files = sorted({row["file"] for row in [*symbols, *calls]})
+    return {
+        "version": "index-v1",
+        "files": files,
+        "skipped": [],
+        "symbols": symbols,
+        "calls": calls,
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+
+
+def _def(name: str, file: str) -> dict:
+    return {"name": name, "file": file, "line_start": 1, "line_end": 5}
+
+
+def _call(caller: str, file: str) -> dict:
+    return {"caller": caller, "callee": "dup", "file": file, "line": 2}
+
+
+def test_call_sites_of_puts_nonproduct_sites_last_even_when_they_sort_first(
+    tmp_path: Path,
+) -> None:
+    """`examples/`는 사전순으로 `lib/`보다 **앞**이라 (파일, 줄) 순서만 보면 비제품 호출이 먼저다 --
+    강등 키가 그것을 뒤로 민다. 위 픽스처(`lib/` < `tests/`)는 키를 지워도 같은 순서라 그 키를 못
+    물었다."""
+    doc = _call_sites_doc(
+        [_def("dup", "src/dup.c"), _def("use", "lib/use.c"), _def("ex", "examples/ex.c")],
+        [_call("use", "lib/use.c"), _call("ex", "examples/ex.c")],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="src/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert [loc.file for loc in graph.call_sites_of(dup)] == ["examples/ex.c", "lib/use.c"]
+    assert [loc.file for loc in graph.call_sites_of(dup, demote_nonproduct=True)] == [
+        "lib/use.c",
+        "examples/ex.c",
+    ]
+
+
+def test_call_sites_of_skips_nonproduct_callers_when_a_nonproduct_copy_exists(
+    tmp_path: Path,
+) -> None:
+    """`lib/dup.c`(대상) · `tests/mock/dup.c`(모의 구현) · `tests/mock/user.c`(모의 구현을 부르는
+    이웃). 강등을 켜면 제품 정의가 하나라 다른 파일 호출이 실리는데(꺼진 쪽은 정의가 둘이라
+    `[]`), **비제품 정의가 따로 있으면 비제품 호출은 어느 `dup`으로 가는지 모른다** -- 이웃
+    (`tests/mock/`)이든 다른 디렉터리(`tests/other/`)든 안 싣는다. 제품 호출(`lib/use.c`)만
+    남는다."""
+    doc = _call_sites_doc(
+        [
+            _def("dup", "lib/dup.c"),
+            _def("use", "lib/use.c"),
+            _def("dup", "tests/mock/dup.c"),
+            _def("mock_user", "tests/mock/user.c"),
+            _def("other_user", "tests/other/user.c"),
+        ],
+        [
+            _call("use", "lib/use.c"),
+            _call("mock_user", "tests/mock/user.c"),
+            _call("other_user", "tests/other/user.c"),
+        ],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="lib/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(dup, demote_nonproduct=True) == [
+        Location(file="lib/use.c", symbol="use", line_start=2, line_end=2)
+    ]
