@@ -29,6 +29,7 @@ from src.adapters.index_graph import (
     GraphIndex,
     SliceBody,
     graph_section,
+    source_lines,
 )
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retriever import Query
@@ -251,7 +252,7 @@ def read_symbol_source(root: Path, target: Location) -> str:
     text = _read_source(root, target.file)
     if target.line_start is None:
         return text
-    lines = text.splitlines()
+    lines = source_lines(text)
     end = target.line_end or target.line_start
     return "\n".join(lines[max(target.line_start - 1, 0) : end])
 

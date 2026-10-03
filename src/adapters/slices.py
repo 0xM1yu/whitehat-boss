@@ -74,7 +74,9 @@ def split_source(raw: bytes) -> list[str]:
 
 @dataclass(frozen=True)
 class Slice:
-    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석 세부(`analysis` 등)는 버린다."""
+    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·싱크 cap·경계만
+    싣고 줄 목록·카운터 같은 나머지 세부는 버린다. `candidate_manifest`의 `sink_arguments`(후보마다
+    싱크 호출의 인자)는 아직 안 싣는다 — 미뤘다(#438)."""
 
     id: str
     candidate_key: str
@@ -93,6 +95,13 @@ class Slice:
     # (file, line) 목록). Scout 창 트림이 어느 줄을 먼저 버릴지 정하는 데 쓴다(#375 HIGH-2 —
     # 전엔 하네스가 이 키를 안 읽었다). 없으면 빈 dict다(옛 슬라이스·degraded 범주 공백).
     provenance: dict[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
+    # 슬라이서의 분석 사실 — `SliceRef`가 같은 이름으로 들고 가고 뜻은 거기 적었다. 없으면 옛
+    # 슬라이스다.
+    analysis_kind: str = ""
+    truncated: bool = False
+    truncation_reasons: tuple[str, ...] = ()
+    sinks_capped: bool = False
+    boundaries: tuple[tuple[str, str, int], ...] = ()
 
     @property
     def given_end(self) -> str:
@@ -202,6 +211,73 @@ def _provenance(raw: object) -> dict[str, tuple[tuple[str, int], ...]]:
     return out
 
 
+def _object(raw: object, name: str) -> dict:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise TypeError(f"{name}: 객체가 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _kind(raw: object) -> str:
+    """`analysis_kind` — 없거나 `null`이면 빈 문자열(슬라이서가 안 적었다 = 모른다)이다."""
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise TypeError(f"analysis_kind: 문자열이 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _flag(raw: object, name: str) -> bool:
+    """JSON 불리언만 받는다 — 없거나 `null`이면 `False`다. `bool("false")`는 참이라 문자열·숫자를
+    `bool()`로 바꾸면 깨진 입력이 「잘렸다」로 읽힌다."""
+    if raw is None:
+        return False
+    if type(raw) is not bool:
+        raise TypeError(f"{name}: 불리언이 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _array(raw: object, name: str) -> list:
+    """JSON 배열만 받는다 — 없거나 `null`이면 빈 목록이다. 문자열을 그대로 돌면 글자마다 하나가
+    된다(`"backward_depth"` → 서로 다른 글자 12개가 사유로)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise TypeError(f"{name}: 배열이 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _analysis_facts(
+    item: dict,
+) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...], bool]:
+    """`analysis`의 절단 사유(`truncation_reasons`) · 역추적이 멈춘 자리(`boundaries`) · flows의
+    싱크 cap(`sinks_capped`).
+
+    클러스터링이 합친 슬라이스의 `analysis`는 **대표 후보의 것**이고 구성원별 분석은
+    `member_analysis`에 있다(대표 자신도 든다 — `slicer_source.cluster`). 최상위 `truncated`가
+    구성원의 OR이라 셋 다 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 · 사유·경계를
+    안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는 처음 나온
+    순서로 중복을 뺀다. 모양이 틀리면(사유·경계가 배열이 아니다 · 사유가 문자열이 아니다 · cap이
+    불리언이 아니다) `TypeError`로 로드를 멈춘다 — 강제 변환하면 깨진 입력이 사실처럼 읽힌다.
+    """
+    members = _object(item.get("member_analysis"), "member_analysis")
+    reasons: dict[str, None] = {}
+    boundaries: dict[tuple[str, str, int], None] = {}
+    sinks_capped = False
+    for raw in list(members.values()) or [item.get("analysis")]:
+        analysis = _object(raw, "analysis")
+        for reason in _array(analysis.get("truncation_reasons"), "truncation_reasons"):
+            if not isinstance(reason, str):
+                raise TypeError(f"truncation_reasons: 문자열이 아니다 — {type(reason).__name__}")
+            reasons[reason] = None
+        sinks_capped = _flag(analysis.get("sinks_capped"), "sinks_capped") or sinks_capped
+        for boundary in _array(analysis.get("boundaries"), "boundaries"):
+            where = boundary["location"]
+            boundaries[(str(boundary["reason"]), str(where["file"]), int(where["line"]))] = None
+    return tuple(sorted(reasons)), tuple(boundaries), sinks_capped
+
+
 def _slice(item: dict) -> Slice:
     case = item["case"]
     if case not in _GIVEN_END:
@@ -211,6 +287,7 @@ def _slice(item: dict) -> Slice:
     code = item["code"]
     if not isinstance(code, str):
         raise TypeError("code")
+    truncation_reasons, boundaries, sinks_capped = _analysis_facts(item)
     return Slice(
         id=str(item["id"]),
         candidate_key=str(item["candidate_key"]),
@@ -221,6 +298,11 @@ def _slice(item: dict) -> Slice:
         code=code,
         degraded=bool(item.get("degraded", False)),
         provenance=_provenance(item.get("line_provenance")),
+        analysis_kind=_kind(item.get("analysis_kind")),
+        truncated=_flag(item.get("truncated"), "truncated"),
+        truncation_reasons=truncation_reasons,
+        sinks_capped=sinks_capped,
+        boundaries=boundaries,
     )
 
 
@@ -256,6 +338,11 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 degraded=item.degraded,
                 # 줄별 출처 — Scout 트림이 anchor > dependency > context 순으로 버린다(#375 HIGH-2).
                 provenance=item.provenance,
+                analysis_kind=item.analysis_kind,
+                truncated=item.truncated,
+                truncation_reasons=item.truncation_reasons,
+                sinks_capped=item.sinks_capped,
+                boundaries=item.boundaries,
             )
         )
     return tuple(refs)
