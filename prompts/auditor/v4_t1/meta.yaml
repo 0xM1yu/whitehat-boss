@@ -3,6 +3,12 @@
 # s500 저장소 전체 실측 2026-10-01로 고른 조합). 나머지 지시·스키마는 v4와 같다. 켜려면 이 판을
 # 고르는 동시에 `thresholds`의 아래 세 옵션을 켠다 -- 판만 고르면 SOURCE가 v4 모양이라 서술이
 # 거짓이 되고, 옵션만 켜면 `cli`가 run을 막는다(source_options 가드, #351).
+# ⏵ 2026-10-03 — `config/budgets.yaml`이 `auditor_caller_lines`도 10으로 켠다(#349). 이 판은 그 옵션을
+# 서술·선언하지 않으므로 이 판을 고를 때는 `auditor_caller_lines`를 0으로 꺼야 한다 — 안 끄면 `cli`가
+# run을 막는다.
+# ⏵ 2026-10-04 — `config/budgets.yaml`이 `auditor_callee_wrappers`도 1로 켠다(래퍼·별칭 너머, 이슈 #451).
+# 이 판의 prefix는 피호출 본문을 「one call level deep」으로 서술하고 그 옵션을 선언하지 않으므로 이 판을
+# 고를 때는 `auditor_callee_wrappers`도 0으로 꺼야 한다 — 안 끄면 `cli`가 run을 막는다.
 role: auditor
 version: v4_t1
 output_schema: Finding

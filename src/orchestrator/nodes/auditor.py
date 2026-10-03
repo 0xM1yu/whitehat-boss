@@ -135,8 +135,9 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # ⚠ **빠져 있으면 v4→v6 전환이 툴 로그 본문을
 # 조용히 떨군다**(#328 리뷰 MEDIUM-1과 같은 결) — `test_config.py`의
 # `test_the_canonical_auditor_version_receives_evidence_bodies`가 그것을 문다.
+# v7(2026-10-04 · #349)은 v6 prefix의 SOURCE 서술만 바꾼 판이라 위 두 구절이 v6와 바이트 동일이다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5", "v6"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5", "v6", "v7"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.

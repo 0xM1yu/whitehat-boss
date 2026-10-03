@@ -1256,6 +1256,357 @@ def test_call_sites_of_counts_definitions_not_files(tmp_path: Path) -> None:
     assert [loc.file for loc in found] == ["a.c"]
 
 
+# --- Auditor `SOURCE` 정의 조회 위생: `locals_of` · 비제품 경로 강등 -------------------------
+#
+# 정의 조회(`definitions_of`·`callees_of`·`call_sites_of`)는 「저장소에서 하나뿐일 때만」 싣는다.
+# 비제품 경로(`tests/`·`examples/` 등)에 같은 이름이 있으면 그 판정이 막힌다 — 강등은 그 정의를
+# **제품 정의 뒤로 미루는 것**이지 지우는 것이 아니다. 기본(꺼짐)은 옛 동작이고, 켜는 곳은
+# `runner._auditor_source` 하나다.
+
+
+def test_locals_of_gives_the_locals_and_params_of_one_function(tmp_path: Path) -> None:
+    """`locals` 표는 파라미터를 포함한다(`indexer.py` 표). 함수 하나의 이름 집합이고, 그 파일의 다른
+    함수 · 모르는 파일은 빈 집합이다 — `None`이 아니다(그쪽은 「v2 표가 없다」)."""
+    graph = _graph(tmp_path, _INDEX_V2)
+
+    assert graph.locals_of("parser.c", "parse_header") == frozenset({"src", "buf"})
+    assert graph.locals_of("parser.c", "helper") == frozenset()
+    assert graph.locals_of("nope.c", "parse_header") == frozenset()
+
+
+def test_locals_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    """인덱스 없음 · v1 · 깨짐이면 `None`이다 — `definitions_of`와 같은 「없다」·「0건」 구별."""
+    assert _graph(tmp_path / "v1").locals_of("parser.c", "parse_header") is None
+    assert _graph(tmp_path / "none", document=None).locals_of("parser.c", "parse_header") is None
+    assert _graph(tmp_path / "bad", "{ not json").locals_of("parser.c", "parse_header") is None
+
+
+def test_is_nonproduct_path_looks_at_directories_not_file_names() -> None:
+    """디렉터리 성분만 본다 — `tests/t.c`는 비제품이고 `lib/test_util.c`는 아니다. 대소문자는
+    접는다."""
+    from src.adapters.index_graph import is_nonproduct_path
+
+    for path in ("tests/t.c", "lib/Test/x.c", "third_party/z/y.h", "fuzz/f.c", "a/fuzzers/f.c"):
+        assert is_nonproduct_path(path), path
+    # 다른 플랫폼·빌드 시스템 사본 — libzip 계열의 `xcode/config.h`가 실제 모양이다.
+    for path in ("xcode/config.h", "a/windows/io.c", "win32/z.h", "msvc/zipconf.h"):
+        assert is_nonproduct_path(path), path
+    for path in ("lib/test_util.c", "src/a.c", "a.c", "lib/testing_util/x.c", "docs.c"):
+        assert not is_nonproduct_path(path), path
+    assert not is_nonproduct_path("lib/windows.c"), "파일 이름은 안 본다"
+
+
+def test_is_nonproduct_path_matches_fuzz_dirs_by_name_not_by_bare_prefix() -> None:
+    """퍼징 디렉터리는 이름(`fuzz`·`fuzzer(s)`·`fuzzing`·`oss-fuzz`)과 구분자 붙은 접두
+    (`fuzz_`·`fuzz-`)로 본다. 맨 `fuzz` 접두는 `src/fuzzy/`(퍼지 매칭 — 제품)까지 먹었다(PR #444
+    리뷰). `unittest(s)`·`testsuite`는 FT Level 1 270표본 잡음 경로 집계에 나온 이름이다."""
+    from src.adapters.index_graph import is_nonproduct_path
+
+    for path in (
+        "fuzz/f.c", "a/fuzzer/f.c", "a/fuzzing/f.c", "oss-fuzz/build.c", "fuzz_targets/t.c",
+        "a/fuzz-corpus/t.c", "a/unittest/u.c", "unittests/u.c", "testsuite/s.c",
+    ):
+        assert is_nonproduct_path(path), path
+    for path in ("src/fuzzy/match.c", "lib/fuzzyfind/x.c", "ios/port.c", "android/jni.c"):
+        assert not is_nonproduct_path(path), path
+
+
+# 같은 이름이 제품(`lib/`)과 비제품(`examples/`)에 둘 있고(`DUP`), 비제품에만 있고(`ONLY_EX`),
+# 제품에만 있다(`ONLY_LIB`). `examples/`는 사전순으로 `lib/`보다 앞이라 기본 순서와 강등 순서가
+# 갈린다.
+_MACROS_ACROSS_DIRS = {
+    "macros": {
+        "DUP": [
+            {"file": "lib/a.h", "line_start": 1, "line_end": 1},
+            {"file": "examples/e.h", "line_start": 1, "line_end": 1},
+        ],
+        "ONLY_EX": [{"file": "examples/e.h", "line_start": 2, "line_end": 2}],
+        "ONLY_LIB": [{"file": "lib/b.h", "line_start": 3, "line_end": 3}],
+    }
+}
+
+
+def test_definitions_of_demotes_nonproduct_rows_when_asked(tmp_path: Path) -> None:
+    """켜면 제품 정의가 비제품 정의보다 앞서 정한다 — `DUP`은 제품 정의가 하나라 그것으로 정해진다
+    (꺼진 쪽은 둘이라 건너뛴다). **삭제가 아니다**: 제품 정의가 없는 `ONLY_EX`도 실리고 순서만 제품
+    정의 뒤로 밀린다(상한이 차면 뒤가 먼저 빠진다)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+
+    found = graph.definitions_of(
+        ["DUP", "ONLY_EX", "ONLY_LIB"], "lib/x.c", demote_nonproduct=True
+    )
+
+    assert found == [
+        Location(file="lib/a.h", symbol="DUP", line_start=1, line_end=1),
+        Location(file="lib/b.h", symbol="ONLY_LIB", line_start=3, line_end=3),
+        Location(file="examples/e.h", symbol="ONLY_EX", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """키워드가 없으면 옛 동작 그대로다 — 제품·비제품이 같은 후보라 `DUP`은 건너뛰고, 순서는 (파일,
+    시작 줄)이다(`examples/`가 `lib/`보다 앞선다). NE resolver 등 다른 호출이 이 기본을 기댄다."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+
+    found = graph.definitions_of(["DUP", "ONLY_EX", "ONLY_LIB"], "lib/x.c")
+
+    assert [(loc.file, loc.symbol) for loc in found] == [
+        ("examples/e.h", "ONLY_EX"),
+        ("lib/b.h", "ONLY_LIB"),
+    ]
+
+
+def test_definitions_of_does_not_demote_when_the_anchor_itself_is_nonproduct(
+    tmp_path: Path,
+) -> None:
+    """앵커가 `examples/` 안이면 강등하지 않는다 — 그 코드가 쓰는 정의는 형제 비제품 경로에 있는 게
+    정상이다. 켜도 꺼진 것과 같은 결과다(`DUP` 건너뜀 · (파일, 줄) 순)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+    names = ["DUP", "ONLY_EX", "ONLY_LIB"]
+
+    assert graph.definitions_of(names, "examples/x.c", demote_nonproduct=True) == (
+        graph.definitions_of(names, "examples/x.c")
+    )
+    assert [loc.symbol for loc in graph.definitions_of(names, "examples/x.c")] == [
+        "ONLY_EX",
+        "ONLY_LIB",
+    ]
+
+
+# 표를 가로지른 강등(PR #444 리뷰 MEDIUM). 두 모양 다 FT Level 1 270표본 관측에서 왔다 —
+# ImageMagick `MagickWand/tests/script-token-test.c:67`의 `#define RelinquishMagickMemory(p)
+# (free(p),NULL)`이 `MagickCore`의 제품 함수 `RelinquishMagickMemory`를 덮었다. 강등이 표 하나
+# 안에서만 걸리면 제품 쪽이 함수(정의 표 밖)거나 다른 표에 있을 때 경쟁에 못 든다.
+_ACROSS_TABLES = {
+    **_INDEX_V2,
+    "symbols": [
+        *_INDEX_V2["symbols"],
+        {
+            "name": "RelinquishMagickMemory",
+            "file": "MagickCore/memory.c",
+            "line_start": 10,
+            "line_end": 20,
+        },
+    ],
+    "macros": {
+        **_INDEX_V2["macros"],
+        "RelinquishMagickMemory": [
+            {"file": "MagickWand/tests/x.c", "line_start": 67, "line_end": 67}
+        ],
+        "node": [{"file": "tests/t.h", "line_start": 1, "line_end": 1}],
+        "ONLY_TEST": [{"file": "tests/t.h", "line_start": 2, "line_end": 2}],
+    },
+    "types": {
+        **_INDEX_V2["types"],
+        "node": [{"file": "lib/t.h", "line_start": 4, "line_end": 6, "kind": "typedef"}],
+    },
+}
+
+
+def test_definitions_of_demotes_across_tables_and_against_product_functions(
+    tmp_path: Path,
+) -> None:
+    """제품 정의가 **어느 표에든** 또는 제품 함수로 있으면 비제품 행은 세 표 모두에서 후보가
+    아니다 — 제품 typedef `node`(types)가 비제품 매크로 `node`(macros)를 이기고, 제품 쪽이 함수뿐인
+    `RelinquishMagickMemory`는 테스트 매크로가 안 붙는다(함수 본문은 `callees_of` 몫). 제품 정의가
+    없는 `ONLY_TEST`는 그대로 실린다 — 삭제가 아니다."""
+    graph = _graph(tmp_path, _ACROSS_TABLES)
+    names = ["RelinquishMagickMemory", "node", "ONLY_TEST"]
+
+    found = graph.definitions_of(names, "MagickCore/blob.c", demote_nonproduct=True)
+
+    assert found == [
+        Location(file="lib/t.h", symbol="node", line_start=4, line_end=6),
+        Location(file="tests/t.h", symbol="ONLY_TEST", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_keeps_the_table_order_when_demotion_is_off(tmp_path: Path) -> None:
+    """키워드가 꺼지면(그리고 앵커가 비제품이면) 옛 동작 그대로다 — 행이 있는 첫 표에서 정하므로
+    테스트 매크로 둘이 나온다. 꺼진 run의 바이트 동일이 여기 걸린다."""
+    graph = _graph(tmp_path, _ACROSS_TABLES)
+    names = ["RelinquishMagickMemory", "node", "ONLY_TEST"]
+    old = [
+        Location(file="MagickWand/tests/x.c", symbol="RelinquishMagickMemory", line_start=67,
+                 line_end=67),
+        Location(file="tests/t.h", symbol="node", line_start=1, line_end=1),
+        Location(file="tests/t.h", symbol="ONLY_TEST", line_start=2, line_end=2),
+    ]
+
+    assert graph.definitions_of(names, "MagickCore/blob.c") == old
+    assert graph.definitions_of(names, "tests/blob.c", demote_nonproduct=True) == old
+
+
+# `entry`(lib/a.c)가 2줄에서 `only_test`(tests/에만 있다)를, 3줄에서 `dup`(lib/b.c와 tests/t.c
+# 둘)을 부른다. `only_test`(tests/t.c)도 `dup`을 부르는데 그 파일이 `dup`을 자기가 정의한다.
+# `t_entry`(tests/u.c)는 `dup`을 정의하지 않는 비제품 파일에서 `dup`을 부른다.
+_CALLS_ACROSS_DIRS = {
+    "version": "index-v1",
+    "files": ["lib/a.c", "lib/b.c", "tests/t.c", "tests/u.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "entry", "file": "lib/a.c", "line_start": 1, "line_end": 10},
+        {"name": "dup", "file": "lib/b.c", "line_start": 1, "line_end": 3},
+        {"name": "dup", "file": "tests/t.c", "line_start": 1, "line_end": 3},
+        {"name": "only_test", "file": "tests/t.c", "line_start": 5, "line_end": 7},
+        {"name": "t_entry", "file": "tests/u.c", "line_start": 1, "line_end": 10},
+    ],
+    "calls": [
+        {"caller": "entry", "callee": "only_test", "file": "lib/a.c", "line": 2},
+        {"caller": "entry", "callee": "dup", "file": "lib/a.c", "line": 3},
+        {"caller": "only_test", "callee": "dup", "file": "tests/t.c", "line": 6},
+        {"caller": "t_entry", "callee": "dup", "file": "tests/u.c", "line": 2},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+_ENTRY = Location(file="lib/a.c", symbol="entry", line_start=1, line_end=10)
+
+
+def test_callees_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`이 제품 정의(lib/b.c) 하나로 정해지고, 제품 정의가 없는 `only_test`는 **남되** 뒤로
+    밀린다 — 첫 호출 줄 순(2·3줄)이면 `only_test`가 앞이다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    found = graph.callees_of(_ENTRY, demote_nonproduct=True)
+
+    assert [(loc.file, loc.symbol) for loc in found] == [
+        ("lib/b.c", "dup"),
+        ("tests/t.c", "only_test"),
+    ]
+
+
+def test_callees_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """기본은 옛 동작이다 — `dup`은 정의가 둘이라 건너뛰고 `only_test`만 남는다. 앵커가 비제품이면
+    켜도 같다(`t_entry`는 `tests/u.c` 안이고 `dup` 정의는 다른 파일 둘이라 건너뛴다)."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    assert [loc.symbol for loc in graph.callees_of(_ENTRY)] == ["only_test"]
+    t_entry = Location(file="tests/u.c", symbol="t_entry", line_start=1, line_end=10)
+    assert graph.callees_of(t_entry) == []
+    assert graph.callees_of(t_entry, demote_nonproduct=True) == []
+
+
+def test_call_sites_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`의 제품 정의가 하나(lib/b.c)라 다른 파일의 호출이 실린다(꺼진 쪽은 정의가 둘이라
+    다른 파일 호출을 안 싣는다). 단 `dup`의 **비제품 정의가 따로 있어**(tests/t.c) 비제품 호출 --
+    그 정의를 가진 파일의 호출(`only_test`)과 어느 `dup`으로 가는지 모르는 `t_entry`(tests/u.c)
+    -- 은 안 싣는다. 제품 호출 `entry`만 남는다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+    dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
+
+    found = graph.call_sites_of(dup, demote_nonproduct=True)
+
+    assert found == [Location(file="lib/a.c", symbol="entry", line_start=3, line_end=3)]
+
+
+def test_call_sites_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """기본은 옛 동작이다 — 정의가 둘이면 다른 파일의 호출은 하나도 안 싣는다. 앵커가 비제품이어도
+    켠 것이 꺼진 것과 같다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+    dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
+    mock = Location(file="tests/t.c", symbol="dup", line_start=1, line_end=3)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(mock, demote_nonproduct=True) == graph.call_sites_of(mock)
+
+
+def _call_sites_doc(symbols: list[dict], calls: list[dict]) -> dict:
+    files = sorted({row["file"] for row in [*symbols, *calls]})
+    return {
+        "version": "index-v1",
+        "files": files,
+        "skipped": [],
+        "symbols": symbols,
+        "calls": calls,
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+
+
+def _def(name: str, file: str) -> dict:
+    return {"name": name, "file": file, "line_start": 1, "line_end": 5}
+
+
+def _call(caller: str, file: str) -> dict:
+    return {"caller": caller, "callee": "dup", "file": file, "line": 2}
+
+
+def test_call_sites_of_puts_nonproduct_sites_last_even_when_they_sort_first(
+    tmp_path: Path,
+) -> None:
+    """`examples/`는 사전순으로 `lib/`보다 **앞**이라 (파일, 줄) 순서만 보면 비제품 호출이 먼저다 --
+    강등 키가 그것을 뒤로 민다. 위 픽스처(`lib/` < `tests/`)는 키를 지워도 같은 순서라 그 키를 못
+    물었다."""
+    doc = _call_sites_doc(
+        [_def("dup", "src/dup.c"), _def("use", "lib/use.c"), _def("ex", "examples/ex.c")],
+        [_call("use", "lib/use.c"), _call("ex", "examples/ex.c")],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="src/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert [loc.file for loc in graph.call_sites_of(dup)] == ["examples/ex.c", "lib/use.c"]
+    assert [loc.file for loc in graph.call_sites_of(dup, demote_nonproduct=True)] == [
+        "lib/use.c",
+        "examples/ex.c",
+    ]
+
+
+def test_call_sites_of_skips_nonproduct_callers_when_a_nonproduct_copy_exists(
+    tmp_path: Path,
+) -> None:
+    """`lib/dup.c`(대상) · `tests/mock/dup.c`(모의 구현) · `tests/mock/user.c`(모의 구현을 부르는
+    이웃). 강등을 켜면 제품 정의가 하나라 다른 파일 호출이 실리는데(꺼진 쪽은 정의가 둘이라
+    `[]`), **비제품 정의가 따로 있으면 비제품 호출은 어느 `dup`으로 가는지 모른다** -- 이웃
+    (`tests/mock/`)이든 다른 디렉터리(`tests/other/`)든 안 싣는다. 제품 호출(`lib/use.c`)만
+    남는다."""
+    doc = _call_sites_doc(
+        [
+            _def("dup", "lib/dup.c"),
+            _def("use", "lib/use.c"),
+            _def("dup", "tests/mock/dup.c"),
+            _def("mock_user", "tests/mock/user.c"),
+            _def("other_user", "tests/other/user.c"),
+        ],
+        [
+            _call("use", "lib/use.c"),
+            _call("mock_user", "tests/mock/user.c"),
+            _call("other_user", "tests/other/user.c"),
+        ],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="lib/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(dup, demote_nonproduct=True) == [
+        Location(file="lib/use.c", symbol="use", line_start=2, line_end=2)
+    ]
+
+
+def test_functions_named_resolves_names_to_function_definitions(tmp_path: Path) -> None:
+    """C4: 매크로 별칭이 부르는 함수 이름 → 정의. `callees_of`와 같은 규칙 — 가까운 파일 정의가
+    이기고, 다른 파일은 하나뿐일 때만, 여럿이면 빠진다. 모르는 이름은 빠지고 순서는 이름 순이다."""
+    graph = _graph(tmp_path, _CALLEE_INDEX)
+
+    found = graph.functions_named({"only_b", "helper", "twice", "memcpy"}, "a.c")
+
+    assert found == [
+        Location(file="a.c", symbol="helper", line_start=12, line_end=15),
+        Location(file="b.c", symbol="only_b", line_start=5, line_end=8),
+    ]
+    assert _graph(tmp_path / "none", None).functions_named({"helper"}, "a.c") is None
+
+
+def test_functions_named_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`이 제품 정의 하나로 정해진다 — 꺼진 쪽은 정의가 둘이라 빠진다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    assert graph.functions_named({"dup"}, "lib/a.c") == []
+    found = graph.functions_named({"dup"}, "lib/a.c", demote_nonproduct=True)
+    assert [loc.file for loc in found] == ["lib/b.c"]
+
 # --- index-v3 (#304): 쓰기 지점 · 함수 포인터 바인딩 · 필드 경유 호출 ----------------------
 #
 # v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한다. 아래 문서는 손으로 적었다 — 줄 번호는 이 문서
