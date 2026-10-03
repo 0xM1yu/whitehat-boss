@@ -66,7 +66,9 @@ override다. 생략 시 설치본 기본값을 읽어 `joern_engine_config`에 �
   passenger +1,406 · freetype +781 · httplib +556 · pjproject +220, hmail·openh264·tcpdump는 0, pcre2 둘은 -2다.
   tree-sitter 함수 중 같은 이름·겹치는 줄 범위의 METHOD가 있는 비율은 10표본 합계 79.1% -> 85.6%다. 정답 함수 안에
   후보가 있는 표본은 이 옵션만으로 1/10 -> 4/10(httplib·freetype·pjproject)이다 — **후보 수준 recall이고 슬라이스·Auditor는 안
-  돌렸다.**
+  돌렸다.** 실서버 재확인 -> 이 브랜치 코드(본문 필터가 항상 켜져 있다)로 3표본을 다시 돌린 후보 합계는 httplib 540(184 / 356) ·
+  freetype 6,671(1,412 / 5,259) · pcre2 `2cbd6ef` 1,915(371 / 1,544)이고, 위 측정에 본문 필터를 재생한 값과 같다. 같은 코드에
+  `--priority-case-a`를 더하면 841 · 6,729 · 1,957이다(2026-10-04 · vast `slicer-dev` · run ID 없음 · 원자료 저장소 밖).
 - **안 푸는 것** -> 함수 머리가 빌드 매크로를 요구하면(pcre2 `PCRE2_CODE_UNIT_WIDTH`, tcpdump `_U_`) include 경로로 안
   풀린다. 그 매크로를 `--define`으로 주는 것은 **이 옵션에 넣지 않았다** — `--define`을 하나라도 주면 c2cpg가 비활성 분기 파싱을
   끈다(같은 측정: pcre2 METHOD 순증감 -121·-123, tcpdump -61인데 후보는 늘었다).
@@ -102,7 +104,11 @@ JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불�
 21,478개 중 3,906개(18%)가 그런 METHOD였다(측정 · 보고서는 저장소 밖 `slicer_c2/C2-report.md` §6b). 이 필터는
 **옵션이 아니라 항상 켜져 있다 -> 후보 집합이 바뀐다.** 이전 코드가 만든 후보 수·manifest와 비교하지 않는다
 (코드 해시가 실행 계약이라 이전 체크포인트와는 어차피 이어지지 않는다). reader 쪽은 reader를 부르는 함수에
-본문이 있으므로 사실상 무변화이고, 규칙을 한 문장으로 두려고 거기에도 걸었다.
+본문이 있으므로 사실상 무변화이고, 규칙을 한 문장으로 두려고 거기에도 걸었다. 실서버 재확인(2026-10-04 · vast
+`slicer-dev` · Joern 4.0.605 · 이 필터가 든 코드 · run ID 없음 · 원자료 저장소 밖): 5표본(httplib · freetype · pcre2
+`2cbd6ef` · hmail · optee)의 후보 합계가 재생값과 전부 같다 — 37 -> 36, 6,162 -> 5,755, 2,283 -> 1,915,
+10,303 -> 10,301, 12,525 -> 12,457. 재생은 `api`에만 걸었는데 실서버(두 목록)와 같으므로 이 CPG들에서 본문 없는
+reader는 0개다.
 
 ### Case B — 선택한 호출 인자에서 역추적
 
@@ -335,7 +341,8 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   인자로 둘 다에 넘김)
 - ⚠ 샤드를 손으로 `--resume --cpg <파일> --shard I/N`으로 돌릴 때도 준비 때와 같은 `--priority-files`를 다시 준다. 빠뜨리거나
   다르면 실행 계약이 달라 `Checkpoint mismatch: run_contract (differs in: settings.priority_files)`로 거부 -> 새 체크포인트가
-  아니라 **같은 목록을 다시 주는 것**이 해법이다
+  아니라 **같은 목록을 다시 주는 것**이 해법이다. 실행 계약에 든 옵션이 더 둘 있고 같은 규칙이다 -> `--priority-case-a`·
+  `--import-include-root`(`settings.priority_case_a`·`settings.import_include_root`)도 준비 때와 같게 다시 준다
 - 결과 `priority` -> 목록 파일 수 · 후보가 있는 파일 수 · 1층 후보 수 · 전체 후보 수 · 맞은/안 맞은 파일 이름(`matched_files`·
   `unmatched_files`, 각 최대 50개로 **사후 감사**용). 목록의 어느 파일도 후보와 안 맞으면 **stderr 한 줄** + `measurement_notes.
   priority_files`에 「기본 순서 그대로」, 일부만 안 맞으면 안 맞은 파일 수(run은 실패시키지 않음)
@@ -367,6 +374,11 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   걸려 있던 것 둘(passenger·optee)과, 캡 순위 4143이 캡 4000에 걸려 있던 것 하나(hmail — 이쪽은 본문 필터만으로도 3786으로 들어온다)다.
   목록은 과제 설명의 BM25로 만든 FT run의 10개 파일이고 정답은 박스에 올리지 않았다. **후보가 정답 함수 안에 있는 것은 필요조건이지
   충분조건이 아니다** — 슬라이스도 Auditor도 안 돌렸다
+- 실서버 재확인 -> 같은 박스·Joern 4.0.605(2026-10-04 · run ID 없음 · 원자료 저장소 밖)에서 이 옵션을 켠 코드로 5표본(httplib ·
+  freetype · pcre2 `2cbd6ef` · hmail · optee)을 새로 발견했다. 후보 합계 36 · 5,780 · 1,957 · 10,300 · 12,490이 재생값과 전부
+  같다. 로컬 정답 대조(정답은 박스에 안 올렸다)에서도 정답 함수에 후보가 생기는 자리가 재생과 같다 — hmail은 본문 필터만으로,
+  optee는 이 옵션으로(기준선·본문 필터만일 때는 없음). `api` 통과 메서드가 캡(4,000)을 넘는 hmail(보고서 §3: 통과 9,057개)에서도
+  이 옵션을 켠 발견이 돌아 Case A 4,018을 냈고 이는 재생과 같다
 - 한계 -> 목록 파일의 메서드가 캡(4,000)보다 많으면 캡은 그 층 안에서 순회 순서로 자른다. 목록 밖 파일의 함수는 못 살린다 -> C2에서
   목록 30위 밖의 openh264 `MapColToList0`(호출 4회)이 그대로 남았다. 본문 필터 없이 이 옵션만 쓰면 후보가 +217(+0.3%) 는다(재생,
   같은 출처) — 이 저장소에서는 본문 필터가 항상 켜져 있어 그 조합은 없다. 목록이 틀리면 정답 후보가 아니라 엉뚱한 파일의 함수가
