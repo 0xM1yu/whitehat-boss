@@ -10,8 +10,12 @@
 # ⏵ 2026-10-04 — 다섯째 `auditor_callee_wrappers`(래퍼·이름만 바꾸는 매크로 너머, 이슈 #451 · PR #452)의
 # 서술을 더했다(prefix 23,448 -> 23,950자, +502자 · 정의·피호출 단계 항목 끝 문장 둘). 이 판으로 돈 run이
 # 아직 0건이라 같은 v7 라벨에 둔다 — 그 전 문장으로 잰 수가 없다.
+# ⏵ 2026-10-04 — 여섯째·일곱째 `auditor_indirect_callees`(함수 포인터 필드 경유 피호출, C6)·
+# `auditor_write_sites`(쓰기 지점 창, C5(a))의 서술을 더했다(prefix 23,950 -> 25,045자, +1,095자 · #304 ·
+# index-v3 표). 판 번호는 그대로다
+# -> v7로 돈 run이 0건이다.
 role: auditor
 version: v7
 output_schema: Finding
 description: v6에 Auditor SOURCE 옵션 넷(20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄)과 래퍼·별칭 너머(2026-10-04)의 입력 서술을 더한 판 — 나머지 지시(독립 검토 · trigger rule · CWE 고르기 · 심각도 기준 아님)는 v6와 같다
-source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers]
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites]
