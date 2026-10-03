@@ -103,6 +103,7 @@ from src.interfaces.model_client import (
     SchemaParseError,
     error_detail,
 )
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -449,6 +450,8 @@ class Dependencies(Protocol):
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
     # 어댑터가 하고 러너는 이 콜러블만 받는다(`resolve_requests`와 같은 자리).
     swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None
+    # 채점기 (#386). `None`이면 이 run은 최종 PoC를 제출하지 않는다 — `swap_to`와 같은 경계다.
+    oracle: Oracle | None
 
 
 @dataclass(frozen=True)
@@ -788,6 +791,8 @@ def run_pipeline(
         resolve_requests=deps.resolve_requests,
         # 단계 경계 교대(ADR 0012 Phase 6.5) — `resolve_requests`와 같은 경계다.
         swap_to=deps.swap_to,
+        # 채점기(#386) — `swap_to`와 같은 경계다. `None`이면 제출하지 않는다.
+        oracle=deps.oracle,
         # CyberGym 과제 설명(PoV 배선). `retrieval.run`이 캡슐에 실어 Scout·Auditor·pov가 본다.
         vuln_description=spec.vuln_description,
     )
@@ -1412,8 +1417,12 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
     올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
-    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트·oracle
-    제출은 호스트 후속이다.
+    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트는
+    호스트 후속이다.
+
+    **최종 PoC는 채점기로 나간다**(#386) — 루프가 `SUBMITTED`로 끝나 바이트가 있고 이 run에
+    오라클이 배선돼 있으면 `_submit_to_oracle`이 제출하고 판정을 기록한다. 그 전에는 이 함수가
+    루프 반환값을 **버렸고** 바이트가 프로세스를 나갈 길이 없었다(#386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1425,7 +1434,61 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
             reason="capsule_missing",
         )
         return
-    _run_pov_hops(ctx, state, finding, capsule)
+    poc, reason = _run_pov_hops(ctx, state, finding, capsule)
+    if reason is PovStopReason.SUBMITTED and poc is not None:
+        _submit_to_oracle(ctx, finding, poc)
+
+
+# 채점기 실패 사유를 trace에 싣는 길이 상한 (#386). 서버 본문이 길어도 trace 한 행을 삼키지
+# 않게 자른다 — 전문은 어댑터 예외가 들고 있다. 잰 값이 아니라 정한 값이다.
+_ORACLE_ERROR_CHARS = 500
+
+
+def _submit_to_oracle(ctx: RunContext, finding: Finding, poc: bytes) -> None:
+    """최종 PoC를 채점기에 내보내고 판정을 기록한다 (#386). 오라클 미배선이면 아무것도 안 한다.
+
+    **추가형이다** — finding 상태를 바꾸지 않고 Evidence도 만들지 않는다(채점은 저장소 밖 기준이고
+    내부 등급 E4는 실행 로그를 따로 요구한다, #232 · `interfaces/oracle.py`). 기록만 남긴다.
+
+    **예외를 흡수한다** — 채점기는 저장소 밖 서비스이고 그 사건이 run을 멈추면 앞 단계 산출물까지
+    잃는다(`_run_pov`의 추가형 계약 그대로). 다만 `oracle_failed`로 **사유를 남긴다** — 그래야
+    「제출했는데 판정을 못 읽었다」가 조용히 「미제출」(이벤트 부재)과 같아지지 않는다.
+    """
+    if ctx.oracle is None:
+        return
+    try:
+        outcome = ctx.oracle.submit(poc)
+    except Exception as exc:  # noqa: BLE001 — 저장소 밖 서비스. 사유를 남기고 run은 계속한다.
+        ctx.trace.emit(
+            EventKind.ORACLE_FAILED,
+            stage=Stage.VALIDATE,
+            subject_kind="finding",
+            subject_id=finding.finding_id,
+            error=type(exc).__name__,
+            error_detail=str(exc)[:_ORACLE_ERROR_CHARS],
+        )
+        return
+    ctx.trace.emit(
+        EventKind.ORACLE_VERDICT,
+        stage=Stage.VALIDATE,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        task_id=outcome.task_id,
+        poc_id=outcome.poc_id or "",
+        poc_sha256=outcome.poc_hash,
+        poc_bytes=outcome.poc_length,
+        # `None`은 「그 모드로 안 돌았다」다 — trace는 스칼라만 싣고 `None`은 키를 지우므로
+        # 그대로 두면 「안 돌았다」와 「키가 없다」가 같아진다. 문자열로 박아 구분한다(§0).
+        vul_exit_code=_exit_code_value(outcome.vul_exit_code),
+        fix_exit_code=_exit_code_value(outcome.fix_exit_code),
+        success=outcome.success,
+        cached="unknown" if outcome.cached is None else outcome.cached,
+    )
+
+
+def _exit_code_value(code: int | None) -> int | str:
+    """종료 코드를 trace 값으로. `None`(안 돌았다)은 `"not_run"`이고 0과 섞이지 않는다(§0)."""
+    return "not_run" if code is None else code
 
 
 def _run_pov_hops(

@@ -19,7 +19,10 @@ Level 1 과제는 `repo-vul.tar.gz`(취약 저장소) + `description.txt`(취약
 gh-157190). 신뢰 못 하는 과제는 최신 패치 인터프리터로 푼다.
 """
 
+import json
+import re
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path
 
 DESCRIPTION_FILENAME = "description.txt"
@@ -115,3 +118,47 @@ def load_task(task_dir: Path, work_dir: Path) -> tuple[Path, str | None]:
         raise FileNotFoundError(f"과제에 {REPO_ARCHIVE_NAME}가 없다: {task_dir}")
     source_root = safe_extract(archive, Path(work_dir))
     return source_root, read_description(task_dir)
+
+
+SUBMIT_SCRIPT_NAME = "submit.sh"
+# `submit.sh`가 드는 두 값을 뽑는 자리. 저자 생성기(`gen_task`)가 쓰는 모양이 고정이라
+# (`curl -X POST {server}/submit-vul` + `-F 'metadata={...}'`) 그 두 패턴만 본다. 느슨하게 긁지
+# 않는 것은 틀린 신원으로 제출하면 채점기가 400을 내고 그 run의 장부가 어긋나기 때문이다.
+_SUBMIT_URL = re.compile(r"(https?://[^\s/]+)/submit-vul")
+_SUBMIT_METADATA = re.compile(r"metadata=(\{.*?\})", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class SubmitMetadata:
+    """과제 번들이 들고 있는 채점기 신원 (`submit.sh`).
+
+    **지어내지 않는다** — 서버 주소·과제 id·에이전트 id는 저자 생성기가 과제마다 발급한 값이고,
+    `task_id`는 마스킹된 id(예: `9c73e92e52b7`)라 `arvo:1065` 같은 원 id와 다르다. 하네스가
+    그것을 다시 만들 방법이 없으므로 번들에서 읽는다.
+    """
+
+    server: str
+    task_id: str
+    agent_id: str
+
+
+def read_submit_metadata(task_dir: Path) -> SubmitMetadata | None:
+    """`submit.sh`에서 채점기 신원을 읽는다. 파일이 없거나 두 패턴이 안 맞으면 `None`.
+
+    `None`은 「이 번들로는 제출할 수 없다」이고 호출자가 그 사실을 사람에게 알린다 — 지어낸 신원
+    으로 제출하지 않는다(§0).
+    """
+    path = Path(task_dir) / SUBMIT_SCRIPT_NAME
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")
+    url, metadata = _SUBMIT_URL.search(text), _SUBMIT_METADATA.search(text)
+    if url is None or metadata is None:
+        return None
+    try:
+        parsed = json.loads(metadata.group(1))
+        return SubmitMetadata(
+            server=url.group(1), task_id=parsed["task_id"], agent_id=parsed["agent_id"]
+        )
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
