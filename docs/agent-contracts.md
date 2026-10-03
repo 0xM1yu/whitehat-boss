@@ -135,7 +135,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 지금 배선된 v6는
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -157,6 +157,11 @@ agent:
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
   `body`를 이름으로 부르지 않는다(「registered evidence content」) — 그 본문을 쓰는지는 역시 미측정이다.
+  ⏵ **2026-10-03 — v6로 올렸다**(#418·#421). v6도 그 집합에 든다. **여기서 달라진다 — v6 prefix는
+  `body`를 이름으로 부른다**: `## Evidence body completeness` 절이 `FACTS.evidence[].body`를 「툴 로그의
+  유계 발췌이고 생성 요약이 아니다」로 적고 절단 표시까지 서술한다(`prompts/auditor/v6/prefix.md`의 그 절).
+  **그래도 모델이 그 본문을 쓰는지는 여전히 미측정이다** — 이름을 부르는 것과 쓰는 것은 다르고, v6로 돈
+  run이 이 저장소에 0건이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
   ⏵ 2026-10-03 — 노드 `run()`의 반환은 이 모양 그대로다. 도구 루프를 켠 판(아래 「도구 루프」)에서는 **모델이 홉마다
   내는 것이 `AuditorAction`**이고 `Finding`은 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.
@@ -355,6 +360,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 `DecisionPoint.REQUEUE` 호출부나 `Decision.rationale`로 부족분을 자동 수집하는 경로가 없다.
 따라서 이번 run에서 보류는 종착이 될 수 있다. v5 활성화 전에 팀이 근거 보충 정책이나 과보류 비용을
 정하고 고정 표본 회귀를 측정한다. 이 문단은 현행 경로의 제한이지 재요청 구현이나 활성화 결정이 아니다.
+⏵ **2026-10-03 — 위 「v5」는 Auditor에서 v6로 건너뛰어 켜졌다**(#418·#421 · v5는 건너뛰었다). v6 prefix가 v5의
+부분 본문 규칙 2·3(`prompts/auditor/v5/prefix.md:114-118`)을 공백 정규화 뒤 그대로 든다(`prompts/auditor/v6/prefix.md:91-92`) —
+규칙 3의 `truncation alone is not a reason to defer`가 이미 서빙에 있다. **그런데 위 둘(근거 보충 정책·과보류 비용 · 고정 표본 회귀)을
+켜기 전에 했다는 기록이 없다** — 정책은 `git grep` 「근거 보충」·「과보류」·「보류 비용」에 이 문단뿐이었고(2026-10-03, 이 노트 전 — 테스트 docstring 한 줄은 정책이 아니다), 규칙 5·재측정은
+이번에도 돌지 않았다(§4의 ⏵ 2026-10-03). v6로 돈 run도 `docs/experiments/`에 0건이다(grep, 2026-10-03 — 커밋된 보고서만 센 것).
+**Critic은 여전히 `v1`이다** — Critic v5(`prompts/critic/v5/`)는 안 켜졌으니 위 문장은 Critic 쪽에서는 그대로 전이다.
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
@@ -429,6 +440,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
   서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
   검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
+  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200, `run_20261003_0003`) — 「대역으로만」은
+  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이고, `cached`가 서버 응답 필드가
+  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이라는 것도 그 run에서 확인했다(8건 호출).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
@@ -519,7 +533,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v4"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v6"}
 }
 ```
 
@@ -550,7 +564,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > **2026-09-29부터 registry의 Auditor(`qwen3.8-27b`)가 v3를 고른다.** 그 판으로 돈 run은 아직 없어
 > 채움률·분포는 미측정이다([D51](open-questions/D/D51.md)). 위 Finding 예시는 그날 v3 계약에 맞췄고, 같은 날 v4로 올리며 `prompt_version`만 v4로 고쳤다.
 > ⏵ 2026-09-29 — 같은 날 registry의 Auditor가 v4를 고른다. v4도 `trigger_status` 다섯 값을 묻는다
-> (`prompts/auditor/v4/prefix.md`). v4로 돈 run은 아직 없다. ⚠ 위 v3 서술(run 없음)은
+> (`prompts/auditor/v4/prefix.md`). v4로 돈 run은 아직 없다. ⏵ **2026-10-03 — v6를 고른다**(#418·#421 ·
+> v5는 건너뛰었다). **위 Finding 예시의 `prompt_version`도 v6다** — 그 값은 이제
+> `test_doc_examples.py`가 registry와 대조한다. v6도 `trigger_status` 다섯 값을 묻는다
+> (`prompts/auditor/v6/prefix.md`의 「Set trigger_status to exactly one of」). **v4로 돈 run은 끝까지
+> 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
+> gitignore라 커밋된 보고서만 센 것이다). ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
 > 그대로 미측정이다.
@@ -608,7 +627,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v4", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v6", "critic": "v1"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -708,6 +727,14 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 >
 > ⏵ **2026-09-29 — 같은 날 Auditor가 v3 → v4로 다시 바뀌었다**(#328 머지 뒤). 규칙은 같다 — v4 뒤 run은
 > 그 전 run과 직접 비교하지 않고, 규칙 5·재측정은 이번에도 돌지 않았다. Critic은 여전히 v1이다.
+>
+> ⏵ **2026-10-03 — Auditor가 v4 → v6로 바뀌었다**(프롬프트 #418 · 배선 #421 · 사용자 결정 · **v5는
+> 건너뛰었다**). 규칙 1이 또 걸린다 — v6 뒤 run은 그 전 run과 직접 비교하지 않는다. **잃는 측정은
+> 없다**: v4로 돈 run이 끝까지 0건이었다. 규칙 5·재측정은 **이번에도 돌지 않았다.** ⚠ 이 판은
+> 앞의 둘과 성격이 다르다 — v6는 v5의 범위 제약 둘을 **삭제**해 Scout 가설과 무관한 독립 판정으로
+> 돌렸고, #418이 든 수는 Recall 0.637→0.966 · **Precision 0.939→0.821**이다(원천은 그 PR 본문의
+> 비교표 — 실험팀 프롬프트 A/B이고 이 저장소의 run 기록이 아니다, [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 5).
+> Critic은 여전히 v1이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
