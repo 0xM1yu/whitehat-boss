@@ -9,6 +9,10 @@
 # ⏵ 2026-10-04 — `config/budgets.yaml`이 `auditor_callee_wrappers`도 1로 켠다(래퍼·별칭 너머, 이슈 #451).
 # 이 판의 prefix는 피호출 본문을 「one call level deep」으로 서술하고 그 옵션을 선언하지 않으므로 이 판을
 # 고를 때는 `auditor_callee_wrappers`도 0으로 꺼야 한다 — 안 끄면 `cli`가 run을 막는다.
+# ⏵ 2026-10-04 — `config/budgets.yaml`이 `auditor_indirect_callees`(1)·`auditor_write_sites`(6)도 켠다(#304 ·
+# PR #468). 이 판은 둘 다 서술·선언하지 않는다. 그래서 이 판을 고를 때 끌 옵션은 넷이다 —
+# `auditor_caller_lines` · `auditor_callee_wrappers` · `auditor_indirect_callees` · `auditor_write_sites`(전부 0).
+# 하나라도 안 끄면 `cli`가 run을 막는다.
 role: auditor
 version: v4_t1
 output_schema: Finding

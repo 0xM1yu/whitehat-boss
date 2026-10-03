@@ -157,6 +157,18 @@ class RunContext:
     functions_named: Callable[..., list[Location] | None] = field(
         default=lambda _names, _file, **_kw: None
     )
+    # 함수 위치 → 필드 경유 호출마다 (필드, 갈 수 있는 함수)(index-v3, C6). `demote_nonproduct`를
+    # 받는다. 미배선 `None`이면 간접 피호출을 안 붙인다.
+    indirect_calls_of: Callable[..., list[tuple[str, list[Location]]] | None] = field(
+        default=lambda _target, **_kw: None
+    )
+    # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 미배선 `None`이면 쓰기 지점 창이 없다.
+    writes_of: Callable[[str, str], list[Location] | None] = field(
+        default=lambda _name, _file: None
+    )
+    field_writes_of: Callable[[str, str], list[Location] | None] = field(
+        default=lambda _field, _file: None
+    )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.
     definitions_of: Callable[..., list[Location] | None] = field(

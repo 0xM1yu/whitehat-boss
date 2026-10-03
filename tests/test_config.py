@@ -46,11 +46,13 @@ from src.orchestrator.runner import (
     _AUDITOR_CALLEE_CHARS,
     _AUDITOR_CALLER_SITES,
     _AUDITOR_DEFINITION_CHARS,
+    _AUDITOR_INDIRECT_MAX,
     _AUDITOR_SOURCE_CHARS,
     _AUDITOR_WINDOW_LINES,
     _AUDITOR_WRAPPER_CALLS,
     _AUDITOR_WRAPPER_DEPTH,
     _AUDITOR_WRAPPER_LINES,
+    _AUDITOR_WRITE_LINES,
     RunSpec,
     _new_record,
 )
@@ -518,6 +520,13 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
             "functions the index can resolve)" in flat
         )
         assert f"up to {_AUDITOR_WRAPPER_DEPTH} further levels" in flat
+    if thresholds.auditor_indirect_callees:  # 간접 피호출(C6 · #304)
+        assert f"resolve to at most {_AUDITOR_INDIRECT_MAX} candidate functions" in flat
+    if thresholds.auditor_write_sites:  # 쓰기 지점 창(C5(a) · #304)
+        assert (
+            f"the {_AUDITOR_WRITE_LINES} lines before and after the write, cut to the writing "
+            f"function's own range, at most {thresholds.auditor_write_sites} windows" in flat
+        )
     if thresholds.auditor_caller_lines:
         assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
         assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat

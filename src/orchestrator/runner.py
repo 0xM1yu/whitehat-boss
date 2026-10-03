@@ -135,6 +135,7 @@ from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.source_definitions import (
     definition_names,
     macro_alias_target,
+    slice_line_refs,
     slice_names_first,
 )
 from src.orchestrator.stages import MAX_STAGE, Stage
@@ -428,6 +429,12 @@ class Dependencies(Protocol):
     call_sites_of: Callable[..., list[Location] | None]
     # (이름들, 가까운 파일) → 함수 정의 위치 — 매크로 별칭이 부르는 함수(C4). 같은 경계다.
     functions_named: Callable[..., list[Location] | None]
+    # 함수 위치 → 필드 경유 호출마다 (필드, 갈 수 있는 함수)(index-v3, C6). `demote_nonproduct`를
+    # 받는다. 같은 경계다.
+    indirect_calls_of: Callable[..., list[tuple[str, list[Location]]] | None]
+    # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 같은 경계다.
+    writes_of: Callable[[str, str], list[Location] | None]
+    field_writes_of: Callable[[str, str], list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[..., list[Location] | None]
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
@@ -821,6 +828,9 @@ def run_pipeline(
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
         functions_named=deps.functions_named,
+        indirect_calls_of=deps.indirect_calls_of,
+        writes_of=deps.writes_of,
+        field_writes_of=deps.field_writes_of,
         definitions_of=deps.definitions_of,
         locals_of=deps.locals_of,
         counter_for_role=deps.counter_for_role,
@@ -3048,7 +3058,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-10-03 — 그 입력 몫은 출력 상한 인상(32,768 → 65,536) 뒤의 값이다. 그 전은 229,376이었다.
 # 53,248은 그 전 계획값이라 지금 경로가 아니다.
 # ⏵ 2026-10-04 — **v7이 됐다**(v6 + SOURCE 옵션 넷의 서술, #349). prefix가 v6보다 +2,050자 더
-# 길고(23,448자 · ⏵ 같은 날 래퍼·별칭 서술을 더해 23,950자) SOURCE 상한이 토큰이 됐다 — 그
+# 길고(23,448자 · ⏵ 같은 날 래퍼·별칭 서술을 더해 23,950자 · ⏵ 간접 피호출·쓰기 지점 창 서술을 더해
+# 25,045자) SOURCE 상한이 토큰이 됐다 — 그
 # 계산은 `config/models.yaml`의 `qwen3.8-27b` 항목이
 # 든다. v7 입력 토큰도 미실측이다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
@@ -3090,6 +3101,16 @@ _AUDITOR_WRAPPER_LINES = 10
 _AUDITOR_WRAPPER_CALLS = 2
 _AUDITOR_WRAPPER_DEPTH = 2
 _AUDITOR_ALIAS_ROUNDS = 2
+# 간접 피호출(C6 — `auditor_indirect_callees`). 실린 함수의 필드 경유 호출 하나(필드 하나)가 갈 수
+# 있는 후보 중 아직 안 실린 것이 이보다 많으면 어느 것인지 몰라 **그 필드의** 후보는 하나도 안
+# 붙인다 — `alloc`처럼 흔한 필드 이름이 여러 구현에 묶인 저장소에서 엉뚱한 본문이 쌓이지 않게.
+# 상한은 필드마다다(PR #468 리뷰 MEDIUM-2 — 함수 단위 합이면 `s->read`(1)와 `s->write`(3)를 같이
+# 부르는 함수에서 둘 다 버려졌다). **정한 값이지 잰 값이 아니다.**
+_AUDITOR_INDIRECT_MAX = 3
+# 쓰기 지점 창(C5(a) — `auditor_write_sites`)의 반폭. 쓰는 줄 앞뒤 이 줄 수를 그 함수 범위 안으로
+# 자른다(`_caller_window`와 같은 창). 할당·길이 계산이 대개 그 줄 바로 앞뒤라 작게 둔다. 이미 실린
+# 범위와 겹치면 쓰는 줄 쪽 남은 조각으로 더 자른다(`_clip_around`). **정한 값.**
+_AUDITOR_WRITE_LINES = 3
 
 
 def _is_short(location: Location) -> bool:
@@ -3145,12 +3166,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `alias_callees`·`alias_definitions`가 든다. 0이면 이 셋이 이벤트에 없고 피호출은 1단에서
     멈춘다 — 이 값이 생기기 전 모양 그대로다.
 
-    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
+    **간접 피호출(C6)** — `auditor_indirect_callees`가 1이면 피호출 단계 끝에, 실린 함수의 필드 경유
+    호출(`sys->alloc(…)`)마다 그 필드에 묶인 함수(`ctx.indirect_calls_of`) 중 아직 안 실린 것을
+    피호출처럼 붙인다. 그 수가 필드마다 `_AUDITOR_INDIRECT_MAX`를 넘으면 그 필드만 건너뛴다.
+
+    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 정의·피호출 함수 다음에, entry
     함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
     붙인다. 이미 실린 범위와 겹치는 지점은 건너뛰고(호출자가 슬라이스에 걸쳐 이미 실렸거나 피호출
     함수로 실린 경우 · 같은 호출자 안의 이웃 호출), 겹치지 않는 지점을 앞에서부터
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
+
+    **쓰기 지점 창(C5(a))** — `auditor_write_sites`가 N이면 맨 뒤(호출자 창 다음 — 호출자 창이 먼저
+    자리를 잡아 쓰기 창에 밀리지 않는다, PR #468 리뷰 MEDIUM-1)에, 슬라이스 줄에 나온 이름·필드에
+    쓰는 지점(`ctx.writes_of`·`ctx.field_writes_of`)의 앞뒤 `_AUDITOR_WRITE_LINES`줄을 쓰는 함수
+    범위로 잘라 N곳까지 붙인다(`_write_sites`가 고르고 순서를 정한다). 창은 `functions`에 안 든다
+    — `write_windows`·`write_windows_dropped`가 따로 센다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
@@ -3258,7 +3289,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 if carry_definition(definition):
                     alias_definitions += 1
     hops = ctx.config.thresholds.auditor_callee_hops
+    indirect = ctx.config.thresholds.auditor_indirect_callees
     callees = callees_dropped = wrapper_callees = alias_callees = 0
+    indirect_callees = indirect_skipped = 0
     if hops:
         # 피호출 함수 1단(#349 (a)) + 래퍼 너머(C4). 붙인 피호출 함수가 짧고
         # (`_AUDITOR_WRAPPER_LINES`줄 이하) 그 본문이 정의를 아는 함수를
@@ -3304,6 +3337,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 if carry_callee(function):
                     alias_callees += 1
                     through_wrapper(function, 1)
+        # 간접 피호출(C6 — #304). `sys->alloc(…)`처럼 필드 경유로 부르는 함수는 `callees_of`가 못
+        # 푼다 -> index-v3 `fn_bindings`로 그 필드에 묶인 함수를 후보로 받아 붙인다. 상한은
+        # 필드마다이고 이미 실린 후보는 안 센다 — 아직 안 실린 후보가 `_AUDITOR_INDIRECT_MAX`개를
+        # 넘는 필드는 건너뛰고 `indirect_skipped`가 센다. 비제품 경로 강등은 피호출 조회와 같다
+        # (`hygiene`).
+        if indirect:
+            for owner in list(carried):
+                for _field, targets in ctx.indirect_calls_of(owner, **hygiene) or []:
+                    fresh = [t for t in targets if not any(_overlaps(t, o) for o in seen)]
+                    if len(fresh) > _AUDITOR_INDIRECT_MAX:
+                        indirect_skipped += 1
+                        continue
+                    for target in fresh:
+                        if carry_callee(target):
+                            indirect_callees += 1
+                            through_wrapper(target, 1)
     # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
     # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
     # (#351 자체 검토).
@@ -3330,6 +3379,33 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             callers += 1
+    # 쓰기 지점 창(C5(a) — #304)은 호출자 창 **뒤**다 — 앞이면 쓰기 창이 먼저 `seen`에 들어가 그와
+    # 겹치는 호출자 창(이 옵션 전에는 실리던 창)이 통째로 빠졌다(PR #468 리뷰 MEDIUM-1). 이미 실린
+    # 범위와 겹치는 쓰기 창은 쓰는 줄 쪽 남은 조각으로 자르고, 쓰는 줄 자체가 실려 있으면 안 붙인다
+    # (읽는 지점 수 상한도 안 먹는다).
+    write_sites = ctx.config.thresholds.auditor_write_sites
+    write_windows = write_windows_dropped = write_sites_found = 0
+    if write_sites:
+        sites = _write_sites(ctx, ref, carried, anchor.file)
+        write_sites_found = len(sites)
+        tried = 0
+        for site in sites:
+            if tried == write_sites:
+                break
+            window = _clip_around(
+                _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1, seen
+            )
+            if window is None:
+                continue
+            tried += 1
+            seen.append(window)
+            block = _block(window, ctx.read_source(window))
+            if size + 1 + measure(block) > cap:
+                write_windows_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            write_windows += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
@@ -3338,7 +3414,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks) - definitions - callers - write_windows,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3353,8 +3429,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                     if wrappers
                     else {}
                 ),
+                **(
+                    {"indirect_callees": indirect_callees, "indirect_skipped": indirect_skipped}
+                    if indirect
+                    else {}
+                ),
             }
             if hops
+            else {}
+        ),
+        **(
+            {
+                "write_windows": write_windows,
+                "write_windows_dropped": write_windows_dropped,
+                "write_sites_found": write_sites_found,
+            }
+            if write_sites
             else {}
         ),
         **(
@@ -3378,6 +3468,67 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         ),
     )
     return source
+
+
+def _write_sites(
+    ctx: RunContext, ref: SliceRef, carried: list[Location], near_file: str
+) -> list[Location]:
+    """쓰기 지점 창(C5(a))을 붙일 후보 지점 — 고유하고 순서가 정해진 것.
+
+    - 이름: 슬라이스 줄에 나온 이름 중 **실린 함수의** 지역·파라미터가 아닌 것(`writes_of`). 그리고
+      **쓰는 함수의** 지역·파라미터인 이름의 지점은 버린다 — `writes_of`는 파일 안에서 함수를 안
+      가른다(그 docstring). 파일 변수 `buf`를 찾는데 다른 함수 `g`의 `char *buf = malloc(8);`이
+      잡히면 Auditor가 할당 크기를 오판한다(PR #468 리뷰 HIGH-1)
+    - 필드: 슬라이스 줄에 필드로 나온 이름(`field_writes_of`)
+    - 순서: 이름·필드가 슬라이스 줄에 **처음 나온 순서**(`slice_line_refs` — 알파벳 순이면 앞쪽
+      이름이 창을 먼저 먹고 길이 필드가 굶었다, 리뷰 MEDIUM-3). 그 안은 조회 순서다. 그다음
+      **함수가 다른 지점이 먼저** — 함수마다 첫 지점이 다 나온 뒤에 둘째 지점이 온다(안정 정렬)
+    - 같은 줄(파일·줄)은 한 번만 — 한 줄이 두 이름을 쓰면 창 하나다(리뷰 LOW-1)
+    """
+    own: set[str] = set()
+    for function in carried:
+        if function.symbol:
+            own |= ctx.locals_of(function.file, function.symbol) or frozenset()
+    found: dict[tuple[str, int], Location] = {}
+    for name, is_field in slice_line_refs(ctx.read_source, ref.lines):
+        if is_field:
+            sites = ctx.field_writes_of(name, near_file) or []
+        elif name in own:
+            continue
+        else:
+            sites = [
+                site
+                for site in ctx.writes_of(name, near_file) or []
+                if not (site.symbol and name in (ctx.locals_of(site.file, site.symbol) or ()))
+            ]
+        for site in sites:
+            found.setdefault((site.file, site.line_start or 0), site)
+    rank: dict[tuple[str, str | None], int] = {}
+    order: list[tuple[int, int, Location]] = []
+    for position, site in enumerate(found.values()):
+        key = (site.file, site.symbol)
+        order.append((rank.get(key, 0), position, site))
+        rank[key] = rank.get(key, 0) + 1
+    return [site for _, _, site in sorted(order, key=lambda item: item[:2])]
+
+
+def _clip_around(window: Location, line: int, seen: list[Location]) -> Location | None:
+    """`window`에서 `seen`의 범위와 겹치는 쪽을 깎고 `line`을 품는 조각만 남긴다. `line` 자체가
+    이미 실린 범위 안이면 `None`. 같은 파일에 범위 없는 위치(파일 전체)가 있어도 `None`."""
+    start, end = window.line_start or line, window.line_end or line
+    for other in seen:
+        if other.file != window.file:
+            continue
+        if other.line_start is None:
+            return None
+        other_end = other.line_end or other.line_start
+        if other.line_start <= line <= other_end:
+            return None
+        if other_end < line:
+            start = max(start, other_end + 1)
+        else:
+            end = min(end, other.line_start - 1)
+    return Location(file=window.file, symbol=window.symbol, line_start=start, line_end=end)
 
 
 def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:
