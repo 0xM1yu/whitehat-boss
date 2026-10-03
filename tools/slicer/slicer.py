@@ -887,13 +887,18 @@ def parser() -> argparse.ArgumentParser:
         "--repo), one per line; blank lines and lines starting with # are skipped, no inline "
         "comments: candidates whose entry or an anchor is in one are sliced first",
     )
-    # Which case is sliced first -- order only, like --priority-files: the same candidates, and a
-    # candidate that gets a full slice gets the same one. Bound into the run contract (settings).
+    # Which case is sliced first. The candidate set and every candidate_key stay the same, but ids
+    # are numbered after the sort: ids, slices[] order, `absorbed` and the export file names move
+    # with the order. What a cut-short run (tools/slice_sharded.py --wall-seconds, a kill) or a
+    # poison streak leaves degraded depends on it too. Bound into the run contract (settings);
+    # docs/slicer-README.md has the rest, including clustering with 10,000 or more candidates.
     result.add_argument(
         "--case-order", choices=sorted(CASE_RANK), default="ab", help="ab: every Case A candidate "
         "is sliced before every Case B (default); ba: every Case B before every Case A. A run cut "
-        "short (--wall-seconds, a kill) leaves the candidates it did not reach degraded, so this "
-        "decides which case that is. Shards and --resume must pass the same value",
+        "short (tools/slice_sharded.py --wall-seconds, a kill) or stopped by a poison streak "
+        "leaves the candidates it did not reach degraded, so this decides which case that is. "
+        "Ids are numbered after the sort, so they differ per order. Shards and --resume must "
+        "pass the same value",
     )
     result.add_argument("--export-dir", type=Path)
     result.add_argument("--progress", type=Path)
