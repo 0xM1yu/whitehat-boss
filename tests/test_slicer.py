@@ -1119,6 +1119,32 @@ def test_broken_compile_commands_falls_back_to_importing_all_sources(
     assert result["counters"]["files_missing_from_cpg"] == 0
 
 
+def test_import_include_root_passes_the_repo_to_the_import(monkeypatch, repo, tmp_path):
+    _, plain, transport = run_cli(monkeypatch, repo, tmp_path, payloads())
+    query = _import_query(transport)
+    assert "--include" not in query and "args=List" not in query
+    assert plain["settings"]["import_include_root"] is False
+    _, rooted, transport = run_cli(
+        monkeypatch, repo, tmp_path, payloads(), "--import-include-root"
+    )
+    # the repo as this run resolved it, absolute -- c2cpg turns each include path into
+    # `Paths.get(_).toAbsolutePath`, so a relative one would resolve against ITS working directory
+    absolute = json.dumps(repo.resolve().as_posix())
+    assert f'args=List("--include", {absolute}))' in _import_query(transport)
+    assert rooted["settings"]["import_include_root"] is True
+
+
+def test_import_include_root_is_refused_with_compile_commands(repo, tmp_path, capsys):
+    """The database already carries the include paths and the pair was not measured."""
+    cc = _write_compile_commands(tmp_path / "compile_commands.json", [])
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--import-include-root", "--compile-commands", str(cc)])
+    assert "--import-include-root cannot be combined with --compile-commands" in (
+        capsys.readouterr().err
+    )
+
+
 def test_query_deadline_does_not_wait_for_blocked_transport(monkeypatch, repo, tmp_path):
     released = threading.Event()
 

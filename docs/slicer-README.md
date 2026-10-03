@@ -50,6 +50,34 @@ override다. 생략 시 설치본 기본값을 읽어 `joern_engine_config`에 �
   타깃 매크로를 정의하지 않으므로, 그 매크로에 걸린 분기가 비활성이 되어 빠질 수 있다. 이
   매크로 동작의 실증은 Joern 실행이 필요하고 풀 슬라이싱에서 확인한다.
 
+`--import-include-root`는 `--repo` 자체를 c2cpg의 헤더 include 경로로 준다 —
+`importCode.c(..., args=List("--include", <repo>))`. 근거는 Joern v4.0.605 소스다: `c2cpg/Main.scala`의
+`include`라는 이름의 문자열 옵션(`.unbounded()`, 설명 "header include paths")이고, `ParserConfig`가 각 경로를
+`Paths.get(_).toAbsolutePath`로 바꾸므로 절대 경로여야 한다(슬라이서는 푼 `--repo`를 건넨다). 콘솔
+`importCode.c`의 `args`가 `c2cpg` 명령줄에 그대로 붙는 경로도 같은 태그에서 읽었다(`ImportCode.scala`
+-> `FrontendConfig.withArgs` -> `CCpgGenerator.generate`). 이 옵션이 없으면 c2cpg는 `<...>`로 닿거나 다른 디렉터리에 있는 프로젝트 헤더를 따라가지
+않아, 헤더의 설정 가드 뒤에 있는 코드(freetype `ttgxvar.c`의 본문은 `ftoption.h`의 매크로 뒤다)와
+헤더만 있는 C++ 라이브러리(httplib `httplib.h`가 C 문법으로 단독 파싱돼 `CASTProblem`)가 그래프에 없다.
+기본은 꺼짐이고, 꺼짐이면 import 질의가 **바이트 동일**하다.
+
+- **그래프가 바뀌고 후보가 는다.** 2026-10-04 vast(`slicer-dev`)·Joern 4.0.605, 10표본에서 이 옵션만 주고 전체를
+  다시 발견한 측정(보고서는 저장소 밖 `slicer_c2/C2-report.md` §6): 후보 합계 67,113 -> 72,388(+5,275, +7.9%).
+  Case A 21,478 -> 21,838, Case B 45,635 -> 50,550(+4,915 · 계산값 — 늘어난 몫의 93%). 표본별 합계 변화는 optee +2,316 ·
+  passenger +1,406 · freetype +781 · httplib +556 · pjproject +220, hmail·openh264·tcpdump는 0, pcre2 둘은 -2다.
+  tree-sitter 함수 중 같은 이름·겹치는 줄 범위의 METHOD가 있는 비율은 10표본 합계 79.1% -> 85.6%다. 정답 함수 안에
+  후보가 있는 표본은 이 옵션만으로 1/10 -> 4/10(httplib·freetype·pjproject)이다 — **후보 수준 recall이고 슬라이스·Auditor는 안
+  돌렸다.**
+- **안 푸는 것** -> 함수 머리가 빌드 매크로를 요구하면(pcre2 `PCRE2_CODE_UNIT_WIDTH`, tcpdump `_U_`) include 경로로 안
+  풀린다. 그 매크로를 `--define`으로 주는 것은 **이 옵션에 넣지 않았다** — `--define`을 하나라도 주면 c2cpg가 비활성 분기 파싱을
+  끈다(같은 측정: pcre2 METHOD 순증감 -121·-123, tcpdump -61인데 후보는 늘었다).
+- **메커니즘은 일부만 분리 확인했다** -> freetype은 c2cpg의 전처리 로그로(`ttgxvar.c`에 기록된 문장 30 -> 106, 가드 매크로의 `#define`이
+  보임), httplib은 같은 로그의 `httplib.h` 문장 450 -> 4,811과 파싱 문제 2 -> 0으로 보였으나 「C++ 번역단위에서 닿아 C 문법 단독
+  파싱을 벗어났다」는 추정이고 분리하지 않았다. pjproject는 문제 목록(37 -> 1)과 CPG에서 추정했다.
+- **`--compile-commands`와 같이 못 쓴다**(CLI가 거부) -> DB가 파일별 include 경로를 이미 들고 있고 그 짝은 안 쟀다.
+- **실행 계약이다** -> `settings.import_include_root`. 샤드·재개가 같은 값을 안 주면 `Checkpoint mismatch: run_contract`.
+  `--cpg` 샤드는 import를 안 하므로 효과는 없지만 계약 때문에 같은 값을 다시 준다(`--priority-files`와 같다).
+- **속도는 미측정** -> 부하가 5~77인 공유 박스에서 준비 시간이 기본 20~245초, 이 옵션 27~399초였으나 서로 비교할 수 없다.
+
 종료 코드는 `ok=0`, `partial=2`, `failed=1`이다. CPG 준비 뒤 질의 실패·위치 누락·분석 절단은
 부분 결과를 남긴다. 정상적인 빈 결과와 질의 실패를 구별한다. 출력은 UTF-8·LF이고, 최종
 JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불가능하면 stderr에 사유를 쓴다.
