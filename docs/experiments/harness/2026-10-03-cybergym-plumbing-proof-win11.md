@@ -142,8 +142,16 @@
 | `##CHECKSUM##` | `ddefc8c8065ab66f9110410f230e75ed31914056f7d4b0d6d6c68f9fd0c1fc5f` | `sha256("arvo:1065" + agent_id + "CyberGym")` = `adapters.cybergym_oracle.checksum()` |
 | `##REQUIRE_FLAG##` | `false` | 저자가 `str(with_flag).lower()`로 넣는 자리. 따옴표 없는 JSON 리터럴이어야 파싱된다 |
 
-파일 속성: 858바이트 · **CR 0바이트**(LF만) · **실행 권한 주지 않았다**(하네스는 이 파일을
-읽기만 하고 `curl`을 부르지 않는다).
+파일 속성: 858바이트 · **CR 0바이트**(LF만, `read_bytes().count(b"\r") == 0`).
+
+⚠ **실행 비트는 내 의도와 다르게 서 있다 — 처음 적은 「실행 권한 주지 않았다」는 측정이 아니라
+의도였고 틀렸다.** 실측: `ls -la`가 `submit.sh`를 **`-rwxr-xr-x`**로, 같은 디렉터리의
+`description.txt`·`repo-vul.tar.gz`를 `-rw-r--r--`로 찍는다(표시 일괄 현상이 아니다).
+`chmod`를 부르지 않았고 `pathlib.write_text`는 모드를 건드리지 않으므로 **그 비트가 어디서
+왔는지는 판독하지 않았다**(Git Bash가 NTFS에서 `.sh`·shebang으로 유도하는지 여부 — 미측정).
+`core.filemode = false`이고 번들은 `.gitignore`라 **git은 이 파일의 모드를 들지 않는다.**
+**기능에는 영향이 없다** — 하네스는 이 파일을 `read_text`로 읽을 뿐 실행하지 않고 `curl`도
+부르지 않는다(`task_loader.read_submit_metadata`).
 
 ### 결과 — 자가 검증과 오염 테스트
 
@@ -325,7 +333,8 @@ Fake Critic은 call graph 근거가 하나라도 있으면 `UPHOLD`를 낸다고
 | 마스킹 서버 경로 | **0건** | 이 증명은 마스킹 안 한 서버만 다룬다. `run_round_trip`은 여전히 `task_id` 하나를 제출·조회에 넘긴다 |
 | 429(레이트 리밋) | **0건** | 분당 20건 상한에 닿지 않았다(8건 중 7건이 캐시 적중) |
 | 팀원 장비의 `vm.mmap_rnd_bits` | **0건** | 이 처방은 이 장비의 것이다 |
-| 서로 다른 바이트의 PoC | **0건** | 8개 PoC가 전부 같은 68바이트였다(Fake가 결정적이라서). **서로 다른 바이트 8건이 각각 컨테이너를 돌 때의 거동은 측정하지 않았다** |
+| 서로 다른 바이트의 PoC | **0건** | 8개 PoC가 전부 같은 68바이트였다(고유 sha256 1개 — Fake가 결정적이라서). **서로 다른 바이트 8건이 각각 컨테이너를 돌 때의 거동은 측정하지 않았다** |
+| `submit.sh`의 실행 비트 출처 | **미판독** | `ls`가 `-rwxr-xr-x`를 찍는데 `chmod`를 부르지 않았다. Git Bash/NTFS 유도인지 확인하지 않았다(§4). 기능 영향 없음 |
 
 ---
 
