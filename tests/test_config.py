@@ -502,13 +502,16 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
             f"its block, counting its banner line, is at most {_AUDITOR_DEFINITION_CHARS:,} "
             "characters" in flat
         )
-        assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
+        if thresholds.auditor_callee_wrappers:
+            assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
     if thresholds.auditor_callee_hops:
         assert (
             f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
             " is skipped" in flat
         )
-        # 래퍼 너머(C4) — 「one or two」가 `_AUDITOR_WRAPPER_CALLS`의 철자다.
+    # 래퍼 너머(C4 · `auditor_callee_wrappers`) — 「one or two」가
+    # `_AUDITOR_WRAPPER_CALLS`의 철자다.
+    if thresholds.auditor_callee_hops and thresholds.auditor_callee_wrappers:
         assert _AUDITOR_WRAPPER_CALLS == 2
         assert (
             f"a short wrapper (at most {_AUDITOR_WRAPPER_LINES} lines, calling one or two "
@@ -2330,7 +2333,8 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
 
 
 @pytest.mark.parametrize(
-    "key", ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim"]
+    "key",
+    ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim", "auditor_callee_wrappers"],
 )
 def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
     with pytest.raises(ValidationError):
