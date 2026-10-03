@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
+from src.config import load_config
 from src.schemas import (
     Artifact,
     Candidate,
@@ -148,3 +149,47 @@ def test_run_record_example_uses_full_length_digests() -> None:
     )
 
     assert all(len(digest) == len("sha256:") + 64 for digest in record.model_checksums.values())
+
+
+def test_run_record_example_prompt_versions_match_the_profile_it_names() -> None:
+    """예시의 `prompt_versions`가 예시가 **스스로 적은 `profile`**의 실제 registry 값과 같다.
+
+    위 검사들은 스키마와 자리만 본다 — 값이 낡는 것은 못 잡는다. 이 예시는 계약 문서가 드는
+    유일한 완성형 `RunRecord`라 읽는 쪽이 「이 자리에 무엇이 들어가나」를 여기서 배운다.
+
+    **사고 —** 2026-09-29 Auditor가 v3→v4가 됐을 때는 이 줄이 따라왔는데, 2026-10-03 v4→v6
+    (#418·#421)에는 **안 따라왔다.** 손으로 고치는 값이라 CI가 영영 초록이었다. 여기서
+    묶으면 다음 판 올림에서 빨개진다 — 고치는 쪽이 예시도 같이 고치게 된다.
+    """
+    raw = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))
+    config = load_config(raw["profile"])
+    declared = raw["prompt_versions"]
+
+    # 거르지 않는다 — `if role in profile.roles`로 걸러 두면 프로필에서 사라진 역할 이름이
+    # 예시에 남아도 **조용히 건너뛰어** 초록이 된다. 없는 역할이면 여기서 터져야 한다.
+    missing = sorted(set(declared) - set(config.profile.roles))
+    assert not missing, f"예시가 `{raw['profile']}`에 없는 역할을 든다: {missing}"
+
+    actual = {role: config.model_for(role).prompt_template_version for role in declared}
+    assert declared == actual
+
+
+def test_finding_example_produced_by_matches_the_registry() -> None:
+    """Finding 예시의 `produced_by`(모델 키·프롬프트 판)도 registry와 같다.
+
+    위 `RunRecord` 핀과 같은 이유다 — 이 값도 손으로 고치는 값이라 v4→v6(#418·#421)에서
+    따라오지 않았다. `produced_by`는 하네스가 파싱 뒤 **덮어쓰는** 자리라(`context.py`의
+    `ProducedBy`) 예시가 틀리면 읽는 쪽이 「무엇으로 덮이는가」를 틀리게 배운다.
+
+    `RunRecord` 예시가 `harness_pool`을 들므로 그것을 기준으로 본다 — 두 예시가 같은 프로필을
+    서술한다는 것이 이 문서의 전제다(§2 Auditor 절이 그 registry 엔트리를 든다).
+    """
+    finding = json.loads(_body("agent-contracts.md", "Finding", 0))
+    profile = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))["profile"]
+    config = load_config(profile)
+    produced_by = finding["produced_by"]
+    role = produced_by["role"]
+
+    # 둘 다 묻는다 — `prompt_version`만 묻던 첫 판은 예시의 `"model"`을 다른 키로 바꿔도 초록이었다.
+    assert produced_by["model"] == config.model_key_for(role)
+    assert produced_by["prompt_version"] == config.model_for(role).prompt_template_version
