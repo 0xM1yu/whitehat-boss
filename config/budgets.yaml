@@ -32,10 +32,33 @@ budgets:
   # 안 적어도 0이다. 아직 안 잰 상한이면 0이 아니라 직접 고른 잠정 상한을 적는다(위 `default`의
   # `tool_seconds`가 그 모양이다 — 잠정치라고 밝히고 목적은 폭주 차단 하나로 둔다).
   dev_fake:
-    # Fake 어댑터는 GPU를 쓰지 않는다. 예산 소진 경로(stopped_after)를 테스트에서
-    # 태울 수 있도록 일부러 작게 잡는다.
-    input_tokens: 200000
-    output_tokens: 20000
+    # Fake 어댑터는 GPU를 쓰지 않는다 — 이 예산에는 **돈이 걸린 항목이 없다.**
+    #
+    # ⏵ 2026-10-03 — 넷을 다 0(= 상한 없음)으로 내렸다. 그전에는 토큰 둘이
+    # `200000`·`20000`이었고 주석은 *"예산 소진 경로(stopped_after)를 테스트에서 태울 수
+    # 있도록 일부러 작게 잡는다"*였다. **그 사유가 성립하지 않는다** — 소진 경로를 태우는
+    # 테스트는 자기 예산을 주입한다(`tests/test_pipeline_e2e.py`의 `Budget(input_tokens=1,
+    # output_tokens=1, gpu_seconds=0)` 둘), `tests/test_poc_log.py`는
+    # `config.budget.input_tokens + 1`로 값에 무관하고, `git grep 200000 tests/`는 과거 run
+    # 매니페스트 픽스처 하나만 낸다. 이 값에 의존하는 테스트가 0건이다.
+    #
+    # 🔴 **그 상한이 실제 과제를 막았다.** 이 프로필의 설명문은 *"GPU 없이 파이프라인 0~9단계를
+    # 완주시키는"*인데(`profiles.yaml`), 실제 CyberGym Level 1 번들(우리가 가진 가장 작은 것)에서
+    # `204,963`이 `200,000`을 넘어 계획된 대상 47건 중 9건에서 끝났다(`stopped_after: 4`).
+    # 7·8단계에 못 가 PoC 바이트가 0개였다 — 이슈 #424, 보고서
+    # `docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md`.
+    #
+    # **왜 숫자가 아니라 0인가.** 상한을 떼고 완주시킨 run의 원장은 `input_tokens 510,732`지만
+    # 그것은 **n=1 · 과제 하나 · 가장 작은 번들**의 값이고 Fake 경로는 `chars/token` 상수를 쓰는
+    # 항등식이다(CLAUDE.md §5). 그 수에 여유를 곱해 적으면 **곱한 값이 추정치**가 되고 §0을 깬다.
+    # 0은 이 파일의 기존 관용구이고(`gpu_seconds`·`tool_seconds`가 먼저 그렇게 쓴다) **위험한
+    # 쪽은 로드 가드가 막는다** — 실모델을 서빙하는 프로필이 0이 든 예산을 쓰면 거부된다
+    # (`_check_real_serving_limits_are_positive`). 그래서 이 프로필에서 0은 「무제한」이 맞다.
+    #
+    # ⚠ **임대 GPU의 상한은 여기가 아니다.** 돈이 걸린 것은 `default`의 `gpu_seconds`이고
+    # 그 값은 이 변경이 건드리지 않는다.
+    input_tokens: 0
+    output_tokens: 0
     gpu_seconds: 0
     # Fake 런타임의 도구 시간은 애초에 청구되지 않는다(`RunContext.call_tool`) — 잴
     # 컨테이너가 없고, 그 시간은 하네스가 자기를 잰 값이다. 0은 "상한 없음"이라는 기존
