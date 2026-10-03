@@ -32,6 +32,9 @@ Exit: 0 = every candidate complete; 3 = `--out` written but some candidates inco
 see summary.json `merge`, `dead_shards`, `wall_stopped_shards`); 1 = failed (prepare, a server,
 merge or export failed, or every shard died); 2 = usage error; 128 + signal when stopped by
 SIGTERM/SIGHUP -- shards and servers are stopped and summary.json is written on every path.
+A server is stopped as a whole process group: SIGTERM, up to STOP_GRACE_SECONDS for the group to
+empty, SIGKILL, a check -- pids still alive after that are in summary.json `unstopped_pids`.
+(`joern` is an sh that runs the JVM as a child, and a JVM busy with a query ignores SIGTERM.)
 ⚠ SIGKILL of this tool cannot be caught: its servers and shards (own sessions) keep running.
 POSIX only (process groups via killpg, start_new_session).
 """
@@ -55,6 +58,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SLICER = ROOT / "tools" / "slicer" / "slicer.py"
 MERGE = ROOT / "tools" / "merge_slicer_shards.py"
 SERVER_START_SECONDS = 300  # set value: a Joern server that is not listening by then failed
+# Stopping a server (stop): SIGTERM, wait for the whole process group, then SIGKILL. Measured once:
+# a Joern server with no query running left on SIGTERM in 0.5-0.7 s (3 runs, dev box, 2026-10-03,
+# heap 2g), one with a query running had not left after 30 s. The two waits are set values.
+STOP_GRACE_SECONDS = 10
+KILL_VERIFY_SECONDS = 10  # how long a SIGKILLed group may take to vanish
+STOP_POLL_SECONDS = 0.1
 POLL_SECONDS = 5
 JVM_OVERHEAD_GB = 4  # set value, not measured: non-heap JVM + slicer process per shard
 
@@ -294,28 +303,83 @@ def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
             time.sleep(0.5)
 
 
-def stop(process: subprocess.Popen) -> None:
+def _live_members(group: int) -> list[int]:
+    """Pids of the live processes in a process group. A zombie nobody has reaped is not live:
+    `killpg(group, 0)` still counts one, and a killed JVM whose parent is pid 1 stays a zombie
+    until pid 1 reaps it. Without /proc that call is all there is, and the leader's pid names the
+    group."""
+    if not Path("/proc/self/stat").exists():
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return []
+        return [group]
+    members = []
+    for entry in Path("/proc").iterdir():
+        pid = _digits(entry.name)
+        text = _read(entry / "stat") if pid is not None else None
+        if text is None:
+            continue
+        # "pid (comm) state ppid pgrp ..." -- comm can hold spaces and parentheses
+        fields = text.rpartition(")")[2].split()
+        if len(fields) > 2 and _digits(fields[2]) == group and fields[0] not in ("Z", "X", "x"):
+            members.append(pid)
+    return members
+
+
+def _signal_group(group: int, sig: int) -> None:
+    try:
+        os.killpg(group, sig)
+    except OSError:  # gone already -- _live_members is what says whether anything is left
+        pass
+
+
+def _wait_gone(process: subprocess.Popen, group: int, seconds: float) -> bool:
+    """Until the process group has no live member (reaping the launcher on the way); False when
+    `seconds` ran out first."""
+    deadline = time.time() + seconds
+    while True:
+        process.poll()
+        if not _live_members(group):
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(STOP_POLL_SECONDS)
+
+
+def stop(process: subprocess.Popen, grace: float | None = None) -> list[int]:
+    """End the process and everything else in its process group; returns the pids that outlived
+    SIGKILL (empty: verified gone).
+
+    `joern` is an `sh` that runs the JVM as a child, so the launcher dying says nothing about the
+    JVM: SIGTERM ends the sh at once, and a JVM with a query still running never finishes its
+    shutdown hook (it queues behind the query) -- eight of them outlived a run on 2026-10-03.
+    So SIGTERM goes to the group, the group gets `grace` seconds (default STOP_GRACE_SECONDS) to
+    empty, then SIGKILL, then a check. `grace=0` skips SIGTERM: for a server whose query was
+    abandoned there is nothing to shut down cleanly."""
     if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the child
         try:
             process.terminate()
             process.wait(30)
         except Exception:  # noqa: BLE001
             process.kill()
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(30)
-    except Exception:  # noqa: BLE001 -- already gone, or hung: escalate
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(30)
-        except Exception:  # noqa: BLE001
-            pass
+        return []
+    group = process.pid  # `launch` starts every process in its own session: the leader's pid
+    grace = STOP_GRACE_SECONDS if grace is None else grace
+    if grace > 0:
+        _signal_group(group, signal.SIGTERM)
+        if _wait_gone(process, group, grace):
+            return []
+    _signal_group(group, signal.SIGKILL)
+    return [] if _wait_gone(process, group, KILL_VERIFY_SECONDS) else _live_members(group)
 
 
-def stop_all(processes: list[subprocess.Popen], tracked: list | None = None) -> None:
-    """Stop in parallel (each stop can wait 30 s); drop them from `tracked`."""
-    threads = [threading.Thread(target=stop, args=(p,)) for p in processes]
+def stop_all(processes: list[subprocess.Popen], tracked: list | None = None,
+             summary: dict | None = None) -> list[int]:
+    """Stop in parallel (each stop can wait); drop them from `tracked`. The pids that outlived
+    SIGKILL are warned about on stderr, put in `summary["unstopped_pids"]` and returned."""
+    survivors: list[int] = []
+    threads = [threading.Thread(target=lambda p=p: survivors.extend(stop(p))) for p in processes]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -324,6 +388,11 @@ def stop_all(processes: list[subprocess.Popen], tracked: list | None = None) -> 
         for process in processes:
             if process in tracked:
                 tracked.remove(process)
+    if survivors:
+        print(f"WARNING: still alive after SIGKILL: pids {survivors}", file=sys.stderr)
+        if summary is not None:
+            summary.setdefault("unstopped_pids", []).extend(survivors)
+    return survivors
 
 
 def slicer_command(repo: Path, out: Path, port: int, joern: Path, checkpoint: Path,
@@ -460,7 +529,7 @@ def run(args: argparse.Namespace, extra: list[str], work: Path, summary: dict,
                      None, tracked)
     code = prepare.wait()
     tracked.remove(prepare)
-    stop_all([server], tracked)
+    stop_all([server], tracked, summary)
     summary.update(prepare_exit=code, prepare_seconds=round(time.time() - started))
     # --prepare-only always ends `partial` (2): it slices nothing by design.
     if code not in (0, 2) or not cpg.is_file():
@@ -499,13 +568,13 @@ def run(args: argparse.Namespace, extra: list[str], work: Path, summary: dict,
     while any(p.poll() is None for p in shards):
         if deadline and time.time() > deadline:
             wall_stopped = [i for i, p in enumerate(shards) if p.poll() is None]
-            stop_all([shards[i] for i in wall_stopped])
+            stop_all([shards[i] for i in wall_stopped], summary=summary)
             break
         time.sleep(POLL_SECONDS)
     codes = [p.wait() for p in shards]
     for process in shards:
         tracked.remove(process)
-    stop_all([s for s, _, _ in servers], tracked)
+    stop_all([s for s, _, _ in servers], tracked, summary)
     # Normal shard exit is 2: finish() always reports a shard as partial. 1 = the slicer failed,
     # negative = killed by a signal we did not send.
     dead = [i for i, c in enumerate(codes) if c not in (0, 2) and i not in wall_stopped]
@@ -577,7 +646,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         for s in caught:
             signal.signal(s, signal.SIG_IGN)  # a second TERM must not cut the cleanup short
-        stop_all(list(tracked), tracked)
+        stop_all(list(tracked), tracked, summary)
         for s, handler in previous.items():
             signal.signal(s, handler)
         summary.update(exit=code, total_seconds=round(time.time() - started))
