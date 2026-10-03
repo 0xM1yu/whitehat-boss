@@ -40,6 +40,13 @@ def test_c_keywords_are_not_names() -> None:
     assert bare_names("if (x) return NULL; else sizeof(int);") == {"x"}
 
 
+def test_a_gnu_case_range_is_not_a_field_access() -> None:
+    """`case LOW ... HIGH:`의 `...`는 점 셋이다 -- 뒤 `HIGH`가 필드로 읽혀 빠지던 것(점 하나만 필드
+    접근이다). 공백 없는 `LOW...HIGH`도 같다. 같은 줄의 진짜 필드 접근은 그대로 거른다."""
+    assert bare_names("case LOW ... HIGH: x = p->len;") == {"LOW", "HIGH", "x", "p"}
+    assert bare_names("case LOW...HIGH: break;") == {"LOW", "HIGH"}
+
+
 # --- definition_names: 함수마다 그 함수의 지역·파라미터를 뺀다 -------------------------------
 
 
@@ -113,6 +120,55 @@ def test_a_window_anchor_has_no_function_to_ask_about() -> None:
     used = definition_names([(window, "za = p->len;")], locals_of)
 
     assert asked == [] and used == {"za", "p"}
+
+
+def test_a_block_scope_extern_names_the_global_not_a_local() -> None:
+    """인덱서는 함수 안 `extern int g_hdr;`도 지역으로 적는다(함수 안 `declaration`은 전부) -- 그
+    이름은 **전역을 가리킨다.** 파일 변수 정의를 찾아야 하고, 같은 함수의 진짜 지역 `za`는 그대로
+    빠진다."""
+    text = "void f(void) { extern int g_hdr; int za = g_hdr; }"
+    f = _loc("u.c", "f", 1, 1)
+
+    used = definition_names([(f, text)], _locals({("u.c", "f"): {"g_hdr", "za"}}))
+
+    assert "g_hdr" in used
+    assert "za" not in used
+
+
+def test_a_local_called_with_parens_still_resolves_the_function_like_macro() -> None:
+    """`int min, max;`옆의 `max(a, b)` -- 전처리는 범위를 안 봐서 `max(`는 함수형 매크로 호출이다.
+    지역 `max`는 괄호로 불렸으니 남고, 괄호로 안 불린 지역 `min`은 그대로 빠진다."""
+    text = "int f(int min, int max) { return max(min, 1); }"
+    f = _loc("u.c", "f", 1, 1)
+
+    used = definition_names([(f, text)], _locals({("u.c", "f"): {"min", "max"}}))
+
+    assert "max" in used
+    assert "min" not in used
+
+
+def test_a_field_call_is_not_a_macro_call() -> None:
+    """`ops->read(read)`의 `read(`는 함수 포인터 필드 호출이라 매크로가 아니다 -- 지역 `read`를
+    되살리지 않는다(필드 자리의 호출은 호출 규칙에서 뺀다)."""
+    text = "void f(void) { int read = 0; ops->read(read); }"
+    f = _loc("u.c", "f", 1, 1)
+
+    used = definition_names([(f, text)], _locals({("u.c", "f"): {"read"}}))
+
+    assert "read" not in used
+
+
+def test_a_typedef_named_like_a_local_is_a_known_limit() -> None:
+    """**알려진 한계**(`definition_names`의 ponytail): `node *node`의 앞 `node`는 typedef인데
+    지역으로 읽혀 안 찾는다 -- `n * n`과 글자로는 같아서 문장 머리·파라미터 목록의 타입 자리를
+    구문 없이 못 가른다. 고치면(예: 인덱서가 선언의 타입 이름도 `locals`에 싣는다) 이 테스트를
+    뒤집는다."""
+    text = "void f(void) { node *node = get(); node->next = 0; }"
+    f = _loc("u.c", "f", 1, 1)
+
+    used = definition_names([(f, text)], _locals({("u.c", "f"): {"node"}}))
+
+    assert "node" not in used
 
 
 # --- slice_names_first: 슬라이스 줄에 나온 이름의 정의가 먼저 ---------------------------------
