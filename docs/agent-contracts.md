@@ -151,9 +151,11 @@ agent:
   행에 `[ambiguous]`가 **안** 붙는 조건은 둘이다: 그 필드를 선언한 구조체가 인덱스에서 하나이고, 그 파일이 쓰기
   파일과 찾는 줄의 파일 둘 다와 같은 디렉터리일 때(include 정보가 인덱스에 없어 「둘 다 볼 수 있다」를 이것으로
   근사한다). 그 밖은 `[ambiguous]`고, 안 붙었어도 증명은 아니다(진짜 구조체가 인덱스 밖 헤더에 있고 같은 디렉터리의
-  다른 구조체가 같은 필드 이름을 가지면 못 가린다). 순서는 같은 파일 → 제품 경로(예제·테스트·fuzz 쓰기는 뒤) →
+  다른 구조체가 같은 필드 이름을 가지면 못 가린다 — 블록 머리가 모델이 보는 줄에 그렇게 적는다). 순서는 같은 파일 → 제품 경로(예제·테스트·fuzz 쓰기는 뒤) →
   모호하지 않은 것이고, 이름마다 4행까지만 싣는다. 못 실은 행이 있으면 블록 끝에 `+N more rows not shown` 줄이 붙고
-  trace에는 목록으로 남는다. 할당기는 **줄 단위**로 이은 것이라 문장의 우변이 그 호출일 때만 `allocates`라 쓴다
+  trace에는 목록으로 남는다. 행이 0일 때 사유는 trace `stores_lookup`이 가른다 — `index`(물었고 쓰기가 없다는 답) ·
+  `none`(v2 표가 없어 못 봤다) · `no_targets`(슬라이스 줄에 물을 이름이 없다). 할당기는 **줄 단위**로 이은 것이라
+  **그 쓰기의** 우변이 그 호출일 때만 `allocates`라 쓴다(같은 줄의 다른 문장 호출은 아니다).
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —

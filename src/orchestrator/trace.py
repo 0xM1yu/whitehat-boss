@@ -245,7 +245,9 @@ class EventKind(StrEnum):
     # `stores_dropped`(못 실은 행 수)·`stores_dropped_rows`(그 행의 `file:line 이름` JSON 배열
     # 문자열 — 앞 50개 뒤에 `+N more`)·`stores_in_source`(`SOURCE`에 이미 보이는 줄이라 건너뛴 행
     # 수 — 줄어든 entry 함수는 남은 토막만)·`stores_targets_skipped`(질의 상한을 넘어 인덱스에 안
-    # 물은 이름 수)가 더 실린다.
+    # 물은 이름 수)·`stores_lookup`(`index` = 인덱스에 물었다 · `none` = v2 표가 없어 못 봤다 ·
+    # `no_targets` = 슬라이스 줄에 물을 이름이 없다 — `stores`가 0일 때 「쓰기가 없다」와 「못
+    # 봤다」를 가른다)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
