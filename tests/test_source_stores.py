@@ -163,6 +163,14 @@ def test_the_block_opens_with_its_own_banner() -> None:
     assert stores.text.splitlines()[0] == HEADER
 
 
+def test_the_header_says_what_an_unmarked_row_does_not_prove() -> None:
+    """머리가 행을 읽는 법을 말한다 — `[ambiguous]`는 같은 구조체·변수라고 확인하지 못했다는 뜻이고,
+    표시가 **없는** 행도 증명이 아니다(이름이 같은 직접 대입일 뿐 — 모듈 docstring의 한계). 문서만이
+    아니라 모델이 보는 줄에 있어야 한다. 철자를 핀하는 테스트다."""
+    assert "[ambiguous] = owner not confirmed" in HEADER
+    assert "unmarked row is not proof" in HEADER
+
+
 def test_a_plain_assignment_becomes_a_row() -> None:
     """파일 전역 `g_len`의 대입 — 연산자가 `+=`여도 원문 줄이 그것을 든다."""
     sites = {("g_len", False): [_site("a.c", 16, "g_len", func="grow", field=False)]}
@@ -341,6 +349,21 @@ def test_a_missing_index_gives_no_block_and_is_asked_once() -> None:
     assert len(asked) == 1
 
 
+def test_stores_zero_tells_a_missing_index_from_a_lookup_that_found_nothing() -> None:
+    """`stores: 0`은 셋이다 — 인덱스가 없어(v1·`stores_of`가 `None`) **못 본** 것 · 인덱스에
+    물었는데 쓰기가 없는 것 · 물을 이름이 슬라이스 줄에 없는 것. 「0건」과 「못 봤다」를 섞지
+    않게 `stores_lookup`이 가른다(`closure_lookup`과 같은 계약 — 값은 `index`·`none`에 하나 더
+    `no_targets`다)."""
+    absent, _ = _run(lambda _target: None)
+    found_nothing, _ = _run({})
+    no_names, _ = _run({}, [], files={"a.c": ["#include <a.h>"]}, entry=("a.c", 1))
+
+    assert [s.rows for s in (absent, found_nothing, no_names)] == [0, 0, 0]
+    assert absent.trace_fields()["stores_lookup"] == "none"
+    assert found_nothing.trace_fields()["stores_lookup"] == "index"
+    assert no_names.trace_fields()["stores_lookup"] == "no_targets"
+
+
 def test_the_same_write_reached_through_two_files_is_one_row() -> None:
     """`len`을 a.c와 b.c에서 둘 다 보면 이름은 파일마다 한 번씩 물어 같은 쓰기가 두 번 돌아온다 —
     행은 하나이고 이미 실린 함수 안이라 건너뛴 것도 한 번만 센다."""
@@ -426,6 +449,23 @@ def test_comments_and_string_literals_name_nothing() -> None:
     assert "secret" not in {t.name for t in asked}
     assert not {"hidden", "gone"} & {t.name for t in asked}
     assert "log" not in {t.name for t in asked}  # 호출 대상은 변수가 아니다
+
+
+def test_a_digit_separator_does_not_open_a_char_literal() -> None:
+    """C23·C++14 자릿수 구분자(`1'000` · `0xFF'FF`)의 `'`는 문자 리터럴이 아니다 — 열면 같은
+    줄의 다음 `'`까지, 그 사이의 쓰기(`c->len`)까지 삼킨다. 수의 꼬리(`0xFF'FF`의 `FF`)는
+    변수 이름이 아니다. 진짜 문자 리터럴(`'x'`)은 여전히 이름을 안 만든다."""
+    files = {"a.c": [
+        "    n = 1'000; c->len = 2'000;",
+        "    m = 0xFF'FF; d->cap = 1'000'000;",
+        "    k = 'x'; e->after = 1;",
+    ]}
+
+    _, asked = _run({}, [("a.c", 1), ("a.c", 2), ("a.c", 3)], files=files, entry=("a.c", 1))
+
+    names = {(t.name, t.field) for t in asked}
+    assert {("len", True), ("cap", True), ("after", True)} <= names
+    assert {("FF", False), ("x", False)}.isdisjoint(names)
 
 
 def test_preprocessor_lines_and_numeric_literals_name_nothing() -> None:
@@ -697,6 +737,43 @@ def test_the_allocation_check_reads_the_whole_statement_not_the_cut_row_text() -
     (row,) = _rows(stores)
     assert row.split(" | ")[1].endswith("...")
     assert row.endswith("| allocates p (malloc: n)")
+
+
+def test_an_allocation_on_the_same_line_belongs_to_the_write_it_is_assigned_to() -> None:
+    """인덱서는 같은 줄의 할당기 호출을 그 줄의 **모든** 쓰기 행에 붙인다. 문장이 둘이면
+    (`a->len = n; a->buf = malloc(n);`) 호출은 그 호출이 오른쪽인 쓰기(`buf`)의 것이고 `len`은
+    같은 줄에 호출이 있다고만 쓴다 — 줄 전체에서 `= malloc(`을 찾으면 `len`이 할당을 받는
+    것으로 읽힌다. 변수도 같다. 한 줄에서 두 객체가 같은 필드를 쓰면 좌변 철자가 가른다."""
+    files = {**_FILES, "m.c": [
+        "    a->len = n; a->buf = malloc(n);",
+        "    size = n; p = (char *)malloc(n);",
+        "    a->buf = NULL; b->buf = malloc(n);",
+        "    a->buf = NULL; b->buf = malloc(n);",
+    ]}
+    alloc = {"alloc": "malloc", "alloc_args": ("n",)}
+    sites = {
+        ("len", True): [_site("m.c", 1, "len", lhs="a->len", **alloc)],
+        ("buf", True): [
+            _site("m.c", 1, "buf", lhs="a->buf", **alloc),
+            _site("m.c", 3, "buf", lhs="a->buf", **alloc),
+            _site("m.c", 4, "buf", lhs="b->buf", **alloc),
+        ],
+        ("size", False): [_site("m.c", 2, "size", field=False, **alloc)],
+        ("p", False): [_site("m.c", 2, "p", field=False, **alloc)],
+    }
+
+    stores, _ = _run(sites, [("a.c", 25), ("m.c", 1), ("m.c", 2)], files=files)
+
+    assert sorted(
+        (row.split(" | ")[0], row.rsplit(" | ", 1)[1]) for row in _rows(stores)
+    ) == [
+        ("m.c:1", "allocates ->buf (malloc: n)"),
+        ("m.c:1", "writes ->len; same line calls malloc(n)"),
+        ("m.c:2", "allocates p (malloc: n)"),
+        ("m.c:2", "assigns size; same line calls malloc(n)"),
+        ("m.c:3", "writes ->buf; same line calls malloc(n)"),
+        ("m.c:4", "allocates ->buf (malloc: n)"),
+    ]
 
 
 def test_only_the_ranges_that_remain_in_the_source_count_as_visible() -> None:

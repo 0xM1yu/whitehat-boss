@@ -1889,9 +1889,9 @@ def test_a_flood_of_same_named_writes_is_capped_per_name_and_listed_in_the_event
 
 def _stores_trim_source(trim: int):  # noqa: ANN202
     """200줄 entry 함수 `big`(100줄이 sink 호출 `memcpy(d, s, p->len)`)에서 `len` 필드의 쓰기가 같은
-    함수 안 세 곳(50 · 99 · 150줄)에 있다. `auditor_entry_trim`이 1이고 상한(단어 120)을 넘으면
-    머리(1-2줄) · 100줄 앞뒤 20줄(80-120) · 닫는 줄(200)만 남는다 — 99줄은 남고 50·150줄은
-    빠진다."""
+    함수 안 세 곳(50 · 99 · 150줄)에 있다. `auditor_entry_trim`이 1이고 상한(단어 150 — 줄인
+    토막에 `STORES` 머리와 행 둘이 들 만큼)을 넘으면 머리(1-2줄) · 100줄 앞뒤 20줄(80-120) · 닫는
+    줄(200)만 남는다 — 99줄은 남고 50·150줄은 빠진다."""
     from src.adapters.slices import SliceRef
     from src.orchestrator import runner
     from src.schemas.stores import StoreSite
@@ -1910,7 +1910,7 @@ def _stores_trim_source(trim: int):  # noqa: ANN202
 
     ctx, events, _, _ = _unit(
         {"big.c": lines}, [big], auditor_entry_trim=trim, auditor_stores=1,
-        auditor_source_tokens=120, stores_of=stores_of,
+        auditor_source_tokens=150, stores_of=stores_of,
     )
     ref = SliceRef(
         slice_id="s", location=big, given_end="sink",
