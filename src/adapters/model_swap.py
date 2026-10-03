@@ -1,9 +1,11 @@
 """단계 경계 모델 교대 — 교대 명령을 부르고, 뜬 것을 다시 본다 (ADR 0012 Phase 6.5 — ADR 0009).
 
 **교대는 콜드 재기동이다.** 교대 명령(장비 파일 `config/serving/<device>.yaml`의 `command`)이 앞
-단계 서버를 끄고 `keys`만 새로 띄운다. vLLM `/sleep`·`/wake_up`은 쓰지 않는다. 하네스와 같은
-기계의 로컬 subprocess다 — `ssh`로 감싸지 않는다. 키 없이 부르면 명령이 자기 run의 서버를 전부
-내린다(run 끝 내림).
+단계 서버를 끄고 `keys`만 새로 띄운다. vLLM `/sleep`·`/wake_up`은 쓰지 않는다. 이 모듈은
+명령을 로컬 subprocess로 부르고 ssh를 모른다 — 서빙이 원격이면 **명령 쪽이** 감싼다
+(`tools/serve/swap-remote.sh`, 장비 파일 `vastai-remote.yaml`). 그때도 아래 계약은 원격의
+명령이 지키고 `_verify`의 `/v1/models` 조회는 로컬에서 터널을 지난다. 키 없이 부르면 명령이
+자기 run의 서버를 전부 내린다(run 끝 내림).
 
 **하네스가 아는 것은 언제·어느 모델이다.** 어떻게 띄우는지(util·창·인자)는 명령이 장비 파일에서
 읽는다. 러너는 `src/adapters/`를 import 하지 않으므로 여기서 만든 콜러블이 `Deps.swap_to`로 경계를
