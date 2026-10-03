@@ -129,7 +129,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 지금 배선된 v6는
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 지금 배선된 v7(body는 v6와 같다)은
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -138,8 +138,10 @@ agent:
   ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
   entry 줄이기). ~~전부 기본 꺼짐이라 위 서술 그대로.~~ 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
-  사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판 v6가
-  그 모양을 서술하고 meta `source_options`로 선언한다(`prompts/auditor/v6/prefix.md`의 「Original-source input contract」)
+  사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
+  그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). v6는 #418이 A/B를 잰 문장 그대로
+  1-b 모양(15,000자)만 서술한다(§4 규칙 1)
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -158,6 +160,8 @@ agent:
   유계 발췌이고 생성 요약이 아니다」로 적고 절단 표시까지 서술한다(`prompts/auditor/v6/prefix.md`의 그 절).
   **그래도 모델이 그 본문을 쓰는지는 여전히 미측정이다** — 이름을 부르는 것과 쓰는 것은 다르고, v6로 돈
   run이 이 저장소에 0건이다.
+  ⏵ 2026-10-04 — v7로 올렸다(v6 + SOURCE 옵션 넷의 서술, #349). 그 절은 v6와 같고 v7도 그 집합에 든다.
+  v7로 돈 run도 0건이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
 - **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
   `missing_evidence`는 비어 있지 않으면 발급 `missing_id` 하나로 정규화한다 — 모델이 어떤 ID를 썼든 「확인 불가」
@@ -350,7 +354,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v6"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v7"}
 }
 ```
 
@@ -386,7 +390,9 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > `test_doc_examples.py`가 registry와 대조한다. v6도 `trigger_status` 다섯 값을 묻는다
 > (`prompts/auditor/v6/prefix.md`의 「Set trigger_status to exactly one of」). **v4로 돈 run은 끝까지
 > 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
-> gitignore라 커밋된 보고서만 센 것이다). ⚠ 위 v3 서술(run 없음)은
+> gitignore라 커밋된 보고서만 센 것이다). ⏵ 2026-10-04 — **v7을 고른다**(v6 + SOURCE 옵션 넷의 서술, #349).
+> 위 Finding 예시의 `prompt_version`도 v7로 고쳤다. `trigger_status` 문장은 v6와 같다. v7로 돈 run도 0건이다.
+> ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
 > 그대로 미측정이다.
@@ -444,7 +450,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v6", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v7", "critic": "v1"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -552,6 +558,14 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 돌렸고, #418이 든 수는 Recall 0.637→0.966 · **Precision 0.939→0.821**이다(원천은 그 PR 본문의
 > 비교표 — 실험팀 프롬프트 A/B이고 이 저장소의 run 기록이 아니다, [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 5).
 > Critic은 여전히 v1이다.
+>
+> ⏵ **2026-10-04 — Auditor가 v6 → v7로 바뀌었다**(#349 · PR #443 리뷰 HIGH). **v7 = v6 + SOURCE 서술**이다 —
+> v6 prefix의 「Original-source input contract」만 `config/budgets.yaml`이 켠 옵션 넷(20,000토큰 상한 · 정의 ·
+> 피호출 본문 1단 · 호출자 창 10줄)에 맞추고 meta `source_options`로 선언했다(prefix 21,398 -> 23,448자, 나머지
+> 지시·body는 v6와 같다). PR #443의 첫 판은 이것을 **v6 그 자리에서** 고쳤다 — 이 규칙 1이 막는 것이다.
+> **#418의 수(Recall 0.637→0.966 · Precision 0.939→0.821)는 v6 문장의 것이다** — v7에 옮겨 읽지 않는다.
+> v7 뒤 run은 그 전 run과 직접 비교하지 않는다. 잃는 측정은 없다(v6로 돈 run이 이 저장소에 0건). 규칙 5·재측정은
+> 이번에도 돌지 않았다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

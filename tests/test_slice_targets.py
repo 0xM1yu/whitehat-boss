@@ -70,14 +70,15 @@ _UTIL = split_source((TARGET / "util.c").read_bytes())
 _SOURCES = {"parser.c": _PARSER, "util.c": _UTIL}
 
 
-@pytest.mark.parametrize("version", ["v4", "v5"])
+@pytest.mark.parametrize("version", ["v4", "v5", "v6"])
 def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     """#328 2차 MEDIUM-3: 모델용 계약의 수치가 러너 상수와 조용히 갈리지 않는다.
 
     ⚠ 이 목록은 **판을 센다** — 올리면서 안 늘리면 서빙 판이 빠진다(2026-10-03 v6가 그랬다).
     판 목록 없이 **서빙 판**을 묻는 것은 `test_config.py`의
-    `test_the_canonical_auditor_prompt_states_the_runner_source_contract`다. ⏵ 2026-10-03 v6는 옵션
-    넷(20,000토큰 상한)을 서술하게 돼 15,000자 철자를 안 든다 -> 그쪽 검사가 v6의 계약을 문다.
+    `test_the_canonical_auditor_prompt_states_the_runner_source_contract`다. ⏵ 2026-10-04 서빙 판
+    v7은 옵션 넷(20,000토큰 상한)을 서술해 15,000자 철자를 안 든다 -> 그쪽 검사가 v7의 계약을 문다.
+    v6는 #418이 잰 1-b 문장 그대로라 여기 남는다.
     """
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 
@@ -1595,7 +1596,7 @@ def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
 def test_default_budgets_carry_definitions_callees_and_caller_windows(tmp_path: Path) -> None:
     """기본 설정(`budgets.yaml` — 2026-10-03부터 옵션 넷 켬, #349)으로 돈 Auditor SOURCE 이벤트가
     네 옵션의 계수를 다 든다. 끄는 줄을 되돌리면(어느 하나라도 0) 그 키가 사라져 여기서 걸린다 --
-    정본 프롬프트 v6가 넷을 서술하므로 기본에서 빠지면 서술이 거짓이 된다."""
+    정본 프롬프트 v7이 넷을 서술하므로 기본에서 빠지면 서술이 거짓이 된다."""
     path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
 
     _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
