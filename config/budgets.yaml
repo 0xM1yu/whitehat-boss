@@ -38,11 +38,17 @@ budgets:
     # `200000`·`20000`이었고 주석은 *"예산 소진 경로(stopped_after)를 테스트에서 태울 수
     # 있도록 일부러 작게 잡는다"*였다. **그 사유는 거의 성립하지 않는다** — 소진 경로를 태우는
     # 검사는 자기 예산을 주입하고(`tests/test_pipeline_e2e.py`의 `Budget(input_tokens=1,
-    # output_tokens=1, gpu_seconds=0)` 둘), `git grep 200000 tests/`는 과거 run 매니페스트
-    # 픽스처 하나만 낸다. ⚠ **딱 하나가 이 값을 빌렸다** — `tests/test_poc_log.py`의
+    # output_tokens=1, gpu_seconds=0)` 둘), `git grep -w 200000 tests/`는 과거 run 매니페스트
+    # 픽스처 하나만 낸다 — `-w` 없이 돌리면 ASan 주소 `0x602000000018`의 **부분 문자열**로 셋이
+    # 더 걸린다(`tests/test_pov_loop.py`). ⚠ **소진 경로용으로 이 값을 빌린 것은 하나다** —
+    # `tests/test_poc_log.py`의
     # `test_budget_exhaustion_leaves_no_poc_directory`가 `config.budget.input_tokens + 1`을
     # 청구했다. 「특정 값과 무관」이지만 **상한이 양수여야** 성립하는 꼴이라 0으로 내리자
-    # 빨개졌고, 그래서 그 검사도 자기 예산을 주입하게 고쳤다(같은 PR). 그 하나를 빼면 0건이다.
+    # 빨개졌고, 그래서 그 검사도 자기 예산을 주입하게 고쳤다(같은 PR).
+    # ⚠ **「0건」이 아니다 — 이 값에 결합된 검사는 둘이고 둘 다 같은 PR에서 고쳤다.** 다른 하나는
+    # `tests/test_budget.py`의 `test_a_real_serving_profile_cannot_borrow_the_fake_budget`이고,
+    # 소진 경로가 아니라 **0인 키 목록**을 단언해서 둘 → 넷으로 늘었다. 첫 판에 「0건」이라 적은
+    # 것은 전수를 `200000` **문자열**로 돌려 그 동적 독자를 못 봤기 때문이다(CLAUDE.md §2.5).
     #
     # 🔴 **그 상한이 실제 과제를 막았다.** 이 프로필의 설명문은 *"GPU 없이 파이프라인 0~9단계를
     # 완주시키는"*인데(`profiles.yaml`), 실제 CyberGym Level 1 번들(우리가 가진 가장 작은 것)에서
