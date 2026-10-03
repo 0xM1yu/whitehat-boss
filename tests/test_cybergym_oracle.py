@@ -32,6 +32,7 @@ from uuid import uuid4
 import pytest
 
 from src.adapters import cybergym_oracle as oracle
+from src.interfaces.oracle import VulSubmission
 
 _SERVER = "http://127.0.0.1:8666"
 _TASK_ID = "arvo:1065"
@@ -810,7 +811,8 @@ def test_no_function_in_the_module_gives_the_server_address_a_default() -> None:
         and "server" in inspect.signature(function).parameters
     }
     # 비어 있는 채로 통과하지 않게 — 공개 함수 넷은 반드시 걸려 있어야 한다.
-    assert {"submit_vul", "submit_fix", "query_verdict", "run_round_trip"} <= set(with_server)
+    required = {"submit_vul", "submit_fix", "query_verdict", "peek_verdict", "run_round_trip"}
+    assert required <= set(with_server)
     assert [n for n, p in with_server.items() if p.default is not inspect.Parameter.empty] == []
     url_constants = [
         name
@@ -834,3 +836,275 @@ def test_no_plan_file_references_remain_in_the_module_or_this_file() -> None:
         text = path.read_text(encoding="utf-8")
         for label, needle in needles.items():
             assert needle not in text, f"{path.name}에 {label}가 남아 있다"
+
+
+# --- 13. TaskOracle — 두 다리·캐시 판별·키·id 모양 (#386) --------------------------------
+def _task(**overrides: object) -> oracle.TaskOracle:
+    fields: dict[str, object] = {
+        "server": _SERVER, "task_id": _TASK_ID, "agent_id": _AGENT_ID, "api_key": _API_KEY,
+    }  # fmt: skip
+    return oracle.TaskOracle(**{**fields, **overrides})  # type: ignore[arg-type]
+
+
+def _paths(server: _FakeOracle) -> list[str]:
+    return [call.url.path for call in server.calls]
+
+
+def test_the_vul_leg_runs_only_the_vul_container(oracle_server: _FakeOracle) -> None:
+    """후보마다 부르는 다리다 - `fix` 컨테이너도 `/submit-fix`도 없다. 장부 읽기가 먼저다."""
+    sent = _task().submit_vul(_POC_A)
+
+    (row,) = oracle_server.rows
+    assert oracle_server.containers == 1
+    assert (row["vul_exit_code"], row["fix_exit_code"]) == (77, None)
+    assert _paths(oracle_server) == ["/query-poc", "/submit-vul"]
+    assert sent == VulSubmission(
+        task_id=_TASK_ID, poc_id=row["poc_id"], response_exit_code=77, cached=False
+    )
+
+
+def test_finalize_runs_the_fix_leg_and_reads_every_field_of_the_verdict(
+    oracle_server: _FakeOracle,
+) -> None:
+    """종료 코드를 서로 다른 값(139·5)으로 넣어 맞바꿈을, 길이·해시·신원으로 상수 대입을 잡는다."""
+    oracle_server.exit_codes[_POC_A] = (139, 5)
+    task = _task()
+    sent = task.submit_vul(_POC_A)
+
+    outcome = task.finalize(_POC_A, sent)
+
+    (row,) = oracle_server.rows
+    assert oracle_server.containers == 2
+    assert _paths(oracle_server)[2:] == ["/query-poc", "/submit-fix", "/query-poc"]
+    assert outcome.task_id == _TASK_ID
+    assert outcome.poc_id == row["poc_id"] == sent.poc_id
+    assert outcome.poc_hash == hashlib.sha256(_POC_A).hexdigest()
+    assert outcome.poc_length == len(_POC_A)
+    assert (outcome.vul_exit_code, outcome.fix_exit_code) == (139, 5)
+    assert outcome.success is False  # fix가 5라 정상 종료가 아니다
+    assert outcome.fix_cached is False
+
+
+@pytest.mark.parametrize(
+    ("codes", "success"),
+    [((139, 0), True), ((77, 0), True), ((0, 0), False), ((300, 0), False), ((77, 139), False)],
+)
+def test_success_is_the_adapters_predicate_not_a_constant(
+    oracle_server: _FakeOracle, codes: tuple[int, int], success: bool
+) -> None:
+    oracle_server.exit_codes[_POC_B] = codes
+    task = _task()
+
+    outcome = task.finalize(_POC_B, task.submit_vul(_POC_B))
+
+    assert outcome.success is success
+
+
+def test_a_first_submission_is_not_cached_whatever_the_servers_clock_says(
+    oracle_server: _FakeOracle,
+) -> None:
+    """대역 서버의 시계는 2026-10-02에서 시작한다 - 이쪽 시계보다 며칠 뒤처졌다. 시각을 견주면
+    처음 낸 바이트가 「캐시」로 읽힌다(PR #408 리뷰가 재현한 방향). 장부를 읽는 방식은 시계를
+    안 본다."""
+    sent = _task().submit_vul(_POC_A)
+
+    assert sent.cached is False
+
+
+def test_a_real_cache_hit_is_reported_even_when_the_servers_clock_is_ahead(
+    oracle_server: _FakeOracle,
+) -> None:
+    """서버 시계가 이쪽보다 **앞서** 있으면 행의 시각이 미래라 시각 비교는 진짜 적중을 「새로
+    돌았다」로 읽는다 - 옛 판정이 새 판정으로 기록되는 더 나쁜 방향이다. 장부를 읽는 방식은 시계를
+    안 본다."""
+    oracle_server._clock = datetime(2099, 1, 1)
+    task = _task()
+    task.submit_vul(_POC_A)
+    first = oracle_server.containers
+
+    again = task.submit_vul(_POC_A)
+
+    assert oracle_server.containers == first, "캐시 적중이라 컨테이너가 안 돌았어야 한다"
+    assert again.cached is True
+
+
+def test_each_leg_reports_whether_its_own_code_was_already_there(
+    oracle_server: _FakeOracle,
+) -> None:
+    """같은 agent_id·같은 바이트를 두 번째 run이 내면 두 다리 모두 옛 코드다. 모드별로 가른다 -
+    첫 run에서 vul만 냈다면 두 번째 run의 vul은 캐시이고 fix는 아니다."""
+    task = _task()
+    first_vul = task.submit_vul(_POC_A)
+    assert first_vul.cached is False
+    second_vul = task.submit_vul(_POC_A)  # 두 번째 run의 vul 다리
+    assert second_vul.cached is True
+
+    outcome = task.finalize(_POC_A, second_vul)
+    assert outcome.fix_cached is False, "fix 다리는 이 호출이 처음 돌렸다"
+
+    third = task.submit_vul(_POC_A)
+    again = task.finalize(_POC_A, third)
+    assert (third.cached, again.fix_cached) == (True, True)
+
+
+def test_a_verdict_whose_timestamps_are_not_strings_is_still_a_verdict(
+    oracle_server: _FakeOracle,
+) -> None:
+    """시각은 읽지 않는다 - 시각을 파싱하던 옛 판별은 `ValueError`만 잡아서 문자열이 아닌
+    `updated_at`이 오면 멀쩡한 판정을 예외로 버렸다(그 호출이 `oracle_failed`가 됐다)."""
+    oracle_server._tick = lambda: 20261003  # type: ignore[method-assign]
+    task = _task()
+    sent = task.submit_vul(_POC_A)
+
+    outcome = task.finalize(_POC_A, sent)
+
+    assert outcome.success is True and (outcome.vul_exit_code, outcome.fix_exit_code) == (77, 0)
+
+
+def test_another_pocs_row_is_not_this_pocs_cache(oracle_server: _FakeOracle) -> None:
+    task = _task()
+    task.submit_vul(_POC_A)
+
+    assert task.submit_vul(_POC_B).cached is False
+
+
+def test_peek_returns_none_when_the_agent_has_no_row_at_all(oracle_server: _FakeOracle) -> None:
+    """저자 서버는 행이 하나도 없으면 404 `Record not found`다 - 오류가 아니라 「아직 없다」다."""
+    verdict = oracle.peek_verdict(_SERVER, _TASK_ID, _AGENT_ID, _POC_A, api_key=_API_KEY)
+
+    assert verdict is None
+
+
+def test_peek_returns_none_when_only_other_pocs_have_rows(oracle_server: _FakeOracle) -> None:
+    _round_trip(_POC_B)
+
+    assert oracle.peek_verdict(_SERVER, _TASK_ID, _AGENT_ID, _POC_A, api_key=_API_KEY) is None
+
+
+def test_peek_returns_the_row_of_the_bytes_asked_about(oracle_server: _FakeOracle) -> None:
+    _round_trip(_POC_A)
+    _round_trip(_POC_B)
+
+    verdict = oracle.peek_verdict(_SERVER, _TASK_ID, _AGENT_ID, _POC_B, api_key=_API_KEY)
+
+    assert verdict is not None and verdict.poc_hash == hashlib.sha256(_POC_B).hexdigest()
+
+
+def test_peek_does_not_mistake_a_key_error_for_no_record(oracle_server: _FakeOracle) -> None:
+    """키 오류의 404(`Not found`)와 기록 없음의 404(`Record not found`)는 본문으로 갈린다."""
+    with pytest.raises(oracle.CyberGymAuthError):
+        oracle.peek_verdict(_SERVER, _TASK_ID, _AGENT_ID, _POC_A, api_key="wrong-key")
+
+
+def test_peek_propagates_any_other_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    def other_404(request, timeout=None):  # noqa: ANN001, ANN202, ARG001
+        raise _http_error(404, "Something else", f"{_SERVER}/query-poc")
+
+    monkeypatch.setattr(urllib.request, "urlopen", other_404)
+
+    with pytest.raises(oracle.CyberGymOracleError) as caught:
+        oracle.peek_verdict(_SERVER, _TASK_ID, _AGENT_ID, _POC_A, api_key=_API_KEY)
+
+    assert caught.value.status == 404 and not isinstance(caught.value, oracle.CyberGymAuthError)
+
+
+def test_a_wrong_key_stops_the_vul_leg_before_any_container_runs(
+    oracle_server: _FakeOracle,
+) -> None:
+    """제출 전에 읽는 `/query-poc`가 키를 검사한다 - 틀린 키가 컨테이너를 돌린 **뒤**에야 드러나던
+    `run_round_trip`과 달리 첫 후보에서 걸린다. 오류의 종류는 그대로다."""
+    with pytest.raises(oracle.CyberGymAuthError):
+        _task(api_key="wrong-key").submit_vul(_POC_A)
+
+    assert oracle_server.containers == 0
+
+
+def test_finalize_rejects_a_vul_submission_that_names_another_poc(
+    oracle_server: _FakeOracle,
+) -> None:
+    task = _task()
+    sent = task.submit_vul(_POC_A)
+    stranger = VulSubmission(task_id=_TASK_ID, poc_id="f" * 32, response_exit_code=77)
+
+    with pytest.raises(oracle.CyberGymOracleError) as caught:
+        task.finalize(_POC_A, stranger)
+
+    assert caught.value.detail == "poc_id mismatch"
+    assert sent.poc_id != stranger.poc_id
+
+
+@pytest.mark.parametrize("task_id", ["arvo:1065", "arvo:18562", "oss-fuzz:368076871"])
+def test_a_real_task_id_is_accepted(oracle_server: _FakeOracle, task_id: str) -> None:
+    """저장소가 아는 실제 id 셋(왕복 보고서·미해결 항목의 표본) - 마스킹을 안 한 서버의 id다."""
+    assert oracle.unsupported_task_id(task_id) is None
+    assert _task(task_id=task_id).task_id == task_id
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    ["9c73e92e52b7", "", "arvo:", ":1065", "arvo:abc", "ARVO:1065", "arvo:1065 ", "arvo 1065"],
+)
+def test_a_task_id_that_is_not_a_real_id_is_refused_before_any_request(
+    oracle_server: _FakeOracle, task_id: str
+) -> None:
+    """마스킹된 id(예: `9c73e92e52b7`)는 지원하지 않는다 - build-plan.md가 마스킹 서버를 미지원으로
+    적는다. 만들어지는 순간 거절하므로 제출은커녕 요청도 안 나간다."""
+    assert oracle.unsupported_task_id(task_id) is not None
+
+    with pytest.raises(ValueError, match="지원하는 모양이 아니다"):
+        _task(task_id=task_id)
+
+    assert oracle_server.calls == []
+
+
+def test_the_refusal_names_the_problem_without_claiming_what_a_masked_server_does() -> None:
+    """실서버에 마스킹 id를 낸 run은 이 저장소에 0건이다(CLAUDE.md 0절) - 문서가 미지원이라 적는다는
+    것과 코드가 거절한다는 것만 말한다. 「항상 404」 같은 단언이 없다."""
+    message = oracle.unsupported_task_id("9c73e92e52b7")
+
+    assert message is not None
+    assert "미지원" in message
+    assert "404" not in message
+    message.encode("cp949")  # 콘솔에 찍힌다
+
+
+def test_the_key_is_not_in_the_printable_forms_of_the_oracle() -> None:
+    task = _task()
+
+    for text in (repr(task), str(task), f"{task}", f"{task!r}", repr([task])):
+        assert _API_KEY not in text
+    assert task.api_key == _API_KEY  # 호출에는 쓰인다 - 숨기는 것은 출력뿐이다
+
+
+def test_the_key_is_scrubbed_from_error_text_a_server_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """오류 본문은 서버가 쓴 글이고 러너가 그것을 run 산출물에 적는다 - 헤더를 되돌려 주는 서버가
+    키를 사이드카로 흘리지 못하게 한다. 예외의 종류·`status`는 그대로다."""
+
+    def echoing(request, timeout=None):  # noqa: ANN001, ANN202, ARG001
+        key = request.headers.get("X-api-key") or dict(request.unredirected_hdrs).get("X-api-key")
+        raise _http_error(500, f"debug echo: {key}", f"{_SERVER}/query-poc")
+
+    monkeypatch.setattr(urllib.request, "urlopen", echoing)
+
+    with pytest.raises(oracle.CyberGymOracleError) as caught:
+        _task().submit_vul(_POC_A)
+
+    assert caught.value.status == 500
+    assert _API_KEY not in str(caught.value)
+    assert _API_KEY not in caught.value.detail
+    assert "debug echo: ***" in caught.value.detail
+
+
+def test_task_oracle_cannot_be_built_without_a_key_argument() -> None:
+    """`api_key`는 기본값이 없다 - 키 없이 만들어 조용히 빈 키로 도는 길이 없다."""
+    with pytest.raises(TypeError):
+        oracle.TaskOracle(server=_SERVER, task_id=_TASK_ID, agent_id=_AGENT_ID)  # type: ignore[call-arg]
+
+
+def test_the_module_ends_with_exactly_one_newline() -> None:
+    module = Path(__file__).resolve().parents[1] / "src" / "adapters" / "cybergym_oracle.py"
+    data = module.read_bytes()
+
+    assert data.endswith(b"\n") and not data.endswith(b"\n\n")

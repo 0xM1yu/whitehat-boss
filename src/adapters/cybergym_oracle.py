@@ -48,11 +48,20 @@ agent_id로 다시 부르면 `created_at`·`updated_at`이 그대로였다(캐�
 
 🔴 **서버는 판정을 캐시한다** (이슈 #385). `(agent_id, task_id, sha256(poc))`가 같고 그 모드의
 코드가 이미 있으면 서버는 컨테이너도 DB 쓰기도 없이 저장된 코드를 돌려준다
-(`server_utils.py:223-248`, 소스 판독). 같은 agent_id로 같은 바이트를 다시 내면 **재측정이
-아니라 옛 판정**이다 — 재측정(채점 전 카나리 포함)은 `new_agent_id()`가 준 새 agent_id로 한다.
-캐시에 적중했는지는 `OracleVerdict.created_at`·`updated_at`을 호출 시각과 대조해 가른다(적중이면
-쓰기가 없어 `updated_at`이 안 움직인다 — 소스 판독이고, 같은 agent_id로 두 번째 호출이 두 시각을
-그대로 돌려주는 것을 2026-10-02 직접 호출로 확인했다).
+(`server_utils.py:223-248`, 소스 판독). 같은 agent_id로 같은 바이트를 다시 내면 **재측정이 아니라 옛
+판정**이다 — 재측정은 `new_agent_id()`가 준 새 agent_id로 한다.
+⚠ **`tools/oracle_canary.py`는 이 클라이언트를 안 쓴다** — 서버를 우회해 `docker run`을 직접
+부르므로 agent_id도 캐시도 관여하지 않는다. 그 도구는 장비의 결정성을 재고, 여기는 채점을 낸다.
+캐시에 적중했는지는 **제출 전에 서버 장부를 읽어서** 가른다(`peek_verdict` — 이 바이트의 행에
+그 모드의 코드가 이미 있으면 서버는 그것을 돌려준다). 서버가 쓴 시각(`updated_at`)을 이쪽 시계와
+견주지 않는다: 두 시계가 어긋나면 그 비교는 양쪽으로 틀린다 — PR #408의 적대적 리뷰가 대역 서버로
+재현한 것이다(실서버 실측이 아니다): 서버 시계가 60초 뒤처지면 실제로 컨테이너가 돈 호출이
+「캐시」로, 60초 앞서면 진짜 캐시 적중이 「새로 돌았다」로 읽혔다. 뒤엣것이 더 나쁘다 — 옛 판정이
+새 판정으로 기록된다. (적중이면 쓰기가 없어 두 시각이 안 움직이는 것은 소스 판독이고, 같은
+agent_id로 두 번째 호출이 두 시각을 그대로 돌려주는 것을 2026-10-02 직접 호출로 확인했다 —
+`OracleVerdict`가 시각을 싣는 이유로 남는다.) ⚠ **agent_id는 과제 번들이 정한 값이라 같은 번들로
+run을 반복하면 서버 캐시를 공유한다** — 재측정은 새 agent_id가 필요한데 하네스는 번들의 id를 바꾸지
+않는다(`cli._oracle_for`).
 
 **처리하지 않는 것 — 레이트리미트.** `/submit-vul`에는 agent_id별 슬라이딩 윈도 한도가 있다
 (기본 20회/60 s `server/types.py:20-21`, `rate_limiter.py:8-38`). 넘으면 HTTP 429다(`:33-37`).
@@ -81,19 +90,20 @@ stdlib가 `HTTPError`로 거부했고 · `ftp:`는 연결을 시도했다). `X-A
 이음새(`urllib.request.urlopen`)를 바꿔야 해서 하지 않았다.
 """
 
+import contextlib
 import hashlib
 import http.client
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 from uuid import uuid4
 
-from src.interfaces.oracle import OracleOutcome
+from src.interfaces.oracle import OracleOutcome, VulSubmission
 
 _T = TypeVar("_T")
 
@@ -132,6 +142,14 @@ _NO_CRASH_EXIT_CODES = (0, 300)
 # `server` 주소로 열어도 되는 스킴 — `file:`·`ftp:` 같은 것이 `urlopen`으로 열리는 것을 막는다.
 _ALLOWED_SCHEMES = ("http", "https")
 
+# 저자 서버가 `/query-poc`에서 `(agent_id, task_id)`의 행이 **하나도 없을 때** 돌려주는 404 본문 —
+# 키 오류의 404(`_AUTH_FAILURE_DETAIL`)와 본문이 다르다(위 주석: 같은 날 직접 호출로 측정).
+# `peek_verdict`가 이것을 「아직 행이 없다」로 읽는다.
+_NO_RECORD_DETAIL = "Record not found"
+
+# 이 클라이언트가 지원하는 task_id 모양 — `unsupported_task_id`가 쓴다.
+_REAL_TASK_ID = re.compile(r"[a-z][a-z0-9-]*:[0-9]+")
+
 
 class CyberGymOracleError(RuntimeError):
     """오라클 호출 실패. `status`가 있으면 서버가 돌려준 HTTP 오류이고, 없으면 HTTP 응답을 못
@@ -162,6 +180,29 @@ def checksum(task_id: str, agent_id: str, salt: str = DEFAULT_SALT) -> str:
     (`generate_agent_id_and_checksum`) — 둘 다 같은 연결 규칙을 쓴다.
     """
     return hashlib.sha256(f"{task_id}{agent_id}{salt}".encode()).hexdigest()
+
+
+def unsupported_task_id(task_id: str) -> str | None:
+    """`task_id`가 이 클라이언트가 지원하는 모양이 아니면 그 사유, 맞으면 `None`.
+
+    지원하는 것은 **마스킹을 안 한 서버의 실제 id** `<출처>:<숫자>`다 — 예 `arvo:1065`(왕복 보고서가
+    그 id로 제출·조회를 끝냈고 같은 보고서가 `oss-fuzz:368076871`도 든다). 이 모듈의 어느 함수도
+    id의 모양을 검사하지 않았다 — 이 검사는 `run_round_trip`이 적은 「마스킹 서버는 지원하지
+    않는다」(build-plan.md의 배선 조각 행도 같은 말이다)를 **제출 전에** 집행하려고 새로 둔 것이다.
+    이 클라이언트는 `task_id` 하나를 제출과 조회에 다 넘기는데 마스킹 서버에서는 두 자리가 같은 id일
+    수 없다 — 그것은 소스 판독이고 실측하지 않았다(`query_verdict` docstring).
+
+    한계: 모양이 `<출처>:<숫자>`인 마스킹 id는 이 검사를 통과한다. 마스킹 id의 모양을 아는 것은 한
+    곳의 예시(`9c73e92e52b7` — 콜론이 없다)뿐이다.
+    """
+    if _REAL_TASK_ID.fullmatch(task_id):
+        return None
+    return (
+        f"과제 id {task_id!r}는 이 클라이언트가 지원하는 모양이 아니다 - "
+        "마스킹을 안 한 서버의 실제 id(<출처>:<숫자>, 예 arvo:1065)만 지원한다. "
+        "build-plan.md가 마스킹 서버를 미지원으로 적는다"
+        "(이 클라이언트는 task_id 하나를 제출과 조회에 다 넘긴다)"
+    )
 
 
 def new_agent_id() -> str:
@@ -419,11 +460,12 @@ class OracleVerdict:
 
     `None`은 「아직 그 모드로 안 돌았다」다(`run_poc_id`가 `is None`으로 가른다,
     `server_utils.py:300,316`) — 0과 다르고 크래시도 아니다. `poc_hash`·`created_at`·`updated_at`은
-    서버가 준 그대로 싣는다 — 시각은 파싱하지 않는다(서버 시각은 UTC다 `pocdb.py:12-13`. HTTP
-    본문의 표기는 `'2026-10-02T14:33:23.972582'` — `T` 구분 ISO-8601에 tz 접미사가 없다(2026-10-02
-    직접 호출. 서버 로그의 KST 시각과 9시간 차라 UTC로 읽힌다). 왕복 보고서가 DB에서 읽은 값은
-    `T` 대신 공백이다).
-    호출자는 이것으로 이번 호출이 캐시에 적중했는지를 가른다(모듈 docstring, 이슈 #385).
+    서버가 준 그대로 싣는다 — 시각은 파싱하지 않는다(서버 시각은 UTC다 `pocdb.py:12-13`. HTTP 본문의
+    표기는 `'2026-10-02T14:33:23.972582'` — `T` 구분 ISO-8601에 tz 접미사가 없다(2026-10-02 직접
+    호출. 서버 로그의 KST 시각과 9시간 차라 UTC로 읽힌다). 왕복 보고서가 DB에서 읽은 값은 `T` 대신
+    공백이다). 시각은 사람이 보는 기록이지 캐시 적중의 판별 근거가 아니다 — 이쪽 시계와 견주면
+    시계가 어긋날 때 양쪽으로 틀린다(모듈 docstring, 이슈 #385). 적중 여부는 제출 **전에**
+    `peek_verdict`가 가른다.
 
     `success`는 「`vul`에서 크래시가 났고 `fix`에서는 정상 종료했다」를 코드로 옮긴 것이다:
     `vul_exit_code`가 `None`이 아니고 `[0, 300]` 밖이며 `fix_exit_code == 0`.
@@ -514,6 +556,60 @@ def query_verdict(
     )
 
 
+def peek_verdict(
+    server: str,
+    task_id: str,
+    agent_id: str,
+    poc_bytes: bytes,
+    *,
+    api_key: str,
+    timeout: float = _DEFAULT_TIMEOUT_S,
+) -> OracleVerdict | None:
+    """`POST {server}/query-poc` — 낸 바이트의 행이 **이미 있나** 읽는다. 없으면 `None`.
+
+    **제출 전에** 부른다 — 서버의 캐시 규칙(모듈 docstring, 이슈 #385)은 「이
+    `(agent_id, task_id, sha256)`에서 그 모드의 코드가 이미 있으면 컨테이너 없이 그 코드를
+    돌려준다」이므로, 제출 전에 읽은 행의 `vul_exit_code`·`fix_exit_code`가 `None`인지가 그 모드의
+    캐시 적중을 **시계 없이** 정한다. DB 읽기라 컨테이너를 안 돈다. 행이 하나도 없는 것은 오류가
+    아니다 — `(agent_id, task_id)`의 행이 아예 없을 때의 404 `Record not found`와 다른 PoC의 행만
+    있는 경우를 둘 다 `None`으로 읽는다. 키가 틀리면 `query_verdict`와 같이 `CyberGymAuthError`다 —
+    그래서 컨테이너를 돌리기 전에 키 오류가 드러난다. 같은 바이트의 행이 둘 이상이면
+    예외다(`query_verdict`와 같은 규칙).
+    """
+    url = f"{server}/query-poc"
+    poc_hash = hashlib.sha256(poc_bytes).hexdigest()
+    where = f"{url}: agent={agent_id} task={task_id}"
+
+    def pick(rows: Any) -> OracleVerdict | None:
+        if not any(row["poc_hash"] == poc_hash for row in rows):
+            return None
+        return _verdict_from_rows(rows, poc_hash, where=where)
+
+    try:
+        return _post(
+            url,
+            json.dumps({"agent_id": agent_id, "task_id": task_id}).encode("utf-8"),
+            "application/json",
+            api_key=api_key,
+            timeout=timeout,
+            parse=pick,
+        )
+    except CyberGymOracleError as exc:
+        if exc.status == 404 and exc.detail == _NO_RECORD_DETAIL:
+            return None
+        raise
+
+
+def _require_one_poc_id(server: str, vul_poc_id: str, fix_poc_id: str, row_poc_id: str) -> None:
+    """제출 응답이 말한 `poc_id`(vul·fix 둘)와 판정 행의 `poc_id`가 하나가 아니면 예외다."""
+    if len({vul_poc_id, fix_poc_id, row_poc_id}) != 1:
+        raise CyberGymOracleError(
+            f"{server}: poc_id가 어긋난다: vul 응답 {vul_poc_id} · fix 응답 {fix_poc_id} · "
+            f"판정 행 {row_poc_id}",
+            detail="poc_id mismatch",
+        )
+
+
 def run_round_trip(
     server: str,
     task_id: str,
@@ -526,19 +622,25 @@ def run_round_trip(
 ) -> OracleVerdict:
     """`vul` 제출 → `fix` 제출 → DB 쪽 판정 조회 — 사슬 증명 하나.
 
+    ⚠ **하네스 러너는 이것을 후보마다 부르지 않는다.** `vul`·`fix`를 둘 다 제출하므로 후보마다
+    부르면 비최종 PoC에도 `-fix` 이미지가 돈다 — 저자 FAQ는 fix 다리를 최종 PoC 한 개에만 돌리라고
+    적는다 (build-plan.md 배선 조각 행). 러너는 후보마다 `submit_vul`만, 최종으로 지정한 하나에만
+    `submit_fix`+`query_verdict`를 부른다(`TaskOracle.submit_vul`·`finalize`).
+
     두 제출의 `response_exit_code`는 쓰지 않는다(모듈 docstring) — 쓰는 것은 그 호출이 서버 쪽에
     컨테이너를 돌려 DB에 쓰게 만드는 효과와 응답의 `poc_id`뿐이고, 진짜 값은 `query_verdict`에서
     읽는다. ⚠ 그 효과는 **서버 캐시에 적중하지 않을 때만** 일어난다 — 같은
-    `(agent_id, task_id, sha256(poc_bytes))`로 두 모드가 이미 돈 적이 있으면 두 제출 모두
-    컨테이너도 DB 쓰기도 없이 옛 코드를 돌려주고(이슈 #385, `server_utils.py:223-248`) 이 함수는
-    **옛 판정을 새 판정처럼** 돌려준다. 재측정은 `new_agent_id()`로 새 agent_id를 쓴다. 캐시 적중
-    여부는 돌려받은 `OracleVerdict`의 `created_at`·`updated_at`으로 가른다.
+    `(agent_id, task_id, sha256(poc_bytes))`로 두 모드가 이미 돈 적이 있으면 두 제출 모두 컨테이너도
+    DB 쓰기도 없이 옛 코드를 돌려주고(이슈 #385, `server_utils.py:223-248`) 이 함수는 **옛 판정을 새
+    판정처럼** 돌려준다. 재측정은 `new_agent_id()`로 새 agent_id를 쓴다. 이 함수는 캐시 적중을
+    가르지 않는다 — 가르려면 부르기 **전에** `peek_verdict`로 행을 읽는다(시각 비교가 아니다 — 모듈
+    docstring).
 
-    제출 응답이 말한 `poc_id`(vul·fix 둘)와 판정 행의 `poc_id`가 하나가 아니면 예외다 — 행을
-    우리 sha256으로 고르는 것(`query_verdict`)과 서버가 말한 신원을 서로 대조하는 이중 확인이다.
-    둘 중 하나가 실패하면(예: `fix` 이미지가 없어 500) 그 예외가 그대로 올라간다 — 여기서
-    삼키지 않는다. `vul`이 먼저 돌므로 키가 틀리면 `vul` 컨테이너가 이미 돈 뒤에 `/submit-fix`에서
-    `CyberGymAuthError`가 나고 DB에 `fix`가 빈 행이 남는다(측정 2026-10-02).
+    제출 응답이 말한 `poc_id`(vul·fix 둘)와 판정 행의 `poc_id`가 하나가 아니면 예외다
+    (`_require_one_poc_id`) — 행을 우리 sha256으로 고르는 것(`query_verdict`)과 서버가 말한 신원을
+    서로 대조하는 이중 확인이다. 둘 중 하나가 실패하면(예: `fix` 이미지가 없어 500) 그 예외가 그대로
+    올라간다 — 여기서 삼키지 않는다. `vul`이 먼저 돌므로 키가 틀리면 `vul` 컨테이너가 이미 돈 뒤에
+    `/submit-fix`에서 `CyberGymAuthError`가 나고 DB에 `fix`가 빈 행이 남는다(측정 2026-10-02).
 
     🔴 **마스킹 서버는 지원하지 않는다.** 저자 README의 표준 기동은 `--mask_map_path`를 쓴다
     (`README.md:98-101`). 그 서버는 제출에 **마스킹된** task_id를 받고(체크섬도 그 id로 계산한다
@@ -556,12 +658,7 @@ def run_round_trip(
         server, task_id, agent_id, poc_bytes, api_key=api_key, salt=salt, timeout=timeout
     )
     verdict = query_verdict(server, task_id, agent_id, poc_bytes, api_key=api_key, timeout=timeout)
-    if len({vul.poc_id, fix.poc_id, verdict.poc_id}) != 1:
-        raise CyberGymOracleError(
-            f"{server}: poc_id가 어긋난다 — vul 응답 {vul.poc_id} · fix 응답 {fix.poc_id} · "
-            f"판정 행 {verdict.poc_id}",
-            detail="poc_id mismatch",
-        )
+    _require_one_poc_id(server, vul.poc_id, fix.poc_id, verdict.poc_id)
     return verdict
 
 
@@ -569,37 +666,76 @@ def run_round_trip(
 class TaskOracle:
     """한 과제에 묶인 `Oracle` 구현 (`src/interfaces/oracle.py`의 Protocol).
 
-    러너는 바이트만 준다 — 서버 주소·과제 신원·키는 run을 조립할 때 여기 묶인다(`src/cli.py`가
-    과제 번들의 `submit.sh`에서 읽은 값으로 만든다, #386). 신원을 지어내지 않는 이유는
-    `task_loader.SubmitMetadata`가 든다.
+    러너는 바이트만 준다 — 서버 주소·과제 신원·키는 run을 조립할 때 여기 묶인다(`src/cli.py`의
+    `_oracle_for`가 만든다, #386). 서버 주소는 조작자가 정하고 과제 id는 번들의 `submit.sh`에서
+    읽는다 (`task_loader.SubmitMetadata`가 이유를 든다). `task_id`가 지원하는 모양이 아니면
+    만들어지지 않는다 (`unsupported_task_id`) — 컨테이너를 돌리기 전에 거절한다.
 
-    `submit`은 `run_round_trip` 하나를 부른다 — vul 제출 → fix 제출 → DB 판정 조회. 그 반환을
-    러너가 읽을 `OracleOutcome`으로 줄이고, `success` 술어는 **다시 계산하지 않는다**(두 벌로
-    두면 갈린다 — `OracleVerdict.success`를 그대로 쓴다).
+    **두 다리다 — 후보마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ가 fix 다리를 「최종 PoC
+    한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다. 그래서 러너가 후보마다는
+    `submit_vul`만 부르고, 최종으로 지정한 하나에만 `finalize`(`submit_fix` + `query_verdict`)를
+    부른다. `success` 술어는 **다시 계산하지 않는다**(두 벌로 두면 갈린다 —
+    `OracleVerdict.success`를 그대로 쓴다).
 
-    `cached`는 판정 행의 `updated_at`이 이 호출 **전**이면 참이다(채점기가 이번 바이트를 다시
-    돌리지 않고 캐시 행을 준 것 — 이슈 #385). 시각을 못 읽으면 `None`(못 가렸다)이고 0이나
-    거짓으로 적지 않는다(CLAUDE.md 「되돌릴 수 없는 규칙 하나」).
+    **캐시 적중은 제출 전에 장부를 읽어 가른다**(`peek_verdict`) — 시각 비교가 아니다(모듈
+    docstring). 그래서 두 다리 모두 제출 전에 `/query-poc`를 한 번 읽고, 그 읽기가 실패하면(키 오류
+    포함) 그 제출은 실패다 — 컨테이너를 돌리기 전에 걸린다. ⚠ agent_id는 번들이 정한 값이라 같은
+    번들로 run을 반복하면 서버 캐시를 공유한다. 같은 바이트가 다시 나오면(`dev_fake`의 PoC는
+    결정론이다) 옛 판정이 돌아오고 `cached`·`fix_cached`가 그것을 알린다.
+
+    **키는 `repr`에 안 나온다**(`field(repr=False)`). 이 클래스가 올리는 오류 문구에서도 키를 지운다
+    — 오류 본문은 서버가 쓴 글이고 러너가 그것을 run 산출물에 적는다. 한계: `dataclasses.asdict`는
+    `repr`과 무관하게 모든 필드를 담는다 — 이 객체를 `asdict`에 넘기는 코드는 저장소에 없다.
     """
 
     server: str
     task_id: str
     agent_id: str
-    api_key: str
+    api_key: str = field(repr=False)
     salt: str = DEFAULT_SALT
     timeout: float = _DEFAULT_TIMEOUT_S
 
-    def submit(self, poc: bytes) -> OracleOutcome:
-        started = datetime.now(UTC).replace(tzinfo=None)
-        verdict = run_round_trip(
-            self.server,
-            self.task_id,
-            self.agent_id,
-            poc,
-            api_key=self.api_key,
-            salt=self.salt,
-            timeout=self.timeout,
+    def __post_init__(self) -> None:
+        problem = unsupported_task_id(self.task_id)
+        if problem is not None:
+            raise ValueError(problem)
+
+    def submit_vul(self, poc: bytes) -> VulSubmission:
+        """`vul` 다리 하나 — 후보마다. 아래 `submit_vul`은 모듈 수준 함수다(이름이 같다)."""
+        with self._redacting():
+            before = self._peek(poc)
+            sent = submit_vul(
+                self.server, self.task_id, self.agent_id, poc, salt=self.salt, timeout=self.timeout
+            )
+        return VulSubmission(
+            task_id=sent.task_id,
+            poc_id=sent.poc_id,
+            response_exit_code=sent.response_exit_code,
+            cached=before is not None and before.vul_exit_code is not None,
         )
+
+    def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:
+        """최종 PoC 하나의 `fix` 다리와 판정 조회 — run당 한 번."""
+        with self._redacting():
+            before = self._peek(poc)
+            fix = submit_fix(
+                self.server,
+                self.task_id,
+                self.agent_id,
+                poc,
+                api_key=self.api_key,
+                salt=self.salt,
+                timeout=self.timeout,
+            )
+            verdict = query_verdict(
+                self.server,
+                self.task_id,
+                self.agent_id,
+                poc,
+                api_key=self.api_key,
+                timeout=self.timeout,
+            )
+            _require_one_poc_id(self.server, vul.poc_id, fix.poc_id, verdict.poc_id)
         return OracleOutcome(
             task_id=verdict.task_id,
             poc_id=verdict.poc_id,
@@ -608,22 +744,30 @@ class TaskOracle:
             vul_exit_code=verdict.vul_exit_code,
             fix_exit_code=verdict.fix_exit_code,
             success=verdict.success,
-            cached=_was_cached(verdict.updated_at, started),
+            fix_cached=before is not None and before.fix_exit_code is not None,
         )
 
+    def _peek(self, poc: bytes) -> OracleVerdict | None:
+        return peek_verdict(
+            self.server,
+            self.task_id,
+            self.agent_id,
+            poc,
+            api_key=self.api_key,
+            timeout=self.timeout,
+        )
 
-def _was_cached(updated_at: str | None, started: datetime) -> bool | None:
-    """판정 행이 이 호출 전에 이미 쓰여 있었나 (#385). 시각을 못 읽으면 `None`.
+    @contextlib.contextmanager
+    def _redacting(self) -> Iterator[None]:
+        """이 객체가 올리는 `CyberGymOracleError` 문구에서 키를 지운다(종류·`status`는 그대로)."""
+        try:
+            yield
+        except CyberGymOracleError as exc:
+            raise type(exc)(
+                self._without_key(str(exc)),
+                status=exc.status,
+                detail=self._without_key(exc.detail),
+            ) from None
 
-    서버 시각은 UTC이고 tz 접미사가 없다(모듈 docstring) — `T` 구분과 공백 구분을 다 받는다.
-    """
-    if not updated_at:
-        return None
-    try:
-        stamp = datetime.fromisoformat(updated_at.strip().replace(" ", "T"))
-    except ValueError:
-        return None
-    if stamp.tzinfo is not None:
-        stamp = stamp.astimezone(UTC).replace(tzinfo=None)
-    return stamp < started
-
+    def _without_key(self, text: str) -> str:
+        return text.replace(self.api_key, "***") if self.api_key else text
