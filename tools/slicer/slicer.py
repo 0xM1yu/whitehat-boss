@@ -206,6 +206,8 @@ LIMITATIONS = [
     "distinguishable from a repo with exactly that many candidates without the measurement note",
     "Case A silently drops methods with an empty name (seen when c2cpg parses a header without "
     "build info); they are not counted, so such a method is never a candidate",
+    "Case A silently drops methods whose body block holds no statement (prototypes and "
+    "definitions with an empty body); they are not counted, so such a method is never a candidate",
     "flow cap stops further method batches, but does not bound engine work within one batch",
     "structure recovery is lexical and does not guarantee compilable preprocessed C/C++",
     "an unterminated OSC escape leaves its payload as text: it can raise a false "
