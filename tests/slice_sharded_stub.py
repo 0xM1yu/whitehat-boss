@@ -2,13 +2,18 @@
 
 Not a Joern protocol fake: it fakes what tools/slice_sharded.py reads -- a listening port, the
 prepared checkpoint's candidate list, the CPG file, exit codes, the merge counters, --out.
-Behaviour by env: STUB_SERVER ok|die|deaf|graceful, STUB_SERVER_DELAY seconds, STUB_PREPARE
-ok|fail, STUB_SHARD ok|die|die0|hang, STUB_CANDIDATES (default 40).
+Behaviour by env: STUB_SERVER ok|die|die-restart|deaf|graceful, STUB_SERVER_DELAY seconds,
+STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang|deadline|deadline0, STUB_DEADLINES (default 1),
+STUB_CANDIDATES (default 40).
 
 `deaf` is Joern's shape: the launcher (this process) is an `sh` that runs the server as a child, and
 the server ignores SIGTERM like a JVM whose shutdown hook queues behind a running query -- SIGTERM
 ends the launcher and the server lives on. It writes its pid to `jvm.pid` in its cwd.
 `graceful` handles SIGTERM with a shutdown that takes a moment and leaves `term.marker` when done.
+`die-restart` boots once and dies at boot in a `restartN` directory (a restarted server).
+`deadline` (every shard) / `deadline0` (shard 0): the shard writes the progress events a query that
+hit its deadline leaves, then blocks like a slicer waiting behind the abandoned query -- until it is
+killed -- unless its --skip-candidates list already holds STUB_DEADLINES keys: then it completes.
 """
 
 import json
@@ -49,7 +54,7 @@ def listen_gracefully(port: int) -> int:
 
 def serve(port: int) -> int:
     mode = os.environ.get("STUB_SERVER")
-    if mode == "die":
+    if mode == "die" or (mode == "die-restart" and Path.cwd().name.startswith("restart")):
         print("stub server: died at boot")
         return 3
     if mode == "deaf":
@@ -59,7 +64,11 @@ def serve(port: int) -> int:
 
 def listen(port: int) -> int:
     time.sleep(float(os.environ.get("STUB_SERVER_DELAY", "0")))  # a slow JVM boot
+    Path("workspace").mkdir(exist_ok=True)  # where Joern keeps the imported graph, in its cwd
+    Path("workspace", "cpg.bin").write_text("graph")
     listener = socket.socket()
+    if os.name != "nt":
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # a restart rebinds the port
     listener.bind(("127.0.0.1", port))
     listener.listen()
     listener.settimeout(1)
@@ -80,6 +89,19 @@ def merge(merged: Path, shards: list[Path]) -> int:
     return 2 if done < candidates else 0
 
 
+DEADLINE_ERROR = "Query deadline exceeded (600.0 seconds); server execution may continue"
+
+
+def hit_deadline(progress: str, key: str) -> None:
+    """What tools/slicer/slicer.py appends when a query runs into its deadline."""
+    events = [{"event": "query_start", "stage": "flows"},
+              {"event": "query_error", "stage": "flows", "error": DEADLINE_ERROR},
+              {"event": "candidate_failed", "error": DEADLINE_ERROR}]
+    with open(progress, "a", encoding="utf-8") as stream:
+        for event in events:
+            stream.write(json.dumps({"time": time.time(), "candidate_key": key, **event}) + "\n")
+
+
 def slicer(argv: list[str]) -> int:
     checkpoint = Path(option(argv, "--checkpoint"))
     candidates = int(os.environ.get("STUB_CANDIDATES", "40"))
@@ -97,9 +119,18 @@ def slicer(argv: list[str]) -> int:
         return 1 if os.environ.get("STUB_PREPARE") == "fail" else 2
     folder = checkpoint.parent
     (folder / "argv.json").write_text(json.dumps(argv))
+    with open(folder / "argvs.jsonl", "a", encoding="utf-8") as stream:  # one line per start
+        stream.write(json.dumps(argv) + "\n")
     index, count = map(int, (option(argv, "--shard") or "0/1").split("/"))
     mode = os.environ.get("STUB_SHARD", "ok")
-    if mode == "hang":
+    if mode == "deadline" or (mode == "deadline0" and index == 0):
+        skipped = option(argv, "--skip-candidates")
+        known = len(Path(skipped).read_text().split()) if skipped else 0
+        if known < int(os.environ.get("STUB_DEADLINES", "1")):
+            hit_deadline(option(argv, "--progress"), f"stub-{index}-{known}")
+            time.sleep(20)  # blocked behind the abandoned query until the tool kills it
+            return 2
+    elif mode == "hang":
         # Long enough for the tool to stop it, short enough that a tool which never does fails
         # the test instead of hanging it; ends without completing anything.
         time.sleep(20)

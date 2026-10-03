@@ -144,7 +144,8 @@ def test_every_slicer_call_gets_the_same_analysis_arguments(tmp_path):
 
 
 @pytest.mark.parametrize("flag", ["--checkpoint", "--joern-endpoint=http://x", "--shard", "--check",
-                                  "--export-dir", "--export", "--claim-db", "--out", "--cpg"])
+                                  "--export-dir", "--export", "--claim-db", "--out", "--cpg",
+                                  "--skip-candidates", "--skip"])
 def test_tool_owned_flags_are_refused_after_the_separator(tmp_path, flag):
     joern = tmp_path / "joern"
     joern.write_text("")
@@ -165,6 +166,7 @@ def test_analysis_flags_pass_through():
     ("--cores-per-shard", "0"), ("--cores-per-shard", "nan"), ("--memory-per-shard-gb", "-3"),
     ("--min-candidates-per-shard", "0"), ("--max-shards", "0"), ("--wall-seconds", "0"),
     ("--wall-seconds", "inf"), ("--heap", "20"), ("--heap", "0g"), ("--base-port", "70000"),
+    ("--max-restarts-per-shard", "0"), ("--max-restarts-per-shard", "many"),
 ])
 def test_bad_numbers_are_refused_by_the_parser(tmp_path, option, bad):
     joern = tmp_path / "joern"
@@ -508,3 +510,192 @@ def test_the_wall_stop_leaves_no_jvm_behind(stubbed, monkeypatch):
     assert len(jvms) == 3                                # prepare + two shards
     assert not any(alive(pid) for pid in jvms)
     assert "unstopped_pids" not in run.summary()
+
+
+# -- --restart-on-deadline ---------------------------------------------------------------------
+
+DEADLINE = "Query deadline exceeded (600.0 seconds); server execution may continue"
+needs_posix = pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+
+
+def test_progress_tail_returns_only_complete_new_lines(tmp_path):
+    log = tmp_path / "progress.jsonl"
+    tail = tool.ProgressTail(log)
+    assert tail.read() == []                                    # no file yet
+    log.write_bytes(b'{"event": "a"}\n{"event": "b"')           # the second line is half written
+    assert [e["event"] for e in tail.read()] == ["a"]
+    with open(log, "ab") as stream:
+        stream.write(b', "x": 1}\nnot json\n[1]\n{"event": "c"}\n')
+    assert [e["event"] for e in tail.read()] == ["b", "c"]      # the half line completes, junk goes
+    assert tail.read() == []
+
+
+@pytest.mark.parametrize(("error", "hit"), [
+    (DEADLINE, True),
+    ("Query deadline exceeded (1.5 seconds); server execution may continue", True),
+    ("HTTP request failed: timed out", True),
+    ("Candidate deadline exceeded", False),         # nothing was sent: no query is left running
+    ("HTTP request failed: <urlopen error [Errno 111] Connection refused>", False),
+    ("boom", False), (None, False), (7, False),
+])
+def test_what_counts_as_a_deadline_hit(error, hit):
+    assert tool.is_deadline_error(error) is hit
+
+
+def test_deadline_keys_pick_the_failed_candidates_only():
+    events = [{"event": "candidate_failed", "candidate_key": "k1", "error": DEADLINE},
+              {"event": "query_error", "candidate_key": "k2", "error": DEADLINE},
+              {"event": "candidate_failed", "candidate_key": "k3", "error": "boom"},
+              {"event": "candidate_failed", "candidate_key": None, "error": DEADLINE},
+              {"event": "candidate_failed", "candidate_key": "k4", "error": DEADLINE}]
+    assert tool.deadline_keys(events) == ["k1", "k4"]
+
+
+def test_the_trigger_is_what_the_real_slicer_writes_on_a_deadline(monkeypatch, tmp_path):
+    """Where the slicer's message and this tool's pattern meet: reword it in JoernClient.query and
+    --restart-on-deadline would turn itself off without a test going red."""
+    from test_slicer import MockTransport, candidate, payloads
+
+    import slicer
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "main.c").write_text("int entry(char *p)\n{\n    return 0;\n}\n", encoding="utf-8")
+    data = payloads(case_a=[candidate()], flow_count=1)
+    answer = data["flows"]
+    data["flows"] = lambda query: (time.sleep(1.5), answer)[1]   # answers after the deadline
+    monkeypatch.setattr(slicer, "urlopen", MockTransport(data))
+    monkeypatch.setattr(slicer, "read_version", lambda *args: ("test-joern", "test fixture"))
+    out = tmp_path / "out"
+    slicer.main(["--repo", str(repo), "--out", str(out / "slices.json"), "--checkpoint",
+                 str(out / "state.db"), "--progress", str(out / "progress.jsonl"),
+                 "--query-timeout-seconds", "0.3"])
+    keys = tool.deadline_keys(tool.ProgressTail(out / "progress.jsonl").read())
+    assert len(keys) == 1 and len(keys[0]) == 64
+
+
+def argvs(run, index: int) -> list[list[str]]:
+    """Every start of shard `index`, from the stub's log."""
+    lines = (run.work / f"shard{index}" / "argvs.jsonl").read_text().splitlines()
+    return [json.loads(line) for line in lines]
+
+
+def flag(argv: list[str], name: str) -> str:
+    return argv[argv.index(name) + 1]
+
+
+@needs_posix
+def test_a_deadline_hit_restarts_the_shard_and_skips_that_candidate(stubbed, monkeypatch):
+    run, launched = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    assert run("--shards", "2", "--restart-on-deadline") == tool.EXIT_OK
+    summary = run.summary()
+    restart = summary["restart"]
+    assert restart["per_shard"] == [1, 1] and restart["total"] == 2
+    assert restart["limit_hit"] == [] and restart["errors"] == []
+    assert sorted(e["shard"] for e in restart["events"]) == [0, 1]
+    for index in (0, 1):
+        first, second = argvs(run, index)
+        assert "--skip-candidates" not in first
+        assert Path(flag(second, "--skip-candidates")).read_text().split() == [f"stub-{index}-0"]
+        for name in ("--checkpoint", "--cpg", "--claim-db", "--joern-version-command"):
+            assert flag(second, name) == flag(first, name)
+        assert "--resume" in second and flag(second, "--shard") == f"{index}/2"
+        assert second[-2:] == ["--max-flows-per-candidate", "10"]
+        assert (run.work / f"shard{index}" / "slicer.1.log").exists()
+        assert (run.work / f"shard{index}" / "restart1" / "joern.log").exists()
+        # the killed server's imported graph is gone (a big CPG is copied there); the new one's not
+        assert not (run.work / f"shard{index}" / "workspace").exists()
+        assert (run.work / f"shard{index}" / "restart1" / "workspace" / "cpg.bin").exists()
+    assert summary["shard_exit_codes"] == [2, 2] and summary["dead_shards"] == []
+    assert all(p.poll() is not None for p in launched)         # old and new servers are all gone
+
+
+@needs_posix
+def test_without_the_flag_a_deadline_hit_restarts_nothing(stubbed, monkeypatch):
+    run, _ = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    assert run("--shards", "2", "--wall-seconds", "3") == tool.EXIT_INCOMPLETE
+    summary = run.summary()
+    assert "restart" not in summary and summary["wall_stopped_shards"] == [0, 1]
+    assert [len(argvs(run, index)) for index in (0, 1)] == [1, 1]
+
+
+@needs_posix
+def test_one_shard_restarts_without_a_claim_queue(stubbed, monkeypatch):
+    run, _ = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    assert run("--shards", "1", "--restart-on-deadline") == tool.EXIT_OK
+    first, second = argvs(run, 0)
+    assert "--shard" not in second and "--claim-db" not in second
+    assert Path(flag(second, "--skip-candidates")).read_text().split() == ["stub-0-0"]
+    assert run.summary()["restart"]["per_shard"] == [1]
+
+
+@needs_posix
+def test_the_skip_list_grows_with_every_restart(stubbed, monkeypatch):
+    run, _ = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    monkeypatch.setenv("STUB_DEADLINES", "2")
+    assert run("--shards", "2", "--restart-on-deadline", "--max-restarts-per-shard", "3") == 0
+    assert run.summary()["restart"]["per_shard"] == [2, 2]
+    for index in (0, 1):
+        *_, last = argvs(run, index)
+        keys = Path(flag(last, "--skip-candidates")).read_text().split()
+        assert keys == [f"stub-{index}-0", f"stub-{index}-1"]
+
+
+@needs_posix
+def test_restarts_are_bounded_per_shard(stubbed, monkeypatch):
+    run, _ = stubbed
+    monkeypatch.setattr(tool, "RESTART_MIN_WALL_SECONDS", 0)
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    monkeypatch.setenv("STUB_DEADLINES", "3")
+    code = run("--shards", "2", "--restart-on-deadline", "--max-restarts-per-shard", "1",
+               "--wall-seconds", "4")
+    assert code == tool.EXIT_INCOMPLETE
+    restart = run.summary()["restart"]
+    assert restart["per_shard"] == [1, 1] and restart["limit_hit"] == [0, 1]
+    assert [len(argvs(run, index)) for index in (0, 1)] == [2, 2]
+
+
+@needs_posix
+def test_restarts_stop_at_the_wall(stubbed, monkeypatch):
+    run, _ = stubbed
+    monkeypatch.setattr(tool, "RESTART_MIN_WALL_SECONDS", 0)
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    monkeypatch.setenv("STUB_DEADLINES", "999")
+    started = time.time()
+    code = run("--shards", "2", "--restart-on-deadline", "--max-restarts-per-shard", "999",
+               "--wall-seconds", "3")
+    assert code == tool.EXIT_INCOMPLETE and time.time() - started < 25
+    summary = run.summary()
+    assert summary["wall_stopped_shards"] == [0, 1]
+    assert summary["restart"]["total"] >= 2
+    assert all(event["at_seconds"] <= 3 for event in summary["restart"]["events"])
+
+
+@needs_posix
+def test_no_restart_starts_with_too_little_wall_left(stubbed, monkeypatch):
+    """A restart costs about 16 s on a small graph; with the default floor (60 s) a 3 s wall
+    leaves the deadline-hit shards as they are, and the wall stops them."""
+    run, _ = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline")
+    code = run("--shards", "2", "--restart-on-deadline", "--wall-seconds", "3")
+    assert code == tool.EXIT_INCOMPLETE
+    summary = run.summary()
+    assert summary["restart"]["total"] == 0 and summary["wall_stopped_shards"] == [0, 1]
+    assert [len(argvs(run, index)) for index in (0, 1)] == [1, 1]
+
+
+@needs_posix
+def test_a_failed_restart_leaves_that_shard_dead_and_says_why(stubbed, monkeypatch):
+    run, launched = stubbed
+    monkeypatch.setenv("STUB_SHARD", "deadline0")
+    monkeypatch.setenv("STUB_SERVER", "die-restart")
+    assert run("--shards", "2", "--restart-on-deadline") == tool.EXIT_INCOMPLETE
+    summary = run.summary()
+    assert summary["dead_shards"] == [0] and summary["restart"]["per_shard"] == [1, 0]
+    assert "exited 3 before listening" in summary["restart"]["errors"][0]
+    assert summary["dead_shard_logs"][0].endswith("slicer.log")
+    assert all(p.poll() is not None for p in launched)
