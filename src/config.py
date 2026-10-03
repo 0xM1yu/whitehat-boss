@@ -671,10 +671,14 @@ class Thresholds(HarnessModel):
     # 않는다. 그래서 16은 **계획값**이고 실측 근거는 홉당 usage(trace `auditor_hop`)가 처음 돈
     # run에서 만든다.
     #
-    # **값의 성격은 폭주 차단이다 — 창이 막아 주는 것이 아니다.** vast 실측 창 262,144
-    # (`config/serving/vastai.yaml`)에서 출력 상한 32,768(`output_max_by_role.auditor`)을 빼면 입력
-    # 몫이 229,376(계산값)이고, v4 최악 추정 입력 28,833(`config/models.yaml`의 그 좌석 예산 절)을
-    # 넣어도 200,543이 남는다(계산값). 홉이 쌓여 그 몫을 먹는 것은 이 상한이 막고, 창은 안 막는다.
+    # **값의 성격은 폭주 차단이다 — 창 적합을 보장하지 않는다.** vast 실측 창 262,144
+    # (`config/serving/vastai.yaml`)에서 출력 상한 65,536(`output_max_by_role.auditor`)을 빼면 입력
+    # 몫이 196,608(계산값)이다. v4 최악 추정 입력 28,833(`config/models.yaml`의 그 좌석
+    # 「기동 조건」 절 — 지금 정본 v6는 prefix가 더 길어 hop0가 이보다 크다)을 넣으면 167,775가
+    # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
+    # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
+    # 주석). 이 상한은 홉이 끝없이 쌓이는 것을 막을 뿐 창은 안 막는다 — 넘으면 서버가 크기
+    # 거절한다.
     # ⚠ 53,248 창(입력 몫 20,480)은 **ATOM 시절 계획값**이다 — ATOM 사용 종료 2026-09-29(#340).
     #
     # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 셋이고
@@ -689,10 +693,6 @@ class Thresholds(HarnessModel):
     # 선례). `cli estimate`의 Auditor 호출 상한(`_expected_calls`)도 이 값을 읽는다 — 후보당 `1 + 이
     # 값`이다.
     auditor_tool_hops: int = Field(default=0, ge=0, le=64)
-
-    def auditor_tools_enabled(self) -> bool:
-        """도구 루프가 켜졌는가. 노드·cli가 이 한 곳만 본다."""
-        return self.auditor_tool_hops > 0
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
         """켜진 Auditor `SOURCE` 옵션(#349) — 결정 1-b를 넓히는 값들. 프롬프트가 그 입력을
