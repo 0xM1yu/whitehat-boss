@@ -20,6 +20,7 @@
 
 import base64
 import copy
+import difflib
 import json
 import re
 import threading
@@ -502,6 +503,68 @@ def test_case_a_takes_only_methods_with_a_body():
     readers = lines.index("val readers = cpg.method.internal.filter(_.name.nonEmpty)")
     assert lines[readers + 2] == CASE_A_BODY_FILTER
     assert code.count(CASE_A_BODY_FILTER) == 2
+
+
+def test_case_a_query_without_a_priority_list_is_the_default_text():
+    """`--priority-case-a` off must leave discovery untouched, byte for byte: every way of saying
+    "no list" yields the very text `candidates_a_query()` always produced, and none of the
+    priority spellings appear in it."""
+    default = queries.candidates_a_query()
+    for absent in (None, [], (), set()):
+        assert queries.candidates_a_query(absent) == default
+        assert queries.candidates_a_query(absent, "/work/repo") == default
+    assert "isPrio" not in default and "prioFiles" not in default
+    assert ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)" in default
+
+
+def test_priority_case_a_changes_exactly_two_lines_and_adds_the_list():
+    """A line diff against the default text: of the default, only the call-limit line and the
+    sort key may change; everything else of the default stays where it was."""
+    default = queries.candidates_a_query()
+    on = queries.candidates_a_query(["b.c", "a.c"], "/work/repo")
+    changed = [x for x in difflib.ndiff(default.splitlines(), on.splitlines()) if x[0] in "+-"]
+    limit = queries.CASE_A_CALL_LIMIT
+    assert [x[2:].strip() for x in changed if x[0] == "-"] == [
+        f"cpg.call.nameExact(m.name).take({limit} + 1).size <= {limit})",
+        ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)",
+    ]
+    assert len([x for x in changed if x[0] == "+"]) > 2  # the list and `isPrio` come with them
+
+
+def test_priority_case_a_ranks_the_listed_files_first_and_exempts_them_from_the_call_limit():
+    """F1+F2 of the C2 report: a method defined in a listed file sorts ahead of the "hot" layer
+    before `CASE_A_CANDIDATE_CAP`, and skips `CASE_A_CALL_LIMIT`. It still needs a parameter (and,
+    from F0, a body). ⚠ Spelling pins (CLAUDE.md §2.5) -- the Scala is not executed here."""
+    cap, limit = queries.CASE_A_CANDIDATE_CAP, queries.CASE_A_CALL_LIMIT
+    code = _scala_code(queries.candidates_a_query(["b.c", "a.c"], "/work/repo"))
+    lines = [line.strip() for line in code.splitlines()]
+    # the list: sorted (so the text does not depend on set order), rebuilt at run time, and an
+    # exact set -- `prioritize()` matches the normalized file string exactly, not a suffix
+    assert 'val prioFiles = List("a.c\\nb.c").mkString.split("\\n").toSet' in lines
+    # c2cpg may name a file absolute or `./`-led: strip the repo prefix the way context_query does
+    assert (
+        "m.filename.replace('\\\\', '/').stripPrefix(\"/work/repo/\").stripPrefix(\"./\"))"
+        in lines
+    )
+    # admission: the priority test comes first so a listed method never pays the call search
+    first = lines.index(".filter(m =>")
+    assert lines[first + 1] == (
+        f"isPrio(m) || cpg.call.nameExact(m.name).take({limit} + 1).size <= {limit})"
+    )
+    assert lines[first - 1] == CASE_A_BODY_FILTER  # F0 stays in front of it
+    # rank: listed, then hot, then the rest -- before the cap, which still bounds both lists
+    api = code[code.index("val api =") : code.index(f".take({cap})", code.index("val api ="))]
+    assert ".filter(_.parameter.size > 0).l" in api
+    assert ".sortBy(m => if (isPrio(m)) 0 else if (hotIds.contains(m.id)) 1 else 2)" in api
+    assert code.count(f".take({cap})") == 2
+    # readers do not change: the list steers the api layer only
+    readers = code[code.index("val readers =") :]
+    assert "isPrio" not in readers.split("ujson.Arr.from(")[0]
+
+
+def test_priority_case_a_needs_the_repo_to_normalize_file_names():
+    with pytest.raises(ValueError, match="repo"):
+        queries.candidates_a_query(["a.c"])
 
 
 def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
