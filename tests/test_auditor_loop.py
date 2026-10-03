@@ -1073,7 +1073,7 @@ def test_a_run_with_the_loop_off_takes_the_one_shot_path_and_emits_no_hop_events
     있다(evaluation §2.3). 홉 이벤트의 **부재**는 「루프를 안 켰다」를 뜻하고 「홉이 0이었다」가
     아니다(`EventKind.AUDITOR_HOP` 주석) — 그래서 꺼진 run이 한 건이라도 내면 그 구별이 무너진다."""
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
-    assert not ctx.config.thresholds.auditor_tools_enabled(), "전제 — 저장소 기본은 꺼짐이다"
+    assert ctx.config.thresholds.auditor_tool_hops == 0, "전제 — 저장소 기본은 꺼짐이다"
 
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
 
