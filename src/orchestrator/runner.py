@@ -135,6 +135,8 @@ from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.source_definitions import (
     definition_names,
     macro_alias_target,
+    slice_line_fields,
+    slice_line_names,
     slice_names_first,
 )
 from src.orchestrator.stages import MAX_STAGE, Stage
@@ -428,6 +430,11 @@ class Dependencies(Protocol):
     call_sites_of: Callable[..., list[Location] | None]
     # (이름들, 가까운 파일) → 함수 정의 위치 — 매크로 별칭이 부르는 함수(C4). 같은 경계다.
     functions_named: Callable[..., list[Location] | None]
+    # 함수 위치 → 필드 경유 호출이 갈 수 있는 함수(index-v3, C6). 같은 경계다.
+    indirect_callees_of: Callable[[Location], list[Location] | None]
+    # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 같은 경계다.
+    writes_of: Callable[[str, str], list[Location] | None]
+    field_writes_of: Callable[[str, str], list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[..., list[Location] | None]
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
@@ -821,6 +828,9 @@ def run_pipeline(
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
         functions_named=deps.functions_named,
+        indirect_callees_of=deps.indirect_callees_of,
+        writes_of=deps.writes_of,
+        field_writes_of=deps.field_writes_of,
         definitions_of=deps.definitions_of,
         locals_of=deps.locals_of,
         counter_for_role=deps.counter_for_role,
@@ -3048,7 +3058,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-10-03 — 그 입력 몫은 출력 상한 인상(32,768 → 65,536) 뒤의 값이다. 그 전은 229,376이었다.
 # 53,248은 그 전 계획값이라 지금 경로가 아니다.
 # ⏵ 2026-10-04 — **v7이 됐다**(v6 + SOURCE 옵션 넷의 서술, #349). prefix가 v6보다 +2,050자 더
-# 길고(23,448자 · ⏵ 같은 날 래퍼·별칭 서술을 더해 23,950자) SOURCE 상한이 토큰이 됐다 — 그
+# 길고(23,448자 · ⏵ 같은 날 래퍼·별칭 서술을 더해 23,950자 · ⏵ 간접 피호출·쓰기 지점 창 서술을 더해
+# 25,045자) SOURCE 상한이 토큰이 됐다 — 그
 # 계산은 `config/models.yaml`의 `qwen3.8-27b` 항목이
 # 든다. v7 입력 토큰도 미실측이다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
@@ -3090,6 +3101,14 @@ _AUDITOR_WRAPPER_LINES = 10
 _AUDITOR_WRAPPER_CALLS = 2
 _AUDITOR_WRAPPER_DEPTH = 2
 _AUDITOR_ALIAS_ROUNDS = 2
+# 간접 피호출(C6 — `auditor_indirect_callees`). 실린 함수 하나의 필드 경유 호출이 갈 수 있는 후보가
+# 이보다 많으면 어느 것인지 몰라 그 함수의 간접 피호출은 통째로 건너뛴다 — `alloc`처럼 흔한 필드
+# 이름이 여러 구현에 묶인 저장소에서 엉뚱한 본문이 쌓이지 않게. **정한 값이지 잰 값이 아니다.**
+_AUDITOR_INDIRECT_MAX = 3
+# 쓰기 지점 창(C5(a) — `auditor_write_sites`)의 반폭. 쓰는 줄 앞뒤 이 줄 수를 그 함수 범위 안으로
+# 자른다(`_caller_window`와 같은 창). 할당·길이 계산이 대개 그 줄 바로 앞뒤라 작게 둔다. **정한
+# 값.**
+_AUDITOR_WRITE_LINES = 3
 
 
 def _is_short(location: Location) -> bool:
@@ -3258,7 +3277,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 if carry_definition(definition):
                     alias_definitions += 1
     hops = ctx.config.thresholds.auditor_callee_hops
+    indirect = ctx.config.thresholds.auditor_indirect_callees
     callees = callees_dropped = wrapper_callees = alias_callees = 0
+    indirect_callees = indirect_skipped = 0
     if hops:
         # 피호출 함수 1단(#349 (a)) + 래퍼 너머(C4). 붙인 피호출 함수가 짧고
         # (`_AUDITOR_WRAPPER_LINES`줄 이하) 그 본문이 정의를 아는 함수를
@@ -3304,6 +3325,53 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 if carry_callee(function):
                     alias_callees += 1
                     through_wrapper(function, 1)
+        # 간접 피호출(C6 — #304). `sys->alloc(…)`처럼 필드 경유로 부르는 함수는 `callees_of`가 못
+        # 푼다 -> index-v3 `fn_bindings`로 그 필드에 묶인 함수를 후보로 받아 붙인다. 후보가
+        # `_AUDITOR_INDIRECT_MAX`개를 넘는 함수는 통째로 건너뛰고 `indirect_skipped`가 센다.
+        if indirect:
+            for owner in list(carried):
+                targets = ctx.indirect_callees_of(owner) or []
+                if len(targets) > _AUDITOR_INDIRECT_MAX:
+                    indirect_skipped += 1
+                    continue
+                for target in targets:
+                    if carry_callee(target):
+                        indirect_callees += 1
+                        through_wrapper(target, 1)
+    # 쓰기 지점 창(C5(a) — #304). 슬라이스 줄에 나온 이름 중 실린 함수의 지역·파라미터가 아닌 것과
+    # 필드 이름마다 그 이름에 쓰는 지점(index-v3)을 찾아, 이미 실린 범위 밖이면 그 줄 앞뒤
+    # `_AUDITOR_WRITE_LINES`줄을 붙인다 — `->payload_packet_len = …`·`buf = malloc(n)`이 다른 함수에
+    # 있을 때다. 지역 이름은 함수마다 따로라 다른 함수의 같은 이름을 잇지 않는다. 창은 함수가 아니라
+    # `functions`에 안 든다.
+    write_sites = ctx.config.thresholds.auditor_write_sites
+    write_windows = write_windows_dropped = write_sites_found = 0
+    if write_sites:
+        own: set[str] = set()
+        for function in carried:
+            if function.symbol:
+                own |= ctx.locals_of(function.file, function.symbol) or frozenset()
+        sites: list[Location] = []
+        for name in sorted(slice_line_names(ctx.read_source, ref.lines) - own):
+            sites += ctx.writes_of(name, anchor.file) or []
+        for name in sorted(slice_line_fields(ctx.read_source, ref.lines)):
+            sites += ctx.field_writes_of(name, anchor.file) or []
+        write_sites_found = len(sites)
+        tried = 0
+        for site in sites:
+            if tried == write_sites:
+                break
+            window = _caller_window(ctx, site, _AUDITOR_WRITE_LINES)
+            if any(_overlaps(window, other) for other in seen):
+                continue
+            tried += 1
+            seen.append(window)
+            block = _block(window, ctx.read_source(window))
+            if size + 1 + measure(block) > cap:
+                write_windows_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            write_windows += 1
     # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
     # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
     # (#351 자체 검토).
@@ -3338,7 +3406,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks) - definitions - callers - write_windows,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3353,8 +3421,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                     if wrappers
                     else {}
                 ),
+                **(
+                    {"indirect_callees": indirect_callees, "indirect_skipped": indirect_skipped}
+                    if indirect
+                    else {}
+                ),
             }
             if hops
+            else {}
+        ),
+        **(
+            {
+                "write_windows": write_windows,
+                "write_windows_dropped": write_windows_dropped,
+                "write_sites_found": write_sites_found,
+            }
+            if write_sites
             else {}
         ),
         **(

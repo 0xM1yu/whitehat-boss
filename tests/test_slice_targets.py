@@ -1193,7 +1193,8 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-                auditor_entry_trim=0, auditor_caller_lines=0, auditor_callee_wrappers=0)),
+                auditor_entry_trim=0, auditor_caller_lines=0, auditor_callee_wrappers=0,
+                auditor_indirect_callees=0, auditor_write_sites=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1229,7 +1230,8 @@ def _trim_source(
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=trim, auditor_caller_lines=0, auditor_callee_wrappers=0)),
+            auditor_entry_trim=trim, auditor_caller_lines=0, auditor_callee_wrappers=0,
+                auditor_indirect_callees=0, auditor_write_sites=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1319,7 +1321,8 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=0, auditor_caller_lines=lines, auditor_callee_wrappers=0)),
+            auditor_entry_trim=0, auditor_caller_lines=lines, auditor_callee_wrappers=0,
+                auditor_indirect_callees=0, auditor_write_sites=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
@@ -1370,6 +1373,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
     thresholds = {
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
         "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_callee_wrappers": 0,
+        "auditor_indirect_callees": 0, "auditor_write_sites": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
@@ -1411,6 +1415,9 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         call_sites_of=sites,
         locals_of=locals_of,
         functions_named=functions_named,
+        indirect_callees_of=lambda loc: opts.get("indirect", {}).get(loc.symbol, []),
+        writes_of=lambda name, _file: opts.get("writes", {}).get(name, []),
+        field_writes_of=lambda name, _file: opts.get("field_writes", {}).get(name, []),
         lookup_kwargs=lookup_kwargs,
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(**thresholds)),
@@ -1789,6 +1796,10 @@ def test_default_budgets_carry_definitions_callees_and_caller_windows(tmp_path: 
     (event,) = _source_events(trace_path)
     for key in ("callees", "callers", "call_sites", "definitions", "tokens"):
         assert key in event, key
+    # 간접 피호출·쓰기 지점 창도 기본에서 켜져 있다(#304 · 2026-10-04) — v3 표가 없는 픽스처
+    # 인덱스라 붙는 것은 0이어도 키는 있다.
+    for key in ("indirect_callees", "indirect_skipped", "write_windows", "write_sites_found"):
+        assert key in event, key
 
 
 # --- 래퍼·별칭 너머(C4) -----------------------------------------------------------------------
@@ -1998,8 +2009,114 @@ def test_auditor_v4_t1_refuses_the_wrapper_option() -> None:
     config = load_config("harness_pool")
     key = config.model_key_for("auditor")
     entry = config.models[key].transition(prompt_template_version="v4_t1")
-    on = config.thresholds.transition(auditor_caller_lines=0, auditor_callee_wrappers=1)
+    # v4_t1이 서술하지 않는 다른 옵션(간접 피호출·쓰기 지점 창, #304)은 꺼서 이 옵션 하나만 본다.
+    on = config.thresholds.transition(
+        auditor_caller_lines=0, auditor_callee_wrappers=1,
+        auditor_indirect_callees=0, auditor_write_sites=0,
+    )
     config = config.transition(models={**config.models, key: entry}, thresholds=on)
     assert cli._undescribed_source_options(config) == ["auditor_callee_wrappers(auditor/v4_t1)"]
     off = config.transition(thresholds=on.transition(auditor_callee_wrappers=0))
     assert cli._undescribed_source_options(off) == []
+
+
+# --- 간접 피호출(C6) · 쓰기 지점 창(C5(a)) — index-v3 표(#304) ------------------------------------
+_I_FILE = {"i.c": [f"i{i} y{i}" for i in range(1, 121)]}
+_I_F = Location(file="i.c", symbol="f", line_start=1, line_end=3)
+_I_A = Location(file="i.c", symbol="impl_a", line_start=30, line_end=40)
+_I_B = Location(file="i.c", symbol="impl_b", line_start=50, line_end=60)
+_I_C = Location(file="i.c", symbol="impl_c", line_start=70, line_end=80)
+_I_D = Location(file="i.c", symbol="impl_d", line_start=90, line_end=100)
+
+
+def _indirect(targets: list, **opts):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _I_FILE, [_I_F], auditor_callee_hops=1, auditor_indirect_callees=1,
+        indirect={"f": targets}, **opts,
+    )
+    return _unit_run(ctx, events, _I_F, [("i.c", 2)])
+
+
+def test_a_field_call_brings_the_functions_bound_to_that_field() -> None:
+    """`sys->alloc(n)`의 후보(`fn_bindings`로 푼 `impl_a`)가 피호출처럼 붙는다."""
+    source, event = _indirect([_I_A])
+    assert "/* ===== i.c:30-40 ===== */" in source
+    assert (event["callees"], event["indirect_callees"], event["indirect_skipped"]) == (1, 1, 0)
+
+
+def test_too_many_field_call_candidates_are_skipped_whole() -> None:
+    """후보가 `_AUDITOR_INDIRECT_MAX`(3)개를 넘으면 어느 것인지 몰라 그 함수의 간접 피호출은 하나도
+    안 붙는다 — 셋이면 붙고 넷이면 안 붙는다."""
+    from src.orchestrator.runner import _AUDITOR_INDIRECT_MAX
+
+    assert _AUDITOR_INDIRECT_MAX == 3
+    _, event = _indirect([_I_A, _I_B, _I_C])
+    assert (event["indirect_callees"], event["indirect_skipped"]) == (3, 0)
+    source, event = _indirect([_I_A, _I_B, _I_C, _I_D])
+    assert "i.c:30-40" not in source
+    assert (event["indirect_callees"], event["indirect_skipped"]) == (0, 1)
+
+
+def test_indirect_callees_off_adds_nothing_and_no_keys() -> None:
+    ctx, events, _, _ = _unit(_I_FILE, [_I_F], auditor_callee_hops=1, indirect={"f": [_I_A]})
+    source, event = _unit_run(ctx, events, _I_F, [("i.c", 2)])
+    assert "i.c:30-40" not in source
+    assert "indirect_callees" not in event
+
+
+_WS_FILE = {
+    "w.c": [
+        "int f(struct pkt *p) {",  # 1
+        "  memcpy(dst, p->payload, p->len);",  # 2 — 슬라이스 줄: 파일 변수 dst · 필드 payload·len
+        "}",  # 3
+        *[f"filler{i}" for i in range(4, 20)],  # 4-19
+        "void setup(struct pkt *p, int n) {",  # 20
+        "  int k = n * 2;",  # 21
+        "  p->len = k;",  # 22 — 필드 쓰기
+        "  return;",  # 23
+        "}",  # 24
+        *[f"filler{i}" for i in range(25, 40)],  # 25-39
+        "void init(void) {",  # 40
+        "  dst = malloc(64);",  # 41 — 파일 변수 쓰기
+        "}",  # 42
+    ]
+}
+_WS_F = Location(file="w.c", symbol="f", line_start=1, line_end=3)
+_WS_SETUP = Location(file="w.c", symbol="setup", line_start=20, line_end=24)
+_WS_INIT = Location(file="w.c", symbol="init", line_start=40, line_end=42)
+
+
+def _write_sites(sites: int, **opts):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=sites,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
+        **opts,
+    )
+    return _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+
+
+def test_write_site_windows_show_where_a_file_var_and_a_field_are_written() -> None:
+    """슬라이스 줄의 파일 변수 `dst`와 필드 `len`에 쓰는 지점(다른 함수)이 그 줄 앞뒤 3줄 창으로
+    붙는다 — 창은 그 함수 범위로 잘린다(`init` 40-42 · `setup` 20-24 안의 19-25가 20-24로)."""
+    source, event = _write_sites(6)
+    assert "/* ===== w.c:40-42 ===== */" in source and "  dst = malloc(64);" in source
+    assert "/* ===== w.c:20-24 ===== */" in source and "  p->len = k;" in source
+    assert (event["write_windows"], event["write_windows_dropped"]) == (2, 0)
+    assert event["write_sites_found"] == 2
+
+
+def test_write_site_windows_stop_at_the_limit_and_skip_locals() -> None:
+    """상한 1이면 한 곳만 붙는다. 실린 함수의 지역·파라미터 이름은 다른 함수의 같은 이름을 잇지
+    않는다 — `dst`가 `f`의 지역이면 그 쓰기 지점을 안 찾는다."""
+    _, event = _write_sites(1)
+    assert event["write_windows"] == 1
+    source, event = _write_sites(6, locals={("w.c", "f"): frozenset({"dst"})})
+    assert "w.c:40-42" not in source
+    assert event["write_windows"] == 1
+
+
+def test_write_sites_off_adds_no_window_and_no_keys() -> None:
+    source, event = _write_sites(0)
+    assert "w.c:40-42" not in source
+    assert "write_windows" not in event

@@ -12,6 +12,7 @@ from src.orchestrator.source_definitions import (
     code_only,
     definition_names,
     macro_alias_target,
+    slice_line_fields,
     slice_line_names,
     slice_names_first,
 )
@@ -367,3 +368,13 @@ def test_an_expression_or_constant_macro_is_not_an_alias() -> None:
     assert macro_alias_target("#define SZ(x) sizeof(x)") is None
     assert macro_alias_target("#define R R") is None
     assert macro_alias_target("int f(void);") is None
+
+
+def test_slice_line_fields_names_only_fields_on_the_slice_lines() -> None:
+    """슬라이스 줄에 필드로 나온 이름만 — 다른 줄과 주석 속 필드는 안 든다(C5(a) 쓰기 지점 창)."""
+    lines = ["a = p->len;", "b = q.size; /* r->hidden */", "c = s->other;"]
+
+    def read(loc: Location) -> str:
+        return chr(10).join(lines[(loc.line_start or 1) - 1 : loc.line_end])
+
+    assert slice_line_fields(read, [("x.c", 1), ("x.c", 2)]) == {"len", "size"}

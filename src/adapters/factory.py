@@ -182,6 +182,14 @@ class Deps:
     # (이름들, 가까운 파일) → 함수 정의 위치. 매크로가 이름만 바꿔 부르는 함수를 찾는다
     # (C4 — 래퍼·별칭 따라가기, `runner._auditor_source`). `callees_of`와 같은 자리.
     functions_named: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
+    # 함수 위치 → 그 본문의 필드 경유 호출(`sys->alloc(…)`)이 갈 수 있는 함수(index-v3
+    # `fn_bindings`, #304 · C6). Auditor `SOURCE`가 간접 피호출 본문을 붙인다. v3 표가 없으면
+    # `None`.
+    indirect_callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
+    # (이름, 가까운 파일) → 그 이름에 쓰는 지점 / (필드, 가까운 파일) → 그 필드에 쓰는 지점
+    # (index-v3 `writes`·`assigns`·`field_assigns`, #304 · C5(a)). Auditor `SOURCE`의 쓰기 지점 창.
+    writes_of: Callable[[str, str], list[Location] | None] = lambda _name, _file: None
+    field_writes_of: Callable[[str, str], list[Location] | None] = lambda _field, _file: None
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
     definitions_of: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름(`locals` 표). 정의 조회가 본문 이름에서
@@ -560,6 +568,9 @@ def build_deps(
         callees_of=graph.callees_of,
         call_sites_of=graph.call_sites_of,
         functions_named=graph.functions_named,
+        indirect_callees_of=graph.indirect_callees_of,
+        writes_of=graph.writes_of,
+        field_writes_of=graph.field_writes_of,
         definitions_of=graph.definitions_of,
         locals_of=graph.locals_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
