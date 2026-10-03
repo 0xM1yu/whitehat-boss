@@ -1627,17 +1627,35 @@ def test_a_poison_streak_degrades_a_different_set_with_a_list(monkeypatch, two_f
     assert with_list["counters"]["candidates_degraded"] == 3
 
 
+def three_candidates_two_files():
+    """a.c's candidate plus two in main.c: the priority, id and candidate_key orders all differ.
+
+    two_file_payloads()' two keys happen to sort in the priority order, so a key-sorted manifest
+    read as a kept one there -- and once the list reorders two candidates, their key order must be
+    the priority or the id order. `third` is at line 4 for its key (at line 5 the keys sorted in the
+    priority order again)."""
+    data = two_file_payloads()
+    data["case_a"] = response(
+        "case_a", [in_file(candidate(), "a.c"), candidate("other", 3), candidate("third", 4)]
+    )
+    return data
+
+
 def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_file_repo, tmp_path):
-    """HIGH-1: the list survives a shard -> merge -> export round trip.
+    """HIGH-1: the list survives a shard -> merge -> export round trip -- but not in the manifest.
 
     Two p%%N shards with the SAME list, merged and exported, give exactly the single prioritized
-    run's slices, and the exported candidate_manifest keeps the priority insertion order."""
+    run's slices, and the merged checkpoint's `candidates` keep the priority order. The exported
+    candidate_manifest does not (#434): export reads it back from the checkpoint baseline, which
+    Checkpoint.set stores key-sorted (canonical, sort_keys=True), so it is in candidate_key order.
+    Only a run that discovered the candidates itself (the single run) keeps the priority order."""
     listing = tmp_path / "priority.txt"
     listing.write_text("main.c\n", encoding="utf-8")
     whole = tmp_path / "whole"
     whole.mkdir()
     _, single, _ = run_cli(
-        monkeypatch, two_file_repo, whole, two_file_payloads(), "--priority-files", str(listing)
+        monkeypatch, two_file_repo, whole, three_candidates_two_files(),
+        "--priority-files", str(listing),
     )
     databases = []
     for index in range(2):
@@ -1645,7 +1663,7 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
         folder.mkdir()
         databases.append(folder / "state.db")
         code, result, _ = run_cli(
-            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            monkeypatch, two_file_repo, folder, three_candidates_two_files(),
             "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
             "--priority-files", str(listing),
         )
@@ -1659,7 +1677,15 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
     )
     assert transport.stages == []
     assert exported["slices"] == single["slices"]
-    assert list(exported["candidate_manifest"]) == list(single["candidate_manifest"])
+    with Checkpoint(merged, resume=True) as store:
+        bound = store.get("candidates")
+    assert [c["entry"]["file"] for c in bound] == ["main.c", "main.c", "a.c"]
+    priority = [c["candidate_key"] for c in bound]
+    by_id = [c["candidate_key"] for c in sorted(bound, key=lambda c: c["id"])]
+    # The fixture must keep the three orders apart, or a key-sorted manifest passes as a kept one.
+    assert len({tuple(priority), tuple(by_id), tuple(sorted(priority))}) == 3
+    assert list(single["candidate_manifest"]) == priority
+    assert list(exported["candidate_manifest"]) == sorted(priority)
 
 
 def test_matching_is_exact_not_substring_or_basename(repo):
