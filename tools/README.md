@@ -272,6 +272,7 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | `symbols` | `{"name": "parse_header", "file": "parser.c", "line_start": 19, "line_end": 26}` |
 | `calls` | `{"memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf", "src", "len"]}]}` — callee → 호출 지점(index-v2. v1은 같은 간선의 목록이었다) |
 | 조회 표(index-v2) | `functions`·`macros`·`types`·`file_vars`·`fields`·`locals`·`assigns`·`field_assigns` — 모양은 `indexer.py` 모듈 docstring. NE resolver 몫이고 캡슐로 가지 않는다 |
+| 조회 표(index-v3, #304) | `writes`(원소·역참조 대입 · 함수 안 선언 초기화) · `fn_bindings`(함수 포인터 필드에 묶인 함수 — 필드 대입·지정 초기화) · `field_calls`(`x->f(...)` 호출 지점) — v2 표는 그대로다. 읽는 쪽은 `index_graph`의 `writes_of`·`field_writes_of`·`fn_pointer_targets`·`indirect_callees_of` |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
 | `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
 | `files` | 실제로 인덱싱한 파일 — 분모다. `symbols`가 적을 때 "함수가 없다"와 "파일이 안 왔다"를 가른다 |
@@ -285,7 +286,8 @@ nlohmann/json(.cpp)에서 70.3%가 사라진다. `#if`/`#else` 양쪽 가지는 
 **이 그래프는 근사다.** 구문만 보므로 함수 포인터 호출(`(*fp)(x)`)·매크로로 감싼 호출·같은
 이름의 파일 스코프 `static` 함수를 구분하지 못한다. 놓친 것을 조용히 버리거나 이름을
 지어내지 않고 **센다** — 호출부의 누락은 `unresolved_calls`, 심볼의 누락은
-`unresolved_symbols`다. 그 값이 크면 그 저장소에서 커버리지가 낮다는 뜻이고, E2를 얼마나
+`unresolved_symbols`다. index-v3부터 그중 필드 경유 호출(`vv->f(x)`)은 `field_calls`에 필드
+이름이 남고 `fn_bindings`로 후보 함수를 이을 수 있다 — 수는 그대로 `unresolved_calls`에 센다. 그 값이 크면 그 저장소에서 커버리지가 낮다는 뜻이고, E2를 얼마나
 믿을지는 그것을 보고 판단한다.
 
 `parse_errors`는 드문 예외가 아니다. `ZEXPORT`·`FAR` 같은 전처리 안 된 매크로가 끼면
