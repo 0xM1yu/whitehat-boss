@@ -147,7 +147,7 @@ _ALLOWED_SCHEMES = ("http", "https")
 # `peek_verdict`가 이것을 「아직 행이 없다」로 읽는다.
 _NO_RECORD_DETAIL = "Record not found"
 
-# 이 클라이언트가 지원하는 task_id 모양 — `unsupported_task_id`가 쓴다.
+# 실 id 없이 단독으로 쓸 수 있는 task_id 모양 — `unsupported_task_id`가 쓴다.
 _REAL_TASK_ID = re.compile(r"[a-z][a-z0-9-]*:[0-9]+")
 
 
@@ -183,14 +183,17 @@ def checksum(task_id: str, agent_id: str, salt: str = DEFAULT_SALT) -> str:
 
 
 def unsupported_task_id(task_id: str) -> str | None:
-    """`task_id`가 이 클라이언트가 지원하는 모양이 아니면 그 사유, 맞으면 `None`.
+    """`task_id`가 **실 id 없이 단독으로** 쓸 수 있는 모양이 아니면 그 사유, 맞으면 `None`.
 
-    지원하는 것은 **마스킹을 안 한 서버의 실제 id** `<출처>:<숫자>`다 — 예 `arvo:1065`(왕복 보고서가
-    그 id로 제출·조회를 끝냈고 같은 보고서가 `oss-fuzz:368076871`도 든다). 이 모듈의 어느 함수도
-    id의 모양을 검사하지 않았다 — 이 검사는 `run_round_trip`이 적은 「마스킹 서버는 지원하지
-    않는다」(build-plan.md의 배선 조각 행도 같은 말이다)를 **제출 전에** 집행하려고 새로 둔 것이다.
-    이 클라이언트는 `task_id` 하나를 제출과 조회에 다 넘기는데 마스킹 서버에서는 두 자리가 같은 id일
-    수 없다 — 그것은 소스 판독이고 실측하지 않았다(`query_verdict` docstring).
+    단독으로 쓸 수 있는 것은 **마스킹을 안 한 서버의 실제 id** `<출처>:<숫자>`다 — 예 `arvo:1065`
+    (왕복 보고서가 그 id로 제출·조회를 끝냈고 같은 보고서가 `oss-fuzz:368076871`도 든다). 그 밖의
+    id는 마스킹 서버가 제출로 받는 id일 수 있고, 그것은 **조회에 쓸 실 id가 같이 올 때만** 쓴다:
+    마스킹 서버는 제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 `/query-poc`는 마스크를 풀지
+    않는다 — 소스 판독이고 실측하지 않았다(`query_verdict` docstring). 그래서 호출부는 이 사유를
+    **실 id가 없을 때만** 거절로 쓴다: `TaskOracle`은 `query_task_id`가, CLI는 `--mask-map`이
+    실 id를 주면 이 결과를 무시한다(`TaskOracle.__post_init__`·`cli._oracle_for`). 컨테이너를
+    돌리기 **전에** 거절하려고 둔 검사다. `run_round_trip`은 이것을 부르지 않고 여전히 `task_id`
+    하나를 제출과 조회에 다 넘기므로 마스킹 서버에 못 쓴다(그 docstring).
 
     한계: 모양이 `<출처>:<숫자>`인 마스킹 id는 이 검사를 통과한다. 마스킹 id의 모양을 아는 것은 한
     곳의 예시(`9c73e92e52b7` — 콜론이 없다)뿐이다.
@@ -199,9 +202,8 @@ def unsupported_task_id(task_id: str) -> str | None:
         return None
     return (
         f"과제 id {task_id!r}는 이 클라이언트가 지원하는 모양이 아니다 - "
-        "마스킹을 안 한 서버의 실제 id(<출처>:<숫자>, 예 arvo:1065)만 지원한다. "
-        "build-plan.md가 마스킹 서버를 미지원으로 적는다"
-        "(이 클라이언트는 task_id 하나를 제출과 조회에 다 넘긴다)"
+        "마스킹을 안 한 서버의 실제 id(<출처>:<숫자>, 예 arvo:1065)는 그대로 쓰고, 그 밖의 id는 "
+        "조회에 쓸 실 id가 같이 와야 쓸 수 있다. 실 id 없이는 미지원이다"
     )
 
 
@@ -642,13 +644,14 @@ def run_round_trip(
     올라간다 — 여기서 삼키지 않는다. `vul`이 먼저 돌므로 키가 틀리면 `vul` 컨테이너가 이미 돈 뒤에
     `/submit-fix`에서 `CyberGymAuthError`가 나고 DB에 `fix`가 빈 행이 남는다(측정 2026-10-02).
 
-    🔴 **마스킹 서버는 지원하지 않는다.** 저자 README의 표준 기동은 `--mask_map_path`를 쓴다
-    (`README.md:98-101`). 그 서버는 제출에 **마스킹된** task_id를 받고(체크섬도 그 id로 계산한다
-    `server_utils.py:205-207`) DB에는 **실제** id를 적으며(`:210-216,258-261`) `/query-poc`는
-    마스크를 풀지 않는다(`__main__.py:201`). 이 함수는 `task_id` 하나를 셋 모두에 넘기므로
-    마스킹된 id를 주면 컨테이너 둘을 돌린 뒤 `/query-poc`가 404 `Record not found`고, 실제 id를
-    주면 제출이 400 `Invalid task_id`다. 둘 다 소스 판독이고 실측하지 않았다 — 왕복 보고서는
-    마스크 없이 돌렸다. 고치는 것(task_id를 둘로 받는다)은 다음 슬라이스의 결정이다.
+    🔴 **이 함수는 마스킹 서버를 지원하지 않는다**(`TaskOracle`은 한다 - 아래). 저자 README의 표준
+    기동은 `--mask_map_path`를 쓴다(`README.md:98-101`). 그 서버는 제출에 **마스킹된** task_id를
+    받고(체크섬도 그 id로 계산한다 `server_utils.py:205-207`) DB에는 **실제** id를 적으며
+    (`:210-216,258-261`) `/query-poc`는 마스크를 풀지 않는다(`__main__.py:201`). 이 함수는
+    `task_id` 하나를 셋 모두에 넘기므로 마스킹된 id를 주면 컨테이너 둘을 돌린 뒤 `/query-poc`가 404
+    `Record not found`고, 실제 id를 주면 제출이 400 `Invalid task_id`다. 둘 다 소스 판독이고
+    실측하지 않았다 — 왕복 보고서는 마스크 없이 돌렸다. `TaskOracle`은 task_id를
+    둘(`task_id`·`query_task_id`)로 받아 이것을 푼다(`--mask-map`) — 이 함수는 그대로 하나만 받는다.
 
     🔴 **429를 처리하지 않는다** — `/submit-vul`의 레이트리미트(모듈 docstring)에 걸리면
     `CyberGymOracleError(status=429)`가 그대로 올라온다. 설계하지 않았다.
@@ -668,8 +671,13 @@ class TaskOracle:
 
     러너는 바이트만 준다 — 서버 주소·과제 신원·키는 run을 조립할 때 여기 묶인다(`src/cli.py`의
     `_oracle_for`가 만든다, #386). 서버 주소는 조작자가 정하고 과제 id는 번들의 `submit.sh`에서
-    읽는다 (`task_loader.SubmitMetadata`가 이유를 든다). `task_id`가 지원하는 모양이 아니면
-    만들어지지 않는다 (`unsupported_task_id`) — 컨테이너를 돌리기 전에 거절한다.
+    읽는다 (`task_loader.SubmitMetadata`가 이유를 든다). `task_id`가 지원하는 모양이 아니고
+    (`unsupported_task_id`) `query_task_id`도 없으면 만들어지지 않는다 — 컨테이너를 돌리기 전에
+    거절한다. 마스킹 서버는 제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 `/query-poc`는 마스크를
+    풀지 않으므로(소스 판독이고 실측하지 않았다, `query_verdict` docstring) 마스킹된 `task_id`는
+    조회에 쓸 실 id를 `query_task_id`로 같이 줄 때만 쓴다. 제출 두 다리(`submit_vul`·`submit_fix`)는
+    `task_id`로, 제출 전 장부 읽기(`peek_verdict`)와 판정 조회(`query_verdict`)는
+    `query_task_id`(없으면 `task_id`)로 간다.
 
     **두 다리다 — 후보마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ가 fix 다리를 「최종 PoC
     한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다. 그래서 러너가 후보마다는
@@ -692,13 +700,38 @@ class TaskOracle:
     task_id: str
     agent_id: str
     api_key: str = field(repr=False)
+    # DB가 저장할 때 쓰는 **실(unmask) task_id**. 마스킹 서버에서는 제출은 masked로 받지만 DB엔
+    # unmask된 id가 적히고(`server_utils.submit_poc:210-216`) `/query-poc`가 마스크를 안 푸므로
+    # (`__main__.py:198-205`), 조회에는 이 값을 써야 한다. `None`이면 `task_id` 하나를 셋 모두에
+    # 쓴다(마스크 없이 띄운 서버 — 두 값이 같아 왕복 보고서가 그 모양이다). 지어내지 않는다:
+    # 호출자가 `mask_map.json`을 읽어 넘긴다(`src/cli.py`).
+    query_task_id: str | None = None
     salt: str = DEFAULT_SALT
     timeout: float = _DEFAULT_TIMEOUT_S
 
     def __post_init__(self) -> None:
+        # 마스킹된 id는 **조회에 쓸 실 id가 같이 올 때만** 받는다 — 마스킹 서버는 제출을 마스킹된
+        # id로 받지만 DB에는 실 id를 적고 `/query-poc`는 마스크를 풀지 않는다(근거·줄 번호·한계는
+        # `unsupported_task_id`와 `query_verdict` docstring). 모양이 지원 밖이어도 `query_task_id`가
+        # 있으면 받는다 — 호출자가 `mask_map.json`을 읽어 준 값이다
+        # (`cli._query_task_id_from_mask_map`). 빈 문자열은 값이 아니다: `_query_task`가 그것을
+        # `task_id`로 되돌리므로 여기서도 없는 것으로 읽는다.
         problem = unsupported_task_id(self.task_id)
-        if problem is not None:
-            raise ValueError(problem)
+        if problem is not None and not self.query_task_id:
+            raise ValueError(
+                f"{problem} - 마스킹된 id라면 그 실 id를 query_task_id로 같이 준다: 마스킹 서버는 "
+                "제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 /query-poc는 마스크를 풀지 "
+                "않는다(저자 소스 판독이고 실측하지 않았다)"
+            )
+
+    @property
+    def _query_task(self) -> str:
+        """`/query-poc`에 보내는 task_id — 제출 전 장부 읽기와 판정 조회.
+
+        마스킹 서버면 `query_task_id`(실 id), 아니면 제출과 같은 `task_id`다. 제출 두 다리는 이것을
+        안 쓴다 — 서버가 제출은 마스킹된 id로만 받는다.
+        """
+        return self.query_task_id or self.task_id
 
     def submit_vul(self, poc: bytes) -> VulSubmission:
         """`vul` 다리 하나 — 후보마다. 아래 `submit_vul`은 모듈 수준 함수다(이름이 같다)."""
@@ -729,7 +762,7 @@ class TaskOracle:
             )
             verdict = query_verdict(
                 self.server,
-                self.task_id,
+                self._query_task,
                 self.agent_id,
                 poc,
                 api_key=self.api_key,
@@ -750,7 +783,7 @@ class TaskOracle:
     def _peek(self, poc: bytes) -> OracleVerdict | None:
         return peek_verdict(
             self.server,
-            self.task_id,
+            self._query_task,
             self.agent_id,
             poc,
             api_key=self.api_key,

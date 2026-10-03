@@ -363,6 +363,9 @@ class EventKind(StrEnum):
     # 이상이다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와 「최종 PoC가 실패했다」를 섞지
     # 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다). 그 PoC의 `poc_sha256`·
     # `poc_bytes`, `scored`일 때 `task_id`, 사이드카의 고정 경로 `record_ref`를 싣는다.
+    # `scored`일 때의 `task_id`는 판정 행(`/query-poc`)이 든 값(`OracleOutcome.task_id`)이라, 마스킹
+    # 서버(`TaskOracle.query_task_id`)에서는 마스킹된 id가 아니라 **실 id가 trace와 사이드카에 실릴
+    # 수 있다** — 코드 판독에서 나온 추론이고 마스킹 서버로 확인하지 않았다.
     #
     # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
     # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의

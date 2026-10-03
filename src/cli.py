@@ -631,19 +631,27 @@ def _oracle_for(
 ) -> Oracle | None | _OracleRefused:
     """`--oracle-submit`이면 채점기를 조립한다 (#386). 설정이 틀리면 `_ORACLE_ERROR`다.
 
-    안 켰으면 `None`(제출 안 함)이다. **서버 주소는 조작자가 정한다**(`--oracle-server`, 기본값
-    없음). 과제 번들은 신뢰 못 하는 소스이고(`task_loader`) 거기서 긁은 주소로 조작자의 API 키를
-    보내면 번들을 만든 쪽이 키를 받는다. 번들의 `submit.sh`에서 읽는 것은 과제 id·에이전트
+    안 켰으면 `None`(제출 안 함)이다 - 단 받아 놓고 안 쓰는 `--oracle-server`·`--mask-map`은 설정
+    오류다.
+
+    **서버 주소는 조작자가 정한다**(`--oracle-server`, 기본값 없음). 과제 번들은 신뢰 못 하는
+    소스이고(`task_loader`) 거기서 긁은 주소로 조작자의 API 키를 보내면 번들을 만든 쪽이 키를
+    받는다. 번들의 `submit.sh`에서 읽는 것은 과제 id·에이전트
     id·체크섬이다(하네스가 다시 만들 수 없는 값이다). **번들이 적은 주소가 조작자의 주소와 다르면
     거부한다** - 둘 중 하나를 조용히 고르지 않는다. 번들의 주소는 보내는 곳이 아니라 「이 번들이
     다른 서버용이 아닌가」를 보는 견줌일 뿐이고, 거부는 조작자가 같은 주소를 주거나 번들을 다시
     만들게 한다(`localhost`와 `127.0.0.1`은 다른 주소로 센다).
 
-    **제출 전에 거절하는 것** - 주소 모양, task_id 모양(마스킹 서버는 미지원,
+    **제출 전에 거절하는 것** - 주소 모양, `--mask-map` 파일(못 읽거나 JSON 객체가 아니거나 번들의
+    masked id가 맵에 없는 것), task_id 모양(마스킹된 id는 `--mask-map`이 실 id를 줄 때만 받는다,
     `unsupported_task_id`), 번들의 체크섬이 클라이언트가 보내는 기본 salt로 계산한 값과 다른 것(다른
     salt로 만든 번들은 서버가 400으로 거부한다), 키 부재. 어느 하나가 걸리면 컨테이너는커녕 요청도
     안 나간다. 제출하려 한 run이 조용히 미제출로 끝나면 「0건 제출」이 설정 오류와 구별되지
     않는다(§0).
+
+    **마스킹 서버**는 제출을 masked task_id로 받지만 DB·`/query-poc`는 실 id를 쓴다(저자 소스
+    판독, 실측 없음). `--mask-map`이 있으면 번들의 masked id를 실 id로 바꿔
+    `TaskOracle.query_task_id`로 넘기고(조회에만 쓴다 - 제출은 번들의 id 그대로), 없으면 `None`이다.
 
     `unreachable`은 이 run이 채점기에 **아무것도 못 내는 사유**(`_oracle_unreachable_reason`)다 -
     있으면 경고만 하고 `None`을 돌려준다. 모델에 안 닿는 run은 막지 않는다는 이 파일의 원칙과 같다:
@@ -653,6 +661,8 @@ def _oracle_for(
     if not getattr(args, "oracle_submit", False):
         if server is not None:
             return _refuse_oracle("--oracle-server는 --oracle-submit와 함께만 쓴다")
+        if getattr(args, "mask_map", None) is not None:
+            return _refuse_oracle("--mask-map은 --oracle-submit와 함께만 쓴다")
         return None
     if unreachable is not None:
         print(
@@ -677,10 +687,14 @@ def _oracle_for(
             f"과제에서 채점기 신원을 못 읽었다 - {args.task_dir}/{SUBMIT_SCRIPT_NAME}에 "
             "서버 주소와 metadata(task_id·agent_id·checksum, 모두 비어 있지 않은 문자열)가 필요하다"
         )
+    query_task_id = _query_task_id_from_mask_map(args, metadata.task_id)
+    if isinstance(query_task_id, _OracleRefused):
+        return query_task_id
     problem = unsupported_task_id(metadata.task_id)
-    if problem is not None:
+    if problem is not None and query_task_id is None:
         return _refuse_oracle(
-            f"과제 번들의 task_id를 지원하지 않는다: {problem}. 아무것도 제출하지 않았다"
+            f"과제 번들의 task_id를 지원하지 않는다: {problem}. 마스킹 서버의 번들이면 "
+            "--mask-map으로 저자 mask_map.json을 같이 준다. 아무것도 제출하지 않았다"
         )
     if checksum(metadata.task_id, metadata.agent_id) != metadata.checksum:
         return _refuse_oracle(
@@ -712,7 +726,42 @@ def _oracle_for(
         task_id=metadata.task_id,
         agent_id=metadata.agent_id,
         api_key=api_key,
+        query_task_id=query_task_id,
     )
+
+
+def _query_task_id_from_mask_map(
+    args: argparse.Namespace, masked: str
+) -> str | None | _OracleRefused:
+    """`--mask-map`이 주어지면 masked task_id를 **실(unmask) id**로 바꿔 돌려준다 (#386).
+
+    마스킹 서버는 제출을 masked로 받지만 DB·`/query-poc`는 unmask된 id를 쓴다(저자 소스 판독 —
+    `cybergym_oracle.run_round_trip` docstring의 마스킹 절). 호출자는 이 값을
+    `TaskOracle.query_task_id`로 넘긴다. `--mask-map`이 없으면 `None`(서버가 마스크를 안 썼다는
+    뜻 — `TaskOracle`이 submit의 task_id를 그대로 쓴다).
+
+    파일을 못 읽거나(없음·권한·UTF-8 아님·JSON 아님) JSON 객체가 아니거나 그 masked id가 맵에
+    없으면 `_ORACLE_ERROR` — 지어내지 않는다. 저장소 밖 파일이라 기본값을 두지 않고, 호출자가
+    명시해야 한다.
+    """
+    mask_map = getattr(args, "mask_map", None)
+    if mask_map is None:
+        return None
+    try:
+        mapping = json.loads(Path(mask_map).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # `JSONDecodeError`·`UnicodeDecodeError`는 `ValueError`다
+        return _refuse_oracle(f"--mask-map을 못 읽었다: {mask_map}: {exc}")
+    if not isinstance(mapping, dict):
+        return _refuse_oracle(
+            f"--mask-map이 JSON 객체가 아니다({type(mapping).__name__}): {mask_map} - "
+            "실 id를 masked id에 잇는 객체여야 한다"
+        )
+    # mask_map.json은 {real: masked}. 역변환이 필요하다.
+    reverse = {v: k for k, v in mapping.items() if isinstance(v, str)}
+    real = reverse.get(masked)
+    if real is None:
+        return _refuse_oracle(f"--mask-map에 masked task_id가 없다: {masked} - {mask_map}")
+    return real
 
 
 def execute(
@@ -1518,6 +1567,15 @@ def build_parser() -> argparse.ArgumentParser:
         "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
     )
     run_cmd.add_argument(
+        "--mask-map",
+        type=Path,
+        default=None,
+        help="저자 mask_map.json 경로. 마스킹 서버(README 표준 기동)와 함께 "
+        "--oracle-submit을 쓸 때 필요하다(--oracle-submit 없이 주면 거부한다, exit 2). "
+        "서버는 제출을 masked task_id로 받지만 "
+        "DB·/query-poc는 unmask된 id를 쓰므로, 조회에만 이 맵으로 바꾼 실 id를 쓴다",
+    )
+    run_cmd.add_argument(
         "--oracle-submit",
         action="store_true",
         help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
@@ -1536,7 +1594,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="채점기 서버 주소(스킴://호스트:포트). 기본값이 없다 - --oracle-submit이면 필수다. "
         "조작자가 정한다: API 키가 가는 곳이라 과제 번들(submit.sh)이 가리키는 주소로는 보내지 "
         "않고, 번들의 주소와 다르면 거부한다(exit 2). 지원하는 과제 id는 마스킹을 안 한 서버의 "
-        "실제 id(예 arvo:1065)뿐이다",
+        "실제 id(예 arvo:1065)이거나, 마스킹된 id에 --mask-map을 같이 준 것이다",
     )
     run_cmd.add_argument(
         "--task-work-dir",
