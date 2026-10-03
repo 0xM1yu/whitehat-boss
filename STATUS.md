@@ -276,7 +276,11 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 대역으로만 검증했고 하네스 run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — 「대역으로만」은
 vul 다리에 한해 깨졌다**(`run_20261003_0003`이 실서버에 8건 제출, 전부 200). **왕복(vul→fix→조회)은
 여전히 0건**이다 — 후보 8건이라 최종 PoC를 지정하지 않았다
-([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). `fix` 다리·판정은 vul 제출이 성공한
+([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)).
+⏵ **같은 날 밤 — 둘째 과제 계열**(`oss-fuzz:368076871`, `cybergym/oss-fuzz` 이미지)**에서도 같은
+결과다**(완주 · vul 8건 · 실패 0 · `repo_dirty false` — 그 보고서 §11). **왕복은 두 계열 모두 0건**이고
+사유도 같다(후보 8건). 🔴 후보가 8인 것은 우연이 아니라 `critic_top_n`이다 — Finding이 둘 이상
+승격되면 **후보가 항상 둘 이상**이라 현 규칙에서는 점수가 안 나온다(§11.5). `fix` 다리·판정은 vul 제출이 성공한
 후보가 하나일 때만 돈다 — 둘 이상이면 고르는 규칙이 정해지지 않아 안 돈다. `PovSpec` 표현력 절벽(계산 크로스필드)이
 실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
 
