@@ -219,6 +219,35 @@ def _object(raw: object, name: str) -> dict:
     return raw
 
 
+def _kind(raw: object) -> str:
+    """`analysis_kind` — 없거나 `null`이면 빈 문자열(슬라이서가 안 적었다 = 모른다)이다."""
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise TypeError(f"analysis_kind: 문자열이 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _flag(raw: object, name: str) -> bool:
+    """JSON 불리언만 받는다 — 없거나 `null`이면 `False`다. `bool("false")`는 참이라 문자열·숫자를
+    `bool()`로 바꾸면 깨진 입력이 「잘렸다」로 읽힌다."""
+    if raw is None:
+        return False
+    if type(raw) is not bool:
+        raise TypeError(f"{name}: 불리언이 아니다 — {type(raw).__name__}")
+    return raw
+
+
+def _array(raw: object, name: str) -> list:
+    """JSON 배열만 받는다 — 없거나 `null`이면 빈 목록이다. 문자열을 그대로 돌면 글자마다 하나가
+    된다(`"backward_depth"` → 서로 다른 글자 12개가 사유로)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise TypeError(f"{name}: 배열이 아니다 — {type(raw).__name__}")
+    return raw
+
+
 def _analysis_facts(
     item: dict,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...], bool]:
@@ -229,7 +258,8 @@ def _analysis_facts(
     `member_analysis`에 있다(대표 자신도 든다 — `slicer_source.cluster`). 최상위 `truncated`가
     구성원의 OR이라 셋 다 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 · 사유·경계를
     안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는 처음 나온
-    순서로 중복을 뺀다.
+    순서로 중복을 뺀다. 모양이 틀리면(사유·경계가 배열이 아니다 · 사유가 문자열이 아니다 · cap이
+    불리언이 아니다) `TypeError`로 로드를 멈춘다 — 강제 변환하면 깨진 입력이 사실처럼 읽힌다.
     """
     members = _object(item.get("member_analysis"), "member_analysis")
     reasons: dict[str, None] = {}
@@ -237,9 +267,12 @@ def _analysis_facts(
     sinks_capped = False
     for raw in list(members.values()) or [item.get("analysis")]:
         analysis = _object(raw, "analysis")
-        reasons.update(dict.fromkeys(str(r) for r in analysis.get("truncation_reasons") or ()))
-        sinks_capped = sinks_capped or bool(analysis.get("sinks_capped", False))
-        for boundary in analysis.get("boundaries") or ():
+        for reason in _array(analysis.get("truncation_reasons"), "truncation_reasons"):
+            if not isinstance(reason, str):
+                raise TypeError(f"truncation_reasons: 문자열이 아니다 — {type(reason).__name__}")
+            reasons[reason] = None
+        sinks_capped = _flag(analysis.get("sinks_capped"), "sinks_capped") or sinks_capped
+        for boundary in _array(analysis.get("boundaries"), "boundaries"):
             where = boundary["location"]
             boundaries[(str(boundary["reason"]), str(where["file"]), int(where["line"]))] = None
     return tuple(sorted(reasons)), tuple(boundaries), sinks_capped
@@ -265,8 +298,8 @@ def _slice(item: dict) -> Slice:
         code=code,
         degraded=bool(item.get("degraded", False)),
         provenance=_provenance(item.get("line_provenance")),
-        analysis_kind=str(item.get("analysis_kind") or ""),
-        truncated=bool(item.get("truncated", False)),
+        analysis_kind=_kind(item.get("analysis_kind")),
+        truncated=_flag(item.get("truncated"), "truncated"),
         truncation_reasons=truncation_reasons,
         sinks_capped=sinks_capped,
         boundaries=boundaries,

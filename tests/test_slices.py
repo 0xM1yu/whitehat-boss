@@ -393,12 +393,39 @@ def test_the_analysis_facts_reach_the_sliceref_boundary(tmp_path: Path) -> None:
             {"boundaries": [{"reason": "x", "location": {"file": "a.c", "line": "n"}}]},
             id="boundary-line-not-a-number",
         ),
+        # 강제 변환이 사실을 지어내던 모양 — 문자열 사유는 글자마다 사유 하나가 됐고(서로 다른
+        # 글자 12개), 문자열 `"false"`는 `bool()`로 참이 됐다.
+        pytest.param({"truncation_reasons": "backward_depth"}, id="reasons-is-a-string"),
+        pytest.param({"truncation_reasons": [1]}, id="reason-not-a-string"),
+        pytest.param({"sinks_capped": "false"}, id="cap-is-a-string"),
+        pytest.param({"sinks_capped": 1}, id="cap-is-a-number"),
+        pytest.param({"boundaries": _ENTRY_PARAMETER}, id="boundaries-is-an-object"),
     ],
 )
 def test_a_malformed_analysis_is_refused_at_load(tmp_path: Path, analysis: object) -> None:
     """읽는 필드의 모양이 틀리면 run이 시작되기 **전에** 이유를 대고 멈춘다(모듈 docstring
-    「로드에서 죽는다」). 조용히 비워 두면 「경계가 없다」와 「못 읽었다」가 같은 입력이 된다."""
+    「로드에서 죽는다」). 조용히 비워 두거나 강제 변환하면 「경계가 없다」·「잘렸다」와 「못
+    읽었다」가 같은 입력이 된다."""
     item = _slice("slice_0001", "B", {("main.c", 5)}, _SOURCES, analysis=analysis)
+
+    with pytest.raises(SliceInputError, match="slice-v2가 아니다"):
+        load_slices(_write(tmp_path, _document([item])))
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"truncated": "false"}, id="truncated-is-a-string"),
+        pytest.param({"truncated": 0}, id="truncated-is-a-number"),
+        pytest.param({"analysis_kind": 1}, id="kind-not-a-string"),
+    ],
+)
+def test_malformed_top_level_analysis_facts_are_refused_at_load(
+    tmp_path: Path, fields: dict
+) -> None:
+    """최상위 `truncated`·`analysis_kind`도 같다 — `bool("false")`가 참이라 강제 변환하면 깨진
+    입력이 「잘렸다」로 읽힌다."""
+    item = _slice("slice_0001", "B", {("main.c", 5)}, _SOURCES, **fields)
 
     with pytest.raises(SliceInputError, match="slice-v2가 아니다"):
         load_slices(_write(tmp_path, _document([item])))
