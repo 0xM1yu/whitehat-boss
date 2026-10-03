@@ -890,17 +890,19 @@ def parser() -> argparse.ArgumentParser:
     # Which case is sliced first. The candidate set and every candidate_key stay the same, but ids
     # are numbered after the sort: ids, slices[] order, `absorbed` and the export file names move
     # with the order. What a cut-short run (tools/slice_sharded.py --wall-seconds, a kill) or a
-    # poison streak leaves degraded depends on it too. Bound into the run contract (settings);
-    # docs/slicer-README.md has the rest, including clustering with 10,000 or more candidates.
+    # poison streak leaves degraded depends on it too. With --priority-files, `ab` splits the
+    # tiers first and `ba` the cases first (slicer_candidates.prioritize). Bound into the run
+    # contract (settings); docs/slicer-README.md has the rest, including clustering with 10,000
+    # or more candidates.
     result.add_argument(
         "--case-order", choices=sorted(CASE_RANK), default="ab", help="ab: Case A candidates are "
-        "sliced before Case B (default); ba: Case B before Case A. With --priority-files this "
-        "holds within each tier (listed-file candidates first, then the rest), so a listed "
-        "file's Case B still comes before an unlisted file's Case A under ab. A run cut "
-        "short (tools/slice_sharded.py --wall-seconds, a kill) or stopped by a poison streak "
-        "leaves the candidates it did not reach degraded, so this decides which case that is. "
-        "Ids are numbered after the sort, so they differ per order. Shards and --resume must "
-        "pass the same value",
+        "sliced before Case B (default); ba: Case B before Case A. With --priority-files, ab is "
+        "tier-first (listed-file A, listed-file B, then the rest's A, B) and ba is case-first "
+        "(listed-file B, the rest's B, listed-file A, the rest's A), so under ba no Case A runs "
+        "before a Case B. A run cut short (tools/slice_sharded.py --wall-seconds, a kill) or "
+        "stopped by a poison streak leaves the candidates it did not reach degraded, so this "
+        "decides which case that is. Ids are numbered after the sort, so they differ per order. "
+        "Shards and --resume must pass the same value",
     )
     result.add_argument("--export-dir", type=Path)
     result.add_argument("--progress", type=Path)

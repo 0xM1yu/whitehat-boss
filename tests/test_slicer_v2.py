@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import random
 import re
 import sqlite3
 import subprocess
@@ -1787,22 +1788,138 @@ def test_collect_puts_case_b_first_when_asked(repo):
     assert {c["entry"]["symbol"]: c["candidate_key"] for c in first_b} == keys
 
 
-def test_prioritize_keeps_b_before_a_inside_each_tier(repo):
-    """prioritize() is stable inside its two tiers, so under `ba` the order becomes priority-B,
-    priority-A, rest-B, rest-A -- and under `ab` the same with A before B."""
+def test_prioritize_is_tier_first_under_ab_and_case_first_under_ba(repo):
+    """--priority-files splits a list stably, and what it splits depends on the case order. `ab`
+    splits the whole list into listed files / the rest (tier-first, as #377 (b) shipped it):
+    priority-A, priority-B, rest-A, rest-B. `ba` splits each case group (case-first): priority-B,
+    rest-B, priority-A, rest-A -- no Case A, listed or not, runs before a Case B. Inside a tier
+    both keep collect()'s order, and `first` counts the listed-file candidates either way."""
     from slicer_candidates import prioritize
 
-    rows = {
-        "A": [in_file(candidate("a_hot", 1), "hot.c"), in_file(candidate("a_cold", 1), "cold.c")],
-        "B": [in_file(candidate("b_hot", 1), "hot.c"), in_file(candidate("b_cold", 1), "cold.c")],
-    }
+    def group(case):
+        return [
+            in_file(candidate(f"{case}{i}_{where}", i), f"{where}.c")
+            for where in ("hot", "cold")
+            for i in (1, 2)
+        ]
+
+    rows = {"A": group("a"), "B": group("b")}
     for order, expected in (
-        ("ba", ["b_hot", "a_hot", "b_cold", "a_cold"]),
-        ("ab", ["a_hot", "b_hot", "a_cold", "b_cold"]),
+        ("ab", "a1_hot a2_hot b1_hot b2_hot a1_cold a2_cold b1_cold b2_cold"),
+        ("ba", "b1_hot b2_hot b1_cold b2_cold a1_hot a2_hot a1_cold a2_cold"),
     ):
-        moved, first, matched = prioritize(collect(rows, repo, order), {"hot.c"})
-        assert first == 2 and matched == {"hot.c"}
-        assert [c["entry"]["symbol"] for c in moved] == expected, order
+        moved, first, matched = prioritize(collect(rows, repo, order), {"hot.c"}, order)
+        assert first == 4 and matched == {"hot.c"}, order
+        assert [c["entry"]["symbol"] for c in moved] == expected.split(), order
+
+
+def legacy_prioritize(candidates, files):
+    """prioritize() exactly as #377 (b) shipped it -- what `ab` must keep returning."""
+    head, tail, matched = [], [], set()
+    for c in candidates:
+        hits = files & ({c["entry"]["file"]} | {a["file"] for a in c["anchors"]})
+        matched |= hits
+        (head if hits else tail).append(c)
+    return head + tail, len(head), matched
+
+
+def random_rows(seed):
+    """Both cases over a few files, some candidates anchored in a second file, and a file list."""
+    rng = random.Random(seed)
+    names = ["a.c", "b.c", "c.c", "d.c"]
+    rows = {}
+    for case in "AB":
+        rows[case] = []
+        for i in range(rng.randint(0, 8)):
+            row = in_file(candidate(f"{case.lower()}{i}", rng.randint(1, 8)), rng.choice(names))
+            row["anchors"].append({"file": rng.choice(names), "line": 1})
+            rows[case].append(row)
+    return rows, set(rng.sample(names, rng.randint(0, 3)))
+
+
+def test_prioritize_under_ab_is_what_377_shipped(repo):
+    """`ab` keeps the tier-first order byte for byte: against the old body, on random inputs."""
+    from slicer_candidates import prioritize
+
+    for seed in range(60):
+        rows, files = random_rows(seed)
+        ordered = collect(rows, repo)
+        expected = legacy_prioritize(ordered, files)
+        assert prioritize(ordered, files) == expected, seed
+        assert prioritize(ordered, files, "ab") == expected, seed
+
+
+def test_prioritize_under_ba_is_case_first_whatever_the_input(repo):
+    """The same rule written the other way round (a model, not the code's own loop): the B group
+    then the A group, listed files first inside each, collect()'s order kept, ids untouched."""
+    from slicer_candidates import prioritize
+
+    def touched(c):
+        return {c["entry"]["file"]} | {a["file"] for a in c["anchors"]}
+
+    for seed in range(60):
+        rows, files = random_rows(seed)
+        ordered = collect(rows, repo, "ba")
+        expected = []
+        for case in "BA":
+            members = [c for c in ordered if c["case"] == case]
+            expected += [c for c in members if files & touched(c)]
+            expected += [c for c in members if not files & touched(c)]
+        moved, first, matched = prioritize(ordered, files, "ba")
+        assert moved == expected, seed
+        assert first == sum(bool(files & touched(c)) for c in ordered), seed
+        assert matched == files & set().union(*[touched(c) for c in ordered]), seed
+
+
+def two_file_both_cases_payloads():
+    """a.c holds the A candidate entry@1 and the B candidate sprintf@5, main.c holds A other@3 and
+    B memcpy@6."""
+    data = two_file_payloads()
+    data["case_b"] = response(
+        "case_b", [in_file(candidate("sprintf", 5), "a.c"), candidate("memcpy", 6)]
+    )
+    return data
+
+
+def executed_candidates(transport):
+    """What each per-candidate query was about, in the order it was SENT: a flows query names the
+    candidate's file, a backward query the call's code."""
+    sent = []
+    for stage, (request, _) in zip(transport.stages, transport.requests, strict=True):
+        query = json.loads(request.data)["query"]
+        if stage == "flows":
+            sent.append((stage, re.search(r'List\(\("([^"]*)"', query)[1]))
+        elif stage == "backward":
+            sent.append((stage, re.search(r'"(\w+)\(buf\)"', query)[1]))
+    return sent
+
+
+@pytest.mark.parametrize(("order", "queries", "ids"), [
+    ("ab", [("flows", "main.c"), ("backward", "memcpy"), ("flows", "a.c"), ("backward", "sprintf")],
+     ["slice_0002", "slice_0004", "slice_0001", "slice_0003"]),
+    ("ba", [("backward", "memcpy"), ("backward", "sprintf"), ("flows", "main.c"), ("flows", "a.c")],
+     ["slice_0002", "slice_0001", "slice_0004", "slice_0003"]),
+])
+def test_priority_files_follow_the_case_order_in_the_pipeline(
+    monkeypatch, two_file_repo, tmp_path, order, queries, ids
+):
+    """With --priority-files main.c: `ab` runs listed A, listed B, rest A, rest B and `ba` runs
+    listed B, rest B, listed A, rest A -- in the order the checkpoint is bound AND the queries are
+    sent. ids stay as collect() numbered them (B first under `ba`), and first_tier_candidates is
+    the number of listed-file candidates under both orders."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    database = tmp_path / "state.db"
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_both_cases_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing), "--case-order", order,
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["first_tier_candidates"] == 2
+    assert result["priority"]["candidates"] == 4
+    with Checkpoint(database, resume=True) as store:
+        assert [c["id"] for c in store.get("candidates")] == ids
+    assert executed_candidates(transport) == queries
 
 
 def test_the_default_case_order_is_ab_and_is_recorded(monkeypatch, repo, tmp_path):
