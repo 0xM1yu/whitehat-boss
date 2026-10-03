@@ -375,7 +375,7 @@ class JoernClient:
     ):
         self.url = endpoint.rstrip("/") + "/query-sync"
         self.timeout = timeout
-        # Where file-transport queries (case_a/case_b) drop their payload. Joern (the JVM)
+        # Where file-transport queries (FILE_TRANSPORT_STAGES) drop their payload. Joern (the JVM)
         # writes it and this process reads it, so the path must be on a filesystem both see
         # -- the same box today; a shared writable mount once Joern runs sandboxed.
         self.payload_dir = payload_dir
@@ -1061,7 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
             # surfaces after the run: --out already holds a correct result and main()
             # still returns 1. Fail on the typo before paying for Joern.
             cli.error("--export-dir exists and is not a directory")
-    # File-transport payloads (case_a/case_b) land here: a sibling of the run outputs (--out
+    # File-transport payloads (FILE_TRANSPORT_STAGES) land here: a sibling of the run outputs (--out
     # is required), so it shares their writable filesystem and stays out of --export-dir's
     # replaced subtree. Resolve so the path handed to Joern is absolute -- Joern's JVM resolves
     # a relative path against its own working directory, not this process's.
