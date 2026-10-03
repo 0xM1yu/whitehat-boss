@@ -1387,8 +1387,9 @@ _INDEX_V3 = {
 def test_v3_tables_are_missing_not_empty_on_older_documents(tmp_path: Path):
     """v2·v1 문서·인덱스 없음에서 v3 표와 v3 조회는 `None`이다 — 「0건」(`{}`·`[]`)이 아니다.
 
-    지금 이미지(index-v2를 낸다)의 산출물은 그대로 읽혀야 한다: v2 그래프는 멀쩡하고 새 조회만
-    「없다」를 낸다. 새 표를 필수로 걸었으면 v2 문서가 통째로 거절돼 그래프 섹션까지 사라진다.
+    #304 전에 빌드한 이미지(index-v2를 낸다)의 산출물은 그대로 읽혀야 한다: v2 그래프는 멀쩡하고
+    새 조회만 「없다」를 낸다. 새 표를 필수로 걸었으면 v2 문서가 통째로 거절돼 그래프 섹션까지
+    사라진다.
     """
     graphs = {
         "v2": _graph(tmp_path / "v2", _INDEX_V2),
@@ -1439,6 +1440,54 @@ def test_writes_of_crosses_files_only_for_a_unique_file_scope_variable(tmp_path:
         Location(file="main.c", symbol="main", line_start=8, line_end=8)
     ]
     assert graph.writes_of("buf", "other.c") == []
+
+
+def test_writes_of_counts_a_global_once_across_its_header_extern(tmp_path: Path):
+    """헤더의 `extern` 선언과 `.c`의 정의는 전역 하나다 — 「하나뿐」은 헤더 밖 선언만 센다(#464
+    리뷰: 전에는 둘로 세 흔한 전역이 다른 파일로 한 번도 안 이어졌다). 그때도 다른 파일 함수의
+    **같은 이름 지역**(`other.c`의 `g_hdr`, `locals`에 있다)에 쓴 것은 그 전역이 아니라 뺀다.
+
+    음성: `.c` 두 곳에 선언이 있으면(파일마다 `static`) 여전히 잇지 않는다."""
+    local_write = {
+        "file": "other.c",
+        "line": 4,
+        "func": "shadow",
+        "lhs": "g_hdr[0]",
+        "rhs": "0",
+        "op": "=",
+        "form": "element",
+        "base": "name",
+    }
+    document = {
+        **_INDEX_V3,
+        "file_vars": {
+            "g_hdr": [
+                {"file": "main.c", "line_start": 3, "line_end": 3},
+                {"file": "hdr.h", "line_start": 2, "line_end": 2},
+            ]
+        },
+        "locals": {**_INDEX_V3["locals"], "other.c": {"shadow": {"g_hdr": [3]}}},
+        "writes": {
+            **_INDEX_V3["writes"],
+            "g_hdr": [*_INDEX_V3["writes"]["g_hdr"], local_write],
+        },
+    }
+    graph = _graph(tmp_path, document)
+
+    assert graph.writes_of("g_hdr", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=8, line_end=8)
+    ]
+
+    two_statics = {
+        **document,
+        "file_vars": {
+            "g_hdr": [
+                {"file": "main.c", "line_start": 3, "line_end": 3},
+                {"file": "util.c", "line_start": 1, "line_end": 1},
+            ]
+        },
+    }
+    assert _graph(tmp_path / "statics", two_statics).writes_of("g_hdr", "parser.c") == []
 
 
 def test_field_writes_of_crosses_files_only_for_a_field_declared_once(tmp_path: Path):
@@ -1526,6 +1575,47 @@ def test_indirect_callees_of_follows_field_calls_in_the_body(tmp_path: Path):
                 },
             },
             id="v3-line-is-a-string",
+        ),
+        # #464 리뷰 — 아래 넷은 전에는 `loaded`로 읽히고 조회 도중에 죽거나(줄 0 → `Location`
+        # `ValidationError`, 매핑 `func` → unhashable `TypeError`) 조용히 0건이 됐다(모르는 `base`).
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "line": 0}]},
+            },
+            id="v3-line-zero",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "func": {"f": 1}}]},
+            },
+            id="v3-func-is-a-mapping",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "base": "weird"}]},
+            },
+            id="v3-unknown-base",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_calls": {
+                    "alloc": [{**_INDEX_V3["field_calls"]["alloc"][0], "args": "n"}]
+                },
+            },
+            id="v3-args-not-a-list",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_assigns": {
+                    "alloc": [{**_INDEX_V3["field_assigns"]["alloc"][0], "func": ["init"]}]
+                },
+            },
+            id="v3-field-assigns-func-not-a-name",
         ),
     ],
 )
