@@ -3108,6 +3108,32 @@ def test_estimate_reports_gpu_seconds_as_unknown(
     assert "예상 모델 호출" in out
 
 
+def _estimate_input_line(budget: Budget) -> str:
+    """`estimate`가 입력 토큰 예산을 말하는 줄. 저장소 값이 아니라 **주입한** 예산으로 돈다."""
+    config = load_config("dev_fake").transition(budget=budget)
+    return next(line for line in cli.estimate(config, TARGET) if line.startswith("예상 input 토큰"))
+
+
+def test_estimate_labels_a_zero_token_budget_as_no_limit() -> None:
+    """`estimate`는 토큰 상한 0을 「예산이 0」이 아니라 「상한 없음」으로 찍는다.
+
+    상한 0은 「검사 안 함」이다(`BudgetLedger._overrun`). `dev_fake`의 토큰 상한이 0이 된 뒤(#427)
+    이 줄이 「약 N / 예산 0 (예산 0)」을 내 0을 두 번 되풀이했고 「못 돈다」로 읽혔다(#435). 그
+    분기는 `aae1f7f`(2026-08-08)가 넣은 뒤 저장소의 어떤 예산도 입력 토큰 0을 든 적이 없어
+    (`config/budgets.yaml` 35개 판 전부 양수) 한 번도 안 타던 자리였고, 이 줄을 무는 검사도
+    0건이었다.
+
+    값을 저장소 `dev_fake`에서 읽지 않고 직접 세운다 — 저장소 값이 바뀌어도 이 경계는 같아야 한다.
+    ⚠ **문구 핀이다** — 철자를 단언하지 성질을 단언하지 않는다. 문구를 바꾸면 이 핀도 같이 바꾼다.
+    """
+    no_limit = _estimate_input_line(Budget(input_tokens=0, output_tokens=0, gpu_seconds=0))
+    capped = _estimate_input_line(Budget(input_tokens=10**9, output_tokens=10**9, gpu_seconds=0))
+
+    assert "상한 없음" in no_limit
+    assert "(예산 0)" not in no_limit
+    assert "%" in capped, "양수 상한이면 예산 대비 비율이 나온다"
+
+
 def test_cli_run_writes_trace_manifest_and_report(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
