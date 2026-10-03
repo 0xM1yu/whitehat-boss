@@ -186,6 +186,10 @@ def test_finding_example_produced_by_matches_the_registry() -> None:
     """
     finding = json.loads(_body("agent-contracts.md", "Finding", 0))
     profile = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))["profile"]
-    entry = load_config(profile).model_for(finding["produced_by"]["role"])
+    config = load_config(profile)
+    produced_by = finding["produced_by"]
+    role = produced_by["role"]
 
-    assert finding["produced_by"]["prompt_version"] == entry.prompt_template_version
+    # 둘 다 묻는다 — `prompt_version`만 묻던 첫 판은 예시의 `"model"`을 다른 키로 바꿔도 초록이었다.
+    assert produced_by["model"] == config.model_key_for(role)
+    assert produced_by["prompt_version"] == config.model_for(role).prompt_template_version
