@@ -648,6 +648,12 @@ class Thresholds(HarnessModel):
     # trace `scout_slice_trimmed`가 남는다. 프롬프트 판은 안 바꾼다(Scout v3 prefix가 SOURCE를
     # 줄이 빠진 슬라이스로 서술한다). 기본은 끈다 — 켜면 같은 슬라이스 집합의 Scout 입력이 달라진다.
     scout_slice_trim: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`가 어디까지 믿을 입력인지를 `auditor_source` 이벤트의 `gate_reasons`로
+    # 남기는가(`orchestrator/source_gate.py` — 슬라이서가 낸 절단·경계와 `SOURCE` 조립이 본 것에서
+    # 사유 코드를 낸다). 0이면 이벤트가 옛 모양 그대로다. **관측 전용이다** — Auditor 입력(SOURCE·
+    # FACTS)도 프롬프트 판도 안 바꾸므로 `AUDITOR_SOURCE_OPTIONS`(입력을 넓혀 meta
+    # `source_options`가 서술해야 하는 옵션)가 아니라 `scout_slice_trim`과 같은 자리다.
+    auditor_source_gate: int = Field(default=0, ge=0, le=1)
     # Auditor가 `repro_spec`을 비워 내면 하네스가 합성하는가 (#S7). 0이면 종전 — 비면 그대로
     # 비어 F-9(`repro_spec_missing`)로 `hypothesized`에 멈추고 8단계가 안 돈다. 1이면
     # `auditor._ensure_repro_origin`이 후보 위치로 명세를 합성해(`origin=harness`) E3(`validated`)
@@ -728,8 +734,8 @@ class Thresholds(HarnessModel):
         # `scout_slice_trim`도 같다(#375 M-3): 기본 꺼짐 run의 `RunRecord.thresholds`에 `0.0`이
         # 생기면 이 필드 이전의 manifest와 모양이 갈리는데 그 차이가 뜻하는 것이 없다.
         # `scout_slice_trim`은 Auditor SOURCE 옵션이 아니라(프롬프트 `source_options` 대상이
-        # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다.
-        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim"):
+        # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다. `auditor_source_gate`도 같다.
+        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim", "auditor_source_gate"):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
