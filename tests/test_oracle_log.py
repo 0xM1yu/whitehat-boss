@@ -3,9 +3,9 @@
 러너 없이 순수하게 본다. 러너가 이 장부를 어떻게 채우는지는 `tests/test_oracle_wiring.py`가,
 파이프라인 끝까지 이어지는지는 `tests/test_pipeline_e2e.py`가 본다.
 
-⚠ 후보가 둘 이상일 때 고르는 규칙은 정해지지 않았다(`runner._designate_final`) - 장부는 지정한
-근거(`designation`)를 **기록**할 뿐이고, 이 파일에는 어느 후보를 고르는 것이 맞는지를 단언하는
-검사가 없다.
+⚠ 후보가 둘 이상일 때의 규칙(내부 근거 등급 최댓값 · 동점이면 거부)은 `runner._designate_final`의
+것이고 **이 파일이 아니다** - 장부는 지정한 근거(`designation`)와 거부 사유(`reason`)를 **기록**할
+뿐이다. 규칙 자체를 단언하는 검사는 `tests/test_oracle_wiring.py` 끝 절에 있다.
 """
 
 import hashlib
@@ -74,7 +74,8 @@ def test_an_unwired_run_has_no_summary_no_warnings_and_no_file(tmp_path: Path) -
     [
         (None, "not_reached", None),
         (FinalAttempt(status="none", reason="no_poc"), "none", "no_poc"),
-        (FinalAttempt(status="none", reason="policy_undecided"), "none", "policy_undecided"),
+        (FinalAttempt(status="none", reason="grade_tie"), "none", "grade_tie"),
+        (FinalAttempt(status="none", reason="grade_unknown"), "none", "grade_unknown"),
         (FinalAttempt(status="failed", attempt=_ok("find_0001"), error="X"), "failed", None),
         (
             FinalAttempt(status="scored", attempt=_ok("find_0001"), outcome=_OUTCOME),
@@ -147,8 +148,12 @@ def test_submission_failures_are_counted_in_a_warning() -> None:
             "vul 제출이 전부 실패해",
         ),
         (
-            FinalAttempt(status="none", reason="policy_undecided"),
-            "고르는 규칙이 정해지지 않았다",
+            FinalAttempt(status="none", reason="grade_tie"),
+            "최댓값이 동점이라",
+        ),
+        (
+            FinalAttempt(status="none", reason="grade_unknown"),
+            "등급을 모르는 것이 있어",
         ),
     ],
 )
@@ -213,7 +218,8 @@ def test_every_warning_is_printable_on_a_cp949_console() -> None:
         FinalAttempt(status="failed", attempt=_ok("f"), error="CyberGymOracleError"),
         FinalAttempt(status="none", reason="no_poc"),
         FinalAttempt(status="none", reason="all_vul_submissions_failed"),
-        FinalAttempt(status="none", reason="policy_undecided"),
+        FinalAttempt(status="none", reason="grade_tie"),
+        FinalAttempt(status="none", reason="grade_unknown"),
         _scored(_ok("f", submission=_cached_vul()), stale_fix),
     ]
     texts = [text for final in finals for text in _warnings(final, failed_attempts=1)]
@@ -339,13 +345,13 @@ def test_none_is_not_failed_in_the_sidecar(tmp_path: Path) -> None:
 
 
 def test_several_candidates_are_none_with_no_designation_in_the_sidecar(tmp_path: Path) -> None:
-    """후보가 둘 이상이면 지정하지 않는다 - `designation`은 `null`이고(근거를 지어내지 않는다)
-    사유가 `policy_undecided`다. 「후보가 없다」(`no_poc`)와 다른 사건이다."""
+    """후보가 둘 이상인데 등급이 못 가르면 지정하지 않는다 - `designation`은 `null`이고(근거를
+    지어내지 않는다) 사유가 `grade_tie`다. 「후보가 없다」(`no_poc`)와 다른 사건이다."""
     ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
-    ledger.set_final(FinalAttempt(status="none", reason="policy_undecided"))
+    ledger.set_final(FinalAttempt(status="none", reason="grade_tie"))
 
     assert _read(tmp_path)["final"] == {
-        "status": "none", "designation": None, "wall_ms": None, "reason": "policy_undecided",
+        "status": "none", "designation": None, "wall_ms": None, "reason": "grade_tie",
     }  # fmt: skip
 
 
