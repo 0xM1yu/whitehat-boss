@@ -505,8 +505,11 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
-        # 음성 통제 — auditor/v4 meta는 「배선됨」이다. 고르면 안 걸려야 한다.
-        ("auditor", "qwen3.8-27b", "v4", []),
+        # 실물 형제 문형 — prompts/auditor/v4/meta.yaml. v6 배선(2026-10-03)으로 v4가 미선택이
+        # 되면서 v3와 같은 ⏵ 노트를 달았다. 그 전에는 이 행이 음성 통제였다.
+        ("auditor", "qwen3.8-27b", "v4", ["auditor/v4"]),
+        # 음성 통제 — auditor/v6 meta는 「정본」이다. 고르면 안 걸려야 한다.
+        ("auditor", "qwen3.8-27b", "v6", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -538,8 +541,10 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("critic", "v3", {"아직 미활성"}),
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — 정본 Auditor가 고르는 판이다(「배선됨」).
-        ("auditor", "v4", set()),
+        # prompts/auditor/v4/meta.yaml — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓴다.
+        ("auditor", "v4", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — 정본 Auditor가 고르는 판이다(「정본」).
+        ("auditor", "v6", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
