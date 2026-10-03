@@ -3,9 +3,10 @@
 from slicer_checkpoint import canonical, digest
 from slicer_source import relative_file
 
-# --case-order: the case is the first sort key, so this decides whether every Case A is sliced
-# before every Case B (`ab`, the default) or the reverse. ids are numbered after the sort, so
-# `ba` gives Case B the low numbers.
+# --case-order: the case is the first sort key, so this decides whether Case A is sliced before
+# Case B (`ab`, the default) or the reverse. prioritize() (--priority-files) partitions this list
+# stably afterwards, so with it the order holds only within each tier. ids are numbered after
+# the sort, so `ba` gives Case B the low numbers.
 CASE_RANK = {"ab": {"A": 0, "B": 1}, "ba": {"B": 0, "A": 1}}
 
 
