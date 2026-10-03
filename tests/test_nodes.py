@@ -1881,13 +1881,26 @@ def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> Non
 
 
 def test_render_says_nothing_about_pov_when_pov_did_not_run(ctx: RunContext) -> None:
-    """pov가 안 돈 run(좌석 없는 프로필)에는 그 줄이 없다 — 0건일 때 줄이 나오면 장식이다
-    (`ne_absorbed`·`deferred`가 비면 줄을 안 내는 것과 같은 자리)."""
+    """PoV가 시도되지 않은 run(`pov_results`가 빔)에는 그 줄이 없다 — 0건일 때 줄이 나오면 장식이다
+    (`ne_absorbed`·`deferred`가 비면 줄을 안 내는 것과 같은 자리). 빈 맵은 8단계 앞에서 멈췄거나,
+    8단계에 든 VALIDATED가 0건이거나, 프로필에 pov 좌석이 없다는 뜻이다."""
     finding = _finding("find_0001", state=FindingState.VALIDATED)
 
     rendered = report.run(ctx, findings=[finding]).render()  # pov_results 안 넘김
 
     assert "PoV 정지 사유" not in rendered
+
+
+def test_render_lists_a_single_pov_attempt(ctx: RunContext) -> None:
+    """시도가 **한 건**인 run도 PoV 줄이 난다 — 줄이 나는 조건은 「시도가 있다」(`pov_results`가
+    비지 않았다)이지 「둘 이상」이 아니다. 위 검사와 e2e 검사는 전부 시도가 둘 이상인 run이라
+    이 경계를 안 건드렸고, 발화 조건을 `len(self.pov_results) > 1`로 바꾸는 변이가 한 건짜리
+    run의 줄을 조용히 지웠다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    rendered = report.run(ctx, findings=[finding], pov_results={"find_0001": "max_hop"}).render()
+
+    assert "PoV 정지 사유 (시도 1건): max_hop 1건" in rendered
 
 
 # --- 프롬프트 계약 ----------------------------------------------------------

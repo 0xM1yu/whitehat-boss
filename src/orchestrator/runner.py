@@ -726,9 +726,11 @@ class _Accumulator:
     # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
     # 어휘는 **10사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 **넷**.
     #   `_POV_CAPSULE_MISSING`      캡슐 미스 — 루프에 못 들어가 enum 값을 못 받는다
-    #   `_POV_SUBMITTED_WITHOUT_POC` submit했는데 바이트가 없다(gen 없는 submit · 빈 바이트열)
-    #   `_POV_SUBMITTED_UNPERSISTED` submit했고 바이트도 있는데 사이드카 쓰기가 실패했다
+    #   `_POV_SUBMITTED_WITHOUT_POC` submit했는데 PoC가 `None`이다(gen 없는 submit)
+    #   `_POV_SUBMITTED_UNPERSISTED` submit했고 PoC도 있는데 사이드카 쓰기가 실패했다
     #   `_POV_ABORTED`               흡수되지 않은 예외로 루프가 끊겼다(`_run_pov`의 `finally`)
+    # ⚠ **`b""`(0바이트)는 PoC 「있음」이다** — `submitted_without_poc`가 아니라 사이드카가
+    # 써졌으면 `submitted`이고 안 써졌으면 `submitted_unpersisted`다(`_pov_result`).
     # 🔴 `submitted*` 둘은 **`submitted`를 쪼갠 것**이다 — 안 쪼개면 그 둘이 「최종 PoC 있음」으로
     # 섞여 장부가 거짓이 된다. 넷 다 실제로 그렇게 샜고 적대적 리뷰가 각각 재현했다.
     #
@@ -1439,37 +1441,43 @@ class _Once:
 # 정지 사유이고 이것은 그 앞에서 갈리기 때문이다. 한 이름으로 두는 것은 `POV_SKIPPED` 이벤트의
 # `reason`과 `_Accumulator.pov_results`의 값이 **같은 철자**라야 사유별 집계를 trace와 대조할
 # 수 있어서다 — 리터럴을 두 자리에 적으면 한쪽만 고치는 변이를 막는 것이 사람뿐이다.
-# 🔴 **그 대조가 아래 둘에는 성립하지 않는다.** `submitted_without_poc`·`submitted_unpersisted`는
-# trace에 없는 철자다 — `_pov_finish`가 그 갈래에도 `reason=submitted`를 낸다. 즉 계수기 어휘
-# **열 중 일곱만** trace와 철자가 같다(enum 여섯 + `capsule_missing`. 나머지 셋 —
-# `submitted_without_poc`·`submitted_unpersisted`·`aborted` — 은 trace에 그 철자로 안 나간다).
-# 경고문이 그 사실을 적어 두는 이유가 이것이고,
-# 철자 자체는 `test_the_counter_vocabulary_spellings_are_pinned`가 리터럴로 묶는다.
+# 🔴 **그 대조가 아래 셋에는 성립하지 않는다.** `submitted_without_poc`·`submitted_unpersisted`는
+# trace에 없는 철자다 — `_pov_finish`가 그 갈래에도 `reason=submitted`를 낸다. `aborted`는 trace에
+# 이벤트를 아예 안 낸다(`_run_pov`의 `finally`가 계수기에만 적는다). 즉 계수기 어휘 **열 중
+# 일곱만** trace와 철자가 같다(enum 여섯 + `capsule_missing`). 경고문이 그 사실을 적어 두는 이유가
+# 이것이고, 철자 자체는 `test_the_counter_vocabulary_spellings_are_pinned`가 리터럴로 묶는다.
 _POV_CAPSULE_MISSING = "capsule_missing"
 
-# 루프가 `SUBMITTED`로 끝났는데 **최종 PoC가 없는** 갈래. 모델이 gen 없이 hop0에서 바로
-# submit하면 이렇게 된다 — `_pov_finish`는 그때 `POV_GENERATED`가 아니라 `POV_SKIPPED`를 낸다.
+# 루프가 `SUBMITTED`로 끝났는데 **조립된 PoC가 없는**(`poc is None`) 갈래. 모델이 gen을 한 번도
+# 안 하고 submit하면(hop0에서 바로든 inspect만 하다가든) 이렇게 된다 — `_pov_finish`는 그때
+# `POV_GENERATED`가 아니라 `POV_SKIPPED`(`reason=submitted`)를 낸다.
 # 🔴 사유를 갈라 두는 이유: 안 가르면 `submitted`가 **PoC 있는 것과 없는 것을 같이 덮어서**
 # 계수기만 보고 「최종 PoC 0건」을 말할 수 없다. 그 run은 PoC가 0건인데 경고가 안 났다(미탐).
-# 가른 뒤로 `submitted`는 `POV_GENERATED` 이벤트와 **1:1**이다.
+# `POV_GENERATED`가 **난** submit은 `submitted`(사이드카가 써졌거나 쓰는 배선이 아니다)와
+# `submitted_unpersisted`(쓰기가 실패했다)로 갈리고, **안 난** submit이 이 갈래다.
 _POV_SUBMITTED_WITHOUT_POC = "submitted_without_poc"
 
 
-# 루프가 `SUBMITTED`로 끝나고 PoC도 있었는데 **사이드카로 남지 못한** 갈래. `_pov_finish`가
-# `ctx.pocs.write`의 `OSError`를 삼켜 이벤트에 `poc_write_error`만 싣고 `ref`를 `None`으로 낸다
-# (디스크 꽉 찼을 때·읽기 전용 run 디렉터리·Windows 260자 초과). 🔴 그때 바이트는 메모리에만
-# 있다가 사라지고 trace에는 sha256만 남는다 — **회수 불가다.**
+# 루프가 `SUBMITTED`로 끝나고 PoC도 있었는데 **사이드카로 남지 못한** 갈래 — 0바이트 PoC(`b""`)도
+# 쓰기가 실패하면 여기다. `_pov_finish`가 `ctx.pocs.write`의 `OSError`를 삼켜 이벤트에
+# `poc_write_error`만 싣고 `ref`를 `None`으로 낸다(디스크 꽉 찼을 때·읽기 전용 run 디렉터리·
+# Windows 260자 초과). 🔴 그때 바이트는 메모리에만 있다가 사라지고 trace에는 sha256만 남는다 —
+# **회수 불가다.**
 # 🔴 이것을 `submitted`로 세면 장부가 「최종 PoC 있음」이라 적는데 **파일이 없다.** 적대적 리뷰가
 # `pov_poc`를 일반 파일로 막아 재현했다(`pov_generated` 2건 전부 `poc_write_error`인데 리포트는
 # `submitted 2건`, 경고 0건). 사유로 가르는 이유가 그것이다.
 _POV_SUBMITTED_UNPERSISTED = "submitted_unpersisted"
 
 # 루프가 **흡수되지 않은 예외로 끊긴** 갈래. `_run_pov`의 `finally`가 아무도 사유를 안 적었을
-# 때만 넣는다. 🔴 이것이 없으면 그 finding이 계수기에서 **사라져**, 「좌석이 없어 안 돌았다」와
-# 「돌다가 터졌다」가 둘 다 빈 맵으로 보인다 — 적대적 리뷰가 설정 오타(`PromptError`)와 잠긴
-# `state.db`(`sqlite3.OperationalError`)로 재현했다. run은 거기서 멈추므로 이 사유가 든 run은
-# 보통 완주하지 않는다. 그래도 적는 이유는 S0 방어선이 매니페스트를 남길 때 **pov 쪽 사실도
-# 같이 남게** 하려는 것이다.
+# 때만 넣는다(`setdefault`). 이것이 없으면 그 finding이 계수기에서 **사라져** 「출구마다 항목이
+# 정확히 하나」가 깨진다 — 적대적 리뷰가 설정 오타(`PromptError`)와 잠긴 `state.db`
+# (`sqlite3.OperationalError`)로 재현했다.
+# ⚠ **이 항목이 어디까지 닿는지는 예외 형이 정한다.** `run_pipeline`이 받는 형(`BudgetExhausted`·
+# `ModelSwapError`·`ModelGatewayError`·`SchemaParseError`)이면 run이 거기서 끝나도 경고와 보고서가
+# 이 항목을 싣는다. 그 밖의 형은 경고·보고서를 짓기 **전에** run을 떠난다 — `Exception`이면 S0
+# 방어선이 매니페스트만 쓰고 다시 던지고(`finish_run`·`write_manifest`는 PoV 값을 안 받는다),
+# 아니면(`KeyboardInterrupt` 등) 그것도 없다. 어느 쪽이든 `aborted`는 `state.pov_results`에만
+# 남고 다른 어디에도 안 닿는다.
 _POV_ABORTED = "aborted"
 
 
@@ -1513,10 +1521,11 @@ def _pov_finish_and_record(
     """루프 종단 + 계수기 기록. 반환은 `_run_pov_hops`가 쥔 **2-튜플 그대로**다.
 
     🔴 **기록이 여기 있는 이유**: 회수 가능성을 가르려면 `_pov_finish`의 3번째 반환값 `ref`가
-    필요한데, `_run_pov_hops`가 네 출구에서 `[:2]`로 그것을 **떼어 버린다**. 두 함수의 반환형은
-    테스트가 쥐고 있어 못 바꾼다(`_run_pov_hops` 2-튜플 · `_pov_finish` 4-튜플). 그래서 떼기
-    직전에 여기서 적는다 — `_run_pov`가 호출 **뒤에** 적던 판은 `ref`를 볼 수 없어
-    **쓰기 실패를 「최종 PoC 있음」으로 셌다**(적대적 리뷰 P1-A, 재현됨).
+    필요한데, `_run_pov_hops`의 반환은 2-튜플이라 `ref`를 `_run_pov`까지 못 올린다. 두 함수의
+    반환형은 테스트가 쥐고 있어 못 넓힌다(`_run_pov_hops` 2-튜플 · `_pov_finish` 4-튜플 —
+    `test_the_pov_loop_return_shapes_and_signatures_stay_put`). 그래서 `ref`가 아직 손에 있는 이
+    자리에서 적는다 — `_run_pov_hops`의 네 출구(흡수된 예외·submit·반복·`max_hop`)가 `_pov_finish`를
+    직접 부르지 않고 이 함수를 부른다.
     """
     poc_out, reason_out, ref, _digest = _pov_finish(ctx, finding, reason, poc)
     state.pov_results[finding.finding_id] = _pov_result(
@@ -1532,27 +1541,31 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     그러면 이 경고가 막으려는 것의 절반만 성립한다.
 
     **말하는 명제는 「`run_dir`에서 꺼낼 수 있는 최종 PoC가 0건」이다.** `submitted`로 세는
-    조건이 셋 다 참일 때뿐이라 그렇다 — `SUBMITTED`로 끝났고, 바이트가 비지 않았고,
-    사이드카가 실제로 **써졌다**(`_pov_result`). 어긋나는 셋은 각자 사유를 받는다:
-    `submitted_without_poc`(gen 없이 submit) · `submitted_unpersisted`(쓰기 실패) ·
-    나머지는 정지 사유 그대로.
+    조건이 셋 다 참일 때뿐이라 그렇다 — `SUBMITTED`로 끝났고, 조립된 PoC가 있고(`poc is not None`.
+    빈 바이트열도 있음이다), 사이드카가 실제로 **써졌다**(사이드카를 안 쓰는 배선의 run은 이
+    조건을 안 본다 — `_pov_result`의 `persisting`). 어긋난 조건은 각자 사유를 받는다:
+    `SUBMITTED`가 아니면 정지 사유 그대로 · PoC가 없으면 `submitted_without_poc`(gen 없이
+    submit) · 쓰기가 실패했으면 `submitted_unpersisted`.
 
     ⚠ **전에 두 번 과장했다.** ① 사유만 세던 판은 gen 없는 submit을 `submitted`로 적어
     **미탐**이 났다. ② 그것을 닫은 판은 *"「최종 PoC 0건」을 정확히 말한다"*고 적었는데
     **쓰기 실패 갈래에서 거짓**이었다(적대적 리뷰가 `pov_poc`를 막아 재현했다). 둘 다 필드를
-    늘리지 않고 **사유 어휘로** 닫았다 — 「시도 수 == 사유별 합」이 그대로 구조적으로 참이다.
+    늘리지 않고 **사유 어휘로** 닫았다.
 
     ⚠ **여전히 말하지 않는 것 둘.**
-    ① 재-raise로 끝난 출구(서버 쪽 사건·`BudgetExhausted`)는 기록 줄에 못 닿아 계수기에 안
-    남는다 — 그 run은 거기서 멈추고 run 수준의 다른 경고가 그 사실을 든다.
+    ① 예외가 올라가도 `finally`가 사유를 **먼저** 넣는다 — 다만 그 기록이 보고서까지 가는지는
+    `run_pipeline`이 그 형을 받는지에 달렸다. `BudgetExhausted`·`ModelSwapError`·
+    `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
+    그 밖의 형은 run과 함께 보고서도 잃는다.
     ② **PoC가 「터지는가」는 아무것도 안 말한다.** 여기서 센 것은 바이트의 존재와 회수
     가능성뿐이다. 그 판정은 오라클이 낸다(범위 밖).
     """
-    # ⚠ 빈 맵은 「8단계에 안 닿았다」다 — 좌석 없는 프로필이 아니다. 커밋된 프로필 일곱이
-    # 전부 pov 좌석을 든다(적대적 리뷰 P1-B가 `load_config`로 셌다). 지금 빈 맵이 뜻하는 것은
-    # 「8단계 앞에서 멈췄다」와 「VALIDATED가 0건이라 `_run_pov`가 안 불렸다」 둘이고, 후자는
-    # 여기서 **구분되지 않는다**. 「좌석이 있는데 대상이 0건」을 따로 말하려면 필드가 하나 더
-    # 필요하다(범위 밖 — 이 경고의 명제는 「PoV를 시도한 run」에 한정이다).
+    # 빈 맵은 「`_run_pov`가 한 번도 사유를 못 적었다」다. 이유는 셋이고 이 맵만으로는 못 가른다:
+    # ① 8단계 앞에서 멈췄다 ② 8단계에 든 VALIDATED가 0건이라 `_run_pov`가 안 불렸다 ③ 프로필에 pov
+    # 좌석이 없다(`REQUIRED_ROLES`에 pov가 없어 스키마상 합법이다. 다만 지금 커밋된 프로필은 전부
+    # 좌석을 든다 — 2026-10-03 `config/profiles.yaml`을 `load_config`로 확인했다). 「좌석이 있는데
+    # 대상이 0건」을 따로 말하려면 필드가 하나 더 필요하다(범위 밖 — 이 경고의 명제는 「PoV를
+    # 시도한 run」에 한정이다).
     if not results:
         return None
     stops = Counter(results.values())
@@ -1560,8 +1573,9 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
         parts = " · ".join(f"{reason} {count}건" for reason, count in sorted(stops.items()))
         return (
             f"PoV 시도 {len(results)}건에서 회수 가능한 최종 PoC가 0건이다: {parts}. "
-            f"홉은 trace의 pov_hop·pov_skipped에 있다(⚠ trace의 `reason`은 "
-            f"`submitted`까지만 갈라 이 어휘와 철자가 다르다)"
+            f"해당 finding의 홉·종단은 trace의 pov_hop·pov_generated·pov_skipped에서 찾는다"
+            f"(aborted는 종단 이벤트가 없고, trace의 reason은 submitted까지만 갈라 "
+            f"이 어휘와 철자가 다르다)"
         )
     return None
 
@@ -1582,8 +1596,10 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
     캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
     추가형이라 상태를 안 바꾸므로 Finding이 멀쩡히 찍힌 채 산출만 조용히 0이 됐다.
-    ⚠ 예외가 올라가는 경로(서버 쪽 사건·`BudgetExhausted`)는 사유를 안 남긴다 — run이 거기서
-    멈추고 그 사실은 run 수준 경고가 든다(`run_pipeline`).
+    ⚠ 예외가 올라가도 `finally`가 사유를 **먼저** 넣는다 — 다만 그 기록이 보고서까지 가는지는
+    `run_pipeline`이 그 형을 받는지에 달렸다. `BudgetExhausted`·`ModelSwapError`·
+    `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
+    그 밖의 형은 run과 함께 보고서도 잃는다.
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1637,8 +1653,9 @@ def _run_pov_hops(
     `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
-    그대로다 — 아래 `[:2]`가 그것을 뗀다. 다음 슬라이스가 반환을 넓힐 때 디렉터리를 글로브하지
-    않고 그대로 올릴 수 있다.
+    그대로다 — 네 출구는 `_pov_finish_and_record`를 불러 `ref`를 계수기 사유에 쓰고 2-튜플만
+    돌려받는다(`digest`는 그 함수가 버린다). 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를
+    그대로 올리면 되고 디렉터리를 글로브할 필요가 없다.
     """
     max_hops = ctx.config.thresholds.max_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
