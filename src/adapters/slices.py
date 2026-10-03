@@ -74,8 +74,9 @@ def split_source(raw: bytes) -> list[str]:
 
 @dataclass(frozen=True)
 class Slice:
-    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·경계만 싣고
-    줄 목록·카운터 같은 나머지 세부는 버린다."""
+    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·싱크 cap·경계만
+    싣고 줄 목록·카운터 같은 나머지 세부는 버린다. `candidate_manifest`의 `sink_arguments`(후보마다
+    싱크 호출의 인자)는 아직 안 싣는다 — 미뤘다(#438)."""
 
     id: str
     candidate_key: str
@@ -99,6 +100,7 @@ class Slice:
     analysis_kind: str = ""
     truncated: bool = False
     truncation_reasons: tuple[str, ...] = ()
+    sinks_capped: bool = False
     boundaries: tuple[tuple[str, str, int], ...] = ()
 
     @property
@@ -217,24 +219,30 @@ def _object(raw: object, name: str) -> dict:
     return raw
 
 
-def _analysis_facts(item: dict) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...]]:
-    """`analysis`의 절단 사유(`truncation_reasons`)와 역추적이 멈춘 자리(`boundaries`).
+def _analysis_facts(
+    item: dict,
+) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...], bool]:
+    """`analysis`의 절단 사유(`truncation_reasons`) · 역추적이 멈춘 자리(`boundaries`) · flows의
+    싱크 cap(`sinks_capped`).
 
     클러스터링이 합친 슬라이스의 `analysis`는 **대표 후보의 것**이고 구성원별 분석은
     `member_analysis`에 있다(대표 자신도 든다 — `slicer_source.cluster`). 최상위 `truncated`가
-    구성원의 OR이라 사유·경계도 구성원 전부에서 모은다. 키가 없으면(옛 슬라이스 · 사유 목록을
-    안 내는 Case A) 빈 튜플이다. 사유는 정렬하고 경계는 처음 나온 순서로 중복을 뺀다.
+    구성원의 OR이라 셋 다 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 · 사유·경계를
+    안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는 처음 나온
+    순서로 중복을 뺀다.
     """
     members = _object(item.get("member_analysis"), "member_analysis")
     reasons: dict[str, None] = {}
     boundaries: dict[tuple[str, str, int], None] = {}
+    sinks_capped = False
     for raw in list(members.values()) or [item.get("analysis")]:
         analysis = _object(raw, "analysis")
         reasons.update(dict.fromkeys(str(r) for r in analysis.get("truncation_reasons") or ()))
+        sinks_capped = sinks_capped or bool(analysis.get("sinks_capped", False))
         for boundary in analysis.get("boundaries") or ():
             where = boundary["location"]
             boundaries[(str(boundary["reason"]), str(where["file"]), int(where["line"]))] = None
-    return tuple(sorted(reasons)), tuple(boundaries)
+    return tuple(sorted(reasons)), tuple(boundaries), sinks_capped
 
 
 def _slice(item: dict) -> Slice:
@@ -246,7 +254,7 @@ def _slice(item: dict) -> Slice:
     code = item["code"]
     if not isinstance(code, str):
         raise TypeError("code")
-    truncation_reasons, boundaries = _analysis_facts(item)
+    truncation_reasons, boundaries, sinks_capped = _analysis_facts(item)
     return Slice(
         id=str(item["id"]),
         candidate_key=str(item["candidate_key"]),
@@ -260,6 +268,7 @@ def _slice(item: dict) -> Slice:
         analysis_kind=str(item.get("analysis_kind") or ""),
         truncated=bool(item.get("truncated", False)),
         truncation_reasons=truncation_reasons,
+        sinks_capped=sinks_capped,
         boundaries=boundaries,
     )
 
@@ -299,6 +308,7 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 analysis_kind=item.analysis_kind,
                 truncated=item.truncated,
                 truncation_reasons=item.truncation_reasons,
+                sinks_capped=item.sinks_capped,
                 boundaries=item.boundaries,
             )
         )

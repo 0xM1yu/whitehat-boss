@@ -249,9 +249,10 @@ class EventKind(StrEnum):
     # (`retrieval_truncated`가 막는 것과 같은 오독이다).
     #
     # `auditor_source_gate`가 1이면 `gate_reasons`(`source_gate.reasons` — 사유 코드를 쉼표로 이은
-    # 문자열: 슬라이서가 낸 절단·경계, 앵커가 창인가, `definitions_dropped`·`callees_dropped`에서
-    # 낸다)가 더 실린다. **빈 문자열은 「알려진 사유 없음」이고 필드가 없는 것은 「게이트
-    # 꺼짐」이다.** 관측 전용이라 Auditor 입력은 안 바뀐다.
+    # 문자열: 슬라이서가 낸 절단·경계·싱크 cap, 앵커가 창인가, `uncovered_lines`·`dropped`·
+    # `callees_dropped`·`definitions_dropped`에서 낸다)가 더 실린다. **빈 문자열은 「나열한 검사가
+    # 하나도 안 걸렸다」이고 필드가 없는 것은 「게이트 꺼짐」이다** — 「SOURCE가 완전하다」는 뜻이
+    # 아니다(정의·피호출을 안 켠 run은 그 검사가 안 돈다). 관측 전용이라 Auditor 입력은 안 바뀐다.
     #
     # **슬라이스 없는 run은 0건이다** — 그 run의 Auditor는 캡슐 대상 하나를 그대로 읽는다.
     AUDITOR_SOURCE = "auditor_source"

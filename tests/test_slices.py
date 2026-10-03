@@ -206,8 +206,8 @@ def test_a_degraded_slice_carries_its_marker_to_the_sliceref_boundary(tmp_path: 
 
 def _backward(**extra) -> dict:
     """Case B `backward_ddg`의 `analysis` — 슬라이서(`slicer_backward.py`)가 쓰는 키 그대로다.
-    `boundaries[]`는 `{reason, location: {file, line}}`이고 `file`은 Joern 원경로라 `lines`·
-    `entry`와 달리 저장소 상대로 정리돼 있지 않다."""
+    `boundaries[]`는 `{reason, location: {file, line}}`이고 `file`은 저장소 상대 경로지만 Joern이
+    보고한 그대로라 `lines`·`entry`와 달리 정리되지 않는다(아래 `_ENTRY_PARAMETER`)."""
     return {
         "flow_count": None,
         "truncated": False,
@@ -221,13 +221,17 @@ def _backward(**extra) -> dict:
     }
 
 
-_ENTRY_PARAMETER = {"reason": "entry_parameter", "location": {"file": "inc/x.h", "line": 540}}
+# 실제 슬라이서 산출(`slices.json`)의 `entry_parameter` 경계에서 옮긴 이름 — 저장소 상대 경로인데
+# Joern이 인클루드 디렉터리를 겹쳐 붙여 보고한 꼴이다.
+_AVIO = "libavdevice/libavformat/libavformat/avio.h"
+_ENTRY_PARAMETER = {"reason": "entry_parameter", "location": {"file": _AVIO, "line": 540}}
 _DEPENDENCY_ROOT = {"reason": "dependency_root", "location": {"file": "main.c", "line": 5}}
 
 
 def test_the_cut_and_the_boundaries_the_slicer_wrote_survive_load(tmp_path: Path) -> None:
     """슬라이서가 `truncated`·`analysis_kind`·`analysis.truncation_reasons`·`analysis.boundaries`를
-    내는데 로더가 버렸다 — 하류가 「이 슬라이스는 잘렸다·위로 호출자를 못 찾았다」를 못 알았다.
+    내는데 로더가 버렸다 — 하류가 「이 슬라이스는 잘렸다·역추적이 호출 간선 없는 파라미터에
+    닿았다」를 못 알았다.
     사유는 정렬된 채(슬라이서도 정렬해 낸다), 경계는 낸 순서 그대로 (reason, file, line)이다."""
     item = _slice(
         "slice_0001", "B", {("main.c", 5)}, _SOURCES, truncated=True, analysis_kind="backward_ddg",
@@ -243,7 +247,7 @@ def test_the_cut_and_the_boundaries_the_slicer_wrote_survive_load(tmp_path: Path
     assert loaded.truncated is True
     assert loaded.truncation_reasons == ("backward_depth", "backward_states", "call_depth")
     assert loaded.boundaries == (
-        ("entry_parameter", "inc/x.h", 540),
+        ("entry_parameter", _AVIO, 540),
         ("dependency_root", "main.c", 5),
     )
 
@@ -260,17 +264,18 @@ def test_a_slice_without_the_analysis_facts_loads_with_defaults(tmp_path: Path) 
         assert loaded.truncated is False
         assert loaded.truncation_reasons == ()
         assert loaded.boundaries == ()
+        assert loaded.sinks_capped is False
 
 
 def test_a_cut_case_a_slice_keeps_the_flag_though_it_has_no_reason_list(tmp_path: Path) -> None:
     """Case A(`parameter_paths`)의 `analysis`에는 `truncation_reasons`가 없다 — 슬라이서의 flows
     질의가 그 키를 안 낸다(`slicer_queries.flows_query`: `flow_count`·`truncated`·`sinks_capped`·
     `sinks_kept`·`lines`). 절단 Case A는 사유 없이 `truncated=True`이고 사유를 지어 채우지
-    않는다."""
+    않는다 — 싱크 cap(`sinks_capped`)은 사유가 아니라 따로 싣는다."""
     item = _slice(
         "slice_0001", "A", {("main.c", 1)}, _SOURCES, truncated=True,
         analysis_kind="parameter_paths",
-        analysis={"flow_count": 10, "truncated": True, "sinks_capped": False, "sinks_kept": 4,
+        analysis={"flow_count": 10, "truncated": True, "sinks_capped": True, "sinks_kept": 2063,
                   "lines": [{"file": "main.c", "line": 1}]},
     )
 
@@ -278,6 +283,7 @@ def test_a_cut_case_a_slice_keeps_the_flag_though_it_has_no_reason_list(tmp_path
 
     assert (loaded.analysis_kind, loaded.truncated) == ("parameter_paths", True)
     assert loaded.truncation_reasons == () and loaded.boundaries == ()
+    assert loaded.sinks_capped is True
 
 
 def test_a_merged_slice_carries_the_analysis_of_every_member(tmp_path: Path) -> None:
@@ -314,8 +320,41 @@ def test_a_merged_slice_carries_the_analysis_of_every_member(tmp_path: Path) -> 
     assert loaded.truncation_reasons == ("backward_depth", "backward_states", "call_depth")
     assert loaded.boundaries == (
         ("dependency_root", "main.c", 5),
-        ("entry_parameter", "inc/x.h", 540),
+        ("entry_parameter", _AVIO, 540),
     )
+
+
+@pytest.mark.parametrize(
+    ("representative_capped", "absorbed_capped", "expected"),
+    [(False, True, True), (True, False, True), (False, False, False)],
+)
+def test_a_merged_case_a_slice_keeps_the_sink_cap_of_any_member(
+    tmp_path: Path, representative_capped: bool, absorbed_capped: bool, expected: bool
+) -> None:
+    """flows의 싱크 cap(`analysis.sinks_capped`)도 합친 슬라이스에서는 구성원 전부에서 OR로 모은다 —
+    다른 필드(`truncated`·사유·경계)와 같은 길이고, 대표 것만 읽으면 흡수된 구성원이 낸 cap이
+    빠지고 마지막 구성원 것만 읽으면 대표가 낸 cap이 빠진다(두 순서를 다 본다). 합친 항목은
+    슬라이서의 `cluster`가 만든다."""
+    def member(sid: str, points: set, capped: bool) -> dict:
+        return _slice(
+            sid, "A", points, _SOURCES, flow_count=1, truncated=False,
+            analysis_kind="parameter_paths",
+            analysis={"flow_count": 1, "truncated": False, "sinks_capped": capped,
+                      "sinks_kept": 2063, "lines": []},
+            line_provenance={"data_dependency": [], "context": [],
+                             "candidate_anchor": [list(p) for p in sorted(points)]},
+        )
+
+    representative = member(
+        "slice_0001", {("main.c", n) for n in range(1, 8)}, capped=representative_capped
+    )
+    absorbed = member("slice_0002", {("main.c", 5), ("main.c", 6)}, capped=absorbed_capped)
+    (merged,) = cluster([representative, absorbed], 0.95, _SOURCES)
+    assert merged["analysis"]["sinks_capped"] is representative_capped  # 대표 자신의 분석뿐이다
+
+    (loaded,) = load_slices(_write(tmp_path, _document([merged]))).slices
+
+    assert loaded.sinks_capped is expected
 
 
 def test_the_analysis_facts_reach_the_sliceref_boundary(tmp_path: Path) -> None:
@@ -328,15 +367,21 @@ def test_the_analysis_facts_reach_the_sliceref_boundary(tmp_path: Path) -> None:
         ),
     )
     old = _slice("slice_0002", "A", {("main.c", 1)}, _SOURCES)
+    capped = _slice(
+        "slice_0003", "A", {("main.c", 1)}, _SOURCES, analysis_kind="parameter_paths",
+        analysis={"flow_count": 1, "truncated": False, "sinks_capped": True,
+                  "sinks_kept": 2063, "lines": []},
+    )
 
-    refs = slice_refs(load_slices(_write(tmp_path, _document([cut, old]))))
+    refs = slice_refs(load_slices(_write(tmp_path, _document([cut, old, capped]))))
 
     assert refs[0].analysis_kind == "backward_ddg"
     assert refs[0].truncated is True
     assert refs[0].truncation_reasons == ("call_depth",)
-    assert refs[0].boundaries == (("entry_parameter", "inc/x.h", 540),)
+    assert refs[0].boundaries == (("entry_parameter", _AVIO, 540),)
     assert (refs[1].analysis_kind, refs[1].truncated) == ("", False)
     assert refs[1].truncation_reasons == () and refs[1].boundaries == ()
+    assert [ref.sinks_capped for ref in refs] == [False, False, True]
 
 
 @pytest.mark.parametrize(

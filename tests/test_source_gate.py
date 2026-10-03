@@ -2,7 +2,7 @@
 
 세 층을 본다. ① 순수 함수(`orchestrator/source_gate.py`)가 사유마다 하나씩 ② 임계가 꺼져 있으면
 `auditor_source` 이벤트와 Auditor 입력이 **그대로**이고 켜면 `gate_reasons`가 붙는다(관측 전용 —
-입력은 안 바뀐다) ③ 슬라이서가 낸 절단·경계가 로더를 지나 이벤트까지 간다.
+입력은 안 바뀐다) ③ 슬라이서가 낸 절단·경계·싱크 cap이 로더를 지나 이벤트까지 간다.
 
 러너 배선의 세부(상한·정의·피호출)는 `tests/test_slice_targets.py`의 `_unit` 도우미로
 `_auditor_source`를 직접 부르고, 로더에서 이벤트까지의 길은 같은 파일의 e2e 도우미(`_run`·
@@ -21,6 +21,7 @@ from src.schemas.common import Location
 from tests.test_pipeline_e2e import _run, _with_index
 from tests.test_slice_targets import (
     _CASE_B,
+    _SPANS_TWO,
     _U_F,
     _U_FILE,
     _U_G,
@@ -33,7 +34,9 @@ from tests.test_slice_targets import (
 
 _FN = Location(file="a.c", symbol="f", line_start=1, line_end=20)  # 감싸는 함수를 찾은 앵커
 _WINDOW = Location(file="a.c", line_start=1, line_end=60)  # 못 찾아 세운 창 — 심볼이 없다
-_ENTRY_PARAMETER = ("entry_parameter", "x.h", 540)
+# 실제 슬라이서 산출(`slices.json`)의 `entry_parameter` 경계에서 옮긴 이름 — 저장소 상대 경로인데
+# Joern이 인클루드 디렉터리를 겹쳐 붙여 보고한 꼴이다.
+_ENTRY_PARAMETER = ("entry_parameter", "libavdevice/libavformat/libavformat/avio.h", 540)
 
 
 def _ref(given_end: str = "sink", **fields) -> SliceRef:
@@ -48,8 +51,8 @@ def _ref(given_end: str = "sink", **fields) -> SliceRef:
 
 
 def test_a_clean_full_slice_with_an_enclosing_function_has_no_reasons() -> None:
-    """빈 목록은 「알려진 결함 없음」이다 — 「완전하다」가 아니다(꺼 둔 정의·피호출 단계는 못
-    본다)."""
+    """빈 목록은 「나열한 검사가 하나도 안 걸렸다」이다 — 「SOURCE가 완전하다」가 아니다(꺼 둔
+    정의·피호출 단계는 검사 자체가 안 돈다)."""
     assert source_gate.reasons(_ref(), _FN) == []
 
 
@@ -72,26 +75,26 @@ def test_a_truncated_slice_without_a_reason_list_is_still_flagged() -> None:
     assert source_gate.reasons(_ref("source", truncated=True), _FN) == ["SLICE_TRUNCATED"]
 
 
-def test_a_backward_slice_that_reached_a_parameter_nobody_calls_reports_none_found() -> None:
-    """Case B 역추적의 한 갈래가 호출자 없는 함수의 파라미터(`entry_parameter`)에서 끝났다 —
-    그 위로 올라갈 호출자를 CPG에서 못 찾았다. 「검증이 없다」가 아니라 「찾은 호출자까지
-    봤다」이다."""
+def test_a_backward_slice_that_reached_a_parameter_without_a_call_edge_reports_it() -> None:
+    """Case B 역추적의 한 갈래가 CPG에 호출 간선(`callIn`)이 없는 함수의 파라미터
+    (`entry_parameter`)에 닿았다 — 호출자가 **없다**는 뜻이 아니라 CPG가 호출자를 **못 이었다**는
+    뜻이다(`slicer_backward.py`가 그 조건에서만 이 경계를 적는다). 「검증이 없다」도 아니다."""
     assert source_gate.reasons(_ref(boundaries=(_ENTRY_PARAMETER,)), _FN) == [
-        "NONE_FOUND_TO_DEPTH"
+        "NO_CALLER_IN_CPG"
     ]
 
 
-def test_the_other_boundary_kinds_do_not_claim_that_no_caller_was_found() -> None:
+def test_the_other_boundary_kinds_are_not_reported_as_a_missing_call_edge() -> None:
     """슬라이서가 내는 나머지 경계(`dependency_root`·`external_or_unresolved_call` —
-    `slicer_backward.py`)는 호출자 부재가 아니다."""
+    `slicer_backward.py`)는 호출 간선이 없다는 뜻이 아니다."""
     boundaries = (("dependency_root", "a.c", 5), ("external_or_unresolved_call", "a.c", 7))
 
     assert source_gate.reasons(_ref(boundaries=boundaries), _FN) == []
 
 
-def test_a_forward_slice_never_claims_none_found() -> None:
+def test_a_forward_slice_never_reports_a_missing_call_edge() -> None:
     """Case A(`source` 끝)는 호출자 쪽으로 안 올라가는 분석이다 — 슬라이서가 경계를 역추적에서만
-    적으므로 이 조합은 지금 안 나오지만, 나온다면 「호출자 없음」이 아니라 다른 뜻이라 안 쓴다."""
+    적으므로 이 조합은 지금 안 나오지만, 나온다면 호출 간선 부재가 아니라 다른 뜻이라 안 쓴다."""
     assert source_gate.reasons(_ref("source", boundaries=(_ENTRY_PARAMETER,)), _FN) == []
 
 
@@ -101,31 +104,51 @@ def test_an_anchor_without_a_symbol_is_a_window_fallback() -> None:
     assert source_gate.reasons(_ref(), _WINDOW) == ["WINDOW_FALLBACK"]
 
 
+def test_a_sink_set_the_flow_query_capped_is_flagged() -> None:
+    """Case A flows 질의가 전역 싱크 집합을 `FLOWS_SINK_CAP`에서 잘랐다(`analysis.sinks_capped` —
+    로더가 싣는다). `truncated`(경로 수 상한)와 별개라 절단이 아닌 슬라이스에도 선다."""
+    assert source_gate.reasons(_ref("source", sinks_capped=True), _FN) == ["FLOW_SINKS_CAPPED"]
+
+
 @pytest.mark.parametrize(
     ("counts", "expected"),
     [
-        ({"definitions_dropped": 2}, ["DEFINITION_DROPPED"]),
-        ({"callees_dropped": 1}, ["CALLEE_DROPPED"]),
+        pytest.param({"uncovered_lines": 3}, ["SLICE_LINES_UNCOVERED"], id="uncovered"),
+        pytest.param({"functions_dropped": 1}, ["SOURCE_DROPPED"], id="function"),
+        pytest.param({"callees_dropped": 1}, ["CALLEE_DROPPED"], id="callee"),
+        pytest.param({"definitions_dropped": 2}, ["DEFINITION_DROPPED"], id="definition"),
     ],
 )
-def test_dropped_definitions_and_callees_are_flagged(counts: dict, expected: list) -> None:
+def test_what_the_source_assembly_could_not_read_or_dropped_is_flagged(
+    counts: dict, expected: list
+) -> None:
+    """`_auditor_source`가 세는 넷 — 인덱스 함수에 안 든 슬라이스 줄(`uncovered_lines`) · 총 상한에
+    걸려 빠진 함수(`dropped`) · 피호출(`callees_dropped`) · 정의(`definitions_dropped`). 0이면
+    사유가 없다(위 빈 목록 검사가 기본값 0으로 그것을 본다)."""
     assert source_gate.reasons(_ref(), _FN, **counts) == expected
 
 
 def test_the_reasons_come_in_one_stable_order() -> None:
-    """슬라이스(절단·대체) → 대상 → 피호출 → 호출자 부재 → 정의 순이다 — 같은 입력이면 같은
-    문자열이라 run끼리 이벤트를 대조할 수 있다."""
+    """슬라이스(대체·절단·싱크 cap) → 대상(창) → `SOURCE` 조립(못 읽은 줄·빠진 함수·피호출) → CPG에
+    호출 간선 없음 → 정의 순이다 — 같은 입력이면 같은 문자열이라 run끼리 이벤트를 대조할 수
+    있다."""
     ref = _ref(
         degraded=True, truncated=True, truncation_reasons=("backward_depth",),
-        boundaries=(_ENTRY_PARAMETER,),
+        sinks_capped=True, boundaries=(_ENTRY_PARAMETER,),
     )
 
-    assert source_gate.reasons(ref, _WINDOW, definitions_dropped=1, callees_dropped=1) == [
+    assert source_gate.reasons(
+        ref, _WINDOW, uncovered_lines=1, functions_dropped=1, callees_dropped=1,
+        definitions_dropped=1,
+    ) == [
         "SLICE_DEGRADED",
         "SLICE_TRUNCATED:backward_depth",
+        "FLOW_SINKS_CAPPED",
         "WINDOW_FALLBACK",
+        "SLICE_LINES_UNCOVERED",
+        "SOURCE_DROPPED",
         "CALLEE_DROPPED",
-        "NONE_FOUND_TO_DEPTH",
+        "NO_CALLER_IN_CPG",
         "DEFINITION_DROPPED",
     ]
 
@@ -187,13 +210,13 @@ def test_with_the_gate_on_the_event_carries_the_reasons_joined_by_commas() -> No
     event = _gate_event(1, ref_fields=_CUT)
 
     assert event["gate_reasons"] == (
-        "SLICE_DEGRADED,SLICE_TRUNCATED:backward_depth,NONE_FOUND_TO_DEPTH"
+        "SLICE_DEGRADED,SLICE_TRUNCATED:backward_depth,NO_CALLER_IN_CPG"
     )
 
 
 def test_with_the_gate_on_a_clean_slice_says_so_with_an_empty_string() -> None:
-    """켠 run에서 빈 문자열은 「알려진 사유 없음」이고 필드가 **없는** 것은 「게이트 꺼짐」이다 —
-    둘이 같은 신호면 꺼진 run과 깨끗한 run을 못 가른다."""
+    """켠 run에서 빈 문자열은 「나열한 검사가 하나도 안 걸렸다」이고 필드가 **없는** 것은 「게이트
+    꺼짐」이다 — 둘이 같은 신호면 꺼진 run과 걸린 게 없는 run을 못 가른다."""
     assert _gate_event(1)["gate_reasons"] == ""
 
 
@@ -201,6 +224,31 @@ def test_with_the_gate_on_a_window_anchor_is_reported() -> None:
     window = Location(file="u.c", line_start=1, line_end=3)
 
     assert _gate_event(1, anchor=window)["gate_reasons"] == "WINDOW_FALLBACK"
+
+
+@pytest.mark.parametrize(
+    ("lines", "opts", "counter", "expected"),
+    [
+        pytest.param(
+            (("u.c", 2), ("u.c", 15)), {}, "uncovered_lines", "SLICE_LINES_UNCOVERED",
+            id="uncovered",
+        ),
+        pytest.param(
+            (("u.c", 2), ("u.c", 25)), {"auditor_source_tokens": 20}, "dropped",
+            "SOURCE_DROPPED", id="function",
+        ),
+    ],
+)
+def test_with_the_gate_on_unread_lines_and_a_cap_dropped_function_are_reported(
+    lines: tuple, opts: dict, counter: str, expected: str
+) -> None:
+    """15번 줄은 어느 인덱스 함수(`f` 1–3 · `g` 20–29)에도 안 들어 못 읽는다. `g`(10줄 = 20단어 +
+    배너)는 토큰 상한 20에 안 들어 빠진다 — 이벤트가 숫자로만 남기던 `uncovered_lines`·`dropped`가
+    1이 되는 그 경우를 게이트가 사유로 올린다."""
+    event = _gate_event(1, lines=lines, **opts)
+
+    assert event[counter] == 1
+    assert event["gate_reasons"] == expected
 
 
 @pytest.mark.parametrize(
@@ -240,8 +288,9 @@ def _gate(value: int):  # noqa: ANN202
 
 
 def _cut_case_b(*, with_facts: bool = True) -> dict:
-    """슬라이서가 쓰는 모양 그대로 절단·경계를 얹은 Case B 픽스처 — 경계의 `file`은 Joern 원경로다
-    (`_slices_file`의 `scopes[].file`과 같은 `/repo/…` 꼴)."""
+    """슬라이서가 쓰는 모양 그대로 절단·경계를 얹은 Case B 픽스처 — 경계의 `file`은 저장소 상대
+    경로다(`lines`·`entry`처럼 정리된 것은 아니고 Joern이 보고한 그대로 — 실제 산출에서 본
+    꼴)."""
     item = _slice(*_CASE_B)
     if with_facts:
         item.update(
@@ -251,7 +300,7 @@ def _cut_case_b(*, with_facts: bool = True) -> dict:
                 "state_count": 2, "dependency_count": 1,
                 "boundaries": [{
                     "reason": "entry_parameter",
-                    "location": {"file": "/repo/parser.c", "line": 19},
+                    "location": {"file": "parser.c", "line": 19},
                 }],
                 "truncation_reasons": ["backward_depth", "backward_states"],
             },
@@ -269,22 +318,41 @@ def test_the_slicers_cut_and_boundary_reach_the_auditor_source_event(tmp_path: P
 
     (event,) = _source_events(trace_path)
     assert event["gate_reasons"] == (
-        "SLICE_TRUNCATED:backward_depth+backward_states,NONE_FOUND_TO_DEPTH"
+        "SLICE_TRUNCATED:backward_depth+backward_states,NO_CALLER_IN_CPG"
     )
 
 
 def test_without_an_index_the_event_says_the_auditor_read_a_window(tmp_path: Path) -> None:
     """인덱스가 없으면 entry를 품는 함수를 모른다 — Auditor는 entry 앞뒤 창을 읽었고
     (`_auditor_target`) 게이트가 그것을 `WINDOW_FALLBACK`으로 남긴다. 사유 순서는 슬라이스 → 대상
-    → 호출자 부재다."""
+    → CPG 호출 간선 없음이다."""
     path = _slices_file(tmp_path, [_cut_case_b()])
 
     _, trace_path = _run(tmp_path, slices_path=path, configure=_gate(1))
 
     (event,) = _source_events(trace_path)
     assert event["gate_reasons"] == (
-        "SLICE_TRUNCATED:backward_depth+backward_states,WINDOW_FALLBACK,NONE_FOUND_TO_DEPTH"
+        "SLICE_TRUNCATED:backward_depth+backward_states,WINDOW_FALLBACK,NO_CALLER_IN_CPG"
     )
+
+
+def test_a_capped_case_a_slice_reports_its_flow_sink_cap_end_to_end(tmp_path: Path) -> None:
+    """Case A 슬라이스의 `analysis.sinks_capped`가 로더를 지나 이벤트에 `FLOW_SINKS_CAPPED`로
+    남는다 — 사유 목록을 안 내는 Case A의 절단(낱말 없는 `SLICE_TRUNCATED`)과 같이 나온다.
+    슬라이서의 flows 질의가 내는 키(`flow_count`·`truncated`·`sinks_capped`·`sinks_kept`·
+    `lines`) 그대로다."""
+    item = _slice(*_SPANS_TWO)
+    item.update(
+        truncated=True, analysis_kind="parameter_paths",
+        analysis={"flow_count": 10, "truncated": True, "sinks_capped": True,
+                  "sinks_kept": 2063, "lines": []},
+    )
+    path = _slices_file(tmp_path, [item])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index(), configure=_gate(1))
+
+    (event,) = _source_events(trace_path)
+    assert event["gate_reasons"] == "SLICE_TRUNCATED,FLOW_SINKS_CAPPED"
 
 
 def test_an_old_slice_without_the_analysis_facts_only_gets_the_reasons_the_run_knows(
