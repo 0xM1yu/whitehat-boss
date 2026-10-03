@@ -190,8 +190,10 @@ class RunContext:
     # 그대로다(사이드카 키를 **아예** 안 늘린다).
     pocs: PocLog | None = None
     # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 이 run에 resolver가 없다
-    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 노드는
-    # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
+    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 부르는 곳은
+    # 둘이다 — Scout 좌석 집계 루프(러너, #95)와 **Auditor 도구 루프의 `lookup`**
+    # (`nodes/auditor._lookup`, 이슈 #419 — 훅만 받고 어댑터는 import하지 않는다). `None`이면
+    # 후자는 정지하지 않고 「조회가 없다」는 관측을 모델에게 준다.
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
     # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 후보마다 `vul`

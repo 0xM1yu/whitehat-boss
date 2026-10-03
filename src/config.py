@@ -615,7 +615,8 @@ class Thresholds(HarnessModel):
     # ADR 0012 결정 1-b(「슬라이스가 걸친 함수의 원본 전부」) 그대로다. 1이면 실린 함수의 본문 안
     # 호출이 부르는 함수의 본문을 뒤에 붙인다(`runner._auditor_source`). 결정 1-b를 넓히는 값이라
     # 기본은 끈다. 2 이상은 아직 없다.
-    # ⚠ 켜면 Auditor v4 프롬프트의 입력 서술(`prompts/auditor/v4/prefix.md` — 슬라이스가 걸친
+    # ⚠ 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
+    # — 그전에는 v4 · 판은 `config/models.yaml`이 고른다 — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
     # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 옵션도 같다.
@@ -668,6 +669,39 @@ class Thresholds(HarnessModel):
     # 돌리는데, `gate`의 `p4`는 `ok=True`만 보고 크래시(non-zero)와 exit 0을 안 가른다 -> 크래시
     # 0건으로 proven이 날 수 있다. 켜기 전에 #232를 먼저 본다.
     synthesize_repro_spec: int = Field(default=0, ge=0, le=1)
+    # Auditor(5단계)가 한 후보에서 돌 수 있는 도구/조회 홉 수 상한 (이슈 #419).
+    # **0이면 종전 한 방 경로다** — 노드가 홉 루프에 안 들어가므로 요청 바이트가 지금과 똑같다.
+    # 양수면 매 홉 `AuditorAction`(`src/schemas/auditor.py`)을 받아 조회·도구를 돌리고 관측을
+    # 다음 홉 user 턴으로 되먹인다.
+    #
+    # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
+    # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
+    # Auditor는 `call_tool`을 안 불렀고(켜면 `probe`가 부른다), 배선된 pov 판은 gdb를 광고하지
+    # 않는다. 그래서 16은 **계획값**이고 실측 근거는 홉당 usage(trace `auditor_hop`)가 처음 돈
+    # run에서 만든다.
+    #
+    # **값의 성격은 폭주 차단이다 — 창 적합을 보장하지 않는다.** vast 실측 창 262,144
+    # (`config/serving/vastai.yaml`)에서 출력 상한 65,536(`output_max_by_role.auditor`)을 빼면 입력
+    # 몫이 196,608(계산값)이다. v4 최악 추정 입력 28,833(`config/models.yaml`의 그 좌석
+    # 「기동 조건」 절 — 지금 정본 v6는 prefix가 더 길어 hop0가 이보다 크다)을 넣으면 167,775가
+    # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
+    # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
+    # 주석). 이 상한은 홉이 끝없이 쌓이는 것을 막을 뿐 창은 안 막는다 — 넘으면 서버가 크기
+    # 거절한다.
+    # ⚠ 53,248 창(입력 몫 20,480)은 **ATOM 시절 계획값**이다 — ATOM 사용 종료 2026-09-29(#340).
+    #
+    # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 셋이고
+    # (`runner._run_ne_hops` · `runner._run_pov_hops` · `cli estimate`의
+    # `scout_calls = candidates * (1 + max_hops)`) 올리면 Scout 되묻기가 같이 늘어난다. NE 쪽은
+    # 효과가 이미 측정돼 있다 — hop0 NE 84좌석 중 5건, 루프에 든 10좌석(강제 8 · 스스로 NE 2)에서
+    # 판정이 바뀐 것 1건, 정상 표본 0/24(`docs/experiments/`의 2026-09-27·09-28 NE 스모크).
+    #
+    # 켜면 프롬프트 판이 도구를 서술해야 한다 — meta가 `output_schema: AuditorAction`과 `tools:`를
+    # 선언한 판이어야 한다. 어긋나면 `cli`의 run(종료 코드 2)·doctor(ERROR)와 노드가 **같은 함수**
+    # (`nodes/auditor.loop_problem`)로 막는다(`AUDITOR_SOURCE_OPTIONS`의 `_check_source_options`
+    # 선례). `cli estimate`의 Auditor 호출 상한(`_expected_calls`)도 이 값을 읽는다 — 후보당 `1 + 이
+    # 값`이다.
+    auditor_tool_hops: int = Field(default=0, ge=0, le=64)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
         """켜진 Auditor `SOURCE` 옵션(#349) — 결정 1-b를 넓히는 값들. 프롬프트가 그 입력을
@@ -736,8 +770,10 @@ class Thresholds(HarnessModel):
         # `scout_slice_trim`도 같다(#375 M-3): 기본 꺼짐 run의 `RunRecord.thresholds`에 `0.0`이
         # 생기면 이 필드 이전의 manifest와 모양이 갈리는데 그 차이가 뜻하는 것이 없다.
         # `scout_slice_trim`은 Auditor SOURCE 옵션이 아니라(프롬프트 `source_options` 대상이
-        # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다.
-        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim"):
+        # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다. `auditor_tool_hops`(#419)도
+        # 같다 — 기본 꺼짐 run의 `run_manifest.json`에 `0.0`이 새로 생기면 지금까지 쌓인 모든
+        # manifest와 열이 갈린다(요청 바이트가 같아도 재현성 기록의 모양은 갈린다).
+        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim", "auditor_tool_hops"):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
@@ -1022,6 +1058,36 @@ def _check_swap_lists_every_served_role(config: HarnessConfig) -> None:
         )
 
 
+def _check_real_serving_limits_are_positive(config: HarnessConfig) -> None:
+    """실모델을 서빙하는 프로필은 예산 상한 넷이 전부 양수여야 한다.
+
+    `BudgetLedger._overrun`은 상한 0을 **검사하지 않는다** — `dev_fake`의 `gpu_seconds: 0`이
+    「Fake는 GPU를 안 쓴다」는 뜻이라서다. 같은 0이 실서빙 프로필의 예산에 적히면 「한도 없음」이
+    되어 임대 GPU가 시간 단위 과금 그대로 한도 없이 돈다. 이 저장소에서 `0`은 보통 「안 쟀다」이고
+    (CLAUDE.md §0) `tool_seconds`는 안 적으면 0이다(`Budget`) — 실수로 0이 들어올 길이 둘이다.
+
+    **실서빙 판정은 `served_models()`다.** 프로필의 `production`이 아니다(`harness_pool`이
+    `production: false`인 채 실서빙이다). Fake 전용 프로필은 그대로 0을 쓴다. 이 검사가 원장이
+    아니라 로드에 있는 것은 원장이 자기 모델이 실서빙인지 모르기 때문이다.
+
+    **숫자를 정하지 않는다.** 아직 안 잰 상한이면 0이 아니라 직접 고른 잠정 상한을 적고 잠정치라고
+    표시한다(`budgets.default.tool_seconds`가 그 모양이다). 막는 것은 0뿐이고 작은 값은 안 막는다.
+    """
+    served = config.served_models()
+    if not served:
+        return
+    # `Budget`의 필드는 전부 상한이다 — 키를 여기 다시 적지 않으면 상한이 늘 때 이 검사가 안 샌다.
+    zero = sorted(item for item, limit in config.budget.model_dump().items() if limit == 0)
+    if zero:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}은 실모델 {sorted(served)}을 서빙하는데 예산 "
+            f"{config.profile.budget!r}의 {zero}가 0이다 — 상한 0은 「검사하지 않는다」"
+            "(`BudgetLedger`)라 임대 GPU가 한도 없이 돈다. 실서빙 프로필은 상한 넷을 전부 양수로 "
+            "적는다(`tool_seconds`는 안 적으면 0이다). 0을 쓸 수 있는 것은 GPU를 안 쓰는 Fake "
+            "전용 프로필뿐이다"
+        )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -1064,6 +1130,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
         seed=seed,
     )
     _check_swap_lists_every_served_role(config)
+    _check_real_serving_limits_are_positive(config)
     return config
 
 
