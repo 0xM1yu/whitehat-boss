@@ -40,6 +40,31 @@ from tests.test_pipeline_e2e import (
     _with_mode,
 )
 
+
+@pytest.fixture(autouse=True)
+def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """이 파일의 `_run`은 Auditor SOURCE 옵션 다섯을 **끈** 설정에서 돈다(결정 1-b 모양).
+
+    2026-10-03부터 `budgets.yaml`이 넷을 켠다(#349) -> 그대로 두면 1-b 규칙을 재는 검사마다 호출자
+    창·정의가 끼어 기대값이 흔들리고, 옵션 하나를 켜는 검사는 다른 셋이 같이 켜진 채로 돈다.
+    옵션을 재는 검사는 `configure`로 그 하나만 켠다. 기본 설정(넷 켬) 그대로의 모양은
+    `test_default_*` 검사가 따로 본다 -> 그 이름은 이 픽스처를 건너뛴다.
+    """
+    if request.node.name.startswith("test_default_"):
+        return
+    import tests.test_pipeline_e2e as e2e
+    from src.config import AUDITOR_SOURCE_OPTIONS
+
+    real = e2e.load_config
+
+    def load(profile: str, **kwargs: object):  # noqa: ANN202
+        config = real(profile, **kwargs)
+        off = config.thresholds.transition(**{key: 0 for key in AUDITOR_SOURCE_OPTIONS})
+        return config.transition(thresholds=off)
+
+    monkeypatch.setattr(e2e, "load_config", load)
+
+
 _PARSER = split_source((TARGET / "parser.c").read_bytes())
 _UTIL = split_source((TARGET / "util.c").read_bytes())
 _SOURCES = {"parser.c": _PARSER, "util.c": _UTIL}
@@ -51,7 +76,9 @@ def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
 
     ⚠ 이 목록은 **판을 센다** — 올리면서 안 늘리면 서빙 판이 빠진다(2026-10-03 v6가 그랬다).
     판 목록 없이 **서빙 판**을 묻는 것은 `test_config.py`의
-    `test_the_canonical_auditor_prompt_states_the_runner_source_contract`다.
+    `test_the_canonical_auditor_prompt_states_the_runner_source_contract`다. ⏵ 2026-10-04 서빙 판
+    v7은 옵션 넷(20,000토큰 상한)을 서술해 15,000자 철자를 안 든다 -> 그쪽 검사가 v7의 계약을 문다.
+    v6는 #418이 잰 1-b 문장 그대로라 여기 남는다.
     """
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 
@@ -1166,7 +1193,7 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-                auditor_entry_trim=0, auditor_caller_lines=0)),
+                auditor_entry_trim=0, auditor_caller_lines=0, auditor_callee_wrappers=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1202,7 +1229,7 @@ def _trim_source(
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=trim, auditor_caller_lines=0)),
+            auditor_entry_trim=trim, auditor_caller_lines=0, auditor_callee_wrappers=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1292,7 +1319,7 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
-            auditor_entry_trim=0, auditor_caller_lines=lines)),
+            auditor_entry_trim=0, auditor_caller_lines=lines, auditor_callee_wrappers=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
@@ -1334,33 +1361,57 @@ def test_a_caller_window_over_the_cap_is_dropped() -> None:
 def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa: ANN202
     """`_auditor_source`를 직접 부르는 최소 ctx(#351 리뷰). 파일은 줄 목록, 상한은 단어 수(모델
     카운터 자리)다. `callees`·`sites`는 심볼 이름 → 위치 목록, `definitions`는 (이름들, 파일) →
-    목록 함수. `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다."""
+    목록 함수, `locals`는 (파일, 함수 이름) → 그 함수의 지역·파라미터 이름 집합이다(없으면 `None` —
+    「v2 표 없음」). `reads`가 읽은 위치를, `names`가 정의 조회에 넘어간 이름을 모은다.
+    `ctx.lookup_kwargs`는 조회가 불린 순서대로 `(조회 이름, 받은 키워드)`를 든다 — 위생이 켜졌는지
+    (`demote_nonproduct`)와 `locals_of`가 불렸는지를 본다."""
     import types
 
     thresholds = {
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
-        "auditor_entry_trim": 0, "auditor_caller_lines": 0,
+        "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_callee_wrappers": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
     names: list[set] = []
+    lookup_kwargs: list[tuple[str, dict]] = []
 
     def read(loc: Location) -> str:
         reads.append(loc)
         lines = files[loc.file]
         return "\n".join(lines[(loc.line_start or 1) - 1 : loc.line_end or len(lines)])
 
-    def definitions(found, file):  # noqa: ANN001, ANN202
+    def definitions(found, file, **kw):  # noqa: ANN001, ANN003, ANN202
         names.append(set(found))
+        lookup_kwargs.append(("definitions_of", kw))
         return opts.get("definitions", lambda _n, _f: [])(found, file)
+
+    def callees(loc, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("callees_of", kw))
+        return opts.get("callees", {}).get(loc.symbol, [])
+
+    def sites(loc, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("call_sites_of", kw))
+        return opts.get("sites", {}).get(loc.symbol, [])
+
+    def locals_of(file, func):  # noqa: ANN001, ANN202
+        lookup_kwargs.append(("locals_of", {}))
+        return opts.get("locals", {}).get((file, func))
+
+    def functions_named(wanted, _file, **kw):  # noqa: ANN001, ANN003, ANN202
+        lookup_kwargs.append(("functions_named", kw))
+        return [loc for name in sorted(wanted) for loc in opts.get("functions", {}).get(name, [])]
 
     events: list[dict] = []
     ctx = types.SimpleNamespace(
         symbols_for=lambda file: [s for s in symbols if s.file == file],
         read_source=read,
-        callees_of=lambda loc: opts.get("callees", {}).get(loc.symbol, []),
+        callees_of=callees,
         definitions_of=definitions,
-        call_sites_of=lambda loc: opts.get("sites", {}).get(loc.symbol, []),
+        call_sites_of=sites,
+        locals_of=locals_of,
+        functions_named=functions_named,
+        lookup_kwargs=lookup_kwargs,
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(**thresholds)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
@@ -1496,6 +1547,167 @@ def test_definition_lookup_reads_code_not_banners_or_omission_marks() -> None:
     assert "w40" in used
 
 
+def test_definition_lookup_skips_the_carried_functions_locals_params_and_fields() -> None:
+    """정의 조회에 넘어가는 이름에서 실린 함수 **자신의** 지역·파라미터와 필드 전용 이름이 빠진다 --
+    그 이름은 다른 파일의 매크로·타입·파일 변수와 철자가 같아도 그것을 가리키지 않는다(`za`·
+    `->len`이 남의 파일 정의를 끌어오던 오염). 전역 `GLOBAL`·다른 함수가 부르는 이름은 남는다."""
+    files = {
+        "u.c": [
+            "int f(int n)",
+            "{",
+            "    int za = p->len + n;",
+            "    return GLOBAL + za;",
+            "}",
+        ]
+    }
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+    ctx, events, _, names = _unit(
+        files, [f], auditor_definitions=1, locals={("u.c", "f"): {"n", "za"}}
+    )
+
+    _unit_run(ctx, events, f, [("u.c", 3)])
+
+    (used,) = names
+    assert used == {"f", "p", "GLOBAL"}
+
+
+def test_definition_lookup_ignores_words_in_comments_and_string_literals() -> None:
+    """정의 조회에 넘어가는 이름에서 주석·문자열 속 낱말(`FOO_MAX`·`BUF_SIZE`·`HIDDEN`)이 빠진다 --
+    같은 철자의 매크로가 다른 파일에 하나뿐이면 끌려오던 오염. 주석에도 나오지만 **코드에도** 나온
+    `LIMIT`은 남는다."""
+    files = {
+        "u.c": [
+            "int f(int n)",
+            "{",
+            "    /* clamp to FOO_MAX and LIMIT first */",
+            '    log("see BUF_SIZE");',
+            "    if (n > LIMIT) return 0;",
+            "    return 1; // HIDDEN",
+            "}",
+        ]
+    }
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=7)
+    ctx, events, _, names = _unit(
+        files, [f], auditor_definitions=1, locals={("u.c", "f"): {"n"}}
+    )
+
+    _unit_run(ctx, events, f, [("u.c", 5)])
+
+    (used,) = names
+    assert used == {"f", "log", "LIMIT"}
+
+
+def test_default_off_never_strips_anything_for_the_definition_lookup() -> None:
+    """`auditor_definitions`가 0이면 정의 조회 자체가 안 돈다 -- 주석 거름도 이름 거름도
+    `locals_of`도 안 불린다(`SOURCE`는 원문 그대로 실리고 이벤트에 `definitions` 키도 없다)."""
+    files = {"u.c": ["int f(void)", "{", "    /* LIMIT */", "    return 0;", "}"]}
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+    ctx, events, _, names = _unit(files, [f])
+
+    source, event = _unit_run(ctx, events, f, [("u.c", 4)])
+
+    assert source == "\n".join(files["u.c"])
+    assert names == [] and "definitions" not in event
+    assert ctx.lookup_kwargs == []
+
+
+# 슬라이스 줄(4)에는 `BBB`만 있고 `AAA`는 같은 함수의 슬라이스 밖 줄(3)에만 있다. 정의는 (파일, 줄)
+# 순으로 `AAA`가 먼저 온다 — 슬라이스 줄에 나온 `BBB`가 앞서야 한다.
+_H_FILE = {
+    "u.c": [
+        "int f(void)",
+        "{",
+        "    use(AAA, BBB);",
+        "    use(BBB);",
+        "}",
+        *[f"filler{i}" for i in range(6, 20)],
+        "#define AAA 1",
+        "#define BBB 2",
+    ]
+}
+_H_F = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+_H_AAA = Location(file="u.c", symbol="AAA", line_start=20, line_end=20)
+_H_BBB = Location(file="u.c", symbol="BBB", line_start=21, line_end=21)
+
+
+def test_definitions_named_on_the_slice_lines_are_appended_first() -> None:
+    """슬라이스 줄에 나온 이름의 정의가 먼저 붙는다(상한이 차면 뒤가 먼저 빠진다)."""
+    ctx, events, _, _ = _unit(
+        _H_FILE, [_H_F], auditor_definitions=1, definitions=lambda _n, _f: [_H_AAA, _H_BBB]
+    )
+
+    source, event = _unit_run(ctx, events, _H_F, [("u.c", 4)])
+
+    assert source.index("#define BBB 2") < source.index("#define AAA 1")
+    assert event["definitions"] == 2
+
+
+def test_the_cap_keeps_the_definition_named_on_the_slice() -> None:
+    """정의 하나만 들어갈 상한이면 슬라이스 줄에 나온 `BBB`가 남고 `AAA`가 빠진다 -- 순서를 안
+    바꾸면 (파일, 줄) 순으로 `AAA`가 먼저 들어가 슬라이스와 무관한 정의가 자리를 먹는다."""
+    from src.orchestrator import runner
+
+    words = lambda text: len(text.split())  # noqa: E731
+    anchor_block = runner._block(_H_F, "\n".join(_H_FILE["u.c"][0:5]))
+    cap = words(anchor_block) + 1 + words(runner._block(_H_BBB, "#define BBB 2"))
+    ctx, events, _, _ = _unit(
+        _H_FILE, [_H_F], auditor_definitions=1, auditor_source_tokens=cap,
+        definitions=lambda _n, _f: [_H_AAA, _H_BBB],
+    )
+
+    source, event = _unit_run(ctx, events, _H_F, [("u.c", 4)])
+
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 1)
+    assert "#define BBB 2" in source and "#define AAA 1" not in source
+
+
+def test_the_definition_hygiene_is_asked_for_only_with_definitions_on() -> None:
+    """`auditor_definitions`가 1이면 정의·피호출·호출자 조회가 `demote_nonproduct=True`로 불리고
+    `locals_of`도 불린다. 0이면(피호출·호출자만 켠 run) 옛 호출 그대로다 -- 키워드가 없고
+    `locals_of`가 안 불린다(측정이 있는 옵션 조합의 출력이 안 바뀐다)."""
+    site = Location(file="u.c", symbol="h", line_start=11, line_end=11)
+    common = {
+        "auditor_callee_hops": 1, "auditor_caller_lines": 1,
+        "callees": {"f": [_U_K]}, "sites": {"f": [site]},
+    }
+
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_H, _U_K], auditor_definitions=1, **common)
+    _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert dict(ctx.lookup_kwargs) == {
+        "definitions_of": {"demote_nonproduct": True},
+        "callees_of": {"demote_nonproduct": True},
+        "call_sites_of": {"demote_nonproduct": True},
+        "locals_of": {},
+    }
+
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_H, _U_K], **common)
+    _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert dict(ctx.lookup_kwargs) == {"callees_of": {}, "call_sites_of": {}}
+
+
+def test_a_parameter_named_like_a_foreign_macro_does_not_pull_it(tmp_path: Path) -> None:
+    """`parse_header(const char *src, int len)`의 `len`은 파라미터다 -- 다른 파일(`util.c`)에
+    `len`이라는 매크로가 **하나뿐**이어도 그것을 가리키지 않는다. 파이프라인 전체(index →
+    `GraphIndex.locals_of` → factory → deps → ctx)를 태운다: `locals_of` 배선이 끊기면 이 테스트가
+    먼저 안다. `struct header` 정의(태그 사용)는 그대로 붙는다."""
+    index = {
+        **_FIXTURE_INDEX_V2,
+        "macros": {"len": [{"file": "util.c", "line_start": 12, "line_end": 12}]},
+        "locals": {"parser.c": {"parse_header": {"src": [19], "len": [19], "buf": [21]}}},
+    }
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(index), configure=_definitions(1)
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert _banner("util.c", 12, 12) not in facts["source"]
+    assert _banner("parser.c", 12, 15) in facts["source"]
+    (event,) = _source_events(trace_path)
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)
+
+
 def test_no_caller_window_without_an_entry_symbol() -> None:
     """entry를 품는 심볼을 몰라 창이 anchor면(`symbol` 없음) 호출자를 찾지 않는다 — 이름 없는
     대상의 호출 지점은 뜻이 없다(`anchor.symbol` 가드 변이가 살던 자리)."""
@@ -1564,3 +1776,230 @@ def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
     source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
     assert "/* ===== u.c:10-30 ===== */" in source
     assert (event["callees"], event["callers"]) == (1, 0)
+
+
+def test_default_budgets_carry_definitions_callees_and_caller_windows(tmp_path: Path) -> None:
+    """기본 설정(`budgets.yaml` — 2026-10-03부터 옵션 넷 켬, #349)으로 돈 Auditor SOURCE 이벤트가
+    네 옵션의 계수를 다 든다. 끄는 줄을 되돌리면(어느 하나라도 0) 그 키가 사라져 여기서 걸린다 --
+    정본 프롬프트 v7이 넷을 서술하므로 기본에서 빠지면 서술이 거짓이 된다."""
+    path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    (event,) = _source_events(trace_path)
+    for key in ("callees", "callers", "call_sites", "definitions", "tokens"):
+        assert key in event, key
+
+
+# --- 래퍼·별칭 너머(C4) -----------------------------------------------------------------------
+# 팀 검수 83표본 중 18건이 「래퍼까지만 붙고 실제 구현이 없다」였다(`gf_strdup` → `gf_mem_strdup` ·
+# `ND_TCHECK` → `ND_TCHECK2`). 붙인 피호출 함수가 짧고 정의를 아는 함수를 한둘만 부르면 래퍼로 보고
+# 그 함수를 붙인다. 짧다 = `_AUDITOR_WRAPPER_LINES`줄 이하.
+_W_FILE = {"w.c": [f"w{i} x{i}" for i in range(1, 121)]}
+_W_F = Location(file="w.c", symbol="f", line_start=1, line_end=3)
+_W_WRAP = Location(file="w.c", symbol="wrap", line_start=10, line_end=12)
+_W_WRAP2 = Location(file="w.c", symbol="wrap2", line_start=14, line_end=16)
+_W_WRAP3 = Location(file="w.c", symbol="wrap3", line_start=18, line_end=20)
+_W_IMPL = Location(file="w.c", symbol="impl", line_start=30, line_end=45)
+_W_LONG = Location(file="w.c", symbol="long_fn", line_start=50, line_end=70)
+_W_A = Location(file="w.c", symbol="a", line_start=80, line_end=82)
+_W_B = Location(file="w.c", symbol="b", line_start=84, line_end=86)
+_W_C = Location(file="w.c", symbol="c", line_start=88, line_end=90)
+
+
+def _wrapped(callees: dict, **opts):  # noqa: ANN202
+    opts.setdefault("auditor_callee_wrappers", 1)
+    ctx, events, _, _ = _unit(
+        _W_FILE, [_W_F, _W_WRAP, _W_IMPL, _W_LONG], auditor_callee_hops=1, callees=callees, **opts
+    )
+    return _unit_run(ctx, events, _W_F, [("w.c", 2)])
+
+
+def test_a_wrapper_callee_brings_the_function_it_forwards_to() -> None:
+    """`f` → `wrap`(3줄, `impl` 하나만 부름) → `impl`이 붙는다. 1단만이던 옛 동작이면 `impl`이
+    빠진다."""
+    source, event = _wrapped({"f": [_W_WRAP], "wrap": [_W_IMPL]})
+    assert "/* ===== w.c:30-45 ===== */" in source
+    assert (event["callees"], event["wrapper_callees"]) == (2, 1)
+
+
+def test_a_long_callee_is_not_a_wrapper() -> None:
+    """`long_fn`(21줄)은 래퍼가 아니다 -> 그 피호출 `impl`은 안 붙는다(1단에서 멈춤)."""
+    from src.orchestrator.runner import _AUDITOR_WRAPPER_LINES
+
+    assert _W_LONG.line_end - _W_LONG.line_start + 1 > _AUDITOR_WRAPPER_LINES
+    source, event = _wrapped({"f": [_W_LONG], "long_fn": [_W_IMPL]})
+    assert "w.c:30-45" not in source
+    assert (event["callees"], event["wrapper_callees"]) == (1, 0)
+
+
+def test_a_short_callee_that_calls_many_functions_is_not_a_wrapper() -> None:
+    """짧아도 정의를 아는 함수를 셋 부르면 래퍼가 아니다(`_AUDITOR_WRAPPER_CALLS` = 2)."""
+    from src.orchestrator.runner import _AUDITOR_WRAPPER_CALLS
+
+    assert _AUDITOR_WRAPPER_CALLS == 2
+    _, event = _wrapped({"f": [_W_WRAP], "wrap": [_W_A, _W_B, _W_C]})
+    assert (event["callees"], event["wrapper_callees"]) == (1, 0)
+    _, event = _wrapped({"f": [_W_WRAP], "wrap": [_W_A, _W_B]})
+    assert (event["callees"], event["wrapper_callees"]) == (3, 2)
+
+
+def test_wrappers_are_followed_only_to_the_depth_limit() -> None:
+    """`wrap` → `wrap2` → `wrap3` → `impl` — 래퍼 너머는 `_AUDITOR_WRAPPER_DEPTH`(2)단까지라
+    `wrap2`·`wrap3`까지 붙고 `impl`은 안 붙는다."""
+    from src.orchestrator.runner import _AUDITOR_WRAPPER_DEPTH
+
+    assert _AUDITOR_WRAPPER_DEPTH == 2
+    source, event = _wrapped(
+        {"f": [_W_WRAP], "wrap": [_W_WRAP2], "wrap2": [_W_WRAP3], "wrap3": [_W_IMPL]}
+    )
+    assert "w.c:14-16" in source and "w.c:18-20" in source
+    assert "w.c:30-45" not in source
+    assert (event["callees"], event["wrapper_callees"]) == (3, 2)
+
+
+def test_callee_hops_off_follows_no_wrapper() -> None:
+    """피호출 단계가 꺼지면 래퍼도 안 따라간다 — 이벤트에 키도 없다."""
+    ctx, events, _, _ = _unit(_W_FILE, [_W_F], callees={"f": [_W_WRAP], "wrap": [_W_IMPL]})
+    source, event = _unit_run(ctx, events, _W_F, [("w.c", 2)])
+    assert "w.c:10-12" not in source
+    assert "wrapper_callees" not in event
+
+
+def test_callee_hops_without_the_wrapper_option_stops_at_one_level() -> None:
+    """`auditor_callee_hops`만 켜고 `auditor_callee_wrappers`가 0이면 C4 이전 모양이다 — 래퍼
+    `wrap`은 붙고 그 너머 `impl`은 안 붙으며, 이벤트에 C4 계수 키가 없다(PR #452 리뷰 MEDIUM-2:
+    전엔 피호출 단계만 켜져 있으면 늘 따라가 run 기록으로 전후가 안 갈렸다)."""
+    callees = {"f": [_W_WRAP], "wrap": [_W_IMPL]}
+    old, old_event = _wrapped(callees, auditor_callee_wrappers=0)
+    assert "/* ===== w.c:10-12 ===== */" in old and "w.c:30-45" not in old
+    assert old_event["callees"] == 1
+    assert old_event.get("wrapper_callees", 0) == 0 and old_event.get("alias_callees", 0) == 0
+    assert "wrapper_callees" not in old_event and "alias_callees" not in old_event
+    new, new_event = _wrapped(callees, auditor_callee_wrappers=1)
+    assert "w.c:30-45" in new and new_event["wrapper_callees"] == 1
+
+
+_M_FILE = {
+    "w.c": _W_FILE["w.c"],
+    "m.h": [
+        "#define M(x) M2(x, 1)",
+        "#define M2(x, n) impl(x, n)",
+        "#define K 64",
+    ],
+}
+_M_M = Location(file="m.h", symbol="M", line_start=1, line_end=1)
+_M_M2 = Location(file="m.h", symbol="M2", line_start=2, line_end=2)
+_M_K = Location(file="m.h", symbol="K", line_start=3, line_end=3)
+
+
+def _aliased(**opts):  # noqa: ANN202
+    def definitions(names, _file):  # noqa: ANN001, ANN202
+        # 첫 조회(실린 `f`의 이름)는 `M`·`K`를 낸다 — 본문이 그 둘을 쓴다고 본다. 별칭 라운드는
+        # 넘어온 이름 그대로 찾는다.
+        return [_M_M2] if "M2" in names else [_M_M, _M_K]
+
+    opts.setdefault("auditor_callee_wrappers", 1)
+    ctx, events, _, names = _unit(
+        _M_FILE,
+        [_W_F, _W_IMPL],
+        auditor_definitions=1,
+        definitions=definitions,
+        functions={"impl": [_W_IMPL]},
+        **opts,
+    )
+    source, event = _unit_run(ctx, events, _W_F, [("w.c", 2)])
+    return source, event, names
+
+
+def test_a_rename_macro_brings_the_macro_it_forwards_to() -> None:
+    """실린 `M`이 `M2`로 이름만 바꿔 넘기면 `M2`의 정의를 한 번 더 찾는다(`ND_TCHECK` →
+    `ND_TCHECK2`). 상수 매크로 `K`는 별칭이 아니라 다시 안 찾는다."""
+    source, event, names = _aliased()
+    assert "/* ===== m.h:2-2 ===== */" in source
+    assert event["alias_definitions"] == 1
+    # 별칭 라운드는 둘(`_AUDITOR_ALIAS_ROUNDS`) — `M` → `M2`, 그 `M2` → `impl`. `K`는 안 찾는다.
+    assert names[1:] == [{"M2"}, {"impl"}]
+
+
+def test_a_rename_macro_brings_the_function_it_forwards_to() -> None:
+    """`M2`가 `impl`을 부르면 피호출 단계가 그 함수 본문을 이름으로 찾아 붙인다 — 매크로 본문 안의
+    호출은 인덱스 호출 표에 없어 `callees_of`로는 안 닿는다(`FT_FRAME_EXTRACT` →
+    `FT_Stream_ExtractFrame`)."""
+    source, event, _ = _aliased(auditor_callee_hops=1)
+    assert "/* ===== w.c:30-45 ===== */" in source
+    assert event["alias_callees"] == 1
+
+
+def test_the_wrapper_option_off_neither_follows_nor_counts_rename_macros() -> None:
+    """`auditor_callee_wrappers`가 0이면 별칭 라운드도 없다 — `M2` 정의·`impl` 본문이 안 붙고
+    정의 조회는 첫 조회 한 번이다(C4 이전 모양)."""
+    source, event, names = _aliased(auditor_callee_hops=1, auditor_callee_wrappers=0)
+    assert "m.h:2-2" not in source and "w.c:30-45" not in source
+    assert len(names) == 1
+    assert "alias_definitions" not in event and "alias_callees" not in event
+
+
+_M3_FILE = {
+    "w.c": _W_FILE["w.c"],
+    "m.h": [
+        "#define M(x) M2(x, 1)",
+        "#define M2(x, n) M3(x, n)",
+        "#define M3(x, n) impl(x, n)",
+    ],
+}
+_M3_M = Location(file="m.h", symbol="M", line_start=1, line_end=1)
+_M3_M2 = Location(file="m.h", symbol="M2", line_start=2, line_end=2)
+_M3_M3 = Location(file="m.h", symbol="M3", line_start=3, line_end=3)
+
+
+def test_rename_macros_are_followed_at_most_the_round_limit() -> None:
+    """`M` → `M2` → `M3` → `impl`: 이름 바꾸기 세 번이다. `_AUDITOR_ALIAS_ROUNDS`(2)번이면 `M2`·`M3`
+    정의까지 붙고 `impl`은 정의도 함수 본문도 안 찾는다 — 마지막 라운드가 낸 대상을 함수 조회에
+    넘기면 세 번째 단계까지 간다(PR #452 리뷰 LOW-1 · v7 prefix 「up to 2 renaming steps」)."""
+    from src.orchestrator.runner import _AUDITOR_ALIAS_ROUNDS
+
+    assert _AUDITOR_ALIAS_ROUNDS == 2
+
+    def definitions(names, _file):  # noqa: ANN001, ANN202
+        table = {"M2": _M3_M2, "M3": _M3_M3}
+        found = [table[name] for name in sorted(names) if name in table]
+        return found if found or "impl" in names else [_M3_M]
+
+    ctx, events, _, names = _unit(
+        _M3_FILE,
+        [_W_F, _W_IMPL],
+        auditor_definitions=1,
+        auditor_callee_hops=1,
+        auditor_callee_wrappers=1,
+        definitions=definitions,
+        functions={"impl": [_W_IMPL]},
+    )
+    source, event = _unit_run(ctx, events, _W_F, [("w.c", 2)])
+    assert "/* ===== m.h:2-2 ===== */" in source and "/* ===== m.h:3-3 ===== */" in source
+    assert event["alias_definitions"] == 2
+    assert names[1:] == [{"M2"}, {"M3"}]  # `impl`은 정의 조회에 안 넘어간다
+    assert "w.c:30-45" not in source
+    assert event["alias_callees"] == 0
+    looked = [kw for name, kw in ctx.lookup_kwargs if name == "functions_named"]
+    assert len(looked) == 1  # `M2`·`M3`로 한 번 찾았고 둘 다 함수가 아니다
+
+
+def test_auditor_v4_t1_refuses_the_wrapper_option() -> None:
+    """v4_t1은 피호출 본문을 「one call level deep」으로 서술하고 `auditor_callee_wrappers`를
+    선언하지 않는다 -> 그 판에 그 옵션을 켜면 `cli`가 막는다(PR #452 리뷰 MEDIUM-1). 끄면 선다."""
+    from src import cli
+    from src.config import load_config
+
+    prefix = (PROMPTS_DIR / "auditor" / "v4_t1" / "prefix.md").read_text(encoding="utf-8")
+    assert "one call level deep" in " ".join(prefix.split())
+    assert "auditor_callee_wrappers" not in load_prompt(Role.AUDITOR, "v4_t1").source_options
+
+    config = load_config("harness_pool")
+    key = config.model_key_for("auditor")
+    entry = config.models[key].transition(prompt_template_version="v4_t1")
+    on = config.thresholds.transition(auditor_caller_lines=0, auditor_callee_wrappers=1)
+    config = config.transition(models={**config.models, key: entry}, thresholds=on)
+    assert cli._undescribed_source_options(config) == ["auditor_callee_wrappers(auditor/v4_t1)"]
+    off = config.transition(thresholds=on.transition(auditor_callee_wrappers=0))
+    assert cli._undescribed_source_options(off) == []
