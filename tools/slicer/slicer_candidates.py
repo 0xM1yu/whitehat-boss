@@ -3,8 +3,14 @@
 from slicer_checkpoint import canonical, digest
 from slicer_source import relative_file
 
+# --case-order: the case is the first sort key, so this decides whether every Case A is sliced
+# before every Case B (`ab`, the default) or the reverse. ids are numbered after the sort, so
+# `ba` gives Case B the low numbers.
+CASE_RANK = {"ab": {"A": 0, "B": 1}, "ba": {"B": 0, "A": 1}}
 
-def collect(rows_by_case: dict, repo) -> list[dict]:
+
+def collect(rows_by_case: dict, repo, case_order: str = "ab") -> list[dict]:
+    rank = CASE_RANK[case_order]
     combined = {}
     for case, rows in rows_by_case.items():
         for row in rows:
@@ -43,7 +49,7 @@ def collect(rows_by_case: dict, repo) -> list[dict]:
     ordered = sorted(
         combined.values(),
         key=lambda c: (
-            c["case"],
+            rank[c["case"]],
             c["entry"]["file"],
             c["entry"]["line"],
             c["entry"]["symbol"],
