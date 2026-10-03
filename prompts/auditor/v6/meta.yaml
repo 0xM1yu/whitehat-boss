@@ -1,0 +1,5 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
+role: auditor
+version: v6
+output_schema: Finding
+description: Auditor가 Scout의 의견에 끌려가는 것을 방지하고 지칭을 'You'로 통일한 버전입니다.
