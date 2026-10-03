@@ -3,7 +3,11 @@
 # v5와 바이트 동일이라 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`에 든다.
 # ⚠ **v5의 상위집합이 아니다** — v5의 범위 제약 둘(`Do not invent unrelated issues` · `Do not
 # expand the analysis to unrelated vulnerabilities …`)을 **삭제**한 것이 이 판의 핵이다.
+# ⏵ 2026-10-03 — SOURCE 서술을 `thresholds`의 Auditor SOURCE 옵션 넷(20,000토큰 상한 · 정의 · 피호출 본문 ·
+# 호출자 창 10줄, #349)에 맞췄다. 판 번호는 안 올렸다 -> v6로 돈 run이 0건이라 섞일 이전 run이 없다.
+# 옵션을 끄면 이 서술이 거짓이 되고, 이 판이 `source_options`를 안 들면 `cli`가 run을 막는다(#351).
 role: auditor
 version: v6
 output_schema: Finding
 description: Scout 가설과 무관하게 SOURCE를 먼저 독립 검토하는 판 — v5의 「후보만 분석하라」를 삭제하고, 입력·라이브러리 호출 실패만으로 생기는 결함을 triggerable에서 빼는 trigger rule(예외 셋)을 두고, CWE를 증명한 근본 원인에서 고르게 하고, 심각도 기준이 아님을 명시하고, 지칭을 'You'로 통일했다
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines]
