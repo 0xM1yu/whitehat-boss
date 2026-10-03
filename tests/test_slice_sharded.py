@@ -356,16 +356,17 @@ def test_a_port_already_in_use_is_refused(stubbed):
 def test_an_interrupt_stops_shards_and_servers_and_writes_the_summary(stubbed, monkeypatch):
     run, launched = stubbed
     monkeypatch.setenv("STUB_SHARD", "hang")
-    real_sleep = time.sleep
+    real_sleep, fired = time.sleep, []
 
     class Clock:
         time = staticmethod(time.time)
 
         @staticmethod
         def sleep(seconds: float) -> None:
-            # Only the main loop's sleep: the threads that stop the servers sleep here too.
+            # Interrupts the main loop once; the cleanup that follows sleeps here too.
             running = sum("--resume" in p.args for p in launched if isinstance(p.args, list))
-            if threading.current_thread() is threading.main_thread() and running == 2:
+            if running == 2 and not fired:
+                fired.append(True)
                 raise KeyboardInterrupt
             real_sleep(seconds)
 
@@ -419,13 +420,14 @@ def wait_for(path: Path, seconds: float = 20) -> str:
 
 @pytest.fixture
 def stub_server(tmp_path, monkeypatch):
-    """start(kind) -> the launcher Popen of a stub server (STUB_SERVER=kind) running in tmp_path."""
+    """start(kind, cwd) -> the launcher Popen of a stub server (STUB_SERVER=kind), by default in
+    tmp_path."""
     started = []
 
-    def start(kind: str) -> object:
+    def start(kind: str, cwd: Path | None = None) -> object:
         monkeypatch.setenv("STUB_SERVER", kind)
         process = tool.launch([sys.executable, str(STUB), "--serve", str(free_base(1))], None, [],
-                              cwd=tmp_path)
+                              cwd=cwd or tmp_path)
         started.append(process)
         return process
 
@@ -442,12 +444,13 @@ def stub_server(tmp_path, monkeypatch):
 def test_stop_ends_a_jvm_that_outlives_its_launcher(stub_server, tmp_path, monkeypatch):
     """`joern` is an sh with the JVM as its child. SIGTERM ends the sh at once; the JVM's shutdown
     hook queues behind a running query and never finishes (2026-10-03: eight JVMs outlived a run).
-    stop() returns only when the JVM is gone."""
+    stop_all() returns only when the JVM is gone."""
     monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 1)
     process = stub_server("deaf")
     jvm = int(wait_for(tmp_path / "jvm.pid"))
-    assert tool.stop(process) == []
-    assert not alive(jvm) and process.poll() is not None
+    assert tool.stop_all([process]) == []
+    assert not alive(jvm)
+    assert process.returncode is not None               # the launcher is reaped, not left a zombie
 
 
 @needs_proc
@@ -458,7 +461,7 @@ def test_stop_kills_a_jvm_whose_launcher_is_already_reaped(stub_server, tmp_path
     process.terminate()
     process.wait()
     assert alive(jvm)                                   # the launcher is gone, the JVM is not
-    assert tool.stop(process) == []
+    assert tool.stop_all([process]) == []
     assert not alive(jvm)
 
 
@@ -467,26 +470,17 @@ def test_stop_sends_sigterm_first_and_waits_for_a_clean_exit(stub_server, tmp_pa
     process = stub_server("graceful")
     wait_for(tmp_path / "ready")
     started = time.time()
-    assert tool.stop(process) == []
+    assert tool.stop_all([process]) == []
     assert (tmp_path / "term.marker").exists()          # the shutdown ran to its end, no SIGKILL
     assert time.time() - started < 10
-
-
-@needs_proc
-def test_stop_without_a_grace_kills_at_once(stub_server, tmp_path):
-    """A server whose query was abandoned past its deadline is not worth a SIGTERM."""
-    process = stub_server("graceful")
-    wait_for(tmp_path / "ready")
-    assert tool.stop(process, grace=0) == []
-    assert not (tmp_path / "term.marker").exists()
 
 
 @needs_proc
 def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server):
     """For a few hundred ms after SIGKILL a JVM is a zombie leader whose threads still hold the
     listening socket (dev box, 2026-10-03: the port kept accepting for 0.15-0.57 s after the kill,
-    up to 0.56 s after stop() had returned). A new server's wait_servers would take that for
-    itself, so stop() must not return before the last thread has gone."""
+    up to 0.56 s after the stop had returned). A new server's wait_servers would take that for
+    itself, so stop_all() must not return before the last thread has gone."""
     process = stub_server("zombie-leader")
     port = int(process.args[-1])
     deadline = time.time() + 20
@@ -495,24 +489,54 @@ def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server)
         time.sleep(0.05)
     stat = Path(f"/proc/{process.pid}/stat").read_text()
     assert stat.rpartition(")")[2].split()[0] == "Z"       # the leader is gone, a thread is not
-    assert tool._live_members(process.pid) == [process.pid]
-    assert tool.stop(process, grace=0) == []
+    assert tool._live_groups({process.pid}) == {process.pid: [process.pid]}
+    assert tool.stop_all([process]) == []
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", port), 1)
+
+
+SURVIVOR = 10_000_000  # added to a group id: a pid no live process has, one per stopped process
+
+
+def immortal(monkeypatch) -> None:  # noqa: ANN001
+    """Every group looks alive to the stop's check: what no signal can end."""
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr(tool, "KILL_VERIFY_SECONDS", 0.2)
+    monkeypatch.setattr(tool, "_live_groups", lambda groups: {g: [g + SURVIVOR] for g in groups})
 
 
 @needs_proc
 def test_stop_reports_what_it_could_not_kill(monkeypatch):
     """After SIGKILL and a bounded wait a group that is still there is reported, not hidden."""
-    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.2)
-    monkeypatch.setattr(tool, "KILL_VERIFY_SECONDS", 0.2)
-    monkeypatch.setattr(tool, "_live_members", lambda group: [4242])
+    immortal(monkeypatch)
     sent = []
     monkeypatch.setattr(tool.os, "killpg", lambda group, sig: sent.append(sig))
     process = tool.launch([sys.executable, "-c", "pass"], None, [])
-    assert tool.stop(process) == [4242]
+    assert tool.stop_all([process]) == [process.pid + SURVIVOR]
     assert sent == [signal.SIGTERM, signal.SIGKILL]
-    assert tool.stop_all([process]) == [4242]
+
+
+@needs_proc
+def test_stop_all_stops_servers_at_once_with_one_proc_pass_per_tick(stub_server, tmp_path,
+                                                                     monkeypatch):
+    """N servers that ignore SIGTERM share one grace window and one pass over /proc per tick. A
+    thread per process that each rescanned /proc took 12.5-31.1 s for 8-32 servers among
+    1,000-3,000 processes (WSL2, 2026-10-04); here the time must stay a grace, not N of them."""
+    n, grace = 8, 1.0
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", grace)
+    servers = []
+    for i in range(n):
+        (tmp_path / str(i)).mkdir()
+        servers.append(stub_server("deaf", tmp_path / str(i)))
+    jvms = [int(wait_for(tmp_path / str(i) / "jvm.pid")) for i in range(n)]
+    passes, scan = [], tool._live_groups
+    monkeypatch.setattr(tool, "_live_groups", lambda groups: passes.append(1) or scan(groups))
+    started = time.time()
+    assert tool.stop_all(servers) == []
+    elapsed = time.time() - started
+    assert elapsed < 0.6 * n * grace                  # one grace for all, not one each
+    assert len(passes) <= elapsed / 0.1 + 2           # a pass per tick, not a pass per server
+    assert not any(alive(pid) for pid in jvms)
 
 
 @needs_proc
@@ -528,3 +552,42 @@ def test_the_wall_stop_leaves_no_jvm_behind(stubbed, monkeypatch):
     assert len(jvms) == 3                                # prepare + two shards
     assert not any(alive(pid) for pid in jvms)
     assert "unstopped_pids" not in run.summary()
+
+
+def unstopped(run, launched, *indexes: int) -> bool:
+    """summary.json `unstopped_pids` is exactly the processes at these `launched` indexes (each
+    one's group id plus SURVIVOR). launched: the prepare server, prepare's slicer, the shard
+    servers, the shard slicers, the merge, the export."""
+    return sorted(run.summary().get("unstopped_pids", [])) == sorted(
+        launched[i].pid + SURVIVOR for i in indexes)
+
+
+@needs_proc
+def test_unstopped_pids_name_the_prepare_server(stubbed, monkeypatch):
+    run, launched = stubbed
+    immortal(monkeypatch)
+    monkeypatch.setenv("STUB_PREPARE", "fail")              # stops after the prepare server's stop
+    assert run("--shards", "2") == tool.EXIT_FAILED
+    assert unstopped(run, launched, 0)
+
+
+@needs_proc
+def test_unstopped_pids_name_the_wall_stopped_shards_and_every_server(stubbed, monkeypatch):
+    """The three stop sites of a wall-stopped run: prepare's server, the shards' slicers, and the
+    shards' servers at the end -- each one's survivors reach summary.json."""
+    run, launched = stubbed
+    immortal(monkeypatch)
+    monkeypatch.setenv("STUB_SHARD", "hang")
+    assert run("--shards", "2", "--wall-seconds", "1") == tool.EXIT_INCOMPLETE
+    # launched: 0 prepare server, 1 prepare slicer, 2-3 shard servers, 4-5 shard slicers
+    assert unstopped(run, launched, 0, 2, 3, 4, 5)
+
+
+@needs_proc
+def test_unstopped_pids_name_what_the_final_cleanup_stops(stubbed, monkeypatch):
+    """A failure before the shards leaves what is tracked to the cleanup in main()'s `finally`."""
+    run, launched = stubbed
+    immortal(monkeypatch)
+    monkeypatch.setenv("STUB_SERVER", "die")                # the prepare server dies at boot
+    assert run("--shards", "2") == tool.EXIT_FAILED
+    assert unstopped(run, launched, 0)
