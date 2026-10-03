@@ -167,10 +167,11 @@
 > 나온다(`test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools`). 아래 문단은
 > **실도구 경로**에 대한 서술이고 그쪽은 그대로다.
 
-E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence인데, 이 구현은 **컴파일 성공을 실행으로 세지
-않는다.** `asan`·`gdb`·`poc`는 링크와 실행까지 성공해야 `ok=True`이고, 빌드 단계에서 끊기면
-`ok=False`다. 그렇게 하지 않으면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다** —
-게이트가 가장 비싼 곳에서 거짓말을 하게 된다.
+E4 조건은 `SANITIZER`/`CRASH`/`POC_RUN` Evidence(⏵ 2026-10-02 — 그리고 종료 코드가 0도 미측정도
+아닐 것, 이슈 #232)인데, 이 구현은 **컴파일 성공을 실행으로 세지 않는다.** `asan`·`gdb`·`poc`는
+링크와 실행까지 성공해야 `ok=True`이고, 빌드 단계에서 끊기면 `ok=False`다. 그렇게 하지 않으면
+**한 번도 돌지 않은 프로그램이 재현 완료로 기록된다** — 게이트가 가장 비싼 곳에서 거짓말을 하게
+된다.
 
 gdb는 2026-09-28 독립 `ContainerToolRunner` 실행에서 정상 종료·SIGSEGV 백트레이스를 모두
 냈다. 다만 `validate.tool_for()`는 아직 gdb를 선택하지 않으므로 **파이프라인의 실도구 E4

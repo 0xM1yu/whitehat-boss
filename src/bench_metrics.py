@@ -10,6 +10,7 @@
 `tests/test_bench.py`가 그 상수를 **실측 원문 fixture**와 대조한다.
 """
 
+import http.client
 import re
 import shutil
 import subprocess
@@ -80,8 +81,15 @@ def fetch(url: str) -> tuple[str | None, str | None]:
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT_S) as response:  # noqa: S310
             return response.read().decode("utf-8"), None
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        return None, f"{url} 요청 실패: {exc}"
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        ValueError,
+        http.client.HTTPException,
+    ) as exc:
+        # `HTTPException`은 `OSError`가 아니다 — 아래 `generation_tokens`와 같은 이유로 더했다.
+        return None, f"{url} 요청 실패: {type(exc).__name__}: {exc}"
 
 
 _SAMPLE = re.compile(r"^(?P<name>[a-zA-Z_:][\w:]*)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>\S+)$")
@@ -120,7 +128,12 @@ def generation_tokens(endpoint: str) -> float | None:
             metrics_url(endpoint), timeout=_COUNTER_TIMEOUT_S
         ) as response:
             text = response.read().decode("utf-8")
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException):
+        # ⏵ 2026-10-02 — `http.client.HTTPException`을 더했다(적대적 리뷰 실측). **`OSError`가
+        # 아니라서** 안 걸렸고, 그러면 `IncompleteRead`·`BadStatusLine`이 여기서 생으로 올라간다.
+        # 이 함수의 호출처는 `openai_compat._post`의 `before`(try **밖**)와 `TimeoutError` 갈래 안
+        # `after`다 — 둘 다 그 함수의 예외 사슬이 못 덮는 자리라, 새면 러너까지 간다.
+        # 이 함수의 계약은 "못 재면 `None`"이고 측정 실패는 사건이 아니다.
         return None
     return _sum_metric(parse_prometheus(text), METRIC_GENERATION_TOKENS)
 

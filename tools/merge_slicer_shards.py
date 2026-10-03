@@ -1,7 +1,7 @@
 """Join the checkpoints of `slicer.py --shard I/N` runs, then export the full result.
 
     python tools/merge_slicer_shards.py [--claim-db claims.db] merged.db shard0.db shard1.db ...
-    python slicer.py --repo ... --out slices.json --checkpoint merged.db --export-only
+    python tools/slicer/slicer.py --repo ... --out slices.json --checkpoint merged.db --export-only
 
 Refuses shards whose run contract, EngineConfig, candidate list or prepared CPG (#368)
 differ. Prints how many candidates are complete and exits 2 when some are not (a shard is
@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "slicer"))
 from slicer_checkpoint import Checkpoint, merge_shards  # noqa: E402
 from slicer_claims import read_claims  # noqa: E402
 

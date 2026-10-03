@@ -17,11 +17,13 @@ import json
 import re
 import socket
 import subprocess
+import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from slicer_source import assemble
 from src import cli, console
 from src.adapters.container_tools import index_output_path
 from src.adapters.factory import build_deps, describe_wiring
@@ -30,7 +32,7 @@ from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
-from src.orchestrator import runner, trace
+from src.orchestrator import runner, task_loader, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
@@ -358,6 +360,743 @@ def test_run_rejects_a_missing_description_file(
 
     assert rc == 2
     assert "description-file" in capsys.readouterr().err
+
+
+def _level1_task(root: Path, *, description: str = "DESC MARKER task-dir") -> Path:
+    """CyberGym Level 1 과제 번들 하나 — `repo-vul.tar.gz` + `description.txt` **둘뿐**이다.
+
+    2026-10-02 실측: HuggingFace `tasks.json`의 `task_difficulty.level1`이 정확히 그 둘을 든다
+    (원천 디렉터리에는 `patch.diff`·`repo-fix.tar.gz`·`error.txt`도 있지만 **정답 재료라 level 1에
+    들어가지 않는다**). 그래서 픽스처도 둘만 만든다 — 더 만들면 실제보다 관대한 입력이 된다.
+    """
+    task = root / "task"
+    task.mkdir(parents=True)
+    (task / "description.txt").write_text(description, encoding="utf-8")
+    src = root / "stage" / "src-vul"
+    src.mkdir(parents=True)
+    (src / "mod_00.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    with tarfile.open(task / "repo-vul.tar.gz", "w:gz") as tf:
+        tf.add(src, arcname="src-vul")
+    return task
+
+
+def test_run_takes_a_level1_task_bundle_as_its_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 `run --task-dir`가 과제 번들을 풀어 **target과 description을 둘 다** 채운다 (#356).
+
+    2026-10-02까지 `task_loader.load_task`의 **프로덕션 호출처가 0건**이었다 — CLI는
+    `--description-file`로 설명만 받고 아카이브는 사람이 손으로 풀어야 했다. 그래서 과제 1건을
+    돌리는 경로가 손 절차에 걸려 있었고, 그 절차는 run 기록에 안 남는다.
+
+    `cli.py`의 `--task-dir` 분기를 지우면 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        ])
+
+    spec = captured["spec"]
+    assert spec.vuln_description == "DESC MARKER task-dir"
+    # 해제된 트리가 target이다 — 사람이 `--target`을 따로 줄 필요가 없다.
+    assert spec.target == tmp_path / "w"
+    assert (tmp_path / "w" / "src-vul" / "mod_00.c").is_file()
+
+
+def _task_run_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture, extra: list[str], *, needle: str
+) -> str:
+    """`--task-dir` run 하나가 **exit 2이고 빈 run 디렉터리를 안 남기는지** 본다. stderr를 돌려준다.
+
+    거부 갈래마다 같은 두 불변식을 봐야 한다 — 전 판은 그것을 **한 갈래에서만** 봐서 나머지가
+    run 디렉터리를 만들어도 초록이었다(적대적 리뷰 2026-10-02 M-3)."""
+    arts = tmp_path / "arts"
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1", "--artifacts-root", str(arts), *extra,
+    ])
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert needle in err, err
+    assert not arts.exists() or not list(arts.iterdir()), "빈 run 디렉터리를 남겼다"
+    return err
+
+
+def test_run_refuses_a_task_work_dir_that_already_has_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 **작업 디렉터리를 재사용하지 않는다** — 비어 있지 않으면 exit 2다.
+
+    `task_loader.safe_extract`는 상한 초과로 중단해도 **앞 멤버를 dest에 남긴다**(그 함수의 경고
+    주석). 남은 트리 위에 또 풀면 두 과제가 섞이고, 섞인 트리로 돈 run은 무엇을 봤는지 모른다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "leftover.c").write_text("stale", encoding="utf-8")
+
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="task-work-dir",
+    )
+
+
+def test_run_accepts_a_task_work_dir_that_exists_but_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이미 있지만 **빈** 디렉터리는 받는다 — `mkdir`로 미리 만들어 둔 경우가 정상이다.
+
+    「비어 있지 않으면 거부」를 「있으면 거부」로 좁히는 변이가 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    work.mkdir()
+
+    class _Stop(RuntimeError):
+        pass
+
+    monkeypatch.setattr(cli, "execute", lambda *a, **k: (_ for _ in ()).throw(_Stop()))
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(work),
+        ])
+
+    assert (work / "src-vul" / "mod_00.c").is_file()
+
+
+def test_run_refuses_a_task_dir_without_the_archive(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """아카이브가 없는 과제는 exit 2다 — 생 예외가 추적으로 새 나가지 않는다."""
+    task = tmp_path / "empty"
+    task.mkdir()
+    work = tmp_path / "w"
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle=f"{task_loader.REPO_ARCHIVE_NAME}가 없다",
+    )
+    # 사전 검사가 해제 **앞**이라 작업 디렉터리를 만들지도 않는다 — 그 검사를 지우면
+    # `safe_extract`가 `mkdir`을 먼저 하고 `FileNotFoundError`(문구에 아카이브 이름이 든다)로
+    # 죽어 위 needle은 다른 문구로 바뀌고, 빈 디렉터리가 남는다(#381 리뷰 LOW).
+    assert not work.exists(), "아카이브가 없는데 작업 디렉터리를 만들었다"
+
+
+# 정답 자료 가드(`task_loader.check_task_dir`)가 **프로덕션 경로에 닿는지** 보는 테스트들. 가드는
+# 처음에 `load_task`에만 걸렸고 그 함수의 프로덕션 호출처는 0건이다 — `run --task-dir`은
+# `read_description`과 `safe_extract`를 따로 부른다. 그래서 `tests/test_task_loader.py`의 단위
+# 테스트가 전부 초록이어도 CLI는 정답 자료가 섞인 번들을 그대로 돌렸다(2026-10-03 실측: exit 0 ·
+# 해제 트리와 run 디렉터리가 남았다). 내용물은 전부 무해한 자리표시자다 — 가드는 이름만 본다.
+_PLACEHOLDER_TEXT = "placeholder, not real task material\n"
+
+
+def test_run_refuses_a_task_dir_holding_answer_key_files_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 정답 자료가 섞인 번들은 **시작하기 전에** 거부한다 — exit 2 · `[ERROR]` · 쓴 것 0.
+
+    번들 폴더를 `data/<종류>/<id>/*`로 통째로 받으면 과제 둘 옆에 정답 자료 셋(수정 diff · 크래시
+    로그 · 패치된 저장소)이 떨어진다 — 저자 데이터셋의 실제 모양이다. 그 디렉터리로 도는 run은
+    무효다. 가드가 `load_task`에만 걸려 있던 판에서는 이 run이 **exit 0으로 끝까지 돌았다**(작업
+    디렉터리를 풀고 run 디렉터리를 남기고). 작업 디렉터리·run 디렉터리 둘 다 안 만들었는지 본다 —
+    쓰고 나서 거부하면 「거부했는데 시작됐다」다."""
+    task = _level1_task(tmp_path)
+    answer_key = ("patch.diff", "error.txt", "repo-fix.tar.gz")
+    for name in answer_key:
+        (task / name).write_text(_PLACEHOLDER_TEXT, encoding="utf-8")
+    work = tmp_path / "w"
+
+    err = _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="patch.diff",
+    )
+
+    refusal = " ".join(_errors(err))
+    assert refusal, f"[ERROR] 줄이 없다: {err}"
+    assert all(name in refusal for name in answer_key), refusal
+    # 운영자 콘솔(cp949)에 그대로 찍히는 줄이다 — `—`·`⚠` 같은 글자가 하나라도 있으면 stdout이
+    # 죽는다. 경로는 개발자 환경의 것이라 뺀다(사용자 이름의 글자가 cp949 밖일 수 있다).
+    refusal.replace(repr(str(task)), "<task-dir>").encode("cp949")
+    assert _PLACEHOLDER_TEXT.strip() not in err, "거부 문구가 파일 내용을 되풀이했다"
+    assert not work.exists(), "정답 자료가 섞인 번들인데 해제 디렉터리를 만들었다"
+
+
+def test_run_refuses_when_the_task_dir_cannot_be_listed_instead_of_passing_unchecked(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 가드가 **목록을 못 읽어** 검사를 못 하면 통과가 아니라 거부다 — exit 2이고 트레이스백이
+    아니다.
+
+    디렉터리를 못 읽는 경우(권한)는 `OSError`다. CLI의 그 `except`를 빼면 트레이스백이 나오고,
+    예외를 삼키고 계속하게 고치면 **검사 안 한 번들이 돈다**. 권한을 깎는 것은 Windows에서 안 되므로
+    가드를 `PermissionError`를 던지는 대역으로 바꾼다 — 공유 객체(`cli` 모듈 속성)에 건다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+
+    def deny(path: Path) -> None:
+        raise PermissionError(13, "denied (simulated)", str(path))
+
+    monkeypatch.setattr(cli, "check_task_dir", deny)
+
+    err = _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="검사를 못 했다",
+    )
+
+    assert _errors(err), err
+    assert not work.exists(), "검사를 못 했는데 해제 디렉터리를 만들었다"
+
+
+def test_run_accepts_the_authors_generator_output_with_readme_and_submit_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 저자 생성기의 산출 네 파일(Level 1 둘 + `README.md`·`submit.sh`)은 거부하지 않는다.
+
+    `submit.sh`는 채점기 신원(서버 · `task_id` · `agent_id`)의 **유일한 출처**다. 생성기를 마스크
+    맵으로 돌렸으면 `task_id`는 마스킹된 값이라 하네스가 다시 만들 수 없고,
+    `--oracle-submit`(#408)의 `read_submit_metadata`가 이 파일을 `--task-dir` 디렉터리에서 읽는다.
+    허용 목록이 둘뿐이면 채점할 수 있는 번들이 전부 이 가드에 걸려 `--oracle-submit`이 영영 못 돈다
+    — 두 PR이 서로 다른 곳에 있어 CI가 못 잡는 결함이다. 허용 목록을 다시 둘로 좁히는 변경이 여기서
+    죽는다. 내용은 자리표시자다(실제 `submit.sh`의 서버 주소·id·체크섬은 이 저장소 어디에도 두지
+    않는다)."""
+    task = _level1_task(tmp_path)
+    (task / "README.md").write_text(_PLACEHOLDER_TEXT, encoding="utf-8")
+    (task / "submit.sh").write_text("# placeholder, not a real submit script\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        ])
+
+    # `execute`까지 왔다 = 가드가 막지 않았고 아카이브가 풀렸다.
+    assert captured["spec"].target == tmp_path / "w"
+    assert (tmp_path / "w" / "src-vul" / "mod_00.c").is_file()
+
+
+def test_run_refuses_a_corrupt_archive_with_exit_2_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 **gzip이 아닌 아카이브도 exit 2다.**
+
+    이것은 실제로 밟는 함정이다 — HuggingFace의 LFS 파일을 `curl -L` 없이 받으면 **텍스트 포인터
+    파일**이 떨어지고, 그것을 풀면 `tarfile.ReadError`가 난다. 전 판은 `FilterError`만 감싸서 그
+    예외가 호출자까지 새 트레이스백으로 나왔다(적대적 리뷰 M-2)."""
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "description.txt").write_text("d", encoding="utf-8")
+    # LFS 포인터의 실제 모양.
+    (task / "repo-vul.tar.gz").write_text(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:0123\nsize 4\n", encoding="utf-8"
+    )
+
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w")],
+        needle="풀 수 없다",
+    )
+
+
+def test_run_refuses_a_task_work_dir_that_is_a_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 `--task-work-dir`가 이미 있는 **파일**이면 exit 2다 — `NotADirectoryError` 트레이스백이
+    아니다(#381 리뷰 LOW). 「비어 있지 않은가」를 `iterdir()`로 보는 검사가 디렉터리가 아닌 것에는
+    예외를 던진다."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    work.write_text("not a directory", encoding="utf-8")
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="디렉터리가 아니다",
+    )
+
+
+def test_run_refuses_a_task_work_dir_that_holds_only_a_subdirectory(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 하위 **디렉터리만** 남은 작업 디렉터리도 비어 있지 않은 것이다 — 해제가 중단되면 앞 멤버가
+    파일이 아니라 디렉터리(`src-vul/`)로 남을 수 있다. 「파일만 센다」로 좁히는 변이가 여기서
+    죽는다(#381 리뷰 LOW)."""
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    (work / "src-vul").mkdir(parents=True)
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="비어 있지 않다",
+    )
+
+
+def test_run_refuses_a_task_work_dir_it_cannot_create(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 작업 디렉터리를 **만들 수 없으면**(부모 자리에 파일이 있다) exit 2다 — `OSError`가
+    트레이스백으로 새지 않는다. CLI의 `except`에서 `OSError`를 빼는 변이가 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the parent directory should be", encoding="utf-8")
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(blocker / "w")],
+        needle="풀 수 없다",
+    )
+
+
+def test_run_refuses_an_interpreter_without_extraction_filters_with_exit_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 추출 필터가 없는 인터프리터(3.11.4 전)에서도 exit 2다 — `RuntimeError`가 새지 않고
+    **풀기 전이라** 작업 디렉터리를 만들지 않는다. CLI의 `except`에서 `RuntimeError`를 빼는 변이가
+    여기서 죽는다. 공유 객체(`tarfile` 모듈)에 건다 — 테스트 모듈의 사본을 바꾸면 안 먹는다."""
+    monkeypatch.delattr(task_loader.tarfile, "data_filter")
+    task = _level1_task(tmp_path)
+    work = tmp_path / "w"
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(work)],
+        needle="3.11.4",
+    )
+    assert not work.exists(), "풀기 전에 거부해야 하는데 작업 디렉터리가 생겼다"
+
+
+@pytest.mark.parametrize("failure", ["corrupt-archive", "drifted-slices"])
+def test_a_refusal_after_the_unpack_tells_the_operator_to_empty_the_work_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture, failure: str
+) -> None:
+    """🔴 **해제 뒤에 멈추면** 작업 디렉터리에 앞 멤버·트리가 남을 수 있고 같은 인자로 다시 돌면
+    「비어 있지 않다」로 거부된다 — 그 길을 막은 뒤에 에러가 **비우라고 말해 준다**(#381 리뷰 LOW).
+    비우는 것은 사람이 한다(지우지 않는다). 해제가 상한·손상으로 중단되는 경우와 해제 뒤 drift
+    검사가 거부하는 경우, 둘 다 같은 말을 한다."""
+    if failure == "corrupt-archive":
+        task = tmp_path / "task"
+        task.mkdir()
+        lfs_pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:0123\nsize 4\n"
+        (task / "repo-vul.tar.gz").write_text(lfs_pointer, encoding="utf-8")
+        extra: list[str] = []
+    else:
+        task = _level1_task(tmp_path)
+        extra = ["--slices", str(_task_slices(tmp_path, text="int main(void) { return 1; }"))]
+    work = tmp_path / "w"
+
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task), "--task-work-dir", str(work), *extra,
+    ])
+
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert "비우" in " ".join(_errors(err)), err
+
+
+def test_run_refuses_both_task_dir_and_description_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """설명의 출처가 둘이면 exit 2다 — 어느 것이 캡슐에 실렸는지 기록으로 못 가른다."""
+    task = _level1_task(tmp_path)
+    desc = tmp_path / "other.txt"
+    desc.write_text("other", encoding="utf-8")
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--description-file", str(desc)],
+        needle="--description-file",
+    )
+
+
+def test_run_refuses_both_task_dir_and_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--task-dir`와 `--target`을 같이 주면 exit 2다 — 어느 트리를 본 run인지 모르게 된다."""
+    task = _level1_task(tmp_path)
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--target", str(TARGET)],
+        needle="--target",
+    )
+
+
+_TASK_SOURCE = "src-vul/mod_00.c"
+# 개수 가드 에러가 들고 있어야 하는 경로 기준 문장.
+_SLICE_PATH_RULE = (
+    "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 한다"
+)
+
+
+def _task_slices(
+    root: Path,
+    *,
+    text: str = "int main(void) { return 0; }",
+    files: tuple[str, ...] = (_TASK_SOURCE,),
+) -> Path:
+    """`files`마다 그 파일 1번 줄을 가리키는 슬라이스 하나씩을 든 `slices.json`. 기본은
+    `_level1_task`가 풀어 놓는 `src-vul/mod_00.c` 하나다(슬라이스 id는 `slice_0001`부터).
+
+    `code`는 슬라이서 자신의 `assemble`로 만든다 — 렌더러의 줄 규칙이 슬라이서와 같다는 것을 지어낸
+    문자열이 아니라 슬라이서 함수로 맞추려는 것이다(`tests/test_slices.py`와 같은 근거 ·
+    CLAUDE.md §2.5 「핀 샘플은 저장소에서 온다」). `text`를 다르게 주면 슬라이서가 **다른 내용**을
+    봤다는 뜻이라 drift 슬라이스가 된다. `files`에 번들 최상위 접두어(`src-vul/`)가 없는 경로나 다른
+    과제의 경로를 주면 풀린 트리에 없는 슬라이스가 된다."""
+    items = []
+    for number, file in enumerate(files, start=1):
+        points = {(file, 1)}
+        items.append({
+            "id": f"slice_{number:04d}",
+            "candidate_key": f"key_{number:04d}",
+            "case": "A",
+            "entry": {"file": file, "line": 1, "symbol": "main"},
+            "members": [f"key_{number:04d}"],
+            "absorbed": [],
+            "lines": [{"file": f, "line": n} for f, n in sorted(points)],
+            "code": assemble(points, {file: [text]}),
+        })
+    path = root / "slices.json"
+    path.write_text(
+        json.dumps({
+            "slice_version": "slice-v2",
+            "status": "ok",
+            "joern_engine_config": {"maxCallDepth": 2},
+            "slices": items,
+            "candidate_manifest": {item["candidate_key"]: {"scopes": []} for item in items},
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_run_takes_slices_made_from_the_same_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 `--task-dir`와 `--slices`는 **같이 쓴다** — 경로가 작업 디렉터리 기준이고 줄 내용이
+    풀린 트리와 같은 슬라이스면 받는다.
+
+    전 판은 둘을 거부했다(*"슬라이스는 이미 풀린 트리에서 나온 것이고 작업 디렉터리는 비어 있어야
+    하므로 슬라이서가 본 트리와 같을 수 없다"*). 그런데 `render`는 **같은 디렉터리**를 요구하지
+    않는다 — 하네스 사본이 슬라이서가 본 것과 **글자 단위로** 같은지(drift)를 본다. 같은 아카이브를
+    푼 트리는 어디서 풀었든 같다. 거부의 대가는 실모델 프로필(Scout 셋이 슬라이스 입력)에서
+    `--task-dir`로는 Scout까지 가는 run을 **시작할 수 없다**는 것이었다(적대적 리뷰 HIGH-1).
+    ⚠ 받는 조건이 **「이 번들의 슬라이스다」가 아니다** — 경로·줄 내용이 우연히 다 맞는 다른 과제의
+    슬라이스는 이 경로로도 들어온다(개수 가드는 경로가 없는 것만 막는다)."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path)
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+            "--slices", str(slices),
+        ])
+
+    assert captured["spec"].slices_path == slices
+    assert captured["spec"].target == tmp_path / "w"
+    assert (tmp_path / "w" / _TASK_SOURCE).is_file()
+
+
+def test_run_refuses_slices_that_drifted_from_the_unpacked_tree(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 같은 경로인데 슬라이서가 **다른 줄 내용**을 봤으면(drift) exit 2다.
+
+    이 검사가 닫는 것은 **경로는 맞고 내용이 다른** 슬라이스뿐이다 — 경로 자체가 트리에 없는
+    슬라이스는 `render_slices`가 오류 없이 건너뛰므로 이 테스트가 아니라 바로 위 개수 가드
+    (`..._does_not_contain`)가 문다. drift 검사는 **풀린 트리에** 돌아야 한다: 트리는
+    `_claim_run_dir` 직전에야 풀리므로 그 전에 `render_slices`를 부르면 트리가 없어 슬라이스가
+    **전부 조용히 빠진다** — 검사가 돌았는데 아무것도 안 본 것이다."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path, text="int main(void) { return 1; }")  # 슬라이서가 본 것 ≠ 번들
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--slices", str(slices)],
+        needle="drift",
+    )
+
+
+@pytest.mark.parametrize(
+    ("files", "matched", "unmatched_ids"),
+    [
+        # 슬라이서를 번들 최상위 `src-vul/`**에서** 돌려 경로에 그 접두어가 없다 — 가장 자연스러운
+        # 슬라이싱 루트이고, 풀린 트리(`--task-work-dir` 기준)에서는 전부 없는 파일이다.
+        pytest.param(("mod_00.c",), 0, ["slice_0001"], id="all-missing-the-bundle-prefix"),
+        # 다른 과제의 slices.json — 경로가 아예 다르다.
+        pytest.param(("other/file.c",), 0, ["slice_0001"], id="foreign-task"),
+        # 일부만 안 맞는다 — 0건이 아니어서 「통째로 비었다」만 보는 검사를 통과한다.
+        pytest.param((_TASK_SOURCE, "mod_00.c"), 1, ["slice_0002"], id="partly-missing"),
+    ],
+)
+def test_run_refuses_slices_the_unpacked_tree_does_not_contain(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    files: tuple[str, ...],
+    matched: int,
+    unmatched_ids: list[str],
+) -> None:
+    """🔴 **렌더된 슬라이스 수가 입력 슬라이스 수와 다르면 exit 2다** — 침묵 0건 run을 막는다.
+
+    `render_slices`는 entry 파일이 트리에 없는 슬라이스를 **조용히 건너뛴다**(drift가 아니라
+    「없음」이라 오류가 아니다). `--task-dir`는 해제 트리가 번들 **최상위**(`src-vul/`의 부모)라
+    슬라이서를 `src-vul/`에서 돌린 자연스러운 슬라이스는 전부 걸러지고, run은 `후보 0건 / 완주 /
+    rc 0`으로 끝난다 — 아무것도 안 봤는데 정상으로 보이는 0이다(CLAUDE.md §0). 2026-10-03
+    `dev_fake`로 재현했다(trace에 `unmatched_slices:1, planned:0`뿐, stderr 경고 없음).
+    기존 `--target` 경로는 사람이 `--target <w>/src-vul`로 루트를 골라 이 문제가 안 난다.
+
+    에러는 몇 건 중 몇 건이 안 맞았는지, **어느** 슬라이스인지, 경로 기준이 무엇인지를 말한다."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path, files=files)
+
+    err = _task_run_is_refused(
+        tmp_path, capsys,
+        ["--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+         "--slices", str(slices)],
+        needle=_SLICE_PATH_RULE,
+    )
+
+    total = len(files)
+    assert f"{total}건 중 {total - matched}건" in err, err
+    for slice_id in unmatched_ids:
+        assert slice_id in err, err
+    for slice_id in {f"slice_{n:04d}" for n in range(1, total + 1)} - set(unmatched_ids):
+        assert slice_id not in err, f"맞은 슬라이스 {slice_id}를 안 맞았다고 말한다"
+
+
+def test_run_accepts_an_empty_slice_set_with_a_task_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """슬라이스 **0건**짜리 `slices.json`은 받는다 — 슬라이서가 후보를 못 찾은 정상 산출물이다.
+
+    개수 가드는 「입력 수 ≠ 렌더 수」이지 「렌더 수가 0」이 아니다 — 0 = 0은 어긋남이 아니다.
+    「렌더가 비면 거부」로 좁히는 변이가 여기서 죽는다."""
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path, files=())
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+            "--slices", str(slices),
+        ])
+
+
+def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """🔴 실모델 프로필(Scout 셋이 슬라이스 입력 v3)에서 `--task-dir`로 Scout까지 가는 run을
+    **시작할 수 있다** — `_claim_run_dir`에 닿는 것으로 본다.
+
+    적대적 리뷰 HIGH-1의 재현을 뒤집은 것이다: 전 판은 같은 인자에서 `--slices` 없이는 슬라이스
+    가드가, 주면 `--task-dir` 게이트가 막아 **어느 쪽으로도 못 시작했다**(문구도 서로를 가리켰다).
+    `execute`가 아니라 `_claim_run_dir`에서 세운다 — 그 뒤는 실서빙 엔드포인트가 필요하다."""
+    _refuse_sockets(monkeypatch)
+    task = _level1_task(tmp_path)
+    slices = _task_slices(tmp_path)
+
+    class _Stop(RuntimeError):
+        """모든 게이트를 지나 run_dir 확보까지 왔다는 표시."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "harness_pool", "--seed", "1",
+            "--condition", "B1prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+            "--slices", str(slices),
+        ])
+
+    assert not _errors(capsys.readouterr().err), "라벨·슬라이스를 다 줬는데 거부됐다"
+    assert (tmp_path / "w" / _TASK_SOURCE).is_file()
+
+
+@pytest.mark.parametrize(
+    ("defect", "needle"),
+    [
+        pytest.param("no-labels", "실서빙", id="serving-label-gate"),
+        pytest.param("no-slices", "슬라이스 입력", id="slice-input-guard"),
+        pytest.param("undescribed-option", "Auditor SOURCE 옵션", id="auditor-source-options-gate"),
+        pytest.param("unknown-device", "장비 파일", id="swap-serving-file-gate"),
+    ],
+)
+def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    defect: str,
+    needle: str,
+) -> None:
+    """🔴 **뒤의 게이트가 거부하면 작업 디렉터리에 트리가 남지 않는다** — 오타를 고친 재시도가 산다.
+
+    해제는 모든 게이트 **뒤**, `_claim_run_dir` **앞**이다. 앞에서 풀면 게이트가 exit 2를 낸 뒤에도
+    트리가 남아 같은 인자로 다시 돌면 「비어 있지 않다」로 거부된다(적대적 리뷰 2026-10-02 M-1 ·
+    #381 리뷰 MEDIUM-1 — 그 수정에 핀이 없어 해제를 옛 위치로 되돌려도 초록이었다). 그래서
+    **거부 직후의 작업 디렉터리**와 **고친 인자로의 재시도**를 둘 다 본다.
+
+    해제 앞에 서는 게이트 **넷을 각각** 건다 — 실서빙 라벨 게이트(`--device`·`--condition` 없음) ·
+    슬라이스 입력 가드(`--slices` 없음) · Auditor SOURCE 옵션 meta 게이트 · 교대 프로필의 장비
+    파일 게이트(없는 `--device`). 처음 판은 앞 둘만 걸어 해제를 뒤 둘의 **앞**으로 옮겨도 초록이었다
+    (#381 독립 검토 LOW). Auditor 게이트는 실제 검출기(`_undescribed_source_options`)를 **갈아끼워**
+    세운다 — 저장소 설정에는 서술 안 된 옵션이 켜진 프로필이 없고, 이 테스트가 보는 것은 검출이
+    아니라 게이트가 **서는 자리**다."""
+    _refuse_sockets(monkeypatch)
+    task = _level1_task(tmp_path)
+    slices = ["--slices", str(_task_slices(tmp_path))]
+    work = tmp_path / "w"
+    base = [
+        "run", "--profile", "harness_pool", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+        "--task-dir", str(task), "--task-work-dir", str(work),
+    ]
+    labels = ["--condition", "B1prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1"]
+    good = base + labels + slices
+    first = {
+        "no-labels": base + slices,
+        "no-slices": base + labels,
+        "undescribed-option": good,
+        "unknown-device": base + [*labels[:3], "no-such-device", *labels[4:]] + slices,
+    }[defect]
+    real_detector = cli._undescribed_source_options
+    if defect == "undescribed-option":
+        monkeypatch.setattr(
+            cli, "_undescribed_source_options", lambda config: ["bogus(auditor/v4)"]
+        )
+
+    rc = cli.main(first)
+
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert needle in " ".join(_errors(err)), err
+    assert not work.exists() or not any(work.iterdir()), "게이트가 거부했는데 트리가 풀렸다"
+
+    class _Stop(RuntimeError):
+        """고친 인자로 모든 게이트를 지나 run_dir 확보까지 왔다는 표시."""
+
+    def _boom(*_: object, **__: object) -> tuple[str, Path]:
+        raise _Stop
+
+    monkeypatch.setattr(cli, "_undescribed_source_options", real_detector)
+    monkeypatch.setattr(cli, "_claim_run_dir", _boom)
+    with pytest.raises(_Stop):
+        cli.main(good)
+    assert (work / _TASK_SOURCE).is_file()
+
+
+def test_run_refuses_a_task_work_dir_without_a_task_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--task-work-dir`만 주면 exit 2다 — 조용히 무시하면 사람은 과제가 풀린 줄 안다."""
+    _task_run_is_refused(
+        tmp_path, capsys,
+        ["--target", str(TARGET), "--task-work-dir", str(tmp_path / "w")],
+        needle="--task-work-dir",
+    )
+
+
+def test_run_refuses_a_task_dir_without_a_task_work_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--task-dir`만 주면 exit 2다 — 해제 자리를 암묵 기본값으로 지어내지 않는다."""
+    task = _level1_task(tmp_path)
+    _task_run_is_refused(
+        tmp_path, capsys, ["--task-dir", str(task)], needle="--task-work-dir",
+    )
+
+
+def test_run_warns_when_the_task_has_no_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """설명이 없으면 **경고하고 계속 간다** — Level 0 과제에는 설명이 없는 것이 정상이다.
+
+    막으면 정상 입력을 거부하고, 조용히 넘어가면 "설명을 줬는데 안 실렸다"와 구별되지 않는다."""
+    task = _level1_task(tmp_path)
+    (task / "description.txt").unlink()
+    captured: dict[str, object] = {}
+
+    class _Stop(RuntimeError):
+        pass
+
+    def fake_execute(config, spec, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["spec"] = spec
+        raise _Stop
+
+    monkeypatch.setattr(cli, "execute", fake_execute)
+
+    with pytest.raises(_Stop):
+        cli.main([
+            "run", "--profile", "dev_fake", "--seed", "1",
+            "--artifacts-root", str(tmp_path / "arts"),
+            "--task-dir", str(task), "--task-work-dir", str(tmp_path / "w"),
+        ])
+
+    assert captured["spec"].vuln_description is None
+    assert "description.txt" in capsys.readouterr().err
+
+
+def test_run_still_requires_a_source_when_neither_flag_is_given(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`--target`도 `--task-dir`도 없으면 exit 2다 — `--target`을 선택으로 바꾼 대가를 여기서 문다.
+
+    argparse의 `required=True`를 뗐으므로 그 검사를 `run()`이 들어야 한다. 안 들면 `None`이
+    `RunSpec`까지 흘러간다."""
+    rc = cli.main([
+        "run", "--profile", "dev_fake", "--seed", "1",
+        "--artifacts-root", str(tmp_path / "arts"),
+    ])
+
+    assert rc == 2
+    assert "--target" in capsys.readouterr().err
 
 
 def _poolify(mode: str | None):  # noqa: ANN202
@@ -2753,6 +3492,57 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     # 절단이 없는 run에는 `critic_skipped`도 없다 — 이벤트 부재가 곧 "안 잘렸다"이다.
     assert not any("critic_top_n" in warning for warning in result.warnings)
     assert "잘린 Finding" not in result.report.render()
+
+
+def _max_hops_zero(config):  # noqa: ANN001, ANN202
+    """`max_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
+    (`test_pov_loop_with_max_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
+    최종 PoC 0건 run을 **monkeypatch 없이 설정 축으로** 만드는 자리다."""
+    return config.transition(thresholds=config.thresholds.transition(max_hops=0))
+
+
+def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
+    tmp_path: Path,
+) -> None:
+    """PoV가 최종 PoC를 0건 냈으면 **왜 0인지**가 run 경고와 리포트에 있다 (#357·#358).
+
+    `deferred`·`critic_failed`를 같은 자리에 올린 논거 그대로다(바로 위 검사들) — trace에만 남기면
+    사용자가 run 결과로 읽는 것에는 안 보인다. 여기서는 한 겹 더 나쁘다: pov는 **추가형이라 상태를
+    안 바꾸므로** Finding이 멀쩡히 찍힌 채 PoC만 조용히 0이 된다.
+
+    ⚠ 경고가 무는 것은 **「`run_dir`에서 꺼낼 수 있는 최종 PoC가 0건」**이다. 사유 어휘가
+    `submitted`를 셋으로 쪼개서 그렇다 — PoC 없는 submit과 쓰기 실패가 각자 사유를 받는다
+    (`runner._pov_result`). **「그 PoC가 터지는가」는 말하지 않는다** — 그 판정은 오라클이
+    낸다. 범위는 `runner._pov_shortfall_warning` docstring이 든다.
+    """
+    result, trace_path = _run(
+        tmp_path, name="pov_zero", before=_with_index(), configure=_max_hops_zero
+    )
+
+    events = _events(trace_path)
+    assert not _of(events, "pov_generated"), "픽스처 전제 — 최종 PoC가 0건이어야 한다"
+    skipped = _of(events, "pov_skipped")
+    assert skipped, "픽스처 전제 — pov가 돌았고 전부 섰다"
+    assert any("회수 가능한 최종 PoC가 0건" in warning for warning in result.warnings)
+    # **사유별 수가 경고 문장 안에 있다.** "0이다"만 적으면 왜 0인지가 여전히 trace에만 있고,
+    # 그러면 이 검사가 막으려는 명제(「왜 0인지가 기록에 있다」)의 절반만 성립한다.
+    assert any(f"max_hop {len(skipped)}건" in warning for warning in result.warnings)
+    assert "PoV 정지 사유" in result.report.render()
+
+
+def test_a_full_run_says_nothing_about_a_pov_shortfall(tmp_path: Path) -> None:
+    """PoV가 submit에 닿은 run에는 그 경고가 **없다** — 0건일 때도 줄이 나오면 그 문장이 신호가
+    아니라 장식이 된다(`test_a_full_run_says_nothing_about_deferral`과 같은 틀).
+
+    ⚠ 리포트의 「PoV 정지 사유」 줄은 **정상 run에도 난다**(`submitted N건`) — 그쪽은 시도가 있으면
+    적는 집계이고(`ne_absorbed`와 같은 자리), 경고는 부족을 알리는 문장이라 발화 조건이 다르다.
+    그래서 여기서 단언하는 것은 경고의 부재이고 리포트 줄의 부재가 아니다.
+    """
+    result, trace_path = _run(tmp_path, name="pov_full", before=_with_index())
+
+    assert _of(_events(trace_path), "pov_generated"), "픽스처 전제 — dev_fake는 PoC를 낸다"
+    assert not any("회수 가능한 최종 PoC가 0건" in warning for warning in result.warnings)
+    assert "PoV 정지 사유 (시도 2건): submitted 2건" in result.report.render()
 
 
 def test_critic_truncation_reaches_the_trace_the_warning_and_the_report(tmp_path: Path) -> None:

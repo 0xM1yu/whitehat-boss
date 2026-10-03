@@ -52,7 +52,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SLICER = ROOT / "slicer.py"
+SLICER = ROOT / "tools" / "slicer" / "slicer.py"
 MERGE = ROOT / "tools" / "merge_slicer_shards.py"
 SERVER_START_SECONDS = 300  # set value: a Joern server that is not listening by then failed
 POLL_SECONDS = 5

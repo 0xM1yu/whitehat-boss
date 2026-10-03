@@ -11,7 +11,7 @@ from src.schemas.common import (
     NonEmptyStr,
     ProducedBy,
 )
-from src.schemas.enums import FindingState, PathStepKind
+from src.schemas.enums import FindingState, PathStepKind, ReproOrigin
 
 # Finding이 가질 수 있는 상태 (architecture.md §4). Candidate 쪽 값(candidate/triaged)은
 # Auditor가 Finding을 만드는 시점에 이미 지나갔으므로 제외한다.
@@ -64,6 +64,12 @@ class ReproSpec(HarnessModel):
     steps: list[NonEmptyStr] = Field(min_length=1)
     # 무엇이 관측되면 재현 성공인가. 예: "ASAN heap-buffer-overflow at parse_header".
     expected_signal: NonEmptyStr
+    # 이 명세를 누가 만들었나 (#S7). 기본은 `model` — 모델이 낸 명세의 값이다. 스키마에 드러나
+    # 모델이 `harness`를 쓸 수도 있으나 하네스가 저장 전에 덮는다(`auditor._ensure_repro_origin`,
+    # 발급값 도장 #279와 같은 결). `harness`는 하네스가 합성한 명세이고, 뜻은 `ReproOrigin` 주석이
+    # 든다. **등급 판정(`gate.evaluate`)은 이 값으로 갈리지 않는다** — E3은 명세 존재만,
+    # E4는 실행 로그를 본다. 게이트는 이 값을 `gate_eval` trace에만 싣는다.
+    origin: ReproOrigin = ReproOrigin.MODEL
 
 
 class Finding(HarnessModel):
@@ -153,8 +159,9 @@ class Finding(HarnessModel):
         architecture.md §4: E3(`validated`)의 조건은 "E2의 조건 전부 + Critic 반박 실패 + 재현
         명세 존재"이고, **경로(source→sink)는 그 E2의 조건**이다 — §4 상태 흐름이 E2를 지난
         뒤에야 E3로 오므로 `validated`에 이른 Finding은 그 경로를 들고 있어야 한다(그래서 아래가
-        `path`도 요구한다). E4(`proven`)는 재현 로그를 요구한다. 근거 0건짜리 `validated`는 이
-        시스템의 전제(Evidence 중심 판정)를 정면으로 뒤집으므로 만들어질 수 없어야 한다.
+        `path`도 요구한다). E4(`proven`)는 재현 로그를 요구한다(종료 코드가 0도 미측정도 아닌
+        런타임 Evidence — #232). 근거 0건짜리 `validated`는 이 시스템의 전제(Evidence 중심 판정)를
+        정면으로 뒤집으므로 만들어질 수 없어야 한다.
         `hypothesized`/`queued` 초안 단계에는 요구하지 않는다.
 
         **게이트가 이 전제를 강제한다** — `gate.py`의 `p3`가 `p2`(경로 양 끝·그래프 근거·
