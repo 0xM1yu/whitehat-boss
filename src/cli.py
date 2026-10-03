@@ -55,6 +55,7 @@ from src.config import (
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.interfaces.oracle import Oracle
+from src.orchestrator.nodes.auditor import loop_problem as auditor_loop_problem
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
     BLOCKING_WHEN_SERVING,
@@ -193,6 +194,7 @@ def doctor(
     checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
+    checks.extend(_check_auditor_loop(config))
     checks.extend(_check_scout_slice_trim(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
@@ -506,6 +508,50 @@ def _check_source_options(config: HarnessConfig) -> list[Check]:
             "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
         )
     ]
+
+
+def _auditor_loop_problem(config: HarnessConfig) -> str | None:
+    """도구 루프(`thresholds.auditor_tool_hops`)와 배선된 Auditor 프롬프트 판의 meta 선언이
+    어긋나면 그 사유 문장을, 맞으면 `None`을 돌려준다(#419). 프로필에 Auditor가 없으면 `None`이다.
+    프롬프트를 못 읽거나 `output_schema`가 허용집합 밖이면 `PromptError`를 올린다 — 호출부가
+    각자의 방식으로 처리한다(`_undescribed_source_options`와 같은 모양).
+
+    **판정은 노드와 같은 함수다**(`nodes.auditor.loop_problem`). 예전에는 cli가 meta의 `tools`만
+    보고 노드가 `output_schema`만 봐서, 한쪽만 통과하는 설정(판은 루프인데 상한 0 · 판은 한 방인데
+    상한 양수 · `tools`에 `AuditorAction.tool`이 안 받는 이름)이 `run`·`doctor`를 지나 첫 Auditor
+    호출에서야 섰다 — 그 앞 단계(1~4)에 쓴 GPU 시간 뒤다.
+    """
+    if Role.AUDITOR.value not in config.profile.roles:
+        return None
+    version = config.model_for(Role.AUDITOR.value).prompt_template_version
+    return auditor_loop_problem(
+        load_prompt(Role.AUDITOR, version), config.thresholds.auditor_tool_hops
+    )
+
+
+def _check_auditor_loop(config: HarnessConfig) -> list[Check]:
+    """도구 루프 상한과 Auditor 프롬프트 선언이 어긋나면 ERROR.
+
+    🔴 **왜 WARN이 아니라 ERROR인가.** 켜 놓고 프롬프트가 도구를 안 알리면 **모델이 도구를 영영
+    안 쓰는데 run은 정상 종료한다** — 그 run의 「도구 호출 0건」이 「모델이 안 골랐다」로 오독된다.
+    `--slices` 경고와 달리 설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) 막는다
+    (`_check_source_options`의 같은 판단).
+    """
+    try:
+        problem = _auditor_loop_problem(config)
+    except PromptError as exc:
+        # (Auditor가 프로필에 없으면 `_auditor_loop_problem`이 `None`이라 여기 안 온다.) 로드 실패는
+        # `_check_prompts`가 이미 ERROR로 댄다. 로드는 됐는데 선언이 이 역할의 허용집합
+        # 밖이면(`resolve_output_schema`) 그 검사가 이 선언을 안 풀어 여기가 유일한 보고다.
+        version = config.model_for(Role.AUDITOR.value).prompt_template_version
+        try:
+            load_prompt(Role.AUDITOR, version)
+        except PromptError:
+            return []
+        problem = str(exc)
+    if problem is None:
+        return []
+    return [Check(Severity.ERROR, problem)]
 
 
 def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
@@ -901,8 +947,8 @@ def _scout_places(config: HarnessConfig) -> int:
 
 
 def _expected_calls(config: HarnessConfig, capsules: int) -> int:
-    """후보 하나당 scout **`1 + max_hops`**회(need_evidence 상한), 승격되면 auditor 1회,
-    상위만 critic 1회.
+    """후보 하나당 scout **`1 + max_hops`**회(need_evidence 상한), 승격되면 auditor 1회(도구 루프를
+    켜면 `1 + auditor_tool_hops`회 — 아래), 상위만 critic 1회.
 
     승격률도 NE 홉 수도 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이
     무의미해진다. Scout 쪽이 특히 그렇다 — v3 좌석이 매번 `max_hops`까지 되물으면 그
@@ -915,13 +961,19 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     세어 풀 프로필에서 **실제의 1/3**을 냈다 — 그 값으로 예산을 잡으면 run이 도중에
     `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
 
+    **Auditor는 도구 루프를 켜면 후보당 `1 + auditor_tool_hops`회**(`thresholds.auditor_tool_hops`,
+    기본 0 = 종전의 1회)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
+
     **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 finding당 최대
     `1 + max_hops`회 더 부른다(VALIDATED = critic 통과분이라 최대 `min(candidates, critic_top_n)
     × (1 + max_hops)`, 계산값). 이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
     scout_calls = candidates * (1 + config.thresholds.max_hops)
-    auditor_calls = candidates
+    # Auditor 도구 루프를 켰으면 후보당 최대 `1 + auditor_tool_hops`회다(hop 0..limit —
+    # `nodes/auditor._run_hops`). 끄면 `auditor_tool_hops`가 0이라 종전의 1회 그대로다.
+    # `max_hops`를 안 쓰는 것은 일부러다(`config.py`의 그 필드 주석).
+    auditor_calls = candidates * (1 + config.thresholds.auditor_tool_hops)
     return scout_calls + auditor_calls + min(candidates, config.thresholds.critic_top_n)
 
 
@@ -1276,6 +1328,20 @@ def run(args: argparse.Namespace) -> int:
                 "않는다 — meta의 source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
                 file=sys.stderr,
             )
+            return 2
+    # **도구 루프 상한과 Auditor 프롬프트 선언이 어긋나면 시작하지 않는다**(#419). 위 가드와 같은
+    # 모양· 같은 판단이다 — 켜 놓고 프롬프트가 안 알리면 모델이 도구를 영영 안 쓰는데 run은 정상
+    # 종료해 「도구 호출 0건」이 「모델이 안 골랐다」로 오독되고, 판은 루프인데 상한이 0이면(또는
+    # 반대면) 노드가 첫 Auditor 호출에서 세워 그 앞 단계에 쓴 시간을 버린다. Auditor에 안 닿는 run은
+    # 막지 않는다.
+    if spec.stop_at()[0] >= Stage.AUDITOR:
+        try:
+            loop_problem_text = _auditor_loop_problem(config)
+        except PromptError as exc:
+            print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
+            return 2
+        if loop_problem_text is not None:
+            print(f"[ERROR] {loop_problem_text}", file=sys.stderr)
             return 2
     # **교대 프로필은 장비 파일 없이 모델에 닿지 않는다**(ADR 0012 Phase 6.5). 교대 명령과 서버
     # 기동 조건(util·창·인자)은 `config/serving/<device>.yaml`이 든다 — 장비를 모르면 무엇으로
