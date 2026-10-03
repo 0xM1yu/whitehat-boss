@@ -2884,6 +2884,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     슬라이스 타깃이면 캡슐의 대상이 후보 위치(entry)가 아니라 **entry를 감싸는 함수**다
     (`_auditor_target`). `SOURCE`는 그 함수에 슬라이스가 걸친 다른 함수들을 이어 붙인 것이다
     (`_auditor_source`). 후보의 위치는 그대로 entry다.
+
+    도구 루프(이슈 #419)가 Finding 없이 서면(`AuditorHopLimit`) **그 후보만 `False`로 멈춘다**(아래
+    `except`) — Finding이 없으니 6단계 게이트로 갈 것이 없고, 후보는 노드가 이미 `queued`로 내렸다.
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
@@ -2900,13 +2903,29 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
-    finding, missings = auditor.run(
-        ctx,
-        candidate=candidate,
-        capsule=expanded,
-        evidences=evidences,
-        source=source,
-    )
+    try:
+        finding, missings = auditor.run(
+            ctx,
+            candidate=candidate,
+            capsule=expanded,
+            evidences=evidences,
+            source=source,
+            # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
+            # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
+            workdir=artifact.path,
+        )
+    except auditor.AuditorHopLimit:
+        # **도구 루프가 Finding 없이 섰다**(같은 요청 반복 · 조사만으로 상한 소진 — 이슈 #419). 둘
+        # 다 모델이 낸 **정상적인 답**이라 한 후보의 정지일 뿐이다 — 노드가 이미 후보를 `queued`로
+        # 내렸고 (`_queue_candidate`) 정지 사유는 trace `auditor_hop.stop_reason`이 든다. 여기서 안
+        # 받으면 `run_pipeline`의 최후 방어선이 `UNFORESEEN_FAILURE`로 run 전체를 멈춘다: 100후보
+        # run에서 첫 반복 요청 하나가 나머지 99후보를 감사도 못 하게 지운다.
+        # `ModelGatewayError`·`SchemaParseError`처럼 `_drop`으로 세지 않는다 — 그 카운터는 **체계적
+        # 고장**을 재는 값이고 이 정지는 모델 호출의 실패가 아니다. 다만 `False`는 이 후보가
+        # Finding을 못 냈다는 뜻이라 다음 단계(6 게이트)로 안 간다. 모든 후보가 이렇게 서면 5단계는
+        # 「응답은 했는데 아무도 못 끝냈다」이고 run은 멈추지 않는다 — 그 비율은 `auditor_hop`의
+        # `stop_reason`이 센다.
+        return False
     item.finding, item.missings = finding, tuple(missings)
     state.update(finding)
     state.evidences[finding.finding_id] = evidences
