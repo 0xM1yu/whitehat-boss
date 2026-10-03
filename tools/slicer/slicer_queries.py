@@ -380,7 +380,7 @@ def inventory_query(limits: dict[str, int] | None = None) -> str:
 CASE_A_CALL_LIMIT = 1
 # The relaxed set explodes on very large repositories: uncapped, sample_01 (OpenBabel) produced
 # a case_a payload big enough to overrun Joern's stdout, so the result envelope was truncated
-# and the whole slice aborted (0 slices). Measured at the earlier cap 2,000 (before #310):
+# and the whole slice aborted (0 slices). Measured at the earlier cap 2,000 (before #300):
 # capping turned sample_01's abort into 2,198 candidates (2,000 api + 198 readers on THAT
 # sample). At cap 4,000 sample_01's api set -- which hit the cap -- can reach up to 4,000, so this
 # 2,198 is a cap-2,000 figure, not the current cap's. Both `api` and `readers` are capped:
