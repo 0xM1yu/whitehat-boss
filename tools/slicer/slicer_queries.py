@@ -297,15 +297,28 @@ ANCESTORS = """
 """
 
 
-def import_query(repo: str, project: str, compilation_database: str | None = None) -> str:
+def import_query(
+    repo: str,
+    project: str,
+    compilation_database: str | None = None,
+    include_root: bool = False,
+) -> str:
     # With a compilation database, c2cpg processes only the compiled translation units with
     # their real flags (compile-aware import): dead #ifdef branches and uncompiled files drop
     # out. Without one, every source file is imported as before.
-    extra = (
-        f', args=List("--compilation-database", {literal(compilation_database)})'
-        if compilation_database is not None
-        else ""
-    )
+    # `include_root` (--import-include-root) also hands c2cpg the repo root as a header include
+    # path. c2cpg 4.0.605 (`Main.scala`): `--include <path>` is `opt[String]("include")
+    # .unbounded()`, "header include paths"; `ParserConfig` makes each `Paths.get(_)
+    # .toAbsolutePath`, so `repo` must already be absolute. Without any include path c2cpg does not
+    # follow project headers reached through `<...>` or from another directory, so code behind a
+    # header-config guard, and header-only C++ libraries, stay out of the graph. NOT `--define`:
+    # one define switches c2cpg to "no inactive-branch parsing" (C2 report, E3).
+    arguments = []
+    if compilation_database is not None:
+        arguments += ["--compilation-database", compilation_database]
+    if include_root:
+        arguments += ["--include", repo]
+    extra = ", args=List(" + ", ".join(literal(a) for a in arguments) + ")" if arguments else ""
     return envelope(
         "import",
         f"""
