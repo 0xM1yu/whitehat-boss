@@ -834,6 +834,50 @@ def test_writes_table_finds_the_base_through_arithmetic_casts_and_fields(tmp_pat
     assert list(index["field_assigns"]) == ["payload_packet_len"]
 
 
+# #464 리뷰가 잡은 꼴. 줄 번호가 단언에 들어가므로 한 줄도 옮기지 않는다.
+_WRITES_INCDEC_C = (
+    "typedef int (*cb_t)(int);\n"                            # 1
+    "struct ops { cb_t cb; cb_t alt; };\n"                   # 2
+    "int my_cb(int x) { return x; }\n"                       # 3
+    "long my_wide(long x) { return x; }\n"                   # 4
+    "static struct ops g = { .alt = (cb_t)my_wide };\n"      # 5
+    "void copy(char *d, const char *s, struct ops *o, int c) {\n"  # 6
+    "    *d++ = *s++;\n"                                     # 7
+    "    *--d = 0;\n"                                        # 8
+    "    *(1 + d) = 2;\n"                                    # 9
+    "    o->cb = (cb_t)my_wide;\n"                           # 10
+    "    o->alt = (my_cb);\n"                                # 11
+    "    o->cb = c ? my_cb : my_cb;\n"                       # 12
+    "}\n"                                                    # 13
+)
+
+
+def test_writes_and_bindings_see_through_increments_literals_and_casts(tmp_path: Path) -> None:
+    """복사 루프의 `*d++ = *s++`(7행)·`*--d = 0`(8행)은 역참조 쓰기다 — 증감은 기저를 감싼 겹일
+    뿐이다. `+`의 왼쪽이 수 상수면 오른쪽이 기저다(9행). 바인딩 값의 캐스트(5·10행)·괄호(11행)는
+    벗긴다. 이 넷은 #464 리뷰 전에는 0건이었다(head 81f94da에서 같은 꼴을 실파싱해 확인).
+
+    음성: 삼항(12행)은 값이 이름 하나가 아니라 안 싣는다."""
+    (tmp_path / "w.c").write_text(_WRITES_INCDEC_C, encoding="utf-8")
+    index = _index(tmp_path, "w.c")
+    row = {"file": "w.c", "func": "copy", "op": "=", "form": "deref", "base": "name"}
+
+    assert index["writes"] == {
+        "d": [
+            {**row, "line": 7, "lhs": "*d++", "rhs": "*s++"},
+            {**row, "line": 8, "lhs": "*--d", "rhs": "0"},
+            {**row, "line": 9, "lhs": "*(1 + d)", "rhs": "2"},
+        ],
+    }
+    assert index["fn_bindings"] == {
+        "alt": [
+            {"file": "w.c", "line": 5, "func": None, "fn": "my_wide", "form": "designated"},
+            {"file": "w.c", "line": 11, "func": "copy", "fn": "my_cb", "form": "assign"},
+        ],
+        "cb": [{"file": "w.c", "line": 10, "func": "copy", "fn": "my_wide", "form": "assign"}],
+    }
+
+
 # 줄 번호가 단언에 들어가므로 한 줄도 옮기지 않는다. 함수 정의는 `impl.c`에 따로 있다 — 바인딩
 # 필터가 파일 하나가 아니라 **저장소 전체**의 `functions`를 보는지를 같이 본다.
 _OPS_C = (
