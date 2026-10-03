@@ -1539,6 +1539,46 @@ def test_definition_lookup_skips_the_carried_functions_locals_params_and_fields(
     assert used == {"f", "p", "GLOBAL"}
 
 
+def test_definition_lookup_ignores_words_in_comments_and_string_literals() -> None:
+    """정의 조회에 넘어가는 이름에서 주석·문자열 속 낱말(`FOO_MAX`·`BUF_SIZE`·`HIDDEN`)이 빠진다 --
+    같은 철자의 매크로가 다른 파일에 하나뿐이면 끌려오던 오염. 주석에도 나오지만 **코드에도** 나온
+    `LIMIT`은 남는다."""
+    files = {
+        "u.c": [
+            "int f(int n)",
+            "{",
+            "    /* clamp to FOO_MAX and LIMIT first */",
+            '    log("see BUF_SIZE");',
+            "    if (n > LIMIT) return 0;",
+            "    return 1; // HIDDEN",
+            "}",
+        ]
+    }
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=7)
+    ctx, events, _, names = _unit(
+        files, [f], auditor_definitions=1, locals={("u.c", "f"): {"n"}}
+    )
+
+    _unit_run(ctx, events, f, [("u.c", 5)])
+
+    (used,) = names
+    assert used == {"f", "log", "LIMIT"}
+
+
+def test_default_off_never_strips_anything_for_the_definition_lookup() -> None:
+    """`auditor_definitions`가 0이면 정의 조회 자체가 안 돈다 -- 주석 거름도 이름 거름도
+    `locals_of`도 안 불린다(`SOURCE`는 원문 그대로 실리고 이벤트에 `definitions` 키도 없다)."""
+    files = {"u.c": ["int f(void)", "{", "    /* LIMIT */", "    return 0;", "}"]}
+    f = Location(file="u.c", symbol="f", line_start=1, line_end=5)
+    ctx, events, _, names = _unit(files, [f])
+
+    source, event = _unit_run(ctx, events, f, [("u.c", 4)])
+
+    assert source == "\n".join(files["u.c"])
+    assert names == [] and "definitions" not in event
+    assert ctx.lookup_kwargs == []
+
+
 # 슬라이스 줄(4)에는 `BBB`만 있고 `AAA`는 같은 함수의 슬라이스 밖 줄(3)에만 있다. 정의는 (파일, 줄)
 # 순으로 `AAA`가 먼저 온다 — 슬라이스 줄에 나온 `BBB`가 앞서야 한다.
 _H_FILE = {
