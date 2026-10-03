@@ -112,14 +112,17 @@ V2_TABLES = (
 DEFINITION_TABLES = ("macros", "types", "file_vars")
 
 # 정의 조회가 「저장소에서 하나뿐」 판정에서 제품 경로 뒤로 미루는 디렉터리 이름
-# (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`). 테스트·예제·번들
-# 라이브러리가 쓰는 흔한 이름이다. `fuzz*`는 접두로 본다. 플랫폼 포트(`windows/`·`xcode/`)는
-# 제품 코드라 넣지 않았다. **정한 값이지 잰 값이 아니다.**
+# (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`). 두 갈래다: 테스트·예제·
+# 문서·번들 라이브러리가 쓰는 흔한 이름(`fuzz*`는 접두), 그리고 **다른 플랫폼·빌드 시스템 몫의
+# 사본**(`xcode/`·`windows/`…) — 리눅스 빌드를 대상으로 본다는 전제라 거기 있는 정의는 효력 있는
+# 정의가 아니라고 본다. 뒤 갈래를 넣은 근거는 로컬 측정 1건이다: libzip 계열 저장소 하나에서 비제품
+# 경로의 정의가 제품 함수로 586건 들어왔고 그중 527건이 `xcode/`, 51건이 `regress/`였다(run ID
+# 없음). **목록은 정한 값이지 잰 값이 아니다.**
 _NONPRODUCT_DIRS = frozenset(
     {
         "test", "tests", "testing", "regress", "example", "examples", "sample", "samples",
         "demo", "demos", "contrib", "doc", "docs", "third_party", "third-party", "thirdparty",
-        "vendor",
+        "vendor", "xcode", "windows", "win32", "win64", "msvc",
     }
 )
 
