@@ -250,7 +250,44 @@ CPG는 하나다.
   JVM을 자식으로 띄우는 `sh`라서 런처만 기다리면 JVM이 남는다 -> 질의를 돌리는 JVM은 SIGTERM에 안 나간다(셧다운 훅
   `EmbeddedRepl.shutdown`이 REPL에 명령을 실행하려다 진행 중인 질의 뒤에서 대기 — jstack). 2026-10-03 E1에서 서버 8개가 run보다
   오래 남았다. 관측 -> dev 박스 2026-10-03 · 힙 2g · 서버 단독: 유휴 서버는 SIGTERM 0.5·0.5·0.7초에 그룹이 비었고(3회),
-  질의(`Thread.sleep(120000)`)를 돌리는 서버는 30초 뒤에도 JVM이 살아 있다가 SIGKILL 0.01초에 사라졌다(1회). 원자료 저장소 밖
+  질의(`Thread.sleep(120000)`)를 돌리는 서버는 30초 뒤에도 JVM이 살아 있다가 SIGKILL 0.01초에 사라졌다(1회). 이 도구의 `stop()`을
+  실 Joern에 건 확인(같은 박스·날짜·힙, 각 1회) -> 유휴 0.88초에 `[]`, 질의 중인 서버 10.02초(유예 10초 뒤 SIGKILL)에 `[]`, 남은
+  프로세스 없음. 원자료 저장소 밖
+
+- `--restart-on-deadline`(기본 꺼짐 — 꺼짐이면 동작도 summary.json도 그대로다) -> 샤드의 질의가 slicer의 클라이언트 데드라인에 걸리면 그 샤드의
+  slicer와 서버를 SIGKILL하고, 같은 `I/N`을 새 서버에서 `--resume --cpg`로 다시 띄워 **다음 후보부터** 잇는다. 근거 -> 데드라인은 서버의
+  계산을 안 멈추고(아래 「Joern HTTP timeout은 …」) 서버는 질의를 하나씩 받으므로 그 샤드의 뒤따르는 질의가 전부 그 뒤에 줄을 선다. 관측 -> dev 박스
+  2026-10-03 · libxml2 · Joern 4.0.605 · 64bd566 슬라이서 · 데드라인 60초 · 샤드 하나(2샤드 claim 큐의 0번): 후보 셋이 연달아 60초에 걸렸고(포이즌
+  3연속으로 그 샤드가 멈췄다) 서버 CPU는 내내 높았다(246초 평균 ≈ 18.9코어, 계산값). 클라이언트를 죽인 뒤에도 `1+1` 질의가 90.5초 동안 답이 없었다.
+  원자료 저장소 밖 · 단일 실행
+- 트리거 -> 샤드의 `--progress` 로그(`shardI/progress.jsonl`)에 새로 붙은 `candidate_failed`의 `error`가 `Query deadline exceeded` 또는
+  `HTTP request failed: timed out`으로 시작할 때(`DEADLINE_ERRORS`; 둘 다 `JoernClient`가 만든다 — 뒤의 것은 `urlopen`의 소켓 타임아웃이 같은 값이라 데드라인
+  스레드와 거의 동시에 울릴 수 있는 경우로, 코드 판독이고 관측된 것은 앞의 것뿐이다). 테스트가 실제 slicer가 데드라인에서 쓰는 이벤트로 앞의 문구를 맞춘다.
+  `Candidate deadline exceeded`(질의를 보내기 전에 후보 예산이 다 된 것)는 서버에 남은 계산이 없으므로 트리거가 아니다. 메인 루프가 `POLL_SECONDS`(5초)마다 본다
+- 다시 띄울 때 -> ① 그 샤드의 slicer와 서버를 그룹째 SIGKILL(위 `stop(grace=0)`) ② 죽은 서버의 `workspace/`를 지운다(`importCpg`가 CPG를 거기에 복사한다 —
+  8.7MB CPG에 서버 하나의 workspace가 17MB였다, `cpg.bin`·`cpg.bin.tmp` 두 벌) ③ 걸린 후보 키를 `shardI/skip_candidates.txt`에 적는다(재시작마다 늘어난다)
+  ④ 새 서버를 `shardI/restartN/`에서 같은 포트·힙으로 띄운다(여러 샤드가 한꺼번에 걸리면 서버는 함께 뜬다) ⑤ 같은 `I/N`·`--claim-db`·체크포인트로
+  `--resume --cpg <저장한 CPG> --skip-candidates shardI/skip_candidates.txt`를 실행한다(로그는 `slicer.N.log`, 진행 로그는 같은 파일에 이어 붙는다).
+  샤드가 하나(`--shards 1`, claim 큐 없음)여도 같다. 죽인 시도는 체크포인트 `attempts`에 `ended: null`로 남는다(강제 종료와 같다)
+- ⚠ **`--skip-candidates`가 없으면 「다음 후보」가 아니다** -> 같은 `I/N`의 `--resume`은 자기 선점을 다시 가져오고, 질의가 실패한 후보는 체크포인트에 저장 단계가
+  없어서 걸렸던 후보를 첫 후보로 또 자르고 데드라인을 한 번 더 태운다. 관측 -> 같은 박스·날짜의 서버를 죽이고 `--resume --cpg`로 다시 띄운 두 번째
+  프로세스의 첫 질의가 첫 번째가 걸렸던 후보였고 60초를 다시 태웠다(1회)
+- `slicer.py --skip-candidates <파일>` -> 후보 키 한 줄에 하나(빈 줄·`#` 줄 무시, BOM 허용). 이 프로세스는 그 후보에 질의하지 않는다 — 체크포인트에 이미
+  complete면 그대로 쓰고, 아니면 포이즌 연속 뒤와 같은 앵커만의 degraded 슬라이스를 내며 **저장하지 않는다**. 선점은 그 샤드의 것으로 남고, 결과 `error`에
+  안 자른 개수가 적히고(그래서 `ok`로 읽히지 않는다) 진행 로그에 `candidate_skipped`가 남는다. 실행 계약에 안 든다(`--shard`처럼 어떤 후보를 자르느냐이지
+  어떻게 자르느냐가 아니다). `--export-only`·`--prepare-only`와는 효과가 없어 거부. 이 도구는 이 플래그를 직접 달므로 `--` 뒤에 쓰면 거부한다
+- 걸린 후보의 결과 -> 체크포인트에 저장되지 않고 선점은 그 샤드에 남는다 -> 병합 export에서 안 끝난 후보라 degraded(옵션을 끈 run과 같다). 목록 없는
+  `--resume`이 나중에 그 후보를 다시 자른다
+- 한도 -> `--max-restarts-per-shard`(기본 5, 정한 값): 한 샤드가 그만큼 다시 떴으면 그 뒤로는 그대로 둔다(걸려도 안 건드린다, summary.json
+  `restart.limit_hit`에 샤드 번호). 그리고 `--wall-seconds`가 `RESTART_MIN_WALL_SECONDS`(60초, 정한 값)보다 적게 남았으면 다시 안 띄운다 — 작은 그래프에서 kill부터
+  그 샤드의 다음 질의까지 ≈ 16초였다(아래). 새 서버가 안 뜨면(또는 옛 서버가 SIGKILL 뒤에도 남으면) 그 샤드는 죽은 채로 `dead_shards`에 들고 이유가
+  `restart.errors`에 남는다
+- 재시작 비용 -> 관측 -> 같은 박스·날짜·libxml2(CPG 8.7MB)·힙 10g·1회: kill 0.01초 + 새 서버가 듣기까지 5.74초 + 새 slicer 프로세스 시작에서 첫 질의까지
+  10.15초(프로세스 시작·`joern --version`·체크포인트 열기를 합쳐 6.05초, 저장한 CPG의 `importCpg` 1.30초, 인벤토리 0.67초, 라이브러리 정의 1.91초) = 약
+  15.9초(세 값의 합, 계산값). 큰 그래프의
+  `importCpg`와 부하가 있는 박스의 값은 미측정. 근거 -> 이 박스의 E2 노트(저장소 밖)
+- summary.json `restart`(옵션을 켠 run에만 있다) -> `max_per_shard` · `per_shard`(샤드별 재시작 수) · `total` · `events`(`shard`·`at_seconds`(샤드 시작 뒤 초)·
+  `candidates`(그때 목록에 더한 키)·`seconds`(kill부터 새 slicer 실행까지)) · `limit_hit` · `errors`
 
 ⏵ #369 **공유 대기열** -> `--claim-db <파일>`(모든 샤드가 같은 SQLite 파일)을 주면 샤드가 `p % N` 대신 아직 아무도
 안 가져간 후보를 하나씩 가져가 자른다 -> 느린 후보가 한 샤드에 몰려도 나머지 샤드가 남은 후보를 처리한다.
@@ -358,7 +395,7 @@ Joern HTTP timeout은 서버의 Scala 계산을 취소하지 않는다. 후보 �
 (OOM·StackOverflow·timeout·HTTP)는 `candidates_failed`에 세고 다음 후보로 계속한다(#219) —
 한 후보가 run 전체를 버리지 않는다. ⚠ 단 `poisoned` 실패가 **연속 `POISON_STOP_STREAK`(3)회**면
 멈춘다: 서버가 계산 중인 runaway 질의 뒤로 후보마다 timeout을 반복하므로, 그때는 전용 서버
-재기동 후 resume이 답이다(자동 재기동은 안 한다 — 저장 지점에서 이어간다).
+재기동 후 resume이 답이다(`slicer.py`는 자동 재기동을 안 한다 — 저장 지점에서 이어간다. 샤드 실행은 `slice_sharded.py --restart-on-deadline`이 한다, 위).
 `--candidate-timeout-seconds`는 한 시도의
 후보 처리 안에서 각 질의의 남은 시간도 제한한다. Python의 원문 조립·디스크 쓰기를 강제
 취소하는 프로세스 상한은 아니다. heartbeat는 대기 중임을 뜻하며 진도 증가로 해석하지 않는다.
