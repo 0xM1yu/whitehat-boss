@@ -21,8 +21,10 @@ from pydantic import ValidationError
 from src.config import AUDITOR_SOURCE_OPTIONS, load_config
 from src.orchestrator import runner
 from src.orchestrator.source_guards import (
+    _EXIT_CHARS,
     _MAX_DROPPED_LISTED,
     _MAX_ROWS,
+    _ROW_CHARS,
     GUARDS_HEADER,
     scan_function,
     scan_guards,
@@ -567,3 +569,187 @@ def test_guards_on_leave_a_case_a_slice_as_it_was(tmp_path: Path) -> None:
     assert facts["source"] == "\n".join(_PARSER[18:26])
     (event,) = _source_events(trace_path)
     assert not [key for key in event if key.startswith("guards")]
+
+
+# --- 독립 검토가 짚은 것 — 가짜 탈출 표시 · 줄이 어긋난 원문 · 안 잡히던 갈래 --------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "tail"),
+    [
+        # 몸통의 **문장 머리**에 있는 탈출만 센다 — 안쪽 `if`·반복문의 몸통·`else`·멤버 호출은 아님
+        (["if (n > MAX) { if (strict) return -1; log_it(); }"], ""),
+        (["if (n > MAX) { for (i = 0; i < n; i++) if (src[i] == 0) break; n = i; }"], ""),
+        (["if (n > MAX) { if (a) b = 1; else return -1; }"], ""),
+        (["if (n > MAX) txn.abort();"], ""),
+        (["if (n > MAX) txn->exit(1);"], ""),
+        (["if (n > MAX) { log_it(); return -1; }"], " [exit: return -1]"),
+        (["if (n > MAX) { if (a) { x(); } return -1; }"], " [exit: return -1]"),
+    ],
+)
+def test_an_exit_counts_only_when_it_starts_a_statement_of_the_guarded_body(
+    body: list[str], tail: str
+) -> None:
+    """안쪽 `if (strict) return`의 탈출이 바깥 가드의 것으로 읽혀 가짜 `[exit: …]`가 붙었다. 독립
+    검토가 curl·zlib·libxml2에서 `if` 행의 약 10%가 그랬다고 보고했다(재측정 안 함 · 로컬 · run
+    ID 없음)."""
+    src = _func(*body, "memcpy(dst, src, n);")
+    first = _scan(src, "memcpy(").rows[0]  # 안쪽 구성의 행이 뒤따를 수 있다 — 바깥 `if`가 첫 행이다
+    assert first == _row(src, "if (n > MAX)", f"if (n > MAX){tail}")
+
+
+@pytest.mark.parametrize(
+    "exit_stmt", ["break", "continue", "abort()", "exit(1)", "goto fail", "return", "return -1"]
+)
+def test_every_early_exit_kind_is_reported(exit_stmt: str) -> None:
+    src = _func(f"if (n > MAX) {exit_stmt};", "memcpy(dst, src, n);")
+    assert _scan(src, "memcpy(").rows == (
+        _row(src, "if (n > MAX)", f"if (n > MAX) [exit: {exit_stmt}]"),
+    )
+
+
+@pytest.mark.parametrize(
+    "macro",
+    [
+        "CHECK(n < 8)",
+        "DCHECK(n < 8)",
+        "CHECK_LT(n, 8)",
+        "ND_TCHECK_LEN(src, n)",
+        "ENSURE(n < 8)",
+        "REQUIRE_NOT_NULL(src)",
+        "VERIFY(n < 8)",
+        "WARN_ON(n > 8)",
+        "WARN_ON_ONCE(n > 8)",
+        "g_return_val_if_fail(n < 8, -1)",
+        "DEBUGASSERT(n < 8)",
+        "ck_assert_int_lt(n, 8)",
+    ],
+)
+def test_assert_like_macro_names_are_guards(macro: str) -> None:
+    """이름에 `assert`가 든 것(대소문자 무관)·`CHECK`가 든 것(`ND_TCHECK_LEN` — tcpdump의 경계
+    검사)·`ENSURE`·`REQUIRE`·`VERIFY`·`BUG_ON`·`WARN_ON`으로 시작하는 것·`g_return_*`."""
+    src = _func(f"{macro};", "memcpy(dst, src, n);")
+    assert _scan(src, "memcpy(").rows == (_row(src, macro, macro),)
+
+
+def test_a_long_condition_and_a_long_exit_are_clipped() -> None:
+    cond = " || ".join(f"n == {i}" for i in range(40))
+    src = _func(f"if ({cond})", f"    return {'x' * 100};", "memcpy(dst, src, n);")
+    (row,) = _scan(src, "memcpy(").rows
+    condition, exit_ = row.split(" | ", 1)[1].split(" [exit: ")
+    assert len(condition) == _ROW_CHARS and condition.endswith("...")
+    assert len(exit_.removesuffix("]")) == _EXIT_CHARS and exit_.endswith("...]")
+
+
+def test_a_comparison_operator_is_not_an_assignment_boundary_of_a_ternary() -> None:
+    src = _func("n = n >= MAX ? MAX : n;", "memcpy(dst, src, n);")
+    assert _scan(src, "memcpy(").rows == (_row(src, "n = n >=", "n >= MAX ? ... : ..."),)
+
+
+def test_a_row_keeps_the_string_literals_of_its_condition() -> None:
+    cond = 'strcmp(name, "a b") != 0 && n > 3'
+    src = _func(f"if ({cond})", "    return -1;", "memcpy(dst, src, n);")
+    assert _scan(src, "memcpy(").rows == (
+        _row(src, "if (strcmp", f"if ({cond}) [exit: return -1]"),
+    )
+
+
+def test_two_calls_of_the_sink_name_on_the_sink_line_both_contribute_names() -> None:
+    src = _func("if (m > 4)", "    return;", "memcpy(a, b, n); memcpy(c, d, m);")
+    assert _scan(src, "memcpy(a").rows == (_row(src, "if (m > 4)", "if (m > 4) [exit: return]"),)
+
+
+def test_the_sink_name_must_start_a_word_and_stay_on_the_sink_line() -> None:
+    """`memcopy(`는 `copy(`가 아니다 · 아래 줄의 같은 이름 호출은 이 sink가 아니다."""
+    src = _func("if (k > 3)", "    return;", "x = memcopy(a, k); copy(dst, src, n);")
+    assert _scan(src, "copy(dst", name="copy").block == NONE_FOUND
+    later = _func("if (m > 4)", "    return;", "memcpy(dst, src, n);", "memcpy(x, y, m);")
+    assert _scan(later, "memcpy(dst").block == NONE_FOUND
+
+
+def test_keywords_do_not_link_a_guard_to_the_sink() -> None:
+    """`sizeof x`(괄호 없는 꼴 — `sizeof(`는 호출처럼 보여 따로 빠진다)의 `sizeof`는 이름 아님."""
+    src = _func("if (other > sizeof tmp)", "    return;", "memcpy(dst, src, sizeof buf);")
+    assert _scan(src, "memcpy(").block == NONE_FOUND
+
+
+def test_an_operator_sink_counts_a_guard_that_leads_its_own_line_only() -> None:
+    op = "<operator>.indirectIndexAccess"
+    src = _func("if (i < n) a[i] = 1;", "a[i] = 2; if (i > 7) log_it();")
+    compact = _row(src, "if (i < n) a[i]", "if (i < n)")
+    assert _scan(src, "if (i < n) a[i]", name=op).rows == (compact,)
+    # 이전 줄의 `if`는 앞이고, 같은 줄에서 sink 뒤에 오는 `if (i > 7)`은 아니다
+    assert _scan(src, "a[i] = 2;", name=op).rows == (compact,)
+
+
+def _as_read_source_does(file_text: str, start: int, end: int) -> str:
+    """`read_symbol_source`가 하는 그대로 — `splitlines()`로 줄을 세어 자른다(#259)."""
+    return "\n".join(file_text.splitlines()[start - 1 : end])
+
+
+@pytest.mark.parametrize("breaks", [0, 1, 2, 3])
+def test_text_misaligned_by_line_breaks_only_splitlines_sees_is_not_scanned(breaks: int) -> None:
+    """함수 앞에 폼피드(`\f`)가 k개 있으면 `splitlines()`가 k줄 위로 밀려 자른다(#259) — 그 원문의
+    sink 줄은 다른 줄이라 「없음」이 거짓이고 행 번호가 k만큼 틀린다. 함수 이름이 첫 두 줄에 없거나
+    마지막 줄이 `}`가 아니면 훑지 않는다(블록 자체를 안 만든다)."""
+    body = [
+        "int f(char *dst, const char *src, size_t n)",
+        "{",
+        "    if (n > MAX)",
+        "        return -1;",
+        "    n = n + 1;",  # 어긋난 원문이 이 줄을 sink 줄로 읽어도 이름이 있다 — 검사 없인 못 거름
+        "    memcpy(dst, src, n);",
+        "    return 0;",
+        "}",
+    ]
+    file_text = "\n".join(["int g(void)", "{", "}", *(["\f"] * breaks), "", *body]) + "\n"
+    real = file_text.split("\n")  # 슬라이서·인덱서가 세는 줄 — `\n`만
+    start = real.index(body[0]) + 1
+    end = start + len(body) - 1
+    sink = real.index("    memcpy(dst, src, n);") + 1
+    anchor = Location(file=FILE, symbol="f", line_start=start, line_end=end)
+    scan = scan_guards(_ref(sink), anchor, _as_read_source_does(file_text, start, end))
+    if breaks == 0:
+        assert scan is not None and scan.shown == 1
+    else:
+        assert scan is None
+
+
+def test_a_name_beyond_the_first_two_lines_is_misaligned_even_if_the_last_line_is_a_brace() -> None:
+    """마지막 줄 검사만으로는 못 거르는 꼴 — 함수가 `}` 세 줄로 끝나면 둘이 밀려 빠져도 마지막 줄이
+    우연히 `}`다. 그땐 이름이 첫 두 줄에서 밀린 것으로 거른다."""
+    body = [
+        "int f(char *dst, const char *src, size_t n)",
+        "{",
+        "    n = n + 1;",
+        "    n = n + 2;",  # 밀린 원문이 sink 줄로 읽는 줄(2줄 위) — 이름이 있어야 검사 없인 훑는다
+        "    memcpy(dst, src, n);",
+        "    if (a) {",
+        "        if (b) {",
+        "            x();",
+        "        }",
+        "    }",
+        "}",
+    ]
+    file_text = "\n".join(["int g(void)", "{", "}", "\f", "\f", "", *body]) + "\n"
+    real = file_text.split("\n")
+    start = real.index(body[0]) + 1
+    end = start + len(body) - 1
+    text = _as_read_source_does(file_text, start, end)
+    assert text.rstrip().endswith("}")  # 마지막 줄 검사는 통과한다 — 이름 검사만 거를 수 있다
+    anchor = Location(file=FILE, symbol="f", line_start=start, line_end=end)
+    sink = real.index("    memcpy(dst, src, n);") + 1
+    assert scan_guards(_ref(sink), anchor, text) is None
+
+
+def test_a_function_named_on_its_second_line_or_closed_with_a_comment_is_aligned() -> None:
+    """GNU 꼴(`static int` 다음 줄에 이름)과 `} /* … */`로 닫는 함수를 어긋남으로 오인 안 한다."""
+    src = _src("""
+        static int
+        parse (const char *src, size_t n)
+        {
+            memcpy(buf, src, n);
+        } /* parse */
+    """)
+    anchor = Location(file=FILE, symbol="parse", line_start=FIRST, line_end=FIRST + 4)
+    assert scan_guards(_ref(_line(src, "memcpy(")), anchor, src) is not None

@@ -16,16 +16,25 @@ sink 호출의 인자 이름을 언급하는 조건을 줄번호와 함께 모�
 
 - 앵커 함수 **안**만 본다 — 호출자의 검증·피호출 함수 안의 검증은 안 본다. 품는 함수를 모르는
   창 앵커면 「없음」의 범위를 `window`라고 적는다(함수 머리가 창 밖일 수 있다).
+- 원문이 슬라이서의 줄과 어긋나면 훑지 않는다(`_aligned`) — `read_source`는 `splitlines()`로
+  줄을 세서(#259) 함수 앞의 폼피드 같은 글자만큼 원문이 위로 밀리고, 그러면 sink 줄이 다른
+  줄이라 「없음」이 거짓이 된다. 함수 이름이 첫 두 줄에 없거나 마지막 줄이 `}`로 안 끝나면
+  어긋난 것이다. 함수 **안**의 폼피드도 마지막 줄이 빠져 같이 걸리지만 그 앞 줄이 우연히 `}`면
+  못 거르고, 창 앵커는 이 검사를 못 한다.
 - 이름으로만 잇는다 — sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드·`_t` 타입 제외)
   중 하나를 조건이 언급하면 후보다. `n = h->len;`을 거쳐 `n`을 쓰는데 가드는 `h->len`을 보는
   식의 **별칭·복사는 안 따라간다** — 한쪽이 별칭 이름이면 안 이어지고, 거꾸로 `len` 같은 흔한
-  필드 이름은 다른 객체의 조건과도 이어진다.
+  필드 이름은 다른 객체의 조건과도 이어진다. 호출의 수신 객체(`v.push_back(x)`의 `v`)는 인자가
+  아니라 안 센다.
 - 전처리를 안 한다 — `#if`의 두 가지가 다 보이고(조건식은 안 본다), 매크로 안의 가드는 이름이
   assert 계열(`assert`·`BUG_ON` 등)일 때만 센다. `MIN(n, cap)` 같은 클램프 매크로는 안 센다.
 - sink를 품은 조건식은 가드로 안 센다 — `if (n < cap && copy(…))`에서 `n < cap`은 sink 앞의
   단락 평가 피연산자지만 같은 조건식 안이라 훑지 않는다.
-- `if`의 `else` 가지에 있는 탈출은 표시하지 않는다(조건은 싣는다). 몸통 안의 **더 안쪽 블록**에
-  있는 탈출도 조건부라 표시하지 않는다.
+- 탈출은 `if` 몸통의 **문장 머리**에 있을 때만 표시한다 — `else` 가지·더 안쪽 블록·안쪽 `if`/
+  반복문의 몸통(`if (s) return`)·멤버 호출(`x.abort()`)의 탈출은 조건부이거나 이 가드의 것이
+  아니라 표시하지 않는다(조건은 싣는다).
+- 연산자 sink(`a[i] = x` — 호출이 없다)는 줄 머리의 `if (…)`만 sink 앞으로 센다 —
+  `else if (…) a[i] = x;`·`{ if (…) … }` 한 줄은 놓친다.
 - C 문법의 훑기다 — 문자열·주석·전처리 줄을 지우고 괄호를 맞춘다. 원시 문자열(`R"(…)"`)·
   `if constexpr`·`switch`/`case`는 모른다.
 
@@ -69,10 +78,12 @@ _NON_NEWLINE = re.compile(r"[^\n]")
 _IDENT = re.compile(r"\b[A-Za-z_]\w*")
 _CALL_AHEAD = re.compile(r"\s*\(")
 _COND_KEYWORD = re.compile(r"\b(if|while|for)\s*\(")
-# assert 계열 — 이름에 `assert`가 든 것(`assert`·`g_assert`·`ck_assert_int_eq`…)과 흔한 검사 매크로.
+# assert 계열 — 이름에 `assert`가 든 것(대소문자 무관: `g_assert`·`DEBUGASSERT`·`ck_assert_int_eq`)·
+# `CHECK`가 든 것(`CHECK_LT`·`ND_TCHECK_LEN` — tcpdump의 경계 검사)과 `BUG_ON`·`WARN_ON`·
+# `ENSURE`·`REQUIRE`·`VERIFY`로 시작하는 것·`g_return_*`.
 _ASSERT_LIKE = re.compile(
-    r"\b(\w*(?i:assert)\w*|BUG_ON|WARN_ON|CHECK|DCHECK|ENSURE|REQUIRE|VERIFY"
-    r"|g_return_if_fail|g_return_val_if_fail)\s*\("
+    r"\b(\w*(?i:assert)\w*|\w*CHECK\w*|BUG_ON\w*|WARN_ON\w*|(?:ENSURE|REQUIRE|VERIFY)\w*"
+    r"|g_return_\w+)\s*\("
 )
 _EXIT = re.compile(r"\b(?:return|goto|break|continue)\b|\b(?:abort|exit)\s*\(")
 _QUESTION = re.compile(r"\?")
@@ -142,6 +153,9 @@ def scan_guards(ref: SliceRef, anchor: Location, text: str) -> GuardScan | None:
     # `scan_function`을 부르면 된다.
     if ref.given_end != "sink" or line is None:
         return None
+    # 품는 함수를 아는 앵커는 원문이 그 함수와 맞는지 먼저 본다 — 어긋났으면 훑지 않는다.
+    if anchor.symbol and not _aligned(text, anchor.symbol):
+        return None
     return scan_function(
         text,
         file=anchor.file,
@@ -151,6 +165,17 @@ def scan_guards(ref: SliceRef, anchor: Location, text: str) -> GuardScan | None:
         # `_auditor_target`은 품는 함수를 모르면 이름 없는 앞뒤 창을 준다
         scope="function" if anchor.symbol else "window",
     )
+
+
+def _aligned(text: str, symbol: str) -> bool:
+    """함수 원문이 슬라이서의 줄과 맞게 잘렸는가. `read_source`는 `splitlines()`로 줄을 세는데
+    슬라이서·인덱서는 줄바꿈만 세서(#259), 함수 앞에 폼피드 같은 글자가 k개 있으면 원문이 k줄 위로
+    밀린다 — 함수 이름이 첫 줄에서 밀리고 마지막 줄(`}`)이 빠진다. 그런 원문의 sink 줄은 다른
+    줄이라 「없음」이 거짓이고 행 번호도 k만큼 틀린다. 이름이 첫 두 줄에 없거나 마지막 줄이 `}`로
+    안 끝나면 어긋난 것이다(주석은 지우고 본다)."""
+    masked = _blank(text, literals=True)
+    head = masked.split("\n", 2)[:2]
+    return any(symbol in line for line in head) and masked.rstrip().endswith("}")
 
 
 def scan_function(
@@ -334,7 +359,9 @@ def _ends_condition(masked: str, i: int) -> bool:
 
 def _exit_after(code: str, masked: str, start: int) -> str | None:
     """`if (…)`(몸통이 `start`부터) 바로 뒤 몸통 — 블록 하나나 문장 하나 — 에 곧바로 든 조기
-    탈출문. 더 안쪽 블록의 탈출은 조건부라 안 본다. 없으면 `None`."""
+    탈출문. 몸통의 **문장 머리**(`{`·`}`·`;`·`:` 다음)에 있는 것만 센다 — 더 안쪽 블록의 탈출도,
+    안쪽 `if`·반복문·`else`의 몸통(`if (s) return`)도, 멤버 호출(`x.abort()`)도 이 가드의 탈출이
+    아니다. 없으면 `None`."""
     i = start
     while i < len(masked) and masked[i].isspace():
         i += 1
@@ -342,27 +369,17 @@ def _exit_after(code: str, masked: str, start: int) -> str | None:
         close = _close_of(masked, i)
         lo, hi = i + 1, close if close >= 0 else len(masked)
     else:
-        lo, hi = i, _statement_end(masked, i)
+        end = masked.find(";", i)
+        lo, hi = i, end if end >= 0 else len(masked)
     # 몸통 안 중괄호 깊이 — 앞 탈출문에서 이어 세므로 몸통이 커도 한 번 훑는다.
     depth, at = 0, lo
     for match in _EXIT.finditer(masked, lo, hi):
         depth += masked.count("{", at, match.start()) - masked.count("}", at, match.start())
         at = match.start()
-        if depth == 0:
+        before = at - 1
+        while before >= lo and masked[before].isspace():
+            before -= 1
+        if depth == 0 and (before < lo or masked[before] in "{};:"):
             end = masked.find(";", at, hi)
             return _clip(_squash(code[at : end if end >= 0 else hi]), _EXIT_CHARS)
     return None
-
-
-def _statement_end(masked: str, start: int) -> int:
-    """`start`에서 시작하는 문장의 끝(괄호 밖 첫 `;`) 인덱스. `for (;;)`의 `;`는 괄호 안이라
-    건너뛴다."""
-    depth = 0
-    for i in range(start, len(masked)):
-        if masked[i] == "(":
-            depth += 1
-        elif masked[i] == ")":
-            depth -= 1
-        elif masked[i] == ";" and depth <= 0:
-            return i
-    return len(masked)
