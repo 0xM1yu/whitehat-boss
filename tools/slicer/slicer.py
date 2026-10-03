@@ -893,8 +893,10 @@ def parser() -> argparse.ArgumentParser:
     # poison streak leaves degraded depends on it too. Bound into the run contract (settings);
     # docs/slicer-README.md has the rest, including clustering with 10,000 or more candidates.
     result.add_argument(
-        "--case-order", choices=sorted(CASE_RANK), default="ab", help="ab: every Case A candidate "
-        "is sliced before every Case B (default); ba: every Case B before every Case A. A run cut "
+        "--case-order", choices=sorted(CASE_RANK), default="ab", help="ab: Case A candidates are "
+        "sliced before Case B (default); ba: Case B before Case A. With --priority-files this "
+        "holds within each tier (listed-file candidates first, then the rest), so a listed "
+        "file's Case B still comes before an unlisted file's Case A under ab. A run cut "
         "short (tools/slice_sharded.py --wall-seconds, a kill) or stopped by a poison streak "
         "leaves the candidates it did not reach degraded, so this decides which case that is. "
         "Ids are numbered after the sort, so they differ per order. Shards and --resume must "
