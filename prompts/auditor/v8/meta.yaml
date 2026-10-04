@@ -1,0 +1,42 @@
+# 도구 루프 판. `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고 `config/budgets.yaml`의
+# `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다 — 둘이 어긋나면
+# `nodes/auditor.loop_problem`이 run과 doctor를 같은 문장으로 막는다.
+#
+# v8 = v7 + 도구 루프. v7의 지시를 **대체하지 않고** 더했다. 바꾼 것은 셋이다 — (1) 홉 프로토콜
+# 절을 새로 넣고 (2) v7이 「이 호출은 한 방이다」라고 단언하던 열두 줄을 홉 계약으로 다시 썼고
+# (3) 캡슐이 빠뜨린 사실에 `reachability_unknown`을 쓰라던 v7 문장 하나(`## Scout and
+# context-capsule status`의 `When the capsule omits …`)에 「먼저 `lookup`, 홉이 없거나 조회가 비었을
+# 때만」 단서를 더했다 — 홉 절과 같은 말을 하게 하려는 것이다(PR #491 리뷰 LOW-2). 그래서 이 판은
+# v7과 열세 줄이 다르다.
+# `SOURCE` 서술(`## Original-source input contract`의 목록 줄)과 그 문장을 뺀 `## Scout and
+# context-capsule status`의 나머지 줄은 **v7과 바이트 동일**이고
+# `tests/test_auditor_prompt_v8.py`가 그 동일성을 문다 — v7이 움직이면 거기서 빨개진다. ⏵ 실제로
+# 그렇게 잡혔다: PR #485가 그 절의 목록 줄에 enum 절단 서술을 더해 4.1 합성에서 빨개졌고, 그
+# 브랜치를 미리 머지해 v8을 그 v7에서 다시 생성했다. ⚠ 이 판은 **아직 어느 run에도 안 쓰였다**
+# (v8로 돈 run 0건) — 그래서 위 (3)이 prefix 바이트를 바꿔도 다시 잴 수가 없다.
+#
+# 판을 올린 이유 -> v7은 `output_schema: Finding`으로 돈 판이다. 같은 v7 라벨에 「매 홉
+# AuditorAction」이라는 다른 문장을 둘 수 없다(`docs/agent-contracts.md` 규칙 1 — 한 판 번호가 두
+# 문장을 가리키지 않는다).
+#
+# `input` 키는 **안 둔다**(= `source`). v7도 안 둔다. 그 키는 `cli`가 「`--slices` 없는 run을
+# 막을지」를 정하는 하드 게이트인데(`src/cli.py`의 `template.input == "slice"` 두 자리) 도구 루프와
+# 무관하고, 이 판의 `SOURCE` 서술이 v7과 바이트 동일이라 슬라이스 없는 run에서도 v7과 똑같이 맞다.
+#
+# 글자 수는 여기 적지 않는다 — `tests/test_auditor_prompt_v8.py`가 센다. 옛 판들이 meta 주석에
+# 적어 둔 수가 prefix 수정마다 낡았다(CLAUDE.md 2.3).
+#
+# 도구 여섯은 `AuditorAction.tool`의 Literal과 같다. 화이트리스트의 `index`는 **일부러 뺐다** —
+# 코드 열람은 `lookup`이 담당한다(`src/schemas/auditor.py`의 그 주석). 이 목록을 넓히면 prefix의
+# 도구 표도 같이 넓힌다 — 스키마가 허용해도 프롬프트가 광고하지 않으면 모델은 그 도구를 영영 안
+# 쓴다(PoV v2와 gdb가 그 선례다).
+#
+# 홉 절의 문장 넷은 외부 조사에서 왔다 — 출처는 `docs/research/2026-10-04-auditor-tool-prompt.md`.
+# 그쪽이 재 둔 수(prompt-only 티어가 recall 60%에서 평평하다는 것 등)는 **남의 실측**이고 우리
+# 하네스에서 잰 값은 아니다.
+role: auditor
+version: v8
+output_schema: AuditorAction
+description: v7에 도구 루프를 더한 판 — 매 홉 AuditorAction(lookup/probe/answer)을 내고, lookup은 이름으로 코드를 조회하며 probe는 진단 도구 하나를 돌려 그 관측을 다음 홉에 되먹인다. SOURCE 서술과 trigger rule은 v7과 같다
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites]
+tools: [semgrep, clang-tidy, build, asan, gdb, poc]

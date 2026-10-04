@@ -56,7 +56,14 @@ def _config(
         swap=SwapPolicy(resident=resident, swappable=swappable, settle_timeout_s=60.0),
     )
     profile = base.profile.transition(roles={**base.profile.roles, **keys}, execution=execution)
-    return base.transition(models={**base.models, **served}, profile=profile)
+    # 도구 루프는 **끈다.** 위 복제가 엔드포인트만 바꾸므로 그 좌석은 `is_fake`가 아니고
+    # 프롬프트는 `dev_fake`와 같은 v1(한 방 판)이다 — 저장소 기본 상한 16(이슈 #419)이 그대로면
+    # `nodes/auditor.loop_problem`이 그 조합을 막는다(막는 것이 맞다). 이 파일이 재는 것은 교대
+    # 기제이고 홉 수가 아니다.
+    thresholds = base.thresholds.transition(auditor_tool_hops=0)
+    return base.transition(
+        models={**base.models, **served}, profile=profile, thresholds=thresholds
+    )
 
 
 class _Rig:

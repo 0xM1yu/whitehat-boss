@@ -23,7 +23,7 @@
 (#63, `index_graph`), 호출자에게 같은 정보를 다시 달라고 하면 **두 번째 데이터원**이
 생기고 그 둘이 갈릴 자리가 만들어진다. 여기서 파생시키면 갈릴 것이 없다.
 
-## 도구 루프 (이슈 #419 — 기본 꺼짐)
+## 도구 루프 (이슈 #419 — ⏵ 2026-10-04 켰다: `config/budgets.yaml`이 16을 든다 · 필드 기본은 0)
 
 `thresholds.auditor_tool_hops`가 양수이고 프롬프트 판이 meta의 `output_schema`로 `AuditorAction`을
 선언하면 한 방 호출 대신 홉 루프가 돈다. 매 홉 모델이 `lookup`(이름으로 코드 조회) · `probe`(도구
@@ -137,7 +137,13 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # `test_the_canonical_auditor_version_receives_evidence_bodies`가 그것을 문다.
 # v7(2026-10-04 · #349)은 v6 prefix의 SOURCE 서술만 바꾼 판이라 위 두 구절이 v6와 바이트 동일이다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5", "v6", "v7"})
+# v8(도구 루프 판)은 첫째 구절(`## Evidence body completeness` 절)의 v7 줄 열여섯을 **바이트
+# 그대로** 절의 앞에 두고 도구 관측의 절단 서술을 한 단락 **뒤에** 붙였다. 둘째 구절은 같지
+# **않다** — `evidence_refs: only …` 줄은 v8이 다시 쓴 열세 줄 중 하나이고 v7의 줄이 머리로만
+# 남는다(뒤에 `probe` 관측의 `evidence_id=` 인용 구절이 붙었다).
+# `tests/test_auditor_prompt_v8.py`가 둘을 각각 문다. 집합에 안 넣으면 근거 본문이 조용히
+# 빠지는데(위 `:119-125`) 루프 판은 그 본문을 더 많이 쓴다.
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8"})
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
@@ -157,8 +163,9 @@ CALLERS_SECTION = "callers"
 # 최악 비에서는 16홉만으로 넘는다**: 입력 몫 196,608(창 262,144 − 출력 상한 65,536, `config.py`의
 # `auditor_tool_hops` 주석)에서 비 1.22면 한 번이 12,296토큰이라 16홉 `lookup` 관측만으로
 # 196,736이고 **hop0를 빼고도 128토큰 넘는다**(계산값). hop0 입력 28,833(프롬프트 **v4**의 최악
-# 추정 — 지금 정본 v6는 prefix가 더 길고 루프 판 v7은 아직 없다. 미실측)을 더하면 225,569로
-# 28,961토큰 넘는다(계산값).
+# 추정 — ⏵ 2026-10-04 지금 정본은 루프 판 v8이고 prefix가 훨씬 길다: v8 33,209자 ↔ v4 13,405자라
+# hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다. hop0가
+# 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은
 # **Scout 좌석 비**(`runner._HOP_CHARS_PER_TOKEN` — 좌석별 3.28~4.23의 하한)를 빌린 **낙관 쪽**이다
 # — Auditor 실측 범위의 상단(3.32) 바로 아래라 「안에 든다」는 그 비를 가정할 때만이다.
@@ -341,7 +348,11 @@ def _ask_model(
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
     schema = resolve_output_schema(template.output_schema)
-    problem = loop_problem(template, ctx.config.thresholds.auditor_tool_hops)
+    problem = loop_problem(
+        template,
+        ctx.config.thresholds.auditor_tool_hops,
+        is_fake=ctx.config.model_for(ROLE.value).is_fake,
+    )
     if problem is not None:
         raise PromptError(problem)
     prompt = _render_hop0(
@@ -412,7 +423,7 @@ def _call_model(
         raise
 
 
-def loop_problem(template: PromptTemplate, hops: int) -> str | None:
+def loop_problem(template: PromptTemplate, hops: int, *, is_fake: bool) -> str | None:
     """프롬프트 판의 meta 선언과 `thresholds.auditor_tool_hops`가 **같은 말**을 하는지 본다.
 
     어긋나면 사유 문장을, 맞으면 `None`을 돌려준다. 노드(`_ask_model` — `PromptError`로 세운다)와
@@ -428,11 +439,27 @@ def loop_problem(template: PromptTemplate, hops: int) -> str | None:
       든다 — 광고하는데 문법이 거절하는 도구라 모델이 그것을 고르면 그 홉이 파싱 실패다.
 
     집합 밖 `output_schema` 선언은 `resolve_output_schema`가 `PromptError`를 올린다.
+
+    **`is_fake`면 둘째를 안 막는다 — 그 설정은 막을 수 있는 설정이 아니다.** `thresholds`는
+    프로필 공통(`config/budgets.yaml`)이라 상한을 켜면 Fake Auditor를 쓰는 프로필도 같이 켜지는데,
+    `dev_fake`가 루프 판을 고를 길이 **없다**: (a) 그 프로필은 scout·auditor·critic을 **한 모델
+    키**(`fake`)에 걸고 판 번호는 키마다 하나라, auditor만 올리려면 키를 갈라야 한다 ·
+    (b) 키를 가르면 `_check_family_split`이 auditor와 critic의 계열이 같다고 로드를 세운다(둘 다
+    `family: fake`) · (c) 키를 안 가르면 그 판 번호가 `prompts/critic/` 아래에도 있어야 하는데
+    루프 판은 auditor 전용이다. 셋이 겹쳐 **만족시킬 수 있는 설정이 없으므로** 여기서 뺀다 —
+    `cli._undescribed_source_options`가 같은 긴장(프로필 공통 thresholds ↔ 정본 프롬프트)을 Fake
+    면제로 푼 것과 같은 논법이고, `_check_checksums`가 Fake 역할을 안 세는 것도 같다.
+    ⚠ **면제는 둘째뿐이다.** 나머지 셋은 Fake에도 그대로 묻는다 — 루프 판을 **고를 수 있게** 되면
+    (예: 테스트가 판을 임시 디렉터리에 만들고 키를 전이한다) 그때 그 셋이 판정을 해야 한다.
+    ⚠ 그래서 **Fake Auditor run의 「도구 호출 0건」은 측정이 아니다** — 판이 `Finding`이라 루프가
+    안 돈 것이고, 모델이 도구를 안 고른 것이 아니다. GPU 없는 스모크는 배선을 보는 run이다.
+    그 사실은 manifest에 `auditor_tool_hops` 키 부재로 남는다(`tool_hops_in_effect` — 러너가
+    `RunRecord.thresholds`에 설정값이 아니라 그 값을 싣는다).
     """
     version = f"auditor/{template.version}"
     looped = resolve_output_schema(template.output_schema) is AuditorAction
     if not looped:
-        if hops <= 0:
+        if hops <= 0 or is_fake:
             return None
         return (
             f"{version}은 output_schema로 Finding(한 방)을 선언하는데 "
@@ -456,6 +483,23 @@ def loop_problem(template: PromptTemplate, hops: int) -> str | None:
             f"문법이 거절하는 도구다. {sorted(AUDITOR_TOOLS)}의 부분집합만 적는다 (#419)"
         )
     return None
+
+
+def tool_hops_in_effect(version: str, hops: int) -> int:
+    """이 판으로 도는 run에서 도구 루프가 **실제로 도는** 조사 홉 상한 — 안 돌면 0이다.
+
+    `_ask_model`의 분기(meta가 `AuditorAction`을 선언하는가)와 같은 판정이다. 설정값 `hops`가
+    양수여도 판이 `Finding`(한 방)이면 루프는 안 돈다 — `loop_problem`이 Fake 좌석에만 허용하는
+    면제다. 러너가 `RunRecord.thresholds`에 설정값 대신 이 값을 싣는다: 설정값 16을 그대로 싣으면
+    manifest는 「켰다」인데 `auditor_hop`은 0건이라 「켰는데 한 번에 answer했다」로 읽힌다.
+    프롬프트를 못 읽으면 `PromptError`다(`_ask_model`의 첫 줄과 같다). **상한 0은 프롬프트를 안
+    읽는다** — 판이 무엇이든 결과가 0이라, 읽으면 꺼진 run의 `_new_record`에 이전에 없던 실패 지점만
+    생긴다(`--stop-after` 5 미만·`--dry-run`은 `cli`의 Auditor 프롬프트 게이트를 안 지난다).
+    """
+    if not hops:
+        return 0
+    template = load_prompt(ROLE, version)
+    return hops if resolve_output_schema(template.output_schema) is AuditorAction else 0
 
 
 def _render_hop0(

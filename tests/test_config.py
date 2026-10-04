@@ -78,6 +78,9 @@ NODE_OUTPUT_SCHEMAS = {
 # scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
 SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHEMAS}
 
+# auditor도 같다 — 한 방 판은 `Finding`, 도구 루프 판은 `AuditorAction`이다(이슈 #419).
+AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
+
 
 # --- 참조 정합성 ------------------------------------------------------------
 
@@ -351,6 +354,17 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
         )
         return
 
+    # auditor도 버전별로 갈린다(이슈 #419) — `auditor_node.OUTPUT_SCHEMA`는 한 방 경로의
+    # 이름이고, 루프 판은 meta 선언을 `resolve_output_schema`로 푼 것을 요청한다. 그래서
+    # scout과 같은 이유로 「하나」와의 동치가 아니라 **집합 소속**을 본다. bench가 같은 선언을
+    # 푸는지는 `tests/test_auditor_loop.py`가 따로 문다.
+    if role is Role.AUDITOR:
+        assert template.output_schema in AUDITOR_ALLOWED_SCHEMA_NAMES, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"auditor 자리가 낼 수 있는 것은 {sorted(AUDITOR_ALLOWED_SCHEMA_NAMES)}뿐이다"
+        )
+        return
+
     node_schema = NODE_OUTPUT_SCHEMAS.get(role)
     if node_schema is not None:
         assert template.output_schema == node_schema.__name__, (
@@ -440,8 +454,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v7`을 고른다. 되돌리면 이
+def test_the_canonical_auditor_selects_prompt_v8(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v8`을 고른다. 되돌리면 이
     핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -450,10 +464,13 @@ def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
     아니다** — v6는 v5의 범위 제약 둘을 삭제했으므로 v5의 상위집합이 아니다(`config/models.yaml`의
     그 항목이 삭제 목록과 #418이 든 수를 적는다). ⏵ **v7**(2026-10-04 · #349) = v6 + Auditor SOURCE
     옵션 넷의 서술. v6를 그 자리에서 고치지 않은 것은 #418의 수가 v6 문장의 것이라서다
-    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH)."""
+    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH). ⏵ **v8**(2026-10-04 · #419) = v7 + 도구
+    루프 — 매 홉 `AuditorAction`이고 `SOURCE` 서술·trigger rule은 v7과 바이트 동일이다
+    (`tests/test_auditor_prompt_v8.py`). v7을 그 자리에서 고치지 않은 것은 v7이
+    `output_schema: Finding`으로 선 판이기 때문이다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v7"
+    assert config.model_for("auditor").prompt_template_version == "v8"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -623,10 +640,15 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 고르지 않는다」. v7 배선(2026-10-04)으로 미선택이 되며 달았고, 그 전에는 이 행이
         # 음성 통제였다.
         ("auditor", "qwen3.8-27b", "v6", ["auditor/v6"]),
-        # 음성 통제 — prompts/auditor/v7/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
-        # 머리 주석 형식이고 v6도 2026-10-04까지 「정본」이었다) — 판독기가 그것을 「안 고른다」로
-        # 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v7", []),
+        # 실물 형제 문형 — prompts/auditor/v7/meta.yaml 마지막 ⏵ 「… 지금은 어느 / registry
+        # 엔트리도 이 버전을 고르지 않는다」. v8 배선(2026-10-04 · PR #491)으로 미선택이 되며
+        # 달았고, 그 전에는 이 행이 음성 통제였다. v6처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "qwen3.8-27b", "v7", ["auditor/v7"]),
+        # 음성 통제 — prompts/auditor/v8/meta.yaml:1의 「auditor 엔트리가 이 버전을 고르고」.
+        # **이 문형은 실재한다**(배선된 판의 머리 주석 형식이고 v7도 2026-10-04까지 「정본」
+        # 이었다) — 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼
+        # 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v8", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -635,8 +657,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 여섯만 시험한다(⏵ 2026-10-04 v7 음성 통제를 더해 여섯) — 새 철자로 적은 meta는
-    목록에 넣어야 잡힌다."""
+    meta 일곱만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
+    새 음성 통제가 되어 일곱) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -665,8 +687,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v6/meta.yaml:6-7 — v7 배선으로 미선택이 되어 v4와 같은 철자를 쓰고,
         # 구절이 주석 줄바꿈으로 갈린다(`:6` 끝이 「어느」다).
         ("auditor", "v6", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v7/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
-        ("auditor", "v7", set()),
+        # prompts/auditor/v7/meta.yaml 마지막 ⏵ — v8 배선으로 미선택이 되어 v6와 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
+        ("auditor", "v7", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v8/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
+        ("auditor", "v8", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -675,7 +700,7 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 여섯 meta의(⏵ 2026-10-04 v7을 더해 여섯) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 일곱 meta의(⏵ 2026-10-04 v8을 더해 일곱) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
@@ -2209,6 +2234,31 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
     """
     _assert_thinking_seat_holds_together("auditor")
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_run_gpu_budget_holds_a_full_lap_of_declared_request_timeouts(profile: str) -> None:
+    """run `gpu_seconds`는 서빙 역할 한 바퀴의 선언된 요청 타임아웃 합 이상이다(이슈 #389).
+
+    7,200이던 때는 한 바퀴(선언값의 합 — 두 프로필 모두 21,300 s, 2026-10-05 계산)의 3분의 1이라
+    호출 하나가 7,500 s 타임아웃으로 한도를 넘을 수 있었고, 정상 run이 중간에 끊긴 채 장부에는
+    「결과가 적은 run」으로만 남았다. **값이 아니라 관계를 잠근다** — 입력이 전부 선언된 설정값이라
+    측정 없이 핀할 수 있다(타임아웃 선언이 없는 좌석은 어댑터 기본 300 s). 이 검사는 실모델 서빙
+    프로필 둘만 본다.
+    """
+    config = load_config(profile)
+    timeouts = {
+        role: config.model_for(role).request_timeout_s or 300 for role in config.profile.roles
+    }
+
+    assert config.budget.gpu_seconds >= max(timeouts.values()), (
+        f"{profile} — gpu_seconds {config.budget.gpu_seconds}가 단일 호출 타임아웃 최대 "
+        f"{max(timeouts.values())}보다 작다 — 호출 하나가 run 예산을 넘는다(#389)"
+    )
+    assert config.budget.gpu_seconds >= sum(timeouts.values()), (
+        f"{profile} — gpu_seconds {config.budget.gpu_seconds}가 서빙 역할 한 바퀴의 선언 "
+        f"타임아웃 합 {sum(timeouts.values())}보다 작다 — 정상 run이 예산에 끊긴다(#389)"
+    )
 
 
 def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> None:
