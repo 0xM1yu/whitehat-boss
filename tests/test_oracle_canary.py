@@ -330,18 +330,33 @@ def test_a_split_vul_leg_fails_even_without_a_segfault(capsys):
     assert "ref/vul" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("code", [0, 137, 139])
+@pytest.mark.parametrize("code", [0, 71, 137, 139])
 def test_a_reference_poc_that_does_not_crash_the_vul_leg_is_named_as_such(code: int, capsys):
     """🔴 이 게이트의 **가장 기본 거부** — 참조 PoC가 `-vul`에서 터지지 않으면 판정을 쓸 수 없다.
 
-    `0`은 크래시가 없다는 뜻이고 `137`은 docker가 SIGKILL했다는 뜻이며 `139`는 입력 무관 SIGSEGV라
-    **셋 다 타깃의 판정이 아니다.** 셋 다 「크래시가 아니다」 문구까지 본다 — `139`는 139 전용
-    검사도 잡으므로 exit 코드만 보면 `_NOT_A_CRASH`에서 139를 빼도 초록이다(변이가 살아남던 자리).
+    `0`은 크래시가 없다는 뜻이고 `71`은 OOM이며(오라클의 술어가 「크래시 아님」으로 읽는다) `137`은
+    docker가 SIGKILL했다는 뜻이고 `139`는 입력 무관 SIGSEGV라 **넷 다 타깃의 판정이 아니다.** 넷 다
+    「크래시가 아니다」 문구까지 본다 — `139`는 139 전용 검사도 잡으므로 exit 코드만 보면
+    `_NOT_A_CRASH`에서 139를 빼도 초록이다(변이가 살아남던 자리).
     """
     assert _main(_Fake(_codes(2, **{"ref/vul": [code, code]})), repeat=2) == 1
     err = capsys.readouterr().err
     assert "ref/vul" in err
     assert "크래시가 아니다" in err
+
+
+def test_the_not_a_crash_message_names_every_code_the_tool_does_not_count():
+    """거절 문구가 `_NOT_A_CRASH`의 **모든** 코드를 조작자에게 열거한다 (리뷰 LOW-4).
+
+    집합에 71(OOM)을 더하면서 사람이 읽는 괄호 설명(`0=무크래시 · 137=…`)을 안 고쳤다 - 그
+    문구가 「크래시가 아닌 코드는 이것들」이라고 읽히므로 71이 빠지면 조작자는 71이 크래시로
+    센다고 오해한다. 문구의 `<코드>=<뜻>` 꼴로 센다(이 도구가 쓰는 꼴이다).
+    """
+    text = " ".join(oracle_canary.judge("ref/vul", VUL, [0]).problems)
+
+    missing = sorted(code for code in oracle_canary._NOT_A_CRASH if f"{code}=" not in text)
+
+    assert not missing, f"거절 문구가 {missing}를 안 든다: {text}"
 
 
 def test_the_judge_logic_does_not_depend_on_the_sample_count():
