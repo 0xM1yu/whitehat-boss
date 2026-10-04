@@ -101,9 +101,51 @@ v2·v3 표가 못 잡는 것 — 구문만 보기 때문이다:
 | 위치 초기화(`{ my_init, my_free }`) | 필드 순서를 타입 정의에서 찾아야 한다 |
 | 함수 포인터 변수·배열 호출(`fp(x)`) | 필드가 아니다 — `calls`에 `fp`로 들고 정의가 없다 |
 | 같은 이름 필드의 주인 | 필드 이름만 키다 — 읽는 쪽이 `fields` 하나뿐일 때만 저장소 전체로 잇는다 |
-| enum 상수 | `types`에는 enum 정의만 든다 |
+| enum 상수 | `types`에는 enum 정의만 든다 — ⏵ index-v4가 `enum_constants`로 싣는다 |
 | C++ 구성(class·namespace·template) | C 문법 노드만 본다 — class 필드는 안 든다 |
 | 대상 트리 밖 헤더(`generated_headers` 등) | 인덱서는 대상 트리 안만 받는다 |
+
+## index-v4 — include 그래프 · enum 상수 · 앞선 선언 표시
+
+v2·v3 표의 행은 **하나만 빼고 그대로다** — `types`의 앞선 선언 typedef 행에 `forward`가 붙는다.
+표 둘을 더했다. 버전을 올린 것은 v3 때와 같은 이유다 — 읽는 쪽이 「표가 없다」(v3 이하 산출물)와
+「0건」을 가른다.
+
+| 표 | 모양 |
+| --- | --- |
+| `includes` | **파일** → [{line, path, system}] — `#include` 지시문. `<x.h>`면 `system` 참 |
+| `enum_constants` | 이름 → [{file, line_start, line_end, enum}] — 범위는 **그 enum 정의 전체** |
+
+- **`includes`** — 경로는 따옴표·꺾쇠 안 원문 그대로다(정규화하지 않는다 — 파일로 푸는 것은 읽는 쪽
+  `index_graph` 몫). `#if` 양쪽 가지의 지시문을 **둘 다** 싣는다(심볼과 같은 원칙). 지시문이 없는
+  파일은 키가 없다. 매크로로 계산하는 경로(`#include MACRO_H`)는 경로가 없어 안 싣는다.
+- **`enum_constants`의 범위** — `typedef enum {…} T;`면 그 `typedef` 문 전체, 아니면 enum 지정자다.
+  같은 enum의 상수는 범위가 같다 — 읽는 쪽이 겹치는 범위를 한 번만 싣는다(`runner._overlaps`).
+  `enum`은 태그 이름, 익명이면 typedef 이름, 둘 다 없으면 `null`이다.
+- **`types`의 `forward`** — `typedef struct X X;`처럼 **본문 없는** struct·union·enum을 가리키는
+  typedef 행에만 `"forward": true`가 붙는다(없으면 거짓). 그 이름의 실제 본문(`struct X {…}`)이 따로
+  있으면 행이 둘이 되는데, 이 행은 정의가 아니라 앞선 선언이다 — 읽는 쪽이 본문 있는 행을 고른다.
+  본문 없는 `struct X;`와 프로토타입은 v2부터 어느 표에도 안 든다(실파싱 확인).
+
+노드 모양은 **실파싱으로 확인했다**(tree-sitter 0.26.0 · tree-sitter-c 0.24.2 · tree-sitter-cpp
+0.23.4, 호스트). 추측했으면 틀렸을 것 셋:
+
+- `preproc_include`의 경로는 `path` 필드이고 `string_literal`·`system_lib_string`·
+  `identifier`(매크로) 중 하나다. **`string_literal`의 `string_content`를 이어 붙이면 안 된다** —
+  역슬래시가 `escape_sequence`로 쪼개진다(`"a\\b.h"`). include 경로는 이스케이프를 안 푸므로
+  따옴표 안 원문을 쓴다.
+- enum 상수는 `enumerator_list` 바로 아래만이 아니라 **`#ifdef` 안에도** 있다(`preproc_ifdef` 자식).
+- `typedef struct Z {…} Z;`는 `types`에 **같은 범위의 행 둘**(struct `Z` · typedef `Z`)을 낸다. 같은
+  사실이므로 읽는 쪽이 범위로 합친다(인덱서는 v2 모양대로 둘 다 낸다).
+
+v4가 못 잡는 것:
+
+| 놓치는 것 | 왜 |
+| --- | --- |
+| 매크로로 계산한 include 경로 | 전처리를 하지 않는다 — 지시문 자체를 안 싣는다 |
+| `-I`로 바뀌는 include 해석 | 빌드 설정을 안 본다 — 읽는 쪽이 경로 접미로 근사한다 |
+| 대상 트리 밖 헤더(libc 등) | 인덱서는 대상 트리 안만 받는다 — 푼 파일이 없다 |
+| `typedef struct _X X;`에서 `X` → `struct _X` 본문 | 태그와 이름이 다르면 안 잇는다 |
 
 ## 종료 코드
 
@@ -124,7 +166,7 @@ from pathlib import Path
 # 거기 없는 값이면 그쪽이 `unsupported_version`으로 **거절한다** — 그래프 섹션이 통째로 사라지는데
 # 그 모양은 "인덱서가 안 돌았다"와 같아서 캡슐만 봐서는 구별되지 않는다. 형식이 바뀌면
 # 올리고, 두 값이 갈리지 않도록 `tests/test_indexer.py`가 대조한다.
-INDEX_VERSION = "index-v3"
+INDEX_VERSION = "index-v4"
 
 # 확장자 → tree-sitter 문법 모듈 이름. **`container_tools._INDEX_SUFFIXES`가 보내는
 # 확장자를 전부 담아야 한다**(그쪽이 이 스크립트에 넘길 파일을 고른다). 여기가 더 넓은
@@ -185,7 +227,7 @@ _TYPE_SPECIFIERS = {
 
 _MACROS = frozenset({"preproc_def", "preproc_function_def"})
 
-# 이름 → 기록 목록 모양의 v2·v3 표. `locals`·`assigns`는 파일 → 함수 → 이름 모양이라 따로 다룬다.
+# 이름 → 기록 목록 모양의 v2~v4 표. `locals`·`assigns`는 파일 → 함수 → 이름 모양이라 따로 다룬다.
 _NAMED_TABLES = (
     "functions",
     "macros",
@@ -196,6 +238,7 @@ _NAMED_TABLES = (
     "writes",
     "fn_bindings",
     "field_calls",
+    "enum_constants",
 )
 
 # 원소·역참조 좌변의 바깥 겹 → `writes`의 `form`(index-v3, #304).
@@ -403,9 +446,11 @@ def _lookup_tables(root, relative: str) -> dict:
             "writes",
             "fn_bindings",
             "field_calls",
+            "enum_constants",
         )
     }
     scoped: dict = {"locals": {}, "assigns": {}}
+    includes: list[dict] = []
     stack = [(root, None, None)]
     while stack:
         node, func, owner = stack.pop()
@@ -414,6 +459,9 @@ def _lookup_tables(root, relative: str) -> dict:
             name = node.child_by_field_name("name")
             if name is not None:
                 _add(tables["macros"], _text(name), _span(node, relative))
+            continue
+        if kind == "preproc_include":
+            _record_include(node, includes)
             continue
         if kind == "function_definition" and func is None:
             func = _function_name(node) or ""
@@ -427,6 +475,8 @@ def _lookup_tables(root, relative: str) -> dict:
                 owner = (_text(name), span)
             elif not _lends_owner(node):
                 owner = (None, span)
+            if kind == "enum_specifier":
+                _record_enumerators(node, relative, tables["enum_constants"])
         elif kind == "type_definition":
             span = _span(node, relative)
             names = [
@@ -434,8 +484,18 @@ def _lookup_tables(root, relative: str) -> dict:
                 for declarator in node.children_by_field_name("declarator")
                 if (found := _declared_name(declarator)) is not None
             ]
+            # 본문 없는 struct·union·enum을 가리키는 typedef(`typedef struct X X;`)는 앞선 선언이다
+            # — 같은 이름의 본문 행과 둘이 되면 읽는 쪽이 본문 행을 고른다(index-v4 `forward`).
+            aliased = node.child_by_field_name("type")
+            forward = (
+                {"forward": True}
+                if aliased is not None
+                and aliased.type in _TYPE_SPECIFIERS
+                and aliased.child_by_field_name("body") is None
+                else {}
+            )
             for name in names:
-                _add(tables["types"], _text(name), {**span, "kind": "typedef"})
+                _add(tables["types"], _text(name), {**span, "kind": "typedef", **forward})
             if names:
                 owner = (_text(names[0]), span)
         elif kind == "field_declaration" and owner is not None:
@@ -460,7 +520,62 @@ def _lookup_tables(root, relative: str) -> dict:
         elif kind == "call_expression" and func:
             _record_field_call(node, func, relative, tables["field_calls"])
         stack.extend((child, func, owner) for child in reversed(node.children))
-    return {**tables, **scoped}
+    return {**tables, **scoped, "includes": sorted(includes, key=lambda row: row["line"])}
+
+
+def _record_include(node, includes: list[dict]) -> None:
+    """`#include "a/b.h"`·`#include <b.h>`를 싣는다(index-v4). 경로는 구분자 안 원문 그대로다.
+
+    `string_literal`의 `string_content`를 이으면 역슬래시가 `escape_sequence`로 빠진다(실파싱) —
+    include 경로는 이스케이프를 안 푸므로 따옴표 안을 그대로 쓴다. 매크로 경로(`identifier`·
+    호출식)와 빈 경로는 안 싣는다.
+    """
+    path = node.child_by_field_name("path")
+    if path is None or path.type not in ("string_literal", "system_lib_string"):
+        return
+    inner = _text(path)[1:-1]
+    if inner:
+        includes.append(
+            {
+                "line": node.start_point[0] + 1,
+                "path": inner,
+                "system": path.type == "system_lib_string",
+            }
+        )
+
+
+def _record_enumerators(specifier, relative: str, enum_constants: dict) -> None:
+    """본문 있는 enum 지정자의 상수를 `enum_constants`에 싣는다(index-v4).
+
+    범위는 그 enum 정의 전체다 — `typedef enum {…} T;`면 typedef 문, 아니면 지정자. 상수 하나만
+    보여 주면 값(`= 3`)과 이웃 상수가 빠진다. `#ifdef` 안 상수도 enum 본문의 자손이라 같이 훑는다
+    (실파싱 — `preproc_ifdef` 자식으로 온다). enum 안에 enum은 없으므로 깊이를 막지 않는다.
+    """
+    body = specifier.child_by_field_name("body")
+    if body is None:
+        return
+    parent = specifier.parent
+    whole = parent if parent is not None and parent.type == "type_definition" else specifier
+    tag = specifier.child_by_field_name("name")
+    enum = None
+    if tag is not None:
+        enum = _text(tag)
+    elif whole is not specifier:
+        for declarator in whole.children_by_field_name("declarator"):
+            found = _declared_name(declarator)
+            if found is not None:
+                enum = _text(found[0])
+                break
+    record = {**_span(whole, relative), "enum": enum}
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        if node.type == "enumerator":
+            name = node.child_by_field_name("name")
+            if name is not None:
+                _add(enum_constants, _text(name), dict(record))
+            continue
+        stack.extend(reversed(node.children))
 
 
 def _lends_owner(specifier) -> bool:
@@ -766,6 +881,7 @@ def build_index(paths: list[Path], root: Path) -> dict:
     calls: list[dict] = []
     named: dict[str, dict] = {name: {} for name in _NAMED_TABLES}
     scoped: dict[str, dict] = {"locals": {}, "assigns": {}}
+    includes: dict[str, list[dict]] = {}
     unresolved = 0
     unnamed = 0
     parse_errors: list[str] = []
@@ -789,6 +905,8 @@ def build_index(paths: list[Path], root: Path) -> dict:
                     per_file.setdefault(relative, {}).setdefault(func, {}).setdefault(
                         var, set()
                     ).update(lines)
+        if result["includes"]:
+            includes[relative] = result["includes"]
         unresolved += result["unresolved_calls"]
         unnamed += result["unresolved_symbols"]
         if result["has_parse_error"]:
@@ -817,6 +935,8 @@ def build_index(paths: list[Path], root: Path) -> dict:
         # 그래프의 커버리지가 낮다는 뜻이고, E2를 얼마나 믿을지는 그것을 보고 판단한다.
         "unresolved_symbols": unnamed,
         "parse_errors": sorted(parse_errors),
+        # 파일 → `#include` 지시문(index-v4). 지시문이 없는 파일은 키가 없다.
+        "includes": dict(sorted(includes.items())),
         **{
             name: {key: sorted(records, key=_record_order) for key, records in table.items()}
             for name, table in named.items()
