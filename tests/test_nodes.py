@@ -1179,7 +1179,9 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
     `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
     state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
 
-    def ask(ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list) -> Decision:
+    def ask(
+        ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list, source=None
+    ) -> Decision:
         verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
         return Decision(
             decision_id=decision_id,
@@ -1709,7 +1711,7 @@ def _facts_of(body: str) -> dict:  # noqa: ANN202
 
 
 def test_critic_v1_prompt_does_not_carry_the_evidence_location(ctx: RunContext) -> None:
-    """**v1 Critic(실서빙 `gpt-oss-20b`)의 프롬프트 바이트는 main과 같다** — 위치를 싣지 않는다.
+    """dev_fake의 v1 Critic은 기존 metadata 렌더를 유지한다 — 위치를 싣지 않는다.
 
     `_CONTENT_AWARE_VERSIONS`가 v1을 뺀 것은 v1이 바이트 동일이라 재측정(evaluation §2.3)이 안
     걸리게 하려는 것이다(#237 HIGH-1). 위치 토막이 그 문 밖에서 붙으면 판 번호 변화 없이 실서빙
@@ -1800,12 +1802,12 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_v4_and_v5() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_v5_and_v6() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert {"v3", "v4", "v5"} <= critic._CONTENT_AWARE_VERSIONS
+    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6"})
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:

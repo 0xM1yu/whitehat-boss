@@ -37,6 +37,8 @@ OUTPUT_SCHEMA = DecisionDraft
 # v3·v4·v5·v6는 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
 _CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6"})
+# SOURCE 입력을 서술하는 판. 본문 인식과 별도 계약이며 앞 판은 SOURCE를 읽지 않는다.
+_SOURCE_INPUT_VERSIONS = frozenset({"v6"})
 
 # 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와
 # 같은 꼴로 읽히도록 맞춘다 — 절단 사유는 어느 상한이 걸렸는지를 이름으로 말해야 한다.
@@ -92,8 +94,7 @@ def run(
             decision_id=decision_id,
             finding=finding,
             evidences=own,
-            # 소스 override가 없으면 기존 호출 모양을 유지한다.
-            **({"source": source} if source is not None else {}),
+            source=source,
         )
         ctx.store.put(decision)
         if gate.was_normalized(decision):
@@ -133,9 +134,9 @@ def _ask_model(
     # 뺀다) 같은 판이면 FACTS와 EVIDENCE 줄이 같은 값을 든다.
     aware = version in _CONTENT_AWARE_VERSIONS
     bodies = evidence_summaries(evidences, ctx.read_payload) if aware else {}
-    # v6만 Auditor의 캐시된 SOURCE를 읽는다. 앞 판의 입력은 그대로 두고,
+    # SOURCE 입력 계약을 선언한 판만 Auditor의 캐시된 SOURCE를 읽는다. 앞 판의 입력은 그대로 두고,
     # 다시 자르지 않는다 — PoV도 같은 _Once 결과를 받아야 한다(이슈 #391).
-    source_text = source() if version == "v6" and source is not None else ""
+    source_text = source() if version in _SOURCE_INPUT_VERSIONS and source is not None else ""
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -148,6 +149,7 @@ def _ask_model(
         claim=f"{finding.title} ({finding.cwe})",
         path=_describe_path(finding),
         evidence=_describe_evidence(evidences, bodies, with_location=aware),
+        **({"source": source_text} if version in _SOURCE_INPUT_VERSIONS else {}),
     )
     # **verdict를 자유 문자열로 받는다** — `Decision`의 `verdict: Verdict`를 스키마에 `enum`으로
     # 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측
