@@ -627,7 +627,7 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 통제 — prompts/critic/v4/meta.yaml:1. 첫째·셋째 철자를 함께 들어 여기서는 철자를
         # 못 가른다 — 철자별로는 `test_the_known_metas_…`가 본다.
         ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
-        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
+        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성: v3 자체는 미배선이다」.
         ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
@@ -718,8 +718,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
 )
 def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
     """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
-    굵게·백틱을 쓰는 문체다 — 굵게는 `prompts/critic/v3/meta.yaml:4`, 백틱은
-    `prompts/critic/v1/meta.yaml:1`(그 한 줄이 굵게와 백틱을 같이 든다). ⚠ 전에는 백틱 증인으로
+    굵게·백틱을 쓰는 문체다 — 굵게와 백틱은 `prompts/critic/v1/meta.yaml:1`에 함께 있다.
+    ⚠ 전에는 백틱 증인으로
     critic/v3의 `:7`을 들었는데 그 줄이 거짓 이력 블록이라 지워졌다 — 지금 critic/v3 머리에는
     백틱이 0개다. 다섯 형은 검토 변이
     B8·B9·B17·B18·B19에서 가져왔다(실물 meta의 형이 아니다) — 접기가 이것들을 못 넘으면 같은
