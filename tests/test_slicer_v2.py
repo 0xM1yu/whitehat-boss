@@ -1983,6 +1983,148 @@ def test_a_dropped_priority_list_on_resume_names_the_field(monkeypatch, two_file
     assert "settings.priority_files" in result["error"]
 
 
+# -- --skip-candidates: keys this process does not slice (slice_sharded --restart-on-deadline) -----
+
+
+def _candidate_keys(monkeypatch, repo, tmp_path):  # noqa: ANN001, ANN202
+    """(the three candidate keys of `three_candidates()` in candidate order, the case-B one)."""
+    folder = tmp_path / "learn"
+    folder.mkdir()
+    _, result, _ = run_cli(monkeypatch, repo, folder, three_candidates())
+    manifest = result["candidate_manifest"]
+    return list(manifest), next(k for k, c in manifest.items() if c["case"] == "B")
+
+
+def _skipping(tmp_path, *keys):  # noqa: ANN002, ANN202
+    listing = tmp_path / "skip.txt"
+    listing.write_text("\n".join(keys) + "\n", encoding="utf-8")
+    return str(listing)
+
+
+def test_a_skipped_candidate_is_degraded_without_a_server_query(monkeypatch, repo, tmp_path):
+    """The restarted shard must not re-attempt the candidate whose query hit the deadline: it gets
+    the anchor-only slice a poison streak gives, nothing is sent to Joern for it, and the result
+    says it was not sliced (a degraded slice in an `ok` result would read as complete)."""
+    _, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    folder = tmp_path / "skip"
+    folder.mkdir()
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(folder / "state.db"),
+        "--skip-candidates", _skipping(tmp_path, b_key),
+        "--progress", str(folder / "progress.jsonl"),
+    )
+    assert transport.stages.count("flows") == 2 and "backward" not in transport.stages
+    events = [json.loads(line) for line in (folder / "progress.jsonl").read_text().splitlines()]
+    skipped = [e["candidate_key"] for e in events if e["event"] == "candidate_skipped"]
+    assert skipped == [b_key]                       # the progress log names what was left out
+    assert code == 2 and result["status"] == "partial"
+    assert "--skip-candidates: 1 candidate not sliced" in result["error"]
+    degraded = [s for s in result["slices"] if s.get("degraded")]
+    assert [s["candidate_key"] for s in degraded] == [b_key]
+    assert "--skip-candidates" in degraded[0]["measurement_notes"]["degraded"]
+    assert result["counters"]["candidates_degraded"] == 1
+    assert result["counters"]["candidates_failed"] == 0
+
+
+def test_without_the_list_the_degraded_note_still_names_the_poison_streak(
+    monkeypatch, repo, tmp_path
+):
+    """The flag off changes nothing: what a poison streak leaves unsliced is noted as that, never
+    as a --skip-candidates skip, and the progress log has no candidate_skipped event."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    folder = tmp_path / "streak"
+    folder.mkdir()
+    _, result, _ = run_cli(monkeypatch, repo, folder, bad,
+                           "--progress", str(folder / "progress.jsonl"))
+    notes = [s["measurement_notes"]["degraded"] for s in result["slices"]]
+    assert notes and all("(poison streak)" in note for note in notes)
+    assert not any("--skip-candidates" in note for note in notes)
+    assert "--skip-candidates" not in result["error"]
+    events = [json.loads(line) for line in (folder / "progress.jsonl").read_text().splitlines()]
+    assert "candidate_skipped" not in {e["event"] for e in events}
+
+
+def test_a_skipped_candidate_stays_unsaved_so_resume_slices_it(monkeypatch, repo, tmp_path):
+    keys, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    folder = tmp_path / "skip"
+    folder.mkdir()
+    state = folder / "state.db"
+    run_cli(monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(state),
+            "--skip-candidates", _skipping(tmp_path, b_key))
+    with Checkpoint(state, resume=True) as store:
+        saved = {row[0] for row in store.conn.execute("SELECT candidate_key FROM stages")}
+    assert saved == set(keys) - {b_key}
+    code, result, transport = run_cli(monkeypatch, repo, folder, three_candidates(),
+                                      "--checkpoint", str(state), "--resume")
+    assert code == 0, result.get("error")
+    assert transport.stages.count("backward") == 1 and "flows" not in transport.stages
+    counters = result["counters"]
+    assert counters["candidates_reused"] == 2 and counters["candidates_degraded"] == 0
+
+
+def test_a_skipped_candidate_that_is_already_complete_is_reused_not_degraded(
+    monkeypatch, repo, tmp_path
+):
+    _, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    folder = tmp_path / "skip"
+    folder.mkdir()
+    state = folder / "state.db"
+    run_cli(monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(state))
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(state), "--resume",
+        "--skip-candidates", _skipping(tmp_path, b_key),
+    )
+    assert code == 0 and "flows" not in transport.stages and "backward" not in transport.stages
+    assert result["counters"]["candidates_degraded"] == 0 and "error" not in result
+
+
+def test_a_claim_shard_skips_a_candidate_it_owns_without_giving_it_away(
+    monkeypatch, repo, tmp_path
+):
+    """The skipped candidate stays claimed by this shard: no other shard takes it (the doc'd
+    no-lease rule), and a later plain `--resume` of the same I/N slices it."""
+    from slicer_claims import read_claims
+
+    _, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    claims = tmp_path / "claims.db"
+    folder = tmp_path / "claim0"
+    folder.mkdir()
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(folder / "state.db"),
+        "--shard", "0/2", "--claim-db", str(claims),
+        "--skip-candidates", _skipping(tmp_path, b_key),
+    )
+    assert "backward" not in transport.stages and transport.stages.count("flows") == 2
+    assert read_claims(claims)[b_key][0] == "0/2"
+    assert result["counters"]["candidates_degraded"] == 1
+
+
+@pytest.mark.parametrize("mode", ["export", "prepare"])
+def test_skip_candidates_with_export_or_prepare_is_refused(repo, tmp_path, capsys, mode):
+    """Neither slices a candidate, so the list would change nothing -- said, not ignored."""
+    flags = ["--export-only"] if mode == "export" else [
+        "--prepare-only", "--cpg-out", str(tmp_path / "c.bin")]
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), *flags,
+                     "--checkpoint", str(tmp_path / "state.db"),
+                     "--skip-candidates", _skipping(tmp_path, "k")])
+    assert "--skip-candidates has no effect" in capsys.readouterr().err
+
+
+def test_a_skip_list_reads_like_a_priority_list(monkeypatch, repo, tmp_path):
+    """One key per line; blank lines and `#` lines are skipped; a BOM does not stick to line 1."""
+    keys, _ = _candidate_keys(monkeypatch, repo, tmp_path)
+    listing = tmp_path / "skip.txt"
+    bom = chr(0xFEFF)
+    listing.write_text(
+        bom + "# deadline hits\n\n" + f"{keys[0]}\n  {keys[1]}  \n", encoding="utf-8"
+    )
+    assert slicer.read_skip_keys(listing) == frozenset(keys[:2])
+
+
 # --case-order: which case is sliced first. The default is `ba`; `ab` is the order before `ba`
 # became the default and stays selectable. Bound into the checkpoint.
 
