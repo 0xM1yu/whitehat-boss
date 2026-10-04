@@ -75,8 +75,13 @@ _D_REF = re.compile(r"(?<![A-Za-z0-9])D(\d+)(?![0-9A-Za-z])")
 
 _LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 
-# `YYYY-MM-DD-<주제>-<장비>.md`. 주제는 검사하지 않는다 — 아래 주석 참조.
-_REPORT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)-([a-z0-9]+)\.md$")
+# `YYYY-MM-DD-<주제>-<장비>.md`의 **모양**만 본다 — 날짜 접두사 · 주제-장비 두 자리(하이픈으로
+# 갈린 둘 이상) · `.md`. `--device` 행이 없는 보고서도 이 모양은 지켜야 한다. 주제는 검사하지 않는다
+# (아래 주석 참조). **장비는 여기서 안 뽑는다**: 장비 이름이 하이픈을 들 수 있어(`vastai-remote`)
+# 파일명만으로는 주제와 장비의 경계를 못 긋는다 — 끝 토큰만 장비로 읽던 판은 어떤 파일명도
+# `vastai-remote`와 같아지게 할 수 없었다. 대조는 본문 `--device`를 알고 나서
+# `_name_carries_device`가 한다.
+_REPORT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+-.+)\.md$")
 
 # 보고서 머리 메타 표의 `--device` 행. TEMPLATE.md가 정한 서식이다.
 _DEVICE_ROW = re.compile(r"^\|\s*`--device`\s*\|\s*`([^`]+)`\s*\|", re.MULTILINE)
@@ -369,6 +374,21 @@ def test_config_comments_point_at_a_real_doc() -> None:
     assert missing == [], "\n".join(missing)
 
 
+def _name_carries_device(name: str, device: str) -> bool:
+    """파일명이 `YYYY-MM-DD-<주제>-<장비>.md`이고 그 장비가 `device`인가.
+
+    **장비는 접미사로 묻는다.** 장비 이름이 하이픈을 들 수 있어(`vastai-remote`) 파일명만 보고
+    장비를 뽑을 수 없다 — 본문 `--device`를 알고 나서 「주제 다음에 `-<장비>`로 끝나는가」를
+    본다. 주제가 비면(`2026-10-04-vastai-remote.md`) 거짓이다.
+
+    ponytail: 장비 `remote`인 보고서가 `…-vastai-remote.md`로도 통과한다(접미사 대조의 한계).
+    장비 이름이 서로의 하이픈 접미사가 되는 일이 생기면 `config/serving/*.yaml`의 stem 집합과
+    대조하도록 올린다 — 그 집합은 두 번째 진실 원천이라 지금은 안 짠다(위 docstring 경고).
+    """
+    match = _REPORT_NAME.match(name)
+    return match is not None and match.group(2).endswith(f"-{device}")
+
+
 def test_experiment_filenames_carry_the_device_the_run_used() -> None:
     """파일명의 장비가 본문의 `--device`와 다르면 색인이 거짓말한다.
 
@@ -383,24 +403,48 @@ def test_experiment_filenames_carry_the_device_the_run_used() -> None:
     offenders: list[str] = []
 
     for report in _reports():
-        match = _REPORT_NAME.match(report.name)
-        if match is None:
+        if _REPORT_NAME.match(report.name) is None:
             offenders.append(f"{_rel(report)}: 파일명이 `YYYY-MM-DD-<주제>-<장비>.md`가 아니다")
             continue
 
-        device_in_name = match.group(3)
         declared = _DEVICE_ROW.search(_read(report))
         if declared is None:
             # 메타 표에 `--device` 행이 없는 것은 별개 문제다(TEMPLATE.md 미준수).
             # 여기서 단언하면 두 실패가 한 메시지에 섞인다.
             continue
-        if declared.group(1) != device_in_name:
+        if not _name_carries_device(report.name, declared.group(1)):
             offenders.append(
-                f"{_rel(report)}: 파일명의 장비는 `{device_in_name}`인데 "
+                f"{_rel(report)}: 파일명이 `-{declared.group(1)}.md`로 끝나지 않는다 — "
                 f"본문 `--device`는 `{declared.group(1)}`이다"
             )
 
     assert offenders == [], "\n".join(offenders)
+
+
+def test_the_report_name_check_reads_a_hyphenated_device() -> None:
+    """하이픈이 든 장비(`vastai-remote`)도 파일명으로 대조된다 — 끝 토큰만 읽던 판은 못 읽었다.
+
+    **사고 —** 2026-10-04 `vastai-remote`로 돈 run의 보고서가 이 검사에 걸렸는데 파일명을
+    아무리 바꿔도 안 풀렸다. 장비 그룹이 `[a-z0-9]+`라 어디서 끊어도 `remote`가 나와 **어떤
+    파일명도 `vastai-remote`와 같아질 수 없었다**(본문 `--device`를 바꾸는 길뿐). 이 장비
+    이름은 `config/serving/vastai-remote.yaml`의 stem이고 `--device`가 그것을 고른다.
+
+    핀의 출처 — 양성: 이 보고서의 파일명, 단일 토큰 장비는 기존 보고서의 것(`harness/`).
+    음성: 첫 판의 파일명(`…-win11-vast.md` — 끝 토큰이 `vast`라 `vastai-remote`가 아니다)과,
+    그 문형이 실제로 나올 수 있는 둘 — 날짜 없는 이름, 주제 없이 장비만 있는 이름.
+    """
+    hyphenated = "2026-10-04-cybergym-operational-run-vastai-remote.md"
+    assert _REPORT_NAME.match(hyphenated)
+    assert _REPORT_NAME.match("2026-08-18-serving-atom.md")
+    assert not _REPORT_NAME.match("cybergym-operational-run-vastai-remote.md")  # 날짜 없음
+    assert not _REPORT_NAME.match("2026-10-05-foo.md")  # 주제-장비 두 자리가 아니다
+
+    assert _name_carries_device(hyphenated, "vastai-remote")
+    assert _name_carries_device("2026-08-18-serving-atom.md", "atom")
+    first_edition = "2026-10-04-cybergym-operational-run-win11-vast.md"  # 끝 토큰 `vast`
+    assert not _name_carries_device(first_edition, "vastai-remote")
+    assert not _name_carries_device(hyphenated, "atom")
+    assert not _name_carries_device("2026-10-04-vastai-remote.md", "vastai-remote")  # 주제가 비었다
 
 
 def test_every_experiment_report_is_in_the_index() -> None:
@@ -1990,7 +2034,7 @@ _UNPINNED_LEGACY = frozenset({
     "_ABSENT_CLAIM", "_ADR_ROW", "_CLAUSE_END", "_COUNT_CLAIM", "_DATED_LINE", "_DEVICE_ROW",
     "_D_REF", "_D_ROW", "_D_STATUS_CELL", "_FENCE", "_FT_REF", "_KEPT_HEADING", "_LEADING_KEY",
     "_LEADING_PIPE", "_LINK", "_MEMORY_HEADER", "_MEMORY_ROW", "_PIPE", "_REGISTRY_CONTEXT",
-    "_REPORT_NAME", "_ROSTER_HEADING", "_R_REF", "_R_ROW", "_SEPARATOR", "_SERVED_ROLE_CLAIM",
+    "_ROSTER_HEADING", "_R_REF", "_R_ROW", "_SEPARATOR", "_SERVED_ROLE_CLAIM",
     "_STRUCK", "_TRAILING_PIPE",
 })
 
