@@ -452,7 +452,7 @@ def _check_checksums(config: HarnessConfig) -> list[Check]:
 
 
 def _check_prompts(config: HarnessConfig) -> list[Check]:
-    """설정이 가리키는 프롬프트 파일이 실제로 있는지 본다.
+    """프롬프트 파일의 실재·내용 인식 배선·디스크의 새 판을 본다.
 
     run 도중에 없는 것을 알면 그때까지 쓴 시간을 버린다(config.py의 판단과 같다).
 
@@ -610,8 +610,9 @@ def _check_score_chain(config: HarnessConfig) -> list[Check]:
     `production: false`여도 실서빙할 수 있고 Fake 전용은 GPU 없는 리허설이라 제외한다.
     좌석이 없으면 러너의 8단계가 안 돌고, 두 스위치가 0이면 재현법을 안 주는 과제에서
     validated가 비어 PoV가 0건이다 — run 완주가 이 구조적 막힘을 숨겨 ERROR로 드러낸다.
-    합성 WARN은 `config.Thresholds.synthesize_repro_spec`의 경고를 따른다: gate의 p4는
-    ok=True만 보고 크래시(non-zero)와 exit 0을 안 가른다 -> 크래시 0건으로 proven이 날 수 있다.
+    합성 WARN은 `config.Thresholds.synthesize_repro_spec`의 #232 경고를 따른다. 그 주석의
+    exit 0 서술은 낡았다: `gate.evaluate`는 이미 0·None을 제외한다. 남은 위험은 비-0 종료와
+    기대 신호를 대조하지 않아 크래시 없이도 proven이 날 수 있다는 것이다(게이트 docstring).
     """
     if not config.served_models():
         return []
@@ -627,8 +628,9 @@ def _check_score_chain(config: HarnessConfig) -> list[Check]:
     if config.thresholds.synthesize_repro_spec:
         checks.append(Check(
             Severity.WARN,
-            "점수 사슬: synthesize_repro_spec=1 — #232: p4가 ok=True만 보고 exit 0과 크래시를 "
-            "안 가르므로 크래시 0건으로 proven이 날 수 있다 (src/config.py의 합성 경고)",
+            "점수 사슬: synthesize_repro_spec=1 — #232: p4는 exit 0·None을 제외하지만 비-0 종료를 "
+            "기대 신호와 대조하지 않아 크래시 없이도 proven이 날 수 있다 "
+            "(src/config.py의 합성 경고 중 남은 위험; gate.evaluate 기준)",
         ))
     return checks or [Check(Severity.OK, "점수 사슬: PoV 좌석과 후보 진입 설정 확인")]
 
