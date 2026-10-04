@@ -23,6 +23,8 @@
 **오케스트레이션 로직은 완성, 실제 동작(어댑터)은 대부분 비어 있다.**
 
 `dev_fake` 프로필로 0~9단계가 완주하고, 동일 조건 재실행 시 trace가 재현된다.
+🔴 **⏵ 2026-10-03 — 실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을
+204,963이 넘겨 `stopped_after: 4`). 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424).
 비어 있는 부분은 전부 `src/adapters/` 쪽이므로 **오케스트레이터를 고치지 않고 교체 가능**하다.
 
 ```
@@ -113,7 +115,8 @@
 
 **실제 산출물 형식** (`indexer.INDEX_VERSION == "index-v1"`, 읽는 쪽이 모르는 버전은 거절).
 ⏵ 2026-09-26 — 지금은 `index-v2`다: `calls`가 callee → [{file, line, caller, args}]로 묶였고
-조회 표 여덟이 더해졌다(`tools/README.md` 인덱서 절). 아래는 v1 시절 모양이다:
+조회 표 여덟이 더해졌다(`tools/README.md` 인덱서 절). ⏵ 2026-10-03 — `index-v3`(#304)가 v2 표를
+그대로 두고 `writes`·`fn_bindings`·`field_calls`를 더한다. 아래는 v1 시절 모양이다:
 ```json
 {
   "version": "index-v1",
@@ -269,8 +272,13 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 ⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트가 아직 도구 입력으로 안 들어가
 (`run_tool`이 도구 argv·workdir만 넘긴다) 관측이 PoC와 무관하다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
 
-**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · 외부 CyberGym oracle
-차분 검증 · feyospace 실서빙 실측(checksum·benchmark·홉수). `PovSpec` 표현력 절벽(계산 크로스필드)이
+**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · feyospace 실서빙
+실측(checksum·benchmark·홉수). 외부 CyberGym oracle 제출은 `run --oracle-submit`(기본 꺼짐)으로 들어왔다 —
+대역으로만 검증했고 하네스 run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — 「대역으로만」은
+vul 다리에 한해 깨졌다**(`run_20261003_0003`이 실서버에 8건 제출, 전부 200). **왕복(vul→fix→조회)은
+여전히 0건**이다 — 후보 8건이라 최종 PoC를 지정하지 않았다
+([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). `fix` 다리·판정은 vul 제출이 성공한
+후보가 하나일 때만 돈다 — 둘 이상이면 고르는 규칙이 정해지지 않아 안 돈다. `PovSpec` 표현력 절벽(계산 크로스필드)이
 실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
 
 **선택지:**
@@ -281,7 +289,8 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 | C | 퍼징으로 크래시 발견 (비용 큼, 후순위) |
 
 ⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
-최종 PoC 바이트까지이고, 실제 크래시 재현·oracle 판정은 후속(서빙+도구 호스트 배선)이다.
+최종 PoC 바이트까지이고(그 PoC를 채점기에 내보내 판정을 기록하는 길은 `--oracle-submit`으로 들어왔다 —
+⏵ 2026-10-03 vul 다리 8건 실측 · 왕복은 0건), 실제 크래시 재현은 후속(서빙+도구 호스트 배선)이다.
 
 ### 🟡 진짜 정적분석 (2단계)
 

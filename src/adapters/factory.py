@@ -9,7 +9,7 @@
 표현할 수 없다.
 """
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -58,6 +58,7 @@ from src.config import (
 )
 from src.ids import IdFactory
 from src.interfaces.model_client import ModelClient
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import EmbeddingClient, RerankerClient
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -168,16 +169,34 @@ class Deps:
     # 기본값이 "인덱스 없음"(`None`)인 것은 의도다. 이 필드 없이 조립된 `Deps`가
     # 후보 0건을 만들면 파이프라인이 조용히 비고, 폴백이면 최소한 옛 동작이 남는다.
     symbols_for: Callable[[str], list[Location] | None] = lambda _file: None
+    # 아래 셋(`callees_of`·`call_sites_of`·`definitions_of`)은 **`demote_nonproduct` 키워드**를
+    # 받는다(기본 꺼짐 — `GraphIndex.definitions_of` docstring). 러너가 `auditor_definitions`를 켠
+    # run에서만 켠다.
+    #
     # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
     # 함수 본문을 붙이는 데 쓴다(`runner._auditor_source`). `symbols_for`와 같은 모양·같은 이유로
     # 콜러블이고, 기본값 `None`("그래프 없음")이 이 필드 없이 조립된 `Deps`의 옛 동작을 지킨다.
-    callees_of: Callable[[Location], list[Location] | None] = lambda _target: None
+    callees_of: Callable[..., list[Location] | None] = lambda _target, **_kw: None
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). `callees_of`와 같은 자리.
-    call_sites_of: Callable[[Location], list[Location] | None] = lambda _target: None
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
-    definitions_of: Callable[[Iterable[str], str], list[Location] | None] = (
-        lambda _names, _file: None
+    call_sites_of: Callable[..., list[Location] | None] = lambda _target, **_kw: None
+    # (이름들, 가까운 파일) → 함수 정의 위치. 매크로가 이름만 바꿔 부르는 함수를 찾는다
+    # (C4 — 래퍼·별칭 따라가기, `runner._auditor_source`). `callees_of`와 같은 자리.
+    functions_named: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
+    # 함수 위치 → 그 본문의 필드 경유 호출(`sys->alloc(…)`)마다 (필드, 갈 수 있는 함수)(index-v3
+    # `fn_bindings`, #304 · C6). Auditor `SOURCE`가 간접 피호출 본문을 붙인다 — 후보 수 상한은
+    # 필드마다다. v3 표가 없으면 `None`. `callees_of`와 같이 `demote_nonproduct`를 받는다.
+    indirect_calls_of: Callable[..., list[tuple[str, list[Location]]] | None] = (
+        lambda _target, **_kw: None
     )
+    # (이름, 가까운 파일) → 그 이름에 쓰는 지점 / (필드, 가까운 파일) → 그 필드에 쓰는 지점
+    # (index-v3 `writes`·`assigns`·`field_assigns`, #304 · C5(a)). Auditor `SOURCE`의 쓰기 지점 창.
+    writes_of: Callable[[str, str], list[Location] | None] = lambda _name, _file: None
+    field_writes_of: Callable[[str, str], list[Location] | None] = lambda _field, _file: None
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
+    definitions_of: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
+    # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름(`locals` 표). 정의 조회가 본문 이름에서
+    # 이것을 뺀다(`runner._auditor_source`). 기본값 `None`("v2 표 없음")은 뺄 것이 없다는 뜻이다.
+    locals_of: Callable[[str, str], frozenset[str] | None] = lambda _file, _func: None
     # `--slices`로 준 슬라이스 → 타깃(ADR 0012 결정 1). `None`이면 슬라이스 없이 도는 run이고
     # 러너는 지금처럼 파일·심볼 타깃을 만든다. 빈 튜플("슬라이스 0개")과 섞지 않는다.
     slice_refs: tuple[SliceRef, ...] | None = None
@@ -217,6 +236,11 @@ class Deps:
     # `model_swap.swap_runner`로 만든다. 기본 `None`("교대 없음")이 이 필드 없이 조립된 `Deps`의
     # 옛 동작이다 — `resolve_requests`와 같은 자리.
     swap_to: SwapTo | None = None
+    # 채점기(oracle) 클라이언트 (#386). `build_deps`는 **만들지 않고 받아서 싣는다** — 서버 주소는
+    # 조작자(`--oracle-server`)가, 과제 id는 과제 번들이 정하고 그것을 아는 것은 CLI다
+    # (`cli._oracle_for`). 기본 `None`이 「제출 안 함」이고 그것이 이 필드 없이 조립된 `Deps`의 옛
+    # 동작이다.
+    oracle: Oracle | None = None
 
 
 @dataclass(frozen=True)
@@ -421,6 +445,7 @@ def build_deps(
     on_index: IndexHook | None = None,
     slices_path: Path | None = None,
     device: str | None = None,
+    oracle: Oracle | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
@@ -523,6 +548,8 @@ def build_deps(
         return fields
 
     return Deps(
+        # 채점기(#386) — factory가 만들지 않고 받는다. 서버 주소와 과제 신원을 아는 것은 CLI다.
+        oracle=oracle,
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
         tools=tools,
@@ -542,7 +569,12 @@ def build_deps(
         symbols_for=graph.symbols_for,
         callees_of=graph.callees_of,
         call_sites_of=graph.call_sites_of,
+        functions_named=graph.functions_named,
+        indirect_calls_of=graph.indirect_calls_of,
+        writes_of=graph.writes_of,
+        field_writes_of=graph.field_writes_of,
         definitions_of=graph.definitions_of,
+        locals_of=graph.locals_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
         # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의

@@ -41,7 +41,21 @@ from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
-from src.orchestrator.runner import RunSpec, _new_record
+from src.orchestrator.runner import (
+    _AUDITOR_ALIAS_ROUNDS,
+    _AUDITOR_CALLEE_CHARS,
+    _AUDITOR_CALLER_SITES,
+    _AUDITOR_DEFINITION_CHARS,
+    _AUDITOR_INDIRECT_MAX,
+    _AUDITOR_SOURCE_CHARS,
+    _AUDITOR_WINDOW_LINES,
+    _AUDITOR_WRAPPER_CALLS,
+    _AUDITOR_WRAPPER_DEPTH,
+    _AUDITOR_WRAPPER_LINES,
+    _AUDITOR_WRITE_LINES,
+    RunSpec,
+    _new_record,
+)
 from src.schemas import CapsuleLevel, RunRecord
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import Role
@@ -426,12 +440,20 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v4(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v4`를 고른다(#328 머지 뒤
-    재배선 — 2026-09-29 v1→v3(#256 항목 4)의 다음 판). 되돌리면 이 핀이 빨개진다."""
+def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v7`을 고른다. 되돌리면 이
+    핀이 빨개진다.
+
+    판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
+    프롬프트 #418 · 배선 #421). v5는 건너뛴다 — v5 배선 PR(#390)이 대여 세션 측정까지
+    주차돼 있었고 v6가 v5에서 출발했다(`2bb374d`). **사용자 결정 2026-10-03이고 측정 결과가
+    아니다** — v6는 v5의 범위 제약 둘을 삭제했으므로 v5의 상위집합이 아니다(`config/models.yaml`의
+    그 항목이 삭제 목록과 #418이 든 수를 적는다). ⏵ **v7**(2026-10-04 · #349) = v6 + Auditor SOURCE
+    옵션 넷의 서술. v6를 그 자리에서 고치지 않은 것은 #418의 수가 v6 문장의 것이라서다
+    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v4"
+    assert config.model_for("auditor").prompt_template_version == "v7"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -443,6 +465,94 @@ def test_the_canonical_auditor_version_receives_evidence_bodies(profile: str) ->
 
     version = config.model_for("auditor").prompt_template_version
     assert version in auditor_node._CONTENT_AWARE_VERSIONS
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile: str) -> None:
+    """서빙 판의 입력 계약 철자가 러너 상수와 갈리지 않는다 — **판을 세지 않고 묻는다.**
+
+    `test_slice_targets.py`의 같은 검사와 `test_nodes.py`의 v5 문구 핀은 판 목록이나 경로의
+    `"v5"`로 대상을 고른다. 그 축은 **판을 올릴 때마다 목록을 같이 늘려야** 하고, 안 늘리면
+    검사가 사라진 것이 아니라 **안 서는 판만 지킨다**.
+
+    **사고 —** 2026-10-03 v4→v6 배선(#418·#421)에서 그것이 났다. 세 핀이 전부 `v4`·`v5`에 걸려 있어
+    **서빙 판 v6가 어느 판본 핀에도 안 걸렸고**, 그 사이 v6의 규칙 3 문장이 이미 갈려 있었다
+    (`establish it,use` — 공백 하나가 빠져 아래 연속 구가 안 맞았다). CI는 초록이었다.
+
+    여기서 고르는 것은 `prompt_template_version`이라 v7로 올려도 같이 돈다. 묻는 것은 철자다 —
+    모델이 그 계약을 따르는지는 고정 표본 회귀의 몫이다(agent-contracts §4 규칙 5).
+    """
+    config = load_config(profile)
+    version = config.model_for("auditor").prompt_template_version
+    prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
+    flat = " ".join(prefix.split())
+    thresholds = config.thresholds
+
+    # 러너 상수 ↔ 계약 수치(`runner._auditor_target`·`_auditor_source`).
+    assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
+    assert "`(file, start line)` order" in prefix
+    # 상한 -> 토큰 상한이 켜져 있으면 그 값, 아니면 글자 상한. 다른 쪽 철자가 남으면 모델이
+    # 두 상한을 같이 읽는다(2026-10-03 옵션 넷을 켬 · 그 서술은 v7 = v6 + 서술, 2026-10-04 · #349).
+    if thresholds.auditor_source_tokens:
+        assert f"{thresholds.auditor_source_tokens:,}-token cap" in prefix
+        assert f"{_AUDITOR_SOURCE_CHARS:,}-character" not in prefix
+    else:
+        assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
+    # 켜진 옵션마다 그 블록의 철자 -- 상한은 배너 줄을 포함한 블록 길이다(`len(block)`, #374 리뷰).
+    if thresholds.auditor_definitions:
+        assert (
+            f"its block, counting its banner line, is at most {_AUDITOR_DEFINITION_CHARS:,} "
+            "characters" in flat
+        )
+        if thresholds.auditor_callee_wrappers:
+            assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
+    if thresholds.auditor_callee_hops:
+        assert (
+            f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
+            " is skipped" in flat
+        )
+    # 래퍼 너머(C4 · `auditor_callee_wrappers`) — 「one or two」가
+    # `_AUDITOR_WRAPPER_CALLS`의 철자다.
+    if thresholds.auditor_callee_hops and thresholds.auditor_callee_wrappers:
+        assert _AUDITOR_WRAPPER_CALLS == 2
+        assert (
+            f"a short wrapper (at most {_AUDITOR_WRAPPER_LINES} lines, calling one or two "
+            "functions the index can resolve)" in flat
+        )
+        assert f"up to {_AUDITOR_WRAPPER_DEPTH} further levels" in flat
+    if thresholds.auditor_indirect_callees:  # 간접 피호출(C6 · #304)
+        assert f"resolve to at most {_AUDITOR_INDIRECT_MAX} candidate functions" in flat
+    if thresholds.auditor_write_sites:  # 쓰기 지점 창(C5(a) · #304)
+        assert (
+            f"the {_AUDITOR_WRITE_LINES} lines before and after the write, cut to the writing "
+            f"function's own range, at most {thresholds.auditor_write_sites} windows" in flat
+        )
+    if thresholds.auditor_caller_lines:
+        assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
+        assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
+    # 규칙 3의 판정 **방향** — 「Otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
+    assert (
+        "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
+        "establish it, use the issued missing-evidence ID; use `reachability_unknown` for a "
+        "missing reachability fact or path connection. Otherwise decide; truncation alone is "
+        "not a reason to defer" in flat
+    )
+    # 근거 본문·절단 계약 — **`_CONTENT_AWARE_VERSIONS` 자격의 근거가 이 문구들이다**(#328 리뷰
+    # MEDIUM-1). 뒤집히면 집합에 든 채로 그 전제가 거짓이 된다. 목록은 `test_nodes.py`의
+    # `test_v5_evidence_completeness_wording`과 같고, 그쪽은 경로에 v5를 하드코딩한다.
+    assert "factual summary" not in flat
+    for text in (
+        "not a generated summary",
+        "`truncated` is false",
+        "line containing only `...`",
+        r"`\n...\n`",
+        "stop mid-line",
+        "not adjacent",
+        "without that marker",
+        "may also occur in the original log",
+        "not a clean result",
+    ):
+        assert text in flat
 
 
 # meta.yaml 머리 주석이 「이 판은 어느 registry 엔트리도 안 고른다」를 적는 철자.
@@ -501,8 +611,18 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
-        # 음성 통제 — auditor/v4 meta는 「배선됨」이다. 고르면 안 걸려야 한다.
-        ("auditor", "qwen3.8-27b", "v4", []),
+        # 실물 형제 문형 — prompts/auditor/v4/meta.yaml:4-5 「… 어느 registry 엔트리도 이 버전을
+        # 고르지 / 않는다」. v3와 같이 구절이 주석 줄바꿈으로 갈린다(`:4` 끝이 「고르지」다).
+        # v6 배선(2026-10-03)으로 v4가 미선택이 되며 달았고, 그 전에는 이 행이 음성 통제였다.
+        ("auditor", "qwen3.8-27b", "v4", ["auditor/v4"]),
+        # 실물 형제 문형 — prompts/auditor/v6/meta.yaml:6-7 「… 어느 / registry 엔트리도 이 버전을
+        # 고르지 않는다」. v7 배선(2026-10-04)으로 미선택이 되며 달았고, 그 전에는 이 행이
+        # 음성 통제였다.
+        ("auditor", "qwen3.8-27b", "v6", ["auditor/v6"]),
+        # 음성 통제 — prompts/auditor/v7/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
+        # 머리 주석 형식이고 v6도 2026-10-04까지 「정본」이었다) — 판독기가 그것을 「안 고른다」로
+        # 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v7", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -511,7 +631,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 넷만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    meta 여섯만 시험한다(⏵ 2026-10-04 v7 음성 통제를 더해 여섯) — 새 철자로 적은 meta는
+    목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -534,8 +655,14 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("critic", "v3", {"아직 미활성"}),
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — 정본 Auditor가 고르는 판이다(「배선됨」).
-        ("auditor", "v4", set()),
+        # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,
+        # v3처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "v4", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # prompts/auditor/v6/meta.yaml:6-7 — v7 배선으로 미선택이 되어 v4와 같은 철자를 쓰고,
+        # 구절이 주석 줄바꿈으로 갈린다(`:6` 끝이 「어느」다).
+        ("auditor", "v6", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v7/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
+        ("auditor", "v7", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -544,7 +671,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 네 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
+    않는다(#341 R2). ⚠ 이 여섯 meta의(⏵ 2026-10-04 v7을 더해 여섯) 오늘 문구에 묶인다 — 머리
+    주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
 
@@ -1220,6 +1348,11 @@ def _copy_config(
     `thresholds_patch`도 같은 규칙이다 — 주면 budgets.yaml이 왕복을 거친다. `output_max`
     처럼 **저장소에는 아직 선언이 없는 값**을 세울 때 쓴다. 저장소 값을 바꿔 재는 검사는
     "값이 실측으로 정해진다"는 이 파일 모듈 docstring의 전제를 깨므로 하지 않는다.
+
+    **프로필의 예산은 `default`로 둔다.** 패치로 만든 프로필은 실서빙 역할을 쓸 수 있고(이 파일의
+    합성 프로필 대부분이 그렇다), 실서빙 프로필은 상한 0을 못 쓴다 — `dev_fake` 예산을 그대로 두면
+    로드가 `_check_real_serving_limits_are_positive`에서 죽는다. 예산은 이 검사들의 축이 아니다.
+    `profile_patch`가 `budget`을 주면 그것이 이긴다.
     """
     budgets_text = (CONFIG_DIR / "budgets.yaml").read_text("utf-8")
     if thresholds_patch is None:
@@ -1241,7 +1374,7 @@ def _copy_config(
             yaml.safe_dump(raw_models, allow_unicode=True), encoding="utf-8"
         )
     raw = yaml.safe_load((CONFIG_DIR / "profiles.yaml").read_text("utf-8"))
-    raw["profiles"][profile].update(profile_patch)
+    raw["profiles"][profile].update({"budget": "default", **profile_patch})
     (dest / "profiles.yaml").write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
 
 
@@ -1985,14 +2118,31 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
         load_config("dev_fake", config_dir=tmp_path)
 
 
-# 사고 켠 Auditor의 디코드 속도(tok/s) — Qwen3.8-27B bf16 단일 스트림의 **외부 보고**
-# (GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목). 우리 장비
-# 미실측이고, 아래 검사가 「타임아웃이 출력 상한보다 먼저 끊지 않는다」를 재는 기준으로만
-# 쓴다 — 대역 상한 계산값 4.9보다 느린 쪽이다.
-# PoV 좌석(`feyospace-v1-small`)은 **자기 속도를 안 쟀다** — Auditor와 같은 베이스·같은 파라미터
-# 수라 이 값을 **빌려** 쓴다. 그래서 PoV 쪽 검사가 뜻하는 것은 「PoV 타임아웃이 실측으로 맞다」가
-# 아니라 「Auditor와 같은 관계가 선다」까지다.
-_AUDITOR_DECODE_TOK_S = 4.5
+# 사고 켠 좌석의 디코드 속도(tok/s) — **좌석마다 따로 둔다.** 하나로 묶으면 한 좌석의 실측이
+# 다른 좌석의 하한(④ 타임아웃 >= 출력 상한 / 속도)까지 같이 움직인다.
+# 2026-10-03 쪼갰다 — 그때까지 둘이 외부 보고 4.5 하나를 공유했다.
+#
+# **Auditor — vast 실측 16.2.** 2026-09-29 · `config/serving/vastai.yaml`의 `qwen3.8-27b`
+# (util 0.90 · `--max-model-len 262144` · KV 29.84 GiB = 483,182토큰 · 정상 상태 생성).
+# 운영 장비가 vast다(ATOM은 2026-09-29 사용 종료). 아래 검사가 그 파일과 수를 대조한다.
+# ⚠ **긴 입력에서 안 쟀다.** 그 관측은 요청 하나(n=1)의 정상 상태이고, 5단계 도구 루프는 홉마다
+#   관측을 history로 되먹여 **입력이 단조 증가**한다 — 홉 후반 속도는 0(미실측)이다(이슈 #432).
+# ⚠ **그래서 이 하한이 서는 범위를 수로 적는다 — 손익분기 8.74 tok/s**(= 출력 상한 65,536 /
+#   타임아웃 7,500 s, 계산값). 실제 디코드가 그 아래로 떨어지면 상한이 아니라 **시계가** 호출을
+#   멈추고, 이 검사는 초록인 채로 그것을 못 잡는다. vast 실측 16.2 대비 여유는 1.85배(계산값).
+# ⚠ **ATOM 실측은 4.27이었다** — 외부 보고 4.5보다 느렸다(2026-09-29 교대 스모크
+#   `docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md`). 장비가 달라 vast 값과 같은
+#   축에 놓지 않는다(evaluation.md §2.3 규칙 5 · D81). 그 장비로 돌아가면 이 상수도 돌아간다.
+_AUDITOR_DECODE_TOK_S = 16.2
+
+# **PoV(`feyospace-v1-small`) — 자기 속도를 안 쟀다.** Auditor와 같은 베이스·같은 파라미터 수지만
+# 그것은 **추론이지 측정이 아니다.** 그래서 실측을 빌리지 않고 저장소에서 가장 느린 값(외부 보고
+# 4.5 · GB10, NVIDIA 포럼 2026-08-24 · `config/models.yaml`의 `qwen3.8-27b` 항목)을 보수값으로 둔다.
+# 그래서 PoV 쪽 검사가 뜻하는 것은 「PoV 타임아웃이 실측으로 맞다」가 아니라 **「같은 관계가
+# 보수적으로 선다」**까지다. 그 좌석 속도를 재면 이 값을 그 실측으로 바꾼다(이슈 #432).
+_POV_DECODE_TOK_S = 4.5
+
+_DECODE_TOK_S_BY_SEAT = {"auditor": _AUDITOR_DECODE_TOK_S, "pov": _POV_DECODE_TOK_S}
 
 
 def _assert_thinking_seat_holds_together(role: str) -> None:
@@ -2000,9 +2150,9 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
 
     무는 것은 **관계**다: ① `xhigh` ② 템플릿 인자가 사고를 끄지 않는다(`enable_thinking`이
     `false`가 아니다) ③ 사고 상한 < 출력 상한이고, 답 몫(출력 상한 − 사고 상한)이 전역 출력
-    상한 이상이다 — `config/budgets.yaml`의 「사고 상한 28,672가 답 몫 4,096(위 전역 상한)을
-    남긴다」 ④ 타임아웃 ≥ 출력 상한 ÷ 속도 ⑤ 요청 payload가 그 값들을 싣는다. 속도는
-    `_AUDITOR_DECODE_TOK_S` 하나라 좌석마다 다른 속도를 못 넣는다(위 주석).
+    상한 이상이다 — `config/budgets.yaml`의 「사고 상한이 답 몫(위 전역 상한)을 남긴다」
+    ④ 타임아웃 ≥ 출력 상한 ÷ 속도 ⑤ 요청 payload가 그 값들을 싣는다. 속도는 **좌석별**
+    (`_DECODE_TOK_S_BY_SEAT[role]`)이다 — 2026-10-03까지는 상수 하나를 공유했다(위 주석).
 
     안 묻는 것: `sampling`(값이다) · `chat_template_kwargs`의 `enable_thinking: false` 밖의
     키 · 답 몫이 **충분한지**(PoV라면 `PovSpec` 실제 길이 — 실측 전이다). ③·④는 하한만
@@ -2032,7 +2182,7 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
     assert entry.request_timeout_s is not None, (
         f"{role} — 어댑터 기본 300 s로는 사고 켠 호출이 못 끝난다"
     )
-    assert entry.request_timeout_s >= cap / _AUDITOR_DECODE_TOK_S, (
+    assert entry.request_timeout_s >= cap / _DECODE_TOK_S_BY_SEAT[role], (
         f"{role} — 타임아웃이 출력 상한 {cap}보다 먼저 끊는다 — 상한이 아니라 시계가 호출을 "
         "멈춘다(#261)"
     )
@@ -2068,13 +2218,47 @@ def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> 
     돌고, 사고 상한이 출력 상한을 넘으면 답 몫이 없으며, 타임아웃이 짧으면 상한 전에 시계가
     호출을 끊는다.
 
-    ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 Auditor의 외부 보고
-    (`_AUDITOR_DECODE_TOK_S`)를 빌린 값이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다.
+    ⚠ 무는 것은 **관계**이고, 속도는 feyospace를 안 재서 보수값(`_POV_DECODE_TOK_S` = 외부
+    보고 4.5)이다 — 「PoV 타임아웃이 실측으로 맞다」가 아니다. Auditor 쪽은 2026-10-03에 vast
+    실측 16.2로 갈라져 나갔고 이 좌석은 따라가지 않았다(그 상수 주석).
     타임아웃과 답 몫은 하한만 문다: 값이 경계 바로 위여도 초록이고, 여유 배수·프리필은 안
     본다. 답 몫이 `PovSpec`에 **충분한지**는 실측 전이라 안 묻는다. `sampling`은 값이라
     안 묻고, `chat_template_kwargs`는 사고를 끄는 `enable_thinking: false` 하나만 문다.
     """
     _assert_thinking_seat_holds_together("pov")
+
+
+def test_each_thinking_seat_takes_its_decode_speed_from_its_own_device() -> None:
+    """속도 상수는 좌석마다 따로 있고, 쓰는 값은 저장소에 실재하는 관측과 같다.
+
+    위 검사 둘이 무는 ④(타임아웃 >= 출력 상한 / 속도)가 **상수 하나를 공유하면** 한 좌석의
+    실측이 다른 좌석의 하한을 같이 움직인다. Auditor는 운영 장비(vast) 실측이 있고 PoV
+    (`feyospace-v1-small`)는 자기 속도를 안 쟀으므로, 묶어 두면 PoV 검사가 **측정 없이**
+    느슨해진다.
+
+    무는 것 셋. (1) 좌석별 상수가 갈려 있다 (2) 미실측 좌석(PoV)이 실측 좌석보다 느린
+    보수값을 쓴다 (3) Auditor 상수가 장비 파일(`config/serving/vastai.yaml`)이 적은 실측과
+    **같은 수**다 — 상수만 올려 ④를 통과시키는 길을 막는다. PoV 쪽은 대조할 실측이 없어
+    (2)까지만 문다.
+
+    안 묻는 것: 그 실측이 **맞는지**(장비 파일이 원천이다) · 긴 입력에서의 속도(미실측 —
+    위 상수 주석의 손익분기) · 좌석이 둘보다 늘어나는 경우(늘면 이 검사를 같이 넓힌다).
+    """
+    assert set(_DECODE_TOK_S_BY_SEAT) == {"auditor", "pov"}, (
+        "사고 켠 좌석이 늘거나 줄었다 — 위 상수와 이 검사를 같이 넓힌다"
+    )
+    assert _DECODE_TOK_S_BY_SEAT["auditor"] != _DECODE_TOK_S_BY_SEAT["pov"], (
+        "두 좌석이 상수 하나를 공유한다 — 한쪽 실측이 다른 쪽 하한을 같이 움직인다"
+    )
+    assert _DECODE_TOK_S_BY_SEAT["pov"] < _DECODE_TOK_S_BY_SEAT["auditor"], (
+        "PoV는 자기 속도를 안 쟀다 — 실측이 있는 좌석보다 느린 보수값이어야 한다"
+    )
+
+    served = (CONFIG_DIR / "serving" / "vastai.yaml").read_text("utf-8")
+    assert f"{_DECODE_TOK_S_BY_SEAT['auditor']} tok/s" in served, (
+        f"Auditor 속도 상수 {_DECODE_TOK_S_BY_SEAT['auditor']}가 장비 파일의 실측과 다르다 — "
+        "상수만 올리면 「타임아웃 >= 출력 상한 / 속도」가 측정 없이 통과한다"
+    )
 
 
 # 스모크에서 잰 좌석별 단일 요청 생성 속도(tok/s) — 2026-09-24 ATOM `run_20260924_0001`
@@ -2146,7 +2330,10 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
     넣어도 통과하던 변이(#351 리뷰)."""
     from src.config import AUDITOR_SOURCE_OPTIONS
 
-    thresholds = load_config("dev_fake").thresholds
+    # 2026-10-03부터 `budgets.yaml`이 넷을 켠다 -> 끈 상태를 만들어 옛 모양을 본다.
+    thresholds = load_config("dev_fake").thresholds.transition(
+        **{key: 0 for key in AUDITOR_SOURCE_OPTIONS}
+    )
     assert not set(AUDITOR_SOURCE_OPTIONS) & thresholds.flatten().keys()
     assert thresholds.auditor_source_options_on() == ()
     on = thresholds.transition(**{key: 1 for key in AUDITOR_SOURCE_OPTIONS})
@@ -2155,17 +2342,29 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
 
 
 @pytest.mark.parametrize(
-    "key", ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim"]
+    "key",
+    ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim", "auditor_callee_wrappers"],
 )
 def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
     with pytest.raises(ValidationError):
         load_config("dev_fake").thresholds.transition(**{key: 2})
 
 
-@pytest.mark.parametrize("version", ["v4", "v5"])
-def test_the_current_auditor_prompts_describe_no_source_option(version: str) -> None:
-    """v4·v5는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 리뷰 MEDIUM-2)."""
+@pytest.mark.parametrize("version", ["v4", "v5", "v6"])
+def test_the_older_auditor_prompts_describe_no_source_option(version: str) -> None:
+    """v4·v5·v6는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 MEDIUM-2).
+    v6는 #418이 A/B를 잰 문장 그대로다 — 옵션 서술은 v7이 든다(2026-10-04 · PR #443 리뷰 HIGH)."""
     assert load_prompt(Role.AUDITOR, version).source_options == ()
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(profile: str) -> None:
+    """서빙 판이 선언한 옵션 == `budgets.yaml`이 켠 옵션. `cli`는 켰는데 선언 안 한 쪽만 막으므로
+    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 넷을 켬 · 서술은 v7, #349)."""
+    config = load_config(profile)
+    version = config.model_for("auditor").prompt_template_version
+    described = set(load_prompt(Role.AUDITOR, version).source_options)
+    assert described == set(config.thresholds.auditor_source_options_on())
 
 
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:

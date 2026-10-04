@@ -1334,7 +1334,7 @@ def test_critic_v3_prompt_is_content_conditional() -> None:
     assert "carries a `body`" in prefix
 
 
-# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328 · v5 절단 계약) --------
+# --- Auditor 근거 본문 배선 (v3 #256 항목 4 · v4 #328 · v5 절단 계약 · v6 #418·#421 · v7 #349) -
 
 
 def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
@@ -1362,22 +1362,31 @@ def test_auditor_includes_evidence_body_when_version_is_content_aware(
     assert "heap-buffer-overflow" in prompt.body  # 본문이 FACTS에 닿는다
 
 
-def test_auditor_content_aware_versions_pin_v3_v4_and_v5() -> None:
+def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     """critic 쪽 #247 리뷰 HIGH-1과 같은 이유 — 위 테스트는 monkeypatch로 게이트를 켜므로
     **실제 값**을 안 문다. `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히
-    metadata만 받는데 그걸 잡는 것은 이 단언뿐이다(#328 리뷰 MEDIUM-1 — v4 prefix가 evidence
-    content를 전제로 쓰였다). **critic의 상수를 import하지 않는다** — 본문을 읽도록 쓰였는지는
-    역할별 프롬프트의 성질이다.
+    metadata만 받는다(#328 리뷰 MEDIUM-1 — v4 prefix가 evidence content를 전제로 쓰였다).
+    **critic의 상수를 import하지 않는다** — 본문을 읽도록 쓰였는지는 역할별 프롬프트의 성질이다.
+
+    ⚠ **부분집합(`<=`)이 아니라 상등이다.** 부분집합이면 든 판만 묻고 안 든 판은 안 묻는다 —
+    2026-10-03 v6를 더할 때 이 단언이 그대로 통과한 이유가 그것이고, 그때 함수 이름도
+    `..._pin_v3_v4_and_v5`로 남아 `v4_t1`·`v6` 둘을 빼먹은 채 거짓이 됐다(#418·#421 리뷰).
+    판을 더하거나 빼면 여기도 같이 고친다 — 그 강제가 이 핀의 목적이다.
+
+    **서빙 판이 이 집합에 드는가**는 판을 세지 않는 별 핀이 묻는다 — `test_config.py`의
+    `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
-    assert {"v3", "v4", "v4_t1", "v5"} <= auditor._CONTENT_AWARE_VERSIONS
+    assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7"}
+    )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
 
-@pytest.mark.parametrize("version", ["v3", "v4", "v5"])
+@pytest.mark.parametrize("version", ["v3", "v4", "v5", "v6", "v7"])
 def test_auditor_content_aware_version_renders_slice_source_and_evidence_body_through_the_node(
     ctx: RunContext, version: str
 ) -> None:
-    """registry가 auditor에 v3·v4·v5를 고르면 **노드를 거친** 렌더가 body를 채운다 —
+    """registry가 auditor에 v3·v4·v5·v6·v7을 고르면 **노드를 거친** 렌더가 body를 채운다 —
     슬라이스 렌더가 `SOURCE`로, payload 본문이 FACTS `evidence[].body`로 간다.
 
     위 셋은 게이트(상수)와 v1만 본다. 이 검사는 **버전 선택 → 본문 읽기 → 렌더**를 한 호출로

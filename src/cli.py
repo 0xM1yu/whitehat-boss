@@ -12,12 +12,15 @@
 """
 
 import argparse
+import ipaddress
 import json
+import os
 import shutil
 import signal
 import sys
 import tempfile
 import threading
+import urllib.parse
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -27,6 +30,7 @@ from pathlib import Path
 from typing import TextIO, get_args
 
 from src.adapters.container_tools import make_payload_reader
+from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
@@ -50,6 +54,8 @@ from src.config import (
 )
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
+from src.interfaces.oracle import Oracle
+from src.orchestrator.nodes.auditor import loop_problem as auditor_loop_problem
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
     BLOCKING_WHEN_SERVING,
@@ -69,8 +75,12 @@ from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.task_loader import (
     DESCRIPTION_FILENAME,
     REPO_ARCHIVE_NAME,
+    SUBMIT_SCRIPT_NAME,
+    UnexpectedTaskFilesError,
     UnsafeArchiveError,
+    check_task_dir,
     read_description,
+    read_submit_metadata,
     safe_extract,
 )
 from src.orchestrator.trace import TraceWriter
@@ -184,6 +194,7 @@ def doctor(
     checks.extend(_check_checksums(config))
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
+    checks.extend(_check_auditor_loop(config))
     checks.extend(_check_scout_slice_trim(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
@@ -472,9 +483,16 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
 
 def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     """켜진 Auditor `SOURCE` 옵션 중 Auditor 프롬프트 meta의 `source_options`가 안 든 것
-    (#351 리뷰 MEDIUM-2). 프로필에 Auditor가 없으면 `[]`다. 프롬프트를 못 읽으면 `PromptError`."""
+    (#351 리뷰 MEDIUM-2). 프로필에 Auditor가 없으면 `[]`다. 프롬프트를 못 읽으면 `PromptError`.
+
+    **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
+    서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
+    프롬프트(v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이 여기서 막혀 GPU 없는 스모크가
+    죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과 같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
     if not on or Role.AUDITOR.value not in config.profile.roles:
+        return []
+    if config.model_for(Role.AUDITOR.value).is_fake:
         return []
     version = config.model_for(Role.AUDITOR.value).prompt_template_version
     described = load_prompt(Role.AUDITOR, version).source_options
@@ -497,6 +515,50 @@ def _check_source_options(config: HarnessConfig) -> list[Check]:
             "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
         )
     ]
+
+
+def _auditor_loop_problem(config: HarnessConfig) -> str | None:
+    """도구 루프(`thresholds.auditor_tool_hops`)와 배선된 Auditor 프롬프트 판의 meta 선언이
+    어긋나면 그 사유 문장을, 맞으면 `None`을 돌려준다(#419). 프로필에 Auditor가 없으면 `None`이다.
+    프롬프트를 못 읽거나 `output_schema`가 허용집합 밖이면 `PromptError`를 올린다 — 호출부가
+    각자의 방식으로 처리한다(`_undescribed_source_options`와 같은 모양).
+
+    **판정은 노드와 같은 함수다**(`nodes.auditor.loop_problem`). 예전에는 cli가 meta의 `tools`만
+    보고 노드가 `output_schema`만 봐서, 한쪽만 통과하는 설정(판은 루프인데 상한 0 · 판은 한 방인데
+    상한 양수 · `tools`에 `AuditorAction.tool`이 안 받는 이름)이 `run`·`doctor`를 지나 첫 Auditor
+    호출에서야 섰다 — 그 앞 단계(1~4)에 쓴 GPU 시간 뒤다.
+    """
+    if Role.AUDITOR.value not in config.profile.roles:
+        return None
+    version = config.model_for(Role.AUDITOR.value).prompt_template_version
+    return auditor_loop_problem(
+        load_prompt(Role.AUDITOR, version), config.thresholds.auditor_tool_hops
+    )
+
+
+def _check_auditor_loop(config: HarnessConfig) -> list[Check]:
+    """도구 루프 상한과 Auditor 프롬프트 선언이 어긋나면 ERROR.
+
+    🔴 **왜 WARN이 아니라 ERROR인가.** 켜 놓고 프롬프트가 도구를 안 알리면 **모델이 도구를 영영
+    안 쓰는데 run은 정상 종료한다** — 그 run의 「도구 호출 0건」이 「모델이 안 골랐다」로 오독된다.
+    `--slices` 경고와 달리 설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) 막는다
+    (`_check_source_options`의 같은 판단).
+    """
+    try:
+        problem = _auditor_loop_problem(config)
+    except PromptError as exc:
+        # (Auditor가 프로필에 없으면 `_auditor_loop_problem`이 `None`이라 여기 안 온다.) 로드 실패는
+        # `_check_prompts`가 이미 ERROR로 댄다. 로드는 됐는데 선언이 이 역할의 허용집합
+        # 밖이면(`resolve_output_schema`) 그 검사가 이 선언을 안 풀어 여기가 유일한 보고다.
+        version = config.model_for(Role.AUDITOR.value).prompt_template_version
+        try:
+            load_prompt(Role.AUDITOR, version)
+        except PromptError:
+            return []
+        problem = str(exc)
+    if problem is None:
+        return []
+    return [Check(Severity.ERROR, problem)]
 
 
 def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
@@ -544,6 +606,217 @@ def _check_state_path(config: HarnessConfig, artifacts_root: Path) -> Check:
 # --- 공통 배선 ---------------------------------------------------------------
 
 
+# 채점기 private 경로(submit-fix·query-poc)에 쓰는 키의 환경변수 이름. 저자 서버의 기본 키가 공개
+# placeholder라 저장소에 박지 않고 환경에서 받는다. 근거는 저자 서버가 아니라 이 저장소의 문서다 -
+# docs/research/2026-09-29-cybergym-pov-design.md의 「엔드포인트 가시성」 항(기본 키가 공개
+# placeholder이고 `CYBERGYM_API_KEY`로 덮는다)과 왕복 보고서 부록 5)의 주석(기본 키는
+# `server/types.py`). 어댑터(`cybergym_oracle.py`)에는 그 문장이 없다.
+_ORACLE_KEY_ENV = "CYBERGYM_API_KEY"
+
+
+class _OracleRefused:
+    """`_oracle_for`가 「사람에게 알리고 멈춰라」를 돌려주는 표식의 타입.
+
+    `Oracle | None`(정상)과 `isinstance`로 갈린다 - 반환 표기가 `object`로 뭉개지지 않는다.
+    """
+
+
+# 설정 오류의 표식. `None`은 「제출 안 함」(정상)이라 그것과 섞으면 설정 오류가 조용히 미제출로
+# 떨어진다.
+_ORACLE_ERROR = _OracleRefused()
+
+
+def _refuse_oracle(message: str) -> _OracleRefused:
+    """`[ERROR]`를 stderr에 찍고 `_ORACLE_ERROR`를 돌려준다 - 호출자가 exit 2로 멈춘다."""
+    print(f"[ERROR] {message}", file=sys.stderr)
+    return _ORACLE_ERROR
+
+
+def _oracle_server_problem(server: str) -> str | None:
+    """`--oracle-server` 값이 클라이언트가 보낼 수 있는 주소가 아니면 그 사유, 맞으면 `None`.
+
+    http/https 주소여야 하고(어댑터가 요청 때 같은 것을 보지만 run 디렉터리를 잡기 **전에** 막는다),
+    호스트가 있어야 하며, 와일드카드 주소(`0.0.0.0`·`::`)와 경로·인증 정보는 안 받는다 -
+    와일드카드는 서버가 bind할 때 쓰는 값이지 클라이언트가 접속할 주소가 아니다(저자도 서버를 그렇게
+    띄우지 말라고 한다, 어댑터 docstring).
+    """
+    try:
+        parts = urllib.parse.urlsplit(server)
+        port_ok = parts.port is None or parts.port > 0
+    except ValueError:
+        return "주소를 읽을 수 없다"
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return "http:// 또는 https://로 시작하는 주소여야 한다"
+    if not port_ok:
+        return "포트가 올바르지 않다"
+    try:
+        wildcard = ipaddress.ip_address(parts.hostname).is_unspecified
+    except ValueError:  # IP가 아닌 호스트 이름
+        wildcard = False
+    if wildcard:
+        return "와일드카드 주소는 접속할 주소가 아니다"
+    if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
+        return "서버 주소에는 경로·질의·인증 정보를 넣지 않는다(스킴://호스트:포트)"
+    return None
+
+
+def _origin(server: str) -> tuple[str, str]:
+    """주소의 (스킴, host:port) - 대소문자와 끝의 `/`를 무시하고 견주려는 키다."""
+    parts = urllib.parse.urlsplit(server)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
+def _oracle_unreachable_reason(spec: RunSpec, config: HarnessConfig) -> str | None:
+    """이 run이 채점기에 **아무것도 못 낸다**면 그 사유, 낼 수 있으면 `None`.
+
+    제출은 8단계 PoV가 만든 PoC에서 나온다. `--dry-run`·낮은 `--stop-after`는 8단계에 안 닿고, pov
+    좌석이 없는 프로필은 PoV가 안 돈다.
+    """
+    if spec.stop_at()[0] < Stage.VALIDATE:
+        return "이 run은 8단계에 닿지 않는다(--dry-run 또는 --stop-after가 8 미만)"
+    if Role.POV.value not in config.profile.roles:
+        return f"프로필 {config.profile_name}에 pov 좌석이 없어 PoV가 돌지 않는다"
+    return None
+
+
+def _oracle_for(
+    args: argparse.Namespace, *, unreachable: str | None = None
+) -> Oracle | None | _OracleRefused:
+    """`--oracle-submit`이면 채점기를 조립한다 (#386). 설정이 틀리면 `_ORACLE_ERROR`다.
+
+    안 켰으면 `None`(제출 안 함)이다 - 단 받아 놓고 안 쓰는 `--oracle-server`·`--mask-map`은 설정
+    오류다.
+
+    **서버 주소는 조작자가 정한다**(`--oracle-server`, 기본값 없음). 과제 번들은 신뢰 못 하는
+    소스이고(`task_loader`) 거기서 긁은 주소로 조작자의 API 키를 보내면 번들을 만든 쪽이 키를
+    받는다. 번들의 `submit.sh`에서 읽는 것은 과제 id·에이전트
+    id·체크섬이다(하네스가 다시 만들 수 없는 값이다). **번들이 적은 주소가 조작자의 주소와 다르면
+    거부한다** - 둘 중 하나를 조용히 고르지 않는다. 번들의 주소는 보내는 곳이 아니라 「이 번들이
+    다른 서버용이 아닌가」를 보는 견줌일 뿐이고, 거부는 조작자가 같은 주소를 주거나 번들을 다시
+    만들게 한다(`localhost`와 `127.0.0.1`은 다른 주소로 센다).
+
+    **제출 전에 거절하는 것** - 주소 모양, `--mask-map` 파일(못 읽거나 JSON 객체가 아니거나 번들의
+    masked id가 맵에 없는 것), task_id 모양(마스킹된 id는 `--mask-map`이 실 id를 줄 때만 받는다,
+    `unsupported_task_id`), 번들의 체크섬이 클라이언트가 보내는 기본 salt로 계산한 값과 다른 것(다른
+    salt로 만든 번들은 서버가 400으로 거부한다), 키 부재. 어느 하나가 걸리면 컨테이너는커녕 요청도
+    안 나간다. 제출하려 한 run이 조용히 미제출로 끝나면 「0건 제출」이 설정 오류와 구별되지
+    않는다(§0).
+
+    **마스킹 서버**는 제출을 masked task_id로 받지만 DB·`/query-poc`는 실 id를 쓴다(저자 소스
+    판독, 실측 없음). `--mask-map`이 있으면 번들의 masked id를 실 id로 바꿔
+    `TaskOracle.query_task_id`로 넘기고(조회에만 쓴다 - 제출은 번들의 id 그대로), 없으면 `None`이다.
+
+    `unreachable`은 이 run이 채점기에 **아무것도 못 내는 사유**(`_oracle_unreachable_reason`)다 -
+    있으면 경고만 하고 `None`을 돌려준다. 모델에 안 닿는 run은 막지 않는다는 이 파일의 원칙과 같다:
+    막으면 통과시키려고 값을 지어내게 되고, 제출할 게 없는 run에 키·번들 검사를 걸 근거가 없다.
+    """
+    server = getattr(args, "oracle_server", None)
+    if not getattr(args, "oracle_submit", False):
+        if server is not None:
+            return _refuse_oracle("--oracle-server는 --oracle-submit와 함께만 쓴다")
+        if getattr(args, "mask_map", None) is not None:
+            return _refuse_oracle("--mask-map은 --oracle-submit와 함께만 쓴다")
+        return None
+    if unreachable is not None:
+        print(
+            f"[WARN ] --oracle-submit이지만 {unreachable} - 아무것도 제출하지 않는다",
+            file=sys.stderr,
+        )
+        return None
+    if args.task_dir is None:
+        return _refuse_oracle("--oracle-submit은 --task-dir와 함께만 쓴다")
+    if server is None:
+        return _refuse_oracle(
+            "--oracle-submit에는 --oracle-server가 필요하다 - 채점기 주소는 조작자가 정한다. "
+            "API 키가 가는 곳이라 과제 번들(submit.sh)이 가리키는 주소로는 보내지 않고, "
+            "기본 주소도 없다"
+        )
+    problem = _oracle_server_problem(server)
+    if problem is not None:
+        return _refuse_oracle(f"--oracle-server {server!r}: {problem}")
+    metadata = read_submit_metadata(args.task_dir)
+    if metadata is None:
+        return _refuse_oracle(
+            f"과제에서 채점기 신원을 못 읽었다 - {args.task_dir}/{SUBMIT_SCRIPT_NAME}에 "
+            "서버 주소와 metadata(task_id·agent_id·checksum, 모두 비어 있지 않은 문자열)가 필요하다"
+        )
+    query_task_id = _query_task_id_from_mask_map(args, metadata.task_id)
+    if isinstance(query_task_id, _OracleRefused):
+        return query_task_id
+    problem = unsupported_task_id(metadata.task_id)
+    if problem is not None and query_task_id is None:
+        return _refuse_oracle(
+            f"과제 번들의 task_id를 지원하지 않는다: {problem}. 마스킹 서버의 번들이면 "
+            "--mask-map으로 저자 mask_map.json을 같이 준다. 아무것도 제출하지 않았다"
+        )
+    if checksum(metadata.task_id, metadata.agent_id) != metadata.checksum:
+        return _refuse_oracle(
+            "과제 번들의 checksum이 기본 salt로 계산한 값과 다르다 - 이 클라이언트는 기본 salt만 "
+            "보낸다(다른 salt로 만든 번들은 서버가 400 Invalid checksum으로 거부한다). 아무것도 "
+            "제출하지 않았다"
+        )
+    if _origin(metadata.server) != _origin(server):
+        return _refuse_oracle(
+            f"과제 번들(submit.sh)의 서버 주소 {metadata.server!r}가 "
+            f"--oracle-server {server!r}와 다르다 - 같은 주소를 주거나 그 서버용으로 번들을 다시 "
+            "만든다. 번들의 주소로는 보내지 않는다"
+        )
+    api_key = os.environ.get(_ORACLE_KEY_ENV, "")
+    if not api_key:
+        return _refuse_oracle(
+            f"{_ORACLE_KEY_ENV}가 비어 있다 - "
+            "채점기의 private 경로(submit-fix·query-poc)에 필요하다"
+        )
+    target = server.rstrip("/")
+    print(
+        f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
+        f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. 후보마다 vul 다리만 보낸다. "
+        "fix 다리와 판정 조회는 vul 제출이 성공한 후보가 하나뿐일 때만 그 하나에 보낸다 - "
+        "둘 이상이면 고르는 규칙이 정해지지 않아 보내지 않는다"
+    )
+    return TaskOracle(
+        server=target,
+        task_id=metadata.task_id,
+        agent_id=metadata.agent_id,
+        api_key=api_key,
+        query_task_id=query_task_id,
+    )
+
+
+def _query_task_id_from_mask_map(
+    args: argparse.Namespace, masked: str
+) -> str | None | _OracleRefused:
+    """`--mask-map`이 주어지면 masked task_id를 **실(unmask) id**로 바꿔 돌려준다 (#386).
+
+    마스킹 서버는 제출을 masked로 받지만 DB·`/query-poc`는 unmask된 id를 쓴다(저자 소스 판독 —
+    `cybergym_oracle.run_round_trip` docstring의 마스킹 절). 호출자는 이 값을
+    `TaskOracle.query_task_id`로 넘긴다. `--mask-map`이 없으면 `None`(서버가 마스크를 안 썼다는
+    뜻 — `TaskOracle`이 submit의 task_id를 그대로 쓴다).
+
+    파일을 못 읽거나(없음·권한·UTF-8 아님·JSON 아님) JSON 객체가 아니거나 그 masked id가 맵에
+    없으면 `_ORACLE_ERROR` — 지어내지 않는다. 저장소 밖 파일이라 기본값을 두지 않고, 호출자가
+    명시해야 한다.
+    """
+    mask_map = getattr(args, "mask_map", None)
+    if mask_map is None:
+        return None
+    try:
+        mapping = json.loads(Path(mask_map).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # `JSONDecodeError`·`UnicodeDecodeError`는 `ValueError`다
+        return _refuse_oracle(f"--mask-map을 못 읽었다: {mask_map}: {exc}")
+    if not isinstance(mapping, dict):
+        return _refuse_oracle(
+            f"--mask-map이 JSON 객체가 아니다({type(mapping).__name__}): {mask_map} - "
+            "실 id를 masked id에 잇는 객체여야 한다"
+        )
+    # mask_map.json은 {real: masked}. 역변환이 필요하다.
+    reverse = {v: k for k, v in mapping.items() if isinstance(v, str)}
+    real = reverse.get(masked)
+    if real is None:
+        return _refuse_oracle(f"--mask-map에 masked task_id가 없다: {masked} - {mask_map}")
+    return real
+
+
 def execute(
     config: HarnessConfig,
     spec: RunSpec,
@@ -551,6 +824,7 @@ def execute(
     run_id: str,
     run_dir: Path,
     trace_stream: TextIO | None = None,
+    oracle: Oracle | None = None,
 ) -> tuple[RunResult, Deps]:
     """factory가 만든 어댑터를 러너에 넘긴다. 이 접합부가 이 파일의 존재 이유다.
 
@@ -580,6 +854,9 @@ def execute(
         slices_path=spec.slices_path,
         # 교대 프로필의 장비 파일을 고른다(ADR 0012 Phase 6.5). 없으면 교대 콜러블을 안 만든다.
         device=spec.device,
+        # 채점기(#386). `None`이면 PoC를 제출하지 않는다 — 서버 주소와 과제 번들을 아는 것은
+        # `run()`이라 factory가 만들지 않고 받는다.
+        oracle=oracle,
     )
     result = run_pipeline(
         spec,
@@ -677,8 +954,8 @@ def _scout_places(config: HarnessConfig) -> int:
 
 
 def _expected_calls(config: HarnessConfig, capsules: int) -> int:
-    """후보 하나당 scout **`1 + max_hops`**회(need_evidence 상한), 승격되면 auditor 1회,
-    상위만 critic 1회.
+    """후보 하나당 scout **`1 + max_hops`**회(need_evidence 상한), 승격되면 auditor 1회(도구 루프를
+    켜면 `1 + auditor_tool_hops`회 — 아래), 상위만 critic 1회.
 
     승격률도 NE 홉 수도 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이
     무의미해진다. Scout 쪽이 특히 그렇다 — v3 좌석이 매번 `max_hops`까지 되물으면 그
@@ -691,13 +968,19 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     세어 풀 프로필에서 **실제의 1/3**을 냈다 — 그 값으로 예산을 잡으면 run이 도중에
     `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
 
+    **Auditor는 도구 루프를 켜면 후보당 `1 + auditor_tool_hops`회**(`thresholds.auditor_tool_hops`,
+    기본 0 = 종전의 1회)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
+
     **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 finding당 최대
     `1 + max_hops`회 더 부른다(VALIDATED = critic 통과분이라 최대 `min(candidates, critic_top_n)
     × (1 + max_hops)`, 계산값). 이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
     scout_calls = candidates * (1 + config.thresholds.max_hops)
-    auditor_calls = candidates
+    # Auditor 도구 루프를 켰으면 후보당 최대 `1 + auditor_tool_hops`회다(hop 0..limit —
+    # `nodes/auditor._run_hops`). 끄면 `auditor_tool_hops`가 0이라 종전의 1회 그대로다.
+    # `max_hops`를 안 쓰는 것은 일부러다(`config.py`의 그 필드 주석).
+    auditor_calls = candidates * (1 + config.thresholds.auditor_tool_hops)
     return scout_calls + auditor_calls + min(candidates, config.thresholds.critic_top_n)
 
 
@@ -854,7 +1137,8 @@ def run(args: argparse.Namespace) -> int:
     # `--target`·`--description-file`을 따로 주는 절차였다. 이 분기는 `safe_extract`와
     # `read_description`을 **따로** 부른다(이유는 아래 — 설명은 해제보다 먼저 읽는다).
     # ⚠ 그래서 둘을 묶은 `load_task`의 프로덕션 호출처는 **지금도 0건**이다 — `load_task`에만 거는
-    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다.
+    # 검사는 이 경로에 닿지 않는다. 새 검사는 이 분기에도 따로 건다 — 정답 자료 가드
+    # (`check_task_dir`)가 그렇게 걸려 있다(아래 아카이브 확인 바로 뒤).
     task_description: str | None = None
     #
     # ⚠ **여기서는 검증만 하고 해제는 `_claim_run_dir` 직전에 한다.** 처음 판은 여기서 바로
@@ -914,6 +1198,27 @@ def run(args: argparse.Namespace) -> int:
             # 쓸 이유도 없다.
             print(
                 f"[ERROR] 과제에 {REPO_ARCHIVE_NAME}가 없다: {args.task_dir}", file=sys.stderr
+            )
+            return 2
+        # 🔴 **정답 자료 가드는 이 분기에도 따로 건다**(위 ⚠ — 이 분기는 `load_task`를 안 거친다).
+        # 아카이브 확인 **뒤**, 설명을 읽거나 무엇을 쓰기 **앞**이다 — 허용 목록(`TASK_FILES`) 밖
+        # 항목이 하나라도 있으면(`patch.diff`·`error.txt`·`repo-fix.tar.gz` 같은 정답 자료가 번들
+        # 옆에 떨어진 경우) 시작하지 않고 작업 디렉터리도 run 디렉터리도 만들지 않는다. **여기서
+        # 직접 잡는다** — 아래 `safe_extract`의 `except`는 이 호출을 감싸지 않고, 그쪽 문구(「앞
+        # 멤버가 남았을 수 있다」)는 아직 아무것도 안 풀었는데 틀리다. `OSError`(목록을 못 읽음 —
+        # 권한)도 같이 막는다: 검사를 못 했으면 통과가 아니라 거부다. ⚠ `--target`을 직접 주는
+        # 경로는 이 검사 밖이다 — 임의의 소스 트리를 받는 경로라 `patch.diff` 같은 이름이 정상
+        # 파일일 수 있다(손으로 푼 번들의 정답 자료는 그쪽에서 못 막는다).
+        try:
+            check_task_dir(args.task_dir)
+        except UnexpectedTaskFilesError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())
+            print(
+                f"[ERROR] 과제 디렉터리를 읽을 수 없어 정답 자료 검사를 못 했다: {detail}",
+                file=sys.stderr,
             )
             return 2
         # 해제 트리가 target이다 — **경로는 지금 알 수 있다**(풀기 전에도).
@@ -1017,7 +1322,9 @@ def run(args: argparse.Namespace) -> int:
             return 2
     # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
     # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
-    # 말한다 — 어긋나도 오류 없이 돈다. Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
+    # 말한다 — 어긋나도 오류 없이 돈다. v6(#418의 A/B 판)도 그 모양만 서술한다(⏵ 2026-10-04 서빙
+    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언).
+    # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
             undescribed = _undescribed_source_options(config)
@@ -1030,6 +1337,20 @@ def run(args: argparse.Namespace) -> int:
                 "않는다 — meta의 source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
                 file=sys.stderr,
             )
+            return 2
+    # **도구 루프 상한과 Auditor 프롬프트 선언이 어긋나면 시작하지 않는다**(#419). 위 가드와 같은
+    # 모양· 같은 판단이다 — 켜 놓고 프롬프트가 안 알리면 모델이 도구를 영영 안 쓰는데 run은 정상
+    # 종료해 「도구 호출 0건」이 「모델이 안 골랐다」로 오독되고, 판은 루프인데 상한이 0이면(또는
+    # 반대면) 노드가 첫 Auditor 호출에서 세워 그 앞 단계에 쓴 시간을 버린다. Auditor에 안 닿는 run은
+    # 막지 않는다.
+    if spec.stop_at()[0] >= Stage.AUDITOR:
+        try:
+            loop_problem_text = _auditor_loop_problem(config)
+        except PromptError as exc:
+            print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
+            return 2
+        if loop_problem_text is not None:
+            print(f"[ERROR] {loop_problem_text}", file=sys.stderr)
             return 2
     # **교대 프로필은 장비 파일 없이 모델에 닿지 않는다**(ADR 0012 Phase 6.5). 교대 명령과 서버
     # 기동 조건(util·창·인자)은 `config/serving/<device>.yaml`이 든다 — 장비를 모르면 무엇으로
@@ -1045,6 +1366,14 @@ def run(args: argparse.Namespace) -> int:
         if problem is not None:
             print(f"[ERROR] {problem}", file=sys.stderr)
             return 2
+    # 채점기 설정은 **해제 앞**에서 본다 (#386) — 순수 검사(파일·환경변수 읽기)이고, 뒤에 두면
+    # 설정 오류가 작업 디렉터리를 더럽혀 오타를 고친 재시도가 「비어 있지 않다」로 거부된다
+    # (#397 리뷰 MEDIUM-1과 같은 배치 이유). **8단계에 못 닿는 run은 이 검사를 건너뛴다** — 낼 PoC가
+    # 없는 run에 키·번들 검사를 걸 근거가 없고, 막으면 통과시키려고 값을 지어내게 된다(위
+    # `reaches_model` 가드와 같은 판단). 건너뛰는 사실은 경고로 알린다.
+    oracle = _oracle_for(args, unreachable=_oracle_unreachable_reason(spec, config))
+    if isinstance(oracle, _OracleRefused):
+        return 2
     # 🔴 **과제 아카이브는 여기서 푼다** — 모든 게이트 **뒤**, 되돌릴 수 없는 첫
     # 쓰기(`_claim_run_dir`) **앞**이다. 앞에서 풀면 뒤의 게이트가 exit 2를 낼 때 작업 디렉터리에
     # 트리가 남아, 오타를 고친 재시도가 "비어 있지 않다"로 거부된다(적대적 리뷰 2026-10-02 M-1).
@@ -1095,7 +1424,14 @@ def run(args: argparse.Namespace) -> int:
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
-        result, _ = execute(config, spec, run_id=run_id, run_dir=run_dir, trace_stream=stream)
+        result, _ = execute(
+            config,
+            spec,
+            run_id=run_id,
+            run_dir=run_dir,
+            trace_stream=stream,
+            oracle=oracle,
+        )
     report_path = write_report(run_dir, result, args.format)
 
     print(f"run_id: {result.record.run_id}")
@@ -1296,12 +1632,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-dir",
         type=Path,
         default=None,
-        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt). 주면 아카이브를 "
+        help="CyberGym 과제 번들 디렉터리(repo-vul.tar.gz + description.txt. 저자 생성기가 더하는 "
+        "README.md·submit.sh도 받는다). 그 밖의 항목이 하나라도 있으면(정답 자료 patch.diff·"
+        "error.txt·repo-fix.tar.gz 포함) 풀기 전에 거부한다(exit 2). 주면 아카이브를 "
         "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
         "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
         "풀린 트리와 줄 내용이 다르거나(drift) 트리에 없는 슬라이스가 하나라도 있으면 exit 2다 "
         "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
+    )
+    run_cmd.add_argument(
+        "--mask-map",
+        type=Path,
+        default=None,
+        help="저자 mask_map.json 경로. 마스킹 서버(README 표준 기동)와 함께 "
+        "--oracle-submit을 쓸 때 필요하다(--oracle-submit 없이 주면 거부한다, exit 2). "
+        "서버는 제출을 masked task_id로 받지만 "
+        "DB·/query-poc는 unmask된 id를 쓰므로, 조회에만 이 맵으로 바꾼 실 id를 쓴다",
+    )
+    run_cmd.add_argument(
+        "--oracle-submit",
+        action="store_true",
+        help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
+        "fix 다리와 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 성공한 후보가 "
+        "하나뿐이면 그 하나에 돌고, 둘 이상이면 고르는 규칙이 아직 정해지지 않아 안 돈다"
+        "(oracle_final은 status none, reason policy_undecided). "
+        "--task-dir와 --oracle-server와 함께만 쓴다. 과제 id·에이전트 id는 번들의 submit.sh에서 "
+        "읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
+        "{run_dir}/oracle/verdict.json에 남고 내부 등급(E4)을 올리지 않는다. 8단계에 닿지 않는 run"
+        "(--dry-run, 8 미만의 --stop-after, pov 좌석이 없는 프로필)에서는 아무것도 제출하지 않고 "
+        "경고만 한다",
+    )
+    run_cmd.add_argument(
+        "--oracle-server",
+        default=None,
+        help="채점기 서버 주소(스킴://호스트:포트). 기본값이 없다 - --oracle-submit이면 필수다. "
+        "조작자가 정한다: API 키가 가는 곳이라 과제 번들(submit.sh)이 가리키는 주소로는 보내지 "
+        "않고, 번들의 주소와 다르면 거부한다(exit 2). 지원하는 과제 id는 마스킹을 안 한 서버의 "
+        "실제 id(예 arvo:1065)이거나, 마스킹된 id에 --mask-map을 같이 준 것이다",
     )
     run_cmd.add_argument(
         "--task-work-dir",
