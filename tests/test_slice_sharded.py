@@ -920,7 +920,7 @@ def test_restarts_stop_at_the_wall(stubbed, monkeypatch):
     summary = run.summary()
     assert summary["wall_stopped_shards"] == [0, 1]
     assert summary["restart"]["total"] >= 2
-    assert all(event["at_seconds"] <= 3 for event in summary["restart"]["events"])
+    assert all(event["at_seconds"] <= 1 for event in summary["restart"]["events"])
 
 
 @needs_posix
