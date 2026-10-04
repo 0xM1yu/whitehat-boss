@@ -497,6 +497,30 @@ def test_context_query_reassembles_the_same_points_at_runtime():
     assert json.loads(rebuilt) == [list(p) for p in points]
 
 
+def test_case_a_priority_list_survives_the_jvm_string_constant_limit():
+    """The priority list is interpolated into the Scala source like the context points are, and a
+    long list (every file of a big repo) must not become one oversized string constant."""
+    files = [f"examples/some/rather/long/path/source_{n}.c" for n in range(1, 6001)]
+    query = queries.candidates_a_query(files, "/work/repo")
+    literals = SCALA_STRING.findall(query)
+    assert literals, "no string literals found; the extraction regex is wrong"
+    assert max(len(s.encode("utf-8")) for s in literals) <= 65535
+    # the list itself is longer than one constant could hold: it really is split
+    assert len(re.search(r"val prioFiles = (.*?)\.mkString", query, re.DOTALL)[1]) > 65535
+
+
+def test_case_a_priority_list_reassembles_the_same_files_at_runtime():
+    """Chunking and escaping must not change the value: the joined literals re-read as the sorted
+    list, quotes, backslashes and non-ASCII names included."""
+    files = ['a"b.c', "back\\slash.c", "한글/파일.c", "\U0001f600/x.c"]
+    files += [f"d/f{n}.c" for n in range(3000)]
+    query = queries.candidates_a_query(files, "/work/repo")
+    chunks = re.search(r"val prioFiles = (.*?)\.mkString\.split", query, re.DOTALL)
+    assert chunks, "the list is no longer rebuilt with mkString.split(...)"
+    rebuilt = "".join(json.loads(s) for s in SCALA_STRING.findall(chunks.group(1)))
+    assert rebuilt.split("\n") == sorted(files)
+
+
 def run_shards(monkeypatch, repo, tmp_path, data, count):
     databases = []
     for index in range(count):
@@ -1551,6 +1575,119 @@ def test_priority_files_are_refused_with_export_only_or_unreadable(repo, tmp_pat
                      "--priority-files", str(listing)])
     with pytest.raises(SystemExit):
         slicer.main([*base, "--priority-files", str(tmp_path / "missing.txt")])
+
+
+def case_a_query(transport):
+    """The case_a discovery query as it was sent, with the client's payload path put back to the
+    token `candidates_a_query` carries, so it compares to the builder's own text."""
+    for request, _ in transport.requests:
+        query = json.loads(request.data)["query"]
+        if '"__SLICER_case_a__"' in query:
+            return re.sub(r'Paths\.get\("[^"]*"\)', f"Paths.get({queries.OUT_PATH_TOKEN})", query)
+    raise AssertionError("no case_a query was sent")
+
+
+def test_priority_case_a_sends_the_list_to_the_case_a_query(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# hint\n\n./main.c\n", encoding="utf-8")
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing), "--priority-case-a",
+    )
+    assert code == 0, result.get("error")
+    # the list as the run normalized it (`./main.c` -> `main.c`) and this run's repo prefix
+    expected = queries.candidates_a_query(["main.c"], two_file_repo.resolve().as_posix())
+    assert case_a_query(transport) == expected
+    assert 'val prioFiles = List("main.c").mkString.split("\\n").toSet' in expected
+    assert result["settings"]["priority_case_a"] is True
+    assert result["settings"]["priority_files"] == {"count": 1, "sha256": digest(["main.c"])}
+
+
+def test_a_priority_list_without_the_flag_leaves_discovery_alone(
+    monkeypatch, two_file_repo, tmp_path
+):
+    """`--priority-files` alone orders only: the case_a query is the default one, to the byte."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert code == 0, result.get("error")
+    assert case_a_query(transport) == queries.candidates_a_query()
+    assert result["settings"]["priority_case_a"] is False
+
+
+def test_priority_case_a_is_refused_without_a_list(repo, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), "--priority-case-a"])
+    assert "--priority-case-a needs --priority-files" in capsys.readouterr().err
+
+
+def test_priority_case_a_is_refused_with_a_list_that_names_no_file(repo, tmp_path, capsys):
+    """A list of comments and blank lines is a list, but it names nothing: the discovery would be
+    the default one while `settings.priority_case_a` says it was steered. Refused, like no list."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# only a note\n\n   \n", encoding="utf-8")
+    out = tmp_path / "s.json"
+    with pytest.raises(SystemExit):
+        slicer.main([
+            "--repo", str(repo), "--out", str(out),
+            "--priority-files", str(listing), "--priority-case-a",
+        ])
+    assert "--priority-case-a needs a --priority-files that names a file" in capsys.readouterr().err
+    assert not out.exists()  # refused before any run state was written
+
+
+def test_resuming_without_the_priority_case_a_flag_is_a_contract_mismatch(
+    monkeypatch, two_file_repo, tmp_path
+):
+    """The flag changes which candidates exist, so it is part of the run contract: a shard or a
+    resume that forgets it is refused and the message names the setting."""
+    database = tmp_path / "state.db"
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    first = ("--checkpoint", str(database), "--priority-files", str(listing))
+    code, _, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), *first, "--priority-case-a"
+    )
+    assert code == 0
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), *first, "--resume"
+    )
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.priority_case_a" in result["error"]
+
+
+def test_resuming_without_the_import_include_root_flag_is_a_contract_mismatch(
+    monkeypatch, repo, tmp_path
+):
+    """The include root changes the graph c2cpg builds, so the run contract carries it: a resume
+    (or a shard) that forgets it is refused, and the message names the setting."""
+    options = checkpoint_options(tmp_path)
+    data = payloads(case_a=[candidate()])
+    code, _, _ = run_cli(monkeypatch, repo, tmp_path, data, *options, "--import-include-root")
+    assert code == 0
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data, *options, "--resume")
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.import_include_root" in result["error"]
+
+
+def test_the_case_a_cap_note_follows_the_order_the_run_used(monkeypatch, two_file_repo, tmp_path):
+    """The note says how the cut was ordered: with the flag on the listed files came first, and
+    with it off the note keeps the words it always had."""
+    monkeypatch.setattr(queries, "CASE_A_CANDIDATE_CAP", 1)
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    on = ("--priority-files", str(listing), "--priority-case-a")
+    notes = []
+    for name, extra in (("off", ()), ("on", on)):
+        folder = tmp_path / name
+        folder.mkdir()
+        _, result, _ = run_cli(monkeypatch, two_file_repo, folder, two_file_payloads(), *extra)
+        notes.append(result["measurement_notes"]["candidates_case_a"])
+    assert "api: write-context methods first, then traversal order" in notes[0]
+    assert "priority" not in notes[0]
+    assert "api: priority-file methods first, then write-context methods" in notes[1]
 
 
 def flows_file_order(transport):

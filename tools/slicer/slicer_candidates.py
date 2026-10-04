@@ -79,7 +79,8 @@ def prioritize(
 ) -> tuple[list[dict], int, set[str]]:
     """Candidates whose entry or any anchor is in `files` first (#377 option (b)).
 
-    Order only. Stable: each tier keeps collect()'s order, and ids stay as collect() numbered
+    Order only (this function; `--priority-case-a` acts earlier, inside the Case A discovery query).
+    Stable: each tier keeps collect()'s order, and ids stay as collect() numbered
     them. The candidate set is unchanged, and a candidate that gets a full slice gets the same
     slice whether or not it was listed. Only which candidates end up DEGRADED can differ -- those
     not reached when the run is cut short (a wall budget, a kill), and those after a poison streak
