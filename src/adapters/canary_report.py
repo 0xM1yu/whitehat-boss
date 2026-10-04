@@ -8,8 +8,9 @@
 **왜 하네스가 보고서를 요구하나.** 오라클 판정이 비결정적일 수 있고 그 원인은 우리 코드도 저자
 코드도 아니라 **채점 컨테이너를 돌리는 호스트 커널의 mmap 엔트로피**다. `vm.mmap_rnd_bits = 32`
 에서 sanitizer 섀도 매핑이 간헐 실패해 타깃이 입력을 읽기도 전에 `139`로 죽고, 그 코드가 성공
-조건에서 「크래시」로 집계된다 — 2026-10-02 `win11wsl` 실측에서 **정답 PoC ≈0.40 · 무해 입력
-≈0.28**이 「성공」이었다(차가 ≈0.12). 28로 내리면 같은 네 조합이 40/40 기대와 같다.
+조건에서 「크래시」로 집계된다 — 2026-10-02 `win11wsl`에서 **정답 PoC ≈0.40 · 무해 입력 ≈0.28**이
+「성공」이었다(차가 ≈0.12). ⚠ **그 셋은 계산값이다** — 다리별 표본 비율(n=10·20)의 곱이고 직접
+잰 성공률이 아니다(그 도구 docstring). 28로 내리면 같은 네 조합이 40/40 기대와 같다.
 🔴 **그 값은 영속하지 않는다** — `vm.*`는 네임스페이스가 없어 VM 전역이고 Docker Desktop 재기동으로
 32로 돌아간다. **그래서 처방이 아니라 카나리가 본체다.**
 
@@ -33,8 +34,18 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+# 이보다 큰 파일은 읽지 않는다. **정한 값이다(실측 아님)** — 도구가 쓴 실 보고서 둘이
+# 1,652 B·1,742 B였고(2026-10-04 `arvo:1065`·`oss-fuzz:368076871`) 이 상한은 그보다 약 600배다.
+# 목적은 폭주 차단이지 모양 검사가 아니다 — 상한이 없으면 임의 크기 파일이 메모리로 들어온다.
+_MAX_REPORT_BYTES = 1 << 20
+
+# `vm.mmap_rnd_bits`가 가질 수 있는 모양 — 10진 숫자뿐이다. `int()`로 보면 `2_8`·`+28`·`٢٨`
+# (아라비아-인도 숫자)가 다 28이 되고 `-1`·`0`은 「28 이하」로 통과한다. 커널이 그 값을 쓰지 않는다.
+_DECIMAL_BITS = re.compile(r"[0-9]{1,3}")
 
 # 보고서가 통과로 세는 유일한 판정. 도구는 넷을 낸다 — `pass` · `weak_pass`(관측 횟수가 모자라
 # `ok=false`) · `fail` · `incomplete`. 채점 run은 `pass`만 받는다.
@@ -57,6 +68,11 @@ _REQUIRED: tuple[tuple[str, type | tuple[type, ...]], ...] = (
     ("mmap_rnd_bits", (str, type(None))),
     ("rnd_bits_above_28", (bool, type(None))),
     ("measured_at", str),
+    # **같은 파일의 반증 칸.** 요약(`verdict`·`ok`)만 읽으면 그 둘을 뒤집은 보고서가 통과한다 —
+    # 자기 선언이 같은 파일의 관측보다 세지 못하게 셋을 같이 읽는다(CLAUDE.md §2.2).
+    ("completed", bool),
+    ("segv_count", int),
+    ("problems", list),
 )
 
 
@@ -77,22 +93,51 @@ class CanaryReport:
     mmap_rnd_bits: str | None
     rnd_bits_above_28: bool | None
     measured_at: str
+    # 도구가 네 조합을 끝까지 돌렸나 · `139`를 몇 번 봤나 · 어긋남 목록. `verdict`의 근거다.
+    completed: bool
+    segv_count: int
+    problems: tuple[str, ...]
     # 어느 장비에서 쟀는지 — 거절 문구에만 쓴다. 도구가 못 읽으면 `null`이라 없어도 된다.
     docker_version: str | None = None
 
 
 def read_canary_report(path: Path) -> CanaryReport:
-    """보고서 JSON을 읽어 옮긴다. 못 읽거나 칸이 비거나 형이 다르면 `CanaryReportError`."""
+    """보고서 JSON을 읽어 옮긴다. 못 읽거나 칸이 비거나 형이 다르면 `CanaryReportError`.
+
+    **못 읽은 것은 통과가 아니다** — 어떤 사유로든 이 함수가 던지면 호출부가 run을 거부한다.
+    그래서 예외를 좁게 잡지 않는다: `UnicodeDecodeError`(UTF-8이 아닌 파일)와
+    `RecursionError`(깊이 중첩된 JSON)는 `OSError`도 `JSONDecodeError`도 아니라 앞 판에서
+    **트레이스백으로 샜다**. 호출부는 `CanaryReportError`만 잡으므로 조작자가 받는 것이 문구가
+    아니었다(제출은 안 나가니 fail-closed는 유지됐다).
+    """
     try:
-        text = path.read_text(encoding="utf-8")
+        size = path.stat().st_size
     except OSError as exc:
         raise CanaryReportError(f"카나리 보고서를 읽지 못했다({path}): {exc}") from exc
+    if size > _MAX_REPORT_BYTES:
+        raise CanaryReportError(
+            f"카나리 보고서가 너무 크다({path}: {size} B) - 도구가 쓰는 보고서는 2 KB 선이다"
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:  # `UnicodeDecodeError`는 `ValueError`다
+        raise CanaryReportError(f"카나리 보고서를 읽지 못했다({path}): {exc!r}") from exc
     try:
         body = json.loads(text)
-    except ValueError as exc:
-        raise CanaryReportError(f"카나리 보고서가 JSON이 아니다({path}): {exc}") from exc
+    except (ValueError, RecursionError) as exc:
+        raise CanaryReportError(f"카나리 보고서가 JSON이 아니다({path}): {exc!r}") from exc
     if not isinstance(body, dict):
         raise CanaryReportError(f"카나리 보고서가 JSON 객체가 아니다({path})")
+    # 완주 못 한 run의 기록(`tools/oracle_canary.py`의 `_incomplete_record`)은 칸이 **적다** —
+    # 필수 칸 루프가 먼저 돌면 「repeat가 없다」가 나와 **파일에 적힌 진짜 원인이 가려진다.**
+    # 무는 것은 `completed`뿐이다 — `_incomplete_record`가 그것을 늘 거짓으로 쓴다. `verdict`까지
+    # 보면 칸이 다 있는데 `verdict`만 `incomplete`인 보고서(손으로 고친 것)가 **문구 없이** 여기서
+    # 죽어, 그 경우를 무는 `canary_refusal`의 핀이 영영 안 돈다.
+    if body.get("completed") is False:
+        raise CanaryReportError(
+            f"카나리가 완주하지 못했다({path}): verdict={body.get('verdict')!r} "
+            f"error={body.get('error')!r} - 그 사유를 고치고 다시 돌린다"
+        )
     for key, want in _REQUIRED:
         if key not in body:
             raise CanaryReportError(f"카나리 보고서에 {key}가 없다({path})")
@@ -112,6 +157,9 @@ def read_canary_report(path: Path) -> CanaryReport:
         mmap_rnd_bits=body["mmap_rnd_bits"],
         rnd_bits_above_28=body["rnd_bits_above_28"],
         measured_at=body["measured_at"],
+        completed=body["completed"],
+        segv_count=body["segv_count"],
+        problems=tuple(str(item) for item in body["problems"]),
         docker_version=body.get("docker_version") or None,
     )
 
@@ -129,8 +177,25 @@ def canary_refusal(report: CanaryReport, *, task_id: str) -> str | None:
         return f"카나리가 다른 과제의 것이다 - 보고서는 {report.task}, 이 run은 {task_id}({where})"
     if report.verdict != PASS_VERDICT or not report.ok:
         return (
-            f"카나리 판정이 {report.verdict}(ok={str(report.ok).lower()})다 - "
+            f"카나리 판정이 {report.verdict!r}(ok={str(report.ok).lower()})다 - "
             f"채점 run은 {PASS_VERDICT}만 받는다({where})"
+        )
+    # 여기부터 셋은 **같은 파일의 관측**을 본다. 위 두 칸은 도구의 자기 선언이라 손으로 뒤집을 수
+    # 있고, 그것만 보는 게이트는 자기 선언만큼만 세다(§2.2).
+    if not report.completed:
+        return (
+            f"카나리가 pass라 적었는데 completed가 거짓이다 - "
+            f"네 조합을 끝까지 안 돌렸다({where})"
+        )
+    if report.segv_count:
+        return (
+            f"카나리가 pass라 적었는데 139(SIGSEGV)를 {report.segv_count}회 봤다 - "
+            f"그 코드가 이 게이트의 표적이다({where})"
+        )
+    if report.problems:
+        return (
+            f"카나리가 pass라 적었는데 problems가 {len(report.problems)}건이다: "
+            f"{report.problems[0]!r}({where})"
         )
     if report.rnd_bits_unmeasured or report.mmap_rnd_bits is None:
         return (
@@ -139,20 +204,23 @@ def canary_refusal(report: CanaryReport, *, task_id: str) -> str | None:
         )
     if report.rnd_bits_above_28 or _above_limit(report.mmap_rnd_bits):
         return (
-            f"호스트 vm.mmap_rnd_bits가 {report.mmap_rnd_bits}다 - "
-            f"{MMAP_RND_BITS_MAX}보다 크면 판정이 비결정적이다({where})"
+            f"호스트 vm.mmap_rnd_bits가 {report.mmap_rnd_bits!r}다 - "
+            f"{MMAP_RND_BITS_MAX} 이하의 10진 숫자가 아니면 판정이 비결정적이다({where})"
         )
     if report.below_measured_repeat:
         return f"카나리를 {report.repeat}회만 돌렸다 - 실측한 횟수보다 적어 판정이 약하다({where})"
+    if report.repeat < 1:
+        return f"카나리의 관측 횟수가 {report.repeat}다 - 0회는 관측이 아니다({where})"
     return None
 
 
 def _above_limit(bits: str) -> bool:
     """보고서의 문자열 값을 **직접** 본다 — `rnd_bits_above_28`이 거짓인데 값이 큰 보고서도 막는다.
 
-    정수로 못 읽으면 `True`다(미측정과 같은 결 — 모르면 제출하지 않는다).
+    모양이 10진 숫자가 아니면 `True`다(미측정과 같은 결 — 모르면 제출하지 않는다). 🔴 `int()`로
+    보면 **모양 검사가 아니다**: `2_8`·`+28`·`٢٨`이 다 28이 되고 `-1`·`0`은 「28 이하」로
+    통과한다. 커널은 그 모양을 쓰지 않으니 셋 다 「모르는 값」이다.
     """
-    try:
-        return int(bits) > MMAP_RND_BITS_MAX
-    except ValueError:
+    if not _DECIMAL_BITS.fullmatch(bits):
         return True
+    return int(bits) > MMAP_RND_BITS_MAX

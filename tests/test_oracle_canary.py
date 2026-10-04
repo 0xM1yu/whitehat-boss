@@ -737,10 +737,13 @@ def test_a_failing_run_says_the_report_will_not_pass_the_gate(capsys):
     """
     assert _main(_Fake(_codes(2, **{"ref/fix": [1, 1]})), repeat=2) == 1
     err = capsys.readouterr().err
-    assert "이 보고서로는 채점 run이 서지 않는다" in err
+    assert "채점 run이 서지 않는다" in err
     assert "--oracle-canary" in err
     assert "이 도구를 부르는 코드는 여전히 없다" in err
     assert "채점을 시작하지 않" not in err, "하지도 않는 일을 한다고 적었다"
+    # ③ 그 문장이 `--out`에 **무엇이 쓰였는가**까지 단언하면 안 된다 - 쓰기가 실패하면 그 경로의
+    # 보고서는 이 판정이 아니다(아래 쓰기 실패 테스트가 그 경우다).
+    assert "옛 보고서가 그 경로에 그대로 남아" in err
 
 
 _CANARY_MENTIONS_ALLOWED = {
@@ -749,7 +752,8 @@ _CANARY_MENTIONS_ALLOWED = {
     "src/adapters/cybergym_oracle.py",
     # ⏵ 2026-10-04 (이슈 #383) — 이 둘은 도구가 **쓴 보고서**를 읽는 게이트다. 도구를 부르지
     # 않는다(subprocess·import 0건): 보고서 JSON의 칸만 본다. 그래서 「호출자 0건」은 그대로이고
-    # 「채점을 막지 않는다」만 거짓이 됐다 — 문서 넷이 그렇게 고쳐져 있다.
+    # 「채점을 막지 않는다」만 거짓이 됐다 — 그 문장을 든 자리 **다섯**(이 도구 docstring ·
+    # `--help` · 실패 stderr · `tools/README.md` · `docs/build-plan.md`)이 그렇게 고쳐져 있다.
     "src/adapters/canary_report.py",
     "src/cli.py",
 }
@@ -759,13 +763,37 @@ def test_the_report_gate_does_not_invoke_the_tool():
     """허용 목록의 둘이 **보고서만 읽는지** 센다 — 부르기 시작하면 「호출자 0건」이 거짓이 된다.
 
     위 언급 검출기는 철자를 보므로 이 둘을 허용한 뒤에는 **성질**을 따로 물어야 한다
-    (CLAUDE.md §2.5 — 문자 핀은 철자를 단언하지 성질을 단언하지 않는다). 성질: 그 둘에
-    `subprocess`도 `oracle_canary` import도 없다.
+    (CLAUDE.md §2.5 — 문자 핀은 철자를 단언하지 성질을 단언하지 않는다).
+
+    ⚠ **이 검사의 한계를 적어 둔다**: 자식 프로세스를 띄우는 **모양**을 열거하는 것이고
+    (`subprocess` · `os.system`·`os.popen` · `os.exec*`/`os.spawn*` · import), 그 목록 밖의
+    모양으로 도구를 돌리는 코드는 통과한다. 성질 전부를 무는 형태를 못 찾았다.
     """
+    spawners = ("subprocess", "os.system", "os.popen", "os.exec", "os.spawn", "runpy")
     for name in ("src/adapters/canary_report.py", "src/cli.py"):
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
-        assert "subprocess" not in text, name
+        for spawner in spawners:
+            assert spawner not in text, f"{name}: {spawner}"
         assert "import oracle_canary" not in text and "from tools" not in text, name
+
+
+def test_the_tool_does_not_count_as_a_crash_what_the_oracle_calls_no_crash():
+    """🔴 두 집합이 갈리면 **통과시킬 수 없는 설정을 통과시킨다**.
+
+    오라클의 술어는 `vul not in [0, 71, 300]`이다(저자 이슈 `sunblaze-ucb/cybergym#15`). 참조
+    PoC가 71(OOM)로 끝나는 과제를 카나리가 「크래시」로 세면 네 조합이 기대와 같아 `pass`가
+    나오는데, 같은 바이트를 오라클은 「크래시 아님」으로 읽어 그 과제의 점수가 0이 된다.
+
+    ⚠ **묶는 범위는 둘뿐이다**(`0`·`71`). 300은 저자 **서버가 갈아 끼우는 코드**이고
+    (`server_utils.py`의 `CustomExitCode.Timeout`) 컨테이너가 직접 내는 종료 코드가 아니라
+    이 도구의 `-vul` 다리에서는 관측되지 않는다 — 전체 집합의 포함 관계로 적으면 참이 아니다.
+    """
+    from src.adapters.cybergym_oracle import _NO_CRASH_EXIT_CODES
+
+    observable = {code for code in _NO_CRASH_EXIT_CODES if code != 300}
+
+    assert observable == {0, 71}
+    assert observable <= oracle_canary._NOT_A_CRASH
 
 
 def test_nothing_in_the_repo_calls_the_canary_so_the_docs_may_say_so():
@@ -1390,7 +1418,10 @@ def test_a_failing_verdict_is_reported_even_when_the_out_path_is_unwritable(tmp_
 
     err = capsys.readouterr().err
     assert str(segv) in err, f"139를 4/4로 잡았는데 사유가 안 나왔다: {err!r}"
-    assert "이 보고서로는 채점 run이 서지 않는다" in err
+    assert "채점 run이 서지 않는다" in err
+    # 🔴 **이 경우가 바로 그 문장이 단언하면 안 되는 경우다** - 쓰기가 실패해 그 경로에는 이
+    # 판정이 없다. 옛 보고서가 남아 있으면 게이트를 통과할 수 있으므로 stderr가 그것을 말한다.
+    assert "옛 보고서가 그 경로에 그대로 남아" in err
     assert code == 2, "쓰기 실패는 완주 실패(2)다"
 
 
