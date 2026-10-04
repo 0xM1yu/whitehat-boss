@@ -5114,16 +5114,39 @@ def test_a_timeout_with_no_generation_still_stops_the_run(
 
 
 def _with_definitions_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`cli`가 읽는 설정에서 `auditor_definitions`만 켠다(#351 리뷰 MEDIUM-2)."""
+    """`cli`가 읽는 설정에서 `auditor_definitions`를 켜고, Auditor 좌석을 **Fake가 아닌** v1
+    엔트리로 바꾼다(#351 리뷰 MEDIUM-2). Fake Auditor는 가드 밖이라
+    (`cli._undescribed_source_options` — Fake 클라이언트는 프롬프트 문장을 안 읽는다) 그대로
+    두면 가드를 못 본다. 엔드포인트는 닿지 않는 주소다 -> run은 `execute` 전에 서고, doctor는
+    접속 줄만 더 낸다."""
     real = cli.load_config
 
     def load(profile: str, **kwargs: object):  # noqa: ANN202
         config = real(profile, **kwargs)
+        key = config.model_key_for("auditor")
+        served = config.models[key].transition(
+            endpoint="http://127.0.0.1:9/v1", family="not-fake-auditor"
+        )
         return config.transition(
-            thresholds=config.thresholds.transition(auditor_definitions=1)
+            thresholds=config.thresholds.transition(auditor_definitions=1),
+            models={**config.models, "served_auditor": served},
+            profile=config.profile.transition(
+                roles={**config.profile.roles, "auditor": "served_auditor"}
+            ),
         )
 
     monkeypatch.setattr(cli, "load_config", load)
+
+
+# 위 헬퍼가 Auditor를 Fake 밖으로 옮기면 실서빙 프로필이 돼 라벨 없는 run은 그 가드에서 먼저 선다.
+_SERVED_LABELS = ("--condition", "B3prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1")
+
+
+def test_a_fake_auditor_is_not_held_by_the_source_options(tmp_path: Path) -> None:
+    """dev 프로필(Fake Auditor · v1)은 옵션이 켜져 있어도 가드에 안 걸린다 -> GPU 없는 스모크가
+    산다. 2026-10-03부터 `budgets.yaml`이 옵션 넷을 켠다(#349)."""
+    assert load_config("dev_fake").thresholds.auditor_source_options_on()
+    assert "source_options" not in _doctor_text("dev_fake", tmp_path)
 
 
 def test_a_run_with_an_undescribed_auditor_source_option_refuses_to_start(
@@ -5139,7 +5162,7 @@ def test_a_run_with_an_undescribed_auditor_source_option_refuses_to_start(
     _with_definitions_on(monkeypatch)
     code = cli.main([
         "run", "--profile", "dev_fake", "--target", str(TARGET), "--seed", "1",
-        "--artifacts-root", str(tmp_path / "arts"),
+        *_SERVED_LABELS, "--artifacts-root", str(tmp_path / "arts"),
     ])
 
     err = capsys.readouterr().err
@@ -5164,7 +5187,7 @@ def test_a_run_that_stops_before_the_auditor_is_not_held_by_the_source_options(
     with pytest.raises(_Started):
         cli.main([
             "run", "--profile", "dev_fake", "--target", str(TARGET), "--seed", "1",
-            "--stop-after", "4", "--artifacts-root", str(tmp_path / "arts"),
+            *_SERVED_LABELS, "--stop-after", "4", "--artifacts-root", str(tmp_path / "arts"),
         ])
 
 
@@ -5172,7 +5195,7 @@ def test_doctor_errors_on_an_undescribed_auditor_source_option(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """doctor는 같은 어긋남을 ERROR로 댄다 — thresholds는 프로필 공통이라 설정 자체의 문제다.
-    옵션이 꺼진 기본 설정에는 그 줄이 없다."""
+    Fake Auditor인 기본 dev 설정에는 그 줄이 없다."""
     assert "source_options" not in _doctor_text("dev_fake", tmp_path)
     _with_definitions_on(monkeypatch)
     text = _doctor_text("dev_fake", tmp_path)

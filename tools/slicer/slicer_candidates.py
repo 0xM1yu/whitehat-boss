@@ -3,8 +3,19 @@
 from slicer_checkpoint import canonical, digest
 from slicer_source import relative_file
 
+# --case-order: the case is the first sort key, so this decides whether Case A is sliced before
+# Case B (`ab`, the default) or the reverse. ids are numbered after the sort, so `ba` gives Case B
+# the low numbers; prioritize() (--priority-files) reorders this list afterwards, never the ids.
+CASE_RANK = {"ab": {"A": 0, "B": 1}, "ba": {"B": 0, "A": 1}}
+# What prioritize() splits into listed files / the rest: the whole list under `ab` (tier-first:
+# priority-A, priority-B, rest-A, rest-B -- the order #377 (b) shipped, kept exactly) or each case
+# group under `ba` (case-first: priority-B, rest-B, priority-A, rest-A), so the case order also
+# holds for the listed files.
+PRIORITY_PER_CASE = {order: order != "ab" for order in CASE_RANK}
 
-def collect(rows_by_case: dict, repo) -> list[dict]:
+
+def collect(rows_by_case: dict, repo, case_order: str = "ab") -> list[dict]:
+    rank = CASE_RANK[case_order]
     combined = {}
     for case, rows in rows_by_case.items():
         for row in rows:
@@ -43,7 +54,7 @@ def collect(rows_by_case: dict, repo) -> list[dict]:
     ordered = sorted(
         combined.values(),
         key=lambda c: (
-            c["case"],
+            rank[c["case"]],
             c["entry"]["file"],
             c["entry"]["line"],
             c["entry"]["symbol"],
@@ -59,7 +70,7 @@ def collect(rows_by_case: dict, repo) -> list[dict]:
 
 
 def prioritize(
-    candidates: list[dict], files: set[str]
+    candidates: list[dict], files: set[str], case_order: str = "ab"
 ) -> tuple[list[dict], int, set[str]]:
     """Candidates whose entry or any anchor is in `files` first (#377 option (b)).
 
@@ -70,14 +81,31 @@ def prioritize(
     not reached when the run is cut short (a wall budget, a kill), and those after a poison streak
     (slicer_pipeline POISON_STOP_STREAK degrades the rest, or a claim-mode shard stops claiming).
 
+    What is split depends on `case_order` (PRIORITY_PER_CASE). `ab` splits the whole list into two
+    tiers, listed files then the rest: tier-first, priority-A, priority-B, rest-A, rest-B. `ba`
+    splits each case group: case-first, priority-B, rest-B, priority-A, rest-A -- no Case A, listed
+    or not, is sliced before a Case B. The case groups keep the order collect() gave them.
+
     Matching is EXACT on the normalized file string -- not substring, basename or glob. `files`
     holds what read_priority_files() produced, spelled as collect() spells candidate entry/anchor
-    files. Returns the reordered list, the size of the first tier, and the subset of `files` that
-    some candidate has as its entry or an anchor.
+    files. Returns the reordered list, the number of candidates that match `files` (the priority
+    tier: the first that many under `ab`, but under `ba` only its Case B part leads the list, so
+    it is a count and not the length of a leading run), and the subset of `files` that some
+    candidate has as its entry or an anchor.
     """
-    head, tail, matched = [], [], set()
-    for c in candidates:
-        hits = files & ({c["entry"]["file"]} | {a["file"] for a in c["anchors"]})
-        matched |= hits
-        (head if hits else tail).append(c)
-    return head + tail, len(head), matched
+    groups = [candidates]
+    if PRIORITY_PER_CASE[case_order]:
+        by_case: dict[str, list[dict]] = {}
+        for c in candidates:
+            by_case.setdefault(c["case"], []).append(c)
+        groups = list(by_case.values())
+    ordered, first, matched = [], 0, set()
+    for group in groups:
+        head, tail = [], []
+        for c in group:
+            hits = files & ({c["entry"]["file"]} | {a["file"] for a in c["anchors"]})
+            matched |= hits
+            (head if hits else tail).append(c)
+        ordered += head + tail
+        first += len(head)
+    return ordered, first, matched

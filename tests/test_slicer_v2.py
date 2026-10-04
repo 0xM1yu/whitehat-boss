@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import random
 import re
 import sqlite3
 import subprocess
@@ -18,7 +19,7 @@ import slicer_queries as queries
 from slicer_candidates import collect
 from slicer_checkpoint import Checkpoint, digest, merge_shards
 from slicer_export import export_sources
-from slicer_source import cluster, recover_lines
+from slicer_source import cluster, recover_lines, source_sink
 
 READ_VERSION = slicer.read_version
 
@@ -742,7 +743,7 @@ def _saving(cpg: Path, content: bytes = b"saved-graph", *, size=None):  # noqa: 
     return save
 
 
-def _prepare(monkeypatch, repo, tmp_path, data, *, save=None):  # noqa: ANN001, ANN202
+def _prepare(monkeypatch, repo, tmp_path, data, *, save=None, extra=()):  # noqa: ANN001, ANN202
     """#368: one `--prepare-only` run -> (checkpoint, saved CPG path, code, result, transport)."""
     folder = tmp_path / "prep"
     folder.mkdir(parents=True)
@@ -750,7 +751,7 @@ def _prepare(monkeypatch, repo, tmp_path, data, *, save=None):  # noqa: ANN001, 
     data["save_cpg"] = _saving(cpg) if save is None else save
     code, result, transport = run_cli(
         monkeypatch, repo, folder, data, "--checkpoint", str(folder / "state.db"),
-        "--prepare-only", "--cpg-out", str(cpg),
+        "--prepare-only", "--cpg-out", str(cpg), *extra,
     )
     return folder / "state.db", cpg, code, result, transport
 
@@ -1107,7 +1108,13 @@ def _flows_by_outcome(outcomes):  # noqa: ANN001, ANN202
         if kind == "F":
             return {"success": False, "stdout": "", "stderr": "boom"}
         return response(
-            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+            "flows",
+            {
+                "flow_count": 2,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "endpoints": [],
+            },
         )
 
     return flows
@@ -1714,7 +1721,13 @@ def six_candidates_two_files():
         if '"a.c"' in query:  # the scope list names a.c -> this candidate is in a.c
             return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
         return response(
-            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+            "flows",
+            {
+                "flow_count": 2,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "endpoints": [],
+            },
         )
 
     data["flows"] = flows
@@ -1880,3 +1893,479 @@ def test_a_dropped_priority_list_on_resume_names_the_field(monkeypatch, two_file
     )
     assert "Checkpoint mismatch: run_contract" in result["error"]
     assert "settings.priority_files" in result["error"]
+
+
+# T1 -- --case-order: which case is sliced first. Order only, bound into the checkpoint.
+
+
+def test_collect_puts_case_b_first_when_asked(repo):
+    """The case is the first sort key: `ab` (the default) is every A then every B, `ba` the reverse.
+
+    The files are laid out so a sort by file alone (a.c, b.c, y.c, z.c) would be a third order, and
+    inside a case nothing moves. ids are numbered after the sort, so `ba` gives B the low numbers;
+    the candidate set and every candidate_key stay the same."""
+    rows = {
+        "A": [in_file(candidate("a1", 1), "a.c"), in_file(candidate("a2", 1), "z.c")],
+        "B": [in_file(candidate("b1", 1), "b.c"), in_file(candidate("b2", 1), "y.c")],
+    }
+    default = collect(rows, repo)
+    assert [(c["case"], c["entry"]["file"]) for c in default] == [
+        ("A", "a.c"), ("A", "z.c"), ("B", "b.c"), ("B", "y.c"),
+    ]
+    assert collect(rows, repo, "ab") == default
+    first_b = collect(rows, repo, "ba")
+    assert [(c["case"], c["entry"]["file"]) for c in first_b] == [
+        ("B", "b.c"), ("B", "y.c"), ("A", "a.c"), ("A", "z.c"),
+    ]
+    assert [c["id"] for c in first_b] == ["slice_0001", "slice_0002", "slice_0003", "slice_0004"]
+    keys = {c["entry"]["symbol"]: c["candidate_key"] for c in default}
+    assert {c["entry"]["symbol"]: c["candidate_key"] for c in first_b} == keys
+
+
+def test_prioritize_is_tier_first_under_ab_and_case_first_under_ba(repo):
+    """--priority-files splits a list stably, and what it splits depends on the case order. `ab`
+    splits the whole list into listed files / the rest (tier-first, as #377 (b) shipped it):
+    priority-A, priority-B, rest-A, rest-B. `ba` splits each case group (case-first): priority-B,
+    rest-B, priority-A, rest-A -- no Case A, listed or not, runs before a Case B. Inside a tier
+    both keep collect()'s order, and `first` counts the listed-file candidates either way."""
+    from slicer_candidates import prioritize
+
+    def group(case):
+        return [
+            in_file(candidate(f"{case}{i}_{where}", i), f"{where}.c")
+            for where in ("hot", "cold")
+            for i in (1, 2)
+        ]
+
+    rows = {"A": group("a"), "B": group("b")}
+    for order, expected in (
+        ("ab", "a1_hot a2_hot b1_hot b2_hot a1_cold a2_cold b1_cold b2_cold"),
+        ("ba", "b1_hot b2_hot b1_cold b2_cold a1_hot a2_hot a1_cold a2_cold"),
+    ):
+        moved, first, matched = prioritize(collect(rows, repo, order), {"hot.c"}, order)
+        assert first == 4 and matched == {"hot.c"}, order
+        assert [c["entry"]["symbol"] for c in moved] == expected.split(), order
+
+
+def legacy_prioritize(candidates, files):
+    """prioritize() exactly as #377 (b) shipped it -- what `ab` must keep returning."""
+    head, tail, matched = [], [], set()
+    for c in candidates:
+        hits = files & ({c["entry"]["file"]} | {a["file"] for a in c["anchors"]})
+        matched |= hits
+        (head if hits else tail).append(c)
+    return head + tail, len(head), matched
+
+
+def random_rows(seed):
+    """Both cases over a few files, some candidates anchored in a second file, and a file list."""
+    rng = random.Random(seed)
+    names = ["a.c", "b.c", "c.c", "d.c"]
+    rows = {}
+    for case in "AB":
+        rows[case] = []
+        for i in range(rng.randint(0, 8)):
+            row = in_file(candidate(f"{case.lower()}{i}", rng.randint(1, 8)), rng.choice(names))
+            row["anchors"].append({"file": rng.choice(names), "line": 1})
+            rows[case].append(row)
+    return rows, set(rng.sample(names, rng.randint(0, 3)))
+
+
+def test_prioritize_under_ab_is_what_377_shipped(repo):
+    """`ab` keeps the tier-first order byte for byte: against the old body, on random inputs."""
+    from slicer_candidates import prioritize
+
+    for seed in range(60):
+        rows, files = random_rows(seed)
+        ordered = collect(rows, repo)
+        expected = legacy_prioritize(ordered, files)
+        assert prioritize(ordered, files) == expected, seed
+        assert prioritize(ordered, files, "ab") == expected, seed
+
+
+def test_prioritize_under_ba_is_case_first_whatever_the_input(repo):
+    """The same rule written the other way round (a model, not the code's own loop): the B group
+    then the A group, listed files first inside each, collect()'s order kept, ids untouched."""
+    from slicer_candidates import prioritize
+
+    def touched(c):
+        return {c["entry"]["file"]} | {a["file"] for a in c["anchors"]}
+
+    for seed in range(60):
+        rows, files = random_rows(seed)
+        ordered = collect(rows, repo, "ba")
+        expected = []
+        for case in "BA":
+            members = [c for c in ordered if c["case"] == case]
+            expected += [c for c in members if files & touched(c)]
+            expected += [c for c in members if not files & touched(c)]
+        moved, first, matched = prioritize(ordered, files, "ba")
+        assert moved == expected, seed
+        assert first == sum(bool(files & touched(c)) for c in ordered), seed
+        assert matched == files & set().union(*[touched(c) for c in ordered]), seed
+
+
+def two_file_both_cases_payloads():
+    """a.c holds the A candidate entry@1 and the B candidate sprintf@5, main.c holds A other@3 and
+    B memcpy@6."""
+    data = two_file_payloads()
+    data["case_b"] = response(
+        "case_b", [in_file(candidate("sprintf", 5), "a.c"), candidate("memcpy", 6)]
+    )
+    return data
+
+
+def executed_candidates(transport):
+    """What each per-candidate query was about, in the order it was SENT: a flows query names the
+    candidate's file, a backward query the call's code."""
+    sent = []
+    for stage, (request, _) in zip(transport.stages, transport.requests, strict=True):
+        query = json.loads(request.data)["query"]
+        if stage == "flows":
+            sent.append((stage, re.search(r'List\(\("([^"]*)"', query)[1]))
+        elif stage == "backward":
+            sent.append((stage, re.search(r'"(\w+)\(buf\)"', query)[1]))
+    return sent
+
+
+@pytest.mark.parametrize(("order", "queries", "ids"), [
+    ("ab", [("flows", "main.c"), ("backward", "memcpy"), ("flows", "a.c"), ("backward", "sprintf")],
+     ["slice_0002", "slice_0004", "slice_0001", "slice_0003"]),
+    ("ba", [("backward", "memcpy"), ("backward", "sprintf"), ("flows", "main.c"), ("flows", "a.c")],
+     ["slice_0002", "slice_0001", "slice_0004", "slice_0003"]),
+])
+def test_priority_files_follow_the_case_order_in_the_pipeline(
+    monkeypatch, two_file_repo, tmp_path, order, queries, ids
+):
+    """With --priority-files main.c: `ab` runs listed A, listed B, rest A, rest B and `ba` runs
+    listed B, rest B, listed A, rest A -- in the order the checkpoint is bound AND the queries are
+    sent. ids stay as collect() numbered them (B first under `ba`), and first_tier_candidates is
+    the number of listed-file candidates under both orders."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    database = tmp_path / "state.db"
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_both_cases_payloads(),
+        "--checkpoint", str(database), "--priority-files", str(listing), "--case-order", order,
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["first_tier_candidates"] == 2
+    assert result["priority"]["candidates"] == 4
+    with Checkpoint(database, resume=True) as store:
+        assert [c["id"] for c in store.get("candidates")] == ids
+    assert executed_candidates(transport) == queries
+
+
+def test_the_default_case_order_is_ab_and_is_recorded(monkeypatch, repo, tmp_path):
+    database = tmp_path / "state.db"
+    data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data, "--checkpoint", str(database))
+    assert code == 0, result.get("error")
+    assert result["settings"]["case_order"] == "ab"
+    with Checkpoint(database, resume=True) as store:
+        assert [c["case"] for c in store.get("candidates")] == ["A", "B"]
+
+
+def test_case_order_changes_the_query_execution_order(monkeypatch, repo, tmp_path):
+    """The flag must change the order queries are SENT, not only the bound list (the trap
+    --priority-files already had): the first per-candidate query is flows under `ab`, backward
+    under `ba`."""
+    def per_candidate(transport):
+        return [stage for stage in transport.stages if stage in ("flows", "backward")]
+
+    sent = {}
+    for name, extra in (("plain", ()), ("ba", ("--case-order", "ba"))):
+        folder = tmp_path / name
+        folder.mkdir()
+        data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+        _, _, sent[name] = run_cli(monkeypatch, repo, folder, data, *extra)
+    assert per_candidate(sent["plain"]) == ["flows", "backward"]
+    assert per_candidate(sent["ba"]) == ["backward", "flows"]
+
+
+def test_case_order_is_part_of_the_run_contract(monkeypatch, repo, tmp_path):
+    """The order is bound into the checkpoint's candidates, so it is part of the contract: the
+    same order resumes, another one -- or leaving the flag out -- is refused by name."""
+    options = ["--checkpoint", str(tmp_path / "state.db")]
+
+    def data():
+        return payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data(), *options, "--case-order", "ba")
+    assert code == 0, result.get("error")
+    assert result["settings"]["case_order"] == "ba"
+    assert [s["case"] for s in result["slices"]] == ["B", "A"]  # slices[] is in id order
+    with Checkpoint(tmp_path / "state.db", resume=True) as store:
+        assert store.get("run_contract")["settings"]["case_order"] == "ba"
+        assert [c["case"] for c in store.get("candidates")] == ["B", "A"]
+    code, resumed, _ = run_cli(
+        monkeypatch, repo, tmp_path, data(), *options, "--resume", "--case-order", "ba"
+    )
+    assert code == 0, resumed.get("error")
+    for another in ((), ("--case-order", "ab")):  # no flag = the default `ab`
+        code, refused, _ = run_cli(
+            monkeypatch, repo, tmp_path, data(), *options, "--resume", *another
+        )
+        assert code != 0 and "Checkpoint mismatch: run_contract" in refused["error"], another
+        assert "settings.case_order" in refused["error"], another
+
+
+def test_shards_with_different_case_orders_are_not_merged(monkeypatch, repo, tmp_path):
+    databases = []
+    for index, extra in enumerate((("--case-order", "ba"), ())):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        databases.append(folder / "state.db")
+        code, result, _ = run_cli(
+            monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(databases[-1]),
+            "--shard", f"{index}/2", *extra,
+        )
+        assert code == 2 and result["status"] == "partial", result.get("error")
+    with pytest.raises(ValueError, match="Shard mismatch on run_contract"):
+        merge_shards(tmp_path / "merged.db", databases)
+
+
+def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypatch, repo, tmp_path):
+    """tools/slice_sharded.py hands the same arguments to the prepare run and to every shard and
+    none to the export, which reads the run contract. Two shards that carried the flag, merged and
+    exported WITHOUT it, give exactly the single `ba` run's slices and candidates, ids included."""
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates(), "--case-order", "ba")
+    state, cpg, code, _, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ba")
+    )
+    assert code == 2
+    databases = []
+    for index in range(2):
+        databases.append(_seed(state, tmp_path / f"seeded{index}"))
+        code, result, _ = _shard_on(
+            monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2",
+            "--case-order", "ba",
+        )
+        assert code == 2 and result["shard"] == {"index": index, "count": 2}, result.get("error")
+    merged = tmp_path / "merged.db"
+    merge_shards(merged, databases)
+    export = tmp_path / "export"
+    export.mkdir()
+    _, exported, _ = run_cli(
+        monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
+    )
+    assert exported["settings"]["case_order"] == "ba"
+    assert exported["slices"] == single["slices"]
+    # The manifest dict comes back from the checkpoint key-sorted (canonical JSON), so only its
+    # content is compared; the order a run sliced in is the checkpoint's `candidates` list.
+    assert exported["candidate_manifest"] == single["candidate_manifest"]
+    with Checkpoint(merged, resume=True) as store:
+        assert [c["case"] for c in store.get("candidates")] == ["B", "A", "A"]
+
+
+def test_a_shard_that_forgot_the_case_order_is_refused(monkeypatch, repo, tmp_path):
+    state, cpg, _, _, _ = _prepare(
+        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ba")
+    )
+    seeded = _seed(state, tmp_path / "seeded")
+    code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.case_order" in result["error"]
+    assert transport.stages == []  # refused before any Joern request
+
+
+# #429: each slice records where the slicer put source and sink, for comparison with a GT.
+
+
+def test_case_a_records_each_kept_flows_parameter_and_sink(monkeypatch, repo, tmp_path):
+    """The flows payload's endpoint pair (fixture: main.c:1 -> main.c:5) lands as-is."""
+    _, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_a=[candidate()], flow_count=1)
+    )
+    assert result["slices"][0]["source_sink"] == {
+        "basis": "flow_endpoints",
+        "sources": [{"file": "main.c", "line": 1, "kind": "parameter"}],
+        "sinks": [{"file": "main.c", "line": 5, "kind": "flow_end"}],
+        "pairs": [
+            {
+                "source": {"file": "main.c", "line": 1, "kind": "parameter"},
+                "sink": {"file": "main.c", "line": 5, "kind": "flow_end"},
+            }
+        ],
+        "unmapped": 0,
+    }
+
+
+def test_case_b_sink_is_the_candidate_call_and_sources_are_its_boundaries(
+    monkeypatch, repo, tmp_path
+):
+    data = payloads(case_b=[candidate("sprintf", 5)])
+    backward, _ = slicer.decode_response(data["backward"], "backward")
+    backward["boundaries"] = [
+        {"reason": "entry_parameter", "location": {"file": "main.c", "line": 1}},
+        {"reason": "dependency_root", "location": {"file": "main.c", "line": 3}},
+    ]
+    data["backward"] = response("backward", backward)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["slices"][0]["source_sink"] == {
+        "basis": "backward_boundaries",
+        "sources": [
+            {"file": "main.c", "line": 1, "kind": "entry_parameter"},
+            {"file": "main.c", "line": 3, "kind": "dependency_root"},
+        ],
+        "sinks": [{"file": "main.c", "line": 5, "kind": "candidate_call"}],
+        "pairs": [],
+        "unmapped": 0,
+    }
+
+
+def test_without_an_analysis_case_b_keeps_its_sink_and_case_a_claims_nothing(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    entry = {"file": "main.c", "line": 5, "symbol": "sprintf"}
+    b = source_sink("B", entry, None, sources, repo)
+    assert b["basis"] == "candidate_only" and b["sources"] == []
+    assert b["sinks"] == [{"file": "main.c", "line": 5, "kind": "candidate_call"}]
+    a = source_sink("A", entry, None, sources, repo)
+    assert (a["basis"], a["sources"], a["sinks"], a["pairs"]) == ("none", [], [], [])
+
+
+def test_an_endpoint_outside_the_sources_is_dropped_and_counted(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    payload = {
+        "endpoints": [
+            {"source": {"file": "main.c", "line": 1}, "sink": {"file": "gone.c", "line": 9}}
+        ]
+    }
+    found = source_sink("A", {"file": "main.c", "line": 1}, payload, sources, repo)
+    assert found["sources"] == [{"file": "main.c", "line": 1, "kind": "parameter"}]
+    assert found["sinks"] == [] and found["pairs"] == [] and found["unmapped"] == 1
+
+
+def test_a_cluster_keeps_every_members_sources_and_sinks():
+    def with_ends(id, source, sink):
+        item = make_slice(id, [1, 2, 3])
+        item.update(
+            candidate_key=id,
+            members=[id],
+            analysis={},
+            line_provenance={"data_dependency": [], "candidate_anchor": [], "context": []},
+            source_sink={
+                "basis": "flow_endpoints",
+                "sources": [{"file": "a.c", "line": source, "kind": "parameter"}],
+                "sinks": [{"file": "a.c", "line": sink, "kind": "flow_end"}],
+                "pairs": [],
+                "unmapped": 0,
+            },
+        )
+        return item
+
+    merged = cluster(
+        [with_ends("slice_0001", 1, 3), with_ends("slice_0002", 2, 3)],
+        0.95,
+        {"a.c": ["x", "y", "z"]},
+    )
+    assert len(merged) == 1
+    ends = merged[0]["source_sink"]
+    assert [p["line"] for p in ends["sources"]] == [1, 2]
+    assert [p["line"] for p in ends["sinks"]] == [3]
+    assert ends["basis"] == "flow_endpoints"
+
+
+_PAIR = {"source": {"file": "main.c", "line": 1}, "sink": {"file": "main.c", "line": 5}}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"endpoints": None},
+        {"endpoints": [{"source": {"file": "main.c", "line": 1}}]},
+        {"endpoints": [_PAIR] * 2},
+        {"endpoints_error": 7},
+        {"endpoints": [_PAIR], "endpoints_error": "boom"},
+    ],
+    ids=["null", "no-sink", "more-than-flows", "error-not-str", "both"],
+)
+def test_a_flows_payload_with_bad_endpoints_is_refused(extra):
+    data = {"flow_count": 1, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+    data.update(extra)
+    with pytest.raises(slicer.QueryError):
+        slicer.validate_payload("flows", data, "")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"endpoints_error": "java.util.NoSuchElementException: head of empty list"}],
+    ids=["absent", "errored"],
+)
+def test_a_flows_payload_without_endpoints_is_accepted(extra):
+    """#433 review: `endpoints` is optional, so its failure cannot fail the flows result."""
+    data = {"flow_count": 1, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+    data.update(extra)
+    slicer.validate_payload("flows", data, "")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"endpoints_error": "java.util.NoSuchElementException: head of empty list"}],
+    ids=["absent", "errored"],
+)
+def test_without_endpoints_case_a_is_a_full_slice_with_unavailable_source_sink(
+    monkeypatch, repo, tmp_path, extra
+):
+    """No endpoints -> not recorded (`endpoints_unavailable`), not zero pairs; not degraded."""
+    data = payloads(case_a=[candidate()], flow_count=1)
+    flows, _ = slicer.decode_response(data["flows"], "flows")
+    del flows["endpoints"]
+    flows.update(extra)
+    data["flows"] = response("flows", flows)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    item = result["slices"][0]
+    assert "degraded" not in item["measurement_notes"]
+    assert item["flow_count"] == 1 and item["lines"]
+    assert item["source_sink"] == {
+        "basis": "endpoints_unavailable",
+        "sources": [],
+        "sinks": [],
+        "pairs": [],
+        "unmapped": 0,
+    }
+    for key, value in extra.items():
+        assert item["analysis"][key] == value
+
+
+def test_recorded_zero_endpoints_is_not_unavailable(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    entry = {"file": "main.c", "line": 1}
+    assert source_sink("A", entry, {"endpoints": []}, sources, repo)["basis"] == "flow_endpoints"
+    assert source_sink("A", entry, {}, sources, repo)["basis"] == "endpoints_unavailable"
+
+
+def test_a_backward_boundary_without_a_location_is_refused():
+    data = {
+        "flow_count": None,
+        "truncated": False,
+        "lines": [],
+        "node_count": 0,
+        "state_count": 0,
+        "dependency_count": 0,
+        "boundaries": [{"reason": "dependency_root"}],
+        "truncation_reasons": [],
+    }
+    with pytest.raises(slicer.QueryError):
+        slicer.validate_payload("backward", data, "")
+
+
+def test_the_flows_query_emits_the_head_and_last_of_each_kept_flow():
+    """Pins the Scala SPELLING only -- no Joern here, so neither compilation nor runtime
+    behaviour of `keptEndpoints` is tested. What it does check: the pair is head/last, it is
+    computed inside a Try, and the success/failure branches write the two keys the validator
+    knows, with the block's value being the result object (not the match's Unit)."""
+    query = queries.flows_query([{"file": "main.c", "full_name": "entry", "line": 1}], 10)
+    assert "(p.elements.head, p.elements.last)" in query
+    body = query[query.index("val keptEndpoints") :]
+    assert body.startswith("val keptEndpoints = scala.util.Try {")
+    assert 'case scala.util.Success(pairs) => flowsResult.value("endpoints") =' in body
+    assert 'flowsResult.value("endpoints_error") = ujson.Str(' in body
+    # the endpoints are no longer a field of the literal result object
+    assert '"endpoints" ->' not in body
+    # last statement of the result block is the object itself
+    assert re.search(r"\}\s*flowsResult\s*\}; ", body)
+    block = body[: body.rindex("flowsResult")]
+    assert block.count("{") == block.count("}")

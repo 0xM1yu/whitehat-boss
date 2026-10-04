@@ -125,7 +125,8 @@ from src.schemas.run import CompileFlags
 # `nodes/sandbox.DEFAULT_SANDBOX.image`와 같아야 한다. 어댑터는 오케스트레이터를 import 하지
 # 않으므로(engineering-guide.md §3) 값을 복제하고 tests/test_container_tools.py가 대조한다.
 # v2부터 인덱서가 index-v2(조회 표)를 낸다 — v1 이미지는 지우지 않는다(지난 run 매니페스트가
-# 그 digest를 적었다).
+# 그 digest를 적었다). ⏵ 2026-10-04 — #304부터 이 트리로 빌드한 v3 이미지는 index-v3를 낸다(태그는
+# 그대로다 — 그 전에 빌드한 v3 이미지는 다시 빌드해야 v3 표가 나온다, Dockerfile 머리 주석).
 DEFAULT_IMAGE = "harness-tools:v3"
 
 # 컨테이너 안 경로. 분석 대상은 항상 읽기 전용이고, 쓰기는 scratch 한 곳에서만 일어난다.
