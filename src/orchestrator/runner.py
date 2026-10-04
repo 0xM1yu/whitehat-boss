@@ -3162,8 +3162,8 @@ _AUDITOR_CALLEE_CHARS = 4_000
 # 정의(매크로·타입·파일 변수·enum 상수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일
 # 때만). 큰 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_DEFINITION_CHARS = 2_000
-# 큰 enum(상한을 넘는 enum 상수의 정의)은 통째로 버리지 않고 머리 줄 · 그 상수 줄 앞뒤 이 줄
-# 수 · 닫는 줄만 남겨 싣는다(`_trim_enum`). index-v4가 enum 상수를 enum 정의 전체로 싣자
+# 큰 enum(상한을 넘는 enum 상수의 정의)은 통째로 버리지 않고 머리 줄 · 물은 상수마다 그 줄
+# 앞뒤 이 줄 수 · 닫는 줄만 남겨 싣는다(`_trim_enum`). index-v4가 enum 상수를 enum 정의 전체로 싣자
 # 「크기 초과로 버림」이 29 -> 142로 늘었다(2026-10-04 로컬 274표본 · run ID 없음). **정한
 # 값이지 잰 값이 아니다.**
 _AUDITOR_ENUM_CONTEXT_LINES = 5
@@ -3248,12 +3248,20 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
 
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
     실린 함수가 쓰는 매크로·타입·파일 변수·enum 상수의 정의(`ctx.definitions_of`)를 붙인다. 정의
-    하나가 `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은
+    하나가 `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다 — 단 **enum**은
+    통째로 버리지 않고, 물은 상수마다 앞뒤 `_AUDITOR_ENUM_CONTEXT_LINES`줄만 남겨 블록 하나로 싣는다
+    (`_trim_enum` — 같은 enum의 상수가 더 오면 그 블록을 넓힌다). 조회하는 이름은
     코드 자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드
     전용 이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
-    먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
+    먼저다. **조회는 본문의 파일마다 그 파일 기준(`near_file`)이다**(`_definitions_by_file`) — 한
+    이름이 파일마다 다른 정의로 풀리면 둘 다 싣고, 본문이 모두 앵커 파일이면 본 조회는 한 번
+    부른다(별칭 라운드는 따로다 — 별칭 대상은 그 별칭 매크로 정의를 푼 파일의 기준으로만 조회한다).
+    이미 실린 enum 블록에서 줄 머리 상수가 아닌 이름(typedef 이름·태그)은 낱말로 보이면 보이는
+    것으로 보고 세지 않는다(정의가 아니라 언급이어도 — `widen_enum`의 한계).
+    이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
     비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을 정한다(`demote_nonproduct`).
-    붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면 이 단계가 없고 `SOURCE`·
+    붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 들고, 그중 잘라 실은 enum 수는
+    `definitions_trimmed`가 든다(SOURCE에 실린 것만 센다). 0이면 이 단계가 없고 `SOURCE`·
     이벤트는 옛 모양 그대로다.
 
     **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
@@ -3366,52 +3374,116 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     aliases: set[str] = set()
     # 정의를 조회한 이름(정의 단계가 채운다) — 별칭 함수 조회가 이 안에서만 찾는다.
     asked: set[str] = set()
+    # 별칭 대상 → 그 별칭 매크로의 **정의를 푼 파일들**(먼저 나온 순). 정의 조회는 **본문의 파일
+    # 마다** 부르고(`_definitions_by_file` — 앵커 파일 하나로 부르면 다른 파일에서 실린 함수의
+    # 이름이 앵커의 include 그래프로 풀린다, PR #485 리뷰 P2-3), 별칭 대상은 그 별칭을 가진
+    # 정의를 푼 파일들의 기준으로만 조회한다 — 그 매크로를 쓴 모든 파일로 귀속하면 `MODE`가 다른
+    # 정의(상수 5)로 풀린 파일의 기준으로도 대상을 찾아 무관한 정의가 붙는다(2라운드 F3).
+    alias_files: dict[str, list[str]] = {}
 
     definitions_trimmed = 0
+    trimmed_enums: dict[tuple[str, int | None, int | None], _TrimmedEnum] = {}
 
-    def carry_definition(definition: Location) -> bool:
+    def widen_enum(definition: Location, cut: _TrimmedEnum) -> bool:
+        """이미 잘라 실은 enum에 그 enum의 다른 상수를 더한다 — 블록을 그 자리에서 다시 만든다.
+        합친 블록이 정의 하나의 상한이나 전체 상한을 넘거나 그 상수가 줄 머리에 안 나오면 이미 실린
+        블록은 그대로 두고 못 더한 상수 하나를 `definitions_dropped`가 센다. 단 줄 머리 상수가 아닌
+        이름(typedef 이름·태그·한 줄 다중 상수의 둘째)이 **이미 실린 블록에 낱말로 있으면** 보이는
+        것으로 보고 조용히 `False`다 — 보이는 정의를 못 실었다고 세면 `DEFINITION_DROPPED` 게이트
+        사유가 거짓 양성이다(2라운드 F1). 판정한 이름은 `cut.settled`에 둔다.
+        ⚠ **한계(수정 전과 같은 침묵 — 미해결)**: 낱말이 있다는 것이 그 이름의 **정의**가 있다는
+        뜻은 아니다. 끝줄 값(`AAA_ALIAS = OP005_B,`)이나 창 안 주석이 언급만 해도 보이는 것으로
+        세므로, 그 정의가 SOURCE에 없는데도 `definitions_dropped`가 **과소 집계**될 수 있다. 특성화
+        테스트: `test_limitation_a_constant_only_mentioned_in_the_block_counts_as_shown`."""
+        nonlocal size, definitions_dropped
+        name = definition.symbol
+        if not name or name in cut.names or name in cut.settled:
+            return False
+        names = [*cut.names, name]
+        trimmed = _trim_enum(cut.text, names)
+        shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일 이름의 낱말은 정의가 아니다
+        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", shown):
+            cut.settled.add(name)
+            return False
+        block = _block(definition, trimmed, end=cut.end) if trimmed is not None else None
+        if (
+            block is None
+            or len(block) > _AUDITOR_DEFINITION_CHARS
+            or size + measure(block) - measure(blocks[cut.index]) > cap
+        ):
+            cut.settled.add(name)
+            definitions_dropped += 1
+            return False
+        size += measure(block) - measure(blocks[cut.index])
+        blocks[cut.index] = block
+        cut.names = names
+        return True
+
+    def carry_definition(definition: Location, resolved_by: list[str]) -> bool:
+        """`resolved_by`는 이 정의를 푼 조회의 파일들이다 — 별칭 대상이 그 기준을 물려받는다."""
         nonlocal size, definitions, definitions_dropped, definitions_trimmed
+        key = (definition.file, definition.line_start, definition.line_end)
+        if (cut := trimmed_enums.get(key)) is not None:
+            return widen_enum(definition, cut)
         if any(_overlaps(definition, other) for other in seen):
             return False
         seen.append(definition)
         text = ctx.read_source(definition)
         block = _block(definition, text)
-        # 상한을 넘는 enum은 그 상수 주변만 남겨 다시 잰다(`_trim_enum`) — 통째로 버리지 않는다
+        # 상한을 넘는 enum은 물은 상수 주변만 남겨 다시 잰다(`_trim_enum`) — 통째로 버리지 않는다
+        end = (definition.line_start or 1) + text.count("\n")
+        is_trimmed = False
         if len(block) > _AUDITOR_DEFINITION_CHARS and definition.symbol:
-            trimmed = _trim_enum(text, definition.symbol)
+            trimmed = _trim_enum(text, [definition.symbol])
             if trimmed is not None:
-                end = (definition.line_start or 1) + text.count("\n")
                 block = _block(definition, trimmed, end=end)
-                definitions_trimmed += len(block) <= _AUDITOR_DEFINITION_CHARS
+                is_trimmed = True
         if len(block) > _AUDITOR_DEFINITION_CHARS or size + 1 + measure(block) > cap:
             definitions_dropped += 1
             return False
         blocks.append(block)
         size += 1 + measure(block)
         definitions += 1
+        if is_trimmed:  # 실린 것만 센다 — 줄여 놓고 상한에 걸려 못 실은 enum은 위에서 dropped다
+            definitions_trimmed += 1
+            trimmed_enums[key] = _TrimmedEnum(text, end, [definition.symbol or ""], len(blocks) - 1)
         if wrappers and (target := macro_alias_target(text)) is not None:
             aliases.add(target)
+            files = alias_files.setdefault(target, [])
+            files += [file for file in resolved_by if file not in files]
         return True
 
     if with_definitions:
         # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수·enum 상수 정의(#349 (f)). 정의는 작고
         # 판단 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그
         # 함수의 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
-        used = definition_names(bodies, ctx.locals_of)
-        found = ctx.definitions_of(used, anchor.file, **hygiene) or []
-        for definition in slice_names_first(found, ctx.read_source, ref.lines):
-            carry_definition(definition)
+        # 조회는 본문의 파일마다 그 파일 기준이다 — 본문이 모두 앵커 파일이면 **이 본 조회**는 한
+        # 번 부르는 예전 호출 그대로다(아래 별칭 라운드는 예전부터 라운드마다 추가 호출이다).
+        by_file: dict[str, set[str]] = {}
+        for body in bodies:
+            by_file.setdefault(body[0].file, set()).update(definition_names([body], ctx.locals_of))
+        found = _definitions_by_file(ctx, by_file, hygiene)
+        for definition in slice_names_first(list(found), ctx.read_source, ref.lines):
+            carry_definition(definition, found[definition])
         # 별칭 라운드(C4) — `ND_TCHECK` → `ND_TCHECK2`처럼 실은 매크로가 이름만 바꿔 넘기면 그
         # 대상의 정의를 한 번 더 찾는다. 대상이 다시 별칭이면 `_AUDITOR_ALIAS_ROUNDS`까지 간다.
-        # 이미 조회한 이름은 다시 안 찾는다. `asked`가 정의를 조회한 이름이다 — 아래 피호출 단계도
-        # 이 이름들의 함수만 찾는다(마지막 라운드가 새로 낸 대상은 한 단계 더 간 것이라 뺀다).
-        asked = set(used)
+        # 이미 조회한 이름은 다시 안 찾는다(파일 기준 — 다른 파일에서 쓴 같은 이름은 그 파일
+        # 기준으로 한 번 더). `asked`가 정의를 조회한 이름이다 — 아래 피호출 단계도 이 이름들의
+        # 함수만 찾는다(마지막 라운드가 새로 낸 대상은 한 단계 더 간 것이라 뺀다).
+        asked_in = {(name, file) for file, file_names in by_file.items() for name in file_names}
+        asked = {name for name, _ in asked_in}
         for _ in range(_AUDITOR_ALIAS_ROUNDS):
-            wanted, asked = aliases - asked, asked | aliases
+            wanted: dict[str, set[str]] = {}
+            for target in sorted(aliases):
+                for file in alias_files[target]:
+                    if (target, file) not in asked_in:
+                        wanted.setdefault(file, set()).add(target)
             if not wanted:
                 break
-            for definition in ctx.definitions_of(wanted, anchor.file, **hygiene) or []:
-                if carry_definition(definition):
+            asked_in |= {(target, file) for file, targets in wanted.items() for target in targets}
+            asked |= set().union(*wanted.values())
+            for definition, resolved_by in _definitions_by_file(ctx, wanted, hygiene).items():
+                if carry_definition(definition, resolved_by):
                     alias_definitions += 1
     hops = ctx.config.thresholds.auditor_callee_hops
     indirect = ctx.config.thresholds.auditor_indirect_callees
@@ -3747,23 +3819,79 @@ def _spans(location: Location, line: int) -> bool:
     return start is not None and start <= line <= (location.line_end or start)
 
 
-def _trim_enum(text: str, name: str) -> str | None:
-    """상한을 넘는 enum 정의를 머리(여는 `{`까지) · `name` 상수 줄 앞뒤
-    `_AUDITOR_ENUM_CONTEXT_LINES`줄 · 닫는 줄만 남겨 줄인다. 뺀 구간마다 `_OMITTED` 한 줄 —
-    줄 번호는 배너와 그 표시로 되짚는다. enum이 아니거나(첫 `{` 앞에 `enum`이 없다) 그 이름이
-    줄 머리 상수로 안 나오면 `None`(줄이지 않는다).
+def _definitions_by_file(
+    ctx: RunContext, names_by_file: dict[str, set[str]], hygiene: dict
+) -> dict[Location, list[str]]:
+    """파일마다 그 파일 본문이 쓰는 이름을 **그 파일 기준**(`near_file`)으로 조회해 이은 정의 위치
+    → 그 정의를 **푼 파일들**(별칭 대상이 그 파일들의 기준으로만 조회된다). 같은 위치는 한 번이고,
+    같은 이름이 파일마다 다른 정의로 풀리면 둘 다 든다 — 블록 배너에 위치가 있어 구별되고, 하나로
+    합치면 한쪽 본문이 틀린 정의를 본다. 순서는 파일 순(각 조회가 정한 순서 그대로)이다 — 본문이 한
+    파일뿐이면 `ctx.definitions_of` 한 번의 결과 그대로다.
+    ponytail: 비제품 강등(`demote_nonproduct`)은 **한 조회 안에서만** 순서를 정한다 — 파일 사이는
+    파일 순 first-fit이라, 앞 파일 조회의 `tests/` 정의가 뒤 파일 조회의 제품 정의보다 앞서 상한을
+    먹을 수 있다. 코드 줄(`found`는 파일 순 연결 · `slice_names_first`는 슬라이스 줄 이름만
+    당긴다)로 입증했을 뿐 실행하거나 재지 않았다. 필요하면 조회들을 모은 뒤 `is_nonproduct_path`로
+    한 번 더 정렬한다(그 함수는 `src.adapters`에 있어 러너가 직접 못 쓴다)."""
+    found: dict[Location, list[str]] = {}
+    for file, names in names_by_file.items():
+        for definition in ctx.definitions_of(names, file, **hygiene) or []:
+            files = found.setdefault(definition, [])
+            if file not in files:
+                files.append(file)
+    return found
+
+
+@dataclass
+class _TrimmedEnum:
+    """`SOURCE`에 잘라 실은 enum 하나 — 같은 enum의 다른 상수를 나중에 물으면(같은 묶음의 다음
+    상수 · 별칭 라운드) `blocks[index]`를 그 상수까지 넓혀 다시 만든다. 첫 상수 주변만 싣고
+    둘째를 겹친다며 건너뛰면 둘째 정의가 사라진다(PR #485 리뷰 P2-4).
+
+    ⚠ **한계(수정 전과 같은 선행 결함 — 미해결)**: 이 기억은 enum이 **줄 머리 상수로** 먼저 실렸을
+    때만 선다. 같은 범위의, 줄 머리 상수가 아닌 이름(typedef 이름·태그·비머리 상수)이 줄 머리
+    상수보다 **먼저 처리되면** `_trim_enum`이 `None`이라 enum이 통째로 `dropped`되고 그 범위가
+    `seen`에 올라, 뒤따르는 상수는 겹침으로 안 실린다(조용히 사라진다). 처리 순서는 정의 조회의
+    이름 정렬(`definitions_of`는 `sorted(set(names))`) 다음에 슬라이스 줄에 나온 이름을 앞으로 당긴
+    것이라 ① 슬라이스 줄에 타입 이름만 있고 상수는 다른 줄일 때뿐 아니라 ② 타입·태그 이름이 상수보다
+    **정렬상 앞서는** enum(`enum AVPixelFormat` ↔ `AV_PIX_FMT_…` — `AVP` < `AV_`)은 타입과 상수가
+    모두 슬라이스 줄에 있어도 난다 — **이 PR이 겨냥한 FFmpeg 꼴에서 상수 주변만 싣는 기능이 걸리지
+    않는다.** ③ 줄마다 상수가 여럿인 enum에서 비머리 상수가 먼저 물려도 같다. 특성화 테스트:
+    `test_limitation_a_type_name_asked_first_drops_the_whole_enum_and_hides_its_constants`(①) ·
+    `test_limitation_a_type_name_that_sorts_before_its_constants_hides_them_on_the_slice`(②).
+    후속 수정 방향(설계 변경이라 이 PR에서 안 한다): 크기로 dropped된 타입 이름 행을 `seen`에 안
+    올려 상수 행이 먼저 시도하게 한다."""
+
+    text: str  # 줄이기 전 enum 원문
+    end: int  # 줄이기 전 끝 줄 — 배너가 든다
+    names: list[str]  # 지금 블록에 든 상수들 — `_trim_enum`에 넘기는 목록이다
+    index: int  # `blocks`에서의 자리
+    # 이미 판정한 이름 — 블록에 낱말로 보이는 이름(typedef 이름·태그·한 줄 다중 상수의 둘째 —
+    # 정의가 아니라 언급일 수도 있다, `widen_enum`의 한계)과 못 더해 `dropped`로 센 상수. 같은
+    # 이름을 또 물어도 세지 않는다. **`names`와 따로 둔다** — 줄
+    # 머리 상수가 아닌 이름이 `names`에 들어가면 `_trim_enum`이 `None`을 내 그 뒤 상수가 못
+    # 더해진다.
+    settled: set[str] = field(default_factory=set)
+
+
+def _trim_enum(text: str, names: list[str]) -> str | None:
+    """상한을 넘는 enum 정의를 머리(여는 `{`까지) · `names` 상수마다 그 줄 앞뒤
+    `_AUDITOR_ENUM_CONTEXT_LINES`줄 · 닫는 줄만 남겨 줄인다 — 창이 겹치면 한 구간이다. 뺀 구간마다
+    `_OMITTED` 한 줄 — 줄 번호는 배너와 그 표시로 되짚는다. enum이 아니거나(첫 `{` 앞에 `enum`이
+    없다) 그 이름 **하나라도** 줄 머리 상수로 안 나오면 `None`(줄이지 않는다 — 일부만 싣고 다 실은
+    것처럼 보이지 않게).
     ⚠ 값을 안 적은 상수는 앞 상수에서 하나씩 세는데, 뺀 구간이 그 앞이면 모델이 값을 못 센다."""
     lines = text.split("\n")
     head = next((i for i, line in enumerate(lines) if "{" in line), None)
     if head is None or not _ENUM_HEAD.search("\n".join(lines[: head + 1])):
         return None
-    own = re.compile(rf"\s*{re.escape(name)}\b")
-    hit = next((i for i, line in enumerate(lines) if i > head and own.match(line)), None)
-    if hit is None:
-        return None
     width = _AUDITOR_ENUM_CONTEXT_LINES
-    near = range(max(0, hit - width), hit + width + 1)
-    keep = set(range(head + 1)) | {len(lines) - 1} | set(near)
+    keep = set(range(head + 1)) | {len(lines) - 1}
+    for name in names:
+        own = re.compile(rf"\s*{re.escape(name)}\b")
+        hit = next((i for i, line in enumerate(lines) if i > head and own.match(line)), None)
+        if hit is None:
+            return None
+        keep |= set(range(max(0, hit - width), hit + width + 1))
     out, gap = [], 0
     for i, line in enumerate(lines):
         if i in keep:

@@ -235,10 +235,17 @@ class EventKind(StrEnum):
     # `wrapper_callees`(`callees` 중 래퍼 너머로 붙인 수)·`alias_callees`(매크로 별칭이 부르는
     # 함수로 붙인 수)도 실린다(C4). `auditor_definitions`가 1이면 `definitions`·
     # `definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수·enum 상수 정의 수 — `functions`에는
-    # 안 든다)와 `alias_definitions`
-    # (`definitions` 중 별칭 라운드로 붙인 수)가 같은 방식으로 더 실린다. 같은 조건에서
-    # `definitions_trimmed`(상한을 넘어 그 상수 주변만 잘라 실은 enum 정의 수 — `definitions`에
-    # 든다)도 실린다.
+    # 안 든다. 단위가 섞인다: 정의 하나가 못 실리면 하나이고, 이미 잘라 실은 enum 블록에 넓히기에서
+    # 못 더한 상수 하나도 센다)와 `alias_definitions`
+    # (별칭 라운드가 붙이거나 — 이미 실린 큰 enum 블록에 상수를 더해 — 넓힌 정의 수)가 같은 방식으로
+    # 더 실린다. 같은 조건에서
+    # `definitions_trimmed`(상한을 넘어 물은 상수 주변만 잘라 **SOURCE에 실은** enum 정의 수 —
+    # enum마다 하나이고 `definitions`에 든다. 줄였어도 전체 상한에 걸려 못 실은 enum은
+    # `definitions_dropped`만 센다. 이미 실린 그 enum 블록에 낱말로 있는 이름 — typedef 이름·
+    # 태그·한 줄 다중 상수의 둘째 — 은 보이는 것으로 보고 어느 쪽에도 안 센다. **한계**: 낱말이
+    # 있다는 것이 정의가 있다는 뜻은 아니라 끝줄 값이나 주석의 언급만이어도 같게 세므로, 그 경우
+    # 정의가 SOURCE에 없는데도 `definitions_dropped`가 과소 집계될 수 있다 — 수정 전과 같은 침묵)도
+    # 실린다.
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
