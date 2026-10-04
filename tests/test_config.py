@@ -78,6 +78,9 @@ NODE_OUTPUT_SCHEMAS = {
 # scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
 SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHEMAS}
 
+# auditor도 같다 — 한 방 판은 `Finding`, 도구 루프 판은 `AuditorAction`이다(이슈 #419).
+AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
+
 
 # --- 참조 정합성 ------------------------------------------------------------
 
@@ -351,6 +354,17 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
         )
         return
 
+    # auditor도 버전별로 갈린다(이슈 #419) — `auditor_node.OUTPUT_SCHEMA`는 한 방 경로의
+    # 이름이고, 루프 판은 meta 선언을 `resolve_output_schema`로 푼 것을 요청한다. 그래서
+    # scout과 같은 이유로 「하나」와의 동치가 아니라 **집합 소속**을 본다. bench가 같은 선언을
+    # 푸는지는 `tests/test_auditor_loop.py`가 따로 문다.
+    if role is Role.AUDITOR:
+        assert template.output_schema in AUDITOR_ALLOWED_SCHEMA_NAMES, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"auditor 자리가 낼 수 있는 것은 {sorted(AUDITOR_ALLOWED_SCHEMA_NAMES)}뿐이다"
+        )
+        return
+
     node_schema = NODE_OUTPUT_SCHEMAS.get(role)
     if node_schema is not None:
         assert template.output_schema == node_schema.__name__, (
@@ -440,7 +454,7 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
+def test_the_canonical_auditor_selects_prompt_v8(profile: str) -> None:
     """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v7`을 고른다. 되돌리면 이
     핀이 빨개진다.
 
@@ -450,10 +464,13 @@ def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
     아니다** — v6는 v5의 범위 제약 둘을 삭제했으므로 v5의 상위집합이 아니다(`config/models.yaml`의
     그 항목이 삭제 목록과 #418이 든 수를 적는다). ⏵ **v7**(2026-10-04 · #349) = v6 + Auditor SOURCE
     옵션 넷의 서술. v6를 그 자리에서 고치지 않은 것은 #418의 수가 v6 문장의 것이라서다
-    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH)."""
+    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH). ⏵ **v8**(2026-10-04 · #419) = v7 + 도구
+    루프 — 매 홉 `AuditorAction`이고 `SOURCE` 서술·trigger rule은 v7과 바이트 동일이다
+    (`tests/test_auditor_prompt_v8.py`). v7을 그 자리에서 고치지 않은 것은 v7이
+    `output_schema: Finding`으로 선 판이기 때문이다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v7"
+    assert config.model_for("auditor").prompt_template_version == "v8"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])

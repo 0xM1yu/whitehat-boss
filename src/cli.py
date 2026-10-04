@@ -530,9 +530,11 @@ def _auditor_loop_problem(config: HarnessConfig) -> str | None:
     """
     if Role.AUDITOR.value not in config.profile.roles:
         return None
-    version = config.model_for(Role.AUDITOR.value).prompt_template_version
+    entry = config.model_for(Role.AUDITOR.value)
     return auditor_loop_problem(
-        load_prompt(Role.AUDITOR, version), config.thresholds.auditor_tool_hops
+        load_prompt(Role.AUDITOR, entry.prompt_template_version),
+        config.thresholds.auditor_tool_hops,
+        is_fake=entry.is_fake,
     )
 
 
