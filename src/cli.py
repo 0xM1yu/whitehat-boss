@@ -786,8 +786,10 @@ def _oracle_for(
     # 🔴 **키 모양을 여기서 거른다 - 그러지 않으면 키가 run 산출물에 평문으로 남는다.** 끝에 CR이
     # 붙은 키(CRLF 파일을 `$(cat key.txt)`로 읽으면 생긴다)는 `http.client`가 헤더를 만들기 전에
     # `ValueError("Invalid header value b'<키>\\r'")`로 거부하는데, 그 문구가 `error_detail`을 거쳐
-    # 사이드카 `oracle/verdict.json`에 **그대로** 쓰인다(어댑터의 가림막은 자기 예외 클래스만
-    # 지운다). 팀이 복사·공유하는 파일이라 키를 쓰는 사고다. 값은 **문구에 싣지 않는다**.
+    # 사이드카 `oracle/verdict.json`에 **그대로** 쓰인다(앞 판의 어댑터 가림막은 자기 예외
+    # 클래스만, 그것도 실제 CR이 든 원문으로만 지웠다 - 지금은 `TaskOracle._redacting`이
+    # `repr(bytes)` 모양까지 지우지만 그것에만 기대지 않고 입구에서 먼저 거른다). 팀이 복사·공유하는
+    # 파일이라 키를 쓰는 사고다. 값은 **문구에 싣지 않는다**.
     if any(ch.isspace() or not ch.isprintable() for ch in api_key):
         return _refuse_oracle(
             f"{_ORACLE_KEY_ENV}에 공백·비출력 문자가 있다({len(api_key)}자) - 값은 찍지 않는다. "
@@ -1771,8 +1773,8 @@ def build_parser() -> argparse.ArgumentParser:
         "하나뿐이면 그 하나에 돌고, 둘 이상이면 하네스 내부 근거 등급의 최댓값을 든 후보가 "
         "하나뿐일 때만 돈다 - 동점이거나 등급을 모르는 후보가 있으면 안 돈다(oracle_final은 "
         "status none, reason grade_tie 또는 grade_unknown). "
-        "--task-dir와 --oracle-server와 함께만 쓴다. 과제 id·에이전트 id는 번들의 submit.sh에서 "
-        "읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
+        "--task-dir·--oracle-server·--oracle-canary와 함께만 쓴다. 과제 id·에이전트 id는 "
+        "번들의 submit.sh에서 읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
         "{run_dir}/oracle/verdict.json에 남고 내부 등급(E4)을 올리지 않는다. 8단계에 닿지 않는 run"
         "(--dry-run, 8 미만의 --stop-after, pov 좌석이 없는 프로필)에서는 아무것도 제출하지 않고 "
         "경고만 한다",
