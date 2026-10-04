@@ -16,7 +16,7 @@
 | Python 3.11.4+ | 아무것도 안 된다 | — |
 | OpenAI 호환 엔드포인트 (실서빙 프로필만) | `fake://` 프로필은 그대로 돈다 | 스킴이 어댑터를 고른다. `models.yaml`의 `endpoint` |
 | 컨테이너 런타임 (도구 프로필만) | `tool_runner: fake` 프로필은 그대로 돈다 | `doctor`가 PATH를 보고 WARN. `--tool-runner`로 갈아끼운다 |
-| GPU | 실서빙·도구 프로필만 필요 | `dev_fake`·`dev_hybrid`는 GPU 없이 0~9단계를 완주한다. 🔴 ⏵ 2026-10-03 — **실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을 204,963이 넘겨 `stopped_after: 4`). 합성·소형 타깃 이야기다 — 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424) |
+| GPU | 실서빙·도구 프로필만 필요 | `dev_fake`·`dev_hybrid`는 GPU 없이 0~9단계를 완주한다. 🔴 ⏵ 2026-10-03 — **실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을 204,963이 넘겨 `stopped_after: 4`). 합성·소형 타깃 이야기다 — 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424). ⏵ 2026-10-03 밤 — **닫혔다**: #427이 `dev_fake` 예산의 토큰 상한을 `0`(= 상한 없음)으로 내렸다(위 문장은 `1fa2182`의 사진). 깨끗한 트리 완주 재현은 `dev_fake` 하나다 — 같은 예산을 쓰는 `dev_hybrid` 등의 재현은 이 줄의 근거에 없다 |
 | `nvidia-smi --query-gpu`가 **GPU 메모리를 보고할 것** | `mem_gb_ctx8k`를 GB로 못 얻는다 | 사유를 남기고 0으로 둔다. 추정하지 않는다. **PATH에 없는 것과, 있는데 `[N/A]`를 주는 것은 다른 사유로 기록된다** — GB10은 통합메모리라 별도 VRAM이 없어 후자다(2026-08-17 실측). 그 경우 이 쿼리로는 고칠 것이 없다. **`--query-compute-apps`는 같은 장비에서 값을 주지만**(2026-09-03 실측) PID별이고 context 고정이 아니라 이 필드를 바로 채우지 못한다 ([보고서](experiments/harness/2026-09-03-model-swap-sleep-atom.md) §3.4) |
 
 **GPU 아키텍처·드라이버·CUDA 버전·스케줄러·호스트명은 목록에 없다.** 하네스 코드가 그
@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | 실행 코드에 장비 고유명이 없다 | `src/**`를 AST로 파싱해 주석·docstring을 뺀 뒤 장비명·아키·스케줄러 이름을 찾는다 | 0건. 남는 것은 `docker`/`singularity`/`podman`(config가 고르는 런타임 이름)과 ~~`NVFP4`(registry의 양자화 값)~~뿐이고, 둘 다 장비가 아니라 설정을 가리킨다. ⏵ 2026-09-24 — `NVFP4`는 이제 안 남는다: `src/` 문자열 상수(docstring 제외)에 0건이고 registry의 `quantization`에도 없다(가중치는 bf16 그대로 · `gpt-oss-20b`만 MXFP4 — 조민규). 장비명 쪽 판정은 다시 안 쟀다 |
 | 전 프로필이 GPU·네트워크 없이 진단을 통과한다 | 모든 프로필에 `doctor` 실행 | ~~8/8~~, ERROR 0건. ⏵ 2026-09-24 — 지금 프로필은 일곱이고 다시 돌려 **7/7 · ERROR 0건**이다(`cli doctor --profile` 일곱, 로스터 밖 정리 뒤) |
-| GPU 없이 파이프라인이 완주한다 | `dev_fake`·`dev_hybrid`로 `run` | 완주. 🔴 ⏵ 2026-10-03 — **실 Level 1 번들에서는 `stopped_after: 4`**(#424). 상한을 제거하면 완주한다 |
+| GPU 없이 파이프라인이 완주한다 | `dev_fake`·`dev_hybrid`로 `run` | 완주. 🔴 ⏵ 2026-10-03 — **실 Level 1 번들에서는 `stopped_after: 4`**(#424). 상한을 제거하면 완주한다. ⏵ 2026-10-03 밤 — #427이 그 상한을 내려 **제거 없이 완주한다**(#424 CLOSED — 재현은 그 PR 본문, `dev_fake`) |
 | 테스트가 GPU·네트워크 없이 돈다 | CI(`ubuntu-latest`, GPU 없음) | 전 테스트 통과 |
 | 프로브가 `pip install` 없이 돈다 | import 그래프를 따라가며 `sys.stdlib_module_names` 밖을 찾는다(`tests/test_probe.py`) | stdlib 밖 0건. `src/__init__.py`까지 따라간다 |
 | 측정 절차가 장비 사이에서 같다 | `tools/probe/run_probe.sh` 하나를 두 래퍼가 공유한다 | 래퍼는 잡 실행·접속만 감싼다 |
