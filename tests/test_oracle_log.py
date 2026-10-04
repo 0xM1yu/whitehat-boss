@@ -3,8 +3,10 @@
 러너 없이 순수하게 본다. 러너가 이 장부를 어떻게 채우는지는 `tests/test_oracle_wiring.py`가,
 파이프라인 끝까지 이어지는지는 `tests/test_pipeline_e2e.py`가 본다.
 
-⚠ 후보가 둘 이상일 때의 규칙(내부 근거 등급 최댓값 · 동점이면 거부)은 `runner._designate_final`의
-것이고 **이 파일이 아니다** - 장부는 지정한 근거(`designation`)와 거부 사유(`reason`)를 **기록**할
+⚠ 후보가 둘 이상일 때의 규칙(같은 바이트는 접고, 남은 것은 등급 → `confidence` → 작은 바이트 →
+PoC 해시의 전순서로 — ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다)은
+`runner._designate_final`의 것이고 **이 파일이 아니다** - 장부는 지정한 근거(`designation`)와
+거부 사유(`reason`)를 **기록**할
 뿐이다. 규칙 자체를 단언하는 검사는 `tests/test_oracle_wiring.py` 끝 절에 있다.
 """
 
@@ -74,7 +76,6 @@ def test_an_unwired_run_has_no_summary_no_warnings_and_no_file(tmp_path: Path) -
     [
         (None, "not_reached", None),
         (FinalAttempt(status="none", reason="no_poc"), "none", "no_poc"),
-        (FinalAttempt(status="none", reason="grade_tie"), "none", "grade_tie"),
         (FinalAttempt(status="none", reason="grade_unknown"), "none", "grade_unknown"),
         (FinalAttempt(status="failed", attempt=_ok("find_0001"), error="X"), "failed", None),
         (
@@ -148,10 +149,6 @@ def test_submission_failures_are_counted_in_a_warning() -> None:
             "vul 제출이 전부 실패해",
         ),
         (
-            FinalAttempt(status="none", reason="grade_tie"),
-            "최댓값이 동점이라",
-        ),
-        (
             FinalAttempt(status="none", reason="grade_unknown"),
             "등급을 모르는 것이 있어",
         ),
@@ -218,7 +215,6 @@ def test_every_warning_is_printable_on_a_cp949_console() -> None:
         FinalAttempt(status="failed", attempt=_ok("f"), error="CyberGymOracleError"),
         FinalAttempt(status="none", reason="no_poc"),
         FinalAttempt(status="none", reason="all_vul_submissions_failed"),
-        FinalAttempt(status="none", reason="grade_tie"),
         FinalAttempt(status="none", reason="grade_unknown"),
         _scored(_ok("f", submission=_cached_vul()), stale_fix),
     ]
@@ -345,13 +341,15 @@ def test_none_is_not_failed_in_the_sidecar(tmp_path: Path) -> None:
 
 
 def test_several_candidates_are_none_with_no_designation_in_the_sidecar(tmp_path: Path) -> None:
-    """후보가 둘 이상인데 등급이 못 가르면 지정하지 않는다 - `designation`은 `null`이고(근거를
-    지어내지 않는다) 사유가 `grade_tie`다. 「후보가 없다」(`no_poc`)와 다른 사건이다."""
+    """후보가 둘 이상인데 **등급을 몰라** 못 가르면 지정하지 않는다 - `designation`은 `null`이고
+    (근거를 지어내지 않는다) 사유가 `grade_unknown`이다. 「후보가 없다」(`no_poc`)와 다른
+    사건이다. ⏵ 2026-10-04 - 앞 판은 `grade_tie`를 썼는데 그 사유가 없어졌다(사슬이 전순서라
+    동점에서 거부할 자리가 없다 — `runner._designate_final`)."""
     ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
-    ledger.set_final(FinalAttempt(status="none", reason="grade_tie"))
+    ledger.set_final(FinalAttempt(status="none", reason="grade_unknown"))
 
     assert _read(tmp_path)["final"] == {
-        "status": "none", "designation": None, "wall_ms": None, "reason": "grade_tie",
+        "status": "none", "designation": None, "wall_ms": None, "reason": "grade_unknown",
     }  # fmt: skip
 
 
@@ -362,7 +360,7 @@ def test_the_grades_the_designation_read_are_in_the_sidecar_only_when_it_read_th
     남는다. 안 읽은 run(후보 0·1건)은 키가 없다 - `{}`가 아니라 **없다**(안 읽었다 != 빈 등급)."""
     ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
     ledger.set_final(
-        FinalAttempt(status="none", reason="grade_tie"), grades={"f_a": "E4", "f_b": "E4"}
+        FinalAttempt(status="none", reason="grade_unknown"), grades={"f_a": "E4", "f_b": "E4"}
     )
     assert _read(tmp_path)["final"]["candidate_grades"] == {"f_a": "E4", "f_b": "E4"}
 
