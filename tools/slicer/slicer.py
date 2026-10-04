@@ -207,6 +207,8 @@ LIMITATIONS = [
     "distinguishable from a repo with exactly that many candidates without the measurement note",
     "Case A silently drops methods with an empty name (seen when c2cpg parses a header without "
     "build info); they are not counted, so such a method is never a candidate",
+    "Case A silently drops methods whose body block holds no statement (prototypes and "
+    "definitions with an empty body); they are not counted, so such a method is never a candidate",
     "flow cap stops further method batches, but does not bound engine work within one batch",
     "structure recovery is lexical and does not guarantee compilable preprocessed C/C++",
     "an unterminated OSC escape leaves its payload as text: it can raise a false "
@@ -530,6 +532,11 @@ class Slicer(SlicingStages):
         # #377 (b): repo-relative files whose candidates are sliced first (--priority-files) --
         # inside each case under the default `ba`, ahead of the whole rest under `ab`.
         self.priority_files: set[str] | None = None
+        # --priority-case-a: that list also steers WHICH Case A methods exist (candidates_a_query),
+        # not only the order. Needs priority_files; main() refuses the flag without a list.
+        self.priority_case_a = False
+        # --import-include-root: build_cpg gives c2cpg the repo root as a header include path.
+        self.import_include_root = False
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
         # Joern can read); compiled_files is the set the database compiles, filled in by
@@ -798,7 +805,9 @@ class Slicer(SlicingStages):
                 "import",
                 queries.import_cpg_query(self.cpg_file.as_posix(), project)
                 if self.cpg_file is not None
-                else queries.import_query(self.repo.as_posix(), project, compilation_database),
+                else queries.import_query(
+                    self.repo.as_posix(), project, compilation_database, self.import_include_root
+                ),
             )
             if not isinstance(payload, dict) or payload.get("imported") is not True:
                 raise ValueError("CPG import did not confirm completion")
@@ -894,6 +903,15 @@ def parser() -> argparse.ArgumentParser:
     # Optional compile_commands.json. When given, c2cpg builds a compile-aware graph from the
     # compiled units only; when absent, every source file is imported (unchanged behaviour).
     result.add_argument("--compile-commands", type=Path)
+    # c2cpg `--include <--repo>`: project headers reached through `<...>` or from another directory
+    # resolve instead of being skipped. It changes the graph (more METHODs), so it is part of the
+    # run contract (settings.import_include_root). Not with --compile-commands (not measured).
+    result.add_argument(
+        "--import-include-root", action="store_true", help="give c2cpg --repo itself as a header "
+        "include path (`--include <repo>`) so code behind header-config guards and header-only "
+        "C++ libraries enter the CPG. Changes the CPG and so the candidates; cannot be combined "
+        "with --compile-commands",
+    )
     result.add_argument("--joern-endpoint", default="http://localhost:16240")
     result.add_argument("--checkpoint", type=Path)
     result.add_argument("--resume", action="store_true")
@@ -906,16 +924,25 @@ def parser() -> argparse.ArgumentParser:
         "--cpg", type=Path, help="load this saved CPG instead of parsing --repo (needs --resume "
         "on a copy of the --prepare-only checkpoint)",
     )
-    # #377 (b): order only. The same candidates are discovered, and a candidate that gets a full
-    # slice gets the same one. Which candidates end up degraded is order-dependent: those not
-    # reached when the run is cut short (tools/slice_sharded.py --wall-seconds, a kill), and
-    # those after a poison streak (POISON_STOP_STREAK in slicer_pipeline).
+    # #377 (b): order only (unless --priority-case-a, below). The same candidates are discovered,
+    # and a candidate that gets a full slice gets the same one. Which candidates end up degraded
+    # is order-dependent: those not reached when the run is cut short (tools/slice_sharded.py
+    # --wall-seconds, a kill), and those after a poison streak (POISON_STOP_STREAK in
+    # slicer_pipeline).
     result.add_argument(
         "--priority-files", type=Path, help="file of paths (repo-relative or absolute under "
         "--repo), one per line; blank lines and lines starting with # are skipped, no inline "
         "comments: candidates whose entry or an anchor is in one are sliced first -- within "
         "their case under the default --case-order ba (a listed Case A still runs after every "
         "Case B), ahead of all unlisted candidates under ab",
+    )
+    # Unlike --priority-files alone this is not order only: it changes which Case A candidates
+    # exist, so it is part of the run contract (settings.priority_case_a).
+    result.add_argument(
+        "--priority-case-a", action="store_true", help="with --priority-files: the list also "
+        "steers Case A discovery -- a method defined in a listed file is ranked ahead of the "
+        "rest before CASE_A_CANDIDATE_CAP and skips CASE_A_CALL_LIMIT (it still needs a body and "
+        "a parameter). Changes WHICH Case A candidates exist, not only their order",
     )
     # Which case is sliced first; the default is `ba`, Case B first. The candidate set and every
     # candidate_key stay the same, but ids are numbered after the sort: ids, slices[] order,
@@ -1072,12 +1099,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.priority_files and args.export_only:
         # Export reads the order the checkpoint was bound with; a list here would change nothing.
         cli.error("--priority-files has no effect with --export-only")
+    if args.priority_case_a and not args.priority_files:
+        cli.error("--priority-case-a needs --priority-files")
+    if args.import_include_root and args.compile_commands:
+        # The database carries each file's real include paths, and the pair was not measured.
+        cli.error("--import-include-root cannot be combined with --compile-commands")
     priority = None
     if args.priority_files:
         try:
             priority = read_priority_files(args.priority_files, args.repo)
         except (OSError, UnicodeError) as exc:
             cli.error(f"--priority-files unreadable: {exc}")
+        if args.priority_case_a and not priority:
+            # A list of notes and blank lines: discovery would be the default one while the result
+            # says it was steered (settings.priority_case_a is true).
+            cli.error("--priority-case-a needs a --priority-files that names a file")
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
         # The shard must start from the prepared checkpoint: its discovery is what makes every
         # shard slice the same candidate list, and the run contract checks it is the same repo.
@@ -1168,8 +1204,16 @@ def main(argv: list[str] | None = None) -> int:
         # Same reason: collect() numbers and orders the candidates by it, and that order is bound
         # into the checkpoint, so a shard or a resume with another order is refused.
         "case_order": args.case_order,
+        # Also contract: with a list it changes which Case A candidates exist (ranked-first and
+        # exempt from the call limit), so a shard or a resume without it is refused.
+        "priority_case_a": args.priority_case_a,
+        # Steers the CPG itself (c2cpg's include paths), like compile_commands above, so it is
+        # contract: a shard or a resume built from a differently imported graph is refused.
+        "import_include_root": args.import_include_root,
     }
     job.priority_files = priority
+    job.priority_case_a = args.priority_case_a
+    job.import_include_root = args.import_include_root
     job.result["settings"] = job.settings
     # The normalized database lands in payload_dir, which is already on the filesystem Joern
     # shares for file-transport payloads.

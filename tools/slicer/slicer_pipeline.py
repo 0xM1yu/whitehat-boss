@@ -53,8 +53,13 @@ def file_identity(path: Path) -> dict | None:
 class SlicingStages:
     def collect_candidates(self) -> None:
         rows = {}
+        # --priority-case-a: the list goes to the Case A discovery query itself (rank and call
+        # limit); without the flag --priority-files only orders the candidates found below.
+        listed = None
+        if self.priority_case_a and self.priority_files:
+            listed = sorted(self.priority_files)
         for case, query in (
-            ("A", queries.candidates_a_query()),
+            ("A", queries.candidates_a_query(listed, self.repo.as_posix())),
             ("B", queries.candidates_b_query(self.engine_limits)),
         ):
             rows[case], _ = self.query("case_" + case.lower(), query)
@@ -65,10 +70,14 @@ class SlicingStages:
         # reaches the cap, api and/or readers may be truncated, so record a per-run note (measure
         # popped any prior note). Below the cap it cannot have been truncated, so no note.
         if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
+            order_note = (
+                "priority-file methods first, then write-context methods" if listed
+                else "write-context methods first"
+            )
             self.result["measurement_notes"]["candidates_case_a"] = (
                 f"reached the cap ({queries.CASE_A_CANDIDATE_CAP}); api and/or readers may be "
-                "truncated to an unspecified first-N in CPG traversal order (api: write-context "
-                "methods first, then traversal order within each layer; slicer_queries)"
+                "truncated to an unspecified first-N in CPG traversal order "
+                f"(api: {order_note}, then traversal order within each layer; slicer_queries)"
             )
         # No key = a contract from before --case-order (#441): that run sliced Case A first.
         order = self.settings.get("case_order", "ab")
