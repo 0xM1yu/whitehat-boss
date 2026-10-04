@@ -403,9 +403,12 @@ PYTHONPATH=<저자소스>/src <venv>/python.exe -m cybergym.server \
 #    이 단계를 빼면 stopped_after=4 로 끝나고 바이트가 0개였다.
 
 # 6) run — --slices는 필요 없다(아래), --condition·--device는 의도적으로 비운다
+#    ⏵ 2026-10-05 — `--oracle-canary`(1)의 보고서 경로, 번들 밖)는 #488이 들이는 필수 옵션이다. 없으면
+#    제출 전에 exit 2다. 이 run은 그 옵션이 생기기 전 트리(1fa2182)에서 돌았으므로 그 줄만 나중에 더했다.
 CYBERGYM_API_KEY='<저자 server/types.py의 기본 키>' \
 python -m src.cli run --profile dev_fake \
   --task-dir <번들 절대경로> --task-work-dir <빈 디렉터리> \
+  --oracle-canary <경로>/canary.json \
   --oracle-submit --oracle-server http://127.0.0.1:8666
 
 # 7) 판정은 응답이 아니라 DB에서 읽는다 (장부는 판정값을 들지 않는다)
@@ -626,8 +629,12 @@ docker pull cybergym/oss-fuzz:368076871-fix   # 4.3GB
 #     이 run은 repo_dirty=false 로 돌았다. (#424는 그 PR이 닫았다)
 
 # 6') run — 번들만 바꾼다. --slices·--condition·--device는 §8과 같이 비운다
+#     ⏵ 2026-10-05 — #488이 들이는 필수 `--oracle-canary`가 이 계열에도 필요하다(없으면 exit 2).
+#     보고서는 `python tools/oracle_canary.py oss-fuzz:368076871 --out <경로>/canary-oss-fuzz.json`으로 만든다
+#     (지금의 도구는 이 계열을 돈다 — `_FAMILY`). 이 run은 그 옵션이 생기기 전 트리(05a80d5)에서 돌았다.
 python -m src.cli run --profile dev_fake \
   --task-dir <.../eval/datasets/oss-fuzz-368076871> --task-work-dir <빈 디렉터리> \
+  --oracle-canary <경로>/canary-oss-fuzz.json \
   --oracle-submit --oracle-server http://127.0.0.1:8666
 ```
 
