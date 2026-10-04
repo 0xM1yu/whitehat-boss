@@ -5,7 +5,7 @@
 F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 
 **Auditor의 원문 추론을 전달하지 않는다**(agent-contracts.md §2.3). 프롬프트에 실리는
-것은 주장·경로·근거(ID·kind·ok, content-aware 판은 본문·위치도)뿐이고 `rca_draft`는
+것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)뿐이고 `rca_draft`는
 넘기지 않는다 — 앞 모델의 설명을 보여 주면 반박이 아니라 재진술이 돌아온다.
 
 **정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
