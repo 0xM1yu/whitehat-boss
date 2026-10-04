@@ -9,6 +9,7 @@ build_auditor around the GT lines (no slices.json.gz). Usage: gt_worker.py <W>""
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -31,6 +32,9 @@ QUERY_TIMEOUT = os.environ.get("QUERY_TIMEOUT", "1800")
 # repos with more C/C++ files than this keep only the GT directories (sparse checkout)
 PRUNE_FILES = int(os.environ.get("PRUNE_FILES", "8000"))
 INCLUDE_MAX = int(os.environ.get("INCLUDE_MAX", "3000"))
+# headers the GT files include are kept too, followed this many levels (at most this many per level)
+INCLUDE_ROUNDS = int(os.environ.get("INCLUDE_ROUNDS", "2"))
+INCLUDE_FILES_MAX = int(os.environ.get("INCLUDE_FILES_MAX", "200"))
 # GT_DIRECT=1: skip Joern; build_auditor assembles around the GT lines (its "-" slices mode).
 # AUDITOR_ARMS / AUDITOR_OPTIONS in the environment reach build_auditor unchanged.
 GT_DIRECT = os.environ.get("GT_DIRECT") == "1"
@@ -97,9 +101,74 @@ def claim():
     return None
 
 
+_INCLUDE = re.compile(r'^[ 	]*#[ 	]*include[ 	]*[<"]([^>"]+)[>"]', re.M)
+_HEADER_SUFFIXES = (".h", ".hh", ".hpp", ".hxx", ".inc")
+
+
+def _included_dirs(repo, start_files, files, rounds=INCLUDE_ROUNDS):
+    """Directories of the headers `start_files` include, followed `rounds` levels deep. An include
+    path is matched by suffix against the commit's file list (`<linux/usb.h>` ->
+    `include/linux/usb.h`) and resolved to ONE header (`_pick`): the including file's own
+    directory first, then the shortest path, x86/generic preferred on a tie -- matching every
+    suffix kept all 25 arch trees plus `tools/` copies on a Linux sample (10,281 of 46,794 C files,
+    143 s). Headers outside the repo (libc) match nothing. Blobs are read lazily from the partial
+    clone."""
+    headers = [f for f in files if f.endswith(_HEADER_SUFFIXES)]
+    by_name: dict[str, list[str]] = {}
+    for h in headers:
+        by_name.setdefault(h.rsplit("/", 1)[-1], []).append(h)
+    seen, frontier, dirs = set(start_files), list(start_files), set()
+    for _ in range(rounds):
+        nxt = []
+        for f in frontier:
+            text = subprocess.run(
+                ["git", "cat-file", "-p", f"FETCH_HEAD:{f}"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=120,
+            ).stdout
+            here = f.rsplit("/", 1)[0] if "/" in f else ""
+            for inc in _INCLUDE.findall(text):
+                inc = inc.strip().lstrip("./")
+                matches = [
+                    h
+                    for h in by_name.get(inc.rsplit("/", 1)[-1], ())
+                    if h == inc or h.endswith("/" + inc)
+                ]
+                h = _pick(matches, here, inc)
+                if h is not None and h not in seen:
+                    seen.add(h)
+                    nxt.append(h)
+                    if "/" in h:
+                        dirs.add(h.rsplit("/", 1)[0])
+        frontier = nxt[:INCLUDE_FILES_MAX]
+        if not frontier:
+            break
+    return dirs
+
+
+def _pick(matches, here, inc):
+    """One header for an include path: the including file's directory, else the shortest path
+    (x86 or generic first on a tie). None when nothing in the repo matches."""
+    if not matches:
+        return None
+    local = f"{here}/{inc}" if here else inc
+    if local in matches:
+        return local
+    return min(
+        matches,
+        key=lambda h: (h.count("/"), not ("x86" in h or "generic" in h), h),
+    )
+
+
 def prune_dirs(repo, gt_points):
     """None if the commit has at most PRUNE_FILES C/C++ files; otherwise the directories to keep:
-    each GT file's directory (recursive) plus a top-level include/ of at most INCLUDE_MAX files."""
+    each GT file's directory (recursive), the directories of the headers the GT files include
+    (`_included_dirs`, so struct/macro definitions in `include/...` stay -- without them a pruned
+    sample lost 70% of its definitions, 2026-10-04 local 281-sample check), plus a top-level
+    include/ of at most INCLUDE_MAX files."""
     res = subprocess.run(
         ["git", "ls-tree", "-r", "--name-only", "FETCH_HEAD"],
         cwd=repo,
@@ -110,10 +179,16 @@ def prune_dirs(repo, gt_points):
     files = [f for f in res.stdout.splitlines() if f.endswith(C_SUFFIXES)]
     if len(files) <= PRUNE_FILES:
         return None
-    keep = sorted({p["file"].rsplit("/", 1)[0] for p in gt_points if "/" in p["file"]})
+    gt_files = sorted({p["file"] for p in gt_points})
+    keep = {f.rsplit("/", 1)[0] for f in gt_files if "/" in f}
+    try:
+        keep |= _included_dirs(repo, gt_files, files)
+    except (OSError, subprocess.SubprocessError):
+        pass  # keep the GT dirs alone rather than fail the sample
     include = sum(f.startswith("include/") for f in files)
     if 0 < include <= INCLUDE_MAX:
-        keep.append("include")
+        keep.add("include")
+    keep = sorted(keep)
     kept = sum(any(f.startswith(k + "/") for k in keep) or "/" not in f for f in files)
     return {"c_files": len(files), "kept_c_files": kept, "keep": keep}
 
