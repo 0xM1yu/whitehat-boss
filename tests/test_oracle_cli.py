@@ -511,6 +511,38 @@ def test_the_redaction_hides_the_key_in_the_shape_http_client_puts_it_in(key: st
     assert "Invalid header value" in message
     assert "SECRETKEY123" not in message
     assert "***" in message
+    # 🔴 **이스케이프 꼬리도 안 남아야 한다.** 앞뒤 공백을 뗀 모양(`SECRETKEY123`)은 `repr` 모양
+    # (`SECRETKEY123\r`)의 **부분 문자열**이라 짧은 것부터 지우면 `b'***\r'`가 남는다(키 조각은
+    # 아니지만 가림막이 모양을 통째로 지운다는 서술이 그것을 요구한다). 긴 모양부터 지우는 정렬을
+    # 문다.
+    assert "\\r" not in message and "\\n" not in message
+
+
+def test_the_redaction_survives_a_key_http_client_cannot_encode() -> None:
+    """라틴-1 밖 문자가 든 키 - `http.client`는 `Invalid header value`가 아니라
+    `UnicodeEncodeError`를 던지고, 가림막은 그 예외도 `CyberGymOracleError`로 올린다
+    (독립 검토 LOW-1).
+
+    `_without_key`가 `key.encode("latin-1", "replace")`의 `replace`를 빼면 이 키로
+    **`_without_key` 자신이** `UnicodeEncodeError`를 던지고, 그것이 `CyberGymOracleError`로 안
+    바뀐 채 호출부로 샌다 - 러너가 잡는 예외 종류가 달라진다. 이 핀이 그 변이를 문다.
+
+    ⚠ 한계(`_without_key` docstring): 그 문구에는 **문자 하나(이스케이프)와 위치**가 남는다 -
+    키가 한 글자면 키 전체다. 여기서는 그 한계를 단언하지 않는다(CPython 문구에 기대는 핀이
+    되므로).
+    """
+    from src.adapters import cybergym_oracle as oc
+
+    oracle = oc.TaskOracle(
+        server="http://127.0.0.1:9", task_id=TASK_ID, agent_id=_AGENT, api_key="SECRET中\r"
+    )
+
+    with pytest.raises(oc.CyberGymOracleError) as caught:
+        oracle.submit_vul(b"x")
+
+    message = str(caught.value)
+    assert message.startswith("UnicodeEncodeError:")
+    assert "SECRET" not in message
 
 
 def test_the_gate_and_the_tool_agree_on_the_entropy_limit() -> None:

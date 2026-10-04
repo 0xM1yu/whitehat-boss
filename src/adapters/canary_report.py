@@ -26,6 +26,15 @@
 (`--oracle-canary`). 거절 문구가 `measured_at`·`docker_version`을 들어 조작자가 그것을 볼 수 있게
 한다.
 
+⚠ **이 모듈이 못 막는 것 — 손으로 고친 보고서.** 보고서의 칸은 전부 같은 파일의 기록이다.
+`repeat`·`completed`·`segv_count`·`problems`도 손으로 고칠 수 있고, `combos[*].exit_codes`의 실제
+길이·내용은 읽지 않는다 — `repeat: 10`인데 `exit_codes`가 셋뿐인 보고서가 통과한다
+(`tests/test_canary_report.py`가 그 동작을 핀으로 둔다). 대조하려면 `combos`를 필수 칸으로 올려야
+하는데 그러면 기존 보고서 픽스처 넷이 깨지고, `exit_codes`도 같은 파일의 칸이라 신뢰 전제는
+남는다. 그래서 이 게이트가 막는 것은 **실수·낡은 보고서·도구가 스스로 낮춘 판정**이지 조작자가
+뜻을 갖고 쓴 보고서가 아니다(조작자 신뢰 전제 — 아래 거절 검사의 「관측 칸」도 같은 파일의
+기록이다).
+
 ⚠ **그리고 하네스가 카나리를 스스로 돌리지는 않는다.** 이슈 #383의 선택지 (a)는 그것까지인데,
 돌리려면 run이 `-fix` 이미지와 참조 PoC를 손에 쥐어야 하고 N·보고서 위치·`weak_pass` 처리가 전부
 정해야 하는 값이다. 그 결정은 사람 몫으로 남겼다 — 이 모듈은 「카나리 없이 채점하지 않는다」까지다.
@@ -61,11 +70,13 @@ PASS_VERDICT = "pass"
 MMAP_RND_BITS_MAX = 28
 
 # 이보다 적게 돌린 보고서는 거부한다. 도구의 `_MEASURED_REPEAT`와 같은 수다 — 판별력 실측이 정답
-# PoC에 쓴 반복 수(n=10)이고, 그 아래는 도구도 `weak_pass`로 낮춘다. 🔴 **보고서의 자기 선언
-# (`below_measured_repeat`·`measured_repeat`)을 믿지 않고 `repeat`를 이 값과 직접 견준다** — 손으로
-# `repeat`만 고친 보고서(선언은 `false` 그대로)가 선언만 보던 판에서 통과했다. 선언을 같이 고친
-# 보고서도 같은 값에 걸린다. `MMAP_RND_BITS_MAX`와 같은 이유로 도구를 import하지 않고 리터럴을
-# 둔다 — 갈리면 테스트가 잡는다.
+# PoC에 쓴 반복 수(n=10)이고, 그 아래는 도구도 `weak_pass`로 낮춘다. 🔴 **선언(`below_measured_
+# repeat`)만 보지 않고 `repeat` 자신도 이 값과 견준다** — 손으로 `repeat`만 고친 보고서(선언은
+# `false` 그대로)가 선언만 보던 판에서 통과했다. ⚠ **`repeat`도 같은 파일의 칸이다** — 손으로
+# 10 이상으로 올리면 통과하고 `combos[*].exit_codes`의 실제 길이와는 대조하지 않는다(모듈
+# docstring의 「못 막는 것」). 이 검사가 막는 것은 **선언과 `repeat`가 어긋난 보고서**이지 위조가
+# 아니다. `MMAP_RND_BITS_MAX`와 같은 이유로 도구를 import하지 않고 리터럴을 둔다 — 갈리면 테스트가
+# 잡는다.
 MEASURED_REPEAT = 10
 
 # 게이트가 읽는 칸과 그 형. 빈 칸을 기본값으로 메우지 않는다 — 「없다」를 「통과」로 읽으면 게이트가
@@ -81,7 +92,8 @@ _REQUIRED: tuple[tuple[str, type | tuple[type, ...]], ...] = (
     ("rnd_bits_above_28", (bool, type(None))),
     ("measured_at", str),
     # **같은 파일의 반증 칸.** 요약(`verdict`·`ok`)만 읽으면 그 둘을 뒤집은 보고서가 통과한다 —
-    # 자기 선언이 같은 파일의 관측보다 세지 못하게 셋을 같이 읽는다(CLAUDE.md §2.2).
+    # 자기 선언이 같은 파일의 관측보다 세지 못하게 셋을 같이 읽는다(CLAUDE.md §2.2). ⚠ 이 셋도
+    # 손으로 고칠 수 있는 칸이다 — 요약만 뒤집은 보고서를 막지 위조를 막지 않는다.
     ("completed", bool),
     ("segv_count", int),
     ("problems", list),
@@ -192,8 +204,10 @@ def canary_refusal(report: CanaryReport, *, task_id: str) -> str | None:
             f"카나리 판정이 {report.verdict!r}(ok={str(report.ok).lower()})다 - "
             f"채점 run은 {PASS_VERDICT}만 받는다({where})"
         )
-    # 여기부터 셋은 **같은 파일의 관측**을 본다. 위 두 칸은 도구의 자기 선언이라 손으로 뒤집을 수
-    # 있고, 그것만 보는 게이트는 자기 선언만큼만 세다(§2.2).
+    # 여기부터 셋은 **같은 파일의 관측 칸**을 본다. 위 두 칸은 도구의 자기 선언이라 손으로 뒤집을 수
+    # 있고, 그것만 보는 게이트는 자기 선언만큼만 세다(§2.2). ⚠ 관측 칸도 같은 파일의 기록이라
+    # 손으로 고치면 통과한다 — 이 셋이 막는 것은 **요약만 뒤집은 보고서**이지 위조가 아니다
+    # (모듈 docstring).
     if not report.completed:
         return (
             f"카나리가 pass라 적었는데 completed가 거짓이다 - "
@@ -221,12 +235,22 @@ def canary_refusal(report: CanaryReport, *, task_id: str) -> str | None:
         )
     if report.repeat < 1:
         return f"카나리의 관측 횟수가 {report.repeat}다 - 0회는 관측이 아니다({where})"
-    # 선언(`below_measured_repeat`)과 `repeat` 자신을 **둘 다** 본다 — 선언은 손으로 `false`로 둘 수
-    # 있고(그것만 보던 판이 `repeat: 3` 보고서를 통과시켰다) `repeat`는 그 선언의 근거다.
-    if report.below_measured_repeat or report.repeat < MEASURED_REPEAT:
+    # 선언(`below_measured_repeat`)과 `repeat` 자신을 **둘 다** 본다 — 선언만 보던 판은 손으로
+    # `repeat`만 고친 보고서(`repeat: 3`, 선언 `false`)를 통과시켰다. 사유를 **가르는** 것은 문구가
+    # 자기모순이 되지 않게서다: 선언이 `true`인데 `repeat >= 10`이면 「20회만 돌렸다 - 10보다
+    # 적어」가 된다.
+    # ⚠ 둘 다 보고서가 적은 값이다 — `combos[*].exit_codes`의 실제 길이와는 대조하지 않는다
+    # (모듈 docstring의 「못 막는 것」).
+    if report.below_measured_repeat:
         return (
-            f"카나리를 {report.repeat}회만 돌렸다 - 실측한 횟수({MEASURED_REPEAT})보다 적어 "
-            f"판정이 약하다({where})"
+            f"카나리 보고서가 below_measured_repeat=true라 적었다(repeat={report.repeat}, "
+            f"실측 기준 {MEASURED_REPEAT}) - 보고서 스스로 횟수가 모자라다고 한다({where})"
+        )
+    if report.repeat < MEASURED_REPEAT:
+        return (
+            f"카나리를 {report.repeat}회만 돌렸다 - 실측한 횟수({MEASURED_REPEAT})보다 적은데 "
+            "below_measured_repeat는 false라 적혀 있다. 도구가 쓰는 두 칸은 어긋나지 않는다"
+            f"({where})"
         )
     return None
 
