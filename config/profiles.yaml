@@ -143,7 +143,9 @@ profiles:
     #   올린 것은 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS` 배선과 같은 PR이다). 같은 날 #328 머지 뒤
     #   `v4`로 다시 올렸다(v4도 그 집합에 든다). ⏵ **2026-10-03 — v6로 올렸다**(프롬프트 #418 ·
     #   배선 #421 · 사용자 결정 — **v5는 건너뛰었다**). v6도 그 집합에 든다. ⏵ 2026-10-04 — v7로 올렸다
-    #   (v6 + Auditor SOURCE 옵션 넷의 서술, #349 — v7도 그 집합에 든다). critic gpt-oss와
+    #   (v6 + Auditor SOURCE 옵션 넷의 서술, #349 — v7도 그 집합에 든다). ⏵ 같은 날 — **v8로
+    #   올렸다**(도구 루프 · #419 — v8도 그 집합에 든다. `thresholds.auditor_tool_hops`가
+    #   양수여야 돈다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.
@@ -231,7 +233,8 @@ profiles:
     #
     # ⚠ **전 역할이 `harness_pool`과 같은 §1 키다** — Scout seccoderx·qwen3-14b(v3),
     #   Auditor `qwen3.8-27b`(⏵ 2026-09-29 — 근거 본문 배선과 함께 v3, 같은 날 v4로 올렸다 ·
-    #   ⏵ 2026-10-03 v6 — #418·#421 · 사고 켬 · ⏵ 2026-10-04 v7 — #349 SOURCE 서술), Critic gpt-oss.
+    #   ⏵ 2026-10-03 v6 — #418·#421 · 사고 켬 · ⏵ 2026-10-04 v7 — #349 SOURCE 서술 · 같은 날 v8 —
+    #   #419 도구 루프), Critic gpt-oss.
     #   checksum·검증 전. **reranker는 2026-09-20에 §1 정본대로 `qwen3-reranker-4b`로
     #   올렸다** — 두 풀 프로필을 같은 diff에서 고친다(`tests/test_config.py`가 쌍의 roles 동일을
     #   기계로 고정하므로 한쪽만 고치면 red다).

@@ -89,12 +89,14 @@ SliceBody = frozenset[tuple[str, int]]
 # 그 스크립트는 이미지 안에서 살고 `src/`를 import 하지 않아 **형식이 양쪽에 따로
 # 존재한다**(`container_tools._INDEX_SUFFIXES` ↔ `indexer._GRAMMARS`와 같은 이중화).
 # 어긋나면 예외가 아니라 `unsupported_version`이 되고 그래프 섹션이 통째로 사라지므로,
-# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1·v2도 계속 읽는다 — 그 이미지로
-# 돈 run의 산출물이 남아 있고, 캡슐 그래프는 세 형식에서 같은 간선을 낸다(`_call_edges`).
-# v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한 것이다(#304).
-SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2", "index-v3")
+# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1·v2·v3도 계속 읽는다 — 그 이미지로
+# 돈 run의 산출물이 남아 있고, 캡슐 그래프는 네 형식에서 같은 간선을 낸다(`_call_edges`).
+# v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한 것이다(#304). v4는 v3 위에 `V4_TABLES`를 더하고
+# `types`의 앞선 선언 typedef 행에 `forward`를 붙인 것이다(`indexer.py`의 index-v4 절).
+SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2", "index-v3", "index-v4")
 _INDEX_V1 = "index-v1"
 _INDEX_V3 = "index-v3"
+_INDEX_V4 = "index-v4"
 
 # index-v2의 조회 표 — NE resolver(#63 후속)가 `GraphIndex.table()`로 읽는다. 모양은
 # `indexer.py` 모듈 docstring의 표다. **캡슐 섹션이 아니다**(`GRAPH_SECTION_KINDS` 주석).
@@ -112,9 +114,17 @@ V2_TABLES = (
 # index-v3가 더한 표(#304) — 쓰기 지점(`writes`)·함수 포인터 바인딩(`fn_bindings`)·필드 경유
 # 간접 호출(`field_calls`). v2 문서에서는 `table()`이 `None`을 낸다(「없다」 — 「0건」이 아니다).
 V3_TABLES = ("writes", "fn_bindings", "field_calls")
+# index-v4가 더한 표 — 파일별 `#include` 지시문(`includes` — 키가 이름이 아니라 **파일**이다)과 enum
+# 상수(`enum_constants` — 범위는 그 enum 정의 전체). v3 이하 문서에서는 `table()`이 `None`을 낸다.
+V4_TABLES = ("includes", "enum_constants")
 # Auditor `SOURCE`가 정의 줄을 붙이는 표(#349 (f) — `definitions_of`). 이 순서로 보고 처음
-# 걸린 표에서 정한다.
-DEFINITION_TABLES = ("macros", "types", "file_vars")
+# 걸린 표에서 정한다. `enum_constants`는 v4 문서에만 있다 — 없는 표는 건너뛴다.
+DEFINITION_TABLES = ("macros", "types", "file_vars", "enum_constants")
+# `definitions_of`의 include 도달성(v4 `includes`)이 앵커 파일에서 따라가는 깊이와 파일 수 상한.
+# **정한 값이지 잰 값이 아니다.** 상한에 걸려 잘린 닫힘에서는 닿는 정의가 하나뿐으로 보여도 상한
+# 밖에 둘째가 있을 수 있다 — 그 경우를 세지는 않는다.
+_INCLUDE_DEPTH = 8
+_INCLUDE_FILES = 2000
 
 # 정의 조회가 「저장소에서 하나뿐」 판정에서 제품 경로 뒤로 미루는 디렉터리 이름
 # (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`·`functions_named`·
@@ -169,6 +179,9 @@ _RECORD_KEYS = {
     "writes": ("file", "line", "func", "lhs", "rhs", "op", "form", "base"),
     "fn_bindings": ("file", "line", "func", "fn", "form"),
     "field_calls": ("file", "line", "caller", "args", "expr"),
+    # v4 — `includes`는 파일 → 지시문 목록이지만 모양(키 → 기록 목록)이 같아 같은 검사를 탄다.
+    "includes": ("line", "path", "system"),
+    "enum_constants": ("file", "line_start", "line_end", "enum"),
 }
 # 위 키 중 줄 번호 — 정수여야 한다(`_v2_tables`).
 _LINE_KEYS = frozenset({"line", "line_start", "line_end"})
@@ -254,6 +267,13 @@ class GraphIndex:
         self._calls: list[tuple[str, str, str, int]] = []
         # index-v2 조회 표(읽기 전용). v1이거나 못 읽었으면 `None`이다(`table()`).
         self._tables: dict[str, Mapping[str, Any]] | None = None
+        # 인덱싱한 파일(`files`) — v4 include 경로를 저장소 파일로 풀 때 쓴다(`_resolve_include`).
+        self._files: frozenset[str] = frozenset()
+        # 지연 캐시 — 파일 이름 → 그 이름의 파일들, (포함 디렉터리, 경로, 꺾쇠) → 푼 파일, 앵커 →
+        # include 닫힘. 조회마다 다시 만들면 정의 조회 하나가 저장소 전체를 훑는다.
+        self._by_base: dict[str, list[str]] | None = None
+        self._resolved: dict[tuple[str, str, bool], tuple[str, ...]] = {}
+        self._closures: dict[str, frozenset[str]] = {}
 
     # --- 조회 -----------------------------------------------------------
 
@@ -365,7 +385,7 @@ class GraphIndex:
 
         | 반환 | 뜻 |
         | --- | --- |
-        | `None` | 인덱스 없음·버전 모름·깨짐, **index-v1**(표가 없는 형식), v2의 `V3_TABLES` |
+        | `None` | 없음·버전 모름·깨짐, **index-v1**(표 없음), 그 판에 없는 표(v2의 V3·V4 등) |
         | `{}` | v2인데 그 표가 0건 |
         | `{...}` | 표. 모양은 `indexer.py` 모듈 docstring의 표다 |
 
@@ -378,7 +398,7 @@ class GraphIndex:
         표의 정의 **위치**는 `definitions_of`도 읽는다 — Auditor `SOURCE`가 정의 줄을 원문으로 싣는
         것이지(#349 (f)) 표가 캡슐 섹션이 되는 것은 아니다.
         """
-        if name not in V2_TABLES + V3_TABLES:
+        if name not in V2_TABLES + V3_TABLES + V4_TABLES:
             raise ValueError(f"조회 표가 아니다: {name}")
         self._load()
         return None if self._tables is None else self._tables.get(name)
@@ -430,22 +450,43 @@ class GraphIndex:
     def definitions_of(
         self, names: Iterable[str], near_file: str, *, demote_nonproduct: bool = False
     ) -> list[Location] | None:
-        """이름들 중 매크로·타입(struct/union/enum/typedef)·파일 스코프 변수인 것의 **정의 위치**.
+        """이름들 중 매크로·타입(struct/union/enum/typedef)·파일 스코프 변수·enum 상수(v4)인 것의
+        **정의 위치**.
 
         `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1). Auditor `SOURCE`가 실린 코드가 쓰는
         `#define`·구조체 정의를 붙이는 데 쓴다(#349 (f)) — 버퍼 크기·필드 배치를 모르면 경계 판단을
-        못 한다. 정의를 고르는 규칙은 `callees_of`와 같다:
+        못 한다. 정의를 고르는 기본 규칙은 `callees_of`와 같다(아래 접기·도달성은 여기만):
 
         - `near_file`에 정의가 있으면 그것, 없으면 저장소 전체에서 **하나뿐일 때만**
-        - 여럿이면(`#if` 양쪽 가지 · 같은 이름 여러 파일) 싣지 않는다 — 이름만으로 못 가른다
+        - 여럿이면(`#if` 양쪽 가지 · 같은 이름 여러 파일) 싣지 않는다 — 이름만으로 못 가른다.
+          **v4 문서는 한 번 더 본다**(아래 「include 도달성」)
         - 표는 `DEFINITION_TABLES` 순서로 보고 처음 걸린 표에서 정한다
+        - enum 상수(v4 `enum_constants`)의 위치는 **그 enum 정의 전체**다 — 같은 enum의 상수 여럿을
+          물으면 같은 위치가 여러 번 나오고, 겹치는 범위는 읽는 쪽(`runner`)이 한 번만 싣는다
+
+        **같은 사실의 행은 하나로 센다**(`_definition_rows` — 판에 상관없다).
+        `typedef struct Z {…} Z;`는 `types`에 범위가 같은 행 둘(struct · typedef)을 내는데 둘로 세면
+        「하나뿐」이 영영 안 선다.
+        v4는 `typedef struct X X;`(앞선 선언 — `forward`)도 **같은 파일에** 그 이름의 본문 행이
+        있으면 뺀다. 다른 파일의 본문이나 별칭 이름이 다른 태그의 본문은 그 행을 못 대신하므로
+        뺄 근거가 아니다 — 두 행이 남는다(index-v3와 같다). 그다음은 아래 규칙대로다: 앵커
+        파일에 있는 행이 먼저고, 아니면 앵커의 include 닫힘에 든 행이 하나뿐일 때 그것이다.
+        본문 파일이 앵커면 본문, 앵커가 typedef 헤더만 include하면 typedef 한 줄이고, **둘 다
+        닿거나 둘 다 안 닿으면 안 붙는다.**
+
+        **include 도달성(v4).** 후보가 여럿이고 `near_file`에 없으면, `near_file`이 `#include`로
+        닿는 파일(`_include_closure` — 깊이 `_INCLUDE_DEPTH`·파일 `_INCLUDE_FILES`까지)의 후보만
+        남긴다. **하나 남을 때만** 그것을 싣고, 0이거나 여럿이면 예전처럼 안 싣는다. `TRUE`·`size_t`
+        처럼 여러 헤더가 정의하는 이름이 앵커가 실제로 include하는 헤더 하나로 좁혀진다. include
+        경로는 파일 경로 접미로 푼다(`_resolve_include`) — `-I` 설정·매크로 경로·대상 트리 밖
+        헤더는 모른다. v3 이하 문서(`includes` 표 없음)는 이 단계가 없다.
 
         순서는 (파일, 시작 줄)이다(결정론).
 
         `demote_nonproduct`(기본 꺼짐 — Auditor `SOURCE`만 켠다)면 「저장소에서 하나뿐」 판정에서
         비제품 경로(`is_nonproduct_path` — `tests/`·`examples/`·`third_party/` 등)의 정의가 한 단계
-        낮다. **표를 가로질러 본다**: 그 이름의 제품 정의가 세 표 어디에든, 또는 제품 **함수**
-        (`_defined`)로 있으면 비제품 행은 세 표 모두에서 후보가 아니다. 그다음 남은 행으로 위 규칙
+        낮다. **표를 가로질러 본다**: 그 이름의 제품 정의가 정의 표 어디에든, 또는 제품 **함수**
+        (`_defined`)로 있으면 비제품 행은 정의 표 모두에서 후보가 아니다. 그다음 남은 행으로 위 규칙
         (표 순서 · 하나뿐)을 그대로 돈다 —
         - `DUP`이 `lib/`와 `tests/`의 매크로면 `lib/`의 것으로 정해진다
         - 제품 typedef `node`와 비제품 매크로 `node`면 매크로 표를 건너뛰고 typedef가 나온다
@@ -454,6 +495,10 @@ class GraphIndex:
         제품 정의가 하나도 없으면 비제품 정의도 그대로 쓴다 — **삭제가 아니다.** 순서도 제품 정의가
         먼저다(읽는 쪽이 상한까지만 싣는다). `near_file`이 비제품이면 강등하지 않는다 — 그 코드가
         쓰는 정의는 형제 비제품 경로에 있는 것이 정상이다.
+
+        **강등이 도달성보다 먼저다.** 제품 앵커가 `tests/` 헤더를 include하는 일은 드물어 순서가
+        결과를 바꾸는 경우가 적고, 강등을 먼저 두면 강등만 켠 조회(v3 이하 문서)와 같은 행에서
+        출발한다. 강등이 비제품 행을 다 뺀 뒤 남은 제품 행이 하나도 안 닿으면 아무것도 안 싣는다.
         """
         if self._load().status != STATUS_LOADED or self._tables is None:
             return None
@@ -463,13 +508,14 @@ class GraphIndex:
         found: list[Location] = []
         for name in wanted:
             for table in DEFINITION_TABLES:
-                rows = self._tables[table].get(name)
+                rows = self._tables.get(table, {}).get(name)
                 if rows and name in product_names:
                     rows = [row for row in rows if not is_nonproduct_path(row["file"])]
                 if not rows:
                     continue
+                rows = _definition_rows(rows)
                 here = [row for row in rows if row["file"] == near_file]
-                candidates = here or list(rows)
+                candidates = here or self._reachable(rows, near_file)
                 if len(candidates) == 1:
                     row = candidates[0]
                     found.append(
@@ -491,8 +537,81 @@ class GraphIndex:
             ),
         )
 
+    def _reachable(self, rows: list, near_file: str) -> list:
+        """후보 행이 여럿이면 `near_file`의 include 닫힘에 든 행이 **하나뿐일 때** 그 행만, 아니면
+        그대로.
+
+        v4 `includes` 표가 없으면(v3 이하) 아무것도 안 한다 — 옛 문서의 조회 결과가 안 바뀐다.
+        """
+        assert self._tables is not None
+        if len(rows) <= 1 or "includes" not in self._tables:
+            return list(rows)
+        closure = self._include_closure(near_file)
+        reached = [row for row in rows if row["file"] in closure]
+        return reached if len(reached) == 1 else list(rows)
+
+    def _include_closure(self, near_file: str) -> frozenset[str]:
+        """`near_file`과 그것이 `#include`로 (전이적으로) 닿는 저장소 파일. 깊이 `_INCLUDE_DEPTH`,
+        파일 `_INCLUDE_FILES`까지다 — 넘치면 거기서 자른다. 앵커마다 한 번 계산해 둔다."""
+        cached = self._closures.get(near_file)
+        if cached is not None:
+            return cached
+        assert self._tables is not None
+        includes = self._tables["includes"]
+        seen = {near_file}
+        frontier = [near_file]
+        for _ in range(_INCLUDE_DEPTH):
+            following = []
+            for file in frontier:
+                for row in includes.get(file, ()):
+                    for target in self._resolve_include(file, row["path"], row["system"]):
+                        if target not in seen and len(seen) < _INCLUDE_FILES:
+                            seen.add(target)
+                            following.append(target)
+            if not following:
+                break
+            frontier = following
+        closure = frozenset(seen)
+        self._closures[near_file] = closure
+        return closure
+
+    def _resolve_include(self, includer: str, path: str, system: bool) -> tuple[str, ...]:
+        """include 경로 → 저장소 파일들. 못 풀면 빈 튜플이다(libc 헤더 · 대상 트리 밖).
+
+        1. 따옴표 include(`system`이 거짓)는 포함 파일의 디렉터리 기준 경로가 인덱싱한 파일이면
+           그것 하나다 — 컴파일러가 먼저 보는 자리다(`../`도 여기서 푼다).
+        2. 아니면 경로 **접미**가 같은 파일(`foo/bar.h`는 `foo/bar.h`·`x/foo/bar.h`)을 찾는다. 앞의
+           `./`·`../`는 떼고 맞춘다. 여럿이면 경로 성분이 가장 적은 것, 그래도 여럿이면 **전부** —
+           어느 `-I`가 이기는지 모르니 하나를 고르지 않는다(닫힘이 넓어질 뿐이고 그만큼 「하나뿐」이
+           덜 선다).
+        """
+        here = posixpath.dirname(includer)
+        key = (here, path, system)
+        cached = self._resolved.get(key)
+        if cached is not None:
+            return cached
+        norm = path.replace("\\", "/")
+        local = posixpath.normpath(posixpath.join(here, norm))
+        if not system and local in self._files:
+            resolved: tuple[str, ...] = (local,)
+        else:
+            parts = [part for part in norm.split("/") if part not in ("", ".", "..")]
+            suffix = "/".join(parts)
+            if self._by_base is None:
+                self._by_base = {}
+                for file in sorted(self._files):
+                    self._by_base.setdefault(posixpath.basename(file), []).append(file)
+            candidates = self._by_base.get(parts[-1], []) if parts else []
+            matches = [
+                file for file in candidates if file == suffix or file.endswith("/" + suffix)
+            ]
+            fewest = min((file.count("/") for file in matches), default=0)
+            resolved = tuple(file for file in matches if file.count("/") == fewest)
+        self._resolved[key] = resolved
+        return resolved
+
     def _product_definition_names(self, names: list[str]) -> frozenset[str]:
-        """`names` 중 제품 경로에 정의가 하나라도 있는 이름 — 세 정의 표와 함수(`_defined`)를 함께
+        """`names` 중 제품 경로에 정의가 하나라도 있는 이름 — 정의 표와 함수(`_defined`)를 함께
         본다. `definitions_of`의 표를 가로지른 강등이 쓴다(v2 표가 실려 있을 때만 부른다)."""
         assert self._tables is not None
         wanted = set(names)
@@ -501,7 +620,8 @@ class GraphIndex:
             for name in wanted
             for table in DEFINITION_TABLES
             if any(
-                not is_nonproduct_path(row["file"]) for row in self._tables[table].get(name, ())
+                not is_nonproduct_path(row["file"])
+                for row in self._tables.get(table, {}).get(name, ())
             )
         }
         for file, symbols in self._defined.items():
@@ -950,6 +1070,7 @@ class GraphIndex:
             defined = _defined_symbols(document["symbols"])
             calls = _call_edges(document["calls"], version)
             tables = _v2_tables(document, version) if version != _INDEX_V1 else None
+            files = frozenset(document["files"])
             summary = IndexSummary(
                 status=STATUS_LOADED,
                 files=len(document["files"]),
@@ -966,6 +1087,7 @@ class GraphIndex:
             # `_tables`는 초기값 그대로다 — 절반만 채워진 그래프도 표도 남지 않는다.
             return IndexSummary(status=STATUS_MALFORMED)
         self._defined, self._calls, self._tables = defined, calls, tables
+        self._files = files
         return summary
 
 
@@ -1055,7 +1177,7 @@ def _defined_symbols(symbols: list[dict]) -> dict[str, list[tuple[str, int, int]
 def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, int]]:
     """(caller, callee, 호출 지점 file, 호출 지점 line). **두 형식에서 같은 간선이다.**
 
-    index-v1의 `calls`는 간선 목록이고, index-v2·v3는 같은 간선을 callee → 호출 지점(+ 인자)으로
+    index-v1의 `calls`는 간선 목록이고, index-v2~v4는 같은 간선을 callee → 호출 지점(+ 인자)으로
     묶었다. 캡슐 그래프 섹션은 이 튜플만 보므로 형식이 바뀌어도 한 글자도 안 바뀐다 —
     `tests/test_index_graph.py`의 v2 절이 박는다. 버전과 모양이 어긋나면(v1인데 묶음, v2인데
     목록) 여기서 예외가 나고 `_read`가 문서를 통째로 거절한다.
@@ -1081,17 +1203,21 @@ def _v2_tables(document: dict, version: str) -> dict[str, Mapping[str, Any]]:
     **v3 문서는 더 본다**(#464 리뷰). v3 조회(`writes_of` 등)는 행 값을 `Location`과 집합 원소로
     바로 쓰므로, 줄 0이나 매핑 `func`가 통과하면 조회 도중 `ValidationError`·`TypeError`로 죽는다.
     그래서 `V3_TABLES`는 값 형·허용 값을 다(`_V3_VALUES`), v3 조회가 함께 읽는 `field_assigns`는
-    `file`·`func`를 본다.
+    `file`·`func`를 본다. **v4 문서는** `V4_TABLES`도 같은 식으로 본다(`_V4_VALUES`).
     """
     tables = {}
-    v3 = version == _INDEX_V3
-    for name in V2_TABLES + (V3_TABLES if v3 else ()):
+    v4 = version == _INDEX_V4
+    v3 = version == _INDEX_V3 or v4
+    for name in V2_TABLES + (V3_TABLES if v3 else ()) + (V4_TABLES if v4 else ()):
         table = document[name]
         if not isinstance(table, dict):
             raise TypeError(f"{version}의 {name}는 매핑이다")
         if name in _RECORD_KEYS:
             keys = _RECORD_KEYS[name]
-            checks = _V3_VALUES.get(name, {}) if v3 else {}
+            checks = {
+                **(_V3_VALUES.get(name, {}) if v3 else {}),
+                **(_V4_VALUES.get(name, {}) if v4 else {}),
+            }
             for records in table.values():
                 for record in records:
                     if not isinstance(record, dict) or not all(key in record for key in keys):
@@ -1147,6 +1273,39 @@ _V3_VALUES: dict[str, dict[str, Callable[[Any], bool]]] = {
         "expr": _is_str,
     },
 }
+
+
+# v4 문서에서 더 보는 값 형(`_v2_tables`). `includes`는 키가 파일이다. `types`의 `forward`는 앞선
+# 선언 typedef 행에만 있다(있으면 `true` — 같은 파일에 본문 행이 있을 때만 단다).
+_V4_VALUES: dict[str, dict[str, Callable[[Any], bool]]] = {
+    "includes": {"path": _is_name, "system": lambda value: isinstance(value, bool)},
+    "enum_constants": {"file": _is_name, "enum": lambda value: value is None or _is_name(value)},
+}
+
+
+# `types` 행 중 본문 있는 태그의 `kind` — `indexer._TAG_KINDS`와 같다(인덱서는 `src/`를 import 하지
+# 않아 값이 양쪽에 있다). 본문 없는 `struct X;`는 표에 안 든다.
+_TAG_KINDS = frozenset({"struct", "union", "enum"})
+
+
+def _definition_rows(rows: Iterable[Mapping[str, Any]]) -> list:
+    """정의 표 행에서 **같은 사실**을 하나로 접는다 — `definitions_of`의 「하나뿐」 판정 앞.
+
+    - 같은 (파일, 시작 줄, 끝 줄)은 하나다 — `typedef struct Z {…} Z;`가 struct·typedef 두 행을 낸다
+    - 앞선 선언 행(v4 `forward` — `typedef struct X X;`)은 **같은 파일에** 본문 있는 태그 행
+      (`struct`·`union`·`enum`)이 있을 때만 뺀다. 표시만 믿지 않고 그 전제를 여기서 다시 본다 —
+      인덱서도 같은 전제로 표시하지만(`indexer._lookup_tables`), 다른 파일의 같은 이름 행
+      (`typedef int X;`)이나 이름이 다른 태그의 본문 때문에 지우면 후보가 줄어 도달성 검사를
+      건너뛰고 엉뚱한 정의가 붙는다
+    """
+    rows = list(rows)
+    tagged_files = {row["file"] for row in rows if row.get("kind") in _TAG_KINDS}
+    distinct: dict[tuple[str, int, int], Mapping[str, Any]] = {}
+    for row in rows:
+        # 앞선 선언을 먼저 거른다 — 같은 줄에 본문이 있어 범위가 같으면 접기가 본문 행을 가린다
+        if not (row.get("forward") and row["file"] in tagged_files):
+            distinct.setdefault((row["file"], row["line_start"], row["line_end"]), row)
+    return list(distinct.values())
 
 
 # 헤더 확장자 — `writes_of`의 「파일 스코프 변수가 하나뿐」에서 `extern` 선언을 빼는 근사다(표에는

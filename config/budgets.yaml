@@ -92,6 +92,51 @@ thresholds:
   # 아니다** — 여기를 올리면 Scout 되묻기·`cli estimate`의 `scout_calls`까지 같이 움직인다(이슈 #419).
   max_hops: 3
 
+  # Auditor 도구 루프의 **전용** 상한(이슈 #419). 조사 홉은 hop 0..값-1이고 hop 값은
+  # `answer`여야 한다 — 모델 호출은 후보당 최대 `1 + 이 값`회다(`nodes/auditor._run_hops` ·
+  # `cli estimate`의 `auditor_calls`). 0이면 루프가 꺼지고 한 방 Finding 판으로 돈다.
+  #
+  # ⚠ 위 `max_hops`가 **아니다.** 거기를 올리면 Scout 되묻기와 PoV 홉까지 같이 움직인다.
+  #
+  # 이 값과 배선된 프롬프트 판은 **같은 말을 해야 한다** — 양수인데 판이 `Finding`을
+  # 선언하거나, 0인데 판이 `AuditorAction`을 선언하거나, 루프 판이 meta `tools`를 안 들면
+  # `nodes/auditor.loop_problem`이 run과 doctor를 같은 문장으로 막는다(한쪽만 통과하는
+  # 설정이면 통과한 run이 첫 Auditor 호출에서야 선다 — 그 앞 단계의 GPU 시간 뒤다).
+  #
+  # **16은 실험팀·사용자 판단으로 받은 값이고 이 하네스에서 안 쟀다(§0).** 홉당 usage는
+  # 0 관측이고, 실측 근거는 `auditor_hop` trace가 처음 돈 run에서 만든다.
+  # 🔴 **창이 드는지도 미실측이다.** 계산값으로만: 입력 몫 196,608토큰(vast 창 262,144 −
+  # 출력 상한 65,536)인데 글자/토큰 최악 비 1.22에서 `lookup` 관측 16개만 196,736이라
+  # hop0를 빼고도 넘는다(`nodes/auditor.py`의 `_LOOKUP_MAX_CHARS` 주석이 그 셈을 든다).
+  # 낙관 비 3.28이면 16홉 합이 73,184로 든다. 어느 쪽인지는 돌려 봐야 안다 — 넘으면 서버가
+  # 크기로 거절하고 그 예외는 안 흡수한다.
+  # 🔴 **run 입력 예산 `default.input_tokens`(4,000,000)도 다시 안 쟀다 — 아래는 계산값이고
+  # 실측이 아니다.** `BudgetLedger.charge`는 호출마다 서버가 센 `prompt_tokens` 전체를 더하고
+  # (`cached_tokens`는 안 뺀다), 루프는 매 홉 prefix(system)와 hop0 user 턴(SOURCE·FACTS)을
+  # `history` 맨 앞에 **다시** 싣는다(`nodes/auditor.py` 모듈 docstring). 후보 하나가 홉 h번을 쓰면
+  # 입력은 `(h+1) × hop0 + 관측 누적`이다.
+  # - hop0 ≈ 30,924토큰: prefix 33,209자(`prompts/auditor/v8/prefix.md`를 센 글자 수 —
+  #   `tests/test_auditor_prompt_v8.py`가 핀으로 든다) ÷ 3.04(#349의 글자/토큰 중앙 비) ≈ 10,924
+  #   + SOURCE 상한 20,000(아래 `auditor_source_tokens` — entry 함수는 그 밖이라 더 클 수 있다.
+  #   FACTS의 근거 본문은 안 셌다).
+  # - 16홉을 다 쓰면 17호출 × 30,924 ≈ 525,700토큰/후보. 거기에 `lookup` 관측이 매번 15,000자
+  #   (`_LOOKUP_MAX_CHARS`, 위 낙관 비 3.28이면 4,574토큰)로 오면 홉 k의 요청에 k개가 쌓여
+  #   136 × 4,574 ≈ 622,100이 더해진다 → 약 1,147,800토큰/후보(어시스턴트 턴 열여섯은 안 셌다).
+  # - 4,000,000 ÷ 525,700 ≈ 7.6 · ÷ 1,147,800 ≈ 3.5후보 — scout·critic 몫을 빼기 전이고 후보마다
+  #   16홉을 다 쓴다는 가정이다. 한 방 판이면 같은 한도가 hop0 한 번씩으로 약 129후보다. 넘으면
+  #   `BudgetExhausted`로 run이 부분 결과로 끝난다. 모델이 일찍 `answer`하면 이보다 훨씬 적다 —
+  #   홉 수 분포는 0 관측이다. **예산 값은 안 바꿨다**(돈이 걸린 결정 — 사용자·실험팀 몫).
+  # - **이 수들은 상한 쪽 계산값이다 — 오차는 대체로 위(과대)로 난다.** SOURCE 20,000은 통상값이
+  #   아니라 상한이고(대부분은 더 작다), 위 「16홉을 다 쓴다」도 가정이다. 다만 엄밀한 천장은
+  #   아니다: 3.04는 C 코드 SOURCE에서 잰 비라 영어 prefix에 맞지 않을 수 있고(`config/models.yaml`의
+  #   「영어 텍스트의 비를 4 아래로 묶은 실측이 없다 · v3 스모크의 2.29 이상」 — 2.29면 hop0는
+  #   33,209 ÷ 2.29 + 20,000 ≈ 34,502, 계산값), entry 함수는 SOURCE 상한 밖이다.
+  # ⚠ `cli estimate`는 이것을 못 센다: `_estimate`는 `캡슐 토큰 × 자리 수 + prefix × 호출 수`이고
+  # prefix가 역할 평균(`harness_pool`에서 4,481토큰 — `len//4`)이라 Auditor 호출을 홉마다 약
+  # 4.5k로 센다. SOURCE(한 방일 때도 안 센다)와 홉마다의 hop0 재전송·관측 누적이 빠져 **루프를 켠
+  # 뒤 과소추정**이다. 고치지 않았다(별 작업).
+  auditor_tool_hops: 16
+
   # queued 후보의 재평가 횟수 상한. 새 Evidence가 들어올 때마다 무한히 재평가하면
   # 토큰이 샌다. 초과 시에도 폐기하지 않고 queued를 유지하며 사유 코드만 남긴다.
   requeue_max: 2
@@ -384,7 +429,9 @@ thresholds:
     expanded: 18000
     focused: 8000
 
-  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 v7(v6 + 이 넷의 서술 · ⏵ 2026-10-04 맨 아래 래퍼 너머 · 간접 피호출 · 쓰기 지점 창까지 일곱)이 이 넷을 서술하고 meta의
+  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 **v8**(⏵ 2026-10-04 — 도구 루프, #419.
+  # 이 절의 서술은 v7에서 **바이트 그대로** 물려받았다 — `tests/test_auditor_prompt_v8.py`)과
+  # 그 전 판 v7(v6 + 이 넷의 서술 · ⏵ 2026-10-04 맨 아래 래퍼 너머 · 간접 피호출 · 쓰기 지점 창까지 일곱)이 이 넷을 서술하고 meta의
   # `source_options`로 선언한다 -> 하나라도 끄면 v7의 서술이 거짓이 된다(`cli`는 켠 쪽만 검사).
   # ⏵ 여덟째 `auditor_guards`(맨 아래)는 v7이 서술·선언하지 **않는다** — 꺼 두었고, 켜려면 프롬프트 판이 먼저
   # 선언해야 한다(아래).
@@ -412,7 +459,8 @@ thresholds:
   auditor_indirect_callees: 1
   auditor_write_sites: 6
   # sink 앞 구문상 가드 목록(GUARDS · #349 · 2026-10-04). **꺼짐(0)이다** — 위 일곱과 달리 켜 두지 않았다.
-  # **v7은 이 옵션을 서술·선언하지 않는다** — 그래서 1로 켜고 v7을 고르면 `cli` run·doctor가 막는다
+  # **v7도 v8도 이 옵션을 서술·선언하지 않는다** — 그래서 1로 켜고 둘 중 하나를 고르면 `cli`
+  # run·doctor가 막는다
   # (`source_options` 가드, #351). 켜려면 프롬프트 판이 `auditor_guards`를 서술·선언해야 하고 그것은 다음 판
   # 몫이다(켠 효과 측정과 함께). v7 prefix를 안 건드린 것은 꺼진 기본 run의 입력(prefix 길이)을 측정 없이
   # 바꾸지 않으려는 것이다. 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에

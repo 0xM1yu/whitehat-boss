@@ -192,7 +192,8 @@ class Deps:
     # (index-v3 `writes`·`assigns`·`field_assigns`, #304 · C5(a)). Auditor `SOURCE`의 쓰기 지점 창.
     writes_of: Callable[[str, str], list[Location] | None] = lambda _name, _file: None
     field_writes_of: Callable[[str, str], list[Location] | None] = lambda _field, _file: None
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수·enum 상수의 정의 위치(#349 (f)). `callees_of`와
+    # 같은 자리.
     definitions_of: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름(`locals` 표). 정의 조회가 본문 이름에서
     # 이것을 뺀다(`runner._auditor_source`). 기본값 `None`("v2 표 없음")은 뺄 것이 없다는 뜻이다.
