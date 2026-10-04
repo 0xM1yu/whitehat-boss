@@ -1538,7 +1538,12 @@ def _auditor_evidence_facts(ctx: RunContext, version: str, payload: str | None):
 
     auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
 
-    return _facts_of(ctx.models.last_for(Role.AUDITOR).body)["evidence"], evidences
+    # **첫** Auditor 프롬프트(hop0)를 읽는다 — 한 방 판은 하나뿐이라 마지막과 같고, 도구 루프 판은
+    # 홉마다 프롬프트를 남겨 마지막이 후속 홉의 도구 관측이라 FACTS가 없다. FACTS를 싣는 것은 hop0
+    # 하나다(`auditor._render_hop0`). 마지막을 읽으면 `_CONTENT_AWARE_VERSIONS`에 루프 판이 들어오는
+    # 순간(#491의 v8) 이 검사가 IndexError로 죽는다 — 어느 PR도 단독으로는 안 깨져 CI가 못 잡는다.
+    hop0 = next(prompt for seen, prompt in ctx.models.prompts if seen is Role.AUDITOR)
+    return _facts_of(hop0.body)["evidence"], evidences
 
 
 def test_auditor_v1_facts_carry_no_evidence_location(ctx: RunContext) -> None:
