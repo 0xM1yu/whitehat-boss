@@ -17,6 +17,8 @@
 #
 # ⚠ 이 경로로 끝까지 돈 run은 아직 없다(2026-10-03). 래퍼의 인자·환경·따옴표·종료 코드 전달은 가짜 ssh로만
 #   확인했다(`tests/test_remote_swap.py`).
+#   ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
+#   `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`). Windows 쪽 서술의 사유는 #477이 고친다.
 
 command: [bash, tools/serve/swap-remote.sh]
 
