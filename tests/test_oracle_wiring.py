@@ -1,21 +1,25 @@
 """채점기(oracle) 배선 — 후보마다 vul, 지정한 하나에만 fix (#386).
 
 러너(`_run_pov`·`_finalize_oracle`)를 `dev_fake` 문맥에서 직접 돌려 **후보 N개가 vul 제출 N건이 되고
-fix 다리는 후보가 0개면 0번 · 1개면 정확히 한 번 · 2개 이상이면 0번 도는지**(셋 다 건다),
+fix 다리는 후보가 0개면 0번 · 1개 이상이면 정확히 한 번 도는지**(둘 다 건다),
 지정·실패·부재가 서로 다른 기록이 되는지, 판정이 trace의 재현성 기준을 안 깨는지를 본다. CLI 조립
 가드·파서·`submit.sh` 신원은 `tests/test_oracle_cli.py`가 본다. 끝의 두 절은 마스킹 서버 몫이다 -
 제출은 masked id, 조회는 실 id(`TaskOracle.query_task_id`)로 가는지와 그 실 id를 `--mask-map`에서
 만드는 `cli._oracle_for`의 이음(여기만 `_oracle_for`를 직접 부른다 - `cli.run`은 안 돈다).
 
-**후보가 둘 이상일 때의 규칙은 2026-10-03에 동결됐다** — 하네스 **내부 근거 등급의 최댓값**을 든
-후보가 하나뿐이면 그것이 최종이고(`top_grade`), 동점이거나 등급을 모르는 후보가 있으면 지정하지
-않는다(`grade_tie`·`grade_unknown`). 끝 절의 검사들이 그 규칙과 **불변식**(지정 로직은 채점기가
-돌려준 값을 안 읽는다)을 건다.
+**후보가 둘 이상일 때의 규칙은 ⏵ 2026-10-04에 사슬로 바뀌었다.** 2026-10-03 동결판은 「내부 근거
+등급의 최댓값 · 동점이면 거부」였고 실측 run에서 후보 8건이 **같은 PoC 바이트 1개**라 그 거부가
+점수를 0으로 만들었다. 지금은 같은 바이트끼리 **접고**(`sole_poc`) 남은 동점을 **전순서**로
+가른다 — ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시. `designation`에 **실제로 가른
+단계**가 찍힌다. 등급 또는 `confidence`를 모르는 후보가 있으면 여전히 거부다(`grade_unknown`).
+끝 절의 검사들이 그
+사슬과 **불변식**(지정 로직은 채점기가 돌려준 값을 안 읽는다)을 건다.
 
-⚠ **위 `ctx` 문맥의 후보 N개는 근거가 없는 손수 만든 Finding이라 등급이 전부 E0이다**(도구가 안
-돈다) - 그래서 후보가 둘 이상이면 `grade_tie`로 거부되고 `fix` 다리는 **0번**이다. 등급이 **갈리는**
-run(재현이 한쪽만 성공해 8단계 `gate_eval`이 E4 · E3으로 가른다)과 `dev_fake`의 동점(둘 다 E4)은
-`tests/test_pipeline_e2e.py`가 파이프라인으로 문다.
+⚠ **위 `ctx` 문맥의 후보 N개는 근거가 없는 손수 만든 Finding이라 등급이 전부 E0이고 `confidence`도
+같다**(도구가 안 돈다) - 그래서 후보가 둘 이상이면 사슬이 ③까지 내려가 **바이트가 작은 쪽**이
+지정되고 `fix` 다리는 **정확히 한 번** 돈다(앞 판은 여기서 `grade_tie`로 거부해 0번이었다). 등급이
+**갈리는** run(재현이 한쪽만 성공해 8단계 `gate_eval`이 E4 · E3으로 가른다)과 `dev_fake`의
+동점(둘 다 E4)은 `tests/test_pipeline_e2e.py`가 파이프라인으로 문다.
 
 ⚠ **이 파일은 `run_pipeline`·CLI를 돌리지 않는다.** 운영 배선(`cli.run` → `execute` → `build_deps` →
 `Deps.oracle` → `RunContext.oracle`)이 끊기지 않았는지는 `tests/test_pipeline_e2e.py`가 파이프라인과
@@ -29,13 +33,24 @@ from pathlib import Path
 import pytest
 
 from src import cli
+from src.interfaces.model_client import ModelGatewayError
 from src.interfaces.oracle import OracleOutcome, VulSubmission
+from src.orchestrator import oracle_log as oracle_log_module
 from src.orchestrator import runner
+from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.oracle_log import OracleLedger, OracleLog, VulAttempt, vul_ok
+from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade, PovStopReason
 from tests.oracle_fakes import TASK_ID, FakeOracle, submit_script
-from tests.test_nodes import _pov_state, ctx  # noqa: F401
+from tests.test_nodes import (  # noqa: F401
+    _demoted_at_validate,
+    _outside_validated,
+    _pov_state,
+    _with_top_n,
+    ctx,
+)
+from tests.test_pipeline_e2e import _run, _run_transition, _with_index
 from tests.test_pov_loop import _gen, _scripted
 
 _SUBMITTED = PovStopReason.SUBMITTED
@@ -76,14 +91,20 @@ def _drive(ctx, state, findings, oracle):  # noqa: ANN001, ANN202, F811
 
 
 @pytest.mark.parametrize("count", [2, 3])
-def test_several_candidates_all_get_the_vul_leg_and_none_is_designated_so_fix_never_runs(
+def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_runs_once_on_the_designated_one(
     ctx, monkeypatch, count  # noqa: ANN001, F811
 ) -> None:
     """차단 결함: 후보마다 vul·fix·판정을 다 내면 비최종 PoC에도 `-fix` 이미지가 돌고 trace에 판정이
-    N건 남는다. 후보는 vul만 낸다. 이 문맥에서는 후보 N개가 근거 없는 Finding이라 **등급이 전부
-    E0**이고 최댓값이 동점이라 **지정하지 않는다** - 동점에서 자리로 가르지 않는 것이 이 저장소의
-    규칙이다. fix 다리·판정 조회는 **0번**이고 기록은 「최댓값이 동점이라」고 말한다. 바이트는
-    **내용으로** 본다."""
+    N건 남는다. 후보는 vul만 낸다 — `fix` 다리는 **지정한 하나에만 정확히 한 번**이다.
+
+    ⏵ **2026-10-04 — 이 검사가 뒤집힌 자리다.** 앞 판은 이 문맥의 후보가 전부 E0 동점이라 「지정
+    안 함 · `fix` 0번」을 물었다. 그 거부를 사슬로 바꿨으니 이제 지정된다 — 등급(E0)과
+    `confidence`가 같아 사슬이 ③까지 내려가고 **바이트가 작은 쪽**(`_POCS[0]`, 7바이트)이
+    최종이다. `designation`은 `smallest_poc`로, **무엇이 갈랐는지**를 말한다.
+
+    ⚠ **자리로 고르는 구현도 `_POCS[0]`을 낸다**(그것이 첫째다) - 그래서 이 검사만으로는 위치
+    규칙을 배제하지 못한다. 배제하는 것은 `test_the_smallest_poc_wins_even_when_it_came_last`와
+    끝 절의 직접 호출 검사들이다. 바이트는 **내용으로** 본다."""
     state, findings = _findings(ctx, count)
     state.oracle_ledger = OracleLedger(wired=True)
     _stub_loop(monkeypatch, [(poc, _SUBMITTED) for poc in _POCS[:count]])
@@ -92,24 +113,25 @@ def test_several_candidates_all_get_the_vul_leg_and_none_is_designated_so_fix_ne
     _drive(ctx, state, findings, oracle)
 
     assert oracle.vul_calls == _POCS[:count]
-    assert oracle.final_calls == [], "후보가 여럿인데 fix 다리가 돌았다"
+    assert len(oracle.final_calls) == 1, "fix 다리는 지정한 하나에만 정확히 한 번이다"
+    assert oracle.final_calls[0][0] == _POCS[0], "가장 작은 PoC가 지정됐어야 한다"
     assert len(_events(ctx, EventKind.ORACLE_SUBMITTED)) == count
     (final,) = _events(ctx, EventKind.ORACLE_FINAL)
-    assert final.subject_kind is None and final.subject_id is None
+    assert final.subject_kind == "finding" and final.subject_id == findings[0].finding_id
     assert final.data == {
-        "status": "none",
-        "designation": None,
-        "reason": "grade_tie",
-        "poc_sha256": None,
-        "poc_bytes": None,
-        "task_id": None,
+        "status": "scored",
+        "designation": "smallest_poc",
+        "reason": None,
+        "poc_sha256": hashlib.sha256(_POCS[0]).hexdigest(),
+        "poc_bytes": len(_POCS[0]),
+        "task_id": TASK_ID,
         "error": None,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
     }
     summary = state.oracle_ledger.summary()
     assert summary is not None
-    assert (summary["final"], summary["final_reason"]) == ("none", "grade_tie")
-    assert any("최댓값이 동점이라" in w for w in state.oracle_ledger.warnings())
+    assert (summary["final"], summary["final_reason"]) == ("scored", None)
+    assert not any("동점" in w for w in state.oracle_ledger.warnings())
 
 
 def test_exactly_one_candidate_is_the_final_and_the_fix_leg_runs_exactly_once(
@@ -263,7 +285,8 @@ def test_a_failed_vul_submission_is_absorbed_and_recorded_and_the_others_still_g
     ctx, monkeypatch  # noqa: ANN001, F811
 ) -> None:
     """셋째 후보의 vul 제출이 실패해도 run은 간다. 실패는 사유와 함께 남는다 - trace에는 예외 클래스
-    이름만, 문구(URL·로케일 errno)는 사이드카용 장부에만. 남은 후보가 둘이라 지정은 안 된다."""
+    이름만, 문구(URL·로케일 errno)는 사이드카용 장부에만. 남은 후보 둘에서 **작은 바이트**가
+    지정된다(⏵ 2026-10-04 - 앞 판은 「남은 후보가 둘이라 지정은 안 된다」였다)."""
     state, findings = _findings(ctx, 3)
     _stub_loop(monkeypatch, [(poc, _SUBMITTED) for poc in _POCS])
     oracle = FakeOracle(vul_errors={2: RuntimeError("server refused http://10.0.0.1")})
@@ -280,7 +303,8 @@ def test_a_failed_vul_submission_is_absorbed_and_recorded_and_the_others_still_g
         "error": "RuntimeError",
     }, "문구(URL·로케일 errno)는 trace에 없다"
     assert state.oracle_ledger.attempts[2].error_detail == "server refused http://10.0.0.1"
-    assert oracle.final_calls == []
+    # 실패한 셋째는 후보가 아니다 - 남은 둘(7·13바이트) 중 작은 쪽이 최종이다.
+    assert [poc for poc, _ in oracle.final_calls] == [_POCS[0]]
 
 
 def test_a_failed_final_is_failed_not_none(ctx, monkeypatch) -> None:  # noqa: ANN001, F811
@@ -345,9 +369,14 @@ def _final_data(ctx, monkeypatch, *, count, results, oracle):  # noqa: ANN001, A
 def test_every_way_of_ending_without_a_score_is_told_apart_from_the_others(
     ctx, monkeypatch  # noqa: ANN001, F811
 ) -> None:
-    """「최종 PoC가 없다」의 사유 셋과 「최종 PoC가 실패했다」, 점수가 난 run이 모두 **서로 다른**
-    기록이다 (§0 - 같은 모양이면 없음이 실패로, 실패가 없음으로 읽힌다). 사건마다 run을 돌려
-    (status, reason, error, designation)을 모은다."""
+    """「최종 PoC가 없다」의 사유 둘과 「최종 PoC가 실패했다」, 점수가 난 run 둘이 모두 **서로
+    다른** 기록이다 (§0 - 같은 모양이면 없음이 실패로, 실패가 없음으로 읽힌다). 사건마다 run을 돌려
+    (status, reason, error, designation)을 모은다.
+
+    ⏵ **2026-10-04 — `several`이 `none`에서 `scored`로 옮겼다.** 후보 둘이 E0 동점이라 앞 판은
+    `grade_tie`로 거부했고, 지금은 사슬이 작은 바이트로 가른다(`smallest_poc`). 그래서 이 표의
+    「점수 없이 끝나는 길」은 **둘**이고(`no_poc`·`all_vul_submissions_failed`) 나머지 사유
+    `grade_unknown`은 현 러너로 닿지 않는 방어 분기다(끝 절의 직접 호출 검사가 문다)."""
     one = [(_POCS[0], _SUBMITTED)]
     two = [(_POCS[0], _SUBMITTED), (_POCS[1], _SUBMITTED)]
     nothing = [(None, PovStopReason.MAX_HOP), (None, PovStopReason.PARSE_FAILED)]
@@ -372,7 +401,7 @@ def test_every_way_of_ending_without_a_score_is_told_apart_from_the_others(
     assert seen == {
         "no_poc": ("none", "no_poc", None, None),
         "all_vul_failed": ("none", "all_vul_submissions_failed", None, None),
-        "several": ("none", "grade_tie", None, None),
+        "several": ("scored", None, None, "smallest_poc"),
         "final_failed": ("failed", None, "TimeoutError", "sole_candidate"),
         "scored": ("scored", None, None, "sole_candidate"),
     }
@@ -532,8 +561,10 @@ def test_no_server_reported_value_reaches_the_trace(ctx, monkeypatch, tmp_path: 
 def test_the_runner_leaves_a_sidecar_that_survives_a_run_cut_short_before_the_final(
     ctx, monkeypatch, tmp_path: Path  # noqa: ANN001, F811
 ) -> None:
-    """8단계가 중간에 끊기면(`_finalize_oracle`에 못 온다) 그때까지 나간 vul 제출은 사이드카에 남고
-    `final`은 `null`이다 - 「최종 없음」과 「아직 안 갔다」가 다르다."""
+    """8단계가 `validated` 대상에서 중간에 끊기면(`_finalize_oracle`에 못 온다) 그때까지 나간 vul
+    제출은 사이드카에 남고 `final`은 `null`이다 - 「최종 없음」과 「아직 안 갔다」가 다르다.
+    (추가 PoV 대상에서 `BudgetExhausted`로 끊긴 run은 최종 지정까지 하고 끝나므로 이 말이 안
+    닿는다 - 아래 `test_a_budget_stop_inside_the_extra_…`.)"""
     import json
 
     state, findings = _findings(ctx, 2)
@@ -548,6 +579,171 @@ def test_the_runner_leaves_a_sidecar_that_survives_a_run_cut_short_before_the_fi
     assert record["final"] is None
     summary = state.oracle_ledger.summary()
     assert summary is not None and summary["final"] == "not_reached"
+
+
+# --- 추가 PoV 대상(`pov_attempt_top_n`)에서 예산이 끊겨도 이미 낸 PoC의 최종 지정은 간다 ---------
+#
+# 추가 대상은 `validated` 뒤에 붙어 같은 루프에서 돈다. `BudgetExhausted`는 흡수하지 않고 올려
+# 보내는 계약이라(`_run_pov_hops`) 그것이 `_finalize_oracle`을 건너뛰게 하면, **앞 대상이 이미 낸
+# PoC의 최종 지정(`fix` 다리·판정 조회)까지 잃는다** - 상한 0이었으면 점수가 났을 run이다
+# (적대적 리뷰 #490 MEDIUM-1). `validated` 대상에서 끊긴 run은 종전 그대로다.
+
+
+def _validated_and_one_extra(ctx):  # noqa: ANN001, ANN202, F811
+    """`validated` 1건(`find_0001`) + 그 밖 1건(`find_0002`)에 상한 1 - `_analyze`가 둘 다
+    `_run_pov`로 부른다. 채점기 장부를 켠 상태다."""
+    state, validated = _demoted_at_validate(ctx)
+    outside, (extra,) = _outside_validated(ctx, [("find_0002", 0.9)])
+    state.update(extra)
+    state.finding_capsules.update(outside.finding_capsules)
+    _with_top_n(ctx, 1)
+    state.oracle_ledger = OracleLedger(wired=True)
+    return state, validated, extra
+
+
+def _pov_loop_that_runs_out_of_budget_at(monkeypatch, stop_at, error=None):  # noqa: ANN001, ANN202
+    """`_run_pov_hops`가 `stop_at`번째(0부터) 호출에서 `BudgetExhausted`(또는 `error`)를 낸다 -
+    그 앞 호출은 PoC를 내고 제출까지 간다. 반환은 호출된 finding_id 목록이다(어디까지 갔는지
+    본다)."""
+    reached: list[str] = []
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        index = len(reached)
+        reached.append(finding.finding_id)
+        if index == stop_at:
+            raise error or BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+        return _POCS[index], _SUBMITTED
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+    return reached
+
+
+def test_a_budget_stop_inside_the_extra_pov_targets_still_designates_the_final(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """`validated` 대상이 PoC를 내 vul 제출까지 성공한 뒤 **추가 대상**에서 예산이 소진돼도 최종
+    지정이 돈다 - `fix` 다리·판정 조회가 정확히 한 번이고 `oracle.final`이 `not_reached`가 아니다.
+    `BudgetExhausted`는 그대로 올라간다(`run_pipeline`이 그것으로 `stopped_after`와 사유를
+    적는다)."""
+    state, validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1)
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [_POCS[0]]
+    assert oracle.final_calls == [(_POCS[0], oracle.vul_results[0])]
+    summary = state.oracle_ledger.summary()
+    assert summary is not None
+    assert (summary["final"], summary["final_reason"]) == ("scored", None)
+    (final,) = _events(ctx, EventKind.ORACLE_FINAL)
+    assert final.subject_id == validated.finding_id
+    assert final.data["designation"] == "sole_candidate"
+
+
+def test_a_budget_stop_inside_the_validated_targets_leaves_the_final_not_reached(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """**`validated` 대상 루프의 예산 소진 동작은 안 바뀌었다** - 첫 대상에서 끊기면 낼 PoC가
+    없었고, 최종 단계는 안 불려 매니페스트 요약이 `not_reached`로 남는다. 위 검사의 `except`가
+    `validated`까지 넓어지는 변이를 이 검사가 문다."""
+    state, validated, _extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 0)
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id]
+    assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
+    summary = state.oracle_ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
+
+
+def test_a_gateway_error_inside_the_extra_pov_targets_still_loses_the_final_designation(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """⚠ **알려진 한계의 핀이다 - 바람직한 동작이 아니다.** 추가 대상의 보호는 `BudgetExhausted`만
+    덮는다: 서버 쪽 `ModelGatewayError`(상태 없음 - `_run_pov_hops`가 흡수하지 않고 올린다)가 추가
+    대상에서 나면 앞 대상이 이미 낸 PoC도 종전대로 최종 지정에 못 닿고 `oracle.final`이
+    `not_reached`다(vul 제출은 1건 나갔다). 의식적으로 넓힐 때(`except`를 다른 예외까지) 이 검사를
+    고친다 - `except Exception`은 run을 멈추는 예외의 뜻을 바꾸므로 지금은 안 넓혔다."""
+    state, validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(
+        monkeypatch, 1, error=ModelGatewayError("down", status=None)
+    )
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(ModelGatewayError):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [_POCS[0]] and oracle.final_calls == []
+    summary = state.oracle_ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
+    assert summary["vul_submitted"] == 1
+
+
+def test_a_budget_stop_before_any_candidate_says_none_no_poc_not_not_reached(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """후보가 0건인 채 추가 대상에서 예산이 끊기면 `not_reached`가 아니라 `none`/`no_poc`다 - 의도한
+    것이 아니라 `_finalize_oracle` 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로
+    싣는다). 「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 오라클 요약은 못 가르고
+    후자는 run 수준의 `stopped_after`·경고가 말한다 - 그 사실의 핀이다."""
+    state, (extra,) = _outside_validated(ctx, [("find_0001", 0.9)])
+    _with_top_n(ctx, 1)
+    state.oracle_ledger = OracleLedger(wired=True)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 0)
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [] and oracle.final_calls == []
+    summary = state.oracle_ledger.summary()
+    assert summary is not None
+    assert (summary["final"], summary["final_reason"]) == ("none", "no_poc")
+
+
+def test_a_run_cut_by_the_budget_inside_the_extra_pov_targets_keeps_its_stop_and_still_scores(
+    tmp_path: Path, monkeypatch  # noqa: ANN001
+) -> None:
+    """**`run_pipeline` 갈래를 `cli.execute` 경유로 문다** - `_analyze`의 `except`가 같은 예외를
+    다시 올려 `run_pipeline`의 `BudgetExhausted` 갈래가 종전대로 `stopped_after`(8)·R-2
+    `budget_exhausted`·경고를 적는지, 그러면서 `oracle.final`이 `scored`인지. 위 `_analyze` 검사들은
+    그 뒤 갈래를 안 지난다.
+
+    `before=_with_index()`가 후보를 둘로 만들고 `critic_top_n=1`이 그중 하나를 `validated` 밖에
+    남긴다(`dev_fake`의 Fake Critic은 올라간 것을 전부 지지한다)."""
+    reached: list[str] = []
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        reached.append(finding.finding_id)
+        if len(reached) == 2:
+            raise BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+        return _POCS[0], _SUBMITTED
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+    oracle = FakeOracle()
+
+    result, trace_path = _run(
+        tmp_path,
+        before=_with_index(),
+        critic_top_n=1,
+        configure=lambda c: c.transition(thresholds=c.thresholds.transition(pov_attempt_top_n=1)),
+        oracle=oracle,
+    )
+
+    assert len(reached) == 2, "추가 대상에 못 닿았다 - 이 검사의 전제가 깨졌다"
+    assert result.record.stopped_after == int(Stage.VALIDATE)
+    assert _run_transition(trace_path)["data"]["reason"] == "budget_exhausted"
+    assert any("8단계에서 예산 소진" in w for w in result.warnings)
+    assert result.record.oracle is not None and result.record.oracle["final"] == "scored"
+    assert len(oracle.final_calls) == 1
 
 
 # --- 마스킹 서버 - 제출은 masked id, 조회는 실 id (`TaskOracle.query_task_id`) ----------------
@@ -670,13 +866,46 @@ def test_a_masked_task_id_is_accepted_only_with_a_query_task_id() -> None:
 _SERVER = "http://127.0.0.1:8666"
 
 
-def _bundle(tmp_path: Path, task_id: str) -> Path:
+def _bundle(tmp_path: Path, task_id: str, canary_task: str | None = None) -> Path:
     task = tmp_path / "task"
     task.mkdir()
     (task / "submit.sh").write_text(
         submit_script(server=_SERVER, task_id=task_id), encoding="utf-8"
     )
+    # 채점 run은 카나리 보고서 없이 조립되지 않는다(이슈 #383). 기본은 번들의 task_id로 쓴다.
+    # ⚠ **마스킹 번들에서는 그 둘이 다르다** - 카나리 도구는 이미지 이름을 과제 id에서 뽑으므로
+    # 조작자가 **실 id**로 돌리고 보고서의 `task`도 실 id다. 그래서 `canary_task`를 따로 받는다.
+    # 거절 규칙 자체는 `tests/test_canary_report.py`·`tests/test_oracle_cli.py`가 든다.
+    _write_canary(tmp_path, canary_task or task_id)
     return task
+
+
+def _write_canary(tmp_path: Path, task_id: str) -> Path:
+    import json
+
+    path = tmp_path / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task": task_id,
+                "verdict": "pass",
+                "ok": True,
+                "repeat": 10,
+                "below_measured_repeat": False,
+                "mmap_rnd_bits": "28",
+                "rnd_bits_above_28": False,
+                "rnd_bits_unmeasured": False,
+                "measured_at": "2026-10-03T17:42:07+00:00",
+                # 게이트가 요약만 믿지 않게 보는 관측 칸 셋(§2.2) - 규칙은
+                # `tests/test_canary_report.py`가 든다.
+                "completed": True,
+                "segv_count": 0,
+                "problems": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _write_mask_map(tmp_path: Path, content: object) -> Path:
@@ -694,7 +923,11 @@ def _write_mask_map(tmp_path: Path, content: object) -> Path:
 
 def _args(task: Path, mask_map: Path | None) -> argparse.Namespace:
     return argparse.Namespace(
-        oracle_submit=True, oracle_server=_SERVER, task_dir=task, mask_map=mask_map
+        oracle_submit=True,
+        oracle_server=_SERVER,
+        task_dir=task,
+        mask_map=mask_map,
+        oracle_canary=task.parent / "canary.json",
     )
 
 
@@ -713,15 +946,39 @@ def test_the_parser_carries_both_oracle_flags_and_the_mask_map_has_no_default() 
 def test_mask_map_unmasks_the_task_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`--mask-map`이 있으면 CLI가 TaskOracle에 unmask된 query_task_id를 넘긴다. 마스킹된 id의
     번들이 거절되지 않고 만들어진다 - 모양 검사(`cli`)도 가드(`TaskOracle`)도 실 id가 오면
-    받는다."""
+    받는다.
+
+    🔴 카나리 보고서는 **실 id**를 든다 - 도구가 이미지 이름을 과제 id에서 뽑아 조작자가 실 id로
+    돌리기 때문이다. 앞 판은 게이트가 번들의 masked id와 견줘 **정상 카나리를 전부 거절했다**.
+    """
     monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
-    args = _args(_bundle(tmp_path, _MASKED_ID), _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
+    bundle = _bundle(tmp_path, _MASKED_ID, canary_task=TASK_ID)
+    args = _args(bundle, _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
 
     oracle = cli._oracle_for(args)
 
     assert oracle is not cli._ORACLE_ERROR and oracle is not None
     assert oracle.task_id == _MASKED_ID
     assert oracle.query_task_id == TASK_ID
+
+
+def test_a_canary_labelled_with_the_masked_id_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """마스킹 run의 카나리가 masked id를 들면 거절한다 - 그 보고서는 도구가 만든 것이 아니다.
+
+    도구는 과제 id로 `-vul`·`-fix` 이미지 이름을 만든다. masked id로는 그 이미지가 없으므로
+    masked id를 든 보고서는 `--vul-image`·`--fix-image`·`--run-cmd`를 손으로 준 것이거나 손으로
+    쓴 것이다. 어느 쪽이든 「이 장비가 이 과제를 제대로 돌린다」의 근거가 아니다.
+    """
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    bundle = _bundle(tmp_path, _MASKED_ID, canary_task=_MASKED_ID)
+    args = _args(bundle, _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
+
+    result = cli._oracle_for(args)
+
+    assert result is cli._ORACLE_ERROR
+    assert "카나리가 다른 과제의 것이다" in capsys.readouterr().err
 
 
 def test_mask_map_missing_entry_is_an_error(
@@ -821,11 +1078,13 @@ def test_a_masked_task_id_without_a_mask_map_is_refused_before_anything_is_built
     assert built == []
 
 
-# --- 후보가 여럿일 때: 내부 근거 등급 최댓값 · 동점이면 거부 (2026-10-03 동결) ------------------
+# --- 후보가 여럿일 때: 같은 바이트는 접고, 남은 것은 전순서로 (⏵ 2026-10-04) ------------------
 #
-# 위 검사들의 후보는 근거 없는 Finding이라 **동점 쪽**(E0 · E0)만 밟는다. 등급이 갈리는 문맥을
-# 이 파일에서 만들려고 아래는 `_designate_final`을 등급 사전째 **직접** 부른다 - 규칙 자체가
-# 대상이고 파이프라인이 아니다(파이프라인에서 등급이 갈리는 run은 `test_pipeline_e2e.py`).
+# 2026-10-03 동결판은 「내부 근거 등급 최댓값 · 동점이면 거부」였다. 아래 검사들은 그 거부가 사슬로
+# 바뀐 뒤를 문다 - ①등급 ②`confidence` ③작은 바이트 ④PoC 해시. 위 검사들의 후보는 근거 없는
+# Finding이라 **등급·confidence가 전부 같아** ③까지 내려간다. 등급·confidence가 **갈리는** 문맥을
+# 이 파일에서 만들려고 아래는 `_designate_final`을 사전째 **직접** 부른다 - 규칙 자체가 대상이고
+# 파이프라인이 아니다(파이프라인에서 등급이 갈리는 run은 `test_pipeline_e2e.py`).
 
 _SUB = VulSubmission(TASK_ID, "a" * 32, 1)
 
@@ -842,14 +1101,20 @@ def _ledger_of(*attempts: VulAttempt) -> OracleLedger:
     return ledger
 
 
+def _flat(*finding_ids: str) -> dict[str, float]:
+    """`confidence`가 전부 같은 사전 - 사슬이 ①②를 지나 ③④로 내려가게 한다."""
+    return dict.fromkeys(finding_ids, 0.5)
+
+
 def test_the_unique_top_internal_grade_is_the_final() -> None:
     """등급이 E2·E4·E3이면 **E4 하나**가 최종이고 근거는 `top_grade`다.
 
     최댓값을 **가운데**에 둔다 - 처음·마지막으로 고르는 규칙이면 이 검사가 빨개진다. 자리로
-    고르지 않는 것이 이 저장소의 규칙이다(2026-10-03).
+    고르지 않는 것이 이 저장소의 규칙이다. ⚠ 가장 작은 PoC(`f_low`, 4바이트)를 최댓값이 **아닌**
+    쪽에 둬서 ③이 ①을 이기는 구현도 빨개진다.
     """
-    low = _attempt("f_low", b"\x01low\xff")
-    top = _attempt("f_top", b"\x02top\xfe")
+    low = _attempt("f_low", b"\x01low")
+    top = _attempt("f_top", b"\x02top\xfe\xfd")
     mid = _attempt("f_mid", b"\x03mid\xfd")
     grades = {
         "f_low": EvidenceGrade.E2,
@@ -857,50 +1122,187 @@ def test_the_unique_top_internal_grade_is_the_final() -> None:
         "f_mid": EvidenceGrade.E3,
     }
 
-    assert runner._designate_final(_ledger_of(low, top, mid), grades) == (top, "top_grade", None)
+    got = runner._designate_final(_ledger_of(low, top, mid), grades, _flat(*grades))
+
+    assert got == (top, "top_grade", None)
 
 
-def test_a_tie_at_the_top_grade_refuses_instead_of_picking_by_position() -> None:
-    """최댓값이 동점이면 **거부**다(`grade_tie`) - 「등급이 같으면 먼저 온 것」은 위치 규칙이다.
+def test_a_tie_at_the_top_grade_is_broken_by_confidence_not_by_position() -> None:
+    """등급 최댓값이 동점이면 **거부가 아니라** `confidence`가 가른다(`top_confidence`).
 
-    E4 둘 + E2 하나를 넣는다. 자리로 가르는 구현은 첫 E4를 내서 이 검사가 빨개진다.
+    ⏵ **2026-10-04 - 이 자리가 뒤집혔다.** 앞 판은 `grade_tie`로 거부했다. E4 둘 + E2 하나를
+    넣고 이긴 쪽을 **가운데**에 둔다 - 자리로 가르는 구현은 첫 E4를 내서 빨개진다. 이긴 쪽의
+    PoC를 **더 크게** 둬서 ③이 ②를 이기는 구현도 빨개진다.
     """
     first = _attempt("f_a", b"\x01a\xff")
-    second = _attempt("f_b", b"\x02b\xfe")
+    second = _attempt("f_b", b"\x02b\xfe\xfd\xfc")
     lower = _attempt("f_c", b"\x03c\xfd")
     grades = {"f_a": EvidenceGrade.E4, "f_b": EvidenceGrade.E4, "f_c": EvidenceGrade.E2}
+    confidences = {"f_a": 0.4, "f_b": 0.9, "f_c": 0.9}
 
-    assert runner._designate_final(_ledger_of(first, second, lower), grades) == (
-        None,
-        "",
-        "grade_tie",
+    got = runner._designate_final(_ledger_of(first, second, lower), grades, confidences)
+
+    assert got == (second, "top_confidence", None)
+
+
+def test_two_pocs_from_one_finding_are_separated_by_the_smaller_bytes() -> None:
+    """같은 Finding에서 PoC가 둘 나오면 등급·confidence가 같다(둘 다 Finding 단위다) - 그래서
+    사슬이 ③으로 내려가 **작은 쪽**이 최종이다(`smallest_poc`).
+
+    ⏵ **2026-10-04** - 앞 판은 「등급이 같으니 거부」였다. 작은 쪽을 **뒤에** 둔다.
+    """
+    big = _attempt("f_same", b"\x01second\xfe")
+    small = _attempt("f_same", b"\x02one\xff")
+
+    got = runner._designate_final(
+        _ledger_of(big, small), {"f_same": EvidenceGrade.E4}, _flat("f_same")
     )
 
+    assert got == (small, "smallest_poc", None)
 
-def test_two_pocs_from_one_finding_are_a_tie_because_the_grade_cannot_separate_them() -> None:
-    """같은 Finding에서 PoC가 둘 나오면 등급이 같으니 **거부**다. 등급은 Finding 단위라서다."""
-    first = _attempt("f_same", b"\x01first\xff")
-    second = _attempt("f_same", b"\x02second\xfe")
 
-    assert runner._designate_final(_ledger_of(first, second), {"f_same": EvidenceGrade.E4}) == (
-        None,
-        "",
-        "grade_tie",
+def test_the_last_rung_is_the_poc_digest_and_the_input_order_does_not_move_it() -> None:
+    """①②③이 전부 같으면 **PoC 해시 사전순**이 가른다(`poc_digest`) - 사슬이 전순서인 자리다.
+
+    바이트 수까지 같은 두 PoC를 넣고, **넣는 순서를 뒤집어도 같은 PoC가 지정되는지**를 본다.
+    자리(처음·마지막)로 가르는 구현은 두 호출이 서로 다른 답을 내서 빨개진다. 기대값은 해시를
+    손으로 적지 않고 **`min`으로 센다** - 리터럴을 적으면 검사가 해시 구현을 따라 베낀다.
+    """
+    one = _attempt("f_one", b"\xaa\xbb\xcc")
+    two = _attempt("f_two", b"\xdd\xee\xff")
+    assert one.poc_bytes == two.poc_bytes, "③이 갈라 버리면 ④를 안 본다"
+    grades = {"f_one": EvidenceGrade.E3, "f_two": EvidenceGrade.E3}
+    expected = min((one, two), key=lambda a: a.poc_sha256)
+
+    forward = runner._designate_final(_ledger_of(one, two), grades, _flat(*grades))
+    backward = runner._designate_final(_ledger_of(two, one), grades, _flat(*grades))
+
+    assert forward == (expected, "poc_digest", None)
+    assert backward[0] is expected and backward[1] == "poc_digest"
+
+
+def test_candidates_that_are_all_the_same_bytes_are_folded_into_one_choice() -> None:
+    """🔴 **실측 run이 점수를 못 낸 자리다.** 후보 8건이 **같은 PoC 바이트 1개**였고(제출 8 = 고유
+    PoC 1 = DB 행 1) 등급이 Finding 단위라 8건이 동점이었다. 앞 판은 그것을 `grade_tie`로 거부해
+    점수를 0으로 만들었다 - 어느 후보를 지정해도 **제출될 바이트가 같은데** 거부한 것이다.
+
+    지금은 접는다: 남은 고유 PoC가 하나면 `sole_poc`이고, 그것은 「등급이 갈랐다」가 아니라
+    **「고를 것이 없었다」**다(`sole_candidate`과 같은 종류의 사실이고 사슬의 단계가 아니다).
+    등급을 **갈라 놔도** 결론이 같은지 본다 - 같은 바이트 안의 등급 차는 제출될 PoC를 안 바꾼다.
+    """
+    same = b"A" * 64 + b"\xef\xbe\xad\xde"  # 실측 run의 68바이트와 같은 모양
+    attempts = [_attempt(f"f_{i:04d}", same) for i in range(8)]
+    grades = {f"f_{i:04d}": EvidenceGrade.E0 if i else EvidenceGrade.E4 for i in range(8)}
+    assert len({a.poc_sha256 for a in attempts}) == 1, "접을 전제(바이트가 같다)가 깨졌다"
+
+    picked, designation, reason = runner._designate_final(
+        _ledger_of(*attempts), grades, _flat(*grades)
     )
+
+    assert (designation, reason) == ("sole_poc", None)
+    assert picked is not None and picked.poc == same
+
+
+def test_inside_a_fold_group_the_recorded_finding_does_not_follow_the_input_order() -> None:
+    """같은 바이트 묶음 안에서 **어느 `finding_id`로 기록할지**도 입력 순서에 안 묶인다.
+
+    제출될 바이트는 묶음 안에서 같으니 이 선택이 PoC를 바꾸지는 않는다 - 그래도 같은 후보
+    묶음을 어떤 순서로 넣어도 같은 기록이 나와야 재현 실행이 갈라지지 않는다. 등급·confidence·
+    바이트·해시가 전부 같은 셋을 넣고 순서를 뒤집어 본다. 정렬 꼬리(`finding_id`)를 빼면
+    `sorted`의 안정성 때문에 **넣은 순서의 첫째**가 나와 이 검사가 빨개진다.
+    """
+    same = bytes([1]) + b"same" + bytes([255])
+    ids = ["f_0003", "f_0001", "f_0002"]
+    attempts = [_attempt(finding_id, same) for finding_id in ids]
+    grades = dict.fromkeys(ids, EvidenceGrade.E3)
+
+    forward = runner._designate_final(_ledger_of(*attempts), grades, _flat(*ids))
+    backward = runner._designate_final(_ledger_of(*reversed(attempts)), grades, _flat(*ids))
+
+    assert forward[0] is not None and forward[0].finding_id == "f_0001"
+    assert backward[0] is not None and backward[0].finding_id == "f_0001"
+    assert forward[1] == backward[1] == "sole_poc"
+
+
+def test_a_grade_split_inside_one_fold_group_does_not_decide_the_poc() -> None:
+    """갈랐다고 적는 상대는 **다른 바이트를 든 후보**다 - 같은 바이트끼리의 차이는 제출될 PoC를
+    바꾸지 않으므로 그것이 `designation`이 되면 안 된다.
+
+    자리를 이렇게 짠다: 같은 바이트 둘이 `confidence`로 갈리고(`f_hi` 0.9 · `f_mid` 0.5),
+    **다른** 바이트 하나는 등급이 낮다(`f_other` E2 · 0.9). 정렬은
+    `[f_hi, f_mid, f_other]`이므로 **`ordered[1]`이 같은 묶음**이다 -
+    상대를 `ordered[1]`로 잡는 구현은 `confidence`가 갈랐다고 적고(`top_confidence`),
+    참인 답은 다른 바이트와의 **등급** 차다(`top_grade`). 그래서 이 검사는 이름으로 그 변이를
+    가른다.
+    """
+    shared = bytes([1]) + b"shared" + bytes([255])
+    twin_high = _attempt("f_hi", shared)
+    twin_mid = _attempt("f_mid", shared)
+    other = _attempt("f_other", bytes([2]) + b"other" + bytes([254]))
+    grades = {
+        "f_hi": EvidenceGrade.E4,
+        "f_mid": EvidenceGrade.E4,
+        "f_other": EvidenceGrade.E2,
+    }
+    confidences = {"f_hi": 0.9, "f_mid": 0.5, "f_other": 0.9}
+
+    picked, designation, reason = runner._designate_final(
+        _ledger_of(twin_mid, twin_high, other), grades, confidences
+    )
+
+    assert picked is not None and picked.poc == shared
+    assert (designation, reason) == ("top_grade", None)
 
 
 def test_a_candidate_with_an_unknown_grade_refuses_rather_than_reading_it_as_e0() -> None:
     """등급을 모르는 후보가 있으면 거부한다(`grade_unknown`) - E0로 깔면 **없는 근거로** 고른다.
 
     모르는 쪽을 E0로 읽는 구현은 E4인 쪽을 최종으로 내서 이 검사가 빨개진다. 안 잰 값은 0이
-    아니라 미실측 표시다(CLAUDE.md §0).
+    아니라 미실측 표시다(CLAUDE.md §0). **이 거부는 2026-10-04에도 그대로다** - 동점과 달리
+    「모르는 값」은 사슬의 다음 단계로 넘길 수 있는 것이 아니다.
     """
     known = _attempt("f_known", b"\x01known\xff")
     unknown = _attempt("f_unknown", b"\x02unknown\xfe")
 
     assert runner._designate_final(
-        _ledger_of(known, unknown), {"f_known": EvidenceGrade.E4}
+        _ledger_of(known, unknown),
+        {"f_known": EvidenceGrade.E4},
+        _flat("f_known", "f_unknown"),
     ) == (None, "", "grade_unknown")
+
+
+def test_a_candidate_with_an_unknown_confidence_is_refused_the_same_way() -> None:
+    """`confidence`를 모르는 후보도 같은 거부다 - 사슬의 ②가 읽는 값이고, 없는 것을 0.0으로 깔면
+    **없는 근거로** 나머지를 고른다(위 검사와 같은 §0 논법).
+
+    현 러너에서는 두 사전이 같은 `state.findings`에서 나와 키 집합이 같다
+    (`_grades_by_finding`·`_confidences_by_finding`) - 그래서 이것도 **방어 분기**다.
+    """
+    known = _attempt("f_known", b"\x01known\xff")
+    other = _attempt("f_other", b"\x02other\xfe")
+    grades = {"f_known": EvidenceGrade.E4, "f_other": EvidenceGrade.E2}
+
+    assert runner._designate_final(_ledger_of(known, other), grades, {"f_known": 0.5}) == (
+        None,
+        "",
+        "grade_unknown",
+    )
+
+
+def test_there_is_no_tie_refusal_left_to_fall_back_on() -> None:
+    """🔴 **사슬이 전순서라 「못 가렸다」가 없다** - 그 사유 상수를 되살리는 변이를 이 줄이 막는다.
+
+    ⏵ 2026-10-04에 `REASON_GRADE_TIE`를 **지웠다**. 사유 상수만 되돌리면 어느 run도 못 내는 사유가
+    문서와 경고에 남고(닿지 않는 코드), 분기까지 되돌리면 위 검사들이 빨개진다.
+
+    같이 무는 것 하나 더 - `_DESIGNATION_CHAIN`의 이름 수와 `_designation_key`의 성분 수가 같다.
+    키에 성분을 더하고 이름을 안 붙이면 `zip(..., strict=True)`가 터지는데, 그 폭발이 **사슬이
+    갈린 run에서만** 나므로 여기서 길이를 직접 센다.
+    """
+    assert not [name for name in vars(oracle_log_module) if "GRADE_TIE" in name]
+    assert len(runner._DESIGNATION_CHAIN) == len(
+        runner._designation_key(_attempt("f", b"\x00"), {"f": EvidenceGrade.E0}, {"f": 0.5})
+    )
 
 
 def _trap(name: str):  # noqa: ANN202
@@ -936,19 +1338,27 @@ class _TrapSubmission:
 
 
 def _trap_attempt(finding_id: str) -> VulAttempt:
+    """함정 `submission`을 든 후보. **해시는 `finding_id`에서 뽑는다** - 앞 판은 전부 같은
+    `"0" * 64`라 접기(`poc_sha256`)가 모든 분기를 `sole_poc` 하나로 눌러 분기들이 뜻을
+    잃는다.
+    바이트 수도 id 길이에서 와서 `smallest_poc` 분기가 선다."""
+    body = finding_id.encode()
     return VulAttempt(
         finding_id=finding_id,
-        poc_sha256="0" * 64,
-        poc_bytes=1,
+        poc_sha256=hashlib.sha256(body).hexdigest(),
+        poc_bytes=len(body),
         wall_ms=1,
-        poc=b"\x01",
+        poc=body,
         submission=_TrapSubmission(),  # type: ignore[arg-type]
     )
 
 
-# (후보 finding들, 등급 사전, 이긴 finding, designation, reason) - 분기마다 하나다. 금지된 읽기가
-# 들어갈 가장 자연스러운 자리는 **동점 분기**다(「크래시 코드가 큰 쪽」으로 가른다) - 그래서
-# 유일 최상위 분기만 문 판은 그 변이를 놓쳤다(적대적 리뷰 2026-10-04: 129건 초록).
+# (후보 finding들, 등급 사전, 이긴 finding, designation, reason) - **사슬의 단계마다 하나씩**이다.
+# 금지된 읽기가 들어갈 가장 자연스러운 자리는 **등급이 동점인 분기**다(「크래시 코드가 큰 쪽」으로
+# 가른다) - 그래서 유일 최상위 분기만 문 판은 그 변이를 놓쳤다(적대적 리뷰 2026-10-04: 129건 초록).
+# ⏵ 2026-10-04 - 그 `tie` 분기가 「거부」에서 「사슬이 가른다」로 바뀌었다. `confidence`를
+# `_flat`으로 깔아 ③(작은 바이트)까지 내려가게 한다 - 동점 분기를 살려 두려는 것이다
+# (`f_bb`가 2바이트로 최소).
 _BRANCHES = [
     pytest.param(
         ("f_low", "f_top", "f_mid"),
@@ -957,10 +1367,10 @@ _BRANCHES = [
         id="unique-top",
     ),
     pytest.param(
-        ("f_a", "f_b", "f_c"),
-        {"f_a": EvidenceGrade.E4, "f_b": EvidenceGrade.E4, "f_c": EvidenceGrade.E2},
-        None, None, "grade_tie",
-        id="tie",
+        ("f_aaa", "f_bb", "f_c"),
+        {"f_aaa": EvidenceGrade.E4, "f_bb": EvidenceGrade.E4, "f_c": EvidenceGrade.E2},
+        "f_bb", "smallest_poc", None,
+        id="grade-tie-smallest",
     ),
     pytest.param(
         ("f_known", "f_unknown"),
@@ -982,7 +1392,8 @@ def test_designation_does_not_read_oracle_fields(
     그 값은 **지정 시점에 손에 있다** - `VulSubmission.response_exit_code`가 후보마다 장부 행에
     실려 있어서(`oracle_log._attempt_record`) 「없어서 안 읽는다」가 아니다. 그래서 문구가
     아니라 **접근**을 문다: 후보의 `submission`이 `_TrapSubmission`이고(속성·`vars`·`repr`·`==`
-    전부 터진다) **분기마다**(유일 최상위 · 동점 · 등급 미상 · 후보 하나) 돌린다.
+    전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 · 등급 또는 confidence 미상 ·
+    후보 하나) 돌린다.
 
     **오염 테스트다** - 어느 분기에든 `attempt.submission.response_exit_code`를 보거나 `repr`로
     고르는 한 줄을 넣으면 그 분기가 빨개진다(2026-10-04 스크래치 사본에서 변이 아홉으로 확인).
@@ -991,7 +1402,9 @@ def test_designation_does_not_read_oracle_fields(
     """
     attempts = [_trap_attempt(finding_id) for finding_id in ids]
 
-    picked, got_designation, got_reason = runner._designate_final(_ledger_of(*attempts), grades)
+    picked, got_designation, got_reason = runner._designate_final(
+        _ledger_of(*attempts), grades, _flat(*ids)
+    )
 
     assert (got_designation or None, got_reason) == (designation, reason)
     if winner is None:
@@ -1026,6 +1439,9 @@ def test_finalize_oracle_does_not_read_oracle_fields_either(
     for finding_id in ids:
         state.oracle_ledger.add_attempt(_trap_attempt(finding_id))
     monkeypatch.setattr(runner, "_grades_by_finding", lambda _state: grades)
+    # 두 사전은 현 러너에서 같은 `state.findings`에서 나와 키 집합이 같다 - 여기서는 등급 사전을
+    # 손으로 꽂으므로 `confidence`도 같은 키로 깔아 준다(안 깔면 전 분기가 `grade_unknown`이다).
+    monkeypatch.setattr(runner, "_confidences_by_finding", lambda _state: _flat(*ids))
     ctx.oracle = _OracleThatReadsNothingItIsGiven()
 
     runner._finalize_oracle(ctx, state)

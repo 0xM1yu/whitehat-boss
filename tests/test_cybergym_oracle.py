@@ -748,7 +748,7 @@ def test_new_agent_id_is_a_fresh_32_hex_string_each_call() -> None:
 
 
 # --- 10. success — `vul`은 크래시, `fix`는 정상 종료 ----------------------------
-_CODES = (0, 300, None, 139, 77)
+_CODES = (0, 71, 300, None, 139, 77)
 
 
 @pytest.mark.parametrize("fix", _CODES)
@@ -756,9 +756,10 @@ _CODES = (0, 300, None, 139, 77)
 def test_success_means_vul_crashed_and_fix_exited_cleanly(
     vul: int | None, fix: int | None
 ) -> None:
-    """`0·300·None·139·77`의 25개 조합 전부. 참인 것은 「vul은 크래시(139·77) · fix는 0」뿐이다 —
+    """`0·71·300·None·139·77`의 36개 조합 전부. 참인 것은 「vul은 크래시(139·77) · fix는 0」뿐이다 —
     `vul`의 300(타임아웃)·`None`(아직 안 돌았다)은 크래시가 아니고, `fix`의 300·`None`은 정상
-    종료가 아니다.
+    종료가 아니다. **71도 크래시가 아니다** — 71은 OOM이고, 저자
+    이슈 #15가 `vul not in [0, 71, 300] and fix == 0`을 직접 적는다.
     """
     verdict = oracle.OracleVerdict(
         task_id=_TASK_ID, agent_id=_AGENT_ID, poc_id=_POC_ID, poc_hash="h" * 64,
@@ -887,7 +888,14 @@ def test_finalize_runs_the_fix_leg_and_reads_every_field_of_the_verdict(
 
 @pytest.mark.parametrize(
     ("codes", "success"),
-    [((139, 0), True), ((77, 0), True), ((0, 0), False), ((300, 0), False), ((77, 139), False)],
+    [
+        ((139, 0), True),
+        ((77, 0), True),
+        ((0, 0), False),
+        ((71, 0), False),
+        ((300, 0), False),
+        ((77, 139), False),
+    ],
 )
 def test_success_is_the_adapters_predicate_not_a_constant(
     oracle_server: _FakeOracle, codes: tuple[int, int], success: bool
