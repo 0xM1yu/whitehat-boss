@@ -2266,9 +2266,11 @@ def test_rows_with_the_same_span_count_once(tmp_path: Path) -> None:
     assert found == [Location(file="z.h", symbol="Z", line_start=2, line_end=4)]
 
 
-def test_a_forward_typedef_gives_way_to_the_body(tmp_path: Path) -> None:
-    """`typedef struct X X;`(v4 `forward`)와 `struct X {…}`가 같이 있으면 본문 행을 싣는다 — 같은
-    파일이든 다른 파일이든. 본문이 없으면 앞선 선언 행이라도 싣는다(그 이름의 유일한 사실)."""
+def test_a_forward_typedef_gives_way_to_the_body_in_its_own_file(tmp_path: Path) -> None:
+    """`typedef struct X X;`(v4 `forward`)와 **같은 파일의** `struct X {…}`가 같이 있으면 본문
+    행을 싣는다. 본문이 다른 파일에 있으면(`api.h`의 `Y` · `impl.c`의 본문) 두 행이 다 남아 안
+    붙는다 — 어느 파일이 어느 파일을 include하는지 모르는 채 앞선 선언을 지우지 않는다. 본문이
+    없으면 앞선 선언 행이라도 싣는다(그 이름의 유일한 사실)."""
     forward = {"file": "mxf.c", "line_start": 1, "line_end": 1, "kind": "typedef", "forward": True}
     doc = {
         **_INDEX_V4,
@@ -2286,9 +2288,29 @@ def test_a_forward_typedef_gives_way_to_the_body(tmp_path: Path) -> None:
 
     assert found == [
         Location(file="api.h", symbol="Opaque", line_start=2, line_end=2),
-        Location(file="impl.c", symbol="Y", line_start=4, line_end=8),
         Location(file="mxf.c", symbol="X", line_start=3, line_end=9),
     ]
+
+
+def test_a_forward_row_is_not_dropped_for_an_unrelated_row_in_another_file(tmp_path: Path) -> None:
+    """리뷰 #485 (a): `forward` 표시만 믿고 「같은 이름의 **어떤** 다른 행」 때문에 지우면 후보가
+    `b.h`의 `typedef int X;` 하나로 줄어 도달성 검사를 건너뛴다. 읽는 쪽이 같은 파일의 본문 행을
+    직접 확인하므로 표시가 틀려도(옛 인덱서 산출물) 앵커가 include하는 `a.h`의 행이 남는다."""
+    doc = {
+        **_INDEX_V4,
+        "files": ["main.c", "a.h", "b.h"],
+        "includes": {"main.c": [{"line": 1, "path": "a.h", "system": False}]},
+        "types": {
+            "X": [
+                {"file": "a.h", "line_start": 1, "line_end": 1, "kind": "typedef", "forward": True},
+                {"file": "b.h", "line_start": 1, "line_end": 1, "kind": "typedef"},
+            ]
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["X"], "main.c", demote_nonproduct=True)
+
+    assert found == [Location(file="a.h", symbol="X", line_start=1, line_end=1)]
 
 
 @pytest.mark.parametrize(
