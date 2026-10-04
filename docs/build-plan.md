@@ -609,7 +609,7 @@ bf16 그대로(`gpt-oss-20b`만 원래 MXFP4)이고 양자화로 공동 상주�
 
 > **이 절은 진행 중인 작업의 순서다** — 그래서 이 문서에서 가장 빨리 낡는다. **상태의 원천은
 > 열린 PR·이슈**이고 여기 있는 것은 **순서와 그 근거**다. 줄번호는 §11.2·§11.5가 `45106a3`(= #393·#406 머지 뒤, 이 절이 말하는 PR들이 들어가기 전의 main)에서
-> 쟀다 — §11.2 ①은 그 뒤 #396이 닫았으니 그 줄은 **그 시점의 것**이다.
+> 쟀다 — §11.2 ①은 그 뒤 #396이, §11.5의 `p4`는 #401이 닫았으니 그 줄들은 **그 시점의 것**이다.
 > 이 절을 현재형으로 읽기 전에 §11.4의 PR 번호를 열어 본다.
 
 **목표는 하나다 — 우리 하네스가 CyberGym Level 1에서 점수를 낸다.** 그 벤치마크의 정답은
@@ -683,6 +683,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 6단계의 `upheld=false`도 예산 탓이 아니라 Critic 앞의 정상 상태다.
 상한 값은 사람이 정한다(보고서 §6: Fake 장부값은 계산값이라 상한 근거가 못 된다) — 이슈
 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424)에 선택지 셋으로 올렸다.
+
 ⏵ **2026-10-03 — 정해졌고 #424는 닫혔다**(`COMPLETED`, 2026-10-03T13:55:38Z): PR [#427](https://github.com/0xM1yu/whitehat-boss/pull/427)이 `dev_fake`의 상한을
 `0`(= 상한 없음)으로 내렸다(`17913e2`). 위 문단은 그 결정 전의 것이다.
 
@@ -705,7 +706,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | 예산 한 줄 | 브랜치 `fix/no-zero-budget` → PR [#427](https://github.com/0xM1yu/whitehat-boss/pull/427) | **main에 있다.** 이 브랜치 이름으로 올라온 PR은 없다 — `4a2f624`가 그것을 `fix/dev-fake-budget-ceiling`에 합쳐 #427로 들어왔다(`17913e2`, 2026-10-03T13:55:37Z) |
 | Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
 | 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
-| Auditor 프롬프트 v5 | ~~draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390)~~ | ⏵ 2026-10-03 **닫혔다.** ~~주차 · 트리거는 첫 대여 세션 — v4와 v5를 그날 둘 다 돌리고 정한다~~ — **v5를 건너뛰고 v6를 배선했다**(프롬프트 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418) · 배선 [#421](https://github.com/0xM1yu/whitehat-boss/pull/421) · 사용자 결정). v4·v5 둘 다 어느 registry 엔트리도 안 고르므로 그 비교는 없어졌다 |
+| Auditor 프롬프트 v5 | ~~draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390)~~ | ⏵ 2026-10-03 **닫혔다.** ~~주차 · 트리거는 첫 대여 세션 — v4와 v5를 그날 둘 다 돌리고 정한다~~ — **v5를 건너뛰고 v6를 배선했다**(프롬프트 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418) · 배선 [#421](https://github.com/0xM1yu/whitehat-boss/pull/421) · 사용자 결정). v4·v5 둘 다 어느 registry 엔트리도 안 고르므로 그 비교는 없어졌다 <br>⏵ 2026-10-04 — **v6는 그 뒤 v7로 올랐다**([#443](https://github.com/0xM1yu/whitehat-boss/pull/443), 2026-10-03T19:10:07Z — `config/models.yaml`의 Auditor `prompt_template_version`). 위 「v6를 배선했다」는 그 전의 것이다 |
 
 🔴 **PR끼리의 충돌은 `src/orchestrator/runner.py`와 `docs/agent-contracts.md`에서 났다** — #380 ↔ #396이
 `_emit_pov_hop`·`_pov_observation`의 호출 인자와 docstring, 계약 문서의 같은 불릿을 서로 다르게 바꿨다.
@@ -728,14 +729,21 @@ container_tools.py:584-587   asan·poc 판정: _EXEC_FAILED면 False, 그 밖은
 않아 이 결함이 닿을 수 없었다.** 합성이 그 문을 연다. 결함 본문과 추적은 [#232](https://github.com/0xM1yu/whitehat-boss/issues/232)이고
 상황의 원천은 [open-questions.md](open-questions.md) 인덱스의 `Evidence.ok` 항목이다.
 
+⏵ **2026-10-04 — 좁은 절반은 #401이 닫았다**(`94798d3`, 2026-10-02T17:01:19Z). `p4`가 런타임 Evidence의
+`exit_code`가 `None`도 `0`도 아닐 것을 요구한다(`gate.py:168-170` · `_NO_CRASH_EXIT = (None, 0)`는 `gate.py:81`).
+위 코드 블록(`gate.py:154`)과 「크래시와 exit 0을 구분하지 않는다」·「실행만 되면 `proven`」은 `45106a3`의 것이고
+#401 앞이다. **남은 것은 `exit_code`가 크래시의 대용 지표라는 점이다** —
+asan·poc의 비-0은 대상이 스스로 낸 비-0과 구분되지 않는다(#401 본문의 잔여 표). 넓은 절반(`expected_signal`과 대조)은
+[#232](https://github.com/0xM1yu/whitehat-boss/issues/232)와 [open-questions.md](open-questions.md) 인덱스의 `Evidence.ok` 항목이 `열림`으로 든다.
+
 ### 11.6 팀원이 집을 수 있는 것
 
 **독립이라 병렬로 돌아간다** — 아래 넷은 서로 다른 파일을 만진다.
 
 | 집을 것 | 선행 | 무엇을 하면 끝인가 |
 | --- | --- | --- |
-| **배선 조각** (가장 앞) | #396·#402 머지 — **둘 다 됐다** | `S5`가 남긴 PoC 파일을 `S6b`가 제출하게 잇는다. 🔴 **fix 다리는 「최종 PoC 한 개」에만 돈다** — 저자 FAQ가 그렇게 적는데 클라이언트는 아무것도 강제하지 않는다. 그 게이트를 하네스가 든다. ⚠ `run_round_trip`은 `vul`·`fix`를 **둘 다** 제출하니 후보마다 부르지 않는다 — 후보마다는 `submit_vul`만, `submit_fix`+`query_verdict`는 최종 PoC 한 개에만. ⏵ 2026-10-03 — 마스킹 서버는 조작자가 저자 `mask_map.json`을 `run --mask-map`으로 줄 때만 지원한다: 제출(`submit_vul`·`submit_fix`)은 번들의 마스킹된 `task_id`로, 판정 조회(`query_verdict`)와 제출 전 캐시 판별(`peek_verdict`)은 맵이 준 실 id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다. ⚠ **이 메커니즘은 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다**(왕복 보고서는 마스크 없이 돌렸다) — `run_round_trip`만 아직 `task_id` 하나를 셋 모두에 넘긴다. 429는 미처리다. API 키는 환경변수로만 받는다 |
-| **단계 3 배관 증명** | 배선 조각 | `dev_fake` + 로컬 오라클로 종단 1회. **$0**이고 GPU가 필요 없다. 🔴 보고서에 **「배관 증명 · 역량 미측정」**을 박고 숫자 칸은 0으로 둔다 — `dev_fake`의 바이트는 항등식이라 `vul=0`이 나온다(CLAUDE.md §0) <br>⏵ **2026-10-03 저녁 — 돌렸다**([보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). 예상대로 `vul_exit_code 0`이 나왔다. **이 칸이 빠뜨린 선행 둘**: ① 번들에 `submit.sh`가 없어 **손으로 만들어야 한다**(저자 생성기는 데이터 묶음이 없어 못 돈다) ② `dev_fake` 예산 상한을 **제거해야 완주한다**(#424 — 안 하면 `stopped_after: 4`, 바이트 0개). `--slices`는 필요 없고 `--condition`·`--device`는 비운다 |
+| **배선 조각** (가장 앞) | #396·#402 머지 — **둘 다 됐다** | `S5`가 남긴 PoC 파일을 `S6b`가 제출하게 잇는다. 🔴 **fix 다리는 「최종 PoC 한 개」에만 돈다** — 저자 FAQ가 그렇게 적는데 클라이언트는 아무것도 강제하지 않는다. 그 게이트를 하네스가 든다. ⚠ `run_round_trip`은 `vul`·`fix`를 **둘 다** 제출하니 후보마다 부르지 않는다 — 후보마다는 `submit_vul`만, `submit_fix`+`query_verdict`는 최종 PoC 한 개에만. ⏵ 2026-10-03 — 마스킹 서버는 조작자가 저자 `mask_map.json`을 `run --mask-map`으로 줄 때만 지원한다: 제출(`submit_vul`·`submit_fix`)은 번들의 마스킹된 `task_id`로, 판정 조회(`query_verdict`)와 제출 전 캐시 판별(`peek_verdict`)은 맵이 준 실 id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다. ⚠ **이 메커니즘은 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다**(왕복 보고서는 마스크 없이 돌렸다) — `run_round_trip`만 아직 `task_id` 하나를 셋 모두에 넘긴다. 429는 미처리다. API 키는 환경변수로만 받는다 <br>⏵ **2026-10-04 — 이 행은 #408로 머지됐다**(`1fa2182`, 2026-10-03T09:14:05Z). 남은 것은 위에 적은 셋 — 마스킹 서버 실측 0건 · `run_round_trip`이 `task_id` 하나를 셋 모두에 넘기는 것 · 429 미처리 — 이다. 후보가 여럿일 때 최종 PoC를 고르는 규칙은 #408이 정하지 않았다(§11.4 #408 행) |
+| **단계 3 배관 증명** | 배선 조각 | `dev_fake` + 로컬 오라클로 종단 1회. **$0**이고 GPU가 필요 없다. 🔴 보고서에 **「배관 증명 · 역량 미측정」**을 박고 숫자 칸은 0으로 둔다 — `dev_fake`의 바이트는 항등식이라 `vul=0`이 나온다(CLAUDE.md §0) <br>⏵ **2026-10-03 저녁 — 돌렸다**([보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). 예상대로 `vul_exit_code 0`이 나왔다. **이 칸이 빠뜨린 선행 둘**: ① 번들에 `submit.sh`가 없어 **손으로 만들어야 한다**(저자 생성기는 데이터 묶음이 없어 못 돈다) ② `dev_fake` 예산 상한을 **제거해야 완주한다**(#424 — 안 하면 `stopped_after: 4`, 바이트 0개). `--slices`는 필요 없고 `--condition`·`--device`는 비운다 <br>⏵ **2026-10-04 — ②는 #427이 풀었다**(`17913e2`, #424 `COMPLETED` 2026-10-03T13:55:38Z). 지금 `dev_fake`의 상한은 넷 다 `0`(= 상한 없음, `config/budgets.yaml`)이라 제거할 것이 없다. ①은 그대로다 |
 | **`#232` 판정 분리** | 없음 | `ok`와 「크래시했다」를 가른다. **합성을 켜는 것의 선행이다**(§11.5). 좁은 절반(exit 0·미측정 종료 코드를 E4로 읽지 않는다)은 PR #401로 **머지됐다**(`94798d3`, 2026-10-02T17:01:19Z) — 넓은 절반(`expected_signal`과 대조)은 결정 대기 |
 | **오라클 카나리** | 없음 | 채점 전에 참조 PoC와 **무해 입력**을 둘 다 돌려 판별력을 확인하는 절차. `#383`. ⏵ 2026-10-03 — **수동 점검 도구**(`tools/oracle_canary.py`)가 있다: 참조 PoC와 무해 입력을 `-vul`·`-fix`에 각 N회 돌려 기대표와 대조한다. 🔴 **이 행은 끝나지 않았다.** ① **호출하는 코드가 없다** — 2026-10-03 `git grep`으로 문서 밖 호출자 0건이라 채점을 막지 못한다(사람이 돌려 읽는다) ② **실 Docker로 0회 돌았다** — 통과하는 28의 경우도 실패하는 32의 경우도 관측이 없고, argv는 보고서 §13의 모양이지 저자 `run_container` 자체가 아니다 <br>⏵ **2026-10-03 저녁 — ②의 절반이 깨졌다.** `arvo:1065`에서 **실 Docker 첫 실행이 통과했다**(`mmap_rnd_bits=28` · 네 조합 각 10회 · `139` 0건 · 도구 exit 0, [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md) §3). **32의 경우는 여전히 0건**이고 ①(문서 밖 호출자 0건)·③도 그대로다 ③ 도구가 스스로 적는 미실측: **다른 과제·ASan·`oss-fuzz` 과제 0건 · 팀원 장비의 `vm.mmap_rnd_bits` 0건 · 네이티브 Linux 기본값 0건 · 병렬 거동 0건**. `#383`은 그래서 열려 있다 |
 
