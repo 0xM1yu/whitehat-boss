@@ -291,7 +291,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
   안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
   **미측정**). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
-  (열린 PR #378의 선택지 (b) — 미머지라 이 저장소에는 그 결함 본문이 아직 없다)
+  ([D97](open-questions/D/D97.md)의 선택지 (b))
 - 우선 순서를 읽을 곳 -> 체크포인트의 `candidates` 목록(병합 체크포인트도 그대로)과, 후보 발견을 **스스로 한** run
   (`--export-only`도 `--cpg`도 아닌 run)의 `candidate_manifest` 삽입 순서. 이 순서는 `--case-order ba`면 우선 층 먼저가 아니라
   **케이스 먼저의 처리 순서**다 -> 아래 「케이스 순서」. ⚠ **발견 기록을 체크포인트에서 되읽은 결과의
@@ -314,7 +314,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   `prioritize()` **전에** Joern 안에서 자른다. 캡에 닿은 저장소에서는 목록 파일의 후보가 **아예 없을 수** 있고, 그러면 결과가
   오타와 **구별되지 않는다**(둘 다 `unmatched_files`에만 뜬다)
 - ⚠ 목록이 틀리면 정답 후보가 뒤로 밀린다 -> lwan 한 표본에서 첫 GT 슬라이스 171 -> 297초, 느린 장비에서는 900초 예산에
-  GT 슬라이스 4 -> 1(**미머지 PR #378의 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
+  GT 슬라이스 4 -> 1(**[D97](open-questions/D/D97.md) 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
 
 ⏵ #368 **준비 한 번** -> `--prepare-only --cpg-out <파일>`이 CPG 생성과 후보 발견을 한 번 하고 그래프를 저장한다(아무
 후보도 안 자름). 그 체크포인트를 샤드마다 복사해 `--resume --cpg <파일> --shard I/N`으로 돌리면 샤드는 저장소를 다시
