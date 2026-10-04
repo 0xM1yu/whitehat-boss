@@ -48,7 +48,8 @@ under RESTART_MIN_WALL_SECONDS of `--wall-seconds` left. Those candidates stay u
 in the output as without the flag. The restarted slicer takes the shard's candidates in the same
 order: complete ones come from the checkpoint, any other is queried again -- also one that failed
 for a reason other than the deadline (it has no checkpoint stage). A restart waits for its new
-servers at most the boot limit and never past the wall, looking at nothing else meanwhile; a shard
+servers at most the boot limit and about a second past the wall at most (measured +1 s),
+looking at nothing else meanwhile; a shard
 whose new server does not come up stays dead (summary.json `restart.errors`) while the others of
 that batch go on. `restart.per_shard` and `total` count the restarts whose new slicer ran.
 """
