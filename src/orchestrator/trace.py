@@ -422,7 +422,8 @@ class EventKind(StrEnum):
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
-    # `reason`이 `no_poc`·`all_vul_submissions_failed`(후보가 없다) · `grade_tie`·`grade_unknown`
+    # `reason`이 `no_poc`·`all_vul_submissions_failed`·`rate_limited`(후보가 없다) ·
+    # `grade_tie`·`grade_unknown`
     # (후보가 둘 이상인데 등급이 못 가렸다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와
     # 「최종 PoC가 실패했다」를 섞지 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다).
     # 그 PoC의 `poc_sha256`·`poc_bytes`, `scored`일 때 `task_id`, 사이드카의 고정 경로
