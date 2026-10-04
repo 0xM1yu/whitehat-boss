@@ -189,7 +189,14 @@ thresholds:
   # **켤 때의 값은 미실측이다(§0).** 후보 1건당 PoV 홉·토큰·벽시계를 한 번도 안 쟀고, 그
   # 측정의 입력이 이 배선 뒤의 실모델 run 1회다. 지금 가진 것은 PoV가 0건이던 run뿐이라
   # 거기서 상한을 유도하면 지어낸 근거가 된다(위 `candidate_max`가 쓰는 논법과 같다).
-  pov_attempt_top_n: 0
+  # 🔴 ⏵ 2026-10-05 — **0에서 8로 켰다(사용자 결정).** 0이면 PoV가 `validated`만 도는데
+  #   `synthesize_repro_spec`이 꺼져 있던 동안 `validated`가 늘 비어서 **PoV가 한 건도 안 돌았고
+  #   PoC가 0건이라 채점이 시작조차 안 됐다.** 위 「켤 때의 값은 미실측이다」는 맞지만, 0은
+  #   미실측이 아니라 **「안 돈다」가 확정된 값**이다 — 재려면 먼저 켜야 한다.
+  #   8은 `critic_top_n: 8`과 같게 맞춘 값이다(계산값 — Critic이 본 Finding 전부를 PoV 풀이
+  #   덮는다). `max_hops: 3`이라 finding당 1+3홉 -> PoV 모델 호출 최대 32회(계산값).
+  #   미실측: 후보당 PoV 홉·토큰·벽시계 0건. 돈이 걸린 상한은 `default.gpu_seconds` 72,000이다.
+  pov_attempt_top_n: 8
 
   # 한 run이 4단계(Scout)에 올릴 target 수 상한 (W2).
   #
@@ -406,6 +413,17 @@ thresholds:
   #   (`tests/test_docs_format.py`가 대조).
   output_max_by_role:
     auditor: 65536
+    # 🔴 Critic — 전역 4,096에서 **32,768**로 올렸다(2026-10-05 사용자 결정).
+    # **4,096이 이미 모자랐다** — 위 2026-09-12 토큰 회계 실측 (2)가 `gpt-oss-20b`의 추론 토큰을
+    # `reasoning_effort: high`에서 **484~16,381**로 적고 그 최대가 4,096을 넘는다. 답 본문은
+    # 76~126토큰(같은 실측)이라 32,768은 추론 최대 16,381 위에 답 몫을 두 배 남기는 값이다(계산값).
+    # ⚠ **위 「전역 4,096이 이미 충분하다」·「`output_max_by_role`은 비워 둔다」 문단은 그 날의
+    # 판단이고 이 줄이 그것을 뒤집는다** — 그 문단의 실측(절단 0건)은 `completion_tokens` 최대
+    # 2,863을 재면서 추론과 본문을 **안 갈랐던** 때의 수다. 같은 보고서가 뒤에 갈라 16,381을 냈다.
+    # 좌석 `request_timeout_s`도 900 -> 3,600으로 같이 올렸다(`config/models.yaml`) —
+    # 32,768 ÷ 12 tok/s ≈ 2,731초(계산값 · 12는 그 파일이 적는 **안 잰 가정**이다).
+    # 미실측: 32,768로 돈 run 0건 · 폭주가 이 상한에서 얼마나 비싸지는지 0건.
+    critic: 32768
     # PoV — 사고를 켠 8단계 모델(feyospace, Auditor와 같은 베이스)이라 같은 32,768을 준다.
     # `thinking_token_budget`(28,672 < 32,768, `config/models.yaml`)이 사고를 묶어 답 자리를 남긴다.
     # 전역 4,096으로 두면 사고가 답을 밀어내 스키마가 깨진다(Auditor가 그 판을 7/7 냈다). 계획값·미실측.
@@ -463,6 +481,30 @@ thresholds:
   # - 호출자 창 10줄 -> 2026-10-03 harness_final_v1 vuln 41개를 GT 함수 중심으로 조립한 비교에서 5줄 대비
   #   토큰 중앙값 +51(1,808 -> 1,859, 글자 근사) · 호출 직전 비교문이 창에 보인 표본 11 -> 19/41
   #   (휴리스틱 -> 길이 검증 아닌 비교도 셈). 창이 붙은 표본 29/41
+  # 🔴 ⏵ 2026-10-05 — 20,000에서 **60,000**으로 올렸다(사용자 결정 — vast 자체 서빙이라 토큰이 돈이
+  #   아니다. 같은 날 run 입력 예산 40,000,000 · `gpu_seconds` 72,000과 같은 결정이다).
+  #   **위 두 소표본 근거는 20,000을 고른 근거이고 60,000의 근거가 아니다** — 60,000으로 돈 run은 0건이다.
+  #   누락률이 더 내려가는지는 미실측이다.
+  # 🔴 **왜 더 못 올리나 — Critic이 같은 문자열을 받는다**(`nodes/critic.py`의 v6 갈래, PR #497).
+  #   Critic 좌석 `gpt-oss-20b`의 창이 131,072(`config/models.yaml`)이고 아래
+  #   `output_max_by_role.critic` 32,768을 빼면 입력 몫이 **98,304**다(계산값). 거기에
+  #   60,000 + v6 prefix·body 13,877자 ÷ 3.04 ≈ 4,565(계산값, #349 중앙 비) + 근거 본문이 든다.
+  #   이 값을 창 위로 올리면 크기 400이 **확정**이고 `_drop_finding`이 그 Finding의 판정을 버려
+  #   8단계 게이트 `p3`(`upheld`)이 영영 안 선다 — `runner._analyze`의 #296 주석이 그 사고를 든다.
+  # ⚠ **entry 함수는 여전히 이 상한 밖이다**(`auditor_entry_trim: 0` — 이 파일에 선언이 없다).
+  #   기록된 `SOURCE` 최대 **155,280토큰**(`src/config.py` — 2026-10-01 s500 로컬 측정 · run ID 없음 ·
+  #   원자료 저장소 밖)은 위 98,304를 넘는다. 창을 넓히는 길은 좌석을 262,144 모델로 바꾸는 것뿐이고
+  #   그것은 로스터 결정이다(`PROJECT-CONTEXT.md`가 정본).
+  # 🔴 ⏵ 2026-10-05 — 60,000으로 올렸다가 **20,000으로 되돌렸다.** 올릴 수 없는 값이 아니라
+  #   **한 줄로 올릴 수 없는 값**이다: 이 수가 `prompts/auditor/v8/prefix.md:130-134`에 글자로
+  #   **아홉 번** 박혀 있고(`20,000-token cap`), `tests/test_config.py`의
+  #   `test_the_canonical_auditor_prompt_states_the_runner_source_contract`가
+  #   `f"{auditor_source_tokens:,}-token cap" in prefix`로 둘을 묶는다. 실측: 60,000으로 바꾸니
+  #   그 검사가 두 프로필에서 빨개졌다(전량 2 failed / 4,329 passed).
+  #   같은 다섯 줄이 `prompts/auditor/v7/prefix.md:59-63`에 바이트 동일로 있고
+  #   `tests/test_auditor_prompt_v8.py`가 그 동일성을 문다 — v8만 고치면 그 핀이 깨지고,
+  #   v7까지 고치면 **이미 돈 판의 본문을 바꾸는 것**이라 「한 판 번호가 한 문장을 가리킨다」를 깬다.
+  #   🔴 **그래서 올리는 길은 `prompts/auditor/v9/`(= v8 + 그 아홉 글자) 신설 + 배선 하나뿐이다.**
   auditor_source_tokens: 20000
   auditor_definitions: 1
   auditor_callee_hops: 1
@@ -490,7 +532,34 @@ thresholds:
   # 저장소 밖 · 이 저장소에서 재현 안 함) — 팀 검수 83표본에서 「범위·검증 근거」 요청이 행의 69% · 정답 sink
   # 82개 중 58개(70.7%)에서 sink와 식별자를 공유하는 가드가 앞이나 둘레에 있었다. 유병률이지 효과가 아니다.
   # **켠 효과는 미실측**이다. ⚠ 켜면 같은 SOURCE 문자열을 받는 PoV 프롬프트에도 이 블록이 든다.
+  # 🔴 ⏵ 2026-10-05 — **이것만 못 켠다.** 위 주석대로 v7도 v8도 이 옵션을 meta
+  #   `source_options`로 선언하지 않아서, 켜고 그 둘을 고르면 `cli`의 run·doctor가 **막는다**
+  #   (`_undescribed_source_options`). 즉 켜면 하네스가 더 도는 게 아니라 **아예 안 뜬다.**
+  #   켜는 길은 위 `auditor_source_tokens`와 같다 — 프롬프트 판 신설이 선행이다.
   auditor_guards: 0
+
+  # 🔴 ⏵ 2026-10-05 — 아래 셋은 선언이 없어 필드 기본값 0(= 꺼짐)으로 돌던 스위치다. 켠다(사용자 결정).
+  # Scout 슬라이스가 창을 넘으면 entry 가까운 줄만 남긴다(#353 (b)). **0이면 통째로 보내고
+  # 서빙이 크기로 거절해 그 후보가 run에서 빠진다** — 1이면 `scout._fit_slice`가 줄여 후보가 산다.
+  # 프롬프트 판은 안 바꾼다(Scout v3 prefix가 SOURCE를 줄 빠진 슬라이스로 서술한다 — 설계상 안전).
+  # 대가: 같은 슬라이스 집합의 Scout 입력이 달라져 이전 run과 직접 비교할 수 없다. 켠 효과는 미실측.
+  scout_slice_trim: 1
+  # `auditor_source` 이벤트에 `gate_reasons`를 남긴다. **관측 전용** — Auditor 입력도 프롬프트 판도
+  # 안 바꾼다(그래서 `AUDITOR_SOURCE_OPTIONS`가 아니다). 켜도 잃을 것이 없고 지금껏 0이라
+  # 「SOURCE를 어디까지 믿는가」가 장부에 0건이었다.
+  auditor_source_gate: 1
+  # 🔴 **채점 사슬을 막던 스위치다.** Auditor가 `repro_spec`을 비워 내면 하네스가 합성한다(S7).
+  # 0이면 비는 채로 F-9(`repro_spec_missing`)로 `hypothesized`에 멈추고 **8단계가 안 돈다** —
+  # 게이트가 `p3 = p2 and upheld and repro_spec is not None`이라 E3가 영영 안 선다.
+  # 그 필드 주석이 **"CyberGym Level 1처럼 과제가 재현법을 안 주는 run을 위한 것이라 기본은 끈다"**고
+  # 적는다 — CyberGym 때문에 만들고 CyberGym용으로 꺼 둔 값이다. 켠다.
+  # ⚠ 대가를 적는다(그 주석의 경고): 켜면 이슈 #232가 잠복에서 **도달 가능**으로 바뀐다 —
+  # `gate`의 `p4`가 `ok=True`만 보고 크래시(non-zero)와 exit 0을 안 갈라서 **크래시 0건으로
+  # `proven`이 날 수 있다.** 즉 **내부 등급이 과대 보고될 수 있다.** 그것을 받아들이는 근거는
+  # 내부 등급이 점수가 아니라는 것이다 — 채점은 CyberGym 오라클이 하고, 8단계가 안 돌면
+  # 제출할 PoC 자체가 0건이다. #232는 따로 고친다.
+  # 미실측: 합성이 선 run 0건 · 합성 명세로 PoV가 PoC를 내는지 0건.
+  synthesize_repro_spec: 1
 
 # 모델 게이트웨이 요청 파라미터. 조건 간 비교에서 고정해야 하므로 RunRecord에 남는다
 # (engineering-guide.md §5).
