@@ -1,0 +1,7 @@
+# 2026-10-05 — gpt-oss-20b Critic 좌석에 배선. v5의 판정·Evidence 인용 계약을 유지한다.
+# 차이: 본문·위치 설명 정정 + Auditor와 같은 캐시 SOURCE의 범위·검증·인용 경계.
+# 실모델 uphold 관측 0회 · 입력 토큰 수 0 · 스키마 준수율 0(모두 미실측, run 필요).
+role: critic
+version: v6
+output_schema: DecisionDraft
+description: v5에 캐시된 Auditor SOURCE의 가드·경로 검증과 누락·Evidence ID 경계를 더하고 실 Critic 좌석에 배선한 판
