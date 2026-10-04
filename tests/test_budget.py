@@ -812,3 +812,31 @@ def test_tool_time_does_not_land_in_the_gpu_ledger() -> None:
 
     assert ledger.tool_ms == 5000
     assert ledger.gpu_ms == 0  # GPU 칸은 도구가 건드리지 않는다
+
+
+def test_an_unlimited_item_has_no_remaining_not_zero() -> None:
+    """#483: 상한 0은 「상한 없음」이라 잔량이 `None`이다. `0`은 상한이 있고 다 쓴 항목뿐이다.
+
+    `dev_fake`처럼 네 상한이 다 0인 원장은 아무리 써도 소진이 아니다 — 잔량을 0으로 내면
+    읽는 쪽이 소진으로 오독한다(#435가 `estimate` 출력에서 겪은 그 오독).
+    """
+    unlimited = BudgetLedger(
+        Budget(input_tokens=0, output_tokens=0, gpu_seconds=0),
+        TraceWriter(RUN_ID, clock=lambda: NOW),
+    )
+    usage = Usage(input_tokens=500, output_tokens=50, cached_tokens=0)
+    unlimited.charge(usage, stage=4, gpu_ms=3000)
+    assert not unlimited.is_exhausted
+    assert unlimited.remaining() == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "gpu_seconds": None,
+        "tool_seconds": None,
+    }
+
+    spent = _ledger(gpu_seconds=2)
+    spent.charge(Usage(input_tokens=0, output_tokens=0, cached_tokens=0), stage=2, gpu_ms=2500)
+    left = spent.remaining()
+    assert left["gpu_seconds"] == 0  # 상한 2초를 다 썼다
+    assert left["tool_seconds"] is None  # 상한 0 -> 없음
+    assert left["input_tokens"] == 10**9
