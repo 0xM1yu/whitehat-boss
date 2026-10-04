@@ -11,7 +11,9 @@
   - 결과 `gt_filter` -> 방식 · 발견 후보 수 · 남긴 수 · GT 범위
 - 슬라이스 자체는 같은 Joern 질의, 같은 `slices.json` 모양
 - Auditor 입력 -> `build_auditor.py`가 하네스의 `runner._auditor_target`·`_auditor_source`를 `config/budgets.yaml` 값으로 부른다
-  - `AUDITOR_DEFINITIONS=1`이면 `auditor_definitions`만 켬(매크로·타입·파일 변수 정의)
+  - `AUDITOR_DEFINITIONS=1` -> `auditor_definitions` 켬(매크로·타입·파일 변수 정의)
+  - `AUDITOR_OPTIONS="auditor_callee_hops=1,auditor_caller_lines=10"` -> 그 밖의 #349 옵션을 이름으로 켬. 켠 옵션은 행의 `auditor_options`에 남음
+  - 하네스 기본값(`config/budgets.yaml`)은 안 바뀜 -> 켠 데이터로 학습하면 실제 run도 같은 옵션 + 그 입력을 서술하는 프롬프트 판이어야 입력이 맞음
   - GT는 `source` 조립에 안 쓰고 라벨(`gt_relevant` · `gt_in_source`)에만 쓴다
 
 ## 파일
