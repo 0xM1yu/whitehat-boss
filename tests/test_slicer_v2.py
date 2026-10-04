@@ -1675,7 +1675,8 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
     export = tmp_path / "export"
     export.mkdir()
     _, exported, transport = run_cli(
-        monkeypatch, two_file_repo, export, {}, "--checkpoint", str(merged), "--export-only"
+        monkeypatch, two_file_repo, export, {}, "--checkpoint", str(merged), "--export-only",
+        "--export-dir", str(export / "exported"),
     )
     assert transport.stages == []
     assert exported["slices"] == single["slices"]
@@ -1692,12 +1693,20 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
     written = (whole / "exported" / "candidate-manifest.json").read_text(encoding="utf-8")
     assert list(json.loads(written)) == priority
     assert list(exported["candidate_manifest"]) == sorted(priority)
+    written = (export / "exported" / "candidate-manifest.json").read_text(encoding="utf-8")
+    assert list(json.loads(written)) == sorted(priority)
 
 
-def test_a_cpg_run_reads_the_manifest_back_in_key_order(monkeypatch, two_file_repo, tmp_path):
+@pytest.mark.parametrize(
+    ("extra", "expected"), [((), 0), (("--shard", "0/2"), 2)], ids=["whole", "shard"]
+)
+def test_a_cpg_run_reads_the_manifest_back_in_key_order(
+    monkeypatch, two_file_repo, tmp_path, extra, expected
+):
     """#434: a --cpg run takes the prepare run's discovery (restore_discovery), so its own
-    candidate_manifest comes back key-sorted as an export's does. The gate is --cpg alone: this
-    run passes no --shard, as `slice_sharded.py --shards 1` does. `candidates` keep the priority."""
+    candidate_manifest comes back key-sorted as an export's does. The gate is --cpg alone, with or
+    without --shard (`slice_sharded.py --shards N>1` passes `--shard I/N`, `--shards 1` does not);
+    a shard's exit code is 2 (partial). `candidates` keep the priority."""
     listing = tmp_path / "priority.txt"
     listing.write_text("main.c\n", encoding="utf-8")
     prep = tmp_path / "prep"
@@ -1715,9 +1724,9 @@ def test_a_cpg_run_reads_the_manifest_back_in_key_order(monkeypatch, two_file_re
     del data["case_a"], data["case_b"]  # a rediscovery would fail
     code, result, _ = run_cli(
         monkeypatch, two_file_repo, seeded.parent, data, "--checkpoint", str(seeded),
-        "--resume", "--cpg", str(cpg), "--priority-files", str(listing),
+        "--resume", "--cpg", str(cpg), "--priority-files", str(listing), *extra,
     )
-    assert code == 0, result.get("error")
+    assert code == expected, result.get("error")
     with Checkpoint(seeded, resume=True) as store:
         bound = store.get("candidates")
     assert [c["entry"]["file"] for c in bound] == ["main.c", "main.c", "a.c"]
