@@ -29,7 +29,7 @@ from src.interfaces.model_client import (
     Usage,
 )
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs, ToolRunner
-from src.orchestrator import prompt_loader, runner
+from src.orchestrator import gate, prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import (
@@ -1547,6 +1547,61 @@ def test_build_facts_evidence_body_is_opt_in() -> None:
     assert with_body["evidence"][0]["truncated"] is False
 
 
+def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
+    """`evidence_locations`를 켠 호출(content-aware **판**)은 Evidence마다 `location`을 싣는다.
+
+    위치는 **판단 보조**다 — 게이트 등급을 이 값이 정하지 않는다(`gate.evaluate`의
+    `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라
+    인용하면 `static_ok`가 이미 참이다 · `container_tools.first_hit_location` docstring). 그 위치는
+    semgrep `results[0]`(첫 히트) 하나다. 위치를 싣는 것이 모델의 인용을 늘리는지는 미실측이다
+    (이슈 #475 — 위치를 싣고 돈 run은 커밋된 `docs/experiments/` 보고서 기준 0건).
+
+    **본문과 따로 정해진다**: payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
+    (적대적 리뷰 #480 LOW-1) — 같은 판의 Critic 줄(`critic._describe_evidence`)과 같은 값을 든다.
+    위치가 없는 Evidence는 `null`로 싣는다 — 바로 위 `target`과 같은 관례이고, 키가 아예 없으면
+    「위치가 없는 도구」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
+    끄면(Scout, content-aware가 아닌 판) 키가 없다 — 프롬프트 바이트가 종전과 같다.
+    """
+    located = _evidence("evidence_0001", "r1").model_copy(
+        update={"location": Location(file="a.c", line_start=1086, line_end=1087)}
+    )
+    bodies = {"evidence_0001": {"body": "semgrep hit", "truncated": False}}
+    shown = {"file": "a.c", "symbol": None, "line_start": 1086, "line_end": 1087}
+
+    with_body = build_facts(
+        run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies=bodies, evidence_locations=True
+    )
+    assert with_body["evidence"][0]["location"] == shown
+
+    # payload가 없어 본문이 빠져도(맵이 빔) 같은 판이면 위치는 나간다 — 본문과 별개다.
+    no_body = build_facts(
+        run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies={}, evidence_locations=True
+    )
+    assert no_body["evidence"] == [
+        {"evidence_id": "evidence_0001", "kind": "sanitizer", "ok": True, "location": shown}
+    ]
+
+    # 위치 없는 Evidence도 키는 나간다 — `null`이 "도구가 위치를 안 줬다"는 사실이다.
+    plain_ev = _evidence("evidence_0001", "r1")
+    no_loc = build_facts(
+        run_id=RUN_ID, ids={}, evidences=[plain_ev], evidence_bodies=bodies, evidence_locations=True
+    )
+    assert no_loc["evidence"][0]["location"] is None
+
+    # 끄면 본문이 있어도 위치는 안 나간다(바이트 동일 — opt-in) · 본문만 종전 모양이다.
+    off = build_facts(run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies=bodies)
+    assert off["evidence"] == [
+        {
+            "evidence_id": "evidence_0001",
+            "kind": "sanitizer",
+            "ok": True,
+            "body": "semgrep hit",
+            "truncated": False,
+        }
+    ]
+    assert "location" not in build_facts(run_id=RUN_ID, ids={}, evidences=[located])["evidence"][0]
+
+
 def test_describe_evidence_appends_body_when_present() -> None:
     ev = _evidence("evidence_0001", "r1")
     assert "heap-overflow" not in critic._describe_evidence([ev])
@@ -1554,6 +1609,50 @@ def test_describe_evidence_appends_body_when_present() -> None:
         [ev], {"evidence_0001": {"body": "heap-overflow", "truncated": True}}
     )
     assert "heap-overflow" in described and "[truncated]" in described
+
+
+def test_describe_evidence_location_is_opt_in_by_version() -> None:
+    """Critic 근거 줄의 위치 토막은 `with_location`(content-aware **판**)일 때만 붙는다.
+
+    **꺼진 쪽(v1)은 main의 렌더와 바이트 동일해야 한다**(적대적 리뷰 #480 HIGH-1) — 아래 기대
+    문자열은 main(`origin/main`)의 `_describe_evidence`가 같은 입력에 낸 실제 출력이다(2026-10-04
+    그 함수를 직접 돌려 대조했다). `bodies`가 `{}`든 `None`이든 같다.
+
+    켜면 위치가 줄에 `file:start-end`로 붙는다. 위치 없는 Evidence는 **줄에 아무것도 더하지
+    않는다** — 산문 한 줄이라 `null`을 적으면 노이즈다(FACTS JSON 블록은 키 부재가 뜻을 흐려서
+    `null`을 싣는다). 위치는 Critic의 판단 보조이고 게이트 등급 근거가 아니다 — 근거는
+    `test_build_facts_evidence_location_is_opt_in_by_version` docstring.
+    """
+    loc = Location(file="a.c", line_start=1086, line_end=1087)
+    located = _evidence("evidence_0001", "r1").model_copy(update={"location": loc})
+    bodies = {"evidence_0001": {"body": "heap-overflow", "truncated": True}}
+    main_line = "- evidence_0001 · sanitizer · ok · asan"
+
+    # v1 — 위치가 있어도 main과 같은 줄이다.
+    assert critic._describe_evidence([located]) == main_line
+    assert critic._describe_evidence([located], {}) == main_line
+    assert (
+        critic._describe_evidence([located], bodies)
+        == f"{main_line}\n    heap-overflow [truncated]"
+    )
+
+    # content-aware 판 — 위치가 붙고, 본문이 있으면 그 앞 줄 끝에 붙는다.
+    on = critic._describe_evidence([located], with_location=True)
+    assert on == f"{main_line} · a.c:1086-1087"
+    on_body = critic._describe_evidence([located], bodies, with_location=True)
+    assert on_body == f"{main_line} · a.c:1086-1087\n    heap-overflow [truncated]"
+
+    # 위치 없는 Evidence는 켜도 종전과 같은 한 줄이다.
+    plain = _evidence("evidence_0001", "r1")
+    assert critic._describe_evidence([plain], with_location=True) == main_line
+
+
+def test_location_text_never_prints_a_missing_value() -> None:
+    """줄 필드는 선택이다 — 없는 값을 `None`이라 적지 않는다(CLAUDE.md §0)."""
+    assert critic._location_text(Location(file="a.c")) == "a.c"
+    assert critic._location_text(Location(file="a.c", line_start=7)) == "a.c:7"
+    assert critic._location_text(Location(file="a.c", line_start=7, line_end=7)) == "a.c:7"
+    assert critic._location_text(Location(file="a.c", line_start=7, line_end=9)) == "a.c:7-9"
 
 
 def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
@@ -1567,6 +1666,83 @@ def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> Non
 
     prompt = ctx.models.last_for(Role.CRITIC)
     assert "heap-buffer-overflow" not in prompt.body  # v1 stays metadata-only (byte-identical)
+
+
+def _critic_prompt_at(ctx: RunContext, version: str, payload: str | None):  # noqa: ANN202
+    """dev_fake Critic을 `version`으로 바꿔 한 번 돌리고 (프롬프트, 인용한 Evidence)를 준다."""
+    key = ctx.config.model_key_for(Role.CRITIC.value)
+    models = {
+        **ctx.config.models,
+        "fake_critic_probe": ctx.config.models[key].transition(prompt_template_version=version),
+    }
+    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_probe"}
+    ctx.config = ctx.config.transition(
+        models=models, profile=ctx.config.profile.transition(roles=roles)
+    )
+    ctx.read_payload = lambda _ref: payload
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    return ctx.models.last_for(Role.CRITIC), gate.evidences_for(graded, evidences)
+
+
+def _facts_of(body: str) -> dict:  # noqa: ANN202
+    return json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+
+
+def test_critic_v1_prompt_does_not_carry_the_evidence_location(ctx: RunContext) -> None:
+    """**v1 Critic(실서빙 `gpt-oss-20b`)의 프롬프트 바이트는 main과 같다** — 위치를 싣지 않는다.
+
+    `_CONTENT_AWARE_VERSIONS`가 v1을 뺀 것은 v1이 바이트 동일이라 재측정(evaluation §2.3)이 안
+    걸리게 하려는 것이다(#237 HIGH-1). 위치 토막이 그 문 밖에서 붙으면 판 번호 변화 없이 실서빙
+    프롬프트가 바뀐다 — 적대적 리뷰 #480 HIGH-1이 `_describe_evidence([위치 든 Evidence], {})`로
+    재현했다(main `… · asan` / PR `… · asan · a.c:1086-1087`).
+
+    핀 샘플은 **노드를 거쳐 실제로 인용된** Evidence다(fake semgrep이 실도구
+    `first_hit_location`처럼 위치를 싣는다) — 지어낸 샘플이 아니다. 기대 줄은 main의
+    `_describe_evidence`가 내던 꼴이다.
+    """
+    prompt, own = _critic_prompt_at(ctx, "v1", "SANITIZER heap-buffer-overflow at parse_header")
+    located = [ev for ev in own if ev.location is not None]
+    assert located, "전제: 위치를 든 Evidence가 인용돼야 이 핀이 의미가 있다"
+
+    for ev in own:
+        main_line = (
+            f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
+        )
+        assert f"{main_line}\n" in prompt.body or prompt.body.endswith(main_line)
+        assert f"{main_line} · " not in prompt.body  # 위치 토막이 이어 붙지 않는다
+    assert all("location" not in item for item in _facts_of(prompt.body)["evidence"])
+
+
+# 판 목록은 노드의 상수에서 읽는다 — 집합에 판이 들어오면 이 검사가 자동으로 늘어난다(손으로 베낀
+# 목록은 상수와 갈라진다). 제외한 판 없음 — 집합의 모든 판이 dev_fake 렌더에서 돈다.
+@pytest.mark.parametrize("version", sorted(critic._CONTENT_AWARE_VERSIONS))
+@pytest.mark.parametrize("payload", ["SANITIZER heap-buffer-overflow at parse_header", None])
+def test_critic_content_aware_prompt_carries_the_evidence_location(
+    ctx: RunContext, version: str, payload: str | None
+) -> None:
+    """content-aware 판은 위치를 EVIDENCE 줄과 FACTS 양쪽에 싣는다 — **payload가 없어도.**
+
+    위치 노출은 판의 성질이지 payload 유무의 성질이 아니다. `read_payload`가 None이면
+    `evidence_summaries`가 그 Evidence를 맵에서 뺀다(파일 부재·미배선). 위치를 본문과 같은 조건에
+    묶으면 그때 FACTS에서 키가 사라지고 Critic 줄에는 남아 **두 자리가 서로 다른 값**을 든다
+    (적대적 리뷰 #480 LOW-1).
+    """
+    prompt, own = _critic_prompt_at(ctx, version, payload)
+    located = [ev for ev in own if ev.location is not None]
+    assert located, "전제: 위치를 든 Evidence가 인용돼야 이 핀이 의미가 있다"
+
+    facts_by_id = {item["evidence_id"]: item for item in _facts_of(prompt.body)["evidence"]}
+    for ev in located:
+        shown = facts_by_id[ev.evidence_id]["location"]
+        assert shown == ev.location.model_dump(mode="json")
+        assert f"{critic._location_text(ev.location)}" in prompt.body
+    for ev in own:
+        assert ("body" in facts_by_id[ev.evidence_id]) is (payload is not None)
 
 
 def test_critic_includes_evidence_body_when_version_is_content_aware(
@@ -1637,6 +1813,64 @@ def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> No
 
     prompt = ctx.models.last_for(Role.AUDITOR)
     assert "heap-buffer-overflow" not in prompt.body  # v1 stays metadata-only (byte-identical)
+
+
+def _auditor_evidence_facts(ctx: RunContext, version: str, payload: str | None):  # noqa: ANN202
+    """dev_fake Auditor를 `version`으로 돌리고 (FACTS의 evidence 항목, 넘긴 Evidence)를 준다."""
+    fake_entry = ctx.config.models["fake"].transition(prompt_template_version=version)
+    ctx.config = ctx.config.transition(
+        models={**ctx.config.models, "fake_probe": fake_entry},
+        profile=ctx.config.profile.transition(
+            roles={**ctx.config.profile.roles, "auditor": "fake_probe"}
+        ),
+    )
+    ctx.read_payload = lambda _ref: payload
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+
+    auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    # **첫** Auditor 프롬프트(hop0)를 읽는다 — 한 방 판은 하나뿐이라 마지막과 같고, 도구 루프 판은
+    # 홉마다 프롬프트를 남겨 마지막이 후속 홉의 도구 관측이라 FACTS가 없다. FACTS를 싣는 것은 hop0
+    # 하나다(`auditor._render_hop0`). 마지막을 읽으면 `_CONTENT_AWARE_VERSIONS`에 루프 판이 들어오는
+    # 순간(#491의 v8) 이 검사가 IndexError로 죽는다 — 어느 PR도 단독으로는 안 깨져 CI가 못 잡는다.
+    hop0 = next(prompt for seen, prompt in ctx.models.prompts if seen is Role.AUDITOR)
+    return _facts_of(hop0.body)["evidence"], evidences
+
+
+def test_auditor_v1_facts_carry_no_evidence_location(ctx: RunContext) -> None:
+    """v1 Auditor의 FACTS는 위치를 안 싣는다 — content-aware가 아닌 판은 바이트가 종전과 같다.
+
+    본문·위치 둘 다 판이 정하는 opt-in이다(`_CONTENT_AWARE_VERSIONS`). 핀 샘플은 노드가 실제로
+    넘긴 Evidence이고 그중 위치를 든 것(fake semgrep)이 있어야 의미가 있다.
+    """
+    items, evidences = _auditor_evidence_facts(
+        ctx, "v1", "SANITIZER heap-buffer-overflow at parse_header"
+    )
+
+    assert any(ev.location is not None for ev in evidences), "전제: 위치 든 Evidence가 있어야 한다"
+    assert all(set(item) == {"evidence_id", "kind", "ok"} for item in items)
+
+
+# 판 목록은 노드의 상수에서 읽는다(위 Critic 검사와 같은 이유). `v4_t1`도 든다 — 손으로 쓴 옛 목록이
+# 빠뜨렸던 판이고 dev_fake 렌더에서 돈다. 제외한 판 없음.
+@pytest.mark.parametrize("version", sorted(auditor._CONTENT_AWARE_VERSIONS))
+@pytest.mark.parametrize("payload", ["SANITIZER heap-buffer-overflow at parse_header", None])
+def test_auditor_content_aware_facts_carry_the_evidence_location(
+    ctx: RunContext, version: str, payload: str | None
+) -> None:
+    """content-aware 판은 Evidence마다 `location`을 싣는다 — payload가 없어도(리뷰 #480 LOW-1).
+
+    위치는 판단 보조이고 게이트 등급 근거가 아니다(`build_facts` 주석). 위치 없는 Evidence(그래프)는
+    `null`이다. 본문은 payload가 있을 때만 실린다.
+    """
+    items, evidences = _auditor_evidence_facts(ctx, version, payload)
+
+    assert any(ev.location is not None for ev in evidences), "전제: 위치 든 Evidence가 있어야 한다"
+    by_id = {item["evidence_id"]: item for item in items}
+    for ev in evidences:
+        expected = ev.location.model_dump(mode="json") if ev.location else None
+        assert by_id[ev.evidence_id]["location"] == expected
+        assert ("body" in by_id[ev.evidence_id]) is (payload is not None)
 
 
 def test_auditor_includes_evidence_body_when_version_is_content_aware(

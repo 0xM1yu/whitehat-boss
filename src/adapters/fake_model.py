@@ -70,6 +70,11 @@ class FakeEvidenceRef(HarnessModel):
     # optional로 받는다.
     body: str | None = None
     truncated: bool | None = None
+    # content-aware 판이 싣는 `Evidence.location`(`prompt_loader.build_facts`의 `evidence_locations`
+    # — 판단 보조이고 게이트 등급 근거가 아니다). **느슨하게 받는다**: 위 `FakeCapsuleSection`과
+    # 같은 이유로 프롬프트에서 파싱해 온 것에 `Location`의 불변식을 다시 걸지 않는다. Fake는
+    # 판정에 위치를 쓰지 않으므로 거부하지 않는 것만이 목적이다.
+    location: dict[str, object] | None = None
 
 
 class FakeCapsuleSection(HarnessModel):
