@@ -907,7 +907,9 @@ def test_restarts_are_bounded_per_shard(stubbed, monkeypatch):
 @needs_posix
 def test_restarts_stop_at_the_wall(stubbed, monkeypatch):
     run, _ = stubbed
-    monkeypatch.setattr(tool, "RESTART_MIN_WALL_SECONDS", 0)
+    # 2, not 0: with 0 a restart can start just before the wall and be cut by it, and that shard
+    # then counts as dead instead of wall_stopped (flaky — the gate saw 6 of 14 runs fail)
+    monkeypatch.setattr(tool, "RESTART_MIN_WALL_SECONDS", 2)
     monkeypatch.setenv("STUB_SHARD", "deadline")
     monkeypatch.setenv("STUB_DEADLINES", "999")
     started = time.time()
