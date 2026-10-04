@@ -870,7 +870,7 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     tokens = sum(c.used_tokens for c in capsules) * places + _prefix_tokens(config) * calls
     budget = config.budget.input_tokens
     # 상한 0은 「검사 안 함」이다(`BudgetLedger._overrun`) — 「예산이 0」이 아니다.
-    # 0을 두 번 되풀이하면 「못 돈다」로 읽힌다(#435).
+    # 0을 두 번 되풀이하면 「못 돈다」로 읽힐 수 있다(#435).
     share = f"{tokens / budget:.1%}" if budget else "상한 없음, 0은 검사 안 함"
     return [
         f"대상 artifact: {len(result.candidates) or len(capsules)}개 / 캡슐 {len(capsules)}개",
