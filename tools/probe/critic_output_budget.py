@@ -24,8 +24,10 @@ E2 미만은 7단계에 못 간다.
 
 ## 프롬프트는 작다 — 21,021은 이 경로의 수가 아니다
 
-`nodes/critic.py`의 `_ask_model`이 `build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences`
-**셋뿐**이다. `capsule=`도 `source=`도 `target=`도 안 넘긴다. 그래서 Critic의 사실 블록은
+**이 probe가 되만드는 v1 경로 한정이다**(`_reconstruct` — `_ask_model`의 metadata-only 조립):
+`build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences` **셋뿐**이다(content-aware 판은
+`evidence_bodies`·`evidence_locations`를 더 넘긴다 — 이 probe의 경로가 아니다). `capsule=`도
+`source=`도 `target=`도 안 넘긴다. 그래서 Critic의 사실 블록은
 `capsule_sections: []` · `source: ""` · `target: null`이고, **대상 원문도 캡슐도 안 실린다**
 (agent-contracts.md §2.3이 `rca_draft`를 빼는 것과 같은 설계다 — Critic은 앞 단계의 서술이
 아니라 주장·경로·근거만 받는다).

@@ -165,6 +165,32 @@ thresholds:
   # (architecture.md §3 "상위 Finding만").
   critic_top_n: 8
 
+  # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 상한. **0은 종전 동작이고
+  # 미실측 표시가 아니다** — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다.
+  #
+  # 풀은 「Critic이 밀어 내지 않은 Finding」이다 — Critic이 반박·보류(`need_evidence`)로
+  # 판정한 것과 판정 호출이 실패해 버려진 것은 뺀다(`runner._pov_targets`). 드는 것은 Critic을
+  # 안 거친 Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어
+  # `hypothesized`에 멈춘 것(F-9) 등이다.
+  #
+  # ⚠ 이 필터는 반박된 Finding의 PoC가 최종 제출이 되는 것을 막지만, **이 기능이 처음 겨냥한
+  # run의 풀은 바꾸지 않는다.** 그 run(`run_20261003_0003`)의 Finding 셋은 Critic을 안 거쳤고
+  # 전부 Auditor가 스스로 낸 부정 결론이다(`trigger_status=no_signal` · `confidence`
+  # 0.10·0.10·0.05 · `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-
+  # remote.md` §4). 풀은 그것을 거르지 않는다(결정 대기) — 그런 Finding에서 PoV가 낼 PoC가
+  # 있는지는 **미측정**이다.
+  #
+  # 왜 상한이 생겼나. 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다 —
+  # Finding이 인용한 Evidence가 없어(모델이 인용하지 않았다 — 이슈 #475 정정) 전부 E0로
+  # 6단계가 `QUEUED`에 내렸고 재현 명세도 없어(Level 1은 그 근거를 안 준다) 8단계 진입
+  # 시점에 `validated`가 비어 있었다. PoV를 안 돌리면 PoC가 없고 PoC가 없으면 채점 점수가
+  # 없다. 그래서 `validated` 밖에서도 상위 몇 건은 시도할 수 있게 뚫었다.
+  #
+  # **켤 때의 값은 미실측이다(§0).** 후보 1건당 PoV 홉·토큰·벽시계를 한 번도 안 쟀고, 그
+  # 측정의 입력이 이 배선 뒤의 실모델 run 1회다. 지금 가진 것은 PoV가 0건이던 run뿐이라
+  # 거기서 상한을 유도하면 지어낸 근거가 된다(위 `candidate_max`가 쓰는 논법과 같다).
+  pov_attempt_top_n: 0
+
   # 한 run이 4단계(Scout)에 올릴 target 수 상한 (W2).
   #
   # 후보 단위가 파일에서 심볼로 바뀌면서 필요해졌다. zlib은 분석 대상 artifact 32건이

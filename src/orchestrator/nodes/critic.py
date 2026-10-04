@@ -5,8 +5,8 @@
 F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 
 **Auditor의 원문 추론을 전달하지 않는다**(agent-contracts.md §2.3). 프롬프트에 실리는
-것은 주장·경로·근거 ID뿐이고 `rca_draft`는 넘기지 않는다 — 앞 모델의 설명을 보여 주면
-반박이 아니라 재진술이 돌아온다.
+것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)뿐이고 `rca_draft`는
+넘기지 않는다 — 앞 모델의 설명을 보여 주면 반박이 아니라 재진술이 돌아온다.
 
 **정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
 있으면 "근거 없는 반박 비율"의 분자가 갈라진다. 노드가 `gate.normalize()`를 부르고,
@@ -21,7 +21,7 @@ from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import build_facts, evidence_summaries, load_prompt
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
-from src.schemas.common import ProducedBy
+from src.schemas.common import Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import Role
 from src.schemas.evidence import Evidence
@@ -113,23 +113,23 @@ def _ask_model(
 ) -> Decision:
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
-    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽어 싣는다.
-    # 그 외 버전은 본문 없이 종전과 동일(#237 HIGH-1 — v1은 바이트 동일).
-    bodies = (
-        evidence_summaries(evidences, ctx.read_payload)
-        if version in _CONTENT_AWARE_VERSIONS
-        else {}
-    )
+    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽고 **위치도** 싣는다.
+    # 그 외 버전은 본문·위치 없이 종전과 동일(#237 HIGH-1 — v1은 바이트 동일). 위치는 payload가
+    # 있느냐가 아니라 **판**이 정한다 — payload가 없어도(`evidence_summaries`가 그 Evidence를 맵에서
+    # 뺀다) 같은 판이면 FACTS와 EVIDENCE 줄이 같은 값을 든다.
+    aware = version in _CONTENT_AWARE_VERSIONS
+    bodies = evidence_summaries(evidences, ctx.read_payload) if aware else {}
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
             ids={"finding_id": finding.finding_id, "decision_id": decision_id},
             evidences=evidences,
             evidence_bodies=bodies,
+            evidence_locations=aware,
         ),
         claim=f"{finding.title} ({finding.cwe})",
         path=_describe_path(finding),
-        evidence=_describe_evidence(evidences, bodies),
+        evidence=_describe_evidence(evidences, bodies, with_location=aware),
     )
     # **verdict를 자유 문자열로 받는다** — `Decision`의 `verdict: Verdict`를 스키마에 `enum`으로
     # 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측
@@ -172,15 +172,42 @@ def _describe_path(finding: Finding) -> str:
     return "\n".join(f"- {step.step.value}: `{step.symbol}`" for step in finding.path)
 
 
+def _location_text(location: Location) -> str:
+    """`file:start-end` 한 토막. 줄이 없으면 파일만, 끝줄이 시작과 같으면 한 줄로 적는다.
+
+    Evidence의 줄 필드는 선택이다(`schemas/common.Location` — "Evidence는 file·line_start만
+    쓴다"). 없는 값을 `None`이라 적지 않는다(CLAUDE.md §0).
+    """
+    start, end = location.line_start, location.line_end
+    if start is None:
+        return location.file
+    if end is None or end == start:
+        return f"{location.file}:{start}"
+    return f"{location.file}:{start}-{end}"
+
+
 def _describe_evidence(
-    evidences: list[Evidence], bodies: Mapping[str, Mapping[str, object]] | None = None
+    evidences: list[Evidence],
+    bodies: Mapping[str, Mapping[str, object]] | None = None,
+    *,
+    with_location: bool = False,
 ) -> str:
+    """근거 한 줄씩. `with_location`은 **content-aware 판만** 켠다(`_ask_model`) — 꺼져 있으면
+    main의 렌더와 바이트 동일이다(v1 · 적대적 리뷰 #480 HIGH-1)."""
     if not evidences:
         return "(근거 없음)"
     bodies = bodies or {}
     lines = []
     for ev in evidences:
         line = f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
+        # **위치를 적는다 — Critic이 「이 근거가 그 주장과 같은 자리를 가리키나」를 볼 재료다.**
+        # 게이트 등급은 이 값으로 안 정해진다: `p1 = static_ok or location_ok`이고 Evidence에 위치를
+        # 싣는 곳이 semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`gate.evaluate` ·
+        # `container_tools.first_hit_location`). 그 위치는 semgrep `results[0]`(첫 히트) 하나라
+        # 주장한 줄과 다를 수 있다. 이 노출이 인용·판정을 바꾸는지는 미실측이다(이슈 #475).
+        # 위치가 없으면 아무것도 더하지 않는다 — 산문 한 줄이라 `null`을 적으면 노이즈다.
+        if with_location and ev.location is not None:
+            line += f" · {_location_text(ev.location)}"
         body = bodies.get(ev.evidence_id)
         if body and body.get("body"):
             snippet = str(body["body"]).replace("\n", "\n    ")

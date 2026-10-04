@@ -414,7 +414,8 @@ def test_static_signal_carries_first_hit_location(target_root: Path) -> None:
     """D23: Fake도 첫 정적 매치의 파일·줄을 Evidence.location에 싣는다.
 
     등급은 이 값과 무관하다(`p1 = static_ok or location_ok`) — 채우는 목적은 신호를
-    심볼 단위로 귀속하는 후속 PR의 입력이다. 신호가 없는 파일은 위치도 없다.
+    심볼 단위로 귀속하는 후속 PR의 입력이다(+ 2026-10-04부터 content-aware 프롬프트의 FACTS·Critic
+    줄 — 이슈 #475). 신호가 없는 파일은 위치도 없다.
     """
     hit = _runner(target_root).run("semgrep", _args("parser.c"), SANDBOX)
     assert hit.location is not None

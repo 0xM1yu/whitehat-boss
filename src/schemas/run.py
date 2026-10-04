@@ -317,9 +317,11 @@ class RunRecord(UtcModel):
     # 채점기(oracle)를 켠 run의 제출 요약 (#386) —
     # `{vul_submitted, vul_failed, final, final_reason, record}`.
     # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·
-    # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 등급이 못 가렸다. 사유는
-    # `final_reason` — `no_poc`·`all_vul_submissions_failed`·`grade_tie`·`grade_unknown`) ·
-    # `not_reached`(8단계가 끝까지 안 돌았다)이고 `record`는 사이드카의 run_dir 상대 경로다.
+    # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급 또는
+    # `confidence`를 모르는 것이 있었다. 사유는 `final_reason` — `no_poc`·
+    # `all_vul_submissions_failed`·`rate_limited`·`grade_unknown`) ·
+    # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 추가 PoV 대상에서 예산이 끊긴
+    # run은 예외로 최종 단계를 부르고 끝난다)이고 `record`는 사이드카의 run_dir 상대 경로다.
     # **판정 값(종료 코드·`success`)은 여기에 없다** — 서버가 돌려준 값이라 사이드카에 두고, 이
     # 매니페스트에는 **무슨 일이 있었는지**(몇 건을 냈고 몇 건이 실패했고 최종이 있었나)만 싣는다.
     # 그래야 「최종 PoC가 없다」·「제출이 전부 실패했다」가 `trace.jsonl`을 안 열고도 보인다.

@@ -386,9 +386,11 @@ class EventKind(StrEnum):
     # 전이라 없다(`poc_log` 모듈 docstring의 「한계」).
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
-    # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **8단계에 들어온**(진입 시
-    # `VALIDATED`인) Finding당 최대 1건이다. `validate.run`이 그중 하나를 `QUEUED`로 내려도(재현
-    # 실패·도구 정책 위반) pov는 돈다 — 대상 목록이 `validate.run` **전에** 잡히는 추가형이다.
+    # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대
+    # 1건이다 — 8단계에 들어온(진입 시 `VALIDATED`인) Finding, 그리고 `pov_attempt_top_n`이 양수면
+    # 그 밖에서 더한 것(`runner._pov_targets`). `validate.run`이 `validated` 중 하나를 `QUEUED`로
+    # 내려도(재현 실패·도구 정책 위반) pov는 돈다 — 그 목록이 `validate.run` **전에** 잡히는
+    # 추가형이다.
     # `poc_bytes`가 최종 PoC 바이트 길이, `poc_sha256`이 그 내용 해시(재현성 대조용)다.
     # **`poc_ref`가 그 PoC를 담은 사이드카 파일**(run_dir 상대 — `pov_poc/NNNN.poc`, #355)이고
     # `poc_digest`가 **그 파일**의 `sha256:` 접두 digest다(`poc_sha256`은 접두 없는 맨 hex라 형식이
@@ -423,16 +425,20 @@ class EventKind(StrEnum):
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 둘뿐이고 둘 다 위치·채점기 점수로 고른 것이 아니다** — 후보(`vul` 제출이
-    # 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보가 여럿인데 **하네스 내부
-    # 근거 등급의 최댓값을 든 것이 하나뿐이라** 그것을 골랐다(`top_grade`). 최댓값이 동점이거나
-    # 등급을 모르는 후보가 있으면 지정하지 않는다(`status=none` · `reason`이 `grade_tie`·
-    # `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이 아니다.
+    # **`designation`은 여섯이고 전부 위치·채점기 점수로 고른 것이 아니다**(`oracle_log`가 목록을
+    # 든다) — 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
+    # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
+    # 갈랐다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — 하네스가 만든 값의
+    # 전순서다). 등급 또는 `confidence`를 모르는 후보가 있으면 지정하지 않는다(`status=none` ·
+    # `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이
+    # 아니다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
-    # `reason`이 `no_poc`·`all_vul_submissions_failed`(후보가 없다) · `grade_tie`·`grade_unknown`
-    # (후보가 둘 이상인데 등급이 못 가렸다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와
+    # `reason`이 `no_poc`·`all_vul_submissions_failed`·`rate_limited`(후보가 없다) ·
+    # `grade_unknown`(후보가 둘 이상인데 그중 등급 또는 `confidence`를 모르는 것이 있다)).
+    # **`none`은 실패가
+    # 아니다** — 「최종 PoC가 없다」와
     # 「최종 PoC가 실패했다」를 섞지 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다).
     # 그 PoC의 `poc_sha256`·`poc_bytes`, `scored`일 때 `task_id`, 사이드카의 고정 경로
     # `record_ref`를 싣는다. 지정이 읽은 후보별 등급은 trace가 아니라 사이드카
@@ -443,7 +449,9 @@ class EventKind(StrEnum):
     #
     # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
     # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
-    # `oracle.final`이 `not_reached`다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도 남기지 않는다:
+    # `oracle.final`이 `not_reached`다. 단 `pov_attempt_top_n`의 추가 대상에서 예산이 끊긴 run은
+    # 최종 지정까지 하고 끝나 `oracle_final`이 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
+    # 남기지 않는다:
     # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
     # PoC로 컨테이너를 돌렸을 수 있다.
     # ⚠ **이것은 하네스 내부 등급이 아니다** — Evidence를 만들지 않고 게이트가 안 읽는다(#232).
