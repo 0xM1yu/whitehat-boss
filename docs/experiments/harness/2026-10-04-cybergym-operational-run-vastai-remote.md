@@ -432,9 +432,13 @@ ssh <원격> "cd /root/harness && MAX_HOURS=10 setsid nohup bash tools/serve/gua
 SWAP_SSH_HOST=<...> SWAP_SSH_PORT=<...> bash tools/serve/vast-tunnel.sh
 
 # 3) run - 셸을 거치지 않고 환경을 세운다(3.3절)
+#    ⏵ 2026-10-05 - #488이 머지된 main에서는 `--oracle-canary`가 필수다(없으면 제출 전에 exit 2). 보고서는
+#    `python tools/oracle_canary.py arvo:1065 --out <경로>/canary.json`으로 만든다(번들 밖 경로).
+#    이 run은 그 옵션이 생기기 전 트리에서 돌았으므로 그 줄만 나중에 더했다.
 python -m src.cli run --profile harness_pool --device vastai-remote \
   --condition B3prime@pipeline --slices <slices.json> \
   --task-dir <번들> --task-work-dir <빈 디렉터리> --artifacts-root <저장소 밖> \
+  --oracle-canary <경로>/canary.json \
   --oracle-submit --oracle-server http://127.0.0.1:8666
 ```
 

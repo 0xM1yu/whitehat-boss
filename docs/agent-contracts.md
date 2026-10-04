@@ -464,7 +464,13 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
   `--mask-map`으로 줄 때만 받는다 — 제출은 번들의 마스킹된 id로, 판정 조회와 제출 전 캐시 판별은 맵이 준 실
   id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). ⚠ 마스킹 서버
-  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. ⏵ **2026-10-04 — 필수 입력이 하나 늘었다**:
+  `--oracle-canary`가 가리키는 **카나리 보고서**(`tools/oracle_canary.py <task-id> --out <경로>`가 쓴 JSON)
+  없이는 제출이 서지 않는다(이슈 #383). 호스트 `vm.mmap_rnd_bits`가 28보다 크면 무해한 입력도
+  「크래시」로 집계된 것을 쟀기 때문이고, 보고서가 이 과제의 것이 아니거나 통과가 아니면 거부한다(exit 2).
+  마스킹 run에서는 보고서의 `task`가 **실 id**다(도구가 과제 id로 이미지 이름을 만든다). ⚠ 하네스가 그
+  도구를 직접 돌리지는 않고, 보고서가 **지금 이 부팅**의 것인지와 **채점 컨테이너를 돌리는 장비**의 것인지는
+  게이트가 못 가린다. 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
   `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
