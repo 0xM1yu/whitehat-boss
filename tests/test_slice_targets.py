@@ -2336,3 +2336,50 @@ def test_write_sites_found_counts_a_line_once() -> None:
     """한 줄이 두 이름을 쓰면 지점 하나·창 하나다(PR #468 리뷰 LOW-1)."""
     _, event = _ordered(6, {"zbuf": [_site("init", 12)], "abuf": [_site("init", 12)]})
     assert (event["write_windows"], event["write_sites_found"]) == (2, 2)
+
+
+# --- 큰 enum은 그 상수 주변만 잘라 싣는다 ------------------------------------------------------
+# index-v4가 enum 상수를 enum 정의 전체로 싣자 2,000자를 넘는 enum이 통째로 버려졌다(2026-10-04 로컬
+# 274표본에서 「크기 초과로 버림」 29 -> 142, run ID 없음). 머리 · 그 상수 앞뒤 · 닫는 줄만 남긴다.
+_BIG_ENUM = ["typedef enum {"] + [f"    COLOR_{i:03d} = {i}," for i in range(120)] + ["} color_t;"]
+_E_FILE = {"u.c": _U_FILE["u.c"], "e.h": _BIG_ENUM}
+_E_ENUM = Location(file="e.h", symbol="COLOR_060", line_start=1, line_end=len(_BIG_ENUM))
+
+
+def test_an_oversized_enum_is_carried_around_the_asked_constant() -> None:
+    from src.orchestrator.runner import _AUDITOR_DEFINITION_CHARS, _AUDITOR_ENUM_CONTEXT_LINES
+
+    assert len("\n".join(_BIG_ENUM)) > _AUDITOR_DEFINITION_CHARS  # 그대로면 버려진다
+    ctx, events, _, _ = _unit(
+        _E_FILE, [_U_F], auditor_definitions=1, definitions=lambda _n, _f: [_E_ENUM]
+    )
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)
+    assert event["definitions_trimmed"] == 1
+    assert f"/* ===== e.h:1-{len(_BIG_ENUM)} ===== */\ntypedef enum {{" in source
+    assert "    COLOR_060 = 60," in source and "} color_t;" in source
+    width = _AUDITOR_ENUM_CONTEXT_LINES
+    assert f"    COLOR_{60 - width:03d} = " in source
+    assert f"    COLOR_{60 - width - 1:03d} = " not in source
+    assert "/* ... 55 lines omitted ... */" in source  # COLOR_000..054 (55줄)
+
+
+def test_a_small_enum_or_a_non_enum_is_not_trimmed() -> None:
+    """상한 안의 enum은 그대로, 상한을 넘어도 enum이 아니면(큰 구조체) 지금처럼 버린다."""
+    small = Location(file="e.h", symbol="COLOR_001", line_start=1, line_end=4)
+    small_enum = ["typedef enum {", "    COLOR_000,", "    COLOR_001,", "} c;"]
+    files = {"u.c": _U_FILE["u.c"], "e.h": small_enum}
+    ctx, events, _, _ = _unit(
+        files, [_U_F], auditor_definitions=1, definitions=lambda _n, _f: [small]
+    )
+    source, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    assert event["definitions_trimmed"] == 0 and "lines omitted" not in source
+    big_struct = ["struct big {"] + [f"    int field_{i:03d};" for i in range(200)] + ["};"]
+    loc = Location(file="s.h", symbol="field_100", line_start=1, line_end=len(big_struct))
+    ctx, events, _, _ = _unit(
+        {"u.c": _U_FILE["u.c"], "s.h": big_struct}, [_U_F], auditor_definitions=1,
+        definitions=lambda _n, _f: [loc],
+    )
+    _, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
+    counts = (event["definitions"], event["definitions_dropped"], event["definitions_trimmed"])
+    assert counts == (0, 1, 0)
