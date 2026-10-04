@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import slicer_queries as queries
-from slicer_candidates import DEFAULT_CASE_ORDER, collect, prioritize
+from slicer_candidates import collect, prioritize
 from slicer_checkpoint import digest
 from slicer_errors import QueryError
 from slicer_library import Library
@@ -64,7 +64,8 @@ class SlicingStages:
                 "truncated to an unspecified first-N in CPG traversal order (api: write-context "
                 "methods first, then traversal order within each layer; slicer_queries)"
             )
-        order = self.settings.get("case_order", DEFAULT_CASE_ORDER)
+        # No key = a contract from before --case-order (#441): that run sliced Case A first.
+        order = self.settings.get("case_order", "ab")
         self.candidates = collect(rows, self.repo, order)
         if self.priority_files is not None:
             # Before bind(): the checkpoint (and so --prepare-only's shards and the claim queue)

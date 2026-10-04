@@ -1806,6 +1806,24 @@ def test_the_default_case_order_is_ba_in_the_cli_and_the_library():
         assert inspect.signature(function).parameters["case_order"].default == "ba"
 
 
+def test_a_settings_dict_without_case_order_is_read_as_ab(repo):
+    """A contract written before --case-order existed (#441) has no `case_order` key, and that run
+    sliced Case A first. The pipeline reads the missing key as `ab`, not as today's default `ba`.
+    The CLI always fills the key, so this only shows when a settings dict reaches the pipeline some
+    other way (a contract's settings, a hand-built job)."""
+    rows = {"case_a": [candidate()], "case_b": [candidate("sprintf", 5)]}
+    job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("unused", None))
+    job.query = lambda stage, _query: (rows[stage], "")
+    for settings, expected in (
+        ({}, ["A", "B"]),
+        ({"case_order": "ab"}, ["A", "B"]),
+        ({"case_order": "ba"}, ["B", "A"]),
+    ):
+        job.settings = settings
+        job.collect_candidates()
+        assert [c["case"] for c in job.candidates] == expected, settings
+
+
 def test_prioritize_is_tier_first_under_ab_and_case_first_under_ba(repo):
     """--priority-files splits a list stably, and what it splits depends on the case order. `ab`
     splits the whole list into listed files / the rest (tier-first, as #377 (b) shipped it):
@@ -1868,7 +1886,9 @@ def test_prioritize_under_ab_is_what_377_shipped(repo):
 
 def test_prioritize_under_ba_is_case_first_whatever_the_input(repo):
     """The same rule written the other way round (a model, not the code's own loop): the B group
-    then the A group, listed files first inside each, collect()'s order kept, ids untouched."""
+    then the A group, listed files first inside each, the input's order kept inside a group, ids
+    untouched. The input is not always what collect(..., "ba") gave -- the A-first list (`ab`) and
+    a shuffled one go in too: the case order is `ba`'s, not whichever case the input starts with."""
     from slicer_candidates import prioritize
 
     def touched(c):
@@ -1876,16 +1896,18 @@ def test_prioritize_under_ba_is_case_first_whatever_the_input(repo):
 
     for seed in range(60):
         rows, files = random_rows(seed)
-        ordered = collect(rows, repo, "ba")
-        expected = []
-        for case in "BA":
-            members = [c for c in ordered if c["case"] == case]
-            expected += [c for c in members if files & touched(c)]
-            expected += [c for c in members if not files & touched(c)]
-        moved, first, matched = prioritize(ordered, files, "ba")
-        assert moved == expected, seed
-        assert first == sum(bool(files & touched(c)) for c in ordered), seed
-        assert matched == files & set().union(*[touched(c) for c in ordered]), seed
+        shuffled = collect(rows, repo, "ba")
+        random.Random(seed).shuffle(shuffled)
+        for ordered in (collect(rows, repo, "ba"), collect(rows, repo, "ab"), shuffled):
+            expected = []
+            for case in "BA":
+                members = [c for c in ordered if c["case"] == case]
+                expected += [c for c in members if files & touched(c)]
+                expected += [c for c in members if not files & touched(c)]
+            moved, first, matched = prioritize(ordered, files, "ba")
+            assert moved == expected, seed
+            assert first == sum(bool(files & touched(c)) for c in ordered), seed
+            assert matched == files & set().union(*[touched(c) for c in ordered]), seed
 
 
 def two_file_both_cases_payloads():
