@@ -7,6 +7,7 @@ import 경로가 흔들리지 않게 하기 위해서다.
 """
 
 from src.schemas.artifact import Artifact
+from src.schemas.auditor import AuditorAction
 from src.schemas.candidate import Candidate, CandidateState
 from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import (
@@ -52,6 +53,7 @@ __all__ = [
     "AnalysisSummary",
     "Artifact",
     "ArtifactKind",
+    "AuditorAction",
     "Budget",
     "Candidate",
     "CandidateState",
