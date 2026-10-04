@@ -28,7 +28,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 ## 사이드카의 모양
 
 `candidates`(후보마다 vul 제출 한 건 — 성공이면 `poc_id`·`response_exit_code`·`cached`, 실패면
-`error`·`error_detail`) · `final`. `final`은 run이 8단계 끝까지 가지 못했으면 `null`이고 아니면
+`error`·`error_status`(HTTP 상태. HTTP 오류가 아니면 `null`)·`error_detail`) ·
+`final`. `final`은 run이 8단계 끝까지 가지 못했으면 `null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
 따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
 읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
@@ -36,16 +37,18 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 ⚠ **`null`은 「안 돌았다」·「못 가렸다」다 — 0도 거짓도 아니다**(CLAUDE.md §0). `fix_exit_code`가
 `null`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 안 돌린 경우다. `final.status`가 `none`인 것
 (지정된 후보가 없었다)과 `failed`인 것(지정했는데 판정을 못 읽었다)은 다른 사건이다 —
-「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은
-`no_poc`·`all_vul_submissions_failed`(지정할 후보가 **없다**)와 `grade_unknown`(후보 중에 내부 근거
-등급을 모르는 것이 있어 **규칙이 거부했다** — `runner._designate_final`)이다. 어느 쪽이든 `fix`
-다리와 판정은 안 돈다.
+「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 **넷**이다:
+`no_poc`·`all_vul_submissions_failed`·`rate_limited`(지정할 후보가 **없다** — 낼 PoC가 없던 것,
+낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 서로 다른 사건이다)와
+`grade_unknown`(후보 중에 내부 근거 등급을 모르는 것이 있어 **규칙이 거부했다** —
+`runner._designate_final`). 어느 쪽이든 `fix` 다리와 판정은 안 돈다.
 
-⏵ 2026-10-04 — **`grade_tie`는 없어졌다.** 후보가 둘 이상일 때 지정이 등급 **동점에서 거부하던**
-것을 사슬로 바꿨다(`runner._designate_final`): 같은 바이트끼리 접은 뒤 ①등급 ②`confidence`
-③작은 바이트 ④PoC 해시다. ④가 **전순서**라 서로 다른 PoC 사이의 동점이 남지 않는다 — 거부할
-자리가 없어져 사유도 상수도 지웠다. 바꾼 이유: 실측 run에서 후보 8건이 **같은 바이트 1개**였고
-(제출 8 = 고유 PoC 1 = DB 행 1) 동점 거부가 그 run의 점수를 0으로 만들었다.
+⏵ 2026-10-04 — **`grade_tie`는 없어졌다**(그래서 다섯이 아니라 넷이다). 후보가 둘 이상일 때
+지정이 등급 **동점에서 거부하던** 것을 사슬로 바꿨다(`runner._designate_final`): 같은
+바이트끼리 접은 뒤 ①등급 ②`confidence` ③작은 바이트 ④PoC 해시다. ④가 **전순서**라 서로 다른
+PoC 사이의 동점이 남지 않는다 — 거부할 자리가 없어져 사유도 상수도 지웠다. 바꾼 이유: 실측
+run에서 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1 = DB 행 1) 동점 거부가 그
+run의 점수를 0으로 만들었다.
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
 
@@ -84,17 +87,32 @@ STATUS_FAILED = "failed"
 STATUS_NONE = "none"
 STATUS_NOT_REACHED = "not_reached"
 
-# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 마지막은 후보가 **둘 이상**인데
-# **규칙이 돌았는데 하나를 못 가려서**다(`runner._designate_final`). 「규칙이 없다」가 아니다 —
-# 규칙이 거부한 것이다.
+# `status == none`의 사유 **넷**. 둘로 갈린다: **지정할 후보가 없어서**인 셋(`no_poc` ·
+# `all_vul_submissions_failed` · 아래 `rate_limited`)과, 후보가 **둘 이상**인데 **규칙이 돌았는데
+# 하나를 못 가려서**인 하나(`grade_unknown`, `runner._designate_final`). 마지막은 「규칙이
+# 없다」가 아니다 — 규칙이 거부한 것이다. ⚠ 세는 말로 적지 않는다 — `rate_limited`가 아래에
+# 따로 있어서 「앞 셋·뒤 하나」로 쓰면 이 자리에 보이는 상수 셋과 어긋난다.
 #
-# ⏵ 2026-10-04 — `grade_tie`를 지웠다. 등급 동점은 더 이상 거부 사유가 아니고 사슬의 다음
-# 단계로 넘어간다(`runner._designate_final`). 사슬의 끝이 PoC 해시라 **전순서**이고, 서로 다른
-# PoC가 끝까지 동점일 수 없다 — 못 가리는 분기가 없어졌으니 사유도 없앴다. 지우지 않고 두면
-# 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
+# ⏵ 2026-10-04 — `grade_tie`를 지웠다(그래서 다섯이 아니라 넷이다). 등급 동점은 더 이상 거부
+# 사유가 아니고 사슬의 다음 단계로 넘어간다(`runner._designate_final`). 사슬의 끝이 PoC 해시라
+# **전순서**이고, 서로 다른 PoC가 끝까지 동점일 수 없다 — 못 가리는 분기가 없어졌으니 사유도
+# 없앴다. 지우지 않고 두면 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
 REASON_NO_POC = "no_poc"
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
 REASON_GRADE_UNKNOWN = "grade_unknown"
+
+# 제출 실패가 **전부** 채점기 레이트리미트여서 후보가 안 남은 경우(이슈 #422). 그렇게 생긴
+# 「점수 없음」은 「냈는데 거부당했다」와 다른 사건이다 — 한도는 60초 슬라이딩 윈도라
+# **사라진 판정은 원래 나왔을 수 있는 것**이고, 재시도가 없어 복구되지 않는다.
+# 한도 밖 실패가 한 건이라도 섞이면 더 넓은 `all_vul_submissions_failed`로 남긴다 —
+# 「한도 때문」을 단언할 수 없다.
+REASON_RATE_LIMITED = "rate_limited"
+
+# 채점기가 한도를 넘긴 제출에 돌려주는 HTTP 상태(어댑터 모듈 docstring의 2026-10-02
+# 실측: 20번째가 통과하고 21번째가 429). **어댑터를 import하지 않고 상태만 본다** —
+# 오케스트레이터는 어댑터 리터럴을 소스에 두지 않는다
+# (`test_orchestrator_source_has_no_adapter_import`).
+_HTTP_TOO_MANY_REQUESTS = 429
 
 # `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로도 채점기 점수로도
 # 고르지 않는다** - 이 저장소가 2026-10-03에 정한 규칙이고 저자의 금지 문장이 아니다(조사
@@ -131,6 +149,10 @@ class VulAttempt:
     submission: VulSubmission | None = None
     error: str | None = None
     error_detail: str = ""
+    # 서버가 돌려준 HTTP 상태 — HTTP 오류가 아니면(연결 실패·타임아웃·계약 어긋남)
+    # `None`이다. 이것이 없으면 429(레이트리미트)와 그 밖의 실패를 **사유 본문을
+    # 파싱해서만** 가른다(이슈 #422).
+    error_status: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -156,6 +178,8 @@ def vul_failed(finding_id: str, poc: bytes, exc: Exception, wall_ms: int) -> Vul
         wall_ms=wall_ms,
         error=type(exc).__name__,
         error_detail=clip_error(exc),
+        # `CyberGymOracleError.status`를 덕 타이핑으로 읽는다 — 어댑터 import 금지(아래 상수 주석).
+        error_status=getattr(exc, "status", None),
     )
 
 
@@ -252,9 +276,22 @@ class OracleLedger:
         """사이드카의 run_dir 상대 경로. 아직 안 썼거나 마지막 쓰기가 실패했으면 `None`."""
         return REF if self._written and self.write_error is None else None
 
+    @property
+    def rate_limited(self) -> int:
+        """레이트리미트(429)로 실패한 시도 수(이슈 #422)."""
+        return sum(1 for a in self.attempts if a.error_status == _HTTP_TOO_MANY_REQUESTS)
+
     def none_reason(self) -> str:
-        """지정할 후보가 없을 때의 사유 — 시도 자체가 없었나, 시도가 전부 실패했나."""
-        return REASON_ALL_VUL_FAILED if self.failed else REASON_NO_POC
+        """지정할 후보가 없을 때의 사유 — 시도가 없었나, 전부 한도에 걸렸나, 전부 실패했나.
+
+        셋을 가르는 이유는 같은 「점수 없음」으로 읽힐 만큼 **다른 사건**이기 때문이다(§0).
+        """
+        failures = [a for a in self.attempts if not a.ok]
+        if not failures:
+            return REASON_NO_POC
+        if all(a.error_status == _HTTP_TOO_MANY_REQUESTS for a in failures):
+            return REASON_RATE_LIMITED
+        return REASON_ALL_VUL_FAILED
 
     def summary(self) -> dict[str, str | int | None] | None:
         """`RunRecord.oracle`이 될 요약. 채점기가 안 배선된 run은 `None`이다."""
@@ -291,6 +328,12 @@ class OracleLedger:
         where = f"{sidecar}와 trace의 oracle_failed" if sidecar else "trace의 oracle_failed"
         if self.failed:
             out.append(f"채점기 vul 제출 {self.failed}건이 예외로 실패했다 - 사유는 {where}에 있다")
+        # 후보가 남은 run에서도 말한다 — 점수가 조용히 낮아진 사유가 된다(이슈 #422).
+        if self.rate_limited:
+            out.append(
+                f"그중 {self.rate_limited}건은 채점기 레이트리미트(HTTP 429)다 - 재시도가 없어 "
+                "그 판정은 복구되지 않는다"
+            )
         final = self.final
         if final is None:
             out.append(
@@ -344,6 +387,13 @@ def _none_warning(final: FinalAttempt, submitted: int) -> str:
             "최종 PoC를 지정하지 않았다 - 등급 없이 고르면 없는 근거로 고르는 것이다. fix 다리와 "
             f"판정 조회를 돌리지 않았다 - {tail}"
         )
+    if final.reason == REASON_RATE_LIMITED:
+        # 사유를 가르는 자리가 사이드카·매니페스트와 **이 한 줄** 둘이다. 앞 판은 이 줄에 분기가
+        # 없어 한도로 잃은 run이 「낼 PoC가 없었다」로 찍혔다 - 가르려던 그 오독이다(이슈 #422).
+        return (
+            "채점기에 낼 최종 PoC를 지정하지 못했다(vul 제출이 전부 채점기 "
+            f"레이트리미트(HTTP 429)로 실패해) - 낼 PoC는 있었고 한도가 판정을 삼켰다. {tail}"
+        )
     cause = (
         "vul 제출이 전부 실패해"
         if final.reason == REASON_ALL_VUL_FAILED
@@ -387,6 +437,7 @@ def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
             **row,
             "status": "failed",
             "error": attempt.error,
+            "error_status": attempt.error_status,
             "error_detail": attempt.error_detail,
         }
     return {
