@@ -17,7 +17,7 @@ import pytest
 
 from src.adapters.factory import WIRINGS, build_deps
 from src.adapters.fake_model import FakeContext, FakeModelClient, FakeModelError, risky_calls_in
-from src.adapters.fake_retriever import FakeRetriever, read_symbol_source
+from src.adapters.fake_retriever import FakeRetriever, read_raw_source, read_symbol_source
 from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
@@ -372,6 +372,19 @@ def test_read_symbol_source_slices_by_line(target_root: Path) -> None:
     assert "memcpy" in whole
     assert sliced
     assert len(sliced) < len(whole)
+
+
+def test_read_raw_source_keeps_the_carriage_returns_the_text_reader_folds(tmp_path: Path) -> None:
+    """`read_symbol_source`는 텍스트 모드로 읽어 `\\r`을 `\\n`으로 접는다 — `\\r\\r\\n`은 줄 둘이
+    된다. GUARDS의 줄 정렬 검사가 그 앞의 모양을 보려고 원본 바이트를 따로 읽는다. 없는 파일은
+    `None`이다."""
+    (tmp_path / "x.c").write_bytes(b"a\r\r\nb\rc\r\n")
+
+    assert read_raw_source(tmp_path, "x.c") == b"a\r\r\nb\rc\r\n"
+    assert read_symbol_source(tmp_path, Location(file="x.c")) == "a\n\nb\nc\n"
+    assert read_raw_source(tmp_path, "missing.c") is None
+    with pytest.raises(PathEscape):
+        read_raw_source(tmp_path, "../x.c")
 
 
 @pytest.mark.parametrize("escape", ["../outside.c", "/etc/passwd"])
