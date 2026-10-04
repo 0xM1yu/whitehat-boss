@@ -160,15 +160,19 @@ _POV_FINDING = (
 def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
     """실제 렌더 경로. 자리표시자 누락은 `render()`가 잡는다."""
     if role is Role.CRITIC:
+        # 합성 벤치도 프롬프트의 원문 블록·FACTS를 함께 채운다. 앞 판의 바이트는 유지한다.
+        source_fields = {"source": filler} if "{{SOURCE}}" in template.body else {}
         facts = build_facts(
             run_id=_BENCH_RUN_ID,
             ids={"finding_id": "find_0001", "decision_id": "dec_0001"},
+            **source_fields,
         )
         return template.render(
             facts=facts,
             claim="검증 없는 memcpy (CWE-787)",
             path="parse_header -> memcpy",
             evidence=filler,
+            **source_fields,
         )
     if role is Role.POV:
         # PoV body는 FINDING·TARGET·SOURCE·FACTS를 받는다(캡슐 섹션이 아니라 Auditor의 Finding).
