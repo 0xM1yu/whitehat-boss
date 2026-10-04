@@ -39,9 +39,23 @@ SIGKILL, a check -- pids still alive after that are on stderr and in summary.jso
 and a JVM busy with a query ignores SIGTERM.)
 ⚠ SIGKILL of this tool cannot be caught: its servers and shards (own sessions) keep running.
 POSIX only (process groups via killpg, start_new_session).
+
+`--restart-on-deadline` (off: nothing here changes): a query that hit the slicer's client deadline
+keeps running in the shard's Joern server and every later query waits behind it, so the shard's
+slicer and server are killed and the shard is started again (new server, `--resume --cpg`, the
+timed-out candidates in `--skip-candidates`) -- at most `--max-restarts-per-shard` times, none with
+under RESTART_MIN_WALL_SECONDS of `--wall-seconds` left. Those candidates stay unfinished, degraded
+in the output as without the flag. The restarted slicer takes the shard's candidates in the same
+order: complete ones come from the checkpoint, any other is queried again -- also one that failed
+for a reason other than the deadline (it has no checkpoint stage). A restart waits for its new
+servers at most the boot limit and about a second past the wall at most (measured +1 s),
+looking at nothing else meanwhile; a shard
+whose new server does not come up stays dead (summary.json `restart.errors`) while the others of
+that batch go on. `restart.per_shard` and `total` count the restarts whose new slicer ran.
 """
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -53,6 +67,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,14 +83,23 @@ KILL_VERIFY_SECONDS = 10  # how long a SIGKILLed group may take to vanish
 STOP_POLL_SECONDS = 0.1
 POLL_SECONDS = 5
 JVM_OVERHEAD_GB = 4  # set value, not measured: non-heap JVM + slicer process per shard
+DEFAULT_MAX_RESTARTS = 5  # set value, not measured: --max-restarts-per-shard
+# A restart took 16 s to the shard's next query on a small graph (libxml2, 8.7 MB CPG, dev box,
+# 2026-10-03, one run); a bigger one imports longer. Less wall left: none (a set value).
+RESTART_MIN_WALL_SECONDS = 60
+# progress `candidate_failed` `error`s for a query the client gave up on while the server goes on
+# with it (JoernClient.query: its deadline message, or the socket timeout that can fire first).
+DEADLINE_ERRORS = ("Query deadline exceeded", "HTTP request failed: timed out")
 
 EXIT_OK, EXIT_FAILED, EXIT_INCOMPLETE = 0, 1, 3
 # Flags slice_sharded.py passes itself; one after `--` would split or redirect the run.
 OWNED_FLAGS = (
     "--repo", "--out", "--joern-endpoint", "--joern-version-command", "--checkpoint", "--progress",
     "--resume", "--export-only", "--prepare-only", "--cpg-out", "--cpg", "--shard", "--claim-db",
-    "--export-dir",
+    "--export-dir", "--skip-candidates",
 )
+# The slicer's client deadlines: without one no query ever "hits the deadline".
+DEADLINE_FLAGS = ("--query-timeout-seconds", "--candidate-timeout-seconds")
 PROC_CGROUP = Path("/proc/self/cgroup")
 CGROUP_ROOT = Path("/sys/fs/cgroup")
 UNLIMITED_BYTES = 1 << 60  # cgroup v1 writes "no limit" as a huge page-aligned number
@@ -281,28 +305,42 @@ def serve(joern: Path, heap: str, port: int, cwd: Path, tracked: list) -> subpro
 
 
 def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
-                 seconds: float | None = None) -> None:
-    """Wait until every server listens; fail fast when one exits first."""
+                 seconds: float | None = None, partial: bool = False) -> dict[int, str]:
+    """Wait until every server listens; fail fast when one exits first. With `partial` a server
+    that exits, or is not listening in time, does not fail the others: they are waited for and the
+    ones that failed come back as {port: why}."""
     seconds = SERVER_START_SECONDS if seconds is None else seconds
     deadline = time.time() + seconds
-    pending = list(servers)
+    pending, failed = list(servers), {}
     while pending:
         for item in list(pending):
             process, port, folder = item
             code = process.poll()
             if code is not None:
-                raise PipelineError(f"Joern server on port {port} exited {code} before listening "
-                                    f"(see {folder / 'joern.log'})")
+                why = (f"Joern server on port {port} exited {code} before listening "
+                       f"(see {folder / 'joern.log'})")
+                if not partial:
+                    raise PipelineError(why)
+                failed[port] = why
+                pending.remove(item)
+                continue
             try:
                 socket.create_connection(("127.0.0.1", port), 1).close()
                 pending.remove(item)
             except OSError:
                 pass
         if pending and time.time() > deadline:
-            raise PipelineError(f"Joern servers on ports {[p for _, p, _ in pending]} not "
-                                f"listening after {seconds} s (see {pending[0][2] / 'joern.log'})")
+            if not partial:
+                raise PipelineError(f"Joern servers on ports {[p for _, p, _ in pending]} not "
+                                    f"listening after {seconds} s "
+                                    f"(see {pending[0][2] / 'joern.log'})")
+            for _, port, folder in pending:
+                failed[port] = (f"Joern server on port {port} not listening after "
+                                f"{round(seconds, 1)} s (see {folder / 'joern.log'})")
+            break
         if pending:
             time.sleep(0.5)
+    return failed
 
 
 def _own_proc() -> bool:
@@ -381,13 +419,14 @@ def _wait_gone(groups: dict[int, subprocess.Popen], seconds: float) -> dict[int,
     return {}
 
 
-def _terminate(processes: list[subprocess.Popen]) -> list[int]:
+def _terminate(processes: list[subprocess.Popen], grace: float | None = None) -> list[int]:
     """End every process and everything else in its process group, all at once; returns the pids
     that outlived SIGKILL. `joern` is an `sh` that runs the JVM as a child, and a JVM with a query
     running does not finish its shutdown hook until that query ends (jstack, text not kept; eight
     outlived a run on 2026-10-03), so the launcher dying says nothing: SIGTERM to every group,
-    STOP_GRACE_SECONDS for them to empty, SIGKILL for what is left, a check. They share one grace
-    (measured at four points, see _wait_gone)."""
+    `grace` seconds (default STOP_GRACE_SECONDS) for them to empty, SIGKILL for what is left, a
+    check. They share one grace (measured at four points, see _wait_gone). `grace=0` skips the
+    SIGTERM."""
     if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the children
         for process in processes:
             try:
@@ -401,21 +440,24 @@ def _terminate(processes: list[subprocess.Popen]) -> list[int]:
                 process.kill()
         return []
     groups = {process.pid: process for process in processes}  # `launch`: each leads its own session
-    for group in groups:
-        _signal_group(group, signal.SIGTERM)
-    alive = _wait_gone(groups, STOP_GRACE_SECONDS)
-    for group in alive:
+    grace = STOP_GRACE_SECONDS if grace is None else grace
+    left = set(groups)
+    if grace > 0:
+        for group in groups:
+            _signal_group(group, signal.SIGTERM)
+        left = set(_wait_gone(groups, grace))
+    for group in left:
         _signal_group(group, signal.SIGKILL)
-    alive = _wait_gone({group: groups[group] for group in alive}, KILL_VERIFY_SECONDS)
+    alive = _wait_gone({group: groups[group] for group in left}, KILL_VERIFY_SECONDS)
     return [pid for pids in alive.values() for pid in pids]
 
 
 def stop_all(processes: list[subprocess.Popen], tracked: list | None = None,
-             summary: dict | None = None) -> list[int]:
+             summary: dict | None = None, grace: float | None = None) -> list[int]:
     """Stop all of them and their process groups at once (see _terminate); drop them from
     `tracked`. The pids that outlived SIGKILL are warned about on stderr, put in
     `summary["unstopped_pids"]` and returned."""
-    survivors = _terminate(processes)
+    survivors = _terminate(processes, grace)
     if tracked is not None:
         for process in processes:
             if process in tracked:
@@ -435,14 +477,142 @@ def slicer_command(repo: Path, out: Path, port: int, joern: Path, checkpoint: Pa
             *more, *extra]
 
 
-def owned_flags_in(extra: list[str]) -> list[str]:
-    """Tool-owned flags in the passthrough, also as `--flag=value` or an argparse abbreviation."""
+def shard_command(repo: Path, folder: Path, port: int, joern: Path, cpg: Path, extra: list[str],
+                  index: int, count: int, claims: Path, skip: Path | None = None) -> list[str]:
+    """One shard's slicer call, resumed on the prepared graph: one shard = a plain seeded run
+    (--shard needs N >= 2), more = the shared queue; `skip` (a restart) lists those to leave."""
+    split = ["--shard", f"{index}/{count}", "--claim-db", str(claims)] if count > 1 else []
+    leave = ["--skip-candidates", str(skip)] if skip else []
+    return slicer_command(repo, folder / "slices.json", port, joern, folder / "state.db", extra,
+                          "--resume", "--cpg", str(cpg), *split, *leave)
+
+
+def deadline_keys(events: list[dict]) -> list[str]:
+    """Candidates whose query hit the deadline (`candidate_failed` names them for every stage)."""
+    return [e["candidate_key"] for e in events
+            if e.get("event") == "candidate_failed" and isinstance(e.get("candidate_key"), str)
+            and str(e.get("error")).startswith(DEADLINE_ERRORS)]
+
+
+class ProgressTail:
+    """The complete JSON lines a shard's --progress file gained since the last read."""
+
+    def __init__(self, path: Path) -> None:
+        self.path, self.offset = path, 0
+
+    def read(self) -> list[dict]:
+        try:
+            with open(self.path, "rb") as stream:
+                stream.seek(self.offset)
+                data = stream.read()
+        except OSError:
+            return []
+        data = data[:data.rfind(b"\n") + 1]  # a line still being written is for the next read
+        self.offset += len(data)
+        events = []
+        for line in data.splitlines():
+            with contextlib.suppress(ValueError):  # junk is not ours to complain about
+                events.append(json.loads(line))
+        return [event for event in events if isinstance(event, dict)]
+
+
+class DeadlineRestarts:
+    """--restart-on-deadline (see the module docstring). `poll` reads what the shards' progress logs
+    gained; a shard with a deadline hit has its slicer and server killed and is started again, with
+    `--skip-candidates` naming the timed-out candidates: `--resume` alone would slice the first of
+    them again (its claim comes back to the same `I/N`) and spend the deadline once more."""
+
+    def __init__(self, args: argparse.Namespace, work: Path, ports: list[int],
+                 command: Callable[[int, Path], list[str]], tracked: list, summary: dict,
+                 started: float, wall: float | None, logs: list[Path]) -> None:
+        self.args, self.work, self.ports, self.command, self.logs = args, work, ports, command, logs
+        self.tracked, self.summary, self.started, self.wall = tracked, summary, started, wall
+        self.tails = [ProgressTail(work / f"shard{i}" / "progress.jsonl")
+                      for i in range(len(ports))]
+        self.skips: list[list[str]] = [[] for _ in ports]
+        self.report = summary["restart"] = {
+            "max_per_shard": args.max_restarts_per_shard, "per_shard": [0] * len(ports),
+            "total": 0, "events": [], "limit_hit": [], "errors": []}
+
+    def poll(self, shards: list[subprocess.Popen], servers: list[tuple | None]) -> None:
+        """One look at the running shards; restarts those whose query hit the deadline."""
+        if self.wall and self.wall - time.time() < RESTART_MIN_WALL_SECONDS:
+            return  # too late to pay for one: the wall stops the shards soon
+        due = {}
+        for index, process in enumerate(shards):
+            hits = deadline_keys(self.tails[index].read()) if process.poll() is None else []
+            if hits and self.report["per_shard"][index] < self.args.max_restarts_per_shard:
+                due[index] = hits
+            elif hits and index not in self.report["limit_hit"]:
+                self.report["limit_hit"].append(index)
+        if due:
+            self.restart(due, shards, servers)
+
+    def boot_seconds(self) -> float:
+        """How long a restart waits for its servers: the boot limit, but not past the wall --
+        nothing else is looked at (the wall, the other shards) while it waits."""
+        left = self.wall - time.time() if self.wall else SERVER_START_SECONDS
+        return max(0.0, min(SERVER_START_SECONDS, left))
+
+    def restart(self, due: dict[int, list[str]], shards: list[subprocess.Popen],
+                servers: list[tuple | None]) -> None:
+        """Restart the shards in `due` together. A shard whose new server does not come up stays
+        dead (its killed slicer is in `shards`, `servers[index]` is None: nothing left to stop);
+        the others go on. Counted in `report` once the new slicer runs, not when tried."""
+        began = time.time()
+        fresh, added = {}, {}
+        for index, hits in due.items():
+            old, dead_cwd = [shards[index], servers[index][0]], servers[index][2]
+            left = stop_all(old, self.tracked, self.summary, grace=0)
+            if left:  # the old server may still hold the port
+                self.report["errors"].append(f"shard {index}: pids {left} outlived SIGKILL")
+                continue
+            shutil.rmtree(dead_cwd / "workspace", ignore_errors=True)  # importCpg copied the CPG
+            keys = hits + deadline_keys(self.tails[index].read())  # the kill can cut an event off
+            added[index] = [k for k in dict.fromkeys(keys) if k not in self.skips[index]]
+            self.skips[index] += added[index]
+            folder = self.work / f"shard{index}"
+            (folder / "skip_candidates.txt").write_text(
+                "".join(f"{key}\n" for key in self.skips[index]), encoding="utf-8")
+            cwd = folder / f"restart{self.report['per_shard'][index] + 1}"
+            fresh[index] = (serve(self.args.joern, self.args.heap, self.ports[index], cwd,
+                                  self.tracked), cwd)
+        failed = wait_servers([(p, self.ports[i], cwd) for i, (p, cwd) in fresh.items()],
+                              self.boot_seconds(), partial=True)
+        down = [index for index in fresh if self.ports[index] in failed]
+        for index in down:
+            self.report["errors"].append(f"shard {index}: {failed[self.ports[index]]}")
+            servers[index] = None
+        if down:
+            stop_all([fresh[index][0] for index in down], self.tracked, self.summary)
+        for index, (server, cwd) in fresh.items():
+            if index in down:
+                continue
+            count = self.report["per_shard"][index] = self.report["per_shard"][index] + 1
+            self.report["total"] += 1
+            folder = self.work / f"shard{index}"
+            log = folder / f"slicer.{count}.log"
+            shards[index] = launch(self.command(index, folder / "skip_candidates.txt"), log,
+                                   self.tracked)
+            servers[index], self.logs[index] = (server, self.ports[index], cwd), log
+            self.report["events"].append({
+                "shard": index, "at_seconds": round(began - self.started),
+                "candidates": added[index], "seconds": round(time.time() - began, 1)})
+
+
+def flags_in(extra: list[str], flags: tuple[str, ...]) -> list[str]:
+    """These flags in the passthrough, also as `--flag=value` or an argparse abbreviation."""
     found = []
     for token in extra:
         name = token.split("=", 1)[0]
-        if name.startswith("--") and len(name) > 2 and any(f.startswith(name) for f in OWNED_FLAGS):
+        if name.startswith("--") and len(name) > 2 and any(f.startswith(name) for f in flags):
             found.append(token)
     return found
+
+
+def owned_flags_in(extra: list[str]) -> list[str]:
+    """Tool-owned flags in the passthrough."""
+    return flags_in(extra, OWNED_FLAGS)
 
 
 def heap_gb(text: str) -> float:
@@ -504,6 +674,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--wall-seconds", type=_positive_float,
                         help="stop shards still running this long after the shard servers are up "
                         "(omitted: no limit)")
+    result.add_argument("--restart-on-deadline", action="store_true",
+                        help="restart a shard whose query hit the slicer's client deadline "
+                        "(--query-timeout-seconds or --candidate-timeout-seconds after `--`; "
+                        "without one this does nothing; see the module docstring)")
+    result.add_argument("--max-restarts-per-shard", type=_positive_int,
+                        default=DEFAULT_MAX_RESTARTS,
+                        help="with --restart-on-deadline (default %(default)s, a set value)")
     result.add_argument("--dry-run", action="store_true", help="print the plan, run nothing")
     return result
 
@@ -515,6 +692,10 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     owned = owned_flags_in(extra)
     if owned:
         cli.error(f"{owned} after -- : slice_sharded.py sets these itself")
+    if args.restart_on_deadline and not flags_in(extra, DEADLINE_FLAGS):
+        print("WARNING --restart-on-deadline: no --query-timeout-seconds or "
+              "--candidate-timeout-seconds after --, so the slicer has no client deadline and no "
+              "restart will ever trigger", file=sys.stderr)
     args.joern = args.joern.resolve()
     if not args.joern.is_file():
         cli.error(f"--joern {args.joern} is not a file")
@@ -585,33 +766,36 @@ def run(args: argparse.Namespace, extra: list[str], work: Path, summary: dict,
         servers.append((serve(args.joern, args.heap, port, folder, tracked), port, folder))
     wait_servers(servers)
     summary["servers_seconds"] = round(time.time() - boot)
-    shards = []
     shard_started = time.time()  # the wall clock starts once every server is up
-    for index, port in enumerate(ports):
-        folder = work / f"shard{index}"
-        # One shard = a plain seeded run (--shard needs N >= 2); more = the shared queue.
-        split = ["--shard", f"{index}/{count}", "--claim-db", str(claims)] if count > 1 else []
-        shards.append(launch(
-            slicer_command(repo, folder / "slices.json", port, args.joern, folder / "state.db",
-                           extra, "--resume", "--cpg", str(cpg), *split),
-            folder / "slicer.log", tracked))
+
+    def command(index: int, skip: Path | None = None) -> list[str]:
+        return shard_command(repo, work / f"shard{index}", ports[index], args.joern, cpg, extra,
+                             index, count, claims, skip)
+
+    logs = [work / f"shard{index}" / "slicer.log" for index in range(count)]
+    shards = [launch(command(index), logs[index], tracked) for index in range(count)]
     deadline = shard_started + args.wall_seconds if args.wall_seconds else None
+    restarts = (DeadlineRestarts(args, work, ports, command, tracked, summary, shard_started,
+                                 deadline, logs) if args.restart_on_deadline else None)
     wall_stopped: list[int] = []
     while any(p.poll() is None for p in shards):
         if deadline and time.time() > deadline:
             wall_stopped = [i for i, p in enumerate(shards) if p.poll() is None]
             stop_all([shards[i] for i in wall_stopped], summary=summary)
             break
+        if restarts:
+            restarts.poll(shards, servers)
         time.sleep(POLL_SECONDS)
     codes = [p.wait() for p in shards]
     for process in shards:
-        tracked.remove(process)
-    stop_all([s for s, _, _ in servers], tracked, summary)
+        if process in tracked:  # a restart that failed took its killed slicer out already
+            tracked.remove(process)
+    stop_all([entry[0] for entry in servers if entry], tracked, summary)
     # Normal shard exit is 2: finish() always reports a shard as partial. 1 = the slicer failed,
     # negative = killed by a signal we did not send.
     dead = [i for i, c in enumerate(codes) if c not in (0, 2) and i not in wall_stopped]
     summary.update(shard_exit_codes=codes, wall_stopped_shards=wall_stopped, dead_shards=dead,
-                   dead_shard_logs=[str(work / f"shard{i}" / "slicer.log") for i in dead],
+                   dead_shard_logs=[str(logs[i]) for i in dead],
                    shard_seconds=round(time.time() - shard_started))
     merged = work / "merged.db"
     merge = launch([sys.executable, str(MERGE), str(merged),
