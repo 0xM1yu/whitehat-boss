@@ -447,17 +447,22 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
   지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 둘뿐이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
-  후보가 여럿인데 **하네스 내부 근거 등급의 최댓값을 든 것이 하나뿐**이라 그것을 골랐다
-  (`top_grade`, 2026-10-03 동결). 최댓값이 동점이거나 등급을 모르는 후보가 있으면 지정하지 않고
-  `fix` 다리·판정 조회는 안 돈다(`oracle_final`은 `status=none` · `reason`이 `grade_tie`·
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여섯이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
+  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
+  갈랐다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ①내부 근거 등급 ②`confidence`
+  ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급을 모르는 후보가 있으면
+  지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은 `status=none` · `reason`이
   `grade_unknown`): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
   council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
   1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
   값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
   `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
   바이트가 `./poc`로 materialize되기 전에는 그 도구 실행이 PoC와 무관해(호스트 후속) 후보가 같은
-  등급으로 동점일 수 있다. 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
+  등급으로 동점일 수 있다 — ⏵ **2026-10-04에 그 동점이 더 이상 점수를 막지 않는다.** 2026-10-03
+  동결 규칙은 「등급 최댓값 · 동점이면 거부」였고, 실측 run의 후보 8건이 **같은 바이트 1개**라
+  (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
+  위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
+  (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
   `response_exit_code`가 지정 시점에 손에 있는데도다(`runner._designate_final`). 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
