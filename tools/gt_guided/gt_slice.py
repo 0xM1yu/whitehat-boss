@@ -7,7 +7,11 @@ Slices themselves are produced by the same Joern queries and come out in the sam
 
 Kept: a candidate whose entry or any anchor lies inside a GT function range (the index function
 containing a GT point), widened by MARGIN lines. If none match, the K candidates in a GT file
-whose entry/anchor is closest to a GT line. The filter result goes to result["gt_filter"].
+whose entry/anchor is closest to a GT line. The filter result goes to result["gt_filter"];
+its mode says which window was used: gt_function (every GT point sits in an index function),
+gt_window (at least one GT point had no function in the index -- its +-30 lines were used),
+nearest_in_gt_file, none. Runs without --checkpoint only (the checkpoint would keep the unfiltered
+candidate list and silently void the filter).
 
 Usage: gt_slice.py <harness> <gt.json> <index.json> -- <slicer.py args...>
   gt.json = {"gt_points": [{"role","file","line","line_end"}...]}
@@ -27,6 +31,7 @@ MARGIN, K = 5, 8
 gt = json.load(open(GT, encoding="utf-8"))["gt_points"]
 index = json.load(open(INDEX, encoding="utf-8"))
 ranges = []  # (file, lo, hi) for each GT point: its enclosing function, else +-30 lines
+windowed = False  # some GT point had no enclosing function in the index
 for p in gt:
     line, end = p["line"], p.get("line_end") or p["line"]
     best = None
@@ -40,7 +45,7 @@ for p in gt:
         ranges.append((p["file"], best["line_start"] - MARGIN, best["line_end"] + MARGIN))
     else:
         ranges.append((p["file"], line - 30, end + 30))
-gt_files = {p["file"] for p in gt}
+        windowed = True
 
 
 def points(c):
@@ -62,10 +67,14 @@ original = slicer_pipeline.SlicingStages.collect_candidates
 
 
 def collect_gt(self):
+    if self.checkpoint:
+        # the original binds the UNFILTERED candidates into the checkpoint; a restore or a shard
+        # merge would read them and the filter would silently not apply
+        raise ValueError("gt_slice.py does not run with --checkpoint: the GT filter would be void")
     original(self)
     every = self.candidates
     kept = [c for c in every if near(c)]
-    mode = "gt_function"
+    mode = "gt_window" if windowed else "gt_function"
     if not kept:
         scored = sorted((d, i) for i, c in enumerate(every) if (d := distance(c)) is not None)
         kept = [every[i] for _, i in scored[:K]]
