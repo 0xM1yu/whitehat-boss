@@ -157,6 +157,7 @@ from src.schemas.enums import (
     ReasonCode,
     Role,
     ScoutSignal,
+    Verdict,
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
@@ -747,6 +748,10 @@ class _Accumulator:
     # 나누는 이유는 그 필드를 `deferred`·`dropped`와 나눈 이유와 같다 — 이쪽은 "안 올라갔다"
     # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
     critic_failed: int = 0
+    # 그 Finding들의 id. **수가 아니라 누구인가**를 8단계가 읽는다 — 판정을 못 받고 버려진 Finding은
+    # 상태가 안 바뀌어(`HYPOTHESIZED` 그대로) 상태로는 못 가르고, `_pov_targets`가 추가 대상 풀에서
+    # 뺀다. `critic_failed`와 **한 자리에서만** 갱신된다(`_drop_finding`).
+    critic_failed_ids: set[str] = field(default_factory=set)
     # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
     # 어휘는 **10사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 **넷**.
     #   `_POV_CAPSULE_MISSING`      캡슐 미스 — 루프에 못 들어가 enum 값을 못 받는다
@@ -1231,7 +1236,9 @@ def _analyze(
     # `validate.run`(유일한 결정론 E4 게이트)을 **먼저 전부** 돌린다. pov는 그 뒤에 추가로 돈다
     # (PoV 배선 — 추가형). 둘을 finding마다 번갈아 돌리면 pov 실패(재발생 갈래)가 뒤 finding의
     # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
-    # **pov의 대상도 이 목록이다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.** 재현
+    # **pov의 대상은 이 목록으로 시작한다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.**
+    # (`pov_attempt_top_n`이 양수면 `_pov_targets`가 `validated` **밖의** Finding을 뒤에 더 붙인다 —
+    # 그 추가 대상은 `validate.run`을 안 돈다. 이 목록의 `validate.run` 루프는 안 넓어진다.) 재현
     # 명세가 부르는 `./poc`는 PoV가 낸 PoC 바이트를 파일로 써야 생기는데(STATUS.md §5 — E4를
     # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 trace와 run 산출물 사이드카
     # (`pov_poc/`, #355)에 남길 뿐 `./poc`로 쓰지 않는다(그 `./poc` materialize는 호스트가
@@ -1273,12 +1280,27 @@ def _analyze(
         # 막는다.
         if swap is not None and Role.POV.value in swap.swappable:
             _swap_for(ctx, Stage.VALIDATE)
+        validated_ids = {f.finding_id for f in validated}
         # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
         for finding in pov_targets:
-            _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+            try:
+                _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+            except BudgetExhausted:
+                # 🔴 **추가 대상(`pov_attempt_top_n`)에서 예산이 끊기면 최종 지정은 하고 올린다.**
+                # 추가 대상은 `validated` 뒤에 붙어 이 루프를 같이 도므로, 앞 대상이 **이미 낸
+                # PoC**가 있을 수 있다 — 여기서 그냥 올리면 `_finalize_oracle`을 건너뛰어 그 PoC의
+                # `fix` 다리·판정 조회를 잃고 `oracle.final`이 `not_reached`가 된다(상한 0이었으면
+                # 점수가 났을 run이다). **사유는 새로 적지 않는다** — 같은 예외를 다시 올리면
+                # `run_pipeline`의 `BudgetExhausted` 갈래가 `stopped_after`·`BUDGET_EXHAUSTED`·
+                # 경고를 적는 종전 경로 그대로다. `validated` 대상에서 끊긴 run은 안 건드린다
+                # (종전 그대로 `not_reached`).
+                if finding.finding_id not in validated_ids:
+                    _finalize_oracle(ctx, state)
+                raise
     # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
     # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
-    # `not_reached`로 남는다.
+    # `not_reached`로 남는다 — **추가 대상에서 `BudgetExhausted`로 끊긴 run만 예외다**(위 `except`가
+    # 최종 지정을 하고 올린다).
     _finalize_oracle(ctx, state)
 
 
@@ -1287,16 +1309,37 @@ def _pov_targets(
 ) -> list[Finding]:
     """PoV를 시도할 Finding. 기본은 `validated` 그대로고, 임계가 양수면 그 **밖에서** 더 붙인다.
 
-    **더하기만 한다 — 빼지 않는다.** `validated`는 전부 그대로 돌고, `pov_attempt_top_n`은 그
-    뒤에 붙일 수의 상한이다. 그래서 이 상한이 잘라 낸 Finding은 **종전에도 PoV를 안 돌던
-    것**이고, 상한이 무언가를 조용히 잃게 하지 않는다(`candidate_max`가 잘린 후보를
+    **`validated`는 빼지 않는다.** `validated`는 전부 그대로 돌고, `pov_attempt_top_n`은 그 뒤에
+    붙일 수의 상한이다. 그래서 이 상한이 잘라 낸 Finding은 **종전에도 PoV를 안 돌던 것**이고,
+    **상한 자체가** 시도할 대상을 조용히 잃게 하지는 않는다(`candidate_max`가 잘린 후보를
     `target_skipped`로 남겨야 했던 이유가 여기엔 없다 — 그쪽은 파이프라인에서 빼는 상한이다).
+    ⚠ 다만 **추가 대상은 예산을 더 쓴다** — 거기서 `BudgetExhausted`가 나면 run은 그 자리에서
+    끝나지만, 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정)은 하고 끝난다(`_analyze`).
+    `validated` 대상에서 끊긴 run은 종전 그대로 최종 지정에 못 닿는다.
 
-    **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. Level 1은
-    재현 명세의 근거를 주지 않아(`repro_spec`이 `null`인 것이 정상이다 — 이슈 #354~#360) F-9가
-    Finding을 `hypothesized`에 세우고, 8단계 진입 시점의 `validated`가 비어 있었다. PoC가 없으면
-    채점 점수가 없다(`oracle.final`이 `no_poc`). 그래서 등급이 못 올라간 Finding에도 PoV를
-    시도할 길을 뒀다.
+    **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
+    ① **Critic이 반박(F-6)·보류(`need_evidence`, F-7)로 판정한 것** — `gate.normalize` 뒤 판정이
+    `uphold`가 아닌 것이다(근거 없는 반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로
+    **든다**) ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
+    (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
+    Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
+    명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
+    판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
+
+    **왜 빼나.** 정렬 키가 Auditor `confidence` 하나라 반박돼도 값이 그대로다 — 풀에 두면 반박된
+    Finding이 더 높은 값으로 다른 Finding의 자리를 밀어내고, 최종 지정 사슬(`_designation_key`)은
+    등급 상한이 같으면 `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가
+    공식 최종 제출이 될 수 있다.** `need_evidence`는 반박은 아니나 같이 뺐다 — Critic이 판정을
+    남긴 Finding을 Critic을 안 거친 것과 같은 줄에 세우지 않는다(판단이 갈려 보수적으로 뺀 쪽이다).
+
+    **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
+    Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
+    (`insufficient_evidence`)에 내렸고 Critic을 한 번도 안 거쳤다
+    (`docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §4) —
+    8단계 진입 시점의 `validated`가 비어 있었다. Level 1은 재현 명세의 근거를 주지 않아
+    (`repro_spec`이 `null`인 것이 정상이다 — 이슈 #354~#360) 인용이 고쳐져도 F-9에서 멈출 수 있다.
+    PoC가 없으면 채점 점수가 없다(`oracle.final`이 `no_poc`). 그래서 등급이 못 올라간 Finding에도
+    PoV를 시도할 길을 뒀다.
 
     🔴 **`validate.run` 루프는 안 넓힌다.** 그쪽은 유일한 결정론 E4 게이트이고 `from=validated`를
     요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓히는 것은 **PoV
@@ -1308,18 +1351,32 @@ def _pov_targets(
 
     자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`
     (정렬이 흔들리면 재현 실행이 갈라진다). ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한
-    값이 아니다** — 그래서 이것은 등급 규칙이 아니라 **순서 규칙**이다. 상한이 0이면 이 정렬은
-    아예 돌지 않는다.
+    값이 아니다** — 그래서 이것은 등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
+    건다. 상한이 0이면 이 정렬은 아예 돌지 않는다.
     """
     limit = ctx.config.thresholds.pov_attempt_top_n
     if limit <= 0:
         return validated
     already = {finding.finding_id for finding in validated}
     rest = sorted(
-        (f for f in state.findings.values() if f.finding_id not in already),
+        (
+            f
+            for f in state.findings.values()
+            if f.finding_id not in already and not _critic_set_aside(state, f.finding_id)
+        ),
         key=lambda f: (-f.confidence, f.finding_id),
     )
     return [*validated, *rest[:limit]]
+
+
+def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
+    """7단계가 이 Finding을 **밀어 냈나** — 판정 호출이 실패해 버려졌거나(`_drop_finding`), Critic이
+    반박·보류로 판정했다. 판정은 `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이
+    읽는 값과 같아야 `QUEUED`(F-6·F-7)와 이 판정이 어긋나지 않는다."""
+    return finding_id in state.critic_failed_ids or any(
+        gate.normalize(decision) is not Verdict.UPHOLD
+        for decision in state.decisions.get(finding_id, ())
+    )
 
 
 # PoV 관측에 싣는 도구 출력 꼬리 길이. **잰 값이 아니라 설계 상수다** — ASan 요약(`SUMMARY:` 줄과
@@ -1662,7 +1719,8 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     """
     # 빈 맵은 「`_run_pov`가 한 번도 사유를 못 적었다」다. 이유는 셋이고 이 맵만으로는 못 가른다:
     # ① 8단계 앞에서 멈췄다 ② `_pov_targets`가 0건이라 `_run_pov`가 안 불렸다(VALIDATED가 0건이고
-    # `pov_attempt_top_n`도 0이다) ③ 프로필에 pov
+    # `pov_attempt_top_n`이 0이거나, 양수인데 Critic이 밀어 내지 않은 추가 대상이 0건이다)
+    # ③ 프로필에 pov
     # 좌석이 없다(`REQUIRED_ROLES`에 pov가 없어 스키마상 합법이다. 다만 지금 커밋된 프로필은 전부
     # 좌석을 든다 — 2026-10-03 `config/profiles.yaml`을 `load_config`로 확인했다). 「좌석이 있는데
     # 대상이 0건」을 따로 말하려면 필드가 하나 더 필요하다(범위 밖 — 이 경고의 명제는 「PoV를
@@ -1705,7 +1763,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
     `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
     다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 여럿이면 내부 근거 등급으로 가른다, `_designate_final`).
+    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ①내부 근거 등급 ②`confidence`
+    ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
     부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는
     나가지 않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
     (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
@@ -1904,9 +1963,11 @@ def _designate_final(
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
       것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
-    - **등급을 모르는 후보가 있다** → 지정하지 않는다(`grade_unknown`). **방어 분기다** — 후보의
-      `finding_id`는 `_run_pov`가 `state.findings`에서 받은 것이고 `_grades_by_finding`·
-      `_confidences_by_finding`이 그 전부를 세므로 현 러너로는 닿지 않는다(직접 호출 검사만 문다).
+    - **등급 또는 `confidence`를 모르는 후보가 있다** → 지정하지 않는다(`grade_unknown` — 이름은
+      등급 미상에서 굳었지만 이 검사는 둘을 같이 본다). **방어 분기다** — 후보의 `finding_id`는
+      `_run_pov`가 `state.findings`에서 받은 것이고 `_grades_by_finding`·
+      `_confidences_by_finding`이 그 전부를 세므로 현 러너로는 닿지 않는다(직접 호출 검사만 문다 —
+      실영향은 없다).
     - **후보가 둘 이상이다** → `_designation_key`의 **전순서**로 하나를 고른다. 같은 바이트끼리
       먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
       **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
@@ -1931,7 +1992,8 @@ def _designate_final(
     돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서 안 나온다(`_grades_by_finding`).
 
     `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
-    `==`)을 분기마다(사슬이 갈린 자리 넷 · 같은 바이트 · 등급 미상 · 후보 하나) 문다.
+    `==`)을 분기마다(사슬이 갈린 자리 넷 · 같은 바이트 · 등급 또는 `confidence` 미상 · 후보 하나)
+    문다.
     ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
     docstring)와 후보 0건(읽을 `submission`이 없다).
@@ -2021,8 +2083,11 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
-    계약). 이 단계는 8단계가 **끝까지 돌았을 때만** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
-    불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
+    계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
+    불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다. **예외 하나:**
+    `pov_attempt_top_n`의 추가 대상에서 `BudgetExhausted`로 끊긴 run은 `_analyze`가 이 단계를 부른
+    뒤 예외를 올린다 — 앞 대상이 이미 낸 PoC의 최종 지정을 잃지 않으려는 것이다(`validated`
+    대상에서 끊긴 run은 그대로다).
     """
     if ctx.oracle is None:
         return
@@ -4350,6 +4415,7 @@ def _drop_finding(
     Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
     """
     state.critic_failed += 1
+    state.critic_failed_ids.add(finding.finding_id)
     ctx.trace.emit(
         EventKind.CRITIC_FAILED,
         stage=Stage.CRITIC,

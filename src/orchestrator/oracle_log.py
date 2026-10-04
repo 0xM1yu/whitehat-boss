@@ -29,7 +29,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 
 `candidates`(후보마다 vul 제출 한 건 — 성공이면 `poc_id`·`response_exit_code`·`cached`, 실패면
 `error`·`error_status`(HTTP 상태. HTTP 오류가 아니면 `null`)·`error_detail`) ·
-`final`. `final`은 run이 8단계 끝까지 가지 못했으면 `null`이고 아니면
+`final`. `final`은 run이 최종 단계에 못 닿았으면(8단계가 끝까지 가지 못했다 — 단
+`pov_attempt_top_n`의 추가 대상에서 예산이 끊긴 run은 최종 지정까지 하고 끝난다) `null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
 따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
 읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
@@ -40,8 +41,9 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 **넷**이다:
 `no_poc`·`all_vul_submissions_failed`·`rate_limited`(지정할 후보가 **없다** — 낼 PoC가 없던 것,
 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 서로 다른 사건이다)와
-`grade_unknown`(후보 중에 내부 근거 등급을 모르는 것이 있어 **규칙이 거부했다** —
-`runner._designate_final`). 어느 쪽이든 `fix` 다리와 판정은 안 돈다.
+`grade_unknown`(후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 **규칙이
+거부했다** — `runner._designate_final`. 이름은 등급 미상에서 굳었지만 그 검사는 둘을 같이 본다.
+현 러너로는 닿지 않는 방어 분기다). 어느 쪽이든 `fix` 다리와 판정은 안 돈다.
 
 ⏵ 2026-10-04 — **`grade_tie`는 없어졌다**(그래서 다섯이 아니라 넷이다). 후보가 둘 이상일 때
 지정이 등급 **동점에서 거부하던** 것을 사슬로 바꿨다(`runner._designate_final`): 같은
@@ -99,6 +101,9 @@ STATUS_NOT_REACHED = "not_reached"
 # 없앴다. 지우지 않고 두면 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
 REASON_NO_POC = "no_poc"
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
+# 후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 규칙이 거부했다. 이름은 등급
+# 미상에서 굳었지만 `runner._designate_final`의 검사가 둘을 같이 본다. 모르는 값을 0으로 깔면
+# 없는 근거로 고르게 되기 때문이다(CLAUDE.md §0). 현 러너로는 닿지 않는 방어 분기다.
 REASON_GRADE_UNKNOWN = "grade_unknown"
 
 # 제출 실패가 **전부** 채점기 레이트리미트여서 후보가 안 남은 경우(이슈 #422). 그렇게 생긴
@@ -301,8 +306,8 @@ class OracleLedger:
             "vul_submitted": self.submitted,
             "vul_failed": self.failed,
             "final": STATUS_NOT_REACHED if self.final is None else self.final.status,
-            # `none`의 사유 — 후보가 여럿인데 등급을 몰라 못 가른 run(`grade_unknown`)과 후보가
-            # 없던 run을 매니페스트에서도 가른다.
+            # `none`의 사유 — 후보가 여럿인데 등급·`confidence`를 몰라 못 가른 run
+            # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
         }
@@ -383,9 +388,9 @@ def _none_warning(final: FinalAttempt, submitted: int) -> str:
     tail = "이 run은 채점 점수가 없다"
     if final.reason == REASON_GRADE_UNKNOWN:
         return (
-            f"vul 제출이 성공한 후보가 {submitted}건인데 그중 내부 근거 등급을 모르는 것이 있어 "
-            "최종 PoC를 지정하지 않았다 - 등급 없이 고르면 없는 근거로 고르는 것이다. fix 다리와 "
-            f"판정 조회를 돌리지 않았다 - {tail}"
+            f"vul 제출이 성공한 후보가 {submitted}건인데 그중 내부 근거 등급 또는 confidence를 "
+            "모르는 것이 있어 최종 PoC를 지정하지 않았다 - 모르는 값으로 고르면 없는 근거로 "
+            f"고르는 것이다. fix 다리와 판정 조회를 돌리지 않았다 - {tail}"
         )
     if final.reason == REASON_RATE_LIMITED:
         # 사유를 가르는 자리가 사이드카·매니페스트와 **이 한 줄** 둘이다. 앞 판은 이 줄에 분기가
