@@ -1623,6 +1623,21 @@ def test_priority_case_a_is_refused_without_a_list(repo, tmp_path, capsys):
     assert "--priority-case-a needs --priority-files" in capsys.readouterr().err
 
 
+def test_priority_case_a_is_refused_with_a_list_that_names_no_file(repo, tmp_path, capsys):
+    """A list of comments and blank lines is a list, but it names nothing: the discovery would be
+    the default one while `settings.priority_case_a` says it was steered. Refused, like no list."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# only a note\n\n   \n", encoding="utf-8")
+    out = tmp_path / "s.json"
+    with pytest.raises(SystemExit):
+        slicer.main([
+            "--repo", str(repo), "--out", str(out),
+            "--priority-files", str(listing), "--priority-case-a",
+        ])
+    assert "--priority-case-a needs a --priority-files that names a file" in capsys.readouterr().err
+    assert not out.exists()  # refused before any run state was written
+
+
 def test_resuming_without_the_priority_case_a_flag_is_a_contract_mismatch(
     monkeypatch, two_file_repo, tmp_path
 ):

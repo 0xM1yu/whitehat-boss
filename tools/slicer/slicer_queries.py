@@ -312,7 +312,9 @@ def import_query(
     # .toAbsolutePath`, so `repo` must already be absolute. Without any include path c2cpg does not
     # follow project headers reached through `<...>` or from another directory, so code behind a
     # header-config guard, and header-only C++ libraries, stay out of the graph. NOT `--define`:
-    # one define switches c2cpg to "no inactive-branch parsing" (C2 report, E3).
+    # E3 probe (2026-10-03, Joern 4.0.605; notes outside the repo): one dummy `--define` alone cut
+    # the internal methods by 37.7% (curl), 62.8% (libxml2) and 21.5% (vim) -- read as c2cpg
+    # no longer parsing inactive branches; the effect is measured, that cause is the reading of it.
     arguments = []
     if compilation_database is not None:
         arguments += ["--compilation-database", compilation_database]
@@ -406,6 +408,10 @@ CASE_A_CALL_LIMIT = 1
 # Since D90 (#318) `api` is sorted write-context-first before its `.take`, so the kept set is
 # "hot methods first", but within each layer (hot, then the rest) the cut is still that
 # unspecified traversal order. `readers` is not sorted.
+# With `--priority-case-a` a listed layer goes in front of "hot" (listed, hot, the rest), so a hot
+# method survives the cap only while |listed| + |hot| fits in it -- the D90 sentence quoted in the
+# query below ("If |hot ∩ api| <= CAP ...") is the flag-off rule. It stays as is: it is query text,
+# and rewording it would change the flag-off text the measurements ran (README, Case A).
 # The stdout-overrun above is the pre-#250 mechanism; #250 moved the payload to a file, so the
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at

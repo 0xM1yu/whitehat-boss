@@ -191,7 +191,7 @@ config에 넣지 않는다.**~~ (⏵ 2026-09-24 — 이 문단 끝의 노트) �
   부르는 함수」 하나로, Case B를 앞의 두 sink로만 적었다.
   입력을 읽는 함수 쪽은 그날 12:06의 첫 슬라이서(#201)부터 있었고, 호출 1회 이하 완화는 #241, 쓰기
   함수·operator 앵커는 #243이 2026-09-22에 넣었다. 본문이 없는 함수(prototype·빈 본문)는 Case A에서
-  빠진다([slicer-README](slicer-README.md) Case A). **정본은 `slicer_queries.py`의
+  빠진다(2026-10-04 · #470 · [slicer-README](slicer-README.md) Case A). **정본은 `slicer_queries.py`의
   `candidates_a_query`·`candidates_b_query`와 그 위 상수다** — 여기는 요약이다.
 - **커버리지가 떨어지면 비용이 거꾸로 는다.** 아래 파서 경고가 말하는 「조용히 불완전한
   그래프」에서 호출 간선이 빠지면 **안 불리는 것처럼 보이는 함수가 늘고**, 그것이 곧 Case A의

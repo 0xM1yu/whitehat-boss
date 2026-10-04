@@ -1106,6 +1106,10 @@ def main(argv: list[str] | None = None) -> int:
             priority = read_priority_files(args.priority_files, args.repo)
         except (OSError, UnicodeError) as exc:
             cli.error(f"--priority-files unreadable: {exc}")
+        if args.priority_case_a and not priority:
+            # A list of notes and blank lines: discovery would be the default one while the result
+            # says it was steered (settings.priority_case_a is true).
+            cli.error("--priority-case-a needs a --priority-files that names a file")
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
         # The shard must start from the prepared checkpoint: its discovery is what makes every
         # shard slice the same candidate list, and the run contract checks it is the same repo.
