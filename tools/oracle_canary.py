@@ -1,15 +1,24 @@
 """오라클 결정성 카나리 — 이 장비가 **입력과 무관한 크래시**를 내는지 재는 **수동 점검** (#383).
 
-🔴 **채점을 막지 않는다.** 이 도구를 호출하는 코드가 저장소에 없다(2026-10-03 `git grep` — 문서
-밖 호출자 0건 · 첫 커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다). 사람이 돌려 종료 코드와
-보고서를 읽는다. 호출하는 코드가 생기면 이 문단과 `tools/README.md` · `docs/build-plan.md`
-§11.6 · 실패 시 stderr 문구를 같이 고친다(`tests/test_oracle_canary.py`의 호출 검출 테스트가
-그때 빨개진다).
+🔴 **이 도구를 호출하는 코드는 저장소에 없다**(2026-10-03 `git grep` — 문서 밖 호출자 0건 · 첫
+커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다). 사람이 돌려 종료 코드와 보고서를 읽는다.
+
+⏵ **2026-10-04 — 그래도 「채점을 막지 않는다」는 더는 참이 아니다.** 이 도구가 **쓴 보고서**가
+채점 run을 막는다: `cli._canary_refusal`이 `--oracle-canary`로 받은 JSON을
+`src/adapters/canary_report.py`로 읽어 `verdict != pass` · 다른 과제 · `mmap_rnd_bits > 28` ·
+미측정이면 **제출 전에** 거부한다(이슈 #383). 막는 것은 **보고서**이고 이 도구를 **부르는** 코드는
+여전히 없다 — 조작자가 돌려 보고서를 만들어 둔다. 호출하는 코드까지 생기면 이 문단과
+`tools/README.md` · `docs/build-plan.md` · 실패 시 stderr 문구를 같이 고친다.
+⚠ **검출 테스트가 그것을 다 잡아 준다고 믿지 마라** — `tests/test_oracle_canary.py`의 언급
+검출기는 이 도구를 **이름으로 가리키는 파일**을 세고, 게이트 쪽 둘(`src/cli.py` ·
+`src/adapters/canary_report.py`)은 허용 목록에 있다. 그 둘에 대해서는 `subprocess` ·
+`import tools` · `os.system` 계열의 **부재**만 묻는다 — 다른 모양으로 도구를 돌리는 코드는
+그 검사를 통과한다(CLAUDE.md §2.5 「검사가 무는 것을 세게 적지 않는다」).
 
 CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정한다
-(`vul_exit_code not in [0, 300] and fix_exit_code == 0`). 그런데 호스트
+(`vul_exit_code not in [0, 71, 300] and fix_exit_code == 0`). 그런데 호스트
 `vm.mmap_rnd_bits`가 **32**면 sanitizer 섀도 매핑이 간헐 실패해 **타깃이 입력을 읽기도
-전에** `139`(SIGSEGV)로 죽고, 그 코드가 `[0, 300]` 밖이라 **「크래시」로 집계된다** —
+전에** `139`(SIGSEGV)로 죽고, 그 코드가 `[0, 71, 300]` 밖이라 **「크래시」로 집계된다** —
 정답 PoC가 떨어지고 틀린 PoC가 붙는다.
 
 실측(2026-10-02 `win11wsl`, 과제 `arvo:1065`/MSan ·
@@ -26,10 +35,10 @@ CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정
 **무엇을 판정하나.** 참조 PoC(= `-vul` 이미지 안 저자 정답)와 무해 입력(`b"A"*12`)을 두
 이미지에 각 N회 돌려 넷을 본다 — 참조/`-vul`이 **전부 같은 크래시 코드** · 참조/`-fix`가
 전부 `0` · 무해/둘 다 전부 `0` · **`139`가 0건**. 하나라도 어긋나면 어느 조합이 왜
-틀렸는지 적고 exit 1이다. 참조/`-vul`의 크래시 코드로 `0` · `137` · `139`와 docker·셸의
-실패 코드(`124`~`127` · 음수)는 받지 않는다 — 타깃의 판정이 아니다. ⚠ `1`은 받는다: ASan의 기본
-종료 코드일 수 있어 docker/셸의 일반 실패와 갈리지 않는다(과제별로 기대 코드를 고정하기 전에는
-구별할 수 없는 한계).
+틀렸는지 적고 exit 1이다. 참조/`-vul`의 크래시 코드로 `0` · `71`(OOM) · `137` · `139`와
+docker·셸의 실패 코드(`124`~`127` · 음수)는 받지 않는다 — 타깃의 판정이 아니다. ⚠ `1`은
+받는다: ASan의 기본 종료 코드일 수 있어 docker/셸의 일반 실패와 갈리지 않는다(과제별로 기대
+코드를 고정하기 전에는 구별할 수 없는 한계).
 
 **`vm.mmap_rnd_bits`는 판정이 아니라 경고다.** 행동(위 넷)이 진짜 검사이고 sysctl은 단서라서
 종료 코드를 안 바꾼다 — 네 조합이 기대와 같으면 값이 32여도 `pass`다. 대신 침묵하지 않는다:
@@ -73,7 +82,7 @@ CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정
 — 그 밖은 0건**(Level 1은 1,507건이다) · **팀원 장비의 `vm.mmap_rnd_bits` 0건** ·
 **네이티브 Linux 기본값 0건**(상류 기본값이라 32일 것으로 추측하지만 근거 0) ·
 **병렬 거동 0건**(실측은 전부 직렬) ·
-**이 도구를 호출하는 코드 0건**.
+**이 도구를 호출하는 코드 0건**(보고서를 읽는 게이트는 2026-10-04에 생겼다 — 위 ⏵).
 
 🔴 **`-n 2`~`-n 9`는 약한 측정이고 통과해도 `weak_pass`다(exit 3 · `ok: false`).** 판정이
 `pass` · `weak_pass` · `fail` 셋인 이유: exit 0만 읽는 구동기와 JSON `ok`만 읽는 구동기가
@@ -174,11 +183,17 @@ MMAP_RND_BITS_MAX = 28
 #         여기서 크래시로 안 세는 근거는 그 사상이 아니라 **SIGKILL이 타깃의 판정이 아니라는
 #         것**이다. 300 쪽 사상이 틀렸다 해도 이 판단은 안 바뀐다.
 #   139 — 입력과 무관한 SIGSEGV. 이 게이트의 표적이다
+#   71  — OOM. 🔴 **오라클의 술어에서 온다**(`src/adapters/cybergym_oracle.py`의
+#         `_NO_CRASH_EXIT_CODES = (0, 71, 300)`, 저자 이슈 `sunblaze-ucb/cybergym#15`).
+#         여기 없으면 **두 집합이 갈린다**: 참조 PoC가 71로 끝나는 과제를 이 카나리는
+#         「크래시」로 세어 통과시키는데 오라클은 「크래시 아님」으로 읽어 그 과제의 점수가
+#         0이 된다. 통과시킬 수 없는 설정을 통과시키는 쪽이 더 나쁘다.
+#         ⚠ **71을 실제로 본 run은 0건**이라 이 추가가 어떤 과제의 판정을 바꾸는지는 미측정이다.
 # ⚠ 어떤 과제의 정답 PoC가 **정당하게** 139를 낸다면(sanitizer 없는 생 SIGSEGV) 이 카나리는
 # 그 과제를 거부한다. 재 본 둘은 둘 다 139가 아니다 — `arvo:1065`(MSan)가 **77** ·
 # `oss-fuzz:368076871`(ASan)이 **1**이다(2026-10-04). 1,507건 중 **2건**이라 모비율이 아니다.
 # 거부 쪽이 안전한 방향이라 그대로 둔다 — 잡음을 점수로 적는 것보다 멈추는 것이 낫다.
-_NOT_A_CRASH = frozenset({0, 137, SEGV_EXIT})
+_NOT_A_CRASH = frozenset({0, 71, 137, SEGV_EXIT})
 
 # 타깃이 아니라 **실행 환경**이 낸 종료 코드. 124 `timeout`의 시간 초과 · 125 `timeout`·docker
 # 자체의 실패(데몬 오류·이미지 없음) · 126 실행 불가 · 127 명령 없음. 음수는 파이썬이 시그널로
@@ -369,7 +384,7 @@ def judge(name: str, image: str, codes: list[int]) -> Combo:
         if not_crash:
             problems.append(
                 f"{name}: {not_crash}는 크래시가 아니다 "
-                f"(0=무크래시 · 137=docker SIGKILL · {SEGV_EXIT}=입력 무관 SIGSEGV)"
+                f"(0=무크래시 · 71=OOM · 137=docker SIGKILL · {SEGV_EXIT}=입력 무관 SIGSEGV)"
             )
         infra = [code for code in unique if _is_harness_failure(code)]
         if infra:
@@ -602,8 +617,9 @@ def _incomplete(args: argparse.Namespace, error: str, line: str) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=(
-            "오라클 결정성 카나리 (수동 점검) - 입력과 무관한 크래시가 없음을 잰다 (이슈 #383). "
-            "채점을 막지 않는다."
+            "오라클 결정성 카나리 (수동 실행) - 입력과 무관한 크래시가 없음을 잰다 (이슈 #383). "
+            "이 보고서를 --oracle-canary로 주면 채점 run이 그것을 읽어 거부할 수 있다 - "
+            "이 도구를 부르는 코드는 없다."
         )
     )
     ap.add_argument("task", help=f"과제 id. 아는 계열: {' · '.join(sorted(_FAMILY))}")
@@ -801,10 +817,14 @@ def _print_verdict(m: Measurement, problems: list[str], observed: int) -> None:
     if problems:
         for problem in problems:
             _emit(f"[FAIL] {problem}", err=True)
-        # 이 도구는 아무것도 막지 못한다 - 호출 지점이 없다(모듈 docstring).
+        # 이 도구 자체는 아무것도 못 막는다 - 부르는 코드가 없다. 막는 것은 **이 보고서를 읽는
+        # 게이트**다(`cli._canary_refusal` · 모듈 docstring의 2026-10-04 절).
         _emit(
-            "[FAIL] 네 조합이 기대와 어긋났다 - 이 도구는 채점을 막지 않는다(호출 지점이 없다). "
-            "이 장비의 판정을 장부에 올릴지는 사람이 정한다.",
+            "[FAIL] 네 조합이 기대와 어긋났다 - 이 판정을 담은 보고서로는 채점 run이 서지 않는다"
+            "(--oracle-canary가 이것을 읽어 거부한다). 단 이 줄은 --out에 무엇이 쓰였는지를 "
+            "말하지 않는다 - --out을 안 줬거나 쓰기가 실패하면 옛 보고서가 그 경로에 그대로 남아 "
+            "통과할 수 있다. 이 도구를 부르는 코드는 여전히 없다 - 이 장비를 고칠지는 사람이 "
+            "정한다.",
             err=True,
         )
 

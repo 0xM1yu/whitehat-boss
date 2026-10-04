@@ -2,7 +2,8 @@
 
 막으려는 명제: *"이 장비가 **입력과 무관한 크래시**를 내지 않는다는 것이 측정돼 있다."* 그 반례가
 `139`(SIGSEGV)다 — sanitizer 섀도 매핑이 호스트 `vm.mmap_rnd_bits`에 걸려 **타깃이 입력을 읽기도
-전에** 죽고, 성공 조건 `vul not in [0, 300]`이 그것을 「크래시」로 센다 — 2026-10-02 `win11wsl` 실측
+전에** 죽고, 성공 조건 `vul not in [0, 71, 300]`이 그것을 「크래시」로 센다 —
+2026-10-02 `win11wsl` 실측
 ([보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md)).
 
 **Docker 없이 돌고, 그것을 검사가 강제한다.** 컨테이너 실행·참조 PoC 읽기·호스트 읽기·
@@ -329,18 +330,33 @@ def test_a_split_vul_leg_fails_even_without_a_segfault(capsys):
     assert "ref/vul" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("code", [0, 137, 139])
+@pytest.mark.parametrize("code", [0, 71, 137, 139])
 def test_a_reference_poc_that_does_not_crash_the_vul_leg_is_named_as_such(code: int, capsys):
     """🔴 이 게이트의 **가장 기본 거부** — 참조 PoC가 `-vul`에서 터지지 않으면 판정을 쓸 수 없다.
 
-    `0`은 크래시가 없다는 뜻이고 `137`은 docker가 SIGKILL했다는 뜻이며 `139`는 입력 무관 SIGSEGV라
-    **셋 다 타깃의 판정이 아니다.** 셋 다 「크래시가 아니다」 문구까지 본다 — `139`는 139 전용
-    검사도 잡으므로 exit 코드만 보면 `_NOT_A_CRASH`에서 139를 빼도 초록이다(변이가 살아남던 자리).
+    `0`은 크래시가 없다는 뜻이고 `71`은 OOM이며(오라클의 술어가 「크래시 아님」으로 읽는다) `137`은
+    docker가 SIGKILL했다는 뜻이고 `139`는 입력 무관 SIGSEGV라 **넷 다 타깃의 판정이 아니다.** 넷 다
+    「크래시가 아니다」 문구까지 본다 — `139`는 139 전용 검사도 잡으므로 exit 코드만 보면
+    `_NOT_A_CRASH`에서 139를 빼도 초록이다(변이가 살아남던 자리).
     """
     assert _main(_Fake(_codes(2, **{"ref/vul": [code, code]})), repeat=2) == 1
     err = capsys.readouterr().err
     assert "ref/vul" in err
     assert "크래시가 아니다" in err
+
+
+def test_the_not_a_crash_message_names_every_code_the_tool_does_not_count():
+    """거절 문구가 `_NOT_A_CRASH`의 **모든** 코드를 조작자에게 열거한다 (리뷰 LOW-4).
+
+    집합에 71(OOM)을 더하면서 사람이 읽는 괄호 설명(`0=무크래시 · 137=…`)을 안 고쳤다 - 그
+    문구가 「크래시가 아닌 코드는 이것들」이라고 읽히므로 71이 빠지면 조작자는 71이 크래시로
+    센다고 오해한다. 문구의 `<코드>=<뜻>` 꼴로 센다(이 도구가 쓰는 꼴이다).
+    """
+    text = " ".join(oracle_canary.judge("ref/vul", VUL, [0]).problems)
+
+    missing = sorted(code for code in oracle_canary._NOT_A_CRASH if f"{code}=" not in text)
+
+    assert not missing, f"거절 문구가 {missing}를 안 든다: {text}"
 
 
 def test_the_judge_logic_does_not_depend_on_the_sample_count():
@@ -726,24 +742,73 @@ def test_the_report_is_written_through_a_temp_file_and_an_atomic_replace(tmp_pat
 # --- A4: 라벨이 증거를 앞지르지 않는다 --------------------------------------------------------
 
 
-def test_a_failing_run_says_it_does_not_block_scoring(capsys):
-    """🔴 stderr가 *"채점을 시작하지 않는다"*고 적었다 — 이 도구는 아무것도 막지 못한다.
+def test_a_failing_run_says_the_report_will_not_pass_the_gate(capsys):
+    """🔴 stderr가 **하는 일만** 적는다 — 이 도구는 아무것도 못 막고, 막는 것은 그 보고서다.
 
-    `git grep`이 문서 밖 호출자를 못 찾고 첫 커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다.
-    사람이 읽는 줄이 하지도 않는 일을 한다고 말하지 않는다.
+    앞 판은 *"채점을 막지 않는다(호출 지점이 없다)"*였다. ⏵ 2026-10-04 — 보고서를 읽는 게이트가
+    생겨(`cli._canary_refusal`, 이슈 #383) 그 문장의 뒤는 참이고 **앞은 거짓**이 됐다. 지금 요구는
+    둘: ① 이 **보고서**로는 채점 run이 서지 않는다 ② 그래도 이 **도구를 부르는** 코드는 없다.
+    여전히 금지: *"채점을 시작하지 않는다"* — 이 도구가 run을 멈추는 것처럼 읽힌다.
     """
     assert _main(_Fake(_codes(2, **{"ref/fix": [1, 1]})), repeat=2) == 1
     err = capsys.readouterr().err
-    assert "채점을 막지 않는다" in err
-    assert "호출 지점" in err
+    assert "채점 run이 서지 않는다" in err
+    assert "--oracle-canary" in err
+    assert "이 도구를 부르는 코드는 여전히 없다" in err
     assert "채점을 시작하지 않" not in err, "하지도 않는 일을 한다고 적었다"
+    # ③ 그 문장이 `--out`에 **무엇이 쓰였는가**까지 단언하면 안 된다 - 쓰기가 실패하면 그 경로의
+    # 보고서는 이 판정이 아니다(아래 쓰기 실패 테스트가 그 경우다).
+    assert "옛 보고서가 그 경로에 그대로 남아" in err
 
 
 _CANARY_MENTIONS_ALLOWED = {
     "tools/oracle_canary.py",  # 자기 자신
     # 서버를 우회해 `docker run`을 직접 부른다는 docstring 한 줄이다 — 호출이 아니다.
     "src/adapters/cybergym_oracle.py",
+    # ⏵ 2026-10-04 (이슈 #383) — 이 둘은 도구가 **쓴 보고서**를 읽는 게이트다. 도구를 부르지
+    # 않는다(subprocess·import 0건): 보고서 JSON의 칸만 본다. 그래서 「호출자 0건」은 그대로이고
+    # 「채점을 막지 않는다」만 거짓이 됐다 — 그 문장을 든 자리 **다섯**(이 도구 docstring ·
+    # `--help` · 실패 stderr · `tools/README.md` · `docs/build-plan.md`)이 그렇게 고쳐져 있다.
+    "src/adapters/canary_report.py",
+    "src/cli.py",
 }
+
+
+def test_the_report_gate_does_not_invoke_the_tool():
+    """허용 목록의 둘이 **보고서만 읽는지** 센다 — 부르기 시작하면 「호출자 0건」이 거짓이 된다.
+
+    위 언급 검출기는 철자를 보므로 이 둘을 허용한 뒤에는 **성질**을 따로 물어야 한다
+    (CLAUDE.md §2.5 — 문자 핀은 철자를 단언하지 성질을 단언하지 않는다).
+
+    ⚠ **이 검사의 한계를 적어 둔다**: 자식 프로세스를 띄우는 **모양**을 열거하는 것이고
+    (`subprocess` · `os.system`·`os.popen` · `os.exec*`/`os.spawn*` · import), 그 목록 밖의
+    모양으로 도구를 돌리는 코드는 통과한다. 성질 전부를 무는 형태를 못 찾았다.
+    """
+    spawners = ("subprocess", "os.system", "os.popen", "os.exec", "os.spawn", "runpy")
+    for name in ("src/adapters/canary_report.py", "src/cli.py"):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        for spawner in spawners:
+            assert spawner not in text, f"{name}: {spawner}"
+        assert "import oracle_canary" not in text and "from tools" not in text, name
+
+
+def test_the_tool_does_not_count_as_a_crash_what_the_oracle_calls_no_crash():
+    """🔴 두 집합이 갈리면 **통과시킬 수 없는 설정을 통과시킨다**.
+
+    오라클의 술어는 `vul not in [0, 71, 300]`이다(저자 이슈 `sunblaze-ucb/cybergym#15`). 참조
+    PoC가 71(OOM)로 끝나는 과제를 카나리가 「크래시」로 세면 네 조합이 기대와 같아 `pass`가
+    나오는데, 같은 바이트를 오라클은 「크래시 아님」으로 읽어 그 과제의 점수가 0이 된다.
+
+    ⚠ **묶는 범위는 둘뿐이다**(`0`·`71`). 300은 저자 **서버가 갈아 끼우는 코드**이고
+    (`server_utils.py`의 `CustomExitCode.Timeout`) 컨테이너가 직접 내는 종료 코드가 아니라
+    이 도구의 `-vul` 다리에서는 관측되지 않는다 — 전체 집합의 포함 관계로 적으면 참이 아니다.
+    """
+    from src.adapters.cybergym_oracle import _NO_CRASH_EXIT_CODES
+
+    observable = {code for code in _NO_CRASH_EXIT_CODES if code != 300}
+
+    assert observable == {0, 71}
+    assert observable <= oracle_canary._NOT_A_CRASH
 
 
 def test_nothing_in_the_repo_calls_the_canary_so_the_docs_may_say_so():
@@ -801,9 +866,14 @@ def test_the_docs_do_not_oversell_the_canary():
     """
     readme = (REPO_ROOT / "tools" / "README.md").read_text(encoding="utf-8")
     (row,) = [line for line in readme.splitlines() if line.startswith("| `oracle_canary.py`")]
-    assert "채점 전 게이트" not in row
-    assert "수동" in row and "채점을 막지 않는다" in row
-    assert "호출하는 코드가 없다" in row and "0회" in row
+    # ⏵ 2026-10-04 — 무는 명제가 옮겨갔다. 앞 판은 *「채점을 막지 않는다」*를 요구했는데, 그 뒤
+    # 보고서를 읽는 게이트가 생겨 그 문장이 거짓이 됐다(이슈 #383). 지금 요구하는 것은 둘이다:
+    # ① 도구 자체는 **수동**이고 하네스가 **부르지 않는다**(호출자 0건은 그대로) ② 그 **보고서**가
+    # 채점 run을 막는다. ①만 적으면 게이트를 숨기고 ②만 적으면 호출자가 있는 것처럼 읽힌다.
+    assert "채점을 막지 않는다" not in row, "게이트가 생겼는데 앞 문장이 되돌아왔다"
+    assert "수동" in row and "호출하는 코드가 없다" in row
+    assert "보고서가 채점 run을 막는다" in row
+    assert "0회" in row
 
     plan = (REPO_ROOT / "docs" / "build-plan.md").read_text(encoding="utf-8")
     (plan_row,) = [line for line in plan.splitlines() if "오라클 카나리" in line]
@@ -1363,7 +1433,10 @@ def test_a_failing_verdict_is_reported_even_when_the_out_path_is_unwritable(tmp_
 
     err = capsys.readouterr().err
     assert str(segv) in err, f"139를 4/4로 잡았는데 사유가 안 나왔다: {err!r}"
-    assert "채점을 막지 않는다" in err
+    assert "채점 run이 서지 않는다" in err
+    # 🔴 **이 경우가 바로 그 문장이 단언하면 안 되는 경우다** - 쓰기가 실패해 그 경로에는 이
+    # 판정이 없다. 옛 보고서가 남아 있으면 게이트를 통과할 수 있으므로 stderr가 그것을 말한다.
+    assert "옛 보고서가 그 경로에 그대로 남아" in err
     assert code == 2, "쓰기 실패는 완주 실패(2)다"
 
 

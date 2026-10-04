@@ -25,9 +25,25 @@
 # 따옴표 — 원격 셸에 가는 값은 전부 작은따옴표로 감싸고 값 안의 작은따옴표는 '\''로 끊는다. 원격 로그인 셸이
 #   POSIX 셸이면 그대로 읽힌다. KEY·run id에 공백·따옴표·$가 들어도 한 인자로 간다(tests/test_remote_swap.py).
 #
-# ⚠ Windows 네이티브 파이썬에서 하네스를 돌리면 `bash`가 WSL 런처로 풀리고 환경변수가 안 넘어간다
-#   (2026-10-03 실측 — subprocess로 띄운 `bash`에서 부모가 준 변수가 빈 값). 그때 이 파일은 HARNESS_RUN_ID가
-#   비었다며 2로 끝난다. 하네스를 WSL·Linux 안에서 돌린다.
+# Windows 네이티브 파이썬 — ~~`bash`가 WSL 런처로 풀리고 환경변수가 안 넘어간다. 하네스를 WSL·Linux 안에서
+#   돌린다~~ ⏵ 2026-10-04 정정(#477): 환경 전달은 멀쩡했다. 원인은 실행 파일 해소다 — `CreateProcess`가 PATH보다
+#   `System32`를 먼저 뒤져 `bash`가 WSL 런처(System32 아래의 `bash.exe`)로 풀렸고, WSL은 `WSLENV` 없이 Windows
+#   환경을 못 받아 변수가 비었다. 이제 `model_swap`이 `command[0]`을 `shutil.which`로 먼저 푼다.
+#   ⚠ 남는 함정 하나 — Git Bash에서 `export SWAP_REMOTE_ROOT=/root/harness`를 하고 네이티브 파이썬을 띄우면 MSYS가
+#   그 **값**을 Windows 경로(`C:/Program Files/Git/root/harness`)로 바꾼다. 교대 환경 변수는 셸을 거치지 않고
+#   세운다(PowerShell `$env:` 또는 파이썬 런처). `MSYS_NO_PATHCONV=1`은 역효과다 — `git -C`가 MSYS 경로를 못 읽는다.
+#   ⏵ 2026-10-05 (#495 리뷰) — `which`는 PATH를 **앞에서부터** 본다. `Git/usr/bin`이 System32보다 **앞에** 있는 PATH
+#   (Git Bash로 띄운 셸)에서만 Git Bash가 잡혀 환경이 그대로 넘어가고, 그보다 앞에 없는 PATH(레지스트리 PATH —
+#   PowerShell·cmd)에서는 같은 런처가 잡힌다. 그때는 **교대를 시도할 때** `ModelSwapError`로 실패한다 — 교대면 run이
+#   `model_swap_failed`로 멈추고 run 끝 내림이면 경고로 남으며, 교대하지 않는 run(`--dry-run`·낮은 `--stop-after`)은
+#   영향이 없다(그 run의 run 끝 내림이 경고 한 줄과 `model_swap ok=false` 이벤트 한 줄을 남긴다).
+#   `SWAP_SSH_HOST`이 비었다 같은 엉뚱한 사유로 실패하는
+#   대신 원인을 바로 말한다. 풀려면 Git Bash로 하네스를 띄우거나 PATH 앞에 `Git/usr/bin`을 두거나 장비 파일
+#   `command[0]`에 bash 절대경로를 적는다(추적 파일을 고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — 실험
+#   run에서는 앞의 둘을 쓴다). 막는 것은 System32의 `bash.exe`뿐이다 — WindowsApps의 별칭은 안 막고, PATH에서
+#   `bash`를 못 찾아 `which`가 못 풀면 못 막는다(`CreateProcess`는 System32를 먼저 본다). `doctor --device`는
+#   이 판정을 안 한다. 이 변경 뒤에 Windows 네이티브로 원격 교대를 끝까지 돌린 run은 없다 —
+#   미실측(`_resolved`의 두 PATH 해소만 2026-10-05 이 PC에서 쟀다).
 # ⚠ 하네스가 마감에 이 프로세스를 죽여도 원격 swap.sh는 자기 마감(SWAP_DEADLINE_S)까지 돈다 — ssh를 TTY 없이
 #   열어 HUP이 안 간다. 계약상 swap.sh는 그 마감에 스스로 끝난다.
 set -euo pipefail
@@ -41,7 +57,7 @@ need() {
 need SWAP_SSH_HOST "원격 교대 호스트를 모른다"
 need SWAP_REMOTE_ROOT "원격 저장소 루트를 모른다"
 need SWAP_REMOTE_PYTHON "원격 하네스 인터프리터를 모른다"
-need HARNESS_RUN_ID "하네스가 안 줬다(Windows 네이티브 파이썬이면 머리 주석의 WSL 항목)"
+need HARNESS_RUN_ID "하네스가 안 줬다(Windows면 머리 주석의 실행 파일 해소 항목 — 이 bash가 WSL 런처일 수 있다)"
 case $SWAP_REMOTE_ROOT in
   /*[!/]) ;; # 절대경로이고 `/`로 끝나지 않는다 — `/` 하나와 `//`도 여기서 걸린다
   *)

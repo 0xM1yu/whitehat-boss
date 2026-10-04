@@ -151,7 +151,8 @@ profiles:
     #   항목이 든다.
     # - **PoV = §1의 `feyospace-v1-small`**(8단계 · Qwen3.8-27B 사이버 post-train, Auditor와 같은 계열).
     #   pov 노드가 8단계에 들어온(진입 시 `VALIDATED`인) Finding에서 PoC를 만든다 — `validate.run`이 `QUEUED`로
-    #   내린 것도 포함한다(추가형 — 대상 목록은 `validate.run` 전에 잡히고 러너가 그 뒤에 부른다). 사고를 켠다 —
+    #   내린 것도 포함한다(추가형 — 그 목록은 `validate.run` 전에 잡히고 러너가 그 뒤에 부른다). `pov_attempt_top_n`이
+    #   양수면 그 밖의 Finding도 상위 몇 건 더한다(기본 0 — `config/budgets.yaml`). 사고를 켠다 —
     #   Auditor의 손잡이 넷(`reasoning_effort` `xhigh` · `sampling` · `thinking_token_budget` ·
     #   `request_timeout_s`)을 물려받아 선언하고 출력 상한은 `output_max_by_role.pov`(`config/budgets.yaml`)다
     #   (계획값 · feyospace 미실측 — `config/models.yaml`). `--reasoning-parser qwen3` 필요 ·

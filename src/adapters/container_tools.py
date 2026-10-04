@@ -737,7 +737,9 @@ def first_hit_location(tool: str, steps: list[Step]) -> Location | None:
 
     **채워도 게이트 등급은 안 바뀐다**(#70): `p1 = static_ok or location_ok`이고
     STATIC Evidence에만 location이 붙어 `static_ok`가 이미 참이다. 이 값의 쓰임은 등급이
-    아니라 신호를 심볼 단위로 귀속하는 후속 PR(신호 1건당 Evidence)의 입력이다. 형태가
+    아니라 신호를 심볼 단위로 귀속하는 후속 PR(신호 1건당 Evidence)의 입력이다(+ 2026-10-04부터
+    content-aware 프롬프트의 FACTS·Critic 줄 — 이슈 #475: 이 값을 바꾸면 그 판의 프롬프트
+    바이트가 바뀐다). 형태가
     어긋나면 채우지 않는다 — 틀린 위치를 넣느니 `None`이 낫다(`location_ok`는 그대로 거짓).
     """
     if tool != "semgrep" or not steps:

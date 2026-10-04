@@ -2298,20 +2298,32 @@ def test_trace_actually_carries_the_volatile_fields(tmp_path: Path) -> None:
 # `tests/test_oracle_wiring.py`는 `ctx.oracle`을 직접 꽂아 러너 함수를 보므로 그 배선이 끊겨도
 # 초록이다. 후보 수가 갈림길이다(후보 N개 ≠ 최종 1개를 가르는 것이 이 PR의 차단 결함이다):
 # 기본 타깃은 8단계에 **후보가 하나** 오고(그 하나가 최종이다), `_with_index()`로 심볼 타깃을
-# 만들면 **후보가 둘** 온다(Fake 도구의 재현이 둘 다 성공해 8단계 등급이 둘 다 E4라 동점이다 -
-# 지정하지 않는다. 한쪽의 재현이 실패하면 E4 하나가 최댓값이라 `top_grade`다 - 아래 둘째 검사).
+# 만들면 **후보가 둘** 온다.
+#
+# ⏵ **2026-10-04 — `dev_fake`의 후보 둘은 PoC 바이트가 같다**(Fake PoV는 결정론이라 finding이
+# 달라도 같은 68바이트를 낸다 — 실측 run이 제출 8건에 고유 PoC 1개였던 것과 같은 모양이다).
+# 그래서 지정이 **접어** `sole_poc`을 내고 `fix` 다리가 한 번 돈다 — 앞 판은 그것을 `grade_tie`로
+# 거부해 왕복이 0번이었다. 🔴 **그 접기 때문에 이 파일은 `top_grade`를 끝까지 못 보인다** —
+# 바이트가 같으면 어느 후보를 지정해도 제출이 같아 라벨이 `sole_poc`이다. 등급이 실제로
+# **읽히는지**는 아래 둘째 검사의 `candidate_grades`·리포트 등급이 묶고, 사슬의 단계별 라벨은
+# `tests/test_oracle_wiring.py` 끝 절이 직접 호출로 묶는다.
 
 
 def _oracle_events(events: list[dict]) -> list[dict]:
     return [e for e in events if e["kind"].startswith("oracle")]
 
 
-def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
+def test_several_candidates_with_the_same_bytes_are_folded_and_the_fix_leg_runs_once(
     tmp_path: Path,
 ) -> None:
     """운영 배선을 지나 대역이 불린다. 후보 둘 모두 vul로 나가고(바이트는 run이 남긴 PoC
-    사이드카 `pov_poc/NNNN.poc`와 **내용으로** 견준다) 지정은 안 된다 - fix 다리·판정 조회는
-    0번이고 기록·경고·매니페스트가 그 이유를 말한다."""
+    사이드카 `pov_poc/NNNN.poc`와 **내용으로** 견준다), **두 PoC가 바이트까지 같아** 지정이
+    접어 `sole_poc`을 낸다 - fix 다리·판정 조회가 정확히 한 번 돈다.
+
+    ⏵ **2026-10-04 - 이 검사가 뒤집힌 자리다.** 앞 판은 「지정 안 함 · fix 0번 ·
+    `grade_tie`」를 물었다. 어느 후보를 지정해도 **제출될 바이트가 같은데** 거부한 것이고,
+    그것이 실측 run(제출 8 = 고유 PoC 1)의 점수를 0으로 만든 규칙이다. 접기의 **전제**를 이
+    검사가 직접 센다 - 두 사이드카 바이트가 같지 않으면 아래 단언이 전부 다른 사건이다."""
     oracle = FakeOracle()
 
     result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
@@ -2324,18 +2336,20 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
     grades = {e["data"]["grade"] for e in _of(events, "gate_eval", stage=int(Stage.VALIDATE))}
     assert grades == {"E4"}, "동점의 전제(8단계 등급이 둘 다 E4)가 깨졌다"
     sidecars = sorted((trace_path.parent / "pov_poc").glob("*.poc"))
-    assert [p.read_bytes() for p in sidecars] == oracle.vul_calls
+    bodies = [p.read_bytes() for p in sidecars]
+    assert bodies == oracle.vul_calls
+    assert len(set(bodies)) == 1, "접기의 전제(두 PoC가 같은 바이트)가 깨졌다"
     assert len(_of(events, "oracle_submitted")) == 2
-    assert oracle.final_calls == [], "후보가 둘인데 fix 다리가 돌았다"
+    assert oracle.final_calls == [(bodies[0], oracle.vul_results[0])]
     (final,) = _of(events, "oracle_final")
-    assert final["subject_id"] is None
-    assert (final["data"]["status"], final["data"]["reason"]) == ("none", "grade_tie")
-    assert final["data"]["designation"] is None
+    assert final["subject_id"] == "find_0001"
+    assert (final["data"]["status"], final["data"]["reason"]) == ("scored", None)
+    assert final["data"]["designation"] == "sole_poc"
     assert result.record.oracle == {
-        "vul_submitted": 2, "vul_failed": 0, "final": "none",
-        "final_reason": "grade_tie", "record": "oracle/verdict.json",
+        "vul_submitted": 2, "vul_failed": 0, "final": "scored",
+        "final_reason": None, "record": "oracle/verdict.json",
     }  # fmt: skip
-    assert any("최댓값이 동점이라" in w for w in result.warnings)
+    assert not any("동점" in w for w in result.warnings)
     sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
     assert sidecar["final"]["candidate_grades"] == {"find_0001": "E4", "find_0002": "E4"}
     assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
@@ -2353,10 +2367,10 @@ class _OracleThatRatesTheLoserHigher(FakeOracle):
         return super().submit_vul(poc)
 
 
-def test_the_designation_sees_the_e4_the_validate_stage_gave_and_picks_the_top_grade(
+def test_the_designation_sees_the_e4_the_validate_stage_gave(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """🔴 후보가 둘이고 **재현이 한 쪽만 성공하면** 지정은 그쪽을 `top_grade`로 고른다.
+    """🔴 후보가 둘이고 **재현이 한 쪽만 성공하면** 지정은 그쪽(E4)을 고른다.
 
     전 판은 지정이 보는 등급이 8단계 `validate.run`의 런타임 Evidence(`produced`)를 버려 E4를
     못 봤다 - 후보가 둘 이상이면 어느 run에서나 **E3 동점**이라 `top_grade`가 도달 불가였다
@@ -2366,6 +2380,13 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave_and_picks_the_top_g
     이 검사의 전제는 **8단계 `gate_eval`이 둘을 가른다**는 것이다 - 안 갈라지면 아래 단언이 전부
     공허하다. 지정 근거는 그 `gate_eval`과 **같은 등급**에서 나와야 한다. 그리고 지정은 채점기
     값을 안 읽는다 - 대역이 진 쪽(find_0002)에 더 센 크래시 코드를 돌려줘도 이긴 쪽이 안 바뀐다.
+
+    ⚠ **`designation`은 `top_grade`가 아니라 `sole_poc`이다**(⏵ 2026-10-04) - `dev_fake`의 두
+    PoC가 **바이트까지 같아** 지정이 먼저 접고, 접어서 하나면 「고를 것이 없었다」가 더 센
+    사실이다(어느 후보를 지정해도 제출이 같다). 그래서 **이 검사는 라벨로 등급을 묶지 못한다**
+    — 묶는 것은 아래 `candidate_grades`와 리포트 등급이고, 라벨 쪽은
+    `tests/test_oracle_wiring.py`가 직접 호출로 묶는다. ⚠ 같은 이유로 이긴 쪽이 `find_0001`인
+    것은 등급 때문인지 `finding_id` 꼬리 때문인지 **이 검사만으로는 안 갈린다**.
     """
     real_repro = FakeToolRunner._run_repro
     asan_calls: list[str] = []
@@ -2393,7 +2414,7 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave_and_picks_the_top_g
     assert len(oracle.vul_results) == 2
     (final,) = _of(events, "oracle_final")
     assert final["subject_id"] == "find_0001"
-    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "top_grade")
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "sole_poc")
     assert oracle.final_calls == [(oracle.vul_calls[0], oracle.vul_results[0])]
     # 지정이 **읽은** 등급이 장부에 남고 8단계 `gate_eval`과 같다 - 어긋나면 이 줄이 빨개진다.
     sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
@@ -2566,23 +2587,30 @@ def _task_oracle() -> TaskOracle:
     return TaskOracle(server=_SERVER, task_id=_TASK_ID, agent_id=_AGENT_ID, api_key=_API_KEY)
 
 
-def test_the_real_client_never_runs_the_fix_container_when_there_are_several_candidates(
+def test_the_real_client_runs_the_fix_container_once_even_with_several_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **0번**이다 -
-    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고, 이 문맥에선 두 후보가 둘 다 8단계 E4라
-    동점으로 거부된다. 같은 바이트의 둘째 제출은 이 run이 만든 행의 캐시라 컨테이너가 안 돈다 -
-    그것을 옛 판정이라 경고하지 않는다."""
+    """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **정확히
+    한 번**이다 - 비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고, N건 전부에 도는 것과
+    0번 도는 것 사이의 **하나**가 맞다. 같은 바이트의 둘째 제출은 이 run이 만든 행의 캐시라
+    컨테이너가 안 돈다 - 그것을 옛 판정이라 경고하지 않는다.
+
+    ⏵ **2026-10-04 - 이 검사가 뒤집힌 자리다.** 앞 판은 `/submit-fix` **0번**과 `grade_tie`를
+    물었다. 두 후보의 PoC가 바이트까지 같아(둘째가 캐시 적중인 것이 그 증거다) 지정이 접고
+    왕복이 돈다 - **실 HTTP 경로에서 왕복이 0번이던 것을 깨는 자리**가 여기다.
+    """
     server = _http_server(monkeypatch)
 
     result, trace_path = _run(tmp_path, before=_with_index(), oracle=_task_oracle())
 
     paths = [call.url.path for call in server.calls]
-    assert paths.count("/submit-vul") == 2 and paths.count("/submit-fix") == 0
-    assert server.containers == 1  # vul 한 번뿐 (둘째 vul은 이 run의 캐시)
+    assert paths.count("/submit-vul") == 2 and paths.count("/submit-fix") == 1
+    assert server.containers == 2  # vul 한 번 + fix 한 번 (둘째 vul은 이 run의 캐시)
     sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
     assert [c["cached"] for c in sidecar["candidates"]] == [False, True]
-    assert (sidecar["final"]["status"], sidecar["final"]["reason"]) == ("none", "grade_tie")
+    # `scored`인 final에는 `reason` 키가 없다 - `None`이 아니라 **없다**(사유가 안 났다).
+    assert sidecar["final"]["status"] == "scored" and "reason" not in sidecar["final"]
+    assert sidecar["final"]["designation"] == "sole_poc"
     assert not any("캐시" in warning for warning in result.warnings)
 
 
@@ -2661,7 +2689,38 @@ def _oracle_task(root: Path, **script: object) -> Path:
         tf.add(src, arcname="src-vul")
     fields = {"server": _SERVER, "task_id": _TASK_ID, "agent_id": _AGENT_ID, **script}
     (task / "submit.sh").write_text(submit_script(**fields), encoding="utf-8")
+    _oracle_canary(root, fields["task_id"])
     return task
+
+
+def _oracle_canary(root: Path, task_id: object) -> Path:
+    """통과하는 카나리 보고서 - 채점 run은 이것 없이 서지 않는다(이슈 #383).
+
+    거절 규칙은 `tests/test_canary_report.py`·`tests/test_oracle_cli.py`가 든다. 여기서는 사슬이
+    서버까지 이어지는지만 보므로 통과하는 보고서 하나로 족하다. **합성값이다.**
+    """
+    path = root / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task": task_id,
+                "verdict": "pass",
+                "ok": True,
+                "repeat": 10,
+                "below_measured_repeat": False,
+                "mmap_rnd_bits": "28",
+                "rnd_bits_above_28": False,
+                "rnd_bits_unmeasured": False,
+                "measured_at": "2026-10-03T17:42:07+00:00",
+                # 게이트가 요약만 믿지 않게 보는 관측 칸 셋(§2.2).
+                "completed": True,
+                "segv_count": 0,
+                "problems": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _oracle_run(  # noqa: ANN202
@@ -2672,6 +2731,7 @@ def _oracle_run(  # noqa: ANN202
         "--artifacts-root", str(tmp_path / "arts"),
         "--task-dir", str(task or _oracle_task(tmp_path)),
         "--task-work-dir", str(tmp_path / "w"),
+        "--oracle-canary", str(tmp_path / "canary.json"),
         "--oracle-submit", *extra,
     ]  # fmt: skip
     if server is not None:
