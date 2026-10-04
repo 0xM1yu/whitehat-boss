@@ -113,9 +113,10 @@ class BoxEnv:
 
     def run_build(self, argv, **kwargs):  # noqa: ANN001, ANN003, ANN202
         self.job_json_seen = json.loads(Path(argv[3]).read_text(encoding="utf-8"))
-        if self.build_timeout:
-            raise subprocess.TimeoutExpired(argv, 3600)
         target = Path(argv[-1])
+        if self.build_timeout:
+            target.write_bytes(b"\x1f\x8b\x08")  # 시간 초과로 죽기 전에 반쯤 쓴 gzip
+            raise subprocess.TimeoutExpired(argv, 3600)
         if self.build_rc == 0:
             with gzip.open(target, "wt", encoding="utf-8") as fh:
                 fh.write("{}\n")
@@ -241,6 +242,31 @@ def test_a_failure_after_the_marker_does_not_end_the_worker_loop(
     assert not list((box.root / "inbox").glob("*.json"))
 
 
+def test_main_takes_the_box_lock_requeues_old_claims_then_supervises(
+    box: BoxEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`main()`의 배선 — 각 함수는 따로 테스트되지만 호출이 빠지면(잠금 없는 두 번째 작업자,
+    안 돌아오는 죽은 claim) 아무 데서도 안 걸린다."""
+    calls: list[str] = []
+    gtw = box.gtw
+    monkeypatch.setattr(gtw, "single_instance", lambda: calls.append("lock") or "held")
+    monkeypatch.setattr(gtw, "requeue_running", lambda: calls.append("requeue"))
+    monkeypatch.setattr(gtw, "supervise", lambda threads: calls.append(f"supervise {len(threads)}"))
+
+    class Idle:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.args = args
+
+        def start(self) -> None:
+            calls.append(f"start {self.args[0]}")
+
+    monkeypatch.setattr(gtw.threading, "Thread", Idle)
+
+    gtw.main(["gt_worker.py", "2"])
+
+    assert calls == ["lock", "requeue", "start 0", "start 1", "supervise 2"]
+
+
 def test_the_supervisor_exits_nonzero_when_a_worker_thread_died(box: BoxEnv) -> None:
     alive = SimpleNamespace(is_alive=lambda: True)
     dead = SimpleNamespace(is_alive=lambda: False)
@@ -336,9 +362,10 @@ def test_a_joern_that_died_at_boot_is_not_waited_on_nor_sliced(
     assert len(sleeps) < 10, f"죽은 Joern을 {len(sleeps)}초 기다렸다"
 
 
-def test_a_failed_build_leaves_no_half_written_output(box: BoxEnv) -> None:
+@pytest.mark.parametrize("setup", [_build_fails, _build_hangs], ids=["failed", "timed-out"])
+def test_a_failed_build_leaves_no_half_written_output(box: BoxEnv, setup) -> None:  # noqa: ANN001
     box.submit("s1")
-    _build_fails(box)
+    setup(box)
 
     box.gtw.step(0)
 

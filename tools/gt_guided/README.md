@@ -21,7 +21,7 @@
 | `gt_slice.py` | 장비 | 슬라이서 + GT 후보 필터 |
 | `build_auditor.py` | 장비 | 표본 하나의 슬라이스 -> Auditor 입력 JSONL |
 | `gt_worker.py` | 장비 | 작업자 W개, 각자 Joern 서버 하나(상자당 하나만 뜸 -- `flock`). `inbox/`에서 작업을 하나씩 가져가(하드링크 -- 이미 도는 표본은 못 가져감) 받기 -> 인덱스 -> `gt_slice` -> `build_auditor` -> `out/<id>/`. 끝에 표지 하나: `DONE`(성공) · `FAILED`(표본 자체의 실패) · `RETRY`(일시 실패 -- clone · Joern 기동 · 예상 밖 예외) |
-| `coord.py` | 사용자 PC | 장비마다 `inbox/`를 작업자 수 x 2 이상 유지(큰 저장소 먼저) · 끝난 표본을 받아(sha256 확인) 표본 단위로 19MB 이하가 되게 묶어 `Downloads/ft_gt_auditor_batchNNN.tar`(있는 파일은 덮지 않고 다음 번호) + 디스코드 웹훅 첨부(넘치는 표본은 다음 묶음, 혼자 19MB 넘는 표본은 조각내 전송) · 멈춘 작업 재배정 · `RETRY`는 한 번 더(총 2회), `FAILED`와 소진된 `RETRY`는 실패로 세고 `build.json`은 받는다 · 상자 사본은 받은 기록(`state.json`)을 저장한 **뒤에** 지운다 · 다 받으면(jobs.json의 표본 **집합**이 전부 pulled) 상자에 안 받은 것이 없는지 보고 vast 인스턴스를 삭제(`vastai`가 실패하면 3회 뒤 손으로 지우라고 로그에 남기고 종료 코드 1) |
+| `coord.py` | 사용자 PC | 장비마다 `inbox/`를 작업자 수 x 2 이상 유지(큰 저장소 먼저) · 끝난 표본을 받아(sha256 확인) 표본 단위로 19MB 이하가 되게 묶어 `Downloads/ft_gt_auditor_batchNNN.tar`(있는 파일은 덮지 않고 다음 번호) + 디스코드 웹훅 첨부(넘치는 표본은 다음 묶음, 혼자 19MB 넘는 표본은 조각내 전송) · 멈춘 작업 재배정 · `RETRY`는 한 번 더(총 2회), `FAILED`와 소진된 `RETRY`는 실패로 세고 `build.json`은 받는다 · 상자 사본은 받은 기록(`state.json`)을 저장한 **뒤에** 지운다 · 다 받으면(jobs.json의 표본 **집합**이 전부 pulled) 상자에 안 받은 것이 없는지 보고 vast 인스턴스를 삭제 -- 조회가 안 되거나(ssh 불통 · 작업자가 안 뜬 상자) 안 받은 것이 든 상자는 **자동으로 안 지우고**, 20번 연속 거부되면 포기(`gave_up`)해 `destroy by hand: vastai destroy instance <id>`를 로그에 남기고 종료 코드 1(안 받은 것이 있을 수 있으니 보고 손으로 처리하라는 뜻). `vastai`가 3번 실패해도 같다. 지운 즉시 `state.json`에 저장하고, 같은 단계가 5바퀴 연속 죽어 멈출 때는 아직 살아 있는 상자의 삭제 명령을 로그에 남긴다 |
 
 ## 장비 배치
 

@@ -15,8 +15,13 @@
   A failed post is logged and never stops the run.
 - A job assigned longer than STALE_S ago (queue wait included), or on a box unreachable for
   UNREACH_S, goes back to the queue.
-- When every job is pulled (the set in jobs.json, not a count) and the box holds nothing that was
-  not pulled, destroys the box with `vastai destroy instance`; a refusal or a failure is logged.
+- When every job is pulled (the set in jobs.json, not a count) and a box holds nothing that was not
+  pulled, destroys it with `vastai destroy instance` and saves at once. A box that cannot be looked
+  at (ssh down, no worker ever started) or still holds something never pulled is NEVER destroyed
+  automatically: after INSPECT_TRIES such passes in a row it is given up on (`gave_up`), the log
+  says `destroy by hand: vastai destroy instance <id>` (look at it first) and the exit code is 1.
+  The same happens after DESTROY_TRIES failed `vastai` calls. The run ends once every box is
+  destroyed or given up.
 State: state.json next to this file. It belongs to ONE jobs.json (its sha256 is stored): another
 jobs.json refuses to start until state.json is moved away.
 Usage: py -3.11 coord.py <jobs.json> <boxes.json>
@@ -119,6 +124,9 @@ STAGE = DL / "ft_gt_tmp"  # one <sid>.tgz per pulled sample, waiting to be packe
 PULL_MIN, STALE_S, UNREACH_S, LOOP_S = 20, 3 * 3600, 1800, 45
 # a transient failure (RETRY) runs MAX_TRIES times in all; vastai gets DESTROY_TRIES tries per box
 MAX_TRIES, DESTROY_TRIES = 2, 3
+# a box that cannot be looked at, or still holds something never pulled, is refused this many passes
+# in a row (about 15 minutes at LOOP_S) before the coordinator stops waiting and tells the user
+INSPECT_TRIES = 20
 FAIL_LIMIT = 5  # the same loop step failing this many passes in a row stops the run
 MARKERS = ("DONE", "FAILED", "RETRY")
 POLL = (
@@ -151,6 +159,7 @@ st: dict = {}
 by_id: dict = {}
 gave_up: list = []  # boxes vastai would not destroy -- the user does it by hand
 destroy_fails: dict = {}
+refused: dict = {}
 failing: dict = {}
 
 
@@ -164,6 +173,8 @@ def init(jobs_file, boxes_file):
     raw = Path(jobs_file).read_bytes()
     JOBS = json.loads(raw.decode("utf-8"))
     BOXES = json.loads(Path(boxes_file).read_text(encoding="utf-8"))
+    if not all(str(b["id"]).isdigit() for b in BOXES):  # it goes into `vastai destroy instance`
+        raise SystemExit("every box id in boxes.json must be a number (the vast instance id)")
     by_id = {j["sample_id"]: j for j in JOBS}
     sha = hashlib.sha256(raw).hexdigest()
     if STATE.exists():
@@ -187,6 +198,7 @@ def init(jobs_file, boxes_file):
         st.setdefault(key, empty)
     gave_up.clear()
     destroy_fails.clear()
+    refused.clear()
     failing.clear()
     reabsorb()
 
@@ -232,6 +244,9 @@ def safely(what, fn, *args):
         failing[what] = failing.get(what, 0) + 1
         log(f"{what}: {type(exc).__name__}: {exc} ({failing[what]}/{FAIL_LIMIT})")
         if failing[what] >= FAIL_LIMIT:
+            alive = [str(b["id"]) for b in BOXES if str(b["id"]) not in st["destroyed"]]
+            cmds = ", ".join(f"vastai destroy instance {i}" for i in alive) or "none"
+            log(f"STOPPING: {what} failed {FAIL_LIMIT} passes in a row; still alive: {cmds}")
             raise
         return None
     failing.pop(what, None)
@@ -504,13 +519,15 @@ def holdings(box, pulled):
     )
     if rc:
         return None
-    where, left = "", []
+    where, left, seen = "", [], set()
     for line in (x.strip() for x in out.split("\n")):
         if line.startswith("#"):
             where = line[1:]
+            seen.add(where)
         elif line and line.removesuffix(".json") not in pulled:
             left.append(f"{where}/{line.removesuffix('.json')}")
-    return left
+    # rc 0 with a cut-off listing would read as "nothing left"
+    return left if seen == {"inbox", "running", "out"} else None
 
 
 def destroy(box):
@@ -531,8 +548,10 @@ def destroy(box):
 
 
 def destroy_all():
-    """Destroy each box, but only after looking at what it still holds: a box with anything not
-    pulled stays (and is named in the log). True when no box is left to try."""
+    """Destroy each box, but only after looking at what it still holds: a box that cannot be looked
+    at, or holds anything not pulled, is NOT destroyed -- never automatically. After INSPECT_TRIES
+    such passes in a row it is given up on: the user is told to look and destroy it by hand (exit
+    code 1), because waiting forever leaves it billing. True when no box is left to try."""
     log("all finished and pulled -> destroying boxes")
     pulled = set(st["pulled"])
     for box in BOXES:
@@ -540,13 +559,25 @@ def destroy_all():
         if key in st["destroyed"] or key in gave_up:
             continue
         left = holdings(box, pulled)
-        if left is None:
-            log(f"box {key}: cannot look at what it holds -> not destroying, retry next loop")
-        elif left:
-            log(f"box {key} NOT destroyed: it holds {left[:8]} that was never pulled")
-        elif destroy(box):
-            st["destroyed"].append(key)
+        if left is None or left:
+            refused[key] = refused.get(key, 0) + 1
+            what = (
+                "cannot be looked at" if left is None else f"holds {left[:8]} that was never pulled"
+            )
+            log(f"box {key} NOT destroyed: it {what} ({refused[key]}/{INSPECT_TRIES})")
+            if refused[key] >= INSPECT_TRIES:
+                gave_up.append(key)
+                log(
+                    f"box {key} still refused after {INSPECT_TRIES} passes -- it may hold output "
+                    f"that was never pulled: look at it, then destroy by hand: "
+                    f"vastai destroy instance {key}"
+                )
         else:
+            refused.pop(key, None)  # in a row: a clean look starts the count over
+            if destroy(box):
+                st["destroyed"].append(key)
+                save()  # at once: a restart must not look at a box that is already gone
+                continue
             destroy_fails[key] = destroy_fails.get(key, 0) + 1
             if destroy_fails[key] >= DESTROY_TRIES:
                 gave_up.append(key)

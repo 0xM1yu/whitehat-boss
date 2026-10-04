@@ -20,104 +20,19 @@ from types import SimpleNamespace
 import pytest
 
 from tests import gt_guided_support as support
-from tests.gt_guided_support import FakeClock, FakeFleet, load
+from tests.gt_guided_support import (
+    SIDS,
+    Crash,
+    batch_members,
+    drive,
+    log_text,
+    make_campaign,
+    plant_staged,
+    run_main,
+)
 
 hermetic = support.hermetic  # autouse: pytest finds a fixture bound in the test module
 cp949_default = support.cp949_default
-
-SIDS = ["a", "b", "c", "d"]
-
-
-class Crash(BaseException):
-    """프로세스가 죽은 것을 흉내 낸다 — 도구의 `except Exception`이 삼키지 못하게 BaseException."""
-
-
-def make_campaign(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    sids: list[str] = SIDS,
-    box_ids: tuple[int, ...] = (101,),
-    workers: int = 2,
-    pull_min: int = 2,
-    descriptions: dict[str, str] | None = None,
-) -> SimpleNamespace:
-    coord = load("coord")
-    coord.HERE = tmp_path / "tool"
-    coord.HERE.mkdir()
-    coord.STATE = coord.HERE / "state.json"
-    coord.DL = tmp_path / "Downloads"
-    coord.DL.mkdir()
-    coord.STAGE = coord.DL / "ft_gt_tmp"
-    coord.PULL_MIN = pull_min
-    descriptions = descriptions or {}
-    jobs = [
-        {
-            "sample_id": s,
-            "repo_url": "https://example.invalid/r.git",
-            "commit": "0" * 40,
-            "gt_points": [{"role": "sink", "file": "f.c", "line": 3, "line_end": 3}],
-            "description": descriptions.get(s, "plain"),
-            "project": "p",
-            "size_kb": 100 - i,
-        }
-        for i, s in enumerate(sids)
-    ]
-    jobs_path, boxes_path = tmp_path / "jobs.json", tmp_path / "boxes.json"
-    jobs_path.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
-    boxes = [{"id": i, "host": f"10.0.0.{i}", "port": 22, "workers": workers} for i in box_ids]
-    boxes_path.write_text(json.dumps(boxes), encoding="utf-8")
-
-    def saved_pulled() -> set[str]:
-        if not coord.STATE.exists():
-            return set()
-        return set(json.loads(coord.STATE.read_text(encoding="utf-8"))["pulled"])
-
-    fleet = FakeFleet(tmp_path / "boxes", {f"10.0.0.{i}": i for i in box_ids}, saved_pulled)
-    monkeypatch.setattr(subprocess, "run", fleet.run)
-    clock = FakeClock()
-    clock.install(monkeypatch)
-    for box in fleet.boxes.values():
-        box.clock = clock
-    coord.init(jobs_path, boxes_path)
-    return SimpleNamespace(
-        coord=coord, fleet=fleet, clock=clock, jobs=jobs_path, boxes=boxes_path, sids=sids
-    )
-
-
-def drive(c: SimpleNamespace, ticks: int = 40, **work) -> bool:  # noqa: ANN003
-    """한 틱 = 작업자가 inbox를 끝낸다 → 코디네이터가 한 바퀴. 코디네이터가 끝나면 True."""
-    for _ in range(ticks):
-        for box in c.fleet.boxes.values():
-            box.work(**work)
-        if c.coord.tick():
-            return True
-        c.clock.now += c.coord.LOOP_S
-    return False
-
-
-def log_text(c: SimpleNamespace) -> str:
-    return (c.coord.HERE / "COORD.log").read_text(encoding="utf-8")
-
-
-def batch_members(c: SimpleNamespace, skip: tuple[Path, ...] = ()) -> list[str]:
-    names: list[str] = []
-    for path in sorted(c.coord.DL.glob("ft_gt_auditor_batch*.tar")):
-        if path not in skip:
-            with tarfile.open(path) as tf:
-                names += tf.getnames()
-    return sorted(names)
-
-
-def plant_staged(c: SimpleNamespace, sid: str) -> Path:
-    """STAGE에 표본 하나의 `<sid>.tgz`를 둔다 — 이미 끊긴 run이 남긴 모양."""
-    c.coord.STAGE.mkdir(parents=True, exist_ok=True)
-    src = c.coord.HERE / f"plant_{sid}"
-    src.mkdir()
-    (src / "build.json").write_text(json.dumps({"sample_id": sid}), encoding="utf-8")
-    path = c.coord.STAGE / f"{sid}.tgz"
-    with tarfile.open(path, "w:gz") as tf:
-        tf.add(src, arcname=sid)
-    return path
 
 
 # ---------------------------------------------------------------- 정상 경로(회귀 핀)
@@ -252,16 +167,8 @@ def test_main_exits_nonzero_when_a_box_could_not_be_destroyed(
 ) -> None:
     c = make_campaign(tmp_path, monkeypatch)
     c.fleet.vastai_rc = 1
-    original_tick = c.coord.tick
 
-    def tick_with_worker() -> bool:
-        for box in c.fleet.boxes.values():
-            box.work()
-        return original_tick()
-
-    c.coord.tick = tick_with_worker
-
-    assert c.coord.main(["coord.py", str(c.jobs), str(c.boxes)]) == 1
+    assert run_main(c) == 1
 
 
 # ---------------------------------------------------------------- CRITICAL-2: 배치 덮어쓰기
@@ -469,7 +376,7 @@ def test_main_refuses_a_python_without_tar_extraction_filters(
     monkeypatch.delattr(tarfile, "data_filter")
 
     with pytest.raises(SystemExit, match="3.11.4"):
-        c.coord.main(["coord.py", str(c.jobs), str(c.boxes)])
+        run_main(c)
 
 
 def test_a_corrupt_download_is_logged_and_retried(
