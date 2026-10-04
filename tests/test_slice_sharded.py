@@ -1062,11 +1062,14 @@ def test_a_restart_waits_for_its_server_no_longer_than_the_wall_leaves(stubbed, 
     monkeypatch.setattr(tool, "RESTART_MIN_WALL_SECONDS", 2)
     monkeypatch.setenv("STUB_SHARD", "deadline")
     monkeypatch.setenv("STUB_RESTART_DELAY", "10")
-    run("--shards", "2", "--restart-on-deadline", "--wall-seconds", "4")
+    code = run("--shards", "2", "--restart-on-deadline", "--wall-seconds", "4")
     summary = run.summary()
     assert summary["shard_seconds"] < 8
     assert summary["restart"]["events"] == [] and len(summary["restart"]["errors"]) == 2
     assert all("not listening" in error for error in summary["restart"]["errors"])
+    # a wait cut by the wall leaves the shard dead, not wall-stopped (README «정지»)
+    assert summary["dead_shards"] == [0, 1] and summary["wall_stopped_shards"] == []
+    assert code == tool.EXIT_FAILED
 
 
 @needs_posix
