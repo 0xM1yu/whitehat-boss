@@ -5,7 +5,7 @@
 본다. 오라클 객체를 만드는 `cli.TaskOracle`은 스텁으로 바꿔 **거절 갈래는 하나도 안 만든다**는 것을
 센다.
 
-러너 쪽(후보마다 vul · 후보가 하나일 때만 지정해 fix)은 `tests/test_oracle_wiring.py`가, 플래그에서
+러너 쪽(후보마다 vul · 지정한 하나에만 fix)은 `tests/test_oracle_wiring.py`가, 플래그에서
 서버까지 이어지는 운영 배선 전체는 `tests/test_pipeline_e2e.py`가 돌려 본다 — 여기서는 `cli.run`을
 돌리지 않는다. 마스킹 서버의 `--mask-map` → `TaskOracle.query_task_id`는
 `tests/test_oracle_wiring.py` 끝의 두 절이 본다 — 아래
@@ -292,7 +292,8 @@ def test_the_target_is_printed_before_the_run_and_the_key_is_not(
     out = capsys.readouterr()
     assert _SERVER in out.out and TASK_ID in out.out and cli._ORACLE_KEY_ENV in out.out
     assert "fix 다리" in out.out
-    assert "둘 이상이면 고르는 규칙이 정해지지 않아 보내지 않는다" in out.out  # 규칙은 미정이다
+    # 규칙은 등급이다(2026-10-03 동결) - 이 줄이 `_oracle_for`의 출력과 함께 움직인다.
+    assert "최댓값이 동점이거나 등급을 모르는 후보가 있으면 보내지 않는다" in out.out
     assert _KEY not in out.out + out.err
 
 

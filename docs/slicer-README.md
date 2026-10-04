@@ -303,12 +303,19 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   poison 연속(`POISON_STOP_STREAK`) 뒤 후보(단일·`--shard`는 나머지를 degraded로, `--claim-db` 샤드는 그 샤드가 청구를 멈춤).
   둘 다 순서를 따르므로 실패 없이 끝까지 돈 run에서만 목록 유무와 무관하게 같은 슬라이스. **상한이 걸린 표본(끊김·poison)에서
   켠/끈 run을 비교하면 「차이 없음」이 아니라 「표본이 다름」이다** -> 비교하지 않는다
-- **하네스(Scout)까지는 안 간다** -> 출력 `slices[]`는 **후보 ID 순**이고 우선 순서를 담지 않는다(우선 순서는
-  `candidate_manifest`의 삽입 순서에만 남는다). 러너는 `(-signal_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
+- **하네스(Scout)까지는 안 간다** -> 출력 `slices[]`는 **후보 ID 순**이고 우선 순서를 담지 않는다(아래 「우선 순서를
+  읽을 곳」). 러너는 `(-signal_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
   `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
   안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
   **미측정**). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
-  (열린 PR #378의 선택지 (b) — 미머지라 이 저장소에는 그 결함 본문이 아직 없다)
+  ([D97](open-questions/D/D97.md)의 선택지 (b))
+- 우선 순서를 읽을 곳 -> 체크포인트의 `candidates` 목록(병합 체크포인트도 그대로)과, 후보 발견을 **스스로 한** run
+  (`--export-only`도 `--cpg`도 아닌 run)의 `candidate_manifest` 삽입 순서. 이 순서는 `--case-order ba`면 우선 층 먼저가 아니라
+  **케이스 먼저의 처리 순서**다 -> 아래 「케이스 순서」. ⚠ **발견 기록을 체크포인트에서 되읽은 결과의
+  `candidate_manifest`에는 없다** -> `--export-only`(따라서 병합 뒤 export로 내는 모든 샤딩 run, `slice_sharded.py` 포함)와
+  `--cpg`를 준 run(`--shard` 유무 무관). 체크포인트가 그 기록(`baseline`)을 키 정렬로 저장하므로
+  (`slicer_checkpoint.canonical`의 `sort_keys=True`) 되읽은 manifest는 **`candidate_key`(SHA-256 hex) 순**이고 우선 순서와도
+  ID 순서와도 무관하다. `--export-dir`의 `candidate-manifest.json`도 결과와 같은 순서다(#434)
 - 순서가 체크포인트에 묶인다 -> 목록의 개수·sha256(**정렬한** 목록의 `slicer_checkpoint.digest` -> 목록 줄 순서와 무관)이
   `settings.priority_files`(실행 계약). 목록이 다른 샤드는 병합 거부(`Shard mismatch on run_contract`), 다른 목록으로
   `--resume`도 거부. `--prepare-only`에 주면 준비 체크포인트를 받은 샤드가 그 순서를 따른다(`slice_sharded.py`는 `--` 뒤
@@ -324,7 +331,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   `prioritize()` **전에** Joern 안에서 자른다. 캡에 닿은 저장소에서는 목록 파일의 후보가 **아예 없을 수** 있고, 그러면 결과가
   오타와 **구별되지 않는다**(둘 다 `unmatched_files`에만 뜬다)
 - ⚠ 목록이 틀리면 정답 후보가 뒤로 밀린다 -> lwan 한 표본에서 첫 GT 슬라이스 171 -> 297초, 느린 장비에서는 900초 예산에
-  GT 슬라이스 4 -> 1(**미머지 PR #378의 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
+  GT 슬라이스 4 -> 1(**[D97](open-questions/D/D97.md) 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
 
 ⏵ **케이스 순서** -> `--case-order {ab,ba}`(기본 `ab`)는 후보를 자르는 순서의 첫 열쇠를 정한다. 후보 정렬 키의 첫 칸이 case라서(`slicer_candidates.collect`)
 `ab`(지금까지의 순서)는 **Case A 전부 → Case B 전부**, `ba`는 **Case B 전부 → Case A 전부**다. 각 case 안의 순서(파일·줄·심볼·selector)는 그대로다.
@@ -462,8 +469,10 @@ Joern 재파싱 후 결과 동등성은 별도 실측으로 확인한다.
 누락은 유지된다. fuzzy parsing·매크로·동적 호출이 빠진 그래프를 완전한 그래프로 만들지는 않는다.
 
 근거: [Joern data flow 단계](https://docs.joern.io/cpgql/data-flow-steps/),
-[4.0.605 경로 API 구현](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala),
-[4.0.605 backward slicer](https://github.com/joernio/joern/blob/v4.0.605/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/slicing/DataFlowSlicing.scala).
+[4.0.646 경로 API 구현](https://github.com/joernio/joern/blob/v4.0.646/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala),
+[4.0.646 backward slicer](https://github.com/joernio/joern/blob/v4.0.646/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/slicing/DataFlowSlicing.scala).
+두 파일은 v4.0.605와 v4.0.646에서 공백과 지역 변수 이름만 다르다 — 2026-10-03 두 태그의 파일을 내려받아
+`diff -w`로 대조했다(소스를 읽었을 뿐 실행은 아니다).
 
 전용 Joern 서버에 대한 선택 실행 검증은 다음과 같다. C/C++ 입력은 분석만 하며 실행하지 않는다.
 출력 디렉터리는 매번 새 경로여야 한다. 코드·입력 해시, 실제 CLI 결과와 종료 코드, Case B 원문,
@@ -485,3 +494,84 @@ ATOM Joern 4.0.605에서 실행한 결과와 범위는 **보고서 셋에 나뉘
 
 HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파싱 통계 해석은
 [frontend Report 구현](https://github.com/joernio/joern/blob/4bb889d96ce972e2ded50d0d5765c514c1a032cf/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/utils/Report.scala)을 참고했다.
+
+### Joern 4.0.646 확인 (2026-10-03)
+
+슬라이서(코드 `64bd566`)를 Joern 4.0.605에서 4.0.646으로 올려도 되는지 본 기록이다. **판을 올리는 결정이 아니다** — 이 저장소에는 Joern 판을 고정하는 파일이 없고
+(판은 실행 장비가 정하고 슬라이서가 실행 계약에 기록만 한다) 위의 4.0.605·4.0.636 실측 기록은 날짜가 박힌 그대로 둔다. 이 절을 더하면서 기존 서술에서 바꾼 것은 위 소스 링크 둘뿐이다.
+⚠ **실측은 조건마다 단일 run이다**(slicer-dev의 605만 두 번) — run ID 없음 · 원자료 저장소 밖(`slicer_j/`·`slicer_e3/`).
+
+**같았던 것과 달랐던 것.** ndpi 한 표본에서 후보 manifest 10,042건, 안 잘린 flows 28건의 기록, 둘 다 완료한 backward 1,942건의 기록은 전부 같았고 질의
+오류는 0이었다. 실행한 경로(준비 · flows · context · backward · 샤드 병합 · export · flow 상한 · 작은 입력의 `--compile-commands`)에서 4.0.646이 깨지는 곳은 못 찾았다.
+**그러나 질의 결과가 같다는 뜻은 아니다** — 최종 줄 집합이 다른 클러스터가 `ab` 5/68 · `ba` 16/83이고, flows가 잘린 후보 4건의 기록이 달랐으며, 작은 픽스처에서는 backward
+계수가 늘었다. 소스 대조에서 **찾은** 원인은 아래 「달라진 것」 셋이다(전수가 아니다 — 「측정하지 않은 것」). 잘린 flows의 차이는 605끼리도 3건 나서 판 탓인지는 가르지 못한다.
+
+| 같은 장비 · 표본 · 호출 (vast slicer-s04, ndpi `95bf287c`, `slice_sharded.py` 8샤드 heap 10g, wall 900초, `--priority-files`, `ab` 순서) | 4.0.605 | 4.0.646 |
+| --- | ---: | ---: |
+| `joern_version` 기록 | `4.0.605` | `4.0.646` |
+| 준비 초 · 전체 초 | 113 · 1,474 | 118 · 1,494 |
+| 후보 (Case A / B) | 2,374 / 7,668 | 2,374 / 7,668 |
+| 후보 manifest 10,042건(키·내용·순서) | 기준 | 전부 같음 |
+| 내부 메서드 · 호출 · 미해결 호출 · CPG 파일 · 누락 파일 | 4,696 · 25,741 · 0 · 412 · 63 | 전부 같음 |
+| `unknown_nodes` | 656 | 654 |
+| 완료 후보 · degraded 후보 | 74 · 9,909 | 75 · 9,908 |
+| flows 질의 합(n=75) · context 질의 합(n=164) | 4,113.7 s · 316.7 s | 4,070.9 s · 312.7 s |
+| 질의 오류 · `QueryError` · 중단 질의 | 0 · 0 · 0 | 0 · 0 · 0 |
+
+- **완료 후보 · flows.** 공통 74건 중 후보별 flows 기록(경로 수·절단·sink 수·줄)이 같은 것이 70건이고 다른 4건은 전부 flows 상한에 잘린
+  후보다. 안 잘린 28건은 전부 같다. 같은 4.0.605 둘(이 `ab` ↔ 데이터팀 FT run, 코드·heap·장비가 달라 완전한 반복은 아니다)도 3건이 다르고
+  역시 전부 잘린 후보다 — 위 「한 repo를 샤드로 나누기」의 *절단된 Case A는 CPG를 다시 만들면 같은 경로를 고르지 않는다*와 같은 결이다.
+  646에만 완료인 1건은 859초에 끝나 900초 벽 안에 든 차이다.
+- **slicer-dev에서 한 번 더.** 공유 장비(64코어, 다른 에이전트와 함께)에서 같은 플래그(경로 인자와 `--base-port 28700`만 다르다)로 605 · 646 · 605 반복 순서로
+  돌렸다. s04보다 빨라 flows 질의가 15초 안팎이고, 완료는 605 390건 · 646 373건 · 605 반복 435건이다 — 같은 605끼리도 ±10% 흔들리니 646이 느리다고
+  읽지 않는다. 공통 후보에서 flows 기록이 다른 비율은 605↔605 반복 17/390, 605↔646 13/373이고, 안 잘린 후보의 차이 2건은 605끼리에서도 **같은 2건**이
+  다르다. 줄 집합이 다른 클러스터는 605↔605 5/156, 605↔646 9/159이며 `x--` 줄이 더해진 것은 646 쪽에만 6건, 605끼리는 0건이다.
+  이 run의 샤드 서버 둘(3·5)이 Scala 3 REPL 내부 assertion(`denotation class String invalid in run N`, `replpp.Rendering`)을 한 번씩 찍었으나 질의 오류는
+  0이었고, 두 버전의 Scala·REPL 라이브러리가 같고(3.8.3 · 0.6.4) 다른 5 run(서버 40개)에는 없었다 — 원인 미확인.
+- **backward.** `ab`는 900초 안에 Case A만 처리해 backward 질의가 0번이다. 그래서 Case B 먼저로 같은 장비·표본을 한 번 더 돌렸다 — `--priority-files`와
+  `--case-order ba`(머지 전 첫 판 `feat/slicer-case-order`의 `4eb0594` = `64bd566` + 순서 옵션). ⚠ **그 판의 `ba`는 우선 파일 층을 먼저 가른다**(우선 B → 우선 A →
+  나머지 B → 나머지 A). 지금 main의 `ba`(`fbbcfa5`)는 케이스 먼저(우선 B → 나머지 B → 우선 A → 나머지 A)라 **main에서 같은 플래그로 돌려도 이 측정의 순서가 아니다**
+  (`ab`는 main에서도 그 순서 그대로다). 비교 단위가 후보별 기록이고 순서는 어느 후보가 wall 안에 닿는지만 바꾼다(`prioritize` docstring).
+  605는 wall 1,800초(2,971건 완료), 646은 wall 900초(1,942건 완료)이고 Joern 경로와 wall 외의 호출은 같다.
+  **둘 다 완료한 1,942건의 backward 기록(node·state·dependency 수, 절단·사유, 분석 줄, 경계)이 전부 같다**(절단 1,126 · 안 잘림
+  816). backward 질의당 0.285초(646, n=1,950) ↔ 0.293초(605를 900초에서 자름, n=1,920) — 합 ÷ 질의 수, 계산값. 이 run의 샤드 서버 로그에
+  `Broken pipe` 1건이 있다 — wall로 클라이언트를 끊은 순간의 것이고 질의 오류는 0이다.
+- **최종 줄.** 같은 후보 묶음 중 줄 집합이 다른 클러스터는 `ab` 5/68, `ba` 16/83이다(605끼리 `ab` ↔ FT는 1/68). `ba` 16개는 전부 4.0.646이
+  줄을 **더한** 경우(빠진 줄 0)이고 더해진 16줄은 `x--`를 담은 줄 13개와 그것을 감싼 `if`·`}` 3개다(ndpi 소스를 열어 확인). `ab` 5개 중 4개도
+  같고 하나는 flows가 고른 호출 줄만 다르다.
+- **실서버 검증 · E3.** `tools/probe/joern_slicer_live.py`는 4.0.646 전용 서버(vast slicer-dev, heap 16g)에서 다섯 검사가 통과했고 같은 입력을
+  4.0.605 서버에 돌린 slices(16 · 16 · 16 · 15개)·후보 8개·카운터와 일치한다(이 입력에는 아래 1·2가 없다). E3(vast slicer-dev, curl · libxml2 ·
+  vim 평문 import)는 메서드·호출·피호출 해석·파일 집합이 같고 달라진 파일은 curl `lib/sha256.c` 하나다 — 파싱 문제 17 → 0, AST 노드 1,117 →
+  1,248, 메서드 6개 그대로. 캐시된 83 저장소에 프론트엔드만 돌린 비교(그래프 아님)는 파일 통째 차이 0건, 28 저장소에서 파싱 문제가
+  4.0.646에서 더 적고(더 많은 곳 0) 합계 501,527 → 495,945.
+- **후보 키는 checkout 경로에 묶인다**(4.0.646과 무관). ndpi의 `ndpi_exclude_protocol(…, __FILE__, …)`처럼 매크로가 절대경로를 펼친 Case B 후보
+  460건은 s04(`/root/e1/…/repo`)와 slicer-dev(`/root/e4/repos/…`)에서 `candidate_key`가 다르고 파일·줄·심볼은 같다. 경로가 다른 run을 키로 맞추면
+  이 460건이 빠진다.
+
+**달라진 것** — 두 태그의 소스를 대조해(`diff -w`) **찾은 것**이다(전수가 아니다 — 아래 「측정하지 않은 것」). 1·2는 작은 C 입력(버전당 3회)과 ndpi로 실행해 확인했다.
+
+1. **`cpg.assignment`가 후위 감소(`x--`)를 포함한다**(실행 확인). 4.0.605의 연산자 목록은 `postIncrement`가 둘이고 `postDecrement`가
+   없었다(`semanticcpg` `operatorextension/package.scala`). context 질의(`slicer_queries.py`의 `cpg.assignment` 단계)는 선택된 선언을 대상으로 한
+   대입을 줄에 보태므로 4.0.646에서는 `i--;` 꼴 줄이 `context`로 더 붙는다. 슬라이스가 조금 커지고(위 16줄) 클러스터의 대표 후보가 바뀔 수 있다.
+2. **함수 안 주소→역참조 DDG 간선이 생겼다**(실행 확인). `dataflowengineoss`의 `addAddressDerefEdges`가 `p = &x;` 뒤의 `*p`에 `x`로부터의 간선을
+   더한다(지역 변수·매개변수만, `p`당 주소 피연산자 하나일 때만). `*p`가 sink 인자인 입력에서 Case B backward의 `dependency_count`·`node_count`·
+   `state_count`가 3씩 늘고(11·8·8 → 14·11·11) 줄 집합은 그대로이며, Case A는 경로가 늘어 flow 상한에 걸린다(절단 `False` → `True`,
+   `flows_truncated` 4 → 5). ndpi 완료 후보 1,942건의 backward에는 영향이 안 보였다.
+3. **c2cpg**(소스를 읽었다). MSVC 정수형 `__int8`~`__int64`를 기본 매크로로 정의한다(E3의 `sha256.c`). CDT 호출의 `StackOverflowError`를 잡아 파일을
+   잃지 않고 `ANY`로 낮춘다. 로그 문구가 `Failed to generate a CPG for: 'x'`에서 `Failed to process ‘x’`로 바뀌었다 — `parse_report`의
+   `cpg_failures_observed` 정규식과 `QUOTED_PATH`의 같은 반쪽이 새 문구에 안 맞는다(`Failed to parse 'x'`는 그대로). 그 로그가 HTTP 응답에 안 실려
+   두 버전 모두 `parse_report` 행 0건·관측 실패 0건이라 지금은 달라지는 것이 없다.
+
+⚠ **측정하지 않은 것.**
+
+- `ab`·`ba`가 wall 안에 못 닿은 후보, 큰 표본의 `--compile-commands`(작은 C 입력 셋 — 컴파일 DB 없음·`-D` 없음·`-DFEATURE_X` —
+  에서만 605와 같음을 봤다), C++ 표본의 슬라이스(E3는 프론트엔드까지만), `files_parse_failed`(두 버전 모두 `null`).
+- 「달라진 것」 밖의 소스 변경은 **읽었을 뿐 이 슬라이서의 질의로 재지 않았다**. c2cpg에서는 파일 위치가 없는 노드를 `MacroHandler`가 예외 대신 건너뛰고, `EvalBinary`
+  문자열에 `": "`가 없으면 예외 대신 `ANY`로 낮추고, 타입·풀네임 보조 함수의 `Try`가 `safeCdtCall`로 바뀌어 실패가 `ANY`로 낮아지는 곳이 늘었다.
+  `HeaderFileFinder`의 정렬은 `minByOption`으로 바뀌지만 결과는 같다(소스 대조). Joern `build.sbt`의 `cpgVersion` 1.7.70 → 1.7.78(codepropertygraph 커밋 8개 —
+  flatgraph 갱신 · json4s → upickle 교체 · `<operator>.import` 추가 등)은 소스를 읽지 않았다.
+- **슬라이서 코드는 `64bd566`뿐이다.** 그 뒤 main의 `tools/slicer` 변경은(2026-10-04 main `f4544db` 기준) 4.0.646에서 안 돌렸다 — #433(슬라이스마다 source·sink 위치: flows 질의에 Scala 코드가
+  늘었고 `slicer_queries.py` 주석이 적듯 컴파일 오류는 질의 전체를 실패시킨다 · `slicer_source.py`)과 #441의 `--case-order`(`ba` 측정은 첫 판 `4eb0594`뿐 —
+  `fbbcfa5`의 케이스 먼저 `ba`는 안 돌렸다).
+- Joern 버전은 실행 계약에 들어 있어(`slicer_pipeline.py`의 `prepare_checkpoint`) 4.0.605로 만든 체크포인트·샤드는 4.0.646 서버로 `--resume`·병합이 안 된다 —
+  코드를 읽었을 뿐이다.
