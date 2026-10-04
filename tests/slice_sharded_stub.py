@@ -2,13 +2,16 @@
 
 Not a Joern protocol fake: it fakes what tools/slice_sharded.py reads -- a listening port, the
 prepared checkpoint's candidate list, the CPG file, exit codes, the merge counters, --out.
-Behaviour by env: STUB_SERVER ok|die|die-restart|deaf|graceful|zombie-leader, STUB_SERVER_DELAY
-seconds, STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang|deadline|deadline0, STUB_DEADLINES
-(default 1), STUB_CANDIDATES (default 40).
+Behaviour by env: STUB_SERVER ok|die|die-restart|deaf|deaf-zombie|graceful|zombie-leader,
+STUB_SERVER_DELAY seconds, STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang|deadline|deadline0,
+STUB_DEADLINES (default 1), STUB_CANDIDATES (default 40).
 
 `deaf` is Joern's shape: the launcher (this process) is an `sh` that runs the server as a child, and
-the server ignores SIGTERM like a JVM whose shutdown hook queues behind a running query -- SIGTERM
-ends the launcher and the server lives on. It writes its pid to `jvm.pid` in its cwd.
+the server ignores SIGTERM like a JVM whose shutdown hook cannot finish while a query runs --
+SIGTERM ends the launcher and the server lives on. It writes its pid to `jvm.pid` in its cwd.
+`deaf-zombie` is `deaf` whose server has also forked a child that exited at once and is never
+wait()ed for: a zombie in the process group, which stays one after the server is killed when the
+subreaper that adopts it (a container's PID 1) does not reap.
 `graceful` handles SIGTERM with a shutdown that takes a moment and leaves `term.marker` when done.
 `zombie-leader`: the main thread exits first, a thread keeps the listening socket.
 `die-restart` boots once and dies at boot in a `restartN` directory (a restarted server).
@@ -40,6 +43,8 @@ def deaf_launcher(port: int) -> int:
 
 def serve_deaf(port: int) -> int:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    if os.environ.get("STUB_SERVER") == "deaf-zombie" and os.fork() == 0:
+        os._exit(0)  # before jvm.pid: a reader of the file finds the zombie already there
     Path("jvm.pid").write_text(str(os.getpid()))  # after the handler: a pid in the file is deaf
     return listen(port)
 
@@ -71,7 +76,7 @@ def serve(port: int) -> int:
         return 3
     if mode == "zombie-leader":
         return zombie_leader(port)
-    if mode == "deaf":
+    if mode in ("deaf", "deaf-zombie"):
         return deaf_launcher(port)
     return listen_gracefully(port) if mode == "graceful" else listen(port)
 
