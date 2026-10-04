@@ -175,6 +175,30 @@ agent:
   **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
   선택지 (a)로 남는다.
+  ⏵ **2026-10-04 — 자르기 전에 빼는 것이 하나 늘었다**(이슈 #481): 구조화 출력의 **잡음 키**
+  (`prompt_loader._JSON_NOISE_KEYS` — 지금 semgrep `--json`의 `errors` 하나)다. 그 키가 head를 먹어
+  `results`(히트의 `check_id`·줄번호)가 통째로 잘렸다 — 운영 run 실측에서 `errors`가 stdout의 **70.5%**였고
+  모델이 받은 본문에 `check_id`가 **0건**이었다. 뺀 자리에는 **뺀 값을 다시 직렬화한 글자 수**가 남는다
+  (원문 글자 수가 아니다 — §0, 조용히 사라지면 「없었다」와 구별되지 않는다). ⚠ 뺀 뒤에도
+  **절단이지 요약이 아니다** — 같은 로그에서 보이게 된 히트는 **10건 중 1건**이고, 결과를 한 줄씩 접는 것은
+  도구를 아는 파서가 필요해 그 이슈에 선택지로 남아 있다.
+  ⚠ **한계 둘 — 둘 다 고치지 않았다.** ① 이 목록은 semgrep을 **파일 하나씩** 돌린 run 한 건에서 쟀다.
+  `paths`(51자)가 head를 안 먹는다는 것도 그 한 건의 값이다 — `paths.scanned`는 스캔한 파일 수만큼 자라
+  알파벳 순으로 `results`보다 앞이라, 픽스처의 `scanned`를 27자 경로 40개(원소당 직렬화 폭 31자)로 늘려
+  실행하면 `errors`를 뺀 뒤에도 `results`가 head 밖이다. 그 head는 증거당 800자 경로의 530자이고 규칙 이름이
+  보이는 최대 파일 수가 10개다 — Auditor `probe`(2,000자 — head 1,330자)는 문턱이 달라 35개다(둘 다 실행한
+  값). 현재 호출부는 파일 경로만 넘기지만(코드 읽기) **그 불변식은 코드가 보장하지 않는다** —
+  [D16](open-questions/D/D16.md)이 같은 경고를 적는다(배선이 배치 스캔으로 바뀌면 조용히 낡는다). 디렉터리 대상
+  실행의 실측은 그 항목의 2파일 디렉터리 한 건(2026-08-20, `paths.scanned`에 `target.c`만)뿐이고 **운영 규모
+  디렉터리 run에서 `paths`가 head를 얼마나 먹는지는 미실측**이다. 같은 문서의 도구 표(`semgrep` · 「대상 디렉터리
+  정적 스캔」)는 호출부와 어긋나 읽힌다 — 이 PR이 안 고쳤다.
+  ② 로그 리더의 읽기 상한(`PAYLOAD_READ_CAP` 200,000자)이 JSON 줄을 중간에서 자르면 `json.loads`가 실패해
+  **이 제거가 꺼지고** 종전처럼 `errors`가 head를 먹는다 — **이 경우만 가르는 표시는 없다**(`truncated`는 정상
+  경로에서도 True라 두 경우 모두 True다). 실측 로그 한 건의 스팬당 약 286.5자로 환산하면 스팬 약 630개 초과에서
+  줄이 잘린다(**계산값이고 실측이 아니다**). 고치는 길은 둘이고 닿는 구간이 다르다 — 이 함수에서 `"errors": [`의
+  괄호 짝을 스캔하는 수정은 `errors`의 끝이 읽기 상한 안에 드는 약 60스팬 폭(약 633~698, 계산값)에서만 돕는다.
+  그 위는 `results`의 글자가 안 읽혀 파싱으로 되살릴 것이 없고, 어댑터가 읽기 상한 **앞에서** `errors`를 빼야
+  닿는다(상한을 올리면 문턱이 옮겨질 뿐이다).
   ⏵ 2026-10-04 — `location`도 **판**이 정한다(이슈 #475 · `prompt_loader.build_facts`의 `evidence_locations` —
   본문과 달리 payload 유무와 무관하다). Critic도 자기 `_CONTENT_AWARE_VERSIONS`의 판이면 위치가 있는 Evidence의
   EVIDENCE 줄에 `file:줄` 한 토막을 붙인다(판 목록은 여기 적지 않는다 — 두 노드의 상수가 정본이다).
@@ -432,7 +456,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
-  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`·`gdb`
+  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. `thresholds.pov_attempt_top_n`이 양수면
+  `validated` 밖의 대상도 같은 루프에서 돈다(풀 — `runner._pov_targets`). 그 **추가 대상**에서
+  `BudgetExhausted`로 끊기면 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정 조회)은 하고 끝난다.
+  ⚠ **이 보호는 `BudgetExhausted`만 덮는다 — 다른 예외(`ModelGatewayError` 등)는 종전대로 최종
+  지정에 못 닿는다**(`oracle.final`이 `not_reached`). `validated` 대상에서 끊긴 run도 마찬가지다. 도구는 `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
@@ -459,24 +487,36 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
   지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 둘뿐이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
-  후보가 여럿인데 **하네스 내부 근거 등급의 최댓값을 든 것이 하나뿐**이라 그것을 골랐다
-  (`top_grade`, 2026-10-03 동결). 최댓값이 동점이거나 등급을 모르는 후보가 있으면 지정하지 않고
-  `fix` 다리·판정 조회는 안 돈다(`oracle_final`은 `status=none` · `reason`이 `grade_tie`·
-  `grade_unknown`): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 @danielcho02가
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여섯이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
+  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
+  갈랐다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ①내부 근거 등급 ②`confidence`
+  ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급 또는 `confidence`를
+  모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
+  `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 둘을 같이 본다. 현
+  러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 @danielcho02가
   council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
   1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
   값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
   `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
   바이트가 `./poc`로 materialize되기 전에는 그 도구 실행이 PoC와 무관해(호스트 후속) 후보가 같은
-  등급으로 동점일 수 있다. 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
+  등급으로 동점일 수 있다 — ⏵ **2026-10-04에 그 동점이 더 이상 점수를 막지 않는다.** 2026-10-03
+  동결 규칙은 「등급 최댓값 · 동점이면 거부」였고, 실측 run의 후보 8건이 **같은 바이트 1개**라
+  (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
+  위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
+  (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
   `response_exit_code`가 지정 시점에 손에 있는데도다(`runner._designate_final`). 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
   `--mask-map`으로 줄 때만 받는다 — 제출은 번들의 마스킹된 id로, 판정 조회와 제출 전 캐시 판별은 맵이 준 실
   id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). ⚠ 마스킹 서버
-  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. ⏵ **2026-10-04 — 필수 입력이 하나 늘었다**:
+  `--oracle-canary`가 가리키는 **카나리 보고서**(`tools/oracle_canary.py <task-id> --out <경로>`가 쓴 JSON)
+  없이는 제출이 서지 않는다(이슈 #383). 호스트 `vm.mmap_rnd_bits`가 28보다 크면 무해한 입력도
+  「크래시」로 집계된 것을 쟀기 때문이고, 보고서가 이 과제의 것이 아니거나 통과가 아니면 거부한다(exit 2).
+  마스킹 run에서는 보고서의 `task`가 **실 id**다(도구가 과제 id로 이미지 이름을 만든다). ⚠ 하네스가 그
+  도구를 직접 돌리지는 않고, 보고서가 **지금 이 부팅**의 것인지와 **채점 컨테이너를 돌리는 장비**의 것인지는
+  게이트가 못 가린다. 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
   `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
