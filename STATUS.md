@@ -25,6 +25,8 @@
 `dev_fake` 프로필로 0~9단계가 완주하고, 동일 조건 재실행 시 trace가 재현된다.
 🔴 **⏵ 2026-10-03 — 실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을
 204,963이 넘겨 `stopped_after: 4`). 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424).
+⏵ **2026-10-03 밤 — 닫혔다.** PR #427이 `dev_fake`의 토큰 상한을 `0`(= 상한 없음)으로 내려 이슈가 닫혔다(13:55:38Z) —
+깨끗한 트리로 완주한 재현은 그 PR 본문이 적는다(`repo_dirty: false` · `stopped_after: null`). 위 문장은 `1fa2182`의 사진이다.
 비어 있는 부분은 전부 `src/adapters/` 쪽이므로 **오케스트레이터를 고치지 않고 교체 가능**하다.
 
 ```
