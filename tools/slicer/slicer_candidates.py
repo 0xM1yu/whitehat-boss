@@ -8,7 +8,9 @@ from slicer_source import relative_file
 # are numbered after the sort, so `ba` gives Case B the low numbers; prioritize() (--priority-files)
 # reorders this list afterwards, never the ids.
 CASE_RANK = {"ab": {"A": 0, "B": 1}, "ba": {"B": 0, "A": 1}}
-# The one place the default lives: the CLI, collect(), prioritize() and the pipeline all read it.
+# The one place the default lives: the CLI, collect() and prioritize() read it. The pipeline reads
+# the run's settings.case_order instead, which the CLI always fills; a settings dict without the
+# key is a contract from before the flag existed (#441) and is read as `ab` there.
 DEFAULT_CASE_ORDER = "ba"
 # What prioritize() splits into listed files / the rest: the whole list under `ab` (tier-first:
 # priority-A, priority-B, rest-A, rest-B -- the order #377 (b) shipped, kept exactly) or each case
@@ -86,8 +88,9 @@ def prioritize(
     What is split depends on `case_order` (PRIORITY_PER_CASE). `ba`, the default, splits each case
     group: case-first, priority-B, rest-B, priority-A, rest-A -- no Case A, listed or not, is
     sliced before a Case B. `ab` splits the whole list into two tiers, listed files then the rest:
-    tier-first, priority-A, priority-B, rest-A, rest-B. The case groups keep the order collect()
-    gave them.
+    tier-first, priority-A, priority-B, rest-A, rest-B. The case groups follow CASE_RANK[case_order]
+    whatever case the list starts with; inside a group, and inside a tier under `ab`, the list's
+    own order (collect()'s) is kept.
 
     Matching is EXACT on the normalized file string -- not substring, basename or glob. `files`
     holds what read_priority_files() produced, spelled as collect() spells candidate entry/anchor
@@ -98,10 +101,8 @@ def prioritize(
     """
     groups = [candidates]
     if PRIORITY_PER_CASE[case_order]:
-        by_case: dict[str, list[dict]] = {}
-        for c in candidates:
-            by_case.setdefault(c["case"], []).append(c)
-        groups = list(by_case.values())
+        rank = CASE_RANK[case_order]
+        groups = [[c for c in candidates if rank[c["case"]] == r] for r in sorted(rank.values())]
     ordered, first, matched = [], 0, set()
     for group in groups:
         head, tail = [], []

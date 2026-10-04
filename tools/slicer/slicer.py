@@ -500,7 +500,8 @@ class Slicer(SlicingStages):
         # The checkpoint's `prepared` record a `cpg_file` was verified against (check_prepared).
         self.prepared: dict | None = None
         self.shard: tuple[int, int] | None = None
-        # #377 (b): repo-relative files whose candidates are sliced first (--priority-files).
+        # #377 (b): repo-relative files whose candidates are sliced first (--priority-files) --
+        # inside each case under the default `ba`, ahead of the whole rest under `ab`.
         self.priority_files: set[str] | None = None
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
@@ -885,7 +886,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--priority-files", type=Path, help="file of paths (repo-relative or absolute under "
         "--repo), one per line; blank lines and lines starting with # are skipped, no inline "
-        "comments: candidates whose entry or an anchor is in one are sliced first",
+        "comments: candidates whose entry or an anchor is in one are sliced first -- within "
+        "their case under the default --case-order ba (a listed Case A still runs after every "
+        "Case B), ahead of all unlisted candidates under ab",
     )
     # Which case is sliced first; the default is `ba`, Case B first. The candidate set and every
     # candidate_key stay the same, but ids are numbered after the sort: ids, slices[] order,
