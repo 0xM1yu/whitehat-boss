@@ -135,7 +135,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 지금 배선된 v7(body는 v6와 같다)은
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 지금 배선된 **v8**(도구 루프 · body는 v6와 바이트 동일)은
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -146,16 +146,16 @@ agent:
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **지금 배선된 판은 v8**이고 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
-  함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7이 서술 · v4_t1은 서술 안 함).
+  함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
-  `budgets.yaml`이 켜고 v7이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
   ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 **꺼져 있다** —
-  `budgets.yaml`이 키를 `0`으로 둔다. **v7은 이 옵션을 서술·선언하지 않는다** — 켜려면 프롬프트 판이 `auditor_guards`를
-  서술하고 meta `source_options`로 선언해야 하고(그 전에 켜고 v7을 고르면 `cli` run·doctor가 막는다), 그것은 다음 판
+  `budgets.yaml`이 키를 `0`으로 둔다. **v7도 v8도 이 옵션을 서술·선언하지 않는다** — 켜려면 프롬프트 판이 `auditor_guards`를
+  서술하고 meta `source_options`로 선언해야 하고(그 전에 켜고 둘 중 하나를 고르면 `cli` run·doctor가 막는다), 그것은 다음 판
   몫이다(켠 효과 측정과 함께). 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
   `GUARDS (syntactic — may not dominate)` 머리줄과 `파일:줄 | 조건 [exit: …]` 행이 붙는다 — sink 호출의 인자 이름을 언급하는
   `if`·`while`·`for`·삼항·assert 계열 조건이고 지배를 주장하지 않는다. 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을
@@ -220,7 +220,8 @@ agent:
   **그래도 모델이 그 본문을 쓰는지는 여전히 미측정이다** — 이름을 부르는 것과 쓰는 것은 다르고, v6로 돈
   run이 이 저장소에 0건이다.
   ⏵ 2026-10-04 — v7로 올렸다(v6 + SOURCE 옵션 넷의 서술, #349). 그 절은 v6와 같고 v7도 그 집합에 든다.
-  v7로 돈 run도 0건이다.
+  ⏵ 같은 날 — **v8로 올렸다**(도구 루프, #419). 그 절은 v7에서 바이트 그대로 물려받은 뒤 도구 관측의
+  절단 서술을 한 단락 더 들었고, v8도 그 집합에 든다. **v7로 돈 run도 v8로 돈 run도 0건이다.**
 - 출력: `Finding`(draft) + `MissingEvidence[]`
   ⏵ 2026-10-03 — 노드 `run()`의 반환은 이 모양 그대로다. 도구 루프를 켠 판(아래 「도구 루프」)에서는 **모델이 홉마다
   내는 것이 `AuditorAction`**이고 `Finding`은 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.
@@ -234,11 +235,13 @@ agent:
 - 규칙: 코드에서 확인 불가한 사실은 주장하지 말고 `MissingEvidence`로 요청한다. "확인 불가"가 유효한 출력이다.
   (한 방 판의 규칙이다. 도구 루프 판에서도 `answer`가 싣는 `Finding`에 그대로 걸린다.)
 
-#### 도구 루프 — Auditor가 홉마다 조회·진단을 부른다 (이슈 #419 · [D99](open-questions/D/D99.md) · 기본 꺼짐)
+#### 도구 루프 — Auditor가 홉마다 조회·진단을 부른다 (이슈 #419 · [D99](open-questions/D/D99.md) · ⏵ 2026-10-04 **켰다**)
 
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
-main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
-그 다음 번호다). 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
+~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
+그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**이고 **지금 배선된 판이다**(`prompts/auditor/v8/` ·
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
 `src/schemas/auditor.py`(`AuditorAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
 
@@ -373,11 +376,17 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
    하나**여야 하고 `Finding`은 `answer` 안에 든다. 서두의 *"Do not invent … sanitizer results, or execution
    logs"*는 지어내기 금지라 관측과 충돌하지 않는다. 다만 repro_spec 문장을 지우기만 하면 「지어내도 된다」로
    읽힐 수 있으니 「관측이 받쳐 주는 것만 쓴다」를 한 문장 더한다.
+   ⏵ 2026-10-04 — **v8은 이 항목의 첫째(repro_spec의 금지 문장을 지운다)를 지키지 않았다.** 그 문장이
+   `prompts/auditor/v8/prefix.md:300`에 그대로 있고(`git grep -c "Do not invent build options" prompts/auditor`
+   → v4~v8 각 1) v8이 고친 것은 그 앞 구절(「or by an observation you received on an earlier hop of this
+   call」을 더함)뿐이다. 나머지 둘(「Return only the final Finding JSON object」·「content must contain only the
+   Finding JSON object」)은 v8이 다시 썼다. 남긴 문장이 `probe` 사용을 막는지는 v8로 돈 run이 0건이라 **미측정**이다 —
+   이 항목을 그대로 두고 v8을 고칠지, 「지어내기 금지라 남겨도 된다」로 항목을 고칠지는 결정이 필요하다.
 
 8. **meta 선언 — 선언 없이 상한만 켜면 cli가 막는다.** 루프 판의 `meta.yaml`은 둘을 든다.
 
    ```yaml
-   # 루프 판의 prompts/auditor/<버전>/meta.yaml 모양 예시 — 그 판은 아직 이 저장소에 없다
+   # 루프 판의 prompts/auditor/<버전>/meta.yaml 모양 예시 — 실물은 prompts/auditor/v8/meta.yaml이다(⏵ 2026-10-04)
    output_schema: AuditorAction
    tools: [semgrep, clang-tidy, build, asan, gdb, poc]   # prefix가 광고하는 만큼만
    ```
@@ -393,13 +402,20 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
      때마다 코드를 고쳐야 하고 잊으면 그 기능이 조용히 꺼진다. 루프도 도구도 **meta 선언**으로 가른다 —
      판을 한 번호에서 다음 번호로 올려도 코드 변경 없이 돈다. (근거 본문 싣기는 아직 이름 목록이다 — 새 판이 본문을 전제로 쓰였으면 거기에는
      이름을 더해야 한다.)
-   - 이 선언을 디스크에 두면 `tests/test_config.py`의
+   - ~~이 선언을 디스크에 두면 `tests/test_config.py`의
      `test_the_prompt_output_schema_is_what_the_caller_actually_requests`가 Auditor를 `Finding` 하나와 등치로
      단언해 빨개진다(`bench.ROLE_SPEC`도 `Finding`을 요청한다) — scout처럼 허용집합 소속으로 넓히는 것은 그
-     테스트를 쥔 레인의 몫이다. 같은 이유로 **루프 판은 bench의 한 방 호출로 못 잰다.**
+     테스트를 쥔 레인의 몫이다. 같은 이유로 **루프 판은 bench의 한 방 호출로 못 잰다.**~~ ⏵ 2026-10-04 — 둘 다
+     고쳤다(#419): 그 테스트는 Auditor를 허용집합(`Finding`·`AuditorAction`) 소속으로 묻고
+     (`AUDITOR_ALLOWED_SCHEMA_NAMES`), bench는 판의 meta 선언을 풀어 요청한다(`bench_report.schema_for` —
+     scout 자리와 같다). `bench.ROLE_SPEC`의 auditor 항목은 여전히 `Finding`(한 방 판의 이름)이고 루프 판에는
+     쓰이지 않는다(`tests/test_auditor_loop.py`의 `test_bench_requests_the_schema_the_auditor_prompt_declares`).
 
-§1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. 기본(꺼짐)에서
-Auditor는 `ctx.call_tool`을 부르지 않는다.
+§1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
+Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
+명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
+들고 정본 Auditor가 루프 판(v8)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
 
@@ -618,7 +634,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v7"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v8"}
 }
 ```
 
@@ -655,7 +671,9 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > (`prompts/auditor/v6/prefix.md`의 「Set trigger_status to exactly one of」). **v4로 돈 run은 끝까지
 > 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
 > gitignore라 커밋된 보고서만 센 것이다). ⏵ 2026-10-04 — **v7을 고른다**(v6 + SOURCE 옵션 넷의 서술, #349).
-> 위 Finding 예시의 `prompt_version`도 v7로 고쳤다. `trigger_status` 문장은 v6와 같다. v7로 돈 run도 0건이다.
+> 위 Finding 예시의 `prompt_version`도 고쳤다. `trigger_status` 문장은 v6와 같다.
+> ⏵ 같은 날 — **지금 고르는 것은 v8**이다(도구 루프, #419 · v7 + 홉 프로토콜). v7로 돈 run도 v8로 돈
+> run도 0건이다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -714,7 +732,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v7", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v8", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -827,7 +845,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > v6 prefix의 「Original-source input contract」만 `config/budgets.yaml`이 켠 옵션 넷(20,000토큰 상한 · 정의 ·
 > 피호출 본문 1단 · 호출자 창 10줄)에 맞추고 meta `source_options`로 선언했다(prefix 21,398 -> 23,448자, 나머지
 > 지시·body는 v6와 같다). PR #443의 첫 판은 이것을 **v6 그 자리에서** 고쳤다 — 이 규칙 1이 막는 것이다.
-> **#418의 수(Recall 0.637→0.966 · Precision 0.939→0.821)는 v6 문장의 것이다** — v7에 옮겨 읽지 않는다.
+> **#418의 수(Recall 0.637→0.966 · Precision 0.939→0.821)는 v6 문장의 것이다** — v7에도 v8에도 옮겨 읽지 않는다.
+> ⏵ 같은 날 — **v7 → v8**(도구 루프, #419). v8은 v7의 지시를 더한 판이고 「한 방」 단언 자리만 다시 썼다.
 > v7 뒤 run은 그 전 run과 직접 비교하지 않는다. 잃는 측정은 없다(v6로 돈 run이 이 저장소에 0건). 규칙 5·재측정은
 > 이번에도 돌지 않았다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
