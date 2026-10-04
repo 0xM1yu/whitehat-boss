@@ -21,7 +21,7 @@ from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import build_facts, evidence_summaries, load_prompt
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
-from src.schemas.common import ProducedBy
+from src.schemas.common import Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import Role
 from src.schemas.evidence import Evidence
@@ -172,6 +172,20 @@ def _describe_path(finding: Finding) -> str:
     return "\n".join(f"- {step.step.value}: `{step.symbol}`" for step in finding.path)
 
 
+def _location_text(location: Location) -> str:
+    """`file:start-end` 한 토막. 줄이 없으면 파일만, 끝줄이 시작과 같으면 한 줄로 적는다.
+
+    Evidence의 줄 필드는 선택이다(`schemas/common.Location` — "Evidence는 file·line_start만
+    쓴다"). 없는 값을 `None`이라 적지 않는다(CLAUDE.md §0).
+    """
+    start, end = location.line_start, location.line_end
+    if start is None:
+        return location.file
+    if end is None or end == start:
+        return f"{location.file}:{start}"
+    return f"{location.file}:{start}-{end}"
+
+
 def _describe_evidence(
     evidences: list[Evidence], bodies: Mapping[str, Mapping[str, object]] | None = None
 ) -> str:
@@ -181,6 +195,13 @@ def _describe_evidence(
     lines = []
     for ev in evidences:
         line = f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
+        # **위치를 적는다 — 게이트가 그 값으로 등급을 매긴다.** E1의 둘째 항이
+        # `any(e.location.overlaps(cand.location))`이고 7단계도 같은 술어를 다시 돈다. 위치를
+        # 숨기면 Critic이 「이 근거가 그 주장을 뒷받침하나」를 판단할 재료가 없다
+        # (`prompt_loader.build_facts`의 같은 주석 — 2026-10-04 실측, 이슈 #475).
+        # 위치가 없으면 아무것도 더하지 않는다 — 산문 한 줄이라 `null`을 적으면 노이즈다.
+        if ev.location is not None:
+            line += f" · {_location_text(ev.location)}"
         body = bodies.get(ev.evidence_id)
         if body and body.get("body"):
             snippet = str(body["body"]).replace("\n", "\n    ")
