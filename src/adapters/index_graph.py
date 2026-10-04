@@ -71,6 +71,7 @@ import json
 import posixpath
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
+from operator import itemgetter
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -88,10 +89,12 @@ SliceBody = frozenset[tuple[str, int]]
 # 그 스크립트는 이미지 안에서 살고 `src/`를 import 하지 않아 **형식이 양쪽에 따로
 # 존재한다**(`container_tools._INDEX_SUFFIXES` ↔ `indexer._GRAMMARS`와 같은 이중화).
 # 어긋나면 예외가 아니라 `unsupported_version`이 되고 그래프 섹션이 통째로 사라지므로,
-# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1도 계속 읽는다 — 이미지가
-# v1인 run의 산출물이 남아 있고, 캡슐 그래프는 두 형식에서 같은 간선을 낸다(`_call_edges`).
-SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2")
-_INDEX_V2 = "index-v2"
+# `tests/test_indexer.py`가 두 값을 대조해 그 어긋남을 막는다. v1·v2도 계속 읽는다 — 그 이미지로
+# 돈 run의 산출물이 남아 있고, 캡슐 그래프는 세 형식에서 같은 간선을 낸다(`_call_edges`).
+# v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한 것이다(#304).
+SUPPORTED_INDEX_VERSIONS = ("index-v1", "index-v2", "index-v3")
+_INDEX_V1 = "index-v1"
+_INDEX_V3 = "index-v3"
 
 # index-v2의 조회 표 — NE resolver(#63 후속)가 `GraphIndex.table()`로 읽는다. 모양은
 # `indexer.py` 모듈 docstring의 표다. **캡슐 섹션이 아니다**(`GRAPH_SECTION_KINDS` 주석).
@@ -106,9 +109,52 @@ V2_TABLES = (
     "field_assigns",
     "calls",
 )
+# index-v3가 더한 표(#304) — 쓰기 지점(`writes`)·함수 포인터 바인딩(`fn_bindings`)·필드 경유
+# 간접 호출(`field_calls`). v2 문서에서는 `table()`이 `None`을 낸다(「없다」 — 「0건」이 아니다).
+V3_TABLES = ("writes", "fn_bindings", "field_calls")
 # Auditor `SOURCE`가 정의 줄을 붙이는 표(#349 (f) — `definitions_of`). 이 순서로 보고 처음
 # 걸린 표에서 정한다.
 DEFINITION_TABLES = ("macros", "types", "file_vars")
+
+# 정의 조회가 「저장소에서 하나뿐」 판정에서 제품 경로 뒤로 미루는 디렉터리 이름
+# (`demote_nonproduct` — `definitions_of`·`callees_of`·`call_sites_of`·`functions_named`·
+# `fn_pointer_targets`·`indirect_calls_of`). 두 갈래다: 테스트·예제·
+# 문서·번들 라이브러리가 쓰는 흔한 이름(퍼징은 `_FUZZ_PREFIXES` 접두도), 그리고 **다른 플랫폼·빌드
+# 시스템 몫의 사본**(`xcode/`·`windows/`…) — 리눅스 빌드를 대상으로 본다는 전제라 거기 있는 정의는
+# 효력 있는 정의가 아니라고 본다. 뒤 갈래를 넣은 근거는 로컬 측정 1건이다: libzip 계열 저장소
+# 하나에서 비제품 경로의 정의가 제품 함수로 586건 들어왔고 그중 527건이 `xcode/`, 51건이
+# `regress/`였다(run ID 없음). `unittest(s)`·`testsuite`는 FT Level 1 Auditor 입력
+# 270표본(2026-10-03 로컬, run ID 없음)의 잡음 경로 집계에 나온 이름이다. 같은 집계의
+# `ios`·`android`는 넣지 않았다 — 제품 포팅 계층일 수 있다. **목록은 정한 값이지 잰 값이 아니다.**
+_NONPRODUCT_DIRS = frozenset(
+    {
+        "test", "tests", "testing", "unittest", "unittests", "testsuite", "regress",
+        "example", "examples", "sample", "samples", "demo", "demos", "contrib", "doc", "docs",
+        "third_party", "third-party", "thirdparty", "vendor",
+        "fuzz", "fuzzer", "fuzzers", "fuzzing", "oss-fuzz",
+        "xcode", "windows", "win32", "win64", "msvc",
+    }
+)
+# 퍼징 하네스 디렉터리의 접두(`fuzz_targets/`·`fuzz-corpus/`). 맨 `fuzz` 접두는 `src/fuzzy/`(제품
+# 퍼지 매칭)까지 먹어서 구분자까지 본다.
+_FUZZ_PREFIXES = ("fuzz_", "fuzz-")
+
+
+def is_nonproduct_path(path: str) -> bool:
+    """`path`의 디렉터리 성분(파일 이름은 안 본다 — `lib/test_util.c`는 제품이다)에 비제품 이름이
+    있는가. 대소문자를 접는다."""
+    return any(
+        part in _NONPRODUCT_DIRS or part.startswith(_FUZZ_PREFIXES)
+        for part in path.lower().split("/")[:-1]
+    )
+
+
+def _product_first(items: list, file_of: Callable[[Any], str]) -> list:
+    """제품 경로 항목이 있으면 그것만, 없으면 전부. 비제품 정의는 **제품 정의가 없을 때만** 후보로
+    남는다 — 강등이지 삭제가 아니다."""
+    product = [item for item in items if not is_nonproduct_path(file_of(item))]
+    return product or list(items)
+
 
 # 이름 → 기록 목록 모양인 표의 기록마다 있어야 하는 키. `locals`·`assigns`는
 # 파일 → 함수 → 이름 → [줄]이라 따로 본다(`_v2_tables`).
@@ -120,6 +166,9 @@ _RECORD_KEYS = {
     "fields": ("type", "file", "line_start", "line_end"),
     "field_assigns": ("file", "line", "func", "lhs", "rhs", "op"),
     "calls": ("file", "line", "caller", "args"),
+    "writes": ("file", "line", "func", "lhs", "rhs", "op", "form", "base"),
+    "fn_bindings": ("file", "line", "func", "fn", "form"),
+    "field_calls": ("file", "line", "caller", "args", "expr"),
 }
 # 위 키 중 줄 번호 — 정수여야 한다(`_v2_tables`).
 _LINE_KEYS = frozenset({"line", "line_start", "line_end"})
@@ -316,7 +365,7 @@ class GraphIndex:
 
         | 반환 | 뜻 |
         | --- | --- |
-        | `None` | 인덱스 없음·버전 모름·깨짐, 또는 **index-v1**(표가 없는 형식) |
+        | `None` | 인덱스 없음·버전 모름·깨짐, **index-v1**(표가 없는 형식), v2의 `V3_TABLES` |
         | `{}` | v2인데 그 표가 0건 |
         | `{...}` | 표. 모양은 `indexer.py` 모듈 docstring의 표다 |
 
@@ -329,10 +378,10 @@ class GraphIndex:
         표의 정의 **위치**는 `definitions_of`도 읽는다 — Auditor `SOURCE`가 정의 줄을 원문으로 싣는
         것이지(#349 (f)) 표가 캡슐 섹션이 되는 것은 아니다.
         """
-        if name not in V2_TABLES:
+        if name not in V2_TABLES + V3_TABLES:
             raise ValueError(f"조회 표가 아니다: {name}")
         self._load()
-        return None if self._tables is None else self._tables[name]
+        return None if self._tables is None else self._tables.get(name)
 
     def neighbor_files(self, target: Location) -> list[str] | None:
         """대상의 호출 그래프 이웃이 정의된 파일들. `None`은 **그래프 자체가 없다**는 뜻이다.
@@ -362,7 +411,25 @@ class GraphIndex:
         files.discard(target.file)
         return sorted(files)
 
-    def definitions_of(self, names: Iterable[str], near_file: str) -> list[Location] | None:
+    def locals_of(self, file: str, func: str) -> frozenset[str] | None:
+        """`file`의 함수 `func` 안에서 선언된 이름 — 지역 변수와 **파라미터**(`locals` 표).
+
+        `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1·깨짐). 표에 없는 함수·파일은 **빈 집합**이다 —
+        「없다」와 「0건」을 가르는 `definitions_of`와 같은 구별이다. Auditor `SOURCE`의 정의 조회가
+        함수 본문의 이름 중 지역·파라미터를 빼는 데 쓴다 — 그 이름은 다른 파일의 매크로·타입·파일
+        변수와 철자가 같아도 그것을 가리키지 않는다.
+
+        표의 키는 **함수 이름**이다(`#if` 양쪽 가지의 같은 이름 함수는 한 항목으로 합쳐진다).
+        ⚠ 이름만 본다 — `struct buffer *buffer`의 태그 `buffer`는 변수 `buffer`와 이름공간이 달라서
+        지역이어도 정의를 가리킬 수 있다. 가르는 일은 읽는 쪽이 한다(`source_definitions`).
+        """
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        return frozenset(self._tables["locals"].get(file, {}).get(func, ()))
+
+    def definitions_of(
+        self, names: Iterable[str], near_file: str, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """이름들 중 매크로·타입(struct/union/enum/typedef)·파일 스코프 변수인 것의 **정의 위치**.
 
         `None`은 v2 표가 없다는 뜻이다(인덱스 없음·v1). Auditor `SOURCE`가 실린 코드가 쓰는
@@ -374,13 +441,31 @@ class GraphIndex:
         - 표는 `DEFINITION_TABLES` 순서로 보고 처음 걸린 표에서 정한다
 
         순서는 (파일, 시작 줄)이다(결정론).
+
+        `demote_nonproduct`(기본 꺼짐 — Auditor `SOURCE`만 켠다)면 「저장소에서 하나뿐」 판정에서
+        비제품 경로(`is_nonproduct_path` — `tests/`·`examples/`·`third_party/` 등)의 정의가 한 단계
+        낮다. **표를 가로질러 본다**: 그 이름의 제품 정의가 세 표 어디에든, 또는 제품 **함수**
+        (`_defined`)로 있으면 비제품 행은 세 표 모두에서 후보가 아니다. 그다음 남은 행으로 위 규칙
+        (표 순서 · 하나뿐)을 그대로 돈다 —
+        - `DUP`이 `lib/`와 `tests/`의 매크로면 `lib/`의 것으로 정해진다
+        - 제품 typedef `node`와 비제품 매크로 `node`면 매크로 표를 건너뛰고 typedef가 나온다
+        - 제품 쪽이 **함수뿐**이면(`tests/`의 `#define F(p) …`가 제품 함수 `F`를 덮는 꼴) 그 이름은
+          싣지 않는다 — 함수 본문은 `callees_of`의 몫이다
+        제품 정의가 하나도 없으면 비제품 정의도 그대로 쓴다 — **삭제가 아니다.** 순서도 제품 정의가
+        먼저다(읽는 쪽이 상한까지만 싣는다). `near_file`이 비제품이면 강등하지 않는다 — 그 코드가
+        쓰는 정의는 형제 비제품 경로에 있는 것이 정상이다.
         """
         if self._load().status != STATUS_LOADED or self._tables is None:
             return None
+        demote = demote_nonproduct and not is_nonproduct_path(near_file)
+        wanted = sorted(set(names))
+        product_names = self._product_definition_names(wanted) if demote else frozenset()
         found: list[Location] = []
-        for name in sorted(set(names)):
+        for name in wanted:
             for table in DEFINITION_TABLES:
                 rows = self._tables[table].get(name)
+                if rows and name in product_names:
+                    rows = [row for row in rows if not is_nonproduct_path(row["file"])]
                 if not rows:
                     continue
                 here = [row for row in rows if row["file"] == near_file]
@@ -396,9 +481,38 @@ class GraphIndex:
                         )
                     )
                 break
-        return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
+        return sorted(
+            found,
+            key=lambda loc: (
+                demote and is_nonproduct_path(loc.file),
+                loc.file,
+                loc.line_start or 0,
+                loc.symbol or "",
+            ),
+        )
 
-    def callees_of(self, target: Location) -> list[Location] | None:
+    def _product_definition_names(self, names: list[str]) -> frozenset[str]:
+        """`names` 중 제품 경로에 정의가 하나라도 있는 이름 — 세 정의 표와 함수(`_defined`)를 함께
+        본다. `definitions_of`의 표를 가로지른 강등이 쓴다(v2 표가 실려 있을 때만 부른다)."""
+        assert self._tables is not None
+        wanted = set(names)
+        product = {
+            name
+            for name in wanted
+            for table in DEFINITION_TABLES
+            if any(
+                not is_nonproduct_path(row["file"]) for row in self._tables[table].get(name, ())
+            )
+        }
+        for file, symbols in self._defined.items():
+            if is_nonproduct_path(file):
+                continue
+            product.update(name for name, _, _ in symbols if name in wanted)
+        return frozenset(product)
+
+    def callees_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """대상 본문 안의 호출이 부르는 함수의 **정의 위치**. `None`은 그래프 자체가 없다는 뜻이다.
 
         Auditor 입력이 슬라이스가 지나간 함수만 싣고 그 함수들이 부르는 함수의 본문은 안 싣던
@@ -410,9 +524,14 @@ class GraphIndex:
           정의인지 모르므로(`_rules` docstring의 한계) 싣지 않는다
 
         대상 자신(재귀)은 뺀다. 순서는 본문 안 첫 호출 줄 순이다(결정론 — 같은 줄이면 이름 순).
+
+        `demote_nonproduct`는 `definitions_of`와 같다 — 켜면 제품 경로 정의가 비제품 정의보다 앞서
+        「하나뿐」을 정하고(제품 정의가 없으면 비제품 정의도 쓴다), 제품 정의의 callee가 먼저 온다.
+        대상 파일이 비제품이면 강등하지 않는다.
         """
         if self._load().status != STATUS_LOADED:
             return None
+        demote = demote_nonproduct and not is_nonproduct_path(target.file)
         defined: dict[str, list[tuple[str, int, int]]] = {}
         for file, symbols in self._defined.items():
             for name, start, end in symbols:
@@ -428,14 +547,54 @@ class GraphIndex:
             if callee == target.symbol:
                 continue
             here = [d for d in defined.get(callee, []) if d[0] == target.file]
-            candidates = here or defined.get(callee, [])
+            candidates = here or (
+                _product_first(defined.get(callee, []), itemgetter(0))
+                if demote
+                else defined.get(callee, [])
+            )
             if len(candidates) != 1:
                 continue
             file, start, end = candidates[0]
             found.append(Location(file=file, symbol=callee, line_start=start, line_end=end))
+        if demote:
+            found.sort(key=lambda loc: is_nonproduct_path(loc.file))  # 안정 정렬 — 호출 줄 순 유지
         return found
 
-    def call_sites_of(self, target: Location) -> list[Location] | None:
+    def functions_named(
+        self, names: Iterable[str], near_file: str, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
+        """이름들 중 **함수**인 것의 정의 위치. `None`은 그래프가 없다는 뜻이다.
+
+        매크로가 이름만 바꿔 부르는 함수
+        (`#define FT_FRAME_EXTRACT(...) FT_Stream_ExtractFrame(...)`)를 찾는 데 쓴다 -- 매크로 본문
+        안의 호출은 인덱스 호출 표에 없어 `callees_of`로는 안 닿는다(#349 후속, C4). 고르는 규칙은
+        `callees_of`와 같다: `near_file`에 정의가 있으면 그것, 없으면 저장소 전체에서 **하나뿐일
+        때만**(`demote_nonproduct`면 제품 경로가 먼저 「하나뿐」을 정한다). 순서는 이름 순이다.
+        """
+        if self._load().status != STATUS_LOADED:
+            return None
+        demote = demote_nonproduct and not is_nonproduct_path(near_file)
+        wanted = set(names)
+        defined: dict[str, list[tuple[str, int, int]]] = {}
+        for file, symbols in self._defined.items():
+            for name, start, end in symbols:
+                if name in wanted:
+                    defined.setdefault(name, []).append((file, start, end))
+        found: list[Location] = []
+        for name in sorted(defined):
+            here = [d for d in defined[name] if d[0] == near_file]
+            candidates = here or (
+                _product_first(defined[name], itemgetter(0)) if demote else defined[name]
+            )
+            if len(candidates) != 1:
+                continue
+            file, start, end = candidates[0]
+            found.append(Location(file=file, symbol=name, line_start=start, line_end=end))
+        return found
+
+    def call_sites_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
         """대상 함수를 부르는 **호출 지점**(줄 하나 — `symbol`은 호출자 이름). `None`은 그래프가
         없다는 뜻이다.
 
@@ -449,11 +608,19 @@ class GraphIndex:
 
         순서는 대상 파일 → 대상과 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄)이다(결정론 —
         읽는 쪽이 앞 몇 개만 쓰므로 가까운 호출자가 먼저 온다 · #351 리뷰). 심볼 없는 대상은 `[]`다.
+
+        `demote_nonproduct`는 `definitions_of`와 같다 — 켜면 「정의가 하나뿐」을 **제품 경로
+        정의만** 세고(비제품 정의는 경쟁자가 아니다), 비제품 경로의 호출 지점은 맨 뒤로 민다. 다만
+        **같은 이름의 비제품 정의가 어딘가 있으면 비제품 호출 전체를 안 싣는다** — 모의 구현을
+        부르는 이웃 호출(`tests/mock/user.c` → `tests/mock/dup.c`)은 어느 정의로 가는지 이름만으로
+        모르고, 그 정의를 가진 파일 자신의 호출도 같다. 제품 호출은 그대로다. 대상 파일이 비제품이면
+        강등하지 않는다.
         """
         if self._load().status != STATUS_LOADED:
             return None
         if not target.symbol:
             return []
+        demote = demote_nonproduct and not is_nonproduct_path(target.file)
         # 파일 수가 아니라 **정의 수**다 — `callees_of`·`definitions_of`와 같은 규칙(한 파일
         # 안 `#if` 양쪽 가지도 둘이다).
         homes = [
@@ -462,23 +629,226 @@ class GraphIndex:
             for name, start, _ in symbols
             if name == target.symbol
         ]
+        rivals = _product_first(homes, itemgetter(0)) if demote else homes
+        # 강등을 켜면 경쟁자가 제품 정의 하나뿐이어도 **같은 이름의 비제품 정의가 따로 있을 수
+        # 있다**(`copied` — 모의 구현·예제 사본). 그러면 비제품 호출은 어느 정의로 가는지 모른다
+        # (`tests/mock/user.c`가 `tests/mock/dup.c`를 부른다) — 이름만으로 못 가르니 안 싣는다.
+        # 그 정의를 가진 파일 자신의 호출도 여기 든다. 제품 호출은 영향이 없다.
+        copied = demote and len(homes) > len(rivals)
         sites = {
             Location(file=file, symbol=caller, line_start=line, line_end=line)
             for caller, callee, file, line in self._calls
             if callee == target.symbol
             and not self._in_body(file, line, target)
-            and (file == target.file or len(homes) == 1)
+            and (
+                file == target.file
+                or (len(rivals) == 1 and not (copied and is_nonproduct_path(file)))
+            )
         }
         here = posixpath.dirname(target.file)
         return sorted(
             sites,
             key=lambda loc: (
+                demote and is_nonproduct_path(loc.file),
                 loc.file != target.file,
                 posixpath.dirname(loc.file) != here,
                 loc.file,
                 loc.line_start or 0,
             ),
         )
+
+    # --- index-v3 조회 (#304) ---------------------------------------------
+    #
+    # 넷 다 **새 메서드**다 — 위의 `callees_of`·`call_sites_of`·`definitions_of`는 그대로다. 이름을
+    # 잇는 규칙은 그쪽과 같다: 같은 파일이 먼저, 다른 파일은 그 이름의 정의가 저장소 전체에서
+    # **하나뿐일 때만**. `None`은 v3 표가 없다는 뜻이다(인덱스 없음·v1·v2).
+
+    def writes_of(self, name: str, near_file: str) -> list[Location] | None:
+        """이름 `name`에 **쓰는 지점**(줄 하나 — `symbol`은 감싼 함수).
+
+        버퍼가 어디서 할당되고 어디서 채워지는지를 Auditor가 못 보던 자리(#304)를 채운다. 합치는
+        것: `assigns`(이름 대입 `p = malloc(n)` · 복합 대입)와 `writes`의 `base == "name"` 행(원소
+        `p[i] = x` · 역참조 `*p = x` · 선언 초기화 `char *p = malloc(n)`). 필드는
+        `field_writes_of`다.
+
+        - `near_file` 안의 쓰기가 있으면 그것만
+        - 없으면 `name`이 파일 스코프 변수로 **하나뿐일 때만**(`file_vars`) 저장소 전체 — 지역
+          이름은 파일마다 따로라 다른 파일의 같은 이름을 잇지 않는다. 「하나뿐」은 헤더 밖 선언이
+          있으면 그것만 센다 — 헤더의 `extern char *g;`와 `.c`의 정의가 둘로 세지면 흔한 전역이
+          한 번도 이어지지 않는다(#464 리뷰). 그때도 그 이름이 **지역·파라미터인 함수**(`locals`)의
+          행은 뺀다 — 다른 파일 함수의 같은 이름 지역은 그 전역이 아니다
+
+        ⚠ 파일 안에서는 함수를 가르지 않는다 — 같은 파일 다른 함수의 같은 지역 이름도 든다. 행의
+        `symbol`(감싼 함수)로 호출자가 거른다. 증감(`i++`)은 인덱서가 안 싣는다(`indexer.py` 표).
+        순서는 (파일, 줄)이다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        sites = {
+            (file, func, line)
+            for file, funcs in tables["assigns"].items()
+            for func, names in funcs.items()
+            for line in names.get(name, ())
+        }
+        sites |= {
+            (row["file"], row["func"], row["line"])
+            for row in tables["writes"].get(name, ())
+            if row["base"] == "name"
+        }
+        here = {site for site in sites if site[0] == near_file}
+        if not here and _single_global(tables["file_vars"].get(name, ())):
+            scoped = tables["locals"]
+            here = {
+                (file, func, line)
+                for file, func, line in sites
+                if name not in scoped.get(file, {}).get(func, {})
+            }
+        return sorted(
+            (
+                Location(file=file, symbol=func, line_start=line, line_end=line)
+                for file, func, line in here
+            ),
+            key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""),
+        )
+
+    def field_writes_of(self, field: str, near_file: str) -> list[Location] | None:
+        """필드 `field`에 **쓰는 지점**(줄 하나 — `symbol`은 감싼 함수).
+
+        `->payload_packet_len = …` 같은 길이 필드가 어디서 정해지는지(#304). `field_assigns`(필드
+        대입)와 `writes`의 `base == "field"` 행(`vv->buf[i] = x` · `*vv->ptr = x`)을 합친다.
+
+        - `near_file` 안의 쓰기는 늘 싣는다
+        - 다른 파일의 쓰기는 그 필드를 선언한 struct가 저장소 전체에서 **하나뿐일 때만**(`fields`) —
+          여럿이면 그 쓰기가 어느 struct의 필드인지 이름만으로 모른다(`call_sites_of`와 같은 규칙)
+
+        순서는 `near_file` → 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄)이다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        rows = list(tables["field_assigns"].get(field, ())) + [
+            row for row in tables["writes"].get(field, ()) if row["base"] == "field"
+        ]
+        unique = len(tables["fields"].get(field, ())) == 1
+        sites = {
+            Location(
+                file=row["file"], symbol=row["func"], line_start=row["line"], line_end=row["line"]
+            )
+            for row in rows
+            if row["file"] == near_file or unique
+        }
+        return _near_first(sites, near_file)
+
+    def fn_pointer_targets(
+        self, field: str, near_file: str, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
+        """함수 포인터 필드 `field`에 묶인 함수들의 **정의 위치**(#304 · 간접 호출 해석).
+
+        `fn_bindings`(`o->alloc = my_alloc` · `.free_ctx = sshpam_free_ctx`)에서 함수 이름을 모으고,
+        그 이름을 `functions` 표의 정의로 푼다.
+
+        - 바인딩은 `near_file` 것은 늘, 다른 파일 것은 필드를 선언한 struct가 **하나뿐일 때만** —
+          `alloc`처럼 흔한 필드 이름이 여러 struct에 있으면 다른 파일의 바인딩이 같은 필드인지
+          모른다
+        - 함수 이름 → 정의는 바인딩이 있는 파일의 정의가 먼저, 없으면 저장소 전체에서 하나뿐일 때만
+          (`callees_of`와 같은 규칙)
+
+        ⚠ 이름 하나에 바인딩이 여럿이면 **전부** 후보다 — 어느 것이 그 호출 시점의 값인지는
+        구문만으로 모른다. 위치 초기화(`{ my_init, my_free }`)는 인덱서가 안 싣는다. 순서는
+        (파일, 시작 줄)이다.
+
+        `demote_nonproduct`는 `callees_of`와 같다 — 켜면 제품 경로 바인딩이 있을 때 비제품
+        경로 바인딩(`tests/`의 `o->alloc = fake_alloc`)을 빼고, 함수 이름 → 정의의 「하나뿐」도
+        제품 경로가 먼저 정한다(`_product_first` — 강등이지 삭제가 아니다). `near_file`이
+        비제품이면 강등하지 않는다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        demote = demote_nonproduct and not is_nonproduct_path(near_file)
+        unique = len(tables["fields"].get(field, ())) == 1
+        rows = [
+            row
+            for row in tables["fn_bindings"].get(field, ())
+            if row["file"] == near_file or unique
+        ]
+        if demote:
+            rows = _product_first(rows, itemgetter("file"))
+        found: set[Location] = set()
+        for row in rows:
+            definitions = list(tables["functions"].get(row["fn"], ()))
+            candidates = [d for d in definitions if d["file"] == row["file"]] or (
+                _product_first(definitions, itemgetter("file")) if demote else definitions
+            )
+            if len(candidates) != 1:
+                continue
+            d = candidates[0]
+            found.add(
+                Location(
+                    file=d["file"],
+                    symbol=row["fn"],
+                    line_start=d["line_start"],
+                    line_end=d["line_end"],
+                )
+            )
+        return sorted(found, key=lambda loc: (loc.file, loc.line_start or 0, loc.symbol or ""))
+
+    def indirect_calls_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[tuple[str, list[Location]]] | None:
+        """대상 본문 안의 필드 경유 호출(`vv->varint_get64s(…)`)마다 **(필드, 갈 수 있는 함수의 정의
+        위치)**.
+
+        `callees_of`가 못 푸는 간접 호출(#304)을 `field_calls` →
+        `fn_pointer_targets(필드, target.file)`로 잇는다. 본문 판정은 `callees_of`와 같은
+        `_in_body`이고 대상 자신은 뺀다. 순서는 본문 안 첫 호출 줄 순(같은 줄이면 필드 이름 순),
+        필드 안은 `fn_pointer_targets`의 순서다. 후보가 없는 필드는 안 낸다. 필드별로 묶는
+        것은 「어느 것인지 모른다」가 필드 하나 단위의 문제라서다 — 러너가 후보 수 상한을 필드마다
+        건다. 두 필드가 같은 함수에 묶이면 둘 다에 든다. `demote_nonproduct`는
+        `fn_pointer_targets`로 넘긴다.
+        """
+        tables = self._v3()
+        if tables is None:
+            return None
+        first_call: dict[str, int] = {}
+        for field, rows in tables["field_calls"].items():
+            for row in rows:
+                if self._in_body(row["file"], row["line"], target):
+                    first_call[field] = min(first_call.get(field, row["line"]), row["line"])
+        found: list[tuple[str, list[Location]]] = []
+        for field in sorted(first_call, key=lambda name: (first_call[name], name)):
+            targets = [
+                loc
+                for loc in self.fn_pointer_targets(
+                    field, target.file, demote_nonproduct=demote_nonproduct
+                )
+                or ()
+                if not (loc.symbol == target.symbol and loc.file == target.file)
+            ]
+            if targets:
+                found.append((field, targets))
+        return found
+
+    def indirect_callees_of(
+        self, target: Location, *, demote_nonproduct: bool = False
+    ) -> list[Location] | None:
+        """`indirect_calls_of`를 펼친 것 — 필드 순서대로 후보를 잇고 같은 정의는 한 번만 낸다."""
+        grouped = self.indirect_calls_of(target, demote_nonproduct=demote_nonproduct)
+        if grouped is None:
+            return None
+        found: list[Location] = []
+        for _, targets in grouped:
+            found.extend(loc for loc in targets if loc not in found)
+        return found
+
+    def _v3(self) -> Mapping[str, Mapping[str, Any]] | None:
+        """v3 표가 다 있으면 표 묶음, 아니면 `None`(인덱스 없음·깨짐·v1·v2)."""
+        if self._load().status != STATUS_LOADED or self._tables is None:
+            return None
+        if not all(name in self._tables for name in V3_TABLES):
+            return None
+        return self._tables
 
     # --- 본문 판정 -------------------------------------------------------
     #
@@ -579,7 +949,7 @@ class GraphIndex:
         try:
             defined = _defined_symbols(document["symbols"])
             calls = _call_edges(document["calls"], version)
-            tables = _v2_tables(document) if version == _INDEX_V2 else None
+            tables = _v2_tables(document, version) if version != _INDEX_V1 else None
             summary = IndexSummary(
                 status=STATUS_LOADED,
                 files=len(document["files"]),
@@ -685,12 +1055,12 @@ def _defined_symbols(symbols: list[dict]) -> dict[str, list[tuple[str, int, int]
 def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, int]]:
     """(caller, callee, 호출 지점 file, 호출 지점 line). **두 형식에서 같은 간선이다.**
 
-    index-v1의 `calls`는 간선 목록이고, index-v2는 같은 간선을 callee → 호출 지점(+ 인자)으로
+    index-v1의 `calls`는 간선 목록이고, index-v2·v3는 같은 간선을 callee → 호출 지점(+ 인자)으로
     묶었다. 캡슐 그래프 섹션은 이 튜플만 보므로 형식이 바뀌어도 한 글자도 안 바뀐다 —
     `tests/test_index_graph.py`의 v2 절이 박는다. 버전과 모양이 어긋나면(v1인데 묶음, v2인데
     목록) 여기서 예외가 나고 `_read`가 문서를 통째로 거절한다.
     """
-    if version != _INDEX_V2:
+    if version == _INDEX_V1:
         return [(c["caller"], c["callee"], c["file"], int(c["line"])) for c in calls]
     return [
         (site["caller"], callee, site["file"], int(site["line"]))
@@ -699,42 +1069,118 @@ def _call_edges(calls: list | dict, version: str) -> list[tuple[str, str, str, i
     ]
 
 
-def _v2_tables(document: dict) -> dict[str, Mapping[str, Any]]:
-    """v2 조회 표를 검사하고 읽기 전용으로 얼린다. 모양이 다르면 예외 — `_read`가 통째로 거절한다.
+def _v2_tables(document: dict, version: str) -> dict[str, Mapping[str, Any]]:
+    """v2 조회 표(v3면 `V3_TABLES`까지)를 검사하고 읽기 전용으로 얼린다. 모양이 다르면 예외 —
+    `_read`가 통째로 거절한다. v2 문서에는 `V3_TABLES`가 없고 결과에도 없다(`table()`이 `None`).
 
     기록의 필수 키와 **줄 번호의 형**까지 본다. 절반만 맞는 표를 받으면 resolver가 조회 도중에
     죽거나, 더 나쁘게는 빈 결과를 「못 찾았다」로 모델에게 전한다. 표는 값을 고치지 않고 내주므로
     (`_freeze`) `"12"`가 그대로 resolver까지 간다 — v1처럼 `int()`로 읽어 들이는 자리가 없다.
-    줄 번호 밖의 값 형(`file`·`params` 등)은 안 본다 — v1도 안 본다.
+    줄 번호 밖의 값 형(`file`·`params` 등)은 v2 표에서는 안 본다 — v1도 안 본다.
+
+    **v3 문서는 더 본다**(#464 리뷰). v3 조회(`writes_of` 등)는 행 값을 `Location`과 집합 원소로
+    바로 쓰므로, 줄 0이나 매핑 `func`가 통과하면 조회 도중 `ValidationError`·`TypeError`로 죽는다.
+    그래서 `V3_TABLES`는 값 형·허용 값을 다(`_V3_VALUES`), v3 조회가 함께 읽는 `field_assigns`는
+    `file`·`func`를 본다.
     """
     tables = {}
-    for name in V2_TABLES:
+    v3 = version == _INDEX_V3
+    for name in V2_TABLES + (V3_TABLES if v3 else ()):
         table = document[name]
         if not isinstance(table, dict):
-            raise TypeError(f"index-v2의 {name}는 매핑이다")
+            raise TypeError(f"{version}의 {name}는 매핑이다")
         if name in _RECORD_KEYS:
             keys = _RECORD_KEYS[name]
+            checks = _V3_VALUES.get(name, {}) if v3 else {}
             for records in table.values():
                 for record in records:
                     if not isinstance(record, dict) or not all(key in record for key in keys):
-                        raise KeyError(f"index-v2의 {name} 기록에는 {keys}가 있어야 한다")
+                        raise KeyError(f"{version}의 {name} 기록에는 {keys}가 있어야 한다")
                     if not all(_is_line(record[key]) for key in keys if key in _LINE_KEYS):
-                        raise TypeError(f"index-v2의 {name} 기록의 줄 번호는 정수다")
+                        raise TypeError(f"{version}의 {name} 기록의 줄 번호는 1 이상 정수다")
+                    if not all(check(record[key]) for key, check in checks.items()):
+                        raise TypeError(f"{version}의 {name} 기록의 값 형이 다르다")
         else:  # 파일 → 함수 → 이름 → [줄]
             for functions in table.values():
                 for names in functions.values():
                     for lines in names.values():
                         if not all(_is_line(line) for line in lines):
-                            raise TypeError(f"index-v2의 {name}는 줄 번호 목록이다")
+                            raise TypeError(f"{version}의 {name}는 줄 번호 목록이다")
         tables[name] = _freeze(table)
     return tables
 
 
+def _is_name(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _is_str(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+def _one_of(*allowed: str) -> Callable[[Any], bool]:
+    return lambda value: isinstance(value, str) and value in allowed
+
+
+# v3 문서에서 행 값마다 보는 형(`_v2_tables`). 허용 값은 `indexer.py`의 v3 절이 낸 것 그대로다.
+_V3_VALUES: dict[str, dict[str, Callable[[Any], bool]]] = {
+    "field_assigns": {"file": _is_name, "func": _is_name},
+    "writes": {
+        "file": _is_name,
+        "func": _is_name,
+        "lhs": _is_str,
+        "rhs": _is_str,
+        "op": _is_str,
+        "form": _one_of("element", "deref", "init"),
+        "base": _one_of("name", "field"),
+    },
+    "fn_bindings": {
+        "file": _is_name,
+        "func": lambda value: value is None or _is_name(value),
+        "fn": _is_name,
+        "form": _one_of("assign", "designated"),
+    },
+    "field_calls": {
+        "file": _is_name,
+        "caller": _is_name,
+        "args": lambda value: isinstance(value, list) and all(_is_str(arg) for arg in value),
+        "expr": _is_str,
+    },
+}
+
+
+# 헤더 확장자 — `writes_of`의 「파일 스코프 변수가 하나뿐」에서 `extern` 선언을 빼는 근사다(표에는
+# `extern` 여부가 없다). 헤더에만 선언이 있으면 그것을 센다.
+_HEADER_SUFFIXES = (".h", ".hh", ".hpp", ".hxx")
+
+
+def _single_global(rows: Iterable[Mapping[str, Any]]) -> bool:
+    """파일 스코프 변수 선언 행들이 전역 하나를 가리키는가 — 헤더 밖 선언이 있으면 그것만 센다."""
+    rows = list(rows)
+    outside = [row for row in rows if not str(row["file"]).endswith(_HEADER_SUFFIXES)]
+    return len(outside or rows) == 1
+
+
+def _near_first(sites: Iterable[Location], near_file: str) -> list[Location]:
+    """`near_file` → 같은 디렉터리 → 나머지, 그 안에서 (파일, 줄) — `call_sites_of`와 같은 순서."""
+    here = posixpath.dirname(near_file)
+    return sorted(
+        sites,
+        key=lambda loc: (
+            loc.file != near_file,
+            posixpath.dirname(loc.file) != here,
+            loc.file,
+            loc.line_start or 0,
+            loc.symbol or "",
+        ),
+    )
+
+
 def _is_line(value: Any) -> bool:
-    """줄 번호인가 — JSON 정수.
+    """줄 번호인가 — 1 이상 JSON 정수(`Location`이 `ge=1`이다 — 0이 통과하면 조회 도중에 죽는다).
 
     `bool`은 `int`의 하위형이라 `isinstance`로 보면 `true`가 통과한다."""
-    return type(value) is int
+    return type(value) is int and value >= 1
 
 
 def _freeze(value: Any) -> Any:
@@ -744,3 +1190,17 @@ def _freeze(value: Any) -> Any:
     if isinstance(value, list):
         return tuple(_freeze(item) for item in value)
     return value
+
+
+def source_lines(text: str) -> list[str]:
+    r"""인덱스 줄 번호와 같은 좌표로 원문을 줄로 나눈다 -> `\n`에서만 끊고 줄 끝 `\r`만 뗀다.
+
+    인덱서는 tree-sitter 행(`start_point[0] + 1`)을 쓰고 그 행은 `\n`에서만 넘어간다.
+    `str.splitlines()`는 폼피드(`\x0c`)·`\x1c`~`\x1e`·`\x85`·` `에서도 끊어 그 글자마다
+    한 줄씩 밀린다 -> 폼피드가 많은 파일(ImageMagick 등)에서 함수 범위가 주석부터 시작하고
+    끝이 잘렸다(#446). 슬라이서 좌표는 `slices.split_source`가 같은 이유로 따로 맞춘다(#259).
+
+    단독 CR 파일은 여전히 어긋난다 -> tree-sitter는 단독 `\r`에서 행을 안 넘기는데 호출자가
+    `read_text`(universal newline)로 읽어 CR을 `\n`으로 바꾼다. 맞추려면 `newline=""`로 읽어야 한다.
+    """
+    return [line.removesuffix("\r") for line in text.split("\n")]

@@ -19,7 +19,7 @@ import slicer_queries as queries
 from slicer_candidates import collect
 from slicer_checkpoint import Checkpoint, digest, merge_shards
 from slicer_export import export_sources
-from slicer_source import cluster, recover_lines
+from slicer_source import cluster, recover_lines, source_sink
 
 READ_VERSION = slicer.read_version
 
@@ -1084,7 +1084,13 @@ def _flows_by_outcome(outcomes):  # noqa: ANN001, ANN202
         if kind == "F":
             return {"success": False, "stdout": "", "stderr": "boom"}
         return response(
-            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+            "flows",
+            {
+                "flow_count": 2,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "endpoints": [],
+            },
         )
 
     return flows
@@ -1593,7 +1599,13 @@ def six_candidates_two_files():
         if '"a.c"' in query:  # the scope list names a.c -> this candidate is in a.c
             return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
         return response(
-            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+            "flows",
+            {
+                "flow_count": 2,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "endpoints": [],
+            },
         )
 
     data["flows"] = flows
@@ -2091,3 +2103,203 @@ def test_a_shard_that_forgot_the_case_order_is_refused(monkeypatch, repo, tmp_pa
     assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
     assert "settings.case_order" in result["error"]
     assert transport.stages == []  # refused before any Joern request
+
+
+# #429: each slice records where the slicer put source and sink, for comparison with a GT.
+
+
+def test_case_a_records_each_kept_flows_parameter_and_sink(monkeypatch, repo, tmp_path):
+    """The flows payload's endpoint pair (fixture: main.c:1 -> main.c:5) lands as-is."""
+    _, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_a=[candidate()], flow_count=1)
+    )
+    assert result["slices"][0]["source_sink"] == {
+        "basis": "flow_endpoints",
+        "sources": [{"file": "main.c", "line": 1, "kind": "parameter"}],
+        "sinks": [{"file": "main.c", "line": 5, "kind": "flow_end"}],
+        "pairs": [
+            {
+                "source": {"file": "main.c", "line": 1, "kind": "parameter"},
+                "sink": {"file": "main.c", "line": 5, "kind": "flow_end"},
+            }
+        ],
+        "unmapped": 0,
+    }
+
+
+def test_case_b_sink_is_the_candidate_call_and_sources_are_its_boundaries(
+    monkeypatch, repo, tmp_path
+):
+    data = payloads(case_b=[candidate("sprintf", 5)])
+    backward, _ = slicer.decode_response(data["backward"], "backward")
+    backward["boundaries"] = [
+        {"reason": "entry_parameter", "location": {"file": "main.c", "line": 1}},
+        {"reason": "dependency_root", "location": {"file": "main.c", "line": 3}},
+    ]
+    data["backward"] = response("backward", backward)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["slices"][0]["source_sink"] == {
+        "basis": "backward_boundaries",
+        "sources": [
+            {"file": "main.c", "line": 1, "kind": "entry_parameter"},
+            {"file": "main.c", "line": 3, "kind": "dependency_root"},
+        ],
+        "sinks": [{"file": "main.c", "line": 5, "kind": "candidate_call"}],
+        "pairs": [],
+        "unmapped": 0,
+    }
+
+
+def test_without_an_analysis_case_b_keeps_its_sink_and_case_a_claims_nothing(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    entry = {"file": "main.c", "line": 5, "symbol": "sprintf"}
+    b = source_sink("B", entry, None, sources, repo)
+    assert b["basis"] == "candidate_only" and b["sources"] == []
+    assert b["sinks"] == [{"file": "main.c", "line": 5, "kind": "candidate_call"}]
+    a = source_sink("A", entry, None, sources, repo)
+    assert (a["basis"], a["sources"], a["sinks"], a["pairs"]) == ("none", [], [], [])
+
+
+def test_an_endpoint_outside_the_sources_is_dropped_and_counted(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    payload = {
+        "endpoints": [
+            {"source": {"file": "main.c", "line": 1}, "sink": {"file": "gone.c", "line": 9}}
+        ]
+    }
+    found = source_sink("A", {"file": "main.c", "line": 1}, payload, sources, repo)
+    assert found["sources"] == [{"file": "main.c", "line": 1, "kind": "parameter"}]
+    assert found["sinks"] == [] and found["pairs"] == [] and found["unmapped"] == 1
+
+
+def test_a_cluster_keeps_every_members_sources_and_sinks():
+    def with_ends(id, source, sink):
+        item = make_slice(id, [1, 2, 3])
+        item.update(
+            candidate_key=id,
+            members=[id],
+            analysis={},
+            line_provenance={"data_dependency": [], "candidate_anchor": [], "context": []},
+            source_sink={
+                "basis": "flow_endpoints",
+                "sources": [{"file": "a.c", "line": source, "kind": "parameter"}],
+                "sinks": [{"file": "a.c", "line": sink, "kind": "flow_end"}],
+                "pairs": [],
+                "unmapped": 0,
+            },
+        )
+        return item
+
+    merged = cluster(
+        [with_ends("slice_0001", 1, 3), with_ends("slice_0002", 2, 3)],
+        0.95,
+        {"a.c": ["x", "y", "z"]},
+    )
+    assert len(merged) == 1
+    ends = merged[0]["source_sink"]
+    assert [p["line"] for p in ends["sources"]] == [1, 2]
+    assert [p["line"] for p in ends["sinks"]] == [3]
+    assert ends["basis"] == "flow_endpoints"
+
+
+_PAIR = {"source": {"file": "main.c", "line": 1}, "sink": {"file": "main.c", "line": 5}}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"endpoints": None},
+        {"endpoints": [{"source": {"file": "main.c", "line": 1}}]},
+        {"endpoints": [_PAIR] * 2},
+        {"endpoints_error": 7},
+        {"endpoints": [_PAIR], "endpoints_error": "boom"},
+    ],
+    ids=["null", "no-sink", "more-than-flows", "error-not-str", "both"],
+)
+def test_a_flows_payload_with_bad_endpoints_is_refused(extra):
+    data = {"flow_count": 1, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+    data.update(extra)
+    with pytest.raises(slicer.QueryError):
+        slicer.validate_payload("flows", data, "")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"endpoints_error": "java.util.NoSuchElementException: head of empty list"}],
+    ids=["absent", "errored"],
+)
+def test_a_flows_payload_without_endpoints_is_accepted(extra):
+    """#433 review: `endpoints` is optional, so its failure cannot fail the flows result."""
+    data = {"flow_count": 1, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+    data.update(extra)
+    slicer.validate_payload("flows", data, "")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"endpoints_error": "java.util.NoSuchElementException: head of empty list"}],
+    ids=["absent", "errored"],
+)
+def test_without_endpoints_case_a_is_a_full_slice_with_unavailable_source_sink(
+    monkeypatch, repo, tmp_path, extra
+):
+    """No endpoints -> not recorded (`endpoints_unavailable`), not zero pairs; not degraded."""
+    data = payloads(case_a=[candidate()], flow_count=1)
+    flows, _ = slicer.decode_response(data["flows"], "flows")
+    del flows["endpoints"]
+    flows.update(extra)
+    data["flows"] = response("flows", flows)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    item = result["slices"][0]
+    assert "degraded" not in item["measurement_notes"]
+    assert item["flow_count"] == 1 and item["lines"]
+    assert item["source_sink"] == {
+        "basis": "endpoints_unavailable",
+        "sources": [],
+        "sinks": [],
+        "pairs": [],
+        "unmapped": 0,
+    }
+    for key, value in extra.items():
+        assert item["analysis"][key] == value
+
+
+def test_recorded_zero_endpoints_is_not_unavailable(repo):
+    sources = {"main.c": (repo / "main.c").read_text(encoding="utf-8").splitlines()}
+    entry = {"file": "main.c", "line": 1}
+    assert source_sink("A", entry, {"endpoints": []}, sources, repo)["basis"] == "flow_endpoints"
+    assert source_sink("A", entry, {}, sources, repo)["basis"] == "endpoints_unavailable"
+
+
+def test_a_backward_boundary_without_a_location_is_refused():
+    data = {
+        "flow_count": None,
+        "truncated": False,
+        "lines": [],
+        "node_count": 0,
+        "state_count": 0,
+        "dependency_count": 0,
+        "boundaries": [{"reason": "dependency_root"}],
+        "truncation_reasons": [],
+    }
+    with pytest.raises(slicer.QueryError):
+        slicer.validate_payload("backward", data, "")
+
+
+def test_the_flows_query_emits_the_head_and_last_of_each_kept_flow():
+    """Pins the Scala SPELLING only -- no Joern here, so neither compilation nor runtime
+    behaviour of `keptEndpoints` is tested. What it does check: the pair is head/last, it is
+    computed inside a Try, and the success/failure branches write the two keys the validator
+    knows, with the block's value being the result object (not the match's Unit)."""
+    query = queries.flows_query([{"file": "main.c", "full_name": "entry", "line": 1}], 10)
+    assert "(p.elements.head, p.elements.last)" in query
+    body = query[query.index("val keptEndpoints") :]
+    assert body.startswith("val keptEndpoints = scala.util.Try {")
+    assert 'case scala.util.Success(pairs) => flowsResult.value("endpoints") =' in body
+    assert 'flowsResult.value("endpoints_error") = ujson.Str(' in body
+    # the endpoints are no longer a field of the literal result object
+    assert '"endpoints" ->' not in body
+    # last statement of the result block is the object itself
+    assert re.search(r"\}\s*flowsResult\s*\}; ", body)
+    block = body[: body.rindex("flowsResult")]
+    assert block.count("{") == block.count("}")
