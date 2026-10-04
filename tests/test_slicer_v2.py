@@ -1801,8 +1801,12 @@ def test_a_skipped_candidate_is_degraded_without_a_server_query(monkeypatch, rep
     code, result, transport = run_cli(
         monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(folder / "state.db"),
         "--skip-candidates", _skipping(tmp_path, b_key),
+        "--progress", str(folder / "progress.jsonl"),
     )
     assert transport.stages.count("flows") == 2 and "backward" not in transport.stages
+    events = [json.loads(line) for line in (folder / "progress.jsonl").read_text().splitlines()]
+    skipped = [e["candidate_key"] for e in events if e["event"] == "candidate_skipped"]
+    assert skipped == [b_key]                       # the progress log names what was left out
     assert code == 2 and result["status"] == "partial"
     assert "--skip-candidates: 1 candidate not sliced" in result["error"]
     degraded = [s for s in result["slices"] if s.get("degraded")]
@@ -1810,6 +1814,27 @@ def test_a_skipped_candidate_is_degraded_without_a_server_query(monkeypatch, rep
     assert "--skip-candidates" in degraded[0]["measurement_notes"]["degraded"]
     assert result["counters"]["candidates_degraded"] == 1
     assert result["counters"]["candidates_failed"] == 0
+
+
+def test_without_the_list_the_degraded_note_still_names_the_poison_streak(
+    monkeypatch, repo, tmp_path
+):
+    """The flag off changes nothing: what a poison streak leaves unsliced is noted as that, never
+    as a --skip-candidates skip, and the progress log has no candidate_skipped event."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    folder = tmp_path / "streak"
+    folder.mkdir()
+    _, result, _ = run_cli(monkeypatch, repo, folder, bad,
+                           "--progress", str(folder / "progress.jsonl"))
+    notes = [s["measurement_notes"]["degraded"] for s in result["slices"]]
+    assert notes and all("(poison streak)" in note for note in notes)
+    assert not any("--skip-candidates" in note for note in notes)
+    assert "--skip-candidates" not in result["error"]
+    events = [json.loads(line) for line in (folder / "progress.jsonl").read_text().splitlines()]
+    assert "candidate_skipped" not in {e["event"] for e in events}
 
 
 def test_a_skipped_candidate_stays_unsaved_so_resume_slices_it(monkeypatch, repo, tmp_path):
