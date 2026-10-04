@@ -187,14 +187,25 @@ class BudgetLedger:
             item=overrun[0] if overrun else None,
         )
 
-    def remaining(self) -> dict[str, int]:
-        """항목별 잔량. 음수가 되지 않게 자른다 — 리포트에서 읽는 값이다."""
-        return {
-            "input_tokens": max(0, self._budget.input_tokens - self.input_tokens),
-            "output_tokens": max(0, self._budget.output_tokens - self.output_tokens),
+    def remaining(self) -> dict[str, int | None]:
+        """항목별 잔량. 음수가 되지 않게 자른다 — 리포트에서 읽는 값이다.
+
+        **상한 0인 항목은 `None`이다** -> 0은 `_overrun`이 검사하지 않는 값(상한 없음)인데
+        잔량 0으로 내면 「소진」으로 읽힌다(#483 · `estimate` 출력의 같은 오독이 #435).
+        `0`은 상한이 있고 다 쓴 경우에만 나온다.
+        """
+
+        def left(limit: int, spent: int, per_unit: int) -> int | None:
+            if limit == 0:
+                return None
             # 잔량도 ms로 뺀 뒤 내림한다. 초끼리 빼면 소비 쪽이 먼저 내림되어 **잔량이
             # 실제보다 최대 1초 많게** 나온다 — 리포트에서 읽는 값이라 낙관적으로 틀리는
             # 방향이다.
-            "gpu_seconds": max(0, self._budget.gpu_seconds * 1000 - self.gpu_ms) // 1000,
-            "tool_seconds": max(0, self._budget.tool_seconds * 1000 - self.tool_ms) // 1000,
+            return max(0, limit * per_unit - spent) // per_unit
+
+        return {
+            "input_tokens": left(self._budget.input_tokens, self.input_tokens, 1),
+            "output_tokens": left(self._budget.output_tokens, self.output_tokens, 1),
+            "gpu_seconds": left(self._budget.gpu_seconds, self.gpu_ms, 1000),
+            "tool_seconds": left(self._budget.tool_seconds, self.tool_ms, 1000),
         }
