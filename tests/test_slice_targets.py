@@ -2338,9 +2338,10 @@ def test_write_sites_found_counts_a_line_once() -> None:
     assert (event["write_windows"], event["write_sites_found"]) == (2, 2)
 
 
-# --- 큰 enum은 그 상수 주변만 잘라 싣는다 ------------------------------------------------------
+# --- 큰 enum은 물은 상수 주변만 잘라 싣는다 -----------------------------------------------------
 # index-v4가 enum 상수를 enum 정의 전체로 싣자 2,000자를 넘는 enum이 통째로 버려졌다(2026-10-04 로컬
-# 274표본에서 「크기 초과로 버림」 29 -> 142, run ID 없음). 머리 · 그 상수 앞뒤 · 닫는 줄만 남긴다.
+# 274표본에서 「크기 초과로 버림」 29 -> 142, run ID 없음). 머리 · 물은 상수마다 그 앞뒤 · 닫는 줄만
+# 남긴다.
 _BIG_ENUM = ["typedef enum {"] + [f"    COLOR_{i:03d} = {i}," for i in range(120)] + ["} color_t;"]
 _E_FILE = {"u.c": _U_FILE["u.c"], "e.h": _BIG_ENUM}
 _E_ENUM = Location(file="e.h", symbol="COLOR_060", line_start=1, line_end=len(_BIG_ENUM))
@@ -2383,3 +2384,486 @@ def test_a_small_enum_or_a_non_enum_is_not_trimmed() -> None:
     _, event = _unit_run(ctx, events, _U_F, [("u.c", 2)])
     counts = (event["definitions"], event["definitions_dropped"], event["definitions_trimmed"])
     assert counts == (0, 1, 0)
+
+
+def _enum_constants(*names: str) -> list[Location]:
+    """`GraphIndex.definitions_of`가 내는 모양 — enum 상수마다 **enum 전체** 범위에 상수 이름이
+    `symbol`이다(그 docstring · `index_graph.py`의 `Location(... symbol=name ...)`)."""
+    return [
+        Location(file="e.h", symbol=name, line_start=1, line_end=len(_BIG_ENUM)) for name in names
+    ]
+
+
+def _carried_enum(*names: str, **opts):  # noqa: ANN202, ANN003
+    ctx, events, _, _ = _unit(
+        {**_E_FILE, **opts.pop("files", {})}, [_U_F], auditor_definitions=1,
+        definitions=opts.pop("definitions", lambda _n, _f: _enum_constants(*names)), **opts,
+    )
+    return _unit_run(ctx, events, _U_F, [("u.c", 2)])
+
+
+def _counts(event: dict) -> tuple:
+    return (event["definitions"], event["definitions_dropped"], event["definitions_trimmed"])
+
+
+def test_an_enum_the_total_cap_refuses_is_not_counted_as_trimmed() -> None:
+    """`definitions_trimmed`는 **SOURCE에 실린** 잘린 enum만 센다 — 줄여 놓고 전체 상한에 걸려 못
+    실은 것은 `definitions_dropped`다(PR #485 리뷰 P2-5: 예전엔 `definitions=0 · dropped=1 ·
+    trimmed=1`로 실리지 않은 정의를 실린 것으로 셌다). 통과 경로는
+    `test_an_oversized_enum_is_carried_around_the_asked_constant`가 든다."""
+    source, event = _carried_enum("COLOR_060", auditor_source_tokens=30)
+    assert _counts(event) == (0, 1, 0)
+    assert "COLOR_" not in source
+
+
+@pytest.mark.parametrize("order", [("COLOR_010", "COLOR_110"), ("COLOR_110", "COLOR_010")])
+def test_an_oversized_enum_carries_every_asked_constant_in_one_block(order: tuple) -> None:
+    """한 enum의 상수를 여럿 물으면 상수마다 앞뒤를 남긴 **블록 하나**다(PR #485 리뷰 P2-4: 첫
+    상수 주변만 싣고 둘째는 enum 전체 범위와 겹친다며 사라졌다). 뺀 구간은 머리 앞 5줄
+    (COLOR_000..004) · 두 창 사이 89줄(016..104) · 끝 4줄(116..119). 물은 순서와 상관없다."""
+    source, event = _carried_enum(*order)
+    assert "    COLOR_010 = 10," in source and "    COLOR_110 = 110," in source
+    assert source.count("/* ===== e.h:") == 1
+    # 넓힌 블록의 배너는 줄이기 전 끝 줄을 든다 — 모델이 줄 번호를 되짚는 곳은 배너뿐이다(F4:
+    # 끝 줄을 빼면 `e.h:1-27`로 잘린 길이가 찍힌다)
+    assert f"/* ===== e.h:1-{len(_BIG_ENUM)} ===== */" in source
+    assert _counts(event) == (1, 0, 1)  # trimmed는 상수 수가 아니라 enum 수다
+    assert event["functions"] == 1  # 블록 수는 그대로 — 넓히기는 새 블록이 아니다
+    for gap in (5, 89, 4):
+        assert f"/* ... {gap} lines omitted ... */" in source
+    assert source.count("lines omitted") == 3
+
+
+def test_three_asked_constants_far_apart_all_stay_in_the_enum_block() -> None:
+    """상수 **셋**(010·060·110 — 창이 서로 안 겹친다)을 한 enum에 물으면 셋 다 실리고 뺀 구간 표시는
+    넷(머리 앞·세 창 사이 둘·끝)이다. 셋째를 더할 때 블록을 줄이는 목록(`cut.names`)이 누적되지
+    않으면(변이 `cut.names = names` 삭제) 둘째 창이 조용히 사라지는데 카운터는 `(1, 0, 1)` 그대로라
+    상수 하나만 더 묻는 테스트로는 안 잡힌다(PR #485 3라운드 R2-3)."""
+    source, event = _carried_enum("COLOR_010", "COLOR_060", "COLOR_110")
+    for value in (10, 60, 110):
+        assert f"    COLOR_{value:03d} = {value}," in source, value
+    assert _counts(event) == (1, 0, 1)
+    assert source.count("lines omitted") == 4
+
+
+def test_asked_constants_whose_windows_touch_share_one_stretch() -> None:
+    """창이 겹치는 두 상수(050·058 — 앞뒤 5줄이 053..055에서 겹친다)는 한 구간으로 합친다. 같은
+    줄이 두 번 실리지 않고 뺀 구간 표시는 머리 앞(045..)·끝 둘뿐이다."""
+    source, event = _carried_enum("COLOR_050", "COLOR_058")
+    assert _counts(event) == (1, 0, 1)
+    for i in range(45, 64):
+        assert source.count(f"    COLOR_{i:03d} = ") == 1, i
+    assert "    COLOR_044 = " not in source and "    COLOR_064 = " not in source
+    assert source.count("lines omitted") == 2
+
+
+def test_a_constant_asked_in_a_later_round_joins_the_enum_already_carried() -> None:
+    """같은 enum의 상수가 **다른 조회 묶음**에서 오면(별칭 라운드: 실린 매크로 `MODE`가
+    `COLOR_110`으로 바꿔 넘긴다) 이미 실린 잘린 블록에 합친다 — 블록을 새로 안 만들고 첫 상수만
+    남기지도 않는다. 정의 수는 매크로 + enum = 2, 별칭 라운드가 붙인 수 1."""
+    macro = Location(file="m.h", symbol="MODE", line_start=1, line_end=1)
+
+    def defs(names, _file):  # noqa: ANN001, ANN202
+        if "COLOR_110" in names:
+            return _enum_constants("COLOR_110")
+        return [macro, *_enum_constants("COLOR_010")]
+
+    source, event = _carried_enum(
+        definitions=defs, files={"m.h": ["#define MODE COLOR_110"]}, auditor_callee_wrappers=1
+    )
+    assert "    COLOR_010 = 10," in source and "    COLOR_110 = 110," in source
+    assert source.count("/* ===== e.h:") == 1
+    assert _counts(event) == (2, 0, 1)
+    assert event["alias_definitions"] == 1
+
+
+def test_a_constant_that_would_overflow_the_enum_block_is_dropped_and_the_block_stays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """둘째 상수를 합치면 블록이 정의 하나의 글자 상한을 넘을 때는 합치지 않는다 — 이미 실린 블록은
+    그대로이고 못 합친 상수 하나를 `definitions_dropped`가 센다(`trimmed`는 enum 수라 1 그대로)."""
+    from src.orchestrator import runner
+
+    one = runner._block(_E_ENUM, runner._trim_enum("\n".join(_BIG_ENUM), ["COLOR_010"]),
+                        end=len(_BIG_ENUM))
+    monkeypatch.setattr(runner, "_AUDITOR_DEFINITION_CHARS", len(one))
+    source, event = _carried_enum("COLOR_010", "COLOR_110")
+    assert "    COLOR_010 = 10," in source and "    COLOR_110 = 110," not in source
+    assert _counts(event) == (1, 1, 1)
+
+
+def test_a_constant_the_enum_text_does_not_show_at_a_line_head_is_not_added() -> None:
+    """줄 머리에 안 나오는 상수(`_trim_enum`이 못 찾음)는 합치지 않는다 — 블록은 그대로이고 그 상수
+    하나를 `definitions_dropped`가 센다. 같은 상수를 두 번 물어도(`COLOR_010` 둘) 한 번이고 뺀 수에
+    안 든다."""
+    from src.orchestrator import runner
+
+    assert runner._trim_enum("\n".join(_BIG_ENUM), ["COLOR_010", "COLOR_NOPE"]) is None
+    source, event = _carried_enum("COLOR_010", "COLOR_NOPE")
+    assert "    COLOR_010 = 10," in source and _counts(event) == (1, 1, 1)
+    _, event = _carried_enum("COLOR_010", "COLOR_010")
+    assert _counts(event) == (1, 0, 1)
+    # 「보이는 이름」 검사는 배너 줄을 안 본다 — 파일 이름 `e.h`의 낱말 `e`는 정의가 아니다
+    _, event = _carried_enum("COLOR_010", "e")
+    assert _counts(event) == (1, 1, 1)
+
+
+# PR #485 리뷰 P2-3의 4파일 — `a.c::f`와 `b.c::g`가 같은 이름 LIMIT에 다른 헤더를 가진다
+_FOUR_FILES = {
+    "a.c": '#include "a.h"\nint f(void) { return 0; }\n',
+    "b.c": '#include "b.h"\nint g(void) { return LIMIT; }\n',
+    "a.h": "#define LIMIT 1\n",
+    "b.h": "#define LIMIT 2\n",
+}
+
+
+def test_names_of_a_body_are_asked_against_that_bodys_own_file() -> None:
+    """실린 함수가 둘 이상의 파일에 걸치면 정의 조회는 **파일마다** 그 파일 본문이 쓰는 이름을 그
+    파일 기준으로 부른다(PR #485 리뷰 P2-3: 이름을 합쳐 앵커 파일 하나로 부르면 `b.c::g`가 쓰는
+    `LIMIT`이 `a.h`의 1로 풀렸다). 같은 이름이 파일마다 다르게 풀리면 둘 다 싣는다."""
+    files = {name: text.splitlines() for name, text in _FOUR_FILES.items()}
+    f = Location(file="a.c", symbol="f", line_start=2, line_end=2)
+    g = Location(file="b.c", symbol="g", line_start=2, line_end=2)
+    limit = {"a.c": Location(file="a.h", symbol="LIMIT", line_start=1, line_end=1),
+             "b.c": Location(file="b.h", symbol="LIMIT", line_start=1, line_end=1)}
+    calls: list[tuple[set, str]] = []
+
+    def defs(names, file):  # noqa: ANN001, ANN202
+        calls.append((set(names), file))
+        return [limit[file]] if "LIMIT" in names else []
+
+    ctx, events, _, _ = _unit(files, [f, g], auditor_definitions=1, definitions=defs)
+    source, event = _unit_run(ctx, events, f, [("a.c", 2), ("b.c", 2)])
+    assert calls == [({"f"}, "a.c"), ({"g", "LIMIT"}, "b.c")]
+    assert "#define LIMIT 2" in source and "#define LIMIT 1" not in source
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)
+
+
+def test_one_name_resolved_two_ways_by_two_files_carries_both_definitions() -> None:
+    """두 파일 본문이 같은 이름을 쓰고 파일마다 다른 정의로 풀리면 **둘 다** 싣는다 — 위치가 블록
+    배너에 있어 구별되고, 하나로 합쳐 보이면 한쪽 본문이 틀린 값을 본다. 같은 Location은 한 번."""
+    files = {
+        "a.c": ["int f(void) { return LIMIT; }"], "b.c": ["int g(void) { return LIMIT; }"],
+        "a.h": ["#define LIMIT 1"], "b.h": ["#define LIMIT 2"], "c.h": ["#define SHARED 3"],
+    }
+    f = Location(file="a.c", symbol="f", line_start=1, line_end=1)
+    g = Location(file="b.c", symbol="g", line_start=1, line_end=1)
+    found = {
+        "a.c": [Location(file="a.h", symbol="LIMIT", line_start=1, line_end=1)],
+        "b.c": [Location(file="b.h", symbol="LIMIT", line_start=1, line_end=1)],
+    }
+    ctx, events, _, _ = _unit(files, [f, g], auditor_definitions=1,
+                              definitions=lambda _n, file: found[file])
+    source, event = _unit_run(ctx, events, f, [("a.c", 1), ("b.c", 1)])
+    assert "#define LIMIT 1" in source and "#define LIMIT 2" in source
+    assert (event["definitions"], event["definitions_dropped"]) == (2, 0)
+    shared = [Location(file="c.h", symbol="LIMIT", line_start=1, line_end=1)]
+    same = {file: shared for file in found}
+    ctx, events, _, _ = _unit(files, [f, g], auditor_definitions=1,
+                              definitions=lambda _n, file: same[file])
+    _, event = _unit_run(ctx, events, f, [("a.c", 1), ("b.c", 1)])
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)  # 같은 위치는 한 번
+
+
+def test_a_rename_macro_target_is_asked_against_the_file_that_used_the_macro() -> None:
+    """별칭 라운드도 같다 — `b.c::g`가 쓴 매크로 `MODE`가 `T`로 바꿔 넘기면 `T`는 `b.c` 기준으로
+    조회한다(앵커 `a.c`가 아니라). `a.c::f`가 `T`를 직접 써서 `a.c` 기준으로는 이미 조회했어도
+    `b.c` 기준은 한 번 더 한다(이름이 아니라 (이름, 파일)로 센다)."""
+    files = {
+        "a.c": ["int f(void) { return A + T; }"], "b.c": ["int g(void) { return MODE; }"],
+        "h.h": ["#define MODE T"],
+    }
+    f = Location(file="a.c", symbol="f", line_start=1, line_end=1)
+    g = Location(file="b.c", symbol="g", line_start=1, line_end=1)
+    calls: list[tuple[set, str]] = []
+
+    def defs(names, file):  # noqa: ANN001, ANN202
+        calls.append((set(names), file))
+        mode = Location(file="h.h", symbol="MODE", line_start=1, line_end=1)
+        return [mode] if "MODE" in names else []
+
+    ctx, events, _, _ = _unit(
+        files, [f, g], auditor_definitions=1, auditor_callee_wrappers=1, definitions=defs
+    )
+    _unit_run(ctx, events, f, [("a.c", 1), ("b.c", 1)])
+    assert calls == [({"f", "A", "T"}, "a.c"), ({"g", "MODE"}, "b.c"), ({"T"}, "b.c")]
+
+
+def test_bodies_in_the_anchor_file_make_one_definition_lookup_as_before() -> None:
+    """실린 함수가 모두 앵커 파일이면 조회는 **한 번**, 이름은 전부 합친 집합, 파일은 앵커 —
+    파일별로 갈라 부르게 된 뒤에도 흔한 경우의 호출과 SOURCE는 예전과 같다(바이트 동일)."""
+    calls: list[tuple[set, str]] = []
+    macro = Location(file="u.c", symbol="x10", line_start=30, line_end=30)
+
+    def defs(names, file):  # noqa: ANN001, ANN202
+        calls.append((set(names), file))
+        return [macro]
+
+    ctx, events, _, _ = _unit(_U_FILE, [_U_F, _U_H], auditor_definitions=1, definitions=defs)
+    source, _ = _unit_run(ctx, events, _U_F, [("u.c", 2), ("u.c", 11)])
+    ((names, file),) = calls
+    assert file == "u.c" and {"w1", "x1", "w10", "x10"} <= names
+    assert source.count("/* ===== u.c:") == 3  # f · h · 정의
+
+
+def _load_indexer():  # noqa: ANN202
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "indexer.py"
+    spec = importlib.util.spec_from_file_location("harness_indexer_slice_targets", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _real_source(tmp_path: Path, files: dict[str, str], entry: str, lines: list, **opts):  # noqa: ANN202, ANN003
+    """**실제 인덱서 → `GraphIndex` → `_auditor_source`.** `files`(이름 → 원문)를 `indexer.main`으로
+    색인하고 그 `definitions_of`(비제품 강등 켠 것 — 러너가 `auditor_definitions`를 켜면 쓰는 꼴)를
+    조회로 꽂는다. mock이 내는 위치는 「잡히는 모양」만 고르게 되므로(CLAUDE.md §2.5) 실제 인덱스가
+    같은 범위에 내는 typedef 이름·태그 행까지 이 경로로 핀한다. `entry`는 앵커 함수 이름이다."""
+    from src.adapters import index_graph
+
+    root = tmp_path / "src"
+    root.mkdir()
+    for name, text in files.items():
+        (root / name).write_text(text, encoding="utf-8")
+    out = tmp_path / "out" / "index.json"
+    argv = ["--out", str(out), "--root", str(root), *(str(root / n) for n in sorted(files))]
+    assert _load_indexer().main(argv) == 0
+    graph = index_graph.GraphIndex(out)
+    symbols = [s for n in sorted(files) if n.endswith(".c") for s in graph.symbols_for(n) or []]
+    ctx, events, _, _ = _unit(
+        {name: text.splitlines() for name, text in files.items()}, symbols,
+        auditor_definitions=1,
+        definitions=lambda names, file: graph.definitions_of(names, file, demote_nonproduct=True),
+        **opts,
+    )
+    return _unit_run(ctx, events, next(s for s in symbols if s.symbol == entry), lines)
+
+
+def test_a_body_from_another_file_gets_its_own_headers_constant(tmp_path: Path) -> None:
+    """앵커 `a.c::f`, 슬라이스가 `b.c::g`도 지나 두 함수가 실리면 `g`가 쓰는 `LIMIT`은 `b.h`의 2다
+    — 앵커 파일 `a.c`의 include 그래프로 풀어 `a.h`의 1이 붙던 것이 PR #485 리뷰 P2-3이다(두
+    헤더가 같은 이름을 정의해 `_reachable`이 앵커의 헤더를 고른다)."""
+    source, event = _real_source(tmp_path, _FOUR_FILES, "f", [("a.c", 2), ("b.c", 2)])
+    assert "int g(void)" in source
+    assert "#define LIMIT 2" in source and "#define LIMIT 1" not in source
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)
+
+
+_ENUM_ROWS = "".join(f"    COLOR_{i:03d} = {i},\n" for i in range(120))
+# 실제 인덱스는 같은 범위에 상수 행 말고 typedef 이름·태그 행도 낸다(PR #485 2라운드 F1)
+_ENUM_HEADERS = {
+    "typedef": "typedef enum {\n" + _ENUM_ROWS + "} color_t;\n",
+    "tag": "enum color {\n" + _ENUM_ROWS + "};\n",
+}
+_ENUM_BODY = '#include "e.h"\nint f(void) {{\n    {decl}\n    return {expr};\n}}\n'
+
+
+@pytest.mark.parametrize(
+    ("kind", "decl", "expr", "lines", "wanted"),
+    [
+        # 상수 하나 + 타입 이름 — 잃은 것 0, 이벤트는 타입 이름이 없을 때와 같아야 한다
+        ("typedef", "color_t c = COLOR_010;", "c", [3], (10,)),
+        ("typedef", "color_t c = COLOR_010;", "c + COLOR_110", [3, 4], (10, 110)),
+        ("tag", "enum color c = COLOR_010;", "c + COLOR_110", [3, 4], (10, 110)),
+    ],
+)
+def test_a_type_or_tag_name_on_the_enums_range_is_not_a_constant_that_failed_to_join(
+    tmp_path: Path, kind: str, decl: str, expr: str, lines: list, wanted: tuple
+) -> None:
+    """실제 인덱스는 큰 `typedef enum {…} color_t;`의 범위에 상수 행 말고 `color_t`(typedef 이름)
+    행도 내고, `enum color {…}`는 태그 행을 낸다. 그 이름은 줄 머리 상수가 아니라 `_trim_enum`이
+    못 찾지만 **정의는 이미 SOURCE에 보인다**(닫는 줄·머리) — 못 더했다고 `definitions_dropped`로
+    세면 게이트 사유 `DEFINITION_DROPPED`까지 거짓 양성이다(PR #485 2라운드 F1)."""
+    text = _ENUM_BODY.format(decl=decl, expr=expr)
+    source, event = _real_source(
+        tmp_path, {"u.c": text, "e.h": _ENUM_HEADERS[kind]}, "f", [("u.c", n) for n in lines]
+    )
+    for value in wanted:
+        assert f"    COLOR_{value:03d} = {value}," in source, value
+    assert _counts(event) == (1, 0, 1)
+
+
+def test_several_constants_on_one_line_of_an_enum_are_one_visible_line(tmp_path: Path) -> None:
+    """한 줄에 상수 셋씩 100줄(`K010_A = .., K010_B = .., K010_C = ..`) — 둘째 `K010_B`는 줄 머리가
+    아니라 `_trim_enum`이 못 찾지만 첫 `K010_A`의 줄에 같이 실려 있다 -> 보이는 정의라 안 센다
+    (F1)."""
+    rows = "".join(
+        f"    K{i:03d}_A = {i}, K{i:03d}_B = {i + 1}, K{i:03d}_C = {i + 2},\n" for i in range(100)
+    )
+    files = {
+        "u.c": '#include "e.h"\nint f(void) {\n    return K010_A + K010_B;\n}\n',
+        "e.h": "enum {\n" + rows + "};\n",
+    }
+    source, event = _real_source(tmp_path, files, "f", [("u.c", 3)])
+    assert "K010_A = 10, K010_B = 11" in source
+    assert _counts(event) == (1, 0, 1)
+
+
+def test_a_name_seen_on_the_enums_block_does_not_stop_a_later_constant_from_joining() -> None:
+    """보이는 이름(typedef 이름)을 「이미 처리한 이름」에 기억해 둘 뿐 **블록을 줄이는 이름 목록에는
+    안 넣는다** — 넣으면 줄 머리 상수가 아닌 그 이름 때문에 `_trim_enum`이 `None`을 내 그 뒤의
+    상수가 영영 못 합친다. 조회가 상수 · typedef 이름 · 상수 순으로 오는 mock(실제 인덱스의 정렬은
+    `COLOR_…` < `color_t`라 이름이 뒤에 오지만, 이름이 앞서 오는 이름이면 이 순서다)."""
+    type_row = Location(file="e.h", symbol="color_t", line_start=1, line_end=len(_BIG_ENUM))
+    rows = [*_enum_constants("COLOR_010"), type_row, *_enum_constants("COLOR_110")]
+    source, event = _carried_enum(definitions=lambda _n, _f: rows)
+    assert "    COLOR_010 = 10," in source and "    COLOR_110 = 110," in source
+    assert _counts(event) == (1, 0, 1)
+
+
+def _size_of(source: str) -> int:
+    """`_unit`의 토큰 카운터(단어 수)로 센 SOURCE의 총 크기 — 블록 크기의 합 + 블록 사이 1."""
+    return len(source.split()) + source.count("/* ===== ") - 1
+
+
+def test_widening_an_enum_block_is_refused_exactly_at_the_total_cap() -> None:
+    """넓히기의 전체 상한 검사는 정확히 상한에서 수락·거절한다 — 넓힌 뒤 크기가 상한이면 싣고 1
+    넘으면 못 더하고 `dropped`다(변이: 그 검사를 빼면 거절 쪽이 빨개진다 · PR #485 2라운드 F4)."""
+    wide, _ = _carried_enum("COLOR_010", "COLOR_110", auditor_source_tokens=10_000)
+    need = _size_of(wide)
+    source, event = _carried_enum("COLOR_010", "COLOR_110", auditor_source_tokens=need)
+    assert "    COLOR_110 = 110," in source and _counts(event) == (1, 0, 1)
+    source, event = _carried_enum("COLOR_010", "COLOR_110", auditor_source_tokens=need - 1)
+    assert "    COLOR_010 = 10," in source and "    COLOR_110 = 110," not in source
+    assert _counts(event) == (1, 1, 1)
+
+
+def test_widening_an_enum_block_keeps_the_size_account_exact_for_what_follows() -> None:
+    """블록을 넓힌 만큼만 크기가 는다 — 옛 블록을 안 빼면(변이) 뒤따르는 정의가 상한 안인데도
+    허위로 밀린다. 넓힌 enum 뒤에 작은 매크로 정의를 하나 두고 총 상한을 **딱 그 합**으로 잡으면
+    둘 다 실리고, 1 모자라면 매크로만 `dropped`다(PR #485 2라운드 F4)."""
+    macro = Location(file="m.h", symbol="LIMIT", line_start=1, line_end=1)
+    opts = {
+        "definitions": lambda _n, _f: [*_enum_constants("COLOR_010", "COLOR_110"), macro],
+        "files": {"m.h": ["#define LIMIT 64"]},
+    }
+    full, event = _carried_enum(auditor_source_tokens=10_000, **opts)
+    assert _counts(event) == (2, 0, 1)
+    need = _size_of(full)
+    source, event = _carried_enum(auditor_source_tokens=need, **opts)
+    assert "#define LIMIT 64" in source and _counts(event) == (2, 0, 1)
+    source, event = _carried_enum(auditor_source_tokens=need - 1, **opts)
+    assert "#define LIMIT 64" not in source and _counts(event) == (1, 1, 1)
+
+
+def test_a_constant_that_could_not_join_is_not_counted_dropped_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """못 더한 상수는 기억해 둔다 — `a.c`가 `COLOR_110`을 직접 쓰고 `b.c`의 매크로 `MODE`가 같은
+    상수로 바꿔 넘기면 별칭 라운드가 같은 상수를 (이름, 파일) 쌍으로 한 번 더 묻는다. 둘째에서도
+    넓히기가 안 되지만 한 상수라 `definitions_dropped`는 1이다(예전 `(2, 2, 1)` — PR #485 2라운드
+    F7)."""
+    from src.orchestrator import runner
+
+    one = runner._block(_E_ENUM, runner._trim_enum("\n".join(_BIG_ENUM), ["COLOR_010"]),
+                        end=len(_BIG_ENUM))
+    monkeypatch.setattr(runner, "_AUDITOR_DEFINITION_CHARS", len(one))  # 상수 하나만 들어간다
+    files = {
+        "a.c": ["int f(void) { return COLOR_010 + COLOR_110; }"],
+        "b.c": ["int g(void) { return MODE; }"], "e.h": _BIG_ENUM,
+        "m.h": ["#define MODE COLOR_110"],
+    }
+    f = Location(file="a.c", symbol="f", line_start=1, line_end=1)
+    g = Location(file="b.c", symbol="g", line_start=1, line_end=1)
+    macro = Location(file="m.h", symbol="MODE", line_start=1, line_end=1)
+
+    def defs(names, _file):  # noqa: ANN001, ANN202
+        asked = sorted(name for name in names if name.startswith("COLOR_"))
+        return [*([macro] if "MODE" in names else []), *_enum_constants(*asked)]
+
+    ctx, events, _, _ = _unit(
+        files, [f, g], auditor_definitions=1, auditor_callee_wrappers=1, definitions=defs
+    )
+    source, event = _unit_run(ctx, events, f, [("a.c", 1), ("b.c", 1)])
+    assert "COLOR_110 =" not in source
+    assert _counts(event) == (2, 1, 1)
+
+
+# 같은 매크로 이름 MODE — a.h는 T로 바꿔 넘기고 b.h는 상수 5. T도 헤더마다 값이 다르다
+_ALIAS_FILES = {
+    "a.c": '#include "a.h"\nint f(void) { return MODE; }\n',
+    "b.c": '#include "b.h"\nint g(void) { return MODE; }\n',
+    "a.h": "#define T 1\n#define MODE T\n",
+    "b.h": "#define T 99\n#define MODE 5\n",
+}
+
+
+def test_an_alias_target_is_asked_only_for_the_files_that_resolved_the_alias(
+    tmp_path: Path,
+) -> None:
+    """별칭 대상은 **그 별칭 매크로 정의로 풀린 파일**의 기준으로만 조회한다 — 두 본문이 모두
+    `MODE`를 써도 `b.c`의 `MODE`는 `b.h`의 5라 `T`와 무관하다. 그 매크로를 쓴 모든 파일로 귀속하면
+    `b.h`의 `#define T 99`가 붙는다(틀린 정의가 붙는 쪽이 안 붙는 쪽보다 나쁘다 — PR #485 2라운드
+    F3, 실제 인덱서 4파일)."""
+    source, event = _real_source(
+        tmp_path, _ALIAS_FILES, "f", [("a.c", 2), ("b.c", 2)], auditor_callee_wrappers=1
+    )
+    assert "#define T 1" in source and "#define MODE T" in source and "#define MODE 5" in source
+    assert "#define T 99" not in source
+    assert (event["definitions"], event["alias_definitions"]) == (3, 1)
+
+
+def test_limitation_a_type_name_asked_first_drops_the_whole_enum_and_hides_its_constants(
+    tmp_path: Path,
+) -> None:
+    """**이 동작은 한계이지 의도가 아니다**(수정 전과 같은 선행 결함 — 이슈 후보). 조건은 「줄 머리
+    상수가 아닌 이름(typedef 이름·태그)이 enum의 줄 머리 상수보다 **먼저 처리된다**」이다 — 처리
+    순서는 정의 조회의 이름 정렬 다음에 슬라이스 줄에 나온 이름이 앞으로 당겨진 순서(안정 정렬)다.
+    이 테스트는 그중 「슬라이스 줄에는 타입 이름(`color_t c;`)만 있고 상수는 다른 줄」인 꼴이다(정렬
+    사유의 꼴은 아래 짝 테스트). 타입 이름 행이 먼저 오면 `_trim_enum`이 `None`이라 큰 enum이
+    **통째로** `dropped`되고, 그 범위가 `seen`에 올라 뒤따르는 `COLOR_010`·`COLOR_110`은 겹침으로
+    조용히 안 실린다. 고치는 날 이 테스트가 빨개지면 기대값을 `(1, 0, 1)`과 두 상수의 실림으로
+    뒤집는다."""
+    text = (
+        '#include "e.h"\nint f(void) {\n    color_t c;\n    c = COLOR_010;\n'
+        "    return c + COLOR_110;\n}\n"
+    )
+    source, event = _real_source(
+        tmp_path, {"u.c": text, "e.h": _ENUM_HEADERS["typedef"]}, "f", [("u.c", 3)]
+    )
+    assert "COLOR_010 =" not in source and "COLOR_110 =" not in source
+    assert _counts(event) == (0, 1, 0)
+
+
+def test_limitation_a_type_name_that_sorts_before_its_constants_hides_them_on_the_slice(
+    tmp_path: Path,
+) -> None:
+    """**이 동작은 한계이지 의도가 아니다**(수정 전과 같은 선행 결함 — 이슈 후보). 위 한계가
+    「슬라이스 줄에 이름만 있을 때」만이 아니라 **타입·태그 이름이 상수보다 정렬상 앞서면** 타입과
+    상수가 모두 슬라이스 줄에 있어도 난다는 짝: FFmpeg 꼴 `enum AVPixelFormat { AV_PIX_FMT_…}`에서
+    `AVPixelFormat`(`AVP`)이 `AV_PIX_FMT_X010`(`AV_`)보다 앞서 처리돼 enum이 통째로 `dropped`되고
+    두 상수가 안 실린다 — **이 PR이 겨냥한 FFmpeg 꼴에서 상수 주변만 싣는 기능이 걸리지 않는다.**
+    고치는 날 이 테스트가 빨개지면 기대값을 `(1, 0, 1)`과 두 상수의 실림으로 뒤집는다."""
+    rows = "".join(f"    AV_PIX_FMT_X{i:03d} = {i},\n" for i in range(120))
+    header = "enum AVPixelFormat {\n    AV_PIX_FMT_NONE = -1,\n" + rows + "    AV_PIX_FMT_NB\n};\n"
+    files = {
+        "pix.h": header,
+        "u.c": (
+            '#include "pix.h"\nint f(void) {\n    enum AVPixelFormat fmt = AV_PIX_FMT_X010;\n'
+            "    return fmt == AV_PIX_FMT_X110;\n}\n"
+        ),
+    }
+    source, event = _real_source(tmp_path, files, "f", [("u.c", 3), ("u.c", 4)])
+    assert "AV_PIX_FMT_X010 =" not in source and "AV_PIX_FMT_X110 =" not in source
+    assert _counts(event) == (0, 1, 0)
+
+
+def test_limitation_a_constant_only_mentioned_in_the_block_counts_as_shown(
+    tmp_path: Path,
+) -> None:
+    """**이 동작은 한계이지 의도가 아니다**(수정 전과 같은 침묵 — 이슈 후보). 줄 머리 상수가 아닌
+    이름은 이미 실린 블록에 **낱말로** 있으면 보이는 것으로 읽는다(`widen_enum`). 낱말이 보이는 것과
+    그 이름의 **정의가 보이는 것**은 다르다 — 끝줄 `AAA_ALIAS = OP005_B,`가 비머리 상수를 값으로
+    언급하면 `OP005_B = 6`은 SOURCE에 없는데 `definitions_dropped`는 0이다(정직하면 1). 주석이
+    언급해도 같다. 고치는 날 이 테스트가 빨개지면 기대값을 `(1, 1, 1)`로 뒤집는다."""
+    rows = "".join(f"    OP{i:03d}_A = {i}, OP{i:03d}_B = {i + 1},\n" for i in range(100))
+    files = {
+        "e.h": "typedef enum {\n" + rows + "    AAA_ALIAS = OP005_B,\n} op_t;\n",
+        "u.c": '#include "e.h"\nint f(void) {\n    return AAA_ALIAS + OP005_B;\n}\n',
+    }
+    source, event = _real_source(tmp_path, files, "f", [("u.c", 3)])
+    assert "AAA_ALIAS = OP005_B" in source and "OP005_B = 6" not in source
+    assert _counts(event) == (1, 0, 1)
