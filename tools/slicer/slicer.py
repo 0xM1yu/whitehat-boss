@@ -532,6 +532,8 @@ class Slicer(SlicingStages):
         # #377 (b): repo-relative files whose candidates are sliced first (--priority-files) --
         # inside each case under the default `ba`, ahead of the whole rest under `ab`.
         self.priority_files: set[str] | None = None
+        # --skip-candidates: candidate keys this process does not query (not part of the contract).
+        self.skip_keys: frozenset[str] = frozenset()
         # --priority-case-a: that list also steers WHICH Case A methods exist (candidates_a_query),
         # not only the order. Needs priority_files; main() refuses the flag without a list.
         self.priority_case_a = False
@@ -991,6 +993,16 @@ def parser() -> argparse.ArgumentParser:
         "instead of the fixed p %% N split; a died shard's claims come back only by --resume "
         "with the same I/N",
     )
+    # tools/slice_sharded.py --restart-on-deadline: a shard restarted after a query hit its deadline
+    # must not re-attempt that candidate -- its claim comes back with --resume and the checkpoint
+    # holds nothing for it -- so the restarted process is told to leave it. Which candidates run,
+    # not how: not part of the run contract (same as --shard).
+    result.add_argument(
+        "--skip-candidates", type=Path, help="file of candidate keys, one per line (blank lines "
+        "and lines starting with # are skipped): this process does not slice them -- one already "
+        "complete in the checkpoint is reused, any other gets the anchor-only degraded slice and "
+        "stays unsaved, so a later --resume slices it",
+    )
     for option in ("--max-call-depth", "--max-args-to-allow", "--max-output-args-expansion"):
         result.add_argument(
             option,
@@ -1056,6 +1068,13 @@ def read_priority_files(path: Path, repo: Path) -> set[str]:
     return names
 
 
+def read_skip_keys(path: Path) -> frozenset[str]:
+    """The --skip-candidates list: a candidate key per line, blank lines and `#` lines skipped
+    (utf-8-sig: a BOM must not stick to line 1)."""
+    lines = (line.strip() for line in path.read_text(encoding="utf-8-sig").splitlines())
+    return frozenset(line for line in lines if line and not line.startswith("#"))
+
+
 def write_result(path: Path, result: dict) -> None:
     """Publish only a complete artifact; failed writes must not destroy an earlier run."""
     encoded = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode(
@@ -1099,6 +1118,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.priority_files and args.export_only:
         # Export reads the order the checkpoint was bound with; a list here would change nothing.
         cli.error("--priority-files has no effect with --export-only")
+    if args.skip_candidates and (args.export_only or args.prepare_only):
+        cli.error("--skip-candidates has no effect with --export-only or --prepare-only")
+    skip = frozenset()
+    if args.skip_candidates:
+        try:
+            skip = read_skip_keys(args.skip_candidates)
+        except (OSError, UnicodeError) as exc:
+            cli.error(f"--skip-candidates unreadable: {exc}")
     if args.priority_case_a and not args.priority_files:
         cli.error("--priority-case-a needs --priority-files")
     if args.import_include_root and args.compile_commands:
@@ -1212,6 +1239,7 @@ def main(argv: list[str] | None = None) -> int:
         "import_include_root": args.import_include_root,
     }
     job.priority_files = priority
+    job.skip_keys = skip
     job.priority_case_a = args.priority_case_a
     job.import_include_root = args.import_include_root
     job.result["settings"] = job.settings

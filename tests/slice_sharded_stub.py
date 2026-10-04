@@ -2,8 +2,10 @@
 
 Not a Joern protocol fake: it fakes what tools/slice_sharded.py reads -- a listening port, the
 prepared checkpoint's candidate list, the CPG file, exit codes, the merge counters, --out.
-Behaviour by env: STUB_SERVER ok|die|deaf|deaf-zombie|graceful|zombie-leader, STUB_SERVER_DELAY
-seconds, STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang, STUB_CANDIDATES (default 40).
+Behaviour by env: STUB_SERVER ok|die|die-restart|die-restart0|hang-restart0|deaf|deaf-zombie|
+graceful|zombie-leader, STUB_SERVER_DELAY seconds, STUB_RESTART_DELAY seconds (a restarted server's
+boot instead), STUB_PREPARE ok|fail, STUB_SHARD ok|die|die0|hang|deadline|deadline0,
+STUB_DEADLINES (default 1), STUB_AFTER_RESTART ok|die, STUB_CANDIDATES (default 40).
 
 `deaf` is Joern's shape: the launcher (this process) is an `sh` that runs the server as a child, and
 the server ignores SIGTERM like a JVM whose shutdown hook cannot finish while a query runs --
@@ -13,6 +15,12 @@ wait()ed for: a zombie in the process group, which stays one after the server is
 subreaper that adopts it (a container's PID 1) does not reap.
 `graceful` handles SIGTERM with a shutdown that takes a moment and leaves `term.marker` when done.
 `zombie-leader`: the main thread exits first, a thread keeps the listening socket.
+`die-restart` boots once and dies at boot in a `restartN` directory (a restarted server);
+`die-restart0` only in shard 0's; `hang-restart0` boots forever there (never listens).
+Every server that listens leaves `listening` (its pid) in its cwd.
+`deadline` (every shard) / `deadline0` (shard 0): the shard writes the progress events a query that
+hit its deadline leaves, then blocks like a slicer waiting behind the abandoned query -- until it is
+killed -- unless its --skip-candidates list already holds STUB_DEADLINES keys: then it completes.
 """
 
 import ctypes
@@ -64,9 +72,20 @@ def zombie_leader(port: int) -> int:
     return 0
 
 
+def restarted_in() -> str | None:
+    """`shardN` when this server runs in `shardN/restartM` (a restart's server), else None."""
+    here = Path.cwd()
+    return here.parent.name if here.name.startswith("restart") else None
+
+
 def serve(port: int) -> int:
     mode = os.environ.get("STUB_SERVER")
-    if mode == "die":
+    shard = restarted_in()
+    if mode == "hang-restart0" and shard == "shard0":
+        time.sleep(30)  # a JVM that boots forever: the tool gives up on it and stops it
+        return 3
+    if (mode == "die" or (mode == "die-restart" and shard)
+            or (mode == "die-restart0" and shard == "shard0")):
         print("stub server: died at boot")
         return 3
     if mode == "zombie-leader":
@@ -77,10 +96,16 @@ def serve(port: int) -> int:
 
 
 def listen(port: int) -> int:
-    time.sleep(float(os.environ.get("STUB_SERVER_DELAY", "0")))  # a slow JVM boot
+    boot = os.environ.get("STUB_RESTART_DELAY") if restarted_in() else None
+    time.sleep(float(boot or os.environ.get("STUB_SERVER_DELAY", "0")))  # a slow JVM boot
+    Path("workspace").mkdir(exist_ok=True)  # where Joern keeps the imported graph, in its cwd
+    Path("workspace", "cpg.bin").write_text("graph")
     listener = socket.socket()
+    if os.name != "nt":
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # a restart rebinds the port
     listener.bind(("127.0.0.1", port))
     listener.listen()
+    Path("listening").write_text(str(os.getpid()))  # this server bound its port (not a stale one)
     listener.settimeout(1)
     deadline = time.time() + 120  # a stub orphaned by a dead test does not outlive it for long
     while time.time() < deadline:
@@ -97,6 +122,19 @@ def merge(merged: Path, shards: list[Path]) -> int:
     merged.write_text("merged")
     print(json.dumps({"candidates": candidates, "complete": done}))
     return 2 if done < candidates else 0
+
+
+DEADLINE_ERROR = "Query deadline exceeded (600.0 seconds); server execution may continue"
+
+
+def hit_deadline(progress: str, key: str) -> None:
+    """What tools/slicer/slicer.py appends when a query runs into its deadline."""
+    events = [{"event": "query_start", "stage": "flows"},
+              {"event": "query_error", "stage": "flows", "error": DEADLINE_ERROR},
+              {"event": "candidate_failed", "error": DEADLINE_ERROR}]
+    with open(progress, "a", encoding="utf-8") as stream:
+        for event in events:
+            stream.write(json.dumps({"time": time.time(), "candidate_key": key, **event}) + "\n")
 
 
 def slicer(argv: list[str]) -> int:
@@ -116,9 +154,20 @@ def slicer(argv: list[str]) -> int:
         return 1 if os.environ.get("STUB_PREPARE") == "fail" else 2
     folder = checkpoint.parent
     (folder / "argv.json").write_text(json.dumps(argv))
+    with open(folder / "argvs.jsonl", "a", encoding="utf-8") as stream:  # one line per start
+        stream.write(json.dumps(argv) + "\n")
     index, count = map(int, (option(argv, "--shard") or "0/1").split("/"))
     mode = os.environ.get("STUB_SHARD", "ok")
-    if mode == "hang":
+    if mode == "deadline" or (mode == "deadline0" and index == 0):
+        skipped = option(argv, "--skip-candidates")
+        known = len(Path(skipped).read_text().split()) if skipped else 0
+        if known < int(os.environ.get("STUB_DEADLINES", "1")):
+            hit_deadline(option(argv, "--progress"), f"stub-{index}-{known}")
+            time.sleep(20)  # blocked behind the abandoned query until the tool kills it
+            return 2
+        if os.environ.get("STUB_AFTER_RESTART") == "die":
+            return 1  # the restarted slicer itself fails
+    elif mode == "hang":
         # Long enough for the tool to stop it, short enough that a tool which never does fails
         # the test instead of hanging it; ends without completing anything.
         time.sleep(20)
