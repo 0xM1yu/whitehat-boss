@@ -112,12 +112,25 @@ def test_an_unmeasured_entropy_is_refused_not_read_as_28(tmp_path: Path) -> None
     assert canary_refusal(report, task_id=_TASK) is not None
 
 
-def test_a_report_that_ran_fewer_times_than_measured_is_refused(tmp_path: Path) -> None:
-    report = read_canary_report(_write(tmp_path, repeat=3, below_measured_repeat=True))
+@pytest.mark.parametrize("repeat", [3, 9, MEASURED_REPEAT, MEASURED_REPEAT * 2])
+def test_a_report_that_declares_too_few_runs_is_refused_by_its_declaration(
+    tmp_path: Path, repeat: int
+) -> None:
+    """선언(`below_measured_repeat: true`)이 거절 사유일 때는 **선언을 사유로 말한다**.
+
+    `repeat >= 10`인데 선언이 `true`인 보고서(도구가 쓰지 않는 모양)도 거절하고, 문구가
+    「카나리를 20회만 돌렸다 - 실측한 횟수(10)보다 적어」처럼 **자기모순이 되지 않아야** 한다
+    (독립 검토 LOW — 앞 판 문구는 선언 분기와 직접 견줌 분기가 같은 말이었다). 선언 분기를
+    지우면 `repeat >= 10` 행이 통과해 빨개진다(그 행이 선언 피연산자를 무는 유일한 핀이다).
+    """
+    report = read_canary_report(_write(tmp_path, repeat=repeat, below_measured_repeat=True))
 
     refusal = canary_refusal(report, task_id=_TASK)
 
-    assert refusal is not None and "3" in refusal
+    assert refusal is not None
+    prefix = f"카나리 보고서가 below_measured_repeat=true라 적었다(repeat={repeat},"
+    assert refusal.startswith(prefix)
+    assert "회만 돌렸다" not in refusal
 
 
 @pytest.mark.parametrize("repeat", [3, 9])
@@ -128,14 +141,34 @@ def test_a_hand_edited_repeat_below_the_measured_count_is_refused(
 
     (리뷰 LOW-3) 앞 판은 횟수를 **자기 선언**(`below_measured_repeat`)으로만 봐서 손으로 `repeat`만
     고친 보고서(`repeat: 3`, 선언은 `false` 그대로)가 통과했다. 도구는 `repeat`와 선언을 같은
-    값에서 같이 쓰므로 둘이 어긋난 보고서는 도구가 쓴 것이 아니다 - 여기서는 선언을 안 믿고
-    `repeat`를 본다.
+    값에서 같이 쓰므로(`tools/oracle_canary.py`의 `_report`) 둘이 어긋난 보고서는 도구가 쓴 것이
+    아니다 - 여기서는 선언을 안 믿고 `repeat`를 본다.
+
+    ⚠ 단언이 문구의 **어느 자리**인지 가른다: 거절 문구 끝의 `measured_at`·Docker 버전에 `3`·`9`가
+    이미 있어 `str(repeat) in refusal`은 `repeat`를 문구가 안 들어도 통과한다(앞 판의 공허한 단언).
     """
     report = read_canary_report(_write(tmp_path, repeat=repeat, below_measured_repeat=False))
 
     refusal = canary_refusal(report, task_id=_TASK)
 
-    assert refusal is not None and str(repeat) in refusal
+    assert refusal is not None
+    assert refusal.startswith(f"카나리를 {repeat}회만 돌렸다 - 실측한 횟수({MEASURED_REPEAT})보다")
+    assert "below_measured_repeat는 false" in refusal
+
+
+def test_the_repeat_is_not_cross_checked_against_the_combos(tmp_path: Path) -> None:
+    """⚠ **한계를 핀으로 둔다**(독립 검토 F1). 게이트는 `repeat`를 보고서가 적은 값 그대로 읽고
+    `combos[*].exit_codes`의 실제 길이와 대조하지 않는다 - `repeat: 10`인데 `exit_codes`가 셋뿐인
+    보고서가 통과한다. 도구는 둘을 같은 값에서 쓰지만(`_report`) 게이트는 `combos`를 안 읽고,
+    대조하려면 `combos`를 필수 칸으로 올려야 해 기존 픽스처 넷(이 파일 · `test_oracle_cli` ·
+    `test_oracle_wiring` · `test_pipeline_e2e`)이 깨진다. 대조가 들어오면 이 핀이 빨개져
+    `canary_report.py`의 한계 서술을 같이 고치게 한다.
+    """
+    codes = [77, 77, 77]
+    short = [{"name": "ref/vul", "image": "x", "exit_codes": codes, "ok": True, "problems": []}]
+    report = read_canary_report(_write(tmp_path, repeat=MEASURED_REPEAT, combos=short))
+
+    assert canary_refusal(report, task_id=_TASK) is None
 
 
 @pytest.mark.parametrize("repeat", [MEASURED_REPEAT, MEASURED_REPEAT + 1])
