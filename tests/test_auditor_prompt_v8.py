@@ -3,7 +3,7 @@
 v8은 v7을 대체하지 않고 **더한** 판이다. 그 주장이 참인지는 사람이 두 파일을 눈으로 비교하는
 수밖에 없었다 — 그래서 여기서 기계로 센다. 막으려는 명제는 둘이다.
 
-1. **v7의 지시가 v8에서 조용히 빠지지 않는다.** v7 prefix의 줄 중 아래 `_REPLACED_IN_V8` 열두
+1. **v7의 지시가 v8에서 조용히 빠지지 않는다.** v7 prefix의 줄 중 아래 `_REPLACED_IN_V8` 열셋
    줄만 v8에 없고 나머지는 **전부 그대로 있다**. `SOURCE` 서술(「Original-source input contract」의
    목록 줄)이 그 보호를 받는 자리다 — `tests/test_config.py`의 서빙 판 철자 검사가 정본 판을
    고르므로 v8이 그 서술을 흘리면 거기서도 빨개지지만, **어느 줄이 빠졌는지는 여기서만 안다**.
@@ -35,13 +35,16 @@ def _prefix(directory: Path) -> str:
     return (directory / "prefix.md").read_text(encoding="utf-8")
 
 
-# v8이 v7에서 **다시 쓴** 줄의 머리. 이 열두 줄만 v8에 없다 — 전부 「이 호출은 한 방이고 내는
-# 것은 Finding 하나다」를 단언하던 자리다. 머리로 거는 것은 줄이 길어서이고, 아래 검사가
+# v8이 v7에서 **다시 쓴** 줄의 머리. 이 열셋만 v8에 없다 — 열둘은 「이 호출은 한 방이고 내는
+# 것은 Finding 하나다」를 단언하던 자리이고, **하나**(`When the capsule omits …` — 넷째)는 한
+# 방 판에서는 맞는 지시(「`reachability_unknown`을 쓴다」)가 홉 절의 「먼저 `lookup`」과 따로
+# 놀아 단서를 더한 자리다(PR #491 리뷰 LOW-2). 머리로 거는 것은 줄이 길어서이고, 아래 검사가
 # **일대일**을 요구하므로 느슨해지지 않는다.
 _REPLACED_IN_V8: tuple[str, ...] = (
     "# Auditor Prompt — Current Harness-Compatible Finding Audit (v6)",
     "Your reasoning depth may be controlled by the serving configuration",
     "Use only symbols, statements, callers, facts, and identifiers present in the supplied input.",
+    "When the capsule omits a caller, guard, source-to-sink connection, or other material needed",
     "- evidence_refs: only FACTS.evidence[*].evidence_id",
     "This call has no Scout-style retrieval loop.",
     "it does not fetch that material or guarantee another audit.",
@@ -54,10 +57,10 @@ _REPLACED_IN_V8: tuple[str, ...] = (
 )
 
 
-def test_v8_keeps_every_v7_line_except_the_twelve_it_rewrites() -> None:
-    """v7 prefix의 줄 중 **열두 줄만** v8에 없다 — 나머지는 바이트 그대로 살아 있다.
+def test_v8_keeps_every_v7_line_except_the_thirteen_it_rewrites() -> None:
+    """v7 prefix의 줄 중 **열세 줄만** v8에 없다 — 나머지는 바이트 그대로 살아 있다.
 
-    오염: `prompts/auditor/v8/prefix.md`에서 아무 줄이나 지우면 빠진 줄이 열셋째로 잡혀 빨개진다.
+    오염: `prompts/auditor/v8/prefix.md`에서 아무 줄이나 지우면 빠진 줄이 열넷째로 잡혀 빨개진다.
     반대로 v7에 줄이 더해져도(= v8에 안 옮기면) 같은 자리에서 빨개진다 — **그쪽이 이 검사의
     주된 목적이다**(CLAUDE.md 2.3: 살아 있는 소스가 갈린 서술을 들지 않는다).
 
@@ -72,7 +75,7 @@ def test_v8_keeps_every_v7_line_except_the_twelve_it_rewrites() -> None:
     missing = [line for line in v7_lines if line not in v8_lines]
 
     assert len(missing) == len(_REPLACED_IN_V8), (
-        "v7 줄이 v8에서 사라진 수가 선언과 다르다 — 선언한 열두 줄 밖이 빠졌거나 v7이 움직였다. "
+        "v7 줄이 v8에서 사라진 수가 선언과 다르다 — 선언한 열세 줄 밖이 빠졌거나 v7이 움직였다. "
         f"빠진 줄: {[line[:70] for line in missing]}"
     )
     for line, stem in zip(missing, _REPLACED_IN_V8, strict=True):
@@ -89,8 +92,85 @@ def test_v8_adds_the_recorded_number_of_lines_on_top_of_v7() -> None:
     v7_lines = set(_prefix(V7).splitlines())
     added = [line for line in _prefix(V8).splitlines() if line not in v7_lines]
 
-    assert len(added) == 101, (
-        f"v8이 더한 줄 수가 101에서 {len(added)}로 움직였다 — 의도한 변경이면 이 수를 갱신한다"
+    assert len(added) == 102, (
+        f"v8이 더한 줄 수가 102에서 {len(added)}로 움직였다 — 의도한 변경이면 이 수를 갱신한다"
+    )
+
+
+def _section(text: str, title: str) -> list[str]:
+    """`## title` 절의 줄 — 제목 줄부터 다음 `## ` 앞까지."""
+    lines: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if inside:
+                break
+            inside = line.strip() == title
+        if inside:
+            lines.append(line)
+    return lines
+
+
+_EVIDENCE_SECTION = "## Evidence body completeness"
+
+
+def test_v8_carries_the_v7_evidence_body_section_byte_for_byte_and_only_appends() -> None:
+    """`## Evidence body completeness` 절은 v7의 줄을 **바이트 그대로 앞에 두고** v8의 단락이
+    **뒤에** 붙는다 — 절 전체가 v7과 같은 것이 아니고, 줄 순서가 바뀐 것도 아니다.
+
+    `nodes/auditor._CONTENT_AWARE_VERSIONS`에 v8이 드는 근거 둘 중 하나가 이 절이다
+    (`FACTS.evidence[].body`가 생성 요약이 아니라 툴 로그의 유계 발췌라고 적는다). 위의 줄 단위
+    검사는 v7 줄이 v8에 **있는지**만 보므로 절 안의 두 줄을 맞바꿔도 초록이었다(오염으로
+    확인 — 글자 수·줄 수도 그대로다). 이 검사가 그 자리(절의 앞 열여섯 줄이 v7과 같다)를
+    묶는다. 뒤에 붙은 단락은 도구 관측(`## Tool observation`)의 같은 절단 서술이다.
+    """
+    v7 = _section(_prefix(V7), _EVIDENCE_SECTION)
+    v8 = _section(_prefix(V8), _EVIDENCE_SECTION)
+
+    assert v7, "전제 — v7에 그 절이 있다"
+    assert v8[: len(v7)] == v7, "v8 절의 앞부분이 v7의 그 절과 바이트 단위로 갈렸다"
+    appended = " ".join(v8[len(v7) :])
+    assert "## Tool observation" in appended and "(middle shortened)" in appended, (
+        "v8이 그 절 뒤에 붙이는 단락은 도구 관측의 절단 서술이다"
+    )
+
+
+def test_v8_evidence_refs_line_is_the_v7_rule_with_a_clause_appended() -> None:
+    """`evidence_refs:` 줄은 v7의 줄이 **머리로 남고** 뒤에 `probe` 관측의 `evidence_id=` 인용
+    구절이 붙은 **다시 쓴 줄**이다 — 「바이트 그대로」가 아니다(`_REPLACED_IN_V8`의 한 줄).
+
+    `_CONTENT_AWARE_VERSIONS` 자격의 둘째 근거(`evidence_refs: only
+    FACTS.evidence[*].evidence_id`)가 이 줄의 머리다. 위 줄 검사는 **v7 쪽** 줄만 묶으므로 v8의
+    이 줄을 같은 글자 수로 다시 써도 초록이었다 — 여기서 v8 쪽을 묶는다."""
+    (v7_line,) = [x for x in _prefix(V7).splitlines() if x.startswith("- evidence_refs: only")]
+    (v8_line,) = [x for x in _prefix(V8).splitlines() if x.startswith("- evidence_refs: only")]
+
+    assert v8_line.startswith(v7_line) and v8_line != v7_line
+    assert "`evidence_id=`" in v8_line, "덧붙인 구절이 `probe` 관측의 인용을 가리키지 않는다"
+
+
+def test_v8_tells_the_model_to_look_a_missing_capsule_fact_up_before_giving_up() -> None:
+    """캡슐이 빠뜨린 사실에 대한 **두 문장이 같은 순서**를 말한다 — 먼저 `lookup`, 그다음에야
+    `reachability_unknown`.
+
+    v7에서 물려받은 문장(「use `reachability_unknown` … when the contract permits it」)이 홉 절의
+    *「`lookup`이 맞는 다음 홉, `reachability_unknown`은 물었는데 못 받았을 때」*와 따로 놀았다 —
+    같은 프롬프트의 두 지시가 달랐다(PR #491 리뷰 LOW-2). 한 방 판 v7은 되물을 길이 없으므로 그
+    문장이 맞고 **v7은 그대로다**(그래서 이 문장은 `_REPLACED_IN_V8` 열셋 중 넷째 줄이다)."""
+    omitted = "When the capsule omits a caller, guard, source-to-sink connection"
+    (v7_line,) = [x for x in _prefix(V7).splitlines() if x.startswith(omitted)]
+    (v8_line,) = [x for x in _prefix(V8).splitlines() if x.startswith(omitted)]
+    qualifier = "no hop remains or the lookup came back empty"
+
+    assert qualifier not in v7_line, "v7은 한 방 판이다 — 되물을 길이 없어 단서가 없는 것이 맞다"
+    assert qualifier in v8_line, "v8의 이 문장이 홉 절과 다른 지시를 한다"
+    assert "`lookup`" in v8_line and "`reachability_unknown`" in v8_line
+    assert v8_line.index("`lookup`") < v8_line.index("`reachability_unknown`"), (
+        "순서가 뒤집혔다 — 조회가 먼저다"
+    )
+    # 홉 절의 문장 — 이 문장과 같은 말을 하는 짝이다(지워지면 위 단서가 홀로 남는다).
+    assert "`reachability_unknown` is for material you asked for and" in " ".join(
+        _prefix(V8).split()
     )
 
 
@@ -197,7 +277,7 @@ def test_the_v8_prefix_is_longer_than_v7_and_the_delta_is_recorded() -> None:
     """
     v7_chars, v8_chars = len(_prefix(V7)), len(_prefix(V8))
 
-    assert (v7_chars, v8_chars) == (25_785, 33_100), (
+    assert (v7_chars, v8_chars) == (25_785, 33_209), (
         f"prefix 글자 수가 움직였다 — v7 {v7_chars} · v8 {v8_chars}. 창 계산"
         "(`config/budgets.yaml`의 auditor_tool_hops 주석)을 다시 보고 이 수를 갱신한다"
     )
