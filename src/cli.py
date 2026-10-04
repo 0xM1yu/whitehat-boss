@@ -1368,9 +1368,10 @@ def run(args: argparse.Namespace) -> int:
             return 2
     # 채점기 설정은 **해제 앞**에서 본다 (#386) — 순수 검사(파일·환경변수 읽기)이고, 뒤에 두면
     # 설정 오류가 작업 디렉터리를 더럽혀 오타를 고친 재시도가 「비어 있지 않다」로 거부된다
-    # (#397 리뷰 MEDIUM-1과 같은 배치 이유). **8단계에 못 닿는 run은 이 검사를 건너뛴다** — 낼 PoC가
-    # 없는 run에 키·번들 검사를 걸 근거가 없고, 막으면 통과시키려고 값을 지어내게 된다(위
-    # `reaches_model` 가드와 같은 판단). 건너뛰는 사실은 경고로 알린다.
+    # (#397 리뷰가 「해제 앞인가」로 확인한 것과 같은 배치 이유 — 거부 뒤 작업 디렉터리가 비어
+    # 있다). **8단계에 못 닿는 run은 이 검사를 건너뛴다** — 낼 PoC가 없는 run에 키·번들 검사를
+    # 걸 근거가 없고, 막으면 통과시키려고 값을 지어내게 된다(위 `reaches_model` 가드와 같은
+    # 판단). 건너뛰는 사실은 경고로 알린다.
     oracle = _oracle_for(args, unreachable=_oracle_unreachable_reason(spec, config))
     if isinstance(oracle, _OracleRefused):
         return 2
