@@ -446,6 +446,7 @@ def build_facts(
     evidences: Iterable[Evidence] = (),
     callers: Iterable[str] = (),
     evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
+    evidence_locations: bool = False,
     slice_criterion: Mapping[str, object] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -459,6 +460,9 @@ def build_facts(
 
     `slice_criterion`은 준 경우에만 키가 생긴다(`FACT_KEYS` 주석) — `None`을 `null`로 싣지
     않는다. 실으면 슬라이스 없는 프롬프트까지 글자가 바뀐다.
+
+    `evidence_locations`도 같은 opt-in이다 — 노드가 content-aware **판**일 때만 켠다. 켜면 각
+    evidence에 `location`(없으면 `null`)이 실리고, 끄면 키가 없다(종전과 바이트 동일).
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
@@ -485,9 +489,32 @@ def build_facts(
         if capsule
         else [],
         "source": source,
-        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 함께 싣는다. 안 주면
+        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 싣는다. 안 주면
         # (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
         # 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
+        #
+        # **`location`은 본문과 따로 `evidence_locations`가 정한다** — 노드가 **판**(content-aware
+        # 여부)으로 켠다. payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
+        # (`evidence_summaries`가 그 Evidence를 맵에서 뺀다) — 본문 유무에 묶으면 그때 키가 사라져
+        # 같은 판의 Critic 줄(`critic._describe_evidence`)과 다른 값을 든다(적대적 리뷰 #480 LOW-1).
+        # 위치가 없는 Evidence는 `null`로 싣는다 — 위 `target`과 같은 관례다. 키를 아예 빼면
+        # 「도구가 위치를 안 줬다」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
+        #
+        # **위치는 판단 보조이고 등급 근거가 아니다.** 게이트 `p1 = static_ok or location_ok`에서
+        # Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다
+        # (`container_tools.first_hit_location` · `gate.evaluate`). 그 위치는 semgrep
+        # `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다.
+        #
+        # **관측 —** 2026-10-04 첫 실모델·실도구 운영 run에서 finding 3건이 전부 `evidence_refs=[]`
+        # (그래서 E0 -> 6단계 queue -> Critic 0회 -> PoV 0건 -> `oracle_final reason=no_poc`)였고,
+        # semgrep 근거는 프롬프트에 본문까지 실려 있었는데 하네스가 아는 위치
+        # `apprentice.c:1086-1087`은 FACTS에 안 나갔다(이슈 #475). 같은 run의 세 Finding은
+        # `trigger_status=no_signal` 부정 결론(확신 0.05~0.10)이었고, semgrep 본문은
+        # `truncated=true`로 절단돼 히트 10건의 줄이 안 보였다(#481) — 그 보고서(`docs/experiments/
+        # harness/2026-10-04-cybergym-operational-run-vastai-remote.md`)는 이 인용 거절을 타당했다고
+        # 적는다. 위치 미노출 외에 이 둘이 인용 부재의 후보다. **위치를 안 본 것이 인용을 막았다는
+        # 것은 가설이다** — 커밋된 `docs/experiments/` 보고서 기준 위치를 싣고 돈 run이 0건이라
+        # 인용이 늘지 어떨지는 미실측이다.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,
@@ -496,6 +523,11 @@ def build_facts(
                 **(
                     {"body": body["body"], "truncated": body["truncated"]}
                     if (body := (evidence_bodies or {}).get(ev.evidence_id)) is not None
+                    else {}
+                ),
+                **(
+                    {"location": ev.location.model_dump(mode="json") if ev.location else None}
+                    if evidence_locations
                     else {}
                 ),
             }
