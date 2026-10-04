@@ -32,6 +32,11 @@ Exit: 0 = every candidate complete; 3 = `--out` written but some candidates inco
 see summary.json `merge`, `dead_shards`, `wall_stopped_shards`); 1 = failed (prepare, a server,
 merge or export failed, or every shard died); 2 = usage error; 128 + signal when stopped by
 SIGTERM/SIGHUP -- shards and servers are stopped and summary.json is written on every path.
+Servers and shards are stopped as whole process groups, all at once: SIGTERM, up to
+STOP_GRACE_SECONDS for the groups to empty (one pass over /proc per tick for all of them),
+SIGKILL, a check -- pids still alive after that are on stderr and in summary.json
+`unstopped_pids`; the exit code does not change. (`joern` is an sh that runs the JVM as a child,
+and a JVM busy with a query ignores SIGTERM.)
 ⚠ SIGKILL of this tool cannot be caught: its servers and shards (own sessions) keep running.
 POSIX only (process groups via killpg, start_new_session).
 """
@@ -47,7 +52,6 @@ import socket
 import sqlite3
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -55,6 +59,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SLICER = ROOT / "tools" / "slicer" / "slicer.py"
 MERGE = ROOT / "tools" / "merge_slicer_shards.py"
 SERVER_START_SECONDS = 300  # set value: a Joern server that is not listening by then failed
+# Stopping servers (stop_all): SIGTERM, wait for the whole process groups, then SIGKILL. Measured
+# on the dev box (2026-10-03, heap 2g): a Joern server with no query running left on SIGTERM in
+# 0.5-0.7 s (3 runs; a `ps` check that skipped zombies, so a lower bound), one with a query running
+# had not left after 30 s (1 run). The two waits are set values.
+STOP_GRACE_SECONDS = 10
+KILL_VERIFY_SECONDS = 10  # how long a SIGKILLed group may take to vanish
+STOP_POLL_SECONDS = 0.1
 POLL_SECONDS = 5
 JVM_OVERHEAD_GB = 4  # set value, not measured: non-heap JVM + slicer process per shard
 
@@ -294,36 +305,126 @@ def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
             time.sleep(0.5)
 
 
-def stop(process: subprocess.Popen) -> None:
-    if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the child
-        try:
-            process.terminate()
-            process.wait(30)
-        except Exception:  # noqa: BLE001
-            process.kill()
-        return
+def _own_proc() -> bool:
+    """Whether /proc is the pid namespace this process is in: `/proc/self` names our own pid there.
+    A sandbox that unshares the pid namespace and keeps the host's /proc (bubblewrap, `unshare -p`)
+    shows the host's pids -- no group of ours is in it, and every group would look empty."""
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(30)
-    except Exception:  # noqa: BLE001 -- already gone, or hung: escalate
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(30)
-        except Exception:  # noqa: BLE001
-            pass
+        return os.readlink("/proc/self") == str(os.getpid())
+    except OSError:
+        return False
 
 
-def stop_all(processes: list[subprocess.Popen], tracked: list | None = None) -> None:
-    """Stop in parallel (each stop can wait 30 s); drop them from `tracked`."""
-    threads = [threading.Thread(target=stop, args=(p,)) for p in processes]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+def _live_groups(groups: set[int]) -> dict[int, list[int]]:
+    """The live pids of each of these process groups, from ONE pass over /proc however many groups
+    there are (a group with none is left out). An unreaped zombie is not live (`killpg(group, 0)`
+    counts it) unless other threads of it are still exiting: they hold its sockets -- a killed
+    server's port kept accepting for up to 0.57 s after SIGKILL (dev, 2026-10-03, 3 runs). Without
+    a /proc of our own `killpg` is all there is (it counts an unreaped zombie), and the leader's pid
+    names the group."""
+    found: dict[int, list[int]] = {}
+    if not _own_proc():
+        for group in groups:
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                continue
+            found[group] = [group]
+        return found
+    for entry in Path("/proc").iterdir():
+        pid = _digits(entry.name)
+        if pid is None:
+            continue
+        try:  # bytes: the kernel cuts comm at 15 bytes, mid-character too, and that is not UTF-8
+            text = (entry / "stat").read_bytes().decode("utf-8", "replace")
+        except OSError:  # gone since the listing
+            continue
+        # "pid (comm) state ppid pgrp ..." -- comm can hold spaces and parentheses
+        fields = text.rpartition(")")[2].split()
+        group = _digits(fields[2]) if len(fields) > 2 else None
+        if group in groups and (fields[0] not in ("Z", "X", "x") or _threads_left(entry)):
+            found.setdefault(group, []).append(pid)
+    return found
+
+
+def _threads_left(process_dir: Path) -> bool:
+    try:
+        return len(os.listdir(process_dir / "task")) > 1  # the zombie leader itself is one
+    except OSError:
+        return False
+
+
+def _signal_group(group: int, sig: int) -> None:
+    try:
+        os.killpg(group, sig)
+    except OSError:  # gone already -- _live_groups is what says whether anything is left
+        pass
+
+
+def _wait_gone(groups: dict[int, subprocess.Popen], seconds: float) -> dict[int, list[int]]:
+    """Until none of these process groups has a live member; what is still alive when `seconds` ran
+    out. One /proc pass per tick for all of them: a thread per process that each rescanned /proc
+    took 12.5-31.1 s to stop 8-32 servers among 1,000-3,000 processes, 10 s of it the grace; one
+    scan per tick took 10.0-10.2 s there, the grace plus 0.1-0.2 s (WSL2, 2026-10-04, stub servers,
+    one run per point, four points). The launchers are reaped on the way: `poll()` runs after the
+    scan, so a launcher the scan found dead (a SIGKILLed one is a zombie by then) is reaped before
+    we return."""
+    deadline = time.time() + seconds
+    while groups:
+        alive = _live_groups(set(groups))
+        for process in groups.values():
+            process.poll()
+        if not alive or time.time() >= deadline:
+            return alive
+        groups = {group: groups[group] for group in alive}
+        time.sleep(STOP_POLL_SECONDS)
+    return {}
+
+
+def _terminate(processes: list[subprocess.Popen]) -> list[int]:
+    """End every process and everything else in its process group, all at once; returns the pids
+    that outlived SIGKILL. `joern` is an `sh` that runs the JVM as a child, and a JVM with a query
+    running does not finish its shutdown hook until that query ends (jstack, text not kept; eight
+    outlived a run on 2026-10-03), so the launcher dying says nothing: SIGTERM to every group,
+    STOP_GRACE_SECONDS for them to empty, SIGKILL for what is left, a check. They share one grace
+    (measured at four points, see _wait_gone)."""
+    if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the children
+        for process in processes:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        for process in processes:
+            try:
+                process.wait(30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        return []
+    groups = {process.pid: process for process in processes}  # `launch`: each leads its own session
+    for group in groups:
+        _signal_group(group, signal.SIGTERM)
+    alive = _wait_gone(groups, STOP_GRACE_SECONDS)
+    for group in alive:
+        _signal_group(group, signal.SIGKILL)
+    alive = _wait_gone({group: groups[group] for group in alive}, KILL_VERIFY_SECONDS)
+    return [pid for pids in alive.values() for pid in pids]
+
+
+def stop_all(processes: list[subprocess.Popen], tracked: list | None = None,
+             summary: dict | None = None) -> list[int]:
+    """Stop all of them and their process groups at once (see _terminate); drop them from
+    `tracked`. The pids that outlived SIGKILL are warned about on stderr, put in
+    `summary["unstopped_pids"]` and returned."""
+    survivors = _terminate(processes)
     if tracked is not None:
         for process in processes:
             if process in tracked:
                 tracked.remove(process)
+    if survivors:
+        print(f"WARNING: still alive after SIGKILL: pids {survivors}", file=sys.stderr)
+        if summary is not None:
+            summary.setdefault("unstopped_pids", []).extend(survivors)
+    return survivors
 
 
 def slicer_command(repo: Path, out: Path, port: int, joern: Path, checkpoint: Path,
@@ -460,7 +561,7 @@ def run(args: argparse.Namespace, extra: list[str], work: Path, summary: dict,
                      None, tracked)
     code = prepare.wait()
     tracked.remove(prepare)
-    stop_all([server], tracked)
+    stop_all([server], tracked, summary)
     summary.update(prepare_exit=code, prepare_seconds=round(time.time() - started))
     # --prepare-only always ends `partial` (2): it slices nothing by design.
     if code not in (0, 2) or not cpg.is_file():
@@ -499,13 +600,13 @@ def run(args: argparse.Namespace, extra: list[str], work: Path, summary: dict,
     while any(p.poll() is None for p in shards):
         if deadline and time.time() > deadline:
             wall_stopped = [i for i, p in enumerate(shards) if p.poll() is None]
-            stop_all([shards[i] for i in wall_stopped])
+            stop_all([shards[i] for i in wall_stopped], summary=summary)
             break
         time.sleep(POLL_SECONDS)
     codes = [p.wait() for p in shards]
     for process in shards:
         tracked.remove(process)
-    stop_all([s for s, _, _ in servers], tracked)
+    stop_all([s for s, _, _ in servers], tracked, summary)
     # Normal shard exit is 2: finish() always reports a shard as partial. 1 = the slicer failed,
     # negative = killed by a signal we did not send.
     dead = [i for i, c in enumerate(codes) if c not in (0, 2) and i not in wall_stopped]
@@ -577,7 +678,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         for s in caught:
             signal.signal(s, signal.SIG_IGN)  # a second TERM must not cut the cleanup short
-        stop_all(list(tracked), tracked)
+        stop_all(list(tracked), tracked, summary)
         for s, handler in previous.items():
             signal.signal(s, handler)
         summary.update(exit=code, total_seconds=round(time.time() - started))
