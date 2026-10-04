@@ -75,12 +75,13 @@ _D_REF = re.compile(r"(?<![A-Za-z0-9])D(\d+)(?![0-9A-Za-z])")
 
 _LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 
-# `YYYY-MM-DD-<주제>-<장비>.md`의 **모양**만 본다 — 날짜 접두사와 `.md`. 주제는 검사하지 않는다
+# `YYYY-MM-DD-<주제>-<장비>.md`의 **모양**만 본다 — 날짜 접두사 · 주제-장비 두 자리(하이픈으로
+# 갈린 둘 이상) · `.md`. `--device` 행이 없는 보고서도 이 모양은 지켜야 한다. 주제는 검사하지 않는다
 # (아래 주석 참조). **장비는 여기서 안 뽑는다**: 장비 이름이 하이픈을 들 수 있어(`vastai-remote`)
 # 파일명만으로는 주제와 장비의 경계를 못 긋는다 — 끝 토큰만 장비로 읽던 판은 어떤 파일명도
 # `vastai-remote`와 같아지게 할 수 없었다. 대조는 본문 `--device`를 알고 나서
 # `_name_carries_device`가 한다.
-_REPORT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)\.md$")
+_REPORT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+-.+)\.md$")
 
 # 보고서 머리 메타 표의 `--device` 행. TEMPLATE.md가 정한 서식이다.
 _DEVICE_ROW = re.compile(r"^\|\s*`--device`\s*\|\s*`([^`]+)`\s*\|", re.MULTILINE)
@@ -436,6 +437,7 @@ def test_the_report_name_check_reads_a_hyphenated_device() -> None:
     assert _REPORT_NAME.match(hyphenated)
     assert _REPORT_NAME.match("2026-08-18-serving-atom.md")
     assert not _REPORT_NAME.match("cybergym-operational-run-vastai-remote.md")  # 날짜 없음
+    assert not _REPORT_NAME.match("2026-10-05-foo.md")  # 주제-장비 두 자리가 아니다
 
     assert _name_carries_device(hyphenated, "vastai-remote")
     assert _name_carries_device("2026-08-18-serving-atom.md", "atom")
