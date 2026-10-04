@@ -437,7 +437,7 @@ class Dependencies(Protocol):
     # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 같은 경계다.
     writes_of: Callable[[str, str], list[Location] | None]
     field_writes_of: Callable[[str, str], list[Location] | None]
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수·enum 상수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[..., list[Location] | None]
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
     locals_of: Callable[[str, str], frozenset[str] | None]
@@ -1321,7 +1321,8 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
 
     **조회는 기존 resolver를 재사용한다**(`ctx.resolve_requests`). 이름으로 함수 본문을 찾는
     수단이 그것뿐이다 — `symbols_for`는 (파일 → 심볼)이고 `definitions_of`는 `macros`·`types`·
-    `file_vars`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서 새 훅·새
+    `file_vars`·`enum_constants`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서
+    새 훅·새
     어댑터 배선이 0이다.
     resolver는 `table("functions")`가 없으면 빈 `Resolution`을 돌려주므로(`need_evidence` 모듈)
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
@@ -3158,8 +3159,8 @@ _AUDITOR_CALLEE_CHARS = 4_000
 # ⚠ 이 상한과 아래 `_AUDITOR_DEFINITION_CHARS`는 `auditor_source_tokens`가 양수여도 **글자**다 —
 # 하나가 너무 큰지를 거르는 값이고, 전체 상한만 토큰으로 센다.
 
-# 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
-# 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
+# 정의(매크로·타입·파일 변수·enum 상수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일
+# 때만). 큰 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_DEFINITION_CHARS = 2_000
 # entry 함수를 줄일 때(#349 — `auditor_entry_trim`이 1이고 entry 함수가 상한을 넘을 때만) 슬라이스
 # 줄·entry 줄 앞뒤로 남기는 줄 수. 함수 머리(여는 `{`까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안)와
@@ -3239,10 +3240,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     그대로 프롬프트에 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
 
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
-    실린 함수가 쓰는 매크로·타입·파일 변수의 정의(`ctx.definitions_of`)를 붙인다. 정의 하나가
-    `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 코드
-    자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드 전용
-    이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
+    실린 함수가 쓰는 매크로·타입·파일 변수·enum 상수의 정의(`ctx.definitions_of`)를 붙인다. 정의
+    하나가 `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은
+    코드 자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드
+    전용 이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
     먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
     비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을 정한다(`demote_nonproduct`).
     붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면 이 단계가 없고 `SOURCE`·
@@ -3377,9 +3378,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         return True
 
     if with_definitions:
-        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
-        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그 함수의
-        # 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
+        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수·enum 상수 정의(#349 (f)). 정의는 작고
+        # 판단 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그
+        # 함수의 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
         used = definition_names(bodies, ctx.locals_of)
         found = ctx.definitions_of(used, anchor.file, **hygiene) or []
         for definition in slice_names_first(found, ctx.read_source, ref.lines):

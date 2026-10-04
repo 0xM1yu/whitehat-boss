@@ -1127,6 +1127,32 @@ def test_definitions_append_the_struct_the_carried_code_uses(tmp_path: Path) -> 
     assert (event["functions"], event["definitions"], event["definitions_dropped"]) == (2, 1, 0)
 
 
+def test_enum_constants_of_one_enum_are_carried_once(tmp_path: Path) -> None:
+    """index-v4 `enum_constants`의 위치는 enum 정의 전체라 같은 enum의 상수 여럿이 같은 범위를
+    낸다 — 겹치는 범위는 한 번만 싣는다(`_overlaps`). 여기선 본문 이름 `buf`·`len`을 같은 범위
+    (12–15)의 상수로 적고 `struct header`도 그 범위다 -> 블록 하나, `definitions` 1, 뺀 수 0."""
+    same = {"file": "parser.c", "line_start": 12, "line_end": 15, "enum": "e"}
+    index = {
+        **_FIXTURE_INDEX_V2,
+        "version": "index-v4",
+        "writes": {},
+        "fn_bindings": {},
+        "field_calls": {},
+        "includes": {},
+        "enum_constants": {"buf": [same], "len": [same]},
+    }
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+
+    _, trace_path = _run(
+        tmp_path, slices_path=path, before=_with_index(index), configure=_definitions(1),
+    )
+
+    ((_, facts),) = _prompts(trace_path, "auditor")
+    assert facts["source"].count(_banner("parser.c", 12, 15)) == 1
+    (event,) = _source_events(trace_path)
+    assert (event["definitions"], event["definitions_dropped"]) == (1, 0)
+
+
 def test_a_definition_over_its_own_cap_is_not_appended(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
