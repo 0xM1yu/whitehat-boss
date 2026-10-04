@@ -24,4 +24,4 @@ if [ -n "${SWAP_SSH_PORT:-}" ]; then
   args+=(-p "$SWAP_SSH_PORT")
 fi
 # ExitOnForwardFailure: 로컬 포트가 이미 쓰이면 반쯤 열린 터널로 남지 않고 끝난다.
-exec ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=10 "${args[@]}" "$SWAP_SSH_HOST"
+exec ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=10 "${args[@]}" -- "$SWAP_SSH_HOST"

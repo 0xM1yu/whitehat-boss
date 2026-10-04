@@ -8,7 +8,9 @@
 #
 # 환경 — 비면 ssh를 열지 않고 2로 끝난다(모르는 호스트·경로로 가지 않는다).
 #   SWAP_SSH_HOST       ssh 목적지(`user@host` 또는 ~/.ssh/config의 Host 별칭)
-#   SWAP_REMOTE_ROOT    원격 저장소 루트(vast-bootstrap.sh가 채운 곳)
+#   SWAP_REMOTE_ROOT    원격 저장소 루트(vast-bootstrap.sh가 채운 곳). 절대경로이고 `/`로 끝나지 않는다 —
+#                       아니면 이것도 ssh 전에 2로 끝난다. vast-bootstrap.sh가 같은 값을 같은 규칙으로 거른다
+#                       (상대경로는 로그인 디렉터리 기준과 `/` 기준이 갈려 가드가 안 본 곳을 지웠다)
 #   SWAP_REMOTE_PYTHON  원격 swap.sh가 장비 파일·registry를 읽을 인터프리터(pyyaml·pydantic)
 #   HARNESS_RUN_ID      하네스가 준다. 원격 swap.sh가 자기 run 서버를 가르는 값이다
 #   SWAP_SSH_PORT       (선택) ssh 포트. vast는 보통 22가 아니다
@@ -40,6 +42,13 @@ need SWAP_SSH_HOST "원격 교대 호스트를 모른다"
 need SWAP_REMOTE_ROOT "원격 저장소 루트를 모른다"
 need SWAP_REMOTE_PYTHON "원격 하네스 인터프리터를 모른다"
 need HARNESS_RUN_ID "하네스가 안 줬다(Windows 네이티브 파이썬이면 머리 주석의 WSL 항목)"
+case $SWAP_REMOTE_ROOT in
+  /*[!/]) ;; # 절대경로이고 `/`로 끝나지 않는다 — `/` 하나와 `//`도 여기서 걸린다
+  *)
+    echo "swap-remote: SWAP_REMOTE_ROOT이(가) 절대경로가 아니거나 /로 끝난다($SWAP_REMOTE_ROOT) — /root/harness처럼 적는다" >&2
+    exit 2
+    ;;
+esac
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 COMMIT=$(git -C "$ROOT" rev-parse HEAD 2> /dev/null) || {
@@ -52,8 +61,8 @@ q() { # 원격 셸용 작은따옴표 인용 — 값 안의 ' 는 '\'' 로 끊�
 }
 
 remote="cd $(q "$SWAP_REMOTE_ROOT") || exit 2"
-remote+="; got=\$(cat .harness-commit 2> /dev/null)"
-remote+="; [ \"\$got\" = $(q "$COMMIT") ] || { echo \"swap-remote: 원격 커밋(\${got:-없음})이 로컬($COMMIT)과 다르다 — vast-bootstrap.sh를 다시 돌린다\" >&2; exit 2; }"
+remote+="; want=$(q "$COMMIT"); got=\$(cat .harness-commit 2> /dev/null)"
+remote+="; [ \"\$got\" = \"\$want\" ] || { echo \"swap-remote: 원격 커밋(\${got:-없음})이 로컬(\$want)과 다르다 — vast-bootstrap.sh를 다시 돌린다\" >&2; exit 2; }"
 remote+="; exec env HARNESS_RUN_ID=$(q "$HARNESS_RUN_ID")"
 remote+=" HARNESS_DEVICE=$(q "${HARNESS_DEVICE:-}")"
 remote+=" HARNESS_PYTHON=$(q "$SWAP_REMOTE_PYTHON")"
@@ -71,4 +80,4 @@ if [ -n "${SWAP_SSH_PORT:-}" ]; then
 fi
 # -n: stdin을 안 읽는다 · -T: TTY 없음 · BatchMode: 암호를 묻지 않는다(하네스는 프롬프트에 답할 수 없어
 # 마감까지 매달린다). 호스트 키 검사는 사용자의 ssh 설정을 따른다 — 여기서 끄지 않는다.
-exec ssh -n -T -o BatchMode=yes -o ServerAliveInterval=10 ${port[@]+"${port[@]}"} "$SWAP_SSH_HOST" "$remote"
+exec ssh -n -T -o BatchMode=yes -o ServerAliveInterval=10 ${port[@]+"${port[@]}"} -- "$SWAP_SSH_HOST" "$remote"
