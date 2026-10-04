@@ -1,4 +1,4 @@
-"""채점기(oracle) 배선 — 후보마다 vul, 후보가 하나일 때만 지정해 그 하나에만 fix (#386).
+"""채점기(oracle) 배선 — 후보마다 vul, 지정한 하나에만 fix (#386).
 
 러너(`_run_pov`·`_finalize_oracle`)를 `dev_fake` 문맥에서 직접 돌려 **후보 N개가 vul 제출 N건이 되고
 fix 다리는 후보가 0개면 0번 · 1개면 정확히 한 번 · 2개 이상이면 0번 도는지**(셋 다 건다),
@@ -7,9 +7,15 @@ fix 다리는 후보가 0개면 0번 · 1개면 정확히 한 번 · 2개 이상
 제출은 masked id, 조회는 실 id(`TaskOracle.query_task_id`)로 가는지와 그 실 id를 `--mask-map`에서
 만드는 `cli._oracle_for`의 이음(여기만 `_oracle_for`를 직접 부른다 - `cli.run`은 안 돈다).
 
-⚠ **후보가 둘 이상일 때 고르는 규칙은 정해지지 않았다**(`runner._designate_final`) - 이 파일에는
-어느 후보를 고르는 것이 맞는지를 단언하는 검사가 없다. 후보가 둘 이상이면 **아무것도 지정하지
-않는다**는 것만 건다.
+**후보가 둘 이상일 때의 규칙은 2026-10-03에 동결됐다** — 하네스 **내부 근거 등급의 최댓값**을 든
+후보가 하나뿐이면 그것이 최종이고(`top_grade`), 동점이거나 등급을 모르는 후보가 있으면 지정하지
+않는다(`grade_tie`·`grade_unknown`). 끝 절의 검사들이 그 규칙과 **불변식**(지정 로직은 채점기가
+돌려준 값을 안 읽는다)을 건다.
+
+⚠ **위 `ctx` 문맥의 후보 N개는 근거가 없는 손수 만든 Finding이라 등급이 전부 E0이다**(도구가 안
+돈다) - 그래서 후보가 둘 이상이면 `grade_tie`로 거부되고 `fix` 다리는 **0번**이다. 등급이 **갈리는**
+run(재현이 한쪽만 성공해 8단계 `gate_eval`이 E4 · E3으로 가른다)과 `dev_fake`의 동점(둘 다 E4)은
+`tests/test_pipeline_e2e.py`가 파이프라인으로 문다.
 
 ⚠ **이 파일은 `run_pipeline`·CLI를 돌리지 않는다.** 운영 배선(`cli.run` → `execute` → `build_deps` →
 `Deps.oracle` → `RunContext.oracle`)이 끊기지 않았는지는 `tests/test_pipeline_e2e.py`가 파이프라인과
@@ -23,10 +29,11 @@ from pathlib import Path
 import pytest
 
 from src import cli
+from src.interfaces.oracle import OracleOutcome, VulSubmission
 from src.orchestrator import runner
-from src.orchestrator.oracle_log import OracleLedger, OracleLog
+from src.orchestrator.oracle_log import OracleLedger, OracleLog, VulAttempt, vul_ok
 from src.orchestrator.trace import EventKind
-from src.schemas.enums import PovStopReason
+from src.schemas.enums import EvidenceGrade, PovStopReason
 from tests.oracle_fakes import TASK_ID, FakeOracle, submit_script
 from tests.test_nodes import _pov_state, ctx  # noqa: F401
 from tests.test_pov_loop import _gen, _scripted
@@ -65,7 +72,7 @@ def _drive(ctx, state, findings, oracle):  # noqa: ANN001, ANN202, F811
     runner._finalize_oracle(ctx, state)
 
 
-# --- 후보마다 vul · 지정은 후보가 하나일 때만 · fix는 지정한 하나에만 ---------------------------
+# --- 후보마다 vul · fix는 지정한 하나에만 -------------------------------------------------------
 
 
 @pytest.mark.parametrize("count", [2, 3])
@@ -73,10 +80,10 @@ def test_several_candidates_all_get_the_vul_leg_and_none_is_designated_so_fix_ne
     ctx, monkeypatch, count  # noqa: ANN001, F811
 ) -> None:
     """차단 결함: 후보마다 vul·fix·판정을 다 내면 비최종 PoC에도 `-fix` 이미지가 돌고 trace에 판정이
-    N건 남는다. 후보는 vul만 내고, 후보가 **둘 이상이면 지정하지 않는다** - 마지막·처음·점수로
-    고르는 규칙은 조사 문서 1.3절이 막고 모델에게 묻는 방식은 별도 조각이다. 그래서 fix 다리·판정
-    조회는 **0번**이고 기록은 「고르는 규칙이 정해지지 않았다」고 말한다. 바이트는 **내용으로**
-    본다."""
+    N건 남는다. 후보는 vul만 낸다. 이 문맥에서는 후보 N개가 근거 없는 Finding이라 **등급이 전부
+    E0**이고 최댓값이 동점이라 **지정하지 않는다** - 동점에서 자리로 가르지 않는 것이 이 저장소의
+    규칙이다. fix 다리·판정 조회는 **0번**이고 기록은 「최댓값이 동점이라」고 말한다. 바이트는
+    **내용으로** 본다."""
     state, findings = _findings(ctx, count)
     state.oracle_ledger = OracleLedger(wired=True)
     _stub_loop(monkeypatch, [(poc, _SUBMITTED) for poc in _POCS[:count]])
@@ -92,7 +99,7 @@ def test_several_candidates_all_get_the_vul_leg_and_none_is_designated_so_fix_ne
     assert final.data == {
         "status": "none",
         "designation": None,
-        "reason": "policy_undecided",
+        "reason": "grade_tie",
         "poc_sha256": None,
         "poc_bytes": None,
         "task_id": None,
@@ -101,8 +108,8 @@ def test_several_candidates_all_get_the_vul_leg_and_none_is_designated_so_fix_ne
     }
     summary = state.oracle_ledger.summary()
     assert summary is not None
-    assert (summary["final"], summary["final_reason"]) == ("none", "policy_undecided")
-    assert any("고르는 규칙이 정해지지 않았다" in w for w in state.oracle_ledger.warnings())
+    assert (summary["final"], summary["final_reason"]) == ("none", "grade_tie")
+    assert any("최댓값이 동점이라" in w for w in state.oracle_ledger.warnings())
 
 
 def test_exactly_one_candidate_is_the_final_and_the_fix_leg_runs_exactly_once(
@@ -365,7 +372,7 @@ def test_every_way_of_ending_without_a_score_is_told_apart_from_the_others(
     assert seen == {
         "no_poc": ("none", "no_poc", None, None),
         "all_vul_failed": ("none", "all_vul_submissions_failed", None, None),
-        "several": ("none", "policy_undecided", None, None),
+        "several": ("none", "grade_tie", None, None),
         "final_failed": ("failed", None, "TimeoutError", "sole_candidate"),
         "scored": ("scored", None, None, "sole_candidate"),
     }
@@ -812,3 +819,240 @@ def test_a_masked_task_id_without_a_mask_map_is_refused_before_anything_is_built
     assert "404" not in err
     err.encode("cp949")  # 콘솔에 찍히는 문장이다
     assert built == []
+
+
+# --- 후보가 여럿일 때: 내부 근거 등급 최댓값 · 동점이면 거부 (2026-10-03 동결) ------------------
+#
+# 위 검사들의 후보는 근거 없는 Finding이라 **동점 쪽**(E0 · E0)만 밟는다. 등급이 갈리는 문맥을
+# 이 파일에서 만들려고 아래는 `_designate_final`을 등급 사전째 **직접** 부른다 - 규칙 자체가
+# 대상이고 파이프라인이 아니다(파이프라인에서 등급이 갈리는 run은 `test_pipeline_e2e.py`).
+
+_SUB = VulSubmission(TASK_ID, "a" * 32, 1)
+
+
+def _attempt(finding_id: str, poc: bytes) -> VulAttempt:
+    return vul_ok(finding_id, poc, _SUB, wall_ms=1)
+
+
+def _ledger_of(*attempts: VulAttempt) -> OracleLedger:
+    """사이드카 없는 장부(`log=None`) - `add_attempt`가 파일을 안 쓴다(`_flush`가 먼저 돌아선다)."""
+    ledger = OracleLedger(wired=True)
+    for attempt in attempts:
+        ledger.add_attempt(attempt)
+    return ledger
+
+
+def test_the_unique_top_internal_grade_is_the_final() -> None:
+    """등급이 E2·E4·E3이면 **E4 하나**가 최종이고 근거는 `top_grade`다.
+
+    최댓값을 **가운데**에 둔다 - 처음·마지막으로 고르는 규칙이면 이 검사가 빨개진다. 자리로
+    고르지 않는 것이 이 저장소의 규칙이다(2026-10-03).
+    """
+    low = _attempt("f_low", b"\x01low\xff")
+    top = _attempt("f_top", b"\x02top\xfe")
+    mid = _attempt("f_mid", b"\x03mid\xfd")
+    grades = {
+        "f_low": EvidenceGrade.E2,
+        "f_top": EvidenceGrade.E4,
+        "f_mid": EvidenceGrade.E3,
+    }
+
+    assert runner._designate_final(_ledger_of(low, top, mid), grades) == (top, "top_grade", None)
+
+
+def test_a_tie_at_the_top_grade_refuses_instead_of_picking_by_position() -> None:
+    """최댓값이 동점이면 **거부**다(`grade_tie`) - 「등급이 같으면 먼저 온 것」은 위치 규칙이다.
+
+    E4 둘 + E2 하나를 넣는다. 자리로 가르는 구현은 첫 E4를 내서 이 검사가 빨개진다.
+    """
+    first = _attempt("f_a", b"\x01a\xff")
+    second = _attempt("f_b", b"\x02b\xfe")
+    lower = _attempt("f_c", b"\x03c\xfd")
+    grades = {"f_a": EvidenceGrade.E4, "f_b": EvidenceGrade.E4, "f_c": EvidenceGrade.E2}
+
+    assert runner._designate_final(_ledger_of(first, second, lower), grades) == (
+        None,
+        "",
+        "grade_tie",
+    )
+
+
+def test_two_pocs_from_one_finding_are_a_tie_because_the_grade_cannot_separate_them() -> None:
+    """같은 Finding에서 PoC가 둘 나오면 등급이 같으니 **거부**다. 등급은 Finding 단위라서다."""
+    first = _attempt("f_same", b"\x01first\xff")
+    second = _attempt("f_same", b"\x02second\xfe")
+
+    assert runner._designate_final(_ledger_of(first, second), {"f_same": EvidenceGrade.E4}) == (
+        None,
+        "",
+        "grade_tie",
+    )
+
+
+def test_a_candidate_with_an_unknown_grade_refuses_rather_than_reading_it_as_e0() -> None:
+    """등급을 모르는 후보가 있으면 거부한다(`grade_unknown`) - E0로 깔면 **없는 근거로** 고른다.
+
+    모르는 쪽을 E0로 읽는 구현은 E4인 쪽을 최종으로 내서 이 검사가 빨개진다. 안 잰 값은 0이
+    아니라 미실측 표시다(CLAUDE.md §0).
+    """
+    known = _attempt("f_known", b"\x01known\xff")
+    unknown = _attempt("f_unknown", b"\x02unknown\xfe")
+
+    assert runner._designate_final(
+        _ledger_of(known, unknown), {"f_known": EvidenceGrade.E4}
+    ) == (None, "", "grade_unknown")
+
+
+def _trap(name: str):  # noqa: ANN202
+    def boom(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202, ARG001
+        raise AssertionError(f"지정 로직이 채점기가 돌려준 submission을 읽었다: {name}")
+
+    return boom
+
+
+class _TrapSubmission:
+    """어떤 접근도 터지는 `submission` - **속성**(`.response_exit_code`)·`vars`·`__dict__`
+    (`__slots__`가 비어 `__dict__`가 없다)·`repr`·`str`·`format`·`==`·`hash`·`dir`가 전부
+    `AssertionError`다.
+
+    타입은 `VulSubmission`이 아니지만 그 자리에 꽂힌다 - `VulAttempt`가 frozen dataclass라 런타임
+    검증이 없다. ⚠ **못 무는 것:** `submission is not None`(후보 자격 `attempt.ok`)은 접근이
+    아니라 허용한다. 그리고 `attempt`의 **다른 필드**(`poc`·`poc_sha256`·`wall_ms`)나 `grades`
+    사전에 채점기 값이 섞이는 경로는 이 함정이 안 본다 - 앞의 둘은 하네스가 만든 값이고 뒤의
+    것은 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 러너 쪽에서 문다.
+    """
+
+    __slots__ = ()
+    __repr__ = _trap("repr")
+    __str__ = _trap("str")
+    __format__ = _trap("format")
+    __eq__ = _trap("==")
+    __ne__ = _trap("!=")
+    __hash__ = _trap("hash")
+    __dir__ = _trap("dir")
+
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(f"지정 로직이 채점기가 돌려준 submission을 읽었다: .{name}")
+
+
+def _trap_attempt(finding_id: str) -> VulAttempt:
+    return VulAttempt(
+        finding_id=finding_id,
+        poc_sha256="0" * 64,
+        poc_bytes=1,
+        wall_ms=1,
+        poc=b"\x01",
+        submission=_TrapSubmission(),  # type: ignore[arg-type]
+    )
+
+
+# (후보 finding들, 등급 사전, 이긴 finding, designation, reason) - 분기마다 하나다. 금지된 읽기가
+# 들어갈 가장 자연스러운 자리는 **동점 분기**다(「크래시 코드가 큰 쪽」으로 가른다) - 그래서
+# 유일 최상위 분기만 문 판은 그 변이를 놓쳤다(적대적 리뷰 2026-10-04: 129건 초록).
+_BRANCHES = [
+    pytest.param(
+        ("f_low", "f_top", "f_mid"),
+        {"f_low": EvidenceGrade.E2, "f_top": EvidenceGrade.E4, "f_mid": EvidenceGrade.E3},
+        "f_top", "top_grade", None,
+        id="unique-top",
+    ),
+    pytest.param(
+        ("f_a", "f_b", "f_c"),
+        {"f_a": EvidenceGrade.E4, "f_b": EvidenceGrade.E4, "f_c": EvidenceGrade.E2},
+        None, None, "grade_tie",
+        id="tie",
+    ),
+    pytest.param(
+        ("f_known", "f_unknown"),
+        {"f_known": EvidenceGrade.E4},
+        None, None, "grade_unknown",
+        id="unknown-grade",
+    ),
+    pytest.param(("f_sole",), {}, "f_sole", "sole_candidate", None, id="sole-candidate"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("ids", "grades", "winner", "designation", "reason"), _BRANCHES)
+def test_designation_does_not_read_oracle_fields(
+    ids, grades, winner, designation, reason  # noqa: ANN001
+) -> None:
+    """🔴 **불변식** - 지정은 채점기가 돌려준 값을 안 읽는다. 이 저장소가 정한 규칙이다(저자의
+    금지 문장이 아니다 - `_designate_final` docstring).
+
+    그 값은 **지정 시점에 손에 있다** - `VulSubmission.response_exit_code`가 후보마다 장부 행에
+    실려 있어서(`oracle_log._attempt_record`) 「없어서 안 읽는다」가 아니다. 그래서 문구가
+    아니라 **접근**을 문다: 후보의 `submission`이 `_TrapSubmission`이고(속성·`vars`·`repr`·`==`
+    전부 터진다) **분기마다**(유일 최상위 · 동점 · 등급 미상 · 후보 하나) 돌린다.
+
+    **오염 테스트다** - 어느 분기에든 `attempt.submission.response_exit_code`를 보거나 `repr`로
+    고르는 한 줄을 넣으면 그 분기가 빨개진다(2026-10-04 스크래치 사본에서 변이 아홉으로 확인).
+    읽어도 되는 것은 `attempt.ok`(후보 자격)와 하네스 내부 등급뿐이다. 후보 0건(실패한 제출만)은
+    읽을 `submission`이 없어 이 함정이 못 문다 - 그 분기는 위 검사들이 문다.
+    """
+    attempts = [_trap_attempt(finding_id) for finding_id in ids]
+
+    picked, got_designation, got_reason = runner._designate_final(_ledger_of(*attempts), grades)
+
+    assert (got_designation or None, got_reason) == (designation, reason)
+    if winner is None:
+        assert picked is None
+    else:
+        assert picked is attempts[ids.index(winner)]
+
+
+class _OracleThatReadsNothingItIsGiven:
+    """`finalize`가 받은 `vul`을 열지 않는 대역 - 함정 `submission`이 `_score`를 지나가게 한다."""
+
+    def submit_vul(self, poc: bytes):  # noqa: ANN201
+        raise AssertionError("이 검사에서는 제출이 안 나간다 - 장부를 손으로 채운다")
+
+    def finalize(self, poc: bytes, vul):  # noqa: ANN001, ANN201
+        return OracleOutcome(
+            task_id=TASK_ID, poc_id=None, poc_hash="0" * 64, poc_length=len(poc),
+            vul_exit_code=None, fix_exit_code=None, success=False,
+        )  # fmt: skip
+
+
+@pytest.mark.parametrize(("ids", "grades", "winner", "designation", "reason"), _BRANCHES)
+def test_finalize_oracle_does_not_read_oracle_fields_either(
+    ctx, monkeypatch, ids, grades, winner, designation, reason  # noqa: ANN001, F811
+) -> None:
+    """`_designate_final`만이 아니라 **`_finalize_oracle`도** 채점기 값을 안 읽는다 - 지정 직전에
+    등급을 채점 성공 후보 쪽으로 올리는 변이는 `_designate_final`을 안 건드리고 여기서 난다.
+    함정 `submission`이 든 장부로 `_finalize_oracle`을 직접 돌리고(등급은
+    `_grades_by_finding`을 바꿔 꽂는다) 결과 기록이 분기대로인지 본다."""
+    state, _ = _findings(ctx, 1)
+    state.oracle_ledger = OracleLedger(wired=True)
+    for finding_id in ids:
+        state.oracle_ledger.add_attempt(_trap_attempt(finding_id))
+    monkeypatch.setattr(runner, "_grades_by_finding", lambda _state: grades)
+    ctx.oracle = _OracleThatReadsNothingItIsGiven()
+
+    runner._finalize_oracle(ctx, state)
+
+    (final,) = _events(ctx, EventKind.ORACLE_FINAL)
+    assert final.subject_id == winner
+    assert (final.data["designation"], final.data["reason"]) == (designation, reason)
+    assert final.data["status"] == ("none" if winner is None else "scored")
+
+
+def test_the_oracle_leg_leaves_the_graded_evidences_alone(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """지정 등급의 입력은 `state.evidences`·`state.findings`이고(`_grades_by_finding`) **채점기
+    다리는 그것을 안 건드린다** - 채점기 응답이 Evidence가 되거나 Finding을 바꾸면 그 등급이
+    채점기 값을 담고 지정이 채점기 값으로 고르는 것과 같아진다. 8단계 `produced`(하네스가
+    도구를 돌려 낸 근거)와 이것은 다른 원천이다.
+
+    **한계:** 이 검사는 두 사전이 **같다**는 것만 본다. 채점기 값을 다른 길(전역·지역 사전)로
+    등급에 섞는 변이는 못 잡는다.
+    """
+    state, findings = _findings(ctx, 2)
+    state.oracle_ledger = OracleLedger(wired=True)
+    evidences, found = dict(state.evidences), dict(state.findings)
+    _stub_loop(monkeypatch, [(poc, _SUBMITTED) for poc in _POCS[:2]])
+
+    _drive(ctx, state, findings, FakeOracle(vul_exit_code=139))
+
+    assert state.evidences == evidences
+    assert state.findings == found
