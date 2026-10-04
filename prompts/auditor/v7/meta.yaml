@@ -19,6 +19,10 @@
 # 서술을 고쳤다(prefix 25,045 -> 25,467자, +422자 · v6 대비 +4,069자). 같은 이유로 판 번호는 그대로다.
 # ⏵ 2026-10-04 — 상한을 넘는 enum을 그 상수 주변만 잘라 싣는 서술을 더했다(D103 · index-v4 enum 상수,
 # prefix 25,467 -> 25,785자, +318자 · v6 대비 +4,387자). 같은 이유로 판 번호는 그대로다.
+# ⏵ 2026-10-04 — `qwen3.8-27b`를 v8(v7 + 도구 루프 절, 이슈 #419 · PR #491)로 올려 지금은 어느
+# registry 엔트리도 이 버전을 고르지 않는다. 위 첫 줄의 「정본」은 그날까지의 기록이다. 이 판의
+# prefix·body는 그대로고 `_CONTENT_AWARE_VERSIONS`에도 남는다 — v8의 `SOURCE` 서술·trigger rule이
+# 이 판과 바이트 동일이라 `tests/test_auditor_prompt_v8.py`가 그 동일성을 센다.
 role: auditor
 version: v7
 output_schema: Finding

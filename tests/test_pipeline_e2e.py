@@ -3583,7 +3583,10 @@ def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
     capsules = 4
     top_n = base.thresholds.critic_top_n
     max_hops = base.thresholds.max_hops
-    per_candidate = 1 + max_hops + 1  # scout(1 + max_hops) + auditor(1)
+    # scout(1 + max_hops) + auditor(1 + auditor_tool_hops). ⏵ 2026-10-04 — auditor 쪽이 1에서
+    # 늘었다: 도구 루프가 켜지면 후보당 `1 + auditor_tool_hops`회다(이슈 #419 ·
+    # `nodes/auditor._run_hops`). 저장소 기본이 16이라 **상수로 적으면 끈 run의 값이 된다.**
+    per_candidate = (1 + max_hops) + (1 + base.thresholds.auditor_tool_hops)
 
     assert _expected_calls(base, capsules) == capsules * per_candidate + min(capsules, top_n), (
         "단일 scout 프로필의 값이 바뀌었다 — 회귀다"
