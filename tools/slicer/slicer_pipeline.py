@@ -70,6 +70,7 @@ class SlicingStages:
                 "truncated to an unspecified first-N in CPG traversal order (api: write-context "
                 "methods first, then traversal order within each layer; slicer_queries)"
             )
+        # No key = a contract from before --case-order (#441): that run sliced Case A first.
         order = self.settings.get("case_order", "ab")
         self.candidates = collect(rows, self.repo, order)
         if self.priority_files is not None:
