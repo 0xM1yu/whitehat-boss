@@ -686,7 +686,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   },
   "tool_runner": "docker",
   "device": "atom",
-  "budget": {"input_tokens": 4000000, "output_tokens": 400000, "gpu_seconds": 7200},
+  "budget": {"input_tokens": 40000000, "output_tokens": 4000000, "gpu_seconds": 72000},
   "thresholds": {"scout_threshold": 0.5},
   "seed": 20260901,
   "sampling": {"temperature": 0.2, "top_p": 0.95},
