@@ -316,24 +316,36 @@ def _walk_calls(node, caller: str, relative: str, calls: list[dict]) -> int:
     `call_expression`의 `function` 필드가 `identifier`면 직접 호출이다. 그 외
     (`parenthesized_expression` 등)는 함수 포인터나 표현식 호출이라 구문만으로는
     대상을 알 수 없다 — 이름을 지어내지 않고 센다.
+
+    **재귀하지 않는다.** 노드마다 자기를 부르던 판은 깊게 중첩된 코드(긴 `else if` 사슬 ·
+    길게 이은 식)에서 Python 재귀 한도를 넘어 `RecursionError`로 인덱스 전체를 잃었다 —
+    2026-10-04 GT 직접 모드 FT 데이터 생성(6,745표본)에서 인덱스 실패 147개(이슈 #492 본문이
+    밝힌 수 — run ID가 없고 원자료가 저장소 밖이라 여기서는 재현할 수 없다). 명시적 스택으로 돈다.
+
+    **방문 순서는 출력에 영향이 없다.** 스택은 예전 재귀와 같은 순서(부모 먼저, 자식은 앞쪽부터)로
+    돌지만 그 순서는 약속이 아니다(2026-10-05 `git grep` 기준 `index_file`을 부르는 곳은
+    `build_index` 하나이고, 그것이 `_by_callee`에서 `calls`를 (파일 · 줄 · caller · callee ·
+    인자)로 정렬해 내보낸다). `index_graph`의 「첫 호출 줄 순」도 줄의 최솟값으로 스스로 정렬한다.
     """
     unresolved = 0
-    if node.type == "call_expression":
-        target = node.child_by_field_name("function")
-        if target is not None and target.type == "identifier":
-            calls.append(
-                {
-                    "caller": caller,
-                    "callee": target.text.decode("utf-8", "replace"),
-                    "file": relative,
-                    "line": node.start_point[0] + 1,
-                    "args": _args(node),
-                }
-            )
-        else:
-            unresolved += 1
-    for child in node.children:
-        unresolved += _walk_calls(child, caller, relative, calls)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "call_expression":
+            target = current.child_by_field_name("function")
+            if target is not None and target.type == "identifier":
+                calls.append(
+                    {
+                        "caller": caller,
+                        "callee": target.text.decode("utf-8", "replace"),
+                        "file": relative,
+                        "line": current.start_point[0] + 1,
+                        "args": _args(current),
+                    }
+                )
+            else:
+                unresolved += 1
+        stack.extend(reversed(current.children))
     return unresolved
 
 
@@ -359,7 +371,11 @@ def _iter_definitions(root):
     것으로 세므로, 중첩 정의까지 별도 심볼로 올리면 같은 호출이 두 번 잡힌다.
 
     재귀 대신 스택을 쓴다 — 파스 트리 깊이가 파이썬 재귀 한계에 걸리는 자리를 하나
-    줄인다(실측 최대 깊이는 zlib 31, json 128로 여유가 있지만 공짜로 없앨 수 있다).
+    줄인다(실측 최대 깊이는 zlib 31, json 128로 여유가 있었다). 그러나 재귀 한도(기본 1,000)를
+    넘는 코드가 실제로 있다 — 이슈 #492가 밝힌 인덱스 실패 147개이고, 로컬 재현은 5,000단 `else if`
+    사슬 · 3,000항 덧셈식이 재귀 순회(`_walk_calls`)를 `RecursionError`로 죽인 것이다(합성 입력이라
+    실제 깊이를 말하지는 않는다). 이 순회와 `_lookup_tables`는 처음부터 스택이라 같은 입력에서도
+    안 죽는다.
     """
     stack = [root]
     while stack:
