@@ -44,9 +44,11 @@ import shlex
 import uuid
 from pathlib import Path, PurePosixPath
 
-# c2cpg (Joern v4.0.605) skips these folder names when it walks a project, so a database entry
-# under one of them -- or under a dot-directory -- never enters the CPG. Source: C2Cpg.scala
-# DefaultIgnoredFolders. Repo-verifiable instance: the 2026-09-14 zlib live run listed
+# c2cpg (Joern v4.0.605 and v4.0.646) skips these folder names when it walks a project, so a
+# database entry under one of them -- or under a dot-directory -- never enters the CPG. Source:
+# C2Cpg.scala DefaultIgnoredFolders. Verified at both tags by reading the source on 2026-10-03:
+# C2Cpg.scala is byte-identical, and x2cpg SourceFiles.scala (which applies the list) differs only
+# in whitespace. Repo-verifiable instance: the 2026-09-14 zlib live run (4.0.605) listed
 # test/example.c, test/infcover.c, test/minigzip.c as the exact 3 "missing from CPG" files
 # (docs/experiments/harness/2026-09-14-joern-slicer-live-atom.md §3.1). Mirroring the rule keeps
 # those from reading as parse misses.
