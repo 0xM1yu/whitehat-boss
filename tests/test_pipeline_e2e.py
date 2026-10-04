@@ -2684,6 +2684,10 @@ def _oracle_canary(root: Path, task_id: object) -> Path:
                 "rnd_bits_above_28": False,
                 "rnd_bits_unmeasured": False,
                 "measured_at": "2026-10-03T17:42:07+00:00",
+                # 게이트가 요약만 믿지 않게 보는 관측 칸 셋(§2.2).
+                "completed": True,
+                "segv_count": 0,
+                "problems": [],
             }
         ),
         encoding="utf-8",

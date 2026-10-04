@@ -758,8 +758,8 @@ def test_success_means_vul_crashed_and_fix_exited_cleanly(
 ) -> None:
     """`0·71·300·None·139·77`의 36개 조합 전부. 참인 것은 「vul은 크래시(139·77) · fix는 0」뿐이다 —
     `vul`의 300(타임아웃)·`None`(아직 안 돌았다)은 크래시가 아니고, `fix`의 300·`None`은 정상
-    종료가 아니다. **71도 크래시가 아니다** — 사워 71은 OOM이고, 저자
-    이슬 #15가 `vul not in [0, 71, 300] and fix == 0`을 직접 적는다.
+    종료가 아니다. **71도 크래시가 아니다** — 71은 OOM이고, 저자
+    이슈 #15가 `vul not in [0, 71, 300] and fix == 0`을 직접 적는다.
     """
     verdict = oracle.OracleVerdict(
         task_id=_TASK_ID, agent_id=_AGENT_ID, poc_id=_POC_ID, poc_hash="h" * 64,
