@@ -771,8 +771,9 @@ def _oracle_for(
     print(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
         f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. 후보마다 vul 다리만 보낸다. "
-        "fix 다리와 판정 조회는 vul 제출이 성공한 후보가 하나뿐일 때만 그 하나에 보낸다 - "
-        "둘 이상이면 고르는 규칙이 정해지지 않아 보내지 않는다"
+        "fix 다리와 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
+        "그 하나고, 둘 이상이면 하네스 내부 근거 등급의 최댓값을 든 후보가 하나뿐일 때 "
+        "그것이다. 최댓값이 동점이거나 등급을 모르는 후보가 있으면 보내지 않는다"
     )
     return TaskOracle(
         server=target,
@@ -922,7 +923,9 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     # 같은 근거다. 캡슐당 한 번만 더하면 풀에서 캡슐 항이 1/3로 나온다.
     tokens = sum(c.used_tokens for c in capsules) * places + _prefix_tokens(config) * calls
     budget = config.budget.input_tokens
-    share = f"{tokens / budget:.1%}" if budget else "예산 0"
+    # 상한 0은 「검사 안 함」이다(`BudgetLedger._overrun`) — 「예산이 0」이 아니다.
+    # 0을 두 번 되풀이하면 「못 돈다」로 읽힐 수 있다(#435).
+    share = f"{tokens / budget:.1%}" if budget else "상한 없음, 0은 검사 안 함"
     return [
         f"대상 artifact: {len(result.candidates) or len(capsules)}개 / 캡슐 {len(capsules)}개",
         f"예상 모델 호출: 최대 {calls}회 (scout + auditor + critic 상한 · pov 제외)",
@@ -1368,9 +1371,10 @@ def run(args: argparse.Namespace) -> int:
             return 2
     # 채점기 설정은 **해제 앞**에서 본다 (#386) — 순수 검사(파일·환경변수 읽기)이고, 뒤에 두면
     # 설정 오류가 작업 디렉터리를 더럽혀 오타를 고친 재시도가 「비어 있지 않다」로 거부된다
-    # (#397 리뷰 MEDIUM-1과 같은 배치 이유). **8단계에 못 닿는 run은 이 검사를 건너뛴다** — 낼 PoC가
-    # 없는 run에 키·번들 검사를 걸 근거가 없고, 막으면 통과시키려고 값을 지어내게 된다(위
-    # `reaches_model` 가드와 같은 판단). 건너뛰는 사실은 경고로 알린다.
+    # (#397 리뷰가 「해제 앞인가」로 확인한 것과 같은 배치 이유 — 거부 뒤 작업 디렉터리가 비어
+    # 있다). **8단계에 못 닿는 run은 이 검사를 건너뛴다** — 낼 PoC가 없는 run에 키·번들 검사를
+    # 걸 근거가 없고, 막으면 통과시키려고 값을 지어내게 된다(위 `reaches_model` 가드와 같은
+    # 판단). 건너뛰는 사실은 경고로 알린다.
     oracle = _oracle_for(args, unreachable=_oracle_unreachable_reason(spec, config))
     if isinstance(oracle, _OracleRefused):
         return 2
@@ -1655,8 +1659,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
         "fix 다리와 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 성공한 후보가 "
-        "하나뿐이면 그 하나에 돌고, 둘 이상이면 고르는 규칙이 아직 정해지지 않아 안 돈다"
-        "(oracle_final은 status none, reason policy_undecided). "
+        "하나뿐이면 그 하나에 돌고, 둘 이상이면 하네스 내부 근거 등급의 최댓값을 든 후보가 "
+        "하나뿐일 때만 돈다 - 동점이거나 등급을 모르는 후보가 있으면 안 돈다(oracle_final은 "
+        "status none, reason grade_tie 또는 grade_unknown). "
         "--task-dir와 --oracle-server와 함께만 쓴다. 과제 id·에이전트 id는 번들의 submit.sh에서 "
         "읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
         "{run_dir}/oracle/verdict.json에 남고 내부 등급(E4)을 올리지 않는다. 8단계에 닿지 않는 run"

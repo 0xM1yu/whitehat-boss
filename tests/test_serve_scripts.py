@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # `bash`에 **상대 경로**로 넘긴다 — Windows에서 PATH의 `bash`가 WSL 런처여도 cwd로 풀린다.
 SWAP = Path("tools/serve/swap.sh")
 GUARD = Path("tools/serve/guard.sh")
-DEVICES = ("atom", "vastai")
+DEVICES = ("atom", "vastai", "vastai-remote")
 
 # 교대 마감 식에 들어가는 스크립트 상수 — `NAME=숫자` 한 줄.
 _CONST = re.compile(
