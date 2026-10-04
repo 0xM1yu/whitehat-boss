@@ -209,3 +209,29 @@ def test_non_slice_auditor_critic_and_pov_share_the_first_read(ctx):
     assert _facts_of(ctx.models.last_for(Role.CRITIC).body)["source"] == first
     assert _facts_of(prompt.body)["source"] == first
     assert reads == [capsule.target]
+
+
+@pytest.mark.parametrize(
+    ("path", "required"),
+    [
+        ("PROJECT-CONTEXT.md", "Critic v6 · 근거 본문·SOURCE"),
+        ("config/profiles.yaml", "프롬프트는 v6이다"),
+        ("config/budgets.yaml", "v1 metadata-only 경로의 수"),
+        ("docs/agent-contracts.md", "Critic v1 → v6"),
+        ("docs/build-plan.md", "#497 — Critic v6"),
+    ],
+)
+def test_current_critic_prose_records_the_source_transition(path, required):
+    """H4의 실제 자리 복귀를 무는 철자 핀. 임의 동의어의 의미는 판독하지 않는다."""
+    assert required in Path(path).read_text(encoding="utf-8")
+
+
+def test_decision_example_uses_its_run_record_profile():
+    import json
+
+    from test_doc_examples import _body
+
+    decision = json.loads(_body("agent-contracts.md", "Decision", 0))
+    record = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))
+    entry = load_config(record["profile"]).model_for("critic")
+    assert decision["produced_by"]["prompt_version"] == entry.prompt_template_version
