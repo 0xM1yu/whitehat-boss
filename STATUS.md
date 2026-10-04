@@ -276,10 +276,13 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 대역으로만 검증했고 하네스 run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — 「대역으로만」은
 vul 다리에 한해 깨졌다**(`run_20261003_0003`이 실서버에 8건 제출, 전부 200). **왕복(vul→fix→조회)은
 여전히 0건**이다 — 후보 8건이라 최종 PoC를 지정하지 않았다
-([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). ⏵ **고르는 규칙은 동결·배선됐다**(2026-10-03) —
+([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). ⏵ **고르는 규칙은 동결·배선됐다**(2026-10-03, @danielcho02 · council 뒤) —
 **내부 근거 등급 최댓값, 동점이면 거부**이고 지정 로직이 채점기 값을 안 읽는다는 불변식에 테스트가
-붙었다. 🔴 **`dev_fake`에서는 그래도 점수가 안 난다** — Fake 도구가 등급을 상수로 만들어 후보가
-전부 동점(`grade_tie`)이다. 등급 변별력은 실모델 run에서 처음 측정된다. `PovSpec` 표현력 절벽(계산 크로스필드)이
+붙었다. 지정이 보는 등급은 8단계 `gate_eval`과 같다(`runner._grades_by_finding` — 8단계 도구 근거까지
+센다). 🔴 **`dev_fake`에서는 그래도 점수가 안 난다** — Fake `_run_repro`가 대상 소스의 존재만 봐 재현이
+전 후보에서 성공하므로 후보가 전부 E4 동점(`grade_tie`)이다(재현이 한쪽만 실패하면 `top_grade`다 —
+e2e 핀으로 잰 것). 🔴 **실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC가 `./poc`로
+materialize되기 전(위 호스트 후속)에는 8단계 도구 실행이 PoC와 무관하다. `PovSpec` 표현력 절벽(계산 크로스필드)이
 실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
 
 **선택지:**

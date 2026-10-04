@@ -355,6 +355,21 @@ def test_several_candidates_are_none_with_no_designation_in_the_sidecar(tmp_path
     }  # fmt: skip
 
 
+def test_the_grades_the_designation_read_are_in_the_sidecar_only_when_it_read_them(
+    tmp_path: Path,
+) -> None:
+    """지정이 후보 둘 이상에서 **읽은** 등급(`finding_id` -> 등급)이 `final.candidate_grades`로
+    남는다. 안 읽은 run(후보 0·1건)은 키가 없다 - `{}`가 아니라 **없다**(안 읽었다 != 빈 등급)."""
+    ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
+    ledger.set_final(
+        FinalAttempt(status="none", reason="grade_tie"), grades={"f_a": "E4", "f_b": "E4"}
+    )
+    assert _read(tmp_path)["final"]["candidate_grades"] == {"f_a": "E4", "f_b": "E4"}
+
+    ledger.set_final(FinalAttempt(status="none", reason="no_poc"))
+    assert "candidate_grades" not in _read(tmp_path)["final"]
+
+
 def test_an_error_text_is_clipped_before_it_reaches_the_sidecar() -> None:
     long = RuntimeError("x" * (oracle_log.ERROR_DETAIL_CHARS * 3))
 
