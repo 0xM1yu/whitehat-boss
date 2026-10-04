@@ -11,14 +11,16 @@
 #   다르면 교대가 2로 멈춘다.
 # - 엔드포인트: registry 그대로 `127.0.0.1` -> 로컬 포트를 원격 같은 포트로 잇는 터널을 run 전에 띄운다
 #   (`tools/serve/vast-tunnel.sh`). 준비 2차 확인(`/v1/models`)과 모델 호출이 그 터널을 지난다.
-# - 하네스는 WSL·Linux 안에서 돈다. Windows 네이티브 파이썬이면 교대 명령에 환경변수가 안 넘어간다
-#   (`swap-remote.sh` 머리 주석).
+# - 하네스는 WSL·Linux·Windows 네이티브 어디서나 돈다. ~~Windows 네이티브 파이썬이면 교대 명령에 환경변수가 안
+#   넘어간다~~ ⏵ 2026-10-04 정정(#477) — 원인은 환경 전달이 아니라 `bash`가 `System32`의 WSL 런처로 풀린 것이다.
+#   `model_swap`이 `command[0]`을 PATH로 먼저 풀어 Git Bash를 고른다. Windows에서는 교대 환경 변수를 Git Bash
+#   `export`로 세우지 않는다 — MSYS가 `/root/…` 값을 Windows 경로로 바꾼다(`swap-remote.sh` 머리 주석).
 # - 도구 단계(Docker)·채점 서버는 로컬이다.
 #
 # ⚠ 이 경로로 끝까지 돈 run은 아직 없다(2026-10-03). 래퍼의 인자·환경·따옴표·종료 코드 전달은 가짜 ssh로만
 #   확인했다(`tests/test_remote_swap.py`).
 #   ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
-#   `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`). Windows 쪽 서술의 사유는 #477이 고친다.
+#   `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`). Windows 쪽 서술의 사유는 #477이 고쳤다(위).
 
 command: [bash, tools/serve/swap-remote.sh]
 
