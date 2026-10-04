@@ -851,6 +851,16 @@ class TaskOracle:
         바이트고 CR·LF가 `\\r`·`\\n` 두 글자가 되므로 실제 CR이 든 원문으로는 `replace`가 안 맞는다
         (재현: `api_key="SECRETKEY123\\r"`). 그래서 원문 · 앞뒤 공백을 뗀 값 · 그 `repr` 모양을
         지운다. 긴 모양부터 지워야 `\\r` 꼬리가 안 남는다.
+
+        ⚠ **한계 둘.** ① 라틴-1 밖 문자가 든 키는 `http.client`가 `Invalid header value`가 아니라
+        `UnicodeEncodeError`를 던지고(`"'latin-1' codec can't encode character '\\u4e2d' in position
+        6"`), 그 문구에 **그 문자 하나(이스케이프)와 위치**가 남는다 — 키가 `"中"` 한 글자면
+        키 전체가 보인다(재현: `api_key="中"` → `... character '\\u4e2d' in position 0`).
+        `"replace"`는 그 키로 이 함수가 `UnicodeEncodeError`를 던져 `CyberGymOracleError`로 안
+        바뀐 채 새는 것을 막을 뿐이다(그 문구의 문자는 안 지운다). 실제 키는 ASCII라 영향이 작고
+        `cli.py`의 입구 검사(`isprintable`)는 `中`을 통과시킨다. ② 지우는 모양은 위 셋뿐이다 —
+        서버가 키를 URL 인코딩·base64 같은 **다른 모양**으로 되돌려 쓰는 응답은 못 지운다(그런
+        응답의 실측은 없다).
         """
         key = self.api_key
         if not key:
