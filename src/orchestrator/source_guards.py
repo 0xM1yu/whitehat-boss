@@ -14,10 +14,10 @@ sink 호출의 인자 이름을 언급하는 조건을 줄번호와 함께 모�
 
 **「없음」을 단언하지 않는다.** 하나도 못 찾으면 맞춰 본 이름을 줄에 적는다 — `GUARDS: no
 condition before the sink mentions <이름들> (syntactic scan of this function; …)`. 이름과 못 보는
-것(별칭 한 걸음 너머·클램프·switch)이 모델이 보는 줄에 있어야 한다. 독립 검토가 실제 GT sink 82개를
-훑어 보니 「없음」 12개 중 3개가 틀렸다(세 꼴 — `rlen = len`/`rlen = remain` 클램프,
-`totalSize = unescapedSize + replSize` 용량 검사, `p = table`·`colors_offset = FT_NEXT_ULONG(p)`를
-거친 `table_size` 검사). 맨 「none found」는 거짓이었다.
+것(별칭 한 걸음 너머·클램프·switch)이 모델이 보는 줄에 있어야 한다. 독립 검토가 실제 sink 82개를
+훑어 보니 「없음」 12개 중 3개가 틀렸다(로컬 · run ID 없음 · 재현 안 함 — 세 꼴: 지역 변수로 받은
+클램프(`n = len`), 합으로 만든 용량 검사(`total = a + b`), 포인터 오프셋 읽기를 거친 크기 검사).
+맨 「none found」는 거짓이었다.
 
 ## 어떻게 잇나 — 이름, 그리고 대입 한 걸음
 
