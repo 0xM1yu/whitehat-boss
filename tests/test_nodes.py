@@ -472,7 +472,13 @@ def _set_synthesize(ctx: RunContext, value: int) -> None:
 
 
 def test_synthesize_off_leaves_an_empty_repro_spec(ctx: RunContext) -> None:
-    """#S7 기본(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈추던 종전 동작. 합성 이벤트 없음."""
+    """#S7 끈 경우(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈춘다. 합성 이벤트 없음.
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 `synthesize_repro_spec: 1`을 선언해 **기본값이 1로
+    바뀌었다.** 그래서 이 검사는 커밋된 기본값에 기대지 않고 0을 **주입한다** — 무는 명제는
+    「켜짐/꺼짐 중 어느 것이 기본인가」가 아니라 「0이면 비는 채로 멈춘다」다.
+    """
+    _set_synthesize(ctx, 0)
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
 
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
@@ -940,10 +946,16 @@ def _pov_subjects(ctx: RunContext) -> list[str | None]:
 
 
 def test_pov_does_not_run_outside_validated_while_the_threshold_is_zero(ctx: RunContext) -> None:
-    """기본값(`pov_attempt_top_n: 0`)에서 `validated` 밖의 Finding은 PoV를 **안** 돈다 — 종전 동작
-    그대로다. 이 검사가 「0이 켜진 값이 아니다」를 문다(기본값을 올리는 변이가 여기서 빨개진다)."""
+    """`pov_attempt_top_n: 0`이면 `validated` 밖의 Finding은 PoV를 **안** 돈다.
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 8을 선언해 **기본값이 올라갔다.** 전 판은 여기서
+    `thresholds.pov_attempt_top_n == 0`을 단언해 기본값 자체를 묶었는데, 그 단언은 「0이면 안
+    돈다」를 무는 것이 아니라 「기본이 0이다」를 물었다. 0을 **주입**해 명제를 원래 자리로 되돌린다.
+    짝 검사 `test_pov_runs_outside_validated_when_the_threshold_is_set`이 양수 쪽을 문다.
+    """
     state, _ = _outside_validated(ctx, [("find_0001", 0.9)])
-    assert ctx.config.thresholds.pov_attempt_top_n == 0, "기본값 전제가 깨졌다"
+    _with_top_n(ctx, 0)
+    assert ctx.config.thresholds.pov_attempt_top_n == 0, "주입이 안 먹었다"
 
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
@@ -1379,6 +1391,9 @@ def test_stamp_issued_revalidates_instead_of_copying(ctx: RunContext, state: Fin
     초록이었다(D83 리뷰 변이 ⑤). 그 검증기를 직접 태운다 — 재현 명세 없는 `validated`·`proven`은
     만들어질 수 없어야 한다.
     """
+    # ⏵ 2026-10-05 — `synthesize_repro_spec` 기본값이 1이 되어 Auditor가 명세를 **채운다.**
+    # 이 검사의 전제는 「명세 없는 Finding」이라 그 스위치를 끄고 만든다(아래 단언이 전제를 묶는다).
+    _set_synthesize(ctx, 0)
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
     assert finding.repro_spec is None, "픽스처 전제 — 재현 명세 없는 Finding이어야 검증기가 문다"
@@ -2825,12 +2840,19 @@ def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: R
     assert kept == [5, 8]  # entry 5에 가까운 둘, 듬성한 번호 보존
 
 
-def test_scout_slice_trim_defaults_off_and_is_absent_from_flatten() -> None:
-    """#375 M-3/M-4 — 기본값 0이고, 0이면 `flatten()`에 키가 없다(#349/#351 선례)."""
+def test_scout_slice_trim_is_absent_from_flatten_when_off() -> None:
+    """#375 M-3/M-4 — 0이면 `flatten()`에 키가 없고 1이면 실린다(#349/#351 선례).
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 `scout_slice_trim: 1`을 선언해 **기본값이 1이 됐다.**
+    전 판은 커밋된 기본값이 0이라고 단언했고 그 줄에 *"기본값 1로 바꾸면 깨진다(M16)"*라고
+    적혀 있었다 — 그날이 왔다. 무는 명제는 **기본값이 아니라 `flatten()`의 모양**이라 두 값을
+    직접 만들어 양쪽을 문다. 이름의 `defaults_off`도 떼었다(거짓이 됐다).
+    """
     thresholds = load_config("dev_fake").thresholds
-    assert thresholds.scout_slice_trim == 0  # 기본값 1로 바꾸면 깨진다(M16)
-    assert "scout_slice_trim" not in thresholds.flatten()
-    on = thresholds.model_copy(update={"scout_slice_trim": 1})
+    off = thresholds.transition(scout_slice_trim=0)
+    on = thresholds.transition(scout_slice_trim=1)
+
+    assert "scout_slice_trim" not in off.flatten()
     assert on.flatten()["scout_slice_trim"] == 1.0  # 켜면 기록에 실린다
 
 
