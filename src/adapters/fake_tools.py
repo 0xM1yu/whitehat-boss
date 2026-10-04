@@ -12,6 +12,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from src.adapters.index_graph import source_lines
 from src.ids import IdFactory, sha256_text
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.paths import PathEscape, safe_join
@@ -154,7 +155,7 @@ class FakeToolRunner:
         root = self.root.resolve()
         for path in sources(workdir):
             text = path.read_text("utf-8", errors="replace")
-            for lineno, line in enumerate(text.splitlines(), start=1):
+            for lineno, line in enumerate(source_lines(text), start=1):
                 if _matches_any(line):
                     try:
                         rel = path.resolve().relative_to(root).as_posix()
