@@ -1256,6 +1256,48 @@ def test_build_facts_evidence_body_is_opt_in() -> None:
     assert with_body["evidence"][0]["truncated"] is False
 
 
+def test_build_facts_shows_the_evidence_location_the_gate_grades_on() -> None:
+    """본문을 싣는 호출은 그 Evidence의 `location`도 싣는다 — **게이트가 그 값으로 등급을 매긴다.**
+
+    `gate.py`의 E1은 `any(e.kind == STATIC) or any(e.location.overlaps(cand.location))`이고 그
+    판정은 **Finding이 인용한** Evidence 위에서 돈다. 그런데 FACTS의 evidence 항목에는 위치가 없어
+    모델은 「이 근거가 내가 주장하는 줄을 가리키나」를 **볼 수 없었다.** 그러면 v6 prefix의
+    *"use evidence IDs only when their registered evidence content supports the claim"*을 따르는
+    모델은 인용을 **거절하는 것이 맞고**, 그 결과 `evidence_refs`가 비어 등급이 E0에 묶인다.
+
+    **사고 —** 2026-10-04 첫 실모델·실도구 운영 run(`run_20261003_0003` · `arvo:1065`)에서 finding
+    3건이 전부 `evidence_refs=[]`였다. 보존된 프롬프트를 열어 보니 semgrep 근거가 실려 있었고
+    하네스는 그 Evidence의 `location`이 `apprentice.c:1086-1087`임을 **알고 있었는데** FACTS에는
+    `{evidence_id, kind, ok, body, truncated}`만 나갔다. 등급이 E0 -> 6단계 queue -> Critic 0회 ->
+    PoV 0건 -> `oracle_final reason=no_poc`로 그 run에 점수가 없었다(이슈 #475).
+
+    `location`은 **본문과 같은 opt-in**이다 — 본문을 안 싣는 호출(Scout, content-aware가 아닌 판)의
+    프롬프트 바이트는 그대로다(위 `test_build_facts_evidence_body_is_opt_in`이 그 모양을 문다).
+    위치가 없는 Evidence는 `null`로 싣는다 — 바로 위 `target`과 같은 관례이고, 키가 아예 없으면
+    「위치가 없는 도구」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
+    """
+    located = _evidence("evidence_0001", "r1").model_copy(
+        update={"location": Location(file="a.c", line_start=1086, line_end=1087)}
+    )
+    bodies = {"evidence_0001": {"body": "semgrep hit", "truncated": False}}
+
+    with_body = build_facts(run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies=bodies)
+    assert with_body["evidence"][0]["location"] == {
+        "file": "a.c",
+        "symbol": None,
+        "line_start": 1086,
+        "line_end": 1087,
+    }
+
+    # 위치 없는 Evidence도 키는 나간다 — `null`이 "도구가 위치를 안 줬다"는 사실이다.
+    plain_ev = _evidence("evidence_0001", "r1")
+    no_loc = build_facts(run_id=RUN_ID, ids={}, evidences=[plain_ev], evidence_bodies=bodies)
+    assert no_loc["evidence"][0]["location"] is None
+
+    # 본문을 안 싣는 호출은 위치도 안 싣는다(바이트 동일 — opt-in).
+    assert "location" not in build_facts(run_id=RUN_ID, ids={}, evidences=[located])["evidence"][0]
+
+
 def test_describe_evidence_appends_body_when_present() -> None:
     ev = _evidence("evidence_0001", "r1")
     assert "heap-overflow" not in critic._describe_evidence([ev])
@@ -1263,6 +1305,26 @@ def test_describe_evidence_appends_body_when_present() -> None:
         [ev], {"evidence_0001": {"body": "heap-overflow", "truncated": True}}
     )
     assert "heap-overflow" in described and "[truncated]" in described
+
+
+def test_describe_evidence_shows_the_location_the_gate_grades_on() -> None:
+    """Critic에게 주는 근거 줄도 `location`을 적는다 — 같은 명제의 둘째 자리다.
+
+    `build_facts`와 같은 이유다(그 주석): 7단계도 같은 게이트를 다시 돌고, Critic의 UPHOLD/REBUT가
+    E3에 들어간다. 위치를 숨기면 Critic이 「이 근거가 그 주장을 뒷받침하나」를 판단할 재료가 없다.
+
+    위치가 없는 Evidence는 **줄에 아무것도 더하지 않는다** — 산문 한 줄이라 `null`을 적으면
+    노이즈다. `build_facts`(JSON 블록)와 갈리는 유일한 점이고, 그쪽은 키 부재가 뜻을 흐려서
+    `null`을 싣는다.
+    """
+    loc = Location(file="a.c", line_start=1086, line_end=1087)
+    located = _evidence("evidence_0001", "r1").model_copy(update={"location": loc})
+
+    line = critic._describe_evidence([located])
+    assert "a.c:1086-1087" in line
+
+    # 위치 없는 Evidence는 종전과 같은 한 줄이다.
+    assert "a.c" not in critic._describe_evidence([_evidence("evidence_0001", "r1")])
 
 
 def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:

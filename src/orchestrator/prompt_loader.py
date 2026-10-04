@@ -378,16 +378,37 @@ def build_facts(
         if capsule
         else [],
         "source": source,
-        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 함께 싣는다. 안 주면
-        # (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
+        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)과 **위치**를 함께 싣는다.
+        # 안 주면 (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
         # 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
+        #
+        # **위치를 싣는 이유는 게이트가 그 값으로 등급을 매기기 때문이다.** E1은
+        # `any(e.kind == STATIC) or any(e.location.overlaps(cand.location))`이고 그 판정은
+        # Finding이 **인용한** Evidence 위에서 돈다(`gate.evidences_for`). 위치를 안 보여주면
+        # 모델은 「이 근거가 내가 주장하는 줄을 가리키나」를 판단할 수 없고, v6 prefix의
+        # "use evidence IDs only when their registered evidence content supports the claim"을
+        # 따르면 **인용을 거절하는 것이 맞다.**
+        # 그러면 `evidence_refs`가 비어 등급이 E0에 묶인다.
+        #
+        # **사고 —** 2026-10-04 첫 실모델·실도구 운영 run에서 finding 3건이 전부 `evidence_refs=[]`
+        # 였다. semgrep 근거는 프롬프트에 본문까지 실려 있었고 하네스는 그 위치가
+        # `apprentice.c:1086-1087`임을 알고 있었는데 FACTS에는 안 나갔다. E0 -> 6단계 queue ->
+        # Critic 0회 -> PoV 0건 -> `oracle_final reason=no_poc`로 그 run에 점수가 없었다(이슈 #475).
+        #
+        # 위치가 없는 Evidence는 `null`로 싣는다 — 위 `target`과 같은 관례다. 키를 아예 빼면
+        # 「도구가 위치를 안 줬다」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
+        # ⚠ **이 값이 등급을 올리지는 않는다** — 모델이 인용해야 비로소 게이트가 본다.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,
                 "kind": ev.kind.value,
                 "ok": ev.ok,
                 **(
-                    {"body": body["body"], "truncated": body["truncated"]}
+                    {
+                        "body": body["body"],
+                        "truncated": body["truncated"],
+                        "location": ev.location.model_dump(mode="json") if ev.location else None,
+                    }
                     if (body := (evidence_bodies or {}).get(ev.evidence_id)) is not None
                     else {}
                 ),
