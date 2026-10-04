@@ -4,7 +4,8 @@ A worker claims the next job file from inbox/ (atomic rename into running/), the
   clone (depth 1) -> harness indexer -> gt_slice.py (one Joern server, GT-near candidates only)
   -> build_auditor.py (AUDITOR_DEFINITIONS=1) -> out/<sid>/{auditor_inputs.jsonl.gz, slices.json.gz,
   build.json} and finally out/<sid>/DONE. The coordinator on the user's PC keeps inbox/ filled and
-pulls finished out/<sid>/ in batches. Usage: gt_worker.py <W>"""
+pulls finished out/<sid>/ in batches. With GT_DIRECT=1 there is no Joern step: clone -> indexer ->
+build_auditor around the GT lines (no slices.json.gz). Usage: gt_worker.py <W>"""
 
 import json
 import os
@@ -24,7 +25,16 @@ TOOL = HARNESS / "tools" / "gt_guided"
 JOERN = str(R / "joern/joern-cli/joern")
 W = int(sys.argv[1])
 HEAP = os.environ.get("HEAP", "20g")
-HARD = int(os.environ.get("HARD_SECONDS", "2400"))
+HARD = int(os.environ.get("HARD_SECONDS", "3600"))
+# CPG import runs under the query timeout; 600 s timed out mid-size repos (ImageMagick, binutils)
+QUERY_TIMEOUT = os.environ.get("QUERY_TIMEOUT", "1800")
+# repos with more C/C++ files than this keep only the GT directories (sparse checkout)
+PRUNE_FILES = int(os.environ.get("PRUNE_FILES", "8000"))
+INCLUDE_MAX = int(os.environ.get("INCLUDE_MAX", "3000"))
+# GT_DIRECT=1: skip Joern; build_auditor assembles around the GT lines (its "-" slices mode).
+# AUDITOR_ARMS / AUDITOR_OPTIONS in the environment reach build_auditor unchanged.
+GT_DIRECT = os.environ.get("GT_DIRECT") == "1"
+C_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx", ".inc")
 SLICER_ARGS = [
     "--threshold",
     "0.95",
@@ -35,7 +45,7 @@ SLICER_ARGS = [
     "--backward-nodes",
     "5000",
     "--query-timeout-seconds",
-    "600",
+    QUERY_TIMEOUT,
     "--candidate-timeout-seconds",
     "600",
 ]
@@ -87,6 +97,27 @@ def claim():
     return None
 
 
+def prune_dirs(repo, gt_points):
+    """None if the commit has at most PRUNE_FILES C/C++ files; otherwise the directories to keep:
+    each GT file's directory (recursive) plus a top-level include/ of at most INCLUDE_MAX files."""
+    res = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "FETCH_HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    files = [f for f in res.stdout.splitlines() if f.endswith(C_SUFFIXES)]
+    if len(files) <= PRUNE_FILES:
+        return None
+    keep = sorted({p["file"].rsplit("/", 1)[0] for p in gt_points if "/" in p["file"]})
+    include = sum(f.startswith("include/") for f in files)
+    if 0 < include <= INCLUDE_MAX:
+        keep.append("include")
+    kept = sum(any(f.startswith(k + "/") for k in keep) or "/" not in f for f in files)
+    return {"c_files": len(files), "kept_c_files": kept, "keep": keep}
+
+
 def process(jobfile, port):
     job = json.load(open(jobfile, encoding="utf-8"))
     sid = job["sample_id"]
@@ -97,21 +128,24 @@ def process(jobfile, port):
     wd.mkdir(parents=True)
     logf = od / "pipeline.log"
     st = {"sample_id": sid, "project": job.get("project"), "gt_guided": True}
+    st["query_timeout"] = int(QUERY_TIMEOUT)
     t0 = time.time()
     repo = wd / "repo"
     repo.mkdir()
     sh(["git", "init", "-q"], cwd=repo, logf=logf)
     sh(["git", "remote", "add", "origin", job["repo_url"]], cwd=repo, logf=logf)
-    if (
-        sh(
-            ["git", "fetch", "-q", "--depth", "1", "origin", job["commit"]],
-            cwd=repo,
-            timeout=1800,
-            logf=logf,
-        )
-        != 0
-        or sh(["git", "checkout", "-q", "FETCH_HEAD"], cwd=repo, logf=logf) != 0
-    ):
+    # trees first (blobs on demand), so a huge repo can be cut down before its files arrive
+    fetch = ["git", "fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", job["commit"]]
+    if sh(fetch, cwd=repo, timeout=1800, logf=logf) != 0:
+        st["error"] = "clone failed"
+        return st, od, wd
+    pruned = prune_dirs(repo, job["gt_points"])
+    if pruned is not None:
+        # init --cone first: before git 2.37 (jammy = 2.34) `set` alone means non-cone
+        sh(["git", "sparse-checkout", "init", "--cone"], cwd=repo, logf=logf)
+        sh(["git", "sparse-checkout", "set", *pruned["keep"]], cwd=repo, logf=logf)
+        st["pruned"] = pruned
+    if sh(["git", "checkout", "-q", "FETCH_HEAD"], cwd=repo, timeout=1800, logf=logf) != 0:
         st["error"] = "clone failed"
         return st, od, wd
     st["clone_s"] = round(time.time() - t0)
@@ -138,6 +172,9 @@ def process(jobfile, port):
     if not index.is_file():
         st["error"] = "index failed"
         return st, od, wd
+    if GT_DIRECT:  # no Joern: the Auditor input is assembled around the GT lines straight away
+        st["gt_direct"] = True
+        return build(job, st, od, wd, repo, index, "-")
     json.dump({"gt_points": job["gt_points"]}, open(wd / "gt.json", "w"))
     free_port(port)
     t2 = time.time()
@@ -205,6 +242,10 @@ def process(jobfile, port):
     if not st["slices"]:
         st["error"] = "no slices kept"
         return st, od, wd
+    return build(job, st, od, wd, repo, index, wd / "slices.json")
+
+
+def build(job, st, od, wd, repo, index, slices):
     json.dump(
         dict(job, kind="vuln", description=job.get("description", "")),
         open(wd / "job.json", "w"),
@@ -218,7 +259,7 @@ def process(jobfile, port):
             str(HARNESS),
             str(wd / "job.json"),
             str(repo),
-            str(wd / "slices.json"),
+            str(slices),
             str(index),
             str(od / "auditor_inputs.jsonl.gz"),
         ],
@@ -263,7 +304,7 @@ def worker(i):
         jobfile.unlink(missing_ok=True)
         log(
             f"{sid} {st.get('project')} slices={st.get('slices')} gt_src={st.get('gt_in_source')} "
-            f"err={st.get('error', '')[:60]} {st['total_s']}s"
+            f"pruned={bool(st.get('pruned'))} err={st.get('error', '')[:60]} {st['total_s']}s"
         )
 
 

@@ -117,6 +117,7 @@ BOXES = json.load(open(sys.argv[2], encoding="utf-8"))
 STATE = HERE / "state.json"
 DL = Path(os.path.expanduser("~")) / "Downloads"
 STAGE = DL / "ft_gt_tmp"  # one <sid>.tgz per pulled sample, waiting to be packed into a batch
+PULLS = DL / "ft_gt_pulls"  # raw pulls, apart from STAGE so flush() never packs one
 PULL_MIN, STALE_S, UNREACH_S, LOOP_S = 20, 3 * 3600, 1800, 45
 SSH = [
     "ssh",
@@ -227,15 +228,60 @@ def pull(box, sids, dest_dir):
     return None
 
 
+def _extract(tf, dest):
+    """extractall(filter="data") needs Python >= 3.11.4; older ones get the same refusal by hand."""
+    try:
+        tf.extractall(dest, filter="data")
+        return
+    except TypeError:
+        pass
+    for m in tf.getmembers():
+        if (
+            not (m.isfile() or m.isdir())
+            or m.name.startswith(("/", "\\"))
+            or ".." in Path(m.name).parts
+        ):
+            raise ValueError(f"refusing tar member {m.name!r}")
+    tf.extractall(dest)
+
+
+def needs_retry(build_json) -> bool:
+    """Failed before candidate discovery (CPG import hit the query timeout) on a worker older than
+    the 1800 s timeout, which did not record query_timeout. Retried once, never again."""
+    try:
+        b = json.loads(Path(build_json).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return b.get("query_timeout") is None and b.get("status") == "failed" and not b.get("gt_filter")
+
+
+def requeue(sids):
+    for s in sids:
+        st["finished"].pop(s, None)
+        st["assigned"].pop(s, None)
+        if s in st["pulled"]:
+            st["pulled"].remove(s)
+        if s not in st["pending"]:
+            st["pending"].insert(0, s)
+
+
 def stage(pulled_tgz):
-    """Split one pulled tar (several samples) into STAGE/<sid>.tgz, one per sample."""
+    """Split one pulled tar (several samples) into STAGE/<sid>.tgz, one per sample. Returns the
+    (staged, retry) sample ids; a retry sample is not staged."""
+    STAGE.mkdir(exist_ok=True)
+    sids, retry = [], []
     with tempfile.TemporaryDirectory() as t, tarfile.open(pulled_tgz, "r:gz") as tf:
-        tf.extractall(t, filter="data")
+        _extract(tf, t)
         for d in sorted(Path(t).iterdir()):
             if d.is_dir():
+                if needs_retry(d / "build.json"):
+                    retry.append(d.name)
+                    continue
                 with tarfile.open(STAGE / f"{d.name}.tgz", "w:gz") as out:
                     out.add(d, arcname=d.name)
+                sids.append(d.name)
     pulled_tgz.unlink()
+    return sids, retry
 
 
 def sample_stats(tgzs):
@@ -292,6 +338,36 @@ def write_batch(tgzs):
 
 
 log(f"start: jobs {len(JOBS)} boxes {len(BOXES)} pending {len(st['pending'])}")
+# a pull that landed but was not staged (crash in between): its samples are already gone from the
+# box, so stage them now and mark them finished + pulled instead of waiting for them forever
+for left in sorted(PULLS.glob("*_pull_*.tgz")) + sorted(STAGE.glob("*_pull_*.tgz")):
+    box_id = left.name.split("_", 1)[0]
+    staged, retry = stage(left)
+    requeue(retry)
+    for s in staged:
+        st["assigned"].pop(s, None)
+        st["finished"][s] = box_id
+        if s not in st["pulled"]:
+            st["pulled"].append(s)
+    log(f"recovered unstaged pull {left.name}")
+    save()
+# samples staged by an older worker that failed on the CPG timeout go back to the queue
+old_fail = []
+for p in sorted(STAGE.glob("hs-*.tgz")):
+    with tempfile.TemporaryDirectory() as t, tarfile.open(p, "r:gz") as tf:
+        m = next((m for m in tf.getmembers() if m.name.endswith("/build.json")), None)
+        if m is None:  # pulled without build.json: never finished
+            old_fail.append(p)
+            continue
+        (Path(t) / "b.json").write_bytes(tf.extractfile(m).read())
+        if needs_retry(Path(t) / "b.json"):
+            old_fail.append(p)
+if old_fail:
+    requeue([p.name[: -len(".tgz")] for p in old_fail])
+    for p in old_fail:
+        p.unlink()
+    log(f"requeued {len(old_fail)} staged samples that failed on the old CPG timeout")
+    save()
 while True:
     now = time.time()
     newly_done = {}
@@ -340,16 +416,19 @@ while True:
     pulled_set = set(st["pulled"])
     unpulled = [s for s in st["finished"] if s not in pulled_set]
     if len(unpulled) >= PULL_MIN or (all_done and unpulled):
-        STAGE.mkdir(exist_ok=True)
+        PULLS.mkdir(exist_ok=True)
         for box in BOXES:
-            mine = [s for s in unpulled if st["finished"][s] == str(box["id"])]
+            mine = [s for s in unpulled if st["finished"].get(s) == str(box["id"])]
             for i in range(0, len(mine), 200):
-                got = pull(box, mine[i : i + 200], STAGE)
+                got = pull(box, mine[i : i + 200], PULLS)
                 if got is None:
                     log(f"pull failed on box {box['id']} -> retry next loop")
                     continue
-                stage(got)
+                _, retry = stage(got)
                 st["pulled"] += mine[i : i + 200]
+                requeue(retry)
+                if retry:
+                    log(f"requeued {len(retry)} samples that failed on the old CPG timeout")
                 save()
     everything_pulled = all_done and len(st["pulled"]) == len(st["finished"])
     if STAGE.exists():
