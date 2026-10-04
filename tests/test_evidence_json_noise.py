@@ -23,9 +23,9 @@ errors와 results 사이 96 — 96은 42,508 − 42,401 − 11). 같은 구조�
 128이다. 픽스처의 본문(머리줄 합쳐)에서 `check_id`
 (`opt.semgrep-rules.c.lang.security.insecure-use-memset`)는 189자, 그 이름의 끝은 254자,
 줄번호 1087은 284자라 모두 head 530자 안이다.
-⚠ **10건 중 1건**이다 — 나머지 아홉은 여전히 안 보인다. 한 줄씩 접어 전부 보이게 하는 것은
-그 이슈의 선택지 1이고 **도구를 아는 파서**가 필요해 이 PR의 범위 밖이다(`evidence_summaries`는
-도구를 모르는 범용 절단기다).
+위 수치는 범용 잡음 제거 경로의 값이다. semgrep은 이제 별도 접기 경로로 규칙·경로·줄 범위와
+메시지 접두를 히트당 한 줄에 싣는다. 첫 히트를 열 번 반복한 축소판에서 800자 본문에
+**5 of 10 shown**을 실측했다. 서로 다른 실제 열 히트의 가시성이나 모델 인용률 실측은 아니다.
 
 이 파일의 픽스처는 **그 실 로그에서 왔다** — `errors[0]`의 `spans`를 148개 → 3개, `type`의
 중첩 스팬 목록을 2개로 줄여 3,127자로 만들었고 `results[0]`은 **손대지 않았다**. 줄인 것은
@@ -35,6 +35,8 @@ errors와 results 사이 96 — 96은 42,508 − 42,401 − 11). 같은 구조�
 
 import json
 from pathlib import Path
+
+import pytest
 
 from src.adapters.container_tools import PAYLOAD_READ_CAP, make_payload_reader
 from src.orchestrator.prompt_loader import (
@@ -120,10 +122,76 @@ _REAL_LOG = (
 )
 
 
-def _body(raw: str) -> dict[str, object]:
+def _body(raw: str, *, source: str = "semgrep", cap: int = 800) -> dict[str, object]:
     """`evidence_summaries`를 통과한 모델 사본. 형제 파일과 같은 관용구다(`model_construct`)."""
-    bare = Evidence.model_construct(evidence_id="evidence_0002", payload_ref="r2")
-    return evidence_summaries([bare], lambda _ref: raw)["evidence_0002"]
+    bare = Evidence.model_construct(evidence_id="evidence_0002", payload_ref="r2", source=source)
+    return evidence_summaries([bare], lambda _ref: raw, per_cap=cap)["evidence_0002"]
+
+
+def _ten_hit_log() -> str:
+    """실 로그 축소판의 첫 히트를 열 번 반복한다 — 키·값은 그대로, 배열 크기만 바꾼다.
+
+    출처: 이 파일 `_REAL_STDOUT`의 `results[0]` (`run_20261003_0003/semgrep/ev_0002.log`).
+    서로 다른 히트를 실측한 픽스처가 아니다. 건수는 규칙·줄 범위를 함께 든 물리 줄로 센다.
+    """
+    document = json.loads(_REAL_STDOUT)
+    document["results"] *= 10
+    return _REAL_LOG.replace(_REAL_STDOUT, json.dumps(document))
+
+
+def test_ten_hits_show_the_maximum_complete_rule_and_line_rows() -> None:
+    """800자 안에서 완전한 규칙·경로·줄·메시지 접두를 가능한 많이 싣는다."""
+    body = str(_body(_ten_hit_log())["body"])
+    hit = json.loads(_REAL_STDOUT)["results"][0]
+    identity = f'{hit["path"]}:{hit["start"]["line"]}-{hit["end"]["line"]} {_RULE_ID}: '
+    rows = [line for line in body.splitlines() if line.startswith(identity)]
+    assert len(rows) == 5  # 이 실 로그 유래 반복판으로 잰 표시 건수
+    assert all(line[len(identity):].startswith(hit["extra"]["message"][:13]) for line in rows)
+    assert f"{len(rows)} of 10 shown" in body
+    assert len(body) == 800
+    # 메시지 최소 16자와 현재 문맥/생략 표시를 유지하면 여섯 번째 완전한 줄은 못 들어간다.
+    overhead = body.index(rows[0])
+    assert overhead + 6 * (len(identity) + 16) + 5 > 800
+
+
+def test_semgrep_folding_uses_the_evidence_source() -> None:
+    """다른 도구가 같은 JSON을 내도 semgrep으로 추측하지 않는다."""
+    assert "of 10 shown" not in str(_body(_ten_hit_log(), source="asan")["body"])
+
+
+@pytest.mark.parametrize("cap", [20, 150, 350, 800, 2000])
+def test_folded_rows_and_count_fit_the_available_budget(cap: int) -> None:
+    """실 로그 유래 열 히트의 완전한 행 수와 표시 건수가 작은 잔여 예산에서도 같다."""
+    body = str(_body(_ten_hit_log(), cap=cap)["body"])
+    rows = [line for line in body.splitlines() if _RULE_ID in line]
+    assert f"{len(rows)} of 10 shown" in body
+    assert len(body) <= cap
+
+
+def test_folding_charges_the_shared_budget_by_the_rendered_body() -> None:
+    """첫 접기 본문을 청구하고 두 번째 증거는 남은 350자만 쓴다."""
+    evidences = [
+        Evidence.model_construct(evidence_id=f"evidence_{n:04d}", payload_ref="r", source="semgrep")
+        for n in (1, 2)
+    ]
+    out = evidence_summaries(evidences, lambda _ref: _ten_hit_log(), total_cap=1150)
+    assert len(out["evidence_0001"]["body"]) == 800
+    assert len(out["evidence_0002"]["body"]) <= 350
+    assert "1 of 10 shown" in out["evidence_0002"]["body"]
+
+
+def test_a_malformed_hit_falls_back_without_inventing_a_row() -> None:
+    """실 로그 히트의 필수 필드를 뺀 음성 판 — 손상된 결과 문서는 접지 않는다."""
+    document = json.loads(_REAL_STDOUT)
+    del document["results"][0]["start"]
+    log = _REAL_LOG.replace(_REAL_STDOUT, json.dumps(document))
+    assert "of 1 shown" not in str(_body(log)["body"])
+
+
+def test_stderr_json_is_not_folded_as_stdout() -> None:
+    """실 로그의 stdout/stderr 위치만 바꿔 stderr를 히트로 오인하는 회귀를 막는다."""
+    log = _REAL_LOG.replace(f"{_REAL_STDOUT}\n--- stderr ---", f"\n--- stderr ---\n{_REAL_STDOUT}")
+    assert "of 1 shown" not in str(_body(log)["body"])
 
 
 # --- 결함 ------------------------------------------------------------------------
@@ -143,7 +211,7 @@ def test_the_model_sees_which_rule_hit_which_line() -> None:
 
 
 def test_the_findings_count_and_the_exit_code_survive() -> None:
-    """하네스가 남기는 줄(발견 수·종료 코드·절 구분)은 그대로다 — 뺀 것은 잡음 키 하나다.
+    """하네스가 남기는 줄(발견 수·종료 코드·절 구분)은 접기 경로에서도 남는다.
 
     ⚠ **비회귀 핀 — 이 수정을 되돌려도 통과한다.** 그 줄들은 `stdout` 앞이라 head 안에 원래
     있다. 호출 자리를 빼든, `_drop_json_noise`를 입력 그대로 돌려주게 하든, `_JSON_NOISE_KEYS`를
@@ -284,14 +352,9 @@ def test_the_noise_list_stays_short_and_declared() -> None:
 
 
 def test_the_body_still_obeys_the_per_evidence_cap() -> None:
-    """뺀 뒤에도 상한은 상한이다 - 예산을 늘리는 수정이 아니다(그 이슈의 선택지 4를 안 골랐다).
+    """접은 뒤에도 상한은 800자이고 생략한 JSON 필드는 truncated=True로 알린다.
 
-    ⚠ **비회귀 핀 — 이 수정을 되돌려도 통과한다**(호출 자리를 빼든 함수를 입력 그대로 돌려주게
-    하든 `_JSON_NOISE_KEYS`를 비우든 통과함을 되돌려 확인했다 — PR #489 리뷰 반영). 상한은
-    `_bound_text`가 지키므로 어느 입력에서도 같다. 그리고 비교 대상이 **같은 모듈의 상수**
-    (`EVIDENCE_BODY_CHAR_CAP`)라 그 상수를 올려도 통과한다 — 단 **약 2,288까지만**이다: 정리 뒤
-    본문이 2,289자(이 함수로 잰 값)라 상한이 그 이상이면 본문이 안 잘려 둘째 단언
-    (`truncated is True`)이 빨개진다. 「예산을 안 늘렸다」는 값(800)을 못 박지 않는다.
+    범용 절단으로 되돌려도 통과하는 비회귀 핀이다. 접기 가시성은 열 히트 핀이 검증한다.
     """
     summary = _body(_REAL_LOG)
 
@@ -299,33 +362,18 @@ def test_the_body_still_obeys_the_per_evidence_cap() -> None:
     assert summary["truncated"] is True
 
 
-# --- 한계 - 고치지 않았다 (PR #489 리뷰) -------------------------------------------
+# --- 범용 경로의 한계와 semgrep 접기의 대조 (PR #489 이후) ---------------------------
 #
-# 아래 둘은 이 수정이 **효과를 잃는 모양**을 실행으로 고정한다. **어느 고침에 빨개지는지는
-# 핀마다 다르다**(되돌려 확인했다):
-# - `paths` 핀 — `paths`를 잡음 키에 넣으면 빨개진다. 잡음 키 제거 자체를 되돌려도 빨개진다
-#   (전제 단언이 `errors`가 빠졌는지 본다).
-# - 읽기 상한 핀 — 어댑터 쪽 수정에만 빨개진다: 읽기 상한을 없애거나 상한 **앞에서** `errors`를
-#   빼 읽은 길이가 상한 미만이 되게 하면 `len(read) == PAYLOAD_READ_CAP`이 빨개진다. 상한을
-#   올리는 수정에는 안 빨개진다(핀이 상한 상수에서 크기를 맞춘다 — 상한이 얼마든 잘린 줄은 같은
-#   모양이다). **파싱 쪽 수정(`_drop_json_noise`가 잘린 줄을 처리)에도 안 빨개진다** — 이 핀의
-#   입력은 `errors`가 상한을 넘어 이어져 `results`의 글자가 읽히지 않으므로 어떤 파싱도 그것을
-#   되살리지 못한다. 그 수정이 돕는 구간은 `errors`의 끝이 상한 안에 드는 약 60스팬 폭뿐이고 이
-#   핀은 그 구간을 안 다룬다.
-# 한계가 풀리면 `prompt_loader`의 `_JSON_NOISE_KEYS` 주석·`_drop_json_noise` docstring과
-# `docs/agent-contracts.md`의 한계 서술을 같이 고친다.
+# paths 핀은 semgrep 접기를 끄면 빨개지고, 다른 도구의 범용 경로에는 기존 한계가 남는다.
+# 읽기 상한 핀은 여전히 읽은 범위 안에 results가 없음을 검증한다. 접기는 잘린 JSON을
+# 복구하지 않는다. 어댑터가 상한 앞에서 잡음을 걷는 선택지는 이 변경 밖이다.
 
 
 def test_a_wide_paths_list_pushes_the_results_out_again() -> None:
-    """한계 핀 - `paths.scanned`가 길면 `errors`를 뺀 뒤에도 `results`가 head 밖이다.
+    """범용 경로의 한계는 남지만 semgrep 접기에서는 paths가 히트를 밀지 않는다.
 
-    `paths`는 알파벳 순으로 `results`보다 앞이고 스캔한 파일 수만큼 자란다. 실측 한 건은 단일
-    파일이라 51자였다. 여기서는 픽스처의 `scanned`를 27자 경로 40개(원소당 직렬화 폭 31자)로
-    **늘렸다**(경로의 디렉터리는 실 로그 그대로다) - 그러면 `results`가 1,330자 지점에서 시작한다.
-    현재 호출부는 파일 경로만 넘기므로(코드 읽기) 실 run에서 이런 모양이 나오는지는 미실측이다.
-
-    첫 단언이 「`errors`를 뺀 뒤에도」를 건다(자리표시자가 본문에 있다) - 없으면 이 핀은 제거를
-    되돌려도 통과한다(`errors`가 안 빠져도 규칙 이름은 head 밖이다).
+    실 로그 경로 모양의 40파일 크기 변형이다. 기존 부재 기대값은 접기가 해결한 한계라 뒤집는다.
+    `_drop_json_noise` 계약은 그대로 두고 두 경로의 결과를 함께 검증한다.
     """
     wide = json.loads(_REAL_STDOUT)
     wide["paths"]["scanned"] = [f"/src/src-vul/file/src/f{n:02d}.c" for n in range(40)]
@@ -333,7 +381,10 @@ def test_a_wide_paths_list_pushes_the_results_out_again() -> None:
     body = _body(log)["body"]
 
     assert "chars dropped" in body  # errors는 빠졌다
-    assert _RULE_ID not in body  # 그런데도 results는 head 밖이다
+    assert _RULE_ID in body
+    assert _HIT_LINE in body
+    assert "1 of 1 shown" in body
+    assert _RULE_ID not in _body(log, source="asan")["body"]  # 범용 경로의 한계는 남는다
 
 
 def test_the_documented_read_cap_value_matches_the_adapter() -> None:
