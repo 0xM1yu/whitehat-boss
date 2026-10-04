@@ -451,9 +451,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
   서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
   검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
-  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200, `run_20261003_0003`) — 「대역으로만」은
-  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이고, `cached`가 서버 응답 필드가
-  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이라는 것도 그 run에서 확인했다(8건 호출).
+  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(제출 8건 200 · **고유 PoC 1개** — `cached` 미적중 1·적중 7 ·
+  `win11`의 `run_20261003_0003`(trace sha256 `f308c5fbfc4f8e54…`),
+  [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)) — 「대역으로만」은
+  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이다. `cached`는 서버 응답 필드가
+  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
+  접근 로그에도 제출마다 앞선 읽기 8건이 있다).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
