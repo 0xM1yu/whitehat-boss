@@ -374,7 +374,13 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   다음 기동이 「STOP_GUARD가 있다」로 거부돼 run이 `model_swap_failed`로 멈춘다 — 그때까지 떠 있던 서버는 그
   단계가 끝나 run 끝 내림이 내릴 때까지 감시 없이 돈다.
 - ⚠ vast.ai 컨테이너에는 docker·podman이 없다(2026-09-29) — 도구 단계를 어디서 돌릴지 정하기 전에는 vast로
-  끝까지 도는 run이 없다. `vastai.yaml`의 `command`는 로컬 실행이고 원격 실행 경로는 짓지 않았다.
+  끝까지 도는 run이 없다. `vastai.yaml`의 `command`는 로컬 실행이다. ⏵ 2026-10-03 — 원격 경로가 생겼다 ->
+  `--device vastai-remote`(하네스·도구는 로컬, 서빙만 vast). 교대는 `tools/serve/swap-remote.sh`가 ssh로 원격
+  `swap.sh`를 부르고, 원격 사본은 `vast-bootstrap.sh`, 모델 호출은 `vast-tunnel.sh` 터널을 지난다. 순서 ->
+  ① bootstrap ② 원격에 감시자 ③ 터널 ④ WSL·Linux에서 `SWAP_SSH_HOST`·`SWAP_REMOTE_ROOT`·`SWAP_REMOTE_PYTHON`을
+  주고 run. 이 경로로 끝까지 돈 run은 아직 없다(가짜 ssh 테스트만 — `tests/test_remote_swap.py`).
+  ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
+  [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)). Windows 쪽 서술의 사유는 #477이 고친다.
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
