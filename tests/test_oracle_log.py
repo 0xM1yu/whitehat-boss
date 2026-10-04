@@ -58,6 +58,68 @@ def test_no_poc_and_all_submissions_failed_are_different_reasons() -> None:
     assert broken.none_reason() == oracle_log.REASON_ALL_VUL_FAILED
 
 
+class _RateLimited(RuntimeError):
+    """`CyberGymOracleError`와 같은 모양 — `status`를 들고 오는 예상이다.
+
+    어댑터를 import하지 않는다 — `src/orchestrator/**`는 `src.adapters`를 import하지
+    않고(`test_orchestrator_source_has_no_adapter_import`), 장부도 그래서 duck typing으로 읽는다.
+    본문은 저자 서버가 21번째에 돌려주는 것이다(어댑터 모듈 docstring의 2026-10-02 실측).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Rate limit exceeded for agent <id>. Max 20 requests per 60s.")
+        self.status = 429
+
+
+def _rate_limited(finding_id: str, poc: bytes = b"poc"):  # noqa: ANN202
+    return oracle_log.vul_failed(finding_id, poc, _RateLimited(), wall_ms=3)
+
+
+def test_the_http_status_of_a_failed_submission_survives_in_the_ledger() -> None:
+    """429(레이트리미트)와 그 밖의 실패가 **사유 본문을 파싱하지 않고** 갈려야 한다 (#422)."""
+    assert _rate_limited("find_0001").error_status == 429
+    assert _failed("find_0002").error_status is None
+
+
+def test_a_rate_limited_attempt_carries_its_status_into_the_sidecar(tmp_path: Path) -> None:
+    """사이드카에도 상태가 들어가야 한다 — 장부를 나중에 읽는 사람이 세어야 한다 (#422)."""
+    ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
+    ledger.add_attempt(_rate_limited("find_0001"))
+
+    row = ledger.record()["candidates"][0]
+
+    assert row["status"] == "failed" and row["error_status"] == 429
+
+
+def test_a_run_whose_submissions_were_all_rate_limited_says_so() -> None:
+    """「한도에 걸려 상실했다」가 「냈는다 전부 실패했다」로 읽히면 안 된다 (#422)."""
+    limited = OracleLedger(wired=True)
+    limited.add_attempt(_rate_limited("find_0001"))
+
+    assert limited.none_reason() == oracle_log.REASON_RATE_LIMITED
+
+
+def test_a_mixed_failure_run_is_not_called_rate_limited() -> None:
+    """한도 밖 실패가 섞이면 「한도 때분」이라 말할 수 없다 — 더 넓은 사유로 남긴다 (#422)."""
+    mixed = OracleLedger(wired=True)
+    mixed.add_attempt(_rate_limited("find_0001"))
+    mixed.add_attempt(_failed("find_0002"))
+
+    assert mixed.none_reason() == oracle_log.REASON_ALL_VUL_FAILED
+
+
+def test_the_warning_names_the_rate_limit_even_when_a_candidate_survived(tmp_path: Path) -> None:
+    """후보가 남아도 한도로 잃은 건이 있으면 경고가 그것을 말한다 (#422).
+
+    ⚠ 이 항목은 **콘솔 본문의 어느 낱말을** 문다 — 성질을 물 형틀을 못 찾았다.
+    """
+    ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
+    ledger.add_attempt(_ok("find_0001"))
+    ledger.add_attempt(_rate_limited("find_0002"))
+
+    assert any("429" in line for line in ledger.warnings())
+
+
 # --- 매니페스트 요약 -----------------------------------------------------------------
 
 
@@ -326,7 +388,7 @@ def test_a_failed_attempt_and_a_failed_final_carry_their_reason(tmp_path: Path) 
     assert record["candidates"][0] == {
         "finding_id": "find_0001", "poc_sha256": hashlib.sha256(b"abc").hexdigest(),
         "poc_bytes": 3, "leg": "vul", "wall_ms": 3, "status": "failed",
-        "error": "RuntimeError", "error_detail": "server refused",
+        "error": "RuntimeError", "error_status": None, "error_detail": "server refused",
     }  # fmt: skip
     assert record["final"] == {
         "status": "failed", "designation": "sole_candidate", "wall_ms": 9,

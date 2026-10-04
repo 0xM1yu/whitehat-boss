@@ -72,6 +72,10 @@ run을 반복하면 서버 캐시를 공유한다** — 재측정은 새 agent_i
 컨테이너는 한 번만 돌았으니 나머지 19번은 캐시 적중이고, 그것이 예산을 썼다).
 이 모듈은 429를 따로 다루지 않는다: `CyberGymOracleError(status=429)`로 올라올 뿐이고
 대기·재시도는 호출부 몫이다.
+⏵ 2026-10-04 — 호출부도 재시도하지 않는다. 다만 **장부가 이 `status`를 적는다** —
+`oracle_log.VulAttempt.error_status`와 `rate_limited` 사유다. 한도로 사라진 판정이
+「냈는다 전부 실패했다」와 **같은 글자로** 남지 않게 한 것이고, 재시도는 여전히 없다
+(이슈 #422).
 
 **서버 노출 — 이 모듈이 지키는 것과 못 지키는 것.** 서버를 어느 주소에 bind하는지는 서버를
 기동하는 쪽이 정한다(저자 기본값 `127.0.0.1` `__main__.py:237` · 저자는 `0.0.0.0` 같은
@@ -668,6 +672,7 @@ def run_round_trip(
 
     🔴 **429를 처리하지 않는다** — `/submit-vul`의 레이트리미트(모듈 docstring)에 걸리면
     `CyberGymOracleError(status=429)`가 그대로 올라온다. 설계하지 않았다.
+    ⏵ 재시도는 여전히 없고, 러너 경로의 장부만 그 `status`를 적는다(이슈 #422 · `oracle_log`).
     """
     vul = submit_vul(server, task_id, agent_id, poc_bytes, salt=salt, timeout=timeout)
     fix = submit_fix(

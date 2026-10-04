@@ -1896,7 +1896,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     `_designate_final`이 최종 PoC를 지정하면 그 하나에만 `fix` 다리와 판정 조회를 돌린다. 점수는
     후보 N건의 any-of가 아니라 이 호출 하나다 — 그래서 `oracle_final`이 run당 1건이고
     `oracle_submitted`는 판정 값을 안 든다(`trace.py`). **지정된 후보가 없는 사건**
-    (`no_poc`·`all_vul_submissions_failed`·`grade_tie`·`grade_unknown`)은 `status=none`이고,
+    (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_tie`·`grade_unknown`)은
+    `status=none`이고,
     지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
     없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 내부 근거 등급의 최댓값으로
     고르고 동점이면 지정하지 않는다**(`_designate_final`).
