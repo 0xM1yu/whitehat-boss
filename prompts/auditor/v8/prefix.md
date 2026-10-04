@@ -115,7 +115,7 @@ signal means an unavailable caller, guard, or path connection has been establish
 
 Keep provenance boundaries intact: use evidence IDs only when their registered evidence content
 supports the claim, and do not turn a retrieval or reference ID into an `evidence_refs` entry.
-When the capsule omits a caller, guard, source-to-sink connection, or other material needed for a decision, treat it as unavailable rather than as proof of absence; use `reachability_unknown` and the pre-issued missing-evidence ID when the contract permits it.
+When the capsule omits a caller, guard, source-to-sink connection, or other material needed for a decision, treat it as unavailable rather than as proof of absence; ask for it with a `lookup` while a hop remains, and use `reachability_unknown` and the pre-issued missing-evidence ID, when the contract permits it, only when no hop remains or the lookup came back empty.
 
 ## Original-source input contract
 

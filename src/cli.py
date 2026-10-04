@@ -487,8 +487,9 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
 
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
-    프롬프트(v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이 여기서 막혀 GPU 없는 스모크가
-    죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과 같은 논법)."""
+    프롬프트(⏵ 2026-10-04 v8 — 그 전 v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
+    같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
     if not on or Role.AUDITOR.value not in config.profile.roles:
         return []
@@ -925,6 +926,11 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     places = _scout_places(config)
     # 캡슐은 target당 하나지만 **자리마다 프롬프트에 실린다** — `_expected_calls`와
     # 같은 근거다. 캡슐당 한 번만 더하면 풀에서 캡슐 항이 1/3로 나온다.
+    # ⚠ **Auditor 도구 루프가 켜진 run은 과소추정이다**(⏵ 2026-10-04 — 이슈 #419). 이 합은 호출마다
+    # **역할 평균 prefix**(`_prefix_tokens` — `harness_pool`에서 4,481토큰)만 더한다. 루프는 매 홉
+    # prefix와 hop0 user 턴(`SOURCE` 최대 20,000토큰 + FACTS)을 다시 싣고 관측이 홉마다 쌓이는데
+    # 둘 다 안 센다 — `SOURCE`는 캡슐 토큰이 아니라 러너가 따로 조립해서 한 방일 때도 안 센다.
+    # 계산값은 `config/budgets.yaml`의 `auditor_tool_hops` 주석이 든다. 고치지 않았다(별 작업).
     tokens = sum(c.used_tokens for c in capsules) * places + _prefix_tokens(config) * calls
     budget = config.budget.input_tokens
     # 상한 0은 「검사 안 함」이다(`BudgetLedger._overrun`) — 「예산이 0」이 아니다.
@@ -975,8 +981,9 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     세어 풀 프로필에서 **실제의 1/3**을 냈다 — 그 값으로 예산을 잡으면 run이 도중에
     `BudgetExhausted`로 부분 결과만 남긴다(PR #178 리뷰).
 
-    **Auditor는 도구 루프를 켜면 후보당 `1 + auditor_tool_hops`회**(`thresholds.auditor_tool_hops`,
-    기본 0 = 종전의 1회)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
+    **Auditor는 도구 루프를 켜면 후보당 `1 + auditor_tool_hops`회**(`thresholds.auditor_tool_hops` —
+    0 = 종전의 1회. 필드 기본은 0이지만 ⏵ 2026-10-04 `config/budgets.yaml`이 16을 들어 저장소 설정은
+    후보당 17회다)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
 
     **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 finding당 최대
     `1 + max_hops`회 더 부른다(VALIDATED = critic 통과분이라 최대 `min(candidates, critic_top_n)
@@ -1330,7 +1337,8 @@ def run(args: argparse.Namespace) -> int:
     # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
     # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
     # 말한다 — 어긋나도 오류 없이 돈다. v6(#418의 A/B 판)도 그 모양만 서술한다(⏵ 2026-10-04 서빙
-    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언).
+    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 지금 서빙 판은 v8 = v7 + 도구 루프이고
+    # 그 서술·선언을 물려받았다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:

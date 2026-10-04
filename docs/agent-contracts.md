@@ -202,8 +202,10 @@ agent:
 #### 도구 루프 — Auditor가 홉마다 조회·진단을 부른다 (이슈 #419 · [D99](open-questions/D/D99.md) · ⏵ 2026-10-04 **켰다**)
 
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
-main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
-그 다음 번호다). 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
+~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
+그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**이고 **지금 배선된 판이다**(`prompts/auditor/v8/` ·
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
 `src/schemas/auditor.py`(`AuditorAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
 
@@ -342,7 +344,7 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
 8. **meta 선언 — 선언 없이 상한만 켜면 cli가 막는다.** 루프 판의 `meta.yaml`은 둘을 든다.
 
    ```yaml
-   # 루프 판의 prompts/auditor/<버전>/meta.yaml 모양 예시 — 그 판은 아직 이 저장소에 없다
+   # 루프 판의 prompts/auditor/<버전>/meta.yaml 모양 예시 — 실물은 prompts/auditor/v8/meta.yaml이다(⏵ 2026-10-04)
    output_schema: AuditorAction
    tools: [semgrep, clang-tidy, build, asan, gdb, poc]   # prefix가 광고하는 만큼만
    ```
@@ -358,13 +360,20 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
      때마다 코드를 고쳐야 하고 잊으면 그 기능이 조용히 꺼진다. 루프도 도구도 **meta 선언**으로 가른다 —
      판을 한 번호에서 다음 번호로 올려도 코드 변경 없이 돈다. (근거 본문 싣기는 아직 이름 목록이다 — 새 판이 본문을 전제로 쓰였으면 거기에는
      이름을 더해야 한다.)
-   - 이 선언을 디스크에 두면 `tests/test_config.py`의
+   - ~~이 선언을 디스크에 두면 `tests/test_config.py`의
      `test_the_prompt_output_schema_is_what_the_caller_actually_requests`가 Auditor를 `Finding` 하나와 등치로
      단언해 빨개진다(`bench.ROLE_SPEC`도 `Finding`을 요청한다) — scout처럼 허용집합 소속으로 넓히는 것은 그
-     테스트를 쥔 레인의 몫이다. 같은 이유로 **루프 판은 bench의 한 방 호출로 못 잰다.**
+     테스트를 쥔 레인의 몫이다. 같은 이유로 **루프 판은 bench의 한 방 호출로 못 잰다.**~~ ⏵ 2026-10-04 — 둘 다
+     고쳤다(#419): 그 테스트는 Auditor를 허용집합(`Finding`·`AuditorAction`) 소속으로 묻고
+     (`AUDITOR_ALLOWED_SCHEMA_NAMES`), bench는 판의 meta 선언을 풀어 요청한다(`bench_report.schema_for` —
+     scout 자리와 같다). `bench.ROLE_SPEC`의 auditor 항목은 여전히 `Finding`(한 방 판의 이름)이고 루프 판에는
+     쓰이지 않는다(`tests/test_auditor_loop.py`의 `test_bench_requests_the_schema_the_auditor_prompt_declares`).
 
-§1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. 기본(꺼짐)에서
-Auditor는 `ctx.call_tool`을 부르지 않는다.
+§1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
+Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
+명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
+들고 정본 Auditor가 루프 판(v8)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
 
