@@ -455,7 +455,7 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
 def test_the_canonical_auditor_selects_prompt_v8(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v7`을 고른다. 되돌리면 이
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v8`을 고른다. 되돌리면 이
     핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -640,10 +640,15 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 고르지 않는다」. v7 배선(2026-10-04)으로 미선택이 되며 달았고, 그 전에는 이 행이
         # 음성 통제였다.
         ("auditor", "qwen3.8-27b", "v6", ["auditor/v6"]),
-        # 음성 통제 — prompts/auditor/v7/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
-        # 머리 주석 형식이고 v6도 2026-10-04까지 「정본」이었다) — 판독기가 그것을 「안 고른다」로
-        # 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v7", []),
+        # 실물 형제 문형 — prompts/auditor/v7/meta.yaml 마지막 ⏵ 「… 지금은 어느 / registry
+        # 엔트리도 이 버전을 고르지 않는다」. v8 배선(2026-10-04 · PR #491)으로 미선택이 되며
+        # 달았고, 그 전에는 이 행이 음성 통제였다. v6처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "qwen3.8-27b", "v7", ["auditor/v7"]),
+        # 음성 통제 — prompts/auditor/v8/meta.yaml:1의 「auditor 엔트리가 이 버전을 고르고」.
+        # **이 문형은 실재한다**(배선된 판의 머리 주석 형식이고 v7도 2026-10-04까지 「정본」
+        # 이었다) — 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼
+        # 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v8", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -652,8 +657,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 여섯만 시험한다(⏵ 2026-10-04 v7 음성 통제를 더해 여섯) — 새 철자로 적은 meta는
-    목록에 넣어야 잡힌다."""
+    meta 일곱만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
+    새 음성 통제가 되어 일곱) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -682,8 +687,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v6/meta.yaml:6-7 — v7 배선으로 미선택이 되어 v4와 같은 철자를 쓰고,
         # 구절이 주석 줄바꿈으로 갈린다(`:6` 끝이 「어느」다).
         ("auditor", "v6", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v7/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
-        ("auditor", "v7", set()),
+        # prompts/auditor/v7/meta.yaml 마지막 ⏵ — v8 배선으로 미선택이 되어 v6와 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
+        ("auditor", "v7", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v8/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
+        ("auditor", "v8", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -692,7 +700,7 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 여섯 meta의(⏵ 2026-10-04 v7을 더해 여섯) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 일곱 meta의(⏵ 2026-10-04 v8을 더해 일곱) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
