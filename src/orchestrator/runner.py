@@ -437,7 +437,7 @@ class Dependencies(Protocol):
     # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 같은 경계다.
     writes_of: Callable[[str, str], list[Location] | None]
     field_writes_of: Callable[[str, str], list[Location] | None]
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수·enum 상수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[..., list[Location] | None]
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
     locals_of: Callable[[str, str], frozenset[str] | None]
@@ -1321,7 +1321,8 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
 
     **조회는 기존 resolver를 재사용한다**(`ctx.resolve_requests`). 이름으로 함수 본문을 찾는
     수단이 그것뿐이다 — `symbols_for`는 (파일 → 심볼)이고 `definitions_of`는 `macros`·`types`·
-    `file_vars`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서 새 훅·새
+    `file_vars`·`enum_constants`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서
+    새 훅·새
     어댑터 배선이 0이다.
     resolver는 `table("functions")`가 없으면 빈 `Resolution`을 돌려주므로(`need_evidence` 모듈)
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
@@ -3158,9 +3159,16 @@ _AUDITOR_CALLEE_CHARS = 4_000
 # ⚠ 이 상한과 아래 `_AUDITOR_DEFINITION_CHARS`는 `auditor_source_tokens`가 양수여도 **글자**다 —
 # 하나가 너무 큰지를 거르는 값이고, 전체 상한만 토큰으로 센다.
 
-# 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
-# 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
+# 정의(매크로·타입·파일 변수·enum 상수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일
+# 때만). 큰 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_DEFINITION_CHARS = 2_000
+# 큰 enum(상한을 넘는 enum 상수의 정의)은 통째로 버리지 않고 머리 줄 · 그 상수 줄 앞뒤 이 줄
+# 수 · 닫는 줄만 남겨 싣는다(`_trim_enum`). index-v4가 enum 상수를 enum 정의 전체로 싣자
+# 「크기 초과로 버림」이 29 -> 142로 늘었다(2026-10-04 로컬 274표본 · run ID 없음). **정한
+# 값이지 잰 값이 아니다.**
+_AUDITOR_ENUM_CONTEXT_LINES = 5
+# `_trim_enum`이 enum 정의인지 보는 머리 패턴 — 첫 `{` 앞에 `enum` 낱말.
+_ENUM_HEAD = re.compile(r"\benum\b")
 # entry 함수를 줄일 때(#349 — `auditor_entry_trim`이 1이고 entry 함수가 상한을 넘을 때만) 슬라이스
 # 줄·entry 줄 앞뒤로 남기는 줄 수. 함수 머리(여는 `{`까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안)와
 # 닫는 줄은 늘 남긴다. **정한 값이지 잰 값이 아니다.**
@@ -3239,10 +3247,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     그대로 프롬프트에 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
 
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
-    실린 함수가 쓰는 매크로·타입·파일 변수의 정의(`ctx.definitions_of`)를 붙인다. 정의 하나가
-    `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 코드
-    자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드 전용
-    이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
+    실린 함수가 쓰는 매크로·타입·파일 변수·enum 상수의 정의(`ctx.definitions_of`)를 붙인다. 정의
+    하나가 `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은
+    코드 자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드
+    전용 이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
     먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
     비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을 정한다(`demote_nonproduct`).
     붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면 이 단계가 없고 `SOURCE`·
@@ -3359,13 +3367,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 정의를 조회한 이름(정의 단계가 채운다) — 별칭 함수 조회가 이 안에서만 찾는다.
     asked: set[str] = set()
 
+    definitions_trimmed = 0
+
     def carry_definition(definition: Location) -> bool:
-        nonlocal size, definitions, definitions_dropped
+        nonlocal size, definitions, definitions_dropped, definitions_trimmed
         if any(_overlaps(definition, other) for other in seen):
             return False
         seen.append(definition)
         text = ctx.read_source(definition)
         block = _block(definition, text)
+        # 상한을 넘는 enum은 그 상수 주변만 남겨 다시 잰다(`_trim_enum`) — 통째로 버리지 않는다
+        if len(block) > _AUDITOR_DEFINITION_CHARS and definition.symbol:
+            trimmed = _trim_enum(text, definition.symbol)
+            if trimmed is not None:
+                end = (definition.line_start or 1) + text.count("\n")
+                block = _block(definition, trimmed, end=end)
+                definitions_trimmed += len(block) <= _AUDITOR_DEFINITION_CHARS
         if len(block) > _AUDITOR_DEFINITION_CHARS or size + 1 + measure(block) > cap:
             definitions_dropped += 1
             return False
@@ -3377,9 +3394,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         return True
 
     if with_definitions:
-        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
-        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그 함수의
-        # 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
+        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수·enum 상수 정의(#349 (f)). 정의는 작고
+        # 판단 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그
+        # 함수의 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
         used = definition_names(bodies, ctx.locals_of)
         found = ctx.definitions_of(used, anchor.file, **hygiene) or []
         for definition in slice_names_first(found, ctx.read_source, ref.lines):
@@ -3570,6 +3587,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             {
                 "definitions": definitions,
                 "definitions_dropped": definitions_dropped,
+                "definitions_trimmed": definitions_trimmed,
                 **({"alias_definitions": alias_definitions} if wrappers else {}),
             }
             if with_definitions
@@ -3727,6 +3745,35 @@ def _narrowest_symbol(symbols: list[Location], line: int) -> Location | None:
 def _spans(location: Location, line: int) -> bool:
     start = location.line_start
     return start is not None and start <= line <= (location.line_end or start)
+
+
+def _trim_enum(text: str, name: str) -> str | None:
+    """상한을 넘는 enum 정의를 머리(여는 `{`까지) · `name` 상수 줄 앞뒤
+    `_AUDITOR_ENUM_CONTEXT_LINES`줄 · 닫는 줄만 남겨 줄인다. 뺀 구간마다 `_OMITTED` 한 줄 —
+    줄 번호는 배너와 그 표시로 되짚는다. enum이 아니거나(첫 `{` 앞에 `enum`이 없다) 그 이름이
+    줄 머리 상수로 안 나오면 `None`(줄이지 않는다).
+    ⚠ 값을 안 적은 상수는 앞 상수에서 하나씩 세는데, 뺀 구간이 그 앞이면 모델이 값을 못 센다."""
+    lines = text.split("\n")
+    head = next((i for i, line in enumerate(lines) if "{" in line), None)
+    if head is None or not _ENUM_HEAD.search("\n".join(lines[: head + 1])):
+        return None
+    own = re.compile(rf"\s*{re.escape(name)}\b")
+    hit = next((i for i, line in enumerate(lines) if i > head and own.match(line)), None)
+    if hit is None:
+        return None
+    width = _AUDITOR_ENUM_CONTEXT_LINES
+    near = range(max(0, hit - width), hit + width + 1)
+    keep = set(range(head + 1)) | {len(lines) - 1} | set(near)
+    out, gap = [], 0
+    for i, line in enumerate(lines):
+        if i in keep:
+            if gap:
+                out.append(_OMITTED.format(gap))
+                gap = 0
+            out.append(line)
+        else:
+            gap += 1
+    return "\n".join(out)
 
 
 def _block(location: Location, text: str, end: int | None = None) -> str:
