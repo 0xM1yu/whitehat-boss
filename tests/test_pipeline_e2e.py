@@ -30,6 +30,7 @@ from src.adapters.container_tools import index_output_path
 from src.adapters.cybergym_oracle import TaskOracle
 from src.adapters.factory import build_deps, describe_wiring
 from src.adapters.fake_model import FakeModelClient
+from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
@@ -2270,7 +2271,8 @@ def test_trace_actually_carries_the_volatile_fields(tmp_path: Path) -> None:
 # `tests/test_oracle_wiring.py`는 `ctx.oracle`을 직접 꽂아 러너 함수를 보므로 그 배선이 끊겨도
 # 초록이다. 후보 수가 갈림길이다(후보 N개 ≠ 최종 1개를 가르는 것이 이 PR의 차단 결함이다):
 # 기본 타깃은 8단계에 **후보가 하나** 오고(그 하나가 최종이다), `_with_index()`로 심볼 타깃을
-# 만들면 **후보가 둘** 온다(이 문맥에선 등급이 같아 동점이라 지정하지 않는다).
+# 만들면 **후보가 둘** 온다(Fake 도구의 재현이 둘 다 성공해 8단계 등급이 둘 다 E4라 동점이다 -
+# 지정하지 않는다. 한쪽의 재현이 실패하면 E4 하나가 최댓값이라 `top_grade`다 - 아래 둘째 검사).
 
 
 def _oracle_events(events: list[dict]) -> list[dict]:
@@ -2290,6 +2292,10 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
     events = _events(trace_path)
     generated = _of(events, "pov_generated", stage=int(Stage.VALIDATE))
     assert len(generated) == 2, "8단계에 finding이 둘 안 왔다 - 이 검사의 전제가 깨졌다"
+    # 동점의 **원인**을 문다: Fake `_run_repro`는 소스 존재만 봐 재현이 둘 다 성공하고, 8단계가
+    # 둘 다 E4로 올린다 - 그래서 최댓값이 동점이다. (전 판은 지정이 그 E4를 못 봐 E3 동점이었다.)
+    grades = {e["data"]["grade"] for e in _of(events, "gate_eval", stage=int(Stage.VALIDATE))}
+    assert grades == {"E4"}, "동점의 전제(8단계 등급이 둘 다 E4)가 깨졌다"
     sidecars = sorted((trace_path.parent / "pov_poc").glob("*.poc"))
     assert [p.read_bytes() for p in sidecars] == oracle.vul_calls
     assert len(_of(events, "oracle_submitted")) == 2
@@ -2303,7 +2309,72 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
         "final_reason": "grade_tie", "record": "oracle/verdict.json",
     }  # fmt: skip
     assert any("최댓값이 동점이라" in w for w in result.warnings)
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert sidecar["final"]["candidate_grades"] == {"find_0001": "E4", "find_0002": "E4"}
     assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
+
+
+class _OracleThatRatesTheLoserHigher(FakeOracle):
+    """둘째 `vul` 제출에만 크래시 코드를 돌려주는 대역 - 채점기 값으로 고르면 **둘째**가 이긴다.
+
+    규칙이 내부 등급이면 채점기가 둘째를 더 좋게 말해도 지정은 안 흔들린다. 지정이 그 값을 읽는
+    변이(`response_exit_code`가 큰 쪽 · 크래시인 쪽)는 이 대역에서 첫째 대신 둘째를 고른다.
+    """
+
+    def submit_vul(self, poc: bytes):  # noqa: ANN201
+        self._vul_exit_code = 0 if not self.vul_calls else 139
+        return super().submit_vul(poc)
+
+
+def test_the_designation_sees_the_e4_the_validate_stage_gave_and_picks_the_top_grade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 후보가 둘이고 **재현이 한 쪽만 성공하면** 지정은 그쪽을 `top_grade`로 고른다.
+
+    전 판은 지정이 보는 등급이 8단계 `validate.run`의 런타임 Evidence(`produced`)를 버려 E4를
+    못 봤다 - 후보가 둘 이상이면 어느 run에서나 **E3 동점**이라 `top_grade`가 도달 불가였다
+    (적대적 리뷰 2026-10-04, `dev_fake` 실측: 8단계 `gate_eval`은 find_0001 E4 · find_0002 E3인데
+    지정이 받은 `grades`는 E3 · E3).
+
+    이 검사의 전제는 **8단계 `gate_eval`이 둘을 가른다**는 것이다 - 안 갈라지면 아래 단언이 전부
+    공허하다. 지정 근거는 그 `gate_eval`과 **같은 등급**에서 나와야 한다. 그리고 지정은 채점기
+    값을 안 읽는다 - 대역이 진 쪽(find_0002)에 더 센 크래시 코드를 돌려줘도 이긴 쪽이 안 바뀐다.
+    """
+    real_repro = FakeToolRunner._run_repro
+    asan_calls: list[str] = []
+
+    def second_asan_fails(self, tool, kind, args, workdir):  # noqa: ANN001, ANN202
+        if tool == "asan":
+            asan_calls.append(tool)
+            if len(asan_calls) == 2:
+                return self.make_evidence(
+                    tool, kind, args, ok=False, exit_code=2, error="재현 실패(검사가 심었다)"
+                )
+        return real_repro(self, tool, kind, args, workdir)
+
+    monkeypatch.setattr(FakeToolRunner, "_run_repro", second_asan_fails)
+    oracle = _OracleThatRatesTheLoserHigher()
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
+
+    events = _events(trace_path)
+    validate_grades = {
+        e["subject_id"]: e["data"]["grade"] for e in _of(events, "gate_eval", stage=Stage.VALIDATE)
+    }
+    assert validate_grades == {"find_0001": "E4", "find_0002": "E3"}, "8단계가 안 갈랐다(전제)"
+    assert len(oracle.vul_calls) == 2
+    assert len(oracle.vul_results) == 2
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] == "find_0001"
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "top_grade")
+    assert oracle.final_calls == [(oracle.vul_calls[0], oracle.vul_results[0])]
+    # 지정이 **읽은** 등급이 장부에 남고 8단계 `gate_eval`과 같다 - 어긋나면 이 줄이 빨개진다.
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert sidecar["final"]["candidate_grades"] == validate_grades
+    # 리포트도 같은 `_grades_by_finding`을 부르므로 8단계 등급을 보인다 - 재현에 성공한 Finding이
+    # `[E3]`이 아니라 `[E4]`다(그 전에는 `proven`인데 E3으로 찍혔다).
+    assert sorted(re.findall(r"\*\*\[(E\d)\]", result.report.render())) == ["E3", "E4"]
+    assert result.record.is_complete
 
 
 def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
@@ -2472,7 +2543,7 @@ def test_the_real_client_never_runs_the_fix_container_when_there_are_several_can
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **0번**이다 -
-    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고, 이 문맥에선 두 후보의 등급이 같아
+    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고, 이 문맥에선 두 후보가 둘 다 8단계 E4라
     동점으로 거부된다. 같은 바이트의 둘째 제출은 이 run이 만든 행의 캐시라 컨테이너가 안 돈다 -
     그것을 옛 판정이라 경고하지 않는다."""
     server = _http_server(monkeypatch)

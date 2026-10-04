@@ -252,9 +252,13 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   후보가 여럿인데 **하네스 내부 근거 등급의 최댓값을 든 것이 하나뿐**이라 그것을 골랐다
   (`top_grade`, 2026-10-03 동결). 최댓값이 동점이거나 등급을 모르는 후보가 있으면 지정하지 않고
   `fix` 다리·판정 조회는 안 돈다(`oracle_final`은 `status=none` · `reason`이 `grade_tie`·
-  `grade_unknown`): 같은 연구 문서 1.3절이 「best-of도 last-attempt도 아니다」라고 결론내려
-  마지막·처음·채점기 점수로 고르는 것을 금지하기 때문이고, 등급은 **채점기 바깥의 하네스 내부
-  값**이라 그 금지에 걸리지 않는다. 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
+  `grade_unknown`): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
+  council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
+  1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
+  값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
+  `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
+  바이트가 `./poc`로 materialize되기 전에는 그 도구 실행이 PoC와 무관해(호스트 후속) 후보가 같은
+  등급으로 동점일 수 있다. 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
   `response_exit_code`가 지정 시점에 손에 있는데도다(`runner._designate_final`). 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
