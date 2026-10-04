@@ -467,7 +467,12 @@ class GraphIndex:
         **같은 사실의 행은 하나로 센다**(`_definition_rows` — 판에 상관없다).
         `typedef struct Z {…} Z;`는 `types`에 범위가 같은 행 둘(struct · typedef)을 내는데 둘로 세면
         「하나뿐」이 영영 안 선다.
-        v4는 `typedef struct X X;`(앞선 선언 — `forward`)도 같은 이름의 본문 행이 있으면 뺀다.
+        v4는 `typedef struct X X;`(앞선 선언 — `forward`)도 **같은 파일에** 그 이름의 본문 행이
+        있으면 뺀다. 다른 파일의 본문이나 별칭 이름이 다른 태그의 본문은 그 행을 못 대신하므로
+        뺄 근거가 아니다 — 두 행이 남는다(index-v3와 같다). 그다음은 아래 규칙대로다: 앵커
+        파일에 있는 행이 먼저고, 아니면 앵커의 include 닫힘에 든 행이 하나뿐일 때 그것이다.
+        본문 파일이 앵커면 본문, 앵커가 typedef 헤더만 include하면 typedef 한 줄이고, **둘 다
+        닿거나 둘 다 안 닿으면 안 붙는다.**
 
         **include 도달성(v4).** 후보가 여럿이고 `near_file`에 없으면, `near_file`이 `#include`로
         닿는 파일(`_include_closure` — 깊이 `_INCLUDE_DEPTH`·파일 `_INCLUDE_FILES`까지)의 후보만
@@ -1271,25 +1276,36 @@ _V3_VALUES: dict[str, dict[str, Callable[[Any], bool]]] = {
 
 
 # v4 문서에서 더 보는 값 형(`_v2_tables`). `includes`는 키가 파일이다. `types`의 `forward`는 앞선
-# 선언 typedef 행에만 있다(있으면 `true`).
+# 선언 typedef 행에만 있다(있으면 `true` — 같은 파일에 본문 행이 있을 때만 단다).
 _V4_VALUES: dict[str, dict[str, Callable[[Any], bool]]] = {
     "includes": {"path": _is_name, "system": lambda value: isinstance(value, bool)},
     "enum_constants": {"file": _is_name, "enum": lambda value: value is None or _is_name(value)},
 }
 
 
+# `types` 행 중 본문 있는 태그의 `kind` — `indexer._TAG_KINDS`와 같다(인덱서는 `src/`를 import 하지
+# 않아 값이 양쪽에 있다). 본문 없는 `struct X;`는 표에 안 든다.
+_TAG_KINDS = frozenset({"struct", "union", "enum"})
+
+
 def _definition_rows(rows: Iterable[Mapping[str, Any]]) -> list:
     """정의 표 행에서 **같은 사실**을 하나로 접는다 — `definitions_of`의 「하나뿐」 판정 앞.
 
     - 같은 (파일, 시작 줄, 끝 줄)은 하나다 — `typedef struct Z {…} Z;`가 struct·typedef 두 행을 낸다
-    - 본문 있는 행이 있으면 앞선 선언 행(v4 `forward` — `typedef struct X X;`)은 뺀다
+    - 앞선 선언 행(v4 `forward` — `typedef struct X X;`)은 **같은 파일에** 본문 있는 태그 행
+      (`struct`·`union`·`enum`)이 있을 때만 뺀다. 표시만 믿지 않고 그 전제를 여기서 다시 본다 —
+      인덱서도 같은 전제로 표시하지만(`indexer._lookup_tables`), 다른 파일의 같은 이름 행
+      (`typedef int X;`)이나 이름이 다른 태그의 본문 때문에 지우면 후보가 줄어 도달성 검사를
+      건너뛰고 엉뚱한 정의가 붙는다
     """
+    rows = list(rows)
+    tagged_files = {row["file"] for row in rows if row.get("kind") in _TAG_KINDS}
     distinct: dict[tuple[str, int, int], Mapping[str, Any]] = {}
     for row in rows:
-        distinct.setdefault((row["file"], row["line_start"], row["line_end"]), row)
-    kept = list(distinct.values())
-    bodied = [row for row in kept if not row.get("forward")]
-    return bodied or kept
+        # 앞선 선언을 먼저 거른다 — 같은 줄에 본문이 있어 범위가 같으면 접기가 본문 행을 가린다
+        if not (row.get("forward") and row["file"] in tagged_files):
+            distinct.setdefault((row["file"], row["line_start"], row["line_end"]), row)
+    return list(distinct.values())
 
 
 # 헤더 확장자 — `writes_of`의 「파일 스코프 변수가 하나뿐」에서 `extern` 선언을 빼는 근사다(표에는
