@@ -5,7 +5,8 @@
 전부다. 그래서 여기서는 가짜 `ssh`를 PATH 앞에 두고 원격 명령 문자열을 실제 `sh -c`로
 돌린다 — 따옴표가 원격 셸을 지나서도 한 인자로 남는지를 문자열 비교가 아니라 파싱 결과로
 본다. 가짜 `ssh`는 원격 명령을 `env -i`로 돌린다 — 로컬 환경이 새면 래퍼가 빠뜨린 변수도
-원격에 있는 것처럼 보여 테스트가 거짓으로 초록이 된다.
+원격에 있는 것처럼 보여 테스트가 거짓으로 초록이 된다. 그리고 진짜 ssh처럼 로그인 디렉터리
+(HOME)에서 시작한다 — 상대 경로가 어디 기준으로 풀리는지가 결과를 가르는 결함이 있었다.
 
 ⚠ 진짜 ssh·vast는 안 탄다. 접속·호스트 키·터널의 거동은 장비 검증(PR 본문)의 몫이다.
 ⚠ Windows에서는 건너뛴다 — 파이썬이 부르는 `bash`가 WSL 런처라 환경이 안 넘어간다
@@ -41,6 +42,7 @@ posix = pytest.mark.skipif(
 _FAKE_SSH = """#!/bin/sh
 printf '%s\\n' "$@" > "$SSH_ARGV_LOG"
 for last; do :; done
+cd "$HOME" || exit 1
 exec env -i PATH="$PATH" HOME="$HOME" sh -c "$last"
 """
 
@@ -188,6 +190,36 @@ def test_a_remote_copy_from_another_commit_is_refused(rig: Rig) -> None:
     assert done.returncode == 2
     assert done.stdout == ""  # 원격 swap.sh를 부르지 않았다
     assert "vast-bootstrap.sh" in done.stderr
+    assert "0" * 40 in done.stderr  # 어느 커밋이 갈렸는지 둘 다 보인다
+    assert _head() in done.stderr
+
+
+@posix
+def test_the_local_commit_reaches_the_remote_shell_only_through_the_quoting(rig: Rig) -> None:
+    # 로컬 `git rev-parse`는 hex만 주지만 「원격 셸에 가는 값은 전부 인용」에 예외가 없어야 한다.
+    # 가짜 git이 적대 값을 주면 불일치 메시지 안의 생 값이 명령 치환으로 읽힌다(고치기 전 결함).
+    git = rig.bin / "git"
+    git.write_text("#!/bin/sh\nprintf '%s\\n' \"$FAKE_GIT_OUT\"\n", encoding="utf-8")
+    git.chmod(0o755)
+    hostile = "$(touch pwned)"
+    done = rig.swap("qwen3-14b", FAKE_GIT_OUT=hostile)
+    assert done.returncode == 2, done.stderr
+    assert not (rig.remote / "pwned").exists(), "커밋 값이 원격 셸에서 실행됐다"
+    assert hostile in done.stderr  # 값은 글자 그대로 메시지에 나온다
+
+
+_BAD_ROOTS = ["workspace/harness", "~/harness", "{tmp}/harness/", "/", "//"]
+
+
+@posix
+@pytest.mark.parametrize("root", _BAD_ROOTS)
+def test_swap_remote_refuses_a_root_that_is_not_a_clean_absolute_path_before_ssh(
+    rig: Rig, tmp_path: Path, root: str
+) -> None:
+    done = rig.swap("qwen3-14b", SWAP_REMOTE_ROOT=root.replace("{tmp}", str(tmp_path)))
+    assert done.returncode == 2, (root, done.stderr)
+    assert "SWAP_REMOTE_ROOT" in done.stderr
+    assert not rig.argv_log.exists(), "루트가 어긋났는데 ssh를 열었다"
 
 
 @posix
@@ -293,17 +325,143 @@ def test_bootstrap_refuses_a_root_it_did_not_make(rig: Rig, tmp_path: Path) -> N
     assert not (target / ".harness-commit").exists()
 
 
+_OLD_MARKER = "a" * 40 + "\n"  # 이 스크립트가 쓴 마커의 모양 — 커밋 하나, 한 줄
+
+
 @posix
 def test_bootstrap_keeps_the_old_copy_when_the_python_cannot_read_the_device_file(
     rig: Rig, tmp_path: Path
 ) -> None:
     target = tmp_path / "boot"
     target.mkdir()
-    (target / ".harness-commit").write_text("old\n", encoding="utf-8")
+    (target / ".harness-commit").write_text(_OLD_MARKER, encoding="utf-8")
     env = {**rig.env, "SWAP_REMOTE_ROOT": str(target), "SWAP_REMOTE_PYTHON": "false"}
     done = _bootstrap(env)
     assert done.returncode == 2
-    assert (target / ".harness-commit").read_text(encoding="utf-8") == "old\n"
+    assert "원격 파이썬" in done.stderr  # 가드가 아니라 파이썬 검사가 막았다
+    assert (target / ".harness-commit").read_text(encoding="utf-8") == _OLD_MARKER
+
+
+@posix
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "",
+        "x\n",
+        "a" * 39 + "\n",
+        "a" * 41 + "\n",
+        "g" * 40 + "\n",
+        "A" * 40 + "\n",
+        _OLD_MARKER + "b\n",
+    ],
+    ids=["empty", "word", "short", "long", "not-hex", "upper", "two-lines"],
+)
+def test_bootstrap_refuses_a_root_whose_marker_is_not_a_commit(
+    rig: Rig, tmp_path: Path, marker: str
+) -> None:
+    # 마커가 「이 스크립트가 만든 곳」의 증거다 — 파일 이름만 맞는 남의 디렉터리는 만든 곳이 아니다
+    target = tmp_path / "someone else"
+    target.mkdir()
+    (target / ".harness-commit").write_text(marker, encoding="utf-8")
+    (target / "keep.txt").write_text("x", encoding="utf-8")
+    env = {**rig.env, "SWAP_REMOTE_ROOT": str(target), "SWAP_REMOTE_PYTHON": sys.executable}
+    done = _bootstrap(env)
+    assert done.returncode == 2, done.stderr
+    assert (target / "keep.txt").read_text(encoding="utf-8") == "x"
+    assert (target / ".harness-commit").read_text(encoding="utf-8") == marker
+
+
+@posix
+def test_bootstrap_reruns_over_its_own_install_and_replaces_the_whole_root(
+    rig: Rig, tmp_path: Path
+) -> None:
+    target = tmp_path / "boot"
+    env = {**rig.env, "SWAP_REMOTE_ROOT": str(target), "SWAP_REMOTE_PYTHON": sys.executable}
+    assert _bootstrap(env).returncode == 0
+    (target / "operator-cache").write_text("x", encoding="utf-8")
+    done = _bootstrap(env)
+    assert done.returncode == 0, done.stderr
+    assert (target / ".harness-commit").read_text(encoding="utf-8").strip() == _head()
+    # ⚠ 머리 주석이 적은 한계 — 재실행은 루트를 통째로 바꾼다. 그 아래에 둔 것은 지워진다
+    assert not (target / "operator-cache").exists()
+
+
+@posix
+@pytest.mark.parametrize("root", _BAD_ROOTS)
+def test_bootstrap_refuses_a_root_that_is_not_a_clean_absolute_path_before_ssh(
+    rig: Rig, tmp_path: Path, root: str
+) -> None:
+    env = {
+        **rig.env,
+        "SWAP_REMOTE_ROOT": root.replace("{tmp}", str(tmp_path)),
+        "SWAP_REMOTE_PYTHON": sys.executable,
+    }
+    done = _bootstrap(env)
+    assert done.returncode == 2, (root, done.stderr)
+    assert "SWAP_REMOTE_ROOT" in done.stderr
+    assert not rig.argv_log.exists(), "루트가 어긋났는데 ssh를 열었다"
+
+
+@posix
+def test_bootstrap_never_deletes_what_a_relative_root_names_from_the_filesystem_root(
+    rig: Rig, tmp_path: Path
+) -> None:
+    # 고치기 전 결함 — 원격 가드는 로그인 디렉터리 기준으로 보고 삭제는 `cd /` 뒤에 한다. 상대
+    # 루트면 둘이 다른 곳을 가리켜서 가드가 한 번도 안 본 디렉터리가 지워졌다. `/` 기준으로
+    # victim이 되는 상대 경로를 주면 그 길이 그대로 재현된다(로그인 디렉터리 아래에는 없는 경로).
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "precious.txt").write_text("x", encoding="utf-8")
+    env = {
+        **rig.env,
+        "SWAP_REMOTE_ROOT": str(victim).lstrip("/"),
+        "SWAP_REMOTE_PYTHON": sys.executable,
+    }
+    done = _bootstrap(env)
+    assert (victim / "precious.txt").read_text(encoding="utf-8") == "x", "상대 루트가 지워졌다"
+    assert done.returncode == 2, done.stderr
+
+
+@posix
+def test_bootstrap_keeps_an_install_when_the_root_has_a_trailing_slash(
+    rig: Rig, tmp_path: Path
+) -> None:
+    # 고치기 전 결함 — `<root>.incoming`이 `<root>/.incoming`(루트 안)이 되어 삭제가 새 사본까지
+    # 치우고 `mv`가 실패했다. 돌아가던 설치본이 사라졌다.
+    target = tmp_path / "boot"
+    target.mkdir()
+    (target / ".harness-commit").write_text(_OLD_MARKER, encoding="utf-8")
+    env = {**rig.env, "SWAP_REMOTE_ROOT": f"{target}/", "SWAP_REMOTE_PYTHON": sys.executable}
+    done = _bootstrap(env)
+    assert done.returncode == 2, done.stderr
+    assert (target / ".harness-commit").read_text(encoding="utf-8") == _OLD_MARKER
+
+
+@posix
+def test_every_ssh_call_puts_the_destination_after_an_end_of_options_marker(
+    rig: Rig, tmp_path: Path
+) -> None:
+    # `-`로 시작하는 SWAP_SSH_HOST가 ssh 옵션으로 읽히지 않게 — 세 스크립트 모두
+    _report(rig.swap("qwen3-14b"))
+    assert rig.ssh_argv()[-3:-1] == ["--", "vast-box"]
+    rig.argv_log.unlink()
+    root, python = str(tmp_path / "boot"), sys.executable
+    assert (
+        _bootstrap({**rig.env, "SWAP_REMOTE_ROOT": root, "SWAP_REMOTE_PYTHON": python}).returncode
+        == 0
+    )
+    assert rig.ssh_argv()[-3:-1] == ["--", "vast-box"]
+    rig.argv_log.unlink()
+    # 가짜 ssh가 호스트를 명령으로 돌려 127로 끝난다 — 여기서 보는 것은 argv뿐이다
+    subprocess.run(
+        ["bash", TUNNEL.as_posix()],
+        cwd=ROOT,
+        env=rig.env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert rig.ssh_argv()[-2:] == ["--", "vast-box"]
 
 
 # --- 장비 파일 · 터널 ----------------------------------------------------------------------
