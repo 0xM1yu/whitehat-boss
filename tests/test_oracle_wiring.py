@@ -676,7 +676,33 @@ def _bundle(tmp_path: Path, task_id: str) -> Path:
     (task / "submit.sh").write_text(
         submit_script(server=_SERVER, task_id=task_id), encoding="utf-8"
     )
+    # 채점 run은 카나리 보고서 없이 조립되지 않는다(이슈 #383) - 번들의 task_id와 같은 과제로 쓴다.
+    # 거절 규칙 자체는 `tests/test_canary_report.py`·`tests/test_oracle_cli.py`가 든다.
+    _write_canary(tmp_path, task_id)
     return task
+
+
+def _write_canary(tmp_path: Path, task_id: str) -> Path:
+    import json
+
+    path = tmp_path / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task": task_id,
+                "verdict": "pass",
+                "ok": True,
+                "repeat": 10,
+                "below_measured_repeat": False,
+                "mmap_rnd_bits": "28",
+                "rnd_bits_above_28": False,
+                "rnd_bits_unmeasured": False,
+                "measured_at": "2026-10-03T17:42:07+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _write_mask_map(tmp_path: Path, content: object) -> Path:
@@ -694,7 +720,11 @@ def _write_mask_map(tmp_path: Path, content: object) -> Path:
 
 def _args(task: Path, mask_map: Path | None) -> argparse.Namespace:
     return argparse.Namespace(
-        oracle_submit=True, oracle_server=_SERVER, task_dir=task, mask_map=mask_map
+        oracle_submit=True,
+        oracle_server=_SERVER,
+        task_dir=task,
+        mask_map=mask_map,
+        oracle_canary=task.parent / "canary.json",
     )
 
 

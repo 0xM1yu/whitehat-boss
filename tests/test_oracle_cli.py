@@ -13,6 +13,7 @@
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,32 @@ def _bundle(tmp_path: Path, text: str | None = None, **script: object) -> Path:
     task = tmp_path / "task"
     task.mkdir(exist_ok=True)
     (task / "submit.sh").write_text(submit_script(**script) if text is None else text, "utf-8")
+    # 통과하는 카나리 보고서를 번들 **옆에** 둔다 - `_args`가 기본값으로 이 경로를 쓴다. 번들 안에
+    # 두지 않는 것은 번들이 못 믿는 소스이고(`task_loader`) 카나리는 조작자의 산출물이라서다.
+    _canary(tmp_path)
     return task
+
+
+# 카나리 보고서의 통과하는 모양. **합성값이다** - 칸의 뜻과 거절 규칙은
+# `tests/test_canary_report.py`가 든다.
+_CANARY = {
+    "task": TASK_ID,
+    "verdict": "pass",
+    "ok": True,
+    "repeat": 10,
+    "below_measured_repeat": False,
+    "mmap_rnd_bits": "28",
+    "rnd_bits_above_28": False,
+    "rnd_bits_unmeasured": False,
+    "measured_at": "2026-10-03T17:42:07+00:00",
+    "docker_version": "29.5.3",
+}
+
+
+def _canary(tmp_path: Path, **overrides: object) -> Path:
+    path = tmp_path / "canary.json"
+    path.write_text(json.dumps({**_CANARY, **overrides}), encoding="utf-8")
+    return path
 
 
 def test_submit_metadata_is_read_from_the_bundle(tmp_path: Path) -> None:
@@ -99,8 +125,27 @@ def test_missing_submit_script_is_none(tmp_path: Path) -> None:
 _KEY = "k-wiring-test-secret"
 
 
-def _args(task_dir: Path | None = None, *, server: str | None = _SERVER, submit: bool = True):  # noqa: ANN202
-    return argparse.Namespace(oracle_submit=submit, oracle_server=server, task_dir=task_dir)
+#  `_args`의 `canary` 기본값 표식 — `None`은 「안 줬다」(거절 대상)라 따로 둬야 한다.
+_FROM_BUNDLE = object()
+
+
+def _args(  # noqa: ANN202
+    task_dir: Path | None = None,
+    *,
+    server: str | None = _SERVER,
+    submit: bool = True,
+    canary: object = _FROM_BUNDLE,
+):
+    """`--oracle-canary`는 기본으로 `_bundle`이 쓴 통과 보고서를 가리킨다(이슈 #383).
+
+    `canary=None`은 **플래그를 안 준** run이고 그것도 거절 대상이다 — 그래서 기본값과 `None`을
+    구별한다. `task_dir`이 없으면 보고서 경로도 없다(그 run은 `--task-dir` 거절이 먼저다).
+    """
+    if canary is _FROM_BUNDLE:
+        canary = None if task_dir is None else task_dir.parent / "canary.json"
+    return argparse.Namespace(
+        oracle_submit=submit, oracle_server=server, task_dir=task_dir, oracle_canary=canary
+    )
 
 
 @pytest.fixture
@@ -314,6 +359,94 @@ def test_a_run_that_cannot_reach_stage_8_only_warns_and_checks_nothing(
     assert built == []
 
 
+# --- 카나리 게이트 (이슈 #383) ---------------------------------------------------------
+
+
+def test_oracle_submit_without_a_canary_report_is_refused(
+    tmp_path: Path, capsys, built, key_env  # noqa: ANN001
+) -> None:
+    """🔴 채점 run은 카나리 없이 돌지 않는다 - 호스트가 sanitizer를 제대로 돌리는지 봐야 한다."""
+    result = cli._oracle_for(_args(_bundle(tmp_path), canary=None))
+
+    _refused(result, capsys, "--oracle-canary")
+    assert built == []
+
+
+def test_a_canary_report_that_cannot_be_read_is_refused(
+    tmp_path: Path, capsys, built, key_env  # noqa: ANN001
+) -> None:
+    """없는 파일·JSON 아님을 「통과」로 읽지 않는다(§0)."""
+    task = _bundle(tmp_path)
+
+    result = cli._oracle_for(_args(task, canary=tmp_path / "nope.json"))
+
+    _refused(result, capsys, "카나리")
+    assert built == []
+
+
+def test_a_canary_for_another_task_is_refused(
+    tmp_path: Path, capsys, built, key_env  # noqa: ANN001
+) -> None:
+    task = _bundle(tmp_path)
+    other = _canary(tmp_path, task="oss-fuzz:368076871")
+
+    result = cli._oracle_for(_args(task, canary=other))
+
+    err = _refused(result, capsys, "oss-fuzz:368076871")
+    assert TASK_ID in err
+
+
+def test_an_entropy_above_28_is_refused_even_though_the_canary_verdict_passed(
+    tmp_path: Path, capsys, built, key_env  # noqa: ANN001
+) -> None:
+    """도구는 32에서도 `pass`를 낸다(그 모듈 docstring) - 채점 게이트는 그것을 거부로 올린다."""
+    task = _bundle(tmp_path)
+    noisy = _canary(tmp_path, mmap_rnd_bits="32", rnd_bits_above_28=True)
+
+    result = cli._oracle_for(_args(task, canary=noisy))
+
+    _refused(result, capsys, "32")
+    assert built == []
+
+
+def test_a_passing_canary_is_printed_with_the_limit_it_cannot_check(
+    tmp_path: Path, capsys, built, key_env  # noqa: ANN001
+) -> None:
+    """통과도 찍는다 - 「언제 쟀나」와 「신선도는 못 본다」를 조작자가 봐야 한다."""
+    cli._oracle_for(_args(_bundle(tmp_path)))
+
+    out = capsys.readouterr().out
+    assert "카나리 통과" in out and "28" in out and "2026-10-03T17:42:07+00:00" in out
+    assert "부팅" in out  # 신선도를 못 본다는 한계
+
+
+def test_the_canary_flag_without_oracle_submit_is_an_error(
+    tmp_path: Path, capsys, built  # noqa: ANN001
+) -> None:
+    """받아 놓고 안 쓰는 플래그는 설정 오류다 - `--oracle-server`·`--mask-map`과 같은 결."""
+    args = _args(None, server=None, submit=False, canary=_canary(tmp_path))
+
+    _refused(cli._oracle_for(args), capsys, "--oracle-canary")
+
+
+def test_the_gate_and_the_tool_agree_on_the_entropy_limit() -> None:
+    """🔴 게이트와 도구가 **같은 수**를 봐야 한다 - `src/`는 `tools/`를 import하지 않아
+    리터럴이 둘이다. 갈리면 하네스가 통과시킨 장비를 도구가 경고하거나 그 반대가 된다.
+    """
+    import importlib.util
+
+    from src.adapters.canary_report import MMAP_RND_BITS_MAX
+
+    spec = importlib.util.spec_from_file_location(
+        "_oracle_canary_tool", Path(cli.REPO_ROOT) / "tools" / "oracle_canary.py"
+    )
+    assert spec is not None and spec.loader is not None
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+
+    assert MMAP_RND_BITS_MAX == tool.MMAP_RND_BITS_MAX
+
+
 def _spec(**kwargs: object) -> RunSpec:
     return RunSpec(condition="B3prime@pipeline", target=Path("."), **kwargs)
 
@@ -388,7 +521,7 @@ def test_the_help_text_is_printable_on_a_cp949_console() -> None:
     )
     flags = {a.dest: a for a in run._actions}
 
-    for dest in ("oracle_submit", "oracle_server", "mask_map"):
+    for dest in ("oracle_submit", "oracle_server", "mask_map", "oracle_canary"):
         flags[dest].help.encode("cp949")
 
 

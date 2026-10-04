@@ -29,6 +29,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TextIO, get_args
 
+from src.adapters.canary_report import CanaryReportError, canary_refusal, read_canary_report
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
 from src.adapters.factory import Deps, build_deps, describe_wiring
@@ -716,6 +717,8 @@ def _oracle_for(
             return _refuse_oracle("--oracle-server는 --oracle-submit와 함께만 쓴다")
         if getattr(args, "mask_map", None) is not None:
             return _refuse_oracle("--mask-map은 --oracle-submit와 함께만 쓴다")
+        if getattr(args, "oracle_canary", None) is not None:
+            return _refuse_oracle("--oracle-canary는 --oracle-submit와 함께만 쓴다")
         return None
     if unreachable is not None:
         print(
@@ -767,6 +770,11 @@ def _oracle_for(
             f"{_ORACLE_KEY_ENV}가 비어 있다 - "
             "채점기의 private 경로(submit-fix·query-poc)에 필요하다"
         )
+    # 설정 검사를 다 지난 뒤에 장비 상태를 본다 - 카나리를 다시 돌리라고 하기 전에 고칠 수 있는
+    # 것(주소·번들·키)을 먼저 말한다.
+    refused = _canary_refusal(args, metadata.task_id)
+    if refused is not None:
+        return refused
     target = server.rstrip("/")
     print(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
@@ -782,6 +790,46 @@ def _oracle_for(
         api_key=api_key,
         query_task_id=query_task_id,
     )
+
+
+def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | None:
+    """카나리 보고서가 이 과제·이 장비를 통과시키지 않으면 `_ORACLE_ERROR` (이슈 #383).
+
+    🔴 **채점 run은 카나리 없이 돌지 않는다.** 오라클 판정이 비결정적일 수 있고 그 원인은 호스트
+    커널의 mmap 엔트로피다 - `vm.mmap_rnd_bits = 32`에서 sanitizer 섀도 매핑이 간헐 실패해 타깃이
+    입력을 읽기도 전에 `139`로 죽고 그 코드가 「크래시」로 집계된다. 2026-10-02 실측에서 **정답
+    PoC ≈0.40 · 무해 입력 ≈0.28**이 「성공」이었다(차가 ≈0.12). 그 run이 낸 점수는 PoC 품질을
+    거의 반영하지 않는다.
+
+    **하네스가 카나리를 직접 돌리지는 않는다** - 조작자가 `tools/oracle_canary.py`로 돌려 보고서를
+    만들고 그 경로를 `--oracle-canary`로 준다. 돌리는 쪽까지 하네스로 가져오려면 run이 `-fix`
+    이미지와 저자 참조 PoC를 손에 쥐어야 하고 N·보고서 위치·`weak_pass` 처리가 전부 정해야 하는
+    값이라, 그 결정은 사람 몫으로 남겼다(그 이슈의 선택지 (a)).
+
+    **보고서가 지금 이 부팅의 것인지는 못 본다** - 현재 `boot_id`를 읽으려면 컨테이너를 돌려야 하고
+    `measured_at`을 자를 나이는 미실측이다. 그래서 신선도의 계약은 **run마다 경로를 명시로 넘기는
+    것**이고, 거절·통과 문구가 `measured_at`을 들어 조작자가 그 시각을 본다.
+    """
+    path = getattr(args, "oracle_canary", None)
+    if path is None:
+        return _refuse_oracle(
+            "--oracle-submit에는 --oracle-canary가 필요하다 - 채점 run 전에 이 장비가 sanitizer를 "
+            "제대로 돌리는지 봐야 한다(호스트 vm.mmap_rnd_bits가 28보다 크면 무해한 입력도 "
+            "「크래시」로 집계된다). tools/oracle_canary.py --task <id> --json <경로>로 만든다"
+        )
+    try:
+        report = read_canary_report(Path(path))
+    except CanaryReportError as exc:
+        return _refuse_oracle(f"{exc} - 아무것도 제출하지 않았다")
+    problem = canary_refusal(report, task_id=task_id)
+    if problem is not None:
+        return _refuse_oracle(f"{problem}. 아무것도 제출하지 않았다")
+    print(
+        f"카나리 통과: {path} ({report.task} · vm.mmap_rnd_bits {report.mmap_rnd_bits} · "
+        f"{report.repeat}회 · {report.measured_at} 측정) - 이 보고서가 지금 이 부팅의 것인지는 "
+        "하네스가 못 본다"
+    )
+    return None
 
 
 def _query_task_id_from_mask_map(
@@ -1677,6 +1725,16 @@ def build_parser() -> argparse.ArgumentParser:
         "조작자가 정한다: API 키가 가는 곳이라 과제 번들(submit.sh)이 가리키는 주소로는 보내지 "
         "않고, 번들의 주소와 다르면 거부한다(exit 2). 지원하는 과제 id는 마스킹을 안 한 서버의 "
         "실제 id(예 arvo:1065)이거나, 마스킹된 id에 --mask-map을 같이 준 것이다",
+    )
+    run_cmd.add_argument(
+        "--oracle-canary",
+        type=Path,
+        default=None,
+        help="tools/oracle_canary.py가 쓴 보고서(--json) 경로. --oracle-submit이면 필수다 - "
+        "없거나 통과한 보고서가 아니면 제출 전에 거부한다(exit 2). 호스트 "
+        "vm.mmap_rnd_bits가 28보다 크면 채점 판정이 비결정적이고, 그 값은 Docker 재기동으로 "
+        "되돌아가므로 보고서를 run마다 명시로 넘긴다. 하네스가 이 도구를 직접 돌리지는 "
+        "않는다 - 조작자가 돌려 보고서를 만들어 둔다"
     )
     run_cmd.add_argument(
         "--task-work-dir",

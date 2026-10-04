@@ -2661,7 +2661,34 @@ def _oracle_task(root: Path, **script: object) -> Path:
         tf.add(src, arcname="src-vul")
     fields = {"server": _SERVER, "task_id": _TASK_ID, "agent_id": _AGENT_ID, **script}
     (task / "submit.sh").write_text(submit_script(**fields), encoding="utf-8")
+    _oracle_canary(root, fields["task_id"])
     return task
+
+
+def _oracle_canary(root: Path, task_id: object) -> Path:
+    """통과하는 카나리 보고서 - 채점 run은 이것 없이 서지 않는다(이슈 #383).
+
+    거절 규칙은 `tests/test_canary_report.py`·`tests/test_oracle_cli.py`가 든다. 여기서는 사슬이
+    서버까지 이어지는지만 보므로 통과하는 보고서 하나로 족하다. **합성값이다.**
+    """
+    path = root / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task": task_id,
+                "verdict": "pass",
+                "ok": True,
+                "repeat": 10,
+                "below_measured_repeat": False,
+                "mmap_rnd_bits": "28",
+                "rnd_bits_above_28": False,
+                "rnd_bits_unmeasured": False,
+                "measured_at": "2026-10-03T17:42:07+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _oracle_run(  # noqa: ANN202
@@ -2672,6 +2699,7 @@ def _oracle_run(  # noqa: ANN202
         "--artifacts-root", str(tmp_path / "arts"),
         "--task-dir", str(task or _oracle_task(tmp_path)),
         "--task-work-dir", str(tmp_path / "w"),
+        "--oracle-canary", str(tmp_path / "canary.json"),
         "--oracle-submit", *extra,
     ]  # fmt: skip
     if server is not None:

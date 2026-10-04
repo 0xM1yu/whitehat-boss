@@ -727,16 +727,19 @@ def test_the_report_is_written_through_a_temp_file_and_an_atomic_replace(tmp_pat
 # --- A4: 라벨이 증거를 앞지르지 않는다 --------------------------------------------------------
 
 
-def test_a_failing_run_says_it_does_not_block_scoring(capsys):
-    """🔴 stderr가 *"채점을 시작하지 않는다"*고 적었다 — 이 도구는 아무것도 막지 못한다.
+def test_a_failing_run_says_the_report_will_not_pass_the_gate(capsys):
+    """🔴 stderr가 **하는 일만** 적는다 — 이 도구는 아무것도 못 막고, 막는 것은 그 보고서다.
 
-    `git grep`이 문서 밖 호출자를 못 찾고 첫 커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다.
-    사람이 읽는 줄이 하지도 않는 일을 한다고 말하지 않는다.
+    앞 판은 *"채점을 막지 않는다(호출 지점이 없다)"*였다. ⏵ 2026-10-04 — 보고서를 읽는 게이트가
+    생겨(`cli._canary_refusal`, 이슈 #383) 그 문장의 뒤는 참이고 **앞은 거짓**이 됐다. 지금 요구는
+    둘: ① 이 **보고서**로는 채점 run이 서지 않는다 ② 그래도 이 **도구를 부르는** 코드는 없다.
+    여전히 금지: *"채점을 시작하지 않는다"* — 이 도구가 run을 멈추는 것처럼 읽힌다.
     """
     assert _main(_Fake(_codes(2, **{"ref/fix": [1, 1]})), repeat=2) == 1
     err = capsys.readouterr().err
-    assert "채점을 막지 않는다" in err
-    assert "호출 지점" in err
+    assert "이 보고서로는 채점 run이 서지 않는다" in err
+    assert "--oracle-canary" in err
+    assert "이 도구를 부르는 코드는 여전히 없다" in err
     assert "채점을 시작하지 않" not in err, "하지도 않는 일을 한다고 적었다"
 
 
@@ -744,7 +747,25 @@ _CANARY_MENTIONS_ALLOWED = {
     "tools/oracle_canary.py",  # 자기 자신
     # 서버를 우회해 `docker run`을 직접 부른다는 docstring 한 줄이다 — 호출이 아니다.
     "src/adapters/cybergym_oracle.py",
+    # ⏵ 2026-10-04 (이슈 #383) — 이 둘은 도구가 **쓴 보고서**를 읽는 게이트다. 도구를 부르지
+    # 않는다(subprocess·import 0건): 보고서 JSON의 칸만 본다. 그래서 「호출자 0건」은 그대로이고
+    # 「채점을 막지 않는다」만 거짓이 됐다 — 문서 넷이 그렇게 고쳐져 있다.
+    "src/adapters/canary_report.py",
+    "src/cli.py",
 }
+
+
+def test_the_report_gate_does_not_invoke_the_tool():
+    """허용 목록의 둘이 **보고서만 읽는지** 센다 — 부르기 시작하면 「호출자 0건」이 거짓이 된다.
+
+    위 언급 검출기는 철자를 보므로 이 둘을 허용한 뒤에는 **성질**을 따로 물어야 한다
+    (CLAUDE.md §2.5 — 문자 핀은 철자를 단언하지 성질을 단언하지 않는다). 성질: 그 둘에
+    `subprocess`도 `oracle_canary` import도 없다.
+    """
+    for name in ("src/adapters/canary_report.py", "src/cli.py"):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        assert "subprocess" not in text, name
+        assert "import oracle_canary" not in text and "from tools" not in text, name
 
 
 def test_nothing_in_the_repo_calls_the_canary_so_the_docs_may_say_so():
@@ -802,9 +823,14 @@ def test_the_docs_do_not_oversell_the_canary():
     """
     readme = (REPO_ROOT / "tools" / "README.md").read_text(encoding="utf-8")
     (row,) = [line for line in readme.splitlines() if line.startswith("| `oracle_canary.py`")]
-    assert "채점 전 게이트" not in row
-    assert "수동" in row and "채점을 막지 않는다" in row
-    assert "호출하는 코드가 없다" in row and "0회" in row
+    # ⏵ 2026-10-04 — 무는 명제가 옮겨갔다. 앞 판은 *「채점을 막지 않는다」*를 요구했는데, 그 뒤
+    # 보고서를 읽는 게이트가 생겨 그 문장이 거짓이 됐다(이슈 #383). 지금 요구하는 것은 둘이다:
+    # ① 도구 자체는 **수동**이고 하네스가 **부르지 않는다**(호출자 0건은 그대로) ② 그 **보고서**가
+    # 채점 run을 막는다. ①만 적으면 게이트를 숨기고 ②만 적으면 호출자가 있는 것처럼 읽힌다.
+    assert "채점을 막지 않는다" not in row, "게이트가 생겼는데 앞 문장이 되돌아왔다"
+    assert "수동" in row and "호출하는 코드가 없다" in row
+    assert "보고서가 채점 run을 막는다" in row
+    assert "0회" in row
 
     plan = (REPO_ROOT / "docs" / "build-plan.md").read_text(encoding="utf-8")
     (plan_row,) = [line for line in plan.splitlines() if "오라클 카나리" in line]
@@ -1364,7 +1390,7 @@ def test_a_failing_verdict_is_reported_even_when_the_out_path_is_unwritable(tmp_
 
     err = capsys.readouterr().err
     assert str(segv) in err, f"139를 4/4로 잡았는데 사유가 안 나왔다: {err!r}"
-    assert "채점을 막지 않는다" in err
+    assert "이 보고서로는 채점 run이 서지 않는다" in err
     assert code == 2, "쓰기 실패는 완주 실패(2)다"
 
 
