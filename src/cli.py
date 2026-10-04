@@ -809,8 +809,9 @@ def _oracle_for(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
         f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. 후보마다 vul 다리만 보낸다. "
         "fix 다리와 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
-        "그 하나고, 둘 이상이면 하네스 내부 근거 등급의 최댓값을 든 후보가 하나뿐일 때 "
-        "그것이다. 최댓값이 동점이거나 등급을 모르는 후보가 있으면 보내지 않는다"
+        "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
+        "하나를 고른다(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). 등급을 "
+        "모르는 후보가 있으면 보내지 않는다(confidence를 모르는 후보도 같다)"
     )
     return TaskOracle(
         server=target,
@@ -1085,9 +1086,13 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     **Auditor는 도구 루프를 켜면 후보당 `1 + auditor_tool_hops`회**(`thresholds.auditor_tool_hops`,
     기본 0 = 종전의 1회)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
 
-    **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 finding당 최대
-    `1 + max_hops`회 더 부른다(VALIDATED = critic 통과분이라 최대 `min(candidates, critic_top_n)
-    × (1 + max_hops)`, 계산값). 이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
+    **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 PoV 대상 finding당
+    최대 `1 + max_hops`회 더 부른다. 대상은 VALIDATED(critic 통과분이라 최대
+    `min(candidates, critic_top_n)`)에 `pov_attempt_top_n`이 양수면 그 밖에서 더한 것이라 상한은
+    `min(candidates, critic_top_n + pov_attempt_top_n) × (1 + max_hops)`다(계산값 —
+    `runner._pov_targets`가 더하는 수는 `pov_attempt_top_n` 이하이고 finding은 후보당 하나다.
+    `pov_attempt_top_n`이 0이면 `min(candidates, critic_top_n) × (1 + max_hops)` 그대로다).
+    이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
     scout_calls = candidates * (1 + config.thresholds.max_hops)
@@ -1770,9 +1775,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
         "fix 다리와 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 성공한 후보가 "
-        "하나뿐이면 그 하나에 돌고, 둘 이상이면 하네스 내부 근거 등급의 최댓값을 든 후보가 "
-        "하나뿐일 때만 돈다 - 동점이거나 등급을 모르는 후보가 있으면 안 돈다(oracle_final은 "
-        "status none, reason grade_tie 또는 grade_unknown). "
+        "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 "
+        "값의 전순위(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시)로 고른 하나에 "
+        "돈다 - 등급 또는 confidence를 모르는 후보가 있으면 안 돈다(oracle_final은 status "
+        "none, reason grade_unknown). "
         "--task-dir·--oracle-server·--oracle-canary와 함께만 쓴다. 과제 id·에이전트 id는 "
         "번들의 submit.sh에서 읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
         "{run_dir}/oracle/verdict.json에 남고 내부 등급(E4)을 올리지 않는다. 8단계에 닿지 않는 run"
