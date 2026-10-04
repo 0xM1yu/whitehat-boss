@@ -116,8 +116,10 @@ JOBS = json.load(open(sys.argv[1], encoding="utf-8"))
 BOXES = json.load(open(sys.argv[2], encoding="utf-8"))
 STATE = HERE / "state.json"
 DL = Path(os.path.expanduser("~")) / "Downloads"
-STAGE = DL / "ft_gt_tmp"  # one <sid>.tgz per pulled sample, waiting to be packed into a batch
-PULLS = DL / "ft_gt_pulls"  # raw pulls, apart from STAGE so flush() never packs one
+# BATCH_PREFIX names this run's batches and temp dirs, so a second run never mixes with the first
+PREFIX = os.environ.get("BATCH_PREFIX", "ft_gt_auditor")
+STAGE = DL / f"{PREFIX}_tmp"  # one <sid>.tgz per pulled sample, waiting to be packed into a batch
+PULLS = DL / f"{PREFIX}_pulls"  # raw pulls, apart from STAGE so flush() never packs one
 PULL_MIN, STALE_S, UNREACH_S, LOOP_S = 20, 3 * 3600, 1800, 45
 SSH = [
     "ssh",
@@ -319,7 +321,7 @@ def flush(final: bool):
 def write_batch(tgzs):
     st["batches"] += 1
     n, gt, err = sample_stats(tgzs)
-    out = DL / f"ft_gt_auditor_batch{st['batches']:03d}.tar"
+    out = DL / f"{PREFIX}_batch{st['batches']:03d}.tar"
     with tarfile.open(out, "w") as tf:
         for p in tgzs:
             tf.add(p, arcname=p.name)
@@ -329,7 +331,7 @@ def write_batch(tgzs):
     mb = out.stat().st_size / 1048576
     log(f"batch {st['batches']:03d} -> {out} ({mb:.1f} MB, {n} samples)")
     note = notify(
-        f"**[FT GT] batch {st['batches']:03d}** — 표본 {n}개 ({mb:.1f} MB) · "
+        f"**[{PREFIX}] batch {st['batches']:03d}** — 표본 {n}개 ({mb:.1f} MB) · "
         f"Auditor 입력에 GT 보임 {gt}개 · 오류 {err}개 · 누적 {st['sent']:,} / {len(JOBS):,}",
         out,
     )
