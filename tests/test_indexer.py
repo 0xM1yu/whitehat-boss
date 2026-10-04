@@ -447,7 +447,7 @@ def test_index_no_longer_shells_out_to_clang() -> None:
 
 
 def test_version_is_stamped_so_readers_can_reject_unknown_formats() -> None:
-    assert indexer.INDEX_VERSION == "index-v3"
+    assert indexer.INDEX_VERSION == "index-v4"
 
 
 def test_the_reader_knows_the_version_this_script_writes() -> None:
@@ -978,4 +978,129 @@ def test_the_reader_resolves_indirect_calls_from_this_scripts_v3_output(
     ]
     assert graph.field_writes_of("n", "impl.c") == [
         Location(file="ops.c", symbol="setup", line_start=12, line_end=12)
+    ]
+
+
+# --- index-v4: include 지시문 · enum 상수 · 앞선 선언 typedef -------------------------------
+#
+# 노드 모양은 실파싱으로 확인했다(호스트 · tree-sitter 0.26.0 · tree-sitter-c 0.24.2 ·
+# tree-sitter-cpp 0.23.4, 2026-10-04). 추측했으면 틀렸을 셋이 아래에 핀으로 있다: 따옴표 경로의
+# 역슬래시가 `escape_sequence`로 쪼개진다는 것, enum 상수가 `#ifdef` 안에도 있다는 것,
+# `typedef struct Z {…} Z;`가 범위가 같은 행 둘을 낸다는 것.
+#
+# 줄 번호가 단언에 들어가므로 이 픽스처는 **한 줄도 옮기지 않는다.** 오른쪽 숫자가 줄 번호다.
+_V4_C = (
+    '#include "sub/a.h"\n'                          # 1
+    "#include <stdio.h>\n"                          # 2
+    "#include MACRO_H\n"                            # 3
+    "#ifdef WIN\n"                                  # 4
+    '#include "win\\x.h"\n'                         # 5
+    "#endif\n"                                      # 6
+    "typedef struct X X;\n"                         # 7
+    "struct X {\n"                                  # 8
+    "    int v;\n"                                  # 9
+    "};\n"                                          # 10
+    "typedef struct Z {\n"                          # 11
+    "    int w;\n"                                  # 12
+    "} Z;\n"                                        # 13
+    "struct Y;\n"                                   # 14
+    "int proto(int a);\n"                           # 15
+    "typedef enum {\n"                              # 16
+    "    PseudoClass,\n"                            # 17
+    "#ifdef HAVE_DIRECT\n"                          # 18
+    "    DirectClass = 3,\n"                        # 19
+    "#endif\n"                                      # 20
+    "} ClassType;\n"                                # 21
+    "enum color { RED, GREEN };\n"                  # 22
+    "enum { ANON };\n"                              # 23
+)
+
+
+@pytest.fixture
+def v4(tmp_path: Path) -> dict:
+    (tmp_path / "v4.c").write_text(_V4_C, encoding="utf-8")
+    return _index(tmp_path, "v4.c")
+
+
+def test_includes_table_keeps_each_directive_path_as_written(v4: dict) -> None:
+    """따옴표·꺾쇠 안 원문 그대로다. 역슬래시 경로(5행)는 `string_content`를 이으면 `\\`가
+    `escape_sequence`로 빠져 `winx.h`가 된다(실파싱) — 원문을 쓴다. 매크로 경로(3행)는 안 싣는다.
+    `#ifdef` 안 지시문(5행)도 싣는다 — 양쪽 가지를 다 내는 것이 심볼과 같은 원칙이다."""
+    assert v4["includes"] == {
+        "v4.c": [
+            {"line": 1, "path": "sub/a.h", "system": False},
+            {"line": 2, "path": "stdio.h", "system": True},
+            {"line": 5, "path": "win\\x.h", "system": False},
+        ]
+    }
+
+
+def test_a_file_without_include_directives_has_no_key(tables: dict) -> None:
+    """지시문이 없는 파일은 키가 없다 — `_TABLES_C`에는 `#include`가 없다."""
+    assert tables["includes"] == {}
+
+
+def test_enum_constants_span_their_whole_enum_definition(v4: dict) -> None:
+    """상수 하나가 아니라 **그 enum 정의 전체**다 — 값(`= 3`)과 이웃 상수가 같이 보인다. 익명
+    enum의 typedef(16~21행)는 typedef 문 전체이고 `enum`은 typedef 이름이다. `#ifdef` 안 상수
+    (19행)도 든다. 태그도 typedef도 없으면 `enum`은 `null`이다."""
+    class_type = {"file": "v4.c", "line_start": 16, "line_end": 21, "enum": "ClassType"}
+    color = {"file": "v4.c", "line_start": 22, "line_end": 22, "enum": "color"}
+
+    assert v4["enum_constants"] == {
+        "PseudoClass": [class_type],
+        "DirectClass": [class_type],
+        "RED": [color],
+        "GREEN": [color],
+        "ANON": [{"file": "v4.c", "line_start": 23, "line_end": 23, "enum": None}],
+    }
+
+
+def test_types_marks_a_forward_typedef_and_keeps_both_rows_of_a_typedef_struct(v4: dict) -> None:
+    """같은 파일 중복의 원인 둘(실파싱): `typedef struct X X;`(7행) + `struct X {…}`(8~10행)은 행이
+    둘이고 앞의 것이 `forward`다. `typedef struct Z {…} Z;`(11~13행)는 **범위가 같은**
+    struct·typedef 두 행이다(읽는 쪽이 범위로 합친다). 본문 없는 `struct Y;`(14행)와
+    프로토타입(15행)은 어느 표에도 안 든다."""
+    assert v4["types"]["X"] == [
+        {"file": "v4.c", "line_start": 7, "line_end": 7, "kind": "typedef", "forward": True},
+        {"file": "v4.c", "line_start": 8, "line_end": 10, "kind": "struct"},
+    ]
+    assert v4["types"]["Z"] == [
+        {"file": "v4.c", "line_start": 11, "line_end": 13, "kind": "struct"},
+        {"file": "v4.c", "line_start": 11, "line_end": 13, "kind": "typedef"},
+    ]
+    assert "Y" not in v4["types"]
+    assert "proto" not in v4["functions"]
+
+
+def test_the_reader_resolves_definitions_through_this_scripts_v4_includes(tmp_path: Path) -> None:
+    """**경계를 건너는 대조(v4).** 이 스크립트가 쓴 index-v4를 읽는 쪽이 받아 정의를 고른다.
+
+    `TRUE`는 `lib/defs.h`와 `win/defs.h` 둘에 있지만 `app/main.c`는 앞의 것만 include한다 — v3까지는
+    안 붙던 이름이다. enum 상수는 enum 전체로, `typedef struct S S;` + `struct S {…}`는 본문으로
+    붙는다. 기대값은 아래 원문에서 손으로 셌다."""
+    src = tmp_path / "src"
+    for name, text in {
+        "app/main.c": '#include "../lib/defs.h"\nint main(void) { return TRUE; }\n',
+        "lib/defs.h": (
+            "#define TRUE 1\n"                      # 1
+            "typedef struct S S;\n"                 # 2
+            "struct S {\n"                          # 3
+            "    int n;\n"                          # 4
+            "};\n"                                  # 5
+            "enum mode { M_A, M_B };\n"             # 6
+        ),
+        "win/defs.h": "#define TRUE 1\n",
+    }.items():
+        (src / name).parent.mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(text, encoding="utf-8")
+    out = tmp_path / "out" / INDEX_FILE
+    files = [str(src / name) for name in ("app/main.c", "lib/defs.h", "win/defs.h")]
+    assert indexer.main(["--out", str(out), "--root", str(src), *files]) == 0
+    graph = index_graph.GraphIndex(out)
+
+    assert graph.definitions_of(["TRUE", "S", "M_B"], "app/main.c") == [
+        Location(file="lib/defs.h", symbol="TRUE", line_start=1, line_end=1),
+        Location(file="lib/defs.h", symbol="S", line_start=3, line_end=5),
+        Location(file="lib/defs.h", symbol="M_B", line_start=6, line_end=6),
     ]

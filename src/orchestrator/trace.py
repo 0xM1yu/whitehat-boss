@@ -234,9 +234,11 @@ class EventKind(StrEnum):
     # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. 같은 조건에서
     # `wrapper_callees`(`callees` 중 래퍼 너머로 붙인 수)·`alias_callees`(매크로 별칭이 부르는
     # 함수로 붙인 수)도 실린다(C4). `auditor_definitions`가 1이면 `definitions`·
-    # `definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 — `functions`에는 안
-    # 든다)와 `alias_definitions`
-    # (`definitions` 중 별칭 라운드로 붙인 수)가 같은 방식으로 더 실린다.
+    # `definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수·enum 상수 정의 수 — `functions`에는
+    # 안 든다)와 `alias_definitions`
+    # (`definitions` 중 별칭 라운드로 붙인 수)가 같은 방식으로 더 실린다. 같은 조건에서
+    # `definitions_trimmed`(상한을 넘어 그 상수 주변만 잘라 실은 enum 정의 수 — `definitions`에
+    # 든다)도 실린다.
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
