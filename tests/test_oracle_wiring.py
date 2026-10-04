@@ -670,13 +670,46 @@ def test_a_masked_task_id_is_accepted_only_with_a_query_task_id() -> None:
 _SERVER = "http://127.0.0.1:8666"
 
 
-def _bundle(tmp_path: Path, task_id: str) -> Path:
+def _bundle(tmp_path: Path, task_id: str, canary_task: str | None = None) -> Path:
     task = tmp_path / "task"
     task.mkdir()
     (task / "submit.sh").write_text(
         submit_script(server=_SERVER, task_id=task_id), encoding="utf-8"
     )
+    # 채점 run은 카나리 보고서 없이 조립되지 않는다(이슈 #383). 기본은 번들의 task_id로 쓴다.
+    # ⚠ **마스킹 번들에서는 그 둘이 다르다** - 카나리 도구는 이미지 이름을 과제 id에서 뽑으므로
+    # 조작자가 **실 id**로 돌리고 보고서의 `task`도 실 id다. 그래서 `canary_task`를 따로 받는다.
+    # 거절 규칙 자체는 `tests/test_canary_report.py`·`tests/test_oracle_cli.py`가 든다.
+    _write_canary(tmp_path, canary_task or task_id)
     return task
+
+
+def _write_canary(tmp_path: Path, task_id: str) -> Path:
+    import json
+
+    path = tmp_path / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task": task_id,
+                "verdict": "pass",
+                "ok": True,
+                "repeat": 10,
+                "below_measured_repeat": False,
+                "mmap_rnd_bits": "28",
+                "rnd_bits_above_28": False,
+                "rnd_bits_unmeasured": False,
+                "measured_at": "2026-10-03T17:42:07+00:00",
+                # 게이트가 요약만 믿지 않게 보는 관측 칸 셋(§2.2) - 규칙은
+                # `tests/test_canary_report.py`가 든다.
+                "completed": True,
+                "segv_count": 0,
+                "problems": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _write_mask_map(tmp_path: Path, content: object) -> Path:
@@ -694,7 +727,11 @@ def _write_mask_map(tmp_path: Path, content: object) -> Path:
 
 def _args(task: Path, mask_map: Path | None) -> argparse.Namespace:
     return argparse.Namespace(
-        oracle_submit=True, oracle_server=_SERVER, task_dir=task, mask_map=mask_map
+        oracle_submit=True,
+        oracle_server=_SERVER,
+        task_dir=task,
+        mask_map=mask_map,
+        oracle_canary=task.parent / "canary.json",
     )
 
 
@@ -713,15 +750,39 @@ def test_the_parser_carries_both_oracle_flags_and_the_mask_map_has_no_default() 
 def test_mask_map_unmasks_the_task_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`--mask-map`이 있으면 CLI가 TaskOracle에 unmask된 query_task_id를 넘긴다. 마스킹된 id의
     번들이 거절되지 않고 만들어진다 - 모양 검사(`cli`)도 가드(`TaskOracle`)도 실 id가 오면
-    받는다."""
+    받는다.
+
+    🔴 카나리 보고서는 **실 id**를 든다 - 도구가 이미지 이름을 과제 id에서 뽑아 조작자가 실 id로
+    돌리기 때문이다. 앞 판은 게이트가 번들의 masked id와 견줘 **정상 카나리를 전부 거절했다**.
+    """
     monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
-    args = _args(_bundle(tmp_path, _MASKED_ID), _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
+    bundle = _bundle(tmp_path, _MASKED_ID, canary_task=TASK_ID)
+    args = _args(bundle, _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
 
     oracle = cli._oracle_for(args)
 
     assert oracle is not cli._ORACLE_ERROR and oracle is not None
     assert oracle.task_id == _MASKED_ID
     assert oracle.query_task_id == TASK_ID
+
+
+def test_a_canary_labelled_with_the_masked_id_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """마스킹 run의 카나리가 masked id를 들면 거절한다 - 그 보고서는 도구가 만든 것이 아니다.
+
+    도구는 과제 id로 `-vul`·`-fix` 이미지 이름을 만든다. masked id로는 그 이미지가 없으므로
+    masked id를 든 보고서는 `--vul-image`·`--fix-image`·`--run-cmd`를 손으로 준 것이거나 손으로
+    쓴 것이다. 어느 쪽이든 「이 장비가 이 과제를 제대로 돌린다」의 근거가 아니다.
+    """
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    bundle = _bundle(tmp_path, _MASKED_ID, canary_task=_MASKED_ID)
+    args = _args(bundle, _write_mask_map(tmp_path, {TASK_ID: _MASKED_ID}))
+
+    result = cli._oracle_for(args)
+
+    assert result is cli._ORACLE_ERROR
+    assert "카나리가 다른 과제의 것이다" in capsys.readouterr().err
 
 
 def test_mask_map_missing_entry_is_an_error(

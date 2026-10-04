@@ -1804,8 +1804,10 @@ def _designate_final(
     돌려주는 것은 `(지정한 시도, 지정 근거, None)`이거나 `(None, "", 지정 못 한 사유)`다.
     **넷으로 갈린다:**
 
-    - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed` — 낼 PoC가 없던
-      것과 낸 것이 다 실패한 것은 다른 사건이다, §0). `fix` 다리와 판정 조회는 0번이다.
+    - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed`·`rate_limited` —
+      낼 PoC가 없던 것, 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
+      사건이다**, §0. 사유를 가르는 것은 `oracle_log.OracleLedger.none_reason`이고 이 함수는
+      그것을 그대로 싣는다). `fix` 다리와 판정 조회는 0번이다.
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
       것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
@@ -1896,7 +1898,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     `_designate_final`이 최종 PoC를 지정하면 그 하나에만 `fix` 다리와 판정 조회를 돌린다. 점수는
     후보 N건의 any-of가 아니라 이 호출 하나다 — 그래서 `oracle_final`이 run당 1건이고
     `oracle_submitted`는 판정 값을 안 든다(`trace.py`). **지정된 후보가 없는 사건**
-    (`no_poc`·`all_vul_submissions_failed`·`grade_tie`·`grade_unknown`)은 `status=none`이고,
+    (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_tie`·`grade_unknown`)은
+    `status=none`이고,
     지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
     없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 내부 근거 등급의 최댓값으로
     고르고 동점이면 지정하지 않는다**(`_designate_final`).
