@@ -304,6 +304,29 @@ def test_indirect_calls_are_counted_not_invented(tmp_path: Path) -> None:
     assert all(c["caller"] == "run" for c in _edges(index))
 
 
+def test_deeply_nested_code_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
+    """긴 `else if` 사슬과 길게 이은 식은 트리가 수천 단으로 깊다 — 노드마다 재귀하던 호출 수집이
+    `RecursionError`로 인덱스 전체를 잃었다(2026-10-04 GT 직접 모드 6,745표본 중 147개, wireshark
+    121). 두 꼴 다 끝까지 돌고 호출을 하나도 안 잃는다."""
+    chain = "".join(f" else if (x == {i}) g({i});" for i in range(1, 5000))
+    (tmp_path / "chain.c").write_text(
+        "void g(int v);\nint f(int x) { if (x == 0) g(0);" + chain + " return 0; }\n",
+        encoding="utf-8",
+    )
+    terms = " + ".join(f"k({i})" for i in range(3000))
+    (tmp_path / "sum.c").write_text(
+        "int k(int v);\nint h(void) { return " + terms + "; }\n", encoding="utf-8"
+    )
+    assert sys.getrecursionlimit() < 3000  # 이 깊이는 재귀로는 못 간다
+
+    index = _index(tmp_path, "chain.c", "sum.c")
+
+    assert len(index["calls"]["g"]) == 5000
+    assert len(index["calls"]["k"]) == 3000
+    # 하나도 안 잃는다 — 인자가 0..2999 전부
+    assert sorted(int(site["args"][0]) for site in index["calls"]["k"]) == list(range(3000))
+
+
 def test_unnamed_definitions_are_counted_not_silently_dropped(tmp_path: Path) -> None:
     """정의는 찾았는데 이름을 못 뽑는 경우가 실제로 남아 있다.
 

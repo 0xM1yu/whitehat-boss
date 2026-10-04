@@ -316,24 +316,32 @@ def _walk_calls(node, caller: str, relative: str, calls: list[dict]) -> int:
     `call_expression`의 `function` 필드가 `identifier`면 직접 호출이다. 그 외
     (`parenthesized_expression` 등)는 함수 포인터나 표현식 호출이라 구문만으로는
     대상을 알 수 없다 — 이름을 지어내지 않고 센다.
+
+    **재귀하지 않는다.** 노드마다 자기를 부르던 판은 깊게 중첩된 코드(긴 `else if` 사슬 ·
+    길게 이은 식)에서 Python 재귀 한도를 넘어 `RecursionError`로 인덱스 전체를 잃었다 —
+    2026-10-04 GT 직접 모드 6,745표본 중 147개(wireshark 121). 명시적 스택으로 같은 순서(부모
+    먼저, 자식은 원문 순)를 돈다 — `calls`의 순서를 읽는 쪽(`index_graph`의 「첫 호출 줄 순」)이
+    그대로다.
     """
     unresolved = 0
-    if node.type == "call_expression":
-        target = node.child_by_field_name("function")
-        if target is not None and target.type == "identifier":
-            calls.append(
-                {
-                    "caller": caller,
-                    "callee": target.text.decode("utf-8", "replace"),
-                    "file": relative,
-                    "line": node.start_point[0] + 1,
-                    "args": _args(node),
-                }
-            )
-        else:
-            unresolved += 1
-    for child in node.children:
-        unresolved += _walk_calls(child, caller, relative, calls)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "call_expression":
+            target = current.child_by_field_name("function")
+            if target is not None and target.type == "identifier":
+                calls.append(
+                    {
+                        "caller": caller,
+                        "callee": target.text.decode("utf-8", "replace"),
+                        "file": relative,
+                        "line": current.start_point[0] + 1,
+                        "args": _args(current),
+                    }
+                )
+            else:
+                unresolved += 1
+        stack.extend(reversed(current.children))
     return unresolved
 
 
