@@ -4,6 +4,7 @@ import pytest
 
 from src import cli
 from src.config import HarnessConfig, load_config
+from src.orchestrator import prompt_loader
 from src.orchestrator.nodes import auditor, critic, pov
 
 
@@ -51,6 +52,7 @@ def test_synthesis_warns_about_232_even_with_attempts(monkeypatch, tmp_path, att
     ))
     checks = _chain(_checks(monkeypatch, tmp_path, config))
     assert any(c.severity == cli.Severity.WARN and "#232" in c.message for c in checks)
+    assert any("기대 신호" in c.message for c in checks)
     assert not any(c.severity == cli.Severity.ERROR for c in checks)
 
 
@@ -119,3 +121,54 @@ def test_cli_exit_is_one_for_real_score_chain(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "load_profile", lambda *_a, **_k: config)
     assert cli.main(["doctor", "--profile", "harness_pool", "--artifacts-root", str(tmp_path)]) == 1
     assert "점수 사슬" in capsys.readouterr().out
+
+
+def test_newer_versions_use_numeric_order_and_require_three_files(monkeypatch, tmp_path):
+    for version in ("v2", "v9", "v10", "v11", "v99_trial", "v100"):
+        directory = tmp_path / "critic" / version
+        directory.mkdir(parents=True)
+        for name in ("prefix.md", "body.md", "meta.yaml"):
+            if version != "v100" or name != "meta.yaml":
+                (directory / name).write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr(prompt_loader, "PROMPTS_DIR", tmp_path)
+    config = _version(load_config("harness_pool"), "critic", "v9")
+    checks = cli._check_prompt_version(config, "critic", "v9")
+    warnings = [c.message for c in checks if c.severity == cli.Severity.WARN]
+    assert len(warnings) == 1 and "새 판 v11" in warnings[0]
+    assert not [c for c in cli._check_prompt_version(config, "critic", "v11")
+                if c.severity == cli.Severity.WARN]
+    assert not [c for c in cli._check_prompt_version(config, "critic", "v99_trial")
+                if c.severity == cli.Severity.WARN]
+
+
+def test_mixed_profile_exempts_only_the_fake_role(monkeypatch, tmp_path):
+    config = load_config("harness_pool_hybrid")
+    roles = {**config.profile.roles, "critic": "fake"}
+    config = config.transition(profile=config.profile.transition(roles=roles))
+    assert config.served_models()
+    checks = _checks(monkeypatch, tmp_path, config)
+    assert not any(c.severity == cli.Severity.ERROR and "critic" in c.message
+                   and "내용 인식" in c.message for c in checks)
+    assert any(c.severity == cli.Severity.ERROR and "pov" in c.message
+               and "내용 인식" in c.message for c in checks)
+
+
+def test_missing_pov_keeps_synthesis_warning(monkeypatch, tmp_path):
+    config = load_config("harness_pool_hybrid")
+    roles = {role: key for role, key in config.profile.roles.items() if role != "pov"}
+    config = config.transition(
+        profile=config.profile.transition(roles=roles),
+        thresholds=config.thresholds.transition(synthesize_repro_spec=1),
+    )
+    checks = _chain(_checks(monkeypatch, tmp_path, config))
+    assert {c.severity for c in checks} == {cli.Severity.ERROR, cli.Severity.WARN}
+
+
+def test_unused_real_retrieval_entries_do_not_turn_fake_profile_real(monkeypatch, tmp_path):
+    config = load_config("dev_fake")
+    real = load_config("harness_pool")
+    roles = {**config.profile.roles, "embedding": real.profile.roles["embedding"],
+             "reranker": real.profile.roles["reranker"]}
+    config = config.transition(profile=config.profile.transition(roles=roles))
+    assert not config.served_models()
+    assert not _chain(_checks(monkeypatch, tmp_path, config))
