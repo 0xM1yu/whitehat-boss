@@ -43,12 +43,13 @@ from tests.test_pipeline_e2e import (
 
 @pytest.fixture(autouse=True)
 def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
-    """이 파일의 `_run`은 Auditor SOURCE 옵션(`AUDITOR_SOURCE_OPTIONS` — 지금 여덟)을 **전부 끈**
+    """이 파일의 `_run`은 Auditor SOURCE 옵션(`AUDITOR_SOURCE_OPTIONS` — 지금 아홉)을 **전부 끈**
     설정에서 돈다(결정 1-b 모양).
 
-    2026-10-03부터 `budgets.yaml`이 그중 일곱을 켠다(entry 줄이기만 꺼짐 · #349 · ⏵ 2026-10-04 래퍼
-    너머 · 간접 피호출 · 쓰기 지점 창) -> 그대로 두면 1-b 규칙을 재는 검사마다 호출자 창·정의가 끼어
-    기대값이 흔들리고, 옵션 하나를 켜는 검사는 다른 것이 같이 켜진 채로 돈다.
+    2026-10-03부터 `budgets.yaml`이 그중 일곱을 켠다(entry 줄이기·가드 목록 `auditor_guards`만
+    꺼짐 · #349 · ⏵ 2026-10-04 래퍼 너머 · 간접 피호출 · 쓰기 지점 창) -> 그대로 두면 1-b 규칙을
+    재는 검사마다 호출자 창·정의가 끼어 기대값이 흔들리고, 옵션 하나를 켜는 검사는 다른 것이 같이
+    켜진 채로 돈다.
     옵션을 재는 검사는 `configure`로 그 하나만 켠다. 기본 설정(일곱 켬) 그대로의 모양은
     `test_default_*` 검사가 따로 본다 -> 그 이름은 이 픽스처를 건너뛴다.
     """
@@ -1194,7 +1195,7 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
             callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
             counter_for_role=lambda role: words if role == "auditor" else None,
             config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
-                auditor_source_gate=0,
+                auditor_source_gate=0, auditor_guards=0,
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
                 auditor_entry_trim=0, auditor_caller_lines=0, auditor_callee_wrappers=0,
                 auditor_indirect_callees=0, auditor_write_sites=0)),
@@ -1232,7 +1233,7 @@ def _trim_source(
         callees_of=lambda _loc: [], definitions_of=lambda _n, _f: [],
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
-            auditor_source_gate=0,
+            auditor_source_gate=0, auditor_guards=0,
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
             auditor_entry_trim=trim, auditor_caller_lines=0, auditor_callee_wrappers=0,
                 auditor_indirect_callees=0, auditor_write_sites=0)),
@@ -1324,7 +1325,7 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
         ),
         counter_for_role=lambda role: (lambda text: len(text.split())),
         config=types.SimpleNamespace(thresholds=types.SimpleNamespace(
-            auditor_source_gate=0,
+            auditor_source_gate=0, auditor_guards=0,
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
             auditor_entry_trim=0, auditor_caller_lines=lines, auditor_callee_wrappers=0,
                 auditor_indirect_callees=0, auditor_write_sites=0)),
@@ -1377,7 +1378,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
     import types
 
     thresholds = {
-        "auditor_source_gate": 0,
+        "auditor_source_gate": 0, "auditor_guards": 0,
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
         "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_callee_wrappers": 0,
         "auditor_indirect_callees": 0, "auditor_write_sites": 0,
