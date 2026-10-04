@@ -17,8 +17,12 @@
 🔴 **절단 구간이 우연이 아니라 구조적이다.** head가 530자(= (800 − 마커 5) × 2/3)인데
 `results`는 42,508자 뒤에 있다.
 
-**고친 뒤의 실측(같은 로그)**: `errors`를 빼면 `results`가 108자 지점에서 시작해 head에
-`check_id`(`opt.semgrep-rules.c.lang.security.insecure-use-memset`)와 줄번호 1087이 들어온다.
+**고친 뒤(계산값 — 실 로그가 저장소에 없어 그 로그로는 다시 못 쟀다)**: `errors`를 자리표시자로
+바꾸면 `results`가 stdout 안 130자 지점에서 시작한다(= `{"errors": ` 11 + 자리표시자 23 +
+errors와 results 사이 96 — 96은 42,508 − 42,401 − 11). 같은 구조의 픽스처를 이 함수로 재면
+128이다. 픽스처의 본문(머리줄 합쳐)에서 `check_id`
+(`opt.semgrep-rules.c.lang.security.insecure-use-memset`)는 189자, 그 이름의 끝은 254자,
+줄번호 1087은 284자라 모두 head 530자 안이다.
 ⚠ **10건 중 1건**이다 — 나머지 아홉은 여전히 안 보인다. 한 줄씩 접어 전부 보이게 하는 것은
 그 이슈의 선택지 1이고 **도구를 아는 파서**가 필요해 이 PR의 범위 밖이다(`evidence_summaries`는
 도구를 모르는 범용 절단기다).
@@ -269,7 +273,9 @@ def test_the_noise_list_stays_short_and_declared() -> None:
     ⚠ **그 `paths` 51자는 단일 파일 run 한 건의 값이다.** `paths.scanned`는 스캔한 파일 수만큼
     자라므로 디렉터리를 대상으로 돌면 `results`를 다시 head 밖으로 밀 수 있다 — 아래
     `test_a_wide_paths_list_pushes_the_results_out_again`이 그 모양을 실행으로 보인다. 현재
-    호출부는 파일 경로만 넘기지만(코드 읽기) 디렉터리 대상 실행은 미실측이다.
+    호출부는 파일 경로만 넘기지만(코드 읽기) **그 불변식은 코드가 보장하지 않는다**(D16.md가
+    같은 경고를 적는다). 디렉터리 대상 실행의 실측은 그 항목의 2파일 디렉터리 한 건뿐이고
+    **운영 규모 디렉터리 run에서 `paths`가 head를 얼마나 먹는지는 미실측**이다.
     """
     assert _JSON_NOISE_KEYS == ("errors",)
 
@@ -283,8 +289,9 @@ def test_the_body_still_obeys_the_per_evidence_cap() -> None:
     ⚠ **비회귀 핀 — 이 수정을 되돌려도 통과한다**(호출 자리를 빼든 함수를 입력 그대로 돌려주게
     하든 `_JSON_NOISE_KEYS`를 비우든 통과함을 되돌려 확인했다 — PR #489 리뷰 반영). 상한은
     `_bound_text`가 지키므로 어느 입력에서도 같다. 그리고 비교 대상이 **같은 모듈의 상수**
-    (`EVIDENCE_BODY_CHAR_CAP`)라 누가 그 상수를 올려도 통과한다 — 「예산을 안 늘렸다」는 값(800)을
-    못 박지 않는다.
+    (`EVIDENCE_BODY_CHAR_CAP`)라 그 상수를 올려도 통과한다 — 단 **약 2,288까지만**이다: 정리 뒤
+    본문이 2,289자(이 함수로 잰 값)라 상한이 그 이상이면 본문이 안 잘려 둘째 단언
+    (`truncated is True`)이 빨개진다. 「예산을 안 늘렸다」는 값(800)을 못 박지 않는다.
     """
     summary = _body(_REAL_LOG)
 
@@ -294,8 +301,18 @@ def test_the_body_still_obeys_the_per_evidence_cap() -> None:
 
 # --- 한계 - 고치지 않았다 (PR #489 리뷰) -------------------------------------------
 #
-# 아래 둘은 이 수정이 **효과를 잃는 모양**을 실행으로 고정한다. 한계가 풀리면(고치면) 빨개지고,
-# 그때 `prompt_loader`의 `_JSON_NOISE_KEYS` 주석·`_drop_json_noise` docstring과
+# 아래 둘은 이 수정이 **효과를 잃는 모양**을 실행으로 고정한다. **어느 고침에 빨개지는지는
+# 핀마다 다르다**(되돌려 확인했다):
+# - `paths` 핀 — `paths`를 잡음 키에 넣으면 빨개진다. 잡음 키 제거 자체를 되돌려도 빨개진다
+#   (전제 단언이 `errors`가 빠졌는지 본다).
+# - 읽기 상한 핀 — 어댑터 쪽 수정에만 빨개진다: 읽기 상한을 없애거나 상한 **앞에서** `errors`를
+#   빼 읽은 길이가 상한 미만이 되게 하면 `len(read) == PAYLOAD_READ_CAP`이 빨개진다. 상한을
+#   올리는 수정에는 안 빨개진다(핀이 상한 상수에서 크기를 맞춘다 — 상한이 얼마든 잘린 줄은 같은
+#   모양이다). **파싱 쪽 수정(`_drop_json_noise`가 잘린 줄을 처리)에도 안 빨개진다** — 이 핀의
+#   입력은 `errors`가 상한을 넘어 이어져 `results`의 글자가 읽히지 않으므로 어떤 파싱도 그것을
+#   되살리지 못한다. 그 수정이 돕는 구간은 `errors`의 끝이 상한 안에 드는 약 60스팬 폭뿐이고 이
+#   핀은 그 구간을 안 다룬다.
+# 한계가 풀리면 `prompt_loader`의 `_JSON_NOISE_KEYS` 주석·`_drop_json_noise` docstring과
 # `docs/agent-contracts.md`의 한계 서술을 같이 고친다.
 
 
@@ -303,15 +320,32 @@ def test_a_wide_paths_list_pushes_the_results_out_again() -> None:
     """한계 핀 - `paths.scanned`가 길면 `errors`를 뺀 뒤에도 `results`가 head 밖이다.
 
     `paths`는 알파벳 순으로 `results`보다 앞이고 스캔한 파일 수만큼 자란다. 실측 한 건은 단일
-    파일이라 51자였다. 여기서는 픽스처의 `scanned`를 31자 경로 40개로 **늘렸다**(경로의
-    디렉터리는 실 로그 그대로다). 현재 호출부는 파일 경로만 넘기므로(코드 읽기) 실 run에서 이런
-    모양이 나오는지는 미실측이다.
+    파일이라 51자였다. 여기서는 픽스처의 `scanned`를 27자 경로 40개(원소당 직렬화 폭 31자)로
+    **늘렸다**(경로의 디렉터리는 실 로그 그대로다) - 그러면 `results`가 1,330자 지점에서 시작한다.
+    현재 호출부는 파일 경로만 넘기므로(코드 읽기) 실 run에서 이런 모양이 나오는지는 미실측이다.
+
+    첫 단언이 「`errors`를 뺀 뒤에도」를 건다(자리표시자가 본문에 있다) - 없으면 이 핀은 제거를
+    되돌려도 통과한다(`errors`가 안 빠져도 규칙 이름은 head 밖이다).
     """
     wide = json.loads(_REAL_STDOUT)
     wide["paths"]["scanned"] = [f"/src/src-vul/file/src/f{n:02d}.c" for n in range(40)]
     log = _REAL_LOG.replace(_REAL_STDOUT, json.dumps(wide))
+    body = _body(log)["body"]
 
-    assert _RULE_ID not in _body(log)["body"]
+    assert "chars dropped" in body  # errors는 빠졌다
+    assert _RULE_ID not in body  # 그런데도 results는 head 밖이다
+
+
+def test_the_documented_read_cap_value_matches_the_adapter() -> None:
+    """서술이 베낀 `PAYLOAD_READ_CAP` 값 사본이 어댑터 상수와 같다.
+
+    `prompt_loader.py`는 어댑터를 import할 수 없어(engineering-guide.md §3) 이 상한을 **값으로**
+    적고(`_drop_json_noise` docstring의 200,000자), `docs/agent-contracts.md`도 같은 값을 쓴다 -
+    거기서 「스팬 약 630개 초과」(계산값)가 나온다. 아래 읽기 상한 핀은 상수에서 크기를 맞추므로
+    **상수가 바뀌어도 초록이다** - 이 단언이 바뀐 것을 잡는다. 빨개지면 위 두 곳의 200,000자와
+    그 값에서 환산한 630·633~636·695~698을 같이 다시 계산한다.
+    """
+    assert PAYLOAD_READ_CAP == 200_000
 
 
 def test_a_log_cut_by_the_read_cap_loses_the_effect(tmp_path: Path) -> None:
@@ -322,6 +356,10 @@ def test_a_log_cut_by_the_read_cap_loses_the_effect(tmp_path: Path) -> None:
     **자름**이다. 실 `make_payload_reader`로 읽는다. 상한을 넘는 로그는 픽스처 `errors[0].spans`를
     그 첫 스팬의 반복으로 늘려 만들었다 - 실 run 한 건은 스팬 148개 · 60,964자였고 이 모양의 실
     run은 미실측이다.
+
+    ⚠ **이 핀은 어댑터 쪽 수정에만 빨개진다**(위 구역 머리말). 마지막 단언은 `_drop_json_noise`를
+    어떻게 고쳐도 참이다 - 읽은 200,000자 안에 `results`가 **없어서**(이 입력에서 `results`는 로그
+    203,709자 지점) 파싱이 되살릴 글자가 없다. 파싱 쪽 수정이 돕는 구간은 이 핀 밖이다.
     """
     wide = json.loads(_REAL_STDOUT)
     span = wide["errors"][0]["spans"][0]
