@@ -6,8 +6,10 @@ query protocol -- the real prepare -> shards -> merge -> export run is checked o
 import importlib.util
 import json
 import os
+import shutil
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -445,8 +447,8 @@ def stub_server(tmp_path, monkeypatch):
 @needs_proc
 def test_stop_ends_a_jvm_that_outlives_its_launcher(stub_server, tmp_path, monkeypatch):
     """`joern` is an sh with the JVM as its child. SIGTERM ends the sh at once; the JVM's shutdown
-    hook queues behind a running query and never finishes (2026-10-03: eight JVMs outlived a run).
-    stop_all() returns only when the JVM is gone."""
+    hook cannot finish while a query runs (jstack, text not kept; 2026-10-03: eight JVMs outlived a
+    run). stop_all() returns only when the JVM is gone."""
     monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 1)
     process = stub_server("deaf")
     jvm = int(wait_for(tmp_path / "jvm.pid"))
@@ -493,8 +495,10 @@ def test_stop_all_without_a_grace_kills_at_once(stub_server, tmp_path, monkeypat
 def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server):
     """For a few hundred ms after SIGKILL a JVM is a zombie leader whose threads still hold the
     listening socket (dev box, 2026-10-03: the port kept accepting for 0.15-0.57 s after the kill,
-    up to 0.56 s after the stop had returned). A new server's wait_servers would take that for
-    itself, so stop_all() must not return before the last thread has gone."""
+    while the stop that ignored threads had returned 4-115 ms after it). The next run's
+    ensure_ports_free (a bind) refuses the port meanwhile, and a restart on the same port (#472,
+    not in this branch) would take the dying server for its own in wait_servers, so stop_all() must
+    not return before the last thread has gone."""
     process = stub_server("zombie-leader")
     port = int(process.args[-1])
     deadline = time.time() + 20
@@ -507,6 +511,139 @@ def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server)
     assert tool.stop_all([process]) == []
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", port), 1)
+
+
+def kill_group(process: subprocess.Popen) -> None:
+    """What a failing test leaves behind: nothing."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    process.wait()
+
+
+def deaf_python(tmp_path: Path, body: str) -> subprocess.Popen:
+    """A process of its own group that ignores SIGTERM, runs `body` and then writes `ready`."""
+    code = ("import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n" + body
+            + "\nopen('ready', 'w').write('1')\ntime.sleep(60)\n")
+    return tool.launch([sys.executable, "-c", code], None, [], cwd=tmp_path)
+
+
+@needs_proc
+def test_a_member_whose_name_is_cut_mid_character_is_still_seen(tmp_path, monkeypatch):
+    """The kernel cuts a process name (`comm`) at 15 bytes, in the middle of a multibyte character
+    too, and that /proc/<pid>/stat line is not UTF-8. A scan that skipped what it could not decode
+    saw an empty group, ended the stop at once, sent no SIGKILL and said nothing."""
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.5)
+    # PR_SET_NAME = 15; 5 characters of 3 bytes cut to 14 bytes: the last one is broken
+    process = deaf_python(tmp_path, "import ctypes\n"
+                          "ctypes.CDLL(None).prctl(15, ('\\uac00' * 5).encode()[:14], 0, 0, 0)")
+    try:
+        wait_for(tmp_path / "ready")
+        with pytest.raises(UnicodeDecodeError):
+            Path(f"/proc/{process.pid}/stat").read_bytes().decode()  # the premise holds here
+        assert tool._live_groups({process.pid}) == {process.pid: [process.pid]}
+        assert tool.stop_all([process]) == []
+        assert process.returncode == -signal.SIGKILL         # it ignored SIGTERM: killed, not left
+    finally:
+        kill_group(process)
+
+
+@needs_proc
+def test_a_launcher_that_only_sigkill_ends_is_reaped(tmp_path, monkeypatch):
+    """The scan finds a SIGKILLed launcher dead (a zombie) before the stop looks at its exit status;
+    stop_all() reaps it before it returns instead of leaving `returncode` None and a zombie."""
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 0.3)
+    process = deaf_python(tmp_path, "")
+    try:
+        wait_for(tmp_path / "ready")
+        assert tool.stop_all([process]) == []
+        assert process.returncode == -signal.SIGKILL
+    finally:
+        kill_group(process)
+
+
+@needs_proc
+def test_sigkill_goes_only_to_a_group_that_is_still_alive(stub_server, tmp_path, monkeypatch):
+    """A group that emptied on SIGTERM gets nothing more: a pid is reused once its group is gone,
+    and a signal to it would land on somebody else's."""
+    monkeypatch.setattr(tool, "STOP_GRACE_SECONDS", 1.5)
+    for folder in ("graceful", "deaf"):
+        (tmp_path / folder).mkdir()
+    graceful = stub_server("graceful", tmp_path / "graceful")
+    deaf = stub_server("deaf", tmp_path / "deaf")
+    wait_for(tmp_path / "graceful" / "ready")
+    wait_for(tmp_path / "deaf" / "jvm.pid")
+    sent, real = [], os.killpg
+    monkeypatch.setattr(tool.os, "killpg",
+                        lambda group, sig: sent.append((group, sig)) or real(group, sig))
+    assert tool.stop_all([graceful, deaf]) == []
+    assert (tmp_path / "graceful" / "term.marker").exists()   # it left on SIGTERM
+    assert sorted(sent) == sorted([(graceful.pid, signal.SIGTERM), (deaf.pid, signal.SIGTERM),
+                                   (deaf.pid, signal.SIGKILL)])
+
+
+def run_in_child(script: str, *args: str, prefix: tuple[str, ...] = ()) -> dict:
+    """`script` in a python of its own (after `prefix`, e.g. unshare); its last line is JSON."""
+    command = [*prefix, sys.executable, "-c", script, str(Path(tool.__file__)), str(STUB), *args]
+    done = subprocess.run(command, capture_output=True, text=True, timeout=90, check=False)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.splitlines()[-1])
+
+
+# One stub server (`kind`: launcher + server, as `joern` and its JVM) stopped by stop_all() in a
+# python of its own; it says what it saw. `setup` is what the case wants set first.
+STOP_IN_CHILD = """
+import importlib.util, json, os, sys, time
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("slice_sharded", sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+tool.STOP_GRACE_SECONDS, tool.KILL_VERIFY_SECONDS = 1, 2
+{setup}
+os.environ["STUB_SERVER"] = "{kind}"
+folder = Path(sys.argv[3])
+process = tool.launch([sys.executable, sys.argv[2], "--serve", sys.argv[4]], None, [], cwd=folder)
+while not (folder / "jvm.pid").exists() or not (folder / "jvm.pid").read_text():
+    time.sleep(0.05)
+jvm = int((folder / "jvm.pid").read_text())
+survivors = tool.stop_all([process])
+# the server is a child of ours once its launcher is gone (we are a subreaper, or init of the
+# namespace): waitpid says whether it is dead -- /proc may be a namespace that does not know its pid
+reaped = os.waitpid(jvm, os.WNOHANG)[0] == jvm
+print(json.dumps({{"survivors": survivors, "jvm_dead": reaped,
+                  "own_proc": os.readlink("/proc/self") == str(os.getpid())}}))
+"""
+
+
+@needs_proc
+def test_a_server_that_died_unreaped_is_not_a_survivor(tmp_path):
+    """The tool is the subreaper (a container's PID 1 is one): a zombie whose parent died is
+    adopted by it and stays a zombie in the group. killpg(group, 0) counts it; the stop must not."""
+    result = run_in_child(
+        STOP_IN_CHILD.format(setup='import ctypes; ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)',
+                             kind="deaf-zombie"), str(tmp_path), str(free_base(1)))
+    assert result["survivors"] == []        # PR_SET_CHILD_SUBREAPER = 36 above
+
+
+@pytest.mark.parametrize("mount_proc", [True, False])
+@needs_proc
+def test_a_proc_that_is_not_our_pid_namespace_is_not_trusted(tmp_path, mount_proc):
+    """In a sandbox that unshares the pid namespace without remounting /proc (bubblewrap, `unshare
+    -p`), /proc names the HOST's pids: no group of ours is in it, every group looks empty and the
+    stop would end with no SIGKILL and no warning. Then it must fall back to killpg."""
+    if shutil.which("unshare") is None:
+        pytest.skip("no unshare")
+    prefix = ("unshare", "--user", "--map-root-user", "--pid", "--fork",
+              *(("--mount-proc",) if mount_proc else ()))
+    try:
+        subprocess.run([*prefix, "true"], capture_output=True, timeout=20, check=True)
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("unprivileged user + pid namespaces are not allowed here")
+    result = run_in_child(STOP_IN_CHILD.format(setup="", kind="deaf"), str(tmp_path),
+                          str(free_base(1)), prefix=prefix)
+    assert result["own_proc"] is mount_proc     # the premise: /proc is ours only when remounted
+    assert result["jvm_dead"]                    # killed either way: not trusted when not ours
 
 
 SURVIVOR = 10_000_000  # added to a group id: a pid no live process has, one per stopped process
