@@ -179,3 +179,33 @@ def test_wired_prefix_keeps_source_and_evidence_boundaries():
         "Match the decisive PATH symbols and supplied Evidence locations to retained source text",
     ):
         assert phrase in normalized
+
+
+def test_non_slice_auditor_critic_and_pov_share_the_first_read(ctx):
+    _v6(ctx)
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    artifact = ctx.store.get("artifact", candidate.artifact_id)
+    item = runner._InFlight(
+        target=runner._Target(
+            artifact=artifact, location=VULN_TARGET, evidences=evidences, signal_rank=2
+        ),
+        reached=runner._Reached(),
+        candidate=candidate,
+    )
+    state = runner._Accumulator()
+    first = ctx.read_source(capsule.target)
+    reads = []
+
+    def changing_reader(target):
+        reads.append(target)
+        return first if len(reads) == 1 else "changed_after_auditor"
+
+    ctx.read_source = changing_reader
+    assert runner._step_auditor(ctx, item, state)
+    source = state.finding_sources[item.finding.finding_id]
+    critic.run(ctx, finding=item.finding, source=source)
+    prompt = pov._render_prompt(ctx, finding=item.finding, capsule=capsule, source=source)
+    assert _facts_of(ctx.models.last_for(Role.AUDITOR).body)["source"] == first
+    assert _facts_of(ctx.models.last_for(Role.CRITIC).body)["source"] == first
+    assert _facts_of(prompt.body)["source"] == first
+    assert reads == [capsule.target]
