@@ -54,6 +54,11 @@ _CANARY = {
     "rnd_bits_unmeasured": False,
     "measured_at": "2026-10-03T17:42:07+00:00",
     "docker_version": "29.5.3",
+    # 게이트는 요약(`verdict`·`ok`)만 믿지 않고 같은 파일의 **관측 칸** 셋도 본다 - 도구의
+    # `_report`가 늘 쓰는 키다(§2.2). 규칙 자체는 `tests/test_canary_report.py`가 든다.
+    "completed": True,
+    "segv_count": 0,
+    "problems": [],
 }
 
 
@@ -429,6 +434,48 @@ def test_the_canary_flag_without_oracle_submit_is_an_error(
     _refused(cli._oracle_for(args), capsys, "--oracle-canary")
 
 
+# `"k\x00"`은 없다 - 환경변수에 NUL을 넣을 수 없어(`os.environ`이 `ValueError`) 이 코드에 닿지
+# 않는다. 닿지 않는 입력을 핀으로 들면 검사가 막는 범위를 넓게 적는 것이다.
+@pytest.mark.parametrize("key", ["k\r", "k\n", "k key", "\tk", "k\x1b[2J"])
+def test_a_key_with_whitespace_or_control_characters_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, key: str
+) -> None:
+    """🔴 **키가 run 산출물에 평문으로 남는 경로를 입구에서 막는다.**
+
+    끝에 CR이 붙은 키(CRLF 파일을 `$(cat key.txt)`로 읽으면 생긴다)는 `http.client`가 헤더를
+    만들기 전에 `ValueError("Invalid header value b'<키>\\r'")`로 거부하고, 그 문구가
+    `error_detail`을 거쳐 사이드카 `oracle/verdict.json`에 **그대로** 쓰인다. 어댑터의 가림막은
+    자기 예외 클래스만 지웠다.
+
+    ⚠ **거절 문구에 키가 없어야 한다** - 막으면서 찍으면 같은 사고다.
+    """
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, key)
+
+    result = cli._oracle_for(_args(_bundle(tmp_path)))
+
+    assert result is cli._ORACLE_ERROR
+    err = capsys.readouterr().err
+    assert "공백·비출력 문자" in err
+    assert key.strip() not in err or "k" not in key.strip()
+
+
+def test_the_redaction_covers_exceptions_that_are_not_ours(tmp_path: Path) -> None:
+    """가림막이 `CyberGymOracleError`만 지우면 키를 든 다른 예외가 그대로 장부로 간다."""
+    from src.adapters import cybergym_oracle as oc
+
+    oracle = oc.TaskOracle(
+        server=_SERVER, task_id=TASK_ID, agent_id=_AGENT, api_key="SECRET-abc123"
+    )
+
+    with pytest.raises(oc.CyberGymOracleError) as caught:  # noqa: PT012
+        with oracle._redacting():
+            raise ValueError("Invalid header value b'SECRET-abc123\\r'")
+
+    message = str(caught.value)
+    assert "SECRET-abc123" not in message
+    assert "ValueError" in message and "***" in message
+
+
 def test_the_gate_and_the_tool_agree_on_the_entropy_limit() -> None:
     """🔴 게이트와 도구가 **같은 수**를 봐야 한다 - `src/`는 `tools/`를 import하지 않아
     리터럴이 둘이다. 갈리면 하네스가 통과시킨 장비를 도구가 경고하거나 그 반대가 된다.
@@ -445,6 +492,53 @@ def test_the_gate_and_the_tool_agree_on_the_entropy_limit() -> None:
     spec.loader.exec_module(tool)
 
     assert MMAP_RND_BITS_MAX == tool.MMAP_RND_BITS_MAX
+
+
+def test_a_canary_inside_the_task_tree_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """과제 번들은 **신뢰 경계 밖**이라 게이트가 읽는 파일을 그 안에 두지 않는다.
+
+    지금은 다른 검사들이 우연히 막는다 - 번들에 허용 목록 밖 파일이 있으면 `check_task_dir`가
+    먼저 거절한다. 그 부수 효과에 기대지 않는다: 그 검사가 느슨해지면 번들이 게이트가 읽는
+    파일을 깔 수 있게 된다.
+    """
+    monkeypatch.setenv(cli._ORACLE_KEY_ENV, "k")
+    task = _bundle(tmp_path)
+    inside = _canary(task)  # 번들 디렉터리 안에 쓴다
+
+    result = cli._oracle_for(_args(task, canary=inside))
+
+    assert result is cli._ORACLE_ERROR
+    assert "과제 트리 안이다" in capsys.readouterr().err
+
+
+def test_the_command_the_refusal_prints_actually_parses(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """거절 문구가 알려 주는 명령을 **그 도구의 파서로 실제로 파싱해 본다**.
+
+    🔴 문자 핀으로는 부족하다 - 철자를 단언하면 `--task`·`--json` 같은 없는 옵션으로 되돌려도
+    초록이다(CLAUDE.md §2.5 「검사가 무는 것을 세게 적지 않는다」). 이 보고서는 채점 run의
+    선행이고 이 문구가 **유일한 복구 안내**라, 틀리면 조작자가 보고서를 손으로 쓰게 된다.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_oracle_canary_tool", Path(cli.REPO_ROOT) / "tools" / "oracle_canary.py"
+    )
+    assert spec is not None and spec.loader is not None
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+
+    # 문구의 `<...>` 자리표시자를 실제 값으로 바꿔 argv를 만든다.
+    fill = {"<task-id>": "arvo:1065", "<경로>": str(tmp_path / "canary.json")}
+    argv = [fill.get(word, word) for word in cli._CANARY_COMMAND.split()[1:]]
+
+    parsed = tool._build_parser().parse_args(argv)
+
+    assert parsed.task == "arvo:1065"
+    assert parsed.out == tmp_path / "canary.json"
 
 
 def _spec(**kwargs: object) -> RunSpec:
