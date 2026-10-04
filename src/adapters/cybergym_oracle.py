@@ -718,7 +718,9 @@ class TaskOracle:
     결정론이다) 옛 판정이 돌아오고 `cached`·`fix_cached`가 그것을 알린다.
 
     **키는 `repr`에 안 나온다**(`field(repr=False)`). 이 클래스가 올리는 오류 문구에서도 키를 지운다
-    — 오류 본문은 서버가 쓴 글이고 러너가 그것을 run 산출물에 적는다. 한계: `dataclasses.asdict`는
+    — 오류 본문은 서버가 쓴 글이고 러너가 그것을 run 산출물에 적는다. `http.client`가 헤더에 못
+    실리는 값(CR·LF가 든 키)을 `repr(bytes)` 모양(`b'<키>\\r'`)으로 문구에 실어도 지운다
+    (`_without_key`). 한계: `dataclasses.asdict`는
     `repr`과 무관하게 모든 필드를 담는다 — 이 객체를 `asdict`에 넘기는 코드는 저장소에 없다.
     """
 
@@ -825,7 +827,8 @@ class TaskOracle:
         **아닐** 수 있다 — `http.client`는 헤더에 못 실리는 값을 받으면
         `ValueError("Invalid header value b'<키>…'")`를 던진다. 그래서 `Exception`까지 넓히고,
         우리 클래스가 아니면 **같은 종류로 다시 만들지 않고**(생성자 모양을 모른다) 가린 문구를
-        든 `CyberGymOracleError`로 바꾼다 — 원래 클래스 이름은 문구에 남긴다.
+        든 `CyberGymOracleError`로 바꾼다 — 원래 클래스 이름은 문구에 남긴다. 그 문구의 키는 원문이
+        아니라 `repr(bytes)` 모양이라 `_without_key`가 그 모양까지 지운다.
         """
         try:
             yield
@@ -841,4 +844,19 @@ class TaskOracle:
             ) from None
 
     def _without_key(self, text: str) -> str:
-        return text.replace(self.api_key, "***") if self.api_key else text
+        """`text`에서 키를 **문구에 실릴 수 있는 모양대로** 지운다.
+
+        원문만 지우면 모자란다 — `http.client`는 헤더에 못 실리는 값을 `repr(bytes)`로 문구에
+        싣는다(`ValueError("Invalid header value b'<키>\\r'")`). 그 `repr`은 **라틴-1**로 인코딩한
+        바이트고 CR·LF가 `\\r`·`\\n` 두 글자가 되므로 실제 CR이 든 원문으로는 `replace`가 안 맞는다
+        (재현: `api_key="SECRETKEY123\\r"`). 그래서 원문 · 앞뒤 공백을 뗀 값 · 그 `repr` 모양을
+        지운다. 긴 모양부터 지워야 `\\r` 꼬리가 안 남는다.
+        """
+        key = self.api_key
+        if not key:
+            return text
+        shapes = {key, key.strip(), repr(key.encode("latin-1", "replace"))[2:-1]}
+        for shape in sorted(shapes, key=len, reverse=True):
+            if shape:
+                text = text.replace(shape, "***")
+        return text

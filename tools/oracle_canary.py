@@ -35,10 +35,10 @@ CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정
 **무엇을 판정하나.** 참조 PoC(= `-vul` 이미지 안 저자 정답)와 무해 입력(`b"A"*12`)을 두
 이미지에 각 N회 돌려 넷을 본다 — 참조/`-vul`이 **전부 같은 크래시 코드** · 참조/`-fix`가
 전부 `0` · 무해/둘 다 전부 `0` · **`139`가 0건**. 하나라도 어긋나면 어느 조합이 왜
-틀렸는지 적고 exit 1이다. 참조/`-vul`의 크래시 코드로 `0` · `137` · `139`와 docker·셸의
-실패 코드(`124`~`127` · 음수)는 받지 않는다 — 타깃의 판정이 아니다. ⚠ `1`은 받는다: ASan의 기본
-종료 코드일 수 있어 docker/셸의 일반 실패와 갈리지 않는다(과제별로 기대 코드를 고정하기 전에는
-구별할 수 없는 한계).
+틀렸는지 적고 exit 1이다. 참조/`-vul`의 크래시 코드로 `0` · `71`(OOM) · `137` · `139`와
+docker·셸의 실패 코드(`124`~`127` · 음수)는 받지 않는다 — 타깃의 판정이 아니다. ⚠ `1`은
+받는다: ASan의 기본 종료 코드일 수 있어 docker/셸의 일반 실패와 갈리지 않는다(과제별로 기대
+코드를 고정하기 전에는 구별할 수 없는 한계).
 
 **`vm.mmap_rnd_bits`는 판정이 아니라 경고다.** 행동(위 넷)이 진짜 검사이고 sysctl은 단서라서
 종료 코드를 안 바꾼다 — 네 조합이 기대와 같으면 값이 32여도 `pass`다. 대신 침묵하지 않는다:
@@ -384,7 +384,7 @@ def judge(name: str, image: str, codes: list[int]) -> Combo:
         if not_crash:
             problems.append(
                 f"{name}: {not_crash}는 크래시가 아니다 "
-                f"(0=무크래시 · 137=docker SIGKILL · {SEGV_EXIT}=입력 무관 SIGSEGV)"
+                f"(0=무크래시 · 71=OOM · 137=docker SIGKILL · {SEGV_EXIT}=입력 무관 SIGSEGV)"
             )
         infra = [code for code in unique if _is_harness_failure(code)]
         if infra:

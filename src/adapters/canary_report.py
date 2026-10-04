@@ -43,8 +43,12 @@ from pathlib import Path
 # 목적은 폭주 차단이지 모양 검사가 아니다 — 상한이 없으면 임의 크기 파일이 메모리로 들어온다.
 _MAX_REPORT_BYTES = 1 << 20
 
-# `vm.mmap_rnd_bits`가 가질 수 있는 모양 — 10진 숫자뿐이다. `int()`로 보면 `2_8`·`+28`·`٢٨`
-# (아라비아-인도 숫자)가 다 28이 되고 `-1`·`0`은 「28 이하」로 통과한다. 커널이 그 값을 쓰지 않는다.
+# `vm.mmap_rnd_bits`가 가질 수 있는 **모양** — 10진 숫자뿐이다. `int()`로 보면 `2_8`·`+28`·`٢٨`
+# (아라비아-인도 숫자)가 다 28이 되고 `-1`도 「28 이하」로 통과한다. 이 정규식은 그 모양들
+# (부호·밑줄·비ASCII 숫자·공백·소수점)을 막는다. ⚠ **값의 하한은 안 문다** — `"0"`·`"00"`은
+# 이 모양에 맞아 통과하고 28 이하로 읽힌다. 커널 최솟값을 이 저장소가 재지 않았고(아키텍처마다
+# 다르다) 도구의 `_BITS_LINE`(`[0-9]+`)도 `0`을 받아 둘이 갈리지 않는다. 그 한계를
+# `tests/test_canary_report.py`가 핀으로 둔다.
 _DECIMAL_BITS = re.compile(r"[0-9]{1,3}")
 
 # 보고서가 통과로 세는 유일한 판정. 도구는 넷을 낸다 — `pass` · `weak_pass`(관측 횟수가 모자라
@@ -55,6 +59,14 @@ PASS_VERDICT = "pass"
 # 40/40을 본 값이다. 🔴 **도구를 import해서 가져오지 않는다** — `src/`가 `tools/`를 import하는
 # 경로가 저장소에 0건이고, 그 방향을 이 결함 하나로 열지 않는다. 두 리터럴이 갈리면 테스트가 잡는다.
 MMAP_RND_BITS_MAX = 28
+
+# 이보다 적게 돌린 보고서는 거부한다. 도구의 `_MEASURED_REPEAT`와 같은 수다 — 판별력 실측이 정답
+# PoC에 쓴 반복 수(n=10)이고, 그 아래는 도구도 `weak_pass`로 낮춘다. 🔴 **보고서의 자기 선언
+# (`below_measured_repeat`·`measured_repeat`)을 믿지 않고 `repeat`를 이 값과 직접 견준다** — 손으로
+# `repeat`만 고친 보고서(선언은 `false` 그대로)가 선언만 보던 판에서 통과했다. 선언을 같이 고친
+# 보고서도 같은 값에 걸린다. `MMAP_RND_BITS_MAX`와 같은 이유로 도구를 import하지 않고 리터럴을
+# 둔다 — 갈리면 테스트가 잡는다.
+MEASURED_REPEAT = 10
 
 # 게이트가 읽는 칸과 그 형. 빈 칸을 기본값으로 메우지 않는다 — 「없다」를 「통과」로 읽으면 게이트가
 # 없는 것과 같다(§0). `mmap_rnd_bits`는 미측정일 때 `null`이라 `None`을 허용한다.
@@ -207,10 +219,15 @@ def canary_refusal(report: CanaryReport, *, task_id: str) -> str | None:
             f"호스트 vm.mmap_rnd_bits가 {report.mmap_rnd_bits!r}다 - "
             f"{MMAP_RND_BITS_MAX} 이하의 10진 숫자가 아니면 판정이 비결정적이다({where})"
         )
-    if report.below_measured_repeat:
-        return f"카나리를 {report.repeat}회만 돌렸다 - 실측한 횟수보다 적어 판정이 약하다({where})"
     if report.repeat < 1:
         return f"카나리의 관측 횟수가 {report.repeat}다 - 0회는 관측이 아니다({where})"
+    # 선언(`below_measured_repeat`)과 `repeat` 자신을 **둘 다** 본다 — 선언은 손으로 `false`로 둘 수
+    # 있고(그것만 보던 판이 `repeat: 3` 보고서를 통과시켰다) `repeat`는 그 선언의 근거다.
+    if report.below_measured_repeat or report.repeat < MEASURED_REPEAT:
+        return (
+            f"카나리를 {report.repeat}회만 돌렸다 - 실측한 횟수({MEASURED_REPEAT})보다 적어 "
+            f"판정이 약하다({where})"
+        )
     return None
 
 
@@ -218,8 +235,9 @@ def _above_limit(bits: str) -> bool:
     """보고서의 문자열 값을 **직접** 본다 — `rnd_bits_above_28`이 거짓인데 값이 큰 보고서도 막는다.
 
     모양이 10진 숫자가 아니면 `True`다(미측정과 같은 결 — 모르면 제출하지 않는다). 🔴 `int()`로
-    보면 **모양 검사가 아니다**: `2_8`·`+28`·`٢٨`이 다 28이 되고 `-1`·`0`은 「28 이하」로
-    통과한다. 커널은 그 모양을 쓰지 않으니 셋 다 「모르는 값」이다.
+    보면 **모양 검사가 아니다**: `2_8`·`+28`·`٢٨`이 다 28이 되고 `-1`도 「28 이하」로
+    통과한다. 커널은 그 모양을 쓰지 않으니 「모르는 값」이다. ⚠ **값의 하한은 안 문다** —
+    `"0"`은 모양이 맞아 `False`(통과)다(`_DECIMAL_BITS` 주석).
     """
     if not _DECIMAL_BITS.fullmatch(bits):
         return True

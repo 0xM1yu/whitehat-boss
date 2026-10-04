@@ -18,6 +18,7 @@ import pytest
 
 from src.adapters.canary_report import (
     _MAX_REPORT_BYTES,
+    MEASURED_REPEAT,
     CanaryReport,
     CanaryReportError,
     canary_refusal,
@@ -117,6 +118,46 @@ def test_a_report_that_ran_fewer_times_than_measured_is_refused(tmp_path: Path) 
     refusal = canary_refusal(report, task_id=_TASK)
 
     assert refusal is not None and "3" in refusal
+
+
+@pytest.mark.parametrize("repeat", [3, 9])
+def test_a_hand_edited_repeat_below_the_measured_count_is_refused(
+    tmp_path: Path, repeat: int
+) -> None:
+    """`below_measured_repeat: false`라고 적혀 있어도 `repeat` 자신이 실측 횟수 아래면 거절한다.
+
+    (리뷰 LOW-3) 앞 판은 횟수를 **자기 선언**(`below_measured_repeat`)으로만 봐서 손으로 `repeat`만
+    고친 보고서(`repeat: 3`, 선언은 `false` 그대로)가 통과했다. 도구는 `repeat`와 선언을 같은
+    값에서 같이 쓰므로 둘이 어긋난 보고서는 도구가 쓴 것이 아니다 - 여기서는 선언을 안 믿고
+    `repeat`를 본다.
+    """
+    report = read_canary_report(_write(tmp_path, repeat=repeat, below_measured_repeat=False))
+
+    refusal = canary_refusal(report, task_id=_TASK)
+
+    assert refusal is not None and str(repeat) in refusal
+
+
+@pytest.mark.parametrize("repeat", [MEASURED_REPEAT, MEASURED_REPEAT + 1])
+def test_a_report_at_or_above_the_measured_repeat_passes_the_repeat_check(
+    tmp_path: Path, repeat: int
+) -> None:
+    """경계: 실측 횟수 **이상**은 이 검사로 거절하지 않는다(`<`이지 `<=`가 아니다)."""
+    report = read_canary_report(_write(tmp_path, repeat=repeat))
+
+    assert canary_refusal(report, task_id=_TASK) is None
+
+
+@pytest.mark.parametrize("bits", ["0", "00"])
+def test_the_lower_bound_of_the_entropy_is_not_checked(tmp_path: Path, bits: str) -> None:
+    """⚠ **한계를 문장이 아니라 핀으로 둔다.** `_DECIMAL_BITS` 주석과 `_above_limit` docstring이
+    「`0`은 모양이 맞아 통과한다」고 적는다 - 하한 검사가 들어오면 이 핀이 빨개져 그 두 문장을
+    같이 고치게 한다. `vm.mmap_rnd_bits`의 커널 최솟값은 이 저장소가 재지 않았고(아키텍처마다
+    다르다) 도구의 `_BITS_LINE`(`[0-9]+`)도 `0`을 받는다 - 한쪽만 거절하면 둘이 갈린다.
+    """
+    report = read_canary_report(_write(tmp_path, mmap_rnd_bits=bits, rnd_bits_above_28=False))
+
+    assert canary_refusal(report, task_id=_TASK) is None
 
 
 def test_a_report_whose_ok_is_false_is_refused_whatever_the_verdict_says(tmp_path: Path) -> None:
@@ -297,7 +338,8 @@ def test_an_entropy_that_is_not_plain_digits_is_refused(tmp_path: Path, bits: st
     """`int()`는 `2_8`·`٢٨`·`+28`을 받는다 - 모르는 모양을 28 이하로 읽지 않는다(미측정과 같은 결).
 
     ⚠ **값의 하한은 안 문다.** `"0"`은 이 핀에 없다 - `vm.mmap_rnd_bits`의 커널 최솟값을 이
-    저장소가 **재지 않았다**(아키텍처마다 다르다). 모양만 보고 값의 범위는 상한만 본다.
+    저장소가 **재지 않았다**(아키텍처마다 다르다). 모양만 보고 값의 범위는 상한만 본다 - 그 한계는
+    `test_the_lower_bound_of_the_entropy_is_not_checked`가 핀으로 든다.
     """
     report = read_canary_report(_write(tmp_path, mmap_rnd_bits=bits, rnd_bits_above_28=False))
 
