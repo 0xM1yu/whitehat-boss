@@ -70,6 +70,7 @@ from src.schemas import (
     Verdict,
 )
 from src.schemas.candidate import Candidate, SliceRef
+from src.schemas.decision import Decision
 from src.schemas.enums import ScoutSignal
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
@@ -898,6 +899,296 @@ def test_pov_is_handed_the_finding_as_validate_run_left_it(
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert handed == [FindingState.QUEUED], f"pov가 validate.run 전 사본을 받았다: {handed}"
+
+
+# --- 8단계 pov의 대상 ② — `validated` 밖의 상위 N (⏵ 2026-10-04, 이슈 #386 ①의 후속) -----------
+#
+# 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다 — Level 1이 재현 명세의 근거를
+# 주지 않아 F-9가 Finding을 `hypothesized`에 세우고 8단계 진입 시점의 `validated`가 비어 있었다.
+# PoC가 없으면 채점 점수가 없다. `thresholds.pov_attempt_top_n`이 그 밖에서도 상위 몇 건을 시도하게
+# 한다 — **0이 종전 동작이고** 미실측 표시가 아니다(`config/budgets.yaml`).
+
+
+def _outside_validated(
+    ctx: RunContext, specs: list[tuple[str, float]]
+) -> tuple[runner._Accumulator, list[Finding]]:
+    """`VALIDATED`로 들어오지 **않은** Finding들과 그 캡슐 — `pov_attempt_top_n`의 **후보 풀**이다
+    (그 풀에서 Critic이 밀어 낸 것을 거른 것이 대상이다 — `runner._pov_targets`). 여기 담는 것은
+    판정이 없는 `HYPOTHESIZED`뿐이라 거르개에 안 걸린다.
+
+    `_finding`의 기본 상태가 `HYPOTHESIZED`다(재현 명세가 없어 F-9가 세우는 자리와 같은 상태).
+    """
+    _, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    state = runner._Accumulator()
+    findings = []
+    for finding_id, confidence in specs:
+        finding = _finding(finding_id, confidence=confidence)
+        state.update(finding)
+        state.finding_capsules[finding.finding_id] = capsule
+        findings.append(finding)
+    return state, findings
+
+
+def _with_top_n(ctx: RunContext, limit: int) -> None:
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(pov_attempt_top_n=limit)
+    )
+
+
+def _pov_subjects(ctx: RunContext) -> list[str | None]:
+    return [e.subject_id for e in ctx.trace.events if e.kind is EventKind.POV_GENERATED]
+
+
+def test_pov_does_not_run_outside_validated_while_the_threshold_is_zero(ctx: RunContext) -> None:
+    """기본값(`pov_attempt_top_n: 0`)에서 `validated` 밖의 Finding은 PoV를 **안** 돈다 — 종전 동작
+    그대로다. 이 검사가 「0이 켜진 값이 아니다」를 문다(기본값을 올리는 변이가 여기서 빨개진다)."""
+    state, _ = _outside_validated(ctx, [("find_0001", 0.9)])
+    assert ctx.config.thresholds.pov_attempt_top_n == 0, "기본값 전제가 깨졌다"
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == []
+
+
+def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -> None:
+    """🔴 임계가 양수면 `validated`가 **0건이어도** PoV가 돈다 — 실측 run이 막힌 자리다.
+
+    `validated`가 비어 있을 때 아예 루프에 안 들어가던 `if validated and ...` 게이트도 같이
+    바뀌었다. 그 게이트를 되돌리면 이 검사가 빨개진다.
+    """
+    state, (finding,) = _outside_validated(ctx, [("find_0001", 0.9)])
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == [finding.finding_id]
+    assert state.findings[finding.finding_id].state is FindingState.HYPOTHESIZED, (
+        "pov는 추가형이다 — 상태를 바꾸지 않는다"
+    )
+
+
+def test_the_extra_pov_targets_are_cut_by_confidence_then_finding_id(ctx: RunContext) -> None:
+    """자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
+
+    `confidence` 0.9 둘 + 0.3 하나를 넣고 상한을 1로 둔다. 넣는 순서를 **0.3 → 큰 id → 작은
+    id**로 해서 ①자리로 고르는 구현(첫째 = 0.3)과 ②동점을 뒤 id로 가르는 구현이 각각 빨개지게
+    한다. 정렬이 흔들리면 재현 실행이 갈라진다.
+    """
+    state, _ = _outside_validated(
+        ctx, [("find_0003", 0.3), ("find_0002", 0.9), ("find_0001", 0.9)]
+    )
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == ["find_0001"]
+
+
+def test_the_threshold_adds_targets_and_never_removes_a_validated_one(
+    ctx: RunContext,
+) -> None:
+    """**더하기만 한다.** 상한이 1인데 `validated`가 1건 + 밖이 2건이면 시도는 **2건**이다 —
+    `validated`는 상한에 들지 않는다. 상한을 전체 대상 수로 읽는 구현은 1건만 시도해 빨개진다.
+
+    그래서 이 상한이 잘라 낸 Finding은 **종전에도 PoV를 안 돌던 것**이고, **상한 자체가** 무언가를
+    조용히 잃게 하지는 않는다(`runner._pov_targets` docstring — 추가 대상이 예산을 더 쓰는 것은
+    별개이고 `tests/test_oracle_wiring.py`가 문다).
+    """
+    state, demoted = _demoted_at_validate(ctx)
+    outside, _ = _outside_validated(ctx, [("find_0002", 0.9), ("find_0003", 0.8)])
+    for finding in outside.findings.values():
+        state.update(finding)
+    state.finding_capsules.update(outside.finding_capsules)
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == [demoted.finding_id, "find_0002"]
+
+
+def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> None:
+    """🔴 **E4 게이트는 안 넓어진다.** `validate.run`은 유일한 결정론 E4 게이트이고 `from=validated`
+    를 요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓힌 것은 PoV 쪽뿐이다.
+
+    `validated` 1건 + 밖 2건에 상한 2를 두고, 8단계 `gate_eval`의 대상이 **`validated` 하나**인지
+    본다. `_pov_targets`를 `validate.run` 루프에도 꽂는 변이가 여기서 빨개진다.
+    """
+    state, demoted = _demoted_at_validate(ctx)
+    outside, _ = _outside_validated(ctx, [("find_0002", 0.9), ("find_0003", 0.8)])
+    for finding in outside.findings.values():
+        state.update(finding)
+    state.finding_capsules.update(outside.finding_capsules)
+    _with_top_n(ctx, 2)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    gated = [
+        e.subject_id
+        for e in ctx.trace.events
+        if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.VALIDATE)
+    ]
+    assert gated == [demoted.finding_id]
+    assert len(_pov_subjects(ctx)) == 3, "PoV 쪽은 넓어졌다(전제)"
+
+
+# --- 추가 대상 풀에서 Critic이 밀어 낸 Finding을 뺀다 (적대적 리뷰 #490 MEDIUM-2) ---------------
+#
+# 정렬 키가 Auditor `confidence` 하나라 반박돼도 그대로다 - 풀에 두면 반박된 Finding이 「재현
+# 명세가 없어 멈춘」 Finding의 자리를 밀어내고, 최종 지정 사슬은 등급 상한이 같으면
+# `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이
+# 될 수 있다. 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
+# 반박·보류(`need_evidence`)로 판정했거나 판정 호출이 실패해 버려진 Finding은 뺀다. Critic을
+# **안 거친** Finding(`critic_top_n`에 잘림 · 6단계 게이트가 E0로 QUEUED한 것)과 재현 명세가
+# 없어 멈춘 것(F-9)은 든다.
+
+
+def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> Decision:
+    return Decision(
+        decision_id="dec_0001",
+        run_id=RUN_ID,
+        finding_id=finding_id,
+        verdict=verdict,
+        rationale="근거 서술",
+        evidence_refs=["ev_0001"] if grounded else [],
+        produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("finding_state", "verdict", "grounded", "dropped", "in_pool"),
+    [
+        pytest.param(
+            FindingState.QUEUED, Verdict.REBUT, True, False, False, id="critic_rebutted_F6"
+        ),
+        pytest.param(
+            FindingState.QUEUED, Verdict.NEED_EVIDENCE, False, False, False,
+            id="critic_asked_for_evidence_F7",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, None, False, True, False,
+            id="critic_call_failed_and_the_finding_was_dropped",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, Verdict.UPHOLD, True, False, True,
+            id="upheld_but_held_for_a_missing_repro_spec_F9",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, Verdict.REBUT, False, False, True,
+            id="an_ungrounded_rebuttal_is_normalized_to_uphold",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, None, False, False, True,
+            id="cut_by_critic_top_n_the_critic_never_judged_it",
+        ),
+        pytest.param(
+            FindingState.QUEUED, None, False, False, True,
+            id="gate_queued_it_as_E0_before_the_critic_F2",
+        ),
+    ],
+)
+def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
+    ctx: RunContext,
+    finding_state: FindingState,
+    verdict: Verdict | None,
+    grounded: bool,
+    dropped: bool,
+    in_pool: bool,
+) -> None:
+    """풀 판정표 - 상태가 아니라 **Critic이 이 Finding에 무엇을 했나**로 가른다. `QUEUED`는
+    F-2(게이트 E0 - Critic을 안 거쳤다)와 F-6·F-7(Critic이 밀어 냈다)이 섞인 상태라 상태만으로는
+    못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `uphold`로 바꾸므로 정책이 `QUEUED`로 안
+    보내고(`HYPOTHESIZED` F-9) 풀에 든다 - 정규화가 한 곳(`gate.normalize`)에서만 일어난다는 전제를
+    같이 문다.
+
+    ⚠ 판정표 일곱은 **정책·상태 기계에서 이 상태가 나오는 길**(F-2 · F-6 · F-7 · F-9 · 상한
+    절단 · `_drop_finding`)에서 골랐다 - 지어낸 상태가 아니다."""
+    finding = _finding("find_0001", state=finding_state, confidence=0.9)
+    state = runner._Accumulator()
+    state.update(finding)
+    if verdict is not None:
+        state.decisions[finding.finding_id] = (
+            _critic_decision(finding.finding_id, verdict, grounded=grounded),
+        )
+    if dropped:
+        runner._drop_finding(ctx, state, finding, "schema_parse_failed", SchemaParseError("bad"))
+    _with_top_n(ctx, 1)
+
+    targets = runner._pov_targets(ctx, state, [])
+
+    assert [f.finding_id for f in targets] == (["find_0001"] if in_pool else [])
+
+
+def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing_repro_spec(
+    ctx: RunContext,
+) -> None:
+    """리뷰의 시나리오 그대로다 - 반박된 Finding이 `confidence`가 더 높아도 상한 1의 자리는 F-9로
+    멈춘 Finding이 받는다. 풀에서 안 빼면 정렬 키(`confidence` 내림차순)가 반박된 쪽을 먼저
+    고른다."""
+    rebutted = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
+    held = _finding("find_0002", state=FindingState.HYPOTHESIZED, confidence=0.5)
+    state = runner._Accumulator()
+    state.update(rebutted)
+    state.update(held)
+    state.decisions[rebutted.finding_id] = (
+        _critic_decision(rebutted.finding_id, Verdict.REBUT, grounded=True),
+    )
+    state.decisions[held.finding_id] = (
+        _critic_decision(held.finding_id, Verdict.UPHOLD, grounded=True),
+    )
+    _with_top_n(ctx, 1)
+
+    assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
+
+
+def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: RunContext) -> None:
+    """위 둘이 보는 `_pov_targets`가 **`_analyze`에 실제로 꽂혀 있다** - 상한 1에 반박된 Finding이
+    더 높은 `confidence`로 있어도 PoV는 재현 명세가 없어 멈춘 쪽에 돈다."""
+    state, (held,) = _outside_validated(ctx, [("find_0001", 0.5)])
+    rebutted = _finding("find_0002", state=FindingState.QUEUED, confidence=0.99)
+    state.update(rebutted)
+    state.finding_capsules[rebutted.finding_id] = state.finding_capsules[held.finding_id]
+    state.decisions[rebutted.finding_id] = (
+        _critic_decision(rebutted.finding_id, Verdict.REBUT, grounded=True),
+    )
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == [held.finding_id]
+
+
+def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**실제 7단계가 쓴 `state.decisions`가 풀 필터에 읽힌다** - 위 검사들은 `decisions`를 손으로
+    꽂는다. 여기서는 `critic.run`의 모델 호출(`_ask_model`)만 갈아 끼워 한 Finding에 근거 있는
+    `rebut`를 내게 하고, 정책이 그것을 `QUEUED`(F-6)로 내린 뒤 PoV가 안 도는지 본다.
+    `confidence`는 반박된 쪽이 더 높다 - 필터가 안 이어졌으면 상한 1의 자리를 그쪽이 가져간다.
+    `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
+    state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
+
+    def ask(ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list) -> Decision:
+        verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
+        return Decision(
+            decision_id=decision_id,
+            run_id=RUN_ID,
+            finding_id=finding.finding_id,
+            verdict=verdict,
+            rationale="근거 서술",
+            evidence_refs=["ev_0001"],
+            produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+        )
+
+    monkeypatch.setattr(critic, "_ask_model", ask)
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert state.findings[rebutted.finding_id].state is FindingState.QUEUED, (
+        "전제 - 실제 7단계가 이 Finding을 F-6으로 내려야 한다"
+    )
+    assert _pov_subjects(ctx) == [kept.finding_id]
+
 
 
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
@@ -1892,7 +2183,8 @@ def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> Non
 def test_render_says_nothing_about_pov_when_pov_did_not_run(ctx: RunContext) -> None:
     """PoV가 시도되지 않은 run(`pov_results`가 빔)에는 그 줄이 없다 — 0건일 때 줄이 나오면 장식이다
     (`ne_absorbed`·`deferred`가 비면 줄을 안 내는 것과 같은 자리). 빈 맵은 8단계 앞에서 멈췄거나,
-    8단계에 든 VALIDATED가 0건이거나, 프로필에 pov 좌석이 없다는 뜻이다."""
+    PoV 대상이 0건이거나(VALIDATED가 0건이고 `pov_attempt_top_n`이 0이거나 그 추가 대상 풀이
+    비었다), 프로필에 pov 좌석이 없다는 뜻이다."""
     finding = _finding("find_0001", state=FindingState.VALIDATED)
 
     rendered = report.run(ctx, findings=[finding]).render()  # pov_results 안 넘김
