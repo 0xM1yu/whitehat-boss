@@ -491,8 +491,13 @@ def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server)
     while not tool.port_in_use(port):
         assert time.time() < deadline, "the stub server never listened"
         time.sleep(0.05)
-    stat = Path(f"/proc/{process.pid}/stat").read_text()
-    assert stat.rpartition(")")[2].split()[0] == "Z"       # the leader is gone, a thread is not
+    # The leader is gone, a thread is not. Wait for "Z": right after the port opens the exiting
+    # leader can still read "D" (CI, 2026-10-04 — a single read failed on ubuntu-latest).
+    state = ""
+    while state != "Z":
+        assert time.time() < deadline, f"the leader never became a zombie (state {state!r})"
+        state = Path(f"/proc/{process.pid}/stat").read_text().rpartition(")")[2].split()[0]
+        time.sleep(0.02)
     assert tool._live_groups({process.pid}) == {process.pid: [process.pid]}
     assert tool.stop_all([process]) == []
     with pytest.raises(OSError):
