@@ -506,6 +506,10 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
         )
         if thresholds.auditor_callee_wrappers:
             assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
+        # 큰 enum은 그 상수 앞뒤만 — 줄 수가 러너 상수와 같아야 한다
+        from src.orchestrator.runner import _AUDITOR_ENUM_CONTEXT_LINES
+
+        assert f"the {_AUDITOR_ENUM_CONTEXT_LINES} lines before and after that constant" in flat
     if thresholds.auditor_callee_hops:
         assert (
             f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"

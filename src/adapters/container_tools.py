@@ -127,6 +127,7 @@ from src.schemas.run import CompileFlags
 # v2부터 인덱서가 index-v2(조회 표)를 낸다 — v1 이미지는 지우지 않는다(지난 run 매니페스트가
 # 그 digest를 적었다). ⏵ 2026-10-04 — #304부터 이 트리로 빌드한 v3 이미지는 index-v3를 낸다(태그는
 # 그대로다 — 그 전에 빌드한 v3 이미지는 다시 빌드해야 v3 표가 나온다, Dockerfile 머리 주석).
+# ⏵ 같은 날 인덱서가 index-v4(`includes`·`enum_constants`)가 됐다 — 태그는 여전히 v3다.
 DEFAULT_IMAGE = "harness-tools:v3"
 
 # 컨테이너 안 경로. 분석 대상은 항상 읽기 전용이고, 쓰기는 scratch 한 곳에서만 일어난다.
