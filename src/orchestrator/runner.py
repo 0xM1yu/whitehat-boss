@@ -4755,6 +4755,24 @@ def _triage_one(
     return resolved_item
 
 
+def _recorded_thresholds(config: HarnessConfig) -> dict[str, float]:
+    """`RunRecord.thresholds` — 설정값이 아니라 **실제로 도는 값**이다.
+
+    `auditor_tool_hops`는 프로필 공통이라 Fake Auditor를 쓰는 프로필에도 걸리는데, 그 좌석은
+    `Finding` 한 방 판이라 루프를 안 돈다(`nodes.auditor.loop_problem`의 면제). 그대로 싣으면
+    manifest는 「켰다」인데 `auditor_hop`은 0건이라 「켰는데 한 번에 answer했다」로 읽힌다 —
+    안 도는 값은 키를 뺀다(`Thresholds.flatten`이 꺼진 상한을 적는 방식).
+    """
+    thresholds = config.thresholds.flatten()
+    looped = Role.AUDITOR.value in config.profile.roles and auditor.tool_hops_in_effect(
+        config.model_for(Role.AUDITOR.value).prompt_template_version,
+        config.thresholds.auditor_tool_hops,
+    )
+    if not looped:
+        thresholds.pop("auditor_tool_hops", None)
+    return thresholds
+
+
 def _new_record(
     spec: RunSpec,
     config: HarnessConfig,
@@ -4794,7 +4812,7 @@ def _new_record(
         # config가 아니라 spec에서 온다 — 장비 라벨은 설정이 아니라 이 실행의 사실이다.
         device=spec.device,
         budget=config.budget,
-        thresholds=config.thresholds.flatten(),
+        thresholds=_recorded_thresholds(config),
         seed=config.seed,
         # 하네스가 **보낸** 샘플링.
         sampling=config.sampling,
