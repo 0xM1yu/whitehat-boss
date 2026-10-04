@@ -734,20 +734,26 @@ def test_flow_cap_records_observed_truncation(monkeypatch, repo, tmp_path, trunc
     assert ".take(4)" in library and "observed.take(3)" in library
 
 
-def test_deterministic_slices_under_reordered_candidates(monkeypatch, repo, tmp_path):
+@pytest.mark.parametrize(("order", "cases", "absorbed"), [
+    ("ab", ["A", "B"], ["slice_0002"]),  # the order before `ba` became the default
+    ("ba", ["B", "A"], ["slice_0003"]),  # the default: B is numbered first, A's pair follows it
+])
+def test_deterministic_slices_under_reordered_candidates(
+    monkeypatch, repo, tmp_path, order, cases, absorbed
+):
     data = payloads(
         case_a=[candidate("z"), candidate("a")], case_b=[candidate("sprintf", 5)], flow_count=2
     )
-    _, first, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    _, first, _ = run_cli(monkeypatch, repo, tmp_path, data, "--case-order", order)
     data["case_a"] = response("case_a", [candidate("a"), candidate("z")])
-    _, second, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    _, second, _ = run_cli(monkeypatch, repo, tmp_path, data, "--case-order", order)
     assert (
         json.dumps(first["slices"], ensure_ascii=False).encode()
         == json.dumps(second["slices"], ensure_ascii=False).encode()
     )
+    assert [item["case"] for item in first["slices"]] == cases
     assert first["slices"][0]["id"] == "slice_0001"
-    assert first["slices"][0]["absorbed"] == ["slice_0002"]
-    assert first["slices"][1]["case"] == "B"
+    assert first["slices"][cases.index("A")]["absorbed"] == absorbed
 
 
 def test_original_line_numbers_and_multifile_assembly(repo):
