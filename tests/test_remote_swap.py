@@ -9,7 +9,12 @@
 (HOME)에서 시작한다 — 상대 경로가 어디 기준으로 풀리는지가 결과를 가르는 결함이 있었다.
 
 ⚠ 진짜 ssh·vast는 안 탄다. 접속·호스트 키·터널의 거동은 장비 검증(PR 본문)의 몫이다.
-⚠ Windows에서는 건너뛴다 — 파이썬이 부르는 `bash`가 WSL 런처라 환경이 안 넘어간다
+⚠ Windows에서는 `posix` 표식 36건을 건너뛰고 나머지 7건이 돈다(2026-10-05 Win11 · Python
+3.14.5 — 36 skipped는 `pytest`를 직접 돌려, 7 passed는 독립 재검토가 쟀다). 그 7건 중
+`test_the_remote_scripts_parse` 3건은 맨 `bash -n`을 부르므로 Windows에서는 `which`가 고르는
+Git Bash가 아니라 System32의 런처로 풀릴 수 있다(`CreateProcess`는 PATH보다 System32를 먼저
+뒤진다 — #477과 같은 어긋남). 건너뛰는 사유로 예전에 적던 「`bash`가 WSL 런처라 환경이 안
+넘어간다」는 #477에서 정정됐다 — 환경은 멀쩡했고 `bash`가 System32 아래의 런처로 풀린 것이다
 (`swap-remote.sh` 머리 주석).
 """
 
@@ -36,7 +41,7 @@ TUNNEL = Path("tools/serve/vast-tunnel.sh")
 
 posix = pytest.mark.skipif(
     sys.platform == "win32" or shutil.which("bash") is None or shutil.which("git") is None,
-    reason="래퍼는 POSIX bash에서 돈다(Windows의 `bash`는 WSL 런처라 환경이 안 넘어간다)",
+    reason="래퍼는 POSIX bash에서 돈다(Windows에서는 이 표식의 36건을 건너뛴다)",
 )
 
 _FAKE_SSH = """#!/bin/sh
@@ -128,6 +133,38 @@ def test_the_remote_scripts_parse(script: Path) -> None:
         ["bash", "-n", script.as_posix()], cwd=ROOT, capture_output=True, text=True
     )
     assert completed.returncode == 0, completed.stderr
+
+
+# --- 제어 바이트 -------------------------------------------------------------------------
+
+
+def _control_bytes(raw: bytes) -> list[tuple[int, int]]:
+    """(위치, 값) — LF·탭 말고 0x20 아래의 바이트. CR도 거른다(이 저장소는 LF만 쓴다)."""
+    return [(at, byte) for at, byte in enumerate(raw) if byte < 0x20 and byte not in b"\n\t"]
+
+
+def test_the_control_byte_scan_flags_the_real_defect_and_passes_the_fixed_line() -> None:
+    # 양성 핀 — `1f0ec6a`의 `swap-remote.sh:30`에 실제로 있던 조각이다. 경로 구분자 뒤 `b`가 셸에서
+    # 백스페이스로 먹혀 화면에는 `System32ash.exe`로 보였다. 음성 핀 — 같은 자리의 고친 모양(구분자
+    # 없이 쓴다). CR도 잡는다.
+    defect = b"WSL (`System32\x08ash.exe`)"
+    assert _control_bytes(defect) == [(defect.index(b"\x08"), 8)]
+    assert _control_bytes("WSL (System32 아래의 `bash.exe`)\n\t".encode()) == []
+    assert _control_bytes(b"a\r\nb") == [(1, 13)]
+
+
+def test_the_wrapper_and_the_serving_files_carry_no_control_bytes() -> None:
+    """셸·문자열 안에서 백슬래시 이스케이프가 제어 문자로 먹히면 화면에는 글자 하나가 빠져 보인다
+    (경로 System32 아래 bash.exe의 구분자 뒤 b가 0x08이 됐다 — 2026-10-05, `swap-remote.sh`).
+    이 PR이 만지는 두 디렉터리의 전수다 — 다른 층(파이썬 문자열)은 `test_model_swap.py`가 본다."""
+    files = sorted((ROOT / "tools/serve").glob("*.sh")) + sorted(
+        (ROOT / "config/serving").glob("*.yaml")
+    )
+    assert files  # 글롭이 비면 전수가 아니다
+
+    leaked = {p.name: found[:3] for p in files if (found := _control_bytes(p.read_bytes()))}
+
+    assert leaked == {}
 
 
 # --- 래퍼 -------------------------------------------------------------------------------

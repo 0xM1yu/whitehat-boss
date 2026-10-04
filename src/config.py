@@ -593,6 +593,22 @@ class Thresholds(HarnessModel):
     max_hops: int = Field(ge=0)
     requeue_max: int = Field(ge=0)
     critic_top_n: int = Field(gt=0)
+    # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 **상한**. `0`이면 종전
+    # 동작이다 — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다. 이 값을 올리면 그 밖에서도
+    # 상위 몇 건을 더 시도한다(이슈 #386 ①의 후속).
+    # **풀은 「Critic이 밀어 내지 않은 Finding」이다** — Critic이 반박·보류(`need_evidence`)로
+    # 판정한 것과 판정 호출이 실패해 버려진 것은 뺀다(반박된 Finding의 PoC가 최종 제출이 되지
+    # 않게 — `runner._pov_targets`). 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
+    # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
+    # ⚠ **이 필터는 이 기능이 처음 겨냥한 run의 풀을 바꾸지 않는다** — 그 run(`run_20261003_0003`)의
+    # Finding 셋은 Critic을 안 거쳤고 전부 Auditor가 스스로 낸 부정 결론(`no_signal` ·
+    # `confidence` 0.10·0.10·0.05)이다. 풀은 그것을 거르지 않고(결정 대기), 그런 Finding에서
+    # PoV가 낼 PoC가 있는지는 미측정이다(출처: `docs/experiments/harness/2026-10-04-cybergym-
+    # operational-run-vastai-remote.md` §4).
+    # **켤 때의 값은 미실측이다** — 후보 1건당 PoV 홉·토큰을 한 번도 안 쟀고, 그 측정의 입력이
+    # 이 배선 뒤의 실모델 run 1회다. 자르는 순서는 `critic_top_n`과 같다
+    # (`confidence` 내림차순 · 동점은 `finding_id`) — 정렬이 흔들리면 재현 실행이 갈라진다.
+    pov_attempt_top_n: int = Field(ge=0)
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)

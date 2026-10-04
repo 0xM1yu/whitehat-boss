@@ -276,6 +276,111 @@ _HARNESS_HEADER_LINE = re.compile(
     r"^(?:# node argv: |# runtime: |\$ (?:docker|podman|singularity) )[^\n]*\n?", re.MULTILINE
 )
 
+# 구조화 출력의 **잡음 키** — `evidence_summaries`가 머리줄과 같은 자리에서, 같은 이유로
+# 절단 **전에** 뺀다(이슈 #481). 절단은 head 2/3 + tail 1/3이므로 **앞에 오는 큰 키가 head를
+# 먹으면 뒤에 오는 결과가 통째로 잘린다** — semgrep `--json`의 최상위 키는 알파벳 순이라
+# `errors`(파싱 실패 목록)가 `results`(히트 — `check_id`·줄번호)보다 **먼저** 온다.
+#
+# 🔴 **취향이 아니라 실측으로 고른 목록이고 지금 하나다.** 2026-10-04 운영 run
+# (`run_20261003_0003`의 `semgrep/ev_0002.log`, stdout 60,113자 · 물리 줄 1개)에서
+# `errors`가 **42,401자(70.5%)**를 먹고 `results`는 **42,508자 지점**에서 시작했다 — head가
+# 530자이니 `check_id`가 **0건** 보였다. 나머지 최상위 키는 `paths` 51자 ·
+# `interfile_languages_used` 2자 · `skipped_rules` 2자 · `version` 8자로 head를 먹지 않아
+# 넣지 않았다. 목록을 취향으로 늘리면 **도구가 낸 결과를 뺄 수 있다** — 이 도구에서 `errors`는
+# 파싱 실패지만 다른 도구에서 그것이 결과일 수 있고, 그 경우는 **미실측**이다.
+#
+# ⚠ **그 51자는 단일 파일 run 한 건의 값이지 일반 서술이 아니다.** `paths.scanned`는 스캔한
+# 파일 수만큼 자라고 알파벳 순으로 `results`보다 앞이다 — 픽스처 `_REAL_STDOUT`의 `scanned`를
+# 27자 경로 40개(원소당 직렬화 폭 31자)로 늘려 돌리면 `errors`를 뺀 뒤에도 `results`가
+# 1,330자 지점에서 시작해 head 530자 밖이다(실행한 값). 530은 증거당 800자 경로의 head이고
+# Auditor `probe`(`_PROBE_BODY_CHARS` 2,000자 — head 1,330)는 문턱이 다르다 — 같은 27자
+# 경로로 규칙 이름이 head에 보이는 최대 파일 수가 800자 경로에서 10개, probe에서 35개다(실행한
+# 값). **운영 규모 디렉터리 run에서 `paths`가 head를 얼마나 먹는지는 미실측이다** — 디렉터리
+# 대상 실행의 실측은 2파일 디렉터리 한 건뿐이다(`docs/open-questions/D/` 아래 `.inc` 건너뜀
+# 항목 — 그 건은 `paths.scanned`에 `target.c`만 들었다). 현재 호출부는 파일 경로만 넘긴다(코드
+# 읽기 — `preprocess.run`이 `is_file()`인 것만 artifact로 만들고 `runner._artifact_signals`·
+# `auditor._probe`가 그 경로를 넘긴다) — **그 불변식은 코드가 지키지 않는다**(같은 항목의
+# 경고): 호출이 배치 스캔으로 바뀌면 이 서술이 조용히 낡는다. 디렉터리를 대상으로 도는 경로가
+# 생기면 `paths`를 이 목록에 넣을지 그때 잰다 — 판정(`judge_semgrep`)은 원본 stdout을 읽으니
+# 이 목록의 영향을 받지 않는다.
+#
+# ⚠ **뺀 뒤에도 절단이지 요약이 아니다.** 같은 로그에서 `errors`를 빼면 `results`가 stdout 안
+# 130자 지점에서 시작한다 — **계산값**이다: `{"errors": ` 11자 + 자리표시자 23자 + errors와
+# results 사이 96자(= 42,508 − 42,401 − 11). 실 로그가 저장소에 없어 그 로그로는 다시 못 쟀고,
+# 같은 구조의 픽스처를 이 함수로 재면 128이다(자리표시자 없이 값만 지우면 11 + 96 = 107).
+# 픽스처의 본문(머리줄 합쳐)에서 첫 히트의 `check_id`는 189자, 규칙 이름의 끝은 254자,
+# 줄번호 1087은 284자라 모두 head 530자 안이다 — **10건 중 1건**이고 나머지 아홉은 여전히
+# 안 보인다. 결과를 한 줄씩 접어 전부 보이게 하는 것은 **도구를 아는 파서**가 필요하고(이
+# 함수는 도구를 모르는 범용 절단기다) 그 이슈에 선택지로 남아 있다.
+#
+# ⚠ **뺀 사실을 숨기지 않는다**(§0) — 자리에 뺀 값의 글자 수를 남긴다. 그 수는 **재직렬화
+# 길이**(`json.dumps` 기본 구분자·`ensure_ascii=True`)이지 원문 글자 수가 아니다 — 구분자가
+# 다른 원문이나 비ASCII를 담은 원문에서는 다르다. `truncated` 플래그는 절단을
+# 말하지 이 제거를 말하지 않고, semgrep이 파싱에 실패했다는 사실 자체가 「10건 찾았다」의
+# 신뢰도에 걸리는 정보다. 로그 파일과 `digest`는 그대로다 — 모델로 가는 사본에서만 뺀다.
+_JSON_NOISE_KEYS = ("errors",)
+
+
+def _drop_json_noise(text: str) -> str:
+    """최상위 JSON 객체인 줄에서 `_JSON_NOISE_KEYS`의 값을 자리표시자로 바꿔 돌려준다.
+
+    **뺄 것이 없으면 입력을 그대로 돌려준다** — 재직렬화는 실제로 뺄 때만 돈다. 그래야 빈
+    `"errors": []`를 내는 run의 모델 입력 바이트가 이유 없이 바뀌지 않는다.
+
+    도구 이름을 보지 않는다. 보는 것은 ① 줄이 `{`로 시작하는가(semgrep `--json`은 한 물리 줄)
+    ② 그것이 JSON 객체로 읽히는가 ③ 그 **최상위**에 잡음 키가 비어 있지 않게 있는가다.
+    셋 중 하나라도 아니면 그 줄은 손대지 않는다 — clang-tidy·build·ASan 로그가 그 경로다.
+
+    ⚠ 뺄 때는 그 줄을 **다시 직렬화**하므로 공백·구분자가 `json.dumps` 기본값으로 정규화된다.
+    실측(그 run의 로그)에서는 왕복이 **바이트 동일**이었다(semgrep이 `", "`·`": "` 구분자를
+    쓴다) — 다른 도구의 포맷은 미실측이다. 정규화는 구분자만이 아니다 — 줄의 **나머지 값도**
+    바뀐다: 비ASCII는 `\\uXXXX`로(`ensure_ascii` 기본값), 숫자는 `1.10`→`1.1`, 범위를 넘는
+    `1e400`→`Infinity`(엄밀한 JSON이 아니다). `ensure_ascii`를 바꾸면 모델 입력 바이트가
+    달라져 안 바꿨다. 자리표시자의 `<N chars dropped>`도 같은 재직렬화 길이다 — 원문 글자
+    수가 아니라서 compact 구분자 원문에서는 원문보다 크게 나온다.
+
+    ⚠ **읽기 상한이 줄 중간에서 자르면 이 제거는 꺼진다.** 로그 리더의 상한(어댑터의
+    `container_tools.PAYLOAD_READ_CAP` 200,000자 — 이 모듈은 어댑터를 import할 수 없어 값으로
+    적는다. 같은 값인지는 `tests/test_evidence_json_noise.py`가 건다)이 JSON 줄을 자르면
+    `json.loads`가 실패해 아래 `except`로 가고, 그 줄은 종전처럼 `errors`가 head를 먹는다.
+    이 경우만 가르는 표시는 없다 — `truncated`는 정상 경로에서도 True다. 문턱은 stdout 줄
+    길이 + 그 앞 머리가 200,000자를 넘을 때다. 실측 로그 한 건(스팬 148개 · `errors` 42,401자
+    · stdout 중 그 밖 17,712자 = 60,113 − 42,401 · 로그 중 stdout 밖 851자 = 60,964 − 60,113)에서
+    `errors` 전부가 스팬에 비례한다고 놓고 스팬당 약 286.5자로 환산하면 스팬 **약 630개
+    초과**다 — **계산값이고 실측이 아니다**(그 밖이 클수록 문턱은 내려간다).
+
+    **고치는 길은 둘이고 닿는 구간이 다르다.** 이 함수에서 최상위 `"errors": [`의 괄호 짝을
+    스캔해 자르는 수정은 `errors`의 끝이 읽기 상한 안에 있을 때만 돕는다 — 줄이 잘리기 시작하는
+    문턱(스팬 약 633~636)에서 `results`의 시작이 상한 앞에 드는 한계(약 695~698)까지, 약 60스팬
+    폭이다(같은 환산의 **계산값**). 그 위로는 `errors`가 상한을 넘어 이어져 `results`의 글자가
+    아예 안 읽히므로 파싱으로 되살릴 것이 없다 — 어댑터가 읽기 상한 **앞에서** `errors`를
+    빼야 닿는다(상한을 올리면 문턱이 옮겨질 뿐 한계는 남는다). 둘 다 아직 안 했다.
+    """
+    lines = text.split("\n")
+    for index, line in enumerate(lines):
+        if not line.startswith("{"):
+            continue
+        if not any(f'"{key}"' in line for key in _JSON_NOISE_KEYS):
+            continue
+        try:
+            body = json.loads(line)
+        except (ValueError, RecursionError):
+            # 못 읽으면 손대지 않는다 — 지어내지 않고, 자르는 쪽이 종전 그대로 돈다. 읽기 상한이
+            # 중간에서 자른 줄도 여기로 온다(위 docstring의 ⚠ — 그때 이 제거는 꺼진다).
+            continue
+        # `isinstance(body, dict)`를 따로 보지 않는다 — `{`로 시작하는 JSON이 읽히면 객체다.
+        # (오염 검증에서 그 분기가 **닿지 않는 코드**로 드러났다: 배열은 위 `startswith`가 건다.)
+        dropped = False
+        for key in _JSON_NOISE_KEYS:
+            value = body.get(key)
+            if not value:  # 없거나 빈 것(`[]`·`{}`·`""`)은 head를 먹지 않는다
+                continue
+            body[key] = f"<{len(json.dumps(value))} chars dropped>"
+            dropped = True
+        if dropped:
+            lines[index] = json.dumps(body)
+    return "\n".join(lines)
+
 
 def _bound_text(text: str, cap: int) -> tuple[str, bool]:
     """cap을 넘으면 head 2/3 + tail 1/3로 결정론 절단하고 truncated=True.
@@ -323,7 +428,8 @@ def evidence_summaries(
         if remaining <= 0:
             out[ev.evidence_id] = {"body": "", "truncated": True}
             continue
-        body, truncated = _bound_text(_HARNESS_HEADER_LINE.sub("", raw), min(per_cap, remaining))
+        trimmed = _drop_json_noise(_HARNESS_HEADER_LINE.sub("", raw))
+        body, truncated = _bound_text(trimmed, min(per_cap, remaining))
         used += len(body)
         out[ev.evidence_id] = {"body": body, "truncated": truncated}
     return out
@@ -340,6 +446,7 @@ def build_facts(
     evidences: Iterable[Evidence] = (),
     callers: Iterable[str] = (),
     evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
+    evidence_locations: bool = False,
     slice_criterion: Mapping[str, object] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -353,6 +460,9 @@ def build_facts(
 
     `slice_criterion`은 준 경우에만 키가 생긴다(`FACT_KEYS` 주석) — `None`을 `null`로 싣지
     않는다. 실으면 슬라이스 없는 프롬프트까지 글자가 바뀐다.
+
+    `evidence_locations`도 같은 opt-in이다 — 노드가 content-aware **판**일 때만 켠다. 켜면 각
+    evidence에 `location`(없으면 `null`)이 실리고, 끄면 키가 없다(종전과 바이트 동일).
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
@@ -379,9 +489,32 @@ def build_facts(
         if capsule
         else [],
         "source": source,
-        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 함께 싣는다. 안 주면
+        # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 싣는다. 안 주면
         # (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
         # 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.
+        #
+        # **`location`은 본문과 따로 `evidence_locations`가 정한다** — 노드가 **판**(content-aware
+        # 여부)으로 켠다. payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
+        # (`evidence_summaries`가 그 Evidence를 맵에서 뺀다) — 본문 유무에 묶으면 그때 키가 사라져
+        # 같은 판의 Critic 줄(`critic._describe_evidence`)과 다른 값을 든다(적대적 리뷰 #480 LOW-1).
+        # 위치가 없는 Evidence는 `null`로 싣는다 — 위 `target`과 같은 관례다. 키를 아예 빼면
+        # 「도구가 위치를 안 줬다」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
+        #
+        # **위치는 판단 보조이고 등급 근거가 아니다.** 게이트 `p1 = static_ok or location_ok`에서
+        # Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다
+        # (`container_tools.first_hit_location` · `gate.evaluate`). 그 위치는 semgrep
+        # `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다.
+        #
+        # **관측 —** 2026-10-04 첫 실모델·실도구 운영 run에서 finding 3건이 전부 `evidence_refs=[]`
+        # (그래서 E0 -> 6단계 queue -> Critic 0회 -> PoV 0건 -> `oracle_final reason=no_poc`)였고,
+        # semgrep 근거는 프롬프트에 본문까지 실려 있었는데 하네스가 아는 위치
+        # `apprentice.c:1086-1087`은 FACTS에 안 나갔다(이슈 #475). 같은 run의 세 Finding은
+        # `trigger_status=no_signal` 부정 결론(확신 0.05~0.10)이었고, semgrep 본문은
+        # `truncated=true`로 절단돼 히트 10건의 줄이 안 보였다(#481) — 그 보고서(`docs/experiments/
+        # harness/2026-10-04-cybergym-operational-run-vastai-remote.md`)는 이 인용 거절을 타당했다고
+        # 적는다. 위치 미노출 외에 이 둘이 인용 부재의 후보다. **위치를 안 본 것이 인용을 막았다는
+        # 것은 가설이다** — 커밋된 `docs/experiments/` 보고서 기준 위치를 싣고 돈 run이 0건이라
+        # 인용이 늘지 어떨지는 미실측이다.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,
@@ -390,6 +523,11 @@ def build_facts(
                 **(
                     {"body": body["body"], "truncated": body["truncated"]}
                     if (body := (evidence_bodies or {}).get(ev.evidence_id)) is not None
+                    else {}
+                ),
+                **(
+                    {"location": ev.location.model_dump(mode="json") if ev.location else None}
+                    if evidence_locations
                     else {}
                 ),
             }
