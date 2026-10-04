@@ -422,6 +422,8 @@ python3 tools/slicer/slicer.py --repo <번들최상위> --out <out>/slices.json 
   --checkpoint <out>/state.db --progress <out>/progress.jsonl --export-dir <out>/export \
   --threshold 0.95 --max-flows-per-candidate 10 --backward-depth 30 --backward-nodes 5000 \
   --query-timeout-seconds 600 --candidate-timeout-seconds 1200
+# ⚠ 이 run의 슬라이서는 `--case-order`가 생기기 전 판이라 순서가 `ab`(그때 유일한 순서)였다.
+#   지금 main(#473 뒤 기본 `ba`)에서 같은 순서를 재현하려면 `--case-order ab`를 더한다
 
 # 2) 원격 서빙 준비 - 로컬에서 돈다
 SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> SWAP_REMOTE_ROOT=/root/harness \

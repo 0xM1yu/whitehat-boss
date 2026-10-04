@@ -379,6 +379,8 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   `swap.sh`를 부르고, 원격 사본은 `vast-bootstrap.sh`, 모델 호출은 `vast-tunnel.sh` 터널을 지난다. 순서 ->
   ① bootstrap ② 원격에 감시자 ③ 터널 ④ WSL·Linux에서 `SWAP_SSH_HOST`·`SWAP_REMOTE_ROOT`·`SWAP_REMOTE_PYTHON`을
   주고 run. 이 경로로 끝까지 돈 run은 아직 없다(가짜 ssh 테스트만 — `tests/test_remote_swap.py`).
+  ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
+  [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)). Windows 쪽 서술의 사유는 #477이 고친다.
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
