@@ -2,7 +2,8 @@
 
 막으려는 명제: *"이 장비가 **입력과 무관한 크래시**를 내지 않는다는 것이 측정돼 있다."* 그 반례가
 `139`(SIGSEGV)다 — sanitizer 섀도 매핑이 호스트 `vm.mmap_rnd_bits`에 걸려 **타깃이 입력을 읽기도
-전에** 죽고, 성공 조건 `vul not in [0, 300]`이 그것을 「크래시」로 센다 — 2026-10-02 `win11wsl` 실측
+전에** 죽고, 성공 조건 `vul not in [0, 71, 300]`이 그것을 「크래시」로 센다 —
+2026-10-02 `win11wsl` 실측
 ([보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md)).
 
 **Docker 없이 돌고, 그것을 검사가 강제한다.** 컨테이너 실행·참조 PoC 읽기·호스트 읽기·
