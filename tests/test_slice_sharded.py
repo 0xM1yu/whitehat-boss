@@ -497,8 +497,9 @@ def test_a_zombie_leader_with_a_live_thread_is_not_a_stopped_server(stub_server)
     """For a few hundred ms after SIGKILL a JVM is a zombie leader whose threads still hold the
     listening socket (dev box, 2026-10-03: the port kept accepting for 0.15-0.57 s after the kill,
     while the stop that ignored threads had returned 4-115 ms after it). The next run's
-    ensure_ports_free (a bind) refuses the port meanwhile, and a restart on the same port (#472,
-    not in this branch) would take the dying server for its own in wait_servers, so stop_all() must
+    ensure_ports_free (a bind) refuses the port meanwhile, and a restart on the same port
+    (--restart-on-deadline, this branch) would take the dying server for its own in
+    wait_servers, so stop_all() must
     not return before the last thread has gone."""
     process = stub_server("zombie-leader")
     port = int(process.args[-1])
