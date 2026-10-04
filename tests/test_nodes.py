@@ -912,7 +912,9 @@ def test_pov_is_handed_the_finding_as_validate_run_left_it(
 def _outside_validated(
     ctx: RunContext, specs: list[tuple[str, float]]
 ) -> tuple[runner._Accumulator, list[Finding]]:
-    """`VALIDATED`로 들어오지 **않은** Finding들과 그 캡슐 — `pov_attempt_top_n`의 대상이다.
+    """`VALIDATED`로 들어오지 **않은** Finding들과 그 캡슐 — `pov_attempt_top_n`의 **후보 풀**이다
+    (그 풀에서 Critic이 밀어 낸 것을 거른 것이 대상이다 — `runner._pov_targets`). 여기 담는 것은
+    판정이 없는 `HYPOTHESIZED`뿐이라 거르개에 안 걸린다.
 
     `_finding`의 기본 상태가 `HYPOTHESIZED`다(재현 명세가 없어 F-9가 세우는 자리와 같은 상태).
     """
@@ -1153,6 +1155,39 @@ def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: R
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert _pov_subjects(ctx) == [held.finding_id]
+
+
+def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**실제 7단계가 쓴 `state.decisions`가 풀 필터에 읽힌다** - 위 검사들은 `decisions`를 손으로
+    꽂는다. 여기서는 `critic.run`의 모델 호출(`_ask_model`)만 갈아 끼워 한 Finding에 근거 있는
+    `rebut`를 내게 하고, 정책이 그것을 `QUEUED`(F-6)로 내린 뒤 PoV가 안 도는지 본다.
+    `confidence`는 반박된 쪽이 더 높다 - 필터가 안 이어졌으면 상한 1의 자리를 그쪽이 가져간다.
+    `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
+    state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
+
+    def ask(ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list) -> Decision:
+        verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
+        return Decision(
+            decision_id=decision_id,
+            run_id=RUN_ID,
+            finding_id=finding.finding_id,
+            verdict=verdict,
+            rationale="근거 서술",
+            evidence_refs=["ev_0001"],
+            produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+        )
+
+    monkeypatch.setattr(critic, "_ask_model", ask)
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert state.findings[rebutted.finding_id].state is FindingState.QUEUED, (
+        "전제 - 실제 7단계가 이 Finding을 F-6으로 내려야 한다"
+    )
+    assert _pov_subjects(ctx) == [kept.finding_id]
 
 
 

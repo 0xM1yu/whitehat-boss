@@ -108,6 +108,13 @@ thresholds:
   # 안 거친 Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어
   # `hypothesized`에 멈춘 것(F-9) 등이다.
   #
+  # ⚠ 이 필터는 반박된 Finding의 PoC가 최종 제출이 되는 것을 막지만, **이 기능이 처음 겨냥한
+  # run의 풀은 바꾸지 않는다.** 그 run(`run_20261003_0003`)의 Finding 셋은 Critic을 안 거쳤고
+  # 전부 Auditor가 스스로 낸 부정 결론이다(`trigger_status=no_signal` · `confidence`
+  # 0.10·0.10·0.05 · `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-
+  # remote.md` §4). 풀은 그것을 거르지 않는다(결정 대기) — 그런 Finding에서 PoV가 낼 PoC가
+  # 있는지는 **미측정**이다.
+  #
   # 왜 상한이 생겼나. 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다 —
   # Finding이 인용한 Evidence가 없어(모델이 인용하지 않았다 — 이슈 #475 정정) 전부 E0로
   # 6단계가 `QUEUED`에 내렸고 재현 명세도 없어(Level 1은 그 근거를 안 준다) 8단계 진입
