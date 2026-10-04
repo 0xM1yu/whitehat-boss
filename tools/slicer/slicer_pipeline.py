@@ -11,7 +11,13 @@ from slicer_candidates import collect, prioritize
 from slicer_checkpoint import digest
 from slicer_errors import QueryError
 from slicer_library import Library
-from slicer_source import assemble, cluster, normalize_points, recover_points
+from slicer_source import (
+    assemble,
+    cluster,
+    normalize_points,
+    recover_points,
+    source_sink,
+)
 
 STAGE_COUNTERS = ("locations_unmapped", "candidates_unmapped")
 
@@ -64,15 +70,22 @@ class SlicingStages:
                 "truncated to an unspecified first-N in CPG traversal order (api: write-context "
                 "methods first, then traversal order within each layer; slicer_queries)"
             )
-        self.candidates = collect(rows, self.repo)
+        order = self.settings.get("case_order", "ab")
+        self.candidates = collect(rows, self.repo, order)
         if self.priority_files is not None:
             # Before bind(): the checkpoint (and so --prepare-only's shards and the claim queue)
             # keeps this order, and resuming with a different list is a contract mismatch.
-            self.candidates, first, matched = prioritize(self.candidates, self.priority_files)
+            self.candidates, first, matched = prioritize(
+                self.candidates, self.priority_files, order
+            )
             unmatched_names = sorted(self.priority_files - matched)
             self.result["priority"] = {
                 "files": len(self.priority_files),
                 "files_with_candidates": len(matched),
+                # The size of the priority tier: how many candidates have their entry or an anchor
+                # in a listed file. Under `ab` they are the first `first` candidates; under `ba`
+                # the listed Case B lead and the listed Case A follow the rest of Case B, so this
+                # is a count, not the length of a leading run.
                 "first_tier_candidates": first,
                 "candidates": len(self.candidates),
                 # Audit trail (review M-3/M-6): the normalized names this list resolved to, so a
@@ -206,6 +219,9 @@ class SlicingStages:
                 if candidate["case"] == "A"
                 else {"flow_count": "Backward dependency graph; paths were not enumerated"}
             ),
+            "source_sink": source_sink(
+                candidate["case"], entry, payload, self.sources, self.repo
+            ),
             "line_provenance": {
                 "data_dependency": state["dependency_points"],
                 "candidate_anchor": state["anchor_points"],
@@ -265,6 +281,7 @@ class SlicingStages:
                 "degraded": f"flow/backward query failed or was skipped ({why}); "
                 "anchor-only slice, no dataflow context -- --resume re-attempts a full slice"
             },
+            "source_sink": source_sink(candidate["case"], entry, None, self.sources, self.repo),
             "line_provenance": {"data_dependency": [], "candidate_anchor": points, "context": []},
         }
 
