@@ -88,6 +88,8 @@ if os.environ.get("AUDITOR_ARMS"):
     for part in filter(None, os.environ["AUDITOR_ARMS"].split(";")):
         name, _, spec = part.partition(":")
         ARMS.append((name.strip(), with_options(thresholds, spec)))
+# event fields that name the row rather than count anything -- the row has its own ids
+_EVENT_IDENTITY = frozenset({"stage", "subject_kind", "subject_id", "slice_id"})
 BANNER = re.compile(r"^/\* ===== (.+):(\d+)-(\d+) ===== \*/$")
 OMIT = re.compile(r"^/\* \.\.\. (\d+) lines omitted \.\.\. \*/$")
 
@@ -214,31 +216,10 @@ with gzip.open(OUT, "wt", encoding="utf-8") as out:
             },
             "source": source,
             "description": job["description"],
-            **{
-                k: ev.get(k)
-                for k in (
-                    "functions",
-                    "dropped",
-                    "uncovered_lines",
-                    "chars",
-                    "anchor_chars",
-                    "callees",
-                    "callees_dropped",
-                    "callers",
-                    "callers_dropped",
-                    "call_sites",
-                    "tokens",
-                    "token_counter",
-                    "wrapper_callees",
-                    "alias_callees",
-                    "alias_definitions",
-                    "indirect_callees",
-                    "indirect_skipped",
-                    "write_windows",
-                    "write_windows_dropped",
-                    "write_sites_found",
-                )
-            },
+            # every count the harness emits on `auditor_source`, not a hand-kept list -- the list
+            # missed `definitions_trimmed` (index-v4 enum trimming) in the 2026-10-04 run. A key the
+            # event leaves out (option off) stays out of the row, as in the trace.
+            **{k: v for k, v in ev.items() if k not in _EVENT_IDENTITY},
             "lines": [list(x) for x in ref.lines],
             "gt_relevant": g_rel,
             "gt_in_source": g_src,
