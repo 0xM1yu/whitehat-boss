@@ -17,7 +17,7 @@ from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.model_swap import swap_runner
 from src.config import load_config
 from src.ids import IdFactory
-from src.interfaces.model_client import ModelGatewayError, ModelSwapError
+from src.interfaces.model_client import ModelGatewayError, ModelSwapError, error_detail
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
@@ -353,3 +353,82 @@ def test_fake_models_and_the_teardown_probe_nothing(tmp_path: Path) -> None:
     swap_to(())
 
     assert [call["argv"] for call in _calls(tmp_path)] == [["fake"], []]
+
+
+# --- #476: 실패 사유가 잘린 상세의 맨 앞에 남는다 ------------------------------------------
+
+
+def test_the_reason_leads_the_truncated_detail_even_behind_a_long_report(tmp_path: Path) -> None:
+    """보고의 `error`가 상세·메시지 맨 앞이다 — 상세는 실패 이벤트에서 앞 512자로 잘린다.
+
+    `run_20261003_0001`에서 보고(서버 기동 인자)가 앞을 다 먹어 사유가 잘렸고 운영자는
+    `memavail_before`만 보고 메모리 부족으로 읽었다. 실제 사유는 「이 run 밖의 GPU 프로세스」였다.
+    """
+    args = "serve Qwen/Qwen3-14B " + "--flag value " * 300  # 실측 보고처럼 긴 기동 인자
+    reason = "outside GPU process: 2920 3648"
+    report = {
+        "ok": False,
+        "memavail_before": 8.5,
+        "server": {"qwen3-14b": {"args": args}},
+        "error": reason,
+    }
+    body = "\n".join(
+        [
+            f"sys.stderr.write({'ABORT: ' + reason!r} + chr(10))",
+            f"print(json.dumps({report!r}))",
+            "sys.exit(2)",
+        ]
+    )
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
+
+    shown = error_detail(caught.value)  # 실패 이벤트·경고에 실리는 그 문자열
+    assert shown.startswith(f"사유: {reason}")
+    assert reason in str(caught.value)
+    assert caught.value.report["error"] == reason  # 보고는 그대로 실린다
+
+
+def test_without_a_report_stderr_leads_the_detail(tmp_path: Path) -> None:
+    """명령이 보고를 못 내면 stderr가 맨 앞이다 — `swap-remote.sh`가 ssh 전에 2로 끝나는 경우."""
+    body = "sys.stderr.write('swap-remote: SWAP_SSH_HOST is empty' + chr(10))\nsys.exit(2)"
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
+
+    assert caught.value.report == {}
+    assert error_detail(caught.value).startswith("stderr: swap-remote: SWAP_SSH_HOST is empty")
+
+
+# --- #477: 교대 명령의 실행 파일을 PATH로 먼저 푼다 ----------------------------------------
+
+
+def test_the_command_head_is_resolved_on_path_before_it_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`command[0]`이 경로 없는 이름이면 `shutil.which`로 푼 절대경로로 띄운다.
+
+    Windows `CreateProcess`는 `System32`를 PATH보다 먼저 뒤져 `bash`를 WSL 런처로 풀었다 — 그러면
+    교대 스크립트가 Windows 환경변수를 못 받는다(`run_20261003_0001`). 여기서는 PATH에 없는 이름
+    `harness-test-shell`을 `which`가 이 파이썬으로 풀게 해, 해소한 경로가 실제로 실행되는지 본다.
+    """
+    seen: list[str] = []
+
+    def which(name: str) -> str | None:
+        seen.append(name)
+        return sys.executable if name == "harness-test-shell" else None
+
+    monkeypatch.setattr(model_swap.shutil, "which", which)
+    script = _command(tmp_path)[1]
+
+    report = _swap(("harness-test-shell", script), _probe())(("seccoderx-8b",))
+
+    assert seen == ["harness-test-shell"]
+    assert report == {}  # 기본 가짜 명령은 보고를 안 낸다 — 성공 경로만 본다
+    assert _calls(tmp_path)[0]["argv"] == ["seccoderx-8b"]
+
+
+def test_a_command_head_with_a_path_or_not_on_path_is_left_as_is() -> None:
+    assert model_swap._resolved((sys.executable, "x")) == (sys.executable, "x")
+    assert model_swap._resolved(("tools/serve/x.sh",)) == ("tools/serve/x.sh",)
+    assert model_swap._resolved(("no-such-shell-1f3a",)) == ("no-such-shell-1f3a",)

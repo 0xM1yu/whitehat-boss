@@ -39,7 +39,9 @@
 - **stdout 마지막 비지 않은 줄이 JSON 객체 보고다.** 실패해도 낼 수 있으면 낸다. 중첩은
   `server.<key>.<field>`로 펴서 `model_swap` 이벤트의 `report.*`에 싣는다(목록은 JSON 문자열).
   JSON이 아니거나 못 읽으면 보고가 없는 것으로 읽는다. 그 앞 줄은 사람용 로그로 자유다 — 실패하면
-  하네스가 stdout·stderr 꼬리를 오류 상세에 싣는다. 권하는 필드: `ok`·`models`·서버별
+  하네스가 보고의 `error`(한 줄 사유) -> stderr 꼬리 -> stdout 꼬리 순으로 오류 상세에 싣는다(앞에서
+  잘리므로 사유가 맨 앞이다 — `_failure_detail`). 실패하면 `error`를 꼭 채운다.
+  권하는 필드: `ok`·`models`·서버별
   `action`·`util`·`max_num_seqs`·`max_model_len`·`args`·`revision`·`load_s`·`ready_s`·`attempts` ·
   `memavail_before`·`memavail_after`·`vllm_version`·`error`. 서버의 기동 조건은 이 보고로만 기록에
   남는다 — 올린 키의 `server.<key>.*`가 하나도 없으면 교대가 성공해도 러너가 run 경고로 그 키를
@@ -57,6 +59,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -107,6 +110,7 @@ def swap_runner(
         from src.bench import check_startup
 
         probe = check_startup
+    command = _resolved(command)
     env = {
         **os.environ,
         "HARNESS_PYTHON": sys.executable,
@@ -154,16 +158,18 @@ def swap_runner(
             raise ModelSwapError(
                 f"모델 교대가 마감 {deadline_s:g}초(+{_REPORT_GRACE_S:g}) 안에 안 끝났다: {label}"
                 f" — 내림 명령을 불렀다({_teardown(run, command)})",
-                detail=_tail(exc.stdout, exc.stderr),
-                report=_report(exc.stdout),
+                detail=_failure_detail(partial := _report(exc.stdout), exc.stdout, exc.stderr),
+                report=partial,
             ) from exc
         except OSError as exc:
             raise ModelSwapError(f"교대 명령을 실행하지 못했다({command[0]}): {exc}") from exc
         report = _report(done.stdout)
         if done.returncode != 0:
+            reason = _reason(report)
             raise ModelSwapError(
-                f"모델 교대가 실패했다(exit {done.returncode}): {label}",
-                detail=_tail(done.stdout, done.stderr),
+                f"모델 교대가 실패했다(exit {done.returncode}): {label}"
+                + (f" — {reason}" if reason else ""),
+                detail=_failure_detail(report, done.stdout, done.stderr),
                 report=report,
             )
         for key in keys:
@@ -171,6 +177,49 @@ def swap_runner(
         return report
 
     return swap_to
+
+
+def _resolved(command: tuple[str, ...]) -> tuple[str, ...]:
+    """`command[0]`을 PATH로 먼저 풀어 절대경로로 바꾼다(#477). 못 풀거나 경로가 든 이름은 그대로.
+
+    Windows `CreateProcess`는 PATH보다 `System32`를 먼저 뒤져 `bash`가 `System32\bash.exe`(WSL
+    런처)로 풀린다 -> 교대 스크립트가 WSL 안에서 돌고 Windows 환경변수를 하나도 못 받는다
+    (`SWAP_SSH_HOST`이 비었다 · 2026-10-03 `run_20261003_0001`). `shutil.which`는 PATH만 보므로
+    Git Bash를 고른다. POSIX에서는 `execvp`가 같은 PATH 탐색을 하므로 고르는 실행 파일이 같다.
+    """
+    head, *rest = command
+    if not head or os.sep in head or (os.altsep and os.altsep in head):
+        return command
+    found = shutil.which(head)
+    return (found, *rest) if found else command
+
+
+def _reason(report: SwapReport) -> str:
+    """보고의 `error`(명령이 고른 한 줄 사유 — `swap.sh`의 `fail`). 없거나 빈 값이면 빈 문자열."""
+    value = report.get("error")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _failure_detail(
+    report: SwapReport, stdout: str | bytes | None, stderr: str | bytes | None
+) -> str:
+    """사유 -> stderr -> stdout 순서의 실패 상세(#476).
+
+    상세는 실패 이벤트에 실을 때 **앞에서부터** `MAX_ERROR_DETAIL`(512)자로 잘린다. 예전 순서
+    (stdout -> stderr)는 stdout 마지막 줄의 긴 JSON 보고(서버 기동 인자)가 앞을 다 먹어 사유가
+    잘렸다 — 원격 교대에서는 그 사유가 다른 기계의 `swap.log`에만 남아 운영자가 `memavail_before`를
+    보고 메모리 부족으로 오독했다(`run_20261003_0001`). 사유는 보고의 `error` 필드에서 읽고(문자열
+    탐색이 아니다), 명령이 보고를 못 냈으면 stderr가 맨 앞이다 — `swap-remote.sh`의 자체 실패와
+    원격 `swap.sh`의 `ABORT:` 로그 줄이 stderr로 온다.
+    """
+    reason = _reason(report)
+    parts = [f"사유: {reason}"] if reason else []
+    err, out = _text(stderr).strip(), _text(stdout).strip()
+    if err:
+        parts.append(f"stderr: {err[-_TAIL_CHARS:]}")
+    if out:
+        parts.append(f"stdout: {out[-_TAIL_CHARS:]}")
+    return " | ".join(parts)
 
 
 def _teardown(
@@ -247,7 +296,3 @@ def _text(stream: str | bytes | None) -> str:
     if isinstance(stream, bytes):
         return stream.decode("utf-8", "replace")
     return stream or ""
-
-
-def _tail(*streams: str | bytes | None) -> str:
-    return "".join(_text(stream) for stream in streams)[-_TAIL_CHARS:]

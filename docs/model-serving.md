@@ -381,6 +381,11 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   주고 run. 이 경로로 끝까지 돈 run은 아직 없다(가짜 ssh 테스트만 — `tests/test_remote_swap.py`).
   ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
   [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)). Windows 쪽 서술의 사유는 #477이 고친다.
+  ⏵ 2026-10-04 — #477: ④의 「WSL·Linux에서」는 이제 조건이 아니다. Windows 네이티브에서 교대가 깨진 원인은 `bash`가
+  `System32`의 WSL 런처로 풀린 것이었고 `model_swap`이 실행 파일을 PATH로 먼저 푼다(Git Bash가 PATH에 있어야 한다).
+  Windows에서는 세 변수를 Git Bash `export`로 세우지 않는다 — MSYS가 `/root/…` 값을 Windows 경로로 바꾼다.
+  교대가 실패하면 하네스 경고·`model_swap` 이벤트의 상세 맨 앞에 교대 스크립트의 사유(`error`)가 온다(#476) ->
+  원격 `swap.log`를 열지 않아도 된다.
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
