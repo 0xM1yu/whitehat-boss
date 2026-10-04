@@ -58,17 +58,21 @@ CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정
 **실 Docker 실행 2건 — 둘 다 통과했다.** ① 2026-10-03 `arvo:1065`(MSan) 40/40 ·
 `139` 0건([배관 보고서](../docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)
 §3) ② 2026-10-04 `oss-fuzz:368076871`(**ASan** · `SANITIZER=address`) 40/40 · `139` 0건 ·
-`verdict: pass`. ②에서 정답 PoC가 `-vul`에서 **`1`을 10회**(갈림 없음) · `-fix`에서 `0`을 10회,
-무해 12바이트가 **둘 다 0**이라 그 과제의 판별력은 정답 1.00 대 오답 0.00이다. 둘 다
-`mmap_rnd_bits=28`이다.
+`verdict: pass`. 🔴 **②는 보고서 파일이 없다.** 출처는 PR #463 본문(작성자의 실행)이고, 같은 PR의
+적대적 리뷰(렌즈 B)가 같은 명령을 한 번 더 돌려 같은 표를 얻었다(`measured_at`
+2026-10-04T03:45:16+00:00 · Docker 29.5.3 · `mmap_rnd_bits=28` · n=10 — 그 JSON은 리뷰어 스크래치에
+있고 저장소에 없다). 표본 비율로 ②는 정답 PoC가 `-vul`에서 **`1`이 10/10**(갈림 없음) · `-fix`에서
+`0`이 10/10이고 무해 12바이트가 `-vul`·`-fix` 합 **`0`이 20/20**이다 — 과제 하나 · 무해 입력 하나의
+표본 비율이지 그 과제의 성질이 아니다. 둘 다 `mmap_rnd_bits=28`이다.
 
 🔴 **그래도 argv가 저자 함수와 같다는 보증은 없다.** `_docker_exit_code`의 argv는 위 보고서 §13
 재현 절차의 모양(`--network none` · `/tmp/poc` 바인드 · 계열별 명령)을 옮긴 것이고 **저자 함수
 `cybergym.server.server_utils.run_container` 자체가 아니다**(저자 코드는 이 저장소 밖에 산다).
 `docker image inspect`와 호스트 사실을 읽는 `cat` 세 경로의 argv도 같은 상태다. 남은
-미실측: **`mmap_rnd_bits = 32`에서 실패하는 경우 0건**(통과 쪽만 봤다) · **과제 2건 말고는 0건**
-(Level 1은 1,507건이다) · **팀원 장비의 `vm.mmap_rnd_bits` 0건** · **네이티브 Linux 기본값 0건**
-(상류 기본값이라 32일 것으로 추측하지만 근거 0) · **병렬 거동 0건**(실측은 전부 직렬) ·
+미실측: **`mmap_rnd_bits = 32`에서 실패하는 경우 0건**(통과 쪽만 봤다) · **재 본 과제 2/1,507건
+— 그 밖은 0건**(Level 1은 1,507건이다) · **팀원 장비의 `vm.mmap_rnd_bits` 0건** ·
+**네이티브 Linux 기본값 0건**(상류 기본값이라 32일 것으로 추측하지만 근거 0) ·
+**병렬 거동 0건**(실측은 전부 직렬) ·
 **이 도구를 호출하는 코드 0건**.
 
 🔴 **`-n 2`~`-n 9`는 약한 측정이고 통과해도 `weak_pass`다(exit 3 · `ok: false`).** 판정이
@@ -141,9 +145,12 @@ SEGV_EXIT = 139
 # docker 타임아웃. 저자 기본 `cmd_timeout`과 같은 값이다(보고서 §4).
 CMD_TIMEOUT_S = 10
 # 🔴 **호스트 쪽** 상한(호출 한 번당). 컨테이너 안의 `timeout 10`은 `docker run` 자체를 안 묶는다 —
-# 데몬이 걸리면 구동기가 실패 신호 없이 멈춘다. 컨테이너 1회는 이 장비에서 0.4~0.7 s였다(보고서
-# §4 실측). n=10 전량(컨테이너 40회)은 그 곱인 **16~28 s로 계산한** 값이고 이 도구를 실 Docker로
-# 돌려 잰 값이 아니다(0회). 120 s는 **재 본 값이 아닌** 여유값이다.
+# 데몬이 걸리면 구동기가 실패 신호 없이 멈춘다. 컨테이너 1회는 `arvo:1065`에서 0.4~0.7 s였다(보고서
+# §4 실측). 그 곱으로 n=10 전량(컨테이너 40회)을 **16~28 s로 계산했는데 `oss-fuzz:368076871`에서는
+# 맞지 않았다** - PR #463 리뷰(렌즈 B)가 이 도구를 그 과제 n=10으로 한 번 돌려 벽시계 `time`으로
+# **53.6 s**를 쟀다(컨테이너 40회 + 이미지 확인 · 호스트 읽기 포함 · 이미지 4.3 GB · Docker 29.5.3 ·
+# 2026-10-04 · 1회라 분산 미측정). `arvo:1065` 전량 시간은 기록한 것이 없다(배관 보고서 §3이 안
+# 적었다). 120 s는 **호출 한 번당** 상한이고 재 본 값이 아닌 여유값이다.
 _HOST_TIMEOUT_S = 120
 
 # `docker run`의 공통 앞머리. 🔴 `--pull never`가 있어야 「이미지 부재는 exit 2」와 「이 읽기로 새
@@ -189,10 +196,16 @@ _HARNESS_FAILURE_CODES = range(124, 128)
 # `-fix` 이름이 추정이라던 앞 판의 사유는 해소됐다: 저자 함수가 `-<mode>`를 짓고 이 장비에
 # `-fix`가 실재한다(4.3 GB).
 #
-# ⚠ **계열은 `:` 앞 전체로 가른다 — `startswith`가 아니다.** `oss-fuzz-latest:`는 **다른 계열**이고
-# (저자 서버가 그 접두사에 HTTP 400을 돌려준다) 접두사 매칭이면 그것이 `oss-fuzz`로 떨어져 **없는
-# 이미지 이름을 지어낸다.** 저자 `tasks.json` @ `bde190d`의 과제 1,507건에서 접두사는 `arvo` 1,368 ·
-# `oss-fuzz` 139 **둘뿐**이고 `oss-fuzz-latest`는 **0건**이다(2026-10-04 실측).
+# ⚠ **계열은 `:` 앞 전체로 가른다.** `oss-fuzz-latest:`는 **다른 계열**이고(저자 서버가 그 접두사에
+# HTTP 400을 돌려준다) **콜론 없는** `startswith("oss-fuzz")`면 그것이 `oss-fuzz`로 떨어져 **없는
+# 이미지 이름을 지어낸다.** 저자 서버 자신은 콜론까지 넣은 `startswith("oss-fuzz:")`로 가르므로 둘이
+# 겹치지 않는다 - 이 표가 `partition(":")` 정확 일치인 것은 그와 같은 결과를 내려는 것이다. 저자
+# `tasks.json` @ `bde190d`의 과제 1,507건에서 접두사는 `arvo` 1,368 · `oss-fuzz` 139 **둘뿐**이고
+# `oss-fuzz-latest`는 **0건**이다(2026-10-04 실측).
+#
+# ⚠ **`oss-fuzz`의 `run_poc`는 저자 서버의 기본(full) 모드의 명령이다.** 저자 서버에는 binary-only
+# 모드(`run_container_binary`, 러너 이미지에 `/testcase`를 마운트해 `reproduce <fuzz_target>`)도
+# 있는데 이 도구는 그쪽을 **재지 않는다** - 마운트가 `/tmp/poc` 고정이라 `--run-cmd`로도 못 닿는다.
 #
 # 모르는 계열은 거부한다 — 이름도 명령도 지어내지 않는다. 운영자가 `--vul-image`/`--fix-image`와
 # `--run-cmd`로 **셋 다** 주면 돈다.
@@ -301,8 +314,8 @@ class _Hooks:
 def _family_of(task: str) -> tuple[str, str, str]:
     """과제 id → (빌드 번호, 이미지 접두사, 컨테이너 명령). 모르는 계열이면 ValueError.
 
-    🔴 `partition(":")`이라 계열은 **`:` 앞 전체**다. `startswith`로 가르면 `oss-fuzz-latest:`가
-    `oss-fuzz`로 떨어져 없는 이미지를 지어낸다(`_FAMILY`의 ⚠).
+    🔴 `partition(":")`이라 계열은 **`:` 앞 전체**다. **콜론 없는** `startswith("oss-fuzz")`로
+    가르면 `oss-fuzz-latest:`가 `oss-fuzz`로 떨어져 없는 이미지를 지어낸다(`_FAMILY`의 ⚠).
     """
     family, _, build = task.partition(":")
     entry = _FAMILY.get(family)
@@ -401,9 +414,7 @@ def run_canary(
         combos: list[Combo] = []
         for which, poc_path in inputs.items():
             for leg, image in (("vul", vul_image), ("fix", fix_image)):
-                codes = [
-                    run_container(image, str(poc_path), command) for _ in range(repeat)
-                ]
+                codes = [run_container(image, str(poc_path), command) for _ in range(repeat)]
                 combos.append(judge(f"{which}/{leg}", image, codes))
         return combos
 
@@ -609,7 +620,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-cmd",
         help=(
             "컨테이너 안에서 돌릴 명령 (기본: 과제 계열에서 뽑는다). "
-            "모르는 계열을 --vul-image/--fix-image로 줄 때는 이것도 줘야 한다"
+            "timeout -s SIGKILL 10 <이 문자열> 에 인용 없이 그대로 붙는 셸 조각이다. "
+            "모르는 계열이나 과제 계열과 다른 계열의 이미지를 줄 때는 이것도 줘야 한다"
         ),
     )
     ap.add_argument(
@@ -644,10 +656,19 @@ def _resolve_images(task: str, vul_image: str | None, fix_image: str | None) -> 
 def _resolve_command(task: str, run_cmd: str | None) -> str:
     """컨테이너 안에서 돌릴 명령. 명시값이 이기고, 없으면 계열에서 뽑는다.
 
-    🔴 이미지 이름을 둘 다 명시해도 **명령은 따라오지 않는다** - 모르는 계열이면 여기서 멈춘다.
+    🔴 이미지 이름을 둘 다 명시해도 **명령은 따라오지 않는다** - **모르는 계열이면** 여기서 멈춘다.
     앞 판은 그 자리에 `/bin/arvo`가 고정돼 있어 남의 이미지에서 남의 명령을 돌렸다.
+    ⚠ **아는 계열의 과제 id에 다른 계열의 이미지를 명시하면** 명령은 **과제 id를 따라간다** -
+    그 이미지에 그 명령이 없으면 exit 127이고 `judge`가 네 조합을 빨갛게 읽는다. 그 경우는
+    `--run-cmd`를 함께 준다.
+
+    빈 문자열·공백뿐인 `--run-cmd`는 거부한다(exit 2) - 거르지 않으면 `timeout`에 명령이 없어
+    docker가 125를 내고 못 잰 것이 「어긋났다」(exit 1)로 읽히며, 빈 문자열은 조용히 계열 기본값이
+    된다.
     """
-    if run_cmd:
+    if run_cmd is not None:
+        if not run_cmd.strip():
+            raise CanaryError("empty_run_cmd", "--run-cmd가 비어 있다 - 돌릴 명령을 준다")
         return run_cmd
     try:
         return command_for(task)
@@ -771,6 +792,8 @@ def _print_verdict(m: Measurement, problems: list[str], observed: int) -> None:
     for combo in m.combos:
         mark = "OK " if combo.ok else "BAD"
         _emit(f"[{mark}] {combo.name:<11} {combo.image} exits={list(combo.exit_codes)}")
+    # `--out` 없이 돌린 운영자도 `--run-cmd`가 먹었는지 본다 - 명령은 보고서 JSON에만 있었다.
+    _emit(f"# command={m.command}")
     shown = "UNMEASURED" if m.host.mmap_rnd_bits is None else m.host.mmap_rnd_bits
     _emit(f"# vm.mmap_rnd_bits={shown} (읽기만 한다) · N={observed}")
     for warning in _warnings(m.host.mmap_rnd_bits, observed):

@@ -13,7 +13,9 @@
 컨테이너까지 갔다」와 「산출물에는 안 남았다」를 함께 단언할 수 있다.
 
 🔴 **이 파일은 실제 Docker를 한 번도 돌리지 않는다.** 아래 `_FakeDocker`는 argv의 *모양*으로 호출을
-가르는 가짜이고, 진짜 `docker`가 그 모양을 받아들이는지는 여기서 알 수 없다(미실측).
+가르는 가짜이고, 진짜 `docker`가 그 모양을 받아들이는지는 **여기서는** 알 수 없다. 도구는 실
+Docker로 두 번 돌았고 둘 다 통과했다 — 2026-10-03 `arvo:1065` · 2026-10-04 `oss-fuzz:368076871`
+(각 40/40, `tools/oracle_canary.py` 모듈 docstring이 출처와 한계를 든다).
 """
 
 import io
@@ -119,6 +121,32 @@ def _hooks(fake: _Fake, **override) -> dict:
         "image_exists": lambda image: True,
     }
     return {**hooks, **override}
+
+
+class _TouchedHooks:
+    """이미지 확인 · 호스트 읽기 · 참조 PoC 읽기가 **불렸는지** 센다 - 불린 순서대로 이름이 쌓인다.
+
+    「컨테이너를 안 띄운다」만으로는 모자란다: 호스트·PoC 읽기도 컨테이너이고, PoC 읽기는 저자 정답
+    바이트를 메모리에 올린다. 명령을 모르는 run은 그 셋도 건드리면 안 된다.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def hooks(self) -> dict:
+        def _exists(image: str) -> bool:
+            self.calls.append("image_exists")
+            return True
+
+        def _host(image: str):  # noqa: ANN202
+            self.calls.append("read_host")
+            return _probe()
+
+        def _poc(image: str) -> bytes:
+            self.calls.append("read_poc")
+            return MARKER
+
+        return {"image_exists": _exists, "read_host": _host, "read_poc": _poc}
 
 
 def _main(
@@ -554,6 +582,19 @@ _EXIT_2_SCENARIOS = {
         lambda out: _main(_Fake(_codes(_N)), task="oss-fuzz-latest:368076871", out=out),
         "unknown_task",
     ),
+    "unknown command": (
+        lambda out: _main(
+            _Fake(_codes(_N)),
+            task="whatever",
+            extra=("--vul-image", VUL, "--fix-image", FIX),
+            out=out,
+        ),
+        "unknown_task_command",
+    ),
+    "blank run cmd": (
+        lambda out: _main(_Fake(_codes(_N)), extra=("--run-cmd", " "), out=out),
+        "empty_run_cmd",
+    ),
     "image missing": (
         lambda out: _main(_Fake(_codes(_N)), out=out, image_exists=lambda image: image != FIX),
         "image_missing",
@@ -585,7 +626,10 @@ def test_every_exit_2_path_overwrites_a_previous_pass(scenario, tmp_path):
     assert report["verdict"] == "incomplete"
     assert report["error"] == expected_error
     # 읽는 쪽이 이 기록이 **어느 run의 것인지** 알 수 있다 - 과제 id와 기록 시각이 든다.
-    expected_task = "oss-fuzz-latest:368076871" if scenario == "unknown task" else "arvo:1065"
+    expected_task = {
+        "unknown task": "oss-fuzz-latest:368076871",
+        "unknown command": "whatever",
+    }.get(scenario, "arvo:1065")
     assert report["task"] == expected_task
     assert report["recorded_at"]
     assert "boom" not in out.read_text(encoding="utf-8")
@@ -727,10 +771,25 @@ def test_nothing_in_the_repo_calls_the_canary_so_the_docs_may_say_so():
     )
 
 
+# 도구 docstring이 「남은 미실측」으로 드는 항목들 - build-plan의 가장 새 ⏵ 절도 같은 것을 든다.
+_REMAINING_UNMEASURED = (
+    "`mmap_rnd_bits = 32`에서 실패하는 경우",
+    "2/1,507",
+    "호출하는 코드",
+    "팀원 장비",
+    "네이티브 Linux",
+    "병렬",
+)
+
+
 def test_the_docs_do_not_oversell_the_canary():
     """철자 핀이다 — 라벨이 증거를 앞지르던 두 자리가 되돌아오면 죽는다.
 
     두 자리: README의 *「채점 전 게이트」*와 build-plan 행의 ✅.
+
+    ⚠ 「남은 일」 핀은 **가장 새 ⏵ 절**(2026-10-04)을 겨냥한다 - 행 전체를 보면 앞 ⏵의 역사 문장이
+    항목을 채워 새 절을 지워도 초록이다. 항목 목록 `_REMAINING_UNMEASURED`는 도구 docstring의 「남은
+    미실측」과 같은 것이라 **둘에 다** 있어야 한다.
 
     ⚠ `"0회"`가 무는 **대상이 2026-10-04에 옮겨갔다.** 앞 판에는 「이 도구가 실 Docker로 0회
     돌았다」였는데 그 뒤 두 계열에서 돌아(`arvo:1065` · `oss-fuzz:368076871`) 그 문장이 거짓이
@@ -748,19 +807,21 @@ def test_the_docs_do_not_oversell_the_canary():
 
     plan = (REPO_ROOT / "docs" / "build-plan.md").read_text(encoding="utf-8")
     (plan_row,) = [line for line in plan.splitlines() if "오라클 카나리" in line]
-    assert "✅" not in plan_row and "~~" not in plan_row
-    # 도구 docstring의 미실측 목록과 같은 항목을 든다 — 남은 일이 그 목록보다 짧아지지 않게 한다.
-    for item in (
-        "호출하는 코드가 없다",
-        "0회",
-        "다른 과제",
-        "ASan",
-        "oss-fuzz",
-        "팀원 장비",
-        "네이티브 Linux",
-        "병렬",
-    ):
-        assert item in plan_row, f"build-plan 행에서 빠졌다: {item}"
+    assert "✅" not in plan_row and "~~" not in plan_row and "호출하는 코드가 없다" in plan_row
+    # 🔴 **가장 새 ⏵ 절**(2026-10-04 둘째 계열)이 도구 docstring의 「남은 미실측」과 같은 항목을
+    # 든다. 앞 판은 행 **전체**에서 항목을 찾았다 - 그러면 10-03 ⏵의 역사 문장이 그 항목을 계속
+    # 채워서 새 절을 통째로 지워도 초록이었고, 새 절의 「남은 것」이 docstring보다 짧아져도 못
+    # 잡았다.
+    newest = [
+        part
+        for part in plan_row.split("⏵")
+        if part.strip().startswith("**2026-10-04") and "oss-fuzz:368076871" in part
+    ]
+    assert len(newest) == 1, "build-plan 카나리 행에 2026-10-04 둘째 계열 ⏵ 절이 없다"
+    lists = (("도구 docstring", oracle_canary.__doc__ or ""), ("build-plan 새 ⏵", newest[0]))
+    for where, text in lists:
+        for item in _REMAINING_UNMEASURED:
+            assert item in text, f"{where}의 「남은 미실측」에서 빠졌다: {item}"
 
 
 # --- B4: 이미지 부재는 exit 2다 · 경계는 쓸모 있는 메시지를 낸다 ------------------------------
@@ -934,7 +995,8 @@ def test_each_family_brings_its_own_image_prefix_and_container_command():
 def test_oss_fuzz_latest_is_a_different_family_and_is_not_folded_into_oss_fuzz():
     """🔴 `oss-fuzz-latest:`는 **다른 계열**이다 - 저자 서버가 그 접두사에 HTTP 400을 돌려준다.
 
-    계열을 `startswith`로 가르면 이것이 `oss-fuzz`로 떨어져 **없는 이미지 이름을 지어낸다.**
+    **콜론 없는** `startswith("oss-fuzz")`로 가르면 이것이 `oss-fuzz`로 떨어져 **없는 이미지 이름을
+    지어낸다**(저자 서버 자신은 콜론까지 넣은 `startswith("oss-fuzz:")`로 가르므로 겹치지 않는다).
     실측(2026-10-04): 저자 `tasks.json` @ `bde190d`의 과제 1,507건에서 이 접두사는 **0건**이고
     접두사는 `arvo` 1,368 · `oss-fuzz` 139 둘뿐이다. 그래서 거부가 맞다.
     """
@@ -962,8 +1024,16 @@ def test_explicit_images_for_an_unknown_family_also_need_an_explicit_command(cap
     「어긋났다」로 읽는다. 운영자가 무엇을 돌릴지 **말하게** 한다(이름을 지어내지 않는다와 같은 결).
     """
     fake = _Fake(_codes(_N))
-    assert _main(fake, task="whatever", extra=("--vul-image", VUL, "--fix-image", FIX)) == 2
+    touched = _TouchedHooks()
+    code = oracle_canary.main(
+        ["whatever", "--vul-image", VUL, "--fix-image", FIX], **_hooks(fake, **touched.hooks())
+    )
+    assert code == 2
     assert fake.seen == [], "명령을 모르는데 컨테이너를 돌렸다"
+    # 🔴 컨테이너 실행만이 아니다 - 이미지 확인 · 호스트 읽기 · **참조 PoC 읽기**(저자 정답 바이트를
+    # 메모리에 올리는 일)도 명령을 정한 **뒤**에 일어나면 안 된다. 순서가 바뀌어도 실행기만 보면
+    # 초록이었다.
+    assert touched.calls == [], f"무엇을 돌릴지 모르는데 먼저 건드렸다: {touched.calls}"
     assert "--run-cmd" in capsys.readouterr().err
 
 
@@ -974,6 +1044,44 @@ def test_an_explicit_command_lets_an_unknown_family_run(capsys):
     assert _main(fake, task="whatever", extra=extra) == 0
     assert VUL in capsys.readouterr().out
     assert fake.commands == ["/bin/arvo"] * (_N * 4)
+
+
+def test_an_explicit_command_beats_the_family_command_and_the_report_says_which_ran(tmp_path):
+    """🔴 **아는 계열에서** `--run-cmd`가 이긴다 - 위 검사는 모르는 계열이라 명시값이 곧 폴백이어서
+    「누가 이기는가」를 못 가린다. 우선순위를 뒤집어도(계열 명령이 이김) 그 검사는 초록이었다.
+
+    보고서의 `container_command`도 **실제로 돌린 명령**이어야 한다 - 과제 계열에서 다시 뽑으면
+    덮어쓴 run이 계열 기본값으로 기록된다(같은 과제 id에서 명령이 갈린다는 것이 이 칸의 존재 이유).
+    """
+    out = tmp_path / "canary.json"
+    override = "reproduce fuzz_target"
+    fake = _Fake(_codes(_N))
+    code = _main(fake, task="oss-fuzz:368076871", out=out, extra=("--run-cmd", override))
+    assert code == 0
+    assert fake.commands == [override] * (_N * 4)
+    assert _report(out)["container_command"] == override
+
+
+@pytest.mark.parametrize("blank", ["", " ", "\t"], ids=["empty", "space", "tab"])
+def test_a_blank_run_cmd_is_refused_before_anything_runs(blank, capsys):
+    """🔴 빈 `--run-cmd`가 `if run_cmd:`에 걸려 **조용히 계열 기본값**이 됐고, 공백뿐인 값은 통과해
+    `timeout`에 명령이 없는 argv(docker 125)가 됐다 - 못 잰 것이 「어긋났다」(exit 1)로 읽힌다.
+    줬는데 안 먹는 것도, 안 줬는데 먹은 것도 아니게 **거부한다.**
+    """
+    fake = _Fake(_codes(_N))
+    touched = _TouchedHooks()
+    code = oracle_canary.main(["arvo:1065", "--run-cmd", blank], **_hooks(fake, **touched.hooks()))
+    assert code == 2
+    assert fake.seen == [] and touched.calls == []
+    assert "--run-cmd" in capsys.readouterr().err
+
+
+def test_the_human_readable_output_names_the_command_that_ran(capsys):
+    """`--out` 없이 돌린 운영자가 `--run-cmd` 덮어쓰기가 먹었는지 볼 곳이 stdout뿐이다."""
+    assert _main(_Fake(_codes(_N)), task="oss-fuzz:368076871") == 0
+    assert "# command=/usr/local/bin/run_poc" in capsys.readouterr().out
+    assert _main(_Fake(_codes(_N)), extra=("--run-cmd", "/bin/arvo -x")) == 0
+    assert "# command=/bin/arvo -x" in capsys.readouterr().out
 
 
 def test_the_derived_command_reaches_every_container_call():
