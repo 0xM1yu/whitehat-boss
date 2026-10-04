@@ -380,12 +380,25 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   ① bootstrap ② 원격에 감시자 ③ 터널 ④ WSL·Linux에서 `SWAP_SSH_HOST`·`SWAP_REMOTE_ROOT`·`SWAP_REMOTE_PYTHON`을
   주고 run. 이 경로로 끝까지 돈 run은 아직 없다(가짜 ssh 테스트만 — `tests/test_remote_swap.py`).
   ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
-  [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)). Windows 쪽 서술의 사유는 #477이 고친다.
-  ⏵ 2026-10-04 — #477: ④의 「WSL·Linux에서」는 이제 조건이 아니다. Windows 네이티브에서 교대가 깨진 원인은 `bash`가
-  `System32`의 WSL 런처로 풀린 것이었고 `model_swap`이 실행 파일을 PATH로 먼저 푼다(Git Bash가 PATH에 있어야 한다).
-  Windows에서는 세 변수를 Git Bash `export`로 세우지 않는다 — MSYS가 `/root/…` 값을 Windows 경로로 바꾼다.
+  [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)). Windows 쪽 서술의 사유는 #477에서 정정했다(아래).
+  ⏵ 2026-10-04 — #477: Windows 네이티브에서 교대가 깨진 원인은 `bash`가 `System32` 아래의 WSL 런처로 풀린 것이었다.
+  `model_swap`이 `command[0]`을 `shutil.which`로 먼저 푼다. Windows에서는 세 변수를 Git Bash `export`로 세우지
+  않는다 — MSYS가 `/root/…` 값을 Windows 경로로 바꾼다.
   교대가 실패하면 하네스 경고·`model_swap` 이벤트의 상세 맨 앞에 교대 스크립트의 사유(`error`)가 온다(#476) ->
   원격 `swap.log`를 열지 않아도 된다.
+  ⏵ 2026-10-05 (#495 리뷰) — `which`는 PATH를 **앞에서부터** 본다. ④는 「WSL·Linux에서」말고도 **`Git\usr\bin`이
+  `System32`보다 앞에 있는 PATH**(Git Bash로 띄운 셸)에서 돌 수 있다. 그보다 앞에 없는 PATH(레지스트리 PATH —
+  PowerShell·cmd)에서는 which도 같은 런처를 골라, **교대를 시도할 때** 하네스가 띄우지 않고 `ModelSwapError`로
+  실패한다 — 교대면 run이 `model_swap_failed`로 멈추고 run 끝 내림이면 경고이며, 교대하지 않는 run(`--dry-run`·낮은
+  `--stop-after`)은 영향이 없다(그 run의 run 끝 내림이 경고 한 줄과 `model_swap ok=false` 이벤트 한 줄을 남긴다).
+  `SWAP_SSH_HOST`이 비었다 같은 엉뚱한
+  사유로 실패하는 대신 원인을 바로 말한다. Git Bash로 띄우거나 PATH 앞에 `Git\usr\bin`을 두거나 장비 파일
+  `command[0]`에 bash 절대경로를 쓴다 — 단 장비 파일은 추적 파일이라 고치면 `repo_dirty`로 그 run은 비교표에서
+  빠진다(실험 run에서는 앞의 둘을 쓴다). 막는 것은 `System32`의 `bash.exe`뿐이고(`WindowsApps` 별칭은 안 막고,
+  PATH에서 `bash`를 못 찾아 `which`가 못 풀면 못 막는다 — `CreateProcess`는 `System32`를 먼저 본다)
+  `doctor --device`는 이 판정을 안 한다 — doctor가 OK여도 교대를 시도하면 막힐 수 있다. 이 변경 뒤에 Windows
+  네이티브로 원격 교대를 끝까지 돌린 run은 없다 — **미실측**(위 Windows `run_20261003_0003`은 `command`를 Git Bash
+  절대경로로 고친 미커밋 우회로 돌았다 — 보고서 3.2).
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).
