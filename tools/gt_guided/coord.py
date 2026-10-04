@@ -173,7 +173,8 @@ def init(jobs_file, boxes_file):
     raw = Path(jobs_file).read_bytes()
     JOBS = json.loads(raw.decode("utf-8"))
     BOXES = json.loads(Path(boxes_file).read_text(encoding="utf-8"))
-    if not all(str(b["id"]).isascii() and str(b["id"]).isdigit() for b in BOXES):  # into `vastai destroy instance`
+    # ids go into `vastai destroy instance`: ASCII digits only (isdigit alone takes other scripts)
+    if not all(str(b["id"]).isascii() and str(b["id"]).isdigit() for b in BOXES):
         raise SystemExit("every box id in boxes.json must be a number (the vast instance id)")
     by_id = {j["sample_id"]: j for j in JOBS}
     sha = hashlib.sha256(raw).hexdigest()
