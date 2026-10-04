@@ -138,6 +138,7 @@ from src.orchestrator.source_definitions import (
     slice_line_refs,
     slice_names_first,
 )
+from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
@@ -791,6 +792,7 @@ def run_pipeline(
     deps: Dependencies,
     read_source: Callable[[Location], str],
     read_payload: Callable[[str], str | None] = lambda _ref: None,
+    read_raw: Callable[[str], bytes | None] = lambda _file: None,
     trace: TraceWriter,
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
@@ -825,6 +827,7 @@ def run_pipeline(
         read_source=read_source,
         read_slice=deps.read_slice,
         read_payload=read_payload,
+        read_raw=read_raw,
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
@@ -3224,6 +3227,17 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     ⏵ `auditor_entry_trim`이 1이면 entry 함수가 상한을 넘을 때 줄인다(`_trim_entry`) — 그때
     `entry_omitted_lines`가 뺀 줄 수를 들고, `anchor_chars`는 줄이기 전 크기 그대로다.
 
+    **GUARDS(`auditor_guards`)** — 1이고 sink를 아는 슬라이스(Case B)면 entry 함수 **바로 뒤에**
+    `source_guards`가 훑은 sink 앞 가드 블록을 붙인다. entry 함수 몫이라 상한에 밀려 빠지지
+    않고, 대신 그 크기를 **먼저** 세어 뒤에 붙는 함수가 그만큼 덜 든다(「+N more」 줄도 블록의
+    일부다). 줄이기(`auditor_entry_trim`) **전**의 원문을 훑는다 — 잘려 안 보이는 검사도 행으로
+    남는다. 함수가 아니라 `functions`에 안 들고, `guards`·`guards_dropped`가 따로 센다. **안 붙이는
+    경우**(Case A · 품는 함수를 모르는 창 앵커 · 줄이 어긋날 수 있는 파일 · sink를 못 찾음)는 사유를
+    `guards_skipped`가 든다. 0이면 이 단계가 없다.
+    ⚠ **PoV도 이 블록을 받는다** — 아래 `_step_auditor`가 이 SOURCE 문자열을
+    `state.finding_sources`로 물려 주고 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서
+    그대로 프롬프트에 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
+
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
     실린 함수가 쓰는 매크로·타입·파일 변수의 정의(`ctx.definitions_of`)를 붙인다. 정의 하나가
     `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 코드
@@ -3285,6 +3299,14 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         else:
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
+    # GUARDS(`auditor_guards`)는 줄이기 **전**의 원문을 훑는다 — 아래 `_trim_entry`가 잘라 낸 검사도
+    # 행으로 남는다. 켜지 않았으면 `guard_scan`이 `None`이라 블록도 이벤트 필드도 없다.
+    guard_scan = (
+        scan_guards(ref, anchor, anchor_text, ctx.read_source, ctx.read_raw)
+        if ctx.config.thresholds.auditor_guards
+        else None
+    )
+    guard_blocks = [guard_scan.block] if guard_scan and guard_scan.block else []
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
     # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
@@ -3306,6 +3328,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 리뷰). 위치를 같이 든다: 지역·파라미터는 함수마다 따로 빼야 해서다(`source_definitions`).
     bodies = [(anchor, _OMITTED_LINE.sub("", anchor_text))]
     size, dropped = measure(blocks[0]), 0
+    # GUARDS는 entry 함수 몫이라 상한에 안 밀리지만 크기는 먼저 센다 — 뒤에 붙는 함수가 그만큼
+    # 덜 든다.
+    size += sum(1 + measure(block) for block in guard_blocks)
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
@@ -3490,6 +3515,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             size += 1 + measure(block)
             write_windows += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
+    # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
+    # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
+    blocks[1:1] = guard_blocks
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
@@ -3497,7 +3525,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers - write_windows,
+        # 함수가 아닌 블록을 전부 뺀다 — 정의·호출자 창·쓰기 지점 창·GUARDS(0 또는 1). 래퍼·별칭·
+        # 간접 피호출은 함수 본문이라 센다. 옵션마다 따로 더한 식이 합쳐질 때 하나가 빠지면
+        # `functions`가 조용히 틀린다.
+        functions=len(blocks) - definitions - callers - write_windows - len(guard_blocks),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3544,6 +3575,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             if with_definitions
             else {}
         ),
+        **(guard_scan.event_fields() if guard_scan else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap
