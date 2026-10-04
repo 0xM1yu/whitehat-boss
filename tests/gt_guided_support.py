@@ -20,7 +20,7 @@ import tarfile
 import time
 import urllib.request
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -105,6 +105,9 @@ class FakeBox:
         self.ssh_calls: list[str] = []
         self.corrupt_downloads = 0  # 다음 N번의 내려받기를 한 바이트 깬다
         self.empty_sha = False  # tar는 성공하는데 sha256 출력이 비어 있다
+        self.omit_from_tar: set[str] = set()  # tar가 rc 0으로 이 표본들을 빼먹는다
+        self.fail_release = False  # 원격 `rm -rf out/<sid>`가 실패한다(rc 1, 아무것도 안 지움)
+        self.stuck: set[str] = set()  # 작업자가 안 가져가는 inbox 작업(`work()`가 건너뜀)
         self.slow_download_s = 0.0  # 내려받기가 가짜 시계를 이만큼 민다
         self.clock = None  # `FakeClock`
 
@@ -124,12 +127,16 @@ class FakeBox:
 
     def work(self, marker_of=lambda sid: "DONE", error_of=lambda sid: None) -> list[str]:  # noqa: ANN001
         """inbox에 있는 작업을 전부 끝낸다."""
-        sids = sorted(p.stem for p in (self.root / "inbox").glob("*.json"))
+        sids = sorted(
+            p.stem for p in (self.root / "inbox").glob("*.json") if p.stem not in self.stuck
+        )
         for sid in sids:
             self.finish(sid, marker_of(sid), error_of(sid))
         return sids
 
     def on_box(self, where: str) -> list[str]:
+        if not (self.root / where).is_dir():
+            return []
         return sorted(p.name.removesuffix(".json") for p in (self.root / where).iterdir())
 
     # ---- ssh ----
@@ -138,11 +145,13 @@ class FakeBox:
         if "tar -xf jobs_in.tar" in cmd:
             return self._unpack_jobs()
         if "ls inbox | wc -l" in cmd:
+            if not (self.root / "inbox").is_dir():  # 작업자가 못 뜬 상자 — `ls inbox`가 실패한다
+                return 2, ""
             return 0, self._poll(old="ls out/*/DONE" in cmd)
         if "tar czf" in cmd:
             return self._tar(cmd)
         if "echo '#inbox'" in cmd:
-            return 0, self._holdings()
+            return self._holdings(cmd)
         if "rm -f" in cmd or "rm -rf" in cmd:
             return self._remove(cmd)
         raise FakeBoxError(f"가짜 상자가 모르는 명령: {cmd!r}")
@@ -158,12 +167,17 @@ class FakeBox:
                     marks.append(d.name if old else f"out/{d.name}/{m}")
         return "\n".join([*counts, *marks]) + "\n"
 
-    def _holdings(self) -> str:
+    def _holdings(self, cmd: str) -> tuple[int, str]:
+        """명령이 `echo '#<구역>'`과 `ls <구역>`을 다 부른 구역만 낸다 — 빠진 구역은 안 낸다.
+        구역 디렉터리가 없으면 `ls`가 실패해 `&&` 사슬이 거기서 끊긴다(rc 2)."""
         out = []
         for d in ("inbox", "running", "out"):
-            out.append(f"#{d}")
-            out += [p.name for p in sorted((self.root / d).iterdir())]
-        return "\n".join(out) + "\n"
+            if f"echo '#{d}'" in cmd and f"ls {d}" in cmd:
+                if not (self.root / d).is_dir():
+                    return 2, ""
+                out.append(f"#{d}")
+                out += [p.name for p in sorted((self.root / d).iterdir())]
+        return 0, "\n".join(out) + "\n"
 
     def _unpack_jobs(self) -> tuple[int, str]:
         with tarfile.open(self.root / "jobs_in.tar") as tf:
@@ -183,7 +197,8 @@ class FakeBox:
             return 2, ""
         with tarfile.open(self.root / name, "w:gz") as tf:
             for s in sids:
-                tf.add(self.root / "out" / s, arcname=s)
+                if s not in self.omit_from_tar:
+                    tf.add(self.root / "out" / s, arcname=s)
         if self.empty_sha:
             return 0, ""
         return 0, hashlib.sha256((self.root / name).read_bytes()).hexdigest() + "\n"
@@ -194,6 +209,8 @@ class FakeBox:
         m = re.search(r"rm -rf (.*)$", cmd)
         if m:
             sids = shlex.split(m[1])
+            if self.fail_release:
+                return 1, ""
             self.deleted.append((sids, set(self.saved_pulled())))
             for s in sids:
                 _rmtree(self.root / "out" / s)
@@ -255,6 +272,8 @@ class FakeFleet:
             if self.vastai_missing:
                 raise FileNotFoundError("vastai")
             self.vastai.append(list(argv))
+            if self.vastai_rc == 0:  # 지워진 인스턴스는 더 이상 ssh에 답하지 않는다
+                self.box(int(argv[3])).down = "refuse"
             return subprocess.CompletedProcess(argv, self.vastai_rc, "destroying\n", "")
         target = next(a for a in argv if str(a).startswith("root@"))
         host = target.removeprefix("root@").split(":")[0]
@@ -277,3 +296,115 @@ class FakeFleet:
         return subprocess.CompletedProcess(
             argv, rc, out if text else out.encode(), "" if text else b""
         )
+
+
+# ---- 코디네이터 캠페인 부품 (test_gt_guided_coord*.py가 같이 쓴다)
+
+SIDS = ["a", "b", "c", "d"]
+
+
+class Crash(BaseException):
+    """프로세스가 죽은 것을 흉내 낸다 — 도구의 `except Exception`이 삼키지 못하게 BaseException."""
+
+
+def make_campaign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sids: list[str] = SIDS,
+    box_ids: tuple[int, ...] = (101,),
+    workers: int = 2,
+    pull_min: int = 2,
+    descriptions: dict[str, str] | None = None,
+) -> SimpleNamespace:
+    coord = load("coord")
+    coord.HERE = tmp_path / "tool"
+    coord.HERE.mkdir()
+    coord.STATE = coord.HERE / "state.json"
+    coord.DL = tmp_path / "Downloads"
+    coord.DL.mkdir()
+    coord.STAGE = coord.DL / "ft_gt_tmp"
+    coord.PULL_MIN = pull_min
+    descriptions = descriptions or {}
+    jobs = [
+        {
+            "sample_id": s,
+            "repo_url": "https://example.invalid/r.git",
+            "commit": "0" * 40,
+            "gt_points": [{"role": "sink", "file": "f.c", "line": 3, "line_end": 3}],
+            "description": descriptions.get(s, "plain"),
+            "project": "p",
+            "size_kb": 100 - i,
+        }
+        for i, s in enumerate(sids)
+    ]
+    jobs_path, boxes_path = tmp_path / "jobs.json", tmp_path / "boxes.json"
+    jobs_path.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
+    boxes = [{"id": i, "host": f"10.0.0.{i}", "port": 22, "workers": workers} for i in box_ids]
+    boxes_path.write_text(json.dumps(boxes), encoding="utf-8")
+
+    def saved_pulled() -> set[str]:
+        if not coord.STATE.exists():
+            return set()
+        return set(json.loads(coord.STATE.read_text(encoding="utf-8"))["pulled"])
+
+    fleet = FakeFleet(tmp_path / "boxes", {f"10.0.0.{i}": i for i in box_ids}, saved_pulled)
+    monkeypatch.setattr(subprocess, "run", fleet.run)
+    clock = FakeClock()
+    clock.install(monkeypatch)
+    for box in fleet.boxes.values():
+        box.clock = clock
+    coord.init(jobs_path, boxes_path)
+    return SimpleNamespace(
+        coord=coord, fleet=fleet, clock=clock, jobs=jobs_path, boxes=boxes_path, sids=sids
+    )
+
+
+def drive(c: SimpleNamespace, ticks: int = 40, **work) -> bool:  # noqa: ANN003
+    """한 틱 = 작업자가 inbox를 끝낸다 → 코디네이터가 한 바퀴. 코디네이터가 끝나면 True."""
+    for _ in range(ticks):
+        for box in c.fleet.boxes.values():
+            box.work(**work)
+        if c.coord.tick():
+            return True
+        c.clock.now += c.coord.LOOP_S
+    return False
+
+
+def run_main(c: SimpleNamespace) -> int:
+    """`main`을 돌린다 — 작업자가 매 틱 끝내고, 200틱 안에 안 끝나면 무한 루프로 보고 실패시킨다."""
+    original_tick, ticks = c.coord.tick, []
+
+    def tick_with_worker() -> bool:
+        ticks.append(1)
+        assert len(ticks) < 200, "main이 200틱 안에 안 끝났다 — 무한 루프"
+        for box in c.fleet.boxes.values():
+            box.work()
+        return original_tick()
+
+    c.coord.tick = tick_with_worker
+    return c.coord.main(["coord.py", str(c.jobs), str(c.boxes)])
+
+
+def log_text(c: SimpleNamespace) -> str:
+    return (c.coord.HERE / "COORD.log").read_text(encoding="utf-8")
+
+
+def batch_members(c: SimpleNamespace, skip: tuple[Path, ...] = ()) -> list[str]:
+    names: list[str] = []
+    for path in sorted(c.coord.DL.glob("ft_gt_auditor_batch*.tar")):
+        if path not in skip:
+            with tarfile.open(path) as tf:
+                names += tf.getnames()
+    return sorted(names)
+
+
+def plant_staged(c: SimpleNamespace, sid: str) -> Path:
+    """STAGE에 표본 하나의 `<sid>.tgz`를 둔다 — 이미 끊긴 run이 남긴 모양."""
+    c.coord.STAGE.mkdir(parents=True, exist_ok=True)
+    src = c.coord.HERE / f"plant_{sid}"
+    src.mkdir()
+    (src / "build.json").write_text(json.dumps({"sample_id": sid}), encoding="utf-8")
+    path = c.coord.STAGE / f"{sid}.tgz"
+    with tarfile.open(path, "w:gz") as tf:
+        tf.add(src, arcname=sid)
+    return path
