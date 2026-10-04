@@ -7,7 +7,7 @@
 | --- | --- |
 | `harness-tools/` | 1·2·8단계가 쓰는 컨테이너 이미지(clang·semgrep·gdb·인덱서). 아래 참조 |
 | `slicer/` | 오프라인 Joern 슬라이서 모듈들 — 하네스가 파일(`slices.json`)로 받는 입력을 만든다. 하네스는 import하지 않는다. 사용법은 [slicer-README.md](../docs/slicer-README.md) |
-| `gt_guided/` | 🔴 **긴급용 · FT 데이터 전용 · 하네스 슬라이싱 설계 아님.** GT 근처 후보만 잘라 Auditor FT 입력을 만든다(행마다 `gt_guided: true`). 실 Joern 종단 1회(표본 4개). [gt_guided/README.md](gt_guided/README.md) |
+| `gt_guided/` | 🔴 **긴급용 · FT 데이터 전용 · 하네스 슬라이싱 설계 아님.** GT 근처 후보만 잘라 Auditor FT 입력을 만든다(행마다 `gt_guided: true`). 실 Joern 종단 1회(표본 4개) · 테스트는 가짜 상자뿐(실 vast·ssh 0건). [gt_guided/README.md](gt_guided/README.md) |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `oracle_canary.py` | **수동 점검이다 — 채점을 막지 않는다.** 이 장비가 **입력과 무관한 크래시**(`139`)를 내는지 네 조합 × N회로 잰다 — 참조 PoC와 무해 입력을 `-vul`·`-fix`에 돌려 기대표와 대조한다(종료 코드: 통과 0 · 어긋남 1 · 못 돌림 2 · N이 작은 약한 통과 3). 🔴 **이 도구를 호출하는 코드가 없다**(문서 밖 호출자 0건) — 사람이 돌려 결과를 읽는다. 🔴 **실 Docker로 0회 돌았다** — 통과하는 28의 경우도 실패하는 32의 경우도 실제 관측이 없고, argv는 보고서 §13 재현 절차의 *모양*이지 저자 `run_container` 자체가 아니다. 근거는 [2026-10-02 왕복 보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md) · 이슈 #383 |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |

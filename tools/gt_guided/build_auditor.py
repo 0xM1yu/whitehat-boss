@@ -13,7 +13,8 @@ One JSONL row per slice:
   functions/dropped/uncovered_lines/chars/anchor_chars (the auditor_source event),
   lines (slice lines), gt_relevant (s500 handoff rule: a slice line within +-2 of a GT point),
   gt_in_source (a GT point line is among the lines the SOURCE shows), harness_commit,
-  slicer_run_signature, auditor_options, definitions/definitions_dropped, gt_guided (from the job).
+  slicer_run_signature, auditor_options, definitions/definitions_dropped, gt_guided (true when the
+  slices were GT-filtered -- slices.json's gt_filter -- or the job says so).
 Usage: build_auditor.py <harness> <job.json> <repo> <slices.json> <index.json> <out.jsonl.gz>
 """
 
@@ -167,8 +168,14 @@ def gt_direct_ref():
 GT_DIRECT = str(SLICES) == "-"
 if GT_DIRECT:
     signature, case_of, refs = None, {}, (gt_direct_ref(),)
+    gt_guided = True
 else:
     raw = load_slices(SLICES)  # SliceSet; plain slices.json (the driver gunzips)
+    # load_slices keeps four fields and drops gt_filter -- but a row built from GT-filtered slices
+    # must say so whatever the job says, or it mixes into data sliced by design
+    gt_guided = bool(
+        json.loads(SLICES.read_text(encoding="utf-8")).get("gt_filter", {}).get("gt_guided")
+    )
     signature = raw.run_signature
     case_of = {s.id: s.case for s in raw.slices}
     refs = slice_refs(raw)
@@ -241,7 +248,7 @@ with gzip.open(OUT, "wt", encoding="utf-8") as out:
             "auditor_source_tokens": thr.auditor_source_tokens,
             "definitions": ev.get("definitions"),
             "definitions_dropped": ev.get("definitions_dropped"),
-            "gt_guided": bool(job.get("gt_guided", False)) or GT_DIRECT,
+            "gt_guided": gt_guided or bool(job.get("gt_guided", False)),
             "gt_direct": GT_DIRECT,
         }
         out.write(json.dumps(row, ensure_ascii=False) + "\n")
