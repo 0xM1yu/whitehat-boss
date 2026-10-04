@@ -30,7 +30,9 @@
 """
 
 import json
+from pathlib import Path
 
+from src.adapters.container_tools import PAYLOAD_READ_CAP, make_payload_reader
 from src.orchestrator.prompt_loader import (
     _JSON_NOISE_KEYS,
     EVIDENCE_BODY_CHAR_CAP,
@@ -137,7 +139,14 @@ def test_the_model_sees_which_rule_hit_which_line() -> None:
 
 
 def test_the_findings_count_and_the_exit_code_survive() -> None:
-    """하네스가 남기는 줄(발견 수·종료 코드·절 구분)은 그대로다 — 뺀 것은 잡음 키 하나다."""
+    """하네스가 남기는 줄(발견 수·종료 코드·절 구분)은 그대로다 — 뺀 것은 잡음 키 하나다.
+
+    ⚠ **비회귀 핀 — 이 수정을 되돌려도 통과한다.** 그 줄들은 `stdout` 앞이라 head 안에 원래
+    있다. 호출 자리를 빼든, `_drop_json_noise`를 입력 그대로 돌려주게 하든, `_JSON_NOISE_KEYS`를
+    비우든 통과함을 되돌려 확인했다(PR #489 리뷰 반영). 막는 것은 이 수정이 그 줄을 **과하게**
+    지우는 회귀이고 **결함의 해소는 증명하지 않는다** — 그것은
+    `test_the_model_sees_which_rule_hit_which_line`이 핀한다.
+    """
     body = _body(_REAL_LOG)["body"]
 
     assert "# semgrep: 10 findings" in body
@@ -153,11 +162,28 @@ def test_the_dropped_size_is_recorded_in_place() -> None:
 
     `truncated` 플래그는 절단을 말하지 이 제거를 말하지 않는다. semgrep이 파싱에 실패한
     사실 자체가 「10건 찾았다」의 신뢰도에 걸리는 정보라(그 이슈의 부수 발견) 크기는 남긴다.
+    ⚠ 그 크기는 **재직렬화 길이**다 - 원문 글자 수가 아니다(바로 아래 테스트).
     """
     dropped = _drop_json_noise(_REAL_STDOUT)
 
     assert '"errors": "<921 chars dropped>"' in dropped
     assert "Syntax error at line" not in dropped
+
+
+def test_the_dropped_size_counts_the_reserialized_value_not_the_source() -> None:
+    """`<N chars dropped>`의 N은 **원문 글자 수가 아니라 재직렬화 길이**다(PR #489 리뷰).
+
+    같은 문서를 compact 구분자로 쓴 원문에서는 `errors` 값이 원문 기준 921자보다 짧은데도
+    자리표시자는 921이다 - `json.dumps` 기본 구분자(`", "`·`": "`)로 다시 쓴 길이라서다.
+    이 저장소의 실 semgrep 로그는 구분자가 기본값이라(아래 첫 단언 - 그 로그의 왕복은 바이트
+    동일이다) 실측 포맷에서는 둘이 같다. 다른 도구의 포맷은 미실측이다.
+    """
+    assert json.dumps(json.loads(_REAL_STDOUT)) == _REAL_STDOUT
+    compact = json.dumps(json.loads(_REAL_STDOUT), separators=(",", ":"))
+    source_size = len(json.dumps(json.loads(compact)["errors"], separators=(",", ":")))
+
+    assert source_size < 921
+    assert '"errors": "<921 chars dropped>"' in _drop_json_noise(compact)
 
 
 def test_the_result_is_still_valid_json() -> None:
@@ -174,6 +200,10 @@ def test_the_input_string_is_not_mutated() -> None:
     """모델로 가는 **사본**에서만 뺀다 - `_HARNESS_HEADER_LINE`과 같은 계약이다.
 
     순수 함수라 입력을 바꾸지 않고, 로그 파일은 리더가 읽기만 한다.
+
+    ⚠ **비회귀 핀이 아니라 계약의 서술이다 — `str`은 불변이라 어떤 구현에서도 통과한다**(이
+    수정을 되돌려도, 함수를 입력 그대로 돌려주게 해도 통과함을 되돌려 확인했다 — PR #489 리뷰
+    반영). 지우지 않고 남기는 것은 계약을 적어 두기 위해서다.
     """
     before = _REAL_LOG
 
@@ -210,6 +240,9 @@ def test_a_json_array_or_a_broken_object_is_untouched() -> None:
     ⚠ **두 경우를 거는 가드가 다르다**: 배열은 `{`로 시작하지 않아 줄 자체가 건너뛰어지고,
     깨진 객체는 `json.loads`의 `ValueError`가 건다. `isinstance(body, dict)` 검사는 **닿지
     않는다**(읽히는 `{`-시작 JSON은 객체다) — 오염 검증이 그것을 드러내 그 분기를 지웠다.
+
+    ⚠ **읽기 상한(`PAYLOAD_READ_CAP`)이 중간에서 자른 JSON 줄도 이 갈래다** - 그때는 이 수정의
+    효과가 꺼진다(`test_a_log_cut_by_the_read_cap_loses_the_effect`).
     """
     array = '[{"errors": [1, 2, 3]}]'
     broken = '{"errors": [1, 2, '
@@ -232,6 +265,11 @@ def test_the_noise_list_stays_short_and_declared() -> None:
     `interfile_languages_used` 2자 · `skipped_rules` 2자 · `version` 8자로 head를 먹지
     않는다. 취향으로 목록을 늘리면 **도구가 낸 결과를 뺄 수 있다** - 이 도구에서 `errors`는
     파싱 실패지만 다른 도구에서는 그것이 결과일 수 있다(그 경우는 미실측이다).
+
+    ⚠ **그 `paths` 51자는 단일 파일 run 한 건의 값이다.** `paths.scanned`는 스캔한 파일 수만큼
+    자라므로 디렉터리를 대상으로 돌면 `results`를 다시 head 밖으로 밀 수 있다 — 아래
+    `test_a_wide_paths_list_pushes_the_results_out_again`이 그 모양을 실행으로 보인다. 현재
+    호출부는 파일 경로만 넘기지만(코드 읽기) 디렉터리 대상 실행은 미실측이다.
     """
     assert _JSON_NOISE_KEYS == ("errors",)
 
@@ -240,8 +278,63 @@ def test_the_noise_list_stays_short_and_declared() -> None:
 
 
 def test_the_body_still_obeys_the_per_evidence_cap() -> None:
-    """뺀 뒤에도 상한은 상한이다 - 예산을 늘리는 수정이 아니다(그 이슈의 선택지 4를 안 골랐다)."""
+    """뺀 뒤에도 상한은 상한이다 - 예산을 늘리는 수정이 아니다(그 이슈의 선택지 4를 안 골랐다).
+
+    ⚠ **비회귀 핀 — 이 수정을 되돌려도 통과한다**(호출 자리를 빼든 함수를 입력 그대로 돌려주게
+    하든 `_JSON_NOISE_KEYS`를 비우든 통과함을 되돌려 확인했다 — PR #489 리뷰 반영). 상한은
+    `_bound_text`가 지키므로 어느 입력에서도 같다. 그리고 비교 대상이 **같은 모듈의 상수**
+    (`EVIDENCE_BODY_CHAR_CAP`)라 누가 그 상수를 올려도 통과한다 — 「예산을 안 늘렸다」는 값(800)을
+    못 박지 않는다.
+    """
     summary = _body(_REAL_LOG)
 
     assert len(summary["body"]) <= EVIDENCE_BODY_CHAR_CAP
     assert summary["truncated"] is True
+
+
+# --- 한계 - 고치지 않았다 (PR #489 리뷰) -------------------------------------------
+#
+# 아래 둘은 이 수정이 **효과를 잃는 모양**을 실행으로 고정한다. 한계가 풀리면(고치면) 빨개지고,
+# 그때 `prompt_loader`의 `_JSON_NOISE_KEYS` 주석·`_drop_json_noise` docstring과
+# `docs/agent-contracts.md`의 한계 서술을 같이 고친다.
+
+
+def test_a_wide_paths_list_pushes_the_results_out_again() -> None:
+    """한계 핀 - `paths.scanned`가 길면 `errors`를 뺀 뒤에도 `results`가 head 밖이다.
+
+    `paths`는 알파벳 순으로 `results`보다 앞이고 스캔한 파일 수만큼 자란다. 실측 한 건은 단일
+    파일이라 51자였다. 여기서는 픽스처의 `scanned`를 31자 경로 40개로 **늘렸다**(경로의
+    디렉터리는 실 로그 그대로다). 현재 호출부는 파일 경로만 넘기므로(코드 읽기) 실 run에서 이런
+    모양이 나오는지는 미실측이다.
+    """
+    wide = json.loads(_REAL_STDOUT)
+    wide["paths"]["scanned"] = [f"/src/src-vul/file/src/f{n:02d}.c" for n in range(40)]
+    log = _REAL_LOG.replace(_REAL_STDOUT, json.dumps(wide))
+
+    assert _RULE_ID not in _body(log)["body"]
+
+
+def test_a_log_cut_by_the_read_cap_loses_the_effect(tmp_path: Path) -> None:
+    """한계 핀 - 읽기 상한이 JSON 줄을 중간에서 자르면 `errors`가 다시 head를 먹는다.
+
+    `PAYLOAD_READ_CAP`(글자)이 stdout 줄을 자르면 `json.loads`가 실패해 `_drop_json_noise`가 그
+    줄을 손대지 않는다. 같은 문서를 안 자르고 주면 효과가 난다(대조) - 원인은 크기가 아니라
+    **자름**이다. 실 `make_payload_reader`로 읽는다. 상한을 넘는 로그는 픽스처 `errors[0].spans`를
+    그 첫 스팬의 반복으로 늘려 만들었다 - 실 run 한 건은 스팬 148개 · 60,964자였고 이 모양의 실
+    run은 미실측이다.
+    """
+    wide = json.loads(_REAL_STDOUT)
+    span = wide["errors"][0]["spans"][0]
+    wide["errors"][0]["spans"] = [span] * (PAYLOAD_READ_CAP // len(json.dumps(span)) + 1)
+    log = _REAL_LOG.replace(_REAL_STDOUT, json.dumps(wide))
+    target = tmp_path / "run" / "semgrep" / "ev_0002.log"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(log.encode("utf-8"))
+
+    read = make_payload_reader(tmp_path)("artifacts/run/semgrep/ev_0002.log")
+
+    assert len(log) > PAYLOAD_READ_CAP
+    assert read is not None
+    assert len(read) == PAYLOAD_READ_CAP  # 잘렸다
+    assert _RULE_ID in _body(log)["body"]  # 대조 - 안 자르면 효과가 난다
+    assert _RULE_ID not in _body(read)["body"]  # 잘리면 꺼진다
