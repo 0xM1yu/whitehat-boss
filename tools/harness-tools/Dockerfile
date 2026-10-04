@@ -7,6 +7,8 @@
 # (`writes_of`·`fn_pointer_targets` 등)가 `None`이다 — **다시 빌드해야 한다.** 같은 태그에 두
 # 내용이 있는 셈이라 run끼리는 `tool_images` digest로 가른다. 태그를 올릴지는 아직 정하지
 # 않았다(#464 리뷰). 아래 인덱서 연막 검사가 버전과 v3 표를 보므로 낡은 사본을 구우면 빌드가 죽는다.
+# ⏵ 2026-10-04 — 인덱서가 **index-v4**(`includes`·`enum_constants`)가 됐다. 그 전에 빌드한 이미지는
+# v3를 내고 정의 조회가 옛 규칙(include 도달성·enum 상수 없음)으로 돈다 — 다시 빌드한다.
 #
 # **태그를 latest로 두지 않는다.** 이 이미지의 digest가 `RunRecord.tool_images`에 박히므로
 # 버전이 고정돼야 두 run의 비교가 성립한다(evaluation.md §6).
@@ -95,7 +97,7 @@ RUN printf '#define N 1\nvoid a(void){}\nvoid b(void){ char x[2]; x[0] = 1; a();
  && python3 -c "import json,sys; d=json.load(open('/tmp/idx.json')); \
 e=sum(map(len, d['calls'].values())); \
 sys.exit(0 if len(d['symbols'])==2 and e==1 and 'N' in d['macros'] \
-and d['version']=='index-v3' and 'x' in d['writes'] else 1)" \
+and d['version']=='index-v4' and 'x' in d['writes'] else 1)" \
  && rm -f /tmp/idx.c /tmp/idx.json
 
 # `.inc` 연막 검사. 실측 샘플은 `target.c`가 `#include` 한 줄이고 코드가 전부 `.inc`에

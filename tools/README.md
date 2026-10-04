@@ -67,6 +67,8 @@ docker build -t harness-tools:v3 tools/harness-tools/
 **#304(index-v3) 전에 빌드한 v3 이미지는 다시 빌드한다** — 인덱서가 이미지에 구워지므로 낡은 이미지는
 index-v2를 내고, `index_graph`의 v3 조회(`writes_of`·`fn_pointer_targets` 등)가 `None`이 된다.
 태그는 그대로라 run끼리는 `tool_images` digest로 가른다(Dockerfile 머리 주석). sif도 같다.
+⏵ 2026-10-04 -> 인덱서가 index-v4(`includes`·`enum_constants`)가 됐다. 그 전에 빌드한 이미지는 v3를 내고
+정의 조회의 include 도달성·enum 상수가 안 붙는다(옛 규칙 그대로) -> 다시 빌드한다.
 
 **v2가 있는 장비에서 v3를 만들 때는 룰셋 커밋을 v2와 맞춘다** — `SEMGREP_RULES_COMMIT`의 기본값이
 브랜치(`develop`)라 그냥 빌드하면 gdb만 더하려던 이미지에서 정적 신호까지 움직인다. v1·v2 이미지는
@@ -277,6 +279,7 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | `calls` | `{"memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf", "src", "len"]}]}` — callee → 호출 지점(index-v2. v1은 같은 간선의 목록이었다) |
 | 조회 표(index-v2) | `functions`·`macros`·`types`·`file_vars`·`fields`·`locals`·`assigns`·`field_assigns` — 모양은 `indexer.py` 모듈 docstring. NE resolver 몫이고 캡슐로 가지 않는다 |
 | 조회 표(index-v3, #304) | `writes`(원소·역참조 대입 · 함수 안 선언 초기화) · `fn_bindings`(함수 포인터 필드에 묶인 함수 — 필드 대입·지정 초기화) · `field_calls`(`x->f(...)` 호출 지점) — v2 표는 그대로다. 읽는 쪽은 `index_graph`의 `writes_of`·`field_writes_of`·`fn_pointer_targets`·`indirect_callees_of` |
+| 조회 표(index-v4) | `includes`(파일 → `#include` 지시문 — 경로 원문 · 꺾쇠 여부) · `enum_constants`(enum 상수 → 그 enum 정의 전체 범위) · `types`의 앞선 선언 typedef 행에 `forward` — v3 표는 그대로다. 읽는 쪽은 `index_graph.definitions_of`(여러 정의 중 앵커가 include로 닿는 것이 하나뿐이면 그것) |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
 | `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
 | `files` | 실제로 인덱싱한 파일 — 분모다. `symbols`가 적을 때 "함수가 없다"와 "파일이 안 왔다"를 가른다 |
