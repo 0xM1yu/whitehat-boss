@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Auditor FT inputs for ONE sample (CPU only, no model): every slice -> the harness's own
 `runner._auditor_target` + `_auditor_source` with the harness's `config/budgets.yaml` thresholds,
-plus the sample's description. #349 Auditor source options are off (the s500 handoff shape) unless
-the environment turns them on: AUDITOR_DEFINITIONS=1 (#define / struct / file-variable definitions
-the carried code uses -- buffer sizes, field layout) and AUDITOR_OPTIONS="name=value,..." for any
-of them. The rows carry the options that were on (`auditor_options`).
+plus the sample's description. The Auditor SOURCE options are whatever `budgets.yaml` sets (since
+2026-10-04 the harness default turns them on), so a row is what a real run would assemble; the
+environment can change them for comparisons -- AUDITOR_DEFINITIONS=1 and AUDITOR_OPTIONS=
+"name=value,..." over `config.AUDITOR_SOURCE_OPTIONS`. The rows carry the options that were on
+(`auditor_options`).
 Ground truth is NOT used to build `source`; it only labels the row afterwards.
 
 One JSONL row per slice:
@@ -29,7 +30,7 @@ sys.path.insert(0, str(HARNESS))
 from src.adapters.fake_retriever import read_symbol_source  # noqa: E402
 from src.adapters.index_graph import GraphIndex  # noqa: E402
 from src.adapters.slices import load_slices, slice_refs  # noqa: E402
-from src.config import Thresholds  # noqa: E402
+from src.config import AUDITOR_SOURCE_OPTIONS, Thresholds  # noqa: E402
 from src.orchestrator import runner  # noqa: E402
 from src.schemas.candidate import SliceRef  # noqa: E402
 from src.schemas.common import Location  # noqa: E402
@@ -47,8 +48,9 @@ else:
     )
     commit = _rev.stdout.strip() or "unknown"
 graph = GraphIndex(INDEX)
-# the harness's own budgets.yaml thresholds (as `load_config` reads them); budgets.yaml sets no
-# #349 option, so each is off unless the environment below turns it on
+# the harness's own budgets.yaml thresholds (as `load_config` reads them) -- since 2026-10-04 that
+# file turns the Auditor SOURCE options on, so the rows match what a real run assembles. The
+# environment below can still change them for comparisons.
 import yaml  # noqa: E402
 
 thresholds = Thresholds.model_validate(
@@ -60,13 +62,8 @@ if os.environ.get("AUDITOR_DEFINITIONS") == "1":
     thresholds = thresholds.model_copy(update={"auditor_definitions": 1})
 # AUDITOR_OPTIONS="auditor_callee_hops=1,auditor_caller_lines=10": any other #349 option by name.
 # Validated through Thresholds (model_copy alone would skip the field bounds, e.g. hops <= 1).
-_OPTION_KEYS = {
-    "auditor_callee_hops",
-    "auditor_definitions",
-    "auditor_source_tokens",
-    "auditor_entry_trim",
-    "auditor_caller_lines",
-}
+# the harness's own list, so a new option needs no edit here
+_OPTION_KEYS = set(AUDITOR_SOURCE_OPTIONS)
 
 
 def with_options(base, spec):
@@ -101,6 +98,13 @@ def ctx(thr):
         callees_of=graph.callees_of,
         definitions_of=graph.definitions_of,
         call_sites_of=graph.call_sites_of,
+        # same lookups `adapters.factory.build_deps` wires into a real run (C4 · C6 · C5(a) need
+        # index-v3 tables; an older index answers None and those steps add nothing)
+        locals_of=graph.locals_of,
+        functions_named=graph.functions_named,
+        indirect_calls_of=graph.indirect_calls_of,
+        writes_of=graph.writes_of,
+        field_writes_of=graph.field_writes_of,
         read_source=lambda loc: read_symbol_source(REPO, loc),
         counter_for_role=lambda role: None,
         config=types.SimpleNamespace(thresholds=thr),
@@ -218,6 +222,14 @@ with gzip.open(OUT, "wt", encoding="utf-8") as out:
                     "call_sites",
                     "tokens",
                     "token_counter",
+                    "wrapper_callees",
+                    "alias_callees",
+                    "alias_definitions",
+                    "indirect_callees",
+                    "indirect_skipped",
+                    "write_windows",
+                    "write_windows_dropped",
+                    "write_sites_found",
                 )
             },
             "lines": [list(x) for x in ref.lines],
