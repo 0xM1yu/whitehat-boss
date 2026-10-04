@@ -3831,7 +3831,7 @@ def _definitions_by_file(
     파일 순 first-fit이라, 앞 파일 조회의 `tests/` 정의가 뒤 파일 조회의 제품 정의보다 앞서 상한을
     먹을 수 있다. 코드 줄(`found`는 파일 순 연결 · `slice_names_first`는 슬라이스 줄 이름만
     당긴다)로 입증했을 뿐 실행하거나 재지 않았다. 필요하면 조회들을 모은 뒤 `is_nonproduct_path`로
-    한 번 더 정렬한다(그 함수는 `src.adapters`에 있어 러너가 직접 못 쓴다)."""
+    한 번 더 정렬한다(그 함수는 `src/adapters/` 쪽에 있어 러너가 직접 못 쓴다)."""
     found: dict[Location, list[str]] = {}
     for file, names in names_by_file.items():
         for definition in ctx.definitions_of(names, file, **hygiene) or []:
