@@ -30,14 +30,16 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 `candidates`(후보마다 vul 제출 한 건 — 성공이면 `poc_id`·`response_exit_code`·`cached`, 실패면
 `error`·`error_detail`) · `final`. `final`은 run이 8단계 끝까지 가지 못했으면 `null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
-따른 값이다.
+따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
+읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
 
 ⚠ **`null`은 「안 돌았다」·「못 가렸다」다 — 0도 거짓도 아니다**(CLAUDE.md §0). `fix_exit_code`가
 `null`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 안 돌린 경우다. `final.status`가 `none`인 것
 (지정된 후보가 없었다)과 `failed`인 것(지정했는데 판정을 못 읽었다)은 다른 사건이다 —
-「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 셋이다:
-`no_poc`·`all_vul_submissions_failed`(지정할 후보가 없다) · `policy_undecided`(후보가 **둘 이상**
-인데 고르는 규칙이 정해지지 않았다 — 지정하지 않는다, `runner._designate_final`). 어느 쪽이든
+「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 넷이다:
+`no_poc`·`all_vul_submissions_failed`(지정할 후보가 없다) · `grade_tie`(후보가 **둘 이상**인데 내부
+근거 등급의 최댓값이 **동점이라** 안 가려졌다) · `grade_unknown`(후보 중에 등급을 모르는 것이 있다).
+뒤 둘은 **규칙이 없어서가 아니라 규칙이 거부한 것이다**(`runner._designate_final`). 어느 쪽이든
 `fix` 다리와 판정은 안 돈다.
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
@@ -77,15 +79,21 @@ STATUS_FAILED = "failed"
 STATUS_NONE = "none"
 STATUS_NOT_REACHED = "not_reached"
 
-# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 셋째는 후보가 **둘 이상**인데
-# 고르는 규칙이 정해지지 않아서다(`runner._designate_final`).
+# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 뒤 둘은 후보가 **둘 이상**인데
+# **규칙이 돌았는데 하나를 못 가려서**다(`runner._designate_final`). 「규칙이 없다」가 아니다 —
+# 규칙은 2026-10-03에 정해졌고(내부 근거 등급 최댓값 · 동점이면 거부) 그 규칙이 거부한 것이다.
 REASON_NO_POC = "no_poc"
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
-REASON_POLICY_UNDECIDED = "policy_undecided"
+REASON_GRADE_TIE = "grade_tie"
+REASON_GRADE_UNKNOWN = "grade_unknown"
 
-# `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. 후보가 하나뿐이라 고를 것이 없었다. 위치
-# (처음·마지막)나 점수로 고른 것이 아니다.
+# `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로도 채점기 점수로도
+# 고르지 않는다** - 이 저장소가 2026-10-03에 정한 규칙이고 저자의 금지 문장이 아니다(조사
+# 문서 1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 둘뿐이다: 후보가
+# 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 내부 근거 등급의 최댓값을 든 후보가
+# **하나뿐이라** 그것을 골랐다(`top_grade`).
 DESIGNATION_SOLE_CANDIDATE = "sole_candidate"
+DESIGNATION_TOP_GRADE = "top_grade"
 
 
 def clip_error(exc: BaseException) -> str:
@@ -189,6 +197,11 @@ class OracleLedger:
         self._log = log
         self.attempts: list[VulAttempt] = []
         self.final: FinalAttempt | None = None
+        # **지정이 읽은** 후보별 내부 근거 등급(`finding_id` -> `E0`~`E4`) - 재계산한 값이 아니라
+        # `runner._designate_final`에 넘어간 그 사전이다. 지정은 후보가 둘 이상일 때만 등급을
+        # 읽으므로 그때만 값이 있다(`None`은 **안 읽었다**). 이 기록이 없으면 지정 등급과 8단계
+        # `gate_eval`이 어긋나도(#460 리뷰) 다시 계산해야만 보였다.
+        self.grades: Mapping[str, str] | None = None
         self.write_error: str | None = None
         self._written = False
 
@@ -198,15 +211,21 @@ class OracleLedger:
         self.attempts.append(attempt)
         self._flush()
 
-    def set_final(self, final: FinalAttempt) -> None:
+    def set_final(self, final: FinalAttempt, grades: Mapping[str, str] | None = None) -> None:
         self.final = final
+        self.grades = grades
         self._flush()
 
     # --- 읽기 ---
 
     @property
+    def candidates(self) -> list[VulAttempt]:
+        """`vul` 제출이 **성공한** 시도 - 최종 PoC의 후보다(`runner._designate_final`)."""
+        return [attempt for attempt in self.attempts if attempt.ok]
+
+    @property
     def submitted(self) -> int:
-        return sum(1 for attempt in self.attempts if attempt.ok)
+        return len(self.candidates)
 
     @property
     def failed(self) -> int:
@@ -229,8 +248,8 @@ class OracleLedger:
             "vul_submitted": self.submitted,
             "vul_failed": self.failed,
             "final": STATUS_NOT_REACHED if self.final is None else self.final.status,
-            # `none`의 사유 — 후보가 여럿이라 지정 못 한 run(`policy_undecided`)과 후보가 없던 run을
-            # 매니페스트에서도 가른다.
+            # `none`의 사유 — 후보가 여럿인데 등급이 못 가른 run(`grade_tie`·`grade_unknown`)과
+            # 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
         }
@@ -239,7 +258,9 @@ class OracleLedger:
         """사이드카의 내용. 값의 뜻은 모듈 docstring이다."""
         return {
             "candidates": [_attempt_record(attempt) for attempt in self.attempts],
-            "final": None if self.final is None else _final_record(self.final, self.attempts),
+            "final": None
+            if self.final is None
+            else _final_record(self.final, self.attempts, self.grades),
         }
 
     def warnings(self) -> list[str]:
@@ -301,12 +322,18 @@ def _none_warning(final: FinalAttempt, submitted: int) -> str:
     콘솔에 찍히므로 cp949로 인코딩할 수 있는 글자만 쓴다.
     """
     tail = "이 run은 채점 점수가 없다"
-    if final.reason == REASON_POLICY_UNDECIDED:
+    if final.reason == REASON_GRADE_TIE:
         return (
-            f"vul 제출이 성공한 후보가 {submitted}건이라 최종 PoC를 지정하지 않았다 - 후보가 둘 "
-            "이상일 때 고르는 규칙이 정해지지 않았다(조사 문서 1.3절은 마지막·처음·best-of로 "
-            "고르지 말라고 하고, 모델에게 묻는 방식은 별도 조각이다). fix 다리와 판정 조회를 "
-            f"돌리지 않았다 - {tail}"
+            f"vul 제출이 성공한 후보가 {submitted}건인데 내부 근거 등급의 최댓값이 동점이라 최종 "
+            "PoC를 지정하지 않았다 - 등급으로 하나를 못 가렸고 위치(처음·마지막)나 채점기 점수로 "
+            "고르지 않는 것이 이 저장소의 규칙이다(2026-10-03). fix 다리와 판정 조회를 돌리지 "
+            f"않았다 - {tail}"
+        )
+    if final.reason == REASON_GRADE_UNKNOWN:
+        return (
+            f"vul 제출이 성공한 후보가 {submitted}건인데 그중 내부 근거 등급을 모르는 것이 있어 "
+            "최종 PoC를 지정하지 않았다 - 등급 없이 고르면 없는 근거로 고르는 것이다. fix 다리와 "
+            f"판정 조회를 돌리지 않았다 - {tail}"
         )
     cause = (
         "vul 제출이 전부 실패해"
@@ -362,12 +389,16 @@ def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
     }
 
 
-def _final_record(final: FinalAttempt, attempts: Sequence[VulAttempt]) -> dict[str, object]:
+def _final_record(
+    final: FinalAttempt, attempts: Sequence[VulAttempt], grades: Mapping[str, str] | None
+) -> dict[str, object]:
     row: dict[str, object] = {
         "status": final.status,
         "designation": final.designation,
         "wall_ms": final.wall_ms,
     }
+    if grades is not None:
+        row["candidate_grades"] = dict(grades)
     if final.status == STATUS_NONE:
         return {**row, "reason": final.reason}
     attempt = final.attempt
