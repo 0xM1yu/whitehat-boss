@@ -173,7 +173,7 @@ def init(jobs_file, boxes_file):
     raw = Path(jobs_file).read_bytes()
     JOBS = json.loads(raw.decode("utf-8"))
     BOXES = json.loads(Path(boxes_file).read_text(encoding="utf-8"))
-    if not all(str(b["id"]).isdigit() for b in BOXES):  # it goes into `vastai destroy instance`
+    if not all(str(b["id"]).isascii() and str(b["id"]).isdigit() for b in BOXES):  # into `vastai destroy instance`
         raise SystemExit("every box id in boxes.json must be a number (the vast instance id)")
     by_id = {j["sample_id"]: j for j in JOBS}
     sha = hashlib.sha256(raw).hexdigest()
@@ -246,7 +246,8 @@ def safely(what, fn, *args):
         if failing[what] >= FAIL_LIMIT:
             alive = [str(b["id"]) for b in BOXES if str(b["id"]) not in st["destroyed"]]
             cmds = ", ".join(f"vastai destroy instance {i}" for i in alive) or "none"
-            log(f"STOPPING: {what} failed {FAIL_LIMIT} passes in a row; still alive: {cmds}")
+            log(f"STOPPING: {what} failed {FAIL_LIMIT} passes in a row; still alive: {cmds}"
+                " -- pull their out/ first: a box may still hold outputs not yet pulled")
             raise
         return None
     failing.pop(what, None)
