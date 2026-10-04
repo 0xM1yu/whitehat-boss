@@ -37,6 +37,7 @@ from src.orchestrator.prompt_loader import (
     PromptTemplate,
     load_prompt,
 )
+from src.orchestrator.runner import RunSpec, _new_record
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import CapsuleLevel, FindingState, Location, Role
 from src.schemas.auditor import AUDITOR_TOOLS, AuditorAction
@@ -1166,9 +1167,12 @@ def test_a_run_with_the_loop_off_takes_the_one_shot_path_and_emits_no_hop_events
 ) -> None:
     """`auditor_tool_hops=0`이면 종전 한 방 경로다 — 호출 하나·`Finding` 스키마·홉 이벤트 0건.
 
-    꺼진 run의 요청이 종전과 같아야 이전 run과 비교할 수 있다(evaluation §2.3). 홉 이벤트의
-    **부재**는 「루프를 안 켰다」를 뜻하고 「홉이 0이었다」가 아니다(`EventKind.AUDITOR_HOP`
-    주석) — 그래서 꺼진 run이 한 건이라도 내면 그 구별이 무너진다.
+    꺼진 run의 요청이 종전과 같아야 이전 run과 비교할 수 있다(evaluation §2.3). 홉 이벤트는
+    루프가 돌 때만 나가므로 꺼진 run이 한 건이라도 내면 「돌았다」와 「안 돌았다」의 구별이
+    무너진다. ⚠ **거꾸로 읽지 않는다 — 이벤트 0건이 「루프를 안 켰다」는 아니다**(켠 run도 첫
+    호출이 실패하면 0건이다, `EventKind.AUDITOR_HOP` 주석). 꺼짐을 가르는 것은 `model_call`의
+    `schema`(`Finding` ↔ `AuditorAction`)이고, 아래 마지막 단언이 그것이다. manifest의
+    `auditor_tool_hops`는 실제로 도는 값만 싣는다(`runner._recorded_thresholds`).
 
     ⏵ 2026-10-04 — **저장소 기본은 더 이상 꺼짐이 아니다**(`config/budgets.yaml`이 16을 든다,
     이슈 #419). 그래서 여기서 **명시로 끈다** — 기본값에 기대던 전제 한 줄이 그 PR에서
@@ -1192,13 +1196,80 @@ def test_the_off_switch_leaves_no_trace_in_the_recorded_thresholds() -> None:
     기록의 모양은 갈린다(#349 `AUDITOR_SOURCE_OPTIONS`·#375 `scout_slice_trim`과 같은 규약이다).
     켜면 값이 실린다 — 안 실으면 어떤 상한으로 돈 run인지 기록이 안 남는다.
 
-    ⏵ 2026-10-04 — 저장소 기본이 16이 됐으므로(이슈 #419) **지금부터 모든 manifest가 이 키를
+    ⏵ 2026-10-04 — 저장소 기본이 16이 됐으므로(이슈 #419) **루프가 도는 run의 manifest는 이 키를
     든다.** 「없다」 쪽은 명시로 끈 run의 성질이고, 그쪽이 여전히 참인지가 이 검사의 절반이다 —
-    끄는 길이 막히면 옛 manifest와 모양을 맞출 방법이 없어진다."""
+    끄는 길이 막히면 옛 manifest와 모양을 맞출 방법이 없어진다. 여기서 보는 것은 `flatten()`(설정값)
+    이고, 러너가 manifest에 싣는 값은 아래 `_recorded`를 쓰는 검사들이 본다 — Fake 면제로 한 방으로
+    도는 좌석은 설정이 16이어도 키가 없다."""
     thresholds = load_config("dev_fake").thresholds
 
     assert thresholds.flatten()["auditor_tool_hops"] == 16.0, "저장소 기본(#419)"
     assert "auditor_tool_hops" not in thresholds.transition(auditor_tool_hops=0).flatten()
+
+
+def _recorded(config, tmp_path: Path):  # noqa: ANN001, ANN202
+    """**생산 경로**(`runner._new_record`)가 만든 `RunRecord`.
+
+    `flatten()`만 단언하면 러너가 그 값을 쓰지 않아도 초록이다 — `test_config.py`의
+    `reasoning_efforts` 검사가 같은 이유로 이 함수를 부른다."""
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config,
+        "run_20260901_0001",
+        datetime(2026, 9, 1, tzinfo=UTC),
+        [],
+        {},
+        {},
+        None,
+    )
+    return record
+
+
+def test_a_seat_the_fake_exemption_covers_records_no_tool_hops(tmp_path: Path) -> None:
+    """`loop_problem`의 둘째 규칙 면제로 **한 방으로 도는** Auditor 좌석의 manifest에는
+    `auditor_tool_hops`가 없다.
+
+    `thresholds`는 프로필 공통이라 저장소 기본 16(이슈 #419)이 `dev_fake`에도 걸린다. 그 좌석은
+    `Finding` 판이라 루프를 안 돈다 — 16을 그대로 싣으면 manifest는 「켰다」이고 `auditor_hop`은
+    0건이라 **「켰는데 한 번에 answer했다」**로 읽힌다(CLAUDE.md §0: 안 돈 것을 돈 값으로 적는다).
+    키 부재는 이 저장소가 「꺼짐」을 적는 방식이다(`Thresholds.flatten`)."""
+    config = load_config("dev_fake")
+    entry = config.model_for("auditor")
+    assert config.thresholds.auditor_tool_hops == 16, "전제 — 저장소 기본이 켜져 있다"
+    template = load_prompt(Role.AUDITOR, entry.prompt_template_version)
+    assert template.output_schema == "Finding" and entry.is_fake, "전제 — 면제가 걸린 좌석이다"
+    assert auditor.loop_problem(template, 16, is_fake=True) is None, "전제 — 면제다"
+
+    record = _recorded(config, tmp_path)
+
+    assert "auditor_tool_hops" not in record.thresholds
+
+
+def test_a_served_loop_seat_records_the_cap_it_ran_with(tmp_path: Path) -> None:
+    """위 검사의 음성 쌍 — 실서빙 좌석(`harness_pool`: v8 · `AuditorAction`)은 16이 그대로 실린다.
+
+    위만 보면 러너가 이 키를 늘 빼도 초록이다. 켠 run이 어떤 상한으로 돌았는지가 이 기록의
+    존재 이유다(`test_the_off_switch_leaves_no_trace_in_the_recorded_thresholds`의 「켜면 값이
+    실린다」)."""
+    record = _recorded(load_config("harness_pool"), tmp_path)
+
+    assert record.thresholds["auditor_tool_hops"] == 16.0
+
+
+def test_a_fake_seat_that_really_loops_records_its_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fake 좌석이어도 **루프 판을 고르면 루프가 돈다** — 그 manifest는 상한을 싣는다.
+
+    이 파일의 B1~B8이 그렇게 돈다(`_loop_config` — Fake 좌석 + 임시 디렉터리의 루프 판).
+    면제의 판정은 `is_fake`가 아니라 **판이 `AuditorAction`을 선언하는가**다(`_ask_model`의 분기와
+    같다). `is_fake`로 빼면 위 둘은 초록이고 여기서만 빨개진다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    config = _loop_config(load_config("dev_fake"), hops=4)
+
+    record = _recorded(config, tmp_path)
+
+    assert record.thresholds["auditor_tool_hops"] == 4.0
 
 
 # --- B5: 조사만으로 상한을 소진 ----------------------------------------------------
@@ -1386,8 +1457,11 @@ def test_the_cli_gate_lets_a_declared_loop_and_a_switched_off_loop_through(
 ) -> None:
     """도구를 선언한 판은 통과하고, 루프를 끈 한 방 판도 통과한다 — 위 거절 검사의 양성 쌍이다.
 
-    거절만 보면 게이트를 「늘 ERROR」로 바꿔도 초록이다. 꺼진 run을 막으면 기본 설정의 모든 run이
-    시작을 못 한다 — 기본 설정(저장소 프롬프트 · 상한 0)이 통과하는 것도 같이 본다."""
+    거절만 보면 게이트를 「늘 ERROR」로 바꿔도 초록이다. 막는 규칙이 멀쩡한 설정을 막으면 기본
+    설정의 모든 run이 시작을 못 한다 — 기본 설정(`dev_fake`: 저장소 프롬프트 v1 한 방 판 · 저장소
+    기본 상한 16)이 통과하는 것도 같이 본다. ⏵ 2026-10-04 — 저장소 기본 상한은 더 이상 0이 아니다
+    (이슈 #419). 그 설정이 통과하는 것은 상한이 꺼져서가 아니라 **Fake 좌석 면제**(`loop_problem`의
+    둘째 규칙) 덕이다."""
     assert cli._auditor_loop_problem(ctx.config) is None
     assert cli._check_auditor_loop(ctx.config) == []
 
