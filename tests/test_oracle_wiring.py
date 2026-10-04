@@ -11,7 +11,8 @@ fix 다리는 후보가 0개면 0번 · 1개 이상이면 정확히 한 번 도�
 등급의 최댓값 · 동점이면 거부」였고 실측 run에서 후보 8건이 **같은 PoC 바이트 1개**라 그 거부가
 점수를 0으로 만들었다. 지금은 같은 바이트끼리 **접고**(`sole_poc`) 남은 동점을 **전순서**로
 가른다 — ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시. `designation`에 **실제로 가른
-단계**가 찍힌다. 등급을 모르는 후보가 있으면 여전히 거부다(`grade_unknown`). 끝 절의 검사들이 그
+단계**가 찍힌다. 등급 또는 `confidence`를 모르는 후보가 있으면 여전히 거부다(`grade_unknown`).
+끝 절의 검사들이 그
 사슬과 **불변식**(지정 로직은 채점기가 돌려준 값을 안 읽는다)을 건다.
 
 ⚠ **위 `ctx` 문맥의 후보 N개는 근거가 없는 손수 만든 Finding이라 등급이 전부 E0이고 `confidence`도
@@ -35,11 +36,19 @@ from src import cli
 from src.interfaces.oracle import OracleOutcome, VulSubmission
 from src.orchestrator import oracle_log as oracle_log_module
 from src.orchestrator import runner
+from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.oracle_log import OracleLedger, OracleLog, VulAttempt, vul_ok
+from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade, PovStopReason
 from tests.oracle_fakes import TASK_ID, FakeOracle, submit_script
-from tests.test_nodes import _pov_state, ctx  # noqa: F401
+from tests.test_nodes import (  # noqa: F401
+    _demoted_at_validate,
+    _outside_validated,
+    _pov_state,
+    _with_top_n,
+    ctx,
+)
 from tests.test_pov_loop import _gen, _scripted
 
 _SUBMITTED = PovStopReason.SUBMITTED
@@ -564,6 +573,86 @@ def test_the_runner_leaves_a_sidecar_that_survives_a_run_cut_short_before_the_fi
     record = json.loads((tmp_path / "oracle" / "verdict.json").read_bytes())
     assert [c["finding_id"] for c in record["candidates"]] == [findings[0].finding_id]
     assert record["final"] is None
+    summary = state.oracle_ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
+
+
+# --- 추가 PoV 대상(`pov_attempt_top_n`)에서 예산이 끊겨도 이미 낸 PoC의 최종 지정은 간다 ---------
+#
+# 추가 대상은 `validated` 뒤에 붙어 같은 루프에서 돈다. `BudgetExhausted`는 흡수하지 않고 올려
+# 보내는 계약이라(`_run_pov_hops`) 그것이 `_finalize_oracle`을 건너뛰게 하면, **앞 대상이 이미 낸
+# PoC의 최종 지정(`fix` 다리·판정 조회)까지 잃는다** - 상한 0이었으면 점수가 났을 run이다
+# (적대적 리뷰 #490 MEDIUM-1). `validated` 대상에서 끊긴 run은 종전 그대로다.
+
+
+def _validated_and_one_extra(ctx):  # noqa: ANN001, ANN202, F811
+    """`validated` 1건(`find_0001`) + 그 밖 1건(`find_0002`)에 상한 1 - `_analyze`가 둘 다
+    `_run_pov`로 부른다. 채점기 장부를 켠 상태다."""
+    state, validated = _demoted_at_validate(ctx)
+    outside, (extra,) = _outside_validated(ctx, [("find_0002", 0.9)])
+    state.update(extra)
+    state.finding_capsules.update(outside.finding_capsules)
+    _with_top_n(ctx, 1)
+    state.oracle_ledger = OracleLedger(wired=True)
+    return state, validated, extra
+
+
+def _pov_loop_that_runs_out_of_budget_at(monkeypatch, stop_at):  # noqa: ANN001, ANN202
+    """`_run_pov_hops`가 `stop_at`번째(0부터) 호출에서 `BudgetExhausted`를 낸다 - 그 앞 호출은 PoC를
+    내고 제출까지 간다. 반환은 호출된 finding_id 목록이다(어디까지 갔는지 본다)."""
+    reached: list[str] = []
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        index = len(reached)
+        reached.append(finding.finding_id)
+        if index == stop_at:
+            raise BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+        return _POCS[index], _SUBMITTED
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+    return reached
+
+
+def test_a_budget_stop_inside_the_extra_pov_targets_still_designates_the_final(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """`validated` 대상이 PoC를 내 vul 제출까지 성공한 뒤 **추가 대상**에서 예산이 소진돼도 최종
+    지정이 돈다 - `fix` 다리·판정 조회가 정확히 한 번이고 `oracle.final`이 `not_reached`가 아니다.
+    `BudgetExhausted`는 그대로 올라간다(`run_pipeline`이 그것으로 `stopped_after`와 사유를
+    적는다)."""
+    state, validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1)
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [_POCS[0]]
+    assert oracle.final_calls == [(_POCS[0], oracle.vul_results[0])]
+    summary = state.oracle_ledger.summary()
+    assert summary is not None
+    assert (summary["final"], summary["final_reason"]) == ("scored", None)
+    (final,) = _events(ctx, EventKind.ORACLE_FINAL)
+    assert final.subject_id == validated.finding_id
+    assert final.data["designation"] == "sole_candidate"
+
+
+def test_a_budget_stop_inside_the_validated_targets_leaves_the_final_not_reached(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """**`validated` 대상 루프의 예산 소진 동작은 안 바뀌었다** - 첫 대상에서 끊기면 낼 PoC가
+    없었고, 최종 단계는 안 불려 매니페스트 요약이 `not_reached`로 남는다. 위 검사의 `except`가
+    `validated`까지 넓어지는 변이를 이 검사가 문다."""
+    state, validated, _extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 0)
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id]
+    assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
     summary = state.oracle_ledger.summary()
     assert summary is not None and summary["final"] == "not_reached"
 
@@ -1214,8 +1303,8 @@ def test_designation_does_not_read_oracle_fields(
     그 값은 **지정 시점에 손에 있다** - `VulSubmission.response_exit_code`가 후보마다 장부 행에
     실려 있어서(`oracle_log._attempt_record`) 「없어서 안 읽는다」가 아니다. 그래서 문구가
     아니라 **접근**을 문다: 후보의 `submission`이 `_TrapSubmission`이고(속성·`vars`·`repr`·`==`
-    전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 · 등급 미상 · 후보 하나)
-    돌린다.
+    전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 · 등급 또는 confidence 미상 ·
+    후보 하나) 돌린다.
 
     **오염 테스트다** - 어느 분기에든 `attempt.submission.response_exit_code`를 보거나 `repr`로
     고르는 한 줄을 넣으면 그 분기가 빨개진다(2026-10-04 스크래치 사본에서 변이 아홉으로 확인).

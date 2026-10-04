@@ -809,7 +809,7 @@ def _oracle_for(
         "fix 다리와 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
         "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
         "하나를 고른다(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). 등급을 "
-        "모르는 후보가 있으면 보내지 않는다"
+        "모르는 후보가 있으면 보내지 않는다(confidence를 모르는 후보도 같다)"
     )
     return TaskOracle(
         server=target,
@@ -1084,9 +1084,13 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     **Auditor는 도구 루프를 켜면 후보당 `1 + auditor_tool_hops`회**(`thresholds.auditor_tool_hops`,
     기본 0 = 종전의 1회)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
 
-    **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 finding당 최대
-    `1 + max_hops`회 더 부른다(VALIDATED = critic 통과분이라 최대 `min(candidates, critic_top_n)
-    × (1 + max_hops)`, 계산값). 이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
+    **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 PoV 대상 finding당
+    최대 `1 + max_hops`회 더 부른다. 대상은 VALIDATED(critic 통과분이라 최대
+    `min(candidates, critic_top_n)`)에 `pov_attempt_top_n`이 양수면 그 밖에서 더한 것이라 상한은
+    `min(candidates, critic_top_n + pov_attempt_top_n) × (1 + max_hops)`다(계산값 —
+    `runner._pov_targets`가 더하는 수는 `pov_attempt_top_n` 이하이고 finding은 후보당 하나다.
+    `pov_attempt_top_n`이 0이면 `min(candidates, critic_top_n) × (1 + max_hops)` 그대로다).
+    이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
     scout_calls = candidates * (1 + config.thresholds.max_hops)
