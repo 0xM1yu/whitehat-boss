@@ -492,8 +492,12 @@ def tool_hops_in_effect(version: str, hops: int) -> int:
     양수여도 판이 `Finding`(한 방)이면 루프는 안 돈다 — `loop_problem`이 Fake 좌석에만 허용하는
     면제다. 러너가 `RunRecord.thresholds`에 설정값 대신 이 값을 싣는다: 설정값 16을 그대로 싣으면
     manifest는 「켰다」인데 `auditor_hop`은 0건이라 「켰는데 한 번에 answer했다」로 읽힌다.
-    프롬프트를 못 읽으면 `PromptError`다(`_ask_model`의 첫 줄과 같다).
+    프롬프트를 못 읽으면 `PromptError`다(`_ask_model`의 첫 줄과 같다). **상한 0은 프롬프트를 안
+    읽는다** — 판이 무엇이든 결과가 0이라, 읽으면 꺼진 run의 `_new_record`에 이전에 없던 실패 지점만
+    생긴다(`--stop-after` 5 미만·`--dry-run`은 `cli`의 Auditor 프롬프트 게이트를 안 지난다).
     """
+    if not hops:
+        return 0
     template = load_prompt(ROLE, version)
     return hops if resolve_output_schema(template.output_schema) is AuditorAction else 0
 

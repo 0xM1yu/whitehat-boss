@@ -156,7 +156,13 @@ def test_v8_tells_the_model_to_look_a_missing_capsule_fact_up_before_giving_up()
     v7에서 물려받은 문장(「use `reachability_unknown` … when the contract permits it」)이 홉 절의
     *「`lookup`이 맞는 다음 홉, `reachability_unknown`은 물었는데 못 받았을 때」*와 따로 놀았다 —
     같은 프롬프트의 두 지시가 달랐다(PR #491 리뷰 LOW-2). 한 방 판 v7은 되물을 길이 없으므로 그
-    문장이 맞고 **v7은 그대로다**(그래서 이 문장은 `_REPLACED_IN_V8` 열셋 중 넷째 줄이다)."""
+    문장이 맞고 **v7은 그대로다**(그래서 이 문장은 `_REPLACED_IN_V8` 열셋 중 넷째 줄이다).
+
+    ⚠ **철자·순서 핀이다 — 성질 핀이 아니다.** 단서 문구가 있는지와 `lookup`이
+    `reachability_unknown` 앞인지만 묻는다. 뜻을 뒤집는 **같은 길이**의 재작성
+    (「only when」→「even when」)은 못 잡는다 — 복사본에서 그렇게 바꿔 v8 테스트 18개가 전부
+    통과하는 것을 확인했다(독립 검토 L-4). 단서를 지우거나 순서를 뒤집는 변경은 잡는다. 모델이
+    그 문장을 따르는지는 이 검사의 몫이 아니고 **미측정**이다(v8로 돈 run 0건 — CLAUDE.md §2.2)."""
     omitted = "When the capsule omits a caller, guard, source-to-sink connection"
     (v7_line,) = [x for x in _prefix(V7).splitlines() if x.startswith(omitted)]
     (v8_line,) = [x for x in _prefix(V8).splitlines() if x.startswith(omitted)]

@@ -1272,6 +1272,28 @@ def test_a_fake_seat_that_really_loops_records_its_cap(
     assert record.thresholds["auditor_tool_hops"] == 4.0
 
 
+def test_a_switched_off_loop_records_without_reading_the_auditor_prompt(tmp_path: Path) -> None:
+    """상한 0이면 `_new_record`가 Auditor 프롬프트를 **안 읽는다** — 못 읽어도 run이 거기서 안 선다.
+
+    `tool_hops_in_effect`가 `hops == 0`에서도 프롬프트를 먼저 읽으면 결과는 어차피 0인데 **수정
+    전에 없던 실패 지점**이 `_new_record`에 생긴다. `cli run`의 `_auditor_loop_problem`이 같은
+    프롬프트를 먼저 읽어 막지만 그 게이트는 `stop_at >= AUDITOR`일 때만 돈다 — `--stop-after` 5
+    미만·`--dry-run`은 Auditor 프롬프트를 안 읽고 `_new_record`에 온다(독립 검토 L-1). 그리고 상한이
+    **양수면** 읽어야 하므로(면제 판정이 그 meta에 달렸다) 못 읽는 판은 여전히 `PromptError`다 —
+    조용히 「안 돈다」로 적지 않는다(fail-closed). 샘플은 저장소 실물이다: `harness_pool`의 Auditor
+    좌석 판 이름만 디스크에 없는 `v99`로 바꿨다."""
+    config = load_config("harness_pool")
+    key = config.profile.roles["auditor"]
+    missing = config.models[key].transition(prompt_template_version="v99")
+    broken = config.transition(models={**config.models, key: missing})
+    off = broken.transition(thresholds=broken.thresholds.transition(auditor_tool_hops=0))
+
+    assert "auditor_tool_hops" not in _recorded(off, tmp_path).thresholds
+
+    with pytest.raises(PromptError):
+        _recorded(broken, tmp_path)
+
+
 # --- B5: 조사만으로 상한을 소진 ----------------------------------------------------
 
 
