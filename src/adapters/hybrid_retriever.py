@@ -53,6 +53,7 @@ from src.adapters.index_graph import (
     GraphIndex,
     SliceBody,
     graph_section,
+    source_lines,
 )
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retrieval import (
@@ -489,7 +490,7 @@ def _chunk_tree(root: Path) -> Iterable[Chunk]:
             continue
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
-        lines = path.read_text("utf-8", errors="replace").splitlines()
+        lines = source_lines(path.read_text("utf-8", errors="replace"))
         relative = path.relative_to(root).as_posix()
         for start in range(0, len(lines), CHUNK_LINES):
             text = "\n".join(lines[start : start + CHUNK_LINES]).strip()
@@ -512,7 +513,7 @@ def read_symbol_source(root: Path, target: Location) -> str:
     text = _read_source(root, target.file)
     if target.line_start is None:
         return text
-    lines = text.splitlines()
+    lines = source_lines(text)
     end = target.line_end or target.line_start
     return "\n".join(lines[max(target.line_start - 1, 0) : end])
 

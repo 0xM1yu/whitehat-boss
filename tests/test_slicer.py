@@ -160,6 +160,16 @@ def payloads(*, case_a=None, case_b=None, flow_count=0, truncated=False):
                 "flow_count": flow_count,
                 "truncated": truncated,
                 "lines": [{"file": "main.c", "line": 5}] if flow_count else [],
+                "endpoints": (
+                    [
+                        {
+                            "source": {"file": "main.c", "line": 1},
+                            "sink": {"file": "main.c", "line": 5},
+                        }
+                    ]
+                    if flow_count
+                    else []
+                ),
             },
         ),
         "backward": response(
@@ -640,7 +650,13 @@ def test_a_poisoned_candidate_is_isolated_not_cascaded(monkeypatch, repo, tmp_pa
         if len(calls) == 2:
             return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
         return response(
-            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+            "flows",
+            {
+                "flow_count": 2,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "endpoints": [],
+            },
         )
 
     data["flows"] = flows
@@ -1026,7 +1042,13 @@ def test_crossfile_flow_and_new_context_survive_assembly(monkeypatch, repo, tmp_
     inventory["files"].append("other.cpp")
     data["inventory"] = response("inventory", inventory)
     data["flows"] = response(
-        "flows", {"flow_count": 1, "truncated": False, "lines": [{"file": "other.cpp", "line": 2}]}
+        "flows",
+        {
+            "flow_count": 1,
+            "truncated": False,
+            "lines": [{"file": "other.cpp", "line": 2}],
+            "endpoints": [],
+        },
     )
     contexts = []
 
@@ -1781,7 +1803,13 @@ def test_a_script_run_isolates_a_poisoned_candidate(monkeypatch, repo, tmp_path)
         if len(calls) == 2:
             return {"success": True, "stdout": "java.lang.StackOverflowError", "stderr": ""}
         return response(
-            "flows", {"flow_count": 2, "truncated": False, "lines": [{"file": "main.c", "line": 5}]}
+            "flows",
+            {
+                "flow_count": 2,
+                "truncated": False,
+                "lines": [{"file": "main.c", "line": 5}],
+                "endpoints": [],
+            },
         )
 
     data["flows"] = flows
