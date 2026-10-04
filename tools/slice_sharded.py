@@ -32,9 +32,10 @@ Exit: 0 = every candidate complete; 3 = `--out` written but some candidates inco
 see summary.json `merge`, `dead_shards`, `wall_stopped_shards`); 1 = failed (prepare, a server,
 merge or export failed, or every shard died); 2 = usage error; 128 + signal when stopped by
 SIGTERM/SIGHUP -- shards and servers are stopped and summary.json is written on every path.
-Servers are stopped as whole process groups, all at once: SIGTERM, up to STOP_GRACE_SECONDS for the
-groups to empty (one pass over /proc per tick for all of them), SIGKILL, a check -- pids still alive
-after that are in summary.json `unstopped_pids`. (`joern` is an sh that runs the JVM as a child,
+Servers and shards are stopped as whole process groups, all at once: SIGTERM, up to
+STOP_GRACE_SECONDS for the groups to empty (one pass over /proc per tick for all of them),
+SIGKILL, a check -- pids still alive after that are on stderr and in summary.json
+`unstopped_pids`; the exit code does not change. (`joern` is an sh that runs the JVM as a child,
 and a JVM busy with a query ignores SIGTERM.)
 ⚠ SIGKILL of this tool cannot be caught: its servers and shards (own sessions) keep running.
 POSIX only (process groups via killpg, start_new_session).
@@ -59,9 +60,9 @@ SLICER = ROOT / "tools" / "slicer" / "slicer.py"
 MERGE = ROOT / "tools" / "merge_slicer_shards.py"
 SERVER_START_SECONDS = 300  # set value: a Joern server that is not listening by then failed
 # Stopping servers (stop_all): SIGTERM, wait for the whole process groups, then SIGKILL. Measured
-# once (dev box, 2026-10-03, heap 2g): a Joern server with no query running left on SIGTERM in
+# on the dev box (2026-10-03, heap 2g): a Joern server with no query running left on SIGTERM in
 # 0.5-0.7 s (3 runs; a `ps` check that skipped zombies, so a lower bound), one with a query running
-# had not left after 30 s. The two waits are set values.
+# had not left after 30 s (1 run). The two waits are set values.
 STOP_GRACE_SECONDS = 10
 KILL_VERIFY_SECONDS = 10  # how long a SIGKILLed group may take to vanish
 STOP_POLL_SECONDS = 0.1
@@ -304,14 +305,25 @@ def wait_servers(servers: list[tuple[subprocess.Popen, int, Path]],
             time.sleep(0.5)
 
 
+def _own_proc() -> bool:
+    """Whether /proc is the pid namespace this process is in: `/proc/self` names our own pid there.
+    A sandbox that unshares the pid namespace and keeps the host's /proc (bubblewrap, `unshare -p`)
+    shows the host's pids -- no group of ours is in it, and every group would look empty."""
+    try:
+        return os.readlink("/proc/self") == str(os.getpid())
+    except OSError:
+        return False
+
+
 def _live_groups(groups: set[int]) -> dict[int, list[int]]:
     """The live pids of each of these process groups, from ONE pass over /proc however many groups
     there are (a group with none is left out). An unreaped zombie is not live (`killpg(group, 0)`
     counts it) unless other threads of it are still exiting: they hold its sockets -- a killed
     server's port kept accepting for up to 0.57 s after SIGKILL (dev, 2026-10-03, 3 runs). Without
-    /proc `killpg` is all there is, and the leader's pid names the group."""
+    a /proc of our own `killpg` is all there is (it counts an unreaped zombie), and the leader's pid
+    names the group."""
     found: dict[int, list[int]] = {}
-    if not Path("/proc/self/stat").exists():
+    if not _own_proc():
         for group in groups:
             try:
                 os.killpg(group, 0)
@@ -321,8 +333,11 @@ def _live_groups(groups: set[int]) -> dict[int, list[int]]:
         return found
     for entry in Path("/proc").iterdir():
         pid = _digits(entry.name)
-        text = _read(entry / "stat") if pid is not None else None
-        if text is None:
+        if pid is None:
+            continue
+        try:  # bytes: the kernel cuts comm at 15 bytes, mid-character too, and that is not UTF-8
+            text = (entry / "stat").read_bytes().decode("utf-8", "replace")
+        except OSError:  # gone since the listing
             continue
         # "pid (comm) state ppid pgrp ..." -- comm can hold spaces and parentheses
         fields = text.rpartition(")")[2].split()
@@ -347,15 +362,18 @@ def _signal_group(group: int, sig: int) -> None:
 
 
 def _wait_gone(groups: dict[int, subprocess.Popen], seconds: float) -> dict[int, list[int]]:
-    """Until none of these process groups has a live member (reaping the launchers on the way);
-    what is still alive when `seconds` ran out. One /proc pass per tick for all of them: a thread
-    per process that each rescanned /proc took 12.5-31.1 s to stop 8-32 servers among 1,000-3,000
-    processes, 10 s of it the grace (WSL2, 2026-10-04, one run each)."""
+    """Until none of these process groups has a live member; what is still alive when `seconds` ran
+    out. One /proc pass per tick for all of them: a thread per process that each rescanned /proc
+    took 12.5-31.1 s to stop 8-32 servers among 1,000-3,000 processes, 10 s of it the grace; one
+    scan per tick took 10.0-10.2 s there, the grace plus 0.1-0.2 s (WSL2, 2026-10-04, stub servers,
+    one run per point, four points). The launchers are reaped on the way: `poll()` runs after the
+    scan, so a launcher the scan found dead (a SIGKILLed one is a zombie by then) is reaped before
+    we return."""
     deadline = time.time() + seconds
     while groups:
+        alive = _live_groups(set(groups))
         for process in groups.values():
             process.poll()
-        alive = _live_groups(set(groups))
         if not alive or time.time() >= deadline:
             return alive
         groups = {group: groups[group] for group in alive}
@@ -366,9 +384,10 @@ def _wait_gone(groups: dict[int, subprocess.Popen], seconds: float) -> dict[int,
 def _terminate(processes: list[subprocess.Popen]) -> list[int]:
     """End every process and everything else in its process group, all at once; returns the pids
     that outlived SIGKILL. `joern` is an `sh` that runs the JVM as a child, and a JVM with a query
-    running never finishes its shutdown hook (it queues behind the query; eight outlived a run on
-    2026-10-03), so the launcher dying says nothing: SIGTERM to every group, STOP_GRACE_SECONDS for
-    them to empty, SIGKILL for what is left, a check. The time does not grow with their number."""
+    running does not finish its shutdown hook until that query ends (jstack, text not kept; eight
+    outlived a run on 2026-10-03), so the launcher dying says nothing: SIGTERM to every group,
+    STOP_GRACE_SECONDS for them to empty, SIGKILL for what is left, a check. They share one grace
+    (measured at four points, see _wait_gone)."""
     if not hasattr(os, "killpg"):  # not POSIX: no process group, best effort on the children
         for process in processes:
             try:
