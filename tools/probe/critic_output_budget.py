@@ -24,7 +24,9 @@ E2 미만은 7단계에 못 간다.
 
 ## 프롬프트는 작다 — 21,021은 이 경로의 수가 아니다
 
-**이 probe가 되만드는 v1 경로 한정이다**(`_reconstruct` — `_ask_model`의 metadata-only 조립):
+**이 probe의 metadata-only 재구성 한정이다**(`_reconstruct` — v1 입력 모양):
+프롬프트 판은 registry에서 읽어 기록하지만 v6의 SOURCE·근거 본문·위치는 재구성하지 않는다.
+그 판의 실 입력 토큰으로 읽지 않는다. SOURCE 자리표시자가 있으면 빈 문자열로 채운다.
 `build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences` **셋뿐**이다(content-aware 판은
 `evidence_bodies`·`evidence_locations`를 더 넘긴다 — 이 probe의 경로가 아니다). `capsule=`도
 `source=`도 `target=`도 안 넘긴다. 그래서 Critic의 사실 블록은
@@ -154,10 +156,11 @@ class Reconstructed:
 def _reconstruct(
     finding: Finding, evidences: list[Evidence], *, template: PromptTemplate, run_id: str
 ) -> Reconstructed:
-    """`nodes/critic._ask_model`의 **metadata-only 조립**(v1)으로 프롬프트를 되만든다.
+    """v1 입력 모양의 metadata-only 조립. 프롬프트 판은 호출자가 고른 대로 기록한다.
 
     content-aware 버전은 `evidence_summaries`로 근거 본문을 더 실으므로 이 되만듦과
-    달라진다 — 이 프로브는 본문 없는 조립의 토큰 예산을 재는 자리다.
+    달라진다 — 이 프로브는 본문 없는 조립의 토큰 예산을 재는 자리다. SOURCE를 받는
+    판의 원문 블록도 빈 문자열이며 현재 실 입력을 재구성했다는 뜻이 아니다.
 
     `decision_id`를 하네스가 발급한 값이 아니라 자리표시자로 채운다 — 그 run은 Critic을
     안 불렀으므로 발급된 적이 없다. 길이에 미치는 영향이 상수 한 줄이라 분포를 안 움직인다.
@@ -172,6 +175,7 @@ def _reconstruct(
         claim=f"{finding.title} ({finding.cwe})",
         path=_describe_path(finding),
         evidence=_describe_evidence(own),
+        **({"source": ""} if "{{SOURCE}}" in template.body else {}),
     )
     return Reconstructed(
         finding_id=finding.finding_id,
@@ -313,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[출처]     {args.state_db}  run_id={source_run_id}")
     print(f"[모델]     {model_key} @ {entry.endpoint}  prompt={ROLE.value}/{template.version}")
+    print("[입력 범위] metadata-only 재구성: SOURCE·근거 본문·위치는 빠져 있다")
     print(f"[Finding]  {len(built)}건 · Evidence {len(evidences)}건")
     print(f"[근거 붙은 Finding] {grounded}/{len(built)}  ← 0이면 D67이 살아 있다는 뜻이다")
     print(f"[프롬프트 추정토큰] {_distribution([r.est_tokens for r in built])}")
@@ -331,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             "note": (
                 "하네스 run이 아니다 — 조건 비교표 밖이다(evaluation.md §6). "
                 "근거 블록이 비어 있으면 프롬프트 크기는 하한이다(D67/#172)."
+                " SOURCE·근거 본문·위치는 재구성하지 않아 content-aware 실 입력이 아니다."
             ),
         },
         "source_state_db": str(args.state_db),
