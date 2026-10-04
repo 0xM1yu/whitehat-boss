@@ -1,9 +1,9 @@
 """채점기(oracle) CLI 조립 — `--oracle-submit`·`--oracle-server`·`submit.sh` 신원 (#386).
 
-`cli._oracle_for`의 거절 갈래(서버 주소·task_id 모양·체크섬·번들의 다른 주소·키)가 **제출 전에**
-멈추는지, 8단계에 못 닿는 run은 경고만 하는지, 파서 기본값이 안 뒤집혔는지, 키가 출력되지 않는지를
-본다. 오라클 객체를 만드는 `cli.TaskOracle`은 스텁으로 바꿔 **거절 갈래는 하나도 안 만든다**는 것을
-센다.
+`cli._oracle_for`의 거절 갈래(서버 주소·task_id 모양·체크섬·번들의 다른 주소·키·카나리 보고서)가
+**제출 전에** 멈추는지, 8단계에 못 닿는 run은 경고만 하는지, 파서 기본값이 안 뒤집혔는지, 키가
+출력되지 않는지를 본다. 오라클 객체를 만드는 `cli.TaskOracle`은 스텁으로 바꿔 **거절 갈래는
+하나도 안 만든다**는 것을 센다.
 
 러너 쪽(후보마다 vul · 지정한 하나에만 fix)은 `tests/test_oracle_wiring.py`가, 플래그에서
 서버까지 이어지는 운영 배선 전체는 `tests/test_pipeline_e2e.py`가 돌려 본다 — 여기서는 `cli.run`을
@@ -444,8 +444,9 @@ def test_a_key_with_whitespace_or_control_characters_is_refused(
 
     끝에 CR이 붙은 키(CRLF 파일을 `$(cat key.txt)`로 읽으면 생긴다)는 `http.client`가 헤더를
     만들기 전에 `ValueError("Invalid header value b'<키>\\r'")`로 거부하고, 그 문구가
-    `error_detail`을 거쳐 사이드카 `oracle/verdict.json`에 **그대로** 쓰인다. 어댑터의 가림막은
-    자기 예외 클래스만 지웠다.
+    `error_detail`을 거쳐 사이드카 `oracle/verdict.json`에 **그대로** 쓰인다. 앞 판의 어댑터
+    가림막은 자기 예외 클래스만 지웠고, 지금은 `Exception`과 `repr(bytes)` 모양까지 지운다 - 이
+    입구 검사는 그 앞의 첫 겹이다(가림막 쪽 핀은 아래 둘).
 
     ⚠ **거절 문구에 키가 없어야 한다** - 막으면서 찍으면 같은 사고다.
     """
@@ -460,7 +461,11 @@ def test_a_key_with_whitespace_or_control_characters_is_refused(
 
 
 def test_the_redaction_covers_exceptions_that_are_not_ours(tmp_path: Path) -> None:
-    """가림막이 `CyberGymOracleError`만 지우면 키를 든 다른 예외가 그대로 장부로 간다."""
+    """가림막이 `CyberGymOracleError`만 지우면 키를 든 다른 예외가 그대로 장부로 간다.
+
+    ⚠ **이 핀은 클래스 넓힘만 문다.** 던지는 문구는 지어낸 것이라 `http.client`가 키를 문구에
+    싣는 모양을 대표하지 않는다 - 그 모양은 바로 아래 핀이 `http.client`를 실제로 불러 든다.
+    """
     from src.adapters import cybergym_oracle as oc
 
     oracle = oc.TaskOracle(
@@ -469,11 +474,43 @@ def test_the_redaction_covers_exceptions_that_are_not_ours(tmp_path: Path) -> No
 
     with pytest.raises(oc.CyberGymOracleError) as caught:  # noqa: PT012
         with oracle._redacting():
-            raise ValueError("Invalid header value b'SECRET-abc123\\r'")
+            raise ValueError("bad value SECRET-abc123 in header")
 
     message = str(caught.value)
     assert "SECRET-abc123" not in message
     assert "ValueError" in message and "***" in message
+
+
+# 키가 `http.client`의 오류 문구에 실리는 모양은 `repr(bytes)`다 - 실제 CR·LF가 이스케이프로 바뀐다.
+# `"SECRETKEY123é…"`는 라틴-1 범위 문자(`é`)가 든 키다: `http.client`는 헤더 값을 **라틴-1**로
+# 인코딩해 `repr`하므로 UTF-8로 인코딩한 `repr`(`\xc3\xa9`)은 그 모양이 아니다.
+@pytest.mark.parametrize(
+    "key",
+    ["SECRETKEY123\r", "SECRETKEY123\n", "SECRETKEY123\r\n", "SECRETKEY123é\r"],
+)
+def test_the_redaction_hides_the_key_in_the_shape_http_client_puts_it_in(key: str) -> None:
+    """🔴 **가림막이 `http.client`가 실제로 쓰는 문구 모양의 키를 지우는지** - 지어낸 문구가 아니다.
+
+    `TaskOracle.submit_vul`이 CR·LF가 든 키로 첫 요청(`/query-poc`)을 만들면 `http.client.putheader`
+    가 소켓을 열기 **전에** `ValueError("Invalid header value b'<키>\\r'")`를 던진다(네트워크
+    호출 없이 재현된다). 앞 판의 가림막은 실제 CR이 든 원문으로 `str.replace`해서 이 `repr`
+    모양(`\\r` 두 글자)과 안 맞았고 키가 그대로 남았다(`src/cli.py`의 입구 검사가 막는 CLI 경로에선
+    안 샜지만 어댑터를 직접 쓰는 호출에서는 샌다).
+    """
+    from src.adapters import cybergym_oracle as oc
+
+    oracle = oc.TaskOracle(
+        server="http://127.0.0.1:9", task_id=TASK_ID, agent_id=_AGENT, api_key=key
+    )
+
+    with pytest.raises(oc.CyberGymOracleError) as caught:
+        oracle.submit_vul(b"x")
+
+    message = str(caught.value)
+    # 전제를 먼저 건다: 정말 `http.client`가 만든 문구인가. 아니면 아래 단언은 빈 말이다.
+    assert "Invalid header value" in message
+    assert "SECRETKEY123" not in message
+    assert "***" in message
 
 
 def test_the_gate_and_the_tool_agree_on_the_entropy_limit() -> None:
@@ -492,6 +529,25 @@ def test_the_gate_and_the_tool_agree_on_the_entropy_limit() -> None:
     spec.loader.exec_module(tool)
 
     assert MMAP_RND_BITS_MAX == tool.MMAP_RND_BITS_MAX
+
+
+def test_the_gate_and_the_tool_agree_on_the_measured_repeat() -> None:
+    """🔴 반복 횟수의 하한도 같은 이유로 리터럴이 둘이다 - 게이트가 `repeat`를 직접 견주는 수
+    (`canary_report.MEASURED_REPEAT`)가 도구가 `weak_pass`를 가르는 수(`_MEASURED_REPEAT`)와
+    갈리면, 도구는 통과로 쓴 보고서를 게이트가 거절하거나 도구가 약하다고 쓴 보고서를 통과시킨다.
+    """
+    import importlib.util
+
+    from src.adapters.canary_report import MEASURED_REPEAT
+
+    spec = importlib.util.spec_from_file_location(
+        "_oracle_canary_tool", Path(cli.REPO_ROOT) / "tools" / "oracle_canary.py"
+    )
+    assert spec is not None and spec.loader is not None
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+
+    assert MEASURED_REPEAT == tool._MEASURED_REPEAT
 
 
 def test_a_canary_inside_the_task_tree_is_refused(
@@ -604,6 +660,37 @@ def test_the_oracle_server_flag_has_no_default() -> None:
     assert flags["oracle_server"].default is None
     assert flags["oracle_server"].required is False
     assert flags["oracle_submit"].default is False
+
+
+def test_the_submit_help_names_every_flag_that_is_required_with_it() -> None:
+    """`--oracle-submit` 도움말이 **함께 필수인 옵션을 빠뜨리지 않는다** (리뷰 LOW-1).
+
+    새 필수 `--oracle-canary`가 들어올 때 이 도움말의 「…와 함께만 쓴다」가 `--task-dir`와
+    `--oracle-server`만 들고 있었다(`_oracle_for` docstring·거절 목록·
+    `docs/agent-contracts.md`는 고쳤다). 동반 옵션은 **자기 도움말이 「--oracle-submit이면
+    필수다」라고 적은 옵션**에서 센다 - 다음에 필수 옵션이 또 늘어도 그 문구를 따르면 여기서
+    걸린다.
+
+    ⚠ 한계: 그 문구로 센다. 필수라고 적으면서 다르게 쓴 옵션은 못 본다(그래서 둘은 이름으로도
+    박았다). `--task-dir`는 자기 도움말에 그 문구가 없어 이름으로만 본다.
+    """
+    run = next(
+        action.choices["run"]
+        for action in cli.build_parser()._actions
+        if getattr(action, "choices", None) and "run" in action.choices
+    )
+    flags = {a.option_strings[0]: a for a in run._actions if a.option_strings}
+    companions = {
+        name
+        for name, action in flags.items()
+        if name != "--oracle-submit" and "--oracle-submit이면 필수다" in (action.help or "")
+    }
+    assert {"--oracle-server", "--oracle-canary"} <= companions  # 센 방법이 둘을 놓치지 않았다
+
+    submit_help = flags["--oracle-submit"].help or ""
+    missing = sorted(name for name in companions | {"--task-dir"} if name not in submit_help)
+
+    assert not missing, f"--oracle-submit 도움말이 {missing}를 안 든다"
 
 
 def test_the_help_text_is_printable_on_a_cp949_console() -> None:
