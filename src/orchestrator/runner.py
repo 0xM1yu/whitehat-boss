@@ -1076,18 +1076,14 @@ def run_pipeline(
     }
     # **등급을 리포트에 넘긴다 (#101·PR #37).** Finding에 등급 필드가 없어 등급은 게이트
     # 판정이라 trace에만 있었고, 그래서 리포트가 대표를 고를 때 등급을 못 보고(E3 삭제)
-    # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다.
+    # 최종 산출물에 등급을 못 실었다. 계산은 `_grades_by_finding`(순수 함수 — `gate_eval`을
+    # 재발행하지 않는다)이고 최종 PoC 지정(`_finalize_oracle`)이 **같은 함수**를 부른다.
     #
-    # **`evidences_for`로 이 Finding이 참조하는 근거만 거른다** — 6·7·8단계 게이트가 전부
-    # 그렇게 하고(`gate_node`·`critic`·`validate`), 안 거르면 artifact 단위 근거 묶음의 다른
-    # Finding 근거로 등급이 올라가 제거율이 무의미해진다. Fake auditor에선 근거가 전량이라
-    # 무동작이지만 **실서빙 auditor가 붙으면 켜진다**(#36의 B1′/B3′). `ctx.evaluate_gate`가
-    # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
-    #
-    # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
-    # 들어간다. 이유는 그 하나이고, 그것을 만드는 자리가 아래 `after, _ = validate.run(...)`이다
-    # (`produced`를 반환하는데 `_`로 버린다). E4가 이 경로로도 열리면 그 근거를 여기로 모으는
-    # 일이 따라온다.
+    # **E4도 이 경로로 나온다 (#460 리뷰).** 8단계 `validate.run`이 만든 런타임 근거(`produced`)를
+    # `_analyze`가 `state.evidences`에 모으므로 이 등급이 8단계 `gate_eval`과 같다. 그 전에는 그것을
+    # 버려 E4가 `ctx.store`에만 있었고 이 경로·지정이 둘 다 E3으로 읽었다.
+    # ⚠ **그래서 리포트의 등급·대표 선정도 E4에 닿는다** - 재현에 성공한 Finding이 `[E3]`이 아니라
+    # `[E4]`로 찍히고 `dedupe`의 대표로 E4가 먼저 남는다(`report.dedupe`가 등급 우선이다).
     #
     # ⚠ **「Fake에선 E4가 원리상 도달 불가」를 두 번째 이유로 달았던 것은 거짓이라 뺐다.**
     # `FakeToolRunner._run_repro()`는 실행 대신 대상 소스의 존재를 보므로 Fake 경로에서 E4는
@@ -1218,7 +1214,7 @@ def _analyze(
     # 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
     validated = state.in_state(FindingState.VALIDATED)
     for finding in validated:
-        after, _ = validate.run(
+        after, produced = validate.run(
             ctx,
             finding=finding,
             workdir=state.workdirs.get(finding.finding_id, "."),
@@ -1227,6 +1223,18 @@ def _analyze(
             decisions=state.decisions.get(finding.finding_id, ()),
         )
         state.update(after)
+        # **8단계가 만든 런타임 근거(build와 asan·poc 실행 로그)를 모은다.** 버리면
+        # `_grades_by_finding`이 8단계 `gate_eval`과 다른 등급(E4 대신 E3)을 계산해 최종 PoC
+        # 지정(`_designate_final`)이 E4를 못 본다 - 후보가 둘 이상이면 어느 run에서나 E3 동점이라
+        # `top_grade`가 도달 불가였다(#460 리뷰). 이것은 **하네스가 도구를 돌려 낸 내부 근거**이고
+        # 채점기 응답이 아니다 - 채점기 값은 `oracle_ledger`에만 들어가고 이 사전에는 안 닿는다
+        # (`test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다). 새 튜플이다 - 5단계가
+        # 넣은 튜플을 안 바꾼다.
+        if produced:
+            state.evidences[finding.finding_id] = (
+                *state.evidences.get(finding.finding_id, ()),
+                *produced,
+            )
     # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
     # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
     if validated and Role.POV.value in ctx.config.profile.roles:
@@ -1628,9 +1636,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
     다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
     돈다(`_finalize_oracle` — 후보가 여럿이면 내부 근거 등급으로 가른다, `_designate_final`).
-    부분 PoC
-    (`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는 나가지
-    않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
+    부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는
+    나가지 않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
     (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
@@ -1736,6 +1743,16 @@ def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
     분모를 이중 계상하기 때문이다. `evidences_for`로 이 Finding이 참조하는 근거만 거르는 이유는
     6·7·8단계 게이트가 전부 그렇게 하기 때문이고, 안 거르면 artifact 단위 근거 묶음의 다른 Finding
     근거로 등급이 오른다.
+
+    🔴 **입력은 `state`의 Finding·근거·판정·누락뿐이고, 근거에는 8단계가 만든 런타임 근거가 든다**
+    (`_analyze`가 `validate.run`의 `produced`를 모은다 — #460 리뷰). 그래서 여기서 나는 등급은
+    8단계 `gate_eval`이 낸 등급과 **같다.** 그 근거를 안 모으던 때는 후보가 전부 E3로 읽혀 지정이
+    어느 run에서나 `grade_tie`였다. 채점기 결과(`OracleLedger`·`VulSubmission`)는 **이 입력에 안
+    닿는다** — 채점기 값이 등급을 올리면 지정이 채점기 값으로 고르는 것과 같아진다.
+
+    ⚠ **실도구 run에서 E4가 나는지는 이 함수의 몫이 아니다.** 컨테이너 러너의 8단계는 PoC 바이트가
+    아직 `./poc`로 materialize되지 않아(호스트 후속, STATUS.md §5) 그 도구 실행이 PoC와
+    무관하다 — 실도구 run의 후보 등급이 갈릴지는 **미실측**이다.
     """
     by_cand = {c.candidate_id: c.location for c in state.candidates}
     return {
@@ -1765,26 +1782,40 @@ def _designate_final(
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
       것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
     - **후보가 둘 이상이고 내부 근거 등급의 최댓값을 든 것이 하나다** → 그것이 최종이다
-      (`top_grade`). 2026-10-03에 동결된 규칙이다.
+      (`top_grade`). 2026-10-03에 @danielcho02가 council 뒤 확정한 규칙이다.
     - **후보가 둘 이상인데 최댓값이 동점이거나(`grade_tie`) 등급을 모르는 후보가 있다**
-      (`grade_unknown`) → **지정하지 않는다.** `fix` 다리와 판정 조회는 0번이다.
+      (`grade_unknown`) → **지정하지 않는다.** `fix` 다리와 판정 조회는 0번이다. `grade_unknown`은
+      **방어 분기다** — 후보의 `finding_id`는 `_run_pov`가 `state.findings`에서 받은 것이고
+      `_grades_by_finding`이 그 전부를 세므로 현 러너로는 닿지 않는다(직접 호출 검사만 문다).
 
-    🔴 **이 함수는 채점기가 돌려준 값을 읽지 않는다.** 후보의 `submission`에는 `response_exit_code`
-    같은 오라클 판정 값이 실려 **지정 시점에 손에 있는데도** 그렇다 — 그것으로 고르면 저자가 금지한
-    best-of가 된다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 읽는 것은
+    🔴 **이 함수는 채점기가 돌려준 값을 읽지 않는다.** 후보의 `submission`에는
+    `response_exit_code` 같은 오라클 응답 값이 실려 **지정 시점에 손에 있는데도** 그렇다. 이것은
+    **이 저장소의 동결 규칙이고 저자의 금지 문장이 아니다** — 저자 `FAQ.md`는 최종 답을 에이전트가
+    정확히 하나 지정하라고 요구하고 any-of가 무차별 대입을 보상한다고 적을 뿐 고르는 방법을
+    금지하지 않는다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 그 값으로
+    후보를 가르면 후보를 채점기에 물어 고르는 best-of가 되어 읽지 않기로 했다. 읽는 것은
     `attempt.ok`(제출이 성공했나 — 후보 자격이고 판정이 아니다)와 **하네스 내부 등급**뿐이다.
-    `test_designation_does_not_read_oracle_fields`가 그것을 문다 — 그 테스트는 필드 접근이 전부
-    터지는 `submission`을 넣는다.
+    내부 등급은 하네스가 도구를 돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서 안
+    나온다(`_grades_by_finding`).
+
+    `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
+    `==`)을 분기마다(유일 최상위·동점·등급 미상·후보 하나) 문다. ⚠ **못 무는 것:** `submission`
+    말고 `grades` 사전에 채점기 값이 섞이는 경로(러너 쪽
+    `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그 docstring)와
+    후보 0건(읽을 `submission`이 없다).
 
     ⚠ **동점에서 자리로 가르지 않는다.** 최댓값을 든 후보가 둘 이상이면 거부한다 — 「등급이 같으면
-    먼저 온 것」은 위치 규칙이고 그것이 금지다. 같은 `finding_id`에서 PoC가 둘 나온 경우도 등급이
-    같아 거부에 걸린다. 판정이 없는 편이 금지된 규칙으로 낸 판정보다 낫다(CLAUDE.md §0).
+    먼저 온 것」은 위치 규칙이고 이 저장소가 쓰지 않기로 했다. 같은 `finding_id`에서 PoC가 둘 나온
+    경우도 등급이 같아 거부에 걸린다. **PoC 바이트가 같은 후보끼리의 동점도 거부한다**(같은 바이트는
+    같은 `(agent_id, task_id, sha256)`라 어느 쪽을 지정해도 제출이 같은데도 — 그 예외를 두는 것은
+    동결 규칙을 넓히는 일이라 사용자 결정이다). 판정이 없는 편이 규칙 밖으로 낸 판정보다 낫다
+    (CLAUDE.md §0).
 
     「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
     — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
     알린다).
     """
-    candidates = [attempt for attempt in ledger.attempts if attempt.ok]
+    candidates = ledger.candidates
     if not candidates:
         return None, "", ledger.none_reason()
     if len(candidates) == 1:
@@ -1850,12 +1881,20 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
         return
     ledger = state.oracle_ledger
     with ctx.stage(Stage.VALIDATE):
-        picked, designation, reason = _designate_final(ledger, _grades_by_finding(state))
+        grades = _grades_by_finding(state)
+        picked, designation, reason = _designate_final(ledger, grades)
         if picked is None:
             final = oracle_log.FinalAttempt(status=oracle_log.STATUS_NONE, reason=reason)
         else:
             final = _score(ctx, ctx.oracle, picked, designation)
-        ledger.set_final(final)
+        # 지정이 읽은 등급을 사이드카에 남긴다(후보가 둘 이상일 때만 읽는다). 같은 `grades`다.
+        candidates = ledger.candidates
+        read = (
+            {a.finding_id: grades[a.finding_id].value for a in candidates if a.finding_id in grades}
+            if len(candidates) > 1
+            else None
+        )
+        ledger.set_final(final, grades=read)
         ctx.trace.emit(
             EventKind.ORACLE_FINAL,
             stage=Stage.VALIDATE,
