@@ -179,8 +179,8 @@ _LOOKUP_REQUESTS_MAX = 3
 
 # `probe` 관측에 싣는 도구 출력 길이. **잰 값이 아니라 설계 상수다** — 같은 도구(asan·gdb·build)의
 # 로그라 PoV 관측의 `runner._POV_OBSERVATION_TAIL_CHARS`(2,000)와 같은 폭을 쓴다. 자르는 방식은
-# 다르다 — 근거 본문 절단(`evidence_summaries`)이라 머리 2/3 + 꼬리 1/3이고 하네스 머리줄을 먼저
-# 뺀다.
+# 다르다 — 근거 본문 절단(`evidence_summaries`)이라 머리 2/3 + 꼬리 1/3이고, 자르기 전에 하네스
+# 머리줄과 구조화 출력의 잡음 키(`_JSON_NOISE_KEYS` — 지금 semgrep JSON의 `errors` 하나)를 뺀다.
 _PROBE_BODY_CHARS = 2000
 
 # resolver 후속 턴(`symbol_render.render_followup`)의 **Scout 전용 꼬리**가 시작하는 문장. 그 후속
