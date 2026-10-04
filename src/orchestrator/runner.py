@@ -1198,6 +1198,8 @@ def _analyze(
                 finding=finding,
                 evidences=state.evidences.get(finding.finding_id, ()),
                 missings=state.missings.get(finding.finding_id, ()),
+                # _Once가 저장한 문자열이라 Critic 뒤 PoV도 같은 소스를 받는다.
+                source=state.finding_sources.get(finding.finding_id),
             )
         except SchemaParseError as exc:
             # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
