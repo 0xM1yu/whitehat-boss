@@ -473,13 +473,11 @@ def _render_hop0(
     (evaluation §2.3).
     """
     text = ctx.read_source(capsule.target) if source is None else source()
-    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽어 싣는다.
-    # 그 외 버전은 본문 없이 종전과 동일(`critic._ask_model`과 같은 패턴).
-    bodies = (
-        evidence_summaries(evidences, ctx.read_payload)
-        if template.version in _CONTENT_AWARE_VERSIONS
-        else {}
-    )
+    # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽고 위치도 싣는다.
+    # 그 외 버전은 본문·위치 없이 종전과 동일(`critic._ask_model`과 같은 패턴 — 위치는 payload
+    # 유무가 아니라 판이 정한다).
+    aware = template.version in _CONTENT_AWARE_VERSIONS
+    bodies = evidence_summaries(evidences, ctx.read_payload) if aware else {}
     return template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -490,6 +488,7 @@ def _render_hop0(
             source=text,
             evidences=evidences,
             evidence_bodies=bodies,
+            evidence_locations=aware,
             callers=caller_names(capsule),
         ),
         candidate=_describe_candidate(candidate),
