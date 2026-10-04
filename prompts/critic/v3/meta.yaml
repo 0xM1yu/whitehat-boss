@@ -1,9 +1,8 @@
-# 아직 미활성(gpt-oss-20b은 v1): critic/v3는 신설(#237)됐고 근거 본문 배선이 들어왔다
-# (critic 노드가 v3 경로에서만 payload 본문을 EVIDENCE·FACTS에 싣는다). 그래서 이 prefix는
-# 더 이상 「항상 need_evidence」가 아니라 content-conditional이다 — 본문 있으면 rebut/uphold,
-# ID·metadata만이면 need_evidence. **다만 gpt-oss-20b을 v3로 켜는 것은 validated·proven이
-# 실제로 흐르는지 확인하는 run(#237 HIGH-1) 뒤 별도 단계다.** 그전까지 v1 유지.
-#
+# 아직 미활성: v3 자체는 미배선이다. 근거 본문을 읽는 content-conditional 판(#237·#247).
+# ⏵ 2026-10-05 — 실 Critic gpt-oss-20b은 v1에서 v6으로 배선됐다.
+# 「validated·proven run 뒤 v1 해제」 선행을 유지하지 않는다: v1은 본문을 받지 않아
+# 그 판정을 기다리는 것이 순환이었다. v6은 본문·위치·캐시 SOURCE를 받는다.
+# 실모델 uphold 관측은 0회(미실측)이며, 입력 배선이 상태 승격을 보장하지 않는다.
 role: critic
 version: v3
 output_schema: DecisionDraft

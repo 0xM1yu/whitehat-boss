@@ -714,7 +714,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v7", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v7", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
