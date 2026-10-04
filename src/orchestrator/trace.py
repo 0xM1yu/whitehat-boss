@@ -20,6 +20,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
+| Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage. **루프
+꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 실패하면 0건) — 꺼짐은 `model_call.schema`가
+`Finding`인지로 가른다 |
 | Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
@@ -29,6 +32,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
+| 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 
@@ -227,16 +231,26 @@ class EventKind(StrEnum):
     # `chars`(원문 글자 수)·`anchor_chars`(entry 함수 **혼자**의 글자 수)와 `slice_id`를 싣는다.
     # `subject_id`는 후보다. `auditor_callee_hops`가 1이면(#349 (a)) `callees`(붙인 피호출 함수 수 —
     # `functions`에도 들어간다)·`callees_dropped`(피호출 함수 상한·전체 상한에 걸려 안 붙인 수)가
-    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. `auditor_definitions`가
-    # 1이면 `definitions`·`definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 —
-    # `functions`에는 안 든다)가 같은 방식으로 더 실린다.
+    # 더 실린다. 0이면 두 필드가 없다 — 이벤트 모양이 결정 1-b 그대로다. 같은 조건에서
+    # `wrapper_callees`(`callees` 중 래퍼 너머로 붙인 수)·`alias_callees`(매크로 별칭이 부르는
+    # 함수로 붙인 수)도 실린다(C4). `auditor_definitions`가 1이면 `definitions`·
+    # `definitions_dropped`(붙인·못 붙인 매크로·타입·파일 변수 정의 수 — `functions`에는 안
+    # 든다)와 `alias_definitions`
+    # (`definitions` 중 별칭 라운드로 붙인 수)가 같은 방식으로 더 실린다.
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·
     # `entry_omitted_lines`(줄이며 뺀 줄 수 — 넘었어도 슬라이스 줄이 함수 전체에 퍼지면 0)가 더
-    # 실린다. `anchor_chars`는 줄이기 전 크기다. `auditor_caller_lines`가 양수면 `callers`·
-    # `callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·`call_sites`
-    # (찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
+    # 실린다. `anchor_chars`는 줄이기 전 크기다. 피호출 단계가 켜졌고 `auditor_indirect_callees`가
+    # 1이면 `indirect_callees`(`callees` 중 필드 경유 호출 후보로 붙인 수)·`indirect_skipped`(아직
+    # 안 실린 후보가 너무 많아 건너뛴 필드 경유 호출 수 — 필드 하나가 하나)가,
+    # `auditor_write_sites`가 양수면 `write_windows`·`write_windows_dropped`(붙인·상한에 못 붙인
+    # 쓰기 지점 창 수 — `functions`에는 안 든다)·`write_sites_found`(창을 붙일 후보 쓰기 지점 수
+    # — 같은 줄은 한 번,
+    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)가 더 실린다(#304).
+    # `auditor_caller_lines`가 양수면
+    # `callers`·`callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·
+    # `call_sites`(찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
@@ -246,6 +260,14 @@ class EventKind(StrEnum):
     # **캡슐이 이것을 못 센다.** EXPANDED 캡슐의 `target_function`은 entry 함수만 세고 그것도
     # 예산으로 잘린 값이라, 이 이벤트가 없으면 상한에 잘린 입력이 온전한 입력으로 읽힌다
     # (`retrieval_truncated`가 막는 것과 같은 오독이다).
+    #
+    # `auditor_source_gate`가 1이면 `gate_reasons`(`source_gate.reasons` — 사유 코드를 쉼표로 이은
+    # 문자열: 슬라이서가 낸 분석 사실의 유무(`ANALYSIS_UNKNOWN`)·절단·경계·싱크 cap, 앵커가
+    # 창인가, `uncovered_lines`·`dropped`·`callees_dropped`·`callers_dropped`·
+    # `definitions_dropped`에서 낸다)가 더 실린다. **빈 문자열은 「나열한 검사가 하나도 안
+    # 걸렸다」이고 필드가 없는 것은 「게이트 꺼짐」이다** — 「SOURCE가 완전하다」는 뜻이 아니다
+    # (정의·피호출·호출자 창을 안 켠 run은 그 검사가 안 돈다). 분석 사실이 없는 옛 슬라이스는 빈
+    # 문자열이 아니라 `ANALYSIS_UNKNOWN`이다. 관측 전용이라 Auditor 입력은 안 바뀐다.
     #
     # **슬라이스 없는 run은 0건이다** — 그 run의 Auditor는 캡슐 대상 하나를 그대로 읽는다.
     AUDITOR_SOURCE = "auditor_source"
@@ -303,6 +325,37 @@ class EventKind(StrEnum):
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
     # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
     SCOUT_HOP = "scout_hop"
+    # 홉 하나의 Auditor(5단계) 도구 홉 루프 기록 (이슈 #419 — 모델-주도 루프). 내는 곳은
+    # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나. `hop`이 조인
+    # 키다(`model_call`의 (subject_id, role, hop) 사슬 — `context.py`). ⚠ **`subject_id`는
+    # 후보(candidate)다** — `probe`/`lookup` 홉에는 Finding이 아직 없다(Finding은 `answer`
+    # 홉에서만 나온다).
+    # 싣는 것:
+    # - 공통 — `hop` · `action`(lookup/probe/answer) · `input_tokens`·`output_tokens`.
+    #   **상한 값의 실측 근거가 여기서 나온다** — 홉당 usage를 안 실으면 홉 수를 몇으로 둘지가
+    #   추정이 된다. 값은 어댑터가 준 `usage`이고 서버가 usage를 안 주면 어댑터가 0을 채운다 —
+    #   `model_call`과 같은 한계라 이 이벤트만의 미측정 표시는 없다.
+    # - `lookup` — `requested`(모델이 낸 요청 수) · `ignored`(resolver 처리 상한 3을 넘어 안
+    #   돈 수 — 있을 때만) · `resolved`·`already`·`fixable_count` · `unfilled`(사유 쉼표 나열)
+    #   · `truncated`(이름 쉼표 나열). 뒤 둘은 `SCOUT_HOP`과 같은 이름·형식이다.
+    #   **`resolved=0`의 세 원인은 이 값들로 가른다** — 넷이 다 비면 인덱스 없음/v1(resolver의
+    #   서명), `unfilled`가 차면 이름을 못 찾음, `truncated`가 차면 크기 상한. 훅이 없거나
+    #   resolver가 `OSError`·`ValueError`로 실패한 홉에는 이 조회 결과 키가 **없다**(안 돌린
+    #   것을 0이라 적지 않는다) — 실패는 `lookup_error`(예외 클래스 이름)가 든다.
+    # - `probe` — `tool` · `tool_ok`·`exit_code`·`evidence_kind` · `evidence_id`(그
+    #   `tool_call` 이벤트로의 조인 키) · `spec`을 실었으면 `poc_sha256`·`poc_bytes`(**도구에는
+    #   안 간다** — 기록뿐이다).
+    # - `answer` — `cited_probe_evidence`(Finding이 `evidence_refs`로 인용한 `probe` Evidence
+    #   수). ⚠ 그 Evidence는 러너가 게이트에 넘기는 `state.evidences`에 **없어서** 인용해도
+    #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
+    #   게이트에 안 닿는 근거를 인용했다」는 사실이다.
+    # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
+    # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
+    # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
+    # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
+    # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
+    # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다.
+    AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
     # (subject_id, role, hop) 사슬 — `context.py`). gen/inspect 홉은 `action`과 도구 결과
@@ -332,6 +385,47 @@ class EventKind(StrEnum):
     # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
     # pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
+    # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **후보(finding)마다
+    # 1행**이고 `fix` 다리는 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`task_id`·
+    # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).
+    #
+    # ⚠ **판정 값이 없다.** 종료 코드·`success`·`poc_id`·`cached`는 서버가 돌려준 값이라 trace가
+    # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
+    # 갈려서 trace의 재현성 기준(아래)을 깬다(분류는 `oracle_log` 모듈 docstring). 그래서 이
+    # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
+    # `oracle_final` 하나다.**
+    ORACLE_SUBMITTED = "oracle_submitted"
+    # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 다리의 후보 하나가 실패했다(`leg`). 추가형이라
+    # run을 멈추지 않는다. `poc_sha256`·`poc_bytes`·`error`(예외 클래스 이름)를 싣는다.
+    # `error_detail`(URL·OS 로케일 문구)은 사이드카에만 있다. 최종 단계의 실패는 이 이벤트가 아니라
+    # `oracle_final`의 `status=failed`다.
+    ORACLE_FAILED = "oracle_failed"
+    # **이 run의 채점 결과 — 채점기가 배선되고 8단계가 끝까지 돈 run에 정확히 1건이다.** 지정한
+    # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
+    # 대응한다.
+    #
+    # **최종 PoC는 후보(`vul` 제출이 성공한 PoC)가 하나뿐일 때만 지정한다**(`designation` =
+    # `sole_candidate` — 고를 것이 없어 지정한 것이고 위치·점수로 고른 것이 아니다). 후보가 둘
+    # 이상이면 지정하지 않는다(`status=none` · `reason=policy_undecided`) — 고르는 규칙이 정해지지
+    # 않았다(`runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이 아니다.
+    #
+    # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
+    # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
+    # `reason`이 `no_poc`·`all_vul_submissions_failed`(후보가 없다) · `policy_undecided`(후보가 둘
+    # 이상이다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와 「최종 PoC가 실패했다」를 섞지
+    # 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다). 그 PoC의 `poc_sha256`·
+    # `poc_bytes`, `scored`일 때 `task_id`, 사이드카의 고정 경로 `record_ref`를 싣는다.
+    # `scored`일 때의 `task_id`는 판정 행(`/query-poc`)이 든 값(`OracleOutcome.task_id`)이라, 마스킹
+    # 서버(`TaskOracle.query_task_id`)에서는 마스킹된 id가 아니라 **실 id가 trace와 사이드카에 실릴
+    # 수 있다** — 코드 판독에서 나온 추론이고 마스킹 서버로 확인하지 않았다.
+    #
+    # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
+    # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
+    # `oracle.final`이 `not_reached`다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도 남기지 않는다:
+    # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
+    # PoC로 컨테이너를 돌렸을 수 있다.
+    # ⚠ **이것은 하네스 내부 등급이 아니다** — Evidence를 만들지 않고 게이트가 안 읽는다(#232).
+    ORACLE_FINAL = "oracle_final"
     # 하네스가 `repro_spec`을 합성한 기록 (#S7 — `synthesize_repro_spec`이 켜졌고 모델이 명세를
     # 비워 냈을 때 `auditor._ensure_repro_origin`이 낸다). `subject_id`는 finding이고
     # `expected_signal`(합성 신호)·`steps`(단계 수)를 싣는다. **이벤트 부재 = 합성 안 함**(꺼졌거나

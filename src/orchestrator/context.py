@@ -13,7 +13,7 @@
 받으며 어댑터 조립은 `src/adapters/factory.py`가 한다(engineering-guide.md §3).
 """
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
 
@@ -28,6 +28,7 @@ from src.interfaces.model_client import (
     Usage,
     error_detail,
 )
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -137,20 +138,46 @@ class RunContext:
     symbols_for: Callable[[str], list[Location] | None] = field(
         default=lambda _file: None
     )
+    # 아래 셋(`callees_of`·`call_sites_of`·`definitions_of`)은 **`demote_nonproduct` 키워드**를
+    # 받는다(기본 꺼짐 — `GraphIndex.definitions_of` docstring). 러너가 `auditor_definitions`를 켠
+    # run에서만 켠다.
+    #
     # 함수 위치 → 그 본문 안 호출이 부르는 함수의 정의 위치(#349). Auditor `SOURCE`가 피호출
     # 함수 본문을 붙이는 데 쓴다. `symbols_for`와 같은 성격 — 미배선 기본값 `None`("그래프 없음")은
     # 붙일 것이 없다는 뜻이고 `SOURCE`는 옛 모양 그대로다.
-    callees_of: Callable[[Location], list[Location] | None] = field(
-        default=lambda _target: None
+    callees_of: Callable[..., list[Location] | None] = field(
+        default=lambda _target, **_kw: None
     )
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 미배선 `None`이면 호출자 창을 안 붙인다.
-    call_sites_of: Callable[[Location], list[Location] | None] = field(
-        default=lambda _target: None
+    call_sites_of: Callable[..., list[Location] | None] = field(
+        default=lambda _target, **_kw: None
+    )
+    # (이름들, 가까운 파일) → 함수 정의 위치. 매크로 별칭이 부르는 함수를 찾는다(C4).
+    # 미배선 `None`이면 별칭 너머 함수를 안 붙인다.
+    functions_named: Callable[..., list[Location] | None] = field(
+        default=lambda _names, _file, **_kw: None
+    )
+    # 함수 위치 → 필드 경유 호출마다 (필드, 갈 수 있는 함수)(index-v3, C6). `demote_nonproduct`를
+    # 받는다. 미배선 `None`이면 간접 피호출을 안 붙인다.
+    indirect_calls_of: Callable[..., list[tuple[str, list[Location]]] | None] = field(
+        default=lambda _target, **_kw: None
+    )
+    # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 미배선 `None`이면 쓰기 지점 창이 없다.
+    writes_of: Callable[[str, str], list[Location] | None] = field(
+        default=lambda _name, _file: None
+    )
+    field_writes_of: Callable[[str, str], list[Location] | None] = field(
+        default=lambda _field, _file: None
     )
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
     # 정의를 안 붙인다 — `callees_of`와 같은 성격.
-    definitions_of: Callable[[Iterable[str], str], list[Location] | None] = field(
-        default=lambda _names, _file: None
+    definitions_of: Callable[..., list[Location] | None] = field(
+        default=lambda _names, _file, **_kw: None
+    )
+    # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 이것을 뺀다
+    # (`runner._auditor_source`). 미배선 `None`("v2 표 없음")은 뺄 것이 없다는 뜻이다.
+    locals_of: Callable[[str, str], frozenset[str] | None] = field(
+        default=lambda _file, _func: None
     )
     # 역할 → 그 역할 모델의 실 토크나이저 카운터 (#96 (b)). `None`이면 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다. `symbols_for`와 같은 성격 — 어댑터가 만들고
@@ -174,10 +201,17 @@ class RunContext:
     # 그대로다(사이드카 키를 **아예** 안 늘린다).
     pocs: PocLog | None = None
     # need_evidence resolver hook (ADR 0012 결정 2). `None`이면 이 run에 resolver가 없다
-    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 노드는
-    # 이것을 쓰지 않는다 — 좌석 집계 루프(러너)가 `ctx.resolve_requests`로 부른다(#95).
+    # (인덱스가 v1이거나 미로드) — `symbols_for`·`counter_for_role`과 같은 자리다. 부르는 곳은
+    # 둘이다 — Scout 좌석 집계 루프(러너, #95)와 **Auditor 도구 루프의 `lookup`**
+    # (`nodes/auditor._lookup`, 이슈 #419 — 훅만 받고 어댑터는 import하지 않는다). `None`이면
+    # 후자는 정지하지 않고 「조회가 없다」는 관측을 모델에게 준다.
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
+    # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 후보마다 `vul`
+    # 다리만, 최종으로 지정한 하나에만 `fix` 다리와 판정 조회를 낸다(`runner._finalize_oracle`).
+    # `None`이면 이 run은 제출하지 않는다(기본) — `resolve_requests`·`swap_to`와 같은 자리다.
+    # 구현은 어댑터에 있고 이 경계는 `src/interfaces/oracle.py`의 Protocol이 넘는다.
+    oracle: Oracle | None = None
     # 단계 경계 모델 교대 (ADR 0012 Phase 6.5). `Dependencies.swap_to`(runner.py)를 옮겨 온
     # 것이다 — `resolve_requests`와 같은 자리. `None`이면 이 run은 교대하지 않는다. 부르는 곳은
     # 러너의 `_swap_for`·run 끝 내림뿐이고 노드는 이것을 쓰지 않는다.

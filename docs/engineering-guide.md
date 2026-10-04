@@ -57,7 +57,8 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 ## 3. 교체 가능한 4개 인터페이스
 
 도메인 로직은 이 4개에만 의존한다. 구현체 교체가 코드 변경 없이 설정만으로 가능해야 한다.
-오케스트레이터 노드가 보는 것은 `Deps`가 들고 있는 이 4개뿐이고, 그 수는 늘리지 않는다.
+오케스트레이터 노드가 **부르는** 것은 `Deps`가 들고 있는 이 4개뿐이고, 그 수는 늘리지 않는다 —
+러너가 직접 부르는 경계(`Oracle`)는 노드가 안 부르므로 이 수에 들지 않는다(§3.1).
 
 ```python
 class ModelClient(Protocol):
@@ -93,12 +94,13 @@ class StateStore(Protocol):
 
 ### 3.1 구현체가 쓰는 하위 Protocol
 
-`src/interfaces/`에는 위 4개 외에 **구현체끼리의 결합점**도 있다. 도메인 로직은 이들을
-보지 않으므로 위의 "4개"는 그대로다.
+`src/interfaces/`에는 위 4개 외에 **노드가 안 부르는 경계**도 있다 — 구현체끼리의 결합점과
+러너가 직접 부르는 경계다. 도메인 로직은 이들을 보지 않으므로 위의 "4개"는 그대로다.
 
 | Protocol | 누가 쓰는가 | 왜 인터페이스인가 |
 | --- | --- | --- |
 | `EmbeddingClient` · `RerankerClient` (`retrieval.py`) | `HybridRetriever`가 의존, 서빙 쪽이 제공 | knowledge-base.md §3의 2단계 재선별을 어떤 서버로 하든 Retriever 코드가 안 바뀌어야 한다. Fake 대체가 되어야 GPU 없이 이 경로가 돈다 |
+| `Oracle` (`oracle.py`) | 러너가 8단계에서 부른다(`_submit_vul_to_oracle`·`_finalize_oracle`) — 노드는 안 부른다 | 채점 서버의 클라이언트는 어댑터이고 러너는 `src/adapters`를 import하지 않는다. 후보마다 `submit_vul`, run당 한 번 `finalize`로 쪼갠 것은 fix 다리를 최종 PoC 한 개에만 돌리려는 것이다(any-of 방지). `finalize`는 vul 제출이 성공한 후보가 하나일 때만 부른다 — 둘 이상이면 고르는 규칙이 미정이라 지정하지 않는다(`runner._designate_final`). 서버 주소·과제 신원·키는 `cli._oracle_for`가 묶는다 |
 
 **`Role`에 넣지 않은 이유**는 [ADR 0004](decisions/0004-retrieval-clients-separate-from-model-client.md)에 있다.
 요약하면 `Role`은 프롬프트 버전·출력 스키마가 붙는 실행 계약 역할이고, 임베딩·리랭킹은

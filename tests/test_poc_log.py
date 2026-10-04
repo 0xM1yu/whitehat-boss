@@ -137,8 +137,8 @@ def _loop(
 def test_files_are_numbered_in_write_order_and_each_keeps_its_own_bytes(tmp_path: Path) -> None:
     """순번이 올라가지 않으면(`self._seq = 1`) 두 번째가 첫 파일을 **덮어** PoC 하나가 사라진다.
 
-    이름 형식도 **리터럴로** 고정한다 — 이 이름은 다음 슬라이스(oracle 제출)와 사람이 쥐는
-    인터페이스라 상수로만 검사하면 이름이 바뀌어도 초록이다. `prompt_log`의
+    이름 형식도 **리터럴로** 고정한다 — 이 이름은 사람이 쥐는 인터페이스라(채점기 제출은 이 파일이
+    아니라 메모리의 바이트를 낸다) 상수로만 검사하면 이름이 바뀌어도 초록이다. `prompt_log`의
     `test_files_are_numbered_in_call_order`가 같은 자리다.
     """
     log = PocLog(tmp_path)
@@ -636,8 +636,9 @@ def test_pov_finish_hands_back_the_ref_and_digest_it_wrote(
     ctx: RunContext,  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """`_pov_finish`는 `(poc, reason, ref, digest)`를 낸다 — 다음 슬라이스가 **디렉터리를 글로브하지
-    않고** 쓰게. 배선이 없거나 바이트가 없거나 쓰기가 실패하면 ref·digest는 `None`이다."""
+    """`_pov_finish`는 `(poc, reason, ref, digest)`를 낸다 — 파일 참조가 필요해질 때 **디렉터리를
+    글로브하지 않고** 쓰게(지금 읽는 곳은 없다). 배선이 없거나 바이트가 없거나 쓰기가 실패하면
+    ref·digest는 `None`이다."""
     _, finding = _pov_state(ctx)
     poc = b"\x00\n\xff"
     wired = _wired(ctx, tmp_path / RUN_ID)
@@ -856,11 +857,14 @@ def test_budget_exhaustion_leaves_no_poc_directory(
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     run_dir = tmp_path / RUN_ID
-    wired = _wired(ctx, run_dir)
-    wired.ledger.charge(
-        Usage(input_tokens=wired.config.budget.input_tokens + 1, output_tokens=0, cached_tokens=0),
-        stage=Stage.VALIDATE,
-    )
+    # **예산을 프로필에서 빌리지 않는다.** 전에는 `config.budget.input_tokens + 1`을 청구해
+    # 소진을 만들었는데, 그것은 「값과 무관」해 보여도 **상한이 양수여야** 성립한다 —
+    # `dev_fake`의 상한이 0(= 상한 없음. `BudgetLedger._overrun`은 0을 검사하지 않는다)으로
+    # 내려가자 이 검사가 소진을 못 만들어 빨개졌다. 소진 경로를 보는 검사는 자기 예산을
+    # 주입한다(`test_pipeline_e2e`의 `tiny`가 그 모양이다).
+    tiny = BudgetLedger(Budget(input_tokens=1, output_tokens=1, gpu_seconds=0), ctx.trace)
+    wired = dataclasses.replace(_wired(ctx, run_dir), ledger=tiny)
+    tiny.charge(Usage(input_tokens=2, output_tokens=0, cached_tokens=0), stage=Stage.VALIDATE)
 
     with pytest.raises(BudgetExhausted):
         runner._run_pov_hops(wired, state, finding, capsule)

@@ -8,6 +8,7 @@
 """
 
 import hashlib
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -873,9 +874,28 @@ def test_indexer_receives_headers_but_clang_tools_do_not(tmp_path: Path, spy: _S
     assert "/src/api.c" in build_argv
 
 
-def test_the_default_image_is_the_one_that_bakes_index_v2_and_gdb() -> None:
-    """v3는 index-v2에 gdb를 더한다. v2는 지난 run의 digest 때문에 별도 태그로 남긴다."""
+def test_the_default_image_is_the_one_that_bakes_the_indexer_and_gdb() -> None:
+    """v3는 v2에 gdb를 더한다. v2는 지난 run의 digest 때문에 별도 태그로 남긴다. 인덱서 형식은
+    #304부터 index-v3인데 태그는 그대로다 — 낡은 이미지는 아래 연막 검사 핀이 빌드에서 막는다."""
     assert DEFAULT_IMAGE == "harness-tools:v3"
+
+
+def test_the_image_smoke_rejects_a_stale_indexer_copy() -> None:
+    """Dockerfile의 인덱서 연막 검사가 **이 트리의** `INDEX_VERSION`과 v3 표를 본다(#464 리뷰).
+
+    이미지에 구운 indexer.py가 낡은 사본이면 v3 조회가 예외 없이 `None`이 된다 — 빌드에서 죽어야
+    한다. ⚠ 이 검사는 철자 대조다: `INDEX_VERSION`을 올리고 Dockerfile을 안 고치면 여기서 죽지만,
+    연막 검사의 나머지 조건이 실제로 도는지는 이미지 빌드만 안다.
+    """
+    tools = Path(__file__).resolve().parents[1] / "tools" / "harness-tools"
+    dockerfile = (tools / "Dockerfile").read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("harness_indexer_smoke", tools / "indexer.py")
+    assert spec is not None and spec.loader is not None
+    indexer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(indexer)
+
+    assert f"d['version']=='{indexer.INDEX_VERSION}'" in dockerfile
+    assert "'x' in d['writes']" in dockerfile
 
 
 def test_the_tool_image_installs_and_smokes_gdb_batch_mode() -> None:

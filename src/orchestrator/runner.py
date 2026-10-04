@@ -88,7 +88,7 @@ import json
 import re
 import subprocess
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -104,11 +104,12 @@ from src.interfaces.model_client import (
     SchemaParseError,
     error_detail,
 )
+from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
-from src.orchestrator import gate, state_machine
+from src.orchestrator import gate, oracle_log, source_gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.heartbeat import Heartbeat
@@ -131,6 +132,12 @@ from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
 from src.orchestrator.prompt_log import PromptLog
+from src.orchestrator.source_definitions import (
+    definition_names,
+    macro_alias_target,
+    slice_line_refs,
+    slice_names_first,
+)
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
@@ -413,12 +420,25 @@ class Dependencies(Protocol):
     # 단위로 되돌아간다. `[]`("봤는데 심볼 0건")와 섞지 않는다 — `index_graph`가 캡슐의
     # 그래프 섹션에 대해 세운 것과 같은 구별이다.
     symbols_for: Callable[[str], list[Location] | None]
+    # 아래 셋(`callees_of`·`call_sites_of`·`definitions_of`)은 `demote_nonproduct` 키워드를 받는다
+    # (기본 꺼짐 — `auditor_definitions`를 켠 run에서만 러너가 켠다).
+    #
     # 함수 위치 → 그 본문이 부르는 함수의 정의 위치(#349). `symbols_for`와 같은 경계다.
-    callees_of: Callable[[Location], list[Location] | None]
+    callees_of: Callable[..., list[Location] | None]
     # 함수 위치 → 그 함수를 부르는 호출 지점(#349 (b)). 같은 경계다.
-    call_sites_of: Callable[[Location], list[Location] | None]
+    call_sites_of: Callable[..., list[Location] | None]
+    # (이름들, 가까운 파일) → 함수 정의 위치 — 매크로 별칭이 부르는 함수(C4). 같은 경계다.
+    functions_named: Callable[..., list[Location] | None]
+    # 함수 위치 → 필드 경유 호출마다 (필드, 갈 수 있는 함수)(index-v3, C6). `demote_nonproduct`를
+    # 받는다. 같은 경계다.
+    indirect_calls_of: Callable[..., list[tuple[str, list[Location]]] | None]
+    # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 같은 경계다.
+    writes_of: Callable[[str, str], list[Location] | None]
+    field_writes_of: Callable[[str, str], list[Location] | None]
     # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
-    definitions_of: Callable[[Iterable[str], str], list[Location] | None]
+    definitions_of: Callable[..., list[Location] | None]
+    # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
+    locals_of: Callable[[str, str], frozenset[str] | None]
     # `--slices`의 슬라이스(ADR 0012 결정 1). `None`이면 위 `symbols_for`로 타깃을 만든다.
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
@@ -450,6 +470,8 @@ class Dependencies(Protocol):
     # 교대 선언이 없거나, 장비가 없어 조립하지 않았다(모델에 안 닿는 run). 교대 명령 실행은
     # 어댑터가 하고 러너는 이 콜러블만 받는다(`resolve_requests`와 같은 자리).
     swap_to: Callable[[tuple[str, ...]], dict[str, TraceValue]] | None
+    # 채점기 (#386). `None`이면 이 run은 PoC를 제출하지 않는다 — `swap_to`와 같은 경계다.
+    oracle: Oracle | None
 
 
 @dataclass(frozen=True)
@@ -749,6 +771,10 @@ class _Accumulator:
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
+    # 채점기(oracle)의 후보별 vul 시도와 최종 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
+    # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
+    # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
+    oracle_ledger: oracle_log.OracleLedger = field(default_factory=oracle_log.OracleLedger)
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -801,7 +827,12 @@ def run_pipeline(
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
+        functions_named=deps.functions_named,
+        indirect_calls_of=deps.indirect_calls_of,
+        writes_of=deps.writes_of,
+        field_writes_of=deps.field_writes_of,
         definitions_of=deps.definitions_of,
+        locals_of=deps.locals_of,
         counter_for_role=deps.counter_for_role,
         # **`write_manifest`와 같은 가드다** — 산출물 디렉터리가 있고 실제로 도는 run일
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
@@ -815,6 +846,8 @@ def run_pipeline(
         resolve_requests=deps.resolve_requests,
         # 단계 경계 교대(ADR 0012 Phase 6.5) — `resolve_requests`와 같은 경계다.
         swap_to=deps.swap_to,
+        # 채점기(#386) — `swap_to`와 같은 경계다. `None`이면 제출하지 않는다.
+        oracle=deps.oracle,
         # CyberGym 과제 설명(PoV 배선). `retrieval.run`이 캡슐에 실어 Scout·Auditor·pov가 본다.
         vuln_description=spec.vuln_description,
     )
@@ -850,7 +883,14 @@ def run_pipeline(
     ctx.record_token_counter(dict(deps.counter_report))
 
     last, stop_reason = spec.stop_at()
-    state = _Accumulator()
+    state = _Accumulator(
+        oracle_ledger=oracle_log.OracleLedger(
+            wired=deps.oracle is not None,
+            # 사이드카는 `prompts`·`pocs`와 같은 가드다 — 산출물 디렉터리가 있고 실제로 도는 run일
+            # 때만.
+            log=oracle_log.OracleLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        )
+    )
     stopped_after = None if stop_reason is None else last
     # 최후 방어선이 잡아 둔 예상 밖 예외 — 매니페스트를 쓴 **뒤** 다시 던진다(`finally` 바로 뒤).
     unforeseen: Exception | None = None
@@ -949,6 +989,13 @@ def run_pipeline(
             if heartbeat is not None:
                 heartbeat.stop()
 
+    # 채점기를 켠 run의 제출 요약을 매니페스트에 싣는다(#386) — 아래 두 `finish_run` 호출(예상 밖
+    # 예외 경로와 정상 경로)이 같은 `record`를 쓰므로 여기서 한 번 바꾼다. 안 켠 run은 `None`이라
+    # 기록이 그대로다.
+    oracle_summary = state.oracle_ledger.summary()
+    if oracle_summary is not None:
+        record = record.transition(oracle=oracle_summary)
+
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
         # HIGH 1).
@@ -1036,6 +1083,10 @@ def run_pipeline(
     pov_shortfall = _pov_shortfall_warning(state.pov_results)
     if pov_shortfall is not None:
         warnings.append(pov_shortfall)
+    # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
+    # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
+    # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
+    warnings.extend(state.oracle_ledger.warnings())
 
     findings = list(state.findings.values())
     # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
@@ -1210,17 +1261,21 @@ def _analyze(
         state.update(after)
     # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
     # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
-    if not (validated and Role.POV.value in ctx.config.profile.roles):
-        return
-    swap = ctx.config.swap
-    # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
-    # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
-    # swappable로 한 번 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라 막는다.
-    if swap is not None and Role.POV.value in swap.swappable:
-        _swap_for(ctx, Stage.VALIDATE)
-    # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
-    for finding in validated:
-        _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+    if validated and Role.POV.value in ctx.config.profile.roles:
+        swap = ctx.config.swap
+        # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
+        # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
+        # swappable로 한 번 더 거르지만, 목록 밖 역할로 부르면 앞 단계 서버를 내리는 빈 교대라
+        # 막는다.
+        if swap is not None and Role.POV.value in swap.swappable:
+            _swap_for(ctx, Stage.VALIDATE)
+        # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
+        for finding in validated:
+            _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+    # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
+    # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
+    # `not_reached`로 남는다.
+    _finalize_oracle(ctx, state)
 
 
 # PoV 관측에 싣는 도구 출력 꼬리 길이. **잰 값이 아니라 설계 상수다** — ASan 요약(`SUMMARY:` 줄과
@@ -1263,7 +1318,8 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
 
     **조회는 기존 resolver를 재사용한다**(`ctx.resolve_requests`). 이름으로 함수 본문을 찾는
     수단이 그것뿐이다 — `symbols_for`는 (파일 → 심볼)이고 `definitions_of`는 `macros`·`types`·
-    `file_vars`만 본다(`src/adapters/index_graph.py:111`). 그래서 새 훅·새 어댑터 배선이 0이다.
+    `file_vars`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서 새 훅·새
+    어댑터 배선이 0이다.
     resolver는 `table("functions")`가 없으면 빈 `Resolution`을 돌려주므로(`need_evidence` 모듈)
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
 
@@ -1590,8 +1646,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
     올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
-    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트·oracle
-    제출은 호스트 후속이다.
+    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트는
+    호스트 후속이다.
 
     **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
     캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
@@ -1600,6 +1656,14 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `run_pipeline`이 그 형을 받는지에 달렸다. `BudgetExhausted`·`ModelSwapError`·
     `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
     그 밖의 형은 run과 함께 보고서도 잃는다.
+
+    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
+    `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
+    다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
+    돈다(`_finalize_oracle` — 후보가 하나일 때만 지정한다, `_designate_final`). 부분 PoC
+    (`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는 나가지
+    않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
+    (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1619,10 +1683,179 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     # `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
     # `setdefault`라 정상 출구가 적은 사유를 덮지 않는다 — 아무도 안 적었을 때만 들어간다.
+    # 채점기 제출(#386)은 이 `try` 안이다: `_submit_vul_to_oracle`이 `Exception`을 스스로 흡수하므로
+    # `finally`가 루프가 이미 적은 사유(`submitted`)를 덮을 일이 없고, 올라가는 인터럽트가 있어도
+    # 사유는 남는다.
     try:
-        _run_pov_hops(ctx, state, finding, capsule)
+        poc, reason = _run_pov_hops(ctx, state, finding, capsule)
+        if reason is PovStopReason.SUBMITTED and poc is not None:
+            _submit_vul_to_oracle(ctx, state, finding, poc)
     finally:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
+
+
+def _submit_vul_to_oracle(
+    ctx: RunContext, state: _Accumulator, finding: Finding, poc: bytes
+) -> None:
+    """후보 하나의 PoC를 채점기의 `vul` 다리에 내보낸다 (#386). 채점기가 없으면 아무것도 안 한다.
+
+    **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
+    적는데 클라이언트는 그것을 강제하지 않는다 — 후보마다 `vul`·`fix`를 다 내면(`run_round_trip`)
+    비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 후보마다는 `vul`만 내고 최종은 `_finalize_oracle`이
+    지정한다.
+
+    **추가형이다** — finding 상태를 바꾸지 않고 Evidence도 만들지 않는다(채점은 저장소 밖 기준이고
+    내부 등급 E4는 실행 로그를 따로 요구한다, #232 · `interfaces/oracle.py`). 기록만 남긴다.
+
+    **예외를 흡수한다** — 채점기는 저장소 밖 서비스이고 그 사건이 run을 멈추면 앞 단계 산출물까지
+    잃는다(`_run_pov`의 추가형 계약 그대로). `Exception`만 흡수한다 — TERM·HUP(`SystemExit`)과
+    Ctrl-C는 올라간다. 다만 `oracle_failed`로 **사유를 남긴다** — 그래야 「제출했는데 실패했다」가
+    조용히 「미제출」(이벤트 부재)과 같아지지 않는다.
+
+    **도커 왕복을 단계 시간에 넣는다** — 이 호출은 `Stage.VALIDATE` 구간(`stage_start`~`stage_end`)
+    안에서 돌고 이벤트가 `wall_ms`를 단다. 구간 밖에서 내면 이 이벤트가 8단계 `stage_end` 뒤에 나가
+    왕복이 단계 시간 장부에서 빠진다. 값은 장부(`state.oracle_ledger`)와 사이드카에 쌓이고,
+    trace에는 결정론 필드만 간다(분류는 `oracle_log` 모듈 docstring).
+    """
+    if ctx.oracle is None:
+        return
+    with ctx.stage(Stage.VALIDATE):
+        started = ctx.monotonic_ms()
+        try:
+            submission = ctx.oracle.submit_vul(poc)
+        except Exception as exc:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
+            attempt = oracle_log.vul_failed(
+                finding.finding_id, poc, exc, max(0, ctx.monotonic_ms() - started)
+            )
+            ctx.trace.emit(
+                EventKind.ORACLE_FAILED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=attempt.wall_ms,
+                leg="vul",
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=attempt.poc_bytes,
+                error=attempt.error,
+            )
+        else:
+            attempt = oracle_log.vul_ok(
+                finding.finding_id, poc, submission, max(0, ctx.monotonic_ms() - started)
+            )
+            ctx.trace.emit(
+                EventKind.ORACLE_SUBMITTED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=attempt.wall_ms,
+                leg="vul",
+                task_id=submission.task_id,
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=attempt.poc_bytes,
+            )
+        state.oracle_ledger.add_attempt(attempt)
+
+
+def _designate_final(
+    ledger: oracle_log.OracleLedger,
+) -> tuple[oracle_log.VulAttempt | None, str | None]:
+    """run당 한 번, `vul` 제출이 성공한 후보 중에서 최종 PoC를 지정한다 (#386).
+
+    돌려주는 것은 `(지정한 시도, None)`이거나 `(None, 지정 못 한 사유)`다. **셋으로 갈린다:**
+
+    - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed` — 낼 PoC가 없던
+      것과 낸 것이 다 실패한 것은 다른 사건이다, §0). `fix` 다리와 판정 조회는 0번이다.
+    - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
+      고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
+      것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
+    - **후보가 둘 이상이다** → **지정하지 않는다**(`policy_undecided`). `fix` 다리와 판정
+      조회는 0번이다. 벤치마크는 에이전트가 최종 답을 정확히 하나 명시적으로 고르라고
+      요구하고, 조사 문서 1.3절(docs/research/2026-09-29-cybergym-pov-design.md)은 거기서
+      「best-of도 last-attempt도 아니다」라는 결론을 낸다 — 마지막·처음·점수로 고르는 기본값을
+      둘 수 없다. 합의된 방식은 모델에게 묻는 것이고 그것은 프롬프트 버전과 좌석이 필요한
+      별도 조각이다. 그 전에는 하나를 고르지 않고 이유를 남긴다 — 판정이 없는 편이 금지된
+      규칙으로 낸 판정보다 낫다(CLAUDE.md §0).
+
+    「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
+    — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
+    알린다).
+    """
+    candidates = [attempt for attempt in ledger.attempts if attempt.ok]
+    if not candidates:
+        return None, ledger.none_reason()
+    if len(candidates) == 1:
+        return candidates[0], None
+    return None, oracle_log.REASON_POLICY_UNDECIDED
+
+
+def _score(
+    ctx: RunContext, oracle: Oracle, picked: oracle_log.VulAttempt, designation: str
+) -> oracle_log.FinalAttempt:
+    """지정한 하나에 `fix` 다리와 판정 조회를 돌린다. 저장소 밖 서비스라 예외는 흡수하고 남긴다."""
+    # 지정되는 것은 vul 제출이 성공한 시도뿐이라 바이트와 제출 결과가 있다.
+    assert picked.poc is not None and picked.submission is not None
+    started = ctx.monotonic_ms()
+    try:
+        outcome = oracle.finalize(picked.poc, picked.submission)
+    except Exception as exc:  # 사유를 남기고 run은 계속한다.
+        return oracle_log.FinalAttempt(
+            status=oracle_log.STATUS_FAILED,
+            wall_ms=max(0, ctx.monotonic_ms() - started),
+            designation=designation,
+            attempt=picked,
+            error=type(exc).__name__,
+            error_detail=oracle_log.clip_error(exc),
+        )
+    return oracle_log.FinalAttempt(
+        status=oracle_log.STATUS_SCORED,
+        wall_ms=max(0, ctx.monotonic_ms() - started),
+        designation=designation,
+        attempt=picked,
+        outcome=outcome,
+    )
+
+
+def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
+    """채점기의 최종 단계 — **run당 한 번**, 후보 하나만 (#386). 채점기가 없으면 아무것도 안 한다.
+
+    `_designate_final`이 최종 PoC를 지정하면 그 하나에만 `fix` 다리와 판정 조회를 돌린다. 점수는
+    후보 N건의 any-of가 아니라 이 호출 하나다 — 그래서 `oracle_final`이 run당 1건이고
+    `oracle_submitted`는 판정 값을 안 든다(`trace.py`). **지정된 후보가 없는 사건**
+    (`no_poc`·`all_vul_submissions_failed`·`policy_undecided`)은 `status=none`이고, 지정했는데
+    `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가 없다」가 「최종
+    PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 지정하지 않는다** — 고르는 규칙이
+    정해지지 않았다(`_designate_final`).
+
+    **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
+    계약). 이 단계는 8단계가 **끝까지 돌았을 때만** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
+    불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
+    """
+    if ctx.oracle is None:
+        return
+    ledger = state.oracle_ledger
+    with ctx.stage(Stage.VALIDATE):
+        picked, reason = _designate_final(ledger)
+        if picked is None:
+            final = oracle_log.FinalAttempt(status=oracle_log.STATUS_NONE, reason=reason)
+        else:
+            final = _score(ctx, ctx.oracle, picked, oracle_log.DESIGNATION_SOLE_CANDIDATE)
+        ledger.set_final(final)
+        ctx.trace.emit(
+            EventKind.ORACLE_FINAL,
+            stage=Stage.VALIDATE,
+            subject_kind=None if picked is None else "finding",
+            subject_id=None if picked is None else picked.finding_id,
+            wall_ms=final.wall_ms,
+            # 키 집합은 `status`와 무관하게 같다 — 해당 없는 값은 `None`(안 정해졌다)이다.
+            status=final.status,
+            designation=final.designation,
+            reason=final.reason,
+            poc_sha256=None if picked is None else picked.poc_sha256,
+            poc_bytes=None if picked is None else picked.poc_bytes,
+            task_id=None if final.outcome is None else final.outcome.task_id,
+            error=final.error,
+            record_ref=ledger.record_ref,
+        )
 
 
 def _run_pov_hops(
@@ -1645,17 +1878,19 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이·oracle 제출도 후속이고,
-    여기서는 홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고,
-    종단에서 **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
+    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다(채점기 제출은
+    `_run_pov`가 이 루프의 반환값으로 한다, #386). 여기서는 홉 이벤트(`POV_HOP`)와 종단
+    이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
+    사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
     `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
     그대로다 — 네 출구는 `_pov_finish_and_record`를 불러 `ref`를 계수기 사유에 쓰고 2-튜플만
-    돌려받는다(`digest`는 그 함수가 버린다). 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를
-    그대로 올리면 되고 디렉터리를 글로브할 필요가 없다.
+    돌려받는다(`digest`는 그 함수가 버린다). 채점기 제출(`_run_pov`)은 이 반환의 바이트를 메모리에서
+    그대로 낸다. 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를 그대로 올리면 되고
+    디렉터리를 글로브할 필요가 없다.
     """
     max_hops = ctx.config.thresholds.max_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
@@ -1909,8 +2144,8 @@ def _pov_finish(
     docstring에 있다.
 
     반환은 `(poc, reason, ref, digest)`다 — `ref`·`digest`는 방금 쓴 사이드카의 것이고 안 썼으면
-    (배선 없음·바이트 없음·쓰기 실패) `None`이다. 다음 슬라이스가 디렉터리를 글로브하지 않고
-    쓰게 낸다."""
+    (배선 없음·바이트 없음·쓰기 실패) `None`이다. 읽는 곳은 아직 없다(`_run_pov_hops`가 `[:2]`로
+    뗀다) — 파일 참조가 필요해질 때 디렉터리를 글로브하지 않고 쓰게 내 둔다."""
     ref: str | None = None
     digest: str | None = None
     sidecar: dict[str, TraceValue] = {}
@@ -2674,6 +2909,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     슬라이스 타깃이면 캡슐의 대상이 후보 위치(entry)가 아니라 **entry를 감싸는 함수**다
     (`_auditor_target`). `SOURCE`는 그 함수에 슬라이스가 걸친 다른 함수들을 이어 붙인 것이다
     (`_auditor_source`). 후보의 위치는 그대로 entry다.
+
+    도구 루프(이슈 #419)가 Finding 없이 서면(`AuditorHopLimit`) **그 후보만 `False`로 멈춘다**(아래
+    `except`) — Finding이 없으니 6단계 게이트로 갈 것이 없고, 후보는 노드가 이미 `queued`로 내렸다.
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
@@ -2690,13 +2928,29 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
-    finding, missings = auditor.run(
-        ctx,
-        candidate=candidate,
-        capsule=expanded,
-        evidences=evidences,
-        source=source,
-    )
+    try:
+        finding, missings = auditor.run(
+            ctx,
+            candidate=candidate,
+            capsule=expanded,
+            evidences=evidences,
+            source=source,
+            # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
+            # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
+            workdir=artifact.path,
+        )
+    except auditor.AuditorHopLimit:
+        # **도구 루프가 Finding 없이 섰다**(같은 요청 반복 · 조사만으로 상한 소진 — 이슈 #419). 둘
+        # 다 모델이 낸 **정상적인 답**이라 한 후보의 정지일 뿐이다 — 노드가 이미 후보를 `queued`로
+        # 내렸고 (`_queue_candidate`) 정지 사유는 trace `auditor_hop.stop_reason`이 든다. 여기서 안
+        # 받으면 `run_pipeline`의 최후 방어선이 `UNFORESEEN_FAILURE`로 run 전체를 멈춘다: 100후보
+        # run에서 첫 반복 요청 하나가 나머지 99후보를 감사도 못 하게 지운다.
+        # `ModelGatewayError`·`SchemaParseError`처럼 `_drop`으로 세지 않는다 — 그 카운터는 **체계적
+        # 고장**을 재는 값이고 이 정지는 모델 호출의 실패가 아니다. 다만 `False`는 이 후보가
+        # Finding을 못 냈다는 뜻이라 다음 단계(6 게이트)로 안 간다. 모든 후보가 이렇게 서면 5단계는
+        # 「응답은 했는데 아무도 못 끝냈다」이고 run은 멈추지 않는다 — 그 비율은 `auditor_hop`의
+        # `stop_reason`이 센다.
+        return False
     item.finding, item.missings = finding, tuple(missings)
     state.update(finding)
     state.evidences[finding.finding_id] = evidences
@@ -2789,6 +3043,25 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-09-29 — 같은 날 Auditor가 v4가 됐다. 같은 계산으로 +4,923~13,396토큰(계산값 — prefix
 # +12,251자 · body 틀 +92자 · 근거 본문 4,000자 = 16,343자). v4 입력 토큰은 미실측이다
 # (`config/models.yaml`의 `qwen3.8-27b` — v3는 스모크가 2호출로 쟀다, 그 항목의 ⏵).
+# ⏵ 2026-10-03 — **v6가 됐다**(#418·#421). 같은 계산으로 **+7,330~19,948토큰**(계산값 — prefix
+# +20,244자 · body 틀 +92자 · 근거 본문 4,000자 = 24,336자). **v4로 돈 run이 0건이라 위 v4 수는
+# 끝까지 미실측이고, v6도 0건이다** — 둘 다 `docs/experiments/` grep(2026-10-03)이고 `artifacts/`는
+# gitignore라 **커밋된 보고서만 센 것**이다. ⚠ v6 자체는 **하네스 밖에서 돌았다**(#418 본문의
+# 비교표 — 실험팀 프롬프트 A/B). 여기서 0건이라는 것은 **이 저장소의 run 기록**에 대한 말이다.
+# ⚠ **창 53,248(입력 몫 20,480)이면 v6는 하한에서도 넘는다** — 15,437 + 7,330 = 22,767.
+# v4는 그 창에서 경계에 걸쳤고(20,360) v6는 더 들어간다. 아래 ⚠의 영어 prefix 비 2.29로 잡아도
+# 15,437 + 10,627 = 26,064다. **다만 「항상 넘는다」로 적지 않는다** — 넘지 않으려면 혼합 비가
+# 24,336/5,043 ≈ 4.83을 넘어야 하고, 근거 본문 4,000자는 **상한이라 0일 수도 있어** 그때 문턱이
+# 20,336/5,043 ≈ 4.03으로 내려간다. **영어 텍스트의 비를 4 아래로 묶은 실측이 없다**(가진 것은
+# v3 스모크의 「2.29 이상」 하나다) — 그래서 이것은 **추정이고 상한 증명이 아니다.**
+# 창이 `context_limit` 262,144면 입력 몫 196,608이라 상한 35,385(= 15,437 + 19,948)도 안쪽이고,
+# ⏵ 2026-10-03 — 그 입력 몫은 출력 상한 인상(32,768 → 65,536) 뒤의 값이다. 그 전은 229,376이었다.
+# 53,248은 그 전 계획값이라 지금 경로가 아니다.
+# ⏵ 2026-10-04 — **v7이 됐다**(v6 + SOURCE 옵션 넷의 서술, #349). prefix가 v6보다 +2,050자 더
+# 길고(23,448자 · ⏵ 같은 날 래퍼·별칭 서술을 더해 23,950자 · ⏵ 간접 피호출·쓰기 지점 창 서술을 더해
+# 25,045자) SOURCE 상한이 토큰이 됐다 — 그
+# 계산은 `config/models.yaml`의 `qwen3.8-27b` 항목이
+# 든다. v7 입력 토큰도 미실측이다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -2810,7 +3083,7 @@ _AUDITOR_DEFINITION_CHARS = 2_000
 # 닫는 줄은 늘 남긴다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_ENTRY_CONTEXT_LINES = 20
 _AUDITOR_ENTRY_HEAD_LINES = 10
-# 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`_IDENT`)는 이 표시의 낱말을 안 본다.
+# 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`source_definitions`)는 이 표시의 낱말을 안 본다.
 _OMITTED = "/* ... {} lines omitted ... */"
 _OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
 # 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)) — 이미 실린 범위와 겹쳐 건너뛴
@@ -2818,13 +3091,33 @@ _OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
 # `callers_dropped`가 지점 수가 된다(#351 리뷰). 순서는 `call_sites_of`가 정한다(같은 파일 →
 # 같은 디렉터리 → 나머지). **정한 값이지 잰 값이 아니다.**
 _AUDITOR_CALLER_SITES = 8
-# 실린 원문에서 이름을 뽑는 데 쓴다 — 파싱이 아니라 토큰 근사다. 키워드는 정의 조회에서 뺀다.
-_IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
-_C_KEYWORDS = frozenset(
-    "auto break case char const continue default do double else enum extern float for goto if "
-    "inline int long register restrict return short signed sizeof static struct switch typedef "
-    "union unsigned void volatile while bool true false NULL".split()
-)
+# 래퍼 너머(C4 — `auditor_callee_wrappers`가 1일 때만). 붙인 피호출 함수가 이 줄 수 이하이고 그
+# 본문이 정의를 아는 함수를 1~`_AUDITOR_WRAPPER_CALLS`개만 부르면 래퍼로 보고 그 함수들을
+# 붙인다 — `gf_strdup` → `gf_mem_strdup` 같은 껍데기 뒤의 실제 구현. 래퍼 너머는
+# `_AUDITOR_WRAPPER_DEPTH`단까지다. 매크로 별칭(`ND_TCHECK` → `ND_TCHECK2`)은
+# `_AUDITOR_ALIAS_ROUNDS`번까지 다시 찾는다. **셋 다 정한 값이지 잰 값이 아니다**
+# — 근거는 팀 검수 83표본의 래퍼 예(1~2단 · 이름만 바꿔 넘기는 짧은 함수)다.
+_AUDITOR_WRAPPER_LINES = 10
+_AUDITOR_WRAPPER_CALLS = 2
+_AUDITOR_WRAPPER_DEPTH = 2
+_AUDITOR_ALIAS_ROUNDS = 2
+# 간접 피호출(C6 — `auditor_indirect_callees`). 실린 함수의 필드 경유 호출 하나(필드 하나)가 갈 수
+# 있는 후보 중 아직 안 실린 것이 이보다 많으면 어느 것인지 몰라 **그 필드의** 후보는 하나도 안
+# 붙인다 — `alloc`처럼 흔한 필드 이름이 여러 구현에 묶인 저장소에서 엉뚱한 본문이 쌓이지 않게.
+# 상한은 필드마다다(PR #468 리뷰 MEDIUM-2 — 함수 단위 합이면 `s->read`(1)와 `s->write`(3)를 같이
+# 부르는 함수에서 둘 다 버려졌다). **정한 값이지 잰 값이 아니다.**
+_AUDITOR_INDIRECT_MAX = 3
+# 쓰기 지점 창(C5(a) — `auditor_write_sites`)의 반폭. 쓰는 줄 앞뒤 이 줄 수를 그 함수 범위 안으로
+# 자른다(`_caller_window`와 같은 창). 할당·길이 계산이 대개 그 줄 바로 앞뒤라 작게 둔다. 이미 실린
+# 범위와 겹치면 쓰는 줄 쪽 남은 조각으로 더 자른다(`_clip_around`). **정한 값.**
+_AUDITOR_WRITE_LINES = 3
+
+
+def _is_short(location: Location) -> bool:
+    """래퍼 판정의 길이 조건 — 범위를 모르면 래퍼로 안 본다."""
+    if location.line_start is None or location.line_end is None:
+        return False
+    return location.line_end - location.line_start + 1 <= _AUDITOR_WRAPPER_LINES
 
 
 def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
@@ -2838,9 +3131,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
 
     상한(`_AUDITOR_SOURCE_CHARS`)은 함수 단위다 — 앞에서부터 들어가는 함수를 넣고 넘치는 것은
     뺀다(중간을 자르면 끊긴 함수를 본다). entry 함수는 상한보다 커도 넣는다. `anchor` 범위 안의 줄은
-    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·프로토타입·매크로)은 읽지 않고
-    센다. 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source` 이벤트가 든다 — EXPANDED 캡슐의
-    `target_function`은 entry 함수만 센다.
+    `anchor`가 덮고, 어느 심볼에도 안 드는 줄(구조체 필드·전역·프로토타입·매크로)은 `SOURCE`에 안
+    싣고 센다 — 읽는 곳은 하나뿐이다: `auditor_definitions`가 1이면 정의 순서를 정하려고 슬라이스
+    줄의 이름만 읽는다(아래 「정의」). 넣은 함수·뺀 함수·못 본 줄·글자 수는 `auditor_source`
+    이벤트가 든다 — EXPANDED 캡슐의 `target_function`은 entry 함수만 센다.
 
     ⚠ **상한은 entry 함수를 안 본다** — 뒤에 붙는 함수만 거른다. 감싸는 함수가 거대하면 `SOURCE`
     하나가 상한과 무관히 커지고, 서빙 입력 몫을 넘으면 400으로 거절된다. 이 함수가 그 경로를 막지
@@ -2850,23 +3144,52 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     ⏵ `auditor_entry_trim`이 1이면 entry 함수가 상한을 넘을 때 줄인다(`_trim_entry`) — 그때
     `entry_omitted_lines`가 뺀 줄 수를 들고, `anchor_chars`는 줄이기 전 크기 그대로다.
 
+    **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
+    실린 함수가 쓰는 매크로·타입·파일 변수의 정의(`ctx.definitions_of`)를 붙인다. 정의 하나가
+    `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 코드
+    자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드 전용
+    이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
+    먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
+    비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을 정한다(`demote_nonproduct`).
+    붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면 이 단계가 없고 `SOURCE`·
+    이벤트는 옛 모양 그대로다.
+
     **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
     안 호출이 부르는 함수의 본문(`ctx.callees_of`)을 붙인다. entry 함수의 피호출 함수가 먼저,
     그다음 실린 순서대로다. 이미 실린 범위와 겹치는 것·`_AUDITOR_CALLEE_CHARS`를 넘는 것은
     싣지 않고, 전체 상한은 같이 받는다. 붙인 수·뺀 수는 `callees`·`callees_dropped`가 든다.
     0이면 이 단계가 없고 `SOURCE`·이벤트는 옛 모양 그대로다(결정 1-b).
 
-    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 맨 뒤(정의·피호출 함수 다음)에, entry
+    **래퍼·별칭 너머(C4)** — `auditor_callee_wrappers`가 1이면 붙인 피호출 함수가 짧은 래퍼일 때
+    그 너머 함수를, 실은 매크로가 이름만 바꿔 넘기면 그 대상 정의(정의 단계)·함수(피호출 단계)를
+    더 붙인다(`_AUDITOR_WRAPPER_*`·`_AUDITOR_ALIAS_ROUNDS` 주석). 붙인 수는 `wrapper_callees`·
+    `alias_callees`·`alias_definitions`가 든다. 0이면 이 셋이 이벤트에 없고 피호출은 1단에서
+    멈춘다 — 이 값이 생기기 전 모양 그대로다.
+
+    **간접 피호출(C6)** — `auditor_indirect_callees`가 1이면 피호출 단계 끝에, 실린 함수의 필드 경유
+    호출(`sys->alloc(…)`)마다 그 필드에 묶인 함수(`ctx.indirect_calls_of`) 중 아직 안 실린 것을
+    피호출처럼 붙인다. 그 수가 필드마다 `_AUDITOR_INDIRECT_MAX`를 넘으면 그 필드만 건너뛴다.
+
+    **호출자 창(#349 (b))** — `auditor_caller_lines`가 N이면 정의·피호출 함수 다음에, entry
     함수를 부르는 호출 지점(`ctx.call_sites_of`)의 앞뒤 N줄을 호출자 함수 범위 안으로 잘라
     붙인다. 이미 실린 범위와 겹치는 지점은 건너뛰고(호출자가 슬라이스에 걸쳐 이미 실렸거나 피호출
     함수로 실린 경우 · 같은 호출자 안의 이웃 호출), 겹치지 않는 지점을 앞에서부터
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
+    **쓰기 지점 창(C5(a))** — `auditor_write_sites`가 N이면 맨 뒤(호출자 창 다음 — 호출자 창이 먼저
+    자리를 잡아 쓰기 창에 밀리지 않는다, PR #468 리뷰 MEDIUM-1)에, 슬라이스 줄에 나온 이름·필드에
+    쓰는 지점(`ctx.writes_of`·`ctx.field_writes_of`)의 앞뒤 `_AUDITOR_WRITE_LINES`줄을 쓰는 함수
+    범위로 잘라 N곳까지 붙인다(`_write_sites`가 고르고 순서를 정한다). 창은 `functions`에 안 든다
+    — `write_windows`·`write_windows_dropped`가 따로 센다.
+
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
+
+    **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
+    이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
     """
     symbols = {file: ctx.symbols_for(file) or [] for file in {file for file, _ in ref.lines}}
     spanned: dict[Location, None] = {}
@@ -2899,8 +3222,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     if over_cap:
         anchor_text, omitted = _trim_entry(anchor, anchor_text, in_anchor)
     blocks = [_block(anchor, anchor_text, end=anchor_end)]
-    # 정의 조회가 읽는 원문 — 배너(`파일:줄`)와 뺀 구간 표시의 낱말은 코드가 아니다(#351 리뷰).
-    texts = [_OMITTED_LINE.sub("", anchor_text)]
+    # 정의 조회가 읽는 (위치, 원문) — 배너(`파일:줄`)와 뺀 구간 표시의 낱말은 코드가 아니다(#351
+    # 리뷰). 위치를 같이 든다: 지역·파라미터는 함수마다 따로 빼야 해서다(`source_definitions`).
+    bodies = [(anchor, _OMITTED_LINE.sub("", anchor_text))]
     size, dropped = measure(blocks[0]), 0
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
@@ -2913,54 +3237,132 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             dropped += 1
             continue
         blocks.append(block)
-        texts.append(text)
+        bodies.append((symbol, text))
         carried.append(symbol)
         size += 1 + measure(block)
     with_definitions = ctx.config.thresholds.auditor_definitions
-    definitions = definitions_dropped = 0
+    # 정의 조회 위생(`source_definitions`)은 `auditor_definitions`를 켠 run만 쓴다 — 아래 피호출·
+    # 호출자 조회도 같은 규칙(비제품 경로 강등)으로 「하나뿐」을 정한다. 끈 run은 옛 호출 그대로라
+    # 측정이 있는 옵션 조합(피호출만·호출자 창만)의 조회 결과가 안 바뀐다. 래퍼·별칭 너머(C4)는
+    # 따로 `auditor_callee_wrappers`가 켠다 — 그 값이 0이면 피호출·정의 단계가 C4 이전 모양이다.
+    hygiene = {"demote_nonproduct": True} if with_definitions else {}
+    wrappers = ctx.config.thresholds.auditor_callee_wrappers
+    definitions = definitions_dropped = alias_definitions = 0
+    # 실은 매크로가 다른 이름 하나로 바꿔 넘기면 그 이름(C4 — `macro_alias_target`). 아래 별칭
+    # 라운드가 그 이름의 정의를, 피호출 단계가 그 이름의 함수 본문을 찾는다.
+    aliases: set[str] = set()
+    # 정의를 조회한 이름(정의 단계가 채운다) — 별칭 함수 조회가 이 안에서만 찾는다.
+    asked: set[str] = set()
+
+    def carry_definition(definition: Location) -> bool:
+        nonlocal size, definitions, definitions_dropped
+        if any(_overlaps(definition, other) for other in seen):
+            return False
+        seen.append(definition)
+        text = ctx.read_source(definition)
+        block = _block(definition, text)
+        if len(block) > _AUDITOR_DEFINITION_CHARS or size + 1 + measure(block) > cap:
+            definitions_dropped += 1
+            return False
+        blocks.append(block)
+        size += 1 + measure(block)
+        definitions += 1
+        if wrappers and (target := macro_alias_target(text)) is not None:
+            aliases.add(target)
+        return True
+
     if with_definitions:
         # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
-        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다.
-        used = {name for text in texts for name in _IDENT.findall(text)} - _C_KEYWORDS
-        for definition in ctx.definitions_of(used, anchor.file) or []:
-            if any(_overlaps(definition, other) for other in seen):
-                continue
-            seen.append(definition)
-            block = _block(definition, ctx.read_source(definition))
-            if (
-                len(block) > _AUDITOR_DEFINITION_CHARS
-                or size + 1 + measure(block) > cap
-            ):
-                definitions_dropped += 1
-                continue
+        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그 함수의
+        # 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
+        used = definition_names(bodies, ctx.locals_of)
+        found = ctx.definitions_of(used, anchor.file, **hygiene) or []
+        for definition in slice_names_first(found, ctx.read_source, ref.lines):
+            carry_definition(definition)
+        # 별칭 라운드(C4) — `ND_TCHECK` → `ND_TCHECK2`처럼 실은 매크로가 이름만 바꿔 넘기면 그
+        # 대상의 정의를 한 번 더 찾는다. 대상이 다시 별칭이면 `_AUDITOR_ALIAS_ROUNDS`까지 간다.
+        # 이미 조회한 이름은 다시 안 찾는다. `asked`가 정의를 조회한 이름이다 — 아래 피호출 단계도
+        # 이 이름들의 함수만 찾는다(마지막 라운드가 새로 낸 대상은 한 단계 더 간 것이라 뺀다).
+        asked = set(used)
+        for _ in range(_AUDITOR_ALIAS_ROUNDS):
+            wanted, asked = aliases - asked, asked | aliases
+            if not wanted:
+                break
+            for definition in ctx.definitions_of(wanted, anchor.file, **hygiene) or []:
+                if carry_definition(definition):
+                    alias_definitions += 1
+    hops = ctx.config.thresholds.auditor_callee_hops
+    indirect = ctx.config.thresholds.auditor_indirect_callees
+    callees = callees_dropped = wrapper_callees = alias_callees = 0
+    indirect_callees = indirect_skipped = 0
+    if hops:
+        # 피호출 함수 1단(#349 (a)) + 래퍼 너머(C4). 붙인 피호출 함수가 짧고
+        # (`_AUDITOR_WRAPPER_LINES`줄 이하) 그 본문이 정의를 아는 함수를
+        # 1~`_AUDITOR_WRAPPER_CALLS`개만 부르면 래퍼로 보고 그 함수들을 바로 뒤에 붙인다 —
+        # `gf_strdup` → `gf_mem_strdup`처럼 래퍼만 실리고 실제 구현이 빠지던 자리다. 래퍼 너머는
+        # `_AUDITOR_WRAPPER_DEPTH`단까지다. 래퍼가 아닌 함수는 1단에서 멈춘다.
+        def carry_callee(callee: Location) -> bool:
+            nonlocal size, callees, callees_dropped
+            if any(_overlaps(callee, other) for other in seen):
+                return False
+            seen.append(callee)
+            block = _block(callee, ctx.read_source(callee))
+            if len(block) > _AUDITOR_CALLEE_CHARS or size + 1 + measure(block) > cap:
+                callees_dropped += 1
+                return False
             blocks.append(block)
             size += 1 + measure(block)
-            definitions += 1
-    hops = ctx.config.thresholds.auditor_callee_hops
-    callees = callees_dropped = 0
-    if hops:
+            callees += 1
+            return True
+
+        def through_wrapper(callee: Location, depth: int) -> None:
+            nonlocal wrapper_callees
+            if not wrappers or depth > _AUDITOR_WRAPPER_DEPTH or not _is_short(callee):
+                return
+            inner = ctx.callees_of(callee, **hygiene) or []
+            if not 1 <= len(inner) <= _AUDITOR_WRAPPER_CALLS:
+                return
+            for target in inner:
+                if carry_callee(target):
+                    wrapper_callees += 1
+                    through_wrapper(target, depth + 1)
+
         for owner in list(carried):
-            for callee in ctx.callees_of(owner) or []:
-                if any(_overlaps(callee, other) for other in seen):
-                    continue
-                seen.append(callee)
-                block = _block(callee, ctx.read_source(callee))
-                if (
-                    len(block) > _AUDITOR_CALLEE_CHARS
-                    or size + 1 + measure(block) > cap
-                ):
-                    callees_dropped += 1
-                    continue
-                blocks.append(block)
-                size += 1 + measure(block)
-                callees += 1
+            for callee in ctx.callees_of(owner, **hygiene) or []:
+                if carry_callee(callee):
+                    through_wrapper(callee, 1)
+        # 별칭 매크로가 부르는 함수(`#define FT_FRAME_EXTRACT(...) FT_Stream_ExtractFrame(...)`).
+        # 매크로 본문 안의 호출은 인덱스 호출 표에 없어 위 `callees_of`로는 안 닿는다 -> 이름으로
+        # 찾는다. 정의를 조회한 이름만이다 — `M` → `M2` → `M3` → `impl`이면 `M2`·`M3`까지가
+        # `_AUDITOR_ALIAS_ROUNDS`(2)번이고 `impl`은 셋째라 안 찾는다(PR #452 리뷰 LOW-1).
+        if forwarded := aliases & asked:
+            for function in ctx.functions_named(sorted(forwarded), anchor.file, **hygiene) or []:
+                if carry_callee(function):
+                    alias_callees += 1
+                    through_wrapper(function, 1)
+        # 간접 피호출(C6 — #304). `sys->alloc(…)`처럼 필드 경유로 부르는 함수는 `callees_of`가 못
+        # 푼다 -> index-v3 `fn_bindings`로 그 필드에 묶인 함수를 후보로 받아 붙인다. 상한은
+        # 필드마다이고 이미 실린 후보는 안 센다 — 아직 안 실린 후보가 `_AUDITOR_INDIRECT_MAX`개를
+        # 넘는 필드는 건너뛰고 `indirect_skipped`가 센다. 비제품 경로 강등은 피호출 조회와 같다
+        # (`hygiene`).
+        if indirect:
+            for owner in list(carried):
+                for _field, targets in ctx.indirect_calls_of(owner, **hygiene) or []:
+                    fresh = [t for t in targets if not any(_overlaps(t, o) for o in seen)]
+                    if len(fresh) > _AUDITOR_INDIRECT_MAX:
+                        indirect_skipped += 1
+                        continue
+                    for target in fresh:
+                        if carry_callee(target):
+                            indirect_callees += 1
+                            through_wrapper(target, 1)
     # 호출자 창은 피호출 함수 **뒤**다 — 피호출 함수가 entry를 되부르면(상호 재귀) 그 본문이
     # 먼저 통째로 실리고 창은 겹쳐 빠진다. 앞이면 본문 대신 창 조각만 남고 아무도 안 셌다
     # (#351 자체 검토).
     caller_lines = ctx.config.thresholds.auditor_caller_lines
     callers = callers_dropped = call_sites = 0
     if caller_lines and anchor.symbol:
-        sites = ctx.call_sites_of(anchor) or []
+        sites = ctx.call_sites_of(anchor, **hygiene) or []
         call_sites = len(sites)
         tried = 0
         for site in sites:
@@ -2980,6 +3382,33 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             callers += 1
+    # 쓰기 지점 창(C5(a) — #304)은 호출자 창 **뒤**다 — 앞이면 쓰기 창이 먼저 `seen`에 들어가 그와
+    # 겹치는 호출자 창(이 옵션 전에는 실리던 창)이 통째로 빠졌다(PR #468 리뷰 MEDIUM-1). 이미 실린
+    # 범위와 겹치는 쓰기 창은 쓰는 줄 쪽 남은 조각으로 자르고, 쓰는 줄 자체가 실려 있으면 안 붙인다
+    # (읽는 지점 수 상한도 안 먹는다).
+    write_sites = ctx.config.thresholds.auditor_write_sites
+    write_windows = write_windows_dropped = write_sites_found = 0
+    if write_sites:
+        sites = _write_sites(ctx, ref, carried, anchor.file)
+        write_sites_found = len(sites)
+        tried = 0
+        for site in sites:
+            if tried == write_sites:
+                break
+            window = _clip_around(
+                _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1, seen
+            )
+            if window is None:
+                continue
+            tried += 1
+            seen.append(window)
+            block = _block(window, ctx.read_source(window))
+            if size + 1 + measure(block) > cap:
+                write_windows_dropped += 1
+                continue
+            blocks.append(block)
+            size += 1 + measure(block)
+            write_windows += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
@@ -2988,20 +3417,50 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers,
+        functions=len(blocks) - definitions - callers - write_windows,
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=anchor_chars,
         **({"entry_omitted_lines": omitted, "entry_over_cap": over_cap} if trim_entry else {}),
-        **({"callees": callees, "callees_dropped": callees_dropped} if hops else {}),
+        **(
+            {
+                "callees": callees,
+                "callees_dropped": callees_dropped,
+                **(
+                    {"wrapper_callees": wrapper_callees, "alias_callees": alias_callees}
+                    if wrappers
+                    else {}
+                ),
+                **(
+                    {"indirect_callees": indirect_callees, "indirect_skipped": indirect_skipped}
+                    if indirect
+                    else {}
+                ),
+            }
+            if hops
+            else {}
+        ),
+        **(
+            {
+                "write_windows": write_windows,
+                "write_windows_dropped": write_windows_dropped,
+                "write_sites_found": write_sites_found,
+            }
+            if write_sites
+            else {}
+        ),
         **(
             {"callers": callers, "callers_dropped": callers_dropped, "call_sites": call_sites}
             if caller_lines
             else {}
         ),
         **(
-            {"definitions": definitions, "definitions_dropped": definitions_dropped}
+            {
+                "definitions": definitions,
+                "definitions_dropped": definitions_dropped,
+                **({"alias_definitions": alias_definitions} if wrappers else {}),
+            }
             if with_definitions
             else {}
         ),
@@ -3010,8 +3469,82 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             if token_cap
             else {}
         ),
+        **(
+            {
+                "gate_reasons": ",".join(
+                    source_gate.reasons(
+                        ref, anchor, uncovered_lines=uncovered, functions_dropped=dropped,
+                        callees_dropped=callees_dropped, callers_dropped=callers_dropped,
+                        definitions_dropped=definitions_dropped,
+                    )
+                )
+            }
+            if ctx.config.thresholds.auditor_source_gate
+            else {}
+        ),
     )
     return source
+
+
+def _write_sites(
+    ctx: RunContext, ref: SliceRef, carried: list[Location], near_file: str
+) -> list[Location]:
+    """쓰기 지점 창(C5(a))을 붙일 후보 지점 — 고유하고 순서가 정해진 것.
+
+    - 이름: 슬라이스 줄에 나온 이름 중 **실린 함수의** 지역·파라미터가 아닌 것(`writes_of`). 그리고
+      **쓰는 함수의** 지역·파라미터인 이름의 지점은 버린다 — `writes_of`는 파일 안에서 함수를 안
+      가른다(그 docstring). 파일 변수 `buf`를 찾는데 다른 함수 `g`의 `char *buf = malloc(8);`이
+      잡히면 Auditor가 할당 크기를 오판한다(PR #468 리뷰 HIGH-1)
+    - 필드: 슬라이스 줄에 필드로 나온 이름(`field_writes_of`)
+    - 순서: 이름·필드가 슬라이스 줄에 **처음 나온 순서**(`slice_line_refs` — 알파벳 순이면 앞쪽
+      이름이 창을 먼저 먹고 길이 필드가 굶었다, 리뷰 MEDIUM-3). 그 안은 조회 순서다. 그다음
+      **함수가 다른 지점이 먼저** — 함수마다 첫 지점이 다 나온 뒤에 둘째 지점이 온다(안정 정렬)
+    - 같은 줄(파일·줄)은 한 번만 — 한 줄이 두 이름을 쓰면 창 하나다(리뷰 LOW-1)
+    """
+    own: set[str] = set()
+    for function in carried:
+        if function.symbol:
+            own |= ctx.locals_of(function.file, function.symbol) or frozenset()
+    found: dict[tuple[str, int], Location] = {}
+    for name, is_field in slice_line_refs(ctx.read_source, ref.lines):
+        if is_field:
+            sites = ctx.field_writes_of(name, near_file) or []
+        elif name in own:
+            continue
+        else:
+            sites = [
+                site
+                for site in ctx.writes_of(name, near_file) or []
+                if not (site.symbol and name in (ctx.locals_of(site.file, site.symbol) or ()))
+            ]
+        for site in sites:
+            found.setdefault((site.file, site.line_start or 0), site)
+    rank: dict[tuple[str, str | None], int] = {}
+    order: list[tuple[int, int, Location]] = []
+    for position, site in enumerate(found.values()):
+        key = (site.file, site.symbol)
+        order.append((rank.get(key, 0), position, site))
+        rank[key] = rank.get(key, 0) + 1
+    return [site for _, _, site in sorted(order, key=lambda item: item[:2])]
+
+
+def _clip_around(window: Location, line: int, seen: list[Location]) -> Location | None:
+    """`window`에서 `seen`의 범위와 겹치는 쪽을 깎고 `line`을 품는 조각만 남긴다. `line` 자체가
+    이미 실린 범위 안이면 `None`. 같은 파일에 범위 없는 위치(파일 전체)가 있어도 `None`."""
+    start, end = window.line_start or line, window.line_end or line
+    for other in seen:
+        if other.file != window.file:
+            continue
+        if other.line_start is None:
+            return None
+        other_end = other.line_end or other.line_start
+        if other.line_start <= line <= other_end:
+            return None
+        if other_end < line:
+            start = max(start, other_end + 1)
+        else:
+            end = min(end, other.line_start - 1)
+    return Location(file=window.file, symbol=window.symbol, line_start=start, line_end=end)
 
 
 def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:

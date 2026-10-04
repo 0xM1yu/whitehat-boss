@@ -670,6 +670,20 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 
 ⏵ **2026-10-03 — `S5`·`S6b`·`S7`은 main에 있다.** 다음은 배선 조각이다(§11.6).
 
+⏵ **2026-10-03 저녁 — 배선 조각도 머지됐고(#408) 「단계 3 배관 증명」을 돌렸다. 배관은 성립한다**
+— `pov_poc` 68바이트 8개가 `/submit-vul`에 **8건 제출 성공**하고 서버 DB 판정 행과 장부
+`oracle/verdict.json`이 **같은 `poc_sha256`·`poc_id`**를 든다
+([보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)).
+번들에 없던 `submit.sh`는 **저자 틀에 네 값을 치환해 조작자 쪽에서 만들었다.**
+🔴 **그 자리에서 다른 벽이 드러났다 — `dev_fake`의 `input_tokens 200,000`을 실제 번들에서
+204,963이 넘겨 run이 대상 9/47에서 끝났다**(`stopped_after: 4`) → 7·8단계 미도달 → 바이트 0개.
+상한을 로컬·미커밋으로 제거하자 완주했다. **배관 증명을 막던 것은 예산이고, 그것은 이 칸의
+문제다.** ⚠ **§11.2의 벽 ②(승격 문)에 대해서는 이 run이 아무것도 말하지 않는다** — 같은 절이
+적듯 *"`dev_fake`로는 이 벽이 안 보인다"*(Fake Critic이 근거만 있으면 `uphold`를 낸다).
+6단계의 `upheld=false`도 예산 탓이 아니라 Critic 앞의 정상 상태다.
+상한 값은 사람이 정한다(보고서 §6: Fake 장부값은 계산값이라 상한 근거가 못 된다) — 이슈
+[#424](https://github.com/0xM1yu/whitehat-boss/issues/424)에 선택지 셋으로 올렸다.
+
 ### 11.4 이 사슬의 PR — 2026-10-03 기준
 
 **상태는 PR을 열어 본다** — 아래는 그날의 사진이다.
@@ -678,17 +692,18 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | --- | --- | --- |
 | `S7` 재현명세 합성 | PR [#393](https://github.com/0xM1yu/whitehat-boss/pull/393) (@sumin0218) · 이슈 [#392](https://github.com/0xM1yu/whitehat-boss/issues/392) | **머지됨.** 기본 꺼짐. **두 자리에서 이 PR이 우리 계획보다 낫다** — `origin`을 최상위 필드로 우회하지 않고 `_ensure_repro_origin`으로 집행하고, 등급을 출처로 가르지 않는다(막아야 할 것은 출처가 아니라 §11.5다) |
 | `S5` PoC 바이트 출구 | PR [#396](https://github.com/0xM1yu/whitehat-boss/pull/396) | **머지됨.** 저장소 최초의 이진 쓰기 |
-| `S6b` 오라클 클라이언트 | PR [#402](https://github.com/0xM1yu/whitehat-boss/pull/402) | **머지됨.** 호출처 0건(배선 조각이 잇는다). 이 클라이언트로 실서버 왕복을 쟀다(2026-10-02) |
+| `S6b` 오라클 클라이언트 | PR [#402](https://github.com/0xM1yu/whitehat-boss/pull/402) | **머지됨.** 호출처는 배선 조각([#408](https://github.com/0xM1yu/whitehat-boss/pull/408))이 잇기 전까지 0건이다. 이 클라이언트로 실서버 왕복을 쟀다(2026-10-02) |
+| 배선 조각 | PR [#408](https://github.com/0xM1yu/whitehat-boss/pull/408) (@sumin0218) | **열림.** `run --oracle-submit`(기본 꺼짐): 후보마다 `vul`만, `fix`·판정 조회는 후보가 하나일 때만 그 하나에(any-of 아님) — 둘 이상이면 고르는 규칙이 미정이라 지정하지 않는다(모델에게 묻는 방식은 별도 조각). 판정 값은 `oracle/verdict.json`. 대역으로만 검증 — 하네스 run으로 실서버 왕복 0건 <br>⏵ **2026-10-03 저녁 — 머지됐고(`1fa2182`) vul 다리의 실서버 제출을 쟀다**(`run_20261003_0003`, 8건 전부 200). **「대역으로만」은 vul 다리에 한해 깨졌다.** 🔴 **왕복(vul→fix→조회)은 여전히 0건이다** — 후보 8건이라 최종 PoC를 지정하지 않아 `fix` 다리·`query_verdict`가 0이다([보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md) §1·§7). 위 「열림」은 그날 아침의 사진이다 |
 | `S0` 최후 방어선 | PR [#382](https://github.com/0xM1yu/whitehat-boss/pull/382) | **머지됨** |
 | 과제 번들 `--task-dir` | PR [#381](https://github.com/0xM1yu/whitehat-boss/pull/381) | **머지됨.** `--slices` 허용 + 슬라이스 개수 가드 |
 | PoV 정보 배선(진입점·넓은 소스·경로 심볼·gdb enum) | PR [#380](https://github.com/0xM1yu/whitehat-boss/pull/380) | **머지됨.** 새 입력은 v3 전용(v3는 미배선) — 배선된 v2의 프롬프트는 main과 바이트 동일 |
 | CyberGym 조사 다섯 | PR [#376](https://github.com/0xM1yu/whitehat-boss/pull/376) | **머지됨** — `docs/research/` |
 | `#232` 판정 분리 — 좁은 절반 | PR [#401](https://github.com/0xM1yu/whitehat-boss/pull/401) | 열림 |
-| 정답 자료 가드 | PR [#397](https://github.com/0xM1yu/whitehat-boss/pull/397) (@sumin0218) | 열림. 우리 쪽 브랜치 `fix/task-answer-guard`(PR 없음)와 **같은 주제**라 하나로 모아야 한다 — 허용목록(`README.md`·`submit.sh`도 거부) 대 블록목록 설계가 갈린다. 🔴 **호출처 0건** — `--task-dir` 분기는 `load_task`를 안 불러 이 가드를 안 거친다 |
+| 정답 자료 가드 | 브랜치 `fix/task-answer-guard` → PR 올림 | ⏵ 2026-10-03 **허용목록으로 정했다**(@danielcho02) — 블록목록 PR [#397](https://github.com/0xM1yu/whitehat-boss/pull/397)(@sumin0218)을 이것으로 대체한다. 허용 이름은 **넷**(`repo-vul.tar.gz`·`description.txt`·`README.md`·`submit.sh` = 저자 생성기 Level 1 산출). 🔴 둘뿐이던 판은 `--oracle-submit`(#408)이 신원을 읽는 `submit.sh`를 거부해 **채점 가능한 번들을 전부 막았다** — 두 PR이 서로 다른 곳이라 CI가 못 잡는 결함이다. 그리고 `--task-dir` 분기에 **배선했다**(`check_task_dir` — 아카이브 확인 뒤·쓰기 앞). 그전에는 `load_task`에만 걸려 호출처가 0건이었고 오염 번들이 **exit 0으로 완주했다**(배선 전 실측) |
 | 예산 한 줄 | 브랜치 `fix/no-zero-budget`(PR 없음) | 구현 끝 |
 | Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다 |
 | 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
-| Auditor 프롬프트 v5 | draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390) | 🅿️ **주차.** 트리거는 **첫 대여 세션** — v4와 v5를 그날 둘 다 돌리고 정한다 |
+| Auditor 프롬프트 v5 | ~~draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390)~~ | ⏵ 2026-10-03 **닫혔다.** ~~주차 · 트리거는 첫 대여 세션 — v4와 v5를 그날 둘 다 돌리고 정한다~~ — **v5를 건너뛰고 v6를 배선했다**(프롬프트 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418) · 배선 [#421](https://github.com/0xM1yu/whitehat-boss/pull/421) · 사용자 결정). v4·v5 둘 다 어느 registry 엔트리도 안 고르므로 그 비교는 없어졌다 |
 
 🔴 **PR끼리의 충돌은 `src/orchestrator/runner.py`와 `docs/agent-contracts.md`에서 났다** — #380 ↔ #396이
 `_emit_pov_hop`·`_pov_observation`의 호출 인자와 docstring, 계약 문서의 같은 불릿을 서로 다르게 바꿨다.
@@ -717,10 +732,10 @@ container_tools.py:584-587   asan·poc 판정: _EXEC_FAILED면 False, 그 밖은
 
 | 집을 것 | 선행 | 무엇을 하면 끝인가 |
 | --- | --- | --- |
-| **배선 조각** (가장 앞) | #396·#402 머지 — **둘 다 됐다** | `S5`가 남긴 PoC 파일을 `S6b`가 제출하게 잇는다. 🔴 **fix 다리는 「최종 PoC 한 개」에만 돈다** — 저자 FAQ가 그렇게 적는데 클라이언트는 아무것도 강제하지 않는다. 그 게이트를 하네스가 든다. ⚠ `run_round_trip`은 `vul`·`fix`를 **둘 다** 제출하니 후보마다 부르지 않는다 — 후보마다는 `submit_vul`만, `submit_fix`+`query_verdict`는 최종 PoC 한 개에만. 마스킹 서버는 미지원(`task_id` 하나를 제출·조회에 다 넘긴다)이고 429는 미처리다. API 키는 환경변수로만 받는다 |
-| **단계 3 배관 증명** | 배선 조각 | `dev_fake` + 로컬 오라클로 종단 1회. **$0**이고 GPU가 필요 없다. 🔴 보고서에 **「배관 증명 · 역량 미측정」**을 박고 숫자 칸은 0으로 둔다 — `dev_fake`의 바이트는 항등식이라 `vul=0`이 나온다(CLAUDE.md §0) |
+| **배선 조각** (가장 앞) | #396·#402 머지 — **둘 다 됐다** | `S5`가 남긴 PoC 파일을 `S6b`가 제출하게 잇는다. 🔴 **fix 다리는 「최종 PoC 한 개」에만 돈다** — 저자 FAQ가 그렇게 적는데 클라이언트는 아무것도 강제하지 않는다. 그 게이트를 하네스가 든다. ⚠ `run_round_trip`은 `vul`·`fix`를 **둘 다** 제출하니 후보마다 부르지 않는다 — 후보마다는 `submit_vul`만, `submit_fix`+`query_verdict`는 최종 PoC 한 개에만. ⏵ 2026-10-03 — 마스킹 서버는 조작자가 저자 `mask_map.json`을 `run --mask-map`으로 줄 때만 지원한다: 제출(`submit_vul`·`submit_fix`)은 번들의 마스킹된 `task_id`로, 판정 조회(`query_verdict`)와 제출 전 캐시 판별(`peek_verdict`)은 맵이 준 실 id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다. ⚠ **이 메커니즘은 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다**(왕복 보고서는 마스크 없이 돌렸다) — `run_round_trip`만 아직 `task_id` 하나를 셋 모두에 넘긴다. 429는 미처리다. API 키는 환경변수로만 받는다 |
+| **단계 3 배관 증명** | 배선 조각 | `dev_fake` + 로컬 오라클로 종단 1회. **$0**이고 GPU가 필요 없다. 🔴 보고서에 **「배관 증명 · 역량 미측정」**을 박고 숫자 칸은 0으로 둔다 — `dev_fake`의 바이트는 항등식이라 `vul=0`이 나온다(CLAUDE.md §0) <br>⏵ **2026-10-03 저녁 — 돌렸다**([보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). 예상대로 `vul_exit_code 0`이 나왔다. **이 칸이 빠뜨린 선행 둘**: ① 번들에 `submit.sh`가 없어 **손으로 만들어야 한다**(저자 생성기는 데이터 묶음이 없어 못 돈다) ② `dev_fake` 예산 상한을 **제거해야 완주한다**(#424 — 안 하면 `stopped_after: 4`, 바이트 0개). `--slices`는 필요 없고 `--condition`·`--device`는 비운다 |
 | **`#232` 판정 분리** | 없음 | `ok`와 「크래시했다」를 가른다. **합성을 켜는 것의 선행이다**(§11.5). 좁은 절반(exit 0·미측정 종료 코드를 E4로 읽지 않는다)은 PR #401로 올라와 있다 — 넓은 절반(`expected_signal`과 대조)은 결정 대기 |
-| **오라클 카나리** | 없음 | 채점 전에 참조 PoC와 **무해 입력**을 둘 다 돌려 판별력을 확인하는 절차. `#383`. ⏵ 2026-10-03 — **수동 점검 도구**(`tools/oracle_canary.py`)가 있다: 참조 PoC와 무해 입력을 `-vul`·`-fix`에 각 N회 돌려 기대표와 대조한다. 🔴 **이 행은 끝나지 않았다.** ① **호출하는 코드가 없다** — 2026-10-03 `git grep`으로 문서 밖 호출자 0건이라 채점을 막지 못한다(사람이 돌려 읽는다) ② **실 Docker로 0회 돌았다** — 통과하는 28의 경우도 실패하는 32의 경우도 관측이 없고, argv는 보고서 §13의 모양이지 저자 `run_container` 자체가 아니다 ③ 도구가 스스로 적는 미실측: **다른 과제·ASan·`oss-fuzz` 과제 0건 · 팀원 장비의 `vm.mmap_rnd_bits` 0건 · 네이티브 Linux 기본값 0건 · 병렬 거동 0건**. `#383`은 그래서 열려 있다 |
+| **오라클 카나리** | 없음 | 채점 전에 참조 PoC와 **무해 입력**을 둘 다 돌려 판별력을 확인하는 절차. `#383`. ⏵ 2026-10-03 — **수동 점검 도구**(`tools/oracle_canary.py`)가 있다: 참조 PoC와 무해 입력을 `-vul`·`-fix`에 각 N회 돌려 기대표와 대조한다. 🔴 **이 행은 끝나지 않았다.** ① **호출하는 코드가 없다** — 2026-10-03 `git grep`으로 문서 밖 호출자 0건이라 채점을 막지 못한다(사람이 돌려 읽는다) ② **실 Docker로 0회 돌았다** — 통과하는 28의 경우도 실패하는 32의 경우도 관측이 없고, argv는 보고서 §13의 모양이지 저자 `run_container` 자체가 아니다 <br>⏵ **2026-10-03 저녁 — ②의 절반이 깨졌다.** `arvo:1065`에서 **실 Docker 첫 실행이 통과했다**(`mmap_rnd_bits=28` · 네 조합 각 10회 · `139` 0건 · 도구 exit 0, [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md) §3). **32의 경우는 여전히 0건**이고 ①(문서 밖 호출자 0건)·③도 그대로다 ③ 도구가 스스로 적는 미실측: **다른 과제·ASan·`oss-fuzz` 과제 0건 · 팀원 장비의 `vm.mmap_rnd_bits` 0건 · 네이티브 Linux 기본값 0건 · 병렬 거동 0건**. `#383`은 그래서 열려 있다 |
 
 ⚠ **GPU 대여는 사전 허락을 받았다**(2026-10-02 @danielcho02) — **단 배관 뒤다.** 배관 전에 재면
 되먹이기가 PoC와 무관해 수렴 못 하는 홉에 시간을 태운다 — 호출당 1,467~2,187 s는 **ATOM 2026-09-29 교대 스모크의 Auditor 추론 호출** 시간이다([보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)). PoV 홉 시간이 아니고 vast 실측도 아니다 — 「홉이 PoC와 무관하면 그만한 호출이 헛돈다」는 **유추**다.
