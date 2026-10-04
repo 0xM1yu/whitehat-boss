@@ -930,7 +930,8 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     # **역할 평균 prefix**(`_prefix_tokens` — `harness_pool`에서 4,481토큰)만 더한다. 루프는 매 홉
     # prefix와 hop0 user 턴(`SOURCE` 최대 20,000토큰 + FACTS)을 다시 싣고 관측이 홉마다 쌓이는데
     # 둘 다 안 센다 — `SOURCE`는 캡슐 토큰이 아니라 러너가 따로 조립해서 한 방일 때도 안 센다.
-    # 계산값은 `config/budgets.yaml`의 `auditor_tool_hops` 주석이 든다. 고치지 않았다(별 작업).
+    # 계산값은 `config/budgets.yaml`의 `auditor_tool_hops` 주석이 든다 — 상한 쪽 계산값이라 오차는
+    # 대체로 위(과대)이지만 엄밀한 천장은 아니다(근거는 그 주석). 고치지 않았다(별 작업).
     tokens = sum(c.used_tokens for c in capsules) * places + _prefix_tokens(config) * calls
     budget = config.budget.input_tokens
     # 상한 0은 「검사 안 함」이다(`BudgetLedger._overrun`) — 「예산이 0」이 아니다.
