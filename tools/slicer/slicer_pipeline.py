@@ -248,12 +248,14 @@ class SlicingStages:
                 return
 
     def degraded_slice(self, candidate: dict, why: str = "poison streak") -> dict:
-        """Server-free fallback for a candidate whose flow/backward query failed or was skipped
-        after a poison streak. The candidate was already captured (that capture is the recall
-        unit -- source/sink is labelled), so keep it in the output with its own coordinates and
-        the source at them instead of DROPPING it. Builds nothing from the CPG, so it works even
-        when the server is unresponsive. `degraded` marks that the dataflow context is absent:
-        a consumer sees the anchor, not a traced slice, and can `--resume` for the full slice.
+        """Server-free fallback for a candidate whose flow/backward query failed or that was left
+        unsliced: after a poison streak (`why`, the default) or by `--skip-candidates`; `why` is
+        named in the slice's `measurement_notes.degraded`. The candidate was already captured
+        (that capture is the recall unit -- source/sink is labelled), so keep it in the output
+        with its own coordinates and the source at them instead of DROPPING it. Builds nothing
+        from the CPG, so it works even when the server is unresponsive. `degraded` marks that
+        the dataflow context is absent: a consumer sees the anchor, not a traced slice, and can
+        `--resume` for the full slice.
         """
         entry = candidate["entry"]
         # Normalize WITHOUT counting (#307 review LOW): in the except-QueryError path
