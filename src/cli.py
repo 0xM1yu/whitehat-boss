@@ -32,7 +32,7 @@ from typing import TextIO, get_args
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
 from src.adapters.factory import Deps, build_deps, describe_wiring
-from src.adapters.fake_retriever import read_symbol_source
+from src.adapters.fake_retriever import read_raw_source, read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
 from src.bench import (
     DEFAULT_CONCURRENCY,
@@ -870,6 +870,8 @@ def execute(
         # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
         # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
         read_payload=make_payload_reader(run_dir.parent),
+        # 원본 바이트 — `read_source`가 접는 `\r`을 GUARDS의 줄 정렬 검사가 본다(`bare_cr`).
+        read_raw=lambda file: read_raw_source(spec.target, file),
         trace=trace,
         run_dir=run_dir,
         cache_hook=hook,

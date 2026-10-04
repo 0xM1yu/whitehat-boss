@@ -561,7 +561,9 @@ class CapsuleBudgets(HarnessModel):
 # 서술하고 선언한다. ⏵ 2026-10-04 — 다섯째 `auditor_callee_wrappers`(래퍼·별칭 너머, 이슈 #451)도
 # 그 파일이 켜고 v7이 서술한다. ⏵ 같은 날 — 여섯째·일곱째 `auditor_indirect_callees`(간접 피호출,
 # C6)·`auditor_write_sites`(쓰기 지점 창, C5(a))도 그 파일이 켜고 v7이 서술한다(index-v3 · #304).
-# 필드 기본 0은 그 파일이 키를 안 적을 때의 값이다.
+# ⏵ 같은 날 — 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록, #349)는 그 파일이 **꺼 두고**(`0`)
+# v7은 서술·선언하지 **않는다** — 켜려면 프롬프트 판이 먼저 선언해야 한다(다음 판 몫). 필드 기본 0은
+# 그 파일이 키를 안 적을 때의 값이다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -571,6 +573,7 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_wrappers",
     "auditor_indirect_callees",
     "auditor_write_sites",
+    "auditor_guards",
 )
 
 
@@ -691,6 +694,19 @@ class Thresholds(HarnessModel):
     # 0(끔) — `budgets.yaml`이 켠다. v3 표가 없으면 아무것도 안 붙는다. 위 ⚠와 같은 프롬프트 판
     # 문제 — v7이 서술한다.
     auditor_write_sites: int = Field(default=0, ge=0)
+    # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
+    # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
+    # dominate)` 블록을 붙인다(`source_guards`) — sink 호출의 인자 이름을 언급하는 if·while·for·
+    # 삼항·assert 계열 조건을 `파일:줄 | 조건`으로(대입 한 걸음으로 이어진 이름 포함). 지배를
+    # 주장하지 않고, 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을 적은 한 줄이다.
+    # Case A·품는 함수를 모르는 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등, #259)은 안 붙이고
+    # 사유를 trace `guards_skipped`가 든다. 행 상한·예산 계산은 `source_guards`·
+    # `runner._auditor_source`가 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 필드 기본도
+    # `budgets.yaml`도 끈다(0 — **켠 효과는 미실측**). **v7은 이 옵션을 서술·선언하지 않으므로**
+    # 켜고 v7을 고르면 `cli` run·doctor가 막는다 — 켜려면 프롬프트 판이 `auditor_guards`를 선언해야
+    # 한다(다음 판 몫). ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV
+    # 프롬프트에도 든다.
+    auditor_guards: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
