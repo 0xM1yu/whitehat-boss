@@ -1072,7 +1072,7 @@ def test_an_operator_sink_counts_a_guard_that_leads_its_own_line_only() -> None:
 # `파일:줄`은 이 저장소에 안 적는다.)
 
 _CLAMP_SHAPE = _src("""
-    static int dynamicGetbuf(gdIOCtxPtr ctx, void *buf, int len)
+    static int read_into_buffer(gdIOCtxPtr ctx, void *buf, int len)
     {
         int rlen, remain;
         dpIOCtxPtr dctx;
@@ -1098,7 +1098,7 @@ _CLAMP_SHAPE = _src("""
 """)
 
 _CAPACITY_SHAPE = _src("""
-    static xmlChar *escapeText(const xmlChar *string, size_t size)
+    static xmlChar *escape_into_copy(const xmlChar *string, size_t size)
     {
         xmlChar *buffer, *out;
         const xmlChar *cur, *base;
@@ -1153,7 +1153,7 @@ _CAPACITY_SHAPE = _src("""
 """)
 
 _TABLE_SHAPE = _src("""
-    FT_Error tt_face_load_cpal(TT_Face face, FT_Stream stream)
+    FT_Error load_palette_table(TT_Face face, FT_Stream stream)
     {
         FT_Byte  *table = NULL;
         FT_Byte  *p     = NULL;
