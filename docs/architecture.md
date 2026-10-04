@@ -104,7 +104,7 @@ graph LR
 > 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
 > (ATOM 스모크 전).)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
->   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 지금 배선된 v4는
+>   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 지금 배선된 v6는
 >   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
@@ -277,8 +277,10 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
 - CyberGym PoV — 실서빙 실측과 외부 oracle 차분 검증의 실측은 MVP 밖이다(서빙+도구 되는 호스트가
   잡힌 뒤). oracle 제출 배선(`run --oracle-submit`, 기본 꺼짐)은 들어왔고 대역으로만 검증했다 — 하네스
-  run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200,
-  `run_20261003_0003`); **왕복(vul→fix→조회)은 여전히 0건**이다. ⚠ 같은 run의 **8단계 E4는
+  run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(제출 8건 200 ·
+  **고유 PoC 1개** — `cached` 미적중 1·적중 7 · `win11`의 `run_20261003_0003`(trace sha256
+  `f308c5fbfc4f8e54…`), [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md));
+  **왕복(vul→fix→조회)은 여전히 0건**이다. ⚠ 같은 run의 **8단계 E4는
   Fake 도구의 상수**(`fake_tools.py:166-179`)이고 오라클 `vul_exit_code`는 0이라 **어긋난다** —
   E4를 Fake로 관측했다고 읽지 마라. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` ·
   `PovSpec`→`assemble_poc`)·러너 8단계 라우팅(추가형)·feyospace 서빙 배선(§1 pov 좌석)도 들어왔다. 모델-주도 툴 루프(코드열람·Python·
