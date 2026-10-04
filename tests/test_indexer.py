@@ -306,8 +306,9 @@ def test_indirect_calls_are_counted_not_invented(tmp_path: Path) -> None:
 
 def test_deeply_nested_code_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
     """긴 `else if` 사슬과 길게 이은 식은 트리가 수천 단으로 깊다 — 노드마다 재귀하던 호출 수집이
-    `RecursionError`로 인덱스 전체를 잃었다(2026-10-04 GT 직접 모드 6,745표본 중 147개, wireshark
-    121). 두 꼴 다 끝까지 돌고 호출을 하나도 안 잃는다."""
+    `RecursionError`로 인덱스 전체를 잃었다(2026-10-04 GT 직접 모드 FT 데이터 생성 6,745표본에서
+    인덱스 실패 147개 — 이슈 #492 본문이 밝힌 수이고 run ID가 없어 여기서는 재현할 수 없다). 두
+    꼴 다 끝까지 돌고 호출을 하나도 안 잃는다. 호출 목록의 순서는 이 테스트가 고정하지 않는다."""
     chain = "".join(f" else if (x == {i}) g({i});" for i in range(1, 5000))
     (tmp_path / "chain.c").write_text(
         "void g(int v);\nint f(int x) { if (x == 0) g(0);" + chain + " return 0; }\n",
