@@ -152,7 +152,19 @@ agent:
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
-  `budgets.yaml`이 켜고 v7이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다
+  `budgets.yaml`이 켜고 v7이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 **꺼져 있다** —
+  `budgets.yaml`이 키를 `0`으로 둔다. **v7은 이 옵션을 서술·선언하지 않는다** — 켜려면 프롬프트 판이 `auditor_guards`를
+  서술하고 meta `source_options`로 선언해야 하고(그 전에 켜고 v7을 고르면 `cli` run·doctor가 막는다), 그것은 다음 판
+  몫이다(켠 효과 측정과 함께). 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
+  `GUARDS (syntactic — may not dominate)` 머리줄과 `파일:줄 | 조건 [exit: …]` 행이 붙는다 — sink 호출의 인자 이름을 언급하는
+  `if`·`while`·`for`·삼항·assert 계열 조건이고 지배를 주장하지 않는다. 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을
+  적은 한 줄이다. 가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등 #259 · `\n`을 안 단 `\r`)에는 안 붙고 사유를 trace
+  `guards_skipped`가 든다. 행이 12를 넘으면 조건이 인자 이름을 **직접** 말하는 행이 먼저 남고, 대입 한 걸음으로만
+  이어진 별칭 행은 뒤이며 `[alias: m←n]`(좌변←우변)이 붙는다. 크기는 총 상한에서 먼저 빠지고(entry 함수 몫이라 밀려 빠지지는
+  않는다) `functions`에는 안 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 켠 효과는 미실측이다.
+  ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
+  `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -435,11 +447,18 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
   지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정은 vul 제출이 성공한 후보가 하나뿐일 때만 한다**(`sole_candidate` — 고를 것이
-  없어서이고 위치 규칙이 아니다). 후보가 둘 이상이면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다
-  (`oracle_final`은 `status=none` · `reason=policy_undecided`): 같은 연구 문서 1.3절이 「best-of도
-  last-attempt도 아니다」라고 결론내려 마지막·처음·점수로 고르는 기본값을 둘 수 없고, 합의된 방식
-  (모델에게 묻기)은 프롬프트 버전과 좌석이 필요한 별도 조각이다(`runner._designate_final`). 서버 주소는 조작자가
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 둘뿐이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
+  후보가 여럿인데 **하네스 내부 근거 등급의 최댓값을 든 것이 하나뿐**이라 그것을 골랐다
+  (`top_grade`, 2026-10-03 동결). 최댓값이 동점이거나 등급을 모르는 후보가 있으면 지정하지 않고
+  `fix` 다리·판정 조회는 안 돈다(`oracle_final`은 `status=none` · `reason`이 `grade_tie`·
+  `grade_unknown`): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
+  council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
+  1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
+  값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
+  `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
+  바이트가 `./poc`로 materialize되기 전에는 그 도구 실행이 PoC와 무관해(호스트 후속) 후보가 같은
+  등급으로 동점일 수 있다. 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
+  `response_exit_code`가 지정 시점에 손에 있는데도다(`runner._designate_final`). 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
@@ -451,9 +470,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
   서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
   검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
-  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200, `run_20261003_0003`) — 「대역으로만」은
-  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이고, `cached`가 서버 응답 필드가
-  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이라는 것도 그 run에서 확인했다(8건 호출).
+  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(제출 8건 200 · **고유 PoC 1개** — `cached` 미적중 1·적중 7 ·
+  `win11`의 `run_20261003_0003`(trace sha256 `f308c5fbfc4f8e54…`),
+  [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)) — 「대역으로만」은
+  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이다. `cached`는 서버 응답 필드가
+  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
+  접근 로그에도 제출마다 앞선 읽기 8건이 있다).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
