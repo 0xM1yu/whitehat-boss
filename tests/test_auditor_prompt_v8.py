@@ -8,7 +8,7 @@ v8은 v7을 대체하지 않고 **더한** 판이다. 그 주장이 참인지는
    목록 줄)이 그 보호를 받는 자리다 — `tests/test_config.py`의 서빙 판 철자 검사가 정본 판을
    고르므로 v8이 그 서술을 흘리면 거기서도 빨개지지만, **어느 줄이 빠졌는지는 여기서만 안다**.
    ⚠ **이 검사는 v7이 움직일 때도 빨개진다** — 그것이 의도다. v7에 줄이 더해지면 v8에도 같이
-   더해야 하고(열린 PR #485가 그 절의 목록 줄을 고치고 있다), 안 더하면 두 판이 갈린 채로
+   더해야 하고, 안 더하면 두 판이 갈린 채로
    「v8 = v7 + 도구 루프」라는 meta·registry 주석이 거짓이 된다(CLAUDE.md 2.3).
 
 2. **v8이 「이 호출은 한 방이다」라고 말하지 않는다.** v7의 그 단언들은 루프 판에서 거짓이다 —
@@ -60,6 +60,11 @@ def test_v8_keeps_every_v7_line_except_the_twelve_it_rewrites() -> None:
     오염: `prompts/auditor/v8/prefix.md`에서 아무 줄이나 지우면 빠진 줄이 열셋째로 잡혀 빨개진다.
     반대로 v7에 줄이 더해져도(= v8에 안 옮기면) 같은 자리에서 빨개진다 — **그쪽이 이 검사의
     주된 목적이다**(CLAUDE.md 2.3: 살아 있는 소스가 갈린 서술을 들지 않는다).
+
+    ⏵ 실제로 그렇게 잡았다. PR #485가 v7의 `## Original-source input contract` 목록 줄에 enum
+    절단 서술을 더했는데, 두 PR이 **각자 CI 초록**이라 순차 머지에서야 드러날 결함이었다 —
+    4.1 합성에서 이 검사와 `test_config.py`의 서빙 판 철자 검사가 같이 빨개졌고, 그래서 그
+    브랜치를 이쪽에 미리 머지하고 v8을 **그 v7에서 다시 생성**했다.
     """
     v7_lines = _prefix(V7).splitlines()
     v8_lines = set(_prefix(V8).splitlines())
@@ -192,7 +197,7 @@ def test_the_v8_prefix_is_longer_than_v7_and_the_delta_is_recorded() -> None:
     """
     v7_chars, v8_chars = len(_prefix(V7)), len(_prefix(V8))
 
-    assert (v7_chars, v8_chars) == (25_467, 32_782), (
+    assert (v7_chars, v8_chars) == (25_785, 33_100), (
         f"prefix 글자 수가 움직였다 — v7 {v7_chars} · v8 {v8_chars}. 창 계산"
         "(`config/budgets.yaml`의 auditor_tool_hops 주석)을 다시 보고 이 수를 갱신한다"
     )
