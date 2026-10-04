@@ -473,7 +473,7 @@ def test_import_query_with_the_include_root_passes_the_repo_as_a_header_include_
     assert 'args=List("--include", "C:\\\\w\\\\r\\"x")' in queries.import_query(
         'C:\\w\\r"x', "proj", include_root=True
     )
-    # never `--define`: one define switches c2cpg to "no inactive-branch parsing" (C2 report 5/E3)
+    # never `--define`: one dummy define cut the internal methods 21.5-62.8% on 3 repos (E3 probe)
     assert "--define" not in query
 
 
