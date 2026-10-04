@@ -42,8 +42,17 @@ from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import (
+    _AUDITOR_ALIAS_ROUNDS,
+    _AUDITOR_CALLEE_CHARS,
+    _AUDITOR_CALLER_SITES,
+    _AUDITOR_DEFINITION_CHARS,
+    _AUDITOR_INDIRECT_MAX,
     _AUDITOR_SOURCE_CHARS,
     _AUDITOR_WINDOW_LINES,
+    _AUDITOR_WRAPPER_CALLS,
+    _AUDITOR_WRAPPER_DEPTH,
+    _AUDITOR_WRAPPER_LINES,
+    _AUDITOR_WRITE_LINES,
     RunSpec,
     _new_record,
 )
@@ -431,18 +440,20 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v6(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v6`를 고른다. 되돌리면 이
+def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v7`을 고른다. 되돌리면 이
     핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
     프롬프트 #418 · 배선 #421). v5는 건너뛴다 — v5 배선 PR(#390)이 대여 세션 측정까지
     주차돼 있었고 v6가 v5에서 출발했다(`2bb374d`). **사용자 결정 2026-10-03이고 측정 결과가
     아니다** — v6는 v5의 범위 제약 둘을 삭제했으므로 v5의 상위집합이 아니다(`config/models.yaml`의
-    그 항목이 삭제 목록과 #418이 든 수를 적는다)."""
+    그 항목이 삭제 목록과 #418이 든 수를 적는다). ⏵ **v7**(2026-10-04 · #349) = v6 + Auditor SOURCE
+    옵션 넷의 서술. v6를 그 자리에서 고치지 않은 것은 #418의 수가 v6 문장의 것이라서다
+    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v6"
+    assert config.model_for("auditor").prompt_template_version == "v7"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -471,14 +482,54 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     여기서 고르는 것은 `prompt_template_version`이라 v7로 올려도 같이 돈다. 묻는 것은 철자다 —
     모델이 그 계약을 따르는지는 고정 표본 회귀의 몫이다(agent-contracts §4 규칙 5).
     """
-    version = load_config(profile).model_for("auditor").prompt_template_version
+    config = load_config(profile)
+    version = config.model_for("auditor").prompt_template_version
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
     flat = " ".join(prefix.split())
+    thresholds = config.thresholds
 
     # 러너 상수 ↔ 계약 수치(`runner._auditor_target`·`_auditor_source`).
     assert f"{_AUDITOR_WINDOW_LINES} lines before and after" in prefix
-    assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
     assert "`(file, start line)` order" in prefix
+    # 상한 -> 토큰 상한이 켜져 있으면 그 값, 아니면 글자 상한. 다른 쪽 철자가 남으면 모델이
+    # 두 상한을 같이 읽는다(2026-10-03 옵션 넷을 켬 · 그 서술은 v7 = v6 + 서술, 2026-10-04 · #349).
+    if thresholds.auditor_source_tokens:
+        assert f"{thresholds.auditor_source_tokens:,}-token cap" in prefix
+        assert f"{_AUDITOR_SOURCE_CHARS:,}-character" not in prefix
+    else:
+        assert f"{_AUDITOR_SOURCE_CHARS:,}-character cap" in prefix
+    # 켜진 옵션마다 그 블록의 철자 -- 상한은 배너 줄을 포함한 블록 길이다(`len(block)`, #374 리뷰).
+    if thresholds.auditor_definitions:
+        assert (
+            f"its block, counting its banner line, is at most {_AUDITOR_DEFINITION_CHARS:,} "
+            "characters" in flat
+        )
+        if thresholds.auditor_callee_wrappers:
+            assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
+    if thresholds.auditor_callee_hops:
+        assert (
+            f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
+            " is skipped" in flat
+        )
+    # 래퍼 너머(C4 · `auditor_callee_wrappers`) — 「one or two」가
+    # `_AUDITOR_WRAPPER_CALLS`의 철자다.
+    if thresholds.auditor_callee_hops and thresholds.auditor_callee_wrappers:
+        assert _AUDITOR_WRAPPER_CALLS == 2
+        assert (
+            f"a short wrapper (at most {_AUDITOR_WRAPPER_LINES} lines, calling one or two "
+            "functions the index can resolve)" in flat
+        )
+        assert f"up to {_AUDITOR_WRAPPER_DEPTH} further levels" in flat
+    if thresholds.auditor_indirect_callees:  # 간접 피호출(C6 · #304)
+        assert f"resolve to at most {_AUDITOR_INDIRECT_MAX} candidate functions" in flat
+    if thresholds.auditor_write_sites:  # 쓰기 지점 창(C5(a) · #304)
+        assert (
+            f"the {_AUDITOR_WRITE_LINES} lines before and after the write, cut to the writing "
+            f"function's own range, at most {thresholds.auditor_write_sites} windows" in flat
+        )
+    if thresholds.auditor_caller_lines:
+        assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
+        assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
     # 규칙 3의 판정 **방향** — 「Otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
     assert (
         "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
@@ -564,10 +615,14 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 고르지 / 않는다」. v3와 같이 구절이 주석 줄바꿈으로 갈린다(`:4` 끝이 「고르지」다).
         # v6 배선(2026-10-03)으로 v4가 미선택이 되며 달았고, 그 전에는 이 행이 음성 통제였다.
         ("auditor", "qwen3.8-27b", "v4", ["auditor/v4"]),
-        # 음성 통제 — prompts/auditor/v6/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
-        # 머리 주석 형식이고 v4도 2026-10-03까지 「배선됨」이었다) — 판독기가 그것을 「안 고른다」로
+        # 실물 형제 문형 — prompts/auditor/v6/meta.yaml:6-7 「… 어느 / registry 엔트리도 이 버전을
+        # 고르지 않는다」. v7 배선(2026-10-04)으로 미선택이 되며 달았고, 그 전에는 이 행이
+        # 음성 통제였다.
+        ("auditor", "qwen3.8-27b", "v6", ["auditor/v6"]),
+        # 음성 통제 — prompts/auditor/v7/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
+        # 머리 주석 형식이고 v6도 2026-10-04까지 「정본」이었다) — 판독기가 그것을 「안 고른다」로
         # 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v6", []),
+        ("auditor", "qwen3.8-27b", "v7", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -576,7 +631,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 다섯만 시험한다 — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    meta 여섯만 시험한다(⏵ 2026-10-04 v7 음성 통제를 더해 여섯) — 새 철자로 적은 meta는
+    목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -602,8 +658,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,
         # v3처럼 구절이 주석 줄바꿈으로 갈린다.
         ("auditor", "v4", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v6/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
-        ("auditor", "v6", set()),
+        # prompts/auditor/v6/meta.yaml:6-7 — v7 배선으로 미선택이 되어 v4와 같은 철자를 쓰고,
+        # 구절이 주석 줄바꿈으로 갈린다(`:6` 끝이 「어느」다).
+        ("auditor", "v6", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v7/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
+        ("auditor", "v7", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -612,7 +671,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 다섯 meta의 오늘 문구에 묶인다 — 머리 주석을 고치면 기대값도 고친다."""
+    않는다(#341 R2). ⚠ 이 여섯 meta의(⏵ 2026-10-04 v7을 더해 여섯) 오늘 문구에 묶인다 — 머리
+    주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
 
@@ -2270,7 +2330,10 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
     넣어도 통과하던 변이(#351 리뷰)."""
     from src.config import AUDITOR_SOURCE_OPTIONS
 
-    thresholds = load_config("dev_fake").thresholds
+    # 2026-10-03부터 `budgets.yaml`이 넷을 켠다 -> 끈 상태를 만들어 옛 모양을 본다.
+    thresholds = load_config("dev_fake").thresholds.transition(
+        **{key: 0 for key in AUDITOR_SOURCE_OPTIONS}
+    )
     assert not set(AUDITOR_SOURCE_OPTIONS) & thresholds.flatten().keys()
     assert thresholds.auditor_source_options_on() == ()
     on = thresholds.transition(**{key: 1 for key in AUDITOR_SOURCE_OPTIONS})
@@ -2279,7 +2342,8 @@ def test_auditor_source_options_stay_out_of_flatten_until_turned_on() -> None:
 
 
 @pytest.mark.parametrize(
-    "key", ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim"]
+    "key",
+    ["auditor_callee_hops", "auditor_definitions", "auditor_entry_trim", "auditor_callee_wrappers"],
 )
 def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
     with pytest.raises(ValidationError):
@@ -2287,9 +2351,20 @@ def test_switch_like_auditor_source_options_reject_two(key: str) -> None:
 
 
 @pytest.mark.parametrize("version", ["v4", "v5", "v6"])
-def test_the_current_auditor_prompts_describe_no_source_option(version: str) -> None:
-    """v4·v5·v6는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 MEDIUM-2)."""
+def test_the_older_auditor_prompts_describe_no_source_option(version: str) -> None:
+    """v4·v5·v6는 결정 1-b의 SOURCE만 서술한다 — 옵션을 켜면 `cli`가 막는 근거(#351 MEDIUM-2).
+    v6는 #418이 A/B를 잰 문장 그대로다 — 옵션 서술은 v7이 든다(2026-10-04 · PR #443 리뷰 HIGH)."""
     assert load_prompt(Role.AUDITOR, version).source_options == ()
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(profile: str) -> None:
+    """서빙 판이 선언한 옵션 == `budgets.yaml`이 켠 옵션. `cli`는 켰는데 선언 안 한 쪽만 막으므로
+    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 넷을 켬 · 서술은 v7, #349)."""
+    config = load_config(profile)
+    version = config.model_for("auditor").prompt_template_version
+    described = set(load_prompt(Role.AUDITOR, version).source_options)
+    assert described == set(config.thresholds.auditor_source_options_on())
 
 
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:

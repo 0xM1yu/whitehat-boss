@@ -554,14 +554,23 @@ class CapsuleBudgets(HarnessModel):
 
 
 # Auditor `SOURCE`를 결정 1-b(「슬라이스가 걸친 함수의 원본 전부 · 15,000자」) 밖으로 넓히는 값들
-# (#349). 전부 기본 0이고 0이면 `flatten()`에 키도 안 생긴다(옛 manifest 모양). 하나라도 켜면
+# (#349). 필드 기본은 0이고 0이면 `flatten()`에 키도 안 생긴다(옛 manifest 모양). 하나라도 켜면
 # Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다(`cli`).
+# ⏵ 2026-10-03 — `config/budgets.yaml`이 entry 줄이기를 뺀 넷을 켠다(20,000토큰 상한 · 정의 ·
+# 피호출 본문 1단 · 호출자 창 10줄 · 사용자 결정). 서빙 판 v7(⏵ 2026-10-04 — v6 + 그 서술)이 그 넷을
+# 서술하고 선언한다. ⏵ 2026-10-04 — 다섯째 `auditor_callee_wrappers`(래퍼·별칭 너머, 이슈 #451)도
+# 그 파일이 켜고 v7이 서술한다. ⏵ 같은 날 — 여섯째·일곱째 `auditor_indirect_callees`(간접 피호출,
+# C6)·`auditor_write_sites`(쓰기 지점 창, C5(a))도 그 파일이 켜고 v7이 서술한다(index-v3 · #304).
+# 필드 기본 0은 그 파일이 키를 안 적을 때의 값이다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
     "auditor_source_tokens",
     "auditor_entry_trim",
     "auditor_caller_lines",
+    "auditor_callee_wrappers",
+    "auditor_indirect_callees",
+    "auditor_write_sites",
 )
 
 
@@ -613,8 +622,13 @@ class Thresholds(HarnessModel):
     # Auditor `SOURCE`에 피호출 함수 본문을 붙이는 단계 수(#349 (a)). 0이면 붙이지 않는다 —
     # ADR 0012 결정 1-b(「슬라이스가 걸친 함수의 원본 전부」) 그대로다. 1이면 실린 함수의 본문 안
     # 호출이 부르는 함수의 본문을 뒤에 붙인다(`runner._auditor_source`). 결정 1-b를 넓히는 값이라
-    # 기본은 끈다. 2 이상은 아직 없다.
-    # ⚠ 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
+    # 필드 기본은 끈다(⏵ 2026-10-03 `budgets.yaml`이 1로 켠다 — 위 `AUDITOR_SOURCE_OPTIONS` 주석).
+    # 2 이상은 아직 없다. ⏵ 2026-10-04 — 붙인 피호출 함수가 짧은 래퍼면 그 너머까지 가는 것은
+    # 이 값이 아니라 아래 `auditor_callee_wrappers`다(C4). 이 값만 켜면 1단에서 멈춘다(래퍼 너머
+    # 이전 모양).
+    # ⚠ (⏵ 2026-10-03 — 아래는 서빙 판이 옵션을 서술하지 않던 때의 경고다. ⏵ 2026-10-04 지금 서빙 판
+    # v7은 넷을 서술한다 — `prompts/auditor/v7/prefix.md`. v6는 1-b 모양만 서술한다.)
+    # 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
     # — 그전에는 v4 · 판은 `config/models.yaml`이 고른다 — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
@@ -629,7 +643,9 @@ class Thresholds(HarnessModel):
     # 여전히 상한 밖이다
     # (아래 `auditor_entry_trim`이 0일 때).
     # **값은 아직 안 정했다** — 저장소 전체 실측에서 효과가 더 늘지 않는 가장 작은 값을 고른다
-    # (#349). 2026-10-01 s500 handoff Auditor `SOURCE` 81,748건을 Qwen3.8-27B 토크나이저로 센 글자/
+    # (#349). ⏵ 2026-10-03 — `config/budgets.yaml`이 20000으로 정했다. 근거는 저장소 전체 실측이
+    # 아니라 로컬 소표본이다(2026-10-01 s500 실패 표본 9개 · run ID 없음 — 그 파일의 주석).
+    # 2026-10-01 s500 handoff Auditor `SOURCE` 81,748건을 Qwen3.8-27B 토크나이저로 센 글자/
     # 토큰 비는 중앙값 3.04(p10 2.53 · p90 3.70) — 15,000자 ≈ 4,900토큰은 그 중앙값으로 나눈
     # **계산값**이다. 측정은 로컬·run ID 없음(원자료 저장소 밖 `measure_results/s500/`).
     auditor_source_tokens: int = Field(default=0, ge=0)
@@ -640,15 +656,53 @@ class Thresholds(HarnessModel):
     auditor_entry_trim: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 entry 함수를 부르는 호출 지점 앞뒤 몇 줄을 붙이는가(#349 (b)). 0이면 안
     # 붙인다(결정 1-b 그대로). 호출자 쪽 검사(인자 길이·NULL 확인)를 겨냥한다. 창은 호출자 함수
-    # 범위 안으로 자르고 맨 뒤(정의·피호출 함수 다음)에 붙는다(`runner._caller_window`). **값은 안
-    # 정했다** — 저장소 전체 실측에서 고른다. 위 ⚠와 같은 프롬프트 판 문제.
+    # 범위 안으로 자르고 정의·피호출 함수 다음(쓰기 지점 창 앞)에 붙는다(`runner._caller_window`).
+    # **값은 안 정했다** — 저장소 전체 실측에서 고른다. ⏵ 2026-10-03 — `config/budgets.yaml`이
+    # 10으로 정했다. 근거는 저장소 전체 실측이 아니라 로컬 소표본이다(harness_final_v1 vuln
+    # 41개를 GT 함수 중심으로 조립한 5줄 대비 비교 · run ID 없음 — 그 파일의 주석). 위 ⚠와 같은
+    # 프롬프트 판 문제.
     auditor_caller_lines: int = Field(default=0, ge=0)
+    # Auditor `SOURCE`가 래퍼·이름만 바꾸는 매크로 너머까지 따라가는가(C4 — 이슈 #451). 0이면
+    # 안 따라간다 — 피호출 본문은 1단에서 멈추고 정의는 실린 이름의 것만 붙는다(이 값이 생기기
+    # 전 모양).
+    # 1이면 `auditor_callee_hops`가 붙인 피호출 함수가 짧은 래퍼일 때 그 너머 함수를 2단까지 더
+    # 붙이고(`runner._AUDITOR_WRAPPER_*`), `auditor_definitions`가 붙인 매크로가 이름만 바꿔 넘기면
+    # 그 이름의 정의(2번까지)와 함수 본문을 더 찾는다(`runner._AUDITOR_ALIAS_ROUNDS`). 두 단계에
+    # 얹히는 값이라 둘 다 꺼져 있으면 효과가 없다. 필드 기본은 끈다 — `budgets.yaml`이 1로 켠다
+    # (2026-10-04 · 켠 run은 `flatten()`에 이 키가 보인다). **세 상수는 정한 값이지 잰 값이 아니다**
+    # (팀 검수 83표본의 래퍼 예). 위 ⚠와 같은 프롬프트 판 문제 — v7이 서술한다.
+    auditor_callee_wrappers: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`가 필드 경유 호출(`sys->alloc(…)`)이 갈 수 있는 함수 본문을 붙이는가(C6 —
+    # #304). 1이면 피호출 단계(`auditor_callee_hops`)에서 실린 함수의 필드 경유 호출마다 index-v3
+    # `fn_bindings`로 푼 후보(`indirect_calls_of`)를 붙인다 — 아직 안 실린 후보가
+    # `runner._AUDITOR_INDIRECT_MAX`개를 넘는 필드는 어느 것인지 몰라 그 필드만 건너뛴다(PR #468
+    # 리뷰 MEDIUM-2 — 상한은 필드마다). 비제품 경로 강등은 피호출 조회와 같다
+    # (`auditor_definitions`를 켠 run). 피호출 단계에 얹히는 값이라 그것이 꺼져 있으면 효과가 없다.
+    # v3 표가 없는 인덱스(이미지 재빌드 전)면 아무것도 안 붙는다. 필드 기본은 끈다 —
+    # `budgets.yaml`이 1로 켠다(2026-10-04). 위 ⚠와 같은 프롬프트 판 문제 — v7이 서술한다.
+    auditor_indirect_callees: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`에 붙이는 **쓰기 지점 창** 수의 상한(C5(a) — #304). 양수 N이면 슬라이스 줄에
+    # 나온 이름 중 실린 함수의 지역·파라미터가 아닌 것(파일 변수 등)과 필드 이름마다 index-v3로
+    # 쓰는 지점(`writes_of`·`field_writes_of`)을 찾아, 이미 실린 범위 밖의 지점 앞뒤
+    # `runner._AUDITOR_WRITE_LINES`줄을 그 함수 범위 안으로 잘라 N곳까지 붙인다(호출자 창과 같은
+    # 창 · 호출자 창 뒤). 쓰는 함수의 같은 이름 지역에 쓰는 지점은 뺀다. 순서는 이름·필드가 슬라이스
+    # 줄에 처음 나온 순서이고 함수가 다른 지점이 먼저다(`runner._write_sites`). 버퍼·길이 필드가
+    # 어디서 정해지는지(`->len = …`·`buf = malloc(n)`)를 겨냥한다. 필드 기본은
+    # 0(끔) — `budgets.yaml`이 켠다. v3 표가 없으면 아무것도 안 붙는다. 위 ⚠와 같은 프롬프트 판
+    # 문제 — v7이 서술한다.
+    auditor_write_sites: int = Field(default=0, ge=0)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
     # trace `scout_slice_trimmed`가 남는다. 프롬프트 판은 안 바꾼다(Scout v3 prefix가 SOURCE를
     # 줄이 빠진 슬라이스로 서술한다). 기본은 끈다 — 켜면 같은 슬라이스 집합의 Scout 입력이 달라진다.
     scout_slice_trim: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`가 어디까지 믿을 입력인지를 `auditor_source` 이벤트의 `gate_reasons`로
+    # 남기는가(`orchestrator/source_gate.py` — 슬라이서가 낸 절단·경계와 `SOURCE` 조립이 본 것에서
+    # 사유 코드를 낸다). 0이면 이벤트가 옛 모양 그대로다. **관측 전용이다** — Auditor 입력(SOURCE·
+    # FACTS)도 프롬프트 판도 안 바꾸므로 `AUDITOR_SOURCE_OPTIONS`(입력을 넓혀 meta
+    # `source_options`가 서술해야 하는 옵션)가 아니라 `scout_slice_trim`과 같은 자리다.
+    auditor_source_gate: int = Field(default=0, ge=0, le=1)
     # Auditor가 `repro_spec`을 비워 내면 하네스가 합성하는가 (#S7). 0이면 종전 — 비면 그대로
     # 비어 F-9(`repro_spec_missing`)로 `hypothesized`에 멈추고 8단계가 안 돈다. 1이면
     # `auditor._ensure_repro_origin`이 후보 위치로 명세를 합성해(`origin=harness`) E3(`validated`)
@@ -765,7 +819,10 @@ class Thresholds(HarnessModel):
         # 아님) `AUDITOR_SOURCE_OPTIONS`에 넣지 않고 여기서 따로 뺀다. `auditor_tool_hops`(#419)도
         # 같다 — 기본 꺼짐 run의 `run_manifest.json`에 `0.0`이 새로 생기면 지금까지 쌓인 모든
         # manifest와 열이 갈린다(요청 바이트가 같아도 재현성 기록의 모양은 갈린다).
-        for key in (*AUDITOR_SOURCE_OPTIONS, "scout_slice_trim", "auditor_tool_hops"):
+        # `auditor_source_gate`도 같다.
+        for key in (
+            *AUDITOR_SOURCE_OPTIONS, "scout_slice_trim", "auditor_tool_hops", "auditor_source_gate"
+        ):
             if not dumped[key]:
                 dumped.pop(key)
         flat = {key: float(value) for key, value in dumped.items()}
