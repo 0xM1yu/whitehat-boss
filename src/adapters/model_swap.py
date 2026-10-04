@@ -32,7 +32,12 @@
 - **준비 확인은 명령이 먼저 한다.** 0으로 끝내기 전에 띄운 서버마다 요청 하나(채팅이면 1토큰)가
   돌아오는 것을 본다. 하네스의 `/v1/models` 재확인(아래)은 **2차 확인**이다 — 재시도가 없다.
 - **종료코드** — 0은 「`keys`만 떠 있고 요청을 받는다」다. 0이 아니면 이유를 가리지 않고
-  `ModelSwapError`다 — 교대면 run이 멈추고(`model_swap_failed`), run 끝 내림이면 경고로 남는다.
+  `ModelSwapError`다 — 교대면 run이 멈추고(`model_swap_failed`), run 끝 내림이면 경고로 남는다
+  (어느 쪽이든 러너 `_swap`이 `model_swap ok=false` 이벤트를 먼저 남긴다).
+  명령을 띄우기도 전의 거부(`command[0]`이 PATH로 WSL 런처로 풀림 — `_resolved`)도 같은
+  `ModelSwapError`이고 **교대를 시도할 때** 난다(만들 때가 아니다). 교대하지 않는
+  run(`--dry-run`·낮은 `--stop-after`)은 만들기만 하므로 영향이 없다 — 단 run 끝 내림은 부르므로
+  막힌 환경에서는 경고 한 줄과 `model_swap ok=false` 이벤트 한 줄이 남고 run은 정상으로 끝난다.
   실패해도 띄운 것을 남길 수 있다 — run 끝 내림이 다시 부른다.
 - **마감** — `SWAP_DEADLINE_S` 안에 끝낸다. 넘으면 부분 보고를 내고 0이 아닌 코드로 끝낸다. 하네스는
   마감 + `_REPORT_GRACE_S` 뒤에 명령을 죽이고 인자 없이 한 번 부른다.
@@ -58,6 +63,7 @@
 """
 
 import json
+import ntpath
 import os
 import shutil
 import subprocess
@@ -110,7 +116,6 @@ def swap_runner(
         from src.bench import check_startup
 
         probe = check_startup
-    command = _resolved(command)
     env = {
         **os.environ,
         "HARNESS_PYTHON": sys.executable,
@@ -119,7 +124,16 @@ def swap_runner(
         "HARNESS_DEVICE": device,
     }
 
+    # 마지막으로 띄우려던 실행 파일 — 푼 경로면 그것이다(실행 실패 메시지가 보여 준다).
+    launched = command[0]
+
     def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        # 실행 파일은 **부를 때** 푼다(#477) — 만들 때 풀어 던지면 교대 안 하는 run(`--dry-run`·
+        # 낮은 `--stop-after`)까지 `build_deps`에서 죽는다. 여기서 난 `ModelSwapError`는 `swap_to`를
+        # 그대로 지나 러너가 읽는다.
+        nonlocal launched
+        argv = [*_resolved((argv[0],)), *argv[1:]]
+        launched = argv[0]
         return subprocess.run(  # noqa: S603 - argv는 장비 파일이 정한다
             argv,
             cwd=cwd,
@@ -144,6 +158,8 @@ def swap_runner(
         try:
             return swap_once(keys, label)
         except ModelSwapError:
+            # 그대로 올린다 — 명령을 띄우기 전의 거부(`_resolved`: `bash`가 WSL 런처로 풀림)도
+            # `run`에서 나 여기를 지난다. 감싸면 사유가 「예상 밖」으로 적히고 `__cause__`가 달린다.
             raise
         except Exception as exc:
             raise ModelSwapError(
@@ -162,7 +178,7 @@ def swap_runner(
                 report=partial,
             ) from exc
         except OSError as exc:
-            raise ModelSwapError(f"교대 명령을 실행하지 못했다({command[0]}): {exc}") from exc
+            raise ModelSwapError(f"교대 명령을 실행하지 못했다({launched}): {exc}") from exc
         report = _report(done.stdout)
         if done.returncode != 0:
             reason = _reason(report)
@@ -182,16 +198,62 @@ def swap_runner(
 def _resolved(command: tuple[str, ...]) -> tuple[str, ...]:
     """`command[0]`을 PATH로 먼저 풀어 절대경로로 바꾼다(#477). 못 풀거나 경로가 든 이름은 그대로.
 
-    Windows `CreateProcess`는 PATH보다 `System32`를 먼저 뒤져 `bash`가 `System32\bash.exe`(WSL
+    Windows `CreateProcess`는 PATH보다 System32를 먼저 뒤져 `bash`가 그 아래의 `bash.exe`(WSL
     런처)로 풀린다 -> 교대 스크립트가 WSL 안에서 돌고 Windows 환경변수를 하나도 못 받는다
-    (`SWAP_SSH_HOST`이 비었다 · 2026-10-03 `run_20261003_0001`). `shutil.which`는 PATH만 보므로
-    Git Bash를 고른다. POSIX에서는 `execvp`가 같은 PATH 탐색을 하므로 고르는 실행 파일이 같다.
+    (`SWAP_SSH_HOST`이 비었다 · 2026-10-03 `run_20261003_0001`). `shutil.which`는 PATH를
+    **앞에서부터** 본다 — Git의 `usr/bin`이 System32보다 **앞에** 있는 PATH(Git Bash로 띄운
+    셸)에서만 Git Bash를 고르고, `usr/bin`이 그보다 앞에 없는 PATH(레지스트리 PATH —
+    PowerShell·cmd)에서는 `which`도 같은 런처를 고른다(2026-10-05 이 PC에서 쟀다: Git `usr/bin`이
+    앞에 있는 PATH → Git Bash · 레지스트리 PATH → System32 런처). 그래서 **`which`가 푼 `bash`가
+    그 런처면 띄우지 않고 `ModelSwapError`를 낸다**(`_is_wsl_launcher`) — `SWAP_SSH_HOST`이 비었다
+    같은 엉뚱한 사유로 실패하는 대신 원인(`bash`가 WSL 런처로 풀림)을 바로 말한다.
+
+    **교대를 시도할 때 난다**(`swap_runner`의 `run`이 부른다) — 만들 때가 아니다. 교대 안 하는
+    run(`--dry-run`·낮은 `--stop-after`)도 `build_deps`로 만들기는 하므로 만들 때 던지면 그 조립에서
+    죽는다. 풀려면 Git Bash로 하네스를 띄우거나 PATH 앞에 `usr/bin`을 두거나 `command[0]`에 경로를
+    직접 적는다(경로가 든 이름은 `which`를 안 거치므로 막지 않는다). 단 장비 파일은 추적 파일이라
+    고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — 실험 run에서는 앞의 둘을 쓴다.
+
+    ⚠ 막는 것은 System32의 `bash.exe`뿐이다. `WindowsApps`의 `bash.exe` 별칭은 안 막는다 — 이
+    PC에서는 그것도 WSL 앱의 `wsl.exe`를 가리켰지만(별칭의 reparse 데이터를 읽었다, 실행은 안
+    했다) 다른 장비·사용자가 둔 별칭은 모른다. ⚠ `which`가 못 풀면(`None` — PATH에서 `bash`를 못
+    찾음) 못 막는다 — 맨 이름이 그대로 가고 Windows `CreateProcess`는 PATH에 System32가 없어도
+    System32를 먼저 뒤져 런처를 고를 수 있다(#477의 원인. 무해한 `whoami`로 쟀다 — 2026-10-05:
+    PATH를 없는 디렉터리로 하면 `which`는 `None`인데 `subprocess.run`은 exit 0). 이름만 보고는
+    막지 않는다(Git Bash·WSL 안에서는 `bash`가 정상이다). ⚠ `doctor --device`는 이 판정을 안
+    한다(장비 파일 검사만 한다) — doctor가 OK여도 교대를 시도하면 막힐 수 있다. POSIX에서는
+    `execvp`가 PATH를 같은 순서로 뒤지므로 고르는 실행 파일이 같다[추론 — 재지 않았다].
     """
     head, *rest = command
     if not head or os.sep in head or (os.altsep and os.altsep in head):
         return command
     found = shutil.which(head)
-    return (found, *rest) if found else command
+    if not found:
+        return command
+    if _is_wsl_launcher(found):
+        raise ModelSwapError(
+            f"교대 명령의 bash가 WSL 런처로 풀렸다({found}) — WSL은 Windows 환경변수를 못 받아 "
+            "교대가 빈 환경으로 돈다. Git Bash로 하네스를 띄우거나 "
+            r"`Git\usr\bin`을 PATH 앞에 두거나 장비 파일 `command[0]`에 bash 절대경로를 쓴다 "
+            "(추적 파일을 고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — "
+            "실험 run에서는 앞의 둘을 쓴다)"
+        )
+    return (found, *rest)
+
+
+def _is_wsl_launcher(path: str) -> bool:
+    """`path`가 `%SystemRoot%`의 System32 아래 `bash.exe`(WSL 런처)인가. Windows가 아니면 거짓.
+
+    `ntpath.normcase`로 접어 비교한다(대소문자·슬래시) — 경로 규칙이 Windows 것이라 `os.path`
+    (리눅스에선 대소문자를 구별한다)를 안 쓴다. `SystemRoot`가 없으면 `C:/Windows`다. 못 알아보고
+    **막지 않는** 꼴: PATH 항목에 `..`나 겹친 구분자가 든 경로 · `Sysnative`(32비트 파이썬이 PATH에
+    그 이름을 둔 경우)·`SysWOW64` 아래 경로 · 확장 경로 접두(물음표를 낀 `//?/` 꼴). 직접 프로브에서
+    이 꼴들은 거짓이었다(2026-10-05) — PATH에 그런 항목이 드물어 영향은 미확인이다.
+    """
+    if sys.platform != "win32":
+        return False
+    launcher = ntpath.join(os.environ.get("SystemRoot") or "C:/Windows", "System32", "bash.exe")
+    return ntpath.normcase(path) == ntpath.normcase(launcher)
 
 
 def _reason(report: SwapReport) -> str:
@@ -236,7 +298,7 @@ def _teardown(
     """
     try:
         return f"exit {run(list(command)).returncode}"
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError, ModelSwapError) as exc:  # 뒤는 `_resolved`의 거부
         return f"실패: {type(exc).__name__}"
 
 
