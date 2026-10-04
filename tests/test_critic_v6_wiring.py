@@ -222,7 +222,7 @@ def test_non_slice_auditor_critic_and_pov_share_the_first_read(ctx):
     ],
 )
 def test_current_critic_prose_records_the_source_transition(path, required):
-    """H4의 실제 자리 복귀를 무는 철자 핀. 임의 동의어의 의미는 판독하지 않는다."""
+    """각 파일에 전환 문자열이 있는지만 묻는다. 개별 자리·다른 오단언은 아래 핀과 손검토 몫이다."""
     assert required in Path(path).read_text(encoding="utf-8")
 
 
@@ -235,3 +235,79 @@ def test_decision_example_uses_its_run_record_profile():
     record = json.loads(_body("agent-contracts.md", "RunRecord (재현성)", 0))
     entry = load_config(record["profile"]).model_for("critic")
     assert decision["produced_by"]["prompt_version"] == entry.prompt_template_version
+
+
+
+def test_wired_prefix_describes_evidence_line_locations():
+    version = load_config("harness_pool").model_for("critic").prompt_template_version
+    prefix = Path(f"prompts/critic/{version}/prefix.md").read_text(encoding="utf-8")
+    assert "source label, followed by file:start-end when a location is available" in prefix
+
+
+def test_markup_witness_still_exists_in_the_actual_meta():
+    """H5 양성 증인 출처: prompts/critic/v1/meta.yaml:1. 합성 핀과 별도로 실물을 연다."""
+    first = Path("prompts/critic/v1/meta.yaml").read_text(encoding="utf-8").splitlines()[0]
+    assert "**" in first and "`version`" in first
+
+
+@pytest.mark.parametrize(
+    ("path", "start", "end", "required", "forbidden"),
+    [
+        ("docs/agent-contracts.md", "### 2.3 Independent Critic", "### 2.4",
+         "서빙 Critic은 v6으로 본문·위치·SOURCE를 받는다", "그 본문 싣기는 꺼져 있다"),
+        ("docs/agent-contracts.md", "2026-10-04 — `location`도", "### 2.3 Independent Critic",
+         "Critic v6 prefix는", "은 v1이라 바뀌지 않는다"),
+        ("docs/agent-contracts.md", "### 2.3 Independent Critic", "### 2.4",
+         "정책·과보류 비용 결정과 고정 표본 회귀를 수행했다는 기록은 없다",
+         "**Critic은 여전히 `v1`이다**"),
+        ("docs/agent-contracts.md", "## 4.", "", "Critic v1 → v6",
+         "이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다."),
+        ("config/budgets.yaml", "(1) **당시 v1", "(2)",
+         "v1 metadata-only 경로의 수", "**Critic 프롬프트는 작다**"),
+    ],
+)
+def test_reviewed_prose_sections_keep_the_specific_correction(
+    path, start, end, required, forbidden
+):
+    """원천 H4 문형의 철자 복귀를 실제 절에서 묻는다. 의미 동의어의 전수 검사는 아니다."""
+    text = Path(path).read_text(encoding="utf-8")
+    block = text[text.index(start):]
+    if end:
+        block = block[:block.index(end)]
+    assert required in block
+    assert forbidden not in block
+
+
+
+def test_budget_reasoning_does_not_conflate_two_probe_conditions():
+    """양성 증인: c07a5bc config/budgets.yaml Critic 상한 주석; 원천 보고서 3.3·3.4."""
+    text = Path("config/budgets.yaml").read_text(encoding="utf-8")
+    block = text[text.index("# 🔴 Critic —"):text.index("    critic: 32768")]
+    assert "4,096이 이미 모자랐다" not in block
+    assert "같은 보고서가 뒤에 갈라 16,381을 냈다" not in block
+    assert "본문 0" in block and "finish=length" in block
+    assert "§3.4" in block and "16콜" in block and "0건" in block
+
+
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6"])
+def test_bench_critic_source_tracks_the_template_slots(version):
+    from src.bench import _render
+    from src.orchestrator.prompt_loader import load_prompt
+
+    template = load_prompt(Role.CRITIC, version)
+    prompt = _render(Role.CRITIC, template, "bench_source")
+    assert _facts_of(prompt.body)["source"] == ("bench_source" if version == "v6" else "")
+    if version == "v6":
+        assert "```\nbench_source\n```" in prompt.body
+
+
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6"])
+def test_metadata_probe_renders_templates_without_claiming_live_source(version):
+    from src.orchestrator.prompt_loader import load_prompt
+    from tools.probe.critic_output_budget import _reconstruct
+
+    built = _reconstruct(
+        _finding("finding_0001"), [], template=load_prompt(Role.CRITIC, version), run_id="probe"
+    )
+    assert _facts_of(built.prompt.body)["source"] == ""
+    assert built.prompt.prompt_version == version

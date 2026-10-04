@@ -1968,14 +1968,18 @@ def test_critic_prompt_is_content_conditional(version: str) -> None:
     assert "contain no body text" in prefix
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_evidence_completeness_wording(role: str) -> None:
     """#346 M1/M2: v5를 v4 텍스트로 되돌리면 실패하는 철자 핀이지 모델 행동 검증은 아니다.
 
     출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
-    변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 활성화 전 별도 측정한다.
+    변이는 못 잡는다. 실제 모델의 근거 사용·과보류는 별도 측정 대상이며
+    배선된 v6 활성화 전에 그 측정을 했다는 기록은 없다(agent-contracts §4).
     """
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "factual summary" not in normalized
     for text in (
@@ -1999,10 +2003,13 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
         assert "Set rebuttal_axis=[] and use non-empty evidence_refs" in normalized
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
     """러너·노드의 별도 호출 경계를 명시하는 문구 핀; 실제 모델 행동 검증은 아니다."""
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     if role == "auditor":
         assert "does not receive Scout's `analysis_summary`" in normalized
@@ -2015,7 +2022,7 @@ def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
         assert "does not automatically retrieve missing material and retry" in normalized
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     """#346 M2 잔여: 부분 본문 규칙 2·3과 Critic §1 범위 문단의 판정 **방향** 문장 철자 핀.
 
@@ -2027,7 +2034,10 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
     §4 규칙 5).
     """
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
         "What a partial body does not show is unknown, not absent: a missing guard, caller, "
@@ -2056,13 +2066,16 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
         assert text in normalized, text
 
 
-def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> None:
+@pytest.mark.parametrize(
+    "version", ["v5", load_config("harness_pool").model_for("critic").prompt_template_version]
+)
+def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional(version: str) -> None:
     """#346 sumin0218 M1: 기존 보류 규칙에 판정을 좌우하는 누락 조건이 붙어 있다.
 
     출처: critic/v5/prefix.md Review procedure §1·§3. 이 핀은 이 문구의 회귀를 잡을 뿐
     모든 의미 반전이나 실제 모델의 규칙 우선순위 준수를 검증하지 않는다.
     """
-    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "cannot be checked from supplied content and the verdict depends on" in normalized
     condition = "unresolved fact that could change the verdict and required material is absent"
@@ -2071,7 +2084,10 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> N
     assert "need_evidence is required when a rebuttal is plausible" not in normalized
 
 
-def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
+@pytest.mark.parametrize(
+    "version", ["v5", load_config("harness_pool").model_for("critic").prompt_template_version]
+)
+def test_critic_v5_role_summary_states_the_decisive_fact_condition(version: str) -> None:
     """#346 sumin0218 M1 잔여: 「세 결과」 요약도 보류를 판정을 좌우하는 반박으로 한정한다.
 
     v4에서 상속된 무한정 문구 「the path or a possible rebuttal cannot be decided」는 잘린
@@ -2081,7 +2097,7 @@ def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
     돌아오거나 한정·꼬리가 바뀌면 빨개지고, 이 줄을 남긴 채 무한정 조건을 다른 문장으로
     덧붙이는 변이는 못 잡는다. 모델이 어느 쪽을 따르는지는 안 쟀다.
     """
-    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "the path or a possible rebuttal cannot be decided" not in normalized
     summary = "need_evidence: the path, or a specific rebuttal that could change the verdict,"
