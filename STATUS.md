@@ -118,7 +118,9 @@
 **실제 산출물 형식** (`indexer.INDEX_VERSION == "index-v1"`, 읽는 쪽이 모르는 버전은 거절).
 ⏵ 2026-09-26 — 지금은 `index-v2`다: `calls`가 callee → [{file, line, caller, args}]로 묶였고
 조회 표 여덟이 더해졌다(`tools/README.md` 인덱서 절). ⏵ 2026-10-03 — `index-v3`(#304)가 v2 표를
-그대로 두고 `writes`·`fn_bindings`·`field_calls`를 더한다. 아래는 v1 시절 모양이다:
+그대로 두고 `writes`·`fn_bindings`·`field_calls`를 더한다. ⏵ 2026-10-04 — `index-v4`가 v3 표를 그대로
+두고 `includes`·`enum_constants`를 더한다(`types`의 앞선 선언 typedef 행에 `forward`). 아래는 v1 시절
+모양이다:
 ```json
 {
   "version": "index-v1",

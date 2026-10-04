@@ -37,8 +37,8 @@
   `docs/slicer-README.md`).
   다른 갈래는 잘렸을 수 있다(`SLICE_TRUNCATED`가 같이 나온다). 「검증이 없다」는 뜻도 아니다 —
   슬라이서에는 제어 의존이 없다.
-- `DEFINITION_DROPPED` — 정의(매크로·타입·파일 변수)가 상한에 걸려 빠졌다(`auditor_definitions`가
-  켜졌을 때).
+- `DEFINITION_DROPPED` — 정의(매크로·타입·파일 변수·enum 상수)가 상한에 걸려 빠졌다
+  (`auditor_definitions`가 켜졌을 때).
 
 **못 내는 것** — 이 지점에 신호가 없다. `DECL_ONLY`(entry가 선언뿐)는 인덱스가 선언을 안 줘서
 `WINDOW_FALLBACK`과 안 갈린다. 피호출의 `NO_REPO_BODY`·`INDIRECT_UNRESOLVED`는 `callees_of`가 풀린

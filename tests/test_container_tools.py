@@ -876,7 +876,8 @@ def test_indexer_receives_headers_but_clang_tools_do_not(tmp_path: Path, spy: _S
 
 def test_the_default_image_is_the_one_that_bakes_the_indexer_and_gdb() -> None:
     """v3는 v2에 gdb를 더한다. v2는 지난 run의 digest 때문에 별도 태그로 남긴다. 인덱서 형식은
-    #304부터 index-v3인데 태그는 그대로다 — 낡은 이미지는 아래 연막 검사 핀이 빌드에서 막는다."""
+    #304부터 index-v3, 2026-10-04부터 index-v4인데 태그는 그대로다 — 낡은 이미지는 아래 연막 검사
+    핀이 빌드에서 막는다."""
     assert DEFAULT_IMAGE == "harness-tools:v3"
 
 

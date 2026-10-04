@@ -682,7 +682,8 @@ def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: 
 
     조회는 **이미 있는 resolver**(`ctx.resolve_requests`)로 **위치만** 받고, 원문은
     `ctx.read_source`가 읽는다 — 새 훅·새 어댑터 배선 없이 이름으로 함수를 찾는 수단이 resolver
-    뿐이다(`definitions_of`는 macros·types·file_vars만 본다 — `index_graph.DEFINITION_TABLES`)."""
+    뿐이다(`definitions_of`는 macros·types·file_vars·enum_constants만 본다 —
+    `index_graph.DEFINITION_TABLES`)."""
     scripted = _scripted(
         _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
     )

@@ -653,7 +653,8 @@ class Thresholds(HarnessModel):
     # 프롬프트 판을 같이 올려야 한다 — 그 판 meta의 `source_options`가 이 키를 들지 않으면
     # `cli`의 run·doctor가 막는다(`AUDITOR_SOURCE_OPTIONS`). 아래 넷도 같다.
     auditor_callee_hops: int = Field(default=0, ge=0, le=1)
-    # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수의 정의 줄을 붙이는가(#349 (f)).
+    # Auditor `SOURCE`에 실린 원문이 쓰는 매크로·타입·파일 변수·enum 상수의 정의 줄을 붙이는가
+    # (#349 (f) — enum 상수는 index-v4부터).
     # 0이면 안 붙인다(결정 1-b 그대로). 피호출 함수보다 먼저 붙는다 — 위 ⚠와 같은 프롬프트 판 문제.
     auditor_definitions: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE` 상한을 토큰으로(#349 (c)). 0이면 지금처럼 글자 상한
