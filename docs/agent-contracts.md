@@ -176,14 +176,16 @@ agent:
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
   선택지 (a)로 남는다.
   ⏵ 2026-10-04 — `location`도 **판**이 정한다(이슈 #475 · `prompt_loader.build_facts`의 `evidence_locations` —
-  본문과 달리 payload 유무와 무관하다). Critic도 자기 `_CONTENT_AWARE_VERSIONS`의 판이면 EVIDENCE 줄에 `file:줄` 한
-  토막을 붙인다(판 목록은 여기 적지 않는다 — 두 노드의 상수가 정본이다).
+  본문과 달리 payload 유무와 무관하다). Critic도 자기 `_CONTENT_AWARE_VERSIONS`의 판이면 위치가 있는 Evidence의
+  EVIDENCE 줄에 `file:줄` 한 토막을 붙인다(판 목록은 여기 적지 않는다 — 두 노드의 상수가 정본이다).
   **이 위치는 판단 보조이고 게이트 등급 근거가 아니다** — `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이
   semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`container_tools.first_hit_location` docstring). 그 값은
   semgrep `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다. 2026-10-04 현재 어느 content-aware 프롬프트의
   prefix도 `FACTS.evidence[].location`을 서술하지 않는다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(위치를
-  싣고 돈 run 0건). content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence 항목마다 `location` 키), content-aware가
-  아닌 판(v1 등)은 바이트 동일이다.
+  싣고 돈 run은 커밋된 `docs/experiments/` 보고서 기준 0건). content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
+  항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-04 현재 서빙 프로필(`harness_pool`·
+  `harness_pool_hybrid`)에서 실제로 바이트가 바뀌는 판은 Auditor 하나(`qwen3.8-27b`가 고르는 판)이고, 서빙 Critic
+  (`gpt-oss-20b`)은 v1이라 바뀌지 않는다 — 손으로 쓴 값이니 `config/models.yaml`이 정본이다.
   ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
@@ -378,7 +380,7 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다** — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다**(2026-10-04 — 위치도 같은 스위치라 서빙 Critic `gpt-oss-20b` = v1에서는 꺼져 있다) — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
 - 출력: `Decision`
 - **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
 - **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).

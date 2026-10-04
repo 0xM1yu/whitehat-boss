@@ -402,9 +402,13 @@ def build_facts(
         # **관측 —** 2026-10-04 첫 실모델·실도구 운영 run에서 finding 3건이 전부 `evidence_refs=[]`
         # (그래서 E0 -> 6단계 queue -> Critic 0회 -> PoV 0건 -> `oracle_final reason=no_poc`)였고,
         # semgrep 근거는 프롬프트에 본문까지 실려 있었는데 하네스가 아는 위치
-        # `apprentice.c:1086-1087`은 FACTS에 안 나갔다(이슈 #475). **위치를 안 본 것이
-        # 인용을 막았다는 것은 가설이다** — 위치를 싣고 돈 run이 0건이라 인용이 늘지 어떨지는
-        # 미실측이다.
+        # `apprentice.c:1086-1087`은 FACTS에 안 나갔다(이슈 #475). 같은 run의 세 Finding은
+        # `trigger_status=no_signal` 부정 결론(확신 0.05~0.10)이었고, semgrep 본문은
+        # `truncated=true`로 절단돼 히트 10건의 줄이 안 보였다(#481) — 그 보고서(`docs/experiments/
+        # harness/2026-10-04-cybergym-operational-run-vastai-remote.md`)는 이 인용 거절을 타당했다고
+        # 적는다. 위치 미노출 외에 이 둘이 인용 부재의 후보다. **위치를 안 본 것이 인용을 막았다는
+        # 것은 가설이다** — 커밋된 `docs/experiments/` 보고서 기준 위치를 싣고 돈 run이 0건이라
+        # 인용이 늘지 어떨지는 미실측이다.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,

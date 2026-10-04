@@ -1263,7 +1263,7 @@ def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
     `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라
     인용하면 `static_ok`가 이미 참이다 · `container_tools.first_hit_location` docstring). 그 위치는
     semgrep `results[0]`(첫 히트) 하나다. 위치를 싣는 것이 모델의 인용을 늘리는지는 미실측이다
-    (이슈 #475 — 위치를 싣고 돈 run이 0건).
+    (이슈 #475 — 위치를 싣고 돈 run은 커밋된 `docs/experiments/` 보고서 기준 0건).
 
     **본문과 따로 정해진다**: payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
     (적대적 리뷰 #480 LOW-1) — 같은 판의 Critic 줄(`critic._describe_evidence`)과 같은 값을 든다.
@@ -1427,7 +1427,9 @@ def test_critic_v1_prompt_does_not_carry_the_evidence_location(ctx: RunContext) 
     assert all("location" not in item for item in _facts_of(prompt.body)["evidence"])
 
 
-@pytest.mark.parametrize("version", ["v3", "v4", "v5"])
+# 판 목록은 노드의 상수에서 읽는다 — 집합에 판이 들어오면 이 검사가 자동으로 늘어난다(손으로 베낀
+# 목록은 상수와 갈라진다). 제외한 판 없음 — 집합의 모든 판이 dev_fake 렌더에서 돈다.
+@pytest.mark.parametrize("version", sorted(critic._CONTENT_AWARE_VERSIONS))
 @pytest.mark.parametrize("payload", ["SANITIZER heap-buffer-overflow at parse_header", None])
 def test_critic_content_aware_prompt_carries_the_evidence_location(
     ctx: RunContext, version: str, payload: str | None
@@ -1553,7 +1555,9 @@ def test_auditor_v1_facts_carry_no_evidence_location(ctx: RunContext) -> None:
     assert all(set(item) == {"evidence_id", "kind", "ok"} for item in items)
 
 
-@pytest.mark.parametrize("version", ["v3", "v4", "v5", "v6", "v7"])
+# 판 목록은 노드의 상수에서 읽는다(위 Critic 검사와 같은 이유). `v4_t1`도 든다 — 손으로 쓴 옛 목록이
+# 빠뜨렸던 판이고 dev_fake 렌더에서 돈다. 제외한 판 없음.
+@pytest.mark.parametrize("version", sorted(auditor._CONTENT_AWARE_VERSIONS))
 @pytest.mark.parametrize("payload", ["SANITIZER heap-buffer-overflow at parse_header", None])
 def test_auditor_content_aware_facts_carry_the_evidence_location(
     ctx: RunContext, version: str, payload: str | None
