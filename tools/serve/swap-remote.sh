@@ -25,9 +25,14 @@
 # 따옴표 — 원격 셸에 가는 값은 전부 작은따옴표로 감싸고 값 안의 작은따옴표는 '\''로 끊는다. 원격 로그인 셸이
 #   POSIX 셸이면 그대로 읽힌다. KEY·run id에 공백·따옴표·$가 들어도 한 인자로 간다(tests/test_remote_swap.py).
 #
-# ⚠ Windows 네이티브 파이썬에서 하네스를 돌리면 `bash`가 WSL 런처로 풀리고 환경변수가 안 넘어간다
-#   (2026-10-03 실측 — subprocess로 띄운 `bash`에서 부모가 준 변수가 빈 값). 그때 이 파일은 HARNESS_RUN_ID가
-#   비었다며 2로 끝난다. 하네스를 WSL·Linux 안에서 돌린다.
+# Windows 네이티브 파이썬 — ~~`bash`가 WSL 런처로 풀리고 환경변수가 안 넘어간다. 하네스를 WSL·Linux 안에서
+#   돌린다~~ ⏵ 2026-10-04 정정(#477): 환경 전달은 멀쩡했다. 원인은 실행 파일 해소다 — `CreateProcess`가 PATH보다
+#   `System32`를 먼저 뒤져 `bash`가 WSL 런처(`System32ash.exe`)로 풀렸고, WSL은 `WSLENV` 없이 Windows 환경을
+#   못 받아 변수가 비었다. 이제 `model_swap`이 `command[0]`을 `shutil.which`(PATH만 본다)로 먼저 풀어 Git Bash를
+#   절대경로로 띄우고 환경도 그대로 넘어간다 -> Windows 네이티브 파이썬에서도 돈다(Git Bash가 PATH에 있어야 한다).
+#   ⚠ 남는 함정 하나 — Git Bash에서 `export SWAP_REMOTE_ROOT=/root/harness`를 하고 네이티브 파이썬을 띄우면 MSYS가
+#   그 **값**을 Windows 경로(`C:/Program Files/Git/root/harness`)로 바꾼다. 교대 환경 변수는 셸을 거치지 않고
+#   세운다(PowerShell `$env:` 또는 파이썬 런처). `MSYS_NO_PATHCONV=1`은 역효과다 — `git -C`가 MSYS 경로를 못 읽는다.
 # ⚠ 하네스가 마감에 이 프로세스를 죽여도 원격 swap.sh는 자기 마감(SWAP_DEADLINE_S)까지 돈다 — ssh를 TTY 없이
 #   열어 HUP이 안 간다. 계약상 swap.sh는 그 마감에 스스로 끝난다.
 set -euo pipefail
@@ -41,7 +46,7 @@ need() {
 need SWAP_SSH_HOST "원격 교대 호스트를 모른다"
 need SWAP_REMOTE_ROOT "원격 저장소 루트를 모른다"
 need SWAP_REMOTE_PYTHON "원격 하네스 인터프리터를 모른다"
-need HARNESS_RUN_ID "하네스가 안 줬다(Windows 네이티브 파이썬이면 머리 주석의 WSL 항목)"
+need HARNESS_RUN_ID "하네스가 안 줬다(Windows면 머리 주석의 실행 파일 해소 항목 — bash가 WSL 런처로 풀렸을 수 있다)"
 case $SWAP_REMOTE_ROOT in
   /*[!/]) ;; # 절대경로이고 `/`로 끝나지 않는다 — `/` 하나와 `//`도 여기서 걸린다
   *)
