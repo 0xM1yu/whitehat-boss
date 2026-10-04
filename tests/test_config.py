@@ -2236,6 +2236,31 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     _assert_thinking_seat_holds_together("auditor")
 
 
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_run_gpu_budget_holds_a_full_lap_of_declared_request_timeouts(profile: str) -> None:
+    """run `gpu_seconds`는 서빙 역할 한 바퀴의 선언된 요청 타임아웃 합 이상이다(이슈 #389).
+
+    7,200이던 때는 한 바퀴(선언값의 합 — 두 프로필 모두 21,300 s, 2026-10-05 계산)의 3분의 1이라
+    호출 하나가 7,500 s 타임아웃으로 한도를 넘을 수 있었고, 정상 run이 중간에 끊긴 채 장부에는
+    「결과가 적은 run」으로만 남았다. **값이 아니라 관계를 잠근다** — 입력이 전부 선언된 설정값이라
+    측정 없이 핀할 수 있다(타임아웃 선언이 없는 좌석은 어댑터 기본 300 s). 이 검사는 실모델 서빙
+    프로필 둘만 본다.
+    """
+    config = load_config(profile)
+    timeouts = {
+        role: config.model_for(role).request_timeout_s or 300 for role in config.profile.roles
+    }
+
+    assert config.budget.gpu_seconds >= max(timeouts.values()), (
+        f"{profile} — gpu_seconds {config.budget.gpu_seconds}가 단일 호출 타임아웃 최대 "
+        f"{max(timeouts.values())}보다 작다 — 호출 하나가 run 예산을 넘는다(#389)"
+    )
+    assert config.budget.gpu_seconds >= sum(timeouts.values()), (
+        f"{profile} — gpu_seconds {config.budget.gpu_seconds}가 서빙 역할 한 바퀴의 선언 "
+        f"타임아웃 합 {sum(timeouts.values())}보다 작다 — 정상 run이 예산에 끊긴다(#389)"
+    )
+
+
 def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> None:
     """8단계 PoV 좌석(`feyospace-v1-small`)도 Auditor와 **같은 관계**를 지킨다.
 
