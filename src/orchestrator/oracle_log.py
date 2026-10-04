@@ -36,11 +36,16 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 ⚠ **`null`은 「안 돌았다」·「못 가렸다」다 — 0도 거짓도 아니다**(CLAUDE.md §0). `fix_exit_code`가
 `null`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 안 돌린 경우다. `final.status`가 `none`인 것
 (지정된 후보가 없었다)과 `failed`인 것(지정했는데 판정을 못 읽었다)은 다른 사건이다 —
-「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 넷이다:
-`no_poc`·`all_vul_submissions_failed`(지정할 후보가 없다) · `grade_tie`(후보가 **둘 이상**인데 내부
-근거 등급의 최댓값이 **동점이라** 안 가려졌다) · `grade_unknown`(후보 중에 등급을 모르는 것이 있다).
-뒤 둘은 **규칙이 없어서가 아니라 규칙이 거부한 것이다**(`runner._designate_final`). 어느 쪽이든
-`fix` 다리와 판정은 안 돈다.
+「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은
+`no_poc`·`all_vul_submissions_failed`(지정할 후보가 **없다**)와 `grade_unknown`(후보 중에 내부 근거
+등급을 모르는 것이 있어 **규칙이 거부했다** — `runner._designate_final`)이다. 어느 쪽이든 `fix`
+다리와 판정은 안 돈다.
+
+⏵ 2026-10-04 — **`grade_tie`는 없어졌다.** 후보가 둘 이상일 때 지정이 등급 **동점에서 거부하던**
+것을 사슬로 바꿨다(`runner._designate_final`): 같은 바이트끼리 접은 뒤 ①등급 ②`confidence`
+③작은 바이트 ④PoC 해시다. ④가 **전순서**라 서로 다른 PoC 사이의 동점이 남지 않는다 — 거부할
+자리가 없어져 사유도 상수도 지웠다. 바꾼 이유: 실측 run에서 후보 8건이 **같은 바이트 1개**였고
+(제출 8 = 고유 PoC 1 = DB 행 1) 동점 거부가 그 run의 점수를 0으로 만들었다.
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
 
@@ -79,21 +84,32 @@ STATUS_FAILED = "failed"
 STATUS_NONE = "none"
 STATUS_NOT_REACHED = "not_reached"
 
-# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 뒤 둘은 후보가 **둘 이상**인데
+# `status == none`의 사유. 앞 둘은 지정할 후보가 **없어서**고, 마지막은 후보가 **둘 이상**인데
 # **규칙이 돌았는데 하나를 못 가려서**다(`runner._designate_final`). 「규칙이 없다」가 아니다 —
-# 규칙은 2026-10-03에 정해졌고(내부 근거 등급 최댓값 · 동점이면 거부) 그 규칙이 거부한 것이다.
+# 규칙이 거부한 것이다.
+#
+# ⏵ 2026-10-04 — `grade_tie`를 지웠다. 등급 동점은 더 이상 거부 사유가 아니고 사슬의 다음
+# 단계로 넘어간다(`runner._designate_final`). 사슬의 끝이 PoC 해시라 **전순서**이고, 서로 다른
+# PoC가 끝까지 동점일 수 없다 — 못 가리는 분기가 없어졌으니 사유도 없앴다. 지우지 않고 두면
+# 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
 REASON_NO_POC = "no_poc"
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
-REASON_GRADE_TIE = "grade_tie"
 REASON_GRADE_UNKNOWN = "grade_unknown"
 
 # `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로도 채점기 점수로도
 # 고르지 않는다** - 이 저장소가 2026-10-03에 정한 규칙이고 저자의 금지 문장이 아니다(조사
-# 문서 1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 둘뿐이다: 후보가
-# 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 내부 근거 등급의 최댓값을 든 후보가
-# **하나뿐이라** 그것을 골랐다(`top_grade`).
-DESIGNATION_SOLE_CANDIDATE = "sole_candidate"
-DESIGNATION_TOP_GRADE = "top_grade"
+# 문서 1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다).
+#
+# ⏵ 2026-10-04 — 둘에서 여섯으로 늘었다. 동점 거부를 사슬로 바꾸면서 **무엇이 실제로 갈랐는지**를
+# 싣기로 했다(§0 — 지정 근거를 적는다). 앞 둘은 고를 것이 없던 경우고, 뒤 넷은 사슬의 **어느
+# 단계가** 둘을 갈랐는지다. `poc_digest`가 찍힌 run은 등급·`confidence`·바이트 수가 전부 같아
+# **내용 해시로** 갈린 것이다 — 약한 근거이고, 그렇게 적혀 있어야 읽는 쪽이 안다.
+DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택이 없었다
+DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
+DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
+DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다
+DESIGNATION_SMALLEST_POC = "smallest_poc"  # 등급·confidence 동점 — 바이트가 작은 쪽
+DESIGNATION_POC_DIGEST = "poc_digest"  # 위 전부 동점 — PoC 해시 사전순(전순서를 만드는 자리)
 
 
 def clip_error(exc: BaseException) -> str:
@@ -248,8 +264,8 @@ class OracleLedger:
             "vul_submitted": self.submitted,
             "vul_failed": self.failed,
             "final": STATUS_NOT_REACHED if self.final is None else self.final.status,
-            # `none`의 사유 — 후보가 여럿인데 등급이 못 가른 run(`grade_tie`·`grade_unknown`)과
-            # 후보가 없던 run을 매니페스트에서도 가른다.
+            # `none`의 사유 — 후보가 여럿인데 등급을 몰라 못 가른 run(`grade_unknown`)과 후보가
+            # 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
         }
@@ -322,13 +338,6 @@ def _none_warning(final: FinalAttempt, submitted: int) -> str:
     콘솔에 찍히므로 cp949로 인코딩할 수 있는 글자만 쓴다.
     """
     tail = "이 run은 채점 점수가 없다"
-    if final.reason == REASON_GRADE_TIE:
-        return (
-            f"vul 제출이 성공한 후보가 {submitted}건인데 내부 근거 등급의 최댓값이 동점이라 최종 "
-            "PoC를 지정하지 않았다 - 등급으로 하나를 못 가렸고 위치(처음·마지막)나 채점기 점수로 "
-            "고르지 않는 것이 이 저장소의 규칙이다(2026-10-03). fix 다리와 판정 조회를 돌리지 "
-            f"않았다 - {tail}"
-        )
     if final.reason == REASON_GRADE_UNKNOWN:
         return (
             f"vul 제출이 성공한 후보가 {submitted}건인데 그중 내부 근거 등급을 모르는 것이 있어 "

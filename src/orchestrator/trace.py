@@ -414,16 +414,17 @@ class EventKind(StrEnum):
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 둘뿐이고 둘 다 위치·채점기 점수로 고른 것이 아니다** — 후보(`vul` 제출이
-    # 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보가 여럿인데 **하네스 내부
-    # 근거 등급의 최댓값을 든 것이 하나뿐이라** 그것을 골랐다(`top_grade`). 최댓값이 동점이거나
-    # 등급을 모르는 후보가 있으면 지정하지 않는다(`status=none` · `reason`이 `grade_tie`·
+    # **`designation`은 여섯이고 전부 위치·채점기 점수로 고른 것이 아니다**(`oracle_log`가 목록을
+    # 든다) — 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
+    # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
+    # 갈랐다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — 하네스가 만든 값의
+    # 전순서다). 등급을 모르는 후보가 있으면 지정하지 않는다(`status=none` · `reason`이
     # `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이 아니다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
-    # `reason`이 `no_poc`·`all_vul_submissions_failed`(후보가 없다) · `grade_tie`·`grade_unknown`
-    # (후보가 둘 이상인데 등급이 못 가렸다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와
+    # `reason`이 `no_poc`·`all_vul_submissions_failed`(후보가 없다) · `grade_unknown`(후보가 둘
+    # 이상인데 그중 등급을 모르는 것이 있다)). **`none`은 실패가 아니다** — 「최종 PoC가 없다」와
     # 「최종 PoC가 실패했다」를 섞지 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다).
     # 그 PoC의 `poc_sha256`·`poc_bytes`, `scored`일 때 `task_id`, 사이드카의 고정 경로
     # `record_ref`를 싣는다. 지정이 읽은 후보별 등급은 trace가 아니라 사이드카

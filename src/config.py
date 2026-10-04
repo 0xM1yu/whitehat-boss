@@ -590,6 +590,13 @@ class Thresholds(HarnessModel):
     max_hops: int = Field(ge=0)
     requeue_max: int = Field(ge=0)
     critic_top_n: int = Field(gt=0)
+    # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 **상한**. `0`이면 종전
+    # 동작이다 — PoV는 `validate.run`이 E4 게이트를 통과시킨 Finding만 돈다. 이 값을 올리면
+    # 재현 명세가 없어 `hypothesized`에 멈춘 Finding도 PoV를 시도한다(이슈 #386 ①의 후속).
+    # **켤 때의 값은 미실측이다** — 후보 1건당 PoV 홉·토큰을 한 번도 안 쟀고, 그 측정의 입력이
+    # 이 배선 뒤의 실모델 run 1회다. 자르는 순서는 `critic_top_n`과 같다
+    # (`confidence` 내림차순 · 동점은 `finding_id`) — 정렬이 흔들리면 재현 실행이 갈라진다.
+    pov_attempt_top_n: int = Field(ge=0)
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)
