@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from src import cli
+from src.interfaces.model_client import ModelGatewayError
 from src.interfaces.oracle import OracleOutcome, VulSubmission
 from src.orchestrator import oracle_log as oracle_log_module
 from src.orchestrator import runner
@@ -49,6 +50,7 @@ from tests.test_nodes import (  # noqa: F401
     _with_top_n,
     ctx,
 )
+from tests.test_pipeline_e2e import _run, _run_transition, _with_index
 from tests.test_pov_loop import _gen, _scripted
 
 _SUBMITTED = PovStopReason.SUBMITTED
@@ -559,8 +561,10 @@ def test_no_server_reported_value_reaches_the_trace(ctx, monkeypatch, tmp_path: 
 def test_the_runner_leaves_a_sidecar_that_survives_a_run_cut_short_before_the_final(
     ctx, monkeypatch, tmp_path: Path  # noqa: ANN001, F811
 ) -> None:
-    """8단계가 중간에 끊기면(`_finalize_oracle`에 못 온다) 그때까지 나간 vul 제출은 사이드카에 남고
-    `final`은 `null`이다 - 「최종 없음」과 「아직 안 갔다」가 다르다."""
+    """8단계가 `validated` 대상에서 중간에 끊기면(`_finalize_oracle`에 못 온다) 그때까지 나간 vul
+    제출은 사이드카에 남고 `final`은 `null`이다 - 「최종 없음」과 「아직 안 갔다」가 다르다.
+    (추가 PoV 대상에서 `BudgetExhausted`로 끊긴 run은 최종 지정까지 하고 끝나므로 이 말이 안
+    닿는다 - 아래 `test_a_budget_stop_inside_the_extra_…`.)"""
     import json
 
     state, findings = _findings(ctx, 2)
@@ -597,16 +601,17 @@ def _validated_and_one_extra(ctx):  # noqa: ANN001, ANN202, F811
     return state, validated, extra
 
 
-def _pov_loop_that_runs_out_of_budget_at(monkeypatch, stop_at):  # noqa: ANN001, ANN202
-    """`_run_pov_hops`가 `stop_at`번째(0부터) 호출에서 `BudgetExhausted`를 낸다 - 그 앞 호출은 PoC를
-    내고 제출까지 간다. 반환은 호출된 finding_id 목록이다(어디까지 갔는지 본다)."""
+def _pov_loop_that_runs_out_of_budget_at(monkeypatch, stop_at, error=None):  # noqa: ANN001, ANN202
+    """`_run_pov_hops`가 `stop_at`번째(0부터) 호출에서 `BudgetExhausted`(또는 `error`)를 낸다 -
+    그 앞 호출은 PoC를 내고 제출까지 간다. 반환은 호출된 finding_id 목록이다(어디까지 갔는지
+    본다)."""
     reached: list[str] = []
 
     def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
         index = len(reached)
         reached.append(finding.finding_id)
         if index == stop_at:
-            raise BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+            raise error or BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
         return _POCS[index], _SUBMITTED
 
     monkeypatch.setattr(runner, "_run_pov_hops", loop)
@@ -655,6 +660,90 @@ def test_a_budget_stop_inside_the_validated_targets_leaves_the_final_not_reached
     assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
     summary = state.oracle_ledger.summary()
     assert summary is not None and summary["final"] == "not_reached"
+
+
+def test_a_gateway_error_inside_the_extra_pov_targets_still_loses_the_final_designation(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """⚠ **알려진 한계의 핀이다 - 바람직한 동작이 아니다.** 추가 대상의 보호는 `BudgetExhausted`만
+    덮는다: 서버 쪽 `ModelGatewayError`(상태 없음 - `_run_pov_hops`가 흡수하지 않고 올린다)가 추가
+    대상에서 나면 앞 대상이 이미 낸 PoC도 종전대로 최종 지정에 못 닿고 `oracle.final`이
+    `not_reached`다(vul 제출은 1건 나갔다). 의식적으로 넓힐 때(`except`를 다른 예외까지) 이 검사를
+    고친다 - `except Exception`은 run을 멈추는 예외의 뜻을 바꾸므로 지금은 안 넓혔다."""
+    state, validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(
+        monkeypatch, 1, error=ModelGatewayError("down", status=None)
+    )
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(ModelGatewayError):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [_POCS[0]] and oracle.final_calls == []
+    summary = state.oracle_ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
+    assert summary["vul_submitted"] == 1
+
+
+def test_a_budget_stop_before_any_candidate_says_none_no_poc_not_not_reached(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """후보가 0건인 채 추가 대상에서 예산이 끊기면 `not_reached`가 아니라 `none`/`no_poc`다 - 의도한
+    것이 아니라 `_finalize_oracle` 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로
+    싣는다). 「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 오라클 요약은 못 가르고
+    후자는 run 수준의 `stopped_after`·경고가 말한다 - 그 사실의 핀이다."""
+    state, (extra,) = _outside_validated(ctx, [("find_0001", 0.9)])
+    _with_top_n(ctx, 1)
+    state.oracle_ledger = OracleLedger(wired=True)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 0)
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [] and oracle.final_calls == []
+    summary = state.oracle_ledger.summary()
+    assert summary is not None
+    assert (summary["final"], summary["final_reason"]) == ("none", "no_poc")
+
+
+def test_a_run_cut_by_the_budget_inside_the_extra_pov_targets_keeps_its_stop_and_still_scores(
+    tmp_path: Path, monkeypatch  # noqa: ANN001
+) -> None:
+    """**`run_pipeline` 갈래를 `cli.execute` 경유로 문다** - `_analyze`의 `except`가 같은 예외를
+    다시 올려 `run_pipeline`의 `BudgetExhausted` 갈래가 종전대로 `stopped_after`(8)·R-2
+    `budget_exhausted`·경고를 적는지, 그러면서 `oracle.final`이 `scored`인지. 위 `_analyze` 검사들은
+    그 뒤 갈래를 안 지난다.
+
+    `before=_with_index()`가 후보를 둘로 만들고 `critic_top_n=1`이 그중 하나를 `validated` 밖에
+    남긴다(`dev_fake`의 Fake Critic은 올라간 것을 전부 지지한다)."""
+    reached: list[str] = []
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        reached.append(finding.finding_id)
+        if len(reached) == 2:
+            raise BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+        return _POCS[0], _SUBMITTED
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+    oracle = FakeOracle()
+
+    result, trace_path = _run(
+        tmp_path,
+        before=_with_index(),
+        critic_top_n=1,
+        configure=lambda c: c.transition(thresholds=c.thresholds.transition(pov_attempt_top_n=1)),
+        oracle=oracle,
+    )
+
+    assert len(reached) == 2, "추가 대상에 못 닿았다 - 이 검사의 전제가 깨졌다"
+    assert result.record.stopped_after == int(Stage.VALIDATE)
+    assert _run_transition(trace_path)["data"]["reason"] == "budget_exhausted"
+    assert any("8단계에서 예산 소진" in w for w in result.warnings)
+    assert result.record.oracle is not None and result.record.oracle["final"] == "scored"
+    assert len(oracle.final_calls) == 1
 
 
 # --- 마스킹 서버 - 제출은 masked id, 조회는 실 id (`TaskOracle.query_task_id`) ----------------

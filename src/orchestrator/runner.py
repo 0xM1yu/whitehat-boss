@@ -1294,13 +1294,23 @@ def _analyze(
                 # `run_pipeline`의 `BudgetExhausted` 갈래가 `stopped_after`·`BUDGET_EXHAUSTED`·
                 # 경고를 적는 종전 경로 그대로다. `validated` 대상에서 끊긴 run은 안 건드린다
                 # (종전 그대로 `not_reached`).
+                # ⚠ **이 보호는 `BudgetExhausted`만 덮는다.** 다른 예외 — 서버 쪽
+                # `ModelGatewayError`(상태 없음·5xx. `_run_pov_hops`가 흡수하지 않고 올린다)가
+                # 추가 대상에서 나면 앞 대상이 이미 낸 PoC도 종전대로 최종 지정에 못 닿는다
+                # (`oracle.final`이 `not_reached` — 2라운드에 실행으로 확인했고
+                # `test_a_gateway_error_inside_the_extra_…`가 핀이다). `except Exception`으로 넓히지
+                # 않은 것은 일부러다 — run을 멈추는 예외의 뜻이 바뀐다.
+                # ⚠ **`_finalize_oracle`이 이 자리에서 `BudgetExhausted`를 가리지는 않는다** —
+                # 흡수하는 것은 `oracle.finalize`의 `Exception`(`_score`)과 사이드카 쓰기의
+                # `OSError`(장부)이고 둘 다 이 자리에서 던져 확인했다. 그 밖에서 던질 실경로는
+                # 못 찾았다(미확인).
                 if finding.finding_id not in validated_ids:
                     _finalize_oracle(ctx, state)
                 raise
     # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
     # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
     # `not_reached`로 남는다 — **추가 대상에서 `BudgetExhausted`로 끊긴 run만 예외다**(위 `except`가
-    # 최종 지정을 하고 올린다).
+    # 최종 지정을 하고 올린다. 다른 예외는 이 예외에 안 든다 — 위 ⚠).
     _finalize_oracle(ctx, state)
 
 
@@ -1315,7 +1325,9 @@ def _pov_targets(
     `target_skipped`로 남겨야 했던 이유가 여기엔 없다 — 그쪽은 파이프라인에서 빼는 상한이다).
     ⚠ 다만 **추가 대상은 예산을 더 쓴다** — 거기서 `BudgetExhausted`가 나면 run은 그 자리에서
     끝나지만, 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정)은 하고 끝난다(`_analyze`).
-    `validated` 대상에서 끊긴 run은 종전 그대로 최종 지정에 못 닿는다.
+    ⚠ **이 보호는 `BudgetExhausted`만 덮는다 — 다른 예외(`ModelGatewayError` 등)는 종전대로 최종
+    지정에 못 닿는다**(추가 대상의 서버 쪽 게이트웨이 오류는 `oracle.final`이 `not_reached`로
+    남는다 — 이슈 후보). `validated` 대상에서 끊긴 run도 종전 그대로 최종 지정에 못 닿는다.
 
     **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
     ① **Critic이 반박(F-6)·보류(`need_evidence`, F-7)로 판정한 것** — `gate.normalize` 뒤 판정이
@@ -1340,6 +1352,14 @@ def _pov_targets(
     (`repro_spec`이 `null`인 것이 정상이다 — 이슈 #354~#360) 인용이 고쳐져도 F-9에서 멈출 수 있다.
     PoC가 없으면 채점 점수가 없다(`oracle.final`이 `no_poc`). 그래서 등급이 못 올라간 Finding에도
     PoV를 시도할 길을 뒀다.
+
+    ⚠ **이 필터는 그 run의 풀을 바꾸지 않는다.** 필터는 반박된 Finding의 PoC가 최종 제출이 되는
+    것을 막지만, 이 기능이 처음 겨냥한 run(`run_20261003_0003`)의 Finding 셋은 Critic을 안 거쳐
+    `state.decisions`가 비어 있고(그래서 전부 풀에 든다), 셋 다 **Auditor가 스스로 낸 부정
+    결론**이다 — `trigger_status=no_signal` · `confidence` 0.10·0.10·0.05(같은 날 WSL
+    `run_20261003_0002`의 다섯은 `reachability_unknown` 3 · `no_signal` 2, 전부 E0·Critic 0회).
+    풀은 그것을 거르지 않는다(결정 대기). **그런 Finding에서 PoV가 낼 PoC가 있는지는
+    미측정이다**(`pov_attempt_top_n`을 켠 run은 0건). 출처는 위 보고서 §4·결과 표다.
 
     🔴 **`validate.run` 루프는 안 넓힌다.** 그쪽은 유일한 결정론 E4 게이트이고 `from=validated`를
     요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓히는 것은 **PoV
@@ -1372,7 +1392,11 @@ def _pov_targets(
 def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     """7단계가 이 Finding을 **밀어 냈나** — 판정 호출이 실패해 버려졌거나(`_drop_finding`), Critic이
     반박·보류로 판정했다. 판정은 `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이
-    읽는 값과 같아야 `QUEUED`(F-6·F-7)와 이 판정이 어긋나지 않는다."""
+    읽는 값과 같아야 `QUEUED`(F-6·F-7)와 이 판정이 어긋나지 않는다.
+
+    ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
+    **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
+    `any(normalize == UPHOLD)`)과 이 `any(normalize != UPHOLD)`가 갈릴 수 있다 — 그때 맞출 것."""
     return finding_id in state.critic_failed_ids or any(
         gate.normalize(decision) is not Verdict.UPHOLD
         for decision in state.decisions.get(finding_id, ())
@@ -2086,8 +2110,20 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
     불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다. **예외 하나:**
     `pov_attempt_top_n`의 추가 대상에서 `BudgetExhausted`로 끊긴 run은 `_analyze`가 이 단계를 부른
-    뒤 예외를 올린다 — 앞 대상이 이미 낸 PoC의 최종 지정을 잃지 않으려는 것이다(`validated`
-    대상에서 끊긴 run은 그대로다).
+    뒤 예외를 올린다 — 앞 대상이 이미 낸 PoC의 최종 지정을 잃지 않으려는 것이다.
+
+    ⚠ **그 보호는 `BudgetExhausted`만 덮는다 — 다른 예외(`ModelGatewayError` 등)는 종전대로 최종
+    지정에 못 닿는다.** 서버 쪽 게이트웨이 오류로 추가 대상에서 끊긴 run도, `validated` 대상에서
+    끊긴 run도 `oracle.final`이 `not_reached`로 남는다(앞은 2라운드에 실행으로 확인했다 — 핀은
+    `tests/test_oracle_wiring.py`).
+    ⚠ **흡수하는 것은 둘이다:** `oracle.finalize`의 `Exception`(`_score`)과 사이드카 쓰기의
+    `OSError`(`oracle_log` 장부). 지정(`_designate_final`)·`trace.emit`은 안 감쌌고 던질 실경로를
+    못 찾았다(미확인) — 그래서 `BudgetExhausted` 위에서 이 함수가 던지면 그 예외가 가려진다.
+    ⚠ **후보 0건에서 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`로 남는다** — 의도한
+    것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다). 「PoV가
+    끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 이 요약은 못 가른다 — 후자는 run
+    수준의 `stopped_after`·`BUDGET_EXHAUSTED`·경고가 말한다. 후보가 있어 `scored`가 된 run도 **부분
+    후보 집합 위의 지정**이다(`vul_submitted` 수와 `stopped_after`로 재구성한다).
     """
     if ctx.oracle is None:
         return

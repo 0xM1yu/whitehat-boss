@@ -597,6 +597,11 @@ class Thresholds(HarnessModel):
     # 판정한 것과 판정 호출이 실패해 버려진 것은 뺀다(반박된 Finding의 PoC가 최종 제출이 되지
     # 않게 — `runner._pov_targets`). 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
     # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
+    # ⚠ **이 필터는 이 기능이 처음 겨냥한 run의 풀을 바꾸지 않는다** — 그 run(`run_20261003_0003`)의
+    # Finding 셋은 Critic을 안 거쳤고 전부 Auditor가 스스로 낸 부정 결론(`no_signal` ·
+    # `confidence` 0.10·0.10·0.05)이다. 풀은 그것을 거르지 않고(결정 대기), 그런 Finding에서
+    # PoV가 낼 PoC가 있는지는 미측정이다(출처: `docs/experiments/harness/2026-10-04-cybergym-
+    # operational-run-vastai-remote.md` §4).
     # **켤 때의 값은 미실측이다** — 후보 1건당 PoV 홉·토큰을 한 번도 안 쟀고, 그 측정의 입력이
     # 이 배선 뒤의 실모델 run 1회다. 자르는 순서는 `critic_top_n`과 같다
     # (`confidence` 내림차순 · 동점은 `finding_id`) — 정렬이 흔들리면 재현 실행이 갈라진다.
