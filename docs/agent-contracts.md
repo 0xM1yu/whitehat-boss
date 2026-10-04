@@ -152,7 +152,19 @@ agent:
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
-  `budgets.yaml`이 켜고 v7이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다
+  `budgets.yaml`이 켜고 v7이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 **꺼져 있다** —
+  `budgets.yaml`이 키를 `0`으로 둔다. **v7은 이 옵션을 서술·선언하지 않는다** — 켜려면 프롬프트 판이 `auditor_guards`를
+  서술하고 meta `source_options`로 선언해야 하고(그 전에 켜고 v7을 고르면 `cli` run·doctor가 막는다), 그것은 다음 판
+  몫이다(켠 효과 측정과 함께). 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
+  `GUARDS (syntactic — may not dominate)` 머리줄과 `파일:줄 | 조건 [exit: …]` 행이 붙는다 — sink 호출의 인자 이름을 언급하는
+  `if`·`while`·`for`·삼항·assert 계열 조건이고 지배를 주장하지 않는다. 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을
+  적은 한 줄이다. 가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등 #259 · `\n`을 안 단 `\r`)에는 안 붙고 사유를 trace
+  `guards_skipped`가 든다. 행이 12를 넘으면 조건이 인자 이름을 **직접** 말하는 행이 먼저 남고, 대입 한 걸음으로만
+  이어진 별칭 행은 뒤이며 `[alias: m←n]`(좌변←우변)이 붙는다. 크기는 총 상한에서 먼저 빠지고(entry 함수 몫이라 밀려 빠지지는
+  않는다) `functions`에는 안 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 켠 효과는 미실측이다.
+  ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
+  `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
