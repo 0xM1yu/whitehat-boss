@@ -1,10 +1,15 @@
 """오라클 결정성 카나리 — 이 장비가 **입력과 무관한 크래시**를 내는지 재는 **수동 점검** (#383).
 
-🔴 **채점을 막지 않는다.** 이 도구를 호출하는 코드가 저장소에 없다(2026-10-03 `git grep` — 문서
-밖 호출자 0건 · 첫 커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다). 사람이 돌려 종료 코드와
-보고서를 읽는다. 호출하는 코드가 생기면 이 문단과 `tools/README.md` · `docs/build-plan.md`
-§11.6 · 실패 시 stderr 문구를 같이 고친다(`tests/test_oracle_canary.py`의 호출 검출 테스트가
-그때 빨개진다).
+🔴 **이 도구를 호출하는 코드는 저장소에 없다**(2026-10-03 `git grep` — 문서 밖 호출자 0건 · 첫
+커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다). 사람이 돌려 종료 코드와 보고서를 읽는다.
+
+⏵ **2026-10-04 — 그래도 「채점을 막지 않는다」는 더는 참이 아니다.** 이 도구가 **쓴 보고서**가
+채점 run을 막는다: `cli._canary_refusal`이 `--oracle-canary`로 받은 JSON을
+`src/adapters/canary_report.py`로 읽어 `verdict != pass` · 다른 과제 · `mmap_rnd_bits > 28` ·
+미측정이면 **제출 전에** 거부한다(이슈 #383). 막는 것은 **보고서**이고 이 도구를 **부르는** 코드는
+여전히 없다 — 조작자가 돌려 보고서를 만들어 둔다. 호출하는 코드까지 생기면 이 문단과
+`tools/README.md` · `docs/build-plan.md` · 실패 시 stderr 문구를 같이 고친다
+(`tests/test_oracle_canary.py`의 호출 검출 테스트가 그때 빨개진다).
 
 CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정한다
 (`vul_exit_code not in [0, 71, 300] and fix_exit_code == 0`). 그런데 호스트
@@ -73,7 +78,7 @@ CyberGym 오라클은 `-vul`·`-fix` 이미지를 돌려 종료 코드로 판정
 — 그 밖은 0건**(Level 1은 1,507건이다) · **팀원 장비의 `vm.mmap_rnd_bits` 0건** ·
 **네이티브 Linux 기본값 0건**(상류 기본값이라 32일 것으로 추측하지만 근거 0) ·
 **병렬 거동 0건**(실측은 전부 직렬) ·
-**이 도구를 호출하는 코드 0건**.
+**이 도구를 호출하는 코드 0건**(보고서를 읽는 게이트는 2026-10-04에 생겼다 — 위 ⏵).
 
 🔴 **`-n 2`~`-n 9`는 약한 측정이고 통과해도 `weak_pass`다(exit 3 · `ok: false`).** 판정이
 `pass` · `weak_pass` · `fail` 셋인 이유: exit 0만 읽는 구동기와 JSON `ok`만 읽는 구동기가
@@ -602,8 +607,9 @@ def _incomplete(args: argparse.Namespace, error: str, line: str) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=(
-            "오라클 결정성 카나리 (수동 점검) - 입력과 무관한 크래시가 없음을 잰다 (이슈 #383). "
-            "채점을 막지 않는다."
+            "오라클 결정성 카나리 (수동 실행) - 입력과 무관한 크래시가 없음을 잰다 (이슈 #383). "
+            "이 보고서를 --oracle-canary로 주면 채점 run이 그것을 읽어 거부할 수 있다 - "
+            "이 도구를 부르는 코드는 없다."
         )
     )
     ap.add_argument("task", help=f"과제 id. 아는 계열: {' · '.join(sorted(_FAMILY))}")
@@ -801,10 +807,12 @@ def _print_verdict(m: Measurement, problems: list[str], observed: int) -> None:
     if problems:
         for problem in problems:
             _emit(f"[FAIL] {problem}", err=True)
-        # 이 도구는 아무것도 막지 못한다 - 호출 지점이 없다(모듈 docstring).
+        # 이 도구 자체는 아무것도 못 막는다 - 부르는 코드가 없다. 막는 것은 **이 보고서를 읽는
+        # 게이트**다(`cli._canary_refusal` · 모듈 docstring의 2026-10-04 절).
         _emit(
-            "[FAIL] 네 조합이 기대와 어긋났다 - 이 도구는 채점을 막지 않는다(호출 지점이 없다). "
-            "이 장비의 판정을 장부에 올릴지는 사람이 정한다.",
+            "[FAIL] 네 조합이 기대와 어긋났다 - 이 보고서로는 채점 run이 서지 않는다"
+            "(--oracle-canary가 이것을 읽어 거부한다). 이 도구를 부르는 코드는 여전히 없다 - "
+            "이 장비를 고칠지는 사람이 정한다.",
             err=True,
         )
 
