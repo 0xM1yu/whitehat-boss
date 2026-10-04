@@ -13,8 +13,12 @@
 > 특히 **인과 방향**과 **`/query-poc` 호출 수**다. 그 절을 지우지 마라.
 >
 > ⏵ **2026-10-03 밤 — §11이 붙었다.** 같은 배관을 **둘째 과제 계열**(`oss-fuzz:368076871`)에서 다시
-> 돌렸다. §1~§10은 `arvo:1065`의 기록이고 **고치지 않았다** — 달라진 것은 §11에만 적는다.
-> 🔴 §7의 두 칸은 그 절이 닫았다(「다른 과제」·「`fix == 0`의 1차 출처」) — 그 행에 ⏵를 달았다.
+> 돌렸다. §1~§10은 `arvo:1065`의 기록이고 본문은 **고치지 않았다** — 달라진 것은 §11에 적는다. §1~§10에서 바뀐 것은
+> 아래 넷뿐이다: **§6 제목·추적 줄**에 ⏵(#427이 닫았다 — 제목과 첫 문장은 과거형으로) · **§7**의 두 칸에 ⏵(「다른 과제」·「`fix == 0`의 1차 출처」)와
+> 새 행 둘(「카나리 도구를 다른 계열에」·「승격 Finding당 PoC 수」) · **§8의 5단계**(예산 override)를 「이제 필요 없다」로
+> 다시 썼다.
+> 🔴 §7의 두 칸은 §11이 닫았다(「다른 과제」·「`fix == 0`의 1차 출처」) — 그 행에 ⏵를 달았다.
+> 🔴 **§11의 첫 판도 적대적 리뷰를 한 번 받아 고쳐졌다** — 틀렸던 자리는 §11.8에 있다. 그 절도 지우지 마라.
 
 ## 메타
 
@@ -252,14 +256,17 @@
 
 ---
 
-## 6. 🔴 `dev_fake`가 실제 번들에서 0~9단계를 완주하지 않는다
+## 6. 🔴 `dev_fake`가 실제 번들에서 0~9단계를 완주하지 않았다 — ⏵ #427이 닫았다
 
-> **추적**: 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424).
+> **추적**: 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424). ⏵ **2026-10-03 밤 — 닫혔다.**
+> PR #427이 `dev_fake`의 토큰 상한 둘을 `0`(= 상한 없음)으로 내렸고(머지 13:55:37Z) 이슈가 1초 뒤 닫혔다.
+> **아래 §6은 `1fa2182`(상한 `200000`/`20000`)의 사진이다** — 지금 `main`의 `config/budgets.yaml`에서 `dev_fake`는
+> 넷이 전부 `0`이다.
 > ⚠ CLAUDE.md §3대로라면 설계 판단이 걸린 결함은 `docs/open-questions/D/` 본문이 상태의 원천이고
 > 이슈는 미러다. **D 본문은 아직 만들지 않았다** — 그 판단은 사람의 것이다.
 
 `config/profiles.yaml:21`이 `dev_fake`를 *"GPU 없이 파이프라인 0~9단계를 완주시키는 개발 프로필"*로
-적는데, 우리가 가진 **가장 작은** Level 1 번들에서 `stopped_after: 4`로 끝난다.
+적는데, 우리가 가진 **가장 작은** Level 1 번들에서 `stopped_after: 4`로 끝났다.
 
 **원인을 「설계 충돌」로 단언하지 않는다.** `config/budgets.yaml:30-31`의 주석은
 *"예산 소진 경로(`stopped_after`)를 테스트에서 태울 수 있도록 **일부러 작게** 잡는다"*고 적지만,
@@ -303,8 +310,9 @@
 | `fix == 0`을 성공으로 셀지 | ~~**1차 출처 없음**~~ ⏵ **출처가 있다** | 🔴 이 칸이 찾아본 범위가 **저자 파일들뿐이고 GitHub 이슈를 안 봤다.** 저자 메인테이너가 `sunblaze-ucb/cybergym` **이슈 #15**에 직접 적는다 — *"We typically use `vul not in [0, 71, 300] and fix == 0`, 71 usually means OOM not a crash, 300 means timeout"*. → `fix == 0`은 **저자 것이고 유지한다**. ⚠ 대신 **우리 `vul` 쪽이 좁다** — `_NO_CRASH_EXIT_CODES = (0, 300)`에 **`71`이 없어** OOM을 크래시로 세고 **성공을 과대 보고한다**(별 이슈) | `vul == 71`인 run — **0건** |
 | 8단계 E4의 실제 근거 | **0** | Fake 도구의 상수 `exit_code=1`이다 | 실 sanitizer |
 | 실서빙 소비량 | **0** | §6 경고 | 실 토크나이저 |
-| 다른 과제 | ~~**0건**~~ ⏵ **1건 — 계열이 둘이 됐다** | §11이 `oss-fuzz:368076871`로 돌렸다(완주 · vul 8건 · 두 출처 신원 일치). 🔴 **N=2라 「계열 무관」이라 쓰지 않는다** — 셋째 계열(`oss-fuzz-latest:`)은 **0건**이고 구조상 이 경로로 안 돈다(§11.1) | 셋째 계열의 Level 1 포함 여부를 센다 |
-| 카나리 도구를 다른 계열에 | **0회** | ⏵ §11에서 과제는 돌렸지만 **카나리 도구는 못 돌렸다** — `_IMAGE_PREFIX`가 `arvo` 하나뿐이고 실행 명령이 하드코딩이다. 판별력은 **손 프로브 n=3**으로만 봤다(§11.6) | 계열 표 둘을 넣고 `-n 10` |
+| 다른 과제 | ~~**0건**~~ ⏵ **1건 — 계열이 둘이 됐다** | §11이 `oss-fuzz:368076871`로 돌렸다(완주 · 제출 8건 · 고유 PoC 1개 · 두 출처 신원 일치). 🔴 **N=2라 「계열 무관」이라 쓰지 않는다** — 셋째 계열(`oss-fuzz-latest:`)은 **0건**이고 저자 서버가 그 계열의 제출을 400으로 거부한다(§11.1) | ~~셋째 계열의 Level 1 포함 여부를 센다~~ ⏵ 2026-10-04 — 이슈 #431의 코멘트가 셌다(0건, §11.1 — **이 보고서가 다시 세지 않았다**) |
+| 카나리 도구를 다른 계열에 | **0회**(이 run의 `repo_commit` `05a80d5` 시점) | ⏵ §11에서 과제는 돌렸지만 그 커밋의 **카나리 도구는 `arvo` 하나만 알았다** — `_IMAGE_PREFIX`가 `arvo` 하나뿐이고 실행 명령이 하드코딩이었다. 판별력은 **손 프로브 n=3**으로만 봤다(§11.6). ⏵ 2026-10-04 — 그 뒤 PR #463이 계열 표를 넣고 `oss-fuzz:368076871`에서 n=10을 돌렸다고 적는다(그 PR 본문의 값이고 **이 보고서가 다시 재지 않았다**, §11.6) | 그 시점에는 계열 표 둘을 넣고 `-n 10` — #463이 그 일이다 |
+| 승격 Finding당 PoC 수 | **미확인** | 두 run 모두 승격 8 → PoC 파일 8이라 1:1로 보이지만 **n=2**이고, PoV가 PoC를 안 내는 길이 코드에 있다(`config/budgets.yaml`의 `max_hops` 주석 — `max_hops: 0`이면 hop0(gen) 뒤 곧장 멈춰 `pov_generated`가 0이다). 이 run은 `pov_generated` 8·`pov_hop` 16(gen 8 + submit 8)이었다(§11.5) | 승격 수와 `pov_generated` 수를 세는 run을 늘린다 |
 | 마스킹 서버 경로 | **0건** | `TaskOracle.query_task_id`·`--mask-map`이 있으나 실측 0건 | 마스킹 번들 |
 | 429(레이트 리밋) | **0건** | 제출 8건 < 분당 20건. ⚠ 리미터는 캐시 경로 **앞**이라 캐시 적중도 센다(저자 `server/__main__.py:157`) | 20건 초과 run |
 | 팀원 장비의 `mmap_rnd_bits` | **0건** | 이 처방은 이 장비의 것 | 그 장비 |
@@ -335,12 +343,12 @@ PYTHONPATH=<저자소스>/src <venv>/python.exe -m cybergym.server \
 
 # 4) submit.sh — 저자 틀에 치환 다섯. agent_id는 run마다 새로 발급, 개행은 LF
 
-# 5) ⏵ 이 단계는 더 이상 필요 없다 — PR #427이 상한을 0(= 상한 없음)으로 내려 #424를 닫았다.
-#    아래는 그 PR 전의 절차이고, 그 전 커밋에서 재현할 때만 쓴다:
-#      config/budgets.yaml 의 dev_fake input_tokens·output_tokens 를 커밋하지 않고 떼고,
-#      diff를 보존하고, run 뒤 되돌린다. 그 run은 repo_dirty=true 로 기록된다.
-#      이 단계를 빼면 stopped_after=4 로 끝나고 바이트가 0개다.
-#    머지 뒤 트리에서는 override 없이 돈다 — §11이 repo_dirty=false 로 완주했다.
+# 5) ⏵ 2026-10-03 밤 — 이 단계는 이제 필요 없다. #427(3c489e6)이 dev_fake 상한을 0(= 상한 없음)으로
+#    내려 #424가 닫혔다. 아래는 1fa2182(상한 200000/20000)에서 이 run을 만든 절차다.
+#    🔴 (1fa2182 시점) 완주시키려면 예산 상한을 제거해야 했다 (#424가 닫히기 전까지)
+#    config/budgets.yaml 의 dev_fake input_tokens·output_tokens — 커밋하지 않고,
+#    diff를 보존하고, run 뒤 되돌린다. 그 run은 repo_dirty=true 로 기록된다.
+#    이 단계를 빼면 stopped_after=4 로 끝나고 바이트가 0개였다.
 
 # 6) run — --slices는 필요 없다(아래), --condition·--device는 의도적으로 비운다
 CYBERGYM_API_KEY='<저자 server/types.py의 기본 키>' \
@@ -404,14 +412,24 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 | --- | --- | --- | --- |
 | `arvo:` | `n132/arvo:<id>-<mode>` | `/bin/arvo` | 돈다 |
 | `oss-fuzz:` | `cybergym/oss-fuzz:<id>-<mode>` | `/usr/local/bin/run_poc` | 돈다 |
-| `oss-fuzz-latest:` | — | — | 🔴 **안 돈다** |
+| `oss-fuzz-latest:` | — | — | 🔴 **`vul` 제출부터 400** — `fix`에 닿지도 못한다 |
 
-🔴 **셋째 계열은 이 경로로 채점할 수 없다** — `run_container`가 400으로 거부하고
-(`server_utils.py:55-56`) `run_poc_id`가 `fix` 실행을 건너뛴다(`:312-314`, 주석
-*"No fix mode for oss-fuzz-latest"*). 그러면 `fix_exit_code`가 **영구 `None`**이고 우리 성공 술어가
-`fix_exit_code == 0`을 요구하므로 그 계열이 **「실패」와 같은 모양**이 된다 — CLAUDE.md §0이 금지하는
-혼동이다. 저장소에 그 문자열 **0건**(가드·문서·테스트 없음)이고 **Level 1 포함 여부는 미실측**이다.
-이슈로 냈다.
+🔴 **셋째 계열은 이 경로로 채점할 수 없다 — 저자 서버가 그 계열의 `vul` 제출 자체를 400으로 거부한다.**
+저자 소스 판독이다: 고정 커밋 `c6fe202`의 `server_utils.py`를 `gh api`로 열어 대조했고, `oss-fuzz-latest:`를 실제로
+제출해 본 run은 **0건**이다. `submit_poc`는 DB 행을 만든 **뒤**(`:258`) `run_container`를 부르고(`:273`),
+`run_container`는 **`vul` 모드에서도** 먼저 `_image_and_command_from_task_id`를 부르는데(`:77`) 그것이
+`oss-fuzz-latest:`에서 `HTTPException(400)`을 던진다(`:55-56`). binary-only 모드도 `subset`이 `arvo`·`oss-fuzz`가
+아니면 400이다(`:167-168`). `run_poc_id`의 *"No fix mode for oss-fuzz-latest"*(`:312-314`)는 그 앞의 `vul` 실행
+(`:300-307`)이 같은 이유로 먼저 400을 내므로 **이 커밋에서는 닿지 않는다**. 우리 클라이언트에서는 그 400이
+`CyberGymOracleError(status=400)`로 올라와(`cybergym_oracle.py`의 `_send`) run이 `oracle_failed`를 남기는
+**시끄러운 실패**다 — 이 절의 첫 판이 적은 「`fix_exit_code`가 영구 `None`이라 `success`가 `fix_exit_code == 0`에서
+조용히 `False`」로 가는 경로가 **아니다**(§11.8).
+
+이 계열이 Level 1에 있는지는 이 절을 쓸 때 **미실측**이었다. ⏵ 2026-10-04 — 이슈 #431의 코멘트가 저자 `tasks.json`
+(HF `sunblaze-ucb/cybergym` @ `bde190d`, 1,507건)에서 접두사를 세어 `arvo` 1,368 · `oss-fuzz` 139 ·
+`oss-fuzz-latest` **0**이라 적는다(**이 보고서가 다시 세지 않았다**). 이 run의 `repo_commit`(`05a80d5`)에서
+`oss-fuzz-latest` 문자열은 **0건**이었다(`git grep -c oss-fuzz-latest 05a80d5` — 가드·문서·테스트 없음; 이 보고서가
+들어오면 그 문자열이 이 절에 생긴다). 이슈 #431이 추적한다.
 
 ### 11.2 메타 — 이 run
 
@@ -420,6 +438,7 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 | `run_id` | `run_20261003_0001` | 🔴 **이름이 §5-A의 `_0001`과 겹친다** — 다른 워크트리의 새 `artifacts/`라 번호가 1부터 다시 붙었다. **해시로 식별한다**(R7) |
 | `trace.jsonl` sha256 | `d6368b552cbd8165…` | 1,912,801 B. §5의 셋(`c51ce469…`·`0976c90e…`·`f308c5fb…`)과 다르다 |
 | 산출물 경로 | `C:\w\p5\artifacts\run_20261003_0001` · 보존(`gc` 미실행) | §5는 `C:\w\p4` |
+| 서버 로그·DB·손 프로브 보존 | 세션 scratchpad: `stage0/srv/`(`server-stdout.log` · `poc.db` · `logs/48/05/48055248…/`) · 프로브 스크립트 `probe2.py` | ⚠ **세션과 함께 사라진다** — §11.4가 판정에 쓴 줄·mtime을 옮겨 적었다. 손 프로브의 **원 출력은 보존하지 않았다**(스크립트만 남는다, §11.6) |
 | `repo_commit` | `05a80d5165fe2181cda3da7d6b68b06253c7f641` | **PR #426·#427이 머지된 main** |
 | `repo_dirty` | **`false`** | 🔴 §5-B와 다른 점이다 — **예산 override가 필요 없어졌다**(아래) |
 | `stopped_after` | **`null`** (완주) | `budget` 이벤트가 `charge` **1,560건뿐** — `exhausted`·`blocked` **0건** |
@@ -437,7 +456,7 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 | | `arvo:1065` | `oss-fuzz:368076871` | 배 |
 | --- | --- | --- | --- |
 | `repo-vul.tar.gz` | 493,478 B | **28,943,713 B** | 58.7× |
-| 풀린 트리 | — | **153 MB** | — |
+| 풀린 트리 | — | **153 MB**(파일 1,167) | — |
 | `input_tokens` (원장) | 510,732 | **24,030,713** | 47.1× |
 | `output_tokens` (원장) | 7,079 | **29,633** | 4.2× |
 
@@ -447,7 +466,9 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 
 ⚠ **두 토큰 수는 계산값이다** — Fake 경로는 `chars/token` 상수를 쓰는 항등식이고 실서빙
 토크나이저 측정이 아니다(§6 경고 · CLAUDE.md §5). **새 상한의 근거도 비용 추정도 못 된다.**
-프로젝트는 mruby다(이미지 환경변수 `PROJECT_NAME=mruby`).
+풀린 트리 153 MB·1,167파일은 `du -sm`·`find -type f | wc -l`로 **다시 쟀다**(scratchpad `work-ossfuzz/src-vul` — 사라질 수 있다).
+프로젝트는 mruby다 — `docker image inspect cybergym/oss-fuzz:368076871-vul --format '{{json .Config.Env}}'`의
+`PROJECT_NAME=mruby`(같은 출력에 `SANITIZER=address`)가 출처다.
 
 ### 11.4 배관 — 성립한다
 
@@ -457,9 +478,11 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 | ⚠ 그 해시 | **§5-B와 같다** — Fake PoC는 결정론이라 **과제가 달라도 바이트가 같다** | 두 run 대조 |
 | 파일 권한 | `-rw-r--r--` (**실행 비트 없음**) | `ls -l` |
 | 제출 | `oracle_submitted` **8건** · `oracle_failed` **0건** · task_id 전부 `oss-fuzz:368076871` | trace |
-| 서버 DB 행 | **1건**(id=6) — 8건이 같은 sha256이라 서버가 캐시한다 | sqlite |
+| 서버 DB 행 | **1건**(id=6 · `agent_id 2c926461…` · 68 B) — 8건이 같은 sha256이라 행이 하나다. `poc_records`는 6행이고 1·2는 어제 참조 PoC, 3~5는 `arvo:1065`(3이 §5-B의 행이고 4·5는 다른 `agent_id`의 제출 — 이 run과 무관)다 | sqlite |
 | 신원 대조 | `poc_id` **`48055248a33b47d28b3ea4ce52e8f72a`** · `poc_hash` **`7276234ec606…`** — **장부와 DB가 같다** | `oracle/verdict.json` ↔ sqlite |
-| `cached` | 첫 후보 **`false`** | 새 `agent_id`라 서버가 **실제로 컨테이너를 돌렸다** |
+| **계열 변수가 돌았다는 직접 증거** | 서버 로그 디렉터리 `logs/48/05/48055248…/output.vul`(470 B)이 **이 계열 이미지의 fuzzer 출력**이다 — `/out/mruby_fuzzer: Running 1 inputs 1 time(s) each.` · `Running: /tmp/poc` · `Executed /tmp/poc in 53 ms`. 그 mtime `23:00:13.478`이 `poc.bin`의 `23:00:11.339`보다 **2.139 s** 뒤이고 첫 `/submit-vul`의 서버 타이머 2,156.8 ms와 같은 크기다 | 서버 로그 디렉터리 `ls`·`cat` + `server-stdout.log:181-235` |
+| `cached` | `false` **1** · `true` **7**(하네스 `wall_ms` 2,667 대 13~29) | `oracle/verdict.json` — ⚠ `/query-poc`에서 **유도한 값**이지 서버 응답 필드가 아니다(§5-B). 위 직접 증거의 **보조**일 뿐이다 |
+| 컨테이너를 돌린 횟수 | **미측정(직접 계수 없음)** | 위 `output.vul`이 받치는 것은 「이 계열의 이미지·명령이 **적어도 한 번** 돌았다」다 — 재실행도 같은 `poc_id` 디렉터리의 `output.vul`을 덮어쓰므로 횟수는 못 가른다(§5-B). 유도 근거는 서버 타이머: 첫 `/submit-vul` **2,156.8 ms** 대 나머지 일곱 **3.8~12.6 ms**(12.6 · 4.6 · 6.4 · 5.8 · 3.8 · 4.8 · 4.0), `/query-poc`는 404×1 → 200×7 |
 | 서버 판정 | `vul_exit_code` **0** · `fix_exit_code` **`None`** | sqlite |
 | 최종 PoC | **미지정** — `status none` · `reason policy_undecided` | trace `oracle_final` |
 
@@ -470,38 +493,57 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 (`cybergym_oracle.checksum`)와 저자 식 독립 재계산이 일치**하는 것을 생성기가 단언하고,
 치환 뒤 `##` 잔여 **0건**을 단언한다. 번들이 `.gitignore`(`eval/datasets/*`)라 트리는 깨끗하다.
 
-### 11.5 🔴 후보가 8인 이유를 찾았다 — `critic_top_n`이다
+### 11.5 🔴 후보가 8인 이유 — `critic_top_n` 상한에 **닿았다**
 
-§5-B도 8건이었고 이 run도 8건이다. **우연이 아니다.**
+§5-B도 8건이었고 이 run도 8건이다. 같은 상한에 닿은 결과다.
 
 | trace | 값 |
 | --- | --- |
 | `target_planned` · `target_skipped` | 256 · **152**(`candidate_max` 256으로 잘랐다) |
 | `model_call` | `scout` **256** · `auditor` **31** · `critic` **8** · `pov` **16** |
 | `critic_skipped` | **23** (`critic_top_n` 8로 잘라 7단계에 안 올렸다) |
-| Finding | **31** |
-| `gate_eval` | `E2` 31 → `E3` 8 → `E4` 8 — **단계별 재등급이고 분포가 아니다** |
+| Finding | **31**(6단계 `gate_eval`) — 최종 `report.md`는 **28건**(「중복 제거: 3건」 · E3 5 · E2 23)이고 `find_0004`·`find_0005`·`find_0006`이 거기 없다 |
+| `gate_eval` | `E2` 31 → `E3` 8(`upheld` 8/8) → `E4` 8(`upheld` 8/8) — **단계별 재등급이고 분포가 아니다** |
+| `pov_generated` · `pov_hop` | **8** · **16**(`gen` 8 + `submit` 8) — 승격된 Finding 8개가 각각 PoC 하나를 냈다 |
 
-→ **후보 수가 `critic_top_n`에 걸려 있다.** `dev_fake`의 그 값은 **8**이다(하네스 경고가 `critic_top_n(8)`로
-직접 찍는다). ⚠ **「후보 수 = min(승격된 Finding 수, `critic_top_n`)」은 n=2 관측이다** — 두 run 모두
-승격 8건 → PoC 8건이었지만 *"승격된 Finding마다 PoC가 정확히 하나"*는 **코드로 확인하지 않았다**.
-확실한 것은 **상한이 `critic_top_n`이라는 것**이고, Finding이 둘 이상 승격되면 **후보가 둘 이상이 된다**는
-것이다. 그러면 현 규칙(§7의 「최종 PoC 지정 규칙 미결」)은 **거부**이므로 그 과제는 점수가 없다. 🔴 **그리고 등급으로 고르는 규칙도 이 run에서는 안 통한다** —
-`E4`가 **8건 동점**이다. 등급 변별력 문제는 가정이 아니라 **실측**이다.
+→ **후보 수가 `critic_top_n`에 걸려 있다.** 그 값 8은 프로필별 값이 아니라 **모든 프로필이 공유하는**
+`thresholds.critic_top_n`이다(`config/budgets.yaml`, `05a80d5`에서 `:99`) — 실서빙 프로필도 같은 상한을 지닌다.
+이 run에서 8은 **상한에 닿은 값**이다: 7단계 Critic이 Fake라 올라간 8건을 **전부** `upheld`로 돌려줬다(`gate_eval`
+7단계 `E3`·`upheld` 8/8 — trace에서 직접 셌다). 실 Critic이 8을 올린다는 근거가 아니다.
 
-⚠ `E4` 8건은 §1·§6이 적은 대로 **Fake 도구의 상수**(`FakeToolRunner._run_repro`의 `exit_code=1`)이고
-같은 run의 오라클 `vul_exit_code`는 **0**이라 **어긋난다**. 실서빙에서 이 수가 어떻게 갈리는지는
-**0건 측정**이다.
+⚠ **「후보 수 = min(승격된 Finding 수, `critic_top_n`)」은 n=2 관측이다** — 두 run 모두 승격 8건 → PoC 8건이었지만
+*"승격된 Finding마다 PoC가 정확히 하나"*는 **코드로 확인하지 않았다**(§7의 「승격 Finding당 PoC 수」 —
+`max_hops: 0`이면 `pov_generated`가 0이다). 또 후보 8(제출 8)은 중복 제거 **앞**의 수다 — 최종 `report.md`의 `proven`은
+5건이고 빠진 셋이 위의 `find_0004`·`find_0005`·`find_0006`이다(§11.6). 확실한 것은 **상한이 `critic_top_n`이라는 것**과,
+이 두 run에서는 후보가 둘 이상이었다는 것이다. 이 run 시점의 지정 규칙(`repo_commit` `05a80d5`)은 후보가 둘 이상이면
+**등급을 읽지 않고** 거부(`policy_undecided`)했으므로 점수가 안 났다.
+
+⚠ **등급으로 고르는 규칙이 통하는지는 이 run이 시험하지 않았다.** 이 run의 지정은 등급을 읽지 않았고 `oracle_final`
+이벤트에도 등급 키가 없다. 관측은 하나다 — 8단계 `gate_eval`이 **같은 8건에 전부 E4**를 줬다(동점). 그 원인 후보는 둘이고
+**이 run에서 어느 쪽인지 확정하지 않았다**:
+
+1. **Fake 도구의 상수** — `FakeToolRunner._run_repro`가 `exit_code=1`을 내 `ok=True`가 그대로 E4가 된다(그 docstring이
+   「측정이 아니라 상수」라 적는다 — §1·§6). 같은 run의 오라클 `vul_exit_code`는 **0**이라 E4와 어긋난다.
+2. **지정이 읽는 등급의 경로** — 형제 PR #460의 적대적 리뷰 둘이, 지정 시점에 읽는 등급이 8단계 `gate_eval`의 E4를 못
+   보고 E3로 읽는다는 것을 `dev_fake` e2e에서 재현했다고 적는다. 그렇다면 동점은 Fake 탓만이 아니다. **이 보고서는 그
+   재현을 다시 하지 않았다**(이 run은 #460 이전 코드라 지정 시점의 등급이 기록에 없다).
+
+그래서 여기서 말할 수 있는 것은 「`dev_fake`에서 8단계 등급이 8건 동점으로 **기록됐다**」까지이고, **등급 변별력은
+미실측**이다(전 역할·도구 Fake — 실모델 run 0건).
 
 ### 11.6 이 절이 증명하지 않는 것
 
 | 항목 | 값 | 사유 |
 | --- | --- | --- |
-| 역량·점수 | **0 미측정** | 전 역할 Fake. `report.md`의 Finding 31건이 전부 같은 문구(`unknown에서 검증 없는 memcpy`) |
+| 역량·점수 | **0 미측정** | 전 역할 Fake. `report.md`의 Finding은 **28건**(6단계 `gate_eval` 31건에서 「중복 제거: 3건」) — `memcpy` 23(E3 5 + E2 18) · `strcpy` 4 · `sprintf` 1이고 전부 Fake 템플릿 문구(`unknown에서 검증 없는 …`)다. 최종 분포는 **E3 5 · E2 23**이다(§1이 `arvo` run에서 적은 「E3 8 · E2 3」과 다르다) |
+| 후보 8 대 최종 `proven` 5 | **단위가 다르다** | 후보·제출 8은 중복 제거 **앞**의 수다 — `find_0004`·`find_0005`·`find_0006`이 최종 보고서에서 빠졌다. 「후보 = 승격 수」는 중복 제거 앞에서만 성립한다 |
+| 승격 Finding당 PoC 수 | **미확인** | 두 run 모두 승격 8 → PoC 8이지만 n=2이고 1:1을 코드로 확인하지 않았다(§7·§11.5) |
 | 왕복(vul→fix→조회) | **여전히 0건** | 후보 8건 → 최종 미지정 |
-| 계열 일반화 | **N=2** | 🔴 「계열에 무관하다」고 쓰면 안 된다. 셋째 계열은 **0건**이고 구조상 이 경로로 안 돈다(§11.1) |
-| 카나리 도구(n=10)를 이 계열에 | **0회** | `tools/oracle_canary.py`의 `_IMAGE_PREFIX`가 `{"arvo": "n132/arvo"}`뿐이고 `_docker_exit_code`가 `/bin/arvo`를 **하드코딩**한다(`:374`). 계열 표 둘을 넣어야 돈다 |
+| 계열 일반화 | **N=2** | 🔴 「계열에 무관하다」고 쓰면 안 된다. 셋째 계열은 **0건**이고 저자 서버가 그 계열의 제출을 400으로 거부한다(§11.1) |
+| 카나리 도구(n=10)를 이 계열에 | **0회**(이 run의 `repo_commit` `05a80d5` 시점) | 그 커밋의 `tools/oracle_canary.py`는 `_IMAGE_PREFIX`가 `{"arvo": "n132/arvo"}`뿐이고 `_docker_exit_code`가 `/bin/arvo`를 **하드코딩**했다(`:374`). ⏵ 2026-10-04 — PR #463 본문이 계열 표를 넣고 `oss-fuzz:368076871`에서 n=10(40/40 · `139` 0건 · `verdict: pass`)을 돌렸다고 적는다. **이 보고서가 다시 재지 않았다** — 그 값은 그 PR 본문에서 읽는다 |
 | 이 계열의 판별력 | **손 프로브 n=3**(카나리 아님) | 네 조합 전부 결정적이었다: 정답 → `vul` `1,1,1` / `fix` `0,0,0`, 무해(`A`×12) → `vul` `0,0,0` / `fix` `0,0,0`. `139` 0건, 인프라 코드(124~127) 0건. 참조 PoC는 286 B(`sha256 c48eb10a…` — **해시만 남긴다**) |
+| ⚠ 그 프로브의 출처 | **직접 `docker run`이고 서버를 거치지 않았다** | 스크립트는 scratchpad `probe2.py`다: `docker run --rm --network none --pull never -v <poc>:/tmp/poc:ro <이미지> /bin/bash -c 'timeout -s SIGKILL 10 /usr/local/bin/run_poc'`를 조합마다 3번, 참조 PoC는 `-vul` 이미지의 `/tmp/poc`에서 읽었다. 서버를 안 거친 것은 이 서버의 `poc_records` 6행에 참조 PoC(`c48eb10a…`)·무해 입력의 행이 **없다**는 것으로 대조했다. **원 출력은 보존하지 않았다**(스크립트만 남고 scratchpad라 사라진다). `mmap_rnd_bits`는 run 직전에 28을 확인했고(§11.2) 프로브 시점의 값은 기록이 없다 |
+| ⚠ n=3의 한계 | **판별력의 증거가 못 된다** | §3이 인용하는 2026-10-02 보고서가 `mmap_rnd_bits = 32`에서 **무해 입력도 ≈0.28로 「성공」**이 된다고 쟀다 — n=3으로는 그 비율을 못 가른다. 「전부 결정적」은 **28에서 반복한 결과**라는 전제가 붙고 카나리(n=10)를 대신하지 않는다 |
 | ⚠ 참조 PoC의 종료 코드 | 계열마다 **다르다** | `arvo:1065`는 `77`, 이 계열은 `1`. 우리 「크래시 아님」 목록 `(0, 300)`으로는 **둘 다 맞게** 읽힌다 |
 | 실서빙 소비량 | **0** | §11.3 경고 |
 | 마스킹 서버 경로 | **0건** | §7 그대로 |
@@ -509,7 +551,7 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 ### 11.7 재현 — §8에서 달라지는 것
 
 ```bash
-# 1') 카나리는 이 계열에 아직 못 돈다 (§11.6) — 손 프로브로 네 조합을 봤다
+# 1') 이 run의 repo_commit(05a80d5)에서는 카나리가 이 계열을 못 돌았다 (§11.6) — 손 프로브로 네 조합을 봤다
 docker pull cybergym/oss-fuzz:368076871-vul   # 4.3GB
 docker pull cybergym/oss-fuzz:368076871-fix   # 4.3GB
 
@@ -524,3 +566,19 @@ python -m src.cli run --profile dev_fake \
 
 ⚠ **API 키는 환경변수로만 준다** — 이 보고서에도 명령문에도 값을 적지 않는다. 저자 기본값은
 `server/types.py`의 `ServerConfig.api_key`에서 읽어 넣었다.
+
+### 11.8 ⏵ 2026-10-04 — 이 절의 첫 판이 틀렸던 자리 (PR #445 적대적 리뷰)
+
+**지우지 마라.** 위 §10과 같은 이유다. 이 절의 서술이 근거보다 세거나 코드와 달랐던 것, 그리고 이 절을 요약하거나
+가리키던 곳이 단서를 떼거나 낡은 것이다.
+
+| 틀린 것 | 맞는 것 | 왜 틀렸나 |
+| --- | --- | --- |
+| *"등급으로 고르는 규칙도 안 통한다 — 변별력 문제는 가정이 아니라 **실측**이다"* | 관측은 「8단계 `gate_eval`이 같은 8건에 전부 E4」까지다. 이 run의 지정은 등급을 읽지 않았고(`policy_undecided`) 동점의 원인(Fake 도구의 상수 · 지정 시점 등급 경로 — PR #460 리뷰)은 확정하지 않았다. **변별력은 미실측**(§11.5) | 같은 문단 두 줄 뒤가 「E4는 Fake 상수 · 0건 측정」이라 스스로 뒤집었다(CLAUDE.md §2.2). 결과(동점)를 변별력의 측정으로 읽었다 |
+| *"`run_container`가 400으로 거부하고 `run_poc_id`가 `fix`를 건너뛴다 → `fix_exit_code` 영구 `None` → 「실패」와 같은 모양"* | 저자 서버는 그 계열의 **`vul` 제출부터** 400으로 거부한다(`:55-56`·`:273`). `:312-314`는 이 커밋에서 도달 불가. 우리 쪽에서는 `oracle_failed`로 **시끄럽게** 실패한다(§11.1) | 줄 번호 둘을 따로 읽고 **호출 순서**(`vul`이 먼저)를 안 따라갔다 — 코드를 열어 대조하는 §2.1의 몫이었다 |
+| *"Finding 31건이 전부 같은 문구"* | 최종 `report.md`는 **28건**(중복 제거 3) — `memcpy` 23 · `strcpy` 4 · `sprintf` 1. 31은 6단계 `gate_eval` 수다 | 단계별 수를 최종 수로 읽었다(§1의 「분포가 아니다」와 같은 부류) |
+| 「새 `agent_id`라 서버가 **실제로 컨테이너를 돌렸다**」 — 근거가 `cached: false` | `cached`는 유도값이다. 직접 증거는 서버 로그 디렉터리 `output.vul`(이 계열 fuzzer 출력)이고 그것이 받치는 것은 「적어도 한 번」이다(§11.4) | 유도값을 직접 증거로 적었다 — §5-B가 이미 적은 한계다(PR #455가 §5-B에서 같은 결함을 고쳤다) |
+| 「카나리 도구 **0회**」·「Level 1 포함 여부 **미실측**」·「`_IMAGE_PREFIX`가 `arvo` 하나뿐」을 날짜 없이 현재형으로 | `repo_commit` `05a80d5` 시점으로 못 박았다. 그 뒤의 값은 PR #463 본문과 이슈 #431 코멘트가 낸다(§7·§11.1·§11.6) | 다른 열린 PR이 바꿀 사실을 현재형으로 적었다(§2.4) |
+| STATUS·build-plan의 「후보가 **항상** 둘 이상」·「**구조적**」 | **n=2** · 승격→PoC 1:1 미확인 · 8은 Fake Critic 전원 `upheld`의 상한 포화(§11.5·§7) | 이 절이 단 단서를 요약 두 곳이 떼고 옮겼다(§2.2) |
+| 「`dev_fake`의 그 값은 8」 | `critic_top_n`은 **모든 프로필이 공유하는** `thresholds`다 | 프로필 한정으로 읽혀 상한 논점을 약하게 했다 |
+| 전수를 「이 보고서를 가리키는 곳」(파일명 문자열)으로 돌려 STATUS·portability의 「완주하지 않는다」 셋을 놓침 | 명제(「산문이 `dev_fake`는 실 Level 1 번들에서 완주하지 못한다고 현재형으로 단언한다」)로 다시 센다 — STATUS 1 · portability 2를 고쳤다 | 전수가 문자열로 돌았다(§2.5) |
