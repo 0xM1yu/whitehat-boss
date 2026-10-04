@@ -70,14 +70,14 @@ class SlicingStages:
         # reaches the cap, api and/or readers may be truncated, so record a per-run note (measure
         # popped any prior note). Below the cap it cannot have been truncated, so no note.
         if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
-            first = (
+            order_note = (
                 "priority-file methods first, then write-context methods" if listed
                 else "write-context methods first"
             )
             self.result["measurement_notes"]["candidates_case_a"] = (
                 f"reached the cap ({queries.CASE_A_CANDIDATE_CAP}); api and/or readers may be "
                 "truncated to an unspecified first-N in CPG traversal order "
-                f"(api: {first}, then traversal order within each layer; slicer_queries)"
+                f"(api: {order_note}, then traversal order within each layer; slicer_queries)"
             )
         order = self.settings.get("case_order", "ab")
         self.candidates = collect(rows, self.repo, order)
