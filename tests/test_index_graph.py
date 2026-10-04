@@ -32,6 +32,7 @@ from src.adapters.index_graph import (
     STATUS_UNSUPPORTED,
     SUPPORTED_INDEX_VERSIONS,
     V2_TABLES,
+    V3_TABLES,
     GraphIndex,
     IndexSummary,
     fit_names,
@@ -874,8 +875,8 @@ def _v1_v2(tmp_path: Path) -> tuple[GraphIndex, GraphIndex]:
 
 
 def test_the_reader_still_accepts_index_v1():
-    """v1 문서는 계속 읽힌다 — 이미지가 v1인 run의 산출물이 남아 있다."""
-    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2"}
+    """v1·v2 문서는 계속 읽힌다 — 그 이미지로 돈 run의 산출물이 남아 있다."""
+    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2", "index-v3"}
 
 
 def test_v2_calls_give_the_same_graph_edges_as_the_v1_list(tmp_path: Path):
@@ -1253,3 +1254,805 @@ def test_call_sites_of_counts_definitions_not_files(tmp_path: Path) -> None:
     found = _graph(tmp_path, doc).call_sites_of(target)
 
     assert [loc.file for loc in found] == ["a.c"]
+
+
+# --- Auditor `SOURCE` 정의 조회 위생: `locals_of` · 비제품 경로 강등 -------------------------
+#
+# 정의 조회(`definitions_of`·`callees_of`·`call_sites_of`)는 「저장소에서 하나뿐일 때만」 싣는다.
+# 비제품 경로(`tests/`·`examples/` 등)에 같은 이름이 있으면 그 판정이 막힌다 — 강등은 그 정의를
+# **제품 정의 뒤로 미루는 것**이지 지우는 것이 아니다. 기본(꺼짐)은 옛 동작이고, 켜는 곳은
+# `runner._auditor_source` 하나다.
+
+
+def test_locals_of_gives_the_locals_and_params_of_one_function(tmp_path: Path) -> None:
+    """`locals` 표는 파라미터를 포함한다(`indexer.py` 표). 함수 하나의 이름 집합이고, 그 파일의 다른
+    함수 · 모르는 파일은 빈 집합이다 — `None`이 아니다(그쪽은 「v2 표가 없다」)."""
+    graph = _graph(tmp_path, _INDEX_V2)
+
+    assert graph.locals_of("parser.c", "parse_header") == frozenset({"src", "buf"})
+    assert graph.locals_of("parser.c", "helper") == frozenset()
+    assert graph.locals_of("nope.c", "parse_header") == frozenset()
+
+
+def test_locals_of_is_none_without_v2_tables(tmp_path: Path) -> None:
+    """인덱스 없음 · v1 · 깨짐이면 `None`이다 — `definitions_of`와 같은 「없다」·「0건」 구별."""
+    assert _graph(tmp_path / "v1").locals_of("parser.c", "parse_header") is None
+    assert _graph(tmp_path / "none", document=None).locals_of("parser.c", "parse_header") is None
+    assert _graph(tmp_path / "bad", "{ not json").locals_of("parser.c", "parse_header") is None
+
+
+def test_is_nonproduct_path_looks_at_directories_not_file_names() -> None:
+    """디렉터리 성분만 본다 — `tests/t.c`는 비제품이고 `lib/test_util.c`는 아니다. 대소문자는
+    접는다."""
+    from src.adapters.index_graph import is_nonproduct_path
+
+    for path in ("tests/t.c", "lib/Test/x.c", "third_party/z/y.h", "fuzz/f.c", "a/fuzzers/f.c"):
+        assert is_nonproduct_path(path), path
+    # 다른 플랫폼·빌드 시스템 사본 — libzip 계열의 `xcode/config.h`가 실제 모양이다.
+    for path in ("xcode/config.h", "a/windows/io.c", "win32/z.h", "msvc/zipconf.h"):
+        assert is_nonproduct_path(path), path
+    for path in ("lib/test_util.c", "src/a.c", "a.c", "lib/testing_util/x.c", "docs.c"):
+        assert not is_nonproduct_path(path), path
+    assert not is_nonproduct_path("lib/windows.c"), "파일 이름은 안 본다"
+
+
+def test_is_nonproduct_path_matches_fuzz_dirs_by_name_not_by_bare_prefix() -> None:
+    """퍼징 디렉터리는 이름(`fuzz`·`fuzzer(s)`·`fuzzing`·`oss-fuzz`)과 구분자 붙은 접두
+    (`fuzz_`·`fuzz-`)로 본다. 맨 `fuzz` 접두는 `src/fuzzy/`(퍼지 매칭 — 제품)까지 먹었다(PR #444
+    리뷰). `unittest(s)`·`testsuite`는 FT Level 1 270표본 잡음 경로 집계에 나온 이름이다."""
+    from src.adapters.index_graph import is_nonproduct_path
+
+    for path in (
+        "fuzz/f.c", "a/fuzzer/f.c", "a/fuzzing/f.c", "oss-fuzz/build.c", "fuzz_targets/t.c",
+        "a/fuzz-corpus/t.c", "a/unittest/u.c", "unittests/u.c", "testsuite/s.c",
+    ):
+        assert is_nonproduct_path(path), path
+    for path in ("src/fuzzy/match.c", "lib/fuzzyfind/x.c", "ios/port.c", "android/jni.c"):
+        assert not is_nonproduct_path(path), path
+
+
+# 같은 이름이 제품(`lib/`)과 비제품(`examples/`)에 둘 있고(`DUP`), 비제품에만 있고(`ONLY_EX`),
+# 제품에만 있다(`ONLY_LIB`). `examples/`는 사전순으로 `lib/`보다 앞이라 기본 순서와 강등 순서가
+# 갈린다.
+_MACROS_ACROSS_DIRS = {
+    "macros": {
+        "DUP": [
+            {"file": "lib/a.h", "line_start": 1, "line_end": 1},
+            {"file": "examples/e.h", "line_start": 1, "line_end": 1},
+        ],
+        "ONLY_EX": [{"file": "examples/e.h", "line_start": 2, "line_end": 2}],
+        "ONLY_LIB": [{"file": "lib/b.h", "line_start": 3, "line_end": 3}],
+    }
+}
+
+
+def test_definitions_of_demotes_nonproduct_rows_when_asked(tmp_path: Path) -> None:
+    """켜면 제품 정의가 비제품 정의보다 앞서 정한다 — `DUP`은 제품 정의가 하나라 그것으로 정해진다
+    (꺼진 쪽은 둘이라 건너뛴다). **삭제가 아니다**: 제품 정의가 없는 `ONLY_EX`도 실리고 순서만 제품
+    정의 뒤로 밀린다(상한이 차면 뒤가 먼저 빠진다)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+
+    found = graph.definitions_of(
+        ["DUP", "ONLY_EX", "ONLY_LIB"], "lib/x.c", demote_nonproduct=True
+    )
+
+    assert found == [
+        Location(file="lib/a.h", symbol="DUP", line_start=1, line_end=1),
+        Location(file="lib/b.h", symbol="ONLY_LIB", line_start=3, line_end=3),
+        Location(file="examples/e.h", symbol="ONLY_EX", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """키워드가 없으면 옛 동작 그대로다 — 제품·비제품이 같은 후보라 `DUP`은 건너뛰고, 순서는 (파일,
+    시작 줄)이다(`examples/`가 `lib/`보다 앞선다). NE resolver 등 다른 호출이 이 기본을 기댄다."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+
+    found = graph.definitions_of(["DUP", "ONLY_EX", "ONLY_LIB"], "lib/x.c")
+
+    assert [(loc.file, loc.symbol) for loc in found] == [
+        ("examples/e.h", "ONLY_EX"),
+        ("lib/b.h", "ONLY_LIB"),
+    ]
+
+
+def test_definitions_of_does_not_demote_when_the_anchor_itself_is_nonproduct(
+    tmp_path: Path,
+) -> None:
+    """앵커가 `examples/` 안이면 강등하지 않는다 — 그 코드가 쓰는 정의는 형제 비제품 경로에 있는 게
+    정상이다. 켜도 꺼진 것과 같은 결과다(`DUP` 건너뜀 · (파일, 줄) 순)."""
+    graph = _graph(tmp_path, {**_INDEX_V2, **_MACROS_ACROSS_DIRS})
+    names = ["DUP", "ONLY_EX", "ONLY_LIB"]
+
+    assert graph.definitions_of(names, "examples/x.c", demote_nonproduct=True) == (
+        graph.definitions_of(names, "examples/x.c")
+    )
+    assert [loc.symbol for loc in graph.definitions_of(names, "examples/x.c")] == [
+        "ONLY_EX",
+        "ONLY_LIB",
+    ]
+
+
+# 표를 가로지른 강등(PR #444 리뷰 MEDIUM). 두 모양 다 FT Level 1 270표본 관측에서 왔다 —
+# ImageMagick `MagickWand/tests/script-token-test.c:67`의 `#define RelinquishMagickMemory(p)
+# (free(p),NULL)`이 `MagickCore`의 제품 함수 `RelinquishMagickMemory`를 덮었다. 강등이 표 하나
+# 안에서만 걸리면 제품 쪽이 함수(정의 표 밖)거나 다른 표에 있을 때 경쟁에 못 든다.
+_ACROSS_TABLES = {
+    **_INDEX_V2,
+    "symbols": [
+        *_INDEX_V2["symbols"],
+        {
+            "name": "RelinquishMagickMemory",
+            "file": "MagickCore/memory.c",
+            "line_start": 10,
+            "line_end": 20,
+        },
+    ],
+    "macros": {
+        **_INDEX_V2["macros"],
+        "RelinquishMagickMemory": [
+            {"file": "MagickWand/tests/x.c", "line_start": 67, "line_end": 67}
+        ],
+        "node": [{"file": "tests/t.h", "line_start": 1, "line_end": 1}],
+        "ONLY_TEST": [{"file": "tests/t.h", "line_start": 2, "line_end": 2}],
+    },
+    "types": {
+        **_INDEX_V2["types"],
+        "node": [{"file": "lib/t.h", "line_start": 4, "line_end": 6, "kind": "typedef"}],
+    },
+}
+
+
+def test_definitions_of_demotes_across_tables_and_against_product_functions(
+    tmp_path: Path,
+) -> None:
+    """제품 정의가 **어느 표에든** 또는 제품 함수로 있으면 비제품 행은 세 표 모두에서 후보가
+    아니다 — 제품 typedef `node`(types)가 비제품 매크로 `node`(macros)를 이기고, 제품 쪽이 함수뿐인
+    `RelinquishMagickMemory`는 테스트 매크로가 안 붙는다(함수 본문은 `callees_of` 몫). 제품 정의가
+    없는 `ONLY_TEST`는 그대로 실린다 — 삭제가 아니다."""
+    graph = _graph(tmp_path, _ACROSS_TABLES)
+    names = ["RelinquishMagickMemory", "node", "ONLY_TEST"]
+
+    found = graph.definitions_of(names, "MagickCore/blob.c", demote_nonproduct=True)
+
+    assert found == [
+        Location(file="lib/t.h", symbol="node", line_start=4, line_end=6),
+        Location(file="tests/t.h", symbol="ONLY_TEST", line_start=2, line_end=2),
+    ]
+
+
+def test_definitions_of_keeps_the_table_order_when_demotion_is_off(tmp_path: Path) -> None:
+    """키워드가 꺼지면(그리고 앵커가 비제품이면) 옛 동작 그대로다 — 행이 있는 첫 표에서 정하므로
+    테스트 매크로 둘이 나온다. 꺼진 run의 바이트 동일이 여기 걸린다."""
+    graph = _graph(tmp_path, _ACROSS_TABLES)
+    names = ["RelinquishMagickMemory", "node", "ONLY_TEST"]
+    old = [
+        Location(file="MagickWand/tests/x.c", symbol="RelinquishMagickMemory", line_start=67,
+                 line_end=67),
+        Location(file="tests/t.h", symbol="node", line_start=1, line_end=1),
+        Location(file="tests/t.h", symbol="ONLY_TEST", line_start=2, line_end=2),
+    ]
+
+    assert graph.definitions_of(names, "MagickCore/blob.c") == old
+    assert graph.definitions_of(names, "tests/blob.c", demote_nonproduct=True) == old
+
+
+# `entry`(lib/a.c)가 2줄에서 `only_test`(tests/에만 있다)를, 3줄에서 `dup`(lib/b.c와 tests/t.c
+# 둘)을 부른다. `only_test`(tests/t.c)도 `dup`을 부르는데 그 파일이 `dup`을 자기가 정의한다.
+# `t_entry`(tests/u.c)는 `dup`을 정의하지 않는 비제품 파일에서 `dup`을 부른다.
+_CALLS_ACROSS_DIRS = {
+    "version": "index-v1",
+    "files": ["lib/a.c", "lib/b.c", "tests/t.c", "tests/u.c"],
+    "skipped": [],
+    "symbols": [
+        {"name": "entry", "file": "lib/a.c", "line_start": 1, "line_end": 10},
+        {"name": "dup", "file": "lib/b.c", "line_start": 1, "line_end": 3},
+        {"name": "dup", "file": "tests/t.c", "line_start": 1, "line_end": 3},
+        {"name": "only_test", "file": "tests/t.c", "line_start": 5, "line_end": 7},
+        {"name": "t_entry", "file": "tests/u.c", "line_start": 1, "line_end": 10},
+    ],
+    "calls": [
+        {"caller": "entry", "callee": "only_test", "file": "lib/a.c", "line": 2},
+        {"caller": "entry", "callee": "dup", "file": "lib/a.c", "line": 3},
+        {"caller": "only_test", "callee": "dup", "file": "tests/t.c", "line": 6},
+        {"caller": "t_entry", "callee": "dup", "file": "tests/u.c", "line": 2},
+    ],
+    "unresolved_calls": 0,
+    "unresolved_symbols": 0,
+    "parse_errors": [],
+}
+_ENTRY = Location(file="lib/a.c", symbol="entry", line_start=1, line_end=10)
+
+
+def test_callees_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`이 제품 정의(lib/b.c) 하나로 정해지고, 제품 정의가 없는 `only_test`는 **남되** 뒤로
+    밀린다 — 첫 호출 줄 순(2·3줄)이면 `only_test`가 앞이다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    found = graph.callees_of(_ENTRY, demote_nonproduct=True)
+
+    assert [(loc.file, loc.symbol) for loc in found] == [
+        ("lib/b.c", "dup"),
+        ("tests/t.c", "only_test"),
+    ]
+
+
+def test_callees_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """기본은 옛 동작이다 — `dup`은 정의가 둘이라 건너뛰고 `only_test`만 남는다. 앵커가 비제품이면
+    켜도 같다(`t_entry`는 `tests/u.c` 안이고 `dup` 정의는 다른 파일 둘이라 건너뛴다)."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    assert [loc.symbol for loc in graph.callees_of(_ENTRY)] == ["only_test"]
+    t_entry = Location(file="tests/u.c", symbol="t_entry", line_start=1, line_end=10)
+    assert graph.callees_of(t_entry) == []
+    assert graph.callees_of(t_entry, demote_nonproduct=True) == []
+
+
+def test_call_sites_of_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`의 제품 정의가 하나(lib/b.c)라 다른 파일의 호출이 실린다(꺼진 쪽은 정의가 둘이라
+    다른 파일 호출을 안 싣는다). 단 `dup`의 **비제품 정의가 따로 있어**(tests/t.c) 비제품 호출 --
+    그 정의를 가진 파일의 호출(`only_test`)과 어느 `dup`으로 가는지 모르는 `t_entry`(tests/u.c)
+    -- 은 안 싣는다. 제품 호출 `entry`만 남는다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+    dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
+
+    found = graph.call_sites_of(dup, demote_nonproduct=True)
+
+    assert found == [Location(file="lib/a.c", symbol="entry", line_start=3, line_end=3)]
+
+
+def test_call_sites_of_ignores_the_path_when_the_keyword_is_off(tmp_path: Path) -> None:
+    """기본은 옛 동작이다 — 정의가 둘이면 다른 파일의 호출은 하나도 안 싣는다. 앵커가 비제품이어도
+    켠 것이 꺼진 것과 같다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+    dup = Location(file="lib/b.c", symbol="dup", line_start=1, line_end=3)
+    mock = Location(file="tests/t.c", symbol="dup", line_start=1, line_end=3)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(mock, demote_nonproduct=True) == graph.call_sites_of(mock)
+
+
+def _call_sites_doc(symbols: list[dict], calls: list[dict]) -> dict:
+    files = sorted({row["file"] for row in [*symbols, *calls]})
+    return {
+        "version": "index-v1",
+        "files": files,
+        "skipped": [],
+        "symbols": symbols,
+        "calls": calls,
+        "unresolved_calls": 0,
+        "unresolved_symbols": 0,
+        "parse_errors": [],
+    }
+
+
+def _def(name: str, file: str) -> dict:
+    return {"name": name, "file": file, "line_start": 1, "line_end": 5}
+
+
+def _call(caller: str, file: str) -> dict:
+    return {"caller": caller, "callee": "dup", "file": file, "line": 2}
+
+
+def test_call_sites_of_puts_nonproduct_sites_last_even_when_they_sort_first(
+    tmp_path: Path,
+) -> None:
+    """`examples/`는 사전순으로 `lib/`보다 **앞**이라 (파일, 줄) 순서만 보면 비제품 호출이 먼저다 --
+    강등 키가 그것을 뒤로 민다. 위 픽스처(`lib/` < `tests/`)는 키를 지워도 같은 순서라 그 키를 못
+    물었다."""
+    doc = _call_sites_doc(
+        [_def("dup", "src/dup.c"), _def("use", "lib/use.c"), _def("ex", "examples/ex.c")],
+        [_call("use", "lib/use.c"), _call("ex", "examples/ex.c")],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="src/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert [loc.file for loc in graph.call_sites_of(dup)] == ["examples/ex.c", "lib/use.c"]
+    assert [loc.file for loc in graph.call_sites_of(dup, demote_nonproduct=True)] == [
+        "lib/use.c",
+        "examples/ex.c",
+    ]
+
+
+def test_call_sites_of_skips_nonproduct_callers_when_a_nonproduct_copy_exists(
+    tmp_path: Path,
+) -> None:
+    """`lib/dup.c`(대상) · `tests/mock/dup.c`(모의 구현) · `tests/mock/user.c`(모의 구현을 부르는
+    이웃). 강등을 켜면 제품 정의가 하나라 다른 파일 호출이 실리는데(꺼진 쪽은 정의가 둘이라
+    `[]`), **비제품 정의가 따로 있으면 비제품 호출은 어느 `dup`으로 가는지 모른다** -- 이웃
+    (`tests/mock/`)이든 다른 디렉터리(`tests/other/`)든 안 싣는다. 제품 호출(`lib/use.c`)만
+    남는다."""
+    doc = _call_sites_doc(
+        [
+            _def("dup", "lib/dup.c"),
+            _def("use", "lib/use.c"),
+            _def("dup", "tests/mock/dup.c"),
+            _def("mock_user", "tests/mock/user.c"),
+            _def("other_user", "tests/other/user.c"),
+        ],
+        [
+            _call("use", "lib/use.c"),
+            _call("mock_user", "tests/mock/user.c"),
+            _call("other_user", "tests/other/user.c"),
+        ],
+    )
+    graph = _graph(tmp_path, doc)
+    dup = Location(file="lib/dup.c", symbol="dup", line_start=1, line_end=5)
+
+    assert graph.call_sites_of(dup) == []
+    assert graph.call_sites_of(dup, demote_nonproduct=True) == [
+        Location(file="lib/use.c", symbol="use", line_start=2, line_end=2)
+    ]
+
+
+def test_functions_named_resolves_names_to_function_definitions(tmp_path: Path) -> None:
+    """C4: 매크로 별칭이 부르는 함수 이름 → 정의. `callees_of`와 같은 규칙 — 가까운 파일 정의가
+    이기고, 다른 파일은 하나뿐일 때만, 여럿이면 빠진다. 모르는 이름은 빠지고 순서는 이름 순이다."""
+    graph = _graph(tmp_path, _CALLEE_INDEX)
+
+    found = graph.functions_named({"only_b", "helper", "twice", "memcpy"}, "a.c")
+
+    assert found == [
+        Location(file="a.c", symbol="helper", line_start=12, line_end=15),
+        Location(file="b.c", symbol="only_b", line_start=5, line_end=8),
+    ]
+    assert _graph(tmp_path / "none", None).functions_named({"helper"}, "a.c") is None
+
+
+def test_functions_named_demotes_nonproduct_definitions_when_asked(tmp_path: Path) -> None:
+    """켜면 `dup`이 제품 정의 하나로 정해진다 — 꺼진 쪽은 정의가 둘이라 빠진다."""
+    graph = _graph(tmp_path, _CALLS_ACROSS_DIRS)
+
+    assert graph.functions_named({"dup"}, "lib/a.c") == []
+    found = graph.functions_named({"dup"}, "lib/a.c", demote_nonproduct=True)
+    assert [loc.file for loc in found] == ["lib/b.c"]
+
+# --- index-v3 (#304): 쓰기 지점 · 함수 포인터 바인딩 · 필드 경유 호출 ----------------------
+#
+# v3는 v2 표를 그대로 두고 `V3_TABLES`를 더한다. 아래 문서는 손으로 적었다 — 줄 번호는 이 문서
+# 안에서만 뜻이 있다(원문 파일이 없다). 해석 규칙(같은 파일 먼저 · 하나뿐일 때만)이 갈리는
+# 자리마다 반대쪽 행을 하나씩 둔다.
+_V3_FIELD = {"file": "ops.h", "line_start": 1, "line_end": 6}
+_INDEX_V3 = {
+    **_INDEX_V2,
+    "version": "index-v3",
+    "functions": {
+        **_INDEX_V2["functions"],
+        "my_free": [{"file": "ops.c", "line_start": 1, "line_end": 4, "params": ["c"]}],
+        "my_alloc": [{"file": "ops.c", "line_start": 6, "line_end": 9, "params": ["n"]}],
+        "dup": [
+            {"file": "x.c", "line_start": 1, "line_end": 2, "params": []},
+            {"file": "y.c", "line_start": 1, "line_end": 2, "params": []},
+        ],
+    },
+    "fields": {
+        **_INDEX_V2["fields"],
+        "free_ctx": [{"type": "ops", **_V3_FIELD}],
+        # 같은 이름 필드가 두 struct에 있다 — 다른 파일의 바인딩·쓰기를 잇지 않는다.
+        "alloc": [
+            {"type": "ops", **_V3_FIELD},
+            {"type": "mem", "file": "mem.h", "line_start": 1, "line_end": 3},
+        ],
+    },
+    "assigns": {
+        "parser.c": {"parse_header": {"n": [11], "buf": [14]}},
+        "main.c": {"main": {"buf": [7]}},
+    },
+    "field_assigns": {
+        **_INDEX_V2["field_assigns"],
+        "alloc": [
+            {
+                "file": "mem.c",
+                "line": 30,
+                "func": "init",
+                "lhs": "m->alloc",
+                "rhs": "my_alloc",
+                "op": "=",
+            }
+        ],
+    },
+    "writes": {
+        "buf": [
+            {
+                "file": "parser.c",
+                "line": 12,
+                "func": "parse_header",
+                "lhs": "buf[i]",
+                "rhs": "c",
+                "op": "=",
+                "form": "element",
+                "base": "name",
+            },
+            # 필드 `buf`에 쓴 것 — 이름 `buf`의 쓰기가 아니다.
+            {
+                "file": "parser.c",
+                "line": 16,
+                "func": "parse_header",
+                "lhs": "h->buf[0]",
+                "rhs": "0",
+                "op": "=",
+                "form": "element",
+                "base": "field",
+            },
+        ],
+        "g_hdr": [
+            {
+                "file": "main.c",
+                "line": 8,
+                "func": "main",
+                "lhs": "*g_hdr",
+                "rhs": "0",
+                "op": "=",
+                "form": "deref",
+                "base": "name",
+            }
+        ],
+    },
+    "fn_bindings": {
+        "free_ctx": [
+            {"file": "ops.c", "line": 20, "func": None, "fn": "my_free", "form": "designated"}
+        ],
+        "alloc": [
+            {"file": "ops.c", "line": 21, "func": None, "fn": "my_alloc", "form": "designated"},
+            {"file": "main.c", "line": 9, "func": "main", "fn": "my_alloc", "form": "assign"},
+        ],
+        # 필드 선언이 인덱스에 없다 — 같은 파일 바인딩만 잇는다. `dup`은 두 파일에 정의가 있다.
+        "dup_cb": [{"file": "x.c", "line": 5, "func": None, "fn": "dup", "form": "designated"}],
+    },
+    "field_calls": {
+        "alloc": [
+            {
+                "file": "parser.c",
+                "line": 17,
+                "caller": "parse_header",
+                "args": ["n"],
+                "expr": "sys->alloc",
+            }
+        ],
+        "free_ctx": [
+            {
+                "file": "parser.c",
+                "line": 19,
+                "caller": "parse_header",
+                "args": ["c"],
+                "expr": "dev.free_ctx",
+            }
+        ],
+        "unbound": [
+            {
+                "file": "parser.c",
+                "line": 18,
+                "caller": "parse_header",
+                "args": [],
+                "expr": "o->unbound",
+            }
+        ],
+        # 본문(9~22) 밖의 호출 — 대상의 간접 callee가 아니다.
+        "outside": [
+            {"file": "main.c", "line": 10, "caller": "main", "args": [], "expr": "o->outside"}
+        ],
+    },
+}
+
+
+def test_v3_tables_are_missing_not_empty_on_older_documents(tmp_path: Path):
+    """v2·v1 문서·인덱스 없음에서 v3 표와 v3 조회는 `None`이다 — 「0건」(`{}`·`[]`)이 아니다.
+
+    #304 전에 빌드한 이미지(index-v2를 낸다)의 산출물은 그대로 읽혀야 한다: v2 그래프는 멀쩡하고
+    새 조회만 「없다」를 낸다. 새 표를 필수로 걸었으면 v2 문서가 통째로 거절돼 그래프 섹션까지
+    사라진다.
+    """
+    graphs = {
+        "v2": _graph(tmp_path / "v2", _INDEX_V2),
+        "v1": _graph(tmp_path / "v1"),
+        "none": _graph(tmp_path / "none", None),
+    }
+    assert graphs["v2"].summary.status == STATUS_LOADED
+    assert graphs["v2"].names_for("callers", _PARSE_HEADER) == [_CALLER_ENTRY]
+    for label, graph in graphs.items():
+        for name in V3_TABLES:
+            assert graph.table(name) is None, (label, name)
+        assert graph.writes_of("buf", "parser.c") is None, label
+        assert graph.field_writes_of("len", "parser.c") is None, label
+        assert graph.fn_pointer_targets("free_ctx", "parser.c") is None, label
+        assert graph.indirect_callees_of(_PARSE_HEADER) is None, label
+
+
+def test_every_v3_table_is_reachable_and_v2_tables_are_unchanged(tmp_path: Path):
+    """v3 문서에서 `V2_TABLES`·`V3_TABLES`가 전부 조회된다. v2 표는 v2 문서와 같은 것이 나온다 —
+    v3가 기존 표의 모양을 안 바꿨다는 것을 읽는 쪽에서 박는다(`calls` 간선·캡슐도 같다)."""
+    v3 = _graph(tmp_path / "v3", _INDEX_V3)
+    v2 = _graph(tmp_path / "v2", _INDEX_V2)
+
+    assert all(v3.table(name) for name in V2_TABLES + V3_TABLES)
+    for name in ("macros", "types", "file_vars", "locals", "calls"):
+        assert v3.table(name) == v2.table(name), name
+    assert v3.names_for("callers", _PARSE_HEADER) == v2.names_for("callers", _PARSE_HEADER)
+    assert v3.summary == v2.summary
+
+
+def test_writes_of_merges_name_assigns_and_element_writes_in_the_near_file(tmp_path: Path):
+    """이름 `buf`에 쓰는 지점: `assigns`(14행)와 `writes`의 이름 기저 원소 대입(12행). 같은 이름
+    **필드**에 쓴 것(`h->buf[0]`, 16행)은 아니다. 다른 파일(main.c 7행)의 지역 `buf`도 아니다."""
+    found = _graph(tmp_path, _INDEX_V3).writes_of("buf", "parser.c")
+
+    assert found == [
+        Location(file="parser.c", symbol="parse_header", line_start=12, line_end=12),
+        Location(file="parser.c", symbol="parse_header", line_start=14, line_end=14),
+    ]
+
+
+def test_writes_of_crosses_files_only_for_a_unique_file_scope_variable(tmp_path: Path):
+    """near 파일에 쓰기가 없으면 — 파일 스코프 변수가 하나뿐일 때(`g_hdr`)만 저장소 전체를 본다.
+    지역 이름(`buf`)은 다른 파일의 같은 이름을 잇지 않는다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.writes_of("g_hdr", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=8, line_end=8)
+    ]
+    assert graph.writes_of("buf", "other.c") == []
+
+
+def test_writes_of_counts_a_global_once_across_its_header_extern(tmp_path: Path):
+    """헤더의 `extern` 선언과 `.c`의 정의는 전역 하나다 — 「하나뿐」은 헤더 밖 선언만 센다(#464
+    리뷰: 전에는 둘로 세 흔한 전역이 다른 파일로 한 번도 안 이어졌다). 그때도 다른 파일 함수의
+    **같은 이름 지역**(`other.c`의 `g_hdr`, `locals`에 있다)에 쓴 것은 그 전역이 아니라 뺀다.
+
+    음성: `.c` 두 곳에 선언이 있으면(파일마다 `static`) 여전히 잇지 않는다."""
+    local_write = {
+        "file": "other.c",
+        "line": 4,
+        "func": "shadow",
+        "lhs": "g_hdr[0]",
+        "rhs": "0",
+        "op": "=",
+        "form": "element",
+        "base": "name",
+    }
+    document = {
+        **_INDEX_V3,
+        "file_vars": {
+            "g_hdr": [
+                {"file": "main.c", "line_start": 3, "line_end": 3},
+                {"file": "hdr.h", "line_start": 2, "line_end": 2},
+            ]
+        },
+        "locals": {**_INDEX_V3["locals"], "other.c": {"shadow": {"g_hdr": [3]}}},
+        "writes": {
+            **_INDEX_V3["writes"],
+            "g_hdr": [*_INDEX_V3["writes"]["g_hdr"], local_write],
+        },
+    }
+    graph = _graph(tmp_path, document)
+
+    assert graph.writes_of("g_hdr", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=8, line_end=8)
+    ]
+
+    two_statics = {
+        **document,
+        "file_vars": {
+            "g_hdr": [
+                {"file": "main.c", "line_start": 3, "line_end": 3},
+                {"file": "util.c", "line_start": 1, "line_end": 1},
+            ]
+        },
+    }
+    assert _graph(tmp_path / "statics", two_statics).writes_of("g_hdr", "parser.c") == []
+
+
+def test_field_writes_of_crosses_files_only_for_a_field_declared_once(tmp_path: Path):
+    """`len`은 struct 하나(`header`)만 선언한다 — 다른 파일의 대입(main.c 13행)도 그 필드다.
+    `alloc`은 두 struct가 선언한다 — mem.c의 대입은 mem.c에서 볼 때만 싣는다. 필드 기저 원소
+    쓰기(`h->buf[0]`)도 필드 쓰기다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.field_writes_of("len", "parser.c") == [
+        Location(file="main.c", symbol="main", line_start=13, line_end=13)
+    ]
+    assert graph.field_writes_of("alloc", "parser.c") == []
+    assert graph.field_writes_of("alloc", "mem.c") == [
+        Location(file="mem.c", symbol="init", line_start=30, line_end=30)
+    ]
+    assert graph.field_writes_of("buf", "other.c") == []  # `buf` 필드 선언이 인덱스에 없다
+    assert graph.field_writes_of("buf", "parser.c") == [
+        Location(file="parser.c", symbol="parse_header", line_start=16, line_end=16)
+    ]
+
+
+def test_fn_pointer_targets_resolves_bindings_to_definitions(tmp_path: Path):
+    """바인딩 → 함수 정의. 필드가 하나뿐이면(`free_ctx`) 다른 파일의 지정 초기화도 잇는다. 같은
+    이름 필드가 여럿이면(`alloc`) near 파일의 바인딩만 — main.c에서 보면 `my_alloc`, parser.c에서
+    보면 없다. 함수 정의가 여럿이면(`dup`) 바인딩이 있는 파일의 정의가 이긴다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+    my_alloc = Location(file="ops.c", symbol="my_alloc", line_start=6, line_end=9)
+
+    assert graph.fn_pointer_targets("free_ctx", "parser.c") == [
+        Location(file="ops.c", symbol="my_free", line_start=1, line_end=4)
+    ]
+    assert graph.fn_pointer_targets("alloc", "parser.c") == []
+    assert graph.fn_pointer_targets("alloc", "main.c") == [my_alloc]
+    assert graph.fn_pointer_targets("alloc", "ops.c") == [my_alloc]
+    assert graph.fn_pointer_targets("dup_cb", "x.c") == [
+        Location(file="x.c", symbol="dup", line_start=1, line_end=2)
+    ]
+    assert graph.fn_pointer_targets("dup_cb", "z.c") == []
+    assert graph.fn_pointer_targets("nope", "parser.c") == []
+
+
+def test_indirect_callees_of_follows_field_calls_in_the_body(tmp_path: Path):
+    """본문(parser.c 9~22) 안 필드 경유 호출 셋 중 풀리는 것은 `dev.free_ctx`(19행)뿐이다 —
+    `sys->alloc`(17행)은 필드가 모호하고 parser.c에 바인딩이 없으며, `o->unbound`(18행)는 바인딩이
+    없다. 본문 밖(main.c 10행)의 호출은 안 본다. 기존 `callees_of`는 이 호출을 모른다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.indirect_callees_of(_PARSE_HEADER) == [
+        Location(file="ops.c", symbol="my_free", line_start=1, line_end=4)
+    ]
+    assert graph.callees_of(_PARSE_HEADER) == [
+        Location(file="parser.c", symbol="helper", line_start=3, line_end=6)
+    ]
+
+
+def test_writes_of_does_not_split_functions_inside_the_near_file(tmp_path: Path):
+    """**계약 핀** — near 파일 안에서는 함수를 안 가른다(docstring ⚠). `buf`는 `parse_header`의
+    지역인데(`locals` 10행) 그 함수의 쓰기(12·14행)가 그대로 나온다 -> 파일 변수 `buf`를 찾는
+    호출자는 행의 `symbol`로 그 함수의 지역인지 직접 걸러야 한다(`runner._write_sites` · PR #468
+    리뷰 HIGH-1). 이 계약이 바뀌면(조회가 거르게 되면) 러너의 거르기는 중복이 될 뿐 틀리지
+    않는다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+
+    assert graph.locals_of("parser.c", "parse_header") == frozenset({"src", "buf"})
+    assert [site.symbol for site in graph.writes_of("buf", "parser.c") or []] == [
+        "parse_header",
+        "parse_header",
+    ]
+
+
+def test_indirect_calls_of_groups_candidates_by_field(tmp_path: Path):
+    """러너가 후보 수 상한을 **필드마다** 건다(PR #468 리뷰 MEDIUM-2) -> 필드별로 묶어 낸다. 풀리는
+    필드만 나온다(`alloc`·`unbound`는 후보 0이라 빠진다). 펼친 것이 `indirect_callees_of`다."""
+    graph = _graph(tmp_path, _INDEX_V3)
+    my_free = Location(file="ops.c", symbol="my_free", line_start=1, line_end=4)
+
+    assert graph.indirect_calls_of(_PARSE_HEADER) == [("free_ctx", [my_free])]
+    assert graph.indirect_callees_of(_PARSE_HEADER) == [my_free]
+
+
+_DEMOTE_MAIN = Location(file="src/main.c", symbol="main", line_start=1, line_end=10)
+_DEMOTE_V3 = {
+    **_INDEX_V3,
+    "functions": {
+        **_INDEX_V3["functions"],
+        "real_cb": [{"file": "src/impl.c", "line_start": 1, "line_end": 5, "params": []}],
+        "fake_cb": [{"file": "tests/t.c", "line_start": 1, "line_end": 3, "params": []}],
+        "twin": [
+            {"file": "src/twin.c", "line_start": 1, "line_end": 2, "params": []},
+            {"file": "tests/twin.c", "line_start": 1, "line_end": 2, "params": []},
+        ],
+    },
+    "fields": {
+        **_INDEX_V3["fields"],
+        "cb": [{"type": "ops", **_V3_FIELD}],
+        "tw": [{"type": "ops", **_V3_FIELD}],
+    },
+    "fn_bindings": {
+        **_INDEX_V3["fn_bindings"],
+        # 제품 바인딩 하나 + 테스트 하네스의 가짜 바인딩 하나.
+        "cb": [
+            {"file": "src/impl.c", "line": 9, "func": None, "fn": "real_cb", "form": "designated"},
+            {"file": "tests/t.c", "line": 7, "func": "setup", "fn": "fake_cb", "form": "assign"},
+        ],
+        # 바인딩 파일에 정의가 없고 정의가 제품·비제품 둘이다.
+        "tw": [{"file": "src/use.c", "line": 3, "func": None, "fn": "twin", "form": "designated"}],
+    },
+    "field_calls": {
+        **_INDEX_V3["field_calls"],
+        "cb": [{"file": "src/main.c", "line": 5, "caller": "main", "args": [], "expr": "o->cb"}],
+    },
+}
+
+
+def test_fn_pointer_targets_demotes_nonproduct_bindings_and_definitions(tmp_path: Path):
+    """`demote_nonproduct`(#444와 같은 규칙 — PR #468 리뷰 MEDIUM-2). 켜면 제품 바인딩이 있을 때
+    `tests/` 바인딩(`fake_cb`)을 빼고, 함수 정의의 「하나뿐」도 제품 경로가 먼저 정한다(`twin`).
+    끄면 옛 결과 그대로다. 조회 기준 파일이 비제품이면 강등하지 않는다."""
+    graph = _graph(tmp_path, _DEMOTE_V3)
+    real = Location(file="src/impl.c", symbol="real_cb", line_start=1, line_end=5)
+    fake = Location(file="tests/t.c", symbol="fake_cb", line_start=1, line_end=3)
+    twin = Location(file="src/twin.c", symbol="twin", line_start=1, line_end=2)
+
+    assert graph.fn_pointer_targets("cb", "src/main.c") == [real, fake]
+    assert graph.fn_pointer_targets("cb", "src/main.c", demote_nonproduct=True) == [real]
+    assert graph.fn_pointer_targets("tw", "src/main.c") == []
+    assert graph.fn_pointer_targets("tw", "src/main.c", demote_nonproduct=True) == [twin]
+    assert graph.fn_pointer_targets("cb", "tests/x.c", demote_nonproduct=True) == [real, fake]
+    # 간접 피호출 조회가 그 키워드를 넘긴다.
+    assert graph.indirect_calls_of(_DEMOTE_MAIN) == [("cb", [real, fake])]
+    assert graph.indirect_calls_of(_DEMOTE_MAIN, demote_nonproduct=True) == [("cb", [real])]
+    assert graph.indirect_callees_of(_DEMOTE_MAIN, demote_nonproduct=True) == [real]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param(
+            {key: value for key, value in _INDEX_V3.items() if key != "writes"},
+            id="v3-table-missing",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "fn_bindings": {
+                    "free_ctx": [{"file": "ops.c", "line": 20, "func": None, "fn": "my_free"}]
+                },
+            },
+            id="v3-row-missing-a-key",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_calls": {
+                    "alloc": [
+                        {
+                            "file": "parser.c",
+                            "line": "17",
+                            "caller": "parse_header",
+                            "args": [],
+                            "expr": "sys->alloc",
+                        }
+                    ]
+                },
+            },
+            id="v3-line-is-a-string",
+        ),
+        # #464 리뷰 — 아래 넷은 전에는 `loaded`로 읽히고 조회 도중에 죽거나(줄 0 → `Location`
+        # `ValidationError`, 매핑 `func` → unhashable `TypeError`) 조용히 0건이 됐다(모르는 `base`).
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "line": 0}]},
+            },
+            id="v3-line-zero",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "func": {"f": 1}}]},
+            },
+            id="v3-func-is-a-mapping",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "writes": {"buf": [{**_INDEX_V3["writes"]["buf"][0], "base": "weird"}]},
+            },
+            id="v3-unknown-base",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_calls": {
+                    "alloc": [{**_INDEX_V3["field_calls"]["alloc"][0], "args": "n"}]
+                },
+            },
+            id="v3-args-not-a-list",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V3,
+                "field_assigns": {
+                    "alloc": [{**_INDEX_V3["field_assigns"]["alloc"][0], "func": ["init"]}]
+                },
+            },
+            id="v3-field-assigns-func-not-a-name",
+        ),
+    ],
+)
+def test_a_misshapen_v3_document_is_refused_whole(broken: dict, tmp_path: Path):
+    """v3라고 적고 v3 표가 모자라면 v2처럼 읽지 않고 통째로 거절한다 — 버전이 곧 계약이다."""
+    graph = _graph(tmp_path, broken)
+
+    assert graph.summary.status == STATUS_MALFORMED
+    assert graph.table("writes") is None
+    assert graph.names_for("callers", _PARSE_HEADER) is None
