@@ -311,3 +311,18 @@ def test_metadata_probe_renders_templates_without_claiming_live_source(version):
     )
     assert _facts_of(built.prompt.body)["source"] == ""
     assert built.prompt.prompt_version == version
+
+
+
+def test_run_always_passes_the_source_argument(ctx, monkeypatch):
+    """M2 호출 계약: None도 명시 전달하므로 대역이 실제 키워드 모양을 공유한다."""
+    original = critic._ask_model
+    calls = []
+
+    def recording(context, **kwargs):
+        calls.append(kwargs)
+        return original(context, **kwargs)
+
+    monkeypatch.setattr(critic, "_ask_model", recording)
+    critic.run(ctx, finding=_finding("finding_0001"))
+    assert "source" in calls[0] and calls[0]["source"] is None

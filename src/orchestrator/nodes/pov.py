@@ -117,8 +117,8 @@ def open_hop(
     넘겼다** — 그래서 PoV는 `None` 갈래로 `ctx.read_source(capsule.target)`, 즉 **entry 함수
     하나**만 봤다. `_WIDE_INPUT_VERSIONS`인 판에서는 러너가 Auditor가 본 것과 **같은 문자열**을
     넘긴다(`runner._Once` · `state.finding_sources`) — 그 판단은 **러너가** 한다(이 함수는 받은
-    `source`를 버전과 무관하게 그대로 쓴다, `_render_prompt` 주석). 슬라이스 타깃이 아니면 두
-    문자열이 같으므로 `None`이어도 예전 갈래가 그대로 맞다.
+    `source`를 버전과 무관하게 그대로 쓴다, `_render_prompt` 주석). 비슬라이스 타깃도 Auditor의
+    최초 읽기를 캐시하므로 그 뒤 파일이나 reader가 달라져도 같은 문자열을 받는다.
 
     `fuzz_entrypoint`는 **PoV만 받는 사실**이다 — libFuzzer 하네스의 진입점과 그 본문이고,
     「바이트가 어디로 들어가는가」의 답이다. 러너가 만든다(`runner._fuzz_entrypoint`). 이것은
