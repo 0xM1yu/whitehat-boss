@@ -59,14 +59,18 @@ agent:
 > **PoV 좌석은 32,768 그대로다** — 자기 속도를 안 쟀다.
 >
 > **2026-09-12 — 값을 안 정하기로 했고 그것이 실측의 결론이다.** 실제 Critic 프롬프트로
-> 재니 `prompt_tokens`가 **646~654**이고(캡슐도 원문도 안 실린다) `gpt-oss-20b`의 출력은
+> 당시 v1 metadata-only 경로에서 재니 `prompt_tokens`가 **646~654**였고(캡슐·원문 없음) `gpt-oss-20b`의 출력은
 > 추론과 본문으로 갈려 **본문이 76~126토큰**이다 — 위 2,863 같은 수는 그 둘의 합이지
 > 답변 길이가 아니다. 하네스 실제 설정 16콜에서 `finish=length`가 0건이라
-> **전역 4,096이 이미 충분하다.** 근거는
+> **당시 조건에서 전역 4,096에 닿지 않았다.** v6의 입력이나 출력 충분성으로 일반화하지 않는다. 근거는
 > [2026-09-12 보고서](experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md)
 > §3.3·§3.4이고, 같은 정정이 `config/budgets.yaml`의 `output_max` 주석에도 들어갔다.
 > 타임아웃(`_TIMEOUT_S = 300`)은 **시도 하나당**이라 `wall_ms`(재시도 포함)와 직접 비교하면
 > 안 된다 — 자세한 계산은 `config/budgets.yaml`의 `output_max` 주석에 있다.
+>
+> ⏵ **2026-10-05 — Critic v1 → v6**(#497). SOURCE·근거 본문·위치가 더해져 위 v1 입력 수는
+> 현행 크기가 아니다. Critic 출력 상한은 `config/budgets.yaml`의 32,768, 타임아웃은 registry의
+> 3,600초다(설정값). v6 입력 토큰·실모델 판정은 0(미실측).
 >
 > ⏵ **2026-09-24 — 두 가지가 움직였다**([스모크 보고서](experiments/harness/2026-09-24-roster-smoke-atom.md) · 비교표 밖).
 > ① 비교표 밖 스모크(`checksum` 0)에서 한 번에 성공한 출력으로 **2,878**이 관측됐다(`seccoderx-8b` `scout_boundary`,
@@ -204,12 +208,12 @@ agent:
   EVIDENCE 줄에 `file:줄` 한 토막을 붙인다(판 목록은 여기 적지 않는다 — 두 노드의 상수가 정본이다).
   **이 위치는 판단 보조이고 게이트 등급 근거가 아니다** — `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이
   semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`container_tools.first_hit_location` docstring). 그 값은
-  semgrep `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다. 2026-10-04 현재 어느 content-aware 프롬프트의
-  prefix도 `FACTS.evidence[].location`을 서술하지 않는다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(위치를
+  semgrep `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다. 2026-10-05 Critic v6 prefix는
+  `FACTS.evidence[].location`과 EVIDENCE 줄의 위치를 서술한다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(위치를
   싣고 돈 run은 커밋된 `docs/experiments/` 보고서 기준 0건). content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
-  항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-04 현재 서빙 프로필(`harness_pool`·
-  `harness_pool_hybrid`)에서 실제로 바이트가 바뀌는 판은 Auditor 하나(`qwen3.8-27b`가 고르는 판)이고, 서빙 Critic
-  (`gpt-oss-20b`)은 v1이라 바뀌지 않는다 — 손으로 쓴 값이니 `config/models.yaml`이 정본이다.
+  항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-05 서빙 프로필(`harness_pool`·
+  `harness_pool_hybrid`)의 Auditor와 Critic 모두 content-aware 판이다. 서빙 Critic
+  (`gpt-oss-20b`)은 v6으로 바뀌어 본문·위치·SOURCE를 받는다 — 손으로 쓴 값이니 `config/models.yaml`이 정본이다.
   ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
@@ -420,7 +424,7 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다**(2026-10-04 — 위치도 같은 스위치라 서빙 Critic `gpt-oss-20b` = v1에서는 꺼져 있다) — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). **2026-10-05 — 서빙 Critic은 v6으로 본문·위치·SOURCE를 받는다**(#497). `dev_*`의 공유 fake v1은 metadata 계약을 유지한다. SOURCE는 Auditor의 최초 읽기 캐시이며 원문 블록과 FACTS에 함께 실린다. v3 확인 run 선행은 유지하지 않는다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v6 · 근거 본문·SOURCE」).
 - 출력: `Decision`
 - **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
 - **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
@@ -440,7 +444,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 규칙 3의 `truncation alone is not a reason to defer`가 이미 서빙에 있다. **그런데 위 둘(근거 보충 정책·과보류 비용 · 고정 표본 회귀)을
 켜기 전에 했다는 기록이 없다** — 정책은 `git grep` 「근거 보충」·「과보류」·「보류 비용」에 이 문단뿐이었고(2026-10-03, 이 노트 전 — 테스트 docstring 한 줄은 정책이 아니다), 규칙 5·재측정은
 이번에도 돌지 않았다(§4의 ⏵ 2026-10-03). v6로 돈 run도 `docs/experiments/`에 0건이다(grep, 2026-10-03 — 커밋된 보고서만 센 것).
-**Critic은 여전히 `v1`이다** — Critic v5(`prompts/critic/v5/`)는 안 켜졌으니 위 문장은 Critic 쪽에서는 그대로 전이다.
+**2026-10-05 — Critic v1 → v6**(#497, 사용자 지시). v5는 배선하지 않았다. 위 근거 보충 정책·과보류 비용 결정과 고정 표본 회귀를 수행했다는 기록은 없다. 측정 전에 입력 배선 결함을 먼저 고쳤으며, 보류 자동 수집 경로는 여전히 없다. 실모델 판정 관측 0회(미실측).
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
@@ -712,7 +716,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "rebuttal_axis": ["guard", "reachability"],
   "rationale": "상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
   "evidence_refs": ["ev_graph_0012"],
-  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v1"}
+  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v6"}
 }
 ```
 
@@ -732,7 +736,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v8", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v8", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -801,12 +805,17 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > **7개에서 critic 엔트리가 scout·auditor와 공유된다** — `fake`(dev 5개 + `single_gpu_12g`)와
 > `qwen3-coder-30b-a3b`(`b1_single`). critic만 v3로 올리면 그 둘이 없는 `prompts/scout/v3`·
 > `prompts/auditor/v3`를 찾는다. 역할별 `prompt_version`([D67](open-questions/D/D67.md) ·
-> 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다. 되돌리지 않은 이유는
+> 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다는 당시 계획이었다. 되돌리지 않은 이유는
 > `prompts/critic/v1/meta.yaml` 머리 주석에 있다.
 >
 > ⚠ **2026-09-24 — 위 「9개 중 7개」는 그때의 수다.** 지금 커밋된 프로필은 7개이고 critic 엔트리를
 > 다른 역할과 공유하는 것은 `dev_*` 다섯(`fake`)뿐이다 — `single_gpu_12g`·`b1_single`은 지웠고
 > `harness_pool`·`_hybrid`의 critic `gpt-oss-20b`는 scout·auditor와 안 겹친다.
+>
+> ⏵ **2026-10-05 — Critic v1 → v6**(#497). 실 Critic의 모델 엔트리는 다른 역할과 공유하지
+> 않아 역할별 판 필드를 기다리지 않는다. `dev_*`의 공유 fake는 v1 그대로다.
+> 위 2026-09-29·10-03의 Critic v1 서술은 각 날짜의 이력이고 현재 판은 v6이다.
+> 규칙 5·재측정은 이번에도 돌지 않았다(실모델 v6 관측 0회). 입력 누락을 먼저 해소했다.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·

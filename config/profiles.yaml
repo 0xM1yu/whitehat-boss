@@ -136,8 +136,8 @@ profiles:
     #   scout_memory/v3=옛 v14s), boundary = `seccoderx-8b`(v3, scout_boundary/v3=옛 v15s).
     #   injection은 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서,
     #   memory는 2026-09-25 실험팀 최종 권고로 `seccoderx-8b`에서 옮겼다(PROJECT-CONTEXT.md §1).
-    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v1이다 — v3로 올리는 것은
-    #   검증 run 뒤의 별도 단계다(`prompts/critic/v3/meta.yaml`).
+    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v6이다(#497, 2026-10-05).
+    #   근거 본문·위치·캐시 SOURCE를 받는다. v3는 디스크 전용이며 확인 run 선행은 유지하지 않는다.
     # - **Auditor = §1의 `qwen3.8-27b`**(2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). ⏵ 2026-09-29 —
     #   registry가 근거 본문 배선과 함께 `v3`를 골랐다(auditor/v3는 2026-09-22 #237로 디스크에 있었고,
     #   올린 것은 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS` 배선과 같은 PR이다). 같은 날 #328 머지 뒤
@@ -152,7 +152,7 @@ profiles:
     # - **PoV = §1의 `feyospace-v1-small`**(8단계 · Qwen3.8-27B 사이버 post-train, Auditor와 같은 계열).
     #   pov 노드가 8단계에 들어온(진입 시 `VALIDATED`인) Finding에서 PoC를 만든다 — `validate.run`이 `QUEUED`로
     #   내린 것도 포함한다(추가형 — 그 목록은 `validate.run` 전에 잡히고 러너가 그 뒤에 부른다). `pov_attempt_top_n`이
-    #   양수면 그 밖의 Finding도 상위 몇 건 더한다(기본 0 — `config/budgets.yaml`). 사고를 켠다 —
+    #   양수면 그 밖의 Finding도 상위 몇 건 더한다(저장소 설정 8 — `config/budgets.yaml`). 사고를 켠다 —
     #   Auditor의 손잡이 넷(`reasoning_effort` `xhigh` · `sampling` · `thinking_token_budget` ·
     #   `request_timeout_s`)을 물려받아 선언하고 출력 상한은 `output_max_by_role.pov`(`config/budgets.yaml`)다
     #   (계획값 · feyospace 미실측 — `config/models.yaml`). `--reasoning-parser qwen3` 필요 ·
