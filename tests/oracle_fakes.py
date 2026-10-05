@@ -63,6 +63,7 @@ class FakeOracle:
         # 성공한 `submit_vul` 호출이 돌려준 것 - 호출 순서대로(실패한 호출은 없다).
         self.vul_results: list[VulSubmission] = []
         self.final_calls: list[tuple[bytes, VulSubmission]] = []
+        self.query_calls: list[bytes] = []
         self._vul_errors = vul_errors or {}
         self._final_error = final_error
         self._vul_exit_code = vul_exit_code
@@ -84,6 +85,10 @@ class FakeOracle:
         )
         self.vul_results.append(result)
         return result
+
+    def query_vul(self, poc: bytes) -> int | None:
+        self.query_calls.append(poc)
+        return self._vul_exit_code
 
     def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:
         self.final_calls.append((poc, vul))
