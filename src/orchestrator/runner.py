@@ -778,7 +778,7 @@ class _Accumulator:
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
-    # 채점기(oracle)의 후보별 vul 시도와 최종 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
+    # 채점기(oracle)의 모든 vul 시도와 최종 지정 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
     # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
     # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
     oracle_ledger: oracle_log.OracleLedger = field(default_factory=oracle_log.OracleLedger)
@@ -1840,9 +1840,9 @@ def _submit_vul_to_oracle(
     gen은 원시 종료 코드를 조회하고, `True`인 모델 submit만 최종 지정 후보가 된다.
 
     **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
-    적는데 클라이언트는 그것을 강제하지 않는다 — 후보마다 `vul`·`fix`를 다 내면(`run_round_trip`)
-    비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 후보마다는 `vul`만 내고 최종은 `_finalize_oracle`이
-    지정한다.
+    적는데 클라이언트는 그것을 강제하지 않는다. 각 vul 제출마다 `vul`·`fix`를 다 내면
+    (`run_round_trip`) 비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 각 제출에는 `vul`만 내고
+    최종은 `_finalize_oracle`이 지정한다.
 
     **추가형이다** — finding 상태를 바꾸지 않고 Evidence도 만들지 않는다(채점은 저장소 밖 기준이고
     내부 등급 E4는 실행 로그를 따로 요구한다, #232 · `interfaces/oracle.py`). 기록만 남긴다.
@@ -2091,9 +2091,9 @@ def _designate_final(
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
     docstring)와 후보 0건(읽을 `submission`이 없다).
 
-    「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
-    — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
-    알린다).
+    「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
+    위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
+    아니다(그 run의 경고가 실패 건수를 알린다).
     """
     candidates = ledger.candidates
     if not candidates:

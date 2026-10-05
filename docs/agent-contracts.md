@@ -540,7 +540,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   도구를 직접 돌리지는 않고, 보고서가 **지금 이 부팅**의 것인지와 **채점 컨테이너를 돌리는 장비**의 것인지는
   게이트가 못 가린다. 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
-  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
+  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(모든 `vul` 시도마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
   서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
   검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
