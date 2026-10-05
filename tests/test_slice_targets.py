@@ -2056,10 +2056,11 @@ def test_auditor_v4_t1_refuses_the_wrapper_option() -> None:
     config = load_config("harness_pool")
     key = config.model_key_for("auditor")
     entry = config.models[key].transition(prompt_template_version="v4_t1")
-    # v4_t1이 서술하지 않는 다른 옵션(간접 피호출·쓰기 지점 창, #304)은 꺼서 이 옵션 하나만 본다.
+    # v4_t1이 서술하지 않는 다른 옵션(간접 피호출·쓰기 지점 창 #304 · 가드 목록)은 꺼서 이 옵션
+    # 하나만 본다.
     on = config.thresholds.transition(
         auditor_caller_lines=0, auditor_callee_wrappers=1,
-        auditor_indirect_callees=0, auditor_write_sites=0,
+        auditor_indirect_callees=0, auditor_write_sites=0, auditor_guards=0,
     )
     config = config.transition(models={**config.models, key: entry}, thresholds=on)
     assert cli._undescribed_source_options(config) == ["auditor_callee_wrappers(auditor/v4_t1)"]

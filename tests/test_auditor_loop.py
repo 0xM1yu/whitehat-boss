@@ -546,7 +546,9 @@ def _served_one_shot_config(config, *, hops: int):  # noqa: ANN001, ANN202
         profile=config.profile.transition(
             roles={**config.profile.roles, "auditor": _SERVED_AUDITOR_KEY}
         ),
-        thresholds=config.thresholds.transition(auditor_tool_hops=hops),
+        # v7은 `auditor_guards`를 선언하지 않는다 - 켜진 채면 SOURCE 옵션 게이트가 먼저 서서 이
+        # 검사가 묻는 한 방 판 규칙에 닿지 못한다(2026-10-06 v9가 그 옵션을 켰다).
+        thresholds=config.thresholds.transition(auditor_tool_hops=hops, auditor_guards=0),
     )
 
 
