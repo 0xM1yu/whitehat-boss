@@ -1003,7 +1003,8 @@ def run_pipeline(
     # 기록이 그대로다.
     oracle_summary = state.oracle_ledger.summary()
     if oracle_summary is not None:
-        record = record.transition(oracle=oracle_summary)
+        # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
+        record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
 
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02

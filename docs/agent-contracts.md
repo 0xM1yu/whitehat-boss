@@ -546,7 +546,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   「크래시」로 집계된 것을 쟀기 때문이고, 보고서가 이 과제의 것이 아니거나 통과가 아니면 거부한다(exit 2).
   마스킹 run에서는 보고서의 `task`가 **실 id**다(도구가 과제 id로 이미지 이름을 만든다). ⚠ 하네스가 그
   도구를 직접 돌리지는 않고, 보고서가 **지금 이 부팅**의 것인지와 **채점 컨테이너를 돌리는 장비**의 것인지는
-  게이트가 못 가린다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  게이트가 못 가린다. 기댄 보고서의 **경로(풀어 쓴 것)와 검사한 바이트의 sha256**은 매니페스트 `oracle`의
+  `canary_path`·`canary_sha256`에 남는다(이슈 #487). 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
   `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(모든 `vul` 시도마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
