@@ -316,7 +316,8 @@ class RunRecord(UtcModel):
     slicer: dict[str, str | int | None] | None = None
     # 채점기(oracle)를 켠 run의 제출 요약 (#386) —
     # `{vul_submitted, vul_failed, final, final_reason, record}` - 여기에 **0이 아닐 때만**
-    # `vul_intermediate`(중간 gen 시도 수)·`vul_candidates`(그 run의 최종 후보 수)·
+    # `vul_intermediate`(중간 gen 시도 수)·`vul_candidates`(최종 후보 수 - `vul_intermediate`가
+    # 있으면 0이어도 있다)·
     # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)가
     # 붙는다.
     # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·

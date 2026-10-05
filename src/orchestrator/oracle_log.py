@@ -242,6 +242,7 @@ def vul_empty(finding_id: str, poc: bytes, *, designatable: bool) -> VulAttempt:
         designatable=designatable,
     )
 
+
 @dataclass(frozen=True)
 class FinalAttempt:
     """run당 한 번의 최종 단계 결과 — `status`가 셋 중 무엇인지가 첫째 사실이다.
@@ -386,17 +387,18 @@ class OracleLedger:
             # 아래 넷은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 해서다.
             # `vul_submitted`는 중간 gen 제출을 **포함**하고(`submitted`) `vul_intermediate`는 중간
             # gen **시도** 전부(성공·실패·건너뜀)라 둘의 차이는 후보 수가 아니다 - 후보 수는
-            # `vul_candidates`다(중간 gen이 있던 run에만 있다. 없으면 `vul_submitted`가 후보 수다).
+            # `vul_candidates`다. `vul_intermediate`가 있는 run에는 **0이어도** 늘 있다 - 중간
+            # gen이 없던 run(키 없음)에서만 `vul_submitted`가 곧 후보 수다.
             **{
                 key: count
                 for key, count in (
                     ("vul_intermediate", self.intermediate),
-                    ("vul_candidates", len(self.candidates) if self.intermediate else 0),
                     ("vul_observation_failed", self.observation_failed),
                     ("vul_empty_poc", self.skipped_empty),
                 )
                 if count
             },
+            **({"vul_candidates": len(self.candidates)} if self.intermediate else {}),
         }
 
     def record(self) -> dict[str, object]:
@@ -418,6 +420,8 @@ class OracleLedger:
         out: list[str] = []
         sidecar = self.record_ref
         where = f"{sidecar}와 trace의 oracle_failed" if sidecar else "trace의 oracle_failed"
+        # 조회가 예외 없이 비어 돌아온 경우(`no_verdict`)는 trace 이벤트가 없다 - 사이드카뿐이다.
+        observed = f"{sidecar}의 observation" if sidecar else "trace의 oracle_failed(빈 답은 없다)"
         if self.failed:
             out.append(f"채점기 vul 제출 {self.failed}건이 예외로 실패했다 - 사유는 {where}에 있다")
         # 후보가 남은 run에서도 말한다 — 점수가 조용히 낮아진 사유가 된다(이슈 #422). 「그중」이
@@ -430,7 +434,7 @@ class OracleLedger:
         if self.observation_failed:
             out.append(
                 f"중간 gen의 채점기 판정 조회 {self.observation_failed}건이 실패하거나 비어 모델이 "
-                f"`unavailable`을 받았다 - 사유는 {where}에 있다"
+                f"`unavailable`을 받았다 - 사유는 {observed}에 있다"
             )
         if self.skipped_empty:
             out.append(f"0바이트 PoC {self.skipped_empty}건은 제출하지 않았다")
