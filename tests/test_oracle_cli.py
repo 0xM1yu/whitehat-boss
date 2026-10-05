@@ -13,6 +13,7 @@
 """
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -330,6 +331,10 @@ def test_the_oracle_is_built_from_the_operators_server_and_the_bundles_identity(
         "agent_id": _AGENT,
         "api_key": _KEY,
         "query_task_id": None,  # `--mask-map`을 안 줬다 - 마스크 없이 띄운 서버
+        # 게이트가 통과시킨 보고서 - 경로는 풀어서, 해시는 검사한 바이트의 것이다(#487).
+        "canary_path": str((task.parent / "canary.json").resolve()),
+        "canary_sha256": "sha256:"
+        + hashlib.sha256((task.parent / "canary.json").read_bytes()).hexdigest(),
     }
 
 
@@ -784,3 +789,62 @@ def test_the_family_without_a_fix_leg_is_refused_before_any_submission(
 
     assert "아무것도 제출하지 않았다" in err
     assert built == []
+
+
+def test_a_passing_canary_is_bound_to_the_oracle_by_path_and_sha256(
+    tmp_path: Path, built, key_env  # noqa: ANN001
+) -> None:
+    """이슈 #487 - 어느 카나리 보고서에 기댔는지가 채점기에 묶여 산출물까지 갈 수 있어야 한다."""
+    task = _bundle(tmp_path)
+    report = task.parent / "canary.json"
+
+    cli._oracle_for(_args(task))
+
+    assert len(built) == 1
+    assert built[0]["canary_path"] == str(report.resolve())
+    assert built[0]["canary_sha256"] == "sha256:" + hashlib.sha256(report.read_bytes()).hexdigest()
+
+
+def test_only_an_oracle_that_leaned_on_a_canary_yields_a_manifest_reference() -> None:
+    from types import SimpleNamespace
+
+    bound = SimpleNamespace(canary_path="/ops/canary.json", canary_sha256="sha256:" + "ab" * 32)
+
+    assert cli._canary_ref(bound) == {
+        "canary_path": "/ops/canary.json",
+        "canary_sha256": "sha256:" + "ab" * 32,
+    }
+    assert cli._canary_ref(FakeOracle()) is None
+    assert cli._canary_ref(None) is None
+
+
+def test_the_gate_reads_the_same_resolved_path_it_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built, key_env  # noqa: ANN001
+) -> None:
+    """상대 경로로 줘도 게이트가 읽는 파일과 기록하는 경로가 **같은 값**이다 - 읽기와 기록 사이에
+    링크가 바뀌어 해시는 A의 것이고 경로는 B를 가리키는 틈을 구조로 닫는다(#487)."""
+    task = _bundle(tmp_path)
+    monkeypatch.chdir(task.parent)
+    seen: list[Path] = []
+    real = cli.read_canary_report
+
+    def spy(path: Path):  # noqa: ANN202
+        seen.append(path)
+        return real(path)
+
+    monkeypatch.setattr(cli, "read_canary_report", spy)
+
+    cli._oracle_for(_args(task, canary="canary.json"))
+
+    recorded = built[0]["canary_path"]
+    assert Path(recorded).is_absolute(), recorded
+    assert seen == [Path(recorded)]
+
+
+def test_a_reference_with_only_one_of_path_and_sha256_is_a_defect() -> None:
+    from types import SimpleNamespace
+
+    half = SimpleNamespace(canary_path="/ops/canary.json", canary_sha256=None)
+
+    with pytest.raises(ValueError, match="canary"):
+        cli._canary_ref(half)
