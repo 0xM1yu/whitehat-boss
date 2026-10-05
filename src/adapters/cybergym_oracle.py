@@ -164,7 +164,7 @@ _NO_RECORD_DETAIL = "Record not found"
 # `run_poc_id`에서 그 접두어면 fix 실행을 건너뛰고(`:312-314`) `run_container`는 HTTP 400을
 # 돌려준다(`:55-56`).
 # 콜론까지 본다 - 저자 서버가 같은 식으로 가른다.
-_FIXLESS_PREFIX = "oss-fuzz-latest:"
+_REFUSED_FAMILY_PREFIX = "oss-fuzz-latest:"
 
 # 실 id 없이 단독으로 쓸 수 있는 task_id 모양 — `unsupported_task_id`가 쓴다.
 _REAL_TASK_ID = re.compile(r"[a-z][a-z0-9-]*:[0-9]+")
@@ -226,23 +226,30 @@ def unsupported_task_id(task_id: str) -> str | None:
     )
 
 
-def fixless_task_id(task_id: str) -> str | None:
-    """서버가 `fix` 다리를 안 돌리는 계열의 **실 id**면 그 사유, 아니면 `None` (이슈 #431).
+def refused_family_task_id(task_id: str) -> str | None:
+    """서버가 제출을 거부하는 계열의 **실 id**면 그 사유, 아니면 `None` (이슈 #431).
 
-    그 계열은 `fix_exit_code`가 영구히 `None`이다. `OracleVerdict.success`가 `fix == 0`을 요구하므로
-    그 과제는 모델이 무엇을 내든 **조용한 실패**로 기록된다 - 「안 돌았다」가 「거짓」과 같은 모양이
-    된다. 그래서 점수가 아니라 거절로 다룬다. 호출부는 마스킹 서버면 **조회에 쓰는 실 id**를 준다.
+    저자 서버는 `oss-fuzz-latest:` 계열의 **`vul` 제출부터** HTTP 400으로 거부한다(`run_container`가
+    이미지 이름을 짓다 던진다, `server_utils.py:55-56`) - 소스 판독이고 그 계열을 실제로 제출해 본
+    run은 0건이다. 우리 쪽에서는 `CyberGymOracleError(status=400)`로 올라와 run이 `oracle_failed`를
+    남기는 **시끄러운 실패**다. 다만 그 400은 모델 호출과 PoV를 다 돈 **뒤** 첫 제출에서야 난다 -
+    그래서 앞에서 거절한다.
+
+    앞 판은 `run_poc_id`의 fix 건너뛰기(`:312-314`)를 근거로 「`fix` 종료 코드가 영구 `None`이라
+    조용한 0점」이라 적었고 그것은 틀렸다 - 그 줄은 앞의 `vul` 실행이 먼저 400을 내므로 이
+    커밋에서는 닿지 않는다(이슈 #431 둘째 코멘트). 호출부는 마스킹 서버면 **조회에 쓰는 실 id**를
+    준다.
     `unsupported_task_id`의 모양 검사는 이것을 못 가린다(`oss-fuzz-latest:123`도 통과한다).
 
-    ⚠ 이 계열이 Level 1에 드는지는 따로 잰 값이다 - 저자 `tasks.json` 1,507건의 접두어는 `arvo`·
-    `oss-fuzz` 둘뿐이다(`tools/oracle_canary.py`가 든 2026-10-04 실측). 그래서 이 거절은 지금 도달
-    불가한 경로를 막는 덧가드다.
+    ⚠ 이 계열이 Level 1에 드는지는 따로 잰 값이다 - 저자 `tasks.json`(HF `bde190d`) 1,507건의
+    접두어는 `arvo`·`oss-fuzz` 둘뿐이다(이슈 #431 첫 코멘트, 2026-10-04 실측). 그래서 이 거절은 지금
+    도달 불가한 경로를 막는 덧가드다. 비교는 서버와 같은 정확 일치다 - 대소문자·공백을 접지 않는다.
     """
-    if not task_id.startswith(_FIXLESS_PREFIX):
+    if not task_id.startswith(_REFUSED_FAMILY_PREFIX):
         return None
     return (
-        f"과제 id {task_id!r}의 계열은 저자 서버가 fix 다리를 안 돌린다 - fix 종료 코드가 영구히 "
-        "비어 우리 판정식이 그 과제를 조용히 실패(0점)로 만든다. 조용한 0점보다 거절이 낫다"
+        f"과제 id {task_id!r}의 계열은 저자 서버가 vul 제출부터 HTTP 400으로 거부한다 - 모델 "
+        "호출과 PoV를 다 돈 뒤 첫 제출에서야 실패하므로 제출 전에 거절한다"
     )
 
 
@@ -725,11 +732,13 @@ class TaskOracle:
     러너는 바이트만 준다 — 서버 주소·과제 신원·키는 run을 조립할 때 여기 묶인다(`src/cli.py`의
     `_oracle_for`가 만든다, #386). 서버 주소는 조작자가 정하고 과제 id는 번들의 `submit.sh`에서
     읽는다 (`task_loader.SubmitMetadata`가 이유를 든다). `task_id`가 지원하는 모양이 아니고
-    (`unsupported_task_id`) `query_task_id`도 없으면 만들어지지 않는다 — 컨테이너를 돌리기 전에
-    거절한다. 마스킹 서버는 제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 `/query-poc`는 마스크를
-    풀지 않으므로(소스 판독이고 실측하지 않았다, `query_verdict` docstring) 마스킹된 `task_id`는
-    조회에 쓸 실 id를 `query_task_id`로 같이 줄 때만 쓴다. 제출 두 다리(`submit_vul`·`submit_fix`)는
-    `task_id`로, 제출 전 장부 읽기(`peek_verdict`)와 판정 조회(`query_verdict`)는
+    (`unsupported_task_id`) `query_task_id`도 없으면, 또는 조회에 쓰는 실 id가 서버가 제출을
+    거부하는 계열이면(`refused_family_task_id`) 만들어지지 않는다 — 컨테이너를 돌리기 전에
+    거절한다. 마스킹 서버는 제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 `/query-poc`는
+    마스크를 풀지 않으므로(소스 판독이고 실측하지 않았다, `query_verdict` docstring) 마스킹된
+    `task_id`는 조회에 쓸 실 id를 `query_task_id`로 같이 줄 때만 쓴다. 제출 두
+    다리(`submit_vul`·`submit_fix`)는 `task_id`로, 제출 전 장부 읽기(`peek_verdict`)와 판정
+    조회(`query_verdict`)는
     `query_task_id`(없으면 `task_id`)로 간다.
 
     **두 다리다 — 각 vul 제출마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ는 fix 다리를
@@ -772,9 +781,9 @@ class TaskOracle:
         # 있으면 받는다 — 호출자가 `mask_map.json`을 읽어 준 값이다
         # (`cli._query_task_id_from_mask_map`). 빈 문자열은 값이 아니다: `_query_task`가 그것을
         # `task_id`로 되돌리므로 여기서도 없는 것으로 읽는다.
-        fixless = fixless_task_id(self.query_task_id or self.task_id)
-        if fixless is not None:
-            raise ValueError(fixless)
+        refused = refused_family_task_id(self.query_task_id or self.task_id)
+        if refused is not None:
+            raise ValueError(refused)
         problem = unsupported_task_id(self.task_id)
         if problem is not None and not self.query_task_id:
             raise ValueError(
