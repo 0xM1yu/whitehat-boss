@@ -42,6 +42,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -123,6 +124,11 @@ class CanaryReport:
     problems: tuple[str, ...]
     # 어느 장비에서 쟀는지 — 거절 문구에만 쓴다. 도구가 못 읽으면 `null`이라 없어도 된다.
     docker_version: str | None = None
+    # **검사한 바이트의** sha256(`sha256:<hex>`) - 파일을 한 번 더 읽어 구하지 않는다. 검사와 기록
+    # 사이에 바뀐 파일이 「통과한 보고서」로 남지 않게 한다(#487).
+    sha256: str | None = None
+    # 읽은 경로 그대로 - 기록하는 경로가 읽은 파일과 같은 값이게 한다(#487).
+    path: str | None = None
 
 
 def read_canary_report(path: Path) -> CanaryReport:
@@ -143,7 +149,8 @@ def read_canary_report(path: Path) -> CanaryReport:
             f"카나리 보고서가 너무 크다({path}: {size} B) - 도구가 쓰는 보고서는 2 KB 선이다"
         )
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
     except (OSError, ValueError) as exc:  # `UnicodeDecodeError`는 `ValueError`다
         raise CanaryReportError(f"카나리 보고서를 읽지 못했다({path}): {exc!r}") from exc
     try:
@@ -185,6 +192,8 @@ def read_canary_report(path: Path) -> CanaryReport:
         segv_count=body["segv_count"],
         problems=tuple(str(item) for item in body["problems"]),
         docker_version=body.get("docker_version") or None,
+        sha256=f"sha256:{hashlib.sha256(raw).hexdigest()}",
+        path=str(path),
     )
 
 
