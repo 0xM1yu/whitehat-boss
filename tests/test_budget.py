@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from src import cli
 from src.adapters.memory_store import InMemoryStateStore
 from src.config import CONFIG_DIR, ConfigError, load_config
 from src.ids import IdFactory
@@ -241,6 +242,66 @@ def test_every_shipped_profile_that_serves_a_real_model_declares_four_positive_l
         for name, config in real.items()
     }
     assert {name: items for name, items in zero_limits.items() if items} == {}
+
+
+def test_every_shipped_profile_that_runs_real_containers_declares_a_tool_time_ceiling() -> None:
+    """이슈 #436 - 실컨테이너를 도는 프로필은 도구 시간 상한이 양수다.
+
+    `RunContext.call_tool`은 `tool_runner`가 `fake`가 아니면 도구 시간을 **청구한다** - 그런데
+    `tool_seconds: 0`은 검사되지 않아(`BudgetLedger._overrun`) 상한이 없다. `dev_fake` 예산의 0은
+    「Fake 런타임은 안 청구한다」는 뜻으로 거기 있고, 그 예산을 실컨테이너 프로필 셋이 빌려 쓰고
+    있었다. 비어 있는 훑기는 초록이라 하나도 안 보이면 멈춘다."""
+    configs = {profile: load_config(profile) for profile in ALL_PROFILES}
+    containers = {
+        name: config
+        for name, config in configs.items()
+        if config.profile.adapters.tool_runner != "fake"
+    }
+    assert containers, "컨테이너 프로필이 하나도 없다 - 이 훑기가 아무것도 보지 않았다"
+
+    assert {name for name, config in containers.items() if config.budget.tool_seconds == 0} == set()
+
+
+def test_a_container_profile_that_borrows_a_zero_tool_time_budget_is_refused(
+    tmp_path: Path,
+) -> None:
+    """컨테이너 프로필이 `tool_seconds: 0` 예산을 가리키면 로드가 실패한다 - 이름 오기다.
+
+    Fake 모델만 쓰는 프로필이라 위 가드(`served_models()`)는 이것을 못 본다. 토큰·GPU의 0은 Fake라서
+    맞고, 이 가드가 무는 것은 도구 시간 하나다."""
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="dev_docker", budget="dev_fake", limits={"tool_seconds": 0}
+    )
+
+    with pytest.raises(ConfigError, match="tool_seconds"):
+        load_config("dev_docker", config_dir=config_dir)
+
+
+@pytest.mark.parametrize("runtime", ["docker", "singularity", "podman"])
+def test_a_cli_tool_runner_override_cannot_turn_a_zero_tool_time_profile_into_a_container_run(
+    runtime: str,
+) -> None:
+    """`--tool-runner`는 `load_config` **뒤에** config를 갈아 끼운다(`cli.load_profile`) - 로드
+    가드가 그 경로에서 안 돌면 `dev_fake`(tool_seconds 0)에 `--tool-runner docker`를 붙인 run이 도구
+    시간 상한 없이 돈다(이슈 #436 리뷰 HIGH). 오버라이드 뒤에서도 같은 가드가 돈다."""
+    with pytest.raises(ConfigError, match="tool_seconds"):
+        cli.load_profile("dev_fake", tool_runner=runtime)
+
+
+def test_a_cli_override_back_to_fake_or_onto_a_capped_profile_still_loads() -> None:
+    """막는 것은 0 위의 컨테이너뿐이다 - 컨테이너 프로필을 Fake로 내리거나(`dev_docker` + `fake`)
+    상한이 있는 프로필에 컨테이너를 얹는 것(`dev_docker` + `docker`)은 그대로다."""
+    assert cli.load_profile("dev_docker", tool_runner="fake").budget.tool_seconds > 0
+    assert cli.load_profile("dev_docker", tool_runner="docker").budget.tool_seconds > 0
+
+
+def test_a_fake_runtime_profile_keeps_a_zero_tool_time_limit(tmp_path: Path) -> None:
+    """Fake 런타임의 도구 시간은 청구되지 않는다 - 0이 그대로 로드된다(막는 범위는 컨테이너뿐)."""
+    config_dir = _config_dir_with_budget(
+        tmp_path, profile="dev_fake", budget="dev_fake", limits={"tool_seconds": 0}
+    )
+
+    assert load_config("dev_fake", config_dir=config_dir).budget.tool_seconds == 0
 
 
 def test_ensure_raises_after_limit_reached() -> None:
