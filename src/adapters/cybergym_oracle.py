@@ -773,6 +773,10 @@ class TaskOracle:
     query_task_id: str | None = None
     salt: str = DEFAULT_SALT
     timeout: float = _DEFAULT_TIMEOUT_S
+    # 이 run이 기댄 카나리 보고서의 경로와 sha256(#487). 판정에는 안 쓰고 `RunRecord.oracle`에
+    # 남기려고 run 조립 때 묶는다 - 점수의 유효 조건을 사후에 변호하는 값이다.
+    canary_path: str | None = None
+    canary_sha256: str | None = None
 
     def __post_init__(self) -> None:
         # 마스킹된 id는 **조회에 쓸 실 id가 같이 올 때만** 받는다 — 마스킹 서버는 제출을 마스킹된
