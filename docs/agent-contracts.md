@@ -381,7 +381,7 @@ agent:
    읽힐 수 있으니 「관측이 받쳐 주는 것만 쓴다」를 한 문장 더한다.
    ⏵ 2026-10-04 — **v8은 이 항목의 첫째(repro_spec의 금지 문장을 지운다)를 지키지 않았다.** 그 문장이
    `prompts/auditor/v8/prefix.md:300`에 그대로 있고(`git grep -c "Do not invent build options" prompts/auditor`
-   → v4~v8 각 1) v8이 고친 것은 그 앞 구절(「or by an observation you received on an earlier hop of this
+   → v4~v9 각 1) v8이 고친 것은 그 앞 구절(「or by an observation you received on an earlier hop of this
    call」을 더함)뿐이다. 나머지 둘(「Return only the final Finding JSON object」·「content must contain only the
    Finding JSON object」)은 v8이 다시 썼다. 남긴 문장이 `probe` 사용을 막는지는 v8로 돈 run이 0건이라 **미측정**이다 —
    이 항목을 그대로 두고 v8을 고칠지, 「지어내기 금지라 남겨도 된다」로 항목을 고칠지는 결정이 필요하다.
