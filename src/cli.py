@@ -34,7 +34,7 @@ from src.adapters.container_tools import make_payload_reader
 from src.adapters.cybergym_oracle import (
     TaskOracle,
     checksum,
-    fixless_task_id,
+    refused_family_task_id,
     unsupported_task_id,
 )
 from src.adapters.factory import Deps, build_deps, describe_wiring
@@ -792,7 +792,8 @@ def _oracle_for(
     **제출 전에 거절하는 것** - 주소 모양, `--mask-map` 파일(못 읽거나 JSON 객체가 아니거나 번들의
     masked id가 맵에 없는 것), task_id 모양(마스킹된 id는 `--mask-map`이 실 id를 줄 때만 받는다,
     `unsupported_task_id`), 번들의 체크섬이 클라이언트가 보내는 기본 salt로 계산한 값과 다른 것(다른
-    salt로 만든 번들은 서버가 400으로 거부한다), 키 부재·키 모양(공백·비출력 문자),
+    salt로 만든 번들은 서버가 400으로 거부한다), 서버가 제출을 400으로 거부하는 계열의 실 id
+    (`refused_family_task_id`), 키 부재·키 모양(공백·비출력 문자),
     **카나리 보고서**(없거나 이 과제의 것이 아니거나 통과가 아닌 것 - `_canary_refusal`).
     어느 하나가 걸리면 컨테이너는커녕 요청도 안 나간다. 제출하려 한 run이 조용히 미제출로 끝나면
     「0건 제출」이 설정 오류와 구별되지 않는다(§0).
@@ -840,11 +841,12 @@ def _oracle_for(
     query_task_id = _query_task_id_from_mask_map(args, metadata.task_id)
     if isinstance(query_task_id, _OracleRefused):
         return query_task_id
-    # fix 다리가 없는 계열은 조용한 0점이 되므로 제출 전에 거절한다(#431) - **조회에 쓰는 실 id**로
-    # 가린다. 카나리 검사보다 앞이라 보고서가 다른 과제의 것이어도 사유는 이쪽이다.
-    fixless = fixless_task_id(query_task_id or metadata.task_id)
-    if fixless is not None:
-        return _refuse_oracle(f"{fixless}. 아무것도 제출하지 않았다")
+    # 서버가 제출을 400으로 거부하는 계열은 run을 다 돈 뒤에야 실패하므로 제출 전에 거절한다(#431) -
+    # **조회에 쓰는 실 id**로 가린다. 카나리 검사보다 앞이라 보고서가 다른 과제의 것이어도 사유는
+    # 이쪽이다.
+    refused = refused_family_task_id(query_task_id or metadata.task_id)
+    if refused is not None:
+        return _refuse_oracle(f"{refused}. 아무것도 제출하지 않았다")
     problem = unsupported_task_id(metadata.task_id)
     if problem is not None and query_task_id is None:
         return _refuse_oracle(
