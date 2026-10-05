@@ -172,3 +172,13 @@ def test_wired_prefix_explains_raw_observation_and_model_designation():
     meta = Path(f"prompts/pov/{version}/meta.yaml").read_text(encoding="utf-8")
     assert "미배선(disk-only)" not in meta
 
+
+def test_live_runner_prose_distinguishes_intermediate_from_final_submission():
+    run_doc = runner._run_pov.__doc__ or ""
+    hops_doc = runner._run_pov_hops.__doc__ or ""
+    assert "중간 `gen`마다" in run_doc
+    assert "`designatable=False`" in run_doc
+    assert "최종 지정 후보가 아니지만" in run_doc
+    assert "v3의 중간 gen은" in hops_doc
+    assert "부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`" not in run_doc
+
