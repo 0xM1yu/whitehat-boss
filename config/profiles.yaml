@@ -234,7 +234,7 @@ profiles:
     # ⚠ **전 역할이 `harness_pool`과 같은 §1 키다** — Scout seccoderx·qwen3-14b(v3),
     #   Auditor `qwen3.8-27b`(⏵ 2026-09-29 — 근거 본문 배선과 함께 v3, 같은 날 v4로 올렸다 ·
     #   ⏵ 2026-10-03 v6 — #418·#421 · 사고 켬 · ⏵ 2026-10-04 v7 — #349 SOURCE 서술 · 같은 날 v8 —
-    #   #419 도구 루프), Critic gpt-oss.
+    #   #419 도구 루프 · ⏵ 2026-10-06 v9 — `auditor_guards` 서술), Critic gpt-oss.
     #   checksum·검증 전. **reranker는 2026-09-20에 §1 정본대로 `qwen3-reranker-4b`로
     #   올렸다** — 두 풀 프로필을 같은 diff에서 고친다(`tests/test_config.py`가 쌍의 roles 동일을
     #   기계로 고정하므로 한쪽만 고치면 red다).

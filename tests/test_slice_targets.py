@@ -46,11 +46,12 @@ def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtu
     """이 파일의 `_run`은 Auditor SOURCE 옵션(`AUDITOR_SOURCE_OPTIONS` — 지금 아홉)을 **전부 끈**
     설정에서 돈다(결정 1-b 모양).
 
-    2026-10-03부터 `budgets.yaml`이 그중 일곱을 켠다(entry 줄이기·가드 목록 `auditor_guards`만
-    꺼짐 · #349 · ⏵ 2026-10-04 래퍼 너머 · 간접 피호출 · 쓰기 지점 창) -> 그대로 두면 1-b 규칙을
+    2026-10-03부터 `budgets.yaml`이 그중 일곱을 켠다(entry 줄이기만 꺼짐 · #349 · ⏵ 2026-10-04
+    래퍼 너머 · 간접 피호출 · 쓰기 지점 창 · ⏵ 2026-10-06 가드 목록 `auditor_guards`) -> 그대로
+    두면 1-b 규칙을
     재는 검사마다 호출자 창·정의가 끼어 기대값이 흔들리고, 옵션 하나를 켜는 검사는 다른 것이 같이
     켜진 채로 돈다.
-    옵션을 재는 검사는 `configure`로 그 하나만 켠다. 기본 설정(일곱 켬) 그대로의 모양은
+    옵션을 재는 검사는 `configure`로 그 하나만 켠다. 기본 설정(여덟 켬) 그대로의 모양은
     `test_default_*` 검사가 따로 본다 -> 그 이름은 이 픽스처를 건너뛴다.
     """
     if request.node.name.startswith("test_default_"):
@@ -87,9 +88,9 @@ def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     ⚠ 이 목록은 **판을 센다** — 올리면서 안 늘리면 서빙 판이 빠진다(2026-10-03 v6가 그랬다).
     판 목록 없이 **서빙 판**을 묻는 것은 `test_config.py`의
     `test_the_canonical_auditor_prompt_states_the_runner_source_contract`다. ⏵ 2026-10-04 서빙 판
-    v7(⏵ 같은 날 지금은 v8 — 그 서술을 바이트 그대로 물려받았다)은 옵션 넷(20,000토큰 상한)을 서술해
-    15,000자 철자를 안 든다 -> 그쪽 검사가 서빙 판의 계약을 문다. v6는 #418이 잰 1-b 문장 그대로라
-    여기 남는다.
+    v7(⏵ 같은 날 v8, ⏵ 2026-10-06부터 v9가 그 서술을 바이트 그대로 물려받았다)은 옵션 넷
+    (20,000토큰 상한)을 서술해 15,000자 철자를 안 든다 -> 그쪽 검사가 서빙 판의 계약을 문다.
+    v6는 #418이 잰 1-b 문장 그대로라 여기 남는다.
     """
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 
@@ -1834,8 +1835,8 @@ def test_a_callee_that_calls_the_entry_back_is_carried_whole() -> None:
 def test_default_budgets_carry_definitions_callees_and_caller_windows(tmp_path: Path) -> None:
     """기본 설정(`budgets.yaml` — 2026-10-03부터 옵션 넷 켬, #349)으로 돈 Auditor SOURCE 이벤트가
     네 옵션의 계수를 다 든다. 끄는 줄을 되돌리면(어느 하나라도 0) 그 키가 사라져 여기서 걸린다 --
-    정본 프롬프트(v7 · ⏵ 2026-10-04 지금은 v8 — 같은 서술)가 넷을 서술하므로 기본에서 빠지면 서술이
-    거짓이 된다."""
+    정본 프롬프트(v7 · ⏵ 2026-10-04 v8 · ⏵ 2026-10-06부터 v9 — 같은 서술)가 넷을 서술하므로
+    기본에서 빠지면 서술이 거짓이 된다."""
     path = _slices_file(tmp_path, [_slice(*_CALLS_ONLY)])
 
     _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())

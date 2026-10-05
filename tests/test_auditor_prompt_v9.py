@@ -86,3 +86,25 @@ def test_the_served_config_turns_guards_on_and_its_prompt_declares_it() -> None:
     entry = config.models["qwen3.8-27b"].transition(prompt_template_version="v8")
     on_v8 = config.transition(models={**config.models, "qwen3.8-27b": entry})
     assert _undescribed_source_options(on_v8) == ["auditor_guards(auditor/v8)"]
+
+
+def test_the_guards_bullet_keeps_each_claim_the_scan_makes() -> None:
+    """문장마다 한 구절씩 문다 - **철자 pin이지 성질이 아니다**(구절이 있어도 뜻이 뒤집힌 문장은 못
+    잡는다). 그래도 항목에서 구절째 빠지거나 철자가 바뀌면 여기서 빨개진다. 독립 리뷰가 항목 문장을
+    고쳐도 초록이던 변이를 걸었고, 코드가 하는 일 중 서술이 빠뜨리거나 좁게 쓴 곳(삼항 · 탈출문 ·
+    우선순위)을 채우면서 그 구절을 핀으로 둔다."""
+    bullet = _guards_bullet()
+
+    for phrase in (
+        "harness-generated block (not source code)",
+        "`[alias: lhs←rhs]`",
+        "a ternary assigned to a sink argument",
+        "`[exit: <that statement>]`",
+        "not inside a nested block, an inner `if`, a loop, or an `else`",
+        "directly are kept before alias rows",
+        "no argument identifier can be found",
+        "the file's line numbers cannot be aligned",
+        "It is never omitted for size",
+        "not as evidence that a range or null check protects the sink",
+    ):
+        assert phrase in bullet, phrase
