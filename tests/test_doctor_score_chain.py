@@ -117,7 +117,9 @@ def test_reads_the_nodes_live_content_set(monkeypatch, tmp_path, role, module, a
 
 
 def test_cli_exit_is_one_for_real_score_chain(monkeypatch, tmp_path, capsys):
-    config: HarnessConfig = load_config("harness_pool")
+    # pov 판을 v2로 박는다 - 서빙 판이 `pov._WIDE_INPUT_VERSIONS`에 들면(v3, PR #499) 이 오류가 안
+    # 나는 것이 정상이라 「서빙 프로필의 현재 판」에 기대면 머지 순서에 따라 이 테스트가 깨진다.
+    config: HarnessConfig = _version(load_config("harness_pool"), "pov", "v2")
     monkeypatch.setattr(cli, "load_profile", lambda *_a, **_k: config)
     assert cli.main(["doctor", "--profile", "harness_pool", "--artifacts-root", str(tmp_path)]) == 1
     assert "점수 사슬" in capsys.readouterr().out
@@ -145,6 +147,7 @@ def test_mixed_profile_exempts_only_the_fake_role(monkeypatch, tmp_path):
     config = load_config("harness_pool_hybrid")
     roles = {**config.profile.roles, "critic": "fake"}
     config = config.transition(profile=config.profile.transition(roles=roles))
+    config = _version(config, "pov", "v2")  # 위 테스트와 같은 사유 - v3는 내용 인식 판이다
     assert config.served_models()
     checks = _checks(monkeypatch, tmp_path, config)
     assert not any(c.severity == cli.Severity.ERROR and "critic" in c.message
