@@ -472,7 +472,13 @@ def _set_synthesize(ctx: RunContext, value: int) -> None:
 
 
 def test_synthesize_off_leaves_an_empty_repro_spec(ctx: RunContext) -> None:
-    """#S7 기본(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈추던 종전 동작. 합성 이벤트 없음."""
+    """#S7 끈 경우(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈춘다. 합성 이벤트 없음.
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 `synthesize_repro_spec: 1`을 선언해 **기본값이 1로
+    바뀌었다.** 그래서 이 검사는 커밋된 기본값에 기대지 않고 0을 **주입한다** — 무는 명제는
+    「켜짐/꺼짐 중 어느 것이 기본인가」가 아니라 「0이면 비는 채로 멈춘다」다.
+    """
+    _set_synthesize(ctx, 0)
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
 
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
@@ -940,10 +946,16 @@ def _pov_subjects(ctx: RunContext) -> list[str | None]:
 
 
 def test_pov_does_not_run_outside_validated_while_the_threshold_is_zero(ctx: RunContext) -> None:
-    """기본값(`pov_attempt_top_n: 0`)에서 `validated` 밖의 Finding은 PoV를 **안** 돈다 — 종전 동작
-    그대로다. 이 검사가 「0이 켜진 값이 아니다」를 문다(기본값을 올리는 변이가 여기서 빨개진다)."""
+    """`pov_attempt_top_n: 0`이면 `validated` 밖의 Finding은 PoV를 **안** 돈다.
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 8을 선언해 **기본값이 올라갔다.** 전 판은 여기서
+    `thresholds.pov_attempt_top_n == 0`을 단언해 기본값 자체를 묶었는데, 그 단언은 「0이면 안
+    돈다」를 무는 것이 아니라 「기본이 0이다」를 물었다. 0을 **주입**해 명제를 원래 자리로 되돌린다.
+    짝 검사 `test_pov_runs_outside_validated_when_the_threshold_is_set`이 양수 쪽을 문다.
+    """
     state, _ = _outside_validated(ctx, [("find_0001", 0.9)])
-    assert ctx.config.thresholds.pov_attempt_top_n == 0, "기본값 전제가 깨졌다"
+    _with_top_n(ctx, 0)
+    assert ctx.config.thresholds.pov_attempt_top_n == 0, "주입이 안 먹었다"
 
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
@@ -1167,7 +1179,9 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
     `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
     state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
 
-    def ask(ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list) -> Decision:
+    def ask(
+        ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list, source=None
+    ) -> Decision:
         verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
         return Decision(
             decision_id=decision_id,
@@ -1379,6 +1393,9 @@ def test_stamp_issued_revalidates_instead_of_copying(ctx: RunContext, state: Fin
     초록이었다(D83 리뷰 변이 ⑤). 그 검증기를 직접 태운다 — 재현 명세 없는 `validated`·`proven`은
     만들어질 수 없어야 한다.
     """
+    # ⏵ 2026-10-05 — `synthesize_repro_spec` 기본값이 1이 되어 Auditor가 명세를 **채운다.**
+    # 이 검사의 전제는 「명세 없는 Finding」이라 그 스위치를 끄고 만든다(아래 단언이 전제를 묶는다).
+    _set_synthesize(ctx, 0)
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
     assert finding.repro_spec is None, "픽스처 전제 — 재현 명세 없는 Finding이어야 검증기가 문다"
@@ -1694,7 +1711,7 @@ def _facts_of(body: str) -> dict:  # noqa: ANN202
 
 
 def test_critic_v1_prompt_does_not_carry_the_evidence_location(ctx: RunContext) -> None:
-    """**v1 Critic(실서빙 `gpt-oss-20b`)의 프롬프트 바이트는 main과 같다** — 위치를 싣지 않는다.
+    """dev_fake의 v1 Critic은 기존 metadata 렌더를 유지한다 — 위치를 싣지 않는다.
 
     `_CONTENT_AWARE_VERSIONS`가 v1을 뺀 것은 v1이 바이트 동일이라 재측정(evaluation §2.3)이 안
     걸리게 하려는 것이다(#237 HIGH-1). 위치 토막이 그 문 밖에서 붙으면 판 번호 변화 없이 실서빙
@@ -1785,12 +1802,12 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_v4_and_v5() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_v5_and_v6() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert {"v3", "v4", "v5"} <= critic._CONTENT_AWARE_VERSIONS
+    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6"})
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -1951,14 +1968,18 @@ def test_critic_prompt_is_content_conditional(version: str) -> None:
     assert "contain no body text" in prefix
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_evidence_completeness_wording(role: str) -> None:
     """#346 M1/M2: v5를 v4 텍스트로 되돌리면 실패하는 철자 핀이지 모델 행동 검증은 아니다.
 
     출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
-    변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 활성화 전 별도 측정한다.
+    변이는 못 잡는다. 실제 모델의 근거 사용·과보류는 별도 측정 대상이며
+    배선된 v6 활성화 전에 그 측정을 했다는 기록은 없다(agent-contracts §4).
     """
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "factual summary" not in normalized
     for text in (
@@ -1982,10 +2003,13 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
         assert "Set rebuttal_axis=[] and use non-empty evidence_refs" in normalized
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
     """러너·노드의 별도 호출 경계를 명시하는 문구 핀; 실제 모델 행동 검증은 아니다."""
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     if role == "auditor":
         assert "does not receive Scout's `analysis_summary`" in normalized
@@ -1998,7 +2022,7 @@ def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
         assert "does not automatically retrieve missing material and retry" in normalized
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     """#346 M2 잔여: 부분 본문 규칙 2·3과 Critic §1 범위 문단의 판정 **방향** 문장 철자 핀.
 
@@ -2010,7 +2034,10 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
     §4 규칙 5).
     """
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
         "What a partial body does not show is unknown, not absent: a missing guard, caller, "
@@ -2039,13 +2066,16 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
         assert text in normalized, text
 
 
-def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> None:
+@pytest.mark.parametrize(
+    "version", ["v5", load_config("harness_pool").model_for("critic").prompt_template_version]
+)
+def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional(version: str) -> None:
     """#346 sumin0218 M1: 기존 보류 규칙에 판정을 좌우하는 누락 조건이 붙어 있다.
 
     출처: critic/v5/prefix.md Review procedure §1·§3. 이 핀은 이 문구의 회귀를 잡을 뿐
     모든 의미 반전이나 실제 모델의 규칙 우선순위 준수를 검증하지 않는다.
     """
-    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "cannot be checked from supplied content and the verdict depends on" in normalized
     condition = "unresolved fact that could change the verdict and required material is absent"
@@ -2054,7 +2084,10 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> N
     assert "need_evidence is required when a rebuttal is plausible" not in normalized
 
 
-def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
+@pytest.mark.parametrize(
+    "version", ["v5", load_config("harness_pool").model_for("critic").prompt_template_version]
+)
+def test_critic_v5_role_summary_states_the_decisive_fact_condition(version: str) -> None:
     """#346 sumin0218 M1 잔여: 「세 결과」 요약도 보류를 판정을 좌우하는 반박으로 한정한다.
 
     v4에서 상속된 무한정 문구 「the path or a possible rebuttal cannot be decided」는 잘린
@@ -2064,7 +2097,7 @@ def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
     돌아오거나 한정·꼬리가 바뀌면 빨개지고, 이 줄을 남긴 채 무한정 조건을 다른 문장으로
     덧붙이는 변이는 못 잡는다. 모델이 어느 쪽을 따르는지는 안 쟀다.
     """
-    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "the path or a possible rebuttal cannot be decided" not in normalized
     summary = "need_evidence: the path, or a specific rebuttal that could change the verdict,"
@@ -2825,12 +2858,19 @@ def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: R
     assert kept == [5, 8]  # entry 5에 가까운 둘, 듬성한 번호 보존
 
 
-def test_scout_slice_trim_defaults_off_and_is_absent_from_flatten() -> None:
-    """#375 M-3/M-4 — 기본값 0이고, 0이면 `flatten()`에 키가 없다(#349/#351 선례)."""
+def test_scout_slice_trim_is_absent_from_flatten_when_off() -> None:
+    """#375 M-3/M-4 — 0이면 `flatten()`에 키가 없고 1이면 실린다(#349/#351 선례).
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 `scout_slice_trim: 1`을 선언해 **기본값이 1이 됐다.**
+    전 판은 커밋된 기본값이 0이라고 단언했고 그 줄에 *"기본값 1로 바꾸면 깨진다(M16)"*라고
+    적혀 있었다 — 그날이 왔다. 무는 명제는 **기본값이 아니라 `flatten()`의 모양**이라 두 값을
+    직접 만들어 양쪽을 문다. 이름의 `defaults_off`도 떼었다(거짓이 됐다).
+    """
     thresholds = load_config("dev_fake").thresholds
-    assert thresholds.scout_slice_trim == 0  # 기본값 1로 바꾸면 깨진다(M16)
-    assert "scout_slice_trim" not in thresholds.flatten()
-    on = thresholds.model_copy(update={"scout_slice_trim": 1})
+    off = thresholds.transition(scout_slice_trim=0)
+    on = thresholds.transition(scout_slice_trim=1)
+
+    assert "scout_slice_trim" not in off.flatten()
     assert on.flatten()["scout_slice_trim"] == 1.0  # 켜면 기록에 실린다
 
 

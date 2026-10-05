@@ -183,10 +183,9 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
-    # v1로 둔다. critic/v3 prefix는 metadata-only 런타임에서 항상 need_evidence를 내므로,
-    # 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). **그
-    # 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — v3로 flip하는 것은
-    # validated·proven이 실제로 나오는지 확인하는 후속의 몫이다. 미참조 버전은 정상이다(v2도).
+    # ⏵ 2026-10-05 — Critic v6을 배선한다. 근거 본문·위치와 Auditor가 본 SOURCE를
+    # 함께 싣는다. 공유 fake 엔트리는 v1을 유지한다. 이전 입력과 직접 비교하지 않는다.
+    # v6의 uphold 관측·입력 토큰 수·스키마 준수율은 0(미실측 — 실모델 run 필요).
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
@@ -199,8 +198,13 @@ models:
     # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
-    request_timeout_s: 900
-    prompt_template_version: "v1"
+    # 🔴 ⏵ 2026-10-05 — 900에서 **3,600**으로 올렸다. `output_max_by_role.critic`이 32,768이 되어
+    # 32,768 ÷ 12 tok/s ≈ 2,731초가 필요하다(계산값 · 12는 위와 같은 안 잰 가정이다).
+    # ⚠ **위 「지금(4,096 · 순차)은 기본 300 s로도 든다」는 이제 전이다** — 그 문단의 93 s·71.8 s·95 s는
+    # 전부 `max_tokens 4096`에서 잰 값이고 상한이 8배가 됐다. 같은 보고서 §3.3의 16,384토큰 382초를
+    # 비율로 쓰면 ≈42.9 tok/s이고 32,768은 ≈764초다(계산값) — 3,600은 그 위에 네 배 여유를 둔 값이다.
+    request_timeout_s: 3600
+    prompt_template_version: "v6"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에

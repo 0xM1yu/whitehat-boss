@@ -175,13 +175,16 @@ def test_the_reasons_come_in_one_stable_order() -> None:
 # --- 임계 -------------------------------------------------------------------------------
 
 
-def test_the_gate_is_off_by_default_and_stays_out_of_the_run_record_until_turned_on() -> None:
-    """기본 0이고 0이면 `flatten()`에 키가 없다 — 기본 꺼짐 run의 `RunRecord.thresholds` 모양이
+def test_the_gate_stays_out_of_the_run_record_until_turned_on() -> None:
+    """0이면 `flatten()`에 키가 없다 — 기본 꺼짐 run의 `RunRecord.thresholds` 모양이
     예전 manifest와 같다(`scout_slice_trim` 선례). 관측 전용이라 프롬프트 meta `source_options`가
     서술할 입력 옵션이 아니다 — `AUDITOR_SOURCE_OPTIONS`에 안 들고 켜도 켜진 입력 옵션 집합이 안
     바뀐다(`cli`가 안 막는다). 집합을 `()`로 박지 않고 게이트를 켜기 전 것과 비교한다 — 입력
     옵션의 기본값(`config/budgets.yaml`)이 바뀌어도 이 성질은 그대로다."""
-    thresholds = load_config("dev_fake").thresholds
+    # ⏵ 2026-10-05 — `config/budgets.yaml`이 `auditor_source_gate: 1`을 선언해 **기본값이 1이
+    # 됐다.** 전 판은 여기서 커밋된 기본값이 0이라고 단언했는데, 그 단언이 무는 것은
+    # 「기본이 꺼짐」이고 이 검사의 명제는 **`flatten()`의 모양**이다. 두 값을 직접 만든다.
+    thresholds = load_config("dev_fake").thresholds.transition(auditor_source_gate=0)
     assert thresholds.auditor_source_gate == 0
     assert "auditor_source_gate" not in thresholds.flatten()
 
@@ -408,8 +411,10 @@ def test_the_gate_never_changes_what_the_auditor_reads_and_off_leaves_the_old_ev
     old = _slices_file(tmp_path / "old", [_cut_case_b(with_facts=False)])
     cut = _slices_file(tmp_path / "cut", [_cut_case_b()])
     runs = {
-        "old": _run(tmp_path, "old", slices_path=old, before=_with_index()),
-        "off": _run(tmp_path, "off", slices_path=cut, before=_with_index()),
+        # ⏵ 2026-10-05 — `budgets.yaml`이 게이트를 1로 켜서 이 둘도 `gate_reasons`를 들고
+        # 왔다. 「꺼진 run」이 이 검사의 전제라 명시로 0을 준다(기본값에 안 기댄다).
+        "old": _run(tmp_path, "old", slices_path=old, before=_with_index(), configure=_gate(0)),
+        "off": _run(tmp_path, "off", slices_path=cut, before=_with_index(), configure=_gate(0)),
         "on": _run(tmp_path, "on", slices_path=cut, before=_with_index(), configure=_gate(1)),
     }
 
