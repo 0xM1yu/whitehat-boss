@@ -264,6 +264,10 @@ def test_markup_witness_still_exists_in_the_actual_meta():
          "이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다."),
         ("config/budgets.yaml", "(1) **당시 v1", "(2)",
          "v1 metadata-only 경로의 수", "**Critic 프롬프트는 작다**"),
+        ("src/orchestrator/runner.py", "# 넓은 입력 판은", "entrypoint =",
+         "이전 판 또는 캐시 부재 시", "타깃이 아니면"),
+        ("src/orchestrator/nodes/pov.py", "def open_hop(", "`fuzz_entrypoint`는",
+         "비슬라이스 타깃도 Auditor의", "두 문자열이 같으므로"),
     ],
 )
 def test_reviewed_prose_sections_keep_the_specific_correction(
