@@ -103,6 +103,12 @@ STATUS_NOT_REACHED = "not_reached"
 # **전순서**이고, 서로 다른 PoC가 끝까지 동점일 수 없다 — 못 가리는 분기가 없어졌으니 사유도
 # 없앴다. 지우지 않고 두면 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
 REASON_NO_POC = "no_poc"
+# 제출 전에 거부한 0바이트 PoC의 사유 — 제출이 **없었으므로** 실패로 세지 않는다(이슈 #423).
+ERROR_EMPTY_POC = "empty_poc"
+# 제출은 성공했는데 서버에 그 바이트의 판정 행이 없거나 코드가 비었다 — 조회가 비었다는 사실을
+# 「안 돌았다」와 가르는 표지다(`observation_error`).
+OBSERVATION_NO_VERDICT = "no_verdict"
+
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
 # 후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 규칙이 거부했다. 이름은 등급
 # 미상에서 굳었지만 `runner._designate_final`의 검사가 둘을 같이 본다. 모르는 값을 0으로 깔면
@@ -172,6 +178,11 @@ class VulAttempt:
     def ok(self) -> bool:
         return self.submission is not None
 
+    @property
+    def skipped(self) -> bool:
+        """제출 전에 거부했다(0바이트) — 제출 시도도 실패도 아니다."""
+        return self.error == ERROR_EMPTY_POC
+
 
 def vul_ok(
     finding_id: str,
@@ -218,6 +229,18 @@ def vul_failed(
         designatable=designatable,
     )
 
+
+def vul_empty(finding_id: str, poc: bytes, *, designatable: bool) -> VulAttempt:
+    """0바이트 PoC — 제출하지 않았다. 실패가 아니라 **건너뜀**이다(`VulAttempt.skipped`)."""
+    return VulAttempt(
+        finding_id=finding_id,
+        poc_sha256=hashlib.sha256(poc).hexdigest(),
+        poc_bytes=0,
+        wall_ms=0,
+        error=ERROR_EMPTY_POC,
+        error_detail="PoC가 0바이트라 vul 다리에 제출하지 않았다",
+        designatable=designatable,
+    )
 
 @dataclass(frozen=True)
 class FinalAttempt:
@@ -301,11 +324,27 @@ class OracleLedger:
 
     @property
     def submitted(self) -> int:
+        """성공한 vul 제출 **전부** — 중간 gen 포함이다. 최종 후보 수는 `candidates`다."""
         return sum(1 for attempt in self.attempts if attempt.ok)
 
     @property
     def failed(self) -> int:
-        return sum(1 for attempt in self.attempts if not attempt.ok)
+        """제출을 시도했다가 실패한 수 — 0바이트라 안 낸 것(`skipped`)은 세지 않는다."""
+        return sum(1 for attempt in self.attempts if not attempt.ok and not attempt.skipped)
+
+    @property
+    def skipped_empty(self) -> int:
+        return sum(1 for attempt in self.attempts if attempt.skipped)
+
+    @property
+    def intermediate(self) -> int:
+        """중간 gen 시도 수(성공·실패·건너뜀 합) — 되먹임을 썼는지의 표지다."""
+        return sum(1 for attempt in self.attempts if not attempt.designatable)
+
+    @property
+    def observation_failed(self) -> int:
+        """제출은 성공했는데 판정 조회가 실패했거나 비었던 수 — 모델은 `unavailable`을 받았다."""
+        return sum(1 for attempt in self.attempts if attempt.observation_error is not None)
 
     @property
     def record_ref(self) -> str | None:
@@ -325,7 +364,7 @@ class OracleLedger:
         # 최종 지정 사유이므로 모델 submit 시도만 본다. 중간 gen의 제출 실패가 최종 답 부재를
         # `all_vul_submissions_failed`나 `rate_limited`로 바꾸면 모델이 submit하지 않은 사실을
         # 잃는다.
-        failures = [a for a in self.attempts if a.designatable and not a.ok]
+        failures = [a for a in self.attempts if a.designatable and not a.ok and not a.skipped]
         if not failures:
             return REASON_NO_POC
         if all(a.error_status == _HTTP_TOO_MANY_REQUESTS for a in failures):
@@ -344,6 +383,18 @@ class OracleLedger:
             # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
+            # 아래 셋은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 해서다.
+            # `vul_submitted`는 중간 gen 제출을 **포함**하므로(`submitted`) `vul_intermediate`가
+            # 있으면 그 수만큼이 최종 후보가 아니다.
+            **{
+                key: count
+                for key, count in (
+                    ("vul_intermediate", self.intermediate),
+                    ("vul_observation_failed", self.observation_failed),
+                    ("vul_empty_poc", self.skipped_empty),
+                )
+                if count
+            },
         }
 
     def record(self) -> dict[str, object]:
@@ -368,6 +419,13 @@ class OracleLedger:
         if self.failed:
             out.append(f"채점기 vul 제출 {self.failed}건이 예외로 실패했다 - 사유는 {where}에 있다")
         # 후보가 남은 run에서도 말한다 — 점수가 조용히 낮아진 사유가 된다(이슈 #422).
+        if self.observation_failed:
+            out.append(
+                f"중간 gen의 채점기 판정 조회 {self.observation_failed}건이 실패하거나 비어 모델이 "
+                f"`unavailable`을 받았다 - 사유는 {where}에 있다"
+            )
+        if self.skipped_empty:
+            out.append(f"0바이트 PoC {self.skipped_empty}건은 제출하지 않았다")
         if self.rate_limited:
             out.append(
                 f"그중 {self.rate_limited}건은 채점기 레이트리미트(HTTP 429)다 - 재시도가 없어 "
@@ -377,7 +435,8 @@ class OracleLedger:
         if final is None:
             out.append(
                 "채점기가 배선됐지만 8단계가 끝까지 돌지 않아 최종 PoC를 지정하지 못했다"
-                f"(vul 제출 {self.submitted}건) - 이 run은 채점 점수가 없다"
+                f"(vul 제출 {self.submitted}건, 그중 최종 후보 {len(self.candidates)}건) - "
+                "이 run은 채점 점수가 없다"
             )
         elif final.status == STATUS_FAILED:
             reason = f"사유는 {sidecar}" if sidecar else "사유는 trace의 oracle_final"
@@ -386,7 +445,7 @@ class OracleLedger:
                 f"({reason})"
             )
         elif final.status == STATUS_NONE:
-            out.append(_none_warning(final, self.submitted))
+            out.append(_none_warning(final, len(self.candidates)))
         else:
             legs = _cached_legs(final, self.attempts)
             if legs:
@@ -414,7 +473,7 @@ class OracleLedger:
             self.write_error = None
 
 
-def _none_warning(final: FinalAttempt, submitted: int) -> str:
+def _none_warning(final: FinalAttempt, candidates: int) -> str:
     """`status == none`의 경고 한 문장 - 사유마다 다른 말이다(같은 문장이면 사유가 안 가려진다).
 
     콘솔에 찍히므로 cp949로 인코딩할 수 있는 글자만 쓴다.
@@ -422,8 +481,9 @@ def _none_warning(final: FinalAttempt, submitted: int) -> str:
     tail = "이 run은 채점 점수가 없다"
     if final.reason == REASON_GRADE_UNKNOWN:
         return (
-            f"vul 제출이 성공한 후보가 {submitted}건인데 그중 내부 근거 등급 또는 confidence를 "
-            "모르는 것이 있어 최종 PoC를 지정하지 않았다 - 모르는 값으로 고르면 없는 근거로 "
+            f"vul 제출이 성공한 최종 후보가 {candidates}건인데 그중 내부 근거 등급 또는 "
+            "confidence를 모르는 것이 있어 최종 PoC를 지정하지 않았다 - 모르는 값으로 고르면 "
+            "없는 근거로 "
             f"고르는 것이다. fix 다리와 판정 조회를 돌리지 않았다 - {tail}"
         )
     if final.reason == REASON_RATE_LIMITED:
@@ -473,6 +533,9 @@ def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
     }
     if not attempt.designatable:
         row["designatable"] = False
+    if attempt.skipped:
+        return {**row, "status": "skipped", "error": attempt.error,
+                "error_detail": attempt.error_detail}
     if attempt.submission is None:
         return {
             **row,

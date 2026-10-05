@@ -35,9 +35,9 @@ OUTPUT_SCHEMA = PovAction
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
 # 않는다). 2026-10-05부터 `config/models.yaml`의 실 PoV 좌석은 v3라 이 넓은 입력을 받는다. v2는
 # 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4, 프롬프트가 바뀌면
-# 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도 없지만, 다음에
-# 기존 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기 관측이 함께 켜졌지만 둘은
-# 서로 다른 입력 변경이다(#354/#386①).
+# 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도 없지만, v2는
+# 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기 관측이 함께
+# 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).

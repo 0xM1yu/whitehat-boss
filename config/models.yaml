@@ -790,7 +790,8 @@ models:
       presence_penalty: 0.0
     thinking_token_budget: 28672
     # v3 = PoV 툴 루프 + 넓은 SOURCE·진입점·도구 출력 꼬리 + 중간 gen의 vul 판정 관측.
-    # 2026-10-05 #354/#386①. 판정 효과·실모델 입력 토큰은 0(미실측)이다.
+    # 2026-10-05 #354/#386①. 판정 관측은 `run --oracle-submit`일 때만 실린다. 판정 효과·실모델
+    # 입력 토큰은 0(미실측)이다.
     prompt_template_version: "v3"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
