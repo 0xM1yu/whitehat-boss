@@ -810,8 +810,9 @@ def _oracle_for(
     target = server.rstrip("/")
     print(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
-        f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. 후보마다 vul 다리만 보낸다. "
-        "fix 다리와 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
+        f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. vul 다리에는 모델이 "
+        "submit한 PoC와(pov v3) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
+        "fix 다리와 최종 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
         "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
         "하나를 고른다(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). 등급을 "
         "모르는 후보가 있으면 보내지 않는다(confidence를 모르는 후보도 같다)"
@@ -1784,8 +1785,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--oracle-submit",
         action="store_true",
-        help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
-        "fix 다리와 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 성공한 후보가 "
+        help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). "
+        "vul 다리에는 모델이 submit한 PoC와(pov v3) 중간 gen을 내고 중간 gen은 판정 조회도 "
+        "한다. fix 다리와 최종 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 "
+        "성공한 최종 후보가 "
         "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 "
         "값의 전순위(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시)로 고른 하나에 "
         "돈다 - 등급 또는 confidence를 모르는 후보가 있으면 안 돈다(oracle_final은 status "

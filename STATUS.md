@@ -264,7 +264,7 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 
 ### 🟡 PoV(PoC) 생성 — 러너 배선·과제 로더·툴 루프 착지, 실서빙 전
 
-**현재:** `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
+**현재:** `Role.POV` + `prompts/pov/v3/`(2026-10-05 배선, 그전은 v2) + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
 `PovSpec` → 순수·결정론 `assemble_poc` → 바이트, council 2026-09-30 fork B-iii)에 더해, 러너가
 `Stage.VALIDATE`에서 `validate.run`과 **나란히** pov를 `_run_pov_hops` 루프로 부른다(추가형 — 캡슐
 미스·스키마·버릴 수 있는 게이트웨이 실패는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽
@@ -306,7 +306,7 @@ materialize되기 전(위 호스트 후속)에는 8단계 도구 실행이 PoC�
 | 방향 | 내용 |
 |---|---|
 | A | 데이터셋에 딸린 정답 PoC 재생 (CyberGym/OSS-Fuzz) |
-| B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
+| B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v3/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
 | C | 퍼징으로 크래시 발견 (비용 큼, 후순위) |
 
 ⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
