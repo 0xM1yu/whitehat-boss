@@ -5019,14 +5019,16 @@ def incomplete_fields(
     warnings = []
     if not record.tool_images:
         # Fake 런타임이면 컨테이너가 정말 없다. 그 밖의 런타임에서 비는 것은 「이미지 digest를
-        # 못 기록했다」다(도구 단계 전에 멈춘 run도 그렇다) - 「컨테이너 없이 실행」이라 쓰면 설정
-        # 오류로 읽힌다(#479 (e)).
+        # 못 기록했다」다 - `tool_images`는 run 시작 전(`build_deps`)에 `images()`가 채우므로 도구
+        # 단계에 닿았는지와 무관하고, 비는 사유는 이미지가 로컬에 없음 · 런타임에 못 닿음 ·
+        # sif 없음이다(보고서 4절의 WSL run은 Docker 소켓이 없었다). 「컨테이너 없이 실행」이라
+        # 쓰면 설정 오류로 읽힌다(#479 (e)).
         runtime = record.tool_runner
         why = (
             "컨테이너 없이 실행"
             if runtime == "fake"
             else f"{runtime} 런타임인데 도구 이미지 digest를 기록하지 못했다 - "
-            "도구 단계 전에 멈췄거나 읽지 못했다"
+            "이미지가 없거나 런타임에 닿지 못했다"
         )
         warnings.append(f"tool_images가 비어 있다 ({why}). 모델 비교표에서 제외한다")
     if served_models:
