@@ -274,7 +274,8 @@ def test_query_failure_shows_in_the_summary_and_warnings(ctx):  # noqa: ANN001, 
 
 def test_clean_run_keeps_the_manifest_keys_it_had():
     ledger = oracle_log.OracleLedger(wired=True)
-    ledger.add_attempt(oracle_log.vul_ok("f", b"a", VulSubmission(TASK_ID, "id", 77), 1))
+    sub = VulSubmission(TASK_ID, "id", 77)
+    ledger.add_attempt(oracle_log.vul_ok("f", b"a", sub, 1, designatable=True))
     assert set(ledger.summary()) == {
         "vul_submitted", "vul_failed", "final", "final_reason", "record",
     }
@@ -291,7 +292,7 @@ def test_warning_counts_candidates_not_submissions():
     for name in ("a", "b"):
         ledger.add_attempt(oracle_log.vul_ok("f", name.encode(), sub, 1, designatable=False))
     for name in ("c", "d"):
-        ledger.add_attempt(oracle_log.vul_ok(name, name.encode(), sub, 1))
+        ledger.add_attempt(oracle_log.vul_ok(name, name.encode(), sub, 1, designatable=True))
     ledger.set_final(oracle_log.FinalAttempt(
         status=oracle_log.STATUS_NONE, reason=oracle_log.REASON_GRADE_UNKNOWN,
     ))
@@ -400,3 +401,62 @@ def test_prose_no_longer_says_every_vul_submission_is_a_candidate():
         text = Path(path).read_text(encoding="utf-8")
         for phrase in phrases:
             assert phrase not in text, (path, phrase)
+
+
+def test_summary_counts_candidates_apart_from_intermediate_attempts():
+    sub = VulSubmission(TASK_ID, "id", 77)
+    ledger = oracle_log.OracleLedger(wired=True)
+    ledger.add_attempt(oracle_log.vul_ok("f", b"a", sub, 1, designatable=False))
+    ledger.add_attempt(oracle_log.vul_failed("f", b"b", RuntimeError("x"), 1, designatable=False))
+    ledger.add_attempt(oracle_log.vul_ok("f", b"c", sub, 1, designatable=True))
+    summary = ledger.summary()
+    # 성공한 중간 1 + 실패한 중간 1 + 최종 1: 둘의 차(2 - 2)가 후보 수가 아니다.
+    assert (summary["vul_submitted"], summary["vul_intermediate"]) == (2, 2)
+    assert summary["vul_candidates"] == 1
+
+
+def test_a_run_without_intermediates_has_no_candidate_key():
+    ledger = oracle_log.OracleLedger(wired=True)
+    ledger.add_attempt(oracle_log.vul_ok("f", b"a", VulSubmission(TASK_ID, "id", 77), 1,
+                                      designatable=True))
+    assert "vul_candidates" not in ledger.summary()
+
+
+def test_cached_marker_never_rides_on_an_unavailable_line(ctx):  # noqa: ANN001, F811
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle(codes=(None,), vul_cached=True), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    body = _prompts(scripted)[-1]
+    assert "oracle_vul=unavailable" in body and "cached" not in body
+
+
+def test_ledger_constructors_have_no_default_for_designatable():
+    sub = VulSubmission(TASK_ID, "id", 77)
+    with pytest.raises(TypeError):
+        oracle_log.vul_ok("f", b"a", sub, 1)
+    with pytest.raises(TypeError):
+        oracle_log.vul_failed("f", b"a", RuntimeError("x"), 1)
+
+
+def test_no_live_source_says_pov_v3_is_unwired():
+    """Proposition pin (CLAUDE.md 2.5): 'the wired PoV prompt is v2 / v3 is not wired'.
+
+    Scans every live doc and source (dated reports under docs/research and docs/experiments and
+    this tests/ tree are excluded) for the forms the review found plus the nearby phrasings.
+    """
+    import re
+
+    forms = re.compile(
+        r"v3(는|가|은)?\s*(아직\s*)?미배선|미배선\s*`?v3|배선된\s*v2|v3(는|가)\s*아직\s*배선"
+    )
+    skipped = ("docs/research", "docs/experiments", "docs/decisions", "tests", "_workspace", ".git")
+    offenders = []
+    for suffix in ("*.md", "*.py", "*.yaml"):
+        for path in Path(".").rglob(suffix):
+            posix = path.as_posix()
+            if posix.startswith(skipped):
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if forms.search(line):
+                    offenders.append(f"{posix}:{number}")
+    assert not offenders, offenders
