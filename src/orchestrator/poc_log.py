@@ -37,9 +37,9 @@
 
 **바이트로 쓴다.** `open(…, "xb")`는 개행을 번역하지 않는다. 텍스트로 쓰면 Windows에서 파일은
 CRLF인데 digest는 LF 본문의 해시가 되어 digest가 그 파일과 안 맞는다 — `_write`
-(`src/adapters/container_tools.py`)가 실제로 그 상태이고 #387이 그것이다. `os.open`을 직접 쓰면
-Windows에서 `O_BINARY`를 따로 주지 않는 한 같은 번역이 난다(2026-10-02 이 장비에서 LF가 CRLF로,
-CRLF가 CR·CR·LF로 바뀌는 것을 실측했다) — 그래서 `open`이다.
+(`src/adapters/container_tools.py`)가 그 상태였고(#387) 지금은 바이트 쓰기로 고쳐졌다.
+`os.open`을 직접 쓰면 Windows에서 `O_BINARY`를 따로 주지 않는 한 같은 번역이 난다
+(2026-10-02 이 장비에서 LF가 CRLF로, CRLF가 CR·CR·LF로 바뀌는 것을 실측했다) — 그래서 `open`이다.
 
 **digest는 파일에서 계산하고, 되읽은 바이트를 조립한 바이트와 대조한다.** 파일에서만 계산하면
 digest는 그 파일에 대해 항상 참인데 번역된 바이트가 「의도된 내용」으로 굳는다(#387이 그 방안의
