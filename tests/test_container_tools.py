@@ -44,6 +44,9 @@ from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 
 RUN_ID = "run_20260901_0001"
+LF = chr(10)
+CRLF = (chr(13) + chr(10)).encode()
+
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 GDB_TARGET = Path(__file__).resolve().parent / "fixtures" / "gdb"
 OBSERVED_AT = datetime(2026, 9, 1, tzinfo=UTC)
@@ -742,6 +745,49 @@ def test_log_records_the_command_that_actually_ran(tmp_path: Path, spy: _Spy) ->
     assert "--error" in body, "실제 실행 명령이 로그에 없다"
     assert "(exit=0)" in body
     assert evidence.digest == f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}"
+
+
+def test_the_log_digest_matches_the_bytes_on_disk(tmp_path: Path, spy: _Spy) -> None:
+    """digest는 **그 파일**을 검증하는 값이다 — 그래서 바이트로 대조한다 (이슈 #387).
+
+    ⚠ 위 검사는 `read_text`로 읽어 비교하는데 **그 호출이 CRLF를 LF로 되돌려 읽는다.**
+    그래서 디스크가 CRLF여도 통과한다 — 이 결함이 그 틈으로 지나갔다.
+    """
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
+    )
+
+    raw = (tmp_path / RUN_ID / "semgrep" / f"{evidence.evidence_id}.log").read_bytes()
+
+    assert evidence.digest == f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    assert CRLF not in raw, "로그가 CRLF로 써졌다 — digest는 LF 본문의 해시다"
+
+
+def test_the_digest_is_taken_from_the_bytes_that_were_written(
+    tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """플랫폼에 안 기댄다 — **파일에 건넨 바이트**가 digest의 입력이다 (이슈 #387).
+
+    텍스트 쓰기(`write_text`)는 줄바꿈을 플랫폼에 맡겨 Windows에서 digest와 파일이 어긋난다.
+    바이트로 쓰면 번역될 여지가 없다. 그래서 `write_bytes`가 받은 바이트를 가로채 digest와
+    대조한다 — 텍스트 쓰기로 되돌리면 가로챌 호출이 없어 **어느 OS에서도** 빨개진다.
+    """
+    real_write_bytes = Path.write_bytes
+    written: list[bytes] = []
+
+    def recording_write_bytes(self: Path, data: bytes) -> int:
+        if tmp_path in self.parents:
+            written.append(bytes(data))
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", recording_write_bytes)
+
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
+    )
+
+    assert len(written) == 1, "로그를 `write_bytes`로 쓰지 않았다"
+    assert evidence.digest == f"sha256:{hashlib.sha256(written[0]).hexdigest()}"
 
 
 def test_rejected_runs_also_leave_a_log(tmp_path: Path, spy: _Spy) -> None:
