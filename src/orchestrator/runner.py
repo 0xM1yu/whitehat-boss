@@ -1826,8 +1826,13 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
 
 
 def _submit_vul_to_oracle(
-    ctx: RunContext, state: _Accumulator, finding: Finding, poc: bytes
-) -> None:
+    ctx: RunContext,
+    state: _Accumulator,
+    finding: Finding,
+    poc: bytes,
+    *,
+    designatable: bool = True,
+) -> str:
     """후보 하나의 PoC를 채점기의 `vul` 다리에 내보낸다 (#386). 채점기가 없으면 아무것도 안 한다.
 
     **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
@@ -1849,14 +1854,37 @@ def _submit_vul_to_oracle(
     trace에는 결정론 필드만 간다(분류는 `oracle_log` 모듈 docstring).
     """
     if ctx.oracle is None:
-        return
+        return "oracle_vul=unavailable"
     with ctx.stage(Stage.VALIDATE):
         started = ctx.monotonic_ms()
+        if not poc:
+            exc = ValueError("empty_poc")
+            attempt = oracle_log.vul_failed(
+                finding.finding_id, poc, exc, 0, designatable=designatable
+            )
+            ctx.trace.emit(
+                EventKind.ORACLE_FAILED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=0,
+                leg="vul",
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=0,
+                error=attempt.error,
+                reason="empty_poc",
+            )
+            state.oracle_ledger.add_attempt(attempt)
+            return "oracle_vul=unavailable"
         try:
             submission = ctx.oracle.submit_vul(poc)
         except Exception as exc:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
             attempt = oracle_log.vul_failed(
-                finding.finding_id, poc, exc, max(0, ctx.monotonic_ms() - started)
+                finding.finding_id,
+                poc,
+                exc,
+                max(0, ctx.monotonic_ms() - started),
+                designatable=designatable,
             )
             ctx.trace.emit(
                 EventKind.ORACLE_FAILED,
@@ -1869,9 +1897,37 @@ def _submit_vul_to_oracle(
                 poc_bytes=attempt.poc_bytes,
                 error=attempt.error,
             )
+            observation = "oracle_vul=unavailable"
         else:
+            exit_code: int | None = None
+            query_error: Exception | None = None
+            if not designatable:
+                try:
+                    exit_code = ctx.oracle.query_vul(poc)
+                except Exception as exc:  # 조회도 추가형 — 실패를 기록하고 다음 모델 홉은 계속한다.
+                    query_error = exc
+                    ctx.trace.emit(
+                        EventKind.ORACLE_FAILED,
+                        stage=Stage.VALIDATE,
+                        subject_kind="finding",
+                        subject_id=finding.finding_id,
+                        wall_ms=max(0, ctx.monotonic_ms() - started),
+                        leg="query_vul",
+                        poc_sha256=hashlib.sha256(poc).hexdigest(),
+                        poc_bytes=len(poc),
+                        error=type(exc).__name__,
+                    )
             attempt = oracle_log.vul_ok(
-                finding.finding_id, poc, submission, max(0, ctx.monotonic_ms() - started)
+                finding.finding_id,
+                poc,
+                submission,
+                max(0, ctx.monotonic_ms() - started),
+                designatable=designatable,
+                observation_exit_code=exit_code,
+                observation_error=None if query_error is None else type(query_error).__name__,
+                observation_error_detail=(
+                    "" if query_error is None else oracle_log.clip_error(query_error)
+                ),
             )
             ctx.trace.emit(
                 EventKind.ORACLE_SUBMITTED,
@@ -1884,7 +1940,13 @@ def _submit_vul_to_oracle(
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
             )
+            observation = (
+                f"oracle_vul exit_code={exit_code}"
+                if exit_code is not None
+                else "oracle_vul=unavailable"
+            )
         state.oracle_ledger.add_attempt(attempt)
+        return observation
 
 
 def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
@@ -2272,6 +2334,7 @@ def _run_pov_hops(
                     ctx, state, finding, PovStopReason.SUBMITTED, last_poc
                 )
             hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
+            oracle_observation = "oracle_vul=unavailable"
             if action.action == "gen":
                 # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
                 # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
@@ -2286,6 +2349,10 @@ def _run_pov_hops(
                         ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
                     )
                 last_poc = hop_poc
+                if pov_wide:
+                    oracle_observation = _submit_vul_to_oracle(
+                        ctx, state, finding, hop_poc, designatable=False
+                    )
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
                 evidence = pov.run_tool(
@@ -2305,6 +2372,10 @@ def _run_pov_hops(
             followup = _pov_observation(
                 action.action, evidence, read_payload=ctx.read_payload, wide=pov_wide
             )
+            if action.action == "gen" and pov_wide:
+                # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
+                # 의미를 파생하지 않는다. 모델이 이 관측을 본 뒤 submit할지를 정한다.
+                followup = f"{followup}\n{oracle_observation}"
             prev = current
             hop += 1
 
@@ -2328,7 +2399,7 @@ def _pov_observation(
     것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
     (`container_tools`)이 지킨다.
 
-    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **꼬리를 안 싣는다** — v2
+    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 이전 판 v2)면 **꼬리를 안 싣는다** — v2
     prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
     같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
     """

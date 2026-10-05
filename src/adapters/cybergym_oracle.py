@@ -775,6 +775,12 @@ class TaskOracle:
             cached=before is not None and before.vul_exit_code is not None,
         )
 
+    def query_vul(self, poc: bytes) -> int | None:
+        """제출한 PoC의 원시 vul 종료 코드만 읽는다. fix 다리는 실행하지 않는다."""
+        with self._redacting():
+            verdict = self._peek(poc)
+        return None if verdict is None else verdict.vul_exit_code
+
     def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:
         """최종 PoC 하나의 `fix` 다리와 판정 조회 — run당 한 번."""
         with self._redacting():
