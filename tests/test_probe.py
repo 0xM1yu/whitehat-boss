@@ -584,11 +584,10 @@ def test_an_empty_cap_sample_reports_null_not_zero() -> None:
 
 
 def test_the_reconstructed_critic_prompt_carries_no_capsule_and_no_source() -> None:
-    """Critic 프롬프트에 캡슐도 대상 원문도 안 실린다 — 이 프로브의 전제다.
+    """프로브의 v1 metadata-only 재구성에는 캡슐도 대상 원문도 안 실린다.
 
-    `nodes/critic._ask_model`이 `build_facts`에 `capsule=`·`source=`를 안 넘기기 때문이고,
-    그래서 이 경로의 프롬프트는 합성 프로브의 21,021 토큰과 **다른 축**이다. 배선이 바뀌어
-    캡슐이 실리는 날 이 검사가 빨개져서 프로브 docstring의 그 문단을 함께 고치게 만든다.
+    이 핀은 `_reconstruct`만 검증한다. SOURCE를 받는 실 Critic v6의 노드 배선·입력 크기는
+    검증하지 않는다 — 그 배선은 `test_critic_v6_wiring.py`가 별도로 문다.
     """
     from src.orchestrator.prompt_loader import load_prompt
     from src.schemas.enums import EvidenceKind

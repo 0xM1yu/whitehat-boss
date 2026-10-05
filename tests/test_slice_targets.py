@@ -62,7 +62,14 @@ def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtu
 
     def load(profile: str, **kwargs: object):  # noqa: ANN202
         config = real(profile, **kwargs)
-        off = config.thresholds.transition(**{key: 0 for key in AUDITOR_SOURCE_OPTIONS})
+        # ⏵ 2026-10-05 — `auditor_source_gate`도 같이 끈다. 그것은 `AUDITOR_SOURCE_OPTIONS`가
+        # 아니지만(입력을 안 넓히는 **관측 전용** 스위치라 그 집합 밖이다) `budgets.yaml`이
+        # 1로 켜면서 `auditor_source` 이벤트에 `gate_reasons`가 붙어, 이 파일이 이벤트 dict를
+        # 통째로 비교하는 검사 다섯이 전부 그 한 키 때문에 깨졌다. 이 픽스처의 명제는
+        # 「결정 1-b 모양에서 재는 것」이고 이벤트 모양도 그 모양이어야 한다.
+        off = config.thresholds.transition(
+            **{key: 0 for key in AUDITOR_SOURCE_OPTIONS}, auditor_source_gate=0
+        )
         return config.transition(thresholds=off)
 
     monkeypatch.setattr(e2e, "load_config", load)

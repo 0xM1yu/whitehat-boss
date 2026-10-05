@@ -5,15 +5,16 @@
 F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 
 **Auditor의 원문 추론을 전달하지 않는다**(agent-contracts.md §2.3). 프롬프트에 실리는
-것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)뿐이고 `rca_draft`는
-넘기지 않는다 — 앞 모델의 설명을 보여 주면 반박이 아니라 재진술이 돌아온다.
+것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)이고, v6은
+Auditor가 본 SOURCE도 싣는다. `rca_draft`는 넘기지 않는다 — 앞 모델의 설명을 보여 주면
+반박이 아니라 재진술이 돌아온다.
 
 **정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
 있으면 "근거 없는 반박 비율"의 분자가 갈라진다. 노드가 `gate.normalize()`를 부르고,
 `gate.was_normalized()`면 `critic_normalized`를 남긴 뒤 **정규화된 값**을 정책에 넘긴다.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from src.orchestrator import gate
 from src.orchestrator.context import RunContext
@@ -33,9 +34,11 @@ ROLE = Role.CRITIC
 OUTPUT_SCHEMA = DecisionDraft
 
 # 근거 본문을 FACTS·EVIDENCE에 싣는 것은 그 본문을 **읽도록 쓰인 프롬프트 버전**에만 한다.
-# v3·v4·v5는 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
+# v3·v4·v5·v6는 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6"})
+# SOURCE 입력을 서술하는 판. 본문 인식과 별도 계약이며 앞 판은 SOURCE를 읽지 않는다.
+_SOURCE_INPUT_VERSIONS = frozenset({"v6"})
 
 # 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와
 # 같은 꼴로 읽히도록 맞춘다 — 절단 사유는 어느 상한이 걸렸는지를 이름으로 말해야 한다.
@@ -80,12 +83,19 @@ def run(
     finding: Finding,
     evidences: tuple[Evidence, ...] = (),
     missings: tuple[MissingEvidence, ...] = (),
+    source: Callable[[], str] | None = None,
 ) -> tuple[Finding, Decision]:
     """반박을 받아 정규화하고, 재판정한 등급까지 반영해 전이시킨다."""
     decision_id = ctx.ids.next("decision")
     own = gate.evidences_for(finding, evidences)
     with ctx.stage(Stage.CRITIC):
-        decision = _ask_model(ctx, decision_id=decision_id, finding=finding, evidences=own)
+        decision = _ask_model(
+            ctx,
+            decision_id=decision_id,
+            finding=finding,
+            evidences=own,
+            source=source,
+        )
         ctx.store.put(decision)
         if gate.was_normalized(decision):
             ctx.record_critic_normalized(decision, stage=Stage.CRITIC)
@@ -109,7 +119,12 @@ def run(
 
 
 def _ask_model(
-    ctx: RunContext, *, decision_id: str, finding: Finding, evidences: list[Evidence]
+    ctx: RunContext,
+    *,
+    decision_id: str,
+    finding: Finding,
+    evidences: list[Evidence],
+    source: Callable[[], str] | None = None,
 ) -> Decision:
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
@@ -119,6 +134,9 @@ def _ask_model(
     # 뺀다) 같은 판이면 FACTS와 EVIDENCE 줄이 같은 값을 든다.
     aware = version in _CONTENT_AWARE_VERSIONS
     bodies = evidence_summaries(evidences, ctx.read_payload) if aware else {}
+    # SOURCE 입력 계약을 선언한 판만 Auditor의 캐시된 SOURCE를 읽는다. 앞 판의 입력은 그대로 두고,
+    # 다시 자르지 않는다 — PoV도 같은 _Once 결과를 받아야 한다(이슈 #391).
+    source_text = source() if version in _SOURCE_INPUT_VERSIONS and source is not None else ""
     prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
@@ -126,10 +144,12 @@ def _ask_model(
             evidences=evidences,
             evidence_bodies=bodies,
             evidence_locations=aware,
+            source=source_text,
         ),
         claim=f"{finding.title} ({finding.cwe})",
         path=_describe_path(finding),
         evidence=_describe_evidence(evidences, bodies, with_location=aware),
+        **({"source": source_text} if version in _SOURCE_INPUT_VERSIONS else {}),
     )
     # **verdict를 자유 문자열로 받는다** — `Decision`의 `verdict: Verdict`를 스키마에 `enum`으로
     # 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다(gpt-oss-20b 실측

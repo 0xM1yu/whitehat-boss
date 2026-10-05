@@ -729,8 +729,8 @@ class _Accumulator:
     finding_capsules: dict[str, ContextCapsule] = field(default_factory=dict)
     # 8단계 PoV가 쓸 `SOURCE` — **Auditor가 본 것과 같은 문자열**이다(사용자 지적 2026-10-02).
     # `_Once`라 PoV가 꺼내 써도 `_auditor_source`가 다시 돌지 않는다(= `auditor_source` 이벤트도
-    # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 슬라이스 타깃이 아닌 finding은 키가 없고, 그때는
-    # PoV가 예전처럼 캡슐 대상을 직접 읽는다 — 그 둘이 같은 문자열이다(`_step_auditor` 주석).
+    # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 비슬라이스도 Auditor의 최초 읽기를 캐시한다.
+    # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
@@ -1198,6 +1198,8 @@ def _analyze(
                 finding=finding,
                 evidences=state.evidences.get(finding.finding_id, ()),
                 missings=state.missings.get(finding.finding_id, ()),
+                # _Once가 저장한 문자열이라 Critic 뒤 PoV도 같은 소스를 받는다.
+                source=state.finding_sources.get(finding.finding_id),
             )
         except SchemaParseError as exc:
             # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
@@ -2219,8 +2221,8 @@ def _run_pov_hops(
             started = ctx.monotonic_ms()
             try:
                 if prev is None:
-                    # `source`는 Auditor가 본 것과 **같은 문자열**이다(`_Once`) — 없으면(슬라이스
-                    # 타깃이 아니면) 노드가 캡슐 대상을 직접 읽는 예전 갈래로 간다.
+                    # 넓은 입력 판은 슬라이스 여부와 무관하게 Auditor의 최초 읽기를 보관한
+                    # `_Once`를 받는다. 이전 판 또는 캐시 부재 시 노드가 캡슐 대상을 직접 읽는다.
                     entrypoint = _fuzz_entrypoint(ctx, capsule.target.file)
                     # 🔴 **조회 결과를 홉 이벤트에 싣는다**(아래 `fuzz=`). 안 남기면 「진입점 탐색
                     # 성공률」이 영영 미실측이고, 성공 0이 나왔을 때 모델 탓인지 조회 탓인지 못
@@ -3230,7 +3232,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring). `_Once`로 감싸는 이유는
     # **8단계 PoV가 같은 문자열을 다시 쓰기 때문**이다(아래 `state.finding_sources`).
     source = (
-        None
+        _Once(partial(ctx.read_source, expanded.target))
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
@@ -3270,10 +3272,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 슬라이스가 걸친 함수 전부를 보는데 **바이트를 써야 하는 쪽이 그보다 좁게 봤다.** CyberGym
     # Level 1의 지배적 실패가 "취약 경로 미도달"이고 그것을 가르는 것이 앞단 파서의 포맷 조건이라,
     # 포맷을 담은 함수가 entry 밖에 있으면 PoV가 영영 못 봤다.
-    # 슬라이스 타깃이 아니면(`ref is None`) 안 싣는다 — 그때는 Auditor도 캡슐 대상을 그대로 읽어
-    # PoV의 기존 갈래와 같은 문자열이다.
-    if source is not None:
-        state.finding_sources[finding.finding_id] = source
+    # 비슬라이스도 Auditor가 처음 읽은 문자열을 재사용한다(사용자 선택 B 보완안, 2026-10-05).
+    state.finding_sources[finding.finding_id] = source
     return True
 
 
