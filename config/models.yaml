@@ -797,9 +797,10 @@ models:
       min_p: 0.0
       presence_penalty: 0.0
     thinking_token_budget: 28672
-    # v2 = PoV 툴 루프 프롬프트(PovAction, gen/inspect/submit). @danielcho02 전달 2026-09-30 · @sumin0218 리뷰 대상
-    # (승인 원천은 저장소에 없다). 단발 v1은 루프로 대체돼 제거됐다(`prompts/pov/v2/`, `nodes/pov.py`).
-    prompt_template_version: "v2"
+    # v3 = PoV 툴 루프 + 넓은 SOURCE·진입점·도구 출력 꼬리 + 중간 gen의 vul 판정 관측.
+    # 2026-10-05 #354/#386①. 판정 관측은 `run --oracle-submit`일 때만 실린다. 판정 효과·실모델
+    # 입력 토큰은 0(미실측)이다.
+    prompt_template_version: "v3"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고

@@ -38,7 +38,7 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 (없으면 빈 목록 — 도구를 안 쓰는 한 방 프롬프트). **스키마가 허용해도 프롬프트가 광고하지
 않으면 모델은 그 도구를 영영 안 쓴다** — PR #327이 `gdb`를 `TOOL_KINDS`에 넣었는데 pov v2
 prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그 줄을 다시 쓸 때까지 모델이
-`gdb`를 부를 길이 없었다(`prompts/pov/v3/meta.yaml`의 「v2와 다른 다섯」 ①).
+`gdb`를 부를 길이 없었다(`prompts/pov/v3/meta.yaml`의 「v2와 다른 여섯」 ①).
 
 **버전 이름으로 분기하지 않는 이유.** 노드마다 있는 `_CONTENT_AWARE_VERSIONS`가 이름 목록이라
 판이 하나 늘 때마다 그 집합을 고쳐야 하고, 잊으면 새 판에서 그 기능이 조용히 꺼진다. 선언이

@@ -213,8 +213,9 @@ class RunContext:
     # 후자는 정지하지 않고 「조회가 없다」는 관측을 모델에게 준다.
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
-    # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 후보마다 `vul`
-    # 다리만, 최종으로 지정한 하나에만 `fix` 다리와 판정 조회를 낸다(`runner._finalize_oracle`).
+    # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 중간 gen은
+    # `vul` 다리와 원시 종료 코드 조회를 다음 홉 관측에 쓰고, 모델이 submit한 하나만 지정 후보가
+    # 된다. 최종으로 지정한 하나에만 `fix` 다리를 낸다(`runner._finalize_oracle`).
     # `None`이면 이 run은 제출하지 않는다(기본) — `resolve_requests`·`swap_to`와 같은 자리다.
     # 구현은 어댑터에 있고 이 경계는 `src/interfaces/oracle.py`의 Protocol이 넘는다.
     oracle: Oracle | None = None
