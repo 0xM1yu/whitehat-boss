@@ -145,7 +145,7 @@ profiles:
     #   배선 #421 · 사용자 결정 — **v5는 건너뛰었다**). v6도 그 집합에 든다. ⏵ 2026-10-04 — v7로 올렸다
     #   (v6 + Auditor SOURCE 옵션 넷의 서술, #349 — v7도 그 집합에 든다). ⏵ 같은 날 — **v8로
     #   올렸다**(도구 루프 · #419 — v8도 그 집합에 든다. `thresholds.auditor_tool_hops`가
-    #   양수여야 돈다). critic gpt-oss와
+    #   양수여야 돈다). ⏵ 2026-10-06 — v9로 올렸다(v8 + `auditor_guards` 서술 — v9도 그 집합에 든다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.
