@@ -85,8 +85,9 @@ budgets:
 
   # **0이 든 예산은 Fake 전용 프로필(`dev_*`)만 쓴다.** 상한 0은 「검사하지 않는다」
   # (`BudgetLedger._overrun`)라 실모델을 서빙하는 프로필이 0이 든 예산을 쓰면 임대 GPU가 한도 없이
-  # 돈다 — `load_config`가 그 프로필을 거부한다(`_check_real_serving_limits_are_positive`). `tool_seconds`는
-  # 안 적어도 0이다. 아직 안 잰 상한이면 0이 아니라 직접 고른 잠정 상한을 적는다(위 `default`의
+  # 돈다 — `load_config`가 그 프로필을 거부한다(`_check_real_serving_limits_are_positive`). 도구 시간은
+  # `tool_runner`가 `fake`가 아닌 프로필(오버라이드 포함)이 0 예산을 쓰는 것도 거부한다
+  # (`check_container_runtime_caps_tool_time`). `tool_seconds`는 안 적어도 0이다. 아직 안 잰 상한이면 0이 아니라 직접 고른 잠정 상한을 적는다(위 `default`의
   # `tool_seconds`가 그 모양이다 — 잠정치라고 밝히고 목적은 폭주 차단 하나로 둔다).
   dev_fake:
     # Fake 어댑터는 GPU를 쓰지 않는다 — 이 예산에는 **돈이 걸린 항목이 없다.**
@@ -129,8 +130,20 @@ budgets:
     gpu_seconds: 0
     # Fake 런타임의 도구 시간은 애초에 청구되지 않는다(`RunContext.call_tool`) — 잴
     # 컨테이너가 없고, 그 시간은 하네스가 자기를 잰 값이다. 0은 "상한 없음"이라는 기존
-    # 관용구다(`BudgetLedger._overrun`).
+    # 관용구다(`BudgetLedger._overrun`). 이 예산을 쓰는 것은 `tool_runner: fake`인 프로필뿐이다 -
+    # 실컨테이너 dev 프로필은 아래 `dev_container`다(이슈 #436 · 로드 가드가 지킨다).
     tool_seconds: 0
+
+  # 실컨테이너를 도는 dev 프로필(`dev_docker`·`dev_hybrid_docker`·`dev_singularity`)의 예산(이슈 #436).
+  # 모델은 Fake라 토큰·GPU의 0은 `dev_fake`와 같지만, 도구는 **진짜 컨테이너**라 `call_tool`이 시간을
+  # 청구한다 - 그래서 `tool_seconds`만 양수다. **정한 값이지 잰 값이 아니다(§0)**: `default`의 잠정치와
+  # 같은 수를 빌렸고 목적은 폭주 차단 하나다. `check_container_runtime_caps_tool_time`이 이 줄이
+  # 0이 되는 것을 로드에서 막는다.
+  dev_container:
+    input_tokens: 0
+    output_tokens: 0
+    gpu_seconds: 0
+    tool_seconds: 18000
 
 thresholds:
   # 4단계 Scout 승격 기준 (architecture.md §3). 초기값이며 실측 후 확정 — 이슈 #91.

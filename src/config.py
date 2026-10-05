@@ -1187,6 +1187,29 @@ def _check_real_serving_limits_are_positive(config: HarnessConfig) -> None:
         )
 
 
+def check_container_runtime_caps_tool_time(config: HarnessConfig) -> None:
+    """`tool_runner`가 `fake`가 아니면 도구 시간 상한(`tool_seconds`)이 양수여야 한다 (이슈 #436).
+
+    `RunContext.call_tool`은 Fake 런타임이 아니면 도구 시간을 **청구한다** - 그런데 상한 0은
+    검사되지 않으므로(`BudgetLedger._overrun`) 실컨테이너가 한도 없이 돈다. 위 실서빙 가드는
+    `served_models()`가 비는 Fake 모델 프로필에서 조기 return하므로 이 축을 못 본다 - 실제로
+    `dev_fake` 예산을 쓰는 dev 프로필 셋이 실컨테이너를 돌고 있었다. 막는 것은 0뿐이고 값은
+    정하지 않는다.
+
+    **오버라이드 뒤에도 돈다** - `cli.load_profile`이 `--tool-runner`로 config를 갈아 끼운 뒤에
+    이 함수를 다시 부른다(`load_config`만 지나면 `dev_fake` + `--tool-runner docker`가 건너뛴다)."""
+    runner = config.profile.adapters.tool_runner
+    if runner == "fake" or config.budget.tool_seconds > 0:
+        return
+    raise ConfigError(
+        f"프로필 {config.profile_name!r}은 도구 런타임 {runner!r}로 실컨테이너를 돌리는데 예산 "
+        f"{config.profile.budget!r}의 tool_seconds가 0이다 - 상한 0은 「검사하지 않는다」"
+        "(`BudgetLedger`)라 도구 시간이 한도 없이 돈다. 컨테이너 프로필은 tool_seconds를 "
+        "양수로 적는다(0을 쓸 수 있는 것은 도구 시간을 청구하지 않는 Fake 런타임뿐이다). "
+        "`--tool-runner` 오버라이드라면 컨테이너 dev 프로필(`dev_docker` 등)을 쓴다"
+    )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -1230,6 +1253,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     )
     _check_swap_lists_every_served_role(config)
     _check_real_serving_limits_are_positive(config)
+    check_container_runtime_caps_tool_time(config)
     return config
 
 

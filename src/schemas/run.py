@@ -54,7 +54,9 @@ class Budget(HarnessModel):
     #
     # ⚠ **실서빙 프로필의 예산이 이 키를 안 적으면 0이고, `load_config`가 그것을 거부한다**
     # (`_check_real_serving_limits_are_positive`) — 임대 GPU 위에서 「검사 안 함」은 한도 없음이다.
-    # 이 스키마가 0을 계속 받는 것은 옛 manifest와 Fake 전용 프로필 때문이다.
+    # 컨테이너 런타임(`tool_runner != fake`)의 0도 같은 가드가 막는다
+    # (`check_container_runtime_caps_tool_time` · #436). 이 스키마가 0을 계속 받는 것은 옛
+    # manifest와 Fake 런타임 프로필 때문이다.
     tool_seconds: int = Field(default=0, ge=0)
 
 
