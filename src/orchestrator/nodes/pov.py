@@ -33,10 +33,11 @@ OUTPUT_SCHEMA = PovAction
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
-# 않는다). `config/models.yaml`의 pov 좌석은 아직 v2라 **배선된 입력은 그대로다** — v2는
+# 않는다). 2026-10-05부터 `config/models.yaml`의 실 PoV 좌석은 v3라 이 넓은 입력을 받는다. v2는
 # 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4, 프롬프트가 바뀌면
 # 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도 없지만, 다음에
-# 돌 v2 run까지 조용히 입력을 바꿀 이유는 없다). v3가 그 입력을 받는 판이다(배선은 별 PR).
+# 기존 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기 관측이 함께 켜졌지만 둘은
+# 서로 다른 입력 변경이다(#354/#386①).
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
@@ -222,7 +223,7 @@ def _describe_finding(finding: Finding, *, wide: bool = True) -> str:
     ⏵ 2026-10-02 정정: 전 판은 필드를 `cmd`·`input_ref`라 적었는데 **그런 필드는 없다**(§2.1 —
     문서가 코드를 서술하면 그 코드를 열어 대조한다).
 
-    `wide=False`(`_WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **옛 모양 그대로**다 —
+    `wide=False`(`_WIDE_INPUT_VERSIONS`에 없는 이전 판 v2)면 **옛 모양 그대로**다 —
     `len(finding.path)`만 싣는다(`_render_prompt`가 결정한다, 적대적 리뷰 2026-10-02 MEDIUM-4).
     """
     if not wide:

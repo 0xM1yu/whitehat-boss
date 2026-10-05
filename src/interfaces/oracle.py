@@ -12,19 +12,18 @@ Protocol이 넘는다 — `swap_to`·`resolve_requests`와 같은 자리다. **�
 조각). `vul`·`fix`·판정 조회를 한 번에 하는 호출(`run_round_trip`)을 후보마다 부르면 비최종 PoC에도
 `-fix` 이미지가 돌고, trace에 판정이 N건 남아 어느 것이 최종인지 가를 표지가 없다 — 그러면 읽는
 쪽이 할 수 있는 집계는 any-of(하나라도 성공)뿐이고, 그것은 공식 점수(최종 제출 하나)와 비교되지
-않는다. 그래서 이 Protocol은 **fix 다리와 판정 조회를 `finalize` 하나에만 두고** 러너가 run당 한
-번만 부른다. 그 하나가 어느 후보인가는 `runner._designate_final`이 정한다 - 후보가 하나뿐이면 그
+않는다. 그래서 이 Protocol은 **fix 다리를 `finalize` 하나에만 두고** 러너가 run당 한 번만 부른다.
+중간 PoC의 `vul` 판정 조회는 `query_vul`로 분리해 다음 PoV 홉에 원시 종료 코드만 돌려준다.
+최종 하나가 어느 후보인가는 `runner._designate_final`이 정한다 - 후보가 하나뿐이면 그
 하나고, **둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순서**(내부 근거 등급 →
 `confidence` → 작은 바이트 → PoC 해시)**로 하나를 고른다**. 등급 또는 `confidence`를 모르는 후보가
 있으면 지정하지 않는다(그 함수 docstring — ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다).
-🔴 **그 규칙은 이 파일이 내는 값을 안 읽는다** — `VulSubmission.response_exit_code`가 지정
-시점에 손에 있는데도다. 또
-`fix`·판정 조회는 비공개 엔드포인트, 곧 채점자의 몫이다 - 에이전트가 보는 신호는 `vul` 응답뿐이다
-(docs/research/2026-09-29-cybergym-pov-design.md 1.5절). 후보마다 `fix`를 내는 것은 채점자의 일을
-N번 하는 것이다.
+🔴 **그 규칙은 이 파일이 내는 값을 안 읽는다** — `VulSubmission.response_exit_code`와 중간
+`query_vul` 값이 지정 시점에 손에 있는데도다. `query_vul`은 모델 되먹임일 뿐이고 `fix`와 최종
+판정은 채점자의 몫이다. 후보마다 `fix`를 내는 것은 채점자의 일을 N번 하는 것이다.
 
-**무엇을 내보내는가.** 8단계 PoV가 만든 PoC 바이트다(모델이 `submit`한 것 — finding당 하나,
-`runner._pov_finish`의 `SUBMITTED`). 중간 gen 바이트는 내보내지 않는다.
+**무엇을 내보내는가.** 8단계 PoV가 만든 PoC 바이트다. 중간 `gen`은 `vul` 다리에 내보내 판정을
+다음 홉 관측으로 돌리고, 모델이 `submit`한 바이트만 최종 지정 후보가 된다.
 
 **신원은 run을 조립할 때 묶인다.** 서버 주소·과제 id·에이전트 id·키는 구현이 들고 있고 러너는
 바이트만 준다. 묶는 곳은 `cli._oracle_for`다 — 서버 주소는 조작자가 `--oracle-server`로 주고(과제
@@ -92,7 +91,7 @@ class OracleOutcome:
 
 
 class Oracle(Protocol):
-    """PoC 바이트를 채점기에 내보낸다 — 후보마다 `submit_vul`, run당 한 번 `finalize`.
+    """PoC 바이트를 채점기에 내보낸다 — `submit_vul`·`query_vul`, run당 한 번 `finalize`.
 
     구현은 서버 호출을 책임진다. 예외는 삼키지 않는다 — 올려 보내고 러너가 추가형 계약대로 흡수해
     기록한다(`runner._submit_vul_to_oracle`·`_finalize_oracle`). 그래야 「제출했는데 판정을 못
@@ -101,6 +100,10 @@ class Oracle(Protocol):
 
     def submit_vul(self, poc: bytes) -> VulSubmission:
         """`poc`를 `vul` 다리에만 내보낸다 — 후보마다 부른다. `fix`·판정 조회는 안 한다."""
+        ...
+
+    def query_vul(self, poc: bytes) -> int | None:
+        """제출한 `poc`의 원시 `vul` 종료 코드를 읽는다. `None`은 안 돌았거나 행이 없다."""
         ...
 
     def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:

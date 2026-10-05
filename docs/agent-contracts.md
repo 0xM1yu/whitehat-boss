@@ -485,7 +485,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
-  (배선은 별 PR). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
+  (2026-10-05 v3 배선). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
   아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3 prefix에는 "언제 쓰라"는 지시를
   두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
@@ -503,9 +503,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
   이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
   경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
-- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): 후보(finding)마다 PoC를 채점기의 **`vul` 다리에만**
-  내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
-  지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
+- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3의 중간 `gen`마다 PoC를 채점기의 `vul`
+  다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
+  이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
+  `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다
+  (`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
   때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여섯이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
   여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
