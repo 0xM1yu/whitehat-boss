@@ -760,3 +760,27 @@ def test_the_key_does_not_leak_through_the_deps_that_embed_the_oracle(tmp_path: 
 
     assert deps.oracle is oracle
     assert _KEY not in repr(deps) and _KEY not in str(deps)
+
+
+@pytest.mark.parametrize(
+    ("task_id", "mask"),
+    [("oss-fuzz-latest:368076871", False), ("9c73e92e52b7", True)],
+    ids=["unmasked", "masked-by-map"],
+)
+def test_the_family_without_a_fix_leg_is_refused_before_any_submission(
+    tmp_path: Path, capsys, built, key_env, task_id: str, mask: bool  # noqa: ANN001
+) -> None:
+    """이슈 #431 - 서버가 fix를 안 돌리는 계열은 조용한 0점이 되므로 제출 전에 exit 2로 거절한다.
+    마스킹 번들이면 **맵이 준 실 id**로 가린다. 카나리 검사보다 앞이라 보고서가 다른 과제의 것이어도
+    사유는 이쪽이다."""
+    task = _bundle(tmp_path, task_id=task_id)
+    args = _args(task)
+    if mask:
+        mask_map = tmp_path / "mask_map.json"
+        mask_map.write_text(json.dumps({"oss-fuzz-latest:368076871": task_id}), "utf-8")
+        args.mask_map = mask_map
+
+    err = _refused(cli._oracle_for(args), capsys, "fix 다리")
+
+    assert "아무것도 제출하지 않았다" in err
+    assert built == []
