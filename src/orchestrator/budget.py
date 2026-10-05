@@ -107,8 +107,9 @@ class BudgetLedger:
 
         **실서빙 프로필의 0은 여기서 안 막는다 — 로드에서 막는다.** 이 원장은 자기 모델이 실서빙인지
         모르므로, 실모델을 서빙하는 프로필의 예산에 0이 있으면 `load_config`가 거부한다
-        (`config._check_real_serving_limits_are_positive`). 그래서 `load_config`를 지나 여기 오는
-        0은 Fake 전용 프로필의 것이다.
+        (`config._check_real_serving_limits_are_positive`). 도구 시간 0은 `tool_runner`가 `fake`가
+        아닌 프로필을 같은 방식으로 막는다(`config.check_container_runtime_caps_tool_time` - CLI
+        오버라이드 뒤에도 돈다). 그래서 이 검사를 지나 여기 오는 0은 Fake 전용 프로필의 것이다.
         """
         # **비교는 밀리초로, 보고는 초로.** 파생값(초)으로 비교하면 상한 직전의 999 ms가
         # 반복해서 버려져 상한이 실제보다 늦게 걸린다. 반대로 메시지에 ms를 그대로 내면

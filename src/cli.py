@@ -49,6 +49,7 @@ from src.config import (
     AdapterSelection,
     ConfigError,
     HarnessConfig,
+    check_container_runtime_caps_tool_time,
     check_serving,
     load_config,
     load_serving,
@@ -160,6 +161,9 @@ def load_profile(
         # 재검증을 타므로 Literal 밖의 값은 여기서 죽는다(argparse choices와 이중 방어).
         adapters = config.profile.adapters.transition(tool_runner=tool_runner)
         config = config.transition(profile=config.profile.transition(adapters=adapters))
+        # 오버라이드는 `load_config`의 가드 **뒤에** 런타임을 바꾼다 - 0 예산 위의 컨테이너를
+        # 여기서 다시 막는다(이슈 #436).
+        check_container_runtime_caps_tool_time(config)
     return config
 
 
