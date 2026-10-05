@@ -85,7 +85,7 @@ profiles:
       retriever: hybrid
       tool_runner: docker
       state_store: memory
-    budget: dev_fake
+    budget: dev_container
 
   dev_docker:
     description: "GPU 없이 실제 도구를 Docker 컨테이너에서 실행. 전 역할 Fake 모델."
@@ -104,7 +104,7 @@ profiles:
       retriever: fake
       tool_runner: docker
       state_store: sqlite
-    budget: dev_fake
+    budget: dev_container
 
   dev_singularity:
     description: "Docker 데몬 접근이 없는 환경(Seraph 등). 도구는 Singularity로 실행."
@@ -123,7 +123,7 @@ profiles:
       retriever: fake
       tool_runner: singularity
       state_store: sqlite
-    budget: dev_fake
+    budget: dev_container
 
   # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
   harness_pool:
