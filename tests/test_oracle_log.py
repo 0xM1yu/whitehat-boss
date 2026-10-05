@@ -36,11 +36,13 @@ _OUTCOME = OracleOutcome(
 
 
 def _ok(finding_id: str, poc: bytes = b"poc", submission: VulSubmission = _SUBMISSION):  # noqa: ANN202
-    return oracle_log.vul_ok(finding_id, poc, submission, wall_ms=5)
+    return oracle_log.vul_ok(finding_id, poc, submission, wall_ms=5, designatable=True)
 
 
 def _failed(finding_id: str, poc: bytes = b"poc"):  # noqa: ANN202
-    return oracle_log.vul_failed(finding_id, poc, RuntimeError("server refused"), wall_ms=3)
+    return oracle_log.vul_failed(
+        finding_id, poc, RuntimeError("server refused"), wall_ms=3, designatable=True
+    )
 
 
 def _cached_vul() -> VulSubmission:
@@ -74,7 +76,7 @@ class _RateLimited(RuntimeError):
 
 
 def _rate_limited(finding_id: str, poc: bytes = b"poc"):  # noqa: ANN202
-    return oracle_log.vul_failed(finding_id, poc, _RateLimited(), wall_ms=3)
+    return oracle_log.vul_failed(finding_id, poc, _RateLimited(), wall_ms=3, designatable=True)
 
 
 def test_the_http_status_of_a_failed_submission_survives_in_the_ledger() -> None:
@@ -285,8 +287,8 @@ def test_a_duplicate_inside_the_same_run_is_not_a_stale_verdict() -> None:
     """finding 둘이 같은 PoC를 내면(`dev_fake`는 늘 그렇다) 둘째의 `cached`는 참이지만 그 행은 이
     run이 만들었다 - 옛 판정이 아니다. 경고가 매번 뜨면 사람이 경고를 안 읽는다."""
     ledger = OracleLedger(wired=True)
-    first = oracle_log.vul_ok("find_0001", b"same", _SUBMISSION, wall_ms=1)
-    second = oracle_log.vul_ok("find_0002", b"same", _cached_vul(), wall_ms=1)
+    first = oracle_log.vul_ok("find_0001", b"same", _SUBMISSION, wall_ms=1, designatable=True)
+    second = oracle_log.vul_ok("find_0002", b"same", _cached_vul(), wall_ms=1, designatable=True)
     ledger.add_attempt(first)
     ledger.add_attempt(second)
     ledger.set_final(_scored(second))
@@ -299,8 +301,8 @@ def test_a_duplicate_inside_the_same_run_is_not_a_stale_verdict() -> None:
 def test_a_duplicate_of_a_stale_first_submission_is_stale() -> None:
     """앞의 제출이 이 run 전의 행을 돌려받았다면(캐시) 같은 바이트의 뒤 제출도 그 옛 코드다."""
     ledger = OracleLedger(wired=True)
-    first = oracle_log.vul_ok("find_0001", b"same", _cached_vul(), wall_ms=1)
-    second = oracle_log.vul_ok("find_0002", b"same", _cached_vul(), wall_ms=1)
+    first = oracle_log.vul_ok("find_0001", b"same", _cached_vul(), wall_ms=1, designatable=True)
+    second = oracle_log.vul_ok("find_0002", b"same", _cached_vul(), wall_ms=1, designatable=True)
     ledger.add_attempt(first)
     ledger.add_attempt(second)
     ledger.set_final(_scored(second))
@@ -363,8 +365,8 @@ def test_the_sidecar_carries_every_field_of_a_scored_run(tmp_path: Path) -> None
     sub_a = VulSubmission("arvo:1065", "1" * 32, 139, cached=False)
     sub_b = VulSubmission("arvo:1065", "2" * 32, 77, cached=True)
     ledger = OracleLedger(wired=True, log=OracleLog(tmp_path))
-    ledger.add_attempt(oracle_log.vul_ok("find_0001", poc_a, sub_a, wall_ms=11))
-    attempt_b = oracle_log.vul_ok("find_0002", poc_b, sub_b, wall_ms=22)
+    ledger.add_attempt(oracle_log.vul_ok("find_0001", poc_a, sub_a, wall_ms=11, designatable=True))
+    attempt_b = oracle_log.vul_ok("find_0002", poc_b, sub_b, wall_ms=22, designatable=True)
     ledger.add_attempt(attempt_b)
     outcome = OracleOutcome(
         task_id="arvo:1065", poc_id="2" * 32, poc_hash=hashlib.sha256(poc_b).hexdigest(),
@@ -481,7 +483,7 @@ def test_the_grades_the_designation_read_are_in_the_sidecar_only_when_it_read_th
 def test_an_error_text_is_clipped_before_it_reaches_the_sidecar() -> None:
     long = RuntimeError("x" * (oracle_log.ERROR_DETAIL_CHARS * 3))
 
-    attempt = oracle_log.vul_failed("find_0001", b"p", long, wall_ms=0)
+    attempt = oracle_log.vul_failed("find_0001", b"p", long, wall_ms=0, designatable=True)
 
     assert len(attempt.error_detail) == oracle_log.ERROR_DETAIL_CHARS
 

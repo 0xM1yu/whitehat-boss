@@ -1092,7 +1092,7 @@ _SUB = VulSubmission(TASK_ID, "a" * 32, 1)
 
 
 def _attempt(finding_id: str, poc: bytes) -> VulAttempt:
-    return vul_ok(finding_id, poc, _SUB, wall_ms=1)
+    return vul_ok(finding_id, poc, _SUB, wall_ms=1, designatable=True)
 
 
 def _ledger_of(*attempts: VulAttempt) -> OracleLedger:
@@ -1352,6 +1352,7 @@ def _trap_attempt(finding_id: str) -> VulAttempt:
         wall_ms=1,
         poc=body,
         submission=_TrapSubmission(),  # type: ignore[arg-type]
+        designatable=True,
     )
 
 

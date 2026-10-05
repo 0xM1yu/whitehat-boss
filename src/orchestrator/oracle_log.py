@@ -31,7 +31,7 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 `candidates`(vul 제출 한 건 — 중간 gen은 `designatable: false`와 원시 종료 코드 조회를
 `observation`에 싣고, 모델 submit은 그 필드가 없어 최종 지정 후보임을 뜻한다. 성공이면
 `poc_id`·`response_exit_code`·`cached`, 실패면 `error`·`error_status`(HTTP 상태. HTTP 오류가
-아니면 `null`)·`error_detail`) ·
+아니면 `null`)·`error_detail`, 0바이트라 제출하지 않았으면 `status: skipped`·`error: empty_poc`) ·
 `final`. `final`은 run이 최종 단계에 못 닿았으면(8단계가 끝까지 가지 못했다 — 단
 `pov_attempt_top_n`의 추가 대상에서 예산이 끊긴 run은 최종 지정까지 하고 끝난다) `null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
@@ -169,7 +169,7 @@ class VulAttempt:
     error_status: int | None = None
     # 모델의 `submit`만 최종 지정 후보가 된다. 중간 gen 판정은 모델 입력으로만 쓰며 정렬 키에는
     # 닿지 않는다. `candidates`가 이 필드로 먼저 거른다.
-    designatable: bool = True
+    designatable: bool = field(kw_only=True)
     observation_exit_code: int | None = None
     observation_error: str | None = None
     observation_error_detail: str = ""
@@ -190,7 +190,7 @@ def vul_ok(
     submission: VulSubmission,
     wall_ms: int,
     *,
-    designatable: bool = True,
+    designatable: bool,
     observation_exit_code: int | None = None,
     observation_error: str | None = None,
     observation_error_detail: str = "",
@@ -215,7 +215,7 @@ def vul_failed(
     exc: Exception,
     wall_ms: int,
     *,
-    designatable: bool = True,
+    designatable: bool,
 ) -> VulAttempt:
     return VulAttempt(
         finding_id=finding_id,
@@ -383,13 +383,15 @@ class OracleLedger:
             # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
-            # 아래 셋은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 해서다.
-            # `vul_submitted`는 중간 gen 제출을 **포함**하므로(`submitted`) `vul_intermediate`가
-            # 있으면 그 수만큼이 최종 후보가 아니다.
+            # 아래 넷은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 해서다.
+            # `vul_submitted`는 중간 gen 제출을 **포함**하고(`submitted`) `vul_intermediate`는 중간
+            # gen **시도** 전부(성공·실패·건너뜀)라 둘의 차이는 후보 수가 아니다 - 후보 수는
+            # `vul_candidates`다(중간 gen이 있던 run에만 있다. 없으면 `vul_submitted`가 후보 수다).
             **{
                 key: count
                 for key, count in (
                     ("vul_intermediate", self.intermediate),
+                    ("vul_candidates", len(self.candidates) if self.intermediate else 0),
                     ("vul_observation_failed", self.observation_failed),
                     ("vul_empty_poc", self.skipped_empty),
                 )
