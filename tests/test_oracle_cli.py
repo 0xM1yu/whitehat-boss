@@ -780,7 +780,7 @@ def test_the_family_without_a_fix_leg_is_refused_before_any_submission(
         mask_map.write_text(json.dumps({"oss-fuzz-latest:368076871": task_id}), "utf-8")
         args.mask_map = mask_map
 
-    err = _refused(cli._oracle_for(args), capsys, "fix 다리")
+    err = _refused(cli._oracle_for(args), capsys, "400")
 
     assert "아무것도 제출하지 않았다" in err
     assert built == []
