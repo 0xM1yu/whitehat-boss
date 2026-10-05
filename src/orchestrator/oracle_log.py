@@ -1,6 +1,7 @@
 """채점기(oracle) 왕복의 run 산출물 — 장부와 사이드카 `{run_dir}/oracle/verdict.json` (#386).
 
-`runner`가 후보마다 `submit_vul`을, run당 한 번 `finalize`를 부르고(`src/interfaces/oracle.py`)
+`runner`가 중간 gen과 모델 submit마다 `submit_vul`을, run당 한 번 `finalize`를 부르고
+(`src/interfaces/oracle.py`)
 그 결과를 이 장부에 쌓는다. 장부는 사이드카 파일·run 매니페스트의 `oracle` 요약·run 경고의 원천이다.
 
 ## 왜 값이 trace가 아니라 사이드카에 있나
@@ -27,8 +28,10 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 
 ## 사이드카의 모양
 
-`candidates`(후보마다 vul 제출 한 건 — 성공이면 `poc_id`·`response_exit_code`·`cached`, 실패면
-`error`·`error_status`(HTTP 상태. HTTP 오류가 아니면 `null`)·`error_detail`) ·
+`candidates`(vul 제출 한 건 — 중간 gen은 `designatable: false`와 원시 종료 코드 조회를
+`observation`에 싣고, 모델 submit은 그 필드가 없어 최종 지정 후보임을 뜻한다. 성공이면
+`poc_id`·`response_exit_code`·`cached`, 실패면 `error`·`error_status`(HTTP 상태. HTTP 오류가
+아니면 `null`)·`error_detail`) ·
 `final`. `final`은 run이 최종 단계에 못 닿았으면(8단계가 끝까지 가지 못했다 — 단
 `pov_attempt_top_n`의 추가 대상에서 예산이 끊긴 run은 최종 지정까지 하고 끝난다) `null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
@@ -158,13 +161,29 @@ class VulAttempt:
     # `None`이다. 이것이 없으면 429(레이트리미트)와 그 밖의 실패를 **사유 본문을
     # 파싱해서만** 가른다(이슈 #422).
     error_status: int | None = None
+    # 모델의 `submit`만 최종 지정 후보가 된다. 중간 gen 판정은 모델 입력으로만 쓰며 정렬 키에는
+    # 닿지 않는다. `candidates`가 이 필드로 먼저 거른다.
+    designatable: bool = True
+    observation_exit_code: int | None = None
+    observation_error: str | None = None
+    observation_error_detail: str = ""
 
     @property
     def ok(self) -> bool:
         return self.submission is not None
 
 
-def vul_ok(finding_id: str, poc: bytes, submission: VulSubmission, wall_ms: int) -> VulAttempt:
+def vul_ok(
+    finding_id: str,
+    poc: bytes,
+    submission: VulSubmission,
+    wall_ms: int,
+    *,
+    designatable: bool = True,
+    observation_exit_code: int | None = None,
+    observation_error: str | None = None,
+    observation_error_detail: str = "",
+) -> VulAttempt:
     return VulAttempt(
         finding_id=finding_id,
         poc_sha256=hashlib.sha256(poc).hexdigest(),
@@ -172,10 +191,21 @@ def vul_ok(finding_id: str, poc: bytes, submission: VulSubmission, wall_ms: int)
         wall_ms=wall_ms,
         poc=poc,
         submission=submission,
+        designatable=designatable,
+        observation_exit_code=observation_exit_code,
+        observation_error=observation_error,
+        observation_error_detail=observation_error_detail,
     )
 
 
-def vul_failed(finding_id: str, poc: bytes, exc: Exception, wall_ms: int) -> VulAttempt:
+def vul_failed(
+    finding_id: str,
+    poc: bytes,
+    exc: Exception,
+    wall_ms: int,
+    *,
+    designatable: bool = True,
+) -> VulAttempt:
     return VulAttempt(
         finding_id=finding_id,
         poc_sha256=hashlib.sha256(poc).hexdigest(),
@@ -185,6 +215,7 @@ def vul_failed(finding_id: str, poc: bytes, exc: Exception, wall_ms: int) -> Vul
         error_detail=clip_error(exc),
         # `CyberGymOracleError.status`를 덕 타이핑으로 읽는다 — 어댑터 import 금지(아래 상수 주석).
         error_status=getattr(exc, "status", None),
+        designatable=designatable,
     )
 
 
@@ -265,12 +296,12 @@ class OracleLedger:
 
     @property
     def candidates(self) -> list[VulAttempt]:
-        """`vul` 제출이 **성공한** 시도 - 최종 PoC의 후보다(`runner._designate_final`)."""
-        return [attempt for attempt in self.attempts if attempt.ok]
+        """모델이 submit했고 `vul` 제출도 성공한 최종 후보(`runner._designate_final`)."""
+        return [attempt for attempt in self.attempts if attempt.ok and attempt.designatable]
 
     @property
     def submitted(self) -> int:
-        return len(self.candidates)
+        return sum(1 for attempt in self.attempts if attempt.ok)
 
     @property
     def failed(self) -> int:
@@ -437,6 +468,8 @@ def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
         "leg": "vul",
         "wall_ms": attempt.wall_ms,
     }
+    if not attempt.designatable:
+        row["designatable"] = False
     if attempt.submission is None:
         return {
             **row,
@@ -445,13 +478,20 @@ def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
             "error_status": attempt.error_status,
             "error_detail": attempt.error_detail,
         }
-    return {
+    result = {
         **row,
         "status": "submitted",
         "poc_id": attempt.submission.poc_id,
         "response_exit_code": attempt.submission.response_exit_code,
         "cached": attempt.submission.cached,
     }
+    if not attempt.designatable:
+        result["observation"] = {
+            "exit_code": attempt.observation_exit_code,
+            "error": attempt.observation_error,
+            "error_detail": attempt.observation_error_detail,
+        }
+    return result
 
 
 def _final_record(
