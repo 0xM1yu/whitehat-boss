@@ -5018,7 +5018,17 @@ def incomplete_fields(
     """
     warnings = []
     if not record.tool_images:
-        warnings.append("tool_images가 비어 있다 (컨테이너 없이 실행). 모델 비교표에서 제외한다")
+        # Fake 런타임이면 컨테이너가 정말 없다. 그 밖의 런타임에서 비는 것은 「이미지 digest를
+        # 못 기록했다」다(도구 단계 전에 멈춘 run도 그렇다) - 「컨테이너 없이 실행」이라 쓰면 설정
+        # 오류로 읽힌다(#479 (e)).
+        runtime = record.tool_runner
+        why = (
+            "컨테이너 없이 실행"
+            if runtime == "fake"
+            else f"{runtime} 런타임인데 도구 이미지 digest를 기록하지 못했다 - "
+            "도구 단계 전에 멈췄거나 읽지 못했다"
+        )
+        warnings.append(f"tool_images가 비어 있다 ({why}). 모델 비교표에서 제외한다")
     if served_models:
         # **Fake 역할은 호출자가 이미 빼고 준다.** Fake 모델의 checksum 0은 빠진 값이
         # 아니라 **맞는 값**이다 — `FakeModelClient`는 프로세스 안에서 도는 코드라 해시할
