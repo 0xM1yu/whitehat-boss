@@ -17,10 +17,30 @@
 | OpenAI 호환 엔드포인트 (실서빙 프로필만) | `fake://` 프로필은 그대로 돈다 | 스킴이 어댑터를 고른다. `models.yaml`의 `endpoint` |
 | 컨테이너 런타임 (도구 프로필만) | `tool_runner: fake` 프로필은 그대로 돈다 | `doctor`가 PATH를 보고 WARN. `--tool-runner`로 갈아끼운다 |
 | GPU | 실서빙·도구 프로필만 필요 | `dev_fake`·`dev_hybrid`는 GPU 없이 0~9단계를 완주한다. 🔴 ⏵ 2026-10-03 — **실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을 204,963이 넘겨 `stopped_after: 4`). 합성·소형 타깃 이야기다 — 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424). ⏵ 2026-10-03 밤 — **닫혔다**: #427이 `dev_fake` 예산의 토큰 상한을 `0`(= 상한 없음)으로 내렸다(위 문장은 `1fa2182`의 사진). 깨끗한 트리 완주 재현은 `dev_fake` 하나다 — 같은 예산을 쓰는 `dev_hybrid` 등의 재현은 이 줄의 근거에 없다 |
+| Joern·JDK (실모델 run — 슬라이스를 만들 때만) | 실모델 Scout 좌석의 프롬프트(v3, meta `input: slice`)가 `--slices` 없이 모델에 닿는 run을 시작하지 않는다 — 실모델 run은 슬라이스에 경질 의존이다 | 개발 장비(Windows·WSL)에는 `joern`·`java`가 0건이었다. 슬라이싱은 CPU 장비를 따로 빌려 한다(이슈 #479 (a)(b)) |
 | `nvidia-smi --query-gpu`가 **GPU 메모리를 보고할 것** | `mem_gb_ctx8k`를 GB로 못 얻는다 | 사유를 남기고 0으로 둔다. 추정하지 않는다. **PATH에 없는 것과, 있는데 `[N/A]`를 주는 것은 다른 사유로 기록된다** — GB10은 통합메모리라 별도 VRAM이 없어 후자다(2026-08-17 실측). 그 경우 이 쿼리로는 고칠 것이 없다. **`--query-compute-apps`는 같은 장비에서 값을 주지만**(2026-09-03 실측) PID별이고 context 고정이 아니라 이 필드를 바로 채우지 못한다 ([보고서](experiments/harness/2026-09-03-model-swap-sleep-atom.md) §3.4) |
 
 **GPU 아키텍처·드라이버·CUDA 버전·스케줄러·호스트명은 목록에 없다.** 하네스 코드가 그
 값들을 읽지 않기 때문이다.
+
+### 실모델 run의 선결조건 (이슈 #479)
+
+2026-10-04 실모델·실도구 run을 세우며 문서가 비어 막혔던 자리다. 코드 결함이 아니라 문서 결함이었다.
+
+- **슬라이스가 먼저다.** 프롬프트 meta가 `input: slice`인 역할이 그 프로필에 있으면(지금은 실모델 Scout
+  좌석의 v3) 모델에 닿는 run은 `--slices` 없이 시작하지 않는다(`--dry-run`·낮은 `--stop-after`는 막지
+  않는다 — `cli`, ADR 0012 결정 1). 슬라이싱에는 Joern(그 run은 4.0.646)과 JDK(21)가 든다 — 그 run은
+  별도 vast 박스에 깔아(그 박스의 사양은 보고서에 근거가 없다) 후보 1,047 → 슬라이스 220을 18.9분에
+  만들었다. 슬라이서 장비는 모델 서빙 장비와 별개여도 된다(슬라이스는 파일로 받는다).
+- **하네스와 채점 서버(오라클)는 같은 네트워크 namespace에서 돈다.** 오라클은 `127.0.0.1:8666`에만
+  바인드한다(`0.0.0.0`은 금지). 이슈 #479 (d)가 보고한 것: WSL2 **기본(NAT) 네트워킹**에서 Windows의
+  `127.0.0.1:8666`은 WSL에서 안 닿고, 그 run은 오라클을 WSL 안에 다시 띄우다가 결국 하네스를 Windows로
+  옮겨 풀었다. 그리고 WSL에서는 `/mnt/c`의 git worktree를 못 읽어(`.git`이 Windows 절대경로) 원격 교대
+  스크립트(`vast-bootstrap.sh`·`swap-remote.sh`가 `git -C "$ROOT" rev-parse HEAD`를 쓴다)를 돌리려면 WSL
+  안의 네이티브 clone이 필요하다. ⚠ **이 서술은 이슈 본문의 진술이고 그 로그는 저장소에 없다** — 두 run
+  모두 오라클에 닿지 못했다(`vul_submitted: 0`). 저장소 안 보고서가 적는 WSL run `0002`의 실제 실패는
+  Docker 소켓이 없는 것이었다(§4).
+- ⚠ **미실측**: WSL2 mirrored 네트워킹과 네이티브 Linux에서 위 namespace 문제가 안 생기는지는 **0회 관측**이다(win11·WSL 기본 네트워킹만 했다).
 
 ## 2. 무엇으로 확인되는가
 

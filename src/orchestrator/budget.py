@@ -169,8 +169,8 @@ class BudgetLedger:
         # `tool_ms`도 같은 규칙이다. Fake 런타임의 도구 시간이 `None`으로 오는데, 그것은
         # GPU도 컨테이너도 아니라 **하네스가 자기를 잰 값**이라 장부에 넣을 대상이 아니다
         # (`RunContext.call_tool`에 그 판단과 근거가 있다). 미측정 개수는 따로 세지 않는다 —
-        # 도구 시간은 재현성 기록이 아니라 상한이고, `tool_images`가 이미 "컨테이너 없이
-        # 돌았다"를 판정한다(`incomplete_fields`).
+        # 도구 시간은 재현성 기록이 아니라 상한이고, Fake 런타임이면 `tool_images`가 이미
+        # "컨테이너 없이 돌았다"를 판정한다(`incomplete_fields`).
         if tool_ms is not None:
             self.tool_ms += tool_ms
         overrun = self._overrun()
