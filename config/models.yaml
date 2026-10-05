@@ -646,7 +646,9 @@ models:
     # 이 판은 `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 돈다 — 둘이
     # 어긋나면 `nodes/auditor.loop_problem`이 run·doctor를 막는다. v8도
     # `_CONTENT_AWARE_VERSIONS`에 든다.
-    prompt_template_version: "v8"
+    # ⏵ 2026-10-06 — v9(v8 + `auditor_guards` 서술 한 항목, `prompts/auditor/v9/meta.yaml`)로
+    # 올렸다. 이 판으로 돈 run도 0건이다.
+    prompt_template_version: "v9"
     fallback: null
     benchmark:
       measured_at: null
