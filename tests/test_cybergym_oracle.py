@@ -1118,3 +1118,33 @@ def test_the_module_ends_with_exactly_one_newline() -> None:
     data = module.read_bytes()
 
     assert data.endswith(b"\n") and not data.endswith(b"\n\n")
+
+
+# --- fix 다리를 안 돌리는 계열 (이슈 #431) -------------------------------------------------
+
+
+@pytest.mark.parametrize("task_id", ["arvo:1065", "oss-fuzz:368076871", "9c73e92e52b7"])
+def test_families_whose_fix_leg_runs_are_not_flagged(task_id: str) -> None:
+    assert oracle.fixless_task_id(task_id) is None
+
+
+def test_the_family_the_server_never_runs_fix_for_is_flagged_by_its_whole_prefix() -> None:
+    """`oss-fuzz-latest:`는 서버가 fix를 건너뛰어 `fix_exit_code`가 영구 `None`이다 - 우리 식이 그
+    과제를 **조용한 0점**으로 만든다. 접두어는 콜론까지 본다: `oss-fuzz:`를 이것으로 오인하지 않고,
+    `oss-fuzz-latest`로 시작하는 다른 이름도 잡지 않는다."""
+    assert oracle.fixless_task_id("oss-fuzz-latest:368076871") is not None
+    assert oracle.fixless_task_id("oss-fuzz-latestx:1") is None
+    # 정규식 모양 검사(`unsupported_task_id`)는 이것을 못 가린다 - 그래서 따로 둔 검사다.
+    assert oracle.unsupported_task_id("oss-fuzz-latest:368076871") is None
+
+
+def test_a_task_oracle_is_not_built_for_that_family_and_no_request_goes_out(
+    oracle_server: _FakeOracle,
+) -> None:
+    with pytest.raises(ValueError, match="fix 다리"):
+        _task(task_id="oss-fuzz-latest:368076871")
+    # 마스킹 서버: 번들의 id는 마스킹돼 있어도 **조회에 쓰는 실 id**가 그 계열이면 같다.
+    with pytest.raises(ValueError, match="fix 다리"):
+        _task(task_id="9c73e92e52b7", query_task_id="oss-fuzz-latest:368076871")
+
+    assert oracle_server.calls == []

@@ -31,7 +31,12 @@ from typing import TextIO, get_args
 
 from src.adapters.canary_report import CanaryReportError, canary_refusal, read_canary_report
 from src.adapters.container_tools import make_payload_reader
-from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
+from src.adapters.cybergym_oracle import (
+    TaskOracle,
+    checksum,
+    fixless_task_id,
+    unsupported_task_id,
+)
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_raw_source, read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
@@ -835,6 +840,11 @@ def _oracle_for(
     query_task_id = _query_task_id_from_mask_map(args, metadata.task_id)
     if isinstance(query_task_id, _OracleRefused):
         return query_task_id
+    # fix 다리가 없는 계열은 조용한 0점이 되므로 제출 전에 거절한다(#431) - **조회에 쓰는 실 id**로
+    # 가린다. 카나리 검사보다 앞이라 보고서가 다른 과제의 것이어도 사유는 이쪽이다.
+    fixless = fixless_task_id(query_task_id or metadata.task_id)
+    if fixless is not None:
+        return _refuse_oracle(f"{fixless}. 아무것도 제출하지 않았다")
     problem = unsupported_task_id(metadata.task_id)
     if problem is not None and query_task_id is None:
         return _refuse_oracle(

@@ -160,6 +160,12 @@ _ALLOWED_SCHEMES = ("http", "https")
 # `peek_verdict`가 이것을 「아직 행이 없다」로 읽는다.
 _NO_RECORD_DETAIL = "Record not found"
 
+# 서버가 fix 다리를 안 돌리는 과제 계열의 접두어(이슈 #431) - 저자 `server_utils.py`가
+# `run_poc_id`에서 그 접두어면 fix 실행을 건너뛰고(`:312-314`) `run_container`는 HTTP 400을
+# 돌려준다(`:55-56`).
+# 콜론까지 본다 - 저자 서버가 같은 식으로 가른다.
+_FIXLESS_PREFIX = "oss-fuzz-latest:"
+
 # 실 id 없이 단독으로 쓸 수 있는 task_id 모양 — `unsupported_task_id`가 쓴다.
 _REAL_TASK_ID = re.compile(r"[a-z][a-z0-9-]*:[0-9]+")
 
@@ -217,6 +223,26 @@ def unsupported_task_id(task_id: str) -> str | None:
         f"과제 id {task_id!r}는 이 클라이언트가 지원하는 모양이 아니다 - "
         "마스킹을 안 한 서버의 실제 id(<출처>:<숫자>, 예 arvo:1065)는 그대로 쓰고, 그 밖의 id는 "
         "조회에 쓸 실 id가 같이 와야 쓸 수 있다. 실 id 없이는 미지원이다"
+    )
+
+
+def fixless_task_id(task_id: str) -> str | None:
+    """서버가 `fix` 다리를 안 돌리는 계열의 **실 id**면 그 사유, 아니면 `None` (이슈 #431).
+
+    그 계열은 `fix_exit_code`가 영구히 `None`이다. `OracleVerdict.success`가 `fix == 0`을 요구하므로
+    그 과제는 모델이 무엇을 내든 **조용한 실패**로 기록된다 - 「안 돌았다」가 「거짓」과 같은 모양이
+    된다. 그래서 점수가 아니라 거절로 다룬다. 호출부는 마스킹 서버면 **조회에 쓰는 실 id**를 준다.
+    `unsupported_task_id`의 모양 검사는 이것을 못 가린다(`oss-fuzz-latest:123`도 통과한다).
+
+    ⚠ 이 계열이 Level 1에 드는지는 따로 잰 값이다 - 저자 `tasks.json` 1,507건의 접두어는 `arvo`·
+    `oss-fuzz` 둘뿐이다(`tools/oracle_canary.py`가 든 2026-10-04 실측). 그래서 이 거절은 지금 도달
+    불가한 경로를 막는 덧가드다.
+    """
+    if not task_id.startswith(_FIXLESS_PREFIX):
+        return None
+    return (
+        f"과제 id {task_id!r}의 계열은 저자 서버가 fix 다리를 안 돌린다 - fix 종료 코드가 영구히 "
+        "비어 우리 판정식이 그 과제를 조용히 실패(0점)로 만든다. 조용한 0점보다 거절이 낫다"
     )
 
 
@@ -746,6 +772,9 @@ class TaskOracle:
         # 있으면 받는다 — 호출자가 `mask_map.json`을 읽어 준 값이다
         # (`cli._query_task_id_from_mask_map`). 빈 문자열은 값이 아니다: `_query_task`가 그것을
         # `task_id`로 되돌리므로 여기서도 없는 것으로 읽는다.
+        fixless = fixless_task_id(self.query_task_id or self.task_id)
+        if fixless is not None:
+            raise ValueError(fixless)
         problem = unsupported_task_id(self.task_id)
         if problem is not None and not self.query_task_id:
             raise ValueError(
