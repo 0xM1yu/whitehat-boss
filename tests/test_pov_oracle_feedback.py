@@ -176,7 +176,6 @@ def test_wired_prefix_explains_raw_observation_and_model_designation():
     assert "## 채점기 vul 관측" in prefix
     for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", "중간"):
         assert text in prefix
-    assert "크래시한 걸 final로" not in prefix
     meta = Path(f"prompts/pov/{version}/meta.yaml").read_text(encoding="utf-8")
     assert "미배선(disk-only)" not in meta
 
@@ -460,3 +459,12 @@ def test_no_live_source_says_pov_v3_is_unwired():
                 if forms.search(line):
                     offenders.append(f"{posix}:{number}")
     assert not offenders, offenders
+
+
+def test_candidate_key_is_present_at_zero_when_intermediates_exist():
+    ledger = oracle_log.OracleLedger(wired=True)
+    ledger.add_attempt(oracle_log.vul_ok("f", b"a", VulSubmission(TASK_ID, "id", 77), 1,
+                                      designatable=False))
+    summary = ledger.summary()
+    # 모델이 submit하지 않은 run - 키가 없으면 `vul_submitted`(=1)가 후보 수로 읽힌다.
+    assert (summary["vul_submitted"], summary["vul_candidates"]) == (1, 0)

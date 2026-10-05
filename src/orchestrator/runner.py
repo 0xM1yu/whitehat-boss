@@ -1788,7 +1788,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     그 밖의 형은 run과 함께 보고서도 잃는다.
 
     **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만). v3 루프의 중간 `gen`마다
-    `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내 원시 종료 코드를 다음 홉에 싣는다.
+    (마지막 홉의 gen은 빼고) `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내
+    원시 종료 코드를 다음 홉에 싣는다.
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
     모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
     돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ①내부 근거 등급 ②`confidence`
