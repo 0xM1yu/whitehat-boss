@@ -56,6 +56,8 @@ from src.config import (
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.interfaces.oracle import Oracle
+from src.orchestrator import prompt_loader
+from src.orchestrator.nodes import auditor, critic, pov
 from src.orchestrator.nodes.auditor import loop_problem as auditor_loop_problem
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
@@ -196,6 +198,7 @@ def doctor(
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
     checks.extend(_check_auditor_loop(config))
+    checks.extend(_check_score_chain(config))
     checks.extend(_check_scout_slice_trim(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
@@ -449,7 +452,7 @@ def _check_checksums(config: HarnessConfig) -> list[Check]:
 
 
 def _check_prompts(config: HarnessConfig) -> list[Check]:
-    """설정이 가리키는 프롬프트 파일이 실제로 있는지 본다.
+    """프롬프트 파일의 실재·내용 인식 배선·디스크의 새 판을 본다.
 
     run 도중에 없는 것을 알면 그때까지 쓴 시간을 버린다(config.py의 판단과 같다).
 
@@ -469,6 +472,7 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
             checks.append(Check(Severity.ERROR, f"{role} 프롬프트 로드 실패: {exc}"))
             continue
         checks.append(Check(Severity.OK, f"{role} 프롬프트 {version} 확인"))
+        checks.extend(_check_prompt_version(config, role, version))
         if template.input == "slice":
             slice_input.append(f"{role}/{version}")
     if slice_input:
@@ -479,6 +483,43 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
                 "시작하지 않는다 (ADR 0012 결정 1)",
             )
         )
+    return checks
+
+
+def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> list[Check]:
+    """내용 인식 배선은 실모델 역할에서 ERROR, 디스크의 새 판은 WARN.
+
+    내용 인식 집합의 정본은 각 노드다. Scout·Single에는 그 집합이 없어 대상이 아니다.
+    Fake 여부는 `ModelEntry.is_fake`로 가른다 — 공유 엔트리의 한 역할만 범프하면 다른 역할의
+    파일이 없어질 수 있다(#172). Fake는 정해진 답을 내므로 낡은 판도 ERROR로 막지 않는다.
+    디스크의 순서는 정수 `vN`만 비교한다. `v4_t1` 같은 실험 이름의 우열은 추측하지 않는다.
+    """
+    versions = {
+        "critic": critic._CONTENT_AWARE_VERSIONS,
+        "pov": pov._WIDE_INPUT_VERSIONS,
+        "auditor": auditor._CONTENT_AWARE_VERSIONS,
+    }.get(role)
+    checks = []
+    if versions is not None and not config.model_for(role).is_fake and version not in versions:
+        checks.append(Check(
+            Severity.ERROR,
+            f"{role} 프롬프트 {version}은 내용 인식 집합 밖이다 — 본문·위치 또는 넓은 입력을 "
+            f"받지 못한다. 해당 노드의 허용 판: {sorted(versions)}",
+        ))
+    if version.startswith("v") and version[1:].isdecimal():
+        newer = sorted(
+            int(path.name[1:])
+            for path in (prompt_loader.PROMPTS_DIR / role).iterdir()
+            if path.is_dir() and path.name.startswith("v") and path.name[1:].isdecimal()
+            and int(path.name[1:]) > int(version[1:])
+            and all((path / name).is_file() for name in ("prefix.md", "body.md", "meta.yaml"))
+        )
+        if newer:
+            checks.append(Check(
+                Severity.WARN,
+                f"{role} 프롬프트는 {version}에 배선됐지만 디스크에 새 판 v{newer[-1]}이 있다 — "
+                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (#172)",
+            ))
     return checks
 
 
@@ -563,6 +604,38 @@ def _check_auditor_loop(config: HarnessConfig) -> list[Check]:
     if problem is None:
         return []
     return [Check(Severity.ERROR, problem)]
+
+
+def _check_score_chain(config: HarnessConfig) -> list[Check]:
+    """PoV 사슬을 막는 설정은 ERROR, 재현 명세 합성의 #232 위험은 WARN.
+
+    `config._check_real_serving_limits_are_positive`와 같은 `served_models()` 기준이다.
+    `production: false`여도 실서빙할 수 있고 Fake 전용은 GPU 없는 리허설이라 제외한다.
+    좌석이 없으면 러너의 8단계가 안 돌고, 두 스위치가 0이면 재현법을 안 주는 과제에서
+    validated가 비어 PoV가 0건이다 — run 완주가 이 구조적 막힘을 숨겨 ERROR로 드러낸다.
+    합성 WARN은 `config.Thresholds.synthesize_repro_spec`의 #232 경고를 따른다. 그 주석의
+    exit 0 서술은 낡았다: `gate.evaluate`는 이미 0·None을 제외한다. 남은 위험은 비-0 종료와
+    기대 신호를 대조하지 않아 크래시 없이도 proven이 날 수 있다는 것이다(게이트 docstring).
+    """
+    if not config.served_models():
+        return []
+    checks = []
+    if Role.POV.value not in config.profile.roles:
+        checks.append(Check(Severity.ERROR, "점수 사슬: pov 좌석이 없어 8단계가 실행되지 않는다"))
+    elif not config.thresholds.pov_attempt_top_n and not config.thresholds.synthesize_repro_spec:
+        checks.append(Check(
+            Severity.ERROR,
+            "점수 사슬: pov_attempt_top_n=0 · synthesize_repro_spec=0 — 재현 명세를 안 주는 "
+            "과제에서는 validated가 비어 PoV가 0건이다",
+        ))
+    if config.thresholds.synthesize_repro_spec:
+        checks.append(Check(
+            Severity.WARN,
+            "점수 사슬: synthesize_repro_spec=1 — #232: p4는 exit 0·None을 제외하지만 비-0 종료를 "
+            "기대 신호와 대조하지 않아 크래시 없이도 proven이 날 수 있다 "
+            "(src/config.py의 합성 경고 중 남은 위험; gate.evaluate 기준)",
+        ))
+    return checks or [Check(Severity.OK, "점수 사슬: PoV 좌석과 후보 진입 설정 확인")]
 
 
 def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
