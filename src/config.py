@@ -762,9 +762,9 @@ class Thresholds(HarnessModel):
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
-    # Auditor는 `call_tool`을 안 불렀고(켜면 `probe`가 부른다), 배선된 pov 판은 gdb를 광고하지
-    # 않는다. 그래서 16은 **계획값**이고 실측 근거는 홉당 usage(trace `auditor_hop`)가 처음 돈
-    # run에서 만든다.
+    # Auditor는 `call_tool`을 안 불렀고(켜면 `probe`가 부른다), 2026-10-05 전에 배선돼 있던 pov v2는
+    # gdb를 광고하지 않았다(v3는 한다). 그래서 16은 **계획값**이고 실측 근거는 홉당 usage
+    # (trace `auditor_hop`)가 처음 돈 run에서 만든다.
     #
     # **값의 성격은 폭주 차단이다 — 창 적합을 보장하지 않는다.** vast 실측 창 262,144
     # (`config/serving/vastai.yaml`)에서 출력 상한 65,536(`output_max_by_role.auditor`)을 빼면 입력
