@@ -465,7 +465,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
   만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
-- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임).
+- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임) + (v3이고 `--oracle-submit`일 때)
+  직전 `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
   직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
   스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
@@ -526,7 +527,13 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
   위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
   (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
-  `response_exit_code`가 지정 시점에 손에 있는데도다(`runner._designate_final`). 서버 주소는 조작자가
+  `response_exit_code`와 중간 gen의 `query_vul` 관측이 지정 시점에 손에 있는데도다
+  (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
+  반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
+  오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
+  최대 `1 + max_hops`번의 시도 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
+  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
+  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을

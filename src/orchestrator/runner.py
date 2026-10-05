@@ -1821,7 +1821,7 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     try:
         poc, reason = _run_pov_hops(ctx, state, finding, capsule)
         if reason is PovStopReason.SUBMITTED and poc is not None:
-            _submit_vul_to_oracle(ctx, state, finding, poc)
+            _submit_vul_to_oracle(ctx, state, finding, poc, designatable=True)
     finally:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
 
@@ -1832,7 +1832,7 @@ def _submit_vul_to_oracle(
     finding: Finding,
     poc: bytes,
     *,
-    designatable: bool = True,
+    designatable: bool,
 ) -> str:
     """PoC를 `vul` 다리에 내보내고 다음 홉 관측 한 줄을 돌려준다 (#386).
 
@@ -1862,10 +1862,7 @@ def _submit_vul_to_oracle(
     with ctx.stage(Stage.VALIDATE):
         started = ctx.monotonic_ms()
         if not poc:
-            exc = ValueError("empty_poc")
-            attempt = oracle_log.vul_failed(
-                finding.finding_id, poc, exc, 0, designatable=designatable
-            )
+            attempt = oracle_log.vul_empty(finding.finding_id, poc, designatable=designatable)
             ctx.trace.emit(
                 EventKind.ORACLE_FAILED,
                 stage=Stage.VALIDATE,
@@ -1873,10 +1870,11 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=0,
                 leg="vul",
+                designatable=designatable,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=0,
                 error=attempt.error,
-                reason="empty_poc",
+                reason=oracle_log.ERROR_EMPTY_POC,
             )
             state.oracle_ledger.add_attempt(attempt)
             return "oracle_vul=unavailable"
@@ -1897,6 +1895,7 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=attempt.wall_ms,
                 leg="vul",
+                designatable=designatable,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
                 error=attempt.error,
@@ -1917,10 +1916,15 @@ def _submit_vul_to_oracle(
                         subject_id=finding.finding_id,
                         wall_ms=max(0, ctx.monotonic_ms() - started),
                         leg="query_vul",
+                        designatable=designatable,
                         poc_sha256=hashlib.sha256(poc).hexdigest(),
                         poc_bytes=len(poc),
                         error=type(exc).__name__,
                     )
+            # 조회가 **예외 없이** 비어 돌아온 것도 기록한다 - 제출이 성공한 직후의 빈 답은 이상이다
+            # (`finalize`는 행이 없으면 예외를 낸다). 안 적으면 서버 설정이 틀려도 모든 gen이
+            # 조용히 `unavailable`을 받는다.
+            no_verdict = not designatable and query_error is None and exit_code is None
             attempt = oracle_log.vul_ok(
                 finding.finding_id,
                 poc,
@@ -1928,7 +1932,13 @@ def _submit_vul_to_oracle(
                 max(0, ctx.monotonic_ms() - started),
                 designatable=designatable,
                 observation_exit_code=exit_code,
-                observation_error=None if query_error is None else type(query_error).__name__,
+                observation_error=(
+                    oracle_log.OBSERVATION_NO_VERDICT
+                    if no_verdict
+                    else None
+                    if query_error is None
+                    else type(query_error).__name__
+                ),
                 observation_error_detail=(
                     "" if query_error is None else oracle_log.clip_error(query_error)
                 ),
@@ -1940,6 +1950,7 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=attempt.wall_ms,
                 leg="vul",
+                designatable=designatable,
                 task_id=submission.task_id,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
@@ -1949,6 +1960,10 @@ def _submit_vul_to_oracle(
                 if exit_code is not None
                 else "oracle_vul=unavailable"
             )
+            # 서버 캐시 hit(같은 바이트를 앞서 냈다 - 이슈 #385)면 그 코드는 **이번 환경의 새
+            # 측정이 아닐 수 있다.** 모델이 새 값으로 읽지 않게 표시한다.
+            if exit_code is not None and submission.cached:
+                observation += " cached=true"
         state.oracle_ledger.add_attempt(attempt)
         return observation
 
@@ -2192,7 +2207,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다). 「PoV가
     끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 이 요약은 못 가른다 — 후자는 run
     수준의 `stopped_after`·`BUDGET_EXHAUSTED`·경고가 말한다. 후보가 있어 `scored`가 된 run도 **부분
-    후보 집합 위의 지정**이다(`vul_submitted` 수와 `stopped_after`로 재구성한다).
+    후보 집합 위의 지정**이다(`vul_submitted`에서 `vul_intermediate`를 뺀 수와 `stopped_after`로
+    재구성한다).
     """
     if ctx.oracle is None:
         return
@@ -2277,8 +2293,9 @@ def _run_pov_hops(
         # 묶는 이유는 조회가 던져도 `except` 갈래가 이 이름을 안전하게 읽어야 해서다.
         fuzz: dict[str, object] | None = None
         # 루프 내내 안 바뀐다(설정값) — 홉마다 다시 읽지 않는다. hop0의 `source=` 결정과
-        # 매 홉의 관측 꼬리(`_pov_observation`) 둘 다 이것을 본다(적대적 리뷰 2026-10-02
-        # MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도 이 PR의 새 입력이다).
+        # 매 홉의 관측 꼬리(`_pov_observation`)와 중간 gen의 vul 제출·판정 줄 셋 다 이것을 본다
+        # (적대적 리뷰 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도
+        # 이 PR의 새 입력이다).
         pov_wide = (
             ctx.config.model_for(Role.POV.value).prompt_template_version
             in pov._WIDE_INPUT_VERSIONS
@@ -2353,7 +2370,9 @@ def _run_pov_hops(
                         ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
                     )
                 last_poc = hop_poc
-                if pov_wide:
+                # 마지막 홉(`hop >= max_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
+                # 두 번이 레이트 예산만 쓰고 버려진다.
+                if pov_wide and hop < max_hops:
                     oracle_observation = _submit_vul_to_oracle(
                         ctx, state, finding, hop_poc, designatable=False
                     )

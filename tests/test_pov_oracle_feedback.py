@@ -126,11 +126,12 @@ def test_only_intermediate_attempts_leave_no_final_candidate():
 def test_zero_bytes_are_rejected_before_any_oracle_submission(ctx):  # noqa: ANN001, F811
     state, finding = _pov_state(ctx)
     ctx.oracle = ReadingOracle()
-    runner._submit_vul_to_oracle(ctx, state, finding, b"")
+    runner._submit_vul_to_oracle(ctx, state, finding, b"", designatable=True)
     assert ctx.oracle.vul_calls == []
     failures = [e for e in ctx.trace.events if e.kind is EventKind.ORACLE_FAILED]
     assert failures[-1].data["reason"] == "empty_poc"
-    assert "empty_poc" in state.oracle_ledger.record()["candidates"][-1]["error_detail"]
+    row = state.oracle_ledger.record()["candidates"][-1]
+    assert (row["status"], row["error"]) == ("skipped", "empty_poc")
 
 
 @pytest.mark.parametrize("code", [None, 0, 71, 300, 139])
@@ -218,3 +219,184 @@ def test_live_oracle_prose_does_not_call_every_vul_submission_a_candidate():
         text = Path(path).read_text(encoding="utf-8")
         assert required in text, path
         assert stale not in text, path
+
+
+# --- review fixes (PR #499 adversarial review) ------------------------------------------------
+
+
+def _prompts(scripted):  # noqa: ANN001, ANN202
+    return [prompt.body for role, prompt in scripted.models.prompts if role is Role.POV]
+
+
+def test_exit_code_zero_is_a_real_observation_not_unavailable(ctx):  # noqa: ANN001, F811
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle(codes=(0, 0)), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    body = _prompts(scripted)[-1]
+    assert "oracle_vul exit_code=0" in body
+    assert "oracle_vul=unavailable" not in body
+
+
+def test_cached_vul_row_is_marked_in_the_observation(ctx):  # noqa: ANN001, F811
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle(codes=(300,), vul_cached=True), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    assert "oracle_vul exit_code=300 cached=true" in _prompts(scripted)[-1]
+
+
+def test_fresh_vul_row_carries_no_cache_marker(ctx):  # noqa: ANN001, F811
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle(codes=(300,), vul_cached=False), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    assert "cached" not in _prompts(scripted)[-1]
+
+
+def test_missing_row_after_a_successful_submit_is_recorded(ctx):  # noqa: ANN001, F811
+    _, state, _ = _feedback_run(ctx, ReadingOracle(codes=(None,)), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    ledger = state.oracle_ledger
+    assert ledger.attempts[0].observation_error == oracle_log.OBSERVATION_NO_VERDICT
+    assert ledger.observation_failed == 1
+    assert ledger.summary()["vul_observation_failed"] == 1
+    assert any("조회" in w for w in ledger.warnings())
+
+
+def test_query_failure_shows_in_the_summary_and_warnings(ctx):  # noqa: ANN001, F811
+    _, state, _ = _feedback_run(ctx, ReadingOracle(query_error=RuntimeError("down")), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    ledger = state.oracle_ledger
+    assert ledger.failed == 0  # 제출은 성공했다 - 조회만 실패했다
+    assert ledger.summary()["vul_observation_failed"] == 1
+    assert any("조회" in w for w in ledger.warnings())
+
+
+def test_clean_run_keeps_the_manifest_keys_it_had():
+    ledger = oracle_log.OracleLedger(wired=True)
+    ledger.add_attempt(oracle_log.vul_ok("f", b"a", VulSubmission(TASK_ID, "id", 77), 1))
+    assert set(ledger.summary()) == {
+        "vul_submitted", "vul_failed", "final", "final_reason", "record",
+    }
+
+
+def test_summary_says_when_intermediate_feedback_was_used(ctx):  # noqa: ANN001, F811
+    _, state, _ = _feedback_run(ctx, ReadingOracle())
+    assert state.oracle_ledger.summary()["vul_intermediate"] == 2
+
+
+def test_warning_counts_candidates_not_submissions():
+    sub = VulSubmission(TASK_ID, "id", 77)
+    ledger = oracle_log.OracleLedger(wired=True)
+    for name in ("a", "b"):
+        ledger.add_attempt(oracle_log.vul_ok("f", name.encode(), sub, 1, designatable=False))
+    for name in ("c", "d"):
+        ledger.add_attempt(oracle_log.vul_ok(name, name.encode(), sub, 1))
+    ledger.set_final(oracle_log.FinalAttempt(
+        status=oracle_log.STATUS_NONE, reason=oracle_log.REASON_GRADE_UNKNOWN,
+    ))
+    text = next(w for w in ledger.warnings() if "후보" in w)
+    assert "후보가 2건" in text and "4건" not in text
+
+
+def test_empty_poc_is_not_a_failed_vul_submission(ctx):  # noqa: ANN001, F811
+    oracle = ReadingOracle()
+    scripted, state, _ = _feedback_run(ctx, oracle, [
+        _gen(count=0), PovAction(action="submit", rationale="model decision"),
+    ])
+    ledger = state.oracle_ledger
+    assert oracle.vul_calls == []
+    assert ledger.failed == 0 and ledger.submitted == 0
+    assert ledger.none_reason() == oracle_log.REASON_NO_POC
+    assert ledger.summary()["vul_empty_poc"] == 2
+    assert not any("예외로 실패" in w for w in ledger.warnings())
+    rows = ledger.record()["candidates"]
+    assert {(r["status"], r["error"]) for r in rows} == {("skipped", "empty_poc")}
+
+
+def test_submit_helper_has_no_default_for_designatable(ctx):  # noqa: ANN001, F811
+    state, finding = _pov_state(ctx)
+    ctx.oracle = ReadingOracle()
+    with pytest.raises(TypeError):
+        runner._submit_vul_to_oracle(ctx, state, finding, b"x")
+
+
+def test_failed_intermediates_alone_do_not_look_like_a_failed_submit(ctx):  # noqa: ANN001, F811
+    oracle = ReadingOracle(vul_errors={0: RuntimeError("down")})
+    _, state, _ = _feedback_run(ctx, oracle, [_gen(count=1), _gen(count=1)])
+    ledger = state.oracle_ledger
+    assert [a.designatable for a in ledger.attempts] == [False]
+    assert ledger.failed == 1
+    assert ledger.none_reason() == oracle_log.REASON_NO_POC
+
+
+def test_empty_intermediate_alone_is_not_designatable(ctx):  # noqa: ANN001, F811
+    _, state, _ = _feedback_run(ctx, ReadingOracle(), [_gen(count=0), _gen(count=0)])
+    ledger = state.oracle_ledger
+    assert [a.designatable for a in ledger.attempts] == [False]
+    assert ledger.none_reason() == oracle_log.REASON_NO_POC
+
+
+def test_designation_reads_no_grades_when_intermediates_are_present(ctx):  # noqa: ANN001, F811
+    scripted, state, _ = _feedback_run(ctx, ReadingOracle(), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    runner._finalize_oracle(scripted, state)
+    assert state.oracle_ledger.grades is None
+
+
+def test_the_discarded_last_hop_gen_is_not_sent_to_the_oracle(ctx):  # noqa: ANN001, F811
+    max_hops = ctx.config.thresholds.max_hops
+    oracle = ReadingOracle(codes=tuple(300 for _ in range(max_hops + 5)))
+    _feedback_run(ctx, oracle, [_gen(count=n) for n in range(1, max_hops + 5)])
+    # hop0..max_hops-1 의 gen만 다음 홉이 읽는다 - 마지막 홉의 gen은 관측을 읽을 홉이 없다.
+    assert len(oracle.vul_calls) == max_hops
+
+
+def test_trace_events_say_whether_a_submission_was_intermediate(ctx):  # noqa: ANN001, F811
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle(codes=(300,)), [
+        _gen(count=1), PovAction(action="submit", rationale="model decision"),
+    ])
+    sent = [e for e in scripted.trace.events if e.kind is EventKind.ORACLE_SUBMITTED]
+    assert [e.data["designatable"] for e in sent] == [False, True]
+
+
+def test_the_v3_prefix_does_not_contradict_the_oracle_line():
+    prefix = load_prompt(Role.POV, "v3").prefix
+    body = load_prompt(Role.POV, "v3").body
+    flat = " ".join(prefix.split())
+    # 오라클 줄은 모델 자신의 바이트에 대한 값이다 - 「관측은 입력의 결과가 아니다」가 그 줄까지
+    # 덮으면 안 된다.
+    for stale in (
+        "고치고 관측을 근거로 고쳤다고 적지 않는다",
+        "관측이 당신 입력에 반응하지 않으므로",
+        "- 관측이 크래시를 안 보여도",
+        "근거는 SOURCE와 FACTS뿐이다",
+        "마지막 `gen`의 PoC가 최종답",
+        "특히 71을",
+    ):
+        assert stale not in flat, stale
+    assert "아래 JSON이 참조 가능한 사실 전부다" not in body
+    assert "도구 관측" in flat and "oracle_vul" in flat
+    assert "cached=true" in flat
+
+
+def test_prose_no_longer_says_every_vul_submission_is_a_candidate():
+    """Spelling pins (CLAUDE.md 2.5: they bite the exact forms found, not the proposition).
+
+    Witnesses are the pre-fix lines the PR #499 review found by a loose sweep; the proposition is
+    'intermediate gens also go to the vul leg, only the model submit is a candidate'.
+    """
+    stale = {
+        "src/cli.py": ["후보마다 vul 다리만"],
+        "docs/engineering-guide.md": ["후보마다 `submit_vul`, run당"],
+        "docs/build-plan.md": ["(v3는 미배선)", "후보마다는 `submit_vul`만"],
+        "docs/open-questions/D/D99.md": ["`gdb`를 받는데 배선된 `prompts/pov/v2"],
+        "STATUS.md": ["**현재:** `Role.POV` + `prompts/pov/v2/`"],
+        "src/orchestrator/trace.py": ["**후보(finding)마다\n    # 1행**"],
+        "src/orchestrator/runner.py": ["(`vul_submitted` 수와 `stopped_after`로 재구성한다)"],
+    }
+    for path, phrases in stale.items():
+        text = Path(path).read_text(encoding="utf-8")
+        for phrase in phrases:
+            assert phrase not in text, (path, phrase)

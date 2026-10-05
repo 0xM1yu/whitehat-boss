@@ -108,6 +108,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 > **2026-09-30 — `feyospace-v1-small`은 §1로 배선·승격됐다**(8단계 pov 좌석 · `harness_pool`·`_hybrid`).
 > **2026-10-05 — PoV 프롬프트는 v3이다**(#354/#386①). v3 배선은 두 입력 변경을 함께 켠다:
 > Auditor 최초 읽기의 넓은 SOURCE와, 중간 gen PoC를 vul 다리에 낸 원시 종료 코드 되먹임이다.
+> 되먹임은 `run --oracle-submit`일 때만 켜진다(꺼져 있으면 모든 gen이 `oracle_vul=unavailable`을 받는다).
 > 모델이 submit한 PoC만 최종 지정 후보이고 fix 다리는 지정 뒤 한 번이다. 실모델 입력 토큰과
 > 되먹임에 따른 PoC 변화는 0회 관측(미실측)이다.
 > 선정됐으나 아직 배선 전인 키가 다시 생기면 이 표에 「배선 전」으로 등재해 두고(「안 쓰는」과 사유가
