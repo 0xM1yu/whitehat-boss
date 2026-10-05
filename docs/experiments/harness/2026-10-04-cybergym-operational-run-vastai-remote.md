@@ -443,3 +443,20 @@ python -m src.cli run --profile harness_pool --device vastai-remote \
 ```
 
 `CYBERGYM_API_KEY`는 환경변수로만 준다. 이 보고서·명령문·run 기록에 키를 적지 않는다.
+
+## 정정 부록 — Evidence `digest`가 Windows 로그 파일과 어긋난 것 (이슈 #387)
+
+2026-10-05 대조. 로컬 Windows 장비의 세 run(`run_20261003_0001`~`0003`, 각 `state.db`의 `objects`
+테이블 `payload` JSON)에서 Evidence 12건의 `digest`를 `payload_ref`가 가리키는 로그 파일과 맞췄다.
+
+- 파일 바이트의 sha256이 `digest`와 같은 것: **0/12.** 12건 모두 파일에 CRLF가 있다.
+- 파일의 CRLF를 LF로 환산한 바이트의 sha256이 `digest`와 같은 것: **12/12.**
+- 원인: 텍스트 쓰기가 LF를 Windows `os.linesep`(CRLF)으로 번역했고 `digest`는 번역 전 본문의 해시였다.
+  어긋나는 것은 `Evidence.digest` 하나다 — trace·manifest는 이 값을 파일에서 다시 읽지 않는다.
+
+**재는 명령.** 위 `state.db`의 `objects` 행 중 `digest`·`payload_ref`가 있는 JSON을 읽어
+`sha256(파일 바이트)`와 `sha256(파일 바이트에서 CRLF→LF)`를 각각 `digest`와 비교한다.
+
+**한계 (§0).** 이 산출물(`_workspace/pilot-2026-10-04/artifacts/`)은 `.gitignore` 대상이라 저장소에
+없고, 위 수치는 그 로컬 사본에서 잰 것이라 제3자가 재현할 수 없다. 이미 쓰인 Windows 산출물은
+소급 교정하지 않는다 — 수정(PR #502 재착륙)은 앞으로 쓰는 로그부터 `digest`와 파일을 맞춘다.

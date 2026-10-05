@@ -763,38 +763,31 @@ def test_the_log_digest_matches_the_bytes_on_disk(tmp_path: Path, spy: _Spy) -> 
     assert CRLF not in raw, "로그가 CRLF로 써졌다 — digest는 LF 본문의 해시다"
 
 
-def test_the_digest_holds_where_a_text_write_translates_newlines(
+def test_the_digest_is_taken_from_the_bytes_that_were_written(
     tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """플랫폼에 안 기댄다 — **번역하는 쓰기를 주입해** 같은 것을 묻는다 (이슈 #387).
+    """플랫폼에 안 기댄다 — **파일에 건넨 바이트**가 digest의 입력이다 (이슈 #387).
 
-    `write_text`의 기본값 `newline=None`은 줄바꿈을 `os.linesep`으로 **번역한다.** Windows에서
-    그것이 CRLF라 digest(번역 전 본문의 해시)와 파일이 어긋난다. POSIX에서는 `os.linesep`이
-    LF라 증상이 안 난다 — 그래서 위 검사만으로는 리눅스 CI가 영영 초록이다.
-
-    여기서는 그 번역을 **흉내내는 쓰기**를 끼운다. `newline`을 명시한 호출만 번역을 면하므로
-    이 검사가 무는 성질은 **「쓰기가 줄바꿈을 고정한다」**이고 특정 플랫폼이 아니다.
+    텍스트 쓰기(`write_text`)는 줄바꿈을 플랫폼에 맡겨 Windows에서 digest와 파일이 어긋난다.
+    바이트로 쓰면 번역될 여지가 없다. 그래서 `write_bytes`가 받은 바이트를 가로채 digest와
+    대조한다 — 텍스트 쓰기로 되돌리면 가로챌 호출이 없어 **어느 OS에서도** 빨개진다.
     """
-    real_write_text = Path.write_text
+    real_write_bytes = Path.write_bytes
+    written: list[bytes] = []
 
-    def translating_write_text(self: Path, data: str, **kwargs: object) -> int:
-        if kwargs.get("newline") is None and tmp_path in self.parents:
-            data = data.replace(LF, CRLF.decode())
-        kwargs["newline"] = ""
-        return real_write_text(self, data, **kwargs)  # type: ignore[arg-type]
+    def recording_write_bytes(self: Path, data: bytes) -> int:
+        if tmp_path in self.parents:
+            written.append(bytes(data))
+        return real_write_bytes(self, data)
 
-    monkeypatch.setattr(Path, "write_text", translating_write_text)
+    monkeypatch.setattr(Path, "write_bytes", recording_write_bytes)
 
     evidence = _runner(tmp_path).run(
         "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
     )
 
-    raw = (tmp_path / RUN_ID / "semgrep" / f"{evidence.evidence_id}.log").read_bytes()
-
-    assert evidence.digest == f"sha256:{hashlib.sha256(raw).hexdigest()}", (
-        "쓰기가 줄바꿈을 번역하는 자리에서 digest가 파일과 어긋난다 — "
-        "`write_text`에 줄바꿈을 명시한다"
-    )
+    assert len(written) == 1, "로그를 `write_bytes`로 쓰지 않았다"
+    assert evidence.digest == f"sha256:{hashlib.sha256(written[0]).hexdigest()}"
 
 
 def test_rejected_runs_also_leave_a_log(tmp_path: Path, spy: _Spy) -> None:
