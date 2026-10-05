@@ -322,7 +322,10 @@ class OracleLedger:
 
         셋을 가르는 이유는 같은 「점수 없음」으로 읽힐 만큼 **다른 사건**이기 때문이다(§0).
         """
-        failures = [a for a in self.attempts if not a.ok]
+        # 최종 지정 사유이므로 모델 submit 시도만 본다. 중간 gen의 제출 실패가 최종 답 부재를
+        # `all_vul_submissions_failed`나 `rate_limited`로 바꾸면 모델이 submit하지 않은 사실을
+        # 잃는다.
+        failures = [a for a in self.attempts if a.designatable and not a.ok]
         if not failures:
             return REASON_NO_POC
         if all(a.error_status == _HTTP_TOO_MANY_REQUESTS for a in failures):

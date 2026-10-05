@@ -115,6 +115,13 @@ def test_only_intermediate_attempts_leave_no_final_candidate():
     assert ledger.submitted == 1
     assert ledger.none_reason() == oracle_log.REASON_NO_POC
 
+    ledger.add_attempt(
+        oracle_log.vul_failed(
+            "f", b"b", RuntimeError("intermediate failure"), 1, designatable=False
+        )
+    )
+    assert ledger.none_reason() == oracle_log.REASON_NO_POC
+
 
 def test_zero_bytes_are_rejected_before_any_oracle_submission(ctx):  # noqa: ANN001, F811
     state, finding = _pov_state(ctx)
