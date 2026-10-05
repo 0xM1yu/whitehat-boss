@@ -44,6 +44,9 @@ from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 
 RUN_ID = "run_20260901_0001"
+LF = chr(10)
+CRLF = (chr(13) + chr(10)).encode()
+
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 GDB_TARGET = Path(__file__).resolve().parent / "fixtures" / "gdb"
 OBSERVED_AT = datetime(2026, 9, 1, tzinfo=UTC)
@@ -742,6 +745,56 @@ def test_log_records_the_command_that_actually_ran(tmp_path: Path, spy: _Spy) ->
     assert "--error" in body, "실제 실행 명령이 로그에 없다"
     assert "(exit=0)" in body
     assert evidence.digest == f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}"
+
+
+def test_the_log_digest_matches_the_bytes_on_disk(tmp_path: Path, spy: _Spy) -> None:
+    """digest는 **그 파일**을 검증하는 값이다 — 그래서 바이트로 대조한다 (이슈 #387).
+
+    ⚠ 위 검사는 `read_text`로 읽어 비교하는데 **그 호출이 CRLF를 LF로 되돌려 읽는다.**
+    그래서 디스크가 CRLF여도 통과한다 — 이 결함이 그 틈으로 지나갔다.
+    """
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
+    )
+
+    raw = (tmp_path / RUN_ID / "semgrep" / f"{evidence.evidence_id}.log").read_bytes()
+
+    assert evidence.digest == f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    assert CRLF not in raw, "로그가 CRLF로 써졌다 — digest는 LF 본문의 해시다"
+
+
+def test_the_digest_holds_where_a_text_write_translates_newlines(
+    tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """플랫폼에 안 기댄다 — **번역하는 쓰기를 주입해** 같은 것을 묻는다 (이슈 #387).
+
+    `write_text`의 기본값 `newline=None`은 줄바꿈을 `os.linesep`으로 **번역한다.** Windows에서
+    그것이 CRLF라 digest(번역 전 본문의 해시)와 파일이 어긋난다. POSIX에서는 `os.linesep`이
+    LF라 증상이 안 난다 — 그래서 위 검사만으로는 리눅스 CI가 영영 초록이다.
+
+    여기서는 그 번역을 **흉내내는 쓰기**를 끼운다. `newline`을 명시한 호출만 번역을 면하므로
+    이 검사가 무는 성질은 **「쓰기가 줄바꿈을 고정한다」**이고 특정 플랫폼이 아니다.
+    """
+    real_write_text = Path.write_text
+
+    def translating_write_text(self: Path, data: str, **kwargs: object) -> int:
+        if kwargs.get("newline") is None and tmp_path in self.parents:
+            data = data.replace(LF, CRLF.decode())
+        kwargs["newline"] = ""
+        return real_write_text(self, data, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", translating_write_text)
+
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
+    )
+
+    raw = (tmp_path / RUN_ID / "semgrep" / f"{evidence.evidence_id}.log").read_bytes()
+
+    assert evidence.digest == f"sha256:{hashlib.sha256(raw).hexdigest()}", (
+        "쓰기가 줄바꿈을 번역하는 자리에서 digest가 파일과 어긋난다 — "
+        "`write_text`에 줄바꿈을 명시한다"
+    )
 
 
 def test_rejected_runs_also_leave_a_log(tmp_path: Path, spy: _Spy) -> None:
