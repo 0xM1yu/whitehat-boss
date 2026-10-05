@@ -2207,8 +2207,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다). 「PoV가
     끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 이 요약은 못 가른다 — 후자는 run
     수준의 `stopped_after`·`BUDGET_EXHAUSTED`·경고가 말한다. 후보가 있어 `scored`가 된 run도 **부분
-    후보 집합 위의 지정**이다(`vul_submitted`에서 `vul_intermediate`를 뺀 수와 `stopped_after`로
-    재구성한다).
+    후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이 없던 run은 `vul_submitted` - 와
+    `stopped_after`로 재구성한다).
     """
     if ctx.oracle is None:
         return
