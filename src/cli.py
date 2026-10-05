@@ -29,7 +29,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TextIO, get_args
 
-from src.adapters.canary_report import CanaryReportError, canary_refusal, read_canary_report
+from src.adapters.canary_report import (
+    CanaryReport,
+    CanaryReportError,
+    canary_refusal,
+    read_canary_report,
+)
 from src.adapters.container_tools import make_payload_reader
 from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
 from src.adapters.factory import Deps, build_deps, describe_wiring
@@ -788,7 +793,7 @@ def _oracle_for(
     masked id가 맵에 없는 것), task_id 모양(마스킹된 id는 `--mask-map`이 실 id를 줄 때만 받는다,
     `unsupported_task_id`), 번들의 체크섬이 클라이언트가 보내는 기본 salt로 계산한 값과 다른 것(다른
     salt로 만든 번들은 서버가 400으로 거부한다), 키 부재·키 모양(공백·비출력 문자),
-    **카나리 보고서**(없거나 이 과제의 것이 아니거나 통과가 아닌 것 - `_canary_refusal`).
+    **카나리 보고서**(없거나 이 과제의 것이 아니거나 통과가 아닌 것 - `_canary_gate`).
     어느 하나가 걸리면 컨테이너는커녕 요청도 안 나간다. 제출하려 한 run이 조용히 미제출로 끝나면
     「0건 제출」이 설정 오류와 구별되지 않는다(§0).
 
@@ -877,9 +882,9 @@ def _oracle_for(
     # 🔴 견주는 것은 **실 id**다. 카나리 도구는 과제 id로 `-vul`·`-fix` 이미지 이름을 만들어
     # 조작자가 실 id로 돌리므로 보고서의 `task`도 실 id다. 번들의 masked id와 견주면 마스킹 run의
     # **정상 카나리가 전부 거절된다**(README 표준 기동이 그 경로다).
-    refused = _canary_refusal(args, query_task_id or metadata.task_id)
-    if refused is not None:
-        return refused
+    gate = _canary_gate(args, query_task_id or metadata.task_id)
+    if isinstance(gate, _OracleRefused):
+        return gate
     target = server.rstrip("/")
     print(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
@@ -896,11 +901,27 @@ def _oracle_for(
         agent_id=metadata.agent_id,
         api_key=api_key,
         query_task_id=query_task_id,
+        # 어느 보고서에 기댔는지 - 경로는 풀어서, 해시는 **게이트가 검사한 바이트의 것**이다(#487).
+        canary_path=gate.path,
+        canary_sha256=gate.sha256,
     )
 
 
-def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | None:
-    """카나리 보고서가 이 과제·이 장비를 통과시키지 않으면 `_ORACLE_ERROR` (이슈 #383).
+def _canary_ref(oracle: object) -> dict[str, str] | None:
+    """`RunRecord.oracle`에 실을 카나리 보고서 참조. 카나리에 안 기댄 채점기면 `None`이다 (#487)."""
+    path = getattr(oracle, "canary_path", None)
+    digest = getattr(oracle, "canary_sha256", None)
+    if path is None and digest is None:
+        return None
+    if path is None or digest is None:
+        raise ValueError("canary_path·canary_sha256은 함께 있어야 한다 - 한쪽만이면 기록이 틀리다")
+    return {"canary_path": path, "canary_sha256": digest}
+
+
+def _canary_gate(args: argparse.Namespace, task_id: str) -> _OracleRefused | CanaryReport:
+    """통과 못 하면 `_ORACLE_ERROR`, 통과면 그 보고서 - 카나리 보고서 게이트 (이슈 #383).
+
+    보고서가 이 과제·이 장비를 통과시키지 않으면 거절이다.
 
     🔴 **보고서가 없으면 제출을 시작하지 않는다.** 오라클 판정이 비결정적일 수 있고 그 원인은 호스트
     커널의 mmap 엔트로피다 - `vm.mmap_rnd_bits = 32`에서 sanitizer 섀도 매핑이 간헐 실패해 타깃이
@@ -938,9 +959,13 @@ def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | 
             f"「크래시」로 집계된다). python {_CANARY_COMMAND}로 만든다"
         )
     try:
-        report = read_canary_report(Path(path))
+        # 🔴 **경로를 한 번만 풀고 그 값으로 읽는다** - 기록하는 경로(`CanaryReport.path`)와 해시한
+        # 파일이 같아야 한다. 읽은 뒤 따로 `resolve`하면 그 틈에 링크가 바뀔 수 있다(#487).
+        report = read_canary_report(Path(path).resolve())
     except CanaryReportError as exc:
         return _refuse_oracle(f"{exc} - 아무것도 제출하지 않았다")
+    except (OSError, RuntimeError) as exc:  # 경로를 못 푼다(심볼릭 링크 순환 등)
+        return _refuse_oracle(f"--oracle-canary 경로를 풀 수 없다({path}): {exc!r}")
     problem = canary_refusal(report, task_id=task_id)
     if problem is not None:
         return _refuse_oracle(f"{problem}. 아무것도 제출하지 않았다")
@@ -949,7 +974,7 @@ def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | 
         f"{report.repeat}회 · {report.measured_at} 측정) - 이 보고서가 지금 이 부팅의 것인지는 "
         "하네스가 못 본다"
     )
-    return None
+    return report
 
 
 def _inside_task_tree(args: argparse.Namespace, path: Path) -> bool:
@@ -1045,6 +1070,8 @@ def execute(
         # 채점기(#386). `None`이면 PoC를 제출하지 않는다 — 서버 주소와 과제 번들을 아는 것은
         # `run()`이라 factory가 만들지 않고 받는다.
         oracle=oracle,
+        # 그 채점기가 기댄 카나리 보고서의 경로·sha256(#487). `RunRecord.oracle`에 실린다.
+        canary_ref=_canary_ref(oracle),
     )
     result = run_pipeline(
         spec,
