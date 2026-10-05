@@ -2221,8 +2221,8 @@ def _run_pov_hops(
             started = ctx.monotonic_ms()
             try:
                 if prev is None:
-                    # `source`는 슬라이스 여부와 무관하게 Auditor의 최초 읽기를 보관한
-                    # `_Once`다. 캐시가 없는 호출만 노드가 캡슐 대상을 직접 읽는다.
+                    # 넓은 입력 판은 슬라이스 여부와 무관하게 Auditor의 최초 읽기를 보관한
+                    # `_Once`를 받는다. 이전 판 또는 캐시 부재 시 노드가 캡슐 대상을 직접 읽는다.
                     entrypoint = _fuzz_entrypoint(ctx, capsule.target.file)
                     # 🔴 **조회 결과를 홉 이벤트에 싣는다**(아래 `fuzz=`). 안 남기면 「진입점 탐색
                     # 성공률」이 영영 미실측이고, 성공 0이 나왔을 때 모델 탓인지 조회 탓인지 못
