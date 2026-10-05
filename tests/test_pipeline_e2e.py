@@ -1587,6 +1587,27 @@ def test_incomplete_manifest_fields_are_reported_not_faked(tmp_path: Path) -> No
     assert any("tool_images" in warning for warning in result.warnings)
 
 
+def test_the_empty_tool_images_warning_names_the_runtime_not_a_missing_container(
+    tmp_path: Path,
+) -> None:
+    """이슈 #479 (e) - 컨테이너 런타임 run에 「컨테이너 없이 실행」이라 쓰면 설정 오류로 읽힌다.
+
+    도구 단계 전에 멈춘 docker run도 `tool_images`가 비는데 뜻은 「이미지 digest를 못 기록했다」다.
+    Fake 런타임이면 컨테이너가 정말 없으므로 옛 문구가 맞다."""
+    result, _ = _run(tmp_path)
+    record = result.record
+
+    def tool_images_warnings(runtime: str) -> list[str]:
+        found = runner.incomplete_fields(record.transition(tool_runner=runtime))
+        return [w for w in found if "tool_images" in w]
+
+    (fake,) = tool_images_warnings("fake")
+    (docker,) = tool_images_warnings("docker")
+    assert "컨테이너 없이 실행" in fake
+    assert "컨테이너 없이" not in docker
+    assert "docker" in docker and "모델 비교표에서 제외한다" in docker
+
+
 def test_the_record_carries_the_compile_condition(tmp_path: Path) -> None:
     """컴파일 조건이 비교표에 나타나야 한다 (D32 / #74).
 

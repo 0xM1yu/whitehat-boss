@@ -24,7 +24,9 @@
 #   PATH 앞에 `Git/usr/bin`을 두거나 `command[0]`에 bash 절대경로를 쓴다 — 단 이 장비 파일은 추적 파일이라 고치면
 #   `repo_dirty`로 그 run은 비교표에서 빠진다(실험 run에서는 앞의 둘을 쓴다). 막는 것은 System32의 `bash.exe`뿐이고
 #   (PATH에서 `bash`를 못 찾아 `which`가 못 풀면 못 막는다) `doctor --device`는 이 판정을 안 한다. 이 변경 뒤에 Windows 네이티브로 원격 교대를 끝까지 돌린 run은 없다 — 미실측.
-# - 도구 단계(Docker)·채점 서버는 로컬이다.
+# - 도구 단계(Docker)·채점 서버는 로컬이다. 🔴 하네스와 채점 서버는 **같은 네트워크 namespace**여야 한다 -
+#   채점 서버는 `127.0.0.1:8666`에만 바인드하고(`0.0.0.0` 금지) Windows의 그 주소는 WSL2에서 안 닿는다
+#   (이슈 #479 (d), `docs/portability.md`의 「실모델 run의 선결조건」). 네이티브 Linux는 미실측이다.
 #
 # ⚠ 이 경로로 끝까지 돈 run은 아직 없다(2026-10-03). 래퍼의 인자·환경·따옴표·종료 코드 전달은 가짜 ssh로만
 #   확인했다(`tests/test_remote_swap.py`).
