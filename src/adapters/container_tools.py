@@ -1059,15 +1059,13 @@ class ContainerToolRunner:
         `workdir`에 대해 막는 것과 같은 종류의 구멍이다.
         """
         body = "\n".join(sections) + "\n"
+        data = body.encode("utf-8")
         slot = tool if tool in TOOL_KINDS else _REJECTED_SLOT
         path = self.artifacts_root / self.run_id / slot / f"{evidence_id}.log"
         path.parent.mkdir(parents=True, exist_ok=True)
-        # 🔴 **줄바꿈을 고정한다.** 기본값 `newline=None`은 본문의 LF를 `os.linesep`으로
-        # 번역하고 Windows에서 그것이 CRLF라, 아래 `digest`(번역 전 본문의 해시)가 **그 파일과
-        # 어긋난다** — 이슈 #387. 보존된 Windows run 셋의 Evidence **12건이 전부** 그랬고, CRLF를
-        # LF로 환산하면 12건이 전부 맞았다. `digest`의 목적이 정확히 그 파일의 검증이다.
-        # `orchestrator/prompt_log.py`가 같은 이유로 같은 인자를 넘긴다.
-        path.write_text(body, encoding="utf-8", newline="\n")
+        # 바이트로 쓰고 **그 바이트를** 해시한다 — 텍스트 쓰기는 Windows에서 LF를 CRLF로 번역해
+        # `digest`가 파일과 어긋난다(#387). `orchestrator/poc_log.py`의 쓰기 절이 같은 선례다.
+        path.write_bytes(data)
         return Evidence(
             evidence_id=evidence_id,
             run_id=self.run_id,
@@ -1076,7 +1074,7 @@ class ContainerToolRunner:
             artifact_id=args.workdir,
             location=location,
             payload_ref=f"artifacts/{self.run_id}/{slot}/{evidence_id}.log",
-            digest=f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}",
+            digest=f"sha256:{hashlib.sha256(data).hexdigest()}",
             observed_at=self.observed_at,
             ok=ok,
             exit_code=exit_code,
