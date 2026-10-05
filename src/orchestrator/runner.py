@@ -1787,14 +1787,15 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
     그 밖의 형은 run과 함께 보고서도 잃는다.
 
-    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
-    `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
-    다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
+    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만). v3 루프의 중간 `gen`마다
+    `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내 원시 종료 코드를 다음 홉에 싣는다.
+    루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
+    모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
     돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ①내부 근거 등급 ②`confidence`
     ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
-    부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는
-    나가지 않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
-    (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
+    `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
+    그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
+    바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1833,7 +1834,10 @@ def _submit_vul_to_oracle(
     *,
     designatable: bool = True,
 ) -> str:
-    """후보 하나의 PoC를 채점기의 `vul` 다리에 내보낸다 (#386). 채점기가 없으면 아무것도 안 한다.
+    """PoC를 `vul` 다리에 내보내고 다음 홉 관측 한 줄을 돌려준다 (#386).
+
+    채점기가 없으면 부수효과 없이 `oracle_vul=unavailable`을 돌려준다. `designatable=False`인 중간
+    gen은 원시 종료 코드를 조회하고, `True`인 모델 submit만 최종 지정 후보가 된다.
 
     **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
     적는데 클라이언트는 그것을 강제하지 않는다 — 후보마다 `vul`·`fix`를 다 내면(`run_round_trip`)
@@ -2248,8 +2252,8 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다(채점기 제출은
-    `_run_pov`가 이 루프의 반환값으로 한다, #386). 여기서는 홉 이벤트(`POV_HOP`)와 종단
+    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다. v3의 중간 gen은
+    별도로 `vul` 판정을 읽어 다음 모델 홉에 싣는다(#354/#386①). 여기서는 홉 이벤트(`POV_HOP`)와 종단
     이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
     사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
