@@ -420,7 +420,13 @@ class OracleLedger:
         where = f"{sidecar}와 trace의 oracle_failed" if sidecar else "trace의 oracle_failed"
         if self.failed:
             out.append(f"채점기 vul 제출 {self.failed}건이 예외로 실패했다 - 사유는 {where}에 있다")
-        # 후보가 남은 run에서도 말한다 — 점수가 조용히 낮아진 사유가 된다(이슈 #422).
+        # 후보가 남은 run에서도 말한다 — 점수가 조용히 낮아진 사유가 된다(이슈 #422). 「그중」이
+        # 가리키는 줄(vul 제출 실패)의 **바로 뒤**에 둔다.
+        if self.rate_limited:
+            out.append(
+                f"그중 {self.rate_limited}건은 채점기 레이트리미트(HTTP 429)다 - 재시도가 없어 "
+                "그 판정은 복구되지 않는다"
+            )
         if self.observation_failed:
             out.append(
                 f"중간 gen의 채점기 판정 조회 {self.observation_failed}건이 실패하거나 비어 모델이 "
@@ -428,11 +434,6 @@ class OracleLedger:
             )
         if self.skipped_empty:
             out.append(f"0바이트 PoC {self.skipped_empty}건은 제출하지 않았다")
-        if self.rate_limited:
-            out.append(
-                f"그중 {self.rate_limited}건은 채점기 레이트리미트(HTTP 429)다 - 재시도가 없어 "
-                "그 판정은 복구되지 않는다"
-            )
         final = self.final
         if final is None:
             out.append(
