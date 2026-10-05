@@ -189,3 +189,32 @@ def test_live_runner_prose_distinguishes_intermediate_from_final_submission():
     assert "v3의 중간 gen은" in hops_doc
     assert "부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`" not in run_doc
 
+
+def test_live_oracle_prose_does_not_call_every_vul_submission_a_candidate():
+    """Repository witnesses: the stale forms came from the reviewed S3 source lines."""
+    sources = {
+        "src/interfaces/oracle.py": (
+            "각 제출 PoC에는 `submit_vul`",
+            "후보마다는 `submit_vul`",
+        ),
+        "src/adapters/cybergym_oracle.py": (
+            "중간 gen과 모델 submit마다 `submit_vul`",
+            "러너는 후보마다 `submit_vul`",
+        ),
+        "src/orchestrator/oracle_log.py": (
+            "모든 vul 시도와 최종 지정 단계",
+            "후보별 vul 시도와 최종 단계",
+        ),
+        "src/orchestrator/runner.py": (
+            "모든 vul 시도와 최종 지정 단계",
+            "채점기(oracle)의 후보별 vul 시도",
+        ),
+        "docs/agent-contracts.md": (
+            "(모든 `vul` 시도마다)",
+            "(후보마다)와",
+        ),
+    }
+    for path, (required, stale) in sources.items():
+        text = Path(path).read_text(encoding="utf-8")
+        assert required in text, path
+        assert stale not in text, path
