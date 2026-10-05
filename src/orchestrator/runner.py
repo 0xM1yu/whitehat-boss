@@ -778,7 +778,7 @@ class _Accumulator:
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
-    # 채점기(oracle)의 후보별 vul 시도와 최종 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
+    # 채점기(oracle)의 모든 vul 시도와 최종 지정 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
     # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
     # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
     oracle_ledger: oracle_log.OracleLedger = field(default_factory=oracle_log.OracleLedger)
@@ -1787,14 +1787,16 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
     그 밖의 형은 run과 함께 보고서도 잃는다.
 
-    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
-    `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
-    다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
+    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만). v3 루프의 중간 `gen`마다
+    (마지막 홉의 gen은 빼고) `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내
+    원시 종료 코드를 다음 홉에 싣는다.
+    루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
+    모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
     돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ①내부 근거 등급 ②`confidence`
     ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
-    부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는
-    나가지 않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
-    (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
+    `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
+    그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
+    바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1820,20 +1822,28 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     try:
         poc, reason = _run_pov_hops(ctx, state, finding, capsule)
         if reason is PovStopReason.SUBMITTED and poc is not None:
-            _submit_vul_to_oracle(ctx, state, finding, poc)
+            _submit_vul_to_oracle(ctx, state, finding, poc, designatable=True)
     finally:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
 
 
 def _submit_vul_to_oracle(
-    ctx: RunContext, state: _Accumulator, finding: Finding, poc: bytes
-) -> None:
-    """후보 하나의 PoC를 채점기의 `vul` 다리에 내보낸다 (#386). 채점기가 없으면 아무것도 안 한다.
+    ctx: RunContext,
+    state: _Accumulator,
+    finding: Finding,
+    poc: bytes,
+    *,
+    designatable: bool,
+) -> str:
+    """PoC를 `vul` 다리에 내보내고 다음 홉 관측 한 줄을 돌려준다 (#386).
+
+    채점기가 없으면 부수효과 없이 `oracle_vul=unavailable`을 돌려준다. `designatable=False`인 중간
+    gen은 원시 종료 코드를 조회하고, `True`인 모델 submit만 최종 지정 후보가 된다.
 
     **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
-    적는데 클라이언트는 그것을 강제하지 않는다 — 후보마다 `vul`·`fix`를 다 내면(`run_round_trip`)
-    비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 후보마다는 `vul`만 내고 최종은 `_finalize_oracle`이
-    지정한다.
+    적는데 클라이언트는 그것을 강제하지 않는다. 각 vul 제출마다 `vul`·`fix`를 다 내면
+    (`run_round_trip`) 비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 각 제출에는 `vul`만 내고
+    최종은 `_finalize_oracle`이 지정한다.
 
     **추가형이다** — finding 상태를 바꾸지 않고 Evidence도 만들지 않는다(채점은 저장소 밖 기준이고
     내부 등급 E4는 실행 로그를 따로 요구한다, #232 · `interfaces/oracle.py`). 기록만 남긴다.
@@ -1849,14 +1859,35 @@ def _submit_vul_to_oracle(
     trace에는 결정론 필드만 간다(분류는 `oracle_log` 모듈 docstring).
     """
     if ctx.oracle is None:
-        return
+        return "oracle_vul=unavailable"
     with ctx.stage(Stage.VALIDATE):
         started = ctx.monotonic_ms()
+        if not poc:
+            attempt = oracle_log.vul_empty(finding.finding_id, poc, designatable=designatable)
+            ctx.trace.emit(
+                EventKind.ORACLE_FAILED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=0,
+                leg="vul",
+                designatable=designatable,
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=0,
+                error=attempt.error,
+                reason=oracle_log.ERROR_EMPTY_POC,
+            )
+            state.oracle_ledger.add_attempt(attempt)
+            return "oracle_vul=unavailable"
         try:
             submission = ctx.oracle.submit_vul(poc)
         except Exception as exc:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
             attempt = oracle_log.vul_failed(
-                finding.finding_id, poc, exc, max(0, ctx.monotonic_ms() - started)
+                finding.finding_id,
+                poc,
+                exc,
+                max(0, ctx.monotonic_ms() - started),
+                designatable=designatable,
             )
             ctx.trace.emit(
                 EventKind.ORACLE_FAILED,
@@ -1865,13 +1896,53 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=attempt.wall_ms,
                 leg="vul",
+                designatable=designatable,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
                 error=attempt.error,
             )
+            observation = "oracle_vul=unavailable"
         else:
+            exit_code: int | None = None
+            query_error: Exception | None = None
+            if not designatable:
+                try:
+                    exit_code = ctx.oracle.query_vul(poc)
+                except Exception as exc:  # 조회도 추가형 — 실패를 기록하고 다음 모델 홉은 계속한다.
+                    query_error = exc
+                    ctx.trace.emit(
+                        EventKind.ORACLE_FAILED,
+                        stage=Stage.VALIDATE,
+                        subject_kind="finding",
+                        subject_id=finding.finding_id,
+                        wall_ms=max(0, ctx.monotonic_ms() - started),
+                        leg="query_vul",
+                        designatable=designatable,
+                        poc_sha256=hashlib.sha256(poc).hexdigest(),
+                        poc_bytes=len(poc),
+                        error=type(exc).__name__,
+                    )
+            # 조회가 **예외 없이** 비어 돌아온 것도 기록한다 - 제출이 성공한 직후의 빈 답은 이상이다
+            # (`finalize`는 행이 없으면 예외를 낸다). 안 적으면 서버 설정이 틀려도 모든 gen이
+            # 조용히 `unavailable`을 받는다.
+            no_verdict = not designatable and query_error is None and exit_code is None
             attempt = oracle_log.vul_ok(
-                finding.finding_id, poc, submission, max(0, ctx.monotonic_ms() - started)
+                finding.finding_id,
+                poc,
+                submission,
+                max(0, ctx.monotonic_ms() - started),
+                designatable=designatable,
+                observation_exit_code=exit_code,
+                observation_error=(
+                    oracle_log.OBSERVATION_NO_VERDICT
+                    if no_verdict
+                    else None
+                    if query_error is None
+                    else type(query_error).__name__
+                ),
+                observation_error_detail=(
+                    "" if query_error is None else oracle_log.clip_error(query_error)
+                ),
             )
             ctx.trace.emit(
                 EventKind.ORACLE_SUBMITTED,
@@ -1880,11 +1951,22 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=attempt.wall_ms,
                 leg="vul",
+                designatable=designatable,
                 task_id=submission.task_id,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
             )
+            observation = (
+                f"oracle_vul exit_code={exit_code}"
+                if exit_code is not None
+                else "oracle_vul=unavailable"
+            )
+            # 서버 캐시 hit(같은 바이트를 앞서 냈다 - 이슈 #385)면 그 코드는 **이번 환경의 새
+            # 측정이 아닐 수 있다.** 모델이 새 값으로 읽지 않게 표시한다.
+            if exit_code is not None and submission.cached:
+                observation += " cached=true"
         state.oracle_ledger.add_attempt(attempt)
+        return observation
 
 
 def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
@@ -2025,9 +2107,9 @@ def _designate_final(
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
     docstring)와 후보 0건(읽을 `submission`이 없다).
 
-    「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
-    — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
-    알린다).
+    「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
+    위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
+    아니다(그 run의 경고가 실패 건수를 알린다).
     """
     candidates = ledger.candidates
     if not candidates:
@@ -2126,7 +2208,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다). 「PoV가
     끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 이 요약은 못 가른다 — 후자는 run
     수준의 `stopped_after`·`BUDGET_EXHAUSTED`·경고가 말한다. 후보가 있어 `scored`가 된 run도 **부분
-    후보 집합 위의 지정**이다(`vul_submitted` 수와 `stopped_after`로 재구성한다).
+    후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이 없던 run은 `vul_submitted` - 와
+    `stopped_after`로 재구성한다).
     """
     if ctx.oracle is None:
         return
@@ -2186,8 +2269,8 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
     되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
     파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다(채점기 제출은
-    `_run_pov`가 이 루프의 반환값으로 한다, #386). 여기서는 홉 이벤트(`POV_HOP`)와 종단
+    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다. v3의 중간 gen은
+    별도로 `vul` 판정을 읽어 다음 모델 홉에 싣는다(#354/#386①). 여기서는 홉 이벤트(`POV_HOP`)와 종단
     이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
     사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
@@ -2211,8 +2294,9 @@ def _run_pov_hops(
         # 묶는 이유는 조회가 던져도 `except` 갈래가 이 이름을 안전하게 읽어야 해서다.
         fuzz: dict[str, object] | None = None
         # 루프 내내 안 바뀐다(설정값) — 홉마다 다시 읽지 않는다. hop0의 `source=` 결정과
-        # 매 홉의 관측 꼬리(`_pov_observation`) 둘 다 이것을 본다(적대적 리뷰 2026-10-02
-        # MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도 이 PR의 새 입력이다).
+        # 매 홉의 관측 꼬리(`_pov_observation`)와 중간 gen의 vul 제출·판정 줄 셋 다 이것을 본다
+        # (적대적 리뷰 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도
+        # 이 PR의 새 입력이다).
         pov_wide = (
             ctx.config.model_for(Role.POV.value).prompt_template_version
             in pov._WIDE_INPUT_VERSIONS
@@ -2272,6 +2356,7 @@ def _run_pov_hops(
                     ctx, state, finding, PovStopReason.SUBMITTED, last_poc
                 )
             hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
+            oracle_observation = "oracle_vul=unavailable"
             if action.action == "gen":
                 # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
                 # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
@@ -2286,6 +2371,12 @@ def _run_pov_hops(
                         ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
                     )
                 last_poc = hop_poc
+                # 마지막 홉(`hop >= max_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
+                # 두 번이 레이트 예산만 쓰고 버려진다.
+                if pov_wide and hop < max_hops:
+                    oracle_observation = _submit_vul_to_oracle(
+                        ctx, state, finding, hop_poc, designatable=False
+                    )
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
                 evidence = pov.run_tool(
@@ -2305,6 +2396,10 @@ def _run_pov_hops(
             followup = _pov_observation(
                 action.action, evidence, read_payload=ctx.read_payload, wide=pov_wide
             )
+            if action.action == "gen" and pov_wide:
+                # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
+                # 의미를 파생하지 않는다. 모델이 이 관측을 본 뒤 submit할지를 정한다.
+                followup = f"{followup}\n{oracle_observation}"
             prev = current
             hop += 1
 
@@ -2328,7 +2423,7 @@ def _pov_observation(
     것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
     (`container_tools`)이 지킨다.
 
-    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **꼬리를 안 싣는다** — v2
+    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 이전 판 v2)면 **꼬리를 안 싣는다** — v2
     prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
     같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
     """

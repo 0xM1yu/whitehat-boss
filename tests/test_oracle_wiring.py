@@ -196,6 +196,7 @@ def test_a_candidate_event_carries_nothing_a_reader_could_count_as_a_score(
     assert [e.data for e in submitted] == [
         {
             "leg": "vul",
+            "designatable": True,
             "task_id": TASK_ID,
             "poc_sha256": hashlib.sha256(poc).hexdigest(),
             "poc_bytes": len(poc),
@@ -298,6 +299,7 @@ def test_a_failed_vul_submission_is_absorbed_and_recorded_and_the_others_still_g
     assert failed.subject_id == findings[2].finding_id
     assert failed.data == {
         "leg": "vul",
+        "designatable": True,
         "poc_sha256": hashlib.sha256(_POCS[2]).hexdigest(),
         "poc_bytes": len(_POCS[2]),
         "error": "RuntimeError",
@@ -1090,7 +1092,7 @@ _SUB = VulSubmission(TASK_ID, "a" * 32, 1)
 
 
 def _attempt(finding_id: str, poc: bytes) -> VulAttempt:
-    return vul_ok(finding_id, poc, _SUB, wall_ms=1)
+    return vul_ok(finding_id, poc, _SUB, wall_ms=1, designatable=True)
 
 
 def _ledger_of(*attempts: VulAttempt) -> OracleLedger:
@@ -1350,6 +1352,7 @@ def _trap_attempt(finding_id: str) -> VulAttempt:
         wall_ms=1,
         poc=body,
         submission=_TrapSubmission(),  # type: ignore[arg-type]
+        designatable=True,
     )
 
 

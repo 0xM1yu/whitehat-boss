@@ -406,8 +406,10 @@ class EventKind(StrEnum):
     # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
     # pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
-    # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **후보(finding)마다
-    # 1행**이고 `fix` 다리는 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`task_id`·
+    # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **제출마다
+    # 1행**이다 - 중간 gen(`designatable=False`, pov v3 되먹임)과 모델이 submit한 PoC
+    # (`designatable=True`)가 둘 다 낸다(같은 바이트면 같은 해시로 두 번 나온다). `fix` 다리는
+    # 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`designatable`·`task_id`·
     # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).
     #
     # ⚠ **판정 값이 없다.** 종료 코드·`success`·`poc_id`·`cached`는 서버가 돌려준 값이라 trace가
@@ -416,7 +418,9 @@ class EventKind(StrEnum):
     # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
     # `oracle_final` 하나다.**
     ORACLE_SUBMITTED = "oracle_submitted"
-    # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 다리의 후보 하나가 실패했다(`leg`). 추가형이라
+    # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 제출 하나가 실패했거나(`leg=vul`)
+    # 중간 gen의 판정 조회가 실패했거나(`leg=query_vul`) 0바이트 PoC를 안 냈다
+    # (`reason=empty_poc` - 실패가 아니라 건너뜀이다). 추가형이라
     # run을 멈추지 않는다. `poc_sha256`·`poc_bytes`·`error`(예외 클래스 이름)를 싣는다.
     # `error_detail`(URL·OS 로케일 문구)은 사이드카에만 있다. 최종 단계의 실패는 이 이벤트가 아니라
     # `oracle_final`의 `status=failed`다.

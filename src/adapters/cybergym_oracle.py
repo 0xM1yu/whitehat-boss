@@ -649,10 +649,11 @@ def run_round_trip(
 ) -> OracleVerdict:
     """`vul` 제출 → `fix` 제출 → DB 쪽 판정 조회 — 사슬 증명 하나.
 
-    ⚠ **하네스 러너는 이것을 후보마다 부르지 않는다.** `vul`·`fix`를 둘 다 제출하므로 후보마다
+    ⚠ **하네스 러너는 이것을 각 vul 제출마다 부르지 않는다.** `vul`·`fix`를 둘 다 제출하므로 매번
     부르면 비최종 PoC에도 `-fix` 이미지가 돈다 — 저자 FAQ는 fix 다리를 최종 PoC 한 개에만 돌리라고
-    적는다 (build-plan.md 배선 조각 행). 러너는 후보마다 `submit_vul`만, 최종으로 지정한 하나에만
-    `submit_fix`+`query_verdict`를 부른다(`TaskOracle.submit_vul`·`finalize`).
+    적는다 (build-plan.md 배선 조각 행). 러너는 중간 gen과 모델 submit마다 `submit_vul`만 부른다.
+    최종으로 지정한 하나에만 `submit_fix`+`query_verdict`를 부른다
+    (`TaskOracle.submit_vul`·`finalize`).
 
     두 제출의 `response_exit_code`는 쓰지 않는다(모듈 docstring) — 쓰는 것은 그 호출이 서버 쪽에
     컨테이너를 돌려 DB에 쓰게 만드는 효과와 응답의 `poc_id`뿐이고, 진짜 값은 `query_verdict`에서
@@ -705,9 +706,10 @@ class TaskOracle:
     `task_id`로, 제출 전 장부 읽기(`peek_verdict`)와 판정 조회(`query_verdict`)는
     `query_task_id`(없으면 `task_id`)로 간다.
 
-    **두 다리다 — 후보마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ가 fix 다리를 「최종 PoC
-    한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다. 그래서 러너가 후보마다는
-    `submit_vul`만 부르고, 최종으로 지정한 하나에만 `finalize`(`submit_fix` + `query_verdict`)를
+    **두 다리다 — 각 vul 제출마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ는 fix 다리를
+    「최종 PoC 한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다.
+    그래서 러너가 각 제출에는 `submit_vul`만 부르고, 최종으로 지정한 하나에만
+    `finalize`(`submit_fix` + `query_verdict`)를
     부른다. `success` 술어는 **다시 계산하지 않는다**(두 벌로 두면 갈린다 —
     `OracleVerdict.success`를 그대로 쓴다).
 
@@ -762,7 +764,7 @@ class TaskOracle:
         return self.query_task_id or self.task_id
 
     def submit_vul(self, poc: bytes) -> VulSubmission:
-        """`vul` 다리 하나 — 후보마다. 아래 `submit_vul`은 모듈 수준 함수다(이름이 같다)."""
+        """`vul` 다리 하나 — 각 PoC 제출마다. 아래 `submit_vul`은 모듈 수준 함수다(이름이 같다)."""
         with self._redacting():
             before = self._peek(poc)
             sent = submit_vul(
@@ -774,6 +776,12 @@ class TaskOracle:
             response_exit_code=sent.response_exit_code,
             cached=before is not None and before.vul_exit_code is not None,
         )
+
+    def query_vul(self, poc: bytes) -> int | None:
+        """제출한 PoC의 원시 vul 종료 코드만 읽는다. fix 다리는 실행하지 않는다."""
+        with self._redacting():
+            verdict = self._peek(poc)
+        return None if verdict is None else verdict.vul_exit_code
 
     def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:
         """최종 PoC 하나의 `fix` 다리와 판정 조회 — run당 한 번."""
