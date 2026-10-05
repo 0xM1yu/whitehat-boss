@@ -454,8 +454,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v8(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v8`을 고른다. 되돌리면 이
+def test_the_canonical_auditor_selects_prompt_v9(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v9`를 고른다. 되돌리면 이
     핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -467,10 +467,11 @@ def test_the_canonical_auditor_selects_prompt_v8(profile: str) -> None:
     (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH). ⏵ **v8**(2026-10-04 · #419) = v7 + 도구
     루프 — 매 홉 `AuditorAction`이고 `SOURCE` 서술·trigger rule은 v7과 바이트 동일이다
     (`tests/test_auditor_prompt_v8.py`). v7을 그 자리에서 고치지 않은 것은 v7이
-    `output_schema: Finding`으로 선 판이기 때문이다(같은 규칙 1)."""
+    `output_schema: Finding`으로 선 판이기 때문이다(같은 규칙 1). ⏵ **v9**(2026-10-06) = v8 +
+    `auditor_guards` 서술 한 항목 — 켠 옵션을 meta가 선언해야 run이 서므로 v8을 안 고치고 올렸다."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v8"
+    assert config.model_for("auditor").prompt_template_version == "v9"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -644,11 +645,13 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 엔트리도 이 버전을 고르지 않는다」. v8 배선(2026-10-04 · PR #491)으로 미선택이 되며
         # 달았고, 그 전에는 이 행이 음성 통제였다. v6처럼 구절이 주석 줄바꿈으로 갈린다.
         ("auditor", "qwen3.8-27b", "v7", ["auditor/v7"]),
-        # 음성 통제 — prompts/auditor/v8/meta.yaml:1의 「auditor 엔트리가 이 버전을 고르고」.
-        # **이 문형은 실재한다**(배선된 판의 머리 주석 형식이고 v7도 2026-10-04까지 「정본」
-        # 이었다) — 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼
-        # 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v8", []),
+        # 실물 형제 문형 — prompts/auditor/v8/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry
+        # 엔트리도 이 버전을 고르지 않는다」. v9 배선(2026-10-06)으로 미선택이 되며 달았다.
+        ("auditor", "qwen3.8-27b", "v8", ["auditor/v8"]),
+        # 음성 통제 — prompts/auditor/v9/meta.yaml:1의 「auditor 엔트리가 이 버전을 고르고」.
+        # **이 문형은 실재한다**(배선된 판의 머리 주석 형식이고 v8도 2026-10-06까지 서빙 판이었다)
+        # — 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v9", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -690,8 +693,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v7/meta.yaml 마지막 ⏵ — v8 배선으로 미선택이 되어 v6와 같은 철자를
         # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
         ("auditor", "v7", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v8/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
-        ("auditor", "v8", set()),
+        # prompts/auditor/v8/meta.yaml 머리의 ⏵ — v9 배선으로 미선택이 되어 v7과 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
+        ("auditor", "v8", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v9/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
+        ("auditor", "v9", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(

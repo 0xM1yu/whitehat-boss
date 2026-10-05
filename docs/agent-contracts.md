@@ -139,7 +139,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 지금 배선된 **v8**(도구 루프 · body는 v6와 바이트 동일)은
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 지금 배선된 **v9**(v8 + `auditor_guards` 서술 · body 동일)는
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -150,17 +150,16 @@ agent:
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **지금 배선된 판은 v8**이고 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — **지금 배선된 판은 v9**다(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
   `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
-  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 **꺼져 있다** —
-  `budgets.yaml`이 키를 `0`으로 둔다. **v7도 v8도 이 옵션을 서술·선언하지 않는다** — 켜려면 프롬프트 판이 `auditor_guards`를
-  서술하고 meta `source_options`로 선언해야 하고(그 전에 켜고 둘 중 하나를 고르면 `cli` run·doctor가 막는다), 그것은 다음 판
-  몫이다(켠 효과 측정과 함께). 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
+  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 ⏵ 2026-10-06 **켜져 있다** —
+  `budgets.yaml`이 키를 `1`로 둔다. **v9가 이 옵션을 서술하고 meta `source_options`로 선언한다.** v7·v8은 선언하지 않아 켜고 그
+  둘을 고르면 `cli` run·doctor가 막는다. 켠 효과는 미실측이다. 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
   `GUARDS (syntactic — may not dominate)` 머리줄과 `파일:줄 | 조건 [exit: …]` 행이 붙는다 — sink 호출의 인자 이름을 언급하는
   `if`·`while`·`for`·삼항·assert 계열 조건이고 지배를 주장하지 않는다. 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을
   적은 한 줄이다. 가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등 #259 · `\n`을 안 단 `\r`)에는 안 붙고 사유를 trace
@@ -243,8 +242,8 @@ agent:
 
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
 ~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
-그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**이고 **지금 배선된 판이다**(`prompts/auditor/v8/` ·
-`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**(`prompts/auditor/v8/` ·
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06부터 **지금 배선된 판은 v9**다(v8 + `auditor_guards` 서술). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
 이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
 `src/schemas/auditor.py`(`AuditorAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
@@ -418,7 +417,7 @@ agent:
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(v8)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(v9)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -647,7 +646,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v8"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v9"}
 }
 ```
 
@@ -685,8 +684,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
 > gitignore라 커밋된 보고서만 센 것이다). ⏵ 2026-10-04 — **v7을 고른다**(v6 + SOURCE 옵션 넷의 서술, #349).
 > 위 Finding 예시의 `prompt_version`도 고쳤다. `trigger_status` 문장은 v6와 같다.
-> ⏵ 같은 날 — **지금 고르는 것은 v8**이다(도구 루프, #419 · v7 + 홉 프로토콜). v7로 돈 run도 v8로 돈
-> run도 0건이다.
+> ⏵ 같은 날 — 그때 고른 것은 v8이었다(도구 루프, #419 · v7 + 홉 프로토콜). ⏵ 2026-10-06 — **지금 고르는 것은
+> v9**다(v8 + `auditor_guards` 서술). v7로 돈 run도 v8로 돈 run도 v9로 돈 run도 0건이다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -745,7 +744,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v8", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v9", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },

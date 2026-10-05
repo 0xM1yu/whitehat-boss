@@ -1526,8 +1526,8 @@ def run(args: argparse.Namespace) -> int:
     # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
     # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
     # 말한다 — 어긋나도 오류 없이 돈다. v6(#418의 A/B 판)도 그 모양만 서술한다(⏵ 2026-10-04 서빙
-    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 지금 서빙 판은 v8 = v7 + 도구 루프이고
-    # 그 서술·선언을 물려받았다).
+    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 v8 = v7 + 도구 루프가 그 서술·선언을
+    # 물려받았고 ⏵ 2026-10-06부터 서빙 판은 v9 = v8 + `auditor_guards` 서술이다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:

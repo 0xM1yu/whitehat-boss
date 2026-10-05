@@ -34,6 +34,9 @@
 # 홉 절의 문장 넷은 외부 조사에서 왔다 — 출처는 `docs/research/2026-10-04-auditor-tool-prompt.md`.
 # 그쪽이 재 둔 수(prompt-only 티어가 recall 60%에서 평평하다는 것 등)는 **남의 실측**이고 우리
 # 하네스에서 잰 값은 아니다.
+# ⏵ 2026-10-06 — `qwen3.8-27b`를 v9(v8 + `auditor_guards` 서술 한 항목)로 올려 지금은 어느
+# registry 엔트리도 이 버전을 고르지 않는다. 위 첫 줄의 「엔트리가 이 버전을 고르고」는 그날까지의
+# 기록이다. 이 판의 prefix·body는 그대로고 `_CONTENT_AWARE_VERSIONS`에도 남는다.
 role: auditor
 version: v8
 output_schema: AuditorAction
