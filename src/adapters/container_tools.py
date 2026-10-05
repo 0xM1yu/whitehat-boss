@@ -1062,12 +1062,7 @@ class ContainerToolRunner:
         slot = tool if tool in TOOL_KINDS else _REJECTED_SLOT
         path = self.artifacts_root / self.run_id / slot / f"{evidence_id}.log"
         path.parent.mkdir(parents=True, exist_ok=True)
-        # 🔴 **줄바꿈을 고정한다.** 기본값 `newline=None`은 본문의 LF를 `os.linesep`으로
-        # 번역하고 Windows에서 그것이 CRLF라, 아래 `digest`(번역 전 본문의 해시)가 **그 파일과
-        # 어긋난다** — 이슈 #387. 보존된 Windows run 셋의 Evidence **12건이 전부** 그랬고, CRLF를
-        # LF로 환산하면 12건이 전부 맞았다. `digest`의 목적이 정확히 그 파일의 검증이다.
-        # `orchestrator/prompt_log.py`가 같은 이유로 같은 인자를 넘긴다.
-        path.write_text(body, encoding="utf-8", newline="\n")
+        path.write_text(body, encoding="utf-8")
         return Evidence(
             evidence_id=evidence_id,
             run_id=self.run_id,
