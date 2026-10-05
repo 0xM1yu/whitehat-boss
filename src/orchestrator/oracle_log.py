@@ -59,7 +59,7 @@ run의 점수를 0으로 만들었다.
 
 ## 쓰기
 
-후보 제출·최종 판정마다 **파일 전체를 다시 쓴다**(작다) — 8단계가 중간에 끊겨도(`BudgetExhausted`
+vul 제출·최종 판정마다 **파일 전체를 다시 쓴다**(작다) — 8단계가 중간에 끊겨도(`BudgetExhausted`
 등) 그때까지 나간 vul 제출은 남는다. 원자적으로 쓴다(임시 파일 + `os.replace` — `poc_log`와 같은
 관용구, 같은 전제: run_dir은 신뢰 경계 안이다). 쓰기 실패(`OSError`)는 장부가 흡수하고
 `write_error`와 run 경고로 남긴다 — 채점기는 추가형이라 사이드카가 run을 죽이면 안 된다.
@@ -145,7 +145,7 @@ def clip_error(exc: BaseException) -> str:
 
 @dataclass(frozen=True)
 class VulAttempt:
-    """후보 하나의 `vul` 제출 시도. `submission`이 없으면 실패다(`error`가 예외 클래스 이름)."""
+    """PoC 하나의 `vul` 제출 시도. `submission`이 없으면 실패다(`error`가 예외 클래스 이름)."""
 
     finding_id: str
     poc_sha256: str
@@ -265,7 +265,7 @@ class OracleLog:
 
 
 class OracleLedger:
-    """한 run의 채점기 장부 — 후보별 vul 시도와 최종 단계. `runner._Accumulator`가 든다."""
+    """한 run의 채점기 장부 — 모든 vul 시도와 최종 지정 단계. `runner._Accumulator`가 든다."""
 
     def __init__(self, *, wired: bool = False, log: OracleLog | None = None) -> None:
         # 채점기가 배선된 run인가 — 안 배선된 run은 요약·경고·파일이 **없다**(옛 동작 그대로).
