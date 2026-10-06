@@ -13,6 +13,7 @@ council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매
 한다(조용히 무시하면 오타·혼동이 통과한다).
 """
 
+import base64
 import dataclasses
 import hashlib
 import json
@@ -26,12 +27,14 @@ from pydantic import ValidationError
 from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
+from src.interfaces import tool_runner
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import poc_log, runner
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
@@ -1197,6 +1200,82 @@ def test_pov_observation_stays_one_line_under_v2() -> None:
     assert "SUMMARY" not in text, "v2 관측에 도구 로그 꼬리가 실렸다"
 
 
+_POC = bytes.fromhex("000d0a0d0aff") + b"AB"  # NUL·CRLF·비-UTF-8 — 글자로 못 싣는 바이트
+
+
+def _observe(**kwargs: object) -> str:
+    return runner._pov_observation(
+        "gen", _asan_evidence(), read_payload=lambda _ref: None, **kwargs
+    )
+
+
+def test_pov_observation_carries_the_size_and_digest_of_the_input() -> None:
+    """🔴 #511의 목적 — 관측이 **자기 PoC의 함수**다. 도구에 넘긴 입력의 크기와 sha256이 첫
+    줄(스칼라 줄)에 실린다. 도구 결과(`ok`·`exit`·`kind`)는 PoC와 무관해도 이 두 값은 PoC에서
+    나온다. digest를 빼는 변이가 여기서 죽는다."""
+    kind = _asan_evidence().kind.value
+
+    text = _observe(poc=_POC)
+
+    assert text == (
+        f"tool=asan action=gen ok=True exit=1 kind={kind} "
+        f"input_bytes={len(_POC)} input_sha256={_digest(_POC)}"
+    )
+
+
+def test_pov_observation_digest_follows_the_bytes_not_the_length() -> None:
+    same_length = bytes(len(_POC))
+
+    assert _observe(poc=_POC) != _observe(poc=same_length)
+    assert f"input_bytes={len(_POC)}" in _observe(poc=same_length)
+
+
+def test_pov_observation_without_an_input_is_the_old_head() -> None:
+    """입력이 없으면(hop0 inspect) **전 판과 바이트가 같다** — 지어낸 `input_bytes=0`이 없다."""
+    kind = _asan_evidence().kind.value
+    old = f"tool=asan action=gen ok=True exit=1 kind={kind}"
+
+    assert _observe() == old
+    assert _observe(poc=None) == old
+
+
+def test_pov_observation_reports_an_empty_poc_as_an_input() -> None:
+    """`b""`는 입력이다 — 참·거짓으로 판정하면 0바이트 PoC가 「입력 없음」으로 둔갑한다."""
+    assert f" input_bytes=0 input_sha256={_digest(b'')}" in _observe(poc=b"")
+
+
+def test_pov_observation_under_v2_is_byte_identical_whatever_the_input_is() -> None:
+    """🔴 v2는 이 PR 전과 **바이트가 같다** — v2 prefix가 서술하는 「관측 한 줄」 계약이고 이
+    입력 필드는 이 PR의 새 입력이다(`wide=False`가 그 경계, MEDIUM-4와 같은 결정)."""
+    old = _observe(wide=False)
+
+    assert _observe(wide=False, poc=_POC) == old
+    assert "input_" not in old
+
+
+def test_pov_observation_puts_the_input_fields_before_the_error_text() -> None:
+    """`error=`는 자유 문구라 **맨 끝**이다 — 뒤에 키를 더하면 그 문구에 먹힌다."""
+    failed = _asan_evidence().transition(ok=False, exit_code=2, error="boom: free text")
+
+    text = runner._pov_observation(
+        "gen", failed, read_payload=lambda _ref: None, poc=_POC
+    )
+
+    assert text.endswith(f" input_sha256={_digest(_POC)} error=boom: free text")
+
+
+def test_pov_observation_keeps_the_input_on_the_first_line_above_the_tail() -> None:
+    log = "SUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018" + chr(10)
+
+    text = runner._pov_observation(
+        "gen", _asan_evidence(), read_payload=lambda _ref: log, poc=_POC
+    )
+
+    first, _, rest = text.partition(chr(10))
+    assert f"input_sha256={_digest(_POC)}" in first
+    assert "SUMMARY: AddressSanitizer" in rest
+
+
 def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     """`runner._Once`는 감싼 콜러블을 한 번만 부르고 같은 문자열을 돌려준다.
 
@@ -1336,15 +1415,8 @@ def _paragraphs(text: str) -> list[str]:
     return [p for p in text.split("\n\n") if p.strip()]
 
 
-def test_no_pov_tool_receives_the_poc_bytes_today(ctx: RunContext) -> None:  # noqa: F811
-    """🔴 **서술을 사실에 묶는 경보기다.** v3 prefix·`docs/agent-contracts.md`·`PovAction`
-    docstring이 「지금 도구는 PoC 바이트를 입력으로 받지 않는다」고 쓴다 — 그 사실을 **코드로**
-    잰다: 러너를 돌려 `gen`(→`poc`)과 `inspect`(asan·gdb·build)가 `ToolRunner`에 넘긴 요청 전부를
-    기록하고, 어느 요청의 argv·workdir·env에도 PoC 바이트가 없고 argv가 `[tool]` 하나뿐임을 본다.
-
-    이 검사가 빨개지면 PoC가 도구 입력으로 들어간 것이다 — 그때는 위 세 곳의 한계 서술을 **같이**
-    고친다(독립 검토가 `poc`·`asan`도 PoC와 무관한데 문구가 gdb에서 그쪽으로 모델을 돌린다고
-    짚었다). 한계: 이 PR 시점의 `ToolArgs`(argv·workdir·env) 세 필드만 본다."""
+def _recording_tools(ctx: RunContext) -> tuple[RunContext, list[tuple[str, object]]]:  # noqa: F811
+    """`ToolRunner`에 간 요청을 전부 기록하는 ctx — 실제 fake 러너에 그대로 위임한다."""
     recorded: list[tuple[str, object]] = []
     real = ctx.tools
 
@@ -1356,26 +1428,182 @@ def test_no_pov_tool_receives_the_poc_bytes_today(ctx: RunContext) -> None:  # n
         def __getattr__(self, name):  # noqa: ANN001, ANN202
             return getattr(real, name)
 
-    scripted = _scripted(
-        ctx,
-        [_gen(),  # PoC 바이트 0x41 x 8 — `poc`가 돈다
-         PovAction(action="inspect", tool="asan", rationale="a"),
-         PovAction(action="inspect", tool="gdb", rationale="g"),
-         PovAction(action="inspect", tool="build", rationale="b"),
-         PovAction(action="submit", rationale="done")],
-    )
-    scripted = dataclasses.replace(scripted, tools=Recorder())
+    return dataclasses.replace(ctx, tools=Recorder()), recorded
+
+
+def _drive(ctx: RunContext, actions: list[object], *, version: str | None = None):  # noqa: ANN202, F811
+    """스크립트한 액션으로 8단계 루프를 돌린다. 반환은 (ctx, 도구 요청 기록, 모델이 홉마다 받은
+    user 본문). `version`이 없으면 기본 `dev_fake`의 pov 좌석(v2)이다."""
+    base = ctx if version is None else _with_pov_version(ctx, version)
+    scripted, recorded = _recording_tools(_scripted(base, actions))
     state, finding = _pov_state(ctx)
-    before = len(recorded)  # `_pov_state`가 앞 단계 도구를 이미 돌렸을 수 있다
-
     runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+    bodies = [p.body for role, p in scripted.models.prompts if role is Role.POV]
+    return scripted, recorded, bodies
 
-    pov_calls = recorded[before:]
-    assert [tool for tool, _ in pov_calls] == ["poc", "asan", "gdb", "build"]
-    for tool, args in pov_calls:
-        assert args.argv == [tool], f"{tool}: argv가 [tool] 하나가 아니다 — {args.argv}"
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+_SUBMIT = PovAction(action="submit", rationale="done")
+
+
+def _inspect(tool: str) -> PovAction:
+    return PovAction(action="inspect", tool=tool, rationale=tool)
+
+
+def test_pov_tool_requests_carry_the_poc_as_input_bytes(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 #511 — `gen`이 조립한 PoC가 도구 요청에 **데이터로** 실린다: `ToolArgs.input_bytes`가 그
+    바이트이고 argv가 자리표를 든다. `inspect` 홉은 **직전 gen의** PoC를 싣는다. 바이트는 argv·
+    workdir·env 어디에도 글자로 안 들어간다. 출처는 모델 spec에서 `assemble_poc`이 조립한
+    바이트뿐이다(참조 PoC가 아니다 — 테스트가 그 출처를 단언한다).
+
+    전 판의 경보기가 「argv가 `[tool]` 하나뿐」을 재던 자리다 — 도구는 PoC를 입력으로 **받지
+    않는다**는 서술이 아직 참인 이유(어느 도구 명령도 그 바이트를 안 읽는다)는
+    `tests/test_container_tools.py`가 실행된 argv로 잰다."""
+    gen = _gen()  # 0x41 x 8
+    _, recorded, _ = _drive(
+        ctx, [gen, _inspect("asan"), _inspect("gdb"), _inspect("build"), _SUBMIT]
+    )
+
+    poc = assemble_poc(gen.spec)
+    assert [tool for tool, _ in recorded] == ["poc", "asan", "gdb", "build"]
+    for tool, args in recorded:
+        assert args.argv == [tool, tool_runner.INPUT_PLACEHOLDER], f"{tool}: argv가 어긋났다"
+        assert args.input_bytes == poc, f"{tool}: 직전 gen의 PoC가 도구에 안 닿았다"
         assert not args.env, f"{tool}: env가 채워졌다"
-        assert "AAAAAAAA" not in " ".join([*args.argv, args.workdir, *args.env.values()])
+        assert poc.decode() not in " ".join([*args.argv, args.workdir])
+
+
+def test_pov_hop0_inspect_has_no_poc_to_carry_and_a_later_inspect_does(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """아직 gen이 없으면 안 싣는다 — 자리표도 없다(`argv == [tool]`). 지어낸 빈 입력이 없다."""
+    gen = _gen()
+    _, recorded, _ = _drive(ctx, [_inspect("asan"), gen, _inspect("build"), _SUBMIT])
+
+    poc = assemble_poc(gen.spec)
+    assert [(tool, args.argv, args.input_bytes) for tool, args in recorded] == [
+        ("asan", ["asan"], None),
+        ("poc", ["poc", tool_runner.INPUT_PLACEHOLDER], poc),
+        ("build", ["build", tool_runner.INPUT_PLACEHOLDER], poc),
+    ]
+
+
+def test_pov_inspect_carries_the_latest_gen_not_the_first(ctx: RunContext) -> None:  # noqa: F811
+    """「직전 gen」이다 — 첫 gen에 굳지 않는다."""
+    _, recorded, _ = _drive(ctx, [_gen(count=8), _gen(count=9), _inspect("asan"), _SUBMIT])
+
+    assert [(tool, args.input_bytes) for tool, args in recorded] == [
+        ("poc", b"A" * 8),
+        ("poc", b"A" * 9),
+        ("asan", b"A" * 9),
+    ]
+
+
+def test_pov_loop_hands_an_empty_poc_to_the_tool_as_an_input(ctx: RunContext) -> None:  # noqa: F811
+    """0바이트 PoC(`repeat` `count=0`)도 입력이다 — 참·거짓으로 판정해 조용히 「없음」으로 만들지
+    않는다. 관측은 `input_bytes=0`과 빈 입력의 digest를 싣는다."""
+    _, recorded, bodies = _drive(ctx, [_gen(count=0), _SUBMIT], version="v3")
+
+    [(tool, args)] = recorded
+    assert (tool, args.argv) == ("poc", [tool, tool_runner.INPUT_PLACEHOLDER])
+    assert args.input_bytes == b""
+    assert f" input_bytes=0 input_sha256={_digest(b'')}" in bodies[1]
+
+
+def test_pov_v3_observation_after_a_gen_carries_the_size_and_digest_of_that_poc(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    gen = _gen()
+    scripted, _, bodies = _drive(ctx, [gen, _SUBMIT], version="v3")
+
+    poc = assemble_poc(gen.spec)
+    first_line = bodies[1].splitlines()[0]
+    assert f" input_bytes={len(poc)} input_sha256={_digest(poc)}" in first_line
+    # 맨 hex라 같은 홉의 `pov_hop.poc_sha256`과 바로 대조된다(`sha256:` 접두를 안 붙인다).
+    assert f"input_sha256={_hops(scripted)[0].data['poc_sha256']}" in first_line
+
+
+def test_pov_v3_observation_is_a_function_of_the_poc(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 같은 길이·다른 바이트 — 되먹임이 **어느 PoC에 대한 것인지**를 가른다. 도구 결과(fake
+    상수)는 둘이 같으므로 관측이 갈리는 곳은 digest 하나뿐이어야 한다. 관측에서 digest를 빼는
+    변이와 입력을 안 싣는 변이가 여기서 죽는다."""
+    a, b = _gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8)
+    _, _, bodies = _drive(ctx, [a, b, _SUBMIT], version="v3")
+
+    digest_a, digest_b = _digest(assemble_poc(a.spec)), _digest(assemble_poc(b.spec))
+    assert bodies[1] != bodies[2]
+    assert bodies[1].replace(digest_a, "<d>") == bodies[2].replace(digest_b, "<d>")
+
+
+def test_pov_v3_observation_after_an_inspect_names_the_gen_it_ran_on(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    gen = _gen()
+    _, _, bodies = _drive(ctx, [gen, _inspect("asan"), _SUBMIT], version="v3")
+
+    assert f"input_sha256={_digest(assemble_poc(gen.spec))}" in bodies[2].splitlines()[0]
+
+
+def test_pov_v3_observation_after_an_inspect_without_a_gen_has_no_input_fields(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    _, _, bodies = _drive(ctx, [_inspect("asan"), _SUBMIT], version="v3")
+
+    assert "input_" not in bodies[1]
+
+
+def test_pov_v2_observation_gains_no_input_fields_through_the_loop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 v2는 같은 요청(PoC가 도구에 간다)에도 관측이 **전 판과 바이트가 같은 한 줄**이다.
+    `_run_pov_hops`가 `wide=pov_wide` 대신 `True`를 넘기는 변이가 여기서 죽는다."""
+    _, recorded, bodies = _drive(ctx, [_gen(), _inspect("asan"), _SUBMIT])  # 기본 pov 좌석은 v2
+
+    assert [tool for tool, _ in recorded] == ["poc", "asan"], "전제: 도구에 PoC가 갔다"
+    for body in bodies[1:]:
+        assert "input_" not in body
+        assert chr(10) not in body
+
+
+def test_fake_tool_results_in_the_loop_do_not_depend_on_the_poc(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 입력 배선은 **관측만** 바꾼다 — 도구 결과(`tool_ok`·`exit_code`)는 PoC가 달라도 같다
+    (`fake_tools._run_repro`의 상수, 이슈 #232)."""
+    a, b = _gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8)
+    scripted, _, _ = _drive(ctx, [a, b, _SUBMIT])
+
+    gens = [h for h in _hops(scripted) if h.data["action"] == "gen"]
+    assert [(h.data["tool_ok"], h.data["exit_code"]) for h in gens] == [(True, 1), (True, 1)]
+
+
+def test_tool_call_events_carry_the_input_size_and_digest_never_the_bytes(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """원바이트는 trace에 안 들어간다 — 크기와 digest만(맨 hex, `pov_hop`의 `poc_sha256`과 같은
+    형식이라 바로 대조된다). `ToolArgs`는 trace로 직렬화되지 않는다(`call_tool`이 `argv` 문자열만
+    싣는다) — 그래도 글자·hex·base64 어느 꼴로도 안 새는지 트레이스 전체에서 찾는다."""
+    canary = b"POC-CANARY-7f3a91"
+    gen = PovAction(
+        action="gen",
+        spec=PovSpec(segments=[PovSegment(kind="literal", hex=canary.hex())], rationale="c"),
+        rationale="canary",
+    )
+    scripted, _, _ = _drive(ctx, [gen, _inspect("asan"), _SUBMIT])
+
+    events = scripted.trace.events
+    carrying = [e for e in events if e.kind is EventKind.TOOL_CALL and "input_sha256" in e.data]
+    assert [e.data["tool"] for e in carrying] == ["poc", "asan"]
+    for event in carrying:
+        assert event.data["input_bytes"] == len(canary)
+        assert event.data["input_sha256"] == _digest(canary)
+    gen_hop = next(h for h in _hops(scripted) if h.data["action"] == "gen")
+    assert carrying[0].data["input_sha256"] == gen_hop.data["poc_sha256"]  # 같은 형식 — 바로 대조
+    blob = chr(10).join(e.model_dump_json() for e in events)
+    forms = (canary.decode(), canary.hex(), canary.hex().upper(), base64.b64encode(canary).decode())
+    for form in forms:
+        assert form not in blob, f"원바이트가 trace에 실렸다: {form[:10]}…"
 
 
 def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
@@ -1384,7 +1612,7 @@ def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
     독립 검토 지적: 전 판은 gdb만 한계를 달고 `poc`는 「현 후보를 그대로 돌린다」,
     `asan`은 「터졌는데 원인이 모호할 때」로 적어
     모델을 gdb에서 그쪽으로 돌렸다. 둘 다 PoC와 무관하다
-    (`test_no_pov_tool_receives_the_poc_bytes_today`가 코드로 잰다).
+    (`test_no_executed_container_command_receives_the_input_today`가 코드로 잰다).
 
     ⚠ **문자열 핀이다** — 뜻을 뒤집되 철자를 남긴 문장에는 초록이다. 지키는 것은 「한계 문단이
     사라지거나 도구 하나를 빼먹지 않는다」뿐이고, 문장이 참인지는 위 코드 경보기가 따로 본다."""

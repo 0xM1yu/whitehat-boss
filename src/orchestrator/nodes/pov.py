@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from src.interfaces.model_client import ChatTurn, Prompt
-from src.interfaces.tool_runner import ToolArgs
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.nodes.scout import describe_target
@@ -183,24 +183,37 @@ def _call_hop(
     )
 
 
-def run_tool(ctx: RunContext, *, finding: Finding, tool: str, workdir: str) -> Evidence:
-    """PoV 홉에서 도구를 돌린다 — gen이 만든 PoC를 대상에서 실행/진단(asan·build·gdb·poc).
+def run_tool(
+    ctx: RunContext, *, finding: Finding, tool: str, workdir: str, poc: bytes | None = None
+) -> Evidence:
+    """PoV 홉에서 도구를 돌린다 — asan·build·gdb·poc.
 
-    ⚠ **PoC 바이트를 도구 입력으로 쓰지 않는다**(`ToolArgs`는 도구 이름과 workdir만 싣는다).
-    fake 도구는 workdir의 대상 소스 존재만 보고 ok를 낸다(`fake_tools._run_repro`) — dev_fake는
-    루프 배선(gen→도구→Evidence→되먹임)을 고정하는 자리다. 이 함수가 쓰는 파일은 없다 —
-    조립된 바이트는 루프가 종단(`_pov_finish`)에 닿으면 `_run_pov_hops`의 반환값과 종단
-    이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서 러너가 마지막 gen의 PoC를 run 산출물
-    사이드카(`pov_poc/`, #355)로 쓴다. ⚠ 루프가 종단에 닿기 전에 끊기면 바이트는 안 남는다
-    (#394). 특히 예산이 이 도구 호출 자신에서 소진되면(`ctx.call_tool`의 `ensure`) 그 홉의
-    gen 이벤트가 나가기 전이라 해시도 안 남는다 — 앞 홉이 이미 낸 gen 이벤트의 `poc_sha256`만
-    남는 경로와 구별한다(`docs/agent-contracts.md`). 컨테이너 경로(호스트)에서 PoC를
-    **마운트 파일로 도구에 넘길** 때 바이트를 materialize한다(`validate._call`이
-    `[tool, *steps]`를 넘기는 자리와 같은 계약).
+    `poc`가 있으면 **데이터로** 싣는다: `ToolArgs.input_bytes`가 그 바이트이고 argv가 자리표를 든다
+    (`[tool, INPUT_PLACEHOLDER]`). 어댑터가 자기 namespace의 파일로 쓰고 자리표를 그 경로로 바꾼다 —
+    이 노드는 컨테이너 안 경로를 모른다. `gen` 홉은 그 홉이 조립한 PoC를, `inspect` 홉은 **직전
+    gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]` 하나). 출처는 모델 spec에서
+    `assemble_poc`이 조립한 바이트뿐이다.
+
+    ⚠ **싣는다고 도구가 읽는 것은 아니다.** fake는 쓰고 지우며 대상 소스 존재만 보고 ok를 낸다
+    (`fake_tools._run_repro`). 컨테이너는 scratch에 쓰되 어느 명령도 그 파일을 인자로 받지
+    않는다 — 그래서 도구 관측의 `ok`·`exit`·꼬리는 여전히 PoC와 무관하다. PoC의 함수가 되는 것은
+    러너가 관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 파일을 **읽게**
+    하는 것은 후속이다. 원바이트는 trace에 안 간다 — `call_tool`이 크기와 digest만 싣는다.
+
+    이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
+    닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서
+    러너가 마지막 gen의 PoC를 run 산출물 사이드카(`pov_poc/`, #355)로 쓴다. ⚠ 루프가 종단에 닿기
+    전에 끊기면 바이트는 안 남는다(#394). 특히 예산이 이 도구 호출 자신에서 소진되면
+    (`ctx.call_tool`의 `ensure`) 그 홉의 gen 이벤트가 나가기 전이라 해시도 안 남는다 — 앞 홉이
+    이미 낸 gen 이벤트의 `poc_sha256`만 남는 경로와 구별한다(`docs/agent-contracts.md`).
     """
     return ctx.call_tool(
         tool=tool,
-        args=ToolArgs(argv=[tool], workdir=workdir),
+        args=ToolArgs(
+            argv=[tool] if poc is None else [tool, INPUT_PLACEHOLDER],
+            workdir=workdir,
+            input_bytes=poc,
+        ),
         sandbox=DEFAULT_SANDBOX,
         stage=Stage.VALIDATE,
         subject_id=finding.finding_id,

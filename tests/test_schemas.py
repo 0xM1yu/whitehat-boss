@@ -18,7 +18,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from src.interfaces import ObjectKind, SandboxSpec, ToolArgs, Usage
+from src.interfaces import ObjectKind, SandboxSpec, ToolArgs, Usage, tool_runner
 from src.schemas import (
     ID_PREFIXES,
     Artifact,
@@ -716,6 +716,76 @@ def test_tool_args_reject_empty_argv() -> None:
     assert ToolArgs(argv=["semgrep", "--config=auto"], workdir="/src").env == {}
     with pytest.raises(ValidationError):
         ToolArgs(argv=[], workdir="/src")
+
+
+# --- 도구에 데이터로 넘기는 입력 바이트 (#511) ---------------------------------------
+
+
+def _placeholder_argv(*rest: str) -> list[str]:
+    return ["poc", tool_runner.INPUT_PLACEHOLDER, *rest]
+
+
+def test_tool_args_input_defaults_to_none() -> None:
+    """옵션 칸이다 — 기존 호출부(`ToolArgs(argv, workdir)`)는 한 줄도 안 바뀐다."""
+    assert ToolArgs(argv=["poc"], workdir="/src").input_bytes is None
+
+
+def test_tool_args_reject_a_placeholder_without_bytes() -> None:
+    """자리표가 있는데 채울 바이트가 없으면 어댑터가 자리표를 **그대로** 도구에 넘긴다 —
+    경계에서 빨리 실패한다. 메시지는 무엇을 고칠지 적는다."""
+    with pytest.raises(ValidationError, match="input_bytes"):
+        ToolArgs(argv=_placeholder_argv(), workdir="/src")
+
+
+def test_tool_args_reject_bytes_without_a_placeholder() -> None:
+    """반대 방향 — 바이트를 실었는데 어댑터가 둔 경로를 알릴 자리표가 없다."""
+    with pytest.raises(ValidationError, match="자리표"):
+        ToolArgs(argv=["poc"], workdir="/src", input_bytes=b"x")
+
+
+def test_tool_args_accept_the_pair_including_an_empty_input() -> None:
+    """`b""`도 입력이다 — PoC가 0바이트일 수 있다(`repeat` `count=0`). 참·거짓으로 판정하면
+    그 입력이 조용히 「없음」이 된다."""
+    for data in (bytes.fromhex("000d0aff"), b""):
+        args = ToolArgs(argv=_placeholder_argv(), workdir="/src", input_bytes=data)
+        assert args.input_bytes == data
+
+
+def test_tool_args_placeholder_is_a_whole_element_not_a_substring() -> None:
+    """모델이 쓴 `repro_spec.steps`가 argv에 그대로 들어간다(`validate._call`). 자리표를 **품은**
+    문자열이 run을 죽이면 안 된다 — 원소가 자리표와 **같을 때만** 자리표다."""
+    embedded = f"cat {tool_runner.INPUT_PLACEHOLDER} | ./poc"
+
+    assert ToolArgs(argv=["poc", embedded], workdir="/src").input_bytes is None
+
+
+def test_tool_args_input_must_be_bytes_not_text() -> None:
+    """텍스트가 조용히 UTF-8로 바뀌어 PoC가 달라지지 않는다."""
+    with pytest.raises(ValidationError):
+        ToolArgs(argv=_placeholder_argv(), workdir="/src", input_bytes="AAAA")
+
+
+def test_tool_args_never_echo_the_bytes_in_repr_or_in_a_validation_error() -> None:
+    """원바이트는 로그·예외 문구로 새지 않는다 — 8 MiB까지 갈 수 있고 PoC다."""
+    secret = b"SECRET-POC-BYTES"
+    carrying = ToolArgs(argv=_placeholder_argv(), workdir="/src", input_bytes=secret)
+
+    assert "SECRET-POC-BYTES" not in repr(carrying)
+    assert "SECRET-POC-BYTES" not in str(carrying)
+    with pytest.raises(ValidationError) as excinfo:
+        ToolArgs(argv=["poc"], workdir="/src", input_bytes=secret)
+    assert "SECRET-POC-BYTES" not in str(excinfo.value)
+
+
+def test_with_input_path_replaces_only_whole_placeholder_elements() -> None:
+    """어댑터가 부르는 치환 — 새 목록을 돌려주고 입력 목록은 안 건드린다."""
+    placeholder = tool_runner.INPUT_PLACEHOLDER
+    argv = ["poc", placeholder, f"x{placeholder}", placeholder]
+
+    resolved = tool_runner.with_input_path(argv, "/work/input-1.poc")
+
+    assert resolved == ["poc", "/work/input-1.poc", f"x{placeholder}", "/work/input-1.poc"]
+    assert argv == ["poc", placeholder, f"x{placeholder}", placeholder]
 
 
 # --- 기존 manifest 호환 (2026-08-17) -----------------------------------------
