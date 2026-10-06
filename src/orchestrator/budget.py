@@ -107,8 +107,9 @@ class BudgetLedger:
 
         **실서빙 프로필의 0은 여기서 안 막는다 — 로드에서 막는다.** 이 원장은 자기 모델이 실서빙인지
         모르므로, 실모델을 서빙하는 프로필의 예산에 0이 있으면 `load_config`가 거부한다
-        (`config._check_real_serving_limits_are_positive`). 그래서 `load_config`를 지나 여기 오는
-        0은 Fake 전용 프로필의 것이다.
+        (`config._check_real_serving_limits_are_positive`). 도구 시간 0은 `tool_runner`가 `fake`가
+        아닌 프로필을 같은 방식으로 막는다(`config.check_container_runtime_caps_tool_time` - CLI
+        오버라이드 뒤에도 돈다). 그래서 이 검사를 지나 여기 오는 0은 Fake 전용 프로필의 것이다.
         """
         # **비교는 밀리초로, 보고는 초로.** 파생값(초)으로 비교하면 상한 직전의 999 ms가
         # 반복해서 버려져 상한이 실제보다 늦게 걸린다. 반대로 메시지에 ms를 그대로 내면
@@ -168,8 +169,8 @@ class BudgetLedger:
         # `tool_ms`도 같은 규칙이다. Fake 런타임의 도구 시간이 `None`으로 오는데, 그것은
         # GPU도 컨테이너도 아니라 **하네스가 자기를 잰 값**이라 장부에 넣을 대상이 아니다
         # (`RunContext.call_tool`에 그 판단과 근거가 있다). 미측정 개수는 따로 세지 않는다 —
-        # 도구 시간은 재현성 기록이 아니라 상한이고, `tool_images`가 이미 "컨테이너 없이
-        # 돌았다"를 판정한다(`incomplete_fields`).
+        # 도구 시간은 재현성 기록이 아니라 상한이고, Fake 런타임이면 `tool_images`가 이미
+        # "컨테이너 없이 돌았다"를 판정한다(`incomplete_fields`).
         if tool_ms is not None:
             self.tool_ms += tool_ms
         overrun = self._overrun()

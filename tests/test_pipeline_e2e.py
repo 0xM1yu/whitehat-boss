@@ -26,6 +26,7 @@ import pytest
 
 from slicer_source import assemble
 from src import cli, console
+from src.adapters import fake_model
 from src.adapters.container_tools import index_output_path
 from src.adapters.cybergym_oracle import TaskOracle
 from src.adapters.factory import build_deps, describe_wiring
@@ -35,6 +36,7 @@ from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER
 from src.orchestrator import runner, task_loader, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
@@ -1587,6 +1589,32 @@ def test_incomplete_manifest_fields_are_reported_not_faked(tmp_path: Path) -> No
     assert any("tool_images" in warning for warning in result.warnings)
 
 
+def test_the_empty_tool_images_warning_names_the_runtime_not_a_missing_container(
+    tmp_path: Path,
+) -> None:
+    """이슈 #479 (e) - 컨테이너 런타임 run에 「컨테이너 없이 실행」이라 쓰면 설정 오류로 읽힌다.
+
+    `tool_images`는 run 시작 전(`build_deps`)에 채워져 도구 단계에 닿았는지와 무관하다 - 비는 뜻은
+    「이미지 digest를 못 기록했다」(이미지 없음 · 런타임에 못 닿음)다. Fake 런타임이면 컨테이너가
+    정말 없으므로 옛 문구가 맞다. 런타임 이름은 셋 다 문구에 든다."""
+    result, _ = _run(tmp_path)
+    record = result.record
+
+    def tool_images_warnings(runtime: str) -> list[str]:
+        found = runner.incomplete_fields(record.transition(tool_runner=runtime))
+        return [w for w in found if "tool_images" in w]
+
+    (fake,) = tool_images_warnings("fake")
+    assert "컨테이너 없이 실행" in fake
+    for runtime in ("docker", "singularity", "podman"):
+        (warning,) = tool_images_warnings(runtime)
+        assert "컨테이너 없이" not in warning, runtime
+        assert runtime in warning and "모델 비교표에서 제외한다" in warning, runtime
+        assert "도구 단계" not in warning, "무관하다(`build_deps`가 run 시작 전에 채운다)"
+        # 조작자가 볼 곳을 알려 준다 - 이미지가 없거나 런타임에 못 닿은 것이다(철자 pin).
+        assert "이미지가 없거나 런타임에 닿지 못했다" in warning, runtime
+
+
 def test_the_record_carries_the_compile_condition(tmp_path: Path) -> None:
     """컴파일 조건이 비교표에 나타나야 한다 (D32 / #74).
 
@@ -2880,6 +2908,34 @@ def test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools(tmp_path: Pat
     assert all(e["data"]["p4"] for e in e4)
 
 
+def test_a_repro_step_equal_to_the_input_placeholder_does_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 8단계는 모델이 쓴 `repro_spec.steps`를 `[tool, *steps]`로 argv에 넣는다(`validate._call`).
+    원소가 **예약 자리표와 같으면** `ToolArgs`가 `ValidationError`를 던졌고 그 루프에는 try가 없어
+    최후 방어선을 지나 run 전체가 `stopped_after: 8`로 멈췄다(독립 검토가 실증). 이제는 그 호출만
+    `ok=False`로 남고 run은 끝까지 간다. 운영 배선(`cli.execute`)으로 돈다 — 노드 단위 검사는
+    `tests/test_nodes.py`가 맡는다."""
+    real = fake_model._repro_spec
+
+    def colliding(target, sink):  # noqa: ANN001, ANN202
+        spec = real(target, sink)
+        return spec.transition(steps=[*spec.steps, INPUT_PLACEHOLDER])
+
+    monkeypatch.setattr(fake_model, "_repro_spec", colliding)
+
+    result, trace_path = _run(tmp_path)
+
+    assert result.record.stopped_after is None, "예약 자리표와 같은 step이 run 전체를 멈췄다"
+    refused = [
+        e
+        for e in _of(_events(trace_path), "tool_call")
+        if e["data"]["ok"] is False and INPUT_PLACEHOLDER in (e["data"]["error"] or "")
+    ]
+    assert refused, "전제 — 그 step이 8단계까지 가서 거절됐다"
+    assert {e["stage"] for e in refused} == {int(Stage.VALIDATE)}
+
+
 def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
     """등급은 근거가 쌓이며 올라가는 값이다. 8단계가 6·7단계보다 낮으면 배선이 틀렸다.
 
@@ -4120,11 +4176,11 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     assert "잘린 Finding" not in result.report.render()
 
 
-def _max_hops_zero(config):  # noqa: ANN001, ANN202
-    """`max_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
-    (`test_pov_loop_with_max_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
+def _pov_hops_zero(config):  # noqa: ANN001, ANN202
+    """`pov_tool_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
+    (`test_pov_loop_with_pov_tool_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
     최종 PoC 0건 run을 **monkeypatch 없이 설정 축으로** 만드는 자리다."""
-    return config.transition(thresholds=config.thresholds.transition(max_hops=0))
+    return config.transition(thresholds=config.thresholds.transition(pov_tool_hops=0))
 
 
 def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
@@ -4142,7 +4198,7 @@ def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
     낸다. 범위는 `runner._pov_shortfall_warning` docstring이 든다.
     """
     result, trace_path = _run(
-        tmp_path, name="pov_zero", before=_with_index(), configure=_max_hops_zero
+        tmp_path, name="pov_zero", before=_with_index(), configure=_pov_hops_zero
     )
 
     events = _events(trace_path)

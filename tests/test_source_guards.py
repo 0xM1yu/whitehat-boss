@@ -899,18 +899,19 @@ def test_guards_are_scanned_in_the_entry_function_before_it_is_trimmed() -> None
     assert _row(big, "if (n > MAX)", "if (n > MAX) [exit: return -1]") in source
 
 
-def test_the_guards_option_is_a_default_off_switch_the_prompt_gate_knows() -> None:
-    """`budgets.yaml`이 키를 `0`으로 둔다 — 다른 일곱과 달리 켜져 있지 않다. 꺼진 옵션은
-    `flatten()`에 키가 없고(옛 manifest 모양) 켜진 옵션 목록에도 안 든다. 다른 옵션은
-    `budgets.yaml`이 켜 두므로(2026-10-04) 목록 전체가 아니라 이 키만 본다."""
+def test_the_guards_option_is_a_switch_the_prompt_gate_knows() -> None:
+    """`budgets.yaml`이 키를 `1`로 둔다(⏵ 2026-10-06 — Auditor v9가 서술·선언한다). 꺼진 옵션은
+    `flatten()`에 키가 없고(옛 manifest 모양) 켜진 옵션 목록에도 안 든다 — **꺼짐은 0을 주입해서**
+    본다(커밋된 설정의 기본값에 기대지 않는다). 다른 옵션은 `budgets.yaml`이 켜 두므로(2026-10-04)
+    목록 전체가 아니라 이 키만 본다."""
     assert "auditor_guards" in AUDITOR_SOURCE_OPTIONS
     thresholds = load_config("dev_fake").thresholds
-    assert thresholds.auditor_guards == 0
-    assert "auditor_guards" not in thresholds.flatten()
-    assert "auditor_guards" not in thresholds.auditor_source_options_on()
-    on = thresholds.transition(auditor_guards=1)
-    assert on.flatten()["auditor_guards"] == 1.0
-    assert "auditor_guards" in on.auditor_source_options_on()
+    assert thresholds.auditor_guards == 1
+    assert "auditor_guards" in thresholds.auditor_source_options_on()
+    off = thresholds.transition(auditor_guards=0)
+    assert "auditor_guards" not in off.flatten()
+    assert "auditor_guards" not in off.auditor_source_options_on()
+    assert thresholds.flatten()["auditor_guards"] == 1.0
     with pytest.raises(ValidationError):
         thresholds.transition(auditor_guards=2)
 
@@ -1513,7 +1514,8 @@ def test_v7_does_not_describe_the_guards_option_so_the_cli_refuses_turning_it_on
     key = config.model_key_for("auditor")
     v7 = config.models[key].transition(prompt_template_version="v7")
     config = config.transition(models={**config.models, key: v7})
-    assert cli._undescribed_source_options(config) == []  # 기본(꺼짐)은 막히지 않는다
+    off = config.transition(thresholds=config.thresholds.transition(auditor_guards=0))
+    assert cli._undescribed_source_options(off) == []  # 꺼짐(0 주입)은 막히지 않는다
     on = config.transition(thresholds=config.thresholds.transition(auditor_guards=1))
     assert cli._undescribed_source_options(on) == ["auditor_guards(auditor/v7)"]
     checks = cli._check_source_options(on)

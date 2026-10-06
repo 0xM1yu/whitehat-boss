@@ -334,8 +334,8 @@ class NeStopReason(StrEnum):
 class PovStopReason(StrEnum):
     """PoV 툴 루프(Option C)가 서는 사유. `NeStopReason`을 미러한 모델-주도 루프다.
 
-    루프 제어 셋 — `SUBMITTED`(모델이 submit) · `REPEAT_SPEC`(직전 gen과 같은 PoC 바이트 재생성) ·
-    `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
+    루프 제어 셋 — `SUBMITTED`(모델이 submit) · `REPEAT_SPEC`(이미 낸 gen과 같은 PoC 바이트 재생성)
+    · `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
     계약대로) — `PARSE_FAILED`(스키마 파싱 실패) · `CONTEXT_OVERFLOW`
     (크기 거절) · `GATEWAY_ERROR`(버릴 수 있는 게이트웨이). **서버 쪽 사건(status 없음·5xx)과
     예산 소진은 흡수하지 않고 올려 보낸다** — run의 사실이라 여기 값이 없다(`NeStopReason`이

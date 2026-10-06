@@ -160,6 +160,12 @@ _ALLOWED_SCHEMES = ("http", "https")
 # `peek_verdict`가 이것을 「아직 행이 없다」로 읽는다.
 _NO_RECORD_DETAIL = "Record not found"
 
+# 서버가 fix 다리를 안 돌리는 과제 계열의 접두어(이슈 #431) - 저자 `server_utils.py`가
+# `run_poc_id`에서 그 접두어면 fix 실행을 건너뛰고(`:312-314`) `run_container`는 HTTP 400을
+# 돌려준다(`:55-56`).
+# 콜론까지 본다 - 저자 서버가 같은 식으로 가른다.
+_REFUSED_FAMILY_PREFIX = "oss-fuzz-latest:"
+
 # 실 id 없이 단독으로 쓸 수 있는 task_id 모양 — `unsupported_task_id`가 쓴다.
 _REAL_TASK_ID = re.compile(r"[a-z][a-z0-9-]*:[0-9]+")
 
@@ -217,6 +223,33 @@ def unsupported_task_id(task_id: str) -> str | None:
         f"과제 id {task_id!r}는 이 클라이언트가 지원하는 모양이 아니다 - "
         "마스킹을 안 한 서버의 실제 id(<출처>:<숫자>, 예 arvo:1065)는 그대로 쓰고, 그 밖의 id는 "
         "조회에 쓸 실 id가 같이 와야 쓸 수 있다. 실 id 없이는 미지원이다"
+    )
+
+
+def refused_family_task_id(task_id: str) -> str | None:
+    """서버가 제출을 거부하는 계열의 **실 id**면 그 사유, 아니면 `None` (이슈 #431).
+
+    저자 서버는 `oss-fuzz-latest:` 계열의 **`vul` 제출부터** HTTP 400으로 거부한다(`run_container`가
+    이미지 이름을 짓다 던진다, `server_utils.py:55-56`) - 소스 판독이고 그 계열을 실제로 제출해 본
+    run은 0건이다. 우리 쪽에서는 `CyberGymOracleError(status=400)`로 올라와 run이 `oracle_failed`를
+    남기는 **시끄러운 실패**다. 다만 그 400은 모델 호출과 PoV를 다 돈 **뒤** 첫 제출에서야 난다 -
+    그래서 앞에서 거절한다.
+
+    앞 판은 `run_poc_id`의 fix 건너뛰기(`:312-314`)를 근거로 「`fix` 종료 코드가 영구 `None`이라
+    조용한 0점」이라 적었고 그것은 틀렸다 - 그 줄은 앞의 `vul` 실행이 먼저 400을 내므로 이
+    커밋에서는 닿지 않는다(이슈 #431 둘째 코멘트). 호출부는 마스킹 서버면 **조회에 쓰는 실 id**를
+    준다.
+    `unsupported_task_id`의 모양 검사는 이것을 못 가린다(`oss-fuzz-latest:123`도 통과한다).
+
+    ⚠ 이 계열이 Level 1에 드는지는 따로 잰 값이다 - 저자 `tasks.json`(HF `bde190d`) 1,507건의
+    접두어는 `arvo`·`oss-fuzz` 둘뿐이다(이슈 #431 첫 코멘트, 2026-10-04 실측). 그래서 이 거절은 지금
+    도달 불가한 경로를 막는 덧가드다. 비교는 서버와 같은 정확 일치다 - 대소문자·공백을 접지 않는다.
+    """
+    if not task_id.startswith(_REFUSED_FAMILY_PREFIX):
+        return None
+    return (
+        f"과제 id {task_id!r}의 계열은 저자 서버가 vul 제출부터 HTTP 400으로 거부한다 - 모델 "
+        "호출과 PoV를 다 돈 뒤 첫 제출에서야 실패하므로 제출 전에 거절한다"
     )
 
 
@@ -649,10 +682,11 @@ def run_round_trip(
 ) -> OracleVerdict:
     """`vul` 제출 → `fix` 제출 → DB 쪽 판정 조회 — 사슬 증명 하나.
 
-    ⚠ **하네스 러너는 이것을 후보마다 부르지 않는다.** `vul`·`fix`를 둘 다 제출하므로 후보마다
+    ⚠ **하네스 러너는 이것을 각 vul 제출마다 부르지 않는다.** `vul`·`fix`를 둘 다 제출하므로 매번
     부르면 비최종 PoC에도 `-fix` 이미지가 돈다 — 저자 FAQ는 fix 다리를 최종 PoC 한 개에만 돌리라고
-    적는다 (build-plan.md 배선 조각 행). 러너는 후보마다 `submit_vul`만, 최종으로 지정한 하나에만
-    `submit_fix`+`query_verdict`를 부른다(`TaskOracle.submit_vul`·`finalize`).
+    적는다 (build-plan.md 배선 조각 행). 러너는 중간 gen과 모델 submit마다 `submit_vul`만 부른다.
+    최종으로 지정한 하나에만 `submit_fix`+`query_verdict`를 부른다
+    (`TaskOracle.submit_vul`·`finalize`).
 
     두 제출의 `response_exit_code`는 쓰지 않는다(모듈 docstring) — 쓰는 것은 그 호출이 서버 쪽에
     컨테이너를 돌려 DB에 쓰게 만드는 효과와 응답의 `poc_id`뿐이고, 진짜 값은 `query_verdict`에서
@@ -698,16 +732,19 @@ class TaskOracle:
     러너는 바이트만 준다 — 서버 주소·과제 신원·키는 run을 조립할 때 여기 묶인다(`src/cli.py`의
     `_oracle_for`가 만든다, #386). 서버 주소는 조작자가 정하고 과제 id는 번들의 `submit.sh`에서
     읽는다 (`task_loader.SubmitMetadata`가 이유를 든다). `task_id`가 지원하는 모양이 아니고
-    (`unsupported_task_id`) `query_task_id`도 없으면 만들어지지 않는다 — 컨테이너를 돌리기 전에
-    거절한다. 마스킹 서버는 제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 `/query-poc`는 마스크를
-    풀지 않으므로(소스 판독이고 실측하지 않았다, `query_verdict` docstring) 마스킹된 `task_id`는
-    조회에 쓸 실 id를 `query_task_id`로 같이 줄 때만 쓴다. 제출 두 다리(`submit_vul`·`submit_fix`)는
-    `task_id`로, 제출 전 장부 읽기(`peek_verdict`)와 판정 조회(`query_verdict`)는
+    (`unsupported_task_id`) `query_task_id`도 없으면, 또는 조회에 쓰는 실 id가 서버가 제출을
+    거부하는 계열이면(`refused_family_task_id`) 만들어지지 않는다 — 컨테이너를 돌리기 전에
+    거절한다. 마스킹 서버는 제출을 마스킹된 id로 받지만 DB에는 실 id를 적고 `/query-poc`는
+    마스크를 풀지 않으므로(소스 판독이고 실측하지 않았다, `query_verdict` docstring) 마스킹된
+    `task_id`는 조회에 쓸 실 id를 `query_task_id`로 같이 줄 때만 쓴다. 제출 두
+    다리(`submit_vul`·`submit_fix`)는 `task_id`로, 제출 전 장부 읽기(`peek_verdict`)와 판정
+    조회(`query_verdict`)는
     `query_task_id`(없으면 `task_id`)로 간다.
 
-    **두 다리다 — 후보마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ가 fix 다리를 「최종 PoC
-    한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다. 그래서 러너가 후보마다는
-    `submit_vul`만 부르고, 최종으로 지정한 하나에만 `finalize`(`submit_fix` + `query_verdict`)를
+    **두 다리다 — 각 vul 제출마다 `submit_vul`, run당 한 번 `finalize`.** 저자 FAQ는 fix 다리를
+    「최종 PoC 한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다.
+    그래서 러너가 각 제출에는 `submit_vul`만 부르고, 최종으로 지정한 하나에만
+    `finalize`(`submit_fix` + `query_verdict`)를
     부른다. `success` 술어는 **다시 계산하지 않는다**(두 벌로 두면 갈린다 —
     `OracleVerdict.success`를 그대로 쓴다).
 
@@ -736,6 +773,10 @@ class TaskOracle:
     query_task_id: str | None = None
     salt: str = DEFAULT_SALT
     timeout: float = _DEFAULT_TIMEOUT_S
+    # 이 run이 기댄 카나리 보고서의 경로와 sha256(#487). 판정에는 안 쓰고 `RunRecord.oracle`에
+    # 남기려고 run 조립 때 묶는다 - 점수의 유효 조건을 사후에 변호하는 값이다.
+    canary_path: str | None = None
+    canary_sha256: str | None = None
 
     def __post_init__(self) -> None:
         # 마스킹된 id는 **조회에 쓸 실 id가 같이 올 때만** 받는다 — 마스킹 서버는 제출을 마스킹된
@@ -744,6 +785,9 @@ class TaskOracle:
         # 있으면 받는다 — 호출자가 `mask_map.json`을 읽어 준 값이다
         # (`cli._query_task_id_from_mask_map`). 빈 문자열은 값이 아니다: `_query_task`가 그것을
         # `task_id`로 되돌리므로 여기서도 없는 것으로 읽는다.
+        refused = refused_family_task_id(self.query_task_id or self.task_id)
+        if refused is not None:
+            raise ValueError(refused)
         problem = unsupported_task_id(self.task_id)
         if problem is not None and not self.query_task_id:
             raise ValueError(
@@ -762,7 +806,7 @@ class TaskOracle:
         return self.query_task_id or self.task_id
 
     def submit_vul(self, poc: bytes) -> VulSubmission:
-        """`vul` 다리 하나 — 후보마다. 아래 `submit_vul`은 모듈 수준 함수다(이름이 같다)."""
+        """`vul` 다리 하나 — 각 PoC 제출마다. 아래 `submit_vul`은 모듈 수준 함수다(이름이 같다)."""
         with self._redacting():
             before = self._peek(poc)
             sent = submit_vul(
@@ -774,6 +818,12 @@ class TaskOracle:
             response_exit_code=sent.response_exit_code,
             cached=before is not None and before.vul_exit_code is not None,
         )
+
+    def query_vul(self, poc: bytes) -> int | None:
+        """제출한 PoC의 원시 vul 종료 코드만 읽는다. fix 다리는 실행하지 않는다."""
+        with self._redacting():
+            verdict = self._peek(poc)
+        return None if verdict is None else verdict.vul_exit_code
 
     def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:
         """최종 PoC 하나의 `fix` 다리와 판정 조회 — run당 한 번."""

@@ -4,7 +4,7 @@
 커밋 `abf8239`도 *"호출 지점은 아직 없다"*고 적었다). 사람이 돌려 종료 코드와 보고서를 읽는다.
 
 ⏵ **2026-10-04 — 그래도 「채점을 막지 않는다」는 더는 참이 아니다.** 이 도구가 **쓴 보고서**가
-채점 run을 막는다: `cli._canary_refusal`이 `--oracle-canary`로 받은 JSON을
+채점 run을 막는다: `cli._canary_gate`이 `--oracle-canary`로 받은 JSON을
 `src/adapters/canary_report.py`로 읽어 `verdict != pass` · 다른 과제 · `mmap_rnd_bits > 28` ·
 미측정이면 **제출 전에** 거부한다(이슈 #383). 막는 것은 **보고서**이고 이 도구를 **부르는** 코드는
 여전히 없다 — 조작자가 돌려 보고서를 만들어 둔다. 호출하는 코드까지 생기면 이 문단과
@@ -818,7 +818,7 @@ def _print_verdict(m: Measurement, problems: list[str], observed: int) -> None:
         for problem in problems:
             _emit(f"[FAIL] {problem}", err=True)
         # 이 도구 자체는 아무것도 못 막는다 - 부르는 코드가 없다. 막는 것은 **이 보고서를 읽는
-        # 게이트**다(`cli._canary_refusal` · 모듈 docstring의 2026-10-04 절).
+        # 게이트**다(`cli._canary_gate` · 모듈 docstring의 2026-10-04 절).
         _emit(
             "[FAIL] 네 조합이 기대와 어긋났다 - 이 판정을 담은 보고서로는 채점 run이 서지 않는다"
             "(--oracle-canary가 이것을 읽어 거부한다). 단 이 줄은 --out에 무엇이 쓰였는지를 "
