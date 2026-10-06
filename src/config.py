@@ -609,6 +609,14 @@ class Thresholds(HarnessModel):
     # 이 배선 뒤의 실모델 run 1회다. 자르는 순서는 `critic_top_n`과 같다
     # (`confidence` 내림차순 · 동점은 `finding_id`) — 정렬이 흔들리면 재현 실행이 갈라진다.
     pov_attempt_top_n: int = Field(ge=0)
+    # 8단계 PoV 툴 루프(`runner._run_pov_hops`)의 **전용** 홉 상한 (이슈 #511) — 모델 호출은
+    # finding당 최대 `1 + 이 값`회다(hop 0..값). 0이면 hop0(gen) 뒤 곧장 MAX_HOP이라 submit이 없다.
+    # `max_hops`에서 떼어냈다 — Auditor가 `auditor_tool_hops`(#419)로 갈라진 것과 같은 이유다:
+    # PoV 홉을 `max_hops`로 늘리면 Scout 되묻기와 `cli estimate`의 `scout_calls`가 같이 움직인다.
+    # **필드 기본이 없다** — 값은 `config/budgets.yaml`만 든다. `auditor_tool_hops`의 기본 0은
+    # 「꺼짐 = 종전 경로」지만 여기 0은 「submit에 못 닿는다」라, 기본 0이면 키가 빠진 설정이 PoV
+    # 산출을 조용히 끈다. **값은 미결정이다**(`cli.PROVISIONAL_THRESHOLDS`) — 근거는 그 파일 주석.
+    pov_tool_hops: int = Field(ge=0)
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)
@@ -783,9 +791,9 @@ class Thresholds(HarnessModel):
     # 거절한다.
     # ⚠ 53,248 창(입력 몫 20,480)은 **ATOM 시절 계획값**이다 — ATOM 사용 종료 2026-09-29(#340).
     #
-    # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 셋이고
-    # (`runner._run_ne_hops` · `runner._run_pov_hops` · `cli estimate`의
-    # `scout_calls = candidates * (1 + max_hops)`) 올리면 Scout 되묻기가 같이 늘어난다. NE 쪽은
+    # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 둘이고
+    # (`runner._run_ne_hops` · `cli estimate`의 `scout_calls = candidates * (1 + max_hops)`) 올리면
+    # Scout 되묻기가 같이 늘어난다 — PoV 루프는 `pov_tool_hops`로 갈렸다. NE 쪽은
     # 효과가 이미 측정돼 있다 — hop0 NE 84좌석 중 5건, 루프에 든 10좌석(강제 8 · 스스로 NE 2)에서
     # 판정이 바뀐 것 1건, 정상 표본 0/24(`docs/experiments/`의 2026-09-27·09-28 NE 스모크).
     #

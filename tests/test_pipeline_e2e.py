@@ -4176,11 +4176,11 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     assert "잘린 Finding" not in result.report.render()
 
 
-def _max_hops_zero(config):  # noqa: ANN001, ANN202
-    """`max_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
-    (`test_pov_loop_with_max_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
+def _pov_hops_zero(config):  # noqa: ANN001, ANN202
+    """`pov_tool_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
+    (`test_pov_loop_with_pov_tool_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
     최종 PoC 0건 run을 **monkeypatch 없이 설정 축으로** 만드는 자리다."""
-    return config.transition(thresholds=config.thresholds.transition(max_hops=0))
+    return config.transition(thresholds=config.thresholds.transition(pov_tool_hops=0))
 
 
 def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
@@ -4198,7 +4198,7 @@ def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
     낸다. 범위는 `runner._pov_shortfall_warning` docstring이 든다.
     """
     result, trace_path = _run(
-        tmp_path, name="pov_zero", before=_with_index(), configure=_max_hops_zero
+        tmp_path, name="pov_zero", before=_with_index(), configure=_pov_hops_zero
     )
 
     events = _events(trace_path)
