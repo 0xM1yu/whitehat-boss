@@ -274,9 +274,9 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 `harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
 ⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트를 읽는 도구 명령이 아직 없어
-(`run_tool`이 PoC를 입력 파일로 싣지만 — `ToolArgs.input_bytes`, #511 — 어느 명령도 그 파일을 인자로
-받지 않는다) 도구 관측이 PoC와 무관하다. v3 관측의 입력 크기·digest 줄만 PoC의 함수다. 그 전에는
-`harness_pool`의 8단계를 돌리지 않는다.
+(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 — `ToolArgs.input_bytes`, #386 ① — 어느 명령도
+그 파일을 인자로 받지 않는다, 읽게 하기는 #513) 도구 관측이 PoC와 무관하다. v3 관측의
+`last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
 
 **남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · feyospace 실서빙
 실측(checksum·benchmark·홉수). 외부 CyberGym oracle 제출은 `run --oracle-submit`(기본 꺼짐)으로 들어왔다 —

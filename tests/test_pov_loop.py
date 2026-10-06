@@ -1210,8 +1210,8 @@ def _observe(**kwargs: object) -> str:
 
 
 def test_pov_observation_carries_the_size_and_digest_of_the_input() -> None:
-    """🔴 #511의 목적 — 관측이 **자기 PoC의 함수**다. 도구에 넘긴 입력의 크기와 sha256이 첫
-    줄(스칼라 줄)에 실린다. 도구 결과(`ok`·`exit`·`kind`)는 PoC와 무관해도 이 두 값은 PoC에서
+    """🔴 #386 ①의 목적 — 관측이 **자기 PoC의 함수**다. 도구 요청에 실은 PoC의 크기와 sha256이
+    첫 줄(스칼라 줄)에 실린다. 도구 결과(`ok`·`exit`·`kind`)는 PoC와 무관해도 이 두 값은 PoC에서
     나온다. digest를 빼는 변이가 여기서 죽는다."""
     kind = _asan_evidence().kind.value
 
@@ -1219,19 +1219,31 @@ def test_pov_observation_carries_the_size_and_digest_of_the_input() -> None:
 
     assert text == (
         f"tool=asan action=gen ok=True exit=1 kind={kind} "
-        f"input_bytes={len(_POC)} input_sha256={_digest(_POC)}"
+        f"last_gen_bytes={len(_POC)} last_gen_sha256={_digest(_POC)}"
     )
+
+
+def test_pov_observation_names_do_not_claim_the_tool_took_the_bytes() -> None:
+    """🔴 독립 검토 HIGH-1 — 필드 이름이 `input_*`이면 「도구의 입력」으로 읽히는데 같은 요청의 v3
+    prefix는 **그 바이트는 도구의 입력이 아니다**라고 적는다. 모델이 이름을 따르면 「내 입력으로
+    asan이 터졌다」고 쓰고, 그 문장은 이 저장소가 막으려던 것이다(D99 「선행 둘」 ②). 그래서 이름은
+    `last_gen_*`다. ⚠ 철자 핀이다: 소비를 암시하는 다른 이름(`fed_*`)은 못 막는다 — prefix가 한계를
+    걷는 판(이슈 #515)에서 이 검사와 이름을 같이 본다."""
+    head = _observe(poc=_POC)
+
+    assert "input" not in head
+    assert " last_gen_bytes=" in head and " last_gen_sha256=" in head
 
 
 def test_pov_observation_digest_follows_the_bytes_not_the_length() -> None:
     same_length = bytes(len(_POC))
 
     assert _observe(poc=_POC) != _observe(poc=same_length)
-    assert f"input_bytes={len(_POC)}" in _observe(poc=same_length)
+    assert f"last_gen_bytes={len(_POC)}" in _observe(poc=same_length)
 
 
 def test_pov_observation_without_an_input_is_the_old_head() -> None:
-    """입력이 없으면(hop0 inspect) **전 판과 바이트가 같다** — 지어낸 `input_bytes=0`이 없다."""
+    """입력이 없으면(hop0 inspect) **전 판과 바이트가 같다** — 지어낸 `last_gen_*`가 없다."""
     kind = _asan_evidence().kind.value
     old = f"tool=asan action=gen ok=True exit=1 kind={kind}"
 
@@ -1241,7 +1253,7 @@ def test_pov_observation_without_an_input_is_the_old_head() -> None:
 
 def test_pov_observation_reports_an_empty_poc_as_an_input() -> None:
     """`b""`는 입력이다 — 참·거짓으로 판정하면 0바이트 PoC가 「입력 없음」으로 둔갑한다."""
-    assert f" input_bytes=0 input_sha256={_digest(b'')}" in _observe(poc=b"")
+    assert f" last_gen_bytes=0 last_gen_sha256={_digest(b'')}" in _observe(poc=b"")
 
 
 def test_pov_observation_under_v2_is_byte_identical_whatever_the_input_is() -> None:
@@ -1250,7 +1262,7 @@ def test_pov_observation_under_v2_is_byte_identical_whatever_the_input_is() -> N
     old = _observe(wide=False)
 
     assert _observe(wide=False, poc=_POC) == old
-    assert "input_" not in old
+    assert "last_gen_" not in old
 
 
 def test_pov_observation_puts_the_input_fields_before_the_error_text() -> None:
@@ -1261,7 +1273,7 @@ def test_pov_observation_puts_the_input_fields_before_the_error_text() -> None:
         "gen", failed, read_payload=lambda _ref: None, poc=_POC
     )
 
-    assert text.endswith(f" input_sha256={_digest(_POC)} error=boom: free text")
+    assert text.endswith(f" last_gen_sha256={_digest(_POC)} error=boom: free text")
 
 
 def test_pov_observation_keeps_the_input_on_the_first_line_above_the_tail() -> None:
@@ -1272,7 +1284,7 @@ def test_pov_observation_keeps_the_input_on_the_first_line_above_the_tail() -> N
     )
 
     first, _, rest = text.partition(chr(10))
-    assert f"input_sha256={_digest(_POC)}" in first
+    assert f"last_gen_sha256={_digest(_POC)}" in first
     assert "SUMMARY: AddressSanitizer" in rest
 
 
@@ -1454,7 +1466,7 @@ def _inspect(tool: str) -> PovAction:
 
 
 def test_pov_tool_requests_carry_the_poc_as_input_bytes(ctx: RunContext) -> None:  # noqa: F811
-    """🔴 #511 — `gen`이 조립한 PoC가 도구 요청에 **데이터로** 실린다: `ToolArgs.input_bytes`가 그
+    """🔴 #386 ① — `gen`이 조립한 PoC가 도구 요청에 **데이터로** 실린다: `ToolArgs.input_bytes`가 그
     바이트이고 argv가 자리표를 든다. `inspect` 홉은 **직전 gen의** PoC를 싣는다. 바이트는 argv·
     workdir·env 어디에도 글자로 안 들어간다. 출처는 모델 spec에서 `assemble_poc`이 조립한
     바이트뿐이다(참조 PoC가 아니다 — 테스트가 그 출처를 단언한다).
@@ -1471,7 +1483,7 @@ def test_pov_tool_requests_carry_the_poc_as_input_bytes(ctx: RunContext) -> None
     assert [tool for tool, _ in recorded] == ["poc", "asan", "gdb", "build"]
     for tool, args in recorded:
         assert args.argv == [tool, tool_runner.INPUT_PLACEHOLDER], f"{tool}: argv가 어긋났다"
-        assert args.input_bytes == poc, f"{tool}: 직전 gen의 PoC가 도구에 안 닿았다"
+        assert args.input_bytes == poc, f"{tool}: 직전 gen의 PoC가 도구 요청에 안 실렸다"
         assert not args.env, f"{tool}: env가 채워졌다"
         assert poc.decode() not in " ".join([*args.argv, args.workdir])
 
@@ -1504,13 +1516,21 @@ def test_pov_inspect_carries_the_latest_gen_not_the_first(ctx: RunContext) -> No
 
 def test_pov_loop_hands_an_empty_poc_to_the_tool_as_an_input(ctx: RunContext) -> None:  # noqa: F811
     """0바이트 PoC(`repeat` `count=0`)도 입력이다 — 참·거짓으로 판정해 조용히 「없음」으로 만들지
-    않는다. 관측은 `input_bytes=0`과 빈 입력의 digest를 싣는다."""
-    _, recorded, bodies = _drive(ctx, [_gen(count=0), _SUBMIT], version="v3")
+    않는다. 관측은 `last_gen_bytes=0`과 빈 입력의 digest를 싣고, trace의 `tool_call`도 그렇다
+    (`input_bytes=0`·sha `e3b0c442…` — `context.call_tool`이 `is not None`을 진리값 판정으로
+    바꾸는 변이가 여기서 죽는다)."""
+    scripted, recorded, bodies = _drive(ctx, [_gen(count=0), _SUBMIT], version="v3")
 
     [(tool, args)] = recorded
     assert (tool, args.argv) == ("poc", [tool, tool_runner.INPUT_PLACEHOLDER])
     assert args.input_bytes == b""
-    assert f" input_bytes=0 input_sha256={_digest(b'')}" in bodies[1]
+    assert f" last_gen_bytes=0 last_gen_sha256={_digest(b'')}" in bodies[1]
+    [call] = [
+        e for e in scripted.trace.events
+        if e.kind is EventKind.TOOL_CALL and e.data["tool"] == "poc"
+    ]
+    assert (call.data["input_bytes"], call.data["input_sha256"]) == (0, _digest(b""))
+    assert _digest(b"").startswith("e3b0c442")
 
 
 def test_pov_v3_observation_after_a_gen_carries_the_size_and_digest_of_that_poc(
@@ -1521,9 +1541,9 @@ def test_pov_v3_observation_after_a_gen_carries_the_size_and_digest_of_that_poc(
 
     poc = assemble_poc(gen.spec)
     first_line = bodies[1].splitlines()[0]
-    assert f" input_bytes={len(poc)} input_sha256={_digest(poc)}" in first_line
+    assert f" last_gen_bytes={len(poc)} last_gen_sha256={_digest(poc)}" in first_line
     # 맨 hex라 같은 홉의 `pov_hop.poc_sha256`과 바로 대조된다(`sha256:` 접두를 안 붙인다).
-    assert f"input_sha256={_hops(scripted)[0].data['poc_sha256']}" in first_line
+    assert f"last_gen_sha256={_hops(scripted)[0].data['poc_sha256']}" in first_line
 
 
 def test_pov_v3_observation_is_a_function_of_the_poc(ctx: RunContext) -> None:  # noqa: F811
@@ -1544,7 +1564,7 @@ def test_pov_v3_observation_after_an_inspect_names_the_gen_it_ran_on(
     gen = _gen()
     _, _, bodies = _drive(ctx, [gen, _inspect("asan"), _SUBMIT], version="v3")
 
-    assert f"input_sha256={_digest(assemble_poc(gen.spec))}" in bodies[2].splitlines()[0]
+    assert f"last_gen_sha256={_digest(assemble_poc(gen.spec))}" in bodies[2].splitlines()[0]
 
 
 def test_pov_v3_observation_after_an_inspect_without_a_gen_has_no_input_fields(
@@ -1552,19 +1572,19 @@ def test_pov_v3_observation_after_an_inspect_without_a_gen_has_no_input_fields(
 ) -> None:
     _, _, bodies = _drive(ctx, [_inspect("asan"), _SUBMIT], version="v3")
 
-    assert "input_" not in bodies[1]
+    assert "last_gen_" not in bodies[1]
 
 
 def test_pov_v2_observation_gains_no_input_fields_through_the_loop(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """🔴 v2는 같은 요청(PoC가 도구에 간다)에도 관측이 **전 판과 바이트가 같은 한 줄**이다.
+    """🔴 v2는 같은 요청(PoC가 도구 요청에 실린다)에도 관측이 **전 판과 바이트가 같은 한 줄**이다.
     `_run_pov_hops`가 `wide=pov_wide` 대신 `True`를 넘기는 변이가 여기서 죽는다."""
     _, recorded, bodies = _drive(ctx, [_gen(), _inspect("asan"), _SUBMIT])  # 기본 pov 좌석은 v2
 
     assert [tool for tool, _ in recorded] == ["poc", "asan"], "전제: 도구에 PoC가 갔다"
     for body in bodies[1:]:
-        assert "input_" not in body
+        assert "last_gen_" not in body
         assert chr(10) not in body
 
 
@@ -1578,28 +1598,54 @@ def test_fake_tool_results_in_the_loop_do_not_depend_on_the_poc(ctx: RunContext)
     assert [(h.data["tool_ok"], h.data["exit_code"]) for h in gens] == [(True, 1), (True, 1)]
 
 
+# `tool_call` 이벤트가 가질 수 있는 키 — 허용목록이다. 입력 키 둘은 **입력을 실었을 때만** 붙는다.
+_TOOL_CALL_KEYS = frozenset({"tool", "argv", "ok", "exit_code", "error", "finding_id"})
+_TOOL_CALL_INPUT_KEYS = frozenset({"input_bytes", "input_sha256"})
+
+
 def test_tool_call_events_carry_the_input_size_and_digest_never_the_bytes(
     ctx: RunContext,  # noqa: F811
 ) -> None:
     """원바이트는 trace에 안 들어간다 — 크기와 digest만(맨 hex, `pov_hop`의 `poc_sha256`과 같은
     형식이라 바로 대조된다). `ToolArgs`는 trace로 직렬화되지 않는다(`call_tool`이 `argv` 문자열만
-    싣는다) — 그래도 글자·hex·base64 어느 꼴로도 안 새는지 트레이스 전체에서 찾는다."""
+    싣는다).
+
+    핀 셋이 **서로 다른 것을** 문다. ① **키 집합** — 트레이스의 모든 `tool_call`이 허용목록과 `==`다
+    (입력 키는 입력을 실은 호출에만). 원바이트를 인코딩해 **새 키**에 싣는 변경은 인코딩이 뭐든
+    (base32·zlib…) 키가 늘어 죽는다. ② **값** — 이 루프의 `tool_call` 셋은 정확한 dict와 `==`다.
+    허용된 키의 값 자리(`argv`·`error`)에 인코딩해 넣는 변경도 죽는다. ③ **철자** — 글자·hex·HEX·
+    base64를 트레이스 **전체**에서 찾는다(① ② 밖의 이벤트 종류까지). ⚠ 한계: ① ②는 `tool_call`만
+    본다 — 다른 이벤트 종류(`pov_hop`·`model_call`…)에 그 네 꼴이 **아닌** 인코딩으로 싣는 변경은
+    ③이 못 막는다."""
     canary = b"POC-CANARY-7f3a91"
     gen = PovAction(
         action="gen",
         spec=PovSpec(segments=[PovSegment(kind="literal", hex=canary.hex())], rationale="c"),
         rationale="canary",
     )
-    scripted, _, _ = _drive(ctx, [gen, _inspect("asan"), _SUBMIT])
+    scripted, _, _ = _drive(ctx, [_inspect("build"), gen, _inspect("asan"), _SUBMIT])
 
     events = scripted.trace.events
-    carrying = [e for e in events if e.kind is EventKind.TOOL_CALL and "input_sha256" in e.data]
+    calls = [e for e in events if e.kind is EventKind.TOOL_CALL]
+    for event in calls:  # 설정 단계(index·semgrep…)의 호출까지 본다
+        has_input = "input_sha256" in event.data
+        allowed = _TOOL_CALL_KEYS | (_TOOL_CALL_INPUT_KEYS if has_input else frozenset())
+        assert set(event.data) == allowed, f"{event.data['tool']}: tool_call 키가 허용목록과 다르다"
+    carrying = [e for e in calls if "input_sha256" in e.data]
     assert [e.data["tool"] for e in carrying] == ["poc", "asan"]
     for event in carrying:
         assert event.data["input_bytes"] == len(canary)
         assert event.data["input_sha256"] == _digest(canary)
     gen_hop = next(h for h in _hops(scripted) if h.data["action"] == "gen")
     assert carrying[0].data["input_sha256"] == gen_hop.data["poc_sha256"]  # 같은 형식 — 바로 대조
+    placeholder = tool_runner.INPUT_PLACEHOLDER
+    base = {"error": None, "finding_id": gen_hop.subject_id, "ok": True}
+    request = {"input_bytes": len(canary), "input_sha256": _digest(canary)}
+    assert [e.data for e in calls if e.data["finding_id"] == gen_hop.subject_id] == [
+        {**base, "tool": "build", "argv": "build", "exit_code": 0},
+        {**base, "tool": "poc", "argv": f"poc {placeholder}", "exit_code": 1, **request},
+        {**base, "tool": "asan", "argv": f"asan {placeholder}", "exit_code": 1, **request},
+    ]
     blob = chr(10).join(e.model_dump_json() for e in events)
     forms = (canary.decode(), canary.hex(), canary.hex().upper(), base64.b64encode(canary).decode())
     for form in forms:
