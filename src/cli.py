@@ -684,7 +684,7 @@ def _check_thresholds() -> Check:
     return Check(
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
-        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92)",
+        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92·#511)",
     )
 
 
