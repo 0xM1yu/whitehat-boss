@@ -19,19 +19,43 @@ PoC 크래시였다" 같은 어긋남이 `ok=True`·비-0 종료 코드로 남�
 
 `_attach()`가 실행 로그를 Finding에 붙여 두는데 그 뒤에 판정하는 사람이 없던 상태다
 (그 함수 docstring이 "이걸 하지 않으면 E4가 성립하지 않는다"고 적어 뒀다).
+
+## 모델이 쓴 `steps`가 예약 자리표와 같으면 실행하지 않고 거절한다
+
+`_call`은 `[tool, *spec.steps]`를 argv로 넘기는데 `steps`는 모델이 쓴 자유 문자열이다. 원소가
+`INPUT_PLACEHOLDER`와 **정확히 같으면** `ToolArgs`가 그 요청을 못 만든다 — `ValidationError`는
+최후 방어선을 지나 run을 멈춘다(독립 검토가 `stopped_after=8`로 실증했다). 그래서 도구에 가기 전에
+`_refuse`가 `ok=False` Evidence로 남긴다(`ToolRunner` 계약: 도구 실패도 Evidence로 기록).
 """
 
-from src.interfaces.tool_runner import ToolArgs
+from datetime import UTC, datetime
+
+from src.ids import sha256_text
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator import gate
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.decision import Decision
+from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 
 BUILD_TOOL = "build"
+
+# 거절한 요청의 Evidence에 찍는 `kind` — `adapters.fake_tools.TOOL_KINDS`의 사본이다(노드는
+# 어댑터를 import하지 못한다). 이 노드가 부르는 도구만 든다 — `tests/test_nodes.py`가 화이트리스트와
+# 대조한다.
+REFUSED_KINDS: dict[str, EvidenceKind] = {
+    BUILD_TOOL: EvidenceKind.BUILD,
+    "asan": EvidenceKind.SANITIZER,
+    "poc": EvidenceKind.POC_RUN,
+}
+# 거절한 Evidence의 관측 시각 — 어댑터가 모든 Evidence에 찍는 고정 시각과 같다(`fake_tools`·
+# `container_tools`의 기본값). 아무것도 관측하지 않았고 재현 실행에서 같은 값이 나와야 한다.
+_REFUSED_AT = datetime(2026, 9, 1, tzinfo=UTC)
 
 # 기대 신호에 나타나는 낱말 → 그것을 만들어 낼 수 있는 도구. 이름은 ToolRunner의
 # 화이트리스트 안에 있어야 한다. 위에서부터 처음 걸리는 것을 쓴다.
@@ -117,6 +141,8 @@ def run(
 
 
 def _call(ctx: RunContext, tool: str, argv: list[str], workdir: str, finding: Finding) -> Evidence:
+    if INPUT_PLACEHOLDER in argv:
+        return _refuse(ctx, tool, argv, workdir, finding)
     return ctx.call_tool(
         tool=tool,
         args=ToolArgs(argv=argv, workdir=workdir),
@@ -124,6 +150,47 @@ def _call(ctx: RunContext, tool: str, argv: list[str], workdir: str, finding: Fi
         stage=Stage.VALIDATE,
         subject_id=finding.finding_id,
     )
+
+
+def _refuse(
+    ctx: RunContext, tool: str, argv: list[str], workdir: str, finding: Finding
+) -> Evidence:
+    """예약 자리표와 같은 단계가 있는 요청을 도구에 보내지 않고 `ok=False`로 남긴다. 도구 실패와
+    같은 모양이다 — Evidence를 저장하고 `tool_call`을 내며(키 집합도 같다), 실행한 적이 없으므로
+    `exit_code`는 `None`(미측정)이다."""
+    evidence_id = ctx.ids.next("evidence")
+    error = (
+        f"repro_spec.steps에 예약된 자리표 {INPUT_PLACEHOLDER!r}와 같은 단계가 있다 — "
+        f"실행하지 않았다({tool})"
+    )
+    evidence = Evidence(
+        evidence_id=evidence_id,
+        run_id=ctx.run_id,
+        kind=REFUSED_KINDS.get(tool, EvidenceKind.BUILD),
+        source=tool,
+        artifact_id=workdir,
+        payload_ref=f"artifacts/{ctx.run_id}/{tool}/{evidence_id}.log",
+        digest=sha256_text(f"{tool} {' '.join(argv)} refused"),
+        observed_at=_REFUSED_AT,
+        ok=False,
+        exit_code=None,
+        error=error,
+    )
+    ctx.store.put(evidence)
+    ctx.trace.emit(
+        EventKind.TOOL_CALL,
+        stage=Stage.VALIDATE,
+        subject_kind="evidence",
+        subject_id=evidence_id,
+        wall_ms=0,
+        tool=tool,
+        argv=" ".join(argv),
+        ok=False,
+        exit_code=None,
+        error=error,
+        finding_id=finding.finding_id,
+    )
+    return evidence
 
 
 def _attach(ctx: RunContext, finding: Finding, evidences: list[Evidence]) -> Finding:
