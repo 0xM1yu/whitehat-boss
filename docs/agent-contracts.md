@@ -464,8 +464,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
   만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
-- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임) + (v3이고 `--oracle-submit`일 때)
-  직전 `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
+- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임 — v3는 직전 `gen`의 PoC가 있으면
+  첫 줄에 그 `last_gen_bytes`·`last_gen_sha256`이 붙는다, #386 ① — 이름이 `input_*`가 아닌 것은
+  일부러다: 도구가 그 바이트를 받았다고 읽히지 않게) + (v3이고 `--oracle-submit`일 때) 직전
+  `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
   직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
   스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
@@ -489,9 +491,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
   아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3 prefix에는 "언제 쓰라"는 지시를
   두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
-  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만
-  넘긴다) — `poc`·`asan`도 gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와
-  무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 —
+  `ToolArgs.input_bytes`, #386 ① — 어느 도구 명령도 그 파일을 인자로 받지 않는다. 컨테이너 쪽은
+  `test_no_executed_container_command_receives_the_input_today`와 `plan("poc")`의 정확 핀
+  `test_the_poc_command_takes_no_argument_today`가 잰다 — 읽게 하는 것은 #513이다) — `poc`·`asan`도
+  gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 도구 관측이 PoC와 무관하므로(v3 관측의
+  `last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다) `harness_pool`의 8단계를 돌리지 않는다.
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
@@ -530,7 +535,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
   반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
   오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
-  최대 `max_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
+  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
   best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
   최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
