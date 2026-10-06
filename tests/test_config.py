@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from src import schemas
 from src.adapters.factory import _model_client
 from src.bench import ROLE_SPEC
-from src.cli import PROVISIONAL_THRESHOLDS
+from src.cli import PROVISIONAL_THRESHOLDS, _expected_calls
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
@@ -1041,6 +1041,61 @@ def test_max_hops_rejects_negative() -> None:
     thresholds = load_config("dev_fake").thresholds
     with pytest.raises(ValidationError):
         thresholds.transition(max_hops=-1)
+
+
+def test_pov_tool_hops_reaches_the_run_record_and_is_provisional() -> None:
+    """`pov_tool_hops`(8단계 PoV 툴 루프의 **전용** 상한 — `max_hops`에서 떼어냈다, 이슈 #511)가
+    `flatten()`으로 run 기록에 실리고, 값이 미결정이라 `PROVISIONAL_THRESHOLDS`에도 있다."""
+    thresholds = load_config("dev_fake").thresholds
+    assert thresholds.pov_tool_hops >= 0
+    assert thresholds.flatten()["pov_tool_hops"] == float(thresholds.pov_tool_hops)
+    assert "pov_tool_hops" in PROVISIONAL_THRESHOLDS
+
+
+def test_pov_tool_hops_rejects_negative() -> None:
+    thresholds = load_config("dev_fake").thresholds
+    with pytest.raises(ValidationError):
+        thresholds.transition(pov_tool_hops=-1)
+
+
+def test_pov_tool_hops_has_no_field_default() -> None:
+    """값은 `config/budgets.yaml`만 든다. 필드 기본이 0이면 키가 빠진 설정이 PoV를 hop0(gen) 뒤에서
+    조용히 세운다 — submit이 0건이던 증상(#511) 그대로다. `auditor_tool_hops`의 기본 0과 다른
+    자리다: 그쪽 0은 「꺼짐 = 종전 경로」이고 여기 0은 「submit에 못 닿는다」다."""
+    thresholds = load_config("dev_fake").thresholds
+    assert type(thresholds).model_fields["pov_tool_hops"].is_required()
+
+
+def test_a_budgets_file_without_pov_tool_hops_does_not_load(tmp_path: Path) -> None:
+    """키가 빠지면 **로드가 터진다** — 적대적 검토 2026-10-06의 생존 변이.
+
+    위 `is_required()` 핀은 스키마 메타데이터만 단언한다. 키 부재 시 `max_hops`를 복사해 채우는
+    before-validator 변이가 **아무 테스트도 빨갛게 하지 않았다**(363 passed). 그러면 PoV 상한이
+    Scout 상한을 조용히 따라간다 — 이 PR이 끊은 결합 그대로다. 성질로 무는 자리가 여기다.
+    """
+    _copy_config(tmp_path, profile_patch={})
+    raw = yaml.safe_load((tmp_path / "budgets.yaml").read_text("utf-8"))
+    del raw["thresholds"]["pov_tool_hops"]
+    (tmp_path / "budgets.yaml").write_text(
+        yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8"
+    )
+    with pytest.raises((ConfigError, ValidationError)):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+def test_the_estimate_scout_calls_follow_max_hops_not_pov_tool_hops() -> None:
+    """`cli estimate`의 scout 호출 상한은 `1 + max_hops`다 — PoV 상한을 올려도 안 움직인다(#511).
+
+    통제가 헛돌지 않게 `max_hops`는 움직이는지도 본다."""
+    config = load_config("dev_fake")
+    base = _expected_calls(config, 4)
+
+    def with_thresholds(**changes: int) -> HarnessConfig:
+        return config.transition(thresholds=config.thresholds.transition(**changes))
+
+    pov_hops = config.thresholds.pov_tool_hops
+    assert _expected_calls(with_thresholds(pov_tool_hops=pov_hops + 7), 4) == base
+    assert _expected_calls(with_thresholds(max_hops=config.thresholds.max_hops + 1), 4) > base
 
 
 def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> None:
