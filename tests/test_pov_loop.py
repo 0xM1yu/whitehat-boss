@@ -298,12 +298,12 @@ def test_pov_loop_threads_history_across_hops(ctx: RunContext) -> None:  # noqa:
 
 
 def test_pov_loop_stops_at_max_hop(ctx: RunContext) -> None:  # noqa: F811
-    """모델이 매 홉 다른 gen만 내면(submit 없음) `max_hops`에서 선다 — 무한 gen을 막는다.
+    """모델이 매 홉 다른 gen만 내면(submit 없음) `pov_tool_hops`에서 선다 — 무한 gen을 막는다.
 
-    홉 수는 정확히 `max_hops + 1`(hop0..max_hops)이고, submit이 아니므로 종단은 POV_SKIPPED
-    (부분 PoC를 실어)다 — GENERATED가 아니다."""
-    max_hops = ctx.config.thresholds.max_hops
-    scripted = _scripted(ctx, [_gen(count=n) for n in range(1, max_hops + 5)])
+    홉 수는 정확히 `pov_tool_hops + 1`(hop0..pov_tool_hops)이고, submit이 아니므로 종단은
+    POV_SKIPPED(부분 PoC를 실어)다 — GENERATED가 아니다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted = _scripted(ctx, [_gen(count=n) for n in range(1, pov_hops + 5)])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
 
@@ -312,7 +312,7 @@ def test_pov_loop_stops_at_max_hop(ctx: RunContext) -> None:  # noqa: F811
     assert reason is PovStopReason.MAX_HOP
     assert isinstance(poc, bytes) and len(poc) > 0  # 마지막 gen의 PoC는 남는다
     hops = _hops(scripted)
-    assert [h.data["hop"] for h in hops] == list(range(max_hops + 1))
+    assert [h.data["hop"] for h in hops] == list(range(pov_hops + 1))
     assert hops[-1].data["stop_reason"] == PovStopReason.MAX_HOP.value
     skipped = [e for e in scripted.trace.events if e.kind is EventKind.POV_SKIPPED]
     assert skipped and skipped[-1].data["reason"] == PovStopReason.MAX_HOP.value
@@ -1524,14 +1524,15 @@ def test_pov_hop_join_key_matches_across_more_than_two_hops(
     )
 
 
-def test_pov_loop_with_max_hops_zero_stops_before_submitting(
+def test_pov_loop_with_pov_tool_hops_zero_stops_before_submitting(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """현재 동작 고정 — `max_hops=0`이면 pov는 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다:
-    `pov_generated` 0, 종단은 `POV_SKIPPED`. NE 루프를 끄는 설정(`max_hops=0`)이 PoV 산출을 조용히
-    0으로 만드는 결합을 못 박는다 — pov 전용 상한 분리는 설정 결정(지금은 미결)이다."""
+    """`pov_tool_hops=0`이면 pov는 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다:
+    `pov_generated` 0, 종단은 `POV_SKIPPED`. 전 판은 이 동작을 NE 루프의 `max_hops=0`에 걸어
+    고정했다 — 그 결합은 #511에서 갈렸다(`max_hops` 쪽은
+    `test_max_hops_does_not_move_the_pov_hop_count`)."""
     ctx.config = ctx.config.transition(
-        thresholds=ctx.config.thresholds.transition(max_hops=0)
+        thresholds=ctx.config.thresholds.transition(pov_tool_hops=0)
     )
     scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
     state, finding = _pov_state(ctx)
@@ -1542,6 +1543,44 @@ def test_pov_loop_with_max_hops_zero_stops_before_submitting(
     assert reason is PovStopReason.MAX_HOP
     assert [h.data["hop"] for h in _hops(scripted)] == [0]  # hop0에서 멈춘다
     assert not any(e.kind is EventKind.POV_GENERATED for e in scripted.trace.events)
+
+
+def _pov_run(ctx: RunContext, actions: list[object], **thresholds: int):  # noqa: ANN202, F811
+    """`thresholds`만 바꿔 8단계 PoV 루프를 돌린다 → (스크립트한 ctx, `_run_pov_hops`의 반환).
+
+    state는 **원래 설정으로** 짓는다 — 앞 단계(Scout NE·Auditor)가 바꾼 값에 흔들리지 않게."""
+    state, finding = _pov_state(ctx)
+    scripted = _scripted(ctx, actions)
+    scripted.config = scripted.config.transition(
+        thresholds=scripted.config.thresholds.transition(**thresholds)
+    )
+    capsule = state.finding_capsules[finding.finding_id]
+    return scripted, runner._run_pov_hops(scripted, state, finding, capsule)
+
+
+@pytest.mark.parametrize("pov_hops", [1, 5])
+def test_the_pov_hop_count_follows_pov_tool_hops(ctx: RunContext, pov_hops: int) -> None:  # noqa: F811
+    """PoV 홉 수는 `pov_tool_hops`가 정한다 — 매 홉 다른 gen이면 hop0..값(값 + 1홉)에서 MAX_HOP."""
+    scripted, (_, reason) = _pov_run(
+        ctx, [_gen(count=n) for n in range(1, pov_hops + 5)], pov_tool_hops=pov_hops
+    )
+
+    assert reason is PovStopReason.MAX_HOP
+    assert [h.data["hop"] for h in _hops(scripted)] == list(range(pov_hops + 1))
+
+
+@pytest.mark.parametrize("max_hops", [0, 9])
+def test_max_hops_does_not_move_the_pov_hop_count(ctx: RunContext, max_hops: int) -> None:  # noqa: F811
+    """음성 통제 — Scout NE 루프의 `max_hops`를 0으로 내리든 9로 올리든 PoV 홉 수는 그대로다(#511).
+
+    0도 본다: 전 판에서는 `max_hops=0`이 PoV를 hop0 뒤에서 세워 submit이 0건이었다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    # 스크립트는 어느 상한에서도 안 마르게 길다 — 마르면 `repeat_spec`이 가로채 사유가 달라진다.
+    gens = [_gen(count=n) for n in range(1, max(pov_hops, max_hops) + 5)]
+    scripted, (_, reason) = _pov_run(ctx, gens, max_hops=max_hops)
+
+    assert reason is PovStopReason.MAX_HOP
+    assert [h.data["hop"] for h in _hops(scripted)] == list(range(pov_hops + 1))
 
 
 def test_pov_action_rejects_an_unknown_action() -> None:
@@ -1810,9 +1849,9 @@ def _exit_repeat_spec(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa
 def _exit_max_hop(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
     state, finding = _pov_state(ctx)
     scripted = _scripted(ctx, [_gen(count=8)])
-    # state를 먼저 만든 뒤 내린다 — auditor가 max_hops=0으로 돌지 않게.
+    # PoV 상한만 0으로 내린다 — hop0(gen) 뒤 곧장 MAX_HOP이다.
     scripted.config = scripted.config.transition(
-        thresholds=scripted.config.thresholds.transition(max_hops=0)
+        thresholds=scripted.config.thresholds.transition(pov_tool_hops=0)
     )
     return scripted, state, finding
 

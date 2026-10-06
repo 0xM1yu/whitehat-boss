@@ -2262,7 +2262,7 @@ def _run_pov_hops(
 
     **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
     **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
-    피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가
+    피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `pov_tool_hops` 소진 → MAX_HOP. 홉 호출 자체가
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
     쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
     호출부 20여 곳이 쥐고 있다.
@@ -2276,7 +2276,7 @@ def _run_pov_hops(
     사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
-    `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    홉 상한은 PoV 전용 `thresholds.pov_tool_hops`다(이슈 #511) — NE 루프의 `max_hops`와 갈랐다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
     그대로다 — 네 출구는 `_pov_finish_and_record`를 불러 `ref`를 계수기 사유에 쓰고 2-튜플만
@@ -2284,7 +2284,7 @@ def _run_pov_hops(
     그대로 낸다. 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를 그대로 올리면 되고
     디렉터리를 글로브할 필요가 없다.
     """
-    max_hops = ctx.config.thresholds.max_hops
+    max_hops = ctx.config.thresholds.pov_tool_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
     with ctx.stage(Stage.VALIDATE):
         last_poc: bytes | None = None
