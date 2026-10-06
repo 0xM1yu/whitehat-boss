@@ -264,7 +264,7 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 
 ### 🟡 PoV(PoC) 생성 — 러너 배선·과제 로더·툴 루프 착지, 실서빙 전
 
-**현재:** `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
+**현재:** `Role.POV` + `prompts/pov/v3/`(2026-10-05 배선, 그전은 v2) + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
 `PovSpec` → 순수·결정론 `assemble_poc` → 바이트, council 2026-09-30 fork B-iii)에 더해, 러너가
 `Stage.VALIDATE`에서 `validate.run`과 **나란히** pov를 `_run_pov_hops` 루프로 부른다(추가형 — 캡슐
 미스·스키마·버릴 수 있는 게이트웨이 실패는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽
@@ -273,8 +273,10 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(@danielcho02 선정)는 §1 8단계 pov 좌석으로
 `harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
-⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트가 아직 도구 입력으로 안 들어가
-(`run_tool`이 도구 argv·workdir만 넘긴다) 관측이 PoC와 무관하다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
+⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트를 읽는 도구 명령이 아직 없어
+(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 — `ToolArgs.input_bytes`, #386 ① — 어느 명령도
+그 파일을 인자로 받지 않는다, 읽게 하기는 #513) 도구 관측이 PoC와 무관하다. v3 관측의
+`last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
 
 **남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · feyospace 실서빙
 실측(checksum·benchmark·홉수). 외부 CyberGym oracle 제출은 `run --oracle-submit`(기본 꺼짐)으로 들어왔다 —
@@ -306,7 +308,7 @@ materialize되기 전(위 호스트 후속)에는 8단계 도구 실행이 PoC�
 | 방향 | 내용 |
 |---|---|
 | A | 데이터셋에 딸린 정답 PoC 재생 (CyberGym/OSS-Fuzz) |
-| B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
+| B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v3/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
 | C | 퍼징으로 크래시 발견 (비용 큼, 후순위) |
 
 ⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)

@@ -29,9 +29,19 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TextIO, get_args
 
-from src.adapters.canary_report import CanaryReportError, canary_refusal, read_canary_report
+from src.adapters.canary_report import (
+    CanaryReport,
+    CanaryReportError,
+    canary_refusal,
+    read_canary_report,
+)
 from src.adapters.container_tools import make_payload_reader
-from src.adapters.cybergym_oracle import TaskOracle, checksum, unsupported_task_id
+from src.adapters.cybergym_oracle import (
+    TaskOracle,
+    checksum,
+    refused_family_task_id,
+    unsupported_task_id,
+)
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_raw_source, read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
@@ -49,6 +59,7 @@ from src.config import (
     AdapterSelection,
     ConfigError,
     HarnessConfig,
+    check_container_runtime_caps_tool_time,
     check_serving,
     load_config,
     load_serving,
@@ -56,6 +67,8 @@ from src.config import (
 from src.console import force_utf8
 from src.ids import MAX_SEQUENCE, SEQ_WIDTH, new_run_id
 from src.interfaces.oracle import Oracle
+from src.orchestrator import prompt_loader
+from src.orchestrator.nodes import auditor, critic, pov
 from src.orchestrator.nodes.auditor import loop_problem as auditor_loop_problem
 from src.orchestrator.prompt_loader import PromptError, load_prompt
 from src.orchestrator.runner import (
@@ -97,7 +110,14 @@ DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 RUN_DIR_PREFIX = "run_"
 
 # 실측 전 초기값인 임계값 (이슈 #91·#92). 조건 간 비교 전에 확정해야 한다.
-PROVISIONAL_THRESHOLDS = ("scout_threshold", "capsule_expansion_max", "requeue_max", "max_hops")
+# `pov_tool_hops`(#511)는 값이 사용자 결정 대기라 같은 자리다.
+PROVISIONAL_THRESHOLDS = (
+    "scout_threshold",
+    "capsule_expansion_max",
+    "requeue_max",
+    "max_hops",
+    "pov_tool_hops",
+)
 
 # `--tool-runner`가 받을 수 있는 값. 목록을 여기 적지 않고 설정 스키마에서 뽑는다 —
 # 배선이 늘었는데 CLI만 모르는 상태(그 반대도)가 생기지 않는다.
@@ -158,6 +178,9 @@ def load_profile(
         # 재검증을 타므로 Literal 밖의 값은 여기서 죽는다(argparse choices와 이중 방어).
         adapters = config.profile.adapters.transition(tool_runner=tool_runner)
         config = config.transition(profile=config.profile.transition(adapters=adapters))
+        # 오버라이드는 `load_config`의 가드 **뒤에** 런타임을 바꾼다 - 0 예산 위의 컨테이너를
+        # 여기서 다시 막는다(이슈 #436).
+        check_container_runtime_caps_tool_time(config)
     return config
 
 
@@ -196,6 +219,7 @@ def doctor(
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
     checks.extend(_check_auditor_loop(config))
+    checks.extend(_check_score_chain(config))
     checks.extend(_check_scout_slice_trim(config))
     checks.append(_check_thresholds())
     checks.append(_check_state_path(config, artifacts_root))
@@ -449,7 +473,7 @@ def _check_checksums(config: HarnessConfig) -> list[Check]:
 
 
 def _check_prompts(config: HarnessConfig) -> list[Check]:
-    """설정이 가리키는 프롬프트 파일이 실제로 있는지 본다.
+    """프롬프트 파일의 실재·내용 인식 배선·디스크의 새 판을 본다.
 
     run 도중에 없는 것을 알면 그때까지 쓴 시간을 버린다(config.py의 판단과 같다).
 
@@ -469,6 +493,7 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
             checks.append(Check(Severity.ERROR, f"{role} 프롬프트 로드 실패: {exc}"))
             continue
         checks.append(Check(Severity.OK, f"{role} 프롬프트 {version} 확인"))
+        checks.extend(_check_prompt_version(config, role, version))
         if template.input == "slice":
             slice_input.append(f"{role}/{version}")
     if slice_input:
@@ -482,13 +507,50 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
     return checks
 
 
+def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> list[Check]:
+    """내용 인식 배선은 실모델 역할에서 ERROR, 디스크의 새 판은 WARN.
+
+    내용 인식 집합의 정본은 각 노드다. Scout·Single에는 그 집합이 없어 대상이 아니다.
+    Fake 여부는 `ModelEntry.is_fake`로 가른다 — 공유 엔트리의 한 역할만 범프하면 다른 역할의
+    파일이 없어질 수 있다(#172). Fake는 정해진 답을 내므로 낡은 판도 ERROR로 막지 않는다.
+    디스크의 순서는 정수 `vN`만 비교한다. `v4_t1` 같은 실험 이름의 우열은 추측하지 않는다.
+    """
+    versions = {
+        "critic": critic._CONTENT_AWARE_VERSIONS,
+        "pov": pov._WIDE_INPUT_VERSIONS,
+        "auditor": auditor._CONTENT_AWARE_VERSIONS,
+    }.get(role)
+    checks = []
+    if versions is not None and not config.model_for(role).is_fake and version not in versions:
+        checks.append(Check(
+            Severity.ERROR,
+            f"{role} 프롬프트 {version}은 내용 인식 집합 밖이다 — 본문·위치 또는 넓은 입력을 "
+            f"받지 못한다. 해당 노드의 허용 판: {sorted(versions)}",
+        ))
+    if version.startswith("v") and version[1:].isdecimal():
+        newer = sorted(
+            int(path.name[1:])
+            for path in (prompt_loader.PROMPTS_DIR / role).iterdir()
+            if path.is_dir() and path.name.startswith("v") and path.name[1:].isdecimal()
+            and int(path.name[1:]) > int(version[1:])
+            and all((path / name).is_file() for name in ("prefix.md", "body.md", "meta.yaml"))
+        )
+        if newer:
+            checks.append(Check(
+                Severity.WARN,
+                f"{role} 프롬프트는 {version}에 배선됐지만 디스크에 새 판 v{newer[-1]}이 있다 — "
+                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (#172)",
+            ))
+    return checks
+
+
 def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     """켜진 Auditor `SOURCE` 옵션 중 Auditor 프롬프트 meta의 `source_options`가 안 든 것
     (#351 리뷰 MEDIUM-2). 프로필에 Auditor가 없으면 `[]`다. 프롬프트를 못 읽으면 `PromptError`.
 
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
-    프롬프트(⏵ 2026-10-04 v8 — 그 전 v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    프롬프트(⏵ 2026-10-06 v9 — 그 전 v8·v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
     여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
     같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
@@ -565,6 +627,38 @@ def _check_auditor_loop(config: HarnessConfig) -> list[Check]:
     return [Check(Severity.ERROR, problem)]
 
 
+def _check_score_chain(config: HarnessConfig) -> list[Check]:
+    """PoV 사슬을 막는 설정은 ERROR, 재현 명세 합성의 #232 위험은 WARN.
+
+    `config._check_real_serving_limits_are_positive`와 같은 `served_models()` 기준이다.
+    `production: false`여도 실서빙할 수 있고 Fake 전용은 GPU 없는 리허설이라 제외한다.
+    좌석이 없으면 러너의 8단계가 안 돌고, 두 스위치가 0이면 재현법을 안 주는 과제에서
+    validated가 비어 PoV가 0건이다 — run 완주가 이 구조적 막힘을 숨겨 ERROR로 드러낸다.
+    합성 WARN은 `config.Thresholds.synthesize_repro_spec`의 #232 경고를 따른다. 그 주석의
+    exit 0 서술은 낡았다: `gate.evaluate`는 이미 0·None을 제외한다. 남은 위험은 비-0 종료와
+    기대 신호를 대조하지 않아 크래시 없이도 proven이 날 수 있다는 것이다(게이트 docstring).
+    """
+    if not config.served_models():
+        return []
+    checks = []
+    if Role.POV.value not in config.profile.roles:
+        checks.append(Check(Severity.ERROR, "점수 사슬: pov 좌석이 없어 8단계가 실행되지 않는다"))
+    elif not config.thresholds.pov_attempt_top_n and not config.thresholds.synthesize_repro_spec:
+        checks.append(Check(
+            Severity.ERROR,
+            "점수 사슬: pov_attempt_top_n=0 · synthesize_repro_spec=0 — 재현 명세를 안 주는 "
+            "과제에서는 validated가 비어 PoV가 0건이다",
+        ))
+    if config.thresholds.synthesize_repro_spec:
+        checks.append(Check(
+            Severity.WARN,
+            "점수 사슬: synthesize_repro_spec=1 — #232: p4는 exit 0·None을 제외하지만 비-0 종료를 "
+            "기대 신호와 대조하지 않아 크래시 없이도 proven이 날 수 있다 "
+            "(src/config.py의 합성 경고 중 남은 위험; gate.evaluate 기준)",
+        ))
+    return checks or [Check(Severity.OK, "점수 사슬: PoV 좌석과 후보 진입 설정 확인")]
+
+
 def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
     """`scout_slice_trim`이 켜지면 WARN — 모델은 **하네스가** 줄을 뺀 것을 모른다(#375 M-1).
 
@@ -590,7 +684,7 @@ def _check_thresholds() -> Check:
     return Check(
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
-        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92)",
+        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92·#511)",
     )
 
 
@@ -714,8 +808,9 @@ def _oracle_for(
     **제출 전에 거절하는 것** - 주소 모양, `--mask-map` 파일(못 읽거나 JSON 객체가 아니거나 번들의
     masked id가 맵에 없는 것), task_id 모양(마스킹된 id는 `--mask-map`이 실 id를 줄 때만 받는다,
     `unsupported_task_id`), 번들의 체크섬이 클라이언트가 보내는 기본 salt로 계산한 값과 다른 것(다른
-    salt로 만든 번들은 서버가 400으로 거부한다), 키 부재·키 모양(공백·비출력 문자),
-    **카나리 보고서**(없거나 이 과제의 것이 아니거나 통과가 아닌 것 - `_canary_refusal`).
+    salt로 만든 번들은 서버가 400으로 거부한다), 서버가 제출을 400으로 거부하는 계열의 실 id
+    (`refused_family_task_id`), 키 부재·키 모양(공백·비출력 문자),
+    **카나리 보고서**(없거나 이 과제의 것이 아니거나 통과가 아닌 것 - `_canary_gate`).
     어느 하나가 걸리면 컨테이너는커녕 요청도 안 나간다. 제출하려 한 run이 조용히 미제출로 끝나면
     「0건 제출」이 설정 오류와 구별되지 않는다(§0).
 
@@ -762,6 +857,12 @@ def _oracle_for(
     query_task_id = _query_task_id_from_mask_map(args, metadata.task_id)
     if isinstance(query_task_id, _OracleRefused):
         return query_task_id
+    # 서버가 제출을 400으로 거부하는 계열은 run을 다 돈 뒤에야 실패하므로 제출 전에 거절한다(#431) -
+    # **조회에 쓰는 실 id**로 가린다. 카나리 검사보다 앞이라 보고서가 다른 과제의 것이어도 사유는
+    # 이쪽이다.
+    refused = refused_family_task_id(query_task_id or metadata.task_id)
+    if refused is not None:
+        return _refuse_oracle(f"{refused}. 아무것도 제출하지 않았다")
     problem = unsupported_task_id(metadata.task_id)
     if problem is not None and query_task_id is None:
         return _refuse_oracle(
@@ -804,14 +905,15 @@ def _oracle_for(
     # 🔴 견주는 것은 **실 id**다. 카나리 도구는 과제 id로 `-vul`·`-fix` 이미지 이름을 만들어
     # 조작자가 실 id로 돌리므로 보고서의 `task`도 실 id다. 번들의 masked id와 견주면 마스킹 run의
     # **정상 카나리가 전부 거절된다**(README 표준 기동이 그 경로다).
-    refused = _canary_refusal(args, query_task_id or metadata.task_id)
-    if refused is not None:
-        return refused
+    gate = _canary_gate(args, query_task_id or metadata.task_id)
+    if isinstance(gate, _OracleRefused):
+        return gate
     target = server.rstrip("/")
     print(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
-        f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. 후보마다 vul 다리만 보낸다. "
-        "fix 다리와 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
+        f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. vul 다리에는 모델이 "
+        "submit한 PoC와(pov v3) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
+        "fix 다리와 최종 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
         "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
         "하나를 고른다(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). 등급을 "
         "모르는 후보가 있으면 보내지 않는다(confidence를 모르는 후보도 같다)"
@@ -822,11 +924,27 @@ def _oracle_for(
         agent_id=metadata.agent_id,
         api_key=api_key,
         query_task_id=query_task_id,
+        # 어느 보고서에 기댔는지 - 경로는 풀어서, 해시는 **게이트가 검사한 바이트의 것**이다(#487).
+        canary_path=gate.path,
+        canary_sha256=gate.sha256,
     )
 
 
-def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | None:
-    """카나리 보고서가 이 과제·이 장비를 통과시키지 않으면 `_ORACLE_ERROR` (이슈 #383).
+def _canary_ref(oracle: object) -> dict[str, str] | None:
+    """`RunRecord.oracle`에 실을 카나리 보고서 참조. 카나리에 안 기댄 채점기면 `None`이다 (#487)."""
+    path = getattr(oracle, "canary_path", None)
+    digest = getattr(oracle, "canary_sha256", None)
+    if path is None and digest is None:
+        return None
+    if path is None or digest is None:
+        raise ValueError("canary_path·canary_sha256은 함께 있어야 한다 - 한쪽만이면 기록이 틀리다")
+    return {"canary_path": path, "canary_sha256": digest}
+
+
+def _canary_gate(args: argparse.Namespace, task_id: str) -> _OracleRefused | CanaryReport:
+    """통과 못 하면 `_ORACLE_ERROR`, 통과면 그 보고서 - 카나리 보고서 게이트 (이슈 #383).
+
+    보고서가 이 과제·이 장비를 통과시키지 않으면 거절이다.
 
     🔴 **보고서가 없으면 제출을 시작하지 않는다.** 오라클 판정이 비결정적일 수 있고 그 원인은 호스트
     커널의 mmap 엔트로피다 - `vm.mmap_rnd_bits = 32`에서 sanitizer 섀도 매핑이 간헐 실패해 타깃이
@@ -864,9 +982,13 @@ def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | 
             f"「크래시」로 집계된다). python {_CANARY_COMMAND}로 만든다"
         )
     try:
-        report = read_canary_report(Path(path))
+        # 🔴 **경로를 한 번만 풀고 그 값으로 읽는다** - 기록하는 경로(`CanaryReport.path`)와 해시한
+        # 파일이 같아야 한다. 읽은 뒤 따로 `resolve`하면 그 틈에 링크가 바뀔 수 있다(#487).
+        report = read_canary_report(Path(path).resolve())
     except CanaryReportError as exc:
         return _refuse_oracle(f"{exc} - 아무것도 제출하지 않았다")
+    except (OSError, RuntimeError) as exc:  # 경로를 못 푼다(심볼릭 링크 순환 등)
+        return _refuse_oracle(f"--oracle-canary 경로를 풀 수 없다({path}): {exc!r}")
     problem = canary_refusal(report, task_id=task_id)
     if problem is not None:
         return _refuse_oracle(f"{problem}. 아무것도 제출하지 않았다")
@@ -875,7 +997,7 @@ def _canary_refusal(args: argparse.Namespace, task_id: str) -> _OracleRefused | 
         f"{report.repeat}회 · {report.measured_at} 측정) - 이 보고서가 지금 이 부팅의 것인지는 "
         "하네스가 못 본다"
     )
-    return None
+    return report
 
 
 def _inside_task_tree(args: argparse.Namespace, path: Path) -> bool:
@@ -971,6 +1093,8 @@ def execute(
         # 채점기(#386). `None`이면 PoC를 제출하지 않는다 — 서버 주소와 과제 번들을 아는 것은
         # `run()`이라 factory가 만들지 않고 받는다.
         oracle=oracle,
+        # 그 채점기가 기댄 카나리 보고서의 경로·sha256(#487). `RunRecord.oracle`에 실린다.
+        canary_ref=_canary_ref(oracle),
     )
     result = run_pipeline(
         spec,
@@ -1097,11 +1221,11 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     후보당 17회다)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
 
     **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 PoV 대상 finding당
-    최대 `1 + max_hops`회 더 부른다. 대상은 VALIDATED(critic 통과분이라 최대
+    최대 `1 + pov_tool_hops`회 더 부른다. 대상은 VALIDATED(critic 통과분이라 최대
     `min(candidates, critic_top_n)`)에 `pov_attempt_top_n`이 양수면 그 밖에서 더한 것이라 상한은
-    `min(candidates, critic_top_n + pov_attempt_top_n) × (1 + max_hops)`다(계산값 —
+    `min(candidates, critic_top_n + pov_attempt_top_n) × (1 + pov_tool_hops)`다(계산값 —
     `runner._pov_targets`가 더하는 수는 `pov_attempt_top_n` 이하이고 finding은 후보당 하나다.
-    `pov_attempt_top_n`이 0이면 `min(candidates, critic_top_n) × (1 + max_hops)` 그대로다).
+    `pov_attempt_top_n`이 0이면 `min(candidates, critic_top_n) × (1 + pov_tool_hops)` 그대로다).
     이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
@@ -1452,8 +1576,8 @@ def run(args: argparse.Namespace) -> int:
     # **켜진 Auditor SOURCE 옵션을 프롬프트가 서술하지 않으면 시작하지 않는다**(#351 리뷰
     # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
     # 말한다 — 어긋나도 오류 없이 돈다. v6(#418의 A/B 판)도 그 모양만 서술한다(⏵ 2026-10-04 서빙
-    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 지금 서빙 판은 v8 = v7 + 도구 루프이고
-    # 그 서술·선언을 물려받았다).
+    # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 v8 = v7 + 도구 루프가 그 서술·선언을
+    # 물려받았고 ⏵ 2026-10-06부터 서빙 판은 v9 = v8 + `auditor_guards` 서술이다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
@@ -1784,8 +1908,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--oracle-submit",
         action="store_true",
-        help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). 후보마다 vul 다리만 낸다. "
-        "fix 다리와 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 성공한 후보가 "
+        help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). "
+        "vul 다리에는 모델이 submit한 PoC와(pov v3) 중간 gen을 내고 중간 gen은 판정 조회도 "
+        "한다. fix 다리와 최종 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 "
+        "성공한 최종 후보가 "
         "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 "
         "값의 전순위(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시)로 고른 하나에 "
         "돈다 - 등급 또는 confidence를 모르는 후보가 있으면 안 돈다(oracle_final은 status "

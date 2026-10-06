@@ -67,9 +67,20 @@ F-11(`queued`)로 가는데 게이트 쪽은 F-10b(`validated` 홀드)로 보낸
 
 지금 픽스처에는 `main`이 없어 링크되지 않으므로 **컨테이너 경로에서 E4는 여전히 도달
 불가**다 — PoV 노드(8단계)는 PoC **바이트**를 trace와 run 산출물 사이드카(`pov_poc/`, #355)에
-남길 뿐 재현 명세가 부르는 `./poc`로 쓰지 않으므로, 그 `./poc` materialize(호스트가 필요한
-후속)가 생기기 전까지는 그것이 사실이고, 그 사실대로 기록한다. ⚠ **Fake 경로에는 그 방벽이
-없다** — `fake_tools._run_repro()`가 실행 대신 대상 소스의 존재를 보고 `ok=True`를 낸다.
+남기고 도구 요청에는 입력 파일로만 실을 뿐(아래 「입력 바이트」) 재현 명세가 부르는 `./poc`로 쓰지
+않으므로, 그 `./poc` materialize(호스트가 필요한 후속)가 생기기 전까지는 그것이 사실이고, 그
+사실대로 기록한다. ⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신
+대상 소스의 존재를 보고 `ok=True`를 낸다.
+
+## 입력 바이트 — 쓰되 어느 명령도 읽지 않는다 (#386 ①)
+
+`ToolArgs.input_bytes`가 있으면 그 도구의 scratch(`/work`)에 `write_input`으로 쓰고, 로그 머리의
+노드 argv에서 자리표(`INPUT_PLACEHOLDER`)를 `/work/<이름>`으로 바꾼다 — 호스트 경로는 컨테이너
+안에서 안 풀린다. **어느 명령도 그 파일을 인자로 받지 않는다**(`plan()`이 명령을 조립하고 노드
+argv는 로그 머리에만 남는다) — 그래서 도구 결과는 여전히 PoC와 무관하다.
+`tests/test_container_tools.py::test_no_executed_container_command_receives_the_input_today`가
+그것을 실행된 argv로 잰다. 읽게 하는 것(대상 빌드·`poc` 명령 개조)은 후속(#513)이고, 그때 그
+경보기와 프롬프트의 한계 서술이 같이 바뀐다. 쓰지 못하면 **실행하지 않고** `Evidence(ok=False)`다.
 
 ## index는 이제 진짜 그래프를 만든다 (이슈 #63)
 
@@ -113,9 +124,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from src.adapters.fake_tools import TOOL_KINDS, SandboxUnavailable, sources
+from src.adapters.fake_tools import TOOL_KINDS, SandboxUnavailable, sources, write_input
 from src.ids import IdFactory
-from src.interfaces.tool_runner import SandboxSpec, ToolArgs
+from src.interfaces.tool_runner import SandboxSpec, ToolArgs, with_input_path
 from src.paths import PathEscape, safe_join
 from src.schemas.common import Location
 from src.schemas.enums import EvidenceKind
@@ -476,7 +487,9 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
         ]
     if tool == "poc":
         # PoC 실행 파일을 만드는 주체가 아직 없다(STATUS.md §5 PoV). 없는 것을 성공으로
-        # 세지 않는다 — 그러면 E4가 실행되지 않은 프로그램 위에서 성립한다.
+        # 세지 않는다 — 그러면 E4가 실행되지 않은 프로그램 위에서 성립한다. 입력 파일
+        # (`ToolArgs.input_bytes`)은 이 명령의 인자가 아니다(모듈 docstring 「입력 바이트」) —
+        # 고치면 `test_the_poc_command_takes_no_argument_today`가 빨개진다(#513).
         return [Command([f"{SCRATCH}/poc"], cwd=SCRATCH)]
     raise ValueError(f"명령 조립 규칙이 없는 도구: {tool!r}")
 
@@ -901,7 +914,20 @@ class ContainerToolRunner:
     ) -> Evidence:
         scratch = scratch_dir(self.artifacts_root, self.run_id, tool)
         scratch.mkdir(parents=True, exist_ok=True)
-        sections = [f"# node argv: {' '.join(args.argv)}", f"# runtime: {self.runtime}"]
+        node_argv = args.argv
+        if args.input_bytes is not None:
+            # 컨테이너 안 경로는 `/work/<이름>`이다 — 호스트 경로를 적으면 안 풀린다. 명령은 이
+            # 경로를 받지 않지만(모듈 docstring) 머리줄에 남아 `Evidence.digest`가 입력에 달린다.
+            # 오류 문구에는 호스트 경로를 안 싣는다 — 관측으로 모델에 간다.
+            try:
+                written = write_input(scratch, args.input_bytes)
+            except OSError as exc:
+                reason = exc.strerror or type(exc).__name__
+                return self._fail(
+                    evidence_id, tool, kind, args, 2, f"입력을 scratch에 쓰지 못했다: {reason}"
+                )
+            node_argv = with_input_path(args.argv, f"{SCRATCH}/{written.name}")
+        sections = [f"# node argv: {' '.join(node_argv)}", f"# runtime: {self.runtime}"]
         steps: list[Step] = []
         for index, command in enumerate(commands):
             name = f"harness-{self.run_id}-{evidence_id}-{index}"
@@ -1059,10 +1085,13 @@ class ContainerToolRunner:
         `workdir`에 대해 막는 것과 같은 종류의 구멍이다.
         """
         body = "\n".join(sections) + "\n"
+        data = body.encode("utf-8")
         slot = tool if tool in TOOL_KINDS else _REJECTED_SLOT
         path = self.artifacts_root / self.run_id / slot / f"{evidence_id}.log"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        # 바이트로 쓰고 **그 바이트를** 해시한다 — 텍스트 쓰기는 Windows에서 LF를 CRLF로 번역해
+        # `digest`가 파일과 어긋난다(#387). `orchestrator/poc_log.py`의 쓰기 절이 같은 선례다.
+        path.write_bytes(data)
         return Evidence(
             evidence_id=evidence_id,
             run_id=self.run_id,
@@ -1071,7 +1100,7 @@ class ContainerToolRunner:
             artifact_id=args.workdir,
             location=location,
             payload_ref=f"artifacts/{self.run_id}/{slot}/{evidence_id}.log",
-            digest=f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}",
+            digest=f"sha256:{hashlib.sha256(data).hexdigest()}",
             observed_at=self.observed_at,
             ok=ok,
             exit_code=exit_code,
