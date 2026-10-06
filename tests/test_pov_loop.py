@@ -557,7 +557,7 @@ def test_pov_loop_stops_on_a_poc_it_saw_before_even_when_the_previous_gen_differ
     """A→B→A→B(진동)는 hop2에서 REPEAT_SPEC이다 — 판정은 직전 gen이 아니라 **본 적 있는 모든** PoC와
     견준다.
 
-    직전(B)만 보면 세 번째 A가 안 걸려 진동이 `max_hops`까지 간다 — 상한이 클수록 그만큼 더 돈다.
+    직전(B)만 보면 세 번째 A가 안 걸려 진동이 **홉 상한까지** 간다 — 상한이 클수록 그만큼 더 돈다.
     집합 조회를 직전 비교로 되돌리는 변이가 여기서 죽는다(MAX_HOP으로 끝난다). 한계: A-B 두 PoC의
     진동만 본다."""
     a = _gen_byte(byte=0x41, count=8)
