@@ -2284,7 +2284,7 @@ def _run_pov_hops(
     그대로 낸다. 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를 그대로 올리면 되고
     디렉터리를 글로브할 필요가 없다.
     """
-    max_hops = ctx.config.thresholds.pov_tool_hops
+    pov_hops = ctx.config.thresholds.pov_tool_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
     with ctx.stage(Stage.VALIDATE):
         last_poc: bytes | None = None
@@ -2372,9 +2372,9 @@ def _run_pov_hops(
                         ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
                     )
                 last_poc = hop_poc
-                # 마지막 홉(`hop >= max_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
+                # 마지막 홉(`hop >= pov_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
                 # 두 번이 레이트 예산만 쓰고 버려진다.
-                if pov_wide and hop < max_hops:
+                if pov_wide and hop < pov_hops:
                     oracle_observation = _submit_vul_to_oracle(
                         ctx, state, finding, hop_poc, designatable=False
                     )
@@ -2383,7 +2383,7 @@ def _run_pov_hops(
                 evidence = pov.run_tool(
                     ctx, finding=finding, tool=action.tool, workdir=workdir
                 )
-            if hop >= max_hops:
+            if hop >= pov_hops:
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value,

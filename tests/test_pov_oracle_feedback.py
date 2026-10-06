@@ -353,6 +353,20 @@ def test_the_discarded_last_hop_gen_is_not_sent_to_the_oracle(ctx):  # noqa: ANN
     assert len(oracle.vul_calls) == pov_hops
 
 
+def test_the_oracle_guard_follows_pov_tool_hops_not_max_hops(ctx):  # noqa: ANN001, F811
+    """중간 제출 가드도 PoV 전용 상한을 읽는다 — 적대적 검토 2026-10-06의 생존 변이.
+
+    정지 검사만 `pov_tool_hops`로 옮기고 이 가드를 `max_hops`로 남기는 한 줄 변이가
+    **아무 테스트도 빨갛게 하지 않았다.** 그러면 `max_hops < pov_tool_hops`인 설정에서
+    그 홉부터 `oracle_vul=unavailable`이 조용히 나간다.
+    """
+    thresholds = ctx.config.thresholds.transition(pov_tool_hops=5, max_hops=0)
+    ctx.config = ctx.config.transition(thresholds=thresholds)
+    oracle = ReadingOracle(codes=tuple(300 for _ in range(10)))
+    _feedback_run(ctx, oracle, [_gen(count=n) for n in range(1, 10)])
+    assert len(oracle.vul_calls) == 5
+
+
 def test_trace_events_say_whether_a_submission_was_intermediate(ctx):  # noqa: ANN001, F811
     scripted, _, _ = _feedback_run(ctx, ReadingOracle(codes=(300,)), [
         _gen(count=1), PovAction(action="submit", rationale="model decision"),
