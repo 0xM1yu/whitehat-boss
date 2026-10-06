@@ -1,5 +1,5 @@
 role: auditor
-version: v9
+version: v10
 output_schema: AuditProcedure
 description: v7에서 취약점 분석 절차를 수정하고 모델에게 도구를 쥐어줍니다. 도구는 v8과 qwen3.8-27b의 chat template 설명을 참고하였습니다.
 source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites]
