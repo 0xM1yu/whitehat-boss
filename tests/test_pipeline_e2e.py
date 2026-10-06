@@ -1587,6 +1587,32 @@ def test_incomplete_manifest_fields_are_reported_not_faked(tmp_path: Path) -> No
     assert any("tool_images" in warning for warning in result.warnings)
 
 
+def test_the_empty_tool_images_warning_names_the_runtime_not_a_missing_container(
+    tmp_path: Path,
+) -> None:
+    """이슈 #479 (e) - 컨테이너 런타임 run에 「컨테이너 없이 실행」이라 쓰면 설정 오류로 읽힌다.
+
+    `tool_images`는 run 시작 전(`build_deps`)에 채워져 도구 단계에 닿았는지와 무관하다 - 비는 뜻은
+    「이미지 digest를 못 기록했다」(이미지 없음 · 런타임에 못 닿음)다. Fake 런타임이면 컨테이너가
+    정말 없으므로 옛 문구가 맞다. 런타임 이름은 셋 다 문구에 든다."""
+    result, _ = _run(tmp_path)
+    record = result.record
+
+    def tool_images_warnings(runtime: str) -> list[str]:
+        found = runner.incomplete_fields(record.transition(tool_runner=runtime))
+        return [w for w in found if "tool_images" in w]
+
+    (fake,) = tool_images_warnings("fake")
+    assert "컨테이너 없이 실행" in fake
+    for runtime in ("docker", "singularity", "podman"):
+        (warning,) = tool_images_warnings(runtime)
+        assert "컨테이너 없이" not in warning, runtime
+        assert runtime in warning and "모델 비교표에서 제외한다" in warning, runtime
+        assert "도구 단계" not in warning, "무관하다(`build_deps`가 run 시작 전에 채운다)"
+        # 조작자가 볼 곳을 알려 준다 - 이미지가 없거나 런타임에 못 닿은 것이다(철자 pin).
+        assert "이미지가 없거나 런타임에 닿지 못했다" in warning, runtime
+
+
 def test_the_record_carries_the_compile_condition(tmp_path: Path) -> None:
     """컴파일 조건이 비교표에 나타나야 한다 (D32 / #74).
 

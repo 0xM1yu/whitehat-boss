@@ -11,6 +11,7 @@
 그래서 이 게이트는 `pass`에 더해 엔트로피 칸을 **따로** 본다.
 """
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -236,7 +237,7 @@ def test_a_report_with_the_wrong_type_in_a_field_is_an_error(tmp_path: Path) -> 
 def test_a_report_that_is_not_utf8_is_an_error_not_a_traceback(tmp_path: Path) -> None:
     """`UnicodeDecodeError`는 `ValueError`라 파싱 분기로 안 간다 - 읽기 분기가 `OSError`만 잡았다.
 
-    호출부(`cli._canary_refusal`)는 `CanaryReportError`만 잡으므로 흘리면 트레이스백과 exit 1이
+    호출부(`cli._canary_gate`)는 `CanaryReportError`만 잡으므로 흘리면 트레이스백과 exit 1이
     나온다. 제출은 안 나가니 fail-closed는 유지되지만 조작자가 받는 것이 문구가 아니다.
     형제인 `cli._query_task_id_from_mask_map`은 이미 `(OSError, ValueError)`를 잡는다.
     """
@@ -377,3 +378,49 @@ def test_an_entropy_that_is_not_plain_digits_is_refused(tmp_path: Path, bits: st
     report = read_canary_report(_write(tmp_path, mmap_rnd_bits=bits, rnd_bits_above_28=False))
 
     assert canary_refusal(report, task_id=_TASK) is not None
+
+
+def test_the_report_carries_the_sha256_of_the_bytes_it_parsed(tmp_path: Path) -> None:
+    """이슈 #487 - 점수가 기댄 보고서를 사후에 변호하려면 **검사한 바이트의** 해시가 필요하다.
+
+    파일을 한 번 더 읽어 해시하면 검사와 기록 사이에 바뀐 파일이 기록에 들어간다."""
+    path = _write(tmp_path)
+
+    report = read_canary_report(path)
+
+    assert report.sha256 == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_the_sha256_is_of_the_raw_bytes_not_of_decoded_text(tmp_path: Path) -> None:
+    """CRLF 보고서(Windows에서 손으로 고친 것)의 해시는 **디스크 바이트** 기준이다 - 텍스트로 풀었다
+    다시 인코딩하면 개행이 번역돼 해시가 파일과 어긋난다(#387과 같은 갈래)."""
+    path = tmp_path / "canary.json"
+    crlf = chr(13) + chr(10)
+    raw = json.dumps(_PASSING, indent=2).replace(chr(10), crlf).encode("utf-8")
+    path.write_bytes(raw)
+
+    report = read_canary_report(path)
+
+    assert crlf.encode() in raw, "공허하다 - CRLF가 없다"
+    assert report.sha256 == "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def test_the_file_is_read_once_so_the_hash_cannot_describe_other_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """두 번째 읽기가 다른 바이트를 주는 파일 - 검사한 바이트와 해시한 바이트가 갈릴 틈이다."""
+    path = _write(tmp_path)
+    real_read_bytes = Path.read_bytes
+    calls: list[Path] = []
+
+    def flaky(self: Path) -> bytes:
+        calls.append(self)
+        data = real_read_bytes(self)
+        return data if len(calls) == 1 else data + b" "
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+
+    report = read_canary_report(path)
+
+    assert len(calls) == 1, "보고서를 한 번만 읽어야 한다"
+    assert report.sha256 == "sha256:" + hashlib.sha256(real_read_bytes(path)).hexdigest()

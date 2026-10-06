@@ -1003,7 +1003,8 @@ def run_pipeline(
     # 기록이 그대로다.
     oracle_summary = state.oracle_ledger.summary()
     if oracle_summary is not None:
-        record = record.transition(oracle=oracle_summary)
+        # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
+        record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
 
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
@@ -5018,7 +5019,19 @@ def incomplete_fields(
     """
     warnings = []
     if not record.tool_images:
-        warnings.append("tool_images가 비어 있다 (컨테이너 없이 실행). 모델 비교표에서 제외한다")
+        # Fake 런타임이면 컨테이너가 정말 없다. 그 밖의 런타임에서 비는 것은 「이미지 digest를
+        # 못 기록했다」다 - `tool_images`는 run 시작 전(`build_deps`)에 `images()`가 채우므로 도구
+        # 단계에 닿았는지와 무관하고, 비는 사유는 이미지가 로컬에 없음 · 런타임에 못 닿음 ·
+        # sif 없음이다(보고서 4절의 WSL run은 Docker 소켓이 없었다). 「컨테이너 없이 실행」이라
+        # 쓰면 설정 오류로 읽힌다(#479 (e)).
+        runtime = record.tool_runner
+        why = (
+            "컨테이너 없이 실행"
+            if runtime == "fake"
+            else f"{runtime} 런타임인데 도구 이미지 digest를 기록하지 못했다 - "
+            "이미지가 없거나 런타임에 닿지 못했다"
+        )
+        warnings.append(f"tool_images가 비어 있다 ({why}). 모델 비교표에서 제외한다")
     if served_models:
         # **Fake 역할은 호출자가 이미 빼고 준다.** Fake 모델의 checksum 0은 빠진 값이
         # 아니라 **맞는 값**이다 — `FakeModelClient`는 프로세스 안에서 도는 코드라 해시할

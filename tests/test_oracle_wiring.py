@@ -1475,3 +1475,33 @@ def test_the_oracle_leg_leaves_the_graded_evidences_alone(
 
     assert state.evidences == evidences
     assert state.findings == found
+
+
+_CANARY_REF = {"canary_path": "/ops/canary.json", "canary_sha256": "sha256:" + "ab" * 32}
+
+
+class _BoundOracle(FakeOracle):
+    """카나리 보고서에 묶인 채점기 - `TaskOracle`이 `_oracle_for`에서 받는 두 값을 든다."""
+
+    canary_path = _CANARY_REF["canary_path"]
+    canary_sha256 = _CANARY_REF["canary_sha256"]
+
+
+def test_the_canary_report_a_run_leaned_on_is_recorded_in_the_manifest_summary(
+    tmp_path: Path,
+) -> None:
+    """이슈 #487 - `RunRecord.oracle`에 보고서 경로와 sha256이 남는다. 빼면 못 변호한다."""
+    result, _ = _run(tmp_path, oracle=_BoundOracle())
+
+    assert result.record.oracle is not None
+    assert {key: result.record.oracle[key] for key in _CANARY_REF} == _CANARY_REF
+
+
+def test_a_run_without_a_canary_reference_leaves_the_summary_keys_as_they_were(
+    tmp_path: Path,
+) -> None:
+    """이 필드 이전의 manifest와 키 집합이 같아야 한다 - 안 준 run에 빈 칸을 새로 만들지 않는다."""
+    result, _ = _run(tmp_path, oracle=FakeOracle())
+
+    assert result.record.oracle is not None
+    assert not {"canary_path", "canary_sha256"} & result.record.oracle.keys()
