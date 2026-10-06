@@ -48,7 +48,7 @@ from src.schemas import (
     Role,
     Verdict,
 )
-from tests.conftest import served_scout_config
+from tests.conftest import plant_link, served_scout_config
 
 RUN_ID = "run_20260901_0001"
 SANDBOX = SandboxSpec(image="fake:latest", cpu_limit=1.0, memory_mb=512, timeout_s=60)
@@ -515,7 +515,7 @@ def test_tool_results_are_deterministic(target_root: Path) -> None:
     assert first == second
 
 
-# --- 도구에 데이터로 넘기는 입력 (#511) -----------------------------------------------
+# --- 도구 요청에 데이터로 싣는 입력 (#386 ①) -------------------------------------------
 
 # NUL·CRLF·비-UTF-8 — 텍스트로 쓰거나 개행을 번역하면 달라지는 바이트다.
 TRICKY_INPUT = bytes.fromhex("000d0a0d0aff") + b"A" * 8
@@ -574,6 +574,67 @@ def test_write_input_refuses_and_removes_a_file_that_reads_back_different(
     assert list(tmp_path.iterdir()) == []
 
 
+def _input_file_name(data: bytes) -> str:
+    return f"input-{hashlib.sha256(data).hexdigest()[:16]}{fake_tools.INPUT_SUFFIX}"
+
+
+@pytest.mark.parametrize("kind", ["symlink", "dangling", "hardlink"])
+def test_write_input_does_not_write_through_a_planted_link(tmp_path: Path, kind: str) -> None:
+    """🔴 **보안 경계다.** scratch는 RW 마운트이고 대상 코드가 거기서 돈다 — 입력 이름은 PoC의
+    sha256에서 나와 **예측되므로** 코드가 그 자리에 링크를 심어 둘 수 있고, `write_bytes`는 따라가
+    **마운트 밖 파일을 PoC로 덮는다**(끊어진 링크면 새 파일을 만든다 · 되읽기도 같은 링크를 따라가
+    통과한다). 하드링크도 같은 inode에 쓰는 같은 구멍이다(Windows에서도 만들어진다)."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside.txt"
+    if kind != "dangling":
+        outside.write_bytes(b"host file - must stay")
+    planted = scratch / _input_file_name(TRICKY_INPUT)
+    plant_link(kind, planted, outside)
+    assert planted.is_symlink() or planted.exists(), "전제 — 링크가 심어졌다"
+
+    path = fake_tools.write_input(scratch, TRICKY_INPUT)
+
+    assert path == planted
+    assert path.read_bytes() == TRICKY_INPUT
+    assert not path.is_symlink()
+    if kind == "dangling":
+        assert not outside.exists(), "끊어진 링크를 따라가 마운트 밖에 파일을 만들었다"
+    else:
+        assert outside.read_bytes() == b"host file - must stay", "링크를 따라가 바깥 파일을 덮었다"
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_write_input_refuses_a_link_that_appears_between_the_unlink_and_the_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """`unlink` 뒤 `xb`의 **둘째 반쪽** — 지운 직후 같은 이름에 링크가 생겨도(경쟁) 따라가지 않고
+    거절한다. `xb`를 `wb`로 바꾸는 변이는 위 검사(미리 심은 링크)에는 초록이고 여기서 죽는다. 그사이
+    심긴 것은 남의 것이라 지우지 않는다(`poc_log.PocLog.write`의 「임시 경로」와 같은 선례)."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"host file - must stay")
+    plant_link(kind, tmp_path / "probe", outside)  # 못 만드는 환경이면 여기서 건너뛴다
+    (tmp_path / "probe").unlink()
+    target = scratch / _input_file_name(TRICKY_INPUT)
+    real_unlink = Path.unlink
+
+    def racing_unlink(self: Path, missing_ok: bool = False) -> None:
+        real_unlink(self, missing_ok=missing_ok)
+        if self == target:
+            plant_link(kind, self, outside)  # 경쟁 — 지운 직후 같은 이름에 링크
+
+    monkeypatch.setattr(Path, "unlink", racing_unlink)
+
+    with pytest.raises(OSError):
+        fake_tools.write_input(scratch, TRICKY_INPUT)
+
+    monkeypatch.undo()
+    assert outside.read_bytes() == b"host file - must stay", "경쟁으로 심긴 링크를 따라갔다"
+    assert target.is_symlink() or target.exists(), "남이 심은 항목을 지웠다"
+
+
 def test_the_input_suffix_is_not_an_analyzable_kind() -> None:
     """`--target`이 저장소 루트라 `artifacts/`가 대상 트리 안에 있으면 이전 run의 입력이 다음 run의
     분석 대상이 된다 — `.bin`이면 BINARY로 분류돼 Scout 프롬프트에 실린다(`poc_log` 모듈 docstring의
@@ -628,6 +689,18 @@ def test_fake_runner_without_input_never_calls_the_writer(
     _runner(target_root).run("poc", _args(".", "poc"), SANDBOX)
 
     assert writer_calls == []
+
+
+def test_fake_runner_writes_an_empty_input_too(
+    target_root: Path, writer_calls: list[tuple[Path, bytes]]
+) -> None:
+    """`b""`는 입력이다 — `is not None`을 진리값 판정(`if args.input_bytes:`)으로 바꾸면 0바이트
+    PoC가 「입력 없음」으로 둔갑해 쓰기가 건너뛰어진다. 쓰기가 빈 바이트로 **한 번** 나갔는지
+    본다."""
+    evidence = _runner(target_root).run("poc", _input_args("poc", b""), SANDBOX)
+
+    assert evidence.ok is True
+    assert [data for _, data in writer_calls] == [b""]
 
 
 def test_fake_runner_rejects_before_it_writes_anything(

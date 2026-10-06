@@ -113,8 +113,9 @@ class EventKind(StrEnum):
     # `retrieval_call`과 합치지 않는다 — 그쪽은 호출 1건당 1행이고 이쪽은 수집 1회당
     # 1행이라 분모가 다르다. `candidates`라는 이름도 겹치지 않게 `collected`를 쓴다.
     RETRIEVAL_TRUNCATED = "retrieval_truncated"
-    # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구에 **데이터로** 넘긴 입력이 있을
-    # 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 원바이트는 안 간다. **키 부재 = 입력 없음.**
+    # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구 요청에 **데이터로** 실은 입력이
+    # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
+    # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"

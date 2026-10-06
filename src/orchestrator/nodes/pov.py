@@ -189,16 +189,16 @@ def run_tool(
     """PoV 홉에서 도구를 돌린다 — asan·build·gdb·poc.
 
     `poc`가 있으면 **데이터로** 싣는다: `ToolArgs.input_bytes`가 그 바이트이고 argv가 자리표를 든다
-    (`[tool, INPUT_PLACEHOLDER]`). 어댑터가 자기 namespace의 파일로 쓰고 자리표를 그 경로로 바꾼다 —
-    이 노드는 컨테이너 안 경로를 모른다. `gen` 홉은 그 홉이 조립한 PoC를, `inspect` 홉은 **직전
-    gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]` 하나). 출처는 모델 spec에서
-    `assemble_poc`이 조립한 바이트뿐이다.
+    (`[tool, INPUT_PLACEHOLDER]`). 어댑터가 자기 namespace의 파일로 쓴다(컨테이너는 로그 머리의
+    자리표만 그 경로로 바꾼다) — 이 노드는 컨테이너 안 경로를 모른다. `gen` 홉은 그 홉이 조립한
+    PoC를, `inspect` 홉은 **직전 gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]`
+    하나). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
 
     ⚠ **싣는다고 도구가 읽는 것은 아니다.** fake는 쓰고 지우며 대상 소스 존재만 보고 ok를 낸다
     (`fake_tools._run_repro`). 컨테이너는 scratch에 쓰되 어느 명령도 그 파일을 인자로 받지
     않는다 — 그래서 도구 관측의 `ok`·`exit`·꼬리는 여전히 PoC와 무관하다. PoC의 함수가 되는 것은
     러너가 관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 파일을 **읽게**
-    하는 것은 후속이다. 원바이트는 trace에 안 간다 — `call_tool`이 크기와 digest만 싣는다.
+    하는 것은 후속(#513)이다. 원바이트는 trace에 안 간다 — `call_tool`이 크기와 digest만 싣는다.
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서
