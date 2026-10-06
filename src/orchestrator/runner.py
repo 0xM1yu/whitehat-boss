@@ -83,6 +83,7 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import contextlib
 import hashlib
 import json
 import re
@@ -1823,7 +1824,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     try:
         poc, reason = _run_pov_hops(ctx, state, finding, capsule)
         if reason is PovStopReason.SUBMITTED and poc is not None:
-            _submit_vul_to_oracle(ctx, state, finding, poc, designatable=True)
+            _submit_vul_to_oracle(
+                ctx, state, finding, poc, designatable=True, in_validate_span=False
+            )
     finally:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
 
@@ -1835,6 +1838,7 @@ def _submit_vul_to_oracle(
     poc: bytes,
     *,
     designatable: bool,
+    in_validate_span: bool,
 ) -> str:
     """PoC를 `vul` 다리에 내보내고 다음 홉 관측 한 줄을 돌려준다 (#386).
 
@@ -1858,10 +1862,17 @@ def _submit_vul_to_oracle(
     안에서 돌고 이벤트가 `wall_ms`를 단다. 구간 밖에서 내면 이 이벤트가 8단계 `stage_end` 뒤에 나가
     왕복이 단계 시간 장부에서 빠진다. 값은 장부(`state.oracle_ledger`)와 사이드카에 쌓이고,
     trace에는 결정론 필드만 간다(분류는 `oracle_log` 모듈 docstring).
+
+    **이미 그 구간 안이면 다시 열지 않는다(`in_validate_span=True`, #518)** — 중간 gen은
+    `_run_pov_hops`가 연 8단계 구간 안에서 불린다. 여기서 또 열면 `StageSpan`이 중첩을 몰라
+    `stage_start`·`stage_end` 쌍이 겹치고, 안쪽 `wall_ms`가 바깥 구간에 이미 든 시간을 한 번 더
+    세 8단계·run 합계 latency(`trace.py` 지표표)가 부푼다. 평면으로 구간을 읽는 쪽은 안쪽
+    `stage_end` 뒤의 `pov_hop`을 구간 밖으로 읽는다. 기본값을 두지 않는다 — 호출부가 자기가
+    구간 안인지를 정한다(`designatable`과 같은 이유).
     """
     if ctx.oracle is None:
         return "oracle_vul=unavailable"
-    with ctx.stage(Stage.VALIDATE):
+    with contextlib.nullcontext() if in_validate_span else ctx.stage(Stage.VALIDATE):
         started = ctx.monotonic_ms()
         if not poc:
             attempt = oracle_log.vul_empty(finding.finding_id, poc, designatable=designatable)
@@ -2376,7 +2387,7 @@ def _run_pov_hops(
                 # 두 번이 레이트 예산만 쓰고 버려진다.
                 if pov_wide and hop < max_hops:
                     oracle_observation = _submit_vul_to_oracle(
-                        ctx, state, finding, hop_poc, designatable=False
+                        ctx, state, finding, hop_poc, designatable=False, in_validate_span=True
                     )
                 evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
             else:  # inspect — 새 PoC 없이 현 후보를 진단
