@@ -26,6 +26,7 @@ import pytest
 
 from slicer_source import assemble
 from src import cli, console
+from src.adapters import fake_model
 from src.adapters.container_tools import index_output_path
 from src.adapters.cybergym_oracle import TaskOracle
 from src.adapters.factory import build_deps, describe_wiring
@@ -35,6 +36,7 @@ from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER
 from src.orchestrator import runner, task_loader, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
@@ -2904,6 +2906,34 @@ def test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools(tmp_path: Pat
     assert e4, "E4가 한 번도 안 나오면 8단계 게이트가 배선되지 않았다"
     assert {e["stage"] for e in e4} == {int(Stage.VALIDATE)}
     assert all(e["data"]["p4"] for e in e4)
+
+
+def test_a_repro_step_equal_to_the_input_placeholder_does_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 8단계는 모델이 쓴 `repro_spec.steps`를 `[tool, *steps]`로 argv에 넣는다(`validate._call`).
+    원소가 **예약 자리표와 같으면** `ToolArgs`가 `ValidationError`를 던졌고 그 루프에는 try가 없어
+    최후 방어선을 지나 run 전체가 `stopped_after: 8`로 멈췄다(독립 검토가 실증). 이제는 그 호출만
+    `ok=False`로 남고 run은 끝까지 간다. 운영 배선(`cli.execute`)으로 돈다 — 노드 단위 검사는
+    `tests/test_nodes.py`가 맡는다."""
+    real = fake_model._repro_spec
+
+    def colliding(target, sink):  # noqa: ANN001, ANN202
+        spec = real(target, sink)
+        return spec.transition(steps=[*spec.steps, INPUT_PLACEHOLDER])
+
+    monkeypatch.setattr(fake_model, "_repro_spec", colliding)
+
+    result, trace_path = _run(tmp_path)
+
+    assert result.record.stopped_after is None, "예약 자리표와 같은 step이 run 전체를 멈췄다"
+    refused = [
+        e
+        for e in _of(_events(trace_path), "tool_call")
+        if e["data"]["ok"] is False and INPUT_PLACEHOLDER in (e["data"]["error"] or "")
+    ]
+    assert refused, "전제 — 그 step이 8단계까지 가서 거절됐다"
+    assert {e["stage"] for e in refused} == {int(Stage.VALIDATE)}
 
 
 def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
