@@ -104,7 +104,7 @@ graph LR
 > 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
 > (ATOM 스모크 전).)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
->   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 지금 배선된 **v9**(v8 + `auditor_guards` 서술 · body 동일)는
+>   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일 — 그날 배선됐던 판이다), ⏵ 같은 날 지금 배선된 **v10**(v7 전면 재작성 · body 동일 · 봉투가 `AuditorProcedureAction`)는
 >   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
@@ -112,7 +112,7 @@ graph LR
 >   함수에도 안 든 줄은 trace `auditor_source`가 센다. ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯
 >   (`config.AUDITOR_SOURCE_OPTIONS`)은 ~~전부 기본 꺼짐~~. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
 >   run이 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄 · entry 줄이기만 꺼짐).
->   상한은 토큰이 되고 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판은 ⏵ 2026-10-04 **v8**이었고(⏵ 2026-10-06부터 v9 — v8 + `auditor_guards` 서술)
+>   상한은 토큰이 되고 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판은 ⏵ 2026-10-04 **v8**이었고(⏵ 2026-10-06부터 v9 — v8 + `auditor_guards` 서술 · ⏵ 같은 날 v10 — 아래 「물려받았다」는 v8·v9의 서술이고 v10은 v7을 전면 재작성해 그 절을 다시 썼다)
 >   그 절을 v7에서 바이트 그대로 물려받았다(도구 루프, #419). 그 전 판 v7(⏵ 2026-10-04 — v6 + 그 서술,
 >   v6는 #418이 잰 문장 그대로)이 그 모양을 서술한다. ⏵ 2026-10-04 -> 피호출 본문 1단 너머는 다섯째 옵션
 >   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)다 -> 짧은 래퍼면 그 너머 2단까지, 이름만 바꾸는 매크로면
@@ -120,7 +120,7 @@ graph LR
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
 >   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다).
 >   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
->   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
+>   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 같은 날부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
 >   PoV 프롬프트에도 든다
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).

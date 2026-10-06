@@ -367,7 +367,11 @@ class EventKind(StrEnum):
     # - `probe` — `tool` · `tool_ok`·`exit_code`·`evidence_kind` · `evidence_id`(그
     #   `tool_call` 이벤트로의 조인 키) · `spec`을 실었으면 `poc_sha256`·`poc_bytes`(**도구에는
     #   안 간다** — 기록뿐이다).
-    # - `answer` — `cited_probe_evidence`(Finding이 `evidence_refs`로 인용한 `probe` Evidence
+    # - `answer` — `trigger_status`(⏵ 2026-10-06 — 모순 비율의 **분모**다. v8·v9 `answer` 홉에도
+    #   새로 붙는다 — 그 판의 `Finding`도 이 필드를 든다) · 어긴 경우에만
+    #   `status_result_mismatch`(`refutation.result`가 가리키는 상태 ↔ `trigger_status`, 값은
+    #   `"<상태>/<result>"`)·`path_without_endpoints`(경로가 비면 안 되는 상태인데 양 끝이 없다) ·
+    #   그리고 `cited_probe_evidence`(최종 답이 `evidence_refs`로 인용한 `probe` Evidence
     #   수). ⚠ 그 Evidence는 러너가 게이트에 넘기는 `state.evidences`에 **없어서** 인용해도
     #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
     #   게이트에 안 닿는 근거를 인용했다」는 사실이다.
@@ -377,6 +381,9 @@ class EventKind(StrEnum):
     # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
     # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
     # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다.
+    # ⏵ 2026-10-06 — 루프 봉투가 둘이라 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이
+    # `AuditorProcedureAction`이다(`Finding`은 한 방 판 그대로). 위 `AuditorAction`은
+    # v8·v9의 이름이다.
     AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의

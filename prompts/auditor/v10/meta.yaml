@@ -1,6 +1,33 @@
+# 도구 루프 판. 배선 조건은 v9와 같다 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고
+# `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다(`nodes/auditor.loop_problem`).
+#
+# v10 = **v7을 전면 재작성한 판**이다 — 분석 절차(5단계 점검 · 우선순위 · 트리거 규칙)와 출력 계약(`audit` 블록)을
+# 새로 썼고 도구는 v8·v9와 같은 홉 구조(lookup · probe · answer)로 부른다. 아직 어느 run도 안 썼다.
+# 그 재작성이 하네스가 실제로 하는 일과 어긋난 자리를 이 판에서 교정했다. 서술은 코드를 열어 대조했다
+# (CLAUDE.md 2.1):
+# - **도구는 네이티브 도구 호출이 아니다.** 하네스는 도구 정의를 안 보내고 매 홉 구조화 출력 JSON 봉투 하나를
+#   받는다(`nodes/auditor._run_hops` · `adapters/openai_compat`의 `response_format`). 조사도 답변도 같은 봉투의
+#   `action`이고, `answer`가 감사를 끝낸다. 감사 결과(`audit` … `repro_spec`)는 그 봉투의 `procedure` 필드에 든다.
+#   반복 판정은 `lookup`의 `(kind, target)` 집합과 `probe`의 도구 이름만 같다고 본다(`nodes/auditor._request_key`).
+# - `cwe`는 no_signal에서도 null이 아니다 — `Finding.cwe`가 non-null이다(`schemas/common.Cwe`). v9의 규칙이다.
+# - SOURCE 상한은 20,000토큰이다(`config/budgets.yaml`의 `auditor_source_tokens` — 글자 15,000이 아니다).
+# - 켜진 Auditor SOURCE 옵션 여덟을 모두 서술하고 선언한다. 그중 `auditor_guards`를 meta가 안 들면 run과 doctor가
+#   막는다(`cli._undescribed_source_options`). 정의 · 피호출 본문 · 호출자 창 · 쓰기 지점 창의 서술도 더했고, 호출자 창과
+#   쓰기 지점 창은 완전한 함수가 아니라 **조각**이라고 적었다.
+# - **슬라이스 anchor note와 그 힌트 절을 지웠다.** 하네스는 그 note를 SOURCE에 안 싣는다(`extracted around`를 내는 코드가
+#   없다) — `slice_criterion`은 Scout 프롬프트에만 싣는 opt-in FACT 키이고(`prompt_loader.FACT_KEYS`) Auditor는 슬라이스
+#   기준을 받지 않는다(v9와 같다). 힌트가 후보를 고르던 분기도 같이 지웠고 남은 선택 규칙은 힌트 없는 경로 그대로다.
+# - 근거 본문(FACTS)과 probe 응답은 절단 표시가 다르다(`(middle shortened)` · 빈 로그 줄 · 접힌 semgrep 본문) — 둘을 가려 적었다.
+#   `path[].note`는 스키마가 안 요구하고 `repro_spec.origin`은 스키마에 노출되나 하네스가 덮는다는 사실도 적었다.
+# ⚠ `output_schema`는 응답의 루트 봉투 클래스다 — 이 판은 `Finding` 대신 `AuditProcedure`를 싣는 형제 봉투
+# `AuditorProcedureAction`을 쓴다. `nodes/auditor.resolve_output_schema`가 그 이름을 허용해야 **쓸 수 있다** —
+# `load_prompt`는 `output_schema`가 비지 않은 문자열인지만 보고, 허용집합 검사는 쓰는 시점에 선다
+# (`nodes/auditor._loop_envelope` · `loop_problem` — `cli`의 doctor `_check_auditor_loop`가 `loop_problem`을
+# 거쳐 푼다).
+# ⚠ 그 서술이 모델에게 어떻게 읽히는지, 켠 옵션이 판정을 바꾸는지는 미실측이다.
 role: auditor
 version: v10
-output_schema: AuditProcedure
-description: v7에서 취약점 분석 절차를 수정하고 모델에게 도구를 쥐어줍니다. 도구는 v8과 qwen3.8-27b의 chat template 설명을 참고하였습니다.
-source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites]
+output_schema: AuditorProcedureAction
+description: v7에서 취약점 분석 절차를 수정하고 모델에게 도구를 쥐어줍니다. 도구는 v8과 qwen3.8-27b의 chat template 설명을 참고하였으나 호출 방식은 네이티브 도구 호출이 아니라 매 홉 JSON 봉투(lookup, probe, answer)이고 최종 결과는 봉투의 procedure 필드에 듭니다. SOURCE 상한(20,000토큰), 켜진 옵션 여덟(GUARDS 포함), cwe(non-null)는 하네스에 맞춰 교정하였습니다.
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards]
 tools: [semgrep, clang-tidy, build, asan, gdb, poc]
