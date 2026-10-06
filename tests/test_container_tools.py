@@ -7,6 +7,7 @@
 `ok`와 `exit_code`의 의미가 섞이지 않는지, 컴파일 성공이 실행으로 둔갑하지 않는지.
 """
 
+import errno
 import hashlib
 import importlib.util
 import json
@@ -38,6 +39,7 @@ from src.adapters.container_tools import (
 )
 from src.adapters.fake_tools import TOOL_KINDS, FakeToolRunner, SandboxUnavailable
 from src.ids import IdFactory
+from src.interfaces import tool_runner
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.schemas.enums import EvidenceKind
@@ -833,6 +835,144 @@ def test_file_workdir_runs_in_its_parent_directory(tmp_path: Path, spy: _Spy) ->
 
     assert argv[argv.index("-w") + 1] == "/src"
     assert "/src/parser.c" in argv
+
+
+# --- 도구에 데이터로 넘기는 입력 — scratch에 쓰고 자리표를 컨테이너 경로로 (#511) --------
+
+# NUL·CRLF·비-UTF-8 — 텍스트로 쓰거나 개행을 번역하면 달라지는 바이트다.
+POC_BYTES = bytes.fromhex("000d0a0d0aff") + b"A" * 8
+
+
+def _input_name(data: bytes) -> str:
+    return f"input-{hashlib.sha256(data).hexdigest()[:16]}.poc"
+
+
+def _input_args(tool: str, data: bytes = POC_BYTES) -> ToolArgs:
+    return ToolArgs(argv=[tool, tool_runner.INPUT_PLACEHOLDER], workdir=".", input_bytes=data)
+
+
+def _log_of(tmp_path: Path, evidence: Evidence) -> str:
+    return (tmp_path / RUN_ID / evidence.source / f"{evidence.evidence_id}.log").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize("tool", ["poc", "asan"])
+def test_input_is_written_to_that_tools_scratch_byte_for_byte(
+    tool: str, tmp_path: Path, spy: _Spy
+) -> None:
+    """같은 길이의 다른 바이트(영 채움)를 쓰는 변이·개행을 번역하는 변이·쓰기를 지우는 변이가
+    여기서 죽는다. 파일은 **그 도구의** scratch에 간다 — 도구마다 마운트가 다르다."""
+    _runner(tmp_path).run(tool, _input_args(tool), SANDBOX)
+
+    written = scratch_dir(tmp_path, RUN_ID, tool) / _input_name(POC_BYTES)
+    assert written.read_bytes() == POC_BYTES
+
+
+def test_the_mounted_scratch_is_the_directory_the_input_was_written_to(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """`/work/<이름>`이 컨테이너 안에서 풀리려면 그 파일이 **`-v …:/work`로 마운트되는 호스트
+    디렉터리**에 있어야 한다 — 호스트 경로를 argv에 넣으면 안 풀린다(`container_argv`가
+    `command.argv`를 그대로 넣는다)."""
+    _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    scratch = scratch_dir(tmp_path, RUN_ID, "poc")
+    assert f"{scratch.resolve().as_posix()}:/work" in spy.calls[0]
+    assert (scratch / _input_name(POC_BYTES)).exists()
+
+
+def test_the_recorded_argv_names_the_container_path_not_the_placeholder(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """자리표를 안 바꾸는 변이가 여기서 죽는다 — 로그 첫 줄(`# node argv:`)이 **컨테이너 안 경로**를
+    든다. 호스트 경로면 컨테이너 안에서 안 풀린다."""
+    evidence = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    log = _log_of(tmp_path, evidence)
+    assert log.splitlines()[0] == f"# node argv: poc /work/{_input_name(POC_BYTES)}"
+    assert tool_runner.INPUT_PLACEHOLDER not in log
+    assert str(tmp_path) not in log.splitlines()[0]
+
+
+def test_the_log_digest_depends_on_the_input(tmp_path: Path, spy: _Spy) -> None:
+    """같은 도구·같은 명령이라도 **다른 입력**이면 로그가 달라 `Evidence.digest`가 달라진다 — 로그
+    첫 줄이 입력 경로를 이름으로 든다(엔지니어링 가이드 §6: 무엇이 실행됐는지 사후 검증).
+    자리표를 안 바꾸면 두 입력이 같은 줄을 남겨 digest가 같아진다. ⚠ 두 run이 **같은** scratch를
+    쓴다 — 로그에는 호스트 마운트 경로가 실려 디렉터리가 다르면 그 차이로 digest가 갈린다."""
+    first = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+    second = _runner(tmp_path).run("poc", _input_args("poc", bytes(len(POC_BYTES))), SANDBOX)
+
+    assert first.digest != second.digest
+
+
+@pytest.mark.parametrize("tool", ["poc", "asan", "gdb", "build"])
+def test_no_executed_container_command_receives_the_input_today(
+    tool: str, tmp_path: Path, spy: _Spy
+) -> None:
+    """🔴 **서술을 사실에 묶는 경보기다.** v3 prefix(`prompts/pov/v3/prefix.md`의 「지금 하네스의
+    한계」)·`docs/agent-contracts.md`·`PovAction` docstring이 「도구는 PoC를 입력으로 받지
+    않는다」고 쓴다. 이 배선은 바이트를 scratch에 두고 로그에 경로를 적을 뿐 **어느 명령도 그것을
+    인자로 받지 않는다**(`plan()`이 명령을 조립하고 노드 argv는 로그 머리에만 남는다) — 그
+    사실을 **실행된 argv**로 잰다.
+
+    이 검사가 빨개지면 도구 명령이 PoC를 받는 것이다(대상 빌드·`poc` 명령 개조) — 그때는 위 세
+    곳의 한계 서술을 **같이** 고친다. 짝: `tests/test_adapters.py`의 `_run_repro` 상수 핀이 fake
+    쪽을 잰다."""
+    _runner(tmp_path).run(tool, _input_args(tool), SANDBOX)
+
+    assert spy.calls, "명령이 하나도 안 돌았다 — 이 검사가 공허하다"
+    container_path = f"/work/{_input_name(POC_BYTES)}"
+    for argv in spy.calls:
+        assert container_path not in " ".join(argv), f"{tool}: 명령이 입력 경로를 받았다 — {argv}"
+        assert not any(arg.endswith(".poc") for arg in argv), f"{tool}: .poc 인자가 있다"
+
+
+def test_unwritable_input_is_failed_evidence_and_starts_no_process(
+    tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """입력을 못 쓰면 **실행하지 않는다** — 없는 입력으로 도구를 돌려 그 결과를 PoC의 결과로 읽게
+    두지 않는다. 문구는 모델 관측에 실리므로 호스트 경로를 안 든다."""
+
+    def broken(directory: Path, data: bytes) -> Path:
+        raise OSError(errno.ENOSPC, "No space left on device", "/host/secret/dir/input.poc")
+
+    monkeypatch.setattr(container_tools, "write_input", broken)
+
+    evidence = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    assert evidence.ok is False
+    assert evidence.exit_code == 2
+    assert "입력" in evidence.error
+    assert "/host/secret" not in evidence.error
+    assert spy.calls == []
+    assert "실행하지 않았다" in _log_of(tmp_path, evidence)
+
+
+def test_a_run_without_input_leaves_the_scratch_empty_and_the_header_as_it_was(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """입력이 없는 호출은 한 줄도 안 바뀐다 — 파일을 안 만들고 머리줄이 노드 argv 그대로다."""
+    evidence = _runner(tmp_path).run(
+        "poc", ToolArgs(argv=["poc", "src/x.c"], workdir="."), SANDBOX
+    )
+
+    assert list(scratch_dir(tmp_path, RUN_ID, "poc").iterdir()) == []
+    assert _log_of(tmp_path, evidence).splitlines()[0] == "# node argv: poc src/x.c"
+
+
+def test_a_request_that_fails_planning_writes_no_input(tmp_path: Path, spy: _Spy) -> None:
+    """계획이 실패하는 요청(컴파일할 소스가 없다)은 **쓰기 전에** 거절된다 — 안 돌 명령을 위해
+    바이트를 두지 않는다."""
+    root = tmp_path / "docs_only"
+    root.mkdir()
+    (root / "README.md").write_text("no sources", encoding="utf-8")
+
+    evidence = _runner(tmp_path / "out", root=root).run("asan", _input_args("asan"), SANDBOX)
+
+    assert evidence.ok is False
+    assert spy.calls == []
+    assert not scratch_dir(tmp_path / "out", RUN_ID, "asan").exists()
 
 
 # --- 확장자가 도구마다 갈라진다 -------------------------------------------------

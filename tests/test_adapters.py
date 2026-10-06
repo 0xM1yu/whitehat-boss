@@ -8,13 +8,17 @@
 그리고 문서가 요구한 계약뿐이다.
 """
 
+import errno
+import hashlib
 import json
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import get_args
 
 import pytest
 
+from src.adapters import fake_tools
 from src.adapters.factory import WIRINGS, build_deps
 from src.adapters.fake_model import FakeContext, FakeModelClient, FakeModelError, risky_calls_in
 from src.adapters.fake_retriever import FakeRetriever, read_raw_source, read_symbol_source
@@ -24,11 +28,14 @@ from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
 from src.config import AdapterSelection, HarnessConfig, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
+from src.interfaces import tool_runner
 from src.interfaces.model_client import ChatTurn, Prompt
 from src.interfaces.retriever import Query
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
+from src.orchestrator.nodes import preprocess
 from src.paths import PathEscape
 from src.schemas import (
+    ArtifactKind,
     Candidate,
     CapsuleLevel,
     Decision,
@@ -506,6 +513,187 @@ def test_tool_results_are_deterministic(target_root: Path) -> None:
     first = _runner(target_root).run("semgrep", _args(), SANDBOX)
     second = _runner(target_root).run("semgrep", _args(), SANDBOX)
     assert first == second
+
+
+# --- 도구에 데이터로 넘기는 입력 (#511) -----------------------------------------------
+
+# NUL·CRLF·비-UTF-8 — 텍스트로 쓰거나 개행을 번역하면 달라지는 바이트다.
+TRICKY_INPUT = bytes.fromhex("000d0a0d0aff") + b"A" * 8
+
+
+def _input_args(tool: str, data: bytes = TRICKY_INPUT) -> ToolArgs:
+    return ToolArgs(argv=[tool, tool_runner.INPUT_PLACEHOLDER], workdir=".", input_bytes=data)
+
+
+@pytest.fixture
+def writer_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, bytes]]:
+    """`fake_tools.write_input`에 간 호출을 기록한다 — 실제 쓰기는 그대로 한다."""
+    calls: list[tuple[Path, bytes]] = []
+    real = fake_tools.write_input
+
+    def recording(directory: Path, data: bytes) -> Path:
+        calls.append((Path(directory), data))
+        return real(directory, data)
+
+    monkeypatch.setattr(fake_tools, "write_input", recording)
+    return calls
+
+
+def test_write_input_keeps_every_byte_and_names_the_file_after_them(tmp_path: Path) -> None:
+    """바이트로 쓴다 — 텍스트 쓰기는 Windows에서 개행을 번역한다(`poc_log` 모듈 docstring)."""
+    path = fake_tools.write_input(tmp_path / "scratch", TRICKY_INPUT)
+
+    assert path.parent == tmp_path / "scratch"
+    assert path.read_bytes() == TRICKY_INPUT
+    assert path.name == f"input-{hashlib.sha256(TRICKY_INPUT).hexdigest()[:16]}.poc"
+
+
+def test_write_input_name_follows_the_bytes_not_the_length(tmp_path: Path) -> None:
+    other = bytes(len(TRICKY_INPUT))  # 같은 길이, 다른 바이트
+
+    first = fake_tools.write_input(tmp_path, TRICKY_INPUT)
+    second = fake_tools.write_input(tmp_path, other)
+    again = fake_tools.write_input(tmp_path, TRICKY_INPUT)
+
+    assert first != second
+    assert again == first
+    assert (first.read_bytes(), second.read_bytes()) == (TRICKY_INPUT, other)
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([first.name, second.name])
+
+
+def test_write_input_refuses_and_removes_a_file_that_reads_back_different(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """번역된 바이트가 「의도한 내용」으로 굳지 않는다 — 틀린 입력 파일은 없는 파일보다 나쁘다."""
+    monkeypatch.setattr(Path, "read_bytes", lambda self: b"translated")
+
+    with pytest.raises(OSError, match="되읽은") as excinfo:
+        fake_tools.write_input(tmp_path, TRICKY_INPUT)
+
+    assert str(tmp_path) not in str(excinfo.value), "예외 문구에 호스트 경로가 실렸다"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_input_suffix_is_not_an_analyzable_kind() -> None:
+    """`--target`이 저장소 루트라 `artifacts/`가 대상 트리 안에 있으면 이전 run의 입력이 다음 run의
+    분석 대상이 된다 — `.bin`이면 BINARY로 분류돼 Scout 프롬프트에 실린다(`poc_log` 모듈 docstring의
+    「이름」 절, `tests/test_poc_log.py`가 같은 것을 문다)."""
+    from src.orchestrator import runner
+
+    kind = preprocess.classify(Path("input-0123456789abcdef" + fake_tools.INPUT_SUFFIX))
+
+    assert fake_tools.INPUT_SUFFIX not in preprocess._KIND_BY_SUFFIX
+    assert kind is ArtifactKind.UNKNOWN
+    assert kind not in runner._ANALYZABLE
+
+
+def test_fake_runner_writes_the_input_outside_the_target_tree(
+    target_root: Path, writer_calls: list[tuple[Path, bytes]]
+) -> None:
+    """읽기 전용 마운트 정책(engineering-guide.md §7) — 대상 트리에는 한 바이트도 안 쓴다.
+    쓰면 다음 run의 `preprocess`가 그 파일을 대상으로 센다."""
+    before = sorted(p.relative_to(target_root).as_posix() for p in target_root.rglob("*"))
+
+    evidence = _runner(target_root).run("poc", _input_args("poc"), SANDBOX)
+
+    assert evidence.ok is True
+    assert [data for _, data in writer_calls] == [TRICKY_INPUT]
+    directory = writer_calls[0][0].resolve()
+    assert target_root.resolve() not in [directory, *directory.parents]
+    assert sorted(p.relative_to(target_root).as_posix() for p in target_root.rglob("*")) == before
+
+
+def test_fake_runner_leaves_no_input_file_behind(
+    target_root: Path,
+    tmp_path: Path,
+    writer_calls: list[tuple[Path, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """쓰고 바로 지운다 — dev_fake는 파일 산출물이 없는 자리라 임시 디렉터리가 호출마다 쌓이면
+    안 된다. 임시 위치를 이 테스트의 디렉터리로 돌려 **정말 거기에 썼다가 지웠는지** 본다."""
+    litter = tmp_path / "tmp"
+    litter.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(litter))
+
+    evidence = _runner(target_root).run("poc", _input_args("poc"), SANDBOX)
+
+    assert evidence.ok is True
+    assert writer_calls[0][0].parent == litter, "임시 디렉터리를 안 썼다 — 이 검사가 공허하다"
+    assert list(litter.iterdir()) == []
+
+
+def test_fake_runner_without_input_never_calls_the_writer(
+    target_root: Path, writer_calls: list[tuple[Path, bytes]]
+) -> None:
+    _runner(target_root).run("poc", _args(".", "poc"), SANDBOX)
+
+    assert writer_calls == []
+
+
+def test_fake_runner_rejects_before_it_writes_anything(
+    target_root: Path, writer_calls: list[tuple[Path, bytes]]
+) -> None:
+    """정책 밖 도구·network·마운트 밖 경로는 거절이 **먼저**다 — 거절된 요청의 바이트는 안 쓴다."""
+    placeholder = tool_runner.INPUT_PLACEHOLDER
+    outside = ToolArgs(argv=["curl", placeholder], workdir=".", input_bytes=TRICKY_INPUT)
+    escaped = ToolArgs(argv=["poc", placeholder], workdir="../secrets", input_bytes=TRICKY_INPUT)
+
+    assert not _runner(target_root).run("curl", outside, SANDBOX).ok
+    assert not _runner(target_root).run("poc", escaped, SANDBOX).ok
+    assert not _runner(target_root).run(
+        "poc", _input_args("poc"), SANDBOX.transition(network=True)
+    ).ok
+    assert writer_calls == []
+
+
+@pytest.mark.parametrize("tool", ["asan", "gdb", "poc"])
+def test_fake_repro_outcome_is_a_constant_whatever_the_input_is(
+    target_root: Path, tool: str
+) -> None:
+    """🔴 입력 배선은 **관측만** 바꾼다. `_run_repro`의 `ok`·`exit_code`는 측정이 아니라 상수이고,
+    입력 바이트에 흔들리면 Evidence Gate E4의 뜻이 움직인다 — 「소스가 있다」가 곧 `proven`인
+    자리다(이슈 #232). 다른 바이트·빈 입력·입력 없음이 전부 같은 결과여야 한다."""
+    runner = _runner(target_root)
+    zeros = bytes(len(TRICKY_INPUT))
+
+    results = [
+        runner.run(tool, _input_args(tool, data), SANDBOX) for data in (TRICKY_INPUT, zeros, b"")
+    ]
+    results.append(runner.run(tool, _args(".", tool), SANDBOX))
+
+    assert [(e.ok, e.exit_code, e.error) for e in results] == [(True, 1, None)] * 4
+
+
+def test_fake_repro_without_a_source_still_fails_whatever_the_input_is(target_root: Path) -> None:
+    """실패 쪽 상수(`exit_code=2`)도 입력과 무관하다."""
+    missing = ToolArgs(
+        argv=["poc", tool_runner.INPUT_PLACEHOLDER],
+        workdir="없는디렉터리",
+        input_bytes=TRICKY_INPUT,
+    )
+
+    evidence = _runner(target_root).run("poc", missing, SANDBOX)
+
+    assert (evidence.ok, evidence.exit_code) == (False, 2)
+
+
+def test_fake_runner_turns_an_unwritable_input_into_failed_evidence(
+    target_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """도구 실패도 Evidence다 — 예외를 던지지 않는다(engineering-guide.md §8.3). 문구는 모델 관측에
+    실리므로 호스트 경로를 안 든다."""
+
+    def broken(directory: Path, data: bytes) -> Path:
+        raise OSError(errno.ENOSPC, "No space left on device", "/host/secret/dir/input.poc")
+
+    monkeypatch.setattr(fake_tools, "write_input", broken)
+
+    evidence = _runner(target_root).run("poc", _input_args("poc"), SANDBOX)
+
+    assert evidence.ok is False
+    assert evidence.exit_code == 2
+    assert "입력" in (evidence.error or "")
+    assert "/host/secret" not in (evidence.error or "")
 
 
 # --- StateStore (두 구현 공통 계약) -----------------------------------------
