@@ -535,7 +535,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
   반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
   오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
-  최대 `max_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
+  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
   best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
   최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면

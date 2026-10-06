@@ -255,9 +255,9 @@ def _skipped_with_partial_poc(ctx, reason):  # noqa: ANN001, ANN202, F811
 
 
 def test_the_real_loop_stopped_by_max_hop_does_not_send_its_partial_poc(ctx) -> None:  # noqa: ANN001, F811
-    max_hops = ctx.config.thresholds.max_hops
+    pov_hops = ctx.config.thresholds.pov_tool_hops
 
-    scripted, oracle = _real_loop_partial(ctx, [_gen(count=n) for n in range(1, max_hops + 5)])
+    scripted, oracle = _real_loop_partial(ctx, [_gen(count=n) for n in range(1, pov_hops + 5)])
 
     _skipped_with_partial_poc(scripted, PovStopReason.MAX_HOP)
     assert oracle.vul_calls == []

@@ -110,7 +110,14 @@ DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 RUN_DIR_PREFIX = "run_"
 
 # 실측 전 초기값인 임계값 (이슈 #91·#92). 조건 간 비교 전에 확정해야 한다.
-PROVISIONAL_THRESHOLDS = ("scout_threshold", "capsule_expansion_max", "requeue_max", "max_hops")
+# `pov_tool_hops`(#511)는 값이 사용자 결정 대기라 같은 자리다.
+PROVISIONAL_THRESHOLDS = (
+    "scout_threshold",
+    "capsule_expansion_max",
+    "requeue_max",
+    "max_hops",
+    "pov_tool_hops",
+)
 
 # `--tool-runner`가 받을 수 있는 값. 목록을 여기 적지 않고 설정 스키마에서 뽑는다 —
 # 배선이 늘었는데 CLI만 모르는 상태(그 반대도)가 생기지 않는다.
@@ -677,7 +684,7 @@ def _check_thresholds() -> Check:
     return Check(
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
-        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92)",
+        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92·#511)",
     )
 
 
@@ -1214,11 +1221,11 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
     후보당 17회다)로 센다 — 켠 run의 Auditor 호출은 후보당 홉 상한까지 간다(계산값).
 
     **⚠ pov 루프 호출은 이 합에 안 든다** — pov 좌석이 있는 프로필에서 8단계가 PoV 대상 finding당
-    최대 `1 + max_hops`회 더 부른다. 대상은 VALIDATED(critic 통과분이라 최대
+    최대 `1 + pov_tool_hops`회 더 부른다. 대상은 VALIDATED(critic 통과분이라 최대
     `min(candidates, critic_top_n)`)에 `pov_attempt_top_n`이 양수면 그 밖에서 더한 것이라 상한은
-    `min(candidates, critic_top_n + pov_attempt_top_n) × (1 + max_hops)`다(계산값 —
+    `min(candidates, critic_top_n + pov_attempt_top_n) × (1 + pov_tool_hops)`다(계산값 —
     `runner._pov_targets`가 더하는 수는 `pov_attempt_top_n` 이하이고 finding은 후보당 하나다.
-    `pov_attempt_top_n`이 0이면 `min(candidates, critic_top_n) × (1 + max_hops)` 그대로다).
+    `pov_attempt_top_n`이 0이면 `min(candidates, critic_top_n) × (1 + pov_tool_hops)` 그대로다).
     이 추정은 scout·auditor·critic 상한만 센다(라벨에 「pov 제외」).
     """
     candidates = capsules * _scout_places(config)
