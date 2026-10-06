@@ -96,7 +96,7 @@ from pathlib import Path
 from typing import Protocol
 
 from src.config import SCOUT_POOL_ROLES, ConfigError, HarnessConfig
-from src.ids import IdFactory, sha256_text
+from src.ids import IdFactory, sha256_digest, sha256_text
 from src.interfaces.model_client import (
     ModelClient,
     ModelGatewayError,
@@ -2260,8 +2260,9 @@ def _run_pov_hops(
     **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/gdb/poc)를 돌린다. `submit`은
     루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
 
-    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
-    **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
+    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 이미 낸 어느 gen과든
+    같은 **PoC 바이트**(digest 집합 조회 — A→B→A도 선다) → REPEAT_SPEC(spec JSON이 아니라 조립
+    바이트로 본다 — rationale 재작성으로 못
     피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `pov_tool_hops` 소진 → MAX_HOP. 홉 호출 자체가
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
     쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
@@ -2290,6 +2291,8 @@ def _run_pov_hops(
     workdir = state.workdirs.get(finding.finding_id, ".")
     with ctx.stage(Stage.VALIDATE):
         last_poc: bytes | None = None
+        # 지금까지 조립한 PoC의 digest(`poc_log`와 같은 `sha256:` 형식) — 바이트는 안 든다.
+        seen: set[str] = set()
         followup = ""
         prev: pov.PovHop | None = None
         hop = 0
@@ -2361,18 +2364,22 @@ def _run_pov_hops(
             hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
             oracle_observation = "oracle_vul=unavailable"
             if action.action == "gen":
-                # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
-                # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
+                # 반복 판정은 조립된 **바이트**의 digest를 **본 적 있는 모든 gen**과 견준다 — spec
+                # JSON에는 `rationale`(바이트에 안 드는 자유 텍스트)이 섞여 재설명만 바꾼 같은 PoC를
+                # 못 잡고(적대적 리뷰), 직전 한 gen만 보면 A→B→A 진동이 안 선다.
                 hop_poc = assemble_poc(action.spec)
-                if last_poc is not None and hop_poc == last_poc:
+                digest = sha256_digest(hop_poc)
+                if digest in seen:
                     _emit_pov_hop(
                         ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                         fuzz=fuzz if hop == 0 else None,
                     )
+                    # 서게 한 gen이 마지막 gen이다 — A→B→A면 A(직전 `last_poc`는 B)다.
                     return _pov_finish_and_record(
-                        ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
+                        ctx, state, finding, PovStopReason.REPEAT_SPEC, hop_poc
                     )
+                seen.add(digest)
                 last_poc = hop_poc
                 # 마지막 홉(`hop >= pov_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
                 # 두 번이 레이트 예산만 쓰고 버려진다.

@@ -405,7 +405,9 @@ def test_a_previous_runs_poc_inside_the_target_tree_never_reaches_a_prompt(
 
 # --- 루프 종단 — 모든 갈래가 마지막 gen의 PoC를 남긴다 ---------------------------------
 
-_EXITS = ("submitted", "max_hop", "repeat_spec", "absorbed_hop1_failure")
+_EXITS = (
+    "submitted", "max_hop", "repeat_spec", "repeat_spec_after_another_gen", "absorbed_hop1_failure",
+)
 
 
 def _exit_case(pov_hops: int, name: str) -> tuple[list[object], PovStopReason, bytes]:
@@ -420,6 +422,13 @@ def _exit_case(pov_hops: int, name: str) -> tuple[list[object], PovStopReason, b
             b"A" * (pov_hops + 1),
         ),
         "repeat_spec": ([_gen(count=8), _gen(count=8)], PovStopReason.REPEAT_SPEC, b"A" * 8),
+        # A→B→A: hop2에서 선다. 파일은 **서게 한 gen**의 바이트(3)이지 직전 gen(5)이 아니다 — 그
+        # gen이 「마지막 gen」이다. 끝의 `_gen(count=7)`은 이 경로가 아닐 때 닿는 자리(MAX_HOP)다.
+        "repeat_spec_after_another_gen": (
+            [_gen(count=3), _gen(count=5), _gen(count=3), _gen(count=7)],
+            PovStopReason.REPEAT_SPEC,
+            b"A" * 3,
+        ),
         "absorbed_hop1_failure": (
             [_gen(count=8), SchemaParseError("bad at hop1")],
             PovStopReason.PARSE_FAILED,
@@ -752,20 +761,23 @@ def test_gen_hop_events_carry_the_poc_sha256_and_other_hops_do_not(
     assert "poc_sha256" not in hops[1].data and "poc_sha256" not in hops[3].data
 
 
-@pytest.mark.parametrize("exit_name", ["max_hop", "repeat_spec"])
+@pytest.mark.parametrize(
+    "exit_name", ["max_hop", "repeat_spec", "repeat_spec_after_another_gen"]
+)
 def test_the_stopping_gen_hop_event_also_carries_the_poc_sha256(
     ctx: RunContext,  # noqa: F811
     tmp_path: Path,
     exit_name: str,
 ) -> None:
     """루프를 **세우는** gen 홉(max_hop·repeat)의 이벤트에도 해시가 실린다 — 정지 이벤트만 따로
-    빼먹기 쉬운 자리다. 종단 이벤트의 `poc_sha256`과 같아야 한다."""
-    actions, _, expected = _exit_case(ctx.config.thresholds.pov_tool_hops, exit_name)
+    빼먹기 쉬운 자리다. 종단 이벤트의 `poc_sha256`과 같아야 한다 — A→B→A로 서는 repeat도 서게 한
+    gen(A)의 해시이지 직전 gen(B)의 것이 아니다."""
+    actions, reason, expected = _exit_case(ctx.config.thresholds.pov_tool_hops, exit_name)
 
     scripted, _, _ = _loop(ctx, tmp_path, actions)
 
     last = _hops(scripted)[-1]
-    assert last.data["action"] == "gen" and last.data["stop_reason"] == exit_name
+    assert last.data["action"] == "gen" and last.data["stop_reason"] == reason.value
     assert last.data["poc_sha256"] == hashlib.sha256(expected).hexdigest()
     assert last.data["poc_sha256"] == _terminal(scripted).data["poc_sha256"]
 

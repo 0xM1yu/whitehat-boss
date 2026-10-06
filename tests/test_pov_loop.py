@@ -324,7 +324,7 @@ def test_pov_loop_stops_at_max_hop(ctx: RunContext) -> None:  # noqa: F811
 
 
 def test_pov_loop_stops_on_a_repeated_poc(ctx: RunContext) -> None:  # noqa: F811
-    """직전 gen과 같은 PoC 바이트를 또 내면 REPEAT_SPEC으로 선다."""
+    """A→A — 방금 낸 gen과 같은 PoC 바이트를 또 내면 REPEAT_SPEC으로 선다."""
     scripted = _scripted(ctx, [_gen(count=8), _gen(count=8)])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -538,8 +538,9 @@ def test_pov_loop_repeat_needs_the_same_bytes_not_just_the_same_length(
 ) -> None:
     """같은 **길이**·다른 바이트인 두 gen은 REPEAT가 아니다 — 판정은 바이트 내용이지 길이가 아니다.
 
-    반복 판정을 `len(poc)==len(last_poc)`로 바꾸는 변이가 여기서 죽는다: 실 모델이 같은 길이로 값만
-    바꿔 가며 시도하는 흔한 경우를 길이 비교면 REPEAT로 오판한다. 한계: 8바이트 두 gen만 본다."""
+    반복 판정을 digest 대신 길이(`len(poc)`를 집합에 넣는다)로 바꾸는 변이가 여기서 죽는다: 실
+    모델이 같은 길이로 값만 바꿔 가며 시도하는 흔한 경우를 길이 비교면 REPEAT로 오판한다. 한계:
+    8바이트 두 gen만 본다."""
     scripted = _scripted(
         ctx,
         [_gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8),
@@ -553,31 +554,57 @@ def test_pov_loop_repeat_needs_the_same_bytes_not_just_the_same_length(
     assert reason is PovStopReason.SUBMITTED  # 길이만 같아선 REPEAT가 아니다
 
 
-def test_pov_loop_repeat_compares_only_the_immediately_previous_gen(
+def test_pov_loop_stops_on_a_poc_it_saw_before_even_when_the_previous_gen_differed(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """A→B→A(진동)는 REPEAT가 아니다 — 판정은 **직전** gen과만 비교한다(「직전 gen」 계약).
+    """A→B→A→B(진동)는 hop2에서 REPEAT_SPEC이다 — 판정은 직전 gen이 아니라 **본 적 있는 모든** PoC와
+    견준다.
 
-    직전이 아니라 이전 모든 gen과 비교하는 변이가 여기서 죽는다: 세 번째 A가 첫 A와 같아도 직전(B)과
-    다르므로 반복이 아니다. 한계: A-B-A 한 패턴만 본다."""
+    직전(B)만 보면 세 번째 A가 안 걸려 진동이 **홉 상한까지** 간다 — 상한이 클수록 그만큼 더 돈다.
+    집합 조회를 직전 비교로 되돌리는 변이가 여기서 죽는다(MAX_HOP으로 끝난다). 한계: A-B 두 PoC의
+    진동만 본다."""
     a = _gen_byte(byte=0x41, count=8)
     b = _gen_byte(byte=0x42, count=8)
-    scripted = _scripted(ctx, [a, b, a, PovAction(action="submit", rationale="done")])
+    scripted = _scripted(ctx, [a, b, a, b, a, b])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
 
     _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
 
-    assert reason is PovStopReason.SUBMITTED  # 직전과만 비교 — A-B-A는 반복 아님
+    assert reason is PovStopReason.REPEAT_SPEC
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]  # 세 번째 gen(A)에서 선다
+    assert hops[-1].data["stop_reason"] == PovStopReason.REPEAT_SPEC.value
+
+
+def test_pov_loop_keeps_going_while_every_gen_is_a_new_poc(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """A→B→C는 안 선다 — 서로 다른 PoC면 집합 조회가 아무것도 안 잡고 submit까지 간다.
+
+    셋이 **같은 길이**(8)라 digest 대신 길이를 집합에 넣는 변이는 hop1에서 오판해 여기서 죽는다.
+    한계: 세 gen만 본다."""
+    scripted = _scripted(
+        ctx,
+        [_gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8),
+         _gen_byte(byte=0x43, count=8), PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert reason is PovStopReason.SUBMITTED  # 새 PoC뿐이면 반복이 아니다
+    assert [h.data["hop"] for h in _hops(scripted)] == [0, 1, 2, 3]
 
 
 def test_pov_loop_repeat_survives_an_inspect_between_two_identical_gens(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """gen(A) → inspect → gen(A)는 REPEAT다 — inspect 홉이 직전 gen의 `last_poc`를 안 지운다.
+    """gen(A) → inspect → gen(A)는 REPEAT다 — inspect 홉이 본 적 있는 PoC의 집합을 안 비운다.
 
-    inspect 분기가 `last_poc`를 지우는 변이가 여기서 죽는다: 지우면 두 번째 A가 반복으로 안 잡혀
-    루프가 이어진다. inspect는 새 PoC를 안 만들므로 「직전 gen」은 그대로 첫 A다."""
+    inspect 분기가 그 집합을 비우는 변이가 여기서 죽는다: 비우면 두 번째 A가 반복으로 안 잡혀
+    루프가 이어진다. inspect는 새 PoC를 안 만드므로 첫 A는 그대로 집합에 있다."""
     a = _gen_byte(byte=0x41, count=8)
     scripted = _scripted(
         ctx,
