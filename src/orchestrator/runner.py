@@ -2267,11 +2267,13 @@ def _run_pov_hops(
     쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
     호출부 20여 곳이 쥐고 있다.
 
-    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
-    되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
-    파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다. v3의 중간 gen은
-    별도로 `vul` 판정을 읽어 다음 모델 홉에 싣는다(#354/#386①). 여기서는 홉 이벤트(`POV_HOP`)와 종단
+    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트는 도구 요청에 데이터로
+    실리지만 어느 도구 명령도 그것을 읽지 않는다**(`pov.run_tool`) — dev_fake는 대상 소스 존재만
+    보고, 컨테이너는 미생성 파일을 돌려 도구 관측의 `ok`·`exit`·꼬리는 PoC와 무관하다(호스트
+    후속, #513). v3 관측에서 PoC의 함수인 것은 입력의 크기·digest 줄(`_pov_observation`)뿐이다 — 그
+    전까지 실서빙 pov 루프를 돌리면 도구 관측으로는 spec의 효과를 못 읽는다(모델이 언제 submit할지는
+    안 쟀다). E4 게이트 전이도 후속이다. v3의 중간 gen은 별도로 `vul` 판정을 읽어 다음 모델 홉에
+    싣는다(#354/#386①). 여기서는 홉 이벤트(`POV_HOP`)와 종단
     이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
     사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
@@ -2378,10 +2380,12 @@ def _run_pov_hops(
                     oracle_observation = _submit_vul_to_oracle(
                         ctx, state, finding, hop_poc, designatable=False
                     )
-                evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
-            else:  # inspect — 새 PoC 없이 현 후보를 진단
                 evidence = pov.run_tool(
-                    ctx, finding=finding, tool=action.tool, workdir=workdir
+                    ctx, finding=finding, tool="poc", workdir=workdir, poc=hop_poc
+                )
+            else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
+                evidence = pov.run_tool(
+                    ctx, finding=finding, tool=action.tool, workdir=workdir, poc=last_poc
                 )
             if hop >= max_hops:
                 _emit_pov_hop(
@@ -2394,8 +2398,13 @@ def _run_pov_hops(
                 ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                 fuzz=fuzz if hop == 0 else None,
             )
+            # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
             followup = _pov_observation(
-                action.action, evidence, read_payload=ctx.read_payload, wide=pov_wide
+                action.action,
+                evidence,
+                read_payload=ctx.read_payload,
+                wide=pov_wide,
+                poc=last_poc,
             )
             if action.action == "gen" and pov_wide:
                 # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
@@ -2406,7 +2415,12 @@ def _run_pov_hops(
 
 
 def _pov_observation(
-    action: str, evidence: Evidence, *, read_payload: ReadPayload, wide: bool = True
+    action: str,
+    evidence: Evidence,
+    *,
+    read_payload: ReadPayload,
+    wide: bool = True,
+    poc: bytes | None = None,
 ) -> str:
     """도구 결과를 다음 홉 user 턴으로 보낼 관측 텍스트(비지 않아야 한다 — `Prompt.body`).
 
@@ -2419,22 +2433,33 @@ def _pov_observation(
     수명주기 줄이 뒤에 온다. 앞을 자르면 컴파일 잡음만 남는다.
 
     ⚠ **`read_payload`가 `None`을 주는 것은 정상 상태다**(`dev_fake`는 로그 파일을 안 쓴다 —
-    `context.read_payload` 주석). 그때는 전 판과 **바이트가 같은** 한 줄이다.
+    `context.read_payload` 주석). 그때는 한 줄이고, 입력이 없으면 전 판과 **바이트가 같다**.
     🔴 **참조 PoC(`/tmp/poc`) 바이트가 이 경로로 프롬프트에 들어가면 run이 무효다.** 여기 실리는
-    것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
-    (`container_tools`)이 지킨다.
+    것은 도구 **stdout/stderr 로그**와 모델 자신의 PoC의 크기·digest이고 PoC 바이트 자체가
+    아니다 — 로그의 분리는 payload를 쓰는 쪽(`container_tools`)이 지킨다.
 
     `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 이전 판 v2)면 **꼬리를 안 싣는다** — v2
     prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
     같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
+
+    ⏵ **#386 ① — 직전 `gen`의 PoC 크기와 sha256을 싣는다**(`poc` — `pov.run_tool`이 도구 요청에
+    실은 바이트, 맨 hex라 trace의 `poc_sha256`과 바로 대조된다). 도구 결과는 PoC와 무관해도 이
+    줄은 **PoC의 함수**라 되먹임이 어느 PoC에 대한 것인지 가른다. 필드 이름이 `last_gen_*`인 것은
+    일부러다 — `input_*`는 도구가 그 바이트를 **받았다**고 읽히는데 v3 prefix는 그 반대를 적는다
+    (어느 명령도 그 파일을 읽지 않는다, #513). 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
+    `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
+    `wide=False`면 안 싣는다(꼬리와 같은 경계).
     """
     detail = f" error={evidence.error}" if evidence.error else ""
     head = (
         f"tool={evidence.source} action={action} ok={evidence.ok} "
-        f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
+        f"exit={evidence.exit_code} kind={evidence.kind.value}"
     )
     if not wide:
-        return head
+        return head + detail
+    if poc is not None:
+        head += f" last_gen_bytes={len(poc)} last_gen_sha256={hashlib.sha256(poc).hexdigest()}"
+    head += detail
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
     body = read_payload(evidence.payload_ref)
