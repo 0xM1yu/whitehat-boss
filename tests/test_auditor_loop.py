@@ -546,7 +546,9 @@ def _served_one_shot_config(config, *, hops: int):  # noqa: ANN001, ANN202
         profile=config.profile.transition(
             roles={**config.profile.roles, "auditor": _SERVED_AUDITOR_KEY}
         ),
-        thresholds=config.thresholds.transition(auditor_tool_hops=hops),
+        # v7은 `auditor_guards`를 선언하지 않는다 - 켜진 채면 SOURCE 옵션 게이트가 먼저 서서 이
+        # 검사가 묻는 한 방 판 규칙에 닿지 못한다(2026-10-06 v9가 그 옵션을 켰다).
+        thresholds=config.thresholds.transition(auditor_tool_hops=hops, auditor_guards=0),
     )
 
 
@@ -1246,7 +1248,7 @@ def test_a_seat_the_fake_exemption_covers_records_no_tool_hops(tmp_path: Path) -
 
 
 def test_a_served_loop_seat_records_the_cap_it_ran_with(tmp_path: Path) -> None:
-    """위 검사의 음성 쌍 — 실서빙 좌석(`harness_pool`: v8 · `AuditorAction`)은 16이 그대로 실린다.
+    """위 검사의 음성 쌍 — 실서빙 좌석(`harness_pool`: v9 · `AuditorAction`)은 16이 그대로 실린다.
 
     위만 보면 러너가 이 키를 늘 빼도 초록이다. 켠 run이 어떤 상한으로 돌았는지가 이 기록의
     존재 이유다(`test_the_off_switch_leaves_no_trace_in_the_recorded_thresholds`의 「켜면 값이

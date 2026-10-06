@@ -28,7 +28,7 @@ from src.interfaces.model_client import (
     SchemaParseError,
     Usage,
 )
-from src.interfaces.tool_runner import SandboxSpec, ToolArgs, ToolRunner
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER, SandboxSpec, ToolArgs, ToolRunner
 from src.orchestrator import gate, prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
@@ -1919,7 +1919,7 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
     assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
-        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8"}
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9"}
     )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
@@ -2246,6 +2246,99 @@ def test_successful_repro_attaches_evidence_and_proves(ctx: RunContext) -> None:
     assert after.state is FindingState.PROVEN
     assert {ev.evidence_id for ev in evidences} <= set(after.evidence_refs)
     assert any(ev.kind is EvidenceKind.SANITIZER for ev in evidences)
+
+
+class _CallRecorder:
+    """`ToolRunner` 대역 — 불린 요청을 기록하고 실제 러너에 그대로 위임한다."""
+
+    def __init__(self, inner: ToolRunner) -> None:
+        self._inner = inner
+        self.calls: list[tuple[str, ToolArgs]] = []
+
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence:
+        self.calls.append((tool, args))
+        return self._inner.run(tool, args, sandbox)
+
+
+def test_a_step_equal_to_the_input_placeholder_is_refused_not_fatal(ctx: RunContext) -> None:
+    """🔴 모델이 쓴 `repro_spec.steps`는 argv에 그대로 들어간다(`validate._call`). 원소가 예약
+    자리표와 **같으면** `ToolArgs`가 `ValidationError`를 던졌고 그 루프에는 try가 없어 run 전체가
+    죽었다(독립 검토가 `stopped_after=8`로 실증). 이제는 도구에 가기 전에 `ok=False` Evidence로
+    남긴다.
+
+    ⚠ **현재 동작을 고정한다**: `ok=False`라 `repro_failed`(F-11, `queued`)로 간다 — 실행할 수 없는
+    명세를 `tool_policy_violation`(F-12)으로 가르는 갈래(위 `test_unmappable_signal_…`)와 다르다.
+    어느 쪽이 옳은지는 이 검사가 정하지 않는다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+    assert finding.repro_spec is not None
+    finding = finding.transition(
+        repro_spec=ReproSpec(
+            steps=["./build.sh", INPUT_PLACEHOLDER],
+            expected_signal=finding.repro_spec.expected_signal,
+        )
+    )
+    recorder = _CallRecorder(ctx.tools)
+    refusing = dataclasses.replace(ctx, tools=recorder)
+
+    after, evidences = validate.run(refusing, finding=finding, workdir="parser.c")
+
+    assert recorder.calls == [], "거절한 요청이 도구까지 갔다"
+    assert [(ev.source, ev.kind) for ev in evidences] == [
+        ("build", EvidenceKind.BUILD),
+        ("asan", EvidenceKind.SANITIZER),
+    ]
+    for ev in evidences:
+        assert (ev.ok, ev.exit_code) == (False, None), "안 돈 것을 돈 것처럼 적었다"
+        assert INPUT_PLACEHOLDER in (ev.error or "") and "실행하지 않았다" in (ev.error or "")
+        assert refusing.store.get("evidence", ev.evidence_id) == ev
+    assert {ev.evidence_id for ev in evidences} <= set(after.evidence_refs)
+    calls = [e for e in refusing.trace.events if e.kind is EventKind.TOOL_CALL]
+    assert [(e.data["tool"], e.data["ok"]) for e in calls] == [("build", False), ("asan", False)]
+    keys = {"tool", "argv", "ok", "exit_code", "error", "finding_id"}
+    assert all(set(e.data) == keys for e in calls), "거절의 tool_call이 실행의 키 집합과 다르다"
+    assert after.state is FindingState.QUEUED
+    transition = next(e for e in refusing.trace.events if e.kind is EventKind.TRANSITION)
+    assert transition.data["reason"] == ReasonCode.REPRO_FAILED.value
+
+
+def test_validate_refusal_kinds_mirror_the_tool_whitelist() -> None:
+    """거절 Evidence의 `kind`는 `validate`가 든 사본이다 — 어댑터는 못 import해서 복제했다
+    (`prompt_loader`의 도구 이름 사본과 같은 사정). 화이트리스트가 움직이면 여기서 빨개지고, 이
+    노드가 부르는 도구(`build` + `_SIGNAL_TOOLS`)가 사본에서 빠지면 `_refuse`가 BUILD로 조용히
+    떨어지므로 그것도 문다."""
+    from src.adapters.fake_tools import TOOL_KINDS
+
+    called = {validate.BUILD_TOOL, *(tool for _, tool in validate._SIGNAL_TOOLS)}
+    assert called <= set(validate.REFUSED_KINDS), "이 노드가 부르는 도구가 사본에서 빠졌다"
+    assert validate.REFUSED_KINDS == {tool: TOOL_KINDS[tool] for tool in validate.REFUSED_KINDS}
+
+
+def test_validate_refusal_stamp_mirrors_both_adapter_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """거절 Evidence의 관측 시각 `_REFUSED_AT`은 어댑터 기본값의 사본이다 — 노드는 어댑터를 못
+    import해서 복제했다(위 `kind` 사본과 같은 사정). 정상 run의 Evidence는 전부 그 고정 도장이라
+    갈라지면 거절 Evidence만 다른 시각을 단다.
+
+    **어댑터 둘 다 본다.** 컨테이너 러너는 런타임이 PATH에 없으면 `SandboxUnavailable`을 던지므로
+    `shutil.which`를 가로채 띄운다(`tests/test_container_tools.py`의 `spy` 선례) — 한쪽만 보면 다른
+    쪽 기본값이 갈라져도 초록이다. `observed_at`을 주지 않아 **기본값**이 나오게 한다."""
+    from src.adapters import container_tools as ct
+    from src.adapters.fake_tools import FakeToolRunner
+    from src.ids import IdFactory
+
+    fake = FakeToolRunner(ids=IdFactory("run_stamp"), run_id="run_stamp", root=Path("target"))
+    monkeypatch.setattr(ct.shutil, "which", lambda name: f"/usr/bin/{name}")
+    container = ct.ContainerToolRunner(
+        ids=IdFactory("run_stamp"),
+        run_id="run_stamp",
+        root=Path("target"),
+        artifacts_root=tmp_path,
+        runtime="docker",
+    )
+
+    assert validate._REFUSED_AT == fake.observed_at
+    assert validate._REFUSED_AT == container.observed_at
 
 
 class _CleanExitTools:

@@ -558,15 +558,15 @@ class CapsuleBudgets(HarnessModel):
 # Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야 run이 선다(`cli`).
 # ⏵ 2026-10-03 — `config/budgets.yaml`이 entry 줄이기를 뺀 넷을 켠다(20,000토큰 상한 · 정의 ·
 # 피호출 본문 1단 · 호출자 창 10줄 · 사용자 결정). 서빙 판 v7(⏵ 2026-10-04 — v6 + 그 서술)이 그 넷을
-# 서술하고 선언한다 — ⏵ 같은 날 **지금 서빙 판은 v8**(v7 + 도구 루프, #419)이고 그 서술을 v7에서
-# 바이트 그대로 물려받아 같은 `source_options`를 선언한다. ⏵ 2026-10-04 — 다섯째
-# `auditor_callee_wrappers`(래퍼·별칭 너머, 이슈 #451)도 그 파일이 켜고 v7·v8이 서술한다.
+# 서술하고 선언한다 — ⏵ 같은 날 **서빙 판은 v8**(v7 + 도구 루프)이었고 그 서술을 v7에서
+# 바이트 그대로 물려받아 같은 `source_options`를 선언한다(⏵ 2026-10-06부터 v9).
+# ⏵ 2026-10-04 — 다섯째 `auditor_callee_wrappers`(래퍼·별칭 너머, 이슈 #451)도 그 파일이 켜고
+# v7·v8이 서술한다.
 # ⏵ 같은 날 — 여섯째·일곱째
 # `auditor_indirect_callees`(간접 피호출, C6)·`auditor_write_sites`(쓰기 지점 창, C5(a))도 그 파일이
 # 켜고 v7·v8이 서술한다(index-v3 · #304).
-# ⏵ 같은 날 — 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록, #349)는 그 파일이 **꺼 두고**(`0`)
-# v7도 v8도 서술·선언하지 **않는다** — 켜려면 프롬프트 판이 먼저 선언해야 한다(다음 판 몫).
-# 필드 기본 0은 그 파일이 키를 안 적을 때의 값이다.
+# ⏵ 같은 날 — 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록, #349)는 v9가 서술·선언한다
+# (2026-10-06 — v7·v8은 안 한다). 필드 기본 0은 그 파일이 키를 안 적을 때의 값이다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -609,6 +609,14 @@ class Thresholds(HarnessModel):
     # 이 배선 뒤의 실모델 run 1회다. 자르는 순서는 `critic_top_n`과 같다
     # (`confidence` 내림차순 · 동점은 `finding_id`) — 정렬이 흔들리면 재현 실행이 갈라진다.
     pov_attempt_top_n: int = Field(ge=0)
+    # 8단계 PoV 툴 루프(`runner._run_pov_hops`)의 **전용** 홉 상한 (이슈 #511) — 모델 호출은
+    # finding당 최대 `1 + 이 값`회다(hop 0..값). 0이면 hop0(gen) 뒤 곧장 MAX_HOP이라 submit이 없다.
+    # `max_hops`에서 떼어냈다 — Auditor가 `auditor_tool_hops`(#419)로 갈라진 것과 같은 이유다:
+    # PoV 홉을 `max_hops`로 늘리면 Scout 되묻기와 `cli estimate`의 `scout_calls`가 같이 움직인다.
+    # **필드 기본이 없다** — 값은 `config/budgets.yaml`만 든다. `auditor_tool_hops`의 기본 0은
+    # 「꺼짐 = 종전 경로」지만 여기 0은 「submit에 못 닿는다」라, 기본 0이면 키가 빠진 설정이 PoV
+    # 산출을 조용히 끈다. **값은 미결정이다**(`cli.PROVISIONAL_THRESHOLDS`) — 근거는 그 파일 주석.
+    pov_tool_hops: int = Field(ge=0)
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)
@@ -649,8 +657,8 @@ class Thresholds(HarnessModel):
     # 이 값이 아니라 아래 `auditor_callee_wrappers`다(C4). 이 값만 켜면 1단에서 멈춘다(래퍼 너머
     # 이전 모양).
     # ⚠ (⏵ 2026-10-03 — 아래는 서빙 판이 옵션을 서술하지 않던 때의 경고다. ⏵ 2026-10-04 서빙 판 v7이
-    # 넷을 서술했고 ⏵ 같은 날 지금 서빙 판 v8도 같은 서술을 물려받았다 —
-    # `prompts/auditor/v7/prefix.md` · `v8/prefix.md`. v6는 1-b 모양만 서술한다.)
+    # 넷을 서술했고 ⏵ 같은 날 서빙 판 v8도, ⏵ 2026-10-06부터의 v9도 같은 서술을
+    # 물려받았다 — `prompts/auditor/v7/prefix.md` · `v8/` · `v9/`. v6는 1-b 모양만 서술한다.)
     # 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
     # — 그전에는 v4 · 판은 `config/models.yaml`이 고른다 — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
@@ -722,11 +730,10 @@ class Thresholds(HarnessModel):
     # 주장하지 않고, 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을 적은 한 줄이다.
     # Case A·품는 함수를 모르는 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등, #259)은 안 붙이고
     # 사유를 trace `guards_skipped`가 든다. 행 상한·예산 계산은 `source_guards`·
-    # `runner._auditor_source`가 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 필드 기본도
-    # `budgets.yaml`도 끈다(0 — **켠 효과는 미실측**). **v7도 v8도 이 옵션을 서술·선언하지
-    # 않으므로** 켜고 그 둘을 고르면 `cli` run·doctor가 막는다 — 켜려면 프롬프트 판이
-    # `auditor_guards`를 선언해야 한다(다음 판 몫). ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은
-    # SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
+    # `runner._auditor_source`가 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 필드 기본은 0이고
+    # `budgets.yaml`이 켠다(⏵ 2026-10-06 — **켠 효과는 미실측**). Auditor v9가 이 옵션을
+    # 서술·선언한다. v7·v8은 안 하므로 켜고 그 둘을 고르면 `cli` run·doctor가 막는다.
+    # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
@@ -749,27 +756,34 @@ class Thresholds(HarnessModel):
     # 이 값과 무관하게 `origin=model`로 덮인다.
     # ⚠ **켜면 #232가 잠복에서 도달 가능으로 바뀐다** (#393 리뷰 MEDIUM-1) — 전엔 8단계에
     # 아무것도 안 올라와 #232가 닿을 수 없었다. 합성이 Finding을 validated로 올려 8단계가 도구를
-    # 돌리는데, `gate`의 `p4`는 `ok=True`만 보고 크래시(non-zero)와 exit 0을 안 가른다 -> 크래시
-    # 0건으로 proven이 날 수 있다. 켜기 전에 #232를 먼저 본다.
+    # 돌린다.
+    # ⏵ **2026-10-05 — 그 뒤 문장이 코드와 어긋났으므로 정정한다.** 앞 판은 *「`p4`는 `ok=True`만
+    # 보고 크래시와 exit 0을 안 가른다 -> 크래시 0건으로 proven이 날 수 있다」*고 적었다.
+    # `gate.py`의 `p4`는 런타임 Evidence의 종료 코드가 **0도 `None`도 아닐 것을 이미 요구한다**
+    # (이슈 #401). 그리고 **이 값이 먹이는 술어는 `p4`가 아니라 `p3`**다 — 합성 명세는
+    # E3(`validated`)에 들어가고 `p4`(E4 `proven`)는 `repro_spec`을 읽지 않는다(위 ⚠가 적는
+    # 그대로다). 남은 한계 둘은 **비-0 종료가 크래시의 대용 지표라는 점**과
+    # **`expected_signal` 미대조**이고 그것이 #232다. 켜기 전에 #232를 먼저 본다.
     synthesize_repro_spec: int = Field(default=0, ge=0, le=1)
     # Auditor(5단계)가 한 후보에서 돌 수 있는 도구/조회 홉 수 상한 (이슈 #419).
     # **0이면 종전 한 방 경로다** — 노드가 홉 루프에 안 들어가므로 요청 바이트가 지금과 똑같다.
     # ⏵ 2026-10-04 — 필드 기본은 여전히 0이지만 **저장소 설정은 켜짐이다**: `config/budgets.yaml`이
-    # 16을 들고 정본 Auditor가 루프 판(v8)이다. 「기본」이 어느 쪽인지는 이 필드가 아니라 그
+    # 16을 들고 정본 Auditor가 루프 판(v9)이다. 「기본」이 어느 쪽인지는 이 필드가 아니라 그
     # 파일이 정한다.
     # 양수면 매 홉 `AuditorAction`(`src/schemas/auditor.py`)을 받아 조회·도구를 돌리고 관측을
     # 다음 홉 user 턴으로 되먹인다.
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
-    # Auditor는 `call_tool`을 안 불렀고(켜면 `probe`가 부른다), 배선된 pov 판은 gdb를 광고하지
-    # 않는다. 그래서 16은 **계획값**이고 실측 근거는 홉당 usage(trace `auditor_hop`)가 처음 돈
-    # run에서 만든다.
+    # Auditor는 `call_tool`을 안 불렀고(켜면 `probe`가 부른다), 2026-10-05 전에 배선돼 있던 pov v2는
+    # gdb를 광고하지 않았다(v3는 한다). 그래서 16은 **계획값**이고 실측 근거는 홉당 usage
+    # (trace `auditor_hop`)가 처음 돈 run에서 만든다.
     #
     # **값의 성격은 폭주 차단이다 — 창 적합을 보장하지 않는다.** vast 실측 창 262,144
     # (`config/serving/vastai.yaml`)에서 출력 상한 65,536(`output_max_by_role.auditor`)을 빼면 입력
     # 몫이 196,608(계산값)이다. v4 최악 추정 입력 28,833(`config/models.yaml`의 그 좌석
-    # 「기동 조건」 절 — ⏵ 2026-10-04 지금 정본은 v8이고 prefix가 더 길어 hop0가 이보다 크다)을
+    # 「기동 조건」 절 — ⏵ 2026-10-04 정본은 v8이었고 ⏵ 2026-10-06부터 v9이며 prefix가 더 길어
+    # hop0가 이보다 크다)을
     # 넣으면 167,775가
     # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
     # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
@@ -777,9 +791,9 @@ class Thresholds(HarnessModel):
     # 거절한다.
     # ⚠ 53,248 창(입력 몫 20,480)은 **ATOM 시절 계획값**이다 — ATOM 사용 종료 2026-09-29(#340).
     #
-    # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 셋이고
-    # (`runner._run_ne_hops` · `runner._run_pov_hops` · `cli estimate`의
-    # `scout_calls = candidates * (1 + max_hops)`) 올리면 Scout 되묻기가 같이 늘어난다. NE 쪽은
+    # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 둘이고
+    # (`runner._run_ne_hops` · `cli estimate`의 `scout_calls = candidates * (1 + max_hops)`) 올리면
+    # Scout 되묻기가 같이 늘어난다 — PoV 루프는 `pov_tool_hops`로 갈렸다. NE 쪽은
     # 효과가 이미 측정돼 있다 — hop0 NE 84좌석 중 5건, 루프에 든 10좌석(강제 8 · 스스로 NE 2)에서
     # 판정이 바뀐 것 1건, 정상 표본 0/24(`docs/experiments/`의 2026-09-27·09-28 NE 스모크).
     #
@@ -1181,6 +1195,29 @@ def _check_real_serving_limits_are_positive(config: HarnessConfig) -> None:
         )
 
 
+def check_container_runtime_caps_tool_time(config: HarnessConfig) -> None:
+    """`tool_runner`가 `fake`가 아니면 도구 시간 상한(`tool_seconds`)이 양수여야 한다 (이슈 #436).
+
+    `RunContext.call_tool`은 Fake 런타임이 아니면 도구 시간을 **청구한다** - 그런데 상한 0은
+    검사되지 않으므로(`BudgetLedger._overrun`) 실컨테이너가 한도 없이 돈다. 위 실서빙 가드는
+    `served_models()`가 비는 Fake 모델 프로필에서 조기 return하므로 이 축을 못 본다 - 실제로
+    `dev_fake` 예산을 쓰는 dev 프로필 셋이 실컨테이너를 돌고 있었다. 막는 것은 0뿐이고 값은
+    정하지 않는다.
+
+    **오버라이드 뒤에도 돈다** - `cli.load_profile`이 `--tool-runner`로 config를 갈아 끼운 뒤에
+    이 함수를 다시 부른다(`load_config`만 지나면 `dev_fake` + `--tool-runner docker`가 건너뛴다)."""
+    runner = config.profile.adapters.tool_runner
+    if runner == "fake" or config.budget.tool_seconds > 0:
+        return
+    raise ConfigError(
+        f"프로필 {config.profile_name!r}은 도구 런타임 {runner!r}로 실컨테이너를 돌리는데 예산 "
+        f"{config.profile.budget!r}의 tool_seconds가 0이다 - 상한 0은 「검사하지 않는다」"
+        "(`BudgetLedger`)라 도구 시간이 한도 없이 돈다. 컨테이너 프로필은 tool_seconds를 "
+        "양수로 적는다(0을 쓸 수 있는 것은 도구 시간을 청구하지 않는 Fake 런타임뿐이다). "
+        "`--tool-runner` 오버라이드라면 컨테이너 dev 프로필(`dev_docker` 등)을 쓴다"
+    )
+
+
 def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     """프로필 하나를 해석해 `HarnessConfig`로 돌려준다.
 
@@ -1224,6 +1261,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     )
     _check_swap_lists_every_served_role(config)
     _check_real_serving_limits_are_positive(config)
+    check_container_runtime_caps_tool_time(config)
     return config
 
 

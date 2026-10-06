@@ -38,7 +38,7 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 (없으면 빈 목록 — 도구를 안 쓰는 한 방 프롬프트). **스키마가 허용해도 프롬프트가 광고하지
 않으면 모델은 그 도구를 영영 안 쓴다** — PR #327이 `gdb`를 `TOOL_KINDS`에 넣었는데 pov v2
 prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그 줄을 다시 쓸 때까지 모델이
-`gdb`를 부를 길이 없었다(`prompts/pov/v3/meta.yaml`의 「v2와 다른 다섯」 ①).
+`gdb`를 부를 길이 없었다(`prompts/pov/v3/meta.yaml`의 「v2와 다른 여섯」 ①).
 
 **버전 이름으로 분기하지 않는 이유.** 노드마다 있는 `_CONTENT_AWARE_VERSIONS`가 이름 목록이라
 판이 하나 늘 때마다 그 집합을 고쳐야 하고, 잊으면 새 판에서 그 기능이 조용히 꺼진다. 선언이
@@ -258,7 +258,8 @@ _TRUNCATION_MARKER = "\n...\n"
 # 런타임마다 실제 러너로 대조한다.
 #
 # ⚠ 뺀 뒤에도 **절단이지 요약이 아니다** — semgrep JSON의 `message` 같은 가운데는 잘릴
-# 수 있다(구조 추출은 #256 항목 3에 남는다). 그리고:
+# 수 있다(구조 추출은 semgrep만 #496이 히트를 한 줄씩 접는다 — 그 밖의 도구는 #481에 남는다).
+# 그리고:
 # - 못 빼는 호스트 경로 — 실행 전 거절 사유(`# 실행하지 않았다: …` — 그 줄이 곧 실패
 #   사유다), 런타임 CLI가 stderr에 쓴 문구(도구 stderr와 한 절이라 가를 표지가 없다),
 #   줄바꿈이 쪼갠 명령줄의 둘째 줄: env 키·값에 줄바꿈이 있으면 그 뒤의 바인드 인자가
@@ -310,8 +311,8 @@ _HARNESS_HEADER_LINE = re.compile(
 # 같은 구조의 픽스처를 이 함수로 재면 128이다(자리표시자 없이 값만 지우면 11 + 96 = 107).
 # 픽스처의 본문(머리줄 합쳐)에서 첫 히트의 `check_id`는 189자, 규칙 이름의 끝은 254자,
 # 줄번호 1087은 284자라 모두 head 530자 안이다 — **10건 중 1건**이고 나머지 아홉은 여전히
-# 안 보인다. 결과를 한 줄씩 접어 전부 보이게 하는 것은 **도구를 아는 파서**가 필요하고(이
-# 함수는 도구를 모르는 범용 절단기다) 그 이슈에 선택지로 남아 있다.
+# 안 보인다 — **이 범용 제거 경로의 한계**다. semgrep Evidence는 별도 함수
+# `_fold_semgrep_results`로 히트당 한 줄에 접는다. 이 함수의 JSON 계약은 그대로다.
 #
 # ⚠ **뺀 사실을 숨기지 않는다**(§0) — 자리에 뺀 값의 글자 수를 남긴다. 그 수는 **재직렬화
 # 길이**(`json.dumps` 기본 구분자·`ensure_ascii=True`)이지 원문 글자 수가 아니다 — 구분자가
@@ -402,6 +403,84 @@ def _bound_text(text: str, cap: int) -> tuple[str, bool]:
     return f"{head}{_TRUNCATION_MARKER}{tail}", True
 
 
+def _fold_semgrep_results(text: str, cap: int) -> tuple[str, bool] | None:
+    """semgrep 결과를 히트당 한 줄로 접는다 — 이슈 #481의 선택지 1.
+
+    호출부가 Evidence.source로 도구를 가른다. 범용 `_drop_json_noise`와 독립이며 원본 stdout과
+    판정은 바꾸지 않는다. 실 로그 유래 `_REAL_STDOUT`의 히트 반복판으로 표시 건수를 잰다.
+    실서빙 모델의 인용 개선은 0회 관측(이 함수의 검증은 본문 가시성뿐이다).
+
+    규칙·경로·시작/끝 줄은 온전히 남기고 메시지는 최소 16자(생략 표시 포함)를 예약한다.
+    그 조건으로 원래 순서의 최대 접두 건수를 계산한 뒤 남은 예산을 메시지에 나눠 쓴다.
+    stdout 밖 실행 기록은 앞 80자·뒤 20자까지 예약한다(설계 상수, 작은 cap이면 더 줄인다).
+    JSON의 나머지 필드는 생략 표시하며 파싱 실패 목록은 건수와 재직렬화 길이를 남긴다.
+    깨진 JSON·필수 필드가 없는 결과는 None으로 돌려 종전 절단 경로에 맡긴다.
+    """
+    lines = text.split("\n")
+    # 하네스 로그에서는 stdout만 읽는다 — stderr의 JSON을 히트로 오인하지 않는다.
+    start = lines.index("--- stdout ---") + 1 if "--- stdout ---" in lines else 0
+    end = lines.index("--- stderr ---") if "--- stderr ---" in lines else len(lines)
+    try:
+        document = json.loads("\n".join(lines[start:end]))
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(document, dict) or not isinstance(document.get("results"), list):
+        return None
+    hits = document["results"]
+    identities: list[str] = []
+    messages: list[str] = []
+    for hit in hits:
+        try:
+            path, rule = hit["path"], hit["check_id"]
+            first, last = hit["start"]["line"], hit["end"]["line"]
+            message = hit["extra"]["message"]
+        except (KeyError, TypeError):
+            return None
+        if (
+            not all(isinstance(value, str) for value in (path, rule, message))
+            or not all(type(value) is int for value in (first, last))
+        ):
+            return None
+        # 개행은 공백으로 접어 한 히트가 물리 줄 하나를 쓰도록 한다.
+        identities.append(f"{' '.join(path.split())}:{first}-{last} {' '.join(rule.split())}: ")
+        messages.append(" ".join(message.split()))
+    errors = document.get("errors", [])
+    if not isinstance(errors, list):
+        return None
+    notice = (
+        f"errors: {len(errors)} ({len(json.dumps(errors))} chars dropped); "
+        "other JSON fields omitted"
+    )
+    context, _ = _bound_text("\n".join(lines[:start]), min(80, cap // 5))
+    tail, _ = _bound_text("\n".join(lines[end:]), min(20, cap // 20))
+    suffix = f"\n{tail}" if tail else ""
+    prefix = f"{context}\n{notice}\n" if context else f"{notice}\n"
+    selected: list[str] = []
+    for identity, message in zip(identities, messages, strict=True):
+        preview = message if len(message) <= 16 else message[:13] + "..."
+        candidate = selected + [identity + preview]
+        count = f"{len(candidate)} of {len(hits)} shown"
+        if len(prefix + count + "\n" + "\n".join(candidate) + suffix) > cap:
+            break
+        selected = candidate
+    count = f"{len(selected)} of {len(hits)} shown"
+    # 아주 작은 잔여 예산에서도 표시 건수를 먼저 둔다. 잘린 표시도 truncated로 알린다.
+    if not selected:
+        if len(count) >= cap:
+            return count[:cap], True
+        rest, _ = _bound_text(prefix + suffix, cap - len(count) - 1)
+        return f"{count}\n{rest}".strip(), True
+    spare = cap - len(prefix + count + "\n" + "\n".join(selected) + suffix)
+    for index in range(len(selected)):
+        old_width = len(selected[index]) - len(identities[index])
+        width = old_width + spare // (len(selected) - index)
+        message = messages[index]
+        preview = message if len(message) <= width else message[: width - 3] + "..."
+        selected[index] = identities[index] + preview
+        spare -= len(preview) - old_width
+    return prefix + count + "\n" + "\n".join(selected) + suffix, True
+
+
 def evidence_summaries(
     evidences: Iterable[Evidence],
     read_payload: Callable[[str], str | None],
@@ -413,7 +492,8 @@ def evidence_summaries(
 
     **하네스가 쓴 실행 기록 머리줄(`_HARNESS_HEADER_LINE`)은 절단 전에 뺀다** — 절단 예산을 도구
     출력에 쓰고 명령줄의 호스트 경로를 모델에 싣지 않는다(못 빼는 형태와 오탐은 그 정규식의
-    주석). 로그 파일은 그대로다.
+    주석). 로그 파일은 그대로다. semgrep은 `_fold_semgrep_results`로 먼저 접고, 그 밖의 도구나
+    파싱 실패는 범용 잡음 제거·절단 경로로 간다.
 
     payload가 없으면(fake·미배선·파일 부재) 그 evidence는 맵에서 빠진다 → 호출부는 그
     evidence를 metadata만으로 싣는다. 총 예산을 넘으면 이후 evidence는 body를 비운다.
@@ -428,8 +508,14 @@ def evidence_summaries(
         if remaining <= 0:
             out[ev.evidence_id] = {"body": "", "truncated": True}
             continue
-        trimmed = _drop_json_noise(_HARNESS_HEADER_LINE.sub("", raw))
-        body, truncated = _bound_text(trimmed, min(per_cap, remaining))
+        trimmed = _HARNESS_HEADER_LINE.sub("", raw)
+        cap = min(per_cap, remaining)
+        folded = (
+            _fold_semgrep_results(trimmed, cap)
+            if getattr(ev, "source", None) == "semgrep"
+            else None
+        )
+        body, truncated = folded or _bound_text(_drop_json_noise(trimmed), cap)
         used += len(body)
         out[ev.evidence_id] = {"body": body, "truncated": truncated}
     return out

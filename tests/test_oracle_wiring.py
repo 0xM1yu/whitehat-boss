@@ -196,6 +196,7 @@ def test_a_candidate_event_carries_nothing_a_reader_could_count_as_a_score(
     assert [e.data for e in submitted] == [
         {
             "leg": "vul",
+            "designatable": True,
             "task_id": TASK_ID,
             "poc_sha256": hashlib.sha256(poc).hexdigest(),
             "poc_bytes": len(poc),
@@ -211,7 +212,7 @@ def test_a_candidate_event_carries_nothing_a_reader_could_count_as_a_score(
 def test_a_loop_that_did_not_submit_sends_nothing_even_with_a_partial_poc(
     ctx, monkeypatch, reason  # noqa: ANN001, F811
 ) -> None:
-    """실제 루프는 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`에서 부분 PoC(`last_poc`)를 들고 돌아온다.
+    """실제 루프는 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`에서 마지막 `gen`의 부분 PoC를 든다.
     스텁이 `(None, ...)`만 내면 `SUBMITTED` 가드를 지워도 초록이라, 부분 바이트를 실어 건다."""
     state, (finding,) = _findings(ctx, 1)
     _stub_loop(monkeypatch, [(b"partial poc", reason)])
@@ -254,9 +255,9 @@ def _skipped_with_partial_poc(ctx, reason):  # noqa: ANN001, ANN202, F811
 
 
 def test_the_real_loop_stopped_by_max_hop_does_not_send_its_partial_poc(ctx) -> None:  # noqa: ANN001, F811
-    max_hops = ctx.config.thresholds.max_hops
+    pov_hops = ctx.config.thresholds.pov_tool_hops
 
-    scripted, oracle = _real_loop_partial(ctx, [_gen(count=n) for n in range(1, max_hops + 5)])
+    scripted, oracle = _real_loop_partial(ctx, [_gen(count=n) for n in range(1, pov_hops + 5)])
 
     _skipped_with_partial_poc(scripted, PovStopReason.MAX_HOP)
     assert oracle.vul_calls == []
@@ -298,6 +299,7 @@ def test_a_failed_vul_submission_is_absorbed_and_recorded_and_the_others_still_g
     assert failed.subject_id == findings[2].finding_id
     assert failed.data == {
         "leg": "vul",
+        "designatable": True,
         "poc_sha256": hashlib.sha256(_POCS[2]).hexdigest(),
         "poc_bytes": len(_POCS[2]),
         "error": "RuntimeError",
@@ -1090,7 +1092,7 @@ _SUB = VulSubmission(TASK_ID, "a" * 32, 1)
 
 
 def _attempt(finding_id: str, poc: bytes) -> VulAttempt:
-    return vul_ok(finding_id, poc, _SUB, wall_ms=1)
+    return vul_ok(finding_id, poc, _SUB, wall_ms=1, designatable=True)
 
 
 def _ledger_of(*attempts: VulAttempt) -> OracleLedger:
@@ -1350,6 +1352,7 @@ def _trap_attempt(finding_id: str) -> VulAttempt:
         wall_ms=1,
         poc=body,
         submission=_TrapSubmission(),  # type: ignore[arg-type]
+        designatable=True,
     )
 
 
@@ -1472,3 +1475,33 @@ def test_the_oracle_leg_leaves_the_graded_evidences_alone(
 
     assert state.evidences == evidences
     assert state.findings == found
+
+
+_CANARY_REF = {"canary_path": "/ops/canary.json", "canary_sha256": "sha256:" + "ab" * 32}
+
+
+class _BoundOracle(FakeOracle):
+    """카나리 보고서에 묶인 채점기 - `TaskOracle`이 `_oracle_for`에서 받는 두 값을 든다."""
+
+    canary_path = _CANARY_REF["canary_path"]
+    canary_sha256 = _CANARY_REF["canary_sha256"]
+
+
+def test_the_canary_report_a_run_leaned_on_is_recorded_in_the_manifest_summary(
+    tmp_path: Path,
+) -> None:
+    """이슈 #487 - `RunRecord.oracle`에 보고서 경로와 sha256이 남는다. 빼면 못 변호한다."""
+    result, _ = _run(tmp_path, oracle=_BoundOracle())
+
+    assert result.record.oracle is not None
+    assert {key: result.record.oracle[key] for key in _CANARY_REF} == _CANARY_REF
+
+
+def test_a_run_without_a_canary_reference_leaves_the_summary_keys_as_they_were(
+    tmp_path: Path,
+) -> None:
+    """이 필드 이전의 manifest와 키 집합이 같아야 한다 - 안 준 run에 빈 칸을 새로 만들지 않는다."""
+    result, _ = _run(tmp_path, oracle=FakeOracle())
+
+    assert result.record.oracle is not None
+    assert not {"canary_path", "canary_sha256"} & result.record.oracle.keys()

@@ -139,7 +139,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 지금 배선된 **v8**(도구 루프 · body는 v6와 바이트 동일)은
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 지금 배선된 **v9**(v8 + `auditor_guards` 서술 · body 동일)는
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -150,17 +150,16 @@ agent:
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **지금 배선된 판은 v8**이고 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — **지금 배선된 판은 v9**다(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
   `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
-  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 **꺼져 있다** —
-  `budgets.yaml`이 키를 `0`으로 둔다. **v7도 v8도 이 옵션을 서술·선언하지 않는다** — 켜려면 프롬프트 판이 `auditor_guards`를
-  서술하고 meta `source_options`로 선언해야 하고(그 전에 켜고 둘 중 하나를 고르면 `cli` run·doctor가 막는다), 그것은 다음 판
-  몫이다(켠 효과 측정과 함께). 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
+  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 ⏵ 2026-10-06 **켜져 있다** —
+  `budgets.yaml`이 키를 `1`로 둔다. **v9가 이 옵션을 서술하고 meta `source_options`로 선언한다.** v7·v8은 선언하지 않아 켜고 그
+  둘을 고르면 `cli` run·doctor가 막는다. 켠 효과는 미실측이다. 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
   `GUARDS (syntactic — may not dominate)` 머리줄과 `파일:줄 | 조건 [exit: …]` 행이 붙는다 — sink 호출의 인자 이름을 언급하는
   `if`·`while`·`for`·삼항·assert 계열 조건이고 지배를 주장하지 않는다. 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을
   적은 한 줄이다. 가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등 #259 · `\n`을 안 단 `\r`)에는 안 붙고 사유를 trace
@@ -243,8 +242,8 @@ agent:
 
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
 ~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
-그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**이고 **지금 배선된 판이다**(`prompts/auditor/v8/` ·
-`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**(`prompts/auditor/v8/` ·
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06부터 **지금 배선된 판은 v9**다(v8 + `auditor_guards` 서술). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
 이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
 `src/schemas/auditor.py`(`AuditorAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
@@ -382,7 +381,7 @@ agent:
    읽힐 수 있으니 「관측이 받쳐 주는 것만 쓴다」를 한 문장 더한다.
    ⏵ 2026-10-04 — **v8은 이 항목의 첫째(repro_spec의 금지 문장을 지운다)를 지키지 않았다.** 그 문장이
    `prompts/auditor/v8/prefix.md:300`에 그대로 있고(`git grep -c "Do not invent build options" prompts/auditor`
-   → v4~v8 각 1) v8이 고친 것은 그 앞 구절(「or by an observation you received on an earlier hop of this
+   → v4~v9 각 1) v8이 고친 것은 그 앞 구절(「or by an observation you received on an earlier hop of this
    call」을 더함)뿐이다. 나머지 둘(「Return only the final Finding JSON object」·「content must contain only the
    Finding JSON object」)은 v8이 다시 썼다. 남긴 문장이 `probe` 사용을 막는지는 v8로 돈 run이 0건이라 **미측정**이다 —
    이 항목을 그대로 두고 v8을 고칠지, 「지어내기 금지라 남겨도 된다」로 항목을 고칠지는 결정이 필요하다.
@@ -418,7 +417,7 @@ agent:
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(v8)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(v9)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -465,7 +464,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
   만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
-- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임).
+- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임 — v3는 직전 `gen`의 PoC가 있으면
+  첫 줄에 그 `last_gen_bytes`·`last_gen_sha256`이 붙는다, #386 ① — 이름이 `input_*`가 아닌 것은
+  일부러다: 도구가 그 바이트를 받았다고 읽히지 않게) + (v3이고 `--oracle-submit`일 때) 직전
+  `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
   직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
   스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
@@ -485,13 +487,16 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
-  (배선은 별 PR). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
+  (2026-10-05 v3 배선). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
   아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3 prefix에는 "언제 쓰라"는 지시를
   두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
-  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만
-  넘긴다) — `poc`·`asan`도 gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와
-  무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 —
+  `ToolArgs.input_bytes`, #386 ① — 어느 도구 명령도 그 파일을 인자로 받지 않는다. 컨테이너 쪽은
+  `test_no_executed_container_command_receives_the_input_today`와 `plan("poc")`의 정확 핀
+  `test_the_poc_command_takes_no_argument_today`가 잰다 — 읽게 하는 것은 #513이다) — `poc`·`asan`도
+  gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 도구 관측이 PoC와 무관하므로(v3 관측의
+  `last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다) `harness_pool`의 8단계를 돌리지 않는다.
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
@@ -503,9 +508,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
   이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
   경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
-- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): 후보(finding)마다 PoC를 채점기의 **`vul` 다리에만**
-  내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
-  지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
+- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
+  다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
+  이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
+  `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다
+  (`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
   때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여섯이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
   여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
@@ -524,21 +531,29 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
   위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
   (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
-  `response_exit_code`가 지정 시점에 손에 있는데도다(`runner._designate_final`). 서버 주소는 조작자가
+  `response_exit_code`와 중간 gen의 `query_vul` 관측이 지정 시점에 손에 있는데도다
+  (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
+  반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
+  오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
+  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
+  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
+  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
   `--mask-map`으로 줄 때만 받는다 — 제출은 번들의 마스킹된 id로, 판정 조회와 제출 전 캐시 판별은 맵이 준 실
-  id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). ⚠ 마스킹 서버
+  id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). 조회에 쓰는 실 id가 `oss-fuzz-latest:` 계열이면
+  저자 서버가 `vul` 제출부터 400으로 거부하므로 그것도 제출 전에 거절한다(이슈 #431, 소스 판독). ⚠ 마스킹 서버
   경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. ⏵ **2026-10-04 — 필수 입력이 하나 늘었다**:
   `--oracle-canary`가 가리키는 **카나리 보고서**(`tools/oracle_canary.py <task-id> --out <경로>`가 쓴 JSON)
   없이는 제출이 서지 않는다(이슈 #383). 호스트 `vm.mmap_rnd_bits`가 28보다 크면 무해한 입력도
   「크래시」로 집계된 것을 쟀기 때문이고, 보고서가 이 과제의 것이 아니거나 통과가 아니면 거부한다(exit 2).
   마스킹 run에서는 보고서의 `task`가 **실 id**다(도구가 과제 id로 이미지 이름을 만든다). ⚠ 하네스가 그
   도구를 직접 돌리지는 않고, 보고서가 **지금 이 부팅**의 것인지와 **채점 컨테이너를 돌리는 장비**의 것인지는
-  게이트가 못 가린다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  게이트가 못 가린다. 기댄 보고서의 **경로(풀어 쓴 것)와 검사한 바이트의 sha256**은 매니페스트 `oracle`의
+  `canary_path`·`canary_sha256`에 남는다(이슈 #487). 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
-  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
+  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(모든 `vul` 시도마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
   서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
   검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
@@ -638,7 +653,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v8"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v9"}
 }
 ```
 
@@ -676,8 +691,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
 > gitignore라 커밋된 보고서만 센 것이다). ⏵ 2026-10-04 — **v7을 고른다**(v6 + SOURCE 옵션 넷의 서술, #349).
 > 위 Finding 예시의 `prompt_version`도 고쳤다. `trigger_status` 문장은 v6와 같다.
-> ⏵ 같은 날 — **지금 고르는 것은 v8**이다(도구 루프, #419 · v7 + 홉 프로토콜). v7로 돈 run도 v8로 돈
-> run도 0건이다.
+> ⏵ 같은 날 — 그때 고른 것은 v8이었다(도구 루프, #419 · v7 + 홉 프로토콜). ⏵ 2026-10-06 — **지금 고르는 것은
+> v9**다(v8 + `auditor_guards` 서술). v7로 돈 run도 v8로 돈 run도 v9로 돈 run도 0건이다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -736,13 +751,13 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v8", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v9", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
   "tool_runner": "docker",
   "device": "atom",
-  "budget": {"input_tokens": 40000000, "output_tokens": 4000000, "gpu_seconds": 72000},
+  "budget": {"input_tokens": 400000000, "output_tokens": 40000000, "gpu_seconds": 7200000},
   "thresholds": {"scout_threshold": 0.5},
   "seed": 20260901,
   "sampling": {"temperature": 0.2, "top_p": 0.95},

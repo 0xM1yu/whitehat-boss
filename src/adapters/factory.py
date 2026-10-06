@@ -242,6 +242,9 @@ class Deps:
     # (`cli._oracle_for`). 기본 `None`이 「제출 안 함」이고 그것이 이 필드 없이 조립된 `Deps`의 옛
     # 동작이다.
     oracle: Oracle | None = None
+    # 그 채점기가 기댄 카나리 보고서의 `{canary_path, canary_sha256}`(#487). `slicer`와 같이 러너가
+    # 만들지 않고 받는다 - `RunRecord.oracle` 요약에 합쳐진다. `None`이면 안 합친다.
+    canary_ref: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -447,6 +450,7 @@ def build_deps(
     slices_path: Path | None = None,
     device: str | None = None,
     oracle: Oracle | None = None,
+    canary_ref: dict[str, str] | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
@@ -551,6 +555,7 @@ def build_deps(
     return Deps(
         # 채점기(#386) — factory가 만들지 않고 받는다. 서버 주소와 과제 신원을 아는 것은 CLI다.
         oracle=oracle,
+        canary_ref=canary_ref,
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
         tools=tools,

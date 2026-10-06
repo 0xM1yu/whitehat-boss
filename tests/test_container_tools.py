@@ -7,6 +7,7 @@
 `ok`와 `exit_code`의 의미가 섞이지 않는지, 컴파일 성공이 실행으로 둔갑하지 않는지.
 """
 
+import errno
 import hashlib
 import importlib.util
 import json
@@ -38,12 +39,17 @@ from src.adapters.container_tools import (
 )
 from src.adapters.fake_tools import TOOL_KINDS, FakeToolRunner, SandboxUnavailable
 from src.ids import IdFactory
+from src.interfaces import tool_runner
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
+from tests.conftest import plant_link
 
 RUN_ID = "run_20260901_0001"
+LF = chr(10)
+CRLF = (chr(13) + chr(10)).encode()
+
 TARGET = Path(__file__).resolve().parent / "fixtures" / "target"
 GDB_TARGET = Path(__file__).resolve().parent / "fixtures" / "gdb"
 OBSERVED_AT = datetime(2026, 9, 1, tzinfo=UTC)
@@ -744,6 +750,49 @@ def test_log_records_the_command_that_actually_ran(tmp_path: Path, spy: _Spy) ->
     assert evidence.digest == f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}"
 
 
+def test_the_log_digest_matches_the_bytes_on_disk(tmp_path: Path, spy: _Spy) -> None:
+    """digest는 **그 파일**을 검증하는 값이다 — 그래서 바이트로 대조한다 (이슈 #387).
+
+    ⚠ 위 검사는 `read_text`로 읽어 비교하는데 **그 호출이 CRLF를 LF로 되돌려 읽는다.**
+    그래서 디스크가 CRLF여도 통과한다 — 이 결함이 그 틈으로 지나갔다.
+    """
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
+    )
+
+    raw = (tmp_path / RUN_ID / "semgrep" / f"{evidence.evidence_id}.log").read_bytes()
+
+    assert evidence.digest == f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    assert CRLF not in raw, "로그가 CRLF로 써졌다 — digest는 LF 본문의 해시다"
+
+
+def test_the_digest_is_taken_from_the_bytes_that_were_written(
+    tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """플랫폼에 안 기댄다 — **파일에 건넨 바이트**가 digest의 입력이다 (이슈 #387).
+
+    텍스트 쓰기(`write_text`)는 줄바꿈을 플랫폼에 맡겨 Windows에서 digest와 파일이 어긋난다.
+    바이트로 쓰면 번역될 여지가 없다. 그래서 `write_bytes`가 받은 바이트를 가로채 digest와
+    대조한다 — 텍스트 쓰기로 되돌리면 가로챌 호출이 없어 **어느 OS에서도** 빨개진다.
+    """
+    real_write_bytes = Path.write_bytes
+    written: list[bytes] = []
+
+    def recording_write_bytes(self: Path, data: bytes) -> int:
+        if tmp_path in self.parents:
+            written.append(bytes(data))
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", recording_write_bytes)
+
+    evidence = _runner(tmp_path).run(
+        "semgrep", ToolArgs(argv=["semgrep", "--quiet", "."], workdir="."), SANDBOX
+    )
+
+    assert len(written) == 1, "로그를 `write_bytes`로 쓰지 않았다"
+    assert evidence.digest == f"sha256:{hashlib.sha256(written[0]).hexdigest()}"
+
+
 def test_rejected_runs_also_leave_a_log(tmp_path: Path, spy: _Spy) -> None:
     """`payload_ref`가 가리키는 파일이 없으면 그 Evidence는 되짚을 수 없다."""
     evidence = _runner(tmp_path).run("rm", ToolArgs(argv=["rm"], workdir="."), SANDBOX)
@@ -787,6 +836,198 @@ def test_file_workdir_runs_in_its_parent_directory(tmp_path: Path, spy: _Spy) ->
 
     assert argv[argv.index("-w") + 1] == "/src"
     assert "/src/parser.c" in argv
+
+
+# --- 도구 요청에 싣는 입력 — scratch에 쓰고 로그 머리의 자리표를 컨테이너 경로로 (#386 ①) ---
+
+# NUL·CRLF·비-UTF-8 — 텍스트로 쓰거나 개행을 번역하면 달라지는 바이트다.
+POC_BYTES = bytes.fromhex("000d0a0d0aff") + b"A" * 8
+
+
+def _input_name(data: bytes) -> str:
+    return f"input-{hashlib.sha256(data).hexdigest()[:16]}.poc"
+
+
+def _input_args(tool: str, data: bytes = POC_BYTES) -> ToolArgs:
+    return ToolArgs(argv=[tool, tool_runner.INPUT_PLACEHOLDER], workdir=".", input_bytes=data)
+
+
+def _log_of(tmp_path: Path, evidence: Evidence) -> str:
+    return (tmp_path / RUN_ID / evidence.source / f"{evidence.evidence_id}.log").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize("tool", ["poc", "asan"])
+def test_input_is_written_to_that_tools_scratch_byte_for_byte(
+    tool: str, tmp_path: Path, spy: _Spy
+) -> None:
+    """같은 길이의 다른 바이트(영 채움)를 쓰는 변이·개행을 번역하는 변이·쓰기를 지우는 변이가
+    여기서 죽는다. 파일은 **그 도구의** scratch에 간다 — 도구마다 마운트가 다르다."""
+    _runner(tmp_path).run(tool, _input_args(tool), SANDBOX)
+
+    written = scratch_dir(tmp_path, RUN_ID, tool) / _input_name(POC_BYTES)
+    assert written.read_bytes() == POC_BYTES
+
+
+def test_the_mounted_scratch_is_the_directory_the_input_was_written_to(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """`/work/<이름>`이 컨테이너 안에서 풀리려면 그 파일이 **`-v …:/work`로 마운트되는 호스트
+    디렉터리**에 있어야 한다 — 호스트 경로를 argv에 넣으면 안 풀린다(`container_argv`가
+    `command.argv`를 그대로 넣는다)."""
+    _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    scratch = scratch_dir(tmp_path, RUN_ID, "poc")
+    assert f"{scratch.resolve().as_posix()}:/work" in spy.calls[0]
+    assert (scratch / _input_name(POC_BYTES)).exists()
+
+
+def test_the_recorded_argv_names_the_container_path_not_the_placeholder(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """자리표를 안 바꾸는 변이가 여기서 죽는다 — 로그 첫 줄(`# node argv:`)이 **컨테이너 안 경로**를
+    든다. 호스트 경로면 컨테이너 안에서 안 풀린다."""
+    evidence = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    log = _log_of(tmp_path, evidence)
+    assert log.splitlines()[0] == f"# node argv: poc /work/{_input_name(POC_BYTES)}"
+    assert tool_runner.INPUT_PLACEHOLDER not in log
+    assert str(tmp_path) not in log.splitlines()[0]
+
+
+def test_the_log_digest_depends_on_the_input(tmp_path: Path, spy: _Spy) -> None:
+    """같은 도구·같은 명령이라도 **다른 입력**이면 로그가 달라 `Evidence.digest`가 달라진다 — 로그
+    첫 줄이 입력 경로를 이름으로 든다(엔지니어링 가이드 §6: 무엇이 실행됐는지 사후 검증).
+    자리표를 안 바꾸면 두 입력이 같은 줄을 남겨 digest가 같아진다. ⚠ 두 run이 **같은** scratch를
+    쓴다 — 로그에는 호스트 마운트 경로가 실려 디렉터리가 다르면 그 차이로 digest가 갈린다."""
+    first = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+    second = _runner(tmp_path).run("poc", _input_args("poc", bytes(len(POC_BYTES))), SANDBOX)
+
+    assert first.digest != second.digest
+
+
+def test_an_empty_input_is_written_and_named_in_the_header(tmp_path: Path, spy: _Spy) -> None:
+    """`b""`는 입력이다 — `is not None`을 진리값 판정(`if args.input_bytes:`)으로 바꾸면 0바이트
+    PoC가 「입력 없음」으로 둔갑해 파일도 안 쓰이고 머리줄에 자리표가 풀리지 않은 채 남는다."""
+    evidence = _runner(tmp_path).run("poc", _input_args("poc", b""), SANDBOX)
+
+    name = _input_name(b"")
+    assert name == "input-e3b0c44298fc1c14.poc"  # 빈 입력의 sha256 앞 16자
+    assert (scratch_dir(tmp_path, RUN_ID, "poc") / name).read_bytes() == b""
+    assert _log_of(tmp_path, evidence).splitlines()[0] == f"# node argv: poc /work/{name}"
+
+
+@pytest.mark.parametrize("tool", ["poc", "asan", "gdb", "build"])
+def test_no_executed_container_command_receives_the_input_today(
+    tool: str, tmp_path: Path, spy: _Spy
+) -> None:
+    """🔴 **서술을 사실에 묶는 경보기다.** v3 prefix(`prompts/pov/v3/prefix.md`의 「지금 하네스의
+    한계」)·`docs/agent-contracts.md`·`PovAction` docstring이 「도구는 PoC를 입력으로 받지
+    않는다」고 쓴다. 이 배선은 바이트를 scratch에 두고 로그에 경로를 적을 뿐 **어느 명령도 그것을
+    인자로 받지 않는다**(`plan()`이 명령을 조립하고 노드 argv는 로그 머리에만 남는다) — 그
+    사실을 **실행된 argv**로 잰다.
+
+    ⚠ **무는 것은 「인자로 받지 않는다」이지 「읽지 않는다」가 아니다.** 실행된 argv에 이 입력의
+    경로·`.poc`가 없는지만 본다 — 명령이 글롭이나 `sh -c`로 scratch의 파일을 **스스로 읽게** 바꾸면
+    철자가 없어 이 검사는 초록이다. 그 변경은 `plan()`을 고치므로 `plan("poc")`는 아래
+    `test_the_poc_command_takes_no_argument_today`가 따로 문다(`asan`·`gdb`·`build` 명령이 글롭으로
+    읽게 바뀌는 것은 어느 쪽도 못 문다).
+
+    이 검사나 그 짝이 빨개지면 도구 명령이 PoC를 받는 것이다(대상 빌드·`poc` 명령 개조, #513) —
+    그때는 위 세 곳의 한계 서술을 **같이** 고친다. 짝: `tests/test_adapters.py`의 `_run_repro` 상수
+    핀이 fake 쪽을 잰다."""
+    _runner(tmp_path).run(tool, _input_args(tool), SANDBOX)
+
+    assert spy.calls, "명령이 하나도 안 돌았다 — 이 검사가 공허하다"
+    container_path = f"/work/{_input_name(POC_BYTES)}"
+    for argv in spy.calls:
+        assert container_path not in " ".join(argv), f"{tool}: 명령이 입력 경로를 받았다 — {argv}"
+        assert not any(arg.endswith(".poc") for arg in argv), f"{tool}: .poc 인자가 있다"
+
+
+def test_the_poc_command_takes_no_argument_today() -> None:
+    """🔴 위 경보기의 **짝**이다 — `plan("poc")`가 내는 argv를 정확히 핀한다. 경보기는 실행된
+    argv에서 입력 경로·`.poc` 접미만 찾으므로 명령이 입력을 **읽게** 바뀌어도
+    (`sh -c "…$(cat /work/input-*)"`) 글롭 철자로 빠져나가 전량 초록이었고, `plan("poc")`를 무는
+    테스트가 0건이었다. 정확히 `[/work/poc]` 하나면 P1b(#513)가 그 명령을 고칠 때 여기가 빨개져
+    「관측이 PoC와 무관하다」 서술(v3 prefix·`PovAction`·문서)을 같이 고치게 된다. ⚠ 이 핀은 `poc`만
+    본다 — 다른 세 도구 명령이 입력을 글롭으로 읽게 바뀌는 것은 안 문다."""
+    commands = plan("poc", target="/src", compile_sources=[], cwd="/src")
+
+    assert [command.argv for command in commands] == [[f"{container_tools.SCRATCH}/poc"]]
+
+
+def test_unwritable_input_is_failed_evidence_and_starts_no_process(
+    tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """입력을 못 쓰면 **실행하지 않는다** — 없는 입력으로 도구를 돌려 그 결과를 PoC의 결과로 읽게
+    두지 않는다. 문구는 모델 관측에 실리므로 호스트 경로를 안 든다."""
+
+    def broken(directory: Path, data: bytes) -> Path:
+        raise OSError(errno.ENOSPC, "No space left on device", "/host/secret/dir/input.poc")
+
+    monkeypatch.setattr(container_tools, "write_input", broken)
+
+    evidence = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    assert evidence.ok is False
+    assert evidence.exit_code == 2
+    assert "입력" in evidence.error
+    assert "/host/secret" not in evidence.error
+    assert spy.calls == []
+    assert "실행하지 않았다" in _log_of(tmp_path, evidence)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "dangling", "hardlink"])
+def test_a_link_planted_in_the_scratch_is_not_written_through(
+    tmp_path: Path, spy: _Spy, kind: str
+) -> None:
+    """🔴 심긴 링크를 따라 쓰면 **마운트 밖 파일이 PoC로 덮인다**(이유는 `tests/test_adapters.py`의
+    짝 검사). 여기서는 `_execute`가 `write_input`을 안 지나고 직접 쓰는 변이를 문다."""
+    outside = tmp_path / "host_secret.txt"
+    if kind != "dangling":
+        outside.write_bytes(b"host file - must stay")
+    scratch = scratch_dir(tmp_path, RUN_ID, "poc")
+    scratch.mkdir(parents=True)
+    planted = scratch / _input_name(POC_BYTES)
+    plant_link(kind, planted, outside)
+    assert planted.is_symlink() or planted.exists(), "전제 — 링크가 심어졌다"
+
+    evidence = _runner(tmp_path).run("poc", _input_args("poc"), SANDBOX)
+
+    assert planted.read_bytes() == POC_BYTES and not planted.is_symlink()
+    if kind == "dangling":
+        assert not outside.exists(), "끊어진 링크를 따라가 마운트 밖에 파일을 만들었다"
+    else:
+        assert outside.read_bytes() == b"host file - must stay", "링크를 따라가 바깥 파일을 덮었다"
+    assert evidence.source == "poc"
+
+
+def test_a_run_without_input_leaves_the_scratch_empty_and_the_header_as_it_was(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """입력이 없는 호출은 한 줄도 안 바뀐다 — 파일을 안 만들고 머리줄이 노드 argv 그대로다."""
+    evidence = _runner(tmp_path).run(
+        "poc", ToolArgs(argv=["poc", "src/x.c"], workdir="."), SANDBOX
+    )
+
+    assert list(scratch_dir(tmp_path, RUN_ID, "poc").iterdir()) == []
+    assert _log_of(tmp_path, evidence).splitlines()[0] == "# node argv: poc src/x.c"
+
+
+def test_a_request_that_fails_planning_writes_no_input(tmp_path: Path, spy: _Spy) -> None:
+    """계획이 실패하는 요청(컴파일할 소스가 없다)은 **쓰기 전에** 거절된다 — 안 돌 명령을 위해
+    바이트를 두지 않는다."""
+    root = tmp_path / "docs_only"
+    root.mkdir()
+    (root / "README.md").write_text("no sources", encoding="utf-8")
+
+    evidence = _runner(tmp_path / "out", root=root).run("asan", _input_args("asan"), SANDBOX)
+
+    assert evidence.ok is False
+    assert spy.calls == []
+    assert not scratch_dir(tmp_path / "out", RUN_ID, "asan").exists()
 
 
 # --- 확장자가 도구마다 갈라진다 -------------------------------------------------
