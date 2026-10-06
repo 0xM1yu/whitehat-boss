@@ -411,14 +411,33 @@ class SubmitResult:
     flag: str | None = None
 
 
+def _typed(value: Any, key: str, *kinds: type) -> Any:
+    """응답 필드 하나의 **값 형**을 본다 — 어긋나면 `TypeError`(`_send`가 감싼다, #519).
+
+    키 존재만 보던 때는 `task_id`가 리스트로 와도 통과했고, 그 값이 러너의 trace 이벤트에서
+    pydantic `ValidationError`로 터져 추가형 계약(「채점기 사건이 run을 멈추지 않는다」)을 깼다 —
+    report·`oracle/verdict.json` 없이 run이 죽고 이미 나간 제출이 장부 0건이 됐다. 여기서 막으면
+    호출부의 기존 흡수 갈래(`oracle_failed`)로 간다.
+
+    `bool`은 `int`의 하위 클래스라 `kinds`에 없으면 따로 거절한다(`true`가 종료 코드 1로 읽히지
+    않게). 메시지에 값을 싣지 않는다 — 형 이름만 싣는다(서버가 되돌린 문자열이 사이드카로 새지
+    않게).
+    """
+    if (isinstance(value, bool) and bool not in kinds) or not isinstance(value, kinds):
+        expected = "/".join("null" if kind is type(None) else kind.__name__ for kind in kinds)
+        raise TypeError(f"{key}의 형이 {type(value).__name__}다 — {expected}여야 한다")
+    return value
+
+
 def _parse_submit(data: Any) -> SubmitResult:
-    # `data`가 dict가 아니면 `TypeError`, 키가 없으면 `KeyError` — `_send`가 감싼다.
+    # `data`가 dict가 아니면 `TypeError`, 키가 없으면 `KeyError`, 값 형이 다르면 `TypeError`
+    # (`_typed`) — `_send`가 감싼다. 형은 2026-10-02 왕복 보고서의 실측 응답과 같다.
     return SubmitResult(
-        task_id=data["task_id"],
-        response_exit_code=data["exit_code"],
-        output=data["output"],
-        poc_id=data["poc_id"],
-        flag=data.get("flag"),
+        task_id=_typed(data["task_id"], "task_id", str),
+        response_exit_code=_typed(data["exit_code"], "exit_code", int),
+        output=_typed(data["output"], "output", str),
+        poc_id=_typed(data["poc_id"], "poc_id", str),
+        flag=_typed(data.get("flag"), "flag", str, type(None)),
     )
 
 
@@ -562,7 +581,9 @@ class OracleVerdict:
 def _verdict_from_rows(rows: Any, poc_hash: str, *, where: str) -> OracleVerdict:
     """`/query-poc`의 행 목록에서 `poc_hash`가 같은 행을 **정확히 1건** 골라 옮긴다.
 
-    `rows`가 리스트가 아니거나 행에 키가 없으면 `TypeError`·`KeyError` — `_send`가 감싼다.
+    `rows`가 리스트가 아니거나 행에 키가 없으면 `TypeError`·`KeyError`, 고른 행의 값 형이 다르면
+    `TypeError`(`_typed`, #519) — `_send`가 감싼다. 형 검사가 없으면 `vul_exit_code`가 문자열일 때
+    그 문자열이 `oracle_vul exit_code=…`로 모델 프롬프트에 실린다(`runner._submit_vul_to_oracle`).
     """
     mine = [row for row in rows if row["poc_hash"] == poc_hash]
     if len(mine) != 1:
@@ -573,12 +594,14 @@ def _verdict_from_rows(rows: Any, poc_hash: str, *, where: str) -> OracleVerdict
         )
     row = mine[0]
     return OracleVerdict(
-        task_id=row["task_id"],
-        agent_id=row["agent_id"],
-        poc_id=row["poc_id"],
-        poc_hash=row["poc_hash"],
-        vul_exit_code=row["vul_exit_code"],
-        fix_exit_code=row["fix_exit_code"],
+        task_id=_typed(row["task_id"], "task_id", str),
+        agent_id=_typed(row["agent_id"], "agent_id", str),
+        poc_id=_typed(row["poc_id"], "poc_id", str),
+        poc_hash=_typed(row["poc_hash"], "poc_hash", str),
+        vul_exit_code=_typed(row["vul_exit_code"], "vul_exit_code", int, type(None)),
+        fix_exit_code=_typed(row["fix_exit_code"], "fix_exit_code", int, type(None)),
+        # 시각은 형을 안 본다 — 아무도 읽지 않고, 문자열이 아닌 시각으로 멀쩡한 판정을 버리던
+        # 결함을 이미 한 번 고쳤다(tests `test_a_verdict_whose_timestamps_are_not_strings_…`).
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
