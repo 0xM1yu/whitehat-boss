@@ -363,7 +363,7 @@ POST /query-poc  → 404 36.8 · 200 2.6 · 200 2.7 · 200 3.2 · 200 3.9 · 200
 | 실서빙 소비량 | **0** | §6 경고 | 실 토크나이저 |
 | 다른 과제 | ~~**0건**~~ ⏵ **1건 — 계열이 둘이 됐다** | §11이 `oss-fuzz:368076871`로 돌렸다(완주 · 제출 8건 · 고유 PoC 1개 · 두 출처 신원 일치). 🔴 **N=2라 「계열 무관」이라 쓰지 않는다** — 셋째 계열(`oss-fuzz-latest:`)은 **0건**이고 저자 서버가 그 계열의 제출을 400으로 거부한다(§11.1) | ~~셋째 계열의 Level 1 포함 여부를 센다~~ ⏵ 2026-10-04 — 이슈 #431의 코멘트가 셌다(0건, §11.1 — **이 보고서가 다시 세지 않았다**) |
 | 카나리 도구를 다른 계열에 | **0회**(이 run의 `repo_commit` `05a80d5` 시점) | ⏵ §11에서 과제는 돌렸지만 그 커밋의 **카나리 도구는 `arvo` 하나만 알았다** — `_IMAGE_PREFIX`가 `arvo` 하나뿐이고 실행 명령이 하드코딩이었다. 판별력은 **손 프로브 n=3**으로만 봤다(§11.6). ⏵ 2026-10-04 — 그 뒤 PR #463이 계열 표를 넣고 `oss-fuzz:368076871`에서 n=10을 돌렸다고 적는다(그 PR 본문의 값이고 **이 보고서가 다시 재지 않았다**, §11.6) | 그 시점에는 계열 표 둘을 넣고 `-n 10` — #463이 그 일이다 |
-| 승격 Finding당 PoC 수 | **미확인** | 두 run 모두 승격 8 → PoC 파일 8이라 1:1로 보이지만 **n=2**이고, PoV가 PoC를 안 내는 길이 코드에 있다(`config/budgets.yaml`의 `max_hops` 주석 — `max_hops: 0`이면 hop0(gen) 뒤 곧장 멈춰 `pov_generated`가 0이다). 이 run은 `pov_generated` 8·`pov_hop` 16(gen 8 + submit 8)이었다(§11.5) | 승격 수와 `pov_generated` 수를 세는 run을 늘린다 |
+| 승격 Finding당 PoC 수 | **미확인** | 두 run 모두 승격 8 → PoC 파일 8이라 1:1로 보이지만 **n=2**이고, PoV가 PoC를 안 내는 길이 코드에 있다(`config/budgets.yaml`의 `max_hops` 주석 — `max_hops: 0`이면 hop0(gen) 뒤 곧장 멈춰 `pov_generated`가 0이다. ⏵ **2026-10-06 — 그 손잡이는 이제 `pov_tool_hops`다**(#511): `max_hops: 0`은 PoV 산출을 안 끈다). 이 run은 `pov_generated` 8·`pov_hop` 16(gen 8 + submit 8)이었다(§11.5) | 승격 수와 `pov_generated` 수를 세는 run을 늘린다 |
 | 마스킹 서버 경로 | **0건** | `TaskOracle.query_task_id`·`--mask-map`이 있으나 실측 0건 | 마스킹 번들 |
 | 429(레이트 리밋) | **0건** | 제출 8건 < 분당 20건. ⚠ 리미터는 캐시 경로 **앞**이라 캐시 적중도 센다(저자 `server/__main__.py:157`) | 20건 초과 run |
 | 팀원 장비의 `mmap_rnd_bits` | **0건** | 이 처방은 이 장비의 것 | 그 장비 |
@@ -583,7 +583,7 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 
 ⚠ **「후보 수 = min(승격된 Finding 수, `critic_top_n`)」은 n=2 관측이다** — 두 run 모두 승격 8건 → PoC 8건이었지만
 *"승격된 Finding마다 PoC가 정확히 하나"*는 **코드로 확인하지 않았다**(§7의 「승격 Finding당 PoC 수」 —
-`max_hops: 0`이면 `pov_generated`가 0이다). 또 후보 8(제출 8)은 중복 제거 **앞**의 수다 — 최종 `report.md`의 `proven`은
+`max_hops: 0`이면 `pov_generated`가 0이다 — ⏵ 2026-10-06 그 손잡이는 `pov_tool_hops`다, #511). 또 후보 8(제출 8)은 중복 제거 **앞**의 수다 — 최종 `report.md`의 `proven`은
 5건이고 빠진 셋이 위의 `find_0004`·`find_0005`·`find_0006`이다(§11.6). 확실한 것은 **상한이 `critic_top_n`이라는 것**과,
 이 두 run에서는 후보가 둘 이상이었다는 것이다. 이 run 시점의 지정 규칙(`repo_commit` `05a80d5`)은 후보가 둘 이상이면
 **등급을 읽지 않고** 거부(`policy_undecided`)했으므로 점수가 안 났다.
