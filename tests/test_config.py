@@ -78,7 +78,9 @@ NODE_OUTPUT_SCHEMAS = {
 # scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
 SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHEMAS}
 
-# auditor도 같다 — 한 방 판은 `Finding`, 도구 루프 판은 `AuditorAction`이다(이슈 #419).
+# auditor도 같다 — 한 방 판은 `Finding`, 도구 루프 판은 봉투다(이슈 #419). ⏵ 2026-10-06 —
+# 봉투가 둘이 됐다: v8·v9는 `AuditorAction`, v10은 `AuditorProcedureAction`이다. 그 payload
+# 모델 `AuditProcedure`는 허용집합에 **없다** — 집합은 「코드가 보내는 것」만 든다.
 AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
 
 
@@ -454,9 +456,9 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v9(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v9`를 고른다. 되돌리면 이
-    핀이 빨개진다.
+def test_the_canonical_auditor_selects_prompt_v10(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v10`을 고른다. 되돌리면
+    이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
     프롬프트 #418 · 배선 #421). v5는 건너뛴다 — v5 배선 PR(#390)이 대여 세션 측정까지
@@ -468,10 +470,16 @@ def test_the_canonical_auditor_selects_prompt_v9(profile: str) -> None:
     루프 — 매 홉 `AuditorAction`이고 `SOURCE` 서술·trigger rule은 v7과 바이트 동일이다
     (`tests/test_auditor_prompt_v8.py`). v7을 그 자리에서 고치지 않은 것은 v7이
     `output_schema: Finding`으로 선 판이기 때문이다(같은 규칙 1). ⏵ **v9**(2026-10-06) = v8 +
-    `auditor_guards` 서술 한 항목 — 켠 옵션을 meta가 선언해야 run이 서므로 v8을 안 고치고 올렸다."""
+    `auditor_guards` 서술 한 항목 — 켠 옵션을 meta가 선언해야 run이 서므로 v8을 안 고치고 올렸다.
+    ⏵ **v10**(2026-10-06) = v7에서 **전면 재작성**한 판이고 출력 계약이 바뀐다 — 매 홉 봉투가
+    `AuditorProcedureAction`이고 결과는 그 `procedure`에 드는 `AuditProcedure`다(새 `audit` 블록
+    하나 + 바깥 필드는 `Finding`과 거의 1:1). 발급 ID 셋과 `state`·`missing_evidence`·
+    `produced_by`를 **모델에게 묻지 않고** 하네스가 붙인다. v8·v9를 그 자리에서 고치지
+    않은 것은 그 둘이
+    `output_schema: AuditorAction`으로 선 판이기 때문이다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v9"
+    assert config.model_for("auditor").prompt_template_version == "v10"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -552,12 +560,19 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     if thresholds.auditor_caller_lines:
         assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
         assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
-    # 규칙 3의 판정 **방향** — 「Otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
+    # 규칙 3의 판정 **방향** — 「otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
+    # ⏵ 2026-10-06 — v9까지 이 핀은 한 문장이었고, 그 문장이 **모델에게** 발급
+    # missing-evidence ID를 쓰라고 시켰다. v10은 `missing_evidence`를 모델 출력에서 빼고
+    # 하네스가 붙인다(`result`가 `decisive_code_missing`이거나 `trigger_status`가
+    # `reachability_unknown`일 때 —
+    # `nodes/auditor`의 변환). 옛 철자를 그대로 묶으면 **거짓이 된 문장을 묶는다.**
+    # 그래서 명제를 두 구로 쪼개 묶고, 「모델이 그 ID를 안 낸다」를 셋째 핀으로 더한다.
+    # ⚠ 핀은 **배선된 판의 철자**다(이 검사의 설계) — 판을 되돌리면 철자도 같이 본다.
+    assert "otherwise decide from the supplied material" in flat
+    assert "Truncation alone is not a reason to defer" in flat
     assert (
-        "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
-        "establish it, use the issued missing-evidence ID; use `reachability_unknown` for a "
-        "missing reachability fact or path connection. Otherwise decide; truncation alone is "
-        "not a reason to defer" in flat
+        "Do not output `finding_id`, `run_id`, `candidate_id`, `state`, `missing_evidence`, "
+        "or `produced_by`" in flat
     )
     # 근거 본문·절단 계약 — **`_CONTENT_AWARE_VERSIONS` 자격의 근거가 이 문구들이다**(#328 리뷰
     # MEDIUM-1). 뒤집히면 집합에 든 채로 그 전제가 거짓이 된다. 목록은 `test_nodes.py`의
@@ -648,10 +663,14 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 실물 형제 문형 — prompts/auditor/v8/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry
         # 엔트리도 이 버전을 고르지 않는다」. v9 배선(2026-10-06)으로 미선택이 되며 달았다.
         ("auditor", "qwen3.8-27b", "v8", ["auditor/v8"]),
-        # 음성 통제 — prompts/auditor/v9/meta.yaml:1의 「auditor 엔트리가 이 버전을 고르고」.
-        # **이 문형은 실재한다**(배선된 판의 머리 주석 형식이고 v8도 2026-10-06까지 서빙 판이었다)
-        # — 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v9", []),
+        # 실물 형제 문형 — prompts/auditor/v9/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry
+        # 엔트리도 이 버전을 / 고르지 않는다」. v10 배선(2026-10-06 같은 날)으로 미선택이 되며
+        # 달았고, 그 전에는 이 행이 음성 통제였다. v8처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "qwen3.8-27b", "v9", ["auditor/v9"]),
+        # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다.
+        # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v9도 그날까지 서빙 판이었다) —
+        # 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v10", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -660,8 +679,9 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 일곱만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
-    새 음성 통제가 되어 일곱) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    meta 여덟만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
+    새 음성 통제가 되어 일곱 · ⏵ 2026-10-06 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
+    음성 통제가 되어 여덟) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -696,8 +716,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v8/meta.yaml 머리의 ⏵ — v9 배선으로 미선택이 되어 v7과 같은 철자를
         # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
         ("auditor", "v8", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v9/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
-        ("auditor", "v9", set()),
+        # prompts/auditor/v9/meta.yaml 머리의 ⏵ — v10 배선으로 미선택이 되어 v8과 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「이 버전을」이다).
+        ("auditor", "v9", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
+        ("auditor", "v10", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -706,7 +729,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 일곱 meta의(⏵ 2026-10-04 v8을 더해 일곱) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 여덟 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
+    여덟) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 

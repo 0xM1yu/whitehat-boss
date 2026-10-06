@@ -7,7 +7,7 @@ import 경로가 흔들리지 않게 하기 위해서다.
 """
 
 from src.schemas.artifact import Artifact
-from src.schemas.auditor import AuditorAction
+from src.schemas.auditor import AuditorAction, AuditorProcedureAction, AuditProcedure
 from src.schemas.candidate import Candidate, CandidateState
 from src.schemas.capsule import CapsuleSection, ContextCapsule
 from src.schemas.common import (
@@ -37,6 +37,11 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import (
+    AuditBlock,
+    AuditDefense,
+    AuditOrigin,
+    AuditPoint,
+    AuditRefutation,
     Finding,
     FindingStateValue,
     MissingEvidence,
@@ -53,7 +58,14 @@ __all__ = [
     "AnalysisSummary",
     "Artifact",
     "ArtifactKind",
+    "AuditBlock",
+    "AuditDefense",
+    "AuditOrigin",
+    "AuditPoint",
+    "AuditProcedure",
+    "AuditRefutation",
     "AuditorAction",
+    "AuditorProcedureAction",
     "Budget",
     "Candidate",
     "CandidateState",

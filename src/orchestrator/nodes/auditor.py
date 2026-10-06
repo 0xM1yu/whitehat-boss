@@ -4,7 +4,7 @@
 파싱 실패·예산 소진(과 도구 루프가 Finding 없이 선 것)이 그대로 표의 행이 된다.
 
 **MissingEvidence 객체는 노드가 만든다.** 구조화 출력의 최종 답이 `Finding` 하나여서(한 방 판은
-스키마가 `Finding`이고, 도구 루프 판은 `answer`가 `Finding`을 싣는다)
+스키마가 `Finding`이고, 도구 루프 판 v8·v9는 `answer`가 `Finding`을 싣는다)
 모델은 미리 발급된 `missing_id`만 참조하고, 실제 객체는 여기서 템플릿 문구로 만든다
 (S1 계약, C4에서 확정). 모델이 `missing_evidence`를 비우지 않았으면 `run()`의 발급값 도장이
 어떤 ID를 썼든 발급 `missing_id` 하나로 정규화한다(이슈 #279) — 발급 ID와의 교집합만 남기면
@@ -12,6 +12,16 @@
 `missing_evidence`에 무엇이든 적었다는 것은 "코드에서 확인 불가"라고 판단했다는 뜻이고, 그것이
 곧 Evidence Gate E2가 막아야 할 상태다
 (계획 D-h: E2의 "guard 부재"를 blocking MissingEvidence 부재로 환원).
+v10은 최종 답이 `AuditProcedure`(`audit` 블록 + 판정)이고 그 스키마에 `missing_evidence`가 없다 —
+모델은 그 자리를 못 쓰므로 **하네스가 발급 `missing_id`를 붙인다** — `audit.refutation.result`가
+`decisive_code_missing`이거나 `trigger_status`가 `reachability_unknown`일 때다. **산문도 둘 다
+약속한다**(「Identifiers and evidence references」 — ⏵ 2026-10-07 적대적 검토가 한쪽만 적힌 것을
+짚어 맞췄다). 넓은 쪽인 이유: 어느 한쪽만 믿으면 둘이 어긋난 출력에서 blocking이 안 붙고,
+`gate.evaluate`는 `trigger_status`를 **안 읽어서** 「모르겠다」로 라벨한 Finding이 E2로 열린다.
+어긋남 자체는 `answer` 홉 관측이 센다
+(`_answer_observed`의 `status_result_mismatch`). 붙이는 것은 `_finding_from_procedure`다.
+「확인 불가」 판단의 신호가 모델이 적은 ID 유무에서 그 결과값으로
+옮겨간 것이다 — 결과가 같은 판정(`blocking`)으로 떨어진다.
 
 ## `callers` 사실은 캡슐에서 파생한다
 
@@ -25,14 +35,18 @@
 
 ## 도구 루프 (이슈 #419 — ⏵ 2026-10-04 켰다: `config/budgets.yaml`이 16을 든다 · 필드 기본은 0)
 
-`thresholds.auditor_tool_hops`가 양수이고 프롬프트 판이 meta의 `output_schema`로 `AuditorAction`을
-선언하면 한 방 호출 대신 홉 루프가 돈다. 매 홉 모델이 `lookup`(이름으로 코드 조회) · `probe`(도구
-하나) · `answer`(최종 `Finding`) 중 하나를 내고, 하네스가 조회·도구를 돌려 **관측을 다음 홉 user
-턴으로 되먹인다** — `runner._run_ne_hops`·`_run_pov_hops`와 같은 규율이다. SOURCE·FACTS는 hop0에서
-**한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청 system(prefix) · history ·
-user 순으로 조립하므로(`openai_compat._request_payload`) prefix는 매 홉 system 메시지로, hop0 user
-턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** — 후속 홉의 *새* 입력이 관측뿐이라는 뜻이고,
-입력 토큰은 홉마다 hop0 몫을 되풀이한다.
+`thresholds.auditor_tool_hops`가 양수이고 프롬프트 판이 meta의 `output_schema`로 홉 봉투
+(`AuditorAction` · `AuditorProcedureAction`)를 선언하면 한 방 호출 대신 홉 루프가 돈다. 매 홉 모델이
+`lookup`(이름으로 코드 조회) · `probe`(도구 하나) · `answer`(최종 답) 중 하나를 내고, 하네스가
+조회·도구를 돌려 **관측을 다음 홉 user 턴으로 되먹인다** — `runner._run_ne_hops`·`_run_pov_hops`와
+같은 규율이다. 최종 답은 봉투마다 갈린다 — `AuditorAction`(v8·v9)은 `Finding`을,
+`AuditorProcedureAction`(v10)은 `AuditProcedure`를 싣고 후자는 **`answer` 홉에서 `Finding`으로
+옮겨진다**(`_finding_from_procedure`). 그래서 루프 뒤 흐름(`_ensure_repro_origin` →
+`stamp_issued` → `create` → `_materialize_missing`)은 어느 봉투로 돌았든 같다. SOURCE·FACTS는
+hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청 system(prefix) ·
+history · user 순으로 조립하므로(`openai_compat._request_payload`) prefix는 매 홉 system 메시지로,
+hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** — 후속 홉의 *새* 입력이
+관측뿐이라는 뜻이고, 입력 토큰은 홉마다 hop0 몫을 되풀이한다.
 
 - **왜 노드 안인가.** `run()`의 반환 계약 `(Finding, list[MissingEvidence])`을 러너가 쥐고 있다.
   러너로 올리면 Finding 없는 정지의 `queued` 전이를 러너가 대신 해야 하고, 빠뜨리면 후보가
@@ -41,10 +55,12 @@ user 순으로 조립하므로(`openai_compat._request_payload`) prefix는 매 �
 - **꺼져 있으면 요청 바이트가 같다.** 한 방 경로는 루프와 같은 hop0 렌더(`_render_hop0`)를 종전과
   같은 인자로 `ctx.call_model`에 넘긴다.
 - **버전 이름이 아니라 meta 선언으로 분기한다.** 이름 목록(`_CONTENT_AWARE_VERSIONS`)은 판이 늘
-  때마다 고쳐야 하고 잊으면 그 기능이 조용히 꺼진다. 선언과 임계값이 **어긋나면**(판은
-  `AuditorAction`인데 상한 0, 또는 반대) 조용히 한쪽으로 넘기지 않고 `PromptError`로
-  세운다(`loop_problem`). cli의 run·doctor가 **같은 함수**를 부른다 — 노드와 cli가 따로 판정하면
-  한쪽만 통과하는 설정이 생겨 첫 Auditor 호출(=그때까지 쓴 GPU 시간 뒤)에야 서기 때문이다.
+  때마다 고쳐야 하고 잊으면 그 기능이 조용히 꺼진다(배선된 판이 그 목록에 드는지는
+  `tests/test_auditor_loop.py`가 문다). 「이 판은 루프 판인가」는 `_loop_envelope` 하나로 묻는다.
+  선언과 임계값이 **어긋나면**(판은 루프 봉투인데 상한 0, 또는 반대) 조용히 한쪽으로 넘기지 않고
+  `PromptError`로 세운다(`loop_problem`). cli의 run·doctor가 **같은 함수**를 부른다 — 노드와 cli가
+  따로 판정하면 한쪽만 통과하는 설정이 생겨 첫 Auditor 호출(=그때까지 쓴 GPU 시간 뒤)에야 서기
+  때문이다.
 - **정지는 셋이고 Finding은 `answer`에서만 나온다.** `ANSWERED`는 Finding을 돌려주고, 직전 홉과
   같은 요청(`REPEAT_REQUEST`)이나 상한까지 조사만 한 것(`MAX_HOP`)은 Finding이 없어 후보를
   `queued`에 두고 `AuditorHopLimit`을 올린다 — **러너가 그것을 후보 단위로 받는다**
@@ -62,7 +78,7 @@ user 순으로 조립하므로(`openai_compat._request_payload`) prefix는 매 �
   「조회 실패」 관측으로 되먹인다(`runner._fuzz_entrypoint`의 같은 가드 — 보조 조회 하나가 run을
   멈추지 않는다).
 - **모델 문자열은 조회·도구 입력에 안 들어간다.** `lookup`은 resolver가 인덱스 표에서 푸는 이름이고,
-  `probe`는 스키마가 닫은 Literal(`AuditorAction.tool`)의 **이름만** argv에 넣는다.
+  `probe`는 스키마가 닫은 Literal(`AuditorTool` — 두 봉투가 공유한다)의 **이름만** argv에 넣는다.
 - ⚠ **`probe`의 `spec`은 도구 입력이 아니다.** 지금 도구(`container_tools.plan()`의
   asan·gdb·poc)는 인자·stdin 없이 돈다 — `spec`으로 조립한 바이트는 sha256과 길이만 홉 이벤트에
   남고 도구에 안 간다. 모델에게도 관측에 그렇게 적는다(`_probe_observation`). PoC 바이트
@@ -89,10 +105,23 @@ from src.orchestrator.prompt_loader import (
 )
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind, TraceValue
-from src.schemas.auditor import AUDITOR_TOOLS, AuditorAction
+from src.schemas.auditor import (
+    AUDITOR_TOOLS,
+    AuditorAction,
+    AuditorProcedureAction,
+    AuditProcedure,
+)
 from src.schemas.candidate import Candidate
 from src.schemas.capsule import ContextCapsule
-from src.schemas.enums import AuditorStopReason, FindingState, ReasonCode, ReproOrigin, Role
+from src.schemas.common import ProducedBy
+from src.schemas.enums import (
+    AuditorStopReason,
+    FindingState,
+    PathStepKind,
+    ReasonCode,
+    ReproOrigin,
+    Role,
+)
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence, ReproSpec
 from src.schemas.need_evidence import Resolution, ResolveQuery
@@ -101,18 +130,35 @@ from src.schemas.scout_response import RequestedContext
 ROLE = Role.AUDITOR
 # **한 방 경로**가 요청하는 구조화 출력 스키마 (`nodes/scout.py`의 같은 상수 참조). 도구 루프를
 # 넣어도 **그대로 `Finding`이다** — bench(`ROLE_SPEC`)와 `tests/test_config.py`의
-# `NODE_OUTPUT_SCHEMAS`가 이 이름을 쥔다. 루프 판이 요청하는 `AuditorAction`은 이 상수가 아니라
-# 프롬프트 meta의 선언을 `resolve_output_schema`로 풀어 얻는다.
+# `NODE_OUTPUT_SCHEMAS`가 이 이름을 쥔다. 루프 판이 요청하는 봉투(`AuditorAction` ·
+# `AuditorProcedureAction`)는 이 상수가 아니라 프롬프트 meta의 선언을 `resolve_output_schema`로
+# 풀어 얻는다.
 OUTPUT_SCHEMA = Finding
 
-# 이 역할이 낼 수 있는 구조화 출력 스키마 — `nodes/scout.py`의 같은 이름과 같은 패턴이다.
-# 한 방 판은 `Finding`, 도구 루프 판은 `AuditorAction`을 meta의 `output_schema`로 선언한다.
-# **아무 스키마나 받지는 않는다** — 집합 밖을 선언하면 `resolve_output_schema`가 실패한다
-# (프롬프트와 grammar가 어긋나면 `additionalProperties: false` 마스크가 추론을 덮는다).
-ALLOWED_OUTPUT_SCHEMAS: tuple[type[Finding] | type[AuditorAction], ...] = (
-    Finding,
+# 도구 루프 판이 매 홉 요청하는 봉투 — **「이 판은 루프 판인가」의 정의는 이 튜플 하나다.** 예전에는
+# `is AuditorAction` 비교가 세 자리(`_ask_model`의 분기 · `loop_problem` · `tool_hops_in_effect`)에
+# 흩어져 있었고, 봉투가 하나 늘면 한 자리가 빠져도 그 판이 한 방 판으로 읽힐 수 있었다. 세 자리는
+# 지금 `_loop_envelope`를 부른다. meta의 `output_schema`가 곧 모델에게 보내는 스키마라(「호출하는
+# 코드가 실제로 보내는 것」 — `tests/test_config.py`) 선언 → 봉투 매핑 표는 없다: 푼 것이 봉투다.
+# `AuditorAction`은 최종 답으로 `Finding`을, `AuditorProcedureAction`은 `AuditProcedure`를 싣는다.
+_LOOP_ENVELOPES: tuple[type[AuditorAction] | type[AuditorProcedureAction], ...] = (
     AuditorAction,
+    AuditorProcedureAction,
 )
+# 홉 하나가 든 값 — 두 봉투는 `action`·`requests`·`tool`·`spec`을 공유하므로(`schemas/auditor.py`의
+# 공통 베이스) 조사 쪽 함수(`_observe`·`_lookup`·`_probe`·`_emit_hop`·`_request_key`)는 둘을 같이
+# 받는다.
+_Hop = AuditorAction | AuditorProcedureAction
+
+# 이 역할이 낼 수 있는 구조화 출력 스키마 — `nodes/scout.py`의 같은 이름과 같은 패턴이다.
+# 한 방 판은 `Finding`, 도구 루프 판은 봉투(`AuditorAction`·`AuditorProcedureAction`)를 meta의
+# `output_schema`로 선언한다. **아무 스키마나 받지는 않는다** — 집합 밖을 선언하면
+# `resolve_output_schema`가 실패한다(프롬프트와 grammar가 어긋나면 `additionalProperties: false`
+# 마스크가 추론을 덮는다). ⚠ **`AuditProcedure`는 일부러 뺐다** — 봉투의 `procedure` payload일
+# 뿐이라 최상위로 요청하면 `lookup`·`probe`·`answer` 액션 없이 감사 결과 하나만 받는 문법이 된다.
+ALLOWED_OUTPUT_SCHEMAS: tuple[
+    type[Finding] | type[AuditorAction] | type[AuditorProcedureAction], ...
+] = (Finding, *_LOOP_ENVELOPES)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 
 # 근거 본문을 FACTS에 싣는 것은 그 본문을 **전제로 쓰인 프롬프트 버전**에만 한다
@@ -142,13 +188,49 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # **않다** — `evidence_refs: only …` 줄은 v8이 다시 쓴 열세 줄 중 하나이고 v7의 줄이 머리로만
 # 남는다(뒤에 `probe` 관측의 `evidence_id=` 인용 구절이 붙었다).
 # `tests/test_auditor_prompt_v8.py`가 둘을 각각 문다. 집합에 안 넣으면 근거 본문이 조용히
-# 빠지는데(위 `:119-125`) 루프 판은 그 본문을 더 많이 쓴다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9"})
+# 빠지는데(위 `_CONTENT_AWARE_VERSIONS` 머리의 v3·v4 문단) 루프 판은 그 본문을 더 많이 쓴다.
+# v10(2026-10-06 · v7을 전면 재작성)이 드는 근거는 v8과 다른 축이다 — 그 prefix가 `## Evidence body
+# completeness` 절에서 `FACTS.evidence[].body`·`truncated`를 읽으라고 시키고 `evidence_refs`에
+# `FACTS.evidence[*].evidence_id`를 인용하라고 쓴다. 집합 밖이면 `aware`가 거짓이라 본문도 위치도
+# FACTS에 안 실리는데 산문은 그것을 읽으라고 한다 — 재료 없이 인용을 기대하는 상태다
+# (`cli._check_prompt_version`이 실모델 역할에서 ERROR로 막는다).
+_CONTENT_AWARE_VERSIONS = frozenset(
+    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10"}
+)
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
 # 매번 다르게 쓰여 집계가 안 된다 — 무엇이 없어서 막혔는지는 세어야 하는 값이다.
 _NEED = "대상 경로를 코드만으로 확정할 수 없다: 정적분석 신호 또는 호출 그래프 근거"
 _HOW = "2단계 신호 수집을 대상 파일로 다시 실행하거나 index 도구로 호출자를 확인한다"
+# v10의 `decisive_code_missing`은 위 `_NEED`가 적는 것과 **다른 사실**이다 — 신호나 호출 그래프가
+# 아니라 판정에 필요한 코드 자체가 SOURCE에 없다는 것이다. **그래도 고정 문구다**: 위 주석의
+# 근거(자유 텍스트면 집계가 안 된다)가 v10에도 그대로 걸린다. 모델이 적은 「무엇이 없는가」는
+# `Finding.audit.refutation.missing_information`에 그대로 남으므로 버려지지 않는다.
+_NEED_PROCEDURE = "판정에 필요한 코드가 SOURCE에 없다 (목록이 있으면 audit.refutation에 있다)"
+# 같은 이유로 `how_to_obtain`도 판마다 가른다. ⚠ **`_HOW`를 고치면 v1~v9가 저장한 문구까지 바뀐다**
+# — 그쪽의 「index 도구」는 거짓이 아니다(ToolRunner 화이트리스트에 `index`가 있고 한 방 경로는
+# 도구를 쓰지 않으므로 그 문장은 사람이 할 일을 적는다). 루프 판에는 `index`가 **일부러 없어서**
+# (`AuditorTool`에서 뺐다 — 코드 열람은 `lookup`이 담당한다) 그 판에만 다른 문구를 쓴다.
+_HOW_PROCEDURE = "모델이 lookup으로 그 코드를 조회하거나 호출 그래프로 호출자를 확인한다"
+
+# E2가 요구하는 경로 양 끝 — `gate._REQUIRED_PATH_STEPS`와 **같은 값이어야 한다.** 노드가 게이트를
+# import하지 않으려고 따로 든 값이고(의존 방향), 갈리면 아래 관측이 게이트와 다른 것을 센다.
+# `tests/test_auditor_loop.py`가 두 값을 대조한다(`GRAPH_SECTION_KINDS`와 같은 규율).
+_PATH_ENDPOINTS = frozenset({PathStepKind.SOURCE, PathStepKind.SINK})
+
+# 경로가 비면 안 되는 상태 — v10 산문은 `audit.path`가 reachability_unknown에서만
+# `[]`일 수 있다고 적는다.
+_PATH_REQUIRED_STATUSES = ("triggerable", "guarded", "no_reach")
+
+# v10 산문이 못박는 `refutation.result` ↔ `trigger_status` 대응. 🔴 **스키마는 이 대응을 안 싣는다**
+# — 싣는 일관성은 `audit is None ⟺ no_signal` 하나뿐이다(`AuditProcedure`의 검증기). 어긴 출력은
+# 그냥 통과하므로 **어긴 비율을 세지 않으면** 이 규칙을 조일지(재생성 비용) 풀지 정할 근거가 없다.
+_STATUS_BY_RESULT = {
+    "defeated": "triggerable",
+    "holds": "guarded",
+    "path_not_executable": "no_reach",
+    "decisive_code_missing": "reachability_unknown",
+}
 
 # `callers` 사실을 뽑아 올 섹션. `index_graph.GRAPH_SECTION_KINDS`의 값과 같은 문자열인데
 # 그쪽은 어댑터라 import 할 수 없다(engineering-guide.md §3). 갈리면 사실 블록이 조용히
@@ -163,15 +245,16 @@ CALLERS_SECTION = "callers"
 # 최악 비에서는 16홉만으로 넘는다**: 입력 몫 196,608(창 262,144 − 출력 상한 65,536, `config.py`의
 # `auditor_tool_hops` 주석)에서 비 1.22면 한 번이 12,296토큰이라 16홉 `lookup` 관측만으로
 # 196,736이고 **hop0를 빼고도 128토큰 넘는다**(계산값). hop0 입력 28,833(프롬프트 **v4**의 최악
-# 추정 — ⏵ 2026-10-04 정본은 루프 판 v8이었고(⏵ 2026-10-06부터 v9) prefix가 훨씬 길다: v8 33,209자
-# (v9는 그보다 1,815자 길다) ↔ v4 13,405자라
-# hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다. hop0가
-# 클수록 넘는 폭도 커진다).
+# 추정 — ⏵ 2026-10-04 정본은 루프 판 v8이었고(⏵ 2026-10-06 v9, ⏵ 같은 날 v10) prefix가 훨씬 길다:
+# v8 33,209자 · v9 35,501자 · v10 56,906자(`load_prompt(...).prefix`의 글자 수 — **실측**이고
+# `tests/test_auditor_prompt_v10.py`가 핀으로 든다) ↔ v4
+# 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다.
+# hop0가 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은
 # **Scout 좌석 비**(`runner._HOP_CHARS_PER_TOKEN` — 좌석별 3.28~4.23의 하한)를 빌린 **낙관 쪽**이다
 # — Auditor 실측 범위의 상단(3.32) 바로 아래라 「안에 든다」는 그 비를 가정할 때만이다.
 # ⚠ **그 합은 `lookup` 관측만 센 것이다 — 보장이 아니다.** 매 홉 `history`에는 어시스턴트
-# 턴(`raw_text` — 16개의 `AuditorAction` JSON)과 「Retrieved context」 머리·상태 줄도 쌓이는데
+# 턴(`raw_text` — 16개의 봉투 JSON)과 「Retrieved context」 머리·상태 줄도 쌓이는데
 # 계산에 없다. 이 상한은 `auditor_tool_hops`의 `le=64`까지도 안 막는다: 64홉이면 최악 합이
 # 786,944라 넘는다. 넘으면 서버가 크기 거절하고 그 예외는 흡수하지 않고 올라온다.
 _LOOKUP_MAX_CHARS = 15_000
@@ -198,7 +281,7 @@ _PROBE_BODY_CHARS = 2000
 # — 두 문장을 대조하는 테스트는 따로 필요하다.
 _SCOUT_FOLLOWUP_TAIL = "Judge the same candidate again"
 
-# 다음 홉이 **마지막 허용 홉**일 때 관측 뒤에 붙이는 안내. `AuditorAction` 설명이 *상한에 닿으면
+# 다음 홉이 **마지막 허용 홉**일 때 관측 뒤에 붙이는 안내. 봉투 설명(두 봉투 다)이 *상한에 닿으면
 # 마지막 홉은 `answer`여야 한다*고 말하는데, 그 홉이 **지금**이라는 사실은 모델이 모른다 — 안
 # 알리면 마지막 홉에도 조사를 내고 Finding 없이 `MAX_HOP`으로 끝난다.
 _LAST_HOP_NOTE = (
@@ -243,7 +326,9 @@ class AuditorHopLimit(RuntimeError):
         self.stop = stop
 
 
-def resolve_output_schema(name: str) -> type[Finding] | type[AuditorAction]:
+def resolve_output_schema(
+    name: str,
+) -> type[Finding] | type[AuditorAction] | type[AuditorProcedureAction]:
     """프롬프트 meta의 `output_schema` 이름을 이 역할이 허용하는 스키마로 푼다.
 
     집합 밖 이름은 조용히 넘기지 않는다 — grammar가 프롬프트와 싸우는 상태를 런타임 첫 호출
@@ -256,6 +341,20 @@ def resolve_output_schema(name: str) -> type[Finding] | type[AuditorAction]:
             f"auditor meta의 output_schema `{name}`은 이 역할이 낼 수 없다 — "
             f"허용: {sorted(_SCHEMA_BY_NAME)}"
         ) from None
+
+
+def _loop_envelope(
+    template: PromptTemplate,
+) -> type[AuditorAction] | type[AuditorProcedureAction] | None:
+    """루프 판이면 그 판이 매 홉 요청할 봉투를, 한 방 판이면 `None`을 돌려준다.
+
+    **「이 판은 루프 판인가」를 묻는 유일한 자리다** — `_ask_model`의 분기 · `loop_problem` ·
+    `tool_hops_in_effect`가 이 함수를 부른다(셋이 같은 명제를 따로 쓰면 다음 봉투에서 한 자리가
+    빠진다). 선언 → 봉투 매핑은 항등이다: meta가 부르는 이름이 곧 요청하는 스키마라 푼 것을 그대로
+    `schema=`로 넘긴다. 집합 밖 선언은 `resolve_output_schema`가 `PromptError`로 세운다.
+    """
+    schema = resolve_output_schema(template.output_schema)
+    return schema if issubclass(schema, _LOOP_ENVELOPES) else None
 
 
 def run(
@@ -338,6 +437,11 @@ def _ask_model(
 ) -> Finding:
     """Finding을 얻는다 — 한 방 호출 또는 도구 루프. 어느 쪽인지는 프롬프트 meta가 정한다.
 
+    루프 판이 어느 봉투(`AuditorAction` · `AuditorProcedureAction`)를 요청하든 **돌려주는 것은
+    `Finding`이다** — v10의 `AuditProcedure`는 `_run_hops`가 `answer` 홉에서 옮겨 담는다. 한 방
+    경로가 `OUTPUT_SCHEMA`(`Finding`)를 보내는 것은 선언이 `Finding`일 때뿐이다: 루프 봉투를
+    선언했는데 한 방으로 새는 길은 `loop_problem`이 막는다(상한 0이면 `PromptError`).
+
     후보를 `queued`에 둔 뒤 그대로 다시 올리는 것은 셋뿐이다 — 모델 호출의 실패(`_call_model`: 예산
     소진은 C-7, 그 밖은 C-6 — 두 경로 공통), 조사(`probe`의 도구 시간 청구)에서 난
     `BudgetExhausted`(C-7), `AuditorHopLimit`(사유가 다르다 — `_NO_FINDING_REASON`: 루프가 Finding
@@ -348,7 +452,7 @@ def _ask_model(
     """
     version = ctx.config.model_for(ROLE.value).prompt_template_version
     template = load_prompt(ROLE, version)
-    schema = resolve_output_schema(template.output_schema)
+    envelope = _loop_envelope(template)
     problem = loop_problem(
         template,
         ctx.config.thresholds.auditor_tool_hops,
@@ -365,10 +469,16 @@ def _ask_model(
         evidences=evidences,
         source=source,
     )
-    if schema is AuditorAction:
+    if envelope is not None:
         try:
             return _run_hops(
-                ctx, candidate=candidate, capsule=capsule, prompt=prompt, workdir=workdir
+                ctx,
+                ids=ids,
+                candidate=candidate,
+                capsule=capsule,
+                prompt=prompt,
+                workdir=workdir,
+                schema=envelope,
             )
         except BudgetExhausted:
             # 모델 호출 쪽 소진은 `_call_model`이 이미 내렸다(`_queue_candidate`는 `triaged`가
@@ -378,7 +488,10 @@ def _ask_model(
         except AuditorHopLimit:
             _queue_candidate(ctx, candidate, _NO_FINDING_REASON)
             raise
-    return _call_model(
+    # `audit`는 **하네스 소유 필드다** — `SkipJsonSchema`라 이 요청 스키마에 없지만 파서는 받으므로
+    # (문법을 강제하지 않는 백엔드) 한 방 판에서도 모델 값을 믿지 않고 비운다. 루프 쪽은
+    # `_finding_from`이 같은 일을 한다 — 두 경로를 같은 규율로 둔다.
+    finding = _call_model(
         ctx,
         candidate,
         prompt=prompt,
@@ -386,6 +499,7 @@ def _ask_model(
         subject_kind="finding",
         subject_id=ids["finding_id"],
     ).value
+    return finding if finding.audit is None else finding.model_copy(update={"audit": None})
 
 
 def _call_model(
@@ -429,14 +543,17 @@ def loop_problem(template: PromptTemplate, hops: int, *, is_fake: bool) -> str |
 
     어긋나면 사유 문장을, 맞으면 `None`을 돌려준다. 노드(`_ask_model` — `PromptError`로 세운다)와
     cli(run·doctor)가 **같은 함수**를 부른다 — 따로 판정하면 한쪽만 통과하는 설정이 생겨, 통과한
-    run이 첫 Auditor 호출(= 그 앞 단계에 쓴 GPU 시간 뒤)에야 선다. 막는 것은 넷이다.
+    run이 첫 Auditor 호출(= 그 앞 단계에 쓴 GPU 시간 뒤)에야 선다. 막는 것은 넷이다. 루프 판은
+    선언이 봉투(`AuditorAction` · `AuditorProcedureAction`)인 판이고(`_loop_envelope`) 사유 문장은
+    **그 판이 실제로 선언한 이름**을 싣는다 — 넷 중 `tools`가 빈 사유만 예외이고
+    그 문장은 판 이름만 든다.
 
-    - 판이 `AuditorAction`(도구 루프)인데 상한이 0 — 루프가 돌 수 없다.
+    - 판이 루프 봉투(도구 루프)를 선언했는데 상한이 0 — 루프가 돌 수 없다.
     - 판이 `Finding`(한 방)인데 상한이 양수 — **루프가 안 도는데 켠 줄 안다.** 조용히 한 방으로
       넘기면 「도구 호출 0건」이 「모델이 안 골랐다」로 오독된다.
     - 루프 판의 meta `tools`가 비었다 — 프롬프트가 도구를 안 알리면 모델이 도구를 영영 안 쓰는데
       run은 정상 종료한다(같은 오독).
-    - 루프 판의 meta `tools`가 `AuditorAction.tool`이 안 받는 이름(`index` — 로더는 통과시킨다)을
+    - 루프 판의 meta `tools`가 그 봉투의 `tool`이 안 받는 이름(`index` — 로더는 통과시킨다)을
       든다 — 광고하는데 문법이 거절하는 도구라 모델이 그것을 고르면 그 홉이 파싱 실패다.
 
     집합 밖 `output_schema` 선언은 `resolve_output_schema`가 `PromptError`를 올린다.
@@ -458,18 +575,19 @@ def loop_problem(template: PromptTemplate, hops: int, *, is_fake: bool) -> str |
     `RunRecord.thresholds`에 설정값이 아니라 그 값을 싣는다).
     """
     version = f"auditor/{template.version}"
-    looped = resolve_output_schema(template.output_schema) is AuditorAction
-    if not looped:
+    declared = template.output_schema
+    if _loop_envelope(template) is None:
         if hops <= 0 or is_fake:
             return None
+        loop_names = " · ".join(envelope.__name__ for envelope in _LOOP_ENVELOPES)
         return (
-            f"{version}은 output_schema로 Finding(한 방)을 선언하는데 "
-            f"thresholds.auditor_tool_hops가 {hops}이다 — 도구 루프는 AuditorAction 판에서만 돈다. "
+            f"{version}은 output_schema로 {declared}(한 방)을 선언하는데 "
+            f"thresholds.auditor_tool_hops가 {hops}이다 — 도구 루프는 {loop_names} 판에서만 돈다. "
             "상한을 0으로 두거나 그 판으로 올린다"
         )
     if hops <= 0:
         return (
-            f"{version}은 output_schema로 AuditorAction(도구 루프)을 선언하는데 "
+            f"{version}은 output_schema로 {declared}(도구 루프)을 선언하는데 "
             "thresholds.auditor_tool_hops가 0이다 — 상한을 양수로 두거나 Finding 판으로 돌린다"
         )
     if not template.tools:
@@ -480,7 +598,7 @@ def loop_problem(template: PromptTemplate, hops: int, *, is_fake: bool) -> str |
     outside = sorted(set(template.tools) - set(AUDITOR_TOOLS))
     if outside:
         return (
-            f"{version}의 meta tools {outside}는 AuditorAction.tool이 받지 않는다 — 광고만 하고 "
+            f"{version}의 meta tools {outside}는 {declared}.tool이 받지 않는다 — 광고만 하고 "
             f"문법이 거절하는 도구다. {sorted(AUDITOR_TOOLS)}의 부분집합만 적는다 (#419)"
         )
     return None
@@ -489,10 +607,10 @@ def loop_problem(template: PromptTemplate, hops: int, *, is_fake: bool) -> str |
 def tool_hops_in_effect(version: str, hops: int) -> int:
     """이 판으로 도는 run에서 도구 루프가 **실제로 도는** 조사 홉 상한 — 안 돌면 0이다.
 
-    `_ask_model`의 분기(meta가 `AuditorAction`을 선언하는가)와 같은 판정이다. 설정값 `hops`가
-    양수여도 판이 `Finding`(한 방)이면 루프는 안 돈다 — `loop_problem`이 Fake 좌석에만 허용하는
-    면제다. 러너가 `RunRecord.thresholds`에 설정값 대신 이 값을 싣는다: 설정값 16을 그대로 싣으면
-    manifest는 「켰다」인데 `auditor_hop`은 0건이라 「켰는데 한 번에 answer했다」로 읽힌다.
+    `_ask_model`의 분기(meta가 루프 봉투를 선언하는가 — `_loop_envelope`)와 같은 판정이다. 설정값
+    `hops`가 양수여도 판이 `Finding`(한 방)이면 루프는 안 돈다 — `loop_problem`이 Fake 좌석에만
+    허용하는 면제다. 러너가 `RunRecord.thresholds`에 설정값 대신 이 값을 싣는다: 설정값 16을 그대로
+    싣으면 manifest는 「켰다」인데 `auditor_hop`은 0건이라 「켰는데 한 번에 answer했다」로 읽힌다.
     프롬프트를 못 읽으면 `PromptError`다(`_ask_model`의 첫 줄과 같다). **상한 0은 프롬프트를 안
     읽는다** — 판이 무엇이든 결과가 0이라, 읽으면 꺼진 run의 `_new_record`에 이전에 없던 실패 지점만
     생긴다(`--stop-after` 5 미만·`--dry-run`은 `cli`의 Auditor 프롬프트 게이트를 안 지난다).
@@ -500,7 +618,7 @@ def tool_hops_in_effect(version: str, hops: int) -> int:
     if not hops:
         return 0
     template = load_prompt(ROLE, version)
-    return hops if resolve_output_schema(template.output_schema) is AuditorAction else 0
+    return hops if _loop_envelope(template) is not None else 0
 
 
 def _render_hop0(
@@ -546,12 +664,18 @@ def _render_hop0(
 def _run_hops(
     ctx: RunContext,
     *,
+    ids: Mapping[str, str],
     candidate: Candidate,
     capsule: ContextCapsule,
     prompt: Prompt,
     workdir: str,
+    schema: type[AuditorAction] | type[AuditorProcedureAction],
 ) -> Finding:
     """도구 루프 본체 — 모델이 `answer`를 낼 때까지 `lookup`·`probe` 관측을 되먹인다.
+
+    `schema`는 판의 선언을 푼 봉투(`_loop_envelope`)이고 **매 홉 그대로 요청한다.** `answer`가 싣는
+    최종 답은 봉투마다 갈려(`Finding` · `AuditProcedure`) `_finding_from`이 어느 쪽이든
+    `Finding`으로 돌려준다 — 호출자는 봉투를 모른다. `ids`는 그 변환이 쓰는 발급값이다.
 
     `runner._run_pov_hops`를 미러한다. **조사 홉은 `auditor_tool_hops`번까지**다 — hop 0..limit-1이
     조사해도 되고 hop `limit`은 `answer`여야 한다(모델 호출은 최대 limit+1회 — `_run_ne_hops`가
@@ -579,7 +703,7 @@ def _run_hops(
             ctx,
             candidate,
             prompt=prompt,
-            schema=AuditorAction,
+            schema=schema,
             subject_kind="candidate",
             subject_id=candidate.candidate_id,
             history=history,
@@ -591,18 +715,26 @@ def _run_hops(
             ChatTurn(speaker="user", content=prompt.body),
             ChatTurn(speaker="assistant", content=result.raw_text or ""),
         )
-        if action.finding is not None:  # `answer`만 싣는다 — `AuditorAction._check_action`
-            cited = probe_evidence.intersection(action.finding.evidence_refs)
+        answer = action.answer
+        if answer is not None:  # `answer`만 싣는다 — 봉투의 `_check_action`
+            cited = probe_evidence.intersection(answer.evidence_refs)
             _emit_hop(
                 ctx,
                 candidate,
                 hop=hop,
                 action=action,
                 usage=result.usage,
-                observed={"cited_probe_evidence": len(cited)},
+                observed=_answer_observed(answer, cited=len(cited)),
                 stop_reason=AuditorStopReason.ANSWERED,
             )
-            return action.finding
+            return _finding_from(
+                ctx,
+                answer,
+                ids=ids,
+                produced_by=ProducedBy(
+                    role=ROLE, model=result.model, prompt_version=prompt.prompt_version
+                ),
+            )
         key = _request_key(action)
         stop = _stop_without_finding(key, previous, hop=hop, limit=limit)
         if stop is not None:
@@ -636,17 +768,133 @@ def _run_hops(
         hop += 1
 
 
-def _served_requests(action: AuditorAction) -> tuple[RequestedContext, ...]:
+def _answer_observed(answer: Finding | AuditProcedure, *, cited: int) -> dict[str, TraceValue]:
+    """`answer` 홉의 관측 — 인용한 probe 근거 수와 v10 계약의 **필드 간 모순**이다.
+
+    🔴 **모순을 값으로 고치지 않고 센다.** 고치면(검증기로 거절하면) 최종 답을 통째로 재생성하고,
+    조용히 넘기면 산문 규칙을 어긴 비율이 어디에도 안 남는다. 어기면 키가 생기고 안 어기면 키가
+    없으니, 분모는 `trigger_status` 키가 든다 — **`answer` 홉마다** 실린다(조사 홉은 안 싣는다).
+
+    - `status_result_mismatch` — `refutation.result`가 가리키는 상태와 `trigger_status`가 다르다.
+      부착 자체는 `_finding_from_procedure`가 넓은 쪽으로 막으므로 이 키는 **관측**이다.
+    - `path_without_endpoints` — 경로가 비면 안 되는 상태인데 `source`·`sink` 양 끝이 없다.
+      게이트의 `p2`가 그 Finding을 떨어뜨리는데(`path_ok`), 그 강등이 **합법적인
+      reachability_unknown의 빈 경로와 trace에서 구분되지 않아** 규칙 위반을 셀 수 없었다.
+    """
+    observed: dict[str, TraceValue] = {"cited_probe_evidence": cited}
+    if answer.trigger_status:
+        observed["trigger_status"] = answer.trigger_status
+    if not isinstance(answer, AuditProcedure):
+        return observed
+    audit = answer.audit
+    if audit is None:
+        return observed
+    if _STATUS_BY_RESULT[audit.refutation.result] != answer.trigger_status:
+        observed["status_result_mismatch"] = f"{answer.trigger_status}/{audit.refutation.result}"
+    if answer.trigger_status in _PATH_REQUIRED_STATUSES and not _PATH_ENDPOINTS <= {
+        step.step for step in audit.path
+    }:
+        observed["path_without_endpoints"] = True
+    return observed
+
+
+def _finding_from(
+    ctx: RunContext,
+    answer: Finding | AuditProcedure,
+    *,
+    ids: Mapping[str, str],
+    produced_by: ProducedBy,
+) -> Finding:
+    """`answer`의 최종 답을 `Finding`으로 — 루프 뒤 흐름(`run()`)은 봉투를 모른다.
+
+    **`produced_by`는 하네스가 찍는다**(`RunContext.call_model`과 같은 논거 — 모델은 자기 모델
+    이름도 프롬프트 판도 모른다). `call_model`의 도장은 응답 **루트**에 `produced_by`가 있을 때만
+    도는데 (`"produced_by" in type(value).model_fields`) 루프 봉투는 루트에 그 필드가 없다 —
+    `AuditorAction`은 안에 든 `Finding`의 것을 모델이 쓴 대로 두었고(v8·v9 prefix는 「하네스가
+    덮는다」고 적는다), `AuditProcedure`에는 아예 없다. 그래서 어느 봉투든 여기서 한 번 찍는다.
+    `Finding`은 재검증으로 덮는다(`stamp_issued`와 같은 식 — `model_copy(update=)`는 검증기를
+    우회한다).
+    """
+    if isinstance(answer, AuditProcedure):
+        return _finding_from_procedure(answer, ids=ids, run_id=ctx.run_id, produced_by=produced_by)
+    # `audit`는 **하네스 소유 필드다**(`SkipJsonSchema`라 요청 스키마에 없다). 문법이 막지만
+    # 파서는 받으므로 — 강제하지 않는 백엔드에서 모델이 그 자리를 채울 수 있다 — v8·v9 분기는
+    # 그 값을 믿지 않고 비운다. 이 봉투의 최종 답에는 `audit` 개념이 없다.
+    return Finding.model_validate(
+        {**answer.model_dump(), "audit": None, "produced_by": produced_by}
+    )
+
+
+def _finding_from_procedure(
+    procedure: AuditProcedure,
+    *,
+    ids: Mapping[str, str],
+    run_id: str,
+    produced_by: ProducedBy,
+) -> Finding:
+    """v10의 최종 답(`AuditProcedure`)을 `Finding`으로 옮긴다 — `DecisionDraft.to_decision`과 같은
+    결이되 **노드가 쥔다**: 발급 ID·후보·`missing_evidence` 배선은 스키마가 아니라 하네스 정책이다.
+
+    모델이 낸 것(`procedure`)과 하네스가 채우는 것이 겹치지 않는다 — 모델은 아래 둘째 줄을 낼 수
+    없다 (`AuditProcedure`에 그 필드가 없다).
+
+    - `audit.path` → `path` (**게이트 `p2`가 경로 양 끝을 요구한다** — 비면 Critic은 「경로 없음」,
+      PoV는 단계 없음, 보고서는 제목 대체로 떨어진다. `audit`가 `None`(no_signal)이면 `[]`) ·
+      `audit` → `audit`(안 실으면 블록이 버려진다) · `trigger_status`·`confidence`·`cwe`·`title`·
+      `rca_draft`·`evidence_refs`·`repro_spec` → 같은 이름 그대로.
+    - `finding_id`·`candidate_id`(발급 `ids`) · `run_id` · `state`(F-1 생성 행인 `hypothesized`) ·
+      `produced_by`. 여기서 이미 발급값을 채우므로 뒤 `stamp_issued`가 같은 값으로 다시 덮어도
+      무해하고 **`issued_override` 이벤트가 안 난다** — 모델이 사실 블록을 안 따른 것이 아니라
+      모델이 쓸 수 없는 값이라 그 관측이 성립하지 않는다.
+    - `missing_evidence` — **`result`가 `decisive_code_missing`이거나 `trigger_status`가
+      `reachability_unknown`이면** 발급 `missing_id` 하나다. 산문도 둘 다 약속한다 — 넓은 쪽인
+      이유는 위 모듈 docstring이 든다. 뒤 `_materialize_missing`이 그 ID마다 blocking
+      `MissingEvidence`를 만들어 E2를 막는다. `audit`가 `None`(`no_signal`)이면 비어 있다 —
+      그 판정은 「모르겠다」가 아니라 「세운 것이 없다」다.
+
+    `repro_spec.origin`은 여기서 안 건드린다 — `run()`이 이 함수 **뒤에** `_ensure_repro_origin`을
+    부르므로 모델이 쓴 `harness`는 그대로 `model`로 덮인다.
+    """
+    audit = procedure.audit
+    # 🔴 **둘 중 하나라도 「결정적 코드가 없다」고 하면 막는다.** 한쪽만 믿으면 모순 출력이
+    # fail-open이 된다: `trigger_status`가 `reachability_unknown`인데 `result`가 다른 값이면
+    # blocking이 안 붙고, `gate.evaluate`는 `trigger_status`를 **안 읽으므로** `unblocked`가 참이
+    # 되어 「모르겠다」로 라벨한 Finding이 E2로 열린다. 산문도 둘 다 약속한다(`prefix.md`의
+    # §Identifiers and evidence references) — 모순 자체는 홉 관측 `status_result_mismatch`가 센다.
+    unknown = procedure.trigger_status == "reachability_unknown"
+    decisive_code_missing = audit is not None and audit.refutation.result == "decisive_code_missing"
+    return Finding(
+        finding_id=ids["finding_id"],
+        run_id=run_id,
+        candidate_id=ids["candidate_id"],
+        state=FindingState.HYPOTHESIZED,
+        path=list(audit.path) if audit is not None else [],
+        audit=audit,
+        trigger_status=procedure.trigger_status,
+        confidence=procedure.confidence,
+        rca_draft=procedure.rca_draft,
+        cwe=procedure.cwe,
+        title=procedure.title,
+        evidence_refs=list(procedure.evidence_refs),
+        missing_evidence=[ids["missing_id"]] if decisive_code_missing or unknown else [],
+        repro_spec=procedure.repro_spec,
+        produced_by=produced_by,
+    )
+
+
+def _served_requests(action: _Hop) -> tuple[RequestedContext, ...]:
     """resolver가 **실제로 처리하는** 요청 — 앞 `_LOOKUP_REQUESTS_MAX`개다."""
     return tuple(action.requests[:_LOOKUP_REQUESTS_MAX])
 
 
-def _request_key(action: AuditorAction) -> Hashable:
+def _request_key(action: _Hop) -> Hashable:
     """직전 홉과 같은 요청인지 보는 키 — 액션이 둘이라 비교 축도 둘이다(`AuditorStopReason`).
 
     `lookup`은 `(kind, target)` 집합(NE 루프의 키와 같다)이되 **resolver가 처리한 앞 몇 개만** 본다
     — 안 돈 요청까지 비교하면 같은 조각이 돌아오는데도 반복이 아니라고 읽는다. `probe`는 **도구
-    이름**이다 — 도구가 `spec`을 입력으로 안 받으므로 `spec`만 바꿔 또 부르면 같은 관측이 돌아온다.
+    이름**이다 — 도구가 `spec`을 입력으로 안 받으므로 `spec`만 바꾼 호출은 **같은 질문**이다.
+    ⏵ 2026-10-07 — 「그래서 같은 관측이 돌아온다」는 과장이라 뺐다: 나중에 다시 돌린 로그가 같을지는
+    안 쟀고 `evidence_id`는 호출마다 새로 난다.
     """
     if action.action == "probe":
         return ("probe", action.tool)
@@ -672,7 +920,7 @@ def _observe(
     ctx: RunContext,
     candidate: Candidate,
     capsule: ContextCapsule,
-    action: AuditorAction,
+    action: _Hop,
     *,
     hop: int,
     workdir: str,
@@ -684,7 +932,7 @@ def _observe(
 
 
 def _lookup(
-    ctx: RunContext, capsule: ContextCapsule, action: AuditorAction, *, hop: int
+    ctx: RunContext, capsule: ContextCapsule, action: _Hop, *, hop: int
 ) -> tuple[dict[str, TraceValue], str]:
     """`lookup` — 이름으로 코드를 조회한다. NE 루프가 쓰는 같은 훅(`ctx.resolve_requests`)이다.
 
@@ -793,15 +1041,15 @@ def _lookup_observation(
 
 
 def _probe(
-    ctx: RunContext, candidate: Candidate, action: AuditorAction, *, hop: int, workdir: str
+    ctx: RunContext, candidate: Candidate, action: _Hop, *, hop: int, workdir: str
 ) -> tuple[dict[str, TraceValue], str]:
     """`probe` — 도구 하나를 돌린다. **도구 이름만** argv에 넣는다(`pov.run_tool`과 같은 계약).
 
-    `AuditorAction.tool`이 스키마에서 닫힌 Literal이라 argv는 고정된 여섯 이름 중 하나다.
-    `subject_id`는 후보 id다 — `call_tool`은 `subject_kind`를 안 받고 `tool_call.finding_id`에 이
-    값을 싣는다. Finding은 `answer` 홉에서야 생기므로 이 홉의 도구 호출은 후보에 귀속되고,
-    `auditor_hop.subject_id`와 같은 키로 조인된다. 홉 이벤트의 `evidence_id`가 그 `tool_call` 이벤트
-    (`subject_id` = Evidence id)로 가는 조인 키다.
+    `AuditorTool`(두 봉투가 공유하는 `tool`의 타입)이 스키마에서 닫힌 Literal이라 argv는 고정된
+    여섯 이름 중 하나다. `subject_id`는 후보 id다 — `call_tool`은 `subject_kind`를 안 받고
+    `tool_call.finding_id`에 이 값을 싣는다. Finding은 `answer` 홉에서야 생기므로 이 홉의 도구
+    호출은 후보에 귀속되고, `auditor_hop.subject_id`와 같은 키로 조인된다. 홉 이벤트의
+    `evidence_id`가 그 `tool_call` 이벤트 (`subject_id` = Evidence id)로 가는 조인 키다.
 
     ⚠ **`spec`은 도구에 안 간다**(모듈 docstring). 조립한 바이트는 sha256과 길이만 홉 이벤트에
     남긴다(`runner._emit_pov_hop`의 `poc_sha256`과 같은 형식).
@@ -878,7 +1126,7 @@ def _emit_hop(
     candidate: Candidate,
     *,
     hop: int,
-    action: AuditorAction,
+    action: _Hop,
     usage: Usage,
     observed: Mapping[str, TraceValue] | None = None,
     stop_reason: AuditorStopReason | None = None,
@@ -1010,8 +1258,8 @@ def _materialize_missing(ctx: RunContext, finding: Finding) -> list[MissingEvide
             missing_id=missing_id,
             run_id=ctx.run_id,
             finding_id=finding.finding_id,
-            need=_NEED,
-            how_to_obtain=_HOW,
+            need=_NEED_PROCEDURE if finding.audit is not None else _NEED,
+            how_to_obtain=_HOW_PROCEDURE if finding.audit is not None else _HOW,
             blocking=True,
         )
         for missing_id in finding.missing_evidence

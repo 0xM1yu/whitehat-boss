@@ -648,7 +648,15 @@ models:
     # `_CONTENT_AWARE_VERSIONS`에 든다.
     # ⏵ 2026-10-06 — v9(v8 + `auditor_guards` 서술 한 항목, `prompts/auditor/v9/meta.yaml`)로
     # 올렸다. 이 판으로 돈 run도 0건이다.
-    prompt_template_version: "v9"
+    # ⏵ 2026-10-06 — 같은 날 v9에서 **v10**으로 올렸다(`prompts/auditor/v10/` + 그 판을 고르는 이 배선). v10은 v7을
+    # 전면 재작성한 판이다 — 분석 절차(5단계 점검 · 우선순위 · 트리거 규칙)와 출력 계약을 새로 썼고
+    # 도구는 v8·v9와 같은 홉 구조다. **출력 계약이 다르다**: 매 홉 `AuditorProcedureAction`이고
+    # `answer`가 `Finding`이 아니라 `AuditProcedure`(`audit` 블록 + 판정)를 싣는다 — 하네스가 그것을
+    # `Finding`으로 옮기고 발급 ID·`produced_by`·`missing_evidence`를 채운다(`nodes/auditor.py`의
+    # `_finding_from_procedure`). v9 문장을 그 자리에서 고치지 않은 것은 판 번호 하나가 두 문장을
+    # 가리키지 않게 하려는 것이다(agent-contracts §4 규칙 1). v10도 `_CONTENT_AWARE_VERSIONS`에 든다 —
+    # 프롬프트가 `FACTS.evidence[].body`를 읽으라고 시킨다. 이 판으로 돈 run은 0건이다.
+    prompt_template_version: "v10"
     fallback: null
     benchmark:
       measured_at: null
