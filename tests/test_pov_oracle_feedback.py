@@ -126,7 +126,9 @@ def test_only_intermediate_attempts_leave_no_final_candidate():
 def test_zero_bytes_are_rejected_before_any_oracle_submission(ctx):  # noqa: ANN001, F811
     state, finding = _pov_state(ctx)
     ctx.oracle = ReadingOracle()
-    runner._submit_vul_to_oracle(ctx, state, finding, b"", designatable=True)
+    runner._submit_vul_to_oracle(
+        ctx, state, finding, b"", designatable=True, in_validate_span=False
+    )
     assert ctx.oracle.vul_calls == []
     failures = [e for e in ctx.trace.events if e.kind is EventKind.ORACLE_FAILED]
     assert failures[-1].data["reason"] == "empty_poc"
@@ -318,7 +320,64 @@ def test_submit_helper_has_no_default_for_designatable(ctx):  # noqa: ANN001, F8
     state, finding = _pov_state(ctx)
     ctx.oracle = ReadingOracle()
     with pytest.raises(TypeError):
-        runner._submit_vul_to_oracle(ctx, state, finding, b"x")
+        runner._submit_vul_to_oracle(ctx, state, finding, b"x", in_validate_span=False)
+
+
+def test_submit_helper_has_no_default_for_the_span_flag(ctx):  # noqa: ANN001, F811
+    state, finding = _pov_state(ctx)
+    ctx.oracle = ReadingOracle()
+    with pytest.raises(TypeError):
+        runner._submit_vul_to_oracle(ctx, state, finding, b"x", designatable=True)
+
+
+def _validate_spans(events):  # noqa: ANN001, ANN202
+    """8단계 `stage_start`/`stage_end`의 최대 깊이와, 평면 파서가 구간 밖으로 읽는 이벤트 종류."""
+    depth = deepest = 0
+    open_stage, outside = None, []
+    for event in events:
+        if event.kind is EventKind.STAGE_START:
+            open_stage = event.stage
+            if event.stage == 8:
+                depth += 1
+                deepest = max(deepest, depth)
+        elif event.kind is EventKind.STAGE_END:
+            open_stage = None
+            if event.stage == 8:
+                depth -= 1
+        elif event.kind in (EventKind.POV_HOP, EventKind.ORACLE_SUBMITTED) and open_stage != 8:
+            outside.append(event.kind)
+    return deepest, outside
+
+
+def test_intermediate_submissions_do_not_nest_the_validate_span(ctx):  # noqa: ANN001, F811
+    # #518 - 중간 gen 제출이 루프의 8단계 구간 안에서 또 구간을 열면 깊이가 2가 되고 안쪽
+    # `wall_ms`가 바깥 구간에 든 시간을 한 번 더 센다. 평면 파서는 안쪽 `stage_end` 뒤의
+    # `pov_hop`을 구간 밖으로 읽는다(`test_pipeline_e2e`·`test_oracle_wiring`이 그렇게 읽는다).
+    start = len(ctx.trace.events)
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle())
+    events = scripted.trace.events[start:]
+    assert [e.data["designatable"] for e in events if e.kind is EventKind.ORACLE_SUBMITTED] == [
+        False, False, True,
+    ]
+    deepest, outside = _validate_spans(events)
+    assert deepest == 1
+    assert outside == []
+
+
+def test_validate_wall_time_counts_each_millisecond_once(ctx):  # noqa: ANN001, F811
+    # 시계가 읽힐 때마다 100 ms씩 간다 - 8단계 구간들의 `wall_ms` 합이 첫 `stage_start`부터
+    # 마지막 `stage_end`까지의 경과를 넘으면 어딘가 두 번 셌다(#518).
+    ticks = iter(range(0, 10**7, 100))
+    ctx.monotonic_ms = lambda: next(ticks)
+    start = len(ctx.trace.events)
+    scripted, _, _ = _feedback_run(ctx, ReadingOracle())
+    ends = [
+        e.wall_ms
+        for e in scripted.trace.events[start:]
+        if e.kind is EventKind.STAGE_END and e.stage == 8
+    ]
+    assert len(ends) == 2  # 루프 구간 하나 + 모델 submit 제출 구간 하나
+    assert sum(ends) <= next(ticks)
 
 
 def test_failed_intermediates_alone_do_not_look_like_a_failed_submit(ctx):  # noqa: ANN001, F811
