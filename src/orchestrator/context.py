@@ -582,7 +582,7 @@ class RunContext:
         evidence = self.tools.run(tool, args, sandbox)
         elapsed = max(0, self.monotonic_ms() - started)
         self.store.put(evidence)
-        # 도구에 데이터로 넘긴 입력은 **크기와 digest만** trace에 간다(맨 hex — `pov_hop`의
+        # 도구 요청에 실은 입력은 **크기와 digest만** trace에 간다(맨 hex — `pov_hop`의
         # `poc_sha256`과 같은 형식). 원바이트는 안 간다. 키 부재 = 입력 없음.
         sent: dict[str, TraceValue] = {}
         if args.input_bytes is not None:

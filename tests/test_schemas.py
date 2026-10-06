@@ -718,7 +718,7 @@ def test_tool_args_reject_empty_argv() -> None:
         ToolArgs(argv=[], workdir="/src")
 
 
-# --- 도구에 데이터로 넘기는 입력 바이트 (#511) ---------------------------------------
+# --- 도구 요청에 데이터로 싣는 입력 바이트 (#386 ①) ---------------------------------
 
 
 def _placeholder_argv(*rest: str) -> list[str]:
@@ -731,7 +731,7 @@ def test_tool_args_input_defaults_to_none() -> None:
 
 
 def test_tool_args_reject_a_placeholder_without_bytes() -> None:
-    """자리표가 있는데 채울 바이트가 없으면 어댑터가 자리표를 **그대로** 도구에 넘긴다 —
+    """자리표가 있는데 채울 바이트가 없으면 안 풀린 자리표가 로그 머리에 **그대로** 남는다 —
     경계에서 빨리 실패한다. 메시지는 무엇을 고칠지 적는다."""
     with pytest.raises(ValidationError, match="input_bytes"):
         ToolArgs(argv=_placeholder_argv(), workdir="/src")
@@ -753,7 +753,8 @@ def test_tool_args_accept_the_pair_including_an_empty_input() -> None:
 
 def test_tool_args_placeholder_is_a_whole_element_not_a_substring() -> None:
     """모델이 쓴 `repro_spec.steps`가 argv에 그대로 들어간다(`validate._call`). 자리표를 **품은**
-    문자열이 run을 죽이면 안 된다 — 원소가 자리표와 **같을 때만** 자리표다."""
+    문자열이 run을 죽이면 안 된다 — 원소가 자리표와 **같을 때만** 자리표다. 같은 원소는 노드가
+    도구에 가기 전에 거절한다(`tests/test_nodes.py`)."""
     embedded = f"cat {tool_runner.INPUT_PLACEHOLDER} | ./poc"
 
     assert ToolArgs(argv=["poc", embedded], workdir="/src").input_bytes is None

@@ -49,7 +49,7 @@ _STATIC_PATTERNS = (
 # 쪽이 고를 후보 자체가 없어져, 인덱서가 볼 수 없는 파일이 조용히 생긴다.
 _SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".inc", ".py")
 
-# 도구에 데이터로 넘기는 입력 파일(`ToolArgs.input_bytes`)의 확장자. **분류되는 확장자가
+# 도구 요청에 데이터로 싣는 입력 파일(`ToolArgs.input_bytes`)의 확장자. **분류되는 확장자가
 # 아니어야 한다**(`preprocess._KIND_BY_SUFFIX`에 없다) — `--target`이 저장소 루트라
 # `artifacts/`가 대상 트리 안에 있으면 `.bin`(→ BINARY) 같은 확장자는 이전 run의 입력이 다음
 # run의 분석 대상이 된다(`orchestrator/poc_log.py` 모듈 docstring의 「이름」 절 — 같은 이유로
@@ -58,17 +58,23 @@ INPUT_SUFFIX = ".poc"
 
 
 def write_input(directory: Path, data: bytes) -> Path:
-    """`data`를 `directory/input-<sha256 앞 16자>.poc`에 **바이트로** 쓰고 그 경로를 돌려준다.
+    """`data`를 `directory/input-<sha256 앞 16자>.poc`에 **새 파일로, 바이트로** 쓰고 경로를 준다.
 
     텍스트로 쓰면 Windows에서 개행이 번역된다(`poc_log` 모듈 docstring) — 되읽어 대조하고, 다르면
-    파일을 지우고 `OSError`다(틀린 입력 파일은 없는 파일보다 나쁘다). 이름이 내용에서 나와 같은
-    바이트는 같은 경로를 덮어쓴다. 예외 문구에 경로를 싣지 않는다 — 어댑터가 그 문구를 Evidence로
+    파일을 지우고 `OSError`다(틀린 입력 파일은 없는 파일보다 나쁘다). **말단 링크를 따라가지
+    않는다** — scratch는 RW 마운트이고 대상 코드가 거기서 돈다: 예측되는 이름에 링크를 심으면
+    `write_bytes`가 마운트 밖 파일을 덮는다. 그래서 있던 항목을 `unlink`하고 `xb`(`O_EXCL`)로
+    만든다 — 그사이 심긴 것은 남의 것이라 안 지우고 `FileExistsError`다(`poc_log.PocLog.write`가
+    같은 선례, 상위 디렉터리 링크는 못 막는다). 예외 문구에 경로를 싣지 않는다 — 어댑터가 Evidence로
     올리고 관측으로 모델에 간다. 컨테이너 어댑터도 이 함수를 쓴다 — 쓰기 규칙이 갈라지지 않게.
     """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"input-{hashlib.sha256(data).hexdigest()[:16]}{INPUT_SUFFIX}"
+    path.unlink(missing_ok=True)
+    handle = open(path, "xb")  # 그새 심겼으면 FileExistsError — 남의 것이라 안 지우고 올린다
     try:
-        path.write_bytes(data)
+        with handle:
+            handle.write(data)
         if path.read_bytes() != data:
             raise OSError(errno.EIO, "되읽은 바이트가 쓴 입력과 다르다")
     except BaseException:

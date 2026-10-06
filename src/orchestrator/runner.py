@@ -2270,7 +2270,7 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트는 도구 요청에 데이터로
     실리지만 어느 도구 명령도 그것을 읽지 않는다**(`pov.run_tool`) — dev_fake는 대상 소스 존재만
     보고, 컨테이너는 미생성 파일을 돌려 도구 관측의 `ok`·`exit`·꼬리는 PoC와 무관하다(호스트
-    후속). v3 관측에서 PoC의 함수인 것은 입력의 크기·digest 줄(`_pov_observation`)뿐이다 — 그
+    후속, #513). v3 관측에서 PoC의 함수인 것은 입력의 크기·digest 줄(`_pov_observation`)뿐이다 — 그
     전까지 실서빙 pov 루프를 돌리면 도구 관측으로는 spec의 효과를 못 읽는다(모델이 언제 submit할지는
     안 쟀다). E4 게이트 전이도 후속이다. v3의 중간 gen은 별도로 `vul` 판정을 읽어 다음 모델 홉에
     싣는다(#354/#386①). 여기서는 홉 이벤트(`POV_HOP`)와 종단
@@ -2398,7 +2398,7 @@ def _run_pov_hops(
                 ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                 fuzz=fuzz if hop == 0 else None,
             )
-            # 도구가 받은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
+            # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
             followup = _pov_observation(
                 action.action,
                 evidence,
@@ -2442,10 +2442,12 @@ def _pov_observation(
     prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
     같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
 
-    ⏵ **#511 — 도구에 넘긴 입력의 크기와 sha256을 싣는다**(`poc` — `pov.run_tool`이 도구에 실은
-    바이트, 맨 hex라 trace의 `poc_sha256`과 바로 대조된다). 도구 결과는 PoC와 무관해도 이 줄은
-    **PoC의 함수**라 되먹임이 어느 PoC에 대한 것인지 가른다. 입력이 없으면(hop0 `inspect`) 줄
-    자체가 없다 — `b""`는 입력이다(`input_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
+    ⏵ **#386 ① — 직전 `gen`의 PoC 크기와 sha256을 싣는다**(`poc` — `pov.run_tool`이 도구 요청에
+    실은 바이트, 맨 hex라 trace의 `poc_sha256`과 바로 대조된다). 도구 결과는 PoC와 무관해도 이
+    줄은 **PoC의 함수**라 되먹임이 어느 PoC에 대한 것인지 가른다. 필드 이름이 `last_gen_*`인 것은
+    일부러다 — `input_*`는 도구가 그 바이트를 **받았다**고 읽히는데 v3 prefix는 그 반대를 적는다
+    (어느 명령도 그 파일을 읽지 않는다, #513). 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
+    `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
     `wide=False`면 안 싣는다(꼬리와 같은 경계).
     """
     detail = f" error={evidence.error}" if evidence.error else ""
@@ -2456,7 +2458,7 @@ def _pov_observation(
     if not wide:
         return head + detail
     if poc is not None:
-        head += f" input_bytes={len(poc)} input_sha256={hashlib.sha256(poc).hexdigest()}"
+        head += f" last_gen_bytes={len(poc)} last_gen_sha256={hashlib.sha256(poc).hexdigest()}"
     head += detail
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
