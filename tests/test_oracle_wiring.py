@@ -212,7 +212,7 @@ def test_a_candidate_event_carries_nothing_a_reader_could_count_as_a_score(
 def test_a_loop_that_did_not_submit_sends_nothing_even_with_a_partial_poc(
     ctx, monkeypatch, reason  # noqa: ANN001, F811
 ) -> None:
-    """실제 루프는 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`에서 부분 PoC(`last_poc`)를 들고 돌아온다.
+    """실제 루프는 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`에서 마지막 `gen`의 부분 PoC를 든다.
     스텁이 `(None, ...)`만 내면 `SUBMITTED` 가드를 지워도 초록이라, 부분 바이트를 실어 건다."""
     state, (finding,) = _findings(ctx, 1)
     _stub_loop(monkeypatch, [(b"partial poc", reason)])
