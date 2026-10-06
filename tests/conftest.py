@@ -5,8 +5,10 @@
 결함("선언과 실제의 괴리")과 같은 종류다.
 """
 
+import os
 from pathlib import Path
 
+import pytest
 import yaml
 
 from src.config import CONFIG_DIR
@@ -46,3 +48,19 @@ def served_scout_config():  # noqa: ANN201 - src.config를 모듈 머리에서 �
         adapters=base.profile.adapters.transition(state_store="sqlite"),
     )
     return base.transition(models={**base.models, SERVED_SCOUT_KEY: entry}, profile=profile)
+
+
+def plant_link(kind: str, link: Path, outside: Path) -> None:
+    """`link` 자리에 `outside`를 가리키는 항목을 심는다 — `symlink`(살아 있는 링크)·`dangling`(없는
+    곳을 가리키는 링크, 호출부가 `outside`를 안 만든다)·`hardlink`(같은 inode).
+
+    못 만드는 환경이면 **사유를 적고 건너뛴다**(Windows는 심링크 권한이 없을 수 있다) — 안 만들어진
+    링크 위에서 초록이 나면 공허하다.
+    """
+    try:
+        if kind == "hardlink":
+            os.link(outside, link)
+        else:
+            link.symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{kind}를 만들 수 없는 환경이다: {type(exc).__name__}: {exc}")
