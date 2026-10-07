@@ -2,17 +2,23 @@
 
 `World`의 기본값은 **모든 점검이 통과하는** 세계다 — 테스트는 한 칸씩 어긋나게 한다. 호출은 전부
 기록된다. `forbid_real_world`가 진짜 프로세스·소켓이 새면 터뜨려 네트워크·Docker·GPU 없이 돈다는
-것을 증명한다(`tests/test_preflight*.py`가 각자 픽스처로 감싼다).
+것을 증명한다(`tests/test_preflight*.py`가 각자 픽스처로 감싼다). 컨테이너 호출은 전부
+`assert_docker_safe`를 지난다 — 안전 인자(네트워크·당김·마운트 없음)가 한 곳에서 걸린다.
 """
 
+import hashlib
+import io
 import json
 import re
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
 
 from src import preflight as pf
+from src import preflight_probes as pp
+from src.adapters.container_tools import DEFAULT_IMAGE
 from src.cli import Check, Severity
 from src.config import load_config
 from tests.oracle_fakes import TASK_ID, submit_script
@@ -21,11 +27,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # 이슈 #534의 재현 프로필 — 교대를 선언하고 도구 런타임이 docker다.
 # 전제가 어긋나면 `make_world`가 죽는다.
 PROFILE = "harness_pool"
+# 교대를 선언하지 않는 실서빙 프로필(서버를 사람이 띄운다) — 리뷰가 `[OK]` exit 0을 재현했다.
+UNSWAPPED_PROFILE = "harness_pool_hybrid"
 DEVICE = "vastai-remote"
 SERVER = "http://127.0.0.1:8666"
-KEY = "SECRET-key-0123456789"
+# 앞 두 글자(`Zq`)도 출력에 나올 일이 없는 값이다 — 접두를 찍는 변이를 접두 길이마다 가린다.
+KEY = "Zq7#unique-long-key-8f3a91c2d8e4b605"
 COMMIT = "a" * 40
-BOOT = "11111111-2222-3333-4444-555555555555"
+# 16진 글자가 든 값이다 — 대소문자를 접는 비교가 숫자뿐인 값에서는 안 드러난다
+BOOT = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
 OK, WARN, ERROR = Severity.OK, Severity.WARN, Severity.ERROR
 # ssh는 진짜 오류 앞에 경고를 낸다 — 사유는 stderr의 끝에서 읽어야 한다.
 _SSH_STDERR = "\n".join(
@@ -35,7 +45,8 @@ _SSH_STDERR = "\n".join(
         "ssh: connect to host vast-box port 22: Connection refused",
     ]
 )
-_Probes = pf.Probes  # CLI 테스트가 `pf.Probes`를 갈아 끼우므로 진짜 클래스를 미리 잡아 둔다
+_Probes = pp.Probes  # CLI 테스트가 `pf.Probes`를 갈아 끼우므로 진짜 클래스를 미리 잡아 둔다
+REAL_CHECKSUMS = pf._check_checksums  # `fill_checksums`가 갈아 끼우기 전의 진짜 판정
 
 
 # --- 바깥 세계의 가짜 ---------------------------------------------------------------------
@@ -59,6 +70,10 @@ def _local_index_version() -> str:
     found = re.search(r'^INDEX_VERSION = "([^"]+)"', text, re.M)
     assert found, "indexer.py의 INDEX_VERSION 줄을 못 찾았다"
     return found.group(1)
+
+
+def _local_indexer_sha() -> str:
+    return hashlib.sha256((ROOT / "tools/harness-tools/indexer.py").read_bytes()).hexdigest()
 
 
 def _canary(path: Path, **overrides: object) -> Path:
@@ -87,14 +102,32 @@ def _bundle(tmp_path: Path, **script: object) -> Path:
     task = tmp_path / "task"
     task.mkdir(exist_ok=True)
     (task / "submit.sh").write_text(submit_script(**script), encoding="utf-8")
-    (task / "repo-vul.tar.gz").write_bytes(b"not read by preflight")
+    with tarfile.open(task / "repo-vul.tar.gz", "w:gz") as tar:  # 열리는 진짜 아카이브다
+        body = b"int main(void) { return 0; }\n"
+        member = tarfile.TarInfo("src-vul/main.c")
+        member.size = len(body)
+        tar.addfile(member, io.BytesIO(body))
     return task
+
+
+def assert_docker_safe(argv: list[str]) -> None:
+    """`preflight`의 **모든** 컨테이너 호출이 지켜야 하는 안전 인자 — 한 곳에서 단언한다."""
+    assert DEFAULT_IMAGE in argv, argv
+    head = argv[: argv.index(DEFAULT_IMAGE)]
+    assert head[0] in ("docker", "podman") and head[1] == "run", argv
+    assert "--rm" in head and "--network=none" in head, argv
+    assert head[head.index("--pull") + 1] == "never", argv
+    unsafe = {"-v", "--volume", "--mount", "--privileged", "--network=host", "-e", "--env"}
+    assert not unsafe & set(head) and not any(
+        a.startswith("--net") and a != "--network=none" for a in head
+    ), argv
 
 
 class World:
     """주입하는 가짜 — 호출을 전부 기록한다. 기본값은 **모든 점검이 통과하는** 세계다."""
 
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, profile: str = PROFILE) -> None:
+        self.profile = profile
         self.env = {
             "SWAP_SSH_HOST": "vast-box",
             "SWAP_REMOTE_ROOT": "/root/harness",
@@ -103,10 +136,13 @@ class World:
         }
         self.commit = COMMIT
         self.remote_commit = COMMIT
-        self.boot_id = BOOT
+        self.boot_id: str | None = BOOT
+        self.mmap_rnd_bits: str | None = "28"
         self.image_version = _local_index_version()
+        self.image_sha = _local_indexer_sha()
+        self.python_missing = False
         self.listening = {("127.0.0.1", port) for port in _script_ports()}
-        self.listening.add(("127.0.0.1", 8666))
+        self.listening |= {("127.0.0.1", 8004), ("127.0.0.1", 8005), ("127.0.0.1", 8666)}
         self.ssh_exit = 0
         self.docker_exit = 0
         self.docker_missing = False
@@ -114,6 +150,20 @@ class World:
         self.tcp_calls: list[tuple[str, int]] = []
         self.bundle = _bundle(tmp_path)
         self.canary = _canary(tmp_path / "canary.json")
+
+    def _docker(self, argv: list[str]) -> tuple[str, int, str]:
+        assert_docker_safe(argv)
+        if self.docker_exit != 0:
+            return "", self.docker_exit, "Unable to find image 'harness-tools:v3' locally"
+        if "cat" in argv:  # 호스트 사실 — 파일 순서대로, 못 읽은 값은 줄이 빠진다
+            lines = [v for v in (self.mmap_rnd_bits, self.boot_id) if v is not None]
+            return "\n".join(lines), 0, ""
+        version = f'INDEX_VERSION = "{self.image_version}"'
+        if "python3" in argv:
+            if self.python_missing:
+                return "", 127, "exec: python3: executable file not found in $PATH"
+            return f"sha256={self.image_sha}\n{version}", 0, ""
+        return version, 0, ""  # grep
 
     def run(self, argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
         self.calls.append((list(argv), timeout))
@@ -127,16 +177,10 @@ class World:
             out = self.remote_commit if code == 0 else ""
             err = "" if code == 0 else _SSH_STDERR
         elif tool in ("docker", "podman"):
-            code = self.docker_exit
-            err = "" if code == 0 else "Unable to find image 'harness-tools:v3' locally"
-            if code != 0:
-                out = ""
-            elif "cat" in argv:
-                out = self.boot_id
-            else:
-                out = f'INDEX_VERSION = "{self.image_version}"'
+            out, code, err = self._docker(argv)
         else:
             raise AssertionError(f"모르는 호출: {argv}")
+        # 끝 개행 하나는 `cat`·`git`이 늘 붙인다 — 없애려면 값에 따로 넣는다
         return subprocess.CompletedProcess(argv, code, out + "\n", err)
 
     def tcp(self, host: str, port: int) -> str | None:
@@ -146,7 +190,7 @@ class World:
     def resolve(self, command: tuple[str, ...]) -> tuple[str, ...]:
         return (f"/usr/bin/{command[0]}", *command[1:])
 
-    def probes(self) -> pf.Probes:
+    def probes(self) -> pp.Probes:
         return _Probes(run=self.run, tcp=self.tcp, resolve=self.resolve, environ=self.env)
 
     def check(self, **overrides: object) -> list[Check]:
@@ -157,7 +201,7 @@ class World:
             "oracle_canary": self.canary,
             **overrides,
         }
-        return pf.preflight(PROFILE, probes=self.probes(), **args)  # type: ignore[arg-type]
+        return pf.preflight(self.profile, probes=self.probes(), **args)  # type: ignore[arg-type]
 
     def tools_called(self) -> list[str]:
         return [argv[0] for argv, _ in self.calls]
@@ -169,16 +213,34 @@ def forbid_real_world(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*args: object, **kwargs: object) -> None:
         raise AssertionError(f"진짜 바깥 세계를 불렀다: {args} {kwargs}")
 
-    monkeypatch.setattr(pf.subprocess, "run", boom)
-    monkeypatch.setattr(pf.socket, "create_connection", boom)
+    monkeypatch.setattr(pp.subprocess, "run", boom)
+    monkeypatch.setattr(pp.socket, "create_connection", boom)
 
 
-def make_world(tmp_path: Path) -> World:
-    config = load_config(PROFILE)
-    assert config.swap is not None and config.profile.adapters.tool_runner == "docker", (
-        f"{PROFILE}의 전제(교대 선언 · docker)가 바뀌었다 — 이 파일의 시나리오를 다시 본다"
+def fill_checksums(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`harness_pool`의 서빙 모델 checksum은 아직 0이라 그대로면 점검에 WARN이 늘 하나 붙는다.
+
+    「모든 점검이 통과하는 세계」를 만들려고 그 판정만 채운 것으로 갈아 끼운다 — 진짜 판정은
+    `REAL_CHECKSUMS`로 따로 시험한다.
+    """
+    monkeypatch.setattr(
+        pf,
+        "_check_checksums",
+        lambda config: [Check(OK, "실서빙 역할의 model checksum이 모두 채워져 있다")],
     )
-    return World(tmp_path)
+
+
+def make_world(tmp_path: Path, profile: str = PROFILE) -> World:
+    config = load_config(profile)
+    if profile == PROFILE:
+        assert config.swap is not None and config.profile.adapters.tool_runner == "docker", (
+            f"{PROFILE}의 전제(교대 선언 · docker)가 바뀌었다 — 이 파일의 시나리오를 다시 본다"
+        )
+    if profile == UNSWAPPED_PROFILE:
+        assert config.swap is None and config.served_models(), (
+            f"{UNSWAPPED_PROFILE}의 전제(교대 없음 · 실서빙 역할)가 바뀌었다"
+        )
+    return World(tmp_path, profile)
 
 
 def one(checks: list[Check], label: str) -> Check:

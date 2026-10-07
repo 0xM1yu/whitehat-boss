@@ -7,10 +7,11 @@
 `doctor`는 **엔드포인트에 접속하지 않는다.** 설정 파일과 저장소 상태만 본다 — GPU가 없는
 팀원도 돌릴 수 있어야 하고, 네트워크 실패와 설정 오류가 같은 오류로 보이면 안 된다.
 
-**`bench`와 `preflight`만 접속한다.** 배포 전 검증 체크리스트(model-serving.md §3)는 실제 서버를
-재야 답이 나오므로 그 경계를 여기서 한 번 연다. `preflight`(#534)는 run 전에 ssh·터널 포트·채점기·
-`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 별 명령이다. 나머지 커맨드는 여전히 소켓을
-열지 않는다.
+**`bench`와 `preflight`는 접속 자체가 일인 진단 명령이다.** 배포 전 검증 체크리스트(model-serving.md
+§3)는 실제 서버를 재야 답이 나오므로 그 경계를 여기서 한 번 연다. `preflight`(#534)는 run 전에
+ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 별 명령이다. `run`도 접속한다 —
+모델 서버·채점기·교대 명령에 닿는 것이 파이프라인을 도는 일이다. 소켓을 열지 않는 것은 `doctor`·
+`estimate`·`gc`다.
 """
 
 import argparse
@@ -1771,7 +1772,8 @@ def _sarif_result(finding: Finding) -> dict:
 
 
 def bench(args: argparse.Namespace) -> int:
-    """§3 체크리스트를 실제 엔드포인트에 대고 잰다. **접속하는 유일한 커맨드다.**
+    """§3 체크리스트를 실제 엔드포인트에 대고 잰다. **진단 중 서버에 요청을 보내는 건 이것뿐이다.**
+    (`preflight`(#534)는 ssh·TCP·`docker run`까지만 한다. `run`도 서버에 닿지만 파이프라인이다.)
 
     종료 코드는 "bench 자신이 제대로 돌았는가"만 뜻한다. 측정 결과의 통과·실패는 JSON의
     `checklist`에 있다 — 체크리스트 실패를 종료 코드로 옮기면 서버가 없는 개발 장비에서
@@ -2016,7 +2018,8 @@ def build_parser() -> argparse.ArgumentParser:
     pre = subs.add_parser(
         "preflight",
         description="실모델·실도구 run의 선결조건을 접속해서 한 번에 점검한다(#534). ssh·TCP·"
-        "docker를 일부러 쓴다. ERROR가 하나라도 있으면 exit 2다",
+        "docker를 일부러 쓴다. ERROR가 하나라도 있으면 exit 2다. 건너뛴·못 확인한 점검(WARN)은 "
+        "기본으로는 exit 0이다 - 자동화는 --strict로 돌린다(WARN이 있으면 exit 4)",
     )
     pre.add_argument("--profile", required=True)
     pre.add_argument(
@@ -2025,6 +2028,12 @@ def build_parser() -> argparse.ArgumentParser:
     pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 — 허용 파일·submit.sh")
     pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 — TCP로 닿는지 본다")
     pre.add_argument("--oracle-canary", type=Path, default=None, help="카나리 보고서 경로")
+    pre.add_argument(
+        "--strict",
+        action="store_true",
+        help="WARN(건너뜀·못 확인)이 하나라도 있으면 exit 4로 끝낸다 - 자동화는 이것을 쓴다. "
+        "기본은 사람이 읽는 용도라 WARN만 있으면 exit 0이다",
+    )
 
     gc_cmd = subs.add_parser("gc")
     gc_cmd.add_argument("--keep", type=int, default=5)
