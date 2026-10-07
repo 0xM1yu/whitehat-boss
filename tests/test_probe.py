@@ -338,6 +338,7 @@ def test_r6_and_the_label_that_is_not_a_metric_are_both_reported(
     `prompt_tokens_details`는 R6 판정이고(Seraph는 null), `kv_cache_memory_bytes`는
     메트릭이 아니라 `cache_config_info`의 라벨이다 — ATOM에서 숫자로 채워지면
     `mem_gb_ctx8k`를 nvidia-smi 없이 얻는다.
+    ⏵ 2026-10-08 — ATOM도 `None`이었다(2026-08-18 — `2026-08-18-serving-atom.md` §3.3).
     """
     _served(monkeypatch)
 

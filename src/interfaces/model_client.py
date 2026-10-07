@@ -38,6 +38,10 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 # `vllm_metrics`를 미리 열어 두는 것은 자리만 잡아 두는 것이지 있는 척하는 것이 아니다 —
 # 서버가 `/metrics`로 무엇을 주는지는 ATOM에서 확인한 뒤에 정한다. 없는 값을 지어내지
 # 않는다(model-serving.md §3, bench.py 모듈 docstring).
+# ⏵ 2026-10-08 — ATOM `/metrics` 프로브는 2026-08-18에 돌았다
+# (`docs/experiments/harness/2026-08-18-serving-atom.md` §3.3). 그 원문은
+# `tests/fixtures/metrics/`에 안 들어왔고 ATOM은 2026-09-29 사용 종료(#340)다.
+# `vllm_metrics`는 여전히 미구현이다(위 표).
 GpuMsSource = Literal["request_wall_clock", "vllm_metrics"]
 
 

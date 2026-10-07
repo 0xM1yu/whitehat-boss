@@ -177,6 +177,10 @@ profiles:
     # 없이 모델에 닿는 run은 run 디렉터리를 잡기 전에 거부된다. **실장비 종단은 미실측이다**(ATOM 먼저).
     # ⏵ 2026-09-29 — ATOM에서 한 번 돌았다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md` — 교대 네 번
     #   전부 `ok=true`, 슬라이스 1개·n=1). vast는 미실측이다.
+    # ⏵ 2026-10-08 — 같은 날 ATOM 사용이 끝났다(#340 · docs/portability.md §6) -> 「ATOM 먼저」는 지난 계획이다. vast 쪽은
+    #   `vastai-remote`로 교대 종단이 처음 성립했다(WSL `run_20261003_0002`가 먼저 완주했으나 도구 4개 전부 실패,
+    #   도구까지 돈 완주는 Windows `run_20261003_0003` — `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`
+    #   §1 — 둘 다 Scout·Auditor만 모델을 불렀고 7·8단계는 안 불렀다). `--device vastai`로 돈 run은 `docs/experiments/`에 없다.
     # hybrid 짝은 교대를 선언하지 않는다 — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤다.
     #
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 6역할

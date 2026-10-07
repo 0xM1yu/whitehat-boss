@@ -356,6 +356,7 @@ def render(report: dict[str, Any], written: dict[str, str]) -> list[str]:
         f"  gpu_memory_utilization={labels.get('gpu_memory_utilization')}",
         # ATOM에서 이 값이 숫자면 mem_gb_ctx8k를 nvidia-smi 없이 얻을 수 있다.
         # Seraph는 문자열 "None"이었다.
+        # ⏵ 2026-10-08 — ATOM도 None이었다(2026-08-18-serving-atom.md §3.3).
         f"kv_cache_memory_bytes: {labels.get('kv_cache_memory_bytes')}",
         f"prompt_tokens_details: {details}"
         f"{'  (R6 재현 — 서버가 장부를 주지 않는다)' if details is None else ''}",

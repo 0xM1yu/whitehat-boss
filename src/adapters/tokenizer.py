@@ -8,6 +8,8 @@
 **`tokenizers`는 하네스의 런타임 의존이 아니다** — `pyproject.toml`의 `dependencies`는
 pydantic·pyyaml 둘뿐이고 실제로 이 라이브러리를 부르는 것은 실서빙 프로필뿐이다(그쪽엔
 vLLM과 함께 깔려 있다 — ATOM).
+⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 하네스가 로컬이고 서빙만 vast인 배치
+(`--device vastai-remote`)에서 하네스 쪽에 `tokenizers`가 깔려 있는지는 이 줄이 확인하지 않았다.
 
 **그러나 `requirements.txt`에는 있다.** 그 파일은 "이 저장소를 검사하려면 무엇이 필요한가"의
 목록이고, `tests/test_tokenizer_adapter.py`의 실카운팅 검증을 **CI에서 실제로 돌리기 위해**
