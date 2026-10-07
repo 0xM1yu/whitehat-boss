@@ -42,7 +42,7 @@ from src.orchestrator.oracle_log import OracleLedger, OracleLog, VulAttempt, vul
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas import FindingState
-from src.schemas.enums import EvidenceGrade, PovStopReason
+from src.schemas.enums import EvidenceGrade, PovStopReason, ReasonCode
 from tests.oracle_fakes import TASK_ID, FakeOracle, submit_script
 from tests.test_nodes import (  # noqa: F401
     _demoted_at_validate,
@@ -624,6 +624,19 @@ def _pov_loop_that_runs_out_of_budget_at(monkeypatch, stop_at, error=None):  # n
     return reached
 
 
+# 이슈 #532가 말한 모양(5xx·401·429)과 상태 없음 - 넷 다 `_is_droppable`이 거짓이라 PoV 루프가
+# 흡수하지 않고 올린다. `status`로 갈라 구하는 변이(상태가 있으면 건너뛴다)는 `None` 하나만으로는
+# 안 잡힌다(적대적 리뷰가 그 변이를 넣었더니 483건이 전부 초록이었다).
+_GATEWAY_STATUSES = [None, 503, 401, 429]
+
+
+def _gateway_error(status):  # noqa: ANN001, ANN202
+    """이 루프까지 올라오는 서버 쪽 `ModelGatewayError` - 전제(흡수 안 됨)를 여기서 단언한다."""
+    error = ModelGatewayError("down", status=status)
+    assert runner._pov_classify_exception(error) is None, "흡수되는 오류다 - 이 루프에 안 온다"
+    return error
+
+
 def test_a_budget_stop_inside_the_extra_pov_targets_still_designates_the_final(
     ctx, monkeypatch  # noqa: ANN001, F811
 ) -> None:
@@ -668,17 +681,17 @@ def test_a_budget_stop_inside_the_validated_targets_leaves_the_final_not_reached
     assert summary is not None and summary["final"] == "not_reached"
 
 
+@pytest.mark.parametrize("status", _GATEWAY_STATUSES, ids=str)
 def test_a_gateway_error_inside_the_extra_pov_targets_still_designates_the_final(
-    ctx, monkeypatch  # noqa: ANN001, F811
+    ctx, monkeypatch, status  # noqa: ANN001, F811
 ) -> None:
-    """서버 쪽 `ModelGatewayError`(상태 없음 - `_run_pov_hops`가 흡수하지 않고 올린다)가 추가
-    대상에서 나도 앞 대상이 이미 낸 PoC의 최종 지정이 돈다 - `fix` 다리·판정 조회가 정확히 한
-    번이고 `oracle.final`이 `not_reached`가 아니다(이슈 #532 - 앞 판은 이것을 `not_reached`로
-    고정한 핀이었다). 예외는 그대로 올라간다(`run_pipeline`의 게이트웨이 갈래가 사유를 적는다)."""
+    """서버 쪽 `ModelGatewayError`(`_run_pov_hops`가 흡수하지 않고 올린다)가 추가 대상에서 나도 앞
+    대상이 이미 낸 PoC의 최종 지정이 돈다 - `fix` 다리·판정 조회가 정확히 한 번이고
+    `oracle.final`이 `not_reached`가 아니다(이슈 #532 - 앞 판은 이것을 `not_reached`로 고정한
+    핀이었다). 예외는 그대로 올라간다(`run_pipeline`의 게이트웨이 갈래가 사유를 적는다).
+    `status`는 상태 없음·5xx·401·429 넷이다 - 어느 것이든 같다."""
     state, validated, extra = _validated_and_one_extra(ctx)
-    reached = _pov_loop_that_runs_out_of_budget_at(
-        monkeypatch, 1, error=ModelGatewayError("down", status=None)
-    )
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1, error=_gateway_error(status))
     ctx.oracle = oracle = FakeOracle()
 
     with pytest.raises(ModelGatewayError):
@@ -705,26 +718,23 @@ def _two_validated(ctx):  # noqa: ANN001, ANN202, F811
     return state, first, second
 
 
-@pytest.mark.parametrize(
-    ("error", "raised"),
-    [
-        (None, BudgetExhausted),
-        (ModelGatewayError("down", status=None), ModelGatewayError),
-    ],
-    ids=["budget", "gateway"],
-)
+@pytest.mark.parametrize("status", ["budget", *_GATEWAY_STATUSES], ids=str)
 def test_a_stop_inside_the_validated_targets_designates_what_an_earlier_target_submitted(
-    ctx, monkeypatch, error, raised  # noqa: ANN001, F811
+    ctx, monkeypatch, status  # noqa: ANN001, F811
 ) -> None:
     """**막는 것은 「어느 대상에서 끊겼나」가 아니라 「이미 낸 PoC가 있는데 지정이 안 돈다」다.**
     `validated` 둘째 대상에서 끊겨도 첫째가 이미 vul 제출을 성공했으면 최종 지정이 돈다(이슈
     #532 - 앞 조건은 `validated` 대상이면 앞 제출과 무관하게 건너뛰었다). 첫 대상에서 끊긴
-    run(낸 PoC 없음)은 위 `…leaves_the_final_not_reached`가 문다."""
+    run(낸 PoC 없음)은 위 `…leaves_the_final_not_reached`가 문다. `status`는 예산과 게이트웨이
+    넷(상태 없음·5xx·401·429)이다 - 상태로 갈라 구하는 변이를 이 자리에서도 문다."""
+    budget = status == "budget"
     state, first, second = _two_validated(ctx)
-    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1, error=error)
+    reached = _pov_loop_that_runs_out_of_budget_at(
+        monkeypatch, 1, error=None if budget else _gateway_error(status)
+    )
     ctx.oracle = oracle = FakeOracle()
 
-    with pytest.raises(raised):
+    with pytest.raises(BudgetExhausted if budget else ModelGatewayError):
         runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert reached == [first.finding_id, second.finding_id], "둘째 대상에 못 닿았다 - 공허하다"
@@ -740,8 +750,8 @@ def test_a_final_designation_that_raises_does_not_hide_the_stop_that_cut_the_loo
     ctx, monkeypatch, stop  # noqa: ANN001, F811
 ) -> None:
     """`_finalize_oracle` 자신이 던져도 run을 끊은 **원 예외**가 올라온다 - 그 예외로
-    `run_pipeline`이 사유를 적는다. 새 예외는 원 예외의 `__notes__`로 붙는다(`run_pipeline`의
-    매니페스트 실패와 같은 모양).
+    `run_pipeline`이 사유를 적는다. 새 예외는 원 예외의 `__notes__`로 붙고, 그 노트가 run
+    경고에 실리는 것은 아래 `test_a_final_designation_failure_reaches_the_run_warnings`가 문다.
     ⚠ 그 함수가 던질 실경로는 못 찾았다(미확인) - 이 검사는 `_finalize_oracle`을 던지게 바꿔
     치워 **그 자리의 처리**만 문다."""
     original = (
@@ -765,6 +775,113 @@ def test_a_final_designation_that_raises_does_not_hide_the_stop_that_cut_the_loo
     assert caught.value is original, f"원 예외가 가려졌다: {caught.value!r}"
     notes = getattr(caught.value, "__notes__", [])
     assert any("RuntimeError: 장부 쓰기 실패" in note for note in notes), notes
+
+
+@pytest.mark.parametrize(
+    ("stop", "reason", "headline"),
+    [
+        ("budget", ReasonCode.BUDGET_EXHAUSTED, "8단계에서 예산 소진"),
+        ("gateway", ReasonCode.MODEL_GATEWAY_UNAVAILABLE, "게이트웨이 실패로 중단했다"),
+    ],
+)
+def test_a_final_designation_failure_reaches_the_run_warnings(
+    tmp_path: Path, monkeypatch, stop, reason, headline  # noqa: ANN001
+) -> None:
+    """**`add_note`로 붙은 사유를 `run_pipeline`이 읽어 `RunResult.warnings`에 싣는다.** 이 갈래는
+    원 예외를 삼키므로(`run_pipeline`의 예산·게이트웨이 `except`) 노트를 안 읽으면 최종 지정이 왜
+    안 됐는지가 산출물 어디에도 안 남는다 - 노트가 트레이스백에 찍히는 매니페스트 실패와 다르다.
+    위 `…does_not_hide…`는 `_analyze`까지만 보므로 그 뒤 갈래를 `cli.execute` 경유로 돌린다.
+    ⚠ `_finalize_oracle`이 던질 실경로는 못 찾았다(미확인) - 던지게 바꿔 치워 **읽는 쪽**만 문다."""
+    reached: list[str] = []
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        reached.append(finding.finding_id)
+        if len(reached) == 2:  # 추가 대상에서 끊긴다 - 앞 대상은 PoC를 냈다
+            raise (
+                BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+                if stop == "budget"
+                else ModelGatewayError("down", status=None)
+            )
+        return _POCS[0], _SUBMITTED
+
+    def broken(ctx_, state_):  # noqa: ANN001, ANN202
+        raise RuntimeError("장부 쓰기 실패")
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+    monkeypatch.setattr(runner, "_finalize_oracle", broken)
+
+    result, trace_path = _run(
+        tmp_path,
+        before=_with_index(),
+        critic_top_n=1,
+        configure=lambda c: c.transition(thresholds=c.thresholds.transition(pov_attempt_top_n=1)),
+        oracle=FakeOracle(),
+    )
+
+    assert len(reached) == 2, "추가 대상에 못 닿았다 - 이 검사의 전제가 깨졌다"
+    assert _run_transition(trace_path)["data"]["reason"] == reason.value
+    assert any(headline in w for w in result.warnings), result.warnings
+    assert any(
+        "최종 지정을 돌리지 못했다: RuntimeError: 장부 쓰기 실패" in w for w in result.warnings
+    ), result.warnings
+
+
+def test_a_non_target_exception_inside_the_pov_loop_does_not_run_the_final_designation(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """**「그 밖의 예외는 안 덮는다」의 핀이다** - `except (BudgetExhausted, ModelGatewayError)`를
+    `except Exception`으로 넓히는 변이를 문다. 핸들러가 `raise`로 다시 올리므로 어느 예외가 run을
+    멈추느냐는 그 변이로도 안 바뀐다 - 바뀌는 것은 **임의 예외에서도 오라클 네트워크 호출(`fix`
+    다리·판정 조회)이 도는 것**이다. 앞 대상이 PoC를 냈고(후보 1건) 끊긴 곳이 추가 대상이라
+    조건식은 **둘 다 참**이다 - 그래서 이 검사가 가르는 것은 예외 종류 하나뿐이다."""
+    state, validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(
+        monkeypatch, 1, error=RuntimeError("계약 밖 예외")
+    )
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(RuntimeError, match="계약 밖 예외"):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [_POCS[0]]
+    assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
+    summary = state.oracle_ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
+
+
+def test_an_intermediate_gen_submission_alone_does_not_make_a_validated_stop_designate(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """**「낸 PoC」는 모델이 submit하고 vul 제출이 성공한 것(`candidates`)이다 - 제출 전부
+    (`submitted`)가 아니다.** `validated` 대상이 중간 gen(`designatable=False`)만 vul에 내고
+    끊기면 최종 후보는 0건이라 최종 지정이 안 돈다 - 중간 gen은 모델 입력으로만 쓰이고 정렬 키에
+    안 닿는다(`VulAttempt.designatable`). `candidates`를 `submitted`로 바꾸는 변이는 여기서
+    `none`/`no_poc`를 만들어 `not_reached`를 가린다. 중간 gen은 실제 제출 경로
+    (`_submit_vul_to_oracle`)로 낸다."""
+    state, first, _second = _two_validated(ctx)
+    ctx.oracle = oracle = FakeOracle()
+    reached: list[str] = []
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        reached.append(finding.finding_id)
+        runner._submit_vul_to_oracle(
+            ctx_, state_, finding, _POCS[0], designatable=False, in_validate_span=False
+        )
+        raise BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+
+    with pytest.raises(BudgetExhausted):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [first.finding_id]
+    assert oracle.vul_calls == [_POCS[0]], "중간 gen이 제출되지 않았다 - 공허하다"
+    ledger = state.oracle_ledger
+    assert ledger.submitted == 1 and ledger.candidates == []
+    assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
+    summary = ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
 
 
 def test_a_droppable_gateway_error_is_absorbed_by_the_pov_loop_and_never_reaches_the_stop_branch(
@@ -799,20 +916,27 @@ def test_a_droppable_gateway_error_is_absorbed_by_the_pov_loop_and_never_reaches
     assert len(_events(ctx, EventKind.ORACLE_FINAL)) == 1
 
 
-def test_a_budget_stop_before_any_candidate_says_none_no_poc_not_not_reached(
-    ctx, monkeypatch  # noqa: ANN001, F811
+@pytest.mark.parametrize("status", ["budget", None], ids=["budget", "gateway"])
+def test_a_stop_before_any_candidate_says_none_no_poc_not_not_reached(
+    ctx, monkeypatch, status  # noqa: ANN001, F811
 ) -> None:
-    """후보가 0건인 채 추가 대상에서 예산이 끊기면 `not_reached`가 아니라 `none`/`no_poc`다 - 의도한
-    것이 아니라 `_finalize_oracle` 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로
-    싣는다). 「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산이 PoV를 끊었다」를 오라클 요약은 못 가르고
-    후자는 run 수준의 `stopped_after`·경고가 말한다 - 그 사실의 핀이다."""
+    """후보가 0건인 채 추가 대상에서 끊기면 `not_reached`가 아니라 `none`/`no_poc`다 - 의도한 것이
+    아니라 `_finalize_oracle` 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로
+    싣는다). 「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 오라클
+    요약은 못 가르고 후자는 run 수준의 `stopped_after`·경고가 말한다 - 그 사실의 핀이다.
+    **예산은 #532 앞에도 이랬고(종전대로) 게이트웨이는 #532에서 새로 이렇게 됐다** - 앞 판은 후보
+    0건의 게이트웨이를 `not_reached`로 남겼다. 게이트웨이 행이 없으면 그 쪽 조건(`validated` 밖이면
+    후보와 무관하게 돈다)을 어느 검사도 안 문다."""
+    budget = status == "budget"
     state, (extra,) = _outside_validated(ctx, [("find_0001", 0.9)])
     _with_top_n(ctx, 1)
     state.oracle_ledger = OracleLedger(wired=True)
-    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 0)
+    reached = _pov_loop_that_runs_out_of_budget_at(
+        monkeypatch, 0, error=None if budget else _gateway_error(status)
+    )
     ctx.oracle = oracle = FakeOracle()
 
-    with pytest.raises(BudgetExhausted):
+    with pytest.raises(BudgetExhausted if budget else ModelGatewayError):
         runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert reached == [extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
