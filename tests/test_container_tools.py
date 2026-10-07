@@ -114,6 +114,26 @@ def test_tool_outside_whitelist_never_starts_a_process(tmp_path: Path, spy: _Spy
     assert spy.calls == []
 
 
+def _container_name(argv: list[str]) -> str:
+    return argv[argv.index("--name") + 1]
+
+
+def test_runs_under_different_artifact_roots_get_different_container_names(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """루트가 다른 두 run은 같은 날 같은 `run_id`(`run_YYYYMMDD_0001`)를 갖는다 — 같은 장비에서
+    동시에 돌면 이름이 겹쳐 늦은 쪽 도구가 exit 125로 빠졌다(#303, 2026-09-26 ATOM 실측).
+    같은 루트에서는 이름이 그대로라 순차 run을 `run_id`가 가르는 것은 변하지 않는다."""
+    args = ToolArgs(argv=["semgrep", "."], workdir=".")
+    for root in ("h-main", "h-pr", "h-main"):
+        _runner(tmp_path / root).run("semgrep", args, SANDBOX)
+
+    first, second, again = (_container_name(argv) for argv in spy.calls)
+    assert first != second, "루트가 다른 같은 run_id가 같은 컨테이너 이름을 만든다"
+    assert first == again, "같은 루트·같은 run_id인데 이름이 흔들린다"
+    assert first.startswith(f"harness-{RUN_ID}-") and first.endswith("-0")
+
+
 def test_network_true_never_starts_a_process(tmp_path: Path, spy: _Spy) -> None:
     """disclosure-policy.md §5: 외부 시스템 실행 금지. 정책이 실행 전에 걸려야 한다."""
     sandbox = SANDBOX.transition(network=True)
