@@ -33,6 +33,8 @@ python tools/slicer/slicer.py --repo /work/repo --out /work/results/slices.json 
   --query-timeout-seconds 600 --candidate-timeout-seconds 1200
 ```
 
+위 `/work/repo`는 하네스를 `run --target /work/repo`로 돌릴 때다(루트를 사람이 고른다). `run --task-dir`면 아래 「`--task-dir`로 쓸 슬라이스」.
+
 `--max-call-depth`, `--max-args-to-allow`, `--max-output-args-expansion`은 Joern EngineConfig
 override다. 생략 시 설치본 기본값을 읽어 `joern_engine_config`에 기록한다. 분석 상한은
 생략하면 제한하지 않는다. heartbeat 기본 간격은 CLI `--heartbeat-seconds 30`이다.
@@ -90,6 +92,22 @@ override다. 생략 시 설치본 기본값을 읽어 `joern_engine_config`에 �
 종료 코드는 `ok=0`, `partial=2`, `failed=1`이다. CPG 준비 뒤 질의 실패·위치 누락·분석 절단은
 부분 결과를 남긴다. 정상적인 빈 결과와 질의 실패를 구별한다. 출력은 UTF-8·LF이고, 최종
 JSON은 임시 파일을 fsync한 뒤 교체한다. 출력 경로 자체가 불가능하면 stderr에 사유를 쓴다.
+
+### `--task-dir`로 쓸 슬라이스 (이슈 #479 (c))
+
+- 슬라이서는 경로를 `--repo` 기준 상대경로로 적는다(`slicer.py` 파일 수집 `relative_to(self.repo)` · `slicer_source.relative_file`).
+- 하네스 `run --task-dir`는 `repo-vul.tar.gz`를 `--task-work-dir`에 풀고 **그 디렉터리**를 루트로 슬라이스 경로를 찾는다(`cli` -> `render_slices(slice_set, args.task_work_dir)`). 아카이브 최상위가 `src-vul/`이라 경로가 `src-vul/…`로 시작해야 한다(2026-10-04 운영 run 번들 — [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md) §4).
+- 그래서 `--repo`에는 `src-vul/`이 아니라 아카이브를 푼 디렉터리(`src-vul/`의 부모)를 준다.
+
+```bash
+mkdir -p /work/task && tar -xzf <번들>/repo-vul.tar.gz -C /work/task   # -> /work/task/src-vul/…
+python tools/slicer/slicer.py --repo /work/task --out /work/results/slices.json \
+  --joern-endpoint http://127.0.0.1:16242 \
+  ... # 나머지 인자는 위 예시와 같다
+```
+
+- `--repo /work/task/src-vul`로 돌리면 접두어가 빠진다 -> `run`이 「슬라이스 N건 중 M건이 풀린 트리에 없다」로 exit 2다(`cli._unmatched_slices_error`). 그 검사 전에는 `후보 0건 / 완주`로 조용히 끝났다(2026-10-03 `dev_fake` 재현 — `tests/test_pipeline_e2e.py`의 `test_run_refuses_slices_the_unpacked_tree_does_not_contain` docstring).
+- Joern 서버도 같은 `/work/task`를 본다(위 「같은 절대경로」 규칙).
 
 ## 분석 규칙
 
