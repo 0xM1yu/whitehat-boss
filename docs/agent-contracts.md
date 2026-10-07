@@ -532,10 +532,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
   (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. `thresholds.pov_attempt_top_n`이 양수면
-  `validated` 밖의 대상도 같은 루프에서 돈다(풀 — `runner._pov_targets`). 그 **추가 대상**에서
-  `BudgetExhausted`로 끊기면 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정 조회)은 하고 끝난다.
-  ⚠ **이 보호는 `BudgetExhausted`만 덮는다 — 다른 예외(`ModelGatewayError` 등)는 종전대로 최종
-  지정에 못 닿는다**(`oracle.final`이 `not_reached`). `validated` 대상에서 끊긴 run도 마찬가지다. 도구는 `asan`·`build`·`poc`·`gdb`
+  `validated` 밖의 대상도 같은 루프에서 돈다(풀 — `runner._pov_targets`). `BudgetExhausted`·서버 쪽
+  `ModelGatewayError`로 끊긴 run은, 오라클에 이미 낸 최종 후보가 있거나 끊긴 곳이 그 **추가 대상**이면
+  낸 PoC의 최종 지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
+  ⚠ **그 밖의 예외는 안 덮는다** — 낸 PoC 없이 `validated` 대상에서 끊긴 run은 `oracle.final`이
+  `not_reached`다. 도구는 `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
