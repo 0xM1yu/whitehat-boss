@@ -12,6 +12,36 @@
 ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 별 명령이다. `run`도 접속한다 —
 모델 서버·채점기·교대 명령에 닿는 것이 파이프라인을 도는 일이다. 소켓을 열지 않는 것은 `doctor`·
 `estimate`·`gc`다.
+
+종료 코드 — `run`이 **어떻게 멈췄는지**를 stdout 문구가 아니라 이 값으로 가른다(#533).
+점수가 났는지·비교표에 서는지는 이 값이 말하지 않는다.
+
+| 코드 | 뜻 |
+| --- | --- |
+| 0 | 정상. `run`은 완주·`--stop-after`·`--dry-run`·예산 소진이다. 후보·Finding 0건도 0이다 |
+| 1 | `doctor` ERROR · `bench --apply` 실패 · 트레이스백으로 죽음(①) |
+| 2 | 입력·설정 거부 — 모델을 부르기 전에 멈췄다. `preflight`도 어긋난 선결조건(ERROR)에 2다 |
+| 3 | `run`이 장애로 중단됐다 — 교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패 |
+| 128+N | TERM(143)·HUP(129)로 끝났다 — 매니페스트는 안 남는다(②) |
+
+- **0은 점수가 났다는 뜻이 아니다.** 채점을 켠 run은 매니페스트 `oracle.final`(`scored`·`failed`·
+  `none`·`not_reached`)을 본다. **0은 비교표 적격도 아니다** — 낮은 `--stop-after`·`--dry-run`·예산
+  소진은 `stopped_after`가 차서 `RunRecord.is_complete`가 거짓이고, 기록이 불완전한 run도 빠진다
+  (`docs/evaluation.md` §6).
+- ① 트레이스백: `run`의 예상 밖 예외(`UNFORESEEN_FAILURE` — 러너가 매니페스트를 남기고 다시
+  던진다) · `_claim_run_dir`의 하루 상한 초과(설계된 `SystemExit`) ·
+  `estimate`·`bench`의 `ConfigError`.
+- ② TERM·HUP는 `_terminate_as_exit`가 `SystemExit(128+N)`으로 바꾼다. **Ctrl-C(SIGINT)는 안 바꾼다**
+  — `KeyboardInterrupt`가 올라가고 값은 인터프리터가 정한다(POSIX 130 · Windows 네이티브
+  `0xC000013A`, 2026-10-07 실측. 이 저장소의 검사는 그 값을 안 문다).
+- **`preflight --strict`의 4는 이 표 밖이다** — ERROR 없이 WARN만 있을 때(`EXIT_UNVERIFIED`:
+  건너뛴 점검이 있어 **확인하지 못했다**)이고 그 명령만 쓰는 값이다.
+
+⚠ **3은 프로그램마다 따로다 — 이 표의 3은 다른 도구의 3과 같은 사건이 아니다.** `src.cli`에서 3은
+`EXIT_RUN_FAULT` 하나뿐이다. `tools/monitor.py`의 3은 DEAD(매니페스트 없이 heartbeat가 낡음)·
+CRASHED(예상 밖 예외 — 이 표에서는 1)이고, 위 장애 넷으로 멈춘 run을 `monitor`는 0으로 읽는다.
+`tools/oracle_canary.py`(weak_pass)·`tools/slice_sharded.py`(후보 미완)·`tools/serve/swap.sh`(서버
+기동·내림 실패)의 3도 각자의 사건이다. 운영 스크립트가 두 3을 한 사건으로 읽지 않는다.
 """
 
 import argparse
@@ -102,7 +132,7 @@ from src.orchestrator.task_loader import (
 )
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
-from src.schemas.enums import Role
+from src.schemas.enums import ReasonCode, Role
 from src.schemas.finding import Finding
 from src.tokens import using_counter
 
@@ -1381,6 +1411,28 @@ def _terminate_as_exit() -> Iterator[None]:
             signal.signal(signum, signal.SIG_DFL if handler is None else handler)
 
 
+# `run`이 장애로 중단됐을 때의 종료 코드. 1(트레이스백)·2(입력 거부)와 안 겹치고 `src.cli`에서
+# 3은 이것뿐이다. ⚠ **다른 도구의 3과 같은 뜻이 아니다** — 종료 코드는 프로그램마다 따로이고
+# 모집단이 서로소다: `tools/monitor.py`의 3은 DEAD·CRASHED(예상 밖 예외 — `run`은 그것을 1로 낸다)
+# 이고, `run`이 3으로 내는 장애 넷(교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패)을
+# `monitor`는 0으로 읽는다. 모듈 docstring 표 아래 경고가 나머지 도구를 든다.
+EXIT_RUN_FAULT = 3
+# 정상 종료로 읽는 사유 — **허용목록이다.** 새 사유가 생기면 기본이 비-0이다(조용한 0이 #533이다).
+# 예산 소진은 러너 docstring이 정상적인 종료 경로라 적고, 나머지 둘은 사용자가 정한 상한이다.
+_NORMAL_STOPS = frozenset(
+    {ReasonCode.USER_STOP_REQUESTED, ReasonCode.DRY_RUN, ReasonCode.BUDGET_EXHAUSTED}
+)
+
+
+def _exit_for(reason: ReasonCode | None) -> int:
+    """러너가 정한 정지 사유 → `run`의 종료 코드. 사유 없음(완주)·허용목록은 0, 그 밖은 전부 3.
+
+    `UNFORESEEN_FAILURE`도 이 함수에서는 3이지만 실제로는 여기 안 온다 — 러너가 매니페스트를
+    쓴 뒤 예외를 다시 던져 `RunResult`가 안 나오고 `run`은 트레이스백(1)으로 끝난다.
+    """
+    return 0 if reason is None or reason in _NORMAL_STOPS else EXIT_RUN_FAULT
+
+
 def run(args: argparse.Namespace) -> int:
     try:
         config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
@@ -1727,7 +1779,16 @@ def run(args: argparse.Namespace) -> int:
         )
     for warning in result.warnings:
         print(f"[WARN ] {warning}", file=sys.stderr)
-    return 0
+    reason = result.stop_reason
+    code = _exit_for(reason)
+    if reason is not None and code != 0:
+        # 사유 문구(무엇을 고칠지)는 위 `[WARN ]` 줄에 있다 — 이 줄은 코드가 왜 3인지만 말한다.
+        print(
+            f"[ERROR] 장애로 중단했다: {reason.value} — 원인 문구는 위 [WARN ] 줄에 있다 · "
+            f"종료 코드 {code}",
+            file=sys.stderr,
+        )
+    return code
 
 
 def write_report(run_dir: Path, result: RunResult, fmt: str) -> Path:
