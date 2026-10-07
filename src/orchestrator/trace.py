@@ -359,11 +359,13 @@ class EventKind(StrEnum):
     #   `model_call`과 같은 한계라 이 이벤트만의 미측정 표시는 없다.
     # - `lookup` — `requested`(모델이 낸 요청 수) · `ignored`(resolver 처리 상한 3을 넘어 안
     #   돈 수 — 있을 때만) · `resolved`·`already`·`fixable_count` · `unfilled`(사유 쉼표 나열)
-    #   · `truncated`(이름 쉼표 나열). 뒤 둘은 `SCOUT_HOP`과 같은 이름·형식이다.
-    #   **`resolved=0`의 세 원인은 이 값들로 가른다** — 넷이 다 비면 인덱스 없음/v1(resolver의
-    #   서명), `unfilled`가 차면 이름을 못 찾음, `truncated`가 차면 크기 상한. 훅이 없거나
-    #   resolver가 `OSError`·`ValueError`로 실패한 홉에는 이 조회 결과 키가 **없다**(안 돌린
-    #   것을 0이라 적지 않는다) — 실패는 `lookup_error`(예외 클래스 이름)가 든다.
+    #   · `truncated`(이름 쉼표 나열) · `index_available`. 뒤 셋은 `SCOUT_HOP`과 같은
+    #   이름·형식이다.
+    #   **`resolved=0`의 세 원인은 이 값들로 가른다** — `index_available=False`면 인덱스
+    #   없음/v1(조회를 안 했다, #315), `unfilled`가 차면 이름을 못 찾음, `truncated`가 차면
+    #   크기 상한. 훅이 없거나 resolver가 `OSError`·`ValueError`로 실패한 홉에는 이 조회
+    #   결과 키가 **없다**(안 돌린 것을 0이라 적지 않는다) — 실패는 `lookup_error`(예외 클래스
+    #   이름)가 든다.
     # - `probe` — `tool` · `tool_ok`·`exit_code`·`evidence_kind` · `evidence_id`(그
     #   `tool_call` 이벤트로의 조인 키) · `spec`을 실었으면 `poc_sha256`·`poc_bytes`(**도구에는
     #   안 간다** — 기록뿐이다).

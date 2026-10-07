@@ -995,6 +995,7 @@ def test_a_found_lookup_feeds_the_blocks_back_without_the_scout_tail(
     data = _hops(ctx)[0].data
     assert (data["resolved"], data["already"], data["fixable_count"]) == (1, 0, 0)
     assert (data["unfilled"], data["truncated"]) == ("", "")
+    assert data["index_available"] is True
     # resolver가 받은 질의 — 훅이 무시되거나 상한이 0으로 바뀌면 조각이 안 온다.
     (query,) = resolver.queries
     assert query.hop == 1 and query.target_file == "parser.c" and query.visible == {}
@@ -1068,7 +1069,14 @@ def test_lookup_request_cap_matches_the_resolvers() -> None:
             id="size-cap",
         ),
         pytest.param(
-            Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=()),
+            Resolution(
+                followup_text="",
+                blocks=(),
+                unfilled=(),
+                already=(),
+                truncated=(),
+                index_available=False,
+            ),
             "",
             "",
             0,
@@ -1101,6 +1109,8 @@ def test_resolved_zero_has_three_causes_and_the_hop_event_tells_them_apart(
         truncated,
         fixable,
     )
+    # 인덱스 없음은 이제 빈 칸의 서명이 아니라 명시 값이다(#315).
+    assert data["index_available"] is resolution.index_available
     assert needle in ctx.models.prompts[1][1].body
 
 
