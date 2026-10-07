@@ -1211,8 +1211,14 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # 확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이
         # 수정은 그중 지금 터진 한 곳을 막을 뿐이다. 정본은 캡슐이 자기 카운터를 싣고
         # 로드가 그것을 복원하는 것이다(#84 (c)) — 그때 이 `with`는 필요 없어진다.
-        with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
-            capsules = deps.store.query("capsule")
+        try:
+            with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
+                capsules = deps.store.query("capsule")
+        finally:
+            # 임시 디렉터리를 지우기 **전에** 닫는다 — 열린 `state.db`가 Windows에서 정리를
+            # 막고(`PermissionError`), 그 예외가 위 조회의 `ValidationError`를 덮었다
+            # (#156 · D43 ②).
+            deps.store.close()
 
     calls = _expected_calls(config, len(capsules))
     places = _scout_places(config)
@@ -1756,7 +1762,7 @@ def run(args: argparse.Namespace) -> int:
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
-        result, _ = execute(
+        result, deps = execute(
             config,
             spec,
             run_id=run_id,
@@ -1764,6 +1770,9 @@ def run(args: argparse.Namespace) -> int:
             trace_stream=stream,
             oracle=oracle,
         )
+        # 결과는 `result`에 다 실렸다 — 저장소를 여기서 닫는다(#156). 안 닫으면 이 프로세스가
+        # 끝날 때까지 `state.db`가 열려 있다.
+        deps.store.close()
     report_path = write_report(run_dir, result, args.format)
 
     print(f"run_id: {result.record.run_id}")
