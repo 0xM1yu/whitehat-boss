@@ -122,6 +122,7 @@ def test_resolve_returns_an_empty_resolution_when_there_is_no_v2_index():
     assert resolution.unfilled == ()
     assert resolution.already == ()
     assert resolution.truncated == ()
+    assert resolution.index_available is False  # 조회를 안 했다 — 「못 찾음」과 가른다(#315)
 
 
 # --- hop 1 예 — 실 인덱서 픽스처 (선언·매크로 명명은 되고, 원소 대입은 안 된다) -----
