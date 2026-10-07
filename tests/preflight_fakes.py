@@ -9,7 +9,9 @@
 import hashlib
 import io
 import json
+import os
 import re
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -110,6 +112,29 @@ def _bundle(tmp_path: Path, **script: object) -> Path:
     return task
 
 
+def config_with_command(tmp_path: Path, command: str) -> Path:
+    """장비 파일의 교대 `command`만 바꾼 config 사본."""
+    cfg = tmp_path / "config"
+    shutil.copytree(ROOT / "config", cfg, dirs_exist_ok=True)
+    path = cfg / "serving" / f"{DEVICE}.yaml"
+    text = path.read_text(encoding="utf-8")
+    old = "command: [bash, tools/serve/swap-remote.sh]"
+    assert old in text
+    path.write_bytes(text.replace(old, f"command: {command}").encode("utf-8"))
+    return cfg
+
+
+def config_with_endpoint(tmp_path: Path, old: str, new: str) -> Path:
+    """registry 주소 하나만 바꾼 config 사본 — 그 주소의 철자는 호출자가 config에서 읽어 온다."""
+    cfg = tmp_path / "config"
+    shutil.copytree(ROOT / "config", cfg, dirs_exist_ok=True)
+    path = cfg / "models.yaml"
+    text = path.read_text(encoding="utf-8")
+    assert text.count(f'endpoint: "{old}"') == 1, old
+    path.write_bytes(text.replace(f'endpoint: "{old}"', f'endpoint: "{new}"').encode("utf-8"))
+    return cfg
+
+
 def assert_docker_safe(argv: list[str]) -> None:
     """`preflight`의 **모든** 컨테이너 호출이 지켜야 하는 안전 인자 — 한 곳에서 단언한다."""
     assert DEFAULT_IMAGE in argv, argv
@@ -188,7 +213,12 @@ class World:
         return None if (host, port) in self.listening else "ConnectionRefusedError"
 
     def resolve(self, command: tuple[str, ...]) -> tuple[str, ...]:
-        return (f"/usr/bin/{command[0]}", *command[1:])
+        # `_resolved`와 같은 갈래다 — 경로가 든 이름은 PATH로 안 풀고 그대로 돌려준다. 늘 풀어
+        # 주는 가짜였을 때는 `check_bash`의 경로 갈래에 **한 번도 안 들어가** 없는 경로가 초록이다.
+        head = command[0]
+        if os.sep in head or (os.altsep and os.altsep in head):
+            return command
+        return (f"/usr/bin/{head}", *command[1:])
 
     def probes(self) -> pp.Probes:
         return _Probes(run=self.run, tcp=self.tcp, resolve=self.resolve, environ=self.env)

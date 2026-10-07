@@ -202,8 +202,9 @@ def test_the_harness_supplies_exactly_the_variables_preflight_does_not_ask_the_o
 
 def test_the_tunnel_ports_come_from_the_config_and_equal_the_tunnel_scripts() -> None:
     config = load_config(PROFILE)
-    endpoints = pr.tunnel_endpoints(config, load_serving(DEVICE))
+    endpoints, unreadable = pr.tunnel_endpoints(config, load_serving(DEVICE))
 
+    assert not unreadable  # 주소를 못 읽은 모델이 있으면 포트 집합이 반쪽이다
     assert {port for _, port in endpoints} == _script_ports()
     assert {host for host, _ in endpoints} == {"127.0.0.1"}
 
