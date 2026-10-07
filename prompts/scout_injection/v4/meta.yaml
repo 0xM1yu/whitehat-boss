@@ -1,6 +1,6 @@
-# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다. 켜려면 qwen3-14b·seccoderx-8b의
-# prompt_template_version을 함께 올린다(풀 세 자리가 한 버전). input: source라 --slices 없이 돈다 —
-# 슬라이스 타깃이면 노드가 SOURCE에 슬라이스 렌더를 넣어 prefix의 입력 서술과 어긋난다.
+# 배선됨(2026-10-07 — PR #524): qwen3-14b·seccoderx-8b가 함께 v4를 고른다(풀 세 자리가 한 버전).
+# ⚠ input: source인데 노드는 SOURCE를 슬라이스 유무로 고른다(nodes/scout.py) — --slices run에서는
+# 슬라이스 렌더가 가고 아래 prefix의 입력 서술과 어긋난다. 그 어긋남은 이 배선 밖이다.
 role: scout_injection
 version: v4
 output_schema: ScoutResponse
