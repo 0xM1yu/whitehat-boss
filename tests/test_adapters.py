@@ -11,6 +11,7 @@
 import errno
 import hashlib
 import json
+import sqlite3
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -851,6 +852,17 @@ def test_sqlite_survives_reopen(tmp_path: Path) -> None:
     first.put(_candidate("cand_0001"))
     first.close()
     assert SqliteStateStore(path).get("candidate", "cand_0001") is not None
+
+
+def test_sqlite_closes_as_a_context_manager_and_twice_is_harmless(tmp_path: Path) -> None:
+    """`with`가 닫고, 닫힌 뒤의 조회는 실패한다 — 닫는다고 적고 안 닫는 구현을 잡는다(#156).
+    두 번 닫아도 예외가 없다 — CLI가 정상·실패 경로에서 각각 부를 수 있다."""
+    with SqliteStateStore(tmp_path / "state.db") as store:
+        store.put(_candidate("cand_0001"))
+    with pytest.raises(sqlite3.ProgrammingError):
+        store.get("candidate", "cand_0001")
+    store.close()
+    InMemoryStateStore().close()  # 계약만 맞춘다 — 놓을 자원이 없다
 
 
 def test_sqlite_payload_is_schema_json(tmp_path: Path) -> None:
