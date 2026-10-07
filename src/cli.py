@@ -1217,7 +1217,7 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         finally:
             # 임시 디렉터리를 지우기 **전에** 닫는다 — 열린 `state.db`가 Windows에서 정리를
             # 막고(`PermissionError`), 그 예외가 위 조회의 `ValidationError`를 덮었다
-            # (#156 · D43 ②).
+            # (#156 · #84 ②).
             deps.store.close()
 
     calls = _expected_calls(config, len(capsules))
