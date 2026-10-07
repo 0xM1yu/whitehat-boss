@@ -1,7 +1,9 @@
 """`preflight` 조립 — 한 번에 전부 보고 · 종료 코드 · CLI · 스크립트·설정 잠금 (#534).
 
-잠금 테스트는 `swap-remote.sh`·`vast-tunnel.sh`·설정이 바뀌면 빨개진다. 가짜 세계는
-`tests/preflight_fakes.py`다.
+잠금 테스트가 무는 것은 **두 모양뿐이다** — `swap-remote.sh`의 `need NAME "…"` 줄과
+`vast-tunnel.sh`의 `PORTS=(…)` 한 줄(그리고 장비 파일·registry에서 끌어낸 포트 집합).
+스크립트의 다른 변경(옵션·검사 순서·`need`가 아닌 방식으로 읽는 새 환경변수·포트를 다른
+모양으로 적기)은 안 걸린다. 가짜 세계는 `tests/preflight_fakes.py`다.
 """
 
 from pathlib import Path
@@ -10,6 +12,9 @@ import pytest
 
 from src import cli
 from src import preflight as pf
+from src import preflight_oracle as po
+from src import preflight_probes as pp
+from src import preflight_remote as pr
 from src.adapters import model_swap
 from src.adapters.index_graph import SUPPORTED_INDEX_VERSIONS
 from src.cli import Check
@@ -26,6 +31,7 @@ from tests.preflight_fakes import (
     _local_index_version,
     _script_needs,
     _script_ports,
+    fill_checksums,
     forbid_real_world,
     make_world,
     one,
@@ -38,7 +44,8 @@ def _no_real_world(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> World:
+def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
+    fill_checksums(monkeypatch)
     return make_world(tmp_path)
 
 
@@ -68,7 +75,7 @@ def test_one_check_that_crashes_is_an_error_and_the_rest_still_run(world: World)
         raise RuntimeError("probe bug")
 
     probes = world.probes()
-    crashing = pf.Probes(run=probes.run, tcp=explode, resolve=probes.resolve, environ=world.env)
+    crashing = pp.Probes(run=probes.run, tcp=explode, resolve=probes.resolve, environ=world.env)
 
     checks = pf.preflight(
         PROFILE, device=DEVICE, task_dir=world.bundle, oracle_server=SERVER, probes=crashing
@@ -81,9 +88,12 @@ def test_one_check_that_crashes_is_an_error_and_the_rest_still_run(world: World)
     assert one(checks, "도구 이미지:").severity is OK  # 뒤 항목은 돌았다
 
 
-def test_exit_code_is_nonzero_only_for_an_error() -> None:
+def test_exit_code_is_nonzero_only_for_an_error_unless_strict() -> None:
     assert pf.exit_code([Check(OK, "a"), Check(WARN, "b")]) == 0
     assert pf.exit_code([Check(OK, "a"), Check(ERROR, "b")]) == pf.EXIT_ERRORS == 2
+    assert pf.exit_code([Check(OK, "a"), Check(WARN, "b")], strict=True) == pf.EXIT_UNVERIFIED == 4
+    assert pf.exit_code([Check(OK, "a")], strict=True) == 0
+    assert pf.exit_code([Check(WARN, "a"), Check(ERROR, "b")], strict=True) == pf.EXIT_ERRORS
 
 
 def test_the_summary_counts_by_severity_and_is_never_a_bare_ok_when_something_is_unverified() -> (
@@ -153,10 +163,11 @@ def test_preflight_takes_no_flag_it_would_ignore() -> None:
         "--task-dir",
         "--oracle-server",
         "--oracle-canary",
+        "--strict",
     }
 
 
-# --- 잠금: 스크립트·설정이 바뀌면 빨개진다 --------------------------------------------------------
+# --- 잠금: `need` 줄·`PORTS` 줄이 어긋나면 빨개진다(그 두 모양만 문다) ------------------
 
 
 def test_the_required_swap_variables_are_the_ones_swap_remote_needs() -> None:
@@ -165,8 +176,8 @@ def test_the_required_swap_variables_are_the_ones_swap_remote_needs() -> None:
     needs = _script_needs(text)
 
     assert needs, "swap-remote.sh에서 `need` 줄을 못 읽었다 — 읽는 정규식이 낡았다"
-    assert set(pf.SWAP_ENV_OPERATOR) | set(pf.SWAP_ENV_HARNESS) == needs
-    assert not set(pf.SWAP_ENV_OPERATOR) & set(pf.SWAP_ENV_HARNESS)
+    assert set(pr.SWAP_ENV_OPERATOR) | set(pr.SWAP_ENV_HARNESS) == needs
+    assert not set(pr.SWAP_ENV_OPERATOR) & set(pr.SWAP_ENV_HARNESS)
 
 
 def test_the_need_reader_bites_when_the_script_gains_a_variable() -> None:
@@ -185,13 +196,13 @@ def test_the_harness_supplies_exactly_the_variables_preflight_does_not_ask_the_o
 
     source = inspect.getsource(model_swap.swap_runner)  # 문자열 핀이다 — 철자가 바뀌면 빨개진다
 
-    assert all(f'"{name}"' in source for name in pf.SWAP_ENV_HARNESS)
-    assert not any(f'"{name}"' in source for name in pf.SWAP_ENV_OPERATOR)
+    assert all(f'"{name}"' in source for name in pr.SWAP_ENV_HARNESS)
+    assert not any(f'"{name}"' in source for name in pr.SWAP_ENV_OPERATOR)
 
 
 def test_the_tunnel_ports_come_from_the_config_and_equal_the_tunnel_scripts() -> None:
     config = load_config(PROFILE)
-    endpoints = pf.tunnel_endpoints(config, load_serving(DEVICE))
+    endpoints = pr.tunnel_endpoints(config, load_serving(DEVICE))
 
     assert {port for _, port in endpoints} == _script_ports()
     assert {host for host, _ in endpoints} == {"127.0.0.1"}
@@ -209,5 +220,6 @@ def test_preflight_reads_the_canary_report_but_never_runs_the_canary_tool(world:
     world.check()
 
     assert not [a for argv, _ in world.calls for a in argv if "oracle_canary" in a]
-    source = Path(pf.__file__).read_text(encoding="utf-8")
-    assert "import oracle_canary" not in source and "from tools" not in source
+    for module in (pf, pp, pr, po):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "import oracle_canary" not in source and "from tools" not in source, module

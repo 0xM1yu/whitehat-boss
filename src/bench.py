@@ -1,10 +1,10 @@
 """배포 전 검증 체크리스트(model-serving.md §3)를 실제 엔드포인트에 대고 잰다.
 
-**`bench`가 모델 서버에 요청을 보내는 유일한 커맨드다.** `doctor`는 설정과 저장소 상태만 보고
-소켓을 열지 않는다(`src/cli.py` 모듈 docstring). 그 경계는 GPU 없는 팀원의 진단이 네트워크
+**진단 명령 중 모델 서버에 요청을 보내는 것은 `bench`뿐이다.** `doctor`는 설정과 저장소 상태만
+보고 소켓을 열지 않는다(`src/cli.py` 모듈 docstring). 그 경계는 GPU 없는 팀원의 진단이 네트워크
 오류로 실패하지 않게 하려는 것이고, 여기서 한 번 더 못박는다 — bench는 서버가 있는 장비에서만
-의미가 있으며, 없으면 "측정 못 함"을 사유와 함께 출력하고 끝낸다. (`preflight`(#534)도
-접속하지만 ssh·TCP 연결·`docker run`까지이고 모델 서버에 요청은 안 보낸다.)
+의미가 있으며, 없으면 "측정 못 함"을 사유와 함께 출력하고 끝낸다. (`preflight`(#534)는
+ssh·TCP 연결·`docker run`까지만 한다. `run`도 그 서버에 닿지만 파이프라인이지 진단이 아니다.)
 
 측정에는 `OpenAICompatModelClient`를 **그대로** 쓴다. bench 전용 HTTP 경로로 잰 수치는
 운영 성능이 아니다. 특히 prefix를 system 메시지로 분리하는 `_request_payload`의 동작이
