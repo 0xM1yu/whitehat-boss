@@ -90,9 +90,9 @@ class ModelSampling(HarnessModel):
     # **`0`과 `-1`은 스키마 밖 값이 아니라 "비활성"이라는 정상 선언이다.** HF는 `top_k: 0`,
     # vLLM은 `-1`을 그 뜻으로 쓴다. `Sampling`(우리가 **보내는** 값)이었다면 `ge=1`이 맞지만
     # 이쪽은 **모델이 선언한 것을 그대로 받아 적는** 자리라, 정상 선언을 스키마 밖으로 밀어내면
-    # 그 모델의 기록이 통째로 사라진다(`read_declared_sampling`이 검증 실패 시 전부 버린다).
-    # 그러면 `temperature 0.7 · top_k 0`을 선언한 모델이 "선언 없음"으로 남아, #99가 막으려던
-    # 오독을 정확히 반대 방향에서 재생산한다.
+    # 그 키가 기록에서 사라진다(`read_declared_sampling`은 검증 실패한 키만 버린다). 그러면
+    # `temperature 0.7 · top_k 0`이 `top_k` 미선언(`None`)으로 남고, `top_k 0`만 선언한 모델은
+    # 빈 `ModelSampling()` = "선언 없음"이 된다 — #99가 막으려던 오독을 반대 방향에서 재생산한다.
     top_k: int | None = Field(default=None, ge=-1)
     repetition_penalty: float | None = Field(default=None, gt=0.0)
 
@@ -264,7 +264,9 @@ class RunRecord(UtcModel):
     #
     # **`| None`이고 기본값 `None`인 것은 device·repo_dirty와 같은 관용구다.** `None`은
     # "이 manifest는 기록하지 않았다"(이 필드 이전에 쓰인 기록)이고, `{}`는 "기록했으나
-    # 선언 샘플링을 읽을 실서빙 모델이 없었다"(Fake 프로필·`source` 없는 모델)로 서로 다르다 —
+    # 선언 샘플링을 읽은 역할이 없었다"(Fake 프로필·`source` 없음·경로 리졸브 실패·파일 없음·
+    # 파일 깨짐 — `declared_sampling_by_role` docstring)로 서로 다르다. 읽었으나 선언이 0개인
+    # 역할은 빈 `ModelSampling()`으로 dict에 남으므로 `{}`가 아니다 —
     # 새 run은 항상 dict(비어도)를 남기므로 `None`은 옛 manifest에서만 나온다. 그래서 이
     # 필드를 늘려도 `test_a_manifest_written_before_tool_seconds_still_loads`가 지키는
     # "옛 manifest는 로드된다"가 깨지지 않는다.

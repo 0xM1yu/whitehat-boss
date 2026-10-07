@@ -109,7 +109,7 @@
 | D54 | **로스터 모델 중 어느 것도 `prompts/{scout,auditor,critic}/v2`를 고르지 않아 머지된 v2가 도달 불가다** | 부분 | [본문](open-questions/D/D54.md) |
 | D55 | ~~재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다~~ | 닫힘 | [본문](open-questions/D/D55.md) |
 | D57 | ~~`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다~~ | 닫힘 | [본문](open-questions/D/D57.md) |
-| D58 | **샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)** | 열림 | [본문](open-questions/D/D58.md) |
+| D58 | ~~샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)~~ (주석 셋을 새 계약에 맞춰 해소) | 닫힘 | [본문](open-questions/D/D58.md) |
 | D59 | ~~Critic과 Auditor가 다른 계열이어야 한다는 조건을 강제하는 장치가 코드에 없다~~ | 닫힘 | [본문](open-questions/D/D59.md) |
 | D60 | ~~bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다~~ | 닫힘 | [본문](open-questions/D/D60.md) |
 | D61 | ~~bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다~~ | 닫힘 | [본문](open-questions/D/D61.md) |
