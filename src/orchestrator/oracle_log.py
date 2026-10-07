@@ -32,8 +32,9 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 `observation`에 싣고, 모델 submit은 그 필드가 없어 최종 지정 후보임을 뜻한다. 성공이면
 `poc_id`·`response_exit_code`·`cached`, 실패면 `error`·`error_status`(HTTP 상태. HTTP 오류가
 아니면 `null`)·`error_detail`, 0바이트라 제출하지 않았으면 `status: skipped`·`error: empty_poc`) ·
-`final`. `final`은 run이 최종 단계에 못 닿았으면(8단계가 끝까지 가지 못했다 — 단
-`pov_attempt_top_n`의 추가 대상에서 예산이 끊긴 run은 최종 지정까지 하고 끝난다) `null`이고 아니면
+`final`. `final`은 run이 최종 단계에 못 닿았으면(8단계가 끝까지 가지 못했다 — 단 예산·서버 쪽
+게이트웨이 오류로 끊겨도 이미 낸 최종 후보가 있거나 `pov_attempt_top_n`의 추가 대상에서 끊긴 run은
+최종 지정까지 하고 끝난다) `null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
 따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
 읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
