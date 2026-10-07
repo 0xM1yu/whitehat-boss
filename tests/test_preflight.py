@@ -4,12 +4,15 @@
 """
 
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from src import cli
 from src import preflight as pf
+from src import preflight_probes as pp
+from src import preflight_remote as pr
 from src.adapters import model_swap
 from src.adapters.canary_report import read_canary_report
 from src.cli import Severity
@@ -31,6 +34,7 @@ from tests.preflight_fakes import (
     _bundle,
     _canary,
     _local_index_version,
+    fill_checksums,
     forbid_real_world,
     make_world,
     one,
@@ -44,7 +48,8 @@ def _no_real_world(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> World:
+def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
+    fill_checksums(monkeypatch)  # 진짜 checksum 판정은 아래 전용 테스트가 본다
     return make_world(tmp_path)
 
 
@@ -56,8 +61,10 @@ def test_a_clean_world_reports_every_item_ok_and_exits_zero(world: World) -> Non
 
     assert [c.render() for c in checks if c.severity is not OK] == []
     for label in (
-        "교대 환경변수:", "bash 해소:", "터널 포트:", "원격 커밋:", "채점기 서버:",
-        "CYBERGYM_API_KEY:", "카나리:", "카나리 boot_id:", "과제 번들:", "도구 이미지:",
+        "교대 환경변수:", "bash 해소:", "터널 포트:", "원격 커밋:", "모델 checksum:",
+        "채점기 서버:",
+        "CYBERGYM_API_KEY:", "카나리:", "카나리 boot_id:", "카나리 mmap_rnd_bits:", "과제 번들:",
+        "도구 이미지:",
     ):  # fmt: skip
         assert one(checks, label).severity is OK
     assert pf.exit_code(checks) == 0
@@ -68,7 +75,7 @@ def test_a_clean_world_reports_every_item_ok_and_exits_zero(world: World) -> Non
 # --- 1. 교대 환경변수 --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", pf.SWAP_ENV_OPERATOR)
+@pytest.mark.parametrize("name", pr.SWAP_ENV_OPERATOR)
 @pytest.mark.parametrize("value", [None, ""])
 def test_a_missing_swap_variable_is_an_error_naming_it_and_no_ssh_is_opened(
     world: World, name: str, value: str | None
@@ -126,7 +133,7 @@ def test_a_bash_that_resolves_to_the_wsl_launcher_is_an_error_with_the_fix(world
     checks = pf.preflight(
         PROFILE,
         device=DEVICE,
-        probes=pf.Probes(run=probes.run, tcp=probes.tcp, resolve=refuse, environ=world.env),
+        probes=pp.Probes(run=probes.run, tcp=probes.tcp, resolve=refuse, environ=world.env),
     )
 
     check = one(checks, "bash 해소:")
@@ -135,7 +142,7 @@ def test_a_bash_that_resolves_to_the_wsl_launcher_is_an_error_with_the_fix(world
 
 def test_a_bare_bash_that_which_cannot_find_is_a_warning_not_a_pass(world: World) -> None:
     probes = world.probes()
-    unresolved = pf.Probes(
+    unresolved = pp.Probes(
         run=probes.run, tcp=probes.tcp, resolve=lambda command: command, environ=world.env
     )
 
@@ -145,7 +152,7 @@ def test_a_bare_bash_that_which_cannot_find_is_a_warning_not_a_pass(world: World
 
 
 def test_the_default_resolver_is_the_one_the_swap_adapter_runs() -> None:
-    assert pf.Probes().resolve is model_swap._resolved  # 새로 짓지 않고 같은 판정을 재사용한다
+    assert pp.Probes().resolve is model_swap._resolved  # 새로 짓지 않고 같은 판정을 재사용한다
 
 
 # --- 3. 터널 포트 ------------------------------------------------------------------------------
@@ -233,15 +240,17 @@ def test_the_default_runner_never_uses_a_shell_and_always_passes_a_timeout(
 ) -> None:
     seen: dict[str, object] = {}
 
-    def record(argv: object, **kwargs: object) -> None:
+    def record(argv: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         seen.update(argv=argv, **kwargs)
+        return subprocess.CompletedProcess(argv, 0, b"abc\r\n", b"")
 
-    monkeypatch.setattr(pf.subprocess, "run", record)
+    monkeypatch.setattr(pp.subprocess, "run", record)
 
-    pf._run(["ssh", "-V"], 7.0)
+    done = pp._run(["ssh", "-V"], 7.0)
 
     assert seen["argv"] == ["ssh", "-V"] and seen["timeout"] == 7.0
     assert not seen.get("shell")
+    assert done.stdout == "abc\r\n"  # CR을 접지 않는다 — 교대 스크립트의 정확 비교와 같은 값이다
 
 
 # --- 5. 오라클 서버 ----------------------------------------------------------------------------
@@ -271,9 +280,9 @@ def test_the_default_tcp_probe_reports_a_refusal_as_a_reason(
     def refuse(*args: object, **kwargs: object) -> None:
         raise ConnectionRefusedError("refused")
 
-    monkeypatch.setattr(pf.socket, "create_connection", refuse)
+    monkeypatch.setattr(pp.socket, "create_connection", refuse)
 
-    assert "ConnectionRefusedError" in str(pf._tcp("127.0.0.1", 1))
+    assert "ConnectionRefusedError" in str(pp._tcp("127.0.0.1", 1))
 
 
 # --- 6. CYBERGYM_API_KEY -----------------------------------------------------------------------
@@ -288,7 +297,7 @@ def test_a_missing_or_malformed_key_is_an_error_and_the_value_is_never_printed(
     checks = world.check()
 
     assert one(checks, "CYBERGYM_API_KEY:").severity is ERROR
-    assert "SECRET" not in text_of(checks)  # 값은 접두 한 글자도 안 찍는다
+    assert KEY not in text_of(checks)  # 값은 안 찍는다(접두 길이별 검사는 hardening 파일이 문다)
     if bad:
         assert f"{len(bad)}자" in one(checks, "CYBERGYM_API_KEY:").message  # 길이만 말한다
 
@@ -297,7 +306,7 @@ def test_a_good_key_is_reported_by_length_only(world: World) -> None:
     checks = world.check()
 
     assert f"{len(KEY)}자" in one(checks, "CYBERGYM_API_KEY:").message
-    assert "SECRET" not in text_of(checks) and KEY not in text_of(checks)
+    assert KEY not in text_of(checks)
 
 
 def test_the_key_shape_rule_is_the_one_the_run_refuses_on() -> None:
@@ -340,14 +349,16 @@ def test_an_unreadable_report_is_an_error(world: World, tmp_path: Path) -> None:
     assert one(world.check(oracle_canary=tmp_path / "missing.json"), "카나리:").severity is ERROR
 
 
-def test_a_masked_bundle_id_skips_the_task_match_and_says_so(world: World) -> None:
+def test_a_masked_bundle_id_skips_the_task_match_and_is_a_warning_not_an_ok(world: World) -> None:
     _bundle(
         world.canary.parent, task_id="9c73e92e52b7"
     )  # 마스킹 id — 실 id는 --mask-map이 있어야 안다
 
-    check = one(world.check(), "카나리:")
+    checks = world.check()
 
-    assert check.severity is OK and "과제 대조 안 함" in check.message
+    assert one(checks, "카나리:").severity is WARN  # 과제를 못 견준 점검은 OK가 아니다
+    assert "과제 대조 안 함" in one(checks, "카나리:").message
+    assert one(checks, "과제 번들:").severity is WARN  # run은 --mask-map 없이 거부한다
 
 
 def test_a_different_boot_id_is_an_error_telling_to_remeasure(world: World) -> None:
@@ -374,13 +385,14 @@ def test_a_boot_id_that_is_not_a_uuid_is_a_warning_not_a_match(world: World) -> 
     assert check.severity is WARN and "확인 못 함" in check.message
 
 
-def test_a_report_without_a_boot_id_is_a_warning_and_docker_is_not_asked(world: World) -> None:
+def test_a_report_without_a_boot_id_is_a_warning_but_the_bits_are_still_read(world: World) -> None:
     _canary(world.canary, host_boot_id=None)
 
-    check = one(world.check(), "카나리 boot_id:")
+    checks = world.check()
 
-    assert check.severity is WARN and "host_boot_id" in check.message
-    assert not any("cat" in argv for argv, _ in world.calls)
+    assert one(checks, "카나리 boot_id:").severity is WARN
+    assert "host_boot_id" in one(checks, "카나리 boot_id:").message
+    assert one(checks, "카나리 mmap_rnd_bits:").severity is OK
 
 
 def test_the_report_reader_carries_the_host_boot_id_and_nothing_invented(tmp_path: Path) -> None:
@@ -440,7 +452,7 @@ def test_an_image_with_an_older_indexer_is_an_error_naming_both_versions_and_the
 def test_the_image_is_read_without_a_network_pull_and_without_a_shell(world: World) -> None:
     world.check()
 
-    argv, _ = next(call for call in world.calls if "grep" in call[0])
+    argv, _ = next(call for call in world.calls if "python3" in call[0])
     assert argv[:2] == ["docker", "run"] and "--network=none" in argv
     assert argv[argv.index("--pull") + 1] == "never"
 
@@ -473,7 +485,7 @@ def test_a_runtime_without_a_docker_image_is_not_asked(
     check = one(world.check(), "도구 이미지:")
 
     assert check.severity is severity
-    assert not any("grep" in argv for argv, _ in world.calls)
+    assert not any("python3" in argv or "grep" in argv for argv, _ in world.calls)
 
 
 # --- 건너뜀 · 해당 없음 · 장비 --------------------------------------------------------------------
@@ -511,7 +523,11 @@ def test_without_a_device_a_swap_profile_is_an_error_with_the_runs_own_sentence(
 
 
 def test_a_profile_without_swap_has_no_swap_checks_and_says_so(world: World) -> None:
-    no_swap = next(p for p in ALL_PROFILES if load_config(p).swap is None)
+    no_swap = next(
+        p
+        for p in ALL_PROFILES
+        if load_config(p).swap is None and not load_config(p).served_models()
+    )
 
     checks = pf.preflight(no_swap, device=None, probes=world.probes())
 
