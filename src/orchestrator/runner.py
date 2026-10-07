@@ -54,8 +54,14 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 **기록에 남긴다.**
 
 **신호 판정은 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만
-신호가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로 간다. 단
-위치를 못 뽑은 신호(실 clang-tidy 등)와 인덱스 없는 폴백은 artifact 단위로 되돌아간다.
+히트 순위(rank 2)가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로
+간다. 위치를 못 뽑은 신호(실 clang-tidy — `container_tools.first_hit_location`은 semgrep만
+읽는다)만 걸린 artifact는 심볼 전부가 rank 1이고, 인덱스 없는 폴백의 파일 단위 target도
+rank 1이다(`_symbol_signal_rank`). **그래서 그 artifact는 다른 파일의 위치 있는 히트
+(rank 2) 뒤로 간다** — 정렬 키 첫 항이 `-signal_rank`라 파일 순서보다 앞선다
+(`_order_and_cut`). #249 전에는 신호 artifact의 심볼이 모두 동급이었으므로 그때와 다른
+순서이고, `candidate_max`가 물면 그 artifact의 심볼이 다른 파일의 히트보다 먼저 잘린다.
+이 동작을 받아들였다(#257 2).
 **점수 축은 아직 artifact 단위다**: `fake_model._has_static_signal()`은 심볼별로
 거르지 않은 evidence를 보므로 가산점은 artifact 전체에 간다 — 순서만 심볼 단위다.
 

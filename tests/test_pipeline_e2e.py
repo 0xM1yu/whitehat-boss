@@ -4140,7 +4140,8 @@ def test_a_hit_symbol_in_a_later_file_beats_a_non_hit_symbol_in_an_earlier_one(
     #248이 채운 위치를 순서가 안 쓰게 해도(`signal_lines = []`) 전체 pytest가 초록이었다(#257
     본문의 두 변이). 여기서는 두 변이 모두 `[a1, a2]`를 낸다.
 
-    **위치 없는 신호를 넣지 않는다** — 그 심볼의 순위는 #257 2가 아직 정하지 않았다.
+    **위치 없는 신호를 넣지 않는다** — 그 artifact의 심볼은 rank 1이라 다른 파일의 히트 뒤로
+    간다(#257 2, 러너 모듈 docstring). 이 검사는 그 순서를 물지 않는다.
     """
     target = tmp_path / "src"
     target.mkdir()
