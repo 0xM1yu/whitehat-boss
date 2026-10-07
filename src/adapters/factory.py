@@ -567,8 +567,10 @@ def build_deps(
         # 같은 이유로 구현에게 묻는다 (#74). Fake는 빈 조건을 내고, 그 빈 값은
         # `RunRecord.compile_flags`의 `None`(옛 manifest)과 구분된다.
         compile_flags=tools.compile_flags(),
-        # 실서빙 모델 파일에서 선언 샘플링을 읽는다. Fake·source 없는 모델은 빠지고, 전부
-        # 그러면 빈 dict다 — `RunRecord.model_sampling`의 `None`(옛 manifest)과 구분된다.
+        # 실서빙 모델 파일에서 선언 샘플링을 읽는다. 맵에서 빠지는 것은 **읽지 못한** 역할뿐이다
+        # (Fake·`source` 없음·경로 리졸브 실패·파일 없음·파일 깨짐 — `read_declared_sampling`이
+        # `None`). 읽었으나 선언이 0개면 빈 `ModelSampling()`으로 남는다. 전부 빠지면 빈 dict다 —
+        # `RunRecord.model_sampling`의 `None`(옛 manifest)과 구분된다.
         model_sampling=declared_sampling_by_role(config),
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.
