@@ -771,6 +771,12 @@ _CANARY_MENTIONS_ALLOWED = {
     # `--help` · 실패 stderr · `tools/README.md` · `docs/build-plan.md`)이 그렇게 고쳐져 있다.
     "src/adapters/canary_report.py",
     "src/cli.py",
+    # ⏵ 2026-10-07 (이슈 #534) — `preflight`는 보고서를 읽고(`--oracle-canary`) 현재 Docker VM의
+    # boot_id·vm.mmap_rnd_bits를 `docker run … cat`으로 읽을 뿐 **도구를 돌리지 않는다**
+    # (`tests/test_preflight_wiring.py`가 센다). `subprocess`를 쓰므로 아래 「보고서만 읽는다」
+    # 검사의 대상이 아니다. 인자 이름(`oracle_canary`)을 든 조립과 도구 경로를 든 점검 모듈이다.
+    "src/preflight.py",
+    "src/preflight_oracle.py",
 }
 
 

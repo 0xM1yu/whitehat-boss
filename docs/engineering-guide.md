@@ -37,9 +37,13 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 │   ├── interfaces/        # ModelClient / Retriever / ToolRunner / StateStore
 │   ├── adapters/          # 위 인터페이스의 구체 구현
 │   ├── schemas/           # Candidate / Evidence / Finding / Decision / RunRecord
-│   ├── bench.py           # §3 체크리스트 측정 (A~E). 접속하는 유일한 경로
+│   ├── bench.py           # §3 체크리스트 측정 (A~E). 진단 중 모델 서버에 요청을 보내는 쪽
 │   ├── bench_metrics.py   # vLLM /metrics 판독 — 이름·파싱·구간 delta
 │   ├── bench_report.py    # 체크리스트 판정 + models.yaml benchmark 반영
+│   ├── preflight.py       # run 전 선결조건 점검(#534) — ssh·TCP·docker run으로 접속한다. 조립·도구 이미지·종료 코드
+│   ├── preflight_remote.py  # 서버 쪽: 원격 교대·터널·원격 커밋·교대 없는 프로필의 서빙 포트
+│   ├── preflight_oracle.py  # 채점 쪽: 채점기·API 키·카나리·과제 번들
+│   ├── preflight_probes.py  # 바깥 세계 주입(`Probes`)과 공용 도우미
 │   └── cli.py             # 표준 CLI 진입점
 ├── tools/                 # 정적분석·build·sanitizer·fuzz 래퍼 (Docker) · slicer/ 오프라인 Joern 슬라이서
 ├── eval/

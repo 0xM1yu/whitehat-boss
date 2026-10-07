@@ -1,4 +1,4 @@
-"""명령줄 진입점 — `doctor` / `estimate` / `run` / `bench` / `gc`.
+"""명령줄 진입점 — `doctor` / `estimate` / `run` / `bench` / `gc` / `preflight`.
 
 **어댑터와 오케스트레이터를 잇는 유일한 파일이다.** `src/orchestrator/**`는
 `src/adapters/`를 import 하지 않으므로(engineering-guide.md §3), factory가 만든 `Deps`를
@@ -7,8 +7,11 @@
 `doctor`는 **엔드포인트에 접속하지 않는다.** 설정 파일과 저장소 상태만 본다 — GPU가 없는
 팀원도 돌릴 수 있어야 하고, 네트워크 실패와 설정 오류가 같은 오류로 보이면 안 된다.
 
-**`bench`만 접속한다.** 배포 전 검증 체크리스트(model-serving.md §3)는 실제 서버를 재야
-답이 나오므로 그 경계를 여기서 한 번 연다. 나머지 커맨드는 여전히 소켓을 열지 않는다.
+**`bench`와 `preflight`는 접속 자체가 일인 진단 명령이다.** 배포 전 검증 체크리스트(model-serving.md
+§3)는 실제 서버를 재야 답이 나오므로 그 경계를 여기서 한 번 연다. `preflight`(#534)는 run 전에
+ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 별 명령이다. `run`도 접속한다 —
+모델 서버·채점기·교대 명령에 닿는 것이 파이프라인을 도는 일이다. 소켓을 열지 않는 것은 `doctor`·
+`estimate`·`gc`다.
 
 종료 코드 — `run`이 **어떻게 멈췄는지**를 stdout 문구가 아니라 이 값으로 가른다(#533).
 점수가 났는지·비교표에 서는지는 이 값이 말하지 않는다.
@@ -17,7 +20,7 @@
 | --- | --- |
 | 0 | 정상. `run`은 완주·`--stop-after`·`--dry-run`·예산 소진이다. 후보·Finding 0건도 0이다 |
 | 1 | `doctor` ERROR · `bench --apply` 실패 · 트레이스백으로 죽음(①) |
-| 2 | 입력·설정 거부 — 모델을 부르기 전에 멈췄다 |
+| 2 | 입력·설정 거부 — 모델을 부르기 전에 멈췄다. `preflight`도 어긋난 선결조건(ERROR)에 2다 |
 | 3 | `run`이 장애로 중단됐다 — 교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패 |
 | 128+N | TERM(143)·HUP(129)로 끝났다 — 매니페스트는 안 남는다(②) |
 
@@ -31,6 +34,8 @@
 - ② TERM·HUP는 `_terminate_as_exit`가 `SystemExit(128+N)`으로 바꾼다. **Ctrl-C(SIGINT)는 안 바꾼다**
   — `KeyboardInterrupt`가 올라가고 값은 인터프리터가 정한다(POSIX 130 · Windows 네이티브
   `0xC000013A`, 2026-10-07 실측. 이 저장소의 검사는 그 값을 안 문다).
+- **`preflight --strict`의 4는 이 표 밖이다** — ERROR 없이 WARN만 있을 때(`EXIT_UNVERIFIED`:
+  건너뛴 점검이 있어 **확인하지 못했다**)이고 그 명령만 쓰는 값이다.
 
 ⚠ **3은 프로그램마다 따로다 — 이 표의 3은 다른 도구의 3과 같은 사건이 아니다.** `src.cli`에서 3은
 `EXIT_RUN_FAULT` 하나뿐이다. `tools/monitor.py`의 3은 DEAD(매니페스트 없이 heartbeat가 낡음)·
@@ -942,7 +947,7 @@ def _oracle_for(
     # 클래스만, 그것도 실제 CR이 든 원문으로만 지웠다 - 지금은 `TaskOracle._redacting`이
     # `repr(bytes)` 모양까지 지우지만 그것에만 기대지 않고 입구에서 먼저 거른다). 팀이 복사·공유하는
     # 파일이라 키를 쓰는 사고다. 값은 **문구에 싣지 않는다**.
-    if any(ch.isspace() or not ch.isprintable() for ch in api_key):
+    if _key_has_bad_chars(api_key):
         return _refuse_oracle(
             f"{_ORACLE_KEY_ENV}에 공백·비출력 문자가 있다({len(api_key)}자) - 값은 찍지 않는다. "
             "파일에서 읽었다면 끝의 개행이 섞인 것이다(CRLF 파일이면 CR까지). HTTP 헤더에 못 "
@@ -976,6 +981,11 @@ def _oracle_for(
         canary_path=gate.path,
         canary_sha256=gate.sha256,
     )
+
+
+def _key_has_bad_chars(key: str) -> bool:
+    """키에 공백·비출력 문자가 있나 - HTTP 헤더에 못 실리는 값이다. `preflight`도 이 판정을 쓴다."""
+    return any(ch.isspace() or not ch.isprintable() for ch in key)
 
 
 def _canary_ref(oracle: object) -> dict[str, str] | None:
@@ -1823,7 +1833,8 @@ def _sarif_result(finding: Finding) -> dict:
 
 
 def bench(args: argparse.Namespace) -> int:
-    """§3 체크리스트를 실제 엔드포인트에 대고 잰다. **접속하는 유일한 커맨드다.**
+    """§3 체크리스트를 실제 엔드포인트에 대고 잰다. **진단 중 서버에 요청을 보내는 건 이것뿐이다.**
+    (`preflight`(#534)는 ssh·TCP·`docker run`까지만 한다. `run`도 서버에 닿지만 파이프라인이다.)
 
     종료 코드는 "bench 자신이 제대로 돌았는가"만 뜻한다. 측정 결과의 통과·실패는 JSON의
     `checklist`에 있다 — 체크리스트 실패를 종료 코드로 옮기면 서버가 없는 개발 장비에서
@@ -2063,6 +2074,28 @@ def build_parser() -> argparse.ArgumentParser:
     bench_cmd.add_argument("--samples", type=int, default=DEFAULT_SAMPLES)
     bench_cmd.add_argument("--apply", action="store_true")
 
+    # `common`을 안 쓴다 — `--artifacts-root`·`--tool-runner`를 받아 놓고 안 쓰는 플래그가 된다.
+    # 인자가 없으면 그 점검은 건너뛴다고 말한다(조용히 OK로 세지 않는다).
+    pre = subs.add_parser(
+        "preflight",
+        description="실모델·실도구 run의 선결조건을 접속해서 한 번에 점검한다(#534). ssh·TCP·"
+        "docker를 일부러 쓴다. ERROR가 하나라도 있으면 exit 2다. 건너뛴·못 확인한 점검(WARN)은 "
+        "기본으로는 exit 0이다 - 자동화는 --strict로 돌린다(WARN이 있으면 exit 4)",
+    )
+    pre.add_argument("--profile", required=True)
+    pre.add_argument(
+        "--device", default=None, help="장비 파일 config/serving/<device>.yaml — 교대 점검의 기준"
+    )
+    pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 — 허용 파일·submit.sh")
+    pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 — TCP로 닿는지 본다")
+    pre.add_argument("--oracle-canary", type=Path, default=None, help="카나리 보고서 경로")
+    pre.add_argument(
+        "--strict",
+        action="store_true",
+        help="WARN(건너뜀·못 확인)이 하나라도 있으면 exit 4로 끝낸다 - 자동화는 이것을 쓴다. "
+        "기본은 사람이 읽는 용도라 WARN만 있으면 exit 0이다",
+    )
+
     gc_cmd = subs.add_parser("gc")
     gc_cmd.add_argument("--keep", type=int, default=5)
     gc_cmd.add_argument("--artifacts-root", type=Path, default=DEFAULT_ARTIFACTS_ROOT)
@@ -2094,6 +2127,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(args)
     if args.command == "bench":
         return bench(args)
+    if args.command == "preflight":
+        # 호출 시점에 import한다 — `src.preflight`가 이 파일의 `Check`·`load_profile`을 가져다 쓴다.
+        from src.preflight import run_preflight
+
+        return run_preflight(args)
     return gc(args)
 
 
