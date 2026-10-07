@@ -174,17 +174,6 @@ def test_a_swap_profile_does_not_probe_serving_ports_the_swap_will_start(world: 
 # --- C1. 래퍼는 철자가 아니라 같은 파일로 알아본다 ----------------------------------------------
 
 
-def _config_with_command(tmp_path: Path, command: str) -> Path:
-    cfg = tmp_path / "config"
-    shutil.copytree(ROOT / "config", cfg)
-    path = cfg / "serving" / "vastai-remote.yaml"
-    text = path.read_text(encoding="utf-8")
-    old = "command: [bash, tools/serve/swap-remote.sh]"
-    assert old in text
-    path.write_bytes(text.replace(old, f"command: {command}").encode("utf-8"))
-    return cfg
-
-
 _WRAPPER_SPELLINGS = [
     "[bash, ./tools/serve/swap-remote.sh]",
     "[bash, tools/serve//swap-remote.sh]",
@@ -197,7 +186,7 @@ _WRAPPER_SPELLINGS = [
 def test_a_wrapper_spelled_another_way_is_still_the_wrapper(
     world: World, tmp_path: Path, command: str
 ) -> None:
-    checks = world.check(config_dir=_config_with_command(tmp_path, command))
+    checks = world.check(config_dir=fk.config_with_command(tmp_path, command))
 
     assert one(checks, "교대 환경변수:").severity is OK  # 점검이 사라지지 않았다
     assert one(checks, "터널 포트:").severity is OK and one(checks, "원격 커밋:").severity is OK
@@ -209,7 +198,7 @@ def test_a_missing_variable_is_still_caught_when_the_wrapper_is_spelled_oddly(
 ) -> None:
     del world.env["SWAP_SSH_HOST"]
 
-    checks = world.check(config_dir=_config_with_command(tmp_path, _WRAPPER_SPELLINGS[0]))
+    checks = world.check(config_dir=fk.config_with_command(tmp_path, _WRAPPER_SPELLINGS[0]))
 
     assert one(checks, "교대 환경변수:").severity is ERROR  # 거짓 「해당 없음」 exit 0이 아니다
     assert pf.exit_code(checks) == pf.EXIT_ERRORS
@@ -219,7 +208,7 @@ def test_a_command_that_does_not_name_the_wrapper_says_what_it_actually_checked(
     world: World, tmp_path: Path
 ) -> None:
     checks = world.check(
-        config_dir=_config_with_command(tmp_path, "[bash, tools/serve/swap.sh]"), device=DEVICE
+        config_dir=fk.config_with_command(tmp_path, "[bash, tools/serve/swap.sh]"), device=DEVICE
     )
 
     check = one(checks, "교대 환경변수·터널·원격 커밋:")

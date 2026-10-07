@@ -6,7 +6,8 @@
 통과한다(리뷰가 `harness_pool_hybrid`로 재현했다).
 
 ⚠ 포트·터널 OK는 TCP 연결뿐이다 — ssh 포워드는 원격 서버가 없어도 로컬 포트를 먼저 연다. 어느
-모델이 떠 있는지는 모른다(`/v1/models`는 `cli bench`·교대가 본다).
+모델이 떠 있는지는 모른다(`/v1/models`는 `cli bench`·교대가 본다). 경로로 적힌 교대 실행 파일은
+**있다는 것까지**다 — 띄워 보지 않았고 Windows `os.access`는 실행 비트를 안 가른다.
 """
 
 import os
@@ -85,16 +86,52 @@ def check_swap_env(env: Mapping[str, str]) -> list[Check]:
     return checks
 
 
-def check_bash(command: tuple[str, ...], probes: Probes) -> Check:
+def _check_path_head(label: str, head: str, repo_root: Path) -> Check:
+    """경로로 적힌 교대 실행 파일 — 그 파일이 **있나**.
+
+    `_resolved`는 경로가 든 이름을 `which`에 안 넘기고 그대로 돌려주므로(그쪽 docstring), 경로라는
+    것만 보고 OK를 내면 **없는 경로도 통과한다** — 교대는 그때야 `subprocess`의 `OSError`를
+    `ModelSwapError("교대 명령을 실행하지 못했다")`로 바꿔 0~3단계를 태운 뒤 멈춘다(리뷰가 재현).
+
+    상대경로는 **교대가 명령을 띄우는 작업 디렉터리** 기준이다 — `swap_runner`의 `cwd`(저장소
+    루트)이고 preflight의 cwd가 아니다. ⚠ 실행 가능성은 `os.access`가 보는 만큼이다: Windows는
+    그 함수가 실행 비트를 안 가르므로 있다는 것까지다(그래서 OK 문구가 「띄워 보지는 않았다」다).
+    """
+    target = repo_root / head  # head가 절대경로면 pathlib이 repo_root를 버린다
+    # 장비 파일(추적 파일)의 값이라 `shown`으로 **안 자른다** — 고치려면 경로를 그대로 봐야 하고,
+    # 60자 상한에 걸리면 `repr(앞 60자)`가 되어 고칠 수 없는 문구가 된다(그 꼴을 한 번 냈다).
+    # 제어 문자는 출력 직전 `printable`이 막는다.
+    where = str(target) if str(target) == head else f"{head} → {target}"
+    try:
+        found = target.is_file()
+    except OSError as exc:  # NUL이 든 경로 · 너무 긴 경로
+        return Check(Severity.ERROR, f"{label} 경로를 못 봤다({where}): {exc}")
+    if not found:
+        return Check(
+            Severity.ERROR,
+            f"{label} 교대 실행 파일이 없다(또는 파일이 아니다): {where} — 장비 파일 command[0]을 "
+            "고친다(교대는 이것을 0~3단계를 태운 뒤 「교대 명령을 실행하지 못했다」로 받는다)",
+        )
+    if not os.access(target, os.X_OK):
+        return Check(Severity.ERROR, f"{label} 실행 권한이 없다({where}) — chmod +x한다")
+    return Check(
+        Severity.OK,
+        f"{label} 교대 명령이 경로로 적혀 있다({where}) — PATH로 안 푼다. "
+        "그 파일이 있다(띄워 보지는 않았다)",
+    )
+
+
+def check_bash(command: tuple[str, ...], probes: Probes, repo_root: Path) -> Check:
     label, head = "bash 해소:", command[0]
     try:
         resolved = probes.resolve((head,))[0]
     except ModelSwapError as exc:  # System32의 WSL 런처 — 문구가 고치는 법까지 든다
         return Check(Severity.ERROR, f"{label} {exc}")
     if resolved != head:
+        # `shutil.which`가 고른 것이다 — 그 함수가 실재·실행 가능까지 보고 고른다.
         return Check(Severity.OK, f"{label} {head} → {resolved}")
     if os.sep in head or (os.altsep and os.altsep in head):
-        return Check(Severity.OK, f"{label} 교대 명령이 경로로 적혀 있다({head}) — PATH로 안 푼다")
+        return _check_path_head(label, head, repo_root)
     return Check(
         Severity.WARN,
         f"{label} {head}를 PATH에서 못 찾았다 — 이름만으로는 못 막는다: Windows "
@@ -132,22 +169,54 @@ def _endpoints(
     return tuple(sorted(found, key=lambda e: (e[1], e[0]))), tuple(unreadable)
 
 
-def tunnel_endpoints(config: HarnessConfig, serving: ServingConfig) -> tuple[tuple[str, int], ...]:
-    """장비 파일의 서버가 registry에서 받는 (호스트, 포트) — 터널이 이어 줄 곳이다.
+def tunnel_endpoints(
+    config: HarnessConfig, serving: ServingConfig
+) -> tuple[tuple[tuple[str, int], ...], tuple[str, ...]]:
+    """장비 파일의 서버가 registry에서 받는 (호스트, 포트)와 **주소를 못 읽은 키**.
 
     `tools/serve/vast-tunnel.sh`의 `PORTS`가 같은 집합이어야 한다(테스트가 `PORTS=(…)` 한 줄의
     모양만 읽어 견준다 — 스크립트의 다른 변경은 못 본다).
+
+    못 읽은 키를 **같이** 돌려주는 이유: 종전에는 `_endpoints`의 첫 값만 취해 그 키를 버렸고,
+    그러면 주소가 깨진 모델의 포트 점검이 조용히 사라졌다(리뷰가 재현했다 — 교대 없는 갈래는
+    같은 목록을 이미 ERROR로 세고 있었다).
     """
-    return _endpoints(config, tuple(serving.servers))[0]
+    return _endpoints(config, tuple(serving.servers))
 
 
 def _closed(endpoints: tuple[tuple[str, int], ...], probes: Probes) -> dict[str, str]:
     return {f"{h}:{p}": why for h, p in endpoints if (why := probes.tcp(h, p))}
 
 
+def _rejected(
+    label: str, endpoints: tuple[tuple[str, int], ...], unreadable: tuple[str, ...]
+) -> Check | None:
+    """두드려 보기 **전에** 걸리는 것 둘 — 교대 갈래·교대 없는 갈래가 같이 지난다.
+
+    둘 다 「빈 성공」이 되는 자리다: 주소를 못 읽은 키를 버리면 그 모델의 포트가 점검에서 사라지고,
+    남은 집합이 비면 닫힌 포트가 없으니 OK가 난다. 하네스는 같은 주소로 모델을 부르므로 run은
+    0~3단계를 태운 뒤 같은 이유로 실패한다.
+    """
+    if unreadable:
+        return Check(
+            Severity.ERROR,
+            f"{label} http(s) 주소가 아니라 포트를 못 읽은 모델: {', '.join(unreadable)} — "
+            "registry endpoint를 고친다(하네스도 같은 주소로 그 모델을 부른다)",
+        )
+    if not endpoints:
+        return Check(
+            Severity.ERROR,
+            f"{label} 점검할 포트가 하나도 없다 — registry 주소를 주는 모델이 없다(빈 집합은 "
+            "「전부 닿는다」가 아니다)",
+        )
+    return None
+
+
 def check_tunnel(config: HarnessConfig, serving: ServingConfig, probes: Probes) -> Check:
     label = "터널 포트:"
-    endpoints = tunnel_endpoints(config, serving)
+    endpoints, unreadable = tunnel_endpoints(config, serving)
+    if (bad := _rejected(label, endpoints, unreadable)) is not None:
+        return bad
     closed = _closed(endpoints, probes)
     if closed:
         listed = ", ".join(f"{addr}({why})" for addr, why in closed.items())
@@ -175,11 +244,8 @@ def check_served(config: HarnessConfig, probes: Probes) -> Check:
     label = "서빙 엔드포인트:"
     keys = tuple(config.served_models().values())
     endpoints, unreadable = _endpoints(config, keys)
-    if unreadable:
-        return Check(
-            Severity.ERROR,
-            f"{label} http(s) 주소가 아니라 포트를 못 읽은 모델: {', '.join(unreadable)}",
-        )
+    if (bad := _rejected(label, endpoints, unreadable)) is not None:
+        return bad
     closed = _closed(endpoints, probes)
     if closed:
         listed = ", ".join(f"{addr}({why})" for addr, why in closed.items())
@@ -287,7 +353,7 @@ def swap_checks(
     if any(c.severity is Severity.ERROR for c in found):
         return [*found, Check(Severity.WARN, f"{label} 건너뜀 — 장비 파일을 못 믿는다(위 ERROR)")]
     serving, env = load_serving(device, config_dir=config_dir), probes.environ
-    bash = guard("bash 해소:", lambda: check_bash(serving.command, probes))
+    bash = guard("bash 해소:", lambda: check_bash(serving.command, probes, repo_root))
     if not uses_remote_wrapper(serving.command, repo_root):
         local_only = Check(
             Severity.OK,
