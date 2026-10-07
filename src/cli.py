@@ -1,4 +1,4 @@
-"""명령줄 진입점 — `doctor` / `estimate` / `run` / `bench` / `gc`.
+"""명령줄 진입점 — `doctor` / `estimate` / `run` / `bench` / `gc` / `preflight`.
 
 **어댑터와 오케스트레이터를 잇는 유일한 파일이다.** `src/orchestrator/**`는
 `src/adapters/`를 import 하지 않으므로(engineering-guide.md §3), factory가 만든 `Deps`를
@@ -7,8 +7,10 @@
 `doctor`는 **엔드포인트에 접속하지 않는다.** 설정 파일과 저장소 상태만 본다 — GPU가 없는
 팀원도 돌릴 수 있어야 하고, 네트워크 실패와 설정 오류가 같은 오류로 보이면 안 된다.
 
-**`bench`만 접속한다.** 배포 전 검증 체크리스트(model-serving.md §3)는 실제 서버를 재야
-답이 나오므로 그 경계를 여기서 한 번 연다. 나머지 커맨드는 여전히 소켓을 열지 않는다.
+**`bench`와 `preflight`만 접속한다.** 배포 전 검증 체크리스트(model-serving.md §3)는 실제 서버를
+재야 답이 나오므로 그 경계를 여기서 한 번 연다. `preflight`(#534)는 run 전에 ssh·터널 포트·채점기·
+`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 별 명령이다. 나머지 커맨드는 여전히 소켓을
+열지 않는다.
 """
 
 import argparse
@@ -914,7 +916,7 @@ def _oracle_for(
     # 클래스만, 그것도 실제 CR이 든 원문으로만 지웠다 - 지금은 `TaskOracle._redacting`이
     # `repr(bytes)` 모양까지 지우지만 그것에만 기대지 않고 입구에서 먼저 거른다). 팀이 복사·공유하는
     # 파일이라 키를 쓰는 사고다. 값은 **문구에 싣지 않는다**.
-    if any(ch.isspace() or not ch.isprintable() for ch in api_key):
+    if _key_has_bad_chars(api_key):
         return _refuse_oracle(
             f"{_ORACLE_KEY_ENV}에 공백·비출력 문자가 있다({len(api_key)}자) - 값은 찍지 않는다. "
             "파일에서 읽었다면 끝의 개행이 섞인 것이다(CRLF 파일이면 CR까지). HTTP 헤더에 못 "
@@ -948,6 +950,11 @@ def _oracle_for(
         canary_path=gate.path,
         canary_sha256=gate.sha256,
     )
+
+
+def _key_has_bad_chars(key: str) -> bool:
+    """키에 공백·비출력 문자가 있나 - HTTP 헤더에 못 실리는 값이다. `preflight`도 이 판정을 쓴다."""
+    return any(ch.isspace() or not ch.isprintable() for ch in key)
 
 
 def _canary_ref(oracle: object) -> dict[str, str] | None:
@@ -2004,6 +2011,21 @@ def build_parser() -> argparse.ArgumentParser:
     bench_cmd.add_argument("--samples", type=int, default=DEFAULT_SAMPLES)
     bench_cmd.add_argument("--apply", action="store_true")
 
+    # `common`을 안 쓴다 — `--artifacts-root`·`--tool-runner`를 받아 놓고 안 쓰는 플래그가 된다.
+    # 인자가 없으면 그 점검은 건너뛴다고 말한다(조용히 OK로 세지 않는다).
+    pre = subs.add_parser(
+        "preflight",
+        description="실모델·실도구 run의 선결조건을 접속해서 한 번에 점검한다(#534). ssh·TCP·"
+        "docker를 일부러 쓴다. ERROR가 하나라도 있으면 exit 2다",
+    )
+    pre.add_argument("--profile", required=True)
+    pre.add_argument(
+        "--device", default=None, help="장비 파일 config/serving/<device>.yaml — 교대 점검의 기준"
+    )
+    pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 — 허용 파일·submit.sh")
+    pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 — TCP로 닿는지 본다")
+    pre.add_argument("--oracle-canary", type=Path, default=None, help="카나리 보고서 경로")
+
     gc_cmd = subs.add_parser("gc")
     gc_cmd.add_argument("--keep", type=int, default=5)
     gc_cmd.add_argument("--artifacts-root", type=Path, default=DEFAULT_ARTIFACTS_ROOT)
@@ -2035,6 +2057,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(args)
     if args.command == "bench":
         return bench(args)
+    if args.command == "preflight":
+        # 호출 시점에 import한다 — `src.preflight`가 이 파일의 `Check`·`load_profile`을 가져다 쓴다.
+        from src.preflight import run_preflight
+
+        return run_preflight(args)
     return gc(args)
 
 
