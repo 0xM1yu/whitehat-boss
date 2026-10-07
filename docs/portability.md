@@ -6,6 +6,7 @@
 
 특정 장비의 접속·잡 실행 절차는 여기 없다. 그건 운용 사항이라
 [tools/probe/README.md](../tools/probe/README.md)와 래퍼 스크립트에 있다.
+예외 하나 -> Windows에서 원격 교대 실모델 run을 세우는 순서는 §1 「Windows에서 원격 교대 run 절차」.
 
 ## 1. 하네스가 장비에 요구하는 것
 
@@ -41,7 +42,58 @@
   모두 오라클에 닿지 못했다(`vul_submitted: 0`). 저장소 안 보고서가 적는 WSL run `0002`의 실제 실패는
   Docker 소켓이 없는 것이었다(§4).
 - ⚠ **미실측**: WSL2 mirrored 네트워킹과 네이티브 Linux에서 위 namespace 문제가 안 생기는지는 **0회 관측**이다(win11·WSL 기본 네트워킹만 했다).
-- **이 목록의 접속 가능한 부분은 `cli preflight`(#534)가 한 번에 본다** — 원격 교대 환경변수·bash 해소·터널 포트·원격 커밋·(교대 없는 프로필의) 서빙 포트·채점기 TCP·API 키 모양·카나리 보고서와 현재 Docker VM·과제 번들·도구 이미지의 인덱서. ⚠ 통과가 run의 거부를 전부 되풀이한 것은 아니다(`doctor`도 돌린다). 자동화는 `--strict`로 돌린다 — 건너뛴 점검(WARN)이 있으면 exit 4다. 이 PC에서 실제 원격으로 끝까지 돌려 본 적은 없다(미실측).
+- **이 목록의 접속 가능한 부분은 `cli preflight`(#534)가 한 번에 본다** — 원격 교대 환경변수·bash 해소·터널 포트·원격 커밋·(교대 없는 프로필의) 서빙 포트·채점기 TCP·API 키 모양·카나리 보고서와 현재 Docker VM·과제 번들·도구 이미지의 인덱서. ⚠ 통과가 run의 거부를 전부 되풀이한 것은 아니다(`doctor`도 돌린다). 자동화는 `--strict`로 돌린다 — 건너뛴 점검(WARN)이 있으면 exit 4다. 이 PC에서 실제 원격으로 끝까지 돌려 본 적은 없다(미실측). ⏵ 2026-10-07 — 실 vast 박스에 붙여 셸 셋으로 돌렸다(이슈 #538 본문). 저장소에 남은 결과는 교대 환경변수·bash 해소 두 점검뿐이다(아래).
+
+#### Windows에서 원격 교대 run 절차 (이슈 #538)
+
+장비 `vastai-remote` -> 하네스·도구·오라클은 로컬, 서빙만 vast. 스크립트별 세부는 각 파일 머리 주석.
+
+🔴 **셸 하나로는 preflight를 통과하지 못한다.** 2026-10-07 실 vast 박스, `harness_pool` · main `5828a0a`(이슈 #538 본문):
+
+| 셸 | 교대 환경변수 | bash 해소 |
+| --- | --- | --- |
+| Git Bash `export` | ERROR -> `SWAP_REMOTE_ROOT`가 `C:/Program Files/Git/root/harness`로 바뀐다 | OK |
+| PowerShell `$env:` | OK | ERROR -> `C:\Windows\system32\bash.EXE`(WSL 런처) |
+| **PowerShell + `Git\usr\bin`을 PATH 앞에** | **OK** | **OK** |
+
+- 기제 -> MSYS가 네이티브 파이썬에 넘기는 환경변수 값의 POSIX 경로를 바꾼다 · `model_swap._resolved`의 `shutil.which`가 PATH를 앞에서부터 본다(레지스트리 PATH면 System32가 앞).
+- 2026-10-08 이 PC 재현 -> 가짜 호스트(`SWAP_SSH_HOST=nohost.invalid`)로 `python -m src.cli preflight --profile harness_pool --device vastai-remote`를 세 셸에서 돌려 위 표와 같은 판정. 원격 커밋 점검은 호스트가 없어 ERROR라 그 너머는 안 봤다.
+- Git Bash 대안 -> `MSYS2_ENV_CONV_EXCL=SWAP_REMOTE_ROOT`를 주면 같은 가짜 호스트 preflight에서 두 점검 다 OK(2026-10-08 이 PC). 실 박스·run은 미실측. `MSYS_NO_PATHCONV=1`은 안 쓴다 -> `git -C`가 깨진다(2026-10-04 보고서 §3.3).
+- 그래서 1·4는 Git Bash, 5·6은 PowerShell + PATH다. 1·4의 값은 bash 안에서만 쓰여 변환이 안 걸린다(1은 2026-10-07 Git Bash 통과 — #538 본문).
+
+```bash
+# Git Bash
+# 1) 원격 사본 — 로컬 HEAD를 원격 루트에 푼다. 커밋이 바뀌면 다시(미커밋 변경은 안 간다)
+SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> SWAP_REMOTE_ROOT=/root/harness \
+  SWAP_REMOTE_PYTHON=/usr/bin/python3 bash tools/serve/vast-bootstrap.sh
+# 2) 원격 감시자 — run마다 하나
+ssh -p <포트> root@<호스트> 'cd /root/harness && MAX_HOURS=10 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &'
+# 4) 터널 — 별도 창, run 동안 둔다
+SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/vast-tunnel.sh
+```
+
+3) 교대는 손으로 안 한다 -> run이 단계마다 장비 파일 `command`(`swap-remote.sh`)로 원격 `swap.sh`를 부른다. 손으로 띄운 서버가 남으면 다음 run 교대가 ABORT한다([2026-10-04 보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md) §3.1) -> 원격에서 `HARNESS_RUN_ID=<그 run id> bash tools/serve/swap.sh`로 내린다.
+
+```powershell
+# PowerShell — 5·6은 같은 창
+$env:PATH = "C:\Program Files\Git\usr\bin;$env:PATH"   # Git 설치 경로의 usr\bin. System32보다 앞
+$env:SWAP_SSH_HOST = 'root@<호스트>'
+$env:SWAP_SSH_PORT = '<포트>'
+$env:SWAP_REMOTE_ROOT = '/root/harness'
+$env:SWAP_REMOTE_PYTHON = '/usr/bin/python3'
+# CYBERGYM_API_KEY도 이 창에서 $env:로 세운다. 값은 문서·명령문·run 기록에 적지 않는다
+# 5) preflight — ERROR가 있으면 exit 2. 0이어야 6으로
+python -m src.cli preflight --profile harness_pool --device vastai-remote `
+  --task-dir <번들> --oracle-server http://127.0.0.1:8666 --oracle-canary <카나리.json>
+# 6) run
+python -m src.cli run --profile harness_pool --device vastai-remote --condition B3prime@pipeline `
+  --slices <slices.json> --task-dir <번들> --task-work-dir <빈 디렉터리> --artifacts-root <저장소 밖> `
+  --oracle-canary <카나리.json> --oracle-submit --oracle-server http://127.0.0.1:8666
+```
+
+- 원격 커밋 점검은 `ssh -o BatchMode=yes`다 -> 암호를 묻는 키면 ERROR. 키를 에이전트에 올려 둔다.
+- `<slices.json>`의 경로에는 `src-vul/` 접두어가 있어야 한다 -> [slicer-README.md](slicer-README.md) 「`--task-dir`로 쓸 슬라이스」.
+- ⚠ 이 절차로 6까지 끝까지 돈 run은 아직 없다 — 미실측. 5의 두 점검까지만 위 표가 근거다.
 
 ## 2. 무엇으로 확인되는가
 

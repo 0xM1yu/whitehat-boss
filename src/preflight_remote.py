@@ -66,7 +66,9 @@ def check_swap_env(env: Mapping[str, str]) -> list[Check]:
         if _MSYS_DRIVE.match(root):
             hint = (
                 " — Git Bash의 export가 `/`로 시작하는 값을 Windows 경로로 바꾼 것이다: "
-                "PowerShell `$env:`이나 파이썬 런처로 세운다"
+                r"PowerShell `$env:`로 세우고 `Git\usr\bin`을 PATH 앞에 둔다"
+                "(Git Bash면 `MSYS2_ENV_CONV_EXCL=SWAP_REMOTE_ROOT`) — "
+                "docs/portability.md 「Windows에서 원격 교대 run 절차」"
             )
         checks.append(
             Check(
