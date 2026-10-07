@@ -79,8 +79,9 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 
 **멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
-`RunRecord`에 남는다(전이 표 R-2). 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
-GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
+`RunRecord`에 남는다(전이 표 R-2). **종료 코드만 갈린다** — 예산 소진은 0이고 이 갈래들은
+`cli`가 3으로 돌려준다(`src/cli.py` 모듈 docstring). 예외가 `write_manifest` 앞을 뚫고 나가면
+그때까지의 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
 import contextlib
@@ -524,6 +525,9 @@ class RunResult:
     candidates: tuple[Candidate, ...]
     findings: tuple[Finding, ...]
     warnings: tuple[str, ...]
+    # 9단계 전에 멈춘 사유 — `finish_run`에 넘긴 값 그대로다(`None` = 끝까지 갔다). `RunRecord`는
+    # 사유를 안 들고(trace에만 있다) `cli.run`이 종료 코드를 정하려면 여기서 받아야 한다.
+    stop_reason: ReasonCode | None = None
 
 
 class CacheHookUnbound(RuntimeError):
@@ -1158,6 +1162,7 @@ def run_pipeline(
         candidates=tuple(state.candidates),
         findings=tuple(findings),
         warnings=tuple(warnings),
+        stop_reason=stop_reason,
     )
 
 
