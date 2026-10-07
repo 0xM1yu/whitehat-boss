@@ -39,6 +39,12 @@
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
 | 8단계 · `pov` | `feyospace-v1-small` (`reasoning_effort: xhigh`) | ✅ |
 
+⏵ **2026-10-07 — Scout 셋의 프롬프트가 v4로 배선됐다**(PR #524 — `qwen3-14b`·`seccoderx-8b` 두 엔트리를
+함께 올렸다. 좌석 배치는 안 바꿨다). ⚠ **위 표의 CWE 열거보다 서빙 프롬프트가 두 칸 넓다** —
+`scout_memory/v4/prefix.md`가 `CWE-822`를, `scout_injection/v4/prefix.md`가 `CWE-22`를 더 든다.
+표를 안 고친 것은 4단계 CWE 분담이 팀이 정한 것이기 때문이다 — 확인은 이슈 #531이 추적한다.
+⚠ **boundary 좌석(`seccoderx-8b`)에서 v4를 돌린 실측은 없다** — 그 프롬프트의 원본 실험은 `qwen3-14b`로 쟀다.
+
 ⚠ **scout_memory·injection은 같은 키 `qwen3-14b` 한 벌이다**(2026-09-25부터 — 그 전에는
 memory·boundary가 `seccoderx-8b` 한 벌이었다) — 프롬프트가 역할 폴더로 갈린다(`scout_memory/v3`=옛
 실험 v14s · `scout_injection/v3`). 같은 weights라 별칭 키를 새로 두지 않는다 — 같은 서버(포트)를 두

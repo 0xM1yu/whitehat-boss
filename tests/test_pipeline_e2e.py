@@ -1049,6 +1049,11 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
         monkeypatch.setattr(
             cli, "_undescribed_source_options", lambda config: ["bogus(auditor/v4)"]
         )
+    # ⏵ 2026-10-07 — 슬라이스 입력 가드도 검출을 갈아끼워 세운다. v4 배선 뒤 저장소 설정으로는
+    # 그 조건을 못 만든다(`cli._slice_input_prompts`의 ⏵) — Auditor 케이스와 같은 논법이고,
+    # 이 테스트가 보는 것은 검출이 아니라 **해제가 게이트 뒤에 있는가**다.
+    if defect == "no-slices":
+        monkeypatch.setattr(cli, "_slice_input_prompts", lambda config: ["scout_memory/v3"])
 
     rc = cli.main(first)
 
@@ -2231,6 +2236,11 @@ def test_a_slice_input_profile_refuses_to_start_without_slices(
 
     `execute`를 막아 둔다. 가드가 사라지면 이 run은 실서빙 프로필로 도구 컨테이너와
     엔드포인트에 나간다 — 빨간 불이 느린 테스트로 보이면 안 된다(`_refuse_sockets`와 같은 뜻).
+
+    ⏵ **2026-10-07 — 검출을 갈아끼운다.** Scout가 v4(`input: source`)로 배선되며 저장소의 어느
+    프로필도 `input: slice`를 고르지 않아, **설정만으로는 이 가드를 세울 수 없다.** 보는 것은
+    검출이 아니라 **게이트가 서는 자리와 거부 줄**이다 — 아래 `_slice_input_prompts` 교체가
+    그것이고, 같은 파일의 `undescribed-option` 케이스가 같은 논법을 먼저 썼다.
     """
 
     class _Started(RuntimeError):
@@ -2240,6 +2250,7 @@ def test_a_slice_input_profile_refuses_to_start_without_slices(
         raise _Started
 
     monkeypatch.setattr(cli, "execute", _boom)
+    monkeypatch.setattr(cli, "_slice_input_prompts", lambda config: ["scout_memory/v3"])
     code = cli.main(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
@@ -2252,6 +2263,37 @@ def test_a_slice_input_profile_refuses_to_start_without_slices(
     assert code == 2, "슬라이스 입력 프롬프트를 부르는 run이 --slices 없이 시작한다"
     assert [line for line in _errors(err) if "--slices" in line], "거부 줄이 --slices를 안 댄다"
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_the_slice_input_detector_reads_the_meta_of_the_wired_version() -> None:
+    """`_slice_input_prompts`가 **배선된 판의 meta**를 읽어 `input: slice`만 고른다.
+
+    🔴 이 검사가 있는 이유. 2026-10-07에 Scout가 v4(`input: source`)로 배선되며 **저장소의 어느
+    프로필도 이 검출을 발화시키지 않게 됐다.** 게이트가 서는 자리는 검출을 갈아끼운 테스트들이
+    보지만, 그러면 **검출 자체를 아무도 안 본다.** 실제로 돌려 본 변이 둘이 이 검사 없이는 전부
+    초록이다 — 비교를 `== "source"`로 뒤집기(고르는 쪽이 반대가 된다), 담는 문자열에서 버전을
+    빼기(`f"{role}"`). 둘 다 이 검사에서는 빨개진다(실측). ⚠ **`!= "source"`는 변이가 아니다** —
+    `input`이 닫힌 두 값이라 `== "slice"`와 등가다. 그래서 그것으로는 이 검사를 시험할 수 없다.
+
+    설정 파일을 만들지 않고 `prompt_versions()`만 흉내낸다 — 검출이 보는 것이 그 맵과
+    프롬프트 meta 둘뿐이고, registry를 끌어오면 배선이 바뀔 때 이 검사도 같이 낡는다.
+    """
+
+    class _Config:
+        def __init__(self, versions: dict[str, str]) -> None:
+            self._versions = versions
+
+        def prompt_versions(self) -> dict[str, str]:
+            return self._versions
+
+    # v3 Scout는 디스크에 있고 `input: slice`를 선언한다 — 고르는 설정이면 검출이 찬다.
+    assert cli._slice_input_prompts(_Config({"scout_memory": "v3"})) == ["scout_memory/v3"]
+    # v4는 `input: source`라 안 찬다. 지금 배선이 이쪽이다.
+    assert cli._slice_input_prompts(_Config({"scout_memory": "v4"})) == []
+    # 섞이면 슬라이스 쪽만 나오고 역할/버전 모양이 그대로 실린다.
+    assert cli._slice_input_prompts(
+        _Config({"scout_memory": "v4", "scout_boundary": "v3", "auditor": "v9"})
+    ) == ["scout_boundary/v3"]
 
 
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
@@ -3206,13 +3248,25 @@ def test_doctor_output_differs_between_profiles(tmp_path: Path) -> None:
     assert "HybridRetriever" not in fake
 
 
-def test_doctor_warns_that_a_slice_input_profile_needs_slices(tmp_path: Path) -> None:
+def test_doctor_warns_that_a_slice_input_profile_needs_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`run`이 `--slices` 없이 거부할 프로필을 doctor가 미리 말한다 — **WARN이지 ERROR가 아니다.**
 
     doctor는 `--slices`를 받지 않으니 막을 대상이 없다. ERROR로 두면 설정이 멀쩡한 풀 프로필의
     `doctor`가 exit 1이 된다. 슬라이스 입력 프롬프트가 없는 프로필(`dev_fake` — scout v1)에는
     그 줄이 없어야 한다 — 전 프로필에 뜨는 경고는 아무도 안 읽는다.
+
+    ⏵ **2026-10-07 — 검출을 갈아끼운다**(v4 배선 뒤 어느 프로필도 `input: slice`를 안 고른다 —
+    `cli._slice_input_prompts`의 ⏵). **교체가 프로필을 가른다** — 풀을 선언한 프로필에만 목록을
+    돌려주므로 「없는 프로필에는 그 줄이 없다」는 뒤쪽 단언이 교체에 먹히지 않고 산다.
+    doctor와 run이 **같은 함수**로 판정하는 것도 여기서 선다(그 전에는 두 벌이었다).
     """
+    monkeypatch.setattr(
+        cli,
+        "_slice_input_prompts",
+        lambda config: ["scout_memory/v3"] if "scout_memory" in config.profile.roles else [],
+    )
 
     def slice_lines(profile: str) -> list[str]:
         return [line for line in _doctor_text(profile, tmp_path).splitlines() if "--slices" in line]

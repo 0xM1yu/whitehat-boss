@@ -115,6 +115,10 @@ agent:
   ⏵ 2026-09-25 — `run --slices`로 돈 run은 이제 그 모양이다(Phase 3a PR #283 · 3b PR #284 · 3c): `{{SOURCE}}`가
   슬라이스 렌더이고 FACTS에 `slice_criterion`(`given_end`와, 슬라이서 entry의 file·line·symbol인 `given`)이
   붙는다. `--slices` 없는 run은 앞 문장 그대로라, 풀 프로필을 슬라이스 없이 돌리면 그 어긋남도 그대로다.
+  ⏵ **2026-10-07 — 서빙 판이 v4다**(PR #524 배선). v4 meta가 `input: source`라 위 슬라이스 서술은
+  서빙 경로가 아니고, `--slices` 없는 run을 막던 가드는 **더 이상 차지 않는다**(`cli._slice_input_prompts`).
+  ⚠ 어긋남이 뒤집혔다 — `--slices` run에서는 노드가 렌더를 싣는데 v4는 함수 본문이라 적는다.
+  아래 NE 루프도 v4에서는 신호가 둘이라 서빙 경로에서 돌지 않는다.
 - 출력: `Candidate[]`. v3는 판정(`candidate`)과 근거(`analysis_summary`)를 한 호출에서 내는 `ScoutResponse`
   (`src/schemas/scout_response.py`)이고 하네스는 `.candidate`만 흘린다. ⚠ **ADR 0012 결정 2 —
   `reason_codes[0]`이 `triage_need_evidence`이면 하네스가 `requested_context`의 target을 심볼 인덱스에서
@@ -892,7 +896,7 @@ HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sh
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v10", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v10", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
