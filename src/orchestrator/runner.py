@@ -922,6 +922,9 @@ def run_pipeline(
         # 끊은 것이 이쪽이다.
         stopped_after, stop_reason = exc.stage, ReasonCode.BUDGET_EXHAUSTED
         warnings.append(f"{exc.stage}단계에서 예산 소진: {exc.item} {exc.spent}/{exc.limit}")
+        # `_analyze`의 PoV 루프가 최종 지정 실패를 `add_note`로 붙여 올린다 — 이 갈래가 예외를
+        # 삼키므로 여기서 안 읽으면 그 사유는 산출물 어디에도 안 남는다(#532).
+        warnings.extend(getattr(exc, "__notes__", ()))
     except ModelSwapError as exc:
         # **아래 게이트웨이 갈래보다 먼저 잡는다** — `ModelSwapError`는 그 하위형이다. 떠 있던
         # 서버가 죽은 것이 아니라 다음 단계 서버를 띄우지 못한 것이라 대응이 다르다(장비 파일과
@@ -941,6 +944,7 @@ def run_pipeline(
         # 경고는 원인을 단언하지 않는다(「응답하지 않아」는 계약 밖 200에 거짓이다) — 원인은
         # detail이다.
         warnings.append(f"게이트웨이 실패로 중단했다: {error_detail(exc)}")
+        warnings.extend(getattr(exc, "__notes__", ()))  # 위 예산 갈래와 같은 이유(#532)
     except _TooManyDrops as exc:
         # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
         stopped_after = int(ctx.current_stage)
@@ -1294,16 +1298,25 @@ def _analyze(
                 # `_finalize_oracle`을 건너뛰어 그 PoC의 `fix` 다리·판정 조회를 잃고
                 # `oracle.final`이 `not_reached`가 된다. 「낸 PoC」는 `_designate_final`이 읽는
                 # `candidates`(submit했고 vul 제출이 성공한 시도)다. **추가 대상**
-                # (`pov_attempt_top_n`)에서 끊긴 run은 후보가 0건이어도 종전대로 이 단계를 돈다
-                # (`none`/`no_poc`). 둘 다 아니면 `not_reached`다.
+                # (`pov_attempt_top_n`)에서 끊긴 run은 후보가 0건이어도 이 단계를 돈다
+                # (`none`/`no_poc`) — 예산은 종전대로, 게이트웨이는 #532에서 새로다. 둘 다 아니면
+                # `not_reached`다.
                 # 사유는 새로 안 적는다 — 같은 예외를 올리면 `run_pipeline`의 갈래가 적는다.
-                # `except Exception`으로 안 넓힌 것은 일부러다(run을 멈추는 예외의 뜻이 바뀐다).
+                # `except Exception`으로 안 넓힌 것은 일부러다 — 핸들러가 `raise`로 다시 올리므로
+                # 어느 예외가 run을 멈추느냐는 안 바뀐다. 바뀌는 것은 **임의 예외에서도 오라클
+                # 네트워크 호출(`fix` 다리·판정 조회)이 돈다**는 것이다(핀:
+                # `test_a_non_target_exception_…`).
                 # 버릴 수 있는 게이트웨이 오류는 루프가 흡수해 여기 안 온다
-                # (`_pov_classify_exception`).
+                # (`_pov_classify_exception`). `ModelSwapError`(하위형)도 이 `except`에 들지만 이
+                # 루프 안에는 교대를 부르는 경로가 없다(`_swap_for`·`_swap`을 전수로 열어 확인했다 —
+                # 루프 앞·단계 진입·Critic 앞·run 끝뿐) — 그래서 전용 핀이 없다.
                 # ⚠ `_finalize_oracle`이 흡수하는 것은 `oracle.finalize`의 `Exception`과 장부
                 # 쓰기의 `OSError`뿐이다 — 그 밖에서 던지면 원 예외가 가려지므로 `add_note`로
-                # 붙이고 원 예외를 올린다(`run_pipeline`의 매니페스트 실패와 같은 모양). 그
-                # 실경로는 못 찾았다(미확인).
+                # 붙이고 원 예외를 올린다. 그 예외를 `run_pipeline`의 예산·게이트웨이 갈래가
+                # **삼키므로** 그 갈래가 `__notes__`를 읽어 `warnings`에 싣는다(안 읽으면 사유가
+                # 버려진다 — 매니페스트 실패의 `add_note`는 `raise`로 올라가 트레이스백에 찍히는
+                # 것과 다르다. `ModelSwapError` 갈래는 안 읽는다 — 위 이유로 여기서 안 온다).
+                # 그 실경로는 못 찾았다(미확인).
                 if state.oracle_ledger.candidates or finding.finding_id not in validated_ids:
                     try:
                         _finalize_oracle(ctx, state)
@@ -2201,18 +2214,20 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
-    계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
-    불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다. **예외 하나:** 루프를 끊은
-    것이 `BudgetExhausted`·`ModelGatewayError`이고 오라클에 이미 낸 후보가 있거나(`candidates`)
-    `pov_attempt_top_n`의 추가 대상에서 끊겼으면 `_analyze`가 이 단계를 부른 뒤 예외를 올린다 —
-    앞 대상이 이미 낸 PoC의 최종 지정을 잃지 않으려는 것이다(#532).
+    계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·
+    `ModelGatewayError`로 끊겨도 오라클에 이미 낸 후보가 있거나(`candidates`) `pov_attempt_top_n`의
+    추가 대상에서 끊겼으면 `_analyze`가 이 단계를 부른 뒤 예외를 올린다 — 앞 대상이 이미 낸 PoC의
+    최종 지정을 잃지 않으려는 것이다(#532). `pov_attempt_top_n`이 8이라(`config/budgets.yaml`) 추가
+    대상이 도는 것은 설정상 평상시다 — 이 경로는 드문 예외가 아니다(그 비율은 안 쟀다). 그 밖의
+    중단은 불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
 
-    ⚠ **그 밖의 예외는 안 덮는다** — 다른 예외로 끊긴 run은 `oracle.final`이 `not_reached`로 남는다.
-    낸 PoC 없이 `validated` 대상에서 끊긴 run도 같다(핀은 `tests/test_oracle_wiring.py`).
+    ⚠ **그 밖의 중단은 둘이고 축이 다르다.** ① 그 두 예외 **밖의** 예외로 끊긴 run(예외 종류) ②
+    그 두 예외라도 낸 후보 없이 `validated` 대상에서 끊긴 run(위치·후보 유무). 핀은
+    `tests/test_oracle_wiring.py`다.
     ⚠ **흡수하는 것은 둘이다:** `oracle.finalize`의 `Exception`(`_score`)과 사이드카 쓰기의
     `OSError`(`oracle_log` 장부). 지정(`_designate_final`)·`trace.emit`은 안 감쌌고 던질 실경로를
     못 찾았다(미확인) — 그래서 `_analyze`가 이 함수의 예외를 원 예외의 `add_note`로 붙여 원 예외를
-    올린다.
+    올리고, `run_pipeline`의 예산·게이트웨이 갈래가 그 노트를 `warnings`에 싣는다.
     ⚠ **추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`로 남는다** —
     의도한 것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다).
     「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
