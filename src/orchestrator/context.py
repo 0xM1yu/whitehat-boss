@@ -316,10 +316,18 @@ class RunContext:
             # 실패해도 재시도가 실제로 보낸 요청은 남긴다 — 400을 받은 요청이 무엇이었는지가
             # 이 항목의 요점이다(#80). 소비를 안 든 예외(`BudgetExhausted`)는 `retry_bodies`가
             # 없어 `getattr`가 빈 튜플을 준다.
-            retry_fields = self._record_retries(
-                role=role, stage=stage, prompt=prompt,
-                retry_bodies=getattr(exc, "retry_bodies", ()), hop=hop, history=history,
-            )
+            # **쓰기 실패가 이 블록을 끊지 않는다(#168 (a)).** 파일 I/O가 여기서 터지면 그 예외가
+            # 원 예외를 덮고, 아래 `emit`·`charge`가 안 돌아 이미 쓴 토큰·GPU가 장부 밖으로 샌다 —
+            # 실패분 청구(#82)의 우회로다. 재시도 많은 run이 곧 디스크를 채우는 run이라 무작위
+            # 실패도 아니다. 실패하면 파일 참조 대신 사유만 싣고 청구·원 예외는 그대로 간다.
+            # 성공 경로는 건드리지 않는다 — 거기서는 쓰기 실패가 호출 자체를 멈춘다.
+            try:
+                retry_fields = self._record_retries(
+                    role=role, stage=stage, prompt=prompt,
+                    retry_bodies=getattr(exc, "retry_bodies", ()), hop=hop, history=history,
+                )
+            except OSError as record_exc:
+                retry_fields = {"retry_record_error": type(record_exc).__name__}
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
