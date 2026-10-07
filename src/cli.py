@@ -570,7 +570,7 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
 
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
-    프롬프트(⏵ 2026-10-06 v9 — 그 전 v8·v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    프롬프트(⏵ 2026-10-06 v10 — 그 전 v9·v8·v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
     여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
     같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
@@ -609,7 +609,7 @@ def _auditor_loop_problem(config: HarnessConfig) -> str | None:
 
     **판정은 노드와 같은 함수다**(`nodes.auditor.loop_problem`). 예전에는 cli가 meta의 `tools`만
     보고 노드가 `output_schema`만 봐서, 한쪽만 통과하는 설정(판은 루프인데 상한 0 · 판은 한 방인데
-    상한 양수 · `tools`에 `AuditorAction.tool`이 안 받는 이름)이 `run`·`doctor`를 지나 첫 Auditor
+    상한 양수 · `tools`에 그 봉투의 `tool`이 안 받는 이름)이 `run`·`doctor`를 지나 첫 Auditor
     호출에서야 섰다 — 그 앞 단계(1~4)에 쓴 GPU 시간 뒤다.
     """
     if Role.AUDITOR.value not in config.profile.roles:
@@ -1593,7 +1593,8 @@ def run(args: argparse.Namespace) -> int:
     # MEDIUM-2). 옵션은 SOURCE 모양을 바꾸는데 v4·v5는 「(file, start line) 순 · 15,000자」를
     # 말한다 — 어긋나도 오류 없이 돈다. v6(#418의 A/B 판)도 그 모양만 서술한다(⏵ 2026-10-04 서빙
     # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 v8 = v7 + 도구 루프가 그 서술·선언을
-    # 물려받았고 ⏵ 2026-10-06부터 서빙 판은 v9 = v8 + `auditor_guards` 서술이다).
+    # 물려받았고 ⏵ 2026-10-06 서빙 판은 v9 = v8 + `auditor_guards` 서술이었으며 ⏵ 같은 날부터
+    # v10(v7을 전면 재작성 — 같은 여덟 옵션을 서술·선언한다)이다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
