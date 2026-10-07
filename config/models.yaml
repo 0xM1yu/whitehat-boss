@@ -396,7 +396,7 @@ models:
     request_timeout_s: 1200
     # ⏵ 2026-10-07 — v3 → v4 배선(PR #524). v4는 `input: source`를 선언하고 신호가 둘이다
     #   (`triage_need_evidence` 없음). 짝인 `qwen3-14b`와 **함께** 올린다 — 풀 세 자리가 한 버전이다(ADR 0010 §6).
-    #   ⚠ 되묻기를 안 내므로 `cli estimate`의 Scout 호출 수가 과대다 — 대여 규모를 그 수로 잡지 않는다(이슈 #530).
+    #   ⚠ 되묻기를 안 내므로 `cli estimate` 상한의 Scout 항이 4배 느슨하다 — 전체 추정은 약 17% 과대다(이슈 #530).
     prompt_template_version: "v4"
     fallback: null
     benchmark:
@@ -729,7 +729,7 @@ models:
     request_timeout_s: 1800
     # ⏵ 2026-10-07 — v3 → v4 배선(PR #524). v4는 `input: source`를 선언하고 신호가 둘이다
     #   (`triage_need_evidence` 없음). 짝인 `seccoderx-8b`와 **함께** 올린다 — 풀 세 자리가 한 버전이다(ADR 0010 §6).
-    #   ⚠ 되묻기를 안 내므로 `cli estimate`의 Scout 호출 수가 과대다 — 대여 규모를 그 수로 잡지 않는다(이슈 #530).
+    #   ⚠ 되묻기를 안 내므로 `cli estimate` 상한의 Scout 항이 4배 느슨하다 — 전체 추정은 약 17% 과대다(이슈 #530).
     prompt_template_version: "v4"
     fallback: null
     benchmark:
