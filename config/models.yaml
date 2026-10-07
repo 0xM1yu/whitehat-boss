@@ -394,7 +394,9 @@ models:
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
     request_timeout_s: 1200
-    prompt_template_version: "v3"
+    # ⏵ 2026-10-07 — v3 → v4 배선(PR #524). v4는 `input: source`를 선언하고 신호가 둘이다
+    #   (`triage_need_evidence` 없음). 짝인 `qwen3-14b`와 **함께** 올린다 — 풀 세 자리가 한 버전이다(ADR 0010 §6).
+    prompt_template_version: "v4"
     fallback: null
     benchmark:
       measured_at: null
@@ -724,7 +726,9 @@ models:
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
     request_timeout_s: 1800
-    prompt_template_version: "v3"
+    # ⏵ 2026-10-07 — v3 → v4 배선(PR #524). v4는 `input: source`를 선언하고 신호가 둘이다
+    #   (`triage_need_evidence` 없음). 짝인 `seccoderx-8b`와 **함께** 올린다 — 풀 세 자리가 한 버전이다(ADR 0010 §6).
+    prompt_template_version: "v4"
     fallback: null
     benchmark:
       measured_at: null
