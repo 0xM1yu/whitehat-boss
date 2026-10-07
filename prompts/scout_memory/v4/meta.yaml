@@ -1,0 +1,28 @@
+# 배선됨(2026-10-07 — PR #524): qwen3-14b·seccoderx-8b가 함께 v4를 고른다(풀 세 자리가 한 버전).
+# ⚠ input: source인데 노드는 SOURCE를 슬라이스 유무로 고른다(nodes/scout.py) — --slices run에서는
+# 슬라이스 렌더가 가고 아래 prefix의 입력 서술과 어긋난다. 그 어긋남은 이 배선 밖이고 이슈 #529가 든다.
+role: scout_memory
+version: v4
+output_schema: ScoutResponse
+input: source
+profile: memory
+model: qwen3-14b
+description: 'scout 프롬프트 FP 실험 v9의 분석·신호 본문. 입력 서술(input: source — 대상 함수 본문, 줄번호 없음, 첫 줄 = FACTS.target.line_start, 캡슐·FACTS)과 출력 절(candidate 9키 먼저, FACTS 복사, claim 먼저)을 하네스 계약에 맞춤. 신호 2개(need_evidence 미사용).'
+cwe_scope:
+- CWE-401
+- CWE-404
+- CWE-415
+- CWE-416
+- CWE-457
+- CWE-476
+- CWE-562
+- CWE-590
+- CWE-761
+- CWE-762
+- CWE-772
+- CWE-775
+- CWE-822
+- CWE-824
+- CWE-825
+- CWE-843
+based_on: experiment-v9
