@@ -19,7 +19,7 @@ from src import cli
 from src.adapters.memory_store import InMemoryStateStore
 from src.config import load_config
 from src.ids import IdFactory, sha256_text
-from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, Usage
+from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, SchemaParseError, Usage
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
@@ -358,6 +358,43 @@ def test_retry_call_persists_the_actual_sent_request(tmp_path: Path) -> None:
     # `sent_sha256`이 그 실제 요청을 가리키고, 1차 해시와 다르다 — 오도가 사라진다.
     assert data["sent_sha256"] == sha256_text(retry_path.read_text(encoding="utf-8"))
     assert data["sent_sha256"] != data["prompt_sha256"]
+
+
+class _RetriedThenFailedClient:
+    """재시도를 보낸 뒤 소진돼 실패한다 — 소비(`usage`·`gpu_ms`)와 재시도 본문을 예외에 싣는다."""
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        raise SchemaParseError(
+            "3회 안에 스키마를 만들지 못했다",
+            usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+            gpu_ms=243_000,
+            gpu_ms_source="request_wall_clock",
+            attempts=2,
+            retry_bodies=("재시도가 실제로 보낸 것",),
+        )
+
+
+def test_a_failed_retry_record_write_keeps_the_charge_the_event_and_the_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D66 — 실패 경로에서 재시도 본문 쓰기가 터져도 ① 이미 쓴 소비가 청구되고 ② 실패
+    `model_call` 이벤트가 남고 ③ **원 예외**가 올라온다. 디스크 full 대신 쓰기를 OSError로
+    바꿔 세운다. 수정 전에는 OSError가 원 `SchemaParseError`를 덮고 청구·이벤트가 둘 다 없었다."""
+    prompts = PromptLog(tmp_path)
+
+    def disk_full(*_a: object, **_k: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(prompts, "write_retry", disk_full)
+    ctx = _context(prompts=prompts, models=_RetriedThenFailedClient())
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    assert ctx.ledger.input_tokens == 300 and ctx.ledger.gpu_ms == 243_000
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is False and call["error"] == "SchemaParseError"
+    assert call["retry_record_error"] == "OSError"
 
 
 def test_non_retry_call_adds_no_sent_hash(tmp_path: Path) -> None:
