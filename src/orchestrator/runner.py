@@ -3245,6 +3245,8 @@ def _emit_scout_hop(
         data["fixable_count"] = resolution.fixable_count
         data["unfilled"] = ",".join(item_.reason.value for item_ in resolution.unfilled)
         data["truncated"] = ",".join(resolution.truncated)
+        # 색인이 없어 조회를 안 했는지 — `nothing_resolved`의 두 원인을 가른다(#315).
+        data["index_available"] = resolution.index_available
     ctx.trace.emit(
         EventKind.SCOUT_HOP,
         stage=Stage.SCOUT,

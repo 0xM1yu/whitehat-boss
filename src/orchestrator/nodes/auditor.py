@@ -986,12 +986,14 @@ def _lookup(
     resolved = len(resolution.blocks) + len(resolution.already)
     observed: dict[str, TraceValue] = {
         "resolved": resolved,
-        # `SCOUT_HOP`과 같은 이름·같은 형식이다. 이 넷이 있어야 `resolved=0`의 세 원인 — 인덱스
-        # 없음/v1 (넷 다 비어 있다), 이름을 못 찾음(`unfilled`), 크기 상한(`truncated`) — 이 갈린다.
+        # `SCOUT_HOP`과 같은 이름·같은 형식이다. 이 값들로 `resolved=0`의 세 원인 — 인덱스
+        # 없음/v1(`index_available=False`), 이름을 못 찾음(`unfilled`), 크기 상한
+        # (`truncated`) — 이 갈린다.
         "already": len(resolution.already),
         "fixable_count": resolution.fixable_count,
         "unfilled": ",".join(item.reason.value for item in resolution.unfilled),
         "truncated": ",".join(resolution.truncated),
+        "index_available": resolution.index_available,
     }
     if ignored:
         observed["ignored"] = ignored
