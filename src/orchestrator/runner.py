@@ -77,9 +77,14 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다. 그리고 **끝까지 시도한 뒤** 한 자리가
 한 번도 성공하지 못했으면 원인이 크기여도 멈춘다 — 그 자리는 아무것도 못 봤다.
 
-**멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
-자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
-`RunRecord`에 남는다(전이 표 R-2). 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
+**멈추는 것과 산출물을 잃는 것은 다르다.** 장애 갈래 넷(교대 실패·게이트웨이 장애·연속 폐기·
+스키마 파싱 실패)은 예산 소진과 같은 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지
+가고 `RunRecord`에는 `stopped_after`가 남는다(전이 표 R-2). **사유는 `RunRecord`에 없다** — trace의
+R-2 `transition` 이벤트(`subject_kind: run`)의 `reason`이 든다. 같은 자리에서 끝나도 **밖에서 보이는
+것은 갈린다**: 예산 소진은 종료 코드 0이고 이 넷은 `cli`가 stderr `[ERROR]` 줄과 3으로 돌려준다
+(`RunResult.stop_reason` — `src/cli.py` 모듈 docstring). 예상 밖 예외(`UNFORESEEN_FAILURE`)는 이
+넷과 또 다르다 — 매니페스트·trace는 남지만 `RunResult`가 안 나오고(리포트 파일 없음) 예외를 다시
+던져 `run`은 트레이스백(1)으로 끝난다. 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
@@ -524,6 +529,10 @@ class RunResult:
     candidates: tuple[Candidate, ...]
     findings: tuple[Finding, ...]
     warnings: tuple[str, ...]
+    # 9단계 전에 멈춘 사유 — `finish_run`에 넘긴 값 그대로다(`None` = 끝까지 갔다). `RunRecord`는
+    # 사유를 안 들고(trace에만 있다) `cli.run`이 종료 코드를 정하려면 여기서 받아야 한다.
+    # **기본값이 없다** — `None`이 「끝까지 갔다」로 읽혀서, 새 생성처가 빠뜨리면 조용한 0이 된다.
+    stop_reason: ReasonCode | None
 
 
 class CacheHookUnbound(RuntimeError):
@@ -966,10 +975,11 @@ def run_pipeline(
         # 것은 별 작업이다(아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다).
         #
         # 🔴 **삼키지 않는다 — 적고, 매니페스트를 쓰고, 다시 던진다.**
-        # 삼키면 두 가지가 깨진다: ① 호출자(`cli.execute`)가 run을 성공으로 읽는다
-        # ② `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 — 그쪽은
-        # **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. 최후 방어선의 뜻은 "삼킨다"가
-        # 아니라 "**증거를 남기고** 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
+        # 삼키면 `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 —
+        # 그쪽은 **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. (#533 이전에는 호출자
+        # (`cli.execute`)가 run을 성공으로 읽는 것도 깨졌다 — 지금은 `cli.run`이 허용목록 밖 사유를
+        # 3으로 돌려줘 그 갈래는 막혔다.) 최후 방어선의 뜻은 "삼킨다"가 아니라 "**증거를 남기고**
+        # 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.UNFORESEEN_FAILURE
         unforeseen = exc
@@ -1158,6 +1168,7 @@ def run_pipeline(
         candidates=tuple(state.candidates),
         findings=tuple(findings),
         warnings=tuple(warnings),
+        stop_reason=stop_reason,
     )
 
 
