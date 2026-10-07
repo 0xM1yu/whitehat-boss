@@ -482,20 +482,21 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
     없어서다 — ERROR면 설정이 멀쩡한 프로필의 doctor가 exit 1이 된다.
     """
     checks: list[Check] = []
-    slice_input: list[str] = []
     for role in PROMPTED_ROLES:
         if role not in config.profile.roles:
             continue  # 이 프로필이 안 쓰는 역할(예: single-pass 전용 single)은 건너뛴다
         version = config.model_for(role).prompt_template_version
         try:
-            template = load_prompt(Role(role), version)
+            load_prompt(Role(role), version)
         except PromptError as exc:
             checks.append(Check(Severity.ERROR, f"{role} 프롬프트 로드 실패: {exc}"))
             continue
         checks.append(Check(Severity.OK, f"{role} 프롬프트 {version} 확인"))
         checks.extend(_check_prompt_version(config, role, version))
-        if template.input == "slice":
-            slice_input.append(f"{role}/{version}")
+    try:
+        slice_input = _slice_input_prompts(config)
+    except PromptError:
+        slice_input = []  # 로드 실패는 위 루프가 이미 ERROR로 댄다(`_check_source_options`와 같다)
     if slice_input:
         checks.append(
             Check(
@@ -542,6 +543,25 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
                 "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (#172)",
             ))
     return checks
+
+
+def _slice_input_prompts(config: HarnessConfig) -> list[str]:
+    """배선된 프롬프트 중 `SOURCE`를 슬라이스로 정의한 것 — meta의 `input: slice`가 정한다.
+
+    `_undescribed_source_options`와 같은 모양이고 **같은 이유로 이름 있는 함수다**: 저장소
+    설정이 그 조건을 못 만드는 때에도 테스트가 검출을 갈아끼워 게이트가 **서는 자리**를
+    볼 수 있어야 한다. 그리고 `doctor`와 `run`이 같은 판정을 두 벌로 들고 있었다 —
+    한쪽만 고치면 미리 말하는 것과 실제로 막는 것이 갈린다.
+
+    ⏵ **2026-10-07 — 저장소의 어느 프로필도 이 목록을 채우지 않는다**(PR #524로 Scout가
+    v4 = `input: source`에 배선됐다). 가드는 그대로 선다 — v3가 디스크에 있고 그것을 고르는
+    설정이면 다시 찬다. 역할·버전을 여기 박지 않는 이유가 그것이다.
+    """
+    return [
+        f"{role}/{version}"
+        for role, version in config.prompt_versions().items()
+        if load_prompt(Role(role), version).input == "slice"
+    ]
 
 
 def _undescribed_source_options(config: HarnessConfig) -> list[str]:
@@ -1557,11 +1577,7 @@ def run(args: argparse.Namespace) -> int:
     # 역할·버전을 여기 박으면 프롬프트가 바뀔 때 이 가드만 뒤처진다.
     if reaches_model and spec.slices_path is None:
         try:
-            slice_input = [
-                f"{role}/{version}"
-                for role, version in config.prompt_versions().items()
-                if load_prompt(Role(role), version).input == "slice"
-            ]
+            slice_input = _slice_input_prompts(config)
         except PromptError as exc:
             print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
             return 2

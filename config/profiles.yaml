@@ -182,9 +182,12 @@ profiles:
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 6역할
     #   (scout 셋+auditor+critic+pov)을 돌려주므로 러너는 이것을 **실서빙 프로필로 취급**하고
     #   `--device`·`--condition`을 요구한다(`runner.py`의 그 주석 — dev/실서빙을 가르는 것은
-    #   `production`이 아니라 `served_models()`다, 2026-09-02 실측). `--slices`도 요구한다 — 이쪽은
-    #   실서빙 여부와 무관하게 Scout 세 자리의 v3 프롬프트가 슬라이스 입력(meta `input: slice`)이라서다
-    #   (`cli.run` — ADR 0012 결정 1). `production: false`가 실제로
+    #   `production`이 아니라 `served_models()`다, 2026-09-02 실측). ~~`--slices`도 요구한다~~ —
+    #   ⏵ **2026-10-07: 더 이상 안 요구한다.** Scout 셋이 v4(meta `input: source`)로 배선되며
+    #   `cli._slice_input_prompts`가 빈 목록을 돌려준다(PR #524). 그 전에는 v3가 슬라이스 입력이라
+    #   실서빙 여부와 무관하게 요구했다(ADR 0012 결정 1). ⚠ 지금은 `--slices`를 **주는** 쪽이
+    #   어긋난다 — 노드가 슬라이스 렌더를 싣는데 v4 산문은 함수 본문이라 적는다(이슈 #529).
+    #   `production: false`가 실제로
     #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 서빙 네 키
     #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
     #   돈 run은 비교표에서 제외된다(CLAUDE.md §0).
