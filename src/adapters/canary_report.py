@@ -24,7 +24,7 @@
 도커를 안 쓴다. `measured_at`의 나이로 자르는 것도 안 한다 — 자를 나이가 **미실측**이라 지어낸
 상수가 된다. 그래서 신선도의 계약은 **조작자가 run마다 경로를 명시로 넘기는 것**이다
 (`--oracle-canary`). 거절 문구가 `measured_at`·`docker_version`을 들어 조작자가 그것을 볼 수 있게
-한다.
+한다. `preflight`(#534)는 접속하는 명령이라 그 `host_boot_id`를 현재 값과 견준다.
 
 ⚠ **이 모듈이 못 막는 것 — 손으로 고친 보고서.** 보고서의 칸은 전부 같은 파일의 기록이다.
 `repeat`·`completed`·`segv_count`·`problems`도 손으로 고칠 수 있고, `combos[*].exit_codes`의 실제
@@ -129,6 +129,9 @@ class CanaryReport:
     sha256: str | None = None
     # 읽은 경로 그대로 - 기록하는 경로가 읽은 파일과 같은 값이게 한다(#487).
     path: str | None = None
+    # 보고서를 쓴 도구가 읽은 Docker VM 커널의 `boot_id`. 게이트(`canary_refusal`)는 안 쓰고
+    # `preflight`가 지금 부팅과 견준다. 없거나 문자열이 아니면 `None`(미측정)이다.
+    host_boot_id: str | None = None
 
 
 def read_canary_report(path: Path) -> CanaryReport:
@@ -178,6 +181,7 @@ def read_canary_report(path: Path) -> CanaryReport:
             raise CanaryReportError(f"카나리 보고서의 {key}가 정수가 아니다({path})")
         if not isinstance(value, want):
             raise CanaryReportError(f"카나리 보고서의 {key}의 형이 다르다({path})")
+    boot_id = body.get("host_boot_id")
     return CanaryReport(
         task=body["task"],
         verdict=body["verdict"],
@@ -194,6 +198,7 @@ def read_canary_report(path: Path) -> CanaryReport:
         docker_version=body.get("docker_version") or None,
         sha256=f"sha256:{hashlib.sha256(raw).hexdigest()}",
         path=str(path),
+        host_boot_id=boot_id if isinstance(boot_id, str) else None,
     )
 
 

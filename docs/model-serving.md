@@ -333,6 +333,8 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⇒ **run 전에 `cli bench`를 그날의 프로필로 한 번 돌리는 것이 이 함정의 프리플라이트다.**
 >
+> (`cli preflight`(#534)는 이름이 겹치지만 다른 명령이다 — run 전 선결조건(터널·원격 커밋·채점기·카나리·도구 이미지)을 보고 모델 서버에 요청은 안 보낸다. 이 함정의 프리플라이트는 여전히 `cli bench`다.)
+>
 > ⏵ **2026-09-29 — 교대 프로필은 run이 스스로 본다.** 교대마다 올린 키를 `check_startup()`으로 다시 읽어 이름이 없거나 `max_model_len`이 registry `context_limit`과 다르면 run을 멈춘다(`src/adapters/model_swap.py` — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안」 절, 제안). **교대를 선언하지 않은 프로필(서버를 사람이 띄운다)은 그대로 위 프리플라이트가 유일하다** — 교대를 선언한 프로필은 `harness_pool` 하나다(`harness_pool_hybrid`는 검색 역할 때문에 선언할 수 없다).
 >
 > ⚠ **`doctor`로는 안 된다** — 접속을 하지 않는다(`src/cli.py`의 `doctor()` docstring).
