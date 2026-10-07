@@ -381,6 +381,9 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
 
 # `input: slice`를 선언해야 하는 프롬프트 — `SOURCE`를 슬라이스로 정의한 v3 Scout 셋이다
 # (ADR 0012 결정 1 · 각 `prefix.md`의 「SOURCE」 정의).
+# ⏵ 2026-10-07 — 이 셋은 **디스크에 있고 아무도 안 고른다**(PR #524로 Scout가 v4 = `input: source`에
+# 배선됐다). 그래서 아래 단언은 서빙 상태가 아니라 **선언의 집합**을 고정한다 — 가드가 보는 것이
+# 그 선언이고, 그것을 고르는 설정이 생기면 가드가 다시 찬다(`cli._slice_input_prompts`).
 SLICE_INPUT_PROMPTS = {"scout_memory/v3", "scout_boundary/v3", "scout_injection/v3"}
 
 
