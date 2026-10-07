@@ -398,6 +398,7 @@ def test_every_registry_block_has_the_line_apply_needs(tmp_path: Path) -> None:
     스키마 기본값만으로는 부족하다 — `--apply`는 YAML을 라인 단위로 치환하므로 그 키가
     파일에 **실제로 적혀 있어야** 한다. 한 모델이라도 빠지면 그 모델의 갱신이 통째로
     실패하고, 그것을 ATOM 실측 현장에서 알게 되는 것이 최악이다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 지금 실측 장비는 vast다(D81).
     """
     path = _models_copy(tmp_path)
     every_model = yaml.safe_load(path.read_text(encoding="utf-8"))["models"]
@@ -758,6 +759,9 @@ def test_serving_profiles_run_real_tools(profile: str) -> None:
 
     **런타임이 `docker`인 것도 이 테스트가 지킨다.** 프로필은 주 실서빙 장비의 런타임을
     선언하고(docs/portability.md §3) 그 장비는 ATOM이다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340 · docs/portability.md §6). 그 뒤 실서빙 run은
+    서빙만 vast이고 도구는 하네스 쪽 로컬 Docker에서 돌았다(`vastai-remote` —
+    `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §2).
 
     **이 단언은 2026-08-28에 `podman`에서 뒤집혔다.** 그전 docstring은 "ATOM에는 podman만
     있으므로 `docker`로 되돌아가면 ATOM의 모든 실서빙 run이 `--tool-runner` 오버라이드를
@@ -779,6 +783,7 @@ def test_serving_profiles_run_real_tools(profile: str) -> None:
 
     assert config.profile.adapters.tool_runner == "docker"
     # retriever까지 올리면 ATOM에 모델 5개를 띄워야 하고 R1의 실패 지점이 늘어난다.
+    # ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 이 근거는 지금 장비로 다시 안 세웠다.
     assert config.profile.adapters.retriever == "fake"
 
 

@@ -16,6 +16,9 @@
 질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다. 그러므로 이 파일이 초록인 것을
 「질의가 맞다」로 읽지 않는다 — CLAUDE.md §5 의
 *"테스트가 통과했으니 맞겠지 → 테스트는 주석 문장이 옳은지 검증하지 않는다"* 가 이 자리다.
+⏵ 2026-10-08 — ATOM 은 2026-09-29 사용 종료(#340). 그 뒤 실 Joern 슬라이싱은 vast 인스턴스에서
+돌았다(`docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §2).
+CI 가 아니라는 점은 그대로다.
 """
 
 import base64
@@ -1328,6 +1331,7 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
 # 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는 여기서 실행되지 않는다 —
 # **질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다.** 이 파일은 그 경계를
 # 뒤집지 않는다.
+# ⏵ 2026-10-08 — ATOM 은 사용 종료다(파일 docstring 의 같은 ⏵). 실 run 은 이제 vast 다.
 #
 # ⚠ **「전부 문자 pin 이라 뜻이 같은 재작성에도 걸린다」로 뭉치지 않는다.** 그것은 **양성**
 # 단언에만 맞다 — 음성 단언(`".l.flatten" not in …`)은 없어야 할 문자열을 막는 것이라

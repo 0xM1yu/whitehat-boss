@@ -10,6 +10,10 @@
 # 머리 주석 · docs/portability.md §6 「페이지 캐시」). vLLM이 util을 곱하는 분모는 119.7 GiB다
 # (docs/experiments/harness/2026-09-28-ne-loop-smoke-benign-atom.md 메타). docker가 있어 하네스·vLLM·도구가
 # 한 기계에서 돈다 — 그래서 첫 종단 검증 장비다(2026-09-29 사용자).
+# ⏵ 2026-10-08 — 그 검증은 2026-09-29 07:28 KST에 한 번 돌았다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md`).
+#   같은 날 ATOM 사용이 끝났다(#340 · docs/portability.md §6) -> 이 파일은 기록이다. 그 뒤
+#   `docs/experiments/` 보고서의 장비는 `vastai-remote`다(2026-10-04 · 2026-10-06). `atom`은 여전히
+#   `tests/test_serving.py`·`tests/test_serve_scripts.py`·`tests/test_model_swap.py`의 장비 목록에 든다.
 #
 # ## command — 로컬 실행
 # 하네스와 같은 기계의 로컬 subprocess다(ADR 0009 「2026-09-29 제안」 절 6). vLLM 실행 파일과 gpt-oss의 Harmony

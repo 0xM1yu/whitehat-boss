@@ -1,6 +1,7 @@
 """교대 명령(`tools/serve/swap.sh`)·감시자(`tools/serve/guard.sh`)와 config의 대조.
 
 스크립트는 장비(ATOM·vast)에서만 실제 vLLM을 띄운다 — 에이전트와 CI는 장비에 접속하지 않는다.
+⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340 · D81). 지금 띄우는 장비는 vast다.
 여기서 보는 것은 넷이다.
 
 1. 문법(`bash -n`).
