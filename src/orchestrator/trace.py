@@ -463,8 +463,9 @@ class EventKind(StrEnum):
     #
     # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
     # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
-    # `oracle.final`이 `not_reached`다. 단 `pov_attempt_top_n`의 추가 대상에서 예산이 끊긴 run은
-    # 최종 지정까지 하고 끝나 `oracle_final`이 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
+    # `oracle.final`이 `not_reached`다. 단 예산·서버 쪽 게이트웨이 오류로 끊겨도 이미 낸 최종 후보가
+    # 있거나 `pov_attempt_top_n`의 추가 대상에서 끊긴 run은 최종 지정까지 하고 끝나 `oracle_final`이
+    # 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
     # 남기지 않는다:
     # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
     # PoC로 컨테이너를 돌렸을 수 있다.
