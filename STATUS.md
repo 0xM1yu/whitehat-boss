@@ -604,7 +604,7 @@ zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그�
 `target_skipped`로 남았다. **즉 이 run의 제거율 분모는 79도 542도 아닌 256이다** — 세 수를
 섞으면 같은 run이 세 개의 다른 제거율을 낸다. 분모로 쓸 값은 `target_plan.planned`다.
 
-### Gate E1의 `location_ok`는 여전히 작동하지 않는다 — 원인은 후보 위치가 아니었다
+### Gate E1의 `location_ok`는 여전히 작동하지 않는다(2026-08-23, #248 전) — 원인은 후보 위치가 아니었다
 
 > ⚠ **2026-09-24 — 이 절의 제목과 2026-08-23 문단들(「왼쪽에 값이 없다」·「어느 쪽도 `location=`을 넘기지
 > 않는다」·「…채워야 하고, 그것은 별개의 작업이다」)은 #248 전의 서술이다.**
@@ -612,6 +612,12 @@ zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그�
 > Fake 짝이 함께). clang-tidy는 그대로 `None`이다. 등급 영향이 0인 것은 아래 2026-08-25 블록 그대로다 —
 > 위치를 싣는 것이 STATIC Evidence뿐이다. 본문은 날짜 기록이라 고치지 않고, 경과는
 > [D23](docs/open-questions/D/D23.md) 본문이 든다.
+> ⏵ **2026-10-08 — 지금 `location_ok`는 참이 될 수 있다.** 6단계 `gate_eval`은 `candidate_location`을 넘기므로
+> semgrep 첫 히트 위치가 후보와 겹치면 참이다. 실관측: `run_20260924_0003` 6단계 36/36 참
+> ([보고서](docs/experiments/harness/2026-09-24-roster-smoke-atom.md) §3 실험 3, `checksum` 0 스모크라 비교표 밖).
+> `Location.overlaps()`는 한쪽에 줄이 없으면 파일 일치를 겹침으로 본다 -> 줄 범위가 빠진 후보는 파일만 맞아도 참이다
+> ([D83](docs/open-questions/D/D83.md)). 7·8단계는 `candidate_location`을 안 넘겨 거짓이다. 등급 영향 0은 그대로다 ->
+> E1은 `p1 = static_ok or location_ok`이고 위치를 싣는 것이 STATIC Evidence뿐이다(`location_ok`는 종류를 안 본다).
 
 **2026-08-23 정정.** 이 문서는 오래 "심볼 단위로 좁혀지면 `location_ok`가 비로소 작동을
 시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다)"고 적어 왔다.
