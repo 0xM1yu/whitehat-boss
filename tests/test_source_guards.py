@@ -900,7 +900,8 @@ def test_guards_are_scanned_in_the_entry_function_before_it_is_trimmed() -> None
 
 
 def test_the_guards_option_is_a_switch_the_prompt_gate_knows() -> None:
-    """`budgets.yaml`이 키를 `1`로 둔다(⏵ 2026-10-06 — Auditor v9가 서술·선언한다). 꺼진 옵션은
+    """`budgets.yaml`이 키를 `1`로 둔다(⏵ 2026-10-06 — Auditor v9가 서술·선언한다 ·
+    ⏵ 같은 날부터 서빙 판 v10도 서술·선언한다). 꺼진 옵션은
     `flatten()`에 키가 없고(옛 manifest 모양) 켜진 옵션 목록에도 안 든다 — **꺼짐은 0을 주입해서**
     본다(커밋된 설정의 기본값에 기대지 않는다). 다른 옵션은 `budgets.yaml`이 켜 두므로(2026-10-04)
     목록 전체가 아니라 이 키만 본다."""

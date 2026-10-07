@@ -3,6 +3,7 @@
 from typing import Literal
 
 from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from src.schemas.common import (
     Cwe,
@@ -72,6 +73,82 @@ class ReproSpec(HarnessModel):
     origin: ReproOrigin = ReproOrigin.MODEL
 
 
+# === 감사 절차 블록 (Auditor 프롬프트 v10의 `audit`) ==========================================
+#
+# 필드·필수·값 집합은 `prompts/auditor/v10/prefix.md`의 「Exact output contract」가 적은 그대로다.
+# **원천은 그 산문이고 아래는 그것을 옮긴 것이다** — 값 집합을 바꾸려면 산문을 먼저 고친다
+# (`tests/test_auditor_procedure_schema.py`가 둘을 대조한다). 계약이 「Every field shown is
+# required」라 **기본값이 있는 필드가 없다** — nullable(`gap`)도 required다.
+#
+# ⚠ **아래 클래스의 docstring은 `response_format`으로 모델 요청 payload에 그대로 실린다**
+# (`AuditProcedure`의 `$defs`). 커밋 SHA·이슈 번호·소스 파일 경로 같은 저장소 내부 참조를
+# docstring에 넣지 않는다 — 그런 이력은 이런 `#` 주석에 둔다.
+
+
+class AuditPoint(HarnessModel):
+    """위험 지점 — 그 지점을 담은 함수와, SOURCE에서 그대로 옮긴 결함 식."""
+
+    symbol: NonEmptyStr
+    expression: NonEmptyStr
+
+
+class AuditOrigin(HarnessModel):
+    """위험 지점이 쓰는 값의 출처 — 입력 · 인자 · 지역 · 상수."""
+
+    kind: Literal["input", "param", "local", "const"]
+    fact: NonEmptyStr
+
+
+class AuditDefense(HarnessModel):
+    """보이는 방어 — 검사 식, 그 상태, 검사가 실패한다면 어디가 틀렸는가."""
+
+    expression: NonEmptyStr
+    status: Literal["absent", "fails", "covers"]
+    gap: Literal["width", "operands", "both_bounds", "off_by_one", "order", "other"] | None
+    fact: NonEmptyStr
+
+
+class AuditRefutation(HarnessModel):
+    """반박 시도의 결과 — 무너뜨렸는가 · 막혔는가 · 경로가 못 도는가 · 결정적 코드가 없는가."""
+
+    result: Literal["defeated", "holds", "path_not_executable", "decisive_code_missing"]
+    witness: NonEmptyStr
+    missing_information: list[NonEmptyStr]
+
+
+class AuditBlock(HarnessModel):
+    """취약점 감사 한 건 — 범주 · 위험 지점 · 값의 출처 · 경로 · 방어 · 반박."""
+
+    category: Literal[
+        "spatial_bounds",
+        "lifetime_null",
+        "initialization",
+        "resource",
+        "integer",
+        "type",
+        "control_flow",
+        "input_validation",
+        "format_string",
+        "injection",
+        "path_traversal",
+        "info_exposure",
+        "concurrency",
+        "authorization",
+        "crypto_config",
+    ]
+    point: AuditPoint
+    origin: AuditOrigin
+    # ⚠ `min_length`를 걸지 않는다. 산문의 규칙은 「reachability_unknown이면 `[]`일 수 있고
+    # triggerable·guarded·no_reach이면 비지 않는다」(v10 prefix 「4. Keep fields consistent」 첫
+    # 항목)인데 그것은 형제 필드 `trigger_status`에 달렸다 — 이 블록은 그 상태를 모르므로 어느
+    # 쪽으로 고정해도 합법 출력 하나를 거절한다. `Finding.path`에 `min_items`를 안 넣은 것과 같은
+    # 논법이다(빈 리스트가 정당한 출력인 자리가 있다). 그 규칙은 산문 몫이고 JSON 스키마는 싣지
+    # 않는다(「Exact output contract」 마지막 문단).
+    path: list[PathStep]
+    defense: AuditDefense
+    refutation: AuditRefutation
+
+
 class Finding(HarnessModel):
     """Auditor가 세운 취약점 가설과 그 이후의 상태.
 
@@ -121,6 +198,25 @@ class Finding(HarnessModel):
     #   100%라 비교 대상이 못 된다(프로브 docstring). 빈 리스트가 **근거 없는 `hypothesized`
     #   초안의 정당한 출력**이라서다.
     path: list[PathStep]
+    # v10 감사 절차 블록(`AuditBlock`) — v10 응답(`AuditProcedure`)의 `audit`를 하네스가 옮겨 싣는
+    # 자리다.
+    # ⚠ **`None`이 두 뜻을 겹친다** — 「이 판은 `audit`를 안 묻는다」(v1~v9)와 「v10이 `no_signal`로
+    # 판정했다」다(그 판정의 계약이 `audit: null`이다). `Finding.trigger_status`가 같은 함정을 두고
+    # 처방을 적는다(아래 그 필드 주석) — **채움률은 `produced_by.prompt_version`별로 센다.**
+    # 응답 쪽 `AuditProcedure.audit`는 required·nullable이라 그쪽에서는 안 겹친다.
+    #
+    # 선언 자리는 `path` 바로 뒤, `trigger_status` 앞이다. ⚠ **이 자리가 생성 순서를 정하지는
+    # 않는다** — 아래 `SkipJsonSchema` 때문에 이 필드는 요청 스키마에 없고, 따라서 문법이 강제하는
+    # property 순서에도 없다. 위 #102의 근거(범주값을 먼저 내게 한다)가 걸리는 것은 **모델이 내는
+    # `AuditProcedure`** 쪽이고, 여기서 자리가 바꾸는 것은 `model_dump` 키 순서뿐이다. 그 순서를
+    # v10 계약과 같게 둔 것은 저장된 Finding을 읽는 사람이 같은 순서로 읽게 하려는 것이다 —
+    # 이미 있는 필드의 상대 순서는 안 바뀐다.
+    #
+    # **JSON 스키마에서 뺀다(`SkipJsonSchema`).** 스키마에 두면 `Finding`을 요청하는 한 방 판과
+    # `AuditorAction`(`$defs`에 `Finding`이 든다 — v8·v9 루프)이 **프롬프트가 안 바뀌었는데 요청
+    # 바이트가 바뀐다**(evaluation §2.3). 모델이 채울 값이 아닌 필드를 그 판들에 보여 주는 일이기도
+    # 하다. 검증·직렬화(`model_dump`)에는 그대로 선다.
+    audit: SkipJsonSchema[AuditBlock | None] = None
     # 트리거 가능성의 명시적 상태 (@0xM1yu 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
     # 모순(예: `not_vulnerable`인데 "취약"이라 서술)을 줄이려 이 상태를 **먼저** 확정하는데, 그
     # 값이 산출물에 안 남아 "모델이 실제로 그 상태로 판정했는지"를 사후에 못 봤다. Auditor가
@@ -148,7 +244,9 @@ class Finding(HarnessModel):
     # 알릴 때만 채우는 선택 필드라 required로 올리면 빈 배열을 강제로 받게 된다.
     missing_evidence: list[Identifier] = Field(default_factory=list)
     repro_spec: ReproSpec | None = None
-    # 마지막이다 — 모델이 채우는 값이 아니라 하네스가 stamp한다(`context.py` `call_model`).
+    # 마지막이다 — 모델이 채우는 값이 아니라 하네스가 stamp한다. 찍는 자리는 **둘**이다:
+    # `context.py`의 `call_model`(응답 루트에 이 필드가 있을 때)과, 루프 봉투는 루트에 없으므로
+    # `nodes/auditor._finding_from`(⏵ 2026-10-06 — 그 전 v8·v9 루프는 모델이 쓴 값이 남았다).
     # v2 프롬프트도 "harness metadata, do not fabricate"로 그렇게 적는다.
     produced_by: ProducedBy
 
