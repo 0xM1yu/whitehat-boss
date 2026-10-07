@@ -9,6 +9,16 @@
 
 **`bench`만 접속한다.** 배포 전 검증 체크리스트(model-serving.md §3)는 실제 서버를 재야
 답이 나오므로 그 경계를 여기서 한 번 연다. 나머지 커맨드는 여전히 소켓을 열지 않는다.
+
+종료 코드 — 자동화는 stdout이 아니라 이 값으로 가른다(#533).
+
+| 코드 | 뜻 |
+| --- | --- |
+| 0 | 정상. `run`은 완주·`--stop-after`·`--dry-run`·예산 소진이다. 후보·Finding 0건도 0이다 |
+| 1 | `doctor` ERROR · `bench --apply` 실패 · `run`이 예상 밖 예외로 죽음(트레이스백) |
+| 2 | 입력·설정 거부 — 모델을 부르기 전에 멈췄다 |
+| 3 | `run`이 장애로 중단됐다 — 교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패 |
+| 128+N | TERM(143)·HUP(129)로 끝났다 |
 """
 
 import argparse
@@ -99,7 +109,7 @@ from src.orchestrator.task_loader import (
 )
 from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
-from src.schemas.enums import Role
+from src.schemas.enums import ReasonCode, Role
 from src.schemas.finding import Finding
 from src.tokens import using_counter
 
@@ -1373,6 +1383,16 @@ def _terminate_as_exit() -> Iterator[None]:
             signal.signal(signum, signal.SIG_DFL if handler is None else handler)
 
 
+# `run`이 장애로 중단됐을 때의 종료 코드 — `tools/monitor.py`가 「매니페스트는 남겼지만 정상
+# 종료가 아니다」(CRASHED)에 쓰는 3과 같은 뜻이다. 1(트레이스백)·2(입력 거부)와 안 겹친다.
+EXIT_RUN_FAULT = 3
+# 정상 종료로 읽는 사유 — **허용목록이다.** 새 사유가 생기면 기본이 비-0이다(조용한 0이 #533이다).
+# 예산 소진은 러너 docstring이 정상적인 종료 경로라 적고, 나머지 둘은 사용자가 정한 상한이다.
+_NORMAL_STOPS = frozenset(
+    {ReasonCode.USER_STOP_REQUESTED, ReasonCode.DRY_RUN, ReasonCode.BUDGET_EXHAUSTED}
+)
+
+
 def run(args: argparse.Namespace) -> int:
     try:
         config = load_profile(args.profile, seed=args.seed, tool_runner=args.tool_runner)
@@ -1719,7 +1739,11 @@ def run(args: argparse.Namespace) -> int:
         )
     for warning in result.warnings:
         print(f"[WARN ] {warning}", file=sys.stderr)
-    return 0
+    reason = result.stop_reason
+    if reason is None or reason in _NORMAL_STOPS:
+        return 0
+    print(f"[ERROR] 장애로 중단했다: {reason.value} — 종료 코드 {EXIT_RUN_FAULT}", file=sys.stderr)
+    return EXIT_RUN_FAULT
 
 
 def write_report(run_dir: Path, result: RunResult, fmt: str) -> Path:
