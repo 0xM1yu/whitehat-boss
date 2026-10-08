@@ -79,6 +79,15 @@ Auditor가 Evidence 인용 0건 (evidence_refs=[] 5/5 · cited_probe_evidence=0)
 **그래서 Critic v6의 `upheld`는 이 run으로도 관측 0회다.** 「E0 벽이 채점을 막는다」는 명제는
 등급 쪽에서 참이지만 **PoV를 막지는 않았다** — 막은 것은 §6의 지정 규칙이다.
 
+🔴 **그런데 E0의 원인은 등급 체계가 아니라 자기 신고다.** `gate.py:148`이 `evidence_refs`가 비면
+`p1`~`p4`를 **계산조차 하지 않고** E0를 반환하고, 그 `evidence_refs`는 **Auditor 자신이 쓴다**
+(`nodes/auditor.py:878`). 즉 **Auditor를 못 믿어서 둔 Critic이 볼지 말지를 그 Auditor가 정한다** —
+이 run에서 `triggerable`(긍정 주장) 2건이 반박을 **한 번도 안 받았다.** 쓸 수 있는 근거는 실제로
+있었다(`ev_0002` semgrep · `kind=static` · `ok=True` → `p1`의 `static_ok`) — **그 하나만 인용했으면
+E1 → `hypothesized` 유지 → Critic이었다.** 이 구조를 [D106](../../open-questions/D/D106.md)으로
+등재했다([#552](https://github.com/0xM1yu/whitehat-boss/issues/552)). ⚠ Critic이 돌았다면 결과가
+달라졌을지는 **미측정이다.**
+
 ### Auditor 판정
 
 | 후보 | 끝낸 홉 | `trigger_status` |
@@ -201,6 +210,7 @@ fix 빌드의 출력에는 MSan 보고가 없다(`Executed /tmp/poc in 45 ms`).
 | --- | --- |
 | [#549](https://github.com/0xM1yu/whitehat-boss/issues/549) 🔴 | 점수 1 PoC를 중간 `gen`이라 버린다 — 승리 신호를 주면서 읽는 규칙은 안 준다 |
 | [#550](https://github.com/0xM1yu/whitehat-boss/issues/550) | PoV `parse_failed`로 Finding 2/5 폐기 · 답 본문 몫이 4,096 |
+| [#552](https://github.com/0xM1yu/whitehat-boss/issues/552) 🔴 [D106](../../open-questions/D/D106.md) | 심사 대상의 자기 신고가 심사 여부를 정한다 — `evidence_refs`를 비우면 Critic이 그 주장을 못 본다. **사용자 지적이 구조를 집었다** |
 | [#538](https://github.com/0xM1yu/whitehat-boss/issues/538) | 실모델 run의 셸 절차가 반쪽 |
 | [#513](https://github.com/0xM1yu/whitehat-boss/issues/513) | `poc` 도구가 실행 파일을 돌린다 — 기제 확인 코멘트 추가 |
 | [#515](https://github.com/0xM1yu/whitehat-boss/issues/515) | 반복 판정 범위를 모델에 안 알린다 — 실모델 사례 3건 추가 |
