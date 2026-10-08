@@ -1957,7 +1957,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         default=None,
         help="이 실행이 돌아간 장비의 라벨. run 기록과 --apply에 그대로 남는다. "
-        "값 집합은 열려 있다(ADR 0006) — 팀이 쓰는 라벨은 docs/portability.md에 있다. "
+        "값 집합은 열려 있다(ADR 0006) - 팀이 쓰는 라벨은 docs/portability.md에 있다. "
         "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다. "
         "run에서 실서빙 프로필이면 거부한다(exit 2). 교대를 선언한 프로필이면 장비 파일 "
         "config/serving/<device>.yaml을 고르고, 없거나 registry와 어긋나면 거부한다(exit 2)",
@@ -1980,7 +1980,7 @@ def build_parser() -> argparse.ArgumentParser:
         "README.md·submit.sh도 받는다). 그 밖의 항목이 하나라도 있으면(정답 자료 patch.diff·"
         "error.txt·repo-fix.tar.gz 포함) 풀기 전에 거부한다(exit 2). 주면 아카이브를 "
         "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
-        "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
+        "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 - "
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
         "풀린 트리와 줄 내용이 다르거나(drift) 트리에 없는 슬라이스가 하나라도 있으면 exit 2다 "
         "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
@@ -2034,7 +2034,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-work-dir",
         type=Path,
         default=None,
-        help="--task-dir의 아카이브를 풀 빈 디렉터리. 비어 있지 않으면 거부한다(exit 2) — "
+        help="--task-dir의 아카이브를 풀 빈 디렉터리. 비어 있지 않으면 거부한다(exit 2) - "
         "해제가 중단되면 앞 멤버가 남아 두 과제가 섞인다",
     )
     # **기본값을 argparse에 두지 않는다.** 값은 `run()`이 `DEFAULT_CONDITION`으로 채우되,
@@ -2043,7 +2043,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--condition",
         default=None,
-        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 경고한다 — "
+        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 경고한다 - "
         "실서빙 프로필에서는 거부한다(exit 2)",
     )
     run_cmd.add_argument("--seed", type=int)
@@ -2054,7 +2054,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="슬라이서 산출물 slices.json(slice-v2). 주면 슬라이스 1개가 타깃 1개다"
         "(ADR 0012 결정 1). 못 믿는 파일이거나 --target과 어긋나면(drift) run 디렉터리를"
-        " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice — v3 Scout)를"
+        " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice - v3 Scout)를"
         " 부르는 run은 이것 없이 거부한다(exit 2)",
     )
     run_cmd.add_argument(
@@ -2063,7 +2063,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
         "Scout·Auditor·PoV가 본다(PoV 배선). 번들을 통째로 주려면 --task-dir를 쓴다 "
-        "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) — 둘을 같이 주지 않는다",
+        "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) - 둘을 같이 주지 않는다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
@@ -2086,10 +2086,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pre.add_argument("--profile", required=True)
     pre.add_argument(
-        "--device", default=None, help="장비 파일 config/serving/<device>.yaml — 교대 점검의 기준"
+        "--device", default=None, help="장비 파일 config/serving/<device>.yaml - 교대 점검의 기준"
     )
-    pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 — 허용 파일·submit.sh")
-    pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 — TCP로 닿는지 본다")
+    pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 - 허용 파일·submit.sh")
+    pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 - TCP로 닿는지 본다")
     pre.add_argument("--oracle-canary", type=Path, default=None, help="카나리 보고서 경로")
     pre.add_argument(
         "--strict",
