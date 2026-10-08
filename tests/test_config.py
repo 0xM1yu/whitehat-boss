@@ -40,7 +40,7 @@ from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
-from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
+from src.orchestrator.prompt_loader import META_KEYS, PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import (
     _AUDITOR_ALIAS_ROUNDS,
     _AUDITOR_CALLEE_CHARS,
@@ -423,6 +423,108 @@ def test_an_unknown_input_kind_is_refused_at_load(tmp_path: Path) -> None:
         load_prompt(Role.SCOUT, "v1", root=tmp_path)
 
 
+@pytest.mark.parametrize(
+    ("read_key", "typo"),
+    [
+        # 로더가 읽는 키 넷의 오타 — 앞의 셋은 이 변경 **전부터** 있던 구멍이다(키를 못 읽고
+        # 기본값으로 가서 값 검사에 닿지도 않았다). 넷째(`hop_header`)는 pov v4가 더했다.
+        ("input", "inputs"),
+        ("source_options", "source_option"),
+        ("tools", "toosl"),
+        ("hop_header", "hop_heder"),
+    ],
+)
+def test_a_misspelled_meta_key_is_refused_at_load(
+    tmp_path: Path, read_key: str, typo: str
+) -> None:
+    """🔴 메타 **키**의 오타는 값 검사에 닿지 않는다 — 로더가 그 키를 못 읽고 기본값(`input: source`
+    · `tools: []` · `hop_header: false`)으로 가서 가드가 **조용히** 꺼졌고, `cli doctor`는 그래도
+    `[OK]`를 찍었다. 위 `test_only_the_v3_scout_prompts_declare_slice_input`이 말하는 `inputs:`가
+    그 실물이다. 로드에서 죽어야 한다.
+
+    복사본(pov/v4)에 오타 키를 붙인다. pov/v4가 `hop_header`를 이미 들고 있으므로 그 키는 이름을
+    **바꿔** 읽을 키가 사라지는 경우(`hop_header: true` → `hop_heder: true`)를 시험한다."""
+    copy = tmp_path / "pov" / "v4"
+    shutil.copytree(PROMPTS_DIR / "pov" / "v4", copy)
+    meta = copy / "meta.yaml"
+    text = meta.read_text(encoding="utf-8")
+    if read_key == "hop_header":
+        assert "hop_header: true" in text  # 전제 — 안 그러면 아래 치환이 아무것도 안 바꾼다
+        text = text.replace("hop_header: true", f"{typo}: true")
+    else:
+        text += f"{typo}: []\n"
+    meta.write_text(text, encoding="utf-8")
+
+    with pytest.raises(PromptError, match=f"모르는 키 .*{typo}"):
+        load_prompt(Role.POV, "v4", root=tmp_path)
+
+
+def _v4_meta_copy(tmp_path: Path) -> Path:
+    copy = tmp_path / "pov" / "v4"
+    shutil.copytree(PROMPTS_DIR / "pov" / "v4", copy)
+    return copy / "meta.yaml"
+
+
+@pytest.mark.parametrize(
+    ("key", "first", "second"),
+    [
+        # 거절돼야 할 값이 **앞**이고 통과하는 값이 **뒤**다 - PyYAML 기본은 뒤가 앞을 덮는다.
+        ("hop_header", "hop_header: true", "hop_header: false"),
+        ("tools", "tools: [gdb]", "tools: []"),
+    ],
+)
+def test_a_duplicated_meta_key_is_refused_at_load(
+    tmp_path: Path, key: str, first: str, second: str
+) -> None:
+    """🔴 같은 키를 두 번 쓰면 PyYAML는 **뒤의 값을 조용히 쓴다** - `hop_header: true` 뒤의
+    `hop_header: false`가 홉 줄을 끄고(`tools: [gdb]` 뒤의 `tools: []`는 광고를 끈다) 값 검사는
+    뒤의 값만 본다. 키 이름 오타를 닫은 `META_KEYS`(위 테스트)가 못 닫는 마지막 자리였다 - 오염
+    변형 열여덟 가지(대소문자 · 키릴 유사 문자 · 끝 공백 · `on:` · 정수·null 키 · 빈 문서 · 목록
+    문서 …) 중 이것만 로드를 통과했다."""
+    meta = _v4_meta_copy(tmp_path)
+    text = meta.read_text(encoding="utf-8")
+    if key == "hop_header":
+        assert "hop_header: true" in text  # 전제 - 안 그러면 치환이 아무것도 안 바꾼다
+        text = text.replace("hop_header: true", f"{first}\n{second}", 1)
+    else:
+        text += f"{first}\n{second}\n"
+    meta.write_text(text, encoding="utf-8")
+
+    with pytest.raises(PromptError, match=f"같은 키 '{key}'"):
+        load_prompt(Role.POV, "v4", root=tmp_path)
+
+
+def test_unknown_meta_keys_of_mixed_types_are_a_prompt_error_not_a_type_error(
+    tmp_path: Path,
+) -> None:
+    """정수·실수·null·문자열 키가 섞여도 `PromptError`다 - 목록을 정렬하기 전에 문자열로 바꾼다
+    (섞인 형을 그대로 `sorted`에 넣으면 `TypeError`가 나 doctor가 ERROR 줄 없이 죽는다)."""
+    meta = _v4_meta_copy(tmp_path)
+    mixed = "1: a\n2.5: b\nfoo: c\n? null\n: d\n"  # 정수 · 실수 · 문자열 · null 키
+    meta.write_text(meta.read_text(encoding="utf-8") + mixed, encoding="utf-8")
+
+    with pytest.raises(PromptError, match="모르는 키 .*'1'.*'2.5'.*'None'.*'foo'"):
+        load_prompt(Role.POV, "v4", root=tmp_path)
+
+
+def test_every_key_on_disk_is_a_known_meta_key() -> None:
+    """디스크의 모든 role 프롬프트 meta가 `META_KEYS` 안의 키만 든다 — 키를 닫은 일이 기존 판을
+    깨지 않는다(`test_every_prompt_version_on_disk_loads`가 로드로 같은 것을 보지만 실패 메시지가
+    판 하나씩이라, 어느 키가 목록에 빠졌는지는 여기서 한꺼번에 읽힌다)."""
+    on_disk = {
+        key
+        for directory in _prompt_dirs()
+        for key in yaml.safe_load((directory / "meta.yaml").read_text(encoding="utf-8"))
+    }
+
+    assert on_disk <= set(META_KEYS), sorted(on_disk - set(META_KEYS))
+    # 로더가 읽는 키 일곱은 목록의 앞 일곱이다 — 목록에서 읽는 키를 빼면 그 키를 쓰는 판이 죽는다.
+    read_by_the_loader = {
+        "role", "version", "output_schema", "input", "source_options", "tools", "hop_header",
+    }
+    assert read_by_the_loader <= set(META_KEYS)
+
+
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> None:
     """프로필이 **고른** 프롬프트 버전이 디스크에 실재한다.
@@ -674,6 +776,13 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v9도 그날까지 서빙 판이었다) —
         # 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
         ("auditor", "qwen3.8-27b", "v10", []),
+        # 실물 형제 문형 — prompts/pov/v3/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry 엔트리도 이
+        # 버전을 고르지 않는다」. pov v4 배선(2026-10-08)으로 미선택이 되며 달았고, 그 전에는
+        # 이 판이 서빙 판이었다. 구절이 한 줄에 든다(주석 줄바꿈이 가르지 않는다).
+        ("pov", "feyospace-v1-small", "v3", ["pov/v3"]),
+        # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형(「…에 배선됐다」)으로 적는다.
+        # 같은 이유로 실재하는 문형이다 — v3도 2026-10-08까지 그 문형이었다.
+        ("pov", "feyospace-v1-small", "v4", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -684,7 +793,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
     meta 여덟만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
     새 음성 통제가 되어 일곱 · ⏵ 2026-10-06 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
-    음성 통제가 되어 여덟) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
+    음성 통제가 되어 아홉) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -724,6 +834,10 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("auditor", "v9", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
         ("auditor", "v10", set()),
+        # prompts/pov/v3/meta.yaml 머리의 ⏵ — pov v4 배선으로 미선택이 되어 셋째 철자를 쓴다.
+        ("pov", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형이다(실재하는 문형).
+        ("pov", "v4", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -732,8 +846,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 여덟 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
-    여덟) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 아홉 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
+    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 

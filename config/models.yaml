@@ -813,10 +813,22 @@ models:
       min_p: 0.0
       presence_penalty: 0.0
     thinking_token_budget: 28672
-    # v3 = PoV 툴 루프 + 넓은 SOURCE·진입점·도구 출력 꼬리 + 중간 gen의 vul 판정 관측.
-    # 2026-10-05 #354/#386①. 판정 관측은 `run --oracle-submit`일 때만 실린다. 판정 효과·실모델
-    # 입력 토큰은 0(미실측)이다.
-    prompt_template_version: "v3"
+    # v4 = v3 + 넷(2026-10-08 #549/#515/#511): 채점기 vul 종료 코드 읽는 규칙(제외 코드 0·71·300) ·
+    # 반복 판정의 실제 범위(모든 gen의 바이트) · 도구 한계 문단 정정과 `last_gen_*` 필드 설명 · 고정
+    # 홉 예산(followup 첫 줄의 홉 줄 — meta `hop_header` · 마지막 홉의 submit은 마지막 gen의 코드로 가른다:
+    # 제외 코드 밖이면 하고 안이면 안 하며 unavailable은 정보 없음이므로 0바이트가 아니고 rationale에
+    # SOURCE·FACTS의 앞단 조건을 거쳐 sink에 이르는 사슬을 적을 때만 한다 - submit 원칙의 유일한 예외).
+    # 캐시된 코드(cached=true)로 submit하면 rationale에 그 사실을 적는다(막지는 않는다).
+    # v4가 물려받은 v3 = PoV 툴 루프 + 넓은 SOURCE·진입점·도구 출력 꼬리 + 중간 gen의
+    # vul 판정 관측(2026-10-05 #354/#386①)이다.
+    # 판정 관측은 `run --oracle-submit`일 때만 실린다. 실모델 입력 토큰은 v3 prefix로 잰 값만 있다(v4는
+    # 아직 안 쟀다 - 호출당 60,446~61,018, n=1, 한 finding의 네 호출,
+    # `docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md`). ⚠ 전형값이 아니다: 그 프로브는
+    # `tool_runner: fake`라 도구 출력 꼬리가 없었고 같은 run의 다른 finding hop0은 6,572토큰으로
+    # 약 열 배 작았다(n=2). 미실측은 판정
+    # 되먹임이 PoC를 낫게 바꾸는 효과 · v4 prefix의 입력 토큰 · 제외 코드 규칙과 마지막 홉 규칙이 submit을
+    # 늘리는지이고, v4로 돈 run은 0건이다.
+    prompt_template_version: "v4"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
