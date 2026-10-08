@@ -12,7 +12,7 @@
 # 한 기계에서 돈다 — 그래서 첫 종단 검증 장비다(2026-09-29 사용자).
 # ⏵ 2026-10-08 — 그 검증은 2026-09-29 07:28 KST에 한 번 돌았다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md`).
 #   같은 날 ATOM 사용이 끝났다(#340 · docs/portability.md §6) -> 이 파일은 기록이다. 그 뒤
-#   `docs/experiments/` 보고서의 장비는 `vastai-remote`다(2026-10-04 · 2026-10-06). `atom`은 여전히
+#   `docs/experiments/` 보고서의 장비는 `vastai-remote`다(2026-10-04 · 2026-10-06 · 2026-10-08). `atom`은 여전히
 #   `tests/test_serving.py`·`tests/test_serve_scripts.py`·`tests/test_model_swap.py`의 장비 목록에 든다.
 #
 # ## command — 로컬 실행
