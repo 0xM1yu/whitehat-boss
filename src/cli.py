@@ -1126,6 +1126,11 @@ def execute(
 
     `Deps`를 함께 돌려주는 것은 `estimate`가 StateStore에서 캡슐을 세야 하기 때문이다.
 
+    **저장소를 닫는 책임(#156).** 정상 반환이면 호출자가 다 쓴 뒤 `deps.store.close()`를
+    부른다. 러너가 예외로 끝나면 `deps`를 돌려줄 수 없어 **여기서** 닫고 원 예외를 그대로
+    올린다 — 안 닫으면 `estimate`의 임시 디렉터리 정리가 열린 `state.db`에서 죽어 원 예외를
+    덮는다(Windows).
+
     **`run_id`를 만들지 않고 받는다.** 예전에는 여기와 `run()`이 각각 `new_run_id`를
     불렀다. 입력이 같아 우연히 일치했을 뿐이라, 순번이 들어오는 순간 디렉터리 이름과
     `RunRecord.run_id`가 갈라질 자리였다 — 지금 고치는 결함보다 나쁜 상태다.
@@ -1156,26 +1161,30 @@ def execute(
         # 그 채점기가 기댄 카나리 보고서의 경로·sha256(#487). `RunRecord.oracle`에 실린다.
         canary_ref=_canary_ref(oracle),
     )
-    result = run_pipeline(
-        spec,
-        config=config,
-        deps=deps,
-        # Retriever와 **같은 함수**를 쓴다. 두 곳이 다르게 읽으면 캡슐의 토큰 수와
-        # 실제 프롬프트가 어긋난다.
-        read_source=lambda target: read_symbol_source(spec.target, target),
-        # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
-        # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
-        # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
-        read_payload=make_payload_reader(run_dir.parent),
-        # 원본 바이트 — `read_source`가 접는 `\r`을 GUARDS의 줄 정렬 검사가 본다(`bare_cr`).
-        read_raw=lambda file: read_raw_source(spec.target, file),
-        trace=trace,
-        run_dir=run_dir,
-        cache_hook=hook,
-        truncate_hook=truncate_hook,
-        usage_hook=usage_hook,
-        index_hook=index_hook,
-    )
+    try:
+        result = run_pipeline(
+            spec,
+            config=config,
+            deps=deps,
+            # Retriever와 **같은 함수**를 쓴다. 두 곳이 다르게 읽으면 캡슐의 토큰 수와
+            # 실제 프롬프트가 어긋난다.
+            read_source=lambda target: read_symbol_source(spec.target, target),
+            # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
+            # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
+            # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
+            read_payload=make_payload_reader(run_dir.parent),
+            # 원본 바이트 — `read_source`가 접는 `\r`을 GUARDS의 줄 정렬 검사가 본다(`bare_cr`).
+            read_raw=lambda file: read_raw_source(spec.target, file),
+            trace=trace,
+            run_dir=run_dir,
+            cache_hook=hook,
+            truncate_hook=truncate_hook,
+            usage_hook=usage_hook,
+            index_hook=index_hook,
+        )
+    except BaseException:
+        deps.store.close()
+        raise
     return result, deps
 
 
@@ -1213,8 +1222,14 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # 확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이
         # 수정은 그중 지금 터진 한 곳을 막을 뿐이다. 정본은 캡슐이 자기 카운터를 싣고
         # 로드가 그것을 복원하는 것이다(#84 (c)) — 그때 이 `with`는 필요 없어진다.
-        with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
-            capsules = deps.store.query("capsule")
+        try:
+            with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
+                capsules = deps.store.query("capsule")
+        finally:
+            # 임시 디렉터리를 지우기 **전에** 닫는다 — 열린 `state.db`가 Windows에서 정리를
+            # 막고(파이썬 판에 따라 WinError 32·267), 그 예외가 위 조회의 `ValidationError`를 덮었다
+            # (#156 · #84 ②).
+            deps.store.close()
 
     calls = _expected_calls(config, len(capsules))
     places = _scout_places(config)
@@ -1758,7 +1773,7 @@ def run(args: argparse.Namespace) -> int:
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
-        result, _ = execute(
+        result, deps = execute(
             config,
             spec,
             run_id=run_id,
@@ -1766,6 +1781,9 @@ def run(args: argparse.Namespace) -> int:
             trace_stream=stream,
             oracle=oracle,
         )
+        # 결과는 `result`에 다 실렸다 — 저장소를 여기서 닫는다(#156). 안 닫으면 이 프로세스가
+        # 끝날 때까지 `state.db`가 열려 있다.
+        deps.store.close()
     report_path = write_report(run_dir, result, args.format)
 
     print(f"run_id: {result.record.run_id}")
