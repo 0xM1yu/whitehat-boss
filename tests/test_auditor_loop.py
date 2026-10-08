@@ -929,7 +929,8 @@ def test_a_lookup_hop_without_a_resolver_reports_no_resolved_count(
 
     lookup = _hops(ctx)[0]
     assert lookup.data["action"] == "lookup" and lookup.data["requested"] == 1
-    assert not {"resolved", "unfilled", "truncated", "already"} & set(lookup.data)
+    unrun = {"resolved", "unfilled", "truncated", "already", "index_available"}
+    assert not unrun & set(lookup.data)
 
 
 def test_only_the_answering_hop_carries_a_stop_reason(
@@ -995,6 +996,7 @@ def test_a_found_lookup_feeds_the_blocks_back_without_the_scout_tail(
     data = _hops(ctx)[0].data
     assert (data["resolved"], data["already"], data["fixable_count"]) == (1, 0, 0)
     assert (data["unfilled"], data["truncated"]) == ("", "")
+    assert data["index_available"] is True
     # resolver가 받은 질의 — 훅이 무시되거나 상한이 0으로 바뀌면 조각이 안 온다.
     (query,) = resolver.queries
     assert query.hop == 1 and query.target_file == "parser.c" and query.visible == {}
@@ -1068,7 +1070,14 @@ def test_lookup_request_cap_matches_the_resolvers() -> None:
             id="size-cap",
         ),
         pytest.param(
-            Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=()),
+            Resolution(
+                followup_text="",
+                blocks=(),
+                unfilled=(),
+                already=(),
+                truncated=(),
+                index_available=False,
+            ),
             "",
             "",
             0,
@@ -1091,7 +1100,8 @@ def test_resolved_zero_has_three_causes_and_the_hop_event_tells_them_apart(
 
     처음 판은 셋 다 `{requested: 1, resolved: 0}` 한 모양이었다 — 이름만 틀렸다는 판단과 조회가
     아예 안 돈 사실이 같은 값이었다. `SCOUT_HOP`처럼 `unfilled`(사유)·`truncated`(이름)를 싣고,
-    인덱스 없음은 **넷이 다 빈 것**이 서명이다(`runner._fuzz_entrypoint`가 같은 서명으로 가른다)."""
+    인덱스 없음은 `index_available=False`로 가른다(#315 — 전에는 넷이 다 빈 것이 서명이었고
+    `runner._fuzz_entrypoint`도 같은 키로 가른다)."""
     _lookup_run(ctx, monkeypatch, tmp_path, _StubResolver(resolution))
 
     data = _hops(ctx)[0].data
@@ -1101,6 +1111,8 @@ def test_resolved_zero_has_three_causes_and_the_hop_event_tells_them_apart(
         truncated,
         fixable,
     )
+    # 인덱스 없음은 이제 빈 칸의 서명이 아니라 명시 값이다(#315).
+    assert data["index_available"] is resolution.index_available
     assert needle in ctx.models.prompts[1][1].body
 
 
@@ -1150,6 +1162,7 @@ def test_a_resolver_value_error_is_fed_back_not_fatal(
     assert isinstance(finding, Finding)
     data = _hops(ctx)[0].data
     assert data["lookup_error"] == "ValueError" and "resolved" not in data
+    assert "index_available" not in data  # 조회가 안 돌았다 — 안 돌린 것을 값으로 적지 않는다
     # 기본 모델은 `RecordingModelClient`라 Scout의 프롬프트도 들어 있다 — Auditor 것만 고른다.
     body = [p for role, p in ctx.models.prompts if role is Role.AUDITOR][1].body
     assert "ValueError" in body and secret not in body

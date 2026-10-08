@@ -831,7 +831,14 @@ def resolve(
     — `unfilled`만 요청당 최대 하나라 그 수는 처리한 요청 수(3 이하)를 넘지 않는다.
     """
     if table("functions") is None:
-        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
+        return Resolution(
+            followup_text="",
+            blocks=(),
+            unfilled=(),
+            already=(),
+            truncated=(),
+            index_available=False,
+        )
 
     all_blocks: list[_Block] = []
     unfilled: list[Unfilled] = []

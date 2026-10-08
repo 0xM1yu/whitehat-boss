@@ -1560,10 +1560,11 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
                 f"진입점을 찾았으나 resolver 조회 상한"
                 f"({_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS:,}자, 렌더 기준)에 통째로 잘렸다"
             )
-        elif not (resolution.blocks or resolution.unfilled or resolution.truncated):
-            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 아무 사유도 없이
-            # 통째로 빈 `Resolution`을 돌려준다 — `unfilled`조차 비는 것이 그 서명이다. 이것을
-            # "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지 이름인지 안 갈린다**
+        elif not resolution.index_available:
+            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 조회를 안 하고
+            # `index_available=False`를 돌려준다(#315 — 전에는 `unfilled`조차 비는 서명으로
+            # 갈랐다). 이것을 "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지
+            # 이름인지 안 갈린다**
             # (§0). 훅은 factory가 **항상** 꽂으므로(`src/adapters/factory.py`) 위의
             # `resolve_requests is None` 갈래는 프로덕션에서 안 닿는다 — 여기가 그 자리다.
             missing["reason"] = "인덱스가 없거나 v1이다(함수 표 없음) — 조회가 아무 사유도 못 냈다"
@@ -3260,6 +3261,8 @@ def _emit_scout_hop(
         data["fixable_count"] = resolution.fixable_count
         data["unfilled"] = ",".join(item_.reason.value for item_ in resolution.unfilled)
         data["truncated"] = ",".join(resolution.truncated)
+        # 색인이 없어 조회를 안 했는지 — `nothing_resolved`의 두 원인을 가른다(#315).
+        data["index_available"] = resolution.index_available
     ctx.trace.emit(
         EventKind.SCOUT_HOP,
         stage=Stage.SCOUT,
