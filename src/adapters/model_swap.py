@@ -239,8 +239,9 @@ def _resolved(command: tuple[str, ...]) -> tuple[str, ...]:
             r"`Git\usr\bin`을 PATH 앞에 두거나(PowerShell `$env:PATH`) "
             "장비 파일 `command[0]`에 bash 절대경로를 쓴다 "
             "(추적 파일을 고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — "
-            "실험 run에서는 앞의 것을 쓴다). Git Bash로 띄우면 `SWAP_REMOTE_ROOT`가 "
-            "Windows 경로로 바뀐다 — docs/portability.md 「Windows에서 원격 교대 run 절차」"
+            "실험 run에서는 앞의 것을 쓴다). Git Bash로 띄우면 `SWAP_REMOTE_ROOT`·"
+            "`SWAP_REMOTE_PYTHON`이 Windows 경로로 바뀐다 — "
+            "docs/portability.md 「Windows에서 원격 교대 run 절차」"
         )
     return (found, *rest)
 
