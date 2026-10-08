@@ -54,8 +54,20 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 **기록에 남긴다.**
 
 **신호 판정은 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만
-신호가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로 간다. 단
-위치를 못 뽑은 신호(실 clang-tidy 등)와 인덱스 없는 폴백은 artifact 단위로 되돌아간다.
+히트 순위(rank 2)가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로
+간다. 위치를 못 뽑은 신호(실 clang-tidy — `container_tools.first_hit_location`은 semgrep만
+읽는다)만 걸린 artifact는 심볼 전부가 rank 1이고, 인덱스 없는 폴백의 파일 단위 target도
+그 artifact에 STATIC 신호가 있으면 rank 1이다(없으면 0 — `_symbol_signal_rank`).
+**그래서 그 artifact는 다른 파일의 위치 있는 히트(rank 2) 뒤로 간다** — 정렬 키 첫 항이
+`-signal_rank`라 파일 순서보다 앞선다(`_order_and_cut`). #249 전에는 신호 artifact의
+심볼이 모두 동급이었으므로 그때와 다른 순서이고, `candidate_max`가 물면 그 artifact의
+심볼이 다른 파일의 히트보다 먼저 잘린다.
+이 동작을 받아들였다(#257 2).
+`--slices` run에서는 더 좁다: 슬라이스 target의 `Location`은 `line_start`=entry 줄이고
+`line_end`가 없다(`src/adapters/slices.py`). `_symbol_signal_rank`가 `end = line_end or start`로
+보므로 rank 2는 히트 줄이 entry 줄과 같을 때뿐이다 -> entry 줄이 아닌 곳에 걸린 semgrep
+히트는 clang-tidy만 걸린 것과 같은 rank 1이다(`_plan_slice_targets`의 ponytail, 코드 읽기 +
+함수 직접 호출 — `--slices` run으로 순서를 재지는 않았다).
 **점수 축은 아직 artifact 단위다**: `fake_model._has_static_signal()`은 심볼별로
 거르지 않은 evidence를 보므로 가산점은 artifact 전체에 간다 — 순서만 심볼 단위다.
 
@@ -1548,10 +1560,11 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
                 f"진입점을 찾았으나 resolver 조회 상한"
                 f"({_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS:,}자, 렌더 기준)에 통째로 잘렸다"
             )
-        elif not (resolution.blocks or resolution.unfilled or resolution.truncated):
-            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 아무 사유도 없이
-            # 통째로 빈 `Resolution`을 돌려준다 — `unfilled`조차 비는 것이 그 서명이다. 이것을
-            # "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지 이름인지 안 갈린다**
+        elif not resolution.index_available:
+            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 조회를 안 하고
+            # `index_available=False`를 돌려준다(#315 — 전에는 `unfilled`조차 비는 서명으로
+            # 갈랐다). 이것을 "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지
+            # 이름인지 안 갈린다**
             # (§0). 훅은 factory가 **항상** 꽂으므로(`src/adapters/factory.py`) 위의
             # `resolve_requests is None` 갈래는 프로덕션에서 안 닿는다 — 여기가 그 자리다.
             missing["reason"] = "인덱스가 없거나 v1이다(함수 표 없음) — 조회가 아무 사유도 못 냈다"
@@ -1801,6 +1814,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
     (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트는
     호스트 후속이다.
+    ⏵ 2026-10-08 — 「호스트 후속」만이 아니다. `./poc` materialize는 #513(열림 — 컨테이너 `poc`
+    도구가 실행 파일을 돌리는데 CyberGym PoC는 입력 파일이다)이 들고, #386도 열림이다.
 
     **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
     캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
@@ -2834,7 +2849,8 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
     나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
     rank 1을 두는 이유는 같은 파일의 두 번째 히트를 신호 없는 심볼 아래로 안 내리기
-    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다.
+    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다
+    (artifact에 STATIC 신호가 있을 때 — 없으면 0).
     """
     plan.collected.sort(
         key=lambda item: (
@@ -3262,6 +3278,8 @@ def _emit_scout_hop(
         data["fixable_count"] = resolution.fixable_count
         data["unfilled"] = ",".join(item_.reason.value for item_ in resolution.unfilled)
         data["truncated"] = ",".join(resolution.truncated)
+        # 색인이 없어 조회를 안 했는지 — `nothing_resolved`의 두 원인을 가른다(#315).
+        data["index_available"] = resolution.index_available
     ctx.trace.emit(
         EventKind.SCOUT_HOP,
         stage=Stage.SCOUT,
@@ -4997,6 +5015,10 @@ def _new_record(
         sampling=config.sampling,
         # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). 서버가
         # 모델 파일에서 적용하는 `top_k` 등을 하네스는 안 보내므로 이 필드로만 기록에 남는다.
+        # ⏵ 2026-10-08 — 위 줄(2026-08-29)은 낡았다. registry `sampling`을 선언한 모델은
+        # `temperature`·`top_p`·`top_k`·`min_p`·`presence_penalty`를 요청에 싣고(#261, `top_k`는
+        # 2026-09-26 선언부터) 그 값은 아래 `model_request_params`에 남는다. `repetition_penalty`는
+        # 여전히 안 보낸다.
         # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
         # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.
         model_sampling=model_sampling,

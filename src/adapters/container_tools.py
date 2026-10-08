@@ -807,6 +807,14 @@ class ContainerToolRunner:
         self.run_id = run_id
         self.root = Path(root)
         self.artifacts_root = Path(artifacts_root)
+        # 컨테이너 이름에 artifacts 루트를 가르는 값을 싣는다(#303). `run_id`는 루트마다
+        # `run_YYYYMMDD_NNNN`이라 루트가 다른 두 run이 같은 날 같은 id를 갖고, 같은 장비에서
+        # 동시에 돌면 이름이 겹친다 — 2026-09-26 ATOM 실측에서 두 run 모두 도구 호출 12건씩이
+        # exit 125로 조용히 빠졌다(#303).
+        # 루트 경로의 해시라 같은 루트의 순차 run은 지금처럼 `run_id`가 가른다.
+        self._name_tag = hashlib.sha256(
+            str(self.artifacts_root.resolve()).encode("utf-8")
+        ).hexdigest()[:8]
         self.image = image
         self.sif_dir = Path(
             sif_dir or os.environ.get("HARNESS_SIF_DIR") or self.artifacts_root / "sif"
@@ -930,7 +938,7 @@ class ContainerToolRunner:
         sections = [f"# node argv: {' '.join(node_argv)}", f"# runtime: {self.runtime}"]
         steps: list[Step] = []
         for index, command in enumerate(commands):
-            name = f"harness-{self.run_id}-{evidence_id}-{index}"
+            name = f"harness-{self.run_id}-{self._name_tag}-{evidence_id}-{index}"
             argv = container_argv(
                 self.runtime,
                 sandbox=sandbox,

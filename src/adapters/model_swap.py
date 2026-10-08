@@ -210,9 +210,11 @@ def _resolved(command: tuple[str, ...]) -> tuple[str, ...]:
 
     **교대를 시도할 때 난다**(`swap_runner`의 `run`이 부른다) — 만들 때가 아니다. 교대 안 하는
     run(`--dry-run`·낮은 `--stop-after`)도 `build_deps`로 만들기는 하므로 만들 때 던지면 그 조립에서
-    죽는다. 풀려면 Git Bash로 하네스를 띄우거나 PATH 앞에 `usr/bin`을 두거나 `command[0]`에 경로를
-    직접 적는다(경로가 든 이름은 `which`를 안 거치므로 막지 않는다). 단 장비 파일은 추적 파일이라
-    고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — 실험 run에서는 앞의 둘을 쓴다.
+    죽는다. 풀려면 PATH 앞에 `usr/bin`을 두거나 `command[0]`에 경로를 직접 적는다(경로가 든 이름은
+    `which`를 안 거치므로 막지 않는다). Git Bash로 하네스를 띄우면 `bash`는 풀리지만 그 셸의
+    `export`가 `SWAP_REMOTE_ROOT`를 Windows 경로로 바꿔 preflight가 막는다(이슈 #538 — 동작하는
+    조합은 `docs/portability.md` 「Windows에서 원격 교대 run 절차」). 단 장비 파일은 추적 파일이라
+    고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — 실험 run에서는 앞의 것(PATH)을 쓴다.
 
     ⚠ 막는 것은 System32의 `bash.exe`뿐이다. `WindowsApps`의 `bash.exe` 별칭은 안 막는다 — 이
     PC에서는 그것도 WSL 앱의 `wsl.exe`를 가리켰지만(별칭의 reparse 데이터를 읽었다, 실행은 안
@@ -233,10 +235,13 @@ def _resolved(command: tuple[str, ...]) -> tuple[str, ...]:
     if _is_wsl_launcher(found):
         raise ModelSwapError(
             f"교대 명령의 bash가 WSL 런처로 풀렸다({found}) — WSL은 Windows 환경변수를 못 받아 "
-            "교대가 빈 환경으로 돈다. Git Bash로 하네스를 띄우거나 "
-            r"`Git\usr\bin`을 PATH 앞에 두거나 장비 파일 `command[0]`에 bash 절대경로를 쓴다 "
+            "교대가 빈 환경으로 돈다. "
+            r"`Git\usr\bin`을 PATH 앞에 두거나(PowerShell `$env:PATH`) "
+            "장비 파일 `command[0]`에 bash 절대경로를 쓴다 "
             "(추적 파일을 고치면 `repo_dirty`로 그 run은 비교표에서 빠진다 — "
-            "실험 run에서는 앞의 둘을 쓴다)"
+            "실험 run에서는 앞의 것을 쓴다). Git Bash로 띄우면 `SWAP_REMOTE_ROOT`·"
+            "`SWAP_REMOTE_PYTHON`이 Windows 경로로 바뀐다 — "
+            "docs/portability.md 「Windows에서 원격 교대 run 절차」"
         )
     return (found, *rest)
 

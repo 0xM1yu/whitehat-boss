@@ -4,6 +4,11 @@ vLLM `/metrics` 원문을 **두 장비에서 같은 절차로** 받아 내는 �
 손으로 조립해 돌린 0단계 절차를 코드화한 것이고, 그 절차가 대화에만 있었던 것이 이 도구가
 생긴 이유다.
 
+> ⏵ 2026-10-08 — ATOM 쪽은 2026-08-18에 돌았다([보고서](../../docs/experiments/harness/2026-08-18-serving-atom.md)
+> §3.3 — `kv_cache_memory_bytes` `None` · 부재 이름 1건). 그 원문은 `tests/fixtures/metrics/`에 안 들어왔고
+> ATOM은 2026-09-29 사용 종료(#340)다. 아래 「ATOM에서 숫자면」·「ATOM 원문에서」는 그 전에 쓴 계획이고
+> `### ATOM` 절은 그때의 절차다.
+
 ## 무엇을 판정하는가
 
 이 프로브는 성능을 재지 않는다. 성능은 `python -m src.cli bench`가 잰다. 여기서 답하는

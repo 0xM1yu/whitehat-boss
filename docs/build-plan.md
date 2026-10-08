@@ -273,7 +273,9 @@ config에 넣지 않는다.**~~ (⏵ 2026-09-24 — 이 문단 끝의 노트) �
 semgrep은 첫 히트 위치를 싣고 clang-tidy는 그대로 `None`이다. 그래도 등급은 안 바뀐다: `p1 = static_ok or
 location_ok`이고 위치가 붙는 것이 STATIC Evidence뿐이라 `static_ok`가 이미 참이다(`src/orchestrator/gate.py`).
 그 위치의 쓰임은 target 순서다(#249 — + 2026-10-04부터 content-aware 프롬프트의 FACTS·Critic 줄, 이슈 #475). #248 뒤로 커밋된 실측 run 기록은 없다(`docs/experiments/`의 마지막
-보고서가 2026-09-22).
+보고서가 2026-09-22). ⏵ 2026-10-08 — 그 뒤 2026-09-24 스모크가 있다 -> `run_20260924_0003` 6단계
+`location_ok`·`static_ok` 모두 36/36 참이라 등급은 안 바뀐다([보고서](experiments/harness/2026-09-24-roster-smoke-atom.md)
+§3 실험 3, `checksum` 0 스모크라 비교표 밖).
 
 **7 · Critic (모델 자리 ⑦).** Auditor와 **다른 계열**. 같은 계열이면 같은 실수를 승인한다 —
 크기보다 *다르게 틀리는 것*이 중요하다. 고도화는 GRPO이고 보상이 8단계에서 결정론적으로
@@ -709,7 +711,7 @@ S7  재현명세 합성            ← 벽 ②. 맨 뒤다
 | 예산 한 줄 | 브랜치 `fix/no-zero-budget` → PR [#427](https://github.com/0xM1yu/whitehat-boss/pull/427) | **main에 있다.** 이 브랜치 이름으로 올라온 PR은 없다 — `4a2f624`가 그것을 `fix/dev-fake-budget-ceiling`에 합쳐 #427로 들어왔다(`17913e2`, 2026-10-03T13:55:37Z) |
 | Critic 프롬프트 v5 | 브랜치 `feat/prompt-critic-v5`(PR 없음) | 당시 버전 올림만. 「소스를 전달한다」는 전제는 오독이었고 [#391](https://github.com/0xM1yu/whitehat-boss/issues/391)로 올렸다. ⏵ 2026-10-05 — #497 — Critic v6이 본문·위치·Auditor 캐시 SOURCE를 받는다. v5는 미배선, 실모델 판정은 미실측 |
 | 산문 최신화 | 브랜치 `docs/currency-sweep`(PR 없음) | 이 PR들 뒤라 머지 전에 다시 맞춰야 한다 |
-| Auditor 프롬프트 v5 | ~~draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390)~~ | ⏵ 2026-10-03 **닫혔다.** ~~주차 · 트리거는 첫 대여 세션 — v4와 v5를 그날 둘 다 돌리고 정한다~~ — **v5를 건너뛰고 v6를 배선했다**(프롬프트 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418) · 배선 [#421](https://github.com/0xM1yu/whitehat-boss/pull/421) · 사용자 결정). v4·v5 둘 다 어느 registry 엔트리도 안 고르므로 그 비교는 없어졌다 <br>⏵ 2026-10-04 — **v6는 그 뒤 v7로 올랐다**([#443](https://github.com/0xM1yu/whitehat-boss/pull/443), 2026-10-03T19:10:07Z — `config/models.yaml`의 Auditor `prompt_template_version`). 위 「v6를 배선했다」는 그 전의 것이다 <br>⏵ 2026-10-04 — **v7은 그 뒤 v8로 올랐다**(도구 루프 · 이슈 [#419](https://github.com/0xM1yu/whitehat-boss/issues/419) — v7 + 홉 프로토콜, `SOURCE` 서술은 바이트 동일). 위 「v7로 올랐다」는 그 전의 것이다 |
+| Auditor 프롬프트 v5 | ~~draft PR [#390](https://github.com/0xM1yu/whitehat-boss/pull/390)~~ | ⏵ 2026-10-03 **닫혔다.** ~~주차 · 트리거는 첫 대여 세션 — v4와 v5를 그날 둘 다 돌리고 정한다~~ — **v5를 건너뛰고 v6를 배선했다**(프롬프트 [#418](https://github.com/0xM1yu/whitehat-boss/pull/418) · 배선 [#421](https://github.com/0xM1yu/whitehat-boss/pull/421) · 사용자 결정). v4·v5 둘 다 어느 registry 엔트리도 안 고르므로 그 비교는 없어졌다 <br>⏵ 2026-10-04 — **v6는 그 뒤 v7로 올랐다**([#443](https://github.com/0xM1yu/whitehat-boss/pull/443), 2026-10-03T19:10:07Z — `config/models.yaml`의 Auditor `prompt_template_version`). 위 「v6를 배선했다」는 그 전의 것이다 <br>⏵ 2026-10-04 — **v7은 그 뒤 v8로 올랐다**(도구 루프 · 이슈 [#419](https://github.com/0xM1yu/whitehat-boss/issues/419) — v7 + 홉 프로토콜, `SOURCE` 서술은 바이트 동일). 위 「v7로 올랐다」는 그 전의 것이다 <br>⏵ 2026-10-08 — **v8은 그 뒤 v9(PR #508, 2026-10-05T16:54:41Z 머지)·v10(PR #521, 2026-10-07T07:12:18Z 머지)으로 올랐다.** 위 「v8로 올랐다」는 그 전의 것이다. 지금 판은 `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다 |
 
 🔴 **PR끼리의 충돌은 `src/orchestrator/runner.py`와 `docs/agent-contracts.md`에서 났다** — #380 ↔ #396이
 `_emit_pov_hop`·`_pov_observation`의 호출 인자와 docstring, 계약 문서의 같은 불릿을 서로 다르게 바꿨다.
@@ -753,6 +755,7 @@ asan·poc의 비-0은 대상이 스스로 낸 비-0과 구분되지 않는다(#4
 ⚠ **GPU 대여는 사전 허락을 받았다**(2026-10-02 조민규) — **단 배관 뒤다.** 배관 전에 재면
 되먹이기가 PoC와 무관해 수렴 못 하는 홉에 시간을 태운다 — 호출당 1,467~2,187 s는 **ATOM 2026-09-29 교대 스모크의 Auditor 추론 호출** 시간이다([보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)). PoV 홉 시간이 아니고 vast 실측도 아니다 — 「홉이 PoC와 무관하면 그만한 호출이 헛돈다」는 **유추**다.
 ⚠ **mercury·saturn은 2026-10-02 기준 쓸 수 없고 ATOM은 2026-09-29에 종료됐다.**
+⚠ **대여 세션의 실모델 run은 슬라이스가 먼저다** -> 모델에 닿는 run은 `--slices` 없이 시작하지 않는다 · 슬라이싱에 Joern·JDK가 든다(서빙 장비와 별개여도 된다) -> [portability.md](portability.md) §1 「실모델 run의 선결조건」(이슈 #479).
 
 ### 11.7 미실측으로 남는 값 (CLAUDE.md §0)
 

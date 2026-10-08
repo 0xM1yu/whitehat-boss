@@ -402,6 +402,8 @@ def test_ne_nothing_resolved_when_the_hook_is_none(
     candidate_id = _candidate_id_for_seat(trace_path)
     hops = _scout_hops(trace_path, candidate_id)
     assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    # 훅이 없으면 조회가 안 돌았다 — `index_available`을 값으로 적지 않는다(#315 · `trace.py`).
+    assert "index_available" not in hops[0]
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
 
 
@@ -433,6 +435,41 @@ def test_ne_resolver_that_finds_nothing_stops_the_loop(
     assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
     assert hops[0]["resolved"] == 0
     assert hops[0]["fixable_count"] == 0
+    assert hops[0]["index_available"] is True
+
+
+def _no_index(query: ResolveQuery) -> Resolution:
+    return Resolution(
+        followup_text="",
+        blocks=(),
+        unfilled=(),
+        already=(),
+        truncated=(),
+        index_available=False,
+    )
+
+
+@_MODES
+def test_ne_stop_without_an_index_says_so_in_the_hop_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """색인이 없어 조회를 **안 한** 홉도 `nothing_resolved`로 서지만, 홉 이벤트가
+    `index_available=False`로 「못 찾음」과 가른다(#315). 2026-09-27 ATOM 스모크 sample_07이 이
+    꼴이었다 — 인덱서가 시간 초과로 `index.json`을 못 만들었는데 기록은 `unfilled=""`뿐이었다."""
+    _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request())],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _no_index)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    hops = _scout_hops(trace_path, _candidate_id_for_seat(trace_path))
+    assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    assert hops[0]["index_available"] is False
 
 
 @_MODES

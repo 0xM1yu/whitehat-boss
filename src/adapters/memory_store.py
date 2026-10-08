@@ -24,6 +24,9 @@ class InMemoryStateStore:
     def get(self, kind: ObjectKind, id: str) -> StoredObject | None:  # noqa: A002
         return self._rows.get((kind, id))
 
+    def close(self) -> None:
+        """놓을 자원이 없다 — `StateStore` 계약을 맞추는 자리다."""
+
     def query(self, kind: ObjectKind, **filters: object) -> list[StoredObject]:
         """ID 오름차순. SqliteStateStore의 `ORDER BY obj_id`와 같은 순서여야 한다.
 

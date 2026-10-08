@@ -210,6 +210,7 @@ models:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에
       # 없어 프로필에 못 올린다 → `cli bench`를 못 돌린다."* 등재로 그 사유가 사라졌으므로
       # `bench --roles critic --device atom --apply`가 채운다. **그때까지 0은 미실측 표시다.**
+      # ⏵ 2026-10-08 — `--device atom`은 낡았다 — ATOM 사용 종료 2026-09-29(#340 · docs/portability.md §6). 아래는 여전히 미실측이다.
       measured_at: null
       measured_on: null
       tok_s_single: 0
@@ -425,6 +426,8 @@ models:
     # `context_limit`은 모델 상한이지 띄울 값이 아니다(`gpt-oss-20b` 항목과 같은 관례).
     # ⚠ `checksum`은 자리표시자 0이다 — ATOM에서 받은 뒤 `tools/model_checksum.py`로 채운다. 그전에 돈
     #   run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
+    #   ⏵ 2026-10-08 — 「ATOM에서 받은 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 · docs/portability.md §6). 이후 실측 장비는
+    #   vast다(docs/portability.md §6 ⏵). `checksum`은 여전히 0이다.
     # ⚠ 고른 근거는 벤더 모델 카드뿐이다 — Qwen3.6-27B 대비 LiveCodeBench v6 90.3 vs 83.9 · SWE-bench Pro
     #   61.7 vs 53.5 `[출처주장]`. 옛 Auditor(35B-A3B)와 직접 비교한 수가 아니고, 취약점 탐지 점수는 공개된
     #   것이 없으며, 우리 장비 품질 실측도 0이다.
@@ -684,6 +687,8 @@ models:
     # `context_limit`은 모델 상한이지 그날 띄운 값이 아니다(`gpt-oss-20b` 항목과 같은 관례).
     # ⚠ `checksum`은 자리표시자 0이다 — ATOM에서 받은 뒤 `tools/model_checksum.py`로 채운다. 그전에 돈
     #   run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
+    #   ⏵ 2026-10-08 — 「ATOM에서 받은 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 · docs/portability.md §6). 이후 실측 장비는
+    #   vast다(docs/portability.md §6 ⏵). `checksum`은 여전히 0이다.
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
@@ -772,6 +777,10 @@ models:
   # ⚠ **checksum·benchmark는 전부 미실측(0/null)이다** — 아직 우리 장비에서 받지도 띄우지도
   #   않았다(ATOM 종료 · 서빙+도구 되는 호스트 미확보). 그전에 돈 run은 비교표 제외(CLAUDE.md §0).
   #   `tools/model_checksum.py`가 스냅샷을 받은 뒤 checksum을, `bench --apply`가 benchmark를 채운다.
+  #   ⏵ 2026-10-08 — 「받지도 띄우지도 않았다」는 낡았다: vast에서 처음 떴다(`run_20261005_0001`, 날짜는 UTC —
+  #   `docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md` §0, 가중치 로드 51.1 GiB · `tool_runner: fake`).
+  #   「호스트 미확보」도 낡았다 — 서빙만 vast에 두는 `vastai-remote`가 들어왔다(#417 — 2026-10-04 머지). checksum·benchmark는
+  #   여전히 0/null이다(아래 `checksum` 줄).
   #
   # ## 배선됨 — `harness_pool`·`harness_pool_hybrid`의 8단계 pov 좌석
   # PoV 노드(`nodes/pov.py`)가 러너 8단계(Stage.VALIDATE) 라우팅에 들어갔다(추가형 — validate.run 뒤).
@@ -780,6 +789,10 @@ models:
   # feyospace 행). resident가 아니라 swappable이라 8단계에 들어갈 때만 콜드 기동한다. PROJECT-CONTEXT
   # §1 로스터·model-serving.md 포트 표(8006)가 이 키를 든다.
   # ⚠ **실장비 종단은 미실측이다** — checksum·benchmark 0(위), 서빙+도구 되는 호스트 확보 뒤 실측한다.
+  #   ⏵ 2026-10-08 — 호스트는 위 ⏵대로 생겼다(`vastai-remote`). 실도구(docker)로 8단계에서 이 키를 부른 run은
+  #   `run_20261007_0001` 하나다(`docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md`
+  #   §1 — PoV 시도 5건, #551). 2026-10-03 run은 8단계 모델을 안 불렀고(`2026-10-04-cybergym-operational-run-vastai-remote.md`
+  #   메타) 2026-10-05 프로브는 `tool_runner: fake`다. 셋 다 비교표 제외다(각 보고서 머리).
   #
   # ## 추론(사고) — Auditor 손잡이를 물려받았다(사고 켬)
   # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
