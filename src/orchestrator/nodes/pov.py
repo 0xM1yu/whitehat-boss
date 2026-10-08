@@ -33,15 +33,20 @@ OUTPUT_SCHEMA = PovAction
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
-# 않는다). 2026-10-05부터 `config/models.yaml`의 실 PoV 좌석은 v3라 이 넓은 입력을 받는다. v2는
-# 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4, 프롬프트가 바뀌면
-# 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도 없지만, v2는
-# 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기 관측이 함께
-# 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
+# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가 `config/models.yaml`의 실 PoV 좌석이라 이
+# 넓은 입력을 받는다. v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
+# 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도
+# 없지만, v2는 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기
+# 관측이 함께 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
+# 🔴 **이 집합은 판이 하나 늘 때마다 같이 자란다** - v2를 뺀 새 판을 여기 안 넣으면 그 판에서
+# 넓은 입력이 **조용히 꺼진다**(프롬프트는 그대로 로드되는데 입력이 v2로 돌아간다. 이유는
+# `prompt_loader` docstring의 「버전 이름으로 분기하지 않는 이유」). 막는 것은
+# `tests/test_pov_loop.py`의 `test_every_pov_prompt_version_but_v2_gets_the_wide_inputs`와 doctor의
+# 「내용 인식」 검사다.
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3"})
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4"})
 
 
 def _render_prompt(

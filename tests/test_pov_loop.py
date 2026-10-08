@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
+from src.config import load_config
 from src.interfaces import tool_runner
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import poc_log, runner
@@ -1251,11 +1252,11 @@ def test_pov_observation_carries_the_size_and_digest_of_the_input() -> None:
 
 
 def test_pov_observation_names_do_not_claim_the_tool_took_the_bytes() -> None:
-    """🔴 독립 검토 HIGH-1 — 필드 이름이 `input_*`이면 「도구의 입력」으로 읽히는데 같은 요청의 v3
-    prefix는 **그 바이트는 도구의 입력이 아니다**라고 적는다. 모델이 이름을 따르면 「내 입력으로
-    asan이 터졌다」고 쓰고, 그 문장은 이 저장소가 막으려던 것이다(D99 「선행 둘」 ②). 그래서 이름은
-    `last_gen_*`다. ⚠ 철자 핀이다: 소비를 암시하는 다른 이름(`fed_*`)은 못 막는다 — prefix가 한계를
-    걷는 판(이슈 #515)에서 이 검사와 이름을 같이 본다."""
+    """🔴 독립 검토 HIGH-1 — 필드 이름이 `input_*`이면 「도구의 입력」으로 읽히는데 같은 요청의
+    v3·v4 prefix는 **그 바이트는 도구의 입력이 아니다**라고 적는다. 모델이 이름을 따르면
+    「내 입력으로 asan이 터졌다」고 쓰고, 그 문장은 이 저장소가 막으려던 것이다(D99 「선행 둘」 ②).
+    그래서 이름은 `last_gen_*`다. ⚠ 철자 핀이다: 소비를 암시하는 다른 이름(`fed_*`)은 못 막는다 —
+    prefix가 한계를 걷는 판(이슈 #515)에서 이 검사와 이름을 같이 본다."""
     head = _observe(poc=_POC)
 
     assert "input" not in head
@@ -1446,8 +1447,28 @@ def test_pov_loop_can_inspect_with_gdb(ctx: RunContext) -> None:  # noqa: F811
     assert hop0.data["evidence_kind"] == TOOL_KINDS["gdb"].value
 
 
-def _v3_prefix() -> str:
-    return (PROMPTS_DIR / "pov" / "v3" / "prefix.md").read_text(encoding="utf-8")
+def _served_pov_version() -> str:
+    """서빙 프로필 둘의 PoV 좌석이 **실제로 고르는** 프롬프트 판 — 살아 있는 config에서 읽는다.
+
+    판 이름을 테스트에 박으면 판이 올라갈 때 그 핀이 **낡은 판을 계속 문다**(서빙 판은 핀 없이
+    돈다) — `prompt_loader` docstring의 「버전 이름으로 분기하지 않는 이유」가 코드에서 경고한
+    함정과 같다. 그래서 서빙 판을 따라 움직이게 읽는다. 두 프로필이 갈리면 어느 쪽을 핀할지
+    모호하므로 실패한다."""
+    versions = {
+        load_config(profile).model_for(Role.POV.value).prompt_template_version
+        for profile in ("harness_pool", "harness_pool_hybrid")
+    }
+    assert len(versions) == 1, f"서빙 프로필의 PoV 좌석 판이 갈린다: {sorted(versions)}"
+    return versions.pop()
+
+
+# prefix 핀은 v3(불변 기록)와 **서빙 판** 둘에 건다. 서빙 판은 이름이 아니라 config에서 읽는다 —
+# 판이 올라가면(v5…) 이 핀이 자동으로 새 판을 물고, 낡은 판(v4)만 달고 있는 일이 없다.
+_POV_PREFIX_VERSIONS = ("v3", _served_pov_version())
+
+
+def _pov_prefix(version: str) -> str:
+    return (PROMPTS_DIR / "pov" / version / "prefix.md").read_text(encoding="utf-8")
 
 
 def _paragraphs(text: str) -> list[str]:
@@ -1679,8 +1700,10 @@ def test_tool_call_events_carry_the_input_size_and_digest_never_the_bytes(
         assert form not in blob, f"원바이트가 trace에 실렸다: {form[:10]}…"
 
 
-def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
-    """v3 prefix의 한계 문단이 **도구 넷 모두**를 이름으로 들고 「PoC가 안 들어간다」를 적는다.
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_states_that_no_tool_receives_the_poc(version: str) -> None:
+    """pov prefix(v3·v4)의 한계 문단이 **도구 넷 모두**를 이름으로 들고 「PoC가 안 들어간다」를
+    적는다.
 
     독립 검토 지적: 전 판은 gdb만 한계를 달고 `poc`는 「현 후보를 그대로 돌린다」,
     `asan`은 「터졌는데 원인이 모호할 때」로 적어
@@ -1689,7 +1712,7 @@ def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
 
     ⚠ **문자열 핀이다** — 뜻을 뒤집되 철자를 남긴 문장에는 초록이다. 지키는 것은 「한계 문단이
     사라지거나 도구 하나를 빼먹지 않는다」뿐이고, 문장이 참인지는 위 코드 경보기가 따로 본다."""
-    paragraph = next(p for p in _paragraphs(_v3_prefix()) if "지금 하네스의 한계" in p)
+    paragraph = next(p for p in _paragraphs(_pov_prefix(version)) if "지금 하네스의 한계" in p)
 
     for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
         assert tool in paragraph, f"한계 문단이 {tool}을 안 든다"
@@ -1698,10 +1721,11 @@ def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
     assert any(phrase in paragraph for phrase in no_input)
 
 
-def test_v3_prefix_does_not_say_the_tools_run_the_candidate() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_does_not_say_the_tools_run_the_candidate(version: str) -> None:
     """독립 검토 지적의 거짓 서술이 다시 들어오지 않는다 — 도구가 PoC(「후보」)를 돌리거나
     검증한다는 문형. 한계: **철자 핀**이다(같은 뜻의 다른 문형은 못 막는다)."""
-    prefix = _v3_prefix()
+    prefix = _pov_prefix(version)
 
     banned = (
         "현 후보를 그대로", "현재 후보를 진단", "도구로 대상을 검증해", "「경로에 닿았나」를 가르",
@@ -1710,33 +1734,37 @@ def test_v3_prefix_does_not_say_the_tools_run_the_candidate() -> None:
         assert phrase not in prefix, f"거짓 서술이 남았다: {phrase!r}"
 
 
-def test_v3_prefix_has_no_gdb_usage_rule() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_has_no_gdb_usage_rule(version: str) -> None:
     """🔴 D92(`docs/open-questions/D/D92.md`): *"프롬프트에 gdb 사용 규칙을 넣는 일에는 ASAN
-    수리·실행 검증이 선행한다"*(#326 열림). v3 prefix는 gdb를 **도구 목록의 사실**로만 쓰고 언제
-    쓰라는 지시를 안 둔다. ⚠ 코드 배선(`PovAction.tool` enum)은 이 선행 조건이 아니다(D92 본문).
+    수리·실행 검증이 선행한다"*(#326 열림). pov prefix(v3·v4)는 gdb를 **도구 목록의 사실**로만 쓰고
+    언제 쓰라는 지시를 안 둔다. ⚠ 코드 배선(`PovAction.tool` enum)은 이 선행 조건이 아니다
+    (D92 본문).
 
     **철자 핀이다** — 지시의 모든 문형을 막지 못한다. 막는 것은 독립 검토가 짚은 문형들(
     `inspect(gdb)` 처방, 「gdb로 확인한 뒤」, 「가르는 수단」)이다."""
-    prefix = _v3_prefix()
+    prefix = _pov_prefix(version)
 
     for phrase in ("inspect(gdb)", "gdb로", "가르는 수단", "가르는 데 쓸"):
         assert phrase not in prefix, f"gdb 사용 규칙이 남았다: {phrase!r}"
 
 
-def test_v3_prefix_reads_reason_whether_or_not_found() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_reads_reason_whether_or_not_found(version: str) -> None:
     """`found=true`여도 원문이 4,000자에서 잘렸으면 알림이 `reason`에만 있다 —
     prefix가 `found=false`일 때만 `reason`을 읽으라 했던 것을 맞춘다. 한계: 철자 핀."""
-    paragraph = next(p for p in _paragraphs(_v3_prefix()) if "`reason`" in p)
+    paragraph = next(p for p in _paragraphs(_pov_prefix(version)) if "`reason`" in p)
 
     assert "`found`와 무관" in paragraph
 
 
-def test_v3_prefix_does_not_overstate_the_fuzz_entrypoint() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_does_not_overstate_the_fuzz_entrypoint(version: str) -> None:
     """독립 검토: prefix가 「이 대상은 libFuzzer 하네스다 — 바이트는 그 진입점 인자로 **그대로**
     들어간다」고 **단정**했다. resolver가 후보 여럿 중 하나를 고른 `found=true`일 수 있고(oss-fuzz·
     arvo에 퍼저가 여럿인 프로젝트가 흔하다) 후보 수는 FACTS에 없다(스키마 확장 필요 — 접었다).
     §0: 모르는 것을 아는 것처럼 쓰지 않는다. 한계: 철자 핀."""
-    prefix = _v3_prefix()
+    prefix = _pov_prefix(version)
 
     assert "이 대상은 **libFuzzer 하네스**다" not in prefix, "단정이 남았다"
     assert "후보 중 하나를 고른" in prefix, "resolver가 하나를 고른 것이라는 고지가 없다"

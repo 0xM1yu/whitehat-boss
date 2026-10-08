@@ -417,7 +417,7 @@ class EventKind(StrEnum):
     # pov 실패는 finding을 안 죽이고 여기 남긴다.
     POV_SKIPPED = "pov_skipped"
     # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **제출마다
-    # 1행**이다 - 중간 gen(`designatable=False`, pov v3 되먹임)과 모델이 submit한 PoC
+    # 1행**이다 - 중간 gen(`designatable=False`, pov v3 이상의 되먹임)과 모델이 submit한 PoC
     # (`designatable=True`)가 둘 다 낸다(같은 바이트면 같은 해시로 두 번 나온다). `fix` 다리는
     # 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`designatable`·`task_id`·
     # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).

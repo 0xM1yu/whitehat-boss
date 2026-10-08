@@ -82,7 +82,7 @@ sink 호출 줄이고 `entry.symbol`이 그 호출 이름이다(`slice_refs`). C
 
 ⚠ **PoV도 이 블록을 받는다.** 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로
 물려 주고(`runner._step_auditor`) 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판에서 그것을 그대로
-프롬프트에 싣는다(지금 `v3`). 그래서 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
+프롬프트에 싣는다. 그래서 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
 """
 
 import bisect

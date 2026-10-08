@@ -136,7 +136,7 @@ from src.orchestrator.nodes.report import Report
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
-from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
+from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE, load_prompt
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.source_definitions import (
     definition_names,
@@ -1810,7 +1810,7 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
     그 밖의 형은 run과 함께 보고서도 잃는다.
 
-    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만). v3 루프의 중간 `gen`마다
+    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만). v3 이상 루프의 중간 `gen`마다
     (마지막 홉의 gen은 빼고) `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내
     원시 종료 코드를 다음 홉에 싣는다.
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
@@ -2305,12 +2305,13 @@ def _run_pov_hops(
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트는 도구 요청에 데이터로
     실리지만 어느 도구 명령도 그것을 읽지 않는다**(`pov.run_tool`) — dev_fake는 대상 소스 존재만
     보고, 컨테이너는 미생성 파일을 돌려 도구 관측의 `ok`·`exit`·꼬리는 PoC와 무관하다(호스트
-    후속, #513). v3 관측에서 PoC의 함수인 것은 입력의 크기·digest 줄(`_pov_observation`)뿐이다 — 그
-    전까지 실서빙 pov 루프를 돌리면 도구 관측으로는 spec의 효과를 못 읽는다(모델이 언제 submit할지는
-    안 쟀다). E4 게이트 전이도 후속이다. v3의 중간 gen은 별도로 `vul` 판정을 읽어 다음 모델 홉에
-    싣는다(#354/#386①). 여기서는 홉 이벤트(`POV_HOP`)와 종단
-    이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
-    사이드카로 남긴다**(`_pov_finish` — #355).
+    후속, #513). v3·v4 관측에서 PoC의 함수인 것은 입력의 크기·digest 줄(`_pov_observation`)뿐이다 —
+    그 전까지 실서빙 pov 루프를 돌리면 도구 관측으로는 spec의 효과를 못 읽는다(모델이 언제
+    submit할지는 안 쟀다). E4 게이트 전이도 후속이다. 중간 gen은 별도로 `vul` 판정을 읽어 다음
+    모델 홉에 싣는다(v3 이상 - #354/#386①). meta가 `hop_header`를 켠 판(v4~)은 followup **맨
+    앞**에 홉 줄을 더 받는다(`_pov_hop_line` · #511) - 그 줄이 있어야 모델이 마감을 안다. 여기서는
+    홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서
+    **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
     홉 상한은 PoV 전용 `thresholds.pov_tool_hops`다(이슈 #511) — NE 루프의 `max_hops`와 갈랐다.
@@ -2451,8 +2452,24 @@ def _run_pov_hops(
                 # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
                 # 의미를 파생하지 않는다. 모델이 이 관측을 본 뒤 submit할지를 정한다.
                 followup = f"{followup}\n{oracle_observation}"
+            # 홉 줄은 **맨 앞**이다 - 이 followup에 답할 홉 번호와 마지막 홉 번호(#511). 위 `hop`은
+            # 방금 끝낸 홉이라 모델이 답할 홉은 `hop + 1`이고, 여기까지 왔다는 것은
+            # `hop < pov_hops`라는 뜻이라(`MAX_HOP`은 위에서 이미 갈렸다) `remaining`은 0 이상이다.
+            # 줄을 받는 판은 meta가 `hop_header`로 선언한다(`prompt_loader` docstring) - v2·v3는
+            # 바이트 그대로다.
+            if load_prompt(Role.POV, current.version).hop_header:
+                followup = f"{_pov_hop_line(hop + 1, pov_hops)}\n{followup}"
             prev = current
             hop += 1
+
+
+def _pov_hop_line(hop: int, last_hop: int) -> str:
+    """followup 맨 앞 줄 - 모델이 지금 답하는 홉(`hop`)·마지막 홉(`last_hop`)·그 뒤 남은 홉 수.
+
+    기계가 읽는 모양이라 키 이름과 순서를 바꾸면 prefix(`prompts/pov/v4/prefix.md`의 「홉 예산」)와
+    `tests/test_pov_prompt_v4.py`가 같이 움직여야 한다. `_pov_observation`의 출력에 넣지 않는다 -
+    그쪽의 v2 바이트 동일이 핀이다."""
+    return f"hop={hop} last_hop={last_hop} remaining={last_hop - hop}"
 
 
 def _pov_observation(
@@ -2486,7 +2503,7 @@ def _pov_observation(
     ⏵ **#386 ① — 직전 `gen`의 PoC 크기와 sha256을 싣는다**(`poc` — `pov.run_tool`이 도구 요청에
     실은 바이트, 맨 hex라 trace의 `poc_sha256`과 바로 대조된다). 도구 결과는 PoC와 무관해도 이
     줄은 **PoC의 함수**라 되먹임이 어느 PoC에 대한 것인지 가른다. 필드 이름이 `last_gen_*`인 것은
-    일부러다 — `input_*`는 도구가 그 바이트를 **받았다**고 읽히는데 v3 prefix는 그 반대를 적는다
+    일부러다 — `input_*`는 도구가 그 바이트를 **받았다**고 읽히는데 v3·v4 prefix는 그 반대를 적는다
     (어느 명령도 그 파일을 읽지 않는다, #513). 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
     `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
     `wide=False`면 안 싣는다(꼬리와 같은 경계).
@@ -3629,7 +3646,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     경우**(Case A · 품는 함수를 모르는 창 앵커 · 줄이 어긋날 수 있는 파일 · sink를 못 찾음)는 사유를
     `guards_skipped`가 든다. 0이면 이 단계가 없다.
     ⚠ **PoV도 이 블록을 받는다** — 아래 `_step_auditor`가 이 SOURCE 문자열을
-    `state.finding_sources`로 물려 주고 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서
+    `state.finding_sources`로 물려 주고 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판에서
     그대로 프롬프트에 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
 
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
