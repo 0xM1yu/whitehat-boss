@@ -865,6 +865,16 @@ def test_sqlite_closes_as_a_context_manager_and_twice_is_harmless(tmp_path: Path
     InMemoryStateStore().close()  # 계약만 맞춘다 — 놓을 자원이 없다
 
 
+def test_the_state_store_contract_declares_close() -> None:
+    """CLI가 `deps.store.close()`를 부르는 근거는 `StateStore` 계약이다(#156). 이 저장소에는 정적
+    타입 검사가 없어 계약에서 `close`가 빠져도 런타임·CI가 모른다(#540 리뷰) — 선언을 직접 본다."""
+    from src.interfaces.state_store import StateStore
+
+    assert "close" in StateStore.__dict__
+    for impl in (InMemoryStateStore, SqliteStateStore):
+        assert callable(getattr(impl, "close", None)), impl.__name__
+
+
 def test_sqlite_payload_is_schema_json(tmp_path: Path) -> None:
     """저장 형태가 스키마 JSON이어야 읽을 때 검증이 돈다."""
     store = SqliteStateStore(tmp_path / "state.db")

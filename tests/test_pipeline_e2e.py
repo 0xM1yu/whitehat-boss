@@ -3406,13 +3406,50 @@ def test_estimate_closes_the_state_store_before_its_temp_dir_goes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`estimate`는 임시 디렉터리 안에 `state.db`를 연다 — 지우기 전에 닫아야 Windows에서 정리가
-    안 죽는다(#156). 수정 전 main에서 Windows는 정리가 `[WinError 267]`로 실패했다(2026-10-08 실측).
+    안 죽는다(#156). 수정 전 main에서 Windows는 정리가 실패했다 — Python 3.11.0에서
+    `[WinError 267]`, 3.14.5에서 `PermissionError [WinError 32]`(2026-10-08 실측 둘).
     Linux는 열린 파일도 지워져 그 증상이 안 보이므로 **닫았는지**를 직접 센다."""
     closed = _spy_close(monkeypatch)
 
     cli.estimate(_sqlite_dev_fake(), TARGET)
 
     assert len(closed) == 1 and closed[0].endswith("state.db"), closed
+
+
+def test_estimate_closes_the_store_even_when_the_count_lookup_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """캡슐 조회가 실패해도 `finally`가 닫고 원 예외가 그대로 나간다(#156). 닫기를 `finally`에서
+    꺼내 정상 경로로만 옮기는 변이를 이 검사가 잡는다(#540 리뷰가 그 변이로 9건 전부 통과를
+    보였다)."""
+    closed = _spy_close(monkeypatch)
+
+    def lookup_fails(_config: object) -> str:
+        raise RuntimeError("count lookup boom")
+
+    monkeypatch.setattr(cli, "_capsule_counter_role", lookup_fails)
+
+    with pytest.raises(RuntimeError, match="count lookup boom"):
+        cli.estimate(_sqlite_dev_fake(), TARGET)
+    assert len(closed) == 1, closed
+
+
+def test_execute_closes_the_store_when_the_pipeline_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """러너가 예외로 끝나면 `execute`가 `deps`를 돌려줄 수 없다 — 그래서 `execute`가 닫고 원
+    예외를 올린다(#156). 안 닫으면 `estimate`의 임시 디렉터리 정리가 열린 `state.db`에서 죽어
+    원 예외를 덮는다(#540 리뷰 · Windows 3.14.5에서 `PermissionError [WinError 32]` 재현)."""
+    closed = _spy_close(monkeypatch)
+
+    def pipeline_fails(*_a: object, **_k: object) -> None:
+        raise RuntimeError("pipeline boom")
+
+    monkeypatch.setattr(cli, "run_pipeline", pipeline_fails)
+
+    with pytest.raises(RuntimeError, match="pipeline boom"):
+        cli.estimate(_sqlite_dev_fake(), TARGET)
+    assert len(closed) == 1, closed
 
 
 def test_run_closes_the_state_store_it_opened(
