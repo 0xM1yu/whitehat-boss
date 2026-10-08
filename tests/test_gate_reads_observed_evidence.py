@@ -5,8 +5,10 @@
 돌려 등급이 같음을 단언한다(`tests/test_gate.py`의 조합 전수와 같은 모양).
 ⚠ 「둘 다 E0」로도 등식은 성립하므로 **E1 이상임을 같이 단언한다** — 안 그러면 수정 전에도 초록이다.
 
-⚠ **Fake로는 이 결함을 만들 수 없다.** `src/adapters/fake_model.py`의 Auditor 세 자리가 전부
-`evidence_refs=[ref.evidence_id for ref in context.evidence]`라 **항상 전부 인용한다.** 그래서
+⚠ **Fake로는 이 결함을 만들 수 없다.** `src/adapters/fake_model.py`의 Auditor 자리 **둘**
+(`_build_finding` · `_build_audit_procedure`)이 `evidence_refs=[ref.evidence_id for ref in
+context.evidence]`라 **항상 전부 인용한다**(세 번째 같은 꼴은 `_build_candidate` — 4단계
+Scout의 `Candidate.evidence_refs`라 이 결함과 무관하다). 그래서
 Fake 기반 테스트 어디에도 「Evidence는 있는데 인용이 빈」 경우가 없었고, 이 결함이 실서빙까지
 살았다(CLAUDE.md §5 「Fake는 항등식을 만든다」). 여기서는 `Finding`을 손으로 만든다.
 
@@ -295,6 +297,29 @@ def test_a_failed_tool_record_is_attached_even_though_it_does_not_lift_the_grade
     assert "ev_failed" in graded.evidence_refs
     assert result.grade is EvidenceGrade.E0
     assert result.predicates["static_ok"] is False
+
+
+def test_only_the_handed_evidence_lands_in_evidence_refs(ctx: RunContext) -> None:
+    """`evidence_refs`에 들어가는 것은 **넘겨받은 Evidence뿐**이다.
+
+    등급 쪽은 `gate.evidences_for`가 모르는 참조를 조용히 버려서 지켜지지만, `evidence_refs`
+    자체는 아무도 안 본다 — 그 값이 `cli` SARIF·리포트 「근거 N건」·승격 불변식·그리고
+    러너의 `_grades_by_finding`(독립 게이트 호출)으로 그대로 흐른다. 그래서 refs 축을 따로 문다.
+
+    (부착이 저장소를 읽게 바꾸는 변이가 등급 핀 전부를 통과한다 — 그 변이를 잡는 자리다.)
+    """
+    elsewhere = _evidence("ev_other", EvidenceKind.GRAPH, source="index")
+    ctx.store.put(elsewhere)
+    handed = (_static_signal(),)
+
+    graded, _ = gate_node.run(
+        ctx,
+        finding=_finding(refs=[]),
+        evidences=handed,
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    assert list(graded.evidence_refs) == ["ev_static"]
 
 
 # --- 핀 ④ Critic 입력: 인용이 비어도 근거가 실린다 ------------------------------

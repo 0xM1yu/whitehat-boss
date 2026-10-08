@@ -36,6 +36,11 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 
+⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
+모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
+타깃에서 관측한 Evidence를 직접 붙이므로(`gate_node.attach_observed`) E0는 「관측이 0건인
+타깃」을 센다. **그 날 앞뒤 run의 이 값을 한 열에 놓지 않는다.** 새 임계는 미실측이다.
+
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
 `artifact_id`·초기 `state`·`missing_evidence`)뿐이다. 하네스가 덮는 `produced_by`·
 `scout_member`·`slice_id`는 이 이벤트 없이 덮이므로 그 셋의 부재는 「안 쟀다」다.
