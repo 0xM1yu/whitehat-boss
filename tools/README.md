@@ -98,8 +98,11 @@ docker run --rm harness-tools:v3 cat /opt/semgrep-rules/COMMIT
 ### ATOM 빌드·실행
 
 > ⏵ 2026-10-08 — ATOM은 2026-09-29 사용이 끝났다(#340 · [portability.md](../docs/portability.md) §6). 이 절은
-> 그때의 절차다. 그 뒤 실서빙 run은 하네스·도구가 로컬 Docker이고 서빙만 vast다(`--device vastai-remote` —
-> [2026-10-04 보고서](../docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md) §2).
+> 그때의 절차다. 그 뒤 도구까지 돈 완주는 하네스·도구가 로컬 Docker이고 서빙만 vast였다(`--device vastai-remote`) —
+> Windows `run_20261003_0003`([2026-10-04 보고서](../docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)
+> §2·§4 — 도구 4개 중 2개 ok)와 `run_20261007_0001`([2026-10-08 보고서](../docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) 메타).
+> 전부가 아니다: WSL `run_20261003_0002`는 Docker 소켓이 없어 도구 4개 전부 실패했고(10-04 보고서 §4),
+> 2026-10-05 PoV 프로브는 `tool_runner: fake`다([2026-10-06 보고서](../docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md) 머리 표).
 
 ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularity는 없다**
 (2026-08-21 확인, 2026-08-28 `ssh atom 'which podman; which docker'` 재확인 —

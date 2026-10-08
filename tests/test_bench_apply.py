@@ -759,9 +759,14 @@ def test_serving_profiles_run_real_tools(profile: str) -> None:
 
     **런타임이 `docker`인 것도 이 테스트가 지킨다.** 프로필은 주 실서빙 장비의 런타임을
     선언하고(docs/portability.md §3) 그 장비는 ATOM이다.
-    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340 · docs/portability.md §6). 그 뒤 실서빙 run은
-    서빙만 vast이고 도구는 하네스 쪽 로컬 Docker에서 돌았다(`vastai-remote` —
-    `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §2).
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340 · docs/portability.md §6). 그 뒤 도구까지 돈
+    완주는 서빙 vast · 도구 하네스 쪽 로컬 Docker(`--device vastai-remote`)였다 — Windows
+    `run_20261003_0003`(도구 4개 중 `index`·`semgrep`만 ok —
+    `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §1·§4)와
+    `run_20261007_0001`(`2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md` 메타·§3).
+    전부가 아니다: WSL `run_20261003_0002`는 Docker 소켓이 없어 도구 4개 전부 실패했고(같은 10-04
+    보고서 메타·§4), 2026-10-05 PoV 프로브(`run_20261005_0001`)는 `tool_runner: fake`다
+    (`2026-10-06-pov-seat-probe-vastai.md` 머리 표).
 
     **이 단언은 2026-08-28에 `podman`에서 뒤집혔다.** 그전 docstring은 "ATOM에는 podman만
     있으므로 `docker`로 되돌아가면 ATOM의 모든 실서빙 run이 `--tool-runner` 오버라이드를

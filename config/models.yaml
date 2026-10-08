@@ -789,9 +789,10 @@ models:
   # feyospace 행). resident가 아니라 swappable이라 8단계에 들어갈 때만 콜드 기동한다. PROJECT-CONTEXT
   # §1 로스터·model-serving.md 포트 표(8006)가 이 키를 든다.
   # ⚠ **실장비 종단은 미실측이다** — checksum·benchmark 0(위), 서빙+도구 되는 호스트 확보 뒤 실측한다.
-  #   ⏵ 2026-10-08 — 호스트는 위 ⏵대로 생겼다(`vastai-remote`). 실도구로 8단계까지 이 키를 부른 run은 `docs/experiments/`에 없다 —
-  #   2026-10-03 run은 8단계 모델을 안 불렀고(`2026-10-04-cybergym-operational-run-vastai-remote.md` 메타) 2026-10-05
-  #   프로브는 `tool_runner: fake`다.
+  #   ⏵ 2026-10-08 — 호스트는 위 ⏵대로 생겼다(`vastai-remote`). 실도구(docker)로 8단계에서 이 키를 부른 run은
+  #   `run_20261007_0001` 하나다(`docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md`
+  #   §1 — PoV 시도 5건, #551). 2026-10-03 run은 8단계 모델을 안 불렀고(`2026-10-04-cybergym-operational-run-vastai-remote.md`
+  #   메타) 2026-10-05 프로브는 `tool_runner: fake`다. 셋 다 비교표 제외다(각 보고서 머리).
   #
   # ## 추론(사고) — Auditor 손잡이를 물려받았다(사고 켬)
   # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
