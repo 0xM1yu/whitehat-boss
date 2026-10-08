@@ -211,15 +211,41 @@ def _diagnose(client: Any, *, arm: str, prompt: Prompt, trials: int) -> list[dic
     out: list[dict[str, Any]] = []
     for _ in range(trials):
         try:
-            raw, usage = client._post(payload)  # noqa: SLF001
+            posted = client._post(payload)  # noqa: SLF001
         except Exception as exc:  # noqa: BLE001
             out.append({"error": f"{type(exc).__name__}: {exc}"[:300]})
             continue
+        # **이름으로 읽는다.** 튜플을 `raw, usage = …`로 풀던 시절 필드가 하나 늘자 이 자리가
+        # 전 호출에서 `ValueError`를 맞고 위 `except`로 떨어져 GPU가 쓴 생성을
+        # `{"error": …}`로 버렸다(#550).
+        #
+        # **`content`는 `None`일 수 있다**(`PostedResponse`). 아래 `len(raw)`가 `TypeError`로 죽으면
+        # 이 함수 밖(`main`)까지 뚫고 나가 이미 쓴 진단이 전부 버려진다 — 위 `except`와 같은 모양의
+        # `error` 행으로 남기고 계속 간다. 서버가 준 사유·토큰은 문구에 싣는다.
+        if posted.content is None:
+            tokens = posted.usage.output_tokens if posted.output_tokens_reported else "미보고"
+            out.append(
+                {
+                    "error": f"content가 null이다 (finish_reason={posted.finish_reason}, "
+                    f"output_tokens={tokens})"
+                }
+            )
+            continue
+        raw, usage = posted.content, posted.usage
+        # **서버가 `completion_tokens`를 안 실었으면 `usage.output_tokens`의 0은 잰 값이 아니다**
+        # (CLAUDE.md §0) — `None`으로 남기고 `hit_cap`도 지어내지 않는다.
+        reported = posted.output_tokens_reported
         record: dict[str, Any] = {
             "max_tokens_sent": payload.get("max_tokens"),
-            "output_tokens": usage.output_tokens,
+            "output_tokens": usage.output_tokens if reported else None,
+            # **서버가 말한 종료 사유다**(`length`·`stop`·`abort` …, 못 읽으면 `null`).
+            # 아래 `hit_cap`은 토큰 수를 상한과 비교한 추정이라 상한과 같은 값에서의 `stop`과
+            # `length`를 못 가른다.
+            "finish_reason": posted.finish_reason,
             # **상한에 닿았나.** 이 한 응답의 값이라 합계 함정이 없다.
-            "hit_cap": usage.output_tokens >= int(payload.get("max_tokens") or 0),
+            "hit_cap": usage.output_tokens >= int(payload.get("max_tokens") or 0)
+            if reported
+            else None,
             "chars": len(raw),
             # 꼬리가 진단이다 — 잘린 JSON은 중간에서 끊기고, 공백 폭주(D46 · #79)는
             # 꼬리가 공백뿐이다.
@@ -353,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"  {arm}[{i}] json={row['json_valid']} "
                     f"out_tok={row['output_tokens']}/{row['max_tokens_sent']} "
-                    f"cap={row['hit_cap']} ws_tail={row['trailing_whitespace']}"
+                    f"cap={row['hit_cap']} finish={row['finish_reason']} "
+                    f"ws_tail={row['trailing_whitespace']}"
                 )
                 if not row["json_valid"]:
                     print(f"      err : {row.get('json_error', '')[:100]}")

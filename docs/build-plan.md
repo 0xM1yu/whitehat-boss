@@ -311,6 +311,9 @@ ADR 0012 결정 6이 폐기한다** — 부족한 맥락은 4단계 need_evidenc
 >    `message.content`만 꺼내 파싱하고 그 원문·`reasoning_content`(⏵ 2026-09-24 — vLLM 0.27.1의 필드 이름은 `reasoning`이다 — [2026-09-12 토큰 회계 보고서](experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md) §4, ATOM 실측)·`finish_reason`은 `ModelResult`에
 >    안 남으며(`src/adapters/openai_compat.py`의 `_post`, `src/interfaces/model_client.py`), 내보내기
 >    명령이 CLI에 없다(`src/cli.py`의 서브커맨드는 `doctor`·`estimate`·`run`·`bench`·`gc`).
+>    ⏵ 2026-10-08 — 그중 `finish_reason`은 이슈 #550으로 `ModelResult.attempt_log`에 시도별로 남고, 성공한 시도의
+>    원문은 2026-09-26부터 `ModelResult.raw_text`가 든다(`src/interfaces/model_client.py`). 안 남는 것은
+>    `reasoning`과 실패한 시도의 원문이다.
 >
 > **아래 본문은 2026-09-13 판 그대로 둔다** — 그 ADR은 승인됐다(2026-09-25) — 본문은 아직이다.
 
