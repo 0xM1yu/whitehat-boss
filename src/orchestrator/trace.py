@@ -345,7 +345,12 @@ class EventKind(StrEnum):
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
-    # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나.
+    # `runner._emit_scout_hop`이다 — 신호가 있는 v3 좌석의 홉마다(hop0 포함) 하나. resolver 통계
+    # (`resolved`·`already`·`fixable_count`·`unfilled`·`truncated`·`index_available`)는 resolver를
+    # 부른 홉에만 실린다 — 훅이 없어 `nothing_resolved`로 선 홉에는 **키가 없다**(안 돌린 것을
+    # 값으로 적지 않는다). 그래서 `nothing_resolved`의 원인은 셋이다: 키 없음(훅 없음 —
+    # 프로덕션은 factory가 늘 꽂는다) · `index_available=False`(색인 없음/v1) · `True`(조회했는데
+    # 못 찾음) (#315).
     SCOUT_HOP = "scout_hop"
     # 홉 하나의 Auditor(5단계) 도구 홉 루프 기록 (이슈 #419 — 모델-주도 루프). 내는 곳은
     # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나. `hop`이 조인
