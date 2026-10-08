@@ -57,11 +57,17 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 히트 순위(rank 2)가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로
 간다. 위치를 못 뽑은 신호(실 clang-tidy — `container_tools.first_hit_location`은 semgrep만
 읽는다)만 걸린 artifact는 심볼 전부가 rank 1이고, 인덱스 없는 폴백의 파일 단위 target도
-rank 1이다(`_symbol_signal_rank`). **그래서 그 artifact는 다른 파일의 위치 있는 히트
-(rank 2) 뒤로 간다** — 정렬 키 첫 항이 `-signal_rank`라 파일 순서보다 앞선다
-(`_order_and_cut`). #249 전에는 신호 artifact의 심볼이 모두 동급이었으므로 그때와 다른
-순서이고, `candidate_max`가 물면 그 artifact의 심볼이 다른 파일의 히트보다 먼저 잘린다.
+그 artifact에 STATIC 신호가 있으면 rank 1이다(없으면 0 — `_symbol_signal_rank`).
+**그래서 그 artifact는 다른 파일의 위치 있는 히트(rank 2) 뒤로 간다** — 정렬 키 첫 항이
+`-signal_rank`라 파일 순서보다 앞선다(`_order_and_cut`). #249 전에는 신호 artifact의
+심볼이 모두 동급이었으므로 그때와 다른 순서이고, `candidate_max`가 물면 그 artifact의
+심볼이 다른 파일의 히트보다 먼저 잘린다.
 이 동작을 받아들였다(#257 2).
+`--slices` run에서는 더 좁다: 슬라이스 target의 `Location`은 `line_start`=entry 줄이고
+`line_end`가 없다(`src/adapters/slices.py`). `_symbol_signal_rank`가 `end = line_end or start`로
+보므로 rank 2는 히트 줄이 entry 줄과 같을 때뿐이다 -> entry 줄이 아닌 곳에 걸린 semgrep
+히트는 clang-tidy만 걸린 것과 같은 rank 1이다(`_plan_slice_targets`의 ponytail, 코드 읽기 +
+함수 직접 호출 — `--slices` run으로 순서를 재지는 않았다).
 **점수 축은 아직 artifact 단위다**: `fake_model._has_static_signal()`은 심볼별로
 거르지 않은 evidence를 보므로 가산점은 artifact 전체에 간다 — 순서만 심볼 단위다.
 
@@ -2823,7 +2829,8 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
     나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
     rank 1을 두는 이유는 같은 파일의 두 번째 히트를 신호 없는 심볼 아래로 안 내리기
-    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다.
+    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다
+    (artifact에 STATIC 신호가 있을 때 — 없으면 0).
     """
     plan.collected.sort(
         key=lambda item: (
