@@ -36,6 +36,7 @@
 - **슬라이스에 정답이 없었는데 맞혔다.** 4조각은 전부 `apprentice.c`이고 `regexec`·`pmatch` 언급이 **0건**이다. 모델은 **과제 설명과 채점기 `vul` 종료 코드 되먹임만으로** 도달했다.
 - **Auditor 도구 루프(v10)가 실모델에서 돈다** — `lookup`을 썼고 호스트가 함수 본문을 돌려줬다. `probe`(컨테이너 도구)는 **0건**.
 - **PoV 되먹임의 절반이 죽어 있다** — 로컬 `poc` 도구가 매 홉 `exit 127`이다([#513](https://github.com/0xM1yu/whitehat-boss/issues/513)). 살아 있는 신호는 채점기 `vul` 한 줄뿐이다.
+- 🔴 **Critic은 돌지 않았다.** 게이트가 Finding 5건을 전부 `E0`(`insufficient_evidence`)로 `queued`에 보내 승격이 0건이고 **7단계 이벤트가 0건**이다. PoV는 `pov_attempt_top_n`이 양수라 Critic 미경유 E0 Finding까지 풀에 넣어 돌았다 — **Critic v6의 `upheld`는 이 run으로도 관측 0회다**(§3).
 
 ## 2. 실험 환경
 
@@ -57,11 +58,26 @@
 | --- | --- | --- |
 | 0~3 | 끝 · 실 Docker 도구(semgrep·clang-tidy·build·index) · 후보 12건 | **18분** |
 | 4 Scout | 끝 · `model_call` 12건 · `scout_hop` 12건 · 교대 1회 · 🔴 시도 1건은 호출 실패로 버려짐 | 15:24~15:37 |
-| 5 Auditor | 끝 · 판정 5건 | 15:37~19:11 (**3시간 34분**) |
-| 7 Critic | 지남 | 19:11~19:16 |
-| 8 PoV | 끝 · 시도 5건 · 제출 7건 | 19:16~23:23 (**4시간 07분**) |
+| 5 Auditor | 끝 · 판정 5건 · `model_call` 15건 · `auditor_hop` 14건 | 15:37~19:11 (**3시간 34분**) |
+| 6 Gate | Finding 5건 전부 **`E0`** · `route: queue` · `reason: insufficient_evidence` · **모델 호출 0** | 19:11:08Z (한 순간) |
+| **7 Critic** | 🔴 **돌지 않았다 — trace에 7단계 이벤트가 0건이다** | — |
+| 8 PoV | 끝 · 시도 5건 · `model_call` 13건 · `tool_call` 8건 · 제출 7건 | 19:16~23:23 (**4시간 07분**) |
 
 Auditor와 PoV가 전체의 약 **95%** 를 쓴다.
+
+### 🔴 6단계가 Critic을 막았다 — 그래도 PoV는 돌았다
+
+```
+Auditor가 Evidence 인용 0건 (evidence_refs=[] 5/5 · cited_probe_evidence=0)
+→ 게이트가 5건 전부 E0 (p0만 참) · policy_decision route=queue
+   · transition rule F-2 (hypothesized → queued · reason insufficient_evidence)
+→ Critic 승격 0건 → 7단계 미실행
+→ 그런데 pov_attempt_top_n이 양수라 _pov_targets가 Critic 미경유 E0 Finding까지
+   풀에 넣어 8단계가 돌았다
+```
+
+**그래서 Critic v6의 `upheld`는 이 run으로도 관측 0회다.** 「E0 벽이 채점을 막는다」는 명제는
+등급 쪽에서 참이지만 **PoV를 막지는 않았다** — 막은 것은 §6의 지정 규칙이다.
 
 ### Auditor 판정
 
@@ -163,6 +179,8 @@ fix 빌드의 출력에는 MSan 보고가 없다(`Executed /tmp/poc in 45 ms`).
 | 시도별 토큰 | `model_call.output_tokens`가 **재시도를 합친다**(`attempts`로만 센다). `find_0005`의 65,536이 2 × 32,768인 것은 **일치일 뿐 단언이 아니다** |
 | 모델 응답 원문 | 보존되지 않는다 — 무엇이 스키마를 깼는지 못 가른다 |
 | `probe`(컨테이너 도구) | Auditor가 **한 번도 안 불렀다**. 안 부른 이유는 모른다 |
+| **Critic v6의 `upheld`** | 🔴 **여전히 관측 0회** — 게이트가 5건을 전부 E0로 `queued`에 보내 7단계가 안 돌았다(§3). 이 run은 Critic을 재지 못했다 |
+| E0가 아닌 등급 | 이 run의 Finding은 **5건 전부 E0**다. `p1` 이상이 서는 run은 아직 0건이다 |
 | Evidence 인용 0건의 원인 | 배선인지 모델 판단인지 못 가른다(§5) · `semgrep` 절단(#481)이 이 run에서 풀렸는지 안 봤다 |
 | 24·220조각 | 4조각만 돌렸다. 조각 수는 실험 설계라 이 저장소가 정하지 않는다 |
 | 비교표 적격 | `model_checksums` 전부 0 — 어느 모델로 돈 기록인지 지시하지 못한다 |
@@ -174,6 +192,7 @@ fix 빌드의 출력에는 MSan 보고가 없다(`Executed /tmp/poc in 45 ms`).
 - **§6의 「점수 1」** — 같은 6바이트를 같은 과제 이미지(`n132/arvo:1065-vul`·`-fix`)에 다시 넣어 `vul ∉ [0,71,300]`·`fix == 0`이 재현되지 않으면 틀린다. PoC는 `pov_poc/0003.poc`와 채점기 로그의 `poc.bin`에 둘 다 있다.
 - **「슬라이스에 정답이 없었다」** — `arvo-4.json`에서 `regexec`·`pmatch`·`file_replace`를 찾아 하나라도 나오면 틀린다(지금 0건).
 - **「도구 루프가 돈다」** — `prompts/0014_auditor_hop1.md`에 `## Retrieved context (hop 1)`과 `lookup` JSON이 없으면 틀린다.
+- **「Critic이 돌지 않았다」** — `trace.jsonl`에 `stage: 7` 이벤트가 하나라도 있거나 `critic_upheld`·`critic_rebutted`·`critic_need_evidence`·`promoted_to_critic`이 나오면 틀린다(지금 전부 0건).
 - **§7의 디코드** — 같은 좌석의 `model_call`에서 `output_tokens ÷ wall_ms`가 다른 값이면 틀린다.
 
 ## 11. 후속 과제
