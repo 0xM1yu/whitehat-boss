@@ -692,8 +692,15 @@ def _resolution(*, name: str = "LLVMFuzzerTestOneInput", file: str = "") -> obje
     from src.schemas.need_evidence import Resolution, RetrievedBlock
 
     if not name:
-        # 통째로 빈 `Resolution` = 인덱스가 없거나 v1이다(`unfilled`조차 빈 것이 그 서명).
-        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
+        # 인덱스가 없거나 v1 — resolver가 실제로 내는 모양(`index_available=False`, #315).
+        return Resolution(
+            followup_text="",
+            blocks=(),
+            unfilled=(),
+            already=(),
+            truncated=(),
+            index_available=False,
+        )
     return Resolution(
         followup_text="",
         blocks=(RetrievedBlock(name=name, label="function", file=file, lines=(1, 2)),),
@@ -2026,7 +2033,7 @@ def test_fuzz_entrypoint_reasons_are_pairwise_distinct_by_cause(
         reason=UnfilledReason.NOT_FOUND, text="Not resolved: SAME_TARGET",
     )
     cases = {
-        "no_index": (resolution(), "인덱스가 없거나 v1"),
+        "no_index": (resolution(index_available=False), "인덱스가 없거나 v1"),
         "name_missing": (resolution(unfilled=(other,)), "함수 표에 LLVMFuzzerTestOneInput가 없다"),
         "truncated": (
             resolution(truncated=("LLVMFuzzerTestOneInput",)), "resolver 조회 상한"

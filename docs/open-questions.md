@@ -109,7 +109,7 @@
 | D54 | **로스터 모델 중 어느 것도 `prompts/{scout,auditor,critic}/v2`를 고르지 않아 머지된 v2가 도달 불가다** | 부분 | [본문](open-questions/D/D54.md) |
 | D55 | ~~재시도가 `model_call` 한 건으로 뭉개져 "스키마 파싱 실패율"이 과소 집계된다~~ | 닫힘 | [본문](open-questions/D/D55.md) |
 | D57 | ~~`served_models()`가 호출되지 않는 역할까지 서빙으로 세어, 안 뜨는 모델의 미실측 `checksum: 0`이 비교표 제외 판정에 들어온다~~ | 닫힘 | [본문](open-questions/D/D57.md) |
-| D58 | **샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)** | 열림 | [본문](open-questions/D/D58.md) |
+| D58 | ~~샘플링 부재를 서술하는 주석 셋이 낡았다 (#99 ③ 이후 두 판본 공존)~~ (주석 셋을 새 계약에 맞춰 해소) | 닫힘 | [본문](open-questions/D/D58.md) |
 | D59 | ~~Critic과 Auditor가 다른 계열이어야 한다는 조건을 강제하는 장치가 코드에 없다~~ | 닫힘 | [본문](open-questions/D/D59.md) |
 | D60 | ~~bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다~~ | 닫힘 | [본문](open-questions/D/D60.md) |
 | D61 | ~~bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다~~ | 닫힘 | [본문](open-questions/D/D61.md) |
@@ -117,7 +117,7 @@
 | D63 | 리랭커 순위를 우리가 실제로 보내는 입력 모양에서 ~~한 번도 재지 않았다~~ 4b만 쟀다(2026-09-13 · 짧은 함수 8건) — **0.6b는 한 번도 안 쟀고 실경로(40줄 조각·32건)는 둘 다 아직이다** | 열림 | [본문](open-questions/D/D63.md) |
 | D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
 | D65 | **게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다** — ~~실서빙 run이 7단계에서 죽는다~~ (크래시는 #167이 닫음 · Auditor `missing_evidence` blocking은 해제 경로가 없어 E2 미만) | 부분 | [본문](open-questions/D/D65.md) |
-| D66 | **실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다** | 열림 | [본문](open-questions/D/D66.md) |
+| D66 | ~~실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다~~ (선택지 (a)로 해소) | 닫힘 | [본문](open-questions/D/D66.md) |
 | D67 | **Auditor가 `path`·`evidence_refs`를 안 채운다 — v1이 둘 다 요구하는데 150건 중 `path` 150·`evidence_refs` 148이 빈다. ②가 원인으로 실측 · ①③ 미확정** | 열림 | [본문](open-questions/D/D67.md) |
 | D68 | ~~Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다~~ (연속 폐기를 역할별로 셈) | 닫힘 | [본문](open-questions/D/D68.md) |
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |

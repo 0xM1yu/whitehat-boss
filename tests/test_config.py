@@ -1622,6 +1622,8 @@ def test_benchmark_distinguishes_three_states() -> None:
     `is_measured`가 `any`라 그것만으로는 **절반만 채운 모델이 production 게이트를 그냥
     통과한다.** ATOM에서 `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으므로
     (2026-08-17) 부분 측정은 가정이 아니라 곧 실제로 생기는 상태다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). vast에서 이 필드가 채워지는지는
+    미실측이다(`src/config.py`의 `Benchmark.is_measured` 같은 ⏵).
     """
     none = _bench()
     partial = _bench(tok_s_single=30.0, tok_s_batch32=90.0)
@@ -2434,6 +2436,7 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     타임아웃이 상한보다 먼저 오면 호출이 끊기고
     연속 셋이면 run이 선다(#261) ③ 사고 상한이 출력 상한과 같으면 답 몫이 없다. 그래서 **값이 아니라
     관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 값을 바꿀 실측 장비는 vast다(D81).
     """
     _assert_thinking_seat_holds_together("auditor")
 

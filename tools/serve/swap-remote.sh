@@ -44,6 +44,8 @@
 #   `bash`를 못 찾아 `which`가 못 풀면 못 막는다(`CreateProcess`는 System32를 먼저 본다). `doctor --device`는
 #   이 판정을 안 한다. 이 변경 뒤에 Windows 네이티브로 원격 교대를 끝까지 돌린 run은 없다 —
 #   미실측(`_resolved`의 두 PATH 해소만 2026-10-05 이 PC에서 쟀다).
+#   ⏵ 2026-10-08 (#538) — 위 풀이 하나만 따르면 다른 쪽이 ERROR다(Git Bash `export` -> 환경변수 · PowerShell -> bash
+#   해소). 통과한 조합과 순서는 docs/portability.md 「Windows에서 원격 교대 run 절차」.
 # ⚠ 하네스가 마감에 이 프로세스를 죽여도 원격 swap.sh는 자기 마감(SWAP_DEADLINE_S)까지 돈다 — ssh를 TTY 없이
 #   열어 HUP이 안 간다. 계약상 swap.sh는 그 마감에 스스로 끝난다.
 set -euo pipefail
