@@ -29,6 +29,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
 | 토큰 계상 방식 | `token_counter` | 역할별 `real`/`approx`와 그 사유. run당 **정확히 1건** |
 | 스키마 파싱 실패율 | `model_call`(`attempts`·`ok`·`error`) | 시도 단위 — 산식 아래 (#83) |
+| 시도별 출력 토큰·종료 사유 | `model_call`의 `attempt_*` 둘 | 시도 순서 — 아래 (#550) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
@@ -43,6 +44,55 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 「스키마 파싱 실패율」 산식: 분자 `Σ(attempts−1 if ok else attempts) −
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다(#83).
+
+「시도별 출력 토큰·종료 사유」(#550): `model_call.output_tokens`는 **재시도를 합친 값**이다. 합이
+**이미** 주는 것이 있다 — 상한이 32,768일 때 두 시도의 합 65,536은 산술로 둘 다 정확히 32,768이고,
+합 27,888은 **`null` 칸이 없을 때** 두 시도가 다 상한 아래임을 보인다(`null` 칸은 합에 0을 더한
+시도라 합이 그 몫만큼 과소일 수 있다 — 아래 규칙 3). 합이 65,536일 때 합이 못 가르는 것은 그
+32,768이 `length`인지 상한과 같은 값에서의 정상 종료인지뿐이다. 합이 **못** 주는 것은
+① 상한과 그 2배 사이의 합에서 어느 시도가 닿았나(CLAUDE.md §2.2의 `a₁ + a₂ = 8,402` 사례)
+② `abort` 같은 `length`·`stop` 밖의 사유 ③ 추론이 아니라 서버의 직접 확인이다. 그래서 같은
+이벤트에 두 키를 더 싣는다(성공·실패 행 모두, 키 집합이 같다).
+
+- `attempt_output_tokens` — 시도별 출력 토큰. 예: `"[8192,12]"`
+- `attempt_finish_reasons` — 시도별 서버 종료 사유(`stop`·`length`·`abort` … 서버가 준 그대로).
+  공백뿐인 값은 `null`이다. 원문이 512자를 넘는 값만 `error_detail`과 같은 자르기로 묶이는데, 그
+  자르기는 공백 연속을 한 칸으로 접고 다시 재므로 **접은 결과가 512자 이하면 잘림 표시 없이 공백만
+  달라진다**(표시가 붙는 것은 접은 뒤에도 넘칠 때뿐이다). 예: `"[\\"length\\",\\"stop\\"]"`
+
+값은 JSON 배열 **문자열**이다(`json.loads`로 읽는다) — `TraceValue`가 스칼라라서이고, 쉼표 연결은
+미측정(`null`)을 빈 칸이나 지어낸 문자열로 써야 해서 안 쓴다. 읽는 규칙 셋:
+
+1. **배열 길이 = `attempts`이고 순서가 시도 순서다.** 원소 `null`은 「안 쟀다」다 — 응답을 못 받은
+   시도(게이트웨이 거절·타임아웃·모양이 깨진 200)이거나, 서버가 그 값을 안 실었다
+   (`attempt_finish_reasons`는 사유를, `attempt_output_tokens`는 `usage.completion_tokens`를).
+   `0`·`""`·`"unknown"`이 아니다 — 토큰 칸의 `0`은 서버가 0이라고 보고한 것이다.
+2. **두 키가 모두 `null`(배열 아님)이면 이 호출에 시도별 내역이 없다 — 이유는 둘이고 trace에서 안
+   갈린다.** (가) 어댑터가 안 실었다 — Fake, 소비를 안 든 예외(프로필에 없는 역할을 부른
+   `UnknownRoleError` 등). (나) 실었는데 **잃었다** — 시도가 측정된 뒤 `complete()`를 어댑터가
+   안 잡는 예외가 뚫고 나가면 예외에 `attempt_log`가 안 실려 (가)와 같은 모양이 된다. 어댑터가
+   잡는 것은 응답 모양이 깨진 200(`KeyError`·`IndexError`·`TypeError`·`AttributeError`·
+   `ValueError`·`OverflowError` → `ModelGatewayError`)과 스키마 검증 실패(`ValidationError`)이고,
+   **안 잡혀 뚫는 것의 측정된 예**는 ① 서버가 보낸 100,000단 중첩 JSON이 `json.loads`에서 일으키는
+   `RecursionError`(응답 하나로 닿는다) ② 스키마 검증기가 던진 `TypeError`·`KeyError` — pydantic
+   2.13.4는 검증기의 `ValueError`·`AssertionError`만 `ValidationError`로 감싼다(`SchemaParseError`가
+   `attempt_log`를 든다). 그 밖의 예외 형은 재지 않았다. 어느 쪽이든 「시도가 없었다」가 아니고,
+   null/null만으로 「측정된 적 없다」를 단정하지 않는다.
+3. **`output_tokens == Σ attempt_output_tokens`(`null` 제외)다.** 합은 그대로이고 이것은 쪼갠
+   내역이다. `null` 칸은 합에 0을 더한 시도라(`Usage`가 `None`을 못 들어 어댑터가 0을 채운다)
+   이 등식은 `null`이 섞여도 선다. **합산 `output_tokens`가 못 가르는 것**: 그 0이 「서버가
+   안 줬다」인지 「0이라고 보고했다」인지 — 가르는 것은 칸의 `null`과 `0`이다. 반대로 `null`
+   칸이 있는 호출의 합은 **그만큼 과소**일 수 있다.
+
+⚠ **1·3은 어댑터가 호출을 지을 때의 관례이지 강제되는 불변식이 아니다.** `ModelResult`는
+`len(attempt_log) == attempts`도 합 일치도 검증하지 않는다(던지는 검증은 계측 결함을 run 중단으로
+바꾸므로 일부러 안 둔다). 지켜지는 곳은 `OpenAICompatModelClient.complete()`와 대본을 준
+`FakeModelClient`이고 `tests/test_model_call_instrumentation.py`가 그 둘을 문다. 어긋난 이벤트를
+읽는 쪽은 같은 이벤트의 `attempts`·`output_tokens`와 규칙 1·3으로 **직접 대조한다** — 어긋나면
+그 호출의 쪼갠 값을 쓰지 않는다.
+
+⚠ `finish_reason="length"`는 서버가 **그 시도가 길이 상한에 닿아 끝났다고 보고한 것**이지 파싱
+실패의 원인을 확정하는 값이 아니다. 이 키가 하는 일은 절단과 그 밖을 **가를 수 있게** 하는 것까지다.
 
 ⚠ **「제거율 — Critic」의 분자는 두 가지를 담는다.** `need_evidence`에는 Critic이 실제로
 보류한 것과 **우리 매퍼가 verdict를 못 읽어** 보류로 보낸 것이 함께 들어간다
@@ -356,7 +406,8 @@ class EventKind(StrEnum):
     # - 공통 — `hop` · `action`(lookup/probe/answer) · `input_tokens`·`output_tokens`.
     #   **상한 값의 실측 근거가 여기서 나온다** — 홉당 usage를 안 실으면 홉 수를 몇으로 둘지가
     #   추정이 된다. 값은 어댑터가 준 `usage`이고 서버가 usage를 안 주면 어댑터가 0을 채운다 —
-    #   `model_call`과 같은 한계라 이 이벤트만의 미측정 표시는 없다.
+    #   `model_call`의 합산 `output_tokens`와 같은 한계다. `model_call`은 시도별 칸의 `null`로 그
+    #   0을 가르지만(#550) 이 이벤트에는 그 칸이 없어 이 이벤트만의 미측정 표시는 없다.
     # - `lookup` — `requested`(모델이 낸 요청 수) · `ignored`(resolver 처리 상한 3을 넘어 안
     #   돈 수 — 있을 때만) · `resolved`·`already`·`fixable_count` · `unfilled`(사유 쉼표 나열)
     #   · `truncated`(이름 쉼표 나열). 뒤 둘은 `SCOUT_HOP`과 같은 이름·형식이다.

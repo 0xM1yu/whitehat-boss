@@ -14,6 +14,7 @@
 """
 
 import hashlib
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -21,6 +22,7 @@ from time import perf_counter
 from src.config import HarnessConfig
 from src.ids import IdFactory
 from src.interfaces.model_client import (
+    AttemptRecord,
     ChatTurn,
     ModelClient,
     ModelResult,
@@ -66,6 +68,26 @@ def _trace_scalar(value: object) -> str:
     (`src/schemas/common.py`). 필드가 달랐다는 사실(`fields`)은 그래도 정확하다.
     """
     return ",".join(value) if isinstance(value, list) else str(value)
+
+
+def _attempt_fields(log: Sequence[AttemptRecord]) -> dict[str, TraceValue]:
+    """시도별 출력 토큰·종료 사유를 `model_call`의 두 키로 (#550). 정본 설명은 `trace.py`다.
+
+    **값은 JSON 배열 문자열이다**(`TraceValue`가 스칼라라서). 쉼표로 잇지 않는 것은 미측정 칸
+    (`null`)을 빈 칸이나 지어낸 문자열로 쓰지 않으려는 것이다 — `json.loads`로 읽으면 `None`이
+    `None`으로 온다.
+
+    **`log`가 비면 두 키 모두 `None`이다** — 어댑터가 안 실은 호출(Fake·소비를 안 든 예외)이거나,
+    실었는데 잃은 호출(측정된 뒤 생 예외가 `complete()`를 뚫은 경우)이다. 둘은 여기서 안 갈린다
+    (`trace.py` 읽는 규칙 2). `"[]"`이 아니다: 시도가 없었다는 뜻으로 읽히고, 키 집합은 성공·실패
+    행에서 같아야 한다.
+    """
+    if not log:
+        return {"attempt_output_tokens": None, "attempt_finish_reasons": None}
+    return {
+        "attempt_output_tokens": json.dumps([a.output_tokens for a in log], separators=(",", ":")),
+        "attempt_finish_reasons": json.dumps([a.finish_reason for a in log], separators=(",", ":")),
+    }
 
 
 def _unwired_read_source(_target: Location) -> str:
@@ -299,7 +321,7 @@ class RunContext:
             # 청구는 예외가 소비를 들고 왔을 때만 한다(아래 `if usage is not None`).
             #
             # **이벤트 키는 성공 경로와 균질하게 둔다(#82 리뷰 F10).** 소비를 안 든 예외
-            # (`BudgetExhausted` 등)는 토큰·gpu·attempts를 `None`으로 싣는다 — 안 잰 것은 0이
+            # (`UnknownRoleError` 등)는 토큰·gpu·attempts를 `None`으로 싣는다 — 안 잰 것은 0이
             # 아니라 `None`이고(model_client.py `gpu_ms` 주석), 키 집합이 실패 종류마다 달라지면
             # 사후 집계가 실패 행에서 KeyError나 `.get(...,0)` 0-뭉갬을 낸다. `attempts`도 안
             # 실려 오면 **지어낸 1이 아니라 `None`**이다(#83 리뷰 F3 — 미실측은 미실측으로 둔다).
@@ -312,6 +334,9 @@ class RunContext:
                 "cached_tokens": usage.cached_tokens if usage is not None else None,
                 "gpu_ms": gpu_ms,
                 "gpu_ms_source": getattr(exc, "gpu_ms_source", None),
+                # 시도별 내역도 같은 규칙이다 — 안 실려 왔으면 `None`이고 지어낸 빈 목록이 아니다.
+                # 가르려는 호출(`SchemaParseError`로 버려진 Finding)이 전부 이 경로로 온다(#550).
+                **_attempt_fields(getattr(exc, "attempt_log", ())),
             }
             # 실패해도 재시도가 실제로 보낸 요청은 남긴다 — 400을 받은 요청이 무엇이었는지가
             # 이 항목의 요점이다(#80). 소비를 안 든 예외(`BudgetExhausted`)는 `retry_bodies`가
@@ -382,6 +407,8 @@ class RunContext:
             gpu_ms=result.gpu_ms,
             gpu_ms_source=result.gpu_ms_source,
             attempts=result.attempts,
+            # `output_tokens`는 위 시도들의 합이다. 시도별 내역과 종료 사유는 여기(#550).
+            **_attempt_fields(result.attempt_log),
         )
         # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
         # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로
