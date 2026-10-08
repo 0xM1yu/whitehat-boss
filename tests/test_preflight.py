@@ -155,6 +155,45 @@ def test_the_default_resolver_is_the_one_the_swap_adapter_runs() -> None:
     assert pp.Probes().resolve is model_swap._resolved  # 새로 짓지 않고 같은 판정을 재사용한다
 
 
+# --- 오류 문구가 가리키는 절 (이슈 #538) --------------------------------------------------------
+# 절 제목은 문서에서 읽는다 — 제목을 바꾸면 아래 두 테스트가 같이 죽는다.
+_PROCEDURE_DOC = Path(__file__).resolve().parents[1] / "docs" / "portability.md"
+_PROCEDURE_HEADING = "Windows에서 원격 교대 run 절차"
+
+
+def _procedure_heading() -> str:
+    lines = _PROCEDURE_DOC.read_text(encoding="utf-8").splitlines()
+    assert any(line.startswith(f"#### {_PROCEDURE_HEADING}") for line in lines)
+    return f"docs/portability.md 「{_PROCEDURE_HEADING}」"
+
+
+def test_the_wsl_launcher_refusal_points_at_the_procedure_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_swap.sys, "platform", "win32")
+    monkeypatch.setattr(model_swap.shutil, "which", lambda _name: r"C:\Windows\system32\bash.EXE")
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+
+    with pytest.raises(ModelSwapError) as refused:
+        model_swap._resolved(("bash", "tools/serve/swap-remote.sh"))
+
+    message = str(refused.value)
+    assert message.startswith("교대 명령의 bash가 WSL 런처로 풀렸다")
+    assert _procedure_heading() in message
+
+
+def test_an_msys_converted_remote_root_points_at_the_procedure_and_excludes_both_vars(
+    world: World,
+) -> None:
+    world.env["SWAP_REMOTE_ROOT"] = "C:/Program Files/Git/root/harness"  # 2026-10-08 이 PC 실측값
+
+    message = one(world.check(), "교대 환경변수:").message
+
+    assert _procedure_heading() in message
+    # 하나만 빼면 반쪽 — ROOT만 빼도 SWAP_REMOTE_PYTHON은 바뀐다(2026-10-08 이 PC)
+    assert 'MSYS2_ENV_CONV_EXCL="SWAP_REMOTE_ROOT;SWAP_REMOTE_PYTHON"' in message
+
+
 # --- 3. 터널 포트 ------------------------------------------------------------------------------
 
 

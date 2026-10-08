@@ -67,6 +67,10 @@ class Resolution(HarnessModel):
     already: tuple[str, ...]
     # 크기 상한(위 `ResolveQuery.max_chars` — 폭주 차단) 때문에 통째로 뺀 블록 이름들.
     truncated: tuple[str, ...]
+    # 조회할 색인 표가 있었는가. `False`면 색인 없음·v1이라 **조회를 아예 안 했다** — 같은 빈
+    # 결과라도 「조회했는데 못 찾음」과 다르다(#315). 예전에는 네 칸이 다 비었다는 것으로만
+    # 가렸다(암묵 규칙). 기본값 `True`는 이 필드가 생기기 전의 생성자 호출을 그대로 둔다.
+    index_available: bool = True
 
     @property
     def fixable_count(self) -> int:

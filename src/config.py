@@ -150,6 +150,8 @@ class Benchmark(HarnessModel):
         (2026-08-17) 그 상태는 가정이 아니라 곧 실제로 발생한다. **다른 쿼리로도 이
         필드가 채워지지 않는다는 뜻은 아니다** — 이 문장이 지탱하는 것은 "부분 측정이
         실제로 생긴다"까지이고, 그것은 어느 쿼리에서든 참이다.
+        ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). vast는 전용 VRAM 장비다
+        (`config/serving/vastai.yaml` 머리) — 거기서 이 필드가 채워지는지는 미실측이다.
         """
         return len(self.missing_measurements) < len(self.MEASUREMENTS)
 
@@ -251,6 +253,8 @@ class ModelEntry(HarnessModel):
     # `reasoning_effort` 그대로다 — 선언 안 하면 `None`이고 payload에 키가 안 생긴다. 값은 아직
     # 아무 모델에도 없다 — 샘플링은 모델 카드 값으로 바꿀지 결정이 남았고, 나머지(사고 켜기·사고
     # 상한·요청 타임아웃)는 ATOM 실측 뒤에 채운다.
+    # ⏵ 2026-10-08 — 「ATOM 실측 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 ·
+    #   docs/portability.md §6). 아래 ⏵대로 값은 실측 전에 계산값으로 들어갔다.
     # ⏵ 2026-09-26 — Auditor(`qwen3.8-27b`)가 처음으로 셋을 선언했다 — `sampling`(모델 카드의
     #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 @danielcho02
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
@@ -1013,6 +1017,8 @@ class HarnessConfig(HarnessModel):
         쓸 모델을 적어 둔 것이고, 지금 fake인 이유는 ATOM에 모델 5개를 동시에 띄우면
         R1(sm_121 커널 호환성) 검증의 실패 지점이 늘기 때문이다(그 근거를 적었던 옛
         `local_balanced`의 retriever 주석은 2026-09-24 프로필과 함께 지웠다 — git 이력).
+        ⏵ 2026-10-08 — 그 장비(ATOM · `sm_121`)는 2026-09-29 사용 종료(#340 ·
+        docs/portability.md §6). 지금 장비에서 fake로 두는 근거는 이 문단이 다시 세우지 않았다.
         그 정보를 프로필에서 지우면 나중에 hybrid로 올릴 때 어느 모델을 쓸지 다시 정해야
         한다. 그래서 **기록(`model_checksums`)은 그대로 두고 판정 대상만 좁힌다.**
         """

@@ -401,6 +401,9 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   `doctor --device`는 이 판정을 안 한다 — doctor가 OK여도 교대를 시도하면 막힐 수 있다. 이 변경 뒤에 Windows
   네이티브로 원격 교대를 끝까지 돌린 run은 없다 — **미실측**(위 Windows `run_20261003_0003`은 `command`를 Git Bash
   절대경로로 고친 미커밋 우회로 돌았다 — 보고서 3.2).
+  ⏵ 2026-10-08 (#538) — 위 ①~④와 풀이는 셸 조건이 반쪽이다: Git Bash `export`는 환경변수, PowerShell은 bash
+  해소에서 preflight ERROR(2026-10-07 실 박스). 실 박스에서 통과한 조합은 PowerShell `$env:` + `Git\usr\bin`을 PATH 앞에 하나다.
+  Windows 순서·명령의 정본은 [portability.md](portability.md) §1 「Windows에서 원격 교대 run 절차」다.
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).

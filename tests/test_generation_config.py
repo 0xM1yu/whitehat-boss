@@ -3,6 +3,11 @@
 **재는 것은 "모델이 선언한 샘플링을 충실히·지어내지 않고 읽는가"다.** 서버가 그 파일을
 읽어 `top_k` 등을 적용하는데 하네스는 그 값을 안 보내고 응답도 안 돌려주므로, 이 리더가
 없으면 그 축이 기록 어디에도 안 남아 모델 비교가 조용히 오염된다(evaluation.md §2.3).
+
+⏵ 2026-10-08 — 「하네스는 그 값을 안 보내고」(2026-08-29)는 `top_k`에 대해 낡았다. registry
+`sampling`을 선언한 모델은 `temperature`·`top_p`·`top_k`·`min_p`·`presence_penalty`를 요청에
+싣는다(`RequestSampling` -> `extra_params`, #261 / `top_k` 선언은 2026-09-26부터).
+`repetition_penalty`는 여전히 안 보낸다. 응답 쪽 서술은 재확인 안 함.
 """
 
 import json

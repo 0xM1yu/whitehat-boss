@@ -46,6 +46,8 @@ MEASURED_AT = "2026-08-17T00:00:00Z"
 # 실측 원문 (2026-08-14, Slurm <node> / vLLM 0.19.1 / Qwen3-0.6B).
 # 파일명에 버전·장비를 박아 둔다 — ATOM 원문이 들어오면 두 번째 파일이 되고, 그때 이름이
 # 바뀌면 `test_bench_reads_only_names_that_exist_in_every_fixture`가 잡는다.
+# ⏵ 2026-10-08 — ATOM 원문은 2026-08-18에 받았으나(`2026-08-18-serving-atom.md` §3.5) 이 디렉터리에
+#   안 들어왔고, ATOM은 2026-09-29 사용 종료(#340)다. 두 번째 파일은 아직 없다.
 METRICS_DIR = FIXTURES / "metrics"
 SLURM_METRICS = METRICS_DIR / "vllm_0191_slurm_sm86.txt"
 SLURM_COMPLETION = METRICS_DIR / "vllm_0191_chat_completion.json"
@@ -537,6 +539,9 @@ def test_bench_reads_only_names_that_exist_in_every_fixture() -> None:
     여기서 실패하고, 그 실패가 정확히 우리가 사려는 신호다 — 그때 버전별 이름 맵을
     도입하면 된다. 지금 미리 관대하게 만들면 `gpu_cache_usage_perc` 사고가 그대로
     재발한다(그 이름은 존재하지 않는데 테스트 26개가 전부 초록이었다).
+    ⏵ 2026-10-08 — ATOM 원문은 이 저장소에 안 들어왔다(위 `METRICS_DIR` 주석의 ⏵). 그 프로브는
+    부재 이름 1건(`vllm:prompt_tokens_recomputed_total`)을 적었다
+    (`2026-08-18-serving-atom.md` §3.3).
     """
     fixtures = sorted(METRICS_DIR.glob("*.txt"))
     assert fixtures, f"{METRICS_DIR}에 메트릭 원문이 없다"
@@ -590,6 +595,7 @@ def test_cache_config_labels_carry_the_names_that_are_not_metrics(
     해석하지 않는 것도 계약이다 — 실측 원문에서 이 라벨은 문자열 `"None"`이고
     (Slurm는 이 값을 채우지 않는다), float으로 바꾸려 들면 거기서 죽는다. ATOM에서
     숫자로 채워지면 그때 `mem_gb_ctx8k`를 nvidia-smi 없이 얻을 수 있다.
+    ⏵ 2026-10-08 — ATOM도 `None`이었다(2026-08-18 — `2026-08-18-serving-atom.md` §3.3).
     """
     monkeypatch.setattr(urllib.request, "urlopen", _Server(metrics=[metrics_fixture()]))
     labels, error = bench_metrics.cache_config_labels("http://127.0.0.1:8001/v1")
@@ -863,6 +869,7 @@ def test_the_measured_content_is_not_schema_valid(served: tuple) -> None:
     그 호출은 `response_format` 없이 나갔고 `finish_reason: "length"`로 잘린 `<think>`
     블록이 왔다. **이 파일로는 B(구조화 출력)를 검증할 수 없다.** Qwen3 계열이 reasoning
     토큰을 먼저 내놓는다는 사실이 여기 박혀 있다 — ATOM에서 B가 실패하면 첫 용의자다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 지금 실측 장비는 vast다(D81).
     """
     payload = json.loads(SLURM_COMPLETION.read_text(encoding="utf-8"))
     content = payload["choices"][0]["message"]["content"]

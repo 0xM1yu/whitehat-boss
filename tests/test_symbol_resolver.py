@@ -122,6 +122,21 @@ def test_resolve_returns_an_empty_resolution_when_there_is_no_v2_index():
     assert resolution.unfilled == ()
     assert resolution.already == ()
     assert resolution.truncated == ()
+    assert resolution.index_available is False  # 조회를 안 했다 — 「못 찾음」과 가른다(#315)
+
+
+def test_an_empty_v2_function_table_is_an_index_that_finds_nothing_not_a_missing_index():
+    """`GraphIndex.table()`은 `None`(없음·v1)과 `{}`(v2인데 그 표가 0건)를 일부러 가른다. 빈 표는
+    색인이 **있는** 것이라 조회가 돌고 「못 찾음」이 남아야 한다 — `is None`을 `not`으로 바꾸는
+    변이를 이 검사가 잡는다(#542 리뷰)."""
+    resolution = resolve(
+        _query(requests=(_request("function", "anything"),), target_file="a.c"),
+        table=lambda _name: {},
+        read_lines=lambda _file: [],
+    )
+
+    assert resolution.index_available is True
+    assert [item.reason.value for item in resolution.unfilled] == ["not_found"]
 
 
 # --- hop 1 예 — 실 인덱서 픽스처 (선언·매크로 명명은 되고, 원소 대입은 안 된다) -----

@@ -745,6 +745,46 @@ def test_the_help_text_is_printable_on_a_cp949_console() -> None:
         flags[dest].help.encode("cp949")
 
 
+def _every_parser(
+    parser: argparse.ArgumentParser, path: str = "cli"
+) -> list[tuple[str, argparse.ArgumentParser]]:
+    found = [(path, parser)]
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for name, sub in action.choices.items():
+                found += _every_parser(sub, f"{path} {name}")
+    return found
+
+
+def test_every_subcommand_help_is_printable_on_a_cp949_console() -> None:
+    """위 검사는 오라클 플래그 넷만 봤다. 서브커맨드마다 **렌더된 도움말 전체**(`format_help`)를
+    cp949로 인코딩한다(#420).
+
+    ⚠ 진입점(`python -m src.cli … --help`)은 `main()`이 `parse_args` 앞에서 stdout을
+    `force_utf8`로 바꿔 이 글자로 안 죽는다. 죽는 것은 `main()`을 거치지 않는 호출이다 —
+    `build_parser().parse_args([...,"--help"])`를 cp949 strict stdout에서 부르면 `5828a0a`에서
+    `UnicodeEncodeError`로 rc 1이었다. 그 커밋에서 `doctor`·`run`·`bench`·`preflight` 넷이 이
+    검사에 걸렸다."""
+    parsers = _every_parser(cli.build_parser())
+    assert len(parsers) > 1, "서브커맨드를 못 찾았다 - 검사가 아무것도 안 본다"
+
+    broken = {}
+    for path, parser in parsers:
+        bad = sorted({f"U+{ord(c):04X}" for c in parser.format_help() if not _cp949(c)})
+        if bad:
+            broken[path] = bad
+
+    assert not broken, f"cp949로 못 찍는 도움말: {broken}"
+
+
+def _cp949(char: str) -> bool:
+    try:
+        char.encode("cp949")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 # --- 키는 출력되지 않는다 ---------------------------------------------------------------------
 
 

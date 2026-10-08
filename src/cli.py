@@ -430,6 +430,8 @@ def _check_benchmarks(config: HarnessConfig) -> list[Check]:
     `mem_gb_ctx8k`를 `nvidia-smi --query-gpu`로 얻을 수 없다는 것이 확정됐으니
     (2026-08-17) 그 상태는 가정이 아니라 곧 실제로 생긴다 — 쿼리를 적는 이유는
     `config.Benchmark.is_measured` 주석과 같다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). vast에서 이 필드가 채워지는지는
+    미실측이다(`config.Benchmark.is_measured`의 같은 ⏵).
 
     부분 측정을 production에서 ERROR로 두는 것은 model-serving.md §5의 취지 그대로다 —
     그 게이트가 막으려는 것이 "실측 없이 올리기"이고 절반은 실측이 아니다. 어떤 항목을
@@ -1124,6 +1126,11 @@ def execute(
 
     `Deps`를 함께 돌려주는 것은 `estimate`가 StateStore에서 캡슐을 세야 하기 때문이다.
 
+    **저장소를 닫는 책임(#156).** 정상 반환이면 호출자가 다 쓴 뒤 `deps.store.close()`를
+    부른다. 러너가 예외로 끝나면 `deps`를 돌려줄 수 없어 **여기서** 닫고 원 예외를 그대로
+    올린다 — 안 닫으면 `estimate`의 임시 디렉터리 정리가 열린 `state.db`에서 죽어 원 예외를
+    덮는다(Windows).
+
     **`run_id`를 만들지 않고 받는다.** 예전에는 여기와 `run()`이 각각 `new_run_id`를
     불렀다. 입력이 같아 우연히 일치했을 뿐이라, 순번이 들어오는 순간 디렉터리 이름과
     `RunRecord.run_id`가 갈라질 자리였다 — 지금 고치는 결함보다 나쁜 상태다.
@@ -1154,26 +1161,30 @@ def execute(
         # 그 채점기가 기댄 카나리 보고서의 경로·sha256(#487). `RunRecord.oracle`에 실린다.
         canary_ref=_canary_ref(oracle),
     )
-    result = run_pipeline(
-        spec,
-        config=config,
-        deps=deps,
-        # Retriever와 **같은 함수**를 쓴다. 두 곳이 다르게 읽으면 캡슐의 토큰 수와
-        # 실제 프롬프트가 어긋난다.
-        read_source=lambda target: read_symbol_source(spec.target, target),
-        # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
-        # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
-        # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
-        read_payload=make_payload_reader(run_dir.parent),
-        # 원본 바이트 — `read_source`가 접는 `\r`을 GUARDS의 줄 정렬 검사가 본다(`bare_cr`).
-        read_raw=lambda file: read_raw_source(spec.target, file),
-        trace=trace,
-        run_dir=run_dir,
-        cache_hook=hook,
-        truncate_hook=truncate_hook,
-        usage_hook=usage_hook,
-        index_hook=index_hook,
-    )
+    try:
+        result = run_pipeline(
+            spec,
+            config=config,
+            deps=deps,
+            # Retriever와 **같은 함수**를 쓴다. 두 곳이 다르게 읽으면 캡슐의 토큰 수와
+            # 실제 프롬프트가 어긋난다.
+            read_source=lambda target: read_symbol_source(spec.target, target),
+            # payload 파일은 `{run_dir.parent}/{run_id}/{slot}/{id}.log`에 있다(build_deps에 준
+            # artifacts_root와 같은 루트). Critic·Auditor의 content-aware 버전이 근거 본문을 받는
+            # 배선(#237 HIGH-1 · Auditor는 2026-09-29부터).
+            read_payload=make_payload_reader(run_dir.parent),
+            # 원본 바이트 — `read_source`가 접는 `\r`을 GUARDS의 줄 정렬 검사가 본다(`bare_cr`).
+            read_raw=lambda file: read_raw_source(spec.target, file),
+            trace=trace,
+            run_dir=run_dir,
+            cache_hook=hook,
+            truncate_hook=truncate_hook,
+            usage_hook=usage_hook,
+            index_hook=index_hook,
+        )
+    except BaseException:
+        deps.store.close()
+        raise
     return result, deps
 
 
@@ -1211,8 +1222,14 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
         # 확장 경로 하나가 아니라 **`using_counter` 밖의 모든 `model_validate`**이고, 이
         # 수정은 그중 지금 터진 한 곳을 막을 뿐이다. 정본은 캡슐이 자기 카운터를 싣고
         # 로드가 그것을 복원하는 것이다(#84 (c)) — 그때 이 `with`는 필요 없어진다.
-        with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
-            capsules = deps.store.query("capsule")
+        try:
+            with using_counter(deps.counter_for_role(_capsule_counter_role(config))):
+                capsules = deps.store.query("capsule")
+        finally:
+            # 임시 디렉터리를 지우기 **전에** 닫는다 — 열린 `state.db`가 Windows에서 정리를
+            # 막고(파이썬 판에 따라 WinError 32·267), 그 예외가 위 조회의 `ValidationError`를 덮었다
+            # (#156 · #84 ②).
+            deps.store.close()
 
     calls = _expected_calls(config, len(capsules))
     places = _scout_places(config)
@@ -1759,7 +1776,7 @@ def run(args: argparse.Namespace) -> int:
     run_id, run_dir = _claim_run_dir(args.artifacts_root, started_at)
     # TERM·HUP에도 run 끝 내림이 돌게 한다(`_terminate_as_exit`).
     with _terminate_as_exit(), (run_dir / "trace.jsonl").open("w", encoding="utf-8") as stream:
-        result, _ = execute(
+        result, deps = execute(
             config,
             spec,
             run_id=run_id,
@@ -1767,6 +1784,9 @@ def run(args: argparse.Namespace) -> int:
             trace_stream=stream,
             oracle=oracle,
         )
+        # 결과는 `result`에 다 실렸다 — 저장소를 여기서 닫는다(#156). 안 닫으면 이 프로세스가
+        # 끝날 때까지 `state.db`가 열려 있다.
+        deps.store.close()
     report_path = write_report(run_dir, result, args.format)
 
     print(f"run_id: {result.record.run_id}")
@@ -1958,7 +1978,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         default=None,
         help="이 실행이 돌아간 장비의 라벨. run 기록과 --apply에 그대로 남는다. "
-        "값 집합은 열려 있다(ADR 0006) — 팀이 쓰는 라벨은 docs/portability.md에 있다. "
+        "값 집합은 열려 있다(ADR 0006) - 팀이 쓰는 라벨은 docs/portability.md에 있다. "
         "호스트명으로 자동으로 채우지 않는다: 안 주면 '확인 못 함'이다. "
         "run에서 실서빙 프로필이면 거부한다(exit 2). 교대를 선언한 프로필이면 장비 파일 "
         "config/serving/<device>.yaml을 고르고, 없거나 registry와 어긋나면 거부한다(exit 2)",
@@ -1981,7 +2001,7 @@ def build_parser() -> argparse.ArgumentParser:
         "README.md·submit.sh도 받는다). 그 밖의 항목이 하나라도 있으면(정답 자료 patch.diff·"
         "error.txt·repo-fix.tar.gz 포함) 풀기 전에 거부한다(exit 2). 주면 아카이브를 "
         "--task-work-dir에 풀어 그 트리를 --target으로 쓰고 description.txt를 캡슐에 싣는다. "
-        "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 — "
+        "--target·--description-file과 같이 주지 않는다(exit 2). --slices와는 같이 쓴다 - "
         "슬라이스 경로는 작업 디렉터리 기준(번들 최상위 디렉터리 `src-vul/` 포함)이어야 하고, "
         "풀린 트리와 줄 내용이 다르거나(drift) 트리에 없는 슬라이스가 하나라도 있으면 exit 2다 "
         "(그때 트리는 작업 디렉터리에 남는다). 이 번들의 슬라이스인지까지는 보증하지 않는다",
@@ -2035,7 +2055,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-work-dir",
         type=Path,
         default=None,
-        help="--task-dir의 아카이브를 풀 빈 디렉터리. 비어 있지 않으면 거부한다(exit 2) — "
+        help="--task-dir의 아카이브를 풀 빈 디렉터리. 비어 있지 않으면 거부한다(exit 2) - "
         "해제가 중단되면 앞 멤버가 남아 두 과제가 섞인다",
     )
     # **기본값을 argparse에 두지 않는다.** 값은 `run()`이 `DEFAULT_CONDITION`으로 채우되,
@@ -2044,7 +2064,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--condition",
         default=None,
-        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 경고한다 — "
+        help=f"조건 라벨. 안 주면 {DEFAULT_CONDITION}으로 기록되고 경고한다 - "
         "실서빙 프로필에서는 거부한다(exit 2)",
     )
     run_cmd.add_argument("--seed", type=int)
@@ -2055,7 +2075,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="슬라이서 산출물 slices.json(slice-v2). 주면 슬라이스 1개가 타깃 1개다"
         "(ADR 0012 결정 1). 못 믿는 파일이거나 --target과 어긋나면(drift) run 디렉터리를"
-        " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice — v3 Scout)를"
+        " 만들기 전에 거부한다(exit 2). 슬라이스 입력 프롬프트(meta input: slice - v3 Scout)를"
         " 부르는 run은 이것 없이 거부한다(exit 2)",
     )
     run_cmd.add_argument(
@@ -2064,7 +2084,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
         "Scout·Auditor·PoV가 본다(PoV 배선). 번들을 통째로 주려면 --task-dir를 쓴다 "
-        "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) — 둘을 같이 주지 않는다",
+        "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) - 둘을 같이 주지 않는다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
@@ -2087,10 +2107,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pre.add_argument("--profile", required=True)
     pre.add_argument(
-        "--device", default=None, help="장비 파일 config/serving/<device>.yaml — 교대 점검의 기준"
+        "--device", default=None, help="장비 파일 config/serving/<device>.yaml - 교대 점검의 기준"
     )
-    pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 — 허용 파일·submit.sh")
-    pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 — TCP로 닿는지 본다")
+    pre.add_argument("--task-dir", type=Path, default=None, help="과제 번들 - 허용 파일·submit.sh")
+    pre.add_argument("--oracle-server", default=None, help="채점기 서버 주소 - TCP로 닿는지 본다")
     pre.add_argument("--oracle-canary", type=Path, default=None, help="카나리 보고서 경로")
     pre.add_argument(
         "--strict",
