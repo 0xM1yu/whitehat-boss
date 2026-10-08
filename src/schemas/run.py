@@ -80,6 +80,13 @@ class ModelSampling(HarnessModel):
     모델마다 다르고(예: Qwen3-8B는 `top_k 20`, Foundation-Sec·granite는 없음) 기록에
     안 남으면 모델 비교에서 샘플링 차이가 모델 차이로 섞인다(evaluation.md §2.3).
 
+    ⏵ 2026-10-08 — 「`temperature`·`top_p`만 보내므로」(2026-08-29 `7bc68c6`)는 낡았다.
+    registry `sampling`이 선언한 모델은 `temperature`·`top_p`·`top_k`·`min_p`·
+    `presence_penalty`를 요청에 싣는다(`RequestSampling` -> `extra_params`, `f695dab`
+    2026-09-25 #261). `top_k` 선언은 `f59d63c`(2026-09-26)부터 -> `qwen3.8-27b`·
+    `feyospace-v1-small` 둘(20). `repetition_penalty`는 여전히 안 보낸다. 응답 쪽 서술은
+    재확인 안 함.
+
     **필드가 전부 optional인 것은 모델마다 선언하는 부분집합이 다르기 때문이다.** `None`은
     "그 모델의 `generation_config.json`이 이 키를 선언하지 않았다" = 서버가 vLLM 기본값을
     쓴다는 뜻이지 값이 0이라는 뜻이 아니다. 지어내지 않고 파일에 있는 것만 담는다.
@@ -261,12 +268,18 @@ class RunRecord(UtcModel):
     # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). `sampling`이
     # 보낸 값이라면 이쪽은 서버가 모델 파일에서 적용하는 값이다 — `top_k`·`repetition_penalty`는
     # 하네스가 안 보내고 요청·응답에도 안 실려 이 필드로만 기록에 남는다.
+    # ⏵ 2026-10-08 — 위 두 줄(2026-08-29 `7bc68c6`)은 `top_k`에 대해 낡았다. registry
+    # `sampling`이 요청에 실린다(`RequestSampling` -> `extra_params`, `f695dab` 2026-09-25 #261):
+    # `temperature`·`top_p`·`top_k`·`min_p`·`presence_penalty`. `top_k`를 처음 선언한 것은
+    # `f59d63c`(2026-09-26) — 그 모델을 쓰는 역할은 보낸 `top_k`가 `model_request_params`에도
+    # 남는다. `repetition_penalty`는 여전히 안 보낸다. 응답 쪽 서술은 재확인 안 함.
     #
     # **`| None`이고 기본값 `None`인 것은 device·repo_dirty와 같은 관용구다.** `None`은
     # "이 manifest는 기록하지 않았다"(이 필드 이전에 쓰인 기록)이고, `{}`는 "기록했으나
-    # 선언 샘플링을 읽은 역할이 없었다"(Fake 프로필·`source` 없음·경로 리졸브 실패·파일 없음·
-    # 파일 깨짐 — `declared_sampling_by_role` docstring)로 서로 다르다. 읽었으나 선언이 0개인
-    # 역할은 빈 `ModelSampling()`으로 dict에 남으므로 `{}`가 아니다 —
+    # 선언 샘플링을 읽은 역할이 없었다"로 서로 다르다. 빠지는 길은 둘이다 -> (a) 읽기 시도
+    # 없음: `PROMPTED_ROLES` 밖·서빙 모델 없음(Fake 포함) (b) 읽었으나 `None`: `source` 없음·
+    # 경로 리졸브 실패·파일 없음·파일 깨짐(`declared_sampling_by_role` docstring).
+    # 읽었으나 선언이 0개인 역할은 빈 `ModelSampling()`으로 dict에 남으므로 `{}`가 아니다 —
     # 새 run은 항상 dict(비어도)를 남기므로 `None`은 옛 manifest에서만 나온다. 그래서 이
     # 필드를 늘려도 `test_a_manifest_written_before_tool_seconds_still_loads`가 지키는
     # "옛 manifest는 로드된다"가 깨지지 않는다.

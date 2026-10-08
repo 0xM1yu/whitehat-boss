@@ -4980,6 +4980,10 @@ def _new_record(
         sampling=config.sampling,
         # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). 서버가
         # 모델 파일에서 적용하는 `top_k` 등을 하네스는 안 보내므로 이 필드로만 기록에 남는다.
+        # ⏵ 2026-10-08 — 위 줄(2026-08-29)은 낡았다. registry `sampling`을 선언한 모델은
+        # `temperature`·`top_p`·`top_k`·`min_p`·`presence_penalty`를 요청에 싣고(#261, `top_k`는
+        # 2026-09-26 선언부터) 그 값은 아래 `model_request_params`에 남는다. `repetition_penalty`는
+        # 여전히 안 보낸다.
         # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
         # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.
         model_sampling=model_sampling,
