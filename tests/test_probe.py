@@ -639,3 +639,241 @@ def test_the_probe_decision_arm_is_an_upper_bound_on_the_draft_arm() -> None:
     from src.schemas.decision import Decision, DecisionDraft  # noqa: PLC0415
 
     assert set(DecisionDraft.model_fields) < set(Decision.model_fields)
+
+
+# --- 두 프로브가 `_post`의 반환을 이름으로 읽는다 (#550) ----------------------------------------
+#
+# `OpenAICompatModelClient._post`는 한때 `(content, usage)` 튜플이었고 `finish_reason`을 더하며
+# 셋으로 늘었다. 이 두 프로브는 그것을 `raw, usage = client._post(payload)`로 풀고 있었고,
+# 풀기가 **둘 다 `except Exception` 안**이라 전 호출이
+# `{"error": "ValueError: too many values to unpack"}`가 되어 GPU가 이미 쓴 생성이 버려졌다
+# (#550 리뷰에서 3회 중 3회 실패로 재현). 그때 이 파일의 다른 핀은 둘 다 `_post`를 안 타서
+# 전체 스위트(5,096개)가 초록이었다. 그래서 여기는 **실제 `_post`**를 탄다 — `urlopen`만 갈아
+# 끼운다(`tests/test_model_call_instrumentation.py`의 `_serve`). 반환 모양이 또 바뀌어 프로브가
+# 못 따라오면 행에 `error`가 생겨 여기서 죽는다.
+
+
+def test_the_critic_budget_probe_reads_a_healthy_response_through_the_real_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """건강한 200 한 건이 `error` 없는 행이 되고, 그 행이 서버의 종료 사유를 든다.
+
+    이 프로브는 「1회·재시도 없음·상한에 닿았나」로 `output_max`를 정하는 도구라 종료 사유가
+    바로 그 물음의 답이다 — `hit_cap`은 토큰 수를 상한과 비교한 추정이라 `length`와 상한 값에서의
+    `stop`을 못 가른다."""
+    from tests.test_model_call_instrumentation import (  # noqa: PLC0415
+        GOOD,
+        TRUNCATED,
+        Tiny,
+        _client,
+        _completion,
+        _serve,
+    )
+    from tools.probe.critic_output_budget import _measure_one  # noqa: PLC0415
+
+    _serve(
+        monkeypatch,
+        [
+            _completion(TRUNCATED, 4096, "length"),
+            _completion(GOOD, 12, "stop"),
+            _completion(GOOD, 7, None),
+        ],
+    )
+    client = _client()
+    payload = client._request_payload("공통 지시", "후보 본문", Tiny)  # noqa: SLF001
+
+    rows = [_measure_one(client, payload, 4096) for _ in range(3)]
+
+    for row in rows:
+        assert "error" not in row, row  # 시그니처가 또 어긋나면 여기서 죽는다
+    assert [row["finish_reason"] for row in rows] == ["length", "stop", None]
+    assert [row["output_tokens"] for row in rows] == [4096, 12, 7]
+    assert rows[0]["hit_cap"] is True
+    assert rows[0]["json_valid"] is False  # 절단된 JSON — 응답 원문도 행까지 왔다
+    assert rows[1]["json_valid"] is True
+
+
+def test_the_d67_diagnose_probe_reads_a_healthy_response_through_the_real_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--diagnose`의 한 번짜리 진단이 같은 자리에서 같은 이유로 죽던 것을 막는다.
+
+    진단의 물음은 「잘렸나, 문법이 깨졌나」이고 이 행의 `finish_reason`이 그 답의 직접 증거다."""
+    from src.interfaces.model_client import Prompt  # noqa: PLC0415
+    from tests.test_model_call_instrumentation import (  # noqa: PLC0415
+        GOOD,
+        TRUNCATED,
+        _client,
+        _completion,
+        _serve,
+    )
+    from tools.probe.d67_required_schema import _diagnose  # noqa: PLC0415
+
+    _serve(monkeypatch, [_completion(TRUNCATED, 4096, "length"), _completion(GOOD, 12, "stop")])
+    prompt = Prompt(prefix="공통 지시", body="후보 본문", prompt_version="v1")
+
+    rows = _diagnose(_client(), arm="required", prompt=prompt, trials=2)
+
+    for row in rows:
+        assert "error" not in row, row
+    assert [row["finish_reason"] for row in rows] == ["length", "stop"]
+    assert [row["output_tokens"] for row in rows] == [4096, 12]
+    assert rows[0]["json_valid"] is False
+    assert rows[1]["json_valid"] is True
+
+
+# --- `content: null`과 `completion_tokens` 미보고 (#550 3라운드) --------------------------------
+#
+# 위 두 핀은 건강한 200만 탔다. 서버가 `message.content`를 `null`로 주면
+# (`PostedResponse.content`가 `str | None`인 이유) 두 프로브가 `raw.rstrip()`
+# (`AttributeError`)·`len(raw)`(`TypeError`)에서 죽었다 — **`except Exception` 밖**이라 프로브
+# 전체가 중단됐고, `critic_output_budget.main`은 행을 루프 뒤에야 쓰므로 그때까지 쓴 생성이
+# 전부 버려졌다. 그 크래시는 원래 있었으나 프로브가 튜플 풀기에서 먼저 죽어 가려져 있었고,
+# 풀기를 고치면서 드러났다.
+#
+# 서버가 `usage.completion_tokens`를 안 실으면 `usage.output_tokens`는 0이다(`_usage_from`이
+# 채운다). 이 프로브들은 그 값으로 `hit_cap`과 `output_max`를 정하는 분포(`cap_sample`)를
+# 만드므로 지어낸 0이 재려던 값을 대신하면 안 된다(CLAUDE.md §0).
+
+
+def test_the_critic_budget_probe_records_a_null_content_as_an_error_row_and_keeps_going(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`content: null`이 크래시가 아니라 `error` 행이고, 다음 호출이 이어진다.
+
+    크래시였다면 첫 줄의 `_measure_one`이 예외를 던져 이 테스트가 죽는다. 두 번째 호출이 정상
+    행을 내는 것이 「이어서 간다」(= 이미 모은 행이 안 버려진다)의 증거다. 서버가 준 사유·토큰은
+    버려지지 않고 `error` 문구에 남는다 — GPU가 이미 쓴 값이다."""
+    from tests.test_model_call_instrumentation import (  # noqa: PLC0415
+        GOOD,
+        Tiny,
+        _client,
+        _completion,
+        _serve,
+    )
+    from tools.probe.critic_output_budget import _measure_one  # noqa: PLC0415
+
+    _serve(monkeypatch, [_completion(None, 4096, "length"), _completion(GOOD, 12, "stop")])
+    client = _client()
+    payload = client._request_payload("공통 지시", "후보 본문", Tiny)  # noqa: SLF001
+
+    rows = [_measure_one(client, payload, 4096) for _ in range(2)]
+
+    assert set(rows[0]) == {"error"}  # 기존 `except Exception` 행과 같은 모양이다
+    assert "null" in rows[0]["error"]
+    assert "finish_reason=length" in rows[0]["error"]
+    assert "output_tokens=4096" in rows[0]["error"]
+    assert "error" not in rows[1]
+    assert rows[1]["finish_reason"] == "stop"
+
+
+def test_the_d67_diagnose_probe_records_a_null_content_as_an_error_row_and_keeps_going(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """위와 같은 일을 `--diagnose`가 한다 — `len(raw)`가 `TypeError`로 죽던 자리다."""
+    from src.interfaces.model_client import Prompt  # noqa: PLC0415
+    from tests.test_model_call_instrumentation import (  # noqa: PLC0415
+        GOOD,
+        _client,
+        _completion,
+        _serve,
+    )
+    from tools.probe.d67_required_schema import _diagnose  # noqa: PLC0415
+
+    _serve(monkeypatch, [_completion(None, 4096, "length"), _completion(GOOD, 12, "stop")])
+    prompt = Prompt(prefix="공통 지시", body="후보 본문", prompt_version="v1")
+
+    rows = _diagnose(_client(), arm="required", prompt=prompt, trials=2)
+
+    assert set(rows[0]) == {"error"}
+    assert "finish_reason=length" in rows[0]["error"]
+    assert "output_tokens=4096" in rows[0]["error"]
+    assert "error" not in rows[1]
+    assert rows[1]["finish_reason"] == "stop"
+
+
+@pytest.mark.parametrize(
+    "reply_kwargs",
+    [{"tokens": None}, {"tokens": None, "usage": False}],
+    ids=["completion_tokens_absent", "usage_object_absent"],
+)
+def test_the_critic_budget_probe_does_not_record_an_unreported_token_count_as_a_measured_zero(
+    monkeypatch: pytest.MonkeyPatch, reply_kwargs: dict[str, Any]
+) -> None:
+    """서버가 출력 토큰을 안 실으면 행이 `output_tokens: null`·`hit_cap: null`이고 표본에서 빠진다.
+
+    0으로 남기면 `hit_cap: False`가 「상한에 안 닿았다」는 측정처럼 읽히고 그 0이 `cap_sample`(출력
+    상한을 정하는 분포)에 들어간다. 반대편(서버가 **0이라고 보고한** 응답)은 `0`·`False`로 남아
+    표본에 들어간다 — 둘이 한 값으로 합쳐지지 않는다."""
+    from tests.test_model_call_instrumentation import (  # noqa: PLC0415
+        GOOD,
+        Tiny,
+        _client,
+        _completion,
+        _serve,
+    )
+    from tools.probe.critic_output_budget import _measure_one, _summarize  # noqa: PLC0415
+
+    _serve(
+        monkeypatch,
+        [
+            _completion(GOOD, **reply_kwargs, finish_reason="stop"),
+            _completion(GOOD, 0, "stop"),
+            _completion(GOOD, 77, "stop"),
+        ],
+    )
+    client = _client()
+    payload = client._request_payload("공통 지시", "후보 본문", Tiny)  # noqa: SLF001
+
+    rows = [_measure_one(client, payload, 4096) for _ in range(3)]
+
+    unreported, reported_zero, measured = rows
+    assert "error" not in unreported  # 멀쩡한 200은 이것 때문에 오류가 되지 않는다
+    assert unreported["output_tokens"] is None
+    assert unreported["hit_cap"] is None
+    assert unreported["finish_reason"] == "stop"  # 따로 실린 종료 사유는 그대로다
+    assert reported_zero["output_tokens"] == 0
+    assert reported_zero["hit_cap"] is False
+    assert measured["output_tokens"] == 77
+
+    summary = _summarize([r | {"est_tokens": 500} for r in rows])
+
+    assert summary["output_tokens_unreported"] == 1
+    assert summary["ok"] == 3  # 성공 호출이다 — 분모에서 빼지 않는다
+    assert summary["cap_sample"]["n"] == 2  # 미보고 행만 빠진다
+    assert summary["cap_sample"]["min"] == 0  # 보고된 0은 표본에 남는다
+    assert summary["cap_sample"]["max"] == 77
+
+
+@pytest.mark.parametrize(
+    "reply_kwargs",
+    [{"tokens": None}, {"tokens": None, "usage": False}],
+    ids=["completion_tokens_absent", "usage_object_absent"],
+)
+def test_the_d67_diagnose_probe_does_not_record_an_unreported_token_count_as_a_measured_zero(
+    monkeypatch: pytest.MonkeyPatch, reply_kwargs: dict[str, Any]
+) -> None:
+    """`--diagnose` 행도 같다 — 미보고는 `null`이고, 보고된 0은 `0`·`False`다."""
+    from src.interfaces.model_client import Prompt  # noqa: PLC0415
+    from tests.test_model_call_instrumentation import (  # noqa: PLC0415
+        GOOD,
+        _client,
+        _completion,
+        _serve,
+    )
+    from tools.probe.d67_required_schema import _diagnose  # noqa: PLC0415
+
+    _serve(
+        monkeypatch,
+        [_completion(GOOD, **reply_kwargs, finish_reason="stop"), _completion(GOOD, 0, "stop")],
+    )
+    prompt = Prompt(prefix="공통 지시", body="후보 본문", prompt_version="v1")
+
+    unreported, reported_zero = _diagnose(_client(), arm="required", prompt=prompt, trials=2)
+
+    assert "error" not in unreported
+    assert unreported["output_tokens"] is None
+    assert unreported["hit_cap"] is None
+    assert unreported["finish_reason"] == "stop"
+    assert reported_zero["output_tokens"] == 0
+    assert reported_zero["hit_cap"] is False
