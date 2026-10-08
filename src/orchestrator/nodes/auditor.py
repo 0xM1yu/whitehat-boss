@@ -953,8 +953,8 @@ def _lookup(
     멈추면 안 되고(`runner._fuzz_entrypoint`의 같은 가드), 이때도 조회 결과 키는 없다. 예외 문구는
     호스트 경로를 실을 수 있어 모델 관측에는 클래스 이름만 준다. 프로덕션에서는 factory가 훅을
     **항상** 꽂으므로(`src/adapters/factory.py`) 훅이 없는 갈래는 단위 테스트 전용이다 — 실서빙의
-    「조회가 안 돈 것」은 인덱스 없음/v1이고, resolver가 빈 `Resolution`으로 내므로 홉 이벤트의
-    `unfilled`·`truncated`가 비는 서명으로 읽는다.
+    「조회가 안 돈 것」은 인덱스 없음/v1이고, resolver가 `index_available=False`로 내므로 홉
+    이벤트의 같은 키로 읽는다(#315 — 전에는 `unfilled`·`truncated`가 비는 서명으로 읽었다).
     """
     next_hop = hop + 1
     if ctx.resolve_requests is None:

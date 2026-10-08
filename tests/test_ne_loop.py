@@ -402,6 +402,8 @@ def test_ne_nothing_resolved_when_the_hook_is_none(
     candidate_id = _candidate_id_for_seat(trace_path)
     hops = _scout_hops(trace_path, candidate_id)
     assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    # 훅이 없으면 조회가 안 돌았다 — `index_available`을 값으로 적지 않는다(#315 · `trace.py`).
+    assert "index_available" not in hops[0]
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
 
 
