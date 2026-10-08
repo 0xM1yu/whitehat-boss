@@ -3385,6 +3385,91 @@ def _estimate_input_line(budget: Budget) -> str:
     return next(line for line in cli.estimate(config, TARGET) if line.startswith("예상 input 토큰"))
 
 
+def _sqlite_dev_fake():  # noqa: ANN202
+    """`dev_fake`(메모리 저장소)를 sqlite 저장소로 바꾼 config — 모델·도구는 그대로 Fake다."""
+    config = load_config("dev_fake")
+    adapters = config.profile.adapters.transition(state_store="sqlite")
+    return config.transition(profile=config.profile.model_copy(update={"adapters": adapters}))
+
+
+def _spy_close(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    closed: list[str] = []
+    original = SqliteStateStore.close
+
+    def close(self: SqliteStateStore) -> None:
+        closed.append(self.path)
+        original(self)
+
+    monkeypatch.setattr(SqliteStateStore, "close", close)
+    return closed
+
+
+def test_estimate_closes_the_state_store_before_its_temp_dir_goes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`estimate`는 임시 디렉터리 안에 `state.db`를 연다 — 지우기 전에 닫아야 Windows에서 정리가
+    안 죽는다(#156). 수정 전 main에서 Windows는 정리가 실패했다 — Python 3.11.0에서
+    `[WinError 267]`, 3.14.5에서 `PermissionError [WinError 32]`(2026-10-08 실측 둘).
+    Linux는 열린 파일도 지워져 그 증상이 안 보이므로 **닫았는지**를 직접 센다."""
+    closed = _spy_close(monkeypatch)
+
+    cli.estimate(_sqlite_dev_fake(), TARGET)
+
+    assert len(closed) == 1 and closed[0].endswith("state.db"), closed
+
+
+def test_estimate_closes_the_store_even_when_the_count_lookup_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """캡슐 조회가 실패해도 `finally`가 닫고 원 예외가 그대로 나간다(#156). 닫기를 `finally`에서
+    꺼내 정상 경로로만 옮기는 변이를 이 검사가 잡는다(#540 리뷰가 그 변이로 9건 전부 통과를
+    보였다)."""
+    closed = _spy_close(monkeypatch)
+
+    def lookup_fails(_config: object) -> str:
+        raise RuntimeError("count lookup boom")
+
+    monkeypatch.setattr(cli, "_capsule_counter_role", lookup_fails)
+
+    with pytest.raises(RuntimeError, match="count lookup boom"):
+        cli.estimate(_sqlite_dev_fake(), TARGET)
+    assert len(closed) == 1, closed
+
+
+def test_execute_closes_the_store_when_the_pipeline_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """러너가 예외로 끝나면 `execute`가 `deps`를 돌려줄 수 없다 — 그래서 `execute`가 닫고 원
+    예외를 올린다(#156). 안 닫으면 `estimate`의 임시 디렉터리 정리가 열린 `state.db`에서 죽어
+    원 예외를 덮는다(#540 리뷰 · Windows 3.14.5에서 `PermissionError [WinError 32]` 재현)."""
+    closed = _spy_close(monkeypatch)
+
+    def pipeline_fails(*_a: object, **_k: object) -> None:
+        raise RuntimeError("pipeline boom")
+
+    monkeypatch.setattr(cli, "run_pipeline", pipeline_fails)
+
+    with pytest.raises(RuntimeError, match="pipeline boom"):
+        cli.estimate(_sqlite_dev_fake(), TARGET)
+    assert len(closed) == 1, closed
+
+
+def test_run_closes_the_state_store_it_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run`도 결과를 다 받은 뒤 저장소를 닫는다 — 안 닫으면 프로세스가 끝날 때까지 열려
+    있다(#156)."""
+    closed = _spy_close(monkeypatch)
+    monkeypatch.setattr(cli, "load_config", lambda *_a, **_k: _sqlite_dev_fake())
+
+    cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET),
+        "--artifacts-root", str(tmp_path / "arts"),
+    ])
+
+    assert [Path(p).name for p in closed] == ["state.db"], closed
+
+
 def test_estimate_labels_a_zero_token_budget_as_no_limit() -> None:
     """`estimate`는 토큰 상한 0을 「예산이 0」이 아니라 「상한 없음」으로 찍는다.
 

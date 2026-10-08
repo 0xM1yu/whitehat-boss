@@ -79,7 +79,14 @@ class SqliteStateStore:
         return [obj for obj in loaded if filters_match(obj, remaining)]
 
     def close(self) -> None:
+        """연결을 닫는다. 두 번 불러도 된다(`sqlite3.Connection.close`가 멱등이다)."""
         self._conn.close()
+
+    def __enter__(self) -> "SqliteStateStore":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     @staticmethod
     def _load(kind: ObjectKind, payload: str) -> StoredObject:
