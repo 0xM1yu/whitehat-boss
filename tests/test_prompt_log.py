@@ -394,7 +394,7 @@ def test_a_failed_retry_record_write_keeps_the_charge_the_event_and_the_original
     assert ctx.ledger.input_tokens == 300 and ctx.ledger.gpu_ms == 243_000
     (call,) = _model_calls(ctx)
     assert call["ok"] is False and call["error"] == "SchemaParseError"
-    assert call["retry_record_error"] == "OSError"
+    assert call["retry_record_error"] == "OSError(errno=28)"
 
 
 def test_non_retry_call_adds_no_sent_hash(tmp_path: Path) -> None:
