@@ -587,12 +587,15 @@ def build_facts(
         # 「도구가 위치를 안 줬다」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
         #
         # **위치는 판단 보조이고 등급 근거가 아니다.** 게이트 `p1 = static_ok or location_ok`에서
-        # Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다
+        # Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라 **인용과 무관하게** `static_ok`가
+        # 이미 참이다(6단계가 타깃 관측분을 붙인다 — 이슈 #552)
         # (`container_tools.first_hit_location` · `gate.evaluate`). 그 위치는 semgrep
         # `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다.
         #
         # **관측 —** 2026-10-04 첫 실모델·실도구 운영 run에서 finding 3건이 전부 `evidence_refs=[]`
         # (그래서 E0 -> 6단계 queue -> Critic 0회 -> PoV 0건 -> `oracle_final reason=no_poc`)였고,
+        # ⏵ **2026-10-08 — 그 사슬의 첫 고리는 끊었다**(이슈 #552: 6단계가 관측 Evidence를 직접
+        # 붙여 인용 0건이어도 E1이 선다). 아래 「인용 부재」 논의는 그 변경 **전**의 것이다.
         # semgrep 근거는 프롬프트에 본문까지 실려 있었는데 하네스가 아는 위치
         # `apprentice.c:1086-1087`은 FACTS에 안 나갔다(이슈 #475). 같은 run의 세 Finding은
         # `trigger_status=no_signal` 부정 결론(확신 0.05~0.10)이었고, semgrep 본문은

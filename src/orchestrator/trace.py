@@ -374,7 +374,8 @@ class EventKind(StrEnum):
     #   그리고 `cited_probe_evidence`(최종 답이 `evidence_refs`로 인용한 `probe` Evidence
     #   수). ⚠ 그 Evidence는 러너가 게이트에 넘기는 `state.evidences`에 **없어서** 인용해도
     #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
-    #   게이트에 안 닿는 근거를 인용했다」는 사실이다.
+    #   게이트에 안 닿는 근거를 인용했다」는 사실이다. ⏵ 2026-10-08 — 6단계가 타깃 관측분을 직접
+    #   붙이므로(이슈 #552) 이 값은 **등급과 무관한 순수 인용 지표**다.
     # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
     # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
     # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
