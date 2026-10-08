@@ -168,6 +168,9 @@ profiles:
     # 그 단계의 모델만 떠 있으면 된다 — 다섯 서버를 한 장비에 다 올리면 util 합이 2.60으로 1을 넘는다
     # (0.30 + 0.40 + 0.80 + 0.30 + 0.80(pov) — `config/serving/atom.yaml`의 util, 계획값). 2026-09-24 판은 1.44였다
     # (Scout 0.20·0.30 · 옛 Auditor `qwen3.6-35b-a3b` 0.64 · Critic 0.30 — 그날 ATOM에서 뜬 util).
+    # ⏵ 2026-10-08 — 위 두 합은 ATOM 값이다(ATOM 사용 종료 2026-09-29, #340 · docs/portability.md §6). 지금 vast 장비
+    #   파일 `config/serving/vastai-remote.yaml`로 세면 0.35 + 0.55 + 0.90 + 0.90 + 0.90(pov) = 3.60(계산값)이라
+    #   「1을 넘는다」는 그대로 선다.
     #
     # ## 교대 — 단계 경계 콜드 재기동(`execution.swap`, 2026-09-29 — ADR 0009 「2026-09-29 제안」 절)
     #
@@ -177,6 +180,12 @@ profiles:
     # 없이 모델에 닿는 run은 run 디렉터리를 잡기 전에 거부된다. **실장비 종단은 미실측이다**(ATOM 먼저).
     # ⏵ 2026-09-29 — ATOM에서 한 번 돌았다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md` — 교대 네 번
     #   전부 `ok=true`, 슬라이스 1개·n=1). vast는 미실측이다.
+    # ⏵ 2026-10-08 — 같은 날 ATOM 사용이 끝났다(#340 · docs/portability.md §6) -> 「ATOM 먼저」는 지난 계획이다. vast 쪽은
+    #   `vastai-remote`로 교대 종단이 처음 성립했다(WSL `run_20261003_0002`가 먼저 완주했으나 도구 4개 전부 실패,
+    #   도구까지 돈 완주는 Windows `run_20261003_0003` — `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`
+    #   §1 — 둘 다 Scout·Auditor만 모델을 불렀고 7·8단계는 안 불렀다). 8단계까지 모델을 부른 첫 완주는
+    #   `run_20261007_0001`이다(`docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md` §1·§3 —
+    #   게이트가 Finding 5건을 전부 `E0`로 보내 7단계 Critic은 0회). `--device vastai`로 돈 run은 `docs/experiments/`에 없다.
     # hybrid 짝은 교대를 선언하지 않는다 — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤다.
     #
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 6역할
@@ -220,6 +229,12 @@ profiles:
         # 50 s(TERM 20 + KILL 30). 준비 상한의 근거는 `config/serving/atom.yaml`의 그 행이고, 나머지는
         # `tools/serve/swap.sh`의 상수와 `src/bench_metrics.py`의 `_TIMEOUT_S`다. `tests/test_serve_scripts.py`가
         # 두 장비 파일의 모든 교대에 대해 이 식을 잠근다.
+        # ⏵ 2026-10-08 — 「두 장비 파일」은 낡았다: 지금 셋이다(`config/serving/` atom·vastai·vastai-remote —
+        #   `tests/test_serve_scripts.py`의 `DEVICES`). ATOM 종료 때문이 아니라 `vastai-remote` 추가(#417) 때문이다.
+        #   4,200 s의 근거는 ATOM Auditor 교대다(ATOM 사용 종료 2026-09-29, #340) — 이 값을 vast로 다시 계산하지 않았다.
+        #   vast에서 잰 교대 벽시계는 최대 145.1 s다(`model_swap` `wall_ms`, WSL `run_20261003_0002` 5단계 —
+        #   `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §3, n=2 run). PoV 좌석은
+        #   손으로 돌린 교대 명령에서 준비 319 s였다(`2026-10-06-pov-seat-probe-vastai.md` §0 — 가중치 캐시가 찬 상태).
         settle_timeout_s: 4200
 
   harness_pool_hybrid:

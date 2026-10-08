@@ -430,6 +430,8 @@ def _check_benchmarks(config: HarnessConfig) -> list[Check]:
     `mem_gb_ctx8k`를 `nvidia-smi --query-gpu`로 얻을 수 없다는 것이 확정됐으니
     (2026-08-17) 그 상태는 가정이 아니라 곧 실제로 생긴다 — 쿼리를 적는 이유는
     `config.Benchmark.is_measured` 주석과 같다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). vast에서 이 필드가 채워지는지는
+    미실측이다(`config.Benchmark.is_measured`의 같은 ⏵).
 
     부분 측정을 production에서 ERROR로 두는 것은 model-serving.md §5의 취지 그대로다 —
     그 게이트가 막으려는 것이 "실측 없이 올리기"이고 절반은 실측이 아니다. 어떤 항목을
