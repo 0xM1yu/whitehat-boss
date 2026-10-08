@@ -51,3 +51,11 @@ class StateStore(Protocol):
     def get(self, kind: ObjectKind, id: str) -> StoredObject | None: ...
 
     def query(self, kind: ObjectKind, **filters: object) -> list[StoredObject]: ...
+
+    def close(self) -> None:
+        """잡은 자원(파일 핸들 등)을 놓는다. 두 번 불러도 된다.
+
+        run을 연 쪽(CLI)이 부른다 — 열린 sqlite 파일은 Windows에서 그 디렉터리 정리를
+        `PermissionError`로 막는다(#156).
+        """
+        ...
