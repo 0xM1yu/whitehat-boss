@@ -10,6 +10,9 @@ v8은 v7을 대체하지 않고 **더한** 판이다. 그 주장이 참인지는
    ⚠ **이 검사는 v7이 움직일 때도 빨개진다** — 그것이 의도다. v7에 줄이 더해지면 v8에도 같이
    더해야 하고, 안 더하면 두 판이 갈린 채로
    「v8 = v7 + 도구 루프」라는 meta·registry 주석이 거짓이 된다(CLAUDE.md 2.3).
+   ⏵ 2026-10-08 — 위 「거기서도 빨개진다」는 v8이 서빙 판이던 동안의 말이다. v9·v10을 거쳐 서빙 판은
+   `config/models.yaml`이 고르고, 그 검사는 이제 v8을 안 본다. v8 서술이 움직이면 빨개지는
+   것은 이 파일과 `tests/test_auditor_prompt_v9.py`(v9 = v8 + 한 줄의 바이트 동일성)다.
 
 2. **v8이 「이 호출은 한 방이다」라고 말하지 않는다.** v7의 그 단언들은 루프 판에서 거짓이다 —
    모델이 읽는 명령이라 거짓 한 줄이 그대로 행동이 된다.
@@ -264,6 +267,9 @@ def test_the_v8_prompt_and_the_repository_threshold_agree() -> None:
 
     여기서 `is_fake=False`로 묻는 것은 그 면제가 **Fake 좌석 전용**이기 때문이다
     (`auditor.loop_problem` docstring). 실서빙에서 통과해야 비로소 배선이 맞는 것이다.
+
+    ⏵ 2026-10-08 — 고르는 판은 이름의 v8이 아니라 registry의 서빙 판이다(v9·v10을 거쳐 지금 판은
+    `config/models.yaml`이 정본이다). 「v8 선언」은 이 검사가 들어온 날의 서빙 판이다.
     """
     config = load_config("harness_pool")
     template = load_prompt(Role.AUDITOR, config.model_for("auditor").prompt_template_version)
