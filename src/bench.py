@@ -112,6 +112,8 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     # PoV — 모델은 매 홉 `PovAction`(gen/inspect/submit)을 낸다(PoV 툴 루프, prompts/pov/v3).
     # `gen`이 실은 `PovSpec`은 순수 조립기가 바이트로 만든다. `_render`에 pov 분기가 있다
     # (FINDING·TARGET·SOURCE·FACTS). 실측은 서빙 호스트 확보 뒤(checksum·benchmark 0).
+    # ⏵ 2026-10-08 — 호스트는 생겼다(`--device vastai-remote`, #417). checksum·benchmark는
+    # 여전히 0이다(`config/models.yaml`의 `feyospace-v1-small`).
     Role.POV: (PovAction, CapsuleLevel.EXPANDED),
 }
 
