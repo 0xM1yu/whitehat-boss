@@ -233,6 +233,10 @@ agent:
   ⏵ 2026-10-04 — v7로 올렸다(v6 + SOURCE 옵션 넷의 서술, #349). 그 절은 v6와 같고 v7도 그 집합에 든다.
   ⏵ 같은 날 — **v8로 올렸다**(도구 루프, #419). 그 절은 v7에서 바이트 그대로 물려받은 뒤 도구 관측의
   절단 서술을 한 단락 더 들었고, v8도 그 집합에 든다. **v7로 돈 run도 v8로 돈 run도 0건이다.**
+  ⏵ 2026-10-08 — 그 뒤 v9(v8 + `auditor_guards` 서술 · PR #508, 2026-10-06 01:54 KST 머지) · v10(v7 전면 재작성 · PR #521, 2026-10-07 16:12 KST 머지)으로 올랐다. 둘 다 그 집합에 들고(`nodes/auditor.py`의
+  `_CONTENT_AWARE_VERSIONS`), v10 prefix도 `FACTS.evidence[].body`를 이름으로 불러 「a bounded excerpt of a tool log,
+  not a generated summary」로 적는다. v9로 돈 run은 0건이고 v10으로 돈 run은 1건이다([10-08 run](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) — `checksum` 0이라 비교표 밖 · `docs/experiments/` grep, 2026-10-08).
+  지금 판은 이 사슬이 아니라 `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
   ⏵ 2026-10-03 — 노드 `run()`의 반환은 이 모양 그대로다. 도구 루프를 켠 판(아래 「도구 루프」)에서는 **모델이 홉마다
   내는 것이 봉투(`AuditorAction` — v8·v9)**이고 `Finding`은 그 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.
@@ -1024,6 +1028,11 @@ HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sh
 > ⏵ 같은 날 — **v7 → v8**(도구 루프, #419). v8은 v7의 지시를 더한 판이고 「한 방」 단언 자리만 다시 썼다.
 > v7 뒤 run은 그 전 run과 직접 비교하지 않는다. 잃는 측정은 없다(v6로 돈 run이 이 저장소에 0건). 규칙 5·재측정은
 > 이번에도 돌지 않았다.
+> ⏵ **2026-10-08 — 그 뒤 두 번 더 바뀌었다**(이 사슬이 v8에서 멈춰 있었다 — 이슈 #528). **v8 → v9**(PR #508, 2026-10-06 01:54 KST 머지 ·
+> v8 + `auditor_guards` 서술 한 줄) · **v9 → v10**(PR #521, 2026-10-07 16:12 KST 머지 · v7 전면 재작성, 매 홉 봉투가 `AuditorProcedureAction`).
+> 각 판 뒤 run은 그 전 run과 직접 비교하지 않는다. 잃는 측정은 없다 — v7·v8·v9로 돈 run이 `docs/experiments/`에 0건이다
+> (grep, 2026-10-08). v10으로 돈 run은 [10-08 run](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) 1건이다(`checksum` 0이라 비교표 밖). 규칙 5의 고정 표본 회귀를 돌린 기록도 그 디렉터리에 없다. 지금 판은 이 사슬이 아니라
+> `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

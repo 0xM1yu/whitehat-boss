@@ -23,7 +23,8 @@ ALL_PROFILES: list[str] = sorted(
 
 # scout 자리만 실서빙인 합성 config의 scout 키. `prompts/scout`에 있는 버전(v1)을 골라야
 # 프롬프트까지 열린다. ⏵ 2026-09-29 — 이 키의 registry 버전이 Auditor v3
-# (⏵ 2026-10-03 v6 · ⏵ 2026-10-04 v7)가 되어
+# (⏵ 2026-10-03 v6 · ⏵ 2026-10-04 v7 · ⏵ 2026-10-08 — 그 뒤 v8·v9·v10. 지금 판은
+# `config/models.yaml`이 정본이다)가 되어
 # (`prompts/scout/v3`는 없다) `served_scout_config`가 합성 엔트리에서 v1로 고정한다 —
 # registry 버전에 기대지 않는다.
 SERVED_SCOUT_KEY = "qwen3.8-27b"
