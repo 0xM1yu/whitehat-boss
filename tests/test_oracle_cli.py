@@ -757,9 +757,14 @@ def _every_parser(
 
 
 def test_every_subcommand_help_is_printable_on_a_cp949_console() -> None:
-    """위 검사는 오라클 플래그 넷만 봤다 - #420은 그 밖의 `help=`(`run --help`)가 `U+2014`로
-    죽은 것이다. 서브커맨드마다 **렌더된 도움말 전체**(`format_help`)를 cp949로 인코딩한다.
-    #420 직전 main에서 `doctor`·`run`·`bench`·`preflight` 넷이 이 검사에 걸렸다."""
+    """위 검사는 오라클 플래그 넷만 봤다. 서브커맨드마다 **렌더된 도움말 전체**(`format_help`)를
+    cp949로 인코딩한다(#420).
+
+    ⚠ 진입점(`python -m src.cli … --help`)은 `main()`이 `parse_args` 앞에서 stdout을
+    `force_utf8`로 바꿔 이 글자로 안 죽는다. 죽는 것은 `main()`을 거치지 않는 호출이다 —
+    `build_parser().parse_args([...,"--help"])`를 cp949 strict stdout에서 부르면 `5828a0a`에서
+    `UnicodeEncodeError`로 rc 1이었다. 그 커밋에서 `doctor`·`run`·`bench`·`preflight` 넷이 이
+    검사에 걸렸다."""
     parsers = _every_parser(cli.build_parser())
     assert len(parsers) > 1, "서브커맨드를 못 찾았다 - 검사가 아무것도 안 본다"
 
