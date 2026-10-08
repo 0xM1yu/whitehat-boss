@@ -58,7 +58,11 @@
 
 - 기제 -> MSYS가 네이티브 파이썬에 넘기는 환경변수 값의 POSIX 경로를 바꾼다 · `model_swap._resolved`의 `shutil.which`가 PATH를 앞에서부터 본다(레지스트리 PATH면 System32가 앞).
 - 2026-10-08 이 PC 재현 -> 가짜 호스트(`SWAP_SSH_HOST=nohost.invalid`)로 `python -m src.cli preflight --profile harness_pool --device vastai-remote`를 세 셸에서 돌려 위 표와 같은 판정. 원격 커밋 점검은 호스트가 없어 ERROR라 그 너머는 안 봤다.
-- Git Bash 대안 -> `MSYS2_ENV_CONV_EXCL=SWAP_REMOTE_ROOT`를 주면 같은 가짜 호스트 preflight에서 두 점검 다 OK(2026-10-08 이 PC). 실 박스·run은 미실측. `MSYS_NO_PATHCONV=1`은 안 쓴다 -> `git -C`가 깨진다(2026-10-04 보고서 §3.3).
+- Git Bash 대안 -> `MSYS2_ENV_CONV_EXCL="SWAP_REMOTE_ROOT;SWAP_REMOTE_PYTHON"`. 둘 다 빼야 한다. 2026-10-08 이 PC, 두 값 `export` 뒤 `py -3.11`이 받은 `os.environ`:
+  - 제외 없음 -> `C:/Program Files/Git/root/harness` · `C:/Program Files/Git/usr/bin/python3`
+  - `SWAP_REMOTE_ROOT`만 -> `/root/harness` · `C:/Program Files/Git/usr/bin/python3`
+  - 둘 다 -> `/root/harness` · `/usr/bin/python3`
+- 같은 날 가짜 호스트 preflight는 둘 다 뺀 형태에서 두 점검 OK. ⚠ preflight는 `SWAP_REMOTE_ROOT`의 모양만 본다(`preflight_remote.py` `check_swap_env`) -> `SWAP_REMOTE_ROOT`만 빼도 OK가 나오고 바뀐 `SWAP_REMOTE_PYTHON`은 못 잡는다. 그 값은 `swap-remote.sh`가 `HARNESS_PYTHON`으로 원격에 넘긴다 -> 원격에서 깨지리라는 것은 코드 읽기이고 실행 확인은 없다. 실 박스·run은 미실측. `MSYS_NO_PATHCONV=1`은 안 쓴다 -> `git -C`가 깨진다(2026-10-04 보고서 §3.3).
 - 그래서 1·4는 Git Bash, 5·6은 PowerShell + PATH다. 1·4의 값은 bash 안에서만 쓰여 변환이 안 걸린다(1은 2026-10-07 Git Bash 통과 — #538 본문).
 
 ```bash
