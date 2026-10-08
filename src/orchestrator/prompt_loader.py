@@ -45,6 +45,28 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 프롬프트 쪽에 있으면 v6→v7→v8이 코드 변경 없이 돈다. **모르는 이름은 거절한다** —
 `input`·`source_options`와 같은 판단이고, 오타 하나가 그 가드를 조용히 끈다.
 
+## meta의 `hop_header` — 그 프롬프트 판이 서술하는 followup 첫 줄 (pov)
+
+`true`면 하네스가 pov 루프의 매 followup 맨 앞에 홉 줄(`hop=<k> last_hop=<N> remaining=<N-k>` —
+`runner._pov_hop_line`)을 붙인다. 없으면 `false`다. **그 줄을 서술하는 prefix와 그 줄을 보내는
+하네스가 갈리지 않게 prefix 옆 meta에 선언한다** — 이름 목록(`pov._WIDE_INPUT_VERSIONS`)에 한 겹
+더 얹지 않은 이유다. 이전 판(v2·v3)은 `false`라 followup이 바이트 그대로고, 새 판은 v4를 복사하면
+같이 따라온다. `tests/test_pov_prompt_v4.py`가 「prefix가 `last_hop=`를 서술하는가 ⇔
+`hop_header`」를 양방향으로 건다. **불리언이 아니면 거절한다** — 오타 하나(`"true"`)가 그 줄을
+조용히 끈다.
+
+## meta의 키 — 모르는 키는 거절한다
+
+위 `input`·`source_options`·`tools`·`hop_header`는 **값**만 닫으면 모자란다. 키 이름이 틀리면
+(`inputs:` · `toosl:` · `hop_heder:`) 로더가 그 키를 못 읽고 **기본값으로 가서** 값 검사에 닿지도
+않는다 — 가드가 조용히 꺼지는 같은 실패가 키 쪽에서 난다. 그래서 최상위 키의 집합(`META_KEYS`)도
+닫는다. 키를 새로 읽게 하는 변경은 이 목록에도 넣는다(안 넣으면 그 키를 쓰는 판이 로드에서 죽는다).
+
+**같은 키가 두 번 나와도 거절한다**(`_UniqueKeyLoader`) — PyYAML 기본은 뒤의 값이 앞의 값을 덮어서
+`hop_header: true` 뒤의 `hop_header: false`가 값 검사를 통과한 채 홉 줄을 조용히 끈다.
+⚠ **여기까지가 한계다**: 깨진 YAML 문법(`ScannerError`·`ConstructorError`)은 `PromptError`로 감싸지
+않으므로 `cli doctor`가 ERROR 줄이 아니라 트레이스백을 낸다(이 변경 전부터 그랬다).
+
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ID는 노드가 미리 발급해 여기 실어
@@ -114,6 +136,24 @@ class PromptError(Exception):
 # meta.yaml의 `input`이 가질 수 있는 값(모듈 docstring 「meta의 `input`」).
 INPUT_KINDS = ("source", "slice")
 
+# meta.yaml이 가질 수 있는 최상위 키(모듈 docstring 「meta의 키」). 앞의 일곱은 `_load_cached`가
+# 읽는 것이고, 뒤의 다섯은 **로더가 안 읽는 기록용**이다 — `description`은 판의 변경 서술이고
+# 나머지 넷(`profile`·`model`·`cwe_scope`·`based_on`)은 디스크의 scout 세 역할 v3·v4가 든다.
+META_KEYS = (
+    "role",
+    "version",
+    "output_schema",
+    "input",
+    "source_options",
+    "tools",
+    "hop_header",
+    "description",
+    "profile",
+    "model",
+    "cwe_scope",
+    "based_on",
+)
+
 # meta.yaml의 `tools`가 가질 수 있는 값(모듈 docstring 「meta의 `tools`」).
 # **`adapters/fake_tools.TOOL_KINDS`의 키와 같은 집합을 여기 복제한다** — 그쪽은 어댑터라
 # import 할 수 없다(engineering-guide.md §3 · CI의
@@ -147,6 +187,8 @@ class PromptTemplate:
     # 이 프롬프트 판이 모델에게 광고하는 도구(모듈 docstring 「meta의 `tools`」).
     # `PROMPT_TOOL_NAMES`의 부분집합이고, 비면 도구를 안 쓰는 판이다.
     tools: tuple[str, ...] = ()
+    # followup 첫 줄에 홉 줄을 붙이는 판인가(모듈 docstring 「meta의 `hop_header`」 — pov만 읽는다).
+    hop_header: bool = False
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -182,6 +224,11 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
     body = _read(directory / "body.md")
     meta = _read_meta(directory / "meta.yaml")
 
+    unknown = sorted(str(key) for key in meta if key not in META_KEYS)
+    if unknown:
+        raise PromptError(
+            f"{directory}/meta.yaml에 모르는 키 {unknown}가 있다 — {list(META_KEYS)} 중에서 쓴다"
+        )
     if meta.get("role") != role.value or str(meta.get("version")) != version:
         raise PromptError(
             f"{directory}의 meta.yaml이 디렉터리와 어긋난다: "
@@ -220,6 +267,12 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
             f"{list(PROMPT_TOOL_NAMES)} 중에서 고른다"
         )
 
+    hop_header = meta.get("hop_header", False)
+    if not isinstance(hop_header, bool):
+        raise PromptError(
+            f"{directory}/meta.yaml의 hop_header {hop_header!r}은 true/false여야 한다"
+        )
+
     return PromptTemplate(
         role=role,
         version=version,
@@ -229,6 +282,7 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
         input=input_kind,
         source_options=tuple(source_options),
         tools=tuple(tools),
+        hop_header=hop_header,
     )
 
 
@@ -641,8 +695,38 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """같은 키가 두 번 나오면 거절하는 로더 — PyYAML 기본은 **뒤의 값이 앞의 값을 조용히 덮는다**.
+
+    그러면 `hop_header: true` 뒤에 `hop_header: false`가 있어도 값 검사는 `false`만 보고 통과한다
+    (`tools: [gdb]` 뒤의 `tools: []`도 같다) - 키 이름 오타를 닫은 것(`META_KEYS`)과 같은 실패가
+    값 쪽에서 난다. 병합 키(`<<`)는 건너뛴다(PyYAML가 따로 펴는 자리다)."""
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[object, object]:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=True)
+            try:
+                if key in seen:
+                    raise PromptError(
+                        f"같은 키 {key!r}가 두 번 있다 - 뒤의 값이 앞의 값을 조용히 덮는다"
+                    )
+                seen.add(key)
+            except TypeError:
+                pass  # 해시할 수 없는 키 - 아래 super()가 ConstructorError로 거절한다
+        return super().construct_mapping(node, deep=deep)
+
+
 def _read_meta(path: Path) -> dict[str, object]:
-    data = yaml.safe_load(_read(path))
+    text = _read(path)
+    try:
+        data = yaml.load(text, Loader=_UniqueKeyLoader)  # SafeLoader의 하위 클래스다
+    except PromptError as exc:
+        raise PromptError(f"{path}: {exc}") from exc
     if not isinstance(data, dict):
         raise PromptError(f"{path}의 최상위는 매핑이어야 한다")
     return data

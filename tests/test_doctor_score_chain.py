@@ -75,7 +75,11 @@ def test_old_real_prompt_outside_content_set_errors(monkeypatch, tmp_path, role)
                and "내용 인식" in c.message for c in checks)
 
 
-@pytest.mark.parametrize("role,version", [("critic", "v5"), ("pov", "v3"), ("auditor", "v7")])
+# pov는 v3(2026-10-05~10-08 서빙 판)와 v4(2026-10-08~ 서빙 판) 둘 다 넓은 입력 판이다.
+@pytest.mark.parametrize(
+    "role,version",
+    [("critic", "v5"), ("pov", "v3"), ("pov", "v4"), ("auditor", "v7")],
+)
 def test_content_aware_prompt_does_not_error(monkeypatch, tmp_path, role, version):
     config = _version(load_config("harness_pool"), role, version)
     checks = _checks(monkeypatch, tmp_path, config)
@@ -106,6 +110,9 @@ def test_missing_prompt_keeps_existing_load_error(monkeypatch, tmp_path):
 @pytest.mark.parametrize("role,module,attribute,version", [
     ("critic", critic, "_CONTENT_AWARE_VERSIONS", "v5"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v3"),
+    # v4가 서빙 판이다(2026-10-08) - 집합에서 v4가 빠지면 넓은 입력이 조용히 꺼진다(그 사고를
+    # doctor가 막는다).
+    ("pov", pov, "_WIDE_INPUT_VERSIONS", "v4"),
     ("auditor", auditor, "_CONTENT_AWARE_VERSIONS", "v7"),
 ])
 def test_reads_the_nodes_live_content_set(monkeypatch, tmp_path, role, module, attribute, version):
@@ -117,8 +124,9 @@ def test_reads_the_nodes_live_content_set(monkeypatch, tmp_path, role, module, a
 
 
 def test_cli_exit_is_one_for_real_score_chain(monkeypatch, tmp_path, capsys):
-    # pov 판을 v2로 박는다 - 서빙 판이 `pov._WIDE_INPUT_VERSIONS`에 들면(v3, PR #499) 이 오류가 안
-    # 나는 것이 정상이라 「서빙 프로필의 현재 판」에 기대면 머지 순서에 따라 이 테스트가 깨진다.
+    # pov 판을 v2로 박는다 - 서빙 판이 `pov._WIDE_INPUT_VERSIONS`에 들면(v3 PR #499, v4 2026-10-08)
+    # 이 오류가 안 나는 것이 정상이라 「서빙 프로필의 현재 판」에 기대면 머지 순서에 따라 이
+    # 테스트가 깨진다.
     config: HarnessConfig = _version(load_config("harness_pool"), "pov", "v2")
     monkeypatch.setattr(cli, "load_profile", lambda *_a, **_k: config)
     assert cli.main(["doctor", "--profile", "harness_pool", "--artifacts-root", str(tmp_path)]) == 1
@@ -147,7 +155,7 @@ def test_mixed_profile_exempts_only_the_fake_role(monkeypatch, tmp_path):
     config = load_config("harness_pool_hybrid")
     roles = {**config.profile.roles, "critic": "fake"}
     config = config.transition(profile=config.profile.transition(roles=roles))
-    config = _version(config, "pov", "v2")  # 위 테스트와 같은 사유 - v3는 내용 인식 판이다
+    config = _version(config, "pov", "v2")  # 위 테스트와 같은 사유 - v3·v4는 내용 인식 판이다
     assert config.served_models()
     checks = _checks(monkeypatch, tmp_path, config)
     assert not any(c.severity == cli.Severity.ERROR and "critic" in c.message

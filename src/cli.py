@@ -965,7 +965,7 @@ def _oracle_for(
     print(
         f"채점기 대상: {target} (과제 id {metadata.task_id}, 에이전트 id {metadata.agent_id}) - "
         f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. vul 다리에는 모델이 "
-        "submit한 PoC와(pov v3) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
+        "submit한 PoC와(pov v3 이상) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
         "fix 다리와 최종 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
         "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
         "하나를 고른다(내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). 등급을 "
@@ -1219,9 +1219,12 @@ def estimate(config: HarnessConfig, target: Path) -> list[str]:
     # 캡슐은 target당 하나지만 **자리마다 프롬프트에 실린다** — `_expected_calls`와
     # 같은 근거다. 캡슐당 한 번만 더하면 풀에서 캡슐 항이 1/3로 나온다.
     # ⚠ **Auditor 도구 루프가 켜진 run은 과소추정이다**(⏵ 2026-10-04 — 이슈 #419). 이 합은 호출마다
-    # **역할 평균 prefix**(`_prefix_tokens` — `harness_pool`에서 4,481토큰)만 더한다. 루프는 매 홉
-    # prefix와 hop0 user 턴(`SOURCE` 최대 20,000토큰 + FACTS)을 다시 싣고 관측이 홉마다 쌓이는데
-    # 둘 다 안 센다 — `SOURCE`는 캡슐 토큰이 아니라 러너가 따로 조립해서 한 방일 때도 안 센다.
+    # **역할 평균 prefix**(`_prefix_tokens` — `harness_pool`에서 5,253토큰, `len//4`의 계산값이고
+    # c2bdac1에 PoV v4 prefix(10,214자)를 올린 상태다. c2bdac1 자체는 5,042, 옛 값 4,481은 낡았다.
+    # prefix가 바뀌면 움직인다)만 더한다.
+    # 루프는 매 홉 prefix와 hop0 user 턴(`SOURCE` 최대 20,000토큰 + FACTS)을 다시 싣고 관측이
+    # 홉마다 쌓이는데 둘 다 안 센다 — `SOURCE`는 캡슐 토큰이 아니라 러너가 따로 조립해서 한 방일
+    # 때도 안 센다.
     # 계산값은 `config/budgets.yaml`의 `auditor_tool_hops` 주석이 든다 — 상한 쪽 계산값이라 오차는
     # 대체로 위(과대)이지만 엄밀한 천장은 아니다(근거는 그 주석). 고치지 않았다(별 작업).
     tokens = sum(c.used_tokens for c in capsules) * places + _prefix_tokens(config) * calls
@@ -1996,7 +1999,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--oracle-submit",
         action="store_true",
         help="8단계가 낸 PoC를 채점기(oracle)에 내보낸다(#386). "
-        "vul 다리에는 모델이 submit한 PoC와(pov v3) 중간 gen을 내고 중간 gen은 판정 조회도 "
+        "vul 다리에는 모델이 submit한 PoC와(pov v3 이상) 중간 gen을 내고 중간 gen은 판정 조회도 "
         "한다. fix 다리와 최종 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 "
         "성공한 최종 후보가 "
         "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 "
