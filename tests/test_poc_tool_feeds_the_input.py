@@ -692,6 +692,15 @@ def test_every_code_the_classifier_calls_environmental_also_carries_a_reason() -
 
     assert silent == [], f"환경 실패로 갈랐는데 사유가 없는 코드: {silent}"
 
+    # 🔴 **빈 문자열만 막으면 뜻을 뒤집는 변이가 산다**(적대적 리뷰 2026-10-09 독립 2인이 둘 다
+    # 재현: 사유를 *"대상이 크래시했다 (정상 판정)"*으로 바꿔도 378건이 통과했다). 그 문구는
+    # 모델 관측의 `error=`로 실리므로 **모델이 환경 실패를 크래시로 읽게 만든다.** 그래서
+    # `POC_AMBIGUOUS_NOTE`·데몬 분기와 **같은 강도로** 뜻을 단언한다.
+    for code, (_, _, error) in verdicts.items():
+        assert error is not None
+        assert "대상의 판정으로 읽을 수 없는" in error, f"exit={code}의 사유가 뜻을 안 든다"
+        assert "크래시" not in error, f"exit={code}의 사유가 크래시를 말한다"
+
 
 @pytest.mark.parametrize("code", [139, 71, 77])
 def test_codes_the_target_can_really_produce_stay_the_targets_verdict(code: int) -> None:
