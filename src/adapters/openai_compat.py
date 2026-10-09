@@ -43,10 +43,11 @@ _TIMEOUT_S = 300
 class PostedResponse:
     """`_post` 한 번이 서버에서 받은 것 — 위치로 푸는 튜플이 아니라 **이름으로 읽는** 기록 (#550).
 
-    `_post`가 `(content, usage)` 튜플일 때 `finish_reason`을 더하려고 셋으로 늘리자, 그것을
-    `raw, usage = client._post(payload)`로 풀던 프로브 둘(`tools/probe/`)이 전 호출에서
-    `ValueError`를 맞았다. 둘 다 `except Exception` 안이라 GPU가 이미 쓴 생성이
-    `{"error": …}`로 버려졌다. 필드를 이름으로 읽으면 하나가 더 늘어도 그 자리가 안 깨진다.
+    `_post`가 `(content, usage)` 튜플일 때 `finish_reason`을 더하려고 셋으로 늘리면, 그것을
+    `raw, usage = client._post(payload)`로 푸는 프로브 둘(`tools/probe/`)이 전 호출에서
+    `ValueError`를 맞는다. 둘 다 `except Exception` 안이라 GPU가 이미 쓴 생성이
+    `{"error": …}`로 버려진다 — #550 작업 중 테스트로 재현(`tests/test_probe.py`), 실서빙 관측
+    아님. 필드를 이름으로 읽으면 하나가 더 늘어도 그 자리가 안 깨진다.
 
     `pydantic` 모델이 아니라 dataclass인 것은 **검증이 없어야 해서다.** 서버가
     `message.content`를 `null`로 줄 수 있고(OpenAI 호환 응답이 허용하며 vLLM 이슈에 그 모양의
