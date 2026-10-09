@@ -224,7 +224,8 @@ def _describe_evidence(
         # 게이트 등급은 이 값으로 안 정해진다: `p1 = static_ok or location_ok`이고 Evidence에 위치를
         # 싣는 곳이 semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`gate.evaluate` ·
         # `container_tools.first_hit_location`). 그 위치는 semgrep `results[0]`(첫 히트) 하나라
-        # 주장한 줄과 다를 수 있다. 이 노출이 인용·판정을 바꾸는지는 미실측이다(이슈 #475).
+        # 주장한 줄과 다를 수 있다. 이 노출이 인용·판정을 바꾸는지는 미실측이다(이슈 #563 —
+        # `run_20261007_0001`이 위치를 싣고 돌았으나 그 히트가 후보 위치와 안 겹쳤다).
         # 위치가 없으면 아무것도 더하지 않는다 — 산문 한 줄이라 `null`을 적으면 노이즈다.
         if with_location and ev.location is not None:
             line += f" · {_location_text(ev.location)}"
