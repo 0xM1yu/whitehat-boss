@@ -311,6 +311,25 @@ def _poc_is_harness_failure(code: int) -> bool:
 # 한다. `summary_line`이 이 값을 보고 주석을 단다.
 _POC_AMBIGUOUS_EXIT = 1
 
+# 🔴 **`1` 중 가를 수 있는 하나 — docker 클라이언트가 데몬에 못 닿았다.** Windows Docker Desktop은
+# 데몬(엔진)이 꺼져 있으면 `125`가 아니라 **`1`**을 낸다 — 2026-10-09 실측(이 저장소 리뷰 장비 ·
+# Docker Desktop 꺼짐): stderr *"failed to connect to the docker API at
+# npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is
+# running: …"* · exit 1. 위 「`1`은 가를 수 없다」가 이 경우엔 틀린다 — 대상이 **아예 안 떴다**.
+# 그래서 `1`이면서 stderr가 클라이언트의 연결 실패 문구면 환경 실패로 보낸다(#567 리뷰).
+# Linux의 같은 실패(*"Cannot connect to the Docker daemon"*)는 `125`라 위 판별자가 이미 걸러 이
+# 정규식에 기대지 않는다 — 그 문구는 같은 뜻이라 함께 든다(그 장비의 종료 코드는 안 쟀다).
+_POC_DAEMON_UNREACHABLE = re.compile(
+    r"failed to connect to the docker API|Cannot connect to the Docker daemon", re.IGNORECASE
+)
+
+
+def _poc_daemon_unreachable(step: "Step") -> bool:
+    """`exit=1`이 대상이 아니라 docker 클라이언트의 연결 실패인가(Windows Docker Desktop)."""
+    return step.exit_code == _POC_AMBIGUOUS_EXIT and bool(
+        _POC_DAEMON_UNREACHABLE.search(step.stderr)
+    )
+
 # `exit=1`을 봤을 때 관측에 싣는 한 줄. 🔴 **상수로 뺀 이유**: 적대적 리뷰 2026-10-09이 이 문구를
 # *"…은 크래시다"*로 **뜻을 뒤집는 변이**를 넣고도 131건이 통과하는 것을 보였다(테스트가
 # `"1" in note`만 봤다). 이제 테스트가 이 상수의 **뜻**을 단언한다.
@@ -803,6 +822,11 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
             # **음수**(시그널로 죽은 자식 — docker 클라이언트가 죽었다).
             # `tools/oracle_canary.py`가 그 위험을 적는다 — *"이 코드로 `-vul` 다리가 채워지면
             # 망가진 docker 설정이 「정답 PoC가 타깃을 터뜨렸다」로 읽힌다."*
+            if _poc_daemon_unreachable(last):
+                return False, code, (
+                    "poc: docker 클라이언트가 데몬에 닿지 못했다 (exit=1) — 실행 환경의 실패이지 "
+                    "대상의 판정이 아니다"
+                )
             if _poc_is_harness_failure(code):
                 return False, code, (
                     f"poc: 과제 이미지를 띄우지 못했다 (exit={code}) — 실행 환경의 코드이지 "
@@ -953,7 +977,10 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     「크래시다」로 읽지 않게 그 사실만 관측에 싣는다.
     """
     if tool == "poc":
-        if steps and steps[-1].exit_code == _POC_AMBIGUOUS_EXIT:
+        # 데몬에 못 닿은 `1`은 애매하지 않다 — `judge`가 환경 실패로 이미 갈랐다.
+        if steps and steps[-1].exit_code == _POC_AMBIGUOUS_EXIT and not _poc_daemon_unreachable(
+            steps[-1]
+        ):
             return POC_AMBIGUOUS_NOTE
         return None
     if tool != "semgrep" or not steps:
@@ -1110,7 +1137,8 @@ class ContainerToolRunner:
         **못 구하면 빈 dict다.** 지어낸 값이 들어가면 재현성 기록 자체가 거짓이 되고,
         `runner.incomplete_fields()`가 경고를 내는 편이 옳은 동작이다.
 
-        🔴 **⏵ 2026-10-09 (ADR 0014) — 실제로 돈 이미지 전부를 든다.** `poc`가 과제 `-vul`
+        🔴 **⏵ 2026-10-09 (ADR 0014) — 이 run에 배선된(돌 수 있는) 이미지 전부를 든다.** `poc`가
+        한 번도 안 불린 run에도 과제 이미지가 실린다(채점기가 서면 늘 배선된다). `poc`가 과제 `-vul`
         이미지로 나가므로 하네스 이미지 하나만 적으면 **그 run의 재현성 기록이 거짓**이 된다 —
         돈 것이 둘인데 하나만 적힌다. ADR 0005(`docs/decisions/0005-tool-runner-override.md`)가
         `--tool-runner` 예외를 열며 *"예외를 열되 사후에 구분 가능하게"* `RunRecord.tool_runner`를

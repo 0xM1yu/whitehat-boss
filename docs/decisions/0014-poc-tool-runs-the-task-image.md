@@ -83,7 +83,10 @@ docker run --rm --network none --pull never \
 1. **종료 코드 `124`·`125`·`126`·`127`과 음수는 타깃의 판정이 아니다.** 「관측 실패」로 낸다.
    근거는 `tools/oracle_canary.py`가 이미 적는다 — *"이 코드로 `-vul` 다리가 채워지면 망가진 docker
    설정이 「정답 PoC가 타깃을 터뜨렸다」로 읽힌다."* **`1`은 가를 수 없다**(ASan 기본 종료 코드일 수
-   있다) — 가를 수 없다는 **그 사실을 기록한다**.
+   있다) — 가를 수 없다는 **그 사실을 기록한다**. ⏵ 2026-10-09 — **예외 하나**: Windows Docker
+   Desktop은 데몬이 꺼지면 `125`가 아니라 `1`을 낸다(실측 — stderr *"failed to connect to the docker
+   API …"*). 그 `1`은 stderr의 클라이언트 연결 실패 문구로 가려 「관측 실패」로 낸다
+   (`container_tools._POC_DAEMON_UNREACHABLE` · #567 리뷰).
 2. **채점은 오라클만 한다. 이 도구는 관측만 낸다.** 둘이 갈리면 오라클이 이긴다.
     **이 ADR은 「지정은 채점기 값을 읽지 않는다」를 건드리지 않는다** —
    `test_designation_does_not_read_oracle_fields`가 그대로 선다.
@@ -113,7 +116,8 @@ docker run --rm --network none --pull never \
 `ContainerToolRunner.images()`는 `{self.image: digest}` **하나**를 냈다. `poc`가 과제 이미지로
 나가면 **그 run의 재현성 기록이 거짓이 된다** — 실제로 돈 이미지 둘 중 하나만 적힌다.
 
-> **`RunRecord.tool_images`는 실제로 돈 이미지 전부를 digest와 함께 든다. 과제 이미지의 digest를
+> **`RunRecord.tool_images`는 이 run에 배선된(돌 수 있는) 이미지 전부를 digest와 함께 든다** —
+> `poc`가 한 번도 안 불린 run에도 과제 이미지가 실린다(채점기가 서면 늘 배선된다). 과제 이미지의 digest를
 > 못 구하면 그 run은 비교표 밖이다.**
 
 [ADR 0005](0005-tool-runner-override.md)가 `--tool-runner` 오버라이드를 열며
@@ -187,8 +191,10 @@ docker run --rm --network none --pull never \
   덮는다)·`-w /work`가 붙는다. PoC가 대상을 멈추면 채점기는 10초에 끊는데 이 도구는
   `sandbox.timeout_s`(지금 300)까지 간다 — **홉당 최대 300초**다. 그 차이가 판정을 가르는지는
   **안 쟀다**(적대적 리뷰 2026-10-09이 지적했다).
-- **복제한 상수가 `tools/oracle_canary.py`와 같은지 비교하는 검사가 없다.** `_POC_FAMILY`·
-  `POC_IN_IMAGE`·환경 코드 범위를 베꼈고 주석이 「같아야 한다」고 적지만 **기계가 안 센다.**
+- **복제한 상수의 대조는 양쪽이 같이 틀리면 못 잡는다.** `_POC_FAMILY`·`POC_IN_IMAGE`·환경 코드
+  범위를 `tools/oracle_canary.py`에서 베꼈고, 둘이 같은지는
+  `tests/test_poc_tool_feeds_the_input.py::test_the_copied_constants_match_the_tool_they_were_copied_from`이
+  센다. 둘 다 저자 소스와 어긋나는 경우는 저자 소스 태그를 다시 봐야 한다(그 테스트 docstring).
 - **런타임 실패가 run 상태에 드러나는지**(#559). 이 결정은 그 자리를 **새로 하나 더 만든다** —
   과제 이미지의 `exit 125`가 도구 결과로 적히면 같은 사고다. 불변식 1이 그것을 막지만 #559 자체는
   이 ADR이 닫지 않는다.
