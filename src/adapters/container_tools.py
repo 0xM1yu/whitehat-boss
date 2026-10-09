@@ -828,9 +828,13 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
                     "대상의 판정이 아니다"
                 )
             if _poc_is_harness_failure(code):
+                # ⏵ 2026-10-09 (적대적 리뷰) — **「띄우지 못했다」로 단정하지 않는다.** `137`은
+                # docker SIGKILL이고 위 `_POC_ENV_FATAL` 주석이 **대상 자신의 OOM과 갈리지
+                # 않는다**고 적는다 — 그 경우 이미지는 **떴다**. 한 문구로 참인 것은 「대상의
+                # 판정으로 읽을 수 없다」까지다. 뜻은 아래 핀이 문다.
                 return False, code, (
-                    f"poc: 과제 이미지를 띄우지 못했다 (exit={code}) — 실행 환경의 코드이지 "
-                    "대상의 판정이 아니다"
+                    f"poc: 대상의 판정으로 읽을 수 없는 종료 코드다 (exit={code}) — 실행 환경이 "
+                    "낸 값이거나 대상의 것과 갈리지 않는다"
                 )
             # 여기까지 오면 대상이 실제로 떴다. 비-0은 실패가 아니라 신호다.
             # `1`의 애매함은 숨기지 않고 `summary_line`이 관측에 적는다.
