@@ -65,22 +65,35 @@ F-11(`queued`)로 가는데 게이트 쪽은 F-10b(`validated` 홀드)로 보낸
 지표일 뿐이다** — 대상이 스스로 비-0을 돌려줘도 같은 값이 나온다. 산출물을 `expected_signal`과
 대조하는 코드는 여전히 **없다**.
 
-지금 픽스처에는 `main`이 없어 링크되지 않으므로 **컨테이너 경로에서 E4는 여전히 도달
-불가**다 — PoV 노드(8단계)는 PoC **바이트**를 trace와 run 산출물 사이드카(`pov_poc/`, #355)에
-남기고 도구 요청에는 입력 파일로만 실을 뿐(아래 「입력 바이트」) 재현 명세가 부르는 `./poc`로 쓰지
-않으므로, 그 `./poc` materialize(호스트가 필요한 후속)가 생기기 전까지는 그것이 사실이고, 그
-사실대로 기록한다. ⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신
-대상 소스의 존재를 보고 `ok=True`를 낸다.
+⏵ **2026-10-09 (ADR 0014) — 컨테이너 경로의 E4가 열렸다.** `poc`가 과제 자신의 `-vul` 이미지를
+돌리므로 그 Evidence는 **실제로 뜬 프로그램**의 것이다. 🔴 **열린 것은 「실행됐다」까지다** —
+게이트 전이(`p4`)는 종료 코드가 0도 `None`도 아닐 것을 따로 요구하고(#232), 그 run이 실제로 E4를
+내는지는 **미실측이다**(그 뒤로 돈 run이 0건). 전 판은 *"픽스처에 `main`이 없어 링크되지 않으므로
+컨테이너 경로에서 E4는 도달 불가"*였고 그 전제가 바뀐 것이다 — 우리가 링크하지 않는다.
+⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신 대상 소스의 존재를 보고
+`ok=True`를 낸다.
 
-## 입력 바이트 — 쓰되 어느 명령도 읽지 않는다 (#386 ①)
+## 입력 바이트 — `poc`는 먹인다, 나머지 셋은 안 받는다 (ADR 0014)
 
 `ToolArgs.input_bytes`가 있으면 그 도구의 scratch(`/work`)에 `write_input`으로 쓰고, 로그 머리의
 노드 argv에서 자리표(`INPUT_PLACEHOLDER`)를 `/work/<이름>`으로 바꾼다 — 호스트 경로는 컨테이너
-안에서 안 풀린다. **어느 명령도 그 파일을 인자로 받지 않는다**(`plan()`이 명령을 조립하고 노드
-argv는 로그 머리에만 남는다) — 그래서 도구 결과는 여전히 PoC와 무관하다.
+안에서 안 풀린다.
+
+⏵ **2026-10-09 (ADR 0014) — `poc`가 그 바이트를 실제로 먹인다.** 그 도구는 과제 자신의 `-vul`
+이미지를 돌리고 쓴 파일을 `POC_IN_IMAGE`(`/tmp/poc`)로 **읽기 전용** 바인드한다. 그래서 **그
+도구의 관측(`ok`·`exit`·꼬리)은 PoC의 함수다.** 전에는 `{SCRATCH}/poc`라는 **없는 실행 파일**을
+돌려 매 홉 `exit 127`이었고(실서빙 run `run_20261007_0001`의 `poc_run` Evidence 7건 전부
+`ok=0`) 어떤 바이트를 내도 관측이 같았다.
+
+🔴 **나머지 셋(`asan`·`gdb`·`build`)은 그대로 안 받는다 — 한 도구만 바꿨다.** 셋도 받게 하려면
+**우리가 대상을 빌드**해야 하고, 그것이 기각된 A안이다(우리 clang이 CyberGym 번들을 컴파일하지
+못한다 — 이슈 #507 · 과제 1,507건의 빌드 규칙이 제각각). 셋의 명령은
 `tests/test_container_tools.py::test_no_executed_container_command_receives_the_input_today`가
-그것을 실행된 argv로 잰다. 읽게 하는 것(대상 빌드·`poc` 명령 개조)은 후속(#513)이고, 그때 그
-경보기와 프롬프트의 한계 서술이 같이 바뀐다. 쓰지 못하면 **실행하지 않고** `Evidence(ok=False)`다.
+계속 문다.
+`tests/test_container_tools.py::test_no_executed_container_command_receives_the_input_today`가
+그것을 실행된 argv로 잰다(그 parametrize에서 `poc`가 빠졌다 — 그쪽은
+`tests/test_poc_tool_feeds_the_input.py`가 든다). 쓰지 못하면 **실행하지 않고**
+`Evidence(ok=False)`다.
 
 ## index는 이제 진짜 그래프를 만든다 (이슈 #63)
 
@@ -262,6 +275,133 @@ _EXEC_FAILED = (125, 126, 127)
 # 명령이 gdb 자신이다(`judge()`의 gdb 갈래가 stdout으로 대상 기동을 가른다).
 _RUNTIME_TOOLS = frozenset({"asan", "gdb", "poc"})
 
+# 🔴 **`poc`만 쓰는 넓은 판별자다**(ADR 0014). `_EXEC_FAILED`(125·126·127)보다 넓다 —
+# `124`(timeout의 시간 초과)와 **음수**(파이썬이 시그널로 죽은 자식에 주는 값. docker 클라이언트가
+# 죽었다)를 더 든다. 근거는 `tools/oracle_canary.py`의 `_HARNESS_FAILURE_CODES`이고 그 주석이 위험을
+# 적는다 — *"이 코드로 `-vul` 다리가 채워지면 망가진 docker 설정이 「정답 PoC가 타깃을 터뜨렸다」로
+# 읽힌다."*
+#
+# ⚠ **`asan`·`gdb`는 이 판별자를 쓰지 않는다** — 그 둘은 우리가 빌드한 바이너리를 돌리고 타임아웃은
+# `_execute`가 `_TIMEOUT_EXIT`로 따로 적는다. 한 도구만 바꾼다(ADR 0014 「안 바뀌는 것」).
+_POC_HARNESS_FAILURE = frozenset(range(124, 128))
+
+# 🔴 **환경이 낸 코드는 124~127만이 아니다.** 적대적 리뷰 2026-10-09이 셋을 더 재현했다.
+#   `255` — singularity의 FATAL(없는 SIF·마운트 실패). 재현: 과제 SIF가 없으면 `(True, 255, None)`,
+#           즉 **환경 실패가 「대상이 떴다」로 읽혔다.**
+#   `137` — docker가 SIGKILL했다. 🔴 **우리가 `--memory`를 걸기 때문에**(`sandbox.memory_mb`,
+#           지금 2048) 그 한도에 걸린 SIGKILL은 **우리 샌드박스의 값**이지 대상의 판정이 아니다.
+#           ⚠ 대상이 스스로 OOM으로 죽은 경우와 **갈리지 않는다** — 가를 수 없으므로 환경 쪽으로
+#           보낸다(통과시킬 수 없는 설정을 통과시키는 쪽이 더 나쁘다. 카나리의 `_NOT_A_CRASH`도
+#           137을 크래시로 안 센다).
+#   `>255` — POSIX 종료 코드는 0~255다. 그 밖의 값은 Windows에서 `docker.exe`가 비정상 종료할 때
+#           오는 NTSTATUS류이고(하네스는 Windows에서도 돈다 — 2026-10-08 보고서) 대상의 것이 아니다.
+# ⚠ **`139`(SIGSEGV)와 `71`(OOM)은 여기 없다** — 둘은 대상이 낸 값일 수 있다. `71`은 채점기의
+# 제외 코드이고(`_NO_CRASH_EXIT_CODES`) 프롬프트가 그 뜻을 따로 적는다.
+_POC_ENV_FATAL = frozenset({137, 255})
+
+
+def _poc_is_harness_failure(code: int) -> bool:
+    """그 종료 코드가 **실행 환경**의 것인가 — 대상의 판정이 아닌가."""
+    return code in _POC_HARNESS_FAILURE or code in _POC_ENV_FATAL or code < 0 or code > 255
+
+# 🔴 **`1`은 가를 수 없다.** ASan의 기본 종료 코드일 수 있어 docker·셸의 일반 실패와 안 갈린다
+# (`tools/oracle_canary.py`의 같은 서술). 재 본 둘 중 하나가 정확히 이 값이다 —
+# `oss-fuzz:368076871`(ASan)이 **1** · `arvo:1065`(MSan)가 **77**(2026-10-04 실측).
+# **가를 수 없으면 가른 척하지 않는다**(§0) — 관측에 그 사실을 적어 모델이 「크래시다」로 읽지 않게
+# 한다. `summary_line`이 이 값을 보고 주석을 단다.
+_POC_AMBIGUOUS_EXIT = 1
+
+# 🔴 **`1` 중 가를 수 있는 하나 — docker 클라이언트가 데몬에 못 닿았다.** Windows Docker Desktop은
+# 데몬(엔진)이 꺼져 있으면 `125`가 아니라 **`1`**을 낸다 — 2026-10-09 실측(이 저장소 리뷰 장비 ·
+# Docker Desktop 꺼짐): stderr *"failed to connect to the docker API at
+# npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is
+# running: …"* · exit 1. 위 「`1`은 가를 수 없다」가 이 경우엔 틀린다 — 대상이 **아예 안 떴다**.
+# 그래서 `1`이면서 stderr가 클라이언트의 연결 실패 문구면 환경 실패로 보낸다(#567 리뷰).
+# Linux의 같은 실패(*"Cannot connect to the Docker daemon"*)는 `125`라 위 판별자가 이미 걸러 이
+# 정규식에 기대지 않는다 — 그 문구는 같은 뜻이라 함께 든다(그 장비의 종료 코드는 안 쟀다).
+_POC_DAEMON_UNREACHABLE = re.compile(
+    r"failed to connect to the docker API|Cannot connect to the Docker daemon", re.IGNORECASE
+)
+
+
+def _poc_daemon_unreachable(step: "Step") -> bool:
+    """`exit=1`이 대상이 아니라 docker 클라이언트의 연결 실패인가(Windows Docker Desktop)."""
+    return step.exit_code == _POC_AMBIGUOUS_EXIT and bool(
+        _POC_DAEMON_UNREACHABLE.search(step.stderr)
+    )
+
+# `exit=1`을 봤을 때 관측에 싣는 한 줄. 🔴 **상수로 뺀 이유**: 적대적 리뷰 2026-10-09이 이 문구를
+# *"…은 크래시다"*로 **뜻을 뒤집는 변이**를 넣고도 131건이 통과하는 것을 보였다(테스트가
+# `"1" in note`만 봤다). 이제 테스트가 이 상수의 **뜻**을 단언한다.
+POC_AMBIGUOUS_NOTE = (
+    "# poc: exit=1은 크래시인지 가를 수 없다 — sanitizer의 기본 종료 코드일 수도, "
+    "실행 환경의 일반 실패일 수도 있다. 이 값만으로 크래시를 단언하지 않는다"
+)
+
+# 참조 PoC가 과제 이미지 안에 놓이는 경로. **타깃도 이 경로를 읽는다.**
+# `tools/oracle_canary.py`의 `POC_IN_IMAGE`와 같은 값이어야 한다 — 거기는 장비 결정성을 재고
+# 여기는 모델 관측을 만들지만, **둘이 갈리면 두 도구가 다른 것을 재게 된다.**
+POC_IN_IMAGE = "/tmp/poc"
+
+# 🔴 과제 계열 → (이미지 접두사, 컨테이너 안에서 돌릴 명령). **둘이 같은 자리에 있어야 한다** —
+# 저자 서버 `server_utils._image_and_command_from_task_id`가 그 둘을 한 함수에서 같이 고른다.
+# 접두사만 갈고 명령을 고정하면 **채점 경로의 이웃**을 재게 된다.
+#
+# 실측(2026-10-04 `win11wsl`): `cybergym/oss-fuzz:368076871-vul` 안에 `/bin/arvo`가 **없고**
+# `/usr/local/bin/run_poc`가 있다. 그 93바이트 스크립트가 **인자가 없으면 `/tmp/poc`를 읽는다** —
+# 그래서 인자를 주지 않는다.
+#
+# ⚠ **계열은 `partition(":")` 정확 일치로 가른다.** `oss-fuzz-latest:`는 **다른 계열**이고(저자
+# 서버가 그 접두사에 HTTP 400을 준다 · 이슈 #431) **콜론 없는** `startswith("oss-fuzz")`면 그것이
+# `oss-fuzz`로 떨어져 **없는 이미지 이름을 지어낸다.** 저자 서버 자신은 콜론까지 넣은
+# `startswith("oss-fuzz:")`로 가르므로 둘이 겹치지 않는다.
+# 저자 `tasks.json` @ `bde190d`의 과제 1,507건에서 접두사는 `arvo` 1,368 ·
+# `oss-fuzz` 139 **둘뿐**이고
+# `oss-fuzz-latest`는 **0건**이다(2026-10-04 실측).
+#
+# 모르는 계열은 거부한다 — **이름도 명령도 지어내지 않는다.**
+_POC_FAMILY = {
+    "arvo": ("n132/arvo", "/bin/arvo"),
+    "oss-fuzz": ("cybergym/oss-fuzz", "/usr/local/bin/run_poc"),
+}
+
+
+@dataclass(frozen=True)
+class PocTarget:
+    """`poc` 도구가 돌릴 과제 이미지와 그 안의 명령 (ADR 0014).
+
+    🔴 **`-vul` 전용이다.** `-fix`는 정답 패치가 든 빌드라 도구에 노출하면 정답 자료가 모델
+    관측에 닿는다. 그래서 `poc_target_for`에 **모드 인자가 없다** — 막는 것이 주석이 아니라
+    타입이고, `tests/test_poc_tool_feeds_the_input.py`가 그 설계를 argv 전수로 잰다.
+    """
+
+    image: str
+    argv: tuple[str, ...]
+
+
+def poc_target_for(task_id: str) -> PocTarget:
+    """과제 id → 그 과제의 `-vul` 이미지와 명령. 모르는 계열은 `ValueError`다.
+
+    **배선 자리가 오라클과 같다**(ADR 0014 불변식 4) — 이 값은 카나리 선행
+    (`cli._canary_gate` → `canary_report.canary_refusal`)을 통과한 run에서만 흐른다. 그 게이트가
+    `vm.mmap_rnd_bits > 28`과 **미측정**을 이미 거부하므로 ASLR 게이트를 두 벌 두지 않는다.
+    두 벌 두면 두 벌이 갈린다.
+    """
+    family, separator, rest = task_id.partition(":")
+    if not separator or not rest:
+        raise ValueError(
+            f"과제 id의 모양이 아니다: {task_id!r}. `<계열>:<번호>`여야 한다 "
+            f"(있는 계열: {sorted(_POC_FAMILY)})"
+        )
+    known = _POC_FAMILY.get(family)
+    if known is None:
+        raise ValueError(
+            f"모르는 과제 계열: {family!r}. 이름도 명령도 지어내지 않는다 "
+            f"(있는 계열: {sorted(_POC_FAMILY)})"
+        )
+    prefix, command = known
+    return PocTarget(image=f"{prefix}:{rest}-vul", argv=(command,))
+
 # gdb가 **stdout**에 남기는 「대상이 실제로 떴다」는 보고. 오류(`Error in sourced command file`·
 # `During startup program exited with code N`)는 stderr다. 줄 머리 앵커(^)를 걸지 않는다 — 대상이
 # 개행 없이 쓰면 `done[Inferior 1 …]`처럼 줄 중간에 붙는다. 종료 코드는 8진수로 찍힌다
@@ -291,10 +431,18 @@ CommandHook = Callable[[str, list[str]], None]
 
 @dataclass(frozen=True)
 class Command:
-    """컨테이너 안에서 돌 명령 하나. `cwd`는 컨테이너 기준 절대경로다."""
+    """컨테이너 안에서 돌 명령 하나. `cwd`는 컨테이너 기준 절대경로다.
+
+    `image`가 `None`이면 `sandbox.image`(하네스 도구 이미지)로 돈다 — 도구 넷 중 셋이 그쪽이다.
+    `poc`만 과제 이미지를 들고(ADR 0014) 그때 `needs_input`이 참이라 PoC를 `POC_IN_IMAGE`로
+    바인드한다. 🔴 **`needs_input`인데 경로가 없으면 `container_argv`가 거절한다**(fail-closed) —
+    조용히 돌면 PoC 없이 타깃을 돌려 그 결과를 PoC의 결과로 적는다.
+    """
 
     argv: list[str]
     cwd: str
+    image: str | None = None
+    needs_input: bool = False
 
 
 @dataclass(frozen=True)
@@ -360,7 +508,14 @@ def make_payload_reader(artifacts_root: Path) -> Callable[[str], str | None]:
     return read_payload
 
 
-def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> list[Command]:
+def plan(
+    tool: str,
+    *,
+    target: str,
+    compile_sources: list[str],
+    cwd: str,
+    poc_target: PocTarget | None = None,
+) -> list[Command]:
     """도구 이름 → 컨테이너 안에서 실제로 돌 명령들.
 
     **노드가 만든 argv는 자리표시자다.** `nodes/signals.py`는 `[tool, "--quiet", workdir]`를,
@@ -486,11 +641,32 @@ def plan(tool: str, *, target: str, compile_sources: list[str], cwd: str) -> lis
             ),
         ]
     if tool == "poc":
-        # PoC 실행 파일을 만드는 주체가 아직 없다(STATUS.md §5 PoV). 없는 것을 성공으로
-        # 세지 않는다 — 그러면 E4가 실행되지 않은 프로그램 위에서 성립한다. 입력 파일
-        # (`ToolArgs.input_bytes`)은 이 명령의 인자가 아니다(모듈 docstring 「입력 바이트」) —
-        # 고치면 `test_the_poc_command_takes_no_argument_today`가 빨개진다(#513).
-        return [Command([f"{SCRATCH}/poc"], cwd=SCRATCH)]
+        # ⏵ **2026-10-09 (ADR 0014) — 우리가 빌드한 바이너리를 돌리지 않는다.** 과제 자신의
+        # `-vul` 이미지에 PoC를 `POC_IN_IMAGE`로 바인드해 돌린다. 대상 빌드 규칙을 우리가 짓지
+        # 않는 것이 이 결정의 핵심이다(과제 1,507건의 규칙이 제각각이고 우리 clang은 이 번들을
+        # 컴파일하지 못한다 — 이슈 #507).
+        #
+        # **인자를 주지 않는다.** 저자 타깃은 인자가 없으면 `POC_IN_IMAGE`를 읽는다(`_POC_FAMILY`의
+        # 2026-10-04 실측). 인자를 지어내면 계열마다 다른 규칙을 우리가 만드는 것이다.
+        #
+        # 🔴 **폴백을 남기지 않는다.** 과제 이미지를 모르면 거절한다 — 옛 `{SCRATCH}/poc` 갈래를
+        # 남기면 배선이 빠진 run에서 **매 홉 `exit 127`**이 그대로 재현되고(실서빙 run
+        # `run_20261007_0001`의 `poc_run` Evidence 7/7 `ok=0`), 그 관측이 「도구가 실패했다」와
+        # 「PoC가 안 터졌다」 사이에서 구분되지 않는다. 없는 것을 성공으로 세지 않는 것과 같은 결의
+        # 규칙이다(모듈 docstring).
+        if poc_target is None:
+            raise ValueError(
+                "poc: 과제 이미지를 모른다 — 카나리 선행을 통과한 run에서만 배선된다(ADR 0014). "
+                "`{SCRATCH}/poc` 폴백은 두지 않는다"
+            )
+        return [
+            Command(
+                list(poc_target.argv),
+                cwd=SCRATCH,
+                image=poc_target.image,
+                needs_input=True,
+            )
+        ]
     raise ValueError(f"명령 조립 규칙이 없는 도구: {tool!r}")
 
 
@@ -504,6 +680,7 @@ def container_argv(
     name: str,
     sif_dir: Path,
     env: dict[str, str] | None = None,
+    input_host_path: Path | None = None,
 ) -> list[str]:
     """런타임별 실행 명령. 이 함수가 순수해야 컨테이너 없이 조립을 검사할 수 있다.
 
@@ -511,12 +688,44 @@ def container_argv(
     이 저장소가 이미 한 번 저지른 결함이다(`factory._Wiring` 주석). 지금 채우는 노드는
     없지만, 채웠는데 무시되는 것보다 전달되는 편이 낫다. 정렬해서 넘긴다(재현성).
     """
+    # ⏵ **2026-10-09 (ADR 0014)** — `command.image`가 있으면 그것으로 돈다(`poc`의 과제 이미지).
+    # `command.needs_input`이면 `input_host_path`를 `POC_IN_IMAGE`로 **읽기 전용** 바인드한다.
+    # 🔴 **경로 없이 `needs_input`이면 거절한다** — 조용히 돌면 PoC 없이 타깃을 돌려 그 결과를
+    # PoC의 결과로 적는다. 이 모듈이 막으려는 사고("한 번도 돌지 않은 프로그램이 재현 완료로
+    # 기록된다")의 정확한 변형이다.
+    if command.needs_input and input_host_path is None:
+        raise ValueError(
+            "입력을 받는 명령인데 입력 경로가 없다 — PoC 없이 대상을 돌려 그 결과를 "
+            "PoC의 결과로 적지 않는다(ADR 0014)"
+        )
+    image = command.image or sandbox.image
+    # 🔴 **`needs_input`으로 묶는다 — 입력이 있기만 해서는 안 붙는다.** PoV의 `inspect` 홉은
+    # 직전 `gen`의 PoC를 `asan`·`gdb`·`build` 요청에도 **싣는다**(`pov.run_tool`의 `poc=last_poc`).
+    # 조건을 `input_host_path is not None`으로 두면 그 셋의 argv에도 `-v …:/tmp/poc:ro`가 붙어
+    # **ADR 0014의 「셋은 안 받는다」가 깨진다**(적대적 리뷰 2026-10-09 H2가 실제로 재현했다 —
+    # 세 도구 전부에 그 인자가 붙었다). `plan()`의 argv만 비교하는 핀은 이것을 못 잡는다.
+    input_binds = (
+        [f"{_host(input_host_path)}:{POC_IN_IMAGE}:ro"]
+        if command.needs_input and input_host_path is not None
+        else []
+    )
     pairs = [f"{key}={value}" for key, value in sorted((env or {}).items())]
     if runtime in ("docker", "podman"):
         # podman은 docker CLI를 그대로 흉내 내므로 플래그가 같다 — 바이너리 이름만 갈린다.
         # ATOM은 SELinux가 비활성이라 볼륨 `:Z` 라벨이 필요 없다(2026-08-17 실측). 켜진
         # 장비가 생기면 그때 `:Z`를 붙인다 — 지금 붙이면 없는 문제에 대비해 소스를 relabel한다.
         argv = [runtime, "run", "--rm", "--name", name]
+        if command.image is not None:
+            # 🔴 **과제 이미지는 당기지 않는다.** 없으면 docker 기본 정책이 `missing`이라 **수백
+            # MB를 조용히 당긴다**(`tools/oracle_canary.py` 보고서 §12 — 그 장비 이미지 하나가 약
+            # 587 MB · `oss-fuzz` 쪽은 4.3 GB). 그리고 샌드박스는 `network=False`라 런타임에
+            # 네트워크를 쓰는 것 자체가 정책 위반이다(`disclosure-policy.md` §5). 이것이 있어야
+            # 「이미지 부재는 즉시 실패」가 참이 된다.
+            #
+            # ⚠ **하네스 도구 이미지에는 안 붙인다** — 붙이면 다른 세 도구의 argv가 바뀌고 이
+            # 변경은 한 도구만 건드린다(ADR 0014 「안 바뀌는 것」). 그쪽 이미지를 당기는 문제는
+            # 이 결정의 범위가 아니다.
+            argv += ["--pull", "never"]
         if not sandbox.network:
             argv.append("--network=none")
         if sandbox.read_only:
@@ -529,8 +738,12 @@ def container_argv(
             "--memory", f"{sandbox.memory_mb}m",
             "-v", f"{_host(root)}:{MOUNT}:ro",
             "-v", f"{_host(scratch)}:{SCRATCH}",
+        ]
+        for bind in input_binds:
+            argv += ["-v", bind]
+        argv += [
             "-w", command.cwd,
-            sandbox.image,
+            image,
             *command.argv,
         ]
         return argv
@@ -555,8 +768,12 @@ def container_argv(
     argv += [
         "--bind", f"{_host(root)}:{MOUNT}:ro",
         "--bind", f"{_host(scratch)}:{SCRATCH}",
+    ]
+    for bind in input_binds:
+        argv += ["--bind", bind]
+    argv += [
         "--pwd", command.cwd,
-        str(sif_path(sif_dir, sandbox.image)),
+        str(sif_path(sif_dir, image)),
         *command.argv,
     ]
     return argv
@@ -598,7 +815,27 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
             if _GDB_TARGET_LIFECYCLE.search(last.stdout) is None:
                 return False, code, f"gdb: 대상을 띄우지 못했다 (exit={code}) — 로그의 stderr 참조"
             return True, code, None
-        # asan·poc: 마지막 명령이 대상 바이너리다.
+        if tool == "poc":
+            # ⏵ **2026-10-09 (ADR 0014)** — `poc`는 과제 `-vul` 이미지를 돌리므로 판별자가 넓다.
+            # 🔴 **실행 환경이 낸 코드를 타깃의 판정으로 읽지 않는다**: `124` 타임아웃 · `125`
+            # docker 자체 실패(데몬 오류·이미지 없음) · `126` 실행 불가 · `127` 명령 없음 ·
+            # **음수**(시그널로 죽은 자식 — docker 클라이언트가 죽었다).
+            # `tools/oracle_canary.py`가 그 위험을 적는다 — *"이 코드로 `-vul` 다리가 채워지면
+            # 망가진 docker 설정이 「정답 PoC가 타깃을 터뜨렸다」로 읽힌다."*
+            if _poc_daemon_unreachable(last):
+                return False, code, (
+                    "poc: docker 클라이언트가 데몬에 닿지 못했다 (exit=1) — 실행 환경의 실패이지 "
+                    "대상의 판정이 아니다"
+                )
+            if _poc_is_harness_failure(code):
+                return False, code, (
+                    f"poc: 과제 이미지를 띄우지 못했다 (exit={code}) — 실행 환경의 코드이지 "
+                    "대상의 판정이 아니다"
+                )
+            # 여기까지 오면 대상이 실제로 떴다. 비-0은 실패가 아니라 신호다.
+            # `1`의 애매함은 숨기지 않고 `summary_line`이 관측에 적는다.
+            return True, code, None
+        # asan: 마지막 명령이 우리가 빌드한 대상 바이너리다.
         if code in _EXEC_FAILED:
             return False, code, f"{tool}: 실행 파일을 띄우지 못했다 (exit={code})"
         # 여기까지 오면 마지막 명령(대상)이 실제로 떴다. 크래시(non-zero)는 실패가 아니라 신호다.
@@ -730,7 +967,22 @@ def unexecuted_commands_note(executed: int, total: int) -> str | None:
 
 
 def summary_line(tool: str, steps: list[Step]) -> str | None:
-    """로그 머리에 붙일 한 줄. `--json`으로 잃은 가독성을 여기서 되돌린다."""
+    """로그 머리에 붙일 한 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
+
+    ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** 이 줄은 `_execute`가
+    `sections[2]`에 넣고 그 로그 꼬리가 모델 관측으로 간다. 🔴 **`1`은 ASan의 기본 종료
+    코드일 수도, docker·셸의 일반 실패일 수도 있어 갈리지 않는다** — 재 본 둘 중 하나가 정확히
+    이 값이다(`oss-fuzz:368076871`(ASan) **1** · `arvo:1065`(MSan) **77**, 2026-10-04 실측).
+    **가를 수 없으면 가른 척하지 않는다**(§0): 등급은 `judge`가 「떴다」로 두고, 모델이
+    「크래시다」로 읽지 않게 그 사실만 관측에 싣는다.
+    """
+    if tool == "poc":
+        # 데몬에 못 닿은 `1`은 애매하지 않다 — `judge`가 환경 실패로 이미 갈랐다.
+        if steps and steps[-1].exit_code == _POC_AMBIGUOUS_EXIT and not _poc_daemon_unreachable(
+            steps[-1]
+        ):
+            return POC_AMBIGUOUS_NOTE
+        return None
     if tool != "semgrep" or not steps:
         return None
     results = semgrep_results(steps[-1].stdout)
@@ -795,6 +1047,7 @@ class ContainerToolRunner:
         sif_dir: Path | None = None,
         observed_at: datetime | None = None,
         on_command: CommandHook | None = None,
+        poc_target: PocTarget | None = None,
     ) -> None:
         if runtime not in UNENFORCED:
             raise ValueError(f"모르는 런타임: {runtime!r}. 있는 것: {sorted(UNENFORCED)}")
@@ -822,6 +1075,10 @@ class ContainerToolRunner:
         # 시각을 주입받는다 — 재현 실행에서 같은 값이 나와야 trace를 대조할 수 있다.
         self.observed_at = observed_at or datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC)
         self.on_command = on_command
+        # `poc` 도구가 돌릴 과제 이미지 (ADR 0014). `None`이면 `poc`가 **거절한다** —
+        # 폴백을 지어내지 않는다. 배선 자리가 오라클과 같아서(`poc_target_for` docstring) 카나리
+        # 선행을 통과하지 않은 run에서는 여기가 비고 `poc`는 실패 Evidence가 된다.
+        self.poc_target = poc_target
 
     # --- ToolRunner ---------------------------------------------------------
 
@@ -847,17 +1104,27 @@ class ContainerToolRunner:
         if not resolved.exists():
             return self._fail(evidence_id, tool, kind, args, 2, f"workdir가 없다: {args.workdir}")
         if self.runtime == "singularity":
-            sif = sif_path(self.sif_dir, sandbox.image)
-            if not sif.exists():
-                # 자동으로 pull 하지 않는다 — 실행 중 네트워크는 network=False와 충돌한다.
-                return self._fail(
-                    evidence_id,
-                    tool,
-                    kind,
-                    args,
-                    127,
-                    f"SIF가 없다: {sif} (변환 절차는 tools/README.md)",
-                )
+            # 🔴 **명령이 쓸 이미지를 **전부** 본다.** ⏵ 2026-10-09 (ADR 0014) — `poc`는 과제
+            # `-vul` 이미지를 돌리고 그 이미지는 Docker 이미지다(`n132/arvo:…`). SIF로 변환해 둔
+            # 장비는 없으므로 여기서 **먼저 거절한다**. 안 막으면 `container_argv`가 없는 SIF
+            # 경로를 만들고 singularity가 그 실패로 **임의의 종료 코드**를 내는데, 그 값이
+            # `_POC_HARNESS_FAILURE` 밖이면 **대상의 판정으로 읽힌다** — 이 모듈이 막으려는
+            # 바로 그 사고다.
+            images = [sandbox.image]
+            if tool == "poc" and self.poc_target is not None:
+                images.append(self.poc_target.image)
+            for image in images:
+                sif = sif_path(self.sif_dir, image)
+                if not sif.exists():
+                    # 자동으로 pull 하지 않는다 — 실행 중 네트워크는 network=False와 충돌한다.
+                    return self._fail(
+                        evidence_id,
+                        tool,
+                        kind,
+                        args,
+                        127,
+                        f"SIF가 없다: {sif} (변환 절차는 tools/README.md)",
+                    )
         try:
             commands = self._plan_for(tool, resolved)
         except ValueError as exc:
@@ -869,9 +1136,27 @@ class ContainerToolRunner:
 
         **못 구하면 빈 dict다.** 지어낸 값이 들어가면 재현성 기록 자체가 거짓이 되고,
         `runner.incomplete_fields()`가 경고를 내는 편이 옳은 동작이다.
+
+        🔴 **⏵ 2026-10-09 (ADR 0014) — 이 run에 배선된(돌 수 있는) 이미지 전부를 든다.** `poc`가
+        한 번도 안 불린 run에도 과제 이미지가 실린다(채점기가 서면 늘 배선된다). `poc`가 과제 `-vul`
+        이미지로 나가므로 하네스 이미지 하나만 적으면 **그 run의 재현성 기록이 거짓**이 된다 —
+        돈 것이 둘인데 하나만 적힌다. ADR 0005(`docs/decisions/0005-tool-runner-override.md`)가
+        `--tool-runner` 예외를 열며 *"예외를 열되 사후에 구분 가능하게"* `RunRecord.tool_runner`를
+        필수로 추가한 것과 같은 거래다: 여기서는 **샌드박스 이미지가 도구마다 갈리는 예외**를
+        열고 기록 필드로 값을 치른다.
+
+        🔴 **하나라도 못 구하면 전부 버린다 — 빈 dict다.** 부분 사전을 돌려주면
+        `runner.incomplete_fields()`가 `not record.tool_images`로만 보므로 **경고가 안 뜨고**,
+        그 run이 digest 하나가 빠진 채 비교표에 들어간다(적대적 리뷰 2026-10-09 H3이 재현했다 —
+        하네스 이미지 inspect만 실패시키면 과제 이미지 하나로 「완전한 기록」이 됐다). 전 판의
+        안전장치가 *"못 구하면 빈 dict다"*였고 그것을 **유지한다** — 이 결정이 치르는 값은
+        「어느 쪽이 빠졌는지 모른다」이고, 그것은 로그의 `$ {argv}` 줄이 답한다.
         """
-        digest = self._image_digest()
-        return {self.image: digest} if digest else {}
+        ran = [self.image] + ([self.poc_target.image] if self.poc_target else [])
+        digests = {image: self._image_digest(image) for image in ran}
+        if any(digest is None for digest in digests.values()):
+            return {}
+        return {image: digest for image, digest in digests.items() if digest is not None}
 
     def compile_flags(self) -> CompileFlags:
         """`RunRecord.compile_flags`에 들어갈 컴파일 조건 (#74).
@@ -909,6 +1194,7 @@ class ContainerToolRunner:
                 if path.suffix in suffixes
             ],
             cwd=_in_container(self.root, resolved if resolved.is_dir() else resolved.parent),
+            poc_target=self.poc_target,
         )
 
     def _execute(
@@ -923,6 +1209,10 @@ class ContainerToolRunner:
         scratch = scratch_dir(self.artifacts_root, self.run_id, tool)
         scratch.mkdir(parents=True, exist_ok=True)
         node_argv = args.argv
+        # 쓴 입력의 호스트 경로. ⏵ 2026-10-09 (ADR 0014) — `needs_input`인 명령은 이것을
+        # `POC_IN_IMAGE`로 바인드받는다. 입력이 없으면 `None`이고 그런 명령은 `container_argv`가
+        # 거절한다(fail-closed).
+        input_host_path: Path | None = None
         if args.input_bytes is not None:
             # 컨테이너 안 경로는 `/work/<이름>`이다 — 호스트 경로를 적으면 안 풀린다. 명령은 이
             # 경로를 받지 않지만(모듈 docstring) 머리줄에 남아 `Evidence.digest`가 입력에 달린다.
@@ -934,21 +1224,29 @@ class ContainerToolRunner:
                 return self._fail(
                     evidence_id, tool, kind, args, 2, f"입력을 scratch에 쓰지 못했다: {reason}"
                 )
+            input_host_path = written
             node_argv = with_input_path(args.argv, f"{SCRATCH}/{written.name}")
         sections = [f"# node argv: {' '.join(node_argv)}", f"# runtime: {self.runtime}"]
         steps: list[Step] = []
         for index, command in enumerate(commands):
             name = f"harness-{self.run_id}-{self._name_tag}-{evidence_id}-{index}"
-            argv = container_argv(
-                self.runtime,
-                sandbox=sandbox,
-                root=self.root,
-                scratch=scratch,
-                command=command,
-                name=name,
-                sif_dir=self.sif_dir,
-                env=args.env,
-            )
+            # `container_argv`는 입력을 받는 명령에 경로가 없으면 던진다(ADR 0014). 그것은
+            # **배선 결함**이지 샌드박스 부재가 아니므로 `ToolRunner` 계약대로 Evidence로 낸다 —
+            # 예외를 던지는 것은 Evidence조차 만들 수 없는 경우뿐이다.
+            try:
+                argv = container_argv(
+                    self.runtime,
+                    sandbox=sandbox,
+                    root=self.root,
+                    scratch=scratch,
+                    command=command,
+                    name=name,
+                    sif_dir=self.sif_dir,
+                    env=args.env,
+                    input_host_path=input_host_path,
+                )
+            except ValueError as exc:
+                return self._fail(evidence_id, tool, kind, args, 2, str(exc))
             if self.on_command is not None:
                 self.on_command(tool, argv)
             try:
@@ -1001,6 +1299,14 @@ class ContainerToolRunner:
         if summary is not None:
             # 머리에 넣는다 — JSON 본문 앞에 결론이 있어야 사람이 로그를 읽는다.
             sections.insert(2, summary)
+            if tool == "poc":
+                # 🔴 **꼬리에도 넣는다.** 모델 관측은 로그의 **마지막 2,000자**만 싣는다
+                # (`runner._POV_OBSERVATION_TAIL_CHARS`) — 머리에만 두면 긴 출력(ASan 보고서는
+                # 쉽게 3 KB를 넘는다)에서 **모델에게 안 닿는다**. v5 prefix가 *"관측에 그 사실이
+                # 한 줄로 붙는다"*고 약속하는 자리이고, 적대적 리뷰 2026-10-09이 3.3 KB stderr로
+                # 그 약속이 깨지는 것을 재현했다. `exit=1`에서만 붙으므로 다른 홉의 바이트는
+                # 안 바뀐다.
+                sections.append(summary)
         return self._write(
             evidence_id,
             tool,
@@ -1028,16 +1334,21 @@ class ContainerToolRunner:
             [self.runtime, "rm", "--force", name], capture_output=True, timeout=30, check=False
         )
 
-    def _image_digest(self) -> str | None:
+    def _image_digest(self, image: str) -> str | None:
+        """한 이미지의 digest. ⏵ 2026-10-09 — 이미지를 **인자로** 받는다(`images()`가 둘을 센다).
+
+        🔴 **`--pull never`도 안 붙인다** — `image inspect`는 읽기이고 이미지를 당기지 않는다.
+        없으면 `None`이고 그 이미지는 기록에서 빠진다(지어내지 않는다).
+        """
         if self.runtime == "singularity":
-            sif = sif_path(self.sif_dir, self.image)
+            sif = sif_path(self.sif_dir, image)
             return f"sha256:{_file_sha256(sif)}" if sif.exists() else None
         # RepoDigests는 **docker에서는 push된 적 없는 로컬 빌드 이미지에 비어 있다.** 그
         # 경우 .Id를 쓴다 — 둘 다 그 이미지를 유일하게 지시하는 sha256이다. podman은 로컬
         # 빌드에도 RepoDigests를 채우지만(2026-08-17 실측) 같은 포맷이라 이 경로가 그대로 된다.
         out = _command_output(
             [
-                self.runtime, "image", "inspect", self.image,
+                self.runtime, "image", "inspect", image,
                 "--format", "{{index .RepoDigests 0}}|{{.Id}}",
             ]
         )

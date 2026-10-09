@@ -229,9 +229,13 @@ class FakeToolRunner:
         하는 일은 도구 이름을 고르는 것뿐이다(`validate.tool_for()`). 게이트는 런타임 Evidence의
         종료 코드가 0도 `None`도 아닐 것을 요구하는데(#232) **여기서 내는 `exit_code=1`은 측정이
         아니라 상수다** — 그래서 `ok=True`가 그대로 E4가 된다.
-        **「소스가 있다」가 `proven`이 된다.** 입력 바이트(`ToolArgs.input_bytes`)가 있어도 읽지
-        않는다 — `ok`·`exit_code`는 입력과 무관한 상수다(이 입력 배선은 관측만 바꾼다. 움직이면
-        E4의 뜻이 움직인다).
+        **「소스가 있다」가 `proven`이 된다.** 🔴 **fake는 입력 바이트를 대상에 안 먹인다** —
+        `ok`·`exit_code`는 입력과 무관한 상수다(이 입력 배선은 관측만 바꾼다. 움직이면 E4의 뜻이
+        움직인다). ⏵ **2026-10-09 (ADR 0014) — 컨테이너와 갈렸다**: 컨테이너의 `poc`는 과제
+        `-vul` 이미지에 PoC를 먹여 **관측이 PoC의 함수**인데 fake는 Docker를 안 띄우므로 그럴 수
+        없다. **그래서 `dev_fake` e2e는 그 사실을 재지 못한다** — 재는 것은
+        `tests/test_poc_tool_feeds_the_input.py`이고, 이 비대칭 자체를 무는 것은 그 파일의
+        `test_the_fake_runner_makes_the_same_claim_as_the_container`다.
         """
         if not sources(workdir):
             return self.make_evidence(

@@ -282,11 +282,19 @@ def test_the_request_schema_tells_the_model_the_truth_about_spec() -> None:
     **지금 도구는 `spec`을 입력으로 안 받는다**(노드가 sha256과 길이만 기록한다). 설명이 「입력
     바이트가 필요하면 `spec`에 명세를 싣는다」고 하면 모델이 「내가 구성한 입력으로 돌렸더니」라는
     거짓 문장을 궤적에 쓴다 — `docs/agent-contracts.md` §2.2가 막으라고 한 바로 그 문장이다. 클래스
-    설명과 `spec` 필드 설명이 둘 다 「받지 않는다」를 말해야 한다."""
+    설명과 `spec` 필드 설명이 둘 다 그 사실을 말해야 한다.
+
+    ⏵ **2026-10-09 (ADR 0014) — 무는 철자를 옮겼다.** 전에는 「받지 않는다」를 물었는데 컨테이너
+    `poc`는 이제 입력을 **받을 수 있다**(과제 `-vul` 이미지의 `/tmp/poc`). 참인 문장은 **「이
+    경로가 안 싣는다」**이고 그 선을 넘지 않는다 — 「도구가 못 받는다」로 쓰면 다시 거짓이다.
+    싣게 하는 것은 이슈 #419다."""
     schema = AuditorAction.model_json_schema()
 
-    assert "받지 않는다" in schema["description"]
-    assert "받지 않" in schema["properties"]["spec"]["description"]
+    assert "안 싣는다" in schema["description"]
+    assert "안 싣" in schema["properties"]["spec"]["description"]
+    assert "받지 않" not in schema["properties"]["spec"]["description"], (
+        "`poc`는 이제 받는다 — 「도구가 못 받는다」는 모델에게 가는 거짓 문장이다"
+    )
     assert "조립 명세" not in schema["description"]
 
 

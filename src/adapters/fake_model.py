@@ -481,10 +481,10 @@ def _auditor_investigation(
 
     hop0(history 빔)은 `lookup` — 대상 함수를 부르는 쪽(없으면 대상 자신)의 본문을 이름으로
     묻는다. hop1은 `probe` — 읽기 전용 도구(`semgrep`)부터 한 번 돌린다. `spec`은 싣지 않는다:
-    지금 Auditor `probe`는 `spec`을 도구에 안 실어 기록일 뿐이고, 선행 둘 — `_probe`가 `spec`
-    바이트를 `input_bytes`로 싣기(#419) · 도구 명령이 그 파일을 읽기(#513) — 이 서기 전에 fake가
-    그 길을 태울 이유가 없다. hop≥2는 `answer`다. ⏵ 2026-10-09 — 바이트를 scratch에 쓰는 #520은
-    PoV 경로(`nodes/pov.run_tool`)만이다.
+    ⏵ 2026-10-09 — **Auditor 경로가** 그 값을 도구에 안 싣기 때문이다(`nodes/auditor._probe`의
+    `ToolArgs`에 `input_bytes`가 없다. 컨테이너 `poc` 자체는 ADR 0014로 받을 수 **있다**).
+    그래서 `spec`은 기록일 뿐이고, 그 경로가 싣게 되기(이슈 #419) 전에 fake가 그 길을 태울 이유가
+    없다. hop≥2는 `answer`다.
 
     홉을 `history`로 가르는 자리는 `_build_pov_action`과 같다 — 홉 번호가 따로 안 넘어온다.
     다만 거기는 「비었나」만 보지만 여기는 **홉 번호**가 필요하다: 매 홉이 user 턴(그 홉 본문)과
