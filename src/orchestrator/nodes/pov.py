@@ -228,6 +228,15 @@ def run_tool(
     )
 
 
+def _cwe_label(finding: Finding) -> str:
+    """Finding 서술 줄의 CWE 칸. ⏵ 2026-10-09 (이슈 #525 선택지 1) — `None`(v11의 `no_signal`)이면
+    `(없음)`이다 — Auditor의 후보 서술(`추정 CWE: (없음)`)과 같은 표시다. `f"{None}"`은 `None`이라는
+    글자를 CWE 자리에 찍는다. CWE가 있으면 그 값 그대로라 종전과 **같은 바이트**다 — 이 줄이 PoV
+    요청의 일부다.
+    """
+    return "(없음)" if finding.cwe is None else finding.cwe
+
+
 def _describe_finding(finding: Finding, *, wide: bool = True) -> str:
     """PoV 프롬프트에 실을 Finding 요약.
 
@@ -249,7 +258,7 @@ def _describe_finding(finding: Finding, *, wide: bool = True) -> str:
     """
     if not wide:
         return (
-            f"{finding.finding_id} · CWE: {finding.cwe} · {finding.title}\n"
+            f"{finding.finding_id} · CWE: {_cwe_label(finding)} · {finding.title}\n"
             f"근거(rca): {finding.rca_draft}\n"
             f"경로 단계 수: {len(finding.path)}"
         )
@@ -260,7 +269,7 @@ def _describe_finding(finding: Finding, *, wide: bool = True) -> str:
         for i, step in enumerate(finding.path, start=1)
     )
     lines = [
-        f"{finding.finding_id} · CWE: {finding.cwe} · {finding.title}",
+        f"{finding.finding_id} · CWE: {_cwe_label(finding)} · {finding.title}",
         f"근거(rca): {finding.rca_draft}",
         f"경로 단계 수: {len(finding.path)}",
     ]

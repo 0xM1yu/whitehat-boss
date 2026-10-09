@@ -1,8 +1,8 @@
 """Finding / MissingEvidence / ReproSpec 스키마 (agent-contracts.md §3)."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, WithJsonSchema, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from src.schemas.common import (
@@ -149,6 +149,14 @@ class AuditBlock(HarnessModel):
     refutation: AuditRefutation
 
 
+# `Finding.cwe`의 타입 — 검증은 `Cwe | None`, **JSON 스키마는 종전 `Cwe` 필드 그대로**다
+# (⏵ 2026-10-09, 이슈 #525 선택지 1 — 이유는 그 필드 주석). 아래 dict는 넓히기 전
+# `Finding.model_json_schema()["properties"]["cwe"]`를 그대로 옮긴 것이고,
+# `tests/test_nullable_cwe.py`가 v8·v9·v10 봉투와 한 방 `Finding`의 요청 스키마를 바이트로 문다.
+_FINDING_CWE_JSON_SCHEMA = {"pattern": r"^CWE-\d+$", "title": "Cwe", "type": "string"}
+_FindingCwe = Annotated[Cwe | None, WithJsonSchema(_FINDING_CWE_JSON_SCHEMA)]
+
+
 class Finding(HarnessModel):
     """Auditor가 세운 취약점 가설과 그 이후의 상태.
 
@@ -236,7 +244,15 @@ class Finding(HarnessModel):
     trigger_status: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     rca_draft: str = ""
-    cwe: Cwe
+    # ⏵ 2026-10-09 (이슈 #525 선택지 1) — **`no_signal`에서만 `None`일 수 있다**(아래
+    # `_cwe_is_null_only_for_no_signal`). `no_signal`은 뿌리 원인을 못 세운 판정이라 참인 CWE가
+    # 없다 — non-null을 강제하면 모델이 지어낸 값이 SARIF `ruleId`와 보고서 중복 제거 키로 갔다.
+    # ⚠ **JSON 스키마는 종전 그대로 둔다**(`_FINDING_CWE_JSON_SCHEMA`) — `Finding`을 요청하는 한 방
+    # 판과 `AuditorAction`(v8·v9, `$defs`에 `Finding`)의 요청 바이트가 이 스키마라, `anyOf`로
+    # 넓히면 프롬프트가 안 바뀌었는데 그 판들의 요청이 바뀐다(evaluation §2.3 — 위 `audit`의
+    # `SkipJsonSchema`와 같은 규율). 그 판들의 계약은 「non-null」이고 그대로 기록이다. `None`을
+    # 싣는 길은 하네스가 v11 응답(`AuditProcedureNullableCwe`)을 옮겨 담는 것 하나다.
+    cwe: _FindingCwe
     title: NonEmptyStr
     # `path`와 같은 이유로 기본값이 없다 (위 주석).
     evidence_refs: list[Identifier]
@@ -277,4 +293,19 @@ class Finding(HarnessModel):
             raise ValueError(f"state={self.state}에는 evidence_refs가 최소 1건 필요하다")
         if not self.path:
             raise ValueError(f"state={self.state}에는 source→sink 경로가 필요하다")
+        return self
+
+    @model_validator(mode="after")
+    def _cwe_is_null_only_for_no_signal(self) -> "Finding":
+        """`cwe`가 `None`이면 `trigger_status`가 `no_signal`이어야 한다(이슈 #525 선택지 1).
+
+        반대 방향(`no_signal`이면 `None`이어야 한다)은 **안 건다** — v1~v10 Finding은 `no_signal`
+        에도 CWE 문자열을 들고 저장돼 있고(그 판들의 계약이 non-null이었다), 그 행이 다시 읽혀야
+        한다. 그 값이 지어낸 것인지는 이 검증기가 못 가른다 — `produced_by.prompt_version`이 가른다.
+        """
+        if self.cwe is None and self.trigger_status != "no_signal":
+            raise ValueError(
+                "cwe는 trigger_status가 no_signal일 때에만 null일 수 있다 "
+                f"(trigger_status={self.trigger_status})"
+            )
         return self

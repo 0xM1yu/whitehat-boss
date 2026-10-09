@@ -1318,14 +1318,23 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # --- 산문이 약속하는 재현 명세 ↔ 그것을 채우는 설정 · 코드 -------------------------------------
 
 
+# v10의 `repro_spec` 약속을 바이트 그대로 든 판 — ⏵ 2026-10-09 v11(이슈 #525)은 v10에서 `cwe` 서술
+# 네
+# 줄만 바꿨고 그 약속 문장은 같다(`tests/test_nullable_cwe.py`가 차이를 그 네 줄로 묶는다). 서빙
+# 판이
+# v11로 올라가도 이 약속의 「스위치가 켜져 있다」는 그대로 걸려야 한다.
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11"})
+
+
 def _profiles_serving_v10() -> list[str]:
-    """`config/profiles.yaml`에서 Auditor 좌석이 v10을 고르는 프로필 — 판 이름을 이 검사가 쥐지 않고
-    **설정에서 읽는다**(v10을 배선한 프로필이 늘면 같이 따라온다)."""
+    """`config/profiles.yaml`에서 Auditor 좌석이 v10(또는 그 약속을 그대로 든 v11)을 고르는 프로필 —
+    판 이름을 이 검사가 쥐지 않고 **설정에서 읽는다**(배선한 프로필이 늘면 같이 따라온다)."""
     text = (CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8")
     return [
         name
         for name in sorted(yaml.safe_load(text)["profiles"])
-        if load_config(name).model_for("auditor").prompt_template_version == "v10"
+        if load_config(name).model_for("auditor").prompt_template_version
+        in _V10_REPRO_PROMISE_VERSIONS
     ]
 
 

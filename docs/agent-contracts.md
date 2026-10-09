@@ -274,7 +274,7 @@ agent:
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
 ~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
 그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**(`prompts/auditor/v8/` ·
-`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06 v9(v8 + `auditor_guards` 서술)를 거쳐 같은 날부터 **지금 배선된 판은 v10**이다(v7 전면 재작성 · 봉투가 다르다 — 아래 「봉투가 둘이다」). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06 v9(v8 + `auditor_guards` 서술)를 거쳐 같은 날부터 **지금 배선된 판은 v10**이다(⏵ 2026-10-09 v11 — v10 + `cwe` 서술, 아래 「봉투가 셋이다」)(v7 전면 재작성 · 봉투가 다르다 — 아래 「봉투가 둘이다」). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
 이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
 `src/schemas/auditor.py`(`AuditorAction` · `AuditorProcedureAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
@@ -289,6 +289,10 @@ agent:
 판정(`_stop_without_finding`)은 그 키만 본다. 다른 것은 `answer`를 받은 뒤 한 단계다 — `procedure`면 `Finding`으로 옮긴다
 (`_finding_from_procedure`, §3 「AuditProcedure」의 「`Finding`과의 관계」). 「이 판은 루프 판인가」는 `_loop_envelope` 하나가 묻는다(meta 선언을
 `resolve_output_schema`로 푼 것이 두 봉투 중 하나인가).
+
+⏵ **2026-10-09 — 봉투가 셋이다.** v11은 셋째 `AuditorProcedureNullableCweAction`을 요청한다 — v10 봉투와 같고 `procedure`가 `cwe`를 `no_signal`에서
+`null`로 받는 `AuditProcedureNullableCwe`(`AuditProcedure`의 서브클래스)일 뿐이다([D107](open-questions/D/D107.md) · §3 「AuditProcedure」의 「v11」). 위 「두 봉투」의
+규칙은 셋째에도 그대로 걸리고 `_Hop`·`_loop_envelope`가 셋을 받는다.
 
 **켜는 조건은 둘이고 어긋나면 서지 않는다.** ① `thresholds.auditor_tool_hops`가 양수 ② 배선된 판의 meta가
 `output_schema`로 루프 봉투(`AuditorAction` · `AuditorProcedureAction`)를 선언. 상한이 0이면 종전 한 방 경로이고 **요청 바이트가 같다**(hop0 렌더
@@ -463,6 +467,7 @@ agent:
      `test_the_prompt_output_schema_is_what_the_caller_actually_requests`가 문다). 그래서 허용집합(`nodes/auditor.ALLOWED_OUTPUT_SCHEMAS`)은
      `Finding`(한 방) · `AuditorAction` · `AuditorProcedureAction` 셋이고 **payload 모델 `AuditProcedure`는 그 집합에 없다** — 봉투의 `procedure`로
      들어갈 뿐 최상위로 요청되지 않는다. 선언하면 `lookup`·`probe` 없이 감사 결과 하나만 받는 문법이 되어 프롬프트가 시키는 홉 봉투와 어긋난다.
+     ⏵ 2026-10-09 — v11의 `AuditorProcedureNullableCweAction`이 더해져 넷이다. payload `AuditProcedureNullableCwe`도 같은 이유로 집합 밖이다.
    - `tools` — 이 판의 prefix가 「쓸 수 있는 도구」로 서술하는 이름이다. **여섯의 부분집합**이어야 한다: 로더는
      `index`도 통과시키지만 봉투의 `tool`(`AuditorTool` — 두 봉투가 공유한다)이 받지 않으므로 적으면 문법이 거절하는 도구를 광고하게 된다.
      `thresholds.auditor_tool_hops`가 양수인데 배선된 판의 `tools`가 비거나 여섯 밖의 이름을 들면 `cli`의
@@ -485,7 +490,7 @@ agent:
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-06 v10)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-06 v10 · ⏵ 2026-10-09 v11)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -753,7 +758,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v10"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v11"}
 }
 ```
 
@@ -768,6 +773,11 @@ property 순서가 되고 그 스키마가 `response_format`으로 서버에 실
 
 ⚠ **`audit`는 이 순서 계약 밖이다** — 위 예시에는 있고 선언도 `path` 바로 뒤지만 `model_json_schema()`에서 **빠진다**(`SkipJsonSchema`). 요청
 스키마에는 안 실리고 저장·검증·`model_dump`에는 선다. 이유와 요청 바이트가 안 바뀐다는 확인은 아래 「AuditProcedure」의 「`Finding`과의 관계」.
+
+⏵ 2026-10-09 — **`cwe`는 `trigger_status`가 `no_signal`일 때에만 `null`일 수 있다**([D107](open-questions/D/D107.md) · 이슈 #525 선택지 1). 다른 상태에서
+`null`이면 검증기가 거절한다. `null`을 싣는 길은 v11 응답(`AuditProcedureNullableCwe`)을 옮겨 담는 것 하나다. **요청 스키마는 그대로다** —
+`cwe` 칸의 `model_json_schema()`는 넓히기 전 모양(`pattern`·`title`·`type` 셋, `null` 없음)으로 고정했다(`WithJsonSchema`). 그래서 `Finding`을
+요청하는 판·`AuditorAction`(v8·v9)·`AuditorProcedureAction`(v10)의 요청 바이트가 안 바뀐다(`tests/test_nullable_cwe.py`가 sha256으로 문다).
 
 `trigger_status` 열거값: `triggerable` | `guarded` | `no_reach` | `reachability_unknown` | `no_signal`.
 **스키마 타입은 `str | None`이고 열거형이 아니다** — 실제 emit 분포를 보기 전에 좁히면 못 본 값이
@@ -802,6 +812,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 그 값 집합은 이 판에서 응답 스키마가 닫는다 — 아래 「AuditProcedure」). v7로 돈 run도 v8·v9·v10으로 돈 run도 0건이다(v10은 `git grep -i v10 -- docs/experiments`가
 > 0건, 2026-10-06 — v8·v9의 0건은 위 ⏵가 적은 그대로다). 위 Finding 예시의 `prompt_version`은 v10이고
 > v10 응답의 `audit` 블록도 든다.
+> ⏵ 2026-10-09 — **지금 고르는 것은 v11**이다(v10 + `no_signal`의 `cwe`를 null로 — [D107](open-questions/D/D107.md) · 이슈 #525). `trigger_status` 문장은
+> v10과 같다. 위 Finding 예시의 `prompt_version`도 v11로 고쳤다(`test_doc_examples.py`가 registry와 대조한다) — 예시의 값 자체는 v10 계약에도 맞는다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -833,7 +845,7 @@ v10(`prompts/auditor/v10/`)의 `answer` 액션이 `procedure`에 싣는 **모델
 | `audit` | `AuditBlock` 또는 `null` | **`null`인 것과 `trigger_status`가 `no_signal`인 것은 같다** — 검증기가 어긋난 쪽을 거절한다 |
 | `trigger_status` | 닫힌 다섯 — `triggerable` · `guarded` · `no_reach` · `reachability_unknown` · `no_signal` | `Finding.trigger_status`(`str` 또는 `None`)와 달리 닫혀 있다 |
 | `confidence` | 0.0 이상 1.0 이하 | 상태별 구간은 산문이 쥔다 |
-| `cwe` | `CWE-<숫자>` 꼴 — **`null`이 안 된다, `no_signal`에서도** | ⚠ 아래 「한계」 |
+| `cwe` | `CWE-<숫자>` 꼴 — **`null`이 안 된다, `no_signal`에서도** | ⚠ 아래 「한계」 · ⏵ 2026-10-09 v11의 `AuditProcedureNullableCwe`는 `no_signal`에서만 `null`이 된다(아래 「v11」) |
 | `title` | 비지 않은 문자열 | — |
 | `rca_draft` | 비지 않은 문자열 | `Finding.rca_draft`는 기본값 `""`이 있지만 v10 응답에서는 비면 거절한다 |
 | `evidence_refs` | 식별자 목록 — 빈 목록은 정당하다 | 인용 규칙은 §2.2 5번 |
@@ -881,6 +893,20 @@ HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sh
 적지만 `Candidate.suspected_cwe`는 빈 리스트일 수 있어(`src/schemas/candidate.py`) 그때 모델이 쓸 수 있는 **참인 값이 없다** — 모델이 지어 쓰면 근거
 없는 CWE가 `Finding`에 저장된다. 그 값을 읽는 자리는 여섯이다: SARIF `ruleId`(`src/cli.py`) · Critic의 주장 문장(`nodes/critic.py`) · PoV 입력
 둘(`nodes/pov.py`) · 보고서의 묶음 키와 항목 줄(`nodes/report.py`). 후보의 `suspected_cwe`가 비는 비율도, v10이 그때 무엇을 쓰는지도 안 쟀다.
+⏵ 2026-10-09 — **v11이 이 한계를 고쳤다**([D107](open-questions/D/D107.md) · 이슈 #525 선택지 1 · 사용자 결정). 위 문단은 v10 계약의 기록으로 남는다 —
+v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「묶음 키」는 정렬 키가 아니다 — `report._dedupe_key`는 집합 소속만 본다.
+
+#### v11 — `no_signal`의 `cwe`가 `null`이다 (⏵ 2026-10-09)
+
+- 봉투 `AuditorProcedureNullableCweAction`(v10 `AuditorProcedureAction`의 형제 · 액션 서술 docstring은 같다) · 최종 답 `AuditProcedureNullableCwe` —
+  `AuditProcedure`의 서브클래스라 필드·순서·`audit` ↔ `no_signal` 검증기를 물려받고 `cwe`만 `CWE-<숫자>` 또는 `null`이다. `null`은 `no_signal`에서만
+  받는다. 반대(`no_signal`이면 `null`이어야 한다)는 스키마가 안 걸고 산문이 시킨다 — 그 위반 비율은 안 쟀다.
+- v10을 넓히지 않은 이유 -> 그 JSON 스키마가 v10의 요청 payload다. 넓히면 한 판 번호가 두 요청을 가리킨다(§4 규칙 1, [evaluation.md](evaluation.md) §2.3).
+- prefix는 v10에서 `cwe` 서술 네 줄만 바꿨다(§5 CWE and reproduction의 괄호 · 출력 계약 예시의 `cwe` 값 · 그 아래 no_signal 문장 · 「Every field shown」
+  문단). 나머지 prefix·body는 v10과 바이트 동일이다(`tests/test_nullable_cwe.py`).
+- 읽는 자리 -> CWE가 있으면 렌더가 종전과 바이트 동일, `null`일 때만 다르다: SARIF는 `ruleId` 키를 뺀다(SARIF 2.1.0에서 선택 속성) · 보고서 항목 줄은
+  `CWE 없음` · Critic `CLAIM`은 `<제목> (CWE 없음)` · PoV 서술은 `CWE: (없음)`. 보고서 중복 제거 키는 `null`을 그대로 쓴다.
+- v11로 돈 run은 0건이다 — 모델이 `no_signal`에서 실제로 `null`을 내는지는 미측정이다.
 
 ### MissingEvidence
 
@@ -926,7 +952,7 @@ HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sh
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v10", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v11", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
