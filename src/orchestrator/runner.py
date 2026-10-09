@@ -1815,7 +1815,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트는
     호스트 후속이다.
     ⏵ 2026-10-08 — 「호스트 후속」만이 아니다. `./poc` materialize는 #513(열림 — 컨테이너 `poc`
-    도구가 실행 파일을 돌리는데 CyberGym PoC는 입력 파일이다)이 들고, #386도 열림이다.
+    도구가 실행 파일을 돌리는데 CyberGym PoC는 입력 파일이다)이 든다. ⏵ 2026-10-09 — #386의 두
+    명제는 `run_20261007_0001`에서 반증됐다(남은 것은 #513).
 
     **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
     캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
