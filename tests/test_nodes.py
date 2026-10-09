@@ -1572,7 +1572,8 @@ def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
     인용하면 `static_ok`가 이미 참이다 · `container_tools.first_hit_location` docstring). 그 위치는
     semgrep `results[0]`(첫 히트) 하나다. 위치를 싣는 것이 모델의 인용을 늘리는지는 미실측이다
     (이슈 #563). ⏵ **2026-10-09 — 「돈 run 0건」은 더 이상 참이 아니다**: `run_20261007_0001`이
-    위치를 싣고 돌았고(2026-10-08 보고서, PR #551) **인용은 0/5**였다. 단 그 run의 semgrep 히트
+    위치를 싣고 돌았고(`5828a0a` `nodes/auditor.py:197` `_CONTENT_AWARE_VERSIONS` ∋ v10 — 위치를
+    싣는 판으로 돌았다) **인용은 0/5**였다. 단 그 run의 semgrep 히트
     (`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를 보여 주면
     인용이 느는가」는 여전히 0회다 — 그 축이 #563이다.
 
