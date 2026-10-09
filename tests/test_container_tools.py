@@ -1640,3 +1640,89 @@ def test_semgrep_own_error_exit_is_not_blamed_on_extension_mapping(tmp_path: Pat
     assert error is not None
     assert "실행 실패" in error, "semgrep 자체 오류인데 확장자 탓으로 기록한다"
     assert "확장자" not in error
+
+
+# --- semgrep 반쪽 파싱 — 이슈 #563 선행 -----------------------------------------
+#
+# 🔴 **샘플은 지어내지 않았다.** 아래 둘은 2026-10-10에 `harness-tools:v3`와
+# `/opt/semgrep-rules/c`로 **실제로 돌려** 받은 출력의 필요한 부분이다(CLAUDE.md §2.5 —
+# 「핀 샘플은 저장소에서 온다. 지어낸 샘플은 잡히는 형태만 고르게 된다」). 구문 오류를 심은
+# C 파일과 그것을 고친 대조 파일을 같은 argv로 돌렸다.
+
+# 양성 — `errors[].type`이 **리스트**이고 첫 원소가 종류 이름이다(실측 모양).
+_SEMGREP_PARTIAL = json.dumps(
+    {
+        "results": [{"path": "bad.c", "start": {"line": 4}, "end": {"line": 4}}],
+        "paths": {"scanned": ["bad.c"]},
+        "errors": [
+            {
+                "code": 3,
+                "level": "warn",
+                "type": ["PartialParsing", [{"path": "bad.c"}]],
+                "path": "bad.c",
+                "message": "Syntax error at line bad.c:3:" + chr(10) + " `int` was unexpected",
+            }
+        ],
+    }
+)
+
+# 음성 — 구문을 고친 대조. 🔴 `exit`·`results`·`paths.scanned`가 **양성과 같다.**
+_SEMGREP_CLEAN = json.dumps(
+    {
+        "results": [{"path": "good.c", "start": {"line": 2}, "end": {"line": 2}}],
+        "paths": {"scanned": ["good.c"]},
+        "errors": [],
+    }
+)
+
+
+def test_a_half_parsed_target_is_named_and_a_clean_one_is_not() -> None:
+    """🔴 **파싱 실패를 말하는 축은 `errors` 하나다** (2026-10-10 실측 · 이슈 #563 선행).
+
+    같은 argv에서 두 파일의 `exit`는 **둘 다 1**(발견 있음) · `results`는 **둘 다 1건** ·
+    그리고 **`paths.scanned`에 둘 다 들어 있다.** 그래서 `judge_semgrep`의 `paths.scanned`
+    판정(#66)은 반쪽 파싱을 **못 잡는다** — 이 검사가 그 사실을 같이 단언한다.
+    """
+    assert container_tools.semgrep_partial_parse(_SEMGREP_PARTIAL) == ("bad.c",)
+    assert container_tools.semgrep_partial_parse(_SEMGREP_CLEAN) == ()
+
+    # 🔴 기존 판정 축이 둘을 못 가른다 — 이 세 줄이 「왜 새 축이 필요한가」다.
+    assert container_tools.semgrep_scanned(_SEMGREP_PARTIAL) == ["bad.c"]
+    assert container_tools.semgrep_scanned(_SEMGREP_CLEAN) == ["good.c"]
+    assert len(container_tools.semgrep_results(_SEMGREP_PARTIAL) or []) == len(
+        container_tools.semgrep_results(_SEMGREP_CLEAN) or []
+    )
+
+
+def test_the_partial_parse_note_says_the_count_is_a_lower_bound() -> None:
+    """🔴 **뜻을 단언한다** — 철자가 아니라. `POC_AMBIGUOUS_NOTE`에서 문구의 뜻을 뒤집는
+    변이가 131건을 통과한 선례가 있다(적대적 리뷰 2026-10-09).
+
+    이 문구가 모델 관측에 실리므로, 「하한」이 「전부」로 뒤집히면 **모델이 「신호는 이것뿐」으로
+    읽는다.** 그리고 판정은 **안 바꾼다** — 반쪽 파싱의 히트도 신호이고 `ok=False`로 내리면
+    `static_ok`가 꺼져 E1이 줄어든다(방향이 거꾸로다).
+    """
+    note = container_tools.SEMGREP_PARTIAL_NOTE
+    assert "하한" in note
+    assert "단언하지 않는다" in note
+    assert "전부" not in note
+
+    steps = [container_tools.Step(1, _SEMGREP_PARTIAL, "")]
+    ok, code, error = container_tools.judge("semgrep", steps, total=1)
+    assert (ok, code, error) == (True, 1, None), "판정은 안 바꾼다 — 기록만 한다"
+
+
+def test_the_note_rides_the_same_observation_line_as_the_finding_count() -> None:
+    """🔴 **떨어뜨려 두면 관측 꼬리 상한에서 잘려 수만 남는다** — `POC_AMBIGUOUS_NOTE`가
+    정확히 그렇게 잘렸다(이슈 #573). 그래서 같은 반환값에 싣는다.
+    """
+    partial = container_tools.summary_line(
+        "semgrep", [container_tools.Step(1, _SEMGREP_PARTIAL, "")]
+    )
+    clean = container_tools.summary_line("semgrep", [container_tools.Step(1, _SEMGREP_CLEAN, "")])
+
+    assert partial is not None and clean is not None
+    assert clean == "# semgrep: 1 findings", "깨끗한 스캔의 바이트는 종전과 같다"
+    assert partial.startswith("# semgrep: 1 findings")
+    assert container_tools.SEMGREP_PARTIAL_NOTE in partial
+    assert "bad.c" in partial, "어느 파일이 반쪽인지 적는다 — 모르면 셀 것이 없다"
