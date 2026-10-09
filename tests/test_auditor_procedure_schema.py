@@ -566,14 +566,17 @@ def test_the_procedure_envelope_tells_the_model_the_truth_about_spec() -> None:
 
     지금 도구는 `spec`을 입력으로 안 받는다 — 설명이 그렇게 말하지 않으면 모델이 「내가 구성한
     입력으로 돌렸더니」라는 거짓 문장을 궤적에 쓴다. 클래스 설명과 `spec` 필드 설명이 둘 다
-    「받지 않는다」를 말해야 한다. `tests/test_auditor_loop.py`의
+    그 사실을 말해야 한다. `tests/test_auditor_loop.py`의
     `test_the_request_schema_tells_the_model_the_truth_about_spec`이 `AuditorAction`에 대해 같은
     것을 문다.
+
+    ⏵ **2026-10-09 (ADR 0014)** — 무는 철자를 「받지 않는다」에서 **「안 싣는다」**로 옮겼다.
+    컨테이너 `poc`는 받을 수 있고, 참인 문장은 이 경로가 안 싣는다는 것이다.
     """
     schema = AuditorProcedureAction.model_json_schema()
 
-    assert "받지 않는다" in schema["description"]
-    assert "받지 않" in schema["properties"]["spec"]["description"]
+    assert "안 싣는다" in schema["description"]
+    assert "안 싣" in schema["properties"]["spec"]["description"]
     assert "조립 명세" not in schema["description"]
 
 
@@ -644,7 +647,11 @@ def test_an_audit_block_survives_validation_transition_and_a_json_round_trip() -
 # `AuditorAction`을 고치지 않았고 `Finding.audit`을 `SkipJsonSchema`로 숨겨서 v1~v9의 요청
 # payload가 안 바뀐다. 적대적 검토 다섯이 각자 `origin/main`을 풀어 재서 확인했지만 **그 확인은
 # 스냅샷이고 상시 핀이 아니었다** — 설명 한 글자를 바꾸는 변이 다섯이 전량 초록으로 살아남았다.
-_AUDITOR_ACTION_DESC_CHARS = 483
+# ⏵ 2026-10-09 (ADR 0014 · 이슈 #513) — **의도적으로 바꿨다.** 전 값은 483이었고, `probe`의
+# `spec` 고지가 「도구는 입력 바이트를 받지 않는다」에서 「이 경로는 안 싣는다」로 갈렸다
+# (컨테이너 `poc`는 이제 받는다 — 전 문장은 모델에게 가는 거짓이 됐다). **요청 바이트가
+# 바뀌었으므로 이 판으로 돈 run은 그전 run과 나란히 놓지 않는다**(`docs/evaluation.md` §2.3).
+_AUDITOR_ACTION_DESC_CHARS = 488
 _AUDITOR_ACTION_SPEC_DESC_CHARS = 49
 _FINDING_DESC_CHARS = 731
 
