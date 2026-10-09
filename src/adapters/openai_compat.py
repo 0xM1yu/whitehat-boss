@@ -18,11 +18,14 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from pydantic import BaseModel, ValidationError
 
 from src.bench_metrics import generation_tokens
 from src.interfaces.model_client import (
+    MAX_ERROR_DETAIL,
+    AttemptRecord,
     ChatTurn,
     ModelGatewayError,
     ModelResult,
@@ -34,6 +37,39 @@ from src.interfaces.model_client import (
 from src.schemas.enums import Role
 
 _TIMEOUT_S = 300
+
+
+@dataclass(frozen=True)
+class PostedResponse:
+    """`_post` 한 번이 서버에서 받은 것 — 위치로 푸는 튜플이 아니라 **이름으로 읽는** 기록 (#550).
+
+    `_post`가 `(content, usage)` 튜플일 때 `finish_reason`을 더하려고 셋으로 늘리면, 그것을
+    `raw, usage = client._post(payload)`로 푸는 프로브 둘(`tools/probe/`)이 전 호출에서
+    `ValueError`를 맞는다. 둘 다 `except Exception` 안이라 GPU가 이미 쓴 생성이
+    `{"error": …}`로 버려진다 — #550 작업 중 테스트로 재현(`tests/test_probe.py`), 실서빙 관측
+    아님. 필드를 이름으로 읽으면 하나가 더 늘어도 그 자리가 안 깨진다.
+
+    `pydantic` 모델이 아니라 dataclass인 것은 **검증이 없어야 해서다.** 서버가
+    `message.content`를 `null`로 줄 수 있고(OpenAI 호환 응답이 허용하며 vLLM 이슈에 그 모양의
+    보고가 있다 — `docs/research/2026-09-08-large-moe.md`의 #37030, **[외부 보고 — 이 저장소의
+    실서빙 관측으로는 확인하지 못했다]**), 그 `None`이 `complete()`의 `model_validate_json`까지
+    흘러 `ValidationError` → 재시도로 이어지는 것이 기존 동작이다. 필드 검증을 달면 그 응답이
+    재시도 대신 `_post` 밖으로 생 예외가 된다(`test_a_null_content_is_retried_not_raised`).
+    """
+
+    # **`None`일 수 있다** — 위 단락의 `null` 응답이다. `complete()`는 그것을 재시도로 흘린다.
+    # 프로브가 이 값을 `str`로 믿고 `.rstrip()`·`len()`을 부르면 죽는다 — `tools/probe/`는
+    # `None`이면 `error` 행으로 남긴다.
+    content: str | None
+    usage: Usage
+    # `choices[0].finish_reason` 그대로. 못 읽으면 `None` — `_finish_reason_from`.
+    finish_reason: str | None
+    # 서버가 `usage.completion_tokens`를 **실었는가.** `usage.output_tokens`는 안 실렸을 때도
+    # `0`이다(`_usage_from`이 0을 채우고 `Usage`는 `None`을 못 든다). 「안 줬다」와 「0이라
+    # 보고했다」를 가르는 것은 이 값뿐이고, `complete()`가 `AttemptRecord.output_tokens`를
+    # `None`으로 두는 근거다.
+    output_tokens_reported: bool
+
 
 # HTTP 오류 응답 본문에서 읽어 둘 최대 바이트. 서버가 거대한 본문을 주는 경우를 막는다.
 # `_MAX_ERROR_DETAIL`이 그것을 다시 문자 단위로 자른다.
@@ -186,6 +222,12 @@ class OpenAICompatModelClient:
         # 담으면 마지막 시도가 실패했을 때 한 번도 안 보낸 body가 끝에 붙는다(핸들러가
         # 다음 회차용 body를 만들고 루프가 소진되는 경우). 상위가 재시도 파일로 남긴다(#80).
         retry_bodies: list[str] = []
+        # 시도별 (출력 토큰, 종료 사유) — 시도 순서대로 칸 하나씩(#550). 위 `spent`는 이 칸들의
+        # 출력 토큰을 합친 값과 같다(합을 대체하지 않고 쪼갠 내역을 더할 뿐이다). 합이 못 푸는 것은
+        # 상한과 그 2배 사이의 합에서 어느 시도가 닿았나, `length`·`stop` 밖의 사유, 그리고 추론이
+        # 아닌 서버의 직접 확인이다(`AttemptRecord`) — 합 65,536처럼 상한의 2배면 두 시도가 정확히
+        # 상한이라는 것까지는 산술로 이미 나온다.
+        attempt_log: list[AttemptRecord] = []
         attempt = 0
         for attempt in range(1, self.retries + 2):
             if attempt > 1:
@@ -193,9 +235,7 @@ class OpenAICompatModelClient:
                 retry_bodies.append(body)
             started = time.monotonic()
             try:
-                raw, usage = self._post(
-                    self._request_payload(prompt.prefix, body, schema, history)
-                )
+                posted = self._post(self._request_payload(prompt.prefix, body, schema, history))
             except ModelGatewayError as exc:
                 # 게이트웨이 거절(컨텍스트 초과 400 등)은 재시도 대상이 아니라 그대로 올린다.
                 # **이 시도가 태운 wall-clock을 먼저 누적한다.** 안 그러면 재보지도 않은 0에
@@ -205,14 +245,27 @@ class OpenAICompatModelClient:
                 # 거절이라 응답 토큰은 없지만 요청 왕복 시간은 실재한다. 앞선 재시도가 쓴 것도
                 # `spent`·`gpu_ms`에 함께 실어 상위(`context.call_model`)가 청구한다.
                 gpu_ms += int((time.monotonic() - started) * 1000)
+                # 응답을 못 받은 시도도 칸을 지킨다 — `AttemptRecord()`는 둘 다 `None`이다.
+                attempt_log.append(AttemptRecord())
                 exc.usage = spent
                 exc.gpu_ms = gpu_ms
                 exc.gpu_ms_source = "request_wall_clock"
                 exc.attempts = attempt
                 exc.retry_bodies = tuple(retry_bodies)
+                exc.attempt_log = tuple(attempt_log)
                 raise
             gpu_ms += int((time.monotonic() - started) * 1000)
+            raw, usage = posted.content, posted.usage
             spent = _add(spent, usage)
+            # 서버가 `completion_tokens`를 안 실었으면 합(`spent`)에는 0이 들어가지만 이 칸은
+            # `None`이다. 합의 0이 「안 줬다」인지 「0이라 보고했다」인지는 이 칸만 안다
+            # (`PostedResponse`).
+            attempt_log.append(
+                AttemptRecord(
+                    output_tokens=usage.output_tokens if posted.output_tokens_reported else None,
+                    finish_reason=posted.finish_reason,
+                )
+            )
             try:
                 value = schema.model_validate_json(raw)
             except ValidationError as exc:
@@ -238,6 +291,9 @@ class OpenAICompatModelClient:
                 # object at line N"을 들고 있고, 그것이 스키마 위반과 출력 절단을 가르는
                 # 유일한 단서다(#79). 재시도하는 모델도, 나중에 trace의 `error_detail`을
                 # 읽는 사람도 그 문장으로 폭주를 알아본다.
+                # ⏵ 2026-10-08 — 사람 쪽은 이제 유일하지 않다: `model_call.attempt_finish_reasons`가
+                # 절단 여부를 서버의 말로 직접 싣는다(#550). 재시도하는 모델은 그것을 못 보므로
+                # (재시도 본문에 안 실린다) 모델에게는 이 문장이 여전히 유일하다.
                 #
                 # **2026-09-12 — `include_input=False`가 닫은 축은 하나뿐이었다.** 그 인자는
                 # **원문**이 실리는 축을 닫고, `errors()`가 리스트라는 데서 오는 **오류 개수**
@@ -261,6 +317,7 @@ class OpenAICompatModelClient:
                 attempts=attempt,
                 retry_bodies=tuple(retry_bodies),
                 raw_text=raw,
+                attempt_log=tuple(attempt_log),
             )
         raise SchemaParseError(
             f"{role} 역할의 {self.model_name}이 {self.retries + 1}회 안에 "
@@ -270,6 +327,7 @@ class OpenAICompatModelClient:
             gpu_ms_source="request_wall_clock",
             attempts=self.retries + 1,
             retry_bodies=tuple(retry_bodies),
+            attempt_log=tuple(attempt_log),
         )
 
     def _request_payload(
@@ -317,7 +375,13 @@ class OpenAICompatModelClient:
             payload["reasoning_effort"] = self.reasoning_effort
         return {**payload, **self.extra_params}
 
-    def _post(self, payload: dict) -> tuple[str, Usage]:
+    def _post(self, payload: dict) -> PostedResponse:
+        """요청 한 번. `content`·`usage`·`finish_reason`을 `PostedResponse`로 돌려준다 (#550).
+
+        `finish_reason`은 `choices[0].finish_reason` 그대로인 문자열이고, 키가 없거나 문자열이
+        아니거나 비었으면 `None`이다(`_finish_reason_from`) — 멀쩡한 200을 이것 때문에 오류로
+        만들지 않는다.
+        """
         request = urllib.request.Request(  # noqa: S310 - 스킴은 config가 정한 http(s)다
             f"{self.endpoint}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -382,12 +446,22 @@ class OpenAICompatModelClient:
                 detail=f"{type(exc).__name__}: {exc}",
             ) from exc
         try:
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
             # `_usage_from`도 **같은 try 안이다**(적대적 리뷰 2026-10-02 실측): `usage: null`이면
             # `AttributeError`, `completion_tokens: null`이면 `TypeError`, `"abc"`면 `ValueError`가
             # 샜다. 모양이 깨진 응답은 content든 usage든 **한 사건**이다.
-            usage = _usage_from(data.get("usage", {}))
-        except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
+            # **`1e999`·`Infinity`는 `OverflowError`다**(2026-10-08 실측) — `json.loads`가 둘 다
+            # `inf`로 읽고 `int(inf)`가 그 예외를 던진다. 서버 응답 하나로 닿고, 아래 except에
+            # 없으면 이미 잰 시도의 내역(`attempt_log`)째 `complete()`를 뚫고 나간다(#550).
+            usage_data = data.get("usage", {})
+            usage = _usage_from(usage_data)
+            # `_usage_from`이 위에서 `.get`을 통과했으므로 `usage_data`는 매핑이다 — `in`은 안
+            # 던진다.
+            output_tokens_reported = "completion_tokens" in usage_data
+            # `choice`가 위에서 `["message"]`를 통과했으므로 매핑이다 — `.get`은 안 던진다.
+            finish_reason = _finish_reason_from(choice)
+        except (KeyError, IndexError, TypeError, AttributeError, ValueError, OverflowError) as exc:
             # 응답이 200인데 **모양이 다르다**(`choices`가 비었거나 키가 없다). 전 판은 이 인덱싱이
             # try 밖이라 `KeyError`가 그대로 새 나갔고, 러너는 그것을 게이트웨이 사건으로 못 읽어
             # `write_manifest` 앞을 뚫었다. 상태 코드는 없다 — 전송은 됐고 **계약이 깨진** 것이다.
@@ -396,7 +470,36 @@ class OpenAICompatModelClient:
             # 것은 trace의 `model_call.error_detail`뿐이고 그것은 `detail`을 읽는다.
             reason = f"응답 모양이 계약과 다르다: {type(exc).__name__}: {exc}"
             raise ModelGatewayError(f"{self.endpoint} {reason}", detail=reason) from exc
-        return content, usage
+        return PostedResponse(
+            content=content,
+            usage=usage,
+            finish_reason=finish_reason,
+            output_tokens_reported=output_tokens_reported,
+        )
+
+
+def _finish_reason_from(choice: dict) -> str | None:
+    """`choices[0].finish_reason`을 문자열로, 못 읽으면 `None`으로 (#550).
+
+    **`""`·`"unknown"`으로 채우지 않는다** — 안 잰 값을 그럴듯한 값으로 메우지 않는다(CLAUDE.md §0).
+    **알려진 값(`stop`·`length` …)으로 거르지도 않는다.** 서버가 낸 처음 보는 사유(vLLM의 `abort`
+    등)를 버리면 이 필드가 있는 이유 — 절단(`length`)과 그 밖을 가르는 것 — 가 사라진다.
+
+    **공백뿐인 값도 `None`이다** — 읽을 사유가 없다. 길이와 무관하게 같다(600칸 공백이 `''`로
+    나가던 것이 이 함수의 「`''`는 안 돌려준다」를 깼다).
+
+    **길이는 묶는다.** 이 문자열은 trace JSONL 한 줄의 셀로 그대로 가는데 서버가 정한 값이라 상한이
+    없다(2MB 값이 2MB 셀이 된다). 정상 길이(`MAX_ERROR_DETAIL` 이하)는 **한 글자도 안 바꾼다.**
+    **원문이 그것을 넘으면** `error_detail`과 같은 자르기(`truncate_detail`)를 거치는데, 그것은
+    **공백 연속을 한 칸으로 접고 앞뒤 공백을 뗀 뒤** 길이를 다시 잰다. 그래서 접은 결과가 아직
+    `MAX_ERROR_DETAIL`을 넘을 때만 잘림 표시가 붙는다 — 공백이 대부분이라 접으면 들어가는 값은
+    **표시 없이 짧아진다**(`length` 뒤에 공백 507칸이 붙은 값이 `length`가 된다).
+    잃는 것은 공백뿐이다.
+    """
+    value = choice.get("finish_reason")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return truncate_detail(value) if len(value) > MAX_ERROR_DETAIL else value
 
 
 def _error_detail(exc: urllib.error.HTTPError) -> str:

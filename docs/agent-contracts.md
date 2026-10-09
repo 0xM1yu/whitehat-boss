@@ -216,8 +216,10 @@ agent:
   **이 위치는 판단 보조이고 게이트 등급 근거가 아니다** — `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이
   semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`container_tools.first_hit_location` docstring). 그 값은
   semgrep `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다. 2026-10-05 Critic v6 prefix는
-  `FACTS.evidence[].location`과 EVIDENCE 줄의 위치를 서술한다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(위치를
-  싣고 돈 run은 커밋된 `docs/experiments/` 보고서 기준 0건). content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
+  `FACTS.evidence[].location`과 EVIDENCE 줄의 위치를 서술한다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(이슈 #563).
+  ⏵ **2026-10-09 — 「싣고 돈 run 0건」은 더 이상 참이 아니다**: `run_20261007_0001`이 위치를 싣고 돌았고(`5828a0a` `nodes/auditor.py:197` `_CONTENT_AWARE_VERSIONS` ∋ v10 — 위치를 싣는 판으로 돌았다)
+  인용은 **0/5**였다. 단 그 run의 semgrep 히트(`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를
+  보여 주면 인용이 느는가」는 여전히 0회다 — 그 축이 #563이다. content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
   항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-05 서빙 프로필(`harness_pool`·
   `harness_pool_hybrid`)의 Auditor와 Critic 모두 content-aware 판이다. 서빙 Critic
   (`gpt-oss-20b`)은 v6으로 바뀌어 본문·위치·SOURCE를 받는다 — 손으로 쓴 값이니 `config/models.yaml`이 정본이다.
