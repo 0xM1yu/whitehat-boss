@@ -442,6 +442,7 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-06 — 루프 봉투가 둘이라 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이
     # `AuditorProcedureAction`이다(`Finding`은 한 방 판 그대로). 위 `AuditorAction`은
     # v8·v9의 이름이다.
+    # ⏵ 2026-10-09 — v11은 셋째 봉투 `AuditorProcedureNullableCweAction`이다(이슈 #525).
     AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의

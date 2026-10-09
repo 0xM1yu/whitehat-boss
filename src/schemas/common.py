@@ -38,6 +38,7 @@ PLACEHOLDER_DIGEST = "sha256:" + "0" * 64
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]
 
 # CWE 식별자. agent-contracts.md §3의 Candidate.suspected_cwe와 Finding.cwe가 공유한다.
+# ⏵ 2026-10-09 — `Finding.cwe`는 `Cwe | None`이다(`no_signal`에서만 `None` — 이슈 #525).
 Cwe = Annotated[str, Field(pattern=r"^CWE-\d+$")]
 
 # 비어 있지 않은 자유 텍스트. 필수 서술 필드를 빈 문자열로 채우는 것을 막는다.

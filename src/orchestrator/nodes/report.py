@@ -205,7 +205,7 @@ def dedupe(
     grades = grades or {}
     files = files or {}
     kept: list[Finding] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str | None, str, str]] = set()
 
     def _rank(finding: Finding) -> tuple[int, str]:
         # 등급 높은 것 먼저, 동급은 finding_id로 — 둘 다 결정론.
@@ -262,8 +262,13 @@ def run(
     )
 
 
-def _dedupe_key(finding: Finding, file: str | None) -> tuple[str, str, str]:
+def _dedupe_key(finding: Finding, file: str | None) -> tuple[str | None, str, str]:
     """(CWE, 파일, 대상 함수). 셋이 같아야 한 건이다 (#101 a).
+
+    ⏵ 2026-10-09 (이슈 #525 선택지 1) — CWE는 `None`일 수 있다(v11의 `no_signal`). 이 키는
+    **정렬되지 않고** 집합 소속만 본다(`dedupe`의 `seen` — 순서는 `_rank`가 등급·`finding_id`로
+    정한다). 그래서 `None`을 그대로 둔다: `None`끼리는 같은 칸이고 실제 CWE와는 다른 칸이다 — 같은
+    파일·대상 함수의 `no_signal` 둘은 한 건으로 묶이고, 같은 자리의 CWE 있는 Finding과는 안 묶인다.
 
     대상 함수는 **경로의 PROPAGATE 칸**이다 — Finding을 서로 다르게 만드는 것이 그것이고,
     SOURCE는 호출자가 없으면 `"input"` 상수로 접히며(`fake_model`) SINK는 여럿이 공유한다
@@ -282,12 +287,19 @@ def _target_symbol(finding: Finding) -> str:
     return finding.title
 
 
+# `cwe`가 `None`인 Finding의 표시(`_entry`) — ⏵ 2026-10-09, 이슈 #525 선택지 1.
+_NO_CWE = "CWE 없음"
+
+
 def _entry(finding: Finding, grade: str | None) -> str:
     # **앞머리에 등급을 박는다 (PR #37).** state(`queued` 등)만 찍으면 E3에 도달한 Finding도
     # `queued`로 보인다 — F-9가 상태를 안 바꾸기 때문이다. 등급이 이 run의 성과다.
     # 등급이 없으면(`grades`에 키 없음) "E0"이 아니라 `-`로 찍는다(위 `_GRADE_UNKNOWN`).
+    # ⏵ 2026-10-09 — `cwe`가 `None`(v11의 `no_signal`)이면 `_NO_CWE`로 적는다. `f"{None}"`은
+    # `None`이라는 글자를 찍어 CWE 이름처럼 읽힌다. CWE가 있으면 종전과 같은 줄이다.
+    cwe = finding.cwe if finding.cwe is not None else _NO_CWE
     return (
         f"- **[{grade or _GRADE_UNKNOWN}] {finding.title}** "
-        f"({finding.cwe}, confidence {finding.confidence:.2f})\n"
+        f"({cwe}, confidence {finding.confidence:.2f})\n"
         f"  - id: `{finding.finding_id}` · 근거 {len(finding.evidence_refs)}건"
     )
