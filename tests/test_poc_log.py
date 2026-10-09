@@ -350,14 +350,15 @@ def test_a_path_whose_identity_differs_from_the_opened_file_is_refused(
     log = PocLog(tmp_path / "run")
     real_lstat = poc_log.os.lstat
 
-    class _Elsewhere:
-        st_ino = -1
-        st_dev = -1
-
-    def lstat(path: object) -> object:
+    def lstat(path: object) -> os.stat_result:
+        found = real_lstat(path)
         if str(path).endswith(".poc.tmp"):
-            return _Elsewhere()  # 경로 말단이 우리가 연 파일이 아니다 — 링크를 따라갔다
-        return real_lstat(path)
+            # 경로 말단이 우리가 연 파일이 아니다 — 링크를 따라갔다. 진짜 stat_result에서 신원만
+            # 바꾼다(POSIX `os.path.realpath`가 같은 `lstat`을 불러 `st_mode`를 읽는다).
+            fields = list(found[:10])
+            fields[1], fields[2] = -1, -1  # st_ino, st_dev
+            return os.stat_result(fields)
+        return found
 
     monkeypatch.setattr(poc_log.os, "lstat", lstat)
 
