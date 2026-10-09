@@ -172,7 +172,7 @@
 - ⚠ **Auditor SFT가 무엇을 배우는지는 갈린다** — 가이드는 CPGQL 생성으로 적고, 11차 멘토링은 「하네스 Auditor는 CPGQL을 만들지도 받지도 않는다」를 확인했다(팀 문서). 이 ADR은 그것을 정하지 않는다 — 아래 「이 ADR이 열어 두는 것」 7.
 - **하네스의 책임은 셋이다.**
   1. **학습과 서빙의 입력 형식이 같다** — 같은 렌더러(결정 1의 gutter·배너)를 쓴다. FT 데이터 풀은 함수 단위라(팀 보고 550,731건 — 위 「팀 방향」의 Notion 문서, 2026-09-23 판독, run ID 없음) 함수를 배너·gutter만 두른 「퇴화 슬라이스」로 렌더하는 길이 필요하다. 짓는 것은 Phase 8이고, 데이터셋팀의 FT 레코드 형식이 온 뒤에 짓는다.
-  2. **모델 응답 원문을 남긴다** — 지금은 응답 본문·`reasoning_content`·`finish_reason`이 남지 않는다(⏵ 2026-09-24 — vLLM 0.27.1 응답에서 추론을 싣는 필드 이름은 `reasoning`이다, `reasoning_content`가 아니다 — [2026-09-12 토큰 회계 보고서](../experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md) §4가 ATOM에서 확인했다. 남지 않는다는 것은 그대로다). `ModelResult`(`src/interfaces/model_client.py:187-221`)에 응답 본문 필드가 없고(`retry_bodies`는 보낸 요청이다) `src/adapters/openai_compat.py`에 두 이름이 0건이다 → [D84](../open-questions/D/D84.md).
+  2. **모델 응답 원문을 남긴다** — 지금은 응답 본문·`reasoning_content`·`finish_reason`이 남지 않는다(⏵ 2026-09-24 — vLLM 0.27.1 응답에서 추론을 싣는 필드 이름은 `reasoning`이다, `reasoning_content`가 아니다 — [2026-09-12 토큰 회계 보고서](../experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md) §4가 ATOM에서 확인했다. 남지 않는다는 것은 그대로다). `ModelResult`(`src/interfaces/model_client.py:187-221`)에 응답 본문 필드가 없고(`retry_bodies`는 보낸 요청이다) `src/adapters/openai_compat.py`에 두 이름이 0건이다 → [D84](../open-questions/D/D84.md). ⏵ 2026-10-08 — `finish_reason`은 이슈 #550으로 시도별 trace에 남는다(`ModelResult.attempt_log`) — 「두 이름이 0건」은 그쪽이 더는 서지 않는다. 「응답 본문 필드가 없고」도 2026-09-26(`raw_text` 추가, `6f5560c`)부터 서지 않았다 — 성공한 시도의 원문은 `ModelResult.raw_text`가 들고 `scout_hop` 이벤트와 후속 홉의 프롬프트 로그(입력 history)로 디스크에 닿는다([D84](../open-questions/D/D84.md)의 그 ⏵). **이 문장은 안 남는 것의 닫힌 목록이 아니다 — 아직 안 남는 것의 전체는 [D84](../open-questions/D/D84.md)가 정본이다**(추론 `reasoning`과 실패한 시도의 응답 원문은 그중 둘이다).
   3. **역할별로 내보낸다(export)** — 지금 CLI 서브커맨드는 `doctor`·`estimate`·`run`·`bench`·`gc`뿐이다(`src/cli.py:860-889`).
 
 ## 결과
@@ -245,4 +245,4 @@
 | 4 | registry에 `qwen3-14b`가 있다 · 새 키에 `@rev`와 실 checksum이 있다 | 미충족 — 0건 · `config/models.yaml:664-665`·`:687-688`·`:715-716` |
 | 5 | 보관 셋의 머리에 보관 표시가 있다 | 문서로만 선다 — 같은 PR이 단다. 코드 조건이 없다 |
 | 6 | `src/`에 `DecisionPoint.REQUEUE`를 내는 코드가 0 · 러너의 `retrieval.expand(` 호출이 0 · `scout.run`에 `previous`를 넘기는 호출이 0 | **충족** — 위 결정 6 표. 코드 삭제 뒤에는 그 이름들이 `src/`에서 0건이 된다 |
-| 7 | `ModelResult`에 응답 원문 필드가 있다 · `export` 서브커맨드가 있다 | 미충족 — `src/interfaces/model_client.py:187-221` · `src/cli.py:860-889` |
+| 7 | `ModelResult`에 응답 원문 필드가 있다 · `export` 서브커맨드가 있다 | 미충족 — `src/interfaces/model_client.py:187-221` · `src/cli.py:860-889` ⏵ 2026-10-08 — 앞 절은 `raw_text`(2026-09-26, 성공한 시도의 원문)로 성립했다. `export`가 없어 이 행은 여전히 미충족이다 |
