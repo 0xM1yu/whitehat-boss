@@ -325,7 +325,9 @@ agent:
    **`SOURCE`와 겹치는 조각이 올 수 있다**. 훅이 없는 run(resolver 미배선)은 정지하지 않고 「조회가 없다」는
    관측을 받는다.
 
-3. **`probe` 도구 여섯, 그리고 ⚠ 지금은 입력을 안 받는다.** `tool`은 닫힌 `Literal`이라 모델 문자열이 아니라
+3. **`probe` 도구 여섯, 그리고 ⚠ 이 경로는 입력을 안 싣는다**(⏵ 2026-10-09 — 컨테이너 `poc`는 받을 수
+   **있게** 됐지만 `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를 안 싣는다. 싣게 하는 것은 이슈 #419).
+   `tool`은 닫힌 `Literal`이라 모델 문자열이 아니라
    **이 여섯 이름 중 하나만** argv에 들어간다. `index`는 화이트리스트에 있으나 일부러 뺐다 — 코드 열람은
    `lookup`의 일이다.
 
@@ -336,14 +338,21 @@ agent:
    | `build` | `build` | `clang -c`로 컴파일만(링크 없음) |
    | `asan` | `sanitizer` | ASan+UBSan으로 새로 빌드한 `asan.bin`을 **인자·stdin 없이** 1회 실행 |
    | `gdb` | `crash` | 새로 빌드한 `gdb.bin`을 고정 `gdb.batch`로 실행 |
-   | `poc` | `poc_run` | `{SCRATCH}/poc`를 실행 — **그 파일을 만드는 주체가 아직 없다** |
+   | `poc` | `poc_run` | ⏵ 2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 과제 `-vul` 이미지를 돌리고 PoC를 `/tmp/poc`로 바인드한다 |
 
-   ⚠ **여섯 모두 모델이 준 바이트를 입력으로 받지 않는다.** `probe`가 `spec`을 싣더라도 노드는 `assemble_poc`으로
-   조립해 sha256과 길이만 홉 이벤트에 남기고 도구에는 안 넘긴다 — 관측은 `spec`과 무관하다(저장소 코드만의
-   함수). 모델이 `spec`을 보냈으면 관측에 *"the spec you sent was recorded but NOT given to the tool"* 줄이
-   붙는다. **프롬프트가 이 사실을 먼저 안 적으면 모델이 「내가 구성한 입력으로 돌렸더니」라고 쓴다** — 그
-   문장은 거짓이고 학습 궤적에 거짓이 들어간다([D99](open-questions/D/D99.md) 「선행 둘」 ②). 입력 바이트를
-   대상에 먹이는 길은 이슈 #386 ①이고 그것이 서면 이 경고와 관측의 그 줄을 같이 고친다.
+   ⚠ **이 경로(Auditor `probe`)는 모델이 준 바이트를 도구에 안 싣는다.** `probe`가 `spec`을 싣더라도 노드는
+   `assemble_poc`으로 조립해 sha256과 길이만 홉 이벤트에 남기고 도구에는 안 넘긴다 — 관측은 `spec`의 함수가
+   아니다(저장소 코드만의 함수). 모델이 `spec`을 보냈으면 관측에 *"the spec you sent was recorded but NOT
+   given to the tool"* 줄이 붙는다. **프롬프트가 이 사실을 먼저 안 적으면 모델이 「내가 구성한 입력으로
+   돌렸더니」라고 쓴다** — 그 문장은 거짓이고 학습 궤적에 거짓이 들어간다
+   ([D99](open-questions/D/D99.md) 「선행 둘」 ②).
+
+   ⏵ **2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 이유가 바뀌었다.** 컨테이너
+   `poc`는 이제 입력을 **먹일 수 있고**(과제 `-vul` 이미지의 `/tmp/poc`) 8단계 PoV 경로가 그것을 쓴다.
+   이 경고가 Auditor 경로에서 여전히 참인 이유는 **도구의 능력이 아니라 이 노드가 안 싣는다는 것**이다
+   (`nodes/auditor._probe`의 `ToolArgs`에 `input_bytes`가 없다). 그래서 `probe(poc)`는 입력 없는 호출이라
+   실패 Evidence다 — 싣게 하는 것은 이슈 #419다. 🔴 **`asan`·`gdb`·`build`는 8단계에서도 안 받는다**:
+   셋을 바꾸려면 우리가 대상을 빌드해야 하고 그것이 기각된 A안이다(이슈 #507).
    ⚠ 관측 헤더의 `exit`는 크래시의 **대용 지표일 뿐**이다 — 비-0이 곧 「그 위치에서 터졌다」가 아니다
    (`src/orchestrator/gate.py` 모듈 docstring, 이슈 #232). 프롬프트가 `exit`≠0을 근거 문장으로 승격시키지
    않게 한다.
@@ -511,8 +520,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 ### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
-`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트를
-도구 입력(`./poc`)으로 materialize하는 것+E4 게이트**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. ⏵ **2026-10-09 — 「PoC 바이트를 도구 입력으로 먹인다」가 섰다**(ADR 0014 · 이슈 #513).
+**남은 것은 E4 게이트 전이**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
 신뢰면·리뷰. `src/schemas/pov.py` docstring). 외부 oracle 제출은 `run --oracle-submit`으로 들어왔다 —
 아래 「채점기 제출」. ⚠ 하네스 run으로 실서버 왕복을 잰 것은 0건이다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
@@ -555,13 +564,19 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (2026-10-05 v3 배선). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
   아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3·v4 prefix에는 "언제 쓰라"는 지시를
-  두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
-  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 —
-  `ToolArgs.input_bytes`, #386 ① — 어느 도구 명령도 그 파일을 인자로 받지 않는다. 컨테이너 쪽은
-  `test_no_executed_container_command_receives_the_input_today`와 `plan("poc")`의 정확 핀
-  `test_the_poc_command_takes_no_argument_today`가 잰다 — 읽게 하는 것은 #513이다) — `poc`·`asan`도
-  gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 도구 관측이 PoC와 무관하므로(v3 이상 관측의
-  `last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다) `harness_pool`의 8단계를 돌리지 않는다.
+  두지 않고 도구의 입력 한계만 적는다.
+
+  ⏵ **2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 넷이 둘로 갈렸다.**
+  **`poc`는 PoC를 먹인다** — 과제 자신의 `-vul` 이미지를 돌리고 쓴 파일을 `/tmp/poc`로 읽기 전용
+  바인드하므로 **그 도구의 관측은 PoC의 함수다**. 🔴 **`asan`·`gdb`·`build` 셋은 그대로다** —
+  셋도 받게 하려면 우리가 대상을 빌드해야 하고 그것이 기각된 A안이다(우리 clang이 CyberGym 번들을
+  컴파일하지 못한다 · 이슈 #507 · 과제 1,507건의 빌드 규칙이 제각각). 셋을 재는 핀은
+  `test_no_executed_container_command_receives_the_input_today`(그 parametrize에서 `poc`가 빠졌다)이고
+  `poc`는 `test_the_poc_command_feeds_the_input_now`와
+  `tests/test_poc_tool_feeds_the_input.py`가 든다.
+  🔴 **전 판은 넷 전부를 한 묶음으로 서술했다** — 「도구의 능력」을 근거로 들었고 **그 사실이
+  뒤집혔다** — 서빙 prefix(v3·v4)는 불변 기록이라
+  고치지 않고 **v5**가 바뀐 사실을 적는다.
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
@@ -590,7 +605,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
   값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
   `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
-  바이트가 `./poc`로 materialize되기 전에는 그 도구 실행이 PoC와 무관해(호스트 후속) 후보가 같은
+  바이트가 대상에 닿기 전에는 그 도구 실행이 PoC의 함수가 아니어서(⏵ 2026-10-09 ADR 0014가 `poc`
+  쪽을 세웠다 — 그 전 run의 기록이다) 후보가 같은
   등급으로 동점일 수 있다 — ⏵ **2026-10-04에 그 동점이 더 이상 점수를 막지 않는다.** 2026-10-03
   동결 규칙은 「등급 최댓값 · 동점이면 거부」였고, 실측 run의 후보 8건이 **같은 바이트 1개**라
   (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은

@@ -454,7 +454,15 @@ def test_the_pov_prefix_does_not_contradict_the_oracle_line(version):
     ):
         assert stale not in flat, stale
     assert "아래 JSON이 참조 가능한 사실 전부다" not in body
-    assert "도구 관측" in flat and "oracle_vul" in flat
+    # ⏵ 2026-10-09 (ADR 0014) — 「도구 관측」이라는 **한 묶음 낱말**을 요구하지 않는다. v5부터
+    # 도구가 둘로 갈려(`poc`는 PoC를 받고 셋은 안 받는다) 그 판은 `poc` 관측과
+    # `asan`·`gdb`·`build` 관측을 **따로 부른다** — 한 묶음을 요구하면 갈라 쓴 참인 판이 빨개진다.
+    # 재는 것은 「도구 관측을 **어떤 이름으로든** 말한다」이고, 그 이름이 정확한지는 그 판의
+    # 한계 문단 핀이 본다(`tests/test_pov_prompt_v4.py`).
+    assert "oracle_vul" in flat
+    assert "도구 관측" in flat or ("`poc` 관측" in flat and "`build` 관측" in flat), (
+        "prefix가 도구 관측을 어떤 이름으로도 말하지 않는다"
+    )
     assert "cached=true" in flat
 
 

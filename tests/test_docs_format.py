@@ -41,6 +41,7 @@ D12에서 끝나고 **빈 줄**이 있었는데 한쪽 PR은 그 앞에, 다른 
 
 import ast
 import difflib
+import functools
 import re
 import subprocess
 from pathlib import Path
@@ -2137,3 +2138,253 @@ def test_every_detector_carries_a_contamination_pin() -> None:
         "지운다. 안 지우면 다음 사람이 그만큼 다시 늘릴 수 있다:\n"
         + "\n".join(f"  {d}" for d in sorted(stale))
     )
+
+
+# --- #513 / ADR 0014 — 「도구가 PoC를 받지 않는다」를 현재형으로 말하는 자리 ---------------
+
+# **명제:** 살아 있는 소스·설정·정본 문서가 *"어느 도구 명령도 PoC 바이트를 받지 않는다 / 도구
+# 관측은 PoC와 무관하다"* 를 **현재형으로 단언한다.** ADR 0014
+# (`docs/decisions/0014-poc-tool-runs-the-task-image.md`)가 `poc` 도구를 과제 `-vul` 이미지로
+# 바꿔 그 사실을 뒤집었으므로, 그렇게 말하는 자리는 **거짓**이다.
+#
+# 🔴 **축을 세 번 갈았고 앞의 둘은 샜다. 그 수를 적는다 — 선언이 아니라 수다(CLAUDE.md §2.5).**
+#   ① **이슈 번호**(`#513`) → `src`·`config`·`docs`에서 **10건**. 번호를 안 쓰는 자리를 통째로
+#      놓쳤다: `docs/agent-contracts.md`의 도구 표 행 · `src/schemas/auditor.py`의
+#      `probe` 설명 **둘** ·
+#      `src/schemas/pov.py`의 `PovAction` 설명. PR #564에서 **같은 실수를 이미 한 번** 했다.
+#   ② **동사 철자**(`인자로 받지 않|읽지 않|PoC와 무관|도달 불가`) → **양방향으로 샜다.**
+#      과탐: `도달 불가`가 D54·D65·D80·`cybergym_oracle.py` 등 **무관한 20여 건**을 물었다.
+#      미탐: `src/interfaces/tool_runner.py`의 「인자로 **안 넘긴다**」와
+#      `src/adapters/fake_tools.py`의
+#      「있어도 **읽지 않는다**」를 놓쳤다 — **단언이 한 줄에 안 담긴다**(네 줄 떨어져 있다).
+#   ③ **「대상 + 부정 + 도구어」를 400자 창에서 동시 요구** → **과탐 44건.**
+#      `input_bytes is not None:`
+#      같은 코드 줄까지 물었고, 도구어가 대상 **앞**에 오는 실형태(`도구가 PoC를 읽지 않는 동안`)는
+#      전방 탐색이라 **놓쳤다**. 느슨한 동시출현은 이 명제를 못 가른다.
+#   ④ 그래서 **실형태를 열거한다.** 아래 각 갈래는 저장소에서 온 것이고 양성 핀이 출처를 든다.
+#
+# ⚠ **못 무는 것 — 적어 둔다(CLAUDE.md §2.5 마지막 절).** 이 검출기는 **철자**를 단언하지 성질을
+# 단언하지 않는다. 같은 명제를 새 낱말로 쓰면 안 걸린다 — 「그 바이너리는 바이트를 참조하지
+# 않는다」. 성질을 표현하는 형태를 못 찾았고, 그 한계가 이 주석이다. 다음 사람이 새 형태를
+# 보면 **갈래를 늘리고 그 출처를 양성 핀에 적는다.**
+_POC_UNREAD = re.compile(
+    r"인자로 받지 않"
+    r"|인자로 안 넘긴"
+    r"|인자가 아니다"
+    r"|입력으로 안 받"
+    r"|입력으로 받지 않"
+    r"|입력 바이트를 받지 않"
+    # ⏵ 2026-10-09 — **놓쳐서 더한 갈래다.** `src/schemas/auditor.py`의 `spec` 필드 설명이
+    # 「도구는 이 값을 **받지 않고**」라 적었고 위 갈래 어느 것에도 안 걸렸다 — 그 문장은
+    # 모델 요청 payload에 **직접** 실리는 자리라 가장 비싼 거짓이었다.
+    r"|도구는 이 값을 받지 않"
+    r"|도구가 이 값을 받지 않"
+    # ⏵ 2026-10-09 (2차) — **적대적 리뷰가 다섯 번째 누출을 보였다.** 아래 셋은 위 갈래 어느
+    # 것에도 안 걸렸다: `입력을 받지 않아`·`입력을 안 받으므로`(조사만 다르다) ·
+    # 「읽게 하는 것 … 후속」(미래형으로 적어 현재형 검사를 비껴간다) · 「materialize」(영어 낱말로
+    # 같은 명제를 쓴다). 🔴 **그리고 울타리가 루트 문서를 빼고 있었다** — `STATUS.md`가
+    # `src config docs prompts` 밖이라 두 자리가 통째로 안 보였다.
+    r"|입력을 받지 않"
+    r"|입력을 안 받"
+    r"|읽게 하는 것"
+    # `materialize`만으로는 D65·D83·D90 등 **무관한 20여 건**을 물었다 — 대상을 같이 요구한다.
+    r"|\./poc[^\n]{0,20}materialize"
+    r"|materialize[^\n]{0,20}\./poc"
+    r"|PoC 바이트[^\n]{0,60}materialize"
+    r"|입력으로도 들어가지 않"
+    r"|PoC(?: 바이트)?를 받지 않"
+    r"|PoC를 읽지 않"
+    # ⚠ 조사가 갈린다 — `PoC`는 「와」, `spec`은 「과」다. 한 묶음으로 쓰면 둘 중 하나가 안 걸리고,
+    # 그 오류를 **양성 핀이 잡았다**(`runner.py:2519`의 실형태가 「PoC와 무관」이다).
+    r"|PoC와 무관"
+    r"|spec과 무관"
+    r"|만드는 주체가 아직 없"
+    r"|어느 명령도 (?:그 파일을 )?읽지 않"
+)
+
+# 이 명제의 **울타리**.
+_POC_UNREAD_SCOPE_SUFFIXES = (".py", ".yaml", ".md")
+
+# 울타리 **밖** — 전부 **기록**이라 고치지 않는다(CLAUDE.md §2.4 — 서술은 낡지만
+# 기록은 그날의 것이다).
+#   `docs/experiments/` — run 보고서. 그날의 사진이다.
+#   `docs/research/`    — 그날의 조사. 이미 스스로 「부분만 낡음」을 단다.
+#   `docs/testing/`     — TDD 기록.
+#   `docs/decisions/`   — ADR. **0014 자신이 옛 단언을 인용해야 한다.**
+#   `tests/`            — 핀은 과거 실형태를 들어도 된다. 뒤집는 것은 그 핀 자신의 일이다.
+#
+# 🔴 **프롬프트는 통째로 빼지 않는다.** 지난 판(v2·v3·v4…)은 불변 기록이라 빼지만 **서빙 판은
+# 기록이 아니라 지금 모델에게 가는 글**이다. 첫 판은 `prompts/`를 통째로 뺐고, 그 구멍이 v5
+# prefix의 **자기모순을 숨겼다** — 한계 문단만 고치고 그 문단을 가리키는 세 자리(`rationale` 줄 ·
+# 루프 규율 · 출력 절)가 옛 명제를 그대로 들고 있었는데 검출기가 못 봤다(적대적 리뷰 2026-10-09 H1).
+# 그래서 **서빙 판만 울타리 안**이다.
+_POC_UNREAD_RECORD_PREFIXES = (
+    "docs/experiments/",
+    "docs/research/",
+    "docs/testing/",
+    "docs/decisions/",
+    "tests/",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _frozen_prompt_versions() -> tuple[str, ...]:
+    """울타리 밖인 **지난** 프롬프트 판의 경로 조각. 서빙 판은 여기 없다."""
+    from src.orchestrator.nodes.pov import _WIDE_INPUT_VERSIONS  # noqa: PLC0415
+    from tests.test_pov_loop import _served_pov_version  # noqa: PLC0415
+
+    served = _served_pov_version()
+    assert served in _WIDE_INPUT_VERSIONS, (
+        f"서빙 pov 판 {served!r}이 `_WIDE_INPUT_VERSIONS`에 없다 — 그러면 되먹임이 조용히 사라진다"
+    )
+    return tuple(f"prompts/pov/{v}/" for v in sorted(_WIDE_INPUT_VERSIONS | {"v2"}) if v != served)
+
+
+# 🔴 **셋을 다 이름으로 든 문장은 제외한다 — 이것이 이 검출기의 명제를 정확히 하는 자리다.**
+# 막으려는 것은 *"`poc`도 PoC를 받지 않는다"*이고, `asan`·`build`·`gdb` **셋에 한정된** 서술은
+# ADR 0014 뒤에도 **참**이다(셋은 우리가 빌드한 대상을 돌린다 — 바꾸려면 기각된 A안이 필요하다).
+# 첫 판은 그 구분이 없어 참인 문장까지 금지했고, 그래서 내가 **참인 서술을 다른 낱말로 돌려 쓰는**
+# 식으로 피해 갔다 — 그것이 바로 CLAUDE.md §2.5가 적는 「핀 문자열을 남긴 채 결함을 되살리는」
+# 모양의 거울상이다. 이제 **범위**로 가른다.
+#
+# ⚠ **못 가르는 것**: 셋 중 둘만 들고 `poc`도 포함하는 문장은 제외되지 않는다(맞다). 반대로 셋을
+# 다 들면서 `poc`까지 묶는 거짓 문장은 **빠져나간다** — 그 축은 리뷰가 본다.
+
+
+def _scoped_to_the_three(text: str, start: int) -> bool:
+    """그 자리가 **셋에 한정된** 서술인가 — **가장 가까운 주어**로 가른다.
+
+    창 안에 세 이름이 다 있는지로 보면 안 된다: 갈라 쓴 문장은 **필연적으로** `poc`와 셋을 다
+    언급하므로(「`poc`는 받는다 … 나머지 셋은 안 받는다」) 그 규칙은 참인 서술을 못 통과시킨다.
+    그래서 **부정 어구 바로 앞의 주어**를 본다 — 그것이 셋 중 하나면 범위가 셋이고, `poc`면 거짓
+    단언이다. 실형태가 「나머지 셋(`asan`·`build`·`gdb`)은 … 입력으로 받지 않는다」라 주어가
+    술어 앞 100자 안에 있다.
+    """
+    window = text[max(0, start - 160) : start]
+    positions = {
+        name: window.rfind(name) for name in ("asan", "gdb", "build", "poc") if name in window
+    }
+    if not positions:
+        return False
+    nearest = max(positions, key=lambda name: positions[name])
+    return nearest != "poc"
+
+
+def _poc_unread_scope() -> list[Path]:
+    """이 명제의 울타리 안에 있는 추적 파일."""
+    return [
+        path
+        # 🔴 루트 문서(`STATUS.md`·`PROJECT-CONTEXT.md`·`CLAUDE.md`…)도 **살아 있는 소스**다 —
+        # 첫 판이 `src config docs prompts`만 세어 `STATUS.md`의 두 자리를 통째로 놓쳤다.
+        for path in _tracked("src", "config", "docs", "prompts", "*.md")
+        if path.suffix in _POC_UNREAD_SCOPE_SUFFIXES
+        if not _rel(path).startswith(_POC_UNREAD_RECORD_PREFIXES)
+        # 지난 프롬프트 판만 뺀다 — 서빙 판은 울타리 **안**이다(위 주석).
+        if not _rel(path).startswith(_frozen_prompt_versions())
+    ]
+
+
+def test_the_poc_unread_regex_matches_the_real_forms() -> None:
+    """🔴 **실형태를 핀으로 쓴다 — 지어낸 샘플은 잡히는 형태만 고르게 된다**(CLAUDE.md §2.5).
+
+    양성 아홉은 전부 **이 저장소에서 온 줄**이고 출처를 옆에 적었다. 음성 넷은 이 검출기가
+    **막으면 안 되는** 문장이다 — 「읽지 않는다」를 쓰지만 대상이 PoC가 아니거나 명제가 다르다.
+    """
+    # 양성 — `src/adapters/container_tools.py:79`
+    assert _POC_UNREAD.search("**어느 명령도 그 파일을 인자로 받지 않는다**(`plan()`이")
+    # 양성 — `src/interfaces/tool_runner.py:46` (②가 놓친 갈래)
+    assert _POC_UNREAD.search("명령의 인자로 안 넘긴다(#513)")
+    # 양성 — `src/adapters/container_tools.py:491`
+    assert _POC_UNREAD.search("(`ToolArgs.input_bytes`)은 이 명령의 인자가 아니다(모듈 docstring")
+    # 양성 — `docs/agent-contracts.md:558`
+    assert _POC_UNREAD.search('"도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다')
+    # 양성 — `src/schemas/auditor.py:166`·`:247`
+    assert _POC_UNREAD.search("도구는 입력 바이트를 받지 않는다 — `spec`을 실어도")
+    # 양성 — `src/schemas/pov.py:165` (「입력으로 받지 않는다」)
+    assert _POC_UNREAD.search("`gen`이 만든 PoC 바이트를 입력으로 받지 않는다")
+    # 양성 — `config/budgets.yaml:290` (③이 놓친 갈래 — 도구어가 대상 **앞**에 온다)
+    assert _POC_UNREAD.search("도구가 PoC를 읽지 않는 동안(이슈 #513) 관측의")
+    # 양성 — `src/orchestrator/runner.py:2322`
+    assert _POC_UNREAD.search("도구 관측의 `ok`·`exit`·꼬리는 PoC와 무관하다(호스트")
+    # 양성 — `src/adapters/container_tools.py:489`
+    assert _POC_UNREAD.search("PoC 실행 파일을 만드는 주체가 아직 없다(STATUS.md §5 PoV)")
+    # 음성 — 채점기 값과 지정의 경계(ADR 0013). 같은 「읽지 않는다」지만 **다른 명제**다.
+    assert not _POC_UNREAD.search("지정 로직은 채점기가 돌려준 값을 읽지 않는다")
+    # 음성 — 전처리의 파일 누락. 대상이 PoC가 아니다.
+    assert not _POC_UNREAD.search("그 17KB가 어느 단계에도 들어가지 않는데, 에러가 아니므로")
+    # 음성 — ②의 과탐 축. 이 명제와 무관한 「도달 불가」 20여 건이 여기서 빠진다.
+    assert not _POC_UNREAD.search("그 조건이 안 서면 E4는 도달 불가다")
+    # 음성 — ADR 0014 **뒤**의 참 서술. 이것을 막으면 고칠 길이 없다.
+    assert not _POC_UNREAD.search(
+        "`poc` 도구는 과제 `-vul` 이미지에 PoC를 `/tmp/poc`로 바인드해 돌린다"
+    )
+
+
+def test_no_live_source_says_the_tools_cannot_receive_the_poc() -> None:
+    """🔴 **ADR 0014가 뒤집은 사실을 살아 있는 소스가 계속 말하지 않는다**(CLAUDE.md §2.3).
+
+    **왜 기계가 세는가.** 이 명제의 전수를 손으로 **세 번** 돌렸고 **세 번 다 반쪽이었다** —
+    번호 축은 번호 없는 네 자리를, 동사 축은 줄을 넘는 두 자리를, 동시출현 축은 44건을 과탐하고도
+    실형태 하나를 놓쳤다(위 `_POC_UNREAD` 주석의 수). 네 번째 축이 맞다는 보증은 없고, 있는
+    보증은 **이 검사가 빨개진다**는 것뿐이다.
+
+    **울타리는 `_POC_UNREAD_RECORD_PREFIXES`가 든다** — 기록은 고치지 않는다. 프롬프트 판이 그
+    울타리 안인 것이 특히 중요하다: 서빙 prefix의 거짓이 된 문단은 **그 판을 고치는 것이 아니라
+    다음 판**에서 고친다(`prompts/pov/v5/`).
+    """
+    offenders = [
+        f"{_rel(path)}:{text.count(chr(10), 0, match.start()) + 1}: {match.group(0)}"
+        for path in _poc_unread_scope()
+        for text in [path.read_text(encoding="utf-8")]
+        for match in _POC_UNREAD.finditer(text)
+        if not _scoped_to_the_three(text, match.start())
+    ]
+    assert offenders == [], (
+        f"ADR 0014가 뒤집은 단언이 살아 있는 소스에 {len(offenders)}건 남아 있다 — "
+        "「도구는 PoC를 받지 않는다」는 이제 거짓이다:\n" + "\n".join(offenders)
+    )
+
+
+# 🔴 **위 검출기의 짝 — 반대 방향이다.** `_POC_UNREAD`는 「넷 모두 안 받는다」를 **금지**하는데,
+# 그것만으로는 **한계 서술이 통째로 지워지는 것**을 못 잡는다. `asan`·`gdb`·`build` 셋은 ADR 0014
+# **뒤에도 안 받으므로**(셋을 바꾸려면 우리가 대상을 빌드해야 하고 그것이 기각된 A안이다 —
+# 이슈 #507) 그 사실이 살아 있는 소스에 **남아 있어야 한다.** 금지와 요구를 둘 다
+# 걸어야 「고쳤다」가
+# 「지웠다」로 새지 않는다 — 이 저장소가 이미 겪은 실패다(형제 PR에서 핀 문자열을 전부 남긴 채
+# 결함을 되살리는 변이가 일곱 났다 · CLAUDE.md §2.5 마지막 절).
+_POC_SPLIT_KEPT = re.compile(r"`asan`[^\n]{0,40}`(?:gdb|build)`")
+
+
+def test_the_three_tools_still_say_they_do_not_receive_the_poc() -> None:
+    """🔴 **`_POC_UNREAD`의 짝이다 — 한계 서술이 지워지지 않았다.**
+
+    ADR 0014는 **한 도구만** 바꿨다. 셋이 입력을 안 받는다는 사실은 그대로이고, 그것을 적는
+    자리가 0건이 되면 다음 사람이 「도구가 PoC를 받는다」를 **넷 전부로** 읽는다. 금지 검출기만
+    있으면 그 삭제가 초록으로 지나간다.
+
+    **무는 것은 「셋을 한 묶음으로 부르는 자리가 있다」까지다** — 그 문장이 **무엇을 말하는지**는
+    안 본다(성질을 표현하는 형태를 못 찾았다). 그 한계는 `_POC_UNREAD` 주석과 같은 결이다.
+    """
+    carriers = [
+        _rel(path)
+        for path in _poc_unread_scope()
+        if _POC_SPLIT_KEPT.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert "src/adapters/container_tools.py" in carriers, (
+        "`poc`를 가른 모듈이 셋을 한 묶음으로 부르는 자리를 잃었다 — ADR 0014는 한 도구만 바꿨다"
+    )
+    assert len(carriers) >= 3, (
+        f"셋의 한계를 적는 자리가 {len(carriers)}곳뿐이다 — "
+        "「고쳤다」가 「지웠다」로 샜는지 본다:\n"
+        + "\n".join(f"  {c}" for c in carriers)
+    )
+
+
+def test_the_poc_split_regex_matches_the_real_forms() -> None:
+    """실형태 핀 — 출처는 `src/adapters/container_tools.py`·`docs/agent-contracts.md`다."""
+    assert _POC_SPLIT_KEPT.search("나머지 셋(`asan`·`gdb`·`build`)은 그대로 안 받는다")
+    assert _POC_SPLIT_KEPT.search("🔴 **`asan`·`gdb`·`build` 셋은 그대로다**")
+    assert not _POC_SPLIT_KEPT.search("`poc` 도구는 과제 이미지를 돌린다")
+    # 음성 — 셋 중 하나만 든 문장은 묶음이 아니다.
+    assert not _POC_SPLIT_KEPT.search("`asan`은 ASan+UBSan으로 새로 빌드한다")
