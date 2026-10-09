@@ -212,8 +212,9 @@ def _measure_one(client: Any, payload: dict, max_tokens: int) -> dict[str, Any]:
         posted = client._post(payload)  # noqa: SLF001
     except Exception as exc:  # noqa: BLE001 - 실패도 관측이다. 삼키지 않고 센다
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
-    # **이름으로 읽는다.** `_post`가 튜플일 때 `raw, usage = …`로 풀던 이 자리가 필드가 하나 늘자
-    # 전 호출에서 `ValueError`를 맞고 위 `except`로 떨어져 GPU가 쓴 생성을 버렸다(#550).
+    # **이름으로 읽는다.** `_post`가 튜플일 때 `raw, usage = …`로 풀면 필드가 하나 늘 때 전 호출에서
+    # `ValueError`를 맞고 위 `except`로 떨어져 GPU가 쓴 생성을 버린다 — #550 작업 중 테스트로
+    # 재현(`tests/test_probe.py`), 실서빙 관측 아님.
     #
     # **`content`는 `None`일 수 있다**(`PostedResponse`). 아래 `.rstrip()`이 `AttributeError`로
     # 죽으면 `main`이 행을 루프 뒤에야 쓰므로 그때까지 쓴 생성이 전부 버려진다 — 위 `except`와
