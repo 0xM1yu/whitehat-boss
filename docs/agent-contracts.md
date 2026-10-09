@@ -143,7 +143,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일), ⏵ 같은 날 지금 배선된 **v10**(v7 전면 재작성 · body는 v6·v9와 바이트 동일)은
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일), ⏵ 2026-10-07 지금 배선된 **v10**(v7 전면 재작성 · body는 v6·v9와 바이트 동일)은
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -471,7 +471,7 @@ agent:
    - ⚠ **버전 이름으로 분기하지 않는다.** `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`는 이름 목록이라 판이 늘
      때마다 코드를 고쳐야 하고 잊으면 그 기능이 조용히 꺼진다. 루프도 도구도 **meta 선언**으로 가른다 —
      판을 한 번호에서 다음 번호로 올려도 코드 변경 없이 돈다. (근거 본문 싣기는 아직 이름 목록이다 — 새 판이 본문을 전제로 쓰였으면 거기에는
-     이름을 더해야 한다. ⏵ 2026-10-06 — v10도 그 목록에 들었다: prefix가 `FACTS.evidence[].body`·`truncated`를 읽으라고 시키는데 목록 밖이면 본문이
+     이름을 더해야 한다. ⏵ 2026-10-07 — v10도 그 목록에 들었다(`21b9513`): prefix가 `FACTS.evidence[].body`·`truncated`를 읽으라고 시키는데 목록 밖이면 본문이
      FACTS에 안 실린다.)
    - ~~이 선언을 디스크에 두면 `tests/test_config.py`의
      `test_the_prompt_output_schema_is_what_the_caller_actually_requests`가 Auditor를 `Finding` 하나와 등치로
@@ -485,7 +485,7 @@ agent:
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-06 v10)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
