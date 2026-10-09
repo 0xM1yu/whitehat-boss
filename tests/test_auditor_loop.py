@@ -49,7 +49,9 @@ from src.schemas.auditor import (
     AUDITOR_TOOLS,
     AuditorAction,
     AuditorProcedureAction,
+    AuditorProcedureNullableCweAction,
     AuditProcedure,
+    AuditProcedureNullableCwe,
 )
 from src.schemas.enums import AuditorStopReason, EvidenceKind, UnfilledReason
 from src.schemas.finding import AuditBlock, AuditRefutation, Finding
@@ -829,6 +831,10 @@ def test_bench_requests_the_schema_the_auditor_prompt_declares() -> None:
         auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v10").output_schema)
         is AuditorProcedureAction
     )
+    assert (
+        auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v11").output_schema)
+        is AuditorProcedureNullableCweAction
+    )
     # `ROLE_SPEC`이 auditor 자리에 든 이름(캡슐 레벨 전용이 된 쪽)을 `declared`로 주고, bench가
     # 그것을 **무시하고 판 선언을 푸는지** 본다. 문자열 핀으로 걸었을 때는 분기를 `elif False:`로
     # 막아도 초록이었다(CLAUDE.md 2.5).
@@ -838,6 +844,7 @@ def test_bench_requests_the_schema_the_auditor_prompt_declares() -> None:
         ("v7", Finding),
         ("v8", AuditorAction),
         ("v10", AuditorProcedureAction),
+        ("v11", AuditorProcedureNullableCweAction),
     ):
         resolved = bench_report.schema_for(
             Role.AUDITOR, load_prompt(Role.AUDITOR, version), declared
@@ -1919,6 +1926,9 @@ def _convert(procedure: AuditProcedure) -> Finding:
         pytest.param("v8", "AuditorAction", True, id="v8-finding-envelope"),
         pytest.param("v9", "AuditorAction", True, id="v9-finding-envelope"),
         pytest.param("v10", "AuditorProcedureAction", True, id="v10-procedure-envelope"),
+        pytest.param(
+            "v11", "AuditorProcedureNullableCweAction", True, id="v11-nullable-cwe-envelope"
+        ),
     ],
 )
 def test_the_places_that_ask_is_this_a_loop_prompt_all_get_the_same_answer(
@@ -1955,11 +1965,19 @@ def test_the_allowed_schemas_are_the_one_shot_finding_plus_exactly_the_loop_enve
     밖이다: 최상위로 요청하면 `lookup`·`probe`·`answer` 없이 감사 결과 하나만 받는 문법이 된다."""
     allowed = set(auditor.ALLOWED_OUTPUT_SCHEMAS)
 
-    assert allowed == {Finding, AuditorAction, AuditorProcedureAction}
+    # ⏵ 2026-10-09 — 셋째 봉투(v11의 `AuditorProcedureNullableCweAction`, 이슈 #525)가 더해졌다.
+    assert allowed == {
+        Finding,
+        AuditorAction,
+        AuditorProcedureAction,
+        AuditorProcedureNullableCweAction,
+    }
     assert allowed - set(auditor._LOOP_ENVELOPES) == {auditor.OUTPUT_SCHEMA}
     assert AuditProcedure not in allowed
-    with pytest.raises(PromptError, match="이 역할이 낼 수 없다"):
-        auditor.resolve_output_schema("AuditProcedure")
+    assert AuditProcedureNullableCwe not in allowed
+    for payload in ("AuditProcedure", "AuditProcedureNullableCwe"):
+        with pytest.raises(PromptError, match="이 역할이 낼 수 없다"):
+            auditor.resolve_output_schema(payload)
 
 
 def test_the_one_shot_sentence_names_every_loop_envelope_and_the_declared_schema() -> None:
@@ -1969,7 +1987,10 @@ def test_the_one_shot_sentence_names_every_loop_envelope_and_the_declared_schema
 
     assert problem is not None
     assert "Finding(한 방)을 선언하는데" in problem
-    assert "AuditorAction · AuditorProcedureAction 판에서만 돈다" in problem
+    assert (
+        "AuditorAction · AuditorProcedureAction · AuditorProcedureNullableCweAction 판에서만 돈다"
+        in problem
+    )
 
 
 def test_a_procedure_loop_prompt_with_a_zero_cap_is_refused_in_the_same_words_everywhere(

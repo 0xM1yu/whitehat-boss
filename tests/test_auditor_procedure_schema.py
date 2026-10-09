@@ -389,6 +389,11 @@ def test_cwe_enforces_the_pattern_and_refuses_null_even_for_no_signal() -> None:
     it is never null, whatever the trigger_status」. `Finding.cwe`가 nullable이 아니고 그 값을
     읽는 자리가 여섯이라(SARIF `ruleId` 포함) 이 스키마는 넓히지 않는다 — 산문이 한 번 null을
     적었던 자리라서 no_signal까지 일부러 못 박는다.
+
+    ⏵ 2026-10-09 — 「`Finding.cwe`가 nullable이 아니고」는 그날까지의 사실이다. `Finding.cwe`는
+    `no_signal`에서 `None`을 받게 됐고(이슈 #525 선택지 1 · D107) null을 받는 응답 스키마는 v11의
+    `AuditProcedureNullableCwe`다. **v10의 이 스키마는 그대로 거절한다** — JSON 스키마가 v10의 요청
+    바이트라서 안 넓혔다(`tests/test_nullable_cwe.py`).
     """
     schema = AuditProcedure.model_json_schema()
     no_signal = {"audit": None, "trigger_status": "no_signal", "confidence": 0.05}
