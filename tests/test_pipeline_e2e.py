@@ -330,7 +330,8 @@ def test_pov_generates_a_poc_at_the_validate_stage_for_dev_fake(tmp_path: Path) 
     (PoV 배선 — 추가형). `validate.run`은 그대로 돌고(유일한 결정론 E4 게이트), pov는 나란히
     PoC를 만들어 `pov_generated`로 바이트 크기를 기록한다. 실행·게이트는 호스트 후속이다.
     ⏵ 2026-10-08 — 「호스트 후속」만이 아니다. 채점기 제출은 #408(`--oracle-submit`)로 들어왔고
-    `./poc` materialize는 #513(열림)이 든다. #386은 열림이다.
+    `./poc` materialize는 #513(열림)이 든다. ⏵ 2026-10-09 — #386은 닫혔다(두 명제가
+    `run_20261007_0001`에서 반증됐다): 남은 것은 #513 하나다.
 
     이 검사가 「pov가 죽은 코드가 아니다」를 실증한다 — 러너 라우팅을 끊으면 8단계 pov_generated가
     0건이 되어 빨개진다."""

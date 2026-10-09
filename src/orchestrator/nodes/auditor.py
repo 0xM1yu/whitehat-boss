@@ -81,8 +81,11 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
   `probe`는 스키마가 닫은 Literal(`AuditorTool` — 두 봉투가 공유한다)의 **이름만** argv에 넣는다.
 - ⚠ **`probe`의 `spec`은 도구 입력이 아니다.** 지금 도구(`container_tools.plan()`의
   asan·gdb·poc)는 인자·stdin 없이 돈다 — `spec`으로 조립한 바이트는 sha256과 길이만 홉 이벤트에
-  남고 도구에 안 간다. 모델에게도 관측에 그렇게 적는다(`_probe_observation`). PoC 바이트
-  materialize는 이슈 #386 ①이고, 그것이 서면 이 경고와 관측의 그 줄을 같이 고친다.
+  남고 도구에 안 간다. 모델에게도 관측에 그렇게 적는다(`_probe_observation`). ⏵ **2026-10-09 —
+  「실림」과 「읽힘」을 가른다**: PoC 바이트를 scratch에 쓰는 것(#386 ①)은 섰고
+  (`ToolArgs.input_bytes` · `container_tools` 모듈 docstring 「입력 바이트」),
+  **어느 명령도 그 파일을 인자로 받지 않는 쪽**이
+  남은 것이다 — 이슈 #513이고, 그것이 서면 이 경고와 관측의 그 줄을 같이 고친다.
 """
 
 import hashlib
