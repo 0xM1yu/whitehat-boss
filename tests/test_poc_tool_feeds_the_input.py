@@ -661,6 +661,38 @@ def test_environment_fatal_codes_are_not_the_targets_verdict(code: int) -> None:
     assert error is not None
 
 
+def test_every_code_the_classifier_calls_environmental_also_carries_a_reason() -> None:
+    """🔴 **성질 핀 — 서빙 prefix가 약속하는 것이 이것이다.** v5는 *"하네스가 환경 실패로 가른
+    홉은 `ok`가 거짓이고 관측이 그 사유를 적는다"*고 적는다. 위 검사들은 **손으로 적은 코드
+    목록**을 돌아서, 판별자에 코드를 **더하면서** 관측 쪽을 안 고치면 초록으로 남는다 — 그러면
+    모델은 `ok=false`만 보고 사유를 못 읽는다.
+
+    그래서 목록이 아니라 **판별자에서 끌어온다**: `_poc_is_harness_failure`가 참이라 말하는 모든
+    코드에 대해 `judge`가 `ok=False`와 **빈 문자열이 아닌 사유**를 돌려야 한다.
+
+    ⚠ **한계** — 전수가 아니다. 음수·`>255`는 무한하므로 각 갈래의 **대표값**을 돈다. 판별자가
+    새 *갈래*를 열면(예: 특정 stderr 문형) 이 핀은 그것을 모른다 — 그때는 `_POC_DAEMON_UNREACHABLE`
+    처럼 자기 검사를 같이 세운다.
+    """
+    representative = [
+        *sorted(container_tools._POC_HARNESS_FAILURE),
+        *sorted(container_tools._POC_ENV_FATAL),
+        -9,
+        256,
+        3221225477,
+    ]
+    assert all(container_tools._poc_is_harness_failure(c) for c in representative)
+
+    verdicts = {code: judge("poc", [Step(code, "", "")], 1) for code in representative}
+    silent = [
+        code
+        for code, (ok, _, error) in verdicts.items()
+        if ok is not False or not (error or "").strip()
+    ]
+
+    assert silent == [], f"환경 실패로 갈랐는데 사유가 없는 코드: {silent}"
+
+
 @pytest.mark.parametrize("code", [139, 71, 77])
 def test_codes_the_target_can_really_produce_stay_the_targets_verdict(code: int) -> None:
     """반대 방향 — `139`(SIGSEGV)·`71`(OOM)·`77`은 대상이 낼 수 있는 값이라 `ok=True`다.
