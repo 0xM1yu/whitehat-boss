@@ -175,7 +175,7 @@ agent:
   이어진 별칭 행은 뒤이며 `[alias: m←n]`(좌변←우변)이 붙는다. 크기는 총 상한에서 먼저 빠지고(entry 함수 몫이라 밀려 빠지지는
   않는다) `functions`에는 안 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 켠 효과는 미실측이다.
   ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
-  `pov._WIDE_INPUT_VERSIONS`인 판(지금 v3)에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
+  `pov._WIDE_INPUT_VERSIONS`인 판에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -523,9 +523,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
   만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
-- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임 — v3는 직전 `gen`의 PoC가 있으면
-  첫 줄에 그 `last_gen_bytes`·`last_gen_sha256`이 붙는다, #386 ① — 이름이 `input_*`가 아닌 것은
-  일부러다: 도구가 그 바이트를 받았다고 읽히지 않게) + (v3이고 `--oracle-submit`일 때) 직전
+- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임 — v3 이상은 직전 `gen`의 PoC가 있으면
+  도구 요약 줄에 그 `last_gen_bytes`·`last_gen_sha256`이 붙는다, #386 ① — 이름이 `input_*`가 아닌 것은
+  일부러다: 도구가 그 바이트를 받았다고 읽히지 않게. **meta가 `hop_header`를 켠 판(v4~)은 followup 맨
+  앞에 홉 줄이 하나 더 붙는다** — `hop=<k> last_hop=<N> remaining=<N-k>`, `runner._pov_hop_line`, #511.
+  그래서 그 판에서 도구 요약은 둘째 줄이다) + (v3 이상이고 `--oracle-submit`일 때) 직전
   `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
   직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
@@ -554,13 +556,13 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
   (2026-10-05 v3 배선). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
-  아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3 prefix에는 "언제 쓰라"는 지시를
+  아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3·v4 prefix에는 "언제 쓰라"는 지시를
   두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
   ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 —
   `ToolArgs.input_bytes`, #386 ① — 어느 도구 명령도 그 파일을 인자로 받지 않는다. 컨테이너 쪽은
   `test_no_executed_container_command_receives_the_input_today`와 `plan("poc")`의 정확 핀
   `test_the_poc_command_takes_no_argument_today`가 잰다 — 읽게 하는 것은 #513이다) — `poc`·`asan`도
-  gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 도구 관측이 PoC와 무관하므로(v3 관측의
+  gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 도구 관측이 PoC와 무관하므로(v3 이상 관측의
   `last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다) `harness_pool`의 8단계를 돌리지 않는다.
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
@@ -573,7 +575,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
   이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
   경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
-- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
+- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3 이상의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
   다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
   이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
   `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다

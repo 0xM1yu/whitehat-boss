@@ -962,11 +962,11 @@ def test_an_empty_input_is_written_and_named_in_the_header(tmp_path: Path, spy: 
 def test_no_executed_container_command_receives_the_input_today(
     tool: str, tmp_path: Path, spy: _Spy
 ) -> None:
-    """🔴 **서술을 사실에 묶는 경보기다.** v3 prefix(`prompts/pov/v3/prefix.md`의 「지금 하네스의
-    한계」)·`docs/agent-contracts.md`·`PovAction` docstring이 「도구는 PoC를 입력으로 받지
-    않는다」고 쓴다. 이 배선은 바이트를 scratch에 두고 로그에 경로를 적을 뿐 **어느 명령도 그것을
-    인자로 받지 않는다**(`plan()`이 명령을 조립하고 노드 argv는 로그 머리에만 남는다) — 그
-    사실을 **실행된 argv**로 잰다.
+    """🔴 **서술을 사실에 묶는 경보기다.** v4 prefix(`prompts/pov/v4/prefix.md`의 「지금 하네스의
+    한계」 — v3 prefix도 같은 한계를 적는다)·`docs/agent-contracts.md`·`PovAction` docstring이
+    「도구는 PoC를 입력으로 받지 않는다」고 쓴다. 이 배선은 바이트를 scratch에 두고 로그에 경로를
+    적을 뿐 **어느 명령도 그것을 인자로 받지 않는다**(`plan()`이 명령을 조립하고 노드 argv는 로그
+    머리에만 남는다) — 그 사실을 **실행된 argv**로 잰다.
 
     ⚠ **무는 것은 「인자로 받지 않는다」이지 「읽지 않는다」가 아니다.** 실행된 argv에 이 입력의
     경로·`.poc`가 없는지만 본다 — 명령이 글롭이나 `sh -c`로 scratch의 파일을 **스스로 읽게** 바꾸면
@@ -991,8 +991,8 @@ def test_the_poc_command_takes_no_argument_today() -> None:
     argv에서 입력 경로·`.poc` 접미만 찾으므로 명령이 입력을 **읽게** 바뀌어도
     (`sh -c "…$(cat /work/input-*)"`) 글롭 철자로 빠져나가 전량 초록이었고, `plan("poc")`를 무는
     테스트가 0건이었다. 정확히 `[/work/poc]` 하나면 P1b(#513)가 그 명령을 고칠 때 여기가 빨개져
-    「관측이 PoC와 무관하다」 서술(v3 prefix·`PovAction`·문서)을 같이 고치게 된다. ⚠ 이 핀은 `poc`만
-    본다 — 다른 세 도구 명령이 입력을 글롭으로 읽게 바뀌는 것은 안 문다."""
+    「관측이 PoC와 무관하다」 서술(v3·v4 prefix·`PovAction`·문서)을 같이 고치게 된다. ⚠ 이 핀은
+    `poc`만 본다 — 다른 세 도구 명령이 입력을 글롭으로 읽게 바뀌는 것은 안 문다."""
     commands = plan("poc", target="/src", compile_sources=[], cwd="/src")
 
     assert [command.argv for command in commands] == [[f"{container_tools.SCRATCH}/poc"]]

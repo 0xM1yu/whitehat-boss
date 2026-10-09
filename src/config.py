@@ -614,8 +614,10 @@ class Thresholds(HarnessModel):
     # `confidence` 0.10·0.10·0.05)이다. 풀은 그것을 거르지 않고(결정 대기), 그런 Finding에서
     # PoV가 낼 PoC가 있는지는 미측정이다(출처: `docs/experiments/harness/2026-10-04-cybergym-
     # operational-run-vastai-remote.md` §4).
-    # **켤 때의 값은 미실측이다** — 후보 1건당 PoV 홉·토큰을 한 번도 안 쟀고, 그 측정의 입력이
-    # 이 배선 뒤의 실모델 run 1회다. 자르는 순서는 `critic_top_n`과 같다
+    # **켤 때의 값은 미실측이다** — ⏵ 2026-10-06 후보 **하나**는 쟀다(PoV 좌석 프로브의
+    # find_0001 - 4홉 · 출력 92,543 · 입력 242,717토큰, 홉 상한에 끊겼다). 못 잰 것은 후보가
+    # **스스로 서기까지의** 홉·토큰이고 그 측정의 입력이 이 배선 뒤의 실모델 run 1회다.
+    # 자르는 순서는 `critic_top_n`과 같다
     # (`confidence` 내림차순 · 동점은 `finding_id`) — 정렬이 흔들리면 재현 실행이 갈라진다.
     pov_attempt_top_n: int = Field(ge=0)
     # 8단계 PoV 툴 루프(`runner._run_pov_hops`)의 **전용** 홉 상한 (이슈 #511) — 모델 호출은
@@ -791,7 +793,7 @@ class Thresholds(HarnessModel):
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
     # Auditor는 `call_tool`을 안 불렀고(켜면 `probe`가 부른다), 2026-10-05 전에 배선돼 있던 pov v2는
-    # gdb를 광고하지 않았다(v3는 한다). 그래서 16은 **계획값**이고 실측 근거는 홉당 usage
+    # gdb를 광고하지 않았다(v3·v4는 한다). 그래서 16은 **계획값**이고 실측 근거는 홉당 usage
     # (trace `auditor_hop`)가 처음 돈 run에서 만든다.
     #
     # **값의 성격은 폭주 차단이다 — 창 적합을 보장하지 않는다.** vast 실측 창 262,144

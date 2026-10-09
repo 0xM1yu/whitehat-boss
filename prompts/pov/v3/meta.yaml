@@ -1,4 +1,8 @@
-# 2026-10-05 — `config/models.yaml`의 feyospace-v1-small에 배선됐다(#354/#386①).
+# ⏵ 2026-10-08 — v4로 올려 지금은 어느 registry 엔트리도 이 버전을 고르지 않는다. 2026-10-05부터
+# 그날까지는 `config/models.yaml`의 feyospace-v1-small이 이 버전을 골랐다(#354/#386①). 이 판의
+# prefix·body는 그대로고 `nodes/pov._WIDE_INPUT_VERSIONS`에도 남는다. 불변 기록이라 고치지 않는다 —
+# 아래 설명이 말하는 도구 한계 문단의 「(그 배선이 아직 없다)」는 그날 하네스를 서술한 것이고, v4가
+# 고쳤다. 이 판은 `hop_header`를 안 켠다(followup에 홉 줄이 없다).
 role: pov
 version: v3
 output_schema: PovAction

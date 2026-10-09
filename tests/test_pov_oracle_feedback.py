@@ -17,9 +17,10 @@ from src.orchestrator.prompt_loader import load_prompt
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade, Role
 from src.schemas.pov import PovAction
+from tests.conftest import REPO_ROOT
 from tests.oracle_fakes import TASK_ID, FakeOracle
 from tests.test_nodes import _pov_state, ctx  # noqa: F401
-from tests.test_pov_loop import _gen, _scripted, _with_pov_version
+from tests.test_pov_loop import _gen, _scripted, _served_pov_version, _with_pov_version
 
 
 class ReadingOracle(FakeOracle):
@@ -161,7 +162,9 @@ def test_task_oracle_missing_row_is_unavailable(monkeypatch):
 def test_wired_pov_gets_source_and_feedback_separately(ctx):  # noqa: ANN001, F811
     cfg = load_config(profile="harness_pool")
     version = cfg.model_for("pov").prompt_template_version
-    assert version == "v3" and version in pov._WIDE_INPUT_VERSIONS
+    # 어느 판이 서빙인지는 `tests/test_pov_prompt_v4.py`가 문다 - 여기서는 서빙 판이 넓은 입력
+    # 판인지만 본다.
+    assert version in pov._WIDE_INPUT_VERSIONS
     # Repository witness: tests/test_nodes.py SOURCE banner and line gutter fixture.
     source = "/* ===== parser.c ===== */\n20| int parse_header(void) { return 0; }\n"
     scripted, _, _ = _feedback_run(ctx, None, [
@@ -188,7 +191,7 @@ def test_live_runner_prose_distinguishes_intermediate_from_final_submission():
     assert "중간 `gen`마다" in run_doc
     assert "`designatable=False`" in run_doc
     assert "최종 지정 후보가 아니지만" in run_doc
-    assert "v3의 중간 gen은" in hops_doc
+    assert "중간 gen은 별도로 `vul` 판정을 읽어" in hops_doc
     assert "부분 PoC(`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`" not in run_doc
 
 
@@ -434,9 +437,10 @@ def test_trace_events_say_whether_a_submission_was_intermediate(ctx):  # noqa: A
     assert [e.data["designatable"] for e in sent] == [False, True]
 
 
-def test_the_v3_prefix_does_not_contradict_the_oracle_line():
-    prefix = load_prompt(Role.POV, "v3").prefix
-    body = load_prompt(Role.POV, "v3").body
+@pytest.mark.parametrize("version", ["v3", _served_pov_version()])  # 서빙 판은 config에서 읽는다
+def test_the_pov_prefix_does_not_contradict_the_oracle_line(version):
+    prefix = load_prompt(Role.POV, version).prefix
+    body = load_prompt(Role.POV, version).body
     flat = " ".join(prefix.split())
     # 오라클 줄은 모델 자신의 바이트에 대한 값이다 - 「관측은 입력의 결과가 아니다」가 그 줄까지
     # 덮으면 안 된다.
@@ -523,14 +527,19 @@ def test_no_live_source_says_pov_v3_is_unwired():
     )
     skipped = ("docs/research", "docs/experiments", "docs/decisions", "tests", "_workspace", ".git")
     offenders = []
+    scanned = 0
+    # 저장소 루트로 고정한다 - `Path(".")`는 다른 디렉터리에서 pytest를 돌리면 아무것도 안
+    # 훑고 초록이다.
     for suffix in ("*.md", "*.py", "*.yaml"):
-        for path in Path(".").rglob(suffix):
-            posix = path.as_posix()
+        for path in REPO_ROOT.rglob(suffix):
+            posix = path.relative_to(REPO_ROOT).as_posix()
             if posix.startswith(skipped):
                 continue
+            scanned += 1
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if forms.search(line):
                     offenders.append(f"{posix}:{number}")
+    assert scanned > 100, "훑은 파일이 너무 적다 - 저장소 루트가 틀렸다"
     assert not offenders, offenders
 
 
