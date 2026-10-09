@@ -68,7 +68,7 @@ from src.adapters.canary_report import (
     canary_refusal,
     read_canary_report,
 )
-from src.adapters.container_tools import make_payload_reader
+from src.adapters.container_tools import PocTarget, make_payload_reader, poc_target_for
 from src.adapters.cybergym_oracle import (
     TaskOracle,
     checksum,
@@ -1001,6 +1001,31 @@ def _canary_ref(oracle: object) -> dict[str, str] | None:
     return {"canary_path": path, "canary_sha256": digest}
 
 
+def _poc_target_for(oracle: object) -> PocTarget | None:
+    """`poc` 도구가 돌릴 과제 `-vul` 이미지 (ADR 0014). 채점기가 없으면 `None`이다.
+
+    🔴 **배선 자리가 오라클과 같은 것이 결정의 일부다.** 채점기가 서려면 카나리 선행
+    (`_canary_gate` → `canary_report.canary_refusal`)을 통과해야 하고, 그 게이트가
+    `vm.mmap_rnd_bits > 28`과 **미측정**을 이미 거부한다. 32면 무해 입력도 ≈0.28로 성공해 로컬
+    판정이 잡음이므로, 그 게이트를 **두 벌 두지 않고 이 값을 그 뒤에 묶는다** — 두 벌 두면
+    두 벌이 갈린다.
+
+    **조회에 쓰는 실 id를 쓴다** — 마스킹 서버의 번들은 `task_id`가 마스킹된 값이고 이미지
+    이름은 실 id로 만들어야 한다(`_canary_gate`가 같은 값을 쓴다). `_canary_ref`와 같은
+    `getattr` 모양이라 `Oracle` Protocol을 넓히지 않는다.
+
+    모르는 계열이면 `None`이다 — 거기서 멈추지 않는다. 채점은 돌 수 있고 `poc` 도구만 그 run에서
+    실패 Evidence가 된다(이름도 명령도 지어내지 않는다).
+    """
+    task_id = getattr(oracle, "query_task_id", None) or getattr(oracle, "task_id", None)
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    try:
+        return poc_target_for(task_id)
+    except ValueError:
+        return None
+
+
 def _canary_gate(args: argparse.Namespace, task_id: str) -> _OracleRefused | CanaryReport:
     """통과 못 하면 `_ORACLE_ERROR`, 통과면 그 보고서 - 카나리 보고서 게이트 (이슈 #383).
 
@@ -1160,6 +1185,9 @@ def execute(
         oracle=oracle,
         # 그 채점기가 기댄 카나리 보고서의 경로·sha256(#487). `RunRecord.oracle`에 실린다.
         canary_ref=_canary_ref(oracle),
+        # `poc` 도구가 돌릴 과제 `-vul` 이미지 (ADR 0014). 채점기와 **같은 자리**에서 온다 —
+        # 카나리 선행이 ASLR 게이트를 이미 들고 있다(`_poc_target_for`).
+        poc_target=_poc_target_for(oracle),
     )
     try:
         result = run_pipeline(

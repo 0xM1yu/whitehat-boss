@@ -30,12 +30,13 @@ from src.adapters.container_tools import (
     make_payload_reader,
     sif_path,
 )
+from src.interfaces import tool_runner
 from src.interfaces.tool_runner import ToolArgs
 from src.orchestrator.nodes import auditor
 from src.orchestrator.prompt_loader import evidence_summaries
 from src.schemas import Role
 from src.schemas.evidence import Evidence
-from tests.test_container_tools import SANDBOX, _runner, _Spy, spy  # noqa: F401
+from tests.test_container_tools import ARVO, SANDBOX, _runner, _Spy, spy  # noqa: F401
 from tests.test_nodes import VULN_TARGET, _triage, ctx  # noqa: F401
 
 # 위 실 run의 semgrep이 낸 규칙 이름 — 모델이 무엇이 걸렸는지 알 수 있는 가장 짧은 문자열이다.
@@ -286,11 +287,22 @@ def test_a_tool_output_line_that_starts_with_a_dollar_sign_is_kept(
     수정은 도구 출력을 지운다. `poc`는 명령이 대상 프로그램 하나라(`plan`) stdout이 곧 그
     프로그램이 찍은 것이다. ⚠ 도구 출력의 줄 머리가 `$ docker ` 같은 런타임 이름이면 그 줄은
     걷힌다 — 받아들인 오탐이다(`prompt_loader`의 머리줄 정규식 주석).
+
+    ⏵ **2026-10-09 (ADR 0014)** — `poc`에 과제 이미지와 입력을 물려 준다. 안 물리면 그 도구가
+    **계획 단계에서 거절**해(폴백을 지어내지 않는다) 로그에 도구 출력이 한 줄도 없고 이 검사가
+    재려던 것이 사라진다. 입력을 싣는 것도 같은 이유다 — `needs_input`인 명령에 경로가 없으면
+    `container_argv`가 거절한다.
     """
     spy.returncode, spy.stdout, spy.stderr = 0, "$ echo hello\nhello\n", ""
-    runner = _runner(tmp_path, root=_sample_tree(tmp_path, 1))
+    runner = _runner(tmp_path, root=_sample_tree(tmp_path, 1), poc_target=ARVO)
     evidence = runner.run(
-        "poc", ToolArgs(argv=["poc", "src/mod_00.c"], workdir="src/mod_00.c"), SANDBOX
+        "poc",
+        ToolArgs(
+            argv=["poc", tool_runner.INPUT_PLACEHOLDER],
+            workdir="src/mod_00.c",
+            input_bytes=b"AAAA",
+        ),
+        SANDBOX,
     )
 
     body = _body_of((evidence,), "poc", tmp_path)

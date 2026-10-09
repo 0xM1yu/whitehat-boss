@@ -15,7 +15,11 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from src.adapters.container_tools import ContainerToolRunner, index_output_path
+from src.adapters.container_tools import (
+    ContainerToolRunner,
+    PocTarget,
+    index_output_path,
+)
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
@@ -260,6 +264,11 @@ class _BuildArgs:
     run_id: str
     source_root: Path
     artifacts_root: Path
+    # `poc` 도구가 돌릴 과제 `-vul` 이미지 (ADR 0014). `None`이면 그 도구가 **거절한다** —
+    # 폴백을 지어내지 않는다. 🔴 **배선 자리가 오라클과 같다**: 카나리 선행
+    # (`cli._canary_gate` → `canary_report.canary_refusal`)이 `vm.mmap_rnd_bits > 28`과 미측정을
+    # 이미 거부하므로 ASLR 게이트를 두 벌 두지 않는다. 두 벌 두면 두 벌이 갈린다.
+    poc_target: PocTarget | None = None
     on_cache: CacheHook | None = None
     on_truncate: TruncateHook | None = None
     on_usage: UsageHook | None = None
@@ -371,6 +380,7 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
             run_id=a.run_id,
             root=a.source_root,
             artifacts_root=a.artifacts_root,
+            poc_target=a.poc_target,
         ),
     ),
     "podman": _Wiring(
@@ -381,6 +391,7 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
             run_id=a.run_id,
             root=a.source_root,
             artifacts_root=a.artifacts_root,
+            poc_target=a.poc_target,
         ),
     ),
     "singularity": _Wiring(
@@ -391,6 +402,7 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
             run_id=a.run_id,
             root=a.source_root,
             artifacts_root=a.artifacts_root,
+            poc_target=a.poc_target,
         ),
     ),
 }
@@ -451,6 +463,7 @@ def build_deps(
     device: str | None = None,
     oracle: Oracle | None = None,
     canary_ref: dict[str, str] | None = None,
+    poc_target: PocTarget | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
@@ -485,6 +498,7 @@ def build_deps(
         slice_signature=loaded.run_signature if loaded is not None else None,
         slice_lines=_slice_lines(loaded),
         graph=graph,
+        poc_target=poc_target,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
     # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지
