@@ -20,7 +20,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, Usage
+from src.interfaces.model_client import AttemptRecord, ChatTurn, ModelResult, Prompt, Usage
 from src.schemas.auditor import AuditorAction, AuditorProcedureAction, AuditProcedure
 from src.schemas.candidate import Candidate
 from src.schemas.common import HarnessModel, Location, ProducedBy
@@ -139,8 +139,15 @@ class FakeModelError(RuntimeError):
 class FakeModelClient:
     """`ModelClient` 구현. 같은 프롬프트에는 항상 같은 출력을 낸다."""
 
-    def __init__(self, *, model_name: str = "fake") -> None:
+    def __init__(
+        self, *, model_name: str = "fake", scripted_attempts: Sequence[AttemptRecord] = ()
+    ) -> None:
         self.model_name = model_name
+        # 시도별 (출력 토큰, 종료 사유)를 **대본으로 줄 때만** 결과에 싣는다(#550) — GPU 없이
+        # `length`와 여러 시도를 만들어 `model_call`의 쪼갠 값을 재기 위한 손잡이다. 기본(빈 대본)은
+        # 기존 그대로 `attempt_log=()`, 곧 「안 쟀다」다: Fake는 종료 사유를 재지 않았으므로
+        # `stop`을 지어내지 않는다.
+        self._scripted_attempts = tuple(scripted_attempts)
         # prefix cache 시뮬레이션. 같은 prefix를 다시 보면 그만큼 cached_tokens로 잡는다
         # (agent-contracts.md §4.2, evaluation.md §5.2 cache hit ratio).
         self._seen_prefixes: set[str] = set()
@@ -170,11 +177,24 @@ class FakeModelClient:
         # (`_build_pov_action`·`_build_auditor_action`). 다른 빌더는 홉을 안 보지만 dict
         # 디스패치라 시그니처가 하나다.
         value = builder(context, produced_by, history)
+        usage = self._usage(prompt, value)
+        if not self._scripted_attempts:
+            return ModelResult(
+                value=value, usage=usage, model=self.model_name, raw_text=value.model_dump_json()
+            )
+        # 대본이 있으면 합산 출력 토큰을 대본에서 낸다 — 합과 쪼갠 값이 어긋난 Fake를 안 만든다.
+        log = self._scripted_attempts
         return ModelResult(
             value=value,
-            usage=self._usage(prompt, value),
+            usage=Usage(
+                input_tokens=usage.input_tokens,
+                output_tokens=sum(a.output_tokens or 0 for a in log),
+                cached_tokens=usage.cached_tokens,
+            ),
             model=self.model_name,
+            attempts=len(log),
             raw_text=value.model_dump_json(),
+            attempt_log=log,
         )
 
     def _usage(self, prompt: Prompt, value: BaseModel) -> Usage:
