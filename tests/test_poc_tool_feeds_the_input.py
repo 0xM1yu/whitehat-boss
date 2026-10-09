@@ -432,10 +432,62 @@ def test_the_other_runtime_tools_are_byte_identical(tool: str) -> None:
     assert all(c.needs_input is False for c in after)
 
 
+# --- docker 클라이언트가 데몬에 못 닿은 `exit=1` ----------------------------------
+
+# 2026-10-09 실측(Windows · Docker Desktop 꺼짐) — `docker run …`의 stderr 그대로, exit 1.
+_WINDOWS_DAEMON_DOWN = (
+    "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if "
+    "the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: "
+    "The system cannot find the file specified."
+)
+# 대상이 실제로 떠서 낸 `exit=1` — ASan 보고의 머리 줄 형태(`tests/test_pov_loop.py`의 SUMMARY 줄과
+# 같은 계열). 이 줄이 데몬 실패로 읽히면 진짜 크래시가 환경 실패로 묻힌다.
+_ASAN_EXIT_1 = (
+    "==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000018\n"
+    "SUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018\n"
+)
+
+
+def test_a_daemon_the_client_cannot_reach_is_an_environment_failure_not_a_launched_target() -> None:
+    """Windows Docker Desktop은 데몬이 꺼지면 `125`가 아니라 **`1`**을 낸다(2026-10-09 실측) —
+    `1`은 「가를 수 없다」로 `ok=True`가 되던 자리라 **환경 실패가 「대상이 떴다」로 읽혔다**
+    (#567 리뷰 · §0). stderr가 클라이언트의 연결 실패 문구면 환경 실패로 가른다."""
+    assert container_tools._POC_DAEMON_UNREACHABLE.search(_WINDOWS_DAEMON_DOWN)
+    steps = [container_tools.Step(exit_code=1, stdout="", stderr=_WINDOWS_DAEMON_DOWN)]
+
+    ok, code, error = container_tools.judge("poc", steps, total=1)
+
+    assert (ok, code) == (False, 1)
+    assert error is not None and "데몬" in error
+    assert container_tools.summary_line("poc", steps) is None  # 애매함 주석을 안 단다
+
+
+def test_a_target_that_exits_1_with_a_sanitizer_report_still_counts_as_launched() -> None:
+    """음성 핀 — 대상이 떠서 낸 `exit=1`(ASan 기본 종료 코드)은 데몬 실패가 아니다. 그대로
+    「떴다」이고 애매함 주석이 붙는다."""
+    assert not container_tools._POC_DAEMON_UNREACHABLE.search(_ASAN_EXIT_1)
+    steps = [container_tools.Step(exit_code=1, stdout="", stderr=_ASAN_EXIT_1)]
+
+    assert container_tools.judge("poc", steps, total=1) == (True, 1, None)
+    assert container_tools.summary_line("poc", steps) == container_tools.POC_AMBIGUOUS_NOTE
+
+
 # --- 실 Docker 조건부 — 미측정 표를 여기 둔다 --------------------------------
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker가 PATH에 없다")
+def _docker_daemon_up() -> bool:
+    """`docker`가 PATH에 있고 **데몬에 닿는가**. PATH만 보면 데몬이 꺼진 장비에서 아래 검사가
+    이미지 부재가 아니라 데몬 부재를 잰다(#567 리뷰 — Windows에서 실제로 그렇게 떨어졌다)."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        done = subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
+
+
+@pytest.mark.skipif(not _docker_daemon_up(), reason="docker 데몬이 닿지 않는다")
 def test_the_task_image_absence_is_failed_evidence_not_an_exception(tmp_path: Path) -> None:
     """🔴 **미측정 — 이 검사는 이미지 **부재**만 잰다.**
 
