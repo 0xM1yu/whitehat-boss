@@ -93,8 +93,9 @@ class _AuditorEnvelope(HarnessModel):
     # ⚠ **지금 도구는 `spec`을 입력으로 안 받는다** — 노드가 sha256과 길이만 기록하고 도구에는 안
     # 넘긴다. 그 사실을 모델에게 **정직하게** 적는다(필드 설명은 요청 payload에 실린다): 「입력
     # 바이트를 구성한다」고 적으면 모델이 「내가 만든 입력으로 돌렸더니」라는 거짓 문장을 궤적에
-    # 쓴다. PoC 바이트 materialize(#386 ①)가 서면 이 설명과 노드 관측의 그 줄
-    # (`_probe_observation`)을 같이 고친다.
+    # 쓴다. ⏵ 2026-10-09 — 바이트를 scratch에 쓰는 #520은 PoV 경로만이다. Auditor `probe`에는
+    # 선행 둘이 남는다 -> `_probe`가 `spec`을 싣기(#419) · 도구 명령이 그 파일을 읽기(#513).
+    # 둘이 서면 이 설명과 노드 관측의 그 줄(`_probe_observation`)을 같이 고친다.
     spec: PovSpec | None = Field(
         default=None,
         description=(
@@ -154,7 +155,9 @@ class _AuditorEnvelope(HarnessModel):
 # 무엇을 배울지」를 판정 ↔ 질의 생성 사이에 열어 뒀고, 질의 생성을 배우려면 모델이 질의를 내는
 # 궤적이 있어야 한다. 등재는 이슈 #419다. ⚠ 궤적을 학습에 쓰려면 사고 보존(#280)과 내보내기가
 # 따라와야 한다 — 이 봉투 하나로 FT 데이터가 서지 않는다.
-# ⚠ `probe`의 `spec`이 도구 입력으로 들어가려면 PoC 바이트 materialize(#386 ①)가 선행이다.
+# ⚠ `probe`의 `spec`이 도구 입력으로 들어가려면 선행이 둘이다 — 노드 `_probe`가 `spec` 바이트를
+# `input_bytes`로 싣기(#419) · 도구 명령이 그 파일을 읽기(#513). 바이트를 scratch에 쓰는 #520은
+# PoV 경로만이다.
 class AuditorAction(_AuditorEnvelope):
     """감사 좌석이 매 홉 내는 제어 액션.
 
