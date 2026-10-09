@@ -202,7 +202,10 @@ def test_the_model_sees_which_rule_hit_which_line() -> None:
 
     Auditor prefix가 *"use evidence IDs only when their registered evidence content
     supports the claim"*을 요구하므로, 어느 줄인지 안 보이면 **인용을 거절하는 것이 맞다** →
-    `evidence_refs` 빈 채로 E0 → 채점 불가(이슈 #475·#481).
+    `evidence_refs` 빈 채로 E0 → 채점 불가(이슈 #475·#481). ⏵ **2026-10-09 — 그 사슬의 끝은
+    틀렸다**: `run_20261007_0001`에서 E0 5/5인 채로도 PoV가 돌아 채점기에 7건을 냈다(#475의
+    「PoV 0건 · 채점 불가」가 그 run에서 반증됐다 — `pov_attempt_top_n`이 양수면 `_pov_targets`가
+    E0 Finding도 풀에 넣는다). 이 검사의 명제(줄번호가 모델에 닿는다)는 그대로다.
     """
     body = _body(_REAL_LOG)["body"]
 
