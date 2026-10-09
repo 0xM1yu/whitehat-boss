@@ -777,6 +777,11 @@ _CANARY_MENTIONS_ALLOWED = {
     # 검사의 대상이 아니다. 인자 이름(`oracle_canary`)을 든 조립과 도구 경로를 든 점검 모듈이다.
     "src/preflight.py",
     "src/preflight_oracle.py",
+    # ⏵ 2026-10-09 (ADR 0014 · 이슈 #513) — `poc` 도구가 과제 `-vul` 이미지를 돌리게 되면서
+    # 이 도구의 **상수와 경고를 베꼈다**: `_POC_FAMILY`(계열 → 이미지·명령) · `POC_IN_IMAGE` ·
+    # `--pull never` · 환경 종료 코드 범위. **import·subprocess 0건이다** — 베꼈지 부르지 않는다
+    # (`tools/`는 `src/`의 의존이 아니다). 상수를 복제한 이유와 그 위험은 그쪽 주석이 든다.
+    "src/adapters/container_tools.py",
 }
 
 

@@ -17,6 +17,7 @@ import base64
 import dataclasses
 import hashlib
 import json
+import re
 from functools import partial
 from pathlib import Path
 from typing import get_args
@@ -1471,7 +1472,15 @@ def _served_pov_version() -> str:
 
 # prefix 핀은 v3(불변 기록)와 **서빙 판** 둘에 건다. 서빙 판은 이름이 아니라 config에서 읽는다 —
 # 판이 올라가면(v5…) 이 핀이 자동으로 새 판을 물고, 낡은 판(v4)만 달고 있는 일이 없다.
-_POV_PREFIX_VERSIONS = ("v3", _served_pov_version())
+# ⏵ 2026-10-09 (ADR 0014) — **판 목록이 둘로 갈렸다.** v3·v4는 「도구 넷 모두 PoC를 안 받는다」를
+# 적고 그것은 **불변 기록**이다. 서빙 판(v5~)은 `poc`가 받는다고 적으므로 같은 핀으로
+# 물면 빨개진다 —
+# 그 판의 한계 문단은 `tests/test_pov_prompt_v4.py`의
+# `test_the_limit_paragraph_is_exact_and_promises_no_more`가 **갈라서** 문다(그쪽이
+# 배선된 판을 읽는다).
+# 🔴 서빙 판을 이 목록에서 뺀 것이 **구멍이 되지 않는 이유**는 그 핀이 서빙 판을 읽기 때문이다.
+_POV_PREFIX_VERSIONS = ("v3", "v4")
+_POV_SERVED_VERSION = _served_pov_version()
 
 
 def _pov_prefix(version: str) -> str:
@@ -1728,6 +1737,29 @@ def test_pov_prefix_states_that_no_tool_receives_the_poc(version: str) -> None:
     assert any(phrase in paragraph for phrase in no_input)
 
 
+def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
+    """🔴 **위 핀의 짝 — 서빙 판은 다른 명제를 적는다**(ADR 0014 · 이슈 #513).
+
+    위 검사는 v3·v4(불변 기록)만 본다. 서빙 판에서 「넷 모두 안 받는다」는 **거짓**이므로 같은
+    핀을 걸 수 없고, 대신 **갈려 있는지**를 문다 — 도구 넷을 다 이름으로 들고, `poc`가 받는다고
+    적고, 나머지 셋은 안 받는다고 적는다.
+
+    ⚠ **철자 핀이다.** 문장이 참인지는 코드 경보기가 따로 본다
+    (`test_no_executed_container_command_receives_the_input_today`가 셋을 ·
+    `tests/test_poc_tool_feeds_the_input.py`가 `poc`를). 통째 핀은
+    `tests/test_pov_prompt_v4.py`의 `_PINNED_BLOCKS`다.
+    """
+    prefix = _pov_prefix(_POV_SERVED_VERSION)
+
+    assert "지금 하네스의 한계" not in prefix, (
+        f"{_POV_SERVED_VERSION}가 옛 한계 문단을 그대로 든다 — 그 문장은 거짓이 됐다"
+    )
+    for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
+        assert tool in prefix, f"서빙 prefix가 {tool}을 안 든다"
+    assert "`poc`는 받는다" in prefix
+    assert "셋은 안 받는다" in prefix
+
+
 @pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
 def test_pov_prefix_does_not_say_the_tools_run_the_candidate(version: str) -> None:
     """독립 검토 지적의 거짓 서술이 다시 들어오지 않는다 — 도구가 PoC(「후보」)를 돌리거나
@@ -1784,7 +1816,10 @@ def test_contract_doc_states_the_tool_limit_and_the_ambiguous_entrypoint() -> No
         encoding="utf-8"
     )
 
-    assert "도구 넷 모두" in text
+    # ⏵ 2026-10-09 (ADR 0014) — 「도구 넷 모두」가 **갈렸다**. 넷을 한 묶음으로 적는 문장은
+    # 거짓이 됐으므로 갈려 있는지를 문다.
+    assert "도구 넷이 둘로 갈린다" in text or "넷이 둘로 갈렸다" in text
+    assert "`asan`·`gdb`·`build` 셋은 그대로다" in text
     assert "후보 중 하나를 고른" in text
     assert "gdb뿐이라" not in text, "PoC 없이는 gdb가 경로 도달을 못 가른다 — 근거 서술이 낡았다"
 
@@ -1801,11 +1836,35 @@ def test_v3_meta_lists_every_difference_from_v2() -> None:
 def test_pov_action_description_in_the_request_has_no_repo_internal_references() -> None:
     """`PovAction`의 docstring은 `response_format.json_schema.schema.description`으로 **모든 pov
     요청에 실린다**(v2 포함 — `openai_compat`). 커밋 SHA·PR 번호·소스 줄 번호 같은 저장소 내부
-    참조와 gdb 사용 근거 서술이 모델 입력에 들어가면 안 된다(D92). 그런 이력은 `#` 주석에 둔다."""
+    참조와 gdb 사용 근거 서술이 모델 입력에 들어가면 안 된다(D92). 그런 이력은 `#` 주석에 둔다.
+
+    ⏵ **2026-10-09 — 고정 문자열 여섯에서 형(形)으로 바꿨다.** 전 판은 `5cf5c20`·`#327` 같은
+    **이미 아는 여섯 개**만 봐서, 이 PR이 docstring에 **새로** 넣은 `ADR 0014`·`이슈 #507`·`A안`을
+    통째로 놓쳤다(적대적 리뷰 2026-10-09 H4가 payload를 직접 출력해 잡았다). 이름을 열거하는 축은
+    **다음 참조를 못 막는다** — 그래서 **모양**을 막는다: 이슈·PR 번호 · 커밋 SHA · ADR 번호 ·
+    소스 파일 이름 · 날짜. 여섯은 그 모양에 전부 걸리므로 따로 안 적는다.
+
+    ⚠ **못 막는 것**: 번호 없이 쓴 내부 서술(「기각된 A안」처럼 이 저장소만 아는 말)은 모양이
+    없어 안 걸린다. 그 축은 리뷰가 본다."""
     description = PovAction.model_json_schema().get("description", "")
 
-    for fragment in ("5cf5c20", "#327", "#360", "container_tools", "fake_tools", "눈으로 볼 수단"):
-        assert fragment not in description, f"요청 payload에 내부 참조가 실린다: {fragment!r}"
+    patterns = {
+        "이슈·PR 번호": r"#\d+",
+        "커밋 SHA": r"\b[0-9a-f]{7,40}\b",
+        "ADR 번호": r"ADR\s*\d+",
+        "소스 파일": r"[A-Za-z_][A-Za-z0-9_]*\.(?:py|md|yaml)",
+        "날짜": r"20\d\d-\d\d-\d\d",
+    }
+    leaks = [
+        f"{label}: {hit!r}"
+        for label, pattern in patterns.items()
+        for hit in re.findall(pattern, description)
+    ]
+
+    assert leaks == [], (
+        "요청 payload에 저장소 내부 참조가 실린다 — 그 이력은 클래스 **밖** `#` 주석에 둔다:\n"
+        + "\n".join(f"  {leak}" for leak in leaks)
+    )
 
 
 def test_every_pov_prompt_version_but_v2_gets_the_wide_inputs() -> None:

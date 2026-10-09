@@ -46,7 +46,7 @@ OUTPUT_SCHEMA = PovAction
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4"})
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5"})
 
 
 def _render_prompt(
@@ -199,11 +199,14 @@ def run_tool(
     PoC를, `inspect` 홉은 **직전 gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]`
     하나). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
 
-    ⚠ **싣는다고 도구가 읽는 것은 아니다.** fake는 쓰고 지우며 대상 소스 존재만 보고 ok를 낸다
-    (`fake_tools._run_repro`). 컨테이너는 scratch에 쓰되 어느 명령도 그 파일을 인자로 받지
-    않는다 — 그래서 도구 관측의 `ok`·`exit`·꼬리는 여전히 PoC와 무관하다. PoC의 함수가 되는 것은
-    러너가 관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 파일을 **읽게**
-    하는 것은 후속(#513)이다. 원바이트는 trace에 안 간다 — `call_tool`이 크기와 digest만 싣는다.
+    ⏵ **2026-10-09 (ADR 0014) — 컨테이너의 `poc`는 그 바이트를 먹인다.** 과제 `-vul` 이미지의
+    `/tmp/poc`로 바인드하므로 **그 도구의 관측은 PoC의 함수다**. ⚠ **나머지는 아니다** — fake는
+    쓰고 지우며 대상 소스 존재만 보고 ok를 내고(`fake_tools._run_repro`), 컨테이너의
+    `asan`·`gdb`·`build`는 우리가 빌드한 대상을 돌려 그 관측이 PoC의 함수가 아니다(셋을
+    바꾸려면 대상
+    빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 셋에서 PoC의 함수인 것은 러너가
+    관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
+    안 간다 — `call_tool`이 크기와 digest만 싣는다.
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서

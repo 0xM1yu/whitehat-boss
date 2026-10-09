@@ -151,6 +151,11 @@ _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
 # **밖의** `#` 주석에 둔다(`tests/test_pov_loop.py::
 # test_pov_action_description_in_the_request_has_no_repo_internal_references`가 지킨다).
 #
+# `poc` 이력: ⏵ 2026-10-09 — 그 도구가 과제 `-vul` 이미지에 PoC를 먹이게 됐다
+# (ADR 0014 · 이슈 #513). `asan`·`build`·`gdb` 셋은 그대로 안 받는다 — 셋을 바꾸려면 우리가
+# 대상을 빌드해야 하고 그 안(A)은 기각됐다(이슈 #507 — 우리 clang이 번들을 컴파일하지 못한다).
+# 🔴 아래 docstring은 **모델 요청에 실리므로** 그 이력을 거기 적지 않는다.
+#
 # gdb 이력: `TOOL_KINDS`에 `"gdb"`가 들어온 것은 PR #327(`5cf5c20`, 2026-10-01) ·
 # `PovAction.tool`에 넣은 근거는 이슈 #360(사용자 결정) · gdb 사용 **규칙**을 프롬프트에 안 두는
 # 이유는 이슈 #325(gdb ToolRunner 결정) — ASAN 실행 경로 수리·검증(#326)이 선행 조건.
@@ -161,8 +166,10 @@ class PovAction(HarnessModel):
     - `gen`: `spec`(PovSpec)을 실어 순수 함수가 인프로세스로 바이트를 만든다. **모델이 쓴 코드를
       실행하지 않는다** — 조립은 결정론 순수 함수. raw 임의 바이트가 필요하면 `spec`의 `literal`
       세그먼트에 통째로 넣는다.
-    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다(새 PoC 없이 대상을 조사). 넷 모두
-      대상 소스를 빌드·실행할 뿐이고, `gen`이 만든 PoC 바이트를 입력으로 받지 않는다.
+    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다. **`poc`는 직전 `gen`의 PoC를 과제의
+      취약 빌드에 먹인다** — 그 관측은 당신 바이트의 결과다. 나머지 셋(`asan`·`build`·`gdb`)은
+      대상 소스를 빌드·실행할 뿐이고 그 바이트를 **입력으로 받지 않는다** — 그 셋의 관측은 대상
+      자체의 상태다.
     - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는

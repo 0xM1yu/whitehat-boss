@@ -273,12 +273,13 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(@danielcho02 선정)는 §1 8단계 pov 좌석으로
 `harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
-⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트를 읽는 도구 명령이 아직 없어
-(`run_tool`이 도구 요청에 PoC를 입력 파일로 싣지만 — `ToolArgs.input_bytes`, #386 ① — 어느 명령도
-그 파일을 인자로 받지 않는다, 읽게 하기는 #513) 도구 관측이 PoC와 무관하다. v3 이상 관측의
-`last_gen_bytes`·`last_gen_sha256` 줄만 PoC의 함수다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
+⏵ **2026-10-09 — 그 조건이 섰다**(ADR 0014(`docs/decisions/0014-poc-tool-runs-the-task-image.md`) · 이슈 #513). `poc` 도구가 과제 자신의 `-vul` 이미지에
+PoC를 `/tmp/poc`로 바인드해 돌리므로 **그 도구의 관측은 PoC의 함수다.** 🔴 `inspect` 홉의
+`asan`·`gdb`·`build` 셋은 그대로다 — 셋을 바꾸려면 우리가 대상을 빌드해야 하고 그 안은 기각됐다
+(이슈 #507). 전 판은 *"호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다"*였고 그 문장이 막던
+조건이 이것이다. **효과는 미실측이다** — 그 뒤로 돈 run이 0건이다.
 
-**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · feyospace 실서빙
+**남은 것(서빙+도구 되는 호스트 필요):** E4 게이트 전이 · feyospace 실서빙
 실측(checksum·benchmark·홉수). 외부 CyberGym oracle 제출은 `run --oracle-submit`(기본 꺼짐)으로 들어왔다 —
 대역으로만 검증했고 하네스 run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — 「대역으로만」은
 vul 다리에 한해 깨졌다**(`win11`의 `run_20261003_0003`(trace sha256 `f308c5fbfc4f8e54…`)이 실서버에 8건
@@ -292,8 +293,8 @@ vul 다리에 한해 깨졌다**(`win11`의 `run_20261003_0003`(trace sha256 `f3
 실측 run의 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1 = DB 행 1) 어느 쪽을 지정해도
 제출될 바이트가 같은데 거부한 것이다. 같은 바이트는 접고(`sole_poc`) 남은 동점은 사슬
 (①등급 ②`confidence` ③작은 바이트 ④PoC 해시 — ④가 전순서다)로 넘긴다. `grade_tie`는 닿지 않는
-분기가 되어 사유 상수째 지웠다(`runner._designate_final`). 🔴 **실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC가 `./poc`로
-materialize되기 전(위 호스트 후속)에는 8단계 도구 실행이 PoC와 무관하다. `PovSpec` 표현력 절벽(계산 크로스필드)이
+분기가 되어 사유 상수째 지웠다(`runner._designate_final`). 🔴 **실도구 run에서 후보 등급이 갈릴지는 미실측이다** — 2026-10-09까지는 8단계 도구 실행이
+PoC의 함수가 아니었고(⏵ ADR 0014가 `poc` 쪽을 세웠다) 그 뒤로 돈 run이 0건이다. `PovSpec` 표현력 절벽(계산 크로스필드)이
 실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
 
 ⏵ **2026-10-03 밤 — 둘째 과제 계열**(`oss-fuzz:368076871`, `cybergym/oss-fuzz` 이미지)**에서도 같은 모양이다** —
