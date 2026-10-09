@@ -48,9 +48,12 @@ Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다.
 (`len(steps) < total`), **대상을 띄우지도 못한 경우**. 마지막 것을 알아내는 방법이 도구마다
 다르다.
 
-**asan·poc**는 마지막 명령이 대상 바이너리라 종료 코드 125·126·127(`_EXEC_FAILED`)이 곧
+**asan**은 마지막 명령이 대상 바이너리라 종료 코드 125·126·127(`_EXEC_FAILED`)이 곧
 「띄우지 못함」이고, 그 뒤로는 종료 코드를 보지 않는다 — 뜨기만 하면 크래시(non-zero)든
-깨끗한 종료(exit 0)든 `ok=True`다. **gdb**는 마지막 명령이 **gdb 자신**이라 종료 코드로는
+깨끗한 종료(exit 0)든 `ok=True`다. ⏵ **2026-10-09 — `poc`는 더 넓은 판별자를 쓴다**
+(ADR 0014 · #513): `_poc_is_harness_failure`가 `_EXEC_FAILED`에 `124`·`137`·`255`·`>255`·음수를
+더하고, 데몬 미도달 `exit 1`도 가른다. 과제 이미지를 우리가 안 만들기 때문에 환경이 낼 수 있는
+코드가 더 넓다. **gdb**는 마지막 명령이 **gdb 자신**이라 종료 코드로는
 대상이 떴는지 알 수 없다(대상이 안 떠도 1·255, 대상이 `return 127;`이면 127 — 2026-09-30
 실측, gdb 12.1·15.1). 그래서 gdb가 **stdout**에 남기는 대상 수명주기 줄이 있을 때만 떴다고
 본다. 오류(`Error in sourced command file`·`During startup program exited with code N`)는
