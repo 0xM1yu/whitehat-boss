@@ -113,6 +113,7 @@ class ModelGatewayError(RuntimeError):
         attempts: int = 1,
         retry_bodies: tuple[str, ...] = (),
         generating: bool | None = None,
+        attempt_log: "tuple[AttemptRecord, ...]" = (),
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -129,6 +130,9 @@ class ModelGatewayError(RuntimeError):
         # 재시도 회차가 실제로 보낸 body — 400이 재시도에서 났으면 그 요청이 여기 있다.
         # 상위가 재시도 파일로 남긴다(#80, `ModelResult.retry_bodies` 주석).
         self.retry_bodies = retry_bodies
+        # 여기까지 시도별 (출력 토큰, 종료 사유) — 실패한 호출이 바로 가르려는 대상이다(#550).
+        # 응답을 못 받은 시도(이 예외를 낸 시도)도 `AttemptRecord()`로 칸을 지킨다.
+        self.attempt_log = attempt_log
 
 
 class ModelSwapError(ModelGatewayError):
@@ -177,6 +181,7 @@ class SchemaParseError(RuntimeError):
         gpu_ms_source: "GpuMsSource | None" = None,
         attempts: int = 1,
         retry_bodies: tuple[str, ...] = (),
+        attempt_log: "tuple[AttemptRecord, ...]" = (),
     ) -> None:
         super().__init__(message)
         self.usage = usage
@@ -185,6 +190,9 @@ class SchemaParseError(RuntimeError):
         self.attempts = attempts
         # 소진까지 재시도가 실제로 보낸 body들. 상위가 재시도 파일로 남긴다(#80).
         self.retry_bodies = retry_bodies
+        # 시도별 (출력 토큰, 종료 사유). 소진한 호출이 절단이었는지를 서버의 말로 직접 가른다
+        # (#550) — `usage`는 시도를 합친 값이라 못 한다.
+        self.attempt_log = attempt_log
 
 
 class Prompt(HarnessModel):
@@ -236,6 +244,39 @@ class Usage(HarnessModel):
         return self
 
 
+class AttemptRecord(HarnessModel):
+    """시도 한 번이 서버에서 받은 응답의 두 사실 (#550).
+
+    `Usage`는 시도를 **합친** 값이라 「어느 시도가 얼마를 냈고 어떻게 끝났나」를 못 돌려준다.
+    **합이 이미 주는 것과 못 주는 것을 가른다**(CLAUDE.md §2.2). 상한이 32,768일 때 두 시도의
+    합 65,536은 산술로 **둘 다 정확히 32,768**이고(각각 상한 이하이므로), 그때 남는 물음은 그 값이
+    `length`인지 상한과 같은 값에서의 정상 종료(`stop`)인지뿐이다. 합 27,888은 **`null` 칸이 없을
+    때** 두 시도가 다 상한 아래임을 이미 보인다 — 그러면 `max_tokens` 절단은 배제된다. `null` 칸은
+    합에 0을 더한 시도라 합이 그 시도의 몫만큼 과소일 수 있고, 그 칸이 있으면 이 산술은 서지 않는다
+    (`orchestrator/trace.py` 읽는 규칙 3). 두 수의 출처는 #550 본문의 `run_20261007_0001` 관측이다.
+    합이 **못** 주는 것은 ① 상한과 그 2배 사이의 합에서 어느 시도가 상한에 닿았나
+    (`a₁ + a₂ = 8,402`이고 두 항이 다 8,192 이하면 나오는 것은 `a₁ ≥ 210`뿐이라던 §2.2의 사례)
+    ② `length`·`stop` 밖의 사유(`abort` …) ③ 추론이 아니라 서버가 한 말이다.
+
+    **`None`은 「안 쟀다」다.** 응답을 못 받은 시도(게이트웨이 거절·타임아웃·모양이 깨진 200)는
+    `AttemptRecord()`(둘 다 `None`)로 자리를 지킨다 — 칸이 시도 순서와 1:1이라 `attempts`와
+    어긋나지 않고, 그 시도의 토큰을 0으로 지어내지 않는다. **응답은 받았어도 서버가
+    `usage.completion_tokens`를 안 실었으면 `output_tokens`가 `None`이다** — 합산 `Usage`는 그때
+    0을 채우지만(`None`을 못 든다) 이 칸은 안 채운다. 그래서 여기서 `0`은 **서버가 0이라고 보고한
+    것**이고 「안 줬다」가 아니다. 합산 쪽에는 이 구분이 없다(`Usage.output_tokens == 0`은 둘 다다).
+
+    `finish_reason`은 서버가 준 문자열 그대로다(`stop`·`length`·`abort` …). 키가 없거나 비었거나
+    공백뿐이거나 문자열이 아니면 `None`이고, `""`·`"unknown"`으로 채우지 않는다. 알려진 값 목록으로
+    거르지 않는다 — 처음 보는 사유를 버리면 이 필드가 있는 이유가 사라진다. 원문이
+    512자(`MAX_ERROR_DETAIL`)를 넘는 값만 `error_detail`과 같은 자르기로 묶는데
+    (`openai_compat._finish_reason_from`), 그 자르기는 **공백을 접고 다시 재므로** 접은 결과가
+    512자 이하면 잘림 표시 없이 공백만 달라진다.
+    """
+
+    output_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+
+
 class ModelResult(HarnessModel, Generic[SchemaT]):
     """구조화 출력 + 그 호출의 비용."""
 
@@ -275,6 +316,23 @@ class ModelResult(HarnessModel, Generic[SchemaT]):
     # 값의 JSON). **사고 토큰은 담지 않는다** — 그 자리는 Phase 8이다. 구현체가 안 채우면
     # `None`이고, 이것도 미실측 표시다.
     raw_text: str | None = None
+    # 시도별 (출력 토큰, 종료 사유), **시도 순서대로**(#550). `usage`는 이 시도들을 합친 값이고
+    # 그대로다 — 이것은 합을 쪼갠 내역이지 대체가 아니다. 구현체가 안 채우면 빈 튜플이고, 그것은
+    # 「안 쟀다」이지 「시도가 없었다」가 아니다(`attempts >= 1`이다). 채우는 구현체는 시도마다
+    # 칸 하나를 둔다.
+    #
+    # ⚠ **아래 둘은 어댑터가 짓는 시점의 관례이지 강제되는 불변식이 아니다**: `len(attempt_log) ==
+    # attempts`, 그리고 `usage.output_tokens == Σ(칸의 output_tokens, None 제외)`. 이 모델은 둘을
+    # 검증하지 않아 어긋난 `ModelResult`도 그대로 만들어지고 trace까지 간다. 일부러 거부하지 않는다
+    # — 던지는 검증은 계측의 결함을 8시간짜리 run의 중단으로 바꾼다. 지켜지는 곳은
+    # `OpenAICompatModelClient.complete()`와 대본을 준 `FakeModelClient`이고, 그 둘을 못 박는 것은
+    # `tests/test_model_call_instrumentation.py`다:
+    #   - 합: `test_the_summed_usage_equals_the_sum_of_the_attempts`
+    #   - 칸 수: `test_every_attempt_keeps_its_slot_at_three_attempts`
+    #   - Fake: `test_the_fake_can_script_a_truncated_multi_attempt_call_through_routing`
+    # 어긋남을 읽는 쪽은 같은 `model_call` 이벤트의 `attempts`·`output_tokens`와 대조한다
+    # (`orchestrator/trace.py`).
+    attempt_log: tuple[AttemptRecord, ...] = ()
 
 
 class ModelClient(Protocol):
