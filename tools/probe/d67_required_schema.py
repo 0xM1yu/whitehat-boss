@@ -215,9 +215,9 @@ def _diagnose(client: Any, *, arm: str, prompt: Prompt, trials: int) -> list[dic
         except Exception as exc:  # noqa: BLE001
             out.append({"error": f"{type(exc).__name__}: {exc}"[:300]})
             continue
-        # **이름으로 읽는다.** 튜플을 `raw, usage = …`로 풀던 시절 필드가 하나 늘자 이 자리가
-        # 전 호출에서 `ValueError`를 맞고 위 `except`로 떨어져 GPU가 쓴 생성을
-        # `{"error": …}`로 버렸다(#550).
+        # **이름으로 읽는다.** 튜플을 `raw, usage = …`로 풀면 필드가 하나 늘 때 이 자리가 전
+        # 호출에서 `ValueError`를 맞고 위 `except`로 떨어져 GPU가 쓴 생성을 `{"error": …}`로
+        # 버린다 — #550 작업 중 테스트로 재현(`tests/test_probe.py`), 실서빙 관측 아님.
         #
         # **`content`는 `None`일 수 있다**(`PostedResponse`). 아래 `len(raw)`가 `TypeError`로 죽으면
         # 이 함수 밖(`main`)까지 뚫고 나가 이미 쓴 진단이 전부 버려진다 — 위 `except`와 같은 모양의
