@@ -227,12 +227,20 @@ def test_an_uncited_finding_with_a_static_signal_stays_hypothesized(ctx: RunCont
 
 
 def test_an_uncited_finding_does_not_jump_past_e1(ctx: RunContext) -> None:
-    """경로가 이어져 있어도 그래프 근거가 없으면 E2로 안 간다.
+    """🔴 **결함 특성화 핀 — 이슈 #576.** 그래프 근거가 없으면 E2로 안 간다(손으로 넘긴 풀 기준).
 
     부착이 등급을 **건너뛰게** 하지 않는다.
 
-    실제 run이 이 모양이었다: `path_ok`는 4/5 참인데 그래프 Evidence가 타깃 풀 밖(`artifact='.'`)
-    이라 `graph_ok`가 거짓이었고 등급이 E1에서 멈췄다.
+    ⚠ **⏵ 2026-10-10 — 앞 판의 docstring은 거짓이었다**(적대적 리뷰 · §2.1). 그것은
+    *"실제 run이 이 모양이었다 — 그래프 Evidence가 타깃 풀 밖(`artifact='.'`)이라 `graph_ok`가
+    거짓이었고 E1에서 멈췄다"*고 적었다. **러너 풀은 그렇지 않다** — `runner.py:1190`이 run 전역
+    graph를 만들고 `_artifact_signals`가 `(graph, *found)`를 돌려주므로 **모든 타깃 풀에 들어간다.**
+    그 run의 **실측은 `5/5 E0`**이고(`evidence_refs`가 비어 `p1`~`p4`를 계산조차 않았다) E1·E2
+    분포는 **재구성한 풀의 계산값**이다.
+
+    🔴 **그래서 이 핀은 「현재 동작이 정답」이라는 뜻이 아니다** — 손으로 넘긴 풀에서의 거동을
+    고정할 뿐이다. 러너 풀 기준은 아래 `test_the_runner_pool_always_carries_the_run_wide_graph`가
+    문다. 이슈 #576이 그 결함을 들고 D106의 「재검토 발동 조건」이 다시 보는 시점을 적는다.
     """
     full_path = [
         PathStep(step=PathStepKind.SOURCE, symbol="read_input"),
@@ -364,3 +372,69 @@ def test_a_target_with_no_observed_evidence_is_still_e0(ctx: RunContext) -> None
 
     assert result.grade is EvidenceGrade.E0
     assert graded.state is FindingState.QUEUED
+
+
+# --- 🔴 러너 풀 기준 — 결함 특성화 핀 (이슈 #576 · council 2026-10-10) -------------
+#
+# 위 핀들은 **손으로 넘긴 풀**을 본다. 그래서 「러너가 만드는 풀이 어떤 모양인가」를
+# 못 잡았고, D106 산문이 「그래프 Evidence는 타깃 풀 밖」이라 적은 것이 네 라운드를 살아남았다.
+# 아래 둘은 러너 쪽에서 끌어와 **그 산문이 다시 들어오면 빨개진다.**
+#
+# 🔴 **이 둘은 「현재 동작이 정답」이라는 뜻이 아니다.** 결함을 고정(characterize)할 뿐이고,
+#    그 결함은 이슈 #576이 든다. D106의 「재검토 발동 조건」이 다시 보는 시점을 적는다.
+
+
+def test_the_runner_pool_always_carries_the_run_wide_graph() -> None:
+    """🔴 **결함 특성화 핀 — 이슈 #576.** 러너 풀에는 run 전역 GRAPH가 **늘** 들어간다.
+
+    `_artifact_signals`가 `(graph, *found)`를 돌려주고 그것이 그대로 `_Target.evidences`가 된다.
+    `artifact_id`로 걸러지지 않는다 — D106 앞 판이 *"`artifact_id`가 `.`이라 타깃 풀 밖"*이라
+    적은 것이 거짓인 이유다(§2.1).
+
+    그래서 **인덱서가 성공하는 동안 `graph_ok`는 전 타깃에서 참**이고 E2가
+    `path_ok ∧ unblocked`로 줄어든다. `path_ok`는 **모델이 쓴 `finding.path`**다.
+    """
+    import inspect
+
+    from src.orchestrator import runner
+
+    source = inspect.getsource(runner._artifact_signals)
+
+    assert "return (graph, *found)" in source, (
+        "러너가 run 전역 graph를 타깃 풀에 넣는 방식이 바뀌었다 — D106과 이슈 #576의 서술을 "
+        "같이 고친다"
+    )
+
+
+def test_the_grade_tracks_the_indexer_not_the_evidence_when_the_graph_fails() -> None:
+    """🔴 **인덱서 실패는 「부착 범위를 좁힌 쪽」의 미리보기다** (council 2026-10-10 Critic).
+
+    인덱서가 실패하면 그 Evidence 하나가 `ok=False`가 되고 `gate.evaluate`의 `usable`이 그것을
+    뺀다 → `graph_ok`가 **전 타깃에서 동시에** 거짓이다. 전원 E1 이하, E3·E4 불가.
+
+    🔴 **그 실패는 타깃별로 독립이 아니라 run 단위로 상관된다.** 그래서 등급이 근거 품질이 아니라
+    **인덱서 가동률**을 잰다 — 비교표에 인덱서 상태 열이 없으면 run 간 등급 비교가 무의미하다
+    (`docs/evaluation.md` · 이슈 #576).
+
+    ⚠ **인덱서 실패율은 0 관측이다**(§0). 이 핀은 그 비율을 주장하지 않고 **실패했을 때의 등급**만
+    고정한다.
+    """
+    from src.orchestrator.gate import evaluate
+
+    path = [
+        PathStep(step=PathStepKind.SOURCE, symbol="read_input"),
+        PathStep(step=PathStepKind.SINK, symbol="memcpy"),
+    ]
+    finding = _finding(refs=["ev_graph", "ev_static"], path=path)
+    static = _static_signal()
+    graph_up = _evidence("ev_graph", EvidenceKind.GRAPH, source="index", ok=True)
+    graph_down = _evidence("ev_graph", EvidenceKind.GRAPH, source="index", ok=False)
+
+    up = evaluate(finding, [graph_up, static], missings=[], decisions=[])
+    down = evaluate(finding, [graph_down, static], missings=[], decisions=[])
+
+    assert up.grade is EvidenceGrade.E2, "인덱서가 서면 E2다(구조상 — path_ok 이고 unblocked)"
+    assert down.grade is EvidenceGrade.E1, (
+        "인덱서가 죽으면 같은 근거·같은 경로인데 등급이 내려간다 — 등급이 인덱서 가동률을 "
+        "잰다는 사실이 바뀌었으면 이슈 #576과 D106을 같이 고친다"
+    )

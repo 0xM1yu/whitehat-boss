@@ -1569,7 +1569,8 @@ def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
 
     위치는 **판단 보조**다 — 게이트 등급을 이 값이 정하지 않는다(`gate.evaluate`의
     `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라
-    인용하면 `static_ok`가 이미 참이다 · `container_tools.first_hit_location` docstring). 그 위치는
+    **인용과 무관하게** `static_ok`가 참이다 — 6단계가 타깃 관측분을 붙인다
+    (이슈 #552) · `container_tools.first_hit_location` docstring). 그 위치는
     semgrep `results[0]`(첫 히트) 하나다. 위치를 싣는 것이 모델의 인용을 늘리는지는 미실측이다
     (이슈 #475 — 위치를 싣고 돈 run은 커밋된 `docs/experiments/` 보고서 기준 0건).
 
