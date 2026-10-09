@@ -841,7 +841,11 @@ models:
     # 약 열 배 작았다(n=2). 미실측은 판정
     # 되먹임이 PoC를 낫게 바꾸는 효과 · v4 prefix의 입력 토큰 · 제외 코드 규칙과 마지막 홉 규칙이 submit을
     # 늘리는지이고, v4로 돈 run은 0건이다.
-    prompt_template_version: "v4"
+    # ⏵ 2026-10-09 — v5로 올렸다(ADR 0014 · 이슈 #513). v4 prefix의 「도구가 PoC를 받지
+    # 않는다」 문단이 거짓이 됐고 프롬프트 판은 불변 기록이라 **다음 판**이 고친다. 그 판의
+    # 효과(poc 관측이 PoC의 함수가 된 것이 submit을 늘리는지)는 **미실측**이다 — v5로 돈 run이
+    # 0건이고 위 「v4로 돈 run은 0건」도 그대로다.
+    prompt_template_version: "v5"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
