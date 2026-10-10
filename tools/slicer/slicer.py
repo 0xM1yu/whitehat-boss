@@ -237,7 +237,7 @@ def valid_location(value: object) -> bool:
 
 
 CANDIDATE_STAGES = ("case_a", "case_b")
-# How many dropped rows a diagnostics entry quotes verbatim (the count next to it stays exact).
+# How many dropped rows a diagnostics entry quotes (the count next to it stays exact).
 INVALID_ROW_SAMPLE = 3
 
 
@@ -281,7 +281,8 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
     """Validate before counters or Scala selectors consume untrusted HTTP fields.
 
     A candidate stage is validated here only as a whole (it must be a list); its rows are
-    validated one by one right after, in `Slicer.query`, which drops the invalid ones (#361)."""
+    validated one by one right after, in `Slicer.query`, which drops the invalid ones and fails
+    the stage when none is valid (#361)."""
     valid = False
     if stage in CANDIDATE_STAGES:
         valid = isinstance(data, list)
@@ -679,9 +680,10 @@ class Slicer(SlicingStages):
         One malformed row used to fail the payload check and void the run (0 slices, #347). Now
         it is dropped, never silently: `counters.candidates_invalid` (both stages) counts it,
         `measurement_notes.candidates_invalid` names the stage and the failing field, a
-        `diagnostics` entry quotes the first rows verbatim, and the run is `partial`. The counter
-        is measured (0 included) the first time a candidate payload passes the list check, so a
-        run that never reached discovery keeps it null with "Stage not reached"."""
+        `diagnostics` entry quotes the first rows as ASCII JSON text, and the run is `partial`.
+        A payload whose rows are ALL invalid is still a stage failure. The counter is measured (0
+        included) the first time a candidate payload passes, so a run that never reached
+        discovery keeps it null with "Stage not reached"."""
         kept, dropped, problems = [], [], {}
         for row in rows:
             problem = candidate_row_problem(stage, row)
@@ -690,21 +692,27 @@ class Slicer(SlicingStages):
             else:
                 problems[problem] = problems.get(problem, 0) + 1
                 dropped.append(row)
-        notes = self.result["measurement_notes"]
-        counted = self.result["counters"]["candidates_invalid"]
-        # The note before the first measurement is "Stage not reached"; it is not carried over.
-        previous = None if counted is None else notes.get("candidates_invalid")
-        self.measure("candidates_invalid", (counted or 0) + len(dropped))
+        if rows and not kept:
+            raise QueryError(f"Invalid {stage} payload schema: all {len(rows)} rows invalid")
+        counters, notes = self.result["counters"], self.result["measurement_notes"]
+        counted = counters["candidates_invalid"]
+        if counted is None:
+            self.measure("candidates_invalid", 0)  # first call only: measure() clears the note
+        counters["candidates_invalid"] = (counted or 0) + len(dropped)
         if dropped:
             reasons = ", ".join(f"{field}: {count}" for field, count in sorted(problems.items()))
             note = f"{stage}: {len(dropped)} rows dropped ({reasons})"
+            sample = dropped[:INVALID_ROW_SAMPLE]
+            previous = notes.get("candidates_invalid")
             notes["candidates_invalid"] = f"{previous}; {note}" if previous else note
             self.result["diagnostics"].append(
                 {
                     "stage": stage,
                     "note": f"dropped {len(dropped)} invalid candidate rows ({reasons}); "
                     "the valid rows were kept",
-                    "rows": dropped[:INVALID_ROW_SAMPLE],
+                    # ASCII JSON text: a raw row can hold NaN or a lone surrogate, which
+                    # write_result cannot encode -- the echo must not lose the run.
+                    "rows": [json.dumps(row, ensure_ascii=True) for row in sample],
                 }
             )
             self.errors.append(f"Dropped {len(dropped)} invalid {stage} candidate rows")
