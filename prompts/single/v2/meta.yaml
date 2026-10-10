@@ -1,3 +1,5 @@
+# `single` = 단일 패스 프롬프트(혼자 Finding을 낸다). `roles`에 `single`을 둔 프로필이 없어 `cli run`·`cli bench` 어디서도
+# 로드되지 않는다(2026-10-10 `config/profiles.yaml` 확인). 아래 description의 「B1·B3」는 쓴 시점의 이름이고, 조건 B1의 뜻은 실험팀 몫이다.
 role: single
 version: v2
 output_schema: Finding
