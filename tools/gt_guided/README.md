@@ -11,11 +11,15 @@
   - 결과 `gt_filter` -> 방식 · 발견 후보 수 · 남긴 수 · GT 범위
 - 슬라이스 자체는 같은 Joern 질의, 같은 `slices.json` 모양
 - Auditor 입력 -> `build_auditor.py`가 하네스의 `runner._auditor_target`·`_auditor_source`를 `config/budgets.yaml` 값으로 부른다
-  - 옵션은 하네스 기본값(`config/budgets.yaml`) 그대로 -> 실제 run이 조립하는 입력과 같음(정의 · 피호출 · 래퍼·별칭 · 간접 피호출 · 쓰기 지점 창 · 호출자 창 · 20k 토큰)
+  - 옵션은 하네스 기본값(`config/budgets.yaml`) 그대로 -> 실제 run이 조립하는 입력과 같음(정의 · 피호출 · 래퍼·별칭 · 간접 피호출 · 쓰기 지점 창 · 호출자 창 · GUARDS · 20k 토큰 -- 무엇이 켜졌는지는 행의 `auditor_options`가 정본)
   - 비교용으로만 바꿈 -> `AUDITOR_OPTIONS="이름=값,..."`(`config.AUDITOR_SOURCE_OPTIONS`의 이름) · `AUDITOR_ARMS`로 여러 조합. 켠 옵션은 행의 `auditor_options`에 남음
   - 간접 피호출·쓰기 지점 창은 index-v3 표가 있어야 붙음 -> 이 도구는 저장소의 `indexer.py`를 바로 돌려 v3가 나옴
   - 토큰은 Auditor 토크나이저가 아니라 글자 근사(`token_counter: estimate`)
-  - GT는 `source` 조립에 안 쓰고 라벨(`gt_relevant` · `gt_in_source`)에만 쓴다
+  - 슬라이스로 만든 행 -> GT는 `source` 조립에 안 쓰고 라벨(`gt_relevant` · `gt_in_source`)에만 쓴다
+  - `gt_in_source` -> 배너 범위 안의 줄만 센다(배너 없이 entry 함수 뒤에 붙는 GUARDS 블록은 소스 줄이 아님)
+- GT 직접 모드(`GT_DIRECT=1`, 기본 꺼짐) -> Joern·슬라이서 없이 GT 점 자체를 슬라이스로(entry = GT sink 줄, 없으면 첫 점)
+  - GT가 `source`를 정한다 -> 행에 `gt_direct: true` · `gt_guided: true`
+  - `gt_relevant`는 구조상 항상 참이라 이 모드에선 구분력 없음
 
 ## 파일
 
@@ -36,19 +40,22 @@ py harness/tools/gt_guided/gt_worker.py <W>
 ```
 
 - 작업 JSON -> `sample_id` · `repo_url` · `commit` · `gt_points`(`role`·`file`·`line`·`line_end`) · `description` · `project`
-- 슬라이서 인자 -> `--max-flows-per-candidate 10 --backward-depth 30 --backward-nodes 5000`, 질의 600초 · 후보 600초, 슬라이서 단계 상한 2400초(`HARD_SECONDS`) -- 표본 전체의 상한이 아니다(`git fetch` · 인덱서는 각 1800초, 빌드는 3600초로 따로 묶인다)
-- 코디네이터 -> `py -3.11 coord.py jobs.json boxes.json` · Python 3.11.4 이상(`tarfile` 추출 필터) · `state.json`은 그 `jobs.json`에만 묶인다 -- 새 캠페인이면 `tools/gt_guided/state.json`을 치운다(다른 jobs.json이면 시작을 거부한다). `coord.py`와 `gt_worker.py`는 같은 커밋에서 배포한다(표지 `DONE`·`FAILED`·`RETRY`가 둘의 약속이다)
+- 슬라이서 인자 -> `--max-flows-per-candidate 10 --backward-depth 30 --backward-nodes 5000`, 질의 1800초(`QUERY_TIMEOUT`) · 후보 600초, 슬라이서 단계 상한 3600초(`HARD_SECONDS`) -- 표본 전체의 상한이 아니다(`git fetch` · 인덱서는 각 1800초, 빌드는 3600초로 따로 묶인다)
+- 코디네이터 -> `py -3.11 coord.py jobs.json boxes.json` · Python 3.11.4 미만(이 팀 PC 3.11.0)이면 `tarfile` 추출 필터 대신 같은 거부(`..` · 절대 경로 · 파일·디렉터리 아닌 멤버)를 손으로 하고 푼다 · `state.json`은 그 `jobs.json`에만 묶인다 -- 새 캠페인이면 `tools/gt_guided/state.json`을 치운다(다른 jobs.json이면 시작을 거부한다). `coord.py`와 `gt_worker.py`는 같은 커밋에서 배포한다(표지 `DONE`·`FAILED`·`RETRY`가 둘의 약속이다)
 
 ## 한계
 
 - 실 Joern 종단 1회 -> 2026-10-03 vast 1대(EPYC 7K62, 작업자 4) · Joern 4.0.605 · s500 vuln 4개(json · proj.4 · readstat · ndpi)
   - 4/4 오류 없음 · 표본당 약 1분 · 후보 470~4,416 -> 1~10개 남김 · 표본 단위로는 4/4에서 Auditor 입력에 GT 줄 보임 -- FT의 단위는 행이고 행 단위로는 **10행 중 5행**(PR #416 본문 검증 표 -- readstat 3행 중 1 · proj.4 1/1 · json 1/1 · ndpi 5행 중 2)
   - 그때의 라벨 `gt_function`은 함수 범위 창과 GT 앞뒤 30줄 창을 구별하지 못했다 -- 4건이 어느 쪽이었는지는 원자료가 저장소 밖이라 알 수 없다(미실측). 지금 판은 `gt_window`로 가른다
-  - `coord.py` 배정 -> 완료 감지 -> sha256 확인 내려받기 -> 인스턴스 삭제까지 확인
+  - `coord.py` 배정 -> 완료 감지 -> sha256 확인 내려받기 -> 인스턴스 삭제까지 확인 -- 그때의 코드 판이다. 삭제 전 상자 조회(`holdings`) · `jobs.json` 묶기 · `flock` · 하드링크 claim · `RETRY` 표지는 그 뒤(`ef852d0`, 2026-10-04)에 들어왔다 -> 이 줄의 확인은 그것들을 덮지 않는다
   - run ID 없음 · 원자료 저장소 밖
 - 표본 4개뿐 -> 큰 저장소·source 라벨 있는 표본·인덱서가 함수를 못 뽑는 C++는 아직 안 돌려 봄
 - source 라벨이 없는 표본은 sink·root_cause 함수 쪽 후보만 남는다
 - C++ 헤더처럼 인덱서가 함수를 못 뽑으면 GT 범위가 GT 줄 앞뒤 30줄로 떨어진다
-- 큰 저장소(CPG 생성이 질의 600초를 넘는 것)는 실패로 기록하고 넘어간다
-- 테스트 -> `tests/test_gt_guided_coord.py` · `tests/test_gt_guided_box.py` · 가짜 상자로 코디네이터·작업자의 **결정 로직**만 잰다. 실 vast · ssh · scp · `vastai` 호출은 0건이다(`subprocess`를 가짜로 바꾸고 진짜가 불리면 테스트가 실패한다) -- 진짜 `vastai`가 실패를 종료 코드로 내는지는 **미실측**이고 코디네이터는 그 출력의 끝 80자를 로그에 남긴다
+- 큰 저장소 -> C/C++ 파일이 `PRUNE_FILES`(기본 8000)를 넘으면 sparse checkout으로 일부만 남긴다
+  - 남기는 것 -> GT 파일의 디렉터리 · GT 파일이 include하는 헤더의 디렉터리(`INCLUDE_ROUNDS` 2단계, 같은 이름 여럿이면 같은 디렉터리 -> 짧은 경로 -> x86·generic) · 파일 `INCLUDE_MAX`(3000) 이하인 최상위 `include/`
+  - 잘린 저장소의 행은 실제 run과 정의·호출자가 다를 수 있다 -> `build.json`의 `pruned`에 남김
+  - 그래도 CPG 생성이 질의 1800초를 넘으면 실패로 기록하고 넘어간다
+- 테스트 -> `tests/test_gt_guided_coord.py` · `tests/test_gt_guided_coord_gate.py` · `tests/test_gt_guided_box.py` · 가짜 상자로 코디네이터·작업자의 **결정 로직**만 잰다. 실 vast · ssh · scp · `vastai` 호출은 0건이다(`subprocess`를 가짜로 바꾸고 진짜가 불리면 테스트가 실패한다) -- 진짜 `vastai`가 실패를 종료 코드로 내는지는 **미실측**이고 코디네이터는 그 출력의 끝 80자를 로그에 남긴다
 - 안 고친 것 -> 비정상 종료한 작업자가 남기는 Joern 고아 프로세스(실 박스 검증 필요) · `port_open`이 아무 listener나 받아들임 · 코디네이터의 재배정 타이머가 push 시각부터 센다(claim 시각을 모른다 -- 큐 대기가 3시간에 들어간다) · 재배정된 작업이 같은 바퀴에 같은 상자로 다시 push됨(상자의 claim이 배타적이라 해롭지 않고, 끝난 표본의 중복 작업은 버려진다)

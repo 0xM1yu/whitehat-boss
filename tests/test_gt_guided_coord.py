@@ -368,27 +368,56 @@ def test_a_step_that_keeps_failing_stops_the_run_with_its_traceback(
             c.coord.tick()
 
 
-def test_a_python_without_tar_extraction_filters_still_pulls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """3.11.4 미만(이 팀 PC의 3.11.0)이면 `_extract`가 같은 거부를 손으로 하고 푼다 — 시작을 막으면
-    그 PC에서 코디네이터가 아예 안 돈다. 위험한 멤버(`..`)는 그대로 거부한다."""
-    c = make_campaign(tmp_path, monkeypatch)
-    monkeypatch.delattr(tarfile, "data_filter", raising=False)  # 3.11.0에는 원래 없다
-
-    assert run_main(c) == 0
-    assert batch_members(c) == [f"{s}.tgz" for s in SIDS]
-
+def _one_member_tar(name: str, kind: bytes = tarfile.REGTYPE) -> tarfile.TarFile:
     import io
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        info = tarfile.TarInfo("../escape")
-        info.size = 1
-        tf.addfile(info, io.BytesIO(b"x"))
+        info = tarfile.TarInfo(name)
+        info.type = kind
+        if kind == tarfile.SYMTYPE:
+            info.linkname = "/etc/passwd"
+            tf.addfile(info)
+        else:
+            info.size = 1
+            tf.addfile(info, io.BytesIO(b"x"))
     buf.seek(0)
-    with tarfile.open(fileobj=buf, mode="r:gz") as tf, pytest.raises(ValueError, match="refusing"):
+    return tarfile.open(fileobj=buf, mode="r:gz")
+
+
+def test_a_python_without_tar_extraction_filters_still_pulls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """3.11.4 미만(이 팀 PC의 3.11.0)이면 `_extract`가 같은 거부를 손으로 하고 푼다 — 시작을 막으면
+    그 PC에서 코디네이터가 아예 안 돈다. `tarfile.data_filter`를 지우는 대신 `TAR_FILTERS`를 끈다 —
+    3.14의 `tarfile`은 그 이름을 기본 필터로 스스로 읽어 지우면 `NameError`로 죽었다."""
+    c = make_campaign(tmp_path, monkeypatch)
+    monkeypatch.setattr(c.coord, "TAR_FILTERS", False)
+
+    assert run_main(c) == 0
+    assert batch_members(c) == [f"{s}.tgz" for s in SIDS]
+
+
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [
+        pytest.param("../escape", tarfile.REGTYPE, id="dot-dot"),
+        pytest.param("/abs", tarfile.REGTYPE, id="absolute"),
+        pytest.param("\\abs", tarfile.REGTYPE, id="absolute-backslash"),
+        pytest.param("link", tarfile.SYMTYPE, id="symlink"),
+    ],
+)
+def test_the_manual_extract_refuses_every_member_the_data_filter_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, kind: bytes
+) -> None:
+    """손 경로의 거부 셋(`..` · 절대 경로 · 파일·디렉터리 아닌 것)을 각각 문다 — `..` 하나만 보던
+    테스트로는 나머지 둘을 빼도 초록이었다(2026-10-08 보충 리뷰 변이)."""
+    c = make_campaign(tmp_path, monkeypatch)
+    monkeypatch.setattr(c.coord, "TAR_FILTERS", False)
+
+    with _one_member_tar(name, kind) as tf, pytest.raises(ValueError, match="refusing"):
         c.coord._extract(tf, tmp_path / "x")
+    assert not (tmp_path / "x").exists()
 
 
 def test_a_corrupt_download_is_logged_and_retried(

@@ -31,7 +31,7 @@ import pytest
 from tests import gt_guided_support as support
 from tests.gt_guided_support import TOOL_DIR, load
 from tests.test_pipeline_e2e import _FIXTURE_INDEX, TARGET
-from tests.test_slice_targets import _CASE_A, _slice, _slices_file
+from tests.test_slice_targets import _CASE_A, _CASE_B, _slice, _slices_file
 
 hermetic = support.hermetic  # autouse: pytest finds a fixture bound in the test module
 cp949_default = support.cp949_default
@@ -61,6 +61,9 @@ class BoxEnv:
         self.build_err = ""
         self.build_timeout = False
         self.job_json_seen: dict = {}
+        self.build_argv: list[str] = []
+        # the commit tree for prune_dirs: path -> text (`ls-tree` lists it, `cat-file` reads it)
+        self.tree: dict[str, str] = {}
         monkeypatch.setattr(self.gtw, "sh", self.sh)
         monkeypatch.setattr(self.gtw, "free_port", lambda port: None)
         monkeypatch.setattr(self.gtw, "port_open", lambda port: self.port_up)
@@ -112,8 +115,12 @@ class BoxEnv:
         return SimpleNamespace(pid=4242, poll=lambda: self.joern_rc)
 
     def run_build(self, argv, **kwargs):  # noqa: ANN001, ANN003, ANN202
-        if argv[0] == "git":  # prune_dirs' ls-tree: an empty tree -> no pruning
-            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[0] == "git":  # prune_dirs: `ls-tree` lists `self.tree`, `cat-file` reads one file
+            if argv[1] == "ls-tree":
+                return subprocess.CompletedProcess(argv, 0, "\n".join(self.tree), "")
+            text = self.tree.get(argv[-1].removeprefix("FETCH_HEAD:"), "")
+            return subprocess.CompletedProcess(argv, 0, text, "")
+        self.build_argv = list(argv)
         self.job_json_seen = json.loads(Path(argv[3]).read_text(encoding="utf-8"))
         target = Path(argv[-1])
         if self.build_timeout:
@@ -477,6 +484,55 @@ def test_a_checkpoint_run_is_refused_not_silently_unfiltered(
 # ---------------------------------------------------------------- build_auditor.py
 
 
+SINK_24 = [{"role": "sink", "file": "parser.c", "line": 24, "line_end": 24}]
+
+
+def run_build_auditor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    slices: list[tuple] | None = None,
+    slices_filter: dict | None = None,
+    job_flag: bool | None = None,
+    gt_points: list[dict] | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[list[dict], dict]:
+    """진짜 하네스 코드(`runner._auditor_source` 등)로 행을 만든다 — 모델도 Joern도 안 쓴다.
+    `slices=None`이면 GT 직접 모드(슬라이스 인자 `-`)다. 행들과 스크립트의 전역을 돌려준다."""
+    if slices is None:
+        path: Path | str = "-"
+    else:
+        path = _slices_file(tmp_path, [_slice(*s) for s in slices])
+        if slices_filter is not None:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["gt_filter"] = slices_filter
+            path.write_text(json.dumps(document), encoding="utf-8")
+    index, job_file, out = tmp_path / "index.json", tmp_path / "job.json", tmp_path / "out.gz"
+    index.write_text(json.dumps(_FIXTURE_INDEX), encoding="utf-8")
+    job = {
+        "sample_id": "s1",
+        "kind": "vuln",
+        "description": "d",
+        "gt_points": gt_points if gt_points is not None else SINK_24,
+    }
+    if job_flag is not None:
+        job["gt_guided"] = job_flag
+    job_file.write_text(json.dumps(job), encoding="utf-8")
+    git = subprocess.CompletedProcess([], 0, "abc1234\n", "")  # `git rev-parse`를 흉내 낸다
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: git)
+    for key in ("AUDITOR_DEFINITIONS", "AUDITOR_OPTIONS", "AUDITOR_ARMS"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in (env or {}).items():
+        monkeypatch.setenv(key, value)
+    argv = ["build_auditor.py", *map(str, (REPO_ROOT, job_file, TARGET, path, index, out))]
+    monkeypatch.setattr(sys, "argv", argv)
+    scope = runpy.run_path(str(TOOL_DIR / "build_auditor.py"), run_name="__main__")
+    capsys.readouterr()
+    with gzip.open(out, "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    return rows, scope
+
+
 def build_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -484,31 +540,9 @@ def build_row(
     slices_filter: dict | None,
     job_flag: bool | None,
 ) -> dict:
-    """진짜 하네스 코드(`runner._auditor_source` 등)로 행 하나를 만든다 — 모델도 Joern도 안 쓴다."""
-    path = _slices_file(tmp_path, [_slice(*_CASE_A)])
-    if slices_filter is not None:
-        document = json.loads(path.read_text(encoding="utf-8"))
-        document["gt_filter"] = slices_filter
-        path.write_text(json.dumps(document), encoding="utf-8")
-    index, job_file, out = tmp_path / "index.json", tmp_path / "job.json", tmp_path / "out.gz"
-    index.write_text(json.dumps(_FIXTURE_INDEX), encoding="utf-8")
-    job = {
-        "sample_id": "s1",
-        "kind": "vuln",
-        "description": "d",
-        "gt_points": [{"role": "sink", "file": "parser.c", "line": 24, "line_end": 24}],
-    }
-    if job_flag is not None:
-        job["gt_guided"] = job_flag
-    job_file.write_text(json.dumps(job), encoding="utf-8")
-    git = subprocess.CompletedProcess([], 0, "abc1234\n", "")  # `git rev-parse`를 흉내 낸다
-    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: git)
-    argv = ["build_auditor.py", *map(str, (REPO_ROOT, job_file, TARGET, path, index, out))]
-    monkeypatch.setattr(sys, "argv", argv)
-    runpy.run_path(str(TOOL_DIR / "build_auditor.py"), run_name="__main__")
-    capsys.readouterr()
-    with gzip.open(out, "rt", encoding="utf-8") as fh:
-        (row,) = [json.loads(line) for line in fh]
+    (row,), _ = run_build_auditor(
+        tmp_path, monkeypatch, capsys, [_CASE_A], slices_filter=slices_filter, job_flag=job_flag
+    )
     return row
 
 
@@ -532,3 +566,182 @@ def test_a_row_built_from_gt_filtered_slices_says_so_whatever_the_job_says(
     row = build_row(tmp_path, monkeypatch, capsys, slices_filter, job_flag)
 
     assert row["gt_guided"] is expected
+
+
+def test_a_row_runs_on_the_harness_source_assembly_with_guards_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """main의 GUARDS(`auditor_guards`, #349)가 `ctx.read_raw`를 읽는다 — 빌더의 ctx에 그것이 없어
+    main과 합친 트리에서 행 하나 못 만들고 `AttributeError`로 죽었다(2026-10-08 재검토 사실 1)."""
+    (row,), _ = run_build_auditor(tmp_path, monkeypatch, capsys, [_CASE_B])
+
+    assert "auditor_guards" in row["auditor_options"]
+    assert "GUARDS" in row["source"], "Case B인데 GUARDS 블록이 안 붙었다 — 아래 테스트의 전제"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        pytest.param(26, True, id="last-line-of-the-entry-function"),
+        pytest.param(27, False, id="line-after-the-function-where-guards-sit"),
+        pytest.param(30, True, id="caller-window-line"),
+    ],
+)
+def test_gt_in_source_counts_only_lines_inside_a_banner_never_the_guards_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    line: int,
+    expected: bool,
+) -> None:
+    """GUARDS 블록은 entry 함수(`parser.c:19-26`) 바로 뒤에 배너 없이 붙는다 — 그 줄을 함수 다음 줄
+    (27·28…)로 세어 `gt_in_source`가 거짓 양성이 됐다(2026-10-08 보충 지적 2)."""
+    pts = [{"role": "sink", "file": "parser.c", "line": line, "line_end": line}]
+
+    (row,), _ = run_build_auditor(tmp_path, monkeypatch, capsys, [_CASE_B], gt_points=pts)
+
+    assert "GUARDS" in row["source"]
+    assert row["gt_in_source"] is expected
+
+
+@pytest.mark.parametrize(
+    ("point", "relevant", "in_source"),
+    [
+        pytest.param(("parser.c", 24), True, True, id="on-a-slice-line"),
+        pytest.param(("parser.c", 30), False, True, id="shown-but-far-from-the-slice"),
+        pytest.param(("util.c", 3), False, False, id="another-file"),
+    ],
+)
+def test_gt_relevant_and_gt_in_source_say_what_they_measure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    point: tuple[str, int],
+    relevant: bool,
+    in_source: bool,
+) -> None:
+    """`gt_relevant` = 슬라이스 줄이 GT 점 ±2 안 · `gt_in_source` = SOURCE가 그 줄을 보여 준다. 둘을
+    단언하는 테스트가 없었다(보충 지적 1)."""
+    pts = [{"role": "sink", "file": point[0], "line": point[1], "line_end": point[1]}]
+
+    (row,), _ = run_build_auditor(tmp_path, monkeypatch, capsys, [_CASE_A], gt_points=pts)
+
+    assert (row["gt_relevant"], row["gt_in_source"]) == (relevant, in_source)
+
+
+def test_gt_direct_mode_builds_one_row_around_the_gt_sink_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """슬라이스 인자 `-` — 슬라이서 없이 GT 점이 슬라이스다. GT가 SOURCE를 정하므로 행이 그것을
+    말해야 하고(`gt_direct`·`gt_guided`) `gt_relevant`는 구조상 참이다."""
+    pts = [  # sink가 처음도 끝도 아니다 — entry는 순서가 아니라 role로 고른다
+        {"role": "root_cause", "file": "parser.c", "line": 30, "line_end": 30},
+        {"role": "sink", "file": "parser.c", "line": 24, "line_end": 24},
+        {"role": "root_cause", "file": "parser.c", "line": 31, "line_end": 31},
+    ]
+
+    (row,), _ = run_build_auditor(tmp_path, monkeypatch, capsys, None, gt_points=pts)
+
+    assert (row["slice_id"], row["gt_direct"], row["gt_guided"]) == ("gt_direct", True, True)
+    assert (row["entry"]["file"], row["entry"]["line"]) == ("parser.c", 24)
+    assert row["anchor"]["symbol"] == "parse_header"
+    assert (row["gt_relevant"], row["gt_in_source"]) == (True, True)
+
+
+def test_auditor_arms_give_one_row_per_slice_per_option_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    arms = "off:auditor_guards=0;on:auditor_guards=1"
+
+    rows, _ = run_build_auditor(
+        tmp_path, monkeypatch, capsys, [_CASE_B], env={"AUDITOR_ARMS": arms}
+    )
+
+    by_arm = {r["arm"]: r for r in rows}
+    assert sorted(by_arm) == ["off", "on"]
+    assert "auditor_guards" not in by_arm["off"]["auditor_options"]
+    assert "auditor_guards" in by_arm["on"]["auditor_options"]
+    assert "GUARDS" not in by_arm["off"]["source"]
+    assert "GUARDS" in by_arm["on"]["source"]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        pytest.param("auditor_nope=1", id="unknown-name"),
+        pytest.param("auditor_callee_hops=5", id="out-of-bounds"),
+    ],
+)
+def test_auditor_options_outside_the_harness_list_or_bounds_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, spec: str
+) -> None:
+    with pytest.raises((SystemExit, ValueError)):
+        run_build_auditor(tmp_path, monkeypatch, capsys, [_CASE_A], env={"AUDITOR_OPTIONS": spec})
+
+
+def test_shown_lines_reads_the_omission_marker_and_the_bannerless_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _, scope = run_build_auditor(tmp_path, monkeypatch, capsys, [_CASE_A])
+    shown_lines = scope["shown_lines"]
+    anchor = SimpleNamespace(file="f.c", line_start=10)
+
+    assert shown_lines("a\nb", anchor) == {("f.c", 10), ("f.c", 11)}
+    trimmed = "/* ===== f.c:10-20 ===== */\nx\n/* ... 5 lines omitted ... */\ny"
+    assert shown_lines(trimmed, anchor) == {("f.c", 10), ("f.c", 16)}
+
+
+# ---------------------------------------------------------------- 큰 저장소 자르기 · GT 직접 모드
+
+
+def test_pick_prefers_the_including_directory_then_the_shortest_path_then_x86() -> None:
+    gtw = load("gt_worker")
+    local = ["src/a/y.h", "y.h"]
+    tie = ["arch/arm/asm/io.h", "arch/x86/asm/io.h"]
+
+    assert gtw._pick(local, "src/a", "y.h") == "src/a/y.h"
+    assert gtw._pick(["deep/er/y.h", "src/y.h"], "lib", "y.h") == "src/y.h"
+    assert gtw._pick(tie, "drivers", "asm/io.h") == "arch/x86/asm/io.h"
+    assert gtw._pick([], "src", "stdio.h") is None
+
+
+def test_a_big_repo_keeps_the_gt_directory_and_the_headers_it_includes(
+    box: BoxEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C/C++ 파일이 `PRUNE_FILES`를 넘으면 sparse checkout — GT 파일의 디렉터리와 그 파일이
+    include하는 헤더의 디렉터리(인자 아키텍처 사본은 짧은 경로 하나)와 작은 최상위 `include/`."""
+    monkeypatch.setattr(box.gtw, "PRUNE_FILES", 3)
+    box.tree = {
+        "src/a/x.c": '#include "y.h"\n#include <linux/usb.h>\n',
+        "src/a/y.h": "",
+        "include/linux/usb.h": '#include "deep/d.h"\n',
+        "include/linux/deep/d.h": "",
+        "arch/arm/include/linux/usb.h": "",
+        "other/z.c": "",
+        "other/w.c": "",
+    }
+    box.submit("s1", gt_points=[{"role": "sink", "file": "src/a/x.c", "line": 3, "line_end": 3}])
+
+    box.gtw.step(0)
+
+    assert box.markers() == ["DONE"]
+    pruned = json.loads((box.out() / "build.json").read_text(encoding="utf-8"))["pruned"]
+    assert pruned["keep"] == ["include", "include/linux", "include/linux/deep", "src/a"]
+    assert pruned["c_files"] == 7
+    sparse = [cmd for cmd, _ in box.sh_calls if cmd[:3] == ["git", "sparse-checkout", "set"]]
+    assert sparse == [["git", "sparse-checkout", "set", *pruned["keep"]]]
+
+
+def test_gt_direct_mode_skips_joern_and_builds_from_the_gt_lines(
+    box: BoxEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(box.gtw, "GT_DIRECT", True)
+    box.submit("s1")
+
+    box.gtw.step(0)
+
+    assert box.markers() == ["DONE"]
+    assert box.popen_calls == [], "Joern이 떴다"
+    assert box.slicer_calls() == 0
+    assert box.build_argv[5] == "-"
+    assert json.loads((box.out() / "build.json").read_text(encoding="utf-8"))["gt_direct"] is True
