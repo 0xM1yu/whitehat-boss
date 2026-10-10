@@ -1312,6 +1312,28 @@ def test_pov_observation_puts_the_input_fields_before_the_error_text() -> None:
     assert text.endswith(f" last_gen_sha256={_digest(_POC)} error=boom: free text")
 
 
+def test_pov_observation_keeps_the_error_text_when_there_is_a_log_body() -> None:
+    """🔴 **로그가 있을 때도 `error=`가 남는다** (적대적 리뷰 2026-10-09 독립 2인).
+
+    위 검사는 `read_payload`가 `None`을 주는 경로만 본다. 그래서 **로그가 있을 때만** `error=`를
+    버리는 한 줄 변이가 378건을 통과했다 — 그리고 **실 컨테이너 run은 늘 로그가 있다.** 그때
+    모델은 `ok=false`만 보고 왜 그런지를 못 읽는다.
+
+    서빙 prefix(v5)가 *"`ok`가 거짓이면 하네스가 가른 것이니 관측이 적은 사유를 읽는다"*고
+    약속하므로 이 핀이 그 약속의 자리다. ⚠ **꼬리 절단과는 무관하다** — `error=`는 첫 줄에
+    있고 꼬리는 그 아래다(아래 `_keeps_the_input_on_the_first_line_above_the_tail`).
+    """
+    failed = _asan_evidence().transition(ok=False, exit_code=2, error="boom: free text")
+    body = ("컴파일 잡음" + chr(10)) * 400
+
+    text = runner._pov_observation(
+        "gen", failed, read_payload=lambda _ref: body, poc=_POC
+    )
+
+    assert "error=boom: free text" in text, "로그가 있으면 사유가 사라진다"
+    assert text.splitlines()[0].endswith("error=boom: free text")
+
+
 def test_pov_observation_keeps_the_input_on_the_first_line_above_the_tail() -> None:
     log = "SUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018" + chr(10)
 

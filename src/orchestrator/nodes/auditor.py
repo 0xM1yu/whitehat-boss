@@ -82,14 +82,16 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
 - **모델 문자열은 조회·도구 입력에 안 들어간다.** `lookup`은 resolver가 인덱스 표에서 푸는 이름이고,
   `probe`는 스키마가 닫은 Literal(`AuditorTool` — 루프 봉투 셋이 공유한다, ⏵ 2026-10-09 v11 포함)의
   **이름만** argv에 넣는다.
-- ⚠ **`probe`의 `spec`은 도구 입력이 아니다.** 지금 도구(`container_tools.plan()`의
-  asan·gdb·poc)는 인자·stdin 없이 돈다 — `spec`으로 조립한 바이트는 sha256과 길이만 홉 이벤트에
-  남고 도구에 안 간다. 모델에게도 관측에 그렇게 적는다(`_probe_observation`). ⏵ **2026-10-09 —
-  「실림」과 「읽힘」을 가른다**: 바이트를 scratch에 쓰는 길(#520 · `ToolArgs.input_bytes`)은
-  **PoV 경로**(`nodes/pov.run_tool`)만 섰다. 이 노드의 `_probe`는
-  `ToolArgs(argv=[action.tool], …)`로 `spec`을 안 싣는다. 남은 선행 둘 -> (i) `_probe`가
-  `spec` 바이트를 싣기(#419) (ii) 도구 명령이 그 파일을 읽기(#513). 둘이 서면 이 경고와 관측의
-  그 줄을 같이 고친다.
+- ⚠ **`probe`의 `spec`은 도구 입력이 아니다 — 이 경로가 안 싣기 때문이다.** `spec`으로 조립한
+  바이트는 sha256과 길이만 홉 이벤트에 남고 도구에 안 간다. 모델에게도 관측에 그렇게 적는다
+  (`_probe_observation`). ⏵ **2026-10-09 — 「실림」과 「읽힘」을 가른다. 읽는 쪽은 섰다.**
+  `poc` 도구 명령은 이제 과제 `-vul` 이미지에서 `/tmp/poc`를 **읽는다**(#513 닫힘 · PR #567 ·
+  ADR 0014) — 그러니 「도구가 인자·stdin 없이 돈다」는 `poc`에 대해 **더는 참이 아니다**
+  (`asan`·`gdb`·`build` 셋은 그대로 안 받는다 — 이슈 #507). 남은 선행은 **하나**다 →
+  `_probe`가 `spec` 바이트를 `ToolArgs.input_bytes`로 싣기(#419). 지금은
+  `ToolArgs(argv=[action.tool], …)`로 **안 싣는다.** 그것이 서면 이 경고와 관측의 그 줄을 같이
+  고친다. 🔴 **그래서 지금 Auditor의 `probe poc`는 입력 없이 도는 호출이고** 컨테이너 런타임에서
+  실패 근거가 된다 — 홉 하나를 태운다(이슈 #572).
 """
 
 import hashlib
