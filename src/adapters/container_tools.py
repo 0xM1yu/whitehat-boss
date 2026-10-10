@@ -1025,7 +1025,8 @@ def unexecuted_commands_note(executed: int, total: int) -> str | None:
 
 
 def summary_line(tool: str, steps: list[Step]) -> str | None:
-    """로그 머리에 붙일 한 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
+    """로그 머리에 붙일 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
+    semgrep이 대상을 반쪽만 파싱했으면 **두 줄**이다(개행으로 이어 한 반환값).
 
     ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** 이 줄은 `_execute`가
     `sections[2]`에 넣고 그 로그 꼬리가 모델 관측으로 간다. 🔴 **`1`은 ASan의 기본 종료
@@ -1047,8 +1048,10 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     if results is None:
         return "# semgrep: 결과 문서 없음 — 아래 stderr 참조"
     head = f"# semgrep: {len(results)} findings"
-    # ⏵ 2026-10-10 (이슈 #563 선행) — 반쪽 파싱을 **같은 줄에** 적는다. 떨어뜨려 두면
+    # ⏵ 2026-10-10 (이슈 #563 선행) — 반쪽 파싱을 **같은 반환값의 둘째 줄에** 적는다. 떨어뜨려 두면
     # 관측 꼬리 상한에서 잘려 수만 남는다(`POC_AMBIGUOUS_NOTE`가 그렇게 잘린 선례 — #573).
+    # ⚠ 모델 사본에서는 이 노트를 `prompt_loader`가 빼고 영어 표지를 `errors:` 줄에 싣는다 — 접기가
+    # 로그 머리를 80자에서 자르기 때문이다(적대적 리뷰 2026-10-10).
     partial = semgrep_partial_parse(steps[-1].stdout)
     if partial:
         shown = ", ".join(partial[:3]) + (" 외" if len(partial) > 3 else "")
