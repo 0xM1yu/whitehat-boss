@@ -28,8 +28,8 @@ CRASHED는 `run`이 1(트레이스백)로 낸다. 이 도구의 코드는 `run`�
   다시 읽어 T를 좁힌다). 역할별 조기경보(healthy 꼬리에서 뽑는 더 짧은 T)는 baseline 실측이
   선행이라 여기 넣지 않는다 — 이 하드 상한은 오경보 0으로 지금 방어된다.
 - **error_storm K = `_MAX_CONSECUTIVE_DROPS`.** 차단기가 잡으려는 모양(**진행 없이 한
-  자리에서 연속 실패**)을 밖에서 읽는다 — K와 역할 축(`scout_member`)은 차단기와 맞추고,
-  `systematic` 축 하나만 trace에 없어 근사로 남는다(크기 거절 오탐). 실제 트립은 종료 전이
+  자리에서 연속 실패**)을 밖에서 읽는다 — K와 역할 축(`scout_member`)은 차단기의 자리 카운터와
+  맞추고, `systematic` 축 하나만 trace에 없어 근사로 남는다(크기 거절 오탐). 실제 트립은 종료 전이
   사유로 정확히 잡는다(`_error_storm` 참조).
 
 `derive_status`와 그 보조는 **순수**하다 — 임계값을 인자로 받아 파일·시계·상수에 안 매인다.
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 # 실패 사유 (runner._REASON_GATEWAY·_REASON_SCHEMA와 같은 값 — test_monitor가 대조해 고정한다).
 # `over_candidate_max`(runner._REASON_OVER_MAX)는 실패가 아니라 예산 절단이라 제외한다.
 _FAILURE_REASONS = frozenset({"gateway_error", "schema_parse_failed"})
-# 진행(리셋) 이벤트 — 하나라도 나오면 그 앞의 연속 실패는 끊긴다(차단기가 완주에서 리셋하는 근사).
+# 진행(리셋) 이벤트 — 하나라도 나오면 그 앞의 연속 실패는 끊긴다(차단기의 리셋 조건을 근사).
 _PROGRESS_KINDS = frozenset({"target_planned", "gate_eval", "transition"})
 # 차단기가 실제로 터진 사후 신호 (runner가 run 종료 전이에 남기는 사유).
 _BREAKER_REASON = "consecutive_target_failures"
@@ -116,10 +116,11 @@ def _error_storm(events: list[dict], k: int) -> bool:
 
     두 갈래다. **사후·정확:** 차단기가 실제로 터진 run은 종료 전이 사유가
     `consecutive_target_failures`라 그것으로 확정한다. **라이브·근사:** 진행 이벤트
-    (`target_planned`·`gate_eval`·`transition` — 차단기가 완주에서 카운터를 리셋하는 것의
-    근사)가 끼기 전까지, **`scout_member`(자리)별로** 실패를 세어 한 자리가 K개에 닿으면
-    storm으로 본다. 차단기가 `item.role`을 키로 세는 것과 같은 축이다 — 그래서 대상 하나가
-    풀 멤버 셋에서 각 1회씩 죽는 것(자리별 1)은 storm이 아니다(차단기도 안 터진다).
+    (`target_planned`·`gate_eval`·`transition` — 차단기의 리셋 조건을 근사)가 끼기 전까지,
+    **`scout_member`(자리)별로** 실패를 세어 한 자리가 K개에 닿으면 storm으로 본다. 차단기의 자리
+    카운터와 같은 축이다 — 그래서 대상 하나가 풀 멤버 셋에서 각 1회씩 죽는 것(자리별 1)은 storm이
+    아니다. ⚠ 차단기의 run 카운터는 자리를 안 가르므로 그 모양도 차단기는 터질 수 있고(#197)
+    라이브는 그것을 미탐한다 — 종료 전이 사유가 뜬 뒤에야 참이다.
 
     ⚠ **차단기와 값(K)·역할 축은 맞추되, systematic 축 하나가 근사로 남는다.** `role`은
     `target_skipped.scout_member`에 실려 있어 위처럼 자리별로 세지만, `_drop`이 크기 거절
