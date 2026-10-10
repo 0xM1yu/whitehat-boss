@@ -287,7 +287,7 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | `symbols` | `{"name": "parse_header", "file": "parser.c", "line_start": 19, "line_end": 26}` |
 | `calls` | `{"memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf", "src", "len"]}]}` — callee → 호출 지점(index-v2. v1은 같은 간선의 목록이었다) |
 | 조회 표(index-v2) | `functions`·`macros`·`types`·`file_vars`·`fields`·`locals`·`assigns`·`field_assigns` — 모양은 `indexer.py` 모듈 docstring. NE resolver 몫이고 캡슐로 가지 않는다 |
-| 조회 표(index-v3, #304) | `writes`(원소·역참조 대입 · 함수 안 선언 초기화) · `fn_bindings`(함수 포인터 필드에 묶인 함수 — 필드 대입·지정 초기화) · `field_calls`(`x->f(...)` 호출 지점) — v2 표는 그대로다. 읽는 쪽은 `index_graph`의 `writes_of`·`field_writes_of`·`fn_pointer_targets`·`indirect_callees_of` |
+| 조회 표(index-v3, #304) | `writes`(원소·역참조 대입 · 함수 안 선언 초기화) · `fn_bindings`(함수 포인터 필드에 묶인 함수 — 필드 대입·지정 초기화) · `field_calls`(`x->f(...)` 호출 지점) — v2 표는 그대로다. 읽는 쪽은 `index_graph`의 `writes_of`·`field_writes_of`·`fn_pointer_targets`·`indirect_callees_of` ⏵ 2026-10-10 그리고 NE resolver — `writes`의 원소·역참조 행을 대입 라벨(3·4·13)에 싣는다(`table()`로 직접 · #304) |
 | 조회 표(index-v4) | `includes`(파일 → `#include` 지시문 — 경로 원문 · 꺾쇠 여부) · `enum_constants`(enum 상수 → 그 enum 정의 전체 범위) · `types`의 앞선 선언 typedef 행에 `forward` — v3 표는 그대로다. 읽는 쪽은 `index_graph.definitions_of`(여러 정의 중 앵커가 include로 닿는 것이 하나뿐이면 그것) |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
 | `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |

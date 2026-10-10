@@ -19,6 +19,14 @@ same function")인데, 그 LHS는 **배열 첨자 대입**(`subscript_expression
 직접 넣었다) — 그 격차가 정확히 이 한 줄이다. `_resolve_same_function_assignment`가
 **평범한 이름 대입**(`i = n;`)에는 맞게 동작하는 것은
 `test_resolve_finds_a_declaration_and_its_same_function_assignment`가 보인다.
+
+⏵ 2026-10-10 — resolver가 index-v3 `writes`를 읽는다(#304). 위 발견은 그 전의 기록이다. 이제 실
+인덱서(index-v3 이상)로 hop 1 예의 세 조각이 **다** 나온다 — 남은 격차는 **순서**뿐이다: 명세 예는
+선언 → 대입 → 매크로이고 resolver는 선언 → 매크로 → 대입이다(`_resolve_declaration`의 순서 —
+`writes`가 없는 인덱스의 출력 바이트를 안 바꾸려고 그대로 뒀다).
+`test_resolve_reproduces_the_hop1_example_up_to_the_order_of_two_fragments`가 그 격차를 바이트로
+박는다. v2 인덱스(`writes` 없음)에서는 예전 그대로 대입 조각이 없고 `Resolution.writes_available`이
+`False`다(아래 #304 절).
 """
 
 import importlib.util
@@ -29,7 +37,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters.factory import build_deps
-from src.adapters.index_graph import GraphIndex
+from src.adapters.index_graph import V3_TABLES, V4_TABLES, GraphIndex
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import (
     _CALLER_SITE_RADIUS,
@@ -139,7 +147,7 @@ def test_an_empty_v2_function_table_is_an_index_that_finds_nothing_not_a_missing
     assert [item.reason.value for item in resolution.unfilled] == ["not_found"]
 
 
-# --- hop 1 예 — 실 인덱서 픽스처 (선언·매크로 명명은 되고, 원소 대입은 안 된다) -----
+# --- hop 1 예 — 실 인덱서 픽스처 (⏵ 2026-10-10 #304 — 원소 대입도 된다) ------------
 
 
 @pytest.fixture
@@ -147,11 +155,11 @@ def hop1_graph(tmp_path: Path) -> GraphIndex:
     return _graph_index(_HOP1_ROOT, tmp_path)
 
 
-def test_resolve_finds_the_hop1_declaration_and_macro_named_blocks_but_not_the_assignment(
+def test_resolve_finds_the_hop1_declaration_macro_named_and_element_assignment_blocks(
     hop1_graph: GraphIndex,
 ) -> None:
-    """모듈 docstring의 발견 — 라벨 10(`Buf` 선언)·11(`GIF_STAMP_LEN`)은 되고, 라벨 4(원소
-    대입)는 실 인덱서의 `assigns` 표에 없어서 안 된다."""
+    """라벨 10(`Buf` 선언)·11(`GIF_STAMP_LEN`)·4(원소 대입 88행). 라벨 4는 `assigns`가 아니라
+    index-v3 `writes`에서 온다(#304 — ⏵ 2026-10-10 전에는 이 검사가 라벨 4가 **없다**를 박았다)."""
     target_file = "android-gif-drawable/src/main/c/giflib/dgif_lib.c"
     query = _query(
         requests=(_request("variable", "Buf"), _request("function", "strdup")),
@@ -166,7 +174,9 @@ def test_resolve_finds_the_hop1_declaration_and_macro_named_blocks_but_not_the_a
     assert by_label["declaration (local)"].file == target_file
     assert by_label["macro named in the declaration"].name == "GIF_STAMP_LEN"
     assert by_label["macro named in the declaration"].lines == (17,)
-    assert "assignment in the same function" not in by_label  # 위 docstring의 발견
+    assert by_label["assignment in the same function"].lines == (88,)
+    assert by_label["assignment in the same function"].file == target_file
+    assert resolution.writes_available is True
 
     assert len(resolution.unfilled) == 1
     assert resolution.unfilled[0].reason == UnfilledReason.LIBC
@@ -174,6 +184,211 @@ def test_resolve_finds_the_hop1_declaration_and_macro_named_blocks_but_not_the_a
     assert resolution.unfilled[0].text == (
         "Not resolved: function:strdup (C standard library symbol)."
     )
+
+
+def test_resolve_reproduces_the_hop1_example_up_to_the_order_of_two_fragments(
+    hop1_graph: GraphIndex,
+) -> None:
+    """실 인덱서 → 실 resolver의 `followup_text`가 명세 hop 1 예(`test_symbol_render`의
+    `_HOP1_EXPECTED` — 렌더 계층만 본 바이트 일치)와 **조각 둘의 순서만** 다르다(모듈 docstring
+    ⏵ 2026-10-10). 순서를 명세대로 바꾸면 이 검사가 빨개진다 — 그때는 기대값을 명세 그대로
+    고친다."""
+    from tests.test_symbol_render import _HOP1_EXPECTED
+
+    query = _query(
+        requests=(_request("variable", "Buf"), _request("function", "strdup")),
+        target_file="android-gif-drawable/src/main/c/giflib/dgif_lib.c",
+        visible={},
+    )
+
+    resolution = resolve(query, table=hop1_graph.table, read_lines=_read_lines(_HOP1_ROOT))
+
+    assignment = (
+        "/* --- retrieved: Buf (assignment in the same function) --- */\n"
+        "/* ===== android-gif-drawable/src/main/c/giflib/dgif_lib.c ===== */\n"
+        "  88| \tBuf[GIF_STAMP_LEN] = '\\0';\n\n"
+    )
+    macro = (
+        "/* --- retrieved: GIF_STAMP_LEN (macro named in the declaration) --- */\n"
+        "/* ===== android-gif-drawable/src/main/c/giflib/gif_lib.h ===== */\n"
+        "  17| #define GIF_STAMP_LEN sizeof(GIF_STAMP) - 1\n\n"
+    )
+    assert assignment + macro in _HOP1_EXPECTED  # 기대값 조각이 명세 예와 바이트로 같다
+    assert resolution.followup_text == _HOP1_EXPECTED.replace(
+        assignment + macro, macro + assignment
+    )
+
+
+# --- #304 — index-v3 `writes`(원소·역참조 쓰기)를 대입 라벨 3·4·13에 싣는다 -----------------
+#
+# 실 인덱서로 인덱싱하는 합성 저장소다(`ne_repo2`에 함수를 더하면 다른 검사의 `closest_name`·줄
+# 번호가 흔들려 따로 둔다). 줄 번호는 아래 소스의 실제 줄이다(1-index).
+
+_WRITES_C = """\
+#define CAP 8
+struct hdr {
+    char *buf;
+    int len;
+};
+static char g_tbl[CAP];
+void fill(char *dst, struct hdr *h)
+{
+    char tmp[CAP] = {0};
+    int k = 0;
+    tmp[0] = 'a';
+    k = 2;
+    *dst = tmp[0];
+    tmp[k] = 'b'; tmp[1] = 'c';
+    h->len = k;
+    h->buf[0] = 'd';
+}
+void other(void)
+{
+    char tmp[CAP];
+    tmp[3] = 'z';
+    g_tbl[1] = 'e';
+    g_tbl[2] = 'f';
+}
+void reset(void)
+{
+    char *p = 0;
+    p = g_tbl; *p = 0;
+}
+void clash(struct hdr *h)
+{
+    char len[CAP];
+    len[0] = 'g';
+}
+static char *g_ptr;
+void swap(void)
+{
+    g_ptr = g_tbl; *g_ptr = 0;
+}
+"""
+
+
+def _writes_graph(tmp_path: Path, *, version: str | None = None) -> GraphIndex:
+    """`_WRITES_C`를 실 인덱서로 인덱싱한다. `version="index-v2"`면 v3 이상 표를 떼어 #304 전
+    이미지가 내던 v2 문서로 만든다(v2 표는 v3에서 한 글자도 안 바뀌었다 — `indexer.py` v3 절)."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "w.c").write_text(_WRITES_C, encoding="utf-8", newline="\n")
+    index = _indexer.build_index([root / "w.c"], root)
+    if version is not None:
+        index["version"] = version
+        for name in V3_TABLES + V4_TABLES:
+            index.pop(name, None)
+    out = tmp_path / "index.json"
+    out.write_text(json.dumps(index), encoding="utf-8")
+    return GraphIndex(out)
+
+
+def _writes_resolve(graph: GraphIndex, tmp_path: Path, target: str):
+    query = _query(requests=(_request("variable", target),), target_file="w.c")
+    return resolve(query, table=graph.table, read_lines=_read_lines(tmp_path / "repo"))
+
+
+def _labelled(resolution, label: str) -> list[tuple[int, ...]]:
+    return [block.lines for block in resolution.blocks if block.label == label]
+
+
+def test_label_4_merges_element_writes_in_line_order_within_the_function(tmp_path: Path):
+    """`tmp`(지역 배열): 선언 9행(라벨 10) + 같은 함수의 원소 대입 11·14행(라벨 4). 9행 선언
+    초기화(`init`)는 라벨 4에 다시 안 싣고, 다른 함수(`other`)의 같은 이름 `tmp[3]`(21행)도 안 든다.
+    한 줄에 원소 대입이 둘(14행)이면 조각 하나다."""
+    resolution = _writes_resolve(_writes_graph(tmp_path), tmp_path, "tmp")
+
+    assert _labelled(resolution, "declaration (local)") == [(9,)]
+    assert _labelled(resolution, "assignment in the same function") == [(11,), (14,)]
+    assert resolution.writes_available is True
+
+
+def test_label_4_carries_a_deref_write_through_a_parameter(tmp_path: Path):
+    """`dst`(파라미터): `*dst = tmp[0];`(13행, `deref`)이 라벨 4로 든다."""
+    resolution = _writes_resolve(_writes_graph(tmp_path), tmp_path, "dst")
+
+    assert _labelled(resolution, "assignment in the same function") == [(13,)]
+
+
+def test_label_4_merges_name_assigns_and_drops_a_same_line_duplicate(tmp_path: Path):
+    """`p`: 28행에 이름 대입(`p = g_tbl`)과 역참조 쓰기(`*p = 0`)가 같이 있다 — 조각은 하나다.
+    27행 선언 초기화는 라벨 10이 준다. `k`(이름 대입만 — `writes`에 원소·역참조 행이 없다)는
+    예전 그대로 12행 하나다(대조군)."""
+    graph = _writes_graph(tmp_path)
+
+    p = _writes_resolve(graph, tmp_path, "p")
+    assert _labelled(p, "declaration (local)") == [(27,)]
+    assert _labelled(p, "assignment in the same function") == [(28,)]
+
+    k = _writes_resolve(graph, tmp_path, "k")
+    assert _labelled(k, "assignment in the same function") == [(12,)]
+
+
+def test_label_13_carries_element_writes_to_a_file_scope_array(tmp_path: Path):
+    """`g_tbl`(파일 전역 배열): 이름 대입이 없고 원소 대입 22·23행이 ±1로 든다. 순서는 (파일, 줄).
+    `reset`의 `p = g_tbl`은 `p`에 쓰는 것이라 안 든다."""
+    resolution = _writes_resolve(_writes_graph(tmp_path), tmp_path, "g_tbl")
+
+    assert _labelled(resolution, "declaration (file scope)") == [(6,)]
+    assert _labelled(resolution, "assignment to g_tbl") == [(21, 22, 23), (22, 23, 24)]
+    assert "Note: assignment blocks" in resolution.followup_text  # 라벨 13 — 주의문이 붙는다
+
+
+def test_label_13_keeps_name_assigns_first_and_drops_a_same_line_write(tmp_path: Path):
+    """`g_ptr`(파일 전역 포인터): 38행에 이름 대입(`g_ptr = g_tbl`)과 역참조 쓰기(`*g_ptr = 0`)가
+    같이 있다 — 라벨 13 조각은 하나다(±1)."""
+    resolution = _writes_resolve(_writes_graph(tmp_path), tmp_path, "g_ptr")
+
+    assert _labelled(resolution, "declaration (file scope)") == [(35,)]
+    assert _labelled(resolution, "assignment to g_ptr") == [(37, 38, 39)]
+
+
+def test_label_3_carries_field_based_element_writes(tmp_path: Path):
+    """체인 `h->buf`: 마지막 필드 `buf`에 필드 대입(`field_assigns`)은 없고 필드 기저 원소 대입
+    `h->buf[0] = 'd'`(16행)가 ±1로 든다. `h->len`은 필드 대입(15행)만 — 대조군이다. `clash`의
+    지역 배열 `len[0] = 'g'`(33행)는 `writes`에서 같은 키 `len` 아래 **이름 기저**로 든다 — 필드
+    `.len`의 대입이 아니라서 라벨 3에 안 든다."""
+    graph = _writes_graph(tmp_path)
+
+    buf = _writes_resolve(graph, tmp_path, "h->buf")
+    assert _labelled(buf, "assignment to .buf") == [(15, 16, 17)]
+
+    length = _writes_resolve(graph, tmp_path, "h->len")
+    assert _labelled(length, "assignment to .len") == [(14, 15, 16)]
+
+
+def test_a_v2_index_keeps_the_old_output_and_says_writes_are_unavailable(tmp_path: Path):
+    """v2 문서(`writes` 없음 — #304 전 이미지의 산출물)에서는 대입 라벨이 예전 그대로 이름·필드
+    대입만 내고 `writes_available=False`로 그 공백을 적는다. v3 이상 문서와 **같은 소스**라 차이는
+    `writes` 표 하나다."""
+    v2 = _writes_graph(tmp_path, version="index-v2")
+    assert v2.table("writes") is None
+    assert v2.table("assigns")  # v2 표는 그대로 읽힌다
+
+    tmp = _writes_resolve(v2, tmp_path, "tmp")
+    assert _labelled(tmp, "declaration (local)") == [(9,)]
+    assert _labelled(tmp, "assignment in the same function") == []
+    assert tmp.writes_available is False
+    assert tmp.index_available is True  # 색인은 있다 — 없는 것은 `writes` 표 하나다
+
+    assert _labelled(_writes_resolve(v2, tmp_path, "k"), "assignment in the same function") == [
+        (12,)
+    ]
+    assert _labelled(_writes_resolve(v2, tmp_path, "p"), "assignment in the same function") == [
+        (28,)
+    ]
+    assert _labelled(_writes_resolve(v2, tmp_path, "g_tbl"), "assignment to g_tbl") == []
+    assert _labelled(_writes_resolve(v2, tmp_path, "h->buf"), "assignment to .buf") == []
+
+
+def test_writes_available_is_false_without_any_index():
+    resolution = resolve(
+        _query(requests=(_request("variable", "x"),), target_file="a.c"),
+        table=lambda _name: None,
+        read_lines=lambda _file: [],
+    )
+
+    assert resolution.writes_available is False
 
 
 # --- ne_repo2 — 나머지 라벨·UNFILLED·동명 점수 ------------------------------
