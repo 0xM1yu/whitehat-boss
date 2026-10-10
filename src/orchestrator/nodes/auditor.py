@@ -821,9 +821,11 @@ def _answer_observed(answer: Finding | AuditProcedure, *, cited: int) -> dict[st
       reachability_unknown의 빈 경로와 trace에서 구분되지 않아** 규칙 위반을 셀 수 없었다.
     - `cwe_present_on_no_signal` — ⏵ 2026-10-09(이슈 #525) v11 답(`AuditProcedureNullableCwe`)이
       `no_signal`인데 `cwe`가 null이 아니다. v11 산문은 null을 시키고 스키마는 안 막는다(거절하면
-      최종 답 재생성 — 같은 근거) → 그 위반을 여기서 센다. **v11로만 제한한다** — v8~v10은 계약이
-      non-null이라 `no_signal`에도 CWE를 쓰는 것이 규칙 준수다. ⚠ `no_signal`은 언제나
-      `audit is None`이라 아래 조기 반환 **앞**에 둔다 — 뒤에 두면 영영 안 생긴다.
+      최종 답 재생성 — 같은 근거) → 그 위반을 여기서 센다. **v11 이후 판(v11·v12)만 센다** —
+      v12 답은 그 서브클래스라 든다(⏵ 2026-10-10 이슈 #578). v8~v10은 계약이 non-null이라
+      `no_signal`에도 CWE를 쓰는 것이 규칙 준수다. ⚠ v10·v11의 `no_signal`은 `audit is None`이라
+      아래 조기 반환 **앞**에 둔다 — 뒤에 두면 영영 안 생긴다(v12는 `audit`가 non-null이라 어느
+      자리든 서지만 같은 자리를 쓴다).
     """
     observed: dict[str, TraceValue] = {"cited_probe_evidence": cited}
     if answer.trigger_status:
@@ -889,7 +891,8 @@ def _finding_from_procedure(
     없다 (`AuditProcedure`에 그 필드가 없다).
 
     - `audit.path` → `path` (**게이트 `p2`가 경로 양 끝을 요구한다** — 비면 Critic은 「경로 없음」,
-      PoV는 단계 없음, 보고서는 제목 대체로 떨어진다. `audit`가 `None`(no_signal)이면 `[]`.
+      PoV는 단계 없음, 보고서는 제목 대체로 떨어진다. v10·v11은 `audit`가 `None`(no_signal)이면
+      `[]`.
       ⏵ 2026-10-10 — **`trigger_status`가 `no_signal`이면 `audit`가 있어도 `[]`다**(v12, 이슈 #578).
       그 경로는 걸러낸 후보를 따라간 기록이지 source→sink 주장이 아니다 — 옮기면 `trigger_status`를
       안 읽는 게이트 `p2`가 「세운 것이 없다」는 Finding의 경로 양 끝을 세어 v11까지와 다른 등급을
@@ -903,8 +906,9 @@ def _finding_from_procedure(
     - `missing_evidence` — **`result`가 `decisive_code_missing`이거나 `trigger_status`가
       `reachability_unknown`이면** 발급 `missing_id` 하나다. 산문도 둘 다 약속한다 — 넓은 쪽인
       이유는 위 모듈 docstring이 든다. 뒤 `_materialize_missing`이 그 ID마다 blocking
-      `MissingEvidence`를 만들어 E2를 막는다. `audit`가 `None`(`no_signal`)이면 비어 있다 —
-      그 판정은 「모르겠다」가 아니라 「세운 것이 없다」다.
+      `MissingEvidence`를 만들어 E2를 막는다. `no_signal`이면 비어 있다(`no_candidate`는
+      `decisive_code_missing`이 아니고 상태도 `reachability_unknown`이 아니다 — v10·v11은 `audit`가
+      `None`이어서, v12는 `path`가 비어서) — 그 판정은 「모르겠다」가 아니라 「세운 것이 없다」다.
 
     `repro_spec.origin`은 여기서 안 건드린다 — `run()`이 이 함수 **뒤에** `_ensure_repro_origin`을
     부르므로 모델이 쓴 `harness`는 그대로 `model`로 덮인다.
