@@ -269,6 +269,64 @@ _COMPILE_ERROR_MARKER = "clang-diagnostic-error"
 # semgrep이 정상 종료로 쓰는 코드. 0=발견 없음, 1=발견(--error). 나머지는 도구 자체의 실패다.
 _SEMGREP_OK = (0, 1)
 
+# 🔴 **semgrep이 대상을 반쪽만 파싱했다는 유일한 표지** (이슈 #563 선행).
+# `--json` 출력의 `errors[].type`은 **리스트**이고 그 첫 원소가 종류 이름이다 — 2026-10-10
+# 실측(`harness-tools:v3` · `/opt/semgrep-rules/c` · 구문 오류를 심은 C 파일):
+#
+#   errors[0].type    = ['PartialParsing', [{'path': 'bad.c', 'start': {...}, 'end': {...}}]]
+#   errors[0].level   = 'warn'              <- 'error'가 아니다
+#   errors[0].path    = 'bad.c'
+#   errors[0].message = "Syntax error at line bad.c:3:" + 개행 + " `int` was unexpected"
+#
+# ⚠ **다른 어느 축으로도 못 가른다**(같은 실측): 같은 파일에서 `exit`는 **1**(발견 있음과
+# 같다) · `results`는 **1건으로 정상** · 그리고 🔴 **`paths.scanned`에 그 파일이 들어 있다**.
+# 구문을 고친 대조 파일은 `exit` 1 · `results` 1 · **`errors` 0**으로 `errors`만 갈렸다.
+# 그래서 `judge_semgrep`의 `paths.scanned` 판정(#66)은 이 경우를 **잡지 못한다.**
+#
+# **왜 기록만 하고 판정을 안 바꾸나.** 반쪽 파싱의 히트도 신호다 — `ok=False`로 내리면
+# `static_ok`가 꺼져 E1이 **줄어든다**(방향이 거꾸로다 · PR #553 council 2026-10-10의
+# (B) 기각 사유와 같다). 참인 것은 **「찾은 수가 하한이다」**까지다.
+_SEMGREP_PARTIAL_PARSE = "PartialParsing"
+
+
+def semgrep_partial_parse(stdout: str) -> tuple[str, ...]:
+    """반쪽 파싱이 난 **경로들** — 없으면 빈 튜플. 이슈 #563 선행.
+
+    `errors[].type`이 리스트든 문자열이든 받는다(실측은 리스트지만 semgrep 판이 바뀌면 모양이
+    달라질 수 있고, 그때 조용히 0건이 되는 것이 이 함수의 실패 모드다 — 아래 `type` 판정을
+    둘 다 받게 둔 이유). 경로가 없는 항목은 `path` 자리를 비워 두지 않고 **건너뛴다** —
+    세는 것은 「어느 파일이 반쪽인가」이고 그것을 모르면 셀 것이 없다.
+    """
+    try:
+        document = json.loads(stdout)
+    except ValueError:
+        return ()
+    if not isinstance(document, dict):
+        return ()
+    errors = document.get("errors")
+    if not isinstance(errors, list):
+        return ()
+    partial: list[str] = []
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        name = kind[0] if isinstance(kind, list) and kind else kind
+        if name != _SEMGREP_PARTIAL_PARSE:
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            partial.append(path)
+    return tuple(partial)
+
+
+# 반쪽 파싱을 봤을 때 관측에 싣는 한 줄. 🔴 **상수로 빼는 이유**는 `POC_AMBIGUOUS_NOTE`와
+# 같다 — 문구의 **뜻**을 테스트가 단언해야 「하한이다」가 「전부다」로 뒤집히지 않는다.
+SEMGREP_PARTIAL_NOTE = (
+    "# semgrep: 대상을 반쪽만 파싱했다 (PartialParsing) — 찾은 히트 수는 **하한**이고 "
+    "안 본 구간의 신호는 없다. 이 수로 「신호가 그것뿐이다」를 단언하지 않는다"
+)
+
 # 컨테이너가 명령을 띄우지도 못했을 때 런타임이 쓰는 코드. 크래시(=신호)와 구분해야 한다.
 # 실행류에서는 **asan만** 쓰고(그 밖에는 clang-tidy가 쓴다), `poc`·gdb에는 쓰지 않는다.
 # ⏵ 2026-10-09 — `poc`는 이 상수가 아니라 더 넓은 `_poc_is_harness_failure`(아래
@@ -985,7 +1043,8 @@ def unexecuted_commands_note(executed: int, total: int) -> str | None:
 
 
 def summary_line(tool: str, steps: list[Step]) -> str | None:
-    """로그 머리에 붙일 한 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
+    """로그 머리에 붙일 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
+    semgrep이 대상을 반쪽만 파싱했으면 **두 줄**이다(개행으로 이어 한 반환값).
 
     ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** 이 줄은 `_execute`가
     `sections[2]`에 넣고 그 로그 꼬리가 모델 관측으로 간다. 🔴 **`1`은 ASan의 기본 종료
@@ -1006,7 +1065,17 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     results = semgrep_results(steps[-1].stdout)
     if results is None:
         return "# semgrep: 결과 문서 없음 — 아래 stderr 참조"
-    return f"# semgrep: {len(results)} findings"
+    head = f"# semgrep: {len(results)} findings"
+    # ⏵ 2026-10-10 (이슈 #563 선행) — 반쪽 파싱을 **같은 반환값의 둘째 줄에** 적는다. 떨어뜨려 두면
+    # 관측 꼬리 상한에서 잘려 수만 남는다(`POC_AMBIGUOUS_NOTE`가 그렇게 잘린 선례 — #573).
+    # ⚠ 모델 사본에서는 이 노트를 `prompt_loader`가 빼고 영어 표지를 `errors:` 줄에 싣는다 — 접기가
+    # 로그 머리를 80자에서 자르기 때문이다(적대적 리뷰 2026-10-10).
+    partial = semgrep_partial_parse(steps[-1].stdout)
+    if partial:
+        shown = ", ".join(partial[:3]) + (" 외" if len(partial) > 3 else "")
+        detail = f"{SEMGREP_PARTIAL_NOTE} ({len(partial)}개: {shown})"
+        return head + chr(10) + detail
+    return head
 
 
 def first_hit_location(tool: str, steps: list[Step]) -> Location | None:

@@ -47,7 +47,7 @@
 >
 > **⚠ 로스터 확정이 D51을 풀지 않는다.** D51을 막는 것은 로스터가 아니라 **Auditor A/B**인데, ADR 0010 §2가 그 자리를 *"A/B로 남긴다 — 문헌이 정면으로 갈려 실측으로 가른다"*로 **확정하면서 열어 뒀고**, PROJECT-CONTEXT.md §1도 *"Auditor는 A/B다"*로 같은 것을 적는다. 어느 모델의 emit 분포를 보고 `Literal`을 좁힐지가 그대로 미정이라 **보류 유지**다 — 후보가 셋에서 둘로 줄었을 뿐 하나가 아니다. **D3도 그대로다** — 애초에 로스터와 무관한 항목이고(`expand()`의 호출부가 없다) 확정이 그 배선을 만들지 않는다. **보류 표시는 남되 그 사유는 2026-09-08부터 이미 「모델 대기」가 아니다.**
 >
-> **⏵ 2026-09-24 — 위 세 문단(2026-09-08·09-09)의 「Auditor A/B」는 2026-09-21 로스터 교체(#240, 2026-09-22 머지) 전 서술이다.** Auditor는 `qwen3.6-35b-a3b` 한 자리가 됐다(2026-09-21 교체 — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1, 근거 실험팀 2026-09-20 선정. 품질 미측정). 그래서 D51을 지금 막는 것은 A/B가 아니라 **그 단일 모델의 `trigger_status` emit 분포가 아직 관측되지 않은 것**이고([D51](open-questions/D/D51.md)의 2026-09-21 절), D24의 「run 두 번」은 한 번이 됐다([D24](open-questions/D/D24.md)의 2026-09-21 절). D3은 [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 6이 확장 상한을 need_evidence 루프의 `max_hops`로 대체하는 쪽으로 정했다([D3](open-questions/D/D3.md)의 2026-09-24 절). **두 항목의 보류 표시는 그대로다.** ⏵ 2026-09-26 — 그 한 자리의 모델이 다시 바뀌었다(`qwen3.8-27b`, 사고 켬 — PROJECT-CONTEXT.md §1). 두 항목을 막던 조건(그 모델의 run·emit 분포가 없다)은 새 모델에도 그대로다.
+> **⏵ 2026-09-24 — 위 세 문단(2026-09-08·09-09)의 「Auditor A/B」는 2026-09-21 로스터 교체(#240, 2026-09-22 머지) 전 서술이다.** Auditor는 `qwen3.6-35b-a3b` 한 자리가 됐다(2026-09-21 교체 — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1, 근거 실험팀 2026-09-20 선정. 품질 미측정). 그래서 D51을 지금 막는 것은 A/B가 아니라 **그 단일 모델의 `trigger_status` emit 분포가 아직 관측되지 않은 것**이고([D51](open-questions/D/D51.md)의 2026-09-21 절), D24의 「run 두 번」은 한 번이 됐다([D24](open-questions/D/D24.md)의 2026-09-21 절). D3은 [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 6이 확장 상한을 need_evidence 루프의 `max_hops`로 대체하는 쪽으로 정했다([D3](open-questions/D/D3.md)의 2026-09-24 절). **두 항목의 보류 표시는 그대로다.** ⏵ 2026-09-26 — 그 한 자리의 모델이 다시 바뀌었다(`qwen3.8-27b`, 사고 켬 — PROJECT-CONTEXT.md §1). 두 항목을 막던 조건(그 모델의 run·emit 분포가 없다)은 새 모델에도 그대로다. ⏵ 2026-10-10 — 두 항목 모두 닫혔다: D3은 위 결정 6으로, D51은 서빙 판(v10 이상)의 응답 스키마가 다섯 값을 강제하는 것으로 충분하다는 결정으로([D51](open-questions/D/D51.md) 머리 블록). 이 절의 「보류」 표시에 걸린 항목은 이제 없다.
 >
 > 미해결 D는 GitHub Issue로 추적한다 — **⚠ 2026-09-08 — 이 문장의 「예외 넷」은 낡았다.** D9·D20·D21은 이슈가 있다(#94·#95·#96, 전부 열림 — 2026-09-08 조회). **남은 예외는 D19 하나**이고 그 이슈는 아직 없다. **2026-09-18 — 반대 방향의 어긋남 하나를 찾아 고쳤다:** D1의 미러 이슈 [#59](https://github.com/0xM1yu/whitehat-boss/issues/59)가 2026-09-15에 **수동으로 닫혀** 있었다(사유 *"2x2 실험 폐기"*, `Closes`를 건 PR 없음 — §3 규칙 1 위반). 폐기된 것은 2×2 **실험 트랙**이고 D1이 가리키는 [evaluation.md](evaluation.md) §2.1의 **라벨 축은 그때 살아 있었다** — 같은 문서 §2.2가 *"라벨 통합 여부는 open-questions.md에서 확정한다"*로 이 항목을 가리킨다. 본문 상태가 계속 `열림`이었으므로 이슈를 되열어 미러를 본문에 맞췄다. **2026-09-19 — 같은 문장을 다시 갱신한다:** [D9](open-questions/D/D9.md) 본문이 `닫힘`이 됐고, 미러 [#94](https://github.com/0xM1yu/whitehat-boss/issues/94)는 그 PR의 `Closes`가 **머지될 때 닫힌다** — **이 줄을 쓴 시점(2026-09-19 조회)에는 PR·이슈 둘 다 `OPEN`이다.** #95·#96은 그대로 열려 있다. ⚠ **이 줄이 갱신 대상이라는 것을 바로 위 2026-09-18 기록이 이미 보여 준다** — 미러 상태가 움직이면 여기를 고친다. **2026-09-20 — 그 라벨 축도 없어졌다:** PM 결정으로 2×2가 완전히 폐기되고 `CONDITION_PATTERN`이 `@pipeline`만 받게 되면서 D1이 묻던 라벨 충돌 자체가 소멸했다([ADR 0011](decisions/0011-retire-the-2x2-condition-axis.md)). 본문이 `닫힘`이 됐고 미러 #59는 그 PR의 `Closes`로 닫힌다.
 
@@ -66,7 +66,7 @@
 | D11 | Evidence에 "발견 건수"가 없다 | 열림 | [본문](open-questions/D/D11.md) |
 | D13 | **캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가** | 열림 | [본문](open-questions/D/D13.md) |
 | D12 | ~~build를 몇 단계에서 실행하는가~~ (선택지 (a) — 문서를 코드에 맞춤) | 닫힘 | [본문](open-questions/D/D12.md) |
-| D14 | **재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다** | 열림 | [본문](open-questions/D/D14.md) |
+| D14 | ~~재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다~~ (확장 안 함 · 바이트 동일은 Fake 경로) | 닫힘 | [본문](open-questions/D/D14.md) |
 | D15 | **`Budget.tool_seconds`의 값에 실대상 근거가 없다** | 열림 | [본문](open-questions/D/D15.md) |
 | D16 | ~~확장자로 대상을 고르는 도구가 `.inc`를 조용히 건너뛴다~~ | 닫힘 | [본문](open-questions/D/D16.md) |
 | D17 | **프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다** | 열림 | [본문](open-questions/D/D17.md) |
@@ -87,7 +87,7 @@
 | D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) — **값이 코드 상수인 것은 그대로** | 부분 | [본문](open-questions/D/D32.md) |
 | D33 | ~~`run_20260825_0001`이 옛 build 배선의 마지막 완전 측정이다~~ | 닫힘 | [본문](open-questions/D/D33.md) |
 | D34 | ~~언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다~~ | 닫힘 | [본문](open-questions/D/D34.md) |
-| D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 부분 | [본문](open-questions/D/D35.md) |
+| D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 닫힘 | [본문](open-questions/D/D35.md) |
 | D36 | ~~`report.md`에 E 등급이 없다 — run의 성과가 최종 산출물에 안 보인다~~ | 닫힘 | [본문](open-questions/D/D36.md) |
 | D37 | ~~`run_manifest.json`에 `profile`이 없다~~ | 닫힘 | [본문](open-questions/D/D37.md) |
 | D38 | **E4는 컨테이너 러너 + Fake auditor에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D38.md) |
@@ -103,7 +103,7 @@
 | D48 | ~~`target_skipped.stage`가 실제로 실패한 단계를 안 가리킨다~~ | 닫힘 | [본문](open-questions/D/D48.md) |
 | D49 | ~~재시도 프롬프트가 산출물에 안 남는다 — 실제로 서버에 간 요청을 재현할 수 없다~~ | 닫힘 | [본문](open-questions/D/D49.md) |
 | D50 | ~~`--tool-runner` 경고가 값을 비교하지 않아 오버라이드가 아닌 run을 오버라이드로 신고한다~~ | 닫힘 | [본문](open-questions/D/D50.md) |
-| D51 | **`trigger_status`의 보류 두 건 — (2) 필드 순서는 닫혔고 (1) 열거 강제가 남았다** | 보류 | [본문](open-questions/D/D51.md) |
+| D51 | ~~`trigger_status`의 보류 두 건 — (2) 필드 순서는 닫혔고 (1) 열거 강제가 남았다~~ (서빙 판 응답 스키마가 강제 · `Finding`은 `str` 유지) | 닫힘 | [본문](open-questions/D/D51.md) |
 | D52 | ~~`trigger_status`를 내라고 시키는 프롬프트가 저장소에 없어 그 필드는 구조적으로 항상 `null`이다~~ | 닫힘 | [본문](open-questions/D/D52.md) |
 | D53 | ~~실패한 `model_call`이 예산 장부에 한 푼도 안 실린다 — 폭주가 잦은 조건일수록 싸 보인다~~ | 닫힘 | [본문](open-questions/D/D53.md) |
 | D54 | ~~로스터 모델 중 어느 것도 `prompts/{scout,auditor,critic}/v2`를 고르지 않아 머지된 v2가 도달 불가다~~ (좌석이 v2를 건너뜀 · 조건별 판은 실험팀) | 닫힘 | [본문](open-questions/D/D54.md) |
@@ -113,7 +113,7 @@
 | D59 | ~~Critic과 Auditor가 다른 계열이어야 한다는 조건을 강제하는 장치가 코드에 없다~~ | 닫힘 | [본문](open-questions/D/D59.md) |
 | D60 | ~~bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다~~ | 닫힘 | [본문](open-questions/D/D60.md) |
 | D61 | ~~bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다~~ | 닫힘 | [본문](open-questions/D/D61.md) |
-| D62 | **bench가 판마다 같은 프롬프트를 보내 두 번째 판부터 자기 캐시를 맞는다 — (b) 채택, 왜곡 제거 (a)는 열림** | 부분 | [본문](open-questions/D/D62.md) |
+| D62 | ~~bench가 판마다 같은 프롬프트를 보내 두 번째 판부터 자기 캐시를 맞는다~~ ((b)로 끝냄 · (a)는 재현성 충돌로 기각) | 닫힘 | [본문](open-questions/D/D62.md) |
 | D63 | 리랭커 순위를 우리가 실제로 보내는 입력 모양에서 ~~한 번도 재지 않았다~~ 4b만 쟀다(2026-09-13 · 짧은 함수 8건) — **0.6b는 한 번도 안 쟀고 실경로(40줄 조각·32건)는 둘 다 아직이다** | 열림 | [본문](open-questions/D/D63.md) |
 | D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
 | D65 | **게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다** — ~~실서빙 run이 7단계에서 죽는다~~ (크래시는 #167이 닫음 · Auditor `missing_evidence` blocking은 해제 경로가 없어 E2 미만) | 부분 | [본문](open-questions/D/D65.md) |
@@ -123,7 +123,7 @@
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
 | D71 | ~~공유 캡슐의 토큰 예산이 첫 멤버의 토크나이저로만 강제된다 — 로스터는 풀 세 자리를 서로 다른 세 모델로 정해 두었다~~ (갈림 실측 후 예산 마진 0.90 — 옵션 A) | 닫힘 | [본문](open-questions/D/D71.md) |
-| D72 | **역할별 출력 상한에 위쪽 한계가 없다 — `2**31`이 로드를 통과하고, 그 run은 전량 400인데 bench가 「못 잼」으로 적는다** | 열림 | [본문](open-questions/D/D72.md) |
+| D72 | ~~역할별 출력 상한에 위쪽 한계가 없다~~ (로드가 실서빙 역할의 상한 ≥ 그 모델 registry 창을 거부해 해소 — 선택지 (a)) | 닫힘 | [본문](open-questions/D/D72.md) |
 | D73 | ~~역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다~~ (run 카운터 + (단계, 자리) 카운터) | 닫힘 | [본문](open-questions/D/D73.md) |
 | D74 | ~~Joern 슬라이스를 캡슐 본문으로 쓰면 Progressive Context Expansion이 확장할 것을 잃는다~~ ((a) 후보 열거에만 → ADR 0012가 대체) | 닫힘 | [본문](open-questions/D/D74.md) |
 | D75 | 실험1이 확증한 Scout CWE→Agent 세부 목록이 로스터·프롬프트의 목록과 다르다 — 어느 것을 정본으로 할지 미결 | 닫힘 | [본문](open-questions/D/D75.md) |
