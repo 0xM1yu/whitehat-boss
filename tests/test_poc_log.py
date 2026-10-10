@@ -39,7 +39,7 @@ from src.adapters.fake_tools import TOOL_KINDS
 from src.config import load_config
 from src.ids import sha256_digest
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError, Usage
-from src.orchestrator import prompt_log, runner
+from src.orchestrator import poc_log, prompt_log, runner
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov, preprocess
@@ -314,9 +314,9 @@ def test_a_failed_attempt_takes_its_number_so_a_leftover_temp_file_never_blocks_
 def test_a_symlink_at_the_temp_path_is_not_followed(tmp_path: Path) -> None:
     """임시 경로의 심링크를 **따라가 대상 파일을 덮지 않는다** — 살아 있는 링크도 끊어진 링크도.
 
-    `O_NOFOLLOW`를 따로 걸지 않은 근거가 이 검사다: `O_EXCL`이 이미 말단 심링크를 거절한다
-    (`FileExistsError`). 심링크 권한이 없는 환경(일반 Windows)에서는 건너뛴다 — 그곳의 `CREATE_NEW`
-    동작은 이 검사가 못 잰다.
+    Linux에서는 `O_EXCL`이 말단 심링크를 거절한다. Windows의 `CREATE_NEW`는 **끊어진** 링크를
+    따라가므로 연 뒤 신원 대조(`_refuse_if_followed`)가 막는다(#565 — 수정 전 권한 있는 Windows에서
+    이 검사가 둘째 바퀴에서 빨갰다). 심링크 권한이 없는 환경(일반 Windows)에서는 건너뛴다.
     """
     victim = tmp_path / "victim"
     victim.write_bytes(b"ORIGINAL")
@@ -335,6 +335,38 @@ def test_a_symlink_at_the_temp_path_is_not_followed(tmp_path: Path) -> None:
 
     assert victim.read_bytes() == b"ORIGINAL"
     assert not dangling.exists(), "끊어진 링크의 대상이 만들어졌다 — 링크를 따라갔다"
+
+
+def test_a_path_whose_identity_differs_from_the_opened_file_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """연 fd(`fstat`)와 경로 말단(`lstat`)의 신원이 다르면 **링크를 따라간 것**이라 거절한다(#565).
+
+    Windows의 `CREATE_NEW`는 끊어진 링크를 따라가는데, 그 갈래는 심링크 권한이 있는 Windows에서만
+    위 검사가 실제로 탄다(이 저장소 CI·권한 없는 장비에서는 skip). 그래서 `lstat`을 갈아 끼워 같은
+    상황을 세운다 — 신원 대조를 지우는 변이를 이 검사가 잡는다. 말단은 **남의 것**으로 보이므로
+    지우지 않는다(위 「남의 것은 안 지운다」와 같은 성질).
+    """
+    log = PocLog(tmp_path / "run")
+    real_lstat = poc_log.os.lstat
+
+    def lstat(path: object) -> os.stat_result:
+        found = real_lstat(path)
+        if str(path).endswith(".poc.tmp"):
+            # 경로 말단이 우리가 연 파일이 아니다 — 링크를 따라갔다. 진짜 stat_result에서 신원만
+            # 바꾼다(POSIX `os.path.realpath`가 같은 `lstat`을 불러 `st_mode`를 읽는다).
+            fields = list(found[:10])
+            fields[1], fields[2] = -1, -1  # st_ino, st_dev
+            return os.stat_result(fields)
+        return found
+
+    monkeypatch.setattr(poc_log.os, "lstat", lstat)
+
+    with pytest.raises(FileExistsError):
+        log.write(b"CLOBBER")
+
+    assert not (log.directory / "0001.poc").exists(), "거절했는데 최종 파일이 생겼다"
+    assert (log.directory / "0001.poc.tmp").exists(), "남의 것으로 보이는 말단을 지웠다"
 
 
 # --- 위치 — 다른 쓰는 쪽·전처리기와 겹치지 않는다 -------------------------------------
