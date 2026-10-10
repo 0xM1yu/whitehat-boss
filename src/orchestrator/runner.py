@@ -1383,7 +1383,9 @@ def _pov_targets(
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
-    (`insufficient_evidence`)에 내렸고 Critic을 한 번도 안 거쳤다
+    (`insufficient_evidence`)에 내렸고 Critic을 한 번도 안 거쳤다 (⏵ **2026-10-08 — 인용이 비어서
+    E0가 되는 기제는 끊었다**: 이슈 #552로 6단계가 타깃 관측 Evidence를 직접 붙인다. 이 길을 둔
+    이유는 남는다 — 관측이 0건인 타깃과 F-9는 그대로다)
     (`docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §4) —
     8단계 진입 시점의 `validated`가 비어 있었다. Level 1은 재현 명세의 근거를 주지 않아
     (`repro_spec`이 `null`인 것이 정상이다 — 이슈 #354~#360) 인용이 고쳐져도 F-9에서 멈출 수 있다.
@@ -3570,6 +3572,11 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 25,045자) SOURCE 상한이 토큰이 됐다 — 그
 # 계산은 `config/models.yaml`의 `qwen3.8-27b` 항목이
 # 든다. v7 입력 토큰도 미실측이다.
+# ⏵ 2026-10-09 — 그때 서빙 판은 v10이었다(prefix 56,906자 — v7의 2.2배). 같은 식의 hop0 상한은
+# 33,462~64,489토큰(계산값 · 그 계산은 `config/models.yaml`의 같은 항목, #556)이라 입력 몫 196,608
+# 안이다. 도구 루프는 홉마다 history가 쌓여 뒤 홉이 더 크다. v10 입력 토큰도 미실측이다.
+# ⏵ 2026-10-09 — 서빙 판은 v11이다(이슈 #525 — prefix 56,872자로 v10보다 34자 짧다). 위 hop0
+# 상한은 v10으로 센 그대로다(다시 안 셌다 — 짧아진 쪽이라 상한 쪽 계산값으로는 남는다).
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).

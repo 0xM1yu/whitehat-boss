@@ -772,7 +772,7 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 엔트리도 이 버전을 고르지 않는다」. v9 배선(2026-10-06)으로 미선택이 되며 달았다.
         ("auditor", "qwen3.8-27b", "v8", ["auditor/v8"]),
         # 실물 형제 문형 — prompts/auditor/v9/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry
-        # 엔트리도 이 버전을 / 고르지 않는다」. v10 배선(2026-10-06 같은 날)으로 미선택이 되며
+        # 엔트리도 이 버전을 / 고르지 않는다」. v10 배선(2026-10-07)으로 미선택이 되며
         # 달았고, 그 전에는 이 행이 음성 통제였다. v8처럼 구절이 주석 줄바꿈으로 갈린다.
         ("auditor", "qwen3.8-27b", "v9", ["auditor/v9"]),
         # 실물 형제 문형 — prompts/auditor/v10/meta.yaml의 ⏵ 「… 지금은 어느 registry 엔트리도
@@ -803,7 +803,7 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
     meta 여덟만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
-    새 음성 통제가 되어 일곱 · ⏵ 2026-10-06 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
+    새 음성 통제가 되어 일곱 · ⏵ 2026-10-07 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
     음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
     음성 통제가 되어 아홉 · ⏵ 2026-10-09 v11 배선으로 v10이 양성으로 옮겨가고 v11이 새 음성 통제가
     되어 열 · ⏵ 2026-10-10 미선택 판으로 선 v12가 양성으로 더해져 열하나) — 새 철자로 적은 meta는

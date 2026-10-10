@@ -37,6 +37,11 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 
+⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
+모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
+타깃에서 관측한 Evidence를 직접 붙이므로(`gate_node.attach_observed`) E0는 「관측이 0건인
+타깃」을 센다. **그 날 앞뒤 run의 이 값을 한 열에 놓지 않는다.** 새 임계는 미실측이다.
+
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
 `artifact_id`·초기 `state`·`missing_evidence`)뿐이다. 하네스가 덮는 `produced_by`·
 `scout_member`·`slice_id`는 이 이벤트 없이 덮이므로 그 셋의 부재는 「안 쟀다」다.
@@ -429,10 +434,13 @@ class EventKind(StrEnum):
     #   새로 붙는다 — 그 판의 `Finding`도 이 필드를 든다) · 어긴 경우에만
     #   `status_result_mismatch`(`refutation.result`가 가리키는 상태 ↔ `trigger_status`, 값은
     #   `"<상태>/<result>"`)·`path_without_endpoints`(경로가 비면 안 되는 상태인데 양 끝이 없다) ·
+    #   ⏵ 2026-10-09 `cwe_present_on_no_signal`(v11 답이 `no_signal`인데 `cwe`가 null이 아니다 —
+    #   v11만, 이슈 #525) ·
     #   그리고 `cited_probe_evidence`(최종 답이 `evidence_refs`로 인용한 `probe` Evidence
     #   수). ⚠ 그 Evidence는 러너가 게이트에 넘기는 `state.evidences`에 **없어서** 인용해도
     #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
-    #   게이트에 안 닿는 근거를 인용했다」는 사실이다.
+    #   게이트에 안 닿는 근거를 인용했다」는 사실이다. ⏵ 2026-10-08 — 6단계가 타깃 관측분을 직접
+    #   붙이므로(이슈 #552) 이 값은 **등급과 무관한 순수 인용 지표**다.
     # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
     # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
     # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이

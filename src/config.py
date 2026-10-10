@@ -571,11 +571,14 @@ class CapsuleBudgets(HarnessModel):
 # 켜고 v7·v8이 서술한다(index-v3 · #304).
 # ⏵ 같은 날 — 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록, #349)는 v9가 서술·선언한다
 # (2026-10-06 — v7·v8은 안 한다). 필드 기본 0은 그 파일이 키를 안 적을 때의 값이다.
-# ⏵ 2026-10-06 — **같은 날 서빙 판은 v10이 됐다.** 위 「서술을 v7에서 바이트 그대로 물려받았다」는
+# ⏵ 2026-10-07 — **서빙 판은 v10이 됐다.** 위 「서술을 v7에서 바이트 그대로 물려받았다」는
 # v8·v9의 서술이다. v10은 v7을 전면 재작성한 판이라 물려받지 않고 켜진 여덟을 다시 써서 meta
 # `source_options`로 여덟을 선언한다(철자는 서빙 판 핀 `tests/test_config.py`의
 # `test_the_canonical_auditor_prompt_states_the_runner_source_contract`가 문다).
-# v10으로 돈 run은 0건이다.
+# v10으로 돈 run은 0건이다(⏵ 2026-10-08 — 1건이 됐다, `docs/experiments/harness/2026-10-08-first-
+# real-serving-run-arvo1065-vastai-remote.md` · `checksum` 0이라 비교표 밖).
+# ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, 이슈
+# #525).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -670,7 +673,7 @@ class Thresholds(HarnessModel):
     # ⚠ (⏵ 2026-10-03 — 아래는 서빙 판이 옵션을 서술하지 않던 때의 경고다. ⏵ 2026-10-04 서빙 판 v7이
     # 넷을 서술했고 ⏵ 같은 날 서빙 판 v8도, ⏵ 2026-10-06부터의 v9도 같은 서술을
     # 물려받았다 — `prompts/auditor/v7/prefix.md` · `v8/` · `v9/`. v6는 1-b 모양만 서술한다.
-    # ⏵ 같은 날 서빙 판이 된 v10은 물려받지 않고 전면 재작성에서 다시 썼다 — `v10/`.)
+    # ⏵ 2026-10-07 서빙 판이 된 v10은 물려받지 않고 전면 재작성에서 다시 썼다 — `v10/`.)
     # 켜면 **서빙 판** Auditor 프롬프트의 입력 서술(⏵ 2026-10-03 `prompts/auditor/v6/prefix.md`
     # — 그전에는 v4 · 판은 `config/models.yaml`이 고른다 — 슬라이스가 걸친
     # 함수를 `(file, start line)` 순으로)과 어긋난다 — 피호출 함수는 그 뒤에 붙는다. 켜는 run은
@@ -745,7 +748,7 @@ class Thresholds(HarnessModel):
     # `runner._auditor_source`가 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 필드 기본은 0이고
     # `budgets.yaml`이 켠다(⏵ 2026-10-06 — **켠 효과는 미실측**). Auditor v9가 이 옵션을
     # 서술·선언한다. v7·v8은 안 하므로 켜고 그 둘을 고르면 `cli` run·doctor가 막는다.
-    # ⏵ 같은 날부터 서빙 판 v10도 서술·선언한다(meta `source_options` 여덟 중 하나).
+    # ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다(meta `source_options` 여덟 중 하나).
     # ⏵ 2026-10-09 — 서빙 판 v11(이슈 #525)도 같은 서술로 선언한다.
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
@@ -786,10 +789,10 @@ class Thresholds(HarnessModel):
     # 파일이 정한다.
     # 양수면 매 홉 `AuditorAction`(`src/schemas/auditor.py`)을 받아 조회·도구를 돌리고 관측을
     # 다음 홉 user 턴으로 되먹인다.
-    # ⏵ 2026-10-06 — 위 「정본 Auditor가 루프 판(v9)」은 같은 날 v10으로 올라갔고 **봉투는 둘이다**:
-    # v8·v9는 매 홉 `AuditorAction`, v10은 형제 `AuditorProcedureAction`을 낸다. 홉 구조·상한은
-    # 같고 `answer`가 싣는 최종 답만 다르다(`Finding` ↔ `AuditProcedure`). 봉투 둘은
-    # `src/schemas/auditor.py`에 있다.
+    # ⏵ 2026-10-06 — 위 「정본 Auditor가 루프 판(v9)」은 2026-10-07에 v10으로 올라갔고
+    # **봉투는 둘이다**: v8·v9는 매 홉 `AuditorAction`, v10은 형제 `AuditorProcedureAction`을
+    # 낸다. 홉 구조·상한은 같고 `answer`가 싣는 최종 답만 다르다(`Finding` ↔
+    # `AuditProcedure`). 봉투 둘은 `src/schemas/auditor.py`에 있다.
     # ⏵ 2026-10-09 — 서빙 판은 v11이고 봉투는 셋이다: v11은 셋째
     # `AuditorProcedureNullableCweAction`(최종 답
     # `AuditProcedureNullableCwe` — `no_signal`에서 `cwe`가 null일 수 있다, 이슈 #525)을 낸다.
@@ -807,7 +810,7 @@ class Thresholds(HarnessModel):
     # (`config/serving/vastai.yaml`)에서 출력 상한 65,536(`output_max_by_role.auditor`)을 빼면 입력
     # 몫이 196,608(계산값)이다. v4 최악 추정 입력 28,833(`config/models.yaml`의 그 좌석
     # 「기동 조건」 절 — ⏵ 2026-10-04 정본은 v8이었고 ⏵ 2026-10-06부터 v9이며 prefix가 더 길어
-    # hop0가 이보다 크다. ⏵ 같은 날부터 v10 — prefix 56,906자(v9는 35,501자 ·
+    # hop0가 이보다 크다. ⏵ 2026-10-07부터 v10 — prefix 56,906자(v9는 35,501자 ·
     # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다 · ⏵ 2026-10-09
     # v11 — 56,872자, 이슈 #525)을
     # 넣으면 167,775가
