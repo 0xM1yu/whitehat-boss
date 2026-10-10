@@ -137,7 +137,7 @@
 | D83 | ~~모델이 쓴 `state`·ID를 하네스가 대조하지 않는다~~ (하네스가 발급값을 도장 찍어 해소 — `location`은 D82 ⑥으로) | 닫힘 | [본문](open-questions/D/D83.md) |
 | D84 | **모델 응답의 원문(실패한 시도·단발 호출·루프 마지막 홉)과 `reasoning_content`를 보존하지 않는다**(⏵ `finish_reason`은 #550으로 시도별 trace에 남는다) — 증류 데이터·D46 진단 불가 | 열림 | [본문](open-questions/D/D84.md) |
 | D85 | ~~슬라이서가 UTF-8 아닌 소스 파일 하나에 run 전체를 실패시킨다~~ (무효 바이트만 latin-1로 해소) | 닫힘 | [본문](open-questions/D/D85.md) |
-| D86 | **resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다** (D10에서 승계) | 열림 | [본문](open-questions/D/D86.md) |
+| D86 | **resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다** (D10에서 승계 · ⏵ 2026-10-10 (b) 판 게이트 섬, resume 지원 여부 남음) | 부분 | [본문](open-questions/D/D86.md) |
 | D87 | **run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다** (2026-09-25 ATOM에서 실제로 났다) | 열림 | [본문](open-questions/D/D87.md) |
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |
