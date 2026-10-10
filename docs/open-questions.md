@@ -87,7 +87,7 @@
 | D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) — **값이 코드 상수인 것은 그대로** | 부분 | [본문](open-questions/D/D32.md) |
 | D33 | ~~`run_20260825_0001`이 옛 build 배선의 마지막 완전 측정이다~~ | 닫힘 | [본문](open-questions/D/D33.md) |
 | D34 | ~~언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다~~ | 닫힘 | [본문](open-questions/D/D34.md) |
-| D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 부분 | [본문](open-questions/D/D35.md) |
+| D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 닫힘 | [본문](open-questions/D/D35.md) |
 | D36 | ~~`report.md`에 E 등급이 없다 — run의 성과가 최종 산출물에 안 보인다~~ | 닫힘 | [본문](open-questions/D/D36.md) |
 | D37 | ~~`run_manifest.json`에 `profile`이 없다~~ | 닫힘 | [본문](open-questions/D/D37.md) |
 | D38 | **E4는 컨테이너 러너 + Fake auditor에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D38.md) |
