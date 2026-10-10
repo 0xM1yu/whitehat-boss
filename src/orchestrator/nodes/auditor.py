@@ -213,8 +213,10 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # (`cli._check_prompt_version`이 실모델 역할에서 ERROR로 막는다).
 # v11(2026-10-09 · 이슈 #525)은 v10에서 `cwe` 서술 네 자리만 바꾼 판이라 위 두 구절이 v10과 바이트
 # 동일이다(`tests/test_nullable_cwe.py`가 v10과의 차이를 그 네 줄로 묶는다).
+# v13(2026-10-10 · 이슈 #67)은 v11에서 FACTS의 `source` 사본을 뺀 판이다 — 위 두 구절은 v11과 바이트
+# 동일이다(`tests/test_auditor_v13_facts.py`가 v11과의 차이를 두 줄로 묶는다).
 _CONTENT_AWARE_VERSIONS = frozenset(
-    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11"}
+    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v13"}
 )
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
@@ -267,7 +269,8 @@ CALLERS_SECTION = "callers"
 # 추정 — ⏵ 2026-10-04 정본은 루프 판 v8이었고(⏵ 2026-10-06 v9, ⏵ 2026-10-07 v10) prefix가 훨씬 길다:
 # v8 33,209자 · v9 35,501자 · v10 56,906자(`load_prompt(...).prefix`의 글자 수 — **실측**이고
 # `tests/test_auditor_prompt_v10.py`가 핀으로 든다 · ⏵ 2026-10-09 서빙 판 v11은 56,872자 —
-# `tests/test_nullable_cwe.py`가 핀으로 든다) ↔ v4
+# `tests/test_nullable_cwe.py`가 핀으로 든다 · ⏵ 2026-10-10 서빙 판 v13은 v11에서 한 조각만 빠졌고
+# hop0 user 턴은 FACTS의 `source` 사본만큼 짧다 — `tests/test_auditor_v13_facts.py`) ↔ v4
 # 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다.
 # hop0가 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은
@@ -674,6 +677,9 @@ def _render_hop0(
             evidences=evidences,
             evidence_bodies=bodies,
             evidence_locations=aware,
+            # `facts_source: false` 판(v13 · 이슈 #67)은 FACTS에 `source` 사본을 안 싣는다 — 원문은
+            # 아래 산문 `source` 하나로 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
+            include_source=template.facts_source,
             callers=caller_names(capsule),
         ),
         candidate=_describe_candidate(candidate),

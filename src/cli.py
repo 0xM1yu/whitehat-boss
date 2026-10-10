@@ -1709,6 +1709,8 @@ def run(args: argparse.Namespace) -> int:
     # 물려받았고 ⏵ 2026-10-06 서빙 판은 v9 = v8 + `auditor_guards` 서술이었으며 ⏵ 같은 날부터
     # v10(v7을 전면 재작성 — 같은 여덟 옵션을 서술·선언한다)이다).
     # ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 같다, 이슈 #525).
+    # ⏵ 2026-10-10 — 서빙 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v11과
+    # 같다, 이슈 #67).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:

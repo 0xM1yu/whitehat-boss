@@ -1924,7 +1924,7 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
     assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
-        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11"}
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v13"}
     )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 

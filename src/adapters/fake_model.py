@@ -215,11 +215,28 @@ class FakeModelClient:
         )
 
 
+# FACTS에 `source`가 없는 판(meta `facts_source: false` — Auditor v13 · 이슈 #67)의 원문 자리. 그
+# 판은 원문을 산문 블록 하나로만 싣는다(`prompts/auditor/v13/body.md`의 이 머리와 다음 `### Facts`
+# 사이).
+_PROSE_SOURCE = re.compile(
+    r"^### Target under analysis — original source code\n\n(?P<source>.*)\n\n### Facts\n",
+    re.DOTALL | re.MULTILINE,
+)
+
+
 def _parse_context(body: str) -> FakeContext:
     matches = _FENCE.findall(body)
     if not matches:
         raise FakeModelError("프롬프트 본문에 ```json 사실 블록이 없다")
-    return FakeContext.model_validate(json.loads(matches[-1]))
+    facts = json.loads(matches[-1])
+    if "source" not in facts:
+        # 키가 없으면 원문은 산문 블록에 있다 — 빈 값으로 두면 위험 호출 탐지가 조용히 0이 되어
+        # v11과 같은 입력에서 다른 판정을 낸다. 산문 블록도 못 찾으면 지어내지 않고 실패한다.
+        prose = _PROSE_SOURCE.search(body)
+        if prose is None:
+            raise FakeModelError("사실 블록에 `source`가 없는데 산문 원문 블록도 없다")
+        facts["source"] = prose.group("source")
+    return FakeContext.model_validate(facts)
 
 
 def risky_calls_in(source: str) -> list[str]:
