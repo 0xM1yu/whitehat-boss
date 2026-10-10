@@ -478,8 +478,9 @@ def candidates_a_query(priority_files: Collection[str] | None = None, repo: str 
           .nonEmpty).filter(c => Option(c.method).isDefined).method.id.l).toSet{definitions}
       // An empty-named method (c2cpg parsing a header without build info, e.g. libexpat
       // xmlrole.h -- full_name `<unresolvedNamespace>.`) passes a `<`-prefix filter, and ONE
-      // such row fails `valid_candidate` and voids the whole run (#347). Both lists drop them,
-      // silently -- the drop is listed in LIMITATIONS, not counted.
+      // such row failed `valid_candidate` and voided the whole run (#347; since #361 the Python
+      // side drops and counts such a row as `candidates_invalid` instead). Both lists drop them
+      // here, silently -- the drop is listed in LIMITATIONS, not counted.
       // A method whose body block holds no statement -- a prototype (a header or forward
       // declaration reaches the CPG as an internal METHOD) or a definition with an empty body --
       // cannot yield a flow, yet it took a cap slot: 3,906 of 21,478 Case A candidates (18%) on

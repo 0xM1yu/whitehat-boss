@@ -183,6 +183,7 @@ COUNTERS = (
     "unknown_nodes",
     "locations_unmapped",
     "candidates_unmapped",
+    "candidates_invalid",
     "candidates_not_processed",
     "candidates_failed",
     "candidates_degraded",
@@ -235,33 +236,55 @@ def valid_location(value: object) -> bool:
     )
 
 
-def valid_candidate(value: object) -> bool:
-    if not valid_location(value) or not isinstance(value.get("symbol"), str) or not value["symbol"]:
-        return False
+CANDIDATE_STAGES = ("case_a", "case_b")
+# How many dropped rows a diagnostics entry quotes verbatim (the count next to it stays exact).
+INVALID_ROW_SAMPLE = 3
+
+
+def candidate_row_problem(stage: str, value: object) -> str | None:
+    """The first field that makes one candidate row unusable, or None when the row is valid.
+
+    #361: a candidate payload is checked row by row, so one bad row is dropped and counted
+    (`Slicer.drop_invalid_candidates`) instead of voiding the whole discovery -- it used to raise
+    `Invalid case_x payload schema` and end the run with 0 slices (#347). The checks are the ones
+    the old all-rows test applied; only the unit they reject changed."""
+    if not valid_location(value):
+        return "location"
+    if not isinstance(value.get("symbol"), str) or not value["symbol"]:
+        return "symbol"
     scope = value.get("scope")
-    return (
-        valid_location(scope)
-        and isinstance(scope.get("full_name"), str)
-        and isinstance(value.get("anchors"), list)
-        and all(valid_location(point) for point in value["anchors"])
-    )
+    if not valid_location(scope) or not isinstance(scope.get("full_name"), str):
+        return "scope"
+    if not isinstance(value.get("anchors"), list) or not all(
+        valid_location(point) for point in value["anchors"]
+    ):
+        return "anchors"
+    if stage == "case_b":
+        selector = value.get("selector")
+        if not (
+            isinstance(selector, dict)
+            and type(selector.get("line")) is int
+            and type(selector.get("column")) is int
+            and isinstance(selector.get("code"), str)
+            and isinstance(selector.get("ast_path"), list)
+            and all(type(n) is int and n >= 0 for n in selector["ast_path"])
+        ):
+            return "selector"
+    return None
+
+
+def valid_candidate(value: object) -> bool:
+    return candidate_row_problem("case_a", value) is None
 
 
 def validate_payload(stage: str, data: object, logs: str) -> None:
-    """Validate before counters or Scala selectors consume untrusted HTTP fields."""
+    """Validate before counters or Scala selectors consume untrusted HTTP fields.
+
+    A candidate stage is validated here only as a whole (it must be a list); its rows are
+    validated one by one right after, in `Slicer.query`, which drops the invalid ones (#361)."""
     valid = False
-    if stage in ("case_a", "case_b"):
-        valid = isinstance(data, list) and all(valid_candidate(row) for row in data)
-        if valid and stage == "case_b":
-            valid = all(
-                isinstance(row.get("selector"), dict)
-                and type(row["selector"].get("line")) is int
-                and type(row["selector"].get("column")) is int
-                and isinstance(row["selector"].get("code"), str)
-                and isinstance(row["selector"].get("ast_path"), list)
-                and all(type(n) is int and n >= 0 for n in row["selector"]["ast_path"])
-                for row in data
-            )
+    if stage in CANDIDATE_STAGES:
+        valid = isinstance(data, list)
     elif stage == "context":
         valid = isinstance(data, list) and all(valid_location(row) for row in data)
     elif stage == "import":
@@ -620,6 +643,8 @@ class Slicer(SlicingStages):
                 timings = {"timings": {k: data[k] for k in ("body_ms", "timings_ms", "counts")}}
                 data = data["value"]
             validate_payload(stage, data, logs)
+            if stage in CANDIDATE_STAGES:
+                data = self.drop_invalid_candidates(stage, data)
             return data, logs
         except QueryError as exc:
             self.increment("queries_aborted")
@@ -647,6 +672,43 @@ class Slicer(SlicingStages):
             self.event(
                 "query_end", stage=stage, elapsed_seconds=time.perf_counter() - started, **timings
             )
+
+    def drop_invalid_candidates(self, stage: str, rows: list) -> list:
+        """Keep the valid rows of a candidate payload and account for the rest (#361).
+
+        One malformed row used to fail the payload check and void the run (0 slices, #347). Now
+        it is dropped, never silently: `counters.candidates_invalid` (both stages) counts it,
+        `measurement_notes.candidates_invalid` names the stage and the failing field, a
+        `diagnostics` entry quotes the first rows verbatim, and the run is `partial`. The counter
+        is measured (0 included) the first time a candidate payload passes the list check, so a
+        run that never reached discovery keeps it null with "Stage not reached"."""
+        kept, dropped, problems = [], [], {}
+        for row in rows:
+            problem = candidate_row_problem(stage, row)
+            if problem is None:
+                kept.append(row)
+            else:
+                problems[problem] = problems.get(problem, 0) + 1
+                dropped.append(row)
+        notes = self.result["measurement_notes"]
+        counted = self.result["counters"]["candidates_invalid"]
+        # The note before the first measurement is "Stage not reached"; it is not carried over.
+        previous = None if counted is None else notes.get("candidates_invalid")
+        self.measure("candidates_invalid", (counted or 0) + len(dropped))
+        if dropped:
+            reasons = ", ".join(f"{field}: {count}" for field, count in sorted(problems.items()))
+            note = f"{stage}: {len(dropped)} rows dropped ({reasons})"
+            notes["candidates_invalid"] = f"{previous}; {note}" if previous else note
+            self.result["diagnostics"].append(
+                {
+                    "stage": stage,
+                    "note": f"dropped {len(dropped)} invalid candidate rows ({reasons}); "
+                    "the valid rows were kept",
+                    "rows": dropped[:INVALID_ROW_SAMPLE],
+                }
+            )
+            self.errors.append(f"Dropped {len(dropped)} invalid {stage} candidate rows")
+        return kept
 
     def load_sources(self) -> None:
         self.repo = self.repo.resolve()
