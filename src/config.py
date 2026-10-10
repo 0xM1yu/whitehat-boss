@@ -1239,9 +1239,11 @@ def _check_role_output_caps_fit_context(config: HarnessConfig) -> None:
     달려 로드 때 정할 수 없고, 임의 상수로 막으면 그 상수가 근거 없는 수가 된다(이슈 #214
     「닫히는 조건」의 ⚠).
 
-    **대조 대상이 registry인 이유.** 서버 창(`--max-model-len`)은 로드 시점에 없다. 대신 장비
-    파일을 쓰는 run은 `check_serving`이 창 = `context_limit`을 강제하므로, 이 검사를 통과한 상한은
-    그 창에서도 「창 이상」이 아니다.
+    **대조 대상이 registry인 이유.** 서버 창(`--max-model-len`)은 로드 시점에 없다. 대신 **교대를
+    선언한 프로필**의 run은 `check_serving`이 창 = `context_limit`을 강제하므로, 이 검사를 통과한
+    상한은 그 창에서도 「창 이상」이 아니다. 교대를 선언할 수 없는 hybrid 실서빙 프로필
+    (`harness_pool_hybrid`)은 이 밖이다 — 로드의 registry 대조만 서고 서버 창은 아무도 안 본다
+    (#331).
 
     **실서빙 역할만 본다**(`served_models()`). Fake는 서버로 요청을 안 보내 400이 날 자리가 없다 —
     `_check_real_serving_limits_are_positive`와 같은 판정이다. 프롬프트를 안 받는 역할(embedding·
