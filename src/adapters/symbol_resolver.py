@@ -23,6 +23,11 @@
 - UNFILLED 사유 사이의 우선순위(원문이 순서를 안 준다) — libc를 가장 먼저 본다(그러지
   않으면 `strdup`이 `calls` 표에도 잡혀 outside_repo로 잘못 읽힌다 — hop 1 예가 그 근거),
   다음 outside_repo(호출은 있음), 다음 closest_name(비슷한 철자), 마지막 not_found.
+- **대입 라벨(3·4·13)에 원소·역참조 쓰기를 넣는다**(#304) — 명세 hop 1 예가 `Buf[GIF_STAMP_LEN]
+  = '\\0';`(배열 원소 대입)을 라벨 4로 보여 준다. 원소·역참조 쓰기는 index-v2의 `assigns`·
+  `field_assigns`에 없고 index-v3의 `writes` 표에 있다(`_write_rows`). 같은 기준을 라벨 3·13에도
+  쓴 것은 이 저장소의 선택이다(명세 예는 라벨 4만 보여 준다). `writes` 표가 없는 인덱스(v2)에서는
+  예전 그대로 이름·필드 대입만 나오고 `Resolution.writes_available`이 `False`다.
 - **Already in SOURCE 줄이 실리는 자리** — 골격(명세 §4.4.5)에 Already 전용 자리가 없다. 둘 다
   "요청한 것을 그대로 안 준다"는 통지라 UNFILLED와 같은 자리에 already를 먼저, Not
   resolved를 뒤에 넣는다(`resolve()`) — **추측**이다.
@@ -144,6 +149,11 @@ _GLOBAL_ASSIGN_RADIUS = 1
 # (2026-09-26). 스키마에 `max_length`를 걸지 않는다 — 걸면 넷째 요청 하나 때문에 응답
 # 전체가 파싱 실패가 된다.
 _MAX_REQUESTS = 3
+
+# `writes` 행 중 대입 라벨(3·4·13)에 싣는 `form` — 원소(`buf[i] = x`)·역참조(`*p = x`). `init`(함수
+# 안 선언 초기화 `char *q = malloc(n)`)은 뺀다: 그 줄은 선언이라 라벨 10이 이미 주고(같은 줄을 두 번
+# 싣게 된다), 다른 함수의 같은 이름 `init`은 그 이름의 **다른 지역 변수**의 선언이다.
+_WRITE_FORMS = frozenset({"element", "deref"})
 
 _TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*")
 _MACRO_TOKEN_RE = re.compile(r"[A-Z][A-Z0-9_]{2,}")
@@ -344,6 +354,22 @@ def _resolve_macro_named_in_declaration(
     return blocks
 
 
+def _write_rows(name: str, base_kind: str, *, table: _Table) -> list[Mapping[str, object]]:
+    """index-v3 `writes`에서 `name`이 기저인 원소·역참조 쓰기 행(#304). `base_kind`는 `name`(이름
+    기저 — 라벨 4·13)·`field`(필드 기저 `vv->buf[i] = x` — 라벨 3). 표가 없으면(v2) 빈 목록이다.
+
+    `GraphIndex.writes_of`·`field_writes_of`를 안 쓰는 이유: 그 둘은 Auditor `SOURCE`용 규칙(같은
+    파일 우선 · 파일 스코프 변수가 하나뿐일 때만 저장소 전체)으로 이미 거른 `Location`을 낸다.
+    resolver 라벨의 범위는 명세 라벨 표가 정한다(라벨 4는 같은 함수, 3·13은 저장소 전체) — 예전부터
+    `assigns`·`field_assigns`를 `table()`로 직접 읽던 것과 같은 자리에서 같은 방식으로 읽는다.
+    """
+    return [
+        row
+        for row in (table("writes") or {}).get(name, ())
+        if row.get("base") == base_kind and row.get("form") in _WRITE_FORMS
+    ]
+
+
 def _resolve_same_function_assignment(
     base: str,
     func: str,
@@ -352,10 +378,22 @@ def _resolve_same_function_assignment(
     table: _Table,
     read_lines: _ReadLines,
 ) -> list[_Block]:
-    """라벨 4 — 같은 함수 안 대입 줄(1줄, 반경 0)."""
-    lines = (table("assigns") or {}).get(file, {}).get(func, {}).get(base, ())
+    """라벨 4 — 같은 함수 안 대입 줄(1줄, 반경 0).
+
+    이름 대입(`assigns`)에 index-v3 `writes`의 원소·역참조 쓰기(`Buf[i] = x` · `*p = x`)를 합쳐
+    줄 순서로 낸다(#304 — 명세 hop 1 예의 `Buf[GIF_STAMP_LEN] = '\\0';`). 같은 줄이 둘 다에
+    있으면 한 번만 싣는다. `writes`가 없으면(v2) `assigns`의 순서 그대로다 — 인덱서가 줄 순으로
+    적으므로 정렬해도 같다.
+    """
+    lines = list((table("assigns") or {}).get(file, {}).get(func, {}).get(base, ()))
+    seen = {int(line) for line in lines}
+    for row in _write_rows(base, "name", table=table):
+        line = int(row["line"])
+        if row.get("file") == file and row.get("func") == func and line not in seen:
+            lines.append(line)
+            seen.add(line)
     blocks: list[_Block] = []
-    for line in lines:
+    for line in sorted(lines, key=int):
         span = _read_span(read_lines, file, int(line), int(line))
         if span is not None:
             blocks.append(
@@ -370,9 +408,11 @@ def _resolve_global_assignment(
     """라벨 13 — 파일 전역 변수 대입을 저장소 전체에서 찾는다(±1, 명세 표)."""
     label = LABEL_ASSIGNMENT_TO_GLOBAL.format(global_name=base)
     blocks: list[_Block] = []
+    seen: set[tuple[str, int]] = set()
     for file, funcs in (table("assigns") or {}).items():
         for names in funcs.values():
             for line in names.get(base, ()):
+                seen.add((file, int(line)))
                 span = _read_span(
                     read_lines,
                     file,
@@ -381,6 +421,39 @@ def _resolve_global_assignment(
                 )
                 if span is not None:
                     blocks.append(_Block(name=base, label=label, file=file, text_lines=span))
+    # index-v3 원소·역참조 쓰기(`g_buf[i] = x`, #304) — 이름 대입 **뒤에** 붙인다: `writes`가 없는
+    # 인덱스(v2)의 출력과 예산 first-fit 순서가 예전 그대로다. 이름 대입과 같은 줄이면 뺀다.
+    blocks.extend(_write_blocks(base, "name", label, seen, table=table, read_lines=read_lines))
+    return blocks
+
+
+def _write_blocks(
+    name: str,
+    base_kind: str,
+    label: str,
+    seen: set[tuple[str, int]],
+    *,
+    table: _Table,
+    read_lines: _ReadLines,
+) -> list[_Block]:
+    """라벨 3·13의 `writes` 몫 — 대입 줄 ±1(이름·필드 대입과 같은 반경).
+
+    `seen`의 (파일, 줄)은 건너뛴다 — 이름·필드 대입이 이미 낸 줄을 두 번 싣지 않는다.
+    """
+    blocks: list[_Block] = []
+    for row in sorted(
+        _write_rows(name, base_kind, table=table),
+        key=lambda row: (str(row["file"]), int(row["line"])),
+    ):
+        file, line = str(row["file"]), int(row["line"])
+        if (file, line) in seen:
+            continue
+        seen.add((file, line))
+        span = _read_span(
+            read_lines, file, line - _GLOBAL_ASSIGN_RADIUS, line + _GLOBAL_ASSIGN_RADIUS
+        )
+        if span is not None:
+            blocks.append(_Block(name=name, label=label, file=file, text_lines=span))
     return blocks
 
 
@@ -390,7 +463,8 @@ def _resolve_field_assignment(
     """라벨 3 — 체인 마지막 필드의 대입을 저장소 전체에서 찾는다(±1, 명세 표)."""
     label = LABEL_ASSIGNMENT_TO_FIELD.format(field=field)
     blocks: list[_Block] = []
-    for record in (table("field_assigns") or {}).get(field, ()):
+    field_assigns = (table("field_assigns") or {}).get(field, ())
+    for record in field_assigns:
         line = int(record["line"])
         span = _read_span(
             read_lines,
@@ -402,6 +476,9 @@ def _resolve_field_assignment(
             blocks.append(
                 _Block(name=field, label=label, file=str(record["file"]), text_lines=span)
             )
+    # index-v3 필드 기저 원소·역참조 쓰기(`vv->buf[i] = x`, #304) — 라벨 13과 같이 필드 대입 뒤에.
+    seen = {(str(record["file"]), int(record["line"])) for record in field_assigns}
+    blocks.extend(_write_blocks(field, "field", label, seen, table=table, read_lines=read_lines))
     return blocks
 
 
@@ -829,6 +906,9 @@ def resolve(
     보낸 `requests` 전체를 그대로 들고 있어 기록에서는 사라지지 않는다. 한 요청이 블록을
     여럿 낼 수 있어(예: 선언+대입) `blocks`·`already`의 합까지 3 이하로 묶이는 것은 아니다
     — `unfilled`만 요청당 최대 하나라 그 수는 처리한 요청 수(3 이하)를 넘지 않는다.
+
+    `table("writes") is None`이면(v2 인덱스) 대입 라벨은 예전 그대로 이름·필드 대입만 내고
+    `writes_available=False`로 그 공백을 적는다(#304 — 모듈 docstring).
     """
     if table("functions") is None:
         return Resolution(
@@ -838,6 +918,7 @@ def resolve(
             already=(),
             truncated=(),
             index_available=False,
+            writes_available=False,
         )
 
     all_blocks: list[_Block] = []
@@ -904,4 +985,5 @@ def resolve(
         unfilled=tuple(unfilled),
         already=tuple(already),
         truncated=tuple(truncated),
+        writes_available=table("writes") is not None,
     )
