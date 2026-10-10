@@ -30,6 +30,7 @@ import pytest
 
 from src import bench, bench_report
 from src.adapters import fake_model
+from src.config import load_config
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor
 from src.orchestrator.prompt_loader import (
@@ -174,6 +175,29 @@ def test_the_v13_node_render_has_no_source_key_and_the_source_once_in_prose(
     assert json.dumps(_RENDER)[1:-1] not in v13.body, "JSON 이스케이프된 사본도 없다"
     assert json.dumps(_RENDER)[1:-1] in v11.body, "전제 — v11에는 그 사본이 있다"
     assert facts == {k: v for k, v in _facts_of(v11.body).items() if k != "source"}
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_served_auditor_seat_renders_a_facts_without_the_source(
+    ctx: RunContext, profile: str
+) -> None:
+    """**성질** 핀 — 서빙 좌석이 실제로 고르는 판의 hop0는 FACTS에 `source`가 없고 원문이 산문에
+    한 번 있다. 판 이름이 아니다: 좌석이 `facts_source`를 안 선언한 판(v14 따위)으로 옮겨가면
+    빨개져 그 결정을 명시하게 한다. `test_config`의 이름 핀만으로는 이름을 고친 뒤 안 물린다."""
+    version = load_config(profile).model_for(Role.AUDITOR.value).prompt_template_version
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    rendered = auditor._render_hop0(
+        ctx,
+        load_prompt(Role.AUDITOR, version),
+        ids=dict(_IDS),
+        candidate=candidate,
+        capsule=capsule,
+        evidences=evidences,
+        source=lambda: _RENDER,
+    )
+
+    assert "source" not in _facts_of(rendered.body), f"서빙 판 {version}의 FACTS에 source가 있다"
+    assert rendered.body.count(_RENDER) == 1
 
 
 def test_the_v13_node_path_omits_the_source_through_auditor_run(ctx: RunContext) -> None:
