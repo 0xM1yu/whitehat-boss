@@ -244,8 +244,11 @@ class Finding(HarnessModel):
     # (`context.py` `call_model`) 어느 프롬프트로 돈 Finding인지가 건마다 남고, 두 `None`이
     # 사후에 갈린다. 전체를 한 분모로 세면 그 둘이 뭉개진다.
     # **타입을 일부러 `str`로 둔다.** 요청의 목적은 "값이 산출물에 안 남아 못 봤다"의 해소,
-    # 곧 **관측**이다. `str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다. 실제 emit
-    # 분포를 본 뒤에야 `Literal`/enum으로 좁혀 강제한다 — 그 보류가 #102이다.
+    # 곧 **관측**이다. `str`은 뭐가 나오든 다 기록하고 finding을 떨구지 않는다.
+    # ⏵ 2026-10-10 — 이 필드는 좁히지 않기로 정했다(#102). 다섯 값의 강제는 서빙 판(v10 이상)의
+    # 응답 스키마 `AuditProcedure.trigger_status`(`schemas/auditor.py`)가 맡는다. 여기를 좁히면 이
+    # `Finding`을 요청 스키마로 보내는 v1~v9의 요청 바이트가 판 라벨 그대로 바뀐다
+    # (위 `audit`와 같은 이유).
     trigger_status: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     rca_draft: str = ""
