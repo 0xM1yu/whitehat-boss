@@ -6,6 +6,12 @@
 # (`runner._pov_hop_line`). prefix의 「홉 예산」 절이 그 줄을 서술하므로 둘은 같이 움직인다.
 # 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판이 **들어 있어야 한다** — 없으면 `oracle_vul` 줄·출력
 # 꼬리·`last_gen_*`이 **조용히 사라진다**(`tests/test_config.py`가 그것을 문다).
+# ⏵ 2026-10-09·10 — **예외: 이 판의 prefix는 제자리에서 고쳤다**(PR #574 · 위 「불변 기록」의 예외).
+#   이유: 고친 시점에 v5로 돈 run이 0건이다(`docs/experiments` grep · 로컬 runs 확인, 2026-10-10).
+#   경계: 옛 prefix는 `60df731`(#567 머지 `a78b09f` · 2026-10-09 19:29)부터 #574 머지 전까지 main에 있었다.
+#   prefix.md sha256 — 전 `14486e57f90f439fbf5eab7a905cd6ac5c66a2c334a891a9d35453a9f8c21ada`
+#   · 후 `e19e7e7bf81f560a863d4eee768da8234143ab16bc12e1072b0aaf54df37d799`.
+#   그 창에 run이 돌았다면 같은 "v5"로 다른 텍스트를 받은 것이다 — 호출의 `prompt_sha256`으로 가른다.
 role: pov
 version: v5
 output_schema: PovAction
@@ -18,7 +24,7 @@ description: >-
   (셋을 바꾸려면 대상 빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 문단에 종료 코드 규칙 둘을 같이 적는다 —
   124·125·126·127과 음수는 **실행 환경**의 코드라 대상의 판정이 아니고(그 홉의 관측은 입력에 대해 아무것도 말하지 않는다),
   exit=1은 새니타이저 기본값일 수도 실행 환경 실패일 수도 있어 **가를 수 없다**.
-  🔴 **그 넷이 환경 코드의 전부는 아니다** — 137(docker SIGKILL · 우리가 --memory를 건다 · 대상 자신의 OOM과
+  🔴 **그 코드들이 환경 코드의 전부는 아니다** — 137(docker SIGKILL · 우리가 --memory를 건다 · 대상 자신의 OOM과
   갈리지 않는다) · 255(singularity FATAL) · 255 초과(Windows NTSTATUS) · 데몬 미도달 exit=1이 같이 들어간다
   (container_tools._POC_HARNESS_FAILURE · _POC_ENV_FATAL · _POC_DAEMON_UNREACHABLE). 그래서 prefix는 열거가
   전부라고 말하지 않고 **ok가 거짓이면 관측의 error= 사유를 읽으라**고 적는다. 모호성 줄은 **가를 수 없을 때만**

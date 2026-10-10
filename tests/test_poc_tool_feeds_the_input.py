@@ -662,10 +662,10 @@ def test_environment_fatal_codes_are_not_the_targets_verdict(code: int) -> None:
 
 
 def test_every_code_the_classifier_calls_environmental_also_carries_a_reason() -> None:
-    """🔴 **성질 핀 — 서빙 prefix가 약속하는 것이 이것이다.** v5는 *"하네스가 환경 실패로 가른
-    홉은 `ok`가 거짓이고 관측이 그 사유를 적는다"*고 적는다. 위 검사들은 **손으로 적은 코드
-    목록**을 돌아서, 판별자에 코드를 **더하면서** 관측 쪽을 안 고치면 초록으로 남는다 — 그러면
-    모델은 `ok=false`만 보고 사유를 못 읽는다.
+    """🔴 **성질 핀 — 서빙 prefix가 약속하는 것이 이것이다.** v5는 *"하네스가 **대상의 판정으로
+    읽을 수 없다**고 가른 홉은 `ok`가 거짓이고 관측의 `error=`가 그 사유를 적는다"*고 적는다.
+    위 검사들은 **손으로 적은 코드 목록**을 돌아서, 판별자에 코드를 **더하면서** 관측 쪽을 안
+    고치면 초록으로 남는다 — 그러면 모델은 `ok=false`만 보고 사유를 못 읽는다.
 
     그래서 목록이 아니라 **판별자에서 끌어온다**: `_poc_is_harness_failure`가 참이라 말하는 모든
     코드에 대해 `judge`가 `ok=False`와 **빈 문자열이 아닌 사유**를 돌려야 한다.
@@ -694,12 +694,19 @@ def test_every_code_the_classifier_calls_environmental_also_carries_a_reason() -
 
     # 🔴 **빈 문자열만 막으면 뜻을 뒤집는 변이가 산다**(적대적 리뷰 2026-10-09 독립 2인이 둘 다
     # 재현: 사유를 *"대상이 크래시했다 (정상 판정)"*으로 바꿔도 378건이 통과했다). 그 문구는
-    # 모델 관측의 `error=`로 실리므로 **모델이 환경 실패를 크래시로 읽게 만든다.** 그래서
-    # `POC_AMBIGUOUS_NOTE`·데몬 분기와 **같은 강도로** 뜻을 단언한다.
+    # 모델 관측의 `error=`로 실리므로 **모델이 환경 실패를 크래시로 읽게 만든다.**
+    # ⏵ 2026-10-09 (리뷰 2라운드) — 구절 포함·「크래시」 부재 두 검사도 **철자 둘**만 물었다:
+    # *"…읽을 수 없는 종료 코드가 아니다 (exit=N) — 대상이 터졌다, 같은 PoC로 submit"*(뜻 반대)이
+    # 둘을 다 통과했다. 그래서 **전체 문자열**을 여기 리터럴로 적고 같음을 단언한다.
+    # ⚠ **한계 — 이것도 철자를 문다.** 뜻을 지키는 고쳐 쓰기도 빨개지고(그때 이 리터럴을 같이
+    # 고친다), 뜻 자체를 기계가 읽는 것은 아니다. 무는 것은 「이 철자에서 벗어나면 죽는다」까지다.
+    expected = (
+        "poc: 대상의 판정으로 읽을 수 없는 종료 코드다 (exit={code}) — 실행 환경이 "
+        "낸 값이거나 대상의 것과 갈리지 않는다"
+    )
+    assert container_tools.POC_UNREADABLE_EXIT_REASON == expected
     for code, (_, _, error) in verdicts.items():
-        assert error is not None
-        assert "대상의 판정으로 읽을 수 없는" in error, f"exit={code}의 사유가 뜻을 안 든다"
-        assert "크래시" not in error, f"exit={code}의 사유가 크래시를 말한다"
+        assert error == expected.format(code=code), f"exit={code}의 사유가 핀과 다르다"
 
 
 @pytest.mark.parametrize("code", [139, 71, 77])

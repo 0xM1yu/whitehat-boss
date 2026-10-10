@@ -253,8 +253,8 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > ⚠ **위에서 「재현이 성공한(`ok=True`)」이라 부른 것은 「크래시했다」가 아니라 「도구가
 > 실행됐다」를 뜻한다.** `container_tools.judge()`가 런타임 도구(`asan`·`gdb`·`poc`)를 `ok=False`로
 > 내리는 갈래는 셋이다 — 명령이 하나도 안 돈 경우, 빌드에서 끊긴 경우(`len(steps) < total`),
-> 대상을 띄우지도 못한 경우(asan은 종료 코드 `_EXEC_FAILED` = 125·126·127로, `poc`는 더 넓은
-> `_poc_is_harness_failure`로 — ADR 0014 · #513, gdb는 stdout에
+> 대상의 판정으로 읽을 수 없는 경우(asan은 종료 코드 `_EXEC_FAILED` = 125·126·127로, `poc`는 더 넓은
+> `_poc_is_harness_failure`로 — ADR 0014 · #513 · `137`이면 이미지는 떴어도 대상 자신의 OOM과 갈리지 않는다, gdb는 stdout에
 > 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
 > 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
