@@ -1383,7 +1383,9 @@ def _pov_targets(
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
-    (`insufficient_evidence`)에 내렸고 Critic을 한 번도 안 거쳤다
+    (`insufficient_evidence`)에 내렸고 Critic을 한 번도 안 거쳤다 (⏵ **2026-10-08 — 인용이 비어서
+    E0가 되는 기제는 끊었다**: 이슈 #552로 6단계가 타깃 관측 Evidence를 직접 붙인다. 이 길을 둔
+    이유는 남는다 — 관측이 0건인 타깃과 F-9는 그대로다)
     (`docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §4) —
     8단계 진입 시점의 `validated`가 비어 있었다. Level 1은 재현 명세의 근거를 주지 않아
     (`repro_spec`이 `null`인 것이 정상이다 — 이슈 #354~#360) 인용이 고쳐져도 F-9에서 멈출 수 있다.
