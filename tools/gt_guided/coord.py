@@ -335,11 +335,15 @@ def release(box, sids):
     ssh(box, f"cd /root/gt/out && rm -rf {lst}", timeout=600)
 
 
+# extractall(filter="data") needs Python >= 3.11.4 (tests turn this off to take the manual path)
+TAR_FILTERS = hasattr(tarfile, "data_filter")
+
+
 def _extract(tf, dest):
     """extractall(filter="data") needs Python >= 3.11.4. On an older interpreter (this team's
     Windows PC runs 3.11.0) refuse the same things by hand -- anything but a regular file or a
     directory, absolute paths, `..` -- and extract plainly."""
-    if hasattr(tarfile, "data_filter"):
+    if TAR_FILTERS:
         tf.extractall(dest, filter="data")
         return
     for m in tf.getmembers():

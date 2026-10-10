@@ -6,7 +6,10 @@ plus the sample's description. The Auditor SOURCE options are whatever `budgets.
 environment can change them for comparisons -- AUDITOR_DEFINITIONS=1 and AUDITOR_OPTIONS=
 "name=value,..." over `config.AUDITOR_SOURCE_OPTIONS`. The rows carry the options that were on
 (`auditor_options`).
-Ground truth is NOT used to build `source`; it only labels the row afterwards.
+Ground truth is NOT used to build `source` from slices; it only labels the row afterwards. The
+one exception is GT direct mode (`<slices.json>` = "-", rows say `gt_direct: true`): there is no
+slicer, the slice IS the GT points (entry = the GT sink line), so the GT decides what `source`
+carries and `gt_relevant` is true by construction.
 
 One JSONL row per slice:
   sample_id, kind, slice_id, case, degraded, entry, anchor, source, description,
@@ -28,7 +31,7 @@ from pathlib import Path
 
 HARNESS, JOB, REPO, SLICES, INDEX, OUT = map(Path, sys.argv[1:7])
 sys.path.insert(0, str(HARNESS))
-from src.adapters.fake_retriever import read_symbol_source  # noqa: E402
+from src.adapters.fake_retriever import read_raw_source, read_symbol_source  # noqa: E402
 from src.adapters.index_graph import GraphIndex  # noqa: E402
 from src.adapters.slices import load_slices, slice_refs  # noqa: E402
 from src.config import AUDITOR_SOURCE_OPTIONS, Thresholds  # noqa: E402
@@ -109,6 +112,9 @@ def ctx(thr):
         writes_of=graph.writes_of,
         field_writes_of=graph.field_writes_of,
         read_source=lambda loc: read_symbol_source(REPO, loc),
+        # raw bytes, as `cli.py` wires `RunContext.read_raw` -- the GUARDS scan (`auditor_guards`)
+        # reads them to see line-ending drift
+        read_raw=lambda file: read_raw_source(REPO, file),
         counter_for_role=lambda role: None,
         config=types.SimpleNamespace(thresholds=thr),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
@@ -117,21 +123,25 @@ def ctx(thr):
 
 
 def shown_lines(source, anchor):
+    """(file, line) pairs the SOURCE shows. With banners a line counts only inside its banner's
+    range -- the GUARDS list sits right after the entry function with no banner of its own, and its
+    lines are not the source lines that follow the function."""
     lines = source.split("\n")
     if not lines or not BANNER.match(lines[0]):
         start = anchor.line_start or 1
         return {(anchor.file, start + i) for i in range(len(lines))}
-    out, file, cur = set(), None, 0
+    out, file, cur, end = set(), None, 0, -1
     for ln in lines:
         m = BANNER.match(ln)
         if m:
-            file, cur = m[1], int(m[2])
+            file, cur, end = m[1], int(m[2]), int(m[3])
             continue
         o = OMIT.match(ln)
         if o:
             cur += int(o[1])
             continue
-        out.add((file, cur))
+        if cur <= end:
+            out.add((file, cur))
         cur += 1
     return out
 
