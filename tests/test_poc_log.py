@@ -45,7 +45,7 @@ from src.orchestrator.nodes import pov, preprocess
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.poc_log import DIR_NAME, SUFFIX, PocLog, PocWriteError
 from src.orchestrator.stages import Stage
-from src.orchestrator.trace import EventKind, TraceWriter
+from src.orchestrator.trace import EventKind, TraceWriter, canonical_line
 from src.schemas.enums import ArtifactKind, PovStopReason
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 from src.schemas.run import Budget
@@ -813,9 +813,10 @@ def test_the_stopping_gen_hop_event_also_carries_the_poc_sha256(
     assert last.data["poc_sha256"] == _terminal(scripted).data["poc_sha256"]
 
 
-def _tight_budget(ctx: RunContext) -> RunContext:  # noqa: F811
-    """hop0의 모델 호출(`_ScriptedModel`의 usage 1토큰)이 입력 토큰 상한에 닿는 원장."""
-    ledger = BudgetLedger(Budget(input_tokens=1, output_tokens=0, gpu_seconds=0), ctx.trace)
+def _tight_budget(ctx: RunContext, tokens: int = 1) -> RunContext:  # noqa: F811
+    """`tokens`번째 모델 호출(`_ScriptedModel`의 usage 홉당 1토큰)이 입력 토큰 상한에 닿는 원장 —
+    기본 1이면 hop0, 2면 hop1의 도구 호출이 `ensure`에서 끊긴다."""
+    ledger = BudgetLedger(Budget(input_tokens=tokens, output_tokens=0, gpu_seconds=0), ctx.trace)
     return dataclasses.replace(ctx, ledger=ledger)
 
 
@@ -852,7 +853,8 @@ def test_a_gateway_abort_at_the_next_hop_files_nothing_but_the_hop_event_names_t
         "중단 경로가 PoC를 남기기 시작했다 — 한계가 풀렸으면 poc_log docstring의 「한계」와 "
         "이 검사를 같이 고친다"
     )
-    assert not _terminals(scripted)  # 종단 이벤트가 없다 — 그래서 hop 이벤트가 유일한 흔적이다
+    # 종단 이벤트가 없다 — 오라클이 없는 이 픽스처에선 hop 이벤트가 유일한 흔적이다
+    assert not _terminals(scripted)
     (gen_hop,) = [h for h in _hops(scripted) if h.data["action"] == "gen"]
     assert gen_hop.data["poc_sha256"] == _LOST
 
@@ -893,9 +895,89 @@ def test_a_budget_abort_inside_the_gen_hops_own_tool_call_still_names_the_lost_p
     assert _tool_calls(scripted) == calls_before
     assert scripted.ledger.input_tokens == 1  # 원장은 이 검사가 새로 만든 것이다(`_tight_budget`)
     assert scripted.ledger.tool_ms == tool_ms_before
-    # 순서 — 원장의 소진 기록이 먼저, 그 홉 이벤트가 뒤다(이벤트는 예외를 받은 뒤 낸다).
-    kinds = [e.kind for e in scripted.trace.events]
-    assert kinds.index(EventKind.BUDGET) < kinds.index(EventKind.POV_HOP)
+    # 순서 — 원장의 **차단** 기록이 먼저, 그 홉 이벤트가 뒤다(이벤트는 예외를 받은 뒤 낸다).
+    # 첫 BUDGET은 픽스처 triage의 charge라 `blocked`로 가른다.
+    events = scripted.trace.events
+    blocked = next(i for i, e in enumerate(events) if e.data.get("event") == "blocked")
+    assert blocked < events.index(hop)
+    # hop0 이벤트는 정상 hop0처럼 진입점 조회 결과(`fuzz_*`)를 싣는다.
+    assert "fuzz_found" in hop.data
+    # 경과는 휘발 값이라 `data`가 아니라 최상위 `wall_ms`다(D14).
+    assert "latency_s" not in hop.data and hop.wall_ms is not None
+
+
+def test_a_budget_abort_at_hop1_names_hop1s_poc_and_joins_on_hop1(
+    ctx: RunContext,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """**hop≥1 gen의 도구 호출이 끊기면 그 홉의 PoC 해시를 싣는다** — 앞 홉 것이 아니다. 「이 홉의
+    PoC」와 「앞 홉의 PoC」가 갈리는 유일한 자리라, hop0 검사만으로는 앞 gen의 해시(`last_poc`)를
+    싣거나 `hop`을 0으로 박거나 해시를 빼는 결함이 모두 살아남는다. `fuzz_*`는 hop0 전용이다."""
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    scripted = _scripted(_tight_budget(ctx, 2), [_gen(count=8), _gen(count=9), _SUBMIT])
+
+    with pytest.raises(BudgetExhausted):
+        runner._run_pov_hops(scripted, state, finding, capsule)
+
+    first, cut = _hops(scripted)
+    assert first.data["poc_sha256"] == _LOST and "error" not in first.data
+    assert cut.data["hop"] == 1 and cut.data["action"] == "gen"  # hop0이 아니다 - 조인 키
+    assert cut.data["poc_sha256"] == hashlib.sha256(b"A" * 9).hexdigest()
+    assert cut.data["poc_sha256"] != _LOST
+    assert cut.data["error"] == "BudgetExhausted"
+    assert "fuzz_found" not in cut.data  # 진입점 조회는 hop0만의 것이다
+    assert not _terminals(scripted)
+
+
+def test_an_abort_of_any_other_type_inside_the_tool_call_leaves_no_hop_event(
+    ctx: RunContext,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**알려진 구멍을 고정한다**(`poc_log` 모듈 docstring 「한계」) — 도구 호출 둘레의 `except`는
+    `BudgetExhausted`만 받는다. `BudgetExhausted` 밖의 형은 그 홉의 이벤트 없이 그대로 올라간다.
+    넓히면(예: `Exception`) 이 검사가 빨개진다 - 그때는 docstring과 같이 고친다."""
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    scripted = _scripted(_wired(ctx, tmp_path / RUN_ID), [_gen(count=8), _SUBMIT])
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(pov, "run_tool", broken)
+
+    with pytest.raises(PermissionError):
+        runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert not _hops(scripted)
+
+
+def _truncated_hop_event(ctx: RunContext, state, finding, step: int) -> str:  # noqa: F811
+    """시계가 `step`ms씩 가는 문맥(눈금만 다른 두 run을 흉내낸다)으로 hop0 절단을 **새 trace**에서
+    한 번 돌려 그 `pov_hop`의 canonical 줄을 낸다. 상태(`finding`)는 호출자가 하나를 공유한다."""
+    ticks = iter(range(0, 10**9, step))
+    trace = TraceWriter(RUN_ID)
+    ledger = BudgetLedger(Budget(input_tokens=1, output_tokens=0, gpu_seconds=0), trace)
+    timed = dataclasses.replace(ctx, monotonic_ms=lambda: next(ticks), trace=trace, ledger=ledger)
+    scripted = _scripted(timed, [_gen(count=8), _SUBMIT])
+    with pytest.raises(BudgetExhausted):
+        runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+    (hop,) = _hops(scripted)
+    return canonical_line(hop)
+
+
+def test_the_truncated_hop_event_is_byte_identical_when_only_the_clock_differs(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """**Fake 경로의 바이트 동일 계약**(D14 — 비교에서 빼는 것은 최상위 `ts`·`wall_ms`뿐): 시계
+    눈금만 다른 두 절단 run의 `pov_hop`은 canonical 줄이 같다. 경과를 `data`에 실으면(`latency_s`)
+    이 둘이 갈린다. 시계를 0으로 고정한 `ctx` 그대로면 이 성질이 안 보인다(`test_nodes` 픽스처)."""
+    state, finding = _pov_state(ctx)
+
+    assert _truncated_hop_event(ctx, state, finding, 1) == _truncated_hop_event(
+        ctx, state, finding, 7
+    )
 
 
 @pytest.mark.parametrize("after_gen", [False, True], ids=["inspect_at_hop0", "inspect_after_gen"])
@@ -925,6 +1007,7 @@ def test_a_budget_abort_inside_an_inspect_hops_tool_call_also_emits_its_hop(
     *before, hop = _hops(scripted)
     assert [h.data["action"] for h in before] == (["gen"] if after_gen else [])
     assert hop.data["action"] == "inspect" and hop.data["error"] == "BudgetExhausted"
+    assert hop.data["hop"] == (1 if after_gen else 0)  # 조인 키
     assert "poc_sha256" not in hop.data
     if after_gen:
         assert before[0].data["poc_sha256"] == _LOST and "error" not in before[0].data
