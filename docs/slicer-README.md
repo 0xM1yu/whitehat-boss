@@ -258,6 +258,15 @@ slices_before/after_clustering, flows_truncated, queries_aborted, cpg_seconds, t
 `candidate_stages_reused`는 저장 상태를 읽은 후보 수다. `queries_aborted`와 시간은 현재 시도의
 관측이며 이전 오류를 지우지 않고 attempts에 남긴다. 완료 후보 통계는 재사용분을 포함한다.
 
+후보 발견 payload(`case_a`·`case_b`)는 **행 단위로** 검증한다(#361). 무효 행(위치·빈 `symbol`·scope·anchors,
+B는 selector — 음수 `ast_path` 포함)은 버리고 나머지 행으로 계속 -> `candidates_invalid`에 셈(두 Case 합),
+`measurement_notes.candidates_invalid`에 단계·필드별 수, `diagnostics`에 단계마다 앞 3행(ASCII JSON 문자열), run은 `partial`.
+`candidates_case_a/b`는 버린 뒤의 후보 수다. 전에는 행 하나가 payload 전체를 거부시켜 run이 슬라이스 0으로 끝났다(#347).
+payload가 리스트가 아니거나 **행이 전부 무효면** 여전히 그 단계 전체 실패(`queries_aborted`). 무효 행 판정은 전과 같고 단위만 바뀌었다.
+격리 대상은 위 검사가 보는 필드뿐이다 — 검사 밖인 `reasons`·`trigger_arguments`·`sink_arguments`의 타입이나 `scope.symbol`이 어긋난 행은
+전과 같이 run을 비우거나(`TypeError`) 하류 로더가 파일째 거부한다(리뷰 재현, main 동일).
+Joern이 그런 Case B 행을 실제로 내는지는 미확인(#361 — 재현은 mock).
+
 ## 체크포인트와 재개
 
 SQLite WAL + synchronous FULL로 단계 payload·checksum·완료 상태를 한 트랜잭션에 저장한다.

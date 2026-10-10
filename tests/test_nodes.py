@@ -2497,6 +2497,110 @@ def test_dedupe_does_not_merge_across_files() -> None:
     assert {f.finding_id for f in kept} == {"find_0001", "find_0002"}
 
 
+def test_report_records_which_representative_each_dropped_finding_merged_into(
+    ctx: RunContext,
+) -> None:
+    """버린 Finding마다 **무엇과 합쳐졌는지**를 남긴다 (이슈 #101 잔여). 예전엔 `중복 제거: N건`이
+    전부라 실측 `run_20260827_0004`에서 사라진 `find_0005`(E2·`upheld`)를 추적할 수 없었다.
+
+    대표는 등급 우선이다 — id가 가장 큰 E3가 E0·E2를 흡수한다. 다른 파일의 같은 키는 안 묶이고
+    행도 안 남는다. 행 수는 `duplicates`와 같다.
+    """
+    low, mid, high = _finding("find_0001"), _finding("find_0005"), _finding("find_0009")
+    elsewhere = _finding("find_0002")  # 같은 (CWE, 대상 함수)지만 다른 파일
+    # 둘째 그룹에도 버려지는 쪽을 둔다 — 없으면 대표를 그 키가 아닌 곳에서 가져오는 변이가 산다.
+    second_drop = _finding("find_0012")  # b.c — find_0002(E1)에 흡수
+    ungraded = _finding("find_0013")  # a.c — 등급 없음: 흡수되고 `grade`는 `null`
+    bare_a, bare_b = _finding("find_0020"), _finding("find_0021")  # c.c — 둘 다 등급 없음
+    grades = {
+        "find_0001": "E0",
+        "find_0005": "E2",
+        "find_0009": "E3",
+        "find_0002": "E1",
+        "find_0012": "E0",
+    }
+    files = {
+        "find_0001": "a.c",
+        "find_0005": "a.c",
+        "find_0009": "a.c",
+        "find_0002": "b.c",
+        "find_0012": "b.c",
+        "find_0013": "a.c",
+        "find_0020": "c.c",
+        "find_0021": "c.c",
+    }
+
+    result = report.run(
+        ctx,
+        findings=[mid, high, elsewhere, bare_b, second_drop, ungraded, bare_a, low],
+        grades=grades,
+        files=files,
+    )
+
+    assert result.merged_into == {
+        "find_0001": "find_0009",
+        "find_0005": "find_0009",
+        "find_0012": "find_0002",
+        "find_0013": "find_0009",
+        "find_0021": "find_0020",
+    }
+    events = [e for e in ctx.trace.events if e.kind is EventKind.FINDING_DEDUPED]
+    assert len(events) == result.duplicates == 5
+    assert [e.subject_id for e in events] == [
+        "find_0001",
+        "find_0005",
+        "find_0012",
+        "find_0013",
+        "find_0021",
+    ]
+    assert all(e.stage == int(Stage.REPORT) and e.subject_kind == "finding" for e in events)
+    assert events[0].data == {
+        "representative": "find_0009",
+        "grade": "E0",
+        "representative_grade": "E3",
+        "cwe": "CWE-787",
+        "file": "a.c",
+        "target": "memcpy",  # PROPAGATE 없음 → sink(`_target_symbol`)
+    }
+    assert events[1].data["representative"] == "find_0009"
+    assert events[1].data["grade"] == "E2"
+    assert events[2].data["representative"] == "find_0002"  # 자기 그룹의 대표 — a.c의 것이 아니다
+    assert (events[2].data["grade"], events[2].data["representative_grade"]) == ("E0", "E1")
+    # 등급 없음은 "E0"이 아니라 `null`이다 — 키는 있고 값이 None.
+    assert events[3].data["grade"] is None and events[3].data["representative_grade"] == "E3"
+    # 대표도 등급이 없으면 `representative_grade`가 `null`이다.
+    assert events[4].data["grade"] is None and events[4].data["representative_grade"] is None
+    assert "중복 제거: 5건 (무엇과 합쳤는지는 trace의 `finding_deduped`)" in result.render()
+
+
+def test_dedupe_with_merges_ties_go_to_the_smallest_finding_id() -> None:
+    """동급이면 대표는 가장 작은 `finding_id`이고 버린 쪽이 그것을 가리킨다 — 입력 순서와 무관.
+    등급이 없는 것은 등급 있는 것에 흡수된다(`_GRADE_RANK_UNKNOWN`)."""
+    kept, merged = report.dedupe_with_merges(
+        [_finding("find_0009"), _finding("find_0003"), _finding("find_0001")],
+        {"find_0009": "E3", "find_0003": "E3"},  # find_0001은 등급 없음
+    )
+
+    assert [f.finding_id for f in kept] == ["find_0003"]
+    assert merged == {"find_0009": "find_0003", "find_0001": "find_0003"}
+
+
+def test_report_without_duplicates_records_nothing(ctx: RunContext) -> None:
+    """중복이 없으면 대응을 하나도 안 남긴다 — `report.run`이 돈 run에서 이벤트 부재가
+    「안 합쳤다」이고, 리포트 바이트도 종전과 같다(중복 줄 자체가 없다)."""
+    a = _finding("find_0001")
+    b = _finding("find_0002")
+
+    result = report.run(ctx, findings=[a, b], files={"find_0001": "a.c", "find_0002": "b.c"})
+
+    assert result.duplicates == 0
+    assert result.merged_into == {}
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.FINDING_DEDUPED]
+    rendered = result.render()
+    assert "중복 제거" not in rendered
+    assert "finding_deduped" not in rendered
+
+
 def test_render_shows_grade_and_distribution(ctx: RunContext) -> None:
     """리포트가 등급을 싣는다 (D36). 예전엔 state만 찍어 E3에 도달한 Finding도 `queued`로
     보였고, run의 성과(E3 건수)를 보려면 trace를 파야 했다."""
@@ -3048,3 +3152,129 @@ def _finding(
         produced_by=ProducedBy(role=Role.AUDITOR, model="fake", prompt_version="v1"),
         repro_spec=ReproSpec(steps=["./build.sh"], expected_signal=signal) if backed else None,
     )
+
+
+def test_a_seat_failing_in_different_stages_does_not_add_up_but_in_one_stage_does(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**자리 연속 폐기 카운터의 키는 `_caller(단계, 자리)`다 (D73 ②, #197).**
+
+    같은 Scout 자리의 시도가 4단계에서 한 번, 5단계에서 한 번 죽은 것은 「그 자리가 체계적으로
+    고장 났다」가 아니다 — 죽은 모델이 다르다. 예전 키(`item.role`)는 둘을 한 버킷에 쌓아 상한에
+    닿았다. 같은 단계에서 다시 죽으면 쌓인다(D68 — 멤버 하나의 전량 실패는 여전히 선다).
+
+    실패 사이마다 `completed()`를 부르는 것은 **형제 자리의 완주**다 — run 카운터를 지워 자리
+    카운터만 남긴다(풀에서 형제가 멀쩡할 때의 모양). 상한 2로 낮춰 세 번 안에 가른다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    # `_drop`이 target에서 읽는 것은 위치와 슬라이스 id뿐이다.
+    target = runner._Target(
+        artifact=None, location=VULN_TARGET, evidences=(), signal_rank=0
+    )
+    state = runner._Accumulator()
+    drops = runner._ConsecutiveDrops()
+
+    def fail(stage: Stage) -> None:
+        runner._drop(
+            ctx, state, target, "schema_parse_failed", SchemaParseError("bad"), drops,
+            stage=stage, role=Role.SCOUT_MEMORY,
+        )
+        drops.completed()
+
+    fail(Stage.SCOUT)
+    fail(Stage.AUDITOR)  # 다른 단계 — 같은 자리여도 4단계 키에 안 쌓인다
+    with pytest.raises(runner._TooManyDrops, match="4단계 scout_memory"):
+        fail(Stage.SCOUT)  # 같은 단계 두 번째 — 상한
+
+
+def _drop_one(ctx: RunContext, drops: runner._ConsecutiveDrops, symbol: str, **where) -> None:  # noqa: ANN003
+    """`symbol` 대상의 시도 하나를 스키마 실패로 버린다 — 카운터만 보려고 `_drop`을 직접 부른다."""
+    target = runner._Target(
+        artifact=None,
+        location=Location(file="parser.c", symbol=symbol, line_start=3, line_end=6),
+        evidences=(),
+        signal_rank=0,
+    )
+    runner._drop(
+        ctx, runner._Accumulator(), target, "schema_parse_failed", SchemaParseError("bad"), drops,
+        **{"stage": Stage.SCOUT, "role": Role.SCOUT_MEMORY, **where},
+    )
+
+
+_POOL_SEATS = (Role.SCOUT_MEMORY, Role.SCOUT_BOUNDARY, Role.SCOUT_INJECTION)
+
+
+def test_a_fan_out_dying_inside_one_target_does_not_trip_the_run_counter(
+    ctx: RunContext,
+) -> None:
+    """**한 대상의 세 자리가 죽은 것은 증거 하나다 — 둘째 대상이 죽어야 run 카운터가 선다.**
+
+    PR #584 리뷰 §1 — 자리 수(3) ≥ 상한(3)이면 대상 하나의 팬아웃 전멸이 run을 죽였다. 이 검사는
+    상한만큼 쌓인 폐기가 **한 대상**에 있을 때 안 서고, 다른 대상의 다음 폐기에 서는 것을 문다.
+    """
+    drops = runner._ConsecutiveDrops()
+    for seat in _POOL_SEATS:  # 상한 3 = 자리 3
+        _drop_one(ctx, drops, "a", role=seat)
+    assert drops.run == runner._MAX_CONSECUTIVE_DROPS
+
+    with pytest.raises(runner._TooManyDrops, match="자리 무관"):
+        _drop_one(ctx, drops, "b", role=Role.SCOUT_MEMORY)
+
+
+def test_the_run_counter_alone_stops_failures_spread_over_targets_and_seats(
+    ctx: RunContext,
+) -> None:
+    """**서로 다른 대상 셋이 서로 다른 자리에서 하나씩 죽으면 셋째에 선다 — 자리 카운터 없이.**
+
+    자리 키(`(4단계, 자리)`)가 모두 1이라 자리 카운터는 못 닿는다 — 서는 것은 run 카운터뿐이다.
+    run 카운터 판정을 끄면 이 검사가 빨개진다(`DID NOT RAISE`).
+    """
+    drops = runner._ConsecutiveDrops()
+    _drop_one(ctx, drops, "a", role=Role.SCOUT_MEMORY)
+    _drop_one(ctx, drops, "b", role=Role.SCOUT_BOUNDARY)
+    assert max(drops.by_caller.values()) == 1
+
+    with pytest.raises(runner._TooManyDrops, match="자리 무관, 서로 다른 대상 3개"):
+        _drop_one(ctx, drops, "c", role=Role.SCOUT_INJECTION)
+
+
+def test_a_completed_attempt_clears_the_run_counters_target_streak(ctx: RunContext) -> None:
+    """완주가 run 카운터와 그 대상 목록을 **같이** 지운다 — 목록이 남으면 앞 대상이 새 줄에 낀다."""
+    drops = runner._ConsecutiveDrops()
+    for seat in _POOL_SEATS:
+        _drop_one(ctx, drops, "a", role=seat)
+    drops.completed()
+    assert drops.run == 0
+    assert not drops.run_targets
+
+    for seat in _POOL_SEATS:  # 새 줄 — 한 대상이라 다시 안 선다
+        _drop_one(ctx, drops, "b", role=seat)
+
+
+def test_auditor_failures_from_different_scout_seats_share_one_key(ctx: RunContext) -> None:
+    """**5단계 키는 Scout 자리로 갈리지 않는다 (D73 ②, #197) — `_caller`를 문다.**
+
+    자리 셋의 Auditor 실패가 한 버킷에 쌓여 셋째에 선다. `_caller`가 5단계에서도 자리를 키로 쓰면
+    (`return (stage, seat)`) 각 버킷이 1이라 `DID NOT RAISE`다. 실패 사이의 `completed()`는 run
+    카운터를 지우는 형제의 완주다 — 자리 카운터만 남긴다.
+    """
+    drops = runner._ConsecutiveDrops()
+    for seat in _POOL_SEATS[:-1]:
+        _drop_one(ctx, drops, "a", stage=Stage.AUDITOR, role=seat)
+        drops.completed()
+
+    with pytest.raises(runner._TooManyDrops, match="5단계"):
+        _drop_one(ctx, drops, "a", stage=Stage.AUDITOR, role=_POOL_SEATS[-1])
+
+
+def test_with_fewer_seats_than_the_cap_the_run_counter_still_stops_at_the_cap(
+    ctx: RunContext,
+) -> None:
+    """자리 수(2) < 상한(3)이면 둘째 대상이 죽는 순간 이미 상한번째다 — 「한 건 늦다」는 자리 수가
+    상한에 닿을 때(N ≥ 상한)만이다. 서는 시점은 `max(상한, 자리 수 + 1)`번째 시도다."""
+    drops = runner._ConsecutiveDrops()
+    _drop_one(ctx, drops, "a", role=Role.SCOUT_MEMORY)
+    _drop_one(ctx, drops, "a", role=Role.SCOUT_BOUNDARY)
+
+    with pytest.raises(runner._TooManyDrops, match=r"후보 3건이 연속으로 실패했다\(자리 무관"):
+        _drop_one(ctx, drops, "b", role=Role.SCOUT_MEMORY)

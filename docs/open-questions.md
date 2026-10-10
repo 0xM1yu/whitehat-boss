@@ -87,7 +87,7 @@
 | D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) — **값이 코드 상수인 것은 그대로** | 부분 | [본문](open-questions/D/D32.md) |
 | D33 | ~~`run_20260825_0001`이 옛 build 배선의 마지막 완전 측정이다~~ | 닫힘 | [본문](open-questions/D/D33.md) |
 | D34 | ~~언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다~~ | 닫힘 | [본문](open-questions/D/D34.md) |
-| D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 부분 | [본문](open-questions/D/D35.md) |
+| D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 닫힘 | [본문](open-questions/D/D35.md) |
 | D36 | ~~`report.md`에 E 등급이 없다 — run의 성과가 최종 산출물에 안 보인다~~ | 닫힘 | [본문](open-questions/D/D36.md) |
 | D37 | ~~`run_manifest.json`에 `profile`이 없다~~ | 닫힘 | [본문](open-questions/D/D37.md) |
 | D38 | **E4는 컨테이너 러너 + Fake auditor에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D38.md) |
@@ -123,8 +123,8 @@
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
 | D71 | ~~공유 캡슐의 토큰 예산이 첫 멤버의 토크나이저로만 강제된다 — 로스터는 풀 세 자리를 서로 다른 세 모델로 정해 두었다~~ (갈림 실측 후 예산 마진 0.90 — 옵션 A) | 닫힘 | [본문](open-questions/D/D71.md) |
-| D72 | **역할별 출력 상한에 위쪽 한계가 없다 — `2**31`이 로드를 통과하고, 그 run은 전량 400인데 bench가 「못 잼」으로 적는다** | 열림 | [본문](open-questions/D/D72.md) |
-| D73 | 역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다 | 열림 | [본문](open-questions/D/D73.md) |
+| D72 | ~~역할별 출력 상한에 위쪽 한계가 없다~~ (로드가 실서빙 역할의 상한 ≥ 그 모델 registry 창을 거부해 해소 — 선택지 (a)) | 닫힘 | [본문](open-questions/D/D72.md) |
+| D73 | ~~역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다~~ (run 카운터 + (단계, 자리) 카운터) | 닫힘 | [본문](open-questions/D/D73.md) |
 | D74 | ~~Joern 슬라이스를 캡슐 본문으로 쓰면 Progressive Context Expansion이 확장할 것을 잃는다~~ ((a) 후보 열거에만 → ADR 0012가 대체) | 닫힘 | [본문](open-questions/D/D74.md) |
 | D75 | 실험1이 확증한 Scout CWE→Agent 세부 목록이 로스터·프롬프트의 목록과 다르다 — 어느 것을 정본으로 할지 미결 | 닫힘 | [본문](open-questions/D/D75.md) |
 | D76 | ~~하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다~~ | 닫힘 | [본문](open-questions/D/D76.md) |
@@ -137,7 +137,7 @@
 | D83 | ~~모델이 쓴 `state`·ID를 하네스가 대조하지 않는다~~ (하네스가 발급값을 도장 찍어 해소 — `location`은 D82 ⑥으로) | 닫힘 | [본문](open-questions/D/D83.md) |
 | D84 | **모델 응답의 원문(실패한 시도·단발 호출·루프 마지막 홉)과 `reasoning_content`를 보존하지 않는다**(⏵ `finish_reason`은 #550으로 시도별 trace에 남는다) — 증류 데이터·D46 진단 불가 | 열림 | [본문](open-questions/D/D84.md) |
 | D85 | ~~슬라이서가 UTF-8 아닌 소스 파일 하나에 run 전체를 실패시킨다~~ (무효 바이트만 latin-1로 해소) | 닫힘 | [본문](open-questions/D/D85.md) |
-| D86 | **resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다** (D10에서 승계) | 열림 | [본문](open-questions/D/D86.md) |
+| D86 | **resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다** (D10에서 승계 · ⏵ 2026-10-10 (b) 판을 적은 파일에 한해 판 게이트 섬, resume 지원 여부 남음) | 부분 | [본문](open-questions/D/D86.md) |
 | D87 | **run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다** (2026-09-25 ATOM에서 실제로 났다) | 열림 | [본문](open-questions/D/D87.md) |
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |

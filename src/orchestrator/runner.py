@@ -106,7 +106,7 @@ import json
 import re
 import subprocess
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -310,7 +310,7 @@ _DROPPABLE_STATUS = frozenset({400, 413, 422})
 # 큰 함수가 뭉쳐 오는 것은 드문 일도 아니다.
 #
 # **번갈아 실패하는 경우는 여전히 걸린다.** 크기 거절은 카운터를 올리지도 않지만
-# **내리지도 않는다** — 리셋 조건은 오직 완주다. 그래서 스키마 → 400 → 스키마 →
+# **내리지도 않는다** — 내리는 것은 죽지 않고 끝난 시도뿐이다. 그래서 스키마 → 400 → 스키마 →
 # 400 → 스키마는 1·1·2·2·3으로 상한에 닿는다. 이 값이 잡으려는 것이 그 모양이다.
 #
 # **크기 거절만 계속 나오는 run은 중간에 멈추지 않는다.** 그래도 폭주하지 않는 것은
@@ -318,6 +318,8 @@ _DROPPABLE_STATUS = frozenset({400, 413, 422})
 # 성공하지 못했으면 멈춘다(`_stop_if_a_caller_saw_nothing`, #296) — 서버 창을 작게 띄우면 크기
 # 거절이 전량이 되는데(`run_20260925_0006`), 그 run을 완주로 두면 「못 봤다」가 「없다」로
 # 읽힌다. 예전에는 여기서 *"한 번 보면 갈린다"*며 받아들였다 — 사람이 본다는 전제였다.
+#
+# **카운터가 둘이고 상한은 이 값 하나다(#197).** 키·리셋·서는 조건은 `_ConsecutiveDrops`가 정한다.
 #
 # **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
 # 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
@@ -363,8 +365,11 @@ def _is_size_rejection(exc: Exception) -> bool:
 def _rejects_every_request(exc: Exception) -> bool:
     """크기가 아닌 400인가 — 요청 모양·서버 설정 거절이라 **다음 요청도 같다**(#296).
 
-    그래서 세지 않고 첫 건에서 멈춘다. 세면 후보 단위에서는 Scout가 안 올린 대상이 카운터를
-    0으로 되돌리고 키가 Scout 자리라(#197), 뒤 단계가 전부 거절해도 상한에 안 닿을 수 있다.
+    그래서 세지 않고 첫 건에서 멈춘다 — 세면 상한까지 같은 거절을 더 태울 뿐이다. 이 정지가 생길
+    때(#296)는 이유가 하나 더 있었다: 카운터 키가 Scout 자리였고 Scout가 안 올린 대상의 완주가 그
+    키를 지워 뒤 단계가 전부 거절해도 상한에 안 닿을 수 있었다. 키가 `_caller(단계, 자리)`가 된
+    뒤(#197)로는 Auditor 키를 Auditor를 안 거친 완주가 못 지운다 —
+    `test_a_scout_that_promotes_nothing_does_not_clear_the_auditors_key`가 후보 단위에서 문다.
     """
     return (
         isinstance(exc, ModelGatewayError) and exc.status == 400 and not _is_size_rejection(exc)
@@ -372,13 +377,58 @@ def _rejects_every_request(exc: Exception) -> bool:
 
 
 def _caller(stage: Stage, seat: Role) -> tuple[Stage, Role | None]:
-    """성공 0 백스톱의 키 — **그 단계에서 모델을 부른 자리**다(#296).
+    """**그 단계에서 모델을 부른 자리** — 성공 0 백스톱(#296)과 자리 연속 폐기 카운터(#197)의 키다.
 
     4단계만 Scout 자리마다 모델·프롬프트가 다르다. 5단계부터는 부르는 역할이 하나라, 자리
-    (`item.role`, #197)로 나누면 한 자리의 후보만 창을 넘어도 「그 자리가 한 번도 성공 못
-    했다」가 되어 멈춘다 — 그 역할은 다른 자리 후보에서 멀쩡히 돌았는데.
+    (`item.role` — 팬아웃에서 정해지는 4단계 자리)로 나누면 한 자리의 후보만 창을 넘어도 「그
+    자리가 한 번도 성공 못 했다」가 되어 멈춘다 — 그 역할은 다른 자리 후보에서 멀쩡히 돌았는데.
+    연속 폐기도 같다 — 5단계 Auditor 장애를 Scout 자리 수만큼의 버킷으로 나눠 세지 않는다.
     """
     return (stage, seat if stage is Stage.SCOUT else None)
+
+
+@dataclass
+class _ConsecutiveDrops:
+    """연속 폐기 카운터 둘 — **run 카운터와 자리 카운터**(#197).
+
+    상한은 둘 다 `_MAX_CONSECUTIVE_DROPS`다.
+
+    | 카운터 | 키 | 지우는 것 | 막는 것 |
+    | --- | --- | --- | --- |
+    | `run` | 없음 | 후보: 죽지 않고 끝난 시도 · 단계: 행의 성공 | 전 자리 장애(대상 둘 이상) |
+    | `by_caller` | `_caller(단계, 자리)` | 그 단계를 지난 시도 | 멤버 하나의 전량 실패(#195) |
+
+    **둘인 이유.** 자리 카운터 하나만 두면(#195 ~ #197) 풀 3자리 전역 장애에서 각 자리가
+    따로 상한까지 올라가야 해서 3번째가 아니라 7번째 시도에 섰다. run 카운터 하나만
+    두면(#195 전) 고장난 멤버의 실패를 형제의 완주가 매번 지워 영영 안 섰다(#195가 고친 맹점).
+
+    **run 카운터는 폐기가 서로 다른 대상 둘 이상에 걸쳐야 선다(PR #584 리뷰 §1).** 아니면 자리 수 ≥
+    상한일 때 한 대상의 팬아웃 전멸만으로 멀쩡한 나머지 대상까지 잃는다. 그 전멸은 전 자리 장애와
+    둘째 대상이 죽기 전까지 가를 수 없어, 전 자리 장애는 `max(상한, 자리 수 + 1)`번째 시도에 선다
+    (자리 3 · 상한 3이면 4번째 — 자리 키만으로는 7번째).
+
+    **자리 카운터의 키가 실패한 단계를 따른다.** 예전 키(`item.role`)는 4단계 자리라 5단계
+    Auditor 장애가 Scout 자리 수만큼의 버킷으로 갈렸고, Scout가 안 올린 대상의 완주가 그
+    자리 키를 지워 Auditor가 전부 실패해도 상한에 안 닿을 수 있었다. 이제 Auditor 키는
+    Auditor를 지난 시도만 지운다.
+
+    단일 `scout`에서 run 카운터는 예전 카운터와 같다(키가 하나였고 완주가 지웠다). 자리
+    카운터가 그보다 먼저 닿는 경우는 뒤 단계의 실패 사이에 그 단계를 안 거친 완주가 낀 때뿐이다.
+    """
+
+    run: int = 0
+    run_targets: set["_TargetKey"] = field(default_factory=set)
+    by_caller: dict[tuple[Stage, Role | None], int] = field(default_factory=dict)
+
+    def passed(self, callers: Iterable[tuple[Stage, Role | None]]) -> None:
+        """그 단계들을 지났다 — 그 자리의 앞 실패는 체계적 고장이 아니었다."""
+        for key in callers:
+            self.by_caller[key] = 0
+
+    def completed(self) -> None:
+        """시도 하나가 **죽지 않고 끝났다**(끝까지 갔든 승격이 안 돼 멈췄든) — run 고장이 아니다."""
+        self.run = 0
+        self.run_targets.clear()
 
 
 def _stop_if_a_caller_saw_nothing(starved: set[tuple[Stage, Role | None]]) -> None:
@@ -1851,10 +1901,12 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
         return
     # 🔴 `finally`로 **빈칸을 메운다.** `_run_pov_hops`의 `except`는
     # `(ModelGatewayError, SchemaParseError)`뿐이고, 그 밖의 형이 올라가면
-    # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다. 적대적 리뷰가 설정만으로 닿는 둘을
-    # 재현했다 — pov 좌석 `prompt_template_version` 오타의 `PromptError`(`run()`은
-    # `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
+    # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다.
+    # 적대적 리뷰가 설정만으로 닿는 둘을 재현했다 — pov 좌석 `prompt_template_version` 오타의
+    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
+    # ⏵ 2026-10-10 도구 호출 둘레의 `except BudgetExhausted`(#394)는 홉 이벤트를 낸 뒤 그대로
+    # 올리므로 사유 0건은 여전하고 이 `finally`가 메운다.
     # `setdefault`라 정상 출구가 적은 사유를 덮지 않는다 — 아무도 안 적었을 때만 들어간다.
     # 채점기 제출(#386)은 이 `try` 안이다: `_submit_vul_to_oracle`이 `Exception`을 스스로 흡수하므로
     # `finally`가 루프가 이미 적은 사유(`submitted`)를 덮을 일이 없고, 올라가는 인터럽트가 있어도
@@ -2333,6 +2385,7 @@ def _run_pov_hops(
     **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
+    도구 호출에서 난 `BudgetExhausted`는 그 홉의 `pov_hop`을 낸 **뒤에** 올린다(#394).
     홉 상한은 PoV 전용 `thresholds.pov_tool_hops`다(이슈 #511) — NE 루프의 `max_hops`와 갈랐다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
@@ -2441,13 +2494,35 @@ def _run_pov_hops(
                     oracle_observation = _submit_vul_to_oracle(
                         ctx, state, finding, hop_poc, designatable=False, in_validate_span=True
                     )
-                evidence = pov.run_tool(
-                    ctx, finding=finding, tool="poc", workdir=workdir, poc=hop_poc
-                )
+                tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
+                tool, tool_poc = action.tool, last_poc
+            try:
                 evidence = pov.run_tool(
-                    ctx, finding=finding, tool=action.tool, workdir=workdir, poc=last_poc
+                    ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
                 )
+            except BudgetExhausted as exc:
+                # 🔴 **그 홉의 이벤트를 내고 다시 던진다**(#394). `call_tool`도 `ledger.ensure`를
+                # 하므로 예산은 이 자리에서도 끊긴다 — gen PoC를 조립한 **뒤**, 홉 이벤트를 내기
+                # **전**이다. 안 내면 오라클 제출이 없는 run·마지막 홉·v2에서 그 PoC의 해시는 trace
+                # 어디에도 없다(제출이 있으면 `oracle_submitted`가 같은 해시를 싣는다 - 홉과의
+                # 연결만 없다). 내면 다음 홉에서 끊긴 경로와 같아진다(그 홉 gen 이벤트의
+                # `poc_sha256`이 잃은 PoC를 특정한다).
+                # 원장은 안 건드린다 — `ensure`가 막은 호출은 도구를 안 돌렸고 청구도 없다.
+                # 예외는 그대로 올린다(추가형 계약 — 예산 소진은 run의 사실). 종단(`_pov_finish`)은
+                # 여전히 안 부른다 — 파일은 이 경로에서도 없다(`poc_log` 모듈 docstring 「한계」).
+                # 이벤트 쓰기가 던지면 원 예외가 가려지므로 `add_note`로 붙이고 원 예외를 올린다.
+                try:
+                    _emit_pov_hop(
+                        ctx, finding, hop=hop, action=action.action, poc=hop_poc,
+                        failed=(exc, None), wall_ms=max(0, ctx.monotonic_ms() - started),
+                        fuzz=fuzz if hop == 0 else None,
+                    )
+                except Exception as emit_exc:
+                    exc.add_note(
+                        f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
+                    )
+                raise
             if hop >= pov_hops:
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
@@ -2563,6 +2638,7 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
     run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
+    ⏵ 2026-10-10 도구 호출(`run_tool`)에서 난 것만은 루프가 그 홉의 이벤트를 낸 뒤 올린다(#394).
 
     ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
     run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
@@ -2587,17 +2663,21 @@ def _emit_pov_hop(
     evidence: Evidence | None = None,
     poc: bytes | None = None,
     stop_reason: str | None = None,
-    failed: tuple[Exception, float] | None = None,
+    failed: tuple[Exception, float | None] | None = None,
+    wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
-    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다).
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
+    **도구 호출**이 예산에서 끊긴 경우도 `failed`로 낸다(#394) — 그때는 응답이 있어 `action`이
+    같이 실리고 `schema_ok`가 참이다. 이 경우 경과는 `data`가 아니라 최상위 `wall_ms`로 보낸다
+    (`failed`의 시간은 `None`) — Fake 경로의 결정론 trace에 시계값을 `data`로 넣지 않는다.
 
     `poc`는 **그 홉의 gen이 조립한 PoC**다 — 있으면 맨 hex sha256을 `poc_sha256`으로 싣는다(종단
     이벤트의 `poc_sha256`과 같은 형식이라 바로 대조된다). 종단을 건너뛰는 중단 경로(예산 소진·서버
-    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이지만 **이 이벤트가 나간 뒤에 끊긴 경우뿐이다**
-    — 그 홉 자신의 도구 호출에서 끊기면(토큰 예산 소진이 그 경로다) 이벤트도 해시도 없다(`poc_log`
-    모듈 docstring의 「한계」).
+    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이다. 그 홉 자신의 도구 호출이 예산에서
+    끊겨도 루프가 이 이벤트를 내고 다시 던진다(#394). 그 밖의 형으로 도구 호출에서 끊기면 이벤트가
+    없다(`poc_log` 모듈 docstring의 「한계」).
 
     `fuzz`는 **hop0에만** 준다 — 퍼즈 진입점 조회의 결과다(`_fuzz_entrypoint`). 그것을 여기 싣는
     이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
@@ -2622,7 +2702,8 @@ def _emit_pov_hop(
     if failed is not None:
         exc, latency_s = failed
         data["schema_ok"] = not isinstance(exc, SchemaParseError)
-        data["latency_s"] = latency_s
+        if latency_s is not None:
+            data["latency_s"] = latency_s
         data["error"] = type(exc).__name__
         data["error_detail"] = error_detail(exc)
     ctx.trace.emit(
@@ -2630,6 +2711,7 @@ def _emit_pov_hop(
         stage=Stage.VALIDATE,
         subject_kind="finding",
         subject_id=finding.finding_id,
+        wall_ms=wall_ms,
         **data,
     )
 
@@ -4488,7 +4570,7 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
     ## 이 루프에서 뜻이 바뀌는 둘 (ADR 0009 「함께 옮겨야 하는 것」)
 
     **1. 연속 폐기 카운터가 「이 단계에서 몇 건이 연속으로 죽었나」가 된다.**
-    후보 단위에서는 카운터가 run 전체에 하나였고 리셋 조건이 「후보 하나가 3~6단계를
+    후보 단위에서는 (#197 전) 카운터가 run 전체에 하나였고 리셋 조건이 「후보 하나가 3~6단계를
     완주」였다. 여기서는 **단계마다 0에서 시작하고**, 「이 target이 이 단계를 마쳤다」가
     리셋이다. 바뀌는 이유는 뜻이 실제로 달라서다 — 단계 단위에서 4단계를 전부 통과한
     run은 「scout는 멀쩡하다」를 증명한 것이고, 그 사실을 5단계 실패가 지우면 안 된다.
@@ -4555,33 +4637,25 @@ def _run_stage_for_all(
     `status not in _DROPPABLE_STATUS`를 적으면 한쪽만 고쳐질 때 같은 오류가 모드에
     따라 다르게 처리된다.
 
-    ## 연속 폐기 카운터는 **역할별**이다 (풀 팬아웃 #178의 후속 수정, 2026-09-13)
+    ## 연속 폐기 카운터는 둘이다 — run과 자리 (#197, `_ConsecutiveDrops`)
 
-    `items`가 target × 역할로 펼쳐지므로 `consecutive`는 **역할을 키로 센다.** 풀 멤버
-    하나가 전량 실패하면 그 역할의 카운터가 형제의 성공에 지워지지 않고 쌓여
-    `_MAX_CONSECUTIVE_DROPS`에 닿는다 — 그래서 Scout 커버리지 1/3이 빈 run이 `stopped_after`를
-    채우고 `is_complete=False`가 된다(비교표에서 빠진다, [evaluation.md](../../evaluation.md) §6).
-    단일 `scout`은 키가 하나라 이전과 동작이 같다.
+    `items`가 target × 역할로 펼쳐진다. **자리 카운터**는 `_caller(stage, item.role)`을 키로
+    센다 — 4단계에서는 Scout 자리, 5단계부터는 부르는 역할 하나다. 풀 멤버 하나가 전량
+    실패하면 그 자리 키가 형제의 성공에 지워지지 않고 쌓여 `_MAX_CONSECUTIVE_DROPS`에
+    닿는다(#195) — 그래서 Scout 커버리지 1/3이 빈 run이 `stopped_after`를 채우고
+    `is_complete=False`가 된다(비교표에서 빠진다, [evaluation.md](../../evaluation.md) §6).
+    **run 카운터**는 키 없이 세고 아무 성공이나 지운다(서는 조건은 `_ConsecutiveDrops`).
 
-    > **왜 역할별인가.** 예전에는 열 전체에 카운터가 하나여서, 고장난 멤버가 매번 죽어도
-    > 형제 멤버의 성공이 그때마다 0으로 지웠다 — 상한에 영원히 안 닿았다. "연속 셋이
-    > 죽으면 그 단계가 체계적으로 고장"이 풀에서 거짓이 되던 자리다.
+    > **왜 둘인가.** 자리를 안 가른 카운터 하나였을 때는 고장난 멤버가 매번 죽어도 형제의
+    > 성공이 그때마다 0으로 지웠다 — 상한에 영원히 안 닿았다(#195). 역할(`item.role`) 키
+    > 하나로 바꾸자(#195) 반대로 풀 3자리 전역 장애가 3번째가 아니라 7번째 시도에 섰고,
+    > 5단계 Auditor 장애가 Scout 세 버킷으로 갈렸다(#197). 둘을 같이 두면 각자 한쪽을 막는다.
 
-    ⚠ **역할별로 바꾸면서 두 가지가 반대로 바뀌었다 — 둘 다 산 결함이 아니라 「의미가
-    달라졌다」이고, 잠정으로 서술만 한다(미해결로 등재됨 — 인덱스 참조).**
-    - **교차역할 전역 장애는 N배 늦게 걸린다.** 모든 역할이 매 target에서 실패하면 각
-      역할이 따로 상한까지 올라가야 하므로, 풀 3역할에서는 3번째가 아니라 **7번째 시도**에
-      발화한다(단일은 그대로 3번째). `_MAX_CONSECUTIVE_DROPS`가 「3이면 3번째에 멈춘다」로
-      읽히지 않게 여기 적는다 — 실효 상한이 자리 수에 걸린다.
-    - **키가 4단계 자리(`item.role`)다.** `_InFlight.role`은 팬아웃에서 한 번 정해지고
-      재대입이 없는데 이 루프는 3~6단계를 같은 items로 돈다. 그래서 5단계 auditor 장애의
-      연속 카운터가 scout 세 버킷으로 갈린다 — 여전히 발화하되 키가 실패하는 역할을 안
-      가리킨다. 단일 `scout`은 키가 하나라 이 오분류가 무해하다.
+    카운터는 이 호출(단계표의 한 행) 안에서만 산다 — 단계 단위의 리셋 경계(`_triage_by_stage`
+    1번)는 그대로다. 그래서 행 하나 안에서 자리 키의 단계는 늘 같다.
 
-    상한 재설계는 `_MAX_CONSECUTIVE_DROPS`의 첫 실대상 실측이 선행이라 미룬다(인덱스 선택지).
-
-    `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`가
-    이 동작을 고정한다.
+    `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`(자리)·
+    `test_a_pool_wide_outage_stops_as_soon_as_a_second_target_fails`(run)가 이 동작을 고정한다.
 
     ## 성공 0 백스톱 (#296)
 
@@ -4591,11 +4665,10 @@ def _run_stage_for_all(
     (둘 다 `Stage.SCOUT`), 행 하나만 보고 판단하면 정착이 아직 후보를 못 만든 시점에
     "이 자리는 아무것도 못 봤다"로 너무 일찍 판정하게 된다(#95). 크기 거절은 카운터에 안
     세므로, 작게 띄운 서버 창이 전량을 거절해도 카운터로는 안 선다. 키는 `item.role`이
-    아니라 `_caller`다 — 5단계부터는 부르는 역할이 하나라서다(위 「키가 4단계 자리다」의
-    오분류를 이 백스톱에 들이지 않는다).
+    아니라 `_caller`다 — 5단계부터는 부르는 역할이 하나라서다(자리 연속 폐기 카운터와 같은 키).
     """
-    # 연속 폐기를 역할별로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
-    consecutive: dict[Role, int] = {}
+    # 연속 폐기를 run과 자리로 센다(같은 이유·같은 표를 `_triage_by_candidate`가 든다).
+    drops = _ConsecutiveDrops()
     tried = {_caller(stage, item.role) for item in items}
     passed: set[tuple[Stage, Role | None]] = set()
     survivors: list[_InFlight] = []
@@ -4607,24 +4680,26 @@ def _run_stage_for_all(
             if not _is_droppable(exc):
                 # 서버 쪽 사건이다. `run_pipeline`이 받아 리포트·매니페스트까지 간다.
                 raise
-            consecutive[role] = _drop(
+            _drop(
                 ctx,
                 state,
                 item.target,
                 _REASON_GATEWAY,
                 exc,
-                consecutive.get(role, 0),
+                drops,
                 stage=item.reached.stage,
                 role=role,
             )
         except SchemaParseError as exc:
-            consecutive[role] = _drop(
-                ctx, state, item.target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+            _drop(
+                ctx, state, item.target, _REASON_SCHEMA, exc, drops,
                 stage=item.reached.stage, role=role,
             )
         else:
-            # 이 역할이 이 단계를 마쳤다. 앞의 실패는 이 역할의 체계적 고장이 아니었다.
-            consecutive[role] = 0
+            # 이 자리가 이 단계를 마쳤다. 앞의 실패는 이 자리의 체계적 고장이 아니었고, 이 단계가
+            # run 전체로 고장 난 것도 아니다.
+            drops.passed({_caller(stage, role)})
+            drops.completed()
             passed.add(_caller(stage, role))
             if keep:
                 survivors.append(item)
@@ -4639,10 +4714,11 @@ def _triage_by_candidate(
     `BudgetExhausted`는 여기서 잡지 않는다 — 실패가 아니라 정상 종료 경로이고
     `run_pipeline`이 처리한다(모듈 docstring).
 
-    **연속 폐기 카운터는 역할별이다.** 팬아웃 뒤 시도 단위가 `(target, role)`이라
-    `consecutive`가 역할을 키로 세므로, 풀 멤버 하나가 전량 실패하면 그 역할이 자기
-    카운터로 상한에 닿는다 — 형제 멤버의 성공은 그 역할 키를 안 건드린다. 전문은
-    `_run_stage_for_all`의 「역할별」 절에 있다.
+    **연속 폐기 카운터는 둘이다 — run과 자리(#197).** 팬아웃 뒤 시도 단위가 `(target, role)`이다.
+    자리 카운터는 시도가 죽은 단계의 `_caller(단계, 자리)`를 키로 세므로, 풀 멤버 하나가 전량
+    실패하면 그 자리가 자기 카운터로 상한에 닿는다 — 형제 멤버의 완주는 그 키를 안 건드린다.
+    run 카운터는 키 없이 세고 죽지 않고 끝난 시도가 지운다. 전문은 `_ConsecutiveDrops`와
+    `_run_stage_for_all`의 「둘이다」 절에 있다.
 
     `ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 그 후보만 버리고 계속
     간다. 다만 무조건 잡으면 안 된다:
@@ -4654,9 +4730,9 @@ def _triage_by_candidate(
     | 서버 쪽 사건 | `status`가 없거나 5xx, 400·413·422 밖의 4xx | 즉시 멈춘다 |
     | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
 
-    **연속 폐기를 하나의 카운터로 센다.** 게이트웨이와 스키마를 따로 세면 둘이 번갈아
-    실패할 때 어느 쪽도 상한에 닿지 않고 target 수백 개를 전부 태운다. 리셋 조건이
-    "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
+    **사유를 가르지 않고 센다.** 게이트웨이와 스키마를 따로 세면 둘이 번갈아
+    실패할 때 어느 쪽도 상한에 닿지 않고 target 수백 개를 전부 태운다. run 카운터의 리셋
+    조건이 "완주"인 것도 같은 이유다 — 사유가 섞여 있다는 사실이 "이 run은 체계적으로
     고장 났다"는 판정을 무르게 하지 않는다.
 
     **끝까지 돈 뒤 성공 0 백스톱을 본다(#296).** 여기서는 시도 하나가 3~6단계를 관통하므로
@@ -4675,21 +4751,21 @@ def _triage_by_candidate(
     기반 실패 주입은 안 흔들린다.
 
     예외 처리(`_drop`·연속 카운터·`tried`/`passed`)는 **국면마다** 같은 패턴을 적용한다 —
-    국면 A에서 실패한 좌석은 국면 B에 들어가지 않는다(그 시도는 거기서 끝난다). **「완주」
-    리셋(`consecutive[role] = 0`)은 국면 B가 예외 없이 끝났을 때만 한다** — 국면 A만
-    통과한 것은 아직 "이 역할이 체계적으로 고장 나지 않았다"를 증명하지 못한다(전체
-    3~6단계를 관통해야 하던 예전 기준과 같다). 국면을 가르는 자리는 하드코딩하지 않고
-    표에서 읽는다(`_SCOUT_SETTLE_INDEX`, `_PHASE_A_STEPS`/`_PHASE_B_STEPS`).
+    국면 A에서 실패한 좌석은 국면 B에 들어가지 않는다(그 시도는 거기서 끝난다). **리셋은
+    시도가 끝날 때만 한다** — 국면 A에서 죽었을 때, 또는 국면 B가 끝났을 때. run 카운터는
+    완주(국면 B가 예외 없이 끝남 — 승격이 안 돼 멈춘 것 포함)만 지우고, 자리 카운터는 그 시도가
+    **다 지난 단계**의 키만 지운다(죽은 단계는 빼고). 국면 A만 통과한 것은 아무것도 지우지 않는다 —
+    4단계 키는 개시와 정착이 같은 키라, 개시 통과가 지우면 정착이 매번 죽어도 키가 0과 1을 오가며
+    상한에 안 닿는다. 국면을 가르는 자리는 하드코딩하지 않고 표에서 읽는다(`_SCOUT_SETTLE_INDEX`,
+    `_PHASE_A_STEPS`/`_PHASE_B_STEPS`).
     """
-    # 연속 폐기를 **역할별로** 센다(풀 팬아웃 #178 후속). 시도 단위가 `(target, role)`이고, 풀에서
-    # 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던 단일 카운터로는 상한에 안 닿았다
-    # (Scout 커버리지 1/3이 빈 run이 정상 완주로 기록됐다). 역할별로 세면 그 멤버가 자기 카운터로
-    # `_MAX_CONSECUTIVE_DROPS`에 닿는다. 단일 `scout`은 키가 하나라 동작이 그대로다.
+    # 연속 폐기를 **run과 자리로** 센다(#197, `_ConsecutiveDrops`). 시도 단위가
+    # `(target, role)`이고, 풀에서 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던
+    # 단일 카운터로는 상한에 안 닿았다(#195). 자리 카운터가 그 멤버를 `_MAX_CONSECUTIVE_DROPS`에
+    # 닿게 하고, run 카운터가 서로 다른 대상 둘 이상에 걸친 연속 폐기를 세운다.
     #
-    # **국면 A·B가 같은 dict를 공유한다** — target 여러 개, 국면 둘을 거치며 누적된다. 예전에
-    # target당 (역할 하나 × 3~6단계 한 번)이던 것이 (역할 하나 × 국면 둘)로 바뀌었을 뿐,
-    # "이 역할이 상한에 닿을 때까지 몇 번 연속으로 실패했나"라는 뜻은 그대로다.
-    consecutive: dict[Role, int] = {}
+    # **국면 A·B가 같은 카운터를 공유한다** — target 여러 개, 국면 둘을 거치며 누적된다.
+    drops = _ConsecutiveDrops()
     tried: set[tuple[Stage, Role | None]] = set()
     passed: set[tuple[Stage, Role | None]] = set()
     # Option C — target × Scout 자리로 편다(풀이면 멤버 셋, 단일이면 하나). 풀에서는 같은
@@ -4716,19 +4792,19 @@ def _triage_by_candidate(
                     raise
                 # 셀지·멈출지는 `_drop`이 가른다 — 크기 거절은 안 세고, 크기가 아닌 400은
                 # 첫 건에서 멈춘다(#296).
-                consecutive[role] = _drop(
+                _drop(
                     ctx,
                     state,
                     target,
                     _REASON_GATEWAY,
                     exc,
-                    consecutive.get(role, 0),
+                    drops,
                     stage=reached.stage,
                     role=role,
                 )
             except SchemaParseError as exc:
-                consecutive[role] = _drop(
-                    ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, drops,
                     stage=reached.stage, role=role,
                 )
             else:
@@ -4738,6 +4814,9 @@ def _triage_by_candidate(
             entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
             tried |= entered
             passed |= entered if finished else entered - {_caller(reached.stage, role)}
+            if not finished:
+                # 시도가 여기서 끝났다 — 죽은 단계 앞까지는 지났다.
+                drops.passed(entered - {_caller(reached.stage, role)})
         # 국면 B — 국면 A에서 살아남은 좌석만, Scout 정착부터 끝까지.
         for role, item in survivors.items():
             reached = item.reached
@@ -4749,22 +4828,25 @@ def _triage_by_candidate(
             except ModelGatewayError as exc:
                 if not _is_droppable(exc):
                     raise
-                consecutive[role] = _drop(
-                    ctx, state, target, _REASON_GATEWAY, exc, consecutive.get(role, 0),
+                _drop(
+                    ctx, state, target, _REASON_GATEWAY, exc, drops,
                     stage=reached.stage, role=role,
                 )
             except SchemaParseError as exc:
-                consecutive[role] = _drop(
-                    ctx, state, target, _REASON_SCHEMA, exc, consecutive.get(role, 0),
+                _drop(
+                    ctx, state, target, _REASON_SCHEMA, exc, drops,
                     stage=reached.stage, role=role,
                 )
             else:
-                # 완주했다(국면 B까지) — 앞의 실패는 이 역할의 체계적 고장이 아니었다.
-                consecutive[role] = 0
+                # 죽지 않고 끝났다(국면 B까지, 승격이 안 돼 멈춘 것도 같다) — run 고장이 아니다.
+                drops.completed()
                 finished = True
             entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
             tried |= entered
-            passed |= entered if finished else entered - {_caller(reached.stage, role)}
+            through = entered if finished else entered - {_caller(reached.stage, role)}
+            passed |= through
+            # 지난 단계의 자리 키만 지운다 — Scout가 안 올린 완주는 Auditor 키를 안 건드린다.
+            drops.passed(through)
     _stop_if_a_caller_saw_nothing(tried - passed)
 
 
@@ -4774,12 +4856,15 @@ def _drop(
     target: _Target,
     reason: str,
     exc: Exception,
-    consecutive: int,
+    drops: _ConsecutiveDrops,
     *,
     stage: Stage,
     role: Role,
-) -> int:
+) -> None:
     """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
+
+    **센다면 두 카운터를 같이 올린다(#197)** — run 카운터와 `_caller(stage, role)` 자리
+    카운터. 멈추는 조건은 `_ConsecutiveDrops`에 있고 메시지가 어느 쪽인지 적는다.
 
     ⚠ **시도는 `(target, Scout 자리)`다 — target이 아니다.** 팬아웃 뒤 `items`가 그 곱으로
     펼쳐지고 이 함수가 시도마다 불린다. 단일 `scout`에서는 자리가 하나라 둘이 같고,
@@ -4812,12 +4897,22 @@ def _drop(
             f"{error_detail(exc)}"
         ) from exc
     if _is_size_rejection(exc):
-        return consecutive
-    if consecutive + 1 >= _MAX_CONSECUTIVE_DROPS:
+        return
+    key = _caller(stage, role)
+    drops.run += 1
+    drops.run_targets.add(_target_key(target.location, target.slice_id))
+    drops.by_caller[key] = drops.by_caller.get(key, 0) + 1
+    if drops.run >= _MAX_CONSECUTIVE_DROPS and len(drops.run_targets) > 1:
         raise _TooManyDrops(
-            f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다. 마지막 사유: {exc}"
+            f"후보 {drops.run}건이 연속으로 실패했다(자리 무관, 서로 다른 대상 "
+            f"{len(drops.run_targets)}개에 걸쳐). 마지막 사유: {exc}"
         ) from exc
-    return consecutive + 1
+    if drops.by_caller[key] >= _MAX_CONSECUTIVE_DROPS:
+        seat = f" {key[1].value}" if key[1] is not None else ""
+        raise _TooManyDrops(
+            f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다({int(stage)}단계{seat}). "
+            f"마지막 사유: {exc}"
+        ) from exc
 
 
 def _drop_finding(
