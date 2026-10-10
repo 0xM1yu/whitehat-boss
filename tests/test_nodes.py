@@ -3081,3 +3081,96 @@ def test_a_seat_failing_in_different_stages_does_not_add_up_but_in_one_stage_doe
     fail(Stage.AUDITOR)  # 다른 단계 — 같은 자리여도 4단계 키에 안 쌓인다
     with pytest.raises(runner._TooManyDrops, match="4단계 scout_memory"):
         fail(Stage.SCOUT)  # 같은 단계 두 번째 — 상한
+
+
+def _drop_one(ctx: RunContext, drops: runner._ConsecutiveDrops, symbol: str, **where) -> None:  # noqa: ANN003
+    """`symbol` 대상의 시도 하나를 스키마 실패로 버린다 — 카운터만 보려고 `_drop`을 직접 부른다."""
+    target = runner._Target(
+        artifact=None,
+        location=Location(file="parser.c", symbol=symbol, line_start=3, line_end=6),
+        evidences=(),
+        signal_rank=0,
+    )
+    runner._drop(
+        ctx, runner._Accumulator(), target, "schema_parse_failed", SchemaParseError("bad"), drops,
+        **{"stage": Stage.SCOUT, "role": Role.SCOUT_MEMORY, **where},
+    )
+
+
+_POOL_SEATS = (Role.SCOUT_MEMORY, Role.SCOUT_BOUNDARY, Role.SCOUT_INJECTION)
+
+
+def test_a_fan_out_dying_inside_one_target_does_not_trip_the_run_counter(
+    ctx: RunContext,
+) -> None:
+    """**한 대상의 세 자리가 죽은 것은 증거 하나다 — 둘째 대상이 죽어야 run 카운터가 선다.**
+
+    PR #584 리뷰 §1 — 자리 수(3) ≥ 상한(3)이면 대상 하나의 팬아웃 전멸이 run을 죽였다. 이 검사는
+    상한만큼 쌓인 폐기가 **한 대상**에 있을 때 안 서고, 다른 대상의 다음 폐기에 서는 것을 문다.
+    """
+    drops = runner._ConsecutiveDrops()
+    for seat in _POOL_SEATS:  # 상한 3 = 자리 3
+        _drop_one(ctx, drops, "a", role=seat)
+    assert drops.run == runner._MAX_CONSECUTIVE_DROPS
+
+    with pytest.raises(runner._TooManyDrops, match="자리 무관"):
+        _drop_one(ctx, drops, "b", role=Role.SCOUT_MEMORY)
+
+
+def test_the_run_counter_alone_stops_failures_spread_over_targets_and_seats(
+    ctx: RunContext,
+) -> None:
+    """**서로 다른 대상 셋이 서로 다른 자리에서 하나씩 죽으면 셋째에 선다 — 자리 카운터 없이.**
+
+    자리 키(`(4단계, 자리)`)가 모두 1이라 자리 카운터는 못 닿는다 — 서는 것은 run 카운터뿐이다.
+    run 카운터 판정을 끄면 이 검사가 빨개진다(`DID NOT RAISE`).
+    """
+    drops = runner._ConsecutiveDrops()
+    _drop_one(ctx, drops, "a", role=Role.SCOUT_MEMORY)
+    _drop_one(ctx, drops, "b", role=Role.SCOUT_BOUNDARY)
+    assert max(drops.by_caller.values()) == 1
+
+    with pytest.raises(runner._TooManyDrops, match="자리 무관, 서로 다른 대상 3개"):
+        _drop_one(ctx, drops, "c", role=Role.SCOUT_INJECTION)
+
+
+def test_a_completed_attempt_clears_the_run_counters_target_streak(ctx: RunContext) -> None:
+    """완주가 run 카운터와 그 대상 목록을 **같이** 지운다 — 목록이 남으면 앞 대상이 새 줄에 낀다."""
+    drops = runner._ConsecutiveDrops()
+    for seat in _POOL_SEATS:
+        _drop_one(ctx, drops, "a", role=seat)
+    drops.completed()
+    assert drops.run == 0
+    assert not drops.run_targets
+
+    for seat in _POOL_SEATS:  # 새 줄 — 한 대상이라 다시 안 선다
+        _drop_one(ctx, drops, "b", role=seat)
+
+
+def test_auditor_failures_from_different_scout_seats_share_one_key(ctx: RunContext) -> None:
+    """**5단계 키는 Scout 자리로 갈리지 않는다 (D73 ②, #197) — `_caller`를 문다.**
+
+    자리 셋의 Auditor 실패가 한 버킷에 쌓여 셋째에 선다. `_caller`가 5단계에서도 자리를 키로 쓰면
+    (`return (stage, seat)`) 각 버킷이 1이라 `DID NOT RAISE`다. 실패 사이의 `completed()`는 run
+    카운터를 지우는 형제의 완주다 — 자리 카운터만 남긴다.
+    """
+    drops = runner._ConsecutiveDrops()
+    for seat in _POOL_SEATS[:-1]:
+        _drop_one(ctx, drops, "a", stage=Stage.AUDITOR, role=seat)
+        drops.completed()
+
+    with pytest.raises(runner._TooManyDrops, match="5단계"):
+        _drop_one(ctx, drops, "a", stage=Stage.AUDITOR, role=_POOL_SEATS[-1])
+
+
+def test_with_fewer_seats_than_the_cap_the_run_counter_still_stops_at_the_cap(
+    ctx: RunContext,
+) -> None:
+    """자리 수(2) < 상한(3)이면 둘째 대상이 죽는 순간 이미 상한번째다 — 「한 건 늦다」는 자리 수가
+    상한에 닿을 때(N ≥ 상한)만이다. 서는 시점은 `max(상한, 자리 수 + 1)`번째 시도다."""
+    drops = runner._ConsecutiveDrops()
+    _drop_one(ctx, drops, "a", role=Role.SCOUT_MEMORY)
+    _drop_one(ctx, drops, "a", role=Role.SCOUT_BOUNDARY)
+
+    with pytest.raises(runner._TooManyDrops, match=r"후보 3건이 연속으로 실패했다\(자리 무관"):
+        _drop_one(ctx, drops, "b", role=Role.SCOUT_MEMORY)

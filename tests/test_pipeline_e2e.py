@@ -1420,14 +1420,19 @@ def test_a_broken_pool_member_trips_the_circuit_breaker(
     기제: **자리 연속 폐기 카운터가 자리를 가른다.** 한 단계의 작업 단위가 target × 역할로
     펼쳐지고 자리 카운터가 `_caller(단계, 자리)`를 키로 세므로(#197), 고장난 멤버
     (`scout_boundary`)의 실패가 형제의 성공에 지워지지 않고 쌓여 `_MAX_CONSECUTIVE_DROPS`에
-    닿는다. run 카운터는 형제의 성공이 지우므로 이 경우를 못 잡는다 — 이 검사가 자리 카운터를 문다.
+    닿는다. run 카운터는 형제의 성공이 지우므로 이 경우를 못 잡는다.
     그래서 `stopped_after`가 채워지고 `is_complete`가 **False**가 된다 — Scout 커버리지 1/3이
     빈 run이 정상 완주로 기록되던 맹점(옛 `_does_not_trip_..._yet`)이 닫혔다.
+
+    **성공 0 백스톱(#296)은 끈다** — 고장난 멤버는 끝까지 한 번도 성공하지 못하므로 그 백스톱이
+    루프 끝에서 같은 `stopped_after`·같은 사유로 세운다. 안 끄면 자리 카운터를 꺼도 이 검사가
+    초록이다(PR #584 리뷰 §3 — 상한 판정 둘을 꺼도 초록이었다). 끄면 서 있는 것은 자리 카운터뿐이다.
 
     ⚠ **단일 `scout`과 대조**: `test_a_systematically_broken_single_scout_trips_the_circuit_breaker`
     가 같은 결과를 단일 역할에서 낸다. 풀에서도 같아진 것이 이 수정의 요점이다.
     """
     monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    monkeypatch.setattr(runner, "_stop_if_a_caller_saw_nothing", lambda starved: None)
     _break_one_role(monkeypatch, "scout_boundary")
 
     result, trace_path = _run(tmp_path, configure=_poolify(mode))
@@ -1485,50 +1490,222 @@ def _gateway_drops(trace_path: Path, stage: Stage) -> list[dict]:
     ]
 
 
+def _fail_scout_seat_calls(monkeypatch: pytest.MonkeyPatch, *, skip: int, count: int) -> None:
+    """Scout 풀 자리 호출 중 `skip`건을 지나 **연속 `count`건**을 422로 죽인다.
+
+    호출 순서는 (대상, 자리)다 — 두 모드 모두 `dev_fake` 풀에서 대상마다 자리 셋이 차례로 한 번씩
+    불린다. `skip=3 × 자리 수`면 `skip`번째 대상의 팬아웃이 통째로 죽는다.
+    """
+    _fail_scout_seat_calls_at(monkeypatch, set(range(skip, skip + count)))
+
+
+def _fail_scout_seat_calls_at(monkeypatch: pytest.MonkeyPatch, indexes: set[int]) -> None:
+    """Scout 풀 자리 호출 중 0부터 센 `indexes`번째들을 422로 죽인다(호출 순서는 위와 같다)."""
+    original = FakeModelClient.complete
+    calls = [0]
+
+    def complete(  # noqa: ANN001
+        self, *, role: Role, prompt: object, schema: object, history: object = ()
+    ) -> object:
+        if role.value in SCOUT_POOL_ROLES:
+            index = calls[0]
+            calls[0] += 1
+            if index in indexes:
+                raise ModelGatewayError(f"{role.value} 대상 하나가 죽음(테스트)", status=422)
+        return original(self, role=role, prompt=prompt, schema=schema, history=history)
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
-def test_a_pool_wide_outage_stops_at_the_cap_whatever_the_seat_count(
+@pytest.mark.parametrize("target_index", [0, 1, 2], ids=["first", "second", "third"])
+def test_one_target_whose_every_seat_fails_does_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None, target_index: int
+) -> None:
+    """**한 대상의 팬아웃이 통째로 죽어도 run은 서지 않는다 (PR #584 리뷰 §1).**
+
+    run 카운터가 자리를 안 가르고 세므로, 풀 자리 수(3)가 상한(3)과 같으면 **대상 하나의 세 자리가
+    죽는 것만으로** 상한에 닿았다. 정상이던 나머지 대상 셋의 후보를 통째로 잃었다. 시작 직후만이
+    아니라 앞 대상이 완주해 카운터가 0이 된 뒤에도 같다(세 번째 대상까지 쟀다).
+
+    run 카운터가 서려면 폐기가 **서로 다른 대상 둘 이상**에 걸쳐야 한다. 뒤 대상이 멀쩡하면 그
+    완주가 카운터를 지운다.
+    """
+    seats = len(SCOUT_POOL_ROLES)
+    _fail_scout_seat_calls(monkeypatch, skip=target_index * seats, count=seats)
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    dropped = _gateway_drops(trace_path, Stage.SCOUT)
+    assert len(dropped) == seats, (
+        f"전제: 한 대상의 세 자리만 죽어야 한다 — 폐기 {len(dropped)}건. 주입이 어긋났다"
+    )
+    assert len({e["data"]["scout_member"] for e in dropped}) == seats
+    assert result.record.is_complete, (
+        f"대상 하나의 팬아웃이 죽었다고 run이 섰다(stopped_after={result.record.stopped_after}): "
+        f"{result.warnings}"
+    )
+    assert result.record.stopped_after is None
+    assert result.candidates, "나머지 대상의 후보가 없다 — 멀쩡한 대상이 안 돌았다"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_scattered_failures_across_targets_and_seats_do_not_add_up_across_healthy_attempts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
-    """**풀 세 자리가 전부 죽으면 상한번째 시도에 선다 — 자리 수와 무관하다 (D73 ①, #197).**
+    """**사이사이 정상 시도가 끼면 흩어진 실패는 run 카운터에 쌓이지 않는다 — 리셋 호출을 문다.**
+
+    세 대상에 각각 **다른 자리**에서 422를 하나씩(호출 0·4·8번째 = 첫 대상의 `scout_memory`, 둘째
+    대상의 `scout_boundary`, 셋째 대상의 `scout_injection`) 주입한다. 자리 키가 모두 1이라 자리
+    카운터는 못 닿고, 서는 것은 run 카운터뿐이다. 실패 사이의 정상 시도가 그 카운터를 지워야
+    한다 — 후보 단위는 `_triage_by_candidate` 국면 B의 `drops.completed()`가, 단계 단위는
+    `_run_stage_for_all`의 같은 호출이 지운다. 둘 중 하나를 지우면 그 모드에서 세 번째 폐기가
+    상한에 닿아 선다(후보 단위 `stopped_after=4`·후보 4, 단계 단위 `stopped_after=4`·후보 0).
+    """
+    _fail_scout_seat_calls_at(monkeypatch, {0, 4, 8})
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    dropped = _gateway_drops(trace_path, Stage.SCOUT)
+    assert {e["data"]["scout_member"] for e in dropped} == set(SCOUT_POOL_ROLES), (
+        f"전제: 세 자리에서 하나씩 죽어야 한다 — 폐기 {len(dropped)}건. 주입이 어긋났다"
+    )
+    assert len(dropped) == 3
+    assert result.record.is_complete, (
+        f"사이에 정상 시도가 끼었는데 run이 섰다(stopped_after={result.record.stopped_after}) — "
+        f"run 카운터의 리셋이 빠졌다: {result.warnings}"
+    )
+    assert result.record.stopped_after is None
+    assert len(result.candidates) == 9, f"후보 {len(result.candidates)}건 — 12 시도 중 폐기 3이면 9"
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_seat_that_succeeds_between_its_failures_is_not_a_streak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**같은 자리의 실패 사이에 그 자리의 성공이 끼면 자리 카운터가 지워진다.**
+
+    상한 2, `scout_boundary`가 첫·셋째 대상에서 죽고(호출 1·7번째) 둘째 대상에서는 성공한다. 자리
+    키 `(4단계, scout_boundary)`가 둘째 대상의 성공에 안 지워지면 셋째 대상의 실패가 2건째가 되어
+    선다. 지우는 자리는 단계 단위 `_run_stage_for_all`의 성공 분기와 후보 단위 국면 B 끝의
+    `drops.passed(through)`다(모드마다 하나 — 하나를 지우면 그 모드가 빨개진다). run 카운터는
+    형제의 성공이 그때마다 지우므로 이 사례를 못 잡는다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    _fail_scout_seat_calls_at(monkeypatch, {1, 7})
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    dropped = _gateway_drops(trace_path, Stage.SCOUT)
+    assert [e["data"]["scout_member"] for e in dropped] == ["scout_boundary"] * 2, (
+        f"전제: scout_boundary만 두 번 죽어야 한다 — {len(dropped)}건. 주입이 어긋났다"
+    )
+    assert result.record.is_complete, (
+        f"사이에 성공이 끼었는데 자리 카운터가 안 지워졌다(stopped_after="
+        f"{result.record.stopped_after}): {result.warnings}"
+    )
+    assert result.record.stopped_after is None
+    assert len(result.candidates) == 10
+
+
+def test_a_scout_open_death_clears_the_retrieval_key_it_got_past(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**국면 A에서 죽은 시도가 그 앞 단계(3단계) 키를 지운다 — `drops.passed`를 문다.**
+
+    후보 단위, 상한 2, 첫 대상: 첫 자리는 3단계(`_step_retrieval`)에서 죽고(3단계 키 1), 둘째 자리는
+    3단계를 지나 4단계 개시에서 죽고(그 시도가 3단계 키를 지운다 → 0), 셋째 자리는 3단계에서 다시
+    죽는다(1). 지우는 줄이 없으면 3단계 키가 2건이 되어 선다. 국면 B에 가는 자리가 없어 다른
+    곳이 3단계 키를 지우지 않고, 폐기가 한 대상 안이라 run 카운터는 안 선다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    _fail_scout_seat_calls_at(monkeypatch, {0})  # 둘째 자리의 4단계 개시(첫 Scout 호출)
+    real_retrieval = runner._step_retrieval
+    calls = [0]
+
+    def retrieval_failing_on_the_first_and_third_seat(ctx, item, state):  # noqa: ANN001, ANN202
+        index = calls[0]
+        calls[0] += 1
+        if index in (0, 2):
+            item.reached.stage = Stage.RETRIEVAL
+            raise ModelGatewayError("3단계 한 자리가 죽음(테스트)", status=422)
+        return real_retrieval(ctx, item, state)
+
+    def swap(steps):  # noqa: ANN001, ANN202
+        failing = retrieval_failing_on_the_first_and_third_seat
+        return tuple((st, failing if step is real_retrieval else step) for st, step in steps)
+
+    monkeypatch.setattr(runner, "_TRIAGE_STEPS", swap(runner._TRIAGE_STEPS))
+    monkeypatch.setattr(runner, "_PHASE_A_STEPS", swap(runner._PHASE_A_STEPS))
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(None))
+
+    dropped = [
+        e
+        for e in _of(_events(trace_path), "target_skipped")
+        if e["data"].get("reason") == _REASON_GATEWAY_ERROR
+    ]
+    assert [e["stage"] for e in dropped] == [3, 4, 3], (
+        f"전제: 3·4·3단계 순서로 죽어야 한다 — {[e['data'] for e in dropped]}"
+    )
+    assert result.record.is_complete, (
+        f"국면 A 사망이 3단계 키를 안 지웠다(stopped_after={result.record.stopped_after}): "
+        f"{result.warnings}"
+    )
+    assert result.record.stopped_after is None
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_pool_wide_outage_stops_as_soon_as_a_second_target_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**풀 전 자리가 죽으면 `자리 수 + 1`번째 시도에 선다 (D73 ①, #197).**
 
     자리 키 카운터 하나뿐이던 동안(#195 ~ #197)은 각 자리가 따로 상한까지 올라가야 해서 상한 3에
-    풀 3자리면 **7번째** 시도에 섰다(D73 본문의 계산). run 카운터가 자리를 안 가르고 세므로 이제
-    단일 `scout`과 같은 3번째다. 대상이 넷이라(`_with_index`) 시도가 12건 — 7건에 닿을 수 있어,
-    옛 동작이면 이 검사가 7을 본다.
+    풀 3자리면 **7번째** 시도에 섰다(D73 본문의 계산). run 카운터는 폐기가 둘 이상의 대상에
+    걸친 뒤 상한에 닿으면 서므로 첫 대상의 세 자리 뒤 **네 번째(= 자리 수 + 1)** 시도에 선다.
+    대상이 넷이라(`_with_index`) 시도가 12건 — 옛 동작이면 이 검사가 7을 본다.
+
+    ⚠ 「상한번째」가 아니라 한 건 늦다 — 첫 대상의 세 자리가 죽은 것과 전 자리 장애는 둘째 대상이
+    죽기 전까지 가를 수 없다(`test_one_target_whose_every_seat_fails_does_not_stop_the_run`).
     """
-    _break_roles(monkeypatch, {"scout_memory", "scout_boundary", "scout_injection"})
+    _break_roles(monkeypatch, set(SCOUT_POOL_ROLES))
 
     result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
 
     assert result.record.stopped_after == int(Stage.SCOUT)
     assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
     dropped = _gateway_drops(trace_path, Stage.SCOUT)
-    assert len(dropped) == runner._MAX_CONSECUTIVE_DROPS, (
-        f"전 자리 장애가 {len(dropped)}번째 시도에 섰다 — "
-        f"상한({runner._MAX_CONSECUTIVE_DROPS})번째여야 한다. "
-        "자리 수만큼 늦어졌으면 run 카운터가 빠졌다(D73 ①)"
+    assert len(dropped) == len(SCOUT_POOL_ROLES) + 1, (
+        f"전 자리 장애가 {len(dropped)}번째 시도에 섰다 — 자리 수 + 1이어야 한다. "
+        "7이면 run 카운터가 빠졌다(D73 ①), 3이면 한 대상의 팬아웃 전멸이 run을 죽인다"
     )
+    assert any(
+        "자리 무관, 서로 다른 대상" in warning for warning in result.warnings
+    ), f"run 카운터가 세운 정지가 아니거나 문구가 옛것이다 — 경고: {result.warnings}"
     assert len({e["data"]["scout_member"] for e in dropped}) > 1, (
         "전제: 폐기가 여러 자리에 걸쳐야 한다 — 한 자리뿐이면 자리 카운터와 못 가른다"
     )
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
-def test_auditor_failures_count_in_one_bucket_not_one_per_scout_seat(
+def test_a_pool_wide_auditor_outage_stops_at_the_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
 ) -> None:
-    """**5단계 Auditor 장애는 Auditor 키 하나로 센다 — Scout 자리로 안 갈린다 (D73 ②, #197).**
+    """**5단계 Auditor 장애는 Auditor 키 하나로 상한번째에 선다 (D73 ②, #197).**
 
     `_InFlight.role`은 팬아웃에서 정해지는 4단계 자리인데 5단계도 같은 items로 돈다. 그 자리를
-    키로 세던 동안은 Auditor 장애가 Scout 세 버킷으로 갈렸고, 후보 단위에서는 Scout가 안 올린
-    대상의 완주가 그 자리 키를 지웠다 — Auditor가 매번 죽어도 상한에 늦게 닿거나 안 닿았다.
-    옛 키로는 이 fixture에서 Auditor 실패 6건(자리마다 2건)을 다 태우고 끝의 성공 0 백스톱에서야
-    섰다(origin/main 러너로 돌려 확인).
+    키로 세던 동안은 Auditor 장애가 Scout 세 버킷으로 갈렸다. 옛 키로는 이 fixture에서 Auditor
+    실패 6건(자리마다 2건)을 다 태우고 끝의 성공 0 백스톱에서야 섰다(origin/main 러너로 돌려 확인).
 
-    ⚠ **이 검사가 무는 것은 「상한번째에 선다」까지다.** 이 fixture에서는 Auditor 실패 사이에
-    완주가 안 끼어 run 카운터와 Auditor 키가 같이 상한에 닿는다 — 어느 쪽이 세웠는지는 못 가른다.
-    키가 단계를 따른다는 것 자체는 `tests/test_nodes.py`의
-    `test_a_seat_failing_in_different_stages_does_not_add_up_but_in_one_stage_does`가 문다.
+    이 fixture에서는 첫 대상의 세 자리가 연달아 Auditor에서 죽는다 — 한 대상이라 run 카운터는
+    안 서고(`test_a_fan_out_dying_inside_one_target_does_not_trip_the_run_counter`) **Auditor 키가
+    세운다.** `_caller`가 5단계에서도 자리를 키로 쓰면 여기서 안 서고 둘째 대상의 첫 실패(4건째)에
+    run 카운터가 선다 — 이 검사가 빨개진다. 키가 단계를 따른다는 것(4단계와 5단계가 안 섞임)은
+    `tests/test_nodes.py`의
+    `test_a_seat_failing_in_different_stages_does_not_add_up_but_in_one_stage_does`가,
+    5단계 키가 자리로 안 갈린다는 것은 같은 파일의
+    `test_auditor_failures_from_different_scout_seats_share_one_key`가 문다.
     """
     _break_roles(monkeypatch, {Role.AUDITOR.value})
 
@@ -1541,10 +1718,70 @@ def test_auditor_failures_count_in_one_bucket_not_one_per_scout_seat(
         f"상한({runner._MAX_CONSECUTIVE_DROPS})번째여야 한다. "
         "더 늦으면 Auditor 장애가 Scout 자리 키로 갈려 세지고 있다(D73 ②)"
     )
+    assert any("연속으로 실패했다(5단계)" in warning for warning in result.warnings), (
+        f"Auditor 키가 세운 정지가 아니다 — 경고: {result.warnings}"
+    )
     assert len({e["data"]["scout_member"] for e in dropped}) > 1, (
         "전제: 실패한 Auditor 호출이 여러 Scout 자리의 후보여야 한다 — "
         "한 자리뿐이면 옛 키와 못 가른다"
     )
+
+
+def test_a_scout_that_promotes_nothing_does_not_clear_the_auditors_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Scout가 후보를 안 올린 완주가 Auditor 키를 지우지 않는다 — D88이 든 구멍이 닫혔다 (#197).**
+
+    D88 「① 세지 않는 이유」가 든 구멍: 카운터 키가 Scout 자리일 때 Scout가 안 올린 대상
+    (`_triage_one`이 정상 반환)의 완주가 키를 0으로 되돌려 Auditor가 매번 죽어도 상한에 안 닿는다.
+    닫힌 모양은 「시도가 **지난** 단계의 키만 지운다」(`drops.passed(through)`)다. 이 검사가 무는
+    것은 그 줄이다 — `passed`가 안 거친 단계의 키까지 지우게 바꾸면 빨개진다.
+
+    ⚠ 이 fixture는 **옛 키(`item.role`)의 구멍 자체를 재현하지는 않는다** — origin/main 러너에서도
+    초록이다(승격 안 된 두 자리가 `scout_memory` 키를 안 건드린다). 같은 자리의 Auditor 실패
+    사이에 그 자리의 승격 안 된 완주를 끼우려면 Auditor에 닿는 대상이 셋 이상이어야 하는데
+    이 fixture는 둘이다.
+
+    이 fixture: 자리 셋 중 `scout_memory`만 승격하고 나머지 둘은 승격 없이 끝난다
+    (`_step_scout_settle`이 False를 낸다). Auditor는 전량 422다. Auditor에 닿는 대상은 둘
+    (`parse_header`·`recv_request`)이라 상한을 2로 낮춘다. 대상마다 Auditor 실패 하나
+    (`scout_memory`) 뒤에 승격 안 된 완주 둘이 오므로, 그 완주가 Auditor 키를 지우면 둘째 실패가
+    1건째가 되어 안 선다.
+
+    **성공 0 백스톱(#296)은 끈다** — Auditor가 한 번도 성공하지 못하므로 그 백스톱이 루프 끝에서
+    같은 `stopped_after`로 세운다(안 끄면 구멍을 되살려도 초록이다, PR #584 리뷰 §6).
+
+    후보 단위만 본다 — 단계 단위는 `_triage_by_candidate`를 안 거치고, 완주가 지우는 키가 그 행의
+    단계 하나뿐이라 이 구멍이 구조상 없다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    monkeypatch.setattr(runner, "_stop_if_a_caller_saw_nothing", lambda starved: None)
+    real_settle = runner._step_scout_settle
+
+    def promote_only_the_memory_seat(ctx, item, state):  # noqa: ANN001, ANN202
+        promoted = real_settle(ctx, item, state)
+        return promoted and item.role is Role.SCOUT_MEMORY
+
+    steps = tuple(
+        (stage, promote_only_the_memory_seat if step is real_settle else step)
+        for stage, step in runner._TRIAGE_STEPS
+    )
+    monkeypatch.setattr(runner, "_TRIAGE_STEPS", steps)
+    monkeypatch.setattr(runner, "_PHASE_B_STEPS", steps[runner._SCOUT_SETTLE_INDEX :])
+    _break_roles(monkeypatch, {Role.AUDITOR.value})
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(None))
+
+    dropped = _gateway_drops(trace_path, Stage.AUDITOR)
+    assert {e["data"]["scout_member"] for e in dropped} == {"scout_memory"}, (
+        "전제: Auditor에 닿는 시도는 scout_memory뿐이어야 한다 — 승격 거름이 안 먹었다"
+    )
+    assert len(dropped) == 2, f"전제: Auditor에 닿는 대상은 둘이다 — 실패 {len(dropped)}건"
+    assert result.record.stopped_after == int(Stage.AUDITOR), (
+        "Auditor가 두 번 연달아 죽었는데 안 섰다 — Scout가 안 올린 완주가 Auditor 키를 지우고 있다"
+        f"(D88 구멍). 경고: {result.warnings}"
+    )
+    assert not result.record.is_complete
 
 
 @pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
@@ -4728,7 +4965,11 @@ def test_size_rejections_do_not_reset_the_counter_either(
 def test_a_completed_target_resets_the_counter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """완주가 리셋 조건이다. 흩어진 실패는 체계적 고장이 아니다."""
+    """완주가 리셋 조건이다. 흩어진 실패는 체계적 고장이 아니다.
+
+    ⚠ 이 검사는 크기 거절만 주입해 카운터를 안 움직인다 — 리셋 호출을 지워도 초록이다. 리셋을 무는
+    것은 `test_scattered_failures_across_targets_and_seats_do_not_add_up_across_healthy_attempts`다.
+    """
     _failing_model(
         monkeypatch,
         [_context_overflow(), None, _context_overflow(), None],
