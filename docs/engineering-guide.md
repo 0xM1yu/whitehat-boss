@@ -24,7 +24,7 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 │   ├── auditor/v2/
 │   ├── critic/v1/
 │   ├── critic/v2/
-│   ├── single/v2/         # B1·B3 통합 단일패스. v1 없이 v2로 들어왔다(`2f8109b`)
+│   ├── single/v2/         # 단일패스 프롬프트(옛 이름 「B1·B3 통합」). v1 없이 v2로 들어왔다(`2f8109b`). 선언한 프로필이 없어 미배선
 │   ├── scout_memory/v2/   # Scout 풀 3역할(ADR 0010 §3). 셋 다 v1 없이 v2로 들어왔다(`6a3c31e`)
 │   ├── scout_boundary/v2/
 │   └── scout_injection/v2/
