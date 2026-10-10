@@ -791,6 +791,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 ⏵ 2026-10-06 — **v10의 응답 스키마(`AuditProcedure.trigger_status`)는 닫힌 `Literal` 다섯이다**: v10이 그 밖의 값을 내면 파싱 실패이고
 `Finding`에는 다섯만 들어온다. `Finding.trigger_status`의 타입은 그대로 `str` 또는 `None`이다 — 한 방 판·v8·v9가 같은 `Finding`을 쓰므로 안
 좁혔다. 값 집합을 닫은 쪽은 v10의 응답 스키마다.
+⏵ 2026-10-10 — 이 배치로 확정했다([D51](open-questions/D/D51.md) 닫힘): 열거 강제는 서빙 판의 응답 스키마가 맡고 `Finding` 필드는 좁히지 않는다. 바로 위 「좁히면」은 그 전의 보류 서술이다.
 
 > **출처 주의 — 위 다섯 중 넷만 이 저장소에서 확인된다 (D51·D52).**
 > [single/v2 prefix](../prompts/single/v2/prefix.md) 규칙 4가 `triggerable`·`guarded`·`no_reach`·
@@ -824,6 +825,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
 > 그대로 미측정이다.
+> ⏵ 2026-10-10 — [D51](open-questions/D/D51.md)은 닫혔다: 열거 강제는 서빙 판(v10 이상)의 응답 스키마가 맡는 것으로 충분하다고
+> 정했고 `Finding.trigger_status`는 `str` 또는 `None` 그대로다. 분포 실측은 v10 run 1건·n=5뿐이다(위 2026-10-08 ⏵).
 
 `repro_spec`은 `hypothesized`·`queued` 초안 단계에서는 `null`이다. `validated` 이상으로 올라가려면 아래 형태로 채워져야 한다.
 
