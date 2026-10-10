@@ -170,7 +170,8 @@ thresholds:
   # 같이 움직인다.
   #
   # 이 값과 배선된 프롬프트 판은 **같은 말을 해야 한다** — 양수인데 판이 `Finding`을
-  # 선언하거나, 0인데 판이 루프 봉투(`AuditorAction`·`AuditorProcedureAction`)를 선언하거나,
+  # 선언하거나, 0인데 판이 루프 봉투(`AuditorAction`·`AuditorProcedureAction`·⏵ 2026-10-09 v11의
+  # `AuditorProcedureNullableCweAction`)를 선언하거나,
   # 루프 판이 meta `tools`를 안 들면
   # `nodes/auditor.loop_problem`이 run과 doctor를 같은 문장으로 막는다(한쪽만 통과하는
   # 설정이면 통과한 run이 첫 Auditor 호출에서야 선다 — 그 앞 단계의 GPU 시간 뒤다).
@@ -599,7 +600,7 @@ thresholds:
     expanded: 18000
     focused: 8000
 
-  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 **v10**(⏵ 2026-10-07 — v7에서
+  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 **v10**(⏵ 2026-10-09부터 정본은 v11 — 아래 ⏵)(⏵ 2026-10-07 — v7에서
   # 전면 재작성한 판이고 출력 계약이 바뀐다. 이 옵션 여덟을 스스로 서술·선언하지만 앞 판과
   # **바이트 동일이 아니라** 그 서술이 러너와 맞는지는 `tests/test_config.py`의 서빙판 핀이 문다.
   # 그 전 판 **v9**(⏵ 2026-10-06 — v8 + `auditor_guards` 서술.

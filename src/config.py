@@ -575,7 +575,10 @@ class CapsuleBudgets(HarnessModel):
 # v8·v9의 서술이다. v10은 v7을 전면 재작성한 판이라 물려받지 않고 켜진 여덟을 다시 써서 meta
 # `source_options`로 여덟을 선언한다(철자는 서빙 판 핀 `tests/test_config.py`의
 # `test_the_canonical_auditor_prompt_states_the_runner_source_contract`가 문다).
-# v10으로 돈 run은 0건이다.
+# v10으로 돈 run은 0건이다(⏵ 2026-10-08 — 1건이 됐다, `docs/experiments/harness/2026-10-08-first-
+# real-serving-run-arvo1065-vastai-remote.md` · `checksum` 0이라 비교표 밖).
+# ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, 이슈
+# #525).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
